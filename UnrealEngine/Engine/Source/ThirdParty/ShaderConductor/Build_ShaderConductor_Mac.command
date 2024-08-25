@@ -17,7 +17,7 @@ fi
 
 PATH="$CUR_DIR/ninja":"$PATH"
 export PATH
-export MACOSX_DEPLOYMENT_TARGET=10.14
+export MACOSX_DEPLOYMENT_TARGET=11.00
 
 cd ShaderConductor
 

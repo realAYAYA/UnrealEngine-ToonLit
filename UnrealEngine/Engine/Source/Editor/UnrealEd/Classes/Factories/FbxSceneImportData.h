@@ -60,6 +60,8 @@ public:
 	/** Attempt to parse an asset import structure from the specified json string. */
 	UNREALED_API void FromJson(FString InJsonString);
 
+	UNREALED_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	UNREALED_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 protected:

@@ -84,12 +84,7 @@ FText UMovieSceneNameableTrack::GetTrackRowDisplayName(int32 TrackRowIndex) cons
 		return TrackRowDisplayNames[TrackRowIndex];
 	}
 
-	if (DisplayName.IsEmpty())
-	{
-		return GetDefaultDisplayName();
-	}
-
-	return DisplayName;
+	return GetDisplayName();
 }
 
 FText UMovieSceneNameableTrack::GetDefaultDisplayName() const

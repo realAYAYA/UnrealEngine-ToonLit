@@ -13,27 +13,21 @@
 #include "map"
 #include "set"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
 
-	//---------------------------------------------------------------------------------------------
-	//! Second pass of the code generation process.
-    //! Solves surface and modifier conditions from tags and variations
-	//---------------------------------------------------------------------------------------------
-    class SecondPassGenerator : public Base
+	/** Second pass of the code generation process.
+     * It solves surface and modifier conditions from tags and variations
+	 */
+    class SecondPassGenerator
 	{
 	public:
 
-		SecondPassGenerator( FirstPassGenerator* firstPass,
-            const CompilerOptions::Private* options  );
+		SecondPassGenerator( FirstPassGenerator* firstPass, const CompilerOptions::Private* options  );
 
 		// Return true on success.
-        bool Generate( ErrorLogPtr pErrorLog,
-                       const Node::Private* root );
+        bool Generate( ErrorLogPtr pErrorLog, const Node::Private* root );
 
 	private:
 
@@ -41,16 +35,8 @@ namespace mu
         const CompilerOptions::Private *m_pCompilerOptions = nullptr;
 
 
-        struct CONDITION_CONTEXT
-        {
-            Ptr<ASTOp> surfaceCondition;
-            FirstPassGenerator::StateCondition stateCondition;
-        };
-        vector< CONDITION_CONTEXT > m_currentCondition;
-
-
         //!
-        ErrorLogPtr m_pErrorLog;
+        Ptr<ErrorLog> m_pErrorLog;
 
         //!
         struct CONDITION_GENERATION_KEY
@@ -92,15 +78,21 @@ namespace mu
                                          const set<size_t>& posTag,
                                          const set<size_t>& negTag );
 
-        //!
-        Ptr<ASTOp> GenerateSurfaceCondition( size_t surfIndex,
-                                             const set<size_t>& posSurf,
-                                             const set<size_t>& negSurf,
-                                             const set<size_t>& posTag,
-                                             const set<size_t>& negTag );
-
-        //!
-        Ptr<ASTOp> GenerateModifierCondition( size_t modIndex );
+        /** Generate Surface, Edit or Modifier condition.
+    	 * @param Index Surface, Edit or Modifier index.
+    	 * @param positiveTags function that given the Surface, Edit or Modifier index, returns its positive tags.
+    	 * @param negativeTags function that given the Surface, Edit or Modifier, returns its negative tags.
+    	 * @param posSurf already visited Surfaces, Edits, or Modifiers that participate positively in the condition.
+    	 * @param negSurf already visited Surfaces, Edits, or Modifiers that participate negatively in the condition.
+      	 * @param posSurf Tags that already belong to the condition (positively).
+		 * @param negSurf Tags that already belong to the condition (negatively). */
+        Ptr<ASTOp> GenerateSurfaceOrModifierCodition(size_t Index,
+									        TFunction<const TArray<FString>&(size_t)> positiveTags,
+											TFunction<const TArray<FString>&(size_t)> negativeTags,
+                                            const set<size_t>& posSurf,
+                                            const set<size_t>& negSurf,
+                                            const set<size_t>& posTag,
+                                            const set<size_t>& negTag);
     };
 
 }

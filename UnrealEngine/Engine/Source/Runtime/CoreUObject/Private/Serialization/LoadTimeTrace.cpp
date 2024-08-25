@@ -32,6 +32,7 @@ UE_TRACE_EVENT_BEGIN(LoadTime, PackageSummary)
 	UE_TRACE_EVENT_FIELD(uint32, ImportCount)
 	UE_TRACE_EVENT_FIELD(uint32, ExportCount)
 	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, Name)
+	UE_TRACE_EVENT_FIELD(int32, Priority) // added in UE 5.4
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(LoadTime, BeginProcessSummary)
@@ -183,7 +184,7 @@ void FLoadTimeProfilerTracePrivate::OutputDestroyLinker(const void* Linker)
 		<< DestroyLinker.Linker(Linker);
 }
 
-void FLoadTimeProfilerTracePrivate::OutputPackageSummary(const void* AsyncPackage, const FName& PackageName, uint32 TotalHeaderSize, uint32 ImportCount, uint32 ExportCount)
+void FLoadTimeProfilerTracePrivate::OutputPackageSummary(const void* AsyncPackage, const FName& PackageName, uint32 TotalHeaderSize, uint32 ImportCount, uint32 ExportCount, int Priority)
 {
 	TCHAR Buffer[FName::StringBufferSize];
 	uint32 NameLength = PackageName.ToString(Buffer);
@@ -193,7 +194,8 @@ void FLoadTimeProfilerTracePrivate::OutputPackageSummary(const void* AsyncPackag
 		<< PackageSummary.TotalHeaderSize(TotalHeaderSize)
 		<< PackageSummary.ImportCount(ImportCount)
 		<< PackageSummary.ExportCount(ExportCount)
-		<< PackageSummary.Name(Buffer, NameLength);
+		<< PackageSummary.Name(Buffer, NameLength)
+		<< PackageSummary.Priority(Priority);
 }
 
 void FLoadTimeProfilerTracePrivate::OutputAsyncPackageRequestAssociation(const void* AsyncPackage, uint64 RequestId)

@@ -18,9 +18,13 @@ public:
 	template <typename RetType>
 	RetType const*			GetPointer(uint32 BlockSize);
 	virtual void			Advance(uint32 BlockSize);
+	virtual bool			IsEmpty() const { return true; }
+	virtual void			DebugBegin() {}
+	virtual void			DebugEnd() {}
 
 protected:
 	virtual const uint8*	GetPointerImpl(uint32 BlockSize);
+
 	FStreamReader*			Reader;
 };
 

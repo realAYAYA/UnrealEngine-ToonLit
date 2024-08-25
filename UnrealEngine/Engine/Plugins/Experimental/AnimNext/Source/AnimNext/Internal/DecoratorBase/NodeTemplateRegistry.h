@@ -28,9 +28,6 @@ namespace UE::AnimNext
 		FNodeTemplateRegistryHandle FindOrAdd(const FNodeTemplate* NodeTemplate);
 
 		// Finds and returns a node template based on its handle or nullptr if the handle is invalid
-		FNodeTemplate* Find(FNodeTemplateRegistryHandle TemplateHandle);
-
-		// Finds and returns a node template based on its handle or nullptr if the handle is invalid
 		const FNodeTemplate* Find(FNodeTemplateRegistryHandle TemplateHandle) const;
 
 		// Returns the number of registered node templates
@@ -39,11 +36,15 @@ namespace UE::AnimNext
 		// Removes the specified node template from the registry
 		void Unregister(const FNodeTemplate* NodeTemplate);
 
-		// Clears the registry by removing every node template
-		void Clear();
-
 	private:
 		FNodeTemplateRegistry() = default;
+		FNodeTemplateRegistry(const FNodeTemplateRegistry&) = delete;
+		FNodeTemplateRegistry(FNodeTemplateRegistry&&) = default;
+		FNodeTemplateRegistry& operator=(const FNodeTemplateRegistry&) = delete;
+		FNodeTemplateRegistry& operator=(FNodeTemplateRegistry&&) = default;
+
+		// Finds and returns a node template based on its handle or nullptr if the handle is invalid
+		FNodeTemplate* FindMutable(FNodeTemplateRegistryHandle TemplateHandle);
 
 		// Module lifetime functions
 		static void Init();
@@ -60,5 +61,7 @@ namespace UE::AnimNext
 		TMap<uint32, FNodeTemplateRegistryHandle>	TemplateUIDToHandleMap;
 
 		friend class FModule;
+		friend class FDecoratorWriter;
+		friend struct FScopedClearNodeTemplateRegistry;
 	};
 }

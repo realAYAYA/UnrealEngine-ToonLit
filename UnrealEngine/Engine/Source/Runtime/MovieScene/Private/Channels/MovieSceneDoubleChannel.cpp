@@ -158,6 +158,16 @@ void FMovieSceneDoubleChannel::Offset(FFrameNumber DeltaPosition)
 	AutoSetTangents();
 }
 
+FKeyHandle FMovieSceneDoubleChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneDoubleChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
+}
+
 void FMovieSceneDoubleChannel::Optimize(const FKeyDataOptimizationParams& Params)
 {
 	FMovieSceneDoubleChannelImpl::Optimize(this, Params);
@@ -251,7 +261,7 @@ bool FMovieSceneDoubleChannel::SerializeFromMismatchedTag(const FPropertyTag& Ta
 
 	// Load pre-LWC content that was saved with a float channel.
 	static const FName FloatChannelName("MovieSceneFloatChannel");
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == FloatChannelName)
+	if (Tag.GetType().IsStruct(FloatChannelName))
 	{
 		// We have to load the whole structure into a float channel, and then convert it into our data.
 		// It's not ideal but it's the safest way to make it work.

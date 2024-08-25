@@ -58,13 +58,12 @@ using namespace ChaosTest;
 
 		{
 			// never touched
-			TManagedArray<FTransform>& RestTransform = Collection->RestCollection->Transform;
+			TManagedArray<FTransform3f>& RestTransform = Collection->RestCollection->Transform;
 			EXPECT_LT(FMath::Abs(RestTransform[0].GetTranslation().Z), SMALL_THRESHOLD);
 
 			// simulated
-			TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-			EXPECT_EQ(Transform.Num(), 1);
-			EXPECT_LT(FMath::Abs(Transform[0].GetTranslation().Z), SMALL_THRESHOLD);
+			EXPECT_EQ(Collection->DynamicCollection->GetNumTransforms(), 1);
+			EXPECT_LT(FMath::Abs(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z), SMALL_THRESHOLD);
 		}
 	}
 
@@ -82,7 +81,7 @@ using namespace ChaosTest;
 
 		FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(RestCollection.Get());
 		EXPECT_EQ(RestCollection->Transform.Num(), 3);
-		RestCollection->Transform[2] = FTransform(FQuat::MakeFromEuler(FVector(90.f, 0, 0.)), FVector(0, 0, 40));
+		RestCollection->Transform[2] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(90.f, 0, 0.)), FVector3f(0, 0, 40));
 
 		//GeometryCollectionAlgo::PrintParentHierarchy(RestCollection.Get());
 
@@ -98,29 +97,28 @@ using namespace ChaosTest;
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
 
-		FVector StartingClusterPosition;
-		TManagedArray<FTransform>* Transform;
+		FVector3f StartingClusterPosition;
 		FReal StartingRigidDistance;
 
 		UnitTest.Solver->RegisterSimOneShotCallback([&]()
 		{
-			TManagedArray<int32>& SimulationType = Collection->DynamicCollection->SimulationType;
+			// Dynamic collection doesn't change the simulation type, RestCollection can be used instead
+			TManagedArray<int32>& SimulationType = RestCollection->SimulationType;
 			EXPECT_EQ(SimulationType[0],FGeometryCollection::ESimulationTypes::FST_Rigid);
 			EXPECT_EQ(SimulationType[1],FGeometryCollection::ESimulationTypes::FST_Rigid);
 			EXPECT_EQ(SimulationType[2],FGeometryCollection::ESimulationTypes::FST_Clustered);
 
-			TManagedArray<int32>& Parent = Collection->DynamicCollection->Parent;
-			EXPECT_EQ(Parent[0],2);
-			EXPECT_EQ(Parent[1],2);
-			EXPECT_EQ(Parent[2],-1);
+			EXPECT_EQ(Collection->DynamicCollection->GetParent(0),2);
+			EXPECT_EQ(Collection->DynamicCollection->GetParent(1),2);
+			EXPECT_EQ(Collection->DynamicCollection->GetParent(2),-1);
 
 			// Set the one cluster to disabled
-			UnitTest.Solver->GetEvolution()->DisableParticle(Collection->PhysObject->GetSolverClusterHandles()[0]);
+			UnitTest.Solver->GetEvolution()->DisableParticle(Collection->PhysObject->GetSolverClusterHandle_Internal(0));
 
-			Transform = &Collection->DynamicCollection->Transform;
-			StartingRigidDistance = ((*Transform)[1].GetTranslation() - (*Transform)[0].GetTranslation()).Size();
+
+			StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 			EXPECT_LT(StartingRigidDistance - 20.0f,SMALL_THRESHOLD);
-			StartingClusterPosition = (*Transform)[2].GetTranslation();
+			StartingClusterPosition = Collection->DynamicCollection->GetTransform(2).GetTranslation();
 		});
 
 		FReal CurrentRigidDistance = 0.0;
@@ -130,11 +128,11 @@ using namespace ChaosTest;
 			UnitTest.Advance();
 
 			// Distance between gc cubes remains the same
-			CurrentRigidDistance = ((*Transform)[1].GetTranslation() - (*Transform)[0].GetTranslation()).Size();
+			CurrentRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 			EXPECT_LT(StartingRigidDistance-CurrentRigidDistance, SMALL_THRESHOLD);
 
 			// Clustered particle doesn't move
-			EXPECT_LT((StartingClusterPosition - (*Transform)[2].GetTranslation()).Size(), SMALL_THRESHOLD);
+			EXPECT_LT((StartingClusterPosition - Collection->DynamicCollection->GetTransform(2).GetTranslation()).Size(), SMALL_THRESHOLD);
 		}
 		
 	}
@@ -220,7 +218,7 @@ using namespace ChaosTest;
 				RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0, 0, 0.)), FVector(0, 0, 0)), FVector(1.0)));
 				RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0, 0, 0.)), FVector(0, 0, 10)), FVector(1.0)));
 				FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(RestCollection.Get());
-				RestCollection->Transform[4] = FTransform(FQuat::MakeFromEuler(FVector(90.f, 0, 0.)), FVector(0, 0, 40));
+				RestCollection->Transform[4] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(90.f, 0, 0.)), FVector3f(0, 0, 40));
 			}
 			else
 			{
@@ -379,7 +377,12 @@ using namespace ChaosTest;
 			UnitTest.Solver->SetGenerateBreakingData(true);
 			UnitTest.Solver->SetBreakingFilterSettings(BreakingFilterSettings);
 
-			ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+			ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			};
 
 			ParticleHandles[0]->SetM(TestMass + 1.0f);
 			ParticleHandles[1]->SetM(TestMass - 1.0f);

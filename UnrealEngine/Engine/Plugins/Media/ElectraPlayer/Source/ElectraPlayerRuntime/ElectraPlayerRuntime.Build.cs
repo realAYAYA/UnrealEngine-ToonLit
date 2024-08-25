@@ -48,13 +48,14 @@ namespace UnrealBuildTool.Rules
 				PrivateDefinitions.Add("_CRT_SECURE_NO_WARNINGS=1");
 
 				AddEngineThirdPartyPrivateStaticDependencies(Target, "WinHttp");
+				AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
 
 				PrivateDefinitions.Add("ELECTRA_HAVE_DX11");	// video decoding for DX11 enabled (Win8+)
 
 				if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows) && Target.WindowsPlatform.Architecture != UnrealArch.Arm64)
 				{
 					PublicAdditionalLibraries.AddRange(new string[] {
-						DirectX.GetLibDir(Target) + "dxerr.lib",
+						Path.Combine(Target.WindowsPlatform.DirectXLibDir, "dxerr.lib"),
 					});
 				}
 
@@ -73,23 +74,7 @@ namespace UnrealBuildTool.Rules
 				PrivateIncludePaths.Add("ElectraPlayerRuntime/Private/Runtime/Decoder/Windows");
 				PrivateIncludePaths.Add("ElectraPlayerRuntime/Private/Windows");
 			}
-			else if (Target.Platform == UnrealTargetPlatform.Mac)
-			{
-				PublicFrameworks.AddRange(
-				new string[] {
-								"CoreMedia",
-								"CoreVideo",
-								"AVFoundation",
-								"AudioToolbox",
-								"VideoToolbox",
-								"QuartzCore"
-				});
-
-				PublicIncludePaths.Add("$(ModuleDir)/Public/Apple");
-
-				PrivateIncludePaths.Add("ElectraPlayerRuntime/Private/Runtime/Decoder/Apple");
-			}
-			else if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+			else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
 			{
 				PublicFrameworks.AddRange(
 				new string[] {

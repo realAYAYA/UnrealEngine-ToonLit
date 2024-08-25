@@ -1,0 +1,488 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseUEWDbg|x64">
+      <Configuration>ReleaseUEWDbg</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseUE|x64">
+      <Configuration>ReleaseUE</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{9E96B4E7-DD01-421B-A94C-38AE65BA5773}</ProjectGuid>
+    <ProjectName>DatasmithARCHICAD27Exporter</ProjectName>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props')" />
+    <Import Project="DatasmithARCHICAD27Exporter.props" />
+    <Import Project="..\Config\DatasmithArchicadExporter.props" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props')" />
+    <Import Project="DatasmithARCHICAD27Exporter.props" />
+    <Import Project="..\Config\DatasmithArchicadExporter.props" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'" Label="PropertySheets">
+    <Import Project="$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props')" />
+    <Import Project="DatasmithARCHICAD27Exporter.props" />
+    <Import Project="..\Config\DatasmithArchicadExporter.props" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'" Label="PropertySheets">
+    <Import Project="$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(LocalAppData)\Microsoft\VisualStudio\10.0\Microsoft.Cpp.$(Platform).user.props')" />
+    <Import Project="DatasmithARCHICAD27Exporter.props" />
+    <Import Project="..\Config\DatasmithArchicadExporter.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IntDir>$(UEIntermediateDir)\DatasmithArchiCADExporter$(AC_VERSION)\</IntDir>
+    <OutDir>$(EnginePath)\Binaries\Win64\DatasmithArchiCADExporter\ArchiCAD$(AC_VERSION)\</OutDir>
+    <TargetExt>.apx</TargetExt>
+    <LinkIncremental>true</LinkIncremental>
+    <TargetName>$(ProjectName)-Debug</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IntDir>$(UEIntermediateDir)\DatasmithArchiCADExporter$(AC_VERSION)\</IntDir>
+    <OutDir>$(EnginePath)\Binaries\Win64\DatasmithArchiCADExporter\ArchiCAD$(AC_VERSION)\</OutDir>
+    <TargetExt>.apx</TargetExt>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">
+    <IntDir>$(UEIntermediateDir)\DatasmithArchiCADExporter27\</IntDir>
+    <OutDir>$(EnginePath)\Binaries\Win64\DatasmithArchiCADExporter\ArchiCAD27\</OutDir>
+    <TargetExt>.apx</TargetExt>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">
+    <IntDir>$(UEIntermediateDir)\DatasmithArchiCADExporter27\</IntDir>
+    <OutDir>$(EnginePath)\Binaries\Win64\DatasmithArchiCADExporter\ArchiCAD27\</OutDir>
+    <TargetExt>.apx</TargetExt>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <SuppressStartupBanner>true</SuppressStartupBanner>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_DEBUG;DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <StringPooling>true</StringPooling>
+      <MinimalRebuild>false</MinimalRebuild>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ProgramDataBaseFileName>$(OutDir)$(ProjectName)-Debug.pdb</ProgramDataBaseFileName>
+      <BrowseInformationFile>$(IntDir)</BrowseInformationFile>
+      <CallingConvention>FastCall</CallingConvention>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <DisableSpecificWarnings>4996;5208;4251;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <AdditionalIncludeDirectories>$(ACSDKPATH)\Support\Modules\RS;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>NotSet</SubSystem>
+      <EntryPointSymbol>DllMainEntry</EntryPointSymbol>
+      <TargetMachine>MachineX64</TargetMachine>
+      <ImportLibrary>
+      </ImportLibrary>
+      <LinkDLL>true</LinkDLL>
+      <AdditionalOptions>/export:GetExportedFuncAddrs,%401 /export:SetImportedFuncAddrs,%402 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalDependencies>DatasmithUE4ArchiCAD-Win64-Debug.lib;ACAP_STATD.lib;RS\Win\RSImp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>echo Copying files
+
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.dll" $(OutDir) /Y
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.pdb" $(OutDir) /Y
+
+set INSTALLDIR=$(HOMEDRIVE)$(HOMEPATH)\Desktop\$(TargetName)
+
+rd /S /Q "%INSTALLDIR%" 2&gt;NUL
+mkdir "%INSTALLDIR%"
+
+IF $(ConfigurationName) == Debug set SUFFIX=-Debug
+
+copy "$(OutDir)$(TargetName)%SUFFIX%.apx" "%INSTALLDIR%" /Y
+copy "$(OutDir)DatasmithUE4ArchiCAD.dll" "%INSTALLDIR%" /Y
+
+copy "$(OutDir)$(TargetName)%SUFFIX%.pdb" "%INSTALLDIR%" /Y
+copy "$(OutDir)DatasmithUE4ArchiCAD.pdb" "%INSTALLDIR%" /Y
+
+..\DebugInstallAccess.bat $(AC_VERSION) %SUFFIX%
+</Command>
+    </PostBuildEvent>
+    <PreBuildEvent>
+      <Command>pushd ..\..\..\..\..\..\..
+call Build\BatchFiles\Build.bat DatasmithUE4ArchiCAD Win64 Debug -WaitMutex -FromMsBuild
+popd
+</Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <SuppressStartupBanner>true</SuppressStartupBanner>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <Optimization>MaxSpeed</Optimization>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <StringPooling>true</StringPooling>
+      <MinimalRebuild>false</MinimalRebuild>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ProgramDataBaseFileName>$(OutDir)$(ProjectName).pdb</ProgramDataBaseFileName>
+      <BrowseInformationFile>$(IntDir)</BrowseInformationFile>
+      <CallingConvention>FastCall</CallingConvention>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <DisableSpecificWarnings>4996;5208;4251;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <AdditionalIncludeDirectories>$(ACSDKPATH)\Support\Modules\RS;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>NotSet</SubSystem>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <EntryPointSymbol>DllMainEntry</EntryPointSymbol>
+      <TargetMachine>MachineX64</TargetMachine>
+      <ImportLibrary>
+      </ImportLibrary>
+      <LinkDLL>true</LinkDLL>
+      <AdditionalOptions>/export:GetExportedFuncAddrs,%401 /export:SetImportedFuncAddrs,%402 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalDependencies>ACAP_STAT.lib;RS\Win\RSImp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>echo Copying files
+
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.dll" $(OutDir) /Y
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.pdb" $(OutDir) /Y
+
+set INSTALLDIR=$(HOMEDRIVE)$(HOMEPATH)\Desktop\$(TargetName)
+
+rd /S /Q "%INSTALLDIR%" 2&gt;NUL
+mkdir "%INSTALLDIR%"
+
+IF $(ConfigurationName) == Debug set SUFFIX=-Debug
+
+copy "$(OutDir)$(TargetName)%SUFFIX%.apx" "%INSTALLDIR%" /Y
+copy "$(OutDir)DatasmithUE4ArchiCAD.dll" "%INSTALLDIR%" /Y
+
+copy "$(OutDir)$(TargetName)%SUFFIX%.pdb" "%INSTALLDIR%" /Y
+copy "$(OutDir)DatasmithUE4ArchiCAD.pdb" "%INSTALLDIR%" /Y
+
+..\DebugInstallAccess.bat $(AC_VERSION) %SUFFIX%
+</Command>
+    </PostBuildEvent>
+    <PreBuildEvent>
+      <Command>pushd ..\..\..\..\..\..\..
+call Build\BatchFiles\Build.bat DatasmithUE4ArchiCAD Win64 Development -WaitMutex -FromMsBuild
+popd
+</Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">
+    <ClCompile>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <SuppressStartupBanner>true</SuppressStartupBanner>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <Optimization>MaxSpeed</Optimization>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <StringPooling>true</StringPooling>
+      <MinimalRebuild>false</MinimalRebuild>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ProgramDataBaseFileName>$(OutDir)$(ProjectName).pdb</ProgramDataBaseFileName>
+      <BrowseInformation>false</BrowseInformation>
+      <BrowseInformationFile>$(IntDir)</BrowseInformationFile>
+      <CallingConvention>FastCall</CallingConvention>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <DisableSpecificWarnings>4996;5208;4251;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <AdditionalIncludeDirectories>$(ACSDKPATH)\Support\Modules\RS;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <OutputFile>$(OutDir)$(ProjectName).apx</OutputFile>
+      <SubSystem>NotSet</SubSystem>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <EntryPointSymbol>DllMainEntry</EntryPointSymbol>
+      <TargetMachine>MachineX64</TargetMachine>
+      <ImportLibrary>
+      </ImportLibrary>
+      <LinkDLL>true</LinkDLL>
+      <AdditionalOptions>/export:GetExportedFuncAddrs,%401 /export:SetImportedFuncAddrs,%402 /ignore:4099 %(AdditionalOptions)</AdditionalOptions>
+      <DelayLoadDLLs />
+      <AdditionalDependencies>ACAP_STAT.lib;RS\Win\RSImp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+    </Link>
+    <PostBuildEvent>
+      <Command>echo Copying files
+
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.dll" $(OutDir) /Y
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.pdb" $(OutDir) /Y
+</Command>
+    </PostBuildEvent>
+    <PreBuildEvent>
+      <Command>
+      </Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">
+    <ClCompile>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <SuppressStartupBanner>true</SuppressStartupBanner>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <Optimization>MaxSpeed</Optimization>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <StringPooling>true</StringPooling>
+      <MinimalRebuild>false</MinimalRebuild>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ProgramDataBaseFileName>$(OutDir)$(ProjectName).pdb</ProgramDataBaseFileName>
+      <BrowseInformation>false</BrowseInformation>
+      <BrowseInformationFile>$(IntDir)</BrowseInformationFile>
+      <CallingConvention>FastCall</CallingConvention>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <DisableSpecificWarnings>4996;5208;4251;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <AdditionalIncludeDirectories>$(ACSDKPATH)\Support\Modules\RS;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <OutputFile>$(OutDir)$(ProjectName).apx</OutputFile>
+      <SubSystem>NotSet</SubSystem>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <EntryPointSymbol>DllMainEntry</EntryPointSymbol>
+      <TargetMachine>MachineX64</TargetMachine>
+      <ImportLibrary>
+      </ImportLibrary>
+      <LinkDLL>true</LinkDLL>
+      <AdditionalOptions>/export:GetExportedFuncAddrs,%401 /export:SetImportedFuncAddrs,%402 %(AdditionalOptions)</AdditionalOptions>
+      <DelayLoadDLLs>
+      </DelayLoadDLLs>
+      <AdditionalDependencies>ACAP_STAT.lib;RS\Win\RSImp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>echo Copying files
+
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.dll" $(OutDir) /Y
+copy "$(EnginePath)\Binaries\Win64\DatasmithUE4ArchiCAD\DatasmithUE4ArchiCAD.pdb" $(OutDir) /Y
+</Command>
+    </PostBuildEvent>
+    <PreBuildEvent>
+      <Command>
+      </Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\Private\Commander.h" />
+    <ClInclude Include="..\..\Private\DatasmithHashTools.h" />
+    <ClInclude Include="..\..\Private\ElementEvent.h" />
+    <ClInclude Include="..\..\Private\Export.h" />
+    <ClInclude Include="..\..\Private\Exporter.h" />
+    <ClInclude Include="..\..\Private\GeometryUtil.h" />
+    <ClInclude Include="..\..\Private\Menus.h" />
+    <ClInclude Include="..\..\Private\MetaData.h" />
+    <ClInclude Include="..\..\Private\Palette.h" />
+    <ClInclude Include="..\..\Private\ProjectEvent.h" />
+    <ClInclude Include="..\..\Private\ReportWindow.h" />
+    <ClInclude Include="..\..\Private\StatsCounter.h" />
+    <ClInclude Include="..\..\Private\Synchronizer.h" />
+    <ClInclude Include="..\..\Private\LoadDatasmithDlls.h" />
+    <ClInclude Include="..\..\Private\ResourcesIDs.h" />
+    <ClInclude Include="..\..\Private\Element2StaticMesh.h" />
+    <ClInclude Include="..\..\Private\ElementID.h" />
+    <ClInclude Include="..\..\Private\MaterialsDatabase.h" />
+    <ClInclude Include="..\..\Private\SyncContext.h" />
+    <ClInclude Include="..\..\Private\SyncData.h" />
+    <ClInclude Include="..\..\Private\SyncDatabase.h" />
+    <ClInclude Include="..\..\Private\TexturesCache.h" />
+    <ClInclude Include="..\..\Private\Utils\3DElement2String.h" />
+    <ClInclude Include="..\..\Private\Utils\AddonTools.h" />
+    <ClInclude Include="..\..\Private\Utils\APIEnvir.h" />
+    <ClInclude Include="..\..\Private\Utils\AutoChangeDatabase.h" />
+    <ClInclude Include="..\..\Private\Utils\CurrentOS.h" />
+    <ClInclude Include="..\..\Private\Utils\DebugTools.h" />
+    <ClInclude Include="..\..\Private\Utils\Element2String.h" />
+    <ClInclude Include="..\..\Private\Utils\ElementTools.h" />
+    <ClInclude Include="..\..\Private\Utils\Error.h" />
+    <ClInclude Include="..\..\Private\Utils\LibPartInfo.h" />
+    <ClInclude Include="..\..\Private\Utils\LocalizeTools.h" />
+    <ClInclude Include="..\..\Private\Utils\Pasteboard.h" />
+    <ClInclude Include="..\..\Private\Utils\Progression.h" />
+    <ClInclude Include="..\..\Private\Utils\ResourcesUtils.h" />
+    <ClInclude Include="..\..\Private\Utils\ShellOpenDocument.h" />
+    <ClInclude Include="..\..\Private\Utils\TaskCalledFromEventLoop.h" />
+    <ClInclude Include="..\..\Private\Utils\TaskMgr.h" />
+    <ClInclude Include="..\..\Private\Utils\TAssValueName.h" />
+    <ClInclude Include="..\..\Private\Utils\TimeStat.h" />
+    <ClInclude Include="..\..\Private\Utils\ViewEvent.h" />
+    <ClInclude Include="..\..\Private\Utils\ViewState.h" />
+    <ClInclude Include="..\..\Private\Utils\WarningsDisabler.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\Private\AddOn.cpp" />
+    <ClCompile Include="..\..\Private\Commander.cpp" />
+    <ClCompile Include="..\..\Private\DatasmithHashTools.cpp" />
+    <ClCompile Include="..\..\Private\ElementEvent.cpp" />
+    <ClCompile Include="..\..\Private\Export.cpp" />
+    <ClCompile Include="..\..\Private\Exporter.cpp" />
+    <ClCompile Include="..\..\Private\GeometryUtil.cpp" />
+    <ClCompile Include="..\..\Private\Menus.cpp" />
+    <ClCompile Include="..\..\Private\MetaData.cpp" />
+    <ClCompile Include="..\..\Private\Palette.cpp" />
+    <ClCompile Include="..\..\Private\ProjectEvent.cpp" />
+    <ClCompile Include="..\..\Private\ReportWindow.cpp" />
+    <ClCompile Include="..\..\Private\Synchronizer.cpp" />
+    <ClCompile Include="..\..\Private\LoadDatasmithDlls.cpp" />
+    <ClCompile Include="..\..\Private\Element2StaticMesh.cpp" />
+    <ClCompile Include="..\..\Private\ElementID.cpp" />
+    <ClCompile Include="..\..\Private\MaterialsDatabase.cpp" />
+    <ClCompile Include="..\..\Private\SyncContext.cpp" />
+    <ClCompile Include="..\..\Private\SyncData.cpp" />
+    <ClCompile Include="..\..\Private\SyncDatabase.cpp" />
+    <ClCompile Include="..\..\Private\TexturesCache.cpp" />
+    <ClCompile Include="..\..\Private\Utils\3DElement2String.cpp" />
+    <ClCompile Include="..\..\Private\Utils\AddonTools.cpp" />
+    <ClCompile Include="..\..\Private\Utils\AutoChangeDatabase.cpp" />
+    <ClCompile Include="..\..\Private\Utils\DebugTools.cpp" />
+    <ClCompile Include="..\..\Private\Utils\Element2String.cpp" />
+    <ClCompile Include="..\..\Private\Utils\ElementTools.cpp" />
+    <ClCompile Include="..\..\Private\Utils\Error.cpp" />
+    <ClCompile Include="..\..\Private\Utils\LibPartInfo.cpp" />
+    <ClCompile Include="..\..\Private\Utils\LocalizeTools.cpp" />
+    <ClCompile Include="..\..\Private\Utils\Pasteboard.cpp" />
+    <ClCompile Include="..\..\Private\Utils\Progression.cpp" />
+    <ClCompile Include="..\..\Private\Utils\ShellOpenDocument.cpp" />
+    <ClCompile Include="..\..\Private\Utils\TaskCalledFromEventLoop.cpp" />
+    <ClCompile Include="..\..\Private\Utils\TaskMgr.cpp" />
+    <ClCompile Include="..\..\Private\Utils\TAssValueName.cpp" />
+    <ClCompile Include="..\..\Private\Utils\TimeStat.cpp" />
+    <ClCompile Include="..\..\Private\Utils\ViewEvent.cpp" />
+    <ClCompile Include="..\..\Private\Utils\ViewState.cpp" />
+    <ClCompile Include="..\..\Private\Utils\WinOS.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\..\Resources\RFIX\DatasmithARCHICADExporterFix.grc">
+      <FileType>Document</FileType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">set FileName=DatasmithARCHICADExporterFix
+cl /nologo /X /EP /P /I "$(ACSDKPATH)\Support\Inc" /I "$(ACSDKPATH)\Support\Modules\DGLib" /I ".\..\..\Private" /I ".\..\..\Resources\RINT" /utf-8 /DDEBUG /DWINDOWS /DAUTO_SYNC=$(AUTO_SYNC) /Fi"$(OutDir)RO\%FileName%.grc.rc2.i" "..\..\Resources\RFIX\%FileName%.grc"
+"$(ACSDKPATH)\Support\Tools\Win\ResConv.exe" -m r -D WINDOWS -T W -q utf8 1252 -D _DEBUG -i "$(OutDir)RO\%FileName%.grc.rc2.i" -p "..\..\Resources\RFIX\Images" -o "$(OutDir)RO\%FileName%.grc.rc2" -w 2
+</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compiling the non-localized GRC file...</Message>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(OutDir)\RO\$(SolutionName)Fix.grc.rc2;%(Outputs)</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">set FileName=DatasmithARCHICADExporterFix
+cl /nologo /X /EP /P /I "$(ACSDKPATH)\Support\Inc" /I "$(ACSDKPATH)\Support\Modules\DGLib" /I ".\..\..\Private" /I ".\..\..\Resources\RINT" /utf-8 /DWINDOWS /DAUTO_SYNC=$(AUTO_SYNC) /Fi"$(OutDir)RO\%FileName%.grc.rc2.i" "..\..\Resources\RFIX\%FileName%.grc"
+"$(ACSDKPATH)\Support\Tools\Win\ResConv.exe" -m r -D WINDOWS -T W -q utf8 1252 -i "$(OutDir)RO\%FileName%.grc.rc2.i" -p "..\..\Resources\RFIX\Images" -o "$(OutDir)RO\%FileName%.grc.rc2" -w 2
+</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">set FileName=DatasmithARCHICADExporterFix
+cl /nologo /X /EP /P /I "$(ACSDKPATH)\Support\Inc" /I "$(ACSDKPATH)\Support\Modules\DGLib" /I ".\..\..\Private" /I ".\..\..\Resources\RINT" /utf-8 /DWINDOWS /DAUTO_SYNC=$(AUTO_SYNC) /Fi"$(OutDir)RO\%FileName%.grc.rc2.i" "..\..\Resources\RFIX\%FileName%.grc"
+"$(ACSDKPATH)\Support\Tools\Win\ResConv.exe" -m r -D WINDOWS -T W -q utf8 1252 -i "$(OutDir)RO\%FileName%.grc.rc2.i" -p "..\..\Resources\RFIX\Images" -o "$(OutDir)RO\%FileName%.grc.rc2" -w 2
+</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">set FileName=DatasmithARCHICADExporterFix
+cl /nologo /X /EP /P /I "$(ACSDKPATH)\Support\Inc" /I "$(ACSDKPATH)\Support\Modules\DGLib" /I ".\..\..\Private" /I ".\..\..\Resources\RINT" /utf-8 /DWINDOWS /DAUTO_SYNC=$(AUTO_SYNC) /Fi"$(OutDir)RO\%FileName%.grc.rc2.i" "..\..\Resources\RFIX\%FileName%.grc"
+"$(ACSDKPATH)\Support\Tools\Win\ResConv.exe" -m r -D WINDOWS -T W -q utf8 1252 -i "$(OutDir)RO\%FileName%.grc.rc2.i" -p "..\..\Resources\RFIX\Images" -o "$(OutDir)RO\%FileName%.grc.rc2" -w 2
+</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compiling the non-localized GRC file...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">Compiling the non-localized GRC file...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">Compiling the non-localized GRC file...</Message>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(OutDir)\RO\$(SolutionName)Fix.grc.rc2;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">$(OutDir)\RO\$(SolutionName)Fix.grc.rc2;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">$(OutDir)\RO\$(SolutionName)Fix.grc.rc2;%(Outputs)</Outputs>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\..\Resources\RFIX.WIN\DatasmithARCHICADExporter.rc2">
+      <FileType>RC</FileType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">rc /i "$(ACSDKPATH)\Support\Inc" /i "$(ACSDKPATH)\Support\Modules\DGLib" /i "$(OutDir)\RO" /d _DEBUG /fo"$(OutDir)$(SolutionName).res" "..\..\Resources\RFIX.WIN\DatasmithARCHICADExporter.rc2"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compiling the RC2 file...</Message>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(OutDir)$(SolutionName).res;%(Outputs)</Outputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(OutDir)RO\$(SolutionName)Fix.grc.rc2;%(AdditionalInputs)</AdditionalInputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">rc /i "$(ACSDKPATH)\Support\Inc" /i "$(ACSDKPATH)\Support\Modules\DGLib" /i "$(OutDir)\RO" /fo"$(OutDir)$(SolutionName).res" "..\..\Resources\RFIX.WIN\DatasmithARCHICADExporter.rc2"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">rc /i "$(ACSDKPATH)\Support\Inc" /i "$(ACSDKPATH)\Support\Modules\DGLib" /i "$(OutDir)\RO" /fo"$(OutDir)$(SolutionName).res" "..\..\Resources\RFIX.WIN\DatasmithARCHICADExporter.rc2"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">rc /i "$(ACSDKPATH)\Support\Inc" /i "$(ACSDKPATH)\Support\Modules\DGLib" /i "$(OutDir)\RO" /fo"$(OutDir)$(SolutionName).res" "..\..\Resources\RFIX.WIN\DatasmithARCHICADExporter.rc2"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compiling the RC2 file...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">Compiling the RC2 file...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">Compiling the RC2 file...</Message>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(OutDir)$(SolutionName).res;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">$(OutDir)$(SolutionName).res;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">$(OutDir)$(SolutionName).res;%(Outputs)</Outputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(OutDir)RO\$(SolutionName)Fix.grc.rc2;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">$(OutDir)RO\$(SolutionName)Fix.grc.rc2;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">$(OutDir)RO\$(SolutionName)Fix.grc.rc2;%(AdditionalInputs)</AdditionalInputs>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Include="$(ACSDKPATH)\Support\Lib\Win\ACAP_STATD.lib">
+      <FileType>Document</FileType>
+    </Library>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\Private\Utils\MacOS.mm" />
+    <None Include="..\..\Resources\RFIX\Images\MenuIcon_18x18.svg" />
+    <None Include="..\..\Resources\RINT\en.lproj\DatasmithARCHICADExporter.grc">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">true</ExcludedFromBuild>
+    </None>
+    <None Include="..\..\Resources\RINT\fr.lproj\DatasmithARCHICADExporter.grc">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ReleaseUEWDbg|x64'">true</ExcludedFromBuild>
+    </None>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

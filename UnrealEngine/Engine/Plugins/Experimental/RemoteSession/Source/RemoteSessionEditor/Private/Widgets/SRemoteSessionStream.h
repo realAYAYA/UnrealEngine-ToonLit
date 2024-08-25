@@ -32,6 +32,7 @@ class UTextureRenderTarget2D;
 class UUserWidget;
 class UWidgetBlueprint;
 class UWorld;
+class FWorkspaceItem;
 
 enum class EMapChangeType : uint8;
 
@@ -85,7 +86,7 @@ public:
 class SRemoteSessionStream : public SCompoundWidget, FGCObject, FTickableEditorObject
 {
 public:
-	static void RegisterNomadTabSpawner();
+	static void RegisterNomadTabSpawner(TSharedRef<FWorkspaceItem> InWorkspaceItem);
 	static void UnregisterNomadTabSpawner();
 	static TSharedPtr<SRemoteSessionStream> GetPanelInstance();
 

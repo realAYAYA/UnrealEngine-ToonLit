@@ -86,6 +86,7 @@ enum class ETAAQuality : uint8
 	Low,
 	Medium,
 	High,
+	MediumHigh,
 	MAX
 };
 
@@ -176,8 +177,11 @@ extern RENDERER_API FTAAOutputs AddTemporalAAPass(
 /** Returns whether a given view need to measure luminance of the scene color for moire anti-flickering. */
 bool NeedTSRMoireLuma(const FViewInfo& View);
 
-/** Measure luminance of the scene color for moire anti-flickering. */
-FScreenPassTexture AddTSRComputeMoireLuma(FRDGBuilder& GraphBuilder, FGlobalShaderMap* ShaderMap, FScreenPassTexture SceneColor);
+/** Returns whether TSR internal visualization is enabled on the view. */
+bool IsVisualizeTSREnabled(const FViewInfo& View);
+
+/** Measure luminance of the scene color for anti-flickering. */
+FScreenPassTexture AddTSRMeasureFlickeringLuma(FRDGBuilder& GraphBuilder, FGlobalShaderMap* ShaderMap, FScreenPassTexture SceneColor);
 
 
 EMainTAAPassConfig GetMainTAAPassConfig(const FViewInfo& View);
@@ -190,6 +194,7 @@ struct FDefaultTemporalUpscaler
 		bool bAllowFullResSlice = false;
 		bool bGenerateSceneColorHalfRes = false;
 		bool bGenerateSceneColorQuarterRes = false;
+		bool bGenerateSceneColorEighthRes = false;
 		bool bGenerateOutputMip1 = false;
 		bool bGenerateVelocityFlattenTextures = false;
 		EPixelFormat DownsampleOverrideFormat;
@@ -197,14 +202,15 @@ struct FDefaultTemporalUpscaler
 		FScreenPassTexture SceneDepth;
 		FScreenPassTexture SceneVelocity;
 		FTranslucencyPassResources PostDOFTranslucencyResources;
-		FScreenPassTexture MoireInputTexture;
+		FScreenPassTexture FlickeringInputTexture;
 	};
 
 	struct FOutputs
 	{
 		FScreenPassTextureSlice FullRes;
-		FScreenPassTexture HalfRes;
-		FScreenPassTexture QuarterRes;
+		FScreenPassTextureSlice HalfRes;
+		FScreenPassTextureSlice QuarterRes;
+		FScreenPassTextureSlice EighthRes;
 		FVelocityFlattenTextures VelocityFlattenTextures;
 	};
 };

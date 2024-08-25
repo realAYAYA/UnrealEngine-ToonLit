@@ -236,12 +236,28 @@ void FInterchangeStepCurve::RemoveRedundantKeys(float Threshold)
 				return ValueA == ValueB;
 			});
 	}
+	else if(BooleanKeyValues.IsSet())
+	{
+		InternalRemoveRedundantKey<bool>(BooleanKeyValues.GetValue(), [](bool ValueA, bool ValueB)
+		{
+			return ValueA == ValueB;
+		});
+	}
+	else if(ByteKeyValues.IsSet())
+	{
+		InternalRemoveRedundantKey<uint8>(ByteKeyValues.GetValue(), [](uint8 ValueA, uint8 ValueB)
+		{
+			return ValueA == ValueB;
+		});
+	}
 }
 
 void FInterchangeStepCurve::Serialize(FArchive& Ar)
 {
 	Ar << KeyTimes;
 	Ar << FloatKeyValues;
+	Ar << ByteKeyValues;
+	Ar << BooleanKeyValues;
 	Ar << IntegerKeyValues;
 	Ar << StringKeyValues;
 }

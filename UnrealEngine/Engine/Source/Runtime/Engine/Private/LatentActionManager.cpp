@@ -6,6 +6,14 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(LatentActionManager)
 
+#ifndef LATENT_ACTION_PROFILING_ENABLED
+#define LATENT_ACTION_PROFILING_ENABLED 0
+#endif
+
+#if LATENT_ACTION_PROFILING_ENABLED
+#include "HAL/IConsoleManager.h"
+#endif
+
 FOnLatentActionsChanged FLatentActionManager::LatentActionsChangedDelegate;
 
 
@@ -83,10 +91,6 @@ void FLatentActionManager::BeginFrame()
 		ObjectActions->bProcessedThisFrame = false;
 	}
 }
-
-#ifndef LATENT_ACTION_PROFILING_ENABLED
-#define LATENT_ACTION_PROFILING_ENABLED 0
-#endif
 
 #if LATENT_ACTION_PROFILING_ENABLED
 static float GLatentActionDurationLoggingThreshold = 0.005f;

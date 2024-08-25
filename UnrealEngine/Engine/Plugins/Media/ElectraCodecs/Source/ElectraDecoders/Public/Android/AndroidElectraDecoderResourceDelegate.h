@@ -61,6 +61,7 @@ public:
 	virtual ~IElectraDecoderVideoOutputCopyResources() = default;
 	virtual void SetBufferIndex(int32 InIndex) = 0;
 	virtual void SetValidCount(int32 InValidCount) = 0;
+	virtual bool ShouldReleaseBufferImmediately() = 0;
 };
 
 

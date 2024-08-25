@@ -9,6 +9,7 @@
 
 class UBlueprint;
 class FKismetCompilerContext;
+class UEdGraph;
 
 /**
  * Per-instance extension object that can be added to UBlueprint::Extensions in order to augment built-in blueprint functionality
@@ -69,6 +70,11 @@ public:
 	{
 		return HandleGatherSearchData(OwningBlueprint);
 	}
+
+	/**
+	 * Override this function to inform editor tools of any graphs in this extension (eg. blueprint diff, asset search)
+	 */
+	virtual void GetAllGraphs(TArray<UEdGraph*>& Graphs) const {}
 
 private:
 

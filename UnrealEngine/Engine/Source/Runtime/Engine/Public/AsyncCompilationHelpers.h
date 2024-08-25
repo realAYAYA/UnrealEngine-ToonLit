@@ -55,6 +55,8 @@ namespace AsyncCompilationHelpers
 
 		/*
 		* Returns true once async tasks are complete, false if timing out.
+		* 
+		* Use a TimeLimitSeconds of 0 to poll for completion.
 		*/
 		virtual bool WaitCompletionWithTimeout(float TimeLimitSeconds) = 0;
 		virtual FName GetName() = 0;

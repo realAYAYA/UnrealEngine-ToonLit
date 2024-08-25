@@ -88,8 +88,10 @@ struct FPlaceableItem
 	{}
 
 	/** Constructor that takes a specific factory and asset */
-	FPlaceableItem(UActorFactory* InFactory, const FAssetData& InAssetData, TOptional<int32> InSortOrder = TOptional<int32>())
-		: Factory(InFactory)
+	FPlaceableItem(TScriptInterface<IAssetFactoryInterface> InAssetFactory,
+		const FAssetData& InAssetData, TOptional<int32> InSortOrder = TOptional<int32>())
+		: Factory(Cast<UActorFactory>(InAssetFactory.GetObject()))
+		, AssetFactory(InAssetFactory)
 		, AssetData(InAssetData)
 		, bAlwaysUseGenericThumbnail(false)
 		, SortOrder(InSortOrder)
@@ -97,9 +99,28 @@ struct FPlaceableItem
 		AutoSetNativeAndDisplayName();
 	}
 
-	/** Constructor for any placeable class */
-	FPlaceableItem(UClass& InAssetClass, TOptional<int32> InSortOrder = TOptional<int32>())
-		: Factory(GEditor->FindActorFactoryByClass(&InAssetClass))
+	//~ Note: for the constructors that expect UActorFactory, we can't forward to the IAssetFactoryInterface
+	//~ constructors because those currently have a Cast<>() call that requires linking to the module that
+	//~ contains IAssetFactoryInterface, which users sometimes don't do. This problem might go away once we
+	//~ finished deprecating and removing the Factory member.
+
+	/** Constructor that takes a specific actor factory and asset */
+	FPlaceableItem(UActorFactory* InFactory, const FAssetData& InAssetData, 
+		TOptional<int32> InSortOrder = TOptional<int32>()) 
+		: Factory(InFactory)
+		, AssetFactory(InFactory)
+		, AssetData(InAssetData)
+		, bAlwaysUseGenericThumbnail(false)
+		, SortOrder(InSortOrder)
+	{
+		AutoSetNativeAndDisplayName();
+	}
+
+	//~ TODO: Might want a version of this that is works for non-actor factories.
+	/** Constructor for any actor factory class */
+	 FPlaceableItem(UClass& InActorFactoryClass, TOptional<int32> InSortOrder = TOptional<int32>())
+		: Factory(GEditor->FindActorFactoryByClass(&InActorFactoryClass))
+		, AssetFactory(Factory)
 		, AssetData(Factory ? Factory->GetDefaultActorClass(FAssetData()) : FAssetData())
 		, bAlwaysUseGenericThumbnail(false)
 		, SortOrder(InSortOrder)
@@ -107,17 +128,17 @@ struct FPlaceableItem
 		AutoSetNativeAndDisplayName();
 	}
 
-	/** Constructor for any placeable class with associated asset data, brush and display name overrides */
+	/** Constructor that takes a specific factory and asset with brush and display name overrides */
 	FPlaceableItem(
-		UClass& InAssetClass,
-		const FAssetData& InAssetData,
-		FName InClassThumbnailBrushOverride = NAME_None,
-		FName InClassIconBrushOverride = NAME_None,
-		TOptional<FLinearColor> InAssetTypeColorOverride = TOptional<FLinearColor>(),
-		TOptional<int32> InSortOrder = TOptional<int32>(),
-		TOptional<FText> InDisplayName = TOptional<FText>()
-	)
-		: Factory(GEditor->FindActorFactoryByClass(&InAssetClass))
+		 TScriptInterface<IAssetFactoryInterface> InAssetFactory,
+		 const FAssetData& InAssetData,
+		 FName InClassThumbnailBrushOverride,
+		 FName InClassIconBrushOverride,
+		 TOptional<FLinearColor> InAssetTypeColorOverride = TOptional<FLinearColor>(),
+		 TOptional<int32> InSortOrder = TOptional<int32>(),
+		 TOptional<FText> InDisplayName = TOptional<FText>())
+		: Factory(Cast<UActorFactory>(InAssetFactory.GetObject()))
+		, AssetFactory(InAssetFactory)
 		, AssetData(InAssetData)
 		, ClassThumbnailBrushOverride(InClassThumbnailBrushOverride)
 		, ClassIconBrushOverride(InClassIconBrushOverride)
@@ -130,6 +151,32 @@ struct FPlaceableItem
 		{
 			DisplayName = InDisplayName.GetValue();
 		}
+	}
+
+	/** Constructor for any placeable actor class with associated asset data, brush and display name overrides */
+	 FPlaceableItem(
+		UClass& InActorFactoryClass,
+		const FAssetData& InAssetData,
+		FName InClassThumbnailBrushOverride = NAME_None,
+		FName InClassIconBrushOverride = NAME_None,
+		TOptional<FLinearColor> InAssetTypeColorOverride = TOptional<FLinearColor>(),
+		TOptional<int32> InSortOrder = TOptional<int32>(),
+		TOptional<FText> InDisplayName = TOptional<FText>()
+	 ) 
+		 : Factory(GEditor->FindActorFactoryByClass(&InActorFactoryClass))
+		 , AssetFactory(Factory)
+		 , AssetData(InAssetData)
+		 , ClassThumbnailBrushOverride(InClassThumbnailBrushOverride)
+		 , ClassIconBrushOverride(InClassIconBrushOverride)
+		 , bAlwaysUseGenericThumbnail(true)
+		 , AssetTypeColorOverride(InAssetTypeColorOverride)
+		 , SortOrder(InSortOrder)
+	{
+		 AutoSetNativeAndDisplayName();
+		 if (InDisplayName.IsSet())
+		 {
+			 DisplayName = InDisplayName.GetValue();
+		 }
 	}
 
 	/** Automatically set this item's native and display names from its class or asset */
@@ -164,8 +211,11 @@ struct FPlaceableItem
 
 public:
 
+	//~TODO: UE_DEPRECATED(5.4, "Use AssetFactory instead.")
+	UActorFactory* Factory = nullptr;
+
 	/** The factory used to create an instance of this placeable item */
-	UActorFactory* Factory;
+	TScriptInterface<IAssetFactoryInterface> AssetFactory = nullptr;
 
 	/** Asset data pertaining to the class */
 	FAssetData AssetData;
@@ -238,11 +288,23 @@ public:
 	 * Add the specified assets to the recently placed items list
 	 */
 	virtual void AddToRecentlyPlaced( const TArray< UObject* >& Assets, UActorFactory* FactoryUsed = NULL ) = 0;
+	virtual void AddToRecentlyPlaced(const TArray< UObject* >& Assets, TScriptInterface<IAssetFactoryInterface> FactoryUsed)
+	{
+		// This overload was added later, so we route to old overload, though there shouldn't be any implementers
+		// aside from the module itself.
+		AddToRecentlyPlaced(Assets, Cast<UActorFactory>(FactoryUsed.GetObject()));
+	}
 	
 	/**
 	 * Add the specified asset to the recently placed items list
 	 */
 	virtual void AddToRecentlyPlaced( UObject* Asset, UActorFactory* FactoryUsed = NULL ) = 0;
+	virtual void AddToRecentlyPlaced(UObject* Asset, TScriptInterface<IAssetFactoryInterface> FactoryUsed)
+	{
+		// This overload was added later, so we route to old overload, though there shouldn't be any implementers
+		// aside from the module itself.
+		AddToRecentlyPlaced(Asset, Cast<UActorFactory>(FactoryUsed.GetObject()));
+	}
 
 	/**
 	 * Get a copy of the recently placed items

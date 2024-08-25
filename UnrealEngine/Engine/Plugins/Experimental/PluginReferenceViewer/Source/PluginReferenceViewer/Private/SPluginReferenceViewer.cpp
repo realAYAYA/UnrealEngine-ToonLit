@@ -7,16 +7,43 @@
 #include "Features/EditorFeatures.h"
 #include "Features/IModularFeatures.h"
 #include "Features/IPluginsEditorFeature.h"
+#include "Framework/Docking/TabManager.h"
 #include "Interfaces/IPluginManager.h"
+#include "Math/UnitConversion.h"
 #include "PluginReferenceViewerCommands.h"
 #include "PluginReferenceViewerSchema.h"
 #include "PluginReferenceViewerStyle.h"
 #include "ToolMenus.h"
+#include "Widgets/Docking/SDockTab.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SSpinBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 
 #define LOCTEXT_NAMESPACE "PluginReferenceViewer"
+
+namespace PluginReferenceViewerTabID
+{
+	static const FName ReferenceGraph = "PluginReferenceViewer.ReferenceGraph";
+	static const FName PluginStats = "PluginReferenceViewer.PluginStats";
+}
+
+namespace
+{
+	/** Provided a byte count this function outputs best fit representation of size using FUnitConversion
+	* @param SizeInBytes The amount of bytes to convert to a formatted text that represents it.
+	* @return A text 
+	*/
+	FText GetSizeInBytesAsBiggerUnits(const uint64 SizeInBytes)
+	{
+		const FNumericUnit<uint64> Unit = FUnitConversion::QuantizeUnitsToBestFit(SizeInBytes, EUnit::Bytes);
+
+		FString UnitAsString = FString::Printf(TEXT("%lld %s"), Unit.Value, FUnitConversion::GetUnitDisplayString(Unit.Units));
+		
+		return FText::FromString(UnitAsString);
+	}
+}
+
 
 SPluginReferenceViewer::~SPluginReferenceViewer()
 {
@@ -33,6 +60,9 @@ void SPluginReferenceViewer::Construct(const FArguments& InArgs)
 {
 	/** Used to delay graph rebuilding during spinbox slider interaction */
 	bNeedsGraphRebuild = false;
+
+	/** Enables loading of plugin stats, such as reference counts, plugin content size, and dependant content size. */
+	bShowAdvancedInfo = false;
 
 	RegisterActions();
 
@@ -60,175 +90,58 @@ void SPluginReferenceViewer::Construct(const FArguments& InArgs)
 
 	GraphObj->CachePluginDependencies(IPluginManager::Get().GetDiscoveredPlugins());
 
+
+	const FName TabLayoutName = "PluginReferenceViewer_Layout_NoStats";
+
+	TSharedRef<FTabManager::FLayout> Layout = FTabManager::NewLayout(TabLayoutName)
+	->AddArea
+	(
+		FTabManager::NewPrimaryArea()
+		->SetOrientation(Orient_Vertical)
+		->Split
+		(
+			// Main application area
+			FTabManager::NewSplitter()
+			->SetOrientation(Orient_Vertical)
+			->Split
+			(
+				FTabManager::NewStack()
+				->SetHideTabWell(true)
+				->SetSizeCoefficient(0.7f)
+				->AddTab(PluginReferenceViewerTabID::ReferenceGraph, ETabState::OpenedTab)
+			)
+			->Split
+			(
+				FTabManager::NewStack()
+				->SetHideTabWell(true)
+				->SetSizeCoefficient(0.3f)
+				->AddTab(PluginReferenceViewerTabID::PluginStats, ETabState::ClosedTab)
+			)
+		)
+	);
+
+	auto RegisterTrackedTabSpawner = [this](const FName& TabId, const FOnSpawnTab& OnSpawnTab) -> FTabSpawnerEntry&
+	{
+		return TabManager->RegisterTabSpawner(TabId, FOnSpawnTab::CreateLambda([this, OnSpawnTab](const FSpawnTabArgs& Args) -> TSharedRef<SDockTab>
+			{
+				TSharedRef<SDockTab> SpawnedTab = OnSpawnTab.Execute(Args);
+				OnTabSpawned(Args.GetTabId().TabType, SpawnedTab);
+				return SpawnedTab;
+			}));
+	};
+
+	check(InArgs._ParentTab.IsValid());
+	TabManager = FGlobalTabmanager::Get()->NewTabManager(InArgs._ParentTab.ToSharedRef());
+
+	RegisterTrackedTabSpawner(PluginReferenceViewerTabID::ReferenceGraph, FOnSpawnTab::CreateSP(this, &SPluginReferenceViewer::SpawnTab_ReferenceGraph))
+		.SetDisplayName(LOCTEXT("ReferenceGraphTab", "Reference Graph"));
+
+	RegisterTrackedTabSpawner(PluginReferenceViewerTabID::PluginStats, FOnSpawnTab::CreateSP(this, &SPluginReferenceViewer::SpawnTab_PluginStats))
+		.SetDisplayName(LOCTEXT("PluginStatsTab", "Plugin Stats"));
+
 	ChildSlot
 	[
-		SNew(SVerticalBox)
-
-		// Path and history
-		+SVerticalBox::Slot()
-		.AutoHeight()
-		[
-			SNew(SBorder)
-			.BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
-			[
-				SNew(SHorizontalBox)
-
-				+SHorizontalBox::Slot()
-				.AutoWidth()
-				.Padding(4, 0)
-				[
-					MakeToolBar()
-				]
-
-				// Path
-				+SHorizontalBox::Slot()
-				.Padding(0, 0, 4, 0)
-				.FillWidth(1.f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(SBorder)
-					.BorderImage( FAppStyle::GetBrush("ToolPanel.GroupBorder") )
-					[
-						SNew(SEditableTextBox)
-						.Text(this, &SPluginReferenceViewer::GetAddressBarText)
-						.OnTextCommitted(this, &SPluginReferenceViewer::OnAddressBarTextCommitted)
-						.OnTextChanged(this, &SPluginReferenceViewer::OnAddressBarTextChanged)
-						.SelectAllTextWhenFocused(true)
-						.SelectAllTextOnCommit(true)
-						.Style(FAppStyle::Get(), "ReferenceViewer.PathText")
-					]
-				]
-			]
-		]
-
-		// Graph
-		+SVerticalBox::Slot()
-		.FillHeight(0.90f)
-		.HAlign(HAlign_Fill)
-		[
-			SNew(SOverlay)
-
-			+ SOverlay::Slot()
-			[
-				GraphEditorPtr.ToSharedRef()
-			]
-
-			+SOverlay::Slot()
-			.VAlign(VAlign_Top)
-			.HAlign(HAlign_Fill)
-			.Padding(8)
-			[
-				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				[
-					SNew(SBorder)
-					.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
-					[
-						SNew(SVerticalBox)
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						[
-							SNew(SHorizontalBox)
-							+ SHorizontalBox::Slot()
-							.VAlign(VAlign_Center)
-							.Padding(2.f)
-							[
-								SNew(STextBlock)
-								.Text(LOCTEXT("SearchDepthReferencersLabelText", "Search Referencers Depth"))
-							]
-
-							+ SHorizontalBox::Slot()
-							.AutoWidth()
-							.VAlign(VAlign_Center)
-							.Padding(2.f)
-							[
-								SNew(SBox)
-								.WidthOverride(100)
-								[
-									SAssignNew(ReferencerCountBox, SSpinBox<int32>)
-									.Value(this, &SPluginReferenceViewer::GetSearchReferencerDepthCount)
-									.OnValueChanged_Lambda([this] (int32 NewValue)
-										{	
-											if (NewValue != Settings.MaxSearchReferencersDepth)
-											{
-												Settings.MaxSearchReferencersDepth = NewValue;
-												bNeedsGraphRebuild = true;
-											}
-										}
-									)
-									.OnValueCommitted_Lambda([this] (int32 NewValue, ETextCommit::Type CommitType) 
-										{ 
-											FSlateApplication::Get().SetKeyboardFocus(GraphEditorPtr, EFocusCause::SetDirectly); 
-
-											if (NewValue != Settings.MaxSearchReferencersDepth || bNeedsGraphRebuild)
-											{
-												Settings.MaxSearchReferencersDepth = NewValue;
-												bNeedsGraphRebuild = false;
-												RebuildGraph();
-											}
-										}
-									)
-									.MinValue(0)
-									.MaxValue(50)
-									.MaxSliderValue(10)
-								]
-							]
-						]
-
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						[
-							SNew(SHorizontalBox)
-							+ SHorizontalBox::Slot()
-							.VAlign(VAlign_Center)
-							.Padding(2.f)
-							[
-								SNew(STextBlock)
-								.Text(LOCTEXT("SearchDepthDependenciesLabelText", "Search Dependencies Depth"))
-							]
-
-							+ SHorizontalBox::Slot()
-							.AutoWidth()
-							.VAlign(VAlign_Center)
-							.Padding(2.f)
-							[
-								SNew(SBox)
-								.WidthOverride(100)
-								[
-									SAssignNew(DependencyCountBox, SSpinBox<int32>)
-									.Value(this, &SPluginReferenceViewer::GetSearchDependencyDepthCount)
-									.OnValueChanged_Lambda([this] (int32 NewValue)
-										{	
-											if (NewValue != Settings.MaxSearchDependencyDepth)
-											{
-												Settings.MaxSearchDependencyDepth = NewValue;
-												bNeedsGraphRebuild = true;
-											}
-										}
-									)
-									.OnValueCommitted_Lambda([this] (int32 NewValue, ETextCommit::Type CommitType) 
-										{ 
-											FSlateApplication::Get().SetKeyboardFocus(GraphEditorPtr, EFocusCause::SetDirectly); 
-
-											if (NewValue != Settings.MaxSearchDependencyDepth || bNeedsGraphRebuild)
-											{
-												Settings.MaxSearchDependencyDepth = NewValue;
-												bNeedsGraphRebuild = false;
-												RebuildGraph();
-											}
-										}
-									)
-									.MinValue(0)
-									.MaxValue(50)
-									.MaxSliderValue(10)
-								]
-							]
-						]
-					]
-				]
-			]
-		]
+		TabManager->RestoreFrom(Layout, nullptr).ToSharedRef()
 	];
 }
 
@@ -427,6 +340,23 @@ FText SPluginReferenceViewer::GetHistoryForwardTooltip() const
 		return FText::Format(LOCTEXT("HistoryForwardTooltip", "Forward to {0}"), HistoryManager.GetForwardDesc());
 	}
 	return FText::GetEmpty();
+}
+
+FText SPluginReferenceViewer::GetPluginStatsText() const
+{
+	const UEdGraphNode* SelectedNode = GraphEditorPtr->GetSingleSelectedNode();
+
+	if (SelectedNode == nullptr)
+	{
+		return FText(LOCTEXT("PluginSelectionError", "Invalid number of nodes selected. Please select a single node!"));
+	}
+
+	FText PluginName = SelectedNode->GetNodeTitle(ENodeTitleType::FullTitle);
+
+	const FPluginStats & PluginStats = GraphObj->GetPluginStats(FPluginIdentifier(FName(PluginName.ToString())));
+
+	return FText::Format(LOCTEXT("PluginInfoText", "Name: {0}\nContent Size: {1}\nTotal Content Size With Dependencies: {2}\nDependencies: {3}\nReferencers: {4}"), 
+		{ PluginName, GetSizeInBytesAsBiggerUnits(PluginStats.Size), GetSizeInBytesAsBiggerUnits(PluginStats.SizeWithDependencies), PluginStats.Dependencies, PluginStats.Referencers });
 }
 
 FText SPluginReferenceViewer::GetAddressBarText() const
@@ -633,6 +563,260 @@ int32 SPluginReferenceViewer::GetSearchReferencerDepthCount() const
 int32 SPluginReferenceViewer::GetSearchDependencyDepthCount() const
 {
 	return Settings.MaxSearchDependencyDepth;
+}
+
+TSharedRef<SDockTab> SPluginReferenceViewer::SpawnTab_ReferenceGraph(const FSpawnTabArgs& Args)
+{
+	TSharedRef<SDockTab> SpawnedTab = SNew(SDockTab)
+	[
+		SNew(SVerticalBox)
+
+		// Path and history
+		+SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			SNew(SBorder)
+			.BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
+			[
+				SNew(SHorizontalBox)
+
+				+SHorizontalBox::Slot()
+				.AutoWidth()
+				.Padding(4, 0)
+				[
+					MakeToolBar()
+				]
+
+				// Path
+				+SHorizontalBox::Slot()
+				.Padding(0, 0, 4, 0)
+				.FillWidth(1.f)
+				.VAlign(VAlign_Center)
+				[
+					SNew(SBorder)
+					.BorderImage( FAppStyle::GetBrush("ToolPanel.GroupBorder") )
+					[
+						SNew(SEditableTextBox)
+						.Text(this, &SPluginReferenceViewer::GetAddressBarText)
+						.OnTextCommitted(this, &SPluginReferenceViewer::OnAddressBarTextCommitted)
+						.OnTextChanged(this, &SPluginReferenceViewer::OnAddressBarTextChanged)
+						.SelectAllTextWhenFocused(true)
+						.SelectAllTextOnCommit(true)
+						.Style(FAppStyle::Get(), "ReferenceViewer.PathText")
+					]
+				]
+			]
+		]
+
+		// Graph
+		+SVerticalBox::Slot()
+		.FillHeight(0.90f)
+		.HAlign(HAlign_Fill)
+		[
+			SNew(SOverlay)
+
+			+ SOverlay::Slot()
+			[
+				GraphEditorPtr.ToSharedRef()
+			]
+
+			+SOverlay::Slot()
+			.VAlign(VAlign_Top)
+			.HAlign(HAlign_Fill)
+			.Padding(8)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				[
+					SNew(SBorder)
+					.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+					[
+						SNew(SVerticalBox)
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						[
+							SNew(SHorizontalBox)
+							+ SHorizontalBox::Slot()
+							.VAlign(VAlign_Center)
+							.Padding(2.f)
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("SearchDepthReferencersLabelText", "Search Referencers Depth"))
+							]
+
+							+ SHorizontalBox::Slot()
+							.AutoWidth()
+							.VAlign(VAlign_Center)
+							.Padding(2.f)
+							[
+								SNew(SBox)
+								.WidthOverride(100)
+								[
+									SAssignNew(ReferencerCountBox, SSpinBox<int32>)
+									.Value(this, &SPluginReferenceViewer::GetSearchReferencerDepthCount)
+									.OnValueChanged_Lambda([this] (int32 NewValue)
+										{	
+											if (NewValue != Settings.MaxSearchReferencersDepth)
+											{
+												Settings.MaxSearchReferencersDepth = NewValue;
+												bNeedsGraphRebuild = true;
+											}
+										}
+									)
+									.OnValueCommitted_Lambda([this] (int32 NewValue, ETextCommit::Type CommitType) 
+										{ 
+											FSlateApplication::Get().SetKeyboardFocus(GraphEditorPtr, EFocusCause::SetDirectly); 
+
+											if (NewValue != Settings.MaxSearchReferencersDepth || bNeedsGraphRebuild)
+											{
+												Settings.MaxSearchReferencersDepth = NewValue;
+												bNeedsGraphRebuild = false;
+												RebuildGraph();
+											}
+										}
+									)
+									.MinValue(0)
+									.MaxValue(50)
+									.MaxSliderValue(10)
+								]
+							]
+						]
+
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						[
+							SNew(SHorizontalBox)
+							+ SHorizontalBox::Slot()
+							.VAlign(VAlign_Center)
+							.Padding(2.f)
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("SearchDepthDependenciesLabelText", "Search Dependencies Depth"))
+							]
+
+							+ SHorizontalBox::Slot()
+							.AutoWidth()
+							.VAlign(VAlign_Center)
+							.Padding(2.f)
+							[
+								SNew(SBox)
+								.WidthOverride(100)
+								[
+									SAssignNew(DependencyCountBox, SSpinBox<int32>)
+									.Value(this, &SPluginReferenceViewer::GetSearchDependencyDepthCount)
+									.OnValueChanged_Lambda([this] (int32 NewValue)
+										{	
+											if (NewValue != Settings.MaxSearchDependencyDepth)
+											{
+												Settings.MaxSearchDependencyDepth = NewValue;
+												bNeedsGraphRebuild = true;
+											}
+										}
+									)
+									.OnValueCommitted_Lambda([this] (int32 NewValue, ETextCommit::Type CommitType) 
+										{ 
+											FSlateApplication::Get().SetKeyboardFocus(GraphEditorPtr, EFocusCause::SetDirectly); 
+
+											if (NewValue != Settings.MaxSearchDependencyDepth || bNeedsGraphRebuild)
+											{
+												Settings.MaxSearchDependencyDepth = NewValue;
+												bNeedsGraphRebuild = false;
+												RebuildGraph();
+											}
+										}
+									)
+									.MinValue(0)
+									.MaxValue(50)
+									.MaxSliderValue(10)
+								]
+							]
+						]
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						[
+							SNew(SHorizontalBox)
+							+ SHorizontalBox::Slot()
+							.VAlign(VAlign_Center)
+							.Padding(2.f)
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("ShowAdvancedInfoLabelText", "Show Advanced Info"))
+							]
+
+							+ SHorizontalBox::Slot()
+							.AutoWidth()
+							.VAlign(VAlign_Center)
+							.Padding(2.f)
+							[
+								SNew(SCheckBox)
+									.IsChecked_Lambda([this]()
+										{
+											return bShowAdvancedInfo ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+										})
+									.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckBoxState)
+										{
+											if (InCheckBoxState == ECheckBoxState::Checked && GraphObj != nullptr)
+											{
+												// need to find a way to do a loading thing here
+												GraphObj->LoadAdvancedPluginInfo();
+												bShowAdvancedInfo = true;
+												TabManager->TryInvokeTab(PluginReferenceViewerTabID::PluginStats);
+											}
+											else
+											{
+												TSharedPtr<SDockTab> TabPtr = TabManager->FindExistingLiveTab(PluginReferenceViewerTabID::PluginStats);
+												if (TabPtr.IsValid())
+												{
+													TabPtr->RequestCloseTab();
+												}
+												// we don't want to actually change our state if we weren't able to load advanced info
+												bShowAdvancedInfo = false;
+											}
+										})
+							]
+						]
+					]
+
+				]
+			]
+		]
+	];
+
+	return SpawnedTab;
+}
+
+TSharedRef<SDockTab> SPluginReferenceViewer::SpawnTab_PluginStats(const FSpawnTabArgs& Args) const
+{
+	const TSharedRef<SDockTab> DockTab = SNew(SDockTab)
+		.ShouldAutosize(false)
+		.TabRole(ETabRole::PanelTab)
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot()
+			[
+				SNew(STextBlock)
+				.Text(this, &SPluginReferenceViewer::GetPluginStatsText)
+			]
+		];
+
+	return DockTab;
+}
+
+void SPluginReferenceViewer::OnTabSpawned(const FName& TabIdentifier, const TSharedRef<SDockTab>& SpawnedTab)
+{
+	TWeakPtr<SDockTab>* const ExistingTab = SpawnedTabs.Find(TabIdentifier);
+	if (ExistingTab)
+	{
+		if (ExistingTab->IsValid())
+		{
+			*ExistingTab = SpawnedTab;
+		}
+	}
+	else
+	{
+		SpawnedTabs.Add(TabIdentifier, SpawnedTab);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

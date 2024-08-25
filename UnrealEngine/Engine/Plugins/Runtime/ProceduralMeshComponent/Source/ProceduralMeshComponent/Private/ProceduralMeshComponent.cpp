@@ -181,27 +181,21 @@ public:
 					{
 						FRayTracingGeometryInitializer Initializer;
 						Initializer.DebugName = DebugName;
-						Initializer.IndexBuffer = nullptr;
-						Initializer.TotalPrimitiveCount = 0;
+						Initializer.IndexBuffer = NewSection->IndexBuffer.IndexBufferRHI;
+						Initializer.TotalPrimitiveCount = NewSection->IndexBuffer.Indices.Num() / 3;
 						Initializer.GeometryType = RTGT_Triangles;
 						Initializer.bFastBuild = true;
 						Initializer.bAllowUpdate = false;
 
-						NewSection->RayTracingGeometry.SetInitializer(Initializer);
-						NewSection->RayTracingGeometry.InitResource(RHICmdList);
-
-						NewSection->RayTracingGeometry.Initializer.IndexBuffer = NewSection->IndexBuffer.IndexBufferRHI;
-						NewSection->RayTracingGeometry.Initializer.TotalPrimitiveCount = NewSection->IndexBuffer.Indices.Num() / 3;
-
 						FRayTracingGeometrySegment Segment;
 						Segment.VertexBuffer = NewSection->VertexBuffers.PositionVertexBuffer.VertexBufferRHI;
-						Segment.NumPrimitives = NewSection->RayTracingGeometry.Initializer.TotalPrimitiveCount;
 						Segment.MaxVertices = NewSection->VertexBuffers.PositionVertexBuffer.GetNumVertices();
-						NewSection->RayTracingGeometry.Initializer.Segments.Add(Segment);
-
-						//#dxr_todo: add support for segments?
+						Segment.NumPrimitives = Initializer.TotalPrimitiveCount;
 						
-						NewSection->RayTracingGeometry.UpdateRHI(RHICmdList);
+						Initializer.Segments.Add(Segment);
+
+						NewSection->RayTracingGeometry.SetInitializer(Initializer);
+						NewSection->RayTracingGeometry.InitResource(RHICmdList);
 					});
 				}
 #endif
@@ -306,16 +300,15 @@ public:
 					Initializer.bFastBuild = true;
 					Initializer.bAllowUpdate = false;
 
-					Section->RayTracingGeometry.SetInitializer(Initializer);
-					Section->RayTracingGeometry.InitResource(RHICmdList);
-
 					FRayTracingGeometrySegment Segment;
 					Segment.VertexBuffer = Section->VertexBuffers.PositionVertexBuffer.VertexBufferRHI;
-					Segment.NumPrimitives = Section->RayTracingGeometry.Initializer.TotalPrimitiveCount;
 					Segment.MaxVertices = Section->VertexBuffers.PositionVertexBuffer.GetNumVertices();
-					Section->RayTracingGeometry.Initializer.Segments.Add(Segment);
+					Segment.NumPrimitives = Initializer.TotalPrimitiveCount;
 
-					Section->RayTracingGeometry.UpdateRHI(RHICmdList);
+					Initializer.Segments.Add(Segment);
+
+					Section->RayTracingGeometry.SetInitializer(Initializer);
+					Section->RayTracingGeometry.InitResource(RHICmdList);
 				}
 #endif
 			}
@@ -384,7 +377,7 @@ public:
 						bOutputVelocity |= AlwaysHasVelocity();
 
 						FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Collector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-						DynamicPrimitiveUniformBuffer.Set(GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), ReceivesDecals(), bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
+						DynamicPrimitiveUniformBuffer.Set(Collector.GetRHICommandList(), GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), ReceivesDecals(), bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
 						BatchElement.PrimitiveUniformBufferResource = &DynamicPrimitiveUniformBuffer.UniformBuffer;
 
 						BatchElement.FirstIndex = 0;
@@ -502,7 +495,7 @@ public:
 					bOutputVelocity |= AlwaysHasVelocity();
 
 					FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Context.RayTracingMeshResourceCollector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-					DynamicPrimitiveUniformBuffer.Set(GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), ReceivesDecals(), bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
+					DynamicPrimitiveUniformBuffer.Set(Context.RHICmdList, GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), ReceivesDecals(), bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
 					BatchElement.PrimitiveUniformBufferResource = &DynamicPrimitiveUniformBuffer.UniformBuffer;
 
 					BatchElement.FirstIndex = 0;
@@ -571,7 +564,7 @@ void UProceduralMeshComponent::CreateMeshSection(int32 SectionIndex, const TArra
 	// Ensure sections array is long enough
 	if (SectionIndex >= ProcMeshSections.Num())
 	{
-		ProcMeshSections.SetNum(SectionIndex + 1, false);
+		ProcMeshSections.SetNum(SectionIndex + 1, EAllowShrinking::No);
 	}
 
 	// Reset this section (in case it already existed)
@@ -616,7 +609,7 @@ void UProceduralMeshComponent::CreateMeshSection(int32 SectionIndex, const TArra
 	{
 		int32 a, b, c;
 		Tie(a, b, c) = GetTriIndices(IndexIdx);
-		NumDegenerateTriangles += a == b || a == c || b == c;
+		NumDegenerateTriangles += a == b || a == c || b == c; //-V614
 	}
 	if (NumDegenerateTriangles > 0)
 	{
@@ -633,7 +626,7 @@ void UProceduralMeshComponent::CreateMeshSection(int32 SectionIndex, const TArra
 		int32 a, b, c;
 		Tie(a, b, c) = GetTriIndices(IndexIdx);
 
-		if (a != b && a != c && b != c)
+		if (a != b && a != c && b != c) //-V614
 		{
 			NewSection.ProcIndexBuffer[CopyIndexIdx++] = a;
 			NewSection.ProcIndexBuffer[CopyIndexIdx++] = b;
@@ -926,7 +919,7 @@ void UProceduralMeshComponent::SetProcMeshSection(int32 SectionIndex, const FPro
 	// Ensure sections array is long enough
 	if (SectionIndex >= ProcMeshSections.Num())
 	{
-		ProcMeshSections.SetNum(SectionIndex + 1, false);
+		ProcMeshSections.SetNum(SectionIndex + 1, EAllowShrinking::No);
 	}
 
 	ProcMeshSections[SectionIndex] = Section;

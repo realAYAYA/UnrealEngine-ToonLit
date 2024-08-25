@@ -20,6 +20,7 @@
 #include "UnrealEngine.h"
 #include "DebugViewModeRendering.h"
 #include "MeshPassProcessor.inl"
+#include "SimpleMeshDrawCommandPass.h"
 
 class FMeshDecalsVS : public FMeshMaterialShader
 {
@@ -35,7 +36,7 @@ public:
 	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FMeshMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("STRATA_INLINE_SHADING"), 1);
+		OutEnvironment.SetDefine(TEXT("SUBSTRATE_INLINE_SHADING"), 1);
 	}
 
 	FMeshDecalsVS() = default;
@@ -159,6 +160,15 @@ private:
 		ERasterizerFillMode MeshFillMode,
 		ERasterizerCullMode MeshCullMode);
 
+	void CollectDeferredDecalMeshPSOInitializers(
+		const FSceneTexturesConfig& SceneTexturesConfig,
+		const FPSOPrecacheVertexFactoryData& VertexFactoryData,
+		const FPSOPrecacheParams& PreCacheParams,
+		const FMaterial& Material,
+		const FDecalBlendDesc DecalBlendDesc,
+		EDecalRenderStage DecalRenderStage,
+		TArray<FPSOPrecacheData>& PSOInitializers);
+
 	FMeshPassProcessorRenderState PassDrawRenderState;
 	const EDecalRenderStage PassDecalStage;
 	const EDecalRenderTargetMode RenderTargetMode;
@@ -167,13 +177,15 @@ private:
 IMPLEMENT_STATIC_UNIFORM_BUFFER_SLOT(DeferredDecals);
 IMPLEMENT_STATIC_UNIFORM_BUFFER_STRUCT(FDeferredDecalUniformParameters, "DeferredDecal", DeferredDecals);
 
+static const TCHAR* MeshDecalPassName = TEXT("MeshDecal");
+
 FMeshDecalMeshProcessor::FMeshDecalMeshProcessor(const FScene* Scene, 
 	ERHIFeatureLevel::Type InFeatureLevel,
 	const FSceneView* InViewIfDynamicMeshCommand, 
 	EDecalRenderStage InPassDecalStage, 
 	EDecalRenderTargetMode InRenderTargetMode,
 	FMeshPassDrawListContext* InDrawListContext)
-	: FMeshPassProcessor(EMeshPass::MeshDecal, Scene, InFeatureLevel, InViewIfDynamicMeshCommand, InDrawListContext)
+	: FMeshPassProcessor(MeshDecalPassName, Scene, InFeatureLevel, InViewIfDynamicMeshCommand, InDrawListContext)
 	, PassDecalStage(InPassDecalStage)
 	, RenderTargetMode(InRenderTargetMode)
 {
@@ -322,6 +334,68 @@ bool FMeshDecalMeshProcessor::Process(
 	return true;
 }
 
+void FMeshDecalMeshProcessor::CollectDeferredDecalMeshPSOInitializers(	
+	const FSceneTexturesConfig& SceneTexturesConfig,
+	const FPSOPrecacheVertexFactoryData& VertexFactoryData,
+	const FPSOPrecacheParams& PreCacheParams,
+	const FMaterial& Material,
+	const FDecalBlendDesc DecalBlendDesc,
+	EDecalRenderStage DecalRenderStage,
+	TArray<FPSOPrecacheData>& PSOInitializers)
+{
+	EDecalRenderTargetMode LocalRenderTargetMode = DecalRendering::GetRenderTargetMode(DecalBlendDesc, DecalRenderStage);
+	PassDrawRenderState.SetBlendState(DecalRendering::GetDecalBlendState(DecalBlendDesc, DecalRenderStage, LocalRenderTargetMode));
+
+	const FMeshDrawingPolicyOverrideSettings OverrideSettings = ComputeMeshOverrideSettings(PreCacheParams);
+	ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(Material, OverrideSettings);
+	ERasterizerCullMode MeshCullMode = ComputeMeshCullMode(Material, OverrideSettings);
+
+	FMaterialShaderTypes ShaderTypes;
+	ShaderTypes.AddShaderType<FMeshDecalsVS>();
+	if (DecalRenderStage == EDecalRenderStage::Emissive)
+	{
+		ShaderTypes.AddShaderType<FMeshDecalsEmissivePS>();
+	}
+	else if (DecalRenderStage == EDecalRenderStage::AmbientOcclusion)
+	{
+		ShaderTypes.AddShaderType<FMeshDecalsAmbientOcclusionPS>();
+	}
+	else
+	{
+		ShaderTypes.AddShaderType<FMeshDecalsPS>();
+	}
+
+	FMaterialShaders Shaders;
+	if (!Material.TryGetShaders(ShaderTypes, VertexFactoryData.VertexFactoryType, Shaders))
+	{
+		return;
+	}
+
+	TMeshProcessorShaders<
+		FMeshDecalsVS,
+		FMeshDecalsPS> MeshDecalPassShaders;
+	Shaders.TryGetVertexShader(MeshDecalPassShaders.VertexShader);
+	Shaders.TryGetPixelShader(MeshDecalPassShaders.PixelShader);
+
+	const EShaderPlatform ShaderPlatform = GetFeatureLevelShaderPlatform(FeatureLevel);
+	FGraphicsPipelineRenderTargetsInfo RenderTargetsInfo;
+	RenderTargetsInfo.NumSamples = 1;
+	GetDeferredDecalRenderTargetsInfo(SceneTexturesConfig, ShaderPlatform, LocalRenderTargetMode, RenderTargetsInfo);
+
+	AddGraphicsPipelineStateInitializer(
+		VertexFactoryData,
+		Material,
+		PassDrawRenderState,
+		RenderTargetsInfo,
+		MeshDecalPassShaders,
+		MeshFillMode,
+		MeshCullMode,
+		PT_TriangleList,
+		EMeshPassFeatures::Default,
+		true /*bRequired*/,
+		PSOInitializers);
+}
+
 void FMeshDecalMeshProcessor::CollectPSOInitializers(
 	const FSceneTexturesConfig& SceneTexturesConfig,
 	const FMaterial& Material,
@@ -339,64 +413,19 @@ void FMeshDecalMeshProcessor::CollectPSOInitializers(
 
 	for (uint32 DecalStageIter = 0; DecalStageIter < (uint32)EDecalRenderStage::Num; ++DecalStageIter)
 	{
-		EDecalRenderStage LocalDecalRenderState = EDecalRenderStage(DecalStageIter);
-
-		const bool bShouldRender = DecalRendering::IsCompatibleWithRenderStage(DecalBlendDesc, LocalDecalRenderState);
+		EDecalRenderStage LocalDecalRenderStage = EDecalRenderStage(DecalStageIter);
+				
+		const bool bShouldRender = DecalRendering::IsCompatibleWithRenderStage(DecalBlendDesc, LocalDecalRenderStage);
 		if (!bShouldRender)
 		{
 			continue;
 		}
 		
-		EDecalRenderTargetMode LocalRenderTargetMode = DecalRendering::GetRenderTargetMode(DecalBlendDesc, LocalDecalRenderState);
-		PassDrawRenderState.SetBlendState(DecalRendering::GetDecalBlendState(DecalBlendDesc, LocalDecalRenderState, LocalRenderTargetMode));
+		// Collect decal pass PSOs
+		CollectDeferredDecalPassPSOInitializers(PSOCollectorIndex, FeatureLevel, SceneTexturesConfig, Material, LocalDecalRenderStage, PSOInitializers);
 
-		const FMeshDrawingPolicyOverrideSettings OverrideSettings = ComputeMeshOverrideSettings(PreCacheParams);
-		ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(Material, OverrideSettings);
-		ERasterizerCullMode MeshCullMode = ComputeMeshCullMode(Material, OverrideSettings);
-
-		FMaterialShaderTypes ShaderTypes;
-		ShaderTypes.AddShaderType<FMeshDecalsVS>();
-		if (LocalDecalRenderState == EDecalRenderStage::Emissive)
-		{
-			ShaderTypes.AddShaderType<FMeshDecalsEmissivePS>();
-		}
-		else if (LocalDecalRenderState == EDecalRenderStage::AmbientOcclusion)
-		{
-			ShaderTypes.AddShaderType<FMeshDecalsAmbientOcclusionPS>();
-		}
-		else
-		{
-			ShaderTypes.AddShaderType<FMeshDecalsPS>();
-		}
-
-		FMaterialShaders Shaders;
-		if (!Material.TryGetShaders(ShaderTypes, VertexFactoryData.VertexFactoryType, Shaders))
-		{
-			continue;
-		}
-
-		TMeshProcessorShaders<
-			FMeshDecalsVS,
-			FMeshDecalsPS> MeshDecalPassShaders;
-		Shaders.TryGetVertexShader(MeshDecalPassShaders.VertexShader);
-		Shaders.TryGetPixelShader(MeshDecalPassShaders.PixelShader);
-
-		FGraphicsPipelineRenderTargetsInfo RenderTargetsInfo;
-		RenderTargetsInfo.NumSamples = 1;
-		GetDeferredDecalRenderTargetsInfo(SceneTexturesConfig, ShaderPlatform, LocalRenderTargetMode, RenderTargetsInfo);
-		
-		AddGraphicsPipelineStateInitializer(
-			VertexFactoryData,
-			Material,
-			PassDrawRenderState,
-			RenderTargetsInfo,
-			MeshDecalPassShaders,
-			MeshFillMode,
-			MeshCullMode,
-			PT_TriangleList,
-			EMeshPassFeatures::Default,
-			true /*bRequired*/,
-			PSOInitializers);
+		// Collect decal mesh PSOs
+		CollectDeferredDecalMeshPSOInitializers(SceneTexturesConfig, VertexFactoryData, PreCacheParams, Material, DecalBlendDesc, LocalDecalRenderStage, PSOInitializers);
 	}
 }
 
@@ -413,23 +442,27 @@ IPSOCollector* CreateMeshDecalMeshProcessor(ERHIFeatureLevel::Type FeatureLevel)
 }
 
 // Only register for PSO Collection
-FRegisterPSOCollectorCreateFunction RegisterPSOCollectorMeshDecal(&CreateMeshDecalMeshProcessor, EShadingPath::Deferred, (uint32)EMeshPass::MeshDecal);
+FRegisterPSOCollectorCreateFunction RegisterPSOCollectorMeshDecal(&CreateMeshDecalMeshProcessor, EShadingPath::Deferred, MeshDecalPassName);
 
 void DrawDecalMeshCommands(
 	FRDGBuilder& GraphBuilder,
+	const FScene& Scene,
 	const FViewInfo& View,
 	const FDeferredDecalPassTextures& DecalPassTextures,
+	FInstanceCullingManager& InstanceCullingManager,
 	EDecalRenderStage DecalRenderStage,
 	EDecalRenderTargetMode RenderTargetMode)
 {
 	auto* PassParameters = GraphBuilder.AllocParameters<FDeferredDecalPassParameters>();
 	GetDeferredDecalPassParameters(GraphBuilder, View, DecalPassTextures, RenderTargetMode, *PassParameters);
 
-	AddDrawDynamicMeshPass(
-		GraphBuilder,
-		RDG_EVENT_NAME("MeshDecals"),
-		PassParameters,
-		View,
+	AddSimpleMeshPass(
+		GraphBuilder, 
+		PassParameters, 
+		&Scene, 
+		View, 
+		&InstanceCullingManager, 
+		RDG_EVENT_NAME("MeshDecals"), 
 		View.ViewRect,
 		[&View, DecalRenderStage, RenderTargetMode](FDynamicPassMeshDrawListContext* DynamicMeshPassContext)
 	{
@@ -451,14 +484,15 @@ void DrawDecalMeshCommands(
 
 			PassMeshProcessor.AddMeshBatch(*Mesh, DefaultBatchElementMask, PrimitiveSceneProxy);
 		}
-
-	}, true);
+	});
 }
 
 void RenderMeshDecals(
 	FRDGBuilder& GraphBuilder,
+	const FScene& Scene,
 	const FViewInfo& View,
 	const FDeferredDecalPassTextures& DecalPassTextures,
+	FInstanceCullingManager& InstanceCullingManager,
 	EDecalRenderStage DecalRenderStage)
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FSceneRenderer_RenderMeshDecals);
@@ -466,28 +500,28 @@ void RenderMeshDecals(
 	switch (DecalRenderStage)
 	{
 	case EDecalRenderStage::BeforeBasePass:
-		DrawDecalMeshCommands(GraphBuilder, View, DecalPassTextures, DecalRenderStage, EDecalRenderTargetMode::DBuffer);
+		DrawDecalMeshCommands(GraphBuilder, Scene, View, DecalPassTextures, InstanceCullingManager, DecalRenderStage, EDecalRenderTargetMode::DBuffer);
 		break;
 
 	case EDecalRenderStage::BeforeLighting:
-		DrawDecalMeshCommands(GraphBuilder, View, DecalPassTextures, DecalRenderStage, EDecalRenderTargetMode::SceneColorAndGBuffer);
-		DrawDecalMeshCommands(GraphBuilder, View, DecalPassTextures, DecalRenderStage, EDecalRenderTargetMode::SceneColorAndGBufferNoNormal);
+		DrawDecalMeshCommands(GraphBuilder, Scene, View, DecalPassTextures, InstanceCullingManager, DecalRenderStage, EDecalRenderTargetMode::SceneColorAndGBuffer);
+		DrawDecalMeshCommands(GraphBuilder, Scene, View, DecalPassTextures, InstanceCullingManager, DecalRenderStage, EDecalRenderTargetMode::SceneColorAndGBufferNoNormal);
 		break;
 
 	case EDecalRenderStage::Mobile:
-		DrawDecalMeshCommands(GraphBuilder, View, DecalPassTextures, DecalRenderStage, EDecalRenderTargetMode::SceneColor);
+		DrawDecalMeshCommands(GraphBuilder, Scene, View, DecalPassTextures, InstanceCullingManager, DecalRenderStage, EDecalRenderTargetMode::SceneColor);
 		break;
 
 	case EDecalRenderStage::MobileBeforeLighting:
-		DrawDecalMeshCommands(GraphBuilder, View, DecalPassTextures, DecalRenderStage, EDecalRenderTargetMode::SceneColorAndGBuffer);
+		DrawDecalMeshCommands(GraphBuilder, Scene, View, DecalPassTextures, InstanceCullingManager, DecalRenderStage, EDecalRenderTargetMode::SceneColorAndGBuffer);
 		break;
 
 	case EDecalRenderStage::Emissive:
-		DrawDecalMeshCommands(GraphBuilder, View, DecalPassTextures, DecalRenderStage, EDecalRenderTargetMode::SceneColor);
+		DrawDecalMeshCommands(GraphBuilder, Scene, View, DecalPassTextures, InstanceCullingManager, DecalRenderStage, EDecalRenderTargetMode::SceneColor);
 		break;
 
 	case EDecalRenderStage::AmbientOcclusion:
-		DrawDecalMeshCommands(GraphBuilder, View, DecalPassTextures, DecalRenderStage, EDecalRenderTargetMode::AmbientOcclusion);
+		DrawDecalMeshCommands(GraphBuilder, Scene, View, DecalPassTextures, InstanceCullingManager, DecalRenderStage, EDecalRenderTargetMode::AmbientOcclusion);
 		break;
 	}
 }

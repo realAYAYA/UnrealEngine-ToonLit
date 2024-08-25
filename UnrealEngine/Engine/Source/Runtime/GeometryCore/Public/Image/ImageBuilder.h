@@ -33,7 +33,7 @@ public:
 	void SetDimensions(FImageDimensions DimensionsIn)
 	{
 		Dimensions = DimensionsIn;
-		Image.Resize(Dimensions.GetWidth(), Dimensions.GetHeight(), true);
+		Image.Resize(Dimensions.GetWidth(), Dimensions.GetHeight(), EAllowShrinking::Yes);
 	}
 
 	const FImageDimensions& GetDimensions() const

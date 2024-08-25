@@ -100,28 +100,54 @@ void FChannelCurveModel<ChannelType, ChannelValue, KeyType>::DrawCurve(const FCu
 
 		// Add the lower bound of the visible space
 		const bool bValidRange = StartingIndex < EndingIndex;
-		if (bValidRange)
+		//if we aren't just doing the default constant then we need to sample
+		const bool PreNotConstant = (Channel->PreInfinityExtrap != RCCE_None && Channel->PreInfinityExtrap != RCCE_Constant);
+		const bool PostNotConstant = (Channel->PostInfinityExtrap != RCCE_None && Channel->PostInfinityExtrap != RCCE_Constant);
+		if (bValidRange && (PreNotConstant || PostNotConstant))
 		{
-			OutInterpolatingPoints.Add(MakeTuple(StartFrame / TickResolution, GetKeyValue(Values, StartingIndex)));
-		}
+			const FFrameRate DisplayResolution = Section->GetTypedOuter<UMovieScene>()->GetDisplayRate();
+			const FFrameNumber StartTimeInDisplay = FFrameRate::TransformTime(FFrameTime(StartFrame), TickResolution, DisplayResolution).FloorToFrame();
+			const FFrameNumber EndTimeInDisplay = FFrameRate::TransformTime(FFrameTime(EndFrame), TickResolution, DisplayResolution).CeilToFrame();
 
-		TOptional<double> PreviousValue;
-		for (int32 KeyIndex = StartingIndex; KeyIndex < EndingIndex; ++KeyIndex)
-		{
-			double Value = GetKeyValue(Values, KeyIndex);
-			if (PreviousValue.IsSet() && PreviousValue.GetValue() != Value)
+			double Value = 0.0;
+			TOptional<double> PreviousValue;
+			for (FFrameNumber DisplayFrameNumber = StartTimeInDisplay; DisplayFrameNumber <= EndTimeInDisplay; ++DisplayFrameNumber)
 			{
-				OutInterpolatingPoints.Add(MakeTuple(Times[KeyIndex] / TickResolution, PreviousValue.GetValue()));
+				FFrameNumber TickFrameNumber = FFrameRate::TransformTime(FFrameTime(DisplayFrameNumber), DisplayResolution, TickResolution).FrameNumber;
+				Evaluate(TickFrameNumber / TickResolution, Value);
+				if (PreviousValue.IsSet() && PreviousValue.GetValue() != Value)
+				{
+					OutInterpolatingPoints.Add(MakeTuple(TickFrameNumber / TickResolution, PreviousValue.GetValue()));
+				}
+				OutInterpolatingPoints.Add(MakeTuple(TickFrameNumber / TickResolution, Value));
+				PreviousValue = Value;
+			}
+		}
+		else
+		{
+			if (bValidRange)
+			{
+				OutInterpolatingPoints.Add(MakeTuple(StartFrame / TickResolution, GetKeyValue(Values, StartingIndex)));
 			}
 
-			OutInterpolatingPoints.Add(MakeTuple(Times[KeyIndex] / TickResolution, Value));
-			PreviousValue = Value;
-		}
+			TOptional<double> PreviousValue;
+			for (int32 KeyIndex = StartingIndex; KeyIndex < EndingIndex; ++KeyIndex)
+			{
+				double Value = GetKeyValue(Values, KeyIndex);
+				if (PreviousValue.IsSet() && PreviousValue.GetValue() != Value)
+				{
+					OutInterpolatingPoints.Add(MakeTuple(Times[KeyIndex] / TickResolution, PreviousValue.GetValue()));
+				}
 
-		// Add the upper bound of the visible space
-		if (bValidRange)
-		{
-			OutInterpolatingPoints.Add(MakeTuple(EndFrame / TickResolution, GetKeyValue(Values, EndingIndex - 1)));
+				OutInterpolatingPoints.Add(MakeTuple(Times[KeyIndex] / TickResolution, Value));
+				PreviousValue = Value;
+			}
+
+			// Add the upper bound of the visible space
+			if (bValidRange)
+			{
+				OutInterpolatingPoints.Add(MakeTuple(EndFrame / TickResolution, GetKeyValue(Values, EndingIndex - 1)));
+			}
 		}
 	}
 }

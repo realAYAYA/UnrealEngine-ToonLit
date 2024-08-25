@@ -81,6 +81,14 @@ void FBaseAssetToolkit::RegisterTabSpawners(const TSharedRef<FTabManager>& InTab
 
 }
 
+void FBaseAssetToolkit::UnregisterTabSpawners(const TSharedRef<FTabManager>& InTabManager)
+{
+	FAssetEditorToolkit::UnregisterTabSpawners(InTabManager);
+
+	InTabManager->UnregisterTabSpawner(ViewportTabID);
+	InTabManager->UnregisterTabSpawner(DetailsTabID);
+}
+
 const TSharedRef<FTabManager::FLayout> FBaseAssetToolkit::GetDefaultLayout() const
 {
 	return StandaloneDefaultLayout.ToSharedRef();

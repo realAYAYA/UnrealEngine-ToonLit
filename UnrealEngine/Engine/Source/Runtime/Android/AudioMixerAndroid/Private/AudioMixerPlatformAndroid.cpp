@@ -9,8 +9,6 @@
 #include "AudioDevice.h"
 
 #if WITH_ENGINE
-#include "VorbisAudioInfo.h"
-#include "BinkAudioInfo.h"
 #include "AudioPluginUtilities.h"
 #endif
 
@@ -417,41 +415,7 @@ namespace Audio
 			SLresult Result = (*SL_PlayerBufferQueue)->Enqueue(SL_PlayerBufferQueue, Buffer, BufferSize);
 			OPENSLES_LOG_ON_FAIL(Result);
 		}
-	}
-
-	FName FMixerPlatformAndroid::GetRuntimeFormat(const USoundWave* InSoundWave) const
-	{
-		FName RuntimeFormat = Audio::ToName(InSoundWave->GetSoundAssetCompressionType());
-
-		if (RuntimeFormat == Audio::NAME_PLATFORM_SPECIFIC)
-		{
-			RuntimeFormat = Audio::NAME_OGG;
-		}
-
-		return RuntimeFormat;
-	}
-
-	ICompressedAudioInfo* FMixerPlatformAndroid::CreateCompressedAudioInfo(const FName& InRuntimeFormat) const
-	{
-		ICompressedAudioInfo* Decoder = nullptr;
-
-		if (InRuntimeFormat == Audio::NAME_OGG)
-		{
-			Decoder = new FVorbisAudioInfo();
-		}
-		else if (InRuntimeFormat == Audio::NAME_BINKA)
-		{
-#if WITH_BINK_AUDIO
-			Decoder = new FBinkAudioInfo();
-#endif // WITH_BINK_AUDIO			
-		}
-		else
-		{
-			Decoder = Audio::CreateSoundAssetDecoder(InRuntimeFormat);
-		}
-		ensureMsgf(Decoder != nullptr, TEXT("Failed to create a sound asset decoder for compression type: %s"), *InRuntimeFormat.ToString());
-		return Decoder;
-	}
+	}	
 
 	FString FMixerPlatformAndroid::GetDefaultDeviceName()
 	{

@@ -373,9 +373,10 @@ private:
 		FName PropertyName,
 		TConstArrayView<uint64> StackFrames = {});
 
+public:
 	/** Returns a string with all flags (we care about) set on an object */
-	static FString GetObjectFlags(FGCObjectInfo* InObject);
-	static FString GetObjectFlags(EInternalObjectFlags InternalFlags, EObjectFlags Flags);
+	static FString GetObjectFlags(const FGCObjectInfo& InObject);
+private:
 
 	/** Dumps a reference chain to log */
 	static void DumpChain(FReferenceChainSearch::FReferenceChain* Chain, TFunctionRef<bool(FCallbackParams& Params)> ReferenceCallback,

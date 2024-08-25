@@ -76,6 +76,12 @@ class UAnimCompress_RemoveLinearKeys : public UAnimCompress
 	UPROPERTY(EditAnywhere, Category=LinearKeyRemoval)
 	uint32 bActuallyFilterLinearKeys:1;
 
+	//~ Begin UAnimBoneCompressionCodec Interface
+#if WITH_EDITORONLY_DATA
+	virtual int64 EstimateCompressionMemoryUsage(const UAnimSequence& AnimSequence) const override;
+#endif // WITH_EDITORONLY_DATA
+	//~ End UAnimBoneCompressionCodec Interface
+
 protected:
 	//~ Begin UAnimCompress Interface
 #if WITH_EDITOR

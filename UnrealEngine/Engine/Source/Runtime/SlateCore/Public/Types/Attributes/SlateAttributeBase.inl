@@ -244,7 +244,7 @@ namespace SlateAttributePrivate
 
 	public:
 		/** @return the SlateAttribute cached value. If the SlateAttribute is bound, the value will be cached at the end of the every frame. */
-		UE_NODISCARD const ObjectType& Get() const
+		[[nodiscard]] const ObjectType& Get() const
 		{
 			return Value;
 		}
@@ -470,7 +470,7 @@ namespace SlateAttributePrivate
 
 	public:
 		/** Build a Attribute from this SlateAttribute. */
-		UE_NODISCARD TAttribute<ObjectType> ToAttribute(const ContainerType& Widget) const
+		[[nodiscard]] TAttribute<ObjectType> ToAttribute(const ContainerType& Widget) const
 		{
 			if (ISlateAttributeGetter* Delegate = ProtectedFindGetter(Widget, InAttributeType))
 			{
@@ -480,14 +480,14 @@ namespace SlateAttributePrivate
 		}
 
 		/** @return True if the SlateAttribute is bound to a getter function. */
-		UE_NODISCARD bool IsBound(const ContainerType& Widget) const
+		[[nodiscard]] bool IsBound(const ContainerType& Widget) const
 		{
 			VerifyOwningWidget(Widget);
 			return ProtectedIsBound(Widget, InAttributeType);
 		}
 
 		/** @return True if they have the same Getter or the same value. */
-		UE_NODISCARD bool IdenticalTo(const ContainerType& Widget, const TSlateAttributeBase& Other) const
+		[[nodiscard]] bool IdenticalTo(const ContainerType& Widget, const TSlateAttributeBase& Other) const
 		{
 			VerifyOwningWidget(Widget);
 			FDelegateHandle ThisDelegateHandle = ProtectedFindGetterHandle(Widget, InAttributeType);
@@ -504,7 +504,7 @@ namespace SlateAttributePrivate
 		}
 
 		/** @return True if they have the same Getter or, if the Attribute is set, the same value. */
-		UE_NODISCARD bool IdenticalTo(const ContainerType& Widget, const TAttribute<ObjectType>& Other) const
+		[[nodiscard]] bool IdenticalTo(const ContainerType& Widget, const TAttribute<ObjectType>& Other) const
 		{
 			VerifyOwningWidget(Widget);
 			FDelegateHandle ThisDelegateHandle = ProtectedFindGetterHandle(Widget, InAttributeType);

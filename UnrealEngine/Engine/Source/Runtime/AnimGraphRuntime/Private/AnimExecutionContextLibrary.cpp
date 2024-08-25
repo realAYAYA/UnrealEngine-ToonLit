@@ -54,6 +54,13 @@ float UAnimExecutionContextLibrary::GetCurrentWeight(const FAnimUpdateContext& U
 	return 0.0f;
 }
 
+bool UAnimExecutionContextLibrary::IsActive(const FAnimExecutionContext& Context)
+{
+	FAnimationBaseContext* BaseContext = Context.GetBaseContext();
+	check(BaseContext);
+	return BaseContext->IsActive();
+}
+
 FAnimPoseContext UAnimExecutionContextLibrary::ConvertToPoseContext(const FAnimExecutionContext& Context, EAnimExecutionContextConversionResult& Result)
 {
 	return FAnimExecutionContext::ConvertToType<FAnimPoseContext>(Context, Result);

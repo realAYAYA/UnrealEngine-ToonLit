@@ -13,7 +13,7 @@ FMassEntityView::FMassEntityView(const FMassArchetypeHandle& ArchetypeHandle, FM
 {
 	Entity = InEntity;
 	Archetype = &FMassArchetypeHelper::ArchetypeDataFromHandleChecked(ArchetypeHandle);
-	EntityHandle = Archetype->MakeEntityHandle(Entity);
+	EntityDataHandle = Archetype->MakeEntityHandle(Entity);
 }
 
 FMassEntityView::FMassEntityView(const FMassEntityManager& EntityManager, FMassEntityHandle InEntity)
@@ -21,25 +21,31 @@ FMassEntityView::FMassEntityView(const FMassEntityManager& EntityManager, FMassE
 	Entity = InEntity;
 	const FMassArchetypeHandle ArchetypeHandle = EntityManager.GetArchetypeForEntity(Entity);
 	Archetype = &FMassArchetypeHelper::ArchetypeDataFromHandleChecked(ArchetypeHandle);
-	EntityHandle = Archetype->MakeEntityHandle(Entity);
+	EntityDataHandle = Archetype->MakeEntityHandle(Entity);
+}
+
+FMassEntityView FMassEntityView::TryMakeView(const FMassEntityManager& EntityManager, FMassEntityHandle InEntity)
+{
+	const FMassArchetypeHandle ArchetypeHandle = EntityManager.GetArchetypeForEntity(InEntity);
+	return ArchetypeHandle.IsValid() ? FMassEntityView(ArchetypeHandle, InEntity) : FMassEntityView();
 }
 
 void* FMassEntityView::GetFragmentPtr(const UScriptStruct& FragmentType) const
 {
-	checkSlow(Archetype && EntityHandle.IsValid());
+	checkSlow(Archetype && EntityDataHandle.IsValid());
 	if (const int32* FragmentIndex = Archetype->GetFragmentIndex(&FragmentType))
 	{
 		// failing the below Find means given entity's archetype is missing given FragmentType
-		return Archetype->GetFragmentData(*FragmentIndex, EntityHandle);
+		return Archetype->GetFragmentData(*FragmentIndex, EntityDataHandle);
 	}
 	return nullptr;
 }
 
 void* FMassEntityView::GetFragmentPtrChecked(const UScriptStruct& FragmentType) const
 {
-	checkSlow(Archetype && EntityHandle.IsValid());
+	checkSlow(Archetype && EntityDataHandle.IsValid());
 	const int32 FragmentIndex = Archetype->GetFragmentIndexChecked(&FragmentType);
-	return Archetype->GetFragmentData(FragmentIndex, EntityHandle);
+	return Archetype->GetFragmentData(FragmentIndex, EntityDataHandle);
 }
 
 const void* FMassEntityView::GetConstSharedFragmentPtr(const UScriptStruct& FragmentType) const
@@ -72,6 +78,6 @@ void* FMassEntityView::GetSharedFragmentPtrChecked(const UScriptStruct& Fragment
 
 bool FMassEntityView::HasTag(const UScriptStruct& TagType) const
 {
-	checkSlow(Archetype && EntityHandle.IsValid());
+	checkSlow(Archetype && EntityDataHandle.IsValid());
 	return Archetype->HasTagType(&TagType);
 }

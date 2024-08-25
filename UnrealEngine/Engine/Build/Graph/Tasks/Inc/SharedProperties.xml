@@ -1,0 +1,20 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+
+	<!-- Option include files -->
+	<Option Name="SharedPropertiesFile" DefaultValue="Engine/Restricted/NotForLicensees/Build/Graph/Tasks/Inc/SharedProperties.xml" Description="Shared Properties file to use (relative from root view)." />
+	<!-- Scratch network path that can be used for tests if we aren't publishing. Assumes there's a cleanup script.. -->
+	<Property Name="NetworkTempRoot" Value=""/>
+	<!-- Network path that can be used for builds that are published -->
+	<Property Name="NetworkPublishRoot" Value=""/>
+	<!-- Network path that can be used for storing reports and logs -->
+	<Property Name="NetworkReportRoot" Value=""/>
+	<!-- URL to Horde server -->
+	<Property Name="HordeDashboardURL" Value=""/>
+	<Option Name="GauntletDeviceService" DefaultValue="" Description="Gauntlet Device Service to use for device reservation when running tests"/>
+	<!-- Get custom shared properties -->
+	<Do If="Exists('$(RootDir)/$(SharedPropertiesFile)')">
+		<Include Script="$(RootDir)/$(SharedPropertiesFile)"/>
+	</Do>
+
+</BuildGraph>

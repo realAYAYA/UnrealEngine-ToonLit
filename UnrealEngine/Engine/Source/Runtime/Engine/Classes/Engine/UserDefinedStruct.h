@@ -74,7 +74,7 @@ public:
 	TEnumAsByte<enum EUserDefinedStructureStatus> Status;
 
 	/** Uniquely identifies this specific user struct */
-	UPROPERTY()
+	UPROPERTY(AssetRegistrySearchable)
 	FGuid Guid;
 
 protected:
@@ -88,6 +88,8 @@ public:
 #if WITH_EDITOR
 	// UObject interface.
 	ENGINE_API virtual void PostDuplicate(bool bDuplicateForPIE) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	ENGINE_API virtual void PostLoad() override;
 	ENGINE_API virtual void PreSaveRoot(FObjectPreSaveRootContext ObjectSaveContext) override;

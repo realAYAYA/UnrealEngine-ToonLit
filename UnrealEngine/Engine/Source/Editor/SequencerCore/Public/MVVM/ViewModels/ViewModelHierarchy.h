@@ -290,8 +290,8 @@ private:
 class SEQUENCERCORE_API FViewModelHierarchyOperation
 {
 public:
-	FViewModelHierarchyOperation(const TSharedPtr<FViewModel>& InAnyModel);
-	FViewModelHierarchyOperation(const TSharedPtr<FSharedViewModelData>& InSharedData);
+	explicit FViewModelHierarchyOperation(const TSharedPtr<FViewModel>& InAnyModel);
+	explicit FViewModelHierarchyOperation(const TSharedRef<FSharedViewModelData>& InSharedData);
 	~FViewModelHierarchyOperation();
 
 	/**
@@ -300,6 +300,8 @@ public:
 	void PreHierarchicalChange(const TSharedPtr<FViewModel>& InChangedNode);
 
 private:
+
+	void Construct();
 
 	struct FCachedHierarchicalPosition
 	{

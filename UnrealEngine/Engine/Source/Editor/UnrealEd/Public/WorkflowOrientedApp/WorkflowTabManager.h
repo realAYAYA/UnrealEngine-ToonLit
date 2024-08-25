@@ -246,7 +246,7 @@ DECLARE_DELEGATE_OneParam(FOnTabActivated, TSharedPtr<SDockTab>);
 class FDocumentTracker : public TSharedFromThis<FDocumentTracker>
 {
 public:
-	UNREALED_API FDocumentTracker();
+	UNREALED_API explicit FDocumentTracker(FName InDefaultDocumentId = "Document");
 	UNREALED_API ~FDocumentTracker();
 
 	UNREALED_API void ClearDocumentFactories();
@@ -353,6 +353,9 @@ private:
 
 	/** Current history index */
 	int32 CurrentHistoryIndex;
+
+	/**  Document ID to use when inserting documents into the tab manager. If this is NAME_None, the tab factory's TabIdentifier will be used. */
+	FName DefaultDocumentId;
 
 private:
 	// Clean the spawned list 

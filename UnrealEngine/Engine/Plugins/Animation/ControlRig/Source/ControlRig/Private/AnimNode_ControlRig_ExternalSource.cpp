@@ -7,6 +7,7 @@
 
 FAnimNode_ControlRig_ExternalSource::FAnimNode_ControlRig_ExternalSource()
 {
+	bControlRigRequiresInitialization = false;
 }
 
 void FAnimNode_ControlRig_ExternalSource::SetControlRig(UControlRig* InControlRig)
@@ -27,6 +28,21 @@ TSubclassOf<UControlRig> FAnimNode_ControlRig_ExternalSource::GetControlRigClass
 		return CR->GetClass();
 	}
 	return nullptr;
+}
+
+void FAnimNode_ControlRig_ExternalSource::Initialize_AnyThread(const FAnimationInitializeContext& Context)
+{
+	FAnimNode_ControlRigBase::Initialize_AnyThread(Context);
+
+	if (ControlRig.IsValid())
+	{
+		//Don't Initialize the Control Rig here, the owner of the rig is in charge of initializing
+		SetTargetInstance(ControlRig.Get());
+	}
+	else
+	{
+		SetTargetInstance(nullptr);
+	}
 }
 
 

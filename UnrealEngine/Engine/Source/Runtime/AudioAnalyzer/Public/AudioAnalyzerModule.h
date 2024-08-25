@@ -2,10 +2,6 @@
 
 #pragma once
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1 
-#include "CoreMinimal.h"
-#endif
-
 #include "HAL/LowLevelMemTracker.h"
 #include "Logging/LogMacros.h"
 #include "Modules/ModuleInterface.h"

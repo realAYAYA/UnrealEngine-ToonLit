@@ -1,19 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-/*=============================================================================
-	LumenScreenTracing.ush
-=============================================================================*/
-
 #pragma once
 
 #include "../Common.ush"
 #include "LumenMaterial.ush"
 #include "../FastMath.ush"
 #include "../SceneTextureParameters.ush"
+#include "LumenPosition.ush"
 
 // HZB mip 0 is half res scene depth. To do accurate traces we need to traverse all the way down to full res scene depth, but this adds an incoherent branch on the inner tracing loop.
 #ifndef HZB_TRACE_INCLUDE_FULL_RES_DEPTH
 #define HZB_TRACE_INCLUDE_FULL_RES_DEPTH 0
+#endif
+
+#ifndef HZB_TRACE_USE_BILINEAR_SAMPLED_DEPTH
+#define HZB_TRACE_USE_BILINEAR_SAMPLED_DEPTH 0
+#endif
+
+#if HZB_TRACE_USE_BILINEAR_SAMPLED_DEPTH && !HZB_TRACE_INCLUDE_FULL_RES_DEPTH
+#	error "HZB_TRACE_USE_BILINEAR_SAMPLED_DEPTH is only compatible with HZB_TRACE_INCLUDE_FULL_RES_DEPTH"
 #endif
 
 #ifndef TERMINATE_ON_LOW_OCCUPANCY
@@ -135,6 +140,13 @@ void InternalTraceScreen(
 		if (MipLevel < 0)
 		{
 			TileZ = InSceneDepthTexture.SampleLevel(GlobalPointClampedSampler, RayScreenUV.xy * InHZBUVToScreenUVScaleBias.xy + InHZBUVToScreenUVScaleBias.zw, 0).r;
+
+#	if HZB_TRACE_USE_BILINEAR_SAMPLED_DEPTH
+			float TileZFiltered = InSceneDepthTexture.SampleLevel(GlobalBilinearClampedSampler, RayScreenUV.xy * InHZBUVToScreenUVScaleBias.xy + InHZBUVToScreenUVScaleBias.zw, 0).r;
+
+			// Using both point and bilinear filtered depth helps avoid incorrect self shadowing by approximating the underlying surface
+			TileZ = min(TileZ, TileZFiltered);
+#	endif
 		}
 		else
 #endif
@@ -149,10 +161,18 @@ void InternalTraceScreen(
 
 		float3 PlaneIntersectionTimes = (BoundaryPlanes - RayStartScreenUV) / RayDirectionScreenUV;
 		PlaneIntersectionTimes.z = RayDirectionScreenUV.z < 0 ? PlaneIntersectionTimes.z : 1.0f;
-		float IntersectionTime = min3(PlaneIntersectionTimes.x, PlaneIntersectionTimes.y, PlaneIntersectionTimes.z);
+		float IntersectionTime = min(PlaneIntersectionTimes.x, PlaneIntersectionTimes.y);
 
 		bool bAboveSurface = RayScreenUV.z > TileZ;
-		bool bSkippedTile = IntersectionTime != PlaneIntersectionTimes.z && bAboveSurface;
+		bool bSkippedTile = bAboveSurface;
+
+#if HZB_TRACE_USE_BILINEAR_SAMPLED_DEPTH
+		if (MipLevel > BaseMipLevel) // don't intersect with Z-plane when using BaseMipLevel since it causes incorrect self shadowing
+#endif
+		{
+			IntersectionTime = min(IntersectionTime, PlaneIntersectionTimes.z);
+			bSkippedTile &= IntersectionTime != PlaneIntersectionTimes.z;
+		}
 
 		if (bSkippedTile)
 		{
@@ -265,32 +285,6 @@ void TraceScreen(
 		OutScreenUV,
 		OutLastVisibleScreenUV,
 		OutHitTileZ);
-} 
-
-float3 GetPrevScreenPosition(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
-{
-	float3 HistoryScreenPosition = float3(ScreenPosition, DeviceZ);
-	bool bIsDynamicPixel = false;
-
-	{
-		float4 ThisClip = float4(HistoryScreenPosition, 1);
-		float4 PrevClip = mul(ThisClip, View.ClipToPrevClip); //<=== doesn't contain AA offsets
-		
-		float3 PrevScreen = PrevClip.xyz / PrevClip.w;
-		float3 Velocity = HistoryScreenPosition - PrevScreen;
-		float4 EncodedVelocity = GBufferVelocityTexture.SampleLevel(GlobalPointClampedSampler, ScreenUV, 0);
-		bIsDynamicPixel = EncodedVelocity.x > 0.0;
-
-		if (bIsDynamicPixel)
-		{
-			// Warning: overwriting velocity, this only works if DeviceZ matches what's in the depth buffer
-			Velocity = DecodeVelocityFromTexture(EncodedVelocity);
-		}
-
-		HistoryScreenPosition -= Velocity;
-	}
-
-	return HistoryScreenPosition;
 }
 
 #include "../SSRT/SSRTRayCast.ush"
@@ -323,14 +317,14 @@ bool SampleSceneColorAtHit(float3 HitTranslatedWorldPosition, float3 HitGeometry
 			float HitSceneDepth = ConvertFromDeviceZ(HitDeviceZ);
 			float RayHitSceneDepth = HitClipPosition.w;
 
-			float3 PixelToCameraDirection = normalize(View.TranslatedWorldCameraOrigin - HitTranslatedWorldPosition);
+			float3 PixelToCameraDirection = -GetCameraVectorFromTranslatedWorldPosition(HitTranslatedWorldPosition);
 
 			// Discard screen points which are either too far or face the other direction
 			// Also discard screen points at steep angle or facing backwards
 			if (abs(RayHitSceneDepth - HitSceneDepth) < RelativeDepthThickness * max(HitSceneDepth, .00001f)
 				&& dot(PixelToCameraDirection, HitGeometryWorldNormal) >= SampleSceneColorNormalTreshold)
 			{
-				float3 HitHistoryScreenPosition = GetPrevScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+				float3 HitHistoryScreenPosition = GetHistoryScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
 
 				float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
 				float Noise = InterleavedGradientNoise(SvPosition + 0.5f, View.StateFrameIndexMod8);
@@ -424,7 +418,7 @@ void DistantScreenTrace(
 		float2 HitScreenPosition = (HitUVz.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
 		float HitDeviceZ = HitUVz.z;
 
-		float3 HitHistoryScreenPosition = GetPrevScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+		float3 HitHistoryScreenPosition = GetHistoryScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
 
 		float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
 

@@ -47,7 +47,7 @@ bool UReplicationBridge::WriteNetRefHandleCreationInfo(FReplicationBridgeSeriali
 	return true;
 }
 
-FReplicationBridgeCreateNetRefHandleResult UReplicationBridge::CreateNetRefHandleFromRemote(FNetRefHandle SubObjectOwnerNetHandle, FNetRefHandle WantedNetHandle, FReplicationBridgeSerializationContext& Context)
+FReplicationBridgeCreateNetRefHandleResult UReplicationBridge::CreateNetRefHandleFromRemote(FNetRefHandle RootObjectOfSubObject, FNetRefHandle WantedNetHandle, FReplicationBridgeSerializationContext& Context)
 {
 	return FReplicationBridgeCreateNetRefHandleResult();
 };
@@ -60,7 +60,19 @@ void UReplicationBridge::PreSendUpdate()
 {
 }
 
+void UReplicationBridge::OnStartPreSendUpdate()
+{
+}
+
+void UReplicationBridge::OnPostSendUpdate()
+{
+}
+
 void UReplicationBridge::UpdateInstancesWorldLocation()
+{
+}
+
+void UReplicationBridge::SubObjectCreatedFromReplication(FNetRefHandle SubObjectRefHandle)
 {
 }
 
@@ -117,6 +129,7 @@ void UReplicationBridge::DetachSubObjectInstancesFromRemote(FNetRefHandle OwnerH
 			FNetRefHandleManager::FReplicatedObjectData& SubObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(SubObjectInternalIndex);
 			const FNetRefHandle SubObjectHandle = SubObjectData.RefHandle;
 			SubObjectData.bTearOff = (DestroyReason == EReplicationBridgeDestroyInstanceReason::TearOff);
+			SubObjectData.bPendingEndReplication = 1U;
 
 			EReplicationBridgeDestroyInstanceFlags SubObjectDestroyFlags = DestroyFlags;
 			// The subobject is allowed to be destroyed if both the owner and the subobject allows it.
@@ -135,11 +148,14 @@ void UReplicationBridge::DestroyNetObjectFromRemote(FNetRefHandle Handle, ERepli
 
 	if (Handle.IsValid())
 	{
+		UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("DestroyNetObjectFromRemote for %s | DestroyReason: %s | DestroyFlags: %s "), *NetRefHandleManager->PrintObjectFromNetRefHandle(Handle), LexToString(DestroyReason), LexToString(DestroyFlags) );
+
 		FInternalNetRefIndex OwnerInternalIndex = NetRefHandleManager->GetInternalIndex(Handle);
 		FNetRefHandleManager::FReplicatedObjectData& ObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(OwnerInternalIndex);
 		ObjectData.bTearOff = (DestroyReason == EReplicationBridgeDestroyInstanceReason::TearOff);
+		ObjectData.bPendingEndReplication = 1U;
 
-		// if the a subobject owner is to be destroyed we want to detach all subobjects before doing so to ensure we execute expected callbacks
+		// if a subobject owner is to be destroyed we want to detach all subobjects before doing so to ensure we execute expected callbacks
 		// We keep tracking them internally
 		DetachSubObjectInstancesFromRemote(Handle, DestroyReason, DestroyFlags);
 		
@@ -151,8 +167,6 @@ void UReplicationBridge::DestroyNetObjectFromRemote(FNetRefHandle Handle, ERepli
 	
 		// Destroy the NetRefHandle
 		InternalDestroyNetObject(Handle);
-
-		UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("DestroyNetObjectFromRemote Remote %s"), *Handle.ToString());
 	}
 }
 
@@ -193,40 +207,44 @@ bool UReplicationBridge::CallWriteNetRefHandleCreationInfo(FReplicationBridgeSer
 {
 	using namespace UE::Net;
 
-	// Special path for destruction info
-	if (Context.bIsDestructionInfo)
-	{
-		UE_NET_TRACE_SCOPE(DestructionInfo, *Context.SerializationContext.GetBitStreamWriter(), Context.SerializationContext.GetTraceCollector(), ENetTraceVerbosity::Trace);
+	check(!Context.bIsDestructionInfo);
 
-		const FDestructionInfo* Info = StaticObjectsPendingDestroy.Find(Handle);
-		if (ensureAlwaysMsgf(Info, TEXT("Failed to write destructionInfo for %s"), *Handle.ToString()))
-		{
-			// Write destruction info
-			WriteFullNetObjectReference(Context.SerializationContext, Info->StaticRef);
-		}
-		else
-		{
-			// Write invalid reference
-			WriteFullNetObjectReference(Context.SerializationContext, FNetObjectReference());
-		}
-		return !Context.SerializationContext.HasErrorOrOverflow();	
+	return WriteNetRefHandleCreationInfo(Context, Handle);
+}
+
+bool UReplicationBridge::CallWriteNetRefHandleDestructionInfo(FReplicationBridgeSerializationContext& Context, FNetRefHandle Handle)
+{
+	using namespace UE::Net;
+
+	check(Context.bIsDestructionInfo);
+	UE_NET_TRACE_SCOPE(DestructionInfo, *Context.SerializationContext.GetBitStreamWriter(), Context.SerializationContext.GetTraceCollector(), ENetTraceVerbosity::Trace);
+
+	const FDestructionInfo* Info = StaticObjectsPendingDestroy.Find(Handle);
+	if (ensure(Info))
+	{
+		// Write destruction info
+		WriteFullNetObjectReference(Context.SerializationContext, Info->StaticRef);
 	}
 	else
 	{
-		return WriteNetRefHandleCreationInfo(Context, Handle);
+		UE_LOG_REPLICATIONBRIDGE(Error, TEXT("Failed to write destructionInfo for %s"), *Handle.ToString());
+		// Write invalid reference
+		WriteFullNetObjectReference(Context.SerializationContext, FNetObjectReference());
 	}
+
+	return !Context.SerializationContext.HasErrorOrOverflow();
 }
 
-FReplicationBridgeCreateNetRefHandleResult UReplicationBridge::CallCreateNetRefHandleFromRemote(FNetRefHandle SubObjectOwnerHandle, FNetRefHandle WantedNetHandle, FReplicationBridgeSerializationContext& Context)
+FReplicationBridgeCreateNetRefHandleResult UReplicationBridge::CallCreateNetRefHandleFromRemote(FNetRefHandle RootObjectOfSubObject, FNetRefHandle WantedNetHandle, FReplicationBridgeSerializationContext& Context)
 {
 	check(!Context.bIsDestructionInfo);
 
-	FReplicationBridgeCreateNetRefHandleResult CreateResult = CreateNetRefHandleFromRemote(SubObjectOwnerHandle, WantedNetHandle, Context);
+	FReplicationBridgeCreateNetRefHandleResult CreateResult = CreateNetRefHandleFromRemote(RootObjectOfSubObject, WantedNetHandle, Context);
 
 	// Track subobjects on clients
-	if (CreateResult.NetRefHandle.IsValid() && SubObjectOwnerHandle.IsValid())
+	if (CreateResult.NetRefHandle.IsValid() && RootObjectOfSubObject.IsValid())
 	{
-		NetRefHandleManager->AddSubObject(SubObjectOwnerHandle, CreateResult.NetRefHandle);
+		NetRefHandleManager->AddSubObject(RootObjectOfSubObject, CreateResult.NetRefHandle);
 	}
 
 	return CreateResult;
@@ -240,6 +258,7 @@ bool UReplicationBridge::IsAllowedToDestroyInstance(const UObject* Instance) con
 void UReplicationBridge::ReadAndExecuteDestructionInfoFromRemote(FReplicationBridgeSerializationContext& Context)
 {
 	using namespace UE::Net;
+	using namespace UE::Net::Private;
 
 	check(Context.bIsDestructionInfo);
 
@@ -253,10 +272,26 @@ void UReplicationBridge::ReadAndExecuteDestructionInfoFromRemote(FReplicationBri
 	// Resolve the reference in order to be able to destroy it
 	if (const UObject* Instance = ObjectReferenceCache->ResolveObjectReference(ReferenceToDestroy, Context.SerializationContext.GetInternalContext()->ResolveContext))
 	{
+		const FInternalNetRefIndex InternalReplicationIndex = NetRefHandleManager->GetInternalIndex(ReferenceToDestroy.GetRefHandle());
+		if (InternalReplicationIndex != FNetRefHandleManager::InvalidInternalIndex)
+		{
+			NetRefHandleManager->GetReplicatedObjectDataNoCheck(InternalReplicationIndex).bPendingEndReplication = 1U;
+		}
+
 		constexpr EReplicationBridgeDestroyInstanceReason DestroyReason = EReplicationBridgeDestroyInstanceReason::Destroy;
 		const EReplicationBridgeDestroyInstanceFlags DestroyFlags = IsAllowedToDestroyInstance(Instance) ? EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote : EReplicationBridgeDestroyInstanceFlags::None;
+
+		// if a subobject owner is to be destroyed we want to detach all subobjects before doing so to ensure we execute expected callbacks
+		// We keep tracking them internally
+		DetachSubObjectInstancesFromRemote(ReferenceToDestroy.GetRefHandle(), DestroyReason, DestroyFlags);
+
 		CallDetachInstanceFromRemote(ReferenceToDestroy.GetRefHandle(), DestroyReason, DestroyFlags);
 	}
+}
+
+void UReplicationBridge::CallSubObjectCreatedFromReplication(FNetRefHandle SubObjectHandle)
+{
+	SubObjectCreatedFromReplication(SubObjectHandle);
 }
 
 void UReplicationBridge::CallPostApplyInitialState(FNetRefHandle Handle)
@@ -271,6 +306,7 @@ UReplicationBridge::~UReplicationBridge()
 void UReplicationBridge::Initialize(UReplicationSystem* InReplicationSystem)
 {
 	using namespace UE::Net;
+	using namespace UE::Net::Private;
 
 	Private::FReplicationSystemInternal* ReplicationSystemInternal = InReplicationSystem->GetReplicationSystemInternal();
 
@@ -284,7 +320,8 @@ void UReplicationBridge::Initialize(UReplicationSystem* InReplicationSystem)
 	// Create destruction info protocol
 	{
 		const FReplicationFragments RegisteredFragments;
-		DestructionInfoProtocol = ReplicationProtocolManager->CreateReplicationProtocol(ReplicationProtocolManager->CalculateProtocolIdentifier(RegisteredFragments), RegisteredFragments, TEXT("InternalDestructionInfo"), false);
+		FCreateReplicationProtocolParameters CreateProtocolParams {.bValidateProtocolId = false, .TypeStatsIndex =  GetReplicationSystem()->GetReplicationSystemInternal()->GetNetTypeStats().GetOrCreateTypeStats(FName("DestructionInfo"))};
+		DestructionInfoProtocol = ReplicationProtocolManager->CreateReplicationProtocol(FReplicationProtocolManager::CalculateProtocolIdentifier(RegisteredFragments), RegisteredFragments, TEXT("InternalDestructionInfo"), CreateProtocolParams);
 	}
 }
 
@@ -375,8 +412,13 @@ void UReplicationBridge::InternalDestroyNetObject(FNetRefHandle Handle)
 
 	if (const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager->GetInternalIndex(Handle))
 	{
-		FNetCullDistanceOverrides& NetCullDistanceOverrides = ReplicationSystem->GetReplicationSystemInternal()->GetNetCullDistanceOverrides();
+		FReplicationSystemInternal* ReplicationSystemInternal = ReplicationSystem->GetReplicationSystemInternal();
+
+		FNetCullDistanceOverrides& NetCullDistanceOverrides = ReplicationSystemInternal->GetNetCullDistanceOverrides();
 		NetCullDistanceOverrides.ClearCullDistanceSqr(ObjectInternalIndex);
+
+		FWorldLocations& WorldLocations = ReplicationSystemInternal->GetWorldLocations();
+		WorldLocations.RemoveObjectInfoCache(ObjectInternalIndex);
 
 		const FNetRefHandleManager::FReplicatedObjectData& ObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(ObjectInternalIndex);
 
@@ -385,7 +427,7 @@ void UReplicationBridge::InternalDestroyNetObject(FNetRefHandle Handle)
 			// We need to explicitly notify all ReplicationWriters that we are destroying objects pending tearoff
 			// The handle will automatically be removed from HandlesPendingTearOff after the next update
 
-			FReplicationConnections& Connections = ReplicationSystem->GetReplicationSystemInternal()->GetConnections();
+			FReplicationConnections& Connections = ReplicationSystemInternal->GetConnections();
 
 			auto NotifyDestroyedObjectPendingTearOff = [&Connections, &ObjectInternalIndex](uint32 ConnectionId)
 			{
@@ -403,6 +445,8 @@ void UReplicationBridge::InternalDestroyNetObject(FNetRefHandle Handle)
 
 void UReplicationBridge::DestroyLocalNetHandle(FNetRefHandle Handle, EEndReplicationFlags EndReplicationFlags)
 {
+	UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("DestroyLocalNetHandle for %s | EndReplicationFlags: %s"), *NetRefHandleManager->PrintObjectFromNetRefHandle(Handle), *LexToString(EndReplicationFlags));
+
 	if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::DestroyNetHandle | EEndReplicationFlags::ClearNetPushId))
 	{
 		const UE::Net::Private::FInternalNetRefIndex InternalReplicationIndex = NetRefHandleManager->GetInternalIndex(Handle);
@@ -432,27 +476,6 @@ void UReplicationBridge::DestroyLocalNetHandle(FNetRefHandle Handle, EEndReplica
 
 	// Tell ReplicationSystem to destroy the handle
 	InternalDestroyNetObject(Handle);
-
-	UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("DestroyLocalNetHandle Local %s"), *Handle.ToString());
-}
-
-UE::Net::FNetRefHandle UReplicationBridge::InternalGetSubObjectOwner(FNetRefHandle SubObjectHandle) const
-{
-	using namespace UE::Net::Private;
-
-	const FInternalNetRefIndex InternalNetRefIndex = NetRefHandleManager->GetInternalIndex(SubObjectHandle);
-	if (InternalNetRefIndex != FNetRefHandleManager::InvalidInternalIndex)
-	{
-		const FNetRefHandleManager::FReplicatedObjectData& ObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(InternalNetRefIndex);
-		const FInternalNetRefIndex OwnerInternalNetRefIndex = ObjectData.SubObjectRootIndex;
-
-		if (OwnerInternalNetRefIndex != FNetRefHandleManager::InvalidInternalIndex)
-		{
-			return NetRefHandleManager->GetReplicatedObjectDataNoCheck(OwnerInternalNetRefIndex).RefHandle;
-		}
-	}
-
-	return FNetRefHandle();
 }
 
 void UReplicationBridge::InternalAddSubObject(FNetRefHandle OwnerHandle, FNetRefHandle SubObjectHandle, FNetRefHandle InsertRelativeToSubObjectHandle, ESubObjectInsertionOrder InsertionOrder)
@@ -482,14 +505,16 @@ void UReplicationBridge::InternalDestroySubObjects(FNetRefHandle OwnerHandle, EE
 	{
 		for (FInternalNetRefIndex SubObjectInternalIndex : NetRefHandleManager->GetChildSubObjects(OwnerInternalIndex))
 		{
-			const FNetRefHandleManager::FReplicatedObjectData& SubObjectData = NetRefHandleManager->GetReplicatedObjectData(SubObjectInternalIndex);
+			FNetRefHandleManager::FReplicatedObjectData& SubObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(SubObjectInternalIndex);
+
 			const FNetRefHandle SubObjectHandle = SubObjectData.RefHandle;
 			const bool bDestroySubObjectWithOwner = SubObjectData.bDestroySubObjectWithOwner;
 				
 			// Tag subobject for destroy. The check against the scope is needed since the subobjects array might contain subobjects already pending destroy.
 			if (bDestroySubObjectWithOwner && NetRefHandleManager->IsScopableIndex(SubObjectInternalIndex))
 			{
-				UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("InternalDestroySubObjects %s - SubObject %s"), *OwnerHandle.ToString(), *SubObjectHandle.ToString());
+				SubObjectData.bPendingEndReplication = 1U;
+				UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("InternalDestroySubObjects %s"), *NetRefHandleManager->PrintObjectFromNetRefHandle(SubObjectHandle));
 				DestroyLocalNetHandle(SubObjectHandle, Flags);
 			}
 		}
@@ -498,12 +523,15 @@ void UReplicationBridge::InternalDestroySubObjects(FNetRefHandle OwnerHandle, EE
 
 void UReplicationBridge::EndReplication(FNetRefHandle Handle, EEndReplicationFlags EndReplicationFlags, FEndReplicationParameters* Parameters)
 {
+	using namespace UE::Net::Private;
+
 	if (!IsReplicatedHandle(Handle))
 	{
 		return;
 	}
 
-	if (NetRefHandleManager->IsLocalNetRefHandle(Handle))
+	const FInternalNetRefIndex InternalReplicationIndex = NetRefHandleManager->GetInternalIndex(Handle);
+	if (NetRefHandleManager->IsLocal(InternalReplicationIndex))
 	{
 		if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::TearOff))
 		{
@@ -533,11 +561,16 @@ void UReplicationBridge::EndReplication(FNetRefHandle Handle, EEndReplicationFla
 				InternalFlushStateData(Handle);
 			}
 
+			NetRefHandleManager->GetReplicatedObjectDataNoCheck(InternalReplicationIndex).bPendingEndReplication = 1U;
 			DestroyLocalNetHandle(Handle, EndReplicationFlags);	
 		}
 	}
 	else
 	{
+		if (InternalReplicationIndex != FNetRefHandleManager::InvalidInternalIndex && EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::SkipPendingEndReplicationValidation))
+		{
+			NetRefHandleManager->GetReplicatedObjectDataNoCheck(InternalReplicationIndex).bPendingEndReplication = 1U;
+		}
 		// If we get a call to end replication on the client, we need to detach the instance as it might be garbage collected
 		InternalDetachInstanceFromNetRefHandle(Handle);
 	}
@@ -550,9 +583,9 @@ void UReplicationBridge::RemoveDestructionInfosForGroup(UE::Net::FNetObjectGroup
 
 	FWorldLocations& WorldLocations = GetReplicationSystem()->GetReplicationSystemInternal()->GetWorldLocations();
 
-	if (GroupHandle)
+	if (GroupHandle.IsValid())
 	{
-		UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("RemoveDestructionInfosForGroup GroupIndex: %u"), GroupHandle);
+		UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("RemoveDestructionInfosForGroup GroupIndex: %u"), GroupHandle.GetGroupIndex());
 
 		FNetObjectGroup* Group = Groups->GetGroup(GroupHandle);
 		check(Group);
@@ -622,6 +655,8 @@ void UReplicationBridge::UpdateHandlesPendingTearOff()
 			// Immediate tear-off or object that no longer are referenced by any connections are destroyed
 			if (NetRefHandleManager->GetNetObjectRefCount(ObjectInternalIndex) == 0U || Info.bIsImmediate)
 			{
+				FNetRefHandleManager::FReplicatedObjectData& ObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(ObjectInternalIndex);
+				ObjectData.bPendingEndReplication = 1U;
 				DestroyLocalNetHandle(Info.Handle, Info.DestroyFlags);
 			}
 			else
@@ -684,7 +719,12 @@ void UReplicationBridge::InternalFlushStateData(UE::Net::FNetSerializationContex
 		CallPreSendUpdateSingleHandle(ObjectData.RefHandle);
 	} 
 
-	FReplicationInstanceOperationsInternal::CopyObjectStateData(ChangeMaskWriter, ChangeMaskCache, *NetRefHandleManager, SerializationContext, InternalObjectIndex);
+	FReplicationInstanceOperationsInternal::QuantizeObjectStateData(ChangeMaskWriter, ChangeMaskCache, *NetRefHandleManager, SerializationContext, InternalObjectIndex);
+
+	// Clear the quantize flag since it was done directly here.
+	NetRefHandleManager->GetDirtyObjectsToQuantize().ClearBit(InternalObjectIndex);
+
+	// $IRIS TODO:  Should we also clear the DirtyTracker flags for this flushed object ?
 }
 
 void UReplicationBridge::InternalFlushStateData(FNetRefHandle Handle)
@@ -709,6 +749,7 @@ void UReplicationBridge::InternalFlushStateData(FNetRefHandle Handle)
 	FNetSerializationContext SerializationContext;
 	FInternalNetSerializationContext InternalContext(ReplicationSystem);
 	SerializationContext.SetInternalContext(&InternalContext);
+	SerializationContext.SetNetStatsContext(ReplicationSystem->GetReplicationSystemInternal()->GetNetTypeStats().GetNetStatsContext());
 
 	InternalFlushStateData(SerializationContext, ChangeMaskCache, ChangeMaskWriter, InternalObjectIndex);
 
@@ -764,6 +805,7 @@ void UReplicationBridge::InternalTearOff(FNetRefHandle Handle)
 		FNetSerializationContext SerializationContext;
 		FInternalNetSerializationContext InternalContext(ReplicationSystem);
 		SerializationContext.SetInternalContext(&InternalContext);
+		SerializationContext.SetNetStatsContext(ReplicationSystem->GetReplicationSystemInternal()->GetNetTypeStats().GetNetStatsContext());
 
 		if (ObjectData.InstanceProtocol && EnumHasAnyFlags(ObjectData.InstanceProtocol->InstanceTraits, EReplicationInstanceProtocolTraits::NeedsPoll | EReplicationInstanceProtocolTraits::NeedsPreSendUpdate))
 		{
@@ -772,7 +814,7 @@ void UReplicationBridge::InternalTearOff(FNetRefHandle Handle)
 
 		if (ObjectData.InstanceProtocol && ObjectData.Protocol->InternalTotalSize > 0U)
 		{
-			FReplicationInstanceOperationsInternal::CopyObjectStateData(ChangeMaskWriter, ChangeMaskCache, *NetRefHandleManager, SerializationContext, InternalObjectIndex);
+			FReplicationInstanceOperationsInternal::QuantizeObjectStateData(ChangeMaskWriter, ChangeMaskCache, *NetRefHandleManager, SerializationContext, InternalObjectIndex);
 		}
 		else
 		{
@@ -815,7 +857,11 @@ UE::Net::FNetRefHandle UReplicationBridge::InternalAddDestructionInfo(FNetRefHan
 	// Create handle for DestructionInfo to be able to scope destruction infos
 	const FNetObjectGroupHandle LevelGroupHandle = GetLevelGroup(Parameters.Level);
 	FNetRefHandle DestructionInfoHandle = NetRefHandleManager->CreateHandleForDestructionInfo(Handle, DestructionInfoProtocol);
-	GetReplicationSystem()->AddToGroup(LevelGroupHandle, DestructionInfoHandle);
+
+	if (LevelGroupHandle.IsValid())
+	{
+		GetReplicationSystem()->AddToGroup(LevelGroupHandle, DestructionInfoHandle);
+	}
 
 	const FInternalNetRefIndex InternalReplicationIndex = NetRefHandleManager->GetInternalIndex(DestructionInfoHandle);
 
@@ -839,7 +885,7 @@ UE::Net::FNetRefHandle UReplicationBridge::InternalAddDestructionInfo(FNetRefHan
 		GetReplicationSystem()->SetPrioritizer(DestructionInfoHandle, DefaultSpatialNetObjectPrioritizerHandle);
 	}
 
-	UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("UReplicationBridge::InternalAddDestructionInfo %s ( InternalIndex: %u ) for %s GroupIndex: %u"), *DestructionInfoHandle.ToString(), InternalReplicationIndex,  *Handle.ToString(), LevelGroupHandle);
+	UE_LOG_REPLICATIONBRIDGE(Verbose, TEXT("UReplicationBridge::InternalAddDestructionInfo %s (InternalIndex: %u ) for %s GroupIndex: %u"), *DestructionInfoHandle.ToString(), InternalReplicationIndex,  *PrintObjectFromNetRefHandle(Handle), LevelGroupHandle.GetGroupIndex());
 	
 	return DestructionInfoHandle;
 }
@@ -924,9 +970,9 @@ UE::Net::FNetObjectGroupHandle UReplicationBridge::CreateLevelGroup(const UObjec
 	using namespace UE::Net;
 
 	FNetObjectGroupHandle LevelGroupHandle = ReplicationSystem->CreateGroup();
-	if (ensure(LevelGroupHandle != InvalidNetObjectGroupHandle))
+	if (ensure(LevelGroupHandle.IsValid()))
 	{
-		ReplicationSystem->AddGroupFilter(LevelGroupHandle);
+		ReplicationSystem->AddExclusionFilterGroup(LevelGroupHandle);
 		LevelGroups.Emplace(FObjectKey(Level), LevelGroupHandle);
 	}
 
@@ -936,7 +982,7 @@ UE::Net::FNetObjectGroupHandle UReplicationBridge::CreateLevelGroup(const UObjec
 UE::Net::FNetObjectGroupHandle UReplicationBridge::GetLevelGroup(const UObject* Level) const
 {
 	const UE::Net::FNetObjectGroupHandle* LevelGroupHandle = LevelGroups.Find(FObjectKey(Level));
-	return (LevelGroupHandle != nullptr ? *LevelGroupHandle : UE::Net::InvalidNetObjectGroupHandle);
+	return (LevelGroupHandle != nullptr ? *LevelGroupHandle : UE::Net::FNetObjectGroupHandle());
 }
 
 void UReplicationBridge::DestroyGlobalNetHandle(UE::Net::Private::FInternalNetRefIndex InternalReplicationIndex)
@@ -969,6 +1015,11 @@ void UReplicationBridge::ClearNetPushIds(UE::Net::Private::FInternalNetRefIndex 
 #endif
 }
 
+FString UReplicationBridge::PrintObjectFromNetRefHandle(FNetRefHandle RefHandle) const
+{
+	return NetRefHandleManager->PrintObjectFromNetRefHandle(RefHandle);
+}
+
 const TCHAR* LexToString(EReplicationBridgeDestroyInstanceReason Reason)
 {
 	switch (Reason)
@@ -989,5 +1040,67 @@ const TCHAR* LexToString(EReplicationBridgeDestroyInstanceReason Reason)
 	{
 		return TEXT("[Invalid]");
 	}
-	};
+	}
+}
+
+const TCHAR* LexToString(EReplicationBridgeDestroyInstanceFlags DestroyFlags)
+{
+	switch (DestroyFlags)
+	{
+	case EReplicationBridgeDestroyInstanceFlags::None:
+	{
+		return TEXT("None");
+	}
+	case EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote:
+	{
+		return TEXT("AllowDestroyInstanceFromRemote");
+	}
+	default:
+	{
+		return TEXT("[Invalid]");
+	}
+	}
+}
+
+FString LexToString(EEndReplicationFlags EndReplicationFlags)
+{
+	
+	if (EndReplicationFlags == EEndReplicationFlags::None)
+	{
+		return TEXT("None");
+	}
+
+	FString Flags;
+
+	if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::Destroy))
+	{
+		Flags += TEXT("Destroy");
+	}
+	if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::TearOff))
+	{
+		if (!Flags.IsEmpty()) { Flags += TEXT(','); }
+		Flags += TEXT("TearOff");
+	}
+	if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::Flush))
+	{
+		if (!Flags.IsEmpty()) { Flags += TEXT(','); }
+		Flags += TEXT("Flush");
+	}
+	if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::DestroyNetHandle))
+	{
+		if (!Flags.IsEmpty()) { Flags += TEXT(','); };
+		Flags += TEXT("DestroyNetHandle");
+	}
+	if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::ClearNetPushId))
+	{
+		if (!Flags.IsEmpty()) { Flags += TEXT(','); };
+		Flags += TEXT("ClearNetPushId");
+	}
+	if (EnumHasAnyFlags(EndReplicationFlags, EEndReplicationFlags::SkipPendingEndReplicationValidation))
+	{
+		if (!Flags.IsEmpty()) { Flags += TEXT(','); };
+		Flags += TEXT("SkipPendingEndReplicationValidation");
+	}
+	
+	return Flags;
 }

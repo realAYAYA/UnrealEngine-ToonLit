@@ -141,7 +141,7 @@ EStateTreeRunStatus FMassUseSmartObjectTask::Tick(FStateTreeExecutionContext& Co
 		break;
 
 	default:
-		ensureMsgf(false, TEXT("Unhandled interaction status % => Returning EStateTreeRunStatus::Failed"), *UEnum::GetValueAsString(SOUser.InteractionStatus));
+		ensureMsgf(false, TEXT("Unhandled interaction status %s => Returning EStateTreeRunStatus::Failed"), *UEnum::GetValueAsString(SOUser.InteractionStatus));
 		Status = EStateTreeRunStatus::Failed;
 	}
 

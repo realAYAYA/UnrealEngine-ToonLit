@@ -125,9 +125,6 @@ public:
 	*/
 	virtual void CreateProxyMesh(const TArray<UStaticMeshComponent*>& InComponents, const struct FMeshProxySettings& InMeshProxySettings, UMaterialInterface* InBaseMaterial, UPackage* InOuter, const FString& InProxyBasePackageName, const FGuid InGuid, const FCreateProxyDelegate& InProxyCreatedDelegate, const bool bAllowAsync = false, const float ScreenSize = 1.0f) const = 0;
 
-	UE_DEPRECATED(5.0, "Use FMaterialUtilities::IsValidFlattenMaterial()")
-	virtual bool IsValidBaseMaterial(const UMaterialInterface* InBaseMaterial, bool bShowToaster) const = 0;
-
 	/** Extract mesh data in FMeshDescription form from the provided static mesh component */
 	virtual void RetrieveMeshDescription(const UStaticMeshComponent* InStaticMeshComponent, int32 LODIndex, FMeshDescription& InOutMeshDescription, bool bPropagateVertexColours) const = 0;
 	/** Extract mesh data in FMeshDescription form from the provided skeletal mesh component */

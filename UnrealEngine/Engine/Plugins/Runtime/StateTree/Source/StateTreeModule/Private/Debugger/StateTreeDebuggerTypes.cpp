@@ -297,9 +297,9 @@ EStateTreeTraceEventType FStateTreeDebuggerBreakpoint::GetMatchingEventType(cons
 	switch (BreakpointType)
 	{
 	case EStateTreeBreakpointType::OnEnter:
-		return EStateTreeTraceEventType::OnEntering;
+		return EStateTreeTraceEventType::OnEntered;
 	case EStateTreeBreakpointType::OnExit:
-		return EStateTreeTraceEventType::OnExiting;
+		return EStateTreeTraceEventType::OnExited;
 	case EStateTreeBreakpointType::OnTransition:
 		return EStateTreeTraceEventType::OnTransition;
 	default:

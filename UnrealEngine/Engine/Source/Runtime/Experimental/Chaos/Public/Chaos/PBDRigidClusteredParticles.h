@@ -4,10 +4,15 @@
 #include "Chaos/ArrayCollectionArray.h"
 #include "Chaos/PBDRigidParticles.h"
 #include "Chaos/ImplicitObjectUnion.h"
+#include "Templates/PimplPtr.h"
 
 namespace Chaos
 {
-	class FImplicitObjectUnionClustered;
+
+namespace Private
+{
+	class FConvexOptimizer;
+}
 
 /** 
  * Used within the clustering system to describe the clustering hierarchy. The ClusterId
@@ -78,7 +83,16 @@ bool IsInterclusterEdge(const TPBDRigidParticleHandle<T, 3>& Particle, const TCo
 	{
 		return false;
 	}
-	return Particle.PhysicsProxy() != Edge.Sibling->PhysicsProxy();
+
+	const TPBDRigidClusteredParticleHandle<T, 3>* ClusterParticle = Particle.CastToClustered();
+	const TPBDRigidClusteredParticleHandle<T, 3>* SiblingParticle = Edge.Sibling->CastToClustered();
+
+	if (!ClusterParticle || !SiblingParticle)
+	{
+		return false;
+	}
+
+	return ClusterParticle->Parent() != SiblingParticle->Parent();
 }
 
 class FRigidClusteredFlags
@@ -149,6 +163,7 @@ class TPBDRigidClusteredParticles : public TPBDRigidParticles<T, d>
 	, MConnectivityEdges(MoveTemp(Other.MConnectivityEdges))
 	, MExternalStrains(MoveTemp(Other.MExternalStrains))
 	, MRigidClusteredFlags(MoveTemp(Other.MRigidClusteredFlags))
+	, MConvexOptimizers(MoveTemp(Other.MConvexOptimizers))
 	{
 		InitHelper();
 	}
@@ -163,8 +178,24 @@ class TPBDRigidClusteredParticles : public TPBDRigidParticles<T, d>
 	const auto& ClusterGroupIndex(int32 Idx) const { return MClusterGroupIndex[Idx]; }
 	auto& ClusterGroupIndex(int32 Idx) { return MClusterGroupIndex[Idx]; }
 
-	const auto& ChildrenSpatial(int32 Idx) const { return MChildrenSpatial[Idx]; }
-	auto& ChildrenSpatial(int32 Idx) { return MChildrenSpatial[Idx]; }
+	const auto& GetChildrenSpatial(int32 Idx) const { return MChildrenSpatial[Idx]; }
+	auto& GetChildrenSpatial(int32 Idx) { return MChildrenSpatial[Idx]; }
+	
+	UE_DEPRECATED(5.4, "Use GetChildrenSpatial instead")
+	const TUniquePtr<FImplicitObjectUnionClustered>& ChildrenSpatial(int32 Idx) const
+	{
+		check(false);
+		static TUniquePtr<FImplicitObjectUnionClustered> DummyPtr(nullptr);
+		return DummyPtr;
+	}
+	
+	UE_DEPRECATED(5.4, "Use GetChildrenSpatial instead")
+    TUniquePtr<FImplicitObjectUnionClustered>& ChildrenSpatial(int32 Idx)
+	{
+		check(false);
+		static TUniquePtr<FImplicitObjectUnionClustered> DummyPtr(nullptr);
+		return DummyPtr; 
+	}
 
 	const auto& PhysicsProxies(int32 Idx) const { return MPhysicsProxies[Idx]; }
 	auto& PhysicsProxies(int32 Idx) { return MPhysicsProxies[Idx]; }
@@ -203,6 +234,8 @@ class TPBDRigidClusteredParticles : public TPBDRigidParticles<T, d>
 	const auto& RigidClusteredFlags() const { return MRigidClusteredFlags; }
 	auto& RigidClusteredFlags() { return MRigidClusteredFlags; }
 
+	const auto& ConvexOptimizers(int32 Idx) const { return MConvexOptimizers[Idx]; }
+	auto& ConvexOptimizers(int32 Idx) { return MConvexOptimizers[Idx]; }
 	
 	typedef TPBDRigidClusteredParticleHandle<T, d> THandleType;
 	const THandleType* Handle(int32 Index) const { return static_cast<const THandleType*>(TGeometryParticles<T,d>::Handle(Index)); }
@@ -226,12 +259,13 @@ class TPBDRigidClusteredParticles : public TPBDRigidParticles<T, d>
 		  TArrayCollection::AddArray(&MConnectivityEdges);
 	  	  TArrayCollection::AddArray(&MExternalStrains);
 	  	  TArrayCollection::AddArray(&MRigidClusteredFlags);
+	  	  TArrayCollection::AddArray(&MConvexOptimizers);
 	  }
 
 	  TArrayCollectionArray<ClusterId> MClusterIds;
 	  TArrayCollectionArray<TRigidTransform<T, d>> MChildToParent;
 	  TArrayCollectionArray<int32> MClusterGroupIndex;
-	  TArrayCollectionArray<TUniquePtr<FImplicitObjectUnionClustered>> MChildrenSpatial;
+	  TArrayCollectionArray<FImplicitObjectUnionClusteredPtr> MChildrenSpatial;
 
 	  // Multiple proxy pointers required for internal clusters
 	  TArrayCollectionArray<TSet<IPhysicsProxyBase*>> MPhysicsProxies;
@@ -249,6 +283,9 @@ class TPBDRigidClusteredParticles : public TPBDRigidParticles<T, d>
 	  TArrayCollectionArray<TArray<TConnectivityEdge<T>>> MConnectivityEdges;
   
 	  TArrayCollectionArray<FRigidClusteredFlags> MRigidClusteredFlags;
+
+	  // Per clustered particle convex optimizer to reduce the collision cost
+	  TArrayCollectionArray<TPimplPtr<Private::FConvexOptimizer>> MConvexOptimizers;
 };
 
 using FPBDRigidClusteredParticles = TPBDRigidClusteredParticles<FReal, 3>;

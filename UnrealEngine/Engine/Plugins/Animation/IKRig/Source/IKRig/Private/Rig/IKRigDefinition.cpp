@@ -255,6 +255,24 @@ void UIKRigEffectorGoal::ResetTransformToDefault(
 
 #endif
 
+void FRetargetDefinition::AddBoneChain(
+	const FName ChainName,
+	const FName StartBone,
+	const FName EndBone,
+	const FName GoalName)
+{
+	if (FBoneChain* Chain = GetEditableBoneChainByName(ChainName))
+	{
+		Chain->StartBone = StartBone;
+		Chain->EndBone = EndBone;
+		Chain->IKGoalName = GoalName;
+	}
+	else
+	{
+		BoneChains.Emplace(ChainName, StartBone, EndBone, GoalName);
+	}
+}
+
 FBoneChain* FRetargetDefinition::GetEditableBoneChainByName(FName ChainName)
 {
 	for (FBoneChain& Chain : BoneChains)
@@ -280,6 +298,14 @@ void UIKRigDefinition::Serialize(FArchive& Ar)
 {
 	Super::Serialize(Ar);
 	Ar.UsingCustomVersion(FIKRigObjectVersion::GUID);
+}
+
+void UIKRigDefinition::PostLoad()
+{
+	Super::PostLoad();
+	
+	// very early versions of the asset may not have been set as standalone
+	SetFlags(RF_Standalone);
 }
 
 const FBoneChain* UIKRigDefinition::GetRetargetChainByName(FName ChainName) const

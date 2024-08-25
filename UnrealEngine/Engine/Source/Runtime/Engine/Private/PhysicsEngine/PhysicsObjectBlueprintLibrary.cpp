@@ -54,7 +54,7 @@ FTransform UPhysicsObjectBlueprintLibrary::GetPhysicsObjectWorldTransform(UPrimi
 	return FTransform::Identity;
 }
 
-void UPhysicsObjectBlueprintLibrary::ApplyRadialImpulse(UPrimitiveComponent* Component, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain)
+void UPhysicsObjectBlueprintLibrary::ApplyRadialImpulse(UPrimitiveComponent* Component, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain, float Strain, bool bVelChange, float MinValue, float MaxValue)
 {
 	if (Component == nullptr)
 	{
@@ -66,6 +66,6 @@ void UPhysicsObjectBlueprintLibrary::ApplyRadialImpulse(UPrimitiveComponent* Com
 		TArray<Chaos::FPhysicsObjectHandle>  PhysicsObjects;
 		PhysicsObjects.Add(PhysicsObject);
 		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite(PhysicsObjects);
-		return Interface->AddRadialImpulse(PhysicsObjects, Origin, Radius, Strength, Falloff, bApplyStrain, true);
+		return Interface->AddRadialImpulse(PhysicsObjects, Origin, Radius, Strength, Falloff, bApplyStrain, Strain, /* bInvalidate */ true, bVelChange, MinValue, MaxValue);
 	}
 }

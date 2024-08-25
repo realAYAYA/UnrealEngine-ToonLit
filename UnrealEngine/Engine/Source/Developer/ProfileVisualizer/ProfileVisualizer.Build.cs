@@ -17,7 +17,7 @@ public class ProfileVisualizer : ModuleRules
 			}
 		);
 
-		if (Target.Type == TargetType.Editor)
+		if ((Target.bCompileAgainstEditor && (Target.Type == TargetType.Editor || Target.Type == TargetType.Program)))
 		{
 			PrivateDependencyModuleNames.AddRange(
 				new string[] {

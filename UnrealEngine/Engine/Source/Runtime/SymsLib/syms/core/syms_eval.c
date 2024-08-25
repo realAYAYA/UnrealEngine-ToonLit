@@ -4,7 +4,7 @@
 #define SYMS_EVAL_C
 
 ////////////////////////////////
-// NOTE(allen): Eval Meta Code
+//~ allen: Eval Meta Code
 
 #include "syms/core/generated/syms_meta_eval.c"
 
@@ -12,17 +12,17 @@
 #include "syms/core/generated/syms_meta_eval_ext.c"
 
 ////////////////////////////////
-// NOTE(allen): Eval Bytecode Helper Functions
+//~ allen: Eval Bytecode Helper Functions
 
 SYMS_API SYMS_EvalOpParams
-syms_op_params(SYMS_U64 p){
+syms_eval_op_params(SYMS_U64 p){
   SYMS_EvalOpParams result = {0};
   result.u64[0] = p;
   return(result);
 }
 
 SYMS_API SYMS_EvalOpParams
-syms_op_params_2u8(SYMS_U8 p1, SYMS_U8 p2){
+syms_eval_op_params_2u8(SYMS_U8 p1, SYMS_U8 p2){
   SYMS_EvalOpParams result = {0};
   result.u8[0] = p1;
   result.u8[1] = p2;
@@ -30,7 +30,7 @@ syms_op_params_2u8(SYMS_U8 p1, SYMS_U8 p2){
 }
 
 SYMS_API SYMS_EvalOpParams
-syms_op_params_2u16(SYMS_U16 p1, SYMS_U16 p2){
+syms_eval_op_params_2u16(SYMS_U16 p1, SYMS_U16 p2){
   SYMS_EvalOpParams result = {0};
   result.u16[0] = p1;
   result.u16[1] = p2;
@@ -38,7 +38,7 @@ syms_op_params_2u16(SYMS_U16 p1, SYMS_U16 p2){
 }
 
 SYMS_API void
-syms_op_push(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_EvalOp op, SYMS_EvalOpParams params){
+syms_eval_op_push(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_EvalOp op, SYMS_EvalOpParams params){
   SYMS_ASSERT(op < SYMS_EvalOp_COUNT);
   
   //- setup new op
@@ -58,7 +58,7 @@ syms_op_push(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_EvalOp op, SYMS_Eval
 }
 
 SYMS_API void
-syms_op_push_bytecode(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_String8 bytecode){
+syms_eval_op_push_bytecode(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_String8 bytecode){
   //- setup new op
   SYMS_EvalOpNode *loose_op = syms_push_array(arena, SYMS_EvalOpNode, 1);
   loose_op->op = SYMS_EvalIRExtKind_Bytecode;
@@ -70,23 +70,23 @@ syms_op_push_bytecode(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_String8 byt
 }
 
 SYMS_API void
-syms_op_list_concat_in_place(SYMS_EvalOpList *left, SYMS_EvalOpList *right){
-  left->byte_count += right->byte_count;
-  if (left->last != 0){
-    if (right->last != 0){
-      left->last->next = right->first;
-      left->last = right->last;
+syms_eval_op_list_concat_in_place(SYMS_EvalOpList *left_dst, SYMS_EvalOpList *right_destroyed){
+  left_dst->byte_count += right_destroyed->byte_count;
+  if (left_dst->last != 0){
+    if (right_destroyed->last != 0){
+      left_dst->last->next = right_destroyed->first;
+      left_dst->last = right_destroyed->last;
     }
   }
   else{
-    left->first = right->first;
-    left->last = right->last;
+    left_dst->first = right_destroyed->first;
+    left_dst->last = right_destroyed->last;
   }
-  syms_memzero_struct(right);
+  syms_memzero_struct(right_destroyed);
 }
 
 SYMS_API void
-syms_op_encode_u(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_U64 u){
+syms_eval_op_encode_u(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_U64 u){
   SYMS_EvalOp op = SYMS_EvalOp_ConstU64;
   if (u <= SYMS_U8_MAX){
     op = SYMS_EvalOp_ConstU8;
@@ -97,11 +97,11 @@ syms_op_encode_u(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_U64 u){
   else if (u <= SYMS_U32_MAX){
     op = SYMS_EvalOp_ConstU32;
   }
-  syms_op_push(arena, list, op, syms_op_params(u));
+  syms_eval_op_push(arena, list, op, syms_eval_op_params(u));
 }
 
 SYMS_API void
-syms_op_encode_s(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_S64 s){
+syms_eval_op_encode_s(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_S64 s){
   SYMS_U64 size = 64;
   SYMS_EvalOp op = SYMS_EvalOp_ConstU64;
   if (SYMS_S8_MIN <= s && s <= SYMS_S8_MAX){
@@ -116,26 +116,55 @@ syms_op_encode_s(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_S64 s){
     op = SYMS_EvalOp_ConstU32;
     size = 32;
   }
-  syms_op_push(arena, list, op, syms_op_params((SYMS_U64)s));
+  syms_eval_op_push(arena, list, op, syms_eval_op_params((SYMS_U64)s));
   if (size < 64){
-    syms_op_push(arena, list, SYMS_EvalOp_TruncSigned, syms_op_params(size));
+    syms_eval_op_push(arena, list, SYMS_EvalOp_TruncSigned, syms_eval_op_params(size));
   }
 }
 
 SYMS_API void
-syms_op_encode_reg_section(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_RegSection sec){
+syms_eval_op_encode_reg_section(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_RegSection sec){
   SYMS_U64 u64 = sec.off | sec.size << 16;
-  syms_op_encode_u(arena, list, u64);
+  syms_eval_op_encode_u(arena, list, u64);
 }
 
 SYMS_API void
-syms_op_encode_reg(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_Arch arch, SYMS_RegID reg_id){
+syms_eval_op_encode_reg(SYMS_Arena *arena, SYMS_EvalOpList *list, SYMS_Arch arch, SYMS_RegID reg_id){
   SYMS_RegSection sec = syms_reg_section_from_reg_id(arch, reg_id);
-  syms_op_encode_reg_section(arena, list, sec);
+  syms_eval_op_encode_reg_section(arena, list, sec);
 }
 
+//- bytecode analysis functions
+
+SYMS_API SYMS_B32
+syms_eval_opcode_type_compatible(SYMS_EvalOp op, SYMS_EvalTypeGroup group){
+  SYMS_B32 result = syms_false;
+  switch (op){
+    case SYMS_EvalOp_Neg:case SYMS_EvalOp_Add:case SYMS_EvalOp_Sub:
+    case SYMS_EvalOp_Mul:case SYMS_EvalOp_Div:
+    case SYMS_EvalOp_EqEq:case SYMS_EvalOp_NtEq:
+    case SYMS_EvalOp_LsEq:case SYMS_EvalOp_GrEq:case SYMS_EvalOp_Less:case SYMS_EvalOp_Grtr:
+    {
+      if (group != SYMS_EvalTypeGroup_Other){
+        result = syms_true;
+      }
+    }break;
+    case SYMS_EvalOp_Mod:case SYMS_EvalOp_LShift:case SYMS_EvalOp_RShift:
+    case SYMS_EvalOp_BitNot:case SYMS_EvalOp_BitAnd:case SYMS_EvalOp_BitXor:case SYMS_EvalOp_BitOr:
+    case SYMS_EvalOp_LogNot:case SYMS_EvalOp_LogAnd:case SYMS_EvalOp_LogOr: 
+    {
+      if (group == SYMS_EvalTypeGroup_S || group == SYMS_EvalTypeGroup_U){
+        result = syms_true;
+      }
+    }break;
+  }
+  return(result);
+}
+
+//- bytecode encoder
+
 SYMS_API SYMS_String8
-syms_bytecode_from_op_list(SYMS_Arena *arena, SYMS_EvalOpList *list){
+syms_eval_bytecode_from_op_list(SYMS_Arena *arena, SYMS_EvalOpList *list){
   // allocate output
   SYMS_String8 result = {0};
   result.size = list->byte_count;
@@ -186,35 +215,10 @@ syms_bytecode_from_op_list(SYMS_Arena *arena, SYMS_EvalOpList *list){
   return(result);
 }
 
-SYMS_API SYMS_B32
-syms_eval_opcode_type_compatible(SYMS_EvalOp op, SYMS_EvalTypeGroup group){
-  SYMS_B32 result = syms_false;
-  switch (op){
-    case SYMS_EvalOp_Neg:case SYMS_EvalOp_Add:case SYMS_EvalOp_Sub:
-    case SYMS_EvalOp_Mul:case SYMS_EvalOp_Div:
-    case SYMS_EvalOp_EqEq:case SYMS_EvalOp_NtEq:
-    case SYMS_EvalOp_LsEq:case SYMS_EvalOp_GrEq:case SYMS_EvalOp_Less:case SYMS_EvalOp_Grtr:
-    {
-      if (group != SYMS_EvalTypeGroup_Other){
-        result = syms_true;
-      }
-    }break;
-    case SYMS_EvalOp_Mod:case SYMS_EvalOp_LShift:case SYMS_EvalOp_RShift:
-    case SYMS_EvalOp_BitNot:case SYMS_EvalOp_BitAnd:case SYMS_EvalOp_BitXor:case SYMS_EvalOp_BitOr:
-    case SYMS_EvalOp_LogNot:case SYMS_EvalOp_LogAnd:case SYMS_EvalOp_LogOr: 
-    {
-      if (group == SYMS_EvalTypeGroup_S || group == SYMS_EvalTypeGroup_U){
-        result = syms_true;
-      }
-    }break;
-  }
-  return(result);
-}
-
 //- ir tree helpers functions
 
 SYMS_API SYMS_EvalIRTree*
-syms_ir_tree_const_u(SYMS_Arena *arena, SYMS_U64 v){
+syms_eval_ir_tree_const_u(SYMS_Arena *arena, SYMS_U64 v){
   // choose encoding op
   SYMS_EvalOp op = SYMS_EvalOp_ConstU64;
   if (v < 0x100){
@@ -230,38 +234,38 @@ syms_ir_tree_const_u(SYMS_Arena *arena, SYMS_U64 v){
   // make the tree node
   SYMS_EvalIRTree *result = syms_push_array_zero(arena, SYMS_EvalIRTree, 1);
   result->op = op;
-  result->params = syms_op_params(v);
+  result->params = syms_eval_op_params(v);
   return(result);
 }
 
 SYMS_API SYMS_EvalIRTree*
-syms_ir_tree_unary_op(SYMS_Arena *arena, SYMS_EvalOp op, SYMS_EvalTypeGroup group, SYMS_EvalIRTree *c){
+syms_eval_ir_tree_unary_op(SYMS_Arena *arena, SYMS_EvalOp op, SYMS_EvalTypeGroup group, SYMS_EvalIRTree *c){
   SYMS_EvalIRTree *result = syms_push_array_zero(arena, SYMS_EvalIRTree, 1);
   result->op = op;
-  result->params = syms_op_params(group);
+  result->params = syms_eval_op_params(group);
   result->children[0] = c;
   return(result);
 }
 
 SYMS_API SYMS_EvalIRTree*
-syms_ir_tree_binary_op(SYMS_Arena *arena, SYMS_EvalOp op, SYMS_EvalTypeGroup group,
-                       SYMS_EvalIRTree *l, SYMS_EvalIRTree *r){
+syms_eval_ir_tree_binary_op(SYMS_Arena *arena, SYMS_EvalOp op, SYMS_EvalTypeGroup group,
+                            SYMS_EvalIRTree *l, SYMS_EvalIRTree *r){
   SYMS_EvalIRTree *result = syms_push_array_zero(arena, SYMS_EvalIRTree, 1);
   result->op = op;
-  result->params = syms_op_params(group);
+  result->params = syms_eval_op_params(group);
   result->children[0] = l;
   result->children[1] = r;
   return(result);
 }
 
 SYMS_API SYMS_EvalIRTree*
-syms_ir_tree_binary_op_u(SYMS_Arena *arena, SYMS_EvalOp op, SYMS_EvalIRTree *l, SYMS_EvalIRTree *r){
-  SYMS_EvalIRTree *result = syms_ir_tree_binary_op(arena, op, SYMS_EvalTypeGroup_U, l, r);
+syms_eval_ir_tree_binary_op_u(SYMS_Arena *arena, SYMS_EvalOp op, SYMS_EvalIRTree *l, SYMS_EvalIRTree *r){
+  SYMS_EvalIRTree *result = syms_eval_ir_tree_binary_op(arena, op, SYMS_EvalTypeGroup_U, l, r);
   return(result);
 }
 
 SYMS_API SYMS_EvalIRTree*
-syms_ir_tree_conditional(SYMS_Arena *arena, SYMS_EvalIRTree *c, SYMS_EvalIRTree *l, SYMS_EvalIRTree *r){
+syms_eval_ir_tree_conditional(SYMS_Arena *arena, SYMS_EvalIRTree *c, SYMS_EvalIRTree *l, SYMS_EvalIRTree *r){
   SYMS_EvalIRTree *result = syms_push_array_zero(arena, SYMS_EvalIRTree, 1);
   result->op = SYMS_EvalOp_Cond;
   result->children[0] = c;
@@ -271,7 +275,7 @@ syms_ir_tree_conditional(SYMS_Arena *arena, SYMS_EvalIRTree *c, SYMS_EvalIRTree 
 }
 
 SYMS_API SYMS_EvalIRTree*
-syms_ir_tree_bytecode_no_copy(SYMS_Arena *arena, SYMS_String8 bytecode){
+syms_eval_ir_tree_bytecode_no_copy(SYMS_Arena *arena, SYMS_String8 bytecode){
   SYMS_EvalIRTree *result = syms_push_array_zero(arena, SYMS_EvalIRTree, 1);
   result->op = SYMS_EvalIRExtKind_Bytecode;
   result->params.data = bytecode;

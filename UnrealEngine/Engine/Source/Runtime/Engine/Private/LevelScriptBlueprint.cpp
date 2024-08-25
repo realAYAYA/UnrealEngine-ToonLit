@@ -20,8 +20,9 @@ FString ULevelScriptBlueprint::GetFriendlyName() const
 {
 #if WITH_EDITORONLY_DATA
 	return FriendlyName;
-#endif
+#else
 	return UBlueprint::GetFriendlyName();
+#endif
 }
 
 FString ULevelScriptBlueprint::CreateLevelScriptNameFromLevel(const ULevel* Level)

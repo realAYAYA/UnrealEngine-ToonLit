@@ -7,6 +7,7 @@
 #include "Serialization/PropertyLocalizationDataGathering.h"
 #include "Serialization/ObjectWriter.h"
 #include "Serialization/ObjectReader.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/LinkerLoad.h"
 #include "DataTableCSV.h"
 #include "DataTableJSON.h"
@@ -96,7 +97,7 @@ void UDataTable::LoadStructData(FStructuredArchiveSlot Slot)
 	{
 		if (!HasAnyFlags(RF_ClassDefaultObject) && GetOutermost() != GetTransientPackage())
 		{
-			UE_LOG(LogDataTable, Error, TEXT("Missing RowStruct while loading DataTable '%s'!"), *GetPathName());
+			UE_LOG(LogDataTable, Error, TEXT("Missing RowStruct while loading DataTable '%s', NeedLoad: '%s'!"), *GetPathName(), HasAnyFlags(RF_NeedLoad) ? TEXT("true") : TEXT("false"));
 		}
 		LoadUsingStruct = FTableRowBase::StaticStruct();
 	}
@@ -135,7 +136,7 @@ void UDataTable::SaveStructData(FStructuredArchiveSlot Slot)
 	{
 		if (!HasAnyFlags(RF_ClassDefaultObject) && GetOutermost() != GetTransientPackage())
 		{
-			UE_LOG(LogDataTable, Error, TEXT("Missing RowStruct while saving DataTable '%s'!"), *GetPathName());
+			UE_LOG(LogDataTable, Error, TEXT("Missing RowStruct while saving DataTable '%s', NeedLoad: '%s'!"), *GetPathName(), HasAnyFlags(RF_NeedLoad) ? TEXT("true") : TEXT("false"));
 		}
 		SaveUsingStruct = FTableRowBase::StaticStruct();
 	}
@@ -319,18 +320,25 @@ FTopLevelAssetPath UDataTable::GetRowStructPathName() const
 
 void UDataTable::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UDataTable::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	if (AssetImportData)
 	{
-		OutTags.Add( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
+		Context.AddTag( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
 	}
 
 	// Add the row structure tag
 	{
 		static const FName RowStructureTag = "RowStructure";
-		OutTags.Add( FAssetRegistryTag(RowStructureTag, GetRowStructPathName().ToString(), FAssetRegistryTag::TT_Alphabetical) );
+		Context.AddTag( FAssetRegistryTag(RowStructureTag, GetRowStructPathName().ToString(), FAssetRegistryTag::TT_Alphabetical) );
 	}
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UDataTable::PostInitProperties()
@@ -396,7 +404,7 @@ UScriptStruct& UDataTable::GetEmptyUsingStruct() const
 	{
 		if (!HasAnyFlags(RF_ClassDefaultObject) && GetOutermost() != GetTransientPackage())
 		{
-			UE_LOG(LogDataTable, Error, TEXT("Missing RowStruct while emptying DataTable '%s'!"), *GetPathName());
+			UE_LOG(LogDataTable, Error, TEXT("Missing RowStruct while emptying DataTable '%s', NeedLoad: '%s'!"), *GetPathName(), HasAnyFlags(RF_NeedLoad) ? TEXT("true") : TEXT("false"));
 		}
 		EmptyUsingStruct = FTableRowBase::StaticStruct();
 	}

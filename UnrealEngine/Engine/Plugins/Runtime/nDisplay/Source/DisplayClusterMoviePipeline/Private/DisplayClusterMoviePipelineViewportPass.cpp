@@ -18,7 +18,7 @@
 #include "RHIUtilities.h"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-namespace DisplayClusterMoviePipelineHelpers
+namespace UE::DisplayCluster::MoviePipelineViewportPass
 {
 	static void DisplayClusterWarpBlendImpl_RenderThread(FRHICommandListImmediate& RHICmdList, const FTextureRHIRef& RenderTargetRHI, IDisplayClusterViewportManagerProxy* InViewportManagerProxy, const FString& InViewportId, const FIntPoint& OffsetMin, const FIntPoint& OffsetMax)
 	{
@@ -80,7 +80,7 @@ namespace DisplayClusterMoviePipelineHelpers
 		}
 	}
 };
-using namespace DisplayClusterMoviePipelineHelpers;
+using namespace UE::DisplayCluster::MoviePipelineViewportPass;
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // UDisplayClusterMoviePipelineViewportPassBase
@@ -215,27 +215,24 @@ void UDisplayClusterMoviePipelineViewportPassBase::BlendPostProcessSettings(FSce
 
 int32 UDisplayClusterMoviePipelineViewportPassBase::GetNumCamerasToRender() const
 {
+	// nDisplay always uses viewports as a set of cameras.
 	return DisplayClusterViewports.Num();
+}
+
+int32 UDisplayClusterMoviePipelineViewportPassBase::GetCameraIndexForRenderPass(const int32 InCameraIndex) const
+{
+	// nDisplay always uses viewports as a set of cameras.
+	return InCameraIndex;
 }
 
 FString UDisplayClusterMoviePipelineViewportPassBase::GetCameraName(const int32 InCameraIndex) const
 {
-	if (InCameraIndex >= 0 && InCameraIndex < DisplayClusterViewports.Num())
-	{
-		return DisplayClusterViewports[InCameraIndex];
-	}
-
-	return TEXT("UndefinedCameraName");
+	return DisplayClusterViewports.IsValidIndex(InCameraIndex) ? DisplayClusterViewports[InCameraIndex] : TEXT("UndefinedCameraName");
 }
 
 FString UDisplayClusterMoviePipelineViewportPassBase::GetCameraNameOverride(const int32 InCameraIndex) const
 {
-	if (DisplayClusterViewports.IsValidIndex(InCameraIndex))
-	{
-		return DisplayClusterViewports[InCameraIndex];
-	}
-
-	return TEXT("");
+	return DisplayClusterViewports.IsValidIndex(InCameraIndex) ? DisplayClusterViewports[InCameraIndex] : TEXT("");
 }
 
 void UDisplayClusterMoviePipelineViewportPassBase::ModifyProjectionMatrixForTiling(const FMoviePipelineRenderPassMetrics& InSampleState, const bool bInOrthographic, FMatrix& InOutProjectionMatrix, float& OutDoFSensorScale) const
@@ -434,6 +431,12 @@ void UDisplayClusterMoviePipelineViewportPassBase::GetViewportCutOffset(const FM
 
 void UDisplayClusterMoviePipelineViewportPassBase::ReleaseDisplayCluster()
 {
+	if (DCRootActor)
+	{
+		// Delete all used rendering resources
+		DCRootActor->RemoveViewportManager();
+	}
+
 	// Reset all runtime values
 	DCRootActor = nullptr;
 
@@ -446,6 +449,8 @@ void UDisplayClusterMoviePipelineViewportPassBase::ReleaseDisplayCluster()
 
 bool UDisplayClusterMoviePipelineViewportPassBase::InitializeDisplayCluster()
 {
+	check(IsInGameThread());
+
 	ReleaseDisplayCluster();
 
 	UWorld* CurrentWorld = GetWorld();
@@ -475,15 +480,20 @@ bool UDisplayClusterMoviePipelineViewportPassBase::InitializeDisplayCluster()
 				return false;
 			}
 
-			IDisplayClusterViewportManager* ViewportManager = DCRootActor->GetViewportManager();
-			check(ViewportManager);
-
-			const EDisplayClusterRenderFrameMode RenderFrameMode = EDisplayClusterRenderFrameMode::Mono;
-
-			// Update local node viewports (update\create\delete) and build new render frame
-			if (ViewportManager->UpdateCustomConfiguration(RenderFrameMode, DisplayClusterViewports, DCRootActor))
+			if (IDisplayClusterViewportManager* ViewportManager = DCRootActor->GetOrCreateViewportManager())
 			{
-				return true;
+				// Get preview settings from DCRootActor properties
+				FDisplayClusterViewport_PreviewSettings NewPreviewSettings = DCRootActor->GetPreviewSettings(true);
+				NewPreviewSettings.bPreviewEnable = false;
+
+				// Don't use preview settings for MRQ rendering (same as for game)
+				ViewportManager->GetConfiguration().SetPreviewSettings(NewPreviewSettings);
+
+				// Update local node viewports (update\create\delete) and build new render frame
+				if (ViewportManager->GetConfiguration().UpdateConfigurationForViewportsList(EDisplayClusterRenderFrameMode::MRQ_Mono, GetWorld(), DisplayClusterViewports))
+				{
+					return true;
+				}
 			}
 		}
 	}
@@ -493,7 +503,6 @@ bool UDisplayClusterMoviePipelineViewportPassBase::InitializeDisplayCluster()
 
 	return false;
 }
-
 
 bool UDisplayClusterMoviePipelineViewportPassBase::GetViewportId(int32 InViewportIndex, FString& OutViewportId) const
 {
@@ -548,7 +557,7 @@ IDisplayClusterViewport* UDisplayClusterMoviePipelineViewportPassBase::GetAndCal
 		}
 
 		FDisplayClusterRenderFrame RenderFrame;
-		if (ViewportManager->BeginNewFrame(GameViewportClient->Viewport, CurrentWorld, RenderFrame))
+		if (ViewportManager->BeginNewFrame(GameViewportClient->Viewport, RenderFrame))
 		{
 			// Obtaining the internal viewpoint for a given viewport with stereo eye offset distance.
 			FMinimalViewInfo ViewInfo;
@@ -560,27 +569,14 @@ IDisplayClusterViewport* UDisplayClusterMoviePipelineViewportPassBase::GetAndCal
 			OutView.ViewRotation = ViewInfo.Rotation;
 			OutView.ViewLocation = ViewInfo.Location;
 			
-			const float PassOffsetSwap = DCViewport->GetStereoEyeOffsetDistance(InContextNum);
-
-			FVector ViewOffset = FVector::ZeroVector;
-			const float CfgNCP = GNearClippingPlane;
-			{
-				// Apply computed offset to the view location
-				const FQuat EyeQuat = OutView.ViewRotation.Quaternion();
-				ViewOffset = EyeQuat.RotateVector(FVector(0.0f, PassOffsetSwap, 0.0f));
-				OutView.ViewLocation += ViewOffset;
-			}
-
-			const AWorldSettings* WorldSettings = CurrentWorld->GetWorldSettings();
-			const float InWorldToMeters = (WorldSettings) ? WorldSettings->WorldToMeters : 100.f;
-
 			bool bResult = false;
+			// Obtaining the offset of the stereo eye and the values of the projection clipping plane for the given viewport was moved inside CalculateView().
 			// Perform view calculations on a policy side
-			if (DCViewport->CalculateView(InContextNum, OutView.ViewLocation, OutView.ViewRotation, ViewOffset, InWorldToMeters, CfgNCP, CfgNCP))
+			if (DCViewport->CalculateView(InContextNum, OutView.ViewLocation, OutView.ViewRotation, ViewportManager->GetConfiguration().GetWorldToMeters()))
 			{
 				OutView.ProjectionMatrix = FMatrix::Identity;
 
-				bResult = ViewportManager->IsSceneOpened() && DCViewport->GetProjectionMatrix(InContextNum, OutView.ProjectionMatrix);
+				bResult = ViewportManager->GetConfiguration().IsSceneOpened() && DCViewport->GetProjectionMatrix(InContextNum, OutView.ProjectionMatrix);
 			}
 
 			if (bFrameWarpBlend)

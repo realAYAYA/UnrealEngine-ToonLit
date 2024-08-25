@@ -122,6 +122,12 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 		Result.TexCoords[CoordinateIndex] = Input.TexCoord.xy;
 	}
 #endif
+
+#if ENABLE_NEW_HLSL_GENERATOR
+	EvaluateVertexMaterialAttributes(Result);
+#endif
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
@@ -132,18 +138,17 @@ float3 SafeNormalize(float3 V)
 
 float4 SimulationToTranslatedWorld(float3 SimPosition)
 {
-	FLWCVector3 WorldPosition;
 	if ( BeamTrailVF.bUseLocalSpace )
 	{
-		WorldPosition = LWCMultiply(SimPosition, GetPrimitiveDataFromUniformBuffer().LocalToWorld);
+		FDFMatrix Transform = GetPrimitiveDataFromUniformBuffer().LocalToWorld;
+		return DFTransformLocalToTranslatedWorld(SimPosition, Transform, ResolvedView.PreViewTranslation);
 	}
 	else
 	{
-		WorldPosition = MakeLWCVector3(BeamTrailVF.LWCTile, SimPosition);
+		FLWCVector3 WorldPosition = MakeLWCVector3(BeamTrailVF.LWCTile, SimPosition);
+		FLWCVector3 TranslatedWorldPosition = LWCAdd(WorldPosition, ResolvedView.TileOffset.PreViewTranslation);
+		return float4(LWCToFloat(TranslatedWorldPosition), 1.0f);
 	}
-
-	FLWCVector3 TranslatedWorldPosition = LWCAdd(WorldPosition, ResolvedView.PreViewTranslation);
-	return float4(LWCToFloat(TranslatedWorldPosition), 1.0f);
 }
 
 void GetTangents(FVertexFactoryInput Input,out float4 Right,out float4 Up)

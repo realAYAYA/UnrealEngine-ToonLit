@@ -178,6 +178,11 @@ struct FBlendSample
 	float RateScale = 1.0f;
 
 #if WITH_EDITORONLY_DATA
+	// Whether or not this sample will be moved when the "analyse all" button is used. Note that, even if disabled,
+	// it will still be available for individual sample analysis/moving
+	UPROPERTY(EditAnywhere, Category = BlendSample, meta=(UIMin="0.01", UIMax="2.0", ClampMin="0.01", ClampMax="64.0"))
+	uint8 bIncludeInAnalyseAll : 1;
+
 	UPROPERTY(transient)
 	uint8 bIsValid : 1;
 
@@ -191,6 +196,7 @@ struct FBlendSample
 		, SampleValue(0.f)
 		, RateScale(1.0f)
 #if WITH_EDITORONLY_DATA
+		, bIncludeInAnalyseAll(true)
 		, bIsValid(false)
 		, CachedMarkerDataUpdateCounter(INDEX_NONE)
 #endif // WITH_EDITORONLY_DATA
@@ -495,6 +501,12 @@ public:
 	* If nothing found, return INDEX_NONE
 	*/
 	virtual int32 GetPerBoneInterpolationIndex(const FCompactPoseBoneIndex& InCompactPoseBoneIndex, const FBoneContainer& RequiredBones, const IInterpolationIndexProvider::FPerBoneInterpolationData* Data) const override;
+
+	/**
+	* Get PerBoneInterpolationIndex for the input BoneIndex
+	* If nothing found, return INDEX_NONE
+	*/
+	virtual int32 GetPerBoneInterpolationIndex(const FSkeletonPoseBoneIndex InSkeletonBoneIndex, const USkeleton* TargetSkeleton, const IInterpolationIndexProvider::FPerBoneInterpolationData* Data) const override;
 	// End IInterpolationIndexProvider Overrides
 
 	/** Returns whether or not the given additive animation type is compatible with the blendspace type */
@@ -561,6 +573,16 @@ public:
 	 */
 	ENGINE_API bool UpdateBlendSamples(const FVector& InBlendSpacePosition, float InDeltaTime, TArray<FBlendSampleData>& InOutSampleDataCache, int32& InOutCachedTriangulationIndex) const;
 	
+	/**
+	 * Resets a cached set of blend samples to match a given input time. All samples will be advanced using sync marker if possible, otherwise, their time will just be set match the input normalized time.
+	 * 
+	 * @param	InOutSampleDataCache			The sample data cache to use.
+	 * @param	InNormalizedCurrentTime			The time to match when advancing samples. 
+	 * @param	bLooping						If true, advance samples as a looping blend space would.
+	 * @param	bMatchSyncPhases				If true, all follower samples will pass the same amount of markers the leader sample has passed to match its sync phase. Otherwise, followers samples will only match their next valid sync position.  
+	 */
+	ENGINE_API void ResetBlendSamples(TArray<FBlendSampleData>& InOutSampleDataCache, float InNormalizedCurrentTime, bool bLooping, bool bMatchSyncPhases = true) const;
+
 	/**
 	 * Allows the user to iterate through all the data samples available in the blend space.
 	 * @param Func The function to run for each blend sample

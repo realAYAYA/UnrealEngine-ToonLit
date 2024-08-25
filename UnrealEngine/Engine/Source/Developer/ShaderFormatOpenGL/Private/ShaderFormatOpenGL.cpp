@@ -2,6 +2,10 @@
 //
 
 #include "ShaderFormatOpenGL.h"
+
+#include "ShaderCompilerCommon.h"
+#include "ShaderPreprocessor.h"
+#include "ShaderPreprocessTypes.h"
 #include "HAL/FileManager.h"
 #include "Modules/ModuleManager.h"
 #include "Interfaces/IShaderFormat.h"
@@ -11,16 +15,22 @@
 
 static FName NAME_GLSL_150_ES3_1(TEXT("GLSL_150_ES31"));
 static FName NAME_GLSL_ES3_1_ANDROID(TEXT("GLSL_ES3_1_ANDROID"));
- 
-class FShaderFormatGLSL : public IShaderFormat
-{
-	enum
-	{
-		/** Version for shader format, this becomes part of the DDC key. */
-		UE_SHADER_GLSL_VER = 107,
-	};
 
-	void CheckFormat(FName Format) const
+extern bool ShouldUseDXC(FShaderCompilerFlags Flags);
+
+extern void CompileOpenGLShader(
+	const FShaderCompilerInput& Input,
+	const FShaderPreprocessOutput& InPreprocessOutput,
+	FShaderCompilerOutput& Output,
+	const FString& WorkingDirectory,
+	GLSLVersion Version);
+
+/** Version for shader format, this becomes part of the DDC key. */
+static const FGuid UE_SHADER_GLSL_VER = FGuid("33988E19-4962-4762-8219-F15483DA764A");
+
+class FShaderFormatGLSL : public UE::ShaderCompilerCommon::FBaseShaderFormat 
+{
+	static void CheckFormat(FName Format)
 	{
 		check(Format == NAME_GLSL_150_ES3_1 || Format == NAME_GLSL_ES3_1_ANDROID);
 	}
@@ -29,21 +39,16 @@ public:
 	virtual uint32 GetVersion(FName Format) const override
 	{
 		CheckFormat(Format);
-		uint32 GLSLVersion = 0;
-		if (Format == NAME_GLSL_150_ES3_1 || Format == NAME_GLSL_ES3_1_ANDROID)
+		FGuid GLSLVersion{};
+		if (ensure(Format == NAME_GLSL_150_ES3_1 || Format == NAME_GLSL_ES3_1_ANDROID))
 		{
 			GLSLVersion = UE_SHADER_GLSL_VER;
 		}
-		else
-		{
-			check(0);
-		}
 
-		uint32 Version = ((HLSLCC_VersionMinor & 0xff) << 8) | (GLSLVersion & 0xff);
+		const uint32 BaseHash = GetTypeHash(GLSLVersion);
 
-	#if UE_OPENGL_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
-		Version = HashCombine(Version, 0x75E2FE85);
-	#endif // UE_OPENGL_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
+		uint32 Version = GetTypeHash(HLSLCC_VersionMinor);
+		Version = HashCombine(Version, BaseHash);
 
 		return Version;
 	}
@@ -70,18 +75,44 @@ public:
 		}
 	}
 
-	virtual void CompileShader(FName Format, const struct FShaderCompilerInput& Input, struct FShaderCompilerOutput& Output,const FString& WorkingDirectory) const override
+	virtual void ModifyShaderCompilerInput(FShaderCompilerInput& Input) const override
 	{
-		CheckFormat(Format);
+		GLSLVersion Version = TranslateFormatNameToEnum(Input.ShaderFormat);
+		switch (Version)
+		{
+		case GLSL_ES3_1_ANDROID:
+			Input.Environment.SetDefine(TEXT("COMPILER_GLSL_ES3_1"), 1);
+			Input.Environment.SetDefine(TEXT("ES3_1_PROFILE"), 1);
+			break;
 
-		GLSLVersion Version = TranslateFormatNameToEnum(Format);
+		case GLSL_150_ES3_1:
+			Input.Environment.SetDefine(TEXT("COMPILER_GLSL"), 1);
+			Input.Environment.SetDefine(TEXT("ES3_1_PROFILE"), 1);
+			Input.Environment.SetDefine(TEXT("row_major"), TEXT(""));
+			break;
 
-		FOpenGLFrontend Frontend;
-		// the frontend will run the cross compiler
-		Frontend.CompileShader(Input, Output, WorkingDirectory, Version);
+		default:
+			check(0);
+		}
+		Input.Environment.SetDefine(TEXT("OPENGL_PROFILE"), 1);
+
+		const bool bUseDXC = ShouldUseDXC(Input.Environment.CompilerFlags);
+		Input.Environment.SetDefine(TEXT("COMPILER_HLSLCC"), bUseDXC ? 2 : 1);
+		Input.Environment.SetDefine(TEXT("COMPILER_SUPPORTS_ATTRIBUTES"), (uint32)1);
+
+		if (Input.Environment.FullPrecisionInPS || (IsValidRef(Input.SharedEnvironment) && Input.SharedEnvironment->FullPrecisionInPS))
+		{
+			Input.Environment.SetDefine(TEXT("FORCE_FLOATS"), (uint32)1);
+		}
 	}
 
-	virtual const TCHAR* GetPlatformIncludeDirectory() const
+	virtual void CompilePreprocessedShader(const FShaderCompilerInput& Input, const FShaderPreprocessOutput& PreprocessOutput, FShaderCompilerOutput& Output, const FString& WorkingDirectory) const override
+	{
+		CheckFormat(Input.ShaderFormat);
+		CompileOpenGLShader(Input, PreprocessOutput, Output, WorkingDirectory, TranslateFormatNameToEnum(Input.ShaderFormat));		
+	}
+
+	virtual const TCHAR* GetPlatformIncludeDirectory() const override
 	{
 		return TEXT("GL");
 	}
@@ -91,17 +122,17 @@ public:
  * Module for OpenGL shaders
  */
 
-static IShaderFormat* Singleton = NULL;
+static IShaderFormat* Singleton = nullptr;
 
 class FShaderFormatOpenGLModule : public IShaderFormatModule
 {
 public:
-	virtual ~FShaderFormatOpenGLModule()
+	virtual ~FShaderFormatOpenGLModule() override
 	{
 		delete Singleton;
-		Singleton = NULL;
+		Singleton = nullptr;
 	}
-	virtual IShaderFormat* GetShaderFormat()
+	virtual IShaderFormat* GetShaderFormat() override
 	{
 		if (!Singleton)
 		{

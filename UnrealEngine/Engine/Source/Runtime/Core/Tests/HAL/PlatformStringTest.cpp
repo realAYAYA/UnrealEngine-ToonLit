@@ -2,6 +2,8 @@
 
 #include "HAL/PlatformString.h"
 
+#include "Misc/CString.h"
+#include "Templates/UnrealTemplate.h"
 #include "Tests/TestHarnessAdapter.h"
 
 #if WITH_TESTS
@@ -24,9 +26,9 @@ TEST_CASE_NAMED(FPlatformStringTestGetVarArgs, "System::Core::HAL::PlatformStrin
 
 TEST_CASE_NAMED(FPlatformStringTestStrnlen, "System::Core::HAL::PlatformString::Strnlen", "[ApplicationContextMask][EngineFilter]")
 {
-	CHECK_MESSAGE(TEXT("Strnlen(nullptr, 0)"), FPlatformString::Strnlen((const ANSICHAR*)nullptr, 0) == 0);
-	CHECK_MESSAGE(TEXT("Strnlen(\"\", 0)"), FPlatformString::Strnlen("", 0) == 0);
-	CHECK_MESSAGE(TEXT("Strnlen(\"1\", 0)"), FPlatformString::Strnlen("1", 0) == 0);
+	CHECK_MESSAGE(TEXT("Strnlen(nullptr, 0)"), FPlatformString::Strnlen((const ANSICHAR*)nullptr, 0) == 0); //-V575
+	CHECK_MESSAGE(TEXT("Strnlen(\"\", 0)"), FPlatformString::Strnlen("", 0) == 0);  //-V575
+	CHECK_MESSAGE(TEXT("Strnlen(\"1\", 0)"), FPlatformString::Strnlen("1", 0) == 0);  //-V575
 	CHECK_MESSAGE(TEXT("Strnlen(\"1\", 1)"), FPlatformString::Strnlen("1", 1) == 1);
 	CHECK_MESSAGE(TEXT("Strnlen(\"1\", 2)"), FPlatformString::Strnlen("1", 2) == 1);
 	CHECK_MESSAGE(TEXT("Strnlen(\"123\", 2)"), FPlatformString::Strnlen("123", 2) == 2);

@@ -42,5 +42,20 @@ void ResolveRenderPassTargets(const FRHIRenderPassInfo& RenderPassInfo, TFunctio
 	ResolveTexture({ DSV.DepthStencilTarget, DSV.ResolveTarget, 0, 0, RenderPassInfo.ResolveRect });
 }
 
+FRHIViewDesc::EDimension AdjustViewInfoDimensionForNarrowing(const FRHIViewDesc::FTexture::FViewInfo& ViewInfo, const FRHITextureDesc& TextureDesc)
+{
+	FRHIViewDesc::EDimension ViewInfoDimension = ViewInfo.Dimension;
+	// some RHIs do not support creating a 2D view to index a specific slice in a 2D array/texture. 
+	// But they do support binding a single slice 2D array as a Texture2D in the shader
+	if (ViewInfoDimension == FRHIViewDesc::EDimension::Texture2D && (TextureDesc.IsTextureCube() || TextureDesc.IsTextureArray()))
+	{
+		ViewInfoDimension = FRHIViewDesc::EDimension::Texture2DArray;
+		ensureAlwaysMsgf(ViewInfo.ArrayRange.Num == 1 || TextureDesc.ArraySize == 1, TEXT("Trying to create a 2D SRV with more than 1 element"));
+	}
+
+	return ViewInfoDimension;
+}
+
+
 } //! RHICore
 } //! UE

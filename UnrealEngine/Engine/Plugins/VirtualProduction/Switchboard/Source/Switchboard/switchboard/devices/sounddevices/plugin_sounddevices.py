@@ -5,7 +5,7 @@ from switchboard.devices.device_widget_base import DeviceWidget
 from switchboard.switchboard_logging import LOGGER
 import switchboard.switchboard_utils as utils
 
-from PySide2 import QtWidgets
+from PySide6 import QtWidgets
 
 import datetime
 import json

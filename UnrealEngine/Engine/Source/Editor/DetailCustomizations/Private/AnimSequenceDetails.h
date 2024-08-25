@@ -23,6 +23,7 @@
 class FEditorViewportClient;
 class FString;
 class IDetailCategoryBuilder;
+class IDetailChildrenBuilder;
 class IDetailLayoutBuilder;
 class IPropertyHandle;
 class STextBlock;
@@ -66,7 +67,7 @@ private:
 	TSharedPtr<IPropertyHandle> RetargetSourceAssetHandle;
 
 	TSharedPtr<class SSearchableComboBox> RetargetSourceComboBox;
-	TArray< TSharedPtr< FString > >						RetargetSourceComboList;
+	TArray< TSharedPtr< FString > > RetargetSourceComboList;
 
 	TSharedRef<SWidget> MakeRetargetSourceComboWidget( TSharedPtr<FString> InItem );
 	void OnRetargetSourceChanged( TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo  );
@@ -81,6 +82,11 @@ private:
 	FDelegateHandle OnDelegateRetargetSourceChangedDelegateHandle;
 	void RegisterRetargetSourceChanged();
 	void DelegateRetargetSourceChanged();
+
+	// *** Animation Track Names ***
+	TSharedPtr<IPropertyHandle> AnimationTrackNamesHandle;
+	TArray<FName> AnimationTrackNamesList;
+	void GenerateAnimationTrackNameArrayElementWidget(TSharedRef<IPropertyHandle> PropertyHandle, int32 ArrayIndex, IDetailChildrenBuilder& ChildrenBuilder, IDetailLayoutBuilder* DetailLayout);
 
 	// button handler for Apply Compression
 	// cache all anim sequences that are selected

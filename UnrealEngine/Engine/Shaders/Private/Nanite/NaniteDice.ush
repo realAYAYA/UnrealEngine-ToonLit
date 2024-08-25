@@ -7,6 +7,8 @@
 
 #if NANITE_TESSELLATION
 
+#define NANITE_TESSELLATION_DICE_USE_LDS 1
+
 void RasterizeDicedTri(
 	FRasterTri		Tri,
 	FRaster			Raster,
@@ -44,12 +46,16 @@ void RasterizeDicedTri(
 	}
 }
 
+groupshared float4 GroupPointPackedClip[ THREADGROUP_SIZE ];	// TODO: Convert to PackedClip ?
+groupshared float4 GroupNormalPackedClip[ THREADGROUP_SIZE ];
+
 struct FDiceTask
 {
 	FRaster			Raster;
 	FMaterialShader	Shader;
 	uint			PixelValue;
 	uint2			VisualizeValues;
+	float4			UVDensities;
 	bool			bReverseWinding;
 
 	FNaniteTransformedVert	Vert;
@@ -59,17 +65,18 @@ struct FDiceTask
 	uint	PatchData;
 
 	// Vertex cache
-	//uint	FirstVert;
-	//uint&	NumCached;
+	float3 CachedPackedSubpixelPosition;
 
 	void Init( float3 TessFactors, uint3 VertIndexes, uint TriIndex )
 	{
-		TessellatedPatch.Init( TessFactors, VertIndexes );
+		TessellatedPatch.Init( TessFactors, VertIndexes, true );
 	
 		PatchData  = VertIndexes.x << 0;
 		PatchData |= VertIndexes.y << 8;
 		PatchData |= VertIndexes.z << 16;
 		PatchData |= TriIndex << 24;
+
+		CachedPackedSubpixelPosition = 0.0f;
 	}
 
 	FDiceTask CreateChild( uint ParentLaneIndex )
@@ -80,12 +87,12 @@ struct FDiceTask
 		ChildTask.Shader			= Shader;
 		ChildTask.PixelValue		= PixelValue;
 		ChildTask.VisualizeValues	= VisualizeValues;
+		ChildTask.UVDensities		= UVDensities;
 		ChildTask.bReverseWinding	= bReverseWinding;
 
 		ChildTask.TessellatedPatch	= WaveReadLaneAt( TessellatedPatch, ParentLaneIndex );
 		ChildTask.Encoded			= WaveReadLaneAt( Encoded, ParentLaneIndex );
 		ChildTask.PatchData			= WaveReadLaneAt( PatchData, ParentLaneIndex );
-		//ChildTask.FirstVert		= WaveReadLaneAt( FirstVert, ParentLaneIndex );
 
 		uint3 PatchVertIndexes;
 		PatchVertIndexes.x = ( ChildTask.PatchData >>  0 ) & 0xff;
@@ -93,18 +100,42 @@ struct FDiceTask
 		PatchVertIndexes.z = ( ChildTask.PatchData >> 16 ) & 0xff;
 
 		FNaniteTransformedTri TransformedTri = MakeTransformedNaniteTriangle( Vert, PatchVertIndexes );
+	
+	#if NANITE_TESSELLATION_DICE_USE_LDS
+		// Alleviate DS pressure by using wide LDS loads instead of single component permutes
+		for (uint Corner = 0; Corner < 3; ++Corner)
+		{
+			const uint SourceIndex = PatchVertIndexes[ Corner ];
+			TransformedTri.Verts[ Corner ].PointClip	= GroupPointPackedClip[ SourceIndex ];
+			TransformedTri.Verts[ Corner ].NormalClip	= GroupNormalPackedClip[ SourceIndex ];
+		}
+	#endif
+
 		ChildTask.Shader.TransformedTri = TransformedTri;	// TODO mutable. This is weird
 
 		return ChildTask;
 	}
+	
+	void CacheToLDS()
+	{
+	#if NANITE_TESSELLATION_DICE_USE_LDS
+		const uint LaneIndex = WaveGetLaneIndex();
 
-	void RunChild( uint LocalItemIndex );
+		GroupPointPackedClip[LaneIndex] = Vert.PointClip;
+		GroupNormalPackedClip[LaneIndex] = Vert.NormalClip;
+
+		GroupMemoryBarrierWithGroupSync();
+	#endif
+	}
+	
+
+	void RunChild( inout FDiceTask ParentTask, bool bActive, uint LocalItemIndex );
 };
 
 //groupshared float3			VertexCache[ THREADGROUP_SIZE ];
 //#define VertCache(x)		VertexCache[ QueueOffset + ( (x) & ( LaneCount - 1 ) ) ]
 
-void FDiceTask::RunChild( uint LocalItemIndex )
+void FDiceTask::RunChild( inout FDiceTask ParentTask, bool bActive, uint LocalItemIndex )
 {
 	uint PatchIndex = PatchData >> 24;
 
@@ -114,8 +145,63 @@ void FDiceTask::RunChild( uint LocalItemIndex )
 		VertIndexes.yz = VertIndexes.zy;
 	
 	float4 Verts[3];
+
+#if 1
+	const float3 TessFactors = TessellatedPatch.GetTessFactors();
+
+	FBarycentrics Barycentrics;
+	Barycentrics.Value = TessellatedPatch.GetVert( LocalItemIndex );
+	Barycentrics.Value_dx = 0;	// float3( -1, 1, 0 ) / TessFactors.x;
+	Barycentrics.Value_dy = 0;	// float3( 0, -1, 1 ) / TessFactors.y;
 	
-#if 0
+	const bool bOrtho = IsOrthoProjection( Shader.NaniteView.ViewToClip );
+
+	float3 CornerPackedSubpixel0;	// sub-pixel xy, linear z
+
+	// TODO: Unify these paths by having EvaluateDomain operate directly in PackedClip space
+	BRANCH
+	if (bOrtho)
+	{
+		// Optimize out .w work and lane permutes
+		const float3 PointPackedClip = Shader.EvaluateDomain( UVDensities, Barycentrics ).xyz;
+		CornerPackedSubpixel0 = PointPackedClip.xyz;
+	}
+	else
+	{
+		// Optimize out .z work and lane permutes
+		const float3 PointPackedClip = Shader.EvaluateDomain( UVDensities, Barycentrics ).xyw;
+		CornerPackedSubpixel0 = float3( PointPackedClip.xy / PointPackedClip.z, PointPackedClip.z );
+	}
+
+	CornerPackedSubpixel0.xy = CornerPackedSubpixel0.xy * Raster.ViewportScale + Raster.ViewportBias;
+	CornerPackedSubpixel0.xy = floor( CornerPackedSubpixel0.xy );
+
+	const int3 RelativeVertIndexes = WaveGetLaneIndex() - ( LocalItemIndex - VertIndexes );	// Relative to thread 0 in wave
+	const uint3 ReadLaneIndex = uint3( RelativeVertIndexes ) & ( WaveGetLaneCount() - 1u );
+
+	float3 CornerPackedSubpixel1 = WaveReadLaneAt( ParentTask.CachedPackedSubpixelPosition, ReadLaneIndex.y );
+	float3 CornerPackedSubpixel2 = WaveReadLaneAt( ParentTask.CachedPackedSubpixelPosition, ReadLaneIndex.z );
+
+	ParentTask.CachedPackedSubpixelPosition = CornerPackedSubpixel0;
+
+	CornerPackedSubpixel1 = select( RelativeVertIndexes.y >= 0, WaveReadLaneAt( ParentTask.CachedPackedSubpixelPosition, ReadLaneIndex.y ), CornerPackedSubpixel1 );
+	CornerPackedSubpixel2 = select( RelativeVertIndexes.z >= 0, WaveReadLaneAt( ParentTask.CachedPackedSubpixelPosition, ReadLaneIndex.z ), CornerPackedSubpixel2 );
+
+	BRANCH
+	if (bOrtho)
+	{
+		Verts[0] = float4( CornerPackedSubpixel0, 1.0f );
+		Verts[1] = float4( CornerPackedSubpixel1, 1.0f );
+		Verts[2] = float4( CornerPackedSubpixel2, 1.0f );
+	}
+	else
+	{
+		Verts[0] = float4( CornerPackedSubpixel0.xy, float2( ClipZFromLinearZ( Shader.NaniteView, CornerPackedSubpixel0.z ), 1.0f ) / CornerPackedSubpixel0.z );
+		Verts[1] = float4( CornerPackedSubpixel1.xy, float2( ClipZFromLinearZ( Shader.NaniteView, CornerPackedSubpixel1.z ), 1.0f ) / CornerPackedSubpixel1.z );
+		Verts[2] = float4( CornerPackedSubpixel2.xy, float2( ClipZFromLinearZ( Shader.NaniteView, CornerPackedSubpixel2.z ), 1.0f ) / CornerPackedSubpixel2.z );
+	}
+	
+#elif 0
 	// Grab what's there for this triangle before updating cache. Otherwise cache would need to be double size.
 	bool3 VertRead = false;
 
@@ -140,11 +226,11 @@ void FDiceTask::RunChild( uint LocalItemIndex )
 		UVW = TransformBarycentrics( UVW );
 
 		FBarycentrics Barycentrics;
-		Barycentrics.UVW 	= UVW;
-		Barycentrics.UVW_dx	= 0;
-		Barycentrics.UVW_dy	= 0;
+		Barycentrics.Value	 	= UVW;
+		Barycentrics.Value_dx	= 0;
+		Barycentrics.Value_dy	= 0;
 
-		VertCache( FirstVert + MaxVertIndex ) = CalculateSubpixelCoordinates( Raster, Shader.EvaluateDomain( Barycentrics ) );
+		VertCache( FirstVert + MaxVertIndex ) = CalculateSubpixelCoordinates( Raster, Shader.EvaluateDomain( PatchIndex, Barycentrics ) );
 	}
 			
 	GroupMemoryBarrier();
@@ -164,20 +250,24 @@ void FDiceTask::RunChild( uint LocalItemIndex )
 	for( uint i = 0; i < 3; i++ )
 	{
 		FBarycentrics Barycentrics;
-		Barycentrics.UVW	= TessellatedPatch.GetVert( VertIndexes[i] );
-		Barycentrics.UVW_dx	= 0;	// float3( -1, 1, 0 ) / TessFactors.x;
-		Barycentrics.UVW_dy	= 0;	// float3( 0, -1, 1 ) / TessFactors.y;
+		Barycentrics.Value		= TessellatedPatch.GetVert( VertIndexes[i] );
+		Barycentrics.Value_dx	= 0;	// float3( -1, 1, 0 ) / TessFactors.x;
+		Barycentrics.Value_dy	= 0;	// float3( 0, -1, 1 ) / TessFactors.y;
 
-		Verts[i] = CalculateSubpixelCoordinates( Raster, Shader.EvaluateDomain( Barycentrics ) );
+		Verts[i] = CalculateSubpixelCoordinates( Raster, Shader.EvaluateDomain( PatchIndex, Barycentrics ) );
 	}
 #endif
 
 	FRasterTri Tri = SetupTriangle< NANITE_SUBPIXEL_SAMPLES, !NANITE_TWO_SIDED >( Raster.ScissorRect, Verts );
 
+	// Immediate dicing doesn't doesn't do near plane culling
+	if( !bActive || min3( Verts[0].w, Verts[1].w, Verts[2].w ) < 0 )
+		Tri.bIsValid = false;
+
 	if( Tri.bIsValid )
 	{
 	#if VISUALIZE
-		VisualizeValues.x = LocalItemIndex;
+		VisualizeValues.x = GetVisualizeValues(1u /*AddValue */, 0u /* SubPatch */, LocalItemIndex);
 	#endif
 
 		RasterizeDicedTri(
@@ -198,7 +288,7 @@ struct FClusterSplitTask
 	void				Init( float3 TessFactors, uint VisibleClusterIndex, uint TriIndex );
 
 	FClusterSplitTask	CreateChild( uint ParentLaneIndex );
-	void				RunChild( uint LocalItemIndex );
+	void				RunChild( inout FClusterSplitTask ParentTask, bool bActive, uint LocalItemIndex );
 };
 
 void FClusterSplitTask::Init( float3 TessFactors, uint VisibleClusterIndex, uint TriIndex )
@@ -208,7 +298,7 @@ void FClusterSplitTask::Init( float3 TessFactors, uint VisibleClusterIndex, uint
 	Encoded.z = BarycentricMax << 16;
 	Encoded.w = 0;
 
-	TessellatedPatch.Init( TessFactors, Encoded.yzw );
+	TessellatedPatch.Init( TessFactors, Encoded.yzw, false );
 }
 
 FClusterSplitTask FClusterSplitTask::CreateChild( uint ParentLaneIndex )
@@ -219,8 +309,10 @@ FClusterSplitTask FClusterSplitTask::CreateChild( uint ParentLaneIndex )
 	return ChildTask;
 }
 
-void FClusterSplitTask::RunChild( uint LocalItemIndex )
+void FClusterSplitTask::RunChild( inout FClusterSplitTask ParentTask, bool bActive, uint LocalItemIndex )
 {
+	if( !bActive )
+		return;
 #if 0
 	Encoded.yzw = TessellatedPatch.GetTriangleEncoded( LocalItemIndex );
 #else

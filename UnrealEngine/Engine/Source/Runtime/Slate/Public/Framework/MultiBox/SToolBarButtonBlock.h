@@ -87,9 +87,9 @@ public:
 	SLATE_API virtual bool HasIcon() const override;
 
 	/** Set optional delegate to customize when a menu appears instead of the widget, such as in toolbars */
-	SLATE_API void SetCustomMenuDelegate( FNewMenuDelegate& InOnFillMenuDelegate);
+	SLATE_API void SetCustomMenuDelegate(const FNewMenuDelegate& InOnFillMenuDelegate);
 
-	SLATE_API void SetOnGetMenuContent( FOnGetContent& OnGetMenuContent);
+	SLATE_API void SetOnGetMenuContent(const FOnGetContent& OnGetMenuContent);
 
 protected:
 	

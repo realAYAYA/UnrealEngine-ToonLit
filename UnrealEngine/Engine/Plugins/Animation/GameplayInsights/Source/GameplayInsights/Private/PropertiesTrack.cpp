@@ -172,7 +172,7 @@ namespace RewindDebugger
 				{
 					// Get parent property
 					TConstArrayView<TSharedPtr<FPropertyTrack>> Parent = Stack.Top();
-					Stack.Pop(false);
+					Stack.Pop(EAllowShrinking::No);
 				
 					// Ensure child properties are deleted
 					for (const TSharedPtr<FPropertyTrack> & Child : Parent)
@@ -290,11 +290,17 @@ namespace RewindDebugger
 		return TargetTypeName;
 	}
 
+	static const FName PropertiesTrackCreatorName("PropertyWatch");
 	FName FPropertiesTrackCreator::GetNameInternal() const
 	{
-		static const FName PropertiesTrackCreatorName("PropertyWatch");
 		return PropertiesTrackCreatorName;
 	}
+
+	void FPropertiesTrackCreator::GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const 
+    {
+    	Types.Add({PropertiesTrackCreatorName, LOCTEXT("Properties", "Properties")});
+    }
+
 
 	TSharedPtr<FRewindDebuggerTrack> FPropertiesTrackCreator::CreateTrackInternal(uint64 ObjectId) const
 	{
@@ -307,6 +313,7 @@ namespace RewindDebugger
 
 	bool FPropertiesTrackCreator::HasDebugInfoInternal(uint64 ObjectId) const
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(FPropertiesTrack::HasDebugInfoInternal);
 		bool bHasData = false;
 
 		if (const TraceServices::IAnalysisSession* AnalysisSession = IRewindDebugger::Instance()->GetAnalysisSession())

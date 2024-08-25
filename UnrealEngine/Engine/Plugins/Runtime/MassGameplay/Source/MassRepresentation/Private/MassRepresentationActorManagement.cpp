@@ -14,12 +14,14 @@ float UMassRepresentationActorManagement::GetSpawnPriority(const FMassRepresenta
 }
 
 AActor* UMassRepresentationActorManagement::GetOrSpawnActor(UMassRepresentationSubsystem& RepresentationSubsystem, FMassEntityManager& EntityManager
-	, const FMassEntityHandle MassAgent, FMassActorFragment& ActorInfo, const FTransform& Transform, const int16 TemplateActorIndex
-	, FMassActorSpawnRequestHandle& SpawnRequestHandle, const float Priority) const
+	, const FMassEntityHandle MassAgent, const FTransform& Transform, const int16 TemplateActorIndex
+	, FMassActorSpawnRequestHandle& InOutSpawnRequestHandle, const float Priority) const
 {
-	return RepresentationSubsystem.GetOrSpawnActorFromTemplate(MassAgent, Transform, TemplateActorIndex, SpawnRequestHandle, Priority,
-		FMassActorPreSpawnDelegate::CreateUObject(this, &UMassRepresentationActorManagement::OnPreActorSpawn, &EntityManager),
-		FMassActorPostSpawnDelegate::CreateUObject(this, &UMassRepresentationActorManagement::OnPostActorSpawn, &EntityManager));
+	TSharedRef<FMassEntityManager> SharedEntityManager = EntityManager.AsShared();
+
+	return RepresentationSubsystem.GetOrSpawnActorFromTemplate(MassAgent, Transform, TemplateActorIndex, InOutSpawnRequestHandle, Priority,
+		FMassActorPreSpawnDelegate::CreateUObject(this, &UMassRepresentationActorManagement::OnPreActorSpawn, SharedEntityManager),
+		FMassActorPostSpawnDelegate::CreateUObject(this, &UMassRepresentationActorManagement::OnPostActorSpawn, SharedEntityManager));
 }
 
 
@@ -51,10 +53,8 @@ void UMassRepresentationActorManagement::TeleportActor(const FTransform& Transfo
 	}
 }
 
-void UMassRepresentationActorManagement::OnPreActorSpawn(const FMassActorSpawnRequestHandle& SpawnRequestHandle, FConstStructView SpawnRequest, FMassEntityManager* EntityManager) const
+void UMassRepresentationActorManagement::OnPreActorSpawn(const FMassActorSpawnRequestHandle& SpawnRequestHandle, FConstStructView SpawnRequest, TSharedRef<FMassEntityManager> EntityManager) const
 {
-	check(EntityManager);
-
 	const FMassActorSpawnRequest& MassActorSpawnRequest = SpawnRequest.Get<const FMassActorSpawnRequest>();
 	const FMassEntityView EntityView(*EntityManager, MassActorSpawnRequest.MassAgent);
 	FMassActorFragment& ActorInfo = EntityView.GetFragmentData<FMassActorFragment>();
@@ -82,10 +82,9 @@ void UMassRepresentationActorManagement::OnPreActorSpawn(const FMassActorSpawnRe
 	}
 }
 
-EMassActorSpawnRequestAction UMassRepresentationActorManagement::OnPostActorSpawn(const FMassActorSpawnRequestHandle& SpawnRequestHandle, FConstStructView SpawnRequest, FMassEntityManager* EntityManager) const
+EMassActorSpawnRequestAction UMassRepresentationActorManagement::OnPostActorSpawn(const FMassActorSpawnRequestHandle& SpawnRequestHandle
+	, FConstStructView SpawnRequest, TSharedRef<FMassEntityManager> EntityManager) const
 {
-	check(EntityManager);
-
 	const FMassActorSpawnRequest& MassActorSpawnRequest = SpawnRequest.Get<const FMassActorSpawnRequest>();
 	checkf(MassActorSpawnRequest.SpawnedActor, TEXT("Expecting valid spawned actor"));
 
@@ -115,7 +114,8 @@ void UMassRepresentationActorManagement::ReleaseAnyActorOrCancelAnySpawning(FMas
 }
 
 void UMassRepresentationActorManagement::ReleaseAnyActorOrCancelAnySpawning(UMassRepresentationSubsystem& RepresentationSubsystem
-	, const FMassEntityHandle MassAgent, FMassActorFragment& ActorInfo, FMassRepresentationFragment& Representation)
+	, const FMassEntityHandle MassAgent, FMassActorFragment& ActorInfo, FMassRepresentationFragment& Representation
+	, UMassActorSubsystem* CachedActorSubsystem)
 {
 	// This method can only release owned by mass actors
 	AActor* Actor = ActorInfo.GetOwnedByMassMutable();
@@ -124,7 +124,7 @@ void UMassRepresentationActorManagement::ReleaseAnyActorOrCancelAnySpawning(UMas
 		// WARNING!
 		// Need to reset before ReleaseTemplateActorOrCancelSpawning as this action might move the entity to a new archetype and
 		// so the Fragment passed in parameters would not be valid anymore.
-		ActorInfo.ResetAndUpdateHandleMap();
+		ActorInfo.ResetAndUpdateHandleMap(CachedActorSubsystem);
 	}
 	// Try releasing both as we can have a low res actor and a high res spawning request
 	if (Representation.HighResTemplateActorIndex != INDEX_NONE)
@@ -136,4 +136,35 @@ void UMassRepresentationActorManagement::ReleaseAnyActorOrCancelAnySpawning(UMas
 		RepresentationSubsystem.ReleaseTemplateActorOrCancelSpawning(MassAgent, Representation.LowResTemplateActorIndex, Actor, Representation.ActorSpawnRequestHandle);
 	}
 	check(!Representation.ActorSpawnRequestHandle.IsValid());
+}
+
+
+//-----------------------------------------------------------------------------
+// DEPRECATED
+//-----------------------------------------------------------------------------
+AActor* UMassRepresentationActorManagement::GetOrSpawnActor(UMassRepresentationSubsystem& RepresentationSubsystem, FMassEntityManager& EntityManager
+	, const FMassEntityHandle MassAgent, FMassActorFragment&/* OutActorInfo*/, const FTransform& Transform, const int16 TemplateActorIndex
+	, FMassActorSpawnRequestHandle& InOutSpawnRequestHandle, const float Priority) const
+{
+	return GetOrSpawnActor(RepresentationSubsystem, EntityManager
+		, MassAgent, Transform, TemplateActorIndex
+		, InOutSpawnRequestHandle, Priority);
+}
+
+void UMassRepresentationActorManagement::OnPreActorSpawn(const FMassActorSpawnRequestHandle& SpawnRequestHandle, FConstStructView SpawnRequest, FMassEntityManager* EntityManager) const
+{
+	if (EntityManager)
+	{
+		OnPreActorSpawn(SpawnRequestHandle, SpawnRequest, EntityManager->AsShared());
+	}
+}
+
+EMassActorSpawnRequestAction UMassRepresentationActorManagement::OnPostActorSpawn(const FMassActorSpawnRequestHandle& SpawnRequestHandle, FConstStructView SpawnRequest, FMassEntityManager* EntityManager) const
+{
+	if (EntityManager)
+	{
+		return OnPostActorSpawn(SpawnRequestHandle, SpawnRequest, EntityManager->AsShared());
+	}
+
+	return EMassActorSpawnRequestAction::Remove;
 }

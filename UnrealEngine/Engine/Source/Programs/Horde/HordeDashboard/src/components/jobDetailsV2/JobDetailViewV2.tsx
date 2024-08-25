@@ -1,16 +1,17 @@
-import { mergeStyleSets, Pivot, PivotItem, Stack } from "@fluentui/react";
+import { mergeStyleSets, Pivot, PivotItem, Spinner, SpinnerSize, Stack } from "@fluentui/react";
 import { observer } from "mobx-react-lite";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { GetJobsTabResponse } from "../../backend/Api";
 import { useWindowSize } from "../../base/utilities/hooks";
-import { hordeClasses, modeColors } from "../../styles/Styles";
+import { getHordeStyling } from "../../styles/Styles";
 import { BreadcrumbItem, Breadcrumbs } from "../Breadcrumbs";
-import ErrorHandler from "../ErrorHandler";
 import { useQuery } from "../JobDetailCommon";
 import { TopNav } from "../TopNav";
+import { JobArtifactsPanel } from "./JobDetailArtifacts";
+import { BisectionPanel } from "./JobDetailBisection";
 import { HealthPanel } from "./JobDetailHealthV2";
-import { StepTrendsPanel } from "./JobDetailStepTrends";
+import { PreflightPanel } from "./JobDetailPreflight";
 import { JobDataView, JobDetailsV2 } from "./JobDetailsViewCommon";
 import { TimelinePanel } from "./JobDetailTimeline";
 import { StepsPanelV2 } from "./JobDetailViewSteps";
@@ -53,11 +54,7 @@ const JobBreadCrumbs: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({ jobDe
          return <Breadcrumbs items={[{ text: "Loading Job" }]} title={"Loading Job"} spinner={true} />
       }
       else {
-         ErrorHandler.set({
-            reason: `Error loading job data`,
-            title: `Unable to Load Job`,
-            message: `Job ${jobDetails.jobId} could not be loaded.\n\nPlease check that you are on the network and the job stream exists.`
-         }, true);
+         console.error(`Unable to load job ${jobDetails.jobId}: ${jobDetails.jobError}`)
       }
 
       return null;
@@ -306,10 +303,15 @@ const DetailsViewOverview: React.FC<{ jobDetails: JobDetailsV2 }> = ({ jobDetail
 
    return <Stack style={{ width: "100%" }} >
       <SummaryPanel jobDetails={details} />
+      <PreflightPanel jobDetails={details} />
+      <JobArtifactsPanel jobDetails={details} />
       <StepsPanelV2 jobDetails={details} />
       <HealthPanel jobDetails={details} />
       <TimelinePanel jobDetails={details} />
-      { false &&<StepTrendsPanel jobDetails={details} /> }
+      <BisectionPanel jobDetails={details} />
+      {!jobDetails.viewsReady && <Stack style={{ paddingTop: 32 }}>
+         <Spinner size={SpinnerSize.large} />
+      </Stack>}
 
    </Stack>
 };
@@ -340,6 +342,7 @@ const DetailsView: React.FC<{ jobDetails: JobDetailsV2 }> = ({ jobDetails }) => 
 
    const windowSize = useWindowSize();
    const scrollRef = useRef<HTMLDivElement>(null);
+   const { modeColors } = getHordeStyling();
 
    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
 
@@ -370,7 +373,7 @@ const DetailsView: React.FC<{ jobDetails: JobDetailsV2 }> = ({ jobDetails }) => 
                <Stack horizontal>
                   <Stack /*className={classNames.pointerSuppress} */ style={{ position: "relative", width: "100%", height: 'calc(100vh - 228px)' }}>
                      <div id="hordeContentArea" ref={scrollRef} style={{ overflowX: "auto", overflowY: "visible" }}>
-                        <Stack horizontal style={{paddingBottom: 48}}>
+                        <Stack horizontal style={{ paddingBottom: 48 }}>
                            <Stack key={`${key}_2`} style={{ paddingLeft: centerAlign }} />
                            <Stack style={{ width: rootWidth }}>
                               <DetailsViewOverview jobDetails={details} />
@@ -388,7 +391,7 @@ const DetailsView: React.FC<{ jobDetails: JobDetailsV2 }> = ({ jobDetails }) => 
 
 export const JobDetailViewV2: React.FC = () => {
 
-   const { jobId } = useParams<{ jobId: string }>();
+   let { jobId } = useParams<{ jobId: string }>();
    const [state, setState] = useState<{ jobDetails?: JobDetailsV2 }>({});
 
    useEffect(() => {
@@ -398,7 +401,42 @@ export const JobDetailViewV2: React.FC = () => {
       };
    }, [state]);
 
+   const { hordeClasses } = getHordeStyling();
+
    if (!jobId) {
+      return null;
+   }
+
+   let stepId = new URLSearchParams(window.location.search).get("step") ?? "";
+
+   let needNavigate = false;
+   if (stepId && stepId.length !== 4) {
+      needNavigate = true;
+      stepId = stepId.slice(0, 4);
+      if (stepId.length !== 4) {
+         stepId = "";
+      }
+   }
+
+   if (jobId.length !== 24) {
+      needNavigate = true;
+      jobId = jobId.slice(0, 24);
+   }
+
+   if (needNavigate) {
+      if (jobId.length !== 24) {
+         // navigate isn't working here
+         window.location.assign("/");
+      } else {
+         let url = `/job/${jobId}`;
+
+         if (stepId) {
+            url += `?step=${stepId}`;
+         }
+
+         // navigate isn't working here
+         window.location.assign(url);
+      }
       return null;
    }
 

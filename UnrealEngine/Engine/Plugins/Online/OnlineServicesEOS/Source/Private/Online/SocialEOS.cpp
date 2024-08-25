@@ -1,10 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Online/SocialEOS.h"
-#include "Online/OnlineErrorEOSGS.h"
-#include "Online/OnlineServicesEOS.h"
-#include "Online/OnlineIdEOS.h"
+
+#include "IEOSSDKManager.h"
 #include "Online/AuthEOS.h"
+#include "Online/OnlineErrorEOSGS.h"
+#include "Online/OnlineIdEOS.h"
+#include "Online/OnlineServicesEOS.h"
 
 #include "eos_friends.h"
 #include "eos_ui.h"
@@ -33,10 +35,10 @@ void FSocialEOS::Initialize()
 {
 	FSocialCommon::Initialize();
 
-	FriendsHandle = EOS_Platform_GetFriendsInterface(static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
+	FriendsHandle = EOS_Platform_GetFriendsInterface(*static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
 	check(FriendsHandle != nullptr);
 
-	UIHandle = EOS_Platform_GetUIInterface(static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
+	UIHandle = EOS_Platform_GetUIInterface(*static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
 
 	// Register for friend updates
 	EOS_Friends_AddNotifyFriendsUpdateOptions Options = { };

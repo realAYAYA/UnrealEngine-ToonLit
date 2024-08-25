@@ -25,6 +25,7 @@
 #include "Materials/Material.h"
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "MeshDescription.h"
+#include "Misc/ScopedSlowTask.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshOperations.h"
 #include "Physics/Experimental/ChaosInterfaceUtils.h"
@@ -35,6 +36,8 @@
 
 
 DEFINE_LOG_CATEGORY_STATIC(UGeometryCollectionConversionLogging, Log, All);
+
+#define LOCTEXT_NAMESPACE "GeometryCollectionConversion"
 
 struct FUniqueVertex
 {
@@ -73,9 +76,17 @@ FORCEINLINE uint32 GetTypeHash(const FUniqueVertex& UniqueVertex)
 	return VertexHash;
 }
 
-static bool IsImportableImplicitObjectType(Chaos::EImplicitObjectType Type)
+static bool IsImportableImplicitObjectType(const Chaos::FImplicitObject& ImplicitObject)
 {
-	const Chaos::EImplicitObjectType InnerType = Type & (~(Chaos::ImplicitObjectType::IsScaled | Chaos::ImplicitObjectType::IsInstanced));
+	const Chaos::EImplicitObjectType InnerType = ImplicitObject.GetType() & (~(Chaos::ImplicitObjectType::IsScaled | Chaos::ImplicitObjectType::IsInstanced));
+	if (InnerType == Chaos::ImplicitObjectType::Transformed)
+	{
+		const Chaos::FImplicitObjectTransformed& TransformedImplicitObject = static_cast<const Chaos::FImplicitObjectTransformed&>(ImplicitObject);
+		if (const Chaos::FImplicitObject* SubObject = TransformedImplicitObject.GetTransformedObject())
+		{
+			return IsImportableImplicitObjectType(*SubObject);
+		}
+	}
 	return (InnerType == Chaos::ImplicitObjectType::Box || InnerType == Chaos::ImplicitObjectType::Sphere || InnerType == Chaos::ImplicitObjectType::Capsule || InnerType == Chaos::ImplicitObjectType::Convex);
 }
 
@@ -103,6 +114,13 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 	}
 
 	check(GeometryCollection);
+
+	// prepare to tick progress per 100k vertices
+	const int32 ReportProgressSpacing = 100000;
+	int32 NumVertProgressSteps = int32(MeshDescription->Vertices().GetArraySize() / ReportProgressSpacing);
+
+	FScopedSlowTask AppendMeshDescriptionTask(6 + 2*NumVertProgressSteps, LOCTEXT("AppendMeshDescriptionTask", "Appending Mesh Description Data"));
+	AppendMeshDescriptionTask.EnterProgressFrame(1);
 
 	// source vertex information
 	FStaticMeshConstAttributes Attributes(*MeshDescription);
@@ -145,9 +163,17 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 	// A new mapping of MeshDescription vertex instances to the split vertices is maintained.
 	TMap<FVertexInstanceID, int32> VertexInstanceToGeometryCollectionVertex;
 	VertexInstanceToGeometryCollectionVertex.Reserve(Attributes.GetVertexInstanceNormals().GetNumElements());
-		
+
+
+	int32 LastProgress = 0;		
 	for (const FVertexID VertexIndex : MeshDescription->Vertices().GetElementIDs())
-	{		
+	{
+		int32 Progress = int32(VertexIndex / ReportProgressSpacing);
+		if (Progress > LastProgress)
+		{
+			AppendMeshDescriptionTask.EnterProgressFrame(Progress - LastProgress);
+			LastProgress = Progress;
+		}
 		TArrayView<const FVertexInstanceID> ReferencingVertexInstances = MeshDescription->GetVertexVertexInstanceIDs(VertexIndex);
 
 		// Generate per instance hash of splittable attributes.
@@ -202,6 +228,16 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 		}
 	}
 
+	if (LastProgress < NumVertProgressSteps)
+	{
+		AppendMeshDescriptionTask.EnterProgressFrame(NumVertProgressSteps - LastProgress);
+		LastProgress = NumVertProgressSteps;
+	}
+
+	// enter a progress frame for triangle processing w/ size equivalent to the vertex processing (as a heuristic)
+	// (note: could instead tick this per 100k triangles as we do with vertices above, if more responsive progress tracking is desired)
+	AppendMeshDescriptionTask.EnterProgressFrame(NumVertProgressSteps);
+
 	// target triangle indices
 	TManagedArray<FIntVector>& TargetIndices = GeometryCollection->Indices;
 	TManagedArray<bool>& TargetVisible = GeometryCollection->Visible;
@@ -243,17 +279,19 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 		++TargetIndex;
 	}
 
+	AppendMeshDescriptionTask.EnterProgressFrame(1);
+
 	// Geometry transform
-	TManagedArray<FTransform>& Transform = GeometryCollection->Transform;
+	TManagedArray<FTransform3f>& Transform = GeometryCollection->Transform;
 
 	int32 TransformIndex1 = GeometryCollection->AddElements(1, FGeometryCollection::TransformGroup);
-	Transform[TransformIndex1] = StaticMeshTransform;
-	Transform[TransformIndex1].SetScale3D(FVector(1.f, 1.f, 1.f));
+	Transform[TransformIndex1] = FTransform3f(StaticMeshTransform);
+	Transform[TransformIndex1].SetScale3D(FVector3f(1.f, 1.f, 1.f));
 
 	// collisions
 	if (BodySetup)
 	{
-		TArray<TUniquePtr<Chaos::FImplicitObject>> Geoms;
+		TArray<Chaos::FImplicitObjectPtr> Geoms;
 		Chaos::FShapesArray Shapes;
 
 		FGeometryAddParams CreateGeometryParams;
@@ -266,19 +304,18 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 		CreateGeometryParams.LocalTransform = Chaos::FRigidTransform3::Identity;
 		CreateGeometryParams.WorldTransform = Chaos::FRigidTransform3::Identity;
 		CreateGeometryParams.Geometry = &BodySetup->AggGeom;
-		CreateGeometryParams.ChaosTriMeshes = MakeArrayView(BodySetup->ChaosTriMeshes);
+		CreateGeometryParams.TriMeshGeometries = MakeArrayView(BodySetup->TriMeshGeometries);
 
 		// todo(chaos) : this currently also create the shape array which is unnecessary ,this could be optimized by having a common function to create only the implicits 
 		ChaosInterface::CreateGeometry(CreateGeometryParams, Geoms, Shapes);
 
-		using FCollisionType = FGeometryDynamicCollection::FSharedImplicit;
-		TManagedArray<FCollisionType>& ExternaCollisions = GeometryCollection->AddAttribute<FCollisionType>("ExternalCollisions", FGeometryCollection::TransformGroup);
+		TManagedArray<Chaos::FImplicitObjectPtr>& ExternaCollisions = GeometryCollection->AddAttribute<Chaos::FImplicitObjectPtr>(FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
 
 		ExternaCollisions[TransformIndex1] = nullptr;
 		for (int32 GeomIndex = 0; GeomIndex < Geoms.Num();)
 		{
 			// make sure we only import box, sphere, capsule or convex
-			if (IsImportableImplicitObjectType(Geoms[GeomIndex]->GetType()))
+			if (Geoms[GeomIndex] && IsImportableImplicitObjectType(*Geoms[GeomIndex]))
 			{
 				GeomIndex++;
 			}
@@ -289,7 +326,7 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 		}
 		if (Geoms.Num() > 0)
 		{
-			ExternaCollisions[TransformIndex1] = MakeShared<Chaos::FImplicitObjectUnion>(MoveTemp(Geoms));
+			ExternaCollisions[TransformIndex1] = MakeImplicitObjectPtr<Chaos::FImplicitObjectUnion>(MoveTemp(Geoms));
 		}
 	}
 		
@@ -332,6 +369,8 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 	}
 	if (VertexCount) Center /= VertexCount;
 
+	AppendMeshDescriptionTask.EnterProgressFrame(1);
+
 	// Inner/Outer edges, bounding box
 	BoundingBox[GeometryIndex] = FBox(ForceInitToZero);
 	InnerRadius[GeometryIndex] = FLT_MAX;
@@ -344,6 +383,8 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 		InnerRadius[GeometryIndex] = FMath::Min(InnerRadius[GeometryIndex], Delta);
 		OuterRadius[GeometryIndex] = FMath::Max(OuterRadius[GeometryIndex], Delta);
 	}
+
+	AppendMeshDescriptionTask.EnterProgressFrame(1);
 
 	// Inner/Outer centroid
 	for (int fdx = IndicesStart; fdx < IndicesStart + IndicesCount; fdx++)
@@ -360,6 +401,8 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 		OuterRadius[GeometryIndex] = FMath::Max(OuterRadius[GeometryIndex], Delta);
 	}
 
+	AppendMeshDescriptionTask.EnterProgressFrame(1);
+
 	// Inner/Outer edges
 	for (int fdx = IndicesStart; fdx < IndicesStart + IndicesCount; fdx++)
 	{
@@ -372,6 +415,8 @@ void FGeometryCollectionEngineConversion::AppendMeshDescription(
 			OuterRadius[GeometryIndex] = FMath::Max(OuterRadius[GeometryIndex], Delta);
 		}
 	}
+
+	AppendMeshDescriptionTask.EnterProgressFrame(1);
 
 	if (ReindexMaterials) {
 		GeometryCollection->ReindexMaterials();
@@ -555,8 +600,11 @@ bool FGeometryCollectionEngineConversion::AppendStaticMesh(const UStaticMesh* St
 	FGeometryCollection* GeometryCollection, bool bReindexMaterials, bool bAddInternalMaterials, bool bSplitComponents, bool bSetInternalFromMaterialIndex)
 {
 #if WITH_EDITORONLY_DATA
+	FScopedSlowTask AppendStaticMeshTask(bSplitComponents ? 3 : 2, LOCTEXT("AppendStaticMeshTask", "Appending Static Mesh"));
+
 	if (StaticMesh)
 	{
+		AppendStaticMeshTask.EnterProgressFrame(1);
 		FMeshDescription* MeshDescription = GetMaxResMeshDescriptionWithNormalsAndTangents(StaticMesh);
 
 		check(GeometryCollection);
@@ -572,6 +620,8 @@ bool FGeometryCollectionEngineConversion::AppendStaticMesh(const UStaticMesh* St
 
 			if (bSplitComponents)
 			{
+				AppendStaticMeshTask.EnterProgressFrame(1);
+
 				int32 MaxVID = MeshDescription->Vertices().Num();
 				UE::Geometry::FVertexConnectedComponents Components(MaxVID);
 				for (const FTriangleID TriangleID : MeshDescription->Triangles().GetElementIDs())
@@ -696,6 +746,7 @@ bool FGeometryCollectionEngineConversion::AppendStaticMesh(const UStaticMesh* St
 				// else only one component -- fall back to just using the original mesh description
 			}
 
+			AppendStaticMeshTask.EnterProgressFrame(1);
 			AppendMeshDescription(MeshDescription, StaticMesh->GetName(), StartMaterialIndex, MeshTransform, GeometryCollection, StaticMesh->GetBodySetup(), bReindexMaterials, bAddInternalMaterials, bSetInternalFromMaterialIndex);
 			return true;
 		}
@@ -719,8 +770,8 @@ bool FGeometryCollectionEngineConversion::AppendGeometryCollection(const FGeomet
 	const int32 GeometryCount = SourceGeometryCollectionPtr->TransformIndex.Num();
 	const int32 SectionCount = SourceGeometryCollectionPtr->Sections.Num();
 
-	FVector Scale = GeometryCollectionTransform.GetScale3D();
-	FTransform AppliedTransform = GeometryCollectionTransform;
+	FVector3f Scale = FVector3f(GeometryCollectionTransform.GetScale3D());
+	FTransform3f AppliedTransform = FTransform3f(GeometryCollectionTransform);
 	AppliedTransform.RemoveScaling();
 
 	const int32 VertexStart = TargetGeometryCollection->AddElements(VertexCount, FGeometryCollection::VerticesGroup);
@@ -798,10 +849,8 @@ bool FGeometryCollectionEngineConversion::AppendGeometryCollection(const FGeomet
 		TargetInternal[FaceOffset] = SourceInternal[FaceIndex];
 	}
 
-	using FCollisionType = FGeometryDynamicCollection::FSharedImplicit;
-
 	// source transform information
-	const TManagedArray<FTransform>& SourceTransform = SourceGeometryCollectionPtr->Transform;
+	const TManagedArray<FTransform3f>& SourceTransform = SourceGeometryCollectionPtr->Transform;
 	const TManagedArray<FString>& SourceBoneName = SourceGeometryCollectionPtr->BoneName;
 	const TManagedArray<FLinearColor>& SourceBoneColor = SourceGeometryCollectionPtr->BoneColor;
 	const TManagedArray<int32>& SourceParent = SourceGeometryCollectionPtr->Parent;
@@ -810,10 +859,10 @@ bool FGeometryCollectionEngineConversion::AppendGeometryCollection(const FGeomet
 	const TManagedArray<int32>& SourceSimulationType = SourceGeometryCollectionPtr->SimulationType;
 	const TManagedArray<int32>& SourceStatusFlags = SourceGeometryCollectionPtr->StatusFlags;
 	const TManagedArray<int32>& SourceInitialDynamicState = SourceGeometryCollectionPtr->InitialDynamicState;
-	const TManagedArray<FCollisionType>* SourceExternalCollisions = SourceGeometryCollectionPtr->FindAttribute<FCollisionType>("ExternalCollisions", FGeometryCollection::TransformGroup);
+	const TManagedArray<Chaos::FImplicitObjectPtr>* SourceExternalCollisions = SourceGeometryCollectionPtr->FindAttribute<Chaos::FImplicitObjectPtr>(FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
 
 	// target transform information
-	TManagedArray<FTransform>& TargetTransform = TargetGeometryCollection->Transform;
+	TManagedArray<FTransform3f>& TargetTransform = TargetGeometryCollection->Transform;
 	TManagedArray<FString>& TargetBoneName = TargetGeometryCollection->BoneName;
 	TManagedArray<FLinearColor>& TargetBoneColor = TargetGeometryCollection->BoneColor;
 	TManagedArray<int32>& TargetParent = TargetGeometryCollection->Parent;
@@ -822,7 +871,7 @@ bool FGeometryCollectionEngineConversion::AppendGeometryCollection(const FGeomet
 	TManagedArray<int32>& TargetSimulationType = TargetGeometryCollection->SimulationType;
 	TManagedArray<int32>& TargetStatusFlags = TargetGeometryCollection->StatusFlags;
 	TManagedArray<int32>& TargetInitialDynamicState = TargetGeometryCollection->InitialDynamicState;
-	TManagedArray<FCollisionType>& TargetExternalCollisions = TargetGeometryCollection->AddAttribute<FCollisionType>("ExternalCollisions", FGeometryCollection::TransformGroup);
+	TManagedArray<Chaos::FImplicitObjectPtr>& TargetExternalCollisions = TargetGeometryCollection->AddAttribute<Chaos::FImplicitObjectPtr>(FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
 
 	// append transform hierarchy
 	for (int32 TransformIndex = 0; TransformIndex < TransformCount; ++TransformIndex)
@@ -836,7 +885,7 @@ bool FGeometryCollectionEngineConversion::AppendGeometryCollection(const FGeomet
 		}
 		else
 		{
-			FTransform ScaledTranslation = SourceTransform[TransformIndex];
+			FTransform3f ScaledTranslation = SourceTransform[TransformIndex];
 			ScaledTranslation.ScaleTranslation(Scale);
 			TargetTransform[TransformOffset] = ScaledTranslation;
 		}
@@ -1285,7 +1334,7 @@ void FGeometryCollectionEngineConversion::AppendSkeleton(const USkeleton* InSkel
 	FGeometryCollection::DefineTransformSchema(*InCollection);
 	GeometryCollection::Facades::FTransformSource TransformSourceFacade(*InCollection);
 
-	TManagedArray<FTransform>& Transform = InCollection->ModifyAttribute<FTransform>(FTransformCollection::TransformAttribute, FTransformCollection::TransformGroup);
+	TManagedArray<FTransform3f>& Transform = InCollection->ModifyAttribute<FTransform3f>(FTransformCollection::TransformAttribute, FTransformCollection::TransformGroup);
 	TManagedArray<FLinearColor>& BoneColor = InCollection->ModifyAttribute<FLinearColor>("BoneColor", FTransformCollection::TransformGroup);
 	TManagedArray<FString>& BoneName = InCollection->ModifyAttribute<FString>("BoneName", FTransformCollection::TransformGroup);
 	TManagedArray<int32>& Parent = InCollection->ModifyAttribute<int32>(FTransformCollection::ParentAttribute, FTransformCollection::TransformGroup);
@@ -1302,7 +1351,7 @@ void FGeometryCollectionEngineConversion::AppendSkeleton(const USkeleton* InSkel
 		int32 TransformBaseIndex = InCollection->AddElements(NumBones, FGeometryCollection::TransformGroup);
 		for (int i = 0, Idx = TransformBaseIndex; i < NumBones; i++, Idx++)
 		{
-			Transform[Idx] = RestTransform[i];
+			Transform[Idx] = FTransform3f(RestTransform[i]);
 			BoneColor[Idx] = FLinearColor(FColor(FMath::Rand() % 100 + 5, FMath::Rand() % 100 + 5, FMath::Rand() % 100 + 5, 255));
 			BoneName[Idx] = BoneInfo[i].Name.ToString();
 			Parent[Idx] = BoneInfo[i].ParentIndex;
@@ -1419,3 +1468,51 @@ void FGeometryCollectionEngineConversion::AppendGeometryCollectionSource(const F
 		}
 	}
 }
+
+void FGeometryCollectionEngineConversion::ConvertStaticMeshToGeometryCollection(const TObjectPtr<UStaticMesh> StaticMesh, FManagedArrayCollection& OutCollection, TArray<TObjectPtr<UMaterial>>& OutMaterials, TArray<FGeometryCollectionAutoInstanceMesh>& OutInstancedMeshes, bool bSetInternalFromMaterialIndex, bool bSplitComponents)
+{
+#if WITH_EDITORONLY_DATA
+	if (UGeometryCollection* NewGeometryCollection = NewObject<UGeometryCollection>())
+	{
+		// If any of the static meshes have Nanite enabled, also enable on the new geometry collection asset for convenience.
+		NewGeometryCollection->EnableNanite |= StaticMesh->IsNaniteEnabled();
+
+		FTransform ComponentTransform = FTransform::Identity;
+
+		// Record the contributing source on the asset.
+		FSoftObjectPath SourceSoftObjectPath(StaticMesh);
+
+		// Materials		
+		TArray<TObjectPtr<UMaterialInterface>> MatArr;
+		for (auto& StaticMaterial : StaticMesh->GetStaticMaterials())
+		{
+			MatArr.Emplace(StaticMaterial.MaterialInterface);
+		}
+		TArray<TObjectPtr<UMaterialInterface>> SourceMaterials(MatArr);
+
+		// InstanceMeshes
+		FGeometryCollectionAutoInstanceMesh NewInstanceMesh;
+		NewInstanceMesh.Mesh = StaticMesh;
+		NewInstanceMesh.Materials = SourceMaterials;
+		OutInstancedMeshes.Emplace(NewInstanceMesh);
+
+		bool bAddInternalMaterials = true;
+
+		NewGeometryCollection->GeometrySource.Emplace(SourceSoftObjectPath, ComponentTransform, SourceMaterials, bSplitComponents, bSetInternalFromMaterialIndex);
+		FGeometryCollectionEngineConversion::AppendStaticMesh(StaticMesh, SourceMaterials, ComponentTransform, NewGeometryCollection, false, bAddInternalMaterials, bSplitComponents, bSetInternalFromMaterialIndex);
+
+		NewGeometryCollection->InitializeMaterials();
+
+		// Materials
+		for (auto& Material : NewGeometryCollection->Materials)
+		{
+			OutMaterials.Emplace(Material->GetMaterial());
+		}
+
+		TSharedPtr<FGeometryCollection> OutCollectionPtr = NewGeometryCollection->GetGeometryCollection();
+		OutCollectionPtr->CopyTo(&OutCollection);
+	}
+#endif //WITH_EDITORONLY_DATA
+}
+
+#undef LOCTEXT_NAMESPACE 

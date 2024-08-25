@@ -10,7 +10,7 @@ namespace AutomationUtils.Matchers
 {
 	class SystemicEventMatcher : ILogEventMatcher
 	{
-		static readonly Regex s_ddc = new Regex(@"LogDerivedDataCache: .*queries/writes will be limited");
+		static readonly Regex s_ddc = new Regex(@"^\s*LogDerivedDataCache: Warning:");
 
 		static readonly Regex s_pdbUtil = new Regex(@"^\s*ERROR: Error: EC_OK");
 		static readonly Regex s_pdbUtilSuffix = new Regex(@"^\s*ERROR:\s*$");

@@ -54,6 +54,39 @@ enum class ENiagaraMeshLockedAxisSpace : uint8
 	Local
 };
 
+UENUM()
+enum class ENiagaraMeshLODMode : uint8
+{
+	/*
+	* Uses the provided LOD level to render all mesh particles.
+	* If the LOD is not streamed in or available on the platform the next available lower LOD level will be used.
+	* For example, LOD Level is set to 1 but the first available is LOD 3 then LOD 3 will be used.
+	*/
+	LODLevel,
+
+	/**
+	* Takes the highest available LOD for the platform + LOD bias to render all mesh particles
+	* If the LOD is not streamed in or available on the platform the next available lower LOD level will be used.
+	* For example, LOD bias is set to 1, the current platform has Min LOD of 2 then 3 will be the used LOD.
+	*/
+	LODBias,
+
+	/*
+	* The LOD level is calculated based on screen space size of the component bounds.
+	* All particles will be rendered with the same calculated LOD level.
+	* Increasing 'LOD calculation scale' will result in lower quality LODs being used, this is useful as component bounds generally are larger than the particle mesh bounds.
+	*/
+	ByComponentBounds,
+
+	/*
+	* The LOD level is calcuated per particle using the particle position and mesh sphere bounds.
+	* This involves running a dispatch & draw per LOD level.
+	* Calculates and renders each particle with it's calcualted LOD level.
+	* Increasing 'LOD calculation scale' will result in lower quality LODs being used.
+	*/
+	PerParticle,
+};
+
 USTRUCT()
 struct FNiagaraMeshMICOverride
 {
@@ -152,6 +185,40 @@ struct FNiagaraMeshRendererMeshProperties
 	UPROPERTY(EditAnywhere, Category = "Mesh")
 	FNiagaraParameterBinding MeshParameterBinding;
 
+	UPROPERTY(EditAnywhere, Category = "Mesh")
+	ENiagaraMeshLODMode LODMode = ENiagaraMeshLODMode::LODLevel;
+
+#if WITH_EDITORONLY_DATA
+	/** Absolute LOD level to use */
+	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (UIMin = "0", DisplayName="LOD Level", EditCondition = "LODMode == ENiagaraMeshLODMode::LODLevel", EditConditionHides))
+	FNiagaraParameterBindingWithValue LODLevelBinding;
+
+	/* LOD bias to apply to the LOD calculation. */
+	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (UIMin = "0", DisplayName = "LOD Bias", EditCondition = "LODMode == ENiagaraMeshLODMode::LODBias", EditConditionHides))
+	FNiagaraParameterBindingWithValue LODBiasBinding;
+#endif
+
+	UPROPERTY()
+	int32 LODLevel = 0;
+
+	UPROPERTY()
+	int32 LODBias = 0;
+
+	/** Used in LOD calculation to modify the distance, i.e. increasing the value will make lower poly LODs transition closer to the camera. */
+	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (UIMin = "0", DisplayName = "LOD Distance Factor", EditCondition = "LODMode == ENiagaraMeshLODMode::ByComponentBounds || LODMode == ENiagaraMeshLODMode::PerParticle", EditConditionHides))
+	float LODDistanceFactor = 1.0f;
+
+	/**
+	When enabled you can restrict the LOD range we consider for LOD calculation.
+	This can be useful to reduce the performance impact, as it reduces the number of draw calls required.
+	*/
+	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (DisplayName = "Use LOD Range", EditCondition = "LODMode == ENiagaraMeshLODMode::PerParticle", EditConditionHides))
+	bool bUseLODRange = false;
+
+	/** Used to restrict the range of LODs we include when dynamically calculating the LOD level. */
+	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (DisplayName = "LOD Range", EditCondition = "bUseLODRange && LODMode == ENiagaraMeshLODMode::PerParticle", EditConditionHides))
+	FIntVector2 LODRange;
+
 	/** Scale of the mesh */
 	UPROPERTY(EditAnywhere, Category = "Mesh")
 	FVector Scale;
@@ -207,7 +274,7 @@ public:
 	NIAGARA_API virtual const FVertexFactoryType* GetVertexFactoryType() const override;
 	virtual bool IsSimTargetSupported(ENiagaraSimTarget InSimTarget) const override { return true; };
 	NIAGARA_API virtual bool PopulateRequiredBindings(FNiagaraParameterStore& InParameterStore) override;
-	NIAGARA_API virtual void CollectPSOPrecacheData(FPSOPrecacheParamsList& OutParams) override;
+	NIAGARA_API virtual void CollectPSOPrecacheData(const FNiagaraEmitterInstance* InEmitter, FPSOPrecacheParamsList& OutParams) const override;
 
 #if WITH_EDITORONLY_DATA
 	NIAGARA_API virtual const TArray<FNiagaraVariable>& GetOptionalAttributes() override;
@@ -292,6 +359,13 @@ public:
 	/** If true and in a non-default facing mode, will lock facing direction to an arbitrary plane of rotation */
 	UPROPERTY(EditAnywhere, Category = "Mesh Rendering")
 	uint32 bLockedAxisEnable : 1;
+
+	/**
+	When disabled the renderer will not cast shadows.
+	The component controls if shadows are enabled, this flag allows you to disable the renderer casting shadows.
+	*/
+	UPROPERTY(EditAnywhere, Category = "Rendering")
+	uint8 bCastShadows : 1 = 1; //-V570
 
 	/** The materials to be used instead of the StaticMesh's materials. Note that each material must have the Niagara Mesh Particles flag checked. If the ParticleMesh
 	requires more materials than exist in this array or any entry in this array is set to None, we will use the ParticleMesh's existing Material instead.*/

@@ -30,6 +30,9 @@ FRewindDebuggerStyle::FRewindDebuggerStyle() :
 	Set("RewindDebugger.Play.small", new CORE_IMAGE_BRUSH("Editor/Slate/Sequencer/Transport_Bar/Play_24x", Icon24x24));
 	Set("RewindDebugger.NextFrame.small", new CORE_IMAGE_BRUSH("Editor/Slate/Sequencer/Transport_Bar/Step_Forward_24x", Icon24x24));
 	Set("RewindDebugger.LastFrame.small", new CORE_IMAGE_BRUSH("Editor/Slate/Sequencer/Transport_Bar/Go_To_End_24x", Icon24x24));
+	
+	Set("RewindDebugger.AutoEject", new IMAGE_BRUSH("autoeject", {30.f, 24.f}));
+	Set("RewindDebugger.AutoRecord", new IMAGE_BRUSH("autorecord", {30.f, 24.f}));
 
 	// Actor Picker
 	Set("RewindDebugger.SelectActor", new CORE_IMAGE_BRUSH("Editor/Slate/Icons/eyedropper_16px", Icon16x16));
@@ -40,6 +43,9 @@ FRewindDebuggerStyle::FRewindDebuggerStyle() :
 
 	// menu icon
 	Set("RewindDebugger.MenuIcon", new CORE_IMAGE_BRUSH_SVG("Slate/Starship/Common/menu", Icon16x16));
+
+	FTableRowStyle TableRowStyle = FTableRowStyle(FAppStyle::Get().GetWidgetStyle<FTableRowStyle>("SceneOutliner.TableViewRow"));
+	Set("RewindDebugger.TableRow", TableRowStyle);
 }
 
 void FRewindDebuggerStyle::Initialize()

@@ -45,11 +45,11 @@ void FDisplayClusterConfiguratorViewClusterBuilder::AddCluster(FDisplayClusterCo
 void FDisplayClusterConfiguratorViewClusterBuilder::AddClusterNodes(FDisplayClusterConfiguratorTreeBuilderOutput& Output, UDisplayClusterConfigurationData* InConfig, UObject* InObjectToEdit)
 {
 	TMap<FString, TMap<FString, UDisplayClusterConfigurationClusterNode*>> SortedClusterNodes;
-	FDisplayClusterConfiguratorClusterUtils::SortClusterNodesByHost(InConfig->Cluster->Nodes, SortedClusterNodes);
+	UE::DisplayClusterConfiguratorClusterUtils::SortClusterNodesByHost(InConfig->Cluster->Nodes, SortedClusterNodes);
 
 	for (const auto& HostPair : SortedClusterNodes)
 	{
-		UDisplayClusterConfigurationHostDisplayData* DisplayData = FDisplayClusterConfiguratorClusterUtils::FindOrCreateHostDisplayData(InConfig->Cluster, HostPair.Key);
+		UDisplayClusterConfigurationHostDisplayData* DisplayData = UE::DisplayClusterConfiguratorClusterUtils::FindOrCreateHostDisplayData(InConfig->Cluster, HostPair.Key);
 
 		const FName HostParentName = "Cluster";
 		const FName HostNodeName = *DisplayData->HostName.ToString();

@@ -42,8 +42,9 @@ namespace mu
 
 	bool ASTOpLayoutMerge::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpLayoutMerge* other = dynamic_cast<const ASTOpLayoutMerge*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpLayoutMerge* other = static_cast<const ASTOpLayoutMerge*>(&otherUntyped);
 			return Base == other->Base && Added == other->Added;
 		}
 		return false;

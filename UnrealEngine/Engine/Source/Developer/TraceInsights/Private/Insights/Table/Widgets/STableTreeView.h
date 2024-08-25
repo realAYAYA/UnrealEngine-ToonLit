@@ -173,9 +173,18 @@ public:
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	/** Set a log listing name to be used for any errors or warnings. Must be preregistered by the caller with the MessageLog module. */
+	/** Sets a log listing name to be used for any errors or warnings. Must be preregistered by the caller with the MessageLog module. */
 	void SetLogListingName(const FName& InLogListingName) { LogListingName = InLogListingName; }
 	const FName& GetLogListingName() { return LogListingName; }
+
+	/** Gets the table row nodes. Each node corresponds to a table row. Index in this array corresponds to RowIndex in source table. */
+	const TArray<FTableTreeNodePtr>& GetTableRowNodes() const { return TableRowNodes; }
+	
+	/** Gets the avaiable grouping. */
+	const TArray<TSharedPtr<FTreeNodeGrouping>>& GetAvailableGroupings() const { return AvailableGroupings; }
+
+	/** Sets the current groupings. */
+	void SetCurrentGroupings(TArray<TSharedPtr<FTreeNodeGrouping>>& InCurrentGroupings);
 
 protected:
 	void InitCommandList();
@@ -441,6 +450,7 @@ protected:
 	void CountNumNodesPerDepthRec(FBaseTreeNode* InRoot, TArray<int32>& InOutNumNodesPerDepth, int32 InDepth, int32 InMaxDepth, int InMaxNodes) const;
 	void SetExpandValueForChildGroupsRec(FBaseTreeNode* InRoot, int32 InDepth, int32 InMaxDepth, bool InValue);
 
+	virtual void ExtendMenu(TSharedRef<FExtender> Extender) {}
 	virtual void ExtendMenu(FMenuBuilder& Menu) {}
 
 	typedef TFunctionRef<void(TArray<FBaseTreeNodePtr>& InNodes)> WriteToFileCallback;

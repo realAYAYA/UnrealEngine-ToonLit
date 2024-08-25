@@ -5,7 +5,7 @@
 #include "VehicleUtility.h"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 namespace Chaos
@@ -34,17 +34,20 @@ namespace Chaos
 		FTorqueSimModule* Parent = static_cast<FTorqueSimModule*>(GetParent());
 		FTorqueSimModule* Child = static_cast<FTorqueSimModule*>(GetFirstChild());
 
-		float EngineSpeed = Parent->GetAngularVelocity();
-		float TransmissionSpeed = Child->GetAngularVelocity();
+		if (Parent && Child)
+		{
+			float EngineSpeed = Parent->GetAngularVelocity();
+			float TransmissionSpeed = Child->GetAngularVelocity();
 
-		// difference in speed between the two plates
-		float AngularVelocityDifference = EngineSpeed - TransmissionSpeed;
+			// difference in speed between the two plates
+			float AngularVelocityDifference = EngineSpeed - TransmissionSpeed;
 
-		Parent->AddAngularVelocity(-AngularVelocityDifference * 0.1f);
-		Child->AddAngularVelocity(AngularVelocityDifference * 0.1f);
+			Parent->AddAngularVelocity(-AngularVelocityDifference * 0.1f);
+			Child->AddAngularVelocity(AngularVelocityDifference * 0.1f);
 
-		float BrakeTorque = 0.0f;
-		TransmitTorque(VehicleModuleSystem, DriveTorque, BrakeTorque, 1.0f, 1.0f/*ClutchValue*/);
+			float BrakeTorque = 0.0f;
+			TransmitTorque(VehicleModuleSystem, DriveTorque, BrakeTorque, 1.0f, ClutchValue);
+		}
 	}
 
 	bool FClutchSimModule::GetDebugString(FString& StringOut) const
@@ -60,5 +63,5 @@ namespace Chaos
 } // namespace Chaos
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif

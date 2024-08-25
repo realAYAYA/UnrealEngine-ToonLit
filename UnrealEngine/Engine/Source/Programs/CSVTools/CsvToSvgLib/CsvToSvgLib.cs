@@ -6,13 +6,14 @@ using System.Threading.Tasks;
 using System.Text;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Security.Cryptography;
 
 namespace CSVTools
 {
 
 	public class CsvToSvgLibVersion
 	{
-		private static string VersionString = "2.57";
+		private static string VersionString = "3.60";
 
 		public static string Get() { return VersionString; }
 	};
@@ -66,6 +67,9 @@ namespace CSVTools
 		public float maxX = Range.Auto;
 		public float minY = Range.Auto;
 		public float maxY = Range.Auto;
+
+		// Max auto Y range. Set to 0 to disable
+		public float maxAutoMaxY = 0.0f;
 
 		public float budget = float.MaxValue;
 		public float lineThickness = 1.0f;
@@ -135,6 +139,11 @@ namespace CSVTools
 			if (maxY <= 0.0f)
 			{
 				maxY = Range.Auto;
+			}
+			if (maxAutoMaxY <= 0.0f)
+			{
+				// Clamp to 8m to prevent craziness
+				maxAutoMaxY = 8000000;
 			}
 			if (smoothKernelSize>0.0f)
 			{
@@ -432,26 +441,26 @@ namespace CSVTools
 
 			// Write defs
 			svg.WriteLine("<defs>");
-			svg.WriteLine("<radialGradient id='radialGradient1'");
+			svg.WriteLine("<radialGradient id='radialGradient<UNIQUE>'");
 			svg.WriteLine("fx='50%' fy='50%' r='65%'");
 			svg.WriteLine("spreadMethod='pad'>");
 			svg.WriteLine("<stop offset='0%'   stop-color=" + theme.BackgroundColourCentre.SVGString() + " stop-opacity='1'/>");
 			svg.WriteLine("<stop offset='100%' stop-color=" + theme.BackgroundColour.SVGString() + " stop-opacity='1' />");
 			svg.WriteLine("</radialGradient>");
 
-			svg.WriteLine("<linearGradient id = 'linearGradient1' x1 = '0%' y1 = '0%' x2 = '100%' y2 = '100%'>");
+			svg.WriteLine("<linearGradient id = 'linearGradient<UNIQUE>' x1 = '0%' y1 = '0%' x2 = '100%' y2 = '100%'>");
 			svg.WriteLine("<stop stop-color = 'black' offset = '0%'/>");
 			svg.WriteLine("<stop stop-color = 'white' offset = '100%'/>");
 			svg.WriteLine("</linearGradient>");
 
 			// Clip rect
-			svg.WriteLine("<clipPath id='graphClipRect'>");
+			svg.WriteLine("<clipPath id='graphClipRect<UNIQUE>'>");
 			// If we're using a fixed point scale for graphs, we need to apply it to the clip rect
 			float clipRectScale = (graphParams.bFixedPointGraphs && !graphParams.percentile) ? graphParams.fixedPointPrecisionScale : 1.0f;
 			svg.WriteLine("<rect  x='" + graphRect.x*clipRectScale + "' y='" + graphRect.y*clipRectScale + "' width='" + graphRect.width*clipRectScale + "' height='" + graphRect.height*clipRectScale + "'/>");
 			svg.WriteLine("</clipPath>");
 
-			svg.WriteLine("<filter id='dropShadowFilter' x='-20%' width='130%' height='130%'>");
+			svg.WriteLine("<filter id='dropShadowFilter<UNIQUE>' x='-20%' width='130%' height='130%'>");
 			svg.WriteLine("<feOffset result='offOut' in='SourceAlpha' dx='-2' dy='2' />");
 			svg.WriteLine("<feGaussianBlur result='blurOut' in='offOut' stdDeviation='1.1' />");
 			svg.WriteLine("<feBlend in='SourceGraphic' in2='blurOut' mode='normal' />");
@@ -466,6 +475,7 @@ namespace CSVTools
 			// Generate the list of processed, filtered CSV stats for graphing
 			List<CsvStats> csvStatsList = new List<CsvStats>();
 			int currentColorOffset = graphParams.colorOffset;
+			int currentCustomLabelIndex = 0;
 			foreach (CsvInfo csvInfo in csvList)
 			{
 				CsvStats newCsvStats = ProcessCsvStats(csvInfo.stats, graphParams);
@@ -491,7 +501,7 @@ namespace CSVTools
 					stackTotalStatIsAutomatic = true;
 				}
 
-				SetLegend(newCsvStats, csvInfo.filename, graphParams, csvList.Count > 1);
+				SetLegend(newCsvStats, csvInfo.filename, graphParams, csvList.Count > 1, ref currentCustomLabelIndex);
 				if (!graphParams.stacked)
 				{
 					currentColorOffset = AssignColours(newCsvStats, theme, false, currentColorOffset);
@@ -559,7 +569,7 @@ namespace CSVTools
 			if (graphParams.stacked) perfLog.LogTiming("StackStats");
 
 			// Adjust range
-			range = ComputeAdjustedYRange(range, graphRect, csvStatsList);
+			range = ComputeAdjustedYRange(range, graphRect, csvStatsList, graphParams.maxAutoMaxY);
 
 			if (graphParams.graphOnly)
 			{
@@ -617,7 +627,7 @@ namespace CSVTools
 
 			// Draw the graphs
 			int csvIndex = 0;
-			svg.WriteLine("<g id='graphArea'>");
+			svg.WriteLine("<g id='graphArea<UNIQUE>'>");
 			if (graphParams.percentile)
 			{
 				range.MinX = graphParams.percentileTop99 ? 99 : (graphParams.percentileTop90 ? 90 : 0);
@@ -715,35 +725,27 @@ namespace CSVTools
 			perfLog.LogTotalTiming(false);
 		}
 
-		Range ComputeAdjustedYRange(Range range, Rect rect, List<CsvStats> csvStats)
+		Range ComputeAdjustedYRange(Range range, Rect rect, List<CsvStats> csvStats, float maxAutoMaxY)
 		{
 			Range newRange = new Range(range.MinX, range.MaxX, range.MinY, range.MaxY);
-			int maxNumSamples = 0;
-			float maxSample = -10000000.0f;
-			float minSample = 10000000.0f;
 
-			foreach (CsvStats stats in csvStats)
+			if (range.MinY == Range.Auto)
 			{
-				foreach (StatSamples samples in stats.Stats.Values)
-				{
-					maxNumSamples = Math.Max(maxNumSamples, samples.samples.Count);
-					foreach (float sample in samples.samples)
-					{
-						if (sample > maxSample)
-						{
-							maxSample = sample;
-						}
-						minSample = Math.Min(minSample, sample);
-						maxSample = Math.Max(maxSample, sample);
-					}
-				}
+				newRange.MinY = 0.0f;
 			}
 
-			// HACK: Clamp to 1m to prevent craziness
-			if (maxSample > 1000000) maxSample = 1000000;
-
-			if (range.MinY == Range.Auto) newRange.MinY = 0.0f;
-			if (range.MaxY == Range.Auto) newRange.MaxY = maxSample * 1.05f;
+			if (range.MaxY == Range.Auto)
+			{
+				float maxSample = -10000000.0f;
+				foreach (CsvStats stats in csvStats)
+				{
+					foreach (StatSamples samples in stats.Stats.Values)
+					{
+						maxSample = Math.Max(maxSample, samples.ComputeMaxValue());
+					}
+				}
+				newRange.MaxY = Math.Min(maxSample * 1.05f, maxAutoMaxY);
+			}
 
 			// Quantise based on yincrement
 			if (rect != null)
@@ -936,9 +938,8 @@ namespace CSVTools
 			return smoothStats;
 		}
 
-		void SetLegend(CsvStats csvStats, string csvFilename, GraphParams graphParams, bool UseFilename)
+		void SetLegend(CsvStats csvStats, string csvFilename, GraphParams graphParams, bool UseFilename, ref int currentCustomLabelIndex)
 		{
-			int customIndex = 0;
 			foreach (StatSamples stat in csvStats.Stats.Values)
 			{
 				stat.LegendName = stat.Name;
@@ -946,10 +947,10 @@ namespace CSVTools
 				{
 					stat.LegendName = System.IO.Path.GetFileName(csvFilename);
 				}
-				if (graphParams.customLegendNames.Count > 0 && customIndex < graphParams.customLegendNames.Count)
+				if (graphParams.customLegendNames.Count > 0 && currentCustomLabelIndex < graphParams.customLegendNames.Count)
 				{
-					stat.LegendName = graphParams.customLegendNames[customIndex];
-					customIndex++;
+					stat.LegendName = graphParams.customLegendNames[currentCustomLabelIndex];
+					currentCustomLabelIndex++;
 				}
 				foreach (string hideStatPrefix in graphParams.hideStatPrefixes)
 				{
@@ -1236,7 +1237,7 @@ namespace CSVTools
 
 			if (gradient)
 			{
-				svg.Write("style='fill:url(#radialGradient1);' ");
+				svg.Write("style='fill:url(#radialGradient<UNIQUE>);' ");
 			}
 			if (interactive)
 			{
@@ -1503,7 +1504,7 @@ namespace CSVTools
 							svg.WriteFast(" " + lastX + ","+ originY);
 							svg.WriteFast(" " + firstX + ","+ originY);
 						}
-						svg.WriteLine("' style='fill:" + fillString + ";stroke-width:" + thickness * graphScale + "; clip-path: url(#graphClipRect)' stroke=" + colour.SVGString() + "/>");
+						svg.WriteLine("' style='fill:" + fillString + ";stroke-width:" + thickness * graphScale + "; clip-path: url(#graphClipRect<UNIQUE>)' stroke=" + colour.SVGString() + "/>");
 					}
 				}
 				else
@@ -1533,7 +1534,7 @@ namespace CSVTools
 						svg.WriteFast(" " + ToSvgX((float)n - 20, rect, range) * graphScale + "," + ToSvgY(0.0f, rect, range) * graphScale);
 						svg.WriteFast(" " + ToSvgX(start, rect, range) * graphScale + "," + ToSvgY(0.0f, rect, range) * graphScale );
 					}
-					svg.WriteLine("' style='fill:" + fillString + ";stroke-width:" + thickness * graphScale + "; clip-path: url(#graphClipRect)' stroke=" + colour.SVGString() + "/>");
+					svg.WriteLine("' style='fill:" + fillString + ";stroke-width:" + thickness * graphScale + "; clip-path: url(#graphClipRect<UNIQUE>)' stroke=" + colour.SVGString() + "/>");
 				}
 			}
 		}
@@ -1571,7 +1572,7 @@ namespace CSVTools
 
 				svg.WriteFast(" " + x + "," + y);
 			}
-			svg.WriteLine("' style='fill:none;stroke-width:1.3; clip-path: url(#graphClipRect)' stroke=" + colour.SVGString() + "/>");
+			svg.WriteLine("' style='fill:none;stroke-width:1.3; clip-path: url(#graphClipRect<UNIQUE>)' stroke=" + colour.SVGString() + "/>");
 
 		}
 
@@ -1697,9 +1698,13 @@ namespace CSVTools
 						string startName = highlightEventRegions[i * 2].ToLower().Trim();
 						string endName = highlightEventRegions[i * 2 + 1].ToLower().Trim();
 
-						if (endName == "{NULL}")
+						if (endName == "{null}")
 						{
 							endName = null;
+						}
+						if (startName == "{null}")
+						{
+							startName = null;
 						}
 
 						List<int> startIndices = null;
@@ -1884,9 +1889,18 @@ namespace CSVTools
 			return value - (float)Math.Truncate(value);
 		}
 
+		string GetStringHash8Char(string name)
+		{
+			using (SHA256 sha256 = SHA256.Create())
+			{
+				Encoding enc = Encoding.UTF8;
+				byte[] hash = sha256.ComputeHash(enc.GetBytes(name));
+				return BitConverter.ToString(hash).Replace("-", string.Empty).Substring(0, 8);
+			}
+		}
+
 		string GetJSStatName(string statName)
 		{
-			uint hashCode = (uint)statName.GetHashCode();
 			string newString = "_";
 			foreach (char c in statName)
 			{
@@ -1899,7 +1913,7 @@ namespace CSVTools
 					newString += "_";
 				}
 			}
-			newString += "_" + hashCode.ToString();
+			newString += "_" + GetStringHash8Char(statName);
 			return newString;
 		}
 

@@ -33,7 +33,31 @@ FScreenPassTexture AddVisualizeTemporalUpscalerPass(FRDGBuilder& GraphBuilder, c
 
 	if (Inputs.TAAConfig != EMainTAAPassConfig::Disabled)
 	{
-		FScreenPassTexture OutputTexture = FScreenPassTexture::CopyFromSlice(GraphBuilder, Inputs.Outputs.FullRes);
+		FScreenPassTexture OutputTexture;
+		if (Inputs.Outputs.FullRes.TextureSRV->Desc.Texture->Desc.IsTextureArray())
+		{
+			FRDGTextureDesc Desc = Inputs.Outputs.FullRes.TextureSRV->Desc.Texture->Desc;
+			Desc.Dimension = ETextureDimension::Texture2D;
+			Desc.ArraySize = 1;
+			Desc.NumMips = 1;
+
+			FRDGTextureRef NewTexture = GraphBuilder.CreateTexture(Desc, Inputs.Outputs.FullRes.TextureSRV->Desc.Texture->Name);
+
+			FRHICopyTextureInfo CopyInfo;
+			CopyInfo.SourceSliceIndex = Inputs.Outputs.FullRes.TextureSRV->Desc.FirstArraySlice;
+
+			AddCopyTexturePass(
+				GraphBuilder,
+				Inputs.Outputs.FullRes.TextureSRV->Desc.Texture,
+				NewTexture,
+				CopyInfo);
+
+			OutputTexture = FScreenPassTexture(NewTexture, Inputs.Outputs.FullRes.ViewRect);
+		}
+		else
+		{
+			OutputTexture = FScreenPassTexture(Inputs.Outputs.FullRes.TextureSRV->Desc.Texture, Inputs.Outputs.FullRes.ViewRect);
+		}
 
 		auto VisualizeTextureLabel = [](FRDGTextureRef Texture, const TCHAR* Suffix = TEXT(""))
 		{
@@ -71,6 +95,7 @@ FScreenPassTexture AddVisualizeTemporalUpscalerPass(FRDGBuilder& GraphBuilder, c
 		}
 
 		// Translucency
+		if (Inputs.TAAConfig == EMainTAAPassConfig::TSR)
 		{
 			FVisualizeBufferTile& Tile = Tiles[4 * 0 + 2];
 			if (Inputs.Inputs.PostDOFTranslucencyResources.IsValid())
@@ -87,6 +112,7 @@ FScreenPassTexture AddVisualizeTemporalUpscalerPass(FRDGBuilder& GraphBuilder, c
 		}
 
 		// Translucency alpha
+		if (Inputs.TAAConfig == EMainTAAPassConfig::TSR)
 		{
 			FVisualizeBufferTile& Tile = Tiles[4 * 0 + 3];
 			if (Inputs.Inputs.PostDOFTranslucencyResources.IsValid())
@@ -123,7 +149,7 @@ FScreenPassTexture AddVisualizeTemporalUpscalerPass(FRDGBuilder& GraphBuilder, c
 			PassInputs.SceneVelocity = Inputs.Inputs.SceneVelocity;
 
 			FVisualizeBufferTile& Tile = Tiles[4 * 2 + 0];
-			Tile.Input = AddVisualizeMotionVectorsPass(GraphBuilder, View, PassInputs);
+			Tile.Input = AddVisualizeMotionVectorsPass(GraphBuilder, View, PassInputs, EVisualizeMotionVectors::ReprojectionAlignment);
 			Tile.Input.ViewRect = CropViewRectToCenter(Tile.Input.ViewRect);
 			Tile.Label = TEXT("show VisualizeReprojection");
 		}
@@ -132,9 +158,31 @@ FScreenPassTexture AddVisualizeTemporalUpscalerPass(FRDGBuilder& GraphBuilder, c
 		if (Inputs.TAAConfig == EMainTAAPassConfig::TSR)
 		{
 			FVisualizeBufferTile& Tile = Tiles[4 * 1 + 3];
-			Tile.Input = Inputs.Inputs.MoireInputTexture;
-			Tile.Input.ViewRect = CropViewRectToCenter(View.ViewRect);
-			Tile.Label = VisualizeTextureLabel(Inputs.Inputs.MoireInputTexture.Texture);
+			if (Inputs.Inputs.FlickeringInputTexture.IsValid())
+			{
+				Tile.Input = Inputs.Inputs.FlickeringInputTexture;
+				Tile.Input.ViewRect = CropViewRectToCenter(View.ViewRect);
+				Tile.Label = VisualizeTextureLabel(Inputs.Inputs.FlickeringInputTexture.Texture);
+			}
+			else
+			{
+				Tile.Input = FScreenPassTexture(GSystemTextures.GetBlackDummy(GraphBuilder));
+				Tile.Label = TEXT("No Moire Luma!");
+			}
+		}
+
+		// Display UMaterial::bHasPixelAnimation used to disable TSR's anti-flickering heuristic (r.TSR.ShadingRejection.Flickering) on per pixel basis
+		if (Inputs.TAAConfig == EMainTAAPassConfig::TSR)
+		{
+			FVisualizeMotionVectorsInputs PassInputs;
+			PassInputs.SceneColor = Inputs.SceneColor;
+			PassInputs.SceneDepth = Inputs.Inputs.SceneDepth;
+			PassInputs.SceneVelocity = Inputs.Inputs.SceneVelocity;
+
+			FVisualizeBufferTile& Tile = Tiles[4 * 2 + 3];
+			Tile.Input = AddVisualizeMotionVectorsPass(GraphBuilder, View, PassInputs, EVisualizeMotionVectors::HasPixelAnimationFlag);
+			Tile.Input.ViewRect = CropViewRectToCenter(Tile.Input.ViewRect);
+			Tile.Label = TEXT("UMaterial::bHasPixelAnimation");
 		}
 
 		// Output
@@ -239,13 +287,42 @@ FScreenPassTexture AddVisualizeTemporalUpscalerPass(FRDGBuilder& GraphBuilder, c
 				QuickDrawSummary(/* Location = */ 4, TEXT("Support Alpha: ") + Text);
 			}
 
+			// Display memory size of the history.
+			{
+				static auto CVarAntiAliasingQuality = IConsoleManager::Get().FindConsoleVariable(TEXT("sg.AntiAliasingQuality"));
+				check(CVarAntiAliasingQuality);
+
+				const uint64 PingPongHistorySizeMultiplier = 2;
+				uint64 HistorySize = 0;
+				if (Inputs.TAAConfig == EMainTAAPassConfig::TAA)
+				{
+					HistorySize = View.PrevViewInfo.TemporalAAHistory.GetGPUSizeBytes(/* bLogSizes = */ false) * PingPongHistorySizeMultiplier;
+				}
+				else if (Inputs.TAAConfig == EMainTAAPassConfig::TSR && View.PrevViewInfo.TSRHistory.IsValid())
+				{
+					HistorySize = View.PrevViewInfo.TSRHistory.GetGPUSizeBytes(/* bLogSizes = */ false);
+
+					bool bHasTSRHistoryResurrection = View.PrevViewInfo.TSRHistory.MetadataArray->GetDesc().ArraySize > 1;
+					bool bHasTSRPingPongHistory = !bHasTSRHistoryResurrection;
+					if (bHasTSRPingPongHistory)
+					{
+						HistorySize *= PingPongHistorySizeMultiplier;
+					}
+				}
+				else if (Inputs.TAAConfig == EMainTAAPassConfig::ThirdParty && View.PrevViewInfo.ThirdPartyTemporalUpscalerHistory.IsValid())
+				{
+					HistorySize = View.PrevViewInfo.ThirdPartyTemporalUpscalerHistory->GetGPUSizeBytes();
+				}
+				QuickDrawSummary(/* Location = */ 5, FString::Printf(TEXT("History VRAM footprint: %.1f MB"), float(HistorySize) / float(1024 * 1024)));
+			}
+
 			// Display if any additional sharpening is happening
 			{
 				static auto CVarSharpen = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Tonemapper.Sharpen"));
 				check(CVarSharpen);
 				float Sharpen = CVarSharpen->GetFloat();
 				Sharpen = (Sharpen < 0) ? View.FinalPostProcessSettings.Sharpen : Sharpen;
-				QuickDrawSummary(/* Location = */ 5, Sharpen > 0 ? FString::Printf(TEXT("Tonemapper Sharpen: %f"), Sharpen) : TEXT("Tonemapper Sharpen: Off"));
+				QuickDrawSummary(/* Location = */ 6, Sharpen > 0 ? FString::Printf(TEXT("Tonemapper Sharpen: %f"), Sharpen) : TEXT("Tonemapper Sharpen: Off"));
 			}
 
 		});

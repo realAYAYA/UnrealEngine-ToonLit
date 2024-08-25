@@ -16,7 +16,6 @@ __pragma(warning(disable: 4264))  /* No override available for virtual member fu
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 #pragma warning(push)
 #pragma warning(disable : 4005)
 #endif //PLATFORM_WINDOWS
@@ -41,7 +40,6 @@ __pragma(warning(disable: 4264))  /* No override available for virtual member fu
 
 #if PLATFORM_WINDOWS
 #pragma warning(pop)
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif //PLATFORM_WINDOWS
 

@@ -30,7 +30,7 @@ class FDMXLibraryFromMVRImporter :
 {
 public:
 	/** Loads the MVR File */
-	UE_NODISCARD bool LoadMVRFile(const FString& InFilename);
+	[[nodiscard]] bool LoadMVRFile(const FString& InFilename);
 
 	/** Creates a modal window that allows the user to change import options. */
 	void UpdateImportOptionsFromModalWindow(UDMXLibraryFromMVRImportOptions* InOutImportOptions, bool& bOutCancelled);

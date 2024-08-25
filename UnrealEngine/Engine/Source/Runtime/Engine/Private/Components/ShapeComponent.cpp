@@ -3,6 +3,7 @@
 
 #include "Components/ShapeComponent.h"
 #include "AI/NavigationSystemBase.h"
+#include "AI/Navigation/NavigationRelevantData.h"
 #include "BodySetupEnums.h"
 #include "PhysicsEngine/BoxElem.h"
 #include "PhysicsEngine/SphereElem.h"
@@ -71,6 +72,12 @@ UShapeComponent::UShapeComponent(const FObjectInitializer& ObjectInitializer)
 
 	bUseSystemDefaultObstacleAreaClass = true;
 	AreaClassOverride = nullptr;
+}
+
+void UShapeComponent::SetLineThickness(float Thickness)
+{
+	LineThickness = Thickness;
+	MarkRenderStateDirty();
 }
 
 FPrimitiveSceneProxy* UShapeComponent::CreateSceneProxy()

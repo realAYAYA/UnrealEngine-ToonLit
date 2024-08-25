@@ -32,13 +32,19 @@ private:
 	void ChangeSourceControlProvider(int32 ProviderIndex) const;
 
 	/** Get the content for the drop-down menu for picking providers */
-	TSharedRef<SWidget> OnGetMenuContent() const;
+	TSharedRef<SWidget> OnGetMenuContent();
 
 	/** Get the button text for the drop-down */
 	FText OnGetButtonText() const;
 
 	/** Get the text to be displayed given the name of the provider */
 	FText GetProviderText(const FName& InName) const;
+
+	/** Requests confirmation for the change of provider */
+	bool ConfirmProviderChanging() const;
+
+	/** The index of the currently active provider */
+	int CurrentProviderIndex = -1;
 };
 
 #endif // SOURCE_CONTROL_WITH_SLATE

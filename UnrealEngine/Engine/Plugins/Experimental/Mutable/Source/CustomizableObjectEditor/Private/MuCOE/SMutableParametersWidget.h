@@ -13,7 +13,7 @@ namespace ESelectInfo { enum Type : int; }
 namespace ETextCommit { enum Type : int; }
 
 class FString;
-class SMutableTextSearchBox;
+class SSearchableComboBox;
 class SVerticalBox;
 struct FGeometry;
 struct FPointerEvent;
@@ -33,11 +33,11 @@ public:
 
 	SLATE_BEGIN_ARGS(SMutableParametersWidget) {}
 
-		/** Parameters to show and edit. */
-		SLATE_ARGUMENT_DEFAULT(mu::ParametersPtr, Parameters) { nullptr };
+	/** Parameters to show and edit. */
+	SLATE_ARGUMENT_DEFAULT(mu::ParametersPtr, Parameters) { nullptr };
 
-		/** Called when any parameter value has changed, with the parameter index as argument.  */
-		SLATE_EVENT(FOnMutableParameterValueChanged, OnParametersValueChanged)
+	/** Called when any parameter value has changed, with the parameter index as argument.  */
+	SLATE_EVENT(FOnMutableParameterValueChanged, OnParametersValueChanged)
 
 	SLATE_END_ARGS()
 
@@ -64,6 +64,9 @@ private:
 
 	/** Dynamically filled box with per-parameter widgets */
 	TSharedPtr<SVerticalBox> ParamBox;
+
+	/** Map from ParamIndexInObject to the int param's selector options */
+	TMap<int32, TSharedPtr<TArray<TSharedPtr<FString>>>> IntParameterOptions;
 
 	/** Check if the Parameter index provided is from a parameter that controls the amount of values another parameter/s
 	 * should have exposed in the UI. If the parameter does so then the redraw of the parameters widget will be scheduled
@@ -96,8 +99,9 @@ private:
 	void OnSetColorFromColorPicker(FLinearColor NewColor, int32 ParamIndex, mu::RangeIndexPtrConst RangeIndex);
 	TOptional<int32> GetIntParameterValue(int32 ParamIndex,  mu::RangeIndexPtrConst RangeIndex) const;
 	TOptional<int32> GetIntParameterValueMax(int32 ParamIndex) const;
-	void OnIntParameterChanged(int32 Value, int32 ParamIndex, TSharedPtr<SMutableTextSearchBox> Combo,  mu::RangeIndexPtrConst RangeIndex);
+	void OnIntParameterChanged(int32 Value, int32 ParamIndex, TSharedPtr<SSearchableComboBox> Combo,  mu::RangeIndexPtrConst RangeIndex);
 	void OnIntParameterTextChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo, int32 ParamIndex, mu::RangeIndexPtrConst RangeIndex);
+	TSharedRef<SWidget> OnGenerateWidgetIntParameter(TSharedPtr<FString> InItem) const;
 
 	/** Projector UI callbacks */
 	TOptional<FVector::FReal> GetProjectorLocation(EAxis::Type Axis, int32 ParamIndex,  mu::RangeIndexPtrConst RangeIndex) const;

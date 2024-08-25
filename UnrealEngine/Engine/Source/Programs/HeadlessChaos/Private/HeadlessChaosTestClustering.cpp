@@ -35,8 +35,8 @@ namespace ChaosTest {
 		FPBDRigidParticleHandle* Box2 = AppendClusteredParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
 		uint32 Box2Id = FirstId++;
 
-		Box2->X() = FVec3((FReal)100, (FReal)0, (FReal)0);
-		Box2->P() = Box2->X();
+		Box2->SetX(FVec3((FReal)100, (FReal)0, (FReal)0));
+		Box2->SetP(Box2->GetX());
 
 		Evolution.EnableParticle(Box1);
 		Evolution.EnableParticle(Box2);
@@ -48,21 +48,21 @@ namespace ChaosTest {
 		ClusterChildren.Add(Box1);
 		ClusterChildren.Add(Box2);
 
-		Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterChildren), ClusterParams);
+		Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterChildren), ClusterParams, FImplicitObjectPtr(nullptr));
 		EXPECT_EQ(ClusteredParticles.Size(), 3);
 
-		FVec3 ClusterX = ClusteredParticles.X(2);
-		FRotation3 ClusterRot = ClusteredParticles.R(2);
+		FVec3 ClusterX = ClusteredParticles.GetX(2);
+		FRotation3 ClusterRot = ClusteredParticles.GetR(2);
 
 		EXPECT_TRUE(ClusterX.Equals(FVec3 {(FReal)50, 0, 0}));
 		EXPECT_TRUE(ClusterRot.Equals(FRotation3::Identity));
-		EXPECT_TRUE(ClusterX.Equals(ClusteredParticles.P(2)));
-		EXPECT_TRUE(ClusterRot.Equals(ClusteredParticles.Q(2)));
+		EXPECT_TRUE(ClusterX.Equals(ClusteredParticles.GetP(2)));
+		EXPECT_TRUE(ClusterRot.Equals(ClusteredParticles.GetQ(2)));
 
 		FRigidTransform3 ClusterTM(ClusterX, ClusterRot);
 		FVec3 LocalPos = ClusterTM.InverseTransformPositionNoScale(FVec3 {(FReal)200, (FReal)0, (FReal)0});
 		FVec3 Normal;
-		FReal Phi = ClusteredParticles.Geometry(2)->PhiWithNormal(LocalPos, Normal);
+		FReal Phi = ClusteredParticles.GetGeometry(2)->PhiWithNormal(LocalPos, Normal);
 		EXPECT_TRUE(FMath::IsNearlyEqual(Phi, (FReal)50));
 		EXPECT_TRUE(Normal.Equals(FVec3{(FReal)1, (FReal)0, (FReal)0}));
 
@@ -86,8 +86,8 @@ namespace ChaosTest {
 		{
 			BoxIDs.Add(ClusteredParticles.Size());
 			FPBDRigidParticleHandle* Box = AppendClusteredParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
-			Box->X() = FVec3((FReal)i * (FReal)100, (FReal)0, (FReal)0);
-			Box->P() = Box->X();
+			Box->SetX(FVec3((FReal)i * (FReal)100, (FReal)0, (FReal)0));
+			Box->SetP(Box->GetX());
 			Boxes.Add(Box);
 
 			Evolution.EnableParticle(Box);
@@ -106,15 +106,15 @@ namespace ChaosTest {
 			ClusterChildren.Add(Boxes[i * 4+1]);
 			ClusterChildren.Add(Boxes[i * 4+2]);
 			ClusterChildren.Add(Boxes[i * 4+3]);
-			ClusterHandles.Add(Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterChildren), ClusterParams));
+			ClusterHandles.Add(Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterChildren), ClusterParams, FImplicitObjectPtr(nullptr)));
 		}
 
 		FClusterCreationParameters ClusterParams;
 		TArray<Chaos::FPBDRigidParticleHandle* > ClusterHandlesCopy = ClusterHandles;
-		Chaos::FPBDRigidParticleHandle* RootClusterHandle = Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterHandlesCopy), ClusterParams);
+		Chaos::FPBDRigidParticleHandle* RootClusterHandle = Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterHandlesCopy), ClusterParams, FImplicitObjectPtr(nullptr));
 		FVec3 InitialVelocity((FReal)50, (FReal)20, (FReal)100);
 
-		RootClusterHandle->V() = InitialVelocity;		
+		RootClusterHandle->SetV(InitialVelocity);
 		
 		constexpr int NumParticles = NumBoxes + NumBoxes / 4 + 1;
 		EXPECT_EQ(ClusteredParticles.Size(), NumParticles);
@@ -160,7 +160,7 @@ namespace ChaosTest {
 			}
 
 			EXPECT_TRUE(bFoundInNonDisabled);	//clusters are enabled and in non disabled array
-			EXPECT_TRUE(ClusterHandle->V().Equals(InitialVelocity));
+			EXPECT_TRUE(ClusterHandle->GetV().Equals(InitialVelocity));
 		}
 
 		Evolution.AdvanceOneTimeStep(Dt);
@@ -187,7 +187,7 @@ namespace ChaosTest {
 				bFoundInNonDisabled |= Particle.Handle() == BoxHandle;
 			}
 			EXPECT_TRUE(bFoundInNonDisabled);
-			EXPECT_TRUE(BoxHandle->V().Equals(InitialVelocity));
+			EXPECT_TRUE(BoxHandle->GetV().Equals(InitialVelocity));
 		}
 	}
 
@@ -208,8 +208,8 @@ namespace ChaosTest {
 		{
 			BoxIDs.Add(ClusteredParticles.Size());
 			FPBDRigidParticleHandle* Box = AppendClusteredParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
-			Box->X() = FVec3((FReal)i * (FReal)100, (FReal)0, (FReal)0);
-			Box->P() = Box->X();
+			Box->SetX(FVec3((FReal)i * (FReal)100, (FReal)0, (FReal)0));
+			Box->SetP(Box->GetX());
 			Boxes.Add(Box);
 
 			Evolution.EnableParticle(Box);
@@ -228,16 +228,16 @@ namespace ChaosTest {
 			ClusterChildren.Add(Boxes[i * 4 + 1]);
 			ClusterChildren.Add(Boxes[i * 4 + 2]);
 			ClusterChildren.Add(Boxes[i * 4 + 3]);
-			ClusterHandles.Add(Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterChildren), ClusterParams));
+			ClusterHandles.Add(Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterChildren), ClusterParams, FImplicitObjectPtr(nullptr)));
 		}
 
 		TArray<Chaos::FPBDRigidParticleHandle* > ClusterHandlesDup = ClusterHandles;
 
 		FClusterCreationParameters ClusterParams;
-		Chaos::FPBDRigidParticleHandle* RootClusterHandle = Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterHandles), ClusterParams);
+		Chaos::FPBDRigidParticleHandle* RootClusterHandle = Evolution.GetRigidClustering().CreateClusterParticle(0, MoveTemp(ClusterHandles), ClusterParams, FImplicitObjectPtr(nullptr));
 		FVec3 InitialVelocity((FReal)50, (FReal)20, (FReal)100);
 
-		RootClusterHandle->V() = InitialVelocity;
+		RootClusterHandle->SetV(InitialVelocity);
 
 		TUniquePtr<FChaosPhysicsMaterial> PhysicalMaterial = MakeUnique<FChaosPhysicsMaterial>();
 		PhysicalMaterial->Friction = 0;

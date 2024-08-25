@@ -9,13 +9,16 @@
 namespace dna {
 
 struct RawDefinition;
+struct RawMesh;
 
 class BlendShapeFilter {
     public:
         explicit BlendShapeFilter(MemoryResource* memRes_);
         void configure(std::uint16_t blendShapeCount, UnorderedSet<std::uint16_t> allowedBlendShapeIndices);
         void apply(RawDefinition& dest);
+        void apply(RawMesh& dest);
         bool passes(std::uint16_t index) const;
+        std::uint16_t remapped(std::uint16_t index) const;
 
     private:
         MemoryResource* memRes;

@@ -49,7 +49,9 @@ public:
 	/**
 	 * Extend the default asset registry tags
 	 */
-	MOVIESCENE_API virtual void ExtendAssetRegistryTags(TArray<UObject::FAssetRegistryTag>& OutTags) const override;
+	MOVIESCENE_API virtual void ExtendAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	MOVIESCENE_API virtual void ExtendAssetRegistryTags(TArray<UObject::FAssetRegistryTag>& OutTags) const override {}
 
 #if WITH_EDITOR
 

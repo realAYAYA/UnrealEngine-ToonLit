@@ -274,7 +274,7 @@ void FFullBlueprintEditorCommands::RegisterCommands()
 	UI_COMMAND(SwitchToBlueprintDefaultsMode, "Defaults", "Switches to Class Defaults Mode", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(SwitchToComponentsMode, "Components", "Switches to Components Mode", EUserInterfaceActionType::ToggleButton, FInputChord());
 
-	UI_COMMAND(EditGlobalOptions, "Class Settings", "Edit Class Settings (Previously known as Blueprint Props)", EUserInterfaceActionType::ToggleButton, FInputChord());
+	UI_COMMAND(EditGlobalOptions, "Class Settings", "Edit Class Settings", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(EditClassDefaults, "Class Defaults", "Edit the initial values of your class.", EUserInterfaceActionType::ToggleButton, FInputChord());
 
 	UI_COMMAND(JumpToErrorNode, "Jump to Error Node", "When enabled, then the Blueprint will snap focus to nodes producing an error during compilation", EUserInterfaceActionType::ToggleButton, FInputChord());
@@ -591,6 +591,10 @@ static void OnDiffRevisionPicked(FRevisionInfo const& RevisionInfo, TWeakObjectP
 									PreviousAsset = ObjAsBlueprint;
 									break;
 								}
+							}
+							if (!PreviousAsset)
+							{
+								UE_LOG(LogSourceControl, Warning, TEXT("Revision %s of %s doesn't have a LevelScriptBlueprint"), *Revision->GetRevision(), *Revision->GetFilename());
 							}
 						}
 						// otherwise its a normal Blueprint

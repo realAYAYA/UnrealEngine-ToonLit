@@ -173,7 +173,7 @@ bool UE::Geometry::SplitInteriorVertexTrianglesIntoSubsets(
 	}
 
 	FIndex2i StartTris = Mesh->GetEdgeT(SplitEdgeID1);
-	if (StartTris.B <= 0)
+	if (StartTris.B < 0)
 	{
 		return false;
 	}

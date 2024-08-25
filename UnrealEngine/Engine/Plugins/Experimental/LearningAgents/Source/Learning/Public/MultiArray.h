@@ -5,17 +5,14 @@
 #include "CoreTypes.h"
 #include "Misc/AssertionMacros.h"
 #include "HAL/UnrealMemory.h"
-#include "Templates/IsSigned.h"
 #include "Templates/UnrealTypeTraits.h"
 #include "Templates/UnrealTemplate.h"
 #include "Containers/ContainerAllocationPolicies.h"
 #include "Containers/ContainerElementTypeCompatibility.h"
 
-#include "Templates/AndOrNot.h"
 #include "Templates/IdentityFunctor.h"
 #include "Templates/Invoke.h"
 #include "Templates/Less.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Sorting.h"
 #include "Templates/AlignmentTemplates.h"
 #include "Templates/IsConstructible.h"
@@ -46,7 +43,7 @@ namespace UE::MultiArray::Private
 	// This should be changed to use std::disjunction and std::is_constructible, and the usage
 	// changed to use ::value instead of ::Value, when std::disjunction (C++17) is available everywhere.
 	template <typename DestType, typename SourceType>
-	using TMultiArrayElementsAreCompatible = TOrValue<std::is_same<DestType, std::decay_t<SourceType>>::value, TIsConstructible<DestType, SourceType>>;
+	constexpr bool TMultiArrayElementsAreCompatible_V = std::is_same_v<DestType, std::decay_t<SourceType>> || std::is_constructible_v<DestType, SourceType>;
 }
 
 
@@ -68,19 +65,19 @@ public:
 	static constexpr bool bIsRestrict = bInIsRestrict;
 	using SizeType = typename InAllocatorType::SizeType;
 
-	using PointerType = typename TChooseClass<
+	using PointerType = std::conditional_t<
 		bIsRestrict,
 		ElementType* RESTRICT,
-		ElementType*>::Result;
+		ElementType*>;
 
-	using ElementAllocatorType = typename TChooseClass<
+	using ElementAllocatorType = std::conditional_t<
 		AllocatorType::NeedsElementType,
 		typename AllocatorType::template ForElementType<ElementType>,
 		typename AllocatorType::ForAnyElementType
-	>::Result;
+	>;
 
 	static_assert(DimNum > 1, "TMultiArray requires a positive, non-zero number of dimensions");
-	static_assert(TIsSigned<SizeType>::Value, "TMultiArray only supports signed index types");
+	static_assert(std::is_signed_v<SizeType>, "TMultiArray only supports signed index types");
 
 public:
 
@@ -299,8 +296,8 @@ public:
 	template <
 		typename OtherElementType,
 		typename OtherAllocator,
-		bool bOtherIsChecked,
-		std::enable_if_t<UE::MultiArray::Private::TMultiArrayElementsAreCompatible<ElementType, const OtherElementType&>::Value>* = nullptr
+		bool bOtherIsChecked
+		UE_REQUIRES(UE::MultiArray::Private::TMultiArrayElementsAreCompatible_V<ElementType, const OtherElementType&>)
 	>
 		FORCEINLINE explicit TMultiArray(const TMultiArray<DimNum, OtherElementType, OtherAllocator, bOtherIsChecked>& Other)
 	{
@@ -387,8 +384,8 @@ public:
 	template <
 		typename OtherElementType,
 		typename OtherAllocator,
-		bool bOtherIsChecked,
-		std::enable_if_t<UE::MultiArray::Private::TMultiArrayElementsAreCompatible<ElementType, OtherElementType&&>::Value>* = nullptr
+		bool bOtherIsChecked
+		UE_REQUIRES(UE::MultiArray::Private::TMultiArrayElementsAreCompatible_V<ElementType, OtherElementType&&>)
 	>
 		FORCEINLINE explicit TMultiArray(TMultiArray<DimNum, OtherElementType, OtherAllocator, bOtherIsChecked>&& Other)
 	{
@@ -833,18 +830,18 @@ public:
 	static constexpr bool bIsRestrict = bInIsRestrict;
 	using SizeType = typename InAllocatorType::SizeType;
 
-	using PointerType = typename TChooseClass<
+	using PointerType = std::conditional_t<
 		bIsRestrict,
 		ElementType* RESTRICT,
-		ElementType*>::Result;
+		ElementType*>;
 
-	using ElementAllocatorType = typename TChooseClass<
+	using ElementAllocatorType = std::conditional_t<
 		AllocatorType::NeedsElementType,
 		typename AllocatorType::template ForElementType<ElementType>,
 		typename AllocatorType::ForAnyElementType
-	>::Result;
+	>;
 
-	static_assert(TIsSigned<SizeType>::Value, "TMultiArray only supports signed index types");
+	static_assert(std::is_signed_v<SizeType>, "TMultiArray only supports signed index types");
 
 	/**
 	 * Initializer list constructor
@@ -955,8 +952,8 @@ public:
 	template <
 		typename OtherElementType,
 		typename OtherAllocator,
-		bool bOtherIsChecked,
-		std::enable_if_t<UE::MultiArray::Private::TMultiArrayElementsAreCompatible<ElementType, const OtherElementType&>::Value>* = nullptr
+		bool bOtherIsChecked
+		UE_REQUIRES(UE::MultiArray::Private::TMultiArrayElementsAreCompatible_V<ElementType, const OtherElementType&>)
 	>
 		FORCEINLINE explicit TMultiArray(const TMultiArray<DimNum, OtherElementType, OtherAllocator, bOtherIsChecked>& Other)
 	{
@@ -1043,8 +1040,8 @@ public:
 	template <
 		typename OtherElementType,
 		typename OtherAllocator,
-		bool bOtherIsChecked,
-		std::enable_if_t<UE::MultiArray::Private::TMultiArrayElementsAreCompatible<ElementType, OtherElementType&&>::Value>* = nullptr
+		bool bOtherIsChecked
+		UE_REQUIRES(UE::MultiArray::Private::TMultiArrayElementsAreCompatible_V<ElementType, OtherElementType&&>)
 	>
 		FORCEINLINE explicit TMultiArray(TMultiArray<DimNum, OtherElementType, OtherAllocator, bOtherIsChecked>&& Other)
 	{

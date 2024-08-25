@@ -6,16 +6,16 @@
 #include "UnsyncCore.h"
 #include "UnsyncFile.h"
 #include "UnsyncHashTable.h"
+#include "UnsyncProgress.h"
 #include "UnsyncProxy.h"
 #include "UnsyncScan.h"
 #include "UnsyncScavenger.h"
 #include "UnsyncSerialization.h"
 #include "UnsyncThread.h"
 #include "UnsyncUtil.h"
-#include "UnsyncProgress.h"
+#include "UnsyncTarget.h"
 
 #include <condition_variable>
-#include <deque>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -27,13 +27,11 @@ UNSYNC_THIRD_PARTY_INCLUDES_START
 #include <md5-sse2.h>
 UNSYNC_THIRD_PARTY_INCLUDES_END
 
-#define UNSYNC_VERSION_STR "1.0.52-dev"
+#define UNSYNC_VERSION_STR "1.0.64"
 
 namespace unsync {
 
 bool GDryRun = false;
-
-static const uint32 MAX_ACTIVE_READERS = 64;  // std::max(4, std::thread::hardware_concurrency();
 
 inline uint32
 ComputeMinVariableBlockSize(uint32 BlockSize)
@@ -122,9 +120,11 @@ ToBlock128(FGenericBlockArray& GenericBlocks)
 }
 
 template<typename WeakHasher>
-FGenericBlockArray
-ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithmID StrongHasher, FComputeMacroBlockParams* OutMacroBlocks)
+FComputeBlocksResult
+ComputeBlocksVariableT(FIOReader& Reader, const FComputeBlocksParams& Params)
 {
+	const uint32 BlockSize = Params.BlockSize;
+
 	const uint64 InputSize = Reader.GetSize();
 
 	const uint32 MinimumBlockSize = ComputeMinVariableBlockSize(BlockSize);
@@ -133,9 +133,9 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 	const uint64 BytesPerTask = std::min<uint64>(256_MB, std::max<uint64>(InputSize, 1ull));  // TODO: handle task boundary overlap
 	const uint64 NumTasks	  = DivUp(InputSize, BytesPerTask);
 
-	const uint64 TargetMacroBlockSize	 = OutMacroBlocks ? OutMacroBlocks->TargetBlockSize : 0;
+	const uint64 TargetMacroBlockSize	 = Params.bNeedMacroBlocks ? Params.MacroBlockTargetSize : 0;
 	const uint64 MinimumMacroBlockSize	 = std::max<uint64>(MinimumBlockSize, TargetMacroBlockSize / 8);
-	const uint64 MaximumMacroBlockSize	 = OutMacroBlocks ? OutMacroBlocks->MaxBlockSize : 0;
+	const uint64 MaximumMacroBlockSize	 = Params.bNeedMacroBlocks ? Params.MacroBlockMaxSize : 0;
 	const uint32 BlocksPerMacroBlock	 = CheckedNarrow(DivUp(TargetMacroBlockSize - MinimumMacroBlockSize, BlockSize));
 	const uint32 MacroBlockHashThreshold = BlocksPerMacroBlock ? (0xFFFFFFFF / BlocksPerMacroBlock) : 0;
 
@@ -177,7 +177,7 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 		auto ScanTask = [&Tasks,
 						 &IoSemaphore,
 						 &BufferPool,
-						 StrongHasher,
+						 &Params,
 						 MinimumBlockSize,
 						 MaximumBlockSize,
 						 ScanTaskBuffer,
@@ -208,7 +208,7 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 						   &LastBlockEnd,
 						   &Task,
 						   DataBegin,
-						   StrongHasher,
+						   &Params,
 						   TargetMacroBlockSize,
 						   &MacroBlockHasher,
 						   &CurrentMacroBlock](const uint8* WindowBegin, const uint8* WindowEnd, uint32 WindowHash)
@@ -226,7 +226,7 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 									  Block.Offset	   = Task.Offset + uint64(LastBlockEnd - DataBegin);
 									  Block.Size	   = CheckedNarrow(ThisBlockSize);
 									  Block.HashWeak   = WindowHash;
-									  Block.HashStrong = ComputeHash(LastBlockEnd, ThisBlockSize, StrongHasher);
+									  Block.HashStrong = ComputeHash(LastBlockEnd, ThisBlockSize, Params.Algorithm.StrongHashAlgorithmId);
 
 									  if (TargetMacroBlockSize)
 									  {
@@ -245,11 +245,27 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 																	 sizeof(CurrentMacroBlock.HashStrong.Data));
 											  Task.MacroBlocks.push_back(CurrentMacroBlock);
 
+											  if (Params.OnMacroBlockGenerated)
+											  {
+												  FBufferView BlockView;
+												  BlockView.Data = (LastBlockEnd + Block.Size) - CurrentMacroBlock.Size;
+												  BlockView.Size = CurrentMacroBlock.Size;
+												  Params.OnMacroBlockGenerated(CurrentMacroBlock, BlockView);
+											  }
+
 											  // Reset macro block state
 											  blake3_hasher_init(&MacroBlockHasher);
 											  CurrentMacroBlock.Offset += CurrentMacroBlock.Size;
 											  CurrentMacroBlock.Size = 0;
 										  }
+									  }
+
+									  if (Params.OnBlockGenerated)
+									  {
+										  FBufferView BlockView;
+										  BlockView.Data = LastBlockEnd;
+										  BlockView.Size = Block.Size;
+										  Params.OnBlockGenerated(Block, BlockView);
 									  }
 
 									  if (!Task.Blocks.empty())
@@ -282,24 +298,25 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 
 	// Merge blocks for all the tasks
 
-	FGenericBlockArray Result;
+	FComputeBlocksResult Result;
+
 	for (uint64 I = 0; I < NumTasks; ++I)
 	{
 		const FTask& Task = Tasks[I];
 		for (uint64 J = 0; J < Task.Blocks.size(); ++J)
 		{
-			Result.push_back(Task.Blocks[J]);
+			Result.Blocks.push_back(Task.Blocks[J]);
 		}
 	}
 
-	if (OutMacroBlocks)
+	if (Params.bNeedMacroBlocks)
 	{
 		for (uint64 I = 0; I < NumTasks; ++I)
 		{
 			const FTask& Task = Tasks[I];
 			for (uint64 J = 0; J < Task.MacroBlocks.size(); ++J)
 			{
-				OutMacroBlocks->Output.push_back(Task.MacroBlocks[J]);
+				Result.MacroBlocks.push_back(Task.MacroBlocks[J]);
 			}
 		}
 	}
@@ -317,12 +334,12 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 
 	THashSet<FGenericHash> UniqueBlockSet;
 	FGenericBlockArray	   UniqueBlocks;
-	for (const FGenericBlock& It : Result)
+	for (const FGenericBlock& It : Result.Blocks)
 	{
 		auto InsertResult = UniqueBlockSet.insert(It.HashStrong);
 		if (InsertResult.second)
 		{
-			if (It.Offset + It.Size < InputSize || Result.size() == 1)
+			if (It.Offset + It.Size < InputSize || Result.Blocks.size() == 1)
 			{
 				UniqueBlockMinSize = std::min<uint64>(UniqueBlockMinSize, It.Size);
 			}
@@ -365,38 +382,66 @@ ComputeBlocksVariableT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithm
 		(uint64)UniqueBlocks.size(),
 		NumTotalBlocks);
 
-	UNSYNC_ASSERT(NumTotalBlocks == Result.size());
+	UNSYNC_ASSERT(NumTotalBlocks == Result.Blocks.size());
 
 	return Result;
 }
 
-FGenericBlockArray
-ComputeBlocksVariable(FIOReader&				Reader,
-					  uint32					BlockSize,
-					  EWeakHashAlgorithmID		WeakHasher,
-					  EStrongHashAlgorithmID	StrongHasher,
-					  FComputeMacroBlockParams* OutMacroBlocks)
+FComputeBlocksResult
+ComputeBlocksVariable(FIOReader& Reader, const FComputeBlocksParams& Params)
 {
-	switch (WeakHasher)
+	switch (Params.Algorithm.WeakHashAlgorithmId)
 	{
 		case EWeakHashAlgorithmID::Naive:
-			return ComputeBlocksVariableT<FRollingChecksum>(Reader, BlockSize, StrongHasher, OutMacroBlocks);
+			return ComputeBlocksVariableT<FRollingChecksum>(Reader, Params);
 		case EWeakHashAlgorithmID::BuzHash:
-			return ComputeBlocksVariableT<FBuzHash>(Reader, BlockSize, StrongHasher, OutMacroBlocks);
+			return ComputeBlocksVariableT<FBuzHash>(Reader, Params);
 		default:
 			UNSYNC_FATAL(L"Unsupported weak hash algorithm mode");
 			return {};
 	}
 }
 
-template<typename WeakHasher>
 FGenericBlockArray
-ComputeBlocksFixedT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithmID StrongHasher, FComputeMacroBlockParams* OutMacroBlocks)
+ComputeBlocks(FIOReader& Reader, uint32 BlockSize, FAlgorithmOptions Algorithm)
+{
+	FComputeBlocksParams Params;
+	Params.Algorithm			= Algorithm;
+	Params.BlockSize			= BlockSize;
+	FComputeBlocksResult Result = ComputeBlocks(Reader, Params);
+	return std::move(Result.Blocks);
+}
+
+FGenericBlockArray
+ComputeBlocks(const uint8* Data, uint64 Size, uint32 BlockSize, FAlgorithmOptions Algorithm)
+{
+	FComputeBlocksParams Params;
+	Params.Algorithm			= Algorithm;
+	Params.BlockSize			= BlockSize;
+	FComputeBlocksResult Result = ComputeBlocks(Data, Size, Params);
+	return std::move(Result.Blocks);
+}
+
+FGenericBlockArray
+ComputeBlocksVariable(FIOReader& Reader, uint32 BlockSize, EWeakHashAlgorithmID WeakHasher, EStrongHashAlgorithmID StrongHasher)
+{
+	FComputeBlocksParams Params;
+	Params.Algorithm.WeakHashAlgorithmId   = WeakHasher;
+	Params.Algorithm.StrongHashAlgorithmId = StrongHasher;
+	Params.BlockSize					   = BlockSize;
+	FComputeBlocksResult Result			   = ComputeBlocks(Reader, Params);
+	return std::move(Result.Blocks);
+}
+
+template<typename WeakHasher>
+FComputeBlocksResult
+ComputeBlocksFixedT(FIOReader& Reader, const FComputeBlocksParams& Params)
 {
 	UNSYNC_LOG_INDENT;
 
 	auto TimeBegin = TimePointNow();
 
+	const uint32 BlockSize = Params.BlockSize;
 	const uint64 NumBlocks = DivUp(Reader.GetSize(), BlockSize);
 
 	FGenericBlockArray Blocks(NumBlocks);
@@ -408,10 +453,10 @@ ComputeBlocksFixedT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithmID 
 	}
 
 	uint64 ReadSize = std::max<uint64>(BlockSize, 8_MB);
-	if (OutMacroBlocks)
+	if (Params.bNeedMacroBlocks)
 	{
 		UNSYNC_FATAL(L"Macro block generation is not implemented for fixed block mode");
-		ReadSize = std::max<uint64>(ReadSize, OutMacroBlocks->TargetBlockSize);
+		ReadSize = std::max<uint64>(ReadSize, Params.MacroBlockTargetSize);
 	}
 	UNSYNC_ASSERT(ReadSize % BlockSize == 0);
 
@@ -430,7 +475,7 @@ ComputeBlocksFixedT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithmID 
 
 			IoSemaphore.Acquire();
 
-			auto ReadCallback = [&NumReadsCompleted, &TaskGroup, &NumBlocksCompleted, &Blocks, &IoSemaphore, StrongHasher, BlockSize](
+			auto ReadCallback = [&NumReadsCompleted, &TaskGroup, &NumBlocksCompleted, &Blocks, &IoSemaphore, &Params, BlockSize](
 									FIOBuffer CmdBuffer,
 									uint64	  CmdOffset,
 									uint64	  CmdReadSize,
@@ -441,7 +486,7 @@ ComputeBlocksFixedT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithmID 
 							   &NumBlocksCompleted,
 							   &Blocks,
 							   &IoSemaphore,
-							   StrongHasher,
+							   &Params,
 							   BlockSize,
 							   CmdBuffer  = MakeShared(std::move(CmdBuffer)),
 							   BufferSize = CmdReadSize,
@@ -463,7 +508,7 @@ ComputeBlocksFixedT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithmID 
 						UNSYNC_ASSERT(Block.HashWeak == 0);
 						UNSYNC_ASSERT(Block.HashStrong == FGenericHash{});
 
-						Block.HashStrong = ComputeHash(Buffer + I * BlockSize, Block.Size, StrongHasher);
+						Block.HashStrong = ComputeHash(Buffer + I * BlockSize, Block.Size, Params.Algorithm.StrongHashAlgorithmId);
 
 						WeakHasher HashWeak;
 						HashWeak.Update(Buffer + I * BlockSize, Block.Size);
@@ -515,22 +560,22 @@ ComputeBlocksFixedT(FIOReader& Reader, uint32 BlockSize, EStrongHashAlgorithmID 
 		UniqueHashes.insert(It.HashWeak);
 	}
 
-	return Blocks;
+	FComputeBlocksResult Result;
+
+	std::swap(Result.Blocks, Blocks);
+
+	return Result;
 }
 
-FGenericBlockArray
-ComputeBlocksFixed(FIOReader&				 Reader,
-				   uint32					 BlockSize,
-				   EWeakHashAlgorithmID		 WeakHasher,
-				   EStrongHashAlgorithmID	 StrongHasher,
-				   FComputeMacroBlockParams* OutMacroBlocks)
+FComputeBlocksResult
+ComputeBlocksFixed(FIOReader& Reader, const FComputeBlocksParams& Params)
 {
-	switch (WeakHasher)
+	switch (Params.Algorithm.WeakHashAlgorithmId)
 	{
 		case EWeakHashAlgorithmID::Naive:
-			return ComputeBlocksFixedT<FRollingChecksum>(Reader, BlockSize, StrongHasher, OutMacroBlocks);
+			return ComputeBlocksFixedT<FRollingChecksum>(Reader, Params);
 		case EWeakHashAlgorithmID::BuzHash:
-			return ComputeBlocksFixedT<FBuzHash>(Reader, BlockSize, StrongHasher, OutMacroBlocks);
+			return ComputeBlocksFixedT<FBuzHash>(Reader, Params);
 		default:
 			UNSYNC_FATAL(L"Unsupported weak hash algorithm mode");
 			return {};
@@ -550,15 +595,15 @@ GetVersionString()
 
 		if (strlen(GitBranch) && strlen(GitRev))
 		{
-			snprintf(Str, sizeof(Str), "v" UNSYNC_VERSION_STR " [%s:%s]", GitBranch, GitRev);
+			snprintf(Str, sizeof(Str), UNSYNC_VERSION_STR " [%s:%s]", GitBranch, GitRev);
 		}
 		else if (strlen(GitRev))
 		{
-			snprintf(Str, sizeof(Str), "v" UNSYNC_VERSION_STR " [%s]", GitRev);
+			snprintf(Str, sizeof(Str), UNSYNC_VERSION_STR " [%s]", GitRev);
 		}
 		else
 		{
-			snprintf(Str, sizeof(Str), "v" UNSYNC_VERSION_STR);
+			snprintf(Str, sizeof(Str), UNSYNC_VERSION_STR);
 		}
 
 		return std::string(Str);
@@ -567,26 +612,26 @@ GetVersionString()
 	return Result;
 }
 
-FGenericBlockArray
-ComputeBlocks(FIOReader& Reader, uint32 BlockSize, FAlgorithmOptions Algorithm, FComputeMacroBlockParams* OutMacroBlocks)
+FComputeBlocksResult
+ComputeBlocks(FIOReader& Reader, const FComputeBlocksParams& Params)
 {
-	switch (Algorithm.ChunkingAlgorithmId)
+	switch (Params.Algorithm.ChunkingAlgorithmId)
 	{
 		case EChunkingAlgorithmID::FixedBlocks:
-			return ComputeBlocksFixed(Reader, BlockSize, Algorithm.WeakHashAlgorithmId, Algorithm.StrongHashAlgorithmId, OutMacroBlocks);
+			return ComputeBlocksFixed(Reader, Params);
 		case EChunkingAlgorithmID::VariableBlocks:
-			return ComputeBlocksVariable(Reader, BlockSize, Algorithm.WeakHashAlgorithmId, Algorithm.StrongHashAlgorithmId, OutMacroBlocks);
+			return ComputeBlocksVariable(Reader, Params);
 		default:
 			UNSYNC_FATAL(L"Unsupported chunking mode");
 			return {};
 	}
 }
 
-FGenericBlockArray
-ComputeBlocks(const uint8* Data, uint64 Size, uint32 BlockSize, FAlgorithmOptions Algorithm, FComputeMacroBlockParams* OutMacroBlocks)
+FComputeBlocksResult
+ComputeBlocks(const uint8* Data, uint64 Size, const FComputeBlocksParams& Params)
 {
 	FMemReader DataReader(Data, Size);
-	return ComputeBlocks(DataReader, BlockSize, Algorithm, OutMacroBlocks);
+	return ComputeBlocks(DataReader, Params);
 }
 
 template<typename BlockType>
@@ -1010,25 +1055,6 @@ OptimizeNeedList(const std::vector<FNeedBlock>& Input, uint64 MaxMergedBlockSize
 	return Result;
 }
 
-FBuffer
-BuildTargetBuffer(const uint8*			 SourceData,
-				  uint64				 SourceSize,
-				  const uint8*			 BaseData,
-				  uint64				 BaseSize,
-				  const FNeedList&		 NeedList,
-				  EStrongHashAlgorithmID StrongHasher)
-{
-	FMemReader SourceReader(SourceData, SourceSize);
-	FMemReader BaseReader(BaseData, BaseSize);
-	return BuildTargetBuffer(SourceReader, BaseReader, NeedList, StrongHasher);
-}
-
-struct FReadSchedule
-{
-	std::vector<FCopyCommand> Blocks;
-	std::deque<uint64>		  Requests;	 // unique block request indices sorted small to large
-};
-
 FReadSchedule
 BuildReadSchedule(const std::vector<FNeedBlock>& Blocks)
 {
@@ -1051,689 +1077,6 @@ BuildReadSchedule(const std::vector<FNeedBlock>& Blocks)
 	}
 
 	return Result;
-}
-
-class FBlockCache
-{
-public:
-	FBuffer							BlockData;
-	THashMap<FHash128, FBufferView> BlockMap;  // Decompressed block data by hash
-};
-
-FBuffer
-BuildTargetBuffer(FIOReader& SourceProvider, FIOReader& BaseProvider, const FNeedList& NeedList, EStrongHashAlgorithmID StrongHasher)
-{
-	FBuffer				Result;
-	const FNeedListSize SizeInfo = ComputeNeedListSize(NeedList);
-	Result.Resize(SizeInfo.TotalBytes);
-	FMemReaderWriter ResultWriter(Result.Data(), Result.Size());
-	BuildTarget(ResultWriter, SourceProvider, BaseProvider, NeedList, StrongHasher);
-	return Result;
-}
-
-void
-DownloadBlocks(FProxyPool&					  ProxyPool,
-			   const std::vector<FNeedBlock>& OriginalUniqueNeedBlocks,
-			   const FBlockDownloadCallback&  CompletionCallback)
-{
-	const uint32		ParentThreadIndent	 = GLogIndent;
-	const bool			bParentThreadVerbose = GLogVerbose;
-	std::atomic<uint64> NumActiveLogThreads	 = {};
-
-	THashSet<FHash128>			   DownloadedBlocks;
-	std::vector<FNeedBlock>		   RemainingNeedBlocks;
-	const std::vector<FNeedBlock>* NeedBlocks = &OriginalUniqueNeedBlocks;
-
-	std::atomic<bool> bGotError = false;
-
-	const uint32 MaxAttempts = 30;
-	for (uint32 Attempt = 0; Attempt <= MaxAttempts && !bGotError; ++Attempt)
-	{
-		if (!ProxyPool.IsValid())
-		{
-			UNSYNC_WARNING(L"FProxy connection is not valid.")
-		}
-
-		if (Attempt != 0)
-		{
-			uint64 NumRemainingBlocks = RemainingNeedBlocks.size();
-			UNSYNC_WARNING(L"Failed to download %lld blocks from proxy. Retry attempt %d of %d ...",
-						   NumRemainingBlocks,
-						   Attempt,
-						   MaxAttempts);
-
-			SchedulerSleep(1000);
-		}
-
-		struct FDownloadBatch
-		{
-			uint64 Begin;
-			uint64 End;
-			uint64 SizeBytes;
-		};
-		std::vector<FDownloadBatch> Batches;
-		Batches.push_back(FDownloadBatch{});
-
-		const uint64 MaxBytesPerBatch = ProxyPool.RemoteDesc.Protocol == EProtocolFlavor::Jupiter ? 16_MB : 128_MB;
-
-		for (uint64 I = 0; I < NeedBlocks->size() && !bGotError; ++I)
-		{
-			const FNeedBlock& Block = (*NeedBlocks)[I];
-
-			if (Batches.back().SizeBytes + Block.Size < MaxBytesPerBatch)
-			{
-				Batches.back().End = I + 1;
-			}
-			else
-			{
-				UNSYNC_ASSERT(Batches.back().End == I);
-				FDownloadBatch NewBatch = {};
-				NewBatch.Begin			= I;
-				NewBatch.End			= I + 1;
-				NewBatch.SizeBytes		= 0;
-				Batches.push_back(NewBatch);
-			}
-
-			Batches.back().SizeBytes += Block.Size;
-		}
-
-		UNSYNC_VERBOSE2(L"Download batches: %lld", Batches.size());
-
-		FTaskGroup DownloadTasks;
-		std::mutex DownloadedBlocksMutex;
-
-		for (FDownloadBatch Batch : Batches)
-		{
-			ProxyPool.ParallelDownloadSemaphore.Acquire();
-			DownloadTasks.run([NeedBlocks,
-							   Batch,
-							   ParentThreadIndent,
-							   bParentThreadVerbose,
-							   &DownloadedBlocksMutex,
-							   &ProxyPool,
-							   &DownloadedBlocks,
-							   &CompletionCallback,
-							   &NumActiveLogThreads,
-							   &bGotError] {
-				if (bGotError)
-				{
-					ProxyPool.ParallelDownloadSemaphore.Release();
-					return;
-				}
-
-				FThreadElectScope  AllowVerbose(NumActiveLogThreads, bParentThreadVerbose);
-				FLogVerbosityScope VerboseScope(AllowVerbose);
-				FLogIndentScope	   IndentScope(ParentThreadIndent, true);
-
-				auto Proxy = ProxyPool.Alloc();
-				if (Proxy)
-				{
-					const FNeedBlock*	   Blocks		  = NeedBlocks->data();
-					TArrayView<FNeedBlock> NeedBlocksView = {Blocks + Batch.Begin, Blocks + Batch.End};
-
-					FDownloadResult DownloadResult =
-						Proxy->Download(NeedBlocksView,
-										[&DownloadedBlocksMutex, &CompletionCallback, &DownloadedBlocks](const FDownloadedBlock& Block,
-																										 FHash128 BlockHash) {
-											{
-												std::lock_guard<std::mutex> LockGuard(DownloadedBlocksMutex);
-												DownloadedBlocks.insert(BlockHash);
-											}
-											CompletionCallback(Block, BlockHash);
-										});
-
-					if (DownloadResult.IsOk())
-					{
-						ProxyPool.Dealloc(std::move(Proxy));
-					}
-					else if (DownloadResult.GetError() == EDownloadRetryMode::Abort)
-					{
-						bGotError = true;
-						ProxyPool.Invalidate();
-					}
-				}
-				ProxyPool.ParallelDownloadSemaphore.Release();
-			});
-		}
-
-		DownloadTasks.wait();
-
-		if (DownloadedBlocks.size() == OriginalUniqueNeedBlocks.size() || bGotError)
-		{
-			break;
-		}
-
-		RemainingNeedBlocks.clear();
-		for (const FNeedBlock& Block : OriginalUniqueNeedBlocks)
-		{
-			if (DownloadedBlocks.find(Block.Hash.ToHash128()) == DownloadedBlocks.end())  // #wip-widehash
-			{
-				RemainingNeedBlocks.push_back(Block);
-			}
-		}
-		NeedBlocks = &RemainingNeedBlocks;
-	}
-}
-
-FBuildTargetResult
-BuildTarget(FIOWriter&			   Output,
-			FIOReader&			   Source,
-			FIOReader&			   Base,
-			const FNeedList&	   NeedList,
-			EStrongHashAlgorithmID StrongHasher,
-			FProxyPool*			   ProxyPool,
-			FBlockCache*		   BlockCache,
-			FScavengeDatabase*	   ScavengeDatabase)
-{
-	UNSYNC_LOG_INDENT;
-
-	FBuildTargetResult BuildResult;
-
-	auto TimeBegin = TimePointNow();
-
-	const FNeedListSize SizeInfo = ComputeNeedListSize(NeedList);
-	UNSYNC_ASSERT(SizeInfo.TotalBytes == Output.GetSize());
-
-	std::atomic<bool> bGotError = false;
-
-	std::atomic<bool> bBaseDataCopyTaskDone	  = false;
-	std::atomic<bool> bSourceDataCopyTaskDone = false;
-	std::atomic<bool> bWaitingForBaseData	  = false;
-
-	struct FStats
-	{
-		std::atomic<uint64> WrittenBytesFromSource = {};
-		std::atomic<uint64> WrittenBytesFromBase   = {};
-	};
-	FStats Stats;
-
-	FSemaphore WriteSemaphore(MAX_ACTIVE_READERS);	// throttle writing tasks to avoid memory bloat
-	FTaskGroup WriteTasks;
-
-	// Remember if parent thread has verbose logging and indentation
-	const bool	 bAllowVerboseLog = GLogVerbose;
-	const uint32 LogIndent		  = GLogIndent;
-
-	// Copy the need list as it will be progressively filtered by various sources:
-	// - block cache
-	// - scevenge from external local files
-	// - download from proxy
-	// - read from source file
-	// TODO: could use a bit array to indicate if the entry is valid instead of full copy
-	std::vector<FNeedBlock> FilteredSourceNeedList;
-
-	if (ScavengeDatabase)
-	{
-		THashSet<FHash128> ScavengedBlocks;
-
-		FScavengedBuildTargetResult ScavengeResult =
-			BuildTargetFromScavengedData(Output, NeedList.Source, *ScavengeDatabase, StrongHasher, ScavengedBlocks);
-
-		// Treat scavenged data the same as base for stats purposes
-		Stats.WrittenBytesFromBase += ScavengeResult.ScavengedBytes;
-
-		FilteredSourceNeedList = NeedList.Source;
-		auto FilterResult =
-			std::remove_if(FilteredSourceNeedList.begin(), FilteredSourceNeedList.end(), [&ScavengedBlocks](const FNeedBlock& Block) {
-				return ScavengedBlocks.find(Block.Hash.ToHash128()) != ScavengedBlocks.end();
-			});
-		FilteredSourceNeedList.erase(FilterResult, FilteredSourceNeedList.end());
-	}
-	else
-	{
-		FilteredSourceNeedList = NeedList.Source;
-	}
-
-	auto ProcessNeedList = [bAllowVerboseLog, LogIndent, &Output, &bGotError, &WriteSemaphore, &WriteTasks, &bWaitingForBaseData, &Stats](
-							   FIOReader&					  DataProvider,
-							   const std::vector<FNeedBlock>& NeedBlocks,
-							   uint64						  TotalCopySize,
-							   EBlockListType				  ListType,
-							   std::atomic<bool>&			  bCompletionFlag) {
-		FLogIndentScope IndentScope(LogIndent, true);
-		uint64			ReadBytesTotal = 0;
-
-		const wchar_t* ListName = ListType == EBlockListType::Source ? L"source" : L"base";
-
-		if (!DataProvider.IsValid())
-		{
-			UNSYNC_ERROR(L"Failed to read blocks from %ls. Stream is invalid.", ListName);
-			bGotError = true;
-			return;
-		}
-
-		if (DataProvider.GetError())
-		{
-			UNSYNC_ERROR(L"Failed to read blocks from %ls. Error code: %d.", ListName, DataProvider.GetError());
-			bGotError = true;
-			return;
-		}
-
-		UNSYNC_VERBOSE(L"Reading blocks from %ls", ListName);
-
-		FLogProgressScope ProgressLogger(TotalCopySize, ELogProgressUnits::MB);
-
-		FReadSchedule ReadSchedule = BuildReadSchedule(NeedBlocks);
-
-		UNSYNC_LOG_INDENT;
-		UNSYNC_VERBOSE(L"Using %d requests for %d total blocks (%.2f MB)",
-					   (int)ReadSchedule.Requests.size(),
-					   (int)NeedBlocks.size(),
-					   SizeMb(TotalCopySize));
-
-		static constexpr uint32 MaxActiveLargeRequests							= 2;
-		uint64					ActiveLargeRequestSizes[MaxActiveLargeRequests] = {};
-
-		while (!ReadSchedule.Requests.empty() && !bGotError)
-		{
-			uint64 BlockIndex = ~0ull;
-
-			uint32 LargeRequestSlot = ~0u;
-			for (uint32 I = 0; I < MaxActiveLargeRequests; ++I)
-			{
-				if (ActiveLargeRequestSizes[I] == 0)
-				{
-					LargeRequestSlot = I;
-					break;
-				}
-			}
-
-			if (LargeRequestSlot != ~0u)
-			{
-				BlockIndex = ReadSchedule.Requests.back();
-				ReadSchedule.Requests.pop_back();
-			}
-			else
-			{
-				BlockIndex = ReadSchedule.Requests.front();
-				ReadSchedule.Requests.pop_front();
-			}
-
-			const FCopyCommand& Block = ReadSchedule.Blocks[BlockIndex];
-
-			if (LargeRequestSlot != ~0u)
-			{
-				ActiveLargeRequestSizes[LargeRequestSlot] = Block.Size;
-			}
-
-			// UNSYNC_VERBOSE(L"Reading block %d, size %d", (int)block_index, (int)block.size);
-
-			UNSYNC_ASSERT(Block.SourceOffset + Block.Size <= DataProvider.GetSize());
-			uint64 ReadBytes = 0;
-
-			auto ReadCallback = [&ReadBytes, &Output, &WriteTasks, &bGotError, &WriteSemaphore, &Stats, Block, ListType](
-									FIOBuffer CmdBuffer,
-									uint64	  CmdOffset,
-									uint64	  CmdReadSize,
-									uint64	  CmdUserData) {
-				WriteSemaphore.Acquire();
-				WriteTasks.run([Buffer = MakeShared(std::move(CmdBuffer)),
-								CmdReadSize,
-								Block,
-								&Output,
-								&bGotError,
-								&WriteSemaphore,
-								&Stats,
-								ListType]() {
-					const uint64 WrittenBytes = Output.Write(Buffer->GetData(), Block.TargetOffset, CmdReadSize);
-
-					if (ListType == EBlockListType::Source)
-					{
-						Stats.WrittenBytesFromSource += WrittenBytes;
-					}
-					else if (ListType == EBlockListType::Base)
-					{
-						Stats.WrittenBytesFromBase += WrittenBytes;
-					}
-					else
-					{
-						UNSYNC_FATAL(L"Unexpected block list type");
-					}
-
-					WriteSemaphore.Release();
-
-					if (WrittenBytes != CmdReadSize)
-					{
-						UNSYNC_FATAL(L"Expected to write %llu bytes, but written %llu", CmdReadSize, WrittenBytes);
-						bGotError = true;
-					}
-				});
-
-				ReadBytes = CmdReadSize;
-
-				AddGlobalProgress(CmdReadSize, ListType);
-			};
-
-			DataProvider.ReadAsync(Block.SourceOffset, Block.Size, 0, ReadCallback);
-
-			for (uint32 I = 0; I < MaxActiveLargeRequests; ++I)
-			{
-				if (ActiveLargeRequestSizes[I] == ReadBytes)
-				{
-					ActiveLargeRequestSizes[I] = 0;
-					break;
-				}
-			}
-
-			ReadBytesTotal += ReadBytes;
-
-			FLogVerbosityScope VerbosityScope(GLogVerbose ||
-											  (bAllowVerboseLog && (ListType == EBlockListType::Base && bWaitingForBaseData)));
-
-			ProgressLogger.Add(ReadBytes);
-
-			SchedulerYield();
-		}
-
-		DataProvider.FlushAll();
-
-		Output.FlushAll();
-
-		ProgressLogger.Complete();
-
-		bCompletionFlag = true;
-	};
-
-	FTaskGroup BackgroundTasks;
-	BackgroundTasks.run([SizeInfo, ProcessNeedList, &NeedList, &Base, &bBaseDataCopyTaskDone]() {
-		// Silence log messages on background task.
-		// Logging will be enabled if we're waiting for base data.
-		FLogVerbosityScope VerbosityScope(false);
-
-		if (SizeInfo.BaseBytes)
-		{
-			ProcessNeedList(Base, NeedList.Base, SizeInfo.BaseBytes, EBlockListType::Base, bBaseDataCopyTaskDone);
-		}
-	});
-
-	THashSet<FHash128> CachedBlocks;
-
-	if (BlockCache)
-	{
-		UNSYNC_VERBOSE(L"Writing blocks from cache");
-		UNSYNC_LOG_INDENT;
-
-		for (const FNeedBlock NeedBlock : FilteredSourceNeedList)
-		{
-			auto It = BlockCache->BlockMap.find(NeedBlock.Hash.ToHash128());
-			if (It != BlockCache->BlockMap.end())
-			{
-				FBufferView BlockBuffer = It->second;
-
-				const uint64 WrittenBytes = Output.Write(BlockBuffer.Data, NeedBlock.TargetOffset, BlockBuffer.Size);
-
-				Stats.WrittenBytesFromSource += WrittenBytes;
-
-				AddGlobalProgress(NeedBlock.Size, EBlockListType::Source);
-			}
-		}
-
-		auto FilterResult =
-			std::remove_if(FilteredSourceNeedList.begin(), FilteredSourceNeedList.end(), [BlockCache](const FNeedBlock& Block) {
-				return BlockCache->BlockMap.find(Block.Hash.ToHash128()) != BlockCache->BlockMap.end();
-			});
-
-		FilteredSourceNeedList.erase(FilterResult, FilteredSourceNeedList.end());
-	}
-
-	if (FilteredSourceNeedList.size() == 0)
-	{
-		// No more data is needed from source file
-	}
-	else if (ProxyPool && ProxyPool->IsValid())
-	{
-		UNSYNC_VERBOSE(L"Downloading blocks");
-		UNSYNC_LOG_INDENT;
-
-		struct FBlockWriteCmd
-		{
-			uint64 TargetOffset = 0;
-			uint64 Size			= 0;
-		};
-		std::mutex								DownloadedBlocksMutex;
-		THashSet<FHash128>						DownloadedBlocks;
-		THashMap<FHash128, FBlockWriteCmd>		BlockWriteMap;
-		THashMap<FHash128, std::vector<uint64>> BlockScatterMap;
-		std::vector<FNeedBlock>					UniqueNeedList;
-
-		uint64 EstimatedDownloadSize = 0;
-		for (const FNeedBlock& Block : FilteredSourceNeedList)
-		{
-			FBlockWriteCmd Cmd;
-			Cmd.TargetOffset  = Block.TargetOffset;
-			Cmd.Size		  = Block.Size;
-			auto InsertResult = BlockWriteMap.insert(std::make_pair(Block.Hash.ToHash128(), Cmd));	// #wip-widehash
-
-			if (InsertResult.second)
-			{
-				UniqueNeedList.push_back(Block);
-				EstimatedDownloadSize += Block.Size;
-			}
-			else
-			{
-				BlockScatterMap[Block.Hash.ToHash128()].push_back(Cmd.TargetOffset);  // #wip-widehash
-			}
-		}
-
-		FTaskGroup DecompressTasks;
-
-		FLogProgressScope DownloadProgressLogger(EstimatedDownloadSize, ELogProgressUnits::MB);
-
-		// limit how many decompression tasks can be queued up to avoid memory bloat
-		const uint64 MaxConcurrentDecompressionTasks = 64;
-		FSemaphore	 DecompressionSemaphore(MaxConcurrentDecompressionTasks);
-
-		const bool			bParentThreadVerbose = GLogVerbose;
-		const uint32		ParentThreadIndent	 = GLogIndent;
-		std::atomic<uint64> NumActiveLogThreads	 = {};
-		std::atomic<uint64> NumHashMismatches	 = {};
-
-		DownloadBlocks(
-			*ProxyPool,
-			UniqueNeedList,
-			[&NumActiveLogThreads,
-			 &DownloadProgressLogger,
-			 &BlockWriteMap,
-			 &DecompressionSemaphore,
-			 &DecompressTasks,
-			 &Output,
-			 StrongHasher,
-			 &BlockScatterMap,
-			 &DownloadedBlocksMutex,
-			 &DownloadedBlocks,
-			 &bGotError,
-			 &NumHashMismatches,
-			 &ParentThreadIndent,
-			 &bParentThreadVerbose,
-			 &Stats](const FDownloadedBlock& Block, FHash128 BlockHash) {
-				FLogIndentScope IndentScope(ParentThreadIndent, true);
-
-				{
-					FThreadElectScope  AllowVerbose(NumActiveLogThreads, bParentThreadVerbose);
-					FLogVerbosityScope VerboseScope(AllowVerbose);
-					DownloadProgressLogger.Add(Block.DecompressedSize);
-				}
-
-				auto WriteIt = BlockWriteMap.find(BlockHash);
-				if (WriteIt != BlockWriteMap.end())
-				{
-					FBlockWriteCmd Cmd = WriteIt->second;
-
-					// TODO: avoid this copy by storing IOBuffer in DownloadedBlock
-					bool	  bCompressed	 = Block.IsCompressed();
-					uint64	  DownloadedSize = bCompressed ? Block.CompressedSize : Block.DecompressedSize;
-					FIOBuffer DownloadedData = FIOBuffer::Alloc(DownloadedSize, L"downloaded_data");
-					memcpy(DownloadedData.GetData(), Block.Data, DownloadedSize);
-
-					DecompressionSemaphore.Acquire();
-
-					DecompressTasks.run([&Output,
-										 BlockHashUnaligned = BlockHash,
-										 Cmd,
-										 DownloadedData	  = std::make_shared<FIOBuffer>(std::move(DownloadedData)),
-										 DecompressedSize = Block.DecompressedSize,
-										 bCompressed,
-										 ParentThreadIndent,
-										 StrongHasher,
-										 &BlockScatterMap,
-										 &DownloadedBlocksMutex,
-										 &DownloadedBlocks,
-										 &DecompressionSemaphore,
-										 &bGotError,
-										 &NumHashMismatches,
-										 &Stats]() {
-						FLogIndentScope IndentScope(ParentThreadIndent, true);
-
-						// captured objects don't respect large alignment requirements
-						FHash128 BlockHash = BlockHashUnaligned;
-
-						bool	  bOk = false;
-						FIOBuffer DecompressedData;
-						if (DecompressedSize == Cmd.Size)
-						{
-							if (bCompressed)
-							{
-								DecompressedData = FIOBuffer::Alloc(Cmd.Size, L"decompressed_data");
-
-								bOk =
-									Decompress(DownloadedData->GetData(), DownloadedData->GetSize(), DecompressedData.GetData(), Cmd.Size);
-							}
-							else
-							{
-								DecompressedData = std::move(*DownloadedData);
-
-								bOk = true;
-							}
-
-							if (bOk)
-							{
-								FHash128 ActualBlockHash = ComputeHash(DecompressedData.GetData(), Cmd.Size, StrongHasher).ToHash128();
-
-								bOk = ActualBlockHash == BlockHash;
-
-								if (bOk)
-								{
-									uint64 WrittenBytes = Output.Write(DecompressedData.GetData(), Cmd.TargetOffset, Cmd.Size);
-
-									Stats.WrittenBytesFromSource += WrittenBytes;
-
-									AddGlobalProgress(Cmd.Size, EBlockListType::Source);
-
-									if (WrittenBytes != Cmd.Size)
-									{
-										bOk = false;
-										UNSYNC_FATAL(L"Expected to write %llu bytes, but written %llu", Cmd.Size, WrittenBytes);
-										bGotError = true;
-									}
-								}
-								else
-								{
-									NumHashMismatches++;
-								}
-							}
-							else
-							{
-								UNSYNC_FATAL(L"Failed to decompress downloaded block");
-								bGotError = true;
-							}
-						}
-
-						if (bOk)
-						{
-							auto ScatterIt = BlockScatterMap.find(BlockHash);
-							if (ScatterIt != BlockScatterMap.end())
-							{
-								const std::vector<uint64>& ScatterList = ScatterIt->second;
-								for (uint64 ScatterOffset : ScatterList)
-								{
-									uint64 WrittenBytes = Output.Write(DecompressedData.GetData(), ScatterOffset, Cmd.Size);
-
-									Stats.WrittenBytesFromSource += WrittenBytes;
-
-									if (WrittenBytes != Cmd.Size)
-									{
-										UNSYNC_FATAL(L"Expected to write %llu bytes, but written %llu", Cmd.Size, WrittenBytes);
-										bGotError = true;
-									}
-								}
-
-								AddGlobalProgress(Cmd.Size * ScatterList.size(), EBlockListType::Source);
-							}
-						}
-
-						if (bOk)
-						{
-							std::lock_guard<std::mutex> LockGuard(DownloadedBlocksMutex);
-							DownloadedBlocks.insert(BlockHash);
-						}
-
-						DecompressionSemaphore.Release();
-					});
-				}
-			});
-
-		DecompressTasks.wait();
-
-		DownloadProgressLogger.Complete();
-
-		if (NumHashMismatches.load() != 0)
-		{
-			UNSYNC_WARNING(L"Found block hash mismatches while downloading data from proxy. Mismatching blocks: %llu.",
-						   NumHashMismatches.load());
-		}
-
-		{
-			auto FilterResult =
-				std::remove_if(FilteredSourceNeedList.begin(), FilteredSourceNeedList.end(), [&DownloadedBlocks](const FNeedBlock& Block) {
-					return DownloadedBlocks.find(Block.Hash.ToHash128()) != DownloadedBlocks.end();
-				});
-			FilteredSourceNeedList.erase(FilterResult, FilteredSourceNeedList.end());
-		}
-
-		if (!FilteredSourceNeedList.empty())
-		{
-			uint64 RemainingBytes = ComputeSize(FilteredSourceNeedList);
-
-			UNSYNC_VERBOSE(L"Did not receive %d blocks from proxy. Must read %.2f MB from source.",
-						   FilteredSourceNeedList.size(),
-						   SizeMb(RemainingBytes));
-
-			UNSYNC_LOG_INDENT;
-
-			ProcessNeedList(Source, FilteredSourceNeedList, RemainingBytes, EBlockListType::Source, bSourceDataCopyTaskDone);
-		}
-		else
-		{
-			bSourceDataCopyTaskDone = true;
-		}
-	}
-	else if (SizeInfo.SourceBytes)
-	{
-		ProcessNeedList(Source, FilteredSourceNeedList, SizeInfo.SourceBytes, EBlockListType::Source, bSourceDataCopyTaskDone);
-	}
-
-	if (!bBaseDataCopyTaskDone)
-	{
-		UNSYNC_VERBOSE(L"Reading blocks from base");
-	}
-
-	bWaitingForBaseData = true;
-	BackgroundTasks.wait();
-	WriteTasks.wait();
-
-	double Duration = DurationSec(TimeBegin, TimePointNow());
-	UNSYNC_VERBOSE(L"Done in %.3f sec (%.3f MB / sec)", Duration, SizeMb(double(SizeInfo.TotalBytes) / Duration));
-
-	if (GLogVerbose)
-	{
-		LogGlobalProgress();
-	}
-
-	BuildResult.bSuccess	= bGotError.load();
-	BuildResult.BaseBytes	= Stats.WrittenBytesFromBase;
-	BuildResult.SourceBytes = Stats.WrittenBytesFromSource;
-
-	return BuildResult;
 }
 
 bool
@@ -1763,429 +1106,6 @@ IsSynchronized(const FNeedList& NeedList, const FGenericBlockArray& SourceBlocks
 	}
 
 	return true;
-}
-
-FDirectoryManifest
-CreateDirectoryManifest(const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm)
-{
-	UNSYNC_LOG_INDENT;
-
-	FDirectoryManifest Result;
-
-	Result.Options = Algorithm;
-
-	FTimePoint TimeBegin = TimePointNow();
-
-	FTaskGroup	 TaskGroup;
-	const uint32 MaxConcurrentFiles = 8;  // quickly diminishing returns past 8 concurrent files
-	FSemaphore	 Semaphore(MaxConcurrentFiles);
-
-	std::mutex ResultMutex;
-	FPath	   UnsyncDirName = ".unsync";
-
-	for (const std::filesystem::directory_entry& Dir : RecursiveDirectoryScan(Root))
-	{
-		if (Dir.is_directory())
-		{
-			continue;
-		}
-
-		FPath RelativePath = std::filesystem::relative(Dir.path(), Root);
-
-		if (RelativePath.native().starts_with(UnsyncDirName.native()))
-		{
-			continue;
-		}
-
-		UNSYNC_VERBOSE2(L"Found '%ls'", RelativePath.wstring().c_str());
-
-		FFileManifest FileManifest;
-
-		FileManifest.Mtime		 = ToWindowsFileTime(Dir.last_write_time());
-		FileManifest.Size		 = Dir.file_size();
-		FileManifest.CurrentPath = Dir.path();
-		FileManifest.BlockSize	 = BlockSize;
-
-		std::wstring Key = RelativePath.wstring();
-
-		{
-			std::lock_guard<std::mutex> LockGuard(ResultMutex);
-			Result.Files[Key] = std::move(FileManifest);
-		}
-
-		if (BlockSize)
-		{
-			FPath FilePath = Root / RelativePath;
-			auto  File	   = std::make_shared<NativeFile>(FilePath, EFileMode::ReadOnlyUnbuffered);
-			if (File->IsValid())
-			{
-				UNSYNC_VERBOSE(L"Computing blocks for '%ls' (%.2f MB)", FilePath.wstring().c_str(), double(File->GetSize()) / (1 << 20));
-
-				Semaphore.Acquire();
-				TaskGroup.run([&Semaphore, &ResultMutex, &Result, File = std::move(File), Key = move(Key), BlockSize, Algorithm]() {
-					FComputeMacroBlockParams MacroBlocks;
-
-					// TODO: macro block generation is only implemented for variable chunk mode
-					const bool bNeedMacroBlocks = Algorithm.ChunkingAlgorithmId == EChunkingAlgorithmID::VariableBlocks;
-
-					FGenericBlockArray Blocks = ComputeBlocks(*File, BlockSize, Algorithm, bNeedMacroBlocks ? &MacroBlocks : nullptr);
-
-					std::lock_guard<std::mutex> LockGuard(ResultMutex);
-
-					std::swap(Result.Files[Key].Blocks, Blocks);
-
-					if (bNeedMacroBlocks)
-					{
-						std::swap(Result.Files[Key].MacroBlocks, MacroBlocks.Output);
-					}
-
-					Semaphore.Release();
-				});
-			}
-			else
-			{
-				UNSYNC_FATAL(L"Failed to open file '%ls' while computing manifest blocks. System error code: %d.",
-							 FilePath.wstring().c_str(),
-							 File->GetError());
-			}
-		}
-	}
-
-	TaskGroup.wait();
-
-	if (BlockSize)
-	{
-		// TODO: move manifest stat printing into a helper
-
-		uint64 NumTotalMacroBlocks = 0;
-		uint64 NumTotalBlocks	   = 0;
-		uint64 NumTotalBytes	   = 0;
-
-		for (auto& It : Result.Files)
-		{
-			FFileManifest& FileManifest = It.second;
-			NumTotalMacroBlocks += FileManifest.MacroBlocks.size();
-			NumTotalBlocks += FileManifest.Blocks.size();
-			NumTotalBytes += FileManifest.Size;
-		}
-
-		double Duration = DurationSec(TimeBegin, TimePointNow());
-		UNSYNC_VERBOSE(L"Total computed %lld block(s) in %.3f sec (%.3f MB, %.3f MB / sec)",
-					   (long long)NumTotalBlocks,
-					   Duration,
-					   SizeMb(NumTotalBytes),
-					   SizeMb((double(NumTotalBytes) / Duration)));
-		if (NumTotalMacroBlocks)
-		{
-			UNSYNC_VERBOSE(L"Macro blocks: %lld", NumTotalMacroBlocks);
-		}
-	}
-
-	return Result;
-}
-
-FDirectoryManifest
-CreateDirectoryManifestIncremental(const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm)
-{
-	FPath ManifestRoot			= Root / ".unsync";
-	FPath DirectoryManifestPath = ManifestRoot / "manifest.bin";
-
-	FDirectoryManifest OldManifest;
-	const bool		   bExistingManifestLoaded = LoadDirectoryManifest(OldManifest, Root, DirectoryManifestPath);
-
-	// Inherit algorithm options from the existing manifest
-	if (bExistingManifestLoaded)
-	{
-		Algorithm = OldManifest.Options;
-	}
-
-	// Scan the input directory and gather file metadata, without generating blocks
-	FDirectoryManifest NewManifest = CreateDirectoryManifest(Root, 0, Algorithm);
-
-	// Copy file blocks from old manifest, if possible
-	for (auto& NewManifestFileEntry : NewManifest.Files)
-	{
-		const std::wstring& FileName			 = NewManifestFileEntry.first;
-		auto				OldManifestFileEntry = OldManifest.Files.find(FileName);
-		if (OldManifestFileEntry == OldManifest.Files.end())
-		{
-			continue;
-		}
-
-		FFileManifest& NewEntry = NewManifestFileEntry.second;
-		FFileManifest& OldEntry = OldManifestFileEntry->second;
-
-		if (NewEntry.Mtime == OldEntry.Mtime && NewEntry.Size == OldEntry.Size)
-		{
-			NewEntry.Blocks		 = std::move(OldEntry.Blocks);
-			NewEntry.MacroBlocks = std::move(OldEntry.MacroBlocks);
-			NewEntry.BlockSize	 = OldEntry.BlockSize;
-		}
-	}
-
-	// Generate blocks for changed or new files
-	UpdateDirectoryManifestBlocks(NewManifest, Root, BlockSize, Algorithm);
-
-	return NewManifest;
-}
-
-void
-UpdateDirectoryManifestBlocks(FDirectoryManifest& Result, const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm)
-{
-	UNSYNC_LOG_INDENT;
-
-	UNSYNC_ASSERT(BlockSize != 0);
-
-	FTimePoint TimeBegin = TimePointNow();
-
-	uint32 NumProcessedFiles = 0;
-
-	FTaskGroup TaskGroup;
-
-	const uint32 MaxConcurrentFiles = 8;  // quickly diminishing returns past 8 concurrent files
-	FSemaphore	 Semaphore(MaxConcurrentFiles);
-
-	uint64 NumSkippedBlocks = 0;
-	uint64 NumSkippedBytes	= 0;
-
-	for (auto& It : Result.Files)
-	{
-		FFileManifest& FileManifest = It.second;
-		if (FileManifest.BlockSize == BlockSize)
-		{
-			NumSkippedBlocks += FileManifest.Blocks.size();
-			NumSkippedBytes += FileManifest.Size;
-
-			continue;
-		}
-
-		++NumProcessedFiles;
-
-		FPath FilePath = Root / It.first;
-		auto  File	   = std::make_shared<NativeFile>(FilePath, EFileMode::ReadOnlyUnbuffered);
-		if (File->IsValid())
-		{
-			UNSYNC_VERBOSE(L"Computing blocks for '%ls' (%.2f MB)", FilePath.wstring().c_str(), double(File->GetSize()) / (1 << 20));
-
-			Semaphore.Acquire();
-			TaskGroup.run([&FileManifest, &Semaphore, File = std::move(File), BlockSize, Algorithm]() {
-				FComputeMacroBlockParams MacroBlocks;
-
-				// TODO: macro block generation is only implemented for variable chunk mode
-				const bool bNeedMacroBlocks = Algorithm.ChunkingAlgorithmId == EChunkingAlgorithmID::VariableBlocks;
-
-				FileManifest.BlockSize = BlockSize;
-				FileManifest.Blocks	   = ComputeBlocks(*File, BlockSize, Algorithm, bNeedMacroBlocks ? &MacroBlocks : nullptr);
-
-				if (bNeedMacroBlocks)
-				{
-					std::swap(FileManifest.MacroBlocks, MacroBlocks.Output);
-				}
-
-				Semaphore.Release();
-			});
-		}
-		else
-		{
-			UNSYNC_FATAL(L"Failed to open file '%ls' while computing manifest blocks. System error code: %d.",
-						 FilePath.wstring().c_str(),
-						 File->GetError());
-		}
-	}
-
-	TaskGroup.wait();
-
-	// TODO: move manifest stat printing into a helper
-
-	uint64 NumTotalMacroBlocks = 0;
-	uint64 NumTotalBlocks	   = 0;
-	uint64 NumTotalBytes	   = 0;
-
-	for (auto& It : Result.Files)
-	{
-		FFileManifest& FileManifest = It.second;
-		NumTotalMacroBlocks += FileManifest.MacroBlocks.size();
-		NumTotalBlocks += FileManifest.Blocks.size();
-		NumTotalBytes += FileManifest.Size;
-	}
-
-	NumTotalBlocks -= NumSkippedBlocks;
-	NumTotalBytes -= NumSkippedBytes;
-
-	double Duration = DurationSec(TimeBegin, TimePointNow());
-
-	if (NumTotalBlocks == 0)
-	{
-		UNSYNC_VERBOSE(L"No blocks needed to be computed")
-	}
-	else
-	{
-		UNSYNC_VERBOSE(L"Total computed %lld block(s) in %.3f sec (%.3f MB, %.3f MB / sec)",
-					   (long long)NumTotalBlocks,
-					   Duration,
-					   SizeMb(NumTotalBytes),
-					   SizeMb((double(NumTotalBytes) / Duration)));
-
-		if (NumTotalMacroBlocks)
-		{
-			UNSYNC_VERBOSE(L"Macro blocks: %lld", NumTotalMacroBlocks);
-		}
-	}
-}
-
-static bool
-AlgorithmOptionsCompatible(const FAlgorithmOptions& A, const FAlgorithmOptions& B)
-{
-	return A.StrongHashAlgorithmId == B.StrongHashAlgorithmId && B.WeakHashAlgorithmId == B.WeakHashAlgorithmId &&
-		   B.ChunkingAlgorithmId == B.ChunkingAlgorithmId;
-}
-
-bool
-LoadOrCreateDirectoryManifest(FDirectoryManifest& Result, const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm)
-{
-	UNSYNC_LOG_INDENT;
-
-	FPath ManifestRoot			= Root / ".unsync";
-	FPath DirectoryManifestPath = ManifestRoot / "manifest.bin";
-
-	FDirectoryManifest OldDirectoryManifest;
-	FDirectoryManifest NewDirectoryManifest;
-
-	const bool bManifestFileExists = PathExists(DirectoryManifestPath);
-	if (!bManifestFileExists)
-	{
-		UNSYNC_VERBOSE(L"Manifest file '%ls' does not exist", DirectoryManifestPath.wstring().c_str());
-	}
-
-	const bool bExistingManifestLoaded = bManifestFileExists && LoadDirectoryManifest(OldDirectoryManifest, Root, DirectoryManifestPath);
-	const bool bExistingManifestCompatible = AlgorithmOptionsCompatible(OldDirectoryManifest.Options, Algorithm);
-
-	if (bExistingManifestLoaded && bExistingManifestCompatible)
-	{
-		UNSYNC_VERBOSE(L"Loaded existing manifest from '%ls'", DirectoryManifestPath.wstring().c_str());
-
-		// Verify that manifests match in dry run mode.
-		// Otherwise just do a quick manifest generation, without file blocks.
-		uint32 NewManifestBlockSize = GDryRun ? BlockSize : 0;
-
-		NewDirectoryManifest = CreateDirectoryManifest(Root, NewManifestBlockSize, Algorithm);
-		for (const auto& OldManifestIt : OldDirectoryManifest.Files)
-		{
-			auto NewManifestIt = NewDirectoryManifest.Files.find(OldManifestIt.first);
-			if (NewManifestIt != NewDirectoryManifest.Files.end())
-			{
-				const FFileManifest& OldFileManifest = OldManifestIt.second;
-				FFileManifest&		 NewFileManifest = NewManifestIt->second;
-				if (NewFileManifest.Size == OldFileManifest.Size && NewFileManifest.Mtime == OldFileManifest.Mtime)
-				{
-					if (NewFileManifest.BlockSize)
-					{
-						UNSYNC_ASSERT(NewFileManifest.BlockSize == OldFileManifest.BlockSize);
-						UNSYNC_ASSERT(NewFileManifest.Blocks.size() == OldFileManifest.Blocks.size());
-						for (uint64 I = 0; I < NewFileManifest.Blocks.size(); ++I)
-						{
-							const FGenericBlock& NewBlock = NewFileManifest.Blocks[I];
-							const FGenericBlock& OldBlock = OldFileManifest.Blocks[I];
-							UNSYNC_ASSERT(NewBlock.Offset == OldBlock.Offset);
-							UNSYNC_ASSERT(NewBlock.Size == OldBlock.Size);
-							UNSYNC_ASSERT(NewBlock.HashWeak == OldBlock.HashWeak);
-							UNSYNC_ASSERT(NewBlock.HashStrong == OldBlock.HashStrong);
-						}
-					}
-					else
-					{
-						NewFileManifest.BlockSize	= OldFileManifest.BlockSize;
-						NewFileManifest.Blocks		= std::move(OldFileManifest.Blocks);
-						NewFileManifest.MacroBlocks = std::move(OldFileManifest.MacroBlocks);
-					}
-				}
-			}
-		}
-
-		if (BlockSize)
-		{
-			UpdateDirectoryManifestBlocks(NewDirectoryManifest, Root, BlockSize, Algorithm);
-		}
-	}
-	else
-	{
-		UNSYNC_VERBOSE(L"Creating manifest for '%ls'", Root.wstring().c_str());
-		NewDirectoryManifest = CreateDirectoryManifest(Root, BlockSize, Algorithm);
-	}
-
-	std::swap(Result, NewDirectoryManifest);
-
-	return true;
-}
-
-template<typename T>
-inline auto
-UpdateHashT(blake3_hasher& Hasher, const T& V)
-{
-	blake3_hasher_update(&Hasher, &V, sizeof(T));
-}
-
-void
-UpdateHashBlocks(blake3_hasher& Hasher, const FGenericBlockArray& Blocks)
-{
-	for (const FGenericBlock& Block : Blocks)
-	{
-		UpdateHashT(Hasher, Block.Offset);
-		UpdateHashT(Hasher, Block.Size);
-		UpdateHashT(Hasher, Block.HashWeak);
-		blake3_hasher_update(&Hasher, Block.HashStrong.Data, Block.HashStrong.Size());
-	}
-}
-
-FHash256
-ComputeManifestStableSignature(const FDirectoryManifest& Manifest)
-{
-	blake3_hasher Hasher;
-	blake3_hasher_init(&Hasher);
-
-	UpdateHashT(Hasher, Manifest.Options.ChunkingAlgorithmId);
-	UpdateHashT(Hasher, Manifest.Options.WeakHashAlgorithmId);
-	UpdateHashT(Hasher, Manifest.Options.StrongHashAlgorithmId);
-
-	std::vector<std::wstring> SortedFiles;
-	SortedFiles.reserve(Manifest.Files.size());
-
-	for (const auto& It : Manifest.Files)
-	{
-		const std::wstring& FileName = It.first;
-		SortedFiles.push_back(FileName);
-	}
-
-	std::sort(SortedFiles.begin(), SortedFiles.end());
-
-	for (const std::wstring& FileName : SortedFiles)
-	{
-		// Canonical unsync file paths are utf8 with unix-style separator `/`
-		std::string FileNameUtf8 = ConvertWideToUtf8(FileName);
-		std::replace(FileNameUtf8.begin(), FileNameUtf8.end(), '\\', '/');
-
-		const FFileManifest& FileManifest = Manifest.Files.at(FileName);
-
-		blake3_hasher_update(&Hasher, FileNameUtf8.c_str(), FileNameUtf8.length());
-
-		UpdateHashT(Hasher, FileManifest.Mtime);
-		UpdateHashT(Hasher, FileManifest.Size);
-		UpdateHashT(Hasher, FileManifest.BlockSize);
-
-		UpdateHashBlocks(Hasher, FileManifest.Blocks);
-		UpdateHashBlocks(Hasher, FileManifest.MacroBlocks);
-	}
-
-	FHash256 Result;
-	blake3_hasher_finalize(&Hasher, Result.Data, sizeof(Result.Data));
-
-	return Result;
-}
-
-FHash160
-ComputeManifestStableSignature_160(const FDirectoryManifest& Manifest)
-{
-	return ToHash160(ComputeManifestStableSignature(Manifest));
 }
 
 bool
@@ -2346,7 +1266,7 @@ SyncFile(const FNeedList&		   NeedList,
 	uint64 NeedFromBase	  = ComputeSize(NeedList.Base);
 	UNSYNC_VERBOSE(L"Need from source %.2f MB, from base: %.2f MB", SizeMb(NeedFromSource), SizeMb(NeedFromBase));
 
-	const FileAttributes TargetFileAttributes = GetFileAttrib(TargetFilePath);
+	const FFileAttributes TargetFileAttributes = GetFileAttrib(TargetFilePath);
 
 	if (!TargetFileAttributes.bValid && NeedList.Sequence.empty())
 	{
@@ -2364,7 +1284,7 @@ SyncFile(const FNeedList&		   NeedList,
 				CreateDirectories(TargetFileParent);
 			}
 
-			auto TargetFile = NativeFile(TargetFilePath, EFileMode::CreateWriteOnly, 0);
+			auto TargetFile = FNativeFile(TargetFilePath, EFileMode::CreateWriteOnly, 0);
 			if (TargetFile.IsValid())
 			{
 				Result.Status = EFileSyncStatus::Ok;
@@ -2406,12 +1326,12 @@ SyncFile(const FNeedList&		   NeedList,
 				CreateDirectories(TargetFileParent);
 			}
 
-			TargetFile = std::make_unique<NativeFile>(TempTargetFilePath, EFileMode::CreateWriteOnly, TargetFileSizeInfo.TotalBytes);
+			TargetFile = std::make_unique<FNativeFile>(TempTargetFilePath, EFileMode::CreateWriteOnly, TargetFileSizeInfo.TotalBytes);
 			if (TargetFile->GetError() != 0)
 			{
-				UNSYNC_ERROR(L"Failed to create output file '%ls'. Error code %d.",
+				UNSYNC_FATAL(L"Failed to create output file '%ls'. %hs",
 							 TempTargetFilePath.wstring().c_str(),
-							 TargetFile->GetError());
+							 FormatSystemErrorMessage(TargetFile->GetError()).c_str());
 			}
 		}
 
@@ -2420,20 +1340,25 @@ SyncFile(const FNeedList&		   NeedList,
 		FDeferredOpenReader SourceFile([SourceFilePath, TargetFilePath] {
 			UNSYNC_VERBOSE(L"Opening source file '%ls'", SourceFilePath.wstring().c_str());
 			LogStatus(TargetFilePath.wstring().c_str(), L"Opening source file");
-			return std::unique_ptr<NativeFile>(new NativeFile(SourceFilePath, EFileMode::ReadOnlyUnbuffered));
+			return std::unique_ptr<FNativeFile>(new FNativeFile(SourceFilePath, EFileMode::ReadOnlyUnbuffered));
 		});
 
-		FBuildTargetResult BuildResult = BuildTarget(*TargetFile,
-													 SourceFile,
-													 BaseDataReader,
-													 NeedList,
-													 Options.Algorithm.StrongHashAlgorithmId,
-													 Options.ProxyPool,
-													 Options.BlockCache,
-													 Options.ScavengeDatabase);
+		FBuildTargetParams BuildParams;
+		BuildParams.StrongHasher	 = Options.Algorithm.StrongHashAlgorithmId;
+		BuildParams.ProxyPool		 = Options.ProxyPool;
+		BuildParams.BlockCache		 = Options.BlockCache;
+		BuildParams.ScavengeDatabase = Options.ScavengeDatabase;
+
+		FBuildTargetResult BuildResult = BuildTarget(*TargetFile, SourceFile, BaseDataReader, NeedList, BuildParams);
 
 		Result.SourceBytes = BuildResult.SourceBytes;
 		Result.BaseBytes   = BuildResult.BaseBytes;
+
+		if (!BuildResult.bSuccess)
+		{
+			Result.Status = EFileSyncStatus::ErrorBuildTargetFailed;
+			return Result;
+		}
 
 		if (Options.bValidateTargetFiles)
 		{
@@ -2445,7 +1370,7 @@ SyncFile(const FNeedList&		   NeedList,
 			{
 				// Reopen the file in unuffered read mode for optimal reading performance
 				TargetFile = nullptr;
-				TargetFile = std::make_unique<NativeFile>(TempTargetFilePath, EFileMode::ReadOnlyUnbuffered);
+				TargetFile = std::make_unique<FNativeFile>(TempTargetFilePath, EFileMode::ReadOnlyUnbuffered);
 			}
 
 			if (!ValidateTarget(*TargetFile, NeedList, Options.Algorithm.StrongHashAlgorithmId))
@@ -2479,22 +1404,22 @@ SyncFile(const FNeedList&		   NeedList,
 				}
 			}
 
-			std::error_code Ec = {};
-			FileRename(TempTargetFilePath, TargetFilePath, Ec);
+			std::error_code ErrorCode = {};
+			FileRename(TempTargetFilePath, TargetFilePath, ErrorCode);
 
-			if (Ec.value() == 0)
+			if (ErrorCode.value() == 0)
 			{
 				Result.Status = EFileSyncStatus::Ok;
 			}
 			else
 			{
 				Result.Status		   = EFileSyncStatus::ErrorFinalRename;
-				Result.SystemErrorCode = Ec;
+				Result.SystemErrorCode = ErrorCode;
 			}
 		}
 
-		const uint64 ExpectedSourceBytes	= ComputeSize(NeedList.Source);
-		const uint64 ExpectedBaseBytes		= ComputeSize(NeedList.Base);
+		const uint64 ExpectedSourceBytes = ComputeSize(NeedList.Source);
+		const uint64 ExpectedBaseBytes	 = ComputeSize(NeedList.Base);
 
 		const uint64 ActualProcessedBytes	= BuildResult.SourceBytes + BuildResult.BaseBytes;
 		const uint64 ExpectedProcessedBytes = ExpectedSourceBytes + ExpectedBaseBytes;
@@ -2546,7 +1471,7 @@ SyncFile(const FPath& SourceFilePath, const FPath& BaseFilePath, const FPath& Ta
 
 	FFileSyncResult Result;
 
-	NativeFile BaseFile(BaseFilePath, EFileMode::ReadOnlyUnbuffered);
+	FNativeFile BaseFile(BaseFilePath, EFileMode::ReadOnlyUnbuffered);
 	if (!BaseFile.IsValid())
 	{
 		BaseFile.Close();
@@ -2602,8 +1527,8 @@ SyncFile(const FPath& SourceFilePath, const FPath& BaseFilePath, const FPath& Ta
 std::error_code
 CopyFileIfNewer(const FPath& Source, const FPath& Target)
 {
-	FileAttributes	SourceAttr = GetFileAttrib(Source);
-	FileAttributes	TargetAttr = GetFileAttrib(Target);
+	FFileAttributes SourceAttr = GetFileAttrib(Source);
+	FFileAttributes TargetAttr = GetFileAttrib(Target);
 	std::error_code Ec;
 	if (SourceAttr.Size != TargetAttr.Size || SourceAttr.Mtime != TargetAttr.Mtime)
 	{
@@ -2796,7 +1721,7 @@ MergeManifests(FDirectoryManifest& Existing, const FDirectoryManifest& Other, bo
 		return true;
 	}
 
-	if (!AlgorithmOptionsCompatible(Existing.Options, Other.Options))
+	if (!AlgorithmOptionsCompatible(Existing.Algorithm, Other.Algorithm))
 	{
 		UNSYNC_ERROR("Trying to merge incompatible manifests (diff algorithm options do not match)");
 		return false;
@@ -2914,15 +1839,106 @@ ToPath(const std::wstring_view& Str)
 #endif	// UNSYNC_PLATFORM_UNIX
 }
 
+struct FPooledProxy
+{
+	FPooledProxy(FProxyPool& InProxyPool) : ProxyPool(InProxyPool) { Proxy = ProxyPool.Alloc(); }
+	~FPooledProxy() { ProxyPool.Dealloc(std::move(Proxy)); }
+	const FProxy&			operator->() const { return *Proxy; }
+	FProxyPool&				ProxyPool;
+	std::unique_ptr<FProxy> Proxy;
+};
+
+static bool
+DownloadFileIfNewer(const FRemoteDesc& RemoteDesc, const FAuthDesc* AuthDesc, const FPath& Source, const FPath& Target, EFileMode TargetFileMode)
+{
+	using FDirectoryListing		 = ProxyQuery::FDirectoryListing;
+	using FDirectoryListingEntry = ProxyQuery::FDirectoryListingEntry;
+
+	FPath SourceParent = Source.parent_path();
+	FPath SourceFileName = Source.filename().string();
+
+	std::string SourceUtf8		   = ConvertWideToUtf8(Source.wstring());
+	std::string SourceParentUtf8   = ConvertWideToUtf8(SourceParent.wstring());
+	std::string SourceFileNameUtf8 = ConvertWideToUtf8(SourceFileName.wstring());
+
+	// TODO: could have a dedicated single file stat query
+	TResult<FDirectoryListing> DirectoryListingResult = ProxyQuery::ListDirectory(RemoteDesc, AuthDesc, SourceParentUtf8);
+	if (DirectoryListingResult.IsError())
+	{
+		LogError(DirectoryListingResult.GetError());
+		return false;
+	}
+
+	const FDirectoryListing&	  DirectoryListing = DirectoryListingResult.GetData();
+	const FDirectoryListingEntry* SourceEntry	   = nullptr;
+	for (const FDirectoryListingEntry& Entry : DirectoryListing.Entries)
+	{
+		if (Entry.Name == SourceFileNameUtf8 && !Entry.bDirectory)
+		{
+			SourceEntry = &Entry;
+			break;
+		}
+	}
+
+	if (!SourceEntry)
+	{
+		UNSYNC_ERROR(L"Remote file '%ls' does not exist", Source.wstring().c_str());
+		return false;
+	}
+
+	FFileAttributes TargetAttr = GetFileAttrib(Target);
+	if (SourceEntry->Size != TargetAttr.Size || SourceEntry->Mtime != TargetAttr.Mtime)
+	{
+		UNSYNC_VERBOSE(L"Downloading '%ls'", Source.wstring().c_str());
+		TResult<FBuffer> DownloadResult = ProxyQuery::DownloadFile(RemoteDesc, AuthDesc, SourceUtf8);
+		if (DownloadResult.IsError())
+		{
+			LogError(DownloadResult.GetError());
+			return false;
+		}
+
+		const FBuffer& FileBuffer = DownloadResult.GetData();
+		if (FileBuffer.Size() != SourceEntry->Size)
+		{
+			UNSYNC_ERROR(L"Downloaded file size mismatch. Expected %llu, actual %llu.",
+						 llu(SourceEntry->Size),
+						 llu(FileBuffer.Size()));
+			return false;
+		}
+
+		bool bFileWritten = WriteBufferToFile(Target, FileBuffer, TargetFileMode);
+		if (!bFileWritten)
+		{
+			UNSYNC_ERROR(L"Failed to write downloaded file '%ls'", Target.wstring().c_str());
+			return false;
+		}
+
+		SetFileMtime(Target, SourceEntry->Mtime, /*allow in dry run*/ true);
+	}
+
+	return true;
+}
+
 static bool
 LoadAndMergeSourceManifest(FDirectoryManifest& Output,
+						   FProxyPool&		   ProxyPool,
 						   const FPath&		   SourcePath,
 						   const FPath&		   TempPath,
 						   FSyncFilter*		   SyncFilter,
 						   const FPath&		   SourceManifestOverride,
 						   bool				   bCaseSensitiveTargetFileSystem)
 {
-	auto ResolvePath = [SyncFilter](const FPath& Filename) -> FPath { return SyncFilter ? SyncFilter->Resolve(Filename) : Filename; };
+	const FRemoteProtocolFeatures& ProxyFeatures = ProxyPool.GetFeatures();
+
+	const bool bDownloadManifestFromProxy =
+		ProxyPool.RemoteDesc.Protocol == EProtocolFlavor::Unsync && ProxyFeatures.bDirectoryListing && ProxyFeatures.bFileDownload;
+
+	UNSYNC_VERBOSE2(L"LoadAndMergeSourceManifest: '%ls' (%hs)",
+					SourcePath.wstring().c_str(),
+					bDownloadManifestFromProxy ? "download" : "filesystem");
+
+	auto ResolvePath = [SyncFilter, bDownloadManifestFromProxy](const FPath& Filename) -> FPath
+	{ return (SyncFilter && !bDownloadManifestFromProxy) ? SyncFilter->Resolve(Filename) : Filename; };
 
 	FDirectoryManifest LoadedManifest;
 
@@ -2942,25 +1958,45 @@ LoadAndMergeSourceManifest(FDirectoryManifest& Output,
 	std::string SourcePathHashStr	   = BytesToHexString(SourcePathHash.Data, sizeof(SourcePathHash.Data));
 	FPath		SourceManifestTempPath = TempPath / SourcePathHashStr;
 
-	if (!PathExists(SourceManifestPath))
-	{
-		UNSYNC_ERROR(L"Source manifest '%ls' does not exist", SourceManifestPath.wstring().c_str());
-		return false;
-	}
-
 	LogGlobalStatus(L"Caching source manifest");
-
 	UNSYNC_VERBOSE(L"Caching source manifest");
+
 	UNSYNC_VERBOSE(L" Source '%ls'", SourceManifestPath.wstring().c_str());
 	UNSYNC_VERBOSE(L" Target '%ls'", SourceManifestTempPath.wstring().c_str());
-	std::error_code CopyErrorCode = CopyFileIfNewer(SourceManifestPath, SourceManifestTempPath);
-	if (CopyErrorCode)
+
+	if (bDownloadManifestFromProxy)
 	{
-		UNSYNC_LOG(L"Failed to copy manifest '%ls' to '%ls'",
-				   SourceManifestPath.wstring().c_str(),
-				   SourceManifestTempPath.wstring().c_str());
-		UNSYNC_ERROR(L"%hs (%d)", CopyErrorCode.message().c_str(), CopyErrorCode.value());
-		return false;
+		UNSYNC_LOG_INDENT;
+		bool bDownloadedOk = DownloadFileIfNewer(ProxyPool.RemoteDesc,
+												 ProxyPool.AuthDesc,
+												 SourceManifestPath,
+												 SourceManifestTempPath,
+												 EFileMode::CreateWriteOnly | EFileMode::IgnoreDryRun);
+
+		if (!bDownloadedOk)
+		{
+			UNSYNC_ERROR(L"Failed to download manifest file '%ls'", SourceManifestPath.wstring().c_str());
+			return false;
+		}
+	}
+	else
+	{
+		UNSYNC_LOG_INDENT;
+		if (!PathExists(SourceManifestPath))
+		{
+			UNSYNC_ERROR(L"Source manifest '%ls' does not exist", SourceManifestPath.wstring().c_str());
+			return false;
+		}
+
+		std::error_code CopyErrorCode = CopyFileIfNewer(SourceManifestPath, SourceManifestTempPath);
+		if (CopyErrorCode)
+		{
+			UNSYNC_LOG(L"Failed to copy manifest '%ls' to '%ls'",
+					   SourceManifestPath.wstring().c_str(),
+					   SourceManifestTempPath.wstring().c_str());
+			UNSYNC_ERROR(L"%hs (%d)", CopyErrorCode.message().c_str(), CopyErrorCode.value());
+			return false;
+		}
 	}
 
 	if (!LoadDirectoryManifest(LoadedManifest, SourcePath, SourceManifestTempPath))
@@ -2970,27 +2006,13 @@ LoadAndMergeSourceManifest(FDirectoryManifest& Output,
 		return false;
 	}
 
-	if (Output.IsValid() && !AlgorithmOptionsCompatible(Output.Options, LoadedManifest.Options))
+	if (Output.IsValid() && !AlgorithmOptionsCompatible(Output.Algorithm, LoadedManifest.Algorithm))
 	{
 		UNSYNC_ERROR(L"Can't merge manifest '%ls' as it uses different algorithm options", SourcePath.wstring().c_str());
 		return false;
 	}
 
 	return MergeManifests(Output, LoadedManifest, bCaseSensitiveTargetFileSystem);
-}
-
-static std::string
-GetAnonymizedHostName()
-{
-	std::string HostName = GetCurrentHostName();
-	if (HostName.empty())
-	{
-		return {};
-	}
-	HostName += " {22FF4421-8CAC-4A14-9E4C-780AAF8BBF2A}";
-	FHash128	MachineId = HashBlake3String<FHash128>(HostName);
-	std::string Result	  = HashToHexString(MachineId);
-	return Result;
 }
 
 struct FFileSyncTaskBatch
@@ -3075,13 +2097,64 @@ struct FFileSyncTaskBatch
 	}
 };
 
+static void
+DeleteOldFilesInDirectory(FPath& Path, uint32 MaxFilesToKeep)
+{
+	struct FEntry
+	{
+		FPath  Path;
+		uint64 Mtime;
+	};
+
+	std::vector<FEntry> Entries;
+
+	FPath ExtendedPath = MakeExtendedAbsolutePath(Path);
+	for (const std::filesystem::directory_entry& It : std::filesystem::directory_iterator(ExtendedPath))
+	{
+		if (It.is_regular_file())
+		{
+			FEntry Entry;
+			Entry.Mtime = ToWindowsFileTime(It.last_write_time());
+			Entry.Path	= It.path();
+			Entries.push_back(Entry);
+		}
+	}
+
+	// reverse sort
+	std::sort(Entries.begin(), Entries.end(), [](const FEntry& A, const FEntry& B) { return A.Mtime > B.Mtime; });
+
+	while (Entries.size() > MaxFilesToKeep)
+	{
+		const FEntry& Oldest = Entries.back();
+
+		std::wstring PathStr = FPath(RemoveExtendedPathPrefix(Oldest.Path)).wstring();
+
+		if (GDryRun)
+		{
+			UNSYNC_VERBOSE(L"Deleting '%ls'(skipped due to dry run mode)", PathStr.c_str());
+		}
+		else
+		{
+			UNSYNC_VERBOSE(L"Deleting '%ls'", PathStr.c_str());
+			std::error_code ErrorCode = {};
+			FileRemove(Oldest.Path, ErrorCode);
+		}
+
+		Entries.pop_back();
+	}
+}
+
 bool  // TODO: return a TResult
 SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 {
+	FProxyPool	DummyProxyPool;
+	FProxyPool& ProxyPool = SyncOptions.ProxyPool ? *SyncOptions.ProxyPool : DummyProxyPool;
+
 	FTimePoint TimeBegin = TimePointNow();
 
 	const bool bFileSystemSource = SyncOptions.SourceType == ESyncSourceType::FileSystem;
-	const bool bServerSource	 = SyncOptions.SourceType == ESyncSourceType::Server;
+	const bool bServerSource =
+		SyncOptions.SourceType == ESyncSourceType::Server || SyncOptions.SourceType == ESyncSourceType::ServerWithManifestHash;
 
 	UNSYNC_ASSERT(bFileSystemSource || bServerSource);
 
@@ -3098,7 +2171,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 	if (SyncOptions.bCleanup)
 	{
-		UNSYNC_VERBOSE(L"Unnecessary files will be deleted after sync (cleanup mode)");
+		UNSYNC_LOG(L"Unnecessary files will be deleted after sync (cleanup mode)");
 	}
 
 	FPath BaseManifestRoot = BasePath / ".unsync";
@@ -3114,6 +2187,14 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 	{
 		UNSYNC_ERROR(L"Failed to create temporary working directory");
 		return false;
+	}
+
+	// Delete oldest cached manifest files if there are more than N
+	{
+		UNSYNC_VERBOSE(L"Cleaning temporary directory");
+		UNSYNC_LOG_INDENT;
+		const uint32 MaxFilesToKeep = uint32(5 + SyncOptions.Overlays.size());
+		DeleteOldFilesInDirectory(TargetTempPath, MaxFilesToKeep);
 	}
 
 	FPath		  LogFilePath = TargetManifestRoot / L"unsync.log";
@@ -3133,37 +2214,14 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 	auto ResolvePath = [SyncFilter](const FPath& Filename) -> FPath { return SyncFilter ? SyncFilter->Resolve(Filename) : Filename; };
 
-	FRemoteDesc ProxySettings = SyncOptions.Remote ? *SyncOptions.Remote : FRemoteDesc();
-	FProxyPool	ProxyPool(ProxySettings);
-
 	FDirectoryManifest SourceDirectoryManifest;
 	FPath			   SourceManifestTempPath;
 
 	const bool bCaseSensitiveTargetFileSystem = IsCaseSensitiveFileSystem(TargetTempPath);
 
-	if (bFileSystemSource || !SourceManifestOverride.empty())
-	{
-		std::vector<FPath> AllSources;
-		AllSources.push_back(SourcePath);
-		for (const FPath& OverlayPath : SyncOptions.Overlays)
-		{
-			AllSources.push_back(OverlayPath);
-		}
+	FTimingLogger ManifestLoadTimingLogger("Manifest load time", ELogLevel::Info);
 
-		for (const FPath& ThisSourcePath : AllSources)
-		{
-			if (!LoadAndMergeSourceManifest(SourceDirectoryManifest,
-											ThisSourcePath,
-											TargetTempPath,
-											SyncFilter,
-											SourceManifestOverride,
-											bCaseSensitiveTargetFileSystem))
-			{
-				return false;
-			}
-		}
-	}
-	else
+	if (SyncOptions.SourceType == ESyncSourceType::ServerWithManifestHash)
 	{
 		if (!ProxyPool.IsValid())
 		{
@@ -3171,7 +2229,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 			return false;
 		}
 
-		UNSYNC_VERBOSE(L"Downloading manifest ...");
+		UNSYNC_LOG(L"Downloading manifest ...");
 
 		std::unique_ptr<FProxy> Proxy = ProxyPool.Alloc();
 
@@ -3191,22 +2249,59 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 			return false;
 		}
 	}
+	else
+	{
+		std::vector<FPath> AllSources;
+		AllSources.push_back(SourcePath);
+		for (const FPath& OverlayPath : SyncOptions.Overlays)
+		{
+			AllSources.push_back(OverlayPath);
+		}
+
+		for (const FPath& ThisSourcePath : AllSources)
+		{
+			if (!LoadAndMergeSourceManifest(SourceDirectoryManifest,
+											ProxyPool,
+											ThisSourcePath,
+											TargetTempPath,
+											SyncFilter,
+											SourceManifestOverride,
+											bCaseSensitiveTargetFileSystem))
+			{
+				return false;
+			}
+		}
+	}
 
 	{
 		UNSYNC_VERBOSE(L"Loaded manifest properties:");
 		UNSYNC_LOG_INDENT;
-		FDirectoryManifestInfo ManifestInfo = GetManifestInfo(SourceDirectoryManifest);
+		FDirectoryManifestInfo ManifestInfo = GetManifestInfo(SourceDirectoryManifest, false /*bGenerateSignature*/);
 		LogManifestInfo(ELogLevel::Debug, ManifestInfo);
-		if (SyncOptions.Remote->Protocol == EProtocolFlavor::Jupiter && ManifestInfo.NumMacroBlocks == 0)
+		if (ProxyPool.RemoteDesc.Protocol == EProtocolFlavor::Jupiter && ManifestInfo.NumMacroBlocks == 0)
 		{
 			UNSYNC_ERROR(L"Manifest must contain macro blocks when using Jupiter");
 			return false;
 		}
 	}
 
+	ManifestLoadTimingLogger.Finish();
+
+	FTimingLogger TargetManifestTimingLogger("Target directory manifest generation time", ELogLevel::Info);
+	UNSYNC_LOG(L"Creating manifest for directory '%ls'", TargetPath.wstring().c_str());
+
+
 	// Propagate algorithm selection from source
-	FAlgorithmOptions  Algorithm			   = SourceDirectoryManifest.Options;
-	FDirectoryManifest TargetDirectoryManifest = CreateDirectoryManifest(TargetPath, 0, Algorithm);
+	const FAlgorithmOptions Algorithm = SourceDirectoryManifest.Algorithm;
+
+	FComputeBlocksParams LightweightManifestParams;
+	LightweightManifestParams.Algorithm	  = Algorithm;
+	LightweightManifestParams.bNeedBlocks = false;
+	LightweightManifestParams.BlockSize	  = 0;
+
+	FDirectoryManifest TargetDirectoryManifest = CreateDirectoryManifest(TargetPath, LightweightManifestParams);
+
+	TargetManifestTimingLogger.Finish();
 
 	if (!bCaseSensitiveTargetFileSystem)
 	{
@@ -3235,15 +2330,15 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 	std::vector<FFileSyncTask> AllFileTasks;
 
 	LogGlobalStatus(L"Scanning base directory");
-	UNSYNC_VERBOSE(L"Scanning base directory");
+	UNSYNC_LOG(L"Scanning base directory");
 	FFileAttributeCache BaseAttribCache = CreateFileAttributeCache(BasePath, SyncFilter);
-	UNSYNC_VERBOSE(L"Base files: %d", (uint32)BaseAttribCache.Map.size());
+	UNSYNC_LOG(L"Base files: %d", (uint32)BaseAttribCache.Map.size());
 
 	FFileAttributeCache SourceAttribCache;
 	if (bFileSystemSource && SyncOptions.bValidateSourceFiles)
 	{
 		LogGlobalStatus(L"Scanning source directory");
-		UNSYNC_VERBOSE(L"Scanning source directory");
+		UNSYNC_LOG(L"Scanning source directory");
 		SourceAttribCache = CreateFileAttributeCache(SourcePath, SyncFilter);
 	}
 
@@ -3254,11 +2349,11 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 	bool			   bBaseDirectoryManifestValid = false;
 	bool			   bQuickDifferencePossible	   = false;
 
-	if (!SyncOptions.bFullDifference && SourceDirectoryManifest.Options.ChunkingAlgorithmId == EChunkingAlgorithmID::VariableBlocks &&
+	if (!SyncOptions.bFullDifference && SourceDirectoryManifest.Algorithm.ChunkingAlgorithmId == EChunkingAlgorithmID::VariableBlocks &&
 		PathExists(BaseManifestPath))
 	{
 		bBaseDirectoryManifestValid = LoadDirectoryManifest(BaseDirectoryManifest, BasePath, BaseManifestPath);
-		if (bBaseDirectoryManifestValid && AlgorithmOptionsCompatible(SourceDirectoryManifest.Options, TargetDirectoryManifest.Options))
+		if (bBaseDirectoryManifestValid && AlgorithmOptionsCompatible(SourceDirectoryManifest.Algorithm, TargetDirectoryManifest.Algorithm))
 		{
 			bQuickDifferencePossible = true;
 		}
@@ -3266,7 +2361,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 	if (bQuickDifferencePossible)
 	{
-		UNSYNC_VERBOSE(L"Quick file difference is allowed (use --full-diff option to override)");
+		UNSYNC_LOG(L"Quick file difference is allowed (use --full-diff option to override)");
 	}
 
 	uint64 TotalSourceSize = 0;
@@ -3313,7 +2408,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 		if (bFileSystemSource && SyncOptions.bValidateSourceFiles)
 		{
-			FileAttributes SourceFileAttrib = GetFileAttrib(ResolvedSourceFilePath, &SourceAttribCache);
+			FFileAttributes SourceFileAttrib = GetFileAttrib(ResolvedSourceFilePath, &SourceAttribCache);
 
 			if (!SourceFileAttrib.bValid)
 			{
@@ -3345,7 +2440,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 		if (bSourceManifestOk)
 		{
-			FileAttributes BaseFileAttrib = GetFileAttrib(BaseFilePath, &BaseAttribCache);
+			FFileAttributes BaseFileAttrib = GetCachedFileAttrib(BaseFilePath, BaseAttribCache);
 
 			if (!BaseFileAttrib.bValid)
 			{
@@ -3413,7 +2508,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 	}
 
 	LogGlobalStatus(L"Computing difference");
-	UNSYNC_VERBOSE(L"Computing difference ...");
+	UNSYNC_LOG(L"Computing difference ...");
 
 	uint64 EstimatedNeedBytesFromSource = 0;
 	uint64 EstimatedNeedBytesFromBase	= 0;
@@ -3430,7 +2525,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 			if (Item.IsBaseValid() && PathExists(Item.BaseFilePath))
 			{
-				NativeFile BaseFile(Item.BaseFilePath, EFileMode::ReadOnlyUnbuffered);
+				FNativeFile BaseFile(Item.BaseFilePath, EFileMode::ReadOnlyUnbuffered);
 				uint32	   SourceBlockSize = Item.SourceManifest->BlockSize;
 				UNSYNC_VERBOSE(L"Computing difference for target '%ls' (base size: %.2f MB)",
 							   Item.BaseFilePath.wstring().c_str(),
@@ -3481,12 +2576,12 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 			UNSYNC_ASSERT(Item.NeedBytesFromSource + Item.NeedBytesFromBase == Item.TotalSizeBytes);
 		};
 
-		ParallelForEach(AllFileTasks.begin(), AllFileTasks.end(), DiffTask);
+		ParallelForEach(AllFileTasks, DiffTask);
 
 		auto TimeDiffEnd = TimePointNow();
 
 		double Duration = DurationSec(TimeDiffBegin, TimeDiffEnd);
-		UNSYNC_VERBOSE(L"Difference complete in %.3f sec", Duration);
+		UNSYNC_LOG(L"Difference complete in %.3f sec", Duration);
 
 		for (FFileSyncTask& Item : AllFileTasks)
 		{
@@ -3495,8 +2590,8 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 			TotalSyncSizeBytes += Item.TotalSizeBytes;
 		}
 
-		UNSYNC_VERBOSE(L"Total need from source: %.2f MB", SizeMb(EstimatedNeedBytesFromSource));
-		UNSYNC_VERBOSE(L"Total need from base: %.2f MB", SizeMb(EstimatedNeedBytesFromBase));
+		UNSYNC_LOG(L"Total need from source: %.2f MB", SizeMb(EstimatedNeedBytesFromSource));
+		UNSYNC_LOG(L"Total need from base: %.2f MB", SizeMb(EstimatedNeedBytesFromBase));
 
 		uint64 AvailableDiskBytes = SyncOptions.bCheckAvailableSpace ? GetAvailableDiskSpace(TargetPath) : ~0ull;
 		if (TotalSyncSizeBytes > AvailableDiskBytes)
@@ -3519,7 +2614,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 	std::unique_ptr<FScavengeDatabase> ScavengeDatabase;
 	if (!SyncOptions.ScavengeRoot.empty())
 	{
-		UNSYNC_VERBOSE(L"Scavenging blocks from existing data sets");
+		UNSYNC_LOG(L"Scavenging blocks from existing data sets");
 		UNSYNC_LOG_INDENT;
 
 		FTimePoint ScavengeDbTimeBegin = TimePointNow();
@@ -3529,18 +2624,18 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 		double Duration = DurationSec(ScavengeDbTimeBegin, TimePointNow());
 
-		UNSYNC_VERBOSE(L"Done in %.3f sec", Duration);
+		UNSYNC_LOG(L"Done in %.3f sec", Duration);
 	}
 
 	LogGlobalProgress();
 
-	if (ProxySettings.IsValid() && ProxyPool.IsValid())
+	if (ProxyPool.IsValid())
 	{
 		LogGlobalStatus(L"Connecting to server");
-		UNSYNC_VERBOSE(L"Connecting to %hs server '%hs:%d' ...",
-					   ToString(ProxySettings.Protocol),
-					   ProxySettings.HostAddress.c_str(),
-					   ProxySettings.HostPort);
+		UNSYNC_LOG(L"Connecting to %hs server '%hs:%d' ...",
+					   ToString(ProxyPool.RemoteDesc.Protocol),
+					   ProxyPool.RemoteDesc.Host.Address.c_str(),
+					   ProxyPool.RemoteDesc.Host.Port);
 		UNSYNC_LOG_INDENT;
 
 		std::unique_ptr<FProxy> Proxy = ProxyPool.Alloc();
@@ -3549,10 +2644,10 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 		{
 			// TODO: report TLS status
 			// ESocketSecurity security = proxy->get_socket_security();
-			// UNSYNC_VERBOSE(L"Connection established (security: %hs)", ToString(security));
+			// UNSYNC_LOG(L"Connection established (security: %hs)", ToString(security));
 
-			UNSYNC_VERBOSE(L"Connection established");
-			UNSYNC_VERBOSE(L"Building block request map");
+			UNSYNC_LOG(L"Connection established");
+			UNSYNC_LOG(L"Building block request map");
 
 			const bool bProxyHasData = Proxy->Contains(SourceDirectoryManifest);
 
@@ -3560,7 +2655,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 			if (bProxyHasData)
 			{
-				ProxyPool.InitRequestMap(SourceDirectoryManifest.Options.StrongHashAlgorithmId);
+				ProxyPool.InitRequestMap(SourceDirectoryManifest.Algorithm.StrongHashAlgorithmId);
 
 				for (const FFileSyncTask& Task : AllFileTasks)
 				{
@@ -3579,18 +2674,24 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 			ProxyPool.Invalidate();
 		}
 	}
-
-	if (ProxySettings.IsValid() && !ProxyPool.IsValid())
+	else
 	{
 		// TODO: bail out if remote connection is required for the download,
 		// such as when downloading data purely from Jupiter.
-		UNSYNC_WARNING(L"Attempting to sync without remote server connection");
+		UNSYNC_VERBOSE(L"Attempting to sync without remote server connection");
 	}
 
 	LogGlobalStatus(L"Copying files");
-	UNSYNC_VERBOSE(L"Copying files");
+	UNSYNC_LOG(L"Copying files ...");
 
 	{
+		// Throttle background tasks by trying to keep them to some sensible memory budget. Best effort only, not a hard limit.
+		const uint64 BackgroundTaskMemoryBudget	 = SyncOptions.BackgroundTaskMemoryBudget;
+		const uint64 TargetTotalSizePerTaskBatch = BackgroundTaskMemoryBudget;
+		const uint64 MaxFilesPerTaskBatch		 = 1000;
+
+		UNSYNC_VERBOSE2(L"Background task memory budget: %llu GB", BackgroundTaskMemoryBudget >> 30);
+
 		struct FBackgroundTaskResult
 		{
 			FPath			TargetFilePath;
@@ -3617,7 +2718,25 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 			FFileSyncTaskBatch CurrentBatch;
 			for (const FFileSyncTask& FileTask : AllFileTasks)
 			{
-				if (CurrentBatch.FileTasks.size() && CurrentBatch.NeedBytesFromSource + FileTask.NeedBytesFromSource > MaxBatchDownloadSize)
+				bool bShouldBreakBatch = false;
+
+				if (!CurrentBatch.FileTasks.empty())
+				{
+					if (CurrentBatch.NeedBytesFromSource + FileTask.NeedBytesFromSource > MaxBatchDownloadSize)
+					{
+						bShouldBreakBatch = true;
+					}
+					else if (CurrentBatch.FileTasks.size() >= MaxFilesPerTaskBatch)
+					{
+						bShouldBreakBatch = true;
+					}
+					else if (CurrentBatch.TotalSizeBytes >= TargetTotalSizePerTaskBatch)
+					{
+						bShouldBreakBatch = true;
+					}
+				}
+
+				if (bShouldBreakBatch)
 				{
 					SyncTaskList.push_back(std::move(CurrentBatch));
 					CurrentBatch = {};
@@ -3658,10 +2777,10 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 								 &ProxyPool](const FFileSyncTask& Item, FBlockCache* BlockCache, bool bBackground) {
 			UNSYNC_VERBOSE(L"Copy '%ls' (%ls)", Item.TargetFilePath.wstring().c_str(), (Item.NeedBytesFromBase) ? L"partial" : L"full");
 
-			std::unique_ptr<NativeFile> BaseFile;
+			std::unique_ptr<FNativeFile> BaseFile;
 			if (Item.IsBaseValid())
 			{
-				BaseFile = std::make_unique<NativeFile>(Item.BaseFilePath, EFileMode::ReadOnlyUnbuffered);
+				BaseFile = std::make_unique<FNativeFile>(Item.BaseFilePath, EFileMode::ReadOnlyUnbuffered);
 			}
 
 			const FGenericBlockArray& SourceBlocks	  = Item.SourceManifest->Blocks;
@@ -3680,34 +2799,51 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 			LogStatus(Item.TargetFilePath.wstring().c_str(), SyncResult.Succeeded() ? L"Succeeded" : L"Failed");
 
-			StatSourceBytes += SyncResult.SourceBytes;
-			StatBaseBytes += SyncResult.BaseBytes;
-			UNSYNC_ASSERT(SyncResult.SourceBytes + SyncResult.BaseBytes == Item.TotalSizeBytes);
-
-			if (SyncResult.Succeeded() && !GDryRun)
+			if (SyncResult.Succeeded())
 			{
-				BaseFile = nullptr;
-				SetFileMtime(Item.TargetFilePath, Item.SourceManifest->Mtime);
+				StatSourceBytes += SyncResult.SourceBytes;
+				StatBaseBytes += SyncResult.BaseBytes;
+				UNSYNC_ASSERT(SyncResult.SourceBytes + SyncResult.BaseBytes == Item.TotalSizeBytes);
+
+				if (!GDryRun)
+				{
+					BaseFile = nullptr;
+					SetFileMtime(Item.TargetFilePath, Item.SourceManifest->Mtime);
+					if (Item.SourceManifest->bReadOnly)
+					{
+						SetFileReadOnly(Item.TargetFilePath, true);
+					}
+				}
+
+				if (bBackground)
+				{
+					FBackgroundTaskResult Result;
+					Result.TargetFilePath = Item.TargetFilePath;
+					Result.SyncResult	  = SyncResult;
+					Result.bIsPartialCopy = Item.NeedBytesFromBase != 0;
+
+					std::lock_guard<std::mutex> LockGuard(BackgroundTaskStatMutex);
+					BackgroundTaskResults.push_back(Result);
+				}	
 			}
-
-			if (bBackground)
+			else
 			{
-				FBackgroundTaskResult Result;
-				Result.TargetFilePath = Item.TargetFilePath;
-				Result.SyncResult	  = SyncResult;
-				Result.bIsPartialCopy = Item.NeedBytesFromBase != 0;
-
-				std::lock_guard<std::mutex> LockGuard(BackgroundTaskStatMutex);
-				BackgroundTaskResults.push_back(Result);
-			}
-
-			if (!SyncResult.Succeeded())
-			{
-				UNSYNC_ERROR(L"Sync failed from '%ls' to '%ls'. Status: %ls, system error code: %d",
-							 Item.ResolvedSourceFilePath.wstring().c_str(),
-							 Item.TargetFilePath.wstring().c_str(),
-							 ToString(SyncResult.Status),
-							 SyncResult.SystemErrorCode.value());
+				if (SyncResult.SystemErrorCode.value())
+				{
+					UNSYNC_ERROR(L"Sync failed from '%ls' to '%ls'. Status: %ls, system error code: %d %hs",
+								 Item.ResolvedSourceFilePath.wstring().c_str(),
+								 Item.TargetFilePath.wstring().c_str(),
+								 ToString(SyncResult.Status),
+								 SyncResult.SystemErrorCode.value(),
+								 SyncResult.SystemErrorCode.message().c_str());
+				}
+				else
+				{
+					UNSYNC_ERROR(L"Sync failed from '%ls' to '%ls'. Status: %ls.",
+								 Item.ResolvedSourceFilePath.wstring().c_str(),
+								 Item.TargetFilePath.wstring().c_str(),
+								 ToString(SyncResult.Status));
+				}
 
 				NumFailedTasks++;
 			}
@@ -3719,8 +2855,6 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 		FTaskGroup BackgroundTaskGroup;
 		FTaskGroup ForegroundTaskGroup;
 
-		// Throttle background tasks by trying to keep them to some sensible memory budget. Best effort only, not a hard limit.
-		const uint64		BackgroundTaskMemoryBudget = 2_GB;
 		std::atomic<uint64> BackgroundTaskMemory	   = {};
 		std::atomic<uint64> RemainingSourceBytes	   = EstimatedNeedBytesFromSource;
 
@@ -3812,7 +2946,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 		if (NumBackgroundTasks != 0)
 		{
-			UNSYNC_VERBOSE(L"Waiting for background tasks to complete");
+			UNSYNC_LOG(L"Waiting for background tasks to complete");
 		}
 		BackgroundTaskGroup.wait();
 
@@ -3848,10 +2982,11 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 			{
 				if (!Item.SyncResult.Succeeded())
 				{
-					UNSYNC_ERROR(L"Failed to copy file '%ls' on background task. Status: %ls, system error code: %d",
+					UNSYNC_ERROR(L"Failed to copy file '%ls' on background task. Status: %ls, system error code: %d %hs",
 								 Item.TargetFilePath.wstring().c_str(),
 								 ToString(Item.SyncResult.Status),
-								 Item.SyncResult.SystemErrorCode.value());
+								 Item.SyncResult.SystemErrorCode.value(),
+								 Item.SyncResult.SystemErrorCode.message().c_str());
 				}
 			}
 			UNSYNC_ERROR(L"Background file copy process failed!");
@@ -3862,14 +2997,14 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 
 	if (bSyncSucceeded && SyncOptions.bCleanup)
 	{
-		UNSYNC_VERBOSE(L"Deleting unnecessary files");
+		UNSYNC_LOG(L"Deleting unnecessary files");
 		UNSYNC_LOG_INDENT;
 		DeleteUnnecessaryFiles(TargetPath, TargetDirectoryManifest, SourceDirectoryManifest, SyncFilter);
 	}
 
 	// Save the source directory manifest on success.
 	// It can be used to speed up the diffing process during next sync.
-	if (bFileSystemSource && bSyncSucceeded && !GDryRun)
+	if (bSyncSucceeded && !GDryRun)
 	{
 		bool bSaveOk = SaveDirectoryManifest(SourceDirectoryManifest, TargetManifestPath);
 
@@ -3879,9 +3014,9 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 		}
 	}
 
-	UNSYNC_VERBOSE(L"Skipped files: %d, full copies: %d, partial copies: %d", StatSkipped, StatFullCopy, StatPartialCopy);
-	UNSYNC_VERBOSE(L"Copied from source: %.2f MB, copied from base: %.2f MB", SizeMb(StatSourceBytes), SizeMb(StatBaseBytes));
-	UNSYNC_VERBOSE(L"Sync completed %ls", bSyncSucceeded ? L"successfully" : L"with errors (see log for details)");
+	UNSYNC_LOG(L"Skipped files: %d, full copies: %d, partial copies: %d", StatSkipped, StatFullCopy, StatPartialCopy);
+	UNSYNC_LOG(L"Copied from source: %.2f MB, copied from base: %.2f MB", SizeMb(StatSourceBytes), SizeMb(StatBaseBytes));
+	UNSYNC_LOG(L"Sync completed %ls", bSyncSucceeded ? L"successfully" : L"with errors (see log for details)");
 
 	double ElapsedSeconds = DurationSec(TimeBegin, TimePointNow());
 	UNSYNC_VERBOSE2(L"Sync time: %.2f seconds", ElapsedSeconds);
@@ -3893,7 +3028,7 @@ SyncDirectory(const FSyncDirectoryOptions& SyncOptions)
 		Event.ClientVersion		 = GetVersionString();
 		Event.Session			 = ProxyPool.GetSessionId();
 		Event.Source			 = ConvertWideToUtf8(SourcePath.wstring());
-		Event.ClientHostNameHash = GetAnonymizedHostName();
+		Event.ClientHostNameHash = GetAnonymizedMachineIdString();
 		Event.TotalBytes		 = TotalSourceSize;
 		Event.SourceBytes		 = StatSourceBytes;
 		Event.BaseBytes			 = StatBaseBytes;
@@ -3934,26 +3069,6 @@ FSyncFilter::Resolve(const FPath& Filename) const
 
 	return Result;
 }
-
-struct FPatchHeader
-{
-	static constexpr uint64 VALIDATION_BLOCK_SIZE = 16_MB;
-
-	static constexpr uint64 MAGIC	= 0x3E63942C4C9ECE16ull;
-	static constexpr uint64 VERSION = 2;
-
-	uint64				   Magic					 = MAGIC;
-	uint64				   Version					 = VERSION;
-	uint64				   SourceSize				 = 0;
-	uint64				   BaseSize					 = 0;
-	uint64				   NumSourceValidationBlocks = 0;
-	uint64				   NumBaseValidationBlocks	 = 0;
-	uint64				   NumSourceBlocks			 = 0;
-	uint64				   NumBaseBlocks			 = 0;
-	uint64				   BlockSize				 = 0;
-	EWeakHashAlgorithmID   WeakHashAlgorithmId		 = EWeakHashAlgorithmID::Naive;
-	EStrongHashAlgorithmID StrongHashAlgorithmId	 = EStrongHashAlgorithmID::Blake3_128;
-};
 
 FBuffer
 GeneratePatch(const uint8*			 BaseData,
@@ -4047,202 +3162,6 @@ GeneratePatch(const uint8*			 BaseData,
 	Result = Compress(Result.Data(), Result.Size(), CompressionLevel);
 
 	UNSYNC_VERBOSE(L"Compressed patch size: %.2f MB", SizeMb(Result.Size()));
-
-	return Result;
-}
-
-template<typename BlockType>
-static bool
-BlocksEqual(const std::vector<BlockType>& A, std::vector<BlockType>& B)
-{
-	if (A.size() != B.size())
-	{
-		return false;
-	}
-
-	for (uint64 I = 0; I < A.size(); ++I)
-	{
-		if (A[I].HashStrong != B[I].HashStrong || A[I].HashWeak != B[I].HashWeak || A[I].Size != B[I].Size || A[I].Offset != B[I].Offset)
-		{
-			return false;
-		}
-	}
-
-	return true;
-}
-
-struct FMemStream
-{
-	FMemStream(const uint8* InData, uint64 InDataSize) : Data(InData), DataRw(nullptr), SIZE(InDataSize), Offset(0) {}
-
-	FMemStream(uint8* InData, uint64 InDataSize) : Data(InData), DataRw(InData), SIZE(InDataSize), Offset(0) {}
-
-	bool Read(void* Dest, uint64 ReadSize)
-	{
-		if (Offset + ReadSize <= SIZE)
-		{
-			uint8* DestBytes = reinterpret_cast<uint8*>(Dest);
-			memcpy(DestBytes, Data + Offset, ReadSize);
-			Offset += ReadSize;
-			return true;
-		}
-		else
-		{
-			return false;
-		}
-	}
-
-	bool Write(const void* Source, uint64 WriteSize)
-	{
-		if (Offset + WriteSize <= SIZE)
-		{
-			const uint8* SourceBytes = reinterpret_cast<const uint8*>(Source);
-			memcpy(DataRw + Offset, SourceBytes, WriteSize);
-			Offset += WriteSize;
-			return true;
-		}
-		else
-		{
-			return false;
-		}
-	}
-
-	const uint8* Data;
-	uint8*		 DataRw;
-	const uint64 SIZE;
-	uint64		 Offset;
-};
-
-FBuffer
-BuildTargetWithPatch(const uint8* PatchData, uint64 PatchSize, const uint8* BaseData, uint64 BaseDataSize)
-{
-	const EChunkingAlgorithmID ChunkingMode = EChunkingAlgorithmID::FixedBlocks;
-
-	FBuffer Result;
-
-	FBuffer	   DecompressedPatch = Decompress(PatchData, PatchSize);
-	FMemStream Stream(DecompressedPatch.Data(), DecompressedPatch.Size());
-
-	FPatchHeader Header;
-	Stream.Read(&Header, sizeof(Header));
-
-	if (Header.Magic != FPatchHeader::MAGIC)
-	{
-		UNSYNC_ERROR(L"Patch file header mismatch. Expected %llX, got %llX", (long long)FPatchHeader::MAGIC, (long long)Header.Magic);
-		return Result;
-	}
-
-	if (Header.Version != FPatchHeader::VERSION)
-	{
-		UNSYNC_ERROR(L"Patch file version mismatch. Expected %lld, got %lld", (long long)FPatchHeader::VERSION, (long long)Header.Version);
-		return Result;
-	}
-
-	FHash128 ExpectedHeaderHash = HashBlake3Bytes<FHash128>(Stream.Data, Stream.Offset);
-	FHash128 HeaderHash;
-	Stream.Read(&HeaderHash, sizeof(HeaderHash));
-	if (HeaderHash != ExpectedHeaderHash)
-	{
-		UNSYNC_ERROR(L"Patch header hash mismatch");
-		return Result;
-	}
-
-	FGenericBlockArray SourceValidationExpected(Header.NumSourceValidationBlocks);
-	FGenericBlockArray BaseValidationExpected(Header.NumBaseValidationBlocks);
-
-	Stream.Read(&SourceValidationExpected[0], SourceValidationExpected.size() * sizeof(SourceValidationExpected[0]));
-	Stream.Read(&BaseValidationExpected[0], BaseValidationExpected.size() * sizeof(BaseValidationExpected[0]));
-
-	FGenericBlockArray BaseValidation;
-
-	{
-		FLogVerbosityScope VerbosityScope(false);
-		FAlgorithmOptions  Algorithm;
-		Algorithm.ChunkingAlgorithmId	= ChunkingMode;
-		Algorithm.WeakHashAlgorithmId	= Header.WeakHashAlgorithmId;
-		Algorithm.StrongHashAlgorithmId = Header.StrongHashAlgorithmId;
-
-		BaseValidation = ComputeBlocks(BaseData, BaseDataSize, FPatchHeader::VALIDATION_BLOCK_SIZE, Algorithm);
-	}
-
-	if (!BlocksEqual(BaseValidation, BaseValidationExpected))
-	{
-		UNSYNC_ERROR(L"Base file mismatch");
-		return Result;
-	}
-
-	FPatchCommandList PatchCommands;
-	PatchCommands.Source.resize(Header.NumSourceBlocks);
-	PatchCommands.Base.resize(Header.NumBaseBlocks);
-
-	Stream.Read(&PatchCommands.Source[0], Header.NumSourceBlocks * sizeof(PatchCommands.Source[0]));
-	Stream.Read(&PatchCommands.Base[0], Header.NumBaseBlocks * sizeof(PatchCommands.Base[0]));
-
-	FHash128 ExpectedBlockHash = HashBlake3Bytes<FHash128>(Stream.Data, Stream.Offset);
-	FHash128 BlockHash;
-	Stream.Read(&BlockHash, sizeof(BlockHash));
-	if (BlockHash != ExpectedBlockHash)
-	{
-		UNSYNC_ERROR(L"Patch block hash mismatch");
-		return Result;
-	}
-
-	const uint8* SourceData		= Stream.Data + Stream.Offset;
-	uint64		 SourceDataSize = Stream.SIZE - Stream.Offset;
-
-	// TODO: generate the proper source need list from the start
-	uint64 SourceOffset = 0;
-	for (FCopyCommand& Block : PatchCommands.Source)
-	{
-		Block.SourceOffset = SourceOffset;
-		SourceOffset += Block.Size;
-	}
-
-	FNeedList NeedList;
-	NeedList.Base.reserve(PatchCommands.Base.size());
-	NeedList.Source.reserve(PatchCommands.Source.size());
-	NeedList.Sequence.reserve(PatchCommands.Sequence.size());
-
-	for (const FCopyCommand& Cmd : PatchCommands.Base)
-	{
-		FNeedBlock Block;
-		static_cast<FCopyCommand&>(Block) = Cmd;
-		NeedList.Base.push_back(Block);
-	}
-
-	for (const FCopyCommand& Cmd : PatchCommands.Source)
-	{
-		FNeedBlock Block;
-		static_cast<FCopyCommand&>(Block) = Cmd;
-		NeedList.Source.push_back(Block);
-	}
-
-	for (const FHash128& Hash : PatchCommands.Sequence)
-	{
-		NeedList.Sequence.push_back(Hash);
-	}
-
-	Result = BuildTargetBuffer(SourceData, SourceDataSize, BaseData, BaseDataSize, NeedList, Header.StrongHashAlgorithmId);
-
-	FGenericBlockArray SourceValidation;
-
-	{
-		FLogVerbosityScope VerbosityScope(false);
-
-		FAlgorithmOptions Algorithm;
-		Algorithm.ChunkingAlgorithmId	= ChunkingMode;
-		Algorithm.WeakHashAlgorithmId	= Header.WeakHashAlgorithmId;
-		Algorithm.StrongHashAlgorithmId = Header.StrongHashAlgorithmId;
-
-		SourceValidation = ComputeBlocks(Result.Data(), Result.Size(), FPatchHeader::VALIDATION_BLOCK_SIZE, Algorithm);
-	}
-
-	if (!BlocksEqual(SourceValidation, SourceValidationExpected))
-	{
-		UNSYNC_ERROR(L"Patched size file mismatch");
-		Result.Clear();
-		return Result;
-	}
 
 	return Result;
 }
@@ -4386,94 +3305,8 @@ ToString(EFileSyncStatus Status)
 			return L"Final file rename failed";
 		case EFileSyncStatus::ErrorTargetFileCreate:
 			return L"Target file creation failed";
-	}
-}
-
-FDirectoryManifestInfo
-GetManifestInfo(const FDirectoryManifest& Manifest)
-{
-	FDirectoryManifestInfo Result = {};
-
-	Result.NumBlocks	  = 0;
-	Result.NumMacroBlocks = 0;
-	Result.TotalSize	  = 0;
-	Result.UniqueSize	  = 0;
-
-	THashSet<FGenericHash> UniqueBlockSet;
-	THashSet<FGenericHash> UniqueMacroBlockSet;
-
-	for (const auto& It : Manifest.Files)
-	{
-		const FFileManifest& File = It.second;
-
-		for (const FGenericBlock& Block : File.Blocks)
-		{
-			if (UniqueBlockSet.insert(Block.HashStrong).second)
-			{
-				Result.UniqueSize += Block.Size;
-			}
-		}
-
-		for (const FGenericBlock& Block : File.MacroBlocks)
-		{
-			UniqueMacroBlockSet.insert(Block.HashStrong);
-		}
-
-		Result.TotalSize += File.Size;
-	}
-
-	Result.NumBlocks	  = UniqueBlockSet.size();
-	Result.NumMacroBlocks = UniqueMacroBlockSet.size();
-	Result.NumFiles		  = Manifest.Files.size();
-	Result.Algorithm	  = Manifest.Options;
-	Result.SerializedHash = ComputeSerializedManifestHash(Manifest);
-	Result.Signature	  = ComputeManifestStableSignature(Manifest);
-
-	return Result;
-}
-
-void
-LogManifestInfo(ELogLevel LogLevel, const FDirectoryManifestInfo& Info)
-{
-	FHash160	ManifestSignature = ToHash160(Info.Signature);
-	std::string SignatureHexStr	  = HashToHexString(ManifestSignature);
-
-	LogPrintf(LogLevel, L"Manifest signature: %hs\n", SignatureHexStr.c_str());
-	LogPrintf(LogLevel, L"Chunking mode: %hs\n", ToString(Info.Algorithm.ChunkingAlgorithmId));
-	LogPrintf(LogLevel, L"Weak hash: %hs\n", ToString(Info.Algorithm.WeakHashAlgorithmId));
-	LogPrintf(LogLevel, L"Strong hash: %hs\n", ToString(Info.Algorithm.StrongHashAlgorithmId));
-	LogPrintf(LogLevel, L"Files: %llu\n", llu(Info.NumFiles));
-	LogPrintf(LogLevel, L"Blocks: %llu\n", llu(Info.NumBlocks));
-	LogPrintf(LogLevel, L"Macro blocks: %llu\n", llu(Info.NumMacroBlocks));
-	LogPrintf(LogLevel, L"Unique data size: %.0f MB (%llu bytes)\n", SizeMb(Info.UniqueSize), llu(Info.UniqueSize));
-	LogPrintf(LogLevel, L"Total data size: %.0f MB (%llu bytes)\n", SizeMb(Info.TotalSize), llu(Info.TotalSize));
-
-	// TODO: block size distribution histogram
-	// TODO: size distribution per file extension
-}
-
-void
-LogManifestInfo(ELogLevel LogLevel, const FDirectoryManifest& Manifest)
-{
-	FDirectoryManifestInfo Info = GetManifestInfo(Manifest);
-	LogManifestInfo(LogLevel, Info);
-}
-
-void
-LogManifestFiles(ELogLevel LogLevel, const FDirectoryManifest& Manifest)
-{
-	std::vector<std::wstring> Files;
-	for (const auto& ManifestIt : Manifest.Files)
-	{
-		Files.push_back(ManifestIt.first);
-	}
-
-	std::sort(Files.begin(), Files.end());
-
-	for (const std::wstring& Filename : Files)
-	{
-		const FFileManifest& Info = Manifest.Files.at(Filename);
-		LogPrintf(LogLevel, L"%s : %llu\n", Filename.c_str(), Info.Size);
+		case EFileSyncStatus::ErrorBuildTargetFailed:
+			return L"Failed to build target";
 	}
 }
 
@@ -4667,7 +3500,7 @@ ComputeSerializedManifestHash(const FDirectoryManifest& Manifest)
 }
 
 FHash160
-ComputeSerializedManifestHash_160(const FDirectoryManifest& Manifest)
+ComputeSerializedManifestHash160(const FDirectoryManifest& Manifest)
 {
 	return ToHash160(ComputeSerializedManifestHash(Manifest));
 }

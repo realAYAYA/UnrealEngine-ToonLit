@@ -41,8 +41,9 @@ namespace mu
 
 	bool ASTOpLayoutPack::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpLayoutPack* other = dynamic_cast<const ASTOpLayoutPack*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpLayoutPack* other = static_cast<const ASTOpLayoutPack*>(&otherUntyped);
 			return Source == other->Source;
 		}
 		return false;

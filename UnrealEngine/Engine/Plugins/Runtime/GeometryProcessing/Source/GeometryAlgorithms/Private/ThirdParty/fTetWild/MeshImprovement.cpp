@@ -1385,6 +1385,7 @@ void floatTetWild::smooth_open_boundary(Mesh& mesh, const AABBWrapper& tree) {
     smooth_open_boundary_aux(mesh, tree);
 
     return;
+#if 0
     for(int i=0;i<10;i++) {
         mark_outside(mesh);
         smooth_open_boundary_aux(mesh, tree);
@@ -1392,6 +1393,7 @@ void floatTetWild::smooth_open_boundary(Mesh& mesh, const AABBWrapper& tree) {
             t.is_outside = false;
     }
     mark_outside(mesh);
+#endif
 }
 
 void floatTetWild::smooth_open_boundary_aux(Mesh& mesh, const AABBWrapper& tree) {

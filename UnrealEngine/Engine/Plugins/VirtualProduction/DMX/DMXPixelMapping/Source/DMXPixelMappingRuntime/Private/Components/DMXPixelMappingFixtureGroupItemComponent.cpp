@@ -2,25 +2,23 @@
 
 #include "Components/DMXPixelMappingFixtureGroupItemComponent.h"
 
+#include "ColorSpace/DMXPixelMappingColorSpace_RGBCMY.h"
+#include "Components/DMXPixelMappingComponentGeometryCache.h"
+#include "Components/DMXPixelMappingFixtureGroupComponent.h"
+#include "Components/DMXPixelMappingRendererComponent.h"
 #include "DMXConversions.h"
 #include "DMXPixelMappingMainStreamObjectVersion.h"
 #include "DMXPixelMappingRuntimeUtils.h"
 #include "DMXPixelMappingTypes.h"
-#include "ColorSpace/DMXPixelMappingColorSpace_RGBCMY.h"
-#include "Components/DMXPixelMappingFixtureGroupComponent.h"
-#include "Components/DMXPixelMappingRendererComponent.h"
+#include "Engine/Texture.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXEntityFixtureType.h"
 #include "Library/DMXLibrary.h"
 #include "IO/DMXOutputPort.h"
+#include "IO/DMXTrace.h"
 #include "Modulators/DMXModulator.h"
-
-#if WITH_EDITOR
-#include "DMXPixelMappingComponentWidget.h"
-#endif // WITH_EDITOR
-
 #include "TextureResource.h"
-#include "Engine/Texture.h"
+#include "UObject/Package.h"
 
 
 DECLARE_CYCLE_STAT(TEXT("Send Fixture Group Item"), STAT_DMXPixelMaping_FixtureGroupItem, STATGROUP_DMXPIXELMAPPING);
@@ -33,7 +31,8 @@ UDMXPixelMappingFixtureGroupItemComponent::UDMXPixelMappingFixtureGroupItemCompo
 	ColorSpaceClass = UDMXPixelMappingColorSpace_RGBCMY::StaticClass();
 	ColorSpace = CreateDefaultSubobject<UDMXPixelMappingColorSpace_RGBCMY>("ColorSpace");
 
-	SetSize(FVector2D(32.f, 32.f));
+	SizeX = 32.f;
+	SizeY = 32.f;
 
 #if WITH_EDITORONLY_DATA
 	// Even tho deprecated, default values on deprecated properties need be set so they don't load their type's default value.
@@ -172,32 +171,13 @@ void UDMXPixelMappingFixtureGroupItemComponent::PostEditChangeProperty(FProperty
 			if (ColorSpace)
 			{
 				ColorSpace->GetOnPostEditChangedProperty().RemoveAll(this);
-				ResetDMX();
+				ResetDMX(EDMXPixelMappingResetDMXMode::DoNotSendValues);
 			}
 
 			ColorSpace = NewObject<UDMXPixelMappingColorSpace>(this, ColorSpaceClass);
 			ColorSpace->GetOnPostEditChangedProperty().AddUObject(this, &UDMXPixelMappingFixtureGroupItemComponent::OnColorSpacePostEditChangeProperties);
 		}
 	}
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (PropertyName == UDMXPixelMappingOutputComponent::GetPositionXPropertyName() ||
-		PropertyName == UDMXPixelMappingOutputComponent::GetPositionYPropertyName())
-	{
-		if (ComponentWidget_DEPRECATED.IsValid())
-		{
-			ComponentWidget_DEPRECATED->SetPosition(GetPosition());
-		}
-	}
-	else if (PropertyName == UDMXPixelMappingOutputComponent::GetSizeXPropertyName() ||
-		PropertyName == UDMXPixelMappingOutputComponent::GetSizeYPropertyName())
-	{
-		if (ComponentWidget_DEPRECATED.IsValid())
-		{
-			ComponentWidget_DEPRECATED->SetSize(GetSize());
-		}
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	InvalidatePixelMapRenderer();
 }
@@ -247,39 +227,20 @@ bool UDMXPixelMappingFixtureGroupItemComponent::IsVisible() const
 }
 #endif // WITH_EDITOR
 
-void UDMXPixelMappingFixtureGroupItemComponent::ResetDMX()
+void UDMXPixelMappingFixtureGroupItemComponent::ResetDMX(EDMXPixelMappingResetDMXMode ResetMode)
 {
-	UDMXPixelMappingRendererComponent* RendererComponent = GetRendererComponent();
-	if (!ensure(RendererComponent))
-	{
-		return;
-	}
-
 	UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.GetFixturePatch();
-	if (!FixturePatch)
-	{
-		return;
-	}
 
-	UDMXLibrary* Library = FixturePatch->GetParentLibrary();
-	if (!Library)
+	if (FixturePatch)
 	{
-		return;
-	}
-	
-	ColorSpace->ResetToBlack();
-	TMap<FDMXAttributeName, float> AttributeToValueMap = ColorSpace->GetAttributeNameToValueMap();
-
-	TMap<int32, uint8> ChannelToValueMap;
-	for (const TTuple<FDMXAttributeName, float>& AttributeValuePair : AttributeToValueMap)
-	{
-		FDMXPixelMappingRuntimeUtils::ConvertNormalizedAttributeValueToChannelValue(FixturePatch, AttributeValuePair.Key, AttributeValuePair.Value, ChannelToValueMap);
-	}
-
-	// Send DMX
-	for (const FDMXOutputPortSharedRef& OutputPort : Library->GetOutputPorts())
-	{
-		OutputPort->SendDMX(FixturePatch->GetUniverseID(), ChannelToValueMap);
+		if (ResetMode == EDMXPixelMappingResetDMXMode::SendZeroValues)
+		{
+			FixturePatch->SendZeroValues();
+		}
+		else if (ResetMode == EDMXPixelMappingResetDMXMode::SendDefaultValues)
+		{
+			FixturePatch->SendDefaultValues();
+		}
 	}
 }
 
@@ -325,6 +286,9 @@ void UDMXPixelMappingFixtureGroupItemComponent::SendDMX()
 	}
 
 	// Send DMX
+	UE_DMX_SCOPED_TRACE_SENDDMX(GetOutermost()->GetFName());
+	UE_DMX_SCOPED_TRACE_SENDDMX(Library->GetFName());
+	UE_DMX_SCOPED_TRACE_SENDDMX(*FixturePatch->GetDisplayName());
 	for (const FDMXOutputPortSharedRef& OutputPort : Library->GetOutputPorts())
 	{
 		OutputPort->SendDMX(FixturePatch->GetUniverseID(), ChannelToValueMap);
@@ -380,15 +344,6 @@ void UDMXPixelMappingFixtureGroupItemComponent::SetPosition(const FVector2D& New
 {
 	Super::SetPosition(NewPosition);
 
-#if WITH_EDITOR
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetPosition(GetPosition());
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
-
 	UpdateRenderElement();
 }
 
@@ -396,38 +351,24 @@ void UDMXPixelMappingFixtureGroupItemComponent::SetSize(const FVector2D& NewSize
 {
 	Super::SetSize(NewSize);
 
-#if WITH_EDITOR
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetSize(GetSize());
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
-
 	UpdateRenderElement();
 }
 
 bool UDMXPixelMappingFixtureGroupItemComponent::IsOverParent() const
 {
-	// Needs be over the over the group
-	if (UDMXPixelMappingFixtureGroupComponent* ParentFixtureGroupComponent = Cast<UDMXPixelMappingFixtureGroupComponent>(GetParent()))
+	if (UDMXPixelMappingFixtureGroupComponent* Parent = Cast<UDMXPixelMappingFixtureGroupComponent>(GetParent()))
 	{
-		const float Left = GetPosition().X;
-		const float Top = GetPosition().Y;
-		const float Right = GetPosition().X + GetSize().X;
-		const float Bottom = GetPosition().Y + GetSize().Y;
-
-		const float ParentLeft = ParentFixtureGroupComponent->GetPosition().X;
-		const float ParentTop = ParentFixtureGroupComponent->GetPosition().Y;
-		const float ParentRight = ParentFixtureGroupComponent->GetPosition().X + ParentFixtureGroupComponent->GetSize().X;
-		const float ParentBottom = ParentFixtureGroupComponent->GetPosition().Y + ParentFixtureGroupComponent->GetSize().Y;
+		FVector2D A;
+		FVector2D B;
+		FVector2D C;
+		FVector2D D;
+		CachedGeometry.GetEdgesAbsolute(A, B, C, D);
 
 		return
-			Left > ParentLeft - .49f &&
-			Top > ParentTop - .49f &&
-			Right < ParentRight + .49f &&
-			Bottom < ParentBottom + .49f;
+			Parent->IsOverPosition(A) &&
+			Parent->IsOverPosition(B) &&
+			Parent->IsOverPosition(C) &&
+			Parent->IsOverPosition(D);
 	}
 
 	return false;
@@ -472,7 +413,16 @@ void UDMXPixelMappingFixtureGroupItemComponent::UpdateRenderElement()
 	FPixelMapRenderElementParameters Parameters;
 	Parameters.UV = FVector2D(GetPosition().X / InputTextureWidth, GetPosition().Y / InputTextureHeight);
 	Parameters.UVSize = FVector2D(GetSize().X / InputTextureWidth, GetSize().Y / InputTextureHeight);
-	Parameters.UVCellSize = Parameters.UVSize / 2.f;
+
+	FVector2D A;
+	FVector2D B;
+	FVector2D C;
+	FVector2D D;
+	GetEdges(A, B, C, D);
+	Parameters.UVTopLeftRotated = FVector2D(A.X / InputTextureWidth, A.Y / InputTextureHeight);
+	Parameters.UVTopRightRotated = FVector2D(B.X / InputTextureWidth, B.Y / InputTextureHeight);
+
+	Parameters.Rotation = GetRotation();
 	Parameters.CellBlendingQuality = CellBlendingQuality;
 	Parameters.bStaticCalculateUV = true;
 
@@ -489,7 +439,7 @@ void UDMXPixelMappingFixtureGroupItemComponent::OnColorSpacePostEditChangeProper
 	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(FDMXAttributeName, Name))
 	{
 		// Reset DMX when an attribute of the color space changed
-		ResetDMX();
+		ResetDMX(EDMXPixelMappingResetDMXMode::DoNotSendValues);
 	}
 }
 #endif // WITH_EDITOR

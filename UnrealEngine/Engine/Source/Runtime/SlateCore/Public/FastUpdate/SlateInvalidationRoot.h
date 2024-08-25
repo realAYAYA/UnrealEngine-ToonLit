@@ -158,6 +158,8 @@ protected:
 
 	virtual void OnRootInvalidated() { }
 
+	SLATECORE_API void SetNeedsSlowPath(bool InNeedsSlowPath);
+
 private:
 	FSlateInvalidationWidgetList& GetFastPathWidgetList() { return *FastWidgetPathList; }
 	void HandleInvalidateAllWidgets(bool bClearResourcesImmediately);

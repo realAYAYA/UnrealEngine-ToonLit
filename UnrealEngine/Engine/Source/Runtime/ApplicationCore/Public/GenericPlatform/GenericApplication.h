@@ -522,7 +522,9 @@ public:
 	
 	DECLARE_EVENT(FSlateApplication, FVirtualKeyboardHiddenEvent);
 	FVirtualKeyboardHiddenEvent& OnVirtualKeyboardHidden()  { return VirtualKeyboardHiddenEvent; }
-
+	
+	DECLARE_EVENT(FSlateApplication, FOnClipboardContentChanged);
+	FOnClipboardContentChanged& OnClipboardContentChanged()  { return OnClipboardContentChangedEvent; }
 	
 	/** Gets the horizontal alignment of the window title bar's title text. */
 	virtual EWindowTitleAlignment::Type GetWindowTitleAlignment() const
@@ -579,5 +581,6 @@ protected:
 	/** Delegate for virtual keyboard being shown */
 	FVirtualKeyboardHiddenEvent VirtualKeyboardHiddenEvent;
 	
-
+	/** Delegate for clipboard contents change */
+	FOnClipboardContentChanged OnClipboardContentChangedEvent;
 };

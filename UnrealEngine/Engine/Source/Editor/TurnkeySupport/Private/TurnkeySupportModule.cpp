@@ -1,6 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "TurnkeySupportModule.h"
+
+#if !UE_WITH_TURNKEY_SUPPORT
+class FTurnkeySupportModuleEmpty : public IModuleInterface {};
+IMPLEMENT_MODULE(FTurnkeySupportModuleEmpty, TurnkeySupport)
+#else // UE_WITH_TURNKEY_SUPPORT
+
 #include "TurnkeySupport.h"
 
 #include "SlateOptMacros.h"
@@ -260,6 +266,9 @@ public:
 			// make sure any changes to DefaultGame are updated in this class
 			PackagingSettings->LoadSettingsForPlatform(PlatformString);
 		}
+
+		// make sure any flushed settings are reloaded
+		PackagingSettings->ReloadConfig();
 
 		return PackagingSettings;
 	}
@@ -934,6 +943,7 @@ static void TurnkeyInstallSdk(FString IniPlatformName, bool bPreferFull, bool bF
 }
 
 static TMap<FName, FString> PerPlatformLastChosen;
+static TMap<FName, FString> PerPlatformLastSimChosen;
 
 static TAttribute<FText> MakeSdkStatusAttribute(FName IniPlatformName, TSharedPtr< ITargetDeviceProxy> DeviceProxy)
 {
@@ -983,6 +993,10 @@ static FSlateIcon MakePlatformSdkIconAttribute(FName IniPlatformName, TSharedPtr
 		{
 			FSlateIcon Icon;
 			if (DeviceProxy->GetConnectionType().Contains(TEXT("Network")))
+			{
+				Icon = FSlateIcon(FAppStyle::Get().GetStyleSetName(), *(TEXT("DeviceDetails.WIFI.") + IniPlatformName.ToString()));
+			}
+			else if (DeviceProxy->GetConnectionType().Contains(TEXT("Wifi")))
 			{
 				Icon = FSlateIcon(FAppStyle::Get().GetStyleSetName(), *(TEXT("DeviceDetails.WIFI.") + IniPlatformName.ToString()));
 			}
@@ -1247,7 +1261,14 @@ static void MakeTurnkeyPlatformMenu(UToolMenu* ToolMenu, FName IniPlatformName, 
 
 		FToolMenuSection& ConfigSection = ToolMenu->AddSection("BuildConfig", LOCTEXT("TurnkeySection_BuildConfig", "Binary Configuration"));
 		
-		const UProjectPackagingSettings::FConfigurationInfo& ConfigInfo = UProjectPackagingSettings::ConfigurationInfo[static_cast<int32>(AllPlatformPackagingSettings->BuildConfiguration)];
+		EProjectPackagingBuildConfigurations BuildConfig = GetMutableDefault<UPlatformsMenuSettings>()->GetBuildConfigurationForPlatform(IniPlatformName);
+		// if PPBC_MAX is set, then the project default should be used instead of the per platform build config
+		if (BuildConfig == EProjectPackagingBuildConfigurations::PPBC_MAX)
+		{
+			BuildConfig = PackagingSettings->BuildConfiguration;
+		}
+
+		const UProjectPackagingSettings::FConfigurationInfo& ConfigInfo = UProjectPackagingSettings::ConfigurationInfo[static_cast<int32>(BuildConfig)];
 		ConfigSection.AddMenuEntry(
 			NAME_None,
 			FText::Format(LOCTEXT("DefaultConfiguration",  "Use Project Setting ({0})"), ConfigInfo.Name),
@@ -1606,6 +1627,11 @@ static void LaunchOnDevice(const FString& DeviceId, const FString& DeviceName, b
 	FTurnkeyEditorSupport::LaunchRunningMap(DeviceId, DeviceName, GetProjectPathForTurnkey(), bUseTurnkey);
 }
 
+static void LaunchOnSimulator(const FString& DeviceId, const FString& DeviceName, bool bUseTurnkey)
+{								
+	FTurnkeyEditorSupport::LaunchRunningMap(DeviceId, DeviceName, GetProjectPathForTurnkey(), false, true);
+}
+
 static void PrepareLaunchOn(FString DeviceId, FString DeviceName)
 {
 	FTurnkeyEditorSupport::PrepareToLaunchRunningMap(DeviceId, DeviceName);
@@ -1617,6 +1643,10 @@ static void HandleLaunchOnDeviceActionExecute(FString DeviceId, FString DeviceNa
 	LaunchOnDevice(DeviceId, DeviceName, bUseTurnkey);
 }
 
+static void HandleLaunchOnSimulatorActionExecute(FString DeviceId, FString DeviceName, bool bUseTurnkey)
+{
+	LaunchOnSimulator(DeviceId, DeviceName, bUseTurnkey);
+}
 
 static bool HandleLaunchOnDeviceActionCanExecute(FString DeviceName)
 {
@@ -1690,9 +1720,17 @@ static void GenerateDeviceProxyMenuParams(TSharedPtr<ITargetDeviceProxy> DeviceP
 					DeviceVariantName = *VariantName;
 				}
 
-				PerPlatformLastChosen[PlatformName] = DeviceProxy->GetName();
 				FString DeviceId = DeviceProxy->GetTargetDeviceId(DeviceVariantName);
-				HandleLaunchOnDeviceActionExecute(DeviceId, DeviceProxy->GetName(), true);
+				if (DeviceProxy->IsSimulated())
+				{
+					PerPlatformLastSimChosen[*DeviceProxy->GetType()] = DeviceProxy->GetName();
+					HandleLaunchOnSimulatorActionExecute(DeviceId, DeviceProxy->GetName(), true);
+				}
+				else
+				{
+					PerPlatformLastChosen[PlatformName] = DeviceProxy->GetName();
+					HandleLaunchOnDeviceActionExecute(DeviceId, DeviceProxy->GetName(), true);
+				}
 				ExternalOnClickDelegate.ExecuteIfBound(DeviceId);
 			}
 	//		, FCanExecuteAction::CreateStatic(&HandleLaunchOnDeviceActionCanExecute, DeviceProxy->GetName())
@@ -1713,7 +1751,7 @@ static void GenerateDeviceProxyMenuParams(TSharedPtr<ITargetDeviceProxy> DeviceP
 		TooltipArguments.Add(TEXT("ModelId"), FText::FromString(DeviceProxy->GetModel()));
 		TooltipArguments.Add(TEXT("OSVersion"), FText::FromString(DeviceProxy->GetOSVersion()));
 
-		OutTooltip = FText::Format(LOCTEXT("LaunchDeviceToolTipText_ThisDeviceExtra", "Launch on \"{DeviceID}\" [OSVer:'{OSVersion}' Model:'{ModelId}']"), TooltipArguments);
+		OutTooltip = FText::Format(LOCTEXT("LaunchDeviceToolTipText_ThisDeviceExtra", "Launch on \"{DeviceID}\" [OS:'{OSVersion}' Info:'{ModelId}']"), TooltipArguments);
 	}
 	else
 	{
@@ -1752,9 +1790,16 @@ void FTurnkeySupportModule::MakeQuickLaunchItems(class UToolMenu* Menu, FOnQuick
 			}
 
 			// look for devices for all platforms, even if the platform isn't installed - Turnkey can install Sdk after selecting LaunchOn
-			TArray<TSharedPtr<ITargetDeviceProxy>> DeviceProxies;
-			TargetDeviceServicesModule->GetDeviceProxyManager()->GetAllProxies(PlatformName, DeviceProxies);
+			TArray<TSharedPtr<ITargetDeviceProxy>> AllDeviceProxies;
+			TargetDeviceServicesModule->GetDeviceProxyManager()->GetAllProxies(PlatformName, AllDeviceProxies);
 
+			// Remove any Simulator based devices
+			TArray<TSharedPtr<ITargetDeviceProxy>> DeviceProxies;
+			DeviceProxies = AllDeviceProxies.FilterByPredicate([](const TSharedPtr<ITargetDeviceProxy>& Device)
+			{
+				return Device->GetConnectionType() != TEXT("Simulator");
+			});
+			
 			if (DeviceProxies.Num() > 0)
 			{
 				FString LastChosen;
@@ -1775,7 +1820,7 @@ void FTurnkeySupportModule::MakeQuickLaunchItems(class UToolMenu* Menu, FOnQuick
 				FText Tooltip;
 
 				GenerateDeviceProxyMenuParams(DeviceProxies[0], PlatformName, Action, Tooltip, ExternalOnClickDelegate);
-				
+
  				const ITargetPlatform* Platform = GetTargetPlatformManager()->FindTargetPlatform(PlatformName.ToString());
 				bool bGroupDevices = Platform->SupportsFeature(ETargetPlatformFeatures::ShowAsPlatformGroup);
 				if (DeviceProxies.Num() == 1 && !bGroupDevices)
@@ -1799,8 +1844,16 @@ void FTurnkeySupportModule::MakeQuickLaunchItems(class UToolMenu* Menu, FOnQuick
 								FToolMenuSection& Section = SubToolMenu->AddSection(NAME_None);
 
 								// re-get the proxies, just in case they changed
+								TArray<TSharedPtr<ITargetDeviceProxy>> AllDeviceProxies;
+								TargetDeviceServicesModule->GetDeviceProxyManager()->GetAllProxies(PlatformName, AllDeviceProxies);
+
+								// Remove any Simulator based devices
 								TArray<TSharedPtr<ITargetDeviceProxy>> DeviceProxies;
-								TargetDeviceServicesModule->GetDeviceProxyManager()->GetAllProxies(PlatformName, DeviceProxies);
+								DeviceProxies = AllDeviceProxies.FilterByPredicate([](const TSharedPtr<ITargetDeviceProxy> &Device)
+													{ 
+														return Device->GetConnectionType() != TEXT("Simulator"); 
+													});
+
 								// for each one, put an entry (even the one that was in the outer menu, for less confusion)
 								for (const TSharedPtr<ITargetDeviceProxy>& Proxy : DeviceProxies)
 								{
@@ -1903,6 +1956,150 @@ void FTurnkeySupportModule::MakeQuickLaunchItems(class UToolMenu* Menu, FOnQuick
 
 }
 
+static void MakeSimulatorMenu(const FString& ModelType, const TArray<TSharedPtr<ITargetDeviceProxy>>& DeviceProxies, FOnQuickLaunchSelected ExternalOnClickDelegate, FToolMenuSection& DynamicSection)
+{
+	FName PlatformName = TEXT("IOS");
+	FName SubPlatformName = *ModelType;
+	FString LastChosen;
+	const TSharedPtr<ITargetDeviceProxy>* LastChosenProxy;
+	if (PerPlatformLastSimChosen.Contains(SubPlatformName))
+	{
+		LastChosen = PerPlatformLastSimChosen[SubPlatformName];
+		const TSharedPtr<ITargetDeviceProxy>* Proxy = DeviceProxies.FindByPredicate([LastChosen](const TSharedPtr<ITargetDeviceProxy>& InProxy)
+		{
+			return InProxy->GetName() == LastChosen;
+		});
+		if (Proxy)
+		{
+			LastChosenProxy = Proxy;
+		}
+		else
+		{
+			return;
+		}
+	}
+	else
+	{
+		const TSharedPtr<ITargetDeviceProxy>* FirstProxy = DeviceProxies.FindByPredicate([ModelType](const TSharedPtr<ITargetDeviceProxy>& InProxy)
+		{
+			return InProxy->GetType() == ModelType;
+		});
+		if (FirstProxy)
+		{
+			LastChosen = (*FirstProxy)->GetName();
+			LastChosenProxy = FirstProxy;
+			PerPlatformLastSimChosen.Add(SubPlatformName, LastChosen);
+		}
+		else
+		{
+			// There is no simulator of this model type to display, so return
+			return;
+		}
+	}
+	
+	// always use the first one, after sorting
+	FUIAction Action;
+	FText Tooltip;
+	
+	ITargetDeviceServicesModule* TargetDeviceServicesModule = static_cast<ITargetDeviceServicesModule*>(FModuleManager::Get().LoadModule(TEXT("TargetDeviceServices")));
+
+	GenerateDeviceProxyMenuParams(*LastChosenProxy, PlatformName, Action, Tooltip, ExternalOnClickDelegate);
+
+	const ITargetPlatform* Platform = GetTargetPlatformManager()->FindTargetPlatform(PlatformName.ToString());
+	DynamicSection.AddSubMenu(
+		NAME_None,
+		MakeSdkStatusAttribute(PlatformName, *LastChosenProxy),
+		Tooltip,
+		FNewToolMenuDelegate::CreateLambda([TargetDeviceServicesModule, ModelType, PlatformName, LastChosen, DeviceProxies, ExternalOnClickDelegate](UToolMenu* SubToolMenu)
+		{
+			FToolMenuSection& Section = SubToolMenu->AddSection(NAME_None);
+			// for each one, put an entry 
+			for (const TSharedPtr<ITargetDeviceProxy>& Proxy : DeviceProxies)
+			{
+				if (Proxy->GetType() != ModelType)
+				{
+					continue;
+				}
+				
+				// Skip over the top level menu item
+				if (LastChosen == Proxy->GetName())
+				{
+					continue;
+				}
+				
+				FUIAction SubAction;
+				FText SubTooltip;
+				GenerateDeviceProxyMenuParams(Proxy, PlatformName, SubAction, SubTooltip, ExternalOnClickDelegate);
+				Section.AddMenuEntry(NAME_None,
+									 MakeSdkStatusAttribute(PlatformName, Proxy),
+									 SubTooltip,
+									 MakePlatformSdkIconAttribute(PlatformName, Proxy),
+									 SubAction,
+									 EUserInterfaceActionType::Button);
+			}
+		}),
+		Action,
+		EUserInterfaceActionType::Check,
+		false,
+		MakePlatformSdkIconAttribute(PlatformName, *LastChosenProxy),
+		true
+	);
+	
+}
+
+void FTurnkeySupportModule::MakeSimulatorItems(class UToolMenu* Menu, FOnQuickLaunchSelected ExternalOnClickDelegate) const
+{
+	FToolMenuSection& MenuSection = Menu->AddSection("SimulatorDevices", LOCTEXT("Simulators", "Simulators"));
+
+	MenuSection.AddDynamicEntry("PlatformsMenu", FNewToolMenuSectionDelegate::CreateLambda([ExternalOnClickDelegate](FToolMenuSection& DynamicSection)
+	{
+		TArray<FString> DeviceIdsToQuery;
+		ITargetDeviceServicesModule* TargetDeviceServicesModule = static_cast<ITargetDeviceServicesModule*>(FModuleManager::Get().LoadModule(TEXT("TargetDeviceServices")));
+		for (const auto& Pair : FDataDrivenPlatformInfoRegistry::GetAllPlatformInfos())
+		{
+			if (Pair.Value.bIsFakePlatform)
+			{
+				continue;
+			}
+
+			FName PlatformName = Pair.Key;
+			const FDataDrivenPlatformInfo& Info = Pair.Value;
+			if (FDataDrivenPlatformInfoRegistry::IsPlatformHiddenFromUI(PlatformName))
+			{
+				continue;
+			}
+
+			// look for devices for all platforms, even if the platform isn't installed - Turnkey can install Sdk after selecting LaunchOn
+			TArray<TSharedPtr<ITargetDeviceProxy>> AllDeviceProxies;
+			TargetDeviceServicesModule->GetDeviceProxyManager()->GetAllProxies(PlatformName, AllDeviceProxies);
+
+			// We only care about Simulator based devices
+			TArray<TSharedPtr<ITargetDeviceProxy>> DeviceProxies;
+			DeviceProxies = AllDeviceProxies.FilterByPredicate([](const TSharedPtr<ITargetDeviceProxy>& Device)
+			{
+				return Device->GetConnectionType() == TEXT("Simulator");
+			});
+			
+			if (DeviceProxies.Num() > 0)
+			{
+				// Partition based on device type
+				Algo::Sort(DeviceProxies, [](TSharedPtr<ITargetDeviceProxy> A, TSharedPtr<ITargetDeviceProxy> B)
+						   { return A->GetModel() >= B->GetModel(); });
+				
+				MakeSimulatorMenu(TEXT("Phone"), DeviceProxies, ExternalOnClickDelegate, DynamicSection);
+				MakeSimulatorMenu(TEXT("Tablet"), DeviceProxies, ExternalOnClickDelegate, DynamicSection);
+			}
+		}
+
+		// now kick-off any devices that need to be updated
+		if (DeviceIdsToQuery.Num() > 0)
+		{
+			ITurnkeySupportModule::Get().UpdateSdkInfoForDevices(DeviceIdsToQuery);
+		}
+	}
+	));
+}
+
 TSharedRef<SWidget> FTurnkeySupportModule::MakeTurnkeyMenuWidget() const
 {
 	FTurnkeySupportCommands::Register();
@@ -1918,6 +2115,7 @@ TSharedRef<SWidget> FTurnkeySupportModule::MakeTurnkeyMenuWidget() const
 
 		FOnQuickLaunchSelected EmptyFunc;
 		MakeQuickLaunchItems(Menu, EmptyFunc);
+		MakeSimulatorItems(Menu, EmptyFunc);
 
 		// need to make this dyamic so icons, etc can update with SDK 
 		// shared devices section
@@ -2077,6 +2275,10 @@ void FTurnkeySupportModule::MakeTurnkeyMenu(FToolMenuSection& MenuSection) const
 
 	// hide during PIE
 	FUIAction PlatformMenuShownDelegate;
+	if (FSlateApplication::IsInitialized())
+	{
+		PlatformMenuShownDelegate.CanExecuteAction = FCanExecuteAction::CreateRaw(&FSlateApplication::Get(), &FSlateApplication::IsNormalExecution);
+	}
 	PlatformMenuShownDelegate.IsActionVisibleDelegate = FIsActionButtonVisible::CreateLambda([]() 
 	{
 		return !FTurnkeyEditorSupport::IsPIERunning();
@@ -2565,7 +2767,7 @@ void FTurnkeySupportModule::UpdateSdkInfoForDevices(TArray<FString> PlatformDevi
 				    }
 			    }
 			}
-			else
+			else if (!IsEngineExitRequested())
 			{
 			    for (const FString& Id : PlatformDeviceIds)
 			    {
@@ -2597,8 +2799,15 @@ void FTurnkeySupportModule::RepeatQuickLaunch(FString DeviceId)
 	TSharedPtr<ITargetDeviceProxy> Proxy = TargetDeviceServicesModule->GetDeviceProxyManager()->FindProxyDeviceForTargetDevice(DeviceId);
 
 	if (Proxy.IsValid())
-	{
-		HandleLaunchOnDeviceActionExecute(DeviceId, Proxy->GetName(), true);
+	{				
+		if (Proxy->IsSimulated())
+		{
+			HandleLaunchOnSimulatorActionExecute(DeviceId, Proxy->GetName(), true);
+		}
+		else
+		{
+			HandleLaunchOnDeviceActionExecute(DeviceId, Proxy->GetName(), true);
+		}
 	}
 	else
 	{
@@ -2677,3 +2886,5 @@ void FTurnkeySupportModule::ShutdownModule( )
 IMPLEMENT_MODULE(FTurnkeySupportModule, TurnkeySupport);
 
 #undef LOCTEXT_NAMESPACE
+
+#endif // UE_WITH_TURNKEY_SUPPORT

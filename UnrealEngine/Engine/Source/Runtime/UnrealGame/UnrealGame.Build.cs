@@ -11,7 +11,7 @@ public class UnrealGame : ModuleRules
 
         //DynamicallyLoadedModuleNames.Add("OnlineSubsystemNull");
 
-		if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			PrivateDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine" });//, "OnlineSubsystem", "OnlineSubsystemUtils" });
             //DynamicallyLoadedModuleNames.Add("OnlineSubsystemIOS");

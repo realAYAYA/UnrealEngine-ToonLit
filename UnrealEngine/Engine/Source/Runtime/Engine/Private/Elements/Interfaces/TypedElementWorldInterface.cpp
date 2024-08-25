@@ -198,7 +198,6 @@ bool ITypedElementWorldInterface::GetBounds(const FScriptTypedElementHandle& InE
 	return GetBounds(NativeHandle, OutBounds);
 }
 
-
 bool ITypedElementWorldInterface::CanMoveElement(const FScriptTypedElementHandle& InElementHandle, const ETypedElementWorldType InWorldType)
 {
 	FTypedElementHandle NativeHandle = InElementHandle.GetTypedElementHandle();
@@ -209,6 +208,18 @@ bool ITypedElementWorldInterface::CanMoveElement(const FScriptTypedElementHandle
 	}
 
 	return CanMoveElement(NativeHandle, InWorldType);
+}
+
+bool ITypedElementWorldInterface::CanScaleElement(const FScriptTypedElementHandle& InElementHandle)
+{
+	FTypedElementHandle NativeHandle = InElementHandle.GetTypedElementHandle();
+	if (!NativeHandle)
+	{
+		FFrame::KismetExecutionMessage(TEXT("InElementHandle is not a valid handle."), ELogVerbosity::Error);
+		return false;
+	}
+
+	return CanScaleElement(NativeHandle);
 }
 
 bool ITypedElementWorldInterface::GetWorldTransform(const FScriptTypedElementHandle& InElementHandle, FTransform& OutTransform)

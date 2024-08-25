@@ -121,6 +121,11 @@ struct FAddCameraShakeParams
 	 */
 	FOnInitializeCameraShake Initializer;
 
+	/**
+	 * An optional override for the duration of the camera shake.
+	 */
+	TOptional<float> DurationOverride;
+
 	FAddCameraShakeParams()
 		: Scale(1.f), PlaySpace(ECameraShakePlaySpace::CameraLocal), UserPlaySpaceRot(FRotator::ZeroRotator), SourceComponent(nullptr)
 	{}

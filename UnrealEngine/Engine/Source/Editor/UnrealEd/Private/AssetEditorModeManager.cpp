@@ -74,12 +74,17 @@ USelection* FAssetEditorModeManager::GetSelectedComponents() const
 
 UWorld* FAssetEditorModeManager::GetWorld() const
 {
-	return (PreviewScene != nullptr) ? PreviewScene->GetWorld() : GEditor->GetEditorWorldContext().World();
+	return (PreviewSceneWorld.IsValid()) ? PreviewSceneWorld.Get() : GEditor->GetEditorWorldContext().World();
 }
 
 void FAssetEditorModeManager::SetPreviewScene(FPreviewScene* NewPreviewScene)
 {
 	PreviewScene = NewPreviewScene;
+
+	// Due to destruction order, we might get a call from FEditorModeTools::OnWorldCleanup with an already destoyed PreviewScene,
+	// but we sill have to return the correct World the editor was using to perform a correct shutdown,
+	// so caching the PreviewScene World when assigning (and clearing if null preview is set)
+	PreviewSceneWorld = (NewPreviewScene != nullptr) ? NewPreviewScene->GetWorld() : nullptr;
 }
 
 FPreviewScene* FAssetEditorModeManager::GetPreviewScene() const

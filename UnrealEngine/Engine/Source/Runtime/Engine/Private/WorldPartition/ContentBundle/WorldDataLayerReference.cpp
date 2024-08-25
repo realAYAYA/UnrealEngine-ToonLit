@@ -5,6 +5,7 @@
 
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 
 FWorldDataLayersReference::FWorldDataLayersReference()
 {
@@ -16,9 +17,9 @@ FWorldDataLayersReference::~FWorldDataLayersReference()
 	Reset();
 }
 
-FWorldDataLayersReference::FWorldDataLayersReference(UActorDescContainer* Container, FName WorldDataLayerName)
+FWorldDataLayersReference::FWorldDataLayersReference(UActorDescContainerInstance* ContainerInstance, FName WorldDataLayerName)
 {
-	TrySetReference(Container, WorldDataLayerName);
+	TrySetReference(ContainerInstance, WorldDataLayerName);
 }
 
 FWorldDataLayersReference::FWorldDataLayersReference(const FActorSpawnParameters& SpawnParameters)
@@ -59,7 +60,7 @@ const AWorldDataLayers* FWorldDataLayersReference::Get() const
 		const FWorldPartitionReference& WorldDataLayerReference = WorldDataLayersVariant.Get<FWorldPartitionReference>();
 		if (WorldDataLayerReference.IsValid())
 		{
-			return Cast<AWorldDataLayers>(WorldDataLayerReference->GetActor());
+			return Cast<AWorldDataLayers>(WorldDataLayerReference.GetActor());
 		}
 		return nullptr;
 	}
@@ -67,15 +68,15 @@ const AWorldDataLayers* FWorldDataLayersReference::Get() const
 	return WorldDataLayersVariant.Get<AWorldDataLayers*>();
 }
 
-bool FWorldDataLayersReference::TrySetReference(UActorDescContainer* Container, FName WorldDataLayerName)
+bool FWorldDataLayersReference::TrySetReference(UActorDescContainerInstance* ContainerInstance, FName WorldDataLayerName)
 {
-	for (UActorDescContainer::TIterator<> ActorDescIterator(Container); ActorDescIterator; ++ActorDescIterator)
+	for (UActorDescContainerInstance::TIterator<> Iterator(ContainerInstance); Iterator; ++Iterator)
 	{
-		if (ActorDescIterator->GetActorNativeClass()->IsChildOf<AWorldDataLayers>())
+		if (Iterator->GetActorNativeClass()->IsChildOf<AWorldDataLayers>())
 		{
-			if (ActorDescIterator->GetActorName() == WorldDataLayerName)
+			if (Iterator->GetActorName() == WorldDataLayerName)
 			{
-				WorldDataLayersVariant.Emplace<FWorldPartitionReference>(Container, ActorDescIterator->GetGuid());
+				WorldDataLayersVariant.Emplace<FWorldPartitionReference>(ContainerInstance, Iterator->GetGuid());
 				return true;
 			}
 		}
@@ -99,7 +100,7 @@ void FWorldDataLayersReference::Reset()
 				FWorldPartitionReference ResolvedReference(WorldPartition, WorldDataLayers->GetActorGuid());
 				if (ResolvedReference.IsValid())
 				{
-					check(WorldDataLayers == ResolvedReference->GetActor());
+					check(WorldDataLayers == ResolvedReference.GetActor());
 					WorldDataLayersVariant.Emplace<FWorldPartitionReference>(ResolvedReference);
 				}
 				else
@@ -114,7 +115,7 @@ void FWorldDataLayersReference::Reset()
 
 	if (WorldDataLayersVariant.IsType<FWorldPartitionReference>())
 	{
-		WorldDataLayersVariant.Get<FWorldPartitionReference>() = nullptr;
+		WorldDataLayersVariant.Get<FWorldPartitionReference>().Reset();
 	}
 }
 

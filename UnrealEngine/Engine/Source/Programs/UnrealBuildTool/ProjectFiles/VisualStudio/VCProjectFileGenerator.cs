@@ -18,7 +18,6 @@ namespace UnrealBuildTool
 	enum VCProjectFileFormat
 	{
 		Default,          // Default to the best installed version, but allow SDKs to override
-		VisualStudio2019,
 		VisualStudio2022,
 	}
 
@@ -93,6 +92,12 @@ namespace UnrealBuildTool
 		/// </summary>
 		[XmlConfigFile(Category = "VCProjectFileGenerator")]
 		public bool bBuildLiveCodingConsole = false;
+
+		/// <summary>
+		/// Whether to generate a project file for each individual target, and not include e.g. Editor/Client/Server in the Configuration.
+		/// </summary>
+		[XmlConfigFile(Category = "VCProjectFileGenerator")]
+		public bool bMakeProjectPerTarget = false;
 	}
 
 	/// <summary>
@@ -101,14 +106,14 @@ namespace UnrealBuildTool
 	class VCProjectFileGenerator : ProjectFileGenerator
 	{
 		/// <summary>
-		/// Set to true to enable a project for each target, and do not put the target type into the configuration
-		/// </summary>
-		protected override bool bMakeProjectPerTarget => false;
-
-		/// <summary>
 		/// The settings object
 		/// </summary>
 		protected VCProjectFileSettings Settings = new VCProjectFileSettings();
+
+		/// <summary>
+		/// Set to true to enable a project for each target, and do not put the target type into the configuration
+		/// </summary>
+		protected override bool bMakeProjectPerTarget => Settings.bMakeProjectPerTarget;
 
 		/// <summary>
 		/// Override for the build tool to use in generated projects. If the compiler version is specified on the command line, we use the same argument on the 
@@ -132,11 +137,7 @@ namespace UnrealBuildTool
 				Settings.ProjectFileFormat = InProjectFileFormat;
 			}
 
-			if (InArguments.HasOption("-2019"))
-			{
-				BuildToolOverride = "-2019";
-			}
-			else if (InArguments.HasOption("-2022"))
+			if (InArguments.HasOption("-2022"))
 			{
 				BuildToolOverride = "-2022";
 			}
@@ -220,8 +221,6 @@ namespace UnrealBuildTool
 		{
 			switch (ProjectFileFormat)
 			{
-				case VCProjectFileFormat.VisualStudio2019:
-					return "16.0";
 				case VCProjectFileFormat.VisualStudio2022:
 					return "17.0";
 			}
@@ -233,8 +232,6 @@ namespace UnrealBuildTool
 		{
 			switch (ProjectFileFormat)
 			{
-				case VCProjectFileFormat.VisualStudio2019:
-					return "v142";
 				case VCProjectFileFormat.VisualStudio2022:
 					return "v143";
 
@@ -248,11 +245,8 @@ namespace UnrealBuildTool
 			{
 				case VCProjectFileFormat.VisualStudio2022:
 					return WindowsCompiler.VisualStudio2022;
-				case VCProjectFileFormat.VisualStudio2019:
-					return WindowsCompiler.VisualStudio2019;
-				default:
-					return WindowsCompiler.VisualStudio2019;
 			}
+			return WindowsCompiler.VisualStudio2022;
 		}
 
 		public static void AppendPlatformToolsetProperty(StringBuilder VCProjectFileContent, VCProjectFileFormat ProjectFileFormat)
@@ -260,6 +254,52 @@ namespace UnrealBuildTool
 			string ToolVersionString = GetProjectFileToolVersionString(ProjectFileFormat);
 			string PlatformToolsetVersionString = GetProjectFilePlatformToolsetVersionString(ProjectFileFormat);
 			VCProjectFileContent.AppendLine("    <PlatformToolset>{0}</PlatformToolset>", PlatformToolsetVersionString);
+		}
+
+		// parses project ini for Android to get architecture(s) enabled
+		private static UnrealArchitectures GetAndroidProjectArchitectures(FileReference? ProjectFile, bool bGetAllSupported)
+		{
+			List<string> ActiveArches = new();
+
+			// look in ini settings for what platforms to compile for
+			ConfigHierarchy Ini = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, DirectoryReference.FromFile(ProjectFile), UnrealTargetPlatform.Android);
+			bool bBuild;
+
+			if (Ini.GetBool("/Script/AndroidRuntimeSettings.AndroidRuntimeSettings", "bBuildForArm64", out bBuild) && bBuild)
+			{
+				ActiveArches.Add("arm64");
+			}
+			if (Ini.GetBool("/Script/AndroidRuntimeSettings.AndroidRuntimeSettings", "bBuildForx8664", out bBuild) && bBuild)
+			{
+				ActiveArches.Add("x64");
+			}
+
+			// we expect one to be specified
+			if (ActiveArches.Count == 0)
+			{
+				ActiveArches.Add("arm64");
+			}
+
+			return new UnrealArchitectures(ActiveArches);
+		}
+
+		/// <summary>
+		/// Returns a list of architectures to generate unique VS platforms for.
+		/// </summary>
+		public static UnrealArchitectures? GetPlatformArchitecturesToGenerate(UEBuildPlatform BuildPlatform, ProjectTarget InProjectTarget)
+		{
+			if (BuildPlatform.ArchitectureConfig.Mode == UnrealArchitectureMode.SingleTargetLinkSeparately)
+			{
+				// this should only be Android at the moment
+				if (BuildPlatform.Platform == UnrealTargetPlatform.Android)
+				{
+					return InProjectTarget.UnrealProjectFilePath == null ? BuildPlatform.ArchitectureConfig.AllSupportedArchitectures
+						: GetAndroidProjectArchitectures(InProjectTarget.UnrealProjectFilePath, true);
+				}
+				return BuildPlatform.ArchitectureConfig.AllSupportedArchitectures;
+			}
+			return (BuildPlatform.ArchitectureConfig.Mode == UnrealArchitectureMode.OneTargetPerArchitecture) ?
+				BuildPlatform.ArchitectureConfig.AllSupportedArchitectures : null;
 		}
 
 		/// <inheritdoc/>
@@ -289,14 +329,6 @@ namespace UnrealBuildTool
 					Settings.ProjectFileFormat = VCProjectFileFormat.Default;
 				}
 			}
-			else if (Settings.ProjectFileFormat == VCProjectFileFormat.VisualStudio2019)
-			{
-				if (!WindowsPlatform.HasCompiler(WindowsCompiler.VisualStudio2019, UnrealArch.X64, Logger))
-				{
-					Logger.LogWarning("Visual Studio C++ 2019 installation not found - ignoring preferred project file format.");
-					Settings.ProjectFileFormat = VCProjectFileFormat.Default;
-				}
-			}
 
 			// Certain platforms override the project file format because their debugger add-ins may not yet support the latest
 			// version of Visual Studio.  This is their chance to override that.
@@ -315,15 +347,10 @@ namespace UnrealBuildTool
 						Format = VCProjectFileFormat.VisualStudio2022;
 						break;
 					}
-					else if (Installation.Compiler == WindowsCompiler.VisualStudio2019)
-					{
-						Format = VCProjectFileFormat.VisualStudio2019;
-						break;
-					}
 				}
 				Settings.ProjectFileFormat = Format;
 
-				bool Vs2019Available = Installations.Any(x => x.Compiler == WindowsCompiler.VisualStudio2019);
+				bool DowngradeAvailable = false; // ex: Installations.Any(x => x.Compiler == WindowsCompiler.VisualStudio2022);
 
 				// Allow the SDKs to override
 				foreach (UnrealTargetPlatform SupportedPlatform in SupportedPlatforms)
@@ -347,16 +374,16 @@ namespace UnrealBuildTool
 									{
 										Logger.LogInformation("Please update {SupportedPlatform} SDK to {Version} if Visual Studio 2022 support is desired.", SupportedPlatform, Version);
 									}
-									if (!Vs2019Available)
+									if (!DowngradeAvailable)
 									{
-										Logger.LogInformation("Generated solution cannot be downgraded to Visual Studio 2019 as it is not installed. Please install Visual Studio 2019 if {SupportedPlatform} SDK support is required.", SupportedPlatform);
+										Logger.LogInformation("Generated solution cannot be downgraded as no prior Visual Studio version is not installed. Please install the prior version of Visual Studio if {SupportedPlatform} SDK support is required.", SupportedPlatform);
 									}
 									else
 									{
+										Logger.LogInformation("Downgrading generated solution to {ProposedFormat}.", ProposedFormat);
+										Logger.LogInformation("To force {ProjectFileFormat} solutions to always be generated add the following to BuildConfiguration.xml:", Settings.ProjectFileFormat);
+										Logger.LogInformation("  <VCProjectFileGenerator>\r\n    <Version>{ProposedFormat}</Version>\r\n  </VCProjectFileGenerator>", Settings.ProjectFileFormat);
 										Settings.ProjectFileFormat = ProposedFormat;
-										Logger.LogInformation("Downgrading generated solution to Visual Studio 2019.");
-										Logger.LogInformation("To force Visual Studio 2022 solutions to always be generated add the following to BuildConfiguration.xml:");
-										Logger.LogInformation("  <VCProjectFileGenerator>\r\n    <Version>VisualStudio2022</Version>\r\n  </VCProjectFileGenerator>");
 									}
 									Logger.LogInformation(String.Empty);
 								}
@@ -364,13 +391,6 @@ namespace UnrealBuildTool
 						}
 					}
 				}
-			}
-
-			if (bIncludeDotNetPrograms && Settings.ProjectFileFormat == VCProjectFileFormat.VisualStudio2019)
-			{
-				Logger.LogInformation("Visual Studio 2019 does not support .NET 6.0 C# projects, these projects will not be added to the generated solution.");
-				Logger.LogInformation("Please generate the Visual Studio 2022 solution if .NET 6.0 C# project support is required.");
-				bIncludeDotNetPrograms = false;
 			}
 		}
 
@@ -399,9 +419,14 @@ namespace UnrealBuildTool
 			/// </summary>
 			public TargetType TargetConfigurationName;
 
+			/// <summary>
+			/// The target architecture
+			/// </summary>
+			public UnrealArch? Architecture;
+
 			public override string ToString()
 			{
-				return String.Format("{0}={1} {2} {3}", VCSolutionConfigAndPlatformName, Configuration, Platform, TargetConfigurationName);
+				return String.Format("{0}={1} {2} {3}{4}", VCSolutionConfigAndPlatformName, Configuration, Platform, TargetConfigurationName, Architecture != null ? " " + Architecture : string.Empty);
 			}
 
 			public VCSolutionConfigCombination(string VCSolutionConfigAndPlatformName)
@@ -488,91 +513,88 @@ namespace UnrealBuildTool
 
 		private void WriteCommonPropsFile(ILogger Logger)
 		{
-			using (ProgressWriter Progress = new ProgressWriter("Creating common properties file...", true, Logger))
-			{
-				StringBuilder VCCommonTargetFileContent = new StringBuilder();
-				VCCommonTargetFileContent.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
-				VCCommonTargetFileContent.AppendLine("<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">");
+			StringBuilder VCCommonTargetFileContent = new StringBuilder();
+			VCCommonTargetFileContent.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+			VCCommonTargetFileContent.AppendLine("<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">");
 
-				// Project globals (project GUID, project type, SCC bindings, etc)
+			// Project globals (project GUID, project type, SCC bindings, etc)
+			{
+				string ToolVersionString = GetProjectFileToolVersionString(Settings.ProjectFileFormat);
+				VCCommonTargetFileContent.AppendLine("  <PropertyGroup Label=\"Globals\">");
+				VCCommonTargetFileContent.AppendLine("    <Keyword>MakeFileProj</Keyword>");
+				AppendPlatformToolsetProperty(VCCommonTargetFileContent, Settings.ProjectFileFormat);
+				VCCommonTargetFileContent.AppendLine("    <MinimumVisualStudioVersion>{0}</MinimumVisualStudioVersion>", ToolVersionString);
+				VCCommonTargetFileContent.AppendLine("    <VCProjectVersion>{0}</VCProjectVersion>", ToolVersionString);
+				VCCommonTargetFileContent.AppendLine("    <NMakeUseOemCodePage>true</NMakeUseOemCodePage>"); // Fixes mojibake with non-Latin character sets (UE-102825)
+				VCCommonTargetFileContent.AppendLine("    <TargetRuntime>Native</TargetRuntime>");
+				VCCommonTargetFileContent.AppendLine("  </PropertyGroup>");
+			}
+
+			// Write the default configuration info
+			VCCommonTargetFileContent.AppendLine("  <PropertyGroup Label=\"Configuration\">");
+			VCCommonTargetFileContent.AppendLine($"    <ConfigurationType>{PlatformProjectGenerator.DefaultPlatformConfigurationType}</ConfigurationType>");
+			AppendPlatformToolsetProperty(VCCommonTargetFileContent, Settings.ProjectFileFormat);
+			VCCommonTargetFileContent.AppendLine("  </PropertyGroup>");
+
+			VCCommonTargetFileContent.AppendLine("  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.Default.props\" />");
+			VCCommonTargetFileContent.AppendLine("  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.props\" />");
+
+			// Write the common and invalid configuration values
+			{
+				const string InvalidMessage = "echo The selected platform/configuration is not valid for this target.";
+
+				string ProjectRelativeUnusedDirectory = ProjectFile.NormalizeProjectPath(DirectoryReference.Combine(Unreal.EngineDirectory, "Intermediate", "Build", "Unused"));
+
+				VCCommonTargetFileContent.AppendLine("  <PropertyGroup>");
+
+				DirectoryReference BatchFilesDirectory = DirectoryReference.Combine(Unreal.EngineDirectory, "Build", "BatchFiles");
+				VCCommonTargetFileContent.AppendLine("    <BuildBatchScript>{0}</BuildBatchScript>", ProjectFile.EscapePath(ProjectFile.NormalizeProjectPath(FileReference.Combine(BatchFilesDirectory, "Build.bat"))));
+				VCCommonTargetFileContent.AppendLine("    <RebuildBatchScript>{0}</RebuildBatchScript>", ProjectFile.EscapePath(ProjectFile.NormalizeProjectPath(FileReference.Combine(BatchFilesDirectory, "Rebuild.bat"))));
+				VCCommonTargetFileContent.AppendLine("    <CleanBatchScript>{0}</CleanBatchScript>", ProjectFile.EscapePath(ProjectFile.NormalizeProjectPath(FileReference.Combine(BatchFilesDirectory, "Clean.bat"))));
+				VCCommonTargetFileContent.AppendLine("    <NMakeBuildCommandLine>{0}</NMakeBuildCommandLine>", InvalidMessage);
+				VCCommonTargetFileContent.AppendLine("    <NMakeReBuildCommandLine>{0}</NMakeReBuildCommandLine>", InvalidMessage);
+				VCCommonTargetFileContent.AppendLine("    <NMakeCleanCommandLine>{0}</NMakeCleanCommandLine>", InvalidMessage);
+				VCCommonTargetFileContent.AppendLine("    <NMakeOutput>Invalid Output</NMakeOutput>", InvalidMessage);
+				VCCommonTargetFileContent.AppendLine("    <OutDir>{0}{1}</OutDir>", ProjectRelativeUnusedDirectory, Path.DirectorySeparatorChar);
+				VCCommonTargetFileContent.AppendLine("    <IntDir>{0}{1}</IntDir>", ProjectRelativeUnusedDirectory, Path.DirectorySeparatorChar);
+				// NOTE: We are intentionally overriding defaults for these paths with empty strings.  We never want Visual Studio's
+				//       defaults for these fields to be propagated, since they are version-sensitive paths that may not reflect
+				//       the environment that UBT is building in.  We'll set these environment variables ourselves!
+				// NOTE: We don't touch 'ExecutablePath' because that would result in Visual Studio clobbering the system "Path"
+				//       environment variable
+				VCCommonTargetFileContent.AppendLine("    <IncludePath />");
+				VCCommonTargetFileContent.AppendLine("    <ReferencePath />");
+				VCCommonTargetFileContent.AppendLine("    <LibraryPath />");
+				VCCommonTargetFileContent.AppendLine("    <LibraryWPath />");
+				VCCommonTargetFileContent.AppendLine("    <SourcePath />");
+				VCCommonTargetFileContent.AppendLine("    <ExcludePath />");
+
+				// Add all the default system include paths
+				if (OperatingSystem.IsWindows())
 				{
-					string ToolVersionString = GetProjectFileToolVersionString(Settings.ProjectFileFormat);
-					VCCommonTargetFileContent.AppendLine("  <PropertyGroup Label=\"Globals\">");
-					VCCommonTargetFileContent.AppendLine("    <Keyword>MakeFileProj</Keyword>");
-					AppendPlatformToolsetProperty(VCCommonTargetFileContent, Settings.ProjectFileFormat);
-					VCCommonTargetFileContent.AppendLine("    <MinimumVisualStudioVersion>{0}</MinimumVisualStudioVersion>", ToolVersionString);
-					VCCommonTargetFileContent.AppendLine("    <VCProjectVersion>{0}</VCProjectVersion>", ToolVersionString);
-					VCCommonTargetFileContent.AppendLine("    <NMakeUseOemCodePage>true</NMakeUseOemCodePage>"); // Fixes mojibake with non-Latin character sets (UE-102825)
-					VCCommonTargetFileContent.AppendLine("    <TargetRuntime>Native</TargetRuntime>");
-					VCCommonTargetFileContent.AppendLine("  </PropertyGroup>");
+					if (SupportedPlatforms.Contains(UnrealTargetPlatform.Win64))
+					{
+						VCCommonTargetFileContent.AppendLine("    <DefaultSystemIncludePaths>{0}</DefaultSystemIncludePaths>", VCToolChain.GetVCIncludePaths(UnrealTargetPlatform.Win64, GetCompilerForIntellisense(Settings.ProjectFileFormat), null, null, Logger));
+					}
+				}
+				else
+				{
+					Logger.LogInformation("Unable to compute VC include paths on non-Windows host");
+					VCCommonTargetFileContent.AppendLine("    <DefaultSystemIncludePaths />");
 				}
 
-				// Write the default configuration info
-				VCCommonTargetFileContent.AppendLine("  <PropertyGroup Label=\"Configuration\">");
-				VCCommonTargetFileContent.AppendLine($"    <ConfigurationType>{PlatformProjectGenerator.DefaultPlatformConfigurationType}</ConfigurationType>");
-				AppendPlatformToolsetProperty(VCCommonTargetFileContent, Settings.ProjectFileFormat);
 				VCCommonTargetFileContent.AppendLine("  </PropertyGroup>");
 
-				VCCommonTargetFileContent.AppendLine("  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.Default.props\" />");
-				VCCommonTargetFileContent.AppendLine("  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.props\" />");
-
-				// Write the common and invalid configuration values
-				{
-					const string InvalidMessage = "echo The selected platform/configuration is not valid for this target.";
-
-					string ProjectRelativeUnusedDirectory = ProjectFile.NormalizeProjectPath(DirectoryReference.Combine(Unreal.EngineDirectory, "Intermediate", "Build", "Unused"));
-
-					VCCommonTargetFileContent.AppendLine("  <PropertyGroup>");
-
-					DirectoryReference BatchFilesDirectory = DirectoryReference.Combine(Unreal.EngineDirectory, "Build", "BatchFiles");
-					VCCommonTargetFileContent.AppendLine("    <BuildBatchScript>{0}</BuildBatchScript>", ProjectFile.EscapePath(ProjectFile.NormalizeProjectPath(FileReference.Combine(BatchFilesDirectory, "Build.bat"))));
-					VCCommonTargetFileContent.AppendLine("    <RebuildBatchScript>{0}</RebuildBatchScript>", ProjectFile.EscapePath(ProjectFile.NormalizeProjectPath(FileReference.Combine(BatchFilesDirectory, "Rebuild.bat"))));
-					VCCommonTargetFileContent.AppendLine("    <CleanBatchScript>{0}</CleanBatchScript>", ProjectFile.EscapePath(ProjectFile.NormalizeProjectPath(FileReference.Combine(BatchFilesDirectory, "Clean.bat"))));
-					VCCommonTargetFileContent.AppendLine("    <NMakeBuildCommandLine>{0}</NMakeBuildCommandLine>", InvalidMessage);
-					VCCommonTargetFileContent.AppendLine("    <NMakeReBuildCommandLine>{0}</NMakeReBuildCommandLine>", InvalidMessage);
-					VCCommonTargetFileContent.AppendLine("    <NMakeCleanCommandLine>{0}</NMakeCleanCommandLine>", InvalidMessage);
-					VCCommonTargetFileContent.AppendLine("    <NMakeOutput>Invalid Output</NMakeOutput>", InvalidMessage);
-					VCCommonTargetFileContent.AppendLine("    <OutDir>{0}{1}</OutDir>", ProjectRelativeUnusedDirectory, Path.DirectorySeparatorChar);
-					VCCommonTargetFileContent.AppendLine("    <IntDir>{0}{1}</IntDir>", ProjectRelativeUnusedDirectory, Path.DirectorySeparatorChar);
-					// NOTE: We are intentionally overriding defaults for these paths with empty strings.  We never want Visual Studio's
-					//       defaults for these fields to be propagated, since they are version-sensitive paths that may not reflect
-					//       the environment that UBT is building in.  We'll set these environment variables ourselves!
-					// NOTE: We don't touch 'ExecutablePath' because that would result in Visual Studio clobbering the system "Path"
-					//       environment variable
-					VCCommonTargetFileContent.AppendLine("    <IncludePath />");
-					VCCommonTargetFileContent.AppendLine("    <ReferencePath />");
-					VCCommonTargetFileContent.AppendLine("    <LibraryPath />");
-					VCCommonTargetFileContent.AppendLine("    <LibraryWPath />");
-					VCCommonTargetFileContent.AppendLine("    <SourcePath />");
-					VCCommonTargetFileContent.AppendLine("    <ExcludePath />");
-
-					// Add all the default system include paths
-					if (OperatingSystem.IsWindows())
-					{
-						if (SupportedPlatforms.Contains(UnrealTargetPlatform.Win64))
-						{
-							VCCommonTargetFileContent.AppendLine("    <DefaultSystemIncludePaths>{0}</DefaultSystemIncludePaths>", VCToolChain.GetVCIncludePaths(UnrealTargetPlatform.Win64, GetCompilerForIntellisense(Settings.ProjectFileFormat), null, null, Logger));
-						}
-					}
-					else
-					{
-						Logger.LogInformation("Unable to compute VC include paths on non-Windows host");
-						VCCommonTargetFileContent.AppendLine("    <DefaultSystemIncludePaths />");
-					}
-
-					VCCommonTargetFileContent.AppendLine("  </PropertyGroup>");
-
-				}
-
-				// Write default import group
-				VCCommonTargetFileContent.AppendLine("  <ImportGroup Label=\"PropertySheets\">");
-				VCCommonTargetFileContent.AppendLine("    <Import Project=\"$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props\" Condition=\"exists('$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props')\" Label=\"LocalAppDataPlatform\" />");
-				VCCommonTargetFileContent.AppendLine("  </ImportGroup>");
-
-				VCCommonTargetFileContent.AppendLine("</Project>");
-
-				Utils.WriteFileIfChanged(FileReference.Combine(IntermediateProjectFilesPath, "UECommon.props"), VCCommonTargetFileContent.ToString(), Logger);
 			}
+
+			// Write default import group
+			VCCommonTargetFileContent.AppendLine("  <ImportGroup Label=\"PropertySheets\">");
+			VCCommonTargetFileContent.AppendLine("    <Import Project=\"$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props\" Condition=\"exists('$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props')\" Label=\"LocalAppDataPlatform\" />");
+			VCCommonTargetFileContent.AppendLine("  </ImportGroup>");
+
+			VCCommonTargetFileContent.AppendLine("</Project>");
+
+			Utils.WriteFileIfChanged(FileReference.Combine(IntermediateProjectFilesPath, "UECommon.props"), VCCommonTargetFileContent.ToString(), Logger);
 		}
 
 		/// <summary>
@@ -595,6 +617,7 @@ namespace UnrealBuildTool
 				XNamespace NS = XNamespace.Get("http://schemas.microsoft.com/developer/msbuild/2003");
 
 				DirectoryReference AutomationToolDir = DirectoryReference.Combine(Unreal.EngineSourceDirectory, "Programs", "AutomationTool");
+				DirectoryReference AutomationToolBinariesDir = DirectoryReference.Combine(Unreal.EngineDirectory, "Binaries", "DotNET", "AutomationTool");
 				XDocument AutomationToolDocument = new XDocument(
 					new XElement(NS + "Project",
 						new XAttribute("ToolsVersion", VCProjectFileGenerator.GetProjectFileToolVersionString(Settings.ProjectFileFormat)),
@@ -602,7 +625,22 @@ namespace UnrealBuildTool
 						new XElement(NS + "ItemGroup",
 							from AutomationProject in AutomationProjectFiles
 							select new XElement(NS + "ProjectReference",
-								new XAttribute("Include", AutomationProject.ProjectFilePath.MakeRelativeTo(AutomationToolDir))
+								new XAttribute("Include", AutomationProject.ProjectFilePath.MakeRelativeTo(AutomationToolDir)),
+								new XElement(NS + "Private", "false")
+							)
+						),
+						// Delete the private copied dlls in case they were ever next to the .exe - that is a bad place for them
+						new XElement(NS + "Target",
+							new XAttribute("Name", "CleanUpStaleDlls"),
+							new XAttribute("AfterTargets", "Build"),
+							AutomationProjectFiles.SelectMany(AutomationProject => {
+									string BaseFilename = FileReference.Combine(AutomationToolBinariesDir, AutomationProject.ProjectFilePath.GetFileNameWithoutExtension()).FullName;
+									return new List<XElement>() {
+										new XElement(NS + "Delete",	new XAttribute("Files", BaseFilename + ".dll")),
+										new XElement(NS + "Delete",	new XAttribute("Files", BaseFilename + ".dll.config")),
+										new XElement(NS + "Delete",	new XAttribute("Files", BaseFilename + ".pdb"))
+									};
+								}
 							)
 						)
 					)
@@ -642,14 +680,6 @@ namespace UnrealBuildTool
 				VCSolutionFileContent.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
 				VCSolutionFileContent.AppendLine("# Visual Studio Version 17");
 				VCSolutionFileContent.AppendLine("VisualStudioVersion = 17.0.31314.256");
-				VCSolutionFileContent.AppendLine("MinimumVisualStudioVersion = 10.0.40219.1");
-			}
-			else if (Settings.ProjectFileFormat == VCProjectFileFormat.VisualStudio2019)
-			{
-				VCSolutionFileContent.AppendLine();
-				VCSolutionFileContent.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
-				VCSolutionFileContent.AppendLine("# Visual Studio Version 16");
-				VCSolutionFileContent.AppendLine("VisualStudioVersion = 16.0.28315.86");
 				VCSolutionFileContent.AppendLine("MinimumVisualStudioVersion = 10.0.40219.1");
 			}
 			else
@@ -763,13 +793,11 @@ namespace UnrealBuildTool
 
 				// Get the path to the visualizers file. Try to make it relative to the solution directory, but fall back to a full path if it's a foreign project.
 				FileReference VisualizersFile = FileReference.Combine(Unreal.EngineDirectory, "Extras", "VisualStudioDebugging", "Unreal.natvis");
-				FileReference VisualizersStepFile = FileReference.Combine(Unreal.EngineDirectory, "Extras", "VisualStudioDebugging", "Unreal.natstepfilter");
 
 				// Add the visualizers at the solution level. Doesn't seem to be picked up from a makefile project in VS2017 15.8.5.
 				VCSolutionFileContent.AppendLine(String.Format("Project(\"{0}\") = \"Visualizers\", \"Visualizers\", \"{{1CCEC849-CC72-4C59-8C36-2F7C38706D4C}}\"", SolutionFolderEntryGUID));
 				VCSolutionFileContent.AppendLine("\tProjectSection(SolutionItems) = preProject");
 				VCSolutionFileContent.AppendLine("\t\t{0} = {0}", VisualizersFile.MakeRelativeTo(PrimaryProjectPath));
-				VCSolutionFileContent.AppendLine("\t\t{0} = {0}", VisualizersStepFile.MakeRelativeTo(PrimaryProjectPath));
 				VCSolutionFileContent.AppendLine("\tEndProjectSection");
 				VCSolutionFileContent.AppendLine("EndProject");
 			}
@@ -823,7 +851,12 @@ namespace UnrealBuildTool
 							foreach (VCSolutionConfigCombination SolutionConfigCombination in SolutionConfigCombinations)
 							{
 								// Get the context for the current solution context
-								MSBuildProjectContext ProjectContext = CurProject.GetMatchingProjectContext(SolutionConfigCombination.TargetConfigurationName, SolutionConfigCombination.Configuration, SolutionConfigCombination.Platform, PlatformProjectGenerators, Logger);
+								MSBuildProjectContext? ProjectContext = CurProject.GetMatchingProjectContext(SolutionConfigCombination.TargetConfigurationName, SolutionConfigCombination.Configuration, SolutionConfigCombination.Platform, PlatformProjectGenerators, SolutionConfigCombination.Architecture, Logger);
+
+								if (ProjectContext == null)
+								{
+									continue;
+								}
 
 								// Override the configuration to build for UBT
 								if (Settings.bBuildUBTInDebug && CurProject == UBTProject)
@@ -919,9 +952,6 @@ namespace UnrealBuildTool
 				FileReference SolutionOptionsFileName;
 				switch (Settings.ProjectFileFormat)
 				{
-					case VCProjectFileFormat.VisualStudio2019:
-						SolutionOptionsFileName = FileReference.Combine(PrimaryProjectPath, ".vs", Path.GetFileNameWithoutExtension(SolutionFileName), "v16", ".suo");
-						break;
 					case VCProjectFileFormat.VisualStudio2022:
 						SolutionOptionsFileName = FileReference.Combine(PrimaryProjectPath, ".vs", Path.GetFileNameWithoutExtension(SolutionFileName), "v17", ".suo");
 						break;
@@ -940,6 +970,7 @@ namespace UnrealBuildTool
 					VCSolutionConfigCombination? DefaultConfig = SolutionConfigCombinations.Find(x =>
 						x.Configuration == UnrealTargetConfiguration.Development &&
 						x.Platform == UnrealTargetPlatform.Win64 &&
+						(x.Architecture == null || x.Architecture == UnrealArch.X64) &&
 						(bMakeProjectPerTarget || x.TargetConfigurationName == TargetType.Editor));
 					if (DefaultConfig != null)
 					{
@@ -954,10 +985,6 @@ namespace UnrealBuildTool
 
 					// Mark all the projects as closed by default, apart from the startup project
 					VCSolutionExplorerState ExplorerState = new VCSolutionExplorerState();
-					if (Settings.ProjectFileFormat >= VCProjectFileFormat.VisualStudio2019)
-					{
-						BuildSolutionExplorerState_VS2019(RootFolder, "", ExplorerState, DefaultProject);
-					}
 					Options.SetExplorerState(ExplorerState);
 
 					// Write the file
@@ -994,8 +1021,7 @@ namespace UnrealBuildTool
 		{
 			OutValidPlatforms = new HashSet<UnrealTargetPlatform>();
 			OutSolutionConfigs = new List<VCSolutionConfigCombination>();
-			Dictionary<string, Tuple<UnrealTargetConfiguration, TargetType>> SolutionConfigurationsValidForProjects =
-				new Dictionary<string, Tuple<UnrealTargetConfiguration, TargetType>>();
+			Dictionary<string, Tuple<UnrealTargetConfiguration, Tuple<ProjectTarget, TargetType>>> SolutionConfigurationsValidForProjects = new();
 
 			foreach (UnrealTargetConfiguration CurConfiguration in AllConfigurations)
 			{
@@ -1016,7 +1042,7 @@ namespace UnrealBuildTool
 									}
 
 									// Figure out the set of valid target configuration names
-									foreach (Project ProjectTarget in CurProject.ProjectTargets)
+									foreach (ProjectTarget ProjectTarget in CurProject.ProjectTargets.OfType<ProjectTarget>())
 									{
 										if (VCProjectFile.IsValidProjectPlatformAndConfiguration(ProjectTarget, CurPlatform,
 												CurConfiguration, Logger))
@@ -1033,7 +1059,7 @@ namespace UnrealBuildTool
 											string SolutionConfigName =
 												MakeSolutionConfigurationName(CurConfiguration, TargetType, bMakeProjectPerTarget);
 											SolutionConfigurationsValidForProjects[SolutionConfigName] =
-												new Tuple<UnrealTargetConfiguration, TargetType>(CurConfiguration, TargetType);
+												new Tuple<UnrealTargetConfiguration, Tuple<ProjectTarget, TargetType>>(CurConfiguration, new Tuple<ProjectTarget, TargetType>(ProjectTarget, TargetType));
 										}
 									}
 								}
@@ -1045,25 +1071,54 @@ namespace UnrealBuildTool
 
 			foreach (UnrealTargetPlatform CurPlatform in OutValidPlatforms)
 			{
-				foreach (KeyValuePair<string, Tuple<UnrealTargetConfiguration, TargetType>> SolutionConfigKeyValue in
-						 SolutionConfigurationsValidForProjects)
+				UEBuildPlatform? BuildPlatform;
+				if (UEBuildPlatform.TryGetBuildPlatform(CurPlatform, out BuildPlatform))
 				{
-					// e.g.  "Development|Win64 = Development|Win64"
-					string SolutionConfigName = SolutionConfigKeyValue.Key;
-					UnrealTargetConfiguration Configuration = SolutionConfigKeyValue.Value.Item1;
-					TargetType TargetType = SolutionConfigKeyValue.Value.Item2;
+					foreach (KeyValuePair<string, Tuple<UnrealTargetConfiguration, Tuple<ProjectTarget, TargetType>>> SolutionConfigKeyValue in
+						SolutionConfigurationsValidForProjects)
+					{
+						ProjectTarget ProjectTarget = SolutionConfigKeyValue.Value.Item2.Item1;
 
-					string SolutionPlatformName = CurPlatform.ToString();
-
-					string SolutionConfigAndPlatformPair = SolutionConfigName + "|" + SolutionPlatformName;
-					OutSolutionConfigs.Add(
-						new VCSolutionConfigCombination(SolutionConfigAndPlatformPair)
+						var AddSolutionConfig = (UnrealArch? Arch, List<VCSolutionConfigCombination> OutSolutionConfigs) =>
 						{
-							Configuration = Configuration,
-							Platform = CurPlatform,
-							TargetConfigurationName = TargetType
+							// e.g.  "Development|Win64 = Development|Win64"
+							string SolutionConfigName = SolutionConfigKeyValue.Key;
+							UnrealTargetConfiguration Configuration = SolutionConfigKeyValue.Value.Item1;
+							TargetType TargetType = SolutionConfigKeyValue.Value.Item2.Item2;
+
+							string SolutionPlatformName = CurPlatform.ToString();
+							// We use RequiresArchitectureFilenames to determine whether the architecture suffix should be added.
+							// This is used to tell us what the "default" architecture is.
+							if (Arch != null && BuildPlatform.ArchitectureConfig.RequiresArchitectureFilenames(new UnrealArchitectures(Arch.Value)))
+							{
+								SolutionPlatformName += $"-{Arch}";
+							}
+
+							string SolutionConfigAndPlatformPair = SolutionConfigName + "|" + SolutionPlatformName;
+							OutSolutionConfigs.Add(
+								new VCSolutionConfigCombination(SolutionConfigAndPlatformPair)
+								{
+									Configuration = Configuration,
+									Platform = CurPlatform,
+									TargetConfigurationName = TargetType,
+									Architecture = Arch
+								}
+							);
+						};
+
+						UnrealArchitectures? Architectures = GetPlatformArchitecturesToGenerate(BuildPlatform, ProjectTarget);
+						if (Architectures == null)
+						{
+							AddSolutionConfig(null, OutSolutionConfigs);
 						}
-					);
+						else
+						{
+							foreach (UnrealArch Arch in Architectures.Architectures)
+							{
+								AddSolutionConfig(Arch, OutSolutionConfigs);
+							}
+						}
+					}
 				}
 			}
 
@@ -1099,36 +1154,6 @@ namespace UnrealBuildTool
 				string ConfigFilePath = FileReference.Combine(IntermediateProjectFilesPath, "UnrealVS.xml").FullName;
 				/* bool bSuccess = */
 				ProjectFileGenerator.WriteFileIfChanged(ConfigFilePath, UnrealVSContent.ToString(), Logger);
-			}
-		}
-
-		static void BuildSolutionExplorerState_VS2019(PrimaryProjectFolder Folder, string Suffix, VCSolutionExplorerState ExplorerState, ProjectFile? DefaultProject)
-		{
-			foreach (ProjectFile Project in Folder.ChildProjects)
-			{
-				string ProjectIdentifier = String.Format("{0}{1}", Project.ProjectFilePath.GetFileNameWithoutExtension(), Suffix);
-				if (Project == DefaultProject)
-				{
-					ExplorerState.OpenProjects.Add(new Tuple<string, string[]>(ProjectIdentifier, new string[] { ProjectIdentifier }));
-				}
-				else
-				{
-					ExplorerState.OpenProjects.Add(new Tuple<string, string[]>(ProjectIdentifier, new string[] { }));
-				}
-			}
-
-			foreach (PrimaryProjectFolder SubFolder in Folder.SubFolders)
-			{
-				string SubFolderName = SubFolder.FolderName + Suffix;
-				if (SubFolderName == "Automation;Programs")
-				{
-					ExplorerState.OpenProjects.Add(new Tuple<string, string[]>(SubFolderName, new string[] { }));
-				}
-				else
-				{
-					ExplorerState.OpenProjects.Add(new Tuple<string, string[]>(SubFolderName, new string[] { SubFolderName }));
-				}
-				BuildSolutionExplorerState_VS2019(SubFolder, ";" + SubFolderName, ExplorerState, DefaultProject);
 			}
 		}
 

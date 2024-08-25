@@ -25,8 +25,10 @@ namespace Metasound
 		return [InCreateFunc](const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			FDataReferenceCollection InputDataReferences = InParams.InputData.ToDataReferenceCollection();
+PRAGMA_DISABLE_DEPRECATION_WARNINGS // Temporary for the deprecation of FCreateOperatorParams
 			FCreateOperatorParams DeprecatedParams{ InParams.Node, InParams.OperatorSettings, InputDataReferences, InParams.Environment, InParams.Builder };
 			return InCreateFunc(DeprecatedParams, OutResults.Errors);
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		};
 	}
 

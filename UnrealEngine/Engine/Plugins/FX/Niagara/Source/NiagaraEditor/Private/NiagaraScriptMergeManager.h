@@ -117,8 +117,6 @@ public:
 
 	void GatherFunctionCallNodes(TArray<UNiagaraNodeFunctionCall*>& OutFunctionCallNodes) const;
 
-	const TArray<FNiagaraStackMessage>& GetMessages() const;
-
 private:
 	TWeakObjectPtr<UNiagaraScript> OwningScript;
 	TWeakObjectPtr<UNiagaraNodeFunctionCall> FunctionCallNode;
@@ -338,9 +336,6 @@ struct FNiagaraScriptStackDiffResults
 
 	TArray<TSharedRef<FNiagaraStackFunctionMergeAdapter>> EnabledChangedBaseModules;
 	TArray<TSharedRef<FNiagaraStackFunctionMergeAdapter>> EnabledChangedOtherModules;
-
-	TArray<FNiagaraStackFunctionMessageData> AddedOtherMessages;
-	TArray<FNiagaraStackFunctionMessageData> RemovedBaseMessagesInOther;
 	
 	TArray<TSharedRef<FNiagaraStackFunctionInputOverrideMergeAdapter>> RemovedBaseInputOverrides;
 	TArray<TSharedRef<FNiagaraStackFunctionInputOverrideMergeAdapter>> AddedOtherInputOverrides;
@@ -418,6 +413,8 @@ struct FNiagaraEmitterDiffResults
 
 	TMap<FString, FText> ModifiedStackEntryDisplayNames;
 
+	TMap<FString, FNiagaraStackNoteData> AddedOrModifiedStackNotesInOther;
+	
 private:
 	bool bIsValid;
 	TArray<FText> ErrorMessages;
@@ -500,6 +497,8 @@ public:
 
 	void DiffStackEntryDisplayNames(const UNiagaraEmitterEditorData* BaseEditorData, const UNiagaraEmitterEditorData* OtherEditorData, TMap<FString, FText>& OutModifiedStackEntryDisplayNames) const;
 
+	void DiffStackNotes(const UNiagaraEmitterEditorData* BaseEditorData, const UNiagaraEmitterEditorData* OtherEditorData, FNiagaraEmitterDiffResults& DiffResults) const;
+	
 	void DiffScratchPadScripts(const TArray<UNiagaraScript*>& BaseScratchPadScripts, const TArray<UNiagaraScript*>& OtherEmitterScratchPadScripts, FNiagaraEmitterDiffResults& DiffResults) const;
 
 	virtual void CopyPropertiesToBase(void* BaseDataAddress, const void* OtherDataAddress, TArray<FProperty*> PropertiesToCopy) const override;
@@ -550,6 +549,8 @@ private:
 	
 	FApplyDiffResults ApplyStackEntryDisplayNameDiffs(FVersionedNiagaraEmitter BaseEmitter, const FNiagaraEmitterDiffResults& DiffResults) const;
 
+	FApplyDiffResults ApplyStackNoteDiffs(FVersionedNiagaraEmitter BaseEmitter, const FNiagaraEmitterDiffResults& DiffResults) const;
+	
 	FApplyDiffResults AddModule(
 		TSharedRef<FNiagaraEmitterMergeAdapter> BaseEmitterAdapter,
 		TSharedRef<FNiagaraScratchPadMergeAdapter> ScratchPadAdapter,

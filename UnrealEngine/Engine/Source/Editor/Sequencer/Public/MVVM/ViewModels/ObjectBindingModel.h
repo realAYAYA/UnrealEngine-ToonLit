@@ -6,6 +6,7 @@
 #include "MVVM/ViewModels/ViewModel.h"
 #include "MVVM/ViewModels/ViewModelHierarchy.h"
 #include "MVVM/ViewModels/OutlinerItemModel.h"
+#include  "MVVM/ViewModels/BindingLifetimeOverlayModel.h"
 #include "MVVM/Extensions/IRenameableExtension.h"
 #include "MVVM/Extensions/ITrackAreaExtension.h"
 #include "MVVM/Extensions/IGroupableExtension.h"
@@ -13,6 +14,7 @@
 #include "MVVM/Extensions/ISortableExtension.h"
 #include "MVVM/Extensions/IDraggableOutlinerExtension.h"
 #include "MVVM/Extensions/IDeletableExtension.h"
+
 
 struct FMovieSceneBinding;
 
@@ -40,7 +42,7 @@ enum class EObjectBindingType
 };
 
 class SEQUENCER_API FObjectBindingModel
-	: public FOutlinerItemModel
+	: public FMuteSoloOutlinerItemModel
 	, public IObjectBindingExtension
 	, public IDraggableOutlinerExtension
 	, public ITrackAreaExtension
@@ -52,7 +54,7 @@ class SEQUENCER_API FObjectBindingModel
 public:
 
 	UE_SEQUENCER_DECLARE_CASTABLE(FObjectBindingModel
-		, FOutlinerItemModel
+		, FMuteSoloOutlinerItemModel
 		, IObjectBindingExtension
 		, IDraggableOutlinerExtension
 		, ITrackAreaExtension
@@ -63,6 +65,8 @@ public:
 
 	FObjectBindingModel(FSequenceModel* OwnerModel, const FMovieSceneBinding& InBinding);
 	~FObjectBindingModel();
+
+	static EViewModelListType GetTopLevelChildTrackAreaGroupType();
 
 	void AddTrack(UMovieSceneTrack* Track);
 	void RemoveTrack(UMovieSceneTrack* Track);
@@ -80,11 +84,12 @@ public:
 	FSlateColor GetLabelColor() const override;
 	FText GetLabelToolTipText() const override;
 	const FSlateBrush* GetIconBrush() const override;
-	TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams) override;
+	TSharedPtr<SWidget> CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName) override;
 
 	/*~ ITrackAreaExtension */
 	FTrackAreaParameters GetTrackAreaParameters() const override;
 	FViewModelVariantIterator GetTrackAreaModelList() const override;
+	FViewModelVariantIterator GetTopLevelChildTrackAreaModels() const override;
 
 	/*~ IGroupableExtension */
 	void GetIdentifierForGrouping(TStringBuilder<128>& OutString) const override;
@@ -114,6 +119,7 @@ public:
 	virtual FText GetTooltipForSingleObjectBinding() const;
 	virtual const UClass* FindObjectClass() const;
 	virtual bool SupportsRebinding() const;
+	virtual FSlateColor GetInvalidBindingLabelColor() const { return FLinearColor::Red; }
 
 public:
 
@@ -147,7 +153,9 @@ protected:
 	FGuid ObjectBindingID;
 	FGuid ParentObjectBindingID;
 	FViewModelListHead TrackAreaList;
+	FViewModelListHead TopLevelChildTrackAreaList;
 	TSharedPtr<FLayerBarModel> LayerBar;
+	TSharedPtr<FBindingLifetimeOverlayModel> BindingLifetimeOverlayModel;
 	FSequenceModel* OwnerModel;
 };
 

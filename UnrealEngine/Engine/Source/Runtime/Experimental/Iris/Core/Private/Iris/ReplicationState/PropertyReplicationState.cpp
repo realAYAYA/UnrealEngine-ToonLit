@@ -1,19 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Iris/ReplicationState/PropertyReplicationState.h"
+#include "Iris/Core/IrisDebugging.h"
+#include "Iris/Core/IrisLog.h"
+#include "Iris/Core/IrisProfiler.h"
 #include "Iris/ReplicationState/InternalPropertyReplicationState.h"
 #include "Iris/ReplicationState/InternalReplicationStateDescriptorUtils.h"
 #include "Iris/ReplicationState/ReplicationStateUtil.h"
 #include "Iris/ReplicationSystem/ReplicationSystem.h"
 #include "Net/Core/NetBitArray.h"
+#include "Net/Core/PushModel/PushModel.h"
 #include "Net/Core/Trace/NetDebugName.h"
 #include "CoreTypes.h"
 #include "UObject/UnrealType.h"
-#include "Iris/Core/IrisLog.h"
 #include "UObject/PropertyPortFlags.h"
 #include "Containers/StringFwd.h"
-#include "Iris/Core/IrisDebugging.h"
-#include "Iris/Core/IrisProfiler.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIrisRepNotify, Warning, All);
 
@@ -144,7 +145,7 @@ void FPropertyReplicationState::Set(const FPropertyReplicationState& Other)
 	}
 }
 
-void FPropertyReplicationState::SetPropertyValue(uint32 Index, const void* SrcValue)
+void FPropertyReplicationState::PollPropertyValue(uint32 Index, const void* SrcValue)
 {
 	const FReplicationStateDescriptor* Descriptor = ReplicationStateDescriptor;
 	void* DstValue = StateBuffer + Descriptor->MemberDescriptors[Index].ExternalMemberOffset;
@@ -176,6 +177,18 @@ void FPropertyReplicationState::SetPropertyValue(uint32 Index, const void* SrcVa
 	Private::InternalCopyPropertyValue(Descriptor, Index, DstValue, SrcValue);
 }
 
+void FPropertyReplicationState::SetPropertyValue(uint32 Index, const void* SrcValue)
+{
+	// We can perform the same operation as normal polling of the state does.
+	PollPropertyValue(Index, SrcValue);
+}
+
+void FPropertyReplicationState::PushPropertyValue(uint32 Index, void* DstValue) const
+{
+	void* SrcValue = StateBuffer + ReplicationStateDescriptor->MemberDescriptors[Index].ExternalMemberOffset;
+	Private::InternalApplyPropertyValue(ReplicationStateDescriptor, Index, DstValue, SrcValue);
+}
+
 void FPropertyReplicationState::GetPropertyValue(uint32 Index, void* DstValue) const
 {
 	void* SrcValue = StateBuffer + ReplicationStateDescriptor->MemberDescriptors[Index].ExternalMemberOffset;
@@ -194,7 +207,7 @@ void FPropertyReplicationState::MarkDirty(uint32 Index)
 			Private::FReplicationStateHeaderAccessor::MarkInitStateDirty(Header);
 			if (Header.IsBound())
 			{
-				MarkNetObjectStateDirty(Header);
+				MarkNetObjectStateHeaderDirty(Header);
 			}
 		}
 	}
@@ -235,7 +248,7 @@ void FPropertyReplicationState::MarkArrayDirty(uint32 Index)
 			Private::FReplicationStateHeaderAccessor::MarkInitStateDirty(Header);
 			if (Header.IsBound())
 			{
-				MarkNetObjectStateDirty(Header);
+				MarkNetObjectStateHeaderDirty(Header);
 			}
 		}
 	}
@@ -270,14 +283,14 @@ bool FPropertyReplicationState::PollPropertyReplicationState(const void* RESTRIC
 			const FProperty* Property = MemberProperties[MemberIt];
 
 			//$TODO: make special version to avoid unnecessary overhead.
-			SetPropertyValue(MemberIt, SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
+			PollPropertyValue(MemberIt, SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
 		}
 	}
 
 	return IsDirty();
 }
 
-bool FPropertyReplicationState::PollPropertyReplicationStateForRepNotifies(const void* RESTRICT SrcStateData)
+bool FPropertyReplicationState::StoreCurrentPropertyReplicationStateForRepNotifies(const void* RESTRICT SrcStateData, const FPropertyReplicationState* NewStateToBeApplied)
 {
 	if (IsValid())
 	{
@@ -291,15 +304,21 @@ bool FPropertyReplicationState::PollPropertyReplicationStateForRepNotifies(const
 		const FReplicationStateMemberPropertyDescriptor* MemberPropertyDescriptors = Descriptor->MemberPropertyDescriptors;
 		const uint32 MemberCount = Descriptor->MemberCount;
 
+		// Copy all if this is a state with no changemask or if NewStateToBeApplied is not set
+		const bool bCopyAll = IsInitState() || NewStateToBeApplied == nullptr;
 		for (uint32 MemberIt = 0; MemberIt < MemberCount; ++MemberIt)
 		{
 			const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[MemberIt];
 			const FReplicationStateMemberPropertyDescriptor& MemberPropertyDescriptor = MemberPropertyDescriptors[MemberIt];
 
-			if (MemberPropertyDescriptor.RepNotifyFunction)
+			if (MemberPropertyDescriptor.RepNotifyFunction && (bCopyAll || NewStateToBeApplied->IsDirty(MemberIt)))
 			{
 				const FProperty* Property = MemberProperties[MemberIt];
-				SetPropertyValue(MemberIt, SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
+
+				void* DstValue = StateBuffer + Descriptor->MemberDescriptors[MemberIt].ExternalMemberOffset;
+				const void* SrcValue = SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex;
+
+				Private::InternalCopyPropertyValue(Descriptor, MemberIt, DstValue, SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
 			}
 		}
 	}
@@ -307,14 +326,19 @@ bool FPropertyReplicationState::PollPropertyReplicationStateForRepNotifies(const
 	return IsDirty();
 }
 
-void FPropertyReplicationState::PushPropertyReplicationState(void* RESTRICT DstData, bool bInPushAll) const
+void FPropertyReplicationState::PushPropertyReplicationState(const UObject* Owner, void* RESTRICT DstData, bool bInPushAll) const
 {
 	// $IRIS TODO: Rewrite this to iterate over change mask instead of iterating over all members and querying the mask
 	// Note, we need to use a NetBitStreamReader and the changemask descriptor since each member might have different number of bits.
 	if (IsValid())
 	{
+#if WITH_PUSH_MODEL
+		using RepIndexType = decltype(FProperty::RepIndex);
+		TArray<RepIndexType, TInlineAllocator<128>> DirtyRepIndices;
+#endif
+
 		const FReplicationStateDescriptor* Descriptor = ReplicationStateDescriptor;
-		uint8* DstBuffer = reinterpret_cast<uint8*>(DstData);
+		uint8* DstBuffer = static_cast<uint8*>(DstData);
 
 		IRIS_PROFILER_PROTOCOL_NAME(ReplicationStateDescriptor->DebugName->Name);
 
@@ -334,9 +358,41 @@ void FPropertyReplicationState::PushPropertyReplicationState(void* RESTRICT DstD
 				const FReplicationStateMemberPropertyDescriptor& MemberPropertyDescriptor = MemberPropertyDescriptors[MemberIt];
 				const FProperty* Property = MemberProperties[MemberIt];
 
-				GetPropertyValue(MemberIt, DstBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
+				PushPropertyValue(MemberIt, DstBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
+
+#if WITH_PUSH_MODEL
+				if (MemberPropertyDescriptor.ArrayIndex == 0)
+				{
+					DirtyRepIndices.Add(Property->RepIndex);
+				}
+#endif
 			}
 		}
+
+#if WITH_PUSH_MODEL
+		if (Owner != nullptr)
+		{
+			for (RepIndexType RepIndex : DirtyRepIndices)
+			{
+				MARK_PROPERTY_DIRTY_UNSAFE(Owner, RepIndex);
+			}
+		}
+#endif
+	}
+}
+
+void FPropertyReplicationState::CopyDirtyProperties(const FPropertyReplicationState& Other)
+{
+	check(this != &Other && IsValid());
+	check(ReplicationStateDescriptor.GetReference() == Other.ReplicationStateDescriptor.GetReference());
+
+	if (!Private::IsReplicationStateBound(StateBuffer, ReplicationStateDescriptor.GetReference()))
+	{
+		Private::CopyDirtyMembers(StateBuffer, Other.StateBuffer, ReplicationStateDescriptor.GetReference());
+	}
+	else
+	{
+		Set(Other);
 	}
 }
 
@@ -361,7 +417,7 @@ bool FPropertyReplicationState::PollObjectReferences(const void* RESTRICT SrcSta
 				const FReplicationStateMemberPropertyDescriptor& MemberPropertyDescriptor = MemberPropertyDescriptors[MemberIt];
 				const FProperty* Property = MemberProperties[MemberIt];
 
-				SetPropertyValue(MemberIt, SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
+				PollPropertyValue(MemberIt, SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
 			}
 		}
 	}
@@ -492,35 +548,14 @@ bool FPropertyReplicationState::IsCustomConditionEnabled(uint32 Index) const
 	const FReplicationStateDescriptor* Descriptor = ReplicationStateDescriptor;
 	const FReplicationStateMemberChangeMaskDescriptor& ChangeMaskInfo = Descriptor->MemberChangeMaskDescriptors[Index];
 
-	// $TODO: Test any bits if check triggers?
-	checkSlow(ChangeMaskInfo.BitCount == 1);
-
-	FNetBitArrayView MemberConditionalChangeMask = Private::GetMemberConditionalChangeMask(StateBuffer, Descriptor);
-	return MemberConditionalChangeMask.GetBit(ChangeMaskInfo.BitOffset);
-}
-
-void FPropertyReplicationState::PollProperty(const void* SrcData, uint32 MemberIndex)
-{
-	if (IsValid())
+	if (ChangeMaskInfo.BitCount > 0)
 	{
-		const FReplicationStateDescriptor* Descriptor = ReplicationStateDescriptor;
-		const uint8* SrcBuffer = static_cast<const uint8*>(SrcData);
-
-		const FReplicationStateMemberDescriptor* MemberDescriptors = Descriptor->MemberDescriptors;
-		const FProperty** MemberProperties = Descriptor->MemberProperties;
-		const FReplicationStateMemberPropertyDescriptor* MemberPropertyDescriptors = Descriptor->MemberPropertyDescriptors;
-		const uint32 MemberCount = Descriptor->MemberCount;
-
-		if (MemberIndex < MemberCount)
-		{
-			const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[MemberIndex];
-			const FReplicationStateMemberPropertyDescriptor& MemberPropertyDescriptor = MemberPropertyDescriptors[MemberIndex];
-			const FProperty* Property = MemberProperties[MemberIndex];
-
-			//$TODO: make special version to avoid unnecessary overhead.
-			SetPropertyValue(MemberIndex, SrcBuffer + Property->GetOffset_ForGC() + Property->ElementSize*MemberPropertyDescriptor.ArrayIndex);
-		}
+		FNetBitArrayView MemberConditionalChangeMask = Private::GetMemberConditionalChangeMask(StateBuffer, Descriptor);
+		return MemberConditionalChangeMask.GetBit(ChangeMaskInfo.BitOffset);
 	}
+
+	// If there's no bitmask the property cannot be disabled.
+	return true;
 }
 
 }

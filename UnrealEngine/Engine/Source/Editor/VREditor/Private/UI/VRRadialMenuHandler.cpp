@@ -80,7 +80,6 @@
 #include "VREditorActions.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "ISequencer.h"
-#include "SLevelEditor.h"
 #include "Kismet2/DebuggerCommands.h"
 #include "UMGStyle.h"
 

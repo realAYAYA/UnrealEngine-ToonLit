@@ -11,6 +11,7 @@
 #include "EditorUtilityBlueprint.h"
 #include "EditorUtilityObject.h"
 #include "EditorUtilityWidget.h"
+#include "EditorFunctionLibrary.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "HAL/Platform.h"
@@ -23,7 +24,6 @@
 #include "Misc/AssertionMacros.h"
 #include "Misc/MessageDialog.h"
 #include "Modules/ModuleManager.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Class.h"
 #include "Widgets/SWindow.h"
 
@@ -81,7 +81,7 @@ bool UEditorUtilityBlueprintFactory::ConfigureProperties()
 	// Fill in options
 	FClassViewerInitializationOptions Options;
 	Options.Mode = EClassViewerMode::ClassPicker;
-	Options.DisplayMode = EClassViewerDisplayMode::ListView;
+	Options.DisplayMode = EClassViewerDisplayMode::TreeView;
 	// Only want blueprint actor base classes.
 	Options.bIsBlueprintBaseOnly = true;
 	// This will allow unloaded blueprints to be shown.
@@ -91,6 +91,7 @@ bool UEditorUtilityBlueprintFactory::ConfigureProperties()
 	Options.ExtraPickerCommonClasses.Add(AEditorUtilityActor::StaticClass());
 	Options.ExtraPickerCommonClasses.Add(UEditorUtilityObject::StaticClass());
 	Options.ExtraPickerCommonClasses.Add(UAssetActionUtility::StaticClass());
+	Options.ExtraPickerCommonClasses.Add(UEditorFunctionLibrary::StaticClass());
 
 	TSharedPtr< FBlutilityBlueprintFactoryFilter > Filter = MakeShareable(new FBlutilityBlueprintFactoryFilter);
 	Filter->DisallowedChildOfClasses.Add(UEditorUtilityWidget::StaticClass());
@@ -112,17 +113,20 @@ UObject* UEditorUtilityBlueprintFactory::FactoryCreateNew(UClass* Class, UObject
 	// Make sure we are trying to factory a blueprint, then create and init one
 	check(Class->IsChildOf(UBlueprint::StaticClass()));
 
-	if ((ParentClass == NULL) || !FKismetEditorUtilities::CanCreateBlueprintOfClass(ParentClass))
+	EBlueprintType BPType = BPTYPE_Normal;
+	if (ParentClass == UEditorFunctionLibrary::StaticClass())
+	{
+		BPType = BPTYPE_FunctionLibrary;
+	}
+	else if ((ParentClass == NULL) || !FKismetEditorUtilities::CanCreateBlueprintOfClass(ParentClass))
 	{
 		FFormatNamedArguments Args;
 		Args.Add( TEXT("ClassName"), (ParentClass != NULL) ? FText::FromString( ParentClass->GetName() ) : NSLOCTEXT("UnrealEd", "Null", "(null)") );
-		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( NSLOCTEXT("UnrealEd", "CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{0}'."), Args ) );
+		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( NSLOCTEXT("UnrealEd", "CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{ClassName}'."), Args ) );
 		return NULL;
 	}
-	else
-	{
-		return FKismetEditorUtilities::CreateBlueprint(ParentClass, InParent, Name, BPTYPE_Normal, UEditorUtilityBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
-	}
+
+	return FKismetEditorUtilities::CreateBlueprint(ParentClass, InParent, Name, BPType, UEditorUtilityBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
 }
 
 bool UEditorUtilityBlueprintFactory::CanCreateNew() const

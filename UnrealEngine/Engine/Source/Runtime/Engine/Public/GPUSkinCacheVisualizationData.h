@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Async/Mutex.h"
 
 class FGPUSkinCacheVisualizationData
 {
@@ -29,16 +30,12 @@ public:
 	typedef TMap<FName, FModeRecord> TModeMap;
 
 public:
-	FGPUSkinCacheVisualizationData()
-	: bIsInitialized(false)
-	{
-	}
 
 	/** Initialize the system. */
 	void Initialize();
 
 	/** Check if system was initialized. */
-	inline bool IsInitialized() const { return bIsInitialized; }
+	inline bool IsInitialized() const { return bIsInitialized.load(std::memory_order_relaxed); }
 
 	/** Check if visualization is active. */
 	ENGINE_API bool IsActive() const;
@@ -86,6 +83,8 @@ private:
 	void SetActiveMode(FModeType ModeType, const FName& ModeName);
 
 private:
+	UE::FMutex Mutex;
+
 	/** The name->mode mapping table */
 	TModeMap ModeMap;
 
@@ -96,7 +95,7 @@ private:
 	FString ConsoleDocumentationVisualizationMode;
 
 	/** Flag indicating if system is initialized. **/
-	bool bIsInitialized = false;
+	std::atomic_bool bIsInitialized = { false };
 };
 
 ENGINE_API FGPUSkinCacheVisualizationData& GetGPUSkinCacheVisualizationData();

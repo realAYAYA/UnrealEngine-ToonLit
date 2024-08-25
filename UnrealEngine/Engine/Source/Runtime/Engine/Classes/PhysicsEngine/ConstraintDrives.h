@@ -65,7 +65,6 @@ USTRUCT()
 struct FLinearDriveConstraint
 {
 	GENERATED_BODY()
-	
 
 	/** Target position the linear drive.*/
 	UPROPERTY(EditAnywhere, Category = LinearMotor)
@@ -84,8 +83,12 @@ struct FLinearDriveConstraint
 	UPROPERTY(EditAnywhere, Category = LinearMotor)
 	FConstraintDrive ZDrive;
 
-	UPROPERTY(EditAnywhere, Category = LinearMotor)
-	uint8 bEnablePositionDrive : 1;
+#if WITH_EDITORONLY_DATA
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UPROPERTY(config, meta = (DeprecatedProperty, DeprecationMessage = "Enable/disable of drives is done inside the individual constraint drives."))
+	uint8 bEnablePositionDrive_DEPRECATED : 1;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+#endif
 
 	ENGINE_API FLinearDriveConstraint();
 

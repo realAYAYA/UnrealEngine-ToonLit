@@ -5,11 +5,14 @@
 #include "EntitySystem/MovieSceneEntityMutations.h"
 #include "EntitySystem/MovieSceneEntitySystemLinker.h"
 #include "EntitySystem/MovieSceneEntityInstantiatorSystem.h"
+#include "EntitySystem/MovieSceneEntitySystemRunner.h"
 #include "EntitySystem/MovieSceneEntitySystemTask.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
 #include "EntitySystem/EntityAllocationIterator.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
 
 #include "Compilation/MovieSceneCompiledDataManager.h"
+#include "Compilation/MovieSceneCompiledVolatilityManager.h"
 
 #include "Evaluation/MovieSceneSequenceHierarchy.h"
 #include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
@@ -54,7 +57,11 @@ FInstanceHandle FInstanceRegistry::FindRelatedInstanceHandle(FInstanceHandle Ins
 	return RootInstance->FindSubInstance(SequenceID);
 }
 
-FRootInstanceHandle FInstanceRegistry::AllocateRootInstance(IMovieScenePlayer* Player)
+FRootInstanceHandle FInstanceRegistry::AllocateRootInstance(
+		UMovieSceneSequence& InRootSequence,
+		UObject* InPlaybackContext,
+		TSharedPtr<FMovieSceneEntitySystemRunner> InRunner,
+		UMovieSceneCompiledDataManager* InCompiledDataManager)
 {
 	check(Instances.Num() < 65535);
 
@@ -63,20 +70,42 @@ FRootInstanceHandle FInstanceRegistry::AllocateRootInstance(IMovieScenePlayer* P
 	FSparseArrayAllocationInfo NewAllocation = Instances.AddUninitialized();
 	FRootInstanceHandle InstanceHandle { (uint16)NewAllocation.Index, InstanceSerial };
 
-	new (NewAllocation) FSequenceInstance(Linker, Player, InstanceHandle);
+	if (!InRunner)
+	{
+		FMovieSceneEntitySystemRunner* ActiveRunner = Linker->GetActiveRunner();
+		InRunner = ActiveRunner ? ActiveRunner->AsShared() : TSharedPtr<FMovieSceneEntitySystemRunner>();
+	}
+	if (!InCompiledDataManager)
+	{
+		InCompiledDataManager = UMovieSceneCompiledDataManager::GetPrecompiledData();
+	}
+
+	FSharedPlaybackStateCreateParams PlaybackStateCreateParams;
+	PlaybackStateCreateParams.PlaybackContext = InPlaybackContext;
+	PlaybackStateCreateParams.RootInstanceHandle = InstanceHandle;
+	PlaybackStateCreateParams.Runner = InRunner;
+	PlaybackStateCreateParams.CompiledDataManager = InCompiledDataManager;
+
+	TSharedRef<FSharedPlaybackState> NewPlaybackState = MakeShared<FSharedPlaybackState>(InRootSequence, PlaybackStateCreateParams);
+
+	new (NewAllocation) FSequenceInstance(NewPlaybackState);
 
 	return InstanceHandle;
 }
 
-FInstanceHandle FInstanceRegistry::AllocateSubInstance(IMovieScenePlayer* Player, FMovieSceneSequenceID SequenceID, FRootInstanceHandle RootInstanceHandle, FInstanceHandle ParentInstanceHandle)
+FInstanceHandle FInstanceRegistry::AllocateSubInstance(FMovieSceneSequenceID SequenceID, FRootInstanceHandle RootInstanceHandle, FInstanceHandle ParentInstanceHandle)
 {
 	check(Instances.Num() < 65535 && SequenceID != MovieSceneSequenceID::Root && ParentInstanceHandle.IsValid());
 
 	const uint16 InstanceSerial = InstanceSerialNumber++;
 	FSparseArrayAllocationInfo NewAllocation = Instances.AddUninitialized();
 	FInstanceHandle InstanceHandle { (uint16)NewAllocation.Index, InstanceSerial };
+	
+	TSharedRef<FSharedPlaybackState> PlaybackState = GetInstance(RootInstanceHandle).GetSharedPlaybackState();
 
-	new (NewAllocation) FSequenceInstance(Linker, Player, InstanceHandle, ParentInstanceHandle, RootInstanceHandle, SequenceID);
+	new (NewAllocation) FSequenceInstance(PlaybackState, InstanceHandle, ParentInstanceHandle, SequenceID);
+
+	PlaybackState->GetCapabilities().OnSubInstanceCreated(PlaybackState, InstanceHandle);
 
 	return InstanceHandle;
 }
@@ -91,7 +120,7 @@ void FInstanceRegistry::DestroyInstance(FInstanceHandle InstanceHandle)
 		{
 			UE_LOG(LogMovieSceneECS, Verbose, TEXT("Instance being destroyed without finishing evaluation."));
 		}
-		Instance.DestroyImmediately(Linker);
+		Instance.DestroyImmediately();
 		Instances.RemoveAt(InstanceHandle.InstanceID);
 	}
 }
@@ -119,6 +148,21 @@ void FInstanceRegistry::CleanupLinkerEntities(const TSet<FMovieSceneEntityID>& E
 			Instance.Ledger.CleanupLinkerEntities(ExpiredBoundObjects);
 		}
 	}
+}
+
+FScopedVolatilityManagerSuppression::FScopedVolatilityManagerSuppression(FInstanceRegistry* InInstanceRegistry, FRootInstanceHandle InRootInstanceHandle)
+	: InstanceRegistry(InInstanceRegistry)
+	, RootInstanceHandle(InRootInstanceHandle)
+{
+	FSequenceInstance& Instance = InstanceRegistry->MutateInstance(RootInstanceHandle);
+	PreviousVolatilityManager = MoveTemp(Instance.VolatilityManager);
+}
+
+FScopedVolatilityManagerSuppression::~FScopedVolatilityManagerSuppression()
+{
+	FSequenceInstance& Instance = InstanceRegistry->MutateInstance(RootInstanceHandle);
+	Instance.VolatilityManager = MoveTemp(PreviousVolatilityManager);
+	Instance.ConditionalRecompile();
 }
 
 } // namespace MovieScene

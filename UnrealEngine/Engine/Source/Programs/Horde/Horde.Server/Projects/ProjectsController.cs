@@ -3,8 +3,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
-using EpicGames.Horde.Api;
-using Horde.Server.Acls;
+using EpicGames.Horde.Projects;
 using Horde.Server.Configuration;
 using Horde.Server.Server;
 using Horde.Server.Streams;
@@ -78,7 +77,7 @@ namespace Horde.Server.Projects
 		public ActionResult<object> GetProject(ProjectId projectId, [FromQuery] PropertyFilter? filter = null)
 		{
 			ProjectConfig? projectConfig;
-			if(!_globalConfig.Value.TryGetProject(projectId, out projectConfig))
+			if (!_globalConfig.Value.TryGetProject(projectId, out projectConfig))
 			{
 				return NotFound(projectId);
 			}
@@ -176,7 +175,6 @@ namespace Horde.Server.Projects
 
 			return response;
 		}
-
 
 		internal static GetProjectCategoryResponse CreateGetProjectCategoryResponse(ProjectCategoryConfig streamCategory)
 		{

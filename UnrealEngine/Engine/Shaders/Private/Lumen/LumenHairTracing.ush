@@ -100,7 +100,7 @@ void TraceHairVoxels(
 	TraversalSettings.bDebugEnabled = false;
 	TraversalSettings.SteppingScale = bIsReflectionTracing ? VirtualVoxel.SteppingScale_Shadow : VirtualVoxel.SteppingScale_Environment;
 	TraversalSettings.Random = Random.xyz;
-	TraversalSettings.PixelRadius = SceneDepth * VirtualVoxel.HairCoveragePixelRadiusAtDepth1;
+	TraversalSettings.PixelRadius = ConvertGivenDepthRadiusForProjectionType(VirtualVoxel.HairCoveragePixelRadiusAtDepth1, SceneDepth);
 	TraversalSettings.bUseOpaqueVisibility = false;
 
 	float Transparency = 1;
@@ -118,7 +118,6 @@ void TraceHairVoxels(
 			CommonDesc,
 			NodeDesc,
 			VirtualVoxel.PageIndexBuffer,
-			VirtualVoxel.PageIndexOccupancyBuffer,
 			VirtualVoxel.PageTexture,
 			TraversalSettings);
 

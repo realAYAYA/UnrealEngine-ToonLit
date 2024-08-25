@@ -40,7 +40,7 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FHairStrandsViewUniformParameters, )
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairOnlyDepthFurthestHZBTexture)			// HZB furthest depth texture containing only hair depth (not strongly typed for legacy shader code reason)
 	SHADER_PARAMETER_SAMPLER(SamplerState, HairOnlyDepthHZBSampler)						// HZB sampler
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, HairSampleOffset)						// Offset & count, for accessing pixel's samples, based on screen pixel position
-	SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, HairSampleCount)						// Total count of hair sample, in sample space
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, HairSampleCount)			// Total count of hair sample, in sample space
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FPackedHairSample>, HairSampleData)// Sample data (coverage, tangent, base color, ...), in sample space // HAIRSTRANDS_TODO: change this to be a uint4 so that we don't have to include the type for generated contant buffer
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint2>, HairSampleCoords)					// Screen pixel coordinate of each sample, in sample space
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint2>, HairTileData)						// Tile coords (RG16F)
@@ -112,7 +112,7 @@ struct FHairStrandsVisibilityData
 
 	uint32			MaxSampleCount = 8; // Sample count per pixel
 	uint32			MaxNodeCount = 0;	// Total sample count
-	FRDGTextureRef	NodeCount = nullptr;
+	FRDGBufferRef	NodeCount = nullptr;
 	FRDGTextureRef	NodeIndex = nullptr;
 	FRDGBufferRef	NodeData = nullptr;
 	FRDGBufferRef	NodeVisData = nullptr;
@@ -124,7 +124,7 @@ struct FHairStrandsVisibilityData
 	uint32				RasterizedInstanceCount = 0;
 	uint32				MaxControlPointCount = 0;
 	FRDGBufferSRVRef	ControlPointsSRV = nullptr;
-	FRDGTextureRef		ControlPointCount = nullptr;
+	FRDGBufferSRVRef	ControlPointCount = nullptr;
 	FRDGBufferSRVRef	ControlPointVelocitySRV = nullptr;
 
 	FHairStrandsTiles TileData;
@@ -197,7 +197,6 @@ BEGIN_SHADER_PARAMETER_STRUCT(FHairStrandsVoxelCommonParameters, )
 
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, AllocatedPageCountBuffer)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, PageIndexBuffer)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint2>, PageIndexOccupancyBuffer)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, PageIndexCoordBuffer)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FPackedVirtualVoxelNodeDesc>, NodeDescBuffer) // Packed into 2 x uint4
 
@@ -217,7 +216,6 @@ struct FHairStrandsVoxelResources
 	TRDGUniformBufferRef<FVirtualVoxelParameters> UniformBuffer;
 	FRDGTextureRef PageTexture = nullptr;
 	FRDGBufferRef PageIndexBuffer = nullptr;
-	FRDGBufferRef PageIndexOccupancyBuffer = nullptr;
 	FRDGBufferRef NodeDescBuffer = nullptr;
 	FRDGBufferRef PageIndexCoordBuffer = nullptr;
 	FRDGBufferRef IndirectArgsBuffer = nullptr;
@@ -308,9 +306,10 @@ struct FHairStrandsMacroGroupData
 	{
 		const FMeshBatch* Mesh = nullptr;
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy = nullptr;
-		uint32 MaterialId;
-		uint32 ResourceId;
-		uint32 GroupIndex;
+		uint32 MaterialId = 0;
+		uint32 ResourceId = 0;
+		uint32 GroupIndex = 0;
+		uint32 Flags = 0; // Hair instance flags
 		FHairGroupPublicData* PublicDataPtr = nullptr;
 		bool IsCullingEnable() const;
 	};
@@ -320,10 +319,10 @@ struct FHairStrandsMacroGroupData
 	TPrimitiveInfos PrimitivesInfos;
 	FBoxSphereBounds Bounds;
 	FIntRect ScreenRect;
-	uint32 MacroGroupId;
+	uint32 MacroGroupId = 0;
+	uint32 Flags = 0; // Aggregated flags for all instances from the group
 
 	bool bSupportVoxelization = false; // true if at least one of the Primitive requires voxelization
-	bool bNeedScatterSceneLighting = false;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -449,6 +448,7 @@ struct FHairStrandsViewData
 	FHairStrandsVoxelResources VirtualVoxelResources;
 	FHairStrandsMacroGroupResources MacroGroupResources;
 	FHairStrandsDebugData DebugData;
+	uint32 Flags = 0;
 
 	// Transient: store all light visible in primary view(s)
 	struct FDirectionalLightCullData { const FLightSceneInfo* LightInfo = nullptr; FConvexVolume ViewFrustumInLightSpace; };
@@ -487,7 +487,7 @@ namespace HairStrands
 	bool HasViewHairStrandsData(const TArray<FViewInfo>& Views);
 	bool HasViewHairStrandsVoxelData(const FViewInfo& View);
 
-	bool HasPositionsChanged(FRDGBuilder& GraphBuilder, const FViewInfo& View);
+	bool HasPositionsChanged(FRDGBuilder& GraphBuilder, const FScene& Scene, const FViewInfo& View);
 	void DrawHitProxies(FRDGBuilder& GraphBuilder, const FScene& Scene, const FViewInfo& View, FInstanceCullingManager& InstanceCullingManager, FRDGTextureRef HitProxyTexture, FRDGTextureRef HitProxyDepthTexture);
 	void DrawEditorSelection(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FIntRect& ViewportRect, FRDGTextureRef SelectionDepthTexture);
 
@@ -496,7 +496,7 @@ namespace HairStrands
 	bool IsHairCompatible(const FMeshBatch* Mesh);
 	bool IsHairStrandsVF(const FMeshBatch* Mesh);
 	bool IsHairCardsVF(const FMeshBatch* Mesh);
-	bool IsHairVisible(const FMeshBatchAndRelevance& MeshBatch);
+	bool IsHairVisible(const FMeshBatchAndRelevance& MeshBatch, bool bCheckLengthScale);
 
 	// Hair helpers
 	bool HasHairInstanceInScene(const FScene& Scene);
@@ -504,4 +504,6 @@ namespace HairStrands
 	bool HasHairStrandsVisible(const TArray<FViewInfo>& Views);
 
 	void AddVisibleShadowCastingLight(const FScene& Scene, TArray<FViewInfo>& Views, const FLightSceneInfo* LightSceneInfo);
+
+	void PostRender(FScene& Scene);
 }

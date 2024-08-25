@@ -38,7 +38,7 @@ public:
 	~TLockFreeFixedSizeAllocator_TLSCacheBase()
 	{
 		FPlatformTLS::FreeTlsSlot(TlsSlot);
-		TlsSlot = 0;
+		TlsSlot = FPlatformTLS::InvalidTlsSlot;
 	}
 
 	/**

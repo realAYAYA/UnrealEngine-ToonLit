@@ -1,0 +1,56 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+
+	<!-- Project Options -->
+	<Option Name="ProjectFile" DefaultValue="_Unknown_" Restrict=".+" Description="The projects to cook"/>
+	<Option Name="ProjectName" DefaultValue="_Unknown_" Restrict=".+" Description="The projects to cook"/>
+	<Option Name="EditorTarget" DefaultValue="$(ProjectName)Editor" Description="Compile name of the editor target"/>
+
+	<!-- Note we can not make the default='', because the default is used for some validation. -->
+	<Error Message="No project file specified" If="'$(ProjectFile)' == '_Unknown_'"/>
+	<Error Message="No project name specified" If="'$(ProjectName)' == '_Unknown_'"/>
+
+	<!-- Platform Options -->
+	<Option Name="TargetPlatform" DefaultValue="Windows" Restrict=".+" Description="The platform to cook"/>
+
+	<!-- Agent Options -->
+	<Option Name="AgentType" DefaultValue="" Description="The platform to cook"/>
+	<Property Name="AgentType" Value="IterativeValidateAgent_$(ProjectName)_$(TargetPlatform)" If="'$(AgentType)' == ''"/>
+
+	<!-- Iterative Options -->
+	<Option Name="IterativeMode" DefaultValue="incremental" Restrict="iterative|incremental" Description="Whether to iteratively cook using Incremental or using the legacy iterative"/>
+	<Option Name="ValidateMode" DefaultValue="onephase" Restrict="onephase|twophase" Description="Whether to validate results in onephase (which reports indeterminism as an iterativefalseskip error) or two phase (which detects indeterminism and downgrades it to a display message)"/>
+	<Property Name="IterativeArgs" Value="-zenstore -ini:Editor:[CookSettings]:HybridIterativeEnabled=true" If="'$(IterativeMode)' == 'incremental'"/>
+	<Property Name="IterativeArgs" Value="-iterate -ini:Editor:[CookSettings]:HybridIterativeEnabled=false -ini:Editor:[CookSettings]:IterativeUseClassFilters=true" If="'$(IterativeMode)' == 'iterative'"/>
+
+	<!-- Agent=IterativeValidate variables -->
+	<Property Name="EditorPlatform" Value="Win64"/>
+	<Property Name="CommonCookArgs" Value="-targetplatform=$(TargetPlatform) $(IterativeArgs) -skiponlyeditoronly=true"/>
+	<!-- Force singleprocess cook because IterativeValidatePackageWriter includes data that is not replicated -->
+	<Property Name="CommonCookArgs" Value="$(CommonCookArgs) -cookprocesscount=1"/>
+
+	<Property Name="CompileNodeName" Value="Compile $(EditorPlatform) $(ProjectName)"/>
+	<Property Name="CookIterativeValidateSinglePhaseName" Value="Cook InteraveValidateSinglePhase $(ProjectName) $(TargetPlatform)"/>
+	<Property Name="CookIterativeValidatePhase1Name" Value="Cook IterativeValidatePhase1 $(ProjectName) $(TargetPlatform)"/>
+	<Property Name="CookIterativeValidatePhase2Name" Value="Cook IterativeValidatePhase2 $(ProjectName) $(TargetPlatform)"/>
+
+	<Agent Name="IterativeValidateAgent" Type="$(AgentType)">
+		<Node Name="$(CompileNodeName)">
+			<Compile Target="ShaderCompileWorker" Platform="$(EditorPlatform)" Project="$(ProjectFile)" Configuration="Development"/>
+			<Compile Target="$(EditorTarget)" Platform="$(EditorPlatform)" Project="$(ProjectFile)" Configuration="Development"/>
+		</Node>
+		<Node Name="$(CookIterativeValidateSinglePhaseName)">
+			<Commandlet Name="Cook" Project="$(ProjectFile)" Arguments="$(CommonCookArgs) -IterativeValidate -IterativeValidateAllowWrite"/>
+		</Node>
+		<Node Name="$(CookIterativeValidatePhase1Name)" Requires="$(CompileNodeName)"  If="'$(ValidateMode)' == 'twophase'">
+			<Commandlet Name="Cook" Project="$(ProjectFile)" Arguments="$(CommonCookArgs) -IterativeValidatePhase1 -IterativeValidateAllowWrite"/>
+		</Node>
+		<Node Name="$(CookIterativeValidatePhase2Name)" Requires="$(CookIterativeValidatePhase1Name)"  If="'$(ValidateMode)' == 'twophase'">
+			<Commandlet Name="Cook" Project="$(ProjectFile)" Arguments="$(CommonCookArgs) -IterativeValidatePhase2 -IterativeValidateAllowWrite"/>
+		</Node>
+	</Agent>
+
+	<Aggregate Name="IterativeValidate" Requires="$(CookIterativeValidateSinglePhaseName)" If="'$(ValidateMode)' == 'onephase'"/>
+	<Aggregate Name="IterativeValidate" Requires="$(CookIterativeValidatePhase2Name)" If="'$(ValidateMode)' == 'twophase'"/>
+
+</BuildGraph>

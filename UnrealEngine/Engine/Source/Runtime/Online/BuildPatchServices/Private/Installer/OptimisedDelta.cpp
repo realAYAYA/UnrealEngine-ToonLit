@@ -3,6 +3,7 @@
 #include "Installer/OptimisedDelta.h"
 
 #include "Async/Future.h"
+#include "Tasks/Task.h"
 #include "Misc/ConfigCacheIni.h"
 
 #include "Installer/DownloadService.h"
@@ -29,7 +30,7 @@ namespace BuildPatchServices
 		: public IOptimisedDelta
 	{
 	public:
-		FOptimisedDelta(const FOptimisedDeltaConfiguration& Configuration, const FOptimisedDeltaDependencies& Dependencies);
+		FOptimisedDelta(const FOptimisedDeltaConfiguration& Configuration, FOptimisedDeltaDependencies&& Dependencies);
 
 		// IOptimisedDelta interface begin.
 		virtual const IOptimisedDelta::FResultValueOrError& GetResult() const override;
@@ -45,9 +46,10 @@ namespace BuildPatchServices
 
 	private:
 		const FOptimisedDeltaConfiguration Configuration;
-		const FOptimisedDeltaDependencies Dependencies;
+		IDownloadService* const DownloadService;
 		const FString RelativeDeltaFilePath;
 		const int32 DeltaRetries;
+		TUniqueFunction<void(const IOptimisedDelta::FResultValueOrError&)> OnComplete;
 		EDeltaPolicy DeltaPolicy;
 		int32 CloudDirIdx;
 		int32 RetryCount;
@@ -60,11 +62,12 @@ namespace BuildPatchServices
 		const TCHAR* ErrorCode;
 	};
 
-	FOptimisedDelta::FOptimisedDelta(const FOptimisedDeltaConfiguration& InConfiguration, const FOptimisedDeltaDependencies& InDependencies)
+	FOptimisedDelta::FOptimisedDelta(const FOptimisedDeltaConfiguration& InConfiguration, FOptimisedDeltaDependencies&& InDependencies)
 		: Configuration(InConfiguration)
-		, Dependencies(InDependencies)
+		, DownloadService(InDependencies.DownloadService)
 		, RelativeDeltaFilePath(Configuration.SourceManifest.IsValid() ? FBuildPatchUtils::GetChunkDeltaFilename(*Configuration.SourceManifest.Get(), Configuration.DestinationManifest.Get()) : TEXT(""))
 		, DeltaRetries(ConfigHelpers::LoadDeltaRetries(Configuration.CloudDirectories.Num()))
+		, OnComplete(MoveTemp(InDependencies.OnComplete))
 		, DeltaPolicy(Configuration.DeltaPolicy)
 		, CloudDirIdx(0)
 		, RetryCount(0)
@@ -87,7 +90,7 @@ namespace BuildPatchServices
 		if (DeltaPolicy != EDeltaPolicy::Skip)
 		{
 			UE_LOG(LogOptimisedDelta, Log, TEXT("Requesting optimised delta file %s"), *RelativeDeltaFilePath);
-			Dependencies.DownloadService->RequestFile(Configuration.CloudDirectories[CloudDirIdx] / RelativeDeltaFilePath, ChunkDeltaComplete, ChunkDeltaProgress);
+			DownloadService->RequestFile(Configuration.CloudDirectories[CloudDirIdx] / RelativeDeltaFilePath, ChunkDeltaComplete, ChunkDeltaProgress);
 		}
 		// Otherwise we provide the standard destination manifest.
 		else
@@ -134,87 +137,96 @@ namespace BuildPatchServices
 
 	void FOptimisedDelta::OnDownloadComplete(int32 RequestId, const FDownloadRef& Download)
 	{
-		if (Download->ResponseSuccessful())
+		UE_LOG(LogOptimisedDelta, Log, TEXT("Download complete for %s, launching comlpletion task"), *RelativeDeltaFilePath);
+
+		// Kick a task to finish this so as not to block the callback thread
+		UE::Tasks::Launch(UE_SOURCE_LOCATION, [this, RequestId, Download] 
 		{
-			// Perform a merge with current manifest so that the delta can support missing out unnecessary information.
-			FBuildPatchAppManifestPtr NewManifest;
-			FBuildPatchAppManifestRef DeltaManifest = MakeShareable(new FBuildPatchAppManifest());
-			if (DeltaManifest->DeserializeFromData(Download->GetData()))
+			if (Download->ResponseSuccessful())
 			{
-				// Verify each file received matches what we expect.
-				TSet<FString> DeltaFilenameList;
-				DeltaManifest->GetFileList(DeltaFilenameList);
-				bool bDeltaAccepted = true;
-				for (const FString& DeltaFilename : DeltaFilenameList)
+				// Perform a merge with current manifest so that the delta can support missing out unnecessary information.
+				FBuildPatchAppManifestPtr NewManifest;
+				FBuildPatchAppManifestRef DeltaManifest = MakeShareable(new FBuildPatchAppManifest());
+				if (DeltaManifest->DeserializeFromData(Download->GetData()))
 				{
-					const FFileManifest* OriginalFileManifest = Configuration.DestinationManifest->GetFileManifest(DeltaFilename);
-					const FFileManifest* DeltaFileManifest = DeltaManifest->GetFileManifest(DeltaFilename);
-					if (OriginalFileManifest != nullptr && DeltaFileManifest != nullptr)
+					// Verify each file received matches what we expect.
+					TSet<FString> DeltaFilenameList;
+					DeltaManifest->GetFileList(DeltaFilenameList);
+					bool bDeltaAccepted = true;
+					for (const FString& DeltaFilename : DeltaFilenameList)
 					{
-						FSHAHash OriginalFileHash;
-						FSHAHash DeltaFileHash;
-						Configuration.DestinationManifest->GetFileHash(DeltaFilename, OriginalFileHash);
-						DeltaManifest->GetFileHash(DeltaFilename, DeltaFileHash);
-						if (OriginalFileHash != DeltaFileHash)
+						const FFileManifest* OriginalFileManifest = Configuration.DestinationManifest->GetFileManifest(DeltaFilename);
+						const FFileManifest* DeltaFileManifest = DeltaManifest->GetFileManifest(DeltaFilename);
+						if (OriginalFileManifest != nullptr && DeltaFileManifest != nullptr)
 						{
-							UE_LOG(LogOptimisedDelta, Log, TEXT("Rejected optimised delta due to file SHA1 mismatch."));
+							FSHAHash OriginalFileHash;
+							FSHAHash DeltaFileHash;
+							Configuration.DestinationManifest->GetFileHash(DeltaFilename, OriginalFileHash);
+							DeltaManifest->GetFileHash(DeltaFilename, DeltaFileHash);
+							if (OriginalFileHash != DeltaFileHash)
+							{
+								UE_LOG(LogOptimisedDelta, Log, TEXT("Rejected optimised delta due to file SHA1 mismatch."));
+								ErrorCode = DownloadErrorCodes::RejectedDeltaFile;
+								bDeltaAccepted = false;
+								break;
+							}
+						}
+						else
+						{
+							UE_LOG(LogOptimisedDelta, Log, TEXT("Rejected optimised delta due to file list mismatch."));
 							ErrorCode = DownloadErrorCodes::RejectedDeltaFile;
 							bDeltaAccepted = false;
 							break;
 						}
 					}
-					else
+					// Only use if accepted so far.
+					if (bDeltaAccepted)
 					{
-						UE_LOG(LogOptimisedDelta, Log, TEXT("Rejected optimised delta due to file list mismatch."));
-						ErrorCode = DownloadErrorCodes::RejectedDeltaFile;
-						bDeltaAccepted = false;
-						break;
+						NewManifest = FBuildMergeManifests::MergeDeltaManifest(Configuration.DestinationManifest, DeltaManifest);
+						if (!NewManifest.IsValid())
+						{
+							UE_LOG(LogOptimisedDelta, Log, TEXT("Rejected optimised delta due to merge failure."));
+							ErrorCode = DownloadErrorCodes::RejectedDeltaFile;
+							bDeltaAccepted = false;
+						}
 					}
 				}
-				// Only use if accepted so far.
-				if (bDeltaAccepted)
+				else
 				{
-					NewManifest = FBuildMergeManifests::MergeDeltaManifest(Configuration.DestinationManifest, DeltaManifest);
-					if (!NewManifest.IsValid())
-					{
-						UE_LOG(LogOptimisedDelta, Log, TEXT("Rejected optimised delta due to merge failure."));
-						ErrorCode = DownloadErrorCodes::RejectedDeltaFile;
-						bDeltaAccepted = false;
-					}
+					ErrorCode = DownloadErrorCodes::UnserialisableDeltaFile;
 				}
-			}
-			else
-			{
-				ErrorCode = DownloadErrorCodes::UnserialisableDeltaFile;
-			}
-			if (NewManifest.IsValid())
-			{
-				UE_LOG(LogOptimisedDelta, Log, TEXT("Received optimised delta file successfully %s"), *RelativeDeltaFilePath);
-				DownloadedBytes.Set(Download->GetData().Num());
-				SetResult(NewManifest);
+
+				if (NewManifest.IsValid())
+				{
+					UE_LOG(LogOptimisedDelta, Log, TEXT("Received optimised delta file successfully %s"), *RelativeDeltaFilePath);
+					DownloadedBytes.Set(Download->GetData().Num());
+					SetResult(NewManifest);
+				}
+				else if (ShouldRetry(Download))
+				{
+					++RetryCount;
+					UE_LOG(LogOptimisedDelta, Log, TEXT("Failed to load %s, retrying %i/%i"), *RelativeDeltaFilePath, RetryCount, DeltaRetries);
+					CloudDirIdx = (CloudDirIdx + RetryCount) % Configuration.CloudDirectories.Num();
+					DownloadService->RequestFile(Configuration.CloudDirectories[CloudDirIdx] / RelativeDeltaFilePath, ChunkDeltaComplete, ChunkDeltaProgress);
+				}
+				else
+				{
+					SetFailedDownload();
+				}
 			}
 			else if (ShouldRetry(Download))
 			{
 				++RetryCount;
+				UE_LOG(LogOptimisedDelta, Log, TEXT("Failed to download %s, retrying %i/%i"), *RelativeDeltaFilePath, RetryCount, DeltaRetries);
 				CloudDirIdx = (CloudDirIdx + RetryCount) % Configuration.CloudDirectories.Num();
-				Dependencies.DownloadService->RequestFile(Configuration.CloudDirectories[CloudDirIdx] / RelativeDeltaFilePath, ChunkDeltaComplete, ChunkDeltaProgress);
+				DownloadService->RequestFile(Configuration.CloudDirectories[CloudDirIdx] / RelativeDeltaFilePath, ChunkDeltaComplete, ChunkDeltaProgress);
 			}
 			else
 			{
+				ErrorCode = DownloadErrorCodes::MissingDeltaFile;
 				SetFailedDownload();
 			}
-		}
-		else if (ShouldRetry(Download))
-		{
-			++RetryCount;
-			CloudDirIdx = (CloudDirIdx + RetryCount) % Configuration.CloudDirectories.Num();
-			Dependencies.DownloadService->RequestFile(Configuration.CloudDirectories[CloudDirIdx] / RelativeDeltaFilePath, ChunkDeltaComplete, ChunkDeltaProgress);
-		}
-		else
-		{
-			ErrorCode = DownloadErrorCodes::MissingDeltaFile;
-			SetFailedDownload();
-		}
+		}, UE::Tasks::ETaskPriority::BackgroundHigh);
 	}
 
 	bool FOptimisedDelta::ShouldRetry(const FDownloadRef& Download)
@@ -229,8 +241,14 @@ namespace BuildPatchServices
 
 	void FOptimisedDelta::SetResult(const FBuildPatchAppManifestPtr& ResultManifest)
 	{
-		ChunkDeltaPromise.SetValue(MakeShared<FResultValueOrError>(MakeValue(ResultManifest)));
-		Dependencies.OnComplete(GetResult());
+		TSharedPtr<FResultValueOrError> Result = MakeShared<FResultValueOrError>(MakeValue(ResultManifest));
+		TUniqueFunction<void(const IOptimisedDelta::FResultValueOrError&)> LocalOnComplete = MoveTemp(OnComplete);
+
+		ChunkDeltaPromise.SetValue(Result);
+		if (LocalOnComplete)
+		{
+			LocalOnComplete(*Result);
+		}
 	}
 
 	void FOptimisedDelta::SetFailedDownload()
@@ -243,8 +261,15 @@ namespace BuildPatchServices
 		else
 		{
 			UE_LOG(LogOptimisedDelta, Log, TEXT("Failed optimised delta file fetch %s"), *RelativeDeltaFilePath);
-			ChunkDeltaPromise.SetValue(MakeShared<FResultValueOrError>(MakeError(ErrorCode)));
-			Dependencies.OnComplete(GetResult());
+
+			TSharedPtr<FResultValueOrError> Result = MakeShared<FResultValueOrError>(MakeError(ErrorCode));
+			TUniqueFunction<void(const IOptimisedDelta::FResultValueOrError&)> LocalOnComplete = MoveTemp(OnComplete);
+
+			ChunkDeltaPromise.SetValue(Result);
+			if (LocalOnComplete)
+			{
+				LocalOnComplete(*Result);
+			}
 		}
 	}
 
@@ -255,15 +280,9 @@ namespace BuildPatchServices
 	{
 	}
 
-	FOptimisedDeltaDependencies::FOptimisedDeltaDependencies()
-		: DownloadService(nullptr)
-		, OnComplete([](const IOptimisedDelta::FResultValueOrError&) {})
-	{
-	}
-
-	IOptimisedDelta* FOptimisedDeltaFactory::Create(const FOptimisedDeltaConfiguration& Configuration, const FOptimisedDeltaDependencies& Dependencies)
+	IOptimisedDelta* FOptimisedDeltaFactory::Create(const FOptimisedDeltaConfiguration& Configuration, FOptimisedDeltaDependencies&& Dependencies)
 	{
 		check(Dependencies.DownloadService != nullptr);
-		return new FOptimisedDelta(Configuration, Dependencies);
+		return new FOptimisedDelta(Configuration, MoveTemp(Dependencies));
 	}
 }

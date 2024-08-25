@@ -54,5 +54,10 @@ namespace FImageCoreUtils
 	 * @param Format2 - Second source format.
 	 */
 	IMAGECORE_API ETextureSourceFormat GetCommonSourceFormat(ETextureSourceFormat Format1, ETextureSourceFormat Format2);
-
+	
+	// return an ERawImageFormat for a PixelFormat
+	// these are not equal and you cannot blit between them
+	//	it's just the closest reasonable thing that can hold that PixelFormat
+	//	often there is no good match
+	IMAGECORE_API ERawImageFormat::Type GetRawImageFormatForPixelFormat(EPixelFormat PF);
 };

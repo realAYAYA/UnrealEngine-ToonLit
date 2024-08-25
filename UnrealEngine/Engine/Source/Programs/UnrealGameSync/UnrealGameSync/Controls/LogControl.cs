@@ -1,16 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Data;
-using System.Linq;
-using System.Text;
-using System.Windows.Forms;
-using System.Runtime.InteropServices;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Data;
+using System.Drawing;
 using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Windows.Forms;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
 
@@ -30,7 +30,7 @@ namespace UnrealGameSync
 		}
 
 		[StructLayout(LayoutKind.Sequential)]
-		class Scrollinfo 
+		class Scrollinfo
 		{
 			public int cbSize;
 			public ScrollInfoMask fMask;
@@ -131,7 +131,7 @@ namespace UnrealGameSync
 		{
 			BackColor = Color.White;
 			ForeColor = Color.FromArgb(255, 32, 32, 32);
-			
+
 			DoubleBuffered = true;
 
 			ContextMenuStrip = new ContextMenuStrip();
@@ -144,7 +144,7 @@ namespace UnrealGameSync
 
 		protected override void OnCreateControl()
 		{
- 			base.OnCreateControl();
+			base.OnCreateControl();
 
 			EnableScrollBar(Handle, ScrollBarType.SbBoth, ScrollBarArrows.EsbEnableBoth);
 
@@ -169,7 +169,7 @@ namespace UnrealGameSync
 		{
 			base.Dispose(disposing);
 
-			if(_updateTimer != null)
+			if (_updateTimer != null)
 			{
 				_updateTimer.Dispose();
 				_updateTimer = null;
@@ -192,7 +192,7 @@ namespace UnrealGameSync
 			{
 				_logFileStream = FileReference.Open(newLogFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
 			}
-			catch(Exception)
+			catch (Exception)
 			{
 				return false;
 			}
@@ -201,7 +201,7 @@ namespace UnrealGameSync
 
 			using StreamReader reader = new StreamReader(_logFileStream, leaveOpen: true);
 			string text = reader.ReadToEnd().TrimEnd('\r', '\n');
-			if(text.Length > 0)
+			if (text.Length > 0)
 			{
 				AddLinesInternal(text.Split('\n').Select(x => x + "\n").ToList());
 			}
@@ -212,7 +212,7 @@ namespace UnrealGameSync
 
 		public void CloseFile()
 		{
-			if(_logFileStream != null)
+			if (_logFileStream != null)
 			{
 				_logFileStream.Dispose();
 				_logFileStream = null;
@@ -229,7 +229,7 @@ namespace UnrealGameSync
 			_isSelecting = false;
 			_selection = null;
 
-			if(IsHandleCreated)
+			if (IsHandleCreated)
 			{
 				Scrollinfo scrollInfo = new Scrollinfo();
 				scrollInfo.cbSize = Marshal.SizeOf(scrollInfo);
@@ -239,7 +239,7 @@ namespace UnrealGameSync
 			}
 
 			_queuedLines = new ConcurrentQueue<string>();
-			if(_logFileStream != null)
+			if (_logFileStream != null)
 			{
 				try
 				{
@@ -262,28 +262,28 @@ namespace UnrealGameSync
 
 		private void Tick()
 		{
-			if(!Focused || !Capture)
+			if (!Focused || !Capture)
 			{
 				List<string> newLines = new List<string>();
-				for(;;)
+				for (; ; )
 				{
 					string? nextLine;
-					if(!_queuedLines.TryDequeue(out nextLine))
+					if (!_queuedLines.TryDequeue(out nextLine))
 					{
 						break;
 					}
 					newLines.Add(nextLine.TrimEnd('\r', '\n') + "\n");
 				}
-				if(newLines.Count > 0)
+				if (newLines.Count > 0)
 				{
 					StringBuilder textToAppendBuilder = new StringBuilder();
-					foreach(string newLine in newLines)
+					foreach (string newLine in newLines)
 					{
 						textToAppendBuilder.AppendLine(newLine.TrimEnd('\n'));
 					}
 
 					string textToAppend = textToAppendBuilder.ToString();
-					if(_logFileStream != null)
+					if (_logFileStream != null)
 					{
 						byte[] data = Encoding.UTF8.GetBytes(textToAppend);
 						try
@@ -291,7 +291,7 @@ namespace UnrealGameSync
 							_logFileStream.Write(data, 0, data.Length);
 							_logFileStream.Flush();
 						}
-						catch(Exception ex)
+						catch (Exception ex)
 						{
 							newLines.Add(String.Format("Failed to write to log file ({0}): {1}\n", _logFileStream.Name, ex.ToString()));
 						}
@@ -306,13 +306,13 @@ namespace UnrealGameSync
 		{
 			_lines.AddRange(newLines);
 
-			if(IsHandleCreated)
+			if (IsHandleCreated)
 			{
 				// Figure out if we're tracking the last line
 				bool isTrackingLastLine = IsTrackingLastLine();
 
 				int newMaxLineLength = Math.Max(_maxLineLength, newLines.Max(x => x.Length));
-				if(newMaxLineLength > _maxLineLength)
+				if (newMaxLineLength > _maxLineLength)
 				{
 					_maxLineLength = newMaxLineLength;
 
@@ -330,7 +330,7 @@ namespace UnrealGameSync
 				verticalScroll.fMask = ScrollInfoMask.SifPos | ScrollInfoMask.SifRange | ScrollInfoMask.SifPage | ScrollInfoMask.SifTrackpos;
 				GetScrollInfo(Handle, ScrollBarType.SbVert, verticalScroll);
 
-				if(_trackingScroll)
+				if (_trackingScroll)
 				{
 					UpdateVerticalScrollPosition(verticalScroll.nTrackPos, ref verticalScroll);
 				}
@@ -338,7 +338,7 @@ namespace UnrealGameSync
 				{
 					verticalScroll.fMask = ScrollInfoMask.SifRange | ScrollInfoMask.SifPage;
 					verticalScroll.nMin = 0;
-					if(isTrackingLastLine)
+					if (isTrackingLastLine)
 					{
 						verticalScroll.fMask |= ScrollInfoMask.SifPos;
 						verticalScroll.nPos = Math.Max(_lines.Count - 1 - _scrollLinesPerPage + 1, 0);
@@ -365,19 +365,19 @@ namespace UnrealGameSync
 
 		private void CopySelection()
 		{
-			if(_lines.Count > 0)
+			if (_lines.Count > 0)
 			{
 				StringBuilder selectedText = new StringBuilder();
-				if(_selection == null || _selection.IsEmpty())
+				if (_selection == null || _selection.IsEmpty())
 				{
-					foreach(string line in _lines)
+					foreach (string line in _lines)
 					{
 						selectedText.Append(line);
 					}
 				}
 				else
 				{
-					for(int lineIdx = Math.Min(_selection.Start.LineIdx, _selection.End.LineIdx); lineIdx <= Math.Max(_selection.Start.LineIdx, _selection.End.LineIdx); lineIdx++)
+					for (int lineIdx = Math.Min(_selection.Start.LineIdx, _selection.End.LineIdx); lineIdx <= Math.Max(_selection.Start.LineIdx, _selection.End.LineIdx); lineIdx++)
 					{
 						int minIdx, maxIdx;
 						ClipSelectionToLine(lineIdx, out minIdx, out maxIdx);
@@ -400,7 +400,7 @@ namespace UnrealGameSync
 
 		public void SelectAll()
 		{
-			if(_lines.Count > 0)
+			if (_lines.Count > 0)
 			{
 				_selection = new TextSelection(new TextLocation(0, 0), new TextLocation(_lines.Count - 1, _lines[_lines.Count - 1].Length));
 				Invalidate();
@@ -409,18 +409,18 @@ namespace UnrealGameSync
 
 		TextLocation PointToTextLocation(Point clientPoint)
 		{
-			if(_lines.Count == 0)
+			if (_lines.Count == 0)
 			{
 				return new TextLocation(0, 0);
 			}
 			else
 			{
 				int unclippedLineIdx = (clientPoint.Y / _fontSize.Height) + _scrollLine;
-				if(unclippedLineIdx < 0)
+				if (unclippedLineIdx < 0)
 				{
 					return new TextLocation(0, 0);
 				}
-				else if(unclippedLineIdx >= _lines.Count)
+				else if (unclippedLineIdx >= _lines.Count)
 				{
 					return new TextLocation(_lines.Count - 1, _lines[_lines.Count - 1].Length);
 				}
@@ -441,7 +441,7 @@ namespace UnrealGameSync
 			newScrollLine = Math.Min(newScrollLine, _lines.Count - _scrollLinesPerPage);
 			newScrollLine = Math.Max(newScrollLine, 0);
 
-			if(_scrollLine != newScrollLine)
+			if (_scrollLine != newScrollLine)
 			{
 				_scrollLine = newScrollLine;
 				Invalidate();
@@ -489,7 +489,7 @@ namespace UnrealGameSync
 
 		private void UpdateFontMetrics()
 		{
-			using(Graphics graphics = CreateGraphics())
+			using (Graphics graphics = CreateGraphics())
 			{
 				_fontSize = TextRenderer.MeasureText(graphics, "A", Font, new Size(Int32.MaxValue, Int32.MaxValue), TextFormatFlags.NoPadding);
 			}
@@ -499,7 +499,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseDown(e);
 
-			if(e.Button == MouseButtons.Left)
+			if (e.Button == MouseButtons.Left)
 			{
 				_isSelecting = true;
 
@@ -525,16 +525,16 @@ namespace UnrealGameSync
 		{
 			base.OnMouseMove(e);
 
-			if(_isSelecting && _selection != null)
+			if (_isSelecting && _selection != null)
 			{
 				TextLocation newSelectionEnd = PointToTextLocation(e.Location);
-				if(newSelectionEnd.LineIdx != _selection.End.LineIdx || newSelectionEnd.ColumnIdx != _selection.End.ColumnIdx)
+				if (newSelectionEnd.LineIdx != _selection.End.LineIdx || newSelectionEnd.ColumnIdx != _selection.End.ColumnIdx)
 				{
 					_selection.End = newSelectionEnd;
 					Invalidate();
 				}
 
-				_autoScrollRate = ((e.Y < 0)? e.Y : Math.Max(e.Y - ClientSize.Height, 0)) / _fontSize.Height;
+				_autoScrollRate = ((e.Y < 0) ? e.Y : Math.Max(e.Y - ClientSize.Height, 0)) / _fontSize.Height;
 			}
 		}
 
@@ -545,7 +545,7 @@ namespace UnrealGameSync
 			EndSelection();
 			Capture = false;
 
-			if(e.Button == MouseButtons.Right)
+			if (e.Button == MouseButtons.Right)
 			{
 				ContextMenuStrip.Show(this, e.Location);
 			}
@@ -562,7 +562,7 @@ namespace UnrealGameSync
 
 		protected override bool IsInputKey(Keys key)
 		{
-			switch(key & ~Keys.Modifiers)
+			switch (key & ~Keys.Modifiers)
 			{
 				case Keys.Up:
 				case Keys.Down:
@@ -574,7 +574,7 @@ namespace UnrealGameSync
 
 		protected override void OnKeyDown(KeyEventArgs e)
 		{
-			switch(e.KeyCode & ~Keys.Modifiers)
+			switch (e.KeyCode & ~Keys.Modifiers)
 			{
 				case Keys.Up:
 					ScrollWindow(-1);
@@ -601,13 +601,13 @@ namespace UnrealGameSync
 					Invalidate();
 					break;
 				case Keys.A:
-					if(e.Control)
+					if (e.Control)
 					{
 						SelectAll();
 					}
 					break;
 				case Keys.C:
-					if(e.Control)
+					if (e.Control)
 					{
 						CopySelection();
 					}
@@ -617,9 +617,9 @@ namespace UnrealGameSync
 
 		void EndSelection()
 		{
-			if(_isSelecting)
+			if (_isSelecting)
 			{
-				if(_selection != null && _selection.IsEmpty())
+				if (_selection != null && _selection.IsEmpty())
 				{
 					_selection = null;
 				}
@@ -632,7 +632,7 @@ namespace UnrealGameSync
 		{
 			base.OnScroll(se);
 
-			if(se.ScrollOrientation == ScrollOrientation.HorizontalScroll)
+			if (se.ScrollOrientation == ScrollOrientation.HorizontalScroll)
 			{
 				// Get the current scroll position
 				Scrollinfo scrollInfo = new Scrollinfo();
@@ -642,7 +642,7 @@ namespace UnrealGameSync
 
 				// Get the new scroll position
 				int targetScrollPos = scrollInfo.nPos;
-				switch(se.Type)
+				switch (se.Type)
 				{
 					case ScrollEventType.SmallDecrement:
 						targetScrollPos = scrollInfo.nPos - 1;
@@ -666,7 +666,7 @@ namespace UnrealGameSync
 				_scrollColumn = Math.Max(0, Math.Min(targetScrollPos, scrollInfo.nMax - scrollInfo.nPage + 1));
 
 				// Update the scroll bar if we're not tracking
-				if(se.Type != ScrollEventType.ThumbTrack)
+				if (se.Type != ScrollEventType.ThumbTrack)
 				{
 					scrollInfo.fMask = ScrollInfoMask.SifPos;
 					scrollInfo.nPos = _scrollColumn;
@@ -675,7 +675,7 @@ namespace UnrealGameSync
 
 				Invalidate();
 			}
-			else if(se.ScrollOrientation == ScrollOrientation.VerticalScroll)
+			else if (se.ScrollOrientation == ScrollOrientation.VerticalScroll)
 			{
 				// Get the current scroll position
 				Scrollinfo scrollInfo = new Scrollinfo();
@@ -685,7 +685,7 @@ namespace UnrealGameSync
 
 				// Get the new scroll position
 				int targetScrollPos = scrollInfo.nPos;
-				switch(se.Type)
+				switch (se.Type)
 				{
 					case ScrollEventType.SmallDecrement:
 						targetScrollPos = scrollInfo.nPos - 1;
@@ -711,7 +711,7 @@ namespace UnrealGameSync
 				UpdateVerticalScrollPosition(targetScrollPos, ref scrollInfo);
 
 				// Update the new range as well
-				if(se.Type == ScrollEventType.ThumbTrack)
+				if (se.Type == ScrollEventType.ThumbTrack)
 				{
 					_trackingScroll = true;
 				}
@@ -719,7 +719,7 @@ namespace UnrealGameSync
 				{
 					// If we've just finished tracking, allow updating the range
 					scrollInfo.nPos = _scrollLine;
-					if(_trackingScroll)
+					if (_trackingScroll)
 					{
 						scrollInfo.fMask |= ScrollInfoMask.SifRange;
 						scrollInfo.nMax = Math.Max(_lines.Count, 1) - 1;
@@ -746,18 +746,18 @@ namespace UnrealGameSync
 			base.OnPaint(e);
 
 			int textX = -_scrollColumn * _fontSize.Width;
-			for(int idx = _scrollLine; idx < _scrollLine + _scrollLinesPerPage + 1 && idx < _lines.Count; idx++)
+			for (int idx = _scrollLine; idx < _scrollLine + _scrollLinesPerPage + 1 && idx < _lines.Count; idx++)
 			{
 				int selectMinIdx;
 				int selectMaxIdx;
 				ClipSelectionToLine(idx, out selectMinIdx, out selectMaxIdx);
 
 				Color textColor;
-				if(Regex.IsMatch(_lines[idx], "(?<!\\w)error[: ]", RegexOptions.IgnoreCase))
+				if (Regex.IsMatch(_lines[idx], "(?<!\\w)error[: ]", RegexOptions.IgnoreCase))
 				{
 					textColor = Color.FromArgb(189, 54, 47);
 				}
-				else if(Regex.IsMatch(_lines[idx], "(?<!\\w)warning[: ]", RegexOptions.IgnoreCase))
+				else if (Regex.IsMatch(_lines[idx], "(?<!\\w)warning[: ]", RegexOptions.IgnoreCase))
 				{
 					textColor = Color.FromArgb(128, 128, 0);
 				}
@@ -767,16 +767,16 @@ namespace UnrealGameSync
 				}
 
 				int textY = (idx - _scrollLine) * _fontSize.Height;
-				if(selectMinIdx > 0)
+				if (selectMinIdx > 0)
 				{
 					TextRenderer.DrawText(e.Graphics, _lines[idx].Substring(0, selectMinIdx), Font, new Point(textX, textY), textColor, TextFormatFlags.NoPadding);
 				}
-				if(selectMinIdx < selectMaxIdx)
+				if (selectMinIdx < selectMaxIdx)
 				{
 					e.Graphics.FillRectangle(SystemBrushes.Highlight, textX + (selectMinIdx * _fontSize.Width), textY, (selectMaxIdx - selectMinIdx) * _fontSize.Width, _fontSize.Height);
 					TextRenderer.DrawText(e.Graphics, _lines[idx].Substring(selectMinIdx, selectMaxIdx - selectMinIdx), Font, new Point(textX + (selectMinIdx * _fontSize.Width), textY), SystemColors.HighlightText, TextFormatFlags.NoPadding);
 				}
-				if(selectMaxIdx < _lines[idx].Length)
+				if (selectMaxIdx < _lines[idx].Length)
 				{
 					TextRenderer.DrawText(e.Graphics, _lines[idx].Substring(selectMaxIdx), Font, new Point(textX + (selectMaxIdx * _fontSize.Width), textY), textColor, TextFormatFlags.NoPadding);
 				}
@@ -799,7 +799,7 @@ namespace UnrealGameSync
 
 		private void SelectionScrollTimer_TimerElapsed(object? sender, EventArgs args)
 		{
-			if(_autoScrollRate != 0 && _selection != null)
+			if (_autoScrollRate != 0 && _selection != null)
 			{
 				ScrollWindow(_autoScrollRate);
 
@@ -808,16 +808,16 @@ namespace UnrealGameSync
 				verticalScroll.fMask = ScrollInfoMask.SifAll;
 				GetScrollInfo(Handle, ScrollBarType.SbVert, verticalScroll);
 
-				if(_autoScrollRate < 0)
+				if (_autoScrollRate < 0)
 				{
-					if(_selection.End.LineIdx > verticalScroll.nPos)
+					if (_selection.End.LineIdx > verticalScroll.nPos)
 					{
 						_selection.End = new TextLocation(verticalScroll.nPos, 0);
 					}
 				}
 				else
 				{
-					if(_selection.End.LineIdx < verticalScroll.nPos + verticalScroll.nPage)
+					if (_selection.End.LineIdx < verticalScroll.nPos + verticalScroll.nPage)
 					{
 						int lineIdx = Math.Min(verticalScroll.nPos + verticalScroll.nPage, _lines.Count - 1);
 
@@ -834,29 +834,29 @@ namespace UnrealGameSync
 
 		protected void ClipSelectionToLine(int lineIdx, out int selectMinIdx, out int selectMaxIdx)
 		{
-			if(_selection == null)
+			if (_selection == null)
 			{
 				selectMinIdx = 0;
 				selectMaxIdx = 0;
 			}
-			else if(_selection.Start.LineIdx < _selection.End.LineIdx)
+			else if (_selection.Start.LineIdx < _selection.End.LineIdx)
 			{
-				if(lineIdx < _selection.Start.LineIdx)
+				if (lineIdx < _selection.Start.LineIdx)
 				{
 					selectMinIdx = _lines[lineIdx].Length;
 					selectMaxIdx = _lines[lineIdx].Length;
 				}
-				else if(lineIdx == _selection.Start.LineIdx)
+				else if (lineIdx == _selection.Start.LineIdx)
 				{
 					selectMinIdx = _selection.Start.ColumnIdx;
 					selectMaxIdx = _lines[lineIdx].Length;
 				}
-				else if(lineIdx < _selection.End.LineIdx)
+				else if (lineIdx < _selection.End.LineIdx)
 				{
 					selectMinIdx = 0;
 					selectMaxIdx = _lines[lineIdx].Length;
 				}
-				else if(lineIdx == _selection.End.LineIdx)
+				else if (lineIdx == _selection.End.LineIdx)
 				{
 					selectMinIdx = 0;
 					selectMaxIdx = _selection.End.ColumnIdx;
@@ -867,24 +867,24 @@ namespace UnrealGameSync
 					selectMaxIdx = 0;
 				}
 			}
-			else if(_selection.Start.LineIdx > _selection.End.LineIdx)
+			else if (_selection.Start.LineIdx > _selection.End.LineIdx)
 			{
-				if(lineIdx < _selection.End.LineIdx)
+				if (lineIdx < _selection.End.LineIdx)
 				{
 					selectMinIdx = _lines[lineIdx].Length;
 					selectMaxIdx = _lines[lineIdx].Length;
 				}
-				else if(lineIdx == _selection.End.LineIdx)
+				else if (lineIdx == _selection.End.LineIdx)
 				{
 					selectMinIdx = _selection.End.ColumnIdx;
 					selectMaxIdx = _lines[lineIdx].Length;
 				}
-				else if(lineIdx < _selection.Start.LineIdx)
+				else if (lineIdx < _selection.Start.LineIdx)
 				{
 					selectMinIdx = 0;
 					selectMaxIdx = _lines[lineIdx].Length;
 				}
-				else if(lineIdx == _selection.Start.LineIdx)
+				else if (lineIdx == _selection.Start.LineIdx)
 				{
 					selectMinIdx = 0;
 					selectMaxIdx = _selection.Start.ColumnIdx;
@@ -897,7 +897,7 @@ namespace UnrealGameSync
 			}
 			else
 			{
-				if(lineIdx == _selection.Start.LineIdx)
+				if (lineIdx == _selection.Start.LineIdx)
 				{
 					selectMinIdx = Math.Min(_selection.Start.ColumnIdx, _selection.End.ColumnIdx);
 					selectMaxIdx = Math.Max(_selection.Start.ColumnIdx, _selection.End.ColumnIdx);

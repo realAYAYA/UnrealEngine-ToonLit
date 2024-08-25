@@ -61,3 +61,12 @@ void FMovieSceneEventChannel::Offset(FFrameNumber DeltaPosition)
 	GetData().Offset(DeltaPosition);
 }
 
+FKeyHandle FMovieSceneEventChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneEventChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
+}

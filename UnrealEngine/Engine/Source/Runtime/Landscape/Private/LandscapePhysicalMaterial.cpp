@@ -612,6 +612,8 @@ void FLandscapePhysicalMaterialRenderTask::UpdateInternal(bool bInFlush)
 		FLandscapePhysicalMaterialRenderTaskImpl* Task = &GTaskPool.Pool[PoolHandle];
 		check(Task->LandscapeComponent != nullptr);
 
+		UE::RenderCommandPipe::FSyncScope SyncScope;
+
 		// If the material gets recompiled, for example, the component's scene proxy could be changed before the RT update runs, so we need to make sure we're getting the scene proxy on the game thread :
 		const FLandscapeComponentSceneProxy* SceneProxy = static_cast<const FLandscapeComponentSceneProxy*>(Task->LandscapeComponent->SceneProxy);
 		ENQUEUE_RENDER_COMMAND(FLandscapePhysicalMaterialFlush)(

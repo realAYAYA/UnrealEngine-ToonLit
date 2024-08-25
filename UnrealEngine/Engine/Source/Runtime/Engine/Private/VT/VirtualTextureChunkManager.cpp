@@ -33,7 +33,7 @@ FVirtualTextureChunkStreamingManager::~FVirtualTextureChunkStreamingManager()
 void FVirtualTextureChunkStreamingManager::UpdateResourceStreaming(float DeltaTime, bool bProcessEverything /*= false*/)
 {
 	// It's OK to execute update if virtual texturing is disabled but we early out anyway to avoid an unnecessary render thread task.
-	if (UseVirtualTexturing(GMaxRHIFeatureLevel))
+	if (UseVirtualTexturing(GMaxRHIShaderPlatform))
 	{
 		FVirtualTextureChunkStreamingManager* StreamingManager = this;
 

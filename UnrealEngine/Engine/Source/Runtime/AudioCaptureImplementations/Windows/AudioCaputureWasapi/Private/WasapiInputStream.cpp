@@ -92,7 +92,7 @@ namespace Audio
 		CaptureClient = MoveTemp(TempCaptureClient);
 		AudioFormat = InFormat;
 		OnAudioCaptureCallback = MoveTemp(InCallback);
-		SilienceBuffer.SetNumZeroed(GetBufferSizeBytes(), false);
+		SilienceBuffer.SetNumZeroed(GetBufferSizeBytes(), EAllowShrinking::No);
 
 		bIsInitialized = true;
 

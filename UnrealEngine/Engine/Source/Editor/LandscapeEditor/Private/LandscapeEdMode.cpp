@@ -1722,16 +1722,16 @@ void FEdModeLandscape::ChangeBrushSize(bool bIncrease)
 	else
 	{
 		float Radius = UISettings->GetCurrentToolBrushRadius();
+		const ULandscapeSettings* LandscapeSettings = GetDefault<ULandscapeSettings>();
 		const float SliderMin = 10.0f;
-		const float SliderMax = 8192.0f;
-		float Diff = 0.05f; //6.0f / SliderMax;
+		const float SliderMax = LandscapeSettings->GetBrushSizeUIMax();
+		float Diff = 0.05f; 
 		if (!bIncrease)
 		{
 			Diff = -Diff;
 		}
 
 		float NewValue = Radius * (1.0f + Diff);
-
 		if (bIncrease)
 		{
 			NewValue = FMath::Max(NewValue, Radius + 1.0f);
@@ -3538,7 +3538,7 @@ ALandscape* FEdModeLandscape::ChangeComponentSetting(int32 NumComponentsX, int32
 					NewMaxY = NewMinY + NewVertsY - 1;
 
 					// offset landscape to component boundary
-					LandscapeOffset = FVector(NewMinX, NewMinY, 0) * OldLandscape->GetActorScale();
+					LandscapeOffset = OldLandscape->GetActorTransform().TransformVector(FVector(NewMinX, NewMinY, 0));
 					LandscapeOffsetQuads = FIntPoint(NewMinX, NewMinY);
 				}
 
@@ -3707,6 +3707,9 @@ ALandscape* FEdModeLandscape::ChangeComponentSetting(int32 NumComponentsX, int32
 			NewLandscape->bFillCollisionUnderLandscapeForNavmesh = OldLandscape->bFillCollisionUnderLandscapeForNavmesh;
 			NewLandscape->NavigationGeometryGatheringMode = OldLandscape->NavigationGeometryGatheringMode;
 			NewLandscape->bUseLandscapeForCullingInvisibleHLODVertices = OldLandscape->bUseLandscapeForCullingInvisibleHLODVertices;
+			NewLandscape->NonNaniteVirtualShadowMapConstantDepthBias = OldLandscape->NonNaniteVirtualShadowMapConstantDepthBias;
+			NewLandscape->NonNaniteVirtualShadowMapInvalidationHeightErrorThreshold = OldLandscape->NonNaniteVirtualShadowMapInvalidationHeightErrorThreshold;
+			NewLandscape->NonNaniteVirtualShadowMapInvalidationScreenSizeLimit = OldLandscape->NonNaniteVirtualShadowMapInvalidationScreenSizeLimit;
 
 			NewLandscape->BodyInstance.SetCollisionProfileName(OldLandscape->BodyInstance.GetCollisionProfileName());
 			if (NewLandscape->BodyInstance.DoesUseCollisionProfile() == false)
@@ -3810,9 +3813,14 @@ ALandscape* FEdModeLandscape::ChangeComponentSetting(int32 NumComponentsX, int32
 
 							if (NewCollisionComponent && FBoxSphereBounds::BoxesIntersect(NewCollisionComponent->Bounds, OldCollisionComponent->Bounds))
 							{
+								// only transfer instances overlapping the new box in x,y
 								FBox Box = NewCollisionComponent->Bounds.GetBox();
-								Box.Min.Z = -WORLD_MAX;
-								Box.Max.Z = WORLD_MAX;
+								FBox OldBox = OldCollisionComponent->Bounds.GetBox();
+
+								// but allow just about any Z (expand old bounds by max extent)
+								double Extent = OldBox.GetExtent().GetMax();
+								Box.Min.Z = OldBox.Min.Z - Extent;
+								Box.Max.Z = OldBox.Max.Z + Extent;
 
 								AInstancedFoliageActor::MoveInstancesToNewComponent(World, OldCollisionComponent, Box, NewCollisionComponent);
 							}

@@ -12,6 +12,7 @@
 #include "Animation/AnimNotifyEndDataContext.h"
 #include "Animation/Skeleton.h"
 #include "Logging/MessageLog.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/FrameworkObjectVersion.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
 #include "Animation/AnimationPoseData.h"
@@ -31,6 +32,7 @@
 
 #include "Animation/AnimationSettings.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
+#include "UObject/UObjectThreadContext.h"
 
 DEFINE_LOG_CATEGORY(LogAnimMarkerSync);
 CSV_DECLARE_CATEGORY_MODULE_EXTERN(ENGINE_API, Animation);
@@ -138,10 +140,8 @@ void UAnimSequenceBase::PostLoad()
 		    ValidateModel();
 			if (UObject* DataModelObject = DataModelInterface.GetObject())
 			{
-				if (DataModelObject->HasAnyFlags(RF_NeedPostLoad | RF_NeedPostLoadSubobjects))
-				{
-					DataModelObject->ConditionalPostLoad();
-				}
+				DataModelObject->ConditionalPostLoad();
+				DataModelObject->ConditionalPostLoadSubobjects();
 			}
 		    GetController();
 		    BindToModelModificationEvent();
@@ -299,7 +299,7 @@ void UAnimSequenceBase::PostDuplicate(EDuplicateMode::Type DuplicateMode)
 	Super::PostDuplicate(DuplicateMode);
 
 #if WITH_EDITOR
-	checkf(DataModelInterface.GetObject()->GetOuter() == this, TEXT("Animation Data Model interface has incorrect outer, expected %s - found %f"), *this->GetName(), *DataModelInterface.GetObject()->GetOuter()->GetName());
+	checkf(DataModelInterface.GetObject()->GetOuter() == this, TEXT("Animation Data Model interface has incorrect outer, expected %s - found %s"), *this->GetName(), *DataModelInterface.GetObject()->GetOuter()->GetName());
 	BindToModelModificationEvent();
 #endif // WITH_EDITOR
 }
@@ -419,24 +419,31 @@ void UAnimSequenceBase::GetAnimNotifies(const float& StartTime, const float& Del
 	float PreviousPosition = StartTime;
 	float CurrentPosition = StartTime;
 	float DesiredDeltaMove = DeltaTime;
+	const float PlayLength = GetPlayLength();
 
-	do 
+	// previous behaviour could get the same notify multiple times  - support this within reasonable limits
+	uint32_t MaxLoopCount = 2;
+	if (PlayLength > 0.0f && FMath::Abs(DeltaTime) > PlayLength)
+	{
+		MaxLoopCount = FMath::Clamp(uint32_t(DesiredDeltaMove / PlayLength), 2, 1000);
+	}
+
+	for (uint32_t i = 0; i < MaxLoopCount; i++)
 	{
 		// Disable looping here. Advance to desired position, or beginning / end of animation
-		const ETypeAdvanceAnim AdvanceType = FAnimationRuntime::AdvanceTime(false, DesiredDeltaMove, CurrentPosition, GetPlayLength());
+		const ETypeAdvanceAnim AdvanceType = FAnimationRuntime::AdvanceTime(false, DesiredDeltaMove, CurrentPosition, PlayLength);
 
 		// Verify position assumptions
-		ensureMsgf(bPlayingBackwards ? (CurrentPosition <= PreviousPosition) : (CurrentPosition >= PreviousPosition), TEXT("in Animation %s(Skeleton %s) : bPlayingBackwards(%d), PreviousPosition(%0.2f), Current Position(%0.2f)"), 
+		ensureMsgf(bPlayingBackwards ? (CurrentPosition <= PreviousPosition) : (CurrentPosition >= PreviousPosition), TEXT("in Animation %s(Skeleton %s) : bPlayingBackwards(%d), PreviousPosition(%0.2f), Current Position(%0.2f)"),
 			*GetName(), *GetNameSafe(GetSkeleton()), bPlayingBackwards, PreviousPosition, CurrentPosition);
-		
+
 		GetAnimNotifiesFromDeltaPositions(PreviousPosition, CurrentPosition, NotifyContext);
-	
+
 		// If we've hit the end of the animation, and we're allowed to loop, keep going.
-		if( (AdvanceType == ETAA_Finished) &&  NotifyContext.TickRecord && NotifyContext.TickRecord->bLooping )
+		if ((AdvanceType == ETAA_Finished) && NotifyContext.TickRecord && NotifyContext.TickRecord->bLooping)
 		{
 			const float ActualDeltaMove = (CurrentPosition - PreviousPosition);
-			DesiredDeltaMove -= ActualDeltaMove; 
-
+			DesiredDeltaMove -= ActualDeltaMove;
 			PreviousPosition = bPlayingBackwards ? GetPlayLength() : 0.f;
 			CurrentPosition = PreviousPosition;
 		}
@@ -444,8 +451,7 @@ void UAnimSequenceBase::GetAnimNotifies(const float& StartTime, const float& Del
 		{
 			break;
 		}
-	} 
-	while( true );
+	}
 }
 
 void UAnimSequenceBase::GetAnimNotifiesFromDeltaPositions(const float& PreviousPosition, const float& CurrentPosition, TArray<const FAnimNotifyEvent *> & OutActiveNotifies) const
@@ -578,6 +584,11 @@ void UAnimSequenceBase::TickAssetPlayer(FAnimTickRecord& Instance, struct FAnimN
 				FAnimationRuntime::AdvanceTime(Instance.bLooping, DeltaTime, CurrentTime, GetPlayLength());
 				UE_LOG(LogAnimMarkerSync, Log, TEXT("Leader (%s) (normal advance)  - PreviousTime (%0.2f), CurrentTime (%0.2f), MoveDelta (%0.2f), Looping (%d) "), *GetName(), PreviousTime, CurrentTime, DeltaTime, Instance.bLooping ? 1 : 0);
 			}
+		}
+		else if (Instance.bCanUseMarkerSync && Context.CanUseMarkerPosition() && !Instance.MarkerTickRecord->IsValid(Instance.bLooping))
+		{
+			// Re-compute marker indices since the asset's tick record is invalid. Get previous and next markers.
+			GetMarkerIndicesForTime(CurrentTime, Instance.bLooping, Context.MarkerTickContext.GetValidMarkerNames(), Instance.MarkerTickRecord->PreviousMarker, Instance.MarkerTickRecord->NextMarker);
 		}
 
 		// Update context's data after ticking.
@@ -870,7 +881,14 @@ EAnimEventTriggerOffsets::Type UAnimSequenceBase::CalculateOffsetForNotify(float
 
 void UAnimSequenceBase::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UAnimSequenceBase::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	// Add notify IDs to a tag list, or a delimiter if we have no notifies.
 	// The delimiter is necessary so we can distinguish between data with no curves and old data, as the asset registry
@@ -885,7 +903,7 @@ void UAnimSequenceBase::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags)
 		}
 	}
 	
-	OutTags.Add(FAssetRegistryTag(USkeleton::AnimNotifyTag, NotifyList, FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(USkeleton::AnimNotifyTag, NotifyList, FAssetRegistryTag::TT_Hidden));
 
 	// Add curve IDs to a tag list, or a delimiter if we have no curves.
 	// The delimiter is necessary so we can distinguish between data with no curves and old data, as the asset registry
@@ -898,7 +916,7 @@ void UAnimSequenceBase::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags)
 			CurveNameList += FString::Printf(TEXT("%s%s"), *Curve.GetName().ToString(), *USkeleton::CurveTagDelimiter);
 		}
 	}
-	OutTags.Add(FAssetRegistryTag(USkeleton::CurveNameTag, CurveNameList, FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(USkeleton::CurveNameTag, CurveNameList, FAssetRegistryTag::TT_Hidden));
 }
 
 uint8* UAnimSequenceBase::FindNotifyPropertyData(int32 NotifyIndex, FArrayProperty*& ArrayProperty)
@@ -1257,6 +1275,8 @@ void UAnimSequenceBase::OnModelModified(const EAnimDataModelNotifyType& NotifyTy
 		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	};
 
+	bool bShouldMarkPackageDirty = !FUObjectThreadContext::Get().IsRoutingPostLoad && NotifyType != EAnimDataModelNotifyType::BracketOpened;
+
 	switch (NotifyType)
 	{
 		case EAnimDataModelNotifyType::SequenceLengthChanged:
@@ -1352,6 +1372,8 @@ void UAnimSequenceBase::OnModelModified(const EAnimDataModelNotifyType& NotifyTy
 
 				const auto LengthChangingNotifies = { EAnimDataModelNotifyType::SequenceLengthChanged, EAnimDataModelNotifyType::FrameRateChanged, EAnimDataModelNotifyType::Reset, EAnimDataModelNotifyType::Populated };
 
+				bShouldMarkPackageDirty = NotifyCollector.WasDataModified();
+
 				if (NotifyCollector.Contains(CurveCopyNotifies) || NotifyCollector.Contains(LengthChangingNotifies))
 				{
 					CopyCurvesFromModel();
@@ -1365,6 +1387,18 @@ void UAnimSequenceBase::OnModelModified(const EAnimDataModelNotifyType& NotifyTy
 			}
 			break;
 		}
+	}
+
+	if (NotifyCollector.IsNotWithinBracket())
+	{
+		if (bShouldMarkPackageDirty)
+		{
+			MarkPackageDirty();
+		}
+	}
+	else if (bShouldMarkPackageDirty)
+	{
+		NotifyCollector.MarkDataModified();
 	}
 }
 

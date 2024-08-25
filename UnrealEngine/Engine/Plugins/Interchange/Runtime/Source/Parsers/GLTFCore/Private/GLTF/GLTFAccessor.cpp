@@ -6,13 +6,43 @@
 
 namespace GLTF
 {
+	FString ToString(const EMeshAttributeType& Type)
+	{
+		switch (Type)
+		{
+		case GLTF::POSITION:
+			return TEXT("POSITION");
+		case GLTF::NORMAL:
+			return TEXT("NORMAL");
+		case GLTF::TANGENT:
+			return TEXT("TANGENT");
+		case GLTF::TEXCOORD_0:
+			return TEXT("TEXCOORD_0");
+		case GLTF::TEXCOORD_1:
+			return TEXT("TEXCOORD_1");
+		case GLTF::COLOR_0:
+			return TEXT("COLOR_0");
+		case GLTF::JOINTS_0:
+			return TEXT("JOINTS_0");
+		case GLTF::WEIGHTS_0:
+			return TEXT("WEIGHTS_0");
+		default:
+			break;
+		}
+		return TEXT("");
+	}
+
 	namespace
 	{
+		static const uint8 ComponentSize[] = { 0, 1, 1, 2, 2, 4, 4 };      // keep in sync with EComponentType
+		static const uint8 ComponentsPerValue[] = { 0, 1, 2, 3, 4, 4, 9, 16 };  // keep in sync with EType
+
+		uint32 GetNumberOfComponents(FAccessor::EType Type)
+		{
+			return ComponentsPerValue[(int)Type];
+		}
 		uint32 GetElementSize(FAccessor::EType Type, FAccessor::EComponentType ComponentType)
 		{
-			static const uint8 ComponentSize[]      = {0, 1, 1, 2, 2, 4, 4};      // keep in sync with EComponentType
-			static const uint8 ComponentsPerValue[] = {0, 1, 2, 3, 4, 4, 9, 16};  // keep in sync with EType
-
 			static_assert(
 			    (int)FAccessor::EType::Unknown == 0 && ((int)FAccessor::EType::Count) == (sizeof(ComponentsPerValue) / sizeof(ComponentsPerValue[0])),
 			    "EType doesn't match!");
@@ -292,7 +322,7 @@ namespace GLTF
 		// Copy data items that don't need conversion/expansion(i.e. Vec3 to Vec3, uint8 to uint8(not uint16)
 		// but including normalized from fixed-point types
 		template<typename ItemType, uint32 ItemElementCount>
-		void CopyWithoutConversion(const FValidAccessor& Accessor, ItemType* Buffer)
+		void CopyWithoutConversion(const FAccessor& Accessor, ItemType* Buffer)
 		{
 			CopyWithoutConversion<ItemType, ItemElementCount>(Accessor.ByteStride, Accessor.ComponentType, Accessor.bNormalized, Accessor.Count, Accessor.BufferView, Accessor.ByteOffset, Buffer);
 		}
@@ -355,7 +385,8 @@ namespace GLTF
 		TArray<uint32> AcquireUnsignedIntArray(const uint32 Count, const FBufferView& BufferView, const uint64 ByteOffset, FAccessor::EComponentType ComponentType)
 		{
 			TArray<uint32> ValueBuffer;
-			ValueBuffer.SetNumUninitialized(Count, false);
+
+			ValueBuffer.SetNumUninitialized(Count, EAllowShrinking::No);
 
 			FillUnsignedIntArray(BufferView, ByteOffset, ComponentType, Count, ValueBuffer.GetData());
 
@@ -497,68 +528,13 @@ namespace GLTF
 		}
 	}
 	
-	FAccessor::FSparse::FIndices::FIndices(uint32 InCount, const FBufferView& InBufferView, uint64 InByteOffset, EComponentType InComponentType)
+	FAccessor::FSparse::FIndices::FIndices(uint32 InCount, FBufferView& InBufferView, uint64 InByteOffset, EComponentType InComponentType)
 		: Count(InCount)
 		, BufferView(InBufferView)
 		, ByteOffset(InByteOffset)
 		, ComponentType(InComponentType)
 	{
 	}
-		
-
-	FAccessor::FAccessor(uint32 InCount, EType InType, EComponentType InCompType, bool bInNormalized, const FSparse& InSparse)
-	    : Count(InCount)
-	    , Type(InType)
-	    , ComponentType(InCompType)
-	    , bNormalized(bInNormalized)
-		, bQuantized(false)
-		, Sparse(InSparse)
-	{
-	}
-
-	uint32 FAccessor::GetUnsignedInt(uint32 Index) const
-	{
-		return 0;
-	}
-
-	void FAccessor::GetUnsignedInt16x4(uint32 Index, uint16 Values[4]) const {}
-
-	float FAccessor::GetFloat(uint32 Index) const
-	{
-		return 0.f;
-	}
-
-	FVector2D FAccessor::GetVec2(uint32 Index) const
-	{
-		return FVector2D::ZeroVector;
-	}
-
-	FVector FAccessor::GetVec3(uint32 Index) const
-	{
-		return FVector::ZeroVector;
-	}
-
-	FVector4 FAccessor::GetVec4(uint32 Index) const
-	{
-		return FVector4();
-	}
-
-	FMatrix FAccessor::GetMat4(uint32 Index) const
-	{
-		return FMatrix::Identity;
-	}
-
-	void FAccessor::GetUnsignedIntArray(uint32* Buffer) const {}
-
-	void FAccessor::GetFloatArray(float* Buffer) const {}
-
-	void FAccessor::GetVec2Array(FVector2f* Buffer) const {}
-
-	void FAccessor::GetVec3Array(FVector3f* Buffer) const {}
-
-	void FAccessor::GetVec4Array(FVector4f* Buffer) const {}
-
-	void FAccessor::GetMat4Array(FMatrix44f* Buffer) const {}
 
 	void FAccessor::GetCoordArray(FVector3f* Buffer) const
 	{
@@ -584,128 +560,133 @@ namespace GLTF
 		}
 	}
 
-	bool FAccessor::CheckAccessorTypeForDataType(EDataType DataType, bool bMorphTargetProperty) const
+	bool FAccessor::CheckAccessorTypeForDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const
 	{
-		switch (DataType)
+		switch (MeshAttributeType)
 		{
-		case GLTF::FAccessor::EDataType::Position:
-		case GLTF::FAccessor::EDataType::Normal:
-			return Type == FAccessor::EType::Vec3;
-		case GLTF::FAccessor::EDataType::Tangent:
-			return (!bMorphTargetProperty && Type == FAccessor::EType::Vec4) || (bMorphTargetProperty && Type == FAccessor::EType::Vec3);
-		case GLTF::FAccessor::EDataType::Texcoord:
-			return Type == FAccessor::EType::Vec2;
-		case GLTF::FAccessor::EDataType::Color:
-			return Type == FAccessor::EType::Vec3 || Type == FAccessor::EType::Vec4;
-		case GLTF::FAccessor::EDataType::Joints:
-		case GLTF::FAccessor::EDataType::Weights:
-			return Type == FAccessor::EType::Vec4;
-		default:
-			ensure(false);
-			break;
+			case GLTF::EMeshAttributeType::POSITION:
+			case GLTF::EMeshAttributeType::NORMAL:
+				return Type == FAccessor::EType::Vec3;
+			case GLTF::EMeshAttributeType::TANGENT:
+				return (!bMorphTargetProperty && Type == FAccessor::EType::Vec4) || (bMorphTargetProperty && Type == FAccessor::EType::Vec3);
+			case GLTF::EMeshAttributeType::TEXCOORD_0:
+			case GLTF::EMeshAttributeType::TEXCOORD_1:
+				return Type == FAccessor::EType::Vec2;
+			case GLTF::EMeshAttributeType::COLOR_0:
+				return Type == FAccessor::EType::Vec3 || Type == FAccessor::EType::Vec4;
+			case GLTF::EMeshAttributeType::JOINTS_0:
+			case GLTF::EMeshAttributeType::WEIGHTS_0:
+				return Type == FAccessor::EType::Vec4;
+			default:
+				ensure(false);
+				break;
 		}
 
 		return false;
 	}
 
-	bool FAccessor::CheckNonQuantizedComponentTypeForDataType(EDataType DataType, bool bMorphTargetProperty) const
+	bool FAccessor::CheckNonQuantizedComponentTypeForDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const
 	{
 		if (!bMorphTargetProperty)
 		{
 			//Non Morph Target:
-			switch (DataType)
+			switch (MeshAttributeType)
 			{
-			case GLTF::FValidAccessor::EDataType::Position:
-			case GLTF::FValidAccessor::EDataType::Normal:
-			case GLTF::FValidAccessor::EDataType::Tangent:
-				return !bNormalized && ComponentType == FAccessor::EComponentType::F32;
-			case GLTF::FValidAccessor::EDataType::Texcoord:
-			case GLTF::FValidAccessor::EDataType::Color:
-				return (!bNormalized && ComponentType == FAccessor::EComponentType::F32) 
-					|| (bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
-			case GLTF::FValidAccessor::EDataType::Joints:
-				return (!bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
-			case GLTF::FValidAccessor::EDataType::Weights:
-				return (!bNormalized && ComponentType == FAccessor::EComponentType::F32)
-					|| (bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
-			default:
-				ensure(false);
-				break;
+				case GLTF::EMeshAttributeType::POSITION:
+				case GLTF::EMeshAttributeType::NORMAL:
+				case GLTF::EMeshAttributeType::TANGENT:
+					return !bNormalized && ComponentType == FAccessor::EComponentType::F32;
+				case GLTF::EMeshAttributeType::TEXCOORD_0:
+				case GLTF::EMeshAttributeType::TEXCOORD_1:
+				case GLTF::EMeshAttributeType::COLOR_0:
+					return (!bNormalized && ComponentType == FAccessor::EComponentType::F32) 
+						|| (bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
+				case GLTF::EMeshAttributeType::JOINTS_0:
+					return (!bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
+				case GLTF::EMeshAttributeType::WEIGHTS_0:
+					return (!bNormalized && ComponentType == FAccessor::EComponentType::F32)
+						|| (bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
+				default:
+					ensure(false);
+					break;
 			}
 		}
 		else
 		{
 			//Morph Target:
-			switch (DataType)
+			switch (MeshAttributeType)
 			{
-			case GLTF::FValidAccessor::EDataType::Position:
-			case GLTF::FValidAccessor::EDataType::Normal:
-			case GLTF::FValidAccessor::EDataType::Tangent:
-				return !bNormalized && ComponentType == FAccessor::EComponentType::F32;
-			case GLTF::FValidAccessor::EDataType::Texcoord:
-			case GLTF::FValidAccessor::EDataType::Color:
-				return (!bNormalized && ComponentType == FAccessor::EComponentType::F32)
-					|| (bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16 || ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
-			default:
-				ensure(false);
-				break;
+				case GLTF::EMeshAttributeType::POSITION:
+				case GLTF::EMeshAttributeType::NORMAL:
+				case GLTF::EMeshAttributeType::TANGENT:
+					return !bNormalized && ComponentType == FAccessor::EComponentType::F32;
+				case GLTF::EMeshAttributeType::TEXCOORD_0:
+				case GLTF::EMeshAttributeType::TEXCOORD_1:
+				case GLTF::EMeshAttributeType::COLOR_0:
+					return (!bNormalized && ComponentType == FAccessor::EComponentType::F32)
+						|| (bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16 || ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
+				default:
+					ensure(false);
+					break;
 			}
 		}
 
 		return false;
 	}
 
-	bool FAccessor::CheckQuantizedComponentTypeForDataType(EDataType DataType, bool bMorphTargetProperty) const
+	bool FAccessor::CheckQuantizedComponentTypeForDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const
 	{
 		if (!bMorphTargetProperty)
 		{
 			//Non Morph Target:
-			switch (DataType)
+			switch (MeshAttributeType)
 			{
-			case GLTF::FValidAccessor::EDataType::Position:
-				return ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::S16 || ComponentType == FAccessor::EComponentType::U16;
-			case GLTF::FValidAccessor::EDataType::Normal:
-			case GLTF::FValidAccessor::EDataType::Tangent:
-				return bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16);
-			case GLTF::FValidAccessor::EDataType::Texcoord:
-				return (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16)
-					|| (!bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
-			default:
-				ensure(false);
-				break;
+				case GLTF::EMeshAttributeType::POSITION:
+					return ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::S16 || ComponentType == FAccessor::EComponentType::U16;
+				case GLTF::EMeshAttributeType::NORMAL:
+				case GLTF::EMeshAttributeType::TANGENT:
+					return bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16);
+				case GLTF::EMeshAttributeType::TEXCOORD_0:
+				case GLTF::EMeshAttributeType::TEXCOORD_1:
+					return (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16)
+						|| (!bNormalized && (ComponentType == FAccessor::EComponentType::U8 || ComponentType == FAccessor::EComponentType::U16));
+				default:
+					ensure(false);
+					break;
 			}
 		}
 		else
 		{
 			//Morph Target:
-			switch (DataType)
+			switch (MeshAttributeType)
 			{
-			case GLTF::FValidAccessor::EDataType::Position:
-				return ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16;
-			case GLTF::FValidAccessor::EDataType::Normal:
-			case GLTF::FValidAccessor::EDataType::Tangent:
-				return bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16);
-			case GLTF::FValidAccessor::EDataType::Texcoord:
-				return !bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16);
-			default:
-				ensure(false);
-				break;
+				case GLTF::EMeshAttributeType::POSITION:
+					return ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16;
+				case GLTF::EMeshAttributeType::NORMAL:
+				case GLTF::EMeshAttributeType::TANGENT:
+					return bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16);
+				case GLTF::EMeshAttributeType::TEXCOORD_0:
+				case GLTF::EMeshAttributeType::TEXCOORD_1:
+					return !bNormalized && (ComponentType == FAccessor::EComponentType::S8 || ComponentType == FAccessor::EComponentType::S16);
+				default:
+					ensure(false);
+					break;
 			}
 		}
 
 		return false;
 	}
 
-	bool FAccessor::IsValidDataType(EDataType DataType, bool bMorphTargetProperty) const
+	bool FAccessor::IsValidDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const
 	{
 		//Check Accessor Type restrictions:
-		if (!CheckAccessorTypeForDataType(DataType, bMorphTargetProperty))
+		if (!CheckAccessorTypeForDataType(MeshAttributeType, bMorphTargetProperty))
 		{
 			return false;
 		}
 
 		//Check Component Type restrictions (non-quantized) first:
-		if (CheckNonQuantizedComponentTypeForDataType(DataType, bMorphTargetProperty))
+		if (CheckNonQuantizedComponentTypeForDataType(MeshAttributeType, bMorphTargetProperty))
 		{
 			return true;
 		}
@@ -713,7 +694,7 @@ namespace GLTF
 		//Check quantized Component Type restrictions:
 		if (bQuantized)
 		{
-			if (CheckQuantizedComponentTypeForDataType(DataType, bMorphTargetProperty))
+			if (CheckQuantizedComponentTypeForDataType(MeshAttributeType, bMorphTargetProperty))
 			{
 				return true;
 			}
@@ -723,7 +704,7 @@ namespace GLTF
 	}
 
 	//Sparse related helpers:
-	void FValidAccessor::UpdateUnsignedIntWithSparse(uint32 Index, uint32& Data) const
+	void FAccessor::UpdateUnsignedIntWithSparse(uint32 Index, uint32& Data) const
 	{
 		if (Sparse.bHasSparse)
 		{
@@ -739,7 +720,7 @@ namespace GLTF
 			}
 		}
 	}
-	void FValidAccessor::UpdateUnsignedInt16x4WithSparse(uint32 Index, uint16 Data[4]) const
+	void FAccessor::UpdateUnsignedInt16x4WithSparse(uint32 Index, uint16 Data[4]) const
 	{
 		if (Sparse.bHasSparse)
 		{
@@ -759,7 +740,7 @@ namespace GLTF
 		}
 	}
 
-	void FValidAccessor::UpdateFloatWithSparse(uint32 Index, float& Data) const
+	void FAccessor::UpdateFloatWithSparse(uint32 Index, float& Data) const
 	{
 		if (Sparse.bHasSparse)
 		{
@@ -775,7 +756,7 @@ namespace GLTF
 			}
 		}
 	}
-	void FValidAccessor::UpdateVec2WithSparse(uint32 Index, FVector2D& Data) const
+	void FAccessor::UpdateVec2WithSparse(uint32 Index, FVector2D& Data) const
 	{
 		if (Sparse.bHasSparse)
 		{
@@ -791,7 +772,7 @@ namespace GLTF
 			}
 		}
 	}
-	void FValidAccessor::UpdateVec3WithSparse(uint32 Index, FVector& Data) const
+	void FAccessor::UpdateVec3WithSparse(uint32 Index, FVector& Data) const
 	{
 		if (Sparse.bHasSparse)
 		{
@@ -807,7 +788,7 @@ namespace GLTF
 			}
 		}
 	}
-	void FValidAccessor::UpdateVec4WithSparse(uint32 Index, FVector4& Data) const
+	void FAccessor::UpdateVec4WithSparse(uint32 Index, FVector4& Data) const
 	{
 		if (Sparse.bHasSparse)
 		{
@@ -824,7 +805,7 @@ namespace GLTF
 		}
 	}
 
-	void FValidAccessor::UpdateMat4WithSparse(uint32 Index, FMatrix& Data) const
+	void FAccessor::UpdateMat4WithSparse(uint32 Index, FMatrix& Data) const
 	{
 		if (Sparse.bHasSparse)
 		{
@@ -841,14 +822,14 @@ namespace GLTF
 		}
 	}
 
-	void FValidAccessor::UpdateFloatArrayWithSparse(float* Data) const
+	void FAccessor::UpdateFloatArrayWithSparse(float* Data) const
 	{
 		if (Sparse.bHasSparse && Sparse.Count)
 		{
 			TArray<uint32> IndicesData = AcquireUnsignedIntArray(Sparse.Count, Sparse.Indices.BufferView, Sparse.Indices.ByteOffset, Sparse.Indices.ComponentType);
 
 			TArray<float> ValueBuffer;
-			ValueBuffer.SetNumUninitialized(Sparse.Count, false);
+			ValueBuffer.SetNumUninitialized(Sparse.Count, EAllowShrinking::No);
 
 			if (FillFloatArray(bNormalized, Sparse.Values.BufferView, Sparse.Values.ByteOffset, ComponentType, ByteStride, Sparse.Count, ValueBuffer.GetData()))
 			{
@@ -865,14 +846,14 @@ namespace GLTF
 			}
 		}
 	}
-	void FValidAccessor::UpdateUnsignedIntArrayWithSparse(uint32* Data) const
+	void FAccessor::UpdateUnsignedIntArrayWithSparse(uint32* Data) const
 	{
 		if (Sparse.bHasSparse && Sparse.Count)
 		{
 			TArray<uint32> IndicesData = AcquireUnsignedIntArray(Sparse.Count, Sparse.Indices.BufferView, Sparse.Indices.ByteOffset, Sparse.Indices.ComponentType);
 
 			TArray<uint32> ValueBuffer;
-			ValueBuffer.SetNumUninitialized(Sparse.Count, false);
+			ValueBuffer.SetNumUninitialized(Sparse.Count, EAllowShrinking::No);
 
 			if (FillUnsignedIntArray(Sparse.Values.BufferView, Sparse.Values.ByteOffset, ComponentType, Count, ValueBuffer.GetData()))
 			{
@@ -891,14 +872,14 @@ namespace GLTF
 	}
 
 	template<typename ItemType, uint32 ItemElementCount>
-	void FValidAccessor::UpdateArrayWithSparse(ItemType* Data) const
+	void FAccessor::UpdateArrayWithSparse(ItemType* Data) const
 	{
 		if (Sparse.bHasSparse && Sparse.Count)
 		{
 			TArray<uint32> IndicesData = AcquireUnsignedIntArray(Sparse.Count, Sparse.Indices.BufferView, Sparse.Indices.ByteOffset, Sparse.Indices.ComponentType);
 
 			TArray<ItemType> ValueBuffer;
-			ValueBuffer.SetNumUninitialized(Sparse.Count, false);
+			ValueBuffer.SetNumUninitialized(Sparse.Count, EAllowShrinking::No);
 
 			CopyWithoutConversion<ItemType, ItemElementCount>(ByteStride, ComponentType, bNormalized, Sparse.Count, Sparse.Values.BufferView, Sparse.Values.ByteOffset, ValueBuffer.GetData());
 
@@ -916,23 +897,69 @@ namespace GLTF
 	}
 
 	//
-	FValidAccessor::FValidAccessor(FBufferView& InBufferView, uint64 InOffset, uint32 InCount, EType InType, EComponentType InCompType,
-	                               bool bInNormalized, const FSparse& InSparse)
-	    : FAccessor(InCount, InType, InCompType, bInNormalized, InSparse)
+	FAccessor::FAccessor()
+		: AccessorIndex(INDEX_NONE)
+		, Count(0)
+		, Type(EType::Unknown)
+		, ComponentType(EComponentType::None)
+		, bNormalized(false)
+		, bQuantized(false)
+		, Sparse()
+		, BufferView()
+		, ByteOffset(0)
+		, NumberOfComponents(0)
+		, ElementSize(0)
+		, ByteStride(0)
+	{
+	}
+
+	FAccessor::FAccessor(uint32 InAccessorIndex,
+		FBufferView& InBufferView, uint64 InOffset, 
+		uint32 InCount, EType InType, EComponentType InCompType, bool bInNormalized, 
+		const FSparse& InSparse)
+		: AccessorIndex(InAccessorIndex)
+		, Count(InCount)
+		, Type(InType)
+		, ComponentType(InCompType)
+		, bNormalized(bInNormalized)
+		, bQuantized(false)
+		, Sparse(InSparse)
 	    , BufferView(InBufferView)
 	    , ByteOffset(InOffset)
+		, NumberOfComponents(GetNumberOfComponents(Type))
 	    , ElementSize(GetElementSize(Type, ComponentType))
 		// BufferView.ByteStride zero means elements are tightly packed
 		, ByteStride(InBufferView.ByteStride ? InBufferView.ByteStride : ElementSize)
 	{
 	}
 
-	bool FValidAccessor::IsValid() const
+	FAccessor::FAccessor(
+		uint32 InAccessorIndex,
+		uint32 InCount, EType InType, EComponentType InCompType, bool bInNormalized, 
+		const FSparse& InSparse)
+		: AccessorIndex(InAccessorIndex)
+		, Count(InCount)
+		, Type(InType)
+		, ComponentType(InCompType)
+		, bNormalized(bInNormalized)
+		, bQuantized(false)
+		, Sparse(InSparse)
+		, BufferView()
+		, ByteOffset(0)
+		, NumberOfComponents(GetNumberOfComponents(Type))
+		, ElementSize(GetElementSize(Type, ComponentType))
+		// BufferView.ByteStride zero means elements are tightly packed
+		, ByteStride(ElementSize)
+	{
+
+	}
+
+	bool FAccessor::IsValid() const
 	{
 		return BufferView.IsValid();
 	}
 
-	FMD5Hash FValidAccessor::GetHash() const
+	FMD5Hash FAccessor::GetHash() const
 	{
 		if (!IsValid())
 		{
@@ -968,7 +995,7 @@ namespace GLTF
 		return Hash;
 	}
 
-	uint32 FValidAccessor::GetUnsignedInt(uint32 Index) const
+	uint32 FAccessor::GetUnsignedInt(uint32 Index) const
 	{
 		// should be Scalar, not bNormalized, unsigned integer (8, 16 or 32 bit)
 
@@ -989,7 +1016,7 @@ namespace GLTF
 		return 0;
 	}
 
-	void FValidAccessor::GetUnsignedInt16x4(uint32 Index, uint16 Values[4]) const
+	void FAccessor::GetUnsignedInt16x4(uint32 Index, uint16 Values[4]) const
 	{
 		// should be Vec4, not bNormalized, unsigned integer (8 or 16 bit)
 
@@ -1007,7 +1034,7 @@ namespace GLTF
 		ensure(false);
 	}
 
-	float FValidAccessor::GetFloat(uint32 Index) const
+	float FAccessor::GetFloat(uint32 Index) const
 	{
 		// should be Scalar float
 
@@ -1028,7 +1055,7 @@ namespace GLTF
 		return 0.f;
 	}
 
-	FVector2D FValidAccessor::GetVec2(uint32 Index) const
+	FVector2D FAccessor::GetVec2(uint32 Index) const
 	{
 		// Spec-defined attributes (TEXCOORD_0, TEXCOORD_1) use only these formats:
 		// - F32
@@ -1053,7 +1080,7 @@ namespace GLTF
 		return FVector2D::ZeroVector;
 	}
 
-	FVector FValidAccessor::GetVec3(uint32 Index) const
+	FVector FAccessor::GetVec3(uint32 Index) const
 	{
 		// Spec-defined attributes (POSITION, NORMAL, COLOR_0) use only these formats:
 		// - F32
@@ -1078,7 +1105,7 @@ namespace GLTF
 		return FVector::ZeroVector;
 	}
 
-	FVector4 FValidAccessor::GetVec4(uint32 Index) const
+	FVector4 FAccessor::GetVec4(uint32 Index) const
 	{
 		// Spec-defined attributes (TANGENT, COLOR_0) use only these formats:
 		// - F32
@@ -1103,7 +1130,7 @@ namespace GLTF
 		return FVector4();
 	}
 
-	FMatrix FValidAccessor::GetMat4(uint32 Index) const
+	FMatrix FAccessor::GetMat4(uint32 Index) const
 	{
 		// Focus on F32 for now, add other types as needed.
 
@@ -1124,7 +1151,7 @@ namespace GLTF
 		return FMatrix();
 	}
 
-	void FValidAccessor::GetUnsignedIntArray(uint32* Buffer) const
+	void FAccessor::GetUnsignedIntArray(uint32* Buffer) const
 	{
 		if (Type == EType::Scalar && !bNormalized)
 		{
@@ -1138,7 +1165,7 @@ namespace GLTF
 		ensure(false);
 	}
 
-	void FValidAccessor::GetFloatArray(float* Buffer) const
+	void FAccessor::GetFloatArray(float* Buffer) const
 	{
 		if (Type == EType::Scalar)
 		{
@@ -1152,7 +1179,7 @@ namespace GLTF
 		ensure(false);
 	}
 
-	void FValidAccessor::GetVec2Array(FVector2f* Buffer) const
+	void FAccessor::GetVec2Array(FVector2f* Buffer) const
 	{
 		if (!ensure(Type == EType::Vec2))
 		{
@@ -1162,7 +1189,7 @@ namespace GLTF
 		UpdateArrayWithSparse<FVector2f, 2>(Buffer);
 	}
 
-	void FValidAccessor::GetVec3Array(FVector3f* Buffer) const
+	void FAccessor::GetVec3Array(FVector3f* Buffer) const
 	{
 		if (!ensure(Type == EType::Vec3))
 		{
@@ -1172,7 +1199,7 @@ namespace GLTF
 		UpdateArrayWithSparse<FVector3f, 3>(Buffer);
 	}
 
-	void FValidAccessor::GetVec4Array(FVector4f* Buffer) const
+	void FAccessor::GetVec4Array(FVector4f* Buffer) const
 	{
 		if (!ensure(Type == EType::Vec4))
 		{
@@ -1182,7 +1209,7 @@ namespace GLTF
 		UpdateArrayWithSparse<FVector4f, 4>(Buffer);
 	}
 
-	void FValidAccessor::GetMat4Array(FMatrix44f* Buffer) const
+	void FAccessor::GetMat4Array(FMatrix44f* Buffer) const
 	{
 		if (Type == EType::Mat4 && ComponentType == EComponentType::F32)  // strict format match, unlike GPU shader fetch
 		{
@@ -1197,21 +1224,65 @@ namespace GLTF
 		ensure(false);
 	}
 
-	inline const uint8* FValidAccessor::DataAt(uint32 Index) const
+	const uint8* FAccessor::DataAt(uint32 Index) const
 	{
 		const uint32 Offset = Index * ByteStride;
 		return BufferView.DataAt(Offset + ByteOffset);
 	}
 
-	//
-
-	bool FVoidAccessor::IsValid() const
+	void FAccessor::GetUnsignedIntArray(TArray<uint32>& Buffer) const
 	{
-		return false;
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetUnsignedIntArray(Buffer.GetData());
 	}
 
-	FMD5Hash FVoidAccessor::GetHash() const
+	void FAccessor::GetFloatArray(TArray<float>& Buffer) const
 	{
-		return FMD5Hash();
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetFloatArray(Buffer.GetData());
+	}
+
+	void FAccessor::GetVec2Array(TArray<FVector2f>& Buffer) const
+	{
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetVec2Array(Buffer.GetData());
+	}
+
+	void FAccessor::GetVec3Array(TArray<FVector3f>& Buffer) const
+	{
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetVec3Array(Buffer.GetData());
+	}
+
+	void FAccessor::GetCoordArray(TArray<FVector3f>& Buffer) const
+	{
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetCoordArray(Buffer.GetData());
+	}
+
+	void FAccessor::GetVec4Array(TArray<FVector4f>& Buffer) const
+	{
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetVec4Array(Buffer.GetData());
+	}
+
+	void FAccessor::GetQuatArray(TArray<FVector4f>& Buffer) const
+	{
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetQuatArray(Buffer.GetData());
+	}
+
+	void FAccessor::GetMat4Array(TArray<FMatrix44f>& Buffer) const
+	{
+		if (IsValid())
+			Buffer.SetNumUninitialized(Count, EAllowShrinking::No);
+		GetMat4Array(Buffer.GetData());
 	}
 }  // namespace GLTF

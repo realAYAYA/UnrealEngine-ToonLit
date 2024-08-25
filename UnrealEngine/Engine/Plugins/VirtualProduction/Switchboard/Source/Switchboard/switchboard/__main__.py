@@ -8,10 +8,10 @@ import signal
 import sys
 import argparse
 
-from PySide2 import QtCore, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 # Build resources
-# "C:\Program Files (x86)\Python37-32\Lib\site-packages\PySide2\pyside2-rcc" -o D:\Switchboard\switchboard\resources.py D:\Switchboard\switchboard\ui\resources.qrc
+# "D:\P4\UE5\Main\Engine\Extras\ThirdPartyNotUE\SwitchboardThirdParty\Python\Scripts\pyside6-rcc" -o "D:\P4\UE5\Main\Engine\Plugins\VirtualProduction\Switchboard\Source\Switchboard\switchboard\resources.py" "D:\P4\UE5\Main\Engine\Plugins\VirtualProduction\Switchboard\Source\Switchboard\switchboard\ui\resources.qrc"
 
 def parse_arguments():
     ''' Parses command line arguments and returns the populated namespace 

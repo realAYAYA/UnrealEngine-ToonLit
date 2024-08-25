@@ -364,7 +364,7 @@ void FSlateClippingManager::PopToStackIndex(int32 Index)
 	const int32 StartIndexToPop = Index + 1;
 	if (ClippingStack.Num() > StartIndexToPop)
 	{
-		ClippingStack.RemoveAt(StartIndexToPop, ClippingStack.Num() - StartIndexToPop, false);
+		ClippingStack.RemoveAt(StartIndexToPop, ClippingStack.Num() - StartIndexToPop, EAllowShrinking::No);
 	}
 }
 

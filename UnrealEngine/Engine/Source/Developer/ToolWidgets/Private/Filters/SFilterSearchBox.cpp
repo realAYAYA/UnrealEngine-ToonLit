@@ -154,9 +154,21 @@ void SFilterSearchBox::Construct( const FArguments& InArgs )
 	OnTextCommitted = InArgs._OnTextCommitted;
 	bShowSearchHistory = InArgs._ShowSearchHistory;
 
-	// Default text shown when there are no items in the search history
-	EmptySearchHistoryText = MakeShareable(new FText(LOCTEXT("EmptySearchHistoryText", "The Search History is Empty")));
-	SearchHistory.Add(EmptySearchHistoryText);
+	if (InArgs._SearchHistory.IsEmpty())
+	{
+		// Default text shown when there are no items in the search history
+		EmptySearchHistoryText = MakeShareable(new FText(LOCTEXT("EmptySearchHistoryText", "The Search History is Empty")));
+		SearchHistory.Add(EmptySearchHistoryText);
+	}
+	else
+	{
+		// Restore search history if supplied
+		SearchHistory.Reserve(InArgs._SearchHistory.Num());
+		for (const FText& SearchText : InArgs._SearchHistory)
+		{
+			SearchHistory.Add(MakeShared<FText>(SearchText));
+		}
+	}
 	
 	ChildSlot
 	[
@@ -233,6 +245,24 @@ void SFilterSearchBox::SetText(const TAttribute< FText >& InNewText)
 FText SFilterSearchBox::GetText() const
 {
 	return SearchBox->GetText();
+}
+
+TArray<FText> SFilterSearchBox::GetSearchHistory() const
+{
+	TArray<FText> Results;
+
+	// If there is only one item, check that it's not the placeholder empty search text
+	if (SearchHistory.Num() == 1 && SearchHistory[0] == EmptySearchHistoryText)
+	{
+		return Results;
+	}
+
+	Results.Reserve(SearchHistory.Num());
+	for (const TSharedPtr<FText>& SearchHistoryText : SearchHistory)
+	{
+		Results.Add(*SearchHistoryText.Get());
+	}
+	return Results;
 }
 
 void SFilterSearchBox::SetError( const FText& InError )

@@ -503,7 +503,11 @@ void UK2Node_VariableSet::ExpandNode(class FKismetCompilerContext& CompilerConte
 			{
 				UClass* OwnerClass = VariableProperty->GetOwnerClass();
 				UFunction* SetFunction = OwnerClass->FindFunctionByName(*SetFunctionName);
-				check(SetFunction);
+				if (!SetFunction)
+				{
+					CompilerContext.MessageLog.Error(*LOCTEXT("MissingSetter", "Setter function not found for @@").ToString(), this);
+					return;
+				}
 
 				UK2Node_CallFunction* CallFuncNode = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(this, SourceGraph);
 				CallFuncNode->SetFromFunction(SetFunction);

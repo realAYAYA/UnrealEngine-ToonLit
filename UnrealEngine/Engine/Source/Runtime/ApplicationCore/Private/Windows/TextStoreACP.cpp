@@ -607,7 +607,7 @@ STDAPI FTextStoreACP::InsertTextAtSelection(DWORD dwFlags, __RPC__in_ecount_full
 		return E_INVALIDARG;
 	}
 
-	FString NewString(cch, pchText);
+	FString NewString = FString::ConstructFromPtrSize(pchText, cch);
 
 	uint32 BeginIndex;
 	uint32 Length;

@@ -46,6 +46,9 @@ struct FReplicationSystemUtil
 	/** Returns the NetHandle for an actor component. The returned handle may be invalid. */
 	ENGINE_API static FNetHandle GetNetHandle(const UActorComponent* SubObject);
 
+	/** Returns the NetHandle for an object. The returned handle may be invalid. */
+	ENGINE_API static FNetHandle GetNetHandle(const UObject* Object);
+
 	/** Begins replication of an actor and all of its registered subobjects. If any ReplicationSystem wants to replicate the actor a NetHandle will be created. */
 	ENGINE_API static void BeginReplication(AActor* Actor, const FActorBeginReplicationParams& Params);
 
@@ -127,6 +130,9 @@ struct FReplicationSystemUtil
 
 	/** Clears any previously set squared cull distance for an actor. This will cause affected code to respect the NetCullDistanceSquared property. */
 	ENGINE_API static void ClearCullDistanceSqrOverride(const AActor* Actor);
+
+	/** Set the poll frequency for an object and its subobjects. */
+	ENGINE_API static void SetPollFrequency(const UObject* Object, float CullDistSqr);
 };
 
 }

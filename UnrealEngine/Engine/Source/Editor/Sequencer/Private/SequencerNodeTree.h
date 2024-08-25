@@ -156,7 +156,10 @@ public:
 	 */
 	FOnUpdated& OnUpdated() { return OnUpdatedDelegate; }
 
-	/** Sorts all nodes and their descendants by category then alphabetically.*/
+	/** Clears all custom sort orders so that sorting will be by category then alphabetically. */
+	void ClearCustomSortOrders();
+
+	/** Sorts all nodes and their descendants*/
 	void SortAllNodesAndDescendants();
 
 	/**
@@ -183,21 +186,6 @@ public:
 	void RemoveLevelFilter(const FString& LevelName);
 	bool IsTrackLevelFilterActive(const FString& LevelName) const;
 
-	void ToggleSelectedNodesSolo();
-	bool IsNodeSolo(const UE::Sequencer::TViewModelPtr<UE::Sequencer::IOutlinerExtension>& InNode) const;
-	
-	/** Returns whether any of the nodes in this tree are marked solo */
-	bool HasSoloNodes() const;
-
-	void ToggleSelectedNodesMute();
-	bool IsNodeMute(const UE::Sequencer::TViewModelPtr<UE::Sequencer::IOutlinerExtension>& InNode) const;
-
-	/** Returns whether any of the currently selected nodes are marked solo */
-	bool IsSelectedNodesSolo() const;
-	
-	/** Returns whether any of the currently selected nodes are muted */
-	bool IsSelectedNodesMute() const;
-
 private:
 
 	/** Returns whether this NodeTree should only display selected nodes */
@@ -217,11 +205,6 @@ private:
 	 * Cleans outdated mute/solo markers
 	 */
 	void CleanupMuteSolo(UMovieScene* MovieScene);
-
-	/**
-	 * Updates mute/solo markers
-	 */
-	void UpdateMuteSolo(UMovieScene* MovieScene);
 
 public:
 
@@ -253,8 +236,5 @@ private:
 
 	bool bFilterUpdateRequested;
 	bool bFilteringOnNodeGroups;
-
-	/** Cached value of whether we have any nodes that should be treated as soloing */
-	bool bHasSoloNodes;
 };
 

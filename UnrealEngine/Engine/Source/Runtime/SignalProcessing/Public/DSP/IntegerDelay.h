@@ -32,7 +32,23 @@ namespace Audio
 		SIGNALPROCESSING_API int32 GetNumDelaySamples() const;
 
 		// Process InSamples, placing delayed versions in OutSamples.
+		FORCEINLINE float ProcessAudioSample(float InSample)
+		{
+			// Update delay line.	
+			DelayLine->AddSamples(&InSample, 1);
+
+			// Copy delayed version to output
+			const float DelayedSample = *(DelayLine->InspectSamples(1 + NumBufferOffsetSamples, NumDelayLineOffsetSamples));
+
+			// Remove unneeded delay line.
+			DelayLine->RemoveSamples(1);
+
+			return DelayedSample;
+		}
+
 		SIGNALPROCESSING_API void ProcessAudio(const Audio::FAlignedFloatBuffer& InSamples, Audio::FAlignedFloatBuffer& OutSamples);
+		// Process InSamples, placing delayed versions in OutSamples.
+		SIGNALPROCESSING_API void ProcessAudio(TArrayView<const float> InSamples, TArrayView<float> OutSamples);
 
 		// Retrieve a copy of the internal delay line.
 		// InNum must be less than or equal to InMaxNumDelaySamples.

@@ -168,8 +168,10 @@ TSharedRef<SWidget> SVariantValueView::MakeVariantValueWidget(const TraceService
 				.OnNavigate_Lambda([ObjectInfo, InValue]()
 				{
 					UObject* Asset = nullptr;
-						
-					UPackage* Package = LoadPackage(NULL, ObjectInfo.PathName, LOAD_NoRedirects);
+					
+					FString PackagePathString = FPackageName::ObjectPathToPackageName(FString(ObjectInfo.PathName));
+
+					UPackage* Package = LoadPackage(NULL, ToCStr(PackagePathString), LOAD_NoRedirects);
 					if (Package)
 					{
 						Package->FullyLoad();

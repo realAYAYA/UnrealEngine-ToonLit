@@ -31,6 +31,7 @@
 #include "UObject/Object.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Masks/SRCProtocolMask.h"
@@ -144,6 +145,7 @@ void SRCPanelExposedField::Construct(const FArguments& InArgs, TWeakPtr<FRemoteC
 		Initialize(FieldPtr->GetId(), InArgs._Preset.Get(), InArgs._LiveMode);
 
 		CachedLabel = FieldPtr->GetLabel();
+		PropertyIdLabel = FieldPtr->PropertyId;
 		EntityId = FieldPtr->GetId();
 
 		if (FieldPtr->FieldType == EExposedFieldType::Property)
@@ -175,6 +177,29 @@ bool SRCPanelExposedField::HasChildren() const
 FName SRCPanelExposedField::GetFieldLabel() const
 {
 	return CachedLabel;
+}
+
+FName SRCPanelExposedField::GetOwnerName() const
+{
+	return CachedOwnerName;
+}
+
+SRCPanelTreeNode::FMakeNodeWidgetArgs SRCPanelExposedField::CreateEntityWidgetInternal(TSharedPtr<SWidget> ValueWidget, TSharedPtr<SWidget> ResetWidget, const FText& OptionalWarningMessage, TSharedRef<SWidget> EditConditionWidget)
+{
+	FMakeNodeWidgetArgs Args = SRCPanelExposedEntity::CreateEntityWidgetInternal(ValueWidget, ResetWidget, OptionalWarningMessage, EditConditionWidget);
+
+	Args.PropertyIdWidget = SNew(SBox)
+		[
+			SNew(SEditableTextBox)
+			.MinDesiredWidth(50.f)
+			.SelectAllTextWhenFocused(true)
+			.RevertTextOnEscape(true)
+			.ClearKeyboardFocusOnCommit(true)
+			.Text_Lambda([this] () { return GetPropertyIdText(); })
+			.OnTextCommitted(this, &SRCPanelExposedField::OnPropertyIdTextCommitted)
+		];
+
+	return Args;
 }
 
 EExposedFieldType SRCPanelExposedField::GetFieldType() const
@@ -540,18 +565,26 @@ TSharedRef<SWidget> SRCPanelExposedField::MakeFieldWidget(const TSharedRef<SWidg
 
 	FText WarningMessage;
 
-	if (GetDefault<URemoteControlSettings>()->bDisplayInEditorOnlyWarnings)
+	if (const TSharedPtr<FRemoteControlField> RCField = GetRemoteControlField().Pin())
 	{
 		bool bIsEditorOnly = false,
             bIsEditableInPackaged = true,
-            bIsCallableInPackaged = true;
+            bIsCallableInPackaged = true,
+			bIsEditableInEditor = true;
 
-		if (const TSharedPtr<FRemoteControlField> RCField = GetRemoteControlField().Pin())
+		FString ErrorTextInEditor;
+		if (RCField->FieldType == EExposedFieldType::Property)
+		{
+			bIsEditableInEditor = StaticCastSharedPtr<FRemoteControlProperty>(RCField)->IsEditableInEditor(&ErrorTextInEditor);
+		}
+
+		FString ErrorTextInPackage;
+		if (GetDefault<URemoteControlSettings>()->bDisplayInEditorOnlyWarnings)
 		{
 			bIsEditorOnly = RCField->IsEditorOnly();
 			if (RCField->FieldType == EExposedFieldType::Property)
 			{
-				bIsEditableInPackaged = StaticCastSharedPtr<FRemoteControlProperty>(RCField)->IsEditableInPackaged();
+				bIsEditableInPackaged = StaticCastSharedPtr<FRemoteControlProperty>(RCField)->IsEditableInPackaged(&ErrorTextInPackage);
 			}
 			else
 			{
@@ -565,9 +598,38 @@ TSharedRef<SWidget> SRCPanelExposedField::MakeFieldWidget(const TSharedRef<SWidg
 			Builder.AppendLine(LOCTEXT("EditorOnlyWarning", "This field will be unavailable in packaged projects."));
 		}
 
+		bool bEditorAndPackagedErrorEquals = false;
 		if (!bIsEditableInPackaged)
 		{
-			Builder.AppendLine(LOCTEXT("NotEditableInPackagedWarning", "This property will not be editable in packaged projects."));
+			if (!bIsEditableInEditor)
+			{
+				const FName PackagedWarning = FName(ErrorTextInPackage);
+				const FName EditorWarning = FName(ErrorTextInEditor);
+				if (PackagedWarning.IsEqual(EditorWarning))
+				{
+					Builder.AppendLine(LOCTEXT("NonEditableInPackagedAndEditorWarning", "Packaged and Editor:"));
+					bEditorAndPackagedErrorEquals = true;
+				}
+			}
+
+			if (!bEditorAndPackagedErrorEquals)
+			{
+				Builder.AppendLine(LOCTEXT("NonEditableInPackagedWarning", "Packaged:"));
+			}
+
+			Builder.AppendLine(ErrorTextInPackage);
+		}
+
+		if (!bIsEditableInEditor && !bEditorAndPackagedErrorEquals)
+		{
+			if (!bIsEditableInPackaged)
+			{
+				// put an empty line between the last error and this
+				Builder.AppendLine();
+			}
+
+			Builder.AppendLine(LOCTEXT("NonEditableInEditorWarning", "Editor:"));
+			Builder.AppendLine(ErrorTextInEditor);
 		}
 
 		if (!bIsCallableInPackaged)
@@ -758,6 +820,36 @@ FReply SRCPanelExposedField::OnClickFunctionButton()
 	}
 
 	return FReply::Handled();
+}
+
+FText SRCPanelExposedField::GetPropertyIdText()
+{
+	if (const TSharedPtr<FRemoteControlField> RCField = WeakField.Pin())
+	{
+		if (RCField->PropertyId != PropertyIdLabel)
+		{
+			PropertyIdLabel = RCField->PropertyId;
+		}
+	}
+	return FText::FromName(PropertyIdLabel);
+}
+
+void SRCPanelExposedField::OnPropertyIdTextCommitted(const FText& InText, ETextCommit::Type InCommitInfo)
+{
+	if (const URemoteControlPreset* RCPreset = Preset.Get())
+	{
+		if (const TSharedPtr<FRemoteControlField> RCField = WeakField.Pin())
+		{
+			const FName NewId = FName(InText.ToString());
+			if (RCField->PropertyId.Compare(NewId) != 0)
+			{
+				RCField->PropertyId = NewId;
+				PropertyIdLabel = NewId;
+				RCPreset->UpdateIdentifiedField(RCField.ToSharedRef());
+				OnPropertyIdRenamed().ExecuteIfBound(NewId);
+			}
+		}
+	}
 }
 
 void SRCPanelFieldChildNode::Construct(const FArguments& InArgs, const TSharedRef<IDetailTreeNode>& InNode, FRCColumnSizeData InColumnSizeData)

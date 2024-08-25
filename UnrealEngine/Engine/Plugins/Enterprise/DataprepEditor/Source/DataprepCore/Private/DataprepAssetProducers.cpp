@@ -8,6 +8,7 @@
 #include "Shared/DataprepCorePrivateUtils.h"
 #include "DataprepCoreUtils.h"
 
+#include "ScopedTransaction.h"
 
 
 #define LOCTEXT_NAMESPACE "DataprepAssetProducers"
@@ -191,51 +192,54 @@ bool UDataprepAssetProducers::RemoveProducer(int32 IndexToRemove)
 
 		// Array of producers superseded by removed producer
 		TArray<int32> ProducersToRevisit;
-		ProducersToRevisit.Reserve( AssetProducers.Num() );
+		ProducersToRevisit.Reserve(AssetProducers.Num());
+
 		{
+			const FScopedTransaction Transaction(LOCTEXT("Producers_RemoveProducer", "Remove Producer"));
+
 			Modify();
 
-			if(UDataprepContentProducer* Producer = AssetProducers[IndexToRemove].Producer)
+			if (UDataprepContentProducer* Producer = AssetProducers[IndexToRemove].Producer)
 			{
-				Producer->GetOnChanged().RemoveAll( this );
+				Producer->GetOnChanged().RemoveAll(this);
 
 				Producer->PreEditChange(nullptr);
 				Producer->Modify();
 
-				DataprepCorePrivateUtils::DeleteRegisteredAsset( Producer );
+				DataprepCorePrivateUtils::DeleteRegisteredAsset(Producer);
 
 				Producer->PostEditChange();
 			}
 
-			AssetProducers.RemoveAt( IndexToRemove );
+			AssetProducers.RemoveAt(IndexToRemove);
 
-			if( AssetProducers.Num() == 1 )
+			if (AssetProducers.Num() == 1)
 			{
 				AssetProducers[0].SupersededBy = INDEX_NONE;
 			}
-			else if(AssetProducers.Num() > 1)
+			else if (AssetProducers.Num() > 1)
 			{
 				// Update value stored in SupersededBy property where applicable
-				for( int32 Index = 0; Index < AssetProducers.Num(); ++Index )
+				for (int32 Index = 0; Index < AssetProducers.Num(); ++Index)
 				{
 					FDataprepAssetProducer& AssetProducer = AssetProducers[Index];
 
-					if( AssetProducer.SupersededBy == IndexToRemove )
+					if (AssetProducer.SupersededBy == IndexToRemove)
 					{
 						AssetProducer.SupersededBy = INDEX_NONE;
-						ProducersToRevisit.Add( Index );
+						ProducersToRevisit.Add(Index);
 					}
-					else if( AssetProducer.SupersededBy > IndexToRemove )
+					else if (AssetProducer.SupersededBy > IndexToRemove)
 					{
 						--AssetProducer.SupersededBy;
 					}
 				}
 			}
 
-			for( int32 ProducerIndex : ProducersToRevisit )
+			for (int32 ProducerIndex : ProducersToRevisit)
 			{
 				bool bLocalChangeAll = false;
-				ValidateProducerChanges( ProducerIndex, bLocalChangeAll );
+				ValidateProducerChanges(ProducerIndex, bLocalChangeAll);
 				bChangeAll |= bLocalChangeAll;
 			}
 		}

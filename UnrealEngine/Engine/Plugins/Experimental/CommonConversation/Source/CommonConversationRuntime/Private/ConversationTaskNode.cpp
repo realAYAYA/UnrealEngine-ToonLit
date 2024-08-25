@@ -127,13 +127,19 @@ FConversationTaskResult UConversationTaskNode::ExecuteTaskNodeWithSideEffects(co
 				}
 			}
 
+			const UConversationDatabase* Graph = nullptr;
+			if (const UConversationInstance* Conversation = InContext.GetActiveConversation())
+			{
+				Graph = Conversation->GetActiveConversationGraph();
+			}
+
 			FConversationParticipants Participants = InContext.GetParticipantsCopy();
 			for (const FConversationParticipantEntry& ParticipantEntry : Participants.List)
 			{
 				if (UConversationParticipantComponent* Component = ParticipantEntry.GetParticipantComponent())
 				{
 					// Notify each client in the conversation
-					Component->ServerNotifyExecuteTaskAndSideEffects(InContext.GetCurrentNodeHandle());
+					Component->ServerNotifyExecuteTaskAndSideEffects(InContext.GetCurrentNodeHandle(), Graph);
 				}
 			}
 		}
@@ -161,10 +167,15 @@ void UConversationTaskNode::GenerateChoicesForDestinations(FConversationBranchPo
 	check(InContext.IsServerContext());
 
 	UWorld* World = InContext.GetWorld();
+	const UConversationDatabase* Graph = nullptr;
+	if (const UConversationInstance* Conversation = InContext.GetActiveConversation())
+	{
+		Graph = Conversation->GetActiveConversationGraph();
+	}
 
 	for (const FGuid& DestinationGUID : CandidateDestinations)
 	{
-		if (UConversationTaskNode* DestinationTaskNode = Cast<UConversationTaskNode>(InContext.GetConversationRegistry().GetRuntimeNodeFromGUID(DestinationGUID)))
+		if (UConversationTaskNode* DestinationTaskNode = Cast<UConversationTaskNode>(InContext.GetConversationRegistry().GetRuntimeNodeFromGUID(DestinationGUID, Graph)))
 		{
 			TGuardValue<decltype(DestinationTaskNode->EvalWorldContextObj)> Swapper(DestinationTaskNode->EvalWorldContextObj, World);
 
@@ -197,7 +208,7 @@ void UConversationTaskNode::GenerateNextChoices(FConversationBranchPointBuilder&
 {
 	if (const UConversationInstance* Conversation = Context.GetActiveConversation())
 	{
-		const TArray<FGuid> CandidateDestinations = Context.GetConversationRegistry().GetOutputLinkGUIDs({ Conversation->GetCurrentChoiceReference().NodeReference.NodeGUID });
+		const TArray<FGuid> CandidateDestinations = Context.GetConversationRegistry().GetOutputLinkGUIDs(Conversation->GetActiveConversationGraph(), { Conversation->GetCurrentChoiceReference().NodeReference.NodeGUID });
 
 		UConversationTaskNode::GenerateChoicesForDestinations(BranchBuilder, Context, CandidateDestinations);
 	}

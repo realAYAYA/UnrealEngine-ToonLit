@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using EpicGames.Core;
@@ -201,20 +202,24 @@ namespace UnrealBuildTool
 					throw new BuildException("Unable to find requested Windows SDK; '{0}' is an invalid version", DesiredVersion);
 				}
 			}
-			else if (MinVersion == null && MaxVersion == null)
-			{
-				WindowsSdkVersion = PreferredWindowsSdkVersions.FirstOrDefault(x => CachedWindowsSdkDirs!.ContainsKey(x));
-				if (WindowsSdkVersion == null && CachedWindowsSdkDirs!.Count > 0)
-				{
-					WindowsSdkVersion = CachedWindowsSdkDirs.OrderBy(x => x.Key).Last().Key;
-				}
-			}
 			else if (CachedWindowsSdkDirs!.Count > 0)
 			{
-				WindowsSdkVersion = CachedWindowsSdkDirs.OrderBy(x => x.Key).Where(
+				IEnumerable<KeyValuePair<VersionNumber, DirectoryReference>> AllowedSdkDirs = CachedWindowsSdkDirs.OrderBy(x => x.Key).Where(
 					x =>
 					(MinVersion == null || x.Key >= MinVersion) &&
-					(MaxVersion == null || x.Key <= MaxVersion)).Last().Key;
+					(MaxVersion == null || x.Key <= MaxVersion));
+
+				// convert the desired version into a VersionNumber
+				VersionNumber MainVersion = VersionNumber.Parse(GetSDKForPlatform("Win64")!.GetMainVersion());
+				if (AllowedSdkDirs.Any(x => x.Key == MainVersion))
+				{
+					WindowsSdkVersion = MainVersion;
+				}
+				// if it's not an installed version, use the highest installed version
+				else if (AllowedSdkDirs.Any())
+				{
+					WindowsSdkVersion = AllowedSdkDirs.Last().Key;
+				}
 			}
 
 			// Get the actual directory for this version
@@ -313,13 +318,20 @@ namespace UnrealBuildTool
 			}
 
 			DirectoryReference? HostAutoSdkDir;
-			if (UEBuildPlatformSDK.TryGetHostPlatformAutoSDKDir(out HostAutoSdkDir))
+			if (TryGetHostPlatformAutoSDKDir(out HostAutoSdkDir))
 			{
-				DirectoryReference RootDirAutoSdk = DirectoryReference.Combine(HostAutoSdkDir, "Win64", "Windows Kits", "10");
-				if (DirectoryReference.Exists(RootDirAutoSdk))
+				DirectoryReference WindowsKitsDirAutoSdk = DirectoryReference.Combine(HostAutoSdkDir, "Win64", "Windows Kits");
+				if (DirectoryReference.Exists(WindowsKitsDirAutoSdk))
 				{
-					Logger.LogDebug("Found Windows 10 AutoSDK root at {RootDirAutoSdk}", RootDirAutoSdk);
-					RootDirs.Add(RootDirAutoSdk);
+					foreach (DirectoryReference RootDirAutoSdk in DirectoryReference.EnumerateDirectories(WindowsKitsDirAutoSdk))
+					{
+						DirectoryReference IncludeRootDir = DirectoryReference.Combine(RootDirAutoSdk, "Include");
+						if (DirectoryReference.Exists(IncludeRootDir))
+						{
+							Logger.LogDebug("Found Windows 10 AutoSDK root at {RootDirAutoSdk}", RootDirAutoSdk);
+							RootDirs.Add(RootDirAutoSdk);
+						}
+					}
 				}
 			}
 		}
@@ -509,11 +521,18 @@ namespace UnrealBuildTool
 			return FindToolChainInstallations(Compiler, Logger).Where(x => (x.Architecture == Architecture)).Any();
 		}
 
+		/// <summary>
+		/// Determines if a given compiler is installed and valid
+		/// </summary>
+		/// <param name="Compiler">Compiler to check for</param>
+		/// <param name="Architecture">Architecture the compiler must support</param>
+		/// <param name="Logger">Logger for output</param>
+		/// <returns>True if the given compiler is installed and valid</returns>
 		public static bool HasValidCompiler(WindowsCompiler Compiler, UnrealArch Architecture, ILogger Logger)
 		{
 			// since this is static, we get the instance for it
 			MicrosoftPlatformSDK SDK = (MicrosoftPlatformSDK)GetSDKForPlatform("Win64")!;
-			return FindToolChainInstallations(Compiler, Logger).Where(x => (x.Version >= MinimumVisualCppVersion && x.Architecture == Architecture)).Any();
+			return FindToolChainInstallations(Compiler, Logger).Where(x => (x.Error == null && x.Architecture == Architecture)).Any();
 		}
 
 		/// <summary>
@@ -591,8 +610,6 @@ namespace UnrealBuildTool
 		{
 			switch (Compiler)
 			{
-				case WindowsCompiler.VisualStudio2019:
-					return "Visual Studio 2019";
 				case WindowsCompiler.VisualStudio2022:
 					return "Visual Studio 2022";
 				default:
@@ -681,6 +698,21 @@ namespace UnrealBuildTool
 			}
 		}
 
+		/// <summary>
+		/// Dump all available toolchain info for a compiler
+		/// </summary>
+		/// <param name="Compiler">The compiler to filter by</param>
+		/// <param name="Architecture">Architecture that must be supported</param>
+		/// <param name="Logger">The ILogger interface to write to</param>
+		public static void DumpAllToolChainInstallations(WindowsCompiler Compiler, UnrealArch Architecture, ILogger Logger)
+		{
+			List<ToolChainInstallation>? ToolChains = CachedToolChainInstallations.GetValueOrDefault(Compiler);
+			if (ToolChains != null)
+			{
+				DumpToolChains(ToolChains, x => x.ThenBy(x => x.ReleaseChannel).ThenByDescending(x => x.Version), Architecture, Logger);
+			}
+		}
+
 		static List<ToolChainInstallation> FindToolChainInstallations(WindowsCompiler Compiler, ILogger Logger)
 		{
 			return CachedToolChainInstallations.GetOrAdd(Compiler, _ =>
@@ -699,13 +731,6 @@ namespace UnrealBuildTool
 						if (!String.IsNullOrEmpty(LlvmPath))
 						{
 							AddClangToolChain(Compiler, new DirectoryReference(LlvmPath), ToolChains, IsAutoSdk: false, Logger);
-						}
-
-						// Check for installations bundled with Visual Studio 2019
-						foreach (VisualStudioInstallation Installation in FindVisualStudioInstallations(WindowsCompiler.VisualStudio2019, Logger))
-						{
-							AddClangToolChain(Compiler, DirectoryReference.Combine(Installation.BaseDir, "VC", "Tools", "Llvm"), ToolChains, IsAutoSdk: false, Logger);
-							AddClangToolChain(Compiler, DirectoryReference.Combine(Installation.BaseDir, "VC", "Tools", "Llvm", "x64"), ToolChains, IsAutoSdk: false, Logger);
 						}
 
 						// Check for installations bundled with Visual Studio 2022
@@ -786,7 +811,6 @@ namespace UnrealBuildTool
 							string VSDir = String.Empty;
 							switch (Compiler)
 							{
-								case WindowsCompiler.VisualStudio2019: VSDir = "VS2019"; break;
 								case WindowsCompiler.VisualStudio2022: VSDir = "VS2022"; break;
 							}
 
@@ -799,7 +823,7 @@ namespace UnrealBuildTool
 								FindVisualStudioToolChains(PreviewBaseDir, null, WindowsCompilerChannel.Preview, ToolChains, IsAutoSdk: true, Logger);
 
 								DirectoryReference ExperimentalBaseDir = DirectoryReference.Combine(PlatformDir, "Win64", $"{VSDir}-Experimental");
-								FindVisualStudioToolChains(PreviewBaseDir, null, WindowsCompilerChannel.Experimental, ToolChains, IsAutoSdk: true, Logger);
+								FindVisualStudioToolChains(ExperimentalBaseDir, null, WindowsCompilerChannel.Experimental, ToolChains, IsAutoSdk: true, Logger);
 							}
 						}
 					}
@@ -862,13 +886,11 @@ namespace UnrealBuildTool
 						{
 							Compiler = WindowsCompiler.VisualStudio2022;
 						}
-						else if (MajorVersion == 16)
+						else // Unsupported older versions still detected for legacy MSBuild projects, but will not be used to compile
 						{
-							Compiler = WindowsCompiler.VisualStudio2019;
-						}
-						else
-						{
-							continue;
+#pragma warning disable CS0618 // Type or member is obsolete
+							Compiler = WindowsCompiler.VisualStudioUnsupported; // Unsupported but still detected for legacy MSBuild projects
+#pragma warning restore CS0618 // Type or member is obsolete
 						}
 
 						ISetupInstanceCatalog? Catalog = Instance as ISetupInstanceCatalog;
@@ -880,7 +902,7 @@ namespace UnrealBuildTool
 						DirectoryReference BaseDir = new DirectoryReference(Instance.GetInstallationPath());
 						Installations.Add(new VisualStudioInstallation(Compiler, Version, BaseDir, bCommunity, ReleaseChannel));
 
-						Logger.LogDebug("Found Visual Studio installation: {BaseDir} (Product={ProductId}, Version={Version})", BaseDir, ProductId, Version);
+						Logger.LogDebug("Found {VisualStudio} installation: {BaseDir} (Product={ProductId}, Version={Version})", Compiler, BaseDir, ProductId, Version);
 					}
 
 					Installations = Installations.OrderByDescending(x => x.Compiler)
@@ -1062,7 +1084,7 @@ namespace UnrealBuildTool
 		/// <param name="Logger"></param>
 		static void AddIntelOneApiToolChain(DirectoryReference ToolChainDir, List<ToolChainInstallation> ToolChains, bool IsAutoSdk, ILogger Logger)
 		{
-			FileReference CompilerFile = FileReference.Combine(ToolChainDir, "windows", "bin", "icx.exe");
+			FileReference CompilerFile = FileReference.Combine(ToolChainDir, "bin", "icx.exe");
 			if (FileReference.Exists(CompilerFile))
 			{
 				FileVersionInfo VersionInfo = FileVersionInfo.GetVersionInfo(CompilerFile.FullName);
@@ -1150,6 +1172,11 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
+		/// The compiler host directory name for the running process architecture.
+		/// </summary>
+		public static string MSVCHostDirectoryName => RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "Hostarm64" : "Hostx64";
+
+		/// <summary>
 		/// Determines if the given path is a valid Visual C++ version number
 		/// </summary>
 		/// <param name="ToolChainDir">The toolchain directory</param>
@@ -1157,7 +1184,7 @@ namespace UnrealBuildTool
 		/// <returns>True if the path is a valid version</returns>
 		static bool IsValidToolChainDirMSVC(DirectoryReference ToolChainDir, [NotNullWhen(true)] out VersionNumber? Version)
 		{
-			FileReference CompilerExe = FileReference.Combine(ToolChainDir, "bin", "Hostx64", "x64", "cl.exe");
+			FileReference CompilerExe = FileReference.Combine(ToolChainDir, "bin", MSVCHostDirectoryName, "x64", "cl.exe");
 			if (!FileReference.Exists(CompilerExe))
 			{
 				Version = null;
@@ -1181,7 +1208,7 @@ namespace UnrealBuildTool
 		/// <returns>True if the given directory contains a 64-bit toolchain</returns>
 		static bool Has64BitToolChain(DirectoryReference ToolChainDir)
 		{
-			return FileReference.Exists(FileReference.Combine(ToolChainDir, "bin", "Hostx64", "x64", "cl.exe"));
+			return FileReference.Exists(FileReference.Combine(ToolChainDir, "bin", MSVCHostDirectoryName, "x64", "cl.exe"));
 		}
 
 		/// <summary>
@@ -1191,7 +1218,7 @@ namespace UnrealBuildTool
 		/// <returns>True if the given directory contains the arm64 toolchain</returns>
 		static bool HasArm64ToolChain(DirectoryReference ToolChainDir)
 		{
-			return FileReference.Exists(FileReference.Combine(ToolChainDir, "bin", "Hostx64", "arm64", "cl.exe"));
+			return FileReference.Exists(FileReference.Combine(ToolChainDir, "bin", MSVCHostDirectoryName, "arm64", "cl.exe"));
 		}
 
 		/// <summary>
@@ -1224,9 +1251,14 @@ namespace UnrealBuildTool
 		[SupportedOSPlatform("windows")]
 		public static bool TryGetMsBuildPath(ILogger Logger, [NotNullWhen(true)] out FileReference? OutLocation)
 		{
-			// Get the Visual Studio 2019 install directory
-			List<DirectoryReference> InstallDirs2019 = MicrosoftPlatformSDK.FindVisualStudioInstallations(WindowsCompiler.VisualStudio2019, Logger).ConvertAll(x => x.BaseDir);
-			foreach (DirectoryReference InstallDir in InstallDirs2019)
+			// Get the Visual Studio install directory
+#pragma warning disable CS0618 // Type or member is obsolete
+			IEnumerable<DirectoryReference> InstallDirs = FindVisualStudioInstallations(WindowsCompiler.VisualStudio2022, Logger)
+				.Concat(FindVisualStudioInstallations(WindowsCompiler.VisualStudioUnsupported, Logger))
+				.Select(x => x.BaseDir);
+#pragma warning restore CS0618 // Type or member is obsolete
+
+			foreach (DirectoryReference InstallDir in InstallDirs)
 			{
 				FileReference MsBuildLocation = FileReference.Combine(InstallDir, "MSBuild", "Current", "Bin", "MSBuild.exe");
 				if (FileReference.Exists(MsBuildLocation))
@@ -1234,43 +1266,6 @@ namespace UnrealBuildTool
 					OutLocation = MsBuildLocation;
 					return true;
 				}
-			}
-
-			// Get the Visual Studio 2022 install directory
-			List<DirectoryReference> InstallDirs2022 = MicrosoftPlatformSDK.FindVisualStudioInstallations(WindowsCompiler.VisualStudio2022, Logger).ConvertAll(x => x.BaseDir);
-			foreach (DirectoryReference InstallDir in InstallDirs2022)
-			{
-				FileReference MsBuildLocation = FileReference.Combine(InstallDir, "MSBuild", "Current", "Bin", "MSBuild.exe");
-				if (FileReference.Exists(MsBuildLocation))
-				{
-					OutLocation = MsBuildLocation;
-					return true;
-				}
-			}
-
-			// Try to get the MSBuild 14.0 path directly (see https://msdn.microsoft.com/en-us/library/hh162058(v=vs.120).aspx)
-			FileReference? ToolPath = FileReference.Combine(DirectoryReference.GetSpecialFolder(Environment.SpecialFolder.ProgramFilesX86)!, "MSBuild", "14.0", "bin", "MSBuild.exe");
-			if (FileReference.Exists(ToolPath))
-			{
-				OutLocation = ToolPath;
-				return true;
-			}
-
-			// Check for older versions of MSBuild. These are registered as separate versions in the registry.
-			if (TryReadMsBuildInstallPath("Microsoft\\MSBuild\\ToolsVersions\\14.0", "MSBuildToolsPath", "MSBuild.exe", out ToolPath))
-			{
-				OutLocation = ToolPath;
-				return true;
-			}
-			if (TryReadMsBuildInstallPath("Microsoft\\MSBuild\\ToolsVersions\\12.0", "MSBuildToolsPath", "MSBuild.exe", out ToolPath))
-			{
-				OutLocation = ToolPath;
-				return true;
-			}
-			if (TryReadMsBuildInstallPath("Microsoft\\MSBuild\\ToolsVersions\\4.0", "MSBuildToolsPath", "MSBuild.exe", out ToolPath))
-			{
-				OutLocation = ToolPath;
-				return true;
 			}
 
 			OutLocation = null;
@@ -1334,7 +1329,6 @@ namespace UnrealBuildTool
 					string VSDir = String.Empty;
 					switch (Compiler)
 					{
-						case WindowsCompiler.VisualStudio2019: VSDir = "VS2019"; break;
 						case WindowsCompiler.VisualStudio2022: VSDir = "VS2022"; break;
 					}
 

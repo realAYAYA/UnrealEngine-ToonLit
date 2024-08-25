@@ -7,6 +7,8 @@
 #include "Input/Reply.h"
 
 class AActor;
+struct FTypedElementHandle;
+class IAssetFactoryInterface;
 class UActorFactory;
 class ULevel;
 class UMaterialInterface;
@@ -272,6 +274,7 @@ public:
 	 */
 	static UNREALED_API UActorFactory* GetFactoryForAssetObject( UObject* AssetObj );
 
+	//~ TODO: UE_DEPRECATED(5.4, "Use UE::AssetPlacementUtil::PlaceAssetInCurrentLevel instead")
 	/**
 	 * Places an actor instance using the factory appropriate for the type of asset
 	 *
@@ -285,6 +288,7 @@ public:
 	 */
 	static UNREALED_API AActor* AddActorForAsset( UObject* AssetObj, bool SelectActor = true, EObjectFlags ObjectFlags = RF_Transactional, UActorFactory* FactoryToUse = NULL, const FName Name = NAME_None );
 
+	//~ TODO: UE_DEPRECATED(5.4)
 	/**
 	 * Places an actor instance using the factory appropriate for the type of asset using the current object selection as the asset
 	 *
@@ -330,3 +334,24 @@ private:
 	{
 	}
 };
+
+namespace UE::AssetPlacementUtil
+{
+	struct FExtraPlaceAssetOptions
+	{
+		bool bSelectOutput = true;
+		EObjectFlags ObjectFlags = RF_Transactional;
+		TScriptInterface<IAssetFactoryInterface> FactoryToUse = NULL;
+		FName Name = NAME_None;
+	};
+
+	/**
+	 * Places an asset instance using the factory appropriate for the type of asset
+	 *
+	 * @param	AssetObj						the asset that is contained in the d&d operation
+	 *
+	 * @return	the object that was created by the factory, or NULL if there aren't any factories for this asset (or
+	 *			the object couldn't be created for some other reason)
+	 */
+	UNREALED_API TArray<FTypedElementHandle> PlaceAssetInCurrentLevel(UObject* AssetObj, const FExtraPlaceAssetOptions& ExtraParams);
+}

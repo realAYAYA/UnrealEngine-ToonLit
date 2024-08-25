@@ -17,7 +17,7 @@ struct FMetalShaderDebugCache
 	}
 	
 	class FMetalShaderDebugZipFile* GetDebugFile(FString Path);
-	ns::String GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC);
+	NS::String* GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC);
 	
 	FCriticalSection Mutex;
 	TMap<FString, class FMetalShaderDebugZipFile*> DebugFiles;

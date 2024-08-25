@@ -7,6 +7,7 @@
 
 class FWidgetBlueprintEditor;
 struct FBindingChainElement;
+class SComboButton;
 class SWidget;
 enum class EMVVMBlueprintViewModelContextCreationType : uint8;
 
@@ -50,13 +51,20 @@ private:
 	TSharedRef<SWidget> CreateExecutionTypeMenuContent();
 	FText GetCreationTypeValue() const;
 	FText GetExecutionTypeValueToolTip() const;
+	FText GetClassName() const;
 	void HandleClassChanged();
+	void HandleCreationTypeChanged();
+	TSharedRef<SWidget> HandleClassGetMenuContent();
+	void HandleClassCancelMenu();
+	void HandleClassCommitted(const UClass* SelectedClass);
 	FText GetViewModalNameValueAsText() const;
 	void HandleNameTextCommitted(const FText& NewText, ETextCommit::Type /*CommitInfo*/);
 	bool HandleNameVerifyTextChanged(const FText& Text, FText& OutError) const;
 
 	FViewModelPropertyAccessEditor PropertyAccessEditor;
 	TWeakPtr<FWidgetBlueprintEditor> WidgetBlueprintEditor;
+	TSharedPtr<SComboButton> NotifyFieldValueClassComboButton;
+	TSharedPtr<IPropertyHandle> ContextHandle;
 	TSharedPtr<IPropertyHandle> NotifyFieldValueClassHandle;
 	TSharedPtr<IPropertyHandle> PropertyPathHandle;
 	TSharedPtr<IPropertyHandle> CreationTypeHandle;

@@ -1,14 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MassVisualizationLODProcessor.h"
+#include "MassRepresentationDebug.h"
 #include "MassExecutionContext.h"
-
-namespace UE::MassRepresentation
-{
-	int32 bDebugRepresentationLOD = 0;
-	FAutoConsoleVariableRef CVarDebugRepresentationLOD(TEXT("ai.debug.RepresentationLOD"), bDebugRepresentationLOD, TEXT("Debug representation LOD"), ECVF_Cheat);
-} // UE::MassRepresentation
-
 
 UMassVisualizationLODProcessor::UMassVisualizationLODProcessor()
 {
@@ -21,6 +15,7 @@ UMassVisualizationLODProcessor::UMassVisualizationLODProcessor()
 void UMassVisualizationLODProcessor::ConfigureQueries()
 {
 	FMassEntityQuery BaseQuery;
+	BaseQuery.AddTagRequirement<FMassVisualizationLODProcessorTag>(EMassFragmentPresence::All);
 	BaseQuery.AddRequirement<FMassViewerInfoFragment>(EMassFragmentAccess::ReadOnly);
 	BaseQuery.AddRequirement<FMassRepresentationLODFragment>(EMassFragmentAccess::ReadWrite);
 	BaseQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
@@ -91,6 +86,7 @@ void UMassVisualizationLODProcessor::Execute(FMassEntityManager& EntityManager, 
 		FarEntityQuery.ForEachEntityChunk(EntityManager, Context, CalculateLOD);
 	}
 
+	if (bDoAdjustmentFromCount)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(AdjustDistanceAndLODFromCount)
 		EntityManager.ForEachSharedFragment<FMassVisualizationLODSharedFragment>([this](FMassVisualizationLODSharedFragment& LODSharedFragment)
@@ -111,8 +107,9 @@ void UMassVisualizationLODProcessor::Execute(FMassEntityManager& EntityManager, 
 		// Far entities do not need to maximize count
 	}
 
+#if WITH_MASSGAMEPLAY_DEBUG
 	// Optional debug display
-	if (UE::MassRepresentation::bDebugRepresentationLOD)
+	if (UE::Mass::Representation::Debug::DebugRepresentationLOD == 1 || UE::Mass::Representation::Debug::DebugRepresentationLOD >= 3)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(DebugDisplayLOD)
 		UWorld* World = EntityManager.GetWorld();
@@ -121,7 +118,20 @@ void UMassVisualizationLODProcessor::Execute(FMassEntityManager& EntityManager, 
 			FMassVisualizationLODSharedFragment& LODSharedFragment = Context.GetMutableSharedFragment<FMassVisualizationLODSharedFragment>();
 			TConstArrayView<FMassRepresentationLODFragment> RepresentationLODList = Context.GetFragmentView<FMassRepresentationLODFragment>();
 			TConstArrayView<FTransformFragment> TransformList = Context.GetFragmentView<FTransformFragment>();
-			LODSharedFragment.LODCalculator.DebugDisplayLOD(Context, RepresentationLODList, TransformList, World);
+			LODSharedFragment.LODCalculator.DebugDisplaySignificantLOD(Context, RepresentationLODList, TransformList, World, UE::Mass::Representation::Debug::DebugRepresentationLODMaxSignificance);
 		});
 	}
+	// Optional vislog
+	if (UE::Mass::Representation::Debug::DebugRepresentationLOD >= 2)
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(VisLogLOD)
+		DebugEntityQuery.ForEachEntityChunk(EntityManager, Context, [this](FMassExecutionContext& Context)
+		{
+			FMassVisualizationLODSharedFragment& LODSharedFragment = Context.GetMutableSharedFragment<FMassVisualizationLODSharedFragment>();
+			TConstArrayView<FMassRepresentationLODFragment> RepresentationLODList = Context.GetFragmentView<FMassRepresentationLODFragment>();
+			TConstArrayView<FTransformFragment> TransformList = Context.GetFragmentView<FTransformFragment>();
+			LODSharedFragment.LODCalculator.VisLogSignificantLOD(Context, RepresentationLODList, TransformList, this, UE::Mass::Representation::Debug::DebugRepresentationLODMaxSignificance);
+		});
+	}
+#endif // WITH_MASSGAMEPLAY_DEBUG
 }

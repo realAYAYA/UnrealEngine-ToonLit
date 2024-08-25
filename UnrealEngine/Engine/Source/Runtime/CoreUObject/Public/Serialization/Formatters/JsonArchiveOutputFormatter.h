@@ -27,7 +27,13 @@ struct FWeakObjectPtr;
 class FJsonArchiveOutputFormatter final : public FStructuredArchiveFormatter
 {
 public:
-	COREUOBJECT_API FJsonArchiveOutputFormatter(FArchive& InInner);
+	// Noncopyable
+	FJsonArchiveOutputFormatter(FJsonArchiveOutputFormatter&&) = delete;
+	FJsonArchiveOutputFormatter(const FJsonArchiveOutputFormatter&) = delete;
+	FJsonArchiveOutputFormatter& operator=(FJsonArchiveOutputFormatter&&) = delete;
+	FJsonArchiveOutputFormatter& operator=(const FJsonArchiveOutputFormatter&) = delete;
+
+	COREUOBJECT_API explicit FJsonArchiveOutputFormatter(FArchive& InInner);
 	COREUOBJECT_API virtual ~FJsonArchiveOutputFormatter();
 
 	COREUOBJECT_API virtual FArchive& GetUnderlyingArchive() override;

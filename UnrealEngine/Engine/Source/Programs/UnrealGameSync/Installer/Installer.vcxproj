@@ -38,7 +38,7 @@
     <None Include="Product.wxs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\UnrealGameSyncLauncher\UnrealGameSyncLauncher.csproj">
+    <ProjectReference Include="..\UnrealGameSync\UnrealGameSync.csproj">
       <Project>{436f7be2-a14c-4779-99a5-6a0748e0860b}</Project>
     </ProjectReference>
   </ItemGroup>

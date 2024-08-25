@@ -15,6 +15,7 @@
 #include "Misc/ScopeLock.h"
 #include "Misc/SlowTask.h"
 #include "Misc/SlowTaskStack.h"
+#include "Misc/Guid.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/UniquePtr.h"
 #include "Templates/UnrealTemplate.h"
@@ -54,6 +55,11 @@ public:
 	DECLARE_EVENT_TwoParams(FFeedbackContext, FOnFinalizeSlowTask, const FText& TaskName, double DurationInSeconds);
 	FOnFinalizeSlowTask& OnFinalizeSlowTask() { return FinalizeSlowTaskEvent; }
 
+	DECLARE_EVENT_TwoParams(FFeedbackContext, FOnStartSlowTaskWithGuid, FGuid Guid, const FText& TaskName);
+	FOnStartSlowTaskWithGuid& OnStartSlowTaskWithGuid() { return StartSlowTaskWithGuidEvent; }
+
+	DECLARE_EVENT_TwoParams(FFeedbackContext, FOnFinalizeSlowTaskWithGuid, FGuid Guid, double DurationInSeconds);
+	FOnFinalizeSlowTaskWithGuid& OnFinalizeSlowTaskWithGuid() { return FinalizeSlowTaskWithGuidEvent; }
 
 	/**** Legacy API - not deprecated as it's still in heavy use, but superceded by FScopedSlowTask ****/
 	CORE_API void BeginSlowTask( const FText& Task, bool ShowProgressDialog, bool bShowCancelButton=false );
@@ -71,9 +77,11 @@ protected:
 	virtual void StartSlowTask( const FText& Task, bool bShowCancelButton=false )
 	{
 		TaskName = Task;
+		TaskGuid = FGuid::NewGuid();
 		TaskStartTime = FPlatformTime::Seconds();
 		GIsSlowTask = true;
 		StartSlowTaskEvent.Broadcast(TaskName);
+		StartSlowTaskWithGuidEvent.Broadcast(TaskGuid, TaskName);
 	}
 
 	/**
@@ -81,7 +89,9 @@ protected:
 	 */
 	virtual void FinalizeSlowTask( )
 	{
-		FinalizeSlowTaskEvent.Broadcast(TaskName, FPlatformTime::Seconds() - TaskStartTime);
+		const double TaskDuration = FPlatformTime::Seconds() - TaskStartTime;
+		FinalizeSlowTaskEvent.Broadcast(TaskName, TaskDuration);
+		FinalizeSlowTaskWithGuidEvent.Broadcast(TaskGuid, TaskDuration);
 		GIsSlowTask = false;
 	}
 
@@ -95,6 +105,8 @@ protected:
 	/** Called to check whether we are playing in editor when starting a slow task */
 	CORE_API virtual bool IsPlayingInEditor() const;
 
+	CORE_API ELogVerbosity::Type ResolveVerbosity(ELogVerbosity::Type Verbosity) const;
+
 	CORE_API void FormatLine(FStringBuilderBase& Out, const TCHAR* V, ELogVerbosity::Type Verbosity, const FName& Category, double Time, ELogVerbosity::Type* OutVerbosity = nullptr) const;
 	CORE_API void FormatRecordLine(FStringBuilderBase& Out, const UE::FLogRecord& Record, ELogVerbosity::Type* OutVerbosity = nullptr) const;
 
@@ -106,7 +118,10 @@ public:
 	virtual TWeakPtr<class SBuildProgressWidget> ShowBuildProgressWindow() {return TWeakPtr<class SBuildProgressWidget>();}
 	virtual void CloseBuildProgressWindow() {}
 
-	bool	TreatWarningsAsErrors = false;
+	/** Promote any logged warnings so that they act as errors */
+	bool TreatWarningsAsErrors = false;
+	/** Demote any logged errors so that they act as warnings; takes priority over TreatWarningsAsErrors */
+	bool TreatErrorsAsWarnings = false;
 
 	CORE_API FFeedbackContext();
 	CORE_API virtual ~FFeedbackContext();
@@ -164,9 +179,14 @@ private:
 
 	/** The name of any task we are running */
 	FText TaskName;
+
 	double TaskStartTime;
 	FOnStartSlowTask StartSlowTaskEvent;
 	FOnFinalizeSlowTask FinalizeSlowTaskEvent;
+	
+	FGuid TaskGuid;
+	FOnStartSlowTaskWithGuid StartSlowTaskWithGuidEvent;
+	FOnFinalizeSlowTaskWithGuid FinalizeSlowTaskWithGuidEvent;
 
 protected:
 	

@@ -5,7 +5,7 @@
 #include "VehicleUtility.h"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 namespace Chaos
@@ -19,14 +19,32 @@ namespace Chaos
 
 	void FThrusterSimModule::Simulate(float DeltaTime, const FAllInputs& Inputs, FSimModuleTree& VehicleModuleSystem)
 	{
+		SteerAngleDegrees = 0.0f;
+		if (Setup().SteeringEnabled)
+		{
+			SteerAngleDegrees = Setup().SteeringEnabled ? Inputs.ControlInputs.Steering * Setup().MaxSteeringAngle : 0.0f;
+		}
+
 		// applies continuous force
-		FVector Force = Setup().ForceAxis * Setup().MaxThrustForce * Inputs.ControlInputs.Throttle;
-		AddLocalForceAtPosition(Force, Setup().ForceOffset, true, false, false, FColor::Magenta);
+		float BoostEffect = Inputs.ControlInputs.Boost * Setup().BoostMultiplier;
+		FVector Force = Setup().ForceAxis * Setup().MaxThrustForce * Inputs.ControlInputs.Throttle * (1.0f + BoostEffect);
+		FQuat Steer = FQuat(Setup().SteeringAxis, FMath::DegreesToRadians(SteerAngleDegrees) * Setup().SteeringForceEffect);
+		AddLocalForceAtPosition(Steer.RotateVector(Force), Setup().ForceOffset, true, false, false, FColor::Magenta);
+	}
+
+	void FThrusterSimModule::Animate(Chaos::FClusterUnionPhysicsProxy* Proxy)
+	{
+		if (FPBDRigidClusteredParticleHandle* ClusterChild = GetClusterParticle(Proxy))
+		{
+			FQuat Steer = FQuat(Setup().SteeringAxis, FMath::DegreesToRadians(SteerAngleDegrees));
+
+			ClusterChild->ChildToParent().SetRotation(GetInitialParticleTransform().GetRotation() * Steer);
+		}
 
 	}
 
 } // namespace Chaos
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif

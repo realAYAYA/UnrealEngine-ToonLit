@@ -9,8 +9,23 @@ struct FNiagaraPooledRWBuffer
 {
 	~FNiagaraPooledRWBuffer() { Release(); }
 
-	NIAGARA_API void Initialize(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat PixelFormat, const FRDGBufferDesc& BufferDesc);
-	NIAGARA_API void Initialize(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat PixelFormat, const uint32 BytesPerElemenet, const uint32 NumElements, EBufferUsageFlags UsageFlags = EBufferUsageFlags::None);
+	template<typename TResourceName>
+	void Initialize(FRDGBuilder& GraphBuilder, const TResourceName& ResourceName, EPixelFormat InPixelFormat, const FRDGBufferDesc& BufferDesc)
+	{
+		static_assert(TIsArrayOrRefOfTypeByPredicate<TResourceName, TIsCharEncodingCompatibleWithTCHAR>::Value, "Resource name must be a character array.");
+		InitializeInternal(GraphBuilder, ResourceName, InPixelFormat, BufferDesc);
+	}
+	template<typename TResourceName>
+	void Initialize(FRDGBuilder& GraphBuilder, const TResourceName& ResourceName, EPixelFormat InPixelFormat, const uint32 BytesPerElemenet, const uint32 NumElements, EBufferUsageFlags UsageFlags = EBufferUsageFlags::None)
+	{
+		static_assert(TIsArrayOrRefOfTypeByPredicate<TResourceName, TIsCharEncodingCompatibleWithTCHAR>::Value, "Resource name must be a character array.");
+		InitializeInternal(GraphBuilder, ResourceName, InPixelFormat, BytesPerElemenet, NumElements, UsageFlags);
+	}
+
+private:
+	NIAGARA_API void InitializeInternal(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat PixelFormat, const FRDGBufferDesc& BufferDesc);
+	NIAGARA_API void InitializeInternal(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat PixelFormat, const uint32 BytesPerElemenet, const uint32 NumElements, EBufferUsageFlags UsageFlags = EBufferUsageFlags::None);
+public:
 	NIAGARA_API void Release();
 
 	bool IsValid() const { return Buffer.IsValid(); }
@@ -42,7 +57,15 @@ struct FNiagaraPooledRWTexture
 {
 	~FNiagaraPooledRWTexture() { Release(); }
 
-	NIAGARA_API void Initialize(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, const FRDGTextureDesc& TextureDesc);
+	template<typename TResourceName>
+	void Initialize(FRDGBuilder& GraphBuilder, const TResourceName& ResourceName, const FRDGTextureDesc& TextureDesc)
+	{
+		static_assert(TIsArrayOrRefOfTypeByPredicate<TResourceName, TIsCharEncodingCompatibleWithTCHAR>::Value, "Resource name must be a character array.");
+		InitializeInternal(GraphBuilder, ResourceName, TextureDesc);
+	}
+private:
+	void InitializeInternal(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, const FRDGTextureDesc& TextureDesc);
+public:
 	NIAGARA_API void Release();
 
 	bool IsValid() const { return Texture.IsValid(); }

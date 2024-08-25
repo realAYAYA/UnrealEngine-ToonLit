@@ -63,7 +63,7 @@ namespace FXConsoleVariables
 	/** Visualize GPU particle simulation. */
 	extern int32 VisualizeGPUSimulation;
 	/** true if GPU emitters are permitted to sort. */
-	extern int32 bAllowGPUSorting;
+	ENGINE_API extern int32 bAllowGPUSorting;
 	/** true if emitters can be culled. */
 	extern int32 bAllowCulling;
 	/** true if GPU particle simulation is frozen. */

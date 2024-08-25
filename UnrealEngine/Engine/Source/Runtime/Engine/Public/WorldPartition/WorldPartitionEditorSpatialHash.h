@@ -198,7 +198,10 @@ public:
 	ENGINE_API virtual void HashActor(FWorldPartitionHandle& InActorHandle) override;
 	ENGINE_API virtual void UnhashActor(FWorldPartitionHandle& InActorHandle) override;
 
-	ENGINE_API virtual int32 ForEachIntersectingActor(const FBox& Box, TFunctionRef<void(FWorldPartitionActorDesc*)> InOperation, const FForEachIntersectingActorParams& Params = FForEachIntersectingActorParams()) override;
+	UE_DEPRECATED(5.4, "Use ForEachIntersectingActor with FWorldPartitionActorDescInstance")
+	ENGINE_API virtual int32 ForEachIntersectingActor(const FBox& Box, TFunctionRef<void(FWorldPartitionActorDesc*)> InOperation, const FForEachIntersectingActorParams& Params = FForEachIntersectingActorParams()) override { return 0;  }
+
+	ENGINE_API virtual int32 ForEachIntersectingActor(const FBox& Box, TFunctionRef<void(FWorldPartitionActorDescInstance*)> InOperation, const FForEachIntersectingActorParams& Params = FForEachIntersectingActorParams()) override;
 	// UWorldPartitionEditorHash interface end
 #endif
 

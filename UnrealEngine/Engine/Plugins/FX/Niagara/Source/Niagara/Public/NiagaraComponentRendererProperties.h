@@ -166,10 +166,8 @@ protected:
 private:
 	static TArray<TWeakObjectPtr<UNiagaraComponentRendererProperties>> ComponentRendererPropertiesToDeferredInit;
 
-	// this is just used to check for localspace when creating a new template component
-	FVersionedNiagaraEmitter EmitterPtr;
-
 	void CreateTemplateComponent();
+	void UpdateTemplateCoordinateSpace();
 
 	void UpdateSetterFunctions();
 

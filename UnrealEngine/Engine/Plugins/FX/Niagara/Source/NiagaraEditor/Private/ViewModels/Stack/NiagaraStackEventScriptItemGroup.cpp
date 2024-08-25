@@ -117,11 +117,12 @@ void UNiagaraStackEventHandlerPropertiesItem::RefreshChildrenInternal(const TArr
 
 		EmitterObject = NewObject<UNiagaraStackObject>(this);
 		bool bIsTopLevelObject = true;
-		EmitterObject->Initialize(CreateDefaultChildRequiredData(), EventWrapper, bIsTopLevelObject, GetStackEditorDataKey());
+		bool bHideTopLevelCategories = false;
+		EmitterObject->Initialize(CreateDefaultChildRequiredData(), EventWrapper, bIsTopLevelObject, bHideTopLevelCategories, GetStackEditorDataKey());
 		EmitterObject->RegisterInstancedCustomPropertyTypeLayout(FNiagaraEventScriptProperties::StaticStruct()->GetFName(), 
 			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FNiagaraEventScriptPropertiesCustomization::MakeInstance, 
 			TWeakObjectPtr<UNiagaraSystem>(&GetSystemViewModel()->GetSystem()), GetEmitterViewModel()->GetEmitter().ToWeakPtr()));
-		EmitterObject->SetOnSelectRootNodes(UNiagaraStackObject::FOnSelectRootNodes::CreateUObject(this, &UNiagaraStackEventHandlerPropertiesItem::SelectEmitterStackObjectRootTreeNodes));
+		EmitterObject->SetOnFilterDetailNodes(FNiagaraStackObjectShared::FOnFilterDetailNodes::CreateUObject(this, &UNiagaraStackEventHandlerPropertiesItem::FilterEmitterStackObjectRootTreeNodes));
 	}
 
 	FVersionedNiagaraEmitterData* EmitterData = GetEmitterViewModel()->GetEmitter().GetEmitterData();
@@ -201,9 +202,9 @@ TSharedPtr<IDetailTreeNode> GetEventHandlerArrayPropertyNode(const TArray<TShare
 	return GetEventHandlerArrayPropertyNode(ChildrenToCheck);
 }
 
-void UNiagaraStackEventHandlerPropertiesItem::SelectEmitterStackObjectRootTreeNodes(TArray<TSharedRef<IDetailTreeNode>> Source, TArray<TSharedRef<IDetailTreeNode>>* Selected)
+void UNiagaraStackEventHandlerPropertiesItem::FilterEmitterStackObjectRootTreeNodes(const TArray<TSharedRef<IDetailTreeNode>>& InSourceNodes, TArray<TSharedRef<IDetailTreeNode>>& OutFilteredNodes)
 {
-	TSharedPtr<IDetailTreeNode> EventHandlerArrayPropertyNode = GetEventHandlerArrayPropertyNode(Source);
+	TSharedPtr<IDetailTreeNode> EventHandlerArrayPropertyNode = GetEventHandlerArrayPropertyNode(InSourceNodes);
 	if (EventHandlerArrayPropertyNode.IsValid())
 	{
 		TArray<TSharedRef<IDetailTreeNode>> EventHandlerArrayItemNodes;
@@ -223,7 +224,7 @@ void UNiagaraStackEventHandlerPropertiesItem::SelectEmitterStackObjectRootTreeNo
 						FNiagaraEventScriptProperties* EventScriptProperties = static_cast<FNiagaraEventScriptProperties*>(RawData[0]);
 						if (EventScriptProperties->Script->GetUsageId() == EventScriptUsageId)
 						{
-							EventHandlerArrayItemNode->GetChildren(*Selected);
+							EventHandlerArrayItemNode->GetChildren(OutFilteredNodes);
 							return;
 						}
 					}
@@ -372,8 +373,15 @@ bool UNiagaraStackEventScriptItemGroup::HasBaseEventHandler() const
 {
 	if (bHasBaseEventHandlerCache.IsSet() == false)
 	{
-		FVersionedNiagaraEmitter BaseEmitter = GetEmitterViewModel()->GetParentEmitter();
-		bHasBaseEventHandlerCache = BaseEmitter.Emitter != nullptr && FNiagaraScriptMergeManager::Get()->HasBaseEventHandler(BaseEmitter, GetScriptUsageId());
+		if (GetEmitterViewModel().IsValid())
+		{
+			FVersionedNiagaraEmitter BaseEmitter = GetEmitterViewModel()->GetParentEmitter();
+			bHasBaseEventHandlerCache = BaseEmitter.Emitter != nullptr && FNiagaraScriptMergeManager::Get()->HasBaseEventHandler(BaseEmitter, GetScriptUsageId());
+		}
+		else
+		{
+			bHasBaseEventHandlerCache = false;
+		}
 	}
 	return bHasBaseEventHandlerCache.GetValue();
 }

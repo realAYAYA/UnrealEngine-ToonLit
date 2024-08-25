@@ -153,9 +153,8 @@ UActorFolder* FFolder::GetActorFolder() const
 		ActorFolder = Level->GetActorFolder(Path);
 		if (ActorFolder)
 		{
-			// Cache ActorFolderGuid
- 			check(!ActorFolderGuid.IsValid());
-			ActorFolderGuid = ActorFolder->GetGuid();
+			// Cache ActorFolderGuid (GetRootObjectAssociatedLevel() can change between calls so avoid checking that it has already been set)
+ 			ActorFolderGuid = ActorFolder->GetGuid();
 			return ActorFolder;
 		}
 	}

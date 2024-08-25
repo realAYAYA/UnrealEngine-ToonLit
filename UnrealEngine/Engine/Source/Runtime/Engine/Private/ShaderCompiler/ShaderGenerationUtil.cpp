@@ -8,18 +8,13 @@
 
 #include "DataDrivenShaderPlatformInfo.h"
 #include "HAL/PlatformFile.h"
-#include "Interfaces/ITargetPlatform.h"
-#include "Misc/FileHelper.h"
-#include "Interfaces/ITargetPlatformManagerModule.h"
 #include "HAL/PlatformFileManager.h"
+#include "Interfaces/ITargetPlatform.h"
+#include "Interfaces/ITargetPlatformManagerModule.h"
+#include "Misc/FileHelper.h"
 #include "RenderUtils.h"
 #include "SceneManagement.h"
-
-
-#if WITH_EDITOR
-#endif
-
-
+#include "ShaderCompilerDefinitions.h"
 #include "ShaderMaterial.h"
 
 static TAutoConsoleVariable<int32> CVarShaderUseGBufferRefactor(
@@ -41,27 +36,21 @@ bool NeedsVelocityDepth(EShaderPlatform TargetPlatform)
 
 #if WITH_EDITOR
 
-int FShaderCompileUtilities::FetchCompileInt(const FShaderCompilerEnvironment& OutEnvironment, const char* SrcName)
+#define SET_COMPILE_BOOL_IF_TRUE(X) { if (DerivedDefines.X) { OutEnvironment.SetDefine(TEXT(#X), 1); } }
+
+#define FETCH_COMPILE_BOOL(X) {																\
+	static FShaderCompilerDefineNameCache Cache_##X(TEXT(#X));								\
+	SrcDefines.X = Environment.GetIntegerValue(Cache_##X, SrcDefines.X) != 0 ? 1 : 0; }
+
+#define FETCH_COMPILE_INT(X) {																\
+	static FShaderCompilerDefineNameCache Cache_##X(TEXT(#X));								\
+	SrcDefines.X = Environment.GetIntegerValue(Cache_##X, SrcDefines.X); }
+
+
+template<typename EnvironmentType>
+void ApplyFetchEnvironmentInternal(FShaderGlobalDefines& SrcDefines, const EnvironmentType& Environment)
 {
-	int32 Ret = 0;
-	if (OutEnvironment.Definitions.GetDefinitionMap().Contains(SrcName))
-	{
-		const FString* Str = OutEnvironment.Definitions.GetDefinitionMap().Find(SrcName);
-
-		Ret = atoi((const char*)Str->GetCharArray().GetData());
-	}
-
-	return Ret;
-}
-
-
-#define SET_COMPILE_BOOL_IF_TRUE(X) { if (DerivedDefines.X) { OutEnvironment.SetDefine(TEXT(#X),TEXT("1")); } }
-
-#define FETCH_COMPILE_BOOL(X) { if (Environment.Definitions.GetDefinitionMap().Contains(#X)) SrcDefines.X = FetchCompileInt(Environment,#X) != 0 ? 1 : 0; }
-#define FETCH_COMPILE_INT(X) { if (Environment.Definitions.GetDefinitionMap().Contains(#X)) SrcDefines.X = FetchCompileInt(Environment,#X); }
-
-void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderGlobalDefines& SrcDefines, const FShaderCompilerEnvironment& Environment, const EShaderPlatform Platform)
-{
+	FETCH_COMPILE_BOOL(USES_BASE_PASS_VELOCITY);
 	FETCH_COMPILE_BOOL(GBUFFER_HAS_VELOCITY);
 	FETCH_COMPILE_BOOL(GBUFFER_HAS_TANGENT);
 	FETCH_COMPILE_BOOL(ALLOW_STATIC_LIGHTING);
@@ -80,20 +69,17 @@ void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderGlobalDefines& SrcDef
 	FETCH_COMPILE_BOOL(SUPPORT_CLOUD_SHADOW_ON_FORWARD_LIT_TRANSLUCENT);
 	FETCH_COMPILE_BOOL(SUPPORT_CLOUD_SHADOW_ON_SINGLE_LAYER_WATER);
 	FETCH_COMPILE_BOOL(POST_PROCESS_ALPHA);
+	FETCH_COMPILE_BOOL(PLATFORM_SUPPORTS_SHADER_ROOT_CONSTANTS);
+	FETCH_COMPILE_BOOL(PLATFORM_SUPPORTS_SHADER_BUNDLE_DISPATCH);
 	FETCH_COMPILE_BOOL(PLATFORM_SUPPORTS_RENDERTARGET_WRITE_MASK);
 	FETCH_COMPILE_BOOL(PLATFORM_SUPPORTS_PER_PIXEL_DBUFFER_MASK);
 	FETCH_COMPILE_BOOL(PLATFORM_SUPPORTS_DISTANCE_FIELDS);
 	FETCH_COMPILE_BOOL(COMPILE_SHADERS_FOR_DEVELOPMENT_ALLOWED);
 	FETCH_COMPILE_BOOL(PLATFORM_ALLOW_SCENE_DATA_COMPRESSED_TRANSFORMS);
-
-	// note that we are doing an if so that if we call ApplyFetchEnvironment() twice, we get the logical OR of bSupportsDualBlending support
-	if (RHISupportsDualSourceBlending(Platform))
-	{
-		SrcDefines.bSupportsDualBlending = true;
-	}
 }
 
-void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderLightmapPropertyDefines& SrcDefines, const FShaderCompilerEnvironment& Environment)
+template<typename EnvironmentType>
+void ApplyFetchEnvironmentInternal(FShaderLightmapPropertyDefines& SrcDefines, const EnvironmentType& Environment)
 {
 	FETCH_COMPILE_BOOL(LQ_TEXTURE_LIGHTMAP);
 	FETCH_COMPILE_BOOL(HQ_TEXTURE_LIGHTMAP);
@@ -120,7 +106,8 @@ void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderLightmapPropertyDefin
 
 }
 
-void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderMaterialPropertyDefines& SrcDefines, const FShaderCompilerEnvironment& Environment)
+template<typename EnvironmentType>
+void ApplyFetchEnvironmentInternal(FShaderMaterialPropertyDefines& SrcDefines, const EnvironmentType& Environment)
 {
 	FETCH_COMPILE_BOOL(MATERIAL_ENABLE_TRANSLUCENCY_FOGGING);
 	FETCH_COMPILE_BOOL(MATERIALBLENDING_ANY_TRANSLUCENT);
@@ -161,12 +148,12 @@ void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderMaterialPropertyDefin
 	FETCH_COMPILE_BOOL(MATERIALBLENDING_MODULATE);
 	FETCH_COMPILE_BOOL(MATERIALBLENDING_ALPHAHOLDOUT);
 
-	FETCH_COMPILE_BOOL(STRATA_BLENDING_OPAQUE);
-	FETCH_COMPILE_BOOL(STRATA_BLENDING_MASKED);
-	FETCH_COMPILE_BOOL(STRATA_BLENDING_TRANSLUCENT_GREYTRANSMITTANCE);
-	FETCH_COMPILE_BOOL(STRATA_BLENDING_TRANSLUCENT_COLOREDTRANSMITTANCE);
-	FETCH_COMPILE_BOOL(STRATA_BLENDING_COLOREDTRANSMITTANCEONLY);
-	FETCH_COMPILE_BOOL(STRATA_BLENDING_ALPHAHOLDOUT);
+	FETCH_COMPILE_BOOL(SUBSTRATE_BLENDING_OPAQUE);
+	FETCH_COMPILE_BOOL(SUBSTRATE_BLENDING_MASKED);
+	FETCH_COMPILE_BOOL(SUBSTRATE_BLENDING_TRANSLUCENT_GREYTRANSMITTANCE);
+	FETCH_COMPILE_BOOL(SUBSTRATE_BLENDING_TRANSLUCENT_COLOREDTRANSMITTANCE);
+	FETCH_COMPILE_BOOL(SUBSTRATE_BLENDING_COLOREDTRANSMITTANCEONLY);
+	FETCH_COMPILE_BOOL(SUBSTRATE_BLENDING_ALPHAHOLDOUT);
 
 	FETCH_COMPILE_INT(MATERIALDECALRESPONSEMASK);
 
@@ -223,14 +210,17 @@ void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderMaterialPropertyDefin
 	FETCH_COMPILE_BOOL(OUT_BASECOLOR_NORMAL_ROUGHNESS);
 	FETCH_COMPILE_BOOL(OUT_BASECOLOR_NORMAL_SPECULAR);
 	FETCH_COMPILE_BOOL(OUT_WORLDHEIGHT);
+	FETCH_COMPILE_BOOL(OUT_DISPLACEMENT);
 
 	FETCH_COMPILE_BOOL(IS_VIRTUAL_TEXTURE_MATERIAL);
 	FETCH_COMPILE_BOOL(IS_DECAL);
 	FETCH_COMPILE_BOOL(IS_BASE_PASS);
+	FETCH_COMPILE_BOOL(COMPUTE_SHADED);
+	FETCH_COMPILE_BOOL(USES_WORLD_POSITION_OFFSET);
 	FETCH_COMPILE_BOOL(IS_MATERIAL_SHADER);
 
-	FETCH_COMPILE_BOOL(STRATA_ENABLED);
-	FETCH_COMPILE_BOOL(MATERIAL_IS_STRATA);
+	FETCH_COMPILE_BOOL(SUBSTRATE_ENABLED);
+	FETCH_COMPILE_BOOL(MATERIAL_IS_SUBSTRATE);
 
 	FETCH_COMPILE_BOOL(PROJECT_OIT);
 
@@ -241,7 +231,8 @@ void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderMaterialPropertyDefin
 	FETCH_COMPILE_INT(GBUFFER_LAYOUT);
 }
 
-void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderCompilerDefines& SrcDefines, const FShaderCompilerEnvironment& Environment)
+template<typename EnvironmentType>
+void ApplyFetchEnvironmentInternal(FShaderCompilerDefines& SrcDefines, const EnvironmentType& Environment)
 {
 	FETCH_COMPILE_BOOL(COMPILER_GLSL_ES3_1);
 	FETCH_COMPILE_BOOL(ES3_1_PROFILE);
@@ -258,6 +249,75 @@ void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderCompilerDefines& SrcD
 	FETCH_COMPILE_BOOL(PLATFORM_SUPPORTS_DEVELOPMENT_SHADERS);
 }
 
+
+void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderGlobalDefines& SrcDefines, const FShaderCompilerEnvironment& Environment, const EShaderPlatform Platform)
+{
+	ApplyFetchEnvironmentInternal(SrcDefines, Environment);
+
+	// note that we are doing an if so that if we call ApplyFetchEnvironment() twice, we get the logical OR of bSupportsDualBlending support
+	if (RHISupportsDualSourceBlending(Platform))
+	{
+		SrcDefines.bSupportsDualBlending = true;
+	}
+}
+void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderLightmapPropertyDefines& SrcDefines, const FShaderCompilerEnvironment& Environment)
+{
+	ApplyFetchEnvironmentInternal(SrcDefines, Environment);
+}
+void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderMaterialPropertyDefines& SrcDefines, const FShaderCompilerEnvironment& Environment)
+{
+	ApplyFetchEnvironmentInternal(SrcDefines, Environment);
+}
+void FShaderCompileUtilities::ApplyFetchEnvironment(FShaderCompilerDefines& SrcDefines, const FShaderCompilerEnvironment& Environment)
+{
+	ApplyFetchEnvironmentInternal(SrcDefines, Environment);
+}
+
+/** Dummy "environment" used to gather names of defines used in the ApplyFetchEnvironmentInternal functions */
+struct FDefineNameGatherEnvironment
+{
+	mutable TArray<FName> Names;
+
+	FORCEINLINE int32 GetIntegerValue(FShaderCompilerDefineNameCache& Cache, int32 DefaultValue) const
+	{
+		Names.Add(Cache);
+		return 0;
+	}
+};
+
+/** Singleton to initialize initial defines at startup */
+struct FShaderInitialDefinesInitializer
+{
+	FShaderInitialDefinesInitializer()
+	{
+		FShaderMaterialPropertyDefines MaterialDefines = {};
+		FShaderLightmapPropertyDefines LightmapDefines = {};
+		FShaderGlobalDefines GlobalDefines = {};
+		FShaderCompilerDefines CompilerDefines = {};
+
+		FDefineNameGatherEnvironment GatherNames;
+
+		ApplyFetchEnvironmentInternal(GlobalDefines, GatherNames);
+		ApplyFetchEnvironmentInternal(MaterialDefines, GatherNames);
+		ApplyFetchEnvironmentInternal(LightmapDefines, GatherNames);
+		ApplyFetchEnvironmentInternal(CompilerDefines, GatherNames);
+
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+
+		FShaderCompilerDefinitions InitialDefines;
+		for (FName DefineKey : GatherNames.Names)
+		{
+			// Add a key, leaving the value unset (EShaderCompilerDefineVariant::None)
+			InitialDefines.FindOrAddMapIndex(DefineKey);
+		}
+		FShaderCompilerDefinitions::InitializeInitialDefines(InitialDefines);
+
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+};
+static FShaderInitialDefinesInitializer GInitialDefinesInitializer;
+
+
 // if we change the logic, increment this number to force a DDC key change
 static const int32 GBufferGeneratorVersion = 5;
 
@@ -267,12 +327,9 @@ static FShaderGlobalDefines FetchShaderGlobalDefines(EShaderPlatform TargetPlatf
 
 	bool bIsMobilePlatform = IsMobilePlatform(TargetPlatform);
 
-	{
-		static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		Ret.ALLOW_STATIC_LIGHTING = (CVar ? (CVar->GetValueOnAnyThread() != 0) : 1);
-	}
-
-	Ret.GBUFFER_HAS_VELOCITY = (IsUsingBasePassVelocity(TargetPlatform) || GBufferLayout == GBL_ForceVelocity) ? 1 : 0;
+	Ret.ALLOW_STATIC_LIGHTING = IsStaticLightingAllowed();
+	Ret.USES_BASE_PASS_VELOCITY = IsUsingBasePassVelocity(TargetPlatform);
+	Ret.GBUFFER_HAS_VELOCITY = (Ret.USES_BASE_PASS_VELOCITY || GBufferLayout == GBL_ForceVelocity) ? 1 : 0;
 	Ret.GBUFFER_HAS_TANGENT = false;//BasePassCanOutputTangent(TargetPlatform) ? 1 : 0;
 
 	{
@@ -376,6 +433,8 @@ static FShaderGlobalDefines FetchShaderGlobalDefines(EShaderPlatform TargetPlatf
 		Ret.POST_PROCESS_ALPHA = PropagateAlpha != 0;
 	}
 
+	Ret.PLATFORM_SUPPORTS_SHADER_ROOT_CONSTANTS = RHISupportsShaderRootConstants(EShaderPlatform(TargetPlatform)) ? 1 : 0;
+	Ret.PLATFORM_SUPPORTS_SHADER_BUNDLE_DISPATCH = RHISupportsShaderBundleDispatch(EShaderPlatform(TargetPlatform)) ? 1 : 0;
 	Ret.PLATFORM_SUPPORTS_RENDERTARGET_WRITE_MASK = RHISupportsRenderTargetWriteMask(EShaderPlatform(TargetPlatform)) ? 1 : 0;
 	Ret.PLATFORM_SUPPORTS_PER_PIXEL_DBUFFER_MASK = FDataDrivenShaderPlatformInfo::GetSupportsPerPixelDBufferMask(EShaderPlatform(TargetPlatform)) ? 1 : 0;
 	Ret.PLATFORM_SUPPORTS_DISTANCE_FIELDS = DoesPlatformSupportDistanceFields(EShaderPlatform(TargetPlatform)) ? 1 : 0;
@@ -1121,10 +1180,10 @@ static FString CreateGBufferDecodeFunctionDirect(const FGBufferInfo& BufferInfo)
 
 	FullStr += TEXT("\tFGBufferData Ret = (FGBufferData)0;\n");
 	
-	// Default initialization in case no gbuffer data are generated when Strata is enabled to 
+	// Default initialization in case no gbuffer data are generated when Substrate is enabled to 
 	// prevent shader compiler error (division by zero, variable not-initialized) with passes 
-	// not converted to Strata and still using Gbuffer data
-	if (Strata::IsStrataEnabled())
+	// not converted to Substrate and still using Gbuffer data
+	if (Substrate::IsSubstrateEnabled())
 	{
 		FullStr += TEXT("\tRet.WorldNormal = float3(0,0,1);\n");
 		FullStr += TEXT("\tRet.Depth = 0.f;\n");
@@ -1684,30 +1743,59 @@ static void SetSlotsForShadingModelType(bool Slots[], EMaterialShadingModel Shad
 	}
 }
 
-
-
-static void SetStandardGBufferSlots(bool Slots[], bool bWriteEmissive, bool bHasTangent, bool bHasVelocity, bool bHasStaticLighting, bool bIsStrataMaterial)
+enum class EGBufferSlotUsage : uint8
 {
-	Slots[GBS_SceneColor] = bWriteEmissive;
-	Slots[GBS_Velocity] = bHasVelocity;
-	Slots[GBS_PrecomputedShadowFactor] = bHasStaticLighting;
+	Unused,
+	Used,
+	Written
+};
 
-	Slots[GBS_WorldNormal] =			bIsStrataMaterial ? false : true;
-	Slots[GBS_PerObjectGBufferData] =	bIsStrataMaterial ? false : true;
-	Slots[GBS_Metallic] =				bIsStrataMaterial ? false : true;
-	Slots[GBS_Specular] =				bIsStrataMaterial ? false : true;
-	Slots[GBS_Roughness] =				bIsStrataMaterial ? false : true;
-	Slots[GBS_ShadingModelId] =			bIsStrataMaterial ? false : true;
-	Slots[GBS_SelectiveOutputMask] =	bIsStrataMaterial ? false : true;
-	Slots[GBS_BaseColor] =				bIsStrataMaterial ? false : true;
-	Slots[GBS_GenericAO] =				bIsStrataMaterial ? false : true;
-	Slots[GBS_AO] =						false;//bIsStrataMaterial ? false : false;// true;		// Why only false?
-	Slots[GBS_WorldTangent] =			bIsStrataMaterial ? false : bHasTangent;
-	Slots[GBS_Anisotropy] =				bIsStrataMaterial ? false : bHasTangent;
+static bool operator> (EGBufferSlotUsage A, EGBufferSlotUsage B) { return uint8(A) >  uint8(B); }
+static bool operator>=(EGBufferSlotUsage A, EGBufferSlotUsage B) { return uint8(A) >= uint8(B); }
+static bool operator< (EGBufferSlotUsage A, EGBufferSlotUsage B) { return uint8(A) <  uint8(B); }
+static bool operator<=(EGBufferSlotUsage A, EGBufferSlotUsage B) { return uint8(A) <= uint8(B); }
+
+static EGBufferSlotUsage GetGBufferSlotUsage(bool bWritten, bool bForceUsed = false)
+{
+	return bWritten ? EGBufferSlotUsage::Written : (bForceUsed ? EGBufferSlotUsage::Used : EGBufferSlotUsage::Unused);
+}
+
+static void SetStandardGBufferSlots(
+	EGBufferSlotUsage Slots[GBS_Num],
+	bool bWriteEmissive,
+	bool bHasTangent,
+	bool bHasVelocity,
+	bool bWritesVelocity,
+	bool bHasStaticLighting,
+	bool bIsSubstrateMaterial)
+{
+	auto GetUsageIfNotSubstrate = [bIsSubstrateMaterial](bool bWritten, bool bForceUsed = false)
+	{
+		return GetGBufferSlotUsage(bWritten && !bIsSubstrateMaterial, bForceUsed && !bIsSubstrateMaterial);
+	};
+
+	Slots[GBS_SceneColor]				= GetGBufferSlotUsage(bWriteEmissive);
+	Slots[GBS_Velocity]					= GetGBufferSlotUsage(bWritesVelocity, bHasVelocity);
+	Slots[GBS_PrecomputedShadowFactor]	= GetGBufferSlotUsage(bHasStaticLighting);
+
+	Slots[GBS_WorldNormal] 				= GetUsageIfNotSubstrate(true);
+	Slots[GBS_PerObjectGBufferData]		= GetUsageIfNotSubstrate(true);
+	Slots[GBS_Metallic] 				= GetUsageIfNotSubstrate(true);
+	Slots[GBS_Specular] 				= GetUsageIfNotSubstrate(true);
+	Slots[GBS_Roughness] 				= GetUsageIfNotSubstrate(true);
+	Slots[GBS_ShadingModelId] 			= GetUsageIfNotSubstrate(true);
+	Slots[GBS_SelectiveOutputMask] 		= GetUsageIfNotSubstrate(true);
+	Slots[GBS_BaseColor] 				= GetUsageIfNotSubstrate(true);
+	Slots[GBS_GenericAO] 				= GetUsageIfNotSubstrate(true);
+
+	Slots[GBS_WorldTangent] 			= GetUsageIfNotSubstrate(bHasTangent);
+	Slots[GBS_Anisotropy]				= GetUsageIfNotSubstrate(bHasTangent);
+
+	Slots[GBS_AO] 						= EGBufferSlotUsage::Unused;
 }
 
 static void DetermineUsedMaterialSlots(
-	bool Slots[],
+	EGBufferSlotUsage Slots[GBS_Num],
 	const FShaderMaterialDerivedDefines& Dst,
 	const FShaderMaterialPropertyDefines& Mat,
 	const FShaderLightmapPropertyDefines& Lightmap,
@@ -1717,94 +1805,94 @@ static void DetermineUsedMaterialSlots(
 {
 	bool bWriteEmissive = Dst.NEEDS_BASEPASS_VERTEX_FOGGING || Mat.USES_EMISSIVE_COLOR || SrcGlobal.ALLOW_STATIC_LIGHTING || Mat.MATERIAL_SHADINGMODEL_SINGLELAYERWATER;
 	bool bHasTangent = SrcGlobal.GBUFFER_HAS_TANGENT;
-	bool bHasVelocity = Dst.WRITES_VELOCITY_TO_GBUFFER;
+	bool bHasVelocity = SrcGlobal.GBUFFER_HAS_VELOCITY;
+	bool bWritesVelocity = Dst.WRITES_VELOCITY_TO_GBUFFER;
 	bool bHasStaticLighting = Dst.GBUFFER_HAS_PRECSHADOWFACTOR || Dst.WRITES_PRECSHADOWFACTOR_TO_GBUFFER;
-	bool bIsStrataMaterial = Mat.STRATA_ENABLED; // Similarly to FetchFullGBufferInfo, we do not check for MATERIAL_IS_STRATA as this is decided per project.
+	bool bIsSubstrateMaterial = Mat.SUBSTRATE_ENABLED; // Similarly to FetchFullGBufferInfo, we do not check for MATERIAL_IS_SUBSTRATE as this is decided per project.
 
-	// Strata doesn't use gbuffer, and thus doesn't need CustomData
-	const bool bUseCustomData = !bIsStrataMaterial;
+	// Substrate doesn't use gbuffer, and thus doesn't need CustomData
+	const bool bUseCustomData = !bIsSubstrateMaterial;
 
 	// we have to use if statements, not switch or if/else statements because we can have multiple shader model ids.
 	if (Mat.MATERIAL_SHADINGMODEL_UNLIT)
 	{
-		Slots[GBS_SceneColor] = true;
-		Slots[GBS_Velocity] = bHasVelocity;
+		SetStandardGBufferSlots(Slots, true, false, bHasVelocity, bWritesVelocity, false, bIsSubstrateMaterial);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_DEFAULT_LIT)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
 	}
 
 	// Change-begin
 	if (Mat.MATERIAL_SHADINGMODEL_TOON_LIT)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 	
 	if (Mat.MATERIAL_SHADINGMODEL_TOON_HAIR)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 	// Change-end
 
 	if (Mat.MATERIAL_SHADINGMODEL_SUBSURFACE)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_PREINTEGRATED_SKIN)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_SUBSURFACE_PROFILE)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_CLEAR_COAT)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_TWOSIDED_FOLIAGE)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_HAIR)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_CLOTH)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_EYE)
 	{
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
-		Slots[GBS_CustomData] = bUseCustomData;
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
+		Slots[GBS_CustomData] = GetGBufferSlotUsage(bUseCustomData);
 	}
 
 	if (Mat.MATERIAL_SHADINGMODEL_SINGLELAYERWATER)
 	{
 		// single layer water uses standard slots
-		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bHasStaticLighting, bIsStrataMaterial);
+		SetStandardGBufferSlots(Slots, bWriteEmissive, bHasTangent, bHasVelocity, bWritesVelocity, bHasStaticLighting, bIsSubstrateMaterial);
 		if (Mat.SINGLE_LAYER_WATER_SEPARATED_MAIN_LIGHT)
 		{
-			Slots[GBS_SeparatedMainDirLight] = true;
+			Slots[GBS_SeparatedMainDirLight] = EGBufferSlotUsage::Written;
 		}
 	}
 
@@ -1812,7 +1900,6 @@ static void DetermineUsedMaterialSlots(
 	if (Mat.MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT)
 	{
 	}
-
 }
 
 void FShaderCompileUtilities::ApplyDerivedDefines(FShaderCompilerEnvironment& OutEnvironment, FShaderCompilerEnvironment * SharedEnvironment, const EShaderPlatform Platform)
@@ -1854,16 +1941,16 @@ void FShaderCompileUtilities::ApplyDerivedDefines(FShaderCompilerEnvironment& Ou
 
 	EGBufferLayout Layout = (EGBufferLayout)MaterialDefines.GBUFFER_LAYOUT;
 	FGBufferParams Params = FShaderCompileUtilities::FetchGBufferParamsRuntime(Platform, Layout);
-	FGBufferInfo BufferInfo = FetchFullGBufferInfo(Params);
+	FGBufferInfo BufferInfo = FetchFullGBufferInfo(Params);	
 
-	bool bTargetUsage[FGBufferInfo::MaxTargets] = {};
+	EGBufferSlotUsage TargetUsage[FGBufferInfo::MaxTargets] = {};
 	if (MaterialDefines.IS_BASE_PASS)
 	{
 		// if we are using a gbuffer, and this is the base pass that writes a gbuffer, search the gbuffer for each slot
 		if (DerivedDefines.USES_GBUFFER)
 		{
-			bTargetUsage[0] = true;
-			bool Slots[GBS_Num] = {};
+			TargetUsage[0] = EGBufferSlotUsage::Written;
+			EGBufferSlotUsage Slots[GBS_Num] = {};
 
 			DetermineUsedMaterialSlots(Slots, DerivedDefines, MaterialDefines, LightmapDefines, GlobalDefines, CompilerDefines, FeatureLevel);
 
@@ -1877,7 +1964,7 @@ void FShaderCompileUtilities::ApplyDerivedDefines(FShaderCompilerEnvironment& Ou
 			for (int32 Index = 0; Index < GBS_Num; Index++)
 			{
 				// if we are using this slot
-				if (Slots[Index])
+				if (Slots[Index] != EGBufferSlotUsage::Unused)
 				{
 					// if we are using this slot, it must have a valid spot in our gbuffer
 					const FGBufferItem& Item = BufferInfo.Slots[Index];
@@ -1889,84 +1976,84 @@ void FShaderCompileUtilities::ApplyDerivedDefines(FShaderCompilerEnvironment& Ou
 						if (Packing.bIsValid)
 						{
 							check(Packing.TargetIndex >= 0);
-							bTargetUsage[Packing.TargetIndex] = true;
+							TargetUsage[Packing.TargetIndex] = FMath::Max(TargetUsage[Packing.TargetIndex], Slots[Index]);
 						}
 					}
 				}
 			}
-
 		}
 		else
 		{
-			bTargetUsage[0] = true;
+			TargetUsage[0] = EGBufferSlotUsage::Written;
 			// we also need MRT for thin translucency due to dual blending if we are not on the fallback path
-			bTargetUsage[1] = (DerivedDefines.WRITES_VELOCITY_TO_GBUFFER || (MaterialDefines.DUAL_SOURCE_COLOR_BLENDING_ENABLED && DerivedDefines.MATERIAL_WORKS_WITH_DUAL_SOURCE_COLOR_BLENDING));
+			const bool bDualSourceBlending = MaterialDefines.DUAL_SOURCE_COLOR_BLENDING_ENABLED && DerivedDefines.MATERIAL_WORKS_WITH_DUAL_SOURCE_COLOR_BLENDING;
+			const bool bHasVelocity = GlobalDefines.GBUFFER_HAS_VELOCITY;
+			const bool bWritesVelocity = DerivedDefines.WRITES_VELOCITY_TO_GBUFFER;
+			TargetUsage[1] = GetGBufferSlotUsage(bWritesVelocity || bDualSourceBlending, bHasVelocity);
 		}
 	}
 	else if (MaterialDefines.IS_VIRTUAL_TEXTURE_MATERIAL)
 	{
-		// these whill change, of course
+		// these will change, of course
 		if (MaterialDefines.OUT_BASECOLOR)
 		{
-			bTargetUsage[0] = 1;
+			TargetUsage[0] = EGBufferSlotUsage::Written;
 		}
 		else if (MaterialDefines.OUT_BASECOLOR_NORMAL_ROUGHNESS)
 		{
-			bTargetUsage[0] = 1;
-			bTargetUsage[1] = 1;
+			TargetUsage[0] = EGBufferSlotUsage::Written;
+			TargetUsage[1] = EGBufferSlotUsage::Written;
 		}
 		else if (MaterialDefines.OUT_BASECOLOR_NORMAL_SPECULAR)
 		{
-			bTargetUsage[0] = 1;
-			bTargetUsage[1] = 1;
-			bTargetUsage[2] = 1;
+			TargetUsage[0] = EGBufferSlotUsage::Written;
+			TargetUsage[1] = EGBufferSlotUsage::Written;
+			TargetUsage[2] = EGBufferSlotUsage::Written;
 		}
 		else if (MaterialDefines.OUT_WORLDHEIGHT)
 		{
-			bTargetUsage[0] = 1;
+			TargetUsage[0] = EGBufferSlotUsage::Written;
+		}
+		else if (MaterialDefines.OUT_DISPLACEMENT)
+		{
+			TargetUsage[0] = EGBufferSlotUsage::Written;
 		}
 	}
 	else if (MaterialDefines.IS_DECAL)
 	{
 		// these will have to change too
-		bTargetUsage[0] = MaterialDefines.DECAL_RENDERTARGET_COUNT > 0;
-		bTargetUsage[1] = MaterialDefines.DECAL_RENDERTARGET_COUNT > 1;
-		bTargetUsage[2] = MaterialDefines.DECAL_RENDERTARGET_COUNT > 2;
-		bTargetUsage[3] = MaterialDefines.DECAL_RENDERTARGET_COUNT > 3;
-		bTargetUsage[4] = MaterialDefines.DECAL_RENDERTARGET_COUNT > 4;
+		TargetUsage[0] = GetGBufferSlotUsage(MaterialDefines.DECAL_RENDERTARGET_COUNT > 0);
+		TargetUsage[1] = GetGBufferSlotUsage(MaterialDefines.DECAL_RENDERTARGET_COUNT > 1);
+		TargetUsage[2] = GetGBufferSlotUsage(MaterialDefines.DECAL_RENDERTARGET_COUNT > 2);
+		TargetUsage[3] = GetGBufferSlotUsage(MaterialDefines.DECAL_RENDERTARGET_COUNT > 3);
+		TargetUsage[4] = GetGBufferSlotUsage(MaterialDefines.DECAL_RENDERTARGET_COUNT > 4);
 	}
 	else
 	{
 		// something else, so no op
 	}
-#if 1
-	static bool bTestNewVersion = true;
-	if (bTestNewVersion)
+
+	// Decide which pixel shader outputs are enabled based on which targets are written and what the first substrate
+	// target is based on which target slots are in use
+	int32 SubstrateFirstMRT = 0;
+	for (int32 Iter = 0; Iter < FGBufferInfo::MaxTargets; Iter++)
 	{
-		//if (DerivedDefines.USES_GBUFFER)
+		if (TargetUsage[Iter] >= EGBufferSlotUsage::Written)
 		{
-			for (int32 Iter = 0; Iter < FGBufferInfo::MaxTargets; Iter++)
-			{
-				if (bTargetUsage[Iter])
-				{
-					FString TargetName = FString::Printf(TEXT("PIXELSHADEROUTPUT_MRT%d"), Iter);
-					OutEnvironment.SetDefine(TargetName.GetCharArray().GetData(), TEXT("1"));
-				}
-			}
+			FString TargetName = FString::Printf(TEXT("PIXELSHADEROUTPUT_MRT%d"), Iter);
+			OutEnvironment.SetDefine(TargetName.GetCharArray().GetData(), TEXT("1"));
+		}
+
+		if (TargetUsage[Iter] >= EGBufferSlotUsage::Used)
+		{
+			SubstrateFirstMRT = Iter + 1;
 		}
 	}
-	else
+
+	if (MaterialDefines.MATERIAL_IS_SUBSTRATE && SubstrateFirstMRT > 0)
 	{
-		// This uses the legacy logic from CalculateDerivedMaterialParameters(); Just keeping it around momentarily for testing during the transition.
-		SET_COMPILE_BOOL_IF_TRUE(PIXELSHADEROUTPUT_MRT0)
-		SET_COMPILE_BOOL_IF_TRUE(PIXELSHADEROUTPUT_MRT1)
-		SET_COMPILE_BOOL_IF_TRUE(PIXELSHADEROUTPUT_MRT2)
-		SET_COMPILE_BOOL_IF_TRUE(PIXELSHADEROUTPUT_MRT3)
-		SET_COMPILE_BOOL_IF_TRUE(PIXELSHADEROUTPUT_MRT4)
-		SET_COMPILE_BOOL_IF_TRUE(PIXELSHADEROUTPUT_MRT5)
-		SET_COMPILE_BOOL_IF_TRUE(PIXELSHADEROUTPUT_MRT6)
+		OutEnvironment.SetDefine(TEXT("SUBSTRATE_FIRST_MRT_INDEX"), SubstrateFirstMRT);
 	}
-#endif
 }
 
 void FShaderCompileUtilities::AppendGBufferDDCKeyString(const EShaderPlatform Platform, FString& KeyString)
@@ -1988,14 +2075,42 @@ void FShaderCompileUtilities::WriteGBufferInfoAutogen(EShaderPlatform TargetPlat
 
 	FScopeLock MapLock(&GCriticalSection);
 
+	FString AutoGenDirectory = GetAutoGenDirectory(TargetPlatform);
+	FString AutogenHeaderFilename = AutoGenDirectory / TEXT("AutogenShaderHeaders.ush");
+	FString AutogenHeaderFilenameTemp = AutoGenDirectory / TEXT("AutogenShaderHeaders_temp.ush");
+
+	// auto-generated GBuffer layout is not used by mobile rendering
+	if (FeatureLevel <= ERHIFeatureLevel::ES3_1)
+	{
+		if (GLastGBufferIsValid[TargetPlatform])
+		{
+			// We've already ensured the autogen file is removed.
+			return;
+		}
+
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		if (PlatformFile.FileExists(*AutogenHeaderFilename))
+		{
+			if (PlatformFile.DeleteFile(*AutogenHeaderFilename))
+			{
+				GLastGBufferIsValid[TargetPlatform] = true;
+			}
+			else
+			{
+				UE_LOG(LogShaderCompilers, Display, TEXT("Failed to delete old and now unused shader autogen file: %s"), *AutogenHeaderFilename);
+			}
+		}
+		else
+		{
+			GLastGBufferIsValid[TargetPlatform] = true;
+		}
+		return;
+	}
+
 	// For now, the logic always calculates the new GBuffer, and if it's the first time, write it, otherwise check it hasn't changed. We are doing this for
 	// debugging, and in the near future it will only calculate the GBuffer on the first time only.
 
 	FGBufferInfo DefaultBufferInfo = FetchFullGBufferInfo(DefaultParams);
-
-	FString AutoGenDirectory = GetAutoGenDirectory(TargetPlatform);
-	FString AutogenHeaderFilename = AutoGenDirectory / TEXT("AutogenShaderHeaders.ush");
-	FString AutogenHeaderFilenameTemp = AutoGenDirectory / TEXT("AutogenShaderHeaders_temp.ush");
 
 	if (GLastGBufferIsValid[TargetPlatform])
 	{
@@ -2114,12 +2229,9 @@ void FShaderCompileUtilities::WriteGBufferInfoAutogen(EShaderPlatform TargetPlat
 void FShaderCompileUtilities::GenerateBrdfHeaders(EShaderPlatform TargetPlatform)
 {
 	ERHIFeatureLevel::Type FeatureLevel = GetMaxSupportedFeatureLevel(TargetPlatform);
-	// auto-generated GBuffer layout is not used by mobile rendering
-	if (FeatureLevel > ERHIFeatureLevel::ES3_1)
-	{
-		// Writes the GBuffer format .ush file if it's out of date.
-		WriteGBufferInfoAutogen(TargetPlatform, FeatureLevel);
-	}
+
+	// Writes the GBuffer format .ush file if it's out of date.
+	WriteGBufferInfoAutogen(TargetPlatform, FeatureLevel);
 }
 
 void FShaderCompileUtilities::GenerateBrdfHeaders(const FName& ShaderFormat)
@@ -2130,7 +2242,7 @@ void FShaderCompileUtilities::GenerateBrdfHeaders(const FName& ShaderFormat)
 
 EGBufferLayout FShaderCompileUtilities::FetchGBufferLayout(const FShaderCompilerEnvironment& Environment)
 {
-	const uint32 Layout = FetchCompileInt(Environment, "GBUFFER_LAYOUT");
+	const uint32 Layout = Environment.GetIntegerValue(TEXT("GBUFFER_LAYOUT"));
 	if (Layout >= GBL_Num)
 	{
 		return GBL_Default;
@@ -2144,11 +2256,7 @@ FGBufferParams FShaderCompileUtilities::FetchGBufferParamsPipeline(EShaderPlatfo
 	Ret.ShaderPlatform = Platform;
 
 #if WITH_EDITOR
-	{
-		static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		Ret.bHasPrecShadowFactor = (CVar ? (CVar->GetValueOnAnyThread() != 0) : 1);
-	}
-
+	Ret.bHasPrecShadowFactor = IsStaticLightingAllowed();
 	Ret.bHasVelocity = (IsUsingBasePassVelocity(Platform) || Layout == GBL_ForceVelocity) ? 1 : 0;
 	Ret.bHasTangent = false;//BasePassCanOutputTangent(TargetPlatform) ? 1 : 0;
 
@@ -2169,7 +2277,7 @@ FGBufferParams FShaderCompileUtilities::FetchGBufferParamsPipeline(EShaderPlatfo
 	return Ret;
 }
 
-#endif
+#endif  // WITH_EDITOR
 
 FGBufferParams FShaderCompileUtilities::FetchGBufferParamsRuntime(EShaderPlatform Platform, EGBufferLayout Layout)
 {
@@ -2178,8 +2286,7 @@ FGBufferParams FShaderCompileUtilities::FetchGBufferParamsRuntime(EShaderPlatfor
 	FGBufferParams Ret = {};
 	Ret.ShaderPlatform = Platform;
 
-	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	Ret.bHasPrecShadowFactor = (CVar ? (CVar->GetValueOnAnyThread() != 0) : 1);
+	Ret.bHasPrecShadowFactor = IsStaticLightingAllowed();
 
 	Ret.bHasVelocity = (IsUsingBasePassVelocity(Platform) || Layout == GBL_ForceVelocity) ? 1 : 0;
 	Ret.bHasTangent = false;//BasePassCanOutputTangent(ShaderPlatform) ? 1 : 0;

@@ -23,40 +23,28 @@
 #include "MuT/NodeScalar.h"
 #include "MuT/NodeString.h"
 #include "MuT/NodeSurface.h"
-#include "map"
-
-#include <stdint.h>
-#include <utility>
 
 
 namespace mu
 {
 
-	//---------------------------------------------------------------------------------------------
 	// Static initialisation
-	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeType = 		NODE_TYPE( "Node", 0 );
+	static FNodeType s_nodeType = 		FNodeType( "Node", 0 );
 
-
-	//---------------------------------------------------------------------------------------------
-	NODE_TYPE::NODE_TYPE()
+	FNodeType::FNodeType()
 	{
 		m_strName = "";
-		m_pParent = 0;
+		m_pParent = nullptr;
 	}
 
-	//---------------------------------------------------------------------------------------------
-	NODE_TYPE::NODE_TYPE( const char* strName, const NODE_TYPE* pParent )
+
+	FNodeType::FNodeType( const char* strName, const FNodeType* pParent )
 	{
         m_strName = strName;
 		m_pParent = pParent;
 	}
 
 
-
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
 	void Node::Serialise( const Node* pNode, OutputArchive& arch )
 	{
         uint32_t ver = 0;
@@ -92,7 +80,6 @@ namespace mu
 	}
 
 
-	//---------------------------------------------------------------------------------------------
 	NodePtr Node::StaticUnserialise( InputArchive& arch )
 	{
         uint32_t ver;
@@ -127,27 +114,22 @@ namespace mu
 	}
 
 
-
-	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* Node::GetType() const
+	const FNodeType* Node::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* Node::GetStaticType()
+	const FNodeType* Node::GetStaticType()
 	{
 		return &s_nodeType;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
 	void Node::SetMessageContext( const void* context )
 	{
 		GetBasePrivate()->m_errorContext = context;
 	}
-
 
 }
 

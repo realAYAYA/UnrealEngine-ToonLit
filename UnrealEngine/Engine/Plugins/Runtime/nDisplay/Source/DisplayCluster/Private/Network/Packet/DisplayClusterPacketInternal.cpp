@@ -159,7 +159,7 @@ bool FDisplayClusterPacketInternal::RecvPacket(FDisplayClusterSocketOperations& 
 	}
 
 	// We need to set a correct value for array size before deserialization
-	DataBuffer.SetNumUninitialized(PacketHeader.PacketBodyLength, false);
+	DataBuffer.SetNumUninitialized(PacketHeader.PacketBodyLength, EAllowShrinking::No);
 
 	UE_LOG(LogDisplayClusterNetwork, VeryVerbose, TEXT("%s - packet body received"), *SocketOps.GetConnectionName());
 

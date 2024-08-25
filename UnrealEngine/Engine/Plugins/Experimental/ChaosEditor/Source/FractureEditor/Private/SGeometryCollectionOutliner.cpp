@@ -21,6 +21,7 @@
 #include "GeometryCollection/GeometryCollectionUtility.h"
 #include "GeometryCollection/Facades/CollectionAnchoringFacade.h"
 #include "GeometryCollection/Facades/CollectionHierarchyFacade.h"
+#include "GeometryCollection/GeometryCollectionSimulationTypes.h"
 #include "PhysicsProxy/GeometryCollectionPhysicsProxy.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SGeometryCollectionOutliner)
@@ -71,19 +72,21 @@ void FGeometryCollectionTreeItem::GenerateContextMenu(UToolMenu* Menu, SGeometry
 	StateSection.AddSubMenu("FractureToolSetInitialDynamicStateMenu", NSLOCTEXT("Fracture", "FractureToolSetInitialDynamicStateMenu", "Initial Dynamic State"), FText(),
 		FNewToolMenuDelegate::CreateLambda([&Outliner](UToolMenu* Menu)
 		{
-			const FName MenuEntryNames[] =
+			constexpr int32 MenuEntryNamesCount = 3;
+			const TPair<FName, EObjectStateTypeEnum> MenuEntryNameState[MenuEntryNamesCount] =
 			{
-				"NoOverride"
-				"Sleeping",
-				"Kinematic",
-				"Static"
+				{"NoOverride",EObjectStateTypeEnum::Chaos_NONE},
+				// Note: Sleeping state intentionally skipped here, as it's not a valid initial state
+				{"Kinematic",EObjectStateTypeEnum::Chaos_Object_Kinematic},
+				{"Static",EObjectStateTypeEnum::Chaos_Object_Static}
 			};
-			const int32 MenuEntryNamesCount = sizeof(MenuEntryNames) / sizeof(FName);
 
 			FToolMenuSection& StateSection = Menu->AddSection("State");
 			for (int32 Index = 0; Index < MenuEntryNamesCount; ++Index)
 			{
-				StateSection.AddMenuEntry(MenuEntryNames[Index], GetTextFromInitialDynamicState(Index), FText(), FSlateIcon(), FUIAction(FExecuteAction::CreateRaw(&Outliner, &SGeometryCollectionOutliner::SetInitialDynamicState, Index)));
+				int32 State = (int32)MenuEntryNameState[Index].Value;
+				StateSection.AddMenuEntry(MenuEntryNameState[Index].Key, GetTextFromInitialDynamicState(State), FText(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateRaw(&Outliner, &SGeometryCollectionOutliner::SetInitialDynamicState, State)));
 			}
 		}));
 
@@ -192,6 +195,12 @@ UOutlinerSettings::UOutlinerSettings(const FObjectInitializer& ObjInit)
 
 TSharedRef<SWidget> SGeometryCollectionOutlinerRow::GenerateWidgetForColumn(const FName& ColumnName)
 {
+	// This can happen because sometimes slate retains old items until the next tick, and keeps calling callbacks on them until then
+	if (!Item->IsValidBone())
+	{
+		return Item->MakeEmptyColumnWidget();
+	}
+
 	if (ColumnName == SGeometryCollectionOutlinerColumnID::BoneIndex)
 	{
 		const TSharedPtr<SWidget> NameWidget = Item->MakeBoneIndexColumnWidget();
@@ -233,6 +242,15 @@ TSharedRef<SWidget> SGeometryCollectionOutlinerRow::GenerateWidgetForColumn(cons
 		return Item->MakeImportedCollisionsColumnWidget();
 	if (ColumnName == SGeometryCollectionOutlinerColumnID::ConvexCount)
 		return Item->MakeConvexCountColumnWidget();
+	if (ColumnName == SGeometryCollectionOutlinerColumnID::TriangleCount)
+	{
+		return Item->MakeTriangleCountColumnWidget();
+	}
+	if (ColumnName == SGeometryCollectionOutlinerColumnID::VertexCount)
+	{
+		return Item->MakeVertexCountColumnWidget();
+	}
+
 	return Item->MakeEmptyColumnWidget();
 }
 
@@ -376,6 +394,24 @@ void SGeometryCollectionOutliner::RegenerateHeader()
 			.FillWidth(CustomFillWidth)
 		);
 		break;
+
+	case EOutlinerColumnMode::Geometry:
+		HeaderRowWidget->AddColumn(
+			SHeaderRow::Column(SGeometryCollectionOutlinerColumnID::TriangleCount)
+			.DefaultLabel(LOCTEXT("GCOutliner_Column_TriangleCount", "Triangle Count"))
+			.DefaultTooltip(LOCTEXT("GCOutliner_Column_TriangleCount_ToolTip", "Number of Triangles"))
+			.HAlignHeader(EHorizontalAlignment::HAlign_Center)
+			.FillWidth(CustomFillWidth)
+		);
+		HeaderRowWidget->AddColumn(
+			SHeaderRow::Column(SGeometryCollectionOutlinerColumnID::VertexCount)
+			.DefaultLabel(LOCTEXT("GCOutliner_Column_VertexCount", "Vertex Count"))
+			.DefaultTooltip(LOCTEXT("GCOutliner_Column_VertexCount_ToolTip", "Number of Vertices"))
+			.HAlignHeader(EHorizontalAlignment::HAlign_Center)
+			.FillWidth(CustomFillWidth)
+		);
+		break;
+
 	}
 }
 
@@ -448,6 +484,14 @@ void SGeometryCollectionOutliner::SetComponents(const TArray<UGeometryCollection
 	TGuardValue<bool> ExternalSelectionGuard(bPerformingSelection, true);
 	TreeView->ClearSelection();
 
+	// explicitly mark the root nodes as invalid before emptying, so we know we can safely ignore them in case slate still triggers callbacks for them (they will not be deleted until the tree view refresh, on tick)
+	for (TSharedPtr<FGeometryCollectionTreeItemComponent>& RootNode : RootNodes)
+	{
+		if (RootNode)
+		{
+			RootNode->Invalidate();
+		}
+	}
 	RootNodes.Empty();
 
 	for (UGeometryCollectionComponent* Component : InNewComponents)
@@ -640,6 +684,8 @@ FGeometryCollectionItemDataFacade::FGeometryCollectionItemDataFacade(FManagedArr
 	, HasSourceCollisionAttribute(InCollection, "HasSourceCollision", DataCollectionGroup)
 	, SourceCollisionUsedAttribute(InCollection, "SourceCollisionUsed", DataCollectionGroup)
 	, ConvexCountAttribute(InCollection, "ConvexCount", DataCollectionGroup)
+	, TriangleCountAttribute(InCollection, "TriangleCount", DataCollectionGroup)
+	, VertexCountAttribute(InCollection, "VertexCount", DataCollectionGroup)
 {
 }
 
@@ -647,6 +693,16 @@ template <typename T>
 static T GetAttributeValue(const TManagedArrayAccessor<T>& Attribute, int32 Index, T Default)
 {
 	return (Attribute.IsValid()) ? Attribute.Get()[Index] : Default;
+}
+
+bool FGeometryCollectionItemDataFacade::IsValidBoneIndex(int32 BoneIndex) const
+{
+	return BoneIndex >= 0 && BoneIndex < BoneNameAttribute.Num();
+}
+
+int32 FGeometryCollectionItemDataFacade::GetBoneCount() const
+{
+	return BoneNameAttribute.Num();
 }
 
 FString FGeometryCollectionItemDataFacade::GetBoneName(int32 Index) const
@@ -699,6 +755,16 @@ bool FGeometryCollectionItemDataFacade::IsSourceCollisionUsed(int32 Index) const
 int32 FGeometryCollectionItemDataFacade::GetConvexCount(int32 Index) const
 {
 	return GetAttributeValue(ConvexCountAttribute, Index, 0);
+}
+
+int32 FGeometryCollectionItemDataFacade::GetTriangleCount(int32 Index) const
+{
+	return GetAttributeValue(TriangleCountAttribute, Index, 0);
+}
+
+int32 FGeometryCollectionItemDataFacade::GetVertexCount(int32 Index) const
+{
+	return GetAttributeValue(VertexCountAttribute, Index, 0);
 }
 
 void FGeometryCollectionItemDataFacade::FillFromGeometryCollectionComponent(const UGeometryCollectionComponent& GeometryCollectionComponent, EOutlinerColumnMode ColumnMode)
@@ -793,11 +859,10 @@ void FGeometryCollectionItemDataFacade::FillFromGeometryCollectionComponent(cons
 		}
 		else if (ColumnMode == EOutlinerColumnMode::Collision)
 		{
-			using FImplicitGeom = FGeometryDynamicCollection::FSharedImplicit;
-			const TManagedArrayAccessor<FImplicitGeom> GCSourceCollisionAttribute(GeometryCollection, "ExternalCollisions", FGeometryCollection::TransformGroup);
+			const TManagedArrayAccessor<Chaos::FImplicitObjectPtr> GCSourceCollisionAttribute(GeometryCollection, FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
 			if (GCSourceCollisionAttribute.IsValid())
 			{
-				const TManagedArray<FImplicitGeom>& GCSourceCollision = GCSourceCollisionAttribute.Get();
+				const TManagedArray<Chaos::FImplicitObjectPtr>& GCSourceCollision = GCSourceCollisionAttribute.Get();
 				TManagedArray<bool>& HasSourceCollision = HasSourceCollisionAttribute.Add();
 				TManagedArray<bool>& SourceCollisionUsed = SourceCollisionUsedAttribute.Add();
 				
@@ -850,6 +915,37 @@ void FGeometryCollectionItemDataFacade::FillFromGeometryCollectionComponent(cons
 				RemoveOnBreakAttribute.Copy(GCRemoveOnBreakAttribute);
 			}
 		}
+		else if (ColumnMode == EOutlinerColumnMode::Geometry)
+		{
+			const TManagedArrayAccessor<int32> GCTransformToGeometryIndexAttribute(GeometryCollection, "TransformToGeometryIndex", FGeometryCollection::TransformGroup);
+			const TManagedArrayAccessor<int32> GCGeoVertexCountAttribute(GeometryCollection, "VertexCount", FGeometryCollection::GeometryGroup);
+			const TManagedArrayAccessor<int32> GCGeoFaceCountAttribute(GeometryCollection, "FaceCount", FGeometryCollection::GeometryGroup);
+			if (GCTransformToGeometryIndexAttribute.IsValid() && GCGeoVertexCountAttribute.IsValid() && GCGeoFaceCountAttribute.IsValid() && GCSimulationTypeAttribute.IsValid())
+			{
+				TManagedArray<int32>& VertexCountArray = VertexCountAttribute.Add();
+				TManagedArray<int32>& TriangleCountArray = TriangleCountAttribute.Add();
+
+				Chaos::Facades::FCollectionHierarchyFacade HierarchyFacade(GeometryCollection);
+				const TArray<int32> TransformIndices = HierarchyFacade.GetTransformArrayInDepthFirstOrder();
+
+				for (int32 TransformIndex : TransformIndices)
+				{
+					int32 GeometryIndex = GCTransformToGeometryIndexAttribute[TransformIndex];
+					if (GCSimulationTypeAttribute[TransformIndex] == FGeometryCollection::ESimulationTypes::FST_Rigid)
+					{
+						VertexCountArray[TransformIndex] = GCGeoVertexCountAttribute[GeometryIndex];
+						TriangleCountArray[TransformIndex] = GCGeoFaceCountAttribute[GeometryIndex];
+					}
+
+					int32 ParentTransformIndex = GeometryCollection.Parent[TransformIndex];
+					if (ParentTransformIndex != INDEX_NONE)
+					{
+						VertexCountArray[ParentTransformIndex] -= FMath::Abs(VertexCountArray[TransformIndex]);
+						TriangleCountArray[ParentTransformIndex] -= FMath::Abs(TriangleCountArray[TransformIndex]);
+					}
+				}
+			}
+			}
 	}
 }
 
@@ -1116,6 +1212,35 @@ TSharedRef<ITableRow> FGeometryCollectionTreeItemBone::MakeTreeRowWidget(const T
 	return SNew(SGeometryCollectionOutlinerRow, InOwnerTable, SharedThis(this));
 }
 
+bool FGeometryCollectionTreeItemComponent::IsValid() const
+{
+	if (bInvalidated)
+	{
+		return false;
+	}
+	if (const UGeometryCollectionComponent* Comp = GetComponent())
+	{
+		if (const UGeometryCollection* RestCollection = Comp->GetRestCollection())
+		{
+			if (const FGeometryCollection* Collection = RestCollection->GetGeometryCollection().Get())
+			{
+				return Collection->NumElements(FGeometryCollection::TransformGroup) == DataCollectionFacade.GetBoneCount();
+			}
+		}
+	}
+	return false;
+}
+
+bool FGeometryCollectionTreeItemBone::IsValidBone() const
+{
+	if (ParentComponentItem && ParentComponentItem->IsValid())
+	{
+		const FGeometryCollectionItemDataFacade& DataCollectionFacade = GetDataCollectionFacade();
+		return DataCollectionFacade.IsValidBoneIndex(BoneIndex);
+	}
+	return false;
+}
+
 TSharedRef<SWidget> FGeometryCollectionTreeItemBone::MakeBoneIndexColumnWidget() const
 {
 	return SNew(SHorizontalBox)
@@ -1328,6 +1453,43 @@ TSharedRef<SWidget> FGeometryCollectionTreeItemBone::MakeConvexCountColumnWidget
 	const bool bIsUnionOfConvex = (ConvexCount < 0);
 
 	const FText ItemText = bIsUnionOfConvex? FText::Format(LOCTEXT("GCOutliner_ConvexCount_Format", "Union of {0}"), FMath::Abs(ConvexCount)): FText::AsNumber(ConvexCount);
+
+	return SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.Padding(12.f, 0.f)
+		.HAlign(HAlign_Right)
+		[
+			SNew(STextBlock)
+			.Text(ItemText)
+		.ColorAndOpacity(ItemColor)
+		];
+}
+
+TSharedRef<SWidget> FGeometryCollectionTreeItemBone::MakeTriangleCountColumnWidget() const
+{
+	const FGeometryCollectionItemDataFacade& DataCollectionFacade = GetDataCollectionFacade();
+	const int32 TriangleCount = DataCollectionFacade.GetTriangleCount(BoneIndex);
+	const bool bIsSumOfChildren = (TriangleCount < 0);
+
+	const FText ItemText = bIsSumOfChildren ? FText::Format(LOCTEXT("GCOutliner_TriangleCount_Format", "({0})"), FMath::Abs(TriangleCount)) : FText::AsNumber(TriangleCount);
+
+	return SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.Padding(12.f, 0.f)
+		.HAlign(HAlign_Right)
+		[
+			SNew(STextBlock)
+			.Text(ItemText)
+		.ColorAndOpacity(ItemColor)
+		];
+}
+TSharedRef<SWidget> FGeometryCollectionTreeItemBone::MakeVertexCountColumnWidget() const
+{
+	const FGeometryCollectionItemDataFacade& DataCollectionFacade = GetDataCollectionFacade();
+	const int32 VertexCount = DataCollectionFacade.GetVertexCount(BoneIndex);
+	const bool bIsSumOfChildren = (VertexCount < 0);
+
+	const FText ItemText = bIsSumOfChildren ? FText::Format(LOCTEXT("GCOutliner_VertexCount_Format", "({0})"), FMath::Abs(VertexCount)) : FText::AsNumber(VertexCount);
 
 	return SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot()

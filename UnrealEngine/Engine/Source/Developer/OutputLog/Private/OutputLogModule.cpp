@@ -169,6 +169,8 @@ void FOutputLogModule::StartupModule()
 
 	OutputLogHistory = MakeShareable(new FOutputLogHistory);
 	OutputLogFilterCache = MakeUnique<FOutputLogFilter>();
+
+	SOutputLog::RegisterSettingsMenu();
 }
 
 void FOutputLogModule::ShutdownModule()
@@ -456,5 +458,9 @@ void FOutputLogModule::OpenOutputLog() const
 
 bool FOutputLogModule::ShouldCycleToOutputLogDrawer() const 
 {
+#if WITH_EDITOR || (IS_PROGRAM && WITH_UNREAL_DEVELOPER_TOOLS)
 	return GetDefault<UOutputLogSettings>()->bCycleToOutputLogDrawer; 
+#else
+	return true;
+#endif
 }

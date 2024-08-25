@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { getTheme, mergeStyleSets, mergeStyles } from '@fluentui/react/lib/Styling';
+import { mergeStyleSets, mergeStyles } from '@fluentui/react/lib/Styling';
 import { action, makeObservable, observable } from 'mobx';
 import moment from 'moment';
 import backend from '.';
@@ -9,7 +9,6 @@ import { getBatchText } from '../components/JobDetailCommon';
 import { AgentData, ArtifactData, BatchData, EventData, GetGroupResponse, GetJobTimingResponse, GetLabelResponse, GetLabelStateResponse, GetLabelTimingInfoResponse, GroupData, IssueData, JobData, JobState, JobStepBatchState, JobStepError, JobStepOutcome, JobStepState, LabelState, NodeData, ReportPlacement, StepData, StreamData, TestData } from './Api';
 import { projectStore } from './ProjectStore';
 
-const theme = getTheme();
 
 export type JobLabel = GetLabelResponse & {
     stateResponse: GetLabelStateResponse;
@@ -102,10 +101,6 @@ export class JobDetails {
                 if (!this.suppressIssues) {
                     requests.push(this.getIssues());
                 }
-            }
-
-            if (!this.isLogView) {
-                requests.push(this.queryReports());
             }
 
             if (logId && logId !== this.logId) {
@@ -552,7 +547,6 @@ export class JobDetails {
         this.labels = [];
         this.fatalError = undefined;
         this.state = JobStepState.Waiting;
-        this.reportData = new Map<string, string>();
         this.cancel();
         this.eventsCallback = undefined;
         this.updateCallback = undefined;
@@ -722,55 +716,12 @@ export class JobDetails {
                 return undefined;
             }
 
-            const report = step.reports?.find(r => r.placement === placement);
-
-            if (!report) {
-                return undefined;
-            }
-
-            return this.reportData.get(report.artifactId);
+            return step.reports?.find(r => r.placement === placement)?.content;
 
         } else {
 
-            if (this.jobdata?.reports?.length) {
-                return this.reportData.get(this.jobdata.reports[0].artifactId);
-            }
+            return this.jobdata?.reports?.find(r => r.placement === placement)?.content;
 
-            return undefined;
-
-        }
-    }
-
-    private async queryReports(): Promise<void> {
-
-        const artifacts: string[] = [];
-
-        this.jobdata?.reports?.forEach(r => {
-            if (!this.stepId) {
-                artifacts.push(r.artifactId)
-            }
-
-        });
-
-        this.jobdata?.batches?.forEach(b => {
-            b.steps.forEach(s => s.reports?.forEach(r => {
-                if (s.id === this.stepId) {
-                    artifacts.push(r.artifactId);
-                }
-            }));
-        });
-
-
-        for (let i = 0; i < artifacts.length; i++) {
-
-            const artifactId = artifacts[i];
-
-            if (!this.reportData.has(artifactId)) {
-
-                const r = await backend.getArtifactDataById(artifactId) as unknown as string;
-
-                this.reportData.set(artifactId, r);
-            }
         }
     }
 
@@ -887,8 +838,7 @@ export class JobDetails {
                 requests.push(backend.getJobTestData(this.id!));
                 if (!this.suppressIssues) {
                     requests.push(this.getIssues());
-                }
-                requests.push(this.queryReports());
+                }                
             }
 
             // sync step/log
@@ -998,9 +948,6 @@ export class JobDetails {
     outcome: JobStepOutcome = JobStepOutcome.Failure;
     state: JobStepState = JobStepState.Waiting;
 
-    // artifact id => report contents (markdown)
-    private reportData = new Map<string, string>();
-
     timeoutID?: any;
 
     updateTime?: Date;
@@ -1034,14 +981,14 @@ const iconClass = mergeStyles({
 
 
 export const detailClassNames = mergeStyleSets({
-    success: [{ color: theme.palette.green, userSelect: "none" }, iconClass],
+    success: [{ color: "#52C705", userSelect: "none" }, iconClass],
     warnings: [{ color: "#F7D154", userSelect: "none" }, iconClass],
     failure: [{ color: "#EC4C47", userSelect: "none" }, iconClass],
     waiting: [{ color: "#A19F9D", userSelect: "none" }, iconClass],
     ready: [{ color: "#A19F9D", userSelect: "none" }, iconClass],
     skipped: [{ color: "#F3F2F1", userSelect: "none" }, iconClass],
     aborted: [{ color: "#F3F2F1", userSelect: "none" }, iconClass],
-    running: [{ color: theme.palette.blueLight, userSelect: "none" }, iconClass]
+    running: [{ color: "#00BCF2", userSelect: "none" }, iconClass]
 });
 
 export const getDetailStyle = (state: JobStepState, outcome: JobStepOutcome): DetailStyle => {

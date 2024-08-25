@@ -42,39 +42,36 @@ public:
 	 * Check if the specified scene component has a simulated transform, setting the specified transform if so.
 	 * @note: Previous simulated transforms are only valid for the frame on which they were added, and are removed on the next frame
 	 *
-	 * @param Component      The Component to retrieve a previous transform for
+	 * @param Object         The Object to retrieve a previous transform for
 	 * @param OutTransform   A valid (non-null) pointer to a transform to receive the simulated transform if possible.
 	 * @return True if OutTransform was overwritten with a valid transform, false otherwise.
 	 */
-	ENGINE_API bool GetPreviousTransform(USceneComponent* Component, FTransform* OutTransform) const;
-
+	ENGINE_API bool GetPreviousTransform(UObject* Object, FTransform* OutTransform) const;
 
 	/**
-	 * Check if the specified scene component has a simulated transform and return the result as an optional transform.
+	 * Check if the specified uboject has a simulated transform and return the result as an optional transform.
 	 * @note: Previous simulated transforms are only valid for the frame on which they were added, and are removed on the next frame
 	 *
-	 * @param Component      The Component to retrieve a previous transform for
+	 * @param Object      The object to retrieve a previous transform for
 	 * @return An optional transform that is set if the specified component has a previous simulated transform, otherwise an empty optional.
 	 */
-	ENGINE_API TOptional<FTransform> GetPreviousTransform(USceneComponent* Component) const;
-
+	ENGINE_API TOptional<FTransform> GetPreviousTransform(UObject* Object) const;	
 
 	/**
-	 * Assign a simulated previous frame transform for the specified component. Overwrites any existing simulated transform.
+	 * Assign a simulated previous frame transform for the specified object. Overwrites any existing simulated transform.
 	 * @note: Previous simulated transforms are only valid for the frame on which they were added, and are removed on the next frame
 	 *
-	 * @param Component                   The Component to assign the previous transform to
+	 * @param Object                      The Object to assign the previous transform to
 	 * @param SimulatedPreviousTransform  The simulated transform that this component had on the last frame
 	 */
-	ENGINE_API void SetPreviousTransform(USceneComponent* Component, const FTransform& SimulatedPreviousTransform);
-
-
+	ENGINE_API void SetPreviousTransform(UObject* Object, const FTransform& SimulatedPreviousTransform);
+	
 	/**
 	 * Clear the simulated previous transform for the specified component
 	 *
-	 * @param Component The Component to clear the previous transform for
+	 * @param Object The Object to clear the previous transform for
 	 */
-	ENGINE_API void ClearPreviousTransform(USceneComponent* Component);
+	ENGINE_API void ClearPreviousTransform(UObject* Component);
 
 private:
 

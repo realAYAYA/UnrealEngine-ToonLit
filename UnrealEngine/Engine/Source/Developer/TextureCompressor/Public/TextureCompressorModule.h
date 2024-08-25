@@ -159,6 +159,8 @@ struct FTextureBuildSettings
 	uint32 bApplyKernelToTopMip : 1;
 	/** 1: renormalizes the top mip (only useful for normal maps, prevents artists errors and adds quality) 0:don't */
 	uint32 bRenormalizeTopMip : 1;
+	/** If set, the texture will generate a tiny placeholder hw texture and save off a copy of the top mip for CPU access. */
+	uint32 bCPUAccessible : 1;
 	/** e.g. CTM_RoughnessFromNormalAlpha */
 	uint8 CompositeTextureMode;	// ECompositeTextureMode, opaque to avoid dependencies on engine headers.
 	/* default 1, high values result in a stronger effect */
@@ -183,6 +185,12 @@ struct FTextureBuildSettings
 	uint8 PowerOfTwoMode;
 	/** The color used to pad the texture out if it is resized due to PowerOfTwoMode */
 	FColor PaddingColor;
+	/** If set to true, texture padding will be performed using colors of the border pixels in order to improve quality of the generated mipmaps. */
+	bool bPadWithBorderColor;
+	/** Width of the resized texture when using "Resize To Specific Resolution" padding and resizing option. If set to zero, original width will be used. */
+	int32 ResizeDuringBuildX;
+	/** Width of the resized texture when using "Resize To Specific Resolution" padding and resizing option. If set to zero, original height will be used. */
+	int32 ResizeDuringBuildY;
 	/** The color that will be replaced with transparent black if chroma keying is enabled */
 	FColor ChromaKeyColor;
 	/** The threshold that components have to match for the texel to be considered equal to the ChromaKeyColor when chroma keying (<=, set to 0 to require a perfect exact match) */
@@ -197,6 +205,9 @@ struct FTextureBuildSettings
 
 	// which version of Oodle Texture to encode with
 	FName OodleTextureSdkVersion;
+
+	/** If set to true, then Oodle encoder preserves 0 and 255 (0.0 and 1.0) values exactly in alpha channel for BC3/BC7 and in all channels for BC4/BC5. */
+	bool bOodlePreserveExtremes;
 
 	/** Encoding settings resolved from fast/final.
 	* Enums aren't accessible from this module:
@@ -240,6 +251,13 @@ struct FTextureBuildSettings
 	// to TextureFormatName.
 	FName BaseTextureFormatName;
 	
+	// Whether bHasTransparentAlpha is valid.
+	bool bKnowAlphaTransparency = false;
+
+	// Only valid if bKnowAlphaTransparency is true. This is whether the resulting texture is expected to require
+	// an alpha channel based on scanning the source mips and analyzing the build settings.
+	bool bHasTransparentAlpha = false;
+
 	static constexpr uint32 MaxTextureResolutionDefault = TNumericLimits<uint32>::Max();
 
 	/** Default settings. */
@@ -280,6 +298,7 @@ struct FTextureBuildSettings
 		, bApplyYCoCgBlockScale(false)
 		, bApplyKernelToTopMip(false)
 		, bRenormalizeTopMip(false)
+		, bCPUAccessible(false)
 		, CompositeTextureMode(0 /*CTM_Disabled*/)
 		, CompositePower(1.0f)
 		, LODBias(0)
@@ -289,11 +308,15 @@ struct FTextureBuildSettings
 		, bChromaKeyTexture(false)
 		, PowerOfTwoMode(0 /*ETexturePowerOfTwoSetting::None*/)
 		, PaddingColor(FColor::Black)
+		, bPadWithBorderColor(false)
+		, ResizeDuringBuildX(0)
+		, ResizeDuringBuildY(0)
 		, ChromaKeyColor(FColorList::Magenta)
 		, ChromaKeyThreshold(1.0f / 255.0f)
 		, CompressionQuality(-1)
 		, LossyCompressionAmount(0 /* TLCA_Default */)
 		, OodleTextureSdkVersion() // FName() == NAME_None
+		, bOodlePreserveExtremes(false)
 		, OodleRDO(30)
 		, OodleEncodeEffort(0 /* ETextureEncodeEffort::Default */)
 		, OodleUniversalTiling(0 /* ETextureUniversalTiling::Disabled */)
@@ -396,6 +419,18 @@ public:
 		TArray<FImage> &OutMipChain,
 		uint32 MipChainDepth
 		);
+
+	/**
+	* Given the channel min/max for the top mip of a texture's source, determine whether there will be any transparency
+	* after image processing occurs, and thus the texture will need to be BC3 for the purposes of AutoDXT format selection.
+	* 
+	* @param bOutAlphaIsTransparent		*This is undetermined if the return is false!*. If true, we expect the image after
+	*									processing to require an alpha channel.
+	* @return							Whether the alpha channel can be determined. There are plenty of edge cases where 
+	*									it's not feasible to determine the result prior to full processing, however these
+	*									are rare in practice.
+	*/
+	TEXTURECOMPRESSOR_API static bool DetermineAlphaChannelTransparency(const FTextureBuildSettings& InBuildSettings, const FLinearColor& InChannelMin, const FLinearColor& InChannelMax, bool& bOutAlphaIsTransparent);
 
 	/**
      * Adjusts the colors of the image using the specified settings

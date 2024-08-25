@@ -2,6 +2,9 @@
 
 #include "MVVM/ViewModels/SequenceModel.h"
 #include "MVVM/Extensions/IObjectBindingExtension.h"
+#include "MVVM/Extensions/ILockableExtension.h"
+#include "MVVM/Extensions/IMutableExtension.h"
+#include "MVVM/Extensions/ISoloableExtension.h"
 #include "MVVM/ViewModels/FolderModel.h"
 #include "MVVM/ViewModels/OutlinerItemModel.h"
 #include "MVVM/ViewModels/TrackModel.h"
@@ -10,6 +13,7 @@
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
 #include "MVVM/ViewModels/ViewModel.h"
 #include "MVVM/ViewModels/ViewModelIterators.h"
+#include "MVVM/ViewModels/EditorSharedViewModelData.h"
 
 #include "MovieScene.h"
 #include "MovieSceneFolder.h"
@@ -39,7 +43,22 @@ FSequenceModel::FSequenceModel(TWeakPtr<FSequencerEditorViewModel> InEditorViewM
 
 void FSequenceModel::InitializeExtensions()
 {
-	SetSharedData(MakeShared<FSharedViewModelData>());
+	TSharedPtr<FSharedViewModelData> NewSharedData = MakeShared<FEditorSharedViewModelData>(WeakEditor.Pin().ToSharedRef());
+	SetSharedData(NewSharedData);
+
+	// Re-generate hierarchical caches when the sequence changes
+	NewSharedData->AddDynamicExtension(FOutlinerCacheExtension::ID);
+	NewSharedData->AddDynamicExtension(FMuteStateCacheExtension::ID);
+	NewSharedData->AddDynamicExtension(FSoloStateCacheExtension::ID);
+	NewSharedData->AddDynamicExtension(FLockStateCacheExtension::ID);
+
+	// Add our hierarchical cache processor
+	TSharedPtr<FOutlinerCacheExtension> OutlinerCache = NewSharedData->CastThisSharedChecked<FOutlinerCacheExtension>();
+	OutlinerCache->Initialize(AsShared());
+
+	// Make sure the hierarchical cache is updated when our hierarchy changes
+	FSimpleMulticastDelegate& HierarchyChanged = NewSharedData->SubscribeToHierarchyChanged(AsShared());
+	HierarchyChanged.AddSP(OutlinerCache.ToSharedRef(), &FOutlinerCacheExtension::OnHierarchyUpdated);
 
 	// This needs to be run outside of the constructor because a shared pointer to 'this' can't
 	// be created until after the object is fully built.
@@ -336,6 +355,35 @@ void FSequenceModel::PerformDrop(const FViewModelPtr& TargetModel, const FDragDr
 	}
 }
 
+void FSequenceModel::OnModifiedIndirectly(UMovieSceneSignedObject*)
+{
+	TSharedPtr<ISequencer> Sequencer = GetEditor()->GetSequencer();
+	const bool bRecording = Sequencer && Sequencer->OnGetIsRecording().IsBound() && Sequencer->OnGetIsRecording().Execute();
+
+	// Disregard updating cached flags during recording
+	if (!bRecording)
+	{
+		if (FOutlinerCacheExtension* OutlinerCache = GetSharedData()->CastThis<FOutlinerCacheExtension>())
+		{
+			OutlinerCache->UpdateCachedFlags();
+		}
+	}
+}
+
+void FSequenceModel::OnModifiedDirectly(UMovieSceneSignedObject*)
+{
+	TSharedPtr<ISequencer> Sequencer = GetEditor()->GetSequencer();
+	const bool bRecording = Sequencer && Sequencer->OnGetIsRecording().IsBound() && Sequencer->OnGetIsRecording().Execute();
+
+	// Disregard updating cached flags during recording
+	if (!bRecording)
+	{
+		if (FOutlinerCacheExtension* OutlinerCache = GetSharedData()->CastThis<FOutlinerCacheExtension>())
+		{
+			OutlinerCache->UpdateCachedFlags();
+		}
+	}
+}
 
 } // namespace Sequencer
 } // namespace UE

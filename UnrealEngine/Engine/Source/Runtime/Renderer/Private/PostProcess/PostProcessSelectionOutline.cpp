@@ -7,7 +7,6 @@
 #include "EditorPrimitivesRendering.h"
 #include "SceneTextureParameters.h"
 #include "CanvasTypes.h"
-#include "RenderTargetTemp.h"
 #include "ClearQuad.h"
 #include "ScenePrivate.h"
 #include "PostProcess/SceneRenderTargets.h"
@@ -38,6 +37,7 @@ public:
 		SHADER_PARAMETER(float, SelectionHighlightIntensity)
 		SHADER_PARAMETER(float, BSPSelectionIntensity)
 		SHADER_PARAMETER(float, UILuminanceAndIsSCRGB)
+		SHADER_PARAMETER(float, SecondaryViewportOffset)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -63,7 +63,7 @@ IMPLEMENT_GLOBAL_SHADER(FSelectionOutlinePS, "/Engine/Private/PostProcessSelecti
 } //! namespace
 
 BEGIN_SHADER_PARAMETER_STRUCT(FSelectionOutlinePassParameters, )
-	SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
+	SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
 	SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureShaderParameters, SceneTextures)
 	SHADER_PARAMETER_STRUCT_INCLUDE(FInstanceCullingDrawParams, InstanceCullingDrawParams)
 	RENDER_TARGET_BINDING_SLOTS()
@@ -78,7 +78,8 @@ FScreenPassTexture AddSelectionOutlinePass(
 	const FViewInfo& View,
 	FSceneUniformBuffer &SceneUniformBuffer,
 	const FSelectionOutlineInputs& Inputs,
-	const Nanite::FRasterResults* NaniteRasterResults)
+	const Nanite::FRasterResults* NaniteRasterResults,
+	FRDGTextureRef& DepthStencilTexture)
 {
 	check(Inputs.SceneColor.IsValid());
 	check(Inputs.SceneDepth.IsValid());
@@ -91,69 +92,99 @@ FScreenPassTexture AddSelectionOutlinePass(
 	const uint32 NumSamples = View.GetSceneTexturesConfig().NumSamples;
 
 	// Patch uniform buffers with updated state for rendering the outline mesh draw commands.
-	const FViewInfo* EditorView = CreateCompositePrimitiveView(View, Inputs.SceneColor.ViewRect, NumSamples);
-
-	FRDGTextureRef DepthStencilTexture = nullptr;
+	const bool bIsInstancedStereoView = View.bIsInstancedStereoEnabled && IStereoRendering::IsStereoEyePass(View.StereoPass);
+	const FViewInfo* EditorView = CreateCompositePrimitiveView(View, bIsInstancedStereoView ? View.ViewRect : Inputs.SceneColor.ViewRect, NumSamples);
 
 	// Generate custom depth / stencil for outline shapes.
 	{
-		const FScreenPassTextureViewport SceneColorViewport(Inputs.SceneColor);
-		RDG_EVENT_SCOPE(GraphBuilder, "OutlineDepth %dx%d", SceneColorViewport.Rect.Width(), SceneColorViewport.Rect.Height());
+		FScreenPassTextureViewport DepthStencilViewport(Inputs.SceneColor);
+		RDG_EVENT_SCOPE(GraphBuilder, "OutlineDepth %dx%d", DepthStencilViewport.Rect.Width(), DepthStencilViewport.Rect.Height());
 
 		FScene* Scene = View.Family->Scene->GetRenderScene();
 
+		if (View.ShouldRenderView() || !DepthStencilTexture)
 		{
-			FRDGTextureDesc DepthStencilDesc = Inputs.SceneColor.Texture->Desc;
-			DepthStencilDesc.Reset();
-			DepthStencilDesc.Format = PF_DepthStencil;
-			// This is a reversed Z depth surface, so 0.0f is the far plane.
-			DepthStencilDesc.ClearValue = FClearValueBinding((float)ERHIZBuffer::FarPlane, 0);
-			DepthStencilDesc.Flags = TexCreate_DepthStencilTargetable | TexCreate_ShaderResource;
-			DepthStencilDesc.NumSamples = NumSamples;
 
-			DepthStencilTexture = GraphBuilder.CreateTexture(DepthStencilDesc, TEXT("Editor.SelectionOutline"));
+			// If instanced stereo is enabled, we can only do traditional draws from the primary view, so we need to generate the secondary view's depth data at the same time.
+			// To hold that secondary view depth data, we patch the depth stencil texture and its viewport to be double-wide.
+			if (bIsInstancedStereoView /* Only primary ISR views have View.ShouldRenderView() == true */)
+			{
+				DepthStencilViewport = FScreenPassTextureViewport(View.ViewRectWithSecondaryViews);
+			}
+
+			{
+				FRDGTextureDesc DepthStencilDesc = Inputs.SceneColor.Texture->Desc;
+				DepthStencilDesc.Reset();
+				DepthStencilDesc.Format = PF_DepthStencil;
+				// This is a reversed Z depth surface, so 0.0f is the far plane.
+				DepthStencilDesc.ClearValue = FClearValueBinding((float)ERHIZBuffer::FarPlane, 0);
+				DepthStencilDesc.Flags = TexCreate_DepthStencilTargetable | TexCreate_ShaderResource;
+				DepthStencilDesc.NumSamples = NumSamples;
+				DepthStencilDesc.Extent = DepthStencilViewport.Extent;
+
+				DepthStencilTexture = GraphBuilder.CreateTexture(DepthStencilDesc, TEXT("Editor.SelectionOutline"));
+			}
+
+			{
+				auto* PassParameters = GraphBuilder.AllocParameters<FSelectionOutlinePassParameters>();
+
+				PassParameters->View = EditorView->GetShaderParameters();
+				PassParameters->SceneTextures = Inputs.SceneTextures;
+				PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(
+					DepthStencilTexture,
+					ERenderTargetLoadAction::EClear,
+					ERenderTargetLoadAction::EClear,
+					FExclusiveDepthStencil::DepthWrite_StencilWrite);
+
+				const float ViewportScale = (float)Inputs.SceneColor.ViewRect.Width() / (float)View.ViewRect.Width(); // Outline selection can be before or after the primary upscale
+
+				const_cast<FViewInfo&>(View).ParallelMeshDrawCommandPasses[EMeshPass::EditorSelection].BuildRenderingCommands(GraphBuilder, Scene->GPUScene, PassParameters->InstanceCullingDrawParams);
+
+				GraphBuilder.AddPass(
+					RDG_EVENT_NAME("EditorSelectionDepth"),
+					PassParameters,
+					ERDGPassFlags::Raster,
+					[&View, DepthStencilViewport, PassParameters, ViewportScale](FRHICommandListImmediate& RHICmdList)
+					{
+						if (View.bIsInstancedStereoEnabled && View.StereoPass == EStereoscopicPass::eSSP_PRIMARY)
+						{
+							FSceneRenderer::SetStereoViewport(RHICmdList, View, ViewportScale);
+						}
+						else
+						{
+							RHICmdList.SetViewport(DepthStencilViewport.Rect.Min.X, DepthStencilViewport.Rect.Min.Y, 0.0f, DepthStencilViewport.Rect.Max.X, DepthStencilViewport.Rect.Max.Y, 1.0f);
+						}
+						
+						// Run selection pass on static elements
+						View.ParallelMeshDrawCommandPasses[EMeshPass::EditorSelection].DispatchDraw(nullptr, RHICmdList, &PassParameters->InstanceCullingDrawParams);
+					}
+				);
+			}
 		}
 
+		// If the depth stencil is double-wide, retarget the view rect to the appropriate side for remaining steps.
+		if (bIsInstancedStereoView)
 		{
-			auto* PassParameters = GraphBuilder.AllocParameters<FSelectionOutlinePassParameters>();
-
-			PassParameters->View = EditorView->ViewUniformBuffer;
-			PassParameters->SceneTextures = Inputs.SceneTextures;
-			PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(
-				DepthStencilTexture,
-				ERenderTargetLoadAction::EClear,
-				ERenderTargetLoadAction::EClear,
-				FExclusiveDepthStencil::DepthWrite_StencilWrite);
-
-			const_cast<FViewInfo&>(View).ParallelMeshDrawCommandPasses[EMeshPass::EditorSelection].BuildRenderingCommands(GraphBuilder, Scene->GPUScene, PassParameters->InstanceCullingDrawParams);
-
-			GraphBuilder.AddPass(
-				RDG_EVENT_NAME("EditorSelectionDepth"),
-				PassParameters,
-				ERDGPassFlags::Raster,
-				[&View, SceneColorViewport, DepthStencilTexture, NaniteRasterResults, PassParameters, bNaniteEnabled](FRHICommandListImmediate& RHICmdList)
-				{
-					RHICmdList.SetViewport(SceneColorViewport.Rect.Min.X, SceneColorViewport.Rect.Min.Y, 0.0f, SceneColorViewport.Rect.Max.X, SceneColorViewport.Rect.Max.Y, 1.0f);
-
-					// Run selection pass on static elements
-					View.ParallelMeshDrawCommandPasses[EMeshPass::EditorSelection].DispatchDraw(nullptr, RHICmdList, &PassParameters->InstanceCullingDrawParams);
-				}
-			);
+			// Use View.ViewRect rather than SceneColor.ViewRect, since SceneColor may be single-wide (thus always 0,0 locked).
+			DepthStencilViewport = FScreenPassTextureViewport(DepthStencilTexture->Desc.Extent, View.ViewRect);
 		}
 
 		// Render Nanite mesh outlines after regular mesh outline, but before borders
 		if (bNaniteEnabled)
 		{
+			// Update editor view to true target view rect
 			Nanite::DrawEditorSelection(GraphBuilder, DepthStencilTexture, *Scene, View, *EditorView, SceneUniformBuffer, NaniteRasterResults);
 		}
 
 		// Render HairStrands outlines
 		if (HairStrands::HasViewHairStrandsData(View))
 		{
-			HairStrands::DrawEditorSelection(GraphBuilder, View, SceneColorViewport.Rect, DepthStencilTexture);
+			HairStrands::DrawEditorSelection(GraphBuilder, View, DepthStencilViewport.Rect, DepthStencilTexture);
 		}
 
 		// Clear the borders to get an outline around the objects if it's partly outside of the screen
+		// Unnecessary for stereo (VR editor) views since the edge of the screen is not visible
+		if (!IStereoRendering::IsStereoEyePass(View.StereoPass))
 		{
 			auto* PassParameters = GraphBuilder.AllocParameters<FSelectionOutlineClearBorderParameters>();
 
@@ -167,27 +198,27 @@ FScreenPassTexture AddSelectionOutlinePass(
 				RDG_EVENT_NAME("DrawOutlineBorder"),
 				PassParameters,
 				ERDGPassFlags::Raster,
-				[SceneColorViewport](FRHICommandListImmediate& RHICmdList)
+				[DepthStencilViewport](FRHICommandListImmediate& RHICmdList)
 				{
-                    RHICmdList.SetViewport(SceneColorViewport.Rect.Min.X, SceneColorViewport.Rect.Min.Y, 0.0f, SceneColorViewport.Rect.Max.X, SceneColorViewport.Rect.Max.Y, 1.0f);
-                    
-					FIntRect InnerRect = SceneColorViewport.Rect;
+					RHICmdList.SetViewport(DepthStencilViewport.Rect.Min.X, DepthStencilViewport.Rect.Min.Y, 0.0f, DepthStencilViewport.Rect.Max.X, DepthStencilViewport.Rect.Max.Y, 1.0f);
+
+					FIntRect InnerRect = DepthStencilViewport.Rect;
 
 					// 1 as we have an outline that is that thick
 					InnerRect.InflateRect(-1);
 
 					// top
-					RHICmdList.SetScissorRect(true, SceneColorViewport.Rect.Min.X, SceneColorViewport.Rect.Min.Y, SceneColorViewport.Rect.Max.X, InnerRect.Min.Y);
-					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, SceneColorViewport.Extent, FIntRect());
+					RHICmdList.SetScissorRect(true, DepthStencilViewport.Rect.Min.X, DepthStencilViewport.Rect.Min.Y, DepthStencilViewport.Rect.Max.X, InnerRect.Min.Y);
+					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, DepthStencilViewport.Extent, FIntRect());
 					// bottom
-					RHICmdList.SetScissorRect(true, SceneColorViewport.Rect.Min.X, InnerRect.Max.Y, SceneColorViewport.Rect.Max.X, SceneColorViewport.Rect.Max.Y);
-					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, SceneColorViewport.Extent, FIntRect());
+					RHICmdList.SetScissorRect(true, DepthStencilViewport.Rect.Min.X, InnerRect.Max.Y, DepthStencilViewport.Rect.Max.X, DepthStencilViewport.Rect.Max.Y);
+					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, DepthStencilViewport.Extent, FIntRect());
 					// left
-					RHICmdList.SetScissorRect(true, SceneColorViewport.Rect.Min.X, SceneColorViewport.Rect.Min.Y, InnerRect.Min.X, SceneColorViewport.Rect.Max.Y);
-					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, SceneColorViewport.Extent, FIntRect());
+					RHICmdList.SetScissorRect(true, DepthStencilViewport.Rect.Min.X, DepthStencilViewport.Rect.Min.Y, InnerRect.Min.X, DepthStencilViewport.Rect.Max.Y);
+					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, DepthStencilViewport.Extent, FIntRect());
 					// right
-					RHICmdList.SetScissorRect(true, InnerRect.Max.X, SceneColorViewport.Rect.Min.Y, SceneColorViewport.Rect.Max.X, SceneColorViewport.Rect.Max.Y);
-					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, SceneColorViewport.Extent, FIntRect());
+					RHICmdList.SetScissorRect(true, InnerRect.Max.X, DepthStencilViewport.Rect.Min.Y, DepthStencilViewport.Rect.Max.X, DepthStencilViewport.Rect.Max.Y);
+					DrawClearQuad(RHICmdList, false, FLinearColor(), true, (float)ERHIZBuffer::FarPlane, true, 0, DepthStencilViewport.Extent, FIntRect());
 
 					RHICmdList.SetScissorRect(false, 0, 0, 0, 0);
 				}
@@ -210,6 +241,12 @@ FScreenPassTexture AddSelectionOutlinePass(
 
 		FRHISamplerState* PointClampSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
+		// In side-by-side stereo, the SceneColor texture can come in as single- or double-wide depending on what post-processing passes are enabled, and it can also be pre- or post-primary upscale
+		// If it's double-wide, the left eye will always be on the left side of the texture, but the right eye may be on the left (0,0 aligned) or the right depending on preceding passes
+		// If an instanced secondary view is on the left, it's depth stencil data will still be on the right, so we need to apply an offset to the outline shader when using instanced stencil data
+		const bool bIsInstancedSecondaryView = bIsInstancedStereoView && View.StereoPass == EStereoscopicPass::eSSP_SECONDARY;
+		const float SecondaryViewOffset = (bIsInstancedSecondaryView && Inputs.SceneColor.ViewRect.Min.X == 0) ? View.ViewRect.Min.X : 0.0f;
+
 		FSelectionOutlinePS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSelectionOutlinePS::FParameters>();
 		PassParameters->RenderTargets[0] = Output.GetRenderTargetBinding();
 		PassParameters->View = View.ViewUniformBuffer;
@@ -231,6 +268,7 @@ FScreenPassTexture AddSelectionOutlinePass(
 		PassParameters->OutlineColorIndexBits = 3;
 		PassParameters->SelectionHighlightIntensity = GEngine->SelectionHighlightIntensity;
 		PassParameters->BSPSelectionIntensity = GEngine->BSPSelectionHighlightIntensity;
+		PassParameters->SecondaryViewportOffset = SecondaryViewOffset;
 
 		EDisplayOutputFormat DisplayOutputFormat = View.Family->RenderTarget->GetDisplayOutputFormat();
 		bool bIsHDR = false;

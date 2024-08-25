@@ -23,6 +23,7 @@ public class TextureEditor : ModuleRules
 			new string[] {
 				"Core",
 				"CoreUObject",
+                "ImageCore",
                 "InputCore",
 				"Engine",
 				"RenderCore",

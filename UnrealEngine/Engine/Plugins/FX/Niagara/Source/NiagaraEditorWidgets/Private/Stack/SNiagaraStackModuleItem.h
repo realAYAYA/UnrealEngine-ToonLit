@@ -77,9 +77,6 @@ private:
 
 	TSharedPtr<SComboButton> AddButton;
 
-	TSharedPtr<SMultiLineEditableTextBox> ShortDescriptionTextBox;
-	TSharedPtr<SMultiLineEditableTextBox> DescriptionTextBox;
-
 	static bool bLibraryOnly;
 
 };

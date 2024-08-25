@@ -1,0 +1,148 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "NiagaraStatelessCommon.ush"
+//#include "WaveOpUtil.ush"
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define PARTICLE_ATTRIBUTE(TYPE, NAME) int Permutation_##NAME##Component;
+	PARTICLE_ATTRIBUTES_OUTPUT
+#undef PARTICLE_ATTRIBUTE
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// TBD this might produce sub optimal code, needs investigate and is temporary
+#include "Modules/NiagaraStatelessModule_CalculateAccurateVelocity.ush"
+#include "Modules/NiagaraStatelessModule_CameraOffset.ush"
+#include "Modules/NiagaraStatelessModule_DynamicMaterialParameters.ush"
+#include "Modules/NiagaraStatelessModule_InitializeParticle.ush"
+#include "Modules/NiagaraStatelessModule_InitialMeshOrientation.ush"
+#include "Modules/NiagaraStatelessModule_MeshIndex.ush"
+#include "Modules/NiagaraStatelessModule_MeshRotationRate.ush"
+#include "Modules/NiagaraStatelessModule_RotateAroundPoint.ush"
+#include "Modules/NiagaraStatelessModule_ShapeLocation.ush"
+#include "Modules/NiagaraStatelessModule_ScaleColor.ush"
+#include "Modules/NiagaraStatelessModule_ScaleSpriteSize.ush"
+#include "Modules/NiagaraStatelessModule_ScaleSpriteSizeBySpeed.ush"
+#include "Modules/NiagaraStatelessModule_ScaleMeshSize.ush"
+#include "Modules/NiagaraStatelessModule_ScaleMeshSizebySpeed.ush"
+#include "Modules/NiagaraStatelessModule_SolveVelocitiesAndForces.ush"
+#include "Modules/NiagaraStatelessModule_SpriteFacingAndAlignment.ush"
+#include "Modules/NiagaraStatelessModule_SpriteRotationRate.ush"
+#include "Modules/NiagaraStatelessModule_SubUVAnimation.ush"
+
+struct FStatelessParticleSimuation
+{
+	#define PARTICLE_MODULE(NAME) FStatelessModule_##NAME	NAME##Module;
+		PARTICLE_MODULES
+	#undef PARTICLE_MODULE
+};
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define NIAGARA_MAX_GPU_SPAWN_INFOS 4
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+uint	Common_RandomSeed;
+float	Common_SimulationTime;
+float	Common_SimulationDeltaTime;
+float	Common_SimulationInvDeltaTime;
+float2	Common_LifetimeScaleBias;
+
+uint				Common_GPUCountBufferOffset;
+RWBuffer<int>		Common_GPUCountBuffer;
+
+DECLARE_SCALAR_ARRAY(uint,	SpawnInfo_NumActive, NIAGARA_MAX_GPU_SPAWN_INFOS);
+DECLARE_SCALAR_ARRAY(uint,	SpawnInfo_ParticleOffset, NIAGARA_MAX_GPU_SPAWN_INFOS);
+DECLARE_SCALAR_ARRAY(uint,	SpawnInfo_UniqueOffset, NIAGARA_MAX_GPU_SPAWN_INFOS);
+DECLARE_SCALAR_ARRAY(float,	SpawnInfo_Time, NIAGARA_MAX_GPU_SPAWN_INFOS);
+DECLARE_SCALAR_ARRAY(float,	SpawnInfo_Rate, NIAGARA_MAX_GPU_SPAWN_INFOS);
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void StatelessMain(uint DispatchThreadId : SV_DispatchThreadID)
+{
+	// Initialize our particle data
+	FStatelessParticle Particle;
+	Particle.Age = -1.0f;
+
+	// Find which spawn info we belong to and fill out details
+	{
+		uint SpawnInfoIndex = DispatchThreadId.x;
+		for ( int i=0; i < NIAGARA_MAX_GPU_SPAWN_INFOS; ++i )
+		{
+			const uint SpawnInfoNumActive		= GET_SCALAR_ARRAY_ELEMENT(SpawnInfo_NumActive, i);
+			const uint SpawnInfoParticleOffset	= GET_SCALAR_ARRAY_ELEMENT(SpawnInfo_ParticleOffset, i);
+			const uint SpawnInfoUniqueOffset	= GET_SCALAR_ARRAY_ELEMENT(SpawnInfo_UniqueOffset, i);
+			const float SpawnInfoTime			= GET_SCALAR_ARRAY_ELEMENT(SpawnInfo_Time, i);
+			const float SpawnInfoRate			= GET_SCALAR_ARRAY_ELEMENT(SpawnInfo_Rate, i);
+			if ( SpawnInfoIndex < SpawnInfoNumActive )
+			{
+				const uint SpawnParticleIndex = SpawnInfoIndex + SpawnInfoParticleOffset;
+				Particle.UniqueIndex	= SpawnInfoIndex + SpawnInfoUniqueOffset + SpawnInfoParticleOffset;
+				Particle.Age			= Common_SimulationTime - (SpawnInfoTime + float(SpawnParticleIndex) * SpawnInfoRate);
+				break;
+			}
+
+			SpawnInfoIndex -= SpawnInfoNumActive;
+		}
+		if ( Particle.Age < 0.0f )
+		{
+			return;
+		}
+	}
+	
+	// Initialize variables / determine lifetime / etc
+	Particle.RandomSeed.x = 7123u;
+	Particle.RandomSeed.y = Common_RandomSeed;
+	Particle.RandomSeed.z = Particle.UniqueIndex * 3581u;
+	Particle.RandomSeed.w = 0;
+
+	Particle.Lifetime = RandomScaleBiasFloat(Particle, Common_LifetimeScaleBias.x, Common_LifetimeScaleBias.y);
+	if ( Particle.Lifetime <= 0.0f || Particle.Age >= Particle.Lifetime )
+	{
+		return;
+	}
+	Particle.NormalizedAge = Particle.Age / Particle.Lifetime;
+
+	Particle.PreviousAge = max(Particle.Age - Common_SimulationDeltaTime, 0.0f);
+	Particle.PreviousNormalizedAge = Particle.PreviousAge / Particle.Lifetime;
+
+	Particle.DeltaTime		= Common_SimulationDeltaTime;
+	Particle.InvDeltaTime	= Common_SimulationInvDeltaTime;
+	
+	Particle.bAlive = true;
+	
+	// Run Particle Initialization
+	FStatelessParticleSimuation ParticleSimulation;
+
+	#define PARTICLE_MODULE(NAME) ##NAME##_Initialize(ParticleSimulation.##NAME##Module, Particle);
+		PARTICLE_MODULES
+	#undef PARTICLE_MODULE
+
+	if ( !Particle.bAlive )
+	{
+		return;
+	}
+
+	// Run Particle Simulate
+	#define PARTICLE_MODULE(NAME) ##NAME##_Simulate(ParticleSimulation.##NAME##Module, Particle);
+		PARTICLE_MODULES
+	#undef PARTICLE_MODULE
+
+	if ( !Particle.bAlive )
+	{
+		return;
+	}
+
+	// Output Particles that are still alive
+	uint OutputIndex;
+	
+	//WaveInterlockedAddScalar_(Common_GPUCountBuffer[Common_GPUCountBufferOffset], 1, Particle.OutputIndex);
+	InterlockedAdd(Common_GPUCountBuffer[Common_GPUCountBufferOffset], 1, OutputIndex);
+
+	#define PARTICLE_ATTRIBUTE(TYPE, NAME) if ( IsValidComponent(Permutation_##NAME##Component) ) { OutputComponentData(OutputIndex, Permutation_##NAME##Component, Particle.##NAME); }
+		PARTICLE_ATTRIBUTES_OUTPUT
+	#undef PARTICLE_ATTRIBUTE
+}

@@ -78,23 +78,26 @@ namespace UE::Sequencer
 			{
 				FMovieSceneChannelHandle ChannelHandle = ChildChannel->GetKeyArea()->GetChannel();
 
-				FText DisplayText = ChannelHandle.GetMetaData()->DisplayText;
+				if (const FMovieSceneChannelMetaData* Metadata = ChannelHandle.GetMetaData())
+				{
+					FText DisplayText = Metadata->DisplayText;
 
-				if (ChannelHandle.GetMetaData()->DisplayText.EqualTo(FCommonChannelData::ChannelR))
-				{
-					ColorChannels[0] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
-				}
-				if (ChannelHandle.GetMetaData()->DisplayText.EqualTo(FCommonChannelData::ChannelG))
-				{
-					ColorChannels[1] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
-				}
-				if (ChannelHandle.GetMetaData()->DisplayText.EqualTo(FCommonChannelData::ChannelB))
-				{
-					ColorChannels[2] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
-				}
-				if (ChannelHandle.GetMetaData()->DisplayText.EqualTo(FCommonChannelData::ChannelA))
-				{
-					ColorChannels[3] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
+					if (DisplayText.EqualTo(FCommonChannelData::ChannelR))
+					{
+						ColorChannels[0] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
+					}
+					else if (DisplayText.EqualTo(FCommonChannelData::ChannelG))
+					{
+						ColorChannels[1] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
+					}
+					else if (DisplayText.EqualTo(FCommonChannelData::ChannelB))
+					{
+						ColorChannels[2] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
+					}
+					else if (DisplayText.EqualTo(FCommonChannelData::ChannelA))
+					{
+						ColorChannels[3] = ChannelHandle.Cast<FMovieSceneFloatChannel>().Get();
+					}
 				}
 			}
 

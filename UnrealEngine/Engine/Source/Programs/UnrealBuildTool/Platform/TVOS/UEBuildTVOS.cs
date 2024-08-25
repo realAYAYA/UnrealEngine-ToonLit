@@ -130,7 +130,7 @@ namespace UnrealBuildTool
 		/// </summary>
 		public override void RegisterBuildPlatforms(ILogger Logger)
 		{
-			ApplePlatformSDK SDK = new IOSPlatformSDK(Logger);
+			ApplePlatformSDK SDK = new ApplePlatformSDK(Logger);
 
 			// Register this build platform for IOS
 			UEBuildPlatform.RegisterBuildPlatform(new TVOSPlatform(SDK, Logger), Logger);

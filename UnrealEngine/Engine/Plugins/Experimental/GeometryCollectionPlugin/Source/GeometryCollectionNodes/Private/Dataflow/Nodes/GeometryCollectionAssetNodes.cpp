@@ -21,6 +21,7 @@ namespace Dataflow
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGetGeometryCollectionAssetDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGetGeometryCollectionSourcesDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FCreateGeometryCollectionFromSourcesDataflowNode);
+		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FStaticMeshToCollectionDataflowNode);
 
 		// Terminal
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY("Terminal", FLinearColor(0.f, 0.f, 0.f), CDefaultNodeBodyTintColor);
@@ -65,7 +66,7 @@ void FGeometryCollectionTerminalDataflowNode::SetAssetValue(TObjectPtr<UObject> 
 
 			const bool bHasInternalMaterial = false; // with data flow there's no assumption of internal materials
 			CollectionAsset->ResetFrom(InCollection, InMaterials, false);
-			CollectionAsset->AutoInstanceMeshes = InInstancedMeshes;
+			CollectionAsset->SetAutoInstanceMeshes(InInstancedMeshes);
 
 #if WITH_EDITOR
 			// make sure we rebuild the render data when we are done setting everything 
@@ -102,13 +103,13 @@ FGetGeometryCollectionAssetDataflowNode::FGetGeometryCollectionAssetDataflowNode
 void FGetGeometryCollectionAssetDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
 {
 	ensure(Out->IsA(&Asset));
+
+	TObjectPtr<UGeometryCollection> CollectionAsset(nullptr);
 	if (const Dataflow::FEngineContext* EngineContext = Context.AsType<Dataflow::FEngineContext>())
 	{
-		if (const TObjectPtr<UGeometryCollection> CollectionAsset = Cast<UGeometryCollection>(EngineContext->Owner))
-		{
-			SetValue(Context, CollectionAsset, &Asset);
-		}
+		CollectionAsset = Cast<UGeometryCollection>(EngineContext->Owner);
 	}
+	SetValue(Context, CollectionAsset, &Asset);
 }
 
 // ===========================================================================================================================
@@ -220,6 +221,35 @@ void FCreateGeometryCollectionFromSourcesDataflowNode::Evaluate(Dataflow::FConte
 
 	// we have to make a copy since we have generated a FGeometryCollection which is inherited from FManagedArrayCollection
 	SetValue(Context, static_cast<const FManagedArrayCollection&>(OutCollection), &Collection);
+	SetValue(Context, MoveTemp(OutMaterials), &Materials);
+	SetValue(Context, MoveTemp(OutInstancedMeshes), &InstancedMeshes);
+}
+
+// ===========================================================================================================================
+
+FStaticMeshToCollectionDataflowNode::FStaticMeshToCollectionDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid)
+	: FDataflowNode(InParam, InGuid)
+{
+	RegisterOutputConnection(&Collection);
+	RegisterOutputConnection(&Materials);
+	RegisterOutputConnection(&InstancedMeshes);
+}
+
+void FStaticMeshToCollectionDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
+{
+	ensure(Out->IsA(&Collection) || Out->IsA(&Materials) || Out->IsA(&InstancedMeshes));
+
+	FManagedArrayCollection OutCollection;
+	TArray<TObjectPtr<UMaterial>> OutMaterials;
+	TArray<FGeometryCollectionAutoInstanceMesh> OutInstancedMeshes;
+
+	if (StaticMesh)
+	{
+		FGeometryCollectionEngineConversion::ConvertStaticMeshToGeometryCollection(StaticMesh, OutCollection, OutMaterials, OutInstancedMeshes, bSetInternalFromMaterialIndex, bSplitComponents);
+	}
+
+	// Set Outputs
+	SetValue(Context, MoveTemp(OutCollection), &Collection);
 	SetValue(Context, MoveTemp(OutMaterials), &Materials);
 	SetValue(Context, MoveTemp(OutInstancedMeshes), &InstancedMeshes);
 }

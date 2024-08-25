@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using Microsoft.Extensions.Logging;
 
 namespace EpicGames.BuildGraph

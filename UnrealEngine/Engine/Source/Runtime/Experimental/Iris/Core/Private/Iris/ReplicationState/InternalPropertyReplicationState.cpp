@@ -28,12 +28,19 @@ void InitReplicationStateInternals(uint8* StateBuffer, const FReplicationStateDe
 	}
 }
 
-void CopyPropertyReplicationStateInternals(uint8* RESTRICT DstStateBuffer, uint8* RESTRICT SrcStateBuffer, const FReplicationStateDescriptor* Descriptor)
+void CopyPropertyReplicationStateInternals(uint8* RESTRICT DstStateBuffer, uint8* RESTRICT SrcStateBuffer, const FReplicationStateDescriptor* Descriptor, bool bOverwriteChangeMask = true)
 {
 	FNetBitArrayView DstChangeMask = GetMemberChangeMask(DstStateBuffer, Descriptor);
 	FNetBitArrayView SrcChangeMask = GetMemberChangeMask(SrcStateBuffer, Descriptor);
 
-	DstChangeMask.Copy(SrcChangeMask);
+	if (bOverwriteChangeMask)
+	{
+		DstChangeMask.Copy(SrcChangeMask);
+	}
+	else
+	{
+		DstChangeMask.Combine(SrcChangeMask, FNetBitArrayView::OrOp);
+	}
 
 	// Copy optional conditional changemask
 	if (EnumHasAnyFlags(Descriptor->Traits, EReplicationStateTraits::HasLifetimeConditionals))
@@ -41,7 +48,14 @@ void CopyPropertyReplicationStateInternals(uint8* RESTRICT DstStateBuffer, uint8
 		FNetBitArrayView DstConditionalChangeMask = GetMemberConditionalChangeMask(DstStateBuffer, Descriptor);
 		FNetBitArrayView SrcConditionalChangeMask = GetMemberConditionalChangeMask(SrcStateBuffer, Descriptor);
 
-		DstConditionalChangeMask.Copy(SrcConditionalChangeMask);
+		if (bOverwriteChangeMask)
+		{
+			DstConditionalChangeMask.Copy(SrcConditionalChangeMask);
+		}
+		else
+		{
+			DstConditionalChangeMask.Combine(SrcConditionalChangeMask, FNetBitArrayView::OrOp);
+		}
 	}
 }
 
@@ -114,6 +128,39 @@ void CopyPropertyReplicationState(uint8* RESTRICT DstStateBuffer, uint8* RESTRIC
 	{
 		const FReplicationStateMemberPropertyDescriptor& MemberPropertyDescriptor = MemberPropertyDescriptors[MemberIt];
 		if (MemberPropertyDescriptor.ArrayIndex == 0)
+		{
+			const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[MemberIt];
+			const FProperty* Property = MemberProperties[MemberIt];
+			Property->CopyCompleteValue(DstStateBuffer + MemberDescriptor.ExternalMemberOffset, SrcStateBuffer + MemberDescriptor.ExternalMemberOffset);
+		}
+	}
+}
+
+void CopyDirtyMembers(uint8* RESTRICT DstStateBuffer, uint8* RESTRICT SrcStateBuffer, const FReplicationStateDescriptor* Descriptor)
+{
+	check(IsAligned(DstStateBuffer, Descriptor->ExternalAlignment) && IsAligned(SrcStateBuffer, Descriptor->ExternalAlignment));
+
+	// Merge changemasks
+	const bool bOverwriteChangeMask = false;
+	CopyPropertyReplicationStateInternals(DstStateBuffer, SrcStateBuffer, Descriptor, bOverwriteChangeMask);
+
+	// copy dirty members
+	const FReplicationStateMemberDescriptor* MemberDescriptors = Descriptor->MemberDescriptors;
+	const FProperty** MemberProperties = Descriptor->MemberProperties;
+	const FReplicationStateMemberPropertyDescriptor* MemberPropertyDescriptors = Descriptor->MemberPropertyDescriptors;
+	FNetBitArrayView DirtyStates = GetMemberChangeMask(SrcStateBuffer, Descriptor);
+	
+	const uint32 MemberCount = Descriptor->MemberCount;
+
+	const bool bIsInitState = Descriptor->IsInitState();
+
+	for (uint32 MemberIt = 0; MemberIt < MemberCount; ++MemberIt)
+	{
+		const FReplicationStateMemberPropertyDescriptor& MemberPropertyDescriptor = MemberPropertyDescriptors[MemberIt];
+		const FReplicationStateMemberChangeMaskDescriptor& ChangeMaskInfo = Descriptor->MemberChangeMaskDescriptors[MemberIt];
+
+		const bool bShouldCopyProperty = bIsInitState || DirtyStates.IsAnyBitSet(ChangeMaskInfo.BitOffset, ChangeMaskInfo.BitCount);
+		if (bShouldCopyProperty && MemberPropertyDescriptor.ArrayIndex == 0)
 		{
 			const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[MemberIt];
 			const FProperty* Property = MemberProperties[MemberIt];
@@ -220,11 +267,134 @@ bool InternalCompareStructProperty(const FReplicationStateDescriptor* StructDesc
 	return true;
 }
 
+void InternalApplyStructProperty(const FReplicationStateDescriptor* StructDescriptor, void* RESTRICT Dst, const void* RESTRICT Src)
+{
+	uint32 FirstStructMemberForApply = 0U;
+	if (EnumHasAnyFlags(StructDescriptor->Traits, EReplicationStateTraits::IsDerivedStruct))
+	{
+		// The first member in a derived struct descriptor is the base struct. We can skip after we've applied the value.
+		FirstStructMemberForApply = 1U;
+
+		// If derived struct has custom Apply we need to use it.
+		const FReplicationStateMemberSerializerDescriptor& MemberSerializerDescriptor = StructDescriptor->MemberSerializerDescriptors[0];
+		if (EnumHasAnyFlags(MemberSerializerDescriptor.Serializer->Traits, ENetSerializerTraits::HasApply))
+		{
+			FNetSerializationContext Context;
+			FNetApplyArgs ApplyArgs;
+			ApplyArgs.NetSerializerConfig = MemberSerializerDescriptor.SerializerConfig;
+			ApplyArgs.Source = NetSerializerValuePointer(Src);
+			ApplyArgs.Target = NetSerializerValuePointer(Dst);
+			MemberSerializerDescriptor.Serializer->Apply(Context, ApplyArgs);
+		}
+		else
+		{
+		// The base struct is the closest parent with a custom serializer. It was determined above that it did not have a custom apply so we should copy it in its entirety.
+			const UScriptStruct* BaseStruct = StructDescriptor->BaseStruct;
+			BaseStruct->CopyScriptStruct(Dst, Src, 1);
+		}
+	}
+
+	const FReplicationStateMemberDescriptor* MemberDescriptors = StructDescriptor->MemberDescriptors;
+	const FProperty** MemberProperties = StructDescriptor->MemberProperties;
+	const FReplicationStateMemberPropertyDescriptor* MemberPropertyDescriptors = StructDescriptor->MemberPropertyDescriptors;
+	for (uint32 StructMemberIt = FirstStructMemberForApply, StructMemberEndIt = StructDescriptor->MemberCount; StructMemberIt < StructMemberEndIt; ++StructMemberIt)
+	{
+		const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[StructMemberIt];
+		const FReplicationStateMemberPropertyDescriptor& MemberPropertyDescriptor = MemberPropertyDescriptors[StructMemberIt];
+		const FProperty* MemberProperty = MemberProperties[StructMemberIt];
+		const SIZE_T MemberOffset = MemberProperty->GetOffset_ForGC() + MemberProperty->ElementSize*MemberPropertyDescriptor.ArrayIndex;
+		InternalApplyPropertyValue(StructDescriptor, StructMemberIt, static_cast<uint8*>(Dst) + MemberOffset, static_cast<const uint8*>(Src) + MemberOffset);
+	}
+}
+
+void InternalApplyPropertyValue(const FReplicationStateDescriptor* Descriptor, uint32 MemberIndex, void* RESTRICT Dst, const void* RESTRICT Src)
+{
+	const FReplicationStateMemberSerializerDescriptor& MemberSerializerDescriptor = Descriptor->MemberSerializerDescriptors[MemberIndex];
+	
+	// If member has serializer with Apply then use it.
+	if (EnumHasAnyFlags(MemberSerializerDescriptor.Serializer->Traits, ENetSerializerTraits::HasApply))
+	{
+		FNetSerializationContext Context;
+		FNetApplyArgs ApplyArgs;
+		ApplyArgs.NetSerializerConfig = MemberSerializerDescriptor.SerializerConfig;
+		ApplyArgs.Source = NetSerializerValuePointer(Src);
+		ApplyArgs.Target = NetSerializerValuePointer(Dst);
+		MemberSerializerDescriptor.Serializer->Apply(Context, ApplyArgs);
+		return;
+	}
+
+	if (IsUsingStructNetSerializer(MemberSerializerDescriptor))
+	{
+		const FStructNetSerializerConfig* StructConfig = static_cast<const FStructNetSerializerConfig*>(MemberSerializerDescriptor.SerializerConfig);
+		const FReplicationStateDescriptor* StructDescriptor = StructConfig->StateDescriptor;
+		if (!EnumHasAnyFlags(StructDescriptor->Traits, EReplicationStateTraits::AllMembersAreReplicated))
+		{
+			InternalApplyStructProperty(StructDescriptor, Dst, Src);
+			return;
+		}
+	}
+	else if (IsUsingArrayPropertyNetSerializer(MemberSerializerDescriptor))
+	{
+		const FArrayPropertyNetSerializerConfig* ArrayConfig = static_cast<const FArrayPropertyNetSerializerConfig*>(MemberSerializerDescriptor.SerializerConfig);
+		const FReplicationStateDescriptor* ElementStateDescriptor = ArrayConfig->StateDescriptor;
+		const FReplicationStateMemberSerializerDescriptor& ElementSerializerDescriptor = ElementStateDescriptor->MemberSerializerDescriptors[0];
+
+		const bool bSerializerHasApply = EnumHasAnyFlags(ElementSerializerDescriptor.Serializer->Traits, ENetSerializerTraits::HasApply);
+		const bool bIsStructWithNotReplicatedProps = IsUsingStructNetSerializer(ElementSerializerDescriptor) && !EnumHasAnyFlags(ElementStateDescriptor->Traits, EReplicationStateTraits::AllMembersAreReplicated);
+		if (bSerializerHasApply || bIsStructWithNotReplicatedProps)
+		{
+			const FReplicationStateDescriptor* StructDescriptor = static_cast<const FStructNetSerializerConfig*>(ElementSerializerDescriptor.SerializerConfig)->StateDescriptor;
+	
+			// Need to explicitly iterate over array members to be able to only copy data that we should copy
+			FScriptArrayHelper ScriptArrayHelperSrc(ArrayConfig->Property.Get(), reinterpret_cast<const void*>(Src));
+			FScriptArrayHelper ScriptArrayHelperDst(ArrayConfig->Property.Get(), reinterpret_cast<void*>(Dst));
+
+			// First we must resize target to match size of source data
+			const uint32 ElementCount = ScriptArrayHelperSrc.Num();
+			ScriptArrayHelperDst.Resize(ElementCount);
+		
+			// Iterate over array entries and copy the values
+			if (bSerializerHasApply)
+			{
+				for (uint32 ElementIt = 0, ElementEndIt = ElementCount; ElementIt < ElementEndIt; ++ElementIt)
+				{
+					const uint8* ArraySrc = ScriptArrayHelperSrc.GetRawPtr(ElementIt);
+					uint8* ArrayDst = ScriptArrayHelperDst.GetRawPtr(ElementIt);
+
+					FNetSerializationContext Context;
+					FNetApplyArgs ApplyArgs;
+					ApplyArgs.NetSerializerConfig = ElementSerializerDescriptor.SerializerConfig;
+					ApplyArgs.Source = NetSerializerValuePointer(ArraySrc);
+					ApplyArgs.Target = NetSerializerValuePointer(ArrayDst);
+					ElementSerializerDescriptor.Serializer->Apply(Context, ApplyArgs);
+				}
+			}
+			else
+			{
+				for (uint32 ElementIt = 0, ElementEndIt = ElementCount; ElementIt < ElementEndIt; ++ElementIt)
+				{
+					const uint8* ArraySrc = ScriptArrayHelperSrc.GetRawPtr(ElementIt);
+					uint8* ArrayDst = ScriptArrayHelperDst.GetRawPtr(ElementIt);
+
+					InternalApplyStructProperty(StructDescriptor, ArrayDst, ArraySrc);
+				}
+			}
+
+			return;
+		}
+	}
+
+	// Default handling for all properties except for structs and arrays that have some non-replicated members or a serializer with custom Apply.
+	const FProperty* Property = Descriptor->MemberProperties[MemberIndex];
+	Property->CopySingleValue(Dst, Src);
+}
+
 void InternalCopyStructProperty(const FReplicationStateDescriptor* StructDescriptor, void* RESTRICT Dst, const void* RESTRICT Src)
 {
 	uint32 FirstStructMemberForCopy = 0U;
 	if (EnumHasAnyFlags(StructDescriptor->Traits, EReplicationStateTraits::IsDerivedStruct))
 	{
+		// The base struct is the closest parent with a custom serializer, for which we always copy the entire state.
 		const UScriptStruct* BaseStruct = StructDescriptor->BaseStruct;
 		BaseStruct->CopyScriptStruct(Dst, Src, 1);
 

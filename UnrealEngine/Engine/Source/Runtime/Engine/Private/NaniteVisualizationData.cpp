@@ -32,6 +32,7 @@ void FNaniteVisualizationData::Initialize()
 
 		AddVisualizationMode(TEXT("Mask"), LOCTEXT("Mask", "Mask"), FModeType::Standard, NANITE_VISUALIZE_NANITE_MASK, true);
 		AddVisualizationMode(TEXT("Triangles"), LOCTEXT("Triangles", "Triangles"), FModeType::Standard, NANITE_VISUALIZE_TRIANGLES, true);
+		AddVisualizationMode(TEXT("Patches"), LOCTEXT("Patches", "Patches"), FModeType::Standard, NANITE_VISUALIZE_PATCHES, true);
 		AddVisualizationMode(TEXT("Clusters"), LOCTEXT("Clusters", "Clusters"), FModeType::Standard, NANITE_VISUALIZE_CLUSTERS, true);
 		AddVisualizationMode(TEXT("Primitives"), LOCTEXT("Primitives", "Primitives"), FModeType::Standard, NANITE_VISUALIZE_PRIMITIVES, true);
 		AddVisualizationMode(TEXT("Instances"), LOCTEXT("Instances", "Instances"), FModeType::Standard, NANITE_VISUALIZE_INSTANCES, true);
@@ -39,6 +40,7 @@ void FNaniteVisualizationData::Initialize()
 		AddVisualizationMode(TEXT("MaterialID"), LOCTEXT("MaterialID", "Material ID"), FModeType::Standard, NANITE_VISUALIZE_MATERIAL_DEPTH, true);
 		AddVisualizationMode(TEXT("LightmapUV"), LOCTEXT("LightmapUV", "Lightmap UV"), FModeType::Standard, NANITE_VISUALIZE_LIGHTMAP_UVS, true);
 		AddVisualizationMode(TEXT("EvaluateWPO"), LOCTEXT("EvaluateWPO", "Evaluate WPO"), FModeType::Standard, NANITE_VISUALIZE_EVALUATE_WORLD_POSITION_OFFSET, true);
+		AddVisualizationMode(TEXT("PixelProgrammable"), LOCTEXT("PixelProgrammable", "Pixel Programmable"), FModeType::Standard, NANITE_VISUALIZE_PIXEL_PROGRAMMABLE_RASTER, true);
 		
 		AddVisualizationMode(TEXT("Picking"), LOCTEXT("Picking", "Picking"), FModeType::Advanced, NANITE_VISUALIZE_PICKING, true);
 		AddVisualizationMode(TEXT("Groups"), LOCTEXT("Groups", "Groups"), FModeType::Advanced, NANITE_VISUALIZE_GROUPS, true);
@@ -64,6 +66,10 @@ void FNaniteVisualizationData::Initialize()
 		AddVisualizationMode(TEXT("PositionBits"), LOCTEXT("PositionBits", "Position Bits"), FModeType::Advanced, NANITE_VISUALIZE_POSITION_BITS, true);
 		AddVisualizationMode(TEXT("VSMStatic"), LOCTEXT("VSMStatic", "Virtual Shadow Map Static"), FModeType::Advanced, NANITE_VISUALIZE_VSM_STATIC_CACHING, true);
 		AddVisualizationMode(TEXT("ShadingWriteMask"), LOCTEXT("ShadingWriteMask", "Shading Write Mask"), FModeType::Advanced, NANITE_VISUALIZE_SHADING_WRITE_MASK, true);
+		AddVisualizationMode(TEXT("NoDerivativeOps"), LOCTEXT("NoDerivativeOps", "No Derivative Ops"), FModeType::Advanced, NANITE_VISUALIZE_NO_DERIVATIVE_OPS, true);
+		AddVisualizationMode(TEXT("FastClearTiles"), LOCTEXT("FastClearTiles", "Fast Clear Tiles"), FModeType::Advanced, NANITE_VISUALIZE_FAST_CLEAR_TILES, true);
+		AddVisualizationMode(TEXT("Tessellation"), LOCTEXT("Tessellation", "Tessellation"), FModeType::Advanced, NANITE_VISUALIZE_TESSELLATION, true);
+		AddVisualizationMode(TEXT("DisplacementScale"), LOCTEXT("DisplacementScale", "DisplacementScale"), FModeType::Advanced, NANITE_VISUALIZE_DISPLACEMENT_SCALE, true);
 
 		ConfigureConsoleCommand();
 

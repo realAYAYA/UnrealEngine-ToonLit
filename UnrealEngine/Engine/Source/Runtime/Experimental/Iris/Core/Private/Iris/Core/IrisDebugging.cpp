@@ -120,7 +120,7 @@ bool BreakOnRPCName(FName RPCName)
 }
 
 
-bool BreakOnNetInternalIndex(UE::Net::Private::FInternalNetRefIndex InternalIndex)
+bool BreakOnInternalNetRefIndex(UE::Net::Private::FInternalNetRefIndex InternalIndex)
 {
 	if (IrisDebugHelperInternal::GIrisDebugInternalIndex != 0 && IrisDebugHelperInternal::GIrisDebugInternalIndex == InternalIndex)
 	{
@@ -131,7 +131,7 @@ bool BreakOnNetInternalIndex(UE::Net::Private::FInternalNetRefIndex InternalInde
 	return false;
 }
 
-UE::Net::Private::FInternalNetRefIndex GetDebugNetInternalIndex()
+UE::Net::Private::FInternalNetRefIndex GetDebugInternalNetRefIndex()
 {
 	return IrisDebugHelperInternal::GIrisDebugInternalIndex;
 }
@@ -170,12 +170,12 @@ void SetIrisDebugRPCName(const ANSICHAR* NameBuffer)
 	}
 }
 
-void SetIrisDebugInternalIndex(UE::Net::Private::FInternalNetRefIndex InternalIndex)
+void SetIrisDebugInternalNetRefIndex(UE::Net::Private::FInternalNetRefIndex InternalIndex)
 {
 	IrisDebugHelperInternal::GIrisDebugInternalIndex = InternalIndex;
 }
 
-void SetIrisDebugInternalIndexViaNetHandle(FNetRefHandle RefHandle)
+void SetIrisDebugInternalNetRefIndexViaNetHandle(FNetRefHandle RefHandle)
 {
 	using namespace UE::Net::Private;
 
@@ -205,6 +205,40 @@ void SetIrisDebugInternalIndexViaNetHandle(FNetRefHandle RefHandle)
 	IrisDebugHelperInternal::GIrisDebugInternalIndex = InternalNetRefIndex;
 }
 
+void SetIrisDebugInternalNetRefIndexViaObject(UObject* Instance)
+{
+	using namespace UE::Net::Private;
+
+	if (!Instance)
+	{
+		IrisDebugHelperInternal::GIrisDebugNetRefHandle = FNetRefHandle();
+		IrisDebugHelperInternal::GIrisDebugInternalIndex = FNetRefHandleManager::InvalidInternalIndex;
+		return;
+	}
+
+	// See if we can find the instance in any replication system
+	for (uint32 RepSystemIt = 0; RepSystemIt < FReplicationSystemFactory::MaxReplicationSystemCount; ++RepSystemIt)
+	{
+		const UReplicationSystem* ReplicationSystem = GetReplicationSystemForDebug(RepSystemIt);
+		if (ReplicationSystem)
+		{
+			if (const UObjectReplicationBridge* Bridge = ReplicationSystem->GetReplicationBridgeAs<UObjectReplicationBridge>())
+			{
+				FNetRefHandle Handle = Bridge->GetReplicatedRefHandle(Instance);
+				if (Handle.IsValid())
+				{
+					const FNetRefHandleManager& NetRefHandleManager = ReplicationSystem->GetReplicationSystemInternal()->GetNetRefHandleManager();
+					FInternalNetRefIndex InternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
+
+					IrisDebugHelperInternal::GIrisDebugNetRefHandle = Handle;
+					IrisDebugHelperInternal::GIrisDebugInternalIndex = InternalIndex;
+					break;
+				}
+			}
+		}
+	}
+}
+
 
 UReplicationSystem* GetReplicationSystemForDebug(uint32 Id)
 {
@@ -225,12 +259,13 @@ uint64 Init()
 	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(DebugNetObjectById);
 	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(DebugNetRefHandle);
 	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(DebugNetRefHandleById);
-	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(DebugNetInternalIndex);
+	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(DebugInternalNetRefIndex);
 	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(DebugNetObjectProtocolReferencesToString);
 	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugObjectName);
 	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugNetRefHandle);
-	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugInternalIndex);
-	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugInternalIndexViaNetHandle);
+	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugInternalNetRefIndex);
+	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugInternalNetRefIndexViaNetHandle);
+	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugInternalNetRefIndexViaObject);
 	UE_NET_FORCE_REFERENCE_DEBUGFUNCTION(SetIrisDebugRPCName);
 	
 	return FunctionReferenceAccumulator;
@@ -297,7 +332,7 @@ void NetObjectStateToString(FStringBuilderBase& StringBuilder, FNetRefHandle Ref
 	FReplicationInstanceOperations::OutputInternalStateToString(NetSerializationContext, StringBuilder, nullptr, InternalStateBuffer, ReplicatedObjectData.InstanceProtocol, ReplicatedObjectData.Protocol);
 }
 
-void DebugOutputNetObjectState(uint32 NetRefHandleId, uint32 ReplicationSystemId)
+void DebugOutputNetObjectState(uint64 NetRefHandleId, uint32 ReplicationSystemId)
 {
 	const FNetRefHandle RefHandle = Private::FNetRefHandleManager::MakeNetRefHandle(NetRefHandleId, ReplicationSystemId);
 
@@ -426,7 +461,7 @@ FNetReplicatedObjectDebugInfo DebugNetRefHandleById(uint64 NetRefHandleId, uint3
 	return Info;
 }
 
-FNetReplicatedObjectDebugInfo DebugNetInternalIndex(uint32 InternalIndex, uint32 ReplicationSystemId)
+FNetReplicatedObjectDebugInfo DebugInternalNetRefIndex(uint32 InternalIndex, uint32 ReplicationSystemId)
 {
 	using namespace UE::Net::Private;
 	FNetReplicatedObjectDebugInfo Info = {};

@@ -12,6 +12,7 @@
 #include "Interfaces/IDMXProtocol.h"
 #include "IO/DMXInputPort.h"
 #include "IO/DMXOutputPort.h"
+#include "IO/DMXTrace.h"
 #include "Library/DMXEntityController.h"
 #include "Library/DMXEntityFixtureType.h"
 #include "Library/DMXImportGDTF.h"
@@ -299,8 +300,8 @@ void UDMXEntityFixturePatch::SendDMX(TMap<FDMXAttributeName, int32> AttributeMap
 	{
 		for (const FDMXFixtureFunction& Function : ModePtr->Functions)
 		{
-			const FDMXAttributeName& FunctionAttr = Function.Attribute;
-			if (FunctionAttr == Elem.Key)
+			const FDMXAttributeName& FunctionAttribute = Function.Attribute;
+			if (FunctionAttribute == Elem.Key)
 			{
 				const int32 LastFunctionChannel = Function.Channel + Function.GetNumChannels() - 1;
 				const bool bLastChannelExceedsChannelSpan = LastFunctionChannel > ModePtr->ChannelSpan;
@@ -327,11 +328,25 @@ void UDMXEntityFixturePatch::SendDMX(TMap<FDMXAttributeName, int32> AttributeMap
 	// Send to the library's output ports
 	if (UDMXLibrary* DMXLibrary = ParentLibrary.Get())
 	{
+		UE_DMX_SCOPED_TRACE_SENDDMX(DMXLibrary->GetFName());
+		UE_DMX_SCOPED_TRACE_SENDDMX(*GetDisplayName());
 		for (const FDMXOutputPortSharedRef& OutputPort : DMXLibrary->GetOutputPorts())
 		{
 			OutputPort->SendDMX(UniverseID, DMXChannelToValueMap);
 		}
 	}
+}
+
+void UDMXEntityFixturePatch::SendDefaultValues()
+{
+	constexpr bool bSendDefaultValues = true;
+	SendResetDataToAllAttributes(bSendDefaultValues);
+}
+
+void UDMXEntityFixturePatch::SendZeroValues()
+{
+	constexpr bool bSendDefaultValues = false;
+	SendResetDataToAllAttributes(bSendDefaultValues);
 }
 
 void UDMXEntityFixturePatch::RebuildCache()
@@ -900,6 +915,9 @@ bool UDMXEntityFixturePatch::SendMatrixCellValue(const FIntPoint& CellCoordinate
 	{
 		if (const FDMXFixtureMatrix* const FixtureMatrixPtr = GetFixtureMatrix())
 		{
+			UE_DMX_SCOPED_TRACE_SENDDMX(DMXLibrary->GetFName());
+			UE_DMX_SCOPED_TRACE_SENDDMX(*GetDisplayName());
+
 			const int32 DistributedCellIndex = Cache.GetDistributedCellIndex(CellCoordinate);
 			const int32 AbsoluteMatrixStartingChannel = Cache.GetMatrixStartingChannelAbsolute();
 			const int32 AbsoluteCellStartingChannel = AbsoluteMatrixStartingChannel + DistributedCellIndex * Cache.GetCellSize();
@@ -985,6 +1003,8 @@ bool UDMXEntityFixturePatch::SendMatrixCellValueWithAttributeMap(const FIntPoint
 	// Send to the library's output ports
 	if (UDMXLibrary* DMXLibrary = ParentLibrary.Get())
 	{
+		UE_DMX_SCOPED_TRACE_SENDDMX(DMXLibrary->GetFName());
+		UE_DMX_SCOPED_TRACE_SENDDMX(*GetDisplayName());
 		for (const FDMXOutputPortSharedRef& OutputPort : DMXLibrary->GetOutputPorts())
 		{
 			OutputPort->SendDMX(UniverseID, DMXChannelToValueMap);
@@ -1205,6 +1225,78 @@ bool UDMXEntityFixturePatch::GetAllMatrixCells(TArray<FDMXCell>& Cells)
 	}
 
 	return false;
+}
+
+void UDMXEntityFixturePatch::SendResetDataToAllAttributes(bool bUseDefaultValues)
+{
+	UDMXLibrary* DMXLibrary = GetParentLibrary();
+	const FDMXFixtureMode* ModePtr = GetActiveMode();
+	if (!DMXLibrary || !ModePtr)
+	{
+		return;
+	}
+
+	// Non-matrix channels
+	TMap<int32, uint8> DMXChannelToValueMap;
+	for (const FDMXFixtureFunction& Function : ModePtr->Functions)
+	{
+		const FDMXAttributeName& FunctionAttribute = Function.Attribute;
+
+		const int32 LastFunctionChannel = Function.Channel + Function.GetNumChannels() - 1;
+		const bool bLastChannelExceedsChannelSpan = LastFunctionChannel > ModePtr->ChannelSpan;
+		const bool bLastChannelExceedsUniverseSize = LastFunctionChannel + GetStartingChannel() - 1 > DMX_MAX_ADDRESS;
+
+		if (!bLastChannelExceedsChannelSpan && !bLastChannelExceedsUniverseSize)
+		{
+			const int32 Channel = Function.Channel + GetStartingChannel() - 1;
+
+			uint32 Value = bUseDefaultValues ? Function.DefaultValue : 0;
+			uint8* ChannelValueBytes = reinterpret_cast<uint8*>(&Value);
+			UDMXEntityFixtureType::FunctionValueToBytes(Function, Value, ChannelValueBytes);
+
+			const uint8 NumBytesInSignalFormat = FDMXConversions::GetSizeOfSignalFormat(Function.DataType);
+			for (uint8 ChannelIt = 0; ChannelIt < NumBytesInSignalFormat; ++ChannelIt)
+			{
+				DMXChannelToValueMap.Add(Channel + ChannelIt, ChannelValueBytes[ChannelIt]);
+			}
+		}
+	}
+
+	// Matrix channels
+	const FDMXFixtureMatrix* const FixtureMatrixPtr = GetFixtureMatrix();
+	if (FixtureMatrixPtr)
+	{
+		TArray<FDMXCell> MatrixCells;
+		GetAllMatrixCells(MatrixCells);
+
+		for (const FDMXCell& MatrixCell : MatrixCells)
+		{
+			const int32 DistributedCellIndex = Cache.GetDistributedCellIndex(MatrixCell.Coordinate);
+			const int32 AbsoluteMatrixStartingChannel = Cache.GetMatrixStartingChannelAbsolute();
+			const int32 AbsoluteCellStartingChannel = AbsoluteMatrixStartingChannel + DistributedCellIndex * Cache.GetCellSize();
+
+			int32 AttributeOffset = 0;
+			for (const FDMXFixtureCellAttribute& CellAttribute : Cache.GetCellAttributes())
+			{
+				const uint32 Value = bUseDefaultValues ? CellAttribute.DefaultValue : 0;
+				const TArray<uint8> ByteArray = FDMXConversions::UnsignedInt32ToByteArray(Value, CellAttribute.DataType, CellAttribute.bUseLSBMode);
+
+				DMXChannelToValueMap.Reserve(ByteArray.Num());
+				for (int32 ByteIndex = 0; ByteIndex < CellAttribute.GetNumChannels(); ByteIndex++)
+				{
+					DMXChannelToValueMap.Add(AbsoluteCellStartingChannel + AttributeOffset + ByteIndex, ByteArray[ByteIndex]);
+				}
+
+				AttributeOffset += CellAttribute.GetNumChannels();
+			}
+		}
+	}
+
+	// Send to the library's output ports
+	for (const FDMXOutputPortSharedRef& OutputPort : DMXLibrary->GetOutputPorts())
+	{
+		OutputPort->SendDMX(UniverseID, DMXChannelToValueMap);
+	}
 }
 
 void UDMXEntityFixturePatch::OnFixtureTypeChanged(const UDMXEntityFixtureType* FixtureType)

@@ -29,8 +29,26 @@ namespace UE::RivermaxCore::Private
 		uint16 PayloadExpectedSize = 1500;
 		uint16 HeaderExpectedSize = 32;
 
-		rmax_in_memblock DataMemory;
-		rmax_in_memblock HeaderMemory;
+		/** Handle returned by Rivermax library to use the Chunk API */
+		rmx_input_chunk_handle ChunkHandle;
+
+		/** Data Sub block ID */
+		const uint8 HeaderBlockID = 0;
+
+		/** Data Sub block ID */
+		const uint8 DataBlockID = 1;
+
+		/** Memory region used to store incoming payloads */
+		rmx_mem_region* DataMemory = nullptr;
+		
+		/** Payload stride in bytes for input stream */
+		size_t DataStride = 0;
+		
+		/** Memory region used to store incoming headers */
+		rmx_mem_region* HeaderMemory = nullptr;
+
+		/** Header stride in bytes for input stream */
+		size_t HeaderStride = 0;
 	};
 
 	struct FInputStreamStats
@@ -45,6 +63,10 @@ namespace UE::RivermaxCore::Private
 		uint64 ChunksReceived = 0;
 		uint64 EndOfFrameReceived = 0;
 		uint64 EmptyCompletionCount = 0;
+		uint64 MinFirstPacketIntervalNS = TNumericLimits<uint64>::Max();
+		uint64 MaxFirstPacketIntervalNS = TNumericLimits<uint64>::Min();
+		uint64 FirstPacketIntervalAccumulatorNS = 0;
+		uint64 FirstPacketIntervalStatsCount = 0;
 	};
 
 	struct FInputStreamData
@@ -101,6 +123,15 @@ namespace UE::RivermaxCore::Private
 		bool bHasLoggedSamplingWarning = false;
 	};
 
+	/** Struct holding different network settings in various forms to initialize Rivermax stream */
+	struct FNetworkSettings
+	{
+		sockaddr_in DeviceInterface;
+		rmx_device_iface RMXDeviceInterface;
+		rmx_ip_addr DeviceAddress;
+		sockaddr_in DestinationAddress;
+	};
+
 	class FRivermaxInputStream : public IRivermaxInputStream, public FRunnable
 	{
 	public:
@@ -137,14 +168,11 @@ namespace UE::RivermaxCore::Private
 		 */
 		void FrameErrorState(const FRTPHeader& RTPHeader);
 
-		/** Extract raw RTP header data, in network endianness to our own intermediate data structure */
-		bool TranslateRTPHeader(const FRawRTPHeader& RawHeader, FRTPHeader& OutParameter);
-
 		/** 
 		 * Iterates over each chunks received in the Completion data structure.
 		 * For each item, its header is parsed and validated before processing data it contains
 		 */
-		void ParseChunks(const rmax_in_completion& Completion);
+		void ParseChunks(const rmx_input_completion* Completion);
 
 		/** Process a SRD / packet by copying data associated to it into output buffer or tracking memory received for gpudirect */
 		void ProcessSRD(const FRTPHeader& RTPHeader, const uint8* DataPtr);
@@ -173,6 +201,15 @@ namespace UE::RivermaxCore::Private
 		/** Updates frame information tracking using RTP header */
 		void UpdateFrameTracking(const FRTPHeader& NewRTPHeader);
 
+		/** Initializes network settings for desired input stream options */
+		bool InitializeNetworkSettings(FNetworkSettings& OutSettings, FString& OutErrorMessage);
+		
+		/** Configures input streams parameters*/
+		bool InitializeStreamParameters(FString& OutErrorMessage);
+
+		/** Finalize Rivermax stream initialization */
+		bool FinalizeStreamCreation(const FNetworkSettings& NetworkSettings, FString& OutErrorMessage);
+
 	private:
 
 		/** Options used for this stream, such has resolution, frame rate etc... */
@@ -185,10 +222,16 @@ namespace UE::RivermaxCore::Private
 		std::atomic<bool> bIsActive = false;
 
 		/** Stream id given back by rivermax */
-		rmax_stream_id StreamId = 0;
+		rmx_stream_id StreamId = 0;
+
+		/** Holding stream configuration data */
+		rmx_input_stream_params StreamParameters;
 
 		/** Flow attributes used at stream creation. Used to compare incoming data to our flow and detect mismatches */
-		rmax_in_flow_attr FlowAttribute;
+		rmx_input_flow FlowAttribute;
+
+		/** Flow identification. Used to verify if packets belong to expected stream */
+		uint32 FlowTag = 0;
 
 		/** Memory configuration used for this stream. */
 		FInputStreamBufferConfiguration BufferConfiguration;

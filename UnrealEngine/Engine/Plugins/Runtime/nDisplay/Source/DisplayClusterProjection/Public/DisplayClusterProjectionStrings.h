@@ -4,7 +4,9 @@
 
 #include "CoreMinimal.h"
 
-
+/**
+* Text constants used by the projection policies.
+*/
 namespace DisplayClusterProjectionStrings
 {
 	namespace cfg
@@ -60,6 +62,7 @@ namespace DisplayClusterProjectionStrings
 			static constexpr const TCHAR* AngleR       = TEXT("r");
 			static constexpr const TCHAR* AngleT       = TEXT("t");
 			static constexpr const TCHAR* AngleB       = TEXT("b");
+
 			namespace FrustumType
 			{
 				static constexpr const TCHAR* Matrix = TEXT("Matrix");
@@ -112,6 +115,46 @@ namespace DisplayClusterProjectionStrings
 			static constexpr const TCHAR* TypePFM = TEXT("Explicit PFM");
 
 			static constexpr const TCHAR* EnablePreview = TEXT("EnablePreview");
+
+			static constexpr const TCHAR* Component = TEXT("screen_component");
+
+			namespace Attributes
+			{
+				namespace Buffer
+				{
+					static constexpr const TCHAR* Resolution = TEXT("BufferResolution");
+				}
+
+				namespace Region
+				{
+					static constexpr const TCHAR* Resolution = TEXT("RegionResolution");
+					static constexpr const TCHAR* Pos = TEXT("RegionPos");
+					static constexpr const TCHAR* Size = TEXT("RegionSize");
+				}
+
+				namespace Frustum
+				{
+					static constexpr const TCHAR* Pitch = TEXT("FrustumPitch");
+					static constexpr const TCHAR* Yaw   = TEXT("FrustumYaw");
+					static constexpr const TCHAR* Roll  = TEXT("FrustumRoll");
+					
+					namespace Angle
+					{
+						static constexpr const TCHAR* Left   = TEXT("FrustumAngleLeft");
+						static constexpr const TCHAR* Right  = TEXT("FrustumAngleRight");
+						static constexpr const TCHAR* Top    = TEXT("FrustumAngleTop");
+						static constexpr const TCHAR* Bottom = TEXT("FrustumAngleBottom");
+					}
+				}
+
+				namespace CoordinateFrame
+				{
+					static constexpr const TCHAR* Pos   = TEXT("CoordinateFramePos");
+					static constexpr const TCHAR* Yaw   = TEXT("CoordinateFrameYaw");
+					static constexpr const TCHAR* Pitch = TEXT("CoordinateFramePitch");
+					static constexpr const TCHAR* Roll  = TEXT("CoordinateFrameRoll");
+				}
+			}
 		}
 
 		namespace domeprojection
@@ -120,18 +163,6 @@ namespace DisplayClusterProjectionStrings
 			static constexpr const TCHAR* Channel = TEXT("channel");
 			static constexpr const TCHAR* Origin  = TEXT("origin");
 		}
-	}
-
-	namespace ThirdParty
-	{
-		static constexpr const TCHAR* PluginName = TEXT("nDisplay");
-
-		namespace VIOSO
-		{
-			static constexpr const TCHAR* Path = TEXT("ThirdParty/VIOSO/DLL");
-			static constexpr const TCHAR* DLL = TEXT("ViosoWarpBlend64.dll");
-		}
-
 	}
 
 	namespace projection

@@ -58,6 +58,8 @@ public:
 	virtual void RequestShutdownImpl(bool bIsError) override;
 	virtual void ShutdownImpl(bool bError ) override;
 	virtual bool IsShutdownRequestedImpl() const override { return bShutdownRequested; }
+	virtual EMovieRenderPipelineState GetPipelineStateImpl() const override { return PipelineState; }
+	virtual bool IsPostShotCallbackNeeded() const override { return IsFlushDiskWritesPerShot(); }
 	// ~UMoviePipelineBase Interface
 
 	/**
@@ -66,16 +68,25 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Movie Render Pipeline")
 	FDateTime GetInitializationTime() const { return InitializationTime; }
 
+	/** 
+	* The offset that should be applied to the GetInitializationTime() when generating
+	* the {time} related filename tokens. GetInitializationTime() is in UTC so this is
+	* either zero (if you called SetInitializationTime) or your offset from UTC.
+	*/
+	UFUNCTION(BlueprintPure, Category = "Movie Render Pipeline")
+	FTimespan GetInitializationTimeOffset() const { return InitializationTimeOffset; }
+
 	/**
 	* Override the time this movie pipeline was initialized at. This can be used for render farms
 	* to ensure that jobs on all machines use the same date/time instead of each calculating it locally.
+	* Clears the auto-calculated InitializationTimeOffset, meaning time tokens will be written in UTC.
 	*
 	* Needs to be called after ::Initialize(...)
 	*
-	* @param InDateTime - The DateTime object to return for GetInitializationTime.
+	* @param InDateTime - Expected to be in UTC timezone.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Movie Render Pipeline")
-	void SetInitializationTime(const FDateTime& InDateTime) { InitializationTime = InDateTime; }
+	void SetInitializationTime(const FDateTime& InDateTime) { InitializationTime = InDateTime; InitializationTimeOffset = FTimespan(); }
 
 	/** Deprecated. Use OnMoviePipelineWorkFinished() instead. */
 	UE_DEPRECATED(4.27, "Use OnMoviePipelineWorkFinished() instead.")
@@ -88,30 +99,6 @@ public:
 	UE_DEPRECATED(4.27, "Use OnMoviePipelineWorkFinishedDelegate instead.")
 	UPROPERTY(BlueprintAssignable, Category = "Movie Render Pipeline")
 	FMoviePipelineFinished OnMoviePipelineFinishedDelegate;
-
-
-	
-	/**
-	* Called when we have completely finished this pipeline. This means that all frames have been rendered,
-	* all files written to disk, and any post-finalize exports have finished. This Pipeline will call
-	* Shutdown() on itself before calling this delegate to ensure we've unregistered from all delegates
-	* and are no longer trying to do anything (even if we still exist).
-	*
-	* The params struct in the return will have metadata about files written to disk for each shot.
-	*/
-	UPROPERTY(BlueprintAssignable, Category = "Movie Render Pipeline")
-	FMoviePipelineWorkFinished OnMoviePipelineWorkFinishedDelegate;
-
-
-
-	/**
-	* Only called if `IsFlushDiskWritesPerShot()` is set!
-	* Called after each shot is finished and files have been flushed to disk. The returned data in
-	* the params struct will have only the per-shot metadata for the just finished shot. Use
-	* OnMoviePipelineFinished() if you need all ot the metadata.
-	*/
-	UPROPERTY(BlueprintAssignable, Category = "Movie Render Pipeline")
-	FMoviePipelineWorkFinished OnMoviePipelineShotWorkFinishedDelegate;
 
 	/**
 	* Get the Primary Configuration used to render this shot. This contains the global settings for the shot, as well as per-shot
@@ -140,7 +127,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Movie Render Pipeline")
 	UMoviePipelineExecutorJob* GetCurrentJob() const { return CurrentJob; }
 
-	EMovieRenderPipelineState GetPipelineState() const { return PipelineState; }
 	FMoviePipelineOutputData GetOutputDataParams();
 
 	void GetSidecarCameraData(UMoviePipelineExecutorShot* InShot, int32 InCameraIndex, FMinimalViewInfo& OutViewInfo, class UCameraComponent** OutCameraComponent) const;
@@ -405,6 +391,9 @@ private:
 
 	/** When using temporal sub-frame stepping common counts (such as 3) don't result in whole ticks. We keep track of how many ticks we lose so we can add them the next time there's a chance. */
 	float AccumulatedTickSubFrameDeltas;
+
+	/** When we originally initialize we store the offset from UTC (which is what GetInitializationTime() is in), but we clear this if you call SetInitializationTime. */
+	FTimespan InitializationTimeOffset;
 
 	/** Deprecated. */
 	FMoviePipelineFinishedNative OnMoviePipelineFinishedDelegateNative;

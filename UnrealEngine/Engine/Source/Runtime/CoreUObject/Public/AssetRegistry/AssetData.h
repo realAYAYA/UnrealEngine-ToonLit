@@ -15,6 +15,7 @@
 #include "Containers/StringFwd.h"
 #include "Containers/StringView.h"
 #include "Containers/UnrealString.h"
+#include "Containers/VersePathFwd.h"
 #include "HAL/PlatformMath.h"
 #include "HAL/UnrealMemory.h"
 #include "IO/IoChunkId.h"
@@ -61,6 +62,7 @@ struct FAssetBundleData;
 struct FCustomVersion;
 class FCbWriter;
 class FCbFieldView;
+enum class EAssetRegistryTagsCaller : uint8;
 
 COREUOBJECT_API DECLARE_LOG_CATEGORY_EXTERN(LogAssetData, Log, All);
 COREUOBJECT_API extern const FName GAssetBundleDataName;
@@ -261,6 +263,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/** Constructor taking a UObject. By default trying to create one for a blueprint class will create one for the UBlueprint instead, but this can be overridden */
 	COREUOBJECT_API FAssetData(const UObject* InAsset, FAssetData::ECreationFlags InCreationFlags = ECreationFlags::None);
+	COREUOBJECT_API FAssetData(const UObject* InAsset, FAssetData::ECreationFlags InCreationFlags, EAssetRegistryTagsCaller Caller);
 
 	/** Constructor taking a UObject. By default trying to create one for a blueprint class will create one for the UBlueprint instead, but this can be overridden */
 	inline FAssetData(const UObject* InAsset, bool bAllowBlueprintClass)
@@ -428,6 +431,13 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		OutExportTextNameBuilder.AppendChar(TEXT('\''));
 	}
 
+	/**
+	 * Gets the versepath of the asset.
+	 *
+	 * @return The VersePath of the asset
+	 */
+	COREUOBJECT_API UE::Core::FVersePath GetVersePath() const;
+
 	/** Returns true if the this asset is a redirector. */
 	bool IsRedirector() const
 	{
@@ -510,6 +520,13 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// We load PackageName rather than using GetObjectPath because external assets may be saved in a different package to their loaded path. 
 		UPackage* FoundPackage = FindObjectFast<UPackage>(nullptr, PackageName);
+
+		// We could find an existing package in memory that is still pending load in the loader.
+		if (FoundPackage && !FoundPackage->IsFullyLoaded())
+		{
+			FoundPackage = nullptr;
+		}
+
 		if (FoundPackage == nullptr && bLoad)
 		{
 			FLinkerInstancingContext InstancingContext(MoveTemp(LoadTags));
@@ -894,7 +911,7 @@ class FAssetPackageData
 {
 public:
 	/** Guid of the source package, uniquely identifies an asset package */
-	UE_DEPRECATED(4.27, "UPackage::Guid has not been used by the engine for a long time and FAssetPackageData::PackageGuid will be removed.")
+	UE_DEPRECATED(5.4, "Use GetPackageSavedHash instead.")
 	FGuid PackageGuid;
 
 	/** MD5 of the cooked package on disk, for tracking nondeterministic changes */
@@ -967,7 +984,7 @@ public:
 	void SetHasVirtualizedPayloads(bool bValue) { Flags = (Flags & ~FLAG_HAS_VIRTUALIZED_PAYLOADS) | (bValue ? FLAG_HAS_VIRTUALIZED_PAYLOADS : 0); }
 
 	/**
-	 * Serialize as part of the registry cache. This is not meant to be serialized as part of a package so  it does not handle versions normally
+	 * Serialize as part of the registry cache. This is not meant to be serialized as part of a package so it does not handle versions normally
 	 * To version this data change FAssetRegistryVersion
 	 */
 	COREUOBJECT_API void SerializeForCache(FArchive& Ar);
@@ -978,6 +995,10 @@ public:
 	{
 		return ImportedClasses.GetAllocatedSize();
 	}
+
+	/** Hash of the package's .uasset/.umap file when it was last saved by the editor. */
+	COREUOBJECT_API FIoHash GetPackageSavedHash() const;
+	COREUOBJECT_API void SetPackageSavedHash(const FIoHash& InHash);
 
 private:
 	FORCEINLINE void SerializeForCacheInternal(FArchive& Ar, FAssetPackageData& PackageData, FAssetRegistryVersion::Type Version);
@@ -1006,6 +1027,7 @@ struct FReferenceViewerParams
 		, FixAndHideSearchDepthLimit(0)
 		, FixAndHideSearchBreadthLimit(0)
 		, bShowCollectionFilter(true)
+		, bShowPluginFilter(true)
 		// Checkbox options
 		, bShowShowReferencesOptions(true)
 		, bShowShowSearchableNames(true)
@@ -1022,6 +1044,8 @@ struct FReferenceViewerParams
 	/* Whether to only display the References/Dependencies which match the text filter, if any. 
 	   If the optional is not set, don't change the current reference viewer's value. */
 	TOptional<bool> bShowFilteredPackagesOnly;
+	/** Whether to only display the References/Dependencies which match the plugin name filter */
+	TArray<FName> PluginFilter;
 	/* Compact mode allows to hide the thumbnail and minimize the space taken by the nodes. Useful when there are many dependencies to inspect, to keep the UI responsive. 
 	   If the optional is not set, don't change the current reference viewer's value. */
 	TOptional<bool> bCompactMode;
@@ -1039,6 +1063,8 @@ struct FReferenceViewerParams
 	int32 FixAndHideSearchBreadthLimit;
 	/** Whether to visually show to the user the option of "Collection Filter" */
 	bool bShowCollectionFilter;
+	/** Whether to visually show to the user the option of "Plugin Filter" */
+	bool bShowPluginFilter;
 	/** Whether to visually show to the user the options of "Show Soft/Hard/Management References" */
 	bool bShowShowReferencesOptions;
 	/** Whether to visually show to the user the option of "Show Searchable Names" */

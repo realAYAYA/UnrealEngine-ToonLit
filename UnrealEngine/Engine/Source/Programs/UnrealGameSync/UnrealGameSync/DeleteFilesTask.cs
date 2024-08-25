@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -9,6 +7,8 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Perforce;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -18,12 +18,12 @@ namespace UnrealGameSync
 		{
 			StringBuilder failMessage = new StringBuilder();
 
-			if(filesToSync.Count > 0)
+			if (filesToSync.Count > 0)
 			{
 				using IPerforceConnection perforce = await PerforceConnection.CreateAsync(perforceSettings, logger);
 
 				List<string> revisionsToSync = new List<string>();
-				foreach(FileInfo fileToSync in filesToSync)
+				foreach (FileInfo fileToSync in filesToSync)
 				{
 					revisionsToSync.Add(String.Format("{0}#have", PerforceUtils.EscapePath(fileToSync.FullName)));
 				}
@@ -35,33 +35,33 @@ namespace UnrealGameSync
 				}
 			}
 
-			foreach(FileInfo fileToDelete in filesToDelete)
+			foreach (FileInfo fileToDelete in filesToDelete)
 			{
 				try
 				{
 					fileToDelete.IsReadOnly = false;
 					fileToDelete.Delete();
 				}
-				catch(Exception ex)
+				catch (Exception ex)
 				{
 					logger.LogWarning(ex, "Unable to delete {File}", fileToDelete.FullName);
 					failMessage.AppendFormat("{0} ({1})\r\n", fileToDelete.FullName, ex.Message.Trim());
 				}
 			}
-			foreach(DirectoryInfo directoryToDelete in directoriesToDelete)
+			foreach (DirectoryInfo directoryToDelete in directoriesToDelete)
 			{
 				try
 				{
 					directoryToDelete.Delete(true);
 				}
-				catch(Exception ex)
+				catch (Exception ex)
 				{
 					logger.LogWarning(ex, "Unable to delete {Directory}", directoryToDelete.FullName);
 					failMessage.AppendFormat("{0} ({1})\r\n", directoryToDelete.FullName, ex.Message.Trim());
 				}
 			}
 
-			if(failMessage.Length > 0)
+			if (failMessage.Length > 0)
 			{
 				throw new UserErrorException(failMessage.ToString());
 			}

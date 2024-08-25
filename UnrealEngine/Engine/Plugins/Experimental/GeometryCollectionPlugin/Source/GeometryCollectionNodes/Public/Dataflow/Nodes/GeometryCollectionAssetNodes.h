@@ -10,6 +10,7 @@
 #include "GeometryCollectionAssetNodes.generated.h"
 
 class UGeometryCollection;
+class UStaticMesh;
 
 USTRUCT(meta = (DataflowGeometryCollection, DataflowTerminal))
 struct FGeometryCollectionTerminalDataflowNode : public FDataflowTerminalNode
@@ -103,13 +104,53 @@ public:
 	UPROPERTY(meta = (DataflowOutput, DisplayName = "Collection"))
 	FManagedArrayCollection Collection;
 
-	/** Geometry collection newly created */
+	/** Materials array to use for this asset */
 	UPROPERTY(meta = (DataflowOutput, DisplayName = "Materials"))
 	TArray<TObjectPtr<UMaterial>> Materials;
 
 	/** array of instanced meshes*/
 	UPROPERTY(meta = (DataflowOutput, DisplayName = "InstancedMeshes"))
 	TArray<FGeometryCollectionAutoInstanceMesh> InstancedMeshes;
+};
+
+
+/**
+ * Create a geometry collection from a UStaticMesh
+ */
+USTRUCT(meta = (DataflowContext = "GeometryCollection", DataflowGeometryCollection, DataflowTerminal))
+struct FStaticMeshToCollectionDataflowNode : public FDataflowNode
+{
+	GENERATED_USTRUCT_BODY()
+	DATAFLOW_NODE_DEFINE_INTERNAL(FStaticMeshToCollectionDataflowNode, "StaticMeshToCollection", "GeometryCollection|Asset", "")
+	DATAFLOW_NODE_RENDER_TYPE(FGeometryCollection::StaticType(), "Collection")
+
+public:
+	/** Asset input */
+	UPROPERTY(EditAnywhere, Category = "Asset");
+	TObjectPtr<UStaticMesh> StaticMesh;
+
+	/** Set the internal faces from material index */
+	UPROPERTY(EditAnywhere, Category = "Asset");
+	bool bSetInternalFromMaterialIndex = true;
+
+	/** Split components */
+	UPROPERTY(EditAnywhere, Category = "Asset");
+	bool bSplitComponents = false;
+
+	/** Geometry collection newly created */
+	UPROPERTY(meta = (DataflowOutput, DisplayName = "Collection"))
+	FManagedArrayCollection Collection;
+
+	/** Materials array to use for this asset */
+	UPROPERTY(meta = (DataflowOutput, DisplayName = "Materials"))
+	TArray<TObjectPtr<UMaterial>> Materials;
+
+	/** Array of instanced meshes*/
+	UPROPERTY(meta = (DataflowOutput, DisplayName = "InstancedMeshes"))
+	TArray<FGeometryCollectionAutoInstanceMesh> InstancedMeshes;
+
+	FStaticMeshToCollectionDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid());
+	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 };
 
 namespace Dataflow

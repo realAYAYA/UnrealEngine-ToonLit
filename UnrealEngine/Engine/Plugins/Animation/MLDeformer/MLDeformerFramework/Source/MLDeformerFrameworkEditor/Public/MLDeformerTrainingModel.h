@@ -75,14 +75,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Training Data")
     int32 NumSamples() const;
 
+	/** This will make the sampling start again from the beginning. This can be used if you have to iterate multiple times over the data set. */
+	UFUNCTION(BlueprintCallable, Category = "Training Data")
+    void ResetSampling();
+
 	/** 
 	 * Set the current sample frame. This will internally call the SampleFrame method, which will update the deltas, curve values and bone rotations. 
 	 * You call this before getting the input bone/curve and vertex delta values.
 	 * @param Index The training data frame/sample number.
 	 * @return Returns true when successful, or false when the specified sample index is out of range.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Training Data")
+	UE_DEPRECATED(5.4, "Please use NextSample instead.")
+	UFUNCTION(meta = (DeprecatedFunction, DeprecationMessage = "Please use NextSample instead."))
 	bool SetCurrentSampleIndex(int32 Index);
+
+	/**
+	 * Take the next sample.
+	 * This will return false when there is something wrong or we sampled more times than NumSamples() returns.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Training Data")
+	bool NextSample();
 
 	/** 
 	 * Check whether we need to resample the inputs and outputs, or if we can use a cached version. 
@@ -102,13 +114,26 @@ public:
 
 protected:
 	/** This updates the sample deltas, curves, and bone rotations. */
+	UE_DEPRECATED(5.4, "Please use UMLDeformerTrainingModel::SampleNextFrame() instead.")
     virtual bool SampleFrame(int32 Index);
+
+	/** Sample the next frame in the sequence of samples. */
+	virtual bool SampleNextFrame();
 
 	/** Change the pointer to the editor model. */
 	void SetEditorModel(UE::MLDeformer::FMLDeformerEditorModel* InModel);
 
 	/** Get a pointer to the editor model. */ 
 	UE::MLDeformer::FMLDeformerEditorModel* GetEditorModel() const;
+
+	/**
+	 * Find the next input animation to sample from.
+	 * This is an index inside the training input animations list.
+	 * This assumes the SampleAnimIndex member as starting point. The method does not modify this member directly, unless passed in as parameter.
+	 * @param OutNextAnimIndex The next animation index to sample from when we take our next sample.
+	 * @return Returns true when we found our next animation to sample. Returns false when we already sampled everything.
+	 */
+	virtual bool FindNextAnimToSample(int32& OutNextAnimIndex) const { return false; }
 
 public:
 	// The delta values per vertex for this sample. This is updated after SetCurrentSampleIndex is called. Contains an xyz (3 floats) for each vertex.
@@ -126,4 +151,17 @@ public:
 protected:
 	/** A pointer to the editor model from which we use the sampler. */
 	UE::MLDeformer::FMLDeformerEditorModel* EditorModel = nullptr;
+
+	/** 
+	 * The number of times a given input animation has been sampled. 
+	 * The size of the array equals the number of training input animations.
+	 * Note that this also contains counts of disabled training input anims. These disabled ones should be ignored.
+	 */
+	TArray<int32> NumTimesSampled;
+
+	/** The training input animation to take the next sample from. */
+	int32 SampleAnimIndex = 0;
+
+	/** Did we finish sampling? This is set to true when every possible frame has been sampled. */
+	bool bFinishedSampling = false;
 };

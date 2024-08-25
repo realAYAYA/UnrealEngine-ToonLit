@@ -42,13 +42,15 @@ class FGenericDataDrivenShaderPlatformInfo
 	uint32 SupportsMultiViewport : int32(ERHIFeatureSupport::NumBits);
 	uint32 bSupportsMSAA : 1;
 	uint32 bSupports4ComponentUAVReadWrite : 1;
+	uint32 bSupportsShaderRootConstants : 1;
+	uint32 bSupportsShaderBundleDispatch : 1;
 	uint32 bSupportsRenderTargetWriteMask : 1;
 	uint32 bSupportsRayTracing : 1;
 	uint32 bSupportsRayTracingCallableShaders : 1;
 	uint32 bSupportsRayTracingProceduralPrimitive : 1;
 	uint32 bSupportsRayTracingTraversalStatistics : 1;
 	uint32 bSupportsRayTracingIndirectInstanceData : 1; // Whether instance transforms can be copied from the GPU to the TLAS instances buffer
-	uint32 bSupportsHighEndRayTracingReflections : 1; // Whether fully-featured RT reflections can be used on the platform (with multi-bounce, translucency, etc.)
+	uint32 bSupportsHighEndRayTracingEffects : 1; // Whether fully-featured RT effects can be used on the platform (with translucent shadow, etc.)
 	uint32 bSupportsPathTracing : 1; // Whether real-time path tracer is supported on this platform (avoids compiling unnecessary shaders)
 	uint32 bSupportsGPUScene : 1;
 	uint32 bSupportsByteBufferComputeShaders : 1;
@@ -81,6 +83,7 @@ class FGenericDataDrivenShaderPlatformInfo
 	uint32 bSupportsMeshShadersTier1 : 1;
 	uint32 bSupportsMeshShadersWithClipDistance : 1;
 	uint32 MaxMeshShaderThreadGroupSize : 10;
+	uint32 bRequiresUnwrappedMeshShaderArgs : 1;
 	uint32 bSupportsPerPixelDBufferMask : 1;
 	uint32 bIsHlslcc : 1;
 	uint32 bSupportsDxc : 1; // Whether DirectXShaderCompiler (DXC) is supported
@@ -94,6 +97,7 @@ class FGenericDataDrivenShaderPlatformInfo
 	uint32 bSupportsHZBOcclusion : 1;
 	uint32 bSupportsWaterIndirectDraw : 1;
 	uint32 bSupportsAsyncPipelineCompilation : 1;
+	uint32 bSupportsVertexShaderSRVs : 1; // Whether SRVs can be bound to vertex shaders (may be independent from ManualVertexFetch)
 	uint32 bSupportsManualVertexFetch : 1;
 	uint32 bRequiresReverseCullingOnMobile : 1;
 	uint32 bOverrideFMaterial_NeedsGBufferEnabled : 1;
@@ -113,6 +117,13 @@ class FGenericDataDrivenShaderPlatformInfo
 	uint32 bSupportsClipDistance : 1;
 	uint32 bSupportsNNEShaders: 1;
 	uint32 bSupportsShaderPipelines : 1;
+	uint32 bSupportsUniformBufferObjects : 1;
+	uint32 bRequiresBindfulUtilityShaders : 1;
+	uint32 MaxSamplers : 8;
+	uint32 SupportsBarycentricsIntrinsics : 1;
+	uint32 SupportsBarycentricsSemantic : int32(ERHIFeatureSupport::NumBits);
+	uint32 bSupportsWave64 : 1;
+
 	// NOTE: When adding fields, you must also add to ParseDataDrivenShaderInfo!
 	uint32 bContainsValidPlatformInfo : 1;
 
@@ -127,7 +138,6 @@ class FGenericDataDrivenShaderPlatformInfo
 
 public:
 	RHI_API static void Initialize();
-	RHI_API static void UpdatePreviewPlatforms();
 	RHI_API static const EShaderPlatform GetShaderPlatformFromName(const FName ShaderPlatformName);
 
 	static FORCEINLINE_DEBUGGABLE const FName GetName(const FStaticShaderPlatform Platform)
@@ -304,6 +314,18 @@ public:
 		return Infos[Platform].bSupportsSwapchainUAVs;
 	}
 
+	static FORCEINLINE_DEBUGGABLE const bool GetSupportsShaderRootConstants(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].bSupportsShaderRootConstants;
+	}
+
+	static FORCEINLINE_DEBUGGABLE const bool GetSupportsShaderBundleDispatch(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].bSupportsShaderBundleDispatch;
+	}
+
 	static FORCEINLINE_DEBUGGABLE const bool GetSupportsRenderTargetWriteMask(const FStaticShaderPlatform Platform)
 	{
 		check(IsValid(Platform));
@@ -364,10 +386,10 @@ public:
 		return Infos[Platform].bSupportsRayTracing && Infos[Platform].bSupportsPathTracing;
 	}
 
-	static FORCEINLINE_DEBUGGABLE const bool GetSupportsHighEndRayTracingReflections(const FStaticShaderPlatform Platform)
+	static FORCEINLINE_DEBUGGABLE const bool GetSupportsHighEndRayTracingEffects(const FStaticShaderPlatform Platform)
 	{
 		check(IsValid(Platform));
-		return Infos[Platform].bSupportsRayTracing && Infos[Platform].bSupportsHighEndRayTracingReflections;
+		return Infos[Platform].bSupportsRayTracing && Infos[Platform].bSupportsHighEndRayTracingEffects;
 	}
 
 	static FORCEINLINE_DEBUGGABLE const bool GetSupportsComputeFramework(const FStaticShaderPlatform Platform)
@@ -556,6 +578,12 @@ public:
 		return Infos[Platform].MaxMeshShaderThreadGroupSize;
 	}
 
+	static FORCEINLINE_DEBUGGABLE const bool GetRequiresUnwrappedMeshShaderArgs(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].bRequiresUnwrappedMeshShaderArgs;
+	}
+
 	static FORCEINLINE_DEBUGGABLE const bool GetSupportsPerPixelDBufferMask(const FStaticShaderPlatform Platform)
 	{
 		check(IsValid(Platform));
@@ -634,6 +662,12 @@ public:
 		return Infos[Platform].bSupportsAsyncPipelineCompilation;
 	}
 
+	static FORCEINLINE_DEBUGGABLE const bool GetSupportsVertexShaderSRVs(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].bSupportsVertexShaderSRVs;
+	}
+
 	static FORCEINLINE_DEBUGGABLE const bool GetSupportsManualVertexFetch(const FStaticShaderPlatform Platform)
 	{
 		check(IsValid(Platform));
@@ -675,12 +709,6 @@ public:
 	{
 		check(IsValid(Platform));
 		return static_cast<ERHIBindlessSupport>(Infos[Platform].BindlessSupport);
-	}
-
-	UE_DEPRECATED(5.2, "You must use GetBindlessSupport instead.")
-	static FORCEINLINE_DEBUGGABLE const bool GetSupportsBindless(const FStaticShaderPlatform Platform)
-	{
-		return GetBindlessSupport(Platform) == ERHIBindlessSupport::AllShaderTypes;
 	}
 
 	static FORCEINLINE_DEBUGGABLE const bool GetSupportsVolumeTextureAtomics(const FStaticShaderPlatform Platform)
@@ -729,6 +757,42 @@ public:
 		check(IsValid(Platform));
 		return Infos[Platform].bSupportsNNEShaders;
 	}
+	
+	static FORCEINLINE_DEBUGGABLE const bool GetSupportsUniformBufferObjects(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].bSupportsUniformBufferObjects;
+	}
+	
+	static FORCEINLINE_DEBUGGABLE const bool GetRequiresBindfulUtilityShaders(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].bRequiresBindfulUtilityShaders;
+	}
+	
+	static FORCEINLINE_DEBUGGABLE const uint32 GetMaxSamplers(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].MaxSamplers;
+	}
+
+	static FORCEINLINE_DEBUGGABLE const bool GetSupportsBarycentricsIntrinsics(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].SupportsBarycentricsIntrinsics;
+	}
+
+	static FORCEINLINE_DEBUGGABLE const ERHIFeatureSupport GetSupportsBarycentricsSemantic(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return ERHIFeatureSupport(Infos[Platform].SupportsBarycentricsSemantic);
+	}
+
+	static FORCEINLINE_DEBUGGABLE const bool GetSupportsWave64(const FStaticShaderPlatform Platform)
+	{
+		check(IsValid(Platform));
+		return Infos[Platform].bSupportsWave64;
+	}
 
 	static FORCEINLINE_DEBUGGABLE const bool IsValid(const FStaticShaderPlatform Platform)
 	{
@@ -736,6 +800,7 @@ public:
 	}
 
 #if WITH_EDITOR
+	RHI_API static void UpdatePreviewPlatforms();
 	RHI_API static FText GetFriendlyName(const FStaticShaderPlatform Platform);
 	RHI_API static const EShaderPlatform GetPreviewShaderPlatformParent(const FStaticShaderPlatform Platform);
 
@@ -1085,6 +1150,18 @@ inline bool RHISupportsWaveOperations(const FStaticShaderPlatform Platform)
 	return FDataDrivenShaderPlatformInfo::GetSupportsWaveOperations(Platform) != ERHIFeatureSupport::Unsupported;
 }
 
+/** True if the given shader platform supports shader root constants */
+inline bool RHISupportsShaderRootConstants(const FStaticShaderPlatform Platform)
+{
+	return FDataDrivenShaderPlatformInfo::GetSupportsShaderRootConstants(Platform);
+}
+
+/** True if the given shader platform supports shader bundle dispatch */
+inline bool RHISupportsShaderBundleDispatch(const FStaticShaderPlatform Platform)
+{
+	return FDataDrivenShaderPlatformInfo::GetSupportsShaderBundleDispatch(Platform);
+}
+
 /** True if the given shader platform supports a render target write mask */
 inline bool RHISupportsRenderTargetWriteMask(const FStaticShaderPlatform Platform)
 {
@@ -1103,15 +1180,15 @@ inline ERHIBindlessSupport RHIGetBindlessSupport(const FStaticShaderPlatform Pla
 	return FDataDrivenShaderPlatformInfo::GetBindlessSupport(Platform);
 }
 
-UE_DEPRECATED(5.2, "You must use RHIGetBindlessSupport instead.")
-inline bool RHISupportsBindless(EShaderPlatform Platform)
-{
-	return RHIGetBindlessSupport(Platform) == ERHIBindlessSupport::AllShaderTypes;
-}
-
 inline bool RHISupportsVolumeTextureAtomics(EShaderPlatform Platform)
 {
 	return FDataDrivenShaderPlatformInfo::GetSupportsVolumeTextureAtomics(Platform);
+}
+
+/** True if the platform supports wave size of 64 */
+inline bool RHISupportsWaveSize64(const FStaticShaderPlatform Platform)
+{
+	return FDataDrivenShaderPlatformInfo::GetSupportsWave64(Platform);
 }
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_3

@@ -4,8 +4,8 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
-using System.Threading.Tasks;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace EpicGames.Core
 {
@@ -116,6 +116,7 @@ namespace EpicGames.Core
 		/// Creates a content hash for a stream asynchronously. 
 		/// </summary>
 		/// <param name="stream">Data to compute the hash for</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>New content hash instance containing the hash of the data</returns>
 		public static async Task<IoHash> ComputeAsync(Stream stream, CancellationToken cancellationToken = default)
 		{

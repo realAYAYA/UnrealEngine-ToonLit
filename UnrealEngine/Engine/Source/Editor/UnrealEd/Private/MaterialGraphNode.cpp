@@ -26,6 +26,7 @@
 #include "Materials/MaterialExpressionMaterialAttributeLayers.h"
 #include "Materials/MaterialExpressionRuntimeVirtualTextureSample.h"
 #include "Materials/MaterialExpressionSparseVolumeTextureSample.h"
+#include "Materials/MaterialExpressionSparseVolumeTextureObject.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionStaticBool.h"
 #include "Materials/MaterialExpressionStaticBoolParameter.h"
@@ -44,7 +45,7 @@
 #include "Materials/MaterialExpressionReroute.h"
 #include "Materials/MaterialExpressionCurveAtlasRowParameter.h"
 #include "Materials/MaterialExpressionExecBegin.h"
-#include "Materials/MaterialExpressionStrata.h"
+#include "Materials/MaterialExpressionSubstrate.h"
 #include "Materials/MaterialFunction.h"
 #include "MaterialEditorUtilities.h"
 #include "MaterialEditorActions.h"
@@ -52,6 +53,7 @@
 #include "GraphEditorSettings.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "ScopedTransaction.h"
+#include "MaterialNodes/SGraphNodeMaterialBase.h"
 
 #define LOCTEXT_NAMESPACE "MaterialGraphNode"
 
@@ -139,24 +141,8 @@ void UMaterialGraphNode::PostDuplicate(bool bDuplicateForPIE)
 
 bool UMaterialGraphNode::CanPasteHere(const UEdGraph* TargetGraph) const
 {
-	if (Super::CanPasteHere(TargetGraph))
+	if (Super::CanPasteHere(TargetGraph) && MaterialExpression)
 	{
-		if (MaterialExpression && MaterialExpression->IsA(UMaterialExpressionStrataLegacyConversion::StaticClass()))
-		{
-			// We could have used CanDuplicateNode() returning false to prevent the copy but it is nicer to have a notification about why the copy is not happening.
-			FText NotificationText = NSLOCTEXT("UMaterialGraphNode", "SkippedSubstrateLegacyConversion", "SubstrateLegacyConversion node cannot be copied! It is only used to convert legacy material to Substrate.");
-			FNotificationInfo Info(NotificationText);
-			Info.ExpireDuration = 5.0f;
-			Info.bUseLargeFont = false;
-			Info.Image = FCoreStyle::Get().GetBrush(TEXT("MessageLog.Warning"));
-			TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info);
-			if (Notification.IsValid())
-			{
-				Notification->SetCompletionState(SNotificationItem::CS_None);
-			}
-			return false; // We do not allow the copy of the StrataLegacyConversion which should only be used to convert pre-strata materials.
-		}
-
 		const UMaterialGraph* MaterialGraph = Cast<const UMaterialGraph>(TargetGraph);
 		if (MaterialGraph)
 		{
@@ -339,7 +325,7 @@ FLinearColor UMaterialGraphNode::GetNodeTitleColor() const
 			return FColor( 0, 128, 128 );
 		}
 	}
-	else if (const UMaterialExpressionStrataBSDF* StrataBSDF = Cast<UMaterialExpressionStrataBSDF>(MaterialExpression))
+	else if (const UMaterialExpressionSubstrateBSDF* SubstrateBSDF = Cast<UMaterialExpressionSubstrateBSDF>(MaterialExpression))
 	{
 		return FColor(181, 29, 230);
 	}
@@ -390,7 +376,7 @@ void UMaterialGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeCo
 		FToolMenuSection& NodeSection = Menu->AddSection("MaterialSchemaNodeActions", LOCTEXT("NodeActionsMenuHeader", "Node Actions"), MenuPosition);
 		if (MaterialExpression)
 		{
-			if (MaterialExpression->IsA(UMaterialExpressionTextureBase::StaticClass()))
+			if (MaterialExpression->IsA(UMaterialExpressionTextureBase::StaticClass()) || MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureBase::StaticClass()))
 			{
 				{
 					NodeSection.AddMenuEntry(FMaterialEditorCommands::Get().UseCurrentTexture);
@@ -398,11 +384,11 @@ void UMaterialGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeCo
 
 				// Add a 'Convert To Texture' option for convertible types
 				{
-					if ( MaterialExpression->IsA(UMaterialExpressionTextureSample::StaticClass()) && !MaterialExpression->HasAParameterName())
+					if ( (MaterialExpression->IsA(UMaterialExpressionTextureSample::StaticClass()) || MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureSample::StaticClass())) && !MaterialExpression->HasAParameterName())
 					{
 						NodeSection.AddMenuEntry(FMaterialEditorCommands::Get().ConvertToTextureObjects);
 					}
-					else if ( MaterialExpression->IsA(UMaterialExpressionTextureObject::StaticClass()))
+					else if ( MaterialExpression->IsA(UMaterialExpressionTextureObject::StaticClass()) || MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureObject::StaticClass()) )
 					{
 						NodeSection.AddMenuEntry(FMaterialEditorCommands::Get().ConvertToTextureSamples);
 					}
@@ -436,8 +422,9 @@ void UMaterialGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeCo
 				|| MaterialExpression->IsA(UMaterialExpressionConstant4Vector::StaticClass())
 				|| (MaterialExpression->IsA(UMaterialExpressionTextureSample::StaticClass()) && !MaterialExpression->HasAParameterName())
 				|| (MaterialExpression->IsA(UMaterialExpressionRuntimeVirtualTextureSample::StaticClass()) && !MaterialExpression->HasAParameterName())
-				|| (MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureSampleParameter::StaticClass()) && !MaterialExpression->HasAParameterName())
+				|| (MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureSample::StaticClass()) && !MaterialExpression->HasAParameterName())
 				|| MaterialExpression->IsA(UMaterialExpressionTextureObject::StaticClass())
+				|| MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureObject::StaticClass())
 				|| MaterialExpression->IsA(UMaterialExpressionComponentMask::StaticClass()))
 			{
 				{
@@ -452,7 +439,8 @@ void UMaterialGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeCo
 			// Add a 'Convert To Constant' option for convertible types
 			if (bIsAStandardScalarParam
 				|| MaterialExpression->IsA(UMaterialExpressionVectorParameter::StaticClass())
-				|| MaterialExpression->IsA(UMaterialExpressionTextureObjectParameter::StaticClass()))
+				|| MaterialExpression->IsA(UMaterialExpressionTextureObjectParameter::StaticClass())
+				|| MaterialExpression->IsA(UMaterialExpressionSparseVolumeTextureObjectParameter::StaticClass()))
 			{
 				{
 					NodeSection.AddMenuEntry(FMaterialEditorCommands::Get().ConvertToConstant);
@@ -523,7 +511,7 @@ void UMaterialGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeCo
 			FToolMenuSection& Section = Menu->AddSection("EdGraphSchemaOrganization", LOCTEXT("OrganizationHeader", "Organization"));
 			Section.AddMenuEntry(FGraphEditorCommands::Get().CollapseNodes);
 			Section.AddMenuEntry(FGraphEditorCommands::Get().ExpandNodes);
-
+			Section.AddMenuEntry(FGraphEditorCommands::Get().CollapseSelectionToFunction);
 			Section.AddSubMenu(
 				"Alignment",
 				LOCTEXT("AlignmentHeader", "Alignment"),
@@ -658,6 +646,11 @@ uint32 UMaterialGraphNode::GetPinMaterialType(const UEdGraphPin* Pin) const
 void UMaterialGraphNode::PinDefaultValueChanged(UEdGraphPin* Pin)
 {
 	MaterialExpression->PinDefaultValueChanged(Pin->SourceIndex, Pin->DefaultValue);
+}
+
+TSharedPtr<SGraphNode> UMaterialGraphNode::CreateVisualWidget()
+{
+	return SNew(SGraphNodeMaterialBase, this);
 }
 
 void UMaterialGraphNode::CreateInputPins()
@@ -816,6 +809,37 @@ void UMaterialGraphNode::CreateOutputPins()
 			// Makes sure pin has a name for lookup purposes but user will never see it
 			NewPin->PinName = CreateUniquePinName(TEXT("Output"));
 			NewPin->PinFriendlyName = SpaceText;
+		}
+	}
+}
+
+void UMaterialGraphNode::PropagatePropertyChange()
+{
+	MaterialExpression->bNeedToUpdatePreview = 1;
+
+	// Loop through all the output pins.
+	for (UEdGraphPin* Pin : Pins)
+	{
+		if (Pin->PinType.PinCategory == UMaterialGraphSchema::PC_Exec ||
+			Pin->Direction != EGPD_Output)
+		{
+			continue;
+		}
+
+		// We only care about pins which are outputs. We call PropagatePropertyChange
+		// on the nodes that are linked to this particular output pin.
+		for (UEdGraphPin* LinkedPins : Pin->LinkedTo)
+		{
+			// Retrieve the linked node. Check that it is of type UMaterialGraphNode.
+			UEdGraphNode* Node = LinkedPins->GetOwningNode();
+			UMaterialGraphNode* CastedNode = Cast<UMaterialGraphNode>(Node);
+			
+			if (!CastedNode)
+			{
+				continue;
+			}
+
+			CastedNode->PropagatePropertyChange();
 		}
 	}
 }
@@ -1031,6 +1055,10 @@ bool UMaterialGraphNode::UsesVectorColour(UMaterialExpression* Expression)
 bool UMaterialGraphNode::UsesObjectColour(UMaterialExpression* Expression)
 {
 	if (Expression->IsA<UMaterialExpressionTextureBase>())
+	{
+		return true;
+	}
+	else if (Expression->IsA<UMaterialExpressionSparseVolumeTextureBase>())
 	{
 		return true;
 	}

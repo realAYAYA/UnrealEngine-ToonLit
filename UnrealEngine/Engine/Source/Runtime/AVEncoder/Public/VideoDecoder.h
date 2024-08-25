@@ -15,13 +15,13 @@ namespace AVEncoder
 	class FVideoDecoderInput;
 	class FVideoDecoderOutput;
 
-	class FVideoDecoder
+	class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FVideoDecoder
 	{
 	public:
 		using CreateDecoderAllocationInterfaceCallback = TFunction<void(void* /*InOptions*/, void** /*InOutParamResult*/)>;
 		using ReleaseDecoderAllocationInterfaceCallback = TFunction<void(void* /*InOptions*/, void** /*InOutParamResult*/)>;
 
-		struct FInit
+		struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FInit
 		{
 			CreateDecoderAllocationInterfaceCallback	CreateDecoderAllocationInterface;
 			ReleaseDecoderAllocationInterfaceCallback	ReleaseDecoderAllocationInterface;
@@ -35,15 +35,18 @@ namespace AVEncoder
 		// Shuts the decoder down AND destroys it. Do not store a pointer to this decoder in a smart pointer!
 		virtual void Shutdown() = 0;
 
-		enum class EDecodeResult
+		enum class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") EDecodeResult
 		{
 			Success,
 			Failure
 //			TryAgainLater
 		};
+
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		virtual EDecodeResult Decode(const FVideoDecoderInput* InInput) = 0;
 
 		using OnDecodedFrameCallback = TFunction<void(const FVideoDecoderOutput* /*InDecodedFrame*/)>;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		virtual void SetOnDecodedFrame(OnDecodedFrameCallback InCallback) { OnDecodedFrame = MoveTemp(InCallback); }
 		virtual void ClearOnDecodedFrame() { OnDecodedFrame = nullptr; }
@@ -55,8 +58,10 @@ namespace AVEncoder
 	protected:
 		bool CreateDecoderAllocationInterface();
 		void ReleaseDecoderAllocationInterface();
-		EFrameBufferAllocReturn AllocateOutputFrameBuffer(FVideoDecoderAllocFrameBufferResult* OutBuffer, const FVideoDecoderAllocFrameBufferParams* InAllocParams);
 		void* GetAllocationInterfaceMethods();
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		EFrameBufferAllocReturn AllocateOutputFrameBuffer(FVideoDecoderAllocFrameBufferResult* OutBuffer, const FVideoDecoderAllocFrameBufferParams* InAllocParams);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		struct FPlatformDecoderAllocInterface;
 

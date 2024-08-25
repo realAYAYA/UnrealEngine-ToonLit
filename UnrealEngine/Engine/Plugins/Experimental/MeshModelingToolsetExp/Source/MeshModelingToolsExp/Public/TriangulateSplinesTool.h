@@ -38,7 +38,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = Spline)
 	EFlattenCurveMethod FlattenMethod = EFlattenCurveMethod::DoNotFlatten;
 
-	// Note: Combining and offsetting curves only works when curves are flattened; curves will be left separate and non-offset if FlattenMethod is DoNotFlatten
+	// Whether or how to combine the curves
 	UPROPERTY(EditAnywhere, Category = Spline, meta = (EditCondition = "FlattenMethod != EFlattenCurveMethod::DoNotFlatten", EditConditionHides))
 	ECombineCurvesMethod CombineMethod = ECombineCurvesMethod::LeaveSeparate;
 

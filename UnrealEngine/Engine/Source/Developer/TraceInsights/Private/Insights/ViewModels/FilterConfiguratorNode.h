@@ -63,23 +63,27 @@ public:
 	void SetSelectedFilter(TSharedPtr<FFilter> InSelectedFilter);
 	TSharedPtr<FFilter> GetSelectedFilter() const { return SelectedFilter; }
 
-	void SetSelectedFilterOperator(TSharedPtr<IFilterOperator> InSelectedFilterOperator) { SelectedFilterOperator = InSelectedFilterOperator; }
-	TSharedPtr<IFilterOperator> GetSelectedFilterOperator() const { return SelectedFilterOperator;	}
-	const TArray<TSharedPtr<FFilterGroupOperator>>& GetFilterGroupOperators();
+	void SetSelectedFilterOperator(TSharedPtr<IFilterOperator> InSelectedFilterOperator);
+	TSharedPtr<const IFilterOperator> GetSelectedFilterOperator() const;
 
+	const TArray<TSharedPtr<FFilterGroupOperator>>& GetFilterGroupOperators() const;
 	void SetSelectedFilterGroupOperator(TSharedPtr<FFilterGroupOperator> InSelectedFilterGroupOperator) { SelectedFilterGroupOperator = InSelectedFilterGroupOperator; }
 	TSharedPtr<FFilterGroupOperator> GetSelectedFilterGroupOperator() const { return SelectedFilterGroupOperator; }
 
 	TSharedPtr<TArray<TSharedPtr<IFilterOperator>>> GetAvailableFilterOperators() const {	return AvailableFilterOperators;	}
 
 	const FString& GetTextBoxValue() { return TextBoxValue; }
-	void SetTextBoxValue(const FString& InValue) { TextBoxValue = InValue; }
+	void SetTextBoxValue(const FString& InValue);
 
 	bool ApplyFilters(const class FFilterContext& Context) const;
 
 	void GetUsedKeys(TSet<int32>& GetUsedKeys) const;
 
 	void ProcessFilter();
+
+	void Update();
+
+	TSharedPtr<FFilterState> GetSelectedFilterState() { return FilterState; }
 
 private:
 	FFilterConfiguratorNode& operator=(const FFilterConfiguratorNode& Other);
@@ -88,16 +92,13 @@ private:
 
 	TSharedPtr<FFilter> SelectedFilter;
 
-	TSharedPtr<IFilterOperator> SelectedFilterOperator;
-
 	TSharedPtr<FFilterGroupOperator> SelectedFilterGroupOperator;
 
 	TSharedPtr<TArray<TSharedPtr<IFilterOperator>>> AvailableFilterOperators;
 
 	FString TextBoxValue;
 
-	// The textbox value, converted to its data type
-	FFilterContext::ContextData FilterValue;
+	TSharedPtr<FFilterState> FilterState;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

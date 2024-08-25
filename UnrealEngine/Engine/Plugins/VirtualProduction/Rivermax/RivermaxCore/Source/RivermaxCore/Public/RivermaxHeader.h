@@ -2,19 +2,19 @@
 
 #pragma once
 
-THIRD_PARTY_INCLUDES_START
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 #endif
 
+THIRD_PARTY_INCLUDES_START
+
+#include "rivermax_defs.h"
 #include "rivermax_api.h"
 
+THIRD_PARTY_INCLUDES_END
+
 #if PLATFORM_WINDOWS
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
-
-THIRD_PARTY_INCLUDES_END
 

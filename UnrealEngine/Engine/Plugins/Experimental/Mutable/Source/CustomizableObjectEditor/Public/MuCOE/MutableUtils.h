@@ -20,14 +20,6 @@ TArray<FVector2f> GetUV(const UStaticMesh& StaticMesh, const int32 LODIndex, con
 bool HasNormalizedBounds(const FVector2f& Point);
 
 
-/** Returns if the given UV is normalized. */
-bool IsUVNormalized(const USkeletalMesh& SkeletalMesh, const int32 LODIndex, const int32 SectionIndex, const int32 UVIndex);
-
-
-/** Returns if the given UV is normalized. */
-bool IsUVNormalized(const UStaticMesh& SkeletalMesh, const int32 LODIndex, const int32 SectionIndex, const int32 UVIndex);
-
-
 /** Check if a given LOD and material in a skeletal mesh is closed. */
 bool IsMeshClosed(const USkeletalMesh* Mesh, int LOD, int MaterialIndex);
 

@@ -109,7 +109,6 @@ bool FWindowsPlatformNamedPipe::Destroy()
 		case State_WaitingForRW:
 			// TODO: Cancel IO and wait
 			bFlushBuffers = true;
-			check(0);
 			break;
 
 		case State_Uninitialized:
@@ -118,7 +117,6 @@ bool FWindowsPlatformNamedPipe::Destroy()
 
 		case State_Connecting:
 			// TODO: Cancel IO
-			check(0);
 			break;
 
 		case State_ErrorPipeClosedUnexpectedly:

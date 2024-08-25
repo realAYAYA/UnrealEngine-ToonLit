@@ -8,6 +8,8 @@
 #include "Widgets/Views/SListView.h"
 #include "UObject/ObjectKey.h"
 #include "Framework/Commands/UICommandList.h"
+#include "ViewModels/Stack/NiagaraStackItem.h"
+#include "ViewModels/Stack/NiagaraStackItemGroup.h"
 
 class UNiagaraStackEntry;
 class UNiagaraStackItem;
@@ -20,12 +22,14 @@ class SNiagaraOverviewStack : public SCompoundWidget
 {
 public:
 	SLATE_BEGIN_ARGS(SNiagaraOverviewStack)
+		: _AllowedClasses({UNiagaraStackItem::StaticClass(), UNiagaraStackItemGroup::StaticClass()})
 	{}
+		SLATE_ARGUMENT(TArray<UClass*>, AllowedClasses)
 	SLATE_END_ARGS();
 
 	void Construct(const FArguments& InArgs, UNiagaraStackViewModel& InStackViewModel, UNiagaraSystemSelectionViewModel& InOverviewSelectionViewModel);
 
-	~SNiagaraOverviewStack();
+	virtual	~SNiagaraOverviewStack() override;
 
 	virtual bool SupportsKeyboardFocus() const override;
 
@@ -95,6 +99,8 @@ private:
 	TArray<TWeakObjectPtr<UNiagaraStackEntry>> PreviousSelection;
 
 	TSharedPtr<FNiagaraStackCommandContext> StackCommandContext;
+
+	TArray<UClass*> AllowedClasses;
 
 	bool bRefreshEntryListPending;
 	bool bUpdatingOverviewSelectionFromStackSelection;

@@ -46,7 +46,7 @@ FIdent FDatabase::CreateId()
 {
 	if (AvailableIdents.Num() > 0)
 	{
-		return  AvailableIdents.Pop(false);
+		return  AvailableIdents.Pop(EAllowShrinking::No);
 	}
 	else
 	{

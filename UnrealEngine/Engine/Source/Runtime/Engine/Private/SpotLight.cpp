@@ -48,11 +48,6 @@ void ASpotLight::PostLoad()
 {
 	Super::PostLoad();
 
-	if (GetLightComponent()->Mobility == EComponentMobility::Static)
-	{
-		GetLightComponent()->ClearLightFunctionMaterial();
-	}
-
 #if WITH_EDITORONLY_DATA
 	if(ArrowComponent)
 	{

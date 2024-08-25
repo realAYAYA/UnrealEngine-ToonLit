@@ -4,7 +4,12 @@
 	LightFunctionCommon.usf: Utility functions for light functions.
 =============================================================================*/
 
-#include "/Engine/Private/Strata/Strata.ush" 
+#include "/Engine/Private/Substrate/Substrate.ush" 
+
+
+#ifndef LIGHT_FUNCTION_ATLAS
+#define LIGHT_FUNCTION_ATLAS 0
+#endif
 
 // This ifdef is to allow shaders(notably the ratracing miss shader implementing light functions) to override where these parameters come from.
 #ifndef LightFunctionParameters
@@ -17,8 +22,20 @@ float4x4 LightFunctionTranslatedWorldToLight;
  * Calculates the light function color with the given light vector. 
  * LightVector is the vector from the light to the position being shaded, in the light's coordinate space.
  */
-float3 GetLightFunctionColor(float3 LightVector, float3 TranslatedWorldSpace)
+float3 GetLightFunctionColor(float3 LightVector, float3 TranslatedWorldSpace
+#if LIGHT_FUNCTION_ATLAS
+	, float2 UVs
+#endif
+)
 {
+
+#if LIGHT_FUNCTION_ATLAS
+
+	// This path is used when rendering a light function into a 2D Atlas
+	float2 LightFunctionUVs = UVs;
+
+#else // LIGHT_FUNCTION_ATLAS
+
 	// Swizzle so that LightVector.xy are perpendicular to the light direction and LightVector.z is distance along the light direction
 	LightVector.xyz = LightVector.zyx;
 
@@ -39,6 +56,8 @@ float3 GetLightFunctionColor(float3 LightVector, float3 TranslatedWorldSpace)
 		LightFunctionUVs = float2((atan2(UnitLightVector.y, UnitLightVector.x) + PI) / (2 * PI), acos(UnitLightVector.z) / PI);
 	}
 
+#endif // LIGHT_FUNCTION_ATLAS
+
 	FMaterialPixelParameters MaterialParameters = MakeInitializedMaterialPixelParameters();
 #if NUM_MATERIAL_TEXCOORDS
 	for(int CoordinateIndex = 0;CoordinateIndex < NUM_MATERIAL_TEXCOORDS;CoordinateIndex++)
@@ -50,21 +69,24 @@ float3 GetLightFunctionColor(float3 LightVector, float3 TranslatedWorldSpace)
 	MaterialParameters.CameraVector = LightVector.xyz;
 	MaterialParameters.ReflectionVector = LightVector.xyz;
 	MaterialParameters.LightVector = LightVector.xyz;
-	MaterialParameters.AbsoluteWorldPosition = LWCSubtract(TranslatedWorldSpace, PrimaryView.PreViewTranslation);
+	MaterialParameters.AbsoluteWorldPosition = DFFastSubtract(TranslatedWorldSpace, PrimaryView.PreViewTranslation);
+	MaterialParameters.WorldPosition_CamRelative = MaterialParameters.WorldPosition_NoOffsets_CamRelative = TranslatedWorldSpace;
 	MaterialParameters.ScreenPosition = mul(float4(TranslatedWorldSpace, 1.0f), PrimaryView.TranslatedWorldToClip);
+	MaterialParameters.LWCData = MakeMaterialLWCData(MaterialParameters);
 
 	FPixelMaterialInputs PixelMaterialInputs;
 	CalcPixelMaterialInputs(MaterialParameters, PixelMaterialInputs);
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
-  #if COMPUTESHADER
-	return StrataGetBSDFEmissive(MaterialParameters.StrataTree.BSDFs[0]); // Unused code path?
-  #else
-	return StrataGetBSDFEmissive(PixelMaterialInputs.FrontMaterial.InlinedBSDF);
-  #endif
+	// Light function node forces a single unlit BSDF. We get the raw data from light function node from the raw BSDF on the tree.
+	FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
+	FSubstrateBSDF UnlitBSDF = SubstratePixelHeader.SubstrateTree.BSDFs[0];
+	UnlitBSDF.SubstrateSanitizeBSDF(); // required wehen not calling SubstrateUpdateTreeUnlit
 
-#else // STRATA_ENABLED
+	return SubstrateGetBSDFEmissive(UnlitBSDF);
+
+#else // SUBSTRATE_ENABLED
 
    #if COMPUTESHADER
 	return GetMaterialEmissiveForCS(MaterialParameters);
@@ -72,5 +94,5 @@ float3 GetLightFunctionColor(float3 LightVector, float3 TranslatedWorldSpace)
 	return GetMaterialEmissive(PixelMaterialInputs);
    #endif
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 }

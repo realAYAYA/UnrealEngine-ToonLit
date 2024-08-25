@@ -116,7 +116,7 @@ bool FSandboxPlatformFile::Initialize(IPlatformFile* Inner, const TCHAR* CmdLine
 			if( FPaths::IsDrive(DriveCheck) == false )
 			{
 				FString Command( CommandLineDirectory.Mid( CommandIndex + 1 ) );
-				CommandLineDirectory.LeftInline( CommandIndex, false);
+				CommandLineDirectory.LeftInline( CommandIndex, EAllowShrinking::No);
 		
 				if( Command == TEXT("wipe") )
 				{
@@ -744,7 +744,7 @@ public:
 			if (NormalizedFilename == SandboxFile.InjectedSourceDirectoryParent)
 			{
 				// "fake" the injected directory so everything falls into place
-				Visitor.Visit(*SandboxFile.InjectedSourceDirectory, true);
+				Visitor.CallShouldVisitAndVisit(*SandboxFile.InjectedSourceDirectory, true);
 
 				// for recursive visiting, we need to recurse into the forced directory
 				if (bIsRecursive)
@@ -770,14 +770,14 @@ public:
 				VisitedSandboxFiles.Add(*LocalFilename);
 				// Now convert the sandbox path back to engine path because the sandbox folder should not be exposed
 				// to the engine and remain transparent.
-				LocalFilename.MidInline(SandboxFile.GetSandboxDirectory().Len(), MAX_int32, false);
+				LocalFilename.MidInline(SandboxFile.GetSandboxDirectory().Len(), MAX_int32, EAllowShrinking::No);
 				if (LocalFilename.StartsWith(TEXT("Engine/")) || (FCString::Stricmp(*LocalFilename, TEXT("Engine")) == 0))
 				{
 					LocalFilename = SandboxFile.GetAbsoluteRootDirectory() / LocalFilename;
 				}
 				else
 				{
-					LocalFilename.MidInline(SandboxFile.GetGameSandboxDirectoryName().Len(), MAX_int32, false);
+					LocalFilename.MidInline(SandboxFile.GetGameSandboxDirectoryName().Len(), MAX_int32, EAllowShrinking::No);
 					LocalFilename = SandboxFile.GetAbsoluteGameDirectory() / LocalFilename;
 				}
 			}
@@ -791,7 +791,7 @@ public:
 
 		if (CanVisit)
 		{
-			bool Result = Visitor.Visit(*LocalFilename, bIsDirectory);
+			bool Result = Visitor.CallShouldVisitAndVisit(*LocalFilename, bIsDirectory);
 			return Result;
 		}
 		else
@@ -861,7 +861,7 @@ public:
 			{
 				// "fake" the injected directory so everything falls into place
 				FFileStatData InjectedStat = SandboxFile.LowerLevel->GetStatData(*SandboxFile.InjectedSourceDirectory);
-				Visitor.Visit(*SandboxFile.InjectedSourceDirectory, InjectedStat);
+				Visitor.CallShouldVisitAndVisit(*SandboxFile.InjectedSourceDirectory, InjectedStat);
 
 				// for recursive visiting, we need to recurse into the forced directory
 				if (bIsRecursive)
@@ -886,7 +886,7 @@ public:
 				VisitedSandboxFiles.Add(*LocalFilename);
 				// Now convert the sandbox path back to engine path because the sandbox folder should not be exposed
 				// to the engine and remain transparent.
-				LocalFilename.MidInline(SandboxFile.GetSandboxDirectory().Len(), MAX_int32, false);
+				LocalFilename.MidInline(SandboxFile.GetSandboxDirectory().Len(), MAX_int32, EAllowShrinking::No);
 				if (LocalFilename.StartsWith(TEXT("Engine/")))
 				{
 					LocalFilename = SandboxFile.GetAbsoluteRootDirectory() / LocalFilename;
@@ -906,7 +906,7 @@ public:
 
 		if (CanVisit)
 		{
-			bool Result = Visitor.Visit(*LocalFilename, StatData);
+			bool Result = Visitor.CallShouldVisitAndVisit(*LocalFilename, StatData);
 			return Result;
 		}
 		else

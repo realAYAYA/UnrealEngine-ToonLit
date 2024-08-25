@@ -66,6 +66,12 @@ FBuffer::Append(const FBuffer& Other)
 }
 
 void
+FBuffer::Append(const FBufferView& Other)
+{
+	Append(Other.Data, Other.Size);
+}
+
+void
 FBuffer::Append(const uint8* AppendData, uint64 AppendSize)
 {
 	uint64 RequiredCapacity		   = BufferSize + AppendSize;

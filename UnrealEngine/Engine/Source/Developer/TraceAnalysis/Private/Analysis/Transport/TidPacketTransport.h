@@ -5,6 +5,8 @@
 #include "Transport.h"
 #include "Analysis/StreamReader.h"
 #include "Containers/Array.h"
+#include "Containers/Map.h"
+#include "TraceAnalysisDebug.h"
 #include "Trace/Detail/Transport.h"
 
 namespace UE {
@@ -24,6 +26,10 @@ public:
 		Ok,
 		Error
 	};
+
+	virtual bool			IsEmpty() const override;
+	virtual void			DebugBegin() override;
+	virtual void			DebugEnd() override;
 
 	ETransportResult		Update();
 	uint32					GetThreadCount() const;
@@ -48,6 +54,8 @@ private:
 
 	EReadPacketResult		ReadPacket();
 	FThreadStream*			FindOrAddThread(uint32 ThreadId, bool bAddIfNotFound);
+	void					DebugUpdate();
+
 	TArray<FThreadStream>	Threads = {
 								{ {}, ETransportTid::Events },
 								{ {}, ETransportTid::Importants },
@@ -55,6 +63,19 @@ private:
 
 protected:
 	uint32					Synced = 0x7fff'ffff;
+
+#if UE_TRACE_ANALYSIS_DEBUG
+private:
+	uint64					TotalPacketHeaderSize = 0;
+	uint64					TotalPacketSize = 0;
+	uint64					TotalDecodedSize = 0;
+	uint32					NumPackets = 0;
+	uint32					MaxBufferSize = 0;
+	uint32					MaxBufferSizeThreadId = 0;
+	uint32					MaxDataSizePerBuffer = 0;
+	uint32					MaxDataSizePerBufferThreadId = 0;
+	TMap<uint32, uint64>	DataSizePerThread;
+#endif // UE_TRACE_ANALYSIS_DEBUG
 };
 
 ////////////////////////////////////////////////////////////////////////////////

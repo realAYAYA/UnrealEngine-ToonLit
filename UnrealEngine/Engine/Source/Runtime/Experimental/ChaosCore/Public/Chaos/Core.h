@@ -27,6 +27,7 @@ namespace Chaos
 	using FVec3f = TVector<FRealSingle, 3>;
 	using FRotation3f = TRotation<FRealSingle, 3>;
 	using FRigidTransform3f = TRigidTransform<FRealSingle, 3>;
+	using FTransformPair = TVector<FRigidTransform3, 2>;
 
 	using FAABB3f = TAABB<FRealSingle, 3>;
 
@@ -51,7 +52,7 @@ namespace Chaos
 	// NOTE: if you get a merge conflict on the GUID, you must replace it with a new GUID - do not accept the source or target
 	// or you will likely get DDC version conflicts resulting in crashes during load.
 	// Core version string for Chaos data. Any DDC builder dependent on Chaos for serialization should depend on this version
-	inline const TCHAR* const ChaosVersionGUID = TEXT("5E9A3DDA-B200-415C-9C6D-A5C15B2AA011");
+	inline const TCHAR* const ChaosVersionGUID = TEXT("5E07152B-EF71-47B8-B477-0CE28888D459");
 
 	inline FString GetChaosVersionStringInner()
 	{

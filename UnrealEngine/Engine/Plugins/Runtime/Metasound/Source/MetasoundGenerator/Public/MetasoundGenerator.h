@@ -3,6 +3,7 @@
 
 #include "MetasoundExecutableOperator.h"
 #include "MetasoundGraphOperator.h"
+#include "MetasoundInstanceCounter.h"
 #include "MetasoundOperatorBuilder.h"
 #include "MetasoundOperatorInterface.h"
 #include "MetasoundParameterPack.h"
@@ -21,6 +22,9 @@
 #define ENABLE_METASOUND_GENERATOR_RENDER_TIMING WITH_EDITOR
 #endif // ifndef ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 
+#ifndef ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
+#define ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING UE_TRACE_ENABLED && !UE_BUILD_SHIPPING
+#endif // ifndef ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
 namespace Metasound
 {
 	namespace DynamicGraph
@@ -30,9 +34,7 @@ namespace Metasound
 
 	namespace MetasoundGeneratorPrivate
 	{
-#if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 		struct FRenderTimer;
-#endif // if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 
 		struct FParameterSetter
 		{
@@ -186,6 +188,9 @@ namespace Metasound
 			return ReadRef;
 		}
 
+		DECLARE_TS_MULTICAST_DELEGATE_OneParam(FOnVertexInterfaceDataUpdated, FVertexInterfaceData);
+		FOnVertexInterfaceDataUpdated OnVertexInterfaceDataUpdated;
+
 		/**
 		 * Add a vertex analyzer for a named output with the given address info.
 		 *
@@ -212,18 +217,30 @@ namespace Metasound
 		bool IsFinished() const override;
 		//~ End FSoundGenerator
 
-#if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
+		/** Enables the performance timing of the metasound rendering process. You
+		 * must call this before "GetCPUCoreUtilization" or the results will
+		 * always be 0.0.
+		 */
+		void EnableRuntimeRenderTiming(bool Enable) { bDoRuntimeRenderTiming = Enable; }
+
 		/** Fraction of a single CPU core used to render audio on a scale of 0.0 to 1.0 */
 		double GetCPUCoreUtilization() const;
 
-#endif // if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
-		
+
 		// Called when a new graph has been "compiled" and set up as this generator's graph.
 		// Note: We don't allow direct assignment to the FOnSetGraph delegate
 		// because we want to give the Delegate an initial immediate callback if the generator 
 		// already has a graph. 
 		FDelegateHandle AddGraphSetCallback(FOnSetGraph::FDelegate&& Delegate);
 		bool RemoveGraphSetCallback(const FDelegateHandle& Handle);
+
+		// Enqueues a command for this generator to execute when its next buffer is
+		// requested by the mixer.  Enqueued commands are executed before OnGenerateAudio,
+		// and on the same thread.  They can safely access generator state.
+		void OnNextBuffer(TUniqueFunction<void(FMetasoundGenerator&)> Command)
+		{
+			SynthCommand([this, Command = MoveTemp(Command)]() { Command(*this); });
+		}
 
 	protected:
 
@@ -236,6 +253,9 @@ namespace Metasound
 
 		virtual TUniquePtr<IOperator> ReleaseGraphOperator();
 		FInputVertexInterfaceData ReleaseInputVertexData();
+#if ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
+		FConcurrentInstanceCounter InstanceCounter; 
+#endif // if ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
 
 		/** Release the graph operator and remove any references to data owned by
 		 * the graph operator.
@@ -243,7 +263,7 @@ namespace Metasound
 		void ClearGraph();
 		bool UpdateGraphIfPending();
 
-
+		std::atomic<bool> bVertexInterfaceHasChanged{ false };
 
 	private:
 
@@ -269,6 +289,7 @@ namespace Metasound
 		
 		void ApplyPendingUpdatesToInputs();
 
+		void HandleRenderTimingEnableDisable();
 
 		bool bIsGraphBuilding;
 		bool bIsFinishTriggered;
@@ -329,9 +350,9 @@ namespace Metasound
 
 		FOnSetGraph OnSetGraph;
 
-#if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
+		double RenderTime;
+		bool bDoRuntimeRenderTiming;
 		TUniquePtr<MetasoundGeneratorPrivate::FRenderTimer> RenderTimer;
-#endif // if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 	};
 
 	/** FMetasoundConstGraphGenerator generates audio from a given metasound IOperator
@@ -355,9 +376,10 @@ namespace Metasound
 		bool TryUseCachedOperator(FMetasoundGeneratorInitParams& InParams, bool bTriggerGenerator);
 		void ReleaseOperatorToCache();
 
+		TUniquePtr<FMetasoundEnvironment> EnvironmentPtr;
 		TUniquePtr<FAsyncTaskBase> BuilderTask;
 		FGuid OperatorID;
-		bool bUseOperatorCache = false;
+		bool bUseOperatorPool = false;
 	};
 
 	struct METASOUNDGENERATOR_API FMetasoundDynamicGraphGeneratorInitParams : FMetasoundGeneratorInitParams

@@ -18,7 +18,7 @@ namespace Horde.Server.Utilities
 		/// <param name="sequence">Sequence of items to add</param>
 		public static void Add<TKey, TValue>(this Google.Protobuf.Collections.MapField<TKey, TValue> map, IEnumerable<KeyValuePair<TKey, TValue>> sequence)
 		{
-			foreach(KeyValuePair<TKey, TValue> pair in sequence)
+			foreach (KeyValuePair<TKey, TValue> pair in sequence)
 			{
 				map.Add(pair.Key, pair.Value);
 			}

@@ -348,14 +348,17 @@ void FConcertTakeRecorderClientSessionCustomization::PopulateClientList()
 	}
 }
 
-void FConcertTakeRecorderClientSessionCustomization::UpdateClientSettings(
-	EConcertClientStatus Status, const FConcertClientRecordSetting& RecordSetting)
+const FConcertClientRecordSetting* FConcertTakeRecorderClientSessionCustomization::FindClientSettings(const FGuid& EndpointSettings) const
 {
-	int32 Index = Clients.IndexOfByPredicate([&RecordSetting](const TSharedPtr<FConcertClientRecordSetting>& Setting) {
-		return Setting->Details.ClientEndpointId == RecordSetting.Details.ClientEndpointId;
-	});
+	const int32 Index = InternalFindClientSettingsIndex(EndpointSettings);
+	return Clients.IsValidIndex(Index) ? Clients[Index].Get() : nullptr;
+}
 
-	switch(Status)
+void FConcertTakeRecorderClientSessionCustomization::UpdateClientSettings(EConcertClientStatus Status, const FConcertClientRecordSetting& RecordSetting)
+{
+	const int32 Index = InternalFindClientSettingsIndex(RecordSetting.Details.ClientEndpointId);
+
+	switch (Status)
 	{
 	case EConcertClientStatus::Connected:
 		Clients.Emplace(MakeShared<FConcertClientRecordSetting>(RecordSetting));
@@ -369,11 +372,12 @@ void FConcertTakeRecorderClientSessionCustomization::UpdateClientSettings(
 		check(Index != INDEX_NONE);
 		Clients.RemoveAt(Index);
 		break;
-	};
+	default: checkNoEntry();
+	}
 
 	if (ClientsListViewWeak.IsValid())
 	{
-		TSharedPtr<SListViewClientRecordSetting> ClientsListView = ClientsListViewWeak.Pin();
+		const TSharedPtr<SListViewClientRecordSetting> ClientsListView = ClientsListViewWeak.Pin();
 		if (Status == EConcertClientStatus::Disconnected
 			|| Status == EConcertClientStatus::Connected )
 		{
@@ -381,7 +385,7 @@ void FConcertTakeRecorderClientSessionCustomization::UpdateClientSettings(
 		}
 		else
 		{
-			TSharedPtr<STakeRecordDetailsRow> Row = StaticCastSharedPtr<STakeRecordDetailsRow>(ClientsListView->WidgetFromItem(Clients[Index]));
+			const TSharedPtr<STakeRecordDetailsRow> Row = StaticCastSharedPtr<STakeRecordDetailsRow>(ClientsListView->WidgetFromItem(Clients[Index]));
 			if (Row.IsValid())
 			{
 				Row->UpdateUI();
@@ -393,6 +397,14 @@ void FConcertTakeRecorderClientSessionCustomization::UpdateClientSettings(
 void FConcertTakeRecorderClientSessionCustomization::RecordSettingChange(const FConcertClientRecordSetting &RecordSetting)
 {
 	OnRecordSettingDelegate.Broadcast(RecordSetting);
+}
+
+int32 FConcertTakeRecorderClientSessionCustomization::InternalFindClientSettingsIndex(const FGuid& ClientEndpointId) const
+{
+	return Clients.IndexOfByPredicate([&ClientEndpointId](const TSharedPtr<FConcertClientRecordSetting>& Setting)
+		{
+			return Setting->Details.ClientEndpointId == ClientEndpointId;
+		});
 }
 
 void FConcertTakeRecorderClientSessionCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailLayout)
@@ -441,6 +453,6 @@ void FConcertTakeRecorderClientSessionCustomization::CustomizeDetails(IDetailLay
 			)
 		];
 	}
-};
+}
 
 #undef LOCTEXT_NAMESPACE

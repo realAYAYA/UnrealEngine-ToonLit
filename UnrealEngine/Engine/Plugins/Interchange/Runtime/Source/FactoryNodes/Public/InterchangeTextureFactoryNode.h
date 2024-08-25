@@ -10,16 +10,16 @@
 #include "InterchangeTextureFactoryNode.generated.h"
 
 
-UCLASS(BlueprintType, Abstract, Experimental)
+UCLASS(BlueprintType, Abstract)
 class INTERCHANGEFACTORYNODES_API UInterchangeTextureFactoryNode : public UInterchangeFactoryBaseNode
 {
 	GENERATED_BODY()
 
 public:
 	/**
-	 * Initialize node data
-	 * @param: UniqueID - The uniqueId for this node
-	 * @param DisplayLabel - The name of the node
+	 * Initialize node data.
+	 * @param: UniqueID - The unique ID for this node.
+	 * @param DisplayLabel - The name of the node.
 	 * @param InAssetClass - The class the texture factory will create for this node.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture")
@@ -34,7 +34,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -42,7 +42,7 @@ public:
 		return TypeName;
 	}
 
-	/** Get the class this node want to create */
+	/** Get the class this node creates. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture")
 	virtual UClass* GetObjectClass() const override
 	{
@@ -63,7 +63,7 @@ public:
 	}
 
 	/**
-	 * Get the translated texture node unique ID.
+	 * Get the unique ID of the translated texture node.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture")
 	bool GetCustomTranslatedTextureNodeUid(FString& AttributeValue) const
@@ -72,7 +72,7 @@ public:
 	}
 
 	/**
-	 * Set the translated texture node unique ID. This is the reference to the node that was create by the translator and this node is needed to get the texture payload.
+	 * Set the unique ID of the translated texture node. This is a reference to the node that was created by the translator. It is needed to get the texture payload.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture")
 	bool SetCustomTranslatedTextureNodeUid(const FString& AttributeValue)
@@ -683,8 +683,8 @@ public:
 	}
 
 	/*
-	 * Should the factory tell the translator to provide a compressed source data payload when available.
-	 * This will generally result in smaller assets, but some operations like the texture build might be slower because the source data will need to be uncompressed.
+	 * Determines whether the factory should tell the translator to provide a compressed source data payload when available.
+	 * This will generally result in smaller assets. However, some operations like the texture build might be slower, because the source data first needs to be decompressed.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Texture | Import Settings")
 	bool SetCustomPreferCompressedSourceData(const bool& AttributeValue)

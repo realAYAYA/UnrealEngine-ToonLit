@@ -42,14 +42,14 @@ namespace EpicGames.OIDC
 		{
 			lock (_lockObject)
 			{
-			OidcTokenClient? client;
-			if (!_tokenClients.TryGetValue(name, out client))
-			{
-				client = new OidcTokenClient(name, providerInfo, _tokenStore);
-				_tokenClients.Add(name, client);
+				OidcTokenClient? client;
+				if (!_tokenClients.TryGetValue(name, out client))
+				{
+					client = new OidcTokenClient(name, providerInfo, TimeSpan.FromMinutes(20), _tokenStore);
+					_tokenClients.Add(name, client);
+				}
+				return client;
 			}
-			return client;
-		}
 		}
 
 		public OidcTokenManager(IServiceProvider provider, IOptionsMonitor<OidcTokenOptions> settings, ITokenStore tokenStore, List<string>? allowedProviders = null)
@@ -72,7 +72,7 @@ namespace EpicGames.OIDC
 					continue;
 				}
 
-				OidcTokenClient tokenClient = ActivatorUtilities.CreateInstance<OidcTokenClient>(provider, key, providerInfo);
+				OidcTokenClient tokenClient = ActivatorUtilities.CreateInstance<OidcTokenClient>(provider, key, providerInfo, settings.CurrentValue.LoginTimeout);
 
 				if (refreshTokens.TryGetValue(key, out string? refreshToken))
 				{
@@ -113,7 +113,7 @@ namespace EpicGames.OIDC
 					continue;
 				}
 
-				OidcTokenClient tokenClient = new OidcTokenClient(key, providerInfo, _tokenStore);
+				OidcTokenClient tokenClient = new OidcTokenClient(key, providerInfo, options.LoginTimeout, _tokenStore);
 
 				if (refreshTokens.TryGetValue(key, out string? refreshToken))
 				{
@@ -148,6 +148,11 @@ namespace EpicGames.OIDC
 			return _tokenClients[providerIdentifier].GetAccessTokenAsync(cancellationToken);
 		}
 
+		public Task<OidcTokenInfo?> TryGetAccessToken(string providerIdentifier, CancellationToken cancellationToken = default)
+		{
+			return _tokenClients[providerIdentifier].TryGetAccessTokenAsync(cancellationToken);
+		}
+
 		public OidcStatus GetStatusForProvider(string providerIdentifier)
 		{
 			return _tokenClients[providerIdentifier].GetStatus();
@@ -163,12 +168,11 @@ namespace EpicGames.OIDC
 
 	public class OidcTokenInfo
 	{
-		public string? IdentityToken { get; set; }
 		public string? RefreshToken { get; set; }
 		public string? AccessToken { get; set; }
 		public DateTimeOffset TokenExpiry { get; set; }
 
-		public bool IsValid => IdentityToken != null && RefreshToken != null && AccessToken != null;
+		public bool IsValid => RefreshToken != null && AccessToken != null;
 	};
 
 	public class OidcTokenClient
@@ -178,6 +182,7 @@ namespace EpicGames.OIDC
 
 		private readonly string _name;
 		private readonly ProviderInfo _providerInfo;
+		private readonly TimeSpan _loginTimeout;
 		private readonly ITokenStore _tokenStore;
 		private readonly Uri _authorityUri;
 		private readonly string _clientId;
@@ -189,16 +194,21 @@ namespace EpicGames.OIDC
 
 		private readonly List<Uri> _redirectUris;
 
-		public OidcTokenClient(string name, ProviderInfo providerInfo, ITokenStore tokenStore)
+		public OidcTokenClient(string name, ProviderInfo providerInfo, TimeSpan loginTimeout, ITokenStore tokenStore)
 		{
 			_name = name;
 			_providerInfo = providerInfo;
+			_loginTimeout = loginTimeout;
 			_tokenStore = tokenStore;
 
 			_authorityUri = providerInfo.ServerUri;
 			_clientId = providerInfo.ClientId;
 
-			List<Uri> possibleRedirectUris = new List<Uri> { providerInfo.RedirectUri };
+			List<Uri> possibleRedirectUris = new List<Uri>();
+			if (providerInfo.RedirectUri != null)
+			{
+				possibleRedirectUris.Add(providerInfo.RedirectUri);
+			}
 			if (providerInfo.PossibleRedirectUri != null)
 			{
 				possibleRedirectUris.AddRange(providerInfo.PossibleRedirectUri);
@@ -273,7 +283,17 @@ namespace EpicGames.OIDC
 						{
 							try
 							{
-								loginResult = await ProcessHttpRequest(http, loginState, oidcClient);
+								Task<LoginResult> processHttpTask = ProcessHttpRequest(http, loginState, oidcClient);
+								Task finishedTask = await Task.WhenAny(Task.Delay(_loginTimeout, cancellationToken), processHttpTask);
+								if (finishedTask == processHttpTask)
+								{
+									loginResult = await processHttpTask;
+								}
+								else
+								{
+									// timed out
+									loginResult = new LoginResult($"Login timed out after: {_loginTimeout.TotalMinutes} minutes");
+								}
 							}
 							catch when (cancellationToken.IsCancellationRequested)
 							{
@@ -314,7 +334,6 @@ namespace EpicGames.OIDC
 
 			return new OidcTokenInfo
 			{
-				IdentityToken = loginResult.IdentityToken,
 				RefreshToken = loginResult.RefreshToken,
 				AccessToken = loginResult.AccessToken,
 				TokenExpiry = loginResult.AccessTokenExpiration
@@ -323,47 +342,63 @@ namespace EpicGames.OIDC
 
 		private static async Task<LoginResult> ProcessHttpRequest(HttpListener http, AuthorizeState loginState, OidcClient oidcClient)
 		{
-			LoginResult loginResult;
-			HttpListenerContext context = await http.GetContextAsync();
-			string? responseData;
-			switch (context.Request.HttpMethod)
+			LoginResult? loginResult = null;
+			const int MaxAttempts = 5;
+			HttpListenerContext? context = null;
+			for (int i = 0; i < MaxAttempts; i++)
 			{
-				case "GET":
-					responseData = context.Request.RawUrl;
-
-					// parse the returned url for the tokens needed to complete the login
-					loginResult = await oidcClient!.ProcessResponseAsync(responseData, loginState);
-					break;
-				case "POST":
+				context = await http.GetContextAsync();
+				string? responseData;
+				switch (context.Request.HttpMethod)
 				{
-					HttpListenerRequest request = context.Request;
-					if (request.ContentType != null && !request.ContentType.Equals("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
-					{
-						// we do not support url encoded return types
+					case "GET":
+						responseData = context.Request.RawUrl;
+
+						// parse the returned url for the tokens needed to complete the login
+						loginResult = await oidcClient!.ProcessResponseAsync(responseData, loginState);
+						break;
+					case "POST":
+						{
+							HttpListenerRequest request = context.Request;
+							if (request.ContentType != null && !request.ContentType.Equals("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+							{
+								// we do not support url encoded return types
+								context.Response.StatusCode = 415;
+								throw new Exception("URL encoded responses not support");
+							}
+
+							// attempt to parse the body
+
+							// if there is no body we can not handle the post
+							if (!context.Request.HasEntityBody)
+							{
+								context.Response.StatusCode = 415;
+								throw new Exception("Empty body not supported");
+							}
+
+							await using Stream body = request.InputStream;
+							using StreamReader reader = new StreamReader(body, request.ContentEncoding);
+							responseData = await reader.ReadToEndAsync();
+
+							loginResult = await oidcClient!.ProcessResponseAsync(responseData, loginState);
+							break;
+						}
+					case "OPTIONS":
+						context.Response.StatusCode = 200;
+						context.Response.Close();
+						continue;
+					default:
+						// if we receive any other http method something is very odd. Tell them to use a different method.
 						context.Response.StatusCode = 415;
-						throw new Exception("URL encoded responses not support");
-					}
-
-					// attempt to parse the body
-
-					// if there is no body we can not handle the post
-					if (!context.Request.HasEntityBody)
-					{
-						context.Response.StatusCode = 415;
-						throw new Exception("Empty body not supported");
-					}
-
-					await using Stream body = request.InputStream;
-					using StreamReader reader = new StreamReader(body, request.ContentEncoding);
-					responseData = await reader.ReadToEndAsync();
-
-					loginResult = await oidcClient!.ProcessResponseAsync(responseData, loginState);
-					break;
+						throw new Exception("Unsupported method used: " + context.Request.HttpMethod);
 				}
-				default:
-					// if we receive any other http method something is very odd. Tell them to use a different method.
-					context.Response.StatusCode = 415;
-					throw new Exception("Unsupported method used: " + context.Request.HttpMethod);
+
+				break;
+			}
+
+			if (context == null || loginResult == null)
+			{
+				throw new Exception("Context or loginResult not set");
 			}
 
 			// generate a simple http page to show the user
@@ -403,25 +438,16 @@ namespace EpicGames.OIDC
 		{
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 			{
-				// Special handling for Chrome (maybe other browsers in future?) that creates a new window to ensure we get focus when the window closes.
-				if (TryReadRegistryString(Registry.CurrentUser, @"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice", "ProgId", out string? progId))
-				{
-					if (TryReadRegistryString(Registry.ClassesRoot, $"{progId}\\shell\\open\\command", null, out string? command))
-					{
-						if (progId.Equals("ChromeHTML", StringComparison.Ordinal) || progId.Equals("MSEdgeHTM", StringComparison.Ordinal))
-						{
-							string exe = command.Replace("--single-argument", "", StringComparison.OrdinalIgnoreCase).Replace("%1", "", StringComparison.Ordinal).TrimEnd();
-							exe = $"{exe} --new-window \"{url}\"";
-							return Process.Start(new ProcessStartInfo(exe));
-						}
-					}
-				}
-
 				return Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
 			}
 			else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
 			{
-				return Process.Start("xdg-open", url);
+				if (IsRunningWsl())
+				{
+					return Process.Start("wslview", url);
+				}
+
+				return Process.Start("xdg-open", url);	
 			}
 			else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
 			{
@@ -431,6 +457,18 @@ namespace EpicGames.OIDC
 			{
 				throw new NotImplementedException();
 			}
+		}
+
+		private static bool IsRunningWsl()
+		{
+			string versionFile = "/proc/version";
+			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || !File.Exists(versionFile))
+			{
+				return false;
+			}
+
+			string version = File.ReadAllText(versionFile);
+			return version.Contains("microsoft", StringComparison.InvariantCultureIgnoreCase) || version.Contains("wsl2", StringComparison.InvariantCultureIgnoreCase);
 		}
 
 		[SupportedOSPlatform("windows")]
@@ -449,7 +487,7 @@ namespace EpicGames.OIDC
 			return false;
 		}
 
-		private async Task<OidcTokenInfo> DoRefreshToken(string inRefreshToken, CancellationToken cancellationToken)
+		private async Task<OidcTokenInfo?> TryDoRefreshToken(string inRefreshToken, CancellationToken cancellationToken)
 		{
 			// redirect uri is not used for refrehs tokens so we can just pick one of them to configure the client
 			OidcClientOptions options = await BuildClientOptions(_redirectUris.First(), cancellationToken);
@@ -464,7 +502,7 @@ namespace EpicGames.OIDC
 				{
 					// the refresh token is no logger valid, resetting it and treating us as not logged in
 					_refreshToken = null;
-					throw new NotLoggedInException();
+					return null;
 				}
 				else
 				{
@@ -476,9 +514,12 @@ namespace EpicGames.OIDC
 			_accessToken = refreshTokenResult.AccessToken;
 			_tokenExpiry = refreshTokenResult.AccessTokenExpiration;
 
+			// refresh tokens are always one time use only so we need to store this new refresh token we got so it can be used the next time
+			_tokenStore.AddRefreshToken(_name, _refreshToken);
+			_tokenStore.Save();
+
 			return new OidcTokenInfo
 			{
-				IdentityToken = refreshTokenResult.IdentityToken,
 				RefreshToken = refreshTokenResult.RefreshToken,
 				AccessToken = refreshTokenResult.AccessToken,
 				TokenExpiry = refreshTokenResult.AccessTokenExpiration
@@ -487,7 +528,8 @@ namespace EpicGames.OIDC
 
 		private async Task<DiscoveryDocumentResponse> GetDiscoveryDocument(CancellationToken cancellationToken)
 		{
-			string discoUrl = $"{_authorityUri}/.well-known/openid-configuration";
+			string baseUrl = _authorityUri.ToString().TrimEnd('/');
+			string discoUrl = $"{baseUrl}/.well-known/openid-configuration";
 
 			using HttpClient client = new HttpClient();
 			using DiscoveryDocumentRequest doc = new DiscoveryDocumentRequest
@@ -507,7 +549,13 @@ namespace EpicGames.OIDC
 
 			return disco;
 		}
+
 		public async Task<OidcTokenInfo> GetAccessTokenAsync(CancellationToken cancellationToken)
+		{
+			return await TryGetAccessTokenAsync(cancellationToken) ?? throw new NotLoggedInException();
+		}
+
+		public async Task<OidcTokenInfo?> TryGetAccessTokenAsync(CancellationToken cancellationToken)
 		{
 			if (String.IsNullOrEmpty(_refreshToken))
 			{
@@ -516,7 +564,9 @@ namespace EpicGames.OIDC
 
 			// if the token is valid for another few minutes we can use it
 			// we avoid using a token that is about to expire to make sure we can finish the call we expect to do with it before it expires
-			if (!String.IsNullOrEmpty(_accessToken) && _tokenExpiry.AddMinutes(2) > DateTime.Now)
+			// if a token has infinite lifetime its expiry is set to 0 and is thus always valid
+			bool tokenValid = _tokenExpiry.AddMinutes(2) > DateTime.Now || _tokenExpiry == DateTimeOffset.MinValue;
+			if (!String.IsNullOrEmpty(_accessToken) && tokenValid)
 			{
 				return new OidcTokenInfo
 				{
@@ -526,7 +576,7 @@ namespace EpicGames.OIDC
 				};
 			}
 
-			return await DoRefreshToken(_refreshToken, cancellationToken);
+			return await TryDoRefreshToken(_refreshToken, cancellationToken);
 		}
 
 		public OidcStatus GetStatus()
@@ -579,6 +629,8 @@ namespace EpicGames.OIDC
 	{
 		public Dictionary<string, ProviderInfo> Providers { get; set; } = new Dictionary<string, ProviderInfo>();
 
+		public TimeSpan LoginTimeout { get; set; } = TimeSpan.FromMinutes(20);
+
 		public static OidcTokenOptions Bind(IConfiguration config)
 		{
 			OidcTokenOptions options = new OidcTokenOptions();
@@ -595,7 +647,7 @@ namespace EpicGames.OIDC
 
 		[Required] public string DisplayName { get; set; } = null!;
 
-		public Uri RedirectUri { get; set; } = null!;
+		public Uri? RedirectUri { get; set; } = null;
 		public List<Uri>? PossibleRedirectUri { get; set; } = null!;
 		[Required] public bool LoadClaimsFromUserProfile { get; set; } = false;
 

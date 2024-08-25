@@ -52,6 +52,10 @@ class UMaterialExpressionLandscapeGrassOutput : public UMaterialExpressionCustom
 	LANDSCAPE_API virtual FExpressionInput* GetInput(int32 InputIndex) override;
 	LANDSCAPE_API virtual FName GetInputName(int32 InputIndex) const override;
 	LANDSCAPE_API void ValidateInputName(FGrassInput& Input) const;
+
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
+
+	virtual UE::Shader::EValueType GetCustomOutputType(int32 OutputIndex) const override;
 #endif
 
 	//~ Begin UObject Interface

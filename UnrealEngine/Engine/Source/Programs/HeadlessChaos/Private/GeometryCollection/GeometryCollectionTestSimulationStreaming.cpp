@@ -61,9 +61,11 @@ namespace GeometryCollectionTest
 		{
 			FGeometryCollectionWrapper* GCW = UnitTest.PhysicsObjects[i]->As<FGeometryCollectionWrapper>();
 			FGeometryCollectionWrapper* GCW2 = UnitTest.PhysicsObjects[i + 1]->As<FGeometryCollectionWrapper>();
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles().Num(), 1);
-			EXPECT_EQ(GCW2->PhysObject->GetSolverParticleHandles().Num(), 1);
-			EXPECT_LT(GCW->PhysObject->GetSolverParticleHandles()[0]->X().Z, GCW2->PhysObject->GetSolverParticleHandles()[0]->X().Z);
+			EXPECT_EQ(GCW->PhysObject->GetUnorderedParticles_Internal().Num(), 1);
+			EXPECT_EQ(GCW2->PhysObject->GetUnorderedParticles_Internal().Num(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetNumTransforms(), 1);
+			EXPECT_EQ(GCW2->PhysObject->GetNumTransforms(), 1);
+			EXPECT_LT(GCW->PhysObject->GetParticle_Internal(0)->GetX().Z, GCW2->PhysObject->GetParticle_Internal(0)->GetX().Z);
 		}
 	}
 
@@ -118,9 +120,11 @@ namespace GeometryCollectionTest
 		{
 			FGeometryCollectionWrapper* GCW = UnitTest.PhysicsObjects[i]->As<FGeometryCollectionWrapper>();
 			FGeometryCollectionWrapper* GCW2 = UnitTest.PhysicsObjects[i + 1]->As<FGeometryCollectionWrapper>();
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles().Num(), 1);
-			EXPECT_EQ(GCW2->PhysObject->GetSolverParticleHandles().Num(), 1);
-			EXPECT_LT(FMath::Abs(GCW->PhysObject->GetSolverParticleHandles()[0]->X().Z - GCW2->PhysObject->GetSolverParticleHandles()[0]->X().Z), KINDA_SMALL_NUMBER);
+			EXPECT_EQ(GCW->PhysObject->GetUnorderedParticles_Internal().Num(), 1);
+			EXPECT_EQ(GCW2->PhysObject->GetUnorderedParticles_Internal().Num(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetNumTransforms(), 1);
+			EXPECT_EQ(GCW2->PhysObject->GetNumTransforms(), 1);
+			EXPECT_LT(FMath::Abs(GCW->PhysObject->GetParticle_Internal(0)->GetX().Z - GCW2->PhysObject->GetParticle_Internal(0)->GetX().Z), KINDA_SMALL_NUMBER);
 		}
 	}
 
@@ -168,8 +172,9 @@ namespace GeometryCollectionTest
 		for (int32 i = 0; i < UnitTest.PhysicsObjects.Num(); i++)
 		{
 			FGeometryCollectionWrapper* GCW = UnitTest.PhysicsObjects[i]->As<FGeometryCollectionWrapper>();
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles().Num(), 1);
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles()[0]->Disabled(), true);
+			EXPECT_EQ(GCW->PhysObject->GetUnorderedParticles_Internal().Num(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetNumTransforms(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetParticle_Internal(0)->Disabled(), true);
 		}
 
 		/*
@@ -183,8 +188,9 @@ namespace GeometryCollectionTest
 		for (int32 i = 0; i < UnitTest.PhysicsObjects.Num(); i++)
 		{
 			FGeometryCollectionWrapper* GCW = UnitTest.PhysicsObjects[i]->As<FGeometryCollectionWrapper>();
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles().Num(), 1);
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles()[0]->Disabled(), false);
+			EXPECT_EQ(GCW->PhysObject->GetUnorderedParticles_Internal().Num(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetNumTransforms(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetParticle_Internal(0)->Disabled(), false);
 		}
 
 		for (int32 Frame = 1; Frame < 100; Frame++)
@@ -199,13 +205,14 @@ namespace GeometryCollectionTest
 		for (int32 i = 0; i < UnitTest.PhysicsObjects.Num() - 1; i++)
 		{
 			FGeometryCollectionWrapper* GCW = UnitTest.PhysicsObjects[i]->As<FGeometryCollectionWrapper>();
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles().Num(), 1);
-			EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles()[0]->Disabled(), true);
+			EXPECT_EQ(GCW->PhysObject->GetUnorderedParticles_Internal().Num(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetNumTransforms(), 1);
+			EXPECT_EQ(GCW->PhysObject->GetParticle_Internal(0)->Disabled(), true);
 		}
 		FGeometryCollectionWrapper* GCW = UnitTest.PhysicsObjects[UnitTest.PhysicsObjects.Num() - 1]->As<FGeometryCollectionWrapper>();
-		EXPECT_EQ(GCW->PhysObject->GetSolverParticleHandles()[0]->Disabled(), false);
+		EXPECT_EQ(GCW->PhysObject->GetParticle_Internal(0)->Disabled(), false);
 
-		EXPECT_LT(GCW->PhysObject->GetSolverParticleHandles()[0]->X().Z, -1.f);					
+		EXPECT_LT(GCW->PhysObject->GetParticle_Internal(0)->GetX().Z, -1.f);
 	}
 
 

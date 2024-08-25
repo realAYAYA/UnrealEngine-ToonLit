@@ -17,9 +17,16 @@ namespace UnrealBuildTool
 	/// module when making versioned builds.
 	/// </summary>
 	[Serializable]
-	class ModuleManifest
+	public class ModuleManifest
 	{
+		/// <summary>
+		/// Unique build id for the modules described in the manifest.
+		/// </summary>
 		public string BuildId;
+
+		/// <summary>
+		/// Map of module name to file name.
+		/// </summary>
 		public Dictionary<string, string> ModuleNameToFileName = new Dictionary<string, string>();
 
 		/// <summary>

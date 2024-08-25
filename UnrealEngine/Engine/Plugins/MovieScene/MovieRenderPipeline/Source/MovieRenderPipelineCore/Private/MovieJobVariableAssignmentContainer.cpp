@@ -13,6 +13,11 @@ void UMovieJobVariableAssignmentContainer::SetGraphConfig(const TSoftObjectPtr<U
 	GraphPreset = InGraphConfig;
 }
 
+TSoftObjectPtr<UMovieGraphConfig> UMovieJobVariableAssignmentContainer::GetGraphConfig() const
+{
+	return GraphPreset;
+}
+
 uint32 UMovieJobVariableAssignmentContainer::GetNumAssignments() const
 {
 	uint32 NumAssignments = 0;
@@ -32,165 +37,165 @@ uint32 UMovieJobVariableAssignmentContainer::GetNumAssignments() const
 	return NumAssignments;
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueBool(const FName& PropertyName, bool& bOutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueBool(const UMovieGraphVariable* InGraphVariable, bool& bOutValue) const
 {
-	TValueOrError<bool, EPropertyBagResult> Result = Value.GetValueBool(PropertyName);
+	TValueOrError<bool, EPropertyBagResult> Result = Value.GetValueBool(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<bool>(Result, bOutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueByte(const FName& PropertyName, uint8& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueByte(const UMovieGraphVariable* InGraphVariable, uint8& OutValue) const
 {
-	TValueOrError<uint8, EPropertyBagResult> Result = Value.GetValueByte(PropertyName);
+	TValueOrError<uint8, EPropertyBagResult> Result = Value.GetValueByte(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<uint8>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueInt32(const FName& PropertyName, int32& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueInt32(const UMovieGraphVariable* InGraphVariable, int32& OutValue) const
 {
-	TValueOrError<int32, EPropertyBagResult> Result = Value.GetValueInt32(PropertyName);
+	TValueOrError<int32, EPropertyBagResult> Result = Value.GetValueInt32(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<int32>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueInt64(const FName& PropertyName, int64& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueInt64(const UMovieGraphVariable* InGraphVariable, int64& OutValue) const
 {
-	TValueOrError<int64, EPropertyBagResult> Result = Value.GetValueInt64(PropertyName);
+	TValueOrError<int64, EPropertyBagResult> Result = Value.GetValueInt64(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<int64>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueFloat(const FName& PropertyName, float& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueFloat(const UMovieGraphVariable* InGraphVariable, float& OutValue) const
 {
-	TValueOrError<float, EPropertyBagResult> Result = Value.GetValueFloat(PropertyName);
+	TValueOrError<float, EPropertyBagResult> Result = Value.GetValueFloat(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<float>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueDouble(const FName& PropertyName, double& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueDouble(const UMovieGraphVariable* InGraphVariable, double& OutValue) const
 {
-	TValueOrError<double, EPropertyBagResult> Result = Value.GetValueDouble(PropertyName);
+	TValueOrError<double, EPropertyBagResult> Result = Value.GetValueDouble(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<double>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueName(const FName& PropertyName, FName& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueName(const UMovieGraphVariable* InGraphVariable, FName& OutValue) const
 {
-	TValueOrError<FName, EPropertyBagResult> Result = Value.GetValueName(PropertyName);
+	TValueOrError<FName, EPropertyBagResult> Result = Value.GetValueName(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<FName>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueString(const FName& PropertyName, FString& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueString(const UMovieGraphVariable* InGraphVariable, FString& OutValue) const
 {
-	TValueOrError<FString, EPropertyBagResult> Result = Value.GetValueString(PropertyName);
+	TValueOrError<FString, EPropertyBagResult> Result = Value.GetValueString(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<FString>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueText(const FName& PropertyName, FText& OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueText(const UMovieGraphVariable* InGraphVariable, FText& OutValue) const
 {
-	TValueOrError<FText, EPropertyBagResult> Result = Value.GetValueText(PropertyName);
+	TValueOrError<FText, EPropertyBagResult> Result = Value.GetValueText(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<FText>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueEnum(const FName& PropertyName, uint8& OutValue, const UEnum* RequestedEnum) const
+bool UMovieJobVariableAssignmentContainer::GetValueEnum(const UMovieGraphVariable* InGraphVariable, uint8& OutValue, const UEnum* RequestedEnum) const
 {
-	TValueOrError<uint8, EPropertyBagResult> Result = Value.GetValueEnum(PropertyName, RequestedEnum);
+	TValueOrError<uint8, EPropertyBagResult> Result = Value.GetValueEnum(ConvertVariableToInternalName(InGraphVariable), RequestedEnum);
 	return UE::MovieGraph::Private::GetOptionalValue<uint8>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueStruct(const FName& PropertyName, FStructView& OutValue, const UScriptStruct* RequestedStruct) const
+bool UMovieJobVariableAssignmentContainer::GetValueStruct(const UMovieGraphVariable* InGraphVariable, FStructView& OutValue, const UScriptStruct* RequestedStruct) const
 {
-	TValueOrError<FStructView, EPropertyBagResult> Result = Value.GetValueStruct(PropertyName, RequestedStruct);
+	TValueOrError<FStructView, EPropertyBagResult> Result = Value.GetValueStruct(ConvertVariableToInternalName(InGraphVariable), RequestedStruct);
 	return UE::MovieGraph::Private::GetOptionalValue<FStructView>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueObject(const FName& PropertyName, UObject* OutValue, const UClass* RequestedClass) const
+bool UMovieJobVariableAssignmentContainer::GetValueObject(const UMovieGraphVariable* InGraphVariable, UObject* OutValue, const UClass* RequestedClass) const
 {
-	TValueOrError<UObject*, EPropertyBagResult> Result = Value.GetValueObject(PropertyName, RequestedClass);
+	TValueOrError<UObject*, EPropertyBagResult> Result = Value.GetValueObject(ConvertVariableToInternalName(InGraphVariable), RequestedClass);
 	return UE::MovieGraph::Private::GetOptionalValue<UObject*>(Result, OutValue);
 }
 
-bool UMovieJobVariableAssignmentContainer::GetValueClass(const FName& PropertyName, UClass* OutValue) const
+bool UMovieJobVariableAssignmentContainer::GetValueClass(const UMovieGraphVariable* InGraphVariable, UClass*& OutValue) const
 {
-	TValueOrError<UClass*, EPropertyBagResult> Result = Value.GetValueClass(PropertyName);
+	TValueOrError<UClass*, EPropertyBagResult> Result = Value.GetValueClass(ConvertVariableToInternalName(InGraphVariable));
 	return UE::MovieGraph::Private::GetOptionalValue<UClass*>(Result, OutValue);
 }
 
-FString UMovieJobVariableAssignmentContainer::GetValueSerializedString(const FName& PropertyName)
+FString UMovieJobVariableAssignmentContainer::GetValueSerializedString(const UMovieGraphVariable* InGraphVariable)
 {
-	TValueOrError<FString, EPropertyBagResult> Result = Value.GetValueSerializedString(PropertyName);
+	TValueOrError<FString, EPropertyBagResult> Result = Value.GetValueSerializedString(ConvertVariableToInternalName(InGraphVariable));
 	FString ResultString;
 	UE::MovieGraph::Private::GetOptionalValue<FString>(Result, ResultString);
 	return ResultString;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueBool(const FName& PropertyName, const bool bInValue)
+bool UMovieJobVariableAssignmentContainer::SetValueBool(const UMovieGraphVariable* InGraphVariable, const bool bInValue)
 {
-	return Value.SetValueBool(PropertyName, bInValue) == EPropertyBagResult::Success;
+	return Value.SetValueBool(ConvertVariableToInternalName(InGraphVariable), bInValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueByte(const FName& PropertyName, const uint8 InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueByte(const UMovieGraphVariable* InGraphVariable, const uint8 InValue)
 {
-	return Value.SetValueByte(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueByte(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueInt32(const FName& PropertyName, const int32 InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueInt32(const UMovieGraphVariable* InGraphVariable, const int32 InValue)
 {
-	return Value.SetValueInt32(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueInt32(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueInt64(const FName& PropertyName, const int64 InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueInt64(const UMovieGraphVariable* InGraphVariable, const int64 InValue)
 {
-	return Value.SetValueInt64(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueInt64(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueFloat(const FName& PropertyName, const float InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueFloat(const UMovieGraphVariable* InGraphVariable, const float InValue)
 {
-	return Value.SetValueFloat(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueFloat(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueDouble(const FName& PropertyName, const double InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueDouble(const UMovieGraphVariable* InGraphVariable, const double InValue)
 {
-	return Value.SetValueDouble(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueDouble(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueName(const FName& PropertyName, const FName InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueName(const UMovieGraphVariable* InGraphVariable, const FName InValue)
 {
-	return Value.SetValueName(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueName(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueString(const FName& PropertyName, const FString& InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueString(const UMovieGraphVariable* InGraphVariable, const FString& InValue)
 {
-	return Value.SetValueString(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueString(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueText(const FName& PropertyName, const FText& InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueText(const UMovieGraphVariable* InGraphVariable, const FText& InValue)
 {
-	return Value.SetValueText(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueText(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueEnum(const FName& PropertyName, const uint8 InValue, const UEnum* Enum)
+bool UMovieJobVariableAssignmentContainer::SetValueEnum(const UMovieGraphVariable* InGraphVariable, const uint8 InValue, const UEnum* Enum)
 {
-	return Value.SetValueEnum(PropertyName, InValue, Enum) == EPropertyBagResult::Success;
+	return Value.SetValueEnum(ConvertVariableToInternalName(InGraphVariable), InValue, Enum) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueStruct(const FName& PropertyName, FConstStructView InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueStruct(const UMovieGraphVariable* InGraphVariable, FConstStructView InValue)
 {
-	return Value.SetValueStruct(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueStruct(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueObject(const FName& PropertyName, UObject* InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueObject(const UMovieGraphVariable* InGraphVariable, UObject* InValue)
 {
-	return Value.SetValueObject(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueObject(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueClass(const FName& PropertyName, UClass* InValue)
+bool UMovieJobVariableAssignmentContainer::SetValueClass(const UMovieGraphVariable* InGraphVariable, UClass* InValue)
 {
-	return Value.SetValueClass(PropertyName, InValue) == EPropertyBagResult::Success;
+	return Value.SetValueClass(ConvertVariableToInternalName(InGraphVariable), InValue) == EPropertyBagResult::Success;
 }
 
-bool UMovieJobVariableAssignmentContainer::SetValueSerializedString(const FName& PropertyName, const FString& NewValue)
+bool UMovieJobVariableAssignmentContainer::SetValueSerializedString(const UMovieGraphVariable* InGraphVariable, const FString& NewValue)
 {
-	return Value.SetValueSerializedString(PropertyName, NewValue) == EPropertyBagResult::Success;
+	return Value.SetValueSerializedString(ConvertVariableToInternalName(InGraphVariable), NewValue) == EPropertyBagResult::Success;
 }
 
-EMovieGraphValueType UMovieJobVariableAssignmentContainer::GetValueType(const FName& PropertyName) const
+EMovieGraphValueType UMovieJobVariableAssignmentContainer::GetValueType(const UMovieGraphVariable* InGraphVariable) const
 {
-	if (const FPropertyBagPropertyDesc* Desc = Value.FindPropertyDescByName(PropertyName))
+	if (const FPropertyBagPropertyDesc* Desc = Value.FindPropertyDescByName(ConvertVariableToInternalName(InGraphVariable)))
 	{
 		return static_cast<EMovieGraphValueType>(Desc->ValueType);
 	}
@@ -198,9 +203,9 @@ EMovieGraphValueType UMovieJobVariableAssignmentContainer::GetValueType(const FN
 	return EMovieGraphValueType::None;
 }
 
-const UObject* UMovieJobVariableAssignmentContainer::GetValueTypeObject(const FName& PropertyName) const
+const UObject* UMovieJobVariableAssignmentContainer::GetValueTypeObject(const UMovieGraphVariable* InGraphVariable) const
 {
-	if (const FPropertyBagPropertyDesc* Desc = Value.FindPropertyDescByName(PropertyName))
+	if (const FPropertyBagPropertyDesc* Desc = Value.FindPropertyDescByName(ConvertVariableToInternalName(InGraphVariable)))
 	{
 		return Desc->ValueTypeObject;
 	}
@@ -208,14 +213,28 @@ const UObject* UMovieJobVariableAssignmentContainer::GetValueTypeObject(const FN
 	return nullptr;
 }
 
-EMovieGraphContainerType UMovieJobVariableAssignmentContainer::GetValueContainerType(const FName& PropertyName) const
+EMovieGraphContainerType UMovieJobVariableAssignmentContainer::GetValueContainerType(const UMovieGraphVariable* InGraphVariable) const
 {
-	if (const FPropertyBagPropertyDesc* Desc = Value.FindPropertyDescByName(PropertyName))
+	if (const FPropertyBagPropertyDesc* Desc = Value.FindPropertyDescByName(ConvertVariableToInternalName(InGraphVariable)))
 	{
 		return static_cast<EMovieGraphContainerType>(Desc->ContainerTypes.GetFirstContainerType());
 	}
 
 	return EMovieGraphContainerType::None;
+}
+
+bool UMovieJobVariableAssignmentContainer::GetValueContainer(const UMovieGraphVariable* InGraphVariable, TObjectPtr<UMovieGraphValueContainer>& OutValueContainer)
+{
+	const FName PropertyName = ConvertVariableToInternalName(InGraphVariable);
+	if (const FPropertyBagPropertyDesc* Desc = Value.FindPropertyDescByName(PropertyName))
+	{
+		// TODO: This object allocation is unfortunate -- it would be nice to find a way to avoid it
+		OutValueContainer = NewObject<UMovieGraphValueContainer>();
+		OutValueContainer->SetFromDesc(Desc, GetValueSerializedString(InGraphVariable));
+		return true;
+	}
+
+	return false;
 }
 
 bool UMovieJobVariableAssignmentContainer::FindOrGenerateVariableOverride(
@@ -441,10 +460,12 @@ bool UMovieJobVariableAssignmentContainer::AddVariableAssignment(const UMovieGra
 
 bool UMovieJobVariableAssignmentContainer::SetVariableAssignmentEnableState(const UMovieGraphVariable* InGraphVariable, bool bIsEnabled)
 {
-	if (FindOrGenerateVariableOverride(InGraphVariable))
+	FPropertyBagPropertyDesc PropDesc;
+	FPropertyBagPropertyDesc EditConditionPropDesc;
+	const bool bAddIfNotExists = false;
+	if (FindOrGenerateVariableOverride(InGraphVariable, &PropDesc, &EditConditionPropDesc, bAddIfNotExists))
 	{
-		const FString EditCondPropName = FString::Format(TEXT("{0}{1}"), {EditConditionPrefix, InGraphVariable->GetMemberName()});
-		const EPropertyBagResult Result = Value.SetValueBool(FName(EditCondPropName), bIsEnabled);
+		const EPropertyBagResult Result = Value.SetValueBool(EditConditionPropDesc.Name, bIsEnabled);
 		
 		return Result == EPropertyBagResult::Success;
 	}
@@ -469,4 +490,21 @@ bool UMovieJobVariableAssignmentContainer::GetVariableAssignmentEnableState(cons
 	}
 
 	return false;
+}
+
+FName UMovieJobVariableAssignmentContainer::ConvertVariableToInternalName(const UMovieGraphVariable* InGraphVariable) const
+{
+	FPropertyBagPropertyDesc PropDesc;
+	FPropertyBagPropertyDesc EditConditionPropDesc;
+	const bool bAddIfNotExists = false;
+
+	// FindOrGenerateVariableOverride is non-const (because of the bAddIfNotExists option), but since we never add,
+	// we're going to const-cast it so that we can call it from here.
+	UMovieJobVariableAssignmentContainer* NonConstThis = const_cast<UMovieJobVariableAssignmentContainer*>(this);
+	if (NonConstThis->FindOrGenerateVariableOverride(InGraphVariable, &PropDesc, &EditConditionPropDesc, bAddIfNotExists))
+	{
+		return PropDesc.Name;
+	}
+
+	return NAME_None;
 }

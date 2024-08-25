@@ -6,6 +6,9 @@
 #include "DetailWidgetRow.h"
 #include "IDetailsView.h"
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
+#include "MuCOE/GraphTraversal.h"
+#include "MuCOE/Nodes/CustomizableObjectNodeObject.h"
 #include "MuR/Model.h"
 #include "MuR/Parameters.h"
 #include "MuR/Ptr.h"
@@ -75,9 +78,7 @@ public:
 
 		return ChildrenList;
 	}
-
 };
-
 
 
 void FCustomizableObjectDetails::CustomizeDetails( IDetailLayoutBuilder& DetailBuilder )
@@ -96,9 +97,9 @@ void FCustomizableObjectDetails::CustomizeDetails( IDetailLayoutBuilder& DetailB
 	DetailBuilder.HideProperty("PopulationClassTags");
 
 	// Make the tree get automatically updated each time we compile the host CO
-	if (CustomizableObject && !CustomizableObject->PostCompileDelegate.IsBoundToObject(this))
+	if (CustomizableObject && !CustomizableObject->GetPrivate()->PostCompileDelegate.IsBoundToObject(this))
 	{
-		CustomizableObject->PostCompileDelegate.AddSP(this, &FCustomizableObjectDetails::UpdateTree);
+		CustomizableObject->GetPrivate()->PostCompileDelegate.AddSP(this, &FCustomizableObjectDetails::UpdateTree);
 	}
 	
 	// Cache the states defined in the CO
@@ -110,7 +111,7 @@ void FCustomizableObjectDetails::CustomizeDetails( IDetailLayoutBuilder& DetailB
 		+ SVerticalBox::Slot()
 		.Padding( 2.0f )
 		[
-			SAssignNew(StatesTree, STreeView<TSharedPtr< FStateDetailsNode > >)
+			SAssignNew(StatesTree, STreeView<TSharedPtr<FStateDetailsNode>>)
 			.SelectionMode(ESelectionMode::Single)
 			.TreeItemsSource( &RootTreeItems )
 			// Called to child items for any given parent item
@@ -119,7 +120,6 @@ void FCustomizableObjectDetails::CustomizeDetails( IDetailLayoutBuilder& DetailB
 			.OnGenerateRow( this, &FCustomizableObjectDetails::OnGenerateRowForStateTree ) 
 			// Allow for some spacing between items with a larger item height.
 			.ItemHeight(20.0f)
-
 			.HeaderRow
 			(
 				SNew(SHeaderRow)
@@ -136,7 +136,7 @@ void FCustomizableObjectDetails::CustomizeDetails( IDetailLayoutBuilder& DetailB
 
 	if (Property->IsValidHandle() && CustomizableObject)
 	{
-		if (CustomizableObject->bIsChildObject)
+		if (CustomizableObject->IsChildObject())
 		{
 			Property->MarkHiddenByCustomization();
 		}
@@ -145,19 +145,50 @@ void FCustomizableObjectDetails::CustomizeDetails( IDetailLayoutBuilder& DetailB
 			Property->MarkResetToDefaultCustomized();
 		}
 	}
+
+	TSharedRef<IPropertyHandle> VersionBridgeProperty = DetailBuilder.GetProperty("VersionBridge");
+
+	if (VersionBridgeProperty->IsValidHandle() && CustomizableObject)
+	{
+		if (CustomizableObject->IsChildObject())
+		{
+			VersionBridgeProperty->MarkHiddenByCustomization();
+		}
+		else
+		{
+			VersionBridgeProperty->MarkResetToDefaultCustomized();
+		}
+	}
+
+	TSharedRef<IPropertyHandle> VersionStructProperty = DetailBuilder.GetProperty("VersionStruct");
+
+	if (VersionStructProperty->IsValidHandle() && CustomizableObject)
+	{
+		if (CustomizableObject->IsChildObject())
+		{
+			VersionStructProperty->MarkResetToDefaultCustomized();
+		}
+		else
+		{
+			VersionStructProperty->MarkHiddenByCustomization();
+		}
+	}
 }
+
 
 void FCustomizableObjectDetails::UpdateTree()
 {
-	if ( CustomizableObject &&  CustomizableObject->GetModel() )
+	UCustomizableObject* RootObject = GetRootObject(CustomizableObject);
+
+	if (RootObject && RootObject->GetPrivate()->GetModel() )
 	{
 		RootTreeItems.SetNumUninitialized(0);
-		const uint32 NumElements = CustomizableObject->GetModel()->GetStateCount();
+		const uint32 NumElements = RootObject->GetPrivate()->GetModel()->GetStateCount();
 		for ( uint32 i=0; i<NumElements; ++i )
 		{
 			TSharedPtr<FStateDetailsNode> SlateDetailsNode = MakeShareable( new FStateDetailsNode );
 
-			SlateDetailsNode->Model = CustomizableObject->GetModel();
+			SlateDetailsNode->Model = RootObject->GetPrivate()->GetModel();
 			SlateDetailsNode->StateIndex = i;
 
 			RootTreeItems.Add( SlateDetailsNode );
@@ -169,6 +200,8 @@ void FCustomizableObjectDetails::UpdateTree()
 		StatesTree->RequestTreeRefresh();
 	}
 }
+
+
 /** The item used for visualizing the class in the tree. */
 class SStateItem : public STableRow< TSharedPtr<FString> >
 {
@@ -204,25 +237,36 @@ public:
 		StateName = InArgs._StateName;
 		AssociatedNode = InArgs._AssociatedNode;
 
+		FMargin Padding = { 0.0f, 3.0f, 6.0f, 3.0f };
+		
+		if (AssociatedNode->ParameterIndex != INDEX_NONE)
+		{
+			Padding = { 10.0f, 3.0f, 6.0f, 3.0f };
+		}
+
 		this->ChildSlot
 		[
 			SNew(SHorizontalBox)
 				
 			+SHorizontalBox::Slot()
-				[
-					SNew( SExpanderArrow, SharedThis(this) )
-				]
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.HAlign(HAlign_Right)
+			[
+				SNew( SExpanderArrow, SharedThis(this) )
+			]
 
 			+SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				.Padding( 0.0f, 3.0f, 6.0f, 3.0f )
-				.VAlign(VAlign_Center)
-				[
-					SNew( STextBlock )
-						.Text( FText::FromString(*StateName.Get()) )
-						//.HighlightString(*InArgs._HighlightText)
-						//.ColorAndOpacity( this, &SClassItem::GetTextColor)
-				]
+			.AutoWidth()
+			.Padding( Padding )
+			.VAlign(VAlign_Center)
+			.HAlign(HAlign_Left)
+			[
+				SNew( STextBlock )
+				.Text( FText::FromString(*StateName.Get()) )
+				//.HighlightString(*InArgs._HighlightText)
+				//.ColorAndOpacity( this, &SClassItem::GetTextColor)
+			]
 
 			//+SHorizontalBox::Slot()
 			//	.HAlign(HAlign_Right)

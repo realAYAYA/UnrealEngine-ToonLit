@@ -18,7 +18,7 @@ namespace P4VUtils.Commands
 
 		public override CustomToolInfo CustomTool => new CustomToolInfo("Find last edit", "%d") { ShowConsole = true };
 
-		private async Task<int> FindLastEditInFileHistory(PerforceConnection Perforce, string FilePath, ILogger Logger)
+		private static async Task<int> FindLastEditInFileHistory(PerforceConnection Perforce, string FilePath, ILogger Logger)
 		{
 			string[] Files = { FilePath };
 			List<FileLogRecord> FileLogRecords = await Perforce.FileLogAsync(FileLogOptions.None, Files, CancellationToken.None);
@@ -28,8 +28,6 @@ namespace P4VUtils.Commands
 				Logger.LogWarning("Could not find any p4 change record for {File}", FilePath);
 				return 1;
 			}
-
-
 
 			// the first file log record is what we're interested in
 			// because we're not following integrations, it should be the only one anyway

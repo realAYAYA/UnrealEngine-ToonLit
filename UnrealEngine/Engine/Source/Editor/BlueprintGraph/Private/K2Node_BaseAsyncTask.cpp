@@ -35,7 +35,6 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Parse.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Trace/Detail/Channel.h"
 #include "UObject/Class.h"
 #include "UObject/Field.h"
@@ -311,11 +310,11 @@ bool UK2Node_BaseAsyncTask::FBaseAsyncTaskHelper::HandleDelegateImplementation(
 		return false;
 	}
 
-	UK2Node_CustomEvent* CurrentCENode = CompilerContext.SpawnIntermediateEventNode<UK2Node_CustomEvent>(CurrentNode, PinForCurrentDelegateProperty, SourceGraph);
+	UK2Node_CustomEvent* CurrentCENode = CompilerContext.SpawnIntermediateNode<UK2Node_CustomEvent>(CurrentNode, SourceGraph);
 	{
-	UK2Node_AddDelegate* AddDelegateNode = CompilerContext.SpawnIntermediateNode<UK2Node_AddDelegate>(CurrentNode, SourceGraph);
-	AddDelegateNode->SetFromProperty(CurrentProperty, false, CurrentProperty->GetOwnerClass());
-	AddDelegateNode->AllocateDefaultPins();
+		UK2Node_AddDelegate* AddDelegateNode = CompilerContext.SpawnIntermediateNode<UK2Node_AddDelegate>(CurrentNode, SourceGraph);
+		AddDelegateNode->SetFromProperty(CurrentProperty, false, CurrentProperty->GetOwnerClass());
+		AddDelegateNode->AllocateDefaultPins();
 		bIsErrorFree &= Schema->TryCreateConnection(AddDelegateNode->FindPinChecked(UEdGraphSchema_K2::PN_Self), ProxyObjectPin);
 		bIsErrorFree &= Schema->TryCreateConnection(InOutLastThenPin, AddDelegateNode->FindPinChecked(UEdGraphSchema_K2::PN_Execute));
 		InOutLastThenPin = AddDelegateNode->FindPinChecked(UEdGraphSchema_K2::PN_Then);
@@ -674,8 +673,8 @@ UK2Node::ERedirectType UK2Node_BaseAsyncTask::DoPinsMatchForReconstruction(const
 		if (!bAsyncTaskPinRedirectMapInitialized)
 		{
 			bAsyncTaskPinRedirectMapInitialized = true;
-			FConfigSection* PackageRedirects = GConfig->GetSectionPrivate(TEXT("/Script/Engine.Engine"), false, true, GEngineIni);
-			for (FConfigSection::TIterator It(*PackageRedirects); It; ++It)
+			const FConfigSection* PackageRedirects = GConfig->GetSection(TEXT("/Script/Engine.Engine"), false, GEngineIni);
+			for (FConfigSection::TConstIterator It(*PackageRedirects); It; ++It)
 			{
 				if (It.Key() == TEXT("K2AsyncTaskPinRedirects"))
 				{

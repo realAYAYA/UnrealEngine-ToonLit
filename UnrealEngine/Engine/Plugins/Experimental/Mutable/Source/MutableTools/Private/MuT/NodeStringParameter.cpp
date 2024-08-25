@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeStringParameter::Private::s_type =
-			NODE_TYPE( "StringParameter", NodeString::GetStaticType() );
+	FNodeType NodeStringParameter::Private::s_type =
+			FNodeType( "StringParameter", NodeString::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -28,118 +28,23 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	int NodeStringParameter::GetInputCount() const
+	void NodeStringParameter::SetName( const FString& Name )
 	{
-        return int( m_pD->m_additionalImages.Num()
-                    +
-                    m_pD->m_ranges.Num() );
+		m_pD->m_name = Name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    Node* NodeStringParameter::GetInputNode( int i ) const
+	void NodeStringParameter::SetUid( const FString& Uid )
 	{
-        check( i<GetInputCount() );
-
-        int imageCount = int(m_pD->m_additionalImages.Num());
-        int rangeCount = int(m_pD->m_ranges.Num());
-        if (i<imageCount)
-        {
-            return m_pD->m_additionalImages[i].get();
-        }
-        else if ( i < imageCount + rangeCount )
-        {
-            int r = i - imageCount;
-            return m_pD->m_ranges[r].get();
-        }
-        return nullptr;
+		m_pD->m_uid = Uid;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    void NodeStringParameter::SetInputNode( int i, NodePtr n )
+	void NodeStringParameter::SetDefaultValue( const FString& v )
 	{
-        check( i<GetInputCount() );
-        int imageCount = int(m_pD->m_additionalImages.Num());
-        int rangeCount = int(m_pD->m_ranges.Num());
-        if (i<imageCount)
-        {
-            m_pD->m_additionalImages[i] = dynamic_cast<NodeImage*>(n.get());
-        }
-        else if ( i < imageCount + rangeCount )
-        {
-            int r = i - imageCount;
-            m_pD->m_ranges[r] = dynamic_cast<NodeRange*>(n.get());
-        }
-    }
-
-
-	//---------------------------------------------------------------------------------------------
-	const char* NodeStringParameter::GetName() const
-	{
-		return m_pD->m_name.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeStringParameter::SetName( const char* strName )
-	{
-		if ( strName )
-		{
-			m_pD->m_name = strName;
-		}
-		else
-		{
-			m_pD->m_name = "";
-		}
-	}
-
-
-	const char* NodeStringParameter::GetUid() const
-	{
-		return m_pD->m_uid.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeStringParameter::SetUid( const char* strUid )
-	{
-		if ( strUid )
-		{
-			m_pD->m_uid = strUid;
-		}
-		else
-		{
-			m_pD->m_uid = "";
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	const char* NodeStringParameter::GetDefaultValue() const
-	{
-		return m_pD->m_defaultValue.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeStringParameter::SetDefaultValue( const char* v )
-	{
-		m_pD->m_defaultValue = v?v:"";
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	PARAMETER_DETAILED_TYPE NodeStringParameter::GetDetailedType() const
-	{
-		return m_pD->m_detailedType;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeStringParameter::SetDetailedType( PARAMETER_DETAILED_TYPE t )
-	{
-		m_pD->m_detailedType = t;
+		m_pD->m_defaultValue = v;
 	}
 
 

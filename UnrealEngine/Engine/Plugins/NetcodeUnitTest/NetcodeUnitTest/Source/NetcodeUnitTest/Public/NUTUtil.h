@@ -433,7 +433,7 @@ struct NUTUtil
 			bool bArgumentsQuoted = *Start == '"';
 
 			// Number of characters we can look back from found looking for first parenthesis.
-			uint32 AllowedBacktraceCharactersCount = Found - Stream;
+			uint64 AllowedBacktraceCharactersCount = Found - Stream;
 
 			// Check for fully quoted string with spaces
 			bool bFullyQuoted = 
@@ -572,7 +572,7 @@ struct NUTUtil
 	 * @param Value		Outputs the integer value of the enum, as specified on the commandline
 	 * @return			Whether or not an enum value was parsed successfully
 	 */
-	static bool ParseEnum(const TCHAR* Stream, const TCHAR* Match, const TCHAR* EnumName, uint32& Value);
+	static bool ParseEnum(const TCHAR* Stream, const TCHAR* Match, const TCHAR* EnumName, uint64& Value);
 
 
 	/**

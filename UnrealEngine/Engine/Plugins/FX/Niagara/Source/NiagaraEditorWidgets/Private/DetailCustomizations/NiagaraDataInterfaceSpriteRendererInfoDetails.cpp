@@ -103,8 +103,8 @@ void FNiagaraDataInterfaceSpriteRendererInfoDetails::OnInterfaceChanged()
 
 void FNiagaraDataInterfaceSpriteRendererInfoDetails::GenerateRendererList()
 {
-	RendererList.SetNum(0, false);
-	RendererLabels.SetNum(0, false);
+	RendererList.SetNum(0, EAllowShrinking::No);
+	RendererLabels.SetNum(0, EAllowShrinking::No);
 
 	// Get a list of all Sprite renderers in the emitter
 	if (auto Interface = DataInterface.Get())

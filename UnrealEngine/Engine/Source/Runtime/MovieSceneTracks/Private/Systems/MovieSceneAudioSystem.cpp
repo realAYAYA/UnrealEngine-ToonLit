@@ -400,7 +400,7 @@ private:
 					AudioComponent->AttachToComponent(AttachComponent, FAttachmentTransformRules::KeepRelativeTransform, AttachKey.SocketName);
 				}
 
-				EvaluationData->VolumeMultiplier = VolumeMultiplier;
+				EvaluationData->VolumeMultiplier = VolumeMultiplier * AudioSection->EvaluateEasing(Context.GetTime());
 				EvaluationData->PitchMultiplier = PitchMultiplier;
 
 				EnsureAudioIsPlaying(nullptr, *AudioSection, *EvaluationData, Context, *Player);
@@ -581,7 +581,7 @@ private:
 			// Only change the sound clip if it has actually changed. This calls Stop internally if needed.
 			if (AudioComponent.Sound != Sound)
 			{
-				UE_LOG(LogMovieScene, Verbose, TEXT("Audio Component calling SetSound due to new sound. Component: %s OldSound: %s NewSound: %s"), *AudioComponent.GetName(), *GetNameSafe(AudioComponent.Sound), *GetNameSafe(AudioComponent.Sound));
+				UE_LOG(LogMovieScene, Verbose, TEXT("Audio Component calling SetSound due to new sound. Component: %s OldSound: %s NewSound: %s"), *AudioComponent.GetName(), *GetNameSafe(AudioComponent.Sound), *GetNameSafe(Sound));
 				AudioComponent.SetSound(Sound);
 			}
 #if WITH_EDITOR
@@ -810,6 +810,7 @@ void UMovieSceneAudioSystem::OnSchedulePersistentTasks(UE::MovieScene::IEntitySy
 
 	TaskScheduler->AddPrerequisite(GatherInputsTask, EvaluateAudioTask);
 	TaskScheduler->AddPrerequisite(GatherTriggersTask, EvaluateAudioTask);
+	TaskScheduler->AddPrerequisite(ResetSharedDataTask, EvaluateAudioTask);
 }
 
 void UMovieSceneAudioSystem::OnRun(FSystemTaskPrerequisites& InPrerequisites, FSystemSubsequentTasks& Subsequents)

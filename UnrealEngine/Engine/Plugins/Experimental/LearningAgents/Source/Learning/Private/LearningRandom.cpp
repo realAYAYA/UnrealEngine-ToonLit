@@ -13,6 +13,11 @@ namespace UE::Learning::Random
 		return FMath::Sqrt(-2.0f * FMath::Loge(FMath::Max(R1, UE_SMALL_NUMBER))) * FMath::Cos(R2 * UE_TWO_PI);
 	}
 
+	static inline float Sigmoid(const float X)
+	{
+		return 1.0f / (1.0f + FMath::Exp(-X));
+	}
+
 	uint32 Int(const uint32 State)
 	{
 		// Here we use a simple xor and shift based 
@@ -143,6 +148,28 @@ namespace UE::Learning::Random
 #endif
 	}
 
+	LEARNING_API void IntArray(
+		TLearningArrayView<1, uint32> Output,
+		const uint32 State,
+		const FIndexSet Indices)
+	{
+		UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(Learning::Random::IntArray);
+
+		if (Indices.IsSlice() && Indices.Num() > 4)
+		{
+			IntArray(
+				Output.Slice(Indices.GetSliceStart(), Indices.GetSliceNum()),
+				State);
+		}
+		else
+		{
+			for (const int32 ElementIdx : Indices)
+			{
+				Output[ElementIdx] = Int(State ^ 0xbed25b30 ^ Int(ElementIdx ^ 0xb521a8d9));
+			}
+		}
+	}
+
 	void FloatArray(
 		TLearningArrayView<1, float> Output,
 		const uint32 State)
@@ -247,6 +274,126 @@ namespace UE::Learning::Random
 		{
 			Output[ElementIdx] = PlanarDirection(State ^ 0xd80bd375 ^ Int(ElementIdx ^ 0x50d8c207), Axis0, Axis1);
 		}
+	}
+
+	void DistributionIndependantNormal(
+		TLearningArrayView<1, float> Output,
+		const uint32 State,
+		const TLearningArrayView<1, const float> Mean,
+		const TLearningArrayView<1, const float> LogStd,
+		const float Scale)
+	{
+		UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(Learning::Random::DistributionIndependantNormal);
+
+		const int32 ElementNum = Output.Num();
+
+#if UE_LEARNING_ISPC
+		ispc::LearningRandomDistributionIndependantNormal(
+			Output.GetData(),
+			Mean.GetData(),
+			LogStd.GetData(),
+			ElementNum,
+			State,
+			Scale);
+#else
+		if (Scale < UE_SMALL_NUMBER)
+		{
+			for (int32 ElementIdx = 0; ElementIdx < ElementNum; ElementIdx++)
+			{
+				Output[ElementIdx] = Mean[ElementIdx];
+			}
+		}
+		else
+		{
+			for (int32 ElementIdx = 0; ElementIdx < ElementNum; ElementIdx++)
+			{
+				Output[ElementIdx] = Gaussian(State ^ 0x7db0e4e9 ^ Int(ElementIdx ^ 0xf4976a00), Mean[ElementIdx], Scale * FMath::Exp(FMath::Min(LogStd[ElementIdx], 10.0f)));
+			}
+		}
+#endif
+	}
+
+	void DistributionMultinoulli(
+		TLearningArrayView<1, float> Output,
+		const uint32 State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale)
+	{
+		UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(Learning::Random::DistributionMultinoulli);
+
+		const int32 ElementNum = Output.Num();
+		if (ElementNum == 0)
+		{
+			return;
+		}
+
+		float MaxValue = -FLT_MAX;
+		uint32 MaxIdx = INDEX_NONE;
+
+		if (Scale < UE_SMALL_NUMBER)
+		{
+			for (int32 ElementIdx = 0; ElementIdx < ElementNum; ElementIdx++)
+			{
+				if (Logits[ElementIdx] > MaxValue)
+				{
+					MaxValue = Logits[ElementIdx];
+					MaxIdx = ElementIdx;
+				}
+			}
+		}
+		else
+		{
+			for (int32 ElementIdx = 0; ElementIdx < ElementNum; ElementIdx++)
+			{
+				const float ElementValue = Logits[ElementIdx] / Scale - FMath::Loge(-FMath::Loge(Uniform(State ^ 0x7a156b37 ^ Int(ElementIdx ^ 0x0c71bebb))));
+
+				if (ElementValue > MaxValue)
+				{
+					MaxValue = ElementValue;
+					MaxIdx = ElementIdx;
+				}
+			}
+		}
+
+		UE_LEARNING_CHECK(MaxIdx != INDEX_NONE);
+
+		Array::Zero(Output);
+		Output[MaxIdx] = 1.0f;
+	}
+
+	void DistributionBernoulli(
+		TLearningArrayView<1, float> Output,
+		const uint32 State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale)
+	{
+		UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(Learning::Random::DistributionBernoulli);
+
+		const int32 ElementNum = Output.Num();
+
+#if UE_LEARNING_ISPC
+		ispc::LearningRandomDistributionBernoulli(
+			Output.GetData(),
+			Logits.GetData(),
+			ElementNum,
+			State,
+			Scale);
+#else
+		if (Scale < UE_SMALL_NUMBER)
+		{
+			for (int32 ElementIdx = 0; ElementIdx < ElementNum; ElementIdx++)
+			{
+				Output[ElementIdx] = Logits[ElementIdx] > 0.0f ? 1.0f : 0.0f;
+			}
+		}
+		else
+		{
+			for (int32 ElementIdx = 0; ElementIdx < ElementNum; ElementIdx++)
+			{
+				Output[ElementIdx] = Sigmoid(Logits[ElementIdx] / Scale) > Uniform(State ^ 0xf4021a46 ^ Int(ElementIdx ^ 0x7a8cc64e)) ? 1.0f : 0.0f;
+			}
+		}
+#endif
 	}
 
 	////////////
@@ -354,6 +501,15 @@ namespace UE::Learning::Random
 		IntArray(Output, State ^ 0x6adcdb41);
 	}
 
+	void SampleIntArray(
+		TLearningArrayView<1, uint32> Output,
+		uint32& State,
+		const FIndexSet Indices)
+	{
+		State = Int(State ^ 0xab9c9ee3);
+		IntArray(Output, State ^ 0x6adcdb41, Indices);
+	}
+
 	void SampleFloatArray(
 		TLearningArrayView<1, float> Output,
 		uint32& State)
@@ -382,29 +538,6 @@ namespace UE::Learning::Random
 		GaussianArray(Output, State ^ 0xf2381309, Mean, Std);
 	}
 
-	void ResampleStateArray(TLearningArrayView<1, uint32> InOutStates, const FIndexSet Indices)
-	{
-		UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(Learning::Random::ResampleStateArray);
-
-		const int32 ElementNum = Indices.Num();
-
-		if (UE_LEARNING_ISPC && Indices.IsSlice() && Indices.Num() > 4)
-		{
-#if UE_LEARNING_ISPC
-			ispc::LearningResampleStateArray(
-				InOutStates.Slice(Indices.GetSliceStart(), Indices.GetSliceNum()).GetData(),
-				Indices.GetSliceNum());
-#endif
-		}
-		else
-		{
-			for (const int32 ElementIdx : Indices)
-			{
-				InOutStates[ElementIdx] = Int(InOutStates[ElementIdx] ^ 0x3616dcc8 ^ Int(ElementIdx ^ 0x6a837ffd));
-			}
-		}
-	}
-
 	void SamplePlanarClippedGaussianArray(
 		TLearningArrayView<1, FVector> Output,
 		uint32& State,
@@ -426,6 +559,50 @@ namespace UE::Learning::Random
 	{
 		State = Int(State ^ 0x3219c5db);
 		PlanarDirectionArray(Output, State ^ 0x6bfd3e6a, Axis0, Axis1);
+	}
+
+	void SampleDistributionIndependantNormal(
+		TLearningArrayView<1, float> Output,
+		uint32& State,
+		const TLearningArrayView<1, const float> Mean,
+		const TLearningArrayView<1, const float> LogStd,
+		const float Scale)
+	{
+		State = Int(State ^ 0x984c4d5f);
+		DistributionIndependantNormal(
+			Output,
+			State,
+			Mean,
+			LogStd,
+			Scale);
+	}
+
+	void SampleDistributionMultinoulli(
+		TLearningArrayView<1, float> Output,
+		uint32& State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale)
+	{
+		State = Int(State ^ 0xc9261d09);
+		DistributionMultinoulli(
+			Output,
+			State,
+			Logits,
+			Scale);
+	}
+
+	void SampleDistributionBernoulli(
+		TLearningArrayView<1, float> Output,
+		uint32& State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale)
+	{
+		State = Int(State ^ 0xfeba3d63);
+		DistributionBernoulli(
+			Output,
+			State,
+			Logits,
+			Scale);
 	}
 
 }

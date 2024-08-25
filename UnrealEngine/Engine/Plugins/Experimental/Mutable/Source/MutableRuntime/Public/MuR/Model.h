@@ -13,8 +13,8 @@
 //! data structures. Compiled models are not necessarily compatible when the runtime is updated,
 //! so this version number can be used externally to verify this. It is not used internally, and
 //! serializing models from different versions than this runtime will probably result in a crash.
-#define MUTABLE_COMPILED_MODEL_CODE_VERSION		uint32( 73 )
-#define MUTABLE_PARAMETERS_VERSION              uint32( 2 )
+#define MUTABLE_COMPILED_MODEL_CODE_VERSION		uint32( 83 )
+#define MUTABLE_PARAMETERS_VERSION              uint32( 3 )
 
 
 namespace mu
@@ -66,6 +66,16 @@ namespace mu
 		//! require data streaming when used.
 		bool HasExternalData() const;
 
+#if WITH_EDITOR
+		//! Return true unless the streamed resources were destroyed, which could happen in the
+		//! editor after recompiling the CO.
+		bool IsValid() const;
+
+		//! Invalidate the Model. Compiling a compiled CO will invalidate the model kept by previously
+		//! generated resources, like streamed textures.
+		void Invalidate();
+#endif
+
 		//-----------------------------------------------------------------------------------------
 		// Own interface
 		//-----------------------------------------------------------------------------------------
@@ -82,10 +92,10 @@ namespace mu
 		int GetStateCount() const;
 
 		//! Get a state name by state index from 0 to GetStateCount-1
-		const char* GetStateName( int stateIndex ) const;
+		const FString& GetStateName( int32 StateIndex ) const;
 
 		//! Find a state index by state name
-		int FindState( const char* strName ) const;
+		int32 FindState( const FString& Name ) const;
 
 		//! Get the number of parameters available in a particular state.
 		int GetStateParameterCount( int stateIndex ) const;
@@ -116,7 +126,7 @@ namespace mu
 		//! \pre The parameter specified by index is a T_FLOAT.
         //! \param Index Index of the parameter from 0 to GetCount()-1
         //! \param R,G,B Pointers to values where every resulting colour channel will be stored
-    	void GetColourDefaultValue(int32 Index, float* R, float* G, float* B) const;
+    	void GetColourDefaultValue(int32 Index, float* R, float* G, float* B, float* A) const;
 
     	//! Return the default value of a projector parameter, as a 4x4 matrix. The matrix is supposed to be
 		//! a linear transform in column-major.

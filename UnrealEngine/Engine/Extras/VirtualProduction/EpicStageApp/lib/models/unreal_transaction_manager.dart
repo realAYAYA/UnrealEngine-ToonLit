@@ -89,7 +89,7 @@ class UnrealTransactionManager {
   dynamic createEndTransactionMessage() {
     if (_activeTransaction == null) {
       _log.warning('Tried to end transaction, but no transaction was in progress');
-      return false;
+      return null;
     }
 
     final message = createUnrealWebSocketMessage('transaction.end', {
@@ -100,6 +100,32 @@ class UnrealTransactionManager {
     return message;
   }
 
+  /// Helper function to automatically create and end a transaction before/after calling a function, taking into account
+  /// whether the engine version allows a manual transaction for property changes.
+  /// If a manual transaction is allowed, this will create a transaction with the given [description], it will call
+  /// [sendRequest] passing true for [bIsManualTransaction], then end the transaction.
+  /// Otherwise, it will just call [sendRequest], passing false for [bIsManualTransaction].
+  dynamic wrapWithTransactionIfManualAllowedForProperties(
+    String description,
+    Function(bool bIsManualTransaction) sendRequest,
+  ) {
+    final bool bIsManualTransaction = _connectionManager.apiVersion?.bCanHttpSetPropertyInManualTransaction == true;
+    if (bIsManualTransaction) {
+      if (!beginTransaction(description)) {
+        _log.warning('Failed to begin transaction for "$description"');
+        return;
+      }
+    }
+
+    final result = sendRequest(bIsManualTransaction);
+
+    if (bIsManualTransaction) {
+      endTransaction();
+    }
+
+    return result;
+  }
+
   /// Called when the engine reports that a transaction has ended.
   void _onEngineTransactionEnded(dynamic message) {
     final int? id = message['TransactionId'];
@@ -108,9 +134,12 @@ class UnrealTransactionManager {
       return;
     }
 
-    if (_activeTransaction?.id == id) {
-      _activeTransaction?.prematureEndCallback?.call();
+    if (_activeTransaction?.id != id) {
+      return;
     }
+
+    _activeTransaction?.prematureEndCallback?.call();
+    _activeTransaction = null;
   }
 }
 

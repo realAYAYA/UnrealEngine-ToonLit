@@ -71,15 +71,16 @@ private:
 	/** Slate whose task is to display the skeleton found on this mesh as a slate tree view */
 	TSharedPtr<SMutableSkeletonViewer> MutableSkeletonViewer;
 
+	/** Widget-side copy of the tags in the mesh.  */
+	TArray<TSharedPtr<FString>> MeshTagList;
+	TSharedRef<ITableRow> GenerateTagRow(TSharedPtr<FString> InItem, const TSharedRef<STableViewBase>& OwnerTable);
+
 	/** Thumbnail objects used to render a view of the selected skeletal mesh for the mesh viewport*/
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;
 	TSharedPtr<FAssetThumbnail> AssetThumbnail;
 
 	/** Data backend for the widget. It represents the mesh that is being "displayed" */
 	mu::MeshPtrConst MutableMesh = nullptr;
-
-	/** Is true, mesh has changed and we need to update. */
-	bool bIsPendingUpdate = false;
 
 	/** Splitter used to separate the two sides of the slate (tables and viewport) */
 	TSharedPtr<SSplitter> SpaceSplitter;

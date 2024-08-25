@@ -365,7 +365,7 @@ public:
 		{
 			FILE_LOG(LogPlatformFile, Verbose, TEXT("Visit %s %d"), FilenameOrDirectory, int32(bIsDirectory));
 			double StartTime = FPlatformTime::Seconds();
-			bool Result = Visitor.Visit(FilenameOrDirectory, bIsDirectory);
+			bool Result = Visitor.CallShouldVisitAndVisit(FilenameOrDirectory, bIsDirectory);
 			double ThisTime = (FPlatformTime::Seconds() - StartTime) / 1000.0;
 			FILE_LOG(LogPlatformFile, Verbose, TEXT("Visit return %d [%fms]"), int32(Result), ThisTime);
 			return Result;
@@ -409,7 +409,7 @@ public:
 		{
 			FILE_LOG(LogPlatformFile, Verbose, TEXT("Visit %s %d"), FilenameOrDirectory, int32(StatData.bIsDirectory));
 			double StartTime = FPlatformTime::Seconds();
-			bool Result = Visitor.Visit(FilenameOrDirectory, StatData);
+			bool Result = Visitor.CallShouldVisitAndVisit(FilenameOrDirectory, StatData);
 			double ThisTime = (FPlatformTime::Seconds() - StartTime) / 1000.0;
 			FILE_LOG(LogPlatformFile, Verbose, TEXT("Visit return %d [%fms]"), int32(Result), ThisTime);
 			return Result;

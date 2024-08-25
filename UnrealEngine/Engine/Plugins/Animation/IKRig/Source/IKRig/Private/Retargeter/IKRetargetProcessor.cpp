@@ -9,6 +9,7 @@
 
 #include "Retargeter/IKRetargeter.h"
 #include "Retargeter/IKRetargetProfile.h"
+#include "Retargeter/IKRetargetOps.h"
 
 #include "Engine/SkeletalMesh.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -81,6 +82,7 @@ void FRetargetSkeleton::GenerateRetargetPose(
 {
 	// record the name of the retarget pose (prevents re-initialization if profile swaps it)
 	RetargetPoseName = InRetargetPoseName;
+	RetargetPoseVersion = InRetargetPose->GetVersion();
 	
 	// initialize retarget pose to the skeletal mesh reference pose
 	RetargetLocalPose = SkeletalMesh->GetRefSkeleton().GetRefBonePose();
@@ -89,14 +91,18 @@ void FRetargetSkeleton::GenerateRetargetPose(
 	// convert to global space
 	UpdateGlobalTransformsBelowBone(-1, RetargetLocalPose, RetargetGlobalPose);
 
+	// strip scale (done AFTER generating global pose so that scales are baked into translation)
+	for (int32 BoneIndex=0; BoneIndex<BoneNames.Num(); ++BoneIndex)
+	{
+		RetargetLocalPose[BoneIndex].SetScale3D(FVector::OneVector);
+		RetargetGlobalPose[BoneIndex].SetScale3D(FVector::OneVector);
+	}
+
 	// no retarget pose specified (will use default pose from skeletal mesh with no offsets)
-	if (InRetargetPose==nullptr  || RetargetRootBone == NAME_None)
+	if (RetargetRootBone == NAME_None)
 	{
 		return;
 	}
-
-	// apply retarget pose offsets (retarget pose is stored as offset relative to reference pose)
-	const TArray<FTransform>& RefPoseLocal = SkeletalMesh->GetRefSkeleton().GetRefBonePose();
 	
 	// apply root translation offset
 	const int32 RootBoneIndex = FindBoneIndexByName(RetargetRootBone);
@@ -107,7 +113,8 @@ void FRetargetSkeleton::GenerateRetargetPose(
 		UpdateLocalTransformOfSingleBone(RootBoneIndex, RetargetLocalPose, RetargetGlobalPose);
 	}
 
-	// apply bone rotation offsets
+	// apply retarget pose offsets (retarget pose is stored as offset relative to reference pose)
+	const TArray<FTransform>& RefPoseLocal = SkeletalMesh->GetRefSkeleton().GetRefBonePose();
 	for (const TTuple<FName, FQuat>& BoneDelta : InRetargetPose->GetAllDeltaRotations())
 	{
 		const int32 BoneIndex = FindBoneIndexByName(BoneDelta.Key);
@@ -197,7 +204,7 @@ void FRetargetSkeleton::UpdateLocalTransformOfSingleBone(
 	OutLocalPose[BoneIndex] = ChildGlobalTransform.GetRelativeTransform(ParentGlobalTransform);
 }
 
-FTransform FRetargetSkeleton::GetGlobalRefPoseOfSingleBone(
+FTransform FRetargetSkeleton::GetGlobalRetargetPoseOfSingleBone(
 	const int32 BoneIndex,
 	const TArray<FTransform>& InGlobalPose) const
 {
@@ -446,6 +453,48 @@ bool FChainFK::Initialize(
 	return CalculateBoneParameters(Log);
 }
 
+FTransform FChainFK::GetTransformAtParam(const TArray<FTransform>& Transforms, const float& Param) const
+{
+	check(Transforms.Num() == Params.Num());
+	
+	if (Params.Num() == 1)
+	{
+		return Transforms[0];
+	}
+	
+	if (Param < KINDA_SMALL_NUMBER)
+	{
+		return Transforms[0];
+	}
+
+	if (Param > 1.0f - KINDA_SMALL_NUMBER)
+	{
+		return Transforms.Last();
+	}
+
+	for (int32 ChainIndex=1; ChainIndex<Params.Num(); ++ChainIndex)
+	{
+		const float CurrentParam = Params[ChainIndex];
+		if (CurrentParam <= Param)
+		{
+			continue;
+		}
+		
+		const float PrevParam = Params[ChainIndex-1];
+		const float PercentBetweenParams = (Param - PrevParam) / (CurrentParam - PrevParam);
+		const FTransform& Prev = Transforms[ChainIndex-1];
+		const FTransform& Next = Transforms[ChainIndex];
+		const FVector Position = FMath::Lerp(Prev.GetTranslation(), Next.GetTranslation(), PercentBetweenParams);
+		const FQuat Rotation = FQuat::FastLerp(Prev.GetRotation(), Next.GetRotation(), PercentBetweenParams).GetNormalized();
+		const FVector Scale = FMath::Lerp(Prev.GetScale3D(), Next.GetScale3D(), PercentBetweenParams);
+		
+		return FTransform(Rotation,Position, Scale);
+	}
+
+	checkNoEntry();
+	return FTransform::Identity;
+}
+
 bool FChainFK::CalculateBoneParameters(FIKRigLogger& Log)
 {
 	Params.Reset();
@@ -520,7 +569,7 @@ void FChainFK::PutCurrentTransformsInRefPose(
 		if (ChainIndex == 0)
 		{
 			const int32 BoneIndex = InBoneIndices[ChainIndex];
-			CurrentGlobalTransforms[ChainIndex] = Skeleton.GetGlobalRefPoseOfSingleBone(BoneIndex, InCurrentGlobalPose);
+			CurrentGlobalTransforms[ChainIndex] = Skeleton.GetGlobalRetargetPoseOfSingleBone(BoneIndex, InCurrentGlobalPose);
 		}
 		else
 		{
@@ -549,11 +598,8 @@ void FChainEncoderFK::EncodePose(
 
 	CurrentLocalTransforms.SetNum(SourceBoneIndices.Num());
 	FillTransformsWithLocalSpaceOfChain(SourceSkeleton, InSourceGlobalPose, SourceBoneIndices, CurrentLocalTransforms);
-
-	if (ChainParentBoneIndex != INDEX_NONE)
-	{
-		ChainParentCurrentGlobalTransform = InSourceGlobalPose[ChainParentBoneIndex];
-	}
+	
+	ChainParentCurrentGlobalTransform = ChainParentBoneIndex != INDEX_NONE ? InSourceGlobalPose[ChainParentBoneIndex] : FTransform::Identity;
 }
 
 void FChainEncoderFK::TransformCurrentChainTransforms(const FTransform& NewParentTransform)
@@ -573,7 +619,7 @@ void FChainEncoderFK::TransformCurrentChainTransforms(const FTransform& NewParen
 
 void FChainDecoderFK::DecodePose(
 	const FRootRetargeter& RootRetargeter,
-	const FTargetChainSettings& Settings,
+	const FTargetChainFKSettings& Settings,
 	const TArray<int32>& TargetBoneIndices,
     FChainEncoderFK& SourceChain,
     const FTargetSkeleton& TargetSkeleton,
@@ -590,7 +636,7 @@ void FChainDecoderFK::DecodePose(
 	// retargeted in the prior step, then the neck bones will need updating first.
 	// Otherwise the neck bones will remain at their location prior to the spine update.
 	UpdateIntermediateParents(TargetSkeleton,InOutGlobalPose);
-
+	
 	// transform entire source chain from it's root to match target's current root orientation (maintaining offset from retarget pose)
 	// this ensures children are retargeted in a "local" manner free from skewing that will happen if source and target
 	// become misaligned as can happen if parent chains were not retargeted
@@ -602,7 +648,7 @@ void FChainDecoderFK::DecodePose(
 	SourceChain.TransformCurrentChainTransforms(SourceChainParentTransform);
 
 	// if FK retargeting has been disabled for this chain, then simply set it to the retarget pose
-	if (!Settings.FK.EnableFK)
+	if (!Settings.EnableFK)
 	{
 		// put the chain in the global ref pose (globally rotated by parent bone in it's currently retargeted state)
 		PutCurrentTransformsInRefPose(TargetBoneIndices, TargetSkeleton, InOutGlobalPose);
@@ -630,23 +676,15 @@ void FChainDecoderFK::DecodePose(
 		FTransform SourceInitialTransform;
 
 		// get source current / initial transforms for this bone
-		switch (Settings.FK.RotationMode)
+		switch (Settings.RotationMode)
 		{
 			case ERetargetRotationMode::Interpolated:
 			{
 				// get the initial and current transform of source chain at param
 				// this is the interpolated transform along the chain
 				const float Param = Params[ChainIndex];
-					
-				SourceCurrentTransform = GetTransformAtParam(
-					SourceChain.CurrentGlobalTransforms,
-					SourceChain.Params,
-					Param);
-
-				SourceInitialTransform = GetTransformAtParam(
-					SourceChain.InitialGlobalTransforms,
-					SourceChain.Params,
-					Param);
+				SourceCurrentTransform = SourceChain.GetTransformAtParam(SourceChain.CurrentGlobalTransforms, Param);
+				SourceInitialTransform = SourceChain.GetTransformAtParam(SourceChain.InitialGlobalTransforms, Param);
 			}
 			break;
 			case ERetargetRotationMode::OneToOne:
@@ -679,8 +717,10 @@ void FChainDecoderFK::DecodePose(
 			break;
 			case ERetargetRotationMode::None:
 			{
-				SourceCurrentTransform = SourceChain.InitialGlobalTransforms.Last();
-				SourceInitialTransform = SourceChain.InitialGlobalTransforms.Last();
+					// in order to induce no rotation on the FK chain, we rotate the chain rigidly from the root of the chain
+					SourceInitialTransform = SourceChain.InitialGlobalTransforms[0];
+					// use the current global space retarget pose as the "current" transform, so chain rotates with parent
+					SourceCurrentTransform = SourceChain.InitialLocalTransforms[0] * SourceChain.ChainParentCurrentGlobalTransform;
 			}
 			break;
 			default:
@@ -703,7 +743,7 @@ void FChainDecoderFK::DecodePose(
 			ParentGlobalTransform = InOutGlobalPose[ParentIndex];
 		}
 		FVector OutPosition;
-		switch (Settings.FK.TranslationMode)
+		switch (Settings.TranslationMode)
 		{
 			case ERetargetTranslationMode::None:
 				{
@@ -737,20 +777,23 @@ void FChainDecoderFK::DecodePose(
 
 	// apply final blending between retarget pose of chain and newly retargeted pose
 	// blend must be done in local space, so we do it in a separate loop after full chain pose is generated
-	// (skipped if the alphas are not near 1.0)
-	if (!FMath::IsNearlyEqual(Settings.FK.RotationAlpha, 1.0f) || !FMath::IsNearlyEqual(Settings.FK.TranslationAlpha, 1.0f))
+	const bool bShouldBlendRotation = !FMath::IsNearlyEqual(Settings.RotationAlpha, 1.0f);
+	const bool bShouldBlendTranslation = !FMath::IsNearlyEqual(Settings.TranslationAlpha, 1.0f);
+	if (bShouldBlendRotation || bShouldBlendTranslation) // (skipped if the alphas are not near 1.0)
 	{
+		// generate local space pose of chain
 		TArray<FTransform> NewLocalTransforms;
 		NewLocalTransforms.SetNum(InitialLocalTransforms.Num());
 		FillTransformsWithLocalSpaceOfChain(TargetSkeleton, InOutGlobalPose, TargetBoneIndices, NewLocalTransforms);
 
+		// blend each bone in chain with the retarget pose
 		for (int32 ChainIndex=0; ChainIndex<InitialLocalTransforms.Num(); ++ChainIndex)
 		{
 			// blend between current local pose and initial local pose
 			FTransform& NewLocalTransform = NewLocalTransforms[ChainIndex];
 			const FTransform& RefPoseLocalTransform = InitialLocalTransforms[ChainIndex];
-			NewLocalTransform.SetTranslation(FMath::Lerp(RefPoseLocalTransform.GetTranslation(), NewLocalTransform.GetTranslation(), Settings.FK.TranslationAlpha));
-			NewLocalTransform.SetRotation(FQuat::FastLerp(RefPoseLocalTransform.GetRotation(), NewLocalTransform.GetRotation(), Settings.FK.RotationAlpha).GetNormalized());
+			NewLocalTransform.SetTranslation(FMath::Lerp(RefPoseLocalTransform.GetTranslation(), NewLocalTransform.GetTranslation(), Settings.TranslationAlpha));
+			NewLocalTransform.SetRotation(FQuat::FastLerp(RefPoseLocalTransform.GetRotation(), NewLocalTransform.GetRotation(), Settings.RotationAlpha).GetNormalized());
 
 			// put blended transforms back in global space and store in final output pose
 			const int32 BoneIndex = TargetBoneIndices[ChainIndex];
@@ -795,49 +838,6 @@ void FChainDecoderFK::UpdateIntermediateParents(
 	{
 		TargetSkeleton.UpdateGlobalTransformOfSingleBone(ParentIndex, TargetSkeleton.RetargetLocalPose, InOutGlobalPose);
 	}
-}
-
-FTransform FChainDecoderFK::GetTransformAtParam(
-	const TArray<FTransform>& Transforms,
-	const TArray<float>& InParams,
-	const float& Param) const
-{
-	if (InParams.Num() == 1)
-	{
-		return Transforms[0];
-	}
-	
-	if (Param < KINDA_SMALL_NUMBER)
-	{
-		return Transforms[0];
-	}
-
-	if (Param > 1.0f - KINDA_SMALL_NUMBER)
-	{
-		return Transforms.Last();
-	}
-
-	for (int32 ChainIndex=1; ChainIndex<InParams.Num(); ++ChainIndex)
-	{
-		const float CurrentParam = InParams[ChainIndex];
-		if (CurrentParam <= Param)
-		{
-			continue;
-		}
-		
-		const float PrevParam = InParams[ChainIndex-1];
-		const float PercentBetweenParams = (Param - PrevParam) / (CurrentParam - PrevParam);
-		const FTransform& Prev = Transforms[ChainIndex-1];
-		const FTransform& Next = Transforms[ChainIndex];
-		const FVector Position = FMath::Lerp(Prev.GetTranslation(), Next.GetTranslation(), PercentBetweenParams);
-		const FQuat Rotation = FQuat::FastLerp(Prev.GetRotation(), Next.GetRotation(), PercentBetweenParams).GetNormalized();
-		const FVector Scale = FMath::Lerp(Prev.GetScale3D(), Next.GetScale3D(), PercentBetweenParams);
-		
-		return FTransform(Rotation,Position, Scale);
-	}
-
-	checkNoEntry();
-	return FTransform::Identity;
 }
 
 bool FChainRetargeterIK::InitializeSource(
@@ -922,7 +922,8 @@ bool FChainRetargeterIK::InitializeTarget(
 }
 	
 void FChainRetargeterIK::DecodePose(
-	const FTargetChainSettings& Settings,
+	const FTargetChainIKSettings& Settings,
+	const FTargetChainSpeedPlantSettings& SpeedPlantSettings,
 	const FRootRetargeter& RootRetargeter,
 	const TMap<FName, float>& SpeedValuesFromCurves,
 	const float DeltaTime,
@@ -933,7 +934,7 @@ void FChainRetargeterIK::DecodePose(
 	FQuat GoalRotation = DeltaRotation * Target.InitialEndRotation;
 
 	// apply static rotation offset in the local space of the foot
-	GoalRotation = GoalRotation * Settings.IK.StaticRotationOffset.Quaternion();
+	GoalRotation = GoalRotation * Settings.StaticRotationOffset.Quaternion();
 
 	//
 	// calculate position of IK goal ...
@@ -946,10 +947,10 @@ void FChainRetargeterIK::DecodePose(
 	FVector GoalPosition = Start + (Source.CurrentEndDirectionNormalized * Target.InitialLength);
 
 	// blend to source location
-	if (Settings.IK.BlendToSource > KINDA_SMALL_NUMBER)
+	if (Settings.BlendToSource > KINDA_SMALL_NUMBER)
 	{
 		const FVector RootModification = RootRetargeter.Target.RootTranslationDelta * RootRetargeter.Settings.GetAffectIKWeightVector();
-		const FVector Weight = Settings.IK.BlendToSource * Settings.IK.BlendToSourceWeights;
+		const FVector Weight = Settings.BlendToSource * Settings.BlendToSourceWeights;
 		const FVector SourceLocation = Source.CurrentEndPosition + RootModification;
 		GoalPosition.X = FMath::Lerp(GoalPosition.X, SourceLocation.X, Weight.X);
 		GoalPosition.Y = FMath::Lerp(GoalPosition.Y, SourceLocation.Y, Weight.Y);
@@ -957,31 +958,30 @@ void FChainRetargeterIK::DecodePose(
 	}
 
 	// apply global static offset
-	GoalPosition += Settings.IK.StaticOffset;
+	GoalPosition += Settings.StaticOffset;
 
 	// apply local static offset
-	GoalPosition += GoalRotation.RotateVector(Settings.IK.StaticLocalOffset);
+	GoalPosition += GoalRotation.RotateVector(Settings.StaticLocalOffset);
 
 	// apply vertical scale
-	GoalPosition.Z *= Settings.IK.ScaleVertical;
+	GoalPosition.Z *= Settings.ScaleVertical;
 	
 	// apply extension
-	if (!FMath::IsNearlyEqual(Settings.IK.Extension, 1.0f))
+	if (!FMath::IsNearlyEqual(Settings.Extension, 1.0f))
 	{
-		GoalPosition = Start + (GoalPosition - Start) * Settings.IK.Extension;	
+		GoalPosition = Start + (GoalPosition - Start) * Settings.Extension;	
 	}
 	
 	// match velocity
-	const FTargetChainSpeedPlantSettings& PlantSettings = Settings.SpeedPlanting;
-	if (!ResetThisTick && PlantSettings.EnableSpeedPlanting && SpeedValuesFromCurves.Contains(PlantSettings.SpeedCurveName))
+	if (!ResetThisTick && SpeedPlantSettings.EnableSpeedPlanting && SpeedValuesFromCurves.Contains(SpeedPlantSettings.SpeedCurveName))
 	{
-		const float SourceSpeed = SpeedValuesFromCurves[PlantSettings.SpeedCurveName];
-		if (SourceSpeed < 0.0f || SourceSpeed > PlantSettings.SpeedThreshold)
+		const float SourceSpeed = SpeedValuesFromCurves[SpeedPlantSettings.SpeedCurveName];
+		if (SourceSpeed < 0.0f || SourceSpeed > SpeedPlantSettings.SpeedThreshold)
 		{
 			GoalPosition = UKismetMathLibrary::VectorSpringInterp(
 				Target.PrevEndPosition, GoalPosition, PlantingSpringState,
-				PlantSettings.UnplantStiffness,
-				PlantSettings.UnplantCriticalDamping,
+				SpeedPlantSettings.UnplantStiffness,
+				SpeedPlantSettings.UnplantCriticalDamping,
 				DeltaTime, 1.0f, 0.0f);
 		}
 		else
@@ -1344,15 +1344,16 @@ bool FPoleVectorMatcher::Initialize(
 }
 
 void FPoleVectorMatcher::MatchPoleVector(
-	const FTargetChainSettings& Settings,
+	const FTargetChainFKSettings& Settings,
 	const TArray<int32>& SourceIndices,
 	const TArray<int32>& TargetIndices,
 	const TArray<FTransform>& SourceGlobalPose,
 	TArray<FTransform>& OutTargetGlobalPose,
 	FRetargetSkeleton& TargetSkeleton)
 {
-	if (Settings.FK.PoleVectorMatching <= KINDA_SMALL_NUMBER &&
-		Settings.FK.PoleVectorOffset <= KINDA_SMALL_NUMBER)
+	const bool bIsMatchingPoleVector = Settings.PoleVectorMatching > KINDA_SMALL_NUMBER;
+	const bool bIsOffsetingPoleVector = !FMath::IsNearlyZero(Settings.PoleVectorOffset);
+	if (!(bIsMatchingPoleVector || bIsOffsetingPoleVector))
 	{
 		return;
 	}
@@ -1372,20 +1373,33 @@ void FPoleVectorMatcher::MatchPoleVector(
 		LocalSpaces.Add(LocalTransform);
 	}
 
-	// calculate rotation to match the target to the source pole vector
-	const FVector SourcePoleVector = CalculatePoleVector(SourcePoleAxis, SourceIndices, SourceGlobalPose);
-	const FVector TargetPoleVector = CalculatePoleVector(TargetPoleAxis, TargetIndices, OutTargetGlobalPose);
-	
-	const float RotateTargetToSource = FMath::Acos(FVector::DotProduct(SourcePoleVector, TargetPoleVector));
-	const float MatchPoleAngle = RotateTargetToSource - TargetToSourceAngularOffsetAtRefPose + FMath::DegreesToRadians(Settings.FK.PoleVectorOffset);
+	// normalized vector pointing from root to tip of chain
+	const FVector TargetChainAxisNorm = GetChainAxisNormalized(TargetIndices, OutTargetGlobalPose);
 
-	const FVector TargetChainNormal = GetChainNormal(TargetIndices, OutTargetGlobalPose);
-	const FQuat PoleVectorMatchingRotation = FQuat(TargetChainNormal, MatchPoleAngle);
-	const FQuat FinalRotation = FQuat::FastLerp(FQuat::Identity, PoleVectorMatchingRotation, Settings.FK.PoleVectorMatching).GetNormalized();
+	// calculate rotation to match the target to the source pole vector
+	FQuat MatchingRotation = FQuat::Identity;
+	if (bIsMatchingPoleVector)
+	{
+		const FVector SourcePoleVector = CalculatePoleVector(SourcePoleAxis, SourceIndices, SourceGlobalPose);
+		const FVector TargetPoleVector = CalculatePoleVector(TargetPoleAxis, TargetIndices, OutTargetGlobalPose);
+	
+		const float RotateTargetToSource = FMath::Acos(FVector::DotProduct(SourcePoleVector, TargetPoleVector));
+		const float MatchPoleAngle = RotateTargetToSource - (Settings.PoleVectorMaintainOffset ? TargetToSourceAngularOffsetAtRefPose : 0);
+		
+		MatchingRotation = FQuat(TargetChainAxisNorm, MatchPoleAngle);
+		MatchingRotation = FQuat::FastLerp(FQuat::Identity, MatchingRotation, Settings.PoleVectorMatching).GetNormalized();
+	}
+
+	// manual offset rotation
+	FQuat OffsetRotation = FQuat::Identity;
+	if (bIsOffsetingPoleVector)
+	{
+		OffsetRotation = FQuat(TargetChainAxisNorm,FMath::DegreesToRadians(Settings.PoleVectorOffset));
+	}
 
 	// rotate the base of the chain to match the pole vectors
 	FTransform& BaseOfChain = OutTargetGlobalPose[TargetIndices[0]];
-	BaseOfChain.SetRotation(FinalRotation * BaseOfChain.GetRotation());
+	BaseOfChain.SetRotation(MatchingRotation * OffsetRotation * BaseOfChain.GetRotation());
 
 	// now update global pose of all bones within chain
 	for (int32 ChainIndex=0; ChainIndex < AllChildrenWithinChain.Num(); ++ChainIndex)
@@ -1432,7 +1446,7 @@ FVector FPoleVectorMatcher::CalculatePoleVector(
 {
 	check(!BoneIndices.IsEmpty())
 
-	const FVector ChainNormal = GetChainNormal(BoneIndices, GlobalPose);
+	const FVector ChainNormal = GetChainAxisNormalized(BoneIndices, GlobalPose);
 	const FVector UnitPoleAxis = GlobalPose[BoneIndices[0]].GetUnitAxis(PoleAxis);
 	const FVector PoleVector = FVector::VectorPlaneProject(UnitPoleAxis, ChainNormal);
 	return PoleVector.GetSafeNormal();
@@ -1459,7 +1473,7 @@ EAxis::Type FPoleVectorMatcher::GetMostDifferentAxis(
 	return MostDifferentAxis;
 }
 
-FVector FPoleVectorMatcher::GetChainNormal(
+FVector FPoleVectorMatcher::GetChainAxisNormalized(
 	const TArray<int32>& BoneIndices,
 	const TArray<FTransform>& GlobalPose)
 {
@@ -1489,8 +1503,8 @@ void UIKRetargetProcessor::Initialize(
 	// record source asset
 	RetargeterAsset = InRetargeterAsset;
 
-	const UIKRigDefinition* SourceIKRig = RetargeterAsset->GetSourceIKRig();
-	const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetTargetIKRig();
+	const UIKRigDefinition* SourceIKRig = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Source);
+	const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Target);
 
 	// check prerequisite assets
 	if (!SourceSkeletalMesh)
@@ -1551,6 +1565,14 @@ void UIKRetargetProcessor::Initialize(
 			FText::FromString(TargetIKRig->GetName()), FText::FromString(TargetSkeletalMesh->GetName())));
 	}
 
+	// initialize the post operations
+	const TArray<TObjectPtr<URetargetOpBase>>& OpsFromAsset = RetargeterAsset->GetPostSettingsUObject()->RetargetOps;
+	const bool bAllOpsInitialized = InitializeOpStack(OpsFromAsset);
+	if (!bAllOpsInitialized)
+	{
+		Log.LogWarning(FText(LOCTEXT("PostOperationInitError", "One of the retarget post operations has warnings. See output log for details.")));
+	}
+
 	// must have a mapped root bone OR at least a single mapped chain to be able to do any retargeting at all
 	if (bRootsInitialized && bAtLeastOneValidBoneChainPair)
 	{
@@ -1563,7 +1585,11 @@ void UIKRetargetProcessor::Initialize(
 	// copy the initial settings from the asset
 	ApplySettingsFromAsset();
 	
-	bIsInitialized = true;
+	bIsInitialized = bRootsInitialized || bAtLeastOneValidBoneChainPair;
+	AssetVersionInitializedWith = RetargeterAsset->GetVersion();
+#if WITH_EDITOR
+	RetargeterInitialized.Broadcast();
+#endif
 }
 
 bool UIKRetargetProcessor::InitializeRoots()
@@ -1572,7 +1598,7 @@ bool UIKRetargetProcessor::InitializeRoots()
 	RootRetargeter.Reset();
 	
 	// initialize root encoder
-	const FName SourceRootBoneName = RetargeterAsset->GetSourceIKRig()->GetRetargetRoot();
+	const FName SourceRootBoneName = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Source)->GetRetargetRoot();
 	const bool bRootEncoderInit = RootRetargeter.InitializeSource(SourceRootBoneName, SourceSkeleton, Log);
 	if (!bRootEncoderInit)
 	{
@@ -1582,7 +1608,7 @@ bool UIKRetargetProcessor::InitializeRoots()
 	}
 
 	// initialize root decoder
-	const FName TargetRootBoneName = RetargeterAsset->GetTargetIKRig()->GetRetargetRoot();
+	const FName TargetRootBoneName =RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Target)->GetRetargetRoot();
 	const bool bRootDecoderInit = RootRetargeter.InitializeTarget(TargetRootBoneName, TargetSkeleton, Log);
 	if (!bRootDecoderInit)
 	{
@@ -1598,18 +1624,17 @@ bool UIKRetargetProcessor::InitializeBoneChainPairs()
 {
 	ChainPairsFK.Reset();
 	ChainPairsIK.Reset();
-	
-	const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetTargetIKRig();
-	const UIKRigDefinition* SourceIKRig = RetargeterAsset->GetSourceIKRig();
-	
+
+	const UIKRigDefinition* SourceIKRig = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Source);
+	const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Target);
 	check(SourceIKRig && TargetIKRig);
 
 	// check that chains are available in both IKRig assets before sorting them based on StartBone index
 	const TArray<TObjectPtr<URetargetChainSettings>>& ChainMapping = RetargeterAsset->GetAllChainSettings();	
-	for (URetargetChainSettings* ChainMap : ChainMapping)
+	for (const URetargetChainSettings* ChainMap : ChainMapping)
 	{
 		// get target bone chain
-		const FBoneChain* TargetBoneChain = RetargeterAsset->GetTargetIKRig()->GetRetargetChainByName(ChainMap->TargetChain);
+		const FBoneChain* TargetBoneChain = TargetIKRig->GetRetargetChainByName(ChainMap->TargetChain);
 		if (!TargetBoneChain)
 		{
 			Log.LogWarning( FText::Format(
@@ -1625,7 +1650,7 @@ bool UIKRetargetProcessor::InitializeBoneChainPairs()
 		}
 		
 		// get source bone chain
-		const FBoneChain* SourceBoneChain = RetargeterAsset->GetSourceIKRig()->GetRetargetChainByName(ChainMap->SourceChain);
+		const FBoneChain* SourceBoneChain = SourceIKRig->GetRetargetChainByName(ChainMap->SourceChain);
 		if (!SourceBoneChain)
 		{
 			Log.LogWarning( FText::Format(
@@ -1715,7 +1740,7 @@ bool UIKRetargetProcessor::InitializeBoneChainPairs()
 bool UIKRetargetProcessor::InitializeIKRig(UObject* Outer, const USkeletalMesh* InSkeletalMesh)
 {
 	// get the target IK Rig asset
-	UIKRigDefinition* IKRig = RetargeterAsset->GetTargetIKRigWriteable();
+	UIKRigDefinition* IKRig = RetargeterAsset->GetIKRigWriteable(ERetargetSourceOrTarget::Target);
 	
 	// gather list of excluded goals based on any chain mapping that has it's IK disabled
 	TArray<FName> GoalsToExclude;
@@ -1822,12 +1847,50 @@ bool UIKRetargetProcessor::InitializeIKRig(UObject* Outer, const USkeletalMesh* 
 	return true;
 }
 
+bool UIKRetargetProcessor::InitializeOpStack(const TArray<TObjectPtr<URetargetOpBase>>& OpStackFromAsset)
+{
+	bool bAllOpsInitialized = true;
+	// create copies of all the operations in the retarget asset for runtime use
+	OpStack.Reset(OpStackFromAsset.Num());
+	int32 OpIndex = 0;
+	for (const URetargetOpBase* OpFromAsset : OpStackFromAsset)
+	{
+		if (!OpFromAsset)
+		{
+			// this can happen if asset references deleted op type which should only happen during development (if at all)
+			Log.LogWarning(FText(LOCTEXT("UnknownPostOperation", "Retargeter has null/unknown post operation in it. Please remove it.")));
+			continue;
+		}
+
+		// create duplicate op instance with unique name
+		const FName BaseName = FName(*(OpFromAsset->GetName() + "_RetargetOpInstance_"));
+		const FName UniqueName = MakeUniqueObjectName(this, OpFromAsset->GetClass(), BaseName, EUniqueObjectNameOptions::GloballyUnique);
+		URetargetOpBase* NewOp = DuplicateObject(OpFromAsset, this, UniqueName);
+		
+		// initialize it and store in the processor
+		NewOp->bIsInitialized = NewOp->Initialize(this, SourceSkeleton, TargetSkeleton, Log);
+		bAllOpsInitialized &= NewOp->bIsInitialized;
+		OpStack.Add(NewOp);
+	}
+
+	return bAllOpsInitialized;
+}
+
 TArray<FTransform>&  UIKRetargetProcessor::RunRetargeter(
 	const TArray<FTransform>& InSourceGlobalPose,
 	const TMap<FName, float>& SpeedValuesFromCurves,
 	const float DeltaTime)
 {
 	check(bIsInitialized);
+
+#if WITH_EDITOR
+	// validate system running the retargeter has stripped all the scale out of the incoming pose
+	for (const FTransform& Transform : InSourceGlobalPose)
+	{
+		const bool bHasNoScale = Transform.GetScale3D().Equals(FVector::OneVector);
+		ensureMsgf(bHasNoScale, TEXT("Found scale values on incoming pose in retarget processor. Scale should be baked into translation and set to 1,1,1. "));
+	}
+#endif
 	
 	// start from retarget pose
 	TargetSkeleton.OutputGlobalPose = TargetSkeleton.RetargetGlobalPose;
@@ -1849,7 +1912,7 @@ TArray<FTransform>&  UIKRetargetProcessor::RunRetargeter(
 	}
 	
 	// IK CHAIN retargeting
-	if (GlobalSettings.bEnableIK && bAtLeastOneValidBoneChainPair && bIKRigInitialized)
+	if (bAtLeastOneValidBoneChainPair && bIKRigInitialized)
 	{
 		RunIKRetarget(InSourceGlobalPose, TargetSkeleton.OutputGlobalPose, SpeedValuesFromCurves, DeltaTime);
 	}
@@ -1858,6 +1921,12 @@ TArray<FTransform>&  UIKRetargetProcessor::RunRetargeter(
 	if (GlobalSettings.bEnableFK && bAtLeastOneValidBoneChainPair)
 	{
 		RunPoleVectorMatching(InSourceGlobalPose, TargetSkeleton.OutputGlobalPose);
+	}
+
+	// POST processes operations
+	if (GlobalSettings.bEnablePost)
+	{
+		RunRetargetOps(InSourceGlobalPose, TargetSkeleton.OutputGlobalPose);
 	}
 
 	return TargetSkeleton.OutputGlobalPose;
@@ -1917,6 +1986,7 @@ void UIKRetargetProcessor::RunIKRetarget(
 		// decode the IK goal and apply to IKRig
 		ChainPair.IKChainRetargeter.DecodePose(
 			ChainPair.Settings,
+			ChainPair.SpeedPlantSettings,
 			RootRetargeter,
 			SpeedValuesFromCurves,
 			DeltaTime,
@@ -1942,12 +2012,15 @@ void UIKRetargetProcessor::RunIKRetarget(
 		ChainPair.IKChainRetargeter.SaveDebugInfo(OutTargetGlobalPose);
 	}
 
-	// copy input pose to start IK solve from
-	IKRigProcessor->SetInputPoseGlobal(OutTargetGlobalPose);
-	// run IK solve
-	IKRigProcessor->Solve();
-	// copy results of solve
-	IKRigProcessor->CopyOutputGlobalPoseToArray(OutTargetGlobalPose);
+	if (GlobalSettings.bEnableIK)
+	{
+		// copy input pose to start IK solve from
+		IKRigProcessor->SetInputPoseGlobal(OutTargetGlobalPose);
+		// run IK solve
+		IKRigProcessor->Solve();
+		// copy results of solve
+		IKRigProcessor->CopyOutputGlobalPoseToArray(OutTargetGlobalPose);
+	}
 }
 
 void UIKRetargetProcessor::RunPoleVectorMatching(
@@ -1973,81 +2046,145 @@ void UIKRetargetProcessor::RunStrideWarping(const TArray<FTransform>& InTargetGl
 	{
 		return;
 	}
+
+	auto ConvertForwardVectorsToRotation = [](FVector& ForwardOrig, FVector& ForwardCurrent) -> FQuat
+	{
+		// project on floor (we only want Yaw) and normalize
+		ForwardOrig.Z = 0.0f;
+		ForwardCurrent.Z = 0.0f;
+		ForwardOrig.Normalize();
+		ForwardCurrent.Normalize();
+		// rotate from orig facing direction to current
+		return FQuat::FindBetweenNormals(ForwardOrig, ForwardCurrent);
+	};
+
+	// we need to determine the character's forward and side directions for warping
+	FVector InitialBodyPosition;
+	FVector CurrentBodyPosition;
+	FQuat CurrentRotation;
 	
 	// get sample points to use for "best fit" global body rotation
-	TArray<FVector> InitialPoints;
-	TArray<FVector> CurrentPoints;
-	if (GlobalSettings.DirectionSource == EWarpingDirectionSource::Goals)
+	switch(GlobalSettings.DirectionSource)
 	{
-		// use goals to determine the body's rotation
-		for (const FRetargetChainPairIK& ChainPair : ChainPairsIK)
+	case EWarpingDirectionSource::Goals:
 		{
-			if (!ChainPair.Settings.IK.bAffectedByIKWarping)
+			TArray<FVector> InitialPoints;
+			TArray<FVector> CurrentPoints;
+			
+			// use goals to determine the body's rotation
+			for (const FRetargetChainPairIK& ChainPair : ChainPairsIK)
 			{
-				continue;
-			}
-			FVector A = ChainPair.IKChainRetargeter.Target.InitialEndPosition;
-			FVector B = ChainPair.IKChainRetargeter.Results.EndEffectorPosition;
-
-			// flatten into 2D for more robust yaw construction (what really matters)
-			A.Z = 0.0f;
-			B.Z = 0.0f;
-		
-			InitialPoints.Add(A);
-			CurrentPoints.Add(B);
-		}
-	}
-	else
-	{
-		// use chain to determine the body's rotation
-		const FRetargetChainPairFK* SpineChain = ChainPairsFK.FindByPredicate(
-				[this](const FRetargetChainPairFK& Other)
+				if (!ChainPair.Settings.bAffectedByIKWarping)
 				{
-					return Other.TargetBoneChainName == GlobalSettings.DirectionChain;
-				});
-		if (!SpineChain)
+					continue;
+				}
+				FVector A = ChainPair.IKChainRetargeter.Target.InitialEndPosition;
+				FVector B = ChainPair.IKChainRetargeter.Results.EndEffectorPosition;
+
+				// flatten into 2D for more robust yaw construction (what really matters)
+				A.Z = 0.0f;
+				B.Z = 0.0f;
+		
+				InitialPoints.Add(A);
+				CurrentPoints.Add(B);
+			}
+
+			// calculate "best fit" global body rotation based on deformation of sample points
+			CurrentRotation = GetRotationFromDeformedPoints(
+				InitialPoints,
+				CurrentPoints,
+				InitialBodyPosition,
+				CurrentBodyPosition);
+			
+			break;
+		}
+	case EWarpingDirectionSource::Chain:
 		{
+			// use chain to determine the body's rotation
+			const FRetargetChainPairFK* Chain = ChainPairsFK.FindByPredicate(
+					[this](const FRetargetChainPairFK& Other)
+					{
+						return Other.TargetBoneChainName == GlobalSettings.DirectionChain;
+					});
+			if (!Chain)
+			{
+				return;
+			}
+
+			const TArray<FTransform>& InitialChainTransforms = Chain->FKDecoder.InitialGlobalTransforms;
+			const TArray<FTransform>& CurrentChainTransforms = Chain->FKDecoder.CurrentGlobalTransforms;
+			if (!ensure(!InitialChainTransforms.IsEmpty()))
+			{
+				return;
+			}
+
+			// calculate initial and current centroids
+			InitialBodyPosition = FVector::ZeroVector;
+			CurrentBodyPosition = FVector::ZeroVector;
+			for (int32 TransformIndex=0; TransformIndex<InitialChainTransforms.Num(); ++TransformIndex)
+			{
+				InitialBodyPosition += InitialChainTransforms[TransformIndex].GetTranslation();
+				CurrentBodyPosition += CurrentChainTransforms[TransformIndex].GetTranslation();
+			}
+			const float InvNum = 1.0f / static_cast<float>(InitialChainTransforms.Num());
+			InitialBodyPosition *= InvNum;
+			CurrentBodyPosition *= InvNum;
+
+			// get the forward vectors of the chain
+			FVector ForwardOrig;
+			FVector ForwardCurrent;
+			
+			// get forward vectors: orig and current
+			if (InitialChainTransforms.Num() == 1)
+			{
+				// in case of single bone chain, we rotate the global forward vector with this bone and then project onto floor
+				const FQuat DeltaRotation = InitialChainTransforms[0].GetRotation() * CurrentChainTransforms[0].GetRotation().Inverse();
+				ForwardOrig = GlobalSettings.GetAxisVector(GlobalSettings.ForwardDirection);
+				ForwardCurrent = DeltaRotation.RotateVector(ForwardOrig);
+			}
+			else
+			{
+				// in case of multi-bone chain, we use the vector from the start to the end of the chain
+				ForwardOrig = InitialChainTransforms.Last().GetTranslation() - InitialChainTransforms[0].GetTranslation();
+				ForwardCurrent = CurrentChainTransforms.Last().GetTranslation() - CurrentChainTransforms[0].GetTranslation();
+			}
+
+			// get rotation from fwd vectors
+			CurrentRotation = ConvertForwardVectorsToRotation(ForwardOrig, ForwardCurrent);
+			break;
+	}
+	case EWarpingDirectionSource::RootBone:
+		{
+			// use the root bone
+			InitialBodyPosition = TargetSkeleton.RetargetGlobalPose[0].GetTranslation();
+			CurrentBodyPosition = TargetSkeleton.OutputGlobalPose[0].GetTranslation();
+
+			// get the forward vectors of the root bone
+			const FQuat DeltaRotation = TargetSkeleton.RetargetGlobalPose[0].GetRotation() * TargetSkeleton.OutputGlobalPose[0].GetRotation().Inverse();
+			FVector ForwardOrig = GlobalSettings.GetAxisVector(GlobalSettings.ForwardDirection);
+			FVector ForwardCurrent = DeltaRotation.RotateVector(ForwardOrig);
+
+			// get rotation from fwd vectors
+			CurrentRotation = ConvertForwardVectorsToRotation(ForwardOrig, ForwardCurrent);
+			break;
+		}
+	default:
+		{
+			checkNoEntry();
 			return;
 		}
-
-		const TArray<FTransform>& InitialChainTransforms = SpineChain->FKDecoder.InitialGlobalTransforms;
-		const TArray<FTransform>& CurrentChainTransforms = SpineChain->FKDecoder.CurrentGlobalTransforms;
-
-		// calculate a "best fit" transform from deformed chain
-		for (int32 ChainIndex=0; ChainIndex<InitialChainTransforms.Num(); ++ChainIndex)
-		{
-			FVector A = InitialChainTransforms[ChainIndex].GetLocation();
-			FVector B = CurrentChainTransforms[ChainIndex].GetLocation();
-
-			// flatten into 2D for more robust yaw construction (what really matters)
-			A.Z = 0.0f;
-			B.Z = 0.0f;
-		
-			InitialPoints.Add(A);
-			CurrentPoints.Add(B);
-		}
 	}
-
-	// calculate "best fit" global body rotation based on deformation of sample points
-	FVector InitialGoalCentroid;
-	FVector CurrentGoalCentroid;
-	const FQuat BestFitBodyRotation = GetRotationFromDeformedPoints(
-		InitialPoints,
-		CurrentPoints,
-		InitialGoalCentroid,
-		CurrentGoalCentroid);
-
-	// generate axes based on body rotation
-	FTransform InitialGlobalGoalTransform = FTransform(FQuat::Identity, InitialGoalCentroid);
-	FTransform CurrentGlobalGoalTransform = FTransform(BestFitBodyRotation, CurrentGoalCentroid);
-	const FVector& Fwd = CurrentGlobalGoalTransform.TransformVector(GlobalSettings.GetAxisVector(GlobalSettings.ForwardDirection));
-	const FVector& Side = FVector::CrossProduct(Fwd, FVector::ZAxisVector);
-	const FVector SideOrig = FVector::CrossProduct(GlobalSettings.GetAxisVector(GlobalSettings.ForwardDirection), FVector::ZAxisVector);
+	
+	FTransform CurrentBodyTransform = FTransform(CurrentRotation, CurrentBodyPosition);
+	FTransform InitialBodyTransform = FTransform(FQuat::Identity, InitialBodyPosition);
+	FVector Fwd = CurrentBodyTransform.TransformVector(GlobalSettings.GetAxisVector(GlobalSettings.ForwardDirection));
+	FVector Side = FVector::CrossProduct(Fwd, FVector::ZAxisVector);
+	FVector SideOrig = FVector::CrossProduct(GlobalSettings.GetAxisVector(GlobalSettings.ForwardDirection), FVector::ZAxisVector);
 
 	// warp goal positions...
 	for (FRetargetChainPairIK& ChainPair : ChainPairsIK)
 	{
-		if (!ChainPair.Settings.IK.bAffectedByIKWarping)
+		if (!ChainPair.Settings.bAffectedByIKWarping)
 		{
 			continue;
 		}
@@ -2055,11 +2192,11 @@ void UIKRetargetProcessor::RunStrideWarping(const TArray<FTransform>& InTargetGl
 		FChainRetargeterIK& ChainRetargeter = ChainPair.IKChainRetargeter;
 
 		// warp this goal position in various ways...
-		FVector WarpedGoalPosition = ChainRetargeter.Results.EndEffectorPosition;
+		FVector& WarpedGoalPosition = ChainRetargeter.Results.EndEffectorPosition;
 		
 		// forward warping
-		const FVector InitialGoalInOrigSpace = InitialGlobalGoalTransform.InverseTransformPosition(ChainRetargeter.Target.InitialEndPosition);
-		const FVector IntialGoalInCurrentSpace = CurrentGlobalGoalTransform.TransformPosition(InitialGoalInOrigSpace);
+		const FVector InitialGoalInOrigSpace = InitialBodyTransform.InverseTransformPosition(ChainRetargeter.Target.InitialEndPosition);
+		const FVector IntialGoalInCurrentSpace = CurrentBodyTransform.TransformPosition(InitialGoalInOrigSpace);
 		const FPlane FwdPlane(IntialGoalInCurrentSpace, Fwd);
 		const FVector GoalProjOnFwdPlane = FwdPlane.PointPlaneProject(WarpedGoalPosition, FwdPlane);
 		WarpedGoalPosition = GoalProjOnFwdPlane + ((WarpedGoalPosition - GoalProjOnFwdPlane) * GlobalSettings.WarpForwards);
@@ -2071,15 +2208,27 @@ void UIKRetargetProcessor::RunStrideWarping(const TArray<FTransform>& InTargetGl
 		WarpedGoalPosition += Side * GlobalSettings.SidewaysOffset * GoalSideMultiplier;
 
 		// splay warping
-		WarpedGoalPosition = CurrentGoalCentroid + (WarpedGoalPosition - CurrentGoalCentroid) * GlobalSettings.WarpSplay; 
-
-		// assign warped position
-		ChainRetargeter.Results.EndEffectorPosition = WarpedGoalPosition;
+		FVector SplayOrigin = CurrentBodyPosition;
+		SplayOrigin.Z = WarpedGoalPosition.Z;
+		WarpedGoalPosition = SplayOrigin + (WarpedGoalPosition - SplayOrigin) * GlobalSettings.WarpSplay; 
 	}
 
 #if WITH_EDITOR
-	DebugData.StrideWarpingFrame = CurrentGlobalGoalTransform;
+	DebugData.StrideWarpingFrame = CurrentBodyTransform;
 #endif
+}
+
+void UIKRetargetProcessor::RunRetargetOps(
+	const TArray<FTransform>& InSourceGlobalPose,
+	TArray<FTransform>& OutTargetGlobalPose)
+{
+	for (URetargetOpBase* RetargetOp : OpStack)
+	{
+		if (RetargetOp->bIsEnabled && RetargetOp->bIsInitialized)
+		{
+			RetargetOp->Run(this, InSourceGlobalPose, OutTargetGlobalPose);
+		}
+	}
 }
 
 void UIKRetargetProcessor::ResetPlanting()
@@ -2095,23 +2244,54 @@ bool UIKRetargetProcessor::WasInitializedWithTheseAssets(
 	const TObjectPtr<USkeletalMesh> InTargetMesh,
 	const TObjectPtr<UIKRetargeter> InRetargetAsset)
 {
+	// not initialized at all
 	if (!IsInitialized())
 	{
 		return false;
 	}
-
-	const bool bSourceMatches = InSourceMesh == GetSourceSkeleton().SkeletalMesh;
-	const bool bTargetMatches = InTargetMesh == GetTargetSkeleton().SkeletalMesh;
-	const bool bAssetMatches = InRetargetAsset == RetargeterAsset;
 	
-	return bSourceMatches && bTargetMatches && bAssetMatches;
-}
+	// asset has been modified in a way that requires reinitialization
+	if (AssetVersionInitializedWith != InRetargetAsset->GetVersion())
+	{
+		return false;
+	}
 
-#if WITH_EDITOR
+	// check that both the source and target skeletal meshes are the same as what we initialized with
+	const FRetargetSkeleton& SourceRetargetSkeleton = GetSkeleton(ERetargetSourceOrTarget::Source);
+	const FRetargetSkeleton& TargetRetargetSkeleton = GetSkeleton(ERetargetSourceOrTarget::Target);
+	const bool bSourceMatches = InSourceMesh == SourceRetargetSkeleton.SkeletalMesh;
+	const bool bTargetMatches = InTargetMesh == TargetRetargetSkeleton.SkeletalMesh;
+	if (!(bSourceMatches && bTargetMatches))
+	{
+		return false;
+	}
+
+	// check that the retarget asset is the same as what we initialized with
+	if (InRetargetAsset != RetargeterAsset)
+	{
+		return false;
+	}
+
+	// check that the number of bones are the same as what we initialized with
+	const bool bSourceHasSameNumberOfBones = InSourceMesh->GetRefSkeleton().GetNum() == SourceRetargetSkeleton.BoneNames.Num();
+	const bool bTargetHasSameNumberOfBones = InTargetMesh->GetRefSkeleton().GetNum() == TargetRetargetSkeleton.BoneNames.Num();
+	if (!(bSourceHasSameNumberOfBones && bTargetHasSameNumberOfBones))
+	{
+		return false;
+	}
+	
+	return true;
+}
 
 void UIKRetargetProcessor::SetNeedsInitialized()
 {
 	bIsInitialized = false;
+
+	if (RetargeterAsset)
+	{
+		RetargeterAsset->IncrementVersion(); // triggers re-init
+	}
+	
 	if (IKRigProcessor)
 	{
 		// may not be initialized yet (during setup as prerequisites are being created)
@@ -2119,14 +2299,27 @@ void UIKRetargetProcessor::SetNeedsInitialized()
 	}
 }
 
+#if WITH_EDITOR
+
 bool UIKRetargetProcessor::IsBoneRetargeted(
-	const int32& BoneIndex,
-	const int8& SkeletonToCheck) const
+	const FName BoneName,
+	const ERetargetSourceOrTarget SourceOrTarget) const
 {
-	const bool bUseSourceSkeleton = SkeletonToCheck == 0;
-	const FRetargetSkeleton& Skeleton = bUseSourceSkeleton ? SourceSkeleton : TargetSkeleton;
-	const int32 RootBoneIndex = bUseSourceSkeleton ? GetSourceRetargetRoot() : GetTargetRetargetRoot();
-	if (BoneIndex==RootBoneIndex)
+	ensure(bIsInitialized);
+	
+	// NOTE: cannot use Skeleton.IsBoneRetargeted because that only exists
+	// on the target skeleton and this function needs to work for either skeleton
+	
+	const FRetargetSkeleton& Skeleton = GetSkeleton(SourceOrTarget);
+	const int32 BoneIndex = Skeleton.FindBoneIndexByName(BoneName);
+	if (BoneIndex == INDEX_NONE)
+	{
+		// bone doesn't exist, therefore not retargeted
+		return false;
+	}
+	
+	const FName RootBoneName = GetRetargetRoot(SourceOrTarget);
+	if (BoneName == RootBoneName)
 	{
 		// retarget root is always retargeted
 		return true;
@@ -2137,41 +2330,34 @@ bool UIKRetargetProcessor::IsBoneRetargeted(
 		// bones not in a chain, therefore cannot be retargeted
 		return false;
 	}
-
-	// bone must be in a chain that is actually mapped to something
-	const TArray<TObjectPtr<URetargetChainSettings>>& ChainMaps = RetargeterAsset->GetAllChainSettings();
-	for (const TObjectPtr<URetargetChainSettings>& ChainMap : ChainMaps)
+	
+	// bone must be in a successfully resolved chain that is mapped and ready to retarget
+	for (const FRetargetChainPairFK& ChainPair : ChainPairsFK)
 	{
-		if (ChainMap->SourceChain == NAME_None || ChainMap->TargetChain == NAME_None)
+		const FName ChainName = SourceOrTarget == ERetargetSourceOrTarget::Source ? ChainPair.SourceBoneChainName : ChainPair.TargetBoneChainName;
+		if (ChainName == ChainThatContainsBone)
 		{
-			continue;
-		}
-		
-		if (bUseSourceSkeleton)
-		{
-			if (ChainMap->SourceChain == ChainThatContainsBone)
-			{
-				return true;
-			}
-		}
-		else
-		{
-			if (ChainMap->TargetChain == ChainThatContainsBone)
-			{
-				return true;
-			}
+			return true;
 		}
 	}
 
 	return false;
 }
 
-FName UIKRetargetProcessor::GetChainNameForBone(const int32& BoneIndex, const int8& SkeletonToCheck) const
+int32 UIKRetargetProcessor::GetBoneIndexFromName(
+	const FName BoneName,
+	const ERetargetSourceOrTarget SourceOrTarget) const
 {
-	const bool bUseSourceSkeleton = SkeletonToCheck == 0;
-	const FRetargetSkeleton& Skeleton = bUseSourceSkeleton ? SourceSkeleton : TargetSkeleton;
-	const int32 RootBoneIndex = bUseSourceSkeleton ? GetSourceRetargetRoot() : GetTargetRetargetRoot();
-	if (RootBoneIndex == BoneIndex)
+	return GetSkeleton(SourceOrTarget).FindBoneIndexByName(BoneName);
+}
+
+FName UIKRetargetProcessor::GetChainNameForBone(const FName BoneName, const ERetargetSourceOrTarget SourceOrTarget) const
+{
+	const bool bUseSource = SourceOrTarget == ERetargetSourceOrTarget::Source;
+	const FRetargetSkeleton& Skeleton = bUseSource ? SourceSkeleton : TargetSkeleton;
+	const int32 BoneIndex = GetBoneIndexFromName(BoneName, SourceOrTarget);
+	const FName RootBoneName = GetRetargetRoot(SourceOrTarget);
+	if (BoneName == RootBoneName)
 	{
 		return FName("Retarget Root");
 	}
@@ -2179,17 +2365,105 @@ FName UIKRetargetProcessor::GetChainNameForBone(const int32& BoneIndex, const in
 	return Skeleton.ChainThatContainsBone[BoneIndex];
 }
 
+FTransform UIKRetargetProcessor::GetGlobalRetargetPoseAtParam(
+	const FName InChainName,
+	const float Param,
+	const ERetargetSourceOrTarget SourceOrTarget) const
+{
+	if (const FChainFK* Chain = GetChain(InChainName, SourceOrTarget))
+	{
+		return Chain->GetTransformAtParam(Chain->InitialGlobalTransforms, Param);
+	}
+
+	checkNoEntry();
+	return FTransform::Identity;
+}
+
+const FChainFK* UIKRetargetProcessor::GetChain(const FName InChainName, const ERetargetSourceOrTarget SourceOrTarget) const
+{
+	const bool bIsSource = SourceOrTarget == ERetargetSourceOrTarget::Source;
+	for (const FRetargetChainPairFK& ChainPair : ChainPairsFK)
+	{
+		const FName ChainName = bIsSource ? ChainPair.SourceBoneChainName : ChainPair.TargetBoneChainName;
+		if (ChainName == InChainName)
+		{
+			const FChainFK* Encoder = &ChainPair.FKEncoder;
+			const FChainFK* Decoder = &ChainPair.FKDecoder;
+			return bIsSource ? Encoder : Decoder;
+		}
+	}
+
+	return nullptr;
+}
+
+float UIKRetargetProcessor::GetParamOfBoneInChain(
+	const FName InBoneName,
+	const ERetargetSourceOrTarget SourceOrTarget) const
+{
+	const FName ChainName = GetChainNameForBone(InBoneName, SourceOrTarget);
+	const FChainFK* Chain = GetChain(ChainName, SourceOrTarget);
+	if (!Chain)
+	{
+		return INDEX_NONE;
+	}
+
+	const int32 BoneIndexInSkeleton = GetBoneIndexFromName(InBoneName, SourceOrTarget);
+	const int32 BoneIndexInChain =  Chain->BoneIndices.Find(BoneIndexInSkeleton);
+	return Chain->Params[BoneIndexInChain];
+}
+
+FName UIKRetargetProcessor::GetBoneAtParam(
+	const FName InChainName, 
+	const float InParam,
+	const ERetargetSourceOrTarget SourceOrTarget) const
+{
+	const FChainFK* Chain = GetChain(InChainName, SourceOrTarget);
+	const FRetargetSkeleton& Skeleton = GetSkeleton(SourceOrTarget);
+	if (Chain->BoneIndices.Num() == 1 || InParam < 0.0f)
+	{
+		return Skeleton.BoneNames[Chain->BoneIndices[0]];
+	}
+	
+	for (int32 ChainIndex = Chain->Params.Num()-1; ChainIndex >= 0 ; --ChainIndex)
+	{
+		if (Chain->Params[ChainIndex] <= InParam)
+		{
+			return Skeleton.BoneNames[Chain->BoneIndices[ChainIndex]];
+		}
+	}
+
+	checkNoEntry();
+	return NAME_None;
+}
+
+FName UIKRetargetProcessor::GetMappedChainName(
+	const FName InChainName,
+	const ERetargetSourceOrTarget SourceOrTarget)
+{
+	const bool bIsSource = SourceOrTarget == ERetargetSourceOrTarget::Source;
+	for (const FRetargetChainPairFK& ChainPair : ChainPairsFK)
+	{
+		const FName ChainName = bIsSource ? ChainPair.SourceBoneChainName : ChainPair.TargetBoneChainName;
+		if (ChainName == InChainName)
+		{
+			return bIsSource ? ChainPair.TargetBoneChainName : ChainPair.SourceBoneChainName;
+		}
+	}
+
+	return NAME_None;
+}
+
 #endif
 
 void UIKRetargetProcessor::ApplySettingsFromAsset()
 {
 	// copy IK Rig settings
-	if (const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetTargetIKRig())
+	if (const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Target))
 	{
 		IKRigProcessor->CopyAllInputsFromSourceAssetAtRuntime(TargetIKRig);
 	}
 	
-	// copy chain settings
+	// copy chain settings from the asset
 	const TArray<TObjectPtr<URetargetChainSettings>>& AllChainSettings = RetargeterAsset->GetAllChainSettings();
 	for (const TObjectPtr<URetargetChainSettings>& ChainSettings : AllChainSettings)
 	{
@@ -2197,7 +2471,7 @@ void UIKRetargetProcessor::ApplySettingsFromAsset()
 		{
 			if (Chain.TargetBoneChainName == ChainSettings->TargetChain)
 			{
-				Chain.Settings.CopySettingsFromAsset(ChainSettings);
+				Chain.Settings = ChainSettings->Settings.FK;
 			}
 		}
 		
@@ -2205,22 +2479,40 @@ void UIKRetargetProcessor::ApplySettingsFromAsset()
 		{
 			if (Chain.TargetBoneChainName == ChainSettings->TargetChain)
 			{
-				Chain.Settings.CopySettingsFromAsset(ChainSettings);
+				Chain.Settings = ChainSettings->Settings.IK;
+				Chain.SpeedPlantSettings = ChainSettings->Settings.SpeedPlanting;
 			}
 		}
 	}
 
 	// copy root settings
-	RootRetargeter.Settings.CopySettingsFromAsset(RetargeterAsset->GetRootSettingsUObject());
+	RootRetargeter.Settings = RetargeterAsset->GetRootSettingsUObject()->Settings;
 
 	// copy global settings
 	GlobalSettings = RetargeterAsset->GetGlobalSettings();
 
+	// apply current retarget poses (only applied if the pose has been switched to a different one OR if the current pose was modified)
+	const FName SourcePose = RetargeterAsset->GetCurrentRetargetPoseName(ERetargetSourceOrTarget::Source);
+	const FName TargetPose = RetargeterAsset->GetCurrentRetargetPoseName(ERetargetSourceOrTarget::Target);
+	UpdateRetargetPoseAtRuntime(SourcePose, ERetargetSourceOrTarget::Source);
+	UpdateRetargetPoseAtRuntime(TargetPose, ERetargetSourceOrTarget::Target);
+
 	// apply the current profile
+	// (this is always applied last so that profile overrides take precedence over asset settings)
 	if (const FRetargetProfile* CurrentProfile = RetargeterAsset->GetCurrentProfile())
 	{
 		ApplySettingsFromProfile(*CurrentProfile);
 	}
+}
+
+const FRetargetSkeleton& UIKRetargetProcessor::GetSkeleton(ERetargetSourceOrTarget SourceOrTarget) const
+{
+	return SourceOrTarget == ERetargetSourceOrTarget::Source ? SourceSkeleton : TargetSkeleton;
+}
+
+FName UIKRetargetProcessor::GetRetargetRoot(ERetargetSourceOrTarget SourceOrTarget) const
+{
+	return SourceOrTarget == ERetargetSourceOrTarget::Source ? RootRetargeter.Source.BoneName : RootRetargeter.Target.BoneName;
 }
 
 void UIKRetargetProcessor::ApplySettingsFromProfile(const FRetargetProfile& Profile)
@@ -2228,11 +2520,11 @@ void UIKRetargetProcessor::ApplySettingsFromProfile(const FRetargetProfile& Prof
 	// assign retarget poses specified in the profile
 	if (Profile.bApplySourceRetargetPose)
 	{
-		ApplyNewRetargetPose(Profile.SourceRetargetPoseName, ERetargetSourceOrTarget::Source);
+		UpdateRetargetPoseAtRuntime(Profile.SourceRetargetPoseName, ERetargetSourceOrTarget::Source);
 	}
 	if (Profile.bApplyTargetRetargetPose)
 	{
-		ApplyNewRetargetPose(Profile.TargetRetargetPoseName, ERetargetSourceOrTarget::Target);
+		UpdateRetargetPoseAtRuntime(Profile.TargetRetargetPoseName, ERetargetSourceOrTarget::Target);
 	}
 
 	// assign chain settings
@@ -2244,7 +2536,7 @@ void UIKRetargetProcessor::ApplySettingsFromProfile(const FRetargetProfile& Prof
 			{
 				if (Chain.TargetBoneChainName == ChainSettings.Key)
 				{
-					Chain.Settings = ChainSettings.Value;
+					Chain.Settings = ChainSettings.Value.FK;
 				}
 			}
 		
@@ -2252,7 +2544,7 @@ void UIKRetargetProcessor::ApplySettingsFromProfile(const FRetargetProfile& Prof
 			{
 				if (Chain.TargetBoneChainName == ChainSettings.Key)
 				{
-					Chain.Settings = ChainSettings.Value;
+					Chain.Settings = ChainSettings.Value.IK;
 				}
 			}
 		}
@@ -2271,35 +2563,37 @@ void UIKRetargetProcessor::ApplySettingsFromProfile(const FRetargetProfile& Prof
 	}
 }
 
-void UIKRetargetProcessor::ApplyNewRetargetPose(
+void UIKRetargetProcessor::UpdateRetargetPoseAtRuntime(
 	const FName NewRetargetPoseName,
 	ERetargetSourceOrTarget SourceOrTarget)
 {
-	const bool bIsSource = SourceOrTarget == ERetargetSourceOrTarget::Source;
-	FRetargetSkeleton& RetargetSkeleton = bIsSource ? SourceSkeleton : TargetSkeleton;
-	if (NewRetargetPoseName == NAME_None || RetargetSkeleton.RetargetPoseName == NewRetargetPoseName)
-	{
-		return; // retarget pose not specified, or already in use
-	}
-
 	const FIKRetargetPose* NewRetargetPose = RetargeterAsset->GetRetargetPoseByName(SourceOrTarget, NewRetargetPoseName);
 	if (!NewRetargetPose)
 	{
-		return;
+		return; // retarget pose not found
 	}
 
+	const bool bIsSource = SourceOrTarget == ERetargetSourceOrTarget::Source;
+	FRetargetSkeleton& RetargetSkeleton = bIsSource ? SourceSkeleton : TargetSkeleton;
+	const bool bSameRetargetPose = RetargetSkeleton.RetargetPoseName == NewRetargetPoseName;
+	const bool bSameVersion = RetargetSkeleton.RetargetPoseVersion == NewRetargetPose->GetVersion();
+	if (bSameRetargetPose && bSameVersion)
+	{
+		return; // retarget pose has not changed since it was initialized
+	}
+	
 	const FName RootBoneName = bIsSource ? RootRetargeter.Source.BoneName : RootRetargeter.Target.BoneName;
 	if (RootBoneName == NAME_None)
 	{
-		return;
+		return; // cannot regenerate pose without a root bone
 	}
 
 	// re-generate the retarget pose
 	RetargetSkeleton.GenerateRetargetPose(NewRetargetPoseName, NewRetargetPose, RootBoneName);
 
 	// re-initialize the bone chains using the newly generated retarget pose
-	const UIKRigDefinition* SourceIKRig = RetargeterAsset->GetSourceIKRig();
-	const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetTargetIKRig();
+	const UIKRigDefinition* SourceIKRig = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Source);
+	const UIKRigDefinition* TargetIKRig = RetargeterAsset->GetIKRig(ERetargetSourceOrTarget::Target);
 	if (!(SourceIKRig && TargetIKRig))
 	{
 		return;

@@ -117,6 +117,9 @@ public:
 	/** Set the amount to scale each lines height by */
 	SLATE_API void SetLineHeightPercentage(const TAttribute<float>& InLineHeightPercentage);
 
+	/** Set whether to leave extra space below the last line due to line height */
+	SLATE_API void SetApplyLineHeightToBottomLine(const TAttribute<bool>& InApplyLineHeightToBottomLine);
+
 	/** Set the text overflow policy that should be used to determine what happens to clipped text */
 	SLATE_API void SetOverflowPolicy(TOptional<ETextOverflowPolicy> InOverflowPolicy);
 
@@ -586,6 +589,9 @@ private:
 
 	/** The amount to scale each lines height by */
 	TAttribute<float> LineHeightPercentage;
+
+	/** Whether to leave extra space below the last line due to line height */
+	TAttribute<bool> ApplyLineHeightToBottomLine;
 
 	/** The information used to help identify who owns this text layout in the case of an error */
 	TAttribute<FString> DebugSourceInfo;

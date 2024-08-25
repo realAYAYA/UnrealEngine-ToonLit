@@ -1,9 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "FileDecoder.h"
-#include "OpusAudioInfo.h"
-#include "VorbisAudioInfo.h"
 #include "HAL/PlatformFileManager.h"
+#include "DSP/FloatArrayMath.h"
 
 FAudioFileReader::FAudioFileReader(const FString& InPath)
 {
@@ -53,47 +52,27 @@ bool FAudioFileReader::PopAudio(float* OutAudio, int32 NumSamples)
 	bool bIsFinished = Decompressor->ReadCompressedData((uint8*) DecompressionBuffer.GetData(), false, NumSamples * sizeof(Audio::DefaultUSoundWaveSampleType));
 
 	// Convert to float:
-	for (int32 Index = 0; Index < NumSamples; Index++)
-	{
-		OutAudio[Index] = ((float)DecompressionBuffer[Index]) / 32768.0f;
-	}
+	Audio::ArrayPcm16ToFloat(MakeArrayView((int16*)DecompressionBuffer.GetData(), NumSamples), MakeArrayView(OutAudio, NumSamples));
 
 	return bIsFinished;
 }
 
 ICompressedAudioInfo* FAudioFileReader::GetNewDecompressorForFile(const FString& InPath)
-{
-	FString Extension = GetExtensionForFile(InPath);
+{	
+	using namespace Audio;
+	using FMapping = TTuple<FString, FName>; 
+	const FMapping Extensions[] =
+	{	
+		{ TEXT(".opus"), NAME_OPUS },
+		{ TEXT(".vorbis"), NAME_OGG },
+		{ TEXT(".binka"), NAME_BINKA }
+	};
 
-	static const FString OpusExtension = TEXT("opus");
-	static const FString OggExtension = TEXT("ogg");
-
-#if PLATFORM_SUPPORTS_OPUS_CODEC 
-	if (Extension.Equals(OpusExtension))
+	const FString LowerPath = InPath.ToLower();
+	if (const FMapping* Found = Algo::FindByPredicate(Extensions, [LowerPath](const auto &i) -> bool { return LowerPath.EndsWith(i.Key); }) )
 	{
-		return new FOpusAudioInfo();
+		return IAudioInfoFactoryRegistry::Get().Create(Found->Value);		
 	}
-#endif
-#if PLATFORM_SUPPORTS_VORBIS_CODEC 
-	if (Extension.Equals(OggExtension))
-	{
-		return new FVorbisAudioInfo();
-	}
-#endif
-
-	UE_LOG(LogTemp, Error, TEXT("Unknown extension '%s' for the FAudioFileReader formats supported on this platform."), *Extension);
+	UE_LOG(LogTemp, Error, TEXT("Unable to determin/create decompressor for '%s'"), *InPath);
 	return nullptr;
-}
-
-FString FAudioFileReader::GetExtensionForFile(const FString& InPath)
-{
-	int32 Index = INDEX_NONE;
-	if (InPath.FindLastChar(TCHAR('.'), Index))
-	{
-		return InPath.RightChop(Index + 1);
-	}
-	else
-	{
-		return FString();
-	}
 }

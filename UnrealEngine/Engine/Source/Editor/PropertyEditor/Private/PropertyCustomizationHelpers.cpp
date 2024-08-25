@@ -67,14 +67,14 @@ namespace PropertyCustomizationHelpers
 				SNew(SBox)
 				.HAlign(HAlign_Center)
 				.VAlign(VAlign_Center)
-				.WidthOverride(22)
-				.HeightOverride(22)
+				.WidthOverride(22.0f)
+				.HeightOverride(22.0f)
 				.ToolTipText(InArgs._Text)
 				[
 					SNew(SButton)
 					.ButtonStyle( FAppStyle::Get(), "SimpleButton" )
 					.OnClicked( this, &SPropertyEditorButton::OnClick )
-					.ContentPadding(0)
+					.ContentPadding(0.0f)
 					.IsFocusable(InArgs._IsFocusable)
 					[ 
 						SNew( SImage )
@@ -142,11 +142,15 @@ namespace PropertyCustomizationHelpers
 			.IsFocusable( false );
 	}
 
-	TSharedRef<SWidget> MakeUseSelectedButton( FSimpleDelegate OnUseSelectedClicked, TAttribute<FText> OptionalToolTipText, TAttribute<bool> IsEnabled )
+	TSharedRef<SWidget> MakeUseSelectedButton( FSimpleDelegate OnUseSelectedClicked, TAttribute<FText> OptionalToolTipText, TAttribute<bool> IsEnabled, const bool IsActor )
 	{
 		return
 			SNew( SPropertyEditorButton )
-			.Text( OptionalToolTipText.Get().IsEmpty() ? LOCTEXT( "UseButtonToolTipText", "Use Selected Asset from Content Browser") : OptionalToolTipText )
+			.Text(
+				!OptionalToolTipText.Get().IsEmpty() ? OptionalToolTipText
+				: IsActor ? LOCTEXT( "UseActorButtonToolTipText", "Use Selected Actor from the Level Editor")
+				: LOCTEXT( "UseButtonToolTipText", "Use Selected Asset from Content Browser")
+			)
 			.Image( FAppStyle::GetBrush("Icons.Use") )
 			.OnClickAction( OnUseSelectedClicked )
 			.IsEnabled(IsEnabled)
@@ -173,6 +177,37 @@ namespace PropertyCustomizationHelpers
 			.OnClickAction( OnClearClicked )
 			.IsEnabled(IsEnabled)
 			.IsFocusable( false );
+	}
+
+	TSharedRef<SWidget> MakeSetOptionalButton(FSimpleDelegate OnSetOptionalClicked, TAttribute<FText> OptionalToolTipText, TAttribute<bool> IsEnabled)
+	{
+		// Custom widget for this button as it has no image and should fill a larger space
+		return SNew(SBox)
+			.HAlign(HAlign_Left)
+			.VAlign(VAlign_Center)
+			.ToolTipText(OptionalToolTipText.Get().IsEmpty() ? LOCTEXT("SetOptionalButtonToolTipText", "Set Optional to default value.") : OptionalToolTipText)
+			[
+				SNew(SButton)
+				.ButtonStyle(FAppStyle::Get(), "Button")
+				.OnClicked_Lambda([OnSetOptionalClicked](){
+					OnSetOptionalClicked.ExecuteIfBound();
+					return FReply::Handled();
+				})
+				.Text(LOCTEXT("SetButtonText", "Set to Value"))
+				.ContentPadding(0.0f)
+				.IsFocusable(false)
+			];
+	}
+
+	TSharedRef<SWidget> MakeClearOptionalButton(FSimpleDelegate OnClearOptionalClicked, TAttribute<FText> OptionalToolTipText, TAttribute<bool> IsEnabled)
+	{
+		return
+			SNew(SPropertyEditorButton)
+			.Text(OptionalToolTipText.Get().IsEmpty() ? LOCTEXT("ClearOptionalButtonToolTipText", "Clear Optional") : OptionalToolTipText)
+			.Image(FAppStyle::Get().GetBrush("Icons.X"))
+			.OnClickAction(OnClearOptionalClicked)
+			.IsEnabled(IsEnabled)
+			.IsFocusable(false);
 	}
 
 	FText GetVisibilityDisplay(TAttribute<bool> bEnabled)
@@ -251,7 +286,7 @@ namespace PropertyCustomizationHelpers
 		return
 			SNew(SComboButton)
 			.ComboButtonStyle( FAppStyle::Get(), "SimpleComboButton" )
-			.ContentPadding(2)
+			.ContentPadding(2.0f)
 			.ForegroundColor( FSlateColor::UseForeground() )
 			.HasDownArrow(true)
 			.MenuContent()
@@ -317,6 +352,20 @@ namespace PropertyCustomizationHelpers
 			SNew( SPropertyMenuActorPicker )
 			.InitialActor(InitialActor)
 			.AllowClear(AllowClear)
+			.AllowPickingLevelInstanceContent(false)
+			.ActorFilter(ActorFilter)
+			.OnSet(OnSet)
+			.OnClose(OnClose)
+			.OnUseSelected(OnUseSelected);
+	}
+
+	TSharedRef<SWidget> MakeActorPickerWithMenu(AActor* const InitialActor, const bool AllowClear, const bool AllowPickingLevelInstanceContent, FOnShouldFilterActor ActorFilter, FOnActorSelected OnSet, FSimpleDelegate OnClose, FSimpleDelegate OnUseSelected)
+	{
+		return
+			SNew(SPropertyMenuActorPicker)
+			.InitialActor(InitialActor)
+			.AllowClear(AllowClear)
+			.AllowPickingLevelInstanceContent(AllowPickingLevelInstanceContent)
 			.ActorFilter(ActorFilter)
 			.OnSet(OnSet)
 			.OnClose(OnClose)
@@ -617,6 +666,7 @@ void SClassPropertyEntryBox::Construct(const FArguments& InArgs)
 				.ShowTree(InArgs._ShowTreeView)
 				.SelectedClass(InArgs._SelectedClass)
 				.OnSetClass(InArgs._OnSetClass)
+				.ClassViewerFilters(InArgs._ClassViewerFilters)
 		]
 	];
 }
@@ -1043,7 +1093,7 @@ public:
 								[
 									SNew(SHorizontalBox)
 									+ SHorizontalBox::Slot()
-									.Padding(0)
+									.Padding(0.0f)
 									.VAlign(VAlign_Center)
 									.AutoWidth()
 									[
@@ -1060,7 +1110,7 @@ public:
 									+ SHorizontalBox::Slot()
 									.VAlign(VAlign_Center)
 									.FillWidth(1.0f)
-									.Padding(5, 0, 0, 0)
+									.Padding(5.0f, 0.0f, 0.0f, 0.0f)
 									[
 										SNew(SBox)
 										.HAlign(HAlign_Fill)
@@ -1071,7 +1121,7 @@ public:
 											SNew(SComboButton)
 											.OnGetMenuContent(this, &FSectionItemView::OnGetMaterialSlotNameMenuForSection)
 											.VAlign(VAlign_Center)
-											.ContentPadding(2)
+											.ContentPadding(2.0f)
 											.IsEnabled(!SectionItem.IsSectionUsingCloth)
 											.ButtonContent()
 											[
@@ -1447,6 +1497,8 @@ void SMaterialSlotWidget::Construct(const FArguments& InArgs, int32 SlotIndex, b
 			LOCTEXT("CustomNameMaterialNotUsedDeleteTooltip", "Delete this material slot"),
 			InArgs._CanDeleteMaterialSlot);
 
+	DeleteButton->SetVisibility(InArgs._DeleteMaterialSlotVisibility);
+
 	ChildSlot
 	[
 		SAssignNew(SlotNameBox, SHorizontalBox)
@@ -1460,7 +1512,7 @@ void SMaterialSlotWidget::Construct(const FArguments& InArgs, int32 SlotIndex, b
 			[
 				SNew(STextBlock)
 				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.Text(LOCTEXT("MaterialArrayNameLabelStringKey", "Slot Name"))
+				.Text(LOCTEXT("MaterialArrayNameLabelStringKey", "Slot"))
 			]
 		]
 		+ SHorizontalBox::Slot()
@@ -1473,6 +1525,7 @@ void SMaterialSlotWidget::Construct(const FArguments& InArgs, int32 SlotIndex, b
 			[
 				SNew(SEditableTextBox)
 				.Text(InArgs._MaterialName)
+				.IsReadOnly(InArgs._IsMaterialSlotNameReadOnly)
 				.OnTextChanged(InArgs._OnMaterialNameChanged)
 				.OnTextCommitted(InArgs._OnMaterialNameCommitted)
 				.Font(IDetailLayoutBuilder::GetDetailFont())

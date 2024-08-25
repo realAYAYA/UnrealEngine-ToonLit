@@ -232,8 +232,8 @@ UE_NET_TEST_FIXTURE(FCompressedChangeMaskTest, WriteChangeMasks)
 	// Log stats
 	if (ChangeMaskStats.TotalChangeMaskBits > 0)
 	{
-		float Ratio = ChangeMaskStats.TotalWrittenBits / (float)ChangeMaskStats.TotalChangeMaskBits;
-		float WrittenBitsPerDirtyBit = ChangeMaskStats.TotalWrittenBits / (float)ChangeMaskStats.TotalSetBits;
+		float Ratio = static_cast<float>(ChangeMaskStats.TotalWrittenBits) / static_cast<float>(ChangeMaskStats.TotalChangeMaskBits);
+		float WrittenBitsPerDirtyBit = static_cast<float>(ChangeMaskStats.TotalWrittenBits) / static_cast<float>(ChangeMaskStats.TotalSetBits);
 
 		UE_NET_LOG(TEXT("")) << TStringBuilder<128>().Appendf(TEXT("WriteChangeMasks::Summary SetBits %u / TotalBits %u WrittenBits %u Ratio %f BitsPerDirtyBit %f"), ChangeMaskStats.TotalSetBits, ChangeMaskStats.TotalChangeMaskBits, ChangeMaskStats.TotalWrittenBits, Ratio, WrittenBitsPerDirtyBit);
 	}

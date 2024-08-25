@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 
+#include <type_traits>
+
 #include "RCTypeTraits.h"
 #include "Math/NumericLimits.h"
 #include "Math/UnrealMathUtility.h"
@@ -157,40 +159,34 @@ namespace RemoteControlTypeUtilities
 	static auto MaxOp = [](auto&& InValues) { return FMath::Max(InValues); };
 
 	/** Returns typed metadata for numeric property if it exists, otherwise returns the DefaultValue. */
-	template <typename PropertyType, typename ValueType>
-	constexpr static typename TEnableIf<
-		std::is_base_of_v<FProperty, PropertyType> &&
-		RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetMetadataValue(const PropertyType* InProperty, const FName& InKey, const ValueType& InDefaultValue)
+	template <
+		typename PropertyType,
+		typename ValueType
+		UE_REQUIRES(std::is_base_of_v<FProperty, PropertyType>)
+	>
+	constexpr static ValueType GetMetadataValue(const PropertyType* InProperty, const FName& InKey, const ValueType& InDefaultValue)
 	{
 #if WITH_EDITORONLY_DATA
-		if(InProperty->HasMetaData(InKey))
+		if constexpr (RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>)
 		{
-			if(const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+			if (InProperty->HasMetaData(InKey))
 			{
-				if(NumericProperty->IsInteger())
+				if (const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
 				{
-					return static_cast<ValueType>(NumericProperty->GetIntMetaData(InKey));
-				}
-			
-				if(NumericProperty->IsFloatingPoint())
-				{
-					return static_cast<ValueType>(NumericProperty->GetFloatMetaData(InKey));
+					if (NumericProperty->IsInteger())
+					{
+						return static_cast<ValueType>(NumericProperty->GetIntMetaData(InKey));
+					}
+
+					if (NumericProperty->IsFloatingPoint())
+					{
+						return static_cast<ValueType>(NumericProperty->GetFloatMetaData(InKey));
+					}
 				}
 			}
 		}
 #endif
 
-		return InDefaultValue;
-	}
-
-	/** Returns typed metadata if it exists, otherwise returns the DefaultValue. */
-	template <typename PropertyType, typename ValueType>
-	constexpr static typename TEnableIf<
-		std::is_base_of_v<FProperty, PropertyType> &&
-		!RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetMetadataValue(const PropertyType* InProperty, const FName& InKey, const ValueType InDefaultValue)
-	{
 		return InDefaultValue;
 	}
 
@@ -347,30 +343,27 @@ namespace RemoteControlTypeUtilities
 	}
 
 	template <typename ValueType>
-	static typename TEnableIf<!RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultRangeValueMin(const FProperty* InProperty)
+	static ValueType GetDefaultRangeValueMin(const FProperty* InProperty)
 	{
 		check(InProperty);
 
-		return TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMin();
-	}
-
-	template <typename ValueType>
-	static typename TEnableIf<RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultRangeValueMin(const FProperty* InProperty)
-	{
-		check(InProperty);
-
-		// Choose greater than the 3 values: (Traits defined) Default, ClampMin, or UIMin
-		ValueType ValueResult = GetClampedValue(MaxOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMin(), { ClampMinKey, UIMinKey });
-
-		// ValueType might not match property, so clamp to min/max of property type
-		if(const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+		if constexpr (RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>)
 		{
-			ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
-		}
+			// Choose greater than the 3 values: (Traits defined) Default, ClampMin, or UIMin
+			ValueType ValueResult = GetClampedValue(MaxOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMin(), { ClampMinKey, UIMinKey });
 
-		return ValueResult;
+			// ValueType might not match property, so clamp to min/max of property type
+			if (const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+			{
+				ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
+			}
+
+			return ValueResult;
+		}
+		else
+		{
+			return TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMin();
+		}
 	}
 
 	template <typename ValueType>
@@ -380,30 +373,27 @@ namespace RemoteControlTypeUtilities
 	}
 
 	template <typename ValueType>
-	static typename TEnableIf<!RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultRangeValueMax(const FProperty* InProperty)
-	{
-		check(InProperty);
-
-		return TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMax();
-	}
-
-	template <typename ValueType>
-	static typename TEnableIf<RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultRangeValueMax(const FProperty* InProperty)
+	static ValueType GetDefaultRangeValueMax(const FProperty* InProperty)
 	{
 		check(InProperty);
 		
-		// Choose lesser than the 3 values: (Traits defined) Default, ClampMin, or UIMin
-		ValueType ValueResult =	GetClampedValue(MinOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMax(), { ClampMaxKey, UIMaxKey });
-
-		// ValueType might not match property, so clamp to min/max of property type
-		if(const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+		if constexpr (RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>)
 		{
-			ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
-		}
+			// Choose lesser than the 3 values: (Traits defined) Default, ClampMin, or UIMin
+			ValueType ValueResult = GetClampedValue(MinOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMax(), { ClampMaxKey, UIMaxKey });
 
-		return ValueResult;
+			// ValueType might not match property, so clamp to min/max of property type
+			if (const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+			{
+				ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
+			}
+
+			return ValueResult;
+		}
+		else
+		{
+			return TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMax();
+		}
 	}
 
 	template <typename ValueType>
@@ -413,34 +403,33 @@ namespace RemoteControlTypeUtilities
 	}
 
 	template <typename ValueType>
-	static typename TEnableIf<!RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultMappingValueMin(const FProperty* InProperty)
+	static ValueType GetDefaultMappingValueMin(const FProperty* InProperty)
 	{
 		check(InProperty);
 
-		return TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMin();
-	}
-
-	template <typename ValueType>
-	static typename TEnableIf<RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultMappingValueMin(const FProperty* InProperty)
-	{
-		check(InProperty);
-		
-		ValueType ValueResult = GetClampedValue(MaxOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMin(), { ClampMinKey, UIMinKey });
-
-		// ValueType might not match property, so clamp to min/max of property type
-		if(const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+		if constexpr (RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>)
 		{
-			ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
-		}
+			ValueType ValueResult = GetClampedValue(MaxOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMin(), { ClampMinKey, UIMinKey });
 
-		return ValueResult;
+			// ValueType might not match property, so clamp to min/max of property type
+			if (const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+			{
+				ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
+			}
+
+			return ValueResult;
+		}
+		else
+		{
+			return TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMin();
+		}
 	}
 
-	template <typename ValueType>
-	static typename TEnableIf<std::is_same_v<ValueType, FStructOnScope>, TSharedPtr<ValueType>>::Type
-	GetDefaultMappingValueMin(const FStructProperty* InProperty)
+	template <
+		typename ValueType
+		UE_REQUIRES(std::is_same_v<ValueType, FStructOnScope>)
+	>
+	static TSharedPtr<ValueType> GetDefaultMappingValueMin(const FStructProperty* InProperty)
 	{
 		check(InProperty);
 
@@ -465,34 +454,33 @@ namespace RemoteControlTypeUtilities
 	}
 
 	template <typename ValueType>
-	static typename TEnableIf<!RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultMappingValueMax(const FProperty* InProperty)
+	static ValueType GetDefaultMappingValueMax(const FProperty* InProperty)
 	{
 		check(InProperty);
 
-		return TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMax();
-	}
-
-	template <typename ValueType>
-	static typename TEnableIf<RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>, ValueType>::Type
-	GetDefaultMappingValueMax(const FProperty* InProperty)
-	{
-		check(InProperty);
-		
-		ValueType ValueResult = GetClampedValue(MinOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMax(), { ClampMaxKey, UIMaxKey });
-
-		// ValueType might not match property, so clamp to min/max of property type
-		if(const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+		if constexpr (RemoteControlTypeTraits::TNumericValueConstraint_V<ValueType>)
 		{
-			ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
-		}
+			ValueType ValueResult = GetClampedValue(MinOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMax(), { ClampMaxKey, UIMaxKey });
 
-		return ValueResult;
+			// ValueType might not match property, so clamp to min/max of property type
+			if (const FNumericProperty* NumericProperty = CastField<FNumericProperty>(InProperty))
+			{
+				ClampToPropertyType<ValueType>(NumericProperty, ValueResult);
+			}
+
+			return ValueResult;
+		}
+		else
+		{
+			return TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMax();
+		}
 	}
 
-	template <typename ValueType>
-	static typename TEnableIf<std::is_same_v<ValueType, FStructOnScope>, TSharedPtr<ValueType>>::Type
-	GetDefaultMappingValueMax(const FStructProperty* InProperty)
+	template <
+		typename ValueType
+		UE_REQUIRES(std::is_same_v<ValueType, FStructOnScope>)
+	>
+	static TSharedPtr<ValueType> GetDefaultMappingValueMax(const FStructProperty* InProperty)
 	{
 		check(InProperty);
 
@@ -501,13 +489,15 @@ namespace RemoteControlTypeUtilities
 
 	/** Various RemoteControl property type Traits (wraps internal implementations). This resolves the property type for you. */
 
-	template <typename PropertyType, typename ValueType>
-	using TPropertyConstraint = typename TEnableIf<
-		TAnd<TIsDerivedFrom<PropertyType, FProperty>>::Value, ValueType>::Type;
+	template <typename PropertyType>
+	constexpr bool TPropertyConstraint_V = std::is_base_of_v<FProperty, PropertyType>;
 	
-	template <typename PropertyType, typename ValueType>
-	static TPropertyConstraint<PropertyType, ValueType>
-	GetDefaultRangeValueMin(const PropertyType* InProperty)
+	template <
+		typename PropertyType,
+		typename ValueType
+		UE_REQUIRES(TPropertyConstraint_V<PropertyType>)
+	>
+	static ValueType GetDefaultRangeValueMin(const PropertyType* InProperty)
 	{
 		check(InProperty);
 		
@@ -516,9 +506,12 @@ namespace RemoteControlTypeUtilities
 		return GetClampedValue(MaxOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMin(), { ClampMinKey, UIMinKey });
 	}
 
-	template <typename PropertyType, typename ValueType>
-	static TPropertyConstraint<PropertyType, ValueType>
-	GetDefaultRangeValueMax(const FProperty* InProperty)
+	template <
+		typename PropertyType,
+		typename ValueType
+		UE_REQUIRES(TPropertyConstraint_V<PropertyType>)
+	>
+	static ValueType GetDefaultRangeValueMax(const FProperty* InProperty)
 	{
 		check(InProperty);
 
@@ -527,9 +520,12 @@ namespace RemoteControlTypeUtilities
 		return GetClampedValue(MinOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultRangeValueMax(), { ClampMaxKey, UIMaxKey });
 	}
 
-	template <typename PropertyType, typename ValueType>
-	static TPropertyConstraint<PropertyType, ValueType>
-	GetDefaultMappingValueMin(const FProperty* InProperty)
+	template <
+		typename PropertyType,
+		typename ValueType
+		UE_REQUIRES(TPropertyConstraint_V<PropertyType>)
+	>
+	static ValueType GetDefaultMappingValueMin(const FProperty* InProperty)
 	{
 		check(InProperty);
 		
@@ -538,9 +534,12 @@ namespace RemoteControlTypeUtilities
 		return GetClampedValue(MaxOp<ValueType>, InProperty, TRemoteControlTypeTraits<ValueType>::DefaultMappingValueMin(), { ClampMinKey, UIMinKey });
 	}
 
-	template <typename PropertyType, typename ValueType>
-	static TPropertyConstraint<PropertyType, ValueType>
-	GetDefaultMappingValueMax(const FProperty* InProperty)
+	template <
+		typename PropertyType,
+		typename ValueType
+		UE_REQUIRES(TPropertyConstraint_V<PropertyType>)
+	>
+	static ValueType GetDefaultMappingValueMax(const FProperty* InProperty)
 	{
 		check(InProperty);
 		

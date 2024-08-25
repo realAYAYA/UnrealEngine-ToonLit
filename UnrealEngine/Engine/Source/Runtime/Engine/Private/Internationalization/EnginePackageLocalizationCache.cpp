@@ -135,26 +135,32 @@ void FEnginePackageLocalizationCache::HandleAssetAdded(const FAssetData& InAsset
 		return;
 	}
 
+	// Convert the string outside the lock and loop	as this is called often while loading
+	const FString PackagePath = InAssetData.PackageName.ToString();
+
 	FScopeLock Lock(&LocalizedCachesCS);
 
 	for (auto& CultureCachePair : AllCultureCaches)
 	{
-		bPackageNameToAssetGroupDirty |= CultureCachePair.Value->AddPackage(InAssetData.PackageName.ToString());
+		bPackageNameToAssetGroupDirty |= CultureCachePair.Value->AddPackage(PackagePath);
 	}
 }
 
 void FEnginePackageLocalizationCache::HandleAssetRemoved(const FAssetData& InAssetData)
 {
+	const FString PackagePath = InAssetData.PackageName.ToString();
+
 	FScopeLock Lock(&LocalizedCachesCS);
 
 	for (auto& CultureCachePair : AllCultureCaches)
 	{
-		bPackageNameToAssetGroupDirty |= CultureCachePair.Value->RemovePackage(InAssetData.PackageName.ToString());
+		bPackageNameToAssetGroupDirty |= CultureCachePair.Value->RemovePackage(PackagePath);
 	}
 }
 
 void FEnginePackageLocalizationCache::HandleAssetRenamed(const FAssetData& InAssetData, const FString& InOldObjectPath)
 {
+	const FString PackagePath = InAssetData.PackageName.ToString();
 	const FString OldPackagePath = FPackageName::ObjectPathToPackageName(InOldObjectPath);
 
 	FScopeLock Lock(&LocalizedCachesCS);
@@ -162,6 +168,6 @@ void FEnginePackageLocalizationCache::HandleAssetRenamed(const FAssetData& InAss
 	for (auto& CultureCachePair : AllCultureCaches)
 	{
 		bPackageNameToAssetGroupDirty |= CultureCachePair.Value->RemovePackage(OldPackagePath);
-		bPackageNameToAssetGroupDirty |= CultureCachePair.Value->AddPackage(InAssetData.PackageName.ToString());
+		bPackageNameToAssetGroupDirty |= CultureCachePair.Value->AddPackage(PackagePath);
 	}
 }

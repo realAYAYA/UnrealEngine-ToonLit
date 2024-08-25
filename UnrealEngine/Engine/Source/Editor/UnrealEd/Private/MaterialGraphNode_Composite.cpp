@@ -16,6 +16,7 @@
 #include "EdGraphUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Framework/Commands/GenericCommands.h"
+#include "MaterialNodes/SGraphNodeMaterialComposite.h"
 
 #define LOCTEXT_NAMESPACE "MaterialGraphNode_Composite"
 
@@ -138,6 +139,16 @@ void UMaterialGraphNode_Composite::OnRenameNode(const FString& NewName)
 	MaterialDirtyDelegate.ExecuteIfBound();
 }
 
+void UMaterialGraphNode_Composite::ReconstructNode()
+{
+	FixupInputAndOutputPinBases();
+}
+
+TSharedPtr<SGraphNode> UMaterialGraphNode_Composite::CreateVisualWidget()
+{
+	return SNew(SGraphNodeMaterialComposite, this);
+}
+
 void UMaterialGraphNode_Composite::FixupInputAndOutputPinBases()
 {
 	if (BoundGraph)
@@ -161,7 +172,7 @@ void UMaterialGraphNode_Composite::FixupInputAndOutputPinBases()
 			}
 		}
 
-		ReconstructNode();
+		UMaterialGraphNode_Base::ReconstructNode();
 	}
 }
 

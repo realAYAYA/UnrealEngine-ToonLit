@@ -444,6 +444,7 @@ private:
 		float TotalTimeMs = 0.0f;
 		int32 NumIterations = 0;
 		int32 NumFilteredOut = 0;
+		bool bOutputBeginEventEmitted = false;
 	};
 
 	mutable TMap<int32, FFilterTestProfileRecord> FilterTestProfiles;

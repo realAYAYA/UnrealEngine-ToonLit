@@ -16,6 +16,7 @@ class IPropertyHandle;
 class IPropertyHandleArray;
 class UMaterialInterface;
 struct FMaterialParameterInfo;
+struct FNiagaraDataChannelVariable;
 class UNiagaraGraph;
 class UNiagaraParameterDefinitions;
 class UNiagaraRendererProperties;
@@ -152,7 +153,7 @@ struct FNiagaraStackAssetAction_VarBind : public FEdGraphSchemaAction
 	}
 	//~ End FEdGraphSchemaAction Interface
 
-	static TArray<FNiagaraVariableBase> FindVariables(const FVersionedNiagaraEmitter& InEmitter, bool bSystem, bool bEmitter, bool bParticles, bool bUser, bool bAllowStatic);
+	static TArray<FNiagaraVariableBase> FindVariables(UNiagaraSystem* NiagaraSystem, const FVersionedNiagaraEmitter& InEmitter, bool bSystem, bool bEmitter, bool bParticles, bool bUser, bool bAllowStatic);
 };
 
 class FNiagaraVariableAttributeBindingCustomization : public IPropertyTypeCustomization
@@ -273,6 +274,9 @@ private:
 	class UNiagaraSystem* BaseSystem;
 	FVersionedNiagaraEmitter BaseEmitter;
 	UNiagaraRendererProperties* RenderProps;
+	//-TODO:stateless:Remove and unify emitter
+	class UNiagaraStatelessEmitter* StatelessEmitter = nullptr;
+	//-TODO:stateless:Remove and unify emitter
 	struct FNiagaraMaterialAttributeBinding* TargetParameterBinding;
 
 };
@@ -385,6 +389,7 @@ public:
 	// IPropertyTypeCustomization interface end
 
 	FText GetBindingNameText(TSharedPtr<IPropertyHandle> PropertyHandle) const;
+	FName GetBindingName(TSharedPtr<IPropertyHandle> PropertyHandle) const;
 	static FText GetMaterialBindingTooltip(FName ParameterName, const FString& ParameterDesc);
 	TSharedRef<SWidget> OnGetMaterialBindingNameMenuContent(TSharedPtr<IPropertyHandle> PropertyHandle) const;
 
@@ -450,11 +455,28 @@ public:
 		return MakeShared<FNiagaraVariableDetailsCustomization>();
 	}
 
-	virtual void CustomizeHeader(TSharedRef<IPropertyHandle> PropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& CustomizationUtils);
+	virtual void CustomizeHeader(TSharedRef<IPropertyHandle> PropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& CustomizationUtils) override;
 
-	virtual void CustomizeChildren(TSharedRef<IPropertyHandle> PropertyHandle, IDetailChildrenBuilder& ChildBuilder, IPropertyTypeCustomizationUtils& CustomizationUtils);
+	virtual void CustomizeChildren(TSharedRef<IPropertyHandle> PropertyHandle, IDetailChildrenBuilder& ChildBuilder, IPropertyTypeCustomizationUtils& CustomizationUtils) override;
 
 private:
 	TSharedRef<SWidget> GetTypeMenu(TSharedPtr<IPropertyHandle> InPropertyHandle, FNiagaraVariable* Var);
 };
 
+//** Properties customization for FNiagaraDataChannelVariable. */
+class FNiagaraDataChannelVariableDetailsCustomization : public IPropertyTypeCustomization
+{
+public:
+	static TSharedRef<IPropertyTypeCustomization> MakeInstance()
+	{
+		return MakeShared<FNiagaraDataChannelVariableDetailsCustomization>();
+	}
+
+	virtual void CustomizeHeader(TSharedRef<IPropertyHandle> PropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& CustomizationUtils) override;
+
+	virtual void CustomizeChildren(TSharedRef<IPropertyHandle> PropertyHandle, IDetailChildrenBuilder& ChildBuilder, IPropertyTypeCustomizationUtils& CustomizationUtils) override;
+
+private:
+	TSharedRef<SWidget> GetTypeMenu(TSharedPtr<IPropertyHandle> InPropertyHandle, FNiagaraDataChannelVariable* Var);
+	TSharedPtr<SComboButton> ChangeTypeButton;
+};

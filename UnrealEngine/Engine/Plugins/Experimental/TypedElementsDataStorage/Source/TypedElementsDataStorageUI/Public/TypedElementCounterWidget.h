@@ -23,13 +23,18 @@ public:
 	UTypedElementCounterWidgetFactory();
 	~UTypedElementCounterWidgetFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
+	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) override;
 	void RegisterWidgetPurposes(ITypedElementDataStorageUiInterface& DataStorageUi) const override;
 	void RegisterWidgetConstructors(ITypedElementDataStorageInterface& DataStorage,
 		ITypedElementDataStorageUiInterface& DataStorageUi) const override;
 
+	static void EnableCounterWidgets();
+
 private:
 	static void SetupMainWindowIntegrations(TSharedPtr<SWindow> ParentWindow, bool bIsRunningStartupDialog);
+
+	static bool bAreCounterWidgetsEnabled;
+	static bool bHasBeenSetup;
 };
 
 /**
@@ -48,14 +53,13 @@ public:
 	~FTypedElementCounterWidgetConstructor() override = default;
 
 	TConstArrayView<const UScriptStruct*> GetAdditionalColumnsList() const override;
-	bool CanBeReused() const override;
 
 	FText ToolTipText{ NSLOCTEXT("TypedElementUI_CounterWidget", "Tooltip", "Shows the total number found in the editor.") };
 	FText LabelText{ NSLOCTEXT("TypedElementUI_CounterWidget", "Label", "Counted") };
 	TypedElementQueryHandle Query;
 
 protected:
-	TSharedPtr<SWidget> CreateWidget() override;
+	TSharedPtr<SWidget> CreateWidget(const TypedElementDataStorage::FMetaDataView& Arguments) override;
 	bool SetColumns(ITypedElementDataStorageInterface* DataStorage, TypedElementRowHandle Row) override;
 };
 

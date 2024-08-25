@@ -15,6 +15,7 @@
 #include "HAL/PlatformApplicationMisc.h"
 #include "ScopedTransaction.h"
 #include "IStructureDetailsView.h"
+#include "SGraphPanel.h"
 
 #define LOCTEXT_NAMESPACE "DataflowGraphEditor"
 
@@ -106,6 +107,36 @@ void SDataflowGraphEditor::Construct(const FArguments& InArgs, UObject* InAssetO
 				FDataflowEditorCommands::Get().ZoomToFitGraph,
 				FExecuteAction::CreateSP(this, &SDataflowGraphEditor::ZoomToFitGraph)
 			);
+			GraphEditorCommands->MapAction(
+				FGraphEditorCommands::Get().ShowAllPins,
+				FExecuteAction::CreateSP(this, &SDataflowGraphEditor::SetPinVisibility, SGraphEditor::Pin_Show),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateSP(this, &SDataflowGraphEditor::GetPinVisibility, SGraphEditor::Pin_Show)
+			);
+			GraphEditorCommands->MapAction(
+				FGraphEditorCommands::Get().HideNoConnectionPins,
+				FExecuteAction::CreateSP(this, &SDataflowGraphEditor::SetPinVisibility, SGraphEditor::Pin_HideNoConnection),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateSP(this, &SDataflowGraphEditor::GetPinVisibility, SGraphEditor::Pin_HideNoConnection)
+			);
+			GraphEditorCommands->MapAction(
+				FGraphEditorCommands::Get().HideNoConnectionNoDefaultPins,
+				FExecuteAction::CreateSP(this, &SDataflowGraphEditor::SetPinVisibility, SGraphEditor::Pin_HideNoConnectionNoDefault),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateSP(this, &SDataflowGraphEditor::GetPinVisibility, SGraphEditor::Pin_HideNoConnectionNoDefault)
+			);
+			GraphEditorCommands->MapAction(
+				FGenericCommands::Get().Copy,
+				FExecuteAction::CreateSP(this, &SDataflowGraphEditor::CopySelectedNodes)
+			);
+			GraphEditorCommands->MapAction(
+				FGenericCommands::Get().Cut,
+				FExecuteAction::CreateSP(this, &SDataflowGraphEditor::CutSelectedNodes)
+			);
+			GraphEditorCommands->MapAction(
+				FGenericCommands::Get().Paste,
+				FExecuteAction::CreateSP(this, &SDataflowGraphEditor::PasteSelectedNodes)
+			);
 		}
 	}
 
@@ -152,20 +183,23 @@ void SDataflowGraphEditor::DeleteNode()
 		}
 
 		const FGraphPanelSelectionSet& SelectedNodes = GetSelectedNodes();
-		FDataflowEditorCommands::DeleteNodes(DataflowAsset.Get(), SelectedNodes);
+		if (SelectedNodes.Num() > 0)
+		{
+			FDataflowEditorCommands::DeleteNodes(DataflowAsset.Get(), SelectedNodes);
 
-		OnNodeDeletedMulticast.Broadcast(SelectedNodes);
+			OnNodeDeletedMulticast.Broadcast(SelectedNodes);
+		}
 	}
 }
 
 void SDataflowGraphEditor::OnSelectedNodesChanged(const TSet<UObject*>& NewSelection)
 {
+	OnSelectionChangedMulticast.Broadcast(NewSelection);  // Broadcast the selection change before refreshing the DetailsView, the nodes' specific UI data have to be updated before the UI is being redrawn
+
 	if (DataflowAsset.Get() && DetailsView)
 	{
 		FDataflowEditorCommands::OnSelectedNodesChanged(DetailsView, AssetOwner.Get(), DataflowAsset.Get(), NewSelection);
 	}
-
-	OnSelectionChangedMulticast.Broadcast(NewSelection);
 }
 
 FReply SDataflowGraphEditor::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
@@ -397,20 +431,21 @@ bool SDataflowGraphEditor::CanAddOptionPin() const
 		// Iterate over all nodes, and add the pin
 		for (FGraphPanelSelectionSet::TConstIterator It(SelectedNodes); It; ++It)
 		{
-			const UDataflowEdNode* const EdNode = CastChecked<UDataflowEdNode>(*It);
+			if (const UDataflowEdNode* const EdNode = Cast<UDataflowEdNode>(*It))
+			{
+				if (const TSharedPtr<const FDataflowNode> Node = DataflowGraph->FindBaseNode(EdNode->DataflowNodeGuid))
+				{
+					bCanAddOptionPin = Node->CanAddPin();
+				}
+				else
+				{
+					bCanAddOptionPin = false;
+				}
 
-			if (const TSharedPtr<const FDataflowNode> Node = DataflowGraph->FindBaseNode(EdNode->DataflowNodeGuid))
-			{
-				bCanAddOptionPin = Node->CanAddPin();
-			}
-			else
-			{
-				bCanAddOptionPin = false;
-			}
-
-			if (!bCanAddOptionPin)
-			{
-				break;  // One bad node is good enough to return false
+				if (!bCanAddOptionPin)
+				{
+					break;  // One bad node is good enough to return false
+				}
 			}
 		}
 	}
@@ -460,20 +495,21 @@ bool SDataflowGraphEditor::CanRemoveOptionPin() const
 		// Iterate over all nodes, and add the pin
 		for (FGraphPanelSelectionSet::TConstIterator It(SelectedNodes); It; ++It)
 		{
-			const UDataflowEdNode* const EdNode = CastChecked<UDataflowEdNode>(*It);
+			if (const UDataflowEdNode* const EdNode = Cast<UDataflowEdNode>(*It))
+			{
+				if (const TSharedPtr<const FDataflowNode> Node = DataflowGraph->FindBaseNode(EdNode->DataflowNodeGuid))
+				{
+					bCanRemoveOptionPin = Node->CanRemovePin();
+				}
+				else
+				{
+					bCanRemoveOptionPin = false;
+				}
 
-			if (const TSharedPtr<const FDataflowNode> Node = DataflowGraph->FindBaseNode(EdNode->DataflowNodeGuid))
-			{
-				bCanRemoveOptionPin = Node->CanRemovePin();
-			}
-			else
-			{
-				bCanRemoveOptionPin = false;
-			}
-
-			if (!bCanRemoveOptionPin)
-			{
-				break;  // One bad node is good enough to return false
+				if (!bCanRemoveOptionPin)
+				{
+					break;  // One bad node is good enough to return false
+				}
 			}
 		}
 	}
@@ -499,6 +535,61 @@ void SDataflowGraphEditor::ZoomToFitGraph()
 {
 	constexpr bool bOnlySelection = true;	// This will focus on the selected nodes, if any. If no nodes are selected, it will focus the whole graph.
 	ZoomToFit(bOnlySelection);
+}
+
+bool SDataflowGraphEditor::GetPinVisibility(SGraphEditor::EPinVisibility PinVisibility) const
+{
+	if (const SGraphPanel* GraphPanel = GetGraphPanel())
+	{
+		return GraphPanel->GetPinVisibility() == PinVisibility;
+	}
+	return false;
+}
+
+void SDataflowGraphEditor::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObject(DataflowAsset);
+	Collector.AddReferencedObject(AssetOwner);
+}
+
+void SDataflowGraphEditor::CopySelectedNodes()
+{
+	if (UDataflow* Graph = DataflowAsset.Get())
+	{
+		const TSharedPtr<SDataflowGraphEditor>& DataflowGraphEditor = SharedThis(this);
+		const FGraphPanelSelectionSet& SelectedNodes = GetSelectedNodes();
+
+		if (SelectedNodes.Num() > 0)
+		{
+			FDataflowEditorCommands::CopyNodes(Graph, DataflowGraphEditor, SelectedNodes);
+		}
+	}
+}
+
+void SDataflowGraphEditor::CutSelectedNodes()
+{
+	if (UDataflow* Graph = DataflowAsset.Get())
+	{
+		const TSharedPtr<SDataflowGraphEditor>& DataflowGraphEditor = SharedThis(this);
+		const FGraphPanelSelectionSet& SelectedNodes = GetSelectedNodes();
+
+		if (SelectedNodes.Num() > 0)
+		{
+			FDataflowEditorCommands::CopyNodes(Graph, DataflowGraphEditor, SelectedNodes);
+
+			FDataflowEditorCommands::DeleteNodes(DataflowAsset.Get(), SelectedNodes);
+		}
+	}
+}
+
+void SDataflowGraphEditor::PasteSelectedNodes()
+{
+	if (UDataflow* Graph = DataflowAsset.Get())
+	{
+		const TSharedPtr<SDataflowGraphEditor>& DataflowGraphEditor = SharedThis(this);
+
+		FDataflowEditorCommands::PasteNodes(Graph, DataflowGraphEditor);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -9,6 +9,7 @@ using PerfReportTool;
 using CSVStats;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.Versioning;
 
 namespace PerfSummaries
 {
@@ -31,20 +32,20 @@ namespace PerfSummaries
 
 		class MapOverlay
 		{
-			public MapOverlay(XElement element)
+			public MapOverlay(XElement element, XmlVariableMappings vars)
 			{
-				positionStatNames[0] = element.GetSafeAttibute<string>("xStat");
-				positionStatNames[1] = element.GetSafeAttibute<string>("yStat");
-				positionStatNames[2] = element.GetSafeAttibute<string>("zStat");
-				summaryStatNamePrefix = element.GetSafeAttibute<string>("summaryStatNamePrefix"); // unused!
-				lineColor = element.GetSafeAttibute<string>("lineColor", "#ffffff");
+				positionStatNames[0] = element.GetSafeAttribute<string>(vars, "xStat");
+				positionStatNames[1] = element.GetSafeAttribute<string>(vars, "yStat");
+				positionStatNames[2] = element.GetSafeAttribute<string>(vars, "zStat");
+				summaryStatNamePrefix = element.GetSafeAttribute<string>(vars, "summaryStatNamePrefix"); // unused!
+				lineColor = element.GetSafeAttribute<string>(vars, "lineColor", "#ffffff");
 				foreach (XElement eventEl in element.Elements("event"))
 				{
-					MapOverlayEvent ev = new MapOverlayEvent(eventEl.Attribute("name").Value);
-					ev.shortName = eventEl.GetSafeAttibute<string>("shortName");
-					ev.summaryStatName = eventEl.GetSafeAttibute<string>("summaryStatName"); // unused!
-					ev.lineColor = eventEl.GetSafeAttibute<string>("lineColor");
-					if (eventEl.GetSafeAttibute<bool>("isStartEvent", false))
+					MapOverlayEvent ev = new MapOverlayEvent(eventEl.GetRequiredAttribute<string>(vars, "name"));
+					ev.shortName = eventEl.GetSafeAttribute<string>(vars, "shortName");
+					ev.summaryStatName = eventEl.GetSafeAttribute<string>(vars, "summaryStatName"); // unused!
+					ev.lineColor = eventEl.GetSafeAttribute<string>(vars, "lineColor");
+					if (eventEl.GetSafeAttribute<bool>(vars, "isStartEvent", false))
 					{
 						if (startEvent != null)
 						{
@@ -63,15 +64,15 @@ namespace PerfSummaries
 			public List<MapOverlayEvent> events = new List<MapOverlayEvent>();
 		}
 
-		public MapOverlaySummary(XElement element, string baseXmlDirectory)
+		public MapOverlaySummary(XElement element, XmlVariableMappings vars, string baseXmlDirectory)
 		{
-			ReadStatsFromXML(element);
+			ReadStatsFromXML(element, vars);
 			if (stats.Count != 0)
 			{
 				throw new Exception("<stats> element is not supported");
 			}
 
-			sourceImagePath = element.GetSafeAttibute<string>("sourceImage");
+			sourceImagePath = element.GetSafeAttribute<string>(vars, "sourceImage");
 			if (baseXmlDirectory == null)
 			{
 				throw new Exception("BaseXmlDirectory not specified");
@@ -81,19 +82,19 @@ namespace PerfSummaries
 				sourceImagePath = System.IO.Path.GetFullPath(System.IO.Path.Combine(baseXmlDirectory, sourceImagePath));
 			}
 
-			offsetX = element.GetSafeAttibute<float>("offsetX", 0.0f);
-			offsetY = element.GetSafeAttibute<float>("offsetY", 0.0f);
-			scale = element.GetSafeAttibute<float>("scale", 1.0f);
-			title = element.GetSafeAttibute("title", "Events");
-			destImageFilename = element.Attribute("destImage").Value;
-			imageWidth = element.GetSafeAttibute<float>("width", 250.0f);
-			imageHeight = element.GetSafeAttibute<float>("height", 250.0f);
-			framesPerLineSegment = element.GetSafeAttibute<int>("framesPerLineSegment", 5);
-			lineSplitDistanceThreshold = element.GetSafeAttibute<float>("lineSplitDistanceThreshold", float.MaxValue);
+			offsetX = element.GetSafeAttribute<float>(vars, "offsetX", 0.0f);
+			offsetY = element.GetSafeAttribute<float>(vars, "offsetY", 0.0f);
+			scale = element.GetSafeAttribute<float>(vars, "scale", 1.0f);
+			title = element.GetSafeAttribute(vars, "title", "Events");
+			destImageFilename = element.GetRequiredAttribute<string>(vars, "destImage");
+			imageWidth = element.GetSafeAttribute<float>(vars, "width", 250.0f);
+			imageHeight = element.GetSafeAttribute<float>(vars, "height", 250.0f);
+			framesPerLineSegment = element.GetSafeAttribute<int>(vars, "framesPerLineSegment", 5);
+			lineSplitDistanceThreshold = element.GetSafeAttribute<float>(vars, "lineSplitDistanceThreshold", float.MaxValue);
 
 			foreach (XElement overlayEl in element.Elements("overlay"))
 			{
-				MapOverlay overlay = new MapOverlay(overlayEl);
+				MapOverlay overlay = new MapOverlay(overlayEl, vars);
 				overlays.Add(overlay);
 				stats.Add(overlay.positionStatNames[0]);
 				stats.Add(overlay.positionStatNames[1]);
@@ -120,26 +121,36 @@ namespace PerfSummaries
 
 		private void CopyAndResizeImage(string sourceImagePath, string destImagePath, int destWidth, int destHeight)
 		{
-			Console.WriteLine("Downsampling map image.\n  Source: " + sourceImagePath+"\n  Dest  : "+destImagePath);
+			if (!OperatingSystem.IsWindows())
+			{
+				Console.WriteLine("CopyAndResizeImage is not supported on this platform!");
+				return;
+			}
+			Console.WriteLine("Downsampling map image.\n  Source: " + sourceImagePath + "\n  Dest  : " + destImagePath);
 			using (FileStream fileStream = new FileStream(sourceImagePath, FileMode.Open, FileAccess.Read))
 			{
 				Console.WriteLine("Reading source image");
-				var image = System.Drawing.Image.FromStream(fileStream);
-				Console.WriteLine("Generating downsampled image");
-				var thumbnail = image.GetThumbnailImage(destWidth, destHeight, null, IntPtr.Zero);
-				using (var destImageStream = new FileStream(destImagePath, FileMode.OpenOrCreate, FileAccess.Write))
+				using (var image = Image.FromStream(fileStream))
 				{
-					Console.WriteLine("Saving downsampled map image: " + destImageStream);
-					thumbnail.Save(destImageStream, ImageFormat.Jpeg);
+					Console.WriteLine("Generating downsampled image");
+					var thumbnail = image.GetThumbnailImage(destWidth, destHeight, null, IntPtr.Zero);
+					using (var destImageStream = new FileStream(destImagePath, FileMode.OpenOrCreate, FileAccess.Write))
+					{
+						Console.WriteLine("Saving downsampled map image: " + destImageStream);
+						thumbnail.Save(destImageStream, ImageFormat.Jpeg);
+					}
 				}
 			}
 		}
 
-		public override void WriteSummaryData(System.IO.StreamWriter htmlFile, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
+		public override HtmlSection WriteSummaryData(bool bWriteHtml, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
 		{
+			HtmlSection htmlSection = null;
+
 			// Output HTML
-			if (htmlFile != null)
+			if (bWriteHtml)
 			{
+				htmlSection = new HtmlSection(title, bStartCollapsed);
 				string outputDirectory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(htmlFileName));
 				string outputMapFilename = System.IO.Path.Combine(outputDirectory, destImageFilename);
 
@@ -160,9 +171,8 @@ namespace PerfSummaries
 				}
 
 				// Check if the file exists in the output directory
-				htmlFile.WriteLine("  <h2>" + title + "</h2>");
-				htmlFile.WriteLine("<svg version='1.1' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='" + imageWidth + "' height='" + imageHeight + "'>");
-				htmlFile.WriteLine("<image href='" + destImageFilename + "' width='" + imageWidth + "' height='" + imageHeight + "' />");
+				htmlSection.WriteLine("<svg version='1.1' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='" + imageWidth + "' height='" + imageHeight + "'>");
+				htmlSection.WriteLine("<image href='" + destImageFilename + "' width='" + imageWidth + "' height='" + imageHeight + "' />");
 
 				// Draw the overlays
 				foreach (MapOverlay overlay in overlays)
@@ -207,7 +217,7 @@ namespace PerfSummaries
 					// Draw the lines
 					string currentLineColor = overlay.lineColor;
 					string lineStartTemplate = "<polyline style='fill:none;stroke-width:1.3;stroke:{LINECOLOUR}' points='";
-					htmlFile.Write(lineStartTemplate.Replace("{LINECOLOUR}", currentLineColor));
+					htmlSection.Write(lineStartTemplate.Replace("{LINECOLOUR}", currentLineColor));
 					float adjustedLineSplitDistanceThreshold = lineSplitDistanceThreshold * framesPerLineSegment;
 					float oldx = 0;
 					float oldy = 0;
@@ -241,20 +251,20 @@ namespace PerfSummaries
 						}
 						else
 						{
-							htmlFile.Write(lineCoordsStr);
+							htmlSection.Write(lineCoordsStr);
 						}
 
 						if (restartLineStrip)
 						{
-							htmlFile.WriteLine("'/>");
-							htmlFile.Write(lineStartTemplate.Replace("{LINECOLOUR}", currentLineColor));
-							htmlFile.Write(lineCoordsStr);
+							htmlSection.WriteLine("'/>");
+							htmlSection.Write(lineStartTemplate.Replace("{LINECOLOUR}", currentLineColor));
+							htmlSection.Write(lineCoordsStr);
 						}
 						oldx = x;
 						oldy = y;
 						lastFrameIndex = i;
 					}
-					htmlFile.WriteLine("'/>");
+					htmlSection.WriteLine("'/>");
 
 					// Plot the events 
 					float circleRadius = 3;
@@ -270,21 +280,22 @@ namespace PerfSummaries
 								float y = yStat.samples[ev.Frame];
 								int svgX = toSvgX(x, y);
 								int svgY = toSvgY(x, y);
-								htmlFile.Write("<circle cx='" + svgX + "' cy='" + svgY + "' r='" + circleRadius + "' fill='" + eventColourString + "' fill-opacity='1.0'/>");
-								htmlFile.WriteLine("<text x='" + (svgX + 5) + "' y='" + svgY + "' text-anchor='left' style='font-family: Verdana;fill: #ffffff; font-size: " + 9 + "px;'>" + eventText + "</text>");
+								htmlSection.Write("<circle cx='" + svgX + "' cy='" + svgY + "' r='" + circleRadius + "' fill='" + eventColourString + "' fill-opacity='1.0'/>");
+								htmlSection.WriteLine("<text x='" + (svgX + 5) + "' y='" + svgY + "' text-anchor='left' style='font-family: Verdana;fill: #ffffff; font-size: " + 9 + "px;'>" + eventText + "</text>");
 							}
 						}
 					}
 				}
 
-				//htmlFile.WriteLine("<text x='50%' y='" + (imageHeight * 0.05) + "' text-anchor='middle' style='font-family: Verdana;fill: #FFFFFF; stroke: #C0C0C0;  font-size: " + 20 + "px;'>" + title + "</text>");
-				htmlFile.WriteLine("</svg>");
+				//htmlSection.WriteLine("<text x='50%' y='" + (imageHeight * 0.05) + "' text-anchor='middle' style='font-family: Verdana;fill: #FFFFFF; stroke: #C0C0C0;  font-size: " + 20 + "px;'>" + title + "</text>");
+				htmlSection.WriteLine("</svg>");
 			}
 
 			// Output row data
 			if (rowData != null)
 			{
 			}
+			return htmlSection;
 		}
 		public override void PostInit(ReportTypeInfo reportTypeInfo, CsvStats csvStats)
 		{

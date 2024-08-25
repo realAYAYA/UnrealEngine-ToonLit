@@ -11,8 +11,10 @@
 #include "ClothingAsset.h"
 #include "MeshUtilities.h"
 #include "Modules/ModuleManager.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCO/CustomizableObjectInstance.h"
 #include "MuCO/CustomizableObjectSystem.h"
+#include "MuCO/UnrealConversionUtils.h"
 #include "MuCOE/CustomizableObjectCompiler.h"
 #include "MuCOE/CustomizableObjectLayout.h"
 #include "MuCOE/GenerateMutableSource/GenerateMutableSourceFloat.h"
@@ -61,9 +63,8 @@ void GetLODAndSectionForAutomaticLODs(const FMutableGraphGenerationContext& Cont
 		return;
 	}
 	
-	const int32 CompilingLODIndex = LODIndexConnected + Context.CurrentLOD;
-	
-	if (CompilingLODIndex == LODIndexConnected)
+	// When processing pins of the current LOD, indices will remain the same.
+	if (Context.CurrentLOD == Context.FromLOD)
 	{
 		return;
 	}
@@ -80,8 +81,15 @@ void GetLODAndSectionForAutomaticLODs(const FMutableGraphGenerationContext& Cont
 		return;
 	}
 	
-	const int32 SearchLODMaterialIndex = ImportedModel->LODModels[LODIndexConnected].Sections[SectionIndexConnected].MaterialIndex; // Material Index of the connected pin
+	const FSkelMeshSection& FromSection = ImportedModel->LODModels[LODIndexConnected].Sections[SectionIndexConnected];
+	const TArray<int32>& FromMaterialMap = SkeletalMesh.GetLODInfoArray()[LODIndexConnected].LODMaterialMap;
+	
+	// Material Index of the connected pin
+	const int32 SearchLODMaterialIndex = FromMaterialMap.IsValidIndex(SectionIndexConnected) && SkeletalMesh.GetMaterials().IsValidIndex(FromMaterialMap[SectionIndexConnected]) ?
+		FromMaterialMap[SectionIndexConnected] : 
+		FromSection.MaterialIndex;
 
+	const int32 CompilingLODIndex = LODIndexConnected + (Context.CurrentLOD - Context.FromLOD);
 	if (!ImportedModel->LODModels.IsValidIndex(CompilingLODIndex))
 	{
 		OutLODIndex = -1;
@@ -95,7 +103,9 @@ void GetLODAndSectionForAutomaticLODs(const FMutableGraphGenerationContext& Cont
 	bool bFound = false;
 	for (int32 SectionIndex = 0; SectionIndex < LODModel.Sections.Num(); ++SectionIndex)
 	{
-		const int32 MaterialIndex = MaterialMap.IsValidIndex(SectionIndex) ? MaterialMap[SectionIndex] : LODModel.Sections[SectionIndex].MaterialIndex; // MaterialMap overrides the MaterialIndex in the section
+		const int32 MaterialIndex =  MaterialMap.IsValidIndex(SectionIndex) && SkeletalMesh.GetMaterials().IsValidIndex(MaterialMap[SectionIndex]) ?
+			MaterialMap[SectionIndex] :
+			LODModel.Sections[SectionIndex].MaterialIndex; // MaterialMap overrides the MaterialIndex in the section
 			
 		if (MaterialIndex == SearchLODMaterialIndex &&
 			!LODModel.Sections[SectionIndex].bDisabled)
@@ -360,7 +370,7 @@ bool IsSkeletalMeshCompatibleWithRefSkeleton(FMutableComponentInfo& ComponentInf
 		if (const uint32* RefSMBonePathHash = RefMeshBoneNamesToPathHash.Find(Bone.Name); RefSMBonePathHash && *RefSMBonePathHash != BonePathHash)
 		{
 			// Different skeletons can't be used if they are incompatible with the reference skeleton.
-			FString Msg = FString::Printf(
+			OutErrorMessage = FString::Printf(
 				TEXT("The SkeletalMesh [%s] with Skeleton [%s] is incompatible with the reference mesh [%s] which has [%s]. "
 					"Bone [%s] has a differnt parent on the Skeleton from the reference mesh."),
 				*InSkeletalMesh->GetName(), *Skeleton->GetName(),
@@ -601,6 +611,8 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 		return nullptr;
 	}
 
+	GenerationContext.AddParticipatingObject(*InSkeletalMesh);
+	
 	const FSkeletalMeshModel* ImportedModel = InSkeletalMesh->GetImportedModel();
 	if (!ImportedModel)
 	{
@@ -630,7 +642,8 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 		}
 	}
 
-	if (!ImportedModel->LODModels[LODIndex].Sections.IsValidIndex(SectionIndex))
+	const FSkeletalMeshLODModel& LODModel = ImportedModel->LODModels[LODIndex];
+	if (!LODModel.Sections.IsValidIndex(SectionIndex))
 	{
 		if (GenerationContext.CurrentAutoLODStrategy == ECustomizableObjectAutomaticLODStrategy::AutomaticFromMesh && 
 			SectionIndex != SectionIndexConnected) // If we are using automatic LODs and not generating the base LOD (the connected one) is not an error.
@@ -645,12 +658,14 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 				LODIndex + 1,
 				ImportedModel->LODModels.Num(),
 				SectionIndex + 1,
-				ImportedModel->LODModels[LODIndex].Sections.Num());
+				LODModel.Sections.Num());
 			GenerationContext.Compiler->CompilerLog(FText::FromString(Msg), CurrentNode);
 
 			return nullptr;
 		}
 	}
+
+	const FSkelMeshSection& MeshSection = LODModel.Sections[SectionIndex];
 
 	// Get the mesh generation flags to use
 	const EMutableMeshConversionFlags CurrentFlags = GenerationContext.MeshGenerationFlags.Last();
@@ -679,6 +694,8 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 			return nullptr;
 		}
 
+		GenerationContext.AddParticipatingObject(*InSkeleton);
+
 		FMutableComponentInfo& MutComponentInfo = GenerationContext.GetCurrentComponentInfo();
 		USkeletalMesh* ComponentRefSkeletalMesh = MutComponentInfo.RefSkeletalMesh;
 		USkeleton* ComponentRefSkeleton = MutComponentInfo.RefSkeleton;
@@ -693,7 +710,7 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 
 			if (!bCompatible)
 			{
-				if (ErrorMessage.IsEmpty())
+				if (!ErrorMessage.IsEmpty())
 				{
 					GenerationContext.Compiler->CompilerLog(FText::FromString(ErrorMessage), CurrentNode, EMessageSeverity::Warning);
 				}
@@ -743,7 +760,7 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 			}
 		}
 
-		const TArray<uint16>& SourceRequiredBones = ImportedModel->LODModels[LODIndex].RequiredBones;
+		const TArray<uint16>& SourceRequiredBones = LODModel.RequiredBones;
 
 		// Remove bones and build an array to remap indices of the BoneMap
 		TArray<FBoneIndexType> RemappedBones;
@@ -759,7 +776,7 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 		}
 
 		// Rebuild BoneMap
-		const TArray<uint16>& SourceBoneMap = ImportedModel->LODModels[LODIndex].Sections[SectionIndex].BoneMap;
+		const TArray<uint16>& SourceBoneMap = MeshSection.BoneMap;
 		const int32 NumBonesInBoneMap = SourceBoneMap.Num();
 		const int32 NumRemappedBones = RemappedBones.Num();
 
@@ -827,19 +844,19 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 
 	// Vertices
 	TArray<FSoftSkinVertex> Vertices;
-	ImportedModel->LODModels[LODIndex].GetVertices(Vertices);
-	int32 VertexStart = ImportedModel->LODModels[LODIndex].Sections[SectionIndex].GetVertexBufferIndex();
-	int32 VertexCount = ImportedModel->LODModels[LODIndex].Sections[SectionIndex].GetNumVertices();
+	LODModel.GetVertices(Vertices);
+	int32 VertexStart = MeshSection.GetVertexBufferIndex();
+	int32 VertexCount = MeshSection.GetNumVertices();
 
 	MutableMesh->GetVertexBuffers().SetElementCount(VertexCount);
 
 	const int32 VertexBuffersCount = 1 +
-		(GenerationContext.Options.bRealTimeMorphTargetsEnabled ? 2 : 0) +
+		(GenerationContext.Options.bRealTimeMorphTargetsEnabled ? 3 : 0) +
 		(GenerationContext.Options.bClothingEnabled ? 1 : 0);
 
 	MutableMesh->GetVertexBuffers().SetBufferCount(VertexBuffersCount);
 
-	const int32 MaxSectionInfluences = ImportedModel->LODModels[LODIndex].Sections[SectionIndex].MaxBoneInfluences;
+	const int32 MaxSectionInfluences = MeshSection.MaxBoneInfluences;
 	const bool bUseUnlimitedInfluences = FGPUBaseSkinVertexFactory::UseUnlimitedBoneInfluences(MaxSectionInfluences, GenerationContext.Options.TargetPlatform);
 
 	if (bIgnoreSkeleton)
@@ -990,7 +1007,7 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 	int32 nextBufferIndex = 1;
 	if (GenerationContext.Options.bRealTimeMorphTargetsEnabled)
 	{
-		nextBufferIndex += 2;
+		nextBufferIndex += 3;
 
 		// This call involves resolving every TObjectPtr<UMorphTarget> to a UMorphTarget*, so
 		// cache the result here to avoid calling it repeatedly.
@@ -1099,47 +1116,76 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 			}
 		}
 
-		// MorphTarget vertex info index.
+		// MorphTarget vertex block offset.
 		{
 			using namespace mu;
-			const int ElementSize = sizeof(int32);
-			const int ChannelCount = 1;
+			const int32 ElementSize = sizeof(int32);
+			const int32 ChannelCount = 1;
 			const MESH_BUFFER_SEMANTIC Semantics[ChannelCount] = { MBS_OTHER };
-			const int SemanticIndices[ChannelCount] = { 0 };
+			const int32 SemanticIndices[ChannelCount] = { 0 };
 			const MESH_BUFFER_FORMAT Formats[ChannelCount] = { MBF_INT32 };
-			int Components[ChannelCount] = { 1 };
-			const int Offsets[ChannelCount] = { 0 };
+			int32 Components[ChannelCount] = { 1 };
+			const int32 Offsets[ChannelCount] = { 0 };
 
 			MutableMesh->GetVertexBuffers().SetBuffer(1, ElementSize, ChannelCount, Semantics, SemanticIndices, Formats, Components, Offsets);
 		}
 
-		// MorphTarget vertex info count.
+		// MorphTarget vertex morph count.
 		{
 			using namespace mu;
-			const int ElementSize = sizeof(int32);
-			const int ChannelCount = 1;
+			const int32 ElementSize = sizeof(uint16);
+			const int32 ChannelCount = 1;
 			const MESH_BUFFER_SEMANTIC Semantics[ChannelCount] = { MBS_OTHER };
-			const int SemanticIndices[ChannelCount] = { 1 };
-			const MESH_BUFFER_FORMAT Formats[ChannelCount] = { MBF_INT32 };
-			int Components[ChannelCount] = { 1 };
-			const int Offsets[ChannelCount] = { 0 };
+			const int32 SemanticIndices[ChannelCount] = { 1 };
+			const MESH_BUFFER_FORMAT Formats[ChannelCount] = { MBF_UINT16 };
+			int32 Components[ChannelCount] = { 1 };
+			const int32 Offsets[ChannelCount] = { 0 };
 
 			MutableMesh->GetVertexBuffers().SetBuffer(2, ElementSize, ChannelCount, Semantics, SemanticIndices, Formats, Components, Offsets);
 		}
 
+		// MorphTarget vertex block id.
+		{
+			using namespace mu;
+			const int32 ElementSize = sizeof(uint16);
+			const int32 ChannelCount = 1;
+			const MESH_BUFFER_SEMANTIC Semantics[ChannelCount] = { MBS_OTHER };
+			const int32 SemanticIndices[ChannelCount] = { 2 };
+			const MESH_BUFFER_FORMAT Formats[ChannelCount] = { MBF_UINT16 };
+			int32 Components[ChannelCount] = { 1 };
+			const int32 Offsets[ChannelCount] = { 0 };
+
+			MutableMesh->GetVertexBuffers().SetBuffer(3, ElementSize, ChannelCount, Semantics, SemanticIndices, Formats, Components, Offsets);
+		}
+
+
 		// Setup MorphTarget reconstruction data.
 
-		TArrayView<int32> VertexMorphsCountBufferView(reinterpret_cast<int32*>(MutableMesh->GetVertexBuffers().GetBufferData(2)), VertexCount);
-		for (int32& Elem : VertexMorphsCountBufferView)
+		TArrayView<int32> VertexMorphsOffsetBufferView(reinterpret_cast<int32*>(MutableMesh->GetVertexBuffers().GetBufferData(1)), VertexCount);
+		TArrayView<uint16> VertexMorphsCountBufferView(reinterpret_cast<uint16*>(MutableMesh->GetVertexBuffers().GetBufferData(2)), VertexCount);
+		TArrayView<uint16> VertexMorphsResourceIdBufferView(reinterpret_cast<uint16*>(MutableMesh->GetVertexBuffers().GetBufferData(3)), VertexCount);
+	
+		for (int32& Elem : VertexMorphsOffsetBufferView)
+		{
+			Elem = -1;
+		}
+
+		for (uint16& Elem : VertexMorphsCountBufferView)
 		{
 			Elem = 0;
 		}
 
-		TArrayView<int32>  VertexMorphsInfoIndexBufferView(reinterpret_cast<int32*>(MutableMesh->GetVertexBuffers().GetBufferData(1)), VertexCount);
+		for (uint16& Elem : VertexMorphsResourceIdBufferView)
+		{
+			Elem = TNumericLimits<uint16>::Max(); 
+		}
 
 		if (UsedMorphTargets.Num())
 		{
 			const double StartTime = FPlatformTime::Seconds();
+
+			TArray<FMorphTargetVertexData> MorphsMeshData;
+			MorphsMeshData.Reserve(32);
 
 			TArray<FMorphTargetVertexData> MorphsUsed;
 			for (int32 VertexIdx = VertexStart; VertexIdx < VertexStart + VertexCount && VertexIdx < Vertices.Num(); ++VertexIdx)
@@ -1155,8 +1201,7 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 
 					const TArray<FMorphTargetLODModel>& MorphLODModels = MorphTarget->GetMorphLODModels();
 
-					if (LODIndex >= MorphLODModels.Num()
-						|| !MorphLODModels[LODIndex].SectionIndices.Contains(SectionIndex))
+					if (LODIndex >= MorphLODModels.Num() || !MorphLODModels[LODIndex].SectionIndices.Contains(SectionIndex))
 					{
 						continue;
 					}
@@ -1164,10 +1209,8 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 					// The vertices should be sorted by SourceIdx
 					check(MorphLODModels[LODIndex].Vertices.Num() < 2 || MorphLODModels[LODIndex].Vertices[0].SourceIdx < MorphLODModels[LODIndex].Vertices.Last().SourceIdx);
 
-					const int32 VertexFoundIndex = Algo::BinarySearchBy(
-						MorphLODModels[LODIndex].Vertices,
-						(uint32)VertexIdx,
-						[](const FMorphTargetDelta& Element) { return Element.SourceIdx; });
+					const int32 VertexFoundIndex = Algo::BinarySearchBy(MorphLODModels[LODIndex].Vertices, (uint32)VertexIdx,
+							[](const FMorphTargetDelta& Element) { return Element.SourceIdx; });
 
 					if (VertexFoundIndex == INDEX_NONE)
 					{
@@ -1177,27 +1220,40 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 					const FMorphTargetDelta& VertexFound = MorphLODModels[LODIndex].Vertices[VertexFoundIndex];
 					const FName MorphTargetName = MorphTarget->GetFName();
 
-					TArray<FMorphTargetInfo>& ContributingMorphTargetsInfo = GenerationContext.ContributingMorphTargetsInfo;
+					TArray<FName>& RealTimeMorphTargetsNames = GenerationContext.RealTimeMorphTargetsNames;
 
-					int32 DestMorphTargetIdx = ContributingMorphTargetsInfo.IndexOfByPredicate(
-						[&MorphTargetName](auto& MorphTargetInfo) { return MorphTargetName == MorphTargetInfo.Name; });
+					int32 MorphTargetNameIndex = RealTimeMorphTargetsNames.Find(MorphTargetName);
 
-					DestMorphTargetIdx = DestMorphTargetIdx != INDEX_NONE
-						? DestMorphTargetIdx
-						: ContributingMorphTargetsInfo.Emplace(FMorphTargetInfo{ MorphTargetName, GenerationContext.CurrentLOD + 1 });
+					MorphTargetNameIndex = MorphTargetNameIndex != INDEX_NONE
+							? MorphTargetNameIndex
+							: RealTimeMorphTargetsNames.Emplace(MorphTargetName);
 
-					FMorphTargetInfo& MorphTargetInfo = ContributingMorphTargetsInfo[DestMorphTargetIdx];
-					MorphTargetInfo.LodNum = FMath::Max(MorphTargetInfo.LodNum, GenerationContext.CurrentLOD + 1);
-
-					MorphsUsed.Emplace(FMorphTargetVertexData{ VertexFound.PositionDelta, VertexFound.TangentZDelta, DestMorphTargetIdx });
+					MorphsUsed.Emplace(FMorphTargetVertexData{VertexFound.PositionDelta, VertexFound.TangentZDelta, (uint32)MorphTargetNameIndex});
 				}
 
 				if (MorphsUsed.Num())
 				{
-					VertexMorphsInfoIndexBufferView[VertexIdx - VertexStart] = GenerationContext.MorphTargetReconstructionData.Num();
-					VertexMorphsCountBufferView[VertexIdx - VertexStart] = MorphsUsed.Num();
 
-					GenerationContext.MorphTargetReconstructionData.Append(MorphsUsed);
+					VertexMorphsOffsetBufferView[VertexIdx - VertexStart] = MorphsMeshData.Num();
+					VertexMorphsCountBufferView[VertexIdx - VertexStart] = (uint16)MorphsUsed.Num();
+					VertexMorphsResourceIdBufferView[VertexIdx - VertexStart] = (uint16)GenerationContext.RealTimeMorphTargetPerMeshData.Num();
+					
+					MorphsMeshData.Append(MorphsUsed);
+				}
+			}
+
+			// Only commit the morph if there is data.
+			if (MorphsMeshData.Num())
+			{
+				if (GenerationContext.RealTimeMorphTargetPerMeshData.Num() < TNumericLimits<uint16>::Max())
+				{
+					FCustomizableObjectStreameableResourceId StreamedMorphResource;
+					StreamedMorphResource.Id = GenerationContext.RealTimeMorphTargetPerMeshData.Num();
+					StreamedMorphResource.Type = static_cast<uint8>(FCustomizableObjectStreameableResourceId::EType::RealTimeMorphTarget);
+
+					MutableMesh->AddStreamedResource(BitCast<uint32>(StreamedMorphResource));
+						
+					GenerationContext.RealTimeMorphTargetPerMeshData.Emplace_GetRef() = MoveTemp(MorphsMeshData);
 				}
 			}
 
@@ -1210,13 +1266,13 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 	{
 		{
 			using namespace mu;
-			const int ElementSize = sizeof(int32);
-			const int ChannelCount = 1;
+			const int32 ElementSize = sizeof(int32);
+			const int32 ChannelCount = 1;
 			const MESH_BUFFER_SEMANTIC Semantics[ChannelCount] = { MBS_OTHER };
-			const int SemanticIndices[ChannelCount] = { GenerationContext.Options.bRealTimeMorphTargetsEnabled ? 2 : 0 };
+			const int32 SemanticIndices[ChannelCount] = { GenerationContext.Options.bRealTimeMorphTargetsEnabled ? 3 : 0 };
 			const MESH_BUFFER_FORMAT Formats[ChannelCount] = { MBF_INT32 };
-			int Components[ChannelCount] = { 1 };
-			const int Offsets[ChannelCount] = { 0 };
+			int32 Components[ChannelCount] = { 1 };
+			const int32 Offsets[ChannelCount] = { 0 };
 
 			MutableMesh->GetVertexBuffers().SetBuffer(nextBufferIndex, ElementSize, ChannelCount, Semantics, SemanticIndices, Formats, Components, Offsets);
 		}
@@ -1286,14 +1342,13 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 				FirstElem.SourceAssetIndex = INDEX_NONE;
 			}
 
-			const FSkelMeshSection& SectionData = ImportedModel->LODModels[LODIndex].Sections[SectionIndex];
-			const TArray<FMeshToMeshVertData>& ClothMappingData = SectionData.ClothMappingDataLODs[0];
+			const TArray<FMeshToMeshVertData>& ClothMappingData = MeshSection.ClothMappingDataLODs[0];
 
 
 			// Similar test as the one used on FSkeletalMeshObjectGPUSkin::FVertexFactoryData::InitAPEXClothVertexFactories
 			// Here should work as expexted, but in the reference code I'm not sure it always works. It is worth investigate
 			// in that direction if at some point multiple influences don't work as expected.
-			const bool bUseMutlipleInfluences = ClothMappingData.Num() > SectionData.NumVertices;
+			const bool bUseMutlipleInfluences = ClothMappingData.Num() > MeshSection.NumVertices;
 
 			// Constant defined in ClothMeshUtils.cpp with the following comment:
 			// // This must match NUM_INFLUENCES_PER_VERTEX in GpuSkinCacheComputeShader.usf and GpuSkinVertexFactory.ush
@@ -1365,12 +1420,12 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 		const int32 BoneWeightsSize = MutableBonesPerVertex * BoneWeightTypeSizeBytes;
 		const int32 SkinWeightProfileVertexSize = sizeof(int32) + BoneIndicesSize + BoneWeightsSize;
 
-		const int32 MaxSectionBoneMapIndex = ImportedModel->LODModels[LODIndex].Sections[SectionIndex].BoneMap.Num();
+		const int32 MaxSectionBoneMapIndex = MeshSection.BoneMap.Num();
 
 		const TArray<FSkinWeightProfileInfo>& SkinWeightProfilesInfo = InSkeletalMesh->GetSkinWeightProfiles();
 		for (const FSkinWeightProfileInfo& Profile : SkinWeightProfilesInfo)
 		{
-			const FImportedSkinWeightProfileData* ImportedProfileData = ImportedModel->LODModels[LODIndex].SkinWeightProfiles.Find(Profile.Name);
+			const FImportedSkinWeightProfileData* ImportedProfileData = LODModel.SkinWeightProfiles.Find(Profile.Name);
 			if (!ImportedProfileData)
 			{
 				continue;
@@ -1455,79 +1510,59 @@ mu::MeshPtr ConvertSkeletalMeshToMutable(const USkeletalMesh* InSkeletalMesh, co
 
 	// Indices
 	{
-		int IndexStart = ImportedModel->LODModels[LODIndex].Sections[SectionIndex].BaseIndex;
-		int IndexCount = ImportedModel->LODModels[LODIndex].Sections[SectionIndex].NumTriangles * 3;
+		const uint32 IndexStart = MeshSection.BaseIndex;
+		const uint32 IndexCount = MeshSection.NumTriangles * 3;
 		MutableMesh->GetIndexBuffers().SetBufferCount(1);
 		MutableMesh->GetIndexBuffers().SetElementCount(IndexCount);
-		MutableMesh->GetFaceBuffers().SetElementCount(IndexCount / 3);
+		MutableMesh->GetFaceBuffers().SetElementCount(MeshSection.NumTriangles);
 
 		using namespace mu;
-		// For some reason, the indices in 4.25 (and 4.24) are in different order in the Imported and Rendering data structures. The strange thing 
-		// is actually that the vertices in the imported model seem to match the rendering model indices. Maybe there is some mapping that
-		// we are missing, but for now this will do:
-		const int ElementSize = InSkeletalMesh->GetResourceForRendering()->LODRenderData[LODIndex].MultiSizeIndexContainer.GetDataTypeSize();
-		void* IndexDataPointer = InSkeletalMesh->GetResourceForRendering()->LODRenderData[LODIndex].MultiSizeIndexContainer.GetIndexBuffer()->GetPointerTo(IndexStart);
-		const int FinalElementSize = sizeof(uint32_t);
-		const int ChannelCount = 1;
+
+		check(LODModel.IndexBuffer.IsValidIndex(IndexStart) && LODModel.IndexBuffer.IsValidIndex(IndexStart + IndexCount - 1));
+		const uint32* IndexDataPtr = &LODModel.IndexBuffer[IndexStart];
+
+		const int32 FinalElementSize = sizeof(uint32_t);
+		const int32 ChannelCount = 1;
 		const MESH_BUFFER_SEMANTIC Semantics[ChannelCount] = { MBS_VERTEXINDEX };
-		const int SemanticIndices[ChannelCount] = { 0 };
+		const int32 SemanticIndices[ChannelCount] = { 0 };
 		// We force 32 bit indices, since merging meshes may create vertex buffers bigger than the initial mesh
 		// and for now the mutable runtime doesn't handle it.
 		// \TODO: go back to 16-bit indices when possible.
 		MESH_BUFFER_FORMAT Formats[ChannelCount] = { MBF_UINT32 };
-		const int Components[ChannelCount] = { 1 };
-		const int Offsets[ChannelCount] = { 0 };
+		const int32 Components[ChannelCount] = { 1 };
+		const int32 Offsets[ChannelCount] = { 0 };
 
 		MutableMesh->GetIndexBuffers().SetBuffer(0, FinalElementSize, ChannelCount, Semantics, SemanticIndices, Formats, Components, Offsets);
 
+		uint32* pDest = reinterpret_cast<uint32*>(MutableMesh->GetIndexBuffers().GetBufferData(0));
+
 		// 32-bit to 32-bit
-		if (ElementSize == 4)
+		uint32 VertexIndex = 0;
+		for (uint32 Index = 0; Index < IndexCount; ++Index)
 		{
-			uint32* pDest = reinterpret_cast<uint32*>(MutableMesh->GetIndexBuffers().GetBufferData(0));
-			const uint32* pSource = reinterpret_cast<const uint32*>(IndexDataPointer);
-
-			for (int i = 0; i < IndexCount; ++i)
+			VertexIndex = *IndexDataPtr - VertexStart;
+			if (ensureMsgf(VertexIndex < (uint32)VertexCount, TEXT("Mutable: VertexIndex >= VertexCount. VI [%d], VC [%d], VS [%d]. SKM [%s] LOD [%d] Section [%d]."),
+				VertexIndex, VertexCount, VertexStart,
+				*GetNameSafe(InSkeletalMesh), LODIndex, SectionIndex))
 			{
-				*pDest = *pSource - VertexStart;
-				check(*pDest < uint32(VertexCount));
-				++pDest;
-				++pSource;
+				*pDest = VertexIndex;
 			}
-		}
-		// 16-bit to 16-bit
-		else if (ElementSize == 2 && Formats[0] == MBF_UINT16)
-		{
-			uint16* pDest = reinterpret_cast<uint16*>(MutableMesh->GetIndexBuffers().GetBufferData(0));
-			const uint16* pSource = reinterpret_cast<const uint16*>(IndexDataPointer);
-
-			for (int i = 0; i < IndexCount; ++i)
+			else
 			{
-				*pDest = *pSource - VertexStart;
-				check(*pDest < uint32(VertexCount));
-				++pDest;
-				++pSource;
+				*pDest = 0;
 			}
-		}
-		// 16-bit to 32-bit
-		else if (ElementSize == 2 && Formats[0] == MBF_UINT32)
-		{
-			uint32* pDest = reinterpret_cast<uint32*>(MutableMesh->GetIndexBuffers().GetBufferData(0));
-			const uint16* pSource = reinterpret_cast<const uint16*>(IndexDataPointer);
-
-			for (int i = 0; i < IndexCount; ++i)
-			{
-				*pDest = *pSource - VertexStart;
-				check(*pDest < uint32(VertexCount));
-				++pDest;
-				++pSource;
-			}
-		}
-		else
-		{
-			// Unsupported case!
-			check(false);
+			++pDest;
+			++IndexDataPtr;
 		}
 	}
+
+	// Ensure Surface Data
+	mu::MESH_SURFACE MeshSurface;
+	MeshSurface.m_vertexCount = MutableMesh->m_VertexBuffers.GetElementCount();
+	MeshSurface.m_indexCount = MutableMesh->m_IndexBuffers.GetElementCount();
+	MeshSurface.BoneMapCount = MutableMesh->BoneMap.Num();
+	MeshSurface.bCastShadow = MeshSection.bCastShadow;
+	MutableMesh->m_surfaces.Add(MeshSurface);
 
 	if (!bIgnorePhysics && InSkeletalMesh->GetPhysicsAsset() && MutableMesh->GetSkeleton() && GenerationContext.Options.bPhysicsAssetMergeEnabled)
 	{
@@ -1783,6 +1818,8 @@ mu::MeshPtr ConvertStaticMeshToMutable(const UStaticMesh* StaticMesh, int32 LODI
 		GenerationContext.Compiler->CompilerLog(FText::FromString(Msg), CurrentNode, EMessageSeverity::Warning);
 		return nullptr;
 	}
+
+	GenerationContext.AddParticipatingObject(*StaticMesh);
 
 	mu::MeshPtr MutableMesh = new mu::Mesh();
 
@@ -2054,8 +2091,13 @@ mu::MeshPtr BuildMorphedMutableMesh(const UEdGraphPin* BaseSourcePin, const FStr
 
 	else if (const UCustomizableObjectNodeTable* TypedNodeTable = Cast<UCustomizableObjectNodeTable>(Node))
 	{
-		TypedNodeTable->GetPinLODAndSection(BaseSourcePin, LODIndexConnected, SectionIndexConnected);
-		SkeletalMesh = TypedNodeTable->GetSkeletalMeshAt(BaseSourcePin, RowName);
+		UDataTable* DataTable = GetDataTable(TypedNodeTable, GenerationContext);
+
+		if (DataTable)
+		{
+			TypedNodeTable->GetPinLODAndSection(BaseSourcePin, LODIndexConnected, SectionIndexConnected);
+			SkeletalMesh = TypedNodeTable->GetSkeletalMeshAt(BaseSourcePin, DataTable, RowName);
+		}
 	}
 
 	if (SkeletalMesh)
@@ -2175,7 +2217,7 @@ void GenerateMorphFactor(const UCustomizableObjectNode* Node, const UEdGraphPin&
 }
 
 TArray<TTuple<USkeletalMesh*, TSoftClassPtr<UAnimInstance>>> GetSkeletalMeshesInfoForReshapeSelection(
-		const UEdGraphNode* SkeletalMeshOrTableNode, const UEdGraphPin* SourceMeshPin)
+		const UEdGraphNode* SkeletalMeshOrTableNode, const UEdGraphPin* SourceMeshPin, FMutableGraphGenerationContext& GenerationContext)
 {
 	TArray<TTuple<USkeletalMesh*, TSoftClassPtr<UAnimInstance>>> SkeletalMeshesInfo;
 
@@ -2193,12 +2235,14 @@ TArray<TTuple<USkeletalMesh*, TSoftClassPtr<UAnimInstance>>> GetSkeletalMeshesIn
 	}
 	else if (const UCustomizableObjectNodeTable* TableNode = Cast<UCustomizableObjectNodeTable>(SkeletalMeshOrTableNode))
 	{
-		if (TableNode->Table)
+		UDataTable* DataTable = GetDataTable(TableNode, GenerationContext);
+
+		if (DataTable)
 		{
-			for (const FName& RowName : TableNode->GetRowNames())
+			for (const FName& RowName : GetRowsToCompile(*DataTable, *TableNode,GenerationContext))
 			{
-				USkeletalMesh* SkeletalMesh = TableNode->GetSkeletalMeshAt(SourceMeshPin, RowName);
-				TSoftClassPtr<UAnimInstance> MeshAnimInstance = TableNode->GetAnimInstanceAt(SourceMeshPin, RowName);
+				USkeletalMesh* SkeletalMesh = TableNode->GetSkeletalMeshAt(SourceMeshPin, DataTable, RowName);
+				TSoftClassPtr<UAnimInstance> MeshAnimInstance = TableNode->GetAnimInstanceAt(SourceMeshPin, DataTable, RowName);
 
 				if (SkeletalMesh)
 				{
@@ -2655,24 +2699,27 @@ mu::NodeMeshPtr GenerateMorphMesh(const UEdGraphPin* Pin,
 	
 	if (const UCustomizableObjectNodeTable* TypedNodeTable = Cast<UCustomizableObjectNodeTable>(Pin->GetOwningNode()))
 	{
+		UDataTable* DataTable = GetDataTable(TypedNodeTable, GenerationContext);
+
 		// Generate a new Column for each morph
-		int32 NumRows = TypedNodeTable->GetRowNames().Num();
+		const TArray<FName>& RowNames = GetRowsToCompile(*DataTable, *TypedNodeTable, GenerationContext);
+		int32 NumRows = RowNames.Num();
 
 		// Should exist
-		mu::TablePtr Table = GenerationContext.GeneratedTables[TypedNodeTable->Table->GetName()];
+		mu::TablePtr Table = GenerationContext.GeneratedTables[DataTable->GetName()];
 
 		FString ColumnName = TableColumnName + TypedNodeMorphs[MorphIndex].MorphTargetName;
 		int32 ColumnIndex = INDEX_NONE;
 
 		for (int32 RowIndex = 0; RowIndex < NumRows; ++RowIndex)
 		{
-			const FName RowName = TypedNodeTable->GetRowNames()[RowIndex];
+			const FName RowName = RowNames[RowIndex];
 
-			ColumnIndex = Table->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get());
+			ColumnIndex = Table->FindColumn(ColumnName);
 
 			if (ColumnIndex == INDEX_NONE)
 			{
-				ColumnIndex = Table->AddColumn(StringCast<ANSICHAR>(*ColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_MESH);
+				ColumnIndex = Table->AddColumn(ColumnName, mu::ETableColumnType::Mesh);
 			}
 
 			mu::MeshPtr MorphedSourceTableMesh = BuildMorphedMutableMesh(Pin, TypedNodeMorphs[MorphIndex].MorphTargetName, GenerationContext, bOnlyConnectedLOD, RowName);
@@ -2685,8 +2732,8 @@ mu::NodeMeshPtr GenerateMorphMesh(const UEdGraphPin* Pin,
 
 			mu::NodeMeshTablePtr MorphedSourceMeshNodeTable = new mu::NodeMeshTable;
 			MorphedSourceMeshNodeTable->SetTable(Table);
-			MorphedSourceMeshNodeTable->SetColumn(StringCast<ANSICHAR>(*ColumnName).Get());
-			MorphedSourceMeshNodeTable->SetParameterName(StringCast<ANSICHAR>(*TypedNodeTable->ParameterName).Get());
+			MorphedSourceMeshNodeTable->SetColumn(ColumnName);
+			MorphedSourceMeshNodeTable->SetParameterName(TypedNodeTable->ParameterName);
 			MorphedSourceMeshNodeTable->SetMessageContext(MorphNode);
 
 			mu::NodeMeshMakeMorphPtr Morph = new mu::NodeMeshMakeMorph;
@@ -2728,7 +2775,7 @@ mu::NodeMeshPtr GenerateMorphMesh(const UEdGraphPin* Pin,
 					const UEdGraphNode* SkeletalMeshNode = SourceMeshPin ? SourceMeshPin->GetOwningNode() : nullptr;
 
 					TArray<TTuple<USkeletalMesh*, TSoftClassPtr<UAnimInstance>>> SkeletalMeshesToDeform = 
-							GetSkeletalMeshesInfoForReshapeSelection(SkeletalMeshNode, SourceMeshPin);
+							GetSkeletalMeshesInfoForReshapeSelection(SkeletalMeshNode, SourceMeshPin, GenerationContext);
 
 					bool bWarningFound = false;
 					if (TypedMorphNode->bReshapeSkeleton)
@@ -2788,7 +2835,7 @@ mu::NodeLayoutBlocksPtr CreateDefaultLayout()
 	LayoutNode->SetBlockReductionMethod(mu::EReductionMethod::HALVE_REDUCTION);
 	LayoutNode->SetBlockCount(1);
 	LayoutNode->SetBlock(0, 0, 0, GridSize, GridSize);
-	LayoutNode->SetBlockOptions(0, 0, false);
+	LayoutNode->SetBlockOptions(0, 0, false, false);
 
 	return LayoutNode;
 }
@@ -2853,10 +2900,15 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 
 			if (!TypedNodeSkel->AnimInstance.IsNull())
 			{
-				FName SlotIndex = TypedNodeSkel->AnimBlueprintSlotName;
-				GenerationContext.AnimBPAssetsMap.Add(TypedNodeSkel->AnimInstance.ToString(), TypedNodeSkel->AnimInstance);
+				if (UClass* AnimInstance = TypedNodeSkel->AnimInstance.LoadSynchronous())
+				{
+					GenerationContext.AddParticipatingObject(*AnimInstance);					
+				}
 
-				AnimBPAssetTag = GenerateAnimationInstanceTag(TypedNodeSkel->AnimInstance.ToString(), SlotIndex);
+				FName SlotIndex = TypedNodeSkel->AnimBlueprintSlotName;
+				const int32 AnimInstanceIndex = GenerationContext.AnimBPAssets.AddUnique(TypedNodeSkel->AnimInstance);
+
+				AnimBPAssetTag = GenerateAnimationInstanceTag(AnimInstanceIndex, SlotIndex);
 				MeshUniqueTags += AnimBPAssetTag;
 			}
 
@@ -2867,6 +2919,38 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 				const FString AnimBPTag = GenerateGameplayTag(GamePlayTag.ToString());
 				ArrayAnimBPTags.Add(AnimBPTag);
 				MeshUniqueTags += AnimBPTag;
+			}
+
+			TArray<FCustomizableObjectStreameableResourceId> StreamedResources;
+
+			if (GenerationContext.Object->bEnableAssetUserDataMerge)
+			{
+				const TArray<UAssetUserData*>* AssetUserDataArray = TypedNodeSkel->SkeletalMesh->GetAssetUserDataArray();
+
+				if (AssetUserDataArray)
+				{
+					for (UAssetUserData* AssetUserData : *AssetUserDataArray)
+					{
+						if (!AssetUserData)
+						{
+							continue;
+						}
+
+						const int32 ResourceIndex = GenerationContext.AddAssetUserDataToStreamedResources(AssetUserData);
+						if (ResourceIndex >= 0)
+						{
+							check(ResourceIndex < (1 << 24) - 1);
+							
+							FCustomizableObjectStreameableResourceId ResourceId;
+							ResourceId.Id = (uint32)ResourceIndex;
+							ResourceId.Type = static_cast<uint8>(FCustomizableObjectStreameableResourceId::EType::AssetUserData);
+
+							StreamedResources.Add(ResourceId);
+						}
+
+						MeshUniqueTags += AssetUserData->GetPathName();
+					}
+				}
 			}
 
 			FSkeletalMeshModel* ImportedModel = TypedNodeSkel->SkeletalMesh->GetImportedModel();
@@ -2881,8 +2965,11 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 					MutableMesh->GetPhysicsBody()->GetBodyCount())
 				{
 					TSoftObjectPtr<UPhysicsAsset> PhysicsAsset = TypedNodeSkel->SkeletalMesh->GetPhysicsAsset();
-					GenerationContext.PhysicsAssetMap.Add(PhysicsAsset.ToString(), PhysicsAsset);
-					FString PhysicsAssetTag = FString("__PhysicsAsset:") + PhysicsAsset.ToString();
+
+					GenerationContext.AddParticipatingObject(*PhysicsAsset);
+
+					const int32 AssetIndex = GenerationContext.PhysicsAssets.AddUnique(PhysicsAsset);
+					FString PhysicsAssetTag = FString("__PA:") + FString::FromInt(AssetIndex);
 
 					AddTagToMutableMeshUnique(*MutableMesh, PhysicsAssetTag);
 				}
@@ -2902,12 +2989,10 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 
 						check(AssetIndex != INDEX_NONE);
 
-						TSoftObjectPtr<UPhysicsAsset> PhysicsAsset = ClothingAssetCommon->PhysicsAsset.Get();
-
-						FString ClothPhysicsAssetTag = FString("__ClothPhysicsAsset:") + FString::Printf(TEXT("%d_AssetIdx_"), AssetIndex) + PhysicsAsset.ToString();
+						GenerationContext.AddParticipatingObject(*ClothingAssetCommon->PhysicsAsset);
 						
-						GenerationContext.PhysicsAssetMap.Add(PhysicsAsset.ToString(), ClothingAssetCommon->PhysicsAsset.Get());
-
+						const int32 PhysicsAssetIndex = GenerationContext.PhysicsAssets.AddUnique(ClothingAssetCommon->PhysicsAsset);
+						FString ClothPhysicsAssetTag = FString::Printf(TEXT("__ClothPA:%d_%d"), AssetIndex, PhysicsAssetIndex);
 						AddTagToMutableMeshUnique(*MutableMesh, ClothPhysicsAssetTag);
 					}
 				}
@@ -2935,6 +3020,11 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 				for (const FString& GamePlayTag : ArrayAnimBPTags)
 				{
 					AddTagToMutableMeshUnique(*MutableMesh, GamePlayTag);
+				}
+
+				for (FCustomizableObjectStreameableResourceId ResourceId : StreamedResources)
+				{
+					MutableMesh->AddStreamedResource(BitCast<uint32>(ResourceId));
 				}
 
 				AddSocketTagsToMesh(TypedNodeSkel->SkeletalMesh, MutableMesh, GenerationContext);
@@ -3090,7 +3180,7 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 			FMorphNodeData NewMorphData = { TypedNodeMorph, TypedNodeMorph->MorphTargetName ,TypedNodeMorph->FactorPin(), TypedNodeMorph->MeshPin() };
 			GenerationContext.MeshMorphStack.Push(NewMorphData);
 			Result = GenerateMutableSourceMesh(ConnectedPin, GenerationContext, MeshData, false, bOnlyConnectedLOD);
-			GenerationContext.MeshMorphStack.Pop(true);
+			GenerationContext.MeshMorphStack.Pop(EAllowShrinking::Yes);
 		}
 		else
 		{
@@ -3156,7 +3246,7 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 
 				for (int32 MorphIndex = 0; MorphIndex < AddedMorphs; ++MorphIndex)
 				{
-					GenerationContext.MeshMorphStack.Pop(true);
+					GenerationContext.MeshMorphStack.Pop(EAllowShrinking::Yes);
 				}
 			}
 			else
@@ -3259,18 +3349,15 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 				GenerationContext.Compiler->CompilerLog(LOCTEXT("MeshFailed", "Mesh generation failed."), Node);
 			}
 		}
-		else
-		{
-			GenerationContext.Compiler->CompilerLog(LOCTEXT("MeshVarMissingDef", "Mesh variation node requires a default value."), Node);
-		}
 
-		MeshNode->SetVariationCount(TypedNodeMeshVar->Variations.Num());
-		for (int VariationIndex = 0; VariationIndex < TypedNodeMeshVar->Variations.Num(); ++VariationIndex)
+		const int32 NumVariations = TypedNodeMeshVar->GetNumVariations();
+		MeshNode->SetVariationCount(NumVariations);
+		for (int VariationIndex = 0; VariationIndex < NumVariations; ++VariationIndex)
 		{
 			const UEdGraphPin* VariationPin = TypedNodeMeshVar->VariationPin(VariationIndex);
 			if (!VariationPin) continue;
 
-			MeshNode->SetVariationTag(VariationIndex, StringCast<ANSICHAR>(*TypedNodeMeshVar->Variations[VariationIndex].Tag).Get());
+			MeshNode->SetVariationTag(VariationIndex, StringCast<ANSICHAR>(*TypedNodeMeshVar->GetVariation(VariationIndex).Tag).Get());
 			if (const UEdGraphPin* ConnectedPin = FollowInputPin(*VariationPin))
 			{
 				FMutableGraphMeshGenerationData VariationMeshData;
@@ -3302,7 +3389,8 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 		}
 		else
 		{
-			GenerationContext.Compiler->CompilerLog(LOCTEXT("MeshGeometryMissingDef", "Mesh variation node requires a default value."), Node);
+			FText Text = FText::Format(LOCTEXT("MeshGeometryMissingDef", "Geometry Operation node requires the {0} value."), TypedNodeGeometry->MeshAPin()->PinFriendlyName);
+			GenerationContext.Compiler->CompilerLog(Text, Node);
 		}
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeGeometry->MeshBPin()))
@@ -3374,6 +3462,7 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 		{
 
 			MeshNode->SetReshapeVertices(TypedNodeReshape->bReshapeVertices);
+			MeshNode->SetApplyLaplacian(TypedNodeReshape->bApplyLaplacianSmoothing);
 			MeshNode->SetReshapeSkeleton(TypedNodeReshape->bReshapeSkeleton);
 			MeshNode->SetReshapePhysicsVolumes(TypedNodeReshape->bReshapePhysicsVolumes);
 
@@ -3434,7 +3523,7 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 			const UEdGraphNode* SkeletalMeshNode = SourceMeshPin ? SourceMeshPin->GetOwningNode() : nullptr;
 
 			TArray<TTuple<USkeletalMesh*, TSoftClassPtr<UAnimInstance>>> SkeletalMeshesToDeform = 
-					GetSkeletalMeshesInfoForReshapeSelection(SkeletalMeshNode, SourceMeshPin);
+					GetSkeletalMeshesInfoForReshapeSelection(SkeletalMeshNode, SourceMeshPin, GenerationContext);
 
 			bool bWarningFound = false;
 			if (TypedNodeReshape->bReshapeSkeleton)
@@ -3573,11 +3662,13 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 		Result = EmptyNode;
 		bool bSuccess = true;
 
-		if (TypedNodeTable->Table)
+		UDataTable* DataTable = GetDataTable(TypedNodeTable, GenerationContext);
+
+		if (DataTable)
 		{
 			// Getting the real name of the data table column
 			FString DataTableColumnName = TypedNodeTable->GetColumnNameByPin(Pin);
-			FProperty* Property = TypedNodeTable->Table->FindTableProperty(FName(*DataTableColumnName));
+			FProperty* Property = DataTable->FindTableProperty(FName(*DataTableColumnName));
 
 			if (!Property)
 			{
@@ -3602,7 +3693,7 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 			{
 				// Generating a new data table if not exists
 				mu::TablePtr Table = nullptr;
-				Table = GenerateMutableSourceTable(TypedNodeTable->Table->GetName(), Pin, GenerationContext);
+				Table = GenerateMutableSourceTable(DataTable, TypedNodeTable, GenerationContext);
 
 				if (Table)
 				{
@@ -3622,10 +3713,10 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 					}
 					
 					// Getting the mutable table mesh column name
-					FString MutableColumnName = TypedNodeTable->GetMutableColumnName(Pin, LODIndex);
+					FString MutableColumnName = TypedNodeTable->GenerateSkeletalMeshMutableColumName(DataTableColumnName, LODIndex, SectionIndex);
 
 					// Generating a new Mesh column if not exists
-					if (Table->FindColumn(StringCast<ANSICHAR>(*MutableColumnName).Get()) == INDEX_NONE)
+					if (Table->FindColumn(MutableColumnName) == INDEX_NONE)
 					{
 						bSuccess = GenerateTableColumn(TypedNodeTable, Pin, Table, DataTableColumnName, Property, LODIndexConnected, SectionIndexConnected, LODIndex, SectionIndex, bOnlyConnectedLOD, GenerationContext);
 
@@ -3641,10 +3732,10 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 						Result = MeshTableNode;
 
 						MeshTableNode->SetTable(Table);
-						MeshTableNode->SetColumn(StringCast<ANSICHAR>(*MutableColumnName).Get());
-						MeshTableNode->SetParameterName(StringCast<ANSICHAR>(*TypedNodeTable->ParameterName).Get());
-
-						GenerationContext.AddParameterNameUnique(Node, TypedNodeTable->ParameterName);
+						MeshTableNode->SetColumn(MutableColumnName);
+						MeshTableNode->SetParameterName(TypedNodeTable->ParameterName);
+						MeshTableNode->SetNoneOption(TypedNodeTable->bAddNoneOption);
+						MeshTableNode->SetDefaultRowName(TypedNodeTable->DefaultRowName.ToString());
 
 						if (DefaultSkeletalMesh)
 						{
@@ -3679,7 +3770,10 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 								LayoutNode->SetGridSize(Layouts[i]->GetGridSize().X, Layouts[i]->GetGridSize().Y);
 								LayoutNode->SetMaxGridSize(Layouts[i]->GetMaxGridSize().X, Layouts[i]->GetMaxGridSize().Y);
 								LayoutNode->SetBlockCount(Layouts[i]->Blocks.Num() ? Layouts[i]->Blocks.Num() : 1);
-								LayoutNode->SetLayoutPackingStrategy(Layouts[i]->GetPackingStrategy() == ECustomizableObjectTextureLayoutPackingStrategy::Fixed ? mu::EPackStrategy::FIXED_LAYOUT : mu::EPackStrategy::RESIZABLE_LAYOUT);
+
+								mu::EPackStrategy PackStrategy = ConvertLayoutStrategy(Layouts[i]->GetPackingStrategy());
+								LayoutNode->SetLayoutPackingStrategy(PackStrategy);
+								
 								LayoutNode->SetBlockReductionMethod(Layouts[i]->GetBlockReductionMethod() == ECustomizableObjectLayoutBlockReductionMethod::Halve ? mu::EReductionMethod::HALVE_REDUCTION : mu::EReductionMethod::UNITARY_REDUCTION);
 
 								if (bLinkedToExtendMaterial)
@@ -3698,7 +3792,7 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 											Layouts[i]->Blocks[BlockIndex].Max.X - Layouts[i]->Blocks[BlockIndex].Min.X,
 											Layouts[i]->Blocks[BlockIndex].Max.Y - Layouts[i]->Blocks[BlockIndex].Min.Y);
 
-										LayoutNode->SetBlockOptions(BlockIndex, Layouts[i]->Blocks[BlockIndex].Priority, Layouts[i]->Blocks[BlockIndex].bUseSymmetry);
+										LayoutNode->SetBlockOptions(BlockIndex, Layouts[i]->Blocks[BlockIndex].Priority, Layouts[i]->Blocks[BlockIndex].bReduceBothAxes, Layouts[i]->Blocks[BlockIndex].bReduceByTwo);
 									}
 								}
 								else
@@ -3707,7 +3801,7 @@ mu::NodeMeshPtr GenerateMutableSourceMesh(const UEdGraphPin* Pin,
 									GenerationContext.Compiler->CompilerLog(FText::FromString(msg), Node, EMessageSeverity::Warning);
 
 									LayoutNode->SetBlock(0, 0, 0, Layouts[i]->GetGridSize().X, Layouts[i]->GetGridSize().Y);
-									LayoutNode->SetBlockOptions(0, 0, false);
+									LayoutNode->SetBlockOptions(0, 0, false, false);
 								}
 
 								MeshTableNode->SetLayout(i, LayoutNode);

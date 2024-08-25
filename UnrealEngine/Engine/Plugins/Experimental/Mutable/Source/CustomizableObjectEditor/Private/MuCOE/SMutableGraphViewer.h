@@ -32,13 +32,15 @@ public:
 	// SWidget interface
 	SLATE_BEGIN_ARGS(SMutableGraphViewer) {}
 
-	/** User-visible tag to indentify the source of the data shwon. */
+	/** User-visible tag to indentify the source of the data shown. */
 	SLATE_ARGUMENT(FString, DataTag)
+
+	SLATE_ARGUMENT(TArray<TSoftObjectPtr<UTexture>>, ReferencedRuntimeTextures)
+	SLATE_ARGUMENT(TArray<TSoftObjectPtr<UTexture>>, ReferencedCompileTextures)
 
 	SLATE_END_ARGS()
 
-	void Construct(const FArguments& InArgs, const mu::NodePtr& InRootNode, const FCompilationOptions& InCompileOptions,
-		TWeakPtr<FTabManager> InParentTabManager, const FName& InParentNewTabId);
+	void Construct(const FArguments& InArgs, const mu::NodePtr& InRootNode);
 
 	// SWidget interface
 	FReply OnDragOver(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
@@ -56,15 +58,12 @@ private:
 	/** The Mutable Graph to show, represented by its root. */
 	mu::NodePtr RootNode;
 
-	/** Compilation options to use in the debugger operations. */
-	FCompilationOptions CompileOptions;
+	/** Array of external referenced textures in MutableModel, indexed by id. */
+	TArray<TSoftObjectPtr<UTexture>> ReferencedRuntimeTextures;
+	TArray<TSoftObjectPtr<UTexture>> ReferencedCompileTextures;
 
 	/** Object compiler. */
 	FCustomizableObjectCompiler Compiler;
-
-	/** UI references used to create new tabs. */
-	TWeakPtr<FTabManager> ParentTabManager;
-	FName ParentNewTabId;
 
 	/** Root nodes of the tree widget. */
 	TArray<TSharedPtr<FMutableGraphTreeElement>> RootNodes;
@@ -98,15 +97,7 @@ private:
 
 	/** */
 	void RebuildTree();
-
-	/** UI callbacks */
-	void CompileMutableCodePressed();
-	TSharedRef<SWidget> GenerateCompileOptionsMenuContent();
-	TSharedPtr<STextComboBox> CompileOptimizationCombo;
-	TArray< TSharedPtr<FString> > CompileOptimizationStrings;
-	TSharedPtr<SNumericDropDown<float>> CompileTilingCombo;
-	void OnChangeCompileOptimizationLevel(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
-
+	
 	/** Callbacks from the tree widget. */
  	TSharedRef<ITableRow> GenerateRowForNodeTree(TSharedPtr<FMutableGraphTreeElement> InTreeNode, const TSharedRef<STableViewBase>& InOwnerTable);
 	void GetChildrenForInfo(TSharedPtr<FMutableGraphTreeElement> InInfo, TArray< TSharedPtr<FMutableGraphTreeElement> >& OutChildren);
@@ -121,9 +112,10 @@ private:
 class FMutableGraphTreeElement : public TSharedFromThis<FMutableGraphTreeElement>
 {
 public:
-	FMutableGraphTreeElement(const mu::NodePtr& InNode, TSharedPtr<FMutableGraphTreeElement>* InDuplicatedOf=nullptr )
+	FMutableGraphTreeElement(const mu::NodePtr& InNode, TSharedPtr<FMutableGraphTreeElement>* InDuplicatedOf=nullptr, const FString& InPrefix=FString() )
 	{
 		MutableNode = InNode;
+		Prefix = InPrefix;
 		if (InDuplicatedOf)
 		{
 			DuplicatedOf = *InDuplicatedOf;
@@ -138,4 +130,6 @@ public:
 	/** If this tree element is a duplicated of another node, this is the node. */
 	TSharedPtr<FMutableGraphTreeElement> DuplicatedOf;
 
+	/** Optional label prefix */
+	FString Prefix;
 };

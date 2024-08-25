@@ -23,13 +23,26 @@ public class AudioWidgets : ModuleRules
 		(
 			new string[]
 			{
+				"AudioMixer",
 				"CoreUObject",
 				"Engine",
+				"InputCore",
 				"Slate",
 				"SlateCore",
 				"AdvancedWidgets",
 				"SignalProcessing"
 			}
 		);
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange
+			(
+				new string[]
+				{
+					"UnrealEd",
+				}
+			);
+		}
 	}
 }

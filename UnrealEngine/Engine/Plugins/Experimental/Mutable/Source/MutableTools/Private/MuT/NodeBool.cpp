@@ -7,8 +7,6 @@
 #include "MuR/Serialisation.h"
 #include "MuR/SerialisationPrivate.h"
 
-#include <stdint.h>
-
 
 namespace mu
 {
@@ -16,13 +14,13 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeBoolType = NODE_TYPE( "NodeBool", Node::GetStaticType() );
+	static FNodeType s_nodeBoolType = FNodeType( "NodeBool", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeBool::Serialise( const NodeBool* p, OutputArchive& arch )
 	{
-        uint32_t ver = 0;
+        uint32 ver = 0;
 		arch << ver;
 
 		arch << uint32_t(p->Type);
@@ -31,20 +29,20 @@ namespace mu
 
         
 	//---------------------------------------------------------------------------------------------
-	NodeBoolPtr NodeBool::StaticUnserialise( InputArchive& arch )
+	Ptr<NodeBool> NodeBool::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (id)
 		{
 		case 0 :  return NodeBoolConstant::StaticUnserialise( arch ); break;
 		case 1 :  return NodeBoolParameter::StaticUnserialise( arch ); break;
-		case 2 :  return NodeBoolIsNull::StaticUnserialise( arch ); break;
+		//case 2 :  return NodeBoolIsNull::StaticUnserialise( arch ); break;
 		case 3 :  return NodeBoolNot::StaticUnserialise( arch ); break;
 		case 4 :  return NodeBoolAnd::StaticUnserialise( arch ); break;
 		default : check(false);
@@ -55,14 +53,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeBool::GetType() const
+	const FNodeType* NodeBool::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeBool::GetStaticType()
+	const FNodeType* NodeBool::GetStaticType()
 	{
 		return &s_nodeBoolType;
 	}

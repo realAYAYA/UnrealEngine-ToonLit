@@ -7,9 +7,7 @@
 #include <string.h>
 
 #if PLATFORM_WINDOWS
-#include "Windows/PreWindowsApi.h"
-#include "Windows/MinWindows.h"
-#include "Windows/PostWindowsApi.h"
+#include "Windows/WindowsHWrapper.h"
 #include <dbghelp.h>
 #else
 #include <execinfo.h>
@@ -22,6 +20,17 @@ DEFINE_LOG_CATEGORY(LogAutoRTFM)
 
 namespace AutoRTFM
 {
+
+void PrettyAbort(const char* const File, const unsigned Line, const char* const Function, const char* const Expression)
+{
+    UE_LOG(LogAutoRTFM, Fatal, TEXT("%s:%d:%s: assertion %s failed."), ANSI_TO_TCHAR(File), Line, ANSI_TO_TCHAR(Function), ANSI_TO_TCHAR(Expression));
+
+#if PLATFORM_WINDOWS
+	__assume(false);
+#else
+	__builtin_unreachable();
+#endif // PLATFORM_WINDOWS
+}
 
 FString GetFunctionDescription(void* FunctionPtr)
 {

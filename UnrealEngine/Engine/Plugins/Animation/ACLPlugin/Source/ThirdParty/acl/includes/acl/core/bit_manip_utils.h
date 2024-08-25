@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/error.h"
 
@@ -73,6 +74,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Counts the number of '1' bits (aka: pop-count)
 	inline uint8_t count_set_bits(uint8_t value)
@@ -80,7 +83,7 @@ namespace acl
 #if defined(ACL_USE_POPCOUNT)
 		return (uint8_t)_mm_popcnt_u32(value);
 #elif defined(RTM_NEON_INTRINSICS)
-		return (uint8_t)vget_lane_u64(vcnt_u8(vcreate_u8(value)), 0);
+		return (uint8_t)vget_lane_u8(vcnt_u8(vcreate_u8(value)), 0);
 #else
 		value = value - ((value >> 1) & 0x55);
 		value = (value & 0x33) + ((value >> 2) & 0x33);
@@ -95,7 +98,7 @@ namespace acl
 #if defined(ACL_USE_POPCOUNT)
 		return (uint16_t)_mm_popcnt_u32(value);
 #elif defined(RTM_NEON_INTRINSICS)
-		return (uint16_t)vget_lane_u64(vpaddl_u8(vcnt_u8(vcreate_u8(value))), 0);
+		return (uint16_t)vget_lane_u16(vpaddl_u8(vcnt_u8(vcreate_u8(value))), 0);
 #else
 		value = value - ((value >> 1) & 0x5555);
 		value = (value & 0x3333) + ((value >> 2) & 0x3333);
@@ -110,7 +113,7 @@ namespace acl
 #if defined(ACL_USE_POPCOUNT)
 		return _mm_popcnt_u32(value);
 #elif defined(RTM_NEON_INTRINSICS)
-		return (uint32_t)vget_lane_u64(vpaddl_u16(vpaddl_u8(vcnt_u8(vcreate_u8(value)))), 0);
+		return (uint32_t)vget_lane_u32(vpaddl_u16(vpaddl_u8(vcnt_u8(vcreate_u8(value)))), 0);
 #else
 		value = value - ((value >> 1) & 0x55555555);
 		value = (value & 0x33333333) + ((value >> 2) & 0x33333333);
@@ -196,6 +199,8 @@ namespace acl
 		return ~not_value & and_value;
 #endif
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 #if defined(RTM_COMPILER_MSVC)

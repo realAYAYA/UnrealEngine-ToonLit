@@ -24,11 +24,12 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/iallocator.h"
 #include "acl/core/error.h"
 #include "acl/core/track_formats.h"
-#include "acl/core/variable_bit_rates.h"
+#include "acl/core/impl/variable_bit_rates.h"
 #include "acl/compression/impl/animated_track_utils.h"
 #include "acl/compression/impl/clip_context.h"
 
@@ -40,6 +41,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 		inline uint32_t get_constant_data_size(const clip_context& clip)
@@ -331,8 +334,8 @@ namespace acl
 				}
 				else
 				{
-					const uint64_t raw_sample_u64 = *safe_ptr_cast<const uint64_t>(raw_sample_ptr);
-					memcpy_bits(animated_track_data_begin, out_bit_offset, &raw_sample_u64, 0, num_bits_at_bit_rate);
+					const uint64_t* raw_sample_u64 = safe_ptr_cast<const uint64_t>(raw_sample_ptr);
+					memcpy_bits(animated_track_data_begin, out_bit_offset, raw_sample_u64, 0, num_bits_at_bit_rate);
 				}
 
 				out_bit_offset += num_bits_at_bit_rate;
@@ -369,6 +372,8 @@ namespace acl
 
 			const uint8_t* animated_track_data_start = animated_track_data;
 			const uint8_t* animated_track_data_end = add_offset_to_ptr<uint8_t>(animated_track_data, animated_data_size);
+			const bool has_stripped_keyframes = segment.clip->has_stripped_keyframes;
+			const bitset_description hard_keyframes_desc = bitset_description::make_from_num_bits<32>();
 
 			uint64_t bit_offset = 0;
 
@@ -410,9 +415,11 @@ namespace acl
 				ACL_ASSERT(animated_track_data <= animated_track_data_end, "Invalid animated track data offset. Wrote too much data."); (void)animated_track_data_end;
 			};
 
-			// TODO: Use a group writer context object to avoid alloc/free/work in loop for every sample when it doesn't change
 			for (uint32_t sample_index = 0; sample_index < segment.num_samples; ++sample_index)
 			{
+				if (has_stripped_keyframes && !bitset_test(&segment.hard_keyframes, hard_keyframes_desc, sample_index))
+					continue;	// This keyframe has been stripped, skip it
+
 				auto group_entry_action = [&segment, sample_index, &group_animated_track_data, &group_bit_offset](animation_track_type8 group_type, uint32_t group_size, uint32_t bone_index)
 				{
 					(void)group_size;
@@ -441,8 +448,12 @@ namespace acl
 			if (bit_offset != 0)
 				animated_track_data = animated_track_data_begin + ((bit_offset + 7) / 8);
 
-			ACL_ASSERT((bit_offset == 0 && segment.num_samples == 0) || ((bit_offset / segment.num_samples) == segment.animated_pose_bit_size), "Unexpected number of bits written");
+#if defined(ACL_HAS_ASSERT_CHECKS)
+			const uint32_t num_stored_samples = has_stripped_keyframes ? bitset_count_set_bits(&segment.hard_keyframes, hard_keyframes_desc) : segment.num_samples;
+			ACL_ASSERT((bit_offset == 0 && segment.num_samples == 0) || ((bit_offset / num_stored_samples) == segment.animated_pose_bit_size), "Unexpected number of bits written");
 			ACL_ASSERT(animated_track_data == animated_track_data_end, "Invalid animated track data offset. Wrote too little data.");
+#endif
+
 			return safe_static_cast<uint32_t>(animated_track_data - animated_track_data_start);
 		}
 
@@ -475,12 +486,29 @@ namespace acl
 			auto group_entry_action = [&segment, &format_per_track_group](animation_track_type8 group_type, uint32_t group_size, uint32_t bone_index)
 			{
 				const transform_streams& bone_stream = segment.bone_streams[bone_index];
+
+				uint32_t bit_rate;
 				if (group_type == animation_track_type8::rotation)
-					format_per_track_group[group_size] = (uint8_t)get_num_bits_at_bit_rate(bone_stream.rotations.get_bit_rate());
+					bit_rate = bone_stream.rotations.get_bit_rate();
 				else if (group_type == animation_track_type8::translation)
-					format_per_track_group[group_size] = (uint8_t)get_num_bits_at_bit_rate(bone_stream.translations.get_bit_rate());
+					bit_rate = bone_stream.translations.get_bit_rate();
 				else
-					format_per_track_group[group_size] = (uint8_t)get_num_bits_at_bit_rate(bone_stream.scales.get_bit_rate());
+					bit_rate = bone_stream.scales.get_bit_rate();
+
+				const uint32_t num_bits = get_num_bits_at_bit_rate(bit_rate);
+				ACL_ASSERT(num_bits <= 32, "Expected 32 bits or less");
+
+				// We only have 25 bit rates and the largest number of bits is 32 (highest bit rate).
+				// This would require 6 bits to store in the per sub-track metadata but it would leave
+				// most of the entries unused.
+				// Instead, we store the number of bits on 5 bits which has a max value of 31.
+				// To do so, we remap 32 to 31 since that value is unused.
+				// This leaves 3 unused bits in our per sub-track metadata.
+				// These will later be needed:
+				//    - 1 bit to dictate if rotations contain 3 or 4 components (to allow mixing full quats in with packed quats)
+				//    - 2 bits to dictate which rotation component is dropped (to allow the largest component to be dropped over our segment)
+
+				format_per_track_group[group_size] = (bit_rate == k_highest_bit_rate) ? 31 : (uint8_t)num_bits;
 			};
 
 			auto group_flush_action = [&format_per_track_data, format_per_track_data_end, &format_per_track_group](animation_track_type8 group_type, uint32_t group_size)
@@ -502,6 +530,8 @@ namespace acl
 			return safe_static_cast<uint32_t>(format_per_track_data - format_per_track_data_start);
 		}
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

@@ -52,12 +52,17 @@ void FNiagaraSystemScriptViewModel::OnSystemVMCompiled(UNiagaraSystem* InSystem)
 	SystemScripts.Add(InSystem->GetSystemUpdateScript());
 	ScriptsEnabled.Add(true);
 	ScriptsEnabled.Add(true);
-
 	
 	for (const FNiagaraEmitterHandle& Handle : InSystem->GetEmitterHandles())
 	{
+		//-TODO:Stateless: Do we need stateless support here?
+		FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
+		if (EmitterData == nullptr)
+		{
+			continue;
+		}
 		int32 NumScripts = SystemScripts.Num();
-		Handle.GetEmitterData()->GetScripts(SystemScripts, true);
+		EmitterData->GetScripts(SystemScripts, true);
 		for (; NumScripts < SystemScripts.Num(); NumScripts++)
 		{
 			if (Handle.GetIsEnabled())

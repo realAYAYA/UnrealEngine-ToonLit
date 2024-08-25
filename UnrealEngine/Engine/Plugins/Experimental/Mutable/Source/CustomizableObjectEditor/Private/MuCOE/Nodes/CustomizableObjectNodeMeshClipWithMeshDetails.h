@@ -15,41 +15,6 @@ class SVerticalBox;
 class UCustomizableObjectNodeMeshClipWithMesh;
 struct FAssetData;
 
-// Widget that represents the array of tags of the clip with mesh node
-class STagView : public SCompoundWidget
-{
-public:
-
-	SLATE_BEGIN_ARGS(class STagView) {}
-	SLATE_ARGUMENT(FString, TagValue)
-	SLATE_ARGUMENT(int32, TagIndex)
-	SLATE_ARGUMENT(UCustomizableObjectNodeMeshClipWithMesh*, Node)
-	SLATE_ARGUMENT(IDetailLayoutBuilder*, DetailBuilderPtr)
-	SLATE_END_ARGS()
-
-	void Construct(const FArguments& InArgs);
-
-	// Delete a tag of the array
-	FReply DeleteTag();
-
-	// Callback for the text box. Modifies the content of a tag.
-	void OnTextBoxTextCommitted(const FText& NewText, ETextCommit::Type InTextCommit);
-
-public:
-
-	// Pointer to the builder passed by CustomizeDetails method
-	IDetailLayoutBuilder* DetailBuilderPtr = nullptr;
-
-	// Pointer to the clip with mesh node
-	UCustomizableObjectNodeMeshClipWithMesh* Node;
-
-	// Value of the tag
-	FString TagValue;
-
-	// Index of the tag inside the array of tags
-	int32 TagIndex;
-};
-
 
 class FCustomizableObjectNodeMeshClipWithMeshDetails : public IDetailCustomization
 {
@@ -69,9 +34,6 @@ private:
 
 	/** Callback when new material name is selected */
 	void OnMeshClipWithMeshNodeComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo);
-
-	/** Creates the array of widgets tags */
-	void CreateTagView();
 
 	/** Initializes the text of the method combobox and the view to display */
 	TSharedPtr<FString> SetInitialClippingMethod();
@@ -93,12 +55,6 @@ private:
 
 	/** Selected CO in the details tab of the Node node, for which to select a material that will be clipped by Node node */
 	class UCustomizableObject* SelectedCO;
-
-	/** Selector with all the materials of the Customizable Object */
-	TSharedPtr< SHorizontalBox > MaterialsSelector;
-
-	/** ComboBox with all the materials of the Customizable Object */
-	TSharedPtr< SVerticalBox > TagView;
 
 	/** Pointer to a FString to indicate that a method must be selected */
 	TSharedPtr<FString> SelectAMethod;

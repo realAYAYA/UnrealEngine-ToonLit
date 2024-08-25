@@ -24,6 +24,15 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Runtime", config)
 	double DesiredActorDestructionTimeSlicePerTick = 0.0005;
 
+	/** 
+	 * Whether the Entity Compaction is allowed. When enabled all the archetypes will be processed on a regular basis
+	 * and the entities will be moved around to optimize archetype chunk memory utilization. Note that this might not be
+	 * desired if your set up results in individual chunks being often not compatible due to the number and value of chunk 
+	 * and shared fragments.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Runtime", config)
+	bool bEntityCompactionEnabled = true;
+
 	/** The desired budget in seconds allowed to do entity compaction per frame */
 	UPROPERTY(EditDefaultsOnly, Category = "Runtime", config)
 	double DesiredEntityCompactionTimeSlicePerTick = 0.005;

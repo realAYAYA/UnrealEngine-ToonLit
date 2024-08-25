@@ -43,7 +43,6 @@ public:
 		static size_t UniquePointer;
 		return reinterpret_cast<size_t>(&UniquePointer);
 	}
-
 #if RHI_RAYTRACING
 	virtual bool IsRayTracingRelevant() const override  { return true; }
 #endif // RHI_RAYTRACING
@@ -52,10 +51,13 @@ public:
 	//~ End FPrimitiveSceneProxy Interface.
 
 private:
-	UMaterialInterface* MaterialInterface;
 	FLocalVertexFactory VertexFactory;
 	FStaticMeshVertexBuffers StaticMeshVertexBuffers;
 	FHeterogeneousVolumeData HeterogeneousVolumeData;
+
+	// Cache UObject values
+	UMaterialInterface* MaterialInterface;
+	FMaterialRelevance MaterialRelevance;
 };
 
 /*=============================================================================
@@ -64,13 +66,23 @@ private:
 
 FHeterogeneousVolumeSceneProxy::FHeterogeneousVolumeSceneProxy(UHeterogeneousVolumeComponent* InComponent)
 	: FPrimitiveSceneProxy(InComponent)
-	, MaterialInterface(InComponent->GetMaterial(0))
 	, VertexFactory(GetScene().GetFeatureLevel(), "FHeterogeneousVolumeSceneProxy")
+#if ACTOR_HAS_LABELS
+	, HeterogeneousVolumeData(this, InComponent->GetReadableName())
+#else
 	, HeterogeneousVolumeData(this)
+#endif
+	, MaterialInterface(InComponent->GetMaterial(0))
 {
 	bIsHeterogeneousVolume = true;
+	bCastDynamicShadow = InComponent->CastShadow;
+
+	// Heterogeneous volumes do not deform internally
+	bHasDeformableMesh = false;
+	ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Static;
 
 	HeterogeneousVolumeData.VoxelResolution = InComponent->VolumeResolution;
+	HeterogeneousVolumeData.InstanceToLocal = InComponent->FrameTransform.ToMatrixWithScale();
 
 	// Infer minimum voxel size from bounds and resolution
 	FVector VoxelSize = 2.0 * InComponent->Bounds.BoxExtent;
@@ -84,10 +96,17 @@ FHeterogeneousVolumeSceneProxy::FHeterogeneousVolumeSceneProxy(UHeterogeneousVol
 		MaterialInterface = InComponent->MaterialInstanceDynamic;
 	}
 
+	if (MaterialInterface)
+	{
+		MaterialRelevance = MaterialInterface->GetRelevance_Concurrent(GetScene().GetFeatureLevel());
+	}
+
 	HeterogeneousVolumeData.StepFactor = InComponent->StepFactor;
 	HeterogeneousVolumeData.ShadowStepFactor = InComponent->ShadowStepFactor;
 	HeterogeneousVolumeData.ShadowBiasFactor = InComponent->ShadowBiasFactor;
 	HeterogeneousVolumeData.LightingDownsampleFactor = InComponent->LightingDownsampleFactor;
+	HeterogeneousVolumeData.MipBias = InComponent->StreamingMipBias;
+	HeterogeneousVolumeData.bPivotAtCentroid = InComponent->bPivotAtCentroid;
 
 	// Initialize vertex buffer data for a quad
 	StaticMeshVertexBuffers.PositionVertexBuffer.Init(4);
@@ -123,7 +142,7 @@ FHeterogeneousVolumeSceneProxy::FHeterogeneousVolumeSceneProxy(UHeterogeneousVol
 			Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(&Self->VertexFactory, Data);
 			Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindLightMapVertexBuffer(&Self->VertexFactory, Data, 0);
 			Self->StaticMeshVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(&Self->VertexFactory, Data);
-			Self->VertexFactory.SetData(Data);
+			Self->VertexFactory.SetData(RHICmdList, Data);
 
 			Self->VertexFactory.InitResource(RHICmdList);
 		}
@@ -143,12 +162,7 @@ FPrimitiveViewRelevance FHeterogeneousVolumeSceneProxy::GetViewRelevance(const F
 {
 	FPrimitiveViewRelevance Result;
 
-	if (MaterialInterface)
-	{
-		FMaterialRelevance MaterialRelevance = MaterialInterface->GetRelevance_Concurrent(View->GetFeatureLevel());
-		MaterialRelevance.SetPrimitiveViewRelevance(Result);
-	}
-
+	MaterialRelevance.SetPrimitiveViewRelevance(Result);
 	Result.bDrawRelevance = IsShown(View) && View->Family->EngineShowFlags.HeterogeneousVolumes;
 	Result.bOpaque = false;
 	Result.bStaticRelevance = false;
@@ -165,49 +179,52 @@ void FHeterogeneousVolumeSceneProxy::GetDynamicMeshElements(
 	uint32 VisibilityMap,
 	FMeshElementCollector& Collector) const
 {
-	check(IsInRenderingThread());
-
-	// Create a dummy MeshBatch to make the system happy..
-	if (MaterialInterface)
+	if (Views.IsEmpty())
 	{
-		// Set up MeshBatch
-		FMeshBatch& Mesh = Collector.AllocateMesh();
-
-		Mesh.VertexFactory = &VertexFactory;
-		Mesh.MaterialRenderProxy = MaterialInterface->GetRenderProxy();
-		Mesh.LCI = NULL;
-		Mesh.ReverseCulling = IsLocalToWorldDeterminantNegative() ? true : false;
-		Mesh.CastShadow = false;
-		//Mesh.DepthPriorityGroup = (ESceneDepthPriorityGroup)GetDepthPriorityGroup(View);
-		Mesh.Type = PT_TriangleStrip;
-		Mesh.bDisableBackfaceCulling = true;
-
-		// Set up the FMeshBatchElement.
-		FMeshBatchElement& BatchElement = Mesh.Elements[0];
-		BatchElement.IndexBuffer = NULL;
-		BatchElement.FirstIndex = 0;
-		BatchElement.MinVertexIndex = 0;
-		BatchElement.MaxVertexIndex = 3;
-		BatchElement.NumPrimitives = 2;
-		BatchElement.BaseVertexIndex = 0;
-
-		//FHeterogeneousVolumeData* HeterogeneousVolumeData = &Collector.AllocateOneFrameResource<FHeterogeneousVolumeData>(this);
-		BatchElement.UserData = &HeterogeneousVolumeData;
-
-		Mesh.bCanApplyViewModeOverrides = true;
-		Mesh.bUseWireframeSelectionColoring = IsSelected();
-
-		Collector.AddMesh(0, Mesh);
+		return;
 	}
 
-	// Draw bounds 
 	if (ViewFamily.EngineShowFlags.HeterogeneousVolumes)
 	{
 		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 		{
 			if (VisibilityMap & (1 << ViewIndex))
 			{
-				RenderBounds(Collector.GetPDI(ViewIndex), ViewFamily.EngineShowFlags, GetBounds(), IsSelected());
+				if (MaterialInterface)
+				{
+					// Set up MeshBatch
+					FMeshBatch& Mesh = Collector.AllocateMesh();
+
+					Mesh.VertexFactory = &VertexFactory;
+					Mesh.MaterialRenderProxy = MaterialInterface->GetRenderProxy();
+					Mesh.LCI = NULL;
+					Mesh.ReverseCulling = IsLocalToWorldDeterminantNegative() ? true : false;
+					Mesh.CastShadow = CastsDynamicShadow();
+					Mesh.Type = PT_TriangleStrip;
+					Mesh.bDisableBackfaceCulling = true;
+
+					// Set up the FMeshBatchElement.
+					FMeshBatchElement& BatchElement = Mesh.Elements[0];
+					BatchElement.IndexBuffer = NULL;
+					BatchElement.FirstIndex = 0;
+					BatchElement.MinVertexIndex = 0;
+					BatchElement.MaxVertexIndex = 3;
+					BatchElement.NumPrimitives = 2;
+					BatchElement.BaseVertexIndex = 0;
+
+					// Heterogeneous Volume Interface is passed through UserData.
+					BatchElement.UserData = &HeterogeneousVolumeData;
+
+					Mesh.bCanApplyViewModeOverrides = true;
+					Mesh.bUseWireframeSelectionColoring = IsSelected();
+					Mesh.bUseSelectionOutline = false;
+					Mesh.bSelectable = false;
+
+					Collector.AddMesh(ViewIndex, Mesh);
+				}
+
+				const FSceneView* View = Views[ViewIndex];
+				RenderBounds(Collector.GetPDI(ViewIndex), View->Family->EngineShowFlags, GetBounds(), IsSelected());
 			}
 		}
 	}
@@ -237,12 +254,33 @@ UHeterogeneousVolumeComponent::UHeterogeneousVolumeComponent(const FObjectInitia
 	StartFrame = 0;
 	EndFrame = 0;
 	StepFactor = 1.0f;
-	ShadowStepFactor = 8.0f;
-	ShadowBiasFactor = 0.0f;
+	ShadowStepFactor = 2.0f;
+	ShadowBiasFactor = 0.5f;
 	LightingDownsampleFactor = 2.0f;
-	MipLevel = 0;
+	StreamingMipBias = 0.0f;
 	bIssueBlockingRequests = false;
+	bPivotAtCentroid = false;
 	PreviousSVT = nullptr;
+}
+
+void UHeterogeneousVolumeComponent::SetStreamingMipBias(int32 NewValue)
+{
+	if (AreDynamicDataChangesAllowed()
+		&& StreamingMipBias != NewValue)
+	{
+		StreamingMipBias = NewValue;
+		MarkRenderStateDirty();
+	}
+}
+
+void UHeterogeneousVolumeComponent::SetVolumeResolution(FIntVector NewValue)
+{
+	if (AreDynamicDataChangesAllowed()
+		&& VolumeResolution != NewValue)
+	{
+		VolumeResolution = NewValue;
+		MarkRenderStateDirty();
+	}
 }
 
 void UHeterogeneousVolumeComponent::SetFrame(float NewValue)
@@ -323,71 +361,118 @@ FPrimitiveSceneProxy* UHeterogeneousVolumeComponent::CreateSceneProxy()
 FBoxSphereBounds UHeterogeneousVolumeComponent::CalcBounds(const FTransform& LocalToWorld) const
 {
 	FBoxSphereBounds NewBounds;
-	NewBounds.Origin = FVector::ZeroVector;
-	NewBounds.BoxExtent = FVector(VolumeResolution) * 0.5;
-	NewBounds.SphereRadius = NewBounds.BoxExtent.Length();
 
-	return NewBounds.TransformBy(LocalToWorld);
+	FVector HalfVolumeResolution = FVector(VolumeResolution) * 0.5;
+	if (bPivotAtCentroid)
+	{
+		NewBounds.Origin = FVector::ZeroVector;
+	}
+	else
+	{
+		NewBounds.Origin = HalfVolumeResolution;
+	}
+	NewBounds.BoxExtent = HalfVolumeResolution;
+	NewBounds.SphereRadius = NewBounds.BoxExtent.Length();
+	return NewBounds.TransformBy(FrameTransform * LocalToWorld);
 }
 
 void UHeterogeneousVolumeComponent::PostLoad()
 {
 	Super::PostLoad();
 
-	UMaterialInterface* MaterialInterface = GetMaterial(0);
-	if (MaterialInterface)
+	MaterialInstanceDynamic = nullptr;
+	if (UMaterialInterface* MaterialInterface = GetHeterogeneousVolumeMaterial())
 	{
-		const UMaterial* Material = MaterialInterface->GetMaterial();
-		if (Material && Material->MaterialDomain == EMaterialDomain::MD_Volume)
-		{
-			Material->GetRenderProxy();
-			MaterialInterface->CheckMaterialUsage(MATUSAGE_HeterogeneousVolumes);
-		}
-
-		MaterialInstanceDynamic = UMaterialInstanceDynamic::Create(MaterialInterface, nullptr);
+		MaterialInstanceDynamic = CreateOrCastToMID(MaterialInterface);
 	}
 }
 
-const USparseVolumeTexture* UHeterogeneousVolumeComponent::GetSparseVolumeTexture() const
+USparseVolumeTexture* UHeterogeneousVolumeComponent::GetSparseVolumeTexture(UMaterialInterface* MaterialInterface, int32 ParameterIndex, FName* OutParamName)
 {
 	USparseVolumeTexture* SparseVolumeTexture = nullptr;
 
-	uint32 MaterialIndex = 0;
-	UMaterialInterface* MaterialInterface = GetMaterial(MaterialIndex);
 	if (MaterialInterface)
 	{
+		// Get parameter infos for all SVTs in the material
 		TArray<FMaterialParameterInfo> ParameterInfo;
 		TArray<FGuid> ParameterIds;
 		MaterialInterface->GetAllSparseVolumeTextureParameterInfo(ParameterInfo, ParameterIds);
 
-		if (!ParameterInfo.IsEmpty())
+		// Get the SVT object
+		if (ParameterInfo.IsValidIndex(ParameterIndex))
 		{
-			MaterialInterface->GetSparseVolumeTextureParameterValue(ParameterInfo[MaterialIndex], SparseVolumeTexture);
+			MaterialInterface->GetSparseVolumeTextureParameterValue(ParameterInfo[ParameterIndex], SparseVolumeTexture);
+		}
+
+		// The SVT in MaterialInterface might be a frame of a UStreamableSparseVolumeTexture. In that case we try to get the owning SVT object.
+		if (SparseVolumeTexture && SparseVolumeTexture->IsA<USparseVolumeTextureFrame>())
+		{
+			USparseVolumeTextureFrame* Frame = Cast<USparseVolumeTextureFrame>(SparseVolumeTexture);
+			UObject* FrameOuter = Frame->GetOuter();
+			check(FrameOuter->IsA<UStreamableSparseVolumeTexture>());
+			SparseVolumeTexture = Cast<USparseVolumeTexture>(FrameOuter);
+			check(SparseVolumeTexture);
+		}
+
+		if (SparseVolumeTexture && OutParamName)
+		{
+			*OutParamName = ParameterInfo[ParameterIndex].Name;
 		}
 	}
 
 	return SparseVolumeTexture;
 }
 
-void UHeterogeneousVolumeComponent::OnSparseVolumeTextureChanged(const USparseVolumeTexture* SparseVolumeTexture)
+UMaterialInstanceDynamic* UHeterogeneousVolumeComponent::CreateOrCastToMID(UMaterialInterface* MaterialInterface)
 {
-	if (SparseVolumeTexture)
+	if (MaterialInterface->IsA<UMaterialInstanceDynamic>())
 	{
-		VolumeResolution = SparseVolumeTexture ? SparseVolumeTexture->GetVolumeResolution() : FIntVector(1);
-		StartFrame = 0;
-		EndFrame = SparseVolumeTexture->GetNumFrames() - 1;
-		Frame = FMath::Clamp(Frame, StartFrame, EndFrame);
+		return Cast<UMaterialInstanceDynamic>(MaterialInterface);
 	}
 	else
 	{
-		VolumeResolution = FIntVector(128);
-		Frame = 0.0f;
-		StartFrame = 0.0f;
-		EndFrame = 0.0f;
+		return UMaterialInstanceDynamic::Create(MaterialInterface, nullptr);
 	}
+}
 
-	PreviousSVT = SparseVolumeTexture;
-	MarkRenderStateDirty();
+void UHeterogeneousVolumeComponent::OnSparseVolumeTextureChanged(const USparseVolumeTexture* SparseVolumeTexture)
+{
+	if (SparseVolumeTexture != PreviousSVT)
+	{
+		if (SparseVolumeTexture)
+		{
+			VolumeResolution = SparseVolumeTexture->GetVolumeResolution();
+			StartFrame = 0;
+			EndFrame = SparseVolumeTexture->GetNumFrames() - 1;
+			Frame = FMath::Clamp(Frame, StartFrame, EndFrame);
+		}
+		else
+		{
+			VolumeResolution = FIntVector(128);
+			Frame = 0.0f;
+			StartFrame = 0.0f;
+			EndFrame = 0.0f;
+		}
+
+		PreviousSVT = SparseVolumeTexture;
+		MarkRenderStateDirty();
+	}
+}
+
+UMaterialInterface* UHeterogeneousVolumeComponent::GetHeterogeneousVolumeMaterial() const
+{
+	const uint32 MaterialIndex = 0;
+	UMaterialInterface* MaterialInterface = GetMaterial(MaterialIndex);
+	if (MaterialInterface)
+	{
+		const UMaterial* Material = MaterialInterface->GetMaterial();
+		if (Material && Material->MaterialDomain == EMaterialDomain::MD_Volume)
+		{
+			MaterialInterface->CheckMaterialUsage(MATUSAGE_HeterogeneousVolumes);
+			return MaterialInterface;
+		}
+	}
+	return nullptr;
 }
 
 #if WITH_EDITOR
@@ -395,34 +480,32 @@ void UHeterogeneousVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
+	const int32 SVTParameterIndex = 0;
+
 	FName PropertyName;
 	if (PropertyChangedEvent.Property)
 	{
 		PropertyName = PropertyChangedEvent.Property->GetFName();
 	}
 
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UHeterogeneousVolumeComponent, OverrideMaterials))
+	// When this component is copied/duplicated in the editor, PostEditChangeProperty() is called with a null PropertyChangedEvent, so we also 
+	// create the MID in that case. Otherwise the component will be copied but not play back because MaterialInstanceDynamic stays nullptr.
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UHeterogeneousVolumeComponent, OverrideMaterials) || PropertyChangedEvent.Property == nullptr)
 	{
-		uint32 MaterialIndex = 0;
-		UMaterialInterface* MaterialInterface = GetMaterial(MaterialIndex);
+		MaterialInstanceDynamic = nullptr; // Reset internal MID. We either create a new one from the new material or leave it as null if the material was unset
+		UMaterialInterface* MaterialInterface = GetHeterogeneousVolumeMaterial();
 		if (MaterialInterface)
 		{
-			const UMaterial* Material = MaterialInterface->GetMaterial();
-			if (Material && Material->MaterialDomain == EMaterialDomain::MD_Volume)
-			{
-				Material->GetRenderProxy();
-				MaterialInterface->CheckMaterialUsage(MATUSAGE_HeterogeneousVolumes);
-			}
-
-			MaterialInstanceDynamic = UMaterialInstanceDynamic::Create(MaterialInterface, nullptr);
-			OnSparseVolumeTextureChanged(GetSparseVolumeTexture());
+			MaterialInstanceDynamic = CreateOrCastToMID(MaterialInterface);
 		}
+		OnSparseVolumeTextureChanged(GetSparseVolumeTexture(MaterialInterface, SVTParameterIndex));
+		MarkRenderStateDirty();
 	}
 
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UHeterogeneousVolumeComponent, VolumeResolution))
 	{
 		// Prevent resolution changes when using SVT
-		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture();
+		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture(GetHeterogeneousVolumeMaterial(), SVTParameterIndex);
 		if (SparseVolumeTexture)
 		{
 			VolumeResolution = SparseVolumeTexture->GetVolumeResolution();
@@ -431,7 +514,7 @@ void UHeterogeneousVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent
 
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UHeterogeneousVolumeComponent, Frame))
 	{
-		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture();
+		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture(GetHeterogeneousVolumeMaterial(), SVTParameterIndex);
 		if (SparseVolumeTexture)
 		{
 			Frame = FMath::Clamp(Frame, StartFrame, EndFrame);
@@ -440,7 +523,7 @@ void UHeterogeneousVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent
 
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UHeterogeneousVolumeComponent, StartFrame))
 	{
-		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture();
+		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture(GetHeterogeneousVolumeMaterial(), SVTParameterIndex);
 		if (SparseVolumeTexture)
 		{
 			StartFrame = FMath::Clamp(StartFrame, 0, EndFrame);
@@ -450,7 +533,7 @@ void UHeterogeneousVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent
 
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UHeterogeneousVolumeComponent, EndFrame))
 	{
-		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture();
+		const USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture(GetHeterogeneousVolumeMaterial(), SVTParameterIndex);
 		if (SparseVolumeTexture)
 		{
 			const int32 FrameCount = SparseVolumeTexture->GetNumFrames();
@@ -471,67 +554,80 @@ void UHeterogeneousVolumeComponent::GetUsedMaterials(TArray<UMaterialInterface*>
 	}
 }
 
+void UHeterogeneousVolumeComponent::SetMaterial(int32 ElementIndex, UMaterialInterface* Material)
+{
+	Super::SetMaterial(ElementIndex, Material);
+	if (Material && ElementIndex == 0)
+	{
+		MaterialInstanceDynamic = nullptr; // Reset internal MID. We either create a new one from the new material or leave it as null if the material was unset
+		UMaterialInterface* MaterialInterface = GetHeterogeneousVolumeMaterial();
+		if (MaterialInterface)
+		{
+			MaterialInstanceDynamic = CreateOrCastToMID(MaterialInterface);
+		}
+		OnSparseVolumeTextureChanged(GetSparseVolumeTexture(MaterialInterface, 0 /*SVTParameterIndex*/));
+	}
+}
+
 void UHeterogeneousVolumeComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	uint32 MaterialIndex = 0;
-	UMaterialInterface* MaterialInterface = UMeshComponent::GetMaterial(MaterialIndex);
-	if (MaterialInterface)
+	if (ShouldRender() && MaterialInstanceDynamic)
 	{
-		// Get all SVT params in the material
-		TArray<FMaterialParameterInfo> ParameterInfo;
-		TArray<FGuid> ParameterIds;
-		MaterialInterface->GetAllSparseVolumeTextureParameterInfo(ParameterInfo, ParameterIds);
+		const int32 SVTParameterIndex = 0;
+		FName SVTParameterName;
+		USparseVolumeTexture* SparseVolumeTexture = GetSparseVolumeTexture(GetHeterogeneousVolumeMaterial(), SVTParameterIndex, &SVTParameterName);
 
-		if (!ParameterInfo.IsEmpty())
-		{
-			USparseVolumeTexture* SparseVolumeTexture = nullptr;
-			bool bValid = MaterialInterface->GetSparseVolumeTextureParameterValue(ParameterInfo[MaterialIndex], SparseVolumeTexture);
 #if WITH_EDITOR
-			// Detect an update to the material
-			if (SparseVolumeTexture != PreviousSVT)
-			{
-				OnSparseVolumeTextureChanged(SparseVolumeTexture);
-			}
+		// Detect an update to the material
+		if (SparseVolumeTexture != PreviousSVT)
+		{
+			OnSparseVolumeTextureChanged(SparseVolumeTexture);
+		}
 #endif // WITH_EDITOR
 
-			if (SparseVolumeTexture)
+		if (SparseVolumeTexture)
+		{
+			const int32 FrameCount = SparseVolumeTexture->GetNumFrames();
+
+			// Determine active frame based on animation controls if playing
+			if (bPlaying)
 			{
-				const int32 FrameCount = SparseVolumeTexture->GetNumFrames();
+				Frame += DeltaTime * FrameRate;
+			}
 
-				// Determine active frame based on animation controls if playing
-				if (bPlaying)
+			if (bLooping)
+			{
+				float FrameRange = EndFrame - StartFrame + 1;
+				Frame = FMath::Fmod(Frame - StartFrame, (float)FrameRange) + StartFrame;
+			}
+			else
+			{
+				Frame = FMath::Clamp(Frame, StartFrame, EndFrame);
+			}
+
+			const bool bIsBlocking = bIssueBlockingRequests != 0;
+			const bool bHasValidFrameRate = bPlaying != 0;
+			const float MipLevel = SparseVolumeTexture->GetOptimalStreamingMipLevel(Bounds, StreamingMipBias);
+			USparseVolumeTextureFrame* SparseVolumeTextureFrame = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, GetTypeHash(this), FrameRate, Frame, MipLevel, bIsBlocking, bHasValidFrameRate);
+			if (SparseVolumeTextureFrame)
+			{
+				FIntVector PerFrameVolumeResolution = SparseVolumeTextureFrame->GetVolumeResolution();
+				if (VolumeResolution != PerFrameVolumeResolution)
 				{
-					Frame += DeltaTime * FrameRate;
+					MarkRenderTransformDirty();
 				}
 
-				if (bLooping)
+				FTransform PerFrameTransform = SparseVolumeTextureFrame->GetFrameTransform();
+				if (!PerFrameTransform.Equals(FrameTransform))
 				{
-					float FrameRange = EndFrame - StartFrame + 1;
-					Frame = FMath::Fmod(Frame - StartFrame, (float)FrameRange) + StartFrame;
-				}
-				else
-				{
-					Frame = FMath::Clamp(Frame, StartFrame, EndFrame);
-				}
-
-				bool bIsBlocking = bIssueBlockingRequests != 0;
-				USparseVolumeTextureFrame* SparseVolumeTextureFrame = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, Frame, MipLevel, bIsBlocking);
-				if (SparseVolumeTextureFrame)
-				{
-					FIntVector PerFrameVolumeResolution = SparseVolumeTextureFrame->GetVolumeResolution();
-					if (VolumeResolution != PerFrameVolumeResolution)
-					{
-						MarkRenderTransformDirty();
-					}
-				}
-
-				if (MaterialInstanceDynamic)
-				{
-					MaterialInstanceDynamic->SetSparseVolumeTextureParameterValue(ParameterInfo[MaterialIndex].Name, SparseVolumeTextureFrame);
+					FrameTransform = PerFrameTransform;
+					MarkRenderStateDirty();
 				}
 			}
+
+			MaterialInstanceDynamic->SetSparseVolumeTextureParameterValue(SVTParameterName, SparseVolumeTextureFrame);
 		}
 	}
 }

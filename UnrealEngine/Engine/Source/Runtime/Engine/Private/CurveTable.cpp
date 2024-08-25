@@ -5,6 +5,7 @@
 #include "Serialization/Csv/CsvParser.h"
 #include "HAL/IConsoleManager.h"
 #include "Stats/Stats.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
 
 #include "EditorFramework/AssetImportData.h"
@@ -273,12 +274,19 @@ void UCurveTable::FinishDestroy()
 #if WITH_EDITORONLY_DATA
 void UCurveTable::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UCurveTable::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	if (AssetImportData)
 	{
-		OutTags.Add(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
 	}
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UCurveTable::PostInitProperties()

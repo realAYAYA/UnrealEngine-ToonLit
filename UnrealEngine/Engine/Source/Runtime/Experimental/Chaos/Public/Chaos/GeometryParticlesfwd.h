@@ -105,5 +105,47 @@ namespace Chaos
 		None,
 		KinematicOrStatic,
 		Dynamic,
+		ClusterUnion
 	};
+
+	/**
+	* Used to keep track of which Lists a particle is in
+	*/
+	enum class EGeometryParticleListMask
+	{
+		None								= 0,
+
+		//
+		// NOTE: The contents of this enum match the members of FPBDRigidsSOA
+		//
+
+		// Particle containers (each particle can only be in one of these by definition)
+		StaticParticles						= 1 << 0,
+		StaticDisabledParticles				= 1 << 1,
+		KinematicParticles					= 1 << 2,
+		KinematicDisabledParticles			= 1 << 3,
+		DynamicDisabledParticles			= 1 << 4,
+		DynamicParticles					= 1 << 5,
+		DynamicKinematicParticles			= 1 << 6,
+		ClusteredParticles					= 1 << 7,
+		GeometryCollectionParticles			= 1 << 8,
+
+		// Particle lists (each particle can be zero or more of these, depending on state
+		StaticGeometryCollectionArray		= 1 << 9,
+		KinematicGeometryCollectionArray	= 1 << 10,
+		SleepingGeometryCollectionArray		= 1 << 11,
+		DynamicGeometryCollectionArray		= 1 << 12,
+		ActiveParticlesMapArray				= 1 << 13,
+		TransientDirtyMapArray				= 1 << 14,
+		MovingKinematicsMapArray			= 1 << 15,
+		StaticClusteredMapArray				= 1 << 16,
+		KinematicClusteredMapArray			= 1 << 18,
+		DynamicClusteredMapArray			= 1 << 19,
+		ResimActiveParticlesMapArray		= 1 << 20,
+		ResimDynamicParticles				= 1 << 21,
+		ResimDynamicKinematicParticles		= 1 << 22,
+		ResimStaticParticles				= 1 << 23,
+		ResimKinematicParticles				= 1 << 24,
+	};
+	ENUM_CLASS_FLAGS(EGeometryParticleListMask);
 }

@@ -18,7 +18,6 @@
 #include "ProfilingDebugging/LoadTimeTracker.h"
 #include "GPUSkinCache.h"
 #include "GPUSkinVertexFactory.h"
-#include "Animation/MeshDeformerProvider.h"
 #include "RenderUtils.h"
 #include "SceneInterface.h"
 
@@ -170,14 +169,6 @@ void FLocalVertexFactoryShaderParameters::Bind(const FShaderParameterMap& Parame
 {
 	FLocalVertexFactoryShaderParametersBase::Bind(ParameterMap);
 	IsGPUSkinPassThrough.Bind(ParameterMap, TEXT("bIsGPUSkinPassThrough"));
-}
-
-bool FLocalVertexFactory::IsGPUSkinPassThroughSupported(EShaderPlatform Platform)
-{
-	// Enable the GPUSkin passthrough path if we might use the GPUSkinCache or MeshDeformers.
-	static IMeshDeformerProvider* MeshDeformerProvider = IMeshDeformerProvider::Get();
-	bool bMeshDeformersAvailable = MeshDeformerProvider && MeshDeformerProvider->IsSupported(Platform);
-	return bMeshDeformersAvailable || IsGPUSkinCacheAvailable(Platform);
 }
 
 static void GetMeshDeformerVertexStreams(FMeshDeformerGeometry const& InDeformerGeometry, FGPUSkinPassthroughVertexFactory const* InVertexFactory, FVertexInputStreamArray& InOutVertexStreams)
@@ -342,7 +333,8 @@ void FLocalVertexFactory::GetPSOPrecacheVertexFetchElements(EVertexInputStreamTy
 		Elements.Add(FVertexElement(1, 4, VET_PackedNormal, 2, sizeof(FPackedNormal)*2u, false));
 	}
 
-	if (UseGPUScene(GMaxRHIShaderPlatform, GMaxRHIFeatureLevel))
+	if (UseGPUScene(GMaxRHIShaderPlatform, GMaxRHIFeatureLevel) 
+		&& !PlatformGPUSceneUsesUniformBufferView(GMaxRHIShaderPlatform))
 	{
 		switch (VertexInputStreamType)
 		{
@@ -373,33 +365,26 @@ void FLocalVertexFactory::GetVertexElements(ERHIFeatureLevel::Type FeatureLevel,
 	int32 ColorStreamIndex;
 	GetVertexElements(FeatureLevel, InputStreamType, bSupportsManualVertexFetch, Data, Elements, VertexStreams, ColorStreamIndex);
 
-	if (UseGPUScene(GMaxRHIShaderPlatform, GMaxRHIFeatureLevel))
+	if (UseGPUScene(GMaxRHIShaderPlatform, GMaxRHIFeatureLevel) 
+		&& !PlatformGPUSceneUsesUniformBufferView(GMaxRHIShaderPlatform))
 	{
-		// For ES3.1 attribute ID needs to be done differently
-		check(FeatureLevel > ERHIFeatureLevel::ES3_1);
-		Elements.Add(FVertexElement(VertexStreams.Num(), 0, VET_UInt, 13, 0, true));
+		Elements.Add(FVertexElement(VertexStreams.Num(), 0, VET_UInt, 13, sizeof(uint32), true));
 	}
 }
 
 void FLocalVertexFactory::SetData(const FDataType& InData)
 {
-	{
-		//const int NumTexCoords = InData.NumTexCoords;
-		//const int LightMapCoordinateIndex = InData.LightMapCoordinateIndex;
-		//check(NumTexCoords > 0);
-		//check(LightMapCoordinateIndex < NumTexCoords && LightMapCoordinateIndex >= 0);
-		//check(InData.PositionComponentSRV);
-		//check(InData.TangentsSRV);
-		//check(InData.TextureCoordinatesSRV);
-		//check(InData.ColorComponentsSRV);
-	}
+	SetData(FRHICommandListImmediate::Get(), InData);
+}
 
+void FLocalVertexFactory::SetData(FRHICommandListBase& RHICmdList, const FDataType& InData)
+{
 	// The shader code makes assumptions that the color component is a FColor, performing swizzles on ES3 and Metal platforms as necessary
 	// If the color is sent down as anything other than VET_Color then you'll get an undesired swizzle on those platforms
 	check((InData.ColorComponent.Type == VET_None) || (InData.ColorComponent.Type == VET_Color));
 
 	Data = InData;
-	UpdateRHI(FRHICommandListImmediate::Get());
+	UpdateRHI(RHICmdList);
 }
 
 /**
@@ -445,7 +430,7 @@ void FLocalVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 				StreamElements.Add(AccessStreamComponent(Data.TangentBasisComponents[1], 2, InputStreamType));
 			}
 
-			AddPrimitiveIdStreamElement(InputStreamType, StreamElements, 1, 8);
+			AddPrimitiveIdStreamElement(InputStreamType, StreamElements, 1, 1);
 
 			InitDeclaration(StreamElements, InputStreamType);
 		};
@@ -456,7 +441,7 @@ void FLocalVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 
 	FVertexDeclarationElementList Elements;
 	GetVertexElements(GetFeatureLevel(), EVertexInputStreamType::Default, bUseManualVertexFetch, Data, Elements, Streams, ColorStreamIndex);
-	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, 8);
+	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, 13);
 	check(Streams.Num() > 0);
 
 	InitDeclaration(Elements);
@@ -475,6 +460,7 @@ void FLocalVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 	LooseParameters.FrameNumber = -1;
 	LooseParameters.GPUSkinPassThroughPositionBuffer = GNullVertexBuffer.VertexBufferSRV;
 	LooseParameters.GPUSkinPassThroughPreviousPositionBuffer = GNullVertexBuffer.VertexBufferSRV;
+	LooseParameters.GPUSkinPassThroughPreSkinnedTangentBuffer = GNullVertexBuffer.VertexBufferSRV;
 	LooseParametersUniformBuffer = TUniformBufferRef<FLocalVertexFactoryLooseParameters>::CreateUniformBufferImmediate(LooseParameters, UniformBuffer_MultiFrame);
 
 	check(IsValidRef(GetDeclaration()));
@@ -555,9 +541,13 @@ void FLocalVertexFactory::GetVertexElements(
 			}
 		}
 
-		// Fill PreSkinPosition slot for GPUSkinPassThrough vertex factory, or else use a dummy buffer.
-		FVertexStreamComponent NullComponent(&GNullVertexBuffer, 0, 0, VET_Float4);
-		Elements.Add(AccessStreamComponent(Data.PreSkinPositionComponent.VertexBuffer ? Data.PreSkinPositionComponent : NullComponent, 14, InOutStreams));
+		// TODO: should also check if VFType supports 'SupportsGPUSkinPassThrough'
+		if (IsGPUSkinPassThroughSupported(GMaxRHIShaderPlatform))
+		{
+			// Fill PreSkinPosition slot for GPUSkinPassThrough vertex factory, or else use a dummy buffer.
+			FVertexStreamComponent NullComponent(&GNullVertexBuffer, 0, 0, VET_Float4);
+			Elements.Add(AccessStreamComponent(Data.PreSkinPositionComponent.VertexBuffer ? Data.PreSkinPositionComponent : NullComponent, 14, InOutStreams));
+		}
 
 		if (Data.LightMapCoordinateComponent.VertexBuffer)
 		{

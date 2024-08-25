@@ -125,7 +125,7 @@ UAnimInstance::UAnimInstance(const FObjectInitializer& ObjectInitializer)
 #endif
 
 #if WITH_EDITOR
-	if(!HasAnyFlags(RF_ClassDefaultObject))
+	if(!HasAnyFlags(RF_ClassDefaultObject) && !GetClass()->HasAnyClassFlags(CLASS_Native))
 	{
 		FCoreUObjectDelegates::OnObjectsReinstanced.AddUObject(this, &UAnimInstance::HandleObjectsReinstanced);
 	}
@@ -223,6 +223,11 @@ void UAnimInstance::GatherDebugData(FNodeDebugData& DebugData)
 USkeletalMeshComponent* UAnimInstance::GetOwningComponent() const
 {
 	return GetSkelMeshComponent();
+}
+
+UAnimInstance* UAnimInstance::Blueprint_GetMainAnimInstance() const
+{
+	return GetSkelMeshComponent()->GetAnimInstance();
 }
 
 UWorld* UAnimInstance::GetWorld() const
@@ -1497,8 +1502,8 @@ void UAnimInstance::TriggerAnimNotifies(float DeltaSeconds)
 				if (ActiveAnimNotifyState.Find(*AnimNotifyEvent, ExistingItemIndex))
 				{
 					check(ActiveAnimNotifyState.Num() == ActiveAnimNotifyEventReference.Num());
-					ActiveAnimNotifyState.RemoveAtSwap(ExistingItemIndex, 1, false); 
-					ActiveAnimNotifyEventReference.RemoveAtSwap(ExistingItemIndex, 1, false);
+					ActiveAnimNotifyState.RemoveAtSwap(ExistingItemIndex, 1, EAllowShrinking::No);
+					ActiveAnimNotifyEventReference.RemoveAtSwap(ExistingItemIndex, 1, EAllowShrinking::No);
 				}
 				else
 				{
@@ -1759,6 +1764,14 @@ void UAnimInstance::GetAllCurveNames(TArray<FName>& OutNames) const
 	GetActiveCurveNames(EAnimCurveType::AttributeCurve, OutNames);
 }
 
+void UAnimInstance::OverrideCurveValue(FName CurveName, float Value)
+{
+	FAnimInstanceProxy& Proxy = GetProxyOnAnyThread<FAnimInstanceProxy>();
+
+	TMap<FName, float>& AnimationCurves = Proxy.GetAnimationCurves(EAnimCurveType::AttributeCurve);
+	AnimationCurves.FindOrAdd(CurveName) = Value;
+}
+
 void UAnimInstance::SetRootMotionMode(TEnumAsByte<ERootMotionMode::Type> Value)
 {
 	RootMotionMode = Value;
@@ -1899,10 +1912,28 @@ void UAnimInstance::QueueMontageBlendingOutEvent(const FQueuedMontageBlendingOut
 	}
 }
 
+void UAnimInstance::QueueMontageBlendedInEvent(const FQueuedMontageBlendedInEvent& MontageBlendedInEvent)
+{
+	if (bQueueMontageEvents)
+	{
+		QueuedMontageBlendedInEvents.Add(MontageBlendedInEvent);
+	}
+	else
+	{
+		TriggerMontageBlendedInEvent(MontageBlendedInEvent);
+	}
+}
+
 void UAnimInstance::TriggerMontageBlendingOutEvent(const FQueuedMontageBlendingOutEvent& MontageBlendingOutEvent)
 {
 	MontageBlendingOutEvent.Delegate.ExecuteIfBound(MontageBlendingOutEvent.Montage, MontageBlendingOutEvent.bInterrupted);
 	OnMontageBlendingOut.Broadcast(MontageBlendingOutEvent.Montage, MontageBlendingOutEvent.bInterrupted);
+}
+
+void UAnimInstance::TriggerMontageBlendedInEvent(const FQueuedMontageBlendedInEvent& MontageBlendedInEvent)
+{
+	MontageBlendedInEvent.Delegate.ExecuteIfBound(MontageBlendedInEvent.Montage);
+	OnMontageBlendedIn.Broadcast(MontageBlendedInEvent.Montage);
 }
 
 void UAnimInstance::QueueMontageEndedEvent(const FQueuedMontageEndedEvent& MontageEndedEvent)
@@ -1988,6 +2019,15 @@ void UAnimInstance::TriggerQueuedMontageEvents()
 			TriggerMontageBlendingOutEvent(MontageBlendingOutEvent);
 		}
 		QueuedMontageBlendingOutEvents.Reset();
+	}
+
+	if (QueuedMontageBlendedInEvents.Num() > 0)
+	{
+		for (const FQueuedMontageBlendedInEvent& MontageBlendedInEvent : QueuedMontageBlendedInEvents)
+		{
+			TriggerMontageBlendedInEvent(MontageBlendedInEvent);
+		}
+		QueuedMontageBlendedInEvents.Reset();
 	}
 
 	if (QueuedMontageEndedEvents.Num() > 0)
@@ -2583,6 +2623,31 @@ void UAnimInstance::Montage_SetBlendingOutDelegate(FOnMontageBlendingOutStarted&
 	}
 }
 
+
+void UAnimInstance::Montage_SetBlendedInDelegate(FOnMontageBlendedInEnded& InOnMontageBlendedIn, UAnimMontage* Montage)
+{
+	if (Montage)
+	{
+		FAnimMontageInstance* MontageInstance = GetActiveInstanceForMontage(Montage);
+		if (MontageInstance)
+		{
+			MontageInstance->OnMontageBlendedInEnded = InOnMontageBlendedIn;
+		}
+	}
+	else
+	{
+		// If no Montage reference, do it on all active ones.
+		for (int32 InstanceIndex = 0; InstanceIndex < MontageInstances.Num(); InstanceIndex++)
+		{
+			FAnimMontageInstance* MontageInstance = MontageInstances[InstanceIndex];
+			if (MontageInstance && MontageInstance->IsActive())
+			{
+				MontageInstance->OnMontageBlendedInEnded = InOnMontageBlendedIn;
+			}
+		}
+	}
+}
+
 FOnMontageEnded* UAnimInstance::Montage_GetEndedDelegate(UAnimMontage* Montage)
 {
 	if (Montage)
@@ -2771,6 +2836,29 @@ float UAnimInstance::Montage_GetEffectivePlayRate(const UAnimMontage* Montage) c
 	}
 
 	return 0.f;
+}
+
+bool UAnimInstance::DynamicMontage_IsPlayingFrom(const UAnimSequenceBase* Animation) const
+{
+	if (!Animation)
+	{
+		return false;
+	}
+
+	if (const UAnimMontage* AnimMontage = Cast<UAnimMontage>(Animation))
+	{
+		return Montage_IsPlaying(AnimMontage);
+	}
+
+	for (const TPair<UAnimMontage*, FAnimMontageInstance*>& ActiveMontage : ActiveMontagesMap)
+	{
+		if (ActiveMontage.Key->IsDynamicMontage() && ActiveMontage.Key->GetFirstAnimReference() == Animation)
+		{
+			return ActiveMontage.Value->IsPlaying();
+		}
+	}
+
+	return false;
 }
 
 void UAnimInstance::MontageSync_Follow(const UAnimMontage* MontageFollower, const UAnimInstance* OtherAnimInstance, const UAnimMontage* MontageLeader)
@@ -3023,9 +3111,14 @@ void UAnimInstance::PerformLinkedLayerOverlayOperation(TSubclassOf<UAnimInstance
 	if (IAnimClassInterface* AnimBlueprintClass = IAnimClassInterface::GetFromClass(GetClass()))
 	{
 		UClass* NewClass = InClass.Get();
+		USkeletalMeshComponent* MeshComp = GetSkelMeshComponent();
 
-		// Make sure we have valid objects as initialization can route back out of linked instances into this outer graph
-		GetProxyOnAnyThread<FAnimInstanceProxy>().InitializeObjects(this);
+		MeshComp->ForEachAnimInstance([](UAnimInstance* InInstance)
+		{
+			// Make sure we have valid objects on all instances as initialization can route back
+			// out of linked instances into other graphs, including 'this'
+			InInstance->GetProxyOnAnyThread<FAnimInstanceProxy>().InitializeObjects(InInstance);
+		});
 
 		// Map of group name->nodes, per class, to run under that group instance
 		TMap<UClass*, TMap<FName, TArray<FAnimNode_LinkedAnimLayer*, TInlineAllocator<4>>, TInlineSetAllocator<4>>, TInlineSetAllocator<4>> LayerNodesToSet;
@@ -3062,8 +3155,6 @@ void UAnimInstance::PerformLinkedLayerOverlayOperation(TSubclassOf<UAnimInstance
 			}
 		}
 
-		USkeletalMeshComponent* MeshComp = GetSkelMeshComponent();
-
 		auto UnlinkLayerNodesInInstance = [](UAnimInstance* InAnimInstance, TArrayView<FAnimNode_LinkedAnimLayer*> InLayerNodes)
 		{
 			const IAnimClassInterface* const NewLinkedInstanceClass = IAnimClassInterface::GetFromClass(InAnimInstance->GetClass());
@@ -3081,10 +3172,14 @@ void UAnimInstance::PerformLinkedLayerOverlayOperation(TSubclassOf<UAnimInstance
 		auto InitializeAndCacheBonesForLinkedRoot = [](FAnimNode_LinkedAnimLayer* InLayerNode, FAnimInstanceProxy& InThisProxy, UAnimInstance* InLinkedInstance, FAnimInstanceProxy& InLinkedProxy)
 		{
 			InLinkedProxy.InitializeObjects(InLinkedInstance);
-			FAnimationInitializeContext InitContext(&InThisProxy);
-			InLayerNode->InitializeSubGraph_AnyThread(InitContext);
-			FAnimationCacheBonesContext CacheBonesContext(&InThisProxy);
-			InLayerNode->CacheBonesSubGraph_AnyThread(CacheBonesContext);
+
+			if (InLinkedInstance->GetSkelMeshComponent()->GetSkeletalMeshAsset() != nullptr)
+			{
+				FAnimationInitializeContext InitContext(&InThisProxy);
+				InLayerNode->InitializeSubGraph_AnyThread(InitContext);
+				FAnimationCacheBonesContext CacheBonesContext(&InThisProxy);
+				InLayerNode->CacheBonesSubGraph_AnyThread(CacheBonesContext);
+			}
 		};
 
 		for (TPair<UClass*, TMap<FName, TArray<FAnimNode_LinkedAnimLayer*, TInlineAllocator<4>>, TInlineSetAllocator<4>>> ClassLayerNodesToSet : LayerNodesToSet)
@@ -3170,6 +3265,12 @@ void UAnimInstance::PerformLinkedLayerOverlayOperation(TSubclassOf<UAnimInstance
 								NewLinkedInstance->bReceiveNotifiesFromLinkedInstances = LayerNode->bReceiveNotifiesFromLinkedInstances;
 								NewLinkedInstance->InitializeAnimation();
 
+								if(MeshComp->HasBegunPlay())
+								{
+									NewLinkedInstance->NativeBeginPlay();
+									NewLinkedInstance->BlueprintBeginPlay();
+								}
+
 								// Unlink any layer nodes in the new linked instance, as they may have been hooked up to self in InitializeAnimation above.
 								UnlinkLayerNodesInInstance(NewLinkedInstance, LayerPair.Value);
 
@@ -3225,6 +3326,12 @@ void UAnimInstance::PerformLinkedLayerOverlayOperation(TSubclassOf<UAnimInstance
 							UAnimInstance* NewLinkedInstance = NewObject<UAnimInstance>(MeshComp, ClassToSet);
 							NewLinkedInstance->bCreatedByLinkedAnimGraph = true;
 							NewLinkedInstance->InitializeAnimation();
+
+							if(MeshComp->HasBegunPlay())
+							{
+								NewLinkedInstance->NativeBeginPlay();
+								NewLinkedInstance->BlueprintBeginPlay();
+							}
 
 							// Unlink any layer nodes in the new linked instance, as they may have been hooked up to self in InitializeAnimation above.
 							UnlinkLayerNodesInInstance(NewLinkedInstance, LayerPair.Value);
@@ -3532,8 +3639,7 @@ UAnimInstance* UAnimInstance::GetLinkedAnimLayerInstanceByGroupAndClass(FName In
 	return nullptr;
 }
 
-
-UAnimInstance* UAnimInstance::GetLinkedAnimLayerInstanceByClass(TSubclassOf<UAnimInstance> InClass) const
+UAnimInstance* UAnimInstance::GetLinkedAnimLayerInstanceByClass(TSubclassOf<UAnimInstance> InClass, bool bCheckForChildClass) const
 {
 	if (IAnimClassInterface* AnimBlueprintClass = IAnimClassInterface::GetFromClass(GetClass()))
 	{
@@ -3541,9 +3647,13 @@ UAnimInstance* UAnimInstance::GetLinkedAnimLayerInstanceByClass(TSubclassOf<UAni
 		{
 			const FAnimNode_LinkedAnimLayer* Layer = LayerNodeProperty->ContainerPtrToValuePtr<FAnimNode_LinkedAnimLayer>(this);
 			UAnimInstance* TargetInstance = Layer->GetTargetInstance<UAnimInstance>();
-			if (TargetInstance && TargetInstance->GetClass() == InClass.Get())
+			
+			if (TargetInstance && TargetInstance->GetClass())
 			{
-				return TargetInstance;
+				if ((bCheckForChildClass && TargetInstance->GetClass()->IsChildOf(InClass)) || (!bCheckForChildClass && TargetInstance->GetClass() == InClass.Get()))
+				{
+					return TargetInstance;
+				}
 			}
 		}
 	}
@@ -3555,6 +3665,19 @@ FAnimMontageInstance* UAnimInstance::GetActiveInstanceForMontage(const UAnimMont
 {
 	FAnimMontageInstance* const* FoundInstancePtr = ActiveMontagesMap.Find(Montage);
 	return FoundInstancePtr ? *FoundInstancePtr : nullptr;
+}
+
+FAnimMontageInstance* UAnimInstance::GetInstanceForMontage(const UAnimMontage* Montage) const
+{
+	for (FAnimMontageInstance* MontageInstance : MontageInstances)
+	{
+		if (MontageInstance && MontageInstance->Montage == Montage)
+		{
+			return MontageInstance;
+		}
+	}
+
+	return nullptr;
 }
 
 FAnimMontageInstance* UAnimInstance::GetMontageInstanceForID(int32 MontageInstanceID)
@@ -3656,6 +3779,11 @@ void UAnimInstance::AddReferencedObjects(UObject* InThis, FReferenceCollector& C
 	for (int32 I = 0; I < This->QueuedMontageBlendingOutEvents.Num(); ++I)
 	{
 		Collector.AddReferencedObject(This->QueuedMontageBlendingOutEvents[I].Montage);
+	}
+
+	for (int32 I = 0; I < This->QueuedMontageBlendedInEvents.Num(); ++I)
+	{
+		Collector.AddReferencedObject(This->QueuedMontageBlendedInEvents[I].Montage);
 	}
 
 	for (int32 I = 0; I < This->QueuedMontageEndedEvents.Num(); ++I)
@@ -4113,6 +4241,20 @@ void UAnimInstance::HandleObjectsReinstanced(const TMap<UObject*, UObject*>& Old
 				}
 
 				MeshComponent->ClearMotionVector();
+			}
+		}
+
+		// Forward to custom property-based nodes even if it wasnt this object that was reinstanced, as they may reference different objects that may
+		// also have been reinstanced
+		if(IAnimClassInterface* AnimClassInterface = IAnimClassInterface::GetFromClass(GetClass()))
+		{
+			for(const FStructProperty* NodeProperty : AnimClassInterface->GetAnimNodeProperties())
+			{
+				if(NodeProperty && NodeProperty->Struct && NodeProperty->Struct->IsChildOf(FAnimNode_CustomProperty::StaticStruct()))
+				{
+					FAnimNode_CustomProperty* CustomPropertyNode = NodeProperty->ContainerPtrToValuePtr<FAnimNode_CustomProperty>(this);
+					CustomPropertyNode->HandleObjectsReinstanced(OldToNewInstanceMap);
+				}
 			}
 		}
 	}

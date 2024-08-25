@@ -5,7 +5,7 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Input/SButton.h"
 
-enum EBadgeState
+enum class EBadgeState
 {
 	Unknown,
 

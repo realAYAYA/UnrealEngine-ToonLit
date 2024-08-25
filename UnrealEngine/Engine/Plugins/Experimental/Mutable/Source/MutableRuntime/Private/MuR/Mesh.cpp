@@ -10,10 +10,9 @@
 #include "MuR/MeshPrivate.h"
 #include "MuR/MutableTrace.h"
 
-#include <limits>
-
 namespace mu
 {
+
 
 //---------------------------------------------------------------------------------------------
 void Mesh::Serialise( const Mesh* p, OutputArchive& arch )
@@ -50,8 +49,8 @@ MeshPtr Mesh::Clone() const
 	pResult->m_surfaces = m_surfaces;
 	pResult->m_pSkeleton = m_pSkeleton;
 	pResult->m_pPhysicsBody = m_pPhysicsBody;
-	pResult->m_faceGroups = m_faceGroups;
 	pResult->m_tags = m_tags;
+	pResult->StreamedResources = StreamedResources;
 
     // Clone the main buffers
     pResult->m_VertexBuffers = m_VertexBuffers;
@@ -59,7 +58,7 @@ MeshPtr Mesh::Clone() const
     pResult->m_FaceBuffers = m_FaceBuffers;
 
 	// Clone additional buffers
-	pResult->m_AdditionalBuffers = m_AdditionalBuffers;
+	pResult->AdditionalBuffers = AdditionalBuffers;
 
     // Clone the layouts
 	pResult->m_layouts = m_layouts;
@@ -105,14 +104,14 @@ MeshPtr Mesh::Clone(EMeshCopyFlags Flags) const
 		pResult->m_pPhysicsBody = m_pPhysicsBody;
 	}
 
-	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithFaceGroups))
-	{
-		pResult->m_faceGroups = m_faceGroups;
-	}
-
 	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithTags))
 	{
 		pResult->m_tags = m_tags;
+	}
+
+	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithStreamedResources))
+	{
+		pResult->StreamedResources = StreamedResources;
 	}
 
     // Clone the main buffers
@@ -134,7 +133,7 @@ MeshPtr Mesh::Clone(EMeshCopyFlags Flags) const
 	// Clone additional buffers
 	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithAdditionalBuffers))
 	{
-		pResult->m_AdditionalBuffers = m_AdditionalBuffers;
+		pResult->AdditionalBuffers = AdditionalBuffers;
 	}
 
     // Clone the layout	
@@ -197,14 +196,14 @@ void Mesh::CopyFrom(const Mesh& From, EMeshCopyFlags Flags)
 		m_pPhysicsBody = From.m_pPhysicsBody;
 	}
 
-	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithFaceGroups))
-	{
-		m_faceGroups = From.m_faceGroups;
-	}
-
 	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithTags))
 	{
 		m_tags = From.m_tags;
+	}
+
+	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithStreamedResources))
+	{
+		StreamedResources = From.StreamedResources;
 	}
 
     // Copy the main buffers
@@ -226,7 +225,7 @@ void Mesh::CopyFrom(const Mesh& From, EMeshCopyFlags Flags)
 	// Copy additional buffers
 	if (EnumHasAnyFlags(Flags, EMeshCopyFlags::WithAdditionalBuffers))
 	{
-		m_AdditionalBuffers = From.m_AdditionalBuffers;
+		AdditionalBuffers = From.AdditionalBuffers;
 	}
 
     // Copy the layout	
@@ -396,7 +395,8 @@ int Mesh::GetSurfaceCount() const
 void Mesh::GetSurface( int32 surfaceIndex,
                        int32* firstVertex, int32* vertexCount,
                        int32* firstIndex, int32* indexCount,
-					   int32* BoneIndex, int32* BoneCount) const
+					   int32* BoneIndex, int32* BoneCount,
+					   bool* bCastShadow) const
 {
     int count = GetSurfaceCount();
 
@@ -411,6 +411,7 @@ void Mesh::GetSurface( int32 surfaceIndex,
             if (indexCount) *indexCount = surf.m_indexCount;
             if (BoneIndex) *BoneIndex = surf.BoneMapIndex;
             if (BoneCount) *BoneCount = surf.BoneMapCount;
+            if (bCastShadow) *bCastShadow = surf.bCastShadow;
         }
         else
         {
@@ -421,6 +422,7 @@ void Mesh::GetSurface( int32 surfaceIndex,
             if (indexCount) *indexCount = GetIndexCount();
 			if (BoneIndex) *BoneIndex = 0;
 			if (BoneCount) *BoneCount = BoneMap.Num();
+			if (bCastShadow) *bCastShadow = false;
         }
     }
     else
@@ -432,6 +434,7 @@ void Mesh::GetSurface( int32 surfaceIndex,
         if (indexCount) *indexCount = 0;
 		if (BoneIndex) *BoneIndex = 0;
 		if (BoneCount) *BoneCount = 0;
+		if (bCastShadow) *bCastShadow = false;
     }
 }
 
@@ -483,70 +486,6 @@ void Mesh::SetLayout( int i, Ptr<const Layout> pLayout )
 
 
 //---------------------------------------------------------------------------------------------
-void Mesh::SetFaceGroupCount( int count )
-{
-    m_faceGroups.SetNum( count );
-}
-
-
-//---------------------------------------------------------------------------------------------
-int Mesh::GetFaceGroupCount() const
-{
-    return m_faceGroups.Num();
-}
-
-
-//---------------------------------------------------------------------------------------------
-const char* Mesh::GetFaceGroupName( int group ) const
-{
-    check( group>=0 && group<m_faceGroups.Num() );
-    return m_faceGroups[group].m_name.c_str();
-}
-
-
-//---------------------------------------------------------------------------------------------
-void Mesh::SetFaceGroupName( int group, const char* strName )
-{
-    check( group>=0 && group<m_faceGroups.Num() );
-    m_faceGroups[group].m_name = strName;
-}
-
-
-//---------------------------------------------------------------------------------------------
-int Mesh::GetFaceGroupFaceCount( int group ) const
-{
-    check( group>=0 && group<m_faceGroups.Num() );
-    return m_faceGroups[group].m_faces.Num();
-}
-
-
-//---------------------------------------------------------------------------------------------
-const int32* Mesh::GetFaceGroupFaces( int group ) const
-{
-    check( group>=0 && group<m_faceGroups.Num() );
-    const int32* pResult = m_faceGroups[group].m_faces.GetData();
-    return pResult;
-}
-
-
-//---------------------------------------------------------------------------------------------
-void Mesh::SetFaceGroupFaces( int group, int count, const int32* faces )
-{
-    check( group>=0 && group<m_faceGroups.Num() );
-    check( !count || faces );
-	LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
-
-    m_faceGroups[group].m_faces.SetNum( count );
-
-    if (count)
-    {
-		FMemory::Memcpy( m_faceGroups[group].m_faces.GetData(), faces, count*sizeof(int32) );
-    }
-
-}
-
-
-//---------------------------------------------------------------------------------------------
 int Mesh::GetTagCount() const
 {
     return m_tags.Num();
@@ -562,31 +501,46 @@ void Mesh::SetTagCount( int count )
 
 
 //---------------------------------------------------------------------------------------------
-const char* Mesh::GetTag( int tagIndex ) const
+const FString& Mesh::GetTag( int tagIndex ) const
 {
     check( tagIndex>=0 && tagIndex<GetTagCount() );
 
     if (tagIndex >= 0 && tagIndex < GetTagCount())
     {
-        return m_tags[tagIndex].c_str();
+        return m_tags[tagIndex];
     }
     else
     {
-        return nullptr;
+		static FString NullString;
+        return NullString;
     }
 }
 
 
 //---------------------------------------------------------------------------------------------
-void Mesh::SetTag( int tagIndex, const char* strName )
+void Mesh::SetTag( int tagIndex, const FString& Name )
 {
     check( tagIndex>=0 && tagIndex<GetTagCount() );
 	LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
 
     if (tagIndex >= 0 && tagIndex < GetTagCount())
     {
-        m_tags[tagIndex] = strName ? strName : "";
+        m_tags[tagIndex] = Name;
     }
+}
+
+
+//---------------------------------------------------------------------------------------------
+void Mesh::AddStreamedResource(uint32 ResourceId)
+{
+	StreamedResources.AddUnique(ResourceId);
+}
+
+
+//---------------------------------------------------------------------------------------------
+const TArray<uint32>& Mesh::GetStreamedResources() const
+{
+	return StreamedResources;
 }
 
 
@@ -698,7 +652,7 @@ int32 Mesh::GetDataSize() const
 
 	// Should be allocation sizes used for this?
 	int32 AdditionalBuffersSize = 0;
-	for (const TPair<EMeshBufferType, FMeshBufferSet>&  AdditionalBuffer : m_AdditionalBuffers)
+	for (const TPair<EMeshBufferType, FMeshBufferSet>&  AdditionalBuffer : AdditionalBuffers)
 	{
 		AdditionalBuffersSize += AdditionalBuffer.Value.GetDataSize();
 	}
@@ -968,8 +922,8 @@ void Mesh::GetVertexMap
 #define MUTABLE_NUM_BUCKETS 256
 #define MUTABLE_BUCKET_CHANNEL 0
 
-    float rangeMin = std::numeric_limits<float>::max();
-    float rangeMax = -std::numeric_limits<float>::max();
+    float rangeMin = TNumericLimits<float>::Max();
+    float rangeMax = -TNumericLimits<float>::Max();
     MeshBufferIteratorConst< MBF_FLOAT32, float, 3 >  itop = itopBegin;
     for ( int ov=0; ov<otherVertexCount; ++ov )
     {
@@ -1054,7 +1008,7 @@ void Mesh::GetVertexMap
                 for ( int ov=0; ov<bucketVertexCount; ++ov )
                 {
                     int otherVertexIndex = buckets[bucket][ov];
-                    vec3<float> p = itopBegin[ otherVertexIndex ];
+                    FVector3f p = (itopBegin+otherVertexIndex).GetAsVec3f();
 
                     bool same = true;
                     for ( int d=0; same && d<3; ++d )
@@ -1163,8 +1117,7 @@ void UnserialiseLegacySurfaces(InputArchive& arch, TArray<MESH_SURFACE>& OutMesh
 //-------------------------------------------------------------------------------------------------
 void MESH_SURFACE::Serialise(OutputArchive& arch) const
 {
-
-	const int32 ver = 0;
+	const int32 ver = 1;
 	arch << ver;
 
 	arch << m_firstVertex;
@@ -1173,9 +1126,9 @@ void MESH_SURFACE::Serialise(OutputArchive& arch) const
 	arch << m_indexCount;
 	arch << BoneMapIndex;
 	arch << BoneMapCount;
-	
-	arch << m_id;
+	arch << bCastShadow;
 
+	arch << m_id;
 }
 
 
@@ -1184,7 +1137,7 @@ void MESH_SURFACE::Unserialise(InputArchive& arch)
 {
 	int32 ver = 0;
 	arch >> ver;
-	check(ver == 0);
+	check(ver <= 1);
 
 	arch >> m_firstVertex;
 	arch >> m_vertexCount;
@@ -1192,31 +1145,13 @@ void MESH_SURFACE::Unserialise(InputArchive& arch)
 	arch >> m_indexCount;
 	arch >> BoneMapIndex;
 	arch >> BoneMapCount;
-		 
+
+	if (ver >= 1)
+	{
+		arch >> bCastShadow;
+	}
+
 	arch >> m_id;
-}
-
-
-//-------------------------------------------------------------------------------------------------
-void Mesh::FACE_GROUP::Serialise(OutputArchive& arch) const
-{
-	const int32 ver = 0;
-	arch << ver;
-
-	arch << m_name;
-	arch << m_faces;
-}
-
-
-//-------------------------------------------------------------------------------------------------
-void Mesh::FACE_GROUP::Unserialise(InputArchive& arch)
-{
-	int32 ver = 0;
-	arch >> ver;
-	check(ver == 0);
-
-	arch >> m_name;
-	arch >> m_faces;
 }
 
 
@@ -1241,8 +1176,8 @@ void Mesh::FBonePose::Unserialise(InputArchive& arch)
 
 	if (ver <= 1)
 	{
-		string BoneName;
-		arch >> BoneName;
+		std::string DeprecatedBoneName;
+		arch >> DeprecatedBoneName;
 
 		BoneId = 0;
 	}
@@ -1269,13 +1204,13 @@ void Mesh::FBonePose::Unserialise(InputArchive& arch)
 //-------------------------------------------------------------------------------------------------
 void Mesh::Serialise(OutputArchive& arch) const
 {
-	uint32 ver = 16;
+	uint32 ver = 18;
 	arch << ver;
 
 	arch << m_IndexBuffers;
 	arch << m_VertexBuffers;
 	arch << m_FaceBuffers;
-	arch << m_AdditionalBuffers;
+	arch << AdditionalBuffers;
 	arch << m_layouts;
 
 	arch << SkeletonIDs;
@@ -1285,9 +1220,9 @@ void Mesh::Serialise(OutputArchive& arch) const
 
 	arch << m_staticFormatFlags;
 	arch << m_surfaces;
-	arch << m_faceGroups;
 
 	arch << m_tags;
+	arch << StreamedResources;
 
 	arch << BonePoses;
 	arch << BoneMap;
@@ -1301,12 +1236,12 @@ void Mesh::Unserialise(InputArchive& arch)
 {
 	uint32 ver;
 	arch >> ver;
-	check(ver <= 16);
+	check(ver <= 18);
 
 	arch >> m_IndexBuffers;
 	arch >> m_VertexBuffers;
 	arch >> m_FaceBuffers;
-	arch >> m_AdditionalBuffers;
+	arch >> AdditionalBuffers;
 	arch >> m_layouts;
 
 	if (ver >= 14)
@@ -1335,9 +1270,45 @@ void Mesh::Unserialise(InputArchive& arch)
 		// Deserialize LegacySurfaces
 		UnserialiseLegacySurfaces(arch, m_surfaces);
 	}
-	arch >> m_faceGroups;
 
-	arch >> m_tags;
+	if (ver <= 16)
+	{
+		struct FACE_GROUP_DEPRECATED
+		{
+			std::string m_name;
+			TArray<int32> m_faces;
+			inline void Unserialise(InputArchive& arch) 
+			{
+				int32 ver = 0;
+				arch >> ver;
+				arch >> m_name;
+				arch >> m_faces;
+			}
+
+		};
+		TArray<FACE_GROUP_DEPRECATED> FaceGroups;
+		arch >> FaceGroups;
+	}
+
+	if (ver <= 16)
+	{
+		TArray < std::string > Temp;
+		arch >> Temp;
+		m_tags.SetNum(Temp.Num());
+		for (int32 c = 0; c < Temp.Num(); ++c)
+		{
+			m_tags[c] = Temp[c].c_str();
+		}
+	}
+	else
+	{
+		arch >> m_tags;
+	}
+
+	if (ver >= 18)
+	{
+		arch >> StreamedResources;
+	}
 
 	if (ver >= 13)
 	{
@@ -1421,7 +1392,6 @@ bool Mesh::IsSimilar(const Mesh& o, bool bCompareLayouts) const
 	}
 
 	if (equal) equal = (m_surfaces == o.m_surfaces);
-	if (equal) equal = (m_faceGroups == o.m_faceGroups);
 	if (equal) equal = (m_tags == o.m_tags);
 
 	// Special comparison for layouts
@@ -1790,20 +1760,20 @@ namespace
         (void)out;
         (void)bufset;
 
-        size_t elemCount = bufset.m_elementCount;
+		uint32 elemCount = bufset.m_elementCount;
         out += "  Set with "
                 + FString::Printf(TEXT("%d"), bufset.m_buffers.Num())
                 + " buffers and "
                 + FString::Printf(TEXT("%d"), elemCount)
                 + " elements.\n";
 
-        for( const auto& buf : bufset.m_buffers )
+        for( const MESH_BUFFER& buf : bufset.m_buffers )
         {
-            const uint8_t* pData = buf.m_data.GetData();
+            const uint8* pData = buf.m_data.GetData();
 
             out += "    Buffer with "+ FString::Printf(TEXT("%d"), buf.m_channels.Num())
                     + " channels and "+ FString::Printf(TEXT("%d"), buf.m_elementSize)+" elementsize\n";
-            for( const auto& chan : buf.m_channels )
+            for( const MESH_BUFFER_CHANNEL& chan : buf.m_channels )
             {
                 out += "      Channel with format: "+ FString::Printf(TEXT("%d"), chan.m_format)
                         + " semantic: "+ FString::Printf(TEXT("%d"), chan.m_semantic)
@@ -1812,8 +1782,8 @@ namespace
                         + " offset: " + FString::Printf(TEXT("%d"), chan.m_offset)+"\n";
                 for( size_t e=0; e<elemCount && e<BufferElementLimit; ++e )
                 {
-                    const uint8_t* pElementData = pData+buf.m_elementSize*e;
-                    const uint8_t* pChanData = pElementData+chan.m_offset;
+                    const uint8* pElementData = pData+buf.m_elementSize*e;
+                    const uint8* pChanData = pElementData+chan.m_offset;
                     out += "        ";
                     for (int c=0; c<chan.m_componentCount; ++c)
                     {

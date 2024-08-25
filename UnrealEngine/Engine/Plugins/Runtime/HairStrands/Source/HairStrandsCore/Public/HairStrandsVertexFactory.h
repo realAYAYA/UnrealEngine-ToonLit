@@ -10,10 +10,10 @@
 #include "HairStrandsDatas.h"
 #include "HairStrandsInterface.h"
 #include "PrimitiveSceneProxy.h"
+#include "MeshBatch.h"
 
 class FMaterial;
 class FSceneView;
-struct FMeshBatchElement;
 struct FHairGroupInstance;
 
 /**
@@ -42,6 +42,10 @@ public:
 	static bool ShouldCompilePermutation(const FVertexFactoryShaderPermutationParameters& Parameters);
 	static void ModifyCompilationEnvironment(const FVertexFactoryShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 	static void ValidateCompiledResult(const FVertexFactoryType* Type, EShaderPlatform Platform, const FShaderParameterMap& ParameterMap, TArray<FString>& OutErrors);
+	static void GetPSOPrecacheVertexFetchElements(EVertexInputStreamType VertexInputStreamType, FVertexDeclarationElementList& Elements);
+
+	// Return the primitive id supported by the VF
+	EPrimitiveIdMode GetPrimitiveIdMode(ERHIFeatureLevel::Type In) const;
 
 	/**
 	 * An implementation of the interface used by TSynchronizedResource to update the resource with new data from the game thread.

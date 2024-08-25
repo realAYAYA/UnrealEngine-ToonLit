@@ -2,12 +2,17 @@
 
 #pragma once
 
+#include "Analytics/DMXEditorToolAnalyticsProvider.h"
 #include "DMXPixelMappingComponentReference.h"
+#include "EditorUndoClient.h"
 #include "Settings/DMXPixelMappingEditorSettings.h"
 #include "TickableEditorObject.h"
 #include "Toolkits/AssetEditorToolkit.h"
+#include "UObject/GCObject.h"
 #include "Widgets/Views/SHeaderRow.h"
 
+enum class ECheckBoxState : uint8;
+enum class EDMXPixelMappingResetDMXMode : uint8;
 class FDMXPixelMappingComponentTemplate;
 class FDMXPixelMappingToolbar;
 class FSpawnTabArgs;
@@ -21,9 +26,19 @@ class SDMXPixelMappingLayoutView;
 class SDMXPixelMappingPreviewView;
 class UDMXPixelMapping;
 class UDMXPixelMappingBaseComponent;
+class UDMXPixelMappingFixtureGroupComponent;
 class UDMXPixelMappingMatrixComponent;
 class UDMXPixelMappingOutputComponent;
 class UDMXPixelMappingRendererComponent;
+
+namespace UE::DMX
+{
+	enum class EDMXPixelMappingTransformHandleMode : uint8
+	{
+		Resize,
+		Rotate
+	};
+}
 
 
 /**
@@ -32,7 +47,10 @@ class UDMXPixelMappingRendererComponent;
 class FDMXPixelMappingToolkit
 	: public FAssetEditorToolkit
 	, public FTickableEditorObject
+	, public FSelfRegisteringEditorUndoClient
 {
+	using EDMXPixelMappingTransformHandleMode = UE::DMX::EDMXPixelMappingTransformHandleMode;
+
 public:
 	DECLARE_MULTICAST_DELEGATE(FOnSelectedComponentsChangedDelegate)
 	FOnSelectedComponentsChangedDelegate& GetOnSelectedComponentsChangedDelegate() { return OnSelectedComponentsChangedDelegate; }
@@ -73,8 +91,8 @@ public:
 	virtual bool IsTickable() const override { return true; }
 	virtual TStatId GetStatId() const override;
 	//~ End FTickableEditorObject Interface
-
-	UDMXPixelMapping* GetDMXPixelMapping() const { return DMXPixelMapping; }
+		
+	UDMXPixelMapping* GetDMXPixelMapping() const;
 
 	FDMXPixelMappingComponentReference GetReferenceFromComponent(UDMXPixelMappingBaseComponent* InComponent);
 
@@ -130,30 +148,59 @@ public:
 	/** Deletes the selected Components */
 	void DeleteSelectedComponents();
 
-	/** Returns true if the selected component can be sized to texture */
-	bool CanSizeSelectedComponentToTexture() const;
+	/** Returns true if the current selection yields a fixture group on which commands can be performed on, e.g. SizeGroupToTexture */
+	bool CanPerformCommandsOnGroup() const;
+
+	/** Flips children of a group either horizontally or vertically */
+	void FlipGroup(EOrientation Orientation, bool bTransacted);
 
 	/** Sizes the component to the render target of the pixelmapping asset */
-	void SizeSelectedComponentToTexture(bool bTransacted);
+	void SizeGroupToTexture(bool bTransacted);
+
+	/** Toggles between grid snapping enabled and disabled */
+	void ToggleGridSnapping();
+
+	/** Sets how transform handles operate */
+	void SetTransformHandleMode(EDMXPixelMappingTransformHandleMode NewTransformHandleMode);
+
+	/** Returns the current transform handle mode */
+	EDMXPixelMappingTransformHandleMode GetTransformHandleMode() const { return TransformHandleMode; }
 
 private:
+	//~ Begin FSelfRegisteringEditorUndoClient interface
+	virtual void PostUndo(bool bSuccess) override;
+	virtual void PostRedo(bool bSuccess) override;
+	//~ End FSelfRegisteringEditorUndoClient interface
+
 	/** Called when a component was added to the pixel mapping */
 	void OnComponentAddedOrRemoved(UDMXPixelMapping* PixelMapping, UDMXPixelMappingBaseComponent* Component);
 
 	/** Called when a component object was renamed */
 	void OnComponentRenamed(UDMXPixelMappingBaseComponent* Component);
 
+	/** Starts to play DMX on editor tick */
 	void PlayDMX();
 
+	/** Pauses playing DMX. Current DMX values will still be sent at a lower rate. */
+	void PauseDMX();
+
+	/** Stops playing DMX */
 	void StopPlayingDMX();
+
+	/** Toggles between playing and pausing DMX */
+	void TogglePlayPauseDMX();
+
+	/** Toggles between playing and stopping DMX */
+	void TogglePlayStopDMX();
+
+	/** Sets the reset DMX mode used by the editor */
+	void SetEditorResetDMXMode(EDMXPixelMappingResetDMXMode NewMode);
 
 	/** Updates blueprint nodes */
 	void UpdateBlueprintNodes() const;
 
 	/** Saves a thumbnail image for the pixel mapping asset */
 	void SaveThumbnailImage();
-
-	void InitializeInternal(const EToolkitMode::Type Mode, const TSharedPtr<class IToolkitHost>& InitToolkitHost, const FGuid& MessageLogGuid);
 
 	/** Spawns the DMX Library View */
 	TSharedRef<SDockTab> SpawnTab_DMXLibraryView(const FSpawnTabArgs& Args);
@@ -179,7 +226,17 @@ private:
 
 	void CreateInternalViews();
 
-	UDMXPixelMapping* DMXPixelMapping;
+	/** Returns the check box state for the compared reset DMX mode */
+	ECheckBoxState GetEditorResetDMXModeCheckboxState(EDMXPixelMappingResetDMXMode CompareMode) const;
+
+	/** Returns the checkbox state for a transform handle mode, checked if the mode equals the current mode. */
+	ECheckBoxState GetTransformHandleModeCheckboxState(EDMXPixelMappingTransformHandleMode CompareTransformHandleMode) const;
+
+	/** 
+	 * Returns the fixture group from a selection. Returns the parent group if the primary selection is a child of a group.
+	 * Returns the primary fixture group in selection or nullptr if no fixture group can be deduced from selection. 
+	 */
+	UDMXPixelMappingFixtureGroupComponent* GetFixtureGroupFromSelection() const;
 
 	/** List of open tool panels; used to ensure only one exists at any one time */
 	TMap<FName, TWeakPtr<SDockableTab>> SpawnedToolPanels;
@@ -218,17 +275,17 @@ private:
 	/** True while playing DMX */
 	bool bIsPlayingDMX = false;
 
-	/** Toggles if DMX should be sent for all components */
-	bool bTogglePlayDMXAll = true;
-
-	/** True while stop DMX is requested, but not carried out yet */
-	bool bRequestStopSendingDMX = false;
+	/** True if paused */
+	bool bIsPaused = false;
 
 	/** True while adding components (to avoid needlessly updating blueprint nodes on each component added via our own methods) */
 	bool bAddingComponents = false;
 
 	/** True while removing components (to avoid needlessly updating blueprint nodes on each component removed via our own methods) */
 	bool bRemovingComponents = false;
+
+	/** The current transform handle mode */
+	EDMXPixelMappingTransformHandleMode TransformHandleMode = EDMXPixelMappingTransformHandleMode::Resize;
 
 public:
 	/** Name of the DMX Library View Tab */
@@ -248,6 +305,9 @@ public:
 
 	/** Name of the Details View Tab */
 	static const FName LayoutViewTabID;
+
+	/** The analytics provider for this tool */
+	UE::DMX::FDMXEditorToolAnalyticsProvider AnalyticsProvider;
 
 	/** Dumped editor settings for fast comparison */
 	TArray<uint8, TFixedAllocator<sizeof(UDMXPixelMappingEditorSettings)>> EditorSettingsDump;

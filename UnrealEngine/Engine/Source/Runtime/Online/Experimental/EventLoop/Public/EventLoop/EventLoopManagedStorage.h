@@ -405,8 +405,8 @@ public:
 	{
 	private:
 		using TInternalIterator = typename FStorageType::TRangedForIterator;
-		using StorageIteratorType = typename TChooseClass<bConst, typename FStorageType::TRangedForConstIterator, typename FStorageType::TRangedForIterator>::Result;
-		using InternalElementType = typename TChooseClass<bConst, const ElementType, ElementType>::Result;
+		using StorageIteratorType = std::conditional_t<bConst, typename FStorageType::TRangedForConstIterator, typename FStorageType::TRangedForIterator>;
+		using InternalElementType = std::conditional_t<bConst, const ElementType, ElementType>;
 		using ItElementType = TPair<FInternalHandle, InternalElementType&>;
 
 	public:

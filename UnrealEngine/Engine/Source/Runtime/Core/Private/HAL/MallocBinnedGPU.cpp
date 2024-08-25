@@ -1095,11 +1095,11 @@ void FMallocBinnedGPU::SetupTLSCachesOnCurrentThread()
 	{
 		return;
 	}
-	if (!BinnedGPUTlsSlot)
+	if (!FPlatformTLS::IsValidTlsSlot(BinnedGPUTlsSlot))
 	{
 		BinnedGPUTlsSlot = FPlatformTLS::AllocTlsSlot();
 	}
-	check(BinnedGPUTlsSlot);
+	check(FPlatformTLS::IsValidTlsSlot(BinnedGPUTlsSlot));
 	FPerThreadFreeBlockLists::SetTLS(*this);
 }
 
@@ -1175,7 +1175,7 @@ FMallocBinnedGPU::FBundleNode* FMallocBinnedGPU::FFreeBlockList::PopBundles(uint
 void FMallocBinnedGPU::FPerThreadFreeBlockLists::SetTLS(FMallocBinnedGPU& Allocator)
 {
 	uint32 BinnedGPUTlsSlot = Allocator.BinnedGPUTlsSlot;
-	check(BinnedGPUTlsSlot);
+	check(FPlatformTLS::IsValidTlsSlot(BinnedGPUTlsSlot));
 	FPerThreadFreeBlockLists* ThreadSingleton = (FPerThreadFreeBlockLists*)FPlatformTLS::GetTlsValue(BinnedGPUTlsSlot);
 	if (!ThreadSingleton)
 	{
@@ -1191,7 +1191,7 @@ void FMallocBinnedGPU::FPerThreadFreeBlockLists::SetTLS(FMallocBinnedGPU& Alloca
 int64 FMallocBinnedGPU::FPerThreadFreeBlockLists::ClearTLS(FMallocBinnedGPU& Allocator)
 {
 	uint32 BinnedGPUTlsSlot = Allocator.BinnedGPUTlsSlot;
-	check(BinnedGPUTlsSlot);
+	check(FPlatformTLS::IsValidTlsSlot(BinnedGPUTlsSlot));
 	int64 Result = 0;
 	FPerThreadFreeBlockLists* ThreadSingleton = (FPerThreadFreeBlockLists*)FPlatformTLS::GetTlsValue(BinnedGPUTlsSlot);
 	if (ThreadSingleton)

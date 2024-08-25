@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AppleARKitPoseTrackingLiveLinkModule.h"
-#include "AppleARKitSystem.h"
 #include "Features/IModularFeature.h"
 #include "Features/IModularFeatures.h"
 #include "CoreGlobals.h"

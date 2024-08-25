@@ -142,3 +142,15 @@ bool FImageWriteTask::EnsureWritableFile()
 	}
 }
 
+void FImageWriteTask::AddPreProcessorToSetAlphaOpaque()
+{
+	struct PreProcessorToSetAlphaOpaque
+	{
+		void operator()(FImagePixelData* InPixelData)
+		{
+			InPixelData->SetAlphaOpaque();
+		}
+	};
+
+	PixelPreProcessors.Emplace( PreProcessorToSetAlphaOpaque() );
+}

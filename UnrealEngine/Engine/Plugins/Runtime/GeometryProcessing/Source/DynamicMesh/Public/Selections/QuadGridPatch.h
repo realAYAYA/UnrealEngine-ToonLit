@@ -27,8 +27,8 @@ class FDynamicMesh3;
 class DYNAMICMESH_API FQuadGridPatch
 {
 public:
-	int NumVertexColsU;
-	int NumVertexRowsV;
+	int NumVertexColsU = 0;
+	int NumVertexRowsV = 0;
 
 	/** NumVertexRowsV rows of NumVertexColsU VertexIDs, may contain repeated element if the patch forms a loop */
 	TArray<TArray<int32>> VertexSpans;
@@ -42,11 +42,19 @@ public:
 	int NumQuadCols() const { return NumVertexColsU-1; }
 	int NumQuadRows() const { return NumVertexRowsV-1; }
 
+	bool IsEmpty() const { return NumVertexColsU == 0 || NumVertexRowsV == 0; }
 
 	/**
-	 * Initialize an Nx1 grid from a list of quads and the row of vertices on the "bottom" (ie first span)
+	 * Initialize an Nx1 grid from a list of quads (represented as a pair of triangles) and the row of vertices on the "bottom" (ie first span)
 	 */
 	void InitializeFromQuadStrip(const FDynamicMesh3& Mesh, const TArray<FIndex2i>& SequentialQuadsIn, const TArray<int32>& FirstVertexSpan );
+
+	/**
+	 * Initialize an NxM grid from a list of quads (represented as a pair of triangles) and corresponding rows of vertices. 
+	 * For N quad-rows, there must be N+1 vertex spans. 
+	 * @return false if the input data is detected to be invalid, in this case the patch is also cleared
+	 */
+	bool InitializeFromQuadPatch(const FDynamicMesh3& Mesh, const TArray<TArray<FIndex2i>>& QuadRowsIn, const TArray<TArray<int32>>& VertexSpansIn);
 
 	/**
 	 * Reverse the order of the vertex/quad rows, ie "flip" vertically
@@ -115,6 +123,15 @@ public:
 		}
 	}
 
+	/**
+	 * Return vertices in specified Column
+	 */
+	bool GetVertexColumn(int32 ColumnIndex, TArray<int32>& VerticesOut) const;
+
+	/**
+	 * Find column that contains vertex, or InvalidID
+	 */
+	int32 FindColumnIndex(int32 VertexID) const;
 
 	/**
 	 * Construct a new QuadGridPatch that is a subset of the current QuadGridPatch

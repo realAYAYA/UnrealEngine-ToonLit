@@ -13,12 +13,14 @@ namespace UnrealBuildTool.Rules
 				{
                     "Core",
 					"CoreUObject",
+					"ContentBrowser",
 					"Engine",
 					"EditorStyle",
 					"InputCore",
 					"InterchangeTests",
 					"LevelEditor",
 					"PropertyEditor",
+					"ToolMenus",
 					"UnrealEd"
 				}
 			);
@@ -26,6 +28,7 @@ namespace UnrealBuildTool.Rules
 			PrivateDependencyModuleNames.AddRange(
 				new string[]
 				{
+					"AssetDefinition",
 					"AssetTools",
 					"WorkspaceMenuStructure",
 					"SlateCore",

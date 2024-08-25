@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include "MVVMBlueprintPin.h"
 #include "MVVMPropertyPath.h"
+#include "Types/MVVMLinkedPinValue.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/SMVVMFieldSelectorMenu.h"
 
@@ -25,7 +27,7 @@ class SFunctionParameter : public SCompoundWidget
 public:
 	SLATE_BEGIN_ARGS(SFunctionParameter) {}
 		SLATE_ARGUMENT(FGuid, BindingId)
-		SLATE_ARGUMENT(FName, ParameterName)
+		SLATE_ARGUMENT(FMVVMBlueprintPinId, ParameterId)
 		SLATE_ARGUMENT_DEFAULT(bool, SourceToDestination) = true;
 		SLATE_ARGUMENT_DEFAULT(bool, AllowDefault) = true;
 	SLATE_END_ARGS()
@@ -36,10 +38,10 @@ private:
 	ECheckBoxState OnGetIsBindArgumentChecked() const;
 	void OnBindArgumentChecked(ECheckBoxState Checked);
 
-	FMVVMBlueprintPropertyPath OnGetSelectedField() const;
-	void SetSelectedField(const FMVVMBlueprintPropertyPath& Path);
+	FMVVMLinkedPinValue OnGetSelectedField() const;
+	void SetSelectedField(const FMVVMLinkedPinValue& Path);
 
-	void HandleFieldSelectionChanged(FMVVMBlueprintPropertyPath SelectedField, const UFunction* Function);
+	void HandleFieldSelectionChanged(FMVVMLinkedPinValue Value);
 	FFieldSelectionContext GetSelectedSelectionContext() const;
 
 	int32 GetCurrentWidgetIndex() const;
@@ -47,11 +49,11 @@ private:
 private:
 	TWeakObjectPtr<UWidgetBlueprint> WidgetBlueprint;
 	FGuid BindingId;
-	FName ParameterName;
+	FMVVMBlueprintPinId ParameterId;
 	/** This reference is just to keep the default value widget alive. */
 	TSharedPtr<SGraphPin> GraphPin;
 
-	FMVVMBlueprintPropertyPath PreviousSelectedField;
+	FMVVMLinkedPinValue PreviousSelectedField;
 
 	bool bSourceToDestination = true;
 	bool bAllowDefault = true;

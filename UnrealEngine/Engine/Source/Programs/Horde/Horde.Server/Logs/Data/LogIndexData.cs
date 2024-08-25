@@ -150,7 +150,7 @@ namespace Horde.Server.Logs.Data
 		/// <param name="lineIndex"></param>
 		public void SetBaseLineIndex(int lineIndex)
 		{
-			for(int blockIdx = 0; blockIdx < _blocks.Length; blockIdx++)
+			for (int blockIdx = 0; blockIdx < _blocks.Length; blockIdx++)
 			{
 				LogIndexBlock block = _blocks[blockIdx];
 				_blocks[blockIdx] = new LogIndexBlock(lineIndex, block.LineCount, block.CachedPlainText, block.CompressedPlainText);
@@ -164,7 +164,7 @@ namespace Horde.Server.Logs.Data
 		/// <returns>The trie for this data</returns>
 		ReadOnlyTrie BuildTrie()
 		{
-			if(_cachedTrie == null)
+			if (_cachedTrie == null)
 			{
 				ReadOnlyTrieBuilder builder = new ReadOnlyTrieBuilder();
 				for (int blockIdx = 0; blockIdx < _blocks.Length; blockIdx++)
@@ -191,7 +191,7 @@ namespace Horde.Server.Logs.Data
 
 			// Figure out how many bits to devote to the block size
 			int newNumBlockBits = 0;
-			while(newBlocks.Length > (1 << newNumBlockBits))
+			while (newBlocks.Length > (1 << newNumBlockBits))
 			{
 				newNumBlockBits += 4;
 			}
@@ -200,7 +200,7 @@ namespace Horde.Server.Logs.Data
 			ReadOnlyTrieBuilder newTrieBuilder = new ReadOnlyTrieBuilder();
 
 			int blockCount = 0;
-			foreach(LogIndexData index in indexes)
+			foreach (LogIndexData index in indexes)
 			{
 				ulong blockMask = ((1UL << index._numBlockBits) - 1);
 				foreach (ulong value in index.BuildTrie())
@@ -234,7 +234,7 @@ namespace Horde.Server.Logs.Data
 				LogIndexBlock block = _blocks[blockIdx];
 
 				stats.NumScannedBlocks++;
-				stats.NumDecompressedBlocks += (block.CachedPlainText == null)? 1 : 0;
+				stats.NumDecompressedBlocks += (block.CachedPlainText == null) ? 1 : 0;
 
 				stats.NumSkippedBlocks += blockIdx - lastBlockCount;
 				lastBlockCount = blockIdx + 1;
@@ -244,18 +244,18 @@ namespace Horde.Server.Logs.Data
 
 				// Find the initial offset within this block
 				int offset = 0;
-				if(firstLineIndex > block.LineIndex)
+				if (firstLineIndex > block.LineIndex)
 				{
 					int lineIndexWithinBlock = firstLineIndex - block.LineIndex;
 					offset = blockText.LineOffsets[lineIndexWithinBlock];
 				}
 
 				// Search within this block
-				for(; ;)
+				for (; ; )
 				{
 					// Find the next offset
 					int nextOffset = blockText.Data.Span.FindNextOcurrence(offset, text);
-					if(nextOffset == -1)
+					if (nextOffset == -1)
 					{
 						stats.NumScannedBytes += blockText.Length - offset;
 						break;
@@ -274,7 +274,7 @@ namespace Horde.Server.Logs.Data
 				}
 
 				// If the last scanned bytes is zero, we didn't have any matches from this chunk
-				if(offset == 0 && _cachedTrie != null)
+				if (offset == 0 && _cachedTrie != null)
 				{
 					stats.NumFalsePositiveBlocks++;
 				}
@@ -292,7 +292,7 @@ namespace Horde.Server.Logs.Data
 		{
 			// Find the starting block index
 			int blockIdx = _blocks.BinarySearch(x => x.LineIndex, lineIndex);
-			if(blockIdx < 0)
+			if (blockIdx < 0)
 			{
 				blockIdx = Math.Max(~blockIdx - 1, 0);
 			}
@@ -514,9 +514,9 @@ namespace Horde.Server.Logs.Data
 				ReadOnlyTrie index = reader.ReadTrie();
 				int numBlockBits = reader.ReadInt32();
 				LogIndexBlock[] blocks = reader.ReadVariableLengthArrayWithInt32Length(() => reader.ReadLogIndexBlock());
-				for(int idx = 1; idx < blocks.Length; idx++)
+				for (int idx = 1; idx < blocks.Length; idx++)
 				{
-					if(blocks[idx].LineIndex == 0)
+					if (blocks[idx].LineIndex == 0)
 					{
 						int lineIndex = blocks[idx - 1].LineIndex + blocks[idx - 1].LineCount;
 						blocks[idx] = new LogIndexBlock(lineIndex, blocks[idx].LineCount, blocks[idx].CachedPlainText, blocks[idx].CompressedPlainText);

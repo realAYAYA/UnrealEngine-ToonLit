@@ -19,6 +19,7 @@ class WebRTCStats
     private var lastBytesReceivedTimestamp : CFTimeInterval?
     private var lastInterframeDelay : Double?
     private var lastProcessingDelay : Double?
+    private var lastARKitEventTimestamp : CFTimeInterval?
     
     private var statsView : WebRTCStatsView
     private var fpsGraph : LineGraphView?
@@ -30,6 +31,7 @@ class WebRTCStats
     private var jitterBufferDelayGraph : LineGraphView?
     private var multipacketFramesGraph : LineGraphView?
     private var freezeCountGraph : LineGraphView?
+    private var pauseCountGraph : LineGraphView?
     private var nackCountGraph : LineGraphView?
     private var pliCountGraph : LineGraphView?
     private var packetLossGraph : LineGraphView?
@@ -38,6 +40,8 @@ class WebRTCStats
     private var framesDroppedGraph : LineGraphView?
     private var interframeDelayGraph : LineGraphView?
     private var processingTimeGraph : LineGraphView?
+    private var arkitEventsGraph : LineGraphView?
+    private var arkitEventsProcessedGraph : LineGraphView?
     
     init(statsView: WebRTCStatsView) {
         
@@ -69,6 +73,9 @@ class WebRTCStats
         self.freezeCountGraph = self.statsView.addGraph(graphName: "Freeze Count")
         self.freezeCountGraph?.maxY = 10
         
+        self.pauseCountGraph = self.statsView.addGraph(graphName: "Pause Count")
+        self.pauseCountGraph?.maxY = 10
+        
         self.pliCountGraph = self.statsView.addGraph(graphName: "Picture Loss Count")
         self.pliCountGraph?.maxY = 10
         
@@ -87,6 +94,11 @@ class WebRTCStats
         self.processingTimeGraph = self.statsView.addGraph(graphName: "Processing delay (ms)")
         self.processingTimeGraph?.maxY = 10
         
+        self.arkitEventsGraph = self.statsView.addGraph(graphName: "ARKit Transform Delta (ms)")
+        self.arkitEventsGraph?.maxY = 100
+        
+        self.arkitEventsProcessedGraph = self.statsView.addGraph(graphName: "ARKit Recv in UE / s")
+        self.arkitEventsProcessedGraph?.maxY = 100
     }
     
     func processStatsReport(report: RTCStatisticsReport){
@@ -127,6 +139,11 @@ class WebRTCStats
                     // Freeze Count
                     if let freezeCount = value.values["freezeCount"] as? Int64 {
                         self.freezeCountGraph?.addDataPoint(value: Double(freezeCount))
+                    }
+                    
+                    // Pause Count
+                    if let pauseCount = value.values["pauseCount"] as? Int64 {
+                        self.pauseCountGraph?.addDataPoint(value: Double(pauseCount))
                     }
                     
                     // Nack Count
@@ -201,7 +218,6 @@ class WebRTCStats
 
                     // There is also:
                     // firCount
-                    // pauseCount
                     // totalSquaredInterFrameDelay : Double
                     // totalDecodeTime : Double
                     // totalPausesDuration : Double
@@ -213,8 +229,18 @@ class WebRTCStats
                 }
             }
         }
-        
-        
+    }
+    
+    func processARKitResponse(numResponses: UInt16){
+        self.arkitEventsProcessedGraph?.addDataPoint(value: Double(numResponses))
+    }
+    
+    func processARKitEvent(){
+        let now = CFAbsoluteTimeGetCurrent()
+        let prevTime = self.lastARKitEventTimestamp ?? CFAbsoluteTimeGetCurrent()
+        let eventDelta = now - prevTime
+        self.arkitEventsGraph?.addDataPoint(value: Double(eventDelta * 1000))
+        self.lastARKitEventTimestamp = now
     }
     
 }

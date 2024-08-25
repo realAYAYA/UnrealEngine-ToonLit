@@ -69,8 +69,8 @@ void UpdateD3D11TextureStats(FD3D11Texture& Texture, bool bAllocating)
 	// This means that we must manually add the tracking here.
 	if (bAllocating)
 	{
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Texture.GetResource(), TextureSize, ELLMTag::GraphicsPlatform));
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default , Texture.GetResource(), TextureSize, ELLMTag::Textures));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Texture.GetResource(), TextureSize, ELLMTag::GraphicsPlatform));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default , Texture.GetResource(), TextureSize, ELLMTag::Textures));
 		{
 			LLM(UE_MEMSCOPE_DEFAULT(ELLMTag::Textures));
 			MemoryTrace_Alloc((uint64)Texture.GetResource(), TextureSize, 1024, EMemoryTraceRootHeap::VideoMemory);
@@ -78,8 +78,8 @@ void UpdateD3D11TextureStats(FD3D11Texture& Texture, bool bAllocating)
 	}
 	else
 	{
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Texture.GetResource()));
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default , Texture.GetResource()));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Texture.GetResource()));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default , Texture.GetResource()));
 		MemoryTrace_Free((uint64)Texture.GetResource(), EMemoryTraceRootHeap::VideoMemory);
 	}
 }
@@ -806,19 +806,14 @@ FD3D11Texture* FD3D11DynamicRHI::CreateD3D11Texture3D(FRHITextureCreateDesc cons
 	2D texture support.
 -----------------------------------------------------------------------------*/
 
-FTextureRHIRef FD3D11DynamicRHI::RHICreateTexture(const FRHITextureCreateDesc& CreateDesc)
+FTextureRHIRef FD3D11DynamicRHI::RHICreateTexture(FRHICommandListBase&, const FRHITextureCreateDesc& CreateDesc)
 {
 	return CreateDesc.IsTexture3D()
 		? CreateD3D11Texture3D(CreateDesc)
 		: CreateD3D11Texture2D(CreateDesc);
 }
 
-FTextureRHIRef FD3D11DynamicRHI::RHICreateTexture_RenderThread(class FRHICommandListImmediate& RHICmdList, const FRHITextureCreateDesc& CreateDesc)
-{
-	return RHICreateTexture(CreateDesc);
-}
-
-FTextureRHIRef FD3D11DynamicRHI::RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, FGraphEventRef& OutCompletionEvent)
+FTextureRHIRef FD3D11DynamicRHI::RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, const TCHAR* DebugName, FGraphEventRef& OutCompletionEvent)
 {
 	TArray<D3D11_SUBRESOURCE_DATA, TInlineAllocator<12>> SubresourceData;
 	SubresourceData.SetNumUninitialized(NumMips);
@@ -856,7 +851,7 @@ FTextureRHIRef FD3D11DynamicRHI::RHIAsyncCreateTexture2D(uint32 SizeX, uint32 Si
 	}
 
 	const FRHITextureCreateDesc Desc =
-		FRHITextureCreateDesc::Create2D(TEXT("RHIAsyncCreateTexture2D"), SizeX, SizeY, (EPixelFormat)Format)
+		FRHITextureCreateDesc::Create2D(DebugName, SizeX, SizeY, (EPixelFormat)Format)
 		.SetClearValue(FClearValueBinding::None)
 		.SetFlags(Flags)
 		.SetNumMips(NumMips)
@@ -1273,13 +1268,45 @@ void FD3D11DynamicRHI::RHIUnlockTexture2DArray(FRHITexture2DArray* TextureRHI, u
 void FD3D11DynamicRHI::RHIUpdateTexture2D(FRHICommandListBase& RHICmdList, FRHITexture2D* TextureRHI, uint32 MipIndex, const FUpdateTextureRegion2D& UpdateRegion, uint32 SourcePitch, const uint8* SourceData)
 {
 	const FPixelFormatInfo& FormatInfo = GPixelFormats[TextureRHI->GetFormat()];
-	const size_t UpdateHeightInTiles = FMath::DivideAndRoundUp(UpdateRegion.Height, (uint32)FormatInfo.BlockSizeY);
-	const size_t SourceDataSize = static_cast<size_t>(SourcePitch) * UpdateHeightInTiles;
-	uint8* SourceDataCopy = (uint8*)FMemory::Malloc(SourceDataSize);
-	FMemory::Memcpy(SourceDataCopy, SourceData, SourceDataSize);
-	SourceData = SourceDataCopy;
 
-	RHICmdList.EnqueueLambda([this, TextureRHI, MipIndex, UpdateRegion, SourcePitch, SourceData] (FRHICommandListBase&)
+	check(UpdateRegion.Width  % FormatInfo.BlockSizeX == 0);
+	check(UpdateRegion.Height % FormatInfo.BlockSizeY == 0);
+	check(UpdateRegion.DestX  % FormatInfo.BlockSizeX == 0);
+	check(UpdateRegion.DestY  % FormatInfo.BlockSizeY == 0);
+	check(UpdateRegion.SrcX   % FormatInfo.BlockSizeX == 0);
+	check(UpdateRegion.SrcY   % FormatInfo.BlockSizeY == 0);
+
+	const uint32 SrcXInBlocks   = FMath::DivideAndRoundUp<uint32>(UpdateRegion.SrcX,   FormatInfo.BlockSizeX);
+	const uint32 SrcYInBlocks   = FMath::DivideAndRoundUp<uint32>(UpdateRegion.SrcY,   FormatInfo.BlockSizeY);
+	const uint32 WidthInBlocks  = FMath::DivideAndRoundUp<uint32>(UpdateRegion.Width,  FormatInfo.BlockSizeX);
+	const uint32 HeightInBlocks = FMath::DivideAndRoundUp<uint32>(UpdateRegion.Height, FormatInfo.BlockSizeY);
+
+	const void* UpdateMemory = SourceData + FormatInfo.BlockBytes * SrcXInBlocks + SourcePitch * SrcYInBlocks * FormatInfo.BlockSizeY;
+	uint32 UpdatePitch = SourcePitch;
+
+	const bool bNeedStagingMemory = RHICmdList.IsTopOfPipe();
+	if (bNeedStagingMemory)
+	{
+		const size_t SourceDataSizeInBlocks = static_cast<size_t>(WidthInBlocks) * static_cast<size_t>(HeightInBlocks);
+		const size_t SourceDataSize = SourceDataSizeInBlocks * FormatInfo.BlockBytes;
+
+		uint8* const StagingMemory = (uint8*)FMemory::Malloc(SourceDataSize);
+		const size_t StagingPitch = static_cast<size_t>(WidthInBlocks) * FormatInfo.BlockBytes;
+
+		const uint8* CopySrc = (const uint8*)UpdateMemory;
+		uint8* CopyDst = (uint8*)StagingMemory;
+		for (uint32 BlockRow = 0; BlockRow < HeightInBlocks; BlockRow++)
+		{
+			FMemory::Memcpy(CopyDst, CopySrc, WidthInBlocks * FormatInfo.BlockBytes);
+			CopySrc += SourcePitch;
+			CopyDst += StagingPitch;
+		}
+
+		UpdateMemory = StagingMemory;
+		UpdatePitch = StagingPitch;
+	}
+
+	RHICmdList.EnqueueLambda([this, TextureRHI, MipIndex, UpdateRegion, UpdatePitch, UpdateMemory, bNeedStagingMemory] (FRHICommandListBase&)
 	{
 		FD3D11Texture* Texture = ResourceCast(TextureRHI);
 
@@ -1289,16 +1316,12 @@ void FD3D11DynamicRHI::RHIUpdateTexture2D(FRHICommandListBase& RHICmdList, FRHIT
 			UpdateRegion.DestX + UpdateRegion.Width, UpdateRegion.DestY + UpdateRegion.Height, 1
 		};
 
-		check(UpdateRegion.Width % GPixelFormats[Texture->GetFormat()].BlockSizeX == 0);
-		check(UpdateRegion.Height % GPixelFormats[Texture->GetFormat()].BlockSizeY == 0);
-		check(UpdateRegion.DestX % GPixelFormats[Texture->GetFormat()].BlockSizeX == 0);
-		check(UpdateRegion.DestY % GPixelFormats[Texture->GetFormat()].BlockSizeY == 0);
-		check(UpdateRegion.SrcX % GPixelFormats[Texture->GetFormat()].BlockSizeX == 0);
-		check(UpdateRegion.SrcY % GPixelFormats[Texture->GetFormat()].BlockSizeY == 0);
+		Direct3DDeviceIMContext->UpdateSubresource(Texture->GetResource(), MipIndex, &DestBox, UpdateMemory, UpdatePitch, 0);
 
-		Direct3DDeviceIMContext->UpdateSubresource(Texture->GetResource(), MipIndex, &DestBox, SourceData, SourcePitch, 0);
-
-		FMemory::Free((void*)SourceData);
+		if (bNeedStagingMemory)
+		{
+			FMemory::Free(const_cast<void*>(UpdateMemory));
+		}
 	});
 }
 
@@ -1408,7 +1431,7 @@ void FD3D11DynamicRHI::RHIUnlockTextureCubeFace_RenderThread(
 	}
 }
 
-void FD3D11DynamicRHI::RHIBindDebugLabelName(FRHITexture* TextureRHI, const TCHAR* Name)
+void FD3D11DynamicRHI::RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHITexture* TextureRHI, const TCHAR* Name)
 {
 	FD3D11Texture* Texture = ResourceCast(TextureRHI);
 

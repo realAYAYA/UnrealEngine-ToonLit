@@ -1,11 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
-using System.Threading;
-using System.Threading.Tasks;
 using Grpc.Core;
 using Grpc.Net.Client;
 using HordeCommon.Rpc;
@@ -243,12 +239,12 @@ namespace Horde.Agent.Utility
 			/// <summary>
 			/// Cancellation token set 
 			/// </summary>
-			private readonly TaskCompletionSource<bool> _disposingTaskSource = new TaskCompletionSource<bool>();
+			private readonly TaskCompletionSource<bool> _disposingTaskSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
 			/// <summary>
 			/// Wraps a task allowing the disposer to wait for clients to finish using this connection
 			/// </summary>
-			private readonly TaskCompletionSource<bool> _disposedTaskSource = new TaskCompletionSource<bool>();
+			private readonly TaskCompletionSource<bool> _disposedTaskSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
 			/// <summary>
 			/// Constructor
@@ -371,8 +367,8 @@ namespace Horde.Agent.Utility
 		}
 
 		private readonly Func<CancellationToken, Task<GrpcChannel>> _createGrpcChannelAsync;
-		private readonly TaskCompletionSource<bool> _stoppingTaskSource = new TaskCompletionSource<bool>();
-		private TaskCompletionSource<RpcSubConnection> _subConnectionTaskSource = new TaskCompletionSource<RpcSubConnection>();
+		private readonly TaskCompletionSource<bool> _stoppingTaskSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+		private TaskCompletionSource<RpcSubConnection> _subConnectionTaskSource = new TaskCompletionSource<RpcSubConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
 		private Task? _backgroundTask;
 		private bool _healthy;
 		private readonly ILogger _logger;
@@ -393,6 +389,7 @@ namespace Horde.Agent.Utility
 			_backgroundTask = Task.Run(() => ExecuteAsync());
 		}
 
+#pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks.
 		/// <summary>
 		/// Attempts to get a client reference, returning immediately if there's not one available
 		/// </summary>
@@ -403,13 +400,14 @@ namespace Horde.Agent.Utility
 			if (subConnectionTask.IsCompleted)
 			{
 				RpcSubConnection defaultClient = subConnectionTask.Result;
-				if(defaultClient.TryAddRef())
+				if (defaultClient.TryAddRef())
 				{
 					return new RpcClientRef<TClient>(defaultClient);
 				}
 			}
 			return null;
 		}
+#pragma warning restore VSTHRD002
 
 		/// <summary>
 		/// Obtains a new client reference object
@@ -475,7 +473,7 @@ namespace Horde.Agent.Utility
 					{
 						// Need to avoid lambda capture of the reconnect task source
 						int newConnectionId = ++connectionId;
-						TaskCompletionSource<bool> newReconnectTaskSource = new TaskCompletionSource<bool>();
+						TaskCompletionSource<bool> newReconnectTaskSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 						tasks.Add(Task.Run(() => HandleConnectionAsync(newConnectionId, newReconnectTaskSource)));
 						reconnectTaskSource = newReconnectTaskSource;
 					}
@@ -494,7 +492,7 @@ namespace Horde.Agent.Utility
 				for (int idx = 0; idx < tasks.Count; idx++)
 				{
 					Task task = tasks[idx];
-					if(task.IsCompleted)
+					if (task.IsCompleted)
 					{
 						await task;
 						tasks.RemoveAt(idx--);
@@ -635,7 +633,7 @@ namespace Horde.Agent.Utility
 				// First reset the task source, so that nothing new starts to use the current connection
 				if (_subConnectionTaskSource.Task.IsCompleted)
 				{
-					_subConnectionTaskSource = new TaskCompletionSource<RpcSubConnection>();
+					_subConnectionTaskSource = new TaskCompletionSource<RpcSubConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
 				}
 
 				// Now trigger another connection

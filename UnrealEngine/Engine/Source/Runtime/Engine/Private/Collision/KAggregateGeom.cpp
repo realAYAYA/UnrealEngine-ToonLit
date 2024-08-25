@@ -445,7 +445,7 @@ FBox FKConvexElem::CalcAABB(const FTransform& BoneTM, const FVector& Scale3D) co
 void FKConvexElem::GetPlanes(TArray<FPlane>& Planes) const
 {
 	using FChaosPlane = Chaos::TPlaneConcrete<Chaos::FReal, 3>;
-	if(Chaos::FConvex* RawConvex = ChaosConvex.Get())
+	if(Chaos::FConvex* RawConvex = ChaosConvex.GetReference())
 	{
 		const int32 NumPlanes = RawConvex->NumPlanes();
 		for(int32 i = 0; i < NumPlanes; ++i)
@@ -610,9 +610,9 @@ FBox FKSkinnedLevelSetElem::CalcAABB(const FTransform& BoneTM, const FVector& Sc
 {
 	FBox Box(ForceInit);
 
-	if (WeightedLevelSet.IsValid())
+	if (WeightedLatticeLevelSet.IsValid())
 	{
-		Box = FBox(WeightedLevelSet->BoundingBox().Min(), WeightedLevelSet->BoundingBox().Max());
+		Box = FBox(WeightedLatticeLevelSet->BoundingBox().Min(), WeightedLatticeLevelSet->BoundingBox().Max());
 		const FTransform LocalToWorld = FTransform(FQuat::Identity, FVector::ZeroVector, Scale3D) * BoneTM;
 		return Box.TransformBy(LocalToWorld);
 	}
@@ -622,9 +622,9 @@ FBox FKSkinnedLevelSetElem::CalcAABB(const FTransform& BoneTM, const FVector& Sc
 
 FIntVector3 FKSkinnedLevelSetElem::LevelSetGridResolution() const
 {
-	if (WeightedLevelSet.IsValid())
+	if (WeightedLatticeLevelSet.IsValid())
 	{
-		const Chaos::TVec3<int32>& Dim = WeightedLevelSet->GetEmbeddedObject()->GetGrid().Counts();
+		const Chaos::TVec3<int32>& Dim = WeightedLatticeLevelSet->GetEmbeddedObject()->GetGrid().Counts();
 		return FIntVector3(Dim[0], Dim[1], Dim[2]);
 	}
 
@@ -633,18 +633,18 @@ FIntVector3 FKSkinnedLevelSetElem::LevelSetGridResolution() const
 
 FIntVector3 FKSkinnedLevelSetElem::LatticeGridResolution() const
 {
-	if (WeightedLevelSet.IsValid())
+	if (WeightedLatticeLevelSet.IsValid())
 	{
-		const Chaos::TVec3<int32>& Dim = WeightedLevelSet->GetGrid().Counts();
+		const Chaos::TVec3<int32>& Dim = WeightedLatticeLevelSet->GetGrid().Counts();
 		return FIntVector3(Dim[0], Dim[1], Dim[2]);
 	}
 
 	return FIntVector3(0, 0, 0);
 }
 
-void FKSkinnedLevelSetElem::SetWeightedLevelSet(TUniquePtr< Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>&& InWeightedLevelSet)
+void FKSkinnedLevelSetElem::SetWeightedLevelSet(TRefCountPtr< Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>&& InWeightedLevelSet)
 {
-	WeightedLevelSet = TSharedPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>(InWeightedLevelSet.Release());
+	WeightedLatticeLevelSet = InWeightedLevelSet;
 }
 
 FTransform FKSkinnedLevelSetElem::GetTransform() const
@@ -956,7 +956,7 @@ FArchive& operator<<(FArchive& Ar,FKConvexElem& Elem)
 		// Initialize the TArray members
 		FMemory::Memzero(&Elem.VertexData, sizeof(Elem.VertexData));
 		FMemory::Memzero(&Elem.ElemBox, sizeof(Elem.ElemBox));
-		Elem.ChaosConvex.Reset();
+		Elem.ChaosConvex.SafeRelease();
 	}
 
 	return Ar;
@@ -983,13 +983,13 @@ bool FKSkinnedLevelSetElem::Serialize(FArchive& Ar)
 {
 	if (Ar.IsLoading())
 	{
-		WeightedLevelSet = TSharedPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>(new Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>());
+		WeightedLatticeLevelSet = TRefCountPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>(new Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>());
 	}
 
-	if (WeightedLevelSet.IsValid())
+	if (WeightedLatticeLevelSet.IsValid())
 	{
 		Chaos::FChaosArchive ChaosAr(Ar);
-		WeightedLevelSet->Serialize(ChaosAr);
+		WeightedLatticeLevelSet->Serialize(ChaosAr);
 	}
 
 	return true;

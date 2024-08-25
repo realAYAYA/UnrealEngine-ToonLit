@@ -25,7 +25,9 @@ namespace
 
 		FAutoConsoleVariableRef(TEXT("ai.debug.nav.DisplaySize"), 
 			FGameplayDebuggerCategoryNavmeshTweakables::DisplaySize,
-			TEXT("Area we want to display in tiles (DisplaySize x DisplaySize). Note that size will round up to an odd number of tiles")),
+			TEXT("Area to display in tiles (DisplaySize x DisplaySize) in gameplay debugger."
+				 " Size will round up to an odd number of tiles."
+				 " Culling distance can be modified using 'ai.debug.nav.DrawDistance'.")),
 
 		FAutoConsoleVariableRef(TEXT("ai.debug.nav.RefreshInterval"),
 			FGameplayDebuggerCategoryNavmeshTweakables::RefreshInterval,

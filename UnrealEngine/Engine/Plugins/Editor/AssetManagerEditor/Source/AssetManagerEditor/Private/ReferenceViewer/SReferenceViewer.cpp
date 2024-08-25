@@ -25,12 +25,15 @@
 #include "Toolkits/GlobalEditorCommonCommands.h"
 #include "Engine/AssetManager.h"
 #include "ReferenceViewer/SReferenceViewerFilterBar.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SComboBox.h"
+#include "Widgets/Input/SComboButton.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "AssetManagerEditorModule.h"
 
 #include "ObjectTools.h"
 #include "Selection.h"
+#include "Interfaces/IPluginManager.h"
 
 #define LOCTEXT_NAMESPACE "ReferenceViewer"
 
@@ -57,7 +60,7 @@ SReferenceViewer::~SReferenceViewer()
 		if ( ensure(GraphObj) )
 		{
 			GraphObj->RemoveFromRoot();
-		}		
+		}
 	}
 }
 
@@ -73,7 +76,7 @@ void SReferenceViewer::Construct(const FArguments& InArgs)
 	// Set up the history manager
 	HistoryManager.SetOnApplyHistoryData(FOnApplyHistoryData::CreateSP(this, &SReferenceViewer::OnApplyHistoryData));
 	HistoryManager.SetOnUpdateHistoryData(FOnUpdateHistoryData::CreateSP(this, &SReferenceViewer::OnUpdateHistoryData));
-
+	
 	// Create the graph
 	GraphObj = NewObject<UEdGraph_ReferenceViewer>();
 	GraphObj->Schema = UReferenceViewerSchema::StaticClass();
@@ -105,6 +108,7 @@ void SReferenceViewer::Construct(const FArguments& InArgs)
 	FixAndHideSearchDepthLimit = 0;
 	FixAndHideSearchBreadthLimit = 0;
 	bShowCollectionFilter = true;
+	bShowPluginFilter = true;
 	bShowShowReferencesOptions = true;
 	bShowShowSearchableNames = true;
 	bShowShowCodePackages = true;
@@ -455,20 +459,62 @@ void SReferenceViewer::Construct(const FArguments& InArgs)
 							SNew(SBox)
 							.WidthOverride(100)
 							[
-								SAssignNew(CollectionsCombo, SComboBox<TSharedPtr<FName>>)
-								.OptionsSource(&CollectionsComboList)
-								.OnComboBoxOpening(this, &SReferenceViewer::UpdateCollectionsComboList)
-								.OnGenerateWidget(this, &SReferenceViewer::GenerateCollectionFilterItem)
-								.OnSelectionChanged(this, &SReferenceViewer::HandleCollectionFilterChanged)
-								.ToolTipText(this, &SReferenceViewer::GetCollectionFilterText)
+								SNew(SComboButton)
+								.OnGetMenuContent(this, &SReferenceViewer::BuildCollectionFilterMenu)
+								.ButtonContent()
 								[
 									SNew(STextBlock)
-									.Text(this, &SReferenceViewer::GetCollectionFilterText)
+									.Text(this, &SReferenceViewer::GetCollectionComboButtonText)
+									.ToolTipText(this, &SReferenceViewer::GetCollectionComboButtonText)
 								]
 							]
 						]
 					]
 
+					+SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						.Visibility_Lambda([this]() { return (bShowPluginFilter ? EVisibility::Visible : EVisibility::Collapsed); })
+
+						+SHorizontalBox::Slot()
+						.VAlign(VAlign_Center)
+						.FillWidth(1.0)
+						.Padding(2.f)
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("PluginFilter", "Plugin Filter"))
+						]
+
+						+SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						.Padding(2.f)
+						[
+							SNew(SCheckBox)
+							.OnCheckStateChanged( this, &SReferenceViewer::OnEnablePluginFilterChanged )
+							.IsChecked( this, &SReferenceViewer::IsEnablePluginFilterChecked )
+						]
+
+						+SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						.Padding(2.f)
+						[
+							SNew(SBox)
+							.WidthOverride(100)
+							[
+								SNew(SComboButton)
+								.OnGetMenuContent(this, &SReferenceViewer::BuildPluginFilterMenu)
+								.ButtonContent()
+								[
+									SNew(STextBlock)
+									.Text(this, &SReferenceViewer::GetPluginComboButtonText)
+									.ToolTipText(this, &SReferenceViewer::GetPluginComboButtonText)
+								]
+							]
+						]
+					]
 				]
 				] // SHorizontalBox::Slot()
 
@@ -505,8 +551,6 @@ void SReferenceViewer::Construct(const FArguments& InArgs)
 			]
 		]
 	];
-
-	UpdateCollectionsComboList();
 
 	SetCanTick(true);
 }
@@ -546,6 +590,7 @@ void SReferenceViewer::SetGraphRootIdentifiers(const TArray<FAssetIdentifier>& N
 		Settings->SetSearchBreadthLimitEnabled(true);
 	}
 	bShowCollectionFilter = ReferenceViewerParams.bShowCollectionFilter;
+	bShowPluginFilter = ReferenceViewerParams.bShowPluginFilter;
 	bShowShowReferencesOptions = ReferenceViewerParams.bShowShowReferencesOptions;
 	bShowShowSearchableNames = ReferenceViewerParams.bShowShowSearchableNames;
 	bShowShowCodePackages = ReferenceViewerParams.bShowShowCodePackages;
@@ -566,6 +611,12 @@ void SReferenceViewer::SetGraphRootIdentifiers(const TArray<FAssetIdentifier>& N
 	if (Settings->IsShowManagementReferences())
 	{
 		UAssetManager::Get().UpdateManagementDatabase();
+	}
+
+	if (!ReferenceViewerParams.PluginFilter.IsEmpty())
+	{
+		Settings->SetEnablePluginFilter(true);
+		GraphObj->SetCurrentPluginFilter(ReferenceViewerParams.PluginFilter);
 	}
 
 	RebuildGraph();
@@ -956,19 +1007,6 @@ ECheckBoxState SReferenceViewer::IsSearchBreadthEnabledChecked() const
 	return Settings->IsSearchBreadthLimited() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 }
 
-TSharedRef<SWidget> SReferenceViewer::GenerateCollectionFilterItem(TSharedPtr<FName> InItem)
-{
-	FText ItemAsText = FText::FromName(*InItem);
-	return
-		SNew(SBox)
-		.WidthOverride(300)
-		[
-			SNew(STextBlock)
-			.Text(ItemAsText)
-			.ToolTipText(ItemAsText)
-		];
-}
-
 void SReferenceViewer::OnEnableCollectionFilterChanged(ECheckBoxState NewState)
 {
 	const bool bNewValue = NewState == ECheckBoxState::Checked;
@@ -985,8 +1023,63 @@ ECheckBoxState SReferenceViewer::IsEnableCollectionFilterChecked() const
 	return Settings->GetEnableCollectionFilter() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 }
 
-void SReferenceViewer::UpdateCollectionsComboList()
+FText SReferenceViewer::GetCollectionComboButtonText() const
 {
+	return FText::FromName(GraphObj->GetCurrentCollectionFilter());
+}
+
+void SReferenceViewer::CollectionFilterAddMenuEntry(FMenuBuilder& MenuBuilder, const FName& CollectionName)
+{
+	FExecuteAction ActionClicked = FExecuteAction::CreateLambda([this, CollectionName]()
+	{
+		// Make sure collection filtering is enabled now that the user clicked something in the menu.
+		Settings->SetEnableCollectionFilter(true);
+
+		FName CurrentCollectionFilter = GraphObj->GetCurrentCollectionFilter();
+
+		// Update the filter and rebuild the graph if the filter changed.
+		if (CurrentCollectionFilter != CollectionName)
+		{
+			GraphObj->SetCurrentCollectionFilter(CollectionName);
+			RebuildGraph();
+		}
+	});
+
+	FIsActionChecked ActionChecked = FIsActionChecked::CreateLambda([this, CollectionName]() -> bool
+	{
+		return GraphObj->GetCurrentCollectionFilter() == CollectionName;
+	});
+
+	MenuBuilder.AddMenuEntry(
+		FText::FromName(CollectionName),
+		FText::FromName(CollectionName),
+		FSlateIcon(),
+		FUIAction(ActionClicked, FCanExecuteAction(), ActionChecked),
+		NAME_None, //InExtensionHook
+		EUserInterfaceActionType::RadioButton
+		);
+}
+
+TSharedRef<SWidget> SReferenceViewer::BuildCollectionFilterMenu()
+{
+	FMenuBuilder MenuBuilder(true /* Pass true to close dropdown after selection. */, nullptr);
+
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("CollectionFilterSelectNone", "Select None"),
+		LOCTEXT("CollectionFilterSelectNoCollection", "Select no collection."),
+		FSlateIcon(),
+		FExecuteAction::CreateLambda([this]()
+		{
+			// Make sure collection filtering is enabled.
+			Settings->SetEnableCollectionFilter(true);
+
+			GraphObj->SetCurrentCollectionFilter(NAME_None);
+			RebuildGraph();
+		})
+	);
+
+	MenuBuilder.AddSeparator();
+
 	TArray<FName> CollectionNames;
 	{
 		FCollectionManagerModule& CollectionManagerModule = FCollectionManagerModule::GetModule();
@@ -1004,61 +1097,177 @@ void SReferenceViewer::UpdateCollectionsComboList()
 				CollectionNames.AddUnique(Collection.Name);
 			}
 		}
-	}
-	CollectionNames.Sort([](const FName& A, const FName& B) { return A.Compare(B) < 0; });
 
-	CollectionsComboList.Reset();
-	CollectionsComboList.Add(MakeShared<FName>(NAME_None));
-	for (FName CollectionName : CollectionNames)
-	{
-		CollectionsComboList.Add(MakeShared<FName>(CollectionName));
+		CollectionNames.Sort([](const FName& A, const FName& B) { return A.Compare(B) < 0; });
 	}
 
-	if (CollectionsCombo)
+	for (const FName& CollectionName : CollectionNames)
 	{
-		CollectionsCombo->ClearSelection();
-		CollectionsCombo->RefreshOptions();
+		CollectionFilterAddMenuEntry(MenuBuilder, CollectionName);
+	}
 
-		if (GraphObj)
+	return MenuBuilder.MakeWidget();
+}
+
+void SReferenceViewer::OnEnablePluginFilterChanged(ECheckBoxState NewState)
+{
+	const bool bNewValue = NewState == ECheckBoxState::Checked;
+
+	const bool bCurrentValue = Settings->GetEnablePluginFilter();
+	if (bCurrentValue != bNewValue)
+	{
+		Settings->SetEnablePluginFilter(NewState == ECheckBoxState::Checked);
+		RebuildGraph();
+	}
+}
+
+ECheckBoxState SReferenceViewer::IsEnablePluginFilterChecked() const
+{
+	return Settings->GetEnablePluginFilter() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+}
+
+void SReferenceViewer::PluginFilterAddMenuEntry(FMenuBuilder& MenuBuilder, const FName& PluginName)
+{
+	FExecuteAction ActionClicked = FExecuteAction::CreateLambda([this, PluginName]()
+	{
+		TArray<FName> CurrentPluginFilter = GraphObj->GetCurrentPluginFilter();
+		// We just got checked if we don't exist in the current plugin filter.
+		const bool bNewChecked = !CurrentPluginFilter.Contains(PluginName);
+
+		if (bNewChecked)
 		{
-			const FName CurrentFilter = GraphObj->GetCurrentCollectionFilter();
+			// Make sure plugin filtering is enabled now that something was checked.
+			Settings->SetEnablePluginFilter(true);
 
-			const int32 SelectedItemIndex = CollectionsComboList.IndexOfByPredicate([CurrentFilter](const TSharedPtr<FName>& InItem)
+			CurrentPluginFilter.AddUnique(PluginName);
+		}
+		else if (CurrentPluginFilter.Contains(PluginName))
+		{
+			CurrentPluginFilter.RemoveAll([PluginName](const FName& Name)
 			{
-				return CurrentFilter == *InItem;
+				return Name == PluginName;
 			});
-
-			if (SelectedItemIndex != INDEX_NONE)
-			{
-				CollectionsCombo->SetSelectedItem(CollectionsComboList[SelectedItemIndex]);
-			}
 		}
-	}
-}
 
-void SReferenceViewer::HandleCollectionFilterChanged(TSharedPtr<FName> Item, ESelectInfo::Type SelectInfo)
-{
-	if (GraphObj && Item)
+		GraphObj->SetCurrentPluginFilter(CurrentPluginFilter);
+		RebuildGraph();
+	});
+
+	FIsActionChecked ActionChecked = FIsActionChecked::CreateLambda([this, PluginName]() -> bool
 	{
-		const FName NewFilter = *Item;
-		const FName CurrentFilter = GraphObj->GetCurrentCollectionFilter();
-		if (CurrentFilter != NewFilter)
-		{
-			if (CurrentFilter == NAME_None)
-			{
-				// Automatically check the box to enable the filter if the previous filter was None
-				Settings->SetEnableCollectionFilter(true);
-			}
+		return GraphObj->GetCurrentPluginFilter().Contains(PluginName);
+	});
 
-			GraphObj->SetCurrentCollectionFilter(NewFilter);
-			RebuildGraph();
-		}
-	}
+	MenuBuilder.AddMenuEntry(
+		FText::FromName(PluginName),
+		FText::FromName(PluginName),
+		FSlateIcon(),
+		FUIAction(ActionClicked, FCanExecuteAction(), ActionChecked),
+		NAME_None, //InExtensionHook
+		EUserInterfaceActionType::ToggleButton
+		);
 }
 
-FText SReferenceViewer::GetCollectionFilterText() const
+TSharedRef<SWidget> SReferenceViewer::BuildPluginFilterMenu()
 {
-	return FText::FromName(GraphObj->GetCurrentCollectionFilter());
+	FMenuBuilder MenuBuilder(false, nullptr);
+
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("PluginFilterSelectAll", "Select All"),
+		LOCTEXT("PluginFilterSelectAllPlugins", "Select all plugins."),
+		FSlateIcon(),
+		FExecuteAction::CreateLambda([this]()
+		{
+			// Make sure plugin filtering is enabled.
+			Settings->SetEnablePluginFilter(true);
+
+			GraphObj->SetCurrentPluginFilter(GraphObj->GetEncounteredPluginsAmongNodes());
+			RebuildGraph();
+		})
+	);
+	
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("PluginFilterSelectNone", "Select None"),
+		LOCTEXT("PluginFilterSelectNoPlugins", "Select no plugins."),
+		FSlateIcon(),
+		FExecuteAction::CreateLambda([this]()
+		{
+			// Make sure plugin filtering is enabled.
+			Settings->SetEnablePluginFilter(true);
+
+			GraphObj->SetCurrentPluginFilter(TArray<FName>());
+			RebuildGraph();
+		})
+	);
+
+	const TArray<FName> InitialPluginFilter = GraphObj->GetCurrentPluginFilter();
+
+	TArray<FName> EnabledPluginNames;
+	for (const TSharedRef<IPlugin>& Plugin : IPluginManager::Get().GetEnabledPluginsWithContent())
+	{
+		const FName Name = FName(Plugin.Get().GetName());
+		EnabledPluginNames.AddUnique(Name);
+	}
+
+	TArray<FName> PluginNames = GraphObj->GetEncounteredPluginsAmongNodes();
+	PluginNames.Sort([](const FName& A, const FName& B) { return A.Compare(B) < 0; });
+
+	if (PluginNames.Num() > 0)
+	{
+		MenuBuilder.AddSeparator();
+	}
+
+	int NumNonPluginsAdded = 0;
+	// First add any "plugins" that are not actual plugins, such as /Game and /Engine.
+	for (const FName& PluginName : PluginNames)
+	{
+		if (EnabledPluginNames.Contains(PluginName))
+		{
+			continue;
+		}
+		
+		PluginFilterAddMenuEntry(MenuBuilder, PluginName);
+
+		++NumNonPluginsAdded;
+	}
+
+	// Add a separator between non-real plugins (such as /Game and /Engine) and actual plugins.
+	// Skip this if no non-real plugins were added or if there are no more plugins to add.
+	if (NumNonPluginsAdded > 0 && NumNonPluginsAdded < PluginNames.Num())
+	{
+		MenuBuilder.AddSeparator();
+	}
+
+	// Add all real plugins.
+	for (const FName& PluginName : PluginNames)
+	{
+		if (!EnabledPluginNames.Contains(PluginName))
+		{
+			continue;
+		}
+		
+		PluginFilterAddMenuEntry(MenuBuilder, PluginName);
+	}
+
+	return MenuBuilder.MakeWidget();
+}
+
+FText SReferenceViewer::GetPluginComboButtonText() const
+{
+	const TArray<FName> CurrentPluginFilter = GraphObj->GetCurrentPluginFilter();
+
+	if (CurrentPluginFilter.IsEmpty())
+	{
+		return LOCTEXT("PluginFilterNothingSelected", "None");
+	}
+	else if (CurrentPluginFilter.Num() == 1)
+	{
+		return FText::FromName(CurrentPluginFilter[0]);
+	}
+	else
+	{
+		return LOCTEXT("PluginFilterMultipleSelected", "Multiple");
+	}
 }
 
 void SReferenceViewer::OnShowSoftReferencesChanged()
@@ -1127,6 +1336,17 @@ void SReferenceViewer::OnCompactModeChanged()
 bool SReferenceViewer::IsCompactModeChecked() const
 {
 	return Settings->IsCompactMode();
+}
+
+void SReferenceViewer::OnShowExternalReferencersChanged()
+{
+	Settings->SetShowExternalReferencersEnabled(!Settings->IsShowExternalReferencers());
+	RebuildGraph();
+}
+
+bool SReferenceViewer::IsShowExternalReferencersChecked() const
+{
+	return Settings->IsShowExternalReferencers();
 }
 
 void SReferenceViewer::OnShowDuplicatesChanged()
@@ -1341,6 +1561,12 @@ void SReferenceViewer::RegisterActions()
 		FCanExecuteAction(),	
 		FIsActionChecked::CreateSP(this, &SReferenceViewer::IsCompactModeChecked),
 		FIsActionButtonVisible::CreateLambda([this] { return bShowCompactMode; }));
+
+	ReferenceViewerActions->MapAction(
+		FAssetManagerEditorCommands::Get().ShowExternalReferencers,
+		FExecuteAction::CreateSP(this, &SReferenceViewer::OnShowExternalReferencersChanged),
+		FCanExecuteAction(),	
+		FIsActionChecked::CreateSP(this, &SReferenceViewer::IsShowExternalReferencersChecked));
 
 	ReferenceViewerActions->MapAction(
 		FAssetManagerEditorCommands::Get().FilterSearch,
@@ -2045,6 +2271,7 @@ TSharedRef<SWidget> SReferenceViewer::GetShowMenuContent()
 	MenuBuilder.AddMenuEntry(FAssetManagerEditorCommands::Get().ShowDuplicates);
 	MenuBuilder.AddMenuEntry(FAssetManagerEditorCommands::Get().FilterSearch);
 	MenuBuilder.AddMenuEntry(FAssetManagerEditorCommands::Get().CompactMode);
+	MenuBuilder.AddMenuEntry(FAssetManagerEditorCommands::Get().ShowExternalReferencers);
 	MenuBuilder.AddMenuEntry(FAssetManagerEditorCommands::Get().ShowCommentPath);
 	MenuBuilder.EndSection();
 

@@ -423,11 +423,15 @@ void FFXSystem::DrawDebug( FCanvas* Canvas )
 	}
 }
 
+DECLARE_GPU_DRAWCALL_STAT(FXSystemPreInitViews);
+
 void FFXSystem::PreInitViews(FRDGBuilder& GraphBuilder, bool bAllowGPUParticleUpdate, const TArrayView<const FSceneViewFamily*>& ViewFamilies, const FSceneViewFamily* CurrentFamily)
 {
 	if (RHISupportsGPUParticles())
 	{
-		AdvanceGPUParticleFrame(bAllowGPUParticleUpdate);
+		// Note: This can not be put into a GraphBuilder pass directly, the internals need to be refactored in order to that.
+		// This is because the data modified in here will be used in GDME pass which must have the most up to date information
+		AdvanceGPUParticleFrame(GraphBuilder.RHICmdList, bAllowGPUParticleUpdate);
 	}
 }
 

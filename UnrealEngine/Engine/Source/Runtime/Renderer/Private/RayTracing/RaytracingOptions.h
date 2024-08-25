@@ -79,11 +79,8 @@ extern bool AnyRayTracingPassEnabled(const FScene* Scene, const FViewInfo& View)
 extern bool AnyInlineRayTracingPassEnabled(const FScene* Scene, const FViewInfo& View);
 extern FRayTracingPrimaryRaysOptions GetRayTracingTranslucencyOptions(const FViewInfo& View);
 
-extern bool ShouldRenderRayTracingSkyLight(const FSkyLightSceneProxy* SkyLightSceneProxy);
+extern bool ShouldRenderRayTracingSkyLight(const FSkyLightSceneProxy* SkyLightSceneProxy, EShaderPlatform ShaderPlatform);
 extern bool ShouldRenderRayTracingAmbientOcclusion(const FViewInfo& View);
-extern bool ShouldRenderRayTracingReflections(const FViewInfo& View);
-extern bool ShouldRenderRayTracingReflectionsWater(const FViewInfo& View);
-extern bool ShouldRenderRayTracingGlobalIllumination(const FViewInfo& View);
 extern bool ShouldRenderRayTracingTranslucency(const FViewInfo& View);
 extern bool ShouldRenderRayTracingShadows();
 extern bool ShouldRenderRayTracingShadowsForLight(const FLightSceneProxy& LightProxy);
@@ -116,27 +113,12 @@ FORCEINLINE bool AnyRayTracingPassEnabled(const FScene* Scene, const FViewInfo& 
 	return false;
 }
 
-FORCEINLINE bool ShouldRenderRayTracingSkyLight(const FSkyLightSceneProxy* SkyLightSceneProxy)
+FORCEINLINE bool ShouldRenderRayTracingSkyLight(const FSkyLightSceneProxy* SkyLightSceneProxy, EShaderPlatform ShaderPlatform)
 {
 	return false;
 }
 
 FORCEINLINE bool ShouldRenderRayTracingAmbientOcclusion(const FViewInfo& View)
-{
-	return false;
-}
-
-FORCEINLINE bool ShouldRenderRayTracingReflections(const FViewInfo& View)
-{
-	return false;
-}
-
-FORCEINLINE bool ShouldRenderRayTracingReflectionsWater(const FViewInfo& View)
-{
-	return false;
-}
-
-FORCEINLINE bool ShouldRenderRayTracingGlobalIllumination(const FViewInfo& View)
 {
 	return false;
 }

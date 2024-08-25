@@ -17,17 +17,18 @@ void UMediaIOCoreSubsystem::Deinitialize()
 
 TSharedPtr<FMediaIOAudioOutput> UMediaIOCoreSubsystem::CreateAudioOutput(const FCreateAudioOutputArgs& InArgs)
 {
-	FMediaIOAudioCapture* MediaIOAudioCapture = nullptr;
+	TSharedPtr<FMediaIOAudioCapture> MediaIOAudioCapture;
 
 	if (InArgs.AudioDeviceHandle.IsValid())
 	{
-		if (const TUniquePtr<FMediaIOAudioCapture>* FoundMediaIOAudioCapture = MediaIOAudioCaptures.Find(InArgs.AudioDeviceHandle.GetDeviceID()))
+		if (const TSharedPtr<FMediaIOAudioCapture, ESPMode::ThreadSafe>* FoundMediaIOAudioCapture = MediaIOAudioCaptures.Find(InArgs.AudioDeviceHandle.GetDeviceID()))
 		{
-			MediaIOAudioCapture = FoundMediaIOAudioCapture->Get();
+			MediaIOAudioCapture = *FoundMediaIOAudioCapture;
 		}
 		else
 		{
-			MediaIOAudioCapture = MediaIOAudioCaptures.Add(InArgs.AudioDeviceHandle.GetDeviceID(), MakeUnique<FMediaIOAudioCapture>(InArgs.AudioDeviceHandle)).Get();
+			MediaIOAudioCapture = MediaIOAudioCaptures.Add(InArgs.AudioDeviceHandle.GetDeviceID(), MakeShared<FMediaIOAudioCapture>());
+			MediaIOAudioCapture->Initialize(InArgs.AudioDeviceHandle);
 			MainMediaIOAudioCapture->OnAudioCaptured_RenderThread().BindUObject(this, &UMediaIOCoreSubsystem::OnBufferReceivedByCapture, InArgs.AudioDeviceHandle.GetDeviceID());
 		}
 	}
@@ -36,10 +37,11 @@ TSharedPtr<FMediaIOAudioOutput> UMediaIOCoreSubsystem::CreateAudioOutput(const F
 		// Fallback using the main audio device.
 		if (!MainMediaIOAudioCapture)
 		{
-			MainMediaIOAudioCapture = MakeUnique<FMainMediaIOAudioCapture>();
+			MainMediaIOAudioCapture = MakeShared<FMainMediaIOAudioCapture>();
+			MainMediaIOAudioCapture->Initialize();
 			MainMediaIOAudioCapture->OnAudioCaptured_RenderThread().BindUObject(this, &UMediaIOCoreSubsystem::OnBufferReceivedByCapture, InArgs.AudioDeviceHandle.GetDeviceID());
 		}
-		MediaIOAudioCapture = MainMediaIOAudioCapture.Get();
+		MediaIOAudioCapture = MainMediaIOAudioCapture;
 	}	
 
 	return MediaIOAudioCapture->CreateAudioOutput(InArgs.NumOutputChannels, InArgs.TargetFrameRate, InArgs.MaxSampleLatency, InArgs.OutputSampleRate);

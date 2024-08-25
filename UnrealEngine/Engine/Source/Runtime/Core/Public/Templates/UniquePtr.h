@@ -796,8 +796,12 @@ template <
  *
  * @return A TUniquePtr which points to a newly-constructed T with the specified Args.
  */
-template <typename T, typename... TArgs>
-[[nodiscard]] FORCEINLINE typename TEnableIf<!std::is_array_v<T>, TUniquePtr<T>>::Type MakeUniqueForOverwrite()
+template <
+	typename T,
+	typename... TArgs
+	UE_REQUIRES(!std::is_array_v<T>)
+>
+[[nodiscard]] FORCEINLINE TUniquePtr<T> MakeUniqueForOverwrite()
 {
 	return TUniquePtr<T>(new T);
 }
@@ -810,10 +814,13 @@ template <typename T, typename... TArgs>
  *
  * @return A TUniquePtr which points to a newly-constructed T array of the specified Size.
  */
-template <typename T>
-[[nodiscard]] FORCEINLINE typename TEnableIf<TIsUnboundedArray<T>::Value, TUniquePtr<T>>::Type MakeUnique(SIZE_T Size)
+template <
+	typename T
+	UE_REQUIRES(TIsUnboundedArray<T>::Value)
+>
+[[nodiscard]] FORCEINLINE TUniquePtr<T> MakeUnique(SIZE_T Size)
 {
-	typedef typename TRemoveExtent<T>::Type ElementType;
+	using ElementType = std::remove_extent_t<T>;
 	return TUniquePtr<T>(new ElementType[Size]());
 }
 
@@ -825,18 +832,25 @@ template <typename T>
  *
  * @return A TUniquePtr which points to a newly-constructed T array of the specified Size.
  */
-template <typename T>
-[[nodiscard]] FORCEINLINE typename TEnableIf<TIsUnboundedArray<T>::Value, TUniquePtr<T>>::Type MakeUniqueForOverwrite(SIZE_T Size)
+template <
+	typename T
+	UE_REQUIRES(TIsUnboundedArray<T>::Value)
+>
+[[nodiscard]] FORCEINLINE TUniquePtr<T> MakeUniqueForOverwrite(SIZE_T Size)
 {
-	typedef typename TRemoveExtent<T>::Type ElementType;
+	using ElementType = std::remove_extent_t<T>;
 	return TUniquePtr<T>(new ElementType[Size]);
 }
 
 /**
  * Overload to cause a compile error when MakeUnique<T[N]> is attempted.  Use MakeUnique<T>(N) instead.
  */
-template <typename T, typename... TArgs>
-typename TEnableIf<TIsBoundedArray<T>::Value, TUniquePtr<T>>::Type MakeUnique(TArgs&&... Args) = delete;
+template <
+	typename T,
+	typename... TArgs
+	UE_REQUIRES(TIsBoundedArray<T>::Value)
+>
+TUniquePtr<T> MakeUnique(TArgs&&... Args) = delete;
 
 /**
  * Trait which determines whether or not a type is a TUniquePtr.

@@ -410,7 +410,7 @@ void AChaosSolverActor::MakeFloor()
 		const FVector SolverLocation = GetActorLocation();
 		const FVector BoxMin(-100000, -100000, -1000);
 		const FVector BoxMax(100000, 100000, 0);
-		FloorParticle->SetGeometry(TUniquePtr<Chaos::TBox<Chaos::FReal, 3>>(new Chaos::TBox<Chaos::FReal, 3>(BoxMin, BoxMax)));
+		FloorParticle->SetGeometry(MakeImplicitObjectPtr<Chaos::TBox<Chaos::FReal, 3>>(BoxMin, BoxMax));
 		FloorParticle->SetX(Chaos::FVec3(SolverLocation.X, SolverLocation.Y, FloorHeight));
 		FCollisionFilterData FilterData;
 		FilterData.Word1 = 0xFFFF;

@@ -24,7 +24,10 @@ protected:
 
 	/** The group of this root node, used to group this output with others when used in a layer. */
 	UPROPERTY(meta=(FoldProperty))
-	FName Group;
+	FName LayerGroup = DefaultSharedGroup;
+
+	UPROPERTY(meta= (DeprecatedProperty, DeprecationMessage = "Please, use LayerGroup"))
+	FName Group_DEPRECATED;
 #endif
 
 public:	
@@ -43,7 +46,8 @@ public:
 	void SetName(FName InName) { Name = InName; }
 
 	/** Set the group of this root node, used to group this output with others when used in a layer. */
-	void SetGroup(FName InGroup) { Group = InGroup; }
+	void SetGroup(FName InGroup) { LayerGroup = InGroup; }
+
 #endif
 
 	/** Get the name of this root node, used to identify the output of this graph */
@@ -51,4 +55,11 @@ public:
 
 	/** Get the group of this root node, used to group this output with others when used in a layer. */
 	ENGINE_API FName GetGroup() const;
+
+#if WITH_EDITORONLY_DATA
+	/** Default shared group used by layers. */
+	ENGINE_API static FName DefaultSharedGroup;
+#endif
+
+	friend class UAnimGraphNode_Root;
 };

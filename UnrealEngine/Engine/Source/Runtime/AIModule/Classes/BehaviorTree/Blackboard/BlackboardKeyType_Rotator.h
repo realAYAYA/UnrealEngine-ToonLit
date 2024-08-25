@@ -22,6 +22,13 @@ class UBlackboardKeyType_Rotator : public UBlackboardKeyType
 	AIMODULE_API virtual EBlackboardCompare::Type CompareValues(const UBlackboardComponent& OwnerComp, const uint8* MemoryBlock,
 		const UBlackboardKeyType* OtherKeyOb, const uint8* OtherMemoryBlock) const override;
 
+	// If not set, will default to  FAISystem::InvalidRotation
+	UPROPERTY(EditDefaultsOnly, Category = Blackboard, meta = (EditCondition = "bUseDefaultValue"))
+	FRotator DefaultValue = FRotator::ZeroRotator;
+
+	UPROPERTY()
+	bool bUseDefaultValue = false;
+
 protected:
 	AIMODULE_API virtual void InitializeMemory(UBlackboardComponent& OwnerComp, uint8* RawData) override;
 	AIMODULE_API virtual FString DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const override;

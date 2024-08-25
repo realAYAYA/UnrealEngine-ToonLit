@@ -8,8 +8,8 @@ public class TP_SIM_BlankEditorTarget : TargetRules
 	public TP_SIM_BlankEditorTarget( TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Editor;
-		DefaultBuildSettings = BuildSettingsVersion.V4;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_3;
+		DefaultBuildSettings = BuildSettingsVersion.V5;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_4;
 		ExtraModuleNames.AddRange( new string[] { "TP_SIM_Blank" } );
 	}
 }

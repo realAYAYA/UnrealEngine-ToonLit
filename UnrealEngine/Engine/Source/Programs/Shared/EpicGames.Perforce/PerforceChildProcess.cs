@@ -96,7 +96,7 @@ namespace EpicGames.Perforce
 			string perforceFileName = "p4.exe";
 			if (!RuntimePlatform.IsWindows)
 			{
-				string[] p4Paths = { 
+				string[] p4Paths = {
 					"/usr/bin/p4", // Default path
 					"/opt/homebrew/bin/p4", // Apple Silicon Homebrew Path
 					"/usr/local/bin/p4", // Apple Intel Homebrew Path
@@ -140,10 +140,11 @@ namespace EpicGames.Perforce
 			}
 			if (_tempFileName != null)
 			{
-				try 
-				{ 
-					File.Delete(_tempFileName); 
-				} catch { }
+				try
+				{
+					File.Delete(_tempFileName);
+				}
+				catch { }
 				_tempFileName = null;
 			}
 		}

@@ -111,5 +111,5 @@ protected:
 	// Returns whether element should be partial based on current view
 	INTERACTIVETOOLSFRAMEWORK_API bool IsPartial(const FVector& InWorldCenter, const FVector& InWorldNormal,
 		const FVector& InViewLocation, const FVector& InViewDirection,
-		bool bIsPerspectiveProjection);
+		const bool bIsPerspectiveProjection);
 };

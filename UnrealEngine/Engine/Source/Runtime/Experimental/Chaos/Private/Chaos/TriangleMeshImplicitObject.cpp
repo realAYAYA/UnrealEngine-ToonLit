@@ -2,6 +2,7 @@
 #include "Chaos/TriangleMeshImplicitObject.h"
 #include "Chaos/Collision/ContactPoint.h"
 #include "Chaos/Collision/ContactPointsMiscShapes.h"
+#include "Chaos/Collision/MeshContactGenerator.h"
 #include "Chaos/Collision/TriangleOverlap.h"
 #include "Chaos/Collision/PBDCollisionConstraint.h"
 #include "Chaos/CollisionOneShotManifolds.h"
@@ -38,19 +39,14 @@ template <typename QueryGeomType>
 static auto MakeScaledHelper(const QueryGeomType& B, const FVec3& InvScale)
 {
 	// TODO: Fixup code using this and remove it.
-
-	TUniquePtr<QueryGeomType> HackBPtr(const_cast<QueryGeomType*>(&B));	//todo: hack, need scaled object to accept raw ptr similar to transformed implicit
-	TSharedPtr<QueryGeomType, ESPMode::ThreadSafe> SharedPtrForRefCount(nullptr); // This scaled is temporary, use null shared ptr.
-	TImplicitObjectScaled<QueryGeomType> ScaledB(MakeSerializable(HackBPtr), SharedPtrForRefCount, InvScale);
-	HackBPtr.Release();
-	return ScaledB;
+	return TImplicitObjectScaled<QueryGeomType,true>(const_cast<QueryGeomType*>(&B), InvScale);
 }
 
 template <typename QueryGeomType>
 static auto MakeScaledHelper(const TImplicitObjectScaled<QueryGeomType>& B, const FVec3& InvScale)
 {
 	//if scaled of scaled just collapse into one scaled
-	TImplicitObjectScaled<QueryGeomType> ScaledB(B.Object(), B.GetSharedObject(), InvScale * B.GetScale());
+	TImplicitObjectScaled<QueryGeomType> ScaledB(B.Object(),  InvScale * B.GetScale());   
 	return ScaledB;
 }
 
@@ -150,9 +146,9 @@ struct FTriangleMeshRaycastVisitor
 		constexpr FReal Epsilon = 1e-4f;
 
 		const int32 FaceIndex = TriIdx.Payload;
-		const FVec3& A = Particles.X(Elements[FaceIndex][0]);
-		const FVec3& B = Particles.X(Elements[FaceIndex][1]);
-		const FVec3& C = Particles.X(Elements[FaceIndex][2]);
+		const FVec3& A = Particles.GetX(Elements[FaceIndex][0]);
+		const FVec3& B = Particles.GetX(Elements[FaceIndex][1]);
+		const FVec3& C = Particles.GetX(Elements[FaceIndex][2]);
 
 		// Note: the math here needs to match FTriangleMeshImplicitObject::GetFaceNormal
 		// @todo(chaos) we should really preprocess the face and remove the degenerated ones to avoid paying this runtime cost
@@ -196,9 +192,9 @@ struct FTriangleMeshRaycastVisitor
 		const FReal R2 = R * R;
 
 		const int32 FaceIndex = TriIdx.Payload;		
-		const FVec3& A = Particles.X(Elements[FaceIndex][0]);
-		const FVec3& B = Particles.X(Elements[FaceIndex][1]);
-		const FVec3& C = Particles.X(Elements[FaceIndex][2]);
+		const FVec3& A = Particles.GetX(Elements[FaceIndex][0]);
+		const FVec3& B = Particles.GetX(Elements[FaceIndex][1]);
+		const FVec3& C = Particles.GetX(Elements[FaceIndex][2]);
 
 		// Note: the math here needs to match FTriangleMeshImplicitObject::GetFaceNormal
 		const FVec3 AB = B - A;
@@ -441,9 +437,9 @@ template <typename IdxType, typename ParticlesType>
 inline void TriangleMeshTransformVertsHelperSimd(const VectorRegister4Float& TriMeshScale, int32 TriIdx, const ParticlesType& Particles,
 	const TArray<TVector<IdxType, 3>>& Elements, VectorRegister4Float& OutA, VectorRegister4Float& OutB, VectorRegister4Float& OutC)
 {
-	OutA = VectorLoadFloat3(&Particles.X(Elements[TriIdx][0]).X);
-	OutB = VectorLoadFloat3(&Particles.X(Elements[TriIdx][1]).X);
-	OutC = VectorLoadFloat3(&Particles.X(Elements[TriIdx][2]).X);
+	OutA = VectorLoadFloat3(&Particles.GetX(Elements[TriIdx][0]).X);
+	OutB = VectorLoadFloat3(&Particles.GetX(Elements[TriIdx][1]).X);
+	OutC = VectorLoadFloat3(&Particles.GetX(Elements[TriIdx][2]).X);
 	OutA = VectorMultiply(OutA, TriMeshScale);
 	OutB = VectorMultiply(OutB, TriMeshScale);
 	OutC = VectorMultiply(OutC, TriMeshScale);
@@ -656,7 +652,7 @@ struct FTriangleMeshOverlapVisitorNoMTD<TBox<FReal, 3>>
 	{
 		if (bIsAxisAligned)
 		{
-			Box.AABBSimd = FAABBSimd(WorldScaleQueryTM, InQueryGeom);
+			Box.AABBSimd = FAABBSimd(WorldScaleQueryTM.GetTranslation(), InQueryGeom);
 		}
 		else
 		{
@@ -721,7 +717,7 @@ struct FTriangleMeshOverlapVisitorNoMTD<TImplicitObjectScaled<TBox<FReal, 3>>>
 	{
 		if (bIsAxisAligned)
 		{
-			Box.AABBSimd = FAABBSimd(WorldScaleQueryTM, InQueryGeom);
+			Box.AABBSimd = FAABBSimd(WorldScaleQueryTM.GetTranslation(), InQueryGeom);
 		}
 		else
 		{
@@ -854,6 +850,38 @@ bool FTriangleMeshImplicitObject::Raycast(const FVec3& StartPoint, const FVec3& 
 	{
 		return RaycastImp(MElements.GetSmallIndexBuffer(), StartPoint, Dir, Length, Thickness, OutTime, OutPosition, OutNormal, OutFaceIndex);
 	}
+}
+
+void FTriangleMeshImplicitObject::CollectTriangles(const FAABB3& MeshQueryBounds, const FRigidTransform3& MeshToObjectTransform, const FAABB3& ObjectBounds, Private::FMeshContactGenerator& Collector) const
+{
+	TArray<int32> OverlapIndices;
+	FindOverlappingTriangles(MeshQueryBounds, OverlapIndices);
+
+	const bool bStandardWinding = ((MeshToObjectTransform.GetScale3D().X * MeshToObjectTransform.GetScale3D().Y * MeshToObjectTransform.GetScale3D().Z) >= FReal(0));
+
+	Collector.BeginCollect(OverlapIndices.Num());
+
+	for (int32 OverlapIndex = 0; OverlapIndex < OverlapIndices.Num(); ++OverlapIndex)
+	{
+		const int32 TriangleIndex = OverlapIndices[OverlapIndex];
+		FTriangle Triangle;
+		int32 VertexIndex0, VertexIndex1, VertexIndex2;
+		GetTransformedTriangle(TriangleIndex, MeshToObjectTransform, Triangle, VertexIndex0, VertexIndex1, VertexIndex2);
+
+		if (!bStandardWinding)
+		{
+			Triangle.ReverseWinding();
+			Swap(VertexIndex1, VertexIndex2);
+		}
+
+		const FAABB3 TriBounds = FAABB3::FromPoints(Triangle.GetVertex(0), Triangle.GetVertex(1), Triangle.GetVertex(2));
+		if (TriBounds.Intersects(ObjectBounds))
+		{
+			Collector.AddTriangle(Triangle, TriangleIndex, VertexIndex0, VertexIndex1, VertexIndex2);
+		}
+	}
+
+	Collector.EndCollect();
 }
 
 template <typename QueryGeomType>
@@ -1015,9 +1043,9 @@ bool FTriangleMeshImplicitObject::OverlapImp(const TArray<TVec3<IdxType>>& Eleme
 
 	for (int32 TriIdx : PotentialIntersections)
 	{
-		const FVec3& A = MParticles.X(Elements[TriIdx][0]);
-		const FVec3& B = MParticles.X(Elements[TriIdx][1]);
-		const FVec3& C = MParticles.X(Elements[TriIdx][2]);
+		const FVec3& A = MParticles.GetX(Elements[TriIdx][0]);
+		const FVec3& B = MParticles.GetX(Elements[TriIdx][1]);
+		const FVec3& C = MParticles.GetX(Elements[TriIdx][2]);
 
 		const FVec3 AB = B - A;
 		const FVec3 AC = C - A;
@@ -1101,6 +1129,7 @@ bool FTriangleMeshImplicitObject::OverlapGeomImp(const QueryGeomType& QueryGeom,
 					{
 						InnerMTD->Penetration = Penetration;
 						InnerMTD->Normal = TriangleNormal;
+						InnerMTD->Position = ClosestA;
 					}
 				}
 			}
@@ -1139,7 +1168,7 @@ bool FTriangleMeshImplicitObject::OverlapGeomImp(const QueryGeomType& QueryGeom,
 			FAABB3 GeometryAABB = WorldScaleQueryGeom.BoundingBox();
 			GeometryAABB.ThickenSymmetrically(FVec3(Thickness));
 			// The geometry is not necessarily in the center of its translation. (cf: a capsule can be create with two points away from its own transform)
-			TriMeshToGeomNoScale.SetTranslation(TriMeshToGeomNoScale.GetTranslation() + GeometryAABB.Center());
+			TriMeshToGeomNoScale.SetTranslation(TriMeshToGeomNoScale.TransformPositionNoScale(GeometryAABB.Center()));
 			Private::FOBBVectorized QueryObb(TriMeshToGeomNoScale, (GeometryAABB.Max() - GeometryAABB.Min()) * 0.5, InvTriMeshScale);
 			TRigidTransform<FReal, 3> WorldScaleQueryTM;
 			ScaleTransformHelper(TriMeshScale, QueryTM, WorldScaleQueryTM);
@@ -1249,9 +1278,9 @@ struct FTriangleMeshSweepVisitor
 
 		const TParticles<FRealSingle, 3>& Particles = TriMesh.MParticles;
 
-		const TVector<FRealSingle, 3>& AVec = Particles.X(Elements[TriIdx][0]);
-		const TVector<FRealSingle, 3>& BVec = Particles.X(Elements[TriIdx][1]);
-		const TVector<FRealSingle, 3>& CVec = Particles.X(Elements[TriIdx][2]);
+		const TVector<FRealSingle, 3>& AVec = Particles.GetX(Elements[TriIdx][0]);
+		const TVector<FRealSingle, 3>& BVec = Particles.GetX(Elements[TriIdx][1]);
+		const TVector<FRealSingle, 3>& CVec = Particles.GetX(Elements[TriIdx][2]);
 
 		VectorRegister4Float A = MakeVectorRegister(AVec.X, AVec.Y, AVec.Z, 0.0f);
 		VectorRegister4Float B = MakeVectorRegister(BVec.X, BVec.Y, BVec.Z, 0.0f);
@@ -1414,9 +1443,9 @@ struct FTriangleMeshSweepVisitorCCD
 
 		const TParticles<FRealSingle, 3>& Particles = TriMesh.MParticles;
 
-		const TVector<FRealSingle, 3>& AVec = Particles.X(Elements[TriIdx][0]);
-		const TVector<FRealSingle, 3>& BVec = Particles.X(Elements[TriIdx][1]);
-		const TVector<FRealSingle, 3>& CVec = Particles.X(Elements[TriIdx][2]);
+		const TVector<FRealSingle, 3>& AVec = Particles.GetX(Elements[TriIdx][0]);
+		const TVector<FRealSingle, 3>& BVec = Particles.GetX(Elements[TriIdx][1]);
+		const TVector<FRealSingle, 3>& CVec = Particles.GetX(Elements[TriIdx][2]);
 
 		VectorRegister4Float A = MakeVectorRegister(AVec.X, AVec.Y, AVec.Z, 0.0f);
 		VectorRegister4Float B = MakeVectorRegister(BVec.X, BVec.Y, BVec.Z, 0.0f);
@@ -1759,9 +1788,9 @@ int32 FTriangleMeshImplicitObject::FindMostOpposingFace(const TArray<TVec3<IdxTy
 
 	for (int32 TriIdx : PotentialIntersections)
 	{
-		const FVec3& A = MParticles.X(Elements[TriIdx][0]) * Scale;
-		const FVec3& B = MParticles.X(Elements[TriIdx][1]) * Scale;
-		const FVec3& C = MParticles.X(Elements[TriIdx][2]) * Scale;
+		const FVec3& A = MParticles.GetX(Elements[TriIdx][0]) * Scale;
+		const FVec3& B = MParticles.GetX(Elements[TriIdx][1]) * Scale;
+		const FVec3& C = MParticles.GetX(Elements[TriIdx][2]) * Scale;
 
 		const FVec3 AB = B - A;
 		const FVec3 AC = C - A;
@@ -1828,7 +1857,7 @@ FVec3 FTriangleMeshImplicitObject::FindGeometryOpposingNormal(const FVec3& Denor
 }
 
 template <typename IdxType>
-TUniquePtr<FTriangleMeshImplicitObject> FTriangleMeshImplicitObject::CopySlowImpl(const TArray<TVector<IdxType, 3>>& InElements) const
+FImplicitObjectPtr FTriangleMeshImplicitObject::CopySlowImpl(const TArray<TVector<IdxType, 3>>& InElements) const
 {
 	using namespace Chaos;
 	
@@ -1848,10 +1877,10 @@ TUniquePtr<FTriangleMeshImplicitObject> FTriangleMeshImplicitObject::CopySlowImp
 		ExternalVertexIndexMapCopy = MakeUnique<TArray<int32>>(*ExternalVertexIndexMap.Get());
 	}
 
-	return TUniquePtr<FTriangleMeshImplicitObject>(new FTriangleMeshImplicitObject(MoveTemp(ParticlesCopy), MoveTemp(ElementsCopy), MoveTemp(MaterialIndicesCopy), MoveTemp(ExternalFaceIndexMapCopy), MoveTemp(ExternalVertexIndexMapCopy), bCullsBackFaceRaycast));
+	return FImplicitObjectPtr(new FTriangleMeshImplicitObject(MoveTemp(ParticlesCopy), MoveTemp(ElementsCopy), MoveTemp(MaterialIndicesCopy), MoveTemp(ExternalFaceIndexMapCopy), MoveTemp(ExternalVertexIndexMapCopy), bCullsBackFaceRaycast));
 }
 
-TUniquePtr<FTriangleMeshImplicitObject> FTriangleMeshImplicitObject::CopySlow() const
+FImplicitObjectPtr FTriangleMeshImplicitObject::DeepCopyGeometry() const
 {
 	if (MElements.RequiresLargeIndices())
 	{
@@ -1862,7 +1891,14 @@ TUniquePtr<FTriangleMeshImplicitObject> FTriangleMeshImplicitObject::CopySlow() 
 		return CopySlowImpl(MElements.GetSmallIndexBuffer());
 	}
 }
-
+	
+FImplicitObjectPtr FTriangleMeshImplicitObject::CopyGeometry() const
+{
+	// For now we are using a deep copy
+	// since we are using refcountptr and not uniqueptr anymore
+	// we can have shallow copy and have 2 different implementations 
+	return DeepCopyGeometry();
+}
 
 void FTriangleMeshImplicitObject::Serialize(FChaosArchive& Ar)
 {
@@ -1902,9 +1938,9 @@ FVec3 FTriangleMeshImplicitObject::GetFaceNormal(const int32 FaceIdx) const
 	{
 		auto LambdaHelper = [&](const auto& Elements)
 		{
-			const ParticleVecType& A = MParticles.X(Elements[FaceIdx][0]);
-			const ParticleVecType& B = MParticles.X(Elements[FaceIdx][1]);
-			const ParticleVecType& C = MParticles.X(Elements[FaceIdx][2]);
+			const ParticleVecType& A = MParticles.GetX(Elements[FaceIdx][0]);
+			const ParticleVecType& B = MParticles.GetX(Elements[FaceIdx][1]);
+			const ParticleVecType& C = MParticles.GetX(Elements[FaceIdx][2]);
 
 			const ParticleVecType AB = B - A;
 			const ParticleVecType AC = C - A;
@@ -2013,7 +2049,7 @@ void FTriangleMeshImplicitObject::UpdateVertices(const TArray<FVector>& NewPosit
 		int32 InternalIdx = bRemapIndices ? (*ExternalVertexIndexMap.Get())[i] : i;
 		if (InternalIdx < (int32)MParticles.Size())
 		{
-			MParticles.X(InternalIdx) = Chaos::FVec3(NewPositions[i]);
+			MParticles.SetX(InternalIdx, Chaos::FVec3(NewPositions[i]));
 		}
 	}
 	RebuildFastBVH();

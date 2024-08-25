@@ -66,11 +66,13 @@ public:
 	 * Add the specified assets to the recently placed items list
 	 */
 	virtual void AddToRecentlyPlaced(const TArray< UObject* >& PlacedObjects, UActorFactory* FactoryUsed = NULL) override;
+	virtual void AddToRecentlyPlaced(const TArray< UObject* >& Assets, TScriptInterface<IAssetFactoryInterface> FactoryUsed) override;
 
 	/**
 	 * Add the specified asset to the recently placed items list
 	 */
 	virtual void AddToRecentlyPlaced(UObject* Asset, UActorFactory* FactoryUsed = NULL) override;
+	virtual void AddToRecentlyPlaced(UObject* Asset, TScriptInterface<IAssetFactoryInterface> FactoryUsed) override;
 
 	/**
 	 * Get a copy of the recently placed items list
@@ -146,7 +148,9 @@ private:
 	TArray< TSharedPtr<FExtender> > ContentPaletteFiltersExtenders;
 	TArray< TSharedPtr<FExtender> > PaletteExtenders;
 
-	TMap<FString, TSharedPtr<FPlaceableItem>> ManuallyCreatedPlaceableItems;
+	// When users explicitly add placeable items, they may add custom icons/descriptions, so we 
+	// need to store extra data to be able to recreate the placeable item in "recently placed"
+	TMap<FActorPlacementInfo, TWeakPtr<FPlaceableItem>> ManuallyCreatedPlaceableItems;
 };
 
 IMPLEMENT_MODULE(FPlacementModeModule, PlacementMode);

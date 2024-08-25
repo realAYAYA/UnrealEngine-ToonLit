@@ -197,6 +197,12 @@ FText SFilterableActorPicker::OnGetAssetName() const
 		return LOCTEXT("None", "None");
 	}
 
+	const AActor* Actor = Cast<AActor>(AssetData.GetAsset());
+	if (Actor)
+	{
+		return FText::AsCultureInvariant(Actor->GetActorNameOrLabel());
+	}
+
 	return FText::AsCultureInvariant(AssetData.AssetName.ToString());
 }
 

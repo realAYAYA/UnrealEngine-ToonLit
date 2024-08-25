@@ -37,7 +37,14 @@ bool FIPv4Endpoint::Parse(const FString& EndpointString, FIPv4Endpoint& OutEndpo
 	{
 		if (FIPv4Address::Parse(Tokens[0], OutEndpoint.Address))
 		{
-			OutEndpoint.Port = FCString::Atoi(*Tokens[1]);
+			const int32 Port = FCString::Atoi(*Tokens[1]);
+
+			if (Port < 0 || Port > MAX_uint16)
+			{
+				return false;
+			}
+
+			OutEndpoint.Port = static_cast<uint16>(Port);
 
 			return true;
 		}

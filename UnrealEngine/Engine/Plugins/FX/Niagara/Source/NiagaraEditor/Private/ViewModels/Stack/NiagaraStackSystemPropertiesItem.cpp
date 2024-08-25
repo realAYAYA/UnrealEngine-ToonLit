@@ -38,7 +38,8 @@ void UNiagaraStackSystemPropertiesItem::RefreshChildrenInternal(const TArray<UNi
 		SystemObject = NewObject<UNiagaraStackObject>(this);
 		FRequiredEntryData RequiredEntryData(GetSystemViewModel(), GetEmitterViewModel(), FExecutionCategoryNames::System, NAME_None, GetStackEditorData());
 		bool bIsTopLevelObject = true;
-		SystemObject->Initialize(RequiredEntryData, System.Get(), bIsTopLevelObject, GetStackEditorDataKey());
+		bool bHideTopLevelCategories = false;
+		SystemObject->Initialize(RequiredEntryData, System.Get(), bIsTopLevelObject, bHideTopLevelCategories, GetStackEditorDataKey());
 		SystemObject->RegisterInstancedCustomPropertyLayout(UNiagaraSystem::StaticClass(), FOnGetDetailCustomizationInstance::CreateStatic(&FNiagaraSystemDetails::MakeInstance));
 	}
 	NewChildren.Add(SystemObject);

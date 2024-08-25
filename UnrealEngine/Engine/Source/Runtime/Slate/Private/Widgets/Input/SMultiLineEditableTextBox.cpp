@@ -382,6 +382,11 @@ void SMultiLineEditableTextBox::SetLineHeightPercentage(const TAttribute<float>&
 	EditableText->SetLineHeightPercentage(InLineHeightPercentage);
 }
 
+void SMultiLineEditableTextBox::SetApplyLineHeightToBottomLine(const TAttribute<bool>& InApplyLineHeightToBottomLine)
+{
+	EditableText->SetApplyLineHeightToBottomLine(InApplyLineHeightToBottomLine);
+}
+
 void SMultiLineEditableTextBox::SetMargin(const TAttribute<FMargin>& InMargin)
 {
 	EditableText->SetMargin(InMargin);

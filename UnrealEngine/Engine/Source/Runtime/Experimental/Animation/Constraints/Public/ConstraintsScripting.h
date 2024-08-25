@@ -27,13 +27,10 @@ public:
 public:
 
 	/**
-	* Get the manager of the constraints. This object contains delegates to listen to for when constraints are added,deleted,
-	* and is also the outer used when creating custom transformable handles, for example this is used to create control rig transformable handles
-	* Note this function will create the mananager and it's actor if one doesn't exist.
-	* @param InWorld, the world you are in
-	* @return Returns the mananger
+	* No longer used, the system will internally set up the outers for the handles and see UConstraintSubsystem
+	* for the delegates.
 	*/
-	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Sequencer Tools | Control Rig | Constraints")
+	UE_DEPRECATED(5.3, "Please use UConstraintSubsystem delegates.")
 	static CONSTRAINTS_API UConstraintsManager* GetManager(UWorld* InWorld);
 
 	/**
@@ -73,6 +70,7 @@ public:
 	* @param InConsrtaint The constraint
 	* @return return If constraint added correctly
 	*/
+	UE_DEPRECATED(5.4, "UConstraintsScriptingLibrary::AddConstraint is deprecated. use UControlRigSequencerEditorLibrary::AddConstraint instead.")
 	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Sequencer Tools | Control Rig | Constraints")
 	static CONSTRAINTS_API bool AddConstraint(UWorld* InWorld, UTransformableHandle* InParentHandle, UTransformableHandle* InChildHandle, UTickableTransformConstraint *InConstraint,
 			const bool bMaintainOffset);

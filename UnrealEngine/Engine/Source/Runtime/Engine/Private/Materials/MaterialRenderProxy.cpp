@@ -52,6 +52,7 @@ public:
 		if (--ReferenceCount == 0)
 		{
 			Wait();
+			Task = {};
 		}
 	}
 
@@ -60,24 +61,21 @@ public:
 		return ReferenceCount > 0 && GUniformExpressionCacheAsyncUpdates > 0 && !GRHICommandList.Bypass();
 	}
 
-	void SetTask(const FGraphEventRef& InTask)
+	void SetTask(const UE::Tasks::FTask& InTask)
 	{
-		check(!Task);
 		check(IsEnabled());
 		Task = InTask;
 	}
 
+	const UE::Tasks::FTask& GetTask() { return Task; }
+
 	void Wait()
 	{
-		if (Task)
-		{
-			Task->Wait();
-			Task = nullptr;
-		}
+		Task.Wait();
 	}
 
 private:
-	FGraphEventRef Task;
+	UE::Tasks::FTask Task;
 	int32 ReferenceCount = 0;
 
 } GUniformExpressionCacheAsyncUpdateTask;
@@ -88,7 +86,6 @@ FUniformExpressionCacheAsyncUpdateScope::FUniformExpressionCacheAsyncUpdateScope
 		[](FRHICommandList&)
 		{
 			GUniformExpressionCacheAsyncUpdateTask.Begin();
-			FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions();
 		});
 }
 
@@ -114,24 +111,23 @@ public:
 		Items.Emplace(UniformExpressionCache, UniformExpressionSet, UniformBufferLayout, Context);
 	}
 
-	void Update(FRHICommandListImmediate& RHICmdListImmediate)
+	void Update(FRHICommandListBase& RHICmdList)
 	{
+		check(!RHICmdList.IsImmediate());
+
 		if (Items.IsEmpty())
 		{
+			RHICmdList.FinishRecording();
 			return;
 		}
 
-		GUniformExpressionCacheAsyncUpdateTask.Wait();
-
-		FRHICommandList* RHICmdList = new FRHICommandList(FRHIGPUMask::All());
-
-		FGraphEventRef Event = FFunctionGraphTask::CreateAndDispatchWhenReady(
-			[Items = MoveTemp(Items), RHICmdList]
+		UE::Tasks::FTask Task = UE::Tasks::Launch(
+			UE_SOURCE_LOCATION,
+			[Items = MoveTemp(Items), &RHICmdList]
 			{
 				TRACE_CPUPROFILER_EVENT_SCOPE(FUniformExpressionCacheAsyncUpdater::Update);
 				FTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
 				FMemMark Mark(FMemStack::Get());
-				RHICmdList->SwitchPipeline(ERHIPipeline::Graphics);
 
 				for (const FItem& Item : Items)
 				{
@@ -141,16 +137,14 @@ public:
 
 					Item.UniformExpressionSet->FillUniformBuffer(Context, Item.AllocatedVTs, Item.UniformBufferLayout, TempBuffer, Item.UniformBufferLayout->ConstantBufferSize);
 
-					RHICmdList->UpdateUniformBuffer(Item.UniformBuffer, TempBuffer);
+					RHICmdList.UpdateUniformBuffer(Item.UniformBuffer, TempBuffer);
 				}
 
-				RHICmdList->FinishRecording();
+				RHICmdList.FinishRecording();
 
-			}, TStatId(), nullptr, ENamedThreads::AnyHiPriThreadHiPriTask);
+			}, GUniformExpressionCacheAsyncUpdateTask.GetTask());
 
-		RHICmdListImmediate.QueueAsyncCommandListSubmit(RHICmdList);
-
-		GUniformExpressionCacheAsyncUpdateTask.SetTask(Event);
+		GUniformExpressionCacheAsyncUpdateTask.SetTask(Task);
 	}
 
 private:
@@ -274,7 +268,7 @@ IAllocatedVirtualTexture* FMaterialRenderProxy::GetPreallocatedVTStack(const FMa
 	return Texture->GetAllocatedVirtualTexture();
 }
 
-IAllocatedVirtualTexture* FMaterialRenderProxy::AllocateVTStack(const FMaterialRenderContext& Context, const FUniformExpressionSet& UniformExpressionSet, const FMaterialVirtualTextureStack& VTStack) const
+IAllocatedVirtualTexture* FMaterialRenderProxy::AllocateVTStack(FRHICommandListBase& RHICmdList, const FMaterialRenderContext& Context, const FUniformExpressionSet& UniformExpressionSet, const FMaterialVirtualTextureStack& VTStack) const
 {
 	check(!VTStack.IsPreallocatedStack());
 	const uint32 NumLayers = VTStack.GetNumLayers();
@@ -347,16 +341,14 @@ IAllocatedVirtualTexture* FMaterialRenderProxy::AllocateVTStack(const FMaterialR
 	if (bFoundValidLayer)
 	{
 		HasVirtualTextureCallbacks = -1;
-		return GetRendererModule().AllocateVirtualTexture(VTDesc);
+		return GetRendererModule().AllocateVirtualTexture(RHICmdList, VTDesc);
 	}
 	return nullptr;
 }
 
 
-void FMaterialRenderProxy::EvaluateUniformExpressions(FUniformExpressionCache& OutUniformExpressionCache, const FMaterialRenderContext& Context, FUniformExpressionCacheAsyncUpdater* Updater) const
+void FMaterialRenderProxy::EvaluateUniformExpressions(FRHICommandListBase& RHICmdList, FUniformExpressionCache& OutUniformExpressionCache, const FMaterialRenderContext& Context, FUniformExpressionCacheAsyncUpdater* Updater) const
 {
-	check(IsInRenderingThread());
-
 	SCOPE_CYCLE_COUNTER(STAT_CacheUniformExpressions);
 
 	TRACE_CPUPROFILER_EVENT_SCOPE(FMaterialRenderProxy::EvaluateUniformExpressions);
@@ -390,7 +382,7 @@ void FMaterialRenderProxy::EvaluateUniformExpressions(FUniformExpressionCache& O
 		}
 		else
 		{
-			AllocatedVT = AllocateVTStack(Context, UniformExpressionSet, VTStack);
+			AllocatedVT = AllocateVTStack(RHICmdList, Context, UniformExpressionSet, VTStack);
 			if (AllocatedVT != nullptr)
 			{
 				OutUniformExpressionCache.OwnedAllocatedVTs.Add(AllocatedVT);
@@ -408,9 +400,22 @@ void FMaterialRenderProxy::EvaluateUniformExpressions(FUniformExpressionCache& O
 			UE_LOG(LogMaterial, Fatal, TEXT("The Uniformbuffer needs to be valid if it has been set"));
 		}
 
-		// The actual pointer may not match because there are cases (in the editor, during the shader compilation) when material's shader map gets updated without proxy's cache
-		// getting invalidated, but the layout contents must match.
+		/**
+		* The actual pointer may not match because there are cases(in the editor, during the shader compilation) when material's shader map gets updated without proxy's cache
+		* getting invalidated, but the layout contents must match.
+		*/
+#if WITH_EDITOR
+		/**
+		* If we are in the editor, this is likely occuring due to a mismatch of buffer invalidations and the type of shaders that need processing, so we can safely reset the
+		* Buffer layout to avoid any engine crashes. However we still want this check in project builds for safety when doing QA passes.
+		*/
+		if (OutUniformExpressionCache.UniformBuffer->GetLayoutPtr() != UniformBufferLayout || *OutUniformExpressionCache.UniformBuffer->GetLayoutPtr() != *UniformBufferLayout)
+		{
+			OutUniformExpressionCache.UniformBuffer = nullptr;
+		}
+#else
 		check(OutUniformExpressionCache.UniformBuffer->GetLayoutPtr() == UniformBufferLayout || *OutUniformExpressionCache.UniformBuffer->GetLayoutPtr() == *UniformBufferLayout);
+#endif
 	}
 
 	if (Updater)
@@ -430,7 +435,7 @@ void FMaterialRenderProxy::EvaluateUniformExpressions(FUniformExpressionCache& O
 
 		if (IsValidRef(OutUniformExpressionCache.UniformBuffer))
 		{
-			FRHICommandListImmediate::Get().UpdateUniformBuffer(OutUniformExpressionCache.UniformBuffer, TempBuffer);
+			RHICmdList.UpdateUniformBuffer(OutUniformExpressionCache.UniformBuffer, TempBuffer);
 		}
 		else
 		{
@@ -446,10 +451,15 @@ void FMaterialRenderProxy::EvaluateUniformExpressions(FUniformExpressionCache& O
 	++UniformExpressionCacheSerialNumber;
 }
 
-void FMaterialRenderProxy::CacheUniformExpressions(bool bRecreateUniformBuffer)
+void FMaterialRenderProxy::EvaluateUniformExpressions(FUniformExpressionCache& OutUniformExpressionCache, const FMaterialRenderContext& Context, FUniformExpressionCacheAsyncUpdater* Updater) const
+{
+	EvaluateUniformExpressions(FRHICommandListImmediate::Get(), OutUniformExpressionCache, Context, Updater);
+}
+
+void FMaterialRenderProxy::CacheUniformExpressions(FRHICommandListBase& RHICmdList, bool bRecreateUniformBuffer)
 {
 	// Register the render proxy's as a render resource so it can receive notifications to free the uniform buffer.
-	InitResource(FRHICommandListImmediate::Get());
+	InitResource(RHICmdList);
 
 	bool bUsingNewLoader = FPlatformProperties::RequiresCookedData();
 
@@ -462,14 +472,22 @@ void FMaterialRenderProxy::CacheUniformExpressions(bool bRecreateUniformBuffer)
 		UE_LOG(LogMaterial, Fatal, TEXT("Cannot queue the Expression Cache for Material %s when it is about to be deleted"), *MaterialName);
 	}
 	StartCacheUniformExpressions();
+
+	DeferredUniformExpressionCacheRequestsMutex.Lock();
 	DeferredUniformExpressionCacheRequests.Add(this);
+	DeferredUniformExpressionCacheRequestsMutex.Unlock();
 
 	InvalidateUniformExpressionCache(bRecreateUniformBuffer);
 
 	if (!GDeferUniformExpressionCaching)
 	{
-		FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions();
+		FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions(RHICmdList);
 	}
+}
+
+void FMaterialRenderProxy::CacheUniformExpressions(bool bRecreateUniformBuffer)
+{
+	CacheUniformExpressions(FRHICommandListImmediate::Get(), bRecreateUniformBuffer);
 }
 
 void FMaterialRenderProxy::CacheUniformExpressions_GameThread(bool bRecreateUniformBuffer)
@@ -481,20 +499,21 @@ void FMaterialRenderProxy::CacheUniformExpressions_GameThread(bool bRecreateUnif
 		FMaterialRenderProxy* RenderProxy = this;
 		ENQUEUE_RENDER_COMMAND(FCacheUniformExpressionsCommand)(
 			[RenderProxy, bRecreateUniformBuffer](FRHICommandListImmediate& RHICmdList)
-			{
-				RenderProxy->CacheUniformExpressions(bRecreateUniformBuffer);
-			});
+		{
+			RenderProxy->CacheUniformExpressions(RHICmdList, bRecreateUniformBuffer);
+		});
 	}
 }
 
 void FMaterialRenderProxy::InvalidateUniformExpressionCache(bool bRecreateUniformBuffer)
 {
-	check(IsInRenderingThread());
 	GUniformExpressionCacheAsyncUpdateTask.Wait();
 
 #if WITH_EDITOR
 	FStaticLightingSystemInterface::OnMaterialInvalidated.Broadcast(this);
 #endif
+
+	UE::TScopeLock Lock(Mutex);
 
 	if (HasVirtualTextureCallbacks)
 	{
@@ -518,18 +537,24 @@ void FMaterialRenderProxy::InvalidateUniformExpressionCache(bool bRecreateUnifor
 	}
 }
 
-void FMaterialRenderProxy::UpdateUniformExpressionCacheIfNeeded(ERHIFeatureLevel::Type InFeatureLevel) const
+void FMaterialRenderProxy::UpdateUniformExpressionCacheIfNeeded(FRHICommandListBase& RHICmdList, ERHIFeatureLevel::Type InFeatureLevel) const
 {
 	// Don't cache uniform expressions if an entirely different FMaterialRenderProxy is going to be used for rendering
 	const FMaterial* Material = GetMaterialNoFallback(InFeatureLevel);
 	// Note: We would actually need to compare the FMaterialShaderMapId of both shader maps but a simple pointer compare also works
 	// because shader maps are currently swapped out whenever they are modified.
+	UE::TScopeLock Lock(Mutex);
 	if (Material && Material->GetRenderingThreadShaderMap() != UniformExpressionCache[InFeatureLevel].CachedUniformExpressionShaderMap)
 	{
 		FMaterialRenderContext MaterialRenderContext(this, *Material, nullptr);
 		MaterialRenderContext.bShowSelection = GIsEditor;
-		EvaluateUniformExpressions(UniformExpressionCache[InFeatureLevel], MaterialRenderContext);
+		EvaluateUniformExpressions(RHICmdList, UniformExpressionCache[InFeatureLevel], MaterialRenderContext, nullptr);
 	}
+}
+
+void FMaterialRenderProxy::UpdateUniformExpressionCacheIfNeeded(ERHIFeatureLevel::Type InFeatureLevel) const
+{
+	UpdateUniformExpressionCacheIfNeeded(FRHICommandListImmediate::Get(), InFeatureLevel);
 }
 
 FMaterialRenderProxy::FMaterialRenderProxy(FString InMaterialName)
@@ -551,13 +576,11 @@ FMaterialRenderProxy::~FMaterialRenderProxy()
 
 	if (IsInitialized())
 	{
-		check(IsInRenderingThread());
 		ReleaseResource();
 	}
 
 	if (HasVirtualTextureCallbacks)
 	{
-		check(IsInRenderingThread());
 		GetRendererModule().RemoveAllVirtualTextureProducerDestroyedCallbacks(this);
 		HasVirtualTextureCallbacks = false;
 	}
@@ -579,7 +602,9 @@ void FMaterialRenderProxy::InitRHI(FRHICommandListBase& RHICmdList)
 
 void FMaterialRenderProxy::CancelCacheUniformExpressions()
 {
+	DeferredUniformExpressionCacheRequestsMutex.Lock();
 	DeferredUniformExpressionCacheRequests.Remove(this);
+	DeferredUniformExpressionCacheRequestsMutex.Unlock();
 }
 
 void FMaterialRenderProxy::ReleaseRHI()
@@ -592,7 +617,11 @@ void FMaterialRenderProxy::ReleaseRHI()
 	}
 #endif // WITH_EDITOR
 
-	if (DeferredUniformExpressionCacheRequests.Remove(this))
+	DeferredUniformExpressionCacheRequestsMutex.Lock();
+	bool bRemoved = DeferredUniformExpressionCacheRequests.Remove(this) != 0;
+	DeferredUniformExpressionCacheRequestsMutex.Unlock();
+
+	if (bRemoved)
 	{
 		// Notify that we're finished with this inflight cache request, because the object is being released
 		FinishCacheUniformExpressions();
@@ -656,28 +685,48 @@ const FMaterial& FMaterialRenderProxy::GetIncompleteMaterialWithFallback(ERHIFea
 	return *Material;
 }
 
-void FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions()
+void FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions(FRHICommandListBase& RHICmdList, UE::Tasks::FTask* TaskIfAsync)
 {
 	LLM_SCOPE(ELLMTag::Materials);
 
-	check(IsInRenderingThread());
+	const bool bAllowAsyncUpdate = RHICmdList.IsImmediate() && GUniformExpressionCacheAsyncUpdateTask.IsEnabled();
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions);
-	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(Material_UpdateDeferredCachedUniformExpressions);
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_UpdateDeferredCachedUniformExpressions);
+	FRHICommandListBase* RHICmdListTask = &RHICmdList;
 
-	FUniformExpressionCacheAsyncUpdater Updater;
-	FUniformExpressionCacheAsyncUpdater* UpdaterIfEnabled = GUniformExpressionCacheAsyncUpdateTask.IsEnabled() ? &Updater : nullptr;
-
-	for (TSet<FMaterialRenderProxy*>::TConstIterator It(DeferredUniformExpressionCacheRequests); It; ++It)
+	// Create an async command list when immediate command list is supplied and async update is allowed.
+	if (bAllowAsyncUpdate)
 	{
-		FMaterialRenderProxy* MaterialProxy = *It;
-		if (MaterialProxy->IsDeleted())
-		{
-			UE_LOG(LogMaterial, Fatal, TEXT("FMaterialRenderProxy deleted and GC mark was: %i"), MaterialProxy->IsMarkedForGarbageCollection());
-		}
+		RHICmdListTask = new FRHICommandList(FRHIGPUMask::All());
+		RHICmdListTask->SwitchPipeline(ERHIPipeline::Graphics);
+	}
+	else
+	{
+		GUniformExpressionCacheAsyncUpdateTask.Wait();
+	}
 
-		UMaterialInterface::IterateOverActiveFeatureLevels([&](ERHIFeatureLevel::Type InFeatureLevel)
+	DeferredUniformExpressionCacheRequestsMutex.Lock();
+	TSet<FMaterialRenderProxy*> UniformExpressions = MoveTemp(DeferredUniformExpressionCacheRequests);
+	DeferredUniformExpressionCacheRequestsMutex.Unlock();
+
+	auto EvaluateUniformExpressionsLambda = [RHICmdListTask, bAllowAsyncUpdate, UniformExpressions = MoveTemp(UniformExpressions)]
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions);
+		CSV_SCOPED_TIMING_STAT_EXCLUSIVE(Material_UpdateDeferredCachedUniformExpressions);
+		QUICK_SCOPE_CYCLE_COUNTER(STAT_UpdateDeferredCachedUniformExpressions);
+
+		FOptionalTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
+		FUniformExpressionCacheAsyncUpdater Updater;
+		FUniformExpressionCacheAsyncUpdater* UpdaterIfEnabled = bAllowAsyncUpdate ? &Updater : nullptr;
+
+		for (TSet<FMaterialRenderProxy*>::TConstIterator It(UniformExpressions); It; ++It)
+		{
+			FMaterialRenderProxy* MaterialProxy = *It;
+			if (MaterialProxy->IsDeleted())
+			{
+				UE_LOG(LogMaterial, Fatal, TEXT("FMaterialRenderProxy deleted and GC mark was: %i"), MaterialProxy->IsMarkedForGarbageCollection());
+			}
+
+			UMaterialInterface::IterateOverActiveFeatureLevels([&](ERHIFeatureLevel::Type InFeatureLevel)
 			{
 				// Don't bother caching if we'll be falling back to a different FMaterialRenderProxy for rendering anyway
 				const FMaterial* Material = MaterialProxy->GetMaterialNoFallback(InFeatureLevel);
@@ -685,23 +734,42 @@ void FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions()
 				{
 					FMaterialRenderContext MaterialRenderContext(MaterialProxy, *Material, nullptr);
 					MaterialRenderContext.bShowSelection = GIsEditor;
-					MaterialProxy->EvaluateUniformExpressions(MaterialProxy->UniformExpressionCache[(int32)InFeatureLevel], MaterialRenderContext, UpdaterIfEnabled);
+					MaterialProxy->EvaluateUniformExpressions(*RHICmdListTask, MaterialProxy->UniformExpressionCache[(int32)InFeatureLevel], MaterialRenderContext, UpdaterIfEnabled);
 				}
 			});
 
-		MaterialProxy->FinishCacheUniformExpressions();
-	}
+			MaterialProxy->FinishCacheUniformExpressions();
+		}
 
-	if (UpdaterIfEnabled)
+		if (UpdaterIfEnabled)
+		{
+			UpdaterIfEnabled->Update(*RHICmdListTask);
+		}
+	};
+
+	if (TaskIfAsync && bAllowAsyncUpdate)
 	{
-		Updater.Update(FRHICommandListExecutor::GetImmediateCommandList());
+		*TaskIfAsync = UE::Tasks::Launch(UE_SOURCE_LOCATION, MoveTemp(EvaluateUniformExpressionsLambda));
+	}
+	else
+	{
+		EvaluateUniformExpressionsLambda();
 	}
 
-	DeferredUniformExpressionCacheRequests.Reset();
+	if (bAllowAsyncUpdate)
+	{
+		FRHICommandListImmediate::Get(RHICmdList).QueueAsyncCommandListSubmit(RHICmdListTask);
+	}
+}
+
+void FMaterialRenderProxy::UpdateDeferredCachedUniformExpressions()
+{
+	UpdateDeferredCachedUniformExpressions(FRHICommandListImmediate::Get());
 }
 
 bool FMaterialRenderProxy::HasDeferredUniformExpressionCacheRequests()
 {
+	UE::TScopeLock Lock(DeferredUniformExpressionCacheRequestsMutex);
 	return DeferredUniformExpressionCacheRequests.Num() > 0;
 }
 
@@ -710,6 +778,7 @@ TSet<FMaterialRenderProxy*> FMaterialRenderProxy::MaterialRenderProxyMap;
 FCriticalSection FMaterialRenderProxy::MaterialRenderProxyMapLock;
 #endif // WITH_EDITOR
 TSet<FMaterialRenderProxy*> FMaterialRenderProxy::DeferredUniformExpressionCacheRequests;
+UE::FMutex FMaterialRenderProxy::DeferredUniformExpressionCacheRequestsMutex;
 
 /*-----------------------------------------------------------------------------
 	FColoredMaterialRenderProxy

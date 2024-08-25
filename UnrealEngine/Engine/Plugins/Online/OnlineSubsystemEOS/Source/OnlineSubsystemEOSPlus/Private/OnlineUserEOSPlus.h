@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Online/CoreOnline.h"
 #include "OnlineSubsystem.h"
+#include "OnlineSubsystemEOSPlusTypes.h"
 #include "Interfaces/OnlineUserInterface.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "Interfaces/OnlineFriendsInterface.h"
@@ -26,7 +27,7 @@ using FUniqueNetIdEOSPlusRef = TSharedRef<const class FUniqueNetIdEOSPlus>;
  * Unique net id wrapper for a EOS plus another account id. The underlying string is a combination
  * of both account ids concatenated
  */
-class FUniqueNetIdEOSPlus : public FUniqueNetId
+class FUniqueNetIdEOSPlus : public IUniqueNetIdEOSPlus
 {
 public:
 	template<typename... TArgs>
@@ -44,15 +45,10 @@ public:
 	virtual FString ToDebugString() const override;
 // ~FUniqueNetId interface
 
-	FUniqueNetIdPtr GetBaseNetId() const
-	{
-		return BaseUniqueNetId;
-	}
-
-	FUniqueNetIdPtr GetEOSNetId() const
-	{
-		return EOSUniqueNetId;
-	}
+// IUniqueNetIdEOSPlus interface
+	virtual FUniqueNetIdPtr GetBaseNetId() const override { return BaseUniqueNetId; }
+	virtual FUniqueNetIdPtr GetEOSNetId() const override { return EOSUniqueNetId; }
+// ~IUniqueNetIdEOSPlus interface
 
 	/** global static instance of invalid (zero) id */
 	static const FUniqueNetIdEOSPlusRef& EmptyId()
@@ -389,7 +385,7 @@ public:
 	virtual FString GetPlayerNickname(int32 LocalUserNum) const override;
 	virtual FString GetPlayerNickname(const FUniqueNetId& UserId) const override;
 	virtual FString GetAuthToken(int32 LocalUserNum) const override;
-	virtual void GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate) override;
+	virtual void GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI=EShowPrivilegeResolveUI::Default) override;
 	virtual FString GetAuthType() const override;
 	virtual void RevokeAuthToken(const FUniqueNetId& LocalUserId, const FOnRevokeAuthTokenCompleteDelegate& Delegate) override;
 	virtual FPlatformUserId GetPlatformUserIdFromUniqueNetId(const FUniqueNetId& UniqueNetId) const override;

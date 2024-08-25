@@ -5,6 +5,7 @@
 #include "CoreTypes.h"
 #include "Misc/AssertionMacros.h"
 #include "HAL/UnrealMemory.h"
+#include "Containers/AllowShrinking.h"
 #include "Containers/ContainerAllocationPolicies.h"
 #include "Containers/Array.h"
 #include <initializer_list>
@@ -66,6 +67,8 @@ public:
 			(uint8*)this->GetAllocation() + (Index       )*NumBytesPerElement,
 			                                               (OldNum-Index)*NumBytesPerElement
 		);
+
+		SlackTrackerNumChanged();
 	}
 	int32 Add( int32 Count, int32 NumBytesPerElement, uint32 AlignmentOfElement )
 	{
@@ -78,6 +81,8 @@ public:
 		{
 			ResizeGrow(OldNum, NumBytesPerElement, AlignmentOfElement);
 		}
+
+		SlackTrackerNumChanged();
 
 		return OldNum;
 	}
@@ -96,7 +101,7 @@ public:
 			ResizeTo(ArrayNum, NumBytesPerElement, AlignmentOfElement);
 		}
 	}
-	void SetNumUninitialized(int32 NewNum, int32 NumBytesPerElement, uint32 AlignmentOfElement, bool bAllowShrinking = true)
+	void SetNumUninitialized(int32 NewNum, int32 NumBytesPerElement, uint32 AlignmentOfElement, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		checkSlow(NewNum >= 0);
 		int32 OldNum = Num();
@@ -106,8 +111,13 @@ public:
 		}
 		else if (NewNum < OldNum)
 		{
-			Remove(NewNum, OldNum - NewNum, NumBytesPerElement, AlignmentOfElement, bAllowShrinking);
+			Remove(NewNum, OldNum - NewNum, NumBytesPerElement, AlignmentOfElement, AllowShrinking);
 		}
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("SetNumUninitialized")
+	FORCEINLINE void SetNumUninitialized(int32 NewNum, int32 NumBytesPerElement, uint32 AlignmentOfElement, bool bAllowShrinking)
+	{
+		SetNumUninitialized(NewNum, NumBytesPerElement, AlignmentOfElement, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 	void MoveAssign(TScriptArray& Other, int32 NumBytesPerElement, uint32 AlignmentOfElement)
 	{
@@ -116,11 +126,17 @@ public:
 		this->MoveToEmpty(Other);
 		ArrayNum = Other.ArrayNum; Other.ArrayNum = 0;
 		ArrayMax = Other.ArrayMax; Other.ArrayMax = 0;
+
+		this->SlackTrackerNumChanged();
+		Other.SlackTrackerNumChanged();
 	}
 	void Empty( int32 Slack, int32 NumBytesPerElement, uint32 AlignmentOfElement )
 	{
 		checkSlow(Slack>=0);
 		ArrayNum = 0;
+
+		SlackTrackerNumChanged();
+
 		if (Slack != ArrayMax)
 		{
 			ResizeTo(Slack, NumBytesPerElement, AlignmentOfElement);
@@ -131,6 +147,8 @@ public:
 		if (NewSize <= ArrayMax)
 		{
 			ArrayNum = 0;
+
+			SlackTrackerNumChanged();
 		}
 		else
 		{
@@ -166,7 +184,7 @@ public:
 		return ArrayMax - ArrayNum;
 	}
 
-	void Remove( int32 Index, int32 Count, int32 NumBytesPerElement, uint32 AlignmentOfElement, bool bAllowShrinking = true )
+	void Remove( int32 Index, int32 Count, int32 NumBytesPerElement, uint32 AlignmentOfElement, EAllowShrinking AllowShrinking = EAllowShrinking::Yes )
 	{
 		if (Count)
 		{
@@ -188,13 +206,20 @@ public:
 			}
 			ArrayNum -= Count;
 
-			if (bAllowShrinking)
+			SlackTrackerNumChanged();
+
+			if (AllowShrinking == EAllowShrinking::Yes)
 			{
 				ResizeShrink(NumBytesPerElement, AlignmentOfElement);
 			}
 			checkSlow(ArrayNum >= 0);
 			checkSlow(ArrayMax >= ArrayNum);
 		}
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("Remove")
+	FORCEINLINE void Remove(int32 Index, int32 Count, int32 NumBytesPerElement, uint32 AlignmentOfElement, bool bAllowShrinking)
+	{
+		Remove(Index, Count, NumBytesPerElement, AlignmentOfElement, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 	SIZE_T GetAllocatedSize(int32 NumBytesPerElement) const
 	{
@@ -213,6 +238,8 @@ protected:
 			ResizeInit(NumBytesPerElement, AlignmentOfElement);
 		}
 		ArrayNum = InNum;
+
+		SlackTrackerNumChanged();
 	}
 	int32	  ArrayNum;
 	int32	  ArrayMax;
@@ -248,6 +275,18 @@ protected:
 			this->ResizeAllocation(ArrayNum, ArrayMax, NumBytesPerElement, AlignmentOfElement);
 		}
 	}
+
+private:
+	FORCEINLINE void SlackTrackerNumChanged()
+	{
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+		if constexpr (TAllocatorTraits<AllocatorType>::SupportsSlackTracking)
+		{
+			((typename AllocatorType::ForAnyElementType*)this)->SlackTrackerLogNum(ArrayNum);
+		}
+#endif
+	}
+
 public:
 	// These should really be private, because they shouldn't be called, but there's a bunch of code
 	// that needs to be fixed first.

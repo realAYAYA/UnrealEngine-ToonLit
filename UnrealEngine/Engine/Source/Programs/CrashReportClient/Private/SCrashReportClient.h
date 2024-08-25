@@ -40,7 +40,6 @@ public:
 	bool IsFinished() { return CrashReportClient->IsUploadComplete() && CrashReportClient->ShouldWindowBeHidden(); }
 
 private:
-
 	/**
 	 * Construct the detailed Slate ui with controls for sending the report and comments
 	 * @param Client Crash report client implementation object
@@ -68,6 +67,17 @@ private:
 
 	/** Whether the send buttons are enabled. */
 	bool IsSendEnabled() const;
+
+	/** Returns the tooltop text for send button */
+	static FText GetSendTooltip();
+
+	/** Returns the 'allow contact' text */
+	static FText GetContactText();
+
+#if PLATFORM_WINDOWS
+	/** Whether the copy to clipboard button is available. */
+	bool IsCopyToClipboardEnabled() const;
+#endif
 
 	/** Crash report client implementation object */
 	TSharedPtr<FCrashReportClient> CrashReportClient;

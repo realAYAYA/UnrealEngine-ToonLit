@@ -19,6 +19,9 @@ public:
 	{
 	public:
 		TArray<TRange<double>> Segments;
+		// This is an optional array of alternating colors. Every segment will use the next color in this array and will wrap around
+		// if the number of colors provided is > than the number of segments.
+		TOptional<TArray<FLinearColor>> AlternatingSegmentsColors;
 	};
 
 	SLATE_BEGIN_ARGS(SSegmentedTimelineView)

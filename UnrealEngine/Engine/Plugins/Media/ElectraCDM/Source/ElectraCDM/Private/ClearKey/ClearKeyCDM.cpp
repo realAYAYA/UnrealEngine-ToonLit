@@ -786,15 +786,15 @@ ECDMError FClearKeyDRMClient::SetLicenseKeyResponseData(void* InEventId, int32 H
 			if (FJsonSerializer::Deserialize(Reader, KeyResponse))
 			{
 				TArray<TSharedPtr<FJsonValue>> Keys;
-				Keys = KeyResponse->GetArrayField("keys");
+				Keys = KeyResponse->GetArrayField(TEXT("keys"));
 				for(int32 i=0; i<Keys.Num(); ++i)
 				{
 					auto Key = Keys[i]->AsObject();
-					FString KTY = Key->GetStringField("kty");	// Mandatory (see RFC-7518 Section 6.1), must be "oct"
+					FString KTY = Key->GetStringField(TEXT("kty"));	// Mandatory (see RFC-7518 Section 6.1), must be "oct"
 					if (KTY.Equals(TEXT("oct")))
 					{
-						FString KID = Key->GetStringField("kid");
-						FString K = Key->GetStringField("k");
+						FString KID = Key->GetStringField(TEXT("kid"));
+						FString K = Key->GetStringField(TEXT("k"));
 						if (KID.Len() && K.Len())
 						{
 							FClearKeyKIDKey NewKey;

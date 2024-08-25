@@ -159,6 +159,15 @@ void FPyReferenceCollector::PurgeUnrealGeneratedTypes()
 		}
 	}
 
+	// Clean-up Python object handles
+	// The handles are instances of UPythonObjectHandle
+	{
+		ForEachObjectOfClass(UPythonObjectHandle::StaticClass(), [&FlagObjectForPurge](UObject* InObject)
+		{
+			FlagObjectForPurge(InObject, /*bMarkPendingKill*/false);
+		}, false, RF_ClassDefaultObject, EInternalObjectFlags::Native);
+	}
+
 	if (PurgingReferenceCollector.HasObjectToPurge())
 	{
 		Py_BEGIN_ALLOW_THREADS
@@ -187,8 +196,7 @@ void FPyReferenceCollector::PurgeUnrealGeneratedTypes()
 void FPyReferenceCollector::AddReferencedObjectsFromDelegate(FReferenceCollector& InCollector, FScriptDelegate& InDelegate)
 {
 	// Keep the delegate object alive if it's using a Python proxy instance
-	// We have to use the EvenIfUnreachable variant here as the objects are speculatively marked as unreachable during GC
-	if (UPythonCallableForDelegate* PythonCallableForDelegate = Cast<UPythonCallableForDelegate>(InDelegate.GetUObjectEvenIfUnreachable()))
+	if (UPythonCallableForDelegate* PythonCallableForDelegate = Cast<UPythonCallableForDelegate>(InDelegate.GetUObject()))
 	{
 		TWeakObjectPtr<UPythonCallableForDelegate> Ptr{PythonCallableForDelegate};
 		InCollector.AddReferencedObject(Ptr);
@@ -345,13 +353,9 @@ void FPyReferenceCollector::AddReferencedObjectsFromPropertyInternal(FReferenceC
 		{
 			bool bSetValuesChanged = false;
 			FScriptSetHelper_InContainer ScriptSetHelper(CastProp, InBaseAddr, ArrIndex);
-
-			for (int32 SparseElementIndex = 0; SparseElementIndex < ScriptSetHelper.GetMaxIndex(); ++SparseElementIndex)
+			for (FScriptSetHelper::FIterator It(ScriptSetHelper); It; ++It)
 			{
-				if (ScriptSetHelper.IsValidIndex(SparseElementIndex))
-				{
-						AddReferencedObjectsFromPropertyInternal(InCollector, ScriptSetHelper.GetElementProperty(), ScriptSetHelper.GetElementPtr(SparseElementIndex), InFlags, bSetValuesChanged);
-				}
+				AddReferencedObjectsFromPropertyInternal(InCollector, ScriptSetHelper.GetElementProperty(), ScriptSetHelper.GetElementPtr(It), InFlags, bSetValuesChanged);
 			}
 
 			if (bSetValuesChanged)
@@ -374,14 +378,11 @@ void FPyReferenceCollector::AddReferencedObjectsFromPropertyInternal(FReferenceC
 			bool bMapValuesChanged = false;
 			FScriptMapHelper_InContainer ScriptMapHelper(CastProp, InBaseAddr, ArrIndex);
 
-			for (int32 SparseElementIndex = 0; SparseElementIndex < ScriptMapHelper.GetMaxIndex(); ++SparseElementIndex)
+			for (FScriptMapHelper::FIterator It(ScriptMapHelper); It; ++It)
 			{
-				if (ScriptMapHelper.IsValidIndex(SparseElementIndex))
-				{
 					// Note: We use the pair pointer below as AddReferencedObjectsFromPropertyInternal expects a base address and the key/value property will apply the correct offset from the base
-					AddReferencedObjectsFromPropertyInternal(InCollector, ScriptMapHelper.GetKeyProperty(), ScriptMapHelper.GetPairPtr(SparseElementIndex), InFlags, bMapKeysChanged);
-					AddReferencedObjectsFromPropertyInternal(InCollector, ScriptMapHelper.GetValueProperty(), ScriptMapHelper.GetPairPtr(SparseElementIndex), InFlags, bMapValuesChanged);
-				}
+					AddReferencedObjectsFromPropertyInternal(InCollector, ScriptMapHelper.GetKeyProperty(), ScriptMapHelper.GetPairPtr(It), InFlags, bMapKeysChanged);
+					AddReferencedObjectsFromPropertyInternal(InCollector, ScriptMapHelper.GetValueProperty(), ScriptMapHelper.GetPairPtr(It), InFlags, bMapValuesChanged);
 			}
 
 			if (bMapKeysChanged || bMapValuesChanged)

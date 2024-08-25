@@ -33,11 +33,11 @@ public:
 	virtual void SetNumTokens(int32 NewNumTokens) override;
 	//~ End DMXPixelMappingScript interface
 
-	/** Num Columns of the grid */
+	/** Num Columns in the grid */
 	UPROPERTY(EditAnywhere, Category = "Layout Settings")
 	int32 Columns = 1;
 
-	/** Num Rows of the grid */
+	/** Num Rows in the grid */
 	UPROPERTY(EditAnywhere, Category = "Layout Settings")
 	int32 Rows = 1;
 
@@ -46,11 +46,11 @@ public:
 	float Padding = 0.f;
 
 	/** Horizontal text alignment */
-	UPROPERTY(EditAnywhere, Category = "Layout Settings", Meta = (DisplayName = "Horizontal Alignment"))
+	UPROPERTY(EditAnywhere, Category = "Layout Settings")
 	TEnumAsByte<EHorizontalAlignment> HorizontalAlignment;
 
 	/** Vertical text alignment */
-	UPROPERTY(EditAnywhere, Category = "Layout Settings", Meta = (DisplayName = "Vertical Alignment"))
+	UPROPERTY(EditAnywhere, Category = "Layout Settings")
 	TEnumAsByte<EVerticalAlignment> VerticalAlignment;
 
 	/** How cells are distributed, compared to their previous distribution */
@@ -63,4 +63,8 @@ private:
 
 	/** Clamps colums to rows given num tokens */
 	void ClampRows();
+
+	/** Auto-size is enabled when either horizontal or vertical aligmenet are set to fill */
+	UPROPERTY()
+	bool bAutoSizeMode = true;
 };

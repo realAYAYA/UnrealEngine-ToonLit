@@ -21,6 +21,12 @@ struct FLiveLinkClearSubject;
 class LIVELINK_API FLiveLinkMessageBusSource : public ILiveLinkSource
 {
 public:
+	/** Text description for a valid source. */
+	static FText ValidSourceStatus();
+	/** Text description for an invalid source. */
+	static FText InvalidSourceStatus();
+	/** Text description for a source that has timed out. */
+	static FText TimeoutSourceStatus();
 
 	FLiveLinkMessageBusSource(const FText& InSourceType, const FText& InSourceMachineName, const FMessageAddress& InConnectionAddress, double InMachineTimeOffset);
 
@@ -59,10 +65,16 @@ protected:
 													  const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context,
 													  UScriptStruct* MessageTypeInfo);
 
+	// Allows derived classes to provide their own timeout duration before a source is removed because the heartbeat timeout was hit
+	virtual double GetDeadSourceTimeout() const;
+
 	// Send the static data to the clients
 	void PushClientSubjectStaticData_AnyThread(const FLiveLinkSubjectKey& SubjectKey, TSubclassOf<ULiveLinkRole> Role, FLiveLinkStaticDataStruct&& StaticData);
 	// Send the frame data to the clients
 	void PushClientSubjectFrameData_AnyThread(const FLiveLinkSubjectKey& SubjectKey, FLiveLinkFrameDataStruct&& FrameData);
+
+	// Send connect message to the provider and start the heartbeat emitter
+	virtual void SendConnectMessage();
 
 	// Send a message through the endpoint
 	template<typename MessageType>
@@ -75,6 +87,18 @@ protected:
 
 		MessageEndpoint->Send(Message, ConnectionAddress);
 	}
+
+	// Start the heartbeat emitter for this connection
+	void StartHeartbeatEmitter();
+protected:
+	// Message bus endpoint responsible for communication with the livelink provider
+	TSharedPtr<FMessageEndpoint, ESPMode::ThreadSafe> MessageEndpoint;
+
+	// Connection address of the livelink provider 
+	FMessageAddress ConnectionAddress;
+
+	// Current Validity of Source
+	FThreadSafeBool bIsValid;
 
 private:
 	TSharedPtr<FMessageEndpoint, ESPMode::ThreadSafe> CreateAndInitializeMessageEndpoint();
@@ -93,8 +117,6 @@ private:
 	// Threadsafe update of the last active time
 	FORCEINLINE void UpdateConnectionLastActive();
 
-	void SendConnectMessage();
-
 	ILiveLinkClient* Client;
 
 	// Our identifier in LiveLink
@@ -103,18 +125,11 @@ private:
 	// List of the roles available when the bus was opened
 	TArray<TWeakObjectPtr<ULiveLinkRole>> RoleInstances;
 
-	TSharedPtr<FMessageEndpoint, ESPMode::ThreadSafe> MessageEndpoint;
-
-	FMessageAddress ConnectionAddress;
-
 	FText SourceType;
 	FText SourceMachineName;
 
 	// Time we last received anything 
 	double ConnectionLastActive;
-
-	// Current Validity of Source
-	FThreadSafeBool bIsValid;
 
 	// Critical section to allow for threadsafe updating of the connection time
 	FCriticalSection ConnectionLastActiveSection;

@@ -193,8 +193,7 @@ FLevelSet::FLevelSet(FLevelSet&& Other)
 FLevelSet::~FLevelSet()
 {
 }
-
-TUniquePtr<FImplicitObject> FLevelSet::DeepCopy() const
+Chaos::FImplicitObjectPtr FLevelSet::CopyGeometry() const
 {
 	FLevelSet* Copy = new FLevelSet();
 	Copy->MGrid = MGrid;
@@ -203,20 +202,19 @@ TUniquePtr<FImplicitObject> FLevelSet::DeepCopy() const
 	Copy->MLocalBoundingBox = MLocalBoundingBox;
 	Copy->MOriginalLocalBoundingBox = MOriginalLocalBoundingBox;
 	Copy->MBandWidth = MBandWidth;
-	return TUniquePtr<FImplicitObject>(Copy);
+	return Chaos::FImplicitObjectPtr(Copy);
 }
 
-TUniquePtr<FImplicitObject> FLevelSet::DeepCopyWithScale(const FVec3& Scale) const
+Chaos::FImplicitObjectPtr FLevelSet::CopyGeometryWithScale(const FVec3& Scale) const
 {
-	FLevelSet Copy;
-	Copy.MGrid = MGrid;
-	Copy.MPhi.Copy(MPhi);
-	Copy.MNormals.Copy(MNormals);
-	Copy.MLocalBoundingBox = MLocalBoundingBox;
-	Copy.MOriginalLocalBoundingBox = MOriginalLocalBoundingBox;
-	Copy.MBandWidth = MBandWidth;
-	TSharedPtr<FLevelSet, ESPMode::ThreadSafe> LevelSetCopy = MakeShared<FLevelSet, ESPMode::ThreadSafe>(MoveTemp(Copy));
-	return TUniquePtr<FImplicitObject>(new TImplicitObjectScaled<FLevelSet>(LevelSetCopy, Scale));
+	FLevelSet* Copy = new FLevelSet();
+	Copy->MGrid = MGrid;
+	Copy->MPhi.Copy(MPhi);
+	Copy->MNormals.Copy(MNormals);
+	Copy->MLocalBoundingBox = MLocalBoundingBox;
+	Copy->MOriginalLocalBoundingBox = MOriginalLocalBoundingBox;
+	Copy->MBandWidth = MBandWidth;
+	return MakeImplicitObjectPtr<TImplicitObjectScaled<FLevelSet>>(Copy, Scale);
 }
 
 bool FLevelSet::ComputeMassProperties(FReal& OutVolume, FVec3& OutCOM, FMatrix33& OutInertia, FRotation3& OutRotationOfMass) const
@@ -297,7 +295,7 @@ FReal FLevelSet::ComputeLevelSetError(const FParticles& InParticles, const TArra
 
 	ParallelFor(Mesh.GetNumElements(), [&](int32 i) {
 		const TVec3<int32> CurrMeshFace = Faces[i];
-		const FVec3 MeshFaceCenter = (InParticles.X(CurrMeshFace[0]) + InParticles.X(CurrMeshFace[1]) + InParticles.X(CurrMeshFace[2])) / 3.f;
+		const FVec3 MeshFaceCenter = (InParticles.GetX(CurrMeshFace[0]) + InParticles.GetX(CurrMeshFace[1]) + InParticles.GetX(CurrMeshFace[2])) / 3.f;
 
 		//FVec3 GridNormal;
 		//FReal phi = PhiWithNormal(MeshFaceCenter, GridNormal);
@@ -312,7 +310,7 @@ FReal FLevelSet::ComputeLevelSetError(const FParticles& InParticles, const TArra
 
 			for (int j = 0; j < 3; ++j)
 			{
-				DistErrorValues[i] += FMath::Abs(SignedDistance(InParticles.X(CurrMeshFace[j])));
+				DistErrorValues[i] += FMath::Abs(SignedDistance(InParticles.GetX(CurrMeshFace[j])));
 			}
 
 			// per triangle error average of 3 corners and center distance to surface according to MPhi
@@ -325,7 +323,7 @@ FReal FLevelSet::ComputeLevelSetError(const FParticles& InParticles, const TArra
 			//AngleErrorValues[i] = FMath::Acos(FVec3::DotProduct(MeshFaceNormal, GridNormal));
 
 			// triangle area used for weighted average
-			TriangleArea[i] = (FReal)0.5 * sqrt(FVec3::CrossProduct(InParticles.X(CurrMeshFace[1]) - InParticles.X(CurrMeshFace[0]), InParticles.X(CurrMeshFace[2]) - InParticles.X(CurrMeshFace[0])).SizeSquared());
+			TriangleArea[i] = (FReal)0.5 * sqrt(FVec3::CrossProduct(InParticles.GetX(CurrMeshFace[1]) - InParticles.GetX(CurrMeshFace[0]), InParticles.GetX(CurrMeshFace[2]) - InParticles.GetX(CurrMeshFace[0])).SizeSquared());
 		}
 	});
 
@@ -434,9 +432,9 @@ void FLevelSet::OutputDebugData(FErrorReporter& ErrorReporter, const FParticles&
 	for (int i = 0; i < Mesh.GetNumElements(); ++i)
 	{
 		const TVec3<int32> CurrMeshFace = Faces[i];
-		int idx = OutVerts.Add(InParticles.X(CurrMeshFace[0]));
-		OutVerts.Add(InParticles.X(CurrMeshFace[1]));
-		OutVerts.Add(InParticles.X(CurrMeshFace[2]));
+		int idx = OutVerts.Add(InParticles.GetX(CurrMeshFace[0]));
+		OutVerts.Add(InParticles.GetX(CurrMeshFace[1]));
+		OutVerts.Add(InParticles.GetX(CurrMeshFace[2]));
 
 		OutNormals.Add(Normals[i]);
 		OutNormals.Add(Normals[i]);
@@ -774,7 +772,7 @@ bool FLevelSet::ComputeDistancesNearZeroIsocontour(FErrorReporter& ErrorReporter
 	const TArray<TVec3<int32>>& Elements = Mesh.GetSurfaceElements();
 	if (Elements.Num() > 0)
 	{
-		MOriginalLocalBoundingBox = FAABB3(InParticles.X(Elements[0][0]), InParticles.X(Elements[0][0]));
+		MOriginalLocalBoundingBox = FAABB3(InParticles.GetX(Elements[0][0]), InParticles.GetX(Elements[0][0]));
 	}
 	else
 	{
@@ -785,10 +783,10 @@ bool FLevelSet::ComputeDistancesNearZeroIsocontour(FErrorReporter& ErrorReporter
 	for (int32 Index = 0; Index < Elements.Num(); ++Index)
 	{
 		const auto& Element = Elements[Index];
-		TPlane<FReal, 3> TrianglePlane(InParticles.X(Element[0]), Normals[Index]);
-		FAABB3 TriangleBounds(InParticles.X(Element[0]), InParticles.X(Element[0]));
-		TriangleBounds.GrowToInclude(InParticles.X(Element[1]));
-		TriangleBounds.GrowToInclude(InParticles.X(Element[2]));
+		TPlane<FReal, 3> TrianglePlane(InParticles.GetX(Element[0]), Normals[Index]);
+		FAABB3 TriangleBounds(InParticles.GetX(Element[0]), InParticles.GetX(Element[0]));
+		TriangleBounds.GrowToInclude(InParticles.GetX(Element[1]));
+		TriangleBounds.GrowToInclude(InParticles.GetX(Element[2]));
 		MOriginalLocalBoundingBox.GrowToInclude(TriangleBounds); //also save the original bounding box
 
 		TVec3<int32> StartIndex = MGrid.Cell(TriangleBounds.Min() - FVec3((0.5f + UE_KINDA_SMALL_NUMBER) * MGrid.Dx()));
@@ -801,7 +799,7 @@ bool FLevelSet::ComputeDistancesNearZeroIsocontour(FErrorReporter& ErrorReporter
 				{
 					const TVec3<int32> CellIndex(i, j, k);
 					const FVec3 Center = MGrid.Location(CellIndex);
-					const FVec3 Point = FindClosestPointOnTriangle(TrianglePlane, InParticles.X(Element[0]), InParticles.X(Element[1]), InParticles.X(Element[2]), Center);
+					const FVec3 Point = FindClosestPointOnTriangle(TrianglePlane, InParticles.GetX(Element[0]), InParticles.GetX(Element[1]), InParticles.GetX(Element[2]), Center);
 
 					FReal NewPhi = (Point - Center).Size();
 					if (NewPhi < MPhi(CellIndex))
@@ -1339,7 +1337,7 @@ bool FLevelSet::IsIntersectingWithTriangle(const FParticles& Particles, const TV
 	if (Intersection.Second)
 	{
 		const FReal Epsilon = (FReal)1e-1; //todo(ocohen): fattening triangle up is relative to triangle size. Do we care about very large triangles?
-		const FVec2 Bary = ComputeBarycentricInPlane(Particles.X(Element[0]), Particles.X(Element[1]), Particles.X(Element[2]), Intersection.First);
+		const FVec2 Bary = ComputeBarycentricInPlane(Particles.GetX(Element[0]), Particles.GetX(Element[1]), Particles.GetX(Element[2]), Intersection.First);
 
 		if (Bary.X >= -Epsilon && Bary.Y >= -Epsilon && (Bary.Y + Bary.X) <= 1 + Epsilon)
 		{
@@ -1404,7 +1402,7 @@ void FLevelSet::ComputeNormals(const FParticles& InParticles, const FTriangleMes
 	const TArray<TVec3<int32>>& Elements = Mesh.GetSurfaceElements();
 	if (Elements.Num() > 0)
 	{
-		MOriginalLocalBoundingBox = FAABB3(InParticles.X(Elements[0][0]), InParticles.X(Elements[0][0]));
+		MOriginalLocalBoundingBox = FAABB3(InParticles.GetX(Elements[0][0]), InParticles.GetX(Elements[0][0]));
 	}
 	else
 	{
@@ -1413,10 +1411,10 @@ void FLevelSet::ComputeNormals(const FParticles& InParticles, const FTriangleMes
 	for (int32 Index = 0; Index < Elements.Num(); ++Index)
 	{
 		const auto& Element = Elements[Index];
-		TPlane<FReal, 3> TrianglePlane(InParticles.X(Element[0]), Normals[Index]);
-		FAABB3 TriangleBounds(InParticles.X(Element[0]), InParticles.X(Element[0]));
-		TriangleBounds.GrowToInclude(InParticles.X(Element[1]));
-		TriangleBounds.GrowToInclude(InParticles.X(Element[2]));
+		TPlane<FReal, 3> TrianglePlane(InParticles.GetX(Element[0]), Normals[Index]);
+		FAABB3 TriangleBounds(InParticles.GetX(Element[0]), InParticles.GetX(Element[0]));
+		TriangleBounds.GrowToInclude(InParticles.GetX(Element[1]));
+		TriangleBounds.GrowToInclude(InParticles.GetX(Element[2]));
 		MOriginalLocalBoundingBox.GrowToInclude(TriangleBounds); //also save the original bounding box
 
 		TVec3<int32> StartIndex = MGrid.Cell(TriangleBounds.Min() - FVec3((0.5f + UE_KINDA_SMALL_NUMBER) * MGrid.Dx()));
@@ -1433,7 +1431,7 @@ void FLevelSet::ComputeNormals(const FParticles& InParticles, const FTriangleMes
 						continue;
 					}
 					const FVec3 Center = MGrid.Location(CellIndex);
-					const FVec3 Point = FindClosestPointOnTriangle(TrianglePlane, InParticles.X(Element[0]), InParticles.X(Element[1]), InParticles.X(Element[2]), Center);
+					const FVec3 Point = FindClosestPointOnTriangle(TrianglePlane, InParticles.GetX(Element[0]), InParticles.GetX(Element[1]), InParticles.GetX(Element[2]), Center);
 
 					FReal NewPhi = (Point - Center).Size();
 					if (NewPhi < LocalPhi(CellIndex))
@@ -1615,7 +1613,7 @@ void GetGeomSurfaceSamples(const FConvex& InGeom, TArray<FVec3>& OutSamples)
 template<typename InnerT>
 void GetGeomSurfaceSamples(const TImplicitObjectScaled<InnerT>& InScaledGeom, TArray<FVec3>& OutSamples)
 {
-	const InnerT* InnerObject = InScaledGeom.Object().Get();
+	const InnerT* InnerObject = InScaledGeom.Object().GetReference();
 
 	if(InnerObject)
 	{
@@ -1726,7 +1724,7 @@ void GetGeomSurfaceSamplesExtended(const FConvex& InGeom, TArray<FVec3>& OutSamp
 template<typename InnerT>
 void GetGeomSurfaceSamplesExtended(const TImplicitObjectScaled<InnerT>& InScaledGeom, TArray<FVec3>& OutSamples)
 {
-	const InnerT* InnerObject = InScaledGeom.Object().Get();
+	const InnerT* InnerObject = InScaledGeom.Object().GetReference();
 
 	if(InnerObject)
 	{
@@ -1772,6 +1770,7 @@ bool FLevelSet::OverlapGeomImp(const QueryGeomType& QueryGeom, const FRigidTrans
 		{
 			OutMTD->Penetration = -TempPhi;
 			OutMTD->Normal = TempNormal;
+			OutMTD->Position = Transformed + OutMTD->Penetration * OutMTD->Normal;
 			bResult = true;
 		}
 		else

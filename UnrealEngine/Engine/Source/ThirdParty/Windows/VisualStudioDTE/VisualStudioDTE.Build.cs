@@ -4,6 +4,8 @@ using Microsoft.Win32;
 using System.IO;
 using EpicGames.Core;
 using UnrealBuildTool;
+using System.Runtime.Versioning;
+using System;
 
 namespace UnrealBuildTool.Rules
 {
@@ -15,8 +17,10 @@ namespace UnrealBuildTool.Rules
 
 			PublicSystemIncludePaths.Add(ModuleDirectory);
 
-			if (Target.Platform != UnrealBuildTool.UnrealTargetPlatform.Win64 ||
-				Target.StaticAnalyzer == StaticAnalyzer.PVSStudio)
+			if (!OperatingSystem.IsWindows() ||
+				Target.Platform != UnrealBuildTool.UnrealTargetPlatform.Win64 ||
+				Target.StaticAnalyzer == StaticAnalyzer.PVSStudio ||
+				Target.WindowsPlatform.Compiler.IsClang())
 			{
 				PublicDefinitions.Add("WITH_VISUALSTUDIO_DTE=0");
 			}
@@ -37,6 +41,7 @@ namespace UnrealBuildTool.Rules
 			}
 		}
 
+		[SupportedOSPlatform("windows")]
 		bool TryGetDteOlbPath(out string OutDteOlbPath)
 		{
 			// Check AutoSDK for the type library

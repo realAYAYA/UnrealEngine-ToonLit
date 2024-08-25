@@ -2,11 +2,14 @@
 
 #include "WorldPartition/WorldPartitionStreamingGenerationContext.h"
 #include "WorldPartition/WorldPartitionStreamingGeneration.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
 
 #if WITH_EDITOR
-const FWorldPartitionActorDescView& IStreamingGenerationContext::FActorInstance::GetActorDescView() const
+
+const FStreamingGenerationActorDescView& IStreamingGenerationContext::FActorInstance::GetActorDescView() const
 {
-	return ActorSetInstance->ContainerInstance->ActorDescViewMap->FindByGuidChecked(ActorGuid);
+	return ActorSetInstance->ActorSetContainerInstance->ActorDescViewMap->FindByGuidChecked(ActorGuid);
 }
 
 const FActorContainerID& IStreamingGenerationContext::FActorInstance::GetContainerID() const
@@ -19,8 +22,19 @@ const FTransform& IStreamingGenerationContext::FActorInstance::GetTransform() co
 	return ActorSetInstance->Transform;
 }
 
-const UActorDescContainer* IStreamingGenerationContext::FActorInstance::GetActorDescContainer() const
+const FBox IStreamingGenerationContext::FActorInstance::GetBounds() const
 {
-	return GetActorDescView().GetActorDesc()->GetContainer();
+	return ActorSetInstance->Bounds;
+}
+
+const UExternalDataLayerAsset* IStreamingGenerationContext::FActorSetInstance::GetExternalDataLayerAsset() const
+{
+	auto IsAnExternalDataLayerPred = [](const UDataLayerInstance* DataLayerInstance) { return DataLayerInstance->IsA<UExternalDataLayerInstance>(); };
+	if (const UDataLayerInstance* const* ExternalDataLayerInstance = DataLayers.FindByPredicate(IsAnExternalDataLayerPred))
+	{
+		return CastChecked<UExternalDataLayerInstance>(*ExternalDataLayerInstance)->GetExternalDataLayerAsset();
+	}
+
+	return nullptr;
 }
 #endif

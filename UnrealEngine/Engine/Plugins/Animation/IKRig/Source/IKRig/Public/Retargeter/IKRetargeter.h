@@ -14,6 +14,7 @@ class FIKRetargetEditorController;
 struct FIKRetargetPose;
 class URetargetChainSettings;
 class URetargetRootSettings;
+class URetargetOpStack;
 
 struct UE_DEPRECATED(5.1, "Use URetargetChainSettings instead.") FRetargetChainMap;
 USTRUCT()
@@ -99,7 +100,7 @@ public:
 
 	// pointer to editor for details customization
 	#if WITH_EDITOR
-	TSharedPtr<FIKRetargetEditorController> EditorController;
+	TWeakPtr<FIKRetargetEditorController> EditorController;
 	#endif
 };
 
@@ -120,7 +121,7 @@ public:
 
 	// pointer to editor for details customization
 	#if WITH_EDITOR
-	TSharedPtr<FIKRetargetEditorController> EditorController;
+	TWeakPtr<FIKRetargetEditorController> EditorController;
 	#endif
 
 private:
@@ -142,7 +143,6 @@ private:
 #endif
 };
 
-
 UCLASS(BlueprintType)
 class IKRIG_API UIKRetargetGlobalSettings: public UObject
 {
@@ -156,10 +156,9 @@ public:
 
 	// pointer to editor for details customization
 	#if WITH_EDITOR
-	TSharedPtr<FIKRetargetEditorController> EditorController;
+	TWeakPtr<FIKRetargetEditorController> EditorController;
 	#endif
 };
-
 
 USTRUCT(BlueprintType)
 struct IKRIG_API FIKRetargetPose
@@ -179,6 +178,9 @@ public:
 	void AddToRootTranslationDelta(const FVector& TranslationDelta);
 	
 	void SortHierarchically(const FIKRigSkeleton& Skeleton);
+	
+	int32 GetVersion() const { return Version; };
+	void IncrementVersion() { ++Version; };
 
 private:
 	// a translational delta in GLOBAL space, applied only to the retarget root bone
@@ -188,6 +190,10 @@ private:
 	// these are LOCAL-space rotation deltas to be applied to a bone to modify it's retarget pose
 	UPROPERTY(EditAnywhere, Category = RetargetPose)
 	TMap<FName, FQuat> BoneRotationOffsets;
+	
+	// incremented by any edits to the retarget pose, indicating to any running instance that it should reinitialize
+	// this is not made "editor only" to leave open the possibility of programmatically modifying a retarget pose in cooked builds
+	int32 Version = INDEX_NONE;
 
 	friend class UIKRetargeterController;
 };
@@ -196,8 +202,10 @@ private:
 UENUM()
 enum class ERetargetSourceOrTarget : uint8
 {
-	Source,	// the SOURCE skeleton (to copy FROM)
-	Target, // the TARGET skeleton (to copy TO)
+	// the SOURCE skeleton (to copy FROM)
+	Source,
+	// the TARGET skeleton (to copy TO)
+	Target,
 };
 
 UCLASS(BlueprintType)
@@ -209,16 +217,15 @@ public:
 	
 	UIKRetargeter(const FObjectInitializer& ObjectInitializer);
 
-	// Get read-only access to the source IK Rig asset 
-	const UIKRigDefinition* GetSourceIKRig() const;
-	// Get read-only access to the target IK Rig asset 
-	const UIKRigDefinition* GetTargetIKRig() const;
+	// Get read-only access to the source or target IK Rig asset 
+	const UIKRigDefinition* GetIKRig(ERetargetSourceOrTarget SourceOrTarget) const;
 	// Get read-write access to the source IK Rig asset.
 	// WARNING: do not use for editing the data model. Use Controller class instead. 
-	UIKRigDefinition* GetSourceIKRigWriteable() const;
-	// Get read-write access to the target IK Rig asset.
-	// WARNING: do not use for editing the data model. Use Controller class instead. 
-	UIKRigDefinition* GetTargetIKRigWriteable() const;
+	UIKRigDefinition* GetIKRigWriteable(ERetargetSourceOrTarget SourceOrTarget) const;
+	#if WITH_EDITORONLY_DATA
+	// Get read-only access to preview meshes
+	USkeletalMesh* GetPreviewMesh(ERetargetSourceOrTarget SourceOrTarget) const;
+	#endif
 
 	// Get read-only access to the chain mapping 
 	const TArray<TObjectPtr<URetargetChainSettings>>& GetAllChainSettings() const { return ChainSettings; };
@@ -232,6 +239,8 @@ public:
 	UIKRetargetGlobalSettings* GetGlobalSettingsUObject() const { return GlobalSettings; };
 	// Get access to the global settings itself 
 	const FRetargetGlobalSettings& GetGlobalSettings() const { return GlobalSettings->Settings; };
+	// Get access to the post settings uobject
+	URetargetOpStack* GetPostSettingsUObject() const { return OpStack; };
 
 	// Get read-only access to a retarget pose 
 	const FIKRetargetPose* GetCurrentRetargetPose(const ERetargetSourceOrTarget& SourceOrTarget) const;
@@ -246,6 +255,11 @@ public:
 	const FRetargetProfile* GetCurrentProfile() const;
 	// Get the retarget profile by name (may be null) 
 	const FRetargetProfile* GetProfileByName(const FName& ProfileName) const;
+
+	// get current version of the data (to compare against running processor instances)
+	int32 GetVersion() const { return Version; };
+	// do this after any edit that would require running instance to reinitialize
+	void IncrementVersion() { ++Version; };
 
 	// BLUEPRINT GETTERS 
 
@@ -273,7 +287,7 @@ public:
 	static void GetRootSettingsFromRetargetAsset(
 		const UIKRetargeter* RetargetAsset,
 		const FName OptionalProfileName,
-		FTargetRootSettings& OutSettings);
+		UPARAM(DisplayName = "ReturnValue") FTargetRootSettings& OutSettings);
 
 	// Returns the root settings in the supplied Retarget Profile. 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category=RetargetProfile)
@@ -284,12 +298,20 @@ public:
 	static void GetGlobalSettingsFromRetargetAsset(
 		const UIKRetargeter* RetargetAsset,
 		const FName OptionalProfileName,
-		FRetargetGlobalSettings& OutSettings);
+		UPARAM(DisplayName = "ReturnValue") FRetargetGlobalSettings& OutSettings);
 
 	// Returns the global settings in the supplied Retarget Profile. 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category=RetargetProfile)
 	static FRetargetGlobalSettings GetGlobalSettingsFromRetargetProfile(UPARAM(ref) FRetargetProfile& RetargetProfile);
 
+	// Returns true if the source IK Rig has been assigned
+	UFUNCTION(BlueprintPure, Category=RetargetProfile)
+	bool HasSourceIKRig() const { return SourceIKRigAsset != nullptr; }
+
+	// Returns true if the target IK Rig has been assigned
+	UFUNCTION(BlueprintPure, Category=RetargetProfile)
+	bool HasTargetIKRig() const { return TargetIKRigAsset != nullptr; }
+	
 	// BLUEPRINT SETTERS 
 
 	// Set the global settings in a retarget profile (will set bApplyGlobalSettings to true). 
@@ -357,6 +379,10 @@ public:
 private:
 
 	void CleanAndInitialize();
+	
+	// incremented by any edits that require re-initialization
+	UPROPERTY(Transient)
+	int32 Version = INDEX_NONE;
 
 	// The rig to copy animation FROM.
 	UPROPERTY(EditAnywhere, Category = Source)
@@ -364,7 +390,7 @@ private:
 
 #if WITH_EDITORONLY_DATA
 	// Optional. Override the Skeletal Mesh to copy animation from. Uses the preview mesh from the Source IK Rig asset by default. 
-	UPROPERTY(EditAnywhere, Category = Source)
+	UPROPERTY(EditAnywhere, Category = Source, meta = (EditCondition = "HasSourceIKRig"))
 	TSoftObjectPtr<USkeletalMesh> SourcePreviewMesh = nullptr;
 #endif
 	
@@ -374,7 +400,7 @@ private:
 
 #if WITH_EDITORONLY_DATA
 	// Optional. Override the Skeletal Mesh to preview the retarget on. Uses the preview mesh from the Target IK Rig asset by default. 
-	UPROPERTY(EditAnywhere, Category = Target)
+	UPROPERTY(EditAnywhere, Category = Target, meta = (EditCondition = "HasTargetIKRig"))
 	TSoftObjectPtr<USkeletalMesh> TargetPreviewMesh = nullptr;
 #endif
 	
@@ -404,6 +430,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = PreviewSettings)
 	FVector SourceMeshOffset;
 
+	// When true, animation sequences with "Force Root Lock" turned On will act as though it is Off.
+	// This affects only the preview in the retarget editor. Use ExportRootLockMode to control exported animation behavior.
+	// This setting has no effect on runtime retargeting where root motion is copied from the source component.
+	UPROPERTY(EditAnywhere, Category = RootLockSettings)
+	bool bIgnoreRootLockInPreview = true;
+
 	// Toggle debug drawing for retargeting in the viewport. 
 	UPROPERTY(EditAnywhere, Category = DebugSettings)
 	bool bDebugDraw = true;
@@ -428,14 +460,13 @@ public:
 	UPROPERTY()
 	float BoneDrawSize = 1.0f;
 
-	/** The controller responsible for managing this asset's data (all editor mutation goes through this) */
+	// The controller responsible for managing this asset's data (all editor mutation goes through this)
 	UPROPERTY(Transient, DuplicateTransient, NonTransactional )
 	TObjectPtr<UObject> Controller;
 	
 private:
-
+	
 	// only ask to fix the root height once, then warn thereafter (don't nag) 
-	UPROPERTY()
 	TSet<TObjectPtr<USkeletalMesh>> MeshesAskedToFixRootHeightFor;
 #endif
 	
@@ -458,6 +489,10 @@ private:
 	// the retarget root settings 
 	UPROPERTY()
 	TObjectPtr<UIKRetargetGlobalSettings> GlobalSettings;
+
+	// the stack of ops to run after the retarget
+	UPROPERTY()
+	TObjectPtr<URetargetOpStack> OpStack;
 
 	// settings profiles stored in this asset 
 	UPROPERTY()

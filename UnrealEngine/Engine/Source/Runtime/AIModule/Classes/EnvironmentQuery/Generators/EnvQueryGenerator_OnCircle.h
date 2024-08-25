@@ -33,17 +33,17 @@ class UEnvQueryGenerator_OnCircle : public UEnvQueryGenerator_ProjectedPoints
 	UPROPERTY(EditDefaultsOnly, Category=Generator)
 	FAIDataProviderFloatValue CircleRadius;
 
-	/** items will be generated on a circle this much apart */
-	UPROPERTY(EditDefaultsOnly, Category = Generator)
-	FAIDataProviderFloatValue SpaceBetween;
-
-	/** this many items will be generated on a circle */
-	UPROPERTY(EditDefaultsOnly, Category = Generator)
-	FAIDataProviderIntValue NumberOfPoints;
-
 	/** how we are choosing where the points are in the circle */
 	UPROPERTY(EditDefaultsOnly, Category = Generator)
 	EPointOnCircleSpacingMethod PointOnCircleSpacingMethod;
+
+	/** items will be generated on a circle this much apart */
+	UPROPERTY(EditDefaultsOnly, Category = Generator, meta = (EditCondition = "PointOnCircleSpacingMethod == EPointOnCircleSpacingMethod::BySpaceBetween", EditConditionHides))
+	FAIDataProviderFloatValue SpaceBetween;
+
+	/** this many items will be generated on a circle */
+	UPROPERTY(EditDefaultsOnly, Category = Generator, meta = (EditCondition = "PointOnCircleSpacingMethod == EPointOnCircleSpacingMethod::ByNumberOfPoints", EditConditionHides))
+	FAIDataProviderIntValue NumberOfPoints;
 
 	/** If you generate items on a piece of circle you define direction of Arc cut here */
 	UPROPERTY(EditDefaultsOnly, Category=Generator, meta=(EditCondition="bDefineArc"))

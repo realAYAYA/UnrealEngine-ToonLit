@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "WorldPartition/ContentBundle/ContentBundleEditorSubsystem.h"
-
+#include "WorldPartition/ContentBundle/ContentBundleEngineSubsystem.h"
 #include "WorldPartition/ContentBundle/ContentBundle.h"
 #include "WorldPartition/ContentBundle/ContentBundleDescriptor.h"
 #include "WorldPartition/ContentBundle/ContentBundle.h"
@@ -30,6 +30,11 @@ void UContentBundleEditingSubmodule::DoDenitialize()
 	}
 
 	EditingContentBundleGuid.Invalidate();
+	if (GEngine)
+	{
+		UContentBundleEngineSubsystem::Get()->SetEditingContentBundleGuid(EditingContentBundleGuid);
+	}
+
 	EditingContentBundlesStack.Empty();
 }
 
@@ -54,6 +59,8 @@ void UContentBundleEditingSubmodule::PostEditUndo()
 		{
 			StartEditing(NewEditingContentBundle);
 		}
+
+		UContentBundleEngineSubsystem::Get()->SetEditingContentBundleGuid(EditingContentBundleGuid);
 	}
 
 	PreUndoRedoEditingContentBundleGuid.Invalidate();
@@ -76,10 +83,22 @@ void UContentBundleEditingSubmodule::OnExecuteActorEditorContextAction(UWorld* I
 		}
 		break;
 	case EActorEditorContextAction::PushContext:
-		PushContentBundleEditing();
+	case EActorEditorContextAction::PushDuplicateContext:
+		PushContentBundleEditing(InType == EActorEditorContextAction::PushDuplicateContext);
 		break;
 	case EActorEditorContextAction::PopContext:
 		PopContentBundleEditing();
+		break;
+	case EActorEditorContextAction::InitializeContextFromActor:
+		{
+			if (InActor->GetContentBundleGuid().IsValid())
+			{
+				if (TSharedPtr<FContentBundleEditor> EditingContentBundle = GetEditorContentBundle(InActor->GetContentBundleGuid()))
+				{
+					ActivateContentBundleEditing(EditingContentBundle);
+				}
+			}
+		}
 		break;
 	}
 }
@@ -163,6 +182,7 @@ bool UContentBundleEditingSubmodule::ActivateContentBundleEditing(TSharedPtr<FCo
 			DeactivateCurrentContentBundleEditing();
 		}
 		EditingContentBundleGuid = ContentBundleEditor->GetDescriptor()->GetGuid();
+		UContentBundleEngineSubsystem::Get()->SetEditingContentBundleGuid(EditingContentBundleGuid);
 		StartEditing(ContentBundleEditor);
 		return true;
 	}
@@ -186,6 +206,7 @@ bool UContentBundleEditingSubmodule::DeactivateContentBundleEditing(TSharedPtr<F
 	{
 		check(EditingContentBundleGuid == ContentBundleEditor->GetDescriptor()->GetGuid());
 		EditingContentBundleGuid.Invalidate();
+		UContentBundleEngineSubsystem::Get()->SetEditingContentBundleGuid(EditingContentBundleGuid);
 		StopEditing(ContentBundleEditor);
 		return true;
 	}
@@ -213,12 +234,15 @@ void UContentBundleEditingSubmodule::StopEditing(TSharedPtr<FContentBundleEditor
 	UE_LOG(LogContentBundle, Log, TEXT("[CB: %s] Content Bundle is no longer being edited"), *ContentBundleEditor->GetDescriptor()->GetDisplayName());
 }
 
-void UContentBundleEditingSubmodule::PushContentBundleEditing()
+void UContentBundleEditingSubmodule::PushContentBundleEditing(bool bDuplicateContext)
 {
 	Modify();
 
 	EditingContentBundlesStack.Add(EditingContentBundleGuid);
-	DeactivateCurrentContentBundleEditing();
+	if (!bDuplicateContext)
+	{
+		DeactivateCurrentContentBundleEditing();
+	}
 }
 
 void UContentBundleEditingSubmodule::PopContentBundleEditing()
@@ -379,14 +403,19 @@ bool UContentBundleEditorSubsystem::DeactivateContentBundleEditing(TSharedPtr<FC
 	return ContentBundleEditingSubModule->DeactivateContentBundleEditing(ContentBundleEditor);
 }
 
+bool UContentBundleEditorSubsystem::DeactivateCurrentContentBundleEditing() const
+{
+	return ContentBundleEditingSubModule->DeactivateCurrentContentBundleEditing();
+}
+
 bool UContentBundleEditorSubsystem::IsContentBundleEditingActivated(TSharedPtr<FContentBundleEditor>& ContentBundleEditor) const
 {
 	return ContentBundleEditor.IsValid() && IsEditingContentBundle(ContentBundleEditor->GetDescriptor()->GetGuid());
 }
 
-void UContentBundleEditorSubsystem::PushContentBundleEditing()
+void UContentBundleEditorSubsystem::PushContentBundleEditing(bool bDuplicateContext)
 {
-	ContentBundleEditingSubModule->PushContentBundleEditing();
+	ContentBundleEditingSubModule->PushContentBundleEditing(bDuplicateContext);
 }
 
 void UContentBundleEditorSubsystem::PopContentBundleEditing()

@@ -6,7 +6,6 @@
 #include "LearningLog.h"
 #include "LearningTrainer.h"
 #include "LearningSharedMemory.h"
-#include "LearningNeuralNetwork.h" // Included for EActivationFunction::ELU
 
 #include "Commandlets/Commandlet.h"
 #include "Templates/SharedPointer.h"
@@ -15,6 +14,7 @@
 
 class FSocket;
 class FMonitoredProcess;
+class ULearningNeuralNetworkData;
 
 UCLASS()
 class LEARNINGTRAINING_API ULearningSocketPPOTrainerServerCommandlet : public UCommandlet
@@ -35,38 +35,6 @@ namespace UE::Learning
 	enum class ECompletionMode : uint8;
 
 	/**
-	* Settings for the networks used for training PPO. These settings must match the Neural Network 
-	* objects passed to PPOTrainer::Train and the action noise must match the action noise used by 
-	* the policy while gathering experience. 
-	*/
-	struct FPPOTrainerNetworkSettings
-	{
-		/** Minimum action noise used by the policy */
-		float PolicyActionNoiseMin = 0.25f;
-
-		/** Maximum action noise used by the policy */
-		float PolicyActionNoiseMax = 0.25f;
-
-		/** Total layers for policy network including input, hidden, and output layers */
-		int32 PolicyLayerNum = 3;
-
-		/** Number of neurons in each hidden layer of the policy network */
-		int32 PolicyHiddenLayerSize = 128;
-
-		/** Activation function to use on hidden layers of the policy network */
-		EActivationFunction PolicyActivationFunction = EActivationFunction::ELU;
-
-		/** Total layers for critic network including input, hidden, and output layers */
-		int32 CriticLayerNum = 4;
-
-		/** Number of neurons in each hidden layer of the critic network */
-		int32 CriticHiddenLayerSize = 256;
-
-		/** Activation function to use on hidden layers of the critic network */
-		EActivationFunction CriticActivationFunction = EActivationFunction::ELU;
-	};
-
-	/**
 	* Settings used for training with PPO
 	*/
 	struct FPPOTrainerTrainingSettings
@@ -83,47 +51,71 @@ namespace UE::Learning
 		// should have a larger learning rate than the policy.
 		float LearningRateCritic = 0.001f;
 
-		// Ratio by which to decay the learning rate every 1000 iterations.
-		float LearningRateDecay = 0.99f;
+		// Amount by which to multiply the learning rate every 1000 iterations.
+		float LearningRateDecay = 1.0f;
 
 		// Amount of weight decay to apply to the network. Larger values encourage network 
 		// weights to be smaller but too large a value can cause the network weights to collapse to all zeros.
-		float WeightDecay = 0.001f;
+		float WeightDecay = 0.0001f;
 
-		// Initial scale to apply to actions before noise is added to them. The smaller this is, 
-		// the less likely you are to have spurious correlations at the beginning of training which 
-		// can make things slow or unstable. Too small and the network may become difficult to train.
-		float InitialActionScale = 0.1f;
+		// Batch size to use for training the policy. Large batch sizes are much more computationally efficient when training on the GPU.
+		uint32 PolicyBatchSize = 1024;
 
-		// Batch size to use for training. Smaller values tend to produce better results 
-		// at the cost of slowing down training. Large batch sizes are much more computationally efficient 
-		// when training on the GPU.
-		uint32 BatchSize = 128;
+		// Batch size to use for training the critic. Large batch sizes are much more computationally efficient when training on the GPU.
+		uint32 CriticBatchSize = 4096;
+
+		// The number of consecutive steps of observations and actions over which to train the policy. Increasing this value 
+		// will encourage the policy to use its memory effectively. Too large and training can become slow and unstable.
+		uint32 PolicyWindow = 16;
+
+		// Number of training iterations to perform per buffer of experience gathered. This should be large enough for
+		// the critic and policy to be effectively updated, but too large and it will simply slow down training.
+		uint32 IterationsPerGather = 32;
+
+		// Number of iterations of training to perform to warm-up the Critic. This helps speed up and stabilize training
+		// at the beginning when the Critic may be producing predictions at the wrong order of magnitude.
+		uint32 CriticWarmupIterations = 8;
 
 		// Clipping ratio to apply to policy updates. Keeps the training "on-policy". 
 		// Larger values may speed up training at the cost of stability. Conversely, too small 
 		// values will keep the policy from being able to learn an optimal policy.
 		float EpsilonClip = 0.2f;
 
-		// Weight used to regularize actions. Larger values will encourage smaller actions but too large
-		// will cause actions to become always zero.
+		// Weight used to regularize predicted returns. Encourages the critic not to over or under estimate returns.
+		float ReturnRegularizationWeight = 0.0001f;
+
+		// Weight for the loss used to train the policy via the PPO surrogate objective.
+		float ActionSurrogateWeight = 1.0f;
+
+		// Weight used to regularize actions.Larger values will encourage exploration and smaller actions, but too large will cause
+		// noisy actions centered around zero.
 		float ActionRegularizationWeight = 0.001f;
 
 		// Weighting used for the entropy bonus. Larger values encourage larger action 
 		// noise and therefore greater exploration but can make actions very noisy.
-		float EntropyWeight = 0.01f;
+		float ActionEntropyWeight = 0.0f;
 
-		// This is used in the Generalized Advantage Estimation as what is essentially 
-		// an exponential smoothing/decay. Typical values should be between 0.9 and 1.0.
-		float GaeLambda = 0.9f;
-
-		// When true, very large or small advantages will be clipped. This has few downsides 
-		// and helps with numerical stability.
-		bool bClipAdvantages = true;
+		// This is used in the Generalized Advantage Estimation, where larger values will tend to assign more credit to recent actions. Typical 
+		// values should be between 0.9 and 1.0.
+		float GaeLambda = 0.95f;
 
 		// When true, advantages are normalized. This tends to makes training more robust to 
 		// adjustments of the scale of rewards. 
 		bool bAdvantageNormalization = true;
+
+		// The minimum advantage to allow. Setting this below zero will encourage the policy to
+		// move away from bad actions, but can introduce instability.
+		float AdvantageMin = 0.0f;
+
+		// The maximum advantage to allow. Making this smaller may increase training stability
+		// at the cost of some training speed.
+		float AdvantageMax = 10.0f;
+
+		// If true, uses gradient norm max clipping. Set this as True if training is unstable or leave as False if unused.
+		bool bUseGradNormMaxClipping = false;
+
+		// The maximum gradient norm to clip updates to.
+		float GradNormMax = 0.5f;
 
 		// Number of steps to trim from the start of each episode during training. This can
 		// be useful if some reset process is taking several steps or you know your starting
@@ -153,30 +145,10 @@ namespace UE::Learning
 		// for this version of Python by going to your Unreal Editor Python Binaries directory 
 		// (e.g. "\Engine\Binaries\ThirdParty\Python3\Win64") and running `python -m pip install tensorboard`. 
 		bool bUseTensorboard = false;
+
+		// If to save snapshots of the trained networks every 1000 iterations
+		bool bSaveSnapshots = false;
 	};
-
-	/**
-	* PPOTrainer flags controlling some aspects of the process of communication with the trainer
-	*/
-	enum class EPPOTrainerFlags : uint8
-	{
-		None = 0,
-
-		// If to send over the initial provided policy network rather than reinitialize it from random weights at 
-		// the start of training. Use this if you want to start from a network which has already been trained 
-		// such as via Imitation Training.
-		UseInitialPolicyNetwork = 1 << 0,
-
-		// If to send over the initial provided critic network rather than reinitialize it from random weights at 
-		// the start of training. Use this if you want to start from a network which has already been trained 
-		// such as via Imitation Training.
-		UseInitialCriticNetwork = 1 << 1,
-
-		// If the critic network should be synchronized between the training process 
-		// and experience gathering process during training
-		SynchronizeCriticNetwork = 1 << 2,
-	};
-	ENUM_CLASS_FLAGS(EPPOTrainerFlags)
 
 	/**
 	* Interface for an object which can train a policy using PPO.
@@ -208,7 +180,7 @@ namespace UE::Learning
 		* @returns				Trainer response
 		*/
 		virtual ETrainerResponse RecvPolicy(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
@@ -223,7 +195,37 @@ namespace UE::Learning
 		* @returns				Trainer response
 		*/
 		virtual ETrainerResponse RecvCritic(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the trainer to push an updated encoder network.
+		*
+		* @param OutNetwork		Network to update
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when updating network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse RecvEncoder(
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the trainer to push an updated decoder network.
+		*
+		* @param OutNetwork		Network to update
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when updating network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse RecvDecoder(
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
@@ -243,7 +245,7 @@ namespace UE::Learning
 		* @returns				Trainer response
 		*/
 		virtual ETrainerResponse SendPolicy(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
@@ -258,7 +260,37 @@ namespace UE::Learning
 		* @returns				Trainer response
 		*/
 		virtual ETrainerResponse SendCritic(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the trainer to be ready and push the current encoder network.
+		*
+		* @param Network		Network to push
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when pushing network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse SendEncoder(
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the trainer to be ready and push the current decoder network.
+		*
+		* @param Network		Network to push
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when pushing network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse SendDecoder(
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
@@ -290,13 +322,19 @@ namespace UE::Learning
 		*
 		* @param TaskName					Name of the training task - used to help identify the logs, snapshots, and other files generated by training
 		* @param PythonExecutablePath		Path to the python executable used for training. In general should be the python shipped with Unreal Editor.
-		* @param SitePackagesPath			Path to the site-packages shipped with the PythonFoundationPackages plugin
+		* @param ExtraSitePackagesPath		Path to additional site-packages if required otherwise empty string
 		* @param PythonContentPath			Path to the Python Content folder provided by the Learning plugin
 		* @param IntermediatePath			Path to the intermediate folder to write temporary files, logs, and snapshots to
 		* @param ReplayBuffer				Replay buffer used to collect experience
+		* @param PolicyNetwork				Policy Network to use
+		* @param CriticNetwork				Critic Network to use
+		* @param EncoderNetwork				Encoder Network to use
+		* @param DecoderNetwork				Decoder Network to use
+		* @param ObservationSchema			Schema used for Observations
+		* @param ObservationSchemaElement	Schema Observation Element
+		* @param ActionSchema				Schema used for Actions
+		* @param ActionSchemaElement		Schema Action Element
 		* @param TrainingSettings			Trainer Training settings
-		* @param NetworkSettings			Trainer Network settings
-		* @param TrainerFlags				Flags for the trainer
 		* @param LogSettings				Logging settings to use
 		* @param TrainingProcessFlags		Training subprocess flags
 
@@ -324,13 +362,19 @@ namespace UE::Learning
 		FSharedMemoryPPOTrainer(
 			const FString& TaskName,
 			const FString& PythonExecutablePath,
-			const FString& SitePackagesPath,
+			const FString& ExtraSitePackagesPath,
 			const FString& PythonContentPath,
 			const FString& IntermediatePath,
 			const FReplayBuffer& ReplayBuffer,
+			const ULearningNeuralNetworkData& PolicyNetwork,
+			const ULearningNeuralNetworkData& CriticNetwork,
+			const ULearningNeuralNetworkData& EncoderNetwork,
+			const ULearningNeuralNetworkData& DecoderNetwork,
+			const Observation::FSchema& ObservationSchema,
+			const Observation::FSchemaElement& ObservationSchemaElement,
+			const Action::FSchema& ActionSchema,
+			const Action::FSchemaElement& ActionSchemaElement,
 			const FPPOTrainerTrainingSettings& TrainingSettings = FPPOTrainerTrainingSettings(),
-			const FPPOTrainerNetworkSettings& NetworkSettings = FPPOTrainerNetworkSettings(),
-			const EPPOTrainerFlags TrainerFlags = EPPOTrainerFlags::None,
 			const ELogSetting LogSettings = ELogSetting::Normal,
 			const ESubprocessFlags TrainingProcessFlags = ESubprocessFlags::None,
 			const uint16 ProcessNum = 1,
@@ -343,13 +387,25 @@ namespace UE::Learning
 		virtual ETrainerResponse Wait(const float Timeout = Trainer::DefaultTimeout) override final;
 
 		virtual ETrainerResponse RecvPolicy(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse RecvCritic(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvEncoder(
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvDecoder(
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
@@ -357,13 +413,25 @@ namespace UE::Learning
 		virtual ETrainerResponse SendStop(const float Timeout = Trainer::DefaultTimeout) override final;
 
 		virtual ETrainerResponse SendPolicy(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse SendCritic(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendEncoder(
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendDecoder(
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
@@ -382,16 +450,20 @@ namespace UE::Learning
 
 		// Shared memory
 
-		UE::Learning::TSharedMemoryArrayView<1, uint8> Policy;
-		UE::Learning::TSharedMemoryArrayView<1, uint8> Critic;
-		UE::Learning::TSharedMemoryArrayView<2, volatile int32> Controls; // Mark as volatile to avoid compiler optimizing away reads without writes etc.
-		UE::Learning::TSharedMemoryArrayView<2, int32> EpisodeStarts;
-		UE::Learning::TSharedMemoryArrayView<2, int32> EpisodeLengths;
-		UE::Learning::TSharedMemoryArrayView<2, ECompletionMode> EpisodeCompletionModes;
-		UE::Learning::TSharedMemoryArrayView<3, float> EpisodeFinalObservations;
-		UE::Learning::TSharedMemoryArrayView<3, float> Observations;
-		UE::Learning::TSharedMemoryArrayView<3, float> Actions;
-		UE::Learning::TSharedMemoryArrayView<2, float> Rewards;
+		TSharedMemoryArrayView<1, uint8> Policy;
+		TSharedMemoryArrayView<1, uint8> Critic;
+		TSharedMemoryArrayView<1, uint8> Encoder;
+		TSharedMemoryArrayView<1, uint8> Decoder;
+		TSharedMemoryArrayView<2, volatile int32> Controls; // Mark as volatile to avoid compiler optimizing away reads without writes etc.
+		TSharedMemoryArrayView<2, int32> EpisodeStarts;
+		TSharedMemoryArrayView<2, int32> EpisodeLengths;
+		TSharedMemoryArrayView<2, ECompletionMode> EpisodeCompletionModes;
+		TSharedMemoryArrayView<3, float> EpisodeFinalObservations;
+		TSharedMemoryArrayView<3, float> EpisodeFinalMemoryStates;
+		TSharedMemoryArrayView<3, float> Observations;
+		TSharedMemoryArrayView<3, float> Actions;
+		TSharedMemoryArrayView<3, float> MemoryStates;
+		TSharedMemoryArrayView<2, float> Rewards;
 
 		// Training Process
 
@@ -418,7 +490,7 @@ namespace UE::Learning
 		* Creates a training server as a subprocess
 		*
 		* @param PythonExecutablePath		Path to the python executable used for training. In general should be the python shipped with Unreal Editor.
-		* @param SitePackagesPath			Path to the site-packages shipped with the PythonFoundationPackages plugin
+		* @param ExtraSitePackagesPath		Path to additional site-packages if required otherwise empty string
 		* @param PythonContentPath			Path to the Python Content folder provided by the Learning plugin
 		* @param IntermediatePath			Path to the intermediate folder to write temporary files, logs, and snapshots to
 		* @param IpAddress					Ip address to bind the listening socket to. For a local server you will want to use 127.0.0.1
@@ -428,7 +500,7 @@ namespace UE::Learning
 		*/
 		FSocketPPOTrainerServerProcess(
 			const FString& PythonExecutablePath,
-			const FString& SitePackagesPath,
+			const FString& ExtraSitePackagesPath,
 			const FString& PythonContentPath,
 			const FString& IntermediatePath,
 			const TCHAR* IpAddress = Trainer::DefaultIp,
@@ -479,23 +551,35 @@ namespace UE::Learning
 		* @param OutResponse				Response to the initial connection
 		* @param TaskName					Name of the training task - used to help identify the logs, snapshots, and other files generated by training
 		* @param ReplayBuffer				Replay buffer used to collect experience
+		* @param PolicyNetwork				Policy Network to use
+		* @param CriticNetwork				Critic Network to use
+		* @param EncoderNetwork				Encoder Network to use
+		* @param DecoderNetwork				Decoder Network to use
+		* @param ObservationSchema			Schema used for Observations
+		* @param ObservationSchemaElement	Schema Observation Element
+		* @param ActionSchema				Schema used for Actions
+		* @param ActionSchemaElement		Schema Action Element
 		* @param IpAddress					Server Ip address
 		* @param Port						Server Port
 		* @param Timeout					Timeout to wait in seconds for connection and initial data transfer
 		* @param TrainingSettings			Trainer Training settings
-		* @param NetworkSettings			Trainer Network settings
-		* @param TrainerFlags				Flags for the trainer
 		*/
 		FSocketPPOTrainer(
 			ETrainerResponse& OutResponse,
 			const FString& TaskName,
 			const FReplayBuffer& ReplayBuffer,
+			const ULearningNeuralNetworkData& PolicyNetwork,
+			const ULearningNeuralNetworkData& CriticNetwork,
+			const ULearningNeuralNetworkData& EncoderNetwork,
+			const ULearningNeuralNetworkData& DecoderNetwork,
+			const Observation::FSchema& ObservationSchema,
+			const Observation::FSchemaElement& ObservationSchemaElement,
+			const Action::FSchema& ActionSchema,
+			const Action::FSchemaElement& ActionSchemaElement,
 			const TCHAR* IpAddress = Trainer::DefaultIp,
 			const uint32 Port = Trainer::DefaultPort,
 			const float Timeout = Trainer::DefaultTimeout,
-			const FPPOTrainerTrainingSettings& TrainingSettings = FPPOTrainerTrainingSettings(),
-			const FPPOTrainerNetworkSettings& NetworkSettings = FPPOTrainerNetworkSettings(),
-			const EPPOTrainerFlags TrainerFlags = EPPOTrainerFlags::None);
+			const FPPOTrainerTrainingSettings& TrainingSettings = FPPOTrainerTrainingSettings());
 
 		~FSocketPPOTrainer();
 
@@ -504,13 +588,25 @@ namespace UE::Learning
 		virtual ETrainerResponse Wait(const float Timeout = Trainer::DefaultTimeout) override final;
 
 		virtual ETrainerResponse RecvPolicy(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse RecvCritic(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvEncoder(
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvDecoder(
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
@@ -518,13 +614,25 @@ namespace UE::Learning
 		virtual ETrainerResponse SendStop(const float Timeout = Trainer::DefaultTimeout) override final;
 
 		virtual ETrainerResponse SendPolicy(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse SendCritic(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendEncoder(
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendDecoder(
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
@@ -538,6 +646,8 @@ namespace UE::Learning
 
 		TLearningArray<1, uint8> PolicyNetworkBuffer;
 		TLearningArray<1, uint8> CriticNetworkBuffer;
+		TLearningArray<1, uint8> EncoderNetworkBuffer;
+		TLearningArray<1, uint8> DecoderNetworkBuffer;
 		FSocket* Socket = nullptr;
 	};
 
@@ -547,46 +657,59 @@ namespace UE::Learning
 		/**
 		* Train a policy while gathering experience
 		*
-		* @param Trainer						Trainer
-		* @param ReplayBuffer					Replay Buffer
-		* @param EpisodeBuffer					Episode Buffer
-		* @param ResetBuffer					Reset Buffer
-		* @param PolicyNetwork					Policy Network to use
-		* @param CriticNetwork					Optional Critic Network to use
-		* @param ObservationVectorBuffer		Buffer to read/write observation vectors into
-		* @param ActionVectorBuffer				Buffer to read/write action vectors into
-		* @param RewardBuffer					Buffer to read/write rewards into
-		* @param CompletionBuffer				Buffer to read/write completions into
-		* @param EpisodeEndCompletionMode		Completion mode to use for episodes that reach the max length
-		* @param ResetFunction					Function to run for resetting the environment
-		* @param ObservationFunction			Function to run for evaluating observations
-		* @param PolicyFunction					Function to run for evaluating the policy
-		* @param ActionFunction					Function to run for evaluating actions
-		* @param UpdateFunction					Function to run for updating the environment
-		* @param RewardFunction					Function to run for evaluating rewards
-		* @param CompletionFunction				Function to run for evaluating completions
-		* @param Instances						Set of instances to run training for
-		* @param TrainerFlags					Flags for the trainer, should match what was used to initialize the Trainer object.
-		* @param bRequestTrainingStopSignal		Optional signal that can be set to indicate training should be stopped
-		* @param PolicyNetworkLock				Optional Lock to use when updating the policy network
-		* @param CriticNetworkLock				Optional Lock to use when updating the critic network
-		* @param bPolicyNetworkUpdatedSignal	Optional signal that will be set when the policy network is updated
-		* @param bCriticNetworkUpdatedSignal	Optional signal that will be set when the critic network is updated
-		* @param LogSettings					Logging settings
-		* @returns								Trainer response in case of errors during communication otherwise Success
+		* @param Trainer								Trainer
+		* @param ReplayBuffer							Replay Buffer
+		* @param EpisodeBuffer							Episode Buffer
+		* @param ResetBuffer							Reset Buffer
+		* @param PolicyNetwork							Policy Network to use
+		* @param CriticNetwork							Critic Network to use
+		* @param EncoderNetwork							Encoder Network to use
+		* @param DecoderNetwork							Decoder Network to use
+		* @param ObservationVectorBuffer				Buffer to read/write observation vectors into
+		* @param ActionVectorBuffer						Buffer to read/write action vectors into
+		* @param PreEvaluationMemoryStateVectorBuffer	Buffer to read/write pre-evaluation memory state vectors into
+		* @param MemoryStateVectorBuffer				Buffer to read/write (post-evaluation) memory state vectors into
+		* @param RewardBuffer							Buffer to read/write rewards into
+		* @param CompletionBuffer						Buffer to read/write completions into
+		* @param EpisodeCompletionBuffer				Additional buffer to record completions from full episode buffers
+		* @param AllCompletionBuffer					Additional buffer to record all completions from full episodes and normal completions
+		* @param ResetFunction							Function to run for resetting the environment
+		* @param ObservationFunction					Function to run for evaluating observations
+		* @param PolicyFunction							Function to run for evaluating the policy
+		* @param ActionFunction							Function to run for evaluating actions
+		* @param UpdateFunction							Function to run for updating the environment
+		* @param RewardFunction							Function to run for evaluating rewards
+		* @param CompletionFunction						Function to run for evaluating completions
+		* @param Instances								Set of instances to run training for
+		* @param bRequestTrainingStopSignal				Optional signal that can be set to indicate training should be stopped
+		* @param PolicyNetworkLock						Optional Lock to use when updating the policy network
+		* @param CriticNetworkLock						Optional Lock to use when updating the critic network
+		* @param EncoderNetworkLock						Optional Lock to use when updating the encoder network
+		* @param DecoderNetworkLock						Optional Lock to use when updating the decoder network
+		* @param bPolicyNetworkUpdatedSignal			Optional signal that will be set when the policy network is updated
+		* @param bCriticNetworkUpdatedSignal			Optional signal that will be set when the critic network is updated
+		* @param bEncoderNetworkUpdatedSignal			Optional signal that will be set when the encoder network is updated
+		* @param bDecoderNetworkUpdatedSignal			Optional signal that will be set when the decoder network is updated
+		* @param LogSettings							Logging settings
+		* @returns										Trainer response in case of errors during communication otherwise Success
 		*/
 		LEARNINGTRAINING_API ETrainerResponse Train(
 			IPPOTrainer& Trainer,
 			FReplayBuffer& ReplayBuffer,
 			FEpisodeBuffer& EpisodeBuffer,
 			FResetInstanceBuffer& ResetBuffer,
-			FNeuralNetwork& PolicyNetwork,
-			FNeuralNetwork* CriticNetwork,
+			ULearningNeuralNetworkData& PolicyNetwork,
+			ULearningNeuralNetworkData& CriticNetwork,
+			ULearningNeuralNetworkData& EncoderNetwork,
+			ULearningNeuralNetworkData& DecoderNetwork,
 			TLearningArrayView<2, float> ObservationVectorBuffer,
 			TLearningArrayView<2, float> ActionVectorBuffer,
+			TLearningArrayView<2, float> PreEvaluationMemoryStateVectorBuffer,
+			TLearningArrayView<2, float> MemoryStateVectorBuffer,
 			TLearningArrayView<1, float> RewardBuffer,
 			TLearningArrayView<1, ECompletionMode> CompletionBuffer,
-			const ECompletionMode EpisodeEndCompletionMode,
+			TLearningArrayView<1, ECompletionMode> EpisodeCompletionBuffer,
+			TLearningArrayView<1, ECompletionMode> AllCompletionBuffer,
 			const TFunctionRef<void(const FIndexSet Instances)> ResetFunction,
 			const TFunctionRef<void(const FIndexSet Instances)> ObservationFunction,
 			const TFunctionRef<void(const FIndexSet Instances)> PolicyFunction,
@@ -595,12 +718,15 @@ namespace UE::Learning
 			const TFunctionRef<void(const FIndexSet Instances)> RewardFunction,
 			const TFunctionRef<void(const FIndexSet Instances)> CompletionFunction,
 			const FIndexSet Instances,
-			const EPPOTrainerFlags TrainerFlags = EPPOTrainerFlags::None,
 			TAtomic<bool>* bRequestTrainingStopSignal = nullptr,
 			FRWLock* PolicyNetworkLock = nullptr,
 			FRWLock* CriticNetworkLock = nullptr,
+			FRWLock* EncoderNetworkLock = nullptr,
+			FRWLock* DecoderNetworkLock = nullptr,
 			TAtomic<bool>* bPolicyNetworkUpdatedSignal = nullptr,
 			TAtomic<bool>* bCriticNetworkUpdatedSignal = nullptr,
+			TAtomic<bool>* bEncoderNetworkUpdatedSignal = nullptr,
+			TAtomic<bool>* bDecoderNetworkUpdatedSignal = nullptr,
 			const ELogSetting LogSettings = ELogSetting::Normal);
 	}
 

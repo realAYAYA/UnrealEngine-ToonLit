@@ -7,6 +7,7 @@
 #include "DisplayClusterConfiguratorBlueprintEditor.h"
 #include "DisplayClusterConfiguratorPropertyUtils.h"
 #include "ISinglePropertyView.h"
+#include "ClusterConfiguration/DisplayClusterConfiguratorClusterEditorUtils.h"
 #include "ClusterConfiguration/DisplayClusterConfiguratorClusterUtils.h"
 #include "Views/DragDrop/DisplayClusterConfiguratorValidatedDragDropOp.h"
 #include "Views/DragDrop/DisplayClusterConfiguratorClusterNodeDragDropOp.h"
@@ -50,7 +51,7 @@ void FDisplayClusterConfiguratorTreeItemClusterNode::SetVisible(bool bIsVisible)
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(ClusterNode, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		ClusterNode, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationClusterNode, bIsVisible));
 	
 	PropertyView->GetPropertyHandle()->SetValue(bIsVisible);
@@ -73,7 +74,7 @@ void FDisplayClusterConfiguratorTreeItemClusterNode::SetUnlocked(bool bIsUnlocke
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(ClusterNode, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		ClusterNode, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationClusterNode, bIsUnlocked));
 
 	PropertyView->GetPropertyHandle()->SetValue(bIsUnlocked);
@@ -92,7 +93,7 @@ void FDisplayClusterConfiguratorTreeItemClusterNode::SetUnlocked(bool bIsUnlocke
 void FDisplayClusterConfiguratorTreeItemClusterNode::DeleteItem() const
 {
 	UDisplayClusterConfigurationClusterNode* ClusterNode = GetObjectChecked<UDisplayClusterConfigurationClusterNode>();
-	FDisplayClusterConfiguratorClusterUtils::RemoveClusterNodeFromCluster(ClusterNode);
+	UE::DisplayClusterConfiguratorClusterUtils::RemoveClusterNodeFromCluster(ClusterNode);
 }
 
 FReply FDisplayClusterConfiguratorTreeItemClusterNode::HandleDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
@@ -114,7 +115,7 @@ FReply FDisplayClusterConfiguratorTreeItemClusterNode::HandleDragDetected(const 
 			SelectedObjects.Add(SelectedItem->GetObject());
 		}
 
-		TSharedPtr<FDragDropOperation> DragDropOp = FDisplayClusterConfiguratorClusterUtils::MakeDragDropOperation(SelectedObjects);
+		TSharedPtr<FDragDropOperation> DragDropOp = UE::DisplayClusterConfiguratorClusterEditorUtils::MakeDragDropOperation(SelectedObjects);
 
 		if (DragDropOp.IsValid())
 		{
@@ -226,7 +227,7 @@ FReply FDisplayClusterConfiguratorTreeItemClusterNode::HandleAcceptDrop(const FD
 					continue;
 				}
 
-				FDisplayClusterConfiguratorClusterUtils::AddViewportToClusterNode(Viewport.Get(), ClusterNode);
+				UE::DisplayClusterConfiguratorClusterUtils::AddViewportToClusterNode(Viewport.Get(), ClusterNode);
 				bClusterModified = true;
 			}
 		}
@@ -283,7 +284,7 @@ void FDisplayClusterConfiguratorTreeItemClusterNode::OnDisplayNameCommitted(cons
 	FScopedTransaction Transaction(LOCTEXT("RenameClusterNode", "Rename Cluster Node"));
 	FString NewName = NewText.ToString();
 
-	if (FDisplayClusterConfiguratorClusterUtils::RenameClusterNode(ClusterNode, NewName))
+	if (UE::DisplayClusterConfiguratorClusterUtils::RenameClusterNode(ClusterNode, NewName))
 	{
 		Name = *NewName;
 
@@ -299,7 +300,7 @@ void FDisplayClusterConfiguratorTreeItemClusterNode::OnDisplayNameCommitted(cons
 EVisibility FDisplayClusterConfiguratorTreeItemClusterNode::GetPrimaryLabelVisibility() const
 {
 	UDisplayClusterConfigurationClusterNode* ClusterNode = GetObjectChecked<UDisplayClusterConfigurationClusterNode>();
-	const bool bIsPrimary = FDisplayClusterConfiguratorClusterUtils::IsClusterNodePrimary(ClusterNode);
+	const bool bIsPrimary = UE::DisplayClusterConfiguratorClusterUtils::IsClusterNodePrimary(ClusterNode);
 
 	return bIsPrimary ? EVisibility::Visible : EVisibility::Collapsed;
 }
@@ -316,7 +317,7 @@ bool FDisplayClusterConfiguratorTreeItemClusterNode::CanDropViewports(TSharedPtr
 		{
 			if (Viewport.IsValid())
 			{
-				FString ViewportName = FDisplayClusterConfiguratorClusterUtils::GetViewportName(Viewport.Get());
+				FString ViewportName = UE::DisplayClusterConfiguratorClusterUtils::GetViewportName(Viewport.Get());
 
 				if (ClusterNode->Viewports.Contains(ViewportName) && ClusterNode->Viewports[ViewportName] != Viewport.Get())
 				{
@@ -348,7 +349,7 @@ void FDisplayClusterConfiguratorTreeItemClusterNode::ToggleClusterItemVisibility
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(ClusterNode, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		ClusterNode, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationClusterNode, bIsVisible));
 
 	PropertyView->GetPropertyHandle()->SetValue(!ClusterNode->bIsVisible);
@@ -380,7 +381,7 @@ void FDisplayClusterConfiguratorTreeItemClusterNode::ToggleClusterItemLock()
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(ClusterNode, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		ClusterNode, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationClusterNode, bIsUnlocked));
 
 	PropertyView->GetPropertyHandle()->SetValue(!ClusterNode->bIsUnlocked);

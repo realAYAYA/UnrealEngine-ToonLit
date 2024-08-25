@@ -9,7 +9,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 #if !defined(UE_CALLSTACK_TRACE_ENABLED)
 	#if UE_TRACE_ENABLED && !UE_BUILD_SHIPPING
-		#if PLATFORM_WINDOWS 
+		#if PLATFORM_WINDOWS && !PLATFORM_CPU_ARM_FAMILY
 			#define UE_CALLSTACK_TRACE_ENABLED 1
 		#endif
 	#endif
@@ -55,7 +55,7 @@ extern CORE_API uint32 GCallStackTracingTlsSlotIndex;
 */
 inline void* CallstackTrace_GetFallbackPlatformReturnAddressData()
 {
-	if (GCallStackTracingTlsSlotIndex != MAX_uint32)
+	if (FPlatformTLS::IsValidTlsSlot(GCallStackTracingTlsSlotIndex))
 		return FPlatformTLS::GetTlsValue(GCallStackTracingTlsSlotIndex);
 	else
 		return nullptr;
@@ -77,7 +77,7 @@ class FCallStackTraceLimitResolveScope
 public:
 	FORCENOINLINE FCallStackTraceLimitResolveScope()
 	{
-		if (GCallStackTracingTlsSlotIndex != MAX_uint32)
+		if (FPlatformTLS::IsValidTlsSlot(GCallStackTracingTlsSlotIndex))
 		{
 			FPlatformTLS::SetTlsValue(GCallStackTracingTlsSlotIndex, PLATFORM_RETURN_ADDRESS_FOR_CALLSTACKTRACING());
 		}
@@ -85,7 +85,7 @@ public:
 
 	FORCENOINLINE ~FCallStackTraceLimitResolveScope()
 	{
-		if (GCallStackTracingTlsSlotIndex != MAX_uint32)
+		if (FPlatformTLS::IsValidTlsSlot(GCallStackTracingTlsSlotIndex))
 		{
 			FPlatformTLS::SetTlsValue(GCallStackTracingTlsSlotIndex, nullptr);
 		}

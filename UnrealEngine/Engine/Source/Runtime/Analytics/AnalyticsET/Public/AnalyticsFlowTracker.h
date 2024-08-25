@@ -8,14 +8,14 @@
 
 using FThreadId = uint32;
 
-class FAnalyticsFlowTracker : FNoncopyable
+class UE_DEPRECATED(5.4, "Use FAnalyticsTracer instead.") FAnalyticsFlowTracker : FNoncopyable
 {
 public:
 	FAnalyticsFlowTracker() {};
 	~FAnalyticsFlowTracker() {};
 
 	/** Sets the analytics provider for the flow tracker. */
-	ANALYTICSET_API void SetProvider(TSharedPtr<IAnalyticsProviderET>& AnalyticsProvider);
+	ANALYTICSET_API void SetProvider(TSharedPtr<IAnalyticsProvider> AnalyticsProvider);
 
 	/** Begins a new flow tracking session. Will emit Flow and SubFlow events to the specified analytics provider */
 	ANALYTICSET_API void StartSession();
@@ -88,7 +88,7 @@ private:
 	TMap<FGuid, FSubFlowData>		SubFlowDataRegistry;
 	TArray<FGuid>					FlowDataStack;
 	FCriticalSection				CriticalSection;
-	TSharedPtr<IAnalyticsProviderET> AnalyticsProvider;
+	TSharedPtr<IAnalyticsProvider>	AnalyticsProvider;
 
 	const uint32 FlowSchemaVersion = 4;
 	const FString FlowEventName = TEXT("Iteration.Flow");

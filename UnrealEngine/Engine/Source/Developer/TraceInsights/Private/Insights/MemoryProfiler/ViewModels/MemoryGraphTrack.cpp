@@ -99,7 +99,7 @@ FMemoryGraphTrack::FMemoryGraphTrack(FMemorySharedState& InSharedState)
 
 	for (uint32 Mode = 0; Mode < static_cast<uint32>(EMemoryTrackHeightMode::Count); ++Mode)
 	{
-		SetAvailableTrackHeight(static_cast<EMemoryTrackHeightMode>(Mode), 100.0f * (Mode + 1));
+		SetAvailableTrackHeight(static_cast<EMemoryTrackHeightMode>(Mode), 100.0f * static_cast<float>(Mode + 1));
 	}
 	SetHeight(200.0f);
 }
@@ -1126,7 +1126,7 @@ void FMemoryGraphTrack::InitTooltip(FTooltipDrawState& InOutTooltip, const ITimi
 
 		if (Series->GetTimelineType() == FMemoryGraphSeries::ETimelineType::MemTag)
 		{
-			FString SubTitle = FString::Printf(TEXT("(tag id 0x%X, tracker id %i)"), (uint64)Series->GetTagId(), (int32)Series->GetTrackerId());
+			FString SubTitle = FString::Printf(TEXT("(tag id 0x%llX, tracker id %i)"), (uint64)Series->GetTagId(), (int32)Series->GetTrackerId());
 			InOutTooltip.AddTitle(SubTitle, Series->GetColor());
 		}
 

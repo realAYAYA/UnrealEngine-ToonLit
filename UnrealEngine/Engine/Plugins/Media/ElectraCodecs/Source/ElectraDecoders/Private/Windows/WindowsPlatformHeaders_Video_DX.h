@@ -6,9 +6,8 @@
 #include "CoreMinimal.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/WindowsHWrapper.h"
-
 THIRD_PARTY_INCLUDES_START
+
 #include <d3d11.h>
 #include <d3d11_1.h>
 #include <d3d12.h>
@@ -18,10 +17,16 @@ THIRD_PARTY_INCLUDES_START
 #include "mfapi.h"
 #include "mferror.h"
 #include "mfidl.h"
+
+#if defined(NTDDI_WIN10_NI)
+#include "mfd3d12.h"
+#define ALLOW_MFSAMPLE_WITH_DX12	1	// Windows SDK 22621 and up do feature APIs to support DX12 texture resources with WMF transforms
+#else
+#define ALLOW_MFSAMPLE_WITH_DX12	0
+#endif
+
 THIRD_PARTY_INCLUDES_END
-
 #include "Windows/HideWindowsPlatformTypes.h"
-
 
 struct FElectraVideoDecoderDXDeviceContext
 {

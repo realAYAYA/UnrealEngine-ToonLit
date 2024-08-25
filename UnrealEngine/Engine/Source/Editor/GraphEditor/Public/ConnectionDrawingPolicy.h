@@ -134,7 +134,7 @@ protected:
 	TArray<UEdGraphNode*> SelectedGraphNodes;
 public:
 	virtual ~FConnectionDrawingPolicy() {}
-
+	
 	FConnectionDrawingPolicy(int32 InBackLayerID, int32 InFrontLayerID, float InZoomFactor, const FSlateRect& InClippingRect, FSlateWindowElementList& InDrawElements);
 
 	// Update the drawing policy with the set of hovered pins (which can be empty)
@@ -185,6 +185,8 @@ public:
 
 	virtual bool IsConnectionCulled( const FArrangedWidget& StartLink, const FArrangedWidget& EndLink ) const;
 
+	virtual TSharedPtr<IToolTip> GetConnectionToolTip(const SGraphPanel& GraphPanel, const FGraphSplineOverlapResult& OverlapData) const;
+	
 protected:
 	// Helper function used by Draw(). Called before DrawPinGeometries to populate PinToPinWidgetMap
 	virtual void BuildPinToPinWidgetMap(TMap<TSharedRef<SWidget>, FArrangedWidget>& InPinGeometries);

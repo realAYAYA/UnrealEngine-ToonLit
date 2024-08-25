@@ -15,8 +15,71 @@ class FDatabase;
 class FModelMesh;
 class FTopologicalEdge;
 class FVertexMesh;
+class FTopologicalVertex;
 
-class CADKERNEL_API FTopologicalVertex : public TLinkable<FTopologicalVertex, FVertexLink>
+/**
+ * TTopologicalLink overload dedicated to FVertex to manage the barycenter of twin vertices
+ */
+class FVertexLink : public TTopologicalLink<FTopologicalVertex>
+{
+	friend class FTopologicalVertex;
+
+protected:
+	FPoint Barycenter;
+
+	void SetBarycenter(const FPoint& Point)
+	{
+		Barycenter = Point;
+	}
+
+public:
+	FVertexLink()
+		: Barycenter(FPoint::ZeroPoint)
+	{
+	}
+
+	FVertexLink(FTopologicalVertex& Entity)
+		: TTopologicalLink<FTopologicalVertex>(Entity)
+		, Barycenter(FPoint::ZeroPoint)
+	{
+	}
+
+	virtual void Serialize(FCADKernelArchive& Ar) override
+	{
+		TTopologicalLink<FTopologicalVertex>::Serialize(Ar);
+		Ar << Barycenter;
+	}
+
+#ifdef CADKERNEL_DEV
+	CADKERNEL_API virtual FInfoEntity& GetInfo(FInfoEntity& Info) const override;
+#endif
+
+	const FPoint& GetBarycenter() const
+	{
+		return Barycenter;
+	}
+
+	virtual bool CleanLink() override
+	{
+		if (TTopologicalLink::CleanLink())
+		{
+			ComputeBarycenter();
+			DefineActiveEntity();
+			return true;
+		}
+		return false;
+	}
+
+	virtual EEntity GetEntityType() const override
+	{
+		return EEntity::VertexLink;
+	}
+
+	CADKERNEL_API void ComputeBarycenter();
+	CADKERNEL_API void DefineActiveEntity();
+};
+
+class FTopologicalVertex : public TLinkable<FTopologicalVertex, FVertexLink>
 {
 	friend class FEntity;
 	friend class FVertexLink;
@@ -60,10 +123,10 @@ public:
 		SerializeIdents(Ar, ConnectedEdges);
 	}
 
-	virtual void SpawnIdent(FDatabase& Database) override;
+	CADKERNEL_API virtual void SpawnIdent(FDatabase& Database) override;
 
 #ifdef CADKERNEL_DEV
-	virtual FInfoEntity& GetInfo(FInfoEntity&) const override;
+	CADKERNEL_API virtual FInfoEntity& GetInfo(FInfoEntity&) const override;
 #endif
 
 	virtual EEntity GetEntityType() const override
@@ -129,7 +192,7 @@ public:
 		return Coordinates.SquareDistance(Point);
 	}
 
-	FVertexMesh& GetOrCreateMesh(FModelMesh& MeshModel);
+	CADKERNEL_API FVertexMesh& GetOrCreateMesh(FModelMesh& MeshModel);
 
 	const FVertexMesh* GetMesh() const
 	{
@@ -144,9 +207,9 @@ public:
 		return nullptr;
 	}
 
-	void Link(FTopologicalVertex& InEntity);
+	CADKERNEL_API void Link(FTopologicalVertex& InEntity);
 
-	void UnlinkTo(FTopologicalVertex& Entity);
+	CADKERNEL_API void UnlinkTo(FTopologicalVertex& Entity);
 
 	virtual void RemoveFromLink() override
 	{
@@ -182,10 +245,10 @@ public:
 		TLinkable<FTopologicalVertex, FVertexLink>::Empty();
 	}
 
-	bool IsBorderVertex() const;
+	CADKERNEL_API bool IsBorderVertex() const;
 
-	void AddConnectedEdge(FTopologicalEdge& Edge);
-	void RemoveConnectedEdge(FTopologicalEdge& Edge);
+	CADKERNEL_API void AddConnectedEdge(FTopologicalEdge& Edge);
+	CADKERNEL_API void RemoveConnectedEdge(FTopologicalEdge& Edge);
 
 	/**
 	 * Mandatory: to browse all the connected edges, you have to browse the connected edges of all the twin vertices
@@ -202,7 +265,7 @@ public:
 		return ConnectedEdges;
 	}
 
-	const FTopologicalFace* GetFace() const;
+	CADKERNEL_API const FTopologicalFace* GetFace() const;
 
 	void GetConnectedEdges(TArray<FTopologicalEdge*>& OutConnectedEdges) const
 	{
@@ -240,7 +303,7 @@ public:
 	/**
 	 *
 	 */
-	void GetConnectedEdges(const FTopologicalVertex& OtherVertex, TArray<FTopologicalEdge*>& Edges) const;
+	CADKERNEL_API void GetConnectedEdges(const FTopologicalVertex& OtherVertex, TArray<FTopologicalEdge*>& Edges) const;
 };
 
 } // namespace UE::CADKernel

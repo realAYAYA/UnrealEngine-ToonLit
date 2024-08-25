@@ -84,7 +84,7 @@ void SNiagaraGraphNode::UpdateErrorInfo()
 	ErrorMsg.Reset();
 	if (NiagaraNode.IsValid())
 	{
-		if (NiagaraEditorSettings->IsAllowedClass(GraphNode->GetClass()) == false || 
+		if (NiagaraEditorSettings->IsReferenceableClass(GraphNode->GetClass()) == false || 
 			(NiagaraNode->GetReferencedAsset() != nullptr && NiagaraEditorSettings->IsAllowedAssetObjectByClassUsage(*NiagaraNode->GetReferencedAsset()) == false))
 		{
 			ErrorMsg = FString(TEXT("UNSUPPORTED!"));
@@ -331,7 +331,8 @@ void SNiagaraGraphNode::UpdateGraphNodeCompact()
 	.AllowPinning( true )
 	.EnableTitleBarBubble( true )
 	.EnableBubbleCtrls( true )
-	.GraphLOD( this, &SGraphNode::GetCurrentLOD );
+	.GraphLOD( this, &SGraphNode::GetCurrentLOD )
+	.IsGraphNodeHovered(this, &SGraphNode::IsHovered);
 
 	GetOrAddSlot( ENodeZone::TopCenter )
 	.SlotOffset( TAttribute<FVector2D>( CommentBubble.Get(), &SCommentBubble::GetOffset ))

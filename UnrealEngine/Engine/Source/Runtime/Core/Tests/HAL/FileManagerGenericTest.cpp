@@ -254,7 +254,7 @@ void FArchiveFileReaderGenericTest::SetPosAndBuffer(TUniquePtr<FArchiveFileReade
 {
 	Reader->Pos = Pos;
 	Reader->BufferBase = BufferBase;
-	Reader->BufferArray.SetNumUninitialized(BufferSize, false /* bAllowShrink */);
+	Reader->BufferArray.SetNumUninitialized(BufferSize, EAllowShrinking::No);
 	if (BufferSize)
 	{
 		Reader->SeekLowLevel(BufferBase);

@@ -10,6 +10,8 @@
 #include "Materials/MaterialExpressionVolumetricAdvancedMaterialOutput.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialSourceTemplate.h"
+#include "StringTemplate.h"
 #include "MaterialDomain.h"
 #include "MaterialHLSLTree.h"
 #include "MaterialCachedHLSLTree.h"
@@ -47,7 +49,7 @@ static const TCHAR* HLSLTypeString(EMaterialValueType Type)
 	case MCT_UInt2:					return TEXT("uint2");
 	case MCT_UInt3:					return TEXT("uint3");
 	case MCT_UInt4:					return TEXT("uint4");
-	case MCT_Strata:				return TEXT("FStrataData");
+	case MCT_Substrate:				return TEXT("FSubstrateData");
 	default:						return TEXT("unknown");
 	};
 }
@@ -67,29 +69,14 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 
 	const Material::FEmitData& EmitMaterialData = EmitContext.FindData<Material::FEmitData>();
 
-	FString MaterialTemplateSource;
-	LoadShaderSourceFileChecked(TEXT("/Engine/Private/MaterialTemplate.ush"), ShaderPlatform, MaterialTemplateSource);
+	TMap<FString, FString> MaterialSourceTemplateParams;
+	int32 MaterialTemplateLineNumber;
 
-	// Find the string index of the '#line' statement in MaterialTemplate.usf
-	const int32 LineIndex = MaterialTemplateSource.Find(TEXT("#line"), ESearchCase::CaseSensitive);
-	check(LineIndex != INDEX_NONE);
+	FStringTemplateResolver Resolver = FMaterialSourceTemplate::Get().BeginResolve(ShaderPlatform, &MaterialTemplateLineNumber);
+	Resolver.SetParameterMap(&MaterialSourceTemplateParams);
 
-	// Count line endings before the '#line' statement
-	int32 MaterialTemplateLineNumber = INDEX_NONE;
-	int32 StartPosition = LineIndex + 1;
-	do
-	{
-		MaterialTemplateLineNumber++;
-		// Using \n instead of LINE_TERMINATOR as not all of the lines are terminated consistently
-		// Subtract one from the last found line ending index to make sure we skip over it
-		StartPosition = MaterialTemplateSource.Find(TEXT("\n"), ESearchCase::CaseSensitive, ESearchDir::FromEnd, StartPosition - 1);
-	} while (StartPosition != INDEX_NONE);
-	check(MaterialTemplateLineNumber != INDEX_NONE);
-	// At this point MaterialTemplateLineNumber is one less than the line number of the '#line' statement
-	// For some reason we have to add 2 more to the #line value to get correct error line numbers from D3DXCompileShader
-	MaterialTemplateLineNumber += 3;
-
-	FLazyPrintf LazyPrintf(*MaterialTemplateSource);
+	MaterialSourceTemplateParams.Reserve(Resolver.GetTemplate().GetNumNamedParameters());
+	MaterialSourceTemplateParams.Add({ TEXT("line_number"), FString::Printf(TEXT("%u"), MaterialTemplateLineNumber) });
 
 	uint32 NumVertexTexCoords = 0u;
 	uint32 NumPixelTexCoords = 0u;
@@ -106,78 +93,23 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 		}
 	}
 
-	NumVertexTexCoords = FMath::Max(NumVertexTexCoords, NumPixelTexCoords);
-
 	const uint32 NumCustomVectors = (EmitMaterialData.NumInterpolatorComponents + 1) / 2;
 	const uint32 NumTexCoordVectors = NumPixelTexCoords + NumCustomVectors;
 
 	OutCompilationOutput.NumUsedUVScalars = NumPixelTexCoords * 2;
 	OutCompilationOutput.NumUsedCustomInterpolatorScalars = EmitMaterialData.NumInterpolatorComponents;
 
-	LazyPrintf.PushParam(*FString::Printf(TEXT("%u"), NumVertexTexCoords));
-	LazyPrintf.PushParam(*FString::Printf(TEXT("%u"), NumPixelTexCoords));
-	LazyPrintf.PushParam(*FString::Printf(TEXT("%u"), NumCustomVectors));
-	LazyPrintf.PushParam(*FString::Printf(TEXT("%u"), NumTexCoordVectors));
+	MaterialSourceTemplateParams.Add({ TEXT("num_material_texcoords_vertex"), FString::Printf(TEXT("%u"), NumVertexTexCoords) });
+	MaterialSourceTemplateParams.Add({ TEXT("num_material_texcoords"), FString::Printf(TEXT("%u"), NumPixelTexCoords) });
+	MaterialSourceTemplateParams.Add({ TEXT("num_custom_vertex_interpolators"), FString::Printf(TEXT("%u"), NumCustomVectors) });
+	MaterialSourceTemplateParams.Add({ TEXT("num_tex_coord_interpolators"), FString::Printf(TEXT("%u"), NumTexCoordVectors) });
 
 	FString VertexInterpolatorsOffsetsDefinition;
-	LazyPrintf.PushParam(*VertexInterpolatorsOffsetsDefinition);
+	MaterialSourceTemplateParams.Add({ TEXT("vertex_interpolators_offsets_definition"), VertexInterpolatorsOffsetsDefinition });
 
-	FString MaterialAttributesDeclaration;
-	FString MaterialAttributesUtilities;
-	FString MaterialAttributesDefault;
-
-	const EMaterialShadingModel DefaultShadingModel = Material.GetShadingModels().GetFirstShadingModel();
-
-	const TArray<FGuid>& OrderedVisibleAttributes = FMaterialAttributeDefinitionMap::GetOrderedVisibleAttributeList();
-	for (const FGuid& AttributeID : OrderedVisibleAttributes)
-	{
-		const FString PropertyName = FMaterialAttributeDefinitionMap::GetAttributeName(AttributeID);
-		const EMaterialValueType PropertyType = FMaterialAttributeDefinitionMap::GetValueType(AttributeID);
-		const TCHAR* HLSLType = nullptr;
-
-		switch (PropertyType)
-		{
-		case MCT_Float1: case MCT_Float: HLSLType = TEXT("float"); break;
-		case MCT_Float2: HLSLType = TEXT("float2"); break;
-		case MCT_Float3: HLSLType = TEXT("float3"); break;
-		case MCT_Float4: HLSLType = TEXT("float4"); break;
-		case MCT_ShadingModel: case MCT_UInt:  case MCT_UInt1:  HLSLType = TEXT("uint"); break;
-		case MCT_UInt2:  HLSLType = TEXT("uint2"); break;
-		case MCT_UInt3:  HLSLType = TEXT("uint3"); break;
-		case MCT_UInt4:  HLSLType = TEXT("uint4"); break;
-		case MCT_Strata: HLSLType = TEXT("FStrataData"); break;
-		default: break;
-		}
-
-		if (HLSLType)
-		{
-			const FVector4f DefaultValue = FMaterialAttributeDefinitionMap::GetDefaultValue(AttributeID);
-
-			MaterialAttributesDeclaration += FString::Printf(TEXT("\t%s %s;") LINE_TERMINATOR, HLSLType, *PropertyName);
-
-			// Chainable method to set the attribute
-			MaterialAttributesUtilities += FString::Printf(TEXT("FMaterialAttributes FMaterialAttributes_Set%s(FMaterialAttributes InAttributes, %s InValue) { InAttributes.%s = InValue; return InAttributes; }") LINE_TERMINATOR,
-				*PropertyName, HLSLType, *PropertyName);
-
-			// Standard value type
-			switch (PropertyType)
-			{
-			case MCT_Float: case MCT_Float1: MaterialAttributesDefault += FString::Printf(TEXT("\tResult.%s = %0.8f;") LINE_TERMINATOR, *PropertyName, DefaultValue.X); break;
-			case MCT_Float2: MaterialAttributesDefault += FString::Printf(TEXT("\tResult.%s = MaterialFloat2(%0.8f,%0.8f);") LINE_TERMINATOR, *PropertyName, DefaultValue.X, DefaultValue.Y); break;
-			case MCT_Float3: MaterialAttributesDefault += FString::Printf(TEXT("\tResult.%s = MaterialFloat3(%0.8f,%0.8f,%0.8f);") LINE_TERMINATOR, *PropertyName, DefaultValue.X, DefaultValue.Y, DefaultValue.Z); break;
-			case MCT_Float4: MaterialAttributesDefault += FString::Printf(TEXT("\tResult.%s = MaterialFloat4(%0.8f,%0.8f,%0.8f,%0.8f);") LINE_TERMINATOR, *PropertyName, DefaultValue.X, DefaultValue.Y, DefaultValue.Z, DefaultValue.W); break;
-			case MCT_ShadingModel: MaterialAttributesDefault += FString::Printf(TEXT("\tResult.%s = %d;") LINE_TERMINATOR, *PropertyName, (int32)DefaultShadingModel); break;
-			case MCT_Strata: MaterialAttributesDefault += FString::Printf(TEXT("\tResult.%s = GetInitialisedStrataData();") LINE_TERMINATOR, *PropertyName); break; // TODO
-			default: checkNoEntry(); break;
-			}
-		}
-	}
-
-	//LazyPrintf.PushParam(*MaterialAttributesDeclaration);
-	//LazyPrintf.PushParam(*MaterialAttributesUtilities);
-
-	LazyPrintf.PushParam(DeclarationsCode);
-	LazyPrintf.PushParam(TEXT(""));
+	MaterialSourceTemplateParams.Add({ TEXT("material_declarations"), DeclarationsCode });
+	// Empty string because setters included in DeclarationsCode
+	MaterialSourceTemplateParams.Add({ TEXT("material_attributes_utilities"), TEXT("") });
 
 	// Stores the shared shader results member declarations
 	// PixelMembersDeclaration should be the same for all variations, but might change in the future. There are cases where work is shared
@@ -208,9 +140,10 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 	//	GetSharedInputsMaterialCode(PixelMembersDeclaration[Index], NormalAssignment[Index], PixelMembersSetupAndAssignments[Index], (ECompiledPartialDerivativeVariation)Index);
 	//}
 
-	LazyPrintf.PushParam(*PixelMembersDeclaration);
+	MaterialSourceTemplateParams.Add({ TEXT("pixel_material_inputs"), PixelMembersDeclaration });
 
-	LazyPrintf.PushParam(SharedShaderCode);
+	// This is actually not uniform expressions but material custom outputs, custom HLSL code, and user vertex interpolators
+	MaterialSourceTemplateParams.Add({ TEXT("uniform_material_expressions"), SharedShaderCode });
 
 	// Anything used bye the GenerationFunctionCode() like WorldPositionOffset shouldn't be using texures, right?
 	// Let those use the standard finite differences textures, since they should be the same. If we actually want
@@ -223,32 +156,31 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 	//}
 	//else
 	{
-		LazyPrintf.PushParam(TEXT("return 0"));
+		MaterialSourceTemplateParams.Add({ TEXT("get_material_emissive_for_cs"), TEXT("return 0") });
 	}
 
-	LazyPrintf.PushParam(*FString::Printf(TEXT("return %.5f"), Material.GetTranslucencyDirectionalLightingIntensity()));
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_translucency_directional_lighting_intensity"), FString::Printf(TEXT("return %.5f"), Material.GetTranslucencyDirectionalLightingIntensity()) });
 
-	LazyPrintf.PushParam(*FString::Printf(TEXT("return %.5f"), Material.GetTranslucentShadowDensityScale()));
-	LazyPrintf.PushParam(*FString::Printf(TEXT("return %.5f"), Material.GetTranslucentSelfShadowDensityScale()));
-	LazyPrintf.PushParam(*FString::Printf(TEXT("return %.5f"), Material.GetTranslucentSelfShadowSecondDensityScale()));
-	LazyPrintf.PushParam(*FString::Printf(TEXT("return %.5f"), Material.GetTranslucentSelfShadowSecondOpacity()));
-	LazyPrintf.PushParam(*FString::Printf(TEXT("return %.5f"), Material.GetTranslucentBackscatteringExponent()));
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_translucent_shadow_density_scale"), FString::Printf(TEXT("return %.5f"), Material.GetTranslucentShadowDensityScale()) });
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_translucent_self_shadow_density_scale"), FString::Printf(TEXT("return %.5f"), Material.GetTranslucentSelfShadowDensityScale()) });
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_translucent_self_shadow_second_density_scale"), FString::Printf(TEXT("return %.5f"), Material.GetTranslucentSelfShadowSecondDensityScale()) });
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_translucent_self_shadow_second_opacity"), FString::Printf(TEXT("return %.5f"), Material.GetTranslucentSelfShadowSecondOpacity()) });
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_translucent_backscattering_exponent"), FString::Printf(TEXT("return %.5f"), Material.GetTranslucentBackscatteringExponent()) });
 
 	{
 		FLinearColor Extinction = Material.GetTranslucentMultipleScatteringExtinction();
 
-		LazyPrintf.PushParam(*FString::Printf(TEXT("return MaterialFloat3(%.5f, %.5f, %.5f)"), Extinction.R, Extinction.G, Extinction.B));
+		MaterialSourceTemplateParams.Add({ TEXT("get_material_translucent_multiple_scattering_extinction"), FString::Printf(TEXT("return MaterialFloat3(%.5f, %.5f, %.5f)"), Extinction.R, Extinction.G, Extinction.B) });
 	}
 
-	LazyPrintf.PushParam(*FString::Printf(TEXT("return %.5f"), Material.GetOpacityMaskClipValue()));
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_opacity_mask_clip_value"), FString::Printf(TEXT("return %.5f"), Material.GetOpacityMaskClipValue()) });
 
-	LazyPrintf.PushParam(TEXT("return Parameters.MaterialAttributes.Displacement"));
-	LazyPrintf.PushParam(TEXT("return Parameters.MaterialAttributes.WorldPositionOffset"));
-	LazyPrintf.PushParam(TEXT("return Parameters.MaterialAttributes.PrevWorldPositionOffset"));
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_world_position_offset_raw"), TEXT("return Parameters.MaterialAttributes.WorldPositionOffset") });
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_previous_world_position_offset_raw"), TEXT("return Parameters.MaterialAttributes.PrevWorldPositionOffset") });
 	
 	// CustomData0/1 are named ClearCoat/ClearCoatRoughness
-	LazyPrintf.PushParam(TEXT("return Parameters.MaterialAttributes.ClearCoat"));
-	LazyPrintf.PushParam(TEXT("return Parameters.MaterialAttributes.ClearCoatRoughness"));
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_custom_data0"), TEXT("return Parameters.MaterialAttributes.ClearCoat") });
+	MaterialSourceTemplateParams.Add({ TEXT("get_material_custom_data1"), TEXT("return Parameters.MaterialAttributes.ClearCoatRoughness") });
 
 	// Print custom texture coordinate assignments, should be fine with regular derivatives
 	{
@@ -256,9 +188,9 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 		for (uint32 CustomUVIndex = 0; CustomUVIndex < NumPixelTexCoords; CustomUVIndex++)
 		{
 			const FString AttributeName = FMaterialAttributeDefinitionMap::GetAttributeName((EMaterialProperty)(MP_CustomizedUVs0 + CustomUVIndex));
-			CustomUVAssignments += FString::Printf(TEXT("\tOutTexCoords[%u] = Parameters.MaterialAttributes.%s;") LINE_TERMINATOR, CustomUVIndex, *AttributeName);
+			CustomUVAssignments += FString::Printf(TEXT("\tOutTexCoords[%u] = Parameters.MaterialAttributes.%s;") HLSL_LINE_TERMINATOR, CustomUVIndex, *AttributeName);
 		}
-		LazyPrintf.PushParam(*CustomUVAssignments);
+		MaterialSourceTemplateParams.Add({ TEXT("get_material_customized_u_vs"), CustomUVAssignments });
 	}
 
 	// Print custom vertex shader interpolator assignments
@@ -266,36 +198,19 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 		FString CustomInterpolatorAssignments;
 		for (uint32 InterpolatorIndex = 0; InterpolatorIndex < NumCustomVectors; ++InterpolatorIndex)
 		{
-			CustomInterpolatorAssignments += FString::Printf(TEXT("\tOutTexCoords[NUM_MATERIAL_TEXCOORDS + %u] = Parameters.CustomInterpolators[%u];") LINE_TERMINATOR, InterpolatorIndex, InterpolatorIndex);
+			CustomInterpolatorAssignments += FString::Printf(TEXT("\tOutTexCoords[NUM_MATERIAL_TEXCOORDS + %u] = Parameters.CustomInterpolators[%u];") HLSL_LINE_TERMINATOR, InterpolatorIndex, InterpolatorIndex);
 		}
-		LazyPrintf.PushParam(*CustomInterpolatorAssignments);
+		MaterialSourceTemplateParams.Add({ TEXT("get_custom_interpolators"), CustomInterpolatorAssignments });
 	}
-
-	//LazyPrintf.PushParam(*MaterialAttributesDefault);
 
 	//if (bEnableExecutionFlow)
 	{
 		FString EvaluateMaterialDeclaration;
 
-		EvaluateMaterialDeclaration += TEXT("void EvaluateVertexMaterialAttributesInternal(in out FMaterialVertexParameters Parameters)" LINE_TERMINATOR);
-		EvaluateMaterialDeclaration += TEXT("{" LINE_TERMINATOR);
+		EvaluateMaterialDeclaration += TEXT("void EvaluateVertexMaterialAttributes(in out FMaterialVertexParameters Parameters)" HLSL_LINE_TERMINATOR);
+		EvaluateMaterialDeclaration += TEXT("{" HLSL_LINE_TERMINATOR);
 		EvaluateMaterialDeclaration += VertexShaderCode;
-		EvaluateMaterialDeclaration += TEXT("}" LINE_TERMINATOR);
-
-		EvaluateMaterialDeclaration += TEXT("void EvaluateVertexMaterialAttributes(in out FMaterialVertexParameters Parameters)" LINE_TERMINATOR);
-		EvaluateMaterialDeclaration += TEXT("{" LINE_TERMINATOR);
-		EvaluateMaterialDeclaration += TEXT("    EvaluateVertexMaterialAttributesInternal(Parameters);" LINE_TERMINATOR);
-		for (uint32 TexCoordIndex = 0; TexCoordIndex < NumPixelTexCoords; ++TexCoordIndex)
-		{
-			const Material::EExternalInput TexCoordInput = Material::MakeInputTexCoord(TexCoordIndex);
-
-			if (EmitMaterialData.IsExternalInputUsed(SF_Pixel, TexCoordInput) && !EmitMaterialData.IsExternalInputUsed(SF_Vertex, TexCoordInput))
-			{
-				const FString AttributeName = FMaterialAttributeDefinitionMap::GetAttributeName((EMaterialProperty)(MP_CustomizedUVs0 + TexCoordIndex));
-				EvaluateMaterialDeclaration += FString::Printf(TEXT("    Parameters.MaterialAttributes.%s = Parameters.TexCoords[%d];") LINE_TERMINATOR, *AttributeName, TexCoordIndex);
-			}
-		}
-		EvaluateMaterialDeclaration += TEXT("}" LINE_TERMINATOR);
+		EvaluateMaterialDeclaration += TEXT("}" HLSL_LINE_TERMINATOR);
 
 		FString EvaluateMaterialAttributesPhase0[2];
 		FString EvaluateMaterialAttributesPhase1[2];
@@ -303,32 +218,32 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 		{
 			const TCHAR* DerivativeName = (DerivativeIndex == 0) ? TEXT("HWDerivative") : TEXT("AnalyticDerivative");
 
-			EvaluateMaterialAttributesPhase0[DerivativeIndex] =  FString::Printf(TEXT("    FMaterialAttributes MaterialAttributesPhase0;" LINE_TERMINATOR), DerivativeName);
-			EvaluateMaterialAttributesPhase0[DerivativeIndex] += FString::Printf(TEXT("    EvaluatePixelMaterialAttributesPhase0_%s(Parameters, MaterialAttributesPhase0);" LINE_TERMINATOR), DerivativeName);
+			EvaluateMaterialAttributesPhase0[DerivativeIndex] =  FString::Printf(TEXT("    FMaterialAttributes MaterialAttributesPhase0;" HLSL_LINE_TERMINATOR), DerivativeName);
+			EvaluateMaterialAttributesPhase0[DerivativeIndex] += FString::Printf(TEXT("    EvaluatePixelMaterialAttributesPhase0_%s(Parameters, MaterialAttributesPhase0);" HLSL_LINE_TERMINATOR), DerivativeName);
 
-			EvaluateMaterialDeclaration += FString::Printf(TEXT("void EvaluatePixelMaterialAttributesPhase0_%s(in out FMaterialPixelParameters Parameters, out FMaterialAttributes OutResult)" LINE_TERMINATOR), DerivativeName);
-			EvaluateMaterialDeclaration += TEXT("{" LINE_TERMINATOR);
+			EvaluateMaterialDeclaration += FString::Printf(TEXT("void EvaluatePixelMaterialAttributesPhase0_%s(in out FMaterialPixelParameters Parameters, out FMaterialAttributes OutResult)" HLSL_LINE_TERMINATOR), DerivativeName);
+			EvaluateMaterialDeclaration += TEXT("{" HLSL_LINE_TERMINATOR);
 			EvaluateMaterialDeclaration += PixelShaderCodePhase0[DerivativeIndex];
-			EvaluateMaterialDeclaration += TEXT("}" LINE_TERMINATOR);
+			EvaluateMaterialDeclaration += TEXT("}" HLSL_LINE_TERMINATOR);
 
 			if (PixelShaderCodePhase1[DerivativeIndex])
 			{
-				EvaluateMaterialDeclaration += FString::Printf(TEXT("void EvaluatePixelMaterialAttributesPhase1_%s(in out FMaterialPixelParameters Parameters, out FMaterialAttributes OutResult)" LINE_TERMINATOR), DerivativeName);
-				EvaluateMaterialDeclaration += TEXT("{" LINE_TERMINATOR);
+				EvaluateMaterialDeclaration += FString::Printf(TEXT("void EvaluatePixelMaterialAttributesPhase1_%s(in out FMaterialPixelParameters Parameters, out FMaterialAttributes OutResult)" HLSL_LINE_TERMINATOR), DerivativeName);
+				EvaluateMaterialDeclaration += TEXT("{" HLSL_LINE_TERMINATOR);
 				EvaluateMaterialDeclaration += PixelShaderCodePhase1[DerivativeIndex];
-				EvaluateMaterialDeclaration += TEXT("}" LINE_TERMINATOR);
+				EvaluateMaterialDeclaration += TEXT("}" HLSL_LINE_TERMINATOR);
 
-				EvaluateMaterialAttributesPhase1[DerivativeIndex] =  FString::Printf(TEXT("    FMaterialAttributes MaterialAttributesPhase1;" LINE_TERMINATOR), DerivativeName);
-				EvaluateMaterialAttributesPhase1[DerivativeIndex] += FString::Printf(TEXT("    EvaluatePixelMaterialAttributesPhase1_%s(Parameters, MaterialAttributesPhase1);" LINE_TERMINATOR), DerivativeName);
-				EvaluateMaterialAttributesPhase1[DerivativeIndex] += TEXT("    Parameters.MaterialAttributes = MaterialAttributesPhase1;" LINE_TERMINATOR);
+				EvaluateMaterialAttributesPhase1[DerivativeIndex] =  FString::Printf(TEXT("    FMaterialAttributes MaterialAttributesPhase1;" HLSL_LINE_TERMINATOR), DerivativeName);
+				EvaluateMaterialAttributesPhase1[DerivativeIndex] += FString::Printf(TEXT("    EvaluatePixelMaterialAttributesPhase1_%s(Parameters, MaterialAttributesPhase1);" HLSL_LINE_TERMINATOR), DerivativeName);
+				EvaluateMaterialAttributesPhase1[DerivativeIndex] += TEXT("    Parameters.MaterialAttributes = MaterialAttributesPhase1;" HLSL_LINE_TERMINATOR);
 			}
 			else
 			{
-				EvaluateMaterialAttributesPhase0[DerivativeIndex] += TEXT("    Parameters.MaterialAttributes = MaterialAttributesPhase0;" LINE_TERMINATOR);
+				EvaluateMaterialAttributesPhase0[DerivativeIndex] += TEXT("    Parameters.MaterialAttributes = MaterialAttributesPhase0;" HLSL_LINE_TERMINATOR);
 			}
 		}
 
-		LazyPrintf.PushParam(*EvaluateMaterialDeclaration);
+		MaterialSourceTemplateParams.Add({ TEXT("evaluate_material_attributes"), EvaluateMaterialDeclaration });
 
 		for (int32 DerivativeIndex = 0; DerivativeIndex < 2; ++DerivativeIndex)
 		{
@@ -352,31 +267,38 @@ static FString GenerateMaterialTemplateHLSL(EShaderPlatform ShaderPlatform,
 
 				if (PropertyIndex == MP_FrontMaterial)
 				{
-					EvaluateMaterialAttributesCode += FString::Printf("    PixelMaterialInputs.%s = GetInitialisedStrataData();" LINE_TERMINATOR, *PropertyName);
+					EvaluateMaterialAttributesCode += FString::Printf("    PixelMaterialInputs.%s = GetInitialisedSubstrateData();" HLSL_LINE_TERMINATOR, *PropertyName);
 				}
 				else if (PropertyIndex == MP_SubsurfaceColor)
 				{
 					EvaluateMaterialAttributesCode += FString::Printf(
-						"    PixelMaterialInputs.Subsurface = float4(MaterialAttributesPhase%d.%s, %s);" LINE_TERMINATOR,
+						"    PixelMaterialInputs.Subsurface = float4(MaterialAttributesPhase%d.%s, %s);" HLSL_LINE_TERMINATOR,
 						EvaluatePhase,
 						*PropertyName,
 						SubsurfaceProfileCode ? SubsurfaceProfileCode : TEXT("1.0f"));
 				}
 				else
 				{
-					EvaluateMaterialAttributesCode += FString::Printf("    PixelMaterialInputs.%s = MaterialAttributesPhase%d.%s;" LINE_TERMINATOR, *PropertyName, EvaluatePhase, *PropertyName);
+					EvaluateMaterialAttributesCode += FString::Printf("    PixelMaterialInputs.%s = MaterialAttributesPhase%d.%s;" HLSL_LINE_TERMINATOR, *PropertyName, EvaluatePhase, *PropertyName);
 				}
 			}
 
-			LazyPrintf.PushParam(TEXT(""));
-			LazyPrintf.PushParam(*EvaluateMaterialAttributesPhase0[DerivativeIndex]);
-			LazyPrintf.PushParam(*EvaluateMaterialAttributesPhase1[DerivativeIndex]);
+			if (DerivativeIndex == 0)
+			{
+				MaterialSourceTemplateParams.Add({ TEXT("calc_pixel_material_inputs_initial_calculations"), TEXT("") });
+				MaterialSourceTemplateParams.Add({ TEXT("calc_pixel_material_inputs_normal"), EvaluateMaterialAttributesPhase0[DerivativeIndex] });
+				MaterialSourceTemplateParams.Add({ TEXT("calc_pixel_material_inputs_other_inputs"), EvaluateMaterialAttributesPhase1[DerivativeIndex] });
+			}
+			else // if (DerivativeIndex == 1)
+			{
+				MaterialSourceTemplateParams.Add({ TEXT("calc_pixel_material_inputs_analytic_derivatives_initial"), TEXT("") });
+				MaterialSourceTemplateParams.Add({ TEXT("calc_pixel_material_inputs_analytic_derivatives_normal"), EvaluateMaterialAttributesPhase0[DerivativeIndex] });
+				MaterialSourceTemplateParams.Add({ TEXT("calc_pixel_material_inputs_analytic_derivatives_other_inputs"), EvaluateMaterialAttributesPhase1[DerivativeIndex] });
+			}
 		}
 	}
 
-	LazyPrintf.PushParam(*FString::Printf(TEXT("%u"), MaterialTemplateLineNumber));
-
-	return LazyPrintf.GetResultString();
+	return Resolver.Finalize();
 }
 
 static void GetMaterialEnvironment(EShaderPlatform InPlatform,
@@ -399,12 +321,15 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 	const bool bNeedsParticlePosition = EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleTranslatedWorldPosition) ||
 		EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleRadius);
 
-	if (bNeedsParticlePosition)// || Material->ShouldGenerateSphericalParticleNormals() || bUsesSphericalParticleOpacity)
+	if (bNeedsParticlePosition || InMaterial.ShouldGenerateSphericalParticleNormals() || EmitContext.bUsesSphericalParticleOpacity)
 	{
 		OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_POSITION"), 1);
 	}
 
-	if (false)//bNeedsParticleVelocity || Material->IsUsedWithNiagaraMeshParticles())
+	const bool bNeedsParticleVelocity = EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleDirection)
+		|| EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleSpeed);
+
+	if (bNeedsParticleVelocity || InMaterial.IsUsedWithNiagaraMeshParticles())
 	{
 		OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_VELOCITY"), 1);
 	}
@@ -415,17 +340,23 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 		OutEnvironment.SetDefine(TEXT("DYNAMIC_PARAMETERS_MASK"), EmitContext.DynamicParticleParameterMask);
 	}
 
-	if (false)//bNeedsParticleTime)
+	const bool bNeedsParticleTime = EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleRelativeTime);
+
+	if (bNeedsParticleTime)
 	{
 		OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_TIME"), 1);
 	}
 
-	if (false)//bUsesParticleMotionBlur)
+	const bool bUsesParticleMotionBlur = EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleMotionBlurFade);
+
+	if (bUsesParticleMotionBlur)
 	{
 		OutEnvironment.SetDefine(TEXT("USES_PARTICLE_MOTION_BLUR"), 1);
 	}
 
-	if (false)//bNeedsParticleRandom)
+	const bool bNeedsParticleRandom = EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleRandom);
+
+	if (bNeedsParticleRandom)
 	{
 		OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_RANDOM"), 1);
 	}
@@ -435,7 +366,12 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 		OutEnvironment.SetDefine(TEXT("SPHERICAL_PARTICLE_OPACITY"), TEXT("1"));
 	}
 
-	if (false)//bUsesParticleSubUVs)
+	const bool bNeedsParticleSubUVs =
+		EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleSubUVCoords0) ||
+		EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleSubUVCoords1) ||
+		EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleSubUVLerp);
+
+	if (bNeedsParticleSubUVs)
 	{
 		OutEnvironment.SetDefine(TEXT("USE_PARTICLE_SUBUVS"), TEXT("1"));
 	}
@@ -445,22 +381,31 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 		OutEnvironment.SetDefine(TEXT("LIGHTMAP_UV_ACCESS"), TEXT("1"));
 	}
 
-	if (false)//bUsesAOMaterialMask)
+	if (EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::AOMask))
 	{
 		OutEnvironment.SetDefine(TEXT("USES_AO_MATERIAL_MASK"), TEXT("1"));
 	}
 
-	if (false)//bUsesSpeedTree)
+	if (EmitContext.bUsesSpeedTree)
 	{
-		OutEnvironment.SetDefine(TEXT("USES_SPEEDTREE"), TEXT("1"));
+		OutEnvironment.SetDefine(TEXT("USES_SPEEDTREE"), 1);
 	}
 
-	if (false)//bNeedsWorldPositionExcludingShaderOffsets)
+	const bool bNeedsWorldPositionExcludingShaderOffsets =
+		EmitContext.bUsesWorldPositionExcludingShaderOffsets || 
+		EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::WorldPosition_NoOffsets) ||
+		EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::TranslatedWorldPosition_NoOffsets) ||
+		EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::PrevWorldPosition_NoOffsets) ||
+		EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::PrevTranslatedWorldPosition_NoOffsets);
+
+	if (bNeedsWorldPositionExcludingShaderOffsets)
 	{
 		OutEnvironment.SetDefine(TEXT("NEEDS_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS"), TEXT("1"));
 	}
 
-	if (false)//bNeedsParticleSize)
+	const bool bNeedsParticleSize = EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::ParticleSize);
+
+	if (bNeedsParticleSize)
 	{
 		OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_SIZE"), TEXT("1"));
 	}
@@ -479,13 +424,15 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 		OutEnvironment.SetDefine(TEXT("VIRTUAL_TEXTURE_OUTPUT"), 1);
 	}
 
+	const bool bUsesPerInstanceFadeAmount = EmitMaterialData.IsExternalInputUsed(Material::EExternalInput::PerInstanceFadeAmount);
+
 	OutEnvironment.SetDefine(TEXT("USES_PER_INSTANCE_CUSTOM_DATA"), MaterialCompilationOutput.bUsesPerInstanceCustomData && InMaterial.IsUsedWithInstancedStaticMeshes());
-	OutEnvironment.SetDefine(TEXT("USES_PER_INSTANCE_RANDOM"), MaterialCompilationOutput.bUsesPerInstanceRandom && InMaterial.IsUsedWithInstancedStaticMeshes());
+	OutEnvironment.SetDefine(TEXT("USES_PER_INSTANCE_FADE_AMOUNT"), bUsesPerInstanceFadeAmount&& InMaterial.IsUsedWithInstancedStaticMeshes());
 	OutEnvironment.SetDefine(TEXT("USES_VERTEX_INTERPOLATOR"), MaterialCompilationOutput.bUsesVertexInterpolator);
 
-	const bool bUsesVertexColor = EmitMaterialData.IsExternalInputUsed(SF_Vertex, Material::EExternalInput::VertexColor) ||
-		EmitMaterialData.IsExternalInputUsed(SF_Vertex, Material::EExternalInput::VertexColor_Ddx) ||
-		EmitMaterialData.IsExternalInputUsed(SF_Vertex, Material::EExternalInput::VertexColor_Ddy);
+	const bool bUsesVertexColor = EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::VertexColor) ||
+		EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::VertexColor_Ddx) ||
+		EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::VertexColor_Ddy);
 
 	const bool bUsesParticleColor = EmitMaterialData.IsExternalInputUsed(SF_Pixel, Material::EExternalInput::ParticleColor);
 
@@ -497,6 +444,7 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 	OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_COLOR"), bUsesParticleColor);
 	OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_LOCAL_TO_WORLD"), false);// bUsesParticleLocalToWorld);
 	OutEnvironment.SetDefine(TEXT("NEEDS_PARTICLE_WORLD_TO_LOCAL"), false);// bUsesParticleWorldToLocal);
+	OutEnvironment.SetDefine(TEXT("NEEDS_PER_INSTANCE_RANDOM_PS"), false); // bUsesPerInstanceRandomPS && InMaterial.IsUsedWithInstancedStaticMeshes());
 	OutEnvironment.SetDefine(TEXT("USES_TRANSFORM_VECTOR"), false);// bUsesTransformVector);
 	OutEnvironment.SetDefine(TEXT("WANT_PIXEL_DEPTH_OFFSET"), MaterialCompilationOutput.bUsesPixelDepthOffset);
 	OutEnvironment.SetDefineAndCompileArgument(TEXT("USES_WORLD_POSITION_OFFSET"), (bool)MaterialCompilationOutput.bUsesWorldPositionOffset);
@@ -512,8 +460,18 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 	OutEnvironment.SetDefine(TEXT("MATERIAL_FULLY_ROUGH"), bIsFullyRough);
 	OutEnvironment.SetDefine(TEXT("MATERIAL_USES_ANISOTROPY"), bUsesAnisotropy);
 
+	OutEnvironment.SetDefine(TEXT("MATERIAL_NEURAL_POST_PROCESS"), (MaterialCompilationOutput.bUsedWithNeuralNetworks || InMaterial.IsUsedWithNeuralNetworks()) && InMaterial.IsPostProcessMaterial());
+
 	// Count the number of VTStacks (each stack will allocate a feedback slot)
 	OutEnvironment.SetDefine(TEXT("NUM_VIRTUALTEXTURE_SAMPLES"), EmitMaterialData.VTStacks.Num());
+
+	// Check if any feedback slots are in use. We can simplify shader and remove EARLYZ optimizations if none are.
+	bool bGenerateFeedback = false;
+	for (int32 i = 0; i < EmitMaterialData.VTStacks.Num() && !bGenerateFeedback; ++i)
+	{
+		bGenerateFeedback |= EmitMaterialData.VTStacks[i].bGenerateFeedback;
+	}
+	OutEnvironment.SetDefine(TEXT("MATERIAL_VIRTUALTEXTURE_FEEDBACK"), bGenerateFeedback);
 
 	// Setup defines to map each VT stack to either 1 or 2 page table textures, depending on how many layers it uses
 	for (int i = 0; i < EmitMaterialData.VTStacks.Num(); ++i)
@@ -537,7 +495,7 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 		OutEnvironment.SetDefine(PageTableName.ToString(), PageTableValue.ToString());
 	}
 
-	const TArray<UMaterialParameterCollection*>& ParameterCollections = InMaterial.GetCachedHLSLTree()->GetParameterCollections();
+	const TConstArrayView<const UMaterialParameterCollection*> ParameterCollections = EmitMaterialData.ParameterCollections;
 	for (int32 CollectionIndex = 0; CollectionIndex < ParameterCollections.Num(); CollectionIndex++)
 	{
 		// Add uniform buffer declarations for any parameter collections referenced
@@ -670,6 +628,12 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 		OutEnvironment.SetDefine(TEXT("MATERIAL_SHADINGMODEL_UNLIT"), TEXT("1"));
 	}
 
+	//static TConsoleVariableData<int32>* CVarLWCEnabled = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MaterialEditor.LWCEnabled"));
+	static IConsoleVariable* CVarLWCIsEnabled = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MaterialEditor.LWCEnabled"));
+	OutEnvironment.SetDefine(TEXT("MATERIAL_LWC_ENABLED"), CVarLWCIsEnabled->GetInt() ? TEXT("1") : TEXT("0"));
+	OutEnvironment.SetDefine(TEXT("WSVECTOR_IS_TILEOFFSET"), TEXT("1"));
+	OutEnvironment.SetDefine(TEXT("WSVECTOR_IS_DOUBLEFLOAT"), TEXT("0"));
+
 	if (InMaterial.GetMaterialDomain() == MD_Volume) // && Material->HasN)
 	{
 		TArray<const UMaterialExpressionVolumetricAdvancedMaterialOutput*> VolumetricAdvancedExpressions;
@@ -710,19 +674,19 @@ static void GetMaterialEnvironment(EShaderPlatform InPlatform,
 		}
 	}
 
-	OutEnvironment.SetDefine(TEXT("MATERIAL_IS_STRATA"), false);// bMaterialIsStrata ? TEXT("1") : TEXT("0"));
+	OutEnvironment.SetDefine(TEXT("MATERIAL_IS_SUBSTRATE"), false);// bMaterialIsSubstrate ? TEXT("1") : TEXT("0"));
 
-	// STRATA_TODO do not request DualSourceBlending if gray scale transmittance is selected.
+	// SUBSTRATE_TODO do not request DualSourceBlending if gray scale transmittance is selected.
 	// bMaterialRequestsDualSourceBlending this base on limited set of blend mode: Opaque, Masked, TransmittanceCoverage, TransmittanceColored;
-	//bMaterialRequestsDualSourceBlending |= bMaterialIsStrata;
+	//bMaterialRequestsDualSourceBlending |= bMaterialIsSubstrate;
 
 	// if duals source blending (colored transmittance) is not supported on a platform, it will fall back to standard alpha blending (grey scale transmittance)
 	OutEnvironment.SetDefine(TEXT("DUAL_SOURCE_COLOR_BLENDING_ENABLED"), false);// bMaterialRequestsDualSourceBlending&& Material->IsDualBlendingEnabled(Platform) ? TEXT("1") : TEXT("0"));
 
 	// Translate() is called before getting here so we can create related define
-	/*if (StrataMaterialAnalysis.RequestedBSDFCount > 0)
+	/*if (SubstrateMaterialAnalysis.RequestedBSDFCount > 0)
 	{
-		OutEnvironment.SetDefine(TEXT("STRATA_CLAMPED_LAYER_COUNT"), StrataMaterialAnalysis.ClampedLayerCount);
+		OutEnvironment.SetDefine(TEXT("SUBSTRATE_CLAMPED_LAYER_COUNT"), SubstrateMaterialAnalysis.ClampedLayerCount);
 	}*/
 
 	OutEnvironment.SetDefine(TEXT("TEXTURE_SAMPLE_DEBUG"), false);// IsDebugTextureSampleEnabled() ? TEXT("1") : TEXT("0"));
@@ -845,6 +809,13 @@ bool MaterialEmitHLSL(const FMaterialCompileTargetParameters& InCompilerTarget,
 	const FStructField* NormalField = CachedTree->GetMaterialAttributesType()->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(MP_Normal));
 	check(NormalField);
 
+	const FStructField* ShadingModelField = nullptr;
+	if (EmitContext.Material->IsShadingModelFromMaterialExpression())
+	{
+		ShadingModelField = CachedTree->GetMaterialAttributesType()->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(MP_ShadingModel));
+		check(ShadingModelField);
+	}
+
 	// Prepare pixel shader code
 	FStringBuilderBase* PixelCodePhase0[2] = { nullptr };
 	FStringBuilderBase* PixelCodePhase1[2] = { nullptr };
@@ -856,13 +827,35 @@ bool MaterialEmitHLSL(const FMaterialCompileTargetParameters& InCompilerTarget,
 		EmitContext.bUseAnalyticDerivatives = (DerivativeIndex == 1);
 		EmitContext.bMarkLiveValues = false;
 		FEmitScope* EmitResultScope = EmitContext.PrepareScope(CachedTree->GetResultScope());
+		FRequestedType RequestedPixelAttributesType(CachedTree->GetMaterialAttributesType(), false);
+
+		// Prepare ShadingModel first if necessary to populate FEmitData::ShadingModelsFromCompilation
+		if (ShadingModelField)
+		{
+			RequestedPixelAttributesType.SetFieldRequested(ShadingModelField);
+
+			const FPreparedType& ShadingModelType = EmitContext.PrepareExpression(CachedTree->GetResultExpression(), *EmitResultScope, RequestedPixelAttributesType);
+			if (ShadingModelType.IsVoid())
+			{
+				return false;
+			}
+
+			EmitContext.bMarkLiveValues = true;
+			EmitContext.PrepareExpression(CachedTree->GetResultExpression(), *EmitResultScope, RequestedPixelAttributesType);
+			EmitContext.bMarkLiveValues = false;
+			EmitContext.bCompiledShadingModels = true;
+			RequestedPixelAttributesType.SetFieldRequested(ShadingModelField, false);
+		}
+		else
+		{
+			EmitContext.bCompiledShadingModels = false;
+		}
 
 		// Prepare all fields *except* normal
-		FRequestedType RequestedPixelAttributesType(CachedTree->GetMaterialAttributesType(), false);
-		CachedTree->SetRequestedFields(SF_Pixel, RequestedPixelAttributesType);
+		CachedTree->SetRequestedFields(EmitContext, RequestedPixelAttributesType);
 		RequestedPixelAttributesType.SetFieldRequested(NormalField, false);
 
-		const FPreparedType PixelResultType0 = EmitContext.PrepareExpression(CachedTree->GetResultExpression(), *EmitResultScope, RequestedPixelAttributesType);
+		const FPreparedType& PixelResultType0 = EmitContext.PrepareExpression(CachedTree->GetResultExpression(), *EmitResultScope, RequestedPixelAttributesType);
 		if (PixelResultType0.IsVoid())
 		{
 			return false;
@@ -978,11 +971,12 @@ bool MaterialEmitHLSL(const FMaterialCompileTargetParameters& InCompilerTarget,
 	// Prepare vertex shader code
 	FStringBuilderMemstack VertexCode(Allocator, 128 * 1024);
 	{
+		EmitContext.ShaderFrequency = SF_Vertex;
+
 		FRequestedType RequestedVertexAttributesType(CachedTree->GetMaterialAttributesType(), false);
-		CachedTree->SetRequestedFields(SF_Vertex, RequestedVertexAttributesType);
+		CachedTree->SetRequestedFields(EmitContext, RequestedVertexAttributesType);
 		RequestedVertexAttributesType.SetFieldRequested(CachedTree->GetMaterialAttributesType()->FindFieldByName(TEXT("PrevWorldPositionOffset")));
 
-		EmitContext.ShaderFrequency = SF_Vertex;
 		EmitContext.bUseAnalyticDerivatives = false;
 		EmitContext.bMarkLiveValues = false;
 		FEmitScope* EmitResultScope = EmitContext.PrepareScope(CachedTree->GetResultScope());
@@ -1006,6 +1000,14 @@ bool MaterialEmitHLSL(const FMaterialCompileTargetParameters& InCompilerTarget,
 		bUsesWorldPositionOffset = CachedTree->IsAttributeUsed(EmitContext, *EmitResultScope, VertexResultType, MP_WorldPositionOffset);
 
 		CachedTree->GetTree().EmitShader(EmitContext, VertexCode);
+	}
+
+	// Don't allow opaque and masked materials to use scene depth as the results are undefined
+	if (OutCompilationOutput.IsSceneTextureUsed(PPI_SceneDepth)
+		&& EmitContext.Material->GetMaterialDomain() != MD_PostProcess
+		&& !IsTranslucentBlendMode(EmitContext.Material->GetBlendMode()))
+	{
+		EmitContext.Error(TEXT("Only transparent or postprocess materials can read from scene depth."));
 	}
 
 	if (EmitContext.NumErrors > 0)
@@ -1051,7 +1053,7 @@ bool MaterialEmitHLSL(const FMaterialCompileTargetParameters& InCompilerTarget,
 			OutCompilationOutput);
 	}
 
-	OutCompilationOutput.UniformExpressionSet.SetParameterCollections(CachedTree->GetParameterCollections());
+	OutCompilationOutput.UniformExpressionSet.SetParameterCollections(EmitMaterialData.ParameterCollections);
 
 	OutMaterialEnvironment = new FSharedShaderCompilerEnvironment();
 	OutMaterialEnvironment->TargetPlatform = InCompilerTarget.TargetPlatform;

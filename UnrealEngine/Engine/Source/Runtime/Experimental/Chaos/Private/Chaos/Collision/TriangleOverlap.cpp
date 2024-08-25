@@ -311,7 +311,7 @@ namespace Chaos
 	FBoxSimd::FBoxSimd(const FRigidTransform3& WorldScaleQueryTM, const TBox<FReal, 3>& InQueryGeom)
 	{
 		FRigidTransform3 Transform(WorldScaleQueryTM);
-		Transform.SetTranslation(Transform.GetTranslation() + InQueryGeom.GetCenter());
+		Transform.SetTranslation(Transform.TransformPositionNoScale(InQueryGeom.GetCenter()));
 		FVec3f HalfExtentsf = InQueryGeom.Extents() * 0.5;
 		Initialize(Transform, HalfExtentsf);
 	}
@@ -319,7 +319,7 @@ namespace Chaos
 	FBoxSimd::FBoxSimd(const FRigidTransform3& QueryTM, const TImplicitObjectScaled< TBox<FReal, 3> >& QueryGeom)
 	{
 		FRigidTransform3 Transform(QueryTM);
-		Transform.TransformPosition(QueryGeom.GetUnscaledObject()->GetCenter() * QueryGeom.GetScale());
+		Transform.SetTranslation(Transform.TransformPositionNoScale(QueryGeom.GetUnscaledObject()->GetCenter() * QueryGeom.GetScale()));
 		FVec3f HalfExtentsf = QueryGeom.GetUnscaledObject()->Extents() * 0.5 * (QueryGeom.GetScale() + UE_SMALL_NUMBER);
 		Initialize(Transform, HalfExtentsf);
 	}
@@ -533,27 +533,21 @@ namespace Chaos
 		HalfExtents = VectorLoadFloat3(&HalfExtentsf.X);
 	}
 
-	FAABBSimd::FAABBSimd(const FRigidTransform3& WorldScaleQueryTM, const TBox<FReal, 3>& InQueryGeom)
+	FAABBSimd::FAABBSimd(const FVec3& Translation, const TBox<FReal, 3>& InQueryGeom)
 	{
-		TRigidTransform<FReal, 3> Transform(WorldScaleQueryTM);
-		Transform.SetTranslation(Transform.GetTranslation() + InQueryGeom.GetCenter());
 		FVec3f HalfExtentsf = InQueryGeom.Extents() * 0.5;
-		Initialize(Transform, HalfExtentsf);
+		Initialize(Translation + InQueryGeom.GetCenter(), HalfExtentsf);
 	}
 
-	FAABBSimd::FAABBSimd(const FRigidTransform3& QueryTM, const TImplicitObjectScaled< TBox<FReal, 3> >& QueryGeom)
+	FAABBSimd::FAABBSimd(const FVec3& Translation, const TImplicitObjectScaled< TBox<FReal, 3> >& QueryGeom)
 	{
-		TRigidTransform<FReal, 3> Transform(QueryTM);
-		Transform.TransformPosition(QueryGeom.GetUnscaledObject()->GetCenter() * QueryGeom.GetScale());
 		FVec3f HalfExtentsf = QueryGeom.GetUnscaledObject()->Extents() * 0.5 * (QueryGeom.GetScale() + UE_SMALL_NUMBER);
-		Initialize(Transform, HalfExtentsf);
+		Initialize(Translation + QueryGeom.GetUnscaledObject()->GetCenter() * QueryGeom.GetScale(), HalfExtentsf);
 	}
 
-	FORCEINLINE void FAABBSimd::Initialize(const FRigidTransform3& Transform, const FVec3f& HalfExtentsf)
+	FORCEINLINE void FAABBSimd::Initialize(const FVec3& Translation, const FVec3f& HalfExtentsf)
 	{
-		FVec3 Translation = Transform.GetTranslation();
 		Position = MakeVectorRegisterFloatFromDouble(VectorLoadDouble3(&Translation.X));
-
 		HalfExtents = VectorLoadFloat3(&HalfExtentsf.X);
 	}
 

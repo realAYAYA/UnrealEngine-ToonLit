@@ -118,6 +118,11 @@ namespace UE::Learning::Random
 		TLearningArrayView<1, uint32> Output,
 		const uint32 State);
 
+	LEARNING_API void IntArray(
+		TLearningArrayView<1, uint32> Output,
+		const uint32 State,
+		const FIndexSet Indices);
+
 	LEARNING_API void FloatArray(
 		TLearningArrayView<1, float> Output,
 		const uint32 State);
@@ -148,6 +153,25 @@ namespace UE::Learning::Random
 		const uint32 State,
 		const FVector Axis0 = FVector::ForwardVector,
 		const FVector Axis1 = FVector::RightVector);
+
+	LEARNING_API void DistributionIndependantNormal(
+		TLearningArrayView<1, float> Output,
+		const uint32 State,
+		const TLearningArrayView<1, const float> Mean,
+		const TLearningArrayView<1, const float> LogStd,
+		const float Scale);
+
+	LEARNING_API void DistributionMultinoulli(
+		TLearningArrayView<1, float> Output,
+		const uint32 State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale);
+
+	LEARNING_API void DistributionBernoulli(
+		TLearningArrayView<1, float> Output,
+		const uint32 State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale);
 
 	/////////////////////////////////////////////////////////
 	//
@@ -211,6 +235,11 @@ namespace UE::Learning::Random
 		TLearningArrayView<1, uint32> Output,
 		uint32& State);
 
+	LEARNING_API void SampleIntArray(
+		TLearningArrayView<1, uint32> Output,
+		uint32& State,
+		const FIndexSet Indices);
+
 	LEARNING_API void SampleFloatArray(
 		TLearningArrayView<1, float> Output,
 		uint32& State);
@@ -227,10 +256,6 @@ namespace UE::Learning::Random
 		const float Mean = 0.0f,
 		const float Std = 1.0f);
 
-	LEARNING_API void ResampleStateArray(
-		TLearningArrayView<1, uint32> InOutStates,
-		const FIndexSet Indices);
-
 	LEARNING_API void SamplePlanarClippedGaussianArray(
 		TLearningArrayView<1, FVector> Output,
 		uint32& State,
@@ -245,4 +270,23 @@ namespace UE::Learning::Random
 		uint32& State,
 		const FVector Axis0 = FVector::ForwardVector,
 		const FVector Axis1 = FVector::RightVector);
+
+	LEARNING_API void SampleDistributionIndependantNormal(
+		TLearningArrayView<1, float> Output,
+		uint32& State,
+		const TLearningArrayView<1, const float> Mean,
+		const TLearningArrayView<1, const float> LogStd,
+		const float Scale);
+
+	LEARNING_API void SampleDistributionMultinoulli(
+		TLearningArrayView<1, float> Output,
+		uint32& State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale);
+
+	LEARNING_API void SampleDistributionBernoulli(
+		TLearningArrayView<1, float> Output,
+		uint32& State,
+		const TLearningArrayView<1, const float> Logits,
+		const float Scale);
 }

@@ -15,6 +15,7 @@
 	"IsExperimentalVersion": false,
 	"Installed": false,
 	"EnabledByDefault": false,
+	"SupportedPrograms": [ "LiveLinkHub" ],
 	"Plugins": [
 		{
 			"Name": "UdpMessaging",
@@ -25,7 +26,9 @@
 		{
 			"Name": "LiveLinkFreeD",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"ProgramAllowList": [ "LiveLinkHub" ]
 		}
 	]
 }
+ 

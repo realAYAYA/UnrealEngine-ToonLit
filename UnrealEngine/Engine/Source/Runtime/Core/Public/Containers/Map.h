@@ -27,8 +27,8 @@ template <typename KeyInitType, typename ValueInitType>
 class TPairInitializer
 {
 public:
-	typename TRValueToLValueReference<KeyInitType  >::Type Key;
-	typename TRValueToLValueReference<ValueInitType>::Type Value;
+	std::conditional_t<std::is_rvalue_reference_v<KeyInitType>,   KeyInitType&,   KeyInitType>   Key;
+	std::conditional_t<std::is_rvalue_reference_v<ValueInitType>, ValueInitType&, ValueInitType> Value;
 
 	/** Initialization constructor. */
 	FORCEINLINE TPairInitializer(KeyInitType InKey, ValueInitType InValue)
@@ -58,12 +58,13 @@ template <typename KeyInitType>
 class TKeyInitializer
 {
 public:
-	typename TRValueToLValueReference<KeyInitType>::Type Key;
+	std::conditional_t<std::is_rvalue_reference_v<KeyInitType>, KeyInitType&, KeyInitType> Key;
 
 	/** Initialization constructor. */
 	FORCEINLINE explicit TKeyInitializer(KeyInitType InKey)
 		: Key(InKey)
-	{ }
+	{
+	}
 
 	template <typename KeyType, typename ValueType>
 	operator TPair<KeyType, ValueType>() const
@@ -314,7 +315,7 @@ public:
 		VisitedKeys.Reserve(Num());
 
 		// Presize the array if we know there are supposed to be no duplicate keys
-		if (!KeyFuncs::bAllowDuplicateKeys)
+		if constexpr (!KeyFuncs::bAllowDuplicateKeys)
 		{
 			OutKeys.Reserve(Num());
 		}
@@ -689,6 +690,23 @@ public:
 	}
 
 	/**
+	 * Find the value associated with a specified key.
+	 *
+	 * @param Key The key to search for.
+	 * @param DefaultValue The fallback value if the key is not found.
+	 * @return The value associated with the specified key, or DefaultValue if the key isn't contained in this map.
+	 */
+	FORCEINLINE ValueType FindRef(KeyConstPointerType Key, ValueType DefaultValue) const
+	{
+		if (const auto* Pair = Pairs.Find(Key))
+		{
+			return Pair->Value;
+		}
+
+		return DefaultValue;
+	}
+
+	/**
 	 * Check if map contains the specified key.
 	 *
 	 * @param Key The key to check for.
@@ -758,16 +776,16 @@ protected:
 	class TBaseIterator
 	{
 	public:
-		typedef typename TChooseClass<
+		typedef std::conditional_t<
 			bConst,
-			typename TChooseClass<bRangedFor, typename ElementSetType::TRangedForConstIterator, typename ElementSetType::TConstIterator>::Result,
-			typename TChooseClass<bRangedFor, typename ElementSetType::TRangedForIterator, typename ElementSetType::TIterator     >::Result
-		>::Result PairItType;
+			std::conditional_t<bRangedFor, typename ElementSetType::TRangedForConstIterator, typename ElementSetType::TConstIterator>,
+			std::conditional_t<bRangedFor, typename ElementSetType::TRangedForIterator, typename ElementSetType::TIterator     >
+		> PairItType;
 	private:
-		typedef typename TChooseClass<bConst, const TMapBase, TMapBase>::Result MapType;
-		typedef typename TChooseClass<bConst, const KeyType, KeyType>::Result ItKeyType;
-		typedef typename TChooseClass<bConst, const ValueType, ValueType>::Result ItValueType;
-		typedef typename TChooseClass<bConst, const typename ElementSetType::ElementType, typename ElementSetType::ElementType>::Result PairType;
+		typedef std::conditional_t<bConst, const TMapBase, TMapBase> MapType;
+		typedef std::conditional_t<bConst, const KeyType, KeyType> ItKeyType;
+		typedef std::conditional_t<bConst, const ValueType, ValueType> ItValueType;
+		typedef std::conditional_t<bConst, const typename ElementSetType::ElementType, typename ElementSetType::ElementType> PairType;
 
 	public:
 		FORCEINLINE TBaseIterator(const PairItType& InElementIt)
@@ -815,9 +833,9 @@ protected:
 	class TBaseKeyIterator
 	{
 	private:
-		typedef typename TChooseClass<bConst, typename ElementSetType::TConstKeyIterator, typename ElementSetType::TKeyIterator>::Result SetItType;
-		typedef typename TChooseClass<bConst, const KeyType, KeyType>::Result ItKeyType;
-		typedef typename TChooseClass<bConst, const ValueType, ValueType>::Result ItValueType;
+		typedef std::conditional_t<bConst, typename ElementSetType::TConstKeyIterator, typename ElementSetType::TKeyIterator> SetItType;
+		typedef std::conditional_t<bConst, const KeyType, KeyType> ItKeyType;
+		typedef std::conditional_t<bConst, const ValueType, ValueType> ItValueType;
 
 	public:
 		/** Initialization constructor. */
@@ -899,7 +917,10 @@ public:
 			}
 		}
 
-		/** Removes the current pair from the map. */
+		/** Removes the current pair from the map without losing the iteration
+		 * position. Increment before using the iterator again, but after that
+		 * it will point at the element that was after the removed element.
+		 */
 		FORCEINLINE void RemoveCurrent()
 		{
 			TBaseIterator<false>::PairIt.RemoveCurrent();
@@ -1676,7 +1697,7 @@ struct FScriptMapLayout
 template <typename AllocatorType, typename InDerivedType>
 class TScriptMap
 {
-	using DerivedType = typename TChooseClass<std::is_void_v<InDerivedType>, TScriptMap, InDerivedType>::Result;
+	using DerivedType = std::conditional_t<std::is_void_v<InDerivedType>, TScriptMap, InDerivedType>;
 
 public:
 	static FScriptMapLayout GetScriptLayout(int32 KeySize, int32 KeyAlignment, int32 ValueSize, int32 ValueAlignment)

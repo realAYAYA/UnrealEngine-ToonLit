@@ -25,6 +25,36 @@ struct FNotificationInfo;
 class ULevelSequence;
 enum class EMovieSceneBlendType : uint8;
 
+namespace UE::Sequencer
+{
+
+struct FCreateBindingParams
+{
+	UE_DEPRECATED(5.4, "Please use FSequencerUtilitiesCreateBindingParams directly.")
+	FCreateBindingParams(const FString& InBindingNameOverride)
+		: BindingNameOverride(InBindingNameOverride)
+	{}
+
+	FCreateBindingParams()
+	{}
+	
+	FCreateBindingParams& Name(FString&& InName)
+	{
+		BindingNameOverride = MoveTemp(InName);
+		return *this;
+	}
+	FCreateBindingParams& Folder(const FName& InFolder)
+	{
+		DesiredFolder = InFolder;
+		return *this;
+	}
+
+	FString BindingNameOverride;
+	FName DesiredFolder;
+};
+
+} // namespace UE::Sequencer
+
 /* Paste folders params */
 USTRUCT(BlueprintType)
 struct FMovieScenePasteFoldersParams
@@ -36,10 +66,10 @@ struct FMovieScenePasteFoldersParams
 		: Sequence(InSequence)
 		, ParentFolder(InParentFolder) {}
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<UMovieSceneSequence> Sequence;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<UMovieSceneFolder> ParentFolder;
 };
 
@@ -55,13 +85,13 @@ struct FMovieScenePasteSectionsParams
 		, TrackRowIndices(InTrackRowIndices)
 		, Time(InTime) {}
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<TObjectPtr<UMovieSceneTrack>> Tracks;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<int32> TrackRowIndices;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	FFrameTime Time;
 };
 
@@ -78,16 +108,16 @@ struct FMovieScenePasteTracksParams
 		, ParentFolder(InParentFolder)
 		, Folders(InFolders) {}
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<UMovieSceneSequence> Sequence;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<FMovieSceneBindingProxy> Bindings;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<UMovieSceneFolder> ParentFolder;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<TObjectPtr<UMovieSceneFolder>> Folders;
 };
 
@@ -103,16 +133,16 @@ struct FMovieScenePasteBindingsParams
 		, Folders(InFolders)
 		, bDuplicateExistingActors(bInDuplicateExistingActors) {}
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<FMovieSceneBindingProxy> Bindings;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TObjectPtr<UMovieSceneFolder> ParentFolder;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	TArray<TObjectPtr<UMovieSceneFolder>> Folders;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movie Scene")
 	bool bDuplicateExistingActors;
 };
 
@@ -182,7 +212,7 @@ struct SEQUENCER_API FSequencerUtilities
 	static TArray<FString> GetPasteBindingsObjectNames(TSharedRef<ISequencer> Sequencer, const FString& TextToImport);
 
 	/** Utility functions for managing bindings */
-	static FGuid CreateBinding(TSharedRef<ISequencer> Sequencer, UObject& InObject, const FString& InName);
+	static FGuid CreateBinding(TSharedRef<ISequencer> Sequencer, UObject& InObject, const UE::Sequencer::FCreateBindingParams& Params = UE::Sequencer::FCreateBindingParams());
 	static void UpdateBindingIDs(TSharedRef<ISequencer> Sequencer, FGuid OldGuid, FGuid NewGuid);
 	static FGuid AssignActor(TSharedRef<ISequencer> Sequencer, AActor* Actor, FGuid InObjectBinding);
 	static void AddActorsToBinding(TSharedRef<ISequencer> Sequencer, const TArray<AActor*>& Actors, const FMovieSceneBindingProxy& ObjectBinding);

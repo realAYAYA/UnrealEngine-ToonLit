@@ -569,13 +569,10 @@ namespace PropertyPathHelpersInternal
 					uint8* Temp = (uint8*)FMemory_Alloca_Aligned(Size, Alignment);
 					FMemory::Memzero(Temp, Size);
 
-					if (!ParentProperty->HasAnyPropertyFlags(CPF_ZeroConstructor))
-					{
-						ParentProperty->InitializeValue_InContainer(Temp);
-					}
+					ParentProperty->InitializeValue(Temp);
 					ParentProperty->CallGetter(ObjectContainerPtr, Temp);
 					ParentProperty->CallSetter(ObjectContainerPtr, Temp);
-					ParentProperty->DestroyValue_InContainer(Temp);
+					ParentProperty->DestroyValue(Temp);
 				}
 				else
 				{
@@ -645,16 +642,13 @@ namespace PropertyPathHelpersInternal
 				uint8* Temp = (uint8*)FMemory_Alloca_Aligned(Size, Alignment);
 				FMemory::Memzero(Temp, Size);
 
-				if (!ParentProperty->HasAnyPropertyFlags(CPF_ZeroConstructor))
-				{
-					ParentProperty->InitializeValue_InContainer(Temp);
-				}
+				ParentProperty->InitializeValue(Temp);
 				ParentProperty->CallGetter(ObjectContainerPtr, Temp);
 
 				// We resolved the property address earlier & it's containing parent, use this for relative-offset for Temp
 				uint8* TempPropertyAddress = Temp + ((uint8*)InPropertyAddress - (uint8*)ParentAddress);
 				GetValueFromProperty(OutValue, InPropertyPath, TempPropertyAddress);
-				ParentProperty->DestroyValue_InContainer(Temp);
+				ParentProperty->DestroyValue(Temp);
 			}
 
 			return;

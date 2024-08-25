@@ -3,6 +3,8 @@
 #include "RigVMFunctions/Math/RigVMFunction_MathVector.h"
 #include "RigVMFunctions/Math/RigVMFunction_MathTransform.h"
 #include "RigVMFunctions/RigVMDispatch_Core.h"
+#include "Engine/Engine.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMFunction_MathVector)
 
@@ -387,48 +389,243 @@ FRigVMStructUpgradeInfo FRigVMFunction_MathVectorMakeBezierFourPoint::GetUpgrade
 	return FRigVMStructUpgradeInfo();
 }
 
+void FRigVMFunction_DrawArrow(FRigVMDrawInterface* DrawInterface, const FTransform& ArrowTransform, const FVector& A, const FVector& B, const FVector& C)
+{
+	DrawInterface->DrawArrow(FTransform(A) * ArrowTransform, B * 0.25f, C * 0.08f, FLinearColor::Yellow, 0.f);
+}
+
+void FRigVMFunction_DrawPlane(FRigVMDrawInterface* DrawInterface, EAxis::Type Axis, float Minimum, float& CurrentMaximum, FTransform& CurrentSpace, FVector Result)
+{
+	FVector A, B, Normal;
+
+	switch (Axis)
+	{
+	case EAxis::X:
+	{
+		A = FVector::YAxisVector;
+		B = FVector::ZAxisVector;
+		Normal = FVector::XAxisVector;
+		break;
+	}
+	case EAxis::Y:
+	{
+		A = FVector::XAxisVector;
+		B = FVector::ZAxisVector;
+		Normal = FVector::YAxisVector;
+		break;
+	}
+	default:
+	{
+		A = FVector::XAxisVector;
+		B = FVector::YAxisVector;
+		Normal = FVector::ZAxisVector;
+		break;
+	}
+	}
+
+	const FVector PointOnPlane = FVector::PointPlaneProject(Result, FPlane(CurrentSpace.GetTranslation(), Normal));
+	const float PlaneScale = FMath::Max<float>(10.f, FVector::Distance(CurrentSpace.GetTranslation(), PointOnPlane)) * 0.525f;
+
+	FTransform PlaneRotation = FTransform::Identity;
+	PlaneRotation.SetRotation(FMatrix(A, Normal.Cross(A), Normal, FVector::ZeroVector).ToQuat());
+	const FTransform PlaneTranslation = FTransform((PointOnPlane - CurrentSpace.GetTranslation()) * 0.5);
+
+	const FTransform MinimumWorldTransform = FTransform(Normal * Minimum) * CurrentSpace * PlaneTranslation;
+	DrawInterface->DrawPlane(PlaneRotation * MinimumWorldTransform, FVector2D(PlaneScale, PlaneScale), FLinearColor::Yellow, true, FLinearColor::Yellow, GEngine->ConstraintLimitMaterialPrismatic->GetRenderProxy());
+	DrawInterface->DrawArrow(MinimumWorldTransform, Normal * PlaneScale * 0.25f, A * PlaneScale * 0.08f, FLinearColor::Yellow, 0.f);
+
+	if (CurrentMaximum > SMALL_NUMBER)
+	{
+		const FTransform MaximumWorldTransform = FTransform(Normal * CurrentMaximum) * CurrentSpace * PlaneTranslation;
+		DrawInterface->DrawPlane(PlaneRotation * MaximumWorldTransform, FVector2D(PlaneScale, PlaneScale), FLinearColor::Yellow, true, FLinearColor::Yellow, GEngine->ConstraintLimitMaterialPrismatic->GetRenderProxy());
+		DrawInterface->DrawArrow(MaximumWorldTransform, -Normal * PlaneScale * 0.25f, A * PlaneScale * 0.08f, FLinearColor::Yellow, 0.f);
+	}
+};
+
+void FRigVMFunction_DrawCylinder(FRigVMDrawInterface* DrawInterface, EAxis::Type Axis, float Minimum, float& CurrentMaximum, FTransform& CurrentSpace, FVector Result)
+{
+	FTransform CircleTransform = FTransform::Identity;
+	switch (Axis)
+	{
+	case EAxis::X:
+	{
+		CircleTransform.SetRotation(FQuat(FVector(0.f, 1.f, 0.f), PI * 0.5f));
+		break;
+	}
+	case EAxis::Y:
+	{
+		CircleTransform.SetRotation(FQuat(FVector(1.f, 0.f, 0.f), PI * 0.5f));
+		break;
+	}
+	default:
+	{
+		break;
+	}
+	}
+
+	const FTransform CombinedTransform = CircleTransform * CurrentSpace;
+	const FVector PointOnAxis = CombinedTransform.InverseTransformPosition(Result) * FVector(0, 0, 1);
+	const float Extent = FMath::Abs<float>((float)PointOnAxis.Z);
+	const FTransform CenterTransform = FTransform(PointOnAxis * 0.5) * CombinedTransform;
+	const TArray<FTransform> Transforms = {
+		FTransform(FVector(0, 0, Extent * 0.5)) * CenterTransform,
+		FTransform(FVector(0, 0, -Extent * 0.5)) * CenterTransform
+	};
+
+	if (Minimum > SMALL_NUMBER)
+	{
+		for (const FTransform& Transform : Transforms)
+		{
+			DrawInterface->DrawCircle(Transform, FTransform::Identity, Minimum, FLinearColor::Yellow, 0.f, 32);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, FVector::XAxisVector * Minimum, FVector::XAxisVector * Minimum, FVector::YAxisVector * Minimum);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, -FVector::XAxisVector * Minimum, -FVector::XAxisVector * Minimum, FVector::YAxisVector * Minimum);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, FVector::YAxisVector * Minimum, FVector::YAxisVector * Minimum, FVector::XAxisVector * Minimum);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, -FVector::YAxisVector * Minimum, -FVector::YAxisVector * Minimum, FVector::XAxisVector * Minimum);
+		}
+		DrawInterface->DrawLines(FTransform::Identity,
+			{
+				Transforms[0].TransformPosition(FVector::XAxisVector * Minimum),
+				Transforms[1].TransformPosition(FVector::XAxisVector * Minimum),
+				Transforms[0].TransformPosition(-FVector::XAxisVector * Minimum),
+				Transforms[1].TransformPosition(-FVector::XAxisVector * Minimum),
+				Transforms[0].TransformPosition(FVector::YAxisVector * Minimum),
+				Transforms[1].TransformPosition(FVector::YAxisVector * Minimum),
+				Transforms[0].TransformPosition(-FVector::YAxisVector * Minimum),
+				Transforms[1].TransformPosition(-FVector::YAxisVector * Minimum),
+			},
+			FLinearColor::Yellow,
+			0
+			);
+	}
+	if (CurrentMaximum > SMALL_NUMBER)
+	{
+		for (const FTransform& Transform : Transforms)
+		{
+			TArray<FVector> LinesToDraw;
+			LinesToDraw.Reserve(8);
+			DrawInterface->DrawCircle(Transform, FTransform::Identity, CurrentMaximum, FLinearColor::Yellow, 0.f, 32);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, -FVector::XAxisVector * CurrentMaximum, FVector::XAxisVector * CurrentMaximum, FVector::YAxisVector * CurrentMaximum);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, FVector::XAxisVector * CurrentMaximum, -FVector::XAxisVector * CurrentMaximum, FVector::YAxisVector * CurrentMaximum);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, -FVector::YAxisVector * CurrentMaximum, FVector::YAxisVector * CurrentMaximum, FVector::XAxisVector * CurrentMaximum);
+			FRigVMFunction_DrawArrow(DrawInterface, Transform, FVector::YAxisVector * CurrentMaximum, -FVector::YAxisVector * CurrentMaximum, FVector::XAxisVector * CurrentMaximum);
+		}
+		DrawInterface->DrawLines(FTransform::Identity,
+			{
+				Transforms[0].TransformPosition(FVector::XAxisVector * CurrentMaximum),
+				Transforms[1].TransformPosition(FVector::XAxisVector * CurrentMaximum),
+				Transforms[0].TransformPosition(-FVector::XAxisVector * CurrentMaximum),
+				Transforms[1].TransformPosition(-FVector::XAxisVector * CurrentMaximum),
+				Transforms[0].TransformPosition(FVector::YAxisVector * CurrentMaximum),
+				Transforms[1].TransformPosition(FVector::YAxisVector * CurrentMaximum),
+				Transforms[0].TransformPosition(-FVector::YAxisVector * CurrentMaximum),
+				Transforms[1].TransformPosition(-FVector::YAxisVector * CurrentMaximum),
+			},
+			FLinearColor::Yellow,
+			0
+			);
+	}
+};
+
+void FRigVMFunction_DrawSphere(FRigVMDrawInterface* DrawInterface, EAxis::Type Axis, float Minimum, float& CurrentMaximum, FTransform& CurrentSpace, FVector Result)
+{
+	FVector XAxisMin = FVector::XAxisVector * Minimum;
+	FVector XAxisMax = FVector::XAxisVector * CurrentMaximum;
+	FVector YAxisMin = FVector::YAxisVector * Minimum;
+	FVector YAxisMax = FVector::YAxisVector * CurrentMaximum;
+	FVector ZAxisMin = FVector::ZAxisVector * Minimum;
+	FVector ZAxisMax = FVector::ZAxisVector * CurrentMaximum;
+
+	FTransform CircleTransform = FTransform::Identity;
+	if (Minimum > SMALL_NUMBER)
+	{
+		DrawInterface->DrawCircle(CurrentSpace, CircleTransform, Minimum, FLinearColor::Yellow, 0.f, 32);
+		const FTransform ArrowTransform = CircleTransform * CurrentSpace;
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, XAxisMin, XAxisMin, YAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -XAxisMin, -XAxisMin, YAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, YAxisMin, YAxisMin, YAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -YAxisMin, -YAxisMin, YAxisMin);
+	}
+	if (CurrentMaximum > SMALL_NUMBER)
+	{
+		DrawInterface->DrawCircle(CurrentSpace, CircleTransform, CurrentMaximum, FLinearColor::Yellow, 0.f, 32);
+		const FTransform ArrowTransform = CircleTransform * CurrentSpace;
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -XAxisMax, XAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, XAxisMax, -XAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -YAxisMax, YAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, YAxisMax, -YAxisMax, ZAxisMax);
+	}
+	CircleTransform.SetRotation(FQuat(FVector(0.f, 1.f, 0.f), PI * 0.5f));
+	if (Minimum > SMALL_NUMBER)
+	{
+		DrawInterface->DrawCircle(CurrentSpace, CircleTransform, Minimum, FLinearColor::Yellow, 0.f, 32);
+		const FTransform ArrowTransform = CircleTransform * CurrentSpace;
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, XAxisMin, XAxisMin, ZAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -XAxisMin, -XAxisMin, ZAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, YAxisMin, YAxisMin, ZAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -YAxisMin, -YAxisMin, ZAxisMin);
+	}
+	if (CurrentMaximum > SMALL_NUMBER)
+	{
+		DrawInterface->DrawCircle(CurrentSpace, CircleTransform, CurrentMaximum, FLinearColor::Yellow, 0.f, 32);
+		const FTransform ArrowTransform = CircleTransform * CurrentSpace;
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -XAxisMax, XAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, XAxisMax, -XAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -YAxisMax, YAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, YAxisMax, -YAxisMax, ZAxisMax);
+	}
+	CircleTransform.SetRotation(FQuat(FVector(1.f, 0.f, 0.f), PI * 0.5f));
+	if (Minimum > SMALL_NUMBER)
+	{
+		DrawInterface->DrawCircle(CurrentSpace, CircleTransform, Minimum, FLinearColor::Yellow, 0.f, 32);
+		const FTransform ArrowTransform = CircleTransform * CurrentSpace;
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, XAxisMin, XAxisMin, ZAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -XAxisMin, -XAxisMin, ZAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, YAxisMin, YAxisMin, ZAxisMin);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -YAxisMin, -YAxisMin, ZAxisMin);
+	}
+	if (CurrentMaximum > SMALL_NUMBER)
+	{
+		DrawInterface->DrawCircle(CurrentSpace, CircleTransform, CurrentMaximum, FLinearColor::Yellow, 0.f, 32);
+		const FTransform ArrowTransform = CircleTransform * CurrentSpace;
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -XAxisMax, XAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, XAxisMax, -XAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, -YAxisMax, YAxisMax, ZAxisMax);
+		FRigVMFunction_DrawArrow(DrawInterface, ArrowTransform, YAxisMax, -YAxisMax, ZAxisMax);
+	}
+};
+
 FRigVMFunction_MathVectorClampSpatially_Execute()
 {
 	Result = FRigVMMathLibrary::ClampSpatially(Value, Axis, Type, Minimum, Maximum, Space);
 
-	if (ExecuteContext.GetDrawInterface() != nullptr && bDrawDebug)
+	FRigVMDrawInterface* DrawInterface = ExecuteContext.GetDrawInterface();
+	if (DrawInterface != nullptr && bDrawDebug)
 	{
-		switch (Type)
+		ERigVMClampSpatialMode::Type Mode = Type;
+		float CurrentMaximum = Maximum;
+		FTransform CurrentSpace = Space;
+		
+		switch (Mode)
 		{
 			case ERigVMClampSpatialMode::Plane:
 			{
-				TArray<FVector> Points;
-				Points.SetNumUninitialized(2);
-					
-				switch (Axis)
-				{
-					case EAxis::X:
-					{
-						Points[0] = FVector(Minimum, 0.f, 0.f);
-						Points[1] = FVector(Maximum, 0.f, 0.f);
-						break;
-					}
-					case EAxis::Y:
-					{
-						Points[0] = FVector(0.f, Minimum, 0.f);
-						Points[1] = FVector(0.f, Maximum, 0.f);
-						break;
-					}
-					default:
-					{
-						Points[0] = FVector(0.f, 0.f, Minimum);
-						Points[1] = FVector(0.f, 0.f, Maximum);
-						break;
-					}
-				}
-
-				ExecuteContext.GetDrawInterface()->DrawLine(Space, Points[0], Points[1], DebugColor, DebugThickness);
-				ExecuteContext.GetDrawInterface()->DrawPoints(Space, Points, DebugThickness * 8.f, DebugColor);
-
+				FRigVMFunction_DrawPlane(DrawInterface, Axis, Minimum, CurrentMaximum, CurrentSpace, Result);
 				break;
 			}
-			case ERigVMClampSpatialMode::Cylinder:
+			case ERigVMClampSpatialMode::Capsule:
 			{
+				const float Radius = Minimum;
+				if(CurrentMaximum < Radius * 2.f)
+				{
+					CurrentMaximum = 0.f;
+					FRigVMFunction_DrawSphere(DrawInterface, Axis, Minimum, CurrentMaximum, CurrentSpace, Result);
+					break;
+				}
+			
+				const float Length = FMath::Max(CurrentMaximum, Radius * 2);
+				const float HalfLength = Length * 0.5f;
+				const float HalfCylinderLength = HalfLength - Radius;
+					
 				FTransform CircleTransform = FTransform::Identity;
 				switch (Axis)
 				{
@@ -447,44 +644,64 @@ FRigVMFunction_MathVectorClampSpatially_Execute()
 						break;
 					}
 				}
-				if (Minimum > SMALL_NUMBER)
+
+				CircleTransform  = CircleTransform * Space;
+					
+				const FVector CylinderDirection = FVector::ZAxisVector * HalfCylinderLength;
+				DrawInterface->DrawLines(CircleTransform,
+					{
+						FVector::XAxisVector * Minimum - CylinderDirection,
+						FVector::XAxisVector * Minimum + CylinderDirection,
+						-FVector::XAxisVector * Minimum - CylinderDirection,
+						-FVector::XAxisVector * Minimum + CylinderDirection,
+						FVector::YAxisVector * Minimum - CylinderDirection,
+						FVector::YAxisVector * Minimum + CylinderDirection,
+						-FVector::YAxisVector * Minimum - CylinderDirection,
+						-FVector::YAxisVector * Minimum + CylinderDirection
+					},
+					FLinearColor::Yellow,
+					0
+				);
+
+				CurrentMaximum = 0.f;
 				{
-					ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Minimum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
+					TGuardValue<FTransform> SpaceGuard(CurrentSpace, FTransform(CylinderDirection) * CircleTransform);
+					FRigVMFunction_DrawSphere(DrawInterface, Axis, Minimum, CurrentMaximum, CurrentSpace, Result);
 				}
-				ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Maximum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
+				{
+					TGuardValue<FTransform> SpaceGuard(CurrentSpace, FTransform(-CylinderDirection) * CircleTransform);
+					FRigVMFunction_DrawSphere(DrawInterface, Axis, Minimum, CurrentMaximum, CurrentSpace, Result);
+				}
+				break;
+			}
+			case ERigVMClampSpatialMode::Cylinder:
+			{
+				FRigVMFunction_DrawCylinder(DrawInterface, Axis, Minimum, CurrentMaximum, CurrentSpace, Result);
 				break;
 			}
 			default:
 			case ERigVMClampSpatialMode::Sphere:
 			{
-				FTransform CircleTransform = FTransform::Identity;
-				if (Minimum > SMALL_NUMBER)
-				{
-					ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Minimum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
-				}
-				ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Maximum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
-				CircleTransform.SetRotation(FQuat(FVector(0.f, 1.f, 0.f), PI * 0.5f));
-				if (Minimum > SMALL_NUMBER)
-				{
-					ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Minimum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
-				}
-				ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Maximum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
-				CircleTransform.SetRotation(FQuat(FVector(1.f, 0.f, 0.f), PI * 0.5f));
-				if (Minimum > SMALL_NUMBER)
-				{
-					ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Minimum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
-				}
-				ExecuteContext.GetDrawInterface()->DrawArc(Space, CircleTransform, Maximum, 0.f, PI * 2.f, DebugColor, DebugThickness, 16);
+				FRigVMFunction_DrawSphere(DrawInterface, Axis, Minimum, CurrentMaximum, CurrentSpace, Result);
 				break;
 			}
-
 		}
+		
+		DrawInterface->DrawPoint(FTransform::Identity, Result, DebugThickness * 8.f, DebugColor);
 	}
 }
 
 FRigVMFunction_MathIntersectPlane_Execute()
 {
-	FPlane Plane(PlanePoint, PlaneNormal);
+	const FVector NormalizedPlaneNormal = PlaneNormal.GetSafeNormal(UE_SMALL_NUMBER, FVector(0.f, 0.f, 1.f));
+	if (FMath::IsNearlyZero(FVector::DotProduct(NormalizedPlaneNormal, Direction)))
+	{
+		Result = FVector::ZeroVector;
+		Distance = 0.f;
+		return;
+	}
+	
+	FPlane Plane(PlanePoint, NormalizedPlaneNormal);
 
 	Result = FMath::RayPlaneIntersection(Start, Direction, Plane);
 	Distance = (Start - Result).Size();

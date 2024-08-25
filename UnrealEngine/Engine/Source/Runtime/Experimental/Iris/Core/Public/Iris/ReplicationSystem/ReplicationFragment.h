@@ -92,23 +92,55 @@ enum class EReplicationStateToStringFlags : uint32
 };
 ENUM_CLASS_FLAGS(EReplicationStateToStringFlags);
 
+/** Traits describing a ReplicationFragmet */
 enum class EReplicationFragmentTraits : uint32
 {
 	None								= 0,
+
+	// Not implemented
 	HasInterpolation					= 1,
+
+	// Fragment has rep notifies
 	HasRepNotifies						= HasInterpolation << 1,
+
+	// Save previous state before apply
 	KeepPreviousState					= HasRepNotifies << 1,
+
+	// Fragment is owned by instance protocol and will be destroyed when the instance protocol is destroyed
 	DeleteWithInstanceProtocol			= KeepPreviousState << 1,
+
+	// Pass raw quantized data when applying state data
 	HasPersistentTargetStateBuffer		= DeleteWithInstanceProtocol << 1,
+
+	// Fragment can be used to source replication data
 	CanReplicate						= HasPersistentTargetStateBuffer << 1,
+
+	// Fragment can receive replication data
 	CanReceive							= CanReplicate << 1,
+
+	// Fragment requires polling to detect dirtiness
 	NeedsPoll							= CanReceive << 1,
+
+	// Fragment requires legacy callbacks
 	NeedsLegacyCallbacks				= NeedsPoll << 1,
+
+	// Fragment requires PreSendUpdate to be called 
 	NeedsPreSendUpdate					= NeedsLegacyCallbacks << 1,
+
+	// Fragment requires world location to be updated before filtering and prioritization
 	NeedsWorldLocationUpdate			= NeedsPreSendUpdate << 1,
+
+	// Fragment supports push based dirtiness
 	HasPushBasedDirtiness				= NeedsWorldLocationUpdate << 1,
+
+	// Fragment is a PropertyReplication, or is using PropertyReplicationState
 	HasPropertyReplicationState			= HasPushBasedDirtiness << 1,
+
+	// Fragment has object references
 	HasObjectReference					= HasPropertyReplicationState << 1,
+
+	// Fragment supports partial dequantized state in apply
+	SupportsPartialDequantizedState		= HasObjectReference << 1,
 };
 ENUM_CLASS_FLAGS(EReplicationFragmentTraits);
 
@@ -189,9 +221,9 @@ ENUM_CLASS_FLAGS(EFragmentRegistrationFlags);
 */
 struct FReplicationFragmentInfo
 {
-	const FReplicationStateDescriptor* Descriptor;
-	void* SrcReplicationStateBuffer;
-	FReplicationFragment* Fragment;
+	const FReplicationStateDescriptor* Descriptor = nullptr;
+	void* SrcReplicationStateBuffer = nullptr;
+	FReplicationFragment* Fragment = nullptr;
 };
 typedef TArray<FReplicationFragmentInfo, TInlineAllocator<32>> FReplicationFragments;
 

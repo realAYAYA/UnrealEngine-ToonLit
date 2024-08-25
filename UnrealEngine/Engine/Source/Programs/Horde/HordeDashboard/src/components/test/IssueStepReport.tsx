@@ -8,13 +8,13 @@ import React, { useEffect, useState } from "react";
 import backend from "../../backend";
 import { IssueData, JobData, JobStepOutcome } from "../../backend/Api";
 import { useWindowSize } from "../../base/utilities/hooks";
-import { hordeClasses, modeColors } from "../../styles/Styles";
 import { Breadcrumbs } from "../Breadcrumbs";
 import { TopNav } from "../TopNav";
 import { action, makeObservable, observable } from "mobx";
 import moment from "moment";
 import { getNiceTime } from "../../base/utilities/timeUtils";
 import { IssueModalV2 } from "../IssueViewV2";
+import { getHordeStyling } from "../../styles/Styles";
 
 class ToolHandler {
 
@@ -199,6 +199,8 @@ const IssuePanel: React.FC = observer(() => {
 
    }, []);
 
+   const { modeColors } = getHordeStyling();
+
    // subscribe
    if (handler.updated) { };
 
@@ -304,6 +306,8 @@ export const StepIssueReportTest: React.FC = () => {
 
    const windowSize = useWindowSize();
    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+
+   const { hordeClasses, modeColors } = getHordeStyling();
 
    return <Stack className={hordeClasses.horde}>
       <TopNav />

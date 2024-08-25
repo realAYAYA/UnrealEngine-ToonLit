@@ -79,6 +79,12 @@ IMPLEMENT_SLATE_PIXELSHADER_TYPE(LineSegment, true, true, false, false);
 IMPLEMENT_SLATE_PIXELSHADER_TYPE(RoundedBox, false, true, false, false);
 IMPLEMENT_SLATE_PIXELSHADER_TYPE(RoundedBox, true, true, false, false);
 
+IMPLEMENT_SLATE_PIXELSHADER_TYPE(SdfFont, false, true, false, false);
+IMPLEMENT_SLATE_PIXELSHADER_TYPE(SdfFont, true, true, false, false);
+
+IMPLEMENT_SLATE_PIXELSHADER_TYPE(MsdfFont, false, true, false, false);
+IMPLEMENT_SLATE_PIXELSHADER_TYPE(MsdfFont, true, true, false, false);
+
 /** The Slate vertex declaration. */
 TGlobalResource<FSlateVertexDeclaration> GSlateVertexDeclaration;
 TGlobalResource<FSlateInstancedVertexDeclaration> GSlateInstancedVertexDeclaration;

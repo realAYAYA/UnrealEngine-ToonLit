@@ -76,8 +76,13 @@ private:
 
 	bool ShouldFilterOutAsset(const FAssetData& InAssetData, bool& bOutIsOldAsset) const;
 
-	void RequestRefresh() { bRefreshRequested = true; }
+	// Request a 'full' refresh. Rebuilds find/replace widgets and also falls through to bRefreshRequested
+	void RequestRefreshUI() { bRefreshUIRequested = true; }
 
+	// Request a refresh of cached data and search results. Re-caches data also falls through to bRefreshSearchResultsRequested
+	void RequestRefreshCachedData() { bRefreshCachedDataRequested = true; }
+
+	// Refresh search results
 	void RequestRefreshSearchResults() { bRefreshSearchResultsRequested = true; }
 
 	FARFilter MakeARFilter() const;
@@ -103,7 +108,9 @@ private:
 
 	bool bFoundAssets = false;
 
-	bool bRefreshRequested = false;
+	bool bRefreshCachedDataRequested = false;
+
+	bool bRefreshUIRequested = false;
 
 	bool bRefreshSearchResultsRequested = false;
 

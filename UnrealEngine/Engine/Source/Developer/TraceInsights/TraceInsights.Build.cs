@@ -6,11 +6,13 @@ public class TraceInsights : ModuleRules
 {
 	public TraceInsights(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PublicDependencyModuleNames.AddRange
-		(
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
+
+		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"AppFramework", // for SColorPicker
 				"ApplicationCore",
+				"AutomationDriver",
 				"Cbor",
 				"Core",
 				"CoreUObject",
@@ -55,6 +57,7 @@ public class TraceInsights : ModuleRules
 			new string[] {
 				"ImageCore",
 				"SlateCore",
+				"ToolWidgets"
 			}
 		);
 

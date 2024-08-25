@@ -135,6 +135,7 @@ private:
 		FInputAccessUnit AccessUnit;
 		TMap<FString, FVariant> AdditionalOptions;
 		TSharedPtr<ElectraDecodersUtil::MPEG::FISO14496_10_seq_parameter_set_data, ESPMode::ThreadSafe> SPS;
+		bool bDropOutput = false;
 	};
 
 	enum class EDecodeState
@@ -203,6 +204,7 @@ void IElectraVideoDecoderH264_Linux::GetConfigurationOptions(TMap<FString, FVari
 	OutOptions.Emplace(IElectraDecoderFeature::MinimumNumberOfOutputFrames, FVariant((int32)8));
 	// The decoder is adaptive. There is no need to call IsCompatibleWith() on stream switches.
 	OutOptions.Emplace(IElectraDecoderFeature::IsAdaptive, FVariant(true));
+	OutOptions.Emplace(IElectraDecoderFeature::SupportsDroppingOutput, FVariant(true));
 }
 
 TSharedPtr<IElectraDecoder, ESPMode::ThreadSafe> IElectraVideoDecoderH264_Linux::Create(const TMap<FString, FVariant>& InOptions, TSharedPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> InResourceDelegate)
@@ -326,15 +328,21 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_Linux::DecodeAccessUnit(
 		return IElectraDecoder::EDecoderError::EndOfData;
 	}
 
+	// CSD only buffer is not handled at the moment.
+	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
+
+	// If this is discardable and won't be output we do not need to handle it at all.
+	if ((InInputAccessUnit.Flags & (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable)) == (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable))
+	{
+		return IElectraDecoder::EDecoderError::None;
+	}
+
 	// If there is pending output it is very likely that decoding this access unit would also generate output.
 	// Since that would result in loss of the pending output we return now.
 	if (CurrentOutput.IsValid())
 	{
 		return IElectraDecoder::EDecoderError::NoBuffer;
 	}
-
-	// CSD only buffer is not handled at the moment.
-	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
 
 	// If a new decoder is needed, destroy the current one.
 	if (bNewDecoderRequired)
@@ -389,6 +397,7 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_Linux::DecodeAccessUnit(
 			TSharedPtr<FDecoderInput, ESPMode::NotThreadSafe> In(new FDecoderInput);
 			In->AdditionalOptions = InAdditionalOptions;
 			In->AccessUnit = InInputAccessUnit;
+			In->bDropOutput = (InInputAccessUnit.Flags & EElectraDecoderFlags::DoNotOutput) == EElectraDecoderFlags::DoNotOutput;
 			In->SPS = CurrentSPS;
 			// Zero the input pointer and size in the copy. That data is not owned by us and it's best not to have any
 			// values here that would lead us to think that we do.
@@ -605,7 +614,11 @@ FElectraVideoDecoderH264_Linux::EConvertResult FElectraVideoDecoderH264_Linux::C
 	NewOutput->ExtraValues.Emplace(TEXT("decoder"), FVariant(TEXT("libavcodec")));
 	NewOutput->ExtraValues.Emplace(TEXT("codec"), FVariant(TEXT("avc")));
 
-	CurrentOutput = MoveTemp(NewOutput);
-
+	// Take this output on if it is not to be dropped.
+	// We need to have pulled it out of libav before deciding this though.
+	if (!In->bDropOutput)
+	{
+		CurrentOutput = MoveTemp(NewOutput);
+	}
 	return EConvertResult::Success;
 }

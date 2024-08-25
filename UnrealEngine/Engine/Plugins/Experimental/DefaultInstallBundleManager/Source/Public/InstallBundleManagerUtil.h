@@ -14,8 +14,6 @@ struct FAnalyticsEventAttribute;
 class IAnalyticsProviderET;
 struct FInstallBundleCacheStats;
 
-extern DEFAULTINSTALLBUNDLEMANAGER_API FString GInstallBundleManagerIni;
-
 DECLARE_LOG_CATEGORY_EXTERN(LogDefaultInstallBundleManager, Display, All);
 
 namespace InstallBundleManagerUtil

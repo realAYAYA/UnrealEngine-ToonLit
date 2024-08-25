@@ -179,7 +179,7 @@ float FThumbnailSection::GetSectionGripSize() const
 }
 
 
-float FThumbnailSection::GetSectionHeight() const
+float FThumbnailSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
 {
 	auto* Settings = GetDefault<UMovieSceneUserThumbnailSettings>();
 	if (Settings->bDrawThumbnails)

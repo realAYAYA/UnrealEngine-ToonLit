@@ -199,9 +199,8 @@ int64 FHttpStreamFArchive::TotalSize()
 
 void FHttpStreamFArchive::Seek( int64 InPos ) 
 {
-	check( InPos <= Buffer.Num() );
-
-	Pos = IntCastChecked<int32>(InPos);
+	ensureMsgf( InPos >= 0 && InPos <= Buffer.Num(), TEXT("FHttpStreamFArchive::Seek invalid InPos %" INT64_FMT " Buffer Length %i"), InPos, Buffer.Num() );
+	Pos = FMath::Clamp( static_cast<int32>(InPos), 0, Buffer.Num() );
 }
 
 bool FHttpStreamFArchive::AtEnd() 

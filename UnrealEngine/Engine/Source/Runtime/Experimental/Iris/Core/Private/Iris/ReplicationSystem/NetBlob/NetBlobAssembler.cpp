@@ -31,24 +31,58 @@ void FNetBlobAssembler::AddPartialNetBlob(FNetSerializationContext& Context, FNe
 		return;
 	}
 
-	const uint32 PartIndex = PartialNetBlob->GetPartIndex();
-	if (PartIndex != NextPartIndex)
+	// We expect broken sequences to be handled as soon as they're reported. We've already reported the error once.
+	if (bIsBrokenSequence)
 	{
 		Context.SetError(NetError_PartialNetBlobSequenceError);
 		return;
 	}
 
-	if (PartIndex == 0U)
+	const uint32 SequenceNumber = PartialNetBlob->GetSequenceNumber();
+	const bool bIsFirstPart = PartialNetBlob->IsFirstPart();
+
+	// Broken sequence detection. For reliable blobs the NextPartIndex and NextSequenceSumber must match. If reliability changes we need some additional validation.
+	const bool bIsReliable = PartialNetBlob->IsReliable();
+	if (SequenceNumber != NextSequenceSumber || bIsReliable != bIsProcessingReliable)
 	{
-		PartCount = PartialNetBlob->GetPartCount();
+		// Reliable sequences are expected to be fully processed before proceeding to a new sequence. If we're in the middle of processing everything needs to match.
+		if (bIsProcessingReliable)
+		{
+			bIsBrokenSequence = true;
+			Context.SetError(NetError_PartialNetBlobSequenceError);
+			return;
+		}
+
+		// Gracefully handle going from unreliable to first part of blob, regardless of its reliability.
+		if (!bIsFirstPart && SequenceNumber != NextSequenceSumber)
+		{
+			bIsBrokenSequence = true;
+			if (bIsReliable)
+			{
+				Context.SetError(NetError_PartialNetBlobSequenceError);
+			}
+			return;
+		}
+	}
+
+	bIsProcessingReliable = bIsReliable;
+
+	if (bIsFirstPart)
+	{
+		const uint32 PartCount = PartialNetBlob->GetPartCount();
+		NextSequenceSumber = SequenceNumber;
+		LastPartSequenceNumber = SequenceNumber + PartialNetBlob->GetPartCount() - 1U;
+
 		if (PartCount == 0)
 		{
+			bIsBrokenSequence = true;
 			Context.SetError(GNetError_InvalidValue);
 			return;
 		}
 
 		if (PartCount > PartialNetBlobHandlerConfig->GetMaxPartCount())
 		{
+			bIsBrokenSequence = true;
 			Context.SetError(GNetError_InvalidValue);
 			return;
 		}
@@ -57,6 +91,7 @@ void FNetBlobAssembler::AddPartialNetBlob(FNetSerializationContext& Context, FNe
 		// We allow part sizes to be lower than the config value in case it was hotfixed.
 		if (PayloadBitCount > PartialNetBlobHandlerConfig->GetMaxPartBitCount())
 		{
+			bIsBrokenSequence = true;
 			Context.SetError(GNetError_InvalidValue);
 			return;
 		}
@@ -80,6 +115,7 @@ void FNetBlobAssembler::AddPartialNetBlob(FNetSerializationContext& Context, FNe
 	{
 		if (InRefHandle != RefHandle)
 		{
+			bIsBrokenSequence = true;
 			Context.SetError(NetError_PartialNetBlobSequenceError);
 			return;
 		}
@@ -87,8 +123,9 @@ void FNetBlobAssembler::AddPartialNetBlob(FNetSerializationContext& Context, FNe
 		const uint32 PayloadBitCount = PartialNetBlob->GetPayloadBitCount();
 		const uint32 PayloadByteCount = (PayloadBitCount + 7U)/8U;
 		// All parts except the last one is expected to match the first part. The last part may be smaller.
-		if (((PayloadBitCount != FirstPayloadBitCount) && ((PartIndex + 1U) < PartCount)) || (PayloadBitCount > FirstPayloadBitCount))
+		if (((PayloadBitCount != FirstPayloadBitCount) && (NextSequenceSumber != LastPartSequenceNumber)) || (PayloadBitCount > FirstPayloadBitCount))
 		{
+			bIsBrokenSequence = true;
 			Context.SetError(GNetError_InvalidValue);
 			return;
 		}
@@ -97,11 +134,13 @@ void FNetBlobAssembler::AddPartialNetBlob(FNetSerializationContext& Context, FNe
 		BitWriter.WriteBitStream(PartialNetBlob->GetPayload(), 0, PayloadBitCount);
 	}
 
-	++NextPartIndex;
-	if (NextPartIndex == PartCount)
+	if (NextSequenceSumber == LastPartSequenceNumber)
 	{
 		bIsReadyToAssemble = true;
-		NextPartIndex = 0;
+	}
+	else
+	{
+		++NextSequenceSumber;
 	}
 }
 

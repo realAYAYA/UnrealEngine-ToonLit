@@ -49,6 +49,8 @@ void UMassReplicationSubsystem::Deinitialize()
 	World = nullptr;
 	MassLODSubsystem = nullptr;
 	EntityManager.Reset();
+
+	Super::Deinitialize();
 }
 
 UMassReplicationSubsystem::UMassReplicationSubsystem()
@@ -197,7 +199,8 @@ bool UMassReplicationSubsystem::SynchronizeClients(const TArray<FViewerInfo>& Vi
 			{
 //no need to check netconnection if UE_ALLOW_DEBUG_REPLICATION_BUBBLES_STANDALONE
 #if !UE_ALLOW_DEBUG_REPLICATION_BUBBLES_STANDALONE
-				if (UE::Mass::Replication::HasParentNetConnection(Viewer.PlayerController))
+				APlayerController* ViewerAsPlayerController = Viewer.GetPlayerController();
+				if (UE::Mass::Replication::HasParentNetConnection(ViewerAsPlayerController))
 #endif
 				{
 					// check if the controller already exists by trying to remove it from the map which was filled up with controllers we were tracking
@@ -205,7 +208,7 @@ bool UMassReplicationSubsystem::SynchronizeClients(const TArray<FViewerInfo>& Vi
 					{
 						// If not add it to ClientsToAdd. Its important AddClient isn't called until necessary Clients are removed, as we may reuse 
 						// array indices that are already in use.
-						ClientsToAdd.Emplace(Viewer.Handle, Viewer.PlayerController);
+						ClientsToAdd.Emplace(Viewer.Handle, ViewerAsPlayerController);
 					}
 				}
 			}
@@ -227,7 +230,7 @@ bool UMassReplicationSubsystem::SynchronizeClients(const TArray<FViewerInfo>& Vi
 	// resize the ViewerToClientHandleArray array to match the viewer handles array (for consistency)
 	if (ViewerToClientHandleArray.Num() > Viewers.Num())
 	{
-		ViewerToClientHandleArray.RemoveAt(Viewers.Num(), ViewerToClientHandleArray.Num() - Viewers.Num(), /* bAllowShrinking */ false);
+		ViewerToClientHandleArray.RemoveAt(Viewers.Num(), ViewerToClientHandleArray.Num() - Viewers.Num(), EAllowShrinking::No);
 	}
 
 	for (FClientAddData& ClientAdd : ClientsToAdd)
@@ -291,7 +294,7 @@ void UMassReplicationSubsystem::SynchronizeClientViewers(const TArray<FViewerInf
 					}
 					else //remove invalid ClientViewer, but dont increment the ViewerIdx
 					{
-						ClientReplicationInfo.Handles.RemoveAt(ViewerIdx, 1, /* bAllowShrinking */ false);
+						ClientReplicationInfo.Handles.RemoveAt(ViewerIdx, 1, EAllowShrinking::No);
 					}
 				}
 			}
@@ -304,12 +307,13 @@ void UMassReplicationSubsystem::SynchronizeClientViewers(const TArray<FViewerInf
 			if (Viewer.Handle.IsValid())
 			{
 				// we are only processing child UNetConnections that have a valid APlayerController OwningActor
-				const APlayerController* ParentController = UE::Mass::Replication::GetParentControllerFromChildNetConnection(Viewer.PlayerController);
+				APlayerController* ViewerAsPlayerController = Viewer.GetPlayerController();
+				const APlayerController* ParentController = UE::Mass::Replication::GetParentControllerFromChildNetConnection(ViewerAsPlayerController);
 
 				// check if the parent controller is valid and already exists
-				if (ParentController && (ClientViewerMap.Find(Viewer.PlayerController) == nullptr))
+				if (ParentController && (ClientViewerMap.Find(ViewerAsPlayerController) == nullptr))
 				{
-					FMassViewerHandle ParentViewerHandle = MassLODSubsystem->GetViewerHandleFromPlayerController(ParentController);
+					FMassViewerHandle ParentViewerHandle = MassLODSubsystem->GetViewerHandleFromActor(*ParentController);
 
 					if (ensureMsgf(ParentViewerHandle.IsValid(), TEXT("MassLODSubsystem handles are out of sync with PlayerController NetConnections!")))
 					{
@@ -322,7 +326,7 @@ void UMassReplicationSubsystem::SynchronizeClientViewers(const TArray<FViewerInf
 						check(ClientHandleManager.IsValidHandle(ParentViewerClientPair.ClientHandle));
 
 						// remove APlayerController from the ClientViewerMap and Add the viewer to the ClientsReplicationInfo
-						ClientViewerMap.Remove(Viewer.PlayerController);
+						ClientViewerMap.Remove(ViewerAsPlayerController);
 
 						FMassClientReplicationInfo& ClientReplicationInfo = ClientsReplicationInfo[ParentViewerClientPair.ClientHandle.GetIndex()];
 
@@ -375,12 +379,12 @@ void UMassReplicationSubsystem::SynchronizeClientsAndViewers()
 	{
 		const int32 NumItems = ClientHandleManager.ShrinkHandles();
 		 
-		ClientsReplicationInfo.RemoveAt(NumItems, ClientsReplicationInfo.Num() - NumItems, /* bAllowShrinking */ false);
-		ClientToViewerHandleArray.RemoveAt(NumItems, ClientToViewerHandleArray.Num() - NumItems, /* bAllowShrinking */ false);
+		ClientsReplicationInfo.RemoveAt(NumItems, ClientsReplicationInfo.Num() - NumItems, EAllowShrinking::No);
+		ClientToViewerHandleArray.RemoveAt(NumItems, ClientToViewerHandleArray.Num() - NumItems, EAllowShrinking::No);
 
 		for (FMassClientBubbleInfoData& InfoData : BubbleInfoArray)
 		{
-			InfoData.Bubbles.RemoveAt(NumItems, InfoData.Bubbles.Num() - NumItems, /* bAllowShrinking */ false);
+			InfoData.Bubbles.RemoveAt(NumItems, InfoData.Bubbles.Num() - NumItems, EAllowShrinking::No);
 		}
 	}
 }

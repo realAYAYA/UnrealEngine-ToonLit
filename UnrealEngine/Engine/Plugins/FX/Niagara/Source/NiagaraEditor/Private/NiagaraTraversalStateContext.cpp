@@ -332,3 +332,21 @@ ENiagaraFunctionDebugState FNiagaraFixedConstantResolver::GetDebugState() const
 	FNiagaraInt32 EnumValue = ResolvedConstants[(uint8)EResolvedConstant::FunctionDebugState].GetValue<FNiagaraInt32>();
 	return (ENiagaraFunctionDebugState)EnumValue.Value;
 }
+
+void FNiagaraFixedConstantResolver::AddNamedChildResolver(FName ScopeName, const FNiagaraFixedConstantResolver& ChildResolver)
+{
+	if (ensure(FindChildResolver(ScopeName) == nullptr))
+	{
+		ChildResolversByName.Emplace(ScopeName, ChildResolver);
+	}
+}
+
+const FNiagaraFixedConstantResolver* FNiagaraFixedConstantResolver::FindChildResolver(FName ScopeName) const
+{
+	const FNamedResolverPair* ChildResolver = ChildResolversByName.FindByPredicate([ScopeName](const FNamedResolverPair& NamedPair) -> bool
+	{
+			return NamedPair.Key == ScopeName;
+	});
+
+	return ChildResolver ? &ChildResolver->Value : nullptr;
+}

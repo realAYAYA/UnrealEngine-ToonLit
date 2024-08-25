@@ -458,7 +458,14 @@ void UNiagaraNodeSelect::GetWildcardPinHoverConnectionTextAddition(const UEdGrap
 {
 	if(ConnectionResponse == ECanCreateConnectionResponse::CONNECT_RESPONSE_DISALLOW)
 	{
-		OutString += TEXT("\nWildcard Pin only allows index types: bool, integer or enums.");
+		if (WildcardPin && WildcardPin->PersistentGuid.IsValid() && WildcardPin->PersistentGuid == SelectorPinGuid)
+		{
+			OutString += TEXT("\nThis wildcard pin only supports bool, integer or enum types.");
+		}
+		else
+		{
+			OutString += TEXT("\nThis wildcard pin only supports simple types (no numerics or data interfaces).");
+		}
 	}
 }
 

@@ -40,6 +40,29 @@ EPreAnimatedCaptureSourceState TPreAnimatedCaptureSources<KeyType>::BeginTrackin
 }
 
 template<typename KeyType>
+void TPreAnimatedCaptureSources<KeyType>::StopTrackingCaptureSource(const KeyType& InKey, FPreAnimatedStorageID InStorageID)
+{
+	FPreAnimatedStateMetaDataArray* Array = KeyToMetaData.Find(InKey);
+	if (Array)
+	{
+		for (int32 Index = Array->Num()-1; Index >= 0; --Index)
+		{
+			const FPreAnimatedStateMetaData& MetaData = (*Array)[Index];
+			if (MetaData.Entry.ValueHandle.TypeID == InStorageID)
+			{
+				Owner->RemoveMetaData(MetaData);
+				Array->RemoveAt(Index, 1, EAllowShrinking::No);
+			}
+		}
+
+		if (Array->Num() == 0)
+		{
+			KeyToMetaData.Remove(InKey);
+		}
+	}
+}
+
+template<typename KeyType>
 void TPreAnimatedCaptureSources<KeyType>::StopTrackingCaptureSource(const KeyType& InKey)
 {
 	FPreAnimatedStateMetaDataArray* Array = KeyToMetaData.Find(InKey);
@@ -81,7 +104,7 @@ void TPreAnimatedCaptureSources<KeyType>::GatherAndRemoveExpiredMetaData(const F
 			if (MetaData.RootInstanceHandle == InstanceHandle)
 			{
 				OutExpiredMetaData.Add(MetaData);
-				Array.RemoveAt(Index, 1, false);
+				Array.RemoveAt(Index, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -104,7 +127,54 @@ void TPreAnimatedCaptureSources<KeyType>::GatherAndRemoveMetaDataForGroup(FPreAn
 			if (MetaData.Entry.GroupHandle == Group)
 			{
 				OutExpiredMetaData.Add(MetaData);
-				Array.RemoveAt(Index, 1, false);
+				Array.RemoveAt(Index, 1, EAllowShrinking::No);
+			}
+		}
+
+		if (Array.Num() == 0)
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+template<typename KeyType>
+void TPreAnimatedCaptureSources<KeyType>::GatherAndRemoveMetaDataForStorage(FPreAnimatedStorageID StorageID, FPreAnimatedStorageIndex StorageIndex, TArray<FPreAnimatedStateMetaData>& OutExpiredMetaData)
+{
+	for (auto It = KeyToMetaData.CreateIterator(); It; ++It)
+	{
+		FPreAnimatedStateMetaDataArray& Array = It.Value();
+		for (int32 Index = Array.Num()-1; Index >= 0; --Index)
+		{
+			const FPreAnimatedStateMetaData& MetaData = Array[Index];
+			if (MetaData.Entry.ValueHandle.TypeID == StorageID &&
+					(!StorageIndex.IsValid() || MetaData.Entry.ValueHandle.StorageIndex == StorageIndex))
+			{
+				OutExpiredMetaData.Add(MetaData);
+				Array.RemoveAt(Index, 1, EAllowShrinking::No);
+			}
+		}
+
+		if (Array.Num() == 0)
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+template<typename KeyType>
+void TPreAnimatedCaptureSources<KeyType>::GatherAndRemoveMetaDataForRootInstance(FRootInstanceHandle InstanceHandle, TArray<FPreAnimatedStateMetaData>& OutExpiredMetaData)
+{
+	for (auto It = KeyToMetaData.CreateIterator(); It; ++It)
+	{
+		FPreAnimatedStateMetaDataArray& Array = It.Value();
+		for (int32 Index = Array.Num()-1; Index >= 0; --Index)
+		{
+			const FPreAnimatedStateMetaData& MetaData = Array[Index];
+			if (MetaData.RootInstanceHandle == InstanceHandle)
+			{
+				OutExpiredMetaData.Add(MetaData);
+				Array.RemoveAt(Index, 1, EAllowShrinking::No);
 			}
 		}
 

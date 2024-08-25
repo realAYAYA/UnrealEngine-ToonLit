@@ -5,7 +5,7 @@
 #include "Delegates/Delegate.h"
 #include "Widgets/SWindow.h"
 
-DECLARE_DELEGATE_TwoParams(FBakeToControlDelegate, bool, float);
+DECLARE_DELEGATE_ThreeParams(FBakeToControlDelegate, bool, float, bool);
 
 struct BakeToControlRigDialog
 {

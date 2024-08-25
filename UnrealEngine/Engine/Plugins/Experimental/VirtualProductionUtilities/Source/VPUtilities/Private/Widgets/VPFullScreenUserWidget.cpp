@@ -63,7 +63,7 @@ namespace
 
 			void RemoveWidget(UVPFullScreenUserWidget* InWidget)
 			{
-				WidgetsToHide.RemoveSingleSwap(InWidget, false);
+				WidgetsToHide.RemoveSingleSwap(InWidget, EAllowShrinking::No);
 			}
 
 		private:

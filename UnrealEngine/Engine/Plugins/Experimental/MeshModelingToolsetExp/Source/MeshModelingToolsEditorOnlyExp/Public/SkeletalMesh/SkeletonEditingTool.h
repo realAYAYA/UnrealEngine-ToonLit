@@ -3,6 +3,7 @@
 #pragma once
 
 #include "DynamicMeshBrushTool.h"
+#include "GroupTopology.h"
 #include "BaseTools/MeshSurfacePointMeshEditingTool.h"
 
 #include "SkeletalMeshNotifier.h"
@@ -10,7 +11,9 @@
 #include "SkeletalMesh/SkeletalMeshEditionInterface.h"
 #include "Engine/World.h"
 #include "Changes/ValueWatcher.h"
+#include "Mechanics/RectangleMarqueeMechanic.h"
 #include "Misc/EnumClassFlags.h"
+#include "Selection/MeshTopologySelectionMechanic.h"
 
 #include "SkeletonEditingTool.generated.h"
 
@@ -21,6 +24,7 @@ class USkeletonEditingTool;
 class USkeletonTransformProxy;
 class USkeletalMeshGizmoContextObjectBase;
 class USkeletalMeshGizmoWrapperBase;
+class UPolygonSelectionMechanic;
 
 namespace SkeletonEditingTool
 {
@@ -108,11 +112,14 @@ public:
 	virtual void Setup() override;
 	virtual void Shutdown(EToolShutdownType ShutdownType) override;
 
+	virtual void DrawHUD(FCanvas* Canvas, IToolsContextRenderAPI* RenderAPI) override;
 	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
 	
 	virtual bool HasCancel() const override { return true; }
 	virtual bool HasAccept() const override { return true; }
 	virtual bool CanAccept() const override { return true; }
+
+	virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
 
 	// ICLickDragBehaviorTarget overrides
 	virtual FInputRayHit CanBeginClickDragSequence(const FInputDeviceRay& InPressPos) override;
@@ -134,7 +141,8 @@ public:
 	void OrientBones();
 	void RemoveBones();
 	void UnParentBones();
-
+	void SnapBoneToComponentSelection(const bool bCreate);
+	
 	// ISkeletalMeshEditionInterface overrides
 	virtual TArray<FName> GetSelectedBones() const override;
 
@@ -151,6 +159,8 @@ public:
 
 	EEditingOperation GetOperation() const;
 	void SetOperation(const EEditingOperation InOperation, const bool bUpdateGizmo = true);
+
+	bool HasSelectedComponent() const;
 	
 protected:
 
@@ -164,8 +174,7 @@ protected:
 	void CreateNewBone();
 	void ParentBones(const FName& InParentName);
 
-	UPROPERTY()
-	TObjectPtr<USkeletonModifier> Modifier;
+public:
 	
 	UPROPERTY()
 	TObjectPtr<USkeletonEditingProperties> Properties;
@@ -176,11 +185,16 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UMirroringProperties> MirroringProperties;
 
-public:
 	UPROPERTY()
 	TObjectPtr<UOrientingProperties> OrientingProperties;
+
+	UPROPERTY()
+	TObjectPtr<UPolygonSelectionMechanic> SelectionMechanic;
 	
 protected:
+	
+	UPROPERTY()
+	TObjectPtr<USkeletonModifier> Modifier = nullptr;
 	
 	UPROPERTY()
 	TObjectPtr<USingleClickInputBehavior> LeftClickBehavior = nullptr;
@@ -241,12 +255,40 @@ private:
 
 	void NormalizeSelection();
 
+	// setup
+	void SetupModifier(USkeletalMesh* InSkeletalMesh);
+	void SetupPreviewMesh();
+	void SetupProperties();
+	void SetupBehaviors();
+	void SetupGizmo(USkeletalMeshComponent* InComponent);
+	void SetupWatchers();
+	void SetupComponentsSelection();
+	
+	// actions
+	void RegisterCreateAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterDeleteAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterSelectAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterParentAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterUnParentAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterCopyAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterPasteAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterDuplicateAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterSelectComponentsAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterSelectionFilterCyclingAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+	void RegisterSnapAction(FInteractiveToolActionSet& InOutActionSet, const int32 InActionId);
+
+	TArray<int32> GetSelectedComponents() const;
+
+	FTransform ComputeTransformFromComponents(const TArray<int32>& InIDs) const;
+	
 	TValueWatcher<TArray<FName>> SelectionWatcher;
 	TValueWatcher<EToolContextCoordinateSystem> CoordinateSystemWatcher; 
 	
 	int32 ParentIndex = INDEX_NONE;
 
 	TFunction<void()> PendingFunction;
+
+	TUniquePtr<UE::Geometry::FTriangleGroupTopology> Topology = nullptr;
 };
 
 ENUM_CLASS_FLAGS(USkeletonEditingTool::EBoneSelectionMode);
@@ -276,6 +318,9 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Viewport Axis Settings",  meta = (DisplayPriority = 10, ClampMin = "0.0", UIMin = "0.0"))
 	float AxisThickness = 0.f;
+
+	UPROPERTY()
+	bool bEnableComponentSelection = false;
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent &PropertyChangedEvent) override;

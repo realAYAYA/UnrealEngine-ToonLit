@@ -3,22 +3,23 @@
 #include "MassSmartObjectProcessor.h"
 #include "MassCommandBuffer.h"
 #include "MassCommonTypes.h"
+#include "MassDebugger.h"
 #include "MassExecutionContext.h"
+#include "MassGameplayExternalTraits.h"
 #include "MassSignalSubsystem.h"
 #include "MassSmartObjectBehaviorDefinition.h"
 #include "MassSmartObjectFragments.h"
 #include "MassSmartObjectRequest.h"
 #include "MassSmartObjectSettings.h"
 #include "MassSmartObjectTypes.h"
-#include "SmartObjectZoneAnnotations.h"
 #include "Misc/ScopeExit.h"
 #include "SmartObjectOctree.h"
 #include "SmartObjectSubsystem.h"
+#include "SmartObjectZoneAnnotations.h"
 #include "VisualLogger/VisualLogger.h"
 #include "ZoneGraphAnnotationSubsystem.h"
-#include "MassGameplayExternalTraits.h"
 #include "ZoneGraphSubsystem.h"
-#include "MassGameplayExternalTraits.h"
+
 
 //----------------------------------------------------------------------//
 // UMassSmartObjectCandidatesFinderProcessor
@@ -388,7 +389,7 @@ UMassSmartObjectUserFragmentDeinitializer::UMassSmartObjectUserFragmentDeinitial
 {
 	ObservedType = FMassSmartObjectUserFragment::StaticStruct();
 	Operation = EMassObservedOperation::Remove;
-	ExecutionFlags = (int32)(EProcessorExecutionFlags::All);
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 }
 
 void UMassSmartObjectUserFragmentDeinitializer::ConfigureQueries()

@@ -70,6 +70,8 @@ public class MovieRenderPipelineEditor : ModuleRules
 				"GraphEditor",
 				"StructUtilsEditor",
 				"ApplicationCore",
+				"KismetWidgets",
+				"BlueprintGraph",
 			}
         );
 

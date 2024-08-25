@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -31,7 +31,7 @@ namespace UnrealGameSync
 				NotifyProjectsTextBox.Text = String.Join(" ", settings.NotifyProjects);
 			}
 
-			if(settings.NotifyUnassignedMinutes < 0)
+			if (settings.NotifyUnassignedMinutes < 0)
 			{
 				NotifyUnassignedCheckBox.Checked = false;
 				NotifyUnassignedTextBox.Text = "5";
@@ -104,10 +104,10 @@ namespace UnrealGameSync
 			}
 
 			int newNotifyUnresolvedMinutes = -1;
-			if(NotifyUnresolvedCheckBox.Checked)
+			if (NotifyUnresolvedCheckBox.Checked)
 			{
 				ushort newNotifyUnresolvedMinutesValue;
-				if(!UInt16.TryParse(NotifyUnresolvedTextBox.Text, out newNotifyUnresolvedMinutesValue))
+				if (!UInt16.TryParse(NotifyUnresolvedTextBox.Text, out newNotifyUnresolvedMinutesValue))
 				{
 					MessageBox.Show("Invalid time");
 					return;
@@ -128,10 +128,10 @@ namespace UnrealGameSync
 			}
 
 			int newNotifyUnassignedMinutes = -1;
-			if(NotifyUnassignedCheckBox.Checked)
+			if (NotifyUnassignedCheckBox.Checked)
 			{
 				ushort newNotifyUnassignedMinutesValue;
-				if(!UInt16.TryParse(NotifyUnassignedTextBox.Text, out newNotifyUnassignedMinutesValue))
+				if (!UInt16.TryParse(NotifyUnassignedTextBox.Text, out newNotifyUnassignedMinutesValue))
 				{
 					MessageBox.Show("Invalid time");
 					return;

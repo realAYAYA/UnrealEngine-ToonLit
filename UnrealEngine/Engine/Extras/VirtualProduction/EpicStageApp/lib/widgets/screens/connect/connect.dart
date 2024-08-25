@@ -1,22 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'dart:collection';
+
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/unreal_beacon.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
-import '../../../../utilities/constants.dart';
-import '../../../../widgets/elements/empty_placeholder.dart';
-import '../../../../widgets/elements/layout/card.dart';
 import '../../../../widgets/screens/connect/views/connection_list.dart';
 import '../../../../widgets/screens/main/toolbar/main_screen_toolbar.dart';
 import '../../../models/engine_connection.dart';
 import '../../../models/navigator_keys.dart';
-import '../../../models/unreal_engine_beacon.dart';
 import '../../../utilities/debug_utilities.dart';
 import '../../../utilities/net_utilities.dart';
-import '../../../utilities/unreal_colors.dart';
-import '../../elements/epic_icon_button.dart';
-import '../../elements/modal.dart';
 import 'mixins/connect_mixin.dart';
 import 'views/manual_connect_form.dart';
 import 'views/quick_action_grid.dart';
@@ -34,7 +32,7 @@ class ConnectScreen extends StatefulWidget {
 
 class _ConnectScreenState extends State<ConnectScreen> with WidgetsBindingObserver, ConnectMixin {
   /// Beacon which will be used to detect instances of Unreal Engine.
-  late final UnrealEngineBeacon _engineBeacon;
+  late final UnrealEngineBeacon<UnrealStageBeaconData> _engineBeacon;
 
   /// Data for the last engine we were connected to, if any.
   ConnectionData? _lastConnection;
@@ -59,8 +57,8 @@ class _ConnectScreenState extends State<ConnectScreen> with WidgetsBindingObserv
 
     _engineBeacon = UnrealEngineBeacon(
       context: context,
+      config: unrealEngineBeaconConfig,
       onBeaconFailure: _onBeaconFailure,
-      onEngineInstancesChanged: () => setState(() {}),
     );
 
     Provider.of<EngineConnectionManager>(context, listen: false)
@@ -102,13 +100,17 @@ class _ConnectScreenState extends State<ConnectScreen> with WidgetsBindingObserv
       appBar: const _ConnectScreenToolbar(),
       body: Container(
         color: UnrealColors.gray14,
-        padding: EdgeInsets.only(left: cardMargin, right: cardMargin, bottom: cardMargin),
+        padding: EdgeInsets.only(
+          left: UnrealTheme.cardMargin,
+          right: UnrealTheme.cardMargin,
+          bottom: UnrealTheme.cardMargin,
+        ),
         child: Container(
           width: MediaQuery.of(context).size.width,
-          padding: EdgeInsets.all(cardMargin),
+          padding: EdgeInsets.all(UnrealTheme.cardMargin),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.background,
-            borderRadius: BorderRadius.circular(outerCornerRadius),
+            borderRadius: BorderRadius.circular(UnrealTheme.outerCornerRadius),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -119,14 +121,14 @@ class _ConnectScreenState extends State<ConnectScreen> with WidgetsBindingObserv
                     children: [
                       CardLargeHeader(
                         title: AppLocalizations.of(context)!.connectScreenQuickConnectPanelTitle,
-                        iconPath: 'assets/images/icons/light_card.svg',
+                        iconPath: 'packages/epic_common/assets/icons/light_card.svg',
                       ),
                       QuickActionGrid(recentConnections: _connections),
                     ],
                   ),
                 ),
               ),
-              SizedBox(width: cardMargin),
+              SizedBox(width: UnrealTheme.cardMargin),
               Expanded(
                 child: Card(
                   child: Column(
@@ -134,22 +136,26 @@ class _ConnectScreenState extends State<ConnectScreen> with WidgetsBindingObserv
                     children: [
                       CardLargeHeader(
                         title: AppLocalizations.of(context)!.connectScreenAllConnectionsPanelTitle,
-                        iconPath: 'assets/images/icons/unreal_u_logo.svg',
+                        iconPath: 'packages/epic_common/assets/icons/unreal_u_logo.svg',
                       ),
                       Expanded(
-                        child: _engineBeacon.connections.length > 0
-                            ? ConnectionList(
-                                connections: _engineBeacon.connections,
-                              )
-                            : EmptyPlaceholder(
-                                message: AppLocalizations.of(context)!.connectScreenAllConnectionsPanelEmptyMessage,
-                                button: EpicWideButton(
-                                  text: AppLocalizations.of(context)!.connectScreenAllConnectionsPanelEmptyButtonLabel,
-                                  iconPath: 'assets/images/icons/plus.svg',
-                                  color: UnrealColors.highlightGreen,
-                                  onPressed: _showManualConnectDialog,
+                        child: ValueListenableBuilder<UnmodifiableListView<UnrealStageBeaconResponse>>(
+                          valueListenable: _engineBeacon.responses,
+                          builder: (_, responses, __) => responses.isNotEmpty
+                              ? ConnectionList(
+                                  connections: responses.map(ConnectionData.fromBeaconResponse).toList(growable: false),
+                                )
+                              : EmptyPlaceholder(
+                                  message: AppLocalizations.of(context)!.connectScreenAllConnectionsPanelEmptyMessage,
+                                  button: EpicWideButton(
+                                    text:
+                                        AppLocalizations.of(context)!.connectScreenAllConnectionsPanelEmptyButtonLabel,
+                                    iconPath: 'packages/epic_common/assets/icons/plus.svg',
+                                    color: UnrealColors.highlightGreen,
+                                    onPressed: _showManualConnectDialog,
+                                  ),
                                 ),
-                              ),
+                        ),
                       ),
                     ],
                   ),

@@ -8,7 +8,7 @@
 #include "Containers/Map.h"
 #include "Containers/Set.h"
 #include "Containers/UnrealString.h"
-#include "Cooker/CookMPCollector.h"
+#include "Cooker/MPCollector.h"
 #include "Misc/AssetRegistryInterface.h"
 #include "Misc/Optional.h"
 #include "Templates/SharedPointer.h"
@@ -18,15 +18,16 @@
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UObjectHash.h"
 
-class FSandboxPlatformFile;
 class IAssetRegistry;
 class ITargetPlatform;
 class IChunkDataGenerator;
 class UChunkDependencyInfo;
+class UCookOnTheFlyServer;
 struct FChunkDependencyTreeNode;
-struct FCookTagList;
 struct FSoftObjectPath;
+namespace UE::Cook { class FAssetRegistryMPCollector; }
 namespace UE::Cook { class FAssetRegistryPackageMessage; }
+namespace UE::Cook { class FCookSandbox; }
 namespace UE::Cook { class FCookWorkerClient; }
 namespace UE::Cook { struct FPackageData; }
 
@@ -80,7 +81,7 @@ public:
 	/** Info about a GeneratorPackage (see ICookPackageSplitter) loaded from previous iterative cooks. */
 	struct FGeneratorPackageInfo
 	{
-		TMap<FName, FGuid> Generated;
+		TMap<FName, FIoHash> Generated;
 	};
 
 	enum EDifference
@@ -156,7 +157,7 @@ public:
 	 *        and a manifest of packagenames is written for each chunk
 	 */
 	void FinalizeChunkIDs(const TSet<FName>& CookedPackages, const TSet<FName>& DevelopmentOnlyPackages,
-		FSandboxPlatformFile& InSandboxFile, bool bGenerateStreamingInstallManifest);
+		UE::Cook::FCookSandbox& InSandboxFile, bool bGenerateStreamingInstallManifest);
 
 	/**
 	 * Register a chunk data generator with this generator.
@@ -204,7 +205,7 @@ public:
 	 * @param InManifestSubDir If non-null, the manifests are written into this subpath
 	 *        of the usual location.
 	 */
-	bool SaveManifests(FSandboxPlatformFile& InSandboxFile, int64 InOverrideChunkSize = 0,
+	bool SaveManifests(UE::Cook::FCookSandbox& InSandboxFile, int64 InOverrideChunkSize = 0,
 		const TCHAR* InManifestSubDir = nullptr);
 
 	/**
@@ -215,7 +216,7 @@ public:
 	/** 
 	 * Writes out CookerOpenOrder.log file 
 	 */
-	bool WriteCookerOpenOrder(FSandboxPlatformFile& InSandboxFile);
+	bool WriteCookerOpenOrder(UE::Cook::FCookSandbox& InSandboxFile);
 
 	/**
 	 * Follows an assets dependency chain to build up a list of package names in the same order as the runtime would attempt to load them
@@ -251,11 +252,12 @@ public:
 	 */
 	void UpdateAssetRegistryData(FName PackageName, const UPackage* Package,
 		UE::Cook::ECookResult CookResult, FSavePackageResultStruct* SavePackageResult,
-		FCookTagList&& InArchiveCookTagList, bool bIncludeOnlyDiskAssets,
+		TOptional<TArray<FAssetData>>&& AssetDatasFromSave,
 		TOptional<FAssetPackageData>&& OverrideAssetPackageData,
-		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies);
+		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies,
+		UCookOnTheFlyServer& COTFS);
 	void UpdateAssetRegistryData(UE::Cook::FMPCollectorServerMessageContext& Context,
-		UE::Cook::FAssetRegistryPackageMessage&& Message);
+		UE::Cook::FAssetRegistryPackageMessage&& Message, UCookOnTheFlyServer& COTFS);
 
 	/**
 	 * Check config to see whether chunk assignments use the AssetManager. If so, run the once-per-process construction
@@ -264,13 +266,7 @@ public:
 	static void UpdateAssetManagerDatabase();
 
 private:
-	/**
-	 * Ensures all assets in the input package are present in the registry
-	 * @param Package - Package to process
-	 * @return - Array of FAssetData entries for all assets in the input package
-	 */
-	typedef TArray<const FAssetData*, TInlineAllocator<1>> FCreateOrFindArray;
-	FCreateOrFindArray CreateOrFindAssetDatas(const UPackage& Package);
+	class FGetShortestReferenceChain;
 
 	/**
 	 * Updates all asset package flags in the specified package
@@ -295,12 +291,6 @@ private:
 	/** State of the asset registry that is being built for this platform */
 	FAssetRegistryState State;
 	
-	/** 
-	 * The list of tags to add for each asset. This is populated during cook by the books,
-	 * and is only added to development registries.
-	 */
-	TMap<FSoftObjectPath, TArray<TPair<FName, FString>>> CookTagsToAdd;
-
 	struct FIterativelySkippedPackageUpdateData
 	{
 		TArray<FAssetData> AssetDatas;
@@ -344,8 +334,6 @@ private:
 	TArray<TUniquePtr<FChunkPackageSet>> FinalChunkManifests;
 	/** Additional data generators used when creating chunks */
 	TArray<TSharedRef<IChunkDataGenerator>> ChunkDataGenerators;
-	/** Lookup table of used package names used when searching references. */
-	TSet<FName> InspectedNames;
 	/** Source of the config-driven parent-child relationships between chunks. */
 	UChunkDependencyInfo& DependencyInfo;
 
@@ -354,24 +342,6 @@ private:
 
 	/** Mapping from chunk id to pakchunk file index. If not defined, Pakchunk index will be the same as chunk id by default */
 	TMap<int32, int32> ChunkIdPakchunkIndexMapping;
-
-	struct FReferencePair
-	{
-		FReferencePair() {}
-
-		FReferencePair(const FName& InName, uint32 InParentIndex)
-			: PackageName(InName)
-			, ParentNodeIndex(InParentIndex)
-		{}
-
-		bool operator == (const FReferencePair& RHS) const
-		{
-			return PackageName == RHS.PackageName;
-		}
-
-		FName		PackageName;
-		uint32		ParentNodeIndex;
-	};
 
 	/**
 	 * Updates AssetData with TagsAndValues corresponding to any collections 
@@ -401,7 +371,7 @@ private:
 	 * 
 	 * @param the InSandboxFile used during cook
 	 */
-	void FixupPackageDependenciesForChunks(FSandboxPlatformFile& InSandboxFile);
+	void FixupPackageDependenciesForChunks(UE::Cook::FCookSandbox& InSandboxFile);
 
 	/**
 	 * Attaches encryption key guids into the registry data for encrypted primary assets
@@ -409,7 +379,7 @@ private:
 	void InjectEncryptionData(FAssetRegistryState& TargetState);
 
 	void AddPackageToChunk(FChunkPackageSet& ThisPackageSet, FName InPkgName,
-		const FString& InSandboxFile, int32 PakchunkIndex, FSandboxPlatformFile& SandboxPlatformFile);
+		const FString& InSandboxFile, int32 PakchunkIndex, UE::Cook::FCookSandbox& SandboxPlatformFile);
 
 	/**
 	 * Returns the path of the temporary packaging directory for the specified platform.
@@ -430,7 +400,7 @@ private:
 
 	/** Calculate the final ChunkIds used by the package and store the package in the manifest for each of those chunks. */
 	void CalculateChunkIdsAndAssignToManifest(const FName& PackageFName, const FString& PackagePathName,
-		const FString& SandboxFilename, const FString& LastLoadedMapName, FSandboxPlatformFile& InSandboxFile);
+		const FString& SandboxFilename, const FString& LastLoadedMapName, UE::Cook::FCookSandbox& InSandboxFile);
 
 	/** Deletes the temporary packaging directory for the specified platform */
 	bool CleanTempPackagingDirectory(const FString& Platform) const;
@@ -440,7 +410,7 @@ private:
 
 	/** Generates and saves streaming install chunk manifest */
 	bool GenerateStreamingInstallManifest(int64 InOverrideChunkSize, const TCHAR* InManifestSubDir,
-		FSandboxPlatformFile& InSandboxFile);
+		UE::Cook::FCookSandbox& InSandboxFile);
 
 	/** Gather a list of dependencies required by to completely load this package */
 	bool GatherAllPackageDependencies(FName PackageName, TArray<FName>& DependentPackageNames);
@@ -453,12 +423,6 @@ private:
 
 	/** Save a CSV dump of chunk asset information, if bWriteIndividualFiles is true it writes a CSV per chunk in addition to AllChunksInfo */
 	bool GenerateAssetChunkInformationCSV(const FString& OutputPath, bool bWriteIndividualFiles = false);
-
-	/** Finds the asset belonging to ChunkID with the smallest number of links to Packages In PackageNames */
-	void FindShortestReferenceChain(TArray<FReferencePair> PackageNames, int32 ChunkID, uint32& OutParentIndex, FString& OutChainPath);
-
-	/** Helper function for FindShortestReferenceChain */
-	FString	GetShortestReferenceChain(FName PackageName, int32 ChunkID);
 
 	/** Recursively remove redundant packages from child chunks based on the chunk dependency tree. */
 	void SubtractParentChunkPackagesFromChildChunks(const FChunkDependencyTreeNode& Node,
@@ -476,11 +440,6 @@ private:
 	/** Initialize ChunkIdPakchunkIndexMapping and PakchunkIndexChunkIdMapping. */
 	void InitializeChunkIdPakchunkIndexMapping();
 
-	/**
-	 * Helper function to find or create asset data for the input object. If the asset is not in the registry it will be added.
-	 */
-	const FAssetData* CreateOrFindAssetData(UObject& Object);
-
 	/** If InState records PackageName is generated, return the name of the Generator, otherwise return NAME_None. */
 	static FName GetGeneratorPackage(FName PackageName, const FAssetRegistryState& InState);
 };
@@ -494,9 +453,10 @@ public:
 	virtual ~IAssetRegistryReporter() {}
 
 	virtual void UpdateAssetRegistryData(FName PackageName, const UPackage* Package, UE::Cook::ECookResult CookResult,
-		FSavePackageResultStruct* SavePackageResult, FCookTagList&& InArchiveCookTagList,
-		bool bIncludeOnlyDiskAssets, TOptional<FAssetPackageData>&& OverrideAssetPackageData, 
-		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies) = 0;
+		FSavePackageResultStruct* SavePackageResult,
+		TOptional<TArray<FAssetData>>&& AssetDatasFromSave, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
+		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies,
+		UCookOnTheFlyServer& COTFS) = 0;
 
 };
 
@@ -509,13 +469,13 @@ public:
 	}
 
 	virtual void UpdateAssetRegistryData(FName PackageName, const UPackage* Package, UE::Cook::ECookResult CookResult,
-		FSavePackageResultStruct* SavePackageResult, FCookTagList&& InArchiveCookTagList,
-		bool bIncludeOnlyDiskAssets, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
-		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies) override
+		FSavePackageResultStruct* SavePackageResult,
+		TOptional<TArray<FAssetData>>&& AssetDatasFromSave, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
+		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies, UCookOnTheFlyServer& COTFS) override
 	{
 		Generator.UpdateAssetRegistryData(PackageName, Package, CookResult, SavePackageResult,
-			MoveTemp(InArchiveCookTagList), bIncludeOnlyDiskAssets, MoveTemp(OverrideAssetPackageData),
-			MoveTemp(OverridePackageDependencies));
+			MoveTemp(AssetDatasFromSave), MoveTemp(OverrideAssetPackageData), MoveTemp(OverridePackageDependencies),
+			COTFS);
 	}
 
 private:
@@ -528,9 +488,9 @@ public:
 	FAssetRegistryReporterRemote(FCookWorkerClient& InClient, const ITargetPlatform* InTargetPlatform);
 
 	virtual void UpdateAssetRegistryData(FName PackageName, const UPackage* Package, UE::Cook::ECookResult CookResult,
-		FSavePackageResultStruct* SavePackageResult, FCookTagList&& InArchiveCookTagList,
-		bool bIncludeOnlyDiskAssets, TOptional<FAssetPackageData>&& OverrideAssetPackageData, 
-		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies) override;
+		FSavePackageResultStruct* SavePackageResult,
+		TOptional<TArray<FAssetData>>&& AssetDatasFromSave, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
+		TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies, UCookOnTheFlyServer& COTFS) override;
 
 private:
 	FCookWorkerClient& Client;
@@ -540,19 +500,19 @@ private:
 	friend FAssetRegistryMPCollector;
 };
 
-class FAssetRegistryPackageMessage : public UE::CompactBinaryTCP::IMessage
+class FAssetRegistryPackageMessage : public IMPCollectorMessage
 {
 public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("AssetRegistryPackageMessage"); }
 
 	FName PackageName;
 	const ITargetPlatform* TargetPlatform;
 	TArray<FAssetData> AssetDatas;
 	TOptional<FAssetPackageData> OverrideAssetPackageData;
 	TOptional<TArray<FAssetDependency>> OverridePackageDependencies;
-	TMap<FSoftObjectPath, TArray<TPair<FName, FString>>> CookTags;
 	uint32 PackageFlags = 0;
 	int64 DiskSize = -1;
 

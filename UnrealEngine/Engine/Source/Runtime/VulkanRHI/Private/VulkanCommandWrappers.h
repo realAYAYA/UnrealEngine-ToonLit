@@ -107,6 +107,7 @@ struct FWrapLayer
 	static void CreateCommandPool(VkResult Result, VkDevice Device, const VkCommandPoolCreateInfo* CreateInfo, VkCommandPool* CommandPool) VULKAN_LAYER_BODY
 	static void DestroyCommandPool(VkResult Result, VkDevice Device, VkCommandPool CommandPool) VULKAN_LAYER_BODY
 	static void ResetCommandPool(VkResult Result, VkDevice Device, VkCommandPool CommandPool, VkCommandPoolResetFlags Flags) VULKAN_LAYER_BODY
+	static void TrimCommandPool(VkResult Result, VkDevice Device, VkCommandPool CommandPool, VkCommandPoolTrimFlags Flags) VULKAN_LAYER_BODY
 	static void AllocateCommandBuffers(VkResult Result, VkDevice Device, const VkCommandBufferAllocateInfo* AllocateInfo, VkCommandBuffer* CommandBuffers) VULKAN_LAYER_BODY
 	static void FreeCommandBuffers(VkResult Result, VkDevice Device, VkCommandPool CommandPool, uint32 CommandBufferCount, const VkCommandBuffer* CommandBuffers) VULKAN_LAYER_BODY
 	static void BeginCommandBuffer(VkResult Result, VkCommandBuffer CommandBuffer, const VkCommandBufferBeginInfo* BeginInfo) VULKAN_LAYER_BODY
@@ -214,6 +215,11 @@ struct FWrapLayer
 	static void CmdBindDescriptorBuffersEXT(VkResult Result, VkCommandBuffer CommandBuffer, uint32_t BufferCount, const VkDescriptorBufferBindingInfoEXT* BindingInfos) VULKAN_LAYER_BODY
 	static void CmdSetDescriptorBufferOffsetsEXT(VkResult Result, VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipelineLayout Layout, uint32_t FirstSet, uint32_t SetCount, const uint32_t* BufferIndices, const VkDeviceSize* Offsets) VULKAN_LAYER_BODY
 	static void GetDescriptorEXT(VkResult Result, VkDevice Device, const VkDescriptorGetInfoEXT* DescriptorInfo, size_t DataSize, void* Descriptor) VULKAN_LAYER_BODY
+	static void CreateDeferredOperationKHR(VkResult Result, VkDevice Device, const VkAllocationCallbacks* Allocator, VkDeferredOperationKHR* DeferredOperation) VULKAN_LAYER_BODY
+	static void DestroyDeferredOperationKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation, const VkAllocationCallbacks* Allocator) VULKAN_LAYER_BODY
+	static void DeferredOperationJoinKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation) VULKAN_LAYER_BODY
+	static void GetDeferredOperationMaxConcurrencyKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation) VULKAN_LAYER_BODY
+	static void GetDeferredOperationResultKHR(VkResult Result, VkDevice Device, VkDeferredOperationKHR DeferredOperation) VULKAN_LAYER_BODY
 	static void GetDeviceFaultInfoEXT(VkResult Result, VkDevice Device, VkDeviceFaultCountsEXT* FaultCounts, VkDeviceFaultInfoEXT* FaultInfo) VULKAN_LAYER_BODY
 };
 
@@ -928,6 +934,13 @@ namespace VulkanRHI
 		return Result;
 	}
 
+	static FORCEINLINE_DEBUGGABLE void  vkTrimCommandPool(VkDevice Device, VkCommandPool CommandPool, VkCommandPoolTrimFlags Flags)
+	{
+		FWrapLayer::TrimCommandPool(VK_RESULT_MAX_ENUM, Device, CommandPool, Flags);
+		VULKANAPINAMESPACE::vkTrimCommandPool(Device, CommandPool, Flags);
+		FWrapLayer::TrimCommandPool(VK_SUCCESS, Device, CommandPool, Flags);
+	}
+
 	static FORCEINLINE_DEBUGGABLE VkResult  vkAllocateCommandBuffers(VkDevice Device, const VkCommandBufferAllocateInfo* AllocateInfo, VkCommandBuffer* CommandBuffers)
 	{
 		FWrapLayer::AllocateCommandBuffers(VK_RESULT_MAX_ENUM, Device, AllocateInfo, CommandBuffers);
@@ -1631,6 +1644,45 @@ namespace VulkanRHI
 		FWrapLayer::GetDescriptorEXT(VK_SUCCESS, Device, DescriptorInfo,  DataSize, Descriptor);
 	}
 
+	static FORCEINLINE_DEBUGGABLE VkResult vkCreateDeferredOperationKHR(VkDevice Device, const VkAllocationCallbacks* Allocator, VkDeferredOperationKHR* DeferredOperation)
+	{
+		FWrapLayer::CreateDeferredOperationKHR(VK_RESULT_MAX_ENUM, Device, Allocator, DeferredOperation);
+		VkResult Result = VULKANAPINAMESPACE::vkCreateDeferredOperationKHR(Device, Allocator, DeferredOperation);
+		FWrapLayer::CreateDeferredOperationKHR(Result, Device, Allocator, DeferredOperation);
+		return Result;
+	}
+
+	static FORCEINLINE_DEBUGGABLE void vkDestroyDeferredOperationKHR(VkDevice Device, VkDeferredOperationKHR DeferredOperation, const VkAllocationCallbacks* Allocator)
+	{
+		FWrapLayer::DestroyDeferredOperationKHR(VK_RESULT_MAX_ENUM, Device, DeferredOperation, Allocator);
+		VULKANAPINAMESPACE::vkDestroyDeferredOperationKHR(Device, DeferredOperation, Allocator);
+		FWrapLayer::DestroyDeferredOperationKHR(VK_SUCCESS, Device, DeferredOperation, Allocator);
+	}
+
+	static FORCEINLINE_DEBUGGABLE VkResult vkDeferredOperationJoinKHR(VkDevice Device, VkDeferredOperationKHR DeferredOperation)
+	{
+		FWrapLayer::DeferredOperationJoinKHR(VK_RESULT_MAX_ENUM, Device, DeferredOperation);
+		VkResult Result = VULKANAPINAMESPACE::vkDeferredOperationJoinKHR(Device, DeferredOperation);
+		FWrapLayer::DeferredOperationJoinKHR(Result, Device, DeferredOperation);
+		return Result;
+	}
+
+	static FORCEINLINE_DEBUGGABLE uint32_t vkGetDeferredOperationMaxConcurrencyKHR(VkDevice Device, VkDeferredOperationKHR DeferredOperation)
+	{
+		FWrapLayer::GetDeferredOperationMaxConcurrencyKHR(VK_RESULT_MAX_ENUM, Device, DeferredOperation);
+		uint32_t Result = VULKANAPINAMESPACE::vkGetDeferredOperationMaxConcurrencyKHR(Device, DeferredOperation);
+		FWrapLayer::GetDeferredOperationMaxConcurrencyKHR(VK_SUCCESS, Device, DeferredOperation);
+		return Result;
+	}
+
+	static FORCEINLINE_DEBUGGABLE VkResult vkGetDeferredOperationResultKHR(VkDevice Device, VkDeferredOperationKHR DeferredOperation)
+	{
+		FWrapLayer::GetDeferredOperationResultKHR(VK_RESULT_MAX_ENUM, Device, DeferredOperation);
+		VkResult Result = VULKANAPINAMESPACE::vkGetDeferredOperationResultKHR(Device, DeferredOperation);
+		FWrapLayer::GetDeferredOperationResultKHR(Result, Device, DeferredOperation);
+		return Result;
+	}
+
 	static FORCEINLINE_DEBUGGABLE VkResult vkGetDeviceFaultInfoEXT(VkDevice Device, VkDeviceFaultCountsEXT* FaultCounts, VkDeviceFaultInfoEXT* FaultInfo)
 	{
 		FWrapLayer::GetDeviceFaultInfoEXT(VK_RESULT_MAX_ENUM, Device, FaultCounts, FaultInfo);
@@ -1638,6 +1690,7 @@ namespace VulkanRHI
 		FWrapLayer::GetDeviceFaultInfoEXT(Result, Device, FaultCounts, FaultInfo);
 		return Result;
 	}
+
 #if VULKAN_ENABLE_IMAGE_TRACKING_LAYER
 	void BindDebugLabelName(VkImage Image, const TCHAR* Name);
 #endif

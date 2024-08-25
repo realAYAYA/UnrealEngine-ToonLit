@@ -339,12 +339,6 @@ private:
 	/** Enable/disable pose watch on selected nodes */
 	void HandlePoseWatchSelectedNodes();
 
-	/** Customize Preview Scene Settings details panel */
-	void HandleOnPreviewSceneSettingsCustomized(IDetailLayoutBuilder& DetailBuilder);
-	void HandlePreviewAnimBlueprintChanged(const FAssetData& InAssetData) const;
-	bool HandleShouldFilterAsset(const FAssetData& InAssetData, FName InTag, bool bCanUseDifferentSkeleton) const;
-	void HandleAnimBlueprintCompiled(UBlueprint* Blueprint) const;
-
 	/** Removes all pose watches created by selection from the current view */
 	void RemoveAllSelectionPoseWatches();
 

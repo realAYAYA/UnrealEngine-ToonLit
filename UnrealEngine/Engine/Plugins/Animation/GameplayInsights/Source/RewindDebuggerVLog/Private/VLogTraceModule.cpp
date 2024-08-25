@@ -4,7 +4,7 @@
 #include "VisualLoggerProvider.h"
 #include "VisualLoggerAnalyzer.h"
 
-FName FVLogTraceModule::ModuleName("GameplayTrace");
+FName FVLogTraceModule::ModuleName("VisualLogger");
 
 void FVLogTraceModule::GetModuleInfo(TraceServices::FModuleInfo& OutModuleInfo)
 {

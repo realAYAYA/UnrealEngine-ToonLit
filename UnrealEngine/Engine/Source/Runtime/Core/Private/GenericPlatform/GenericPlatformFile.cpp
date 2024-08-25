@@ -4,6 +4,7 @@
 #include "Algo/Accumulate.h"
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
+#include "Misc/PathViews.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/ThreadSafeCounter.h"
 #include "Stats/Stats.h"
@@ -11,6 +12,7 @@
 #include "Templates/UniquePtr.h"
 #include "Misc/ScopeLock.h"
 #include "HAL/LowLevelMemTracker.h"
+#include "String/BytesToHex.h"
 
 #include "Async/AsyncFileHandle.h"
 #include "Async/MappedFileHandle.h"
@@ -96,6 +98,17 @@ public:
 			}
 		}
 	}
+
+	virtual void EnsureCompletion() override
+	{
+		if (Task)
+		{
+			Task->EnsureCompletion();
+			delete Task;
+			Task = nullptr;
+		}
+	}
+
 	virtual void CancelImpl() override
 	{
 		if (Task)
@@ -527,6 +540,27 @@ FDateTime IPlatformFile::GetTimeStampLocal(const TCHAR* Filename)
 	return FileTimeStamp;
 }
 
+bool IPlatformFile::FDirectoryVisitor::CallShouldVisitAndVisit(const TCHAR* FilenameOrDirectory, bool bIsDirectory)
+{
+	FStringView LeafPathname = FPathViews::GetCleanFilename(FilenameOrDirectory);
+	if (!ShouldVisitLeafPathname(LeafPathname))
+	{
+		return true; // Continue iterating
+	}
+	return Visit(FilenameOrDirectory, bIsDirectory);
+}
+
+bool IPlatformFile::FDirectoryStatVisitor::CallShouldVisitAndVisit(const TCHAR* FilenameOrDirectory,
+	const FFileStatData& StatData)
+{
+	FStringView LeafPathname = FPathViews::GetCleanFilename(FilenameOrDirectory);
+	if (!ShouldVisitLeafPathname(LeafPathname))
+	{
+		return true; // Continue iterating
+	}
+	return Visit(FilenameOrDirectory, StatData);
+}
+
 class FDirectoryVisitorFuncWrapper : public IPlatformFile::FDirectoryVisitor
 {
 public:
@@ -582,7 +616,7 @@ bool IPlatformFile::IterateDirectoryRecursively(const TCHAR* Directory, FDirecto
 		}
 		virtual bool Visit(const TCHAR* FilenameOrDirectory, bool bIsDirectory) override
 		{
-			bool bResult = Visitor.Visit(FilenameOrDirectory, bIsDirectory);
+			bool bResult = Visitor.CallShouldVisitAndVisit(FilenameOrDirectory, bIsDirectory);
 			if (bResult && bIsDirectory)
 			{
 				Directories.Emplace(FilenameOrDirectory);
@@ -638,7 +672,7 @@ bool IPlatformFile::IterateDirectoryStatRecursively(const TCHAR* Directory, FDir
 		}
 		virtual bool Visit(const TCHAR* FilenameOrDirectory, const FFileStatData& StatData) override
 		{
-			bool bResult = Visitor.Visit(FilenameOrDirectory, StatData);
+			bool bResult = Visitor.CallShouldVisitAndVisit(FilenameOrDirectory, StatData);
 			if (bResult && StatData.bIsDirectory)
 			{
 				bResult = PlatformFile.IterateDirectoryStat(FilenameOrDirectory, *this);
@@ -929,6 +963,110 @@ bool IPlatformFile::CreateDirectoryTree(const TCHAR* Directory)
 	FPaths::NormalizeDirectoryName(LocalDirname);
 
 	return InternalCreateDirectoryTree(*this, LocalDirname);
+}
+
+FString FFileJournalFileHandle::ToString()
+{
+	FString Output;
+	TArray<TCHAR, FString::AllocatorType>& CharArray = Output.GetCharArray();
+	CharArray.AddUninitialized(sizeof(FFileJournalFileHandle) * 2 + 3);
+	TCHAR* Data = CharArray.GetData();
+	Data[0] = '0';
+	Data[1] = 'x';
+	UE::String::BytesToHexLower(Bytes, Data + 2);
+	CharArray.Last() = TCHAR('\0');
+	return Output;
+}
+
+namespace UE::PlatformFileJournal::Private
+{
+
+FFileJournalFileHandle CreateInvalidFileHandle()
+{
+	FFileJournalFileHandle Result;
+	for (uint8& Byte : Result.Bytes)
+	{
+		Byte = 0;
+	}
+	return Result;
+}
+
+FFileJournalData ToJournalData(const FFileStatData& StatData)
+{
+	FFileJournalData JournalData;
+	JournalData.ModificationTime = StatData.ModificationTime;
+	JournalData.JournalHandle = FileJournalFileHandleInvalid;
+	JournalData.bIsValid = StatData.bIsValid;
+	JournalData.bIsDirectory = StatData.bIsDirectory;
+	return JournalData;
+}
+
+constexpr const TCHAR* PlatformNotAvailableMessage = TEXT("PlatformFileJournal is not implemented on the current platform.");
+
+} // namespace UE::PlatformFileJournal::Private
+
+const FFileJournalFileHandle FileJournalFileHandleInvalid = UE::PlatformFileJournal::Private::CreateInvalidFileHandle();
+
+bool IPlatformFile::FileJournalIsAvailable(const TCHAR* VolumeOrPath, ELogVerbosity::Type* OutErrorLevel,
+	FString* OutError)
+{
+	if (OutErrorLevel)
+	{
+		*OutErrorLevel = ELogVerbosity::Display;
+	}
+	if (OutError)
+	{
+		*OutError = UE::PlatformFileJournal::Private::PlatformNotAvailableMessage;
+	}
+	return false;
+}
+
+EFileJournalResult IPlatformFile::FileJournalGetLatestEntry(const TCHAR* VolumeOrPath,
+	FFileJournalId& OutJournalId, FFileJournalEntryHandle& OutEntryHandle, FString* OutError)
+{
+	if (OutError)
+	{
+		*OutError = UE::PlatformFileJournal::Private::PlatformNotAvailableMessage;
+	}
+	OutJournalId = FileJournalIdInvalid;
+	OutEntryHandle = FileJournalEntryHandleInvalid;
+	return EFileJournalResult::InvalidPlatform;
+}
+
+bool IPlatformFile::FileJournalIterateDirectory(const TCHAR* Directory, FDirectoryJournalVisitorFunc Visitor)
+{
+	return this->IterateDirectoryStat(Directory,
+		[&Visitor](const TCHAR* InPackageFilename, const FFileStatData& StatData)
+		{
+			return Visitor(InPackageFilename, UE::PlatformFileJournal::Private::ToJournalData(StatData));
+		});
+}
+
+FFileJournalData IPlatformFile::FileJournalGetFileData(const TCHAR* FilenameOrDirectory)
+{
+	return UE::PlatformFileJournal::Private::ToJournalData(this->GetStatData(FilenameOrDirectory));
+}
+
+EFileJournalResult IPlatformFile::FileJournalReadModified(const TCHAR* VolumeName,
+	const FFileJournalId& JournalIdOfStartingEntry, const FFileJournalEntryHandle& StartingJournalEntry,
+	TMap<FFileJournalFileHandle, FString>& KnownDirectories, TSet<FString>& OutModifiedDirectories,
+	FFileJournalEntryHandle& OutNextJournalEntry, FString* OutError)
+{
+	OutNextJournalEntry = FileJournalEntryHandleInvalid;
+	if (OutError)
+	{
+		*OutError = UE::PlatformFileJournal::Private::PlatformNotAvailableMessage;
+	}
+	return EFileJournalResult::InvalidPlatform;
+}
+
+FString IPlatformFile::FileJournalGetVolumeName(FStringView Path)
+{
+	FString FullPath = FPaths::ConvertRelativePathToFull(FString(Path));
+	FStringView VolumeName;
+	FStringView Remainder;
+	FPathViews::SplitVolumeSpecifier(FullPath, VolumeName, Remainder);
+	return FString(VolumeName);
 }
 
 bool IPhysicalPlatformFile::Initialize(IPlatformFile* Inner, const TCHAR* CmdLine)

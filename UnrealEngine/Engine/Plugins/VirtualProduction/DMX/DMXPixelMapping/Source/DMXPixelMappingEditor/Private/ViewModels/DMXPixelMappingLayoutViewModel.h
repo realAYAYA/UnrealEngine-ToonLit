@@ -31,7 +31,7 @@ enum class EDMXPixelMappingLayoutViewModelMode
 UCLASS(Transient)
 class UDMXPixelMappingLayoutViewModel
 	: public UObject
-	, public FEditorUndoClient
+	, public FSelfRegisteringEditorUndoClient
 {
 	GENERATED_BODY()
 
@@ -42,12 +42,6 @@ protected:
 #endif
 
 public:
-	/** Destructor */
-	UDMXPixelMappingLayoutViewModel();
-
-	/** Destructor */
-	virtual ~UDMXPixelMappingLayoutViewModel();
-
 	/** Sets the toolkit from which the model sources */
 	void SetToolkit(const TSharedRef<FDMXPixelMappingToolkit>& InToolkit);
 
@@ -57,13 +51,26 @@ public:
 	/** Returns the Layout Scripts of relevant components. Looks up each relevant component and returns its script. */
 	TArray<UObject*> GetLayoutScriptsObjectsSlow() const;
 
-	/** Applies the layouts scripts currently in use on the next tick */
-	void RequestApplyLayoutScripts();
+	/** Returns true if a layout script can be applied. */
+	bool CanApplyLayoutScript() const;
+
+	/** Applies the layouts script on the next tick. Test if CanApplyLayoutScript before calling (ensured). */
+	void RequestApplyLayoutScript();
+
+	/** Applies the layouts script. Test if CanApplyLayoutScript before calling (ensured). */
+	void ForceApplyLayoutScript();
+
+	/** Returns true if the layout script should be auto-applied on property changes */
+	bool ShouldAutoApplyLayoutScript() const { return bAutoApply; }
+
+	/** Returns the parent of the components being laid out */
+	UDMXPixelMappingOutputComponent* GetParentComponent() const;
 
 	/** Delegate executed when the Model changed */
 	FSimpleMulticastDelegate OnModelChanged;
 
 	// Property name getters
+	FORCEINLINE static FName GetAutoApplyPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXPixelMappingLayoutViewModel, bAutoApply); }
 	FORCEINLINE static FName GetLayoutScriptClassPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXPixelMappingLayoutViewModel, LayoutScriptClass); }
 
 protected:
@@ -73,9 +80,6 @@ protected:
 	// End of FEditorUndoClient
 
 private:
-	/** Applies the layouts scripts currently in use */
-	void ApplyLayoutScripts();
-
 	/** Lays out children of the Renderer Component */
 	void LayoutRendererComponentChildren();
 
@@ -125,7 +129,11 @@ private:
 	UPROPERTY()
 	TArray<TWeakObjectPtr<UDMXPixelMappingMatrixComponent>> MatrixComponents;
 
-	/** The Layout Script class currently in use */
+	/** If true, the script is auto applied on property changes */
+	UPROPERTY(EditAnywhere, Category = "Layout Script", Meta = (DisplayName = "Apply Script on Property Changes"))
+	bool bAutoApply = true;
+
+	/** The Layout Script class currently in use. Note, custom scripts can be blueprinted. */
 	UPROPERTY(EditAnywhere, Category = "Layout Script", Meta = (ShowDisplayNames))
 	TSoftClassPtr<UDMXPixelMappingLayoutScript> LayoutScriptClass;
 
@@ -133,5 +141,6 @@ private:
 	FTimerHandle ApplyLayoutScriptTimerHandle;
 
 	/** The Layout Script class currently before it was changed */
+	UPROPERTY(Transient)
 	TSoftClassPtr<UDMXPixelMappingLayoutScript> PreEditChangeLayoutScriptClass;
 };

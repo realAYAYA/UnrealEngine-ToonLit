@@ -11,19 +11,7 @@
 #include "Animation/AnimClassInterface.h"
 #include "Animation/AnimTrace.h"
 #include "Animation/AnimSync.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "BoneContainer.h"
-#include "Animation/Skeleton.h"
-#include "BonePose.h"
-#include "Animation/AnimNotifyQueue.h"
-#include "Animation/PoseSnapshot.h"
-#include "Animation/AnimInstance.h"
-#include "Engine/PoseWatch.h"
-#include "Animation/AnimBlueprintGeneratedClass.h"
-#include "Logging/TokenizedMessage.h"
-#include "Animation/AnimSyncScope.h"
-#include "Animation/ActiveStateMachineScope.h"
-#endif
+
 #include "AnimInstanceProxy.generated.h"
 
 class UAnimInstance;
@@ -86,7 +74,8 @@ namespace EDrawDebugItemType
 		Point,
 		Circle,
 		Cone,
-		InWorldMessage
+		InWorldMessage,
+		Capsule,
 	};
 }
 
@@ -458,7 +447,7 @@ public:
 	ENGINE_API void GatherDebugData_WithRoot(FNodeDebugData& DebugData, FAnimNode_Base* InRootNode, FName InLayerName);
 
 #if ENABLE_ANIM_DRAW_DEBUG
-	TArray<FQueuedDrawDebugItem> QueuedDrawDebugItems;
+	mutable TArray<FQueuedDrawDebugItem> QueuedDrawDebugItems;
 
 	ENGINE_API void AnimDrawDebugOnScreenMessage(const FString& DebugMessage, const FColor& Color, const FVector2D& TextScale = FVector2D::UnitVector, ESceneDepthPriorityGroup DepthPriority = SDPG_World);
 	ENGINE_API void AnimDrawDebugInWorldMessage(const FString& DebugMessage, const FVector& TextLocation, const FColor& Color, float TextScale);
@@ -470,6 +459,7 @@ public:
 	ENGINE_API void AnimDrawDebugPoint(const FVector& Loc, float Size, const FColor& Color, bool bPersistentLines = false, float LifeTime = -1.f, ESceneDepthPriorityGroup DepthPriority = SDPG_World);
 	ENGINE_API void AnimDrawDebugCircle(const FVector& Center, float Radius, int32 Segments, const FColor& Color, const FVector& UpVector = FVector::UpVector, bool bPersistentLines = false, float LifeTime = -1.f, ESceneDepthPriorityGroup DepthPriority = SDPG_World, float Thickness = 0.f);
 	ENGINE_API void AnimDrawDebugCone(const FVector& Center, float Radius, const FVector& Direction, float AngleWidth, float AngleHeight, int32 Segments, const FColor& Color, bool bPersistentLines = false, float LifeTime = -1.f, ESceneDepthPriorityGroup DepthPriority = SDPG_World, float Thickness = 0.f);
+	ENGINE_API void AnimDrawDebugCapsule(const FVector& Center, float HalfHeight, float Radius, const FRotator& Rotation, const FColor& Color, bool bPersistentLines = false, float LifeTime = -1.f, float Thickness = 0.f);
 #else
 	void AnimDrawDebugOnScreenMessage(const FString& DebugMessage, const FColor& Color, const FVector2D& TextScale = FVector2D::UnitVector, ESceneDepthPriorityGroup DepthPriority = SDPG_World) {}
 	void AnimDrawDebugInWorldMessage(const FString& DebugMessage, const FVector& TextLocation, const FColor& Color, float TextScale) {}
@@ -481,6 +471,7 @@ public:
 	void AnimDrawDebugPoint(const FVector& Loc, float Size, const FColor& Color, bool bPersistentLines = false, float LifeTime = -1.f, ESceneDepthPriorityGroup DepthPriority = SDPG_World) {}
 	void AnimDrawDebugCircle(const FVector& Center, float Radius, int32 Segments, const FColor& Color, const FVector& UpVector = FVector::UpVector, bool bPersistentLines = false, float LifeTime=-1.f, ESceneDepthPriorityGroup DepthPriority = SDPG_World, float Thickness = 0.f) {}
 	void AnimDrawDebugCone(const FVector& Center, float Radius, const FVector& Direction, float AngleWidth, float AngleHeight, int32 Segments, const FColor& Color, bool bPersistentLines = false, float LifeTime = -1.f, ESceneDepthPriorityGroup DepthPriority = SDPG_World, float Thickness = 0.f) {}
+	ENGINE_API void AnimDrawDebugCapsule(const FVector& Center, float HalfHeight, float Radius, const FRotator& Rotation, const FColor& Color, bool bPersistentLines = false, float LifeTime = -1.f, float Thickness = 0.f) {}
 #endif // ENABLE_ANIM_DRAW_DEBUG
 
 #if ENABLE_ANIM_LOGGING
@@ -561,6 +552,13 @@ public:
 	/** Get the debug data for this instance's anim bp */
 	ENGINE_API FAnimBlueprintDebugData* GetAnimBlueprintDebugData() const;
 
+	/**
+	 * Add anim notifies to the proxies notify queue
+	 * @param NewNotifies		The notifies to add
+	 * @param InstanceWeight	The effective weight of the notifies (used for trigger filtering)
+	 **/
+	ENGINE_API void AddAnimNotifies(const TArray<FAnimNotifyEventReference>& NewNotifies, const float InstanceWeight);
+
 	/** Only restricted classes can access the protected interface */
 	friend class UAnimInstance;
 	friend class UAnimSingleNodeInstance;
@@ -572,6 +570,7 @@ public:
 	friend struct UE::Anim::FAnimSync;
 	friend class UE::Anim::FAnimSyncGroupScope;
 	friend class UE::Anim::FActiveStateMachineScope;
+	friend struct FAnimNode_ControlRigInputPose;
 	
 protected:
 	/** Called when our anim instance is being initialized */
@@ -703,9 +702,6 @@ protected:
 	{ 
 		return BufferWriteIndex; 
 	}
-
-	/** Add anim notifier **/
-	ENGINE_API void AddAnimNotifies(const TArray<FAnimNotifyEventReference>& NewNotifies, const float InstanceWeight);
 
 	/** Returns the baked sync group index from the compile step */
 	ENGINE_API int32 GetSyncGroupIndexFromName(FName SyncGroupName) const;
@@ -970,6 +966,11 @@ protected:
 		Sync.ResetAll();
 	}
 
+#if ENABLE_ANIM_DRAW_DEBUG
+	/** Send any queued DrawDebug commands and reset the queue */
+	void FlushQueuedDebugDrawItems(AActor* InActor, UWorld* InWorld) const;
+#endif
+
 private:
 
 	FName GetTargetLogNameForCurrentWorldType() const;
@@ -1071,7 +1072,7 @@ private:
 	TMap<FName, float> AnimationCurves[(uint8)EAnimCurveType::MaxAnimCurveType];
 
 	/** Material parameters that we had been changing and now need to clear */
-	TArray<FName> MaterialParametersToClear;
+	TSet<FName> MaterialParametersToClear;
 
 protected:
 	// Animation Notifies that has been triggered since the last tick. These can be safely consumed at any point.

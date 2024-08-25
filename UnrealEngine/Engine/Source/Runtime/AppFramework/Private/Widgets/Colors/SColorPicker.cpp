@@ -491,7 +491,6 @@ void SColorPicker::GenerateDefaultColorPickerContent( bool bAdvancedSectionExpan
 		+ SVerticalBox::Slot()
 			.AutoHeight()
 			.HAlign(HAlign_Right)
-			.VAlign(VAlign_Center)
 			.Padding(0.0f, 12.0f, 0.0f, 0.0f)
 			[
 				SNew(SUniformGridPanel)

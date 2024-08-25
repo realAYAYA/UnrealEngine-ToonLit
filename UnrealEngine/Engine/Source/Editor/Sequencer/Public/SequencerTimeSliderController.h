@@ -64,6 +64,9 @@ public:
 	/** Get the current play range for this controller */
 	virtual TRange<FFrameNumber> GetPlayRange() const override { return TimeSliderArgs.PlaybackRange.Get(TRange<FFrameNumber>()); }
 
+	/** Get the time bounds for this controller. The time bounds should be a subset of the playback range. */
+	virtual TRange<FFrameNumber> GetTimeBounds() const override { return TimeSliderArgs.TimeBounds.Get(TRange<FFrameNumber>()); }
+
 	/** Get the selection range */
 	virtual TRange<FFrameNumber> GetSelectionRange() const override { return TimeSliderArgs.SelectionRange.Get(TRange<FFrameNumber>()); }
 
@@ -288,14 +291,13 @@ private:
 	void SetSelectionRangeStart(FFrameNumber NewStart);
 	void SetSelectionRangeEnd(FFrameNumber NewEnd);
 
-	void SetMark(int32 InMarkIndex, FFrameNumber NewFrame);
+	void SetMark(FFrameNumber DiffFrame);
 
 	TSharedRef<SWidget> OpenSetPlaybackRangeMenu(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent);
 	FFrameTime ComputeScrubTimeFromMouse(const FGeometry& Geometry, const FPointerEvent& MouseEvent, FScrubRangeToScreen RangeToScreen) const;
 	FFrameTime ComputeFrameTimeFromMouse(const FGeometry& Geometry, FVector2D ScreenSpacePosition, FScrubRangeToScreen RangeToScreen, bool CheckSnapping = true) const;
 
 	void HandleMarkSelection(int32 InMarkIndex);
-	void UpdateMarkSelection(int32 InOldMarkIndex, FFrameNumber InMarkFrameNumber);
 	void AddMarkAtFrame(FFrameNumber FrameNumber);
 	void DeleteMarkAtIndex(int32 InMarkIndex);
 	void DeleteAllMarks();
@@ -361,7 +363,7 @@ private:
 	bool bPanning;
 
 	/** Mouse down position range */
-	FVector2D MouseDownPosition[2];
+	TOptional<FVector2D> MouseDownPosition[2];
 
 	/** Geometry on mouse down */
 	FGeometry MouseDownGeometry;
@@ -378,14 +380,8 @@ private:
 	/** Index of mark being hovered */
 	int32 HoverMarkIndex;
 
-	/** Index of mark being edited */
-	int32 DragMarkIndex;
-
-	/** Marked frame time when the mouse is first pressed down */
-	FFrameNumber DragMarkReferenceFrameNumber;
-
-	/** Time of the mark being edited */
-	FFrameNumber DragMarkCurrentFrameNumber;
+	/** Map of the indices of the marks being edited and their initial frame numbers when pressed */
+	TMap<int32, FFrameNumber> DragMarkMap;
 
 	/** When > 0, we should not show context menus */
 	int32 ContextMenuSuppression;

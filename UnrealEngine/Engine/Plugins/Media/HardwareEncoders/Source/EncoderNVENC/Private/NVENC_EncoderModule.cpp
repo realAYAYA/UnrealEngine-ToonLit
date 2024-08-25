@@ -43,8 +43,11 @@ public:
 				{
 					if (IsRHIDeviceNVIDIA())
 					{
+						PRAGMA_DISABLE_DEPRECATION_WARNINGS
 						FVideoEncoderNVENC_H264::Register(FVideoEncoderFactory::Get());
+						PRAGMA_ENABLE_DEPRECATION_WARNINGS
 					}
+					
 				});
 			}
 		}

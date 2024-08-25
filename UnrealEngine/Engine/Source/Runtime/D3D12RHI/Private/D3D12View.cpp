@@ -116,7 +116,7 @@ FD3D12ViewRange::FD3D12ViewRange(D3D12_SHADER_RESOURCE_VIEW_DESC const& ViewDesc
 
 	case D3D12_SRV_DIMENSION_TEXTURECUBE:
 		Mip   = { ViewDesc.TextureCube.MostDetailedMip, ViewDesc.TextureCube.MipLevels };
-		Array = { 0, 1 };
+		Array = { 0, 6 };
 		break;
 
 	case D3D12_SRV_DIMENSION_TEXTURECUBEARRAY:
@@ -220,7 +220,7 @@ FD3D12View::FD3D12View(FD3D12Device* InDevice, ERHIDescriptorHeapType InHeapType
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
 	if (HeapType == ERHIDescriptorHeapType::Standard)
 	{
-		BindlessHandle = InDevice->GetBindlessDescriptorManager().Allocate(ERHIDescriptorHeapType::Standard);
+		BindlessHandle = InDevice->GetBindlessDescriptorManager().AllocateResourceHandle();
 	}
 #endif
 }
@@ -229,10 +229,9 @@ FD3D12View::~FD3D12View()
 {
 	// Unregister this view from the underlying resource
 	if (ResourceInfo.BaseResource)
+	{
 		ResourceInfo.BaseResource->RemoveRenameListener(this);
-
-	// Free the descriptor heap slot and bindless handle
-	GetParentDevice()->GetOfflineDescriptorManager(HeapType).FreeHeapSlot(OfflineCpuHandle);
+	}
 
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
 	if (BindlessHandle.IsValid())
@@ -241,32 +240,34 @@ FD3D12View::~FD3D12View()
 		BindlessHandle = {};
 	}
 #endif
+
+	// Free the descriptor heap slot and bindless handle
+	GetParentDevice()->GetOfflineDescriptorManager(HeapType).FreeHeapSlot(OfflineCpuHandle);
 }
 
-void FD3D12View::UpdateBindlessSlot(EReason Reason)
+void FD3D12View::InitializeBindlessSlot()
 {
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
 	if (BindlessHandle.IsValid())
 	{
-		FD3D12BindlessDescriptorManager& BindlessManager = GetParentDevice()->GetBindlessDescriptorManager();
-		if (Reason == EReason::InitialCreate)
-		{
-			BindlessManager.UpdateImmediately(BindlessHandle, OfflineCpuHandle);
-		}
-		else
-		{
-			BindlessManager.UpdateDeferred(BindlessHandle, OfflineCpuHandle);
-		}
+		GetParentDevice()->GetBindlessDescriptorManager().UpdateDescriptorImmediately(BindlessHandle, this);
 	}
 #endif
 }
 
-void FD3D12View::CreateView(FResourceInfo const& InResource, FNullDescPtr NullDescriptor)
+void FD3D12View::UpdateBindlessSlot(FRHICommandListBase& RHICmdList)
 {
-	EReason Reason = IsInitialized()
-		? EReason::UpdateOrRename
-		: EReason::InitialCreate;
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	if (BindlessHandle.IsValid())
+	{
+		check(BindlessHandle.GetType() == ERHIDescriptorHeapType::Standard);
+		GetParentDevice()->GetBindlessDescriptorManager().UpdateDescriptor(RHICmdList, BindlessHandle, this);
+	}
+#endif
+}
 
+void FD3D12View::UpdateResourceInfo(FResourceInfo const& InResource, FNullDescPtr NullDescriptor)
+{
 	if (ResourceInfo.BaseResource != InResource.BaseResource)
 	{
 		if (ResourceInfo.BaseResource)
@@ -299,21 +300,30 @@ void FD3D12View::CreateView(FResourceInfo const& InResource, FNullDescPtr NullDe
 
 		OfflineCpuHandle.IncrementVersion();
 	}
-
-	UpdateBindlessSlot(Reason);
 }
 
-void FD3D12View::ResourceRenamed(FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation)
+void FD3D12View::CreateView(FResourceInfo const& InResource, FNullDescPtr NullDescriptor)
+{
+	UpdateResourceInfo(InResource, NullDescriptor);
+	InitializeBindlessSlot();
+}
+
+void FD3D12View::UpdateView(FRHICommandListBase& RHICmdList, const FResourceInfo& InResource, FNullDescPtr NullDescriptor)
+{
+	UpdateResourceInfo(InResource, NullDescriptor);
+	UpdateBindlessSlot(RHICmdList);
+}
+
+void FD3D12View::ResourceRenamed(FRHICommandListBase& RHICmdList, FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation)
 {
 	// Can only be called if the base shader resource is not null.
-	check(ResourceInfo.BaseResource == InRenamedResource &&
-		ResourceInfo.ResourceLocation == InNewResourceLocation);
+	check(ResourceInfo.BaseResource == InRenamedResource && ResourceInfo.ResourceLocation == InNewResourceLocation);
 
 	// Update the cached resource pointers
 	ResourceInfo = InRenamedResource;
 
 	UpdateDescriptor();
-	UpdateBindlessSlot(EReason::UpdateOrRename);
+	UpdateBindlessSlot(RHICmdList);
 }
 
 
@@ -339,10 +349,10 @@ void FD3D12ConstantBufferView::CreateView(FResourceInfo const& InResource, uint3
 	TD3D12View::CreateView(InResource, CBVDesc);
 }
 
-void FD3D12ConstantBufferView::ResourceRenamed(FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation)
+void FD3D12ConstantBufferView::ResourceRenamed(FRHICommandListBase& RHICmdList, FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation)
 {
 	D3DViewDesc.BufferLocation = InNewResourceLocation->GetGPUVirtualAddress() + Offset;
-	TD3D12View::ResourceRenamed(InRenamedResource, InNewResourceLocation);
+	TD3D12View::ResourceRenamed(RHICmdList, InRenamedResource, InNewResourceLocation);
 }
 
 void FD3D12ConstantBufferView::UpdateDescriptor()

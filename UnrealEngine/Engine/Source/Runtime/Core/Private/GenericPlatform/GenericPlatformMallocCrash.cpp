@@ -242,9 +242,9 @@ FGenericPlatformMallocCrash::FGenericPlatformMallocCrash( FMalloc* MainMalloc )
 	SmallMemoryPool = (uint8*)FPlatformMemory::BinnedAllocFromOS((SIZE_T)SmallMemoryPoolSize);
 	BookkeepingPool = (uint8*)FPlatformMemory::BinnedAllocFromOS((SIZE_T)BookkeepingPoolSize);
 
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, LargeMemoryPool, LargeMemoryPoolSize));
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, SmallMemoryPool, SmallMemoryPoolSize));
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, BookkeepingPool, BookkeepingPoolSize));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, LargeMemoryPool, LargeMemoryPoolSize));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, SmallMemoryPool, SmallMemoryPoolSize));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, BookkeepingPool, BookkeepingPoolSize));
 
 	MemoryTrace_Alloc((uint64)LargeMemoryPool, LargeMemoryPoolSize, alignof(uint8), EMemoryTraceRootHeap::SystemMemory);
 	MemoryTrace_Alloc((uint64)SmallMemoryPool, SmallMemoryPoolSize, alignof(uint8), EMemoryTraceRootHeap::SystemMemory);
@@ -294,6 +294,11 @@ void FGenericPlatformMallocCrash::SetAsGMalloc()
 		*GFixedMallocLocationPtr = nullptr; // this disables any fast-path inline allocators
 	}
 	CrashedThreadId = FPlatformTLS::GetCurrentThreadId();
+}
+
+bool FGenericPlatformMallocCrash::IsActive() const
+{
+	return GMalloc == this;
 }
 
 void* FGenericPlatformMallocCrash::Malloc( SIZE_T Size, uint32 Alignment )
@@ -449,6 +454,7 @@ void FGenericPlatformMallocCrash::PrintPoolsUsage()
 #endif // _DEBUG
 }
 
+PRAGMA_DISABLE_UNREACHABLE_CODE_WARNINGS
 bool FGenericPlatformMallocCrash::IsOnCrashedThread() const
 {
 	// Suspend threads other than the crashed one to prevent serious memory errors.
@@ -463,6 +469,8 @@ bool FGenericPlatformMallocCrash::IsOnCrashedThread() const
 		return false;
 	}
 }
+PRAGMA_RESTORE_UNREACHABLE_CODE_WARNINGS
+
 
 bool FGenericPlatformMallocCrash::IsPtrInLargePool( void* Ptr ) const
 {
@@ -639,6 +647,11 @@ void FGenericStackBasedMallocCrash::SetAsGMalloc()
 		*GFixedMallocLocationPtr = nullptr; // this disables any fast-path inline allocators
 	}
 	GMalloc = this;
+}
+
+bool FGenericStackBasedMallocCrash::IsActive() const
+{
+	return GMalloc == this;
 }
 
 void* FGenericStackBasedMallocCrash::Malloc(SIZE_T Size, uint32 Alignment)

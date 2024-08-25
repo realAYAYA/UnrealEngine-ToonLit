@@ -153,7 +153,7 @@ bool URigVMEdGraph::HandleModifiedEvent_Internal(ERigVMGraphNotifType InNotifTyp
 
 	// only make sure to receive notifs for this graph - unless
 	// we are on a template graph (used by node spawners)
-	if (GetModel() != InGraph && TemplateController == nullptr)
+	if (GetModel() != InGraph)
 	{
 		return false;
 	}
@@ -169,28 +169,6 @@ bool URigVMEdGraph::HandleModifiedEvent_Internal(ERigVMGraphNotifType InNotifTyp
 	if(URigVMEdGraphSchema* EdGraphSchema = (URigVMEdGraphSchema*)GetRigVMEdGraphSchema())
 	{
 		EdGraphSchema->HandleModifiedEvent(InNotifType, InGraph, InSubject);
-	}
-
-	if(TemplateController)
-	{
-		switch(InNotifType)
-		{
-			case ERigVMGraphNotifType::NodeRemoved:
-			case ERigVMGraphNotifType::PinTypeChanged:
-			case ERigVMGraphNotifType::PinDefaultValueChanged:
-			case ERigVMGraphNotifType::PinRemoved:
-			case ERigVMGraphNotifType::PinRenamed:
-			case ERigVMGraphNotifType::VariableRemoved:
-			case ERigVMGraphNotifType::VariableRenamed:
-			case ERigVMGraphNotifType::GraphChanged:
-			{
-				return false;
-			}
-			default:
-			{
-				break;
-			}
-		}
 	}
 
 	// increment the node topology version for any interaction
@@ -437,7 +415,7 @@ bool URigVMEdGraph::HandleModifiedEvent_Internal(ERigVMGraphNotifType InNotifTyp
 				UEdGraphNode_Comment* EdNode = Cast<UEdGraphNode_Comment>(FindNodeForModelNodeName(ModelNode->GetFName()));
 				if (EdNode)
 				{
-					EdNode->OnUpdateCommentText(ModelNode->GetCommentText());
+					EdNode->NodeComment = ModelNode->GetCommentText();
 					EdNode->FontSize = ModelNode->GetCommentFontSize();
 					EdNode->bCommentBubbleVisible = ModelNode->GetCommentBubbleVisible();
 					EdNode->bCommentBubbleVisible_InDetailsPanel = ModelNode->GetCommentBubbleVisible();
@@ -850,19 +828,19 @@ int32 URigVMEdGraph::GetInstructionIndex(const URigVMEdGraphNode* InNode, bool b
 void URigVMEdGraph::CacheEntryNameList()
 {
 	EntryNameList.Reset();
-	EntryNameList.Add(MakeShared<FString>(FName(NAME_None).ToString()));
+	EntryNameList.Add(MakeShared<FRigVMStringWithTag>(FName(NAME_None).ToString()));
 
 	if(const URigVMBlueprint* Blueprint = CastChecked<URigVMBlueprint>(GetBlueprint()))
 	{
 		const TArray<FName> EntryNames = Blueprint->GetRigVMClient()->GetEntryNames();
 		for (const FName& EntryName : EntryNames)
 		{
-			EntryNameList.Add(MakeShared<FString>(EntryName.ToString()));
+			EntryNameList.Add(MakeShared<FRigVMStringWithTag>(EntryName.ToString()));
 		}
 	}
 }
 
-const TArray<TSharedPtr<FString>>* URigVMEdGraph::GetEntryNameList(URigVMPin* InPin) const
+const TArray<TSharedPtr<FRigVMStringWithTag>>* URigVMEdGraph::GetEntryNameList(URigVMPin* InPin) const
 {
 	if (const URigVMEdGraph* OuterGraph = Cast<URigVMEdGraph>(GetOuter()))
 	{
@@ -1032,18 +1010,7 @@ void URigVMEdGraph::RemoveNode(UEdGraphNode* InNode)
 	Super::RemoveNode(InNode);
 }
 
-URigVMController* URigVMEdGraph::GetTemplateController()
-{
-	if (TemplateController == nullptr)
-	{
-		TemplateController = GetBlueprint()->GetTemplateController();
-		TemplateController->OnModified().RemoveAll(this);
-		TemplateController->OnModified().AddUObject(this, &URigVMEdGraph::HandleModifiedEvent);
-	}
-	return TemplateController;
-}
-
-void URigVMEdGraph::HandleVMCompiledEvent(UObject* InCompiledObject, URigVM* InVM)
+void URigVMEdGraph::HandleVMCompiledEvent(UObject* InCompiledObject, URigVM* InVM, FRigVMExtendedExecuteContext& InContext)
 {
 	CachedInstructionIndices.Reset();
 }

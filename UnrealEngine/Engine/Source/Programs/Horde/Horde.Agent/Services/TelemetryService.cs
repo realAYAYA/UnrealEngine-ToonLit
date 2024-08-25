@@ -1,13 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using EpicGames.Core;
@@ -17,10 +10,10 @@ using Grpc.Net.Client;
 using Horde.Agent.Leases.Handlers;
 using HordeCommon.Rpc;
 using HordeCommon.Rpc.Messages.Telemetry;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Management.Infrastructure;
-using Horde.Agent.Utility;
 
 namespace Horde.Agent.Services;
 
@@ -33,12 +26,12 @@ public class CpuMetrics
 	/// Percentage of time the CPU was busy executing code in user space
 	/// </summary>
 	public float User { get; set; }
-	
+
 	/// <summary>
 	/// Percentage of time the CPU was busy executing code in kernel space
 	/// </summary>
 	public float System { get; set; }
-	
+
 	/// <summary>
 	/// Percentage of time the CPU was idling
 	/// </summary>
@@ -69,17 +62,17 @@ public class MemoryMetrics
 	/// Total memory installed (kibibytes)
 	/// </summary>
 	public uint Total { get; set; }
-	
+
 	/// <summary>
 	/// Available memory (kibibytes)
 	/// </summary>
 	public uint Available { get; set; }
-	
+
 	/// <summary>
 	/// Used memory (kibibytes)
 	/// </summary>
 	public uint Used { get; set; }
-	
+
 	/// <summary>
 	/// Used memory (percentage)
 	/// </summary>
@@ -90,7 +83,7 @@ public class MemoryMetrics
 	{
 		return $"Total={Total} kB, Available={Available} kB, Used={Used} kB, Used={UsedPercentage * 100.0:F1} %";
 	}
-	
+
 	/// <summary>
 	/// Convert to Protobuf-based event
 	/// </summary>
@@ -111,7 +104,7 @@ public interface ISystemMetrics : IDisposable
 	/// </summary>
 	/// <returns>An object with CPU usage metrics</returns>
 	CpuMetrics GetCpu();
-	
+
 	/// <summary>
 	/// Get memory usage metrics
 	/// </summary>
@@ -131,12 +124,12 @@ public sealed class WindowsSystemMetrics : ISystemMetrics
 	private const string Memory = "Memory";
 	private const string Total = "_Total";
 
-	private readonly PerformanceCounter _procIdleTime = new (ProcessorInfo, "% Idle Time", Total);
-	private readonly PerformanceCounter _procUserTime = new (ProcessorInfo, "% User Time", Total);
-	private readonly PerformanceCounter _procPrivilegedTime = new (ProcessorInfo, "% Privileged Time", Total);
-	
+	private readonly PerformanceCounter _procIdleTime = new(ProcessorInfo, "% Idle Time", Total);
+	private readonly PerformanceCounter _procUserTime = new(ProcessorInfo, "% User Time", Total);
+	private readonly PerformanceCounter _procPrivilegedTime = new(ProcessorInfo, "% Privileged Time", Total);
+
 	private readonly uint _totalPhysicalMemory = GetPhysicalMemory();
-	private readonly PerformanceCounter _memAvailableBytes = new (Memory, "Available Bytes");
+	private readonly PerformanceCounter _memAvailableBytes = new(Memory, "Available Bytes");
 
 	/// <summary>
 	/// Constructor
@@ -186,7 +179,7 @@ public sealed class WindowsSystemMetrics : ISystemMetrics
 		const string QueryNamespace = @"root\cimv2";
 		const string QueryDialect = "WQL";
 		ulong totalCapacity = 0;
-		
+
 		foreach (CimInstance instance in session.QueryInstances(QueryNamespace, QueryDialect, "select Capacity from Win32_PhysicalMemory"))
 		{
 			foreach (CimProperty property in instance.CimInstanceProperties)
@@ -211,7 +204,7 @@ class TelemetryService : BackgroundService
 {
 	private readonly TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(60);
 	private readonly TimeSpan _heartbeatMaxAllowedDiff = TimeSpan.FromSeconds(5);
-	
+
 	private readonly WorkerService _workerService;
 	private readonly JobHandler _jobHandler;
 	private readonly GrpcService _grpcService;
@@ -224,6 +217,7 @@ class TelemetryService : BackgroundService
 	private DateTime _lastTimeAgentMetadataSent = DateTime.UnixEpoch;
 
 	private CancellationTokenSource? _eventLoopHeartbeatCts;
+	private Task? _eventLoopTask;
 	internal Func<DateTime> GetUtcNow { get; set; } = () => DateTime.UtcNow;
 
 	/// <summary>
@@ -237,7 +231,7 @@ class TelemetryService : BackgroundService
 		_agentSettings = settings.Value;
 		_logger = logger;
 		_reportInterval = TimeSpan.FromMilliseconds(_agentSettings.TelemetryReportInterval);
-		
+
 		// Calculate this once at startup as it should not change during lifetime of process
 		_agentMetadataEvent = GetAgentMetadataEvent();
 	}
@@ -249,7 +243,7 @@ class TelemetryService : BackgroundService
 		_systemMetrics?.Dispose();
 		_eventLoopHeartbeatCts?.Dispose();
 	}
- 
+
 	/// <inheritdoc />
 	public override Task StartAsync(CancellationToken cancellationToken)
 	{
@@ -270,17 +264,28 @@ class TelemetryService : BackgroundService
 		}
 
 		_eventLoopHeartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-#pragma warning disable CS4014 // Call not awaited
-		EventLoopHeartbeatAsync(_eventLoopHeartbeatCts.Token);
-#pragma warning restore CS4014
-		
+		_eventLoopTask = EventLoopHeartbeatAsync(_eventLoopHeartbeatCts.Token);
+
 		return base.StartAsync(cancellationToken);
 	}
 
-	public override Task StopAsync(CancellationToken cancellationToken)
+	public override async Task StopAsync(CancellationToken cancellationToken)
 	{
 		_eventLoopHeartbeatCts?.Cancel();
-		return base.StopAsync(cancellationToken);
+
+		if (_eventLoopTask != null)
+		{
+			try
+			{
+				await _eventLoopTask;
+			}
+			catch (OperationCanceledException)
+			{
+				// Ignore cancellation exceptions
+			}
+		}
+
+		await base.StopAsync(cancellationToken);
 	}
 
 	/// <summary>
@@ -298,7 +303,7 @@ class TelemetryService : BackgroundService
 			}
 		}
 	}
-	
+
 	/// <summary>
 	/// Checks if the async event loop is on time
 	/// </summary>
@@ -328,7 +333,7 @@ class TelemetryService : BackgroundService
 	/// </summary>
 	/// <param name="logger">Logger to use</param>
 	/// <param name="cancellationToken">Cancellation token for the call</param>
-	public static async Task<List<string>> GetProblematicFilterDrivers(ILogger logger, CancellationToken cancellationToken)
+	public static async Task<List<string>> GetProblematicFilterDriversAsync(ILogger logger, CancellationToken cancellationToken)
 	{
 		try
 		{
@@ -339,10 +344,10 @@ class TelemetryService : BackgroundService
 				"cbfsfilter",
 				"cbfsconnect",
 				"sie-filemon",
-				
+
 				"csagent", // CrowdStrike
 			};
-			
+
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 			{
 				string output = await ReadFltMcOutputAsync(cancellationToken);
@@ -366,7 +371,6 @@ class TelemetryService : BackgroundService
 						return false;
 					})
 					.ToList();
-				
 
 				return loadedDrivers;
 			}
@@ -375,32 +379,32 @@ class TelemetryService : BackgroundService
 		{
 			logger.LogError(e, "Error logging filter drivers");
 		}
-		
+
 		return new List<string>();
 	}
-	
+
 	/// <summary>
 	/// Log any filter drivers known to be problematic for builds
 	/// </summary>
 	/// <param name="logger">Logger to use</param>
 	/// <param name="cancellationToken">Cancellation token for the call</param>
-	public static async Task LogProblematicFilterDrivers(ILogger logger, CancellationToken cancellationToken)
+	public static async Task LogProblematicFilterDriversAsync(ILogger logger, CancellationToken cancellationToken)
 	{
-		List<string> loadedDrivers = await GetProblematicFilterDrivers(logger, cancellationToken);
+		List<string> loadedDrivers = await GetProblematicFilterDriversAsync(logger, cancellationToken);
 		if (loadedDrivers.Count > 0)
 		{
 			logger.LogWarning("Agent has problematic filter drivers loaded: {FilterDrivers}", String.Join(',', loadedDrivers));
 		}
 	}
-	
+
 	internal static async Task<string> ReadFltMcOutputAsync(CancellationToken cancellationToken)
 	{
 		string fltmcExePath = Path.Combine(Environment.SystemDirectory, "fltmc.exe");
 		using CancellationTokenSource cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 		cancellationSource.CancelAfter(10000);
-		using ManagedProcess process = new (null, fltmcExePath, "filters", null, null, null, ProcessPriorityClass.Normal);
+		using ManagedProcess process = new(null, fltmcExePath, "filters", null, null, null, ProcessPriorityClass.Normal);
 		StringBuilder sb = new(1000);
-		
+
 		while (!cancellationToken.IsCancellationRequested)
 		{
 			string? line = await process.ReadLineAsync(cancellationToken);
@@ -422,16 +426,25 @@ class TelemetryService : BackgroundService
 		{
 			return null;
 		}
-		
-		List<string> filters = new ();
+
+		List<string> filters = new();
 		string[] lines = output.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-		
+
 		foreach (string line in lines)
 		{
-			if (line.Length < 5) continue;
-			if (line.StartsWith("---", StringComparison.Ordinal)) continue;
-			if (line.StartsWith("Filter", StringComparison.Ordinal)) continue;
-				
+			if (line.Length < 5)
+			{
+				continue;
+			}
+			if (line.StartsWith("---", StringComparison.Ordinal))
+			{
+				continue;
+			}
+			if (line.StartsWith("Filter", StringComparison.Ordinal))
+			{
+				continue;
+			}
+
 			string[] parts = line.Split("   ", StringSplitOptions.RemoveEmptyEntries);
 			string filterName = parts[0];
 			filters.Add(filterName);
@@ -460,7 +473,7 @@ class TelemetryService : BackgroundService
 			{
 				_logger.LogWarning(ex, "Exception in TelemetryService: {Message}", ex.Message);
 			}
-			
+
 			// Wait a moment before attempting to restart the background work
 			await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken);
 		}
@@ -468,28 +481,28 @@ class TelemetryService : BackgroundService
 
 	private async Task<bool> ExecuteInternalAsync(CancellationToken stoppingToken)
 	{
-		if (_systemMetrics == null)
+		if (_systemMetrics == null || !_agentSettings.EnableTelemetry)
 		{
 			return false;
 		}
-		
+
 		using GrpcChannel channel = await _grpcService.CreateGrpcChannelAsync(stoppingToken);
 		CallInvoker invoker = _grpcService.GetInvoker(channel);
-		HordeRpc.HordeRpcClient client = new (invoker);
-		
+		HordeRpc.HordeRpcClient client = new(invoker);
+
 		while (!stoppingToken.IsCancellationRequested)
 		{
 			_logger.LogDebug("Sending telemetry events to server...");
-			
+
 			SendTelemetryEventsRequest request = new();
 			Timestamp utcNow = Timestamp.FromDateTime(DateTime.UtcNow);
 			ExecutionMetadata em = new()
 			{
-				LeaseId = _jobHandler.CurrentLeaseId,
+				LeaseId = _jobHandler.CurrentLeaseId.ToString(),
 				JobId = _jobHandler.CurrentJobId,
 				JobBatchId = _jobHandler.CurrentBatchId,
 			};
-			
+
 			{
 				AgentCpuMetricsEvent cpuMetricsEvent = _systemMetrics.GetCpu().ToEvent();
 				cpuMetricsEvent.AgentId = _agentMetadataEvent.AgentId;
@@ -513,7 +526,7 @@ class TelemetryService : BackgroundService
 				request.Events.Add(new WrappedTelemetryEvent { AgentMetadata = _agentMetadataEvent });
 				_lastTimeAgentMetadataSent = DateTime.UtcNow;
 			}
-			
+
 			await client.SendTelemetryEventsAsync(request, new CallOptions(cancellationToken: stoppingToken));
 			await Task.Delay(_reportInterval, stoppingToken);
 		}
@@ -530,7 +543,7 @@ class TelemetryService : BackgroundService
 			Region = null,
 			AvailabilityZone = null,
 			Environment = null,
-			AgentVersion = Program.Version,
+			AgentVersion = AgentApp.Version,
 			Os = GetOs(),
 			OsVersion = Environment.OSVersion.Version.ToString(),
 			Architecture = RuntimeInformation.OSArchitecture.ToString(),
@@ -543,16 +556,16 @@ class TelemetryService : BackgroundService
 	private static string GetOs()
 	{
 		if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-		{ 
-			return "Windows"; 
+		{
+			return "Windows";
 		}
 		if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-		{ 
-			return "Linux"; 
+		{
+			return "Linux";
 		}
 		if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-		{ 
-			return "macOS"; 
+		{
+			return "macOS";
 		}
 		return "Unknown";
 	}

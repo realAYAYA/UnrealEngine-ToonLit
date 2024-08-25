@@ -260,7 +260,7 @@ public:
 	{
 		if (InMaterialInterface)
 		{
-			bStrataEnabled = Lightmass_IsSubstrateEnabled();
+			bSubstrateEnabled = Lightmass_IsSubstrateEnabled();
 			MaterialInterface = InMaterialInterface;
 			Material = MaterialInterface ? MaterialInterface->GetMaterial() : NULL;
 			PropertyToCompile = InPropertyToCompile;
@@ -382,26 +382,26 @@ public:
 		const uint32 ForceCast_Exact_Replicate = MFCF_ForceCast | MFCF_ExactMatch | MFCF_ReplicateValue;
 		const EMaterialProperty DiffuseInput = MP_BaseColor;
 
-		if (bStrataEnabled)
+		if (bSubstrateEnabled)
 		{
 			uint8 BlendMode = static_cast<uint8>(MaterialInterface->GetBlendMode());
-			EStrataMaterialExportContext StrataMaterialExportContext = IsOpaqueOrMaskedBlendMode(*MaterialInterface) ? EStrataMaterialExportContext::SMEC_Opaque : EStrataMaterialExportContext::SMEC_Translucent;
+			ESubstrateMaterialExportContext SubstrateMaterialExportContext = IsOpaqueOrMaskedBlendMode(*MaterialInterface) ? ESubstrateMaterialExportContext::SMEC_Opaque : ESubstrateMaterialExportContext::SMEC_Translucent;
 
 			if (Usage == EMaterialShaderMapUsage::LightmassExportDiffuse)
 			{
-				Compiler->SetStrataMaterialExportType(SME_Diffuse, StrataMaterialExportContext, BlendMode);
+				Compiler->SetSubstrateMaterialExportType(SME_Diffuse, SubstrateMaterialExportContext, BlendMode);
 			}
 			else if (Usage == EMaterialShaderMapUsage::LightmassExportNormal)
 			{
-				Compiler->SetStrataMaterialExportType(SME_Normal, StrataMaterialExportContext, BlendMode);
+				Compiler->SetSubstrateMaterialExportType(SME_Normal, SubstrateMaterialExportContext, BlendMode);
 			}
 			else if (Usage == EMaterialShaderMapUsage::LightmassExportOpacity)
 			{
-				Compiler->SetStrataMaterialExportType(SME_Transmittance, StrataMaterialExportContext, BlendMode);
+				Compiler->SetSubstrateMaterialExportType(SME_Transmittance, SubstrateMaterialExportContext, BlendMode);
 			}
 			else if (Usage == EMaterialShaderMapUsage::LightmassExportEmissive)
 			{
-				Compiler->SetStrataMaterialExportType(SME_Emissive, StrataMaterialExportContext, BlendMode);
+				Compiler->SetSubstrateMaterialExportType(SME_Emissive, SubstrateMaterialExportContext, BlendMode);
 			}
 		}
 
@@ -485,15 +485,15 @@ public:
 			case MP_ShadingModel:
 				return MaterialInterface->CompileProperty(&ProxyCompiler, MP_ShadingModel);
 			case MP_FrontMaterial:
-				if (bStrataEnabled)
+				if (bSubstrateEnabled)
 				{
-					// When using strata, material property always compile from material. 
+					// When using Substrate, material property always compile from material. 
 					// We cannot use rediction so instead we instruct the compiler the type of data export we are looking for.
 					return MaterialInterface->CompileProperty(&ProxyCompiler, MP_FrontMaterial);
 				}
 				else
 				{
-					return ProxyCompiler.StrataCreateAndRegisterNullMaterial();
+					return ProxyCompiler.SubstrateCreateAndRegisterNullMaterial();
 				}
 			default:
 				return Compiler->Constant(1.0f);
@@ -513,10 +513,10 @@ public:
 		}
 		else if (Property == MP_ShadingModel)
 		{
-			return MaterialInterface->CompileProperty(Compiler, MP_ShadingModel); // useless with strata
+			return MaterialInterface->CompileProperty(Compiler, MP_ShadingModel); // useless with Substrate
 		}
-		// When using strata, we need to actually compile more root node inputs, 
-		// and then we handle what needs to actually be exported from the shader code (see STRATA_MATERIAL_EXPORT_TYPE).
+		// When using Substrate, we need to actually compile more root node inputs, 
+		// and then we handle what needs to actually be exported from the shader code (see SUBSTRATE_MATERIAL_EXPORT_TYPE).
 		else if (Property == MP_OpacityMask)
 		{
 			return MaterialInterface->CompileProperty(Compiler, MP_OpacityMask);
@@ -527,13 +527,13 @@ public:
 		}
 		else if (Property == MP_FrontMaterial)
 		{
-			if (bStrataEnabled)
+			if (bSubstrateEnabled)
 			{
 				return MaterialInterface->CompileProperty(Compiler, MP_FrontMaterial);
 			}
 			else
 			{
-				return Compiler->StrataCreateAndRegisterNullMaterial();
+				return Compiler->SubstrateCreateAndRegisterNullMaterial();
 			}
 		}
 		else
@@ -653,7 +653,7 @@ public:
 		bool bConnected = false;
 		UMaterialEditorOnlyData* MaterialEditorOnly = InMaterial->GetEditorOnlyData();
 
-		if (bStrataEnabled)
+		if (bSubstrateEnabled)
 		{
 			// Material attribute do not override the FrontMaterial input
 			bConnected = MaterialEditorOnly->FrontMaterial.Expression != nullptr;
@@ -712,7 +712,7 @@ public:
 		check(Material);
 		bool bExpressionIsNULL = false;
 
-		if (bStrataEnabled)
+		if (bSubstrateEnabled)
 		{
 			const bool bIsOpaque = IsOpaqueBlendMode(*MaterialInterface);
 			const bool bIsMasked = IsMaskedBlendMode(*MaterialInterface);
@@ -877,7 +877,7 @@ public:
 		return true;
 	}
 
-	static bool WillFillData(EBlendMode InBlendMode, EMaterialProperty InMaterialProperty, bool bStrataEnabled)
+	static bool WillFillData(EBlendMode InBlendMode, EMaterialProperty InMaterialProperty, bool bSubstrateEnabled)
 	{
 		// MAKE SURE THIS MATCHES THE CHART IN CompileProperty
 		// 						  RETURNED VALUES (F16 'textures')
@@ -896,7 +896,7 @@ public:
 			return true;
 		}
 
-		if (bStrataEnabled)
+		if (bSubstrateEnabled)
 		{
 			switch (InMaterialProperty)
 			{
@@ -1003,8 +1003,8 @@ private:
 	EMaterialProperty PropertyToCompile;
 	/** Stores which exported attribute this proxy is compiling for. */
 	EMaterialShaderMapUsage::Type Usage;
-	/** If Strata is enabled, we need to specify things differently since redirection cannot straiforwardly be used*/
-	bool bStrataEnabled;
+	/** If Substrate is enabled, we need to specify things differently since redirection cannot straiforwardly be used*/
+	bool bSubstrateEnabled;
 };
 
 FMaterialExportDataEntry::~FMaterialExportDataEntry()
@@ -1053,23 +1053,23 @@ void FLightmassMaterialRenderer::BeginGenerateMaterialData(
 	if (BaseMaterial)
 	{
 		check(!MaterialExportData.Contains(InMaterial));
-		const bool bStrataEnabled = Lightmass_IsSubstrateEnabled();
+		const bool bSubstrateEnabled = Lightmass_IsSubstrateEnabled();
 
 		FMaterialExportDataEntry& MaterialData = MaterialExportData.Add(InMaterial, FMaterialExportDataEntry(ChannelName));
 
-		if (FLightmassMaterialProxy::WillFillData(BlendMode, MP_DiffuseColor, bStrataEnabled))
+		if (FLightmassMaterialProxy::WillFillData(BlendMode, MP_DiffuseColor, bSubstrateEnabled))
 		{
 			MaterialData.DiffuseMaterialProxy = new FLightmassMaterialProxy();
 			MaterialData.DiffuseMaterialProxy->BeginCompiling(InMaterial, MP_DiffuseColor, EMaterialShaderMapUsage::LightmassExportDiffuse);
 		}
 
-		if (FLightmassMaterialProxy::WillFillData(BlendMode, MP_EmissiveColor, bStrataEnabled))
+		if (FLightmassMaterialProxy::WillFillData(BlendMode, MP_EmissiveColor, bSubstrateEnabled))
 		{
 			MaterialData.EmissiveMaterialProxy = new FLightmassMaterialProxy();
 			MaterialData.EmissiveMaterialProxy->BeginCompiling(InMaterial, MP_EmissiveColor, EMaterialShaderMapUsage::LightmassExportEmissive);
 		}
 
-		if (FLightmassMaterialProxy::WillFillData(BlendMode, MP_Opacity, bStrataEnabled))
+		if (FLightmassMaterialProxy::WillFillData(BlendMode, MP_Opacity, bSubstrateEnabled))
 		{
 			// Landscape opacity is generated from the hole mask, not the material
 			if (!bIsLandscapeMaterial)
@@ -1079,7 +1079,7 @@ void FLightmassMaterialRenderer::BeginGenerateMaterialData(
 			}
 		}
 
-		if (bInWantNormals && FLightmassMaterialProxy::WillFillData(BlendMode, MP_Normal, bStrataEnabled))
+		if (bInWantNormals && FLightmassMaterialProxy::WillFillData(BlendMode, MP_Normal, bSubstrateEnabled))
 		{
 			MaterialData.NormalMaterialProxy = new FLightmassMaterialProxy();
 			MaterialData.NormalMaterialProxy->BeginCompiling(InMaterial, MP_Normal, EMaterialShaderMapUsage::LightmassExportNormal);
@@ -1114,10 +1114,10 @@ bool FLightmassMaterialRenderer::GenerateMaterialData(
 	check(BaseMaterial);
 
 	EBlendMode BlendMode = InMaterial.GetBlendMode();
-	const bool bStrataEnabled = Lightmass_IsSubstrateEnabled();
+	const bool bSubstrateEnabled = Lightmass_IsSubstrateEnabled();
 
 	FMaterialShadingModelField ShadingModels = InMaterial.GetShadingModels();
- 	if (!bStrataEnabled &&		// Shading models are irrelevant when using Strata
+ 	if (!bSubstrateEnabled &&		// Shading models are irrelevant when using Substrate
 		!ShadingModels.HasShadingModel(MSM_DefaultLit) &&
 		!ShadingModels.HasShadingModel(MSM_Unlit) &&
 		!ShadingModels.HasShadingModel(MSM_Subsurface) &&
@@ -1311,10 +1311,12 @@ bool FLightmassMaterialRenderer::GenerateMaterialPropertyData(
 
 				// Prefetch all virtual textures so that we have content available
 				//todo[vt]: Move this to calling function to avoid multiple prefetches
-				if (UseVirtualTexturing(GMaxRHIFeatureLevel))
+				if (UseVirtualTexturing(GMaxRHIShaderPlatform))
 				{					
 					const ERHIFeatureLevel::Type FeatureLevel = GMaxRHIFeatureLevel;
 					const FVector2D ScreenSpaceSize(InOutSizeX, InOutSizeY);
+
+					UE::RenderCommandPipe::FSyncScope SyncScope;
 
 					ENQUEUE_RENDER_COMMAND(LoadTiles)(
 						[FeatureLevel, ScreenSpaceSize](FRHICommandListImmediate& RHICmdList)

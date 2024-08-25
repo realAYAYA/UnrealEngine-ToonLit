@@ -51,10 +51,14 @@ EFXAAQuality GetFXAAQuality()
 	return EFXAAQuality(FMath::Clamp(CVarFXAAQuality.GetValueOnRenderThread(), 0, 5));
 }
 
-FScreenPassTexture AddFXAAPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FFXAAInputs& Inputs)
+FScreenPassTexture AddFXAAPass(FRDGBuilder& GraphBuilder, const FSceneView& InSceneView, const FFXAAInputs& Inputs)
 {
+	
 	check(Inputs.SceneColor.IsValid());
 	check(Inputs.Quality != EFXAAQuality::MAX);
+
+	checkSlow(InSceneView.bIsViewInfo);
+	const FViewInfo& View = static_cast<const FViewInfo&>(InSceneView);
 
 	FScreenPassRenderTarget Output = Inputs.OverrideOutput;
 	

@@ -2,6 +2,7 @@
 
 #include "PlasticSourceControlShell.h"
 
+#include "Notification.h"
 #include "PlasticSourceControlModule.h"
 #include "PlasticSourceControlProvider.h"
 
@@ -10,9 +11,6 @@
 #include "Misc/ScopeLock.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
-
-#include "Framework/Notifications/NotificationManager.h"
-#include "Widgets/Notifications/SNotificationList.h"
 
 #if PLATFORM_LINUX
 #include <sys/ioctl.h>
@@ -42,6 +40,9 @@ static FCriticalSection	ShellCriticalSection;
 static size_t			ShellCommandCounter = -1;
 static double			ShellCumulatedTime = 0.;
 
+// Whether we already ran a status command to warm up the current shell process
+static bool             bShellIsWarmedUp = false;
+
 // Internal function to cleanup (called under the critical section)
 static void _CleanupBackgroundCommandLineShell()
 {
@@ -51,7 +52,17 @@ static void _CleanupBackgroundCommandLineShell()
 	ShellInputPipeRead = ShellInputPipeWrite = nullptr;
 }
 
-// Internal function to launch the Plastic SCM background 'cm' process in interactive shell mode (called under the critical section)
+static bool _GetShellIsWarmedUp()
+{
+	return bShellIsWarmedUp;
+}
+
+static void _SetShellIsWarmedUp()
+{
+	bShellIsWarmedUp = true;
+}
+
+// Internal function to launch the Unity Version Control background 'cm' process in interactive shell mode (called under the critical section)
 static bool _StartBackgroundPlasticShell(const FString& InPathToPlasticBinary, const FString& InWorkingDirectory)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(PlasticSourceControlShell::_StartBackgroundPlasticShell);
@@ -62,6 +73,8 @@ static bool _StartBackgroundPlasticShell(const FString& InPathToPlasticBinary, c
 	const bool bLaunchHidden = true;				// the new process will be minimized in the task bar
 	const bool bLaunchReallyHidden = bLaunchHidden; // the new process will not have a window or be in the task bar
 
+	bShellIsWarmedUp = false;
+
 	const double StartTimestamp = FPlatformTime::Seconds();
 
 	verify(FPlatformProcess::CreatePipe(ShellOutputPipeRead, ShellOutputPipeWrite, false));	// For reading outputs from cm shell child process
@@ -69,7 +82,7 @@ static bool _StartBackgroundPlasticShell(const FString& InPathToPlasticBinary, c
 
 #if PLATFORM_WINDOWS
 	ShellProcessHandle = FPlatformProcess::CreateProc(*InPathToPlasticBinary, *FullCommand, bLaunchDetached, bLaunchHidden, bLaunchReallyHidden, nullptr, 0, *InWorkingDirectory, ShellOutputPipeWrite, ShellInputPipeRead);
-#else // PLATFORM_LINUX
+#else // PLATFORM_MAC or PLATFORM_LINUX
 	// Update working directory
 	char OriginalWorkingDirectory[PATH_MAX];
 	getcwd(OriginalWorkingDirectory, PATH_MAX);
@@ -83,7 +96,7 @@ static bool _StartBackgroundPlasticShell(const FString& InPathToPlasticBinary, c
 
 	if (!ShellProcessHandle.IsValid())
 	{
-		UE_LOG(LogSourceControl, Warning, TEXT("Failed to launch 'cm shell'")); // not a bug, just no Plastic SCM cli found
+		UE_LOG(LogSourceControl, Warning, TEXT("Failed to launch 'cm shell'")); // not a bug, just no Unity Version Control cli found
 		_CleanupBackgroundCommandLineShell();
 	}
 	else
@@ -147,18 +160,6 @@ static void _RestartBackgroundCommandLineShell(const bool bInForceExit = false)
 	_StartBackgroundPlasticShell(PathToPlasticBinary, WorkingDirectory);
 }
 
-
-// Display a temporary failure notification in case of an error in the shell
-void DisplayFailureNotification(const FText& InNotificationText)
-{
-	FNotificationInfo* Info = new FNotificationInfo(InNotificationText);
-	Info->ExpireDuration = 10.0f;
-	FSlateNotificationManager::Get().QueueNotification(Info);
-	// NOTE: all source control operations run in a thread, so we cannot use MessageLog nor Notify() them since they can only be used from the Main/UI thread
-	// FMessageLog("SourceControl").Error(InNotificationText);
-	UE_LOG(LogSourceControl, Error, TEXT("%s"), *InNotificationText.ToString());
-}
-
 // Internal function (called under the critical section)
 static bool _RunCommandInternal(const FString& InCommand, const TArray<FString>& InParameters, const TArray<FString>& InFiles, FString& OutResults, FString& OutErrors)
 {
@@ -175,7 +176,7 @@ static bool _RunCommandInternal(const FString& InCommand, const TArray<FString>&
 		_RestartBackgroundCommandLineShell();
 	}
 
-	// Start with the Plastic command itself ("status", "log", "checkin"...)
+	// Start with the command itself ("status", "log", "checkin"...)
 	FString FullCommand = InCommand;
 	// Append to the command all parameters, and then finally the files
 	for (const FString& Parameter : InParameters)
@@ -235,8 +236,8 @@ static bool _RunCommandInternal(const FString& InCommand, const TArray<FString>&
 			const uint32 IndexPrompt = OutResults.Find(ShellUserInteractText, ESearchCase::CaseSensitive, ESearchDir::FromEnd);
 			if (INDEX_NONE != IndexPrompt)
 			{
-				const FText ShellRequiresInteractionError(LOCTEXT("SourceControlShell_AskAuthenticate", "Plastic SCM command line requires user interaction.\nSign in using the Plastic SCM client."));
-				DisplayFailureNotification(ShellRequiresInteractionError);
+				const FText ShellRequiresInteractionError(LOCTEXT("SourceControlShell_AskAuthenticate", "Unity Version Control command line requires user interaction.\nSign in using the Unity Version Control client."));
+				FNotification::DisplayFailure(ShellRequiresInteractionError);
 
 				// Restart the shell without waiting, it is forever blocked waiting for user input
 				_RestartBackgroundCommandLineShell(true);
@@ -313,7 +314,7 @@ static bool _RunCommandInternal(const FString& InCommand, const TArray<FString>&
 	return bResult;
 }
 
-// Launch the Plastic SCM 'cm shell' process in background for optimized successive commands (thread-safe)
+// Launch the Unity Version Control 'cm shell' process in background for optimized successive commands (thread-safe)
 bool Launch(const FString& InPathToPlasticBinary, const FString& InWorkingDirectory)
 {
 	// Protect public APIs from multi-thread access
@@ -332,6 +333,20 @@ void Terminate()
 	FScopeLock Lock(&ShellCriticalSection);
 
 	_ExitBackgroundCommandLineShell();
+}
+
+void SetShellIsWarmedUp()
+{
+	FScopeLock Lock(&ShellCriticalSection);
+
+	_SetShellIsWarmedUp();
+}
+
+bool GetShellIsWarmedUp()
+{
+	FScopeLock Lock(&ShellCriticalSection);
+
+	return _GetShellIsWarmedUp();
 }
 
 // Run command and return the raw result

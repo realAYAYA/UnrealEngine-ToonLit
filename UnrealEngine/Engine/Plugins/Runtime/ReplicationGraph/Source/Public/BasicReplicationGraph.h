@@ -50,6 +50,10 @@ public:
 	virtual void RouteAddNetworkActorToNodes(const FNewReplicatedActorInfo& ActorInfo, FGlobalActorReplicationInfo& GlobalInfo) override;
 	virtual void RouteRemoveNetworkActorToNodes(const FNewReplicatedActorInfo& ActorInfo) override;
 
+protected:
+	virtual void RouteRenameNetworkActorToNodes(const FRenamedReplicatedActorInfo& ActorInfo) override;
+
+public:
 	virtual int32 ServerReplicateActors(float DeltaSeconds) override;
 
 	UPROPERTY()

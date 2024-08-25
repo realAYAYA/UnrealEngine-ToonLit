@@ -6,9 +6,6 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/UObjectGlobals.h"
 #include "InputCoreTypes.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/EngineTypes.h"
-#endif
 #include "Engine/HitResult.h"
 #include "Components/SceneComponent.h"
 #include "GenericPlatform/GenericApplication.h"

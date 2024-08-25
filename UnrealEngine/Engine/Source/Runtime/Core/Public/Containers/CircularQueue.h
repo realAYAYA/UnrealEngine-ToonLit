@@ -6,6 +6,8 @@
 #include "Containers/CircularBuffer.h"
 #include "Templates/Atomic.h"
 
+// WARNING: This queue is planned for deprecation in favor of TSpscQueue
+
 /**
  * Implements a lock-free first-in first-out queue using a circular array.
  *

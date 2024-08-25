@@ -5,16 +5,16 @@
 #include "DMXProtocolLog.h"
 #include "DMXProtocolSettings.h"
 #include "DMXProtocolUtils.h"
-#include "Interfaces/IDMXProtocol.h"
-#include "Interfaces/IDMXSender.h"
-#include "IO/DMXOutputPortConfig.h"
-#include "IO/DMXPortManager.h"
-#include "IO/DMXRawListener.h"
-
 #include "HAL/Event.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/RunnableThread.h"
-#include <limits.h>
+#include "Interfaces/IDMXProtocol.h"
+#include "Interfaces/IDMXSender.h"
+#include "IO/DMXConflictMonitor.h"
+#include "IO/DMXOutputPortConfig.h"
+#include "IO/DMXPortManager.h"
+#include "IO/DMXRawListener.h"
+#include <limits>
 #include "Misc/FrameRate.h"
 
 
@@ -536,6 +536,9 @@ FDMXOutputPortSharedRef FDMXOutputPort::CreateFromConfig(FDMXOutputPortConfig& O
 
 	FDMXOutputPortSharedRef NewOutputPort = MakeShared<FDMXOutputPort, ESPMode::ThreadSafe>();
 
+	NewOutputPort->SendDMXEvent = FPlatformProcess::GetSynchEventFromPool();
+	check(NewOutputPort->SendDMXEvent != nullptr);
+
 	NewOutputPort->PortGuid = OutputPortConfig.GetPortGuid();
 
 	UDMXProtocolSettings* Settings = GetMutableDefault<UDMXProtocolSettings>();
@@ -568,6 +571,9 @@ FDMXOutputPort::~FDMXOutputPort()
 		Thread->Kill(true);
 		delete Thread;
 	}
+
+	FPlatformProcess::ReturnSynchEventToPool(SendDMXEvent);
+	SendDMXEvent = nullptr;
 
 	UE_LOG(LogDMXProtocol, VeryVerbose, TEXT("Destroyed output port %s"), *PortName);
 }
@@ -787,6 +793,7 @@ void FDMXOutputPort::RemoveRawListener(TSharedRef<FDMXRawListener> InRawListener
 
 void FDMXOutputPort::SendDMX(int32 LocalUniverseID, const TMap<int32, uint8>& ChannelToValueMap)
 {
+	using namespace UE::DMX;
 	checkf(IsInGameThread(), TEXT("Only the game-thread can Send from a DMX Output Port."));
 
 	if (IsLocalUniverseInPortRange(LocalUniverseID))
@@ -808,6 +815,14 @@ void FDMXOutputPort::SendDMX(int32 LocalUniverseID, const TMap<int32, uint8>& Ch
 
 			// Write the fragment to the game thread's buffer
 			const FDMXSignalSharedPtr& Signal = ExternUniverseToLatestSignalMap_GameThread.FindOrAdd(ExternUniverseID, MakeShared<FDMXSignal, ESPMode::ThreadSafe>());
+
+#if WITH_EDITOR
+			// Monitor conflicts
+			if (FDMXConflictMonitor* ConflictMonitor = FDMXConflictMonitor::Get())
+			{
+				ConflictMonitor->MonitorOutboundDMX(SharedThis(this), LocalUniverseID, ChannelToValueMap);
+			}
+#endif
 
 			for (const TTuple<int32, uint8>& ChannelValueKvp : ChannelToValueMap)
 			{
@@ -942,9 +957,6 @@ bool FDMXOutputPort::Init()
 
 uint32 FDMXOutputPort::Run()
 {
-	SendDMXEvent = FPlatformProcess::GetSynchEventFromPool();
-	check(SendDMXEvent != nullptr);
-
 	while (!bStopping)
 	{
 		const double StartTime = FPlatformTime::Seconds();
@@ -956,17 +968,16 @@ uint32 FDMXOutputPort::Run()
 
 		ProcessSendDMX();
 
+		const double Interval = 1.0 / SendRate;
 		const double EndTime = FPlatformTime::Seconds();
-		const double WaitTimeMs = ((1.0 / SendRate) - (EndTime - StartTime)) * 1000.0;
-		
-		if (WaitTimeMs > 0.0 && WaitTimeMs < std::numeric_limits<uint32>::max())
+		const double Elapsed = EndTime - StartTime;
+
+		if (Interval > Elapsed)
 		{
-			SendDMXEvent->Wait(WaitTimeMs);
+			const FTimespan WaitTimespan = FTimespan::FromSeconds(Interval - Elapsed);
+			SendDMXEvent->Wait(WaitTimespan);
 		}
 	}
-
-	FPlatformProcess::ReturnSynchEventToPool(SendDMXEvent);
-	SendDMXEvent = nullptr;
 
 	return 0;
 }

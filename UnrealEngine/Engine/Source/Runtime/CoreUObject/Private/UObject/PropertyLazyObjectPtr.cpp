@@ -158,7 +158,7 @@ uint32 FLazyObjectProperty::GetValueTypeHashInternal(const void* Src) const
 
 void FLazyObjectProperty::CopySingleValueToScriptVM( void* Dest, void const* Src ) const
 {
-	*(UObject**)Dest = ((const FLazyObjectPtr*)Src)->Get();
+	*(FObjectPtr*)Dest = ((const FLazyObjectPtr*)Src)->Get();
 }
 
 void FLazyObjectProperty::CopySingleValueFromScriptVM( void* Dest, void const* Src ) const

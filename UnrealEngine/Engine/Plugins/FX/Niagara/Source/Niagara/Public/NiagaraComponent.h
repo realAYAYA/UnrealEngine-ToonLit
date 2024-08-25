@@ -85,6 +85,8 @@ public:
 
 	NIAGARA_API virtual FName GetFNameForStatID() const override;
 
+	NIAGARA_API virtual bool RequiresGameThreadEndOfFrameRecreate() const override;
+
 private:
 	UPROPERTY(EditAnywhere, Category="Niagara", meta = (DisplayName = "Niagara System Asset"))
 	TObjectPtr<UNiagaraSystem> Asset;
@@ -261,6 +263,7 @@ public:
 	NIAGARA_API virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials = false) const override;
 	NIAGARA_API virtual void GetStreamingRenderAssetInfo(FStreamingTextureLevelContext& LevelContext, TArray<FStreamingRenderAssetPrimitiveInfo>& OutStreamingRenderAssets) const override;
 	NIAGARA_API virtual void OnAttachmentChanged() override;
+	NIAGARA_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 	//~ End UPrimitiveComponent Interface
 
 	//~ Begin USceneComponent Interface
@@ -287,19 +290,19 @@ public:
 	NIAGARA_API void SetAsset(UNiagaraSystem* InAsset, bool bResetExistingOverrideParameters = true);
 
 	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Get Niagara System Asset"))
-	UNiagaraSystem* GetAsset() const { return Asset; }
+	NIAGARA_API UNiagaraSystem* GetAsset() const { return Asset; }
 
 	UFUNCTION(BlueprintCallable, Category = Niagara)
-	void SetOcclusionQueryMode(ENiagaraOcclusionQueryMode Mode);
+	NIAGARA_API void SetOcclusionQueryMode(ENiagaraOcclusionQueryMode Mode);
 
 	UFUNCTION(BlueprintCallable, Category = Niagara)
-	ENiagaraOcclusionQueryMode GetOcclusionQueryMode() const { return OcclusionQueryMode; }
+	NIAGARA_API ENiagaraOcclusionQueryMode GetOcclusionQueryMode() const { return OcclusionQueryMode; }
 
 	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Set Forced Solo Mode"))
 	NIAGARA_API void SetForceSolo(bool bInForceSolo);
 
 	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Is In Forced Solo Mode"))
-	bool GetForceSolo()const { return bForceSolo; }
+	NIAGARA_API bool GetForceSolo() const { return bForceSolo; }
 
 private:
 	NIAGARA_API bool RequiresSoloMode() const;
@@ -317,7 +320,7 @@ public:
 	NIAGARA_API void SetCustomTimeDilation(float Dilation = 1.0f);
 
 	UFUNCTION(BlueprintCallable, Category = Niagara)
-	float GetCustomTimeDilation() const { return CustomTimeDilation; }
+	NIAGARA_API float GetCustomTimeDilation() const { return CustomTimeDilation; }
 
 	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Get Age Update Mode"))
 	NIAGARA_API ENiagaraAgeUpdateMode GetAgeUpdateMode() const;
@@ -558,18 +561,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Set Niagara Variable (TextureRenderTarget)"))
 	NIAGARA_API void SetVariableTextureRenderTarget(FName InVariableName, class UTextureRenderTarget* TextureRenderTarget);
 
-	/** Debug accessors for getting positions in blueprints. */
-	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Get Niagara Emitter Positions", DeprecatedFunction, DeprecationMessage = "Get Niagara Emitter Positions is deprecated, use the particle export DI inside your emitter instead."))
-	NIAGARA_API TArray<FVector> GetNiagaraParticlePositions_DebugOnly(const FString& InEmitterName);
-
-	/** Debug accessors for getting a float attribute array in blueprints.  The attribute name should be without namespaces. For example for "Particles.Position", send "Position". */
-	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Get Niagara Emitter Float Attrib", DeprecatedFunction, DeprecationMessage = "Get Niagara Emitter Float Attrib is deprecated, use the particle export DI inside your emitter instead."))
-	NIAGARA_API TArray<float> GetNiagaraParticleValues_DebugOnly(const FString& InEmitterName, const FString& InValueName);
-
-	/** Debug accessors for getting a FVector attribute array in blueprints. The attribute name should be without namespaces. For example for "Particles.Position", send "Position". */
-	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Get Niagara Emitter Vec3 Attrib", DeprecatedFunction, DeprecationMessage = "Get Niagara Emitter Vec3 Attrib is deprecated, use the particle export DI inside your emitter instead."))
-	NIAGARA_API TArray<FVector> GetNiagaraParticleValueVec3_DebugOnly(const FString& InEmitterName, const FString& InValueName);
-
 	/** Resets the System to it's initial pre-simulated state. */
 	UFUNCTION(BlueprintCallable, Category = Niagara, meta = (DisplayName = "Reset System"))
 	NIAGARA_API void ResetSystem();
@@ -677,7 +668,7 @@ public:
 	//~ End UObject Interface.
 
 	// Called when the particle system is done
-	UPROPERTY(BlueprintAssignable)
+	UPROPERTY(BlueprintAssignable, DuplicateTransient)
 	FOnNiagaraSystemFinished OnSystemFinished;
 
 	/** Removes all local overrides and replaces them with the values from the source System - note: this also removes the editor overrides from the component as it is used by the pooling mechanism to prevent values leaking between different instances. */
@@ -853,6 +844,9 @@ private:
 	/** Stores the current state for pause/unpause desired by the use. Allows us to pause/unpause correctly while also pausing/unpausing via scalability. */
 	uint32 bDesiredPauseState : 1;
 
+	/** Request recache the PSOs */
+	uint32 bRecachePSOs : 1;
+
 	/** Restore relative transform from auto attachment and optionally detach from parent (regardless of whether it was an auto attachment). */
 	NIAGARA_API void CancelAutoAttachment(bool bDetachFromParent);
 
@@ -871,8 +865,19 @@ private:
 	FBox CurrLocalBounds;
 
 	FBox SystemFixedBounds;
-	TMap<FName, FBox> EmitterFixedBounds;
 
+	struct FEmitterOverrideInfo
+	{
+		explicit FEmitterOverrideInfo(FName InEmitterName) : EmitterName(InEmitterName) {}
+
+		FName	EmitterName;
+		bool	bEnabled = true;
+		FBox	FixedBounds = FBox(EForceInit::ForceInit);
+	};
+	TArray<FEmitterOverrideInfo> EmitterOverrideInfos;
+	const FEmitterOverrideInfo* FindEmitterOverrideInfo(FName EmitterName) const;
+	FEmitterOverrideInfo* FindEmitterOverrideInfo(FName EmitterName);
+	FEmitterOverrideInfo& FindOrAddEmitterOverrideInfo(FName EmitterName);
 
 	float CustomTimeDilation = 1.0f;
 

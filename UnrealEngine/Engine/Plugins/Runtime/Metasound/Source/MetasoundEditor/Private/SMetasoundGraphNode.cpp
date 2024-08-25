@@ -343,6 +343,14 @@ namespace Metasound
 				PinWidget = SNew(SMetasoundGraphPin, InPin);
 			}
 
+			IMetasoundEditorModule& EditorModule = FModuleManager::GetModuleChecked<IMetasoundEditorModule>("MetaSoundEditor");
+			const FSlateBrush* PinConnectedIcon = nullptr;
+			const FSlateBrush* PinDisconnectedIcon = nullptr;
+			if (EditorModule.GetCustomPinIcons(InPin, PinConnectedIcon, PinDisconnectedIcon))
+			{
+				PinWidget->SetCustomPinIcon(PinConnectedIcon, PinDisconnectedIcon);
+			}
+
 			return PinWidget;
 		}
 

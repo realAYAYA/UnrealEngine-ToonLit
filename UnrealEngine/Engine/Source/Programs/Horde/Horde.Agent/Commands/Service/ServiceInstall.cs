@@ -1,9 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
+using System.ComponentModel;
 using System.Reflection;
 using System.Text;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using Horde.Agent.Utility;
 using Microsoft.Extensions.Logging;
@@ -11,9 +10,9 @@ using Microsoft.Extensions.Logging;
 namespace Horde.Agent.Commands.Service
 {
 	/// <summary>
-	/// Installs the agent as a service
+	/// Installs the agent as a Windows service
 	/// </summary>
-	[Command("service", "install", "Installs the agent as a service")]
+	[Command("service", "install", "Installs the agent as a Windows service")]
 	class InstallCommand : Command
 	{
 		/// <summary>
@@ -21,44 +20,39 @@ namespace Horde.Agent.Commands.Service
 		/// </summary>
 		public const string ServiceName = "HordeAgent";
 
-		/// <summary>
-		/// Specifies the username for the service to run under
-		/// </summary>
 		[CommandLine("-UserName=")]
+		[Description("Specifies the username for the service to run under")]
 		public string? UserName { get; set; } = null;
 
-		/// <summary>
-		/// Password for the username
-		/// </summary>
 		[CommandLine("-Password=")]
+		[Description("Password for the service account")]
 		public string? Password { get; set; } = null;
 
-		/// <summary>
-		/// The server profile to use
-		/// </summary>
 		[CommandLine("-Server=")]
+		[Description("The server profile to use")]
 		public string? Server { get; set; } = null;
-		
-		/// <summary>
-		/// Path to dotnet executable (dotnet.exe on Windows)
-		/// When left empty, the value of "dotnet" will be used.
-		/// </summary>
+
 		[CommandLine("-DotNetExecutable=")]
+		[Description("Path to dotnet executable (dotnet.exe on Windows). When left empty, the value of \"dotnet\" will be used.")]
 		public string DotNetExecutable { get; set; } = "dotnet";
-		
-		/// <summary>
-		/// Start the service after installation
-		/// </summary>
+
 		[CommandLine("-Start=")]
+		[Description("Whether to start the service after installation (true/false)")]
 		public string? Start { get; set; } = "true";
 
 		/// <summary>
-		/// Runs the service indefinitely
+		/// Installs the service
 		/// </summary>
 		/// <param name="logger">Logger to use</param>
 		/// <returns>Exit code</returns>
 		public override Task<int> ExecuteAsync(ILogger logger)
 		{
+			if (!RuntimePlatform.IsWindows)
+			{
+				logger.LogError("This command requires Windows");
+				return Task.FromResult(1);
+			}
+
 			using (WindowsServiceManager serviceManager = new WindowsServiceManager())
 			{
 				using (WindowsService service = serviceManager.Open(ServiceName))
@@ -82,9 +76,24 @@ namespace Horde.Agent.Commands.Service
 
 				logger.LogInformation("Registering {ServiceName} service", ServiceName);
 
-				StringBuilder commandLine = new StringBuilder();
-				commandLine.AppendFormat("{0} \"{1}\" service run", DotNetExecutable, Assembly.GetEntryAssembly()!.Location);
-				if(Server != null)
+				StringBuilder commandLine = new();
+				if (AgentApp.IsSelfContained)
+				{
+					if (Environment.ProcessPath == null)
+					{
+						logger.LogError("Unable to detect current process path");
+						return Task.FromResult(1);
+					}
+					commandLine.Append($"\"{Environment.ProcessPath}\" service run");
+				}
+				else
+				{
+#pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file
+					commandLine.AppendFormat("{0} \"{1}\" service run", DotNetExecutable, Assembly.GetEntryAssembly()!.Location);
+#pragma warning restore IL3000 // Avoid accessing Assembly file path when publishing as a single file					
+				}
+
+				if (Server != null)
 				{
 					commandLine.Append($" -server={Server}");
 				}
@@ -97,7 +106,7 @@ namespace Horde.Agent.Commands.Service
 					{
 						logger.LogInformation("Starting...");
 						service.Start();
-						
+
 						WindowsServiceStatus status = service.WaitForStatusChange(WindowsServiceStatus.Starting, TimeSpan.FromSeconds(30.0));
 						if (status != WindowsServiceStatus.Running)
 						{

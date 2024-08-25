@@ -168,11 +168,8 @@ namespace AutomationTool.Tasks
 				{
 					Arguments.Add(String.Format("/target:{0}", CommandUtils.MakePathSafeToUseWithCommandLine(Parameters.Target)));
 				}
-				if(!CommandUtils.CmdEnv.FrameworkMsbuildPath.Equals("xbuild"))
-				{
-					// not supported by xbuild
-					Arguments.Add("/restore");
-				}
+
+				Arguments.Add("/restore");
 				Arguments.Add("/verbosity:minimal");
 				Arguments.Add("/nologo");
 
@@ -420,7 +417,7 @@ namespace AutomationTool.Tasks
 
 			HashSet<FileReference> BuildProducts = new HashSet<FileReference>();
 			Dictionary<string, HashSet<FileReference>> TagNameToFileSet = new Dictionary<string, HashSet<FileReference>>();
-			await new CsCompileTask(Parameters).ExecuteAsync(new JobContext(null!), BuildProducts, TagNameToFileSet);
+			await new CsCompileTask(Parameters).ExecuteAsync(new JobContext(null!, null!), BuildProducts, TagNameToFileSet);
 
 			FileSet Binaries = FileSet.Empty;
 			FileSet References = FileSet.Empty;

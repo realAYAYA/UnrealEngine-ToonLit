@@ -117,11 +117,6 @@ void UImgMediaSource::AddTargetObject(AActor* InActor)
 	MipMapInfo->AddObject(InActor);
 }
 
-void UImgMediaSource::AddTargetObject(AActor* InActor, float Width)
-{
-	AddTargetObject(InActor);
-}
-
 
 void UImgMediaSource::RemoveTargetObject(AActor* InActor)
 {

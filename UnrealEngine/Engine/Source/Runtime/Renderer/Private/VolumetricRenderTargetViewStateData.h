@@ -29,6 +29,16 @@ public:
 
 	void Reset();
 
+	void PostRenderUpdate(float ViewExposure)
+	{
+		PreViewExposure = ViewExposure;
+	}
+
+	float GetPrevViewExposure()
+	{
+		return PreViewExposure;
+	}
+
 	FRDGTextureRef GetOrCreateVolumetricTracingRT(FRDGBuilder& GraphBuilder);
 	FRDGTextureRef GetOrCreateVolumetricSecondaryTracingRT(FRDGBuilder& GraphBuilder);
 	FRDGTextureRef GetOrCreateVolumetricTracingRTDepth(FRDGBuilder& GraphBuilder);
@@ -68,6 +78,7 @@ private:
 	uint32 CurrentRT;
 	bool bFirstTimeUsed;
 	bool bHistoryValid;
+	float PreViewExposure;
 
 	int32 FrameId;
 	uint32 NoiseFrameIndex;	// This is only incremented once all Volumetric render target samples have been iterated

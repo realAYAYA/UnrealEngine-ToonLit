@@ -10,6 +10,7 @@ class Boot(flow.cmd.Cmd):
     startdir    = flow.cmd.Arg("", "Working directory to start the shell in")
     bootarg     = flow.cmd.Opt("", "(for internal use)")
     cleanprompt = flow.cmd.Opt(False, "Do not modify the host shell's prompt")
+    theme       = flow.cmd.Opt("", "Adds a spot of colour with '.ushell theme'")
 
     def main(self):
         # Clear the screen
@@ -68,6 +69,11 @@ class Boot(flow.cmd.Cmd):
         # Run the shell
         system = channel.get_system()
         shell_class(system).boot_shell(env, shell_cookie)
+
+        # Apply a theme
+        if self.args.theme:
+            import subprocess
+            subprocess.run(("_ushell", "theme", "apply", self.args.theme))
 
     def get_prompt(self):
         pass

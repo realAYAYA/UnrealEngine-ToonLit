@@ -4,13 +4,15 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
-using Horde.Server.Acls;
 using Horde.Server.Server;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Trace;
 
 namespace Horde.Server.Perforce
 {
@@ -40,9 +42,9 @@ namespace Horde.Server.Perforce
 		/// <returns></returns>
 		[HttpGet]
 		[Route("/api/v1/perforce/status")]
-		public async Task<ActionResult<List<object>>> GetStatusAsync()
+		public async Task<ActionResult<List<object>>> GetStatusAsync(CancellationToken cancellationToken)
 		{
-			List<IPerforceServer> servers = await _perforceLoadBalancer.GetServersAsync();
+			List<IPerforceServer> servers = await _perforceLoadBalancer.GetServersAsync(cancellationToken);
 
 			List<object> responses = new List<object>();
 			foreach (IPerforceServer server in servers)
@@ -58,7 +60,7 @@ namespace Horde.Server.Perforce
 		/// <returns>List of Perforce clusters</returns>
 		[HttpGet]
 		[Route("/api/v1/perforce/settings")]
-		public ActionResult<List<PerforceCluster>> GetPerforceSettingsAsync()
+		public ActionResult<List<PerforceCluster>> GetPerforceSettings()
 		{
 			GlobalConfig globalConfig = _globalConfig.Value;
 
@@ -80,69 +82,69 @@ namespace Horde.Server.Perforce
 		/// Type of trigger (change-commit, form-save etc)
 		/// </summary>
 		public string TriggerType { get; }
-		
+
 		/// <summary>
 		/// Triggering user’s client workspace name.
 		/// </summary>
 		public string Client { get; }
-		
+
 		/// <summary>
 		/// Hostname of the user’s workstation (even if connected through a proxy, broker, replica, or an edge server.)
 		/// </summary>
 		public string ClientHost { get; }
-		
+
 		/// <summary>
 		/// The IP address of the user’s workstation (even if connected through a proxy, broker, replica, or an edge server.)
 		/// </summary>
 		public string ClientIp { get; }
-		
+
 		/// <summary>
 		/// The name of the user’s client application. For example, P4V, P4Win
 		/// </summary>
-		public string ClientProg { get;}
-		
+		public string ClientProg { get; }
+
 		/// <summary>
 		/// The version of the user’s client application.
 		/// </summary>
 		public string ClientVersion { get; }
-		
+
 		/// <summary>
 		/// If the command was sent through a proxy, broker, replica, or edge server, the hostname of the proxy, broker, replica, or edge server.
 		/// (If the command was sent directly, %peerhost% matches %clienthost%)
 		/// </summary>
 		public string PeerHost { get; }
-		
+
 		/// <summary>
 		/// If the command was sent through a proxy, broker, replica, or edge server, the IP address of the proxy, broker, replica, or edge server.
 		/// (If the command was sent directly, %peerip% matches %clientip%)
 		/// </summary>
 		public string PeerIp { get; }
-		
+
 		/// <summary>
 		/// Hostname of the Helix Core Server.
 		/// </summary>
 		public string ServerHost { get; }
-		
+
 		/// <summary>
 		/// The value of the Helix Core Server’s server.id. See p4 serverid in the Helix Core Command-Line (P4) Reference.
 		/// </summary>
 		public string ServerId { get; }
-		
+
 		/// <summary>
 		/// The IP address of the server.
 		/// </summary>
 		public string ServerIp { get; }
-		
+
 		/// <summary>
 		/// The value of the Helix Core Server’s P4NAME.
 		/// </summary>
 		public string ServerName { get; }
-		
+
 		/// <summary>
 		/// The transport, IP address, and port of the Helix Core Server, in the format prefix:ip_address:port.
 		/// </summary>
 		public string ServerPort { get; }
-		
+
 		/// <summary>
 		/// In a distributed installation, for any change trigger:
 		///     If the submit was run on the commit server, %submitserverid% equals %serverid%.
@@ -150,33 +152,33 @@ namespace Horde.Server.Perforce
 		/// If this is not a distributed installation, %submitserverid% is always empty.
 		/// </summary>
 		public string? SubmitServerId { get; }
-		
+
 		/// <summary>
 		/// Helix Server username of the triggering user.
 		/// </summary>
 		public string User { get; }
-		
+
 		/// <summary>
 		/// Name of form (for instance, a branch name or a changelist number).
 		/// </summary>
 		public string? FormName { get; }
-		
+
 		/// <summary>
 		/// Type of form (for instance, branch, change, and so on).
 		/// </summary>
 		public string? FormType { get; }
-		
+
 		/// <summary>
 		/// The number of the changelist being submitted. Not set for form-save.
 		/// </summary>
 		[JsonPropertyName("ChangeNumber")]
 		public string? ChangeNumberString { get; }
-		
+
 		/// <summary>
 		/// The root path of files submitted.
 		/// </summary>
 		public string? ChangeRoot { get; }
-		
+
 		/// <summary>
 		/// Change number
 		/// Normalized as form-save stores the change number in 'formname'
@@ -245,23 +247,26 @@ namespace Horde.Server.Perforce
 			return $"TriggerType={TriggerType} User={User} ChangeNumber={ChangeNumber}";
 		}
 	}
-	
+
 	/// <summary>
 	/// Controller for Perforce triggers and callbacks
 	/// </summary>
 	[ApiController]
+	[Tags("Perforce")]
 	[Route("[controller]")]
 	public class PublicPerforceController : ControllerBase
 	{
 		private readonly IPerforceService _perforceService;
+		private readonly Tracer _tracer;
 		private readonly ILogger<PerforceController> _logger;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public PublicPerforceController(IPerforceService perforceService, ILogger<PerforceController> logger)
+		public PublicPerforceController(IPerforceService perforceService, Tracer tracer, ILogger<PerforceController> logger)
 		{
 			_perforceService = perforceService;
+			_tracer = tracer;
 			_logger = logger;
 		}
 
@@ -271,17 +276,30 @@ namespace Horde.Server.Perforce
 		/// <returns>200 OK on success</returns>
 		[HttpPost]
 		[Route("/api/v1/perforce/{cluster}/trigger")]
-		public async Task<ActionResult> TriggerCallback(string cluster, [FromBody]PerforceTriggerRequest trigger)
+		public async Task<ActionResult> TriggerCallbackAsync(string cluster, [FromBody] PerforceTriggerRequest trigger)
 		{
-			_logger.LogDebug("Received Perforce trigger callback. Type={Type} CL={Changelist} User={User} Root={Root}", 
+			_logger.LogDebug("Received Perforce trigger callback. Type={Type} CL={Changelist} User={User} Root={Root}",
 				trigger.TriggerType, trigger.ChangeNumber, trigger.User, trigger.ChangeRoot);
-			
-			// For "form-save" triggers, change number can be -1 due to variable "formname" is set to "default" (non-submitted changelist)
-			if (trigger.TriggerType == "change-commit" && trigger.ChangeNumber != -1)
+
+			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(PublicPerforceController)}.{nameof(TriggerCallbackAsync)}");
+			span.SetAttribute("type", trigger.TriggerType);
+			span.SetAttribute("cl", trigger.ChangeNumber);
+			span.SetAttribute("user", trigger.User);
+			span.SetAttribute("root", trigger.ChangeRoot);
+			span.SetAttribute("client", trigger.Client);
+
+			switch (trigger.TriggerType)
 			{
-				// Not implemented yet
-				await Task.Delay(0); // Avoid await warnings
-				// await _perforceService.RefreshCachedCommitAsync(cluster, trigger.ChangeNumber);
+				case "change-commit":
+				case "shelve-commit":
+				case "form-save":
+					// For "form-save" triggers, change number can be -1 due to variable "formname" is set to "default" (non-submitted changelist)
+					if (trigger.ChangeNumber != -1)
+					{
+						await _perforceService.RefreshCachedCommitAsync(cluster, trigger.ChangeNumber);
+						span.SetAttribute("commitRefreshed", true);
+					}
+					break;
 			}
 
 			string content = "{\"message\": \"Trigger received\"}";

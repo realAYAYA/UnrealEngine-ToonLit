@@ -9,12 +9,15 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PhysicsControlActor)
 
+FInitialCharacterControls::FInitialCharacterControls() = default;
+FInitialCharacterControls::~FInitialCharacterControls() = default;
+
 //======================================================================================================================
 void UPhysicsControlInitializerComponent::CreateInitialCharacterControls(UPhysicsControlComponent* ControlComponent)
 {
 	USkeletalMeshComponent* SkeletalMeshComponent = nullptr;
 
-	if (InitialCharacterControls.CharacterActor)
+	if (InitialCharacterControls.CharacterActor.IsValid())
 	{
 		if (InitialCharacterControls.SkeletalMeshComponentName != NAME_None)
 		{
@@ -49,12 +52,8 @@ void UPhysicsControlInitializerComponent::CreateInitialCharacterControls(UPhysic
 			SkeletalMeshComponent,
 			InitialCharacterControls.LimbSetupData,
 			InitialCharacterControls.WorldSpaceControlData,
-			InitialCharacterControls.WorldSpaceControlSettings,
-			InitialCharacterControls.bEnableWorldSpaceControls,
 			InitialCharacterControls.ParentSpaceControlData,
-			InitialCharacterControls.ParentSpaceControlSettings,
-			InitialCharacterControls.bEnableParentSpaceControls,
-			InitialCharacterControls.PhysicsMovementType
+			InitialCharacterControls.BodyModifierData
 		);
 	}
 }
@@ -69,7 +68,7 @@ void UPhysicsControlInitializerComponent::CreateOrUpdateInitialControls(UPhysics
 		const FInitialPhysicsControl& InitialPhysicsControl = InitialPhysicsControlPair.Value;
 
 		UMeshComponent* ChildMeshComponent = nullptr;
-		if (InitialPhysicsControl.ChildActor)
+		if (InitialPhysicsControl.ChildActor.IsValid())
 		{
 			if (InitialPhysicsControl.ChildMeshComponentName != NAME_None)
 			{
@@ -94,7 +93,7 @@ void UPhysicsControlInitializerComponent::CreateOrUpdateInitialControls(UPhysics
 		}
 
 		UMeshComponent* ParentMeshComponent = nullptr;
-		if (InitialPhysicsControl.ParentActor)
+		if (InitialPhysicsControl.ParentActor.IsValid())
 		{
 			if (InitialPhysicsControl.ParentMeshComponentName != NAME_None)
 			{
@@ -115,7 +114,10 @@ void UPhysicsControlInitializerComponent::CreateOrUpdateInitialControls(UPhysics
 
 		// If we get here then we will be removing the original and making a new one in its place.
 		TArray<FName> Sets = ControlComponent->GetSetsContainingControl(Name);
-		ControlComponent->DestroyControl(Name);
+		if (ControlComponent->GetControlExists(Name))
+		{
+			ControlComponent->DestroyControl(Name);
+		}
 
 		if (ControlComponent->CreateNamedControl(
 			Name,
@@ -125,9 +127,7 @@ void UPhysicsControlInitializerComponent::CreateOrUpdateInitialControls(UPhysics
 			InitialPhysicsControl.ChildBoneName,
 			InitialPhysicsControl.ControlData,
 			InitialPhysicsControl.ControlTarget,
-			InitialPhysicsControl.ControlSettings,
-			"All",
-			true))
+			"All"))
 		{
 			// If we were replacing a control then add it to the original sets
 			FPhysicsControlNames Names;
@@ -149,7 +149,7 @@ void UPhysicsControlInitializerComponent::CreateOrUpdateInitialBodyModifiers(UPh
 		const FInitialBodyModifier& InitialBodyModifier = InitialBodyModifierPair.Value;
 
 		UMeshComponent* MeshComponent = nullptr;
-		if (InitialBodyModifier.Actor)
+		if (InitialBodyModifier.Actor.IsValid())
 		{
 			if (InitialBodyModifier.MeshComponentName != NAME_None)
 			{
@@ -175,17 +175,13 @@ void UPhysicsControlInitializerComponent::CreateOrUpdateInitialBodyModifiers(UPh
 
 		// If we get here then we will be removing the original and making a new one in its place.
 		TArray<FName> Sets = ControlComponent->GetSetsContainingBodyModifier(Name);
-		ControlComponent->DestroyBodyModifier(Name);
+		if (ControlComponent->GetBodyModifierExists(Name))
+		{
+			ControlComponent->DestroyBodyModifier(Name);
+		}
 
 		if (ControlComponent->CreateNamedBodyModifier(
-			Name,
-			MeshComponent,
-			InitialBodyModifier.BoneName,
-			"All",
-			InitialBodyModifier.MovementType,
-			InitialBodyModifier.CollisionType,
-			InitialBodyModifier.GravityMultiplier,
-			InitialBodyModifier.bUseSkeletalAnimation))
+			Name, MeshComponent, InitialBodyModifier.BoneName, "All", InitialBodyModifier.BodyModifierData))
 		{
 			// If we were replacing a control then add it to the original sets
 			FPhysicsControlNames Names;

@@ -7,11 +7,14 @@
 #include "CoreMinimal.h"
 #include "LiveLinkRetargetAsset.h"
 #include "LiveLinkTypes.h"
+#include "Templates/SubclassOf.h"
 
 #include "AnimNode_LiveLinkPose.generated.h"
 
 
 class ILiveLinkClient;
+class ULiveLinkRole;
+struct FLiveLinkSubjectFrameData;
 
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -27,6 +30,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = SourceData, meta = (PinShownByDefault))
 	FLiveLinkSubjectName LiveLinkSubjectName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Transient, Category = SourceData, meta = (PinShownByDefault))
+	bool bDoLiveLinkEvaluation = true;
 
 #if WITH_EDITORONLY_DATA
 	UE_DEPRECATED(4.23, "FName SubjectName is deprecated. Use the SubjectName of type FLiveLinkSubjectName instead.")
@@ -57,6 +63,13 @@ public:
 
 protected:
 	LIVELINKANIMATIONCORE_API virtual void OnInitializeAnimInstance(const FAnimInstanceProxy* InProxy, const UAnimInstance* InAnimInstance) override;
+	
+	/** Build output pose using evaluated LiveLink animation data */
+	LIVELINKANIMATIONCORE_API void BuildPoseFromAnimData(const FLiveLinkSubjectFrameData& LiveLinkData, FPoseContext& Output);
+	
+	/** Build output pose using evaluated LiveLink curve (Basic Role) data */
+	LIVELINKANIMATIONCORE_API void BuildPoseFromCurveData(const FLiveLinkSubjectFrameData& LiveLinkData, FPoseContext& Output);
+
 
 private:
 
@@ -64,6 +77,12 @@ private:
 
 	// Delta time from update so that it can be passed to retargeter
 	float CachedDeltaTime;
+
+	/** Cached LiveLink evaluated data from last frame */
+	TSharedPtr<FLiveLinkSubjectFrameData> CachedLiveLinkData;
+
+	/** Cached LiveLink Role evaluated last frame */
+	TSubclassOf<ULiveLinkRole> CachedEvaluatedRole;
 };
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

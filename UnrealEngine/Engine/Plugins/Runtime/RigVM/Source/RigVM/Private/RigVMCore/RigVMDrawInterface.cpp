@@ -274,6 +274,12 @@ void FRigVMDrawInterface::DrawArc(const FTransform& WorldOffset, const FTransfor
 	Instructions.Add(Instruction);
 }
 
+void FRigVMDrawInterface::DrawCircle(const FTransform& WorldOffset, const FTransform& Transform, float Radius,
+	const FLinearColor& Color, float Thickness, int32 Detail)
+{
+	DrawArc(WorldOffset, Transform, Radius, 0, TWO_PI, Color, Thickness, Detail);
+}
+
 void FRigVMDrawInterface::DrawCone(const FTransform& WorldOffset, const FTransform& ConeOffset, float Angle1, float Angle2, uint32 NumSides, bool bDrawSideLines, const FLinearColor& SideLineColor, FMaterialRenderProxy* const MaterialRenderProxy)
 {
 	if (!IsEnabled())
@@ -307,6 +313,67 @@ void FRigVMDrawInterface::DrawCone(const FTransform& WorldOffset, const FTransfo
 			FVector ConeVert = CalcConeVert(Angle1, Angle2, Azi);
 			DrawLine(WorldOffset, ConeOffset.GetLocation(), ConeOffset.TransformPosition(ConeVert), SideLineColor, 1.f);
 		}
+	}
+}
+
+void FRigVMDrawInterface::DrawArrow(const FTransform& WorldOffset, const FVector& Direction, const FVector& Side,
+	const FLinearColor& Color, float Thickness)
+{
+	if (!IsEnabled())
+	{
+		return;
+	}
+
+	FRigVMDrawInstruction Instruction(ERigVMDrawSettings::Lines, Color, Thickness, WorldOffset);
+
+	Instruction.Positions.SetNum(6);
+	Instruction.Positions[0] = FVector::ZeroVector;
+	Instruction.Positions[1] = Direction;
+	Instruction.Positions[2] = Instruction.Positions[1];
+	Instruction.Positions[3] = Direction - Direction.GetSafeNormal() * Side.Size() + Side;
+	Instruction.Positions[4] = Instruction.Positions[1];
+	Instruction.Positions[5] = Direction - Direction.GetSafeNormal() * Side.Size() - Side;
+
+	Instructions.Add(Instruction);
+}
+
+void FRigVMDrawInterface::DrawPlane(const FTransform& WorldOffset, const FVector2D& Scale, const FLinearColor& MeshColor,
+	bool bDrawLines, const FLinearColor& LineColor, FMaterialRenderProxy* const MaterialRenderProxy)
+{
+	if (!IsEnabled())
+	{
+		return;
+	}
+
+	const FVector Corner(Scale.X, Scale.Y, 0);
+
+	FRigVMDrawInstruction MeshInstruction;
+	MeshInstruction.PrimitiveType = ERigVMDrawSettings::DynamicMesh;
+	MeshInstruction.Transform = WorldOffset;
+	MeshInstruction.MeshVerts = {
+		(FVector3f)(Corner * FVector(-1, 1, 0)),
+		(FVector3f)(Corner * FVector(1, 1, 0)),
+		(FVector3f)(Corner * FVector(1, -1, 0)),
+		(FVector3f)(Corner * FVector(-1, -1, 0))
+	};
+	MeshInstruction.MeshIndices = { 0, 1, 2, 2, 3, 0 };
+	MeshInstruction.MaterialRenderProxy = MaterialRenderProxy;
+
+	Instructions.Add(MeshInstruction);
+
+	if (bDrawLines)
+	{
+		FRigVMDrawInstruction LinesInstruction(ERigVMDrawSettings::LineStrip, LineColor, 0.f, WorldOffset);
+
+		LinesInstruction.Positions.Reserve(5);
+		LinesInstruction.Positions.Add(FVector(MeshInstruction.MeshVerts[0].Position));
+		LinesInstruction.Positions.Add(FVector(MeshInstruction.MeshVerts[1].Position));
+		LinesInstruction.Positions.Add(FVector(MeshInstruction.MeshVerts[2].Position));
+		LinesInstruction.Positions.Add(FVector(MeshInstruction.MeshVerts[3].Position));
+		LinesInstruction.Positions.Add(FVector(MeshInstruction.MeshVerts[0].Position));
+		LinesInstruction.Positions.Add(FVector(MeshInstruction.MeshVerts[2].Position));
+
+		Instructions.Add(LinesInstruction);
 	}
 }
 

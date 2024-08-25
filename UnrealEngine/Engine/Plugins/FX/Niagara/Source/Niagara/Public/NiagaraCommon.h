@@ -46,8 +46,10 @@ enum EShaderPlatform : uint16;
 enum EPixelFormat : uint8;
 
 class FNiagaraDataBuffer;
+class FNiagaraShaderMap;
 
 using FNiagaraDataBufferRef = TRefCountPtr<FNiagaraDataBuffer>;
+using FNiagaraShaderMapRef = TRefCountPtr<FNiagaraShaderMap>;
 
 #define NIAGARA_MEMORY_TRACKING	!UE_BUILD_SHIPPING
 
@@ -62,6 +64,10 @@ using FNiagaraDataBufferRef = TRefCountPtr<FNiagaraDataBuffer>;
 
 /** When enabled allows builds to warn about system / emitter information such as hitting buffer caps.  Small performance overhead for copying the name around so RT has access. */
 #define WITH_NIAGARA_DEBUG_EMITTER_NAME	1//!UE_BUILD_SHIPPING
+
+#ifndef WITH_NIAGARA_LEAK_DETECTOR
+	#define WITH_NIAGARA_LEAK_DETECTOR	1
+#endif
 
 #define INTERPOLATED_PARAMETER_PREFIX TEXT("PREV_")
 
@@ -343,6 +349,9 @@ struct FNiagaraScriptDataUsageInfo
 	bool bReadsAttributeData;
 };
 
+// automatically fills in source file and line for a FNiagaraFunctionSignature, so the editor can jump to it on double click
+#define NIAGARA_ADD_FUNCTION_SOURCE_INFO(FunctionSignature) { FunctionSignature.SourceFile = __FILE__; FunctionSignature.SourceLine = __LINE__; }
+
 USTRUCT()
 struct FNiagaraFunctionSignature
 {
@@ -351,12 +360,12 @@ struct FNiagaraFunctionSignature
 	/** Name of the function. */
 	UPROPERTY()
 	FName Name;
-	/** Input parameters to this function. */
+	/** Input parameters to this function. The data stored in the variables is used for default values. */
 	UPROPERTY()
-	TArray<FNiagaraVariable> Inputs; //TODO: Can these be FNiagaraVariableBase?
-	/** Input parameters of this function. */
+	TArray<FNiagaraVariable> Inputs;
+	/** Output parameters of this function. The data stored in the variables is used for default values. */
 	UPROPERTY()
-	TArray<FNiagaraVariable> Outputs; //TODO: Can these be FNiagaraVariableBase?
+	TArray<FNiagaraVariable> Outputs;
 	/** Id of the owner is this is a member function. */
 	UPROPERTY()
 	FName OwnerName;
@@ -443,6 +452,12 @@ struct FNiagaraFunctionSignature
 
 	UPROPERTY(meta = (SkipForCompileHash = true))
 	TMap<FNiagaraVariableBase, FText> OutputDescriptions;
+
+	UPROPERTY(meta = (SkipForCompileHash = true))
+	FString SourceFile;
+
+	UPROPERTY(meta = (SkipForCompileHash = true))
+	int32 SourceLine = 0;
 #endif
 
 	FNiagaraFunctionSignature() 
@@ -1014,6 +1029,8 @@ private:
 	UPROPERTY(transient)
 	TArray<TObjectPtr<UNiagaraComponent>> ComponentsToNotifySimDestroy;
 	UPROPERTY(transient)
+	TArray<TObjectPtr<UNiagaraComponent>> ComponentsToDestroyInstance;
+	UPROPERTY(transient)
 	TArray<TObjectPtr<UNiagaraSystem>> SystemSimsToDestroy;
 	UPROPERTY(transient)
 	TArray<TObjectPtr<UNiagaraSystem>> SystemSimsToRecache;
@@ -1512,7 +1529,7 @@ namespace FNiagaraUtilities
 	 */
 	void NIAGARA_API PrepareRapidIterationParameters(const TArray<UNiagaraScript*>& Scripts, const TMap<UNiagaraScript*, UNiagaraScript*>& ScriptDependencyMap, const TMap<UNiagaraScript*, FVersionedNiagaraEmitter>& ScriptToEmitterNameMap);
 
-	bool NIAGARA_API AreTypesAssignable(const FNiagaraTypeDefinition& TypeA, const FNiagaraTypeDefinition& TypeB);
+	bool NIAGARA_API AreTypesAssignable(const FNiagaraTypeDefinition& FromType, const FNiagaraTypeDefinition& ToType);
 #endif
 
 	void NIAGARA_API DumpHLSLText(const FString& SourceCode, const FString& DebugName);

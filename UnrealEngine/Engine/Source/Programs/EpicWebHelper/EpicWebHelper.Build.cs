@@ -7,7 +7,6 @@ public class EpicWebHelper : ModuleRules
 {
 	public EpicWebHelper(ReadOnlyTargetRules Target) : base(Target)
 	{
-		CppStandard = CppStandardVersion.Cpp17;
 		PublicIncludePathModuleNames.Add("Launch");
 
 		PrivateDependencyModuleNames.AddRange(

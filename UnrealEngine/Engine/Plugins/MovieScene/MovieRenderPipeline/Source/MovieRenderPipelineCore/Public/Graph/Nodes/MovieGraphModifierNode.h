@@ -2,12 +2,31 @@
 
 #pragma once
 
+#include "Graph/MovieGraphConfig.h"
 #include "Graph/MovieGraphNode.h"
+#include "Graph/MovieGraphRenderLayerSubsystem.h"
 
 #include "MovieGraphModifierNode.generated.h"
 
-// Forward Declare
-class UMoviePipelineCollectionModifier;
+/** A container which allows an array of modifiers to be merged correctly. */
+UCLASS()
+class UMovieGraphMergeableModifierContainer final : public UObject, public IMovieGraphTraversableObject
+{
+	GENERATED_BODY()
+
+public:
+	// IMovieGraphTraversableObject interface
+	virtual void Merge(const IMovieGraphTraversableObject* InSourceObject) override;
+	virtual TArray<TPair<FString, FString>> GetMergedProperties() const override;
+	// ~IMovieGraphTraversableObject interface
+
+private:
+	void MergeProperties(const TObjectPtr<UMovieGraphCollectionModifier>& InDestModifier, const TObjectPtr<UMovieGraphCollectionModifier>& InSourceModifier);
+
+public:
+	UPROPERTY()
+	TArray<TObjectPtr<UMovieGraphCollectionModifier>> Modifiers;
+};
 
 /** 
 * A collection node specifies an interface for doing dynamic scene queries for actors in the world. Collections work in tandem with
@@ -19,6 +38,8 @@ class MOVIERENDERPIPELINECORE_API UMovieGraphModifierNode : public UMovieGraphSe
 	GENERATED_BODY()
 
 public:
+	UMovieGraphModifierNode();
+
 #if WITH_EDITOR
 	virtual FText GetNodeTitle(const bool bGetDescriptive = false) const override;
 	virtual FText GetMenuCategory() const override;
@@ -32,25 +53,57 @@ public:
 
 	virtual FString GetNodeInstanceName() const override { return ModifierName; }
 
+	/** Gets the modifier of the specified type, or nullptr if one does not exist on this node. */
+	UFUNCTION(BlueprintCallable, Category = "Modifiers")
+	UMovieGraphCollectionModifier* GetModifier(TSubclassOf<UMovieGraphCollectionModifier> ModifierType) const;
+
+	/** Gets all modifiers currently added to the node. */
+	UFUNCTION(BlueprintCallable, Category = "Modifiers")
+	const TArray<UMovieGraphCollectionModifier*>& GetModifiers() const;
+
+	/**
+	 * Adds a new modifier of the specified type. Returns a pointer to the new modifier, or nullptr if a modifier of the specified type already
+	 * exists on this node (only one modifier of each type can be added to the node).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Modifiers")
+	UMovieGraphCollectionModifier* AddModifier(TSubclassOf<UMovieGraphCollectionModifier> ModifierType);
+
+	/** Removes the modifier of the specified type. Returns true on success, or false if a modifier of the specified type does not exist on the node. */
+	UFUNCTION(BlueprintCallable, Category = "Modifiers")
+	bool RemoveModifier(TSubclassOf<UMovieGraphCollectionModifier> ModifierType);
+
+	/** Add a collection identified by the given name which will be affected by the modifiers on this node. */
+	UFUNCTION(BlueprintCallable, Category = "Modifiers")
+	void AddCollection(const FName& InCollectionName);
+
+	/** Remove a collection identified by the given name. Returns true if the collection was found and removed successfully, else false. */
+	UFUNCTION(BlueprintCallable, Category = "Modifiers")
+	bool RemoveCollection(const FName& InCollectionName);
+
+	/** Gets all collections that will be affected by the modifiers on this node. */
+	UFUNCTION(BlueprintCallable, Category = "Modifiers")
+	const TArray<FName>& GetCollections() const;
+
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Overrides, meta = (InlineEditConditionToggle))
-	uint8 bOverride_ModifierName : 1;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Overrides, meta = (InlineEditConditionToggle))
-	uint8 bOverride_ModifiedCollectionName : 1;
-		
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Overrides, meta = (InlineEditConditionToggle))
-	uint8 bOverride_ModifierClass : 1;
+	UPROPERTY()
+	uint8 bOverride_ModifierName : 1 = 1;	// Always merge the modifier name, no need for the user to do this explicitly
 
 	/** The name of this modifier. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "General", meta=(EditCondition="bOverride_ModifierName"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifier")
 	FString ModifierName;
 
-	/** The name of the collection being modified. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "General", meta=(EditCondition="bOverride_ModifiedCollectionName")) 
-	FString ModifiedCollectionName;
+private:
+	UPROPERTY()
+	uint8 bOverride_Collections : 1 = 1; //-V570
+
+	UPROPERTY()
+	uint8 bOverride_ModifiersContainer : 1 = 1; //-V570
 	
-	/** The modifier this node should run. */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Instanced, Category = "General", meta=(EditCondition="bOverride_ModifierClass", EditInline))
-	TObjectPtr<UMoviePipelineCollectionModifier> ModifierClass;
+	/** The names of collections being modified. */
+	UPROPERTY()
+	TArray<FName> Collections;
+	
+	/** The modifiers this node should run. */
+	UPROPERTY(meta=(DisplayName="Modifiers"))
+	TObjectPtr<UMovieGraphMergeableModifierContainer> ModifiersContainer;
 };

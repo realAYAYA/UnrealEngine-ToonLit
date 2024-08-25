@@ -5,10 +5,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Horde.Server.Agents;
-using Horde.Server.Agents.Leases;
 using Horde.Server.Agents.Pools;
 using Horde.Server.Jobs;
 using Horde.Server.Logs;
@@ -16,6 +19,7 @@ using Horde.Server.Perforce;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
 using HordeCommon;
+using HordeCommon.Rpc.Messages;
 using HordeCommon.Rpc.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -26,7 +30,7 @@ namespace Horde.Server.Tasks
 	/// <summary>
 	/// Generates tasks telling agents to sync their workspaces
 	/// </summary>
-	public sealed class ConformTaskSource : TaskSourceBase<ConformTask>, IHostedService, IDisposable
+	public sealed class ConformTaskSource : TaskSourceBase<ConformTask>, IHostedService, IAsyncDisposable
 	{
 		/// <inheritdoc/>
 		public override string Type => "Conform";
@@ -34,8 +38,6 @@ namespace Horde.Server.Tasks
 		/// <inheritdoc/>
 		public override TaskSourceFlags Flags => TaskSourceFlags.AllowWhenDisabled;
 
-		readonly MongoService _mongoService;
-		readonly GlobalsService _globalsService;
 		readonly IAgentCollection _agentCollection;
 		readonly PoolService _poolService;
 		readonly SingletonDocument<ConformList> _conformList;
@@ -49,10 +51,8 @@ namespace Horde.Server.Tasks
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public ConformTaskSource(MongoService mongoService, GlobalsService globalsService, IAgentCollection agentCollection, PoolService poolService, ILogFileService logService, PerforceLoadBalancer perforceLoadBalancer, IClock clock, IOptionsMonitor<ServerSettings> settings, IOptionsMonitor<GlobalConfig> globalConfig, ILogger<ConformTaskSource> logger)
+		public ConformTaskSource(MongoService mongoService, IAgentCollection agentCollection, PoolService poolService, ILogFileService logService, PerforceLoadBalancer perforceLoadBalancer, IClock clock, IOptionsMonitor<ServerSettings> settings, IOptionsMonitor<GlobalConfig> globalConfig, ILogger<ConformTaskSource> logger)
 		{
-			_mongoService = mongoService;
-			_globalsService = globalsService;
 			_agentCollection = agentCollection;
 			_poolService = poolService;
 			_conformList = new SingletonDocument<ConformList>(mongoService);
@@ -73,7 +73,7 @@ namespace Horde.Server.Tasks
 		public Task StopAsync(CancellationToken cancellationToken) => _tickConformList.StopAsync();
 
 		/// <inheritdoc/>
-		public void Dispose() => _tickConformList.Dispose();
+		public async ValueTask DisposeAsync() => await _tickConformList.DisposeAsync();
 
 		/// <summary>
 		/// Clean up the conform list of any outdated entries
@@ -86,7 +86,7 @@ namespace Horde.Server.Tasks
 			DateTime lastCheckTimeUtc = utcNow - TimeSpan.FromMinutes(30.0);
 
 			// Get the current state of the conform list
-			ConformList list = await _conformList.GetAsync();
+			ConformList list = await _conformList.GetAsync(cancellationToken);
 
 			// Update any leases that are older than LastCheckTimeUtc
 			Dictionary<LeaseId, bool> removeLeases = new Dictionary<LeaseId, bool>();
@@ -94,7 +94,7 @@ namespace Horde.Server.Tasks
 			{
 				if (entry.LastCheckTimeUtc < lastCheckTimeUtc)
 				{
-					IAgent? agent = await _agentCollection.GetAsync(entry.AgentId);
+					IAgent? agent = await _agentCollection.GetAsync(entry.AgentId, cancellationToken);
 
 					bool remove = false;
 					if (agent == null || !agent.Leases.Any(x => x.Id == entry.LeaseId))
@@ -110,7 +110,7 @@ namespace Horde.Server.Tasks
 			// If there's anything to change, update the list
 			if (removeLeases.Count > 0)
 			{
-				await _conformList.UpdateAsync(list => UpdateConformList(list, utcNow, removeLeases));
+				await _conformList.UpdateAsync(list => UpdateConformList(list, utcNow, removeLeases), cancellationToken);
 			}
 		}
 
@@ -159,30 +159,38 @@ namespace Horde.Server.Tasks
 		{
 			if (!_settings.CurrentValue.EnableConformTasks)
 			{
-				return Skip(cancellationToken);
+				return SkipAsync(cancellationToken);
 			}
 
 			DateTime utcNow = DateTime.UtcNow;
-			if (!await IsConformPendingAsync(agent, utcNow))
+			if (!await IsConformPendingAsync(agent, utcNow, cancellationToken))
 			{
-				return Skip(cancellationToken);
+				return SkipAsync(cancellationToken);
 			}
 
 			if (agent.Leases.Count == 0)
 			{
 				ConformTask task = new ConformTask();
-				if (await GetWorkspacesAsync(agent, task.Workspaces))
+				if (await GetWorkspacesAsync(agent, task.Workspaces, cancellationToken))
 				{
-					LeaseId leaseId = LeaseId.GenerateNewId();
-					if (await AllocateConformLeaseAsync(agent.Id, task.Workspaces, leaseId))
+					LeaseId leaseId = new LeaseId(BinaryIdUtils.CreateNew());
+					if (await AllocateConformLeaseAsync(agent.Id, task.Workspaces, leaseId, cancellationToken))
 					{
-						ILogFile log = await _logService.CreateLogFileAsync(JobId.Empty, leaseId, agent.SessionId, LogType.Json, useNewStorageBackend: false, cancellationToken: cancellationToken);
-						task.LogId = log.Id.ToString();
-						task.RemoveUntrackedFiles = agent.RequestFullConform;
+						try
+						{
+							ILogFile log = await _logService.CreateLogFileAsync(JobId.Empty, leaseId, agent.SessionId, LogType.Json, cancellationToken: cancellationToken);
+							task.LogId = log.Id.ToString();
+							task.RemoveUntrackedFiles = agent.RequestFullConform;
 
-						byte[] payload = Any.Pack(task).ToByteArray();
+							byte[] payload = Any.Pack(task).ToByteArray();
 
-						return Lease(new AgentLease(leaseId, "Updating workspaces", null, null, log.Id, LeaseState.Pending, null, true, payload));
+							return LeaseAsync(new AgentLease(leaseId, null, "Updating workspaces", null, null, log.Id, LeaseState.Pending, null, true, payload));
+						}
+						catch
+						{
+							await ReleaseConformLeaseAsync(leaseId, cancellationToken);
+							throw;
+						}
 					}
 				}
 			}
@@ -193,26 +201,26 @@ namespace Horde.Server.Tasks
 			}
 			else
 			{
-				return Skip(cancellationToken);
+				return SkipAsync(cancellationToken);
 			}
 		}
 
 		/// <inheritdoc/>
-		public override Task CancelLeaseAsync(IAgent agent, LeaseId leaseId, ConformTask payload)
+		public override Task CancelLeaseAsync(IAgent agent, LeaseId leaseId, ConformTask payload, CancellationToken cancellationToken)
 		{
-			return ReleaseConformLeaseAsync(leaseId);
+			return ReleaseConformLeaseAsync(leaseId, cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<bool> GetWorkspacesAsync(IAgent agent, IList<HordeCommon.Rpc.Messages.AgentWorkspace> workspaces)
+		public async Task<bool> GetWorkspacesAsync(IAgent agent, IList<HordeCommon.Rpc.Messages.AgentWorkspace> workspaces, CancellationToken cancellationToken)
 		{
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 
-			HashSet<AgentWorkspace> conformWorkspaces = await _poolService.GetWorkspacesAsync(agent, DateTime.UtcNow, globalConfig);
-			foreach (AgentWorkspace conformWorkspace in conformWorkspaces)
+			HashSet<AgentWorkspaceInfo> conformWorkspaces = await _poolService.GetWorkspacesAsync(agent, DateTime.UtcNow, globalConfig, cancellationToken);
+			foreach (AgentWorkspaceInfo conformWorkspace in conformWorkspaces)
 			{
 				PerforceCluster? cluster = globalConfig.FindPerforceCluster(conformWorkspace.Cluster);
-				if (cluster == null || !await agent.TryAddWorkspaceMessage(conformWorkspace, cluster, _perforceLoadBalancer, workspaces))
+				if (cluster == null || !await agent.TryAddWorkspaceMessageAsync(conformWorkspace, cluster, _perforceLoadBalancer, workspaces, cancellationToken))
 				{
 					return false;
 				}
@@ -222,9 +230,9 @@ namespace Horde.Server.Tasks
 		}
 
 		/// <inheritdoc/>
-		public override Task OnLeaseFinishedAsync(IAgent agent, LeaseId leaseId, ConformTask payload, LeaseOutcome outcome, ReadOnlyMemory<byte> output, ILogger logger)
+		public override Task OnLeaseFinishedAsync(IAgent agent, LeaseId leaseId, ConformTask payload, LeaseOutcome outcome, ReadOnlyMemory<byte> output, ILogger logger, CancellationToken cancellationToken)
 		{
-			return ReleaseConformLeaseAsync(leaseId);
+			return ReleaseConformLeaseAsync(leaseId, cancellationToken);
 		}
 
 		/// <summary>
@@ -233,20 +241,21 @@ namespace Horde.Server.Tasks
 		/// <param name="agentId">The agent id</param>
 		/// <param name="workspaces">List of workspaces that are required</param>
 		/// <param name="leaseId">The lease id</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the resource was allocated, false otherwise</returns>
-		private async Task<bool> AllocateConformLeaseAsync(AgentId agentId, IEnumerable<HordeCommon.Rpc.Messages.AgentWorkspace> workspaces, LeaseId leaseId)
+		private async Task<bool> AllocateConformLeaseAsync(AgentId agentId, IEnumerable<AgentWorkspace> workspaces, LeaseId leaseId, CancellationToken cancellationToken)
 		{
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 			for (; ; )
 			{
-				ConformList currentValue = await _conformList.GetAsync();
+				ConformList currentValue = await _conformList.GetAsync(cancellationToken);
 				if (globalConfig.MaxConformCount != 0 && currentValue.Entries.Count + currentValue.Servers.Sum(x => x.Entries.Count) >= globalConfig.MaxConformCount)
 				{
 					return false;
 				}
 
 				HashSet<string> servers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-				foreach (HordeCommon.Rpc.Messages.AgentWorkspace workspace in workspaces)
+				foreach (AgentWorkspace workspace in workspaces)
 				{
 					if (servers.Add(workspace.ServerAndPort))
 					{
@@ -284,7 +293,7 @@ namespace Horde.Server.Tasks
 					}
 				}
 
-				if (await _conformList.TryUpdateAsync(currentValue))
+				if (await _conformList.TryUpdateAsync(currentValue, cancellationToken))
 				{
 					_logger.LogInformation("Added conform lease {LeaseId}", leaseId);
 					return true;
@@ -296,18 +305,19 @@ namespace Horde.Server.Tasks
 		/// Terminate a conform lease
 		/// </summary>
 		/// <param name="leaseId">The lease id</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		public async Task ReleaseConformLeaseAsync(LeaseId leaseId)
+		public async Task ReleaseConformLeaseAsync(LeaseId leaseId, CancellationToken cancellationToken)
 		{
 			for (; ; )
 			{
-				ConformList currentValue = await _conformList.GetAsync();
+				ConformList currentValue = await _conformList.GetAsync(cancellationToken);
 				if (currentValue.Entries.RemoveAll(x => x.LeaseId == leaseId) + currentValue.Servers.Sum(x => x.Entries.RemoveAll(x => x.LeaseId == leaseId)) == 0)
 				{
 					_logger.LogInformation("Conform lease {LeaseId} is not in singelton", leaseId);
 					break;
 				}
-				if (await _conformList.TryUpdateAsync(currentValue))
+				if (await _conformList.TryUpdateAsync(currentValue, cancellationToken))
 				{
 					_logger.LogInformation("Removed conform lease {LeaseId}", leaseId);
 					break;
@@ -320,8 +330,9 @@ namespace Horde.Server.Tasks
 		/// </summary>
 		/// <param name="agent">The agent to test</param>
 		/// <param name="utcNow">Current time</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the agent should be conformed</returns>
-		private async Task<bool> IsConformPendingAsync(IAgent agent, DateTime utcNow)
+		private async Task<bool> IsConformPendingAsync(IAgent agent, DateTime utcNow, CancellationToken cancellationToken)
 		{
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 
@@ -341,10 +352,10 @@ namespace Horde.Server.Tasks
 				}
 
 				// Get the current pools for the agent
-				List<IPool> pools = await _poolService.GetCachedPoolsAsync(agent, DateTime.UtcNow - TimeSpan.FromMinutes(2.0));
+				List<IPoolConfig> pools = await _poolService.GetPoolsAsync(agent, DateTime.UtcNow - TimeSpan.FromMinutes(2.0), cancellationToken);
 
 				TimeSpan? conformInterval = null;
-				foreach(IPool pool in pools)
+				foreach (IPoolConfig pool in pools)
 				{
 					TimeSpan interval = pool.ConformInterval ?? TimeSpan.FromDays(1.0);
 					if (interval > TimeSpan.Zero && (conformInterval == null || interval < conformInterval.Value))
@@ -354,7 +365,7 @@ namespace Horde.Server.Tasks
 				}
 
 				// If there is no conform interval, early out
-				if(conformInterval == null)
+				if (conformInterval == null)
 				{
 					return false;
 				}
@@ -366,10 +377,10 @@ namespace Horde.Server.Tasks
 				}
 
 				// Check if the workspaces have changed (first check against a cached list of workspaces, then an accurate one)
-				HashSet<AgentWorkspace> workspaces = await _poolService.GetWorkspacesAsync(agent, utcNow - TimeSpan.FromSeconds(30.0), globalConfig);
+				HashSet<AgentWorkspaceInfo> workspaces = await _poolService.GetWorkspacesAsync(agent, utcNow - TimeSpan.FromSeconds(30.0), globalConfig, cancellationToken);
 				if (!workspaces.SetEquals(agent.Workspaces))
 				{
-					workspaces = await _poolService.GetWorkspacesAsync(agent, utcNow, globalConfig);
+					workspaces = await _poolService.GetWorkspacesAsync(agent, utcNow, globalConfig, cancellationToken);
 					if (!workspaces.SetEquals(agent.Workspaces))
 					{
 						return true;

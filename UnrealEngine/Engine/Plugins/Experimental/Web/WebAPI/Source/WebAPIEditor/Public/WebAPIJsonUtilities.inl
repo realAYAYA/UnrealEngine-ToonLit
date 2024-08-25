@@ -562,7 +562,7 @@ namespace UE::Json
 	bool TryParse(const TSharedPtr<FJsonValue>& InJsonValue, TVariant<ValueTypes...>& OutValue)
 	{
 		using VariantType = TVariant<ValueTypes...>;
-		if constexpr (TypeIndex < TVariantSize<VariantType>::Value)
+		if constexpr (TypeIndex < TVariantSize_V<VariantType>)
 		{
 			using ValueType = typename TNthTypeFromParameterPack<TypeIndex, ValueTypes...>::Type;
 			ValueType Value;
@@ -574,8 +574,10 @@ namespace UE::Json
 
 			return TryParse<TypeIndex + 1, ValueTypes...>(InJsonValue, OutValue);
 		}
-
-		return false;
+		else
+		{
+			return false;
+		}
 	}
 
 	// Variant

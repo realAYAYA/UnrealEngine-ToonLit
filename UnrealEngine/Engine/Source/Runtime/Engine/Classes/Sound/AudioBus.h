@@ -16,8 +16,29 @@ enum class EAudioBusChannels : uint8
 	Stereo = 1,
 	Quad = 3,
 	FivePointOne = 5,
-	SevenPointOne = 7
+	SevenPointOne = 7,
+	MaxChannelCount = 8
 };
+
+namespace AudioBusUtils
+{
+	static EAudioBusChannels ConvertIntToEAudioBusChannels(const int32 InValue)
+	{
+		switch (InValue)
+		{
+		case 1: return EAudioBusChannels::Mono;
+		case 2:	return EAudioBusChannels::Stereo;
+		case 4:	return EAudioBusChannels::Quad;
+		case 6:	return EAudioBusChannels::FivePointOne;
+		case 8:	return EAudioBusChannels::SevenPointOne;
+		default:
+			// TODO alex.perez: LogAudio undeclared identifier, is it ok to add the header that has LogAudio, or should we move this function to another place?
+			//UE_LOG(LogAudio, Error, TEXT("Number of channels: %d not available in AudioBusChannels configurations. Make sure that the number of channels used is 1, 2, 4, 6 or 8."), InValue);
+			check(false);
+			return EAudioBusChannels::Mono;
+		}
+	};
+}
 
 class FAudioBusProxy;
 

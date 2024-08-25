@@ -196,8 +196,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 bool UGridSlot::NudgeByDesigner(const FVector2D& NudgeDirection, const TOptional<int32>& GridSnapSize)
 {
 	const FVector2D ClampedDirection = NudgeDirection.ClampAxes(-1.0f, 1.0f);
-	const int32 NewColumn = GetColumn() + ClampedDirection.X;
-	const int32 NewRow = GetRow() + ClampedDirection.Y;
+	const int32 NewColumn = GetColumn() + FMath::TruncToInt32(ClampedDirection.X);
+	const int32 NewRow = GetRow() + FMath::TruncToInt32(ClampedDirection.Y);
 
 	if (NewColumn < 0 || NewRow < 0 || (NewColumn == GetColumn() && NewRow == GetRow()))
 	{

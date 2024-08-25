@@ -54,8 +54,6 @@ FElectraRendererVideo::FElectraRendererVideo(TSharedPtr<FElectraPlayer, ESPMode:
 
 FElectraRendererVideo::~FElectraRendererVideo()
 {
-	// Manually delete all images in all queues. Well, the queues will are also deleted automatically.
-	QueueTickedAndWaitingForDecoder.Empty();
 }
 
 
@@ -107,13 +105,13 @@ void FElectraRendererVideo::AcquireFromPool(FVideoDecoderOutputPtr& DelayedImage
  */
 UEMediaError FElectraRendererVideo::CreateBufferPool(const Electra::FParamDict& Parameters)
 {
-	const FVariantValue& variantNumBuffers = Parameters.GetValue("num_buffers");
+	const FVariantValue& variantNumBuffers = Parameters.GetValue(RenderOptionKeys::NumBuffers);
 	if (!variantNumBuffers.IsType(FVariantValue::EDataType::TypeInt64))
 		return UEMEDIA_ERROR_BAD_ARGUMENTS;
 	int32 RequestedNumBuffers = (int32)variantNumBuffers.GetInt64();
 
 	// Update dict for later query via GetBufferPoolProperties
-	BufferPoolProperties.Set("max_buffers", Electra::FVariantValue((int64)RequestedNumBuffers));
+	BufferPoolProperties.Set(RenderOptionKeys::MaxBuffers, Electra::FVariantValue((int64)RequestedNumBuffers));
 
 	// Currently, we only handle enlargement of the buffer pool. If the size should shrink,
 	if (RequestedNumBuffers != NumBuffers)
@@ -124,8 +122,6 @@ UEMediaError FElectraRendererVideo::CreateBufferPool(const Electra::FParamDict& 
 		{
 			FVideoDecoderOutputPtr DelayedImage;
 			AcquireFromPool(DelayedImage);
-			QueueTickedAndWaitingForDecoder.Enqueue(DelayedImage);
-
 		}
 		NumBuffers = RequestedNumBuffers;
 	}
@@ -150,32 +146,16 @@ UEMediaError FElectraRendererVideo::AcquireBuffer(IBuffer*& OutBuffer, int32 Tim
 		PinnedPlayer->DropOldFramesFromPresentationQueue();
 	}
 
-	// Check if we have any buffer which we can hand out to the decoder...
-	if (QueueTickedAndWaitingForDecoder.IsEmpty())
-	{
-		// Check GLOBAL number of output textures in flight...
-		if (NumOutputTexturesInUse < NumBuffers)
-		{
-			// Allocate an image from the pool, but do NOT use it immediately because it COULD be still rendering...
-			FVideoDecoderOutputPtr DelayedImage;
-			// Acquire image and with information about how many render frames to wait before usage is possible
-			AcquireFromPool(DelayedImage);
-			QueueTickedAndWaitingForDecoder.Enqueue(DelayedImage);
-		}
-
-		if (QueueTickedAndWaitingForDecoder.IsEmpty())
-		{
-			return UEMEDIA_ERROR_INSUFFICIENT_DATA;
-		}
-	}
-
 	FVideoDecoderOutputPtr DelayedImage;
-	QueueTickedAndWaitingForDecoder.Dequeue(DelayedImage);
-	check(DelayedImage.IsValid());
+	AcquireFromPool(DelayedImage);
+	if (!DelayedImage.IsValid())
+	{
+		return UEMEDIA_ERROR_INSUFFICIENT_DATA;
+	}
 
 	FMediaBufferSharedPtrWrapper* MediaBufferSharedPtrWrapper = new FMediaBufferSharedPtrWrapper(DelayedImage);
 	check(MediaBufferSharedPtrWrapper);
-	MediaBufferSharedPtrWrapper->BufferProperties.Set("texture", FVariantValue(DelayedImage));
+	MediaBufferSharedPtrWrapper->BufferProperties.Set(RenderOptionKeys::Texture, FVariantValue(DelayedImage));
 	OutBuffer = MediaBufferSharedPtrWrapper;
 
 	FPlatformAtomics::InterlockedIncrement(&NumBuffersAcquiredForDecoder);
@@ -186,7 +166,7 @@ UEMediaError FElectraRendererVideo::AcquireBuffer(IBuffer*& OutBuffer, int32 Tim
 /**
  * Releases the buffer for rendering and subsequent return to the buffer pool
  */
-UEMediaError FElectraRendererVideo::ReturnBuffer(IBuffer* Buffer, bool bRender, const FParamDict& InSampleProperties)
+UEMediaError FElectraRendererVideo::ReturnBuffer(IBuffer* Buffer, bool bRender, FParamDict& InOutSampleProperties)
 {
 	if (Buffer == nullptr)
 	{
@@ -194,12 +174,12 @@ UEMediaError FElectraRendererVideo::ReturnBuffer(IBuffer* Buffer, bool bRender, 
 	}
 
 	FMediaBufferSharedPtrWrapper* MediaBufferSharedPtrWrapper = static_cast<FMediaBufferSharedPtrWrapper*>(Buffer);
-	MediaBufferSharedPtrWrapper->DecoderOutput->GetMutablePropertyDictionary() = InSampleProperties;
+	MediaBufferSharedPtrWrapper->DecoderOutput->GetMutablePropertyDictionary() = InOutSampleProperties;
 
 	if (bRender)
 	{
-		//OPT/CHANGE: Note that "MediaBufferSharedPtrWrapper->DecoderOutput->GetDict()" is the very same as InSampleProperties!
-		bool bIsDummyBuffer = InSampleProperties.GetValue("is_dummy").SafeGetBool(false);
+		//OPT/CHANGE: Note that "MediaBufferSharedPtrWrapper->DecoderOutput->GetDict()" is the very same as InOutSampleProperties!
+		bool bIsDummyBuffer = InOutSampleProperties.GetValue(RenderOptionKeys::DummyBufferFlag).SafeGetBool(false);
 
 		// Put frame into output queue...
 		if (TSharedPtr<FElectraPlayer, ESPMode::ThreadSafe> PinnedPlayer = Player.Pin())
@@ -236,6 +216,13 @@ bool FElectraRendererVideo::CanReceiveOutputFrames(uint64 NumFrames) const
 	}
 
 	return PinnedPlayer->CanPresentVideoFrames(NumFrames);
+}
+
+bool FElectraRendererVideo::GetEnqueuedFrameInfo(int32& OutNumberOfEnqueuedFrames, Electra::FTimeValue& OutDurationOfEnqueuedFrames) const
+{
+	OutNumberOfEnqueuedFrames = 0;
+	OutDurationOfEnqueuedFrames.SetToZero();
+	return false;
 }
 
 /**

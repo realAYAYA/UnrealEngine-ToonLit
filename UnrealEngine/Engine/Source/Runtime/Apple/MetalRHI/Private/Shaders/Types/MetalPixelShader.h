@@ -16,7 +16,7 @@ class FMetalPixelShader : public TMetalBaseShader<FRHIPixelShader, SF_Pixel>
 {
 public:
 	FMetalPixelShader(TArrayView<const uint8> InCode);
-	FMetalPixelShader(TArrayView<const uint8> InCode, mtlpp::Library InLibrary);
+	FMetalPixelShader(TArrayView<const uint8> InCode, MTLLibraryPtr InLibrary);
 
-	mtlpp::Function GetFunction();
+	MTLFunctionPtr GetFunction();
 };

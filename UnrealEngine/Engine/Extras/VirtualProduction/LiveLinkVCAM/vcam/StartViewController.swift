@@ -28,13 +28,12 @@ class StartViewController : BaseViewController {
     private var tapGesture : UITapGestureRecognizer!
     
     private var streamingConnection : StreamingConnection?
+    private var gameController : GCController?
     private var _liveLinkTimer : Timer?
 
     
     @objc dynamic let appSettings = AppSettings.shared
     private var observers = [NSKeyValueObservation]()
-    
-    private var gameController : GCController?
     
     var pickerData: [String] = [String]()
     var selectedStreamer: String = "";
@@ -45,6 +44,81 @@ class StartViewController : BaseViewController {
     
     override var preferredStatusBarStyle: UIStatusBarStyle {
           return .lightContent
+    }
+    
+    // Constructor (before view is even loaded)
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupObservers()
+    }
+    
+    deinit {
+        Log.info("StartViewController destructed")
+    }
+    
+    func setupObservers() {
+        // Observers for keyboard show/hide
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
+        
+        // Observers for game controller connect/disconnect
+        NotificationCenter.default.addObserver(self, selector: #selector(gameControllerDidConnectNotification), name: .GCControllerDidConnect, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(gameControllerDidDisconnectNotification), name: .GCControllerDidDisconnect, object: nil)
+        
+        // Observers for app settings
+        observers.append(observe(\.appSettings.timecodeSource, options: [.initial,.new,.old], changeHandler: { [weak self] object, change in
+            
+            if let oldValue = TimecodeSource(rawValue:change.oldValue ?? 0) {
+                switch oldValue {
+                case .ntp:
+                    Clock.reset()
+                case .tentacleSync:
+                    Tentacle.shared = nil
+                default:
+                    break
+                }
+            }
+            
+            switch self?.appSettings.timecodeSourceEnum() {
+            case .ntp:
+                let pool = AppSettings.shared.ntpPool.isEmpty ? "time.apple.com" : AppSettings.shared.ntpPool
+                Log.info("Started NTP : \(pool)")
+                
+                // IMPORTANT
+                // We reset the NTP clock first --
+                // otherwise we don't know if the NTP address that is used for the pool is valid or not because it
+                // will be using a stale last valid time
+                Clock.reset()
+                Clock.sync(from: pool)
+            case .tentacleSync:
+                Tentacle.shared = Tentacle()
+            default:
+                break
+            }
+            
+        }))
+        
+        // any change to the subject name will remove & re-add the camera subject.
+        observers.append(observe(\.appSettings.liveLinkSubjectName, options: [.old,.new], changeHandler: { [weak self] object, change in
+            if let sc = self?.streamingConnection {
+                sc.subjectName = self?.appSettings.liveLinkSubjectName
+            }
+        }))
+
+        // initial & value changes for the connection type instantiates a new StreamingConnection object
+        observers.append(observe(\.appSettings.connectionType, options: [.initial, .old,.new], changeHandler: { [weak self] object, change in
+            
+            if let validSelf = self {
+                validSelf.streamingConnection?.shutdown()
+                validSelf.streamingConnection = nil
+
+                let connectionType = validSelf.appSettings.connectionType
+                if let connectionClass = Bundle.main.classNamed("VCAM.\(connectionType)StreamingConnection") as? StreamingConnection.Type {
+                    validSelf.streamingConnection = connectionClass.init(subjectName: validSelf.appSettings.liveLinkSubjectName)
+                    validSelf.streamingConnection?.delegate = validSelf
+                }
+            }
+        }))
     }
     
     override func viewDidLoad() {
@@ -68,70 +142,13 @@ class StartViewController : BaseViewController {
         
         self.rebuildRecentAddressesBarButtons()
 
+        // Add gesture recognizer
         self.tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         self.tapGesture.cancelsTouchesInView = false
         self.tapGesture.delegate = self
         self.view.addGestureRecognizer(tapGesture)
         
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide), name: UIResponder.keyboardWillHideNotification, object: nil)
-        
-        observers.append(observe(\.appSettings.timecodeSource, options: [.initial,.new,.old], changeHandler: { object, change in
-            
-            if let oldValue = TimecodeSource(rawValue:change.oldValue ?? 0) {
-                switch oldValue {
-                case .ntp:
-                    Clock.reset()
-                case .tentacleSync:
-                    Tentacle.shared = nil
-                default:
-                    break
-                }
-            }
-            
-            switch self.appSettings.timecodeSourceEnum() {
-            case .ntp:
-                let pool = AppSettings.shared.ntpPool.isEmpty ? "time.apple.com" : AppSettings.shared.ntpPool
-                Log.info("Started NTP : \(pool)")
-                
-                // IMPORTANT
-                // We reset the NTP clock first --
-                // otherwise we don't know if the NTP address that is used for the pool is valid or not because it
-                // will be using a stale last valid time
-                Clock.reset()
-                Clock.sync(from: pool)
-            case .tentacleSync:
-                Tentacle.shared = Tentacle()
-            default:
-                break
-            }
-            
-        }))
-        
-        // any change to the subject name will remove & re-add the camera subject.
-        observers.append(observe(\.appSettings.liveLinkSubjectName, options: [.old,.new], changeHandler: { object, change in
-            if let sc = self.streamingConnection {
-                sc.subjectName = self.appSettings.liveLinkSubjectName
-            }
-        }))
-
-        // initial & value changes for the connection type instantiates a new StreamingConnection object
-        observers.append(observe(\.appSettings.connectionType, options: [.initial, .old,.new], changeHandler: { object, change in
-            
-            self.streamingConnection?.shutdown()
-            self.streamingConnection = nil
-
-            let connectionType = self.appSettings.connectionType
-            if let connectionClass = Bundle.main.classNamed("VCAM.\(connectionType)StreamingConnection") as? StreamingConnection.Type {
-                self.streamingConnection = connectionClass.init(subjectName: self.appSettings.liveLinkSubjectName)
-                self.streamingConnection?.delegate = self
-            }
-
-        }))
-
-        NotificationCenter.default.addObserver(self, selector: #selector(gameControllerDidConnectNotification), name: .GCControllerDidConnect, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(gameControllerDidDisconnectNotification), name: .GCControllerDidDisconnect, object: nil)
-        
+        // Attempt to get an attached game controller
         self.gameController = GCController.controllers().first
         if let gc = self.gameController {
             if gc.isAttachedToDevice {
@@ -143,25 +160,28 @@ class StartViewController : BaseViewController {
 
     
     override func viewWillAppear(_ animated : Bool) {
-        
         self.connectingView.isHidden = true
         self.headerView.start()
 
         self.streamingConnection?.delegate = self
         
-        _liveLinkTimer = Timer.scheduledTimer(withTimeInterval: 1.0/10.0, repeats: true, block: { timer in
-            self.streamingConnection?.sendTransform(simd_float4x4(), atTime: Timecode.create().toTimeInterval())
+        _liveLinkTimer = Timer.scheduledTimer(withTimeInterval: 1.0/10.0, repeats: true, block: { [weak self] timer in
+            self?.streamingConnection?.sendTransform(simd_float4x4(), atTime: Timecode.create().toTimeInterval())
         })
     }
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        self.headerView.start()
         self.streamingConnection?.disconnect()
     }
     
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         self.headerView.stop()
+        
+        // Remove gesture recognizer
+        self.view.removeGestureRecognizer(self.tapGesture)
     }
     
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
@@ -181,9 +201,11 @@ class StartViewController : BaseViewController {
                 _liveLinkTimer?.invalidate()
                 _liveLinkTimer = nil
 
-                self.streamingConnection?.delegate = vc
+                // This a little awkward but what happens here is the streamingConnection and gameController gets
+                // are passed (weakly) from StartViewController to VideoViewController as it needs them
+                // They are not nil'd in this view because this view still exists because it is the ancestor of the segue
                 vc.streamingConnection = self.streamingConnection
-                
+                vc.streamingConnection?.delegate = vc
                 vc.gameController = self.gameController
             }
         }
@@ -206,8 +228,8 @@ class StartViewController : BaseViewController {
             self.entryViewYConstraint.constant = 0
         }
 
-        UIView.animate(withDuration: 0.2) {
-            self.view.layoutIfNeeded()
+        UIView.animate(withDuration: 0.2) { [weak self] in
+            self?.view.layoutIfNeeded()
         }
     }
 
@@ -215,8 +237,8 @@ class StartViewController : BaseViewController {
         if self.entryViewYConstraint.constant != 0 {
             self.entryViewYConstraint.constant = 0
 
-            UIView.animate(withDuration: 0.2) {
-                self.view.layoutIfNeeded()
+            UIView.animate(withDuration: 0.2) { [weak self] in
+                self?.view.layoutIfNeeded()
             }
         }
     }
@@ -271,7 +293,6 @@ class StartViewController : BaseViewController {
     }
     
     @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
-        
         self.view.endEditing(true)
     }
     
@@ -288,13 +309,13 @@ class StartViewController : BaseViewController {
             // show the connection view
             self.connectingView.isHidden = false
             self.connectingView.alpha = 0.0
-            UIView.animate(withDuration: 0.2) {
-                self.connectingView.alpha = 1.0
+            UIView.animate(withDuration: 0.2) { [weak self] in
+                self?.connectingView.alpha = 1.0
             }
             
-            showConnectingAlertView(mode: .connecting) {
-                self.hideConnectingView() { }
-            }
+            showConnectingAlertView(mode: .connecting, { [weak self] in
+                self?.hideConnectingView() {}
+            })
 
             do {
                 self.streamingConnection?.destination = self.ipAddress.text!.trimmed()
@@ -315,18 +336,18 @@ class StartViewController : BaseViewController {
         hideConnectingAlertView() {
 
             let errorAlert = UIAlertController(title: Localized.titleError(), message: "\(Localized.messageCouldntConnect()) : \(message)", preferredStyle: .alert)
-            errorAlert.addAction(UIAlertAction(title: Localized.buttonOK(), style: .default, handler: { _ in
-                self.hideConnectingView { }
+            errorAlert.addAction(UIAlertAction(title: Localized.buttonOK(), style: .default, handler: { [weak self] _ in
+                self?.hideConnectingView { }
             }))
             self.present(errorAlert, animated: true)
         }
     }
     
     func hideConnectingView( _ completion : @escaping () -> Void) {
-        UIView.animate(withDuration: 0.2, animations: {
-            self.connectingView.alpha = 0.0
-        }, completion: { b in
-            self.connectingView.isHidden = true
+        UIView.animate(withDuration: 0.2, animations: { [weak self] in
+            self?.connectingView.alpha = 0.0
+        }, completion: { [weak self] b in
+            self?.connectingView.isHidden = true
         })
         hideConnectingAlertView(completion)
     }

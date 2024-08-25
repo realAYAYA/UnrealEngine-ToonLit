@@ -3,7 +3,9 @@
 #include "Retargeter/IKRetargeter.h"
 
 #include "IKRigObjectVersion.h"
+#include "Retargeter/IKRetargetOps.h"
 #include "Retargeter/IKRetargetProfile.h"
+#include "Engine/SkeletalMesh.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(IKRetargeter)
 
@@ -23,7 +25,6 @@ void UIKRetargeter::GetSpeedCurveNames(TArray<FName>& OutSpeedCurveNames) const
 		}
 	}
 }
-
 #endif
 
 UIKRetargeter::UIKRetargeter(const FObjectInitializer& ObjectInitializer)
@@ -35,48 +36,67 @@ UIKRetargeter::UIKRetargeter(const FObjectInitializer& ObjectInitializer)
 	GlobalSettings = CreateDefaultSubobject<UIKRetargetGlobalSettings>(TEXT("GlobalSettings"));
 	GlobalSettings->SetFlags(RF_Transactional);
 
+	OpStack = CreateDefaultSubobject<URetargetOpStack>(TEXT("PostSettings"));
+	OpStack->SetFlags(RF_Transactional);
+
 	CleanAndInitialize();
 }
 
-const UIKRigDefinition* UIKRetargeter::GetSourceIKRig() const
+const UIKRigDefinition* UIKRetargeter::GetIKRig(ERetargetSourceOrTarget SourceOrTarget) const
 {
-	if (IsInGameThread())
+	const TSoftObjectPtr<UIKRigDefinition> SoftIKRig = SourceOrTarget == ERetargetSourceOrTarget::Source ? SourceIKRigAsset : TargetIKRigAsset;
+	if (SoftIKRig.IsValid())
 	{
-		return SourceIKRigAsset.LoadSynchronous();	
+		return SoftIKRig.Get();
 	}
 	
-	return nullptr;
+	return IsInGameThread() ? SoftIKRig.LoadSynchronous() : nullptr;
 }
 
-const UIKRigDefinition* UIKRetargeter::GetTargetIKRig() const
+UIKRigDefinition* UIKRetargeter::GetIKRigWriteable(ERetargetSourceOrTarget SourceOrTarget) const
 {
-	if (IsInGameThread())
+	const TSoftObjectPtr<UIKRigDefinition> SoftIKRig = SourceOrTarget == ERetargetSourceOrTarget::Source ? SourceIKRigAsset : TargetIKRigAsset;
+	if (SoftIKRig.IsValid())
 	{
-		return TargetIKRigAsset.LoadSynchronous();	
+		return SoftIKRig.Get();
 	}
 	
-	return nullptr;
+	return IsInGameThread() ? SoftIKRig.LoadSynchronous() : nullptr;
 }
 
-UIKRigDefinition* UIKRetargeter::GetSourceIKRigWriteable() const
+#if WITH_EDITORONLY_DATA
+USkeletalMesh* UIKRetargeter::GetPreviewMesh(ERetargetSourceOrTarget SourceOrTarget) const
 {
-	if (IsInGameThread())
+	if (!IsInGameThread())
 	{
-		return SourceIKRigAsset.LoadSynchronous();	
+		return nullptr;
 	}
-	
-	return nullptr;
-}
 
-UIKRigDefinition* UIKRetargeter::GetTargetIKRigWriteable() const
-{
-	if (IsInGameThread())
+	// the preview mesh override on the retarget takes precedence
+	if (SourceOrTarget == ERetargetSourceOrTarget::Source)
 	{
-		return TargetIKRigAsset.LoadSynchronous();	
+		if (SourcePreviewMesh.IsValid())
+		{
+			return SourcePreviewMesh.LoadSynchronous();
+		}
 	}
-	
+	else
+	{
+		if (TargetPreviewMesh.IsValid())
+		{
+			return TargetPreviewMesh.LoadSynchronous();
+		}
+	}
+
+	// fallback to preview mesh from the IK Rig itself
+	if (const UIKRigDefinition* IKRig = GetIKRig(SourceOrTarget))
+	{
+		return IKRig->GetPreviewMesh();
+	}
+
 	return nullptr;
 }
+#endif
 
 void UIKRetargeter::PostDuplicate(bool bDuplicateForPIE)
 {
@@ -95,6 +115,9 @@ void UIKRetargeter::Serialize(FArchive& Ar)
 void UIKRetargeter::PostLoad()
 {
 	Super::PostLoad();
+
+	// very early versions of the asset may not have been set as standalone
+	SetFlags(RF_Standalone);
 
 	// load deprecated chain mapping (pre UStruct to UObject refactor)
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -181,6 +204,9 @@ void UIKRetargeter::DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConst
 
 void UIKRetargeter::CleanAndInitialize()
 {
+	// remove null retarget ops
+	OpStack->RetargetOps.Remove(nullptr);
+	
 	// remove null settings
 	ChainSettings.Remove(nullptr);
 
@@ -281,6 +307,8 @@ FQuat FIKRetargetPose::GetDeltaRotationForBone(const FName BoneName) const
 
 void FIKRetargetPose::SetDeltaRotationForBone(FName BoneName, const FQuat& RotationDelta)
 {
+	IncrementVersion();
+
 	FQuat* RotOffset = BoneRotationOffsets.Find(BoneName);
 	if (RotOffset == nullptr)
 	{
@@ -299,6 +327,8 @@ FVector FIKRetargetPose::GetRootTranslationDelta() const
 
 void FIKRetargetPose::SetRootTranslationDelta(const FVector& TranslationDelta)
 {
+	IncrementVersion();
+	
 	RootTranslationOffset = TranslationDelta;
 	// only allow vertical offset of root in retarget pose
 	RootTranslationOffset.X = 0.0f;
@@ -307,6 +337,8 @@ void FIKRetargetPose::SetRootTranslationDelta(const FVector& TranslationDelta)
 
 void FIKRetargetPose::AddToRootTranslationDelta(const FVector& TranslateDelta)
 {
+	IncrementVersion();
+	
 	RootTranslationOffset += TranslateDelta;
 	// only allow vertical offset of root in retarget pose
 	RootTranslationOffset.X = 0.0f;
@@ -389,7 +421,7 @@ FTargetChainSettings UIKRetargeter::GetChainUsingGoalFromRetargetAsset(
 		return EmptySettings;
 	}
 
-	const UIKRigDefinition* IKRig = RetargetAsset->GetTargetIKRig();
+	const UIKRigDefinition* IKRig = RetargetAsset->GetIKRig(ERetargetSourceOrTarget::Target);
 	if (!IKRig)
 	{
 		return EmptySettings;

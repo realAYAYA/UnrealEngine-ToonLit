@@ -25,6 +25,7 @@ class UWorldFactory : public UFactory
 	TEnumAsByte<EWorldType::Type> WorldType;
 	bool bInformEngineOfWorld;
 	bool bCreateWorldPartition;
+	bool bEnableWorldPartitionStreaming;
 	ERHIFeatureLevel::Type FeatureLevel;
 
 	//~ Begin UFactory Interface

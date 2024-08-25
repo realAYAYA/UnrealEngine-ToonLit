@@ -23,6 +23,9 @@ public:
 	 *   // Return true if DataCache is enabled.
 	 *   static bool IsDataCacheEnabled();
 	 *
+	 *   // Method for releasing a cached data item, called before its destructor
+	 *   void ReleaseDataCacheItem();
+	 *
 	 *   // Returns the unique name of this texture for DataCache.
 	 *   inline const FString& GetDataCacheName() const;
 	 */
@@ -127,7 +130,7 @@ protected:
 		if (CachedObjects.IsEmpty())
 		{
 			// Unregister tick event
-			if (TickHandle.IsValid())
+			if (TickableGameObject.IsValid() && TickHandle.IsValid())
 			{
 				TickableGameObject->OnTick().Remove(TickHandle);
 			}
@@ -150,6 +153,16 @@ private:
 		FCachedObject(const TSharedPtr<DataType, ESPMode::ThreadSafe>& InDataRef)
 			: DataRef(InDataRef)
 		{ }
+
+		~FCachedObject()
+		{
+			// Calling the release function for referenced data before the destructor
+			if (DataRef.IsValid())
+			{
+				DataRef->ReleaseDataCacheItem();
+				DataRef.Reset();
+			}
+		}
 
 		inline bool IsNameEqual(const FString& InName) const
 		{

@@ -16,6 +16,8 @@ namespace UnrealBuildTool.Rules
 					"NetcodeUnitTest"
 				}
 			);
+
+			UnsafeTypeCastWarningLevel = WarningLevel.Error;
 		}
 	}
 }

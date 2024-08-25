@@ -41,7 +41,7 @@ namespace GeometryCollectionTest
 		Chaos::FParticles particles;
 		particles.AddParticles(numParticles);
 		for (int i = 0; i < numParticles; i++)
-			particles.X(i).Set(Vertex[i][0], Vertex[i][1], Vertex[i][2]);
+			particles.SetX(i, FVec3(Vertex[i][0], Vertex[i][1], Vertex[i][2]));
 		return particles;
 	}
 

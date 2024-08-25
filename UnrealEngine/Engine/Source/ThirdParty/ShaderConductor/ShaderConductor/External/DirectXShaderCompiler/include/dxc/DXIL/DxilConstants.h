@@ -61,6 +61,11 @@ namespace DXIL {
   const unsigned kEnableMSAD                    = 0x00000080; // D3D11_1_SB_GLOBAL_FLAG_ENABLE_SHADER_EXTENSIONS
   const unsigned kAllResourcesBound             = 0x00000100; // D3D12_SB_GLOBAL_FLAG_ALL_RESOURCES_BOUND
 
+  // UE Change Begin: Added UserInfo container and check for derivative ops
+  // User flags.
+  const unsigned kNoDerivativeOps               = 0x00000001;
+  // UE Change End: Added UserInfo container and check for derivative ops
+
   const unsigned kNumOutputStreams = 4;
   const unsigned kNumClipPlanes = 6;
 

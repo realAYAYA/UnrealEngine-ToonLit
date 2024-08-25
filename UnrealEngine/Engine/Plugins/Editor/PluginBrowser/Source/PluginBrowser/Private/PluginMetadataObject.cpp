@@ -5,6 +5,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Interfaces/IPluginManager.h"
+#include "PluginDisallowedDescriptor.h"
 #include "PluginReferenceDescriptor.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
@@ -25,6 +26,18 @@ void FPluginReferenceMetadata::CopyIntoDescriptor(FPluginReferenceDescriptor& Ou
 	OutDescriptor.Name = Name;
 	OutDescriptor.bEnabled = bEnabled;
 	OutDescriptor.bOptional = bOptional;
+}
+
+void FPluginDisallowedMetadata::PopulateFromDescriptor(const FPluginDisallowedDescriptor& InDescriptor)
+{
+	Name = InDescriptor.Name;
+	Comment = InDescriptor.Comment;
+}
+
+void FPluginDisallowedMetadata::CopyIntoDescriptor(FPluginDisallowedDescriptor& OutDescriptor) const
+{
+	OutDescriptor.Name = Name;
+	OutDescriptor.Comment = Comment;
 }
 
 UPluginMetadataObject::UPluginMetadataObject(const FObjectInitializer& ObjectInitializer)
@@ -61,7 +74,12 @@ void UPluginMetadataObject::PopulateFromPlugin(TSharedPtr<IPlugin> InPlugin)
 		PluginRef.PopulateFromDescriptor(PluginRefDesc);
 	}
 
-	DisallowedPlugins = InDescriptor.DisallowedPlugins;
+	DisallowedPlugins.Reset(InDescriptor.DisallowedPlugins.Num());
+	for (const FPluginDisallowedDescriptor& PluginRefDesc : InDescriptor.DisallowedPlugins)
+	{
+		FPluginDisallowedMetadata& PluginRef = DisallowedPlugins.AddDefaulted_GetRef();
+		PluginRef.PopulateFromDescriptor(PluginRefDesc);
+	}
 }
 
 void UPluginMetadataObject::CopyIntoDescriptor(FPluginDescriptor& OutDescriptor) const
@@ -104,7 +122,24 @@ void UPluginMetadataObject::CopyIntoDescriptor(FPluginDescriptor& OutDescriptor)
 	}
 
 	OutDescriptor.Plugins = MoveTemp(NewPlugins);
-	OutDescriptor.DisallowedPlugins = DisallowedPlugins;
+
+	{
+		TArray<FPluginDisallowedDescriptor> NewDisallowedPlugins;
+		NewDisallowedPlugins.Reserve(DisallowedPlugins.Num());
+
+		for (const FPluginDisallowedMetadata& DisallowedRefMetadata : DisallowedPlugins)
+		{
+			if (DisallowedRefMetadata.Name.IsEmpty())
+			{
+				continue;
+			}
+
+			FPluginDisallowedDescriptor& NewDisallowedRefDesc = NewDisallowedPlugins.AddDefaulted_GetRef();
+			DisallowedRefMetadata.CopyIntoDescriptor(NewDisallowedRefDesc);
+		}
+
+		OutDescriptor.DisallowedPlugins = MoveTemp(NewDisallowedPlugins);
+	}
 
 	// Apply any edits done by an extension
 	for (const TSharedPtr<FPluginEditorExtension>& Extension : Extensions)
@@ -136,9 +171,9 @@ TArray<FString> UPluginMetadataObject::GetAvailablePluginDependencies() const
 		}
 
 		bool bDependencyDisallowed = false;
-		for (const FString& DisallowedPlugin : DisallowedPlugins)
+		for (const FPluginDisallowedDescriptor& DisallowedPlugin : Plugin->GetDescriptor().DisallowedPlugins)
 		{
-			if (Plugin->GetName() == DisallowedPlugin)
+			if (Plugin->GetName() == DisallowedPlugin.Name)
 			{
 				bDependencyDisallowed = true;
 				break;

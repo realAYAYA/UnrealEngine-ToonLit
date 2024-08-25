@@ -9,7 +9,7 @@
 namespace UE::Mass::Replication
 {
 	int32 DebugClientReplicationLOD = -1;
-	FAutoConsoleVariableRef CVarDebugReplicationViewerLOD(TEXT("ai.debug.ClientReplicationLOD"), DebugClientReplicationLOD, TEXT("Debug Replication LOD of the specified client index"), ECVF_Cheat);
+	FAutoConsoleVariableRef CVarDebugReplicationViewerLOD(TEXT("mass.debug.ClientReplicationLOD"), DebugClientReplicationLOD, TEXT("Debug Replication LOD of the specified client index"), ECVF_Cheat);
 } // UE::Mass::Crowd
 
 //----------------------------------------------------------------------//
@@ -25,7 +25,7 @@ UMassReplicationProcessor::UMassReplicationProcessor()
 #if !UE_ALLOW_DEBUG_REPLICATION_BUBBLES_STANDALONE
 	ExecutionFlags = int32(EProcessorExecutionFlags::Server);
 #else
-	ExecutionFlags = int32(EProcessorExecutionFlags::All);
+	ExecutionFlags = int32(EProcessorExecutionFlags::AllNetModes);
 #endif // UE_ALLOW_DEBUG_REPLICATION_BUBBLES_STANDALONE
 
 	ProcessingPhase = EMassProcessingPhase::PostPhysics;
@@ -137,8 +137,8 @@ void UMassReplicationProcessor::PrepareExecution(FMassEntityManager& EntityManag
 		{
 			const int32 NumRemove = RepSharedFragment.CachedClientHandles.Num() - CurrentClientHandles.Num();
 
-			RepSharedFragment.CachedClientHandles.RemoveAt(CurrentClientHandles.Num(), NumRemove, /* bAllowShrinking */ false);
-			RepSharedFragment.BubbleInfos.RemoveAt(CurrentClientHandles.Num(), NumRemove, /* bAllowShrinking */ false);
+			RepSharedFragment.CachedClientHandles.RemoveAt(CurrentClientHandles.Num(), NumRemove, EAllowShrinking::No);
+			RepSharedFragment.BubbleInfos.RemoveAt(CurrentClientHandles.Num(), NumRemove, EAllowShrinking::No);
 		}
 
 		//check to see if any cached client handles have changed, if they have set the BubbleInfo[] appropriately
@@ -377,6 +377,7 @@ void UMassReplicationProcessor::Execute(FMassEntityManager& EntityManager, FMass
 					});
 				}
 
+#if WITH_MASSGAMEPLAY_DEBUG
 				// Optional debug display
 				if (UE::Mass::Replication::DebugClientReplicationLOD == ClientHandle.GetIndex())
 				{
@@ -390,6 +391,7 @@ void UMassReplicationProcessor::Execute(FMassEntityManager& EntityManager, FMass
 						});
 					});
 				}
+#endif // WITH_MASSGAMEPLAY_DEBUG
 
 				Context.ClearEntityCollection();
 			}

@@ -27,6 +27,11 @@ class UFoliageType_Actor : public UFoliageType
 	virtual UObject* GetSource() const override { return ActorClass; }
 
 #if WITH_EDITOR
+	virtual FString GetDefaultNewAssetName() const override
+	{
+		return TEXT("NewActorFoliage");
+	}
+
 	virtual void UpdateBounds();
 	virtual bool IsSourcePropertyChange(const FProperty* Property) const override
 	{

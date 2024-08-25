@@ -245,6 +245,8 @@ struct FStreamableHandle : public TSharedFromThis<FStreamableHandle>
 	 * @param CancelDelegate	If handle gets cancelled before primary delegate executes, this delegate will be called instead
 	 */
 	static ENGINE_API void ExecuteDelegate(const FStreamableDelegate& Delegate, TSharedPtr<FStreamableHandle> AssociatedHandle = nullptr, const FStreamableDelegate& CancelDelegate = FStreamableDelegate());
+	/** Overload taking the Delegate by rvalue. Using this will prevent any copies of FStreamableDelegate from being made if the callback is deferred. */
+	static ENGINE_API void ExecuteDelegate(FStreamableDelegate&& Delegate, TSharedPtr<FStreamableHandle> AssociatedHandle = nullptr, FStreamableDelegate&& CancelDelegate = FStreamableDelegate());
 
 	/**
 	 * Return a TSharedPtr of the first handle among this and descendants which satisfies the predicate.
@@ -471,7 +473,7 @@ ENUM_CLASS_FLAGS(EStreamableManagerCombinedHandleOptions);
 struct FStreamableManager : public FGCObject
 {
 	// Default priority for all async loads
-	static const TAsyncLoadPriority DefaultAsyncLoadPriority = 0;
+	static constexpr TAsyncLoadPriority DefaultAsyncLoadPriority = 0;
 	// Priority to try and load immediately
 	static const TAsyncLoadPriority AsyncLoadHighPriority = 100;
 

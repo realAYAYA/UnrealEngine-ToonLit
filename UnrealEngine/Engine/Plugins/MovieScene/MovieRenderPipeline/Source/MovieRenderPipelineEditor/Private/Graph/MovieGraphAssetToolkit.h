@@ -5,6 +5,26 @@
 #include "CoreMinimal.h"
 #include "Toolkits/AssetEditorToolkit.h"
 
+/** Evaluates a collection and syncs the matched actors to the Outliner selection. */
+class SMovieGraphSyncCollectionToOutlinerButton final : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SMovieGraphSyncCollectionToOutlinerButton) {}
+		/** The nodes selected in the graph. */
+		SLATE_ATTRIBUTE(TArray<TWeakObjectPtr<UObject>>, SelectedNodes)
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs);
+
+private:
+	/** Evaluates the collection and selects all matches in the Outliner. */
+	void EvaluateCollectionAndSelect() const;
+
+private:
+	/** The nodes which are currently selected in the graph. */
+	TAttribute<TArray<TWeakObjectPtr<UObject>>> SelectedNodesAttribute;
+};
+
 class FMovieGraphAssetToolkit :  public FAssetEditorToolkit
 {
 public:
@@ -45,9 +65,15 @@ private:
 	/** Copies editor-only nodes to the underlying runtime graph so they can be restored later. */
 	void PersistEditorOnlyNodes() const;
 
+	/** Generate the widget that displays a warning banner if the default graph is being edited. */
+	TSharedRef<SWidget> GetDefaultGraphEditWarning() const;
+
 private:
 	/** The details panel for the selected object(s) in the graph */
 	TSharedPtr<IDetailsView> SelectedGraphObjectsDetailsWidget;
+
+	/** Custom widgetry shown above the filter box in the details panel. */
+	TSharedPtr<SWidget> NameAreaCustomContent;
 
 	/** The widget that contains the main node graph */
 	TSharedPtr<class SMoviePipelineGraphPanel> MovieGraphWidget;

@@ -10,6 +10,7 @@
 #include "NiagaraCompilationTypes.generated.h"
 
 class UNiagaraSystem;
+class ITargetPlatform;
 
 using FNiagaraCompilationTaskHandle = int32;
 
@@ -32,6 +33,15 @@ struct FNiagaraSystemCompileMetrics
 	TMap<TObjectKey<UNiagaraScript>, FNiagaraScriptCompileMetrics> ScriptMetrics;
 };
 
+struct FNiagaraCompiledShaderInfo
+{
+	FNiagaraShaderMapRef CompiledShader;
+	TArray<FShaderCompilerError> CompilationErrors;
+	const ITargetPlatform* TargetPlatform = nullptr;
+	EShaderPlatform ShaderPlatform = SP_NumPlatforms;
+	ERHIFeatureLevel::Type FeatureLevel = ERHIFeatureLevel::Num;
+};
+
 USTRUCT()
 struct FNiagaraScriptAsyncCompileData
 {
@@ -39,7 +49,9 @@ struct FNiagaraScriptAsyncCompileData
 
 	FNiagaraVMExecutableDataId CompileId;
 	TSharedPtr<struct FNiagaraVMExecutableData> ExeData;
+	TArray<FNiagaraCompiledShaderInfo> CompiledShaders;
 	FString UniqueEmitterName;
+	FNiagaraEmitterID EmitterID = INDEX_NONE;
 	FNiagaraScriptCompileMetrics CompileMetrics;
 
 	bool bFromDerivedDataCache = false;
@@ -76,6 +88,7 @@ struct FNiagaraSystemAsyncCompileResults
 struct FNiagaraCompilationOptions
 {
 	UNiagaraSystem* System = nullptr;
+	const ITargetPlatform* TargetPlatform = nullptr;
 	bool bForced = false;
 };
 
@@ -101,6 +114,7 @@ public:
 	virtual void Apply(const FNiagaraQueryCompilationOptions& Options) = 0;
 	virtual void ReportResults(const FNiagaraQueryCompilationOptions& Options) const = 0;
 	virtual bool BlocksBeginCacheForCooked() const { return false; }
+	virtual bool BlocksGarbageCollection() const { return true; }
 
 	void Invalidate()
 	{

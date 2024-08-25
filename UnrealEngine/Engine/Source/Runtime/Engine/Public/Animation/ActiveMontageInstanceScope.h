@@ -10,7 +10,7 @@ namespace UE::Anim {
 // This is useful i.e When there's simultaneous instances of the same montage, to trigger start/end events of its notify states.
 class FAnimNotifyMontageInstanceContext : public UE::Anim::IAnimNotifyEventContextDataInterface
 {
-	DECLARE_NOTIFY_CONTEXT_INTERFACE(FAnimNotifyMontageInstanceContext)
+	DECLARE_NOTIFY_CONTEXT_INTERFACE_API(FAnimNotifyMontageInstanceContext, ENGINE_API)
 public:
 	ENGINE_API FAnimNotifyMontageInstanceContext(const int32 InMontageInstanceID);
 	const int32 MontageInstanceID;

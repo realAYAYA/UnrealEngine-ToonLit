@@ -1,11 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
-
-import '../../utilities/unreal_colors.dart';
-import 'epic_icon_button.dart';
 
 /// Widget housing for locking or unlocking the screen, either ignoring touch input on allowing them.
 class ControlLock extends StatefulWidget {
@@ -128,7 +127,9 @@ class _ControlLockButton extends StatelessWidget {
           : EpicIconButton(
               bIsToggledOn: bIsLocked,
               activeBackgroundColor: UnrealColors.highlightRed,
-              iconPath: bIsLocked ? 'assets/images/icons/lock_locked.svg' : 'assets/images/icons/lock_unlocked.svg',
+              iconPath: bIsLocked
+                  ? 'packages/epic_common/assets/icons/lock_locked.svg'
+                  : 'packages/epic_common/assets/icons/lock_unlocked.svg',
               onLongPressed: onLongPressed,
               tooltipMessage:
                   bIsLocked ? AppLocalizations.of(context)!.unlockControls : AppLocalizations.of(context)!.lockControls,

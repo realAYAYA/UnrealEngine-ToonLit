@@ -120,7 +120,11 @@ uint32 FWeakObjectProperty::GetValueTypeHashInternal(const void* Src) const
 
 void FWeakObjectProperty::CopySingleValueToScriptVM( void* Dest, void const* Src ) const
 {
-	*(UObject**)Dest = ((const FWeakObjectPtr*)Src)->Get();
+	#if UE_GC_RUN_WEAKPTR_BARRIERS
+	*(FObjectPtr*)Dest = ((const FWeakObjectPtr*)Src)->Get();
+	#else
+	*(UObject**)Dest = ((const FWeakObjectPtr*)Src)->Get();	
+	#endif
 }
 
 void FWeakObjectProperty::CopySingleValueFromScriptVM( void* Dest, void const* Src ) const

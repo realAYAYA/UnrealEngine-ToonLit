@@ -11,10 +11,13 @@
 #include "UObject/ObjectHandle.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/ObjectPtr.h"
-#include "UObject/WeakObjectPtrTemplates.h"
 #include <type_traits>
 
 #define UE_USE_CAST_FLAGS (USTRUCT_FAST_ISCHILDOF_IMPL != USTRUCT_ISCHILDOF_STRUCTARRAY)
+
+#ifndef UE_ENABLE_UNRELATED_CAST_WARNINGS
+#define UE_ENABLE_UNRELATED_CAST_WARNINGS 1
+#endif
 
 class AActor;
 class APawn;
@@ -33,7 +36,7 @@ template<class TClass> class TSubclassOf;
 template <typename Type> struct TCastFlags;
 /// @endcond
 
-UE_NORETURN COREUOBJECT_API void CastLogError(const TCHAR* FromType, const TCHAR* ToType);
+[[noreturn]] COREUOBJECT_API void CastLogError(const TCHAR* FromType, const TCHAR* ToType);
 
 /**
  * Metafunction which detects whether or not a class is an IInterface.  Rules:
@@ -96,18 +99,35 @@ FORCEINLINE To* Cast(From* Src)
 				}
 				else
 				{
-					if (Obj->IsA<To>())
+					if constexpr (std::is_same_v<To, UObject>)
 					{
-						return (To*)Obj;
+						return Obj;
+					}
+					else
+					{
+						if (Obj->IsA<To>())
+						{
+							return (To*)Obj;
+						}
 					}
 				}
 			}
 		}
 		else if constexpr (UE_USE_CAST_FLAGS && TCastFlags<To>::Value != CASTCLASS_None)
 		{
-			if (((const UObject*)Src)->GetClass()->HasAnyCastFlag(TCastFlags<To>::Value))
+			if constexpr (std::is_base_of_v<To, From>)
 			{
 				return (To*)Src;
+			}
+			else
+			{
+#if UE_ENABLE_UNRELATED_CAST_WARNINGS
+				UE_STATIC_ASSERT_WARN((std::is_base_of_v<From, To>), "Attempting to use Cast<> on types that are not related");
+#endif
+				if (((const UObject*)Src)->GetClass()->HasAnyCastFlag(TCastFlags<To>::Value))
+				{
+					return (To*)Src;
+				}
 			}
 		}
 		else
@@ -118,8 +138,15 @@ FORCEINLINE To* Cast(From* Src)
 			{
 				return (To*)((UObject*)Src)->GetInterfaceAddress(To::UClassType::StaticClass());
 			}
+			else if constexpr (std::is_base_of_v<To, From>)
+			{
+				return Src;
+			}
 			else
 			{
+#if UE_ENABLE_UNRELATED_CAST_WARNINGS
+				UE_STATIC_ASSERT_WARN((std::is_base_of_v<From, To>), "Attempting to use Cast<> on types that are not related");
+#endif
 				if (((const UObject*)Src)->IsA<To>())
 				{
 					return (To*)Src;
@@ -148,6 +175,10 @@ FORCEINLINE T* ExactCast( UObject* Src )
 		{
 			return GetFullNameSafe(InObjectOrInterface);
 		}
+		else if constexpr (std::is_base_of_v<UObject, T>)
+    	{
+    		return InObjectOrInterface->GetFullName();;
+    	}
 		else
 		{
 			return Cast<UObject>(InObjectOrInterface)->GetFullName();
@@ -250,30 +281,53 @@ template< class T, class U > FORCEINLINE T* CastChecked( const TWeakObjectPtr<U>
 
 // object ptr versions
 template <typename To, typename From>
-FORCEINLINE To* Cast(const TObjectPtr<From>& InSrc)
+FORCEINLINE typename TCopyQualifiersFromTo<From, To>::Type* Cast(const TObjectPtr<From>& InSrc)
 {
-	static_assert(sizeof(To) > 0, "Attempting to cast to an incomplete type");
+	static_assert(sizeof(To) > 0 && sizeof(From) > 0, "Attempting to cast between incomplete types");
 
 	const FObjectPtr& Src = (const FObjectPtr&)InSrc;
 
 	if constexpr (UE_USE_CAST_FLAGS && TCastFlags<To>::Value != CASTCLASS_None)
 	{
-		if (Src && Src.GetClass()->HasAnyCastFlag(TCastFlags<To>::Value))
+		if (Src)
 		{
-			return (To*)Src.Get();
+			if constexpr (std::is_base_of_v<To, From>)
+			{
+				return (To*)Src.Get();
+			}
+			else
+			{
+	#if UE_ENABLE_UNRELATED_CAST_WARNINGS
+				UE_STATIC_ASSERT_WARN((std::is_base_of_v<From, To>), "Attempting to use Cast<> on types that are not related");
+	#endif
+				if (Src.GetClass()->HasAnyCastFlag(TCastFlags<To>::Value))
+				{
+					return (To*)Src.Get();
+				}
+			}
 		}
 	}
 	else if constexpr (TIsIInterface<To>::Value)
 	{
-		UObject* SrcObj = UE::CoreUObject::Private::ResolveObjectHandleNoRead(Src.GetHandleRef());
+		const UObject* SrcObj = UE::CoreUObject::Private::ResolveObjectHandleNoRead(Src.GetHandleRef());
 		if (SrcObj)
 		{
 			UE::CoreUObject::Private::OnHandleRead(SrcObj);
 			return (To*)Src.Get()->GetInterfaceAddress(To::UClassType::StaticClass());
 		}
 	}
+	else if constexpr (std::is_base_of_v<To, From>)
+	{
+		if (Src)
+		{
+			return (To*)Src.Get();
+		}
+	}
 	else
 	{
+#if UE_ENABLE_UNRELATED_CAST_WARNINGS
+		UE_STATIC_ASSERT_WARN((std::is_base_of_v<From, To>), "Attempting to use Cast<> on types that are not related");
+#endif
 		if (Src && Src.IsA<To>())
 		{
 			return (To*)Src.Get();
@@ -284,7 +338,7 @@ FORCEINLINE To* Cast(const TObjectPtr<From>& InSrc)
 }
 
 template <typename To, typename From>
-FORCEINLINE To* ExactCast(const TObjectPtr<From>& Src)
+FORCEINLINE typename TCopyQualifiersFromTo<From, To>::Type* ExactCast(const TObjectPtr<From>& Src)
 {
 	static_assert(sizeof(To) > 0, "Attempting to cast to an incomplete type");
 
@@ -298,14 +352,14 @@ FORCEINLINE To* ExactCast(const TObjectPtr<From>& Src)
 }
 
 template <typename To, typename From>
-FORCEINLINE To* CastChecked(const TObjectPtr<From>& Src, ECastCheckedType::Type CheckType = ECastCheckedType::NullChecked)
+FORCEINLINE typename TCopyQualifiersFromTo<From, To>::Type* CastChecked(const TObjectPtr<From>& Src, ECastCheckedType::Type CheckType = ECastCheckedType::NullChecked)
 {
 	static_assert(sizeof(From) > 0 && sizeof(To) > 0, "Attempting to cast between incomplete types");
 
 #if DO_CHECK
 	if (Src)
 	{
-		To* Result = Cast<To>(Src);
+		auto* Result = Cast<To>(Src);
 		if (!Result)
 		{
 			CastLogError(*GetFullNameForCastLogError(Src.Get()), *GetTypeName<To>());
@@ -378,7 +432,6 @@ DECLARE_CAST_BY_FLAG(UClass)							\
 DECLARE_CAST_BY_FLAG(FProperty)							\
 DECLARE_CAST_BY_FLAG(FObjectPropertyBase)				\
 DECLARE_CAST_BY_FLAG(FObjectProperty)					\
-DECLARE_CAST_BY_FLAG(FObjectPtrProperty)				\
 DECLARE_CAST_BY_FLAG(FWeakObjectProperty)				\
 DECLARE_CAST_BY_FLAG(FLazyObjectProperty)				\
 DECLARE_CAST_BY_FLAG(FSoftObjectProperty)				\
@@ -424,6 +477,7 @@ DECLARE_CAST_BY_FLAG(USparseDelegateFunction)			\
 DECLARE_CAST_BY_FLAG(FMulticastInlineDelegateProperty)	\
 DECLARE_CAST_BY_FLAG(FMulticastSparseDelegateProperty)	\
 DECLARE_CAST_BY_FLAG(FOptionalProperty)					\
+DECLARE_CAST_BY_FLAG(FVerseValueProperty)				\
 FINISH_DECLARING_CAST_FLAGS		// This is here to hopefully remind people to include the "\" in all declarations above, especially when copy/pasting the final line.
 
 // Now actually declare the flags

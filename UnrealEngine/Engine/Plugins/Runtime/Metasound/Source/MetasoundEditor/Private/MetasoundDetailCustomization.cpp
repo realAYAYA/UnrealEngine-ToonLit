@@ -96,12 +96,6 @@ namespace Metasound
 		{
 			using namespace Frontend;
 
-			EMetasoundActiveDetailView DetailsView = EMetasoundActiveDetailView::Metasound;
-			if (const UMetasoundEditorSettings* EditorSettings = GetDefault<UMetasoundEditorSettings>())
-			{
-				DetailsView = EditorSettings->DetailView;
-			}
-
 			TArray<TWeakObjectPtr<UObject>> Objects;
 			DetailLayout.GetObjectsBeingCustomized(Objects);
 
@@ -118,6 +112,18 @@ namespace Metasound
 			}
 
 			TWeakObjectPtr<UMetaSoundSource> MetaSoundSource = Cast<UMetaSoundSource>(MetaSound.Get());
+
+			// MetaSound patches don't have source settings, so view MetaSound settings by default 
+			EMetasoundActiveDetailView DetailsView = EMetasoundActiveDetailView::Metasound;
+			if (MetaSoundSource.IsValid())
+			{
+				// Show source settings by default unless previously set
+				DetailsView = EMetasoundActiveDetailView::General;
+				if (const UMetasoundEditorSettings* EditorSettings = GetDefault<UMetasoundEditorSettings>())
+				{
+					DetailsView = EditorSettings->DetailView;
+				}
+			}
 
 			switch (DetailsView)
 			{
@@ -164,7 +170,7 @@ namespace Metasound
 									TSharedPtr<FEditor> ParentEditor = FGraphBuilder::GetEditorForMetasound(*Source.Get());
 									if (ParentEditor.IsValid())
 									{
-										ParentEditor->DestroyAnalyzers();
+										ParentEditor->Stop();
 									};
 								}
 							}));
@@ -261,20 +267,13 @@ namespace Metasound
 				default:
 					DetailLayout.HideCategory("MetaSound");
 
-					const bool bShouldBeInitiallyCollapsed = true;
 					TArray<TSharedRef<IPropertyHandle>>DeveloperProperties;
 					TArray<TSharedRef<IPropertyHandle>>SoundProperties;
 
 					DetailLayout.EditCategory("Sound")
-						.InitiallyCollapsed(bShouldBeInitiallyCollapsed)
 						.GetDefaultProperties(SoundProperties);
-					DetailLayout.EditCategory("Attenuation").InitiallyCollapsed(bShouldBeInitiallyCollapsed);
 					DetailLayout.EditCategory("Developer")
-						.InitiallyCollapsed(bShouldBeInitiallyCollapsed)
 						.GetDefaultProperties(DeveloperProperties);
-					DetailLayout.EditCategory("Effects").InitiallyCollapsed(bShouldBeInitiallyCollapsed);
-					DetailLayout.EditCategory("Modulation").InitiallyCollapsed(bShouldBeInitiallyCollapsed);
-					DetailLayout.EditCategory("Voice Management").InitiallyCollapsed(bShouldBeInitiallyCollapsed);
 
 					auto HideProperties = [](const TSet<FName>& PropsToHide, const TArray<TSharedRef<IPropertyHandle>>& Properties)
 					{

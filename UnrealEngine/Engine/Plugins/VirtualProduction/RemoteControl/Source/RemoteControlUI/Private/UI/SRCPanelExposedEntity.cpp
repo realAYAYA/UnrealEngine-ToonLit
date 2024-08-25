@@ -69,6 +69,8 @@ namespace RebindingUtils
 	}
 }
 
+const FText SRCPanelExposedEntity::SelectInOutliner = LOCTEXT("RCSelectInOutliner", "\nDouble Click to Select in Outliner");
+
 TSharedPtr<FRemoteControlEntity> SRCPanelExposedEntity::GetEntity() const
 {
 	if (Preset.IsValid())
@@ -141,6 +143,11 @@ void SRCPanelExposedEntity::EnterRenameMode()
 	}
 }
 
+FName SRCPanelExposedEntity::GetPropertyId()
+{
+	return PropertyIdLabel;
+}
+
 void SRCPanelExposedEntity::Refresh()
 {
 	if (EntityId.IsValid() && Preset.IsValid())
@@ -167,7 +174,8 @@ void SRCPanelExposedEntity::Initialize(const FGuid& InEntityId, URemoteControlPr
 
 			if (RCEntity->GetStruct() == FRemoteControlProperty::StaticStruct())
 			{
-				CachedFieldPath = StaticCastSharedPtr<FRemoteControlProperty>(RCEntity)->FieldPathInfo.ToString();
+				const TSharedPtr<FRemoteControlProperty> RCProperty = StaticCastSharedPtr<FRemoteControlProperty>(RCEntity);
+				CachedFieldPath = RCProperty->FieldPathInfo.ToString();
 			}
 
 			FName OwnerFName;
@@ -413,8 +421,9 @@ void SRCPanelExposedEntity::OnLabelCommitted(const FText& InLabel, ETextCommit::
 	{
 		FScopedTransaction Transaction(LOCTEXT("ModifyEntityLabel", "Modify exposed entity's label."));
 		RCPreset->Modify();
+		FName OldName = CachedLabel;
 		CachedLabel = RCPreset->RenameExposedEntity(EntityId, *InLabel.ToString());
-		NameTextBox->SetText(FText::FromName(CachedLabel));
+		OnLabelModified().ExecuteIfBound(OldName, CachedLabel);
 	}
 }
 
@@ -467,18 +476,19 @@ bool SRCPanelExposedEntity::IsActorSelectable(const AActor* Actor) const
 
 TSharedRef<SWidget> SRCPanelExposedEntity::CreateEntityWidget(TSharedPtr<SWidget> ValueWidget, TSharedPtr<SWidget> ResetWidget, const FText& OptionalWarningMessage, TSharedRef<SWidget> EditConditionWidget)
 {
-	FMakeNodeWidgetArgs Args;
+	const FMakeNodeWidgetArgs Args = CreateEntityWidgetInternal(ValueWidget, ResetWidget, OptionalWarningMessage, EditConditionWidget);
 
 	TSharedRef<SBorder> Widget = SNew(SBorder)
 		.Padding(0.0f)
 		.BorderImage(this, &SRCPanelExposedEntity::GetBorderImage);
-	
-	Args.DragHandle = SNew(SBox)
-		.Visibility(this, &SRCPanelExposedEntity::GetVisibilityAccordingToLiveMode, EVisibility::Collapsed)
-		[
-			SNew(SRCPanelDragHandle<FExposedEntityDragDrop>, GetRCId())
-			.Widget(Widget)
-		];
+
+	Widget->SetContent(MakeNodeWidget(Args));
+	return Widget;
+}
+
+SRCPanelTreeNode::FMakeNodeWidgetArgs SRCPanelExposedEntity::CreateEntityWidgetInternal(TSharedPtr<SWidget> ValueWidget, TSharedPtr<SWidget> ResetWidget, const FText& OptionalWarningMessage, TSharedRef<SWidget> EditConditionWidget)
+{
+	FMakeNodeWidgetArgs Args;
 
 	const FSlateBrush* TrashBrush = FAppStyle::Get().GetBrush("Icons.Delete");
 
@@ -501,7 +511,7 @@ TSharedRef<SWidget> SRCPanelExposedEntity::CreateEntityWidget(TSharedPtr<SWidget
 				SNew(STextBlock)
 				.ColorAndOpacity_Lambda([this]() { return bValidBinding ? FSlateColor::UseForeground() : FSlateColor::UseSubduedForeground(); })
 				.Text(FText::FromName(CachedOwnerName))
-				.ToolTipText(FText::FromName(CachedBindingPath))
+				.ToolTipText(FText::FromString(CachedBindingPath.ToString() + SelectInOutliner.ToString()))
 			]
 		];
 
@@ -511,7 +521,7 @@ TSharedRef<SWidget> SRCPanelExposedEntity::CreateEntityWidget(TSharedPtr<SWidget
 			SNew(STextBlock)
 			.ColorAndOpacity_Lambda([this]() { return bValidBinding ? FSlateColor::UseForeground() : FSlateColor::UseSubduedForeground(); })
 			.Text(CachedSubobjectPath.IsNone() ? FText::GetEmpty() : FText::FromName(CachedSubobjectPath))
-			.ToolTipText(LOCTEXT("SubobjectPathToolTip", "The path from the owner actor to the uobject holding the exposed property."))
+			.ToolTipText(FText::Format(LOCTEXT("SubobjectPathToolTip", "The path from the owner actor to the uobject holding the exposed property.{0}"), SelectInOutliner))
 		];
 
 	Args.NameWidget = SNew(SHorizontalBox)
@@ -525,6 +535,7 @@ TSharedRef<SWidget> SRCPanelExposedEntity::CreateEntityWidget(TSharedPtr<SWidget
 			.Visibility(!OptionalWarningMessage.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed)
             .TextStyle(FRemoteControlPanelStyle::Get(), "RemoteControlPanel.Button.TextStyle")
             .Font(FAppStyle::Get().GetFontStyle("FontAwesome.10"))
+            .ColorAndOpacity(FSlateColor(FLinearColor::Yellow))
             .ToolTipText(OptionalWarningMessage)
             .Text(FEditorFontGlyphs::Exclamation_Triangle)
 		]
@@ -538,8 +549,8 @@ TSharedRef<SWidget> SRCPanelExposedEntity::CreateEntityWidget(TSharedPtr<SWidget
 		.AutoWidth()
 		[
 			SAssignNew(NameTextBox, SInlineEditableTextBlock)
-			.Text(FText::FromName(CachedLabel))
-			.ToolTipText(FText::FromString(CachedFieldPath))
+			.Text_Lambda([this] () { return FText::FromName(CachedLabel); })
+			.ToolTipText(FText::FromString(CachedFieldPath + SelectInOutliner.ToString()))
 			.OnTextCommitted(this, &SRCPanelExposedEntity::OnLabelCommitted)
 			.OnVerifyTextChanged(this, &SRCPanelExposedEntity::OnVerifyItemLabelChanged)
 			.IsReadOnly_Lambda([this]() { return bLiveMode.Get(); })
@@ -550,8 +561,7 @@ TSharedRef<SWidget> SRCPanelExposedEntity::CreateEntityWidget(TSharedPtr<SWidget
 
 	Args.ResetButton = ResetWidget;
 
-	Widget->SetContent(MakeNodeWidget(Args));
-	return Widget;
+	return Args;
 }
 
 void SRCPanelExposedEntity::OnActorSelectedForRebindAllProperties(AActor* InActor) const

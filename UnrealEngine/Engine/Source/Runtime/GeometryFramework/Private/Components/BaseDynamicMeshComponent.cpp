@@ -213,9 +213,22 @@ void UBaseDynamicMeshComponent::SetMaterial(int32 ElementIndex, UMaterialInterfa
 	check(ElementIndex >= 0);
 	if (ElementIndex >= BaseMaterials.Num())
 	{
-		BaseMaterials.SetNum(ElementIndex + 1, false);
+		BaseMaterials.SetNum(ElementIndex + 1, EAllowShrinking::No);
 	}
 	BaseMaterials[ElementIndex] = Material;
+
+	// @todo allow for precache of pipeline state objects for rendering
+	// PrecachePSOs(); // indirectly calls GetUsedMaterials, requires CollectPSOPrecacheData to be implemented, see UStaticMeshComponent for example
+
+	
+	MarkRenderStateDirty();
+
+	// update the body instance in case this material has an associated physics material 
+	FBodyInstance* BodyInst = GetBodyInstance();
+	if (BodyInst && BodyInst->IsValidBodyInstance())
+	{
+		BodyInst->UpdatePhysicalMaterials();
+	}
 }
 
 

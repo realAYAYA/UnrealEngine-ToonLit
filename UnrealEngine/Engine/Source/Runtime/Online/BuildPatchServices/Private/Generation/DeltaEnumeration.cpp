@@ -144,7 +144,7 @@ namespace BuildPatchServices
 		volatile int64* StatChunkingTime = StatsCollector->CreateStat(TEXT("BuildA: Chunking time"), EStatFormat::Timer);
 		volatile int64* StatChunkingCompleted = StatsCollector->CreateStat(TEXT("BuildA: Progress"), EStatFormat::Percentage);
 
-		const bool bAllowShrinking = false;
+		const EAllowShrinking AllowShrinking = EAllowShrinking::No;
 		const FBlockStructure& StreamerBlocks = Streamer->GetBlockStructure();
 		const uint64 ManifestAStreamSize = BlockStructureHelpers::CountSize(StreamerBlocks);
 		const uint32 StreamBufferReadSize = WindowSize * 32;
@@ -157,9 +157,9 @@ namespace BuildPatchServices
 		{
 			// Grab some data, maintaining accurate buffer size.
 			const uint32 StreamBufferPadding = StreamBuffer.Num();
-			StreamBuffer.SetNumUninitialized(StreamBufferPadding + StreamBufferReadSize, bAllowShrinking);
+			StreamBuffer.SetNumUninitialized(StreamBufferPadding + StreamBufferReadSize, AllowShrinking);
 			const uint32 SizeRead = Streamer->DequeueData(StreamBuffer.GetData() + StreamBufferPadding, StreamBufferReadSize);
-			StreamBuffer.SetNumUninitialized(StreamBufferPadding + SizeRead, bAllowShrinking);
+			StreamBuffer.SetNumUninitialized(StreamBufferPadding + SizeRead, AllowShrinking);
 
 			// Calculate the buffer's build structure.
 			FBlockStructure StreamBuildStructure;
@@ -199,7 +199,7 @@ namespace BuildPatchServices
 				const uint8* const CopyFrom = &StreamBuffer[StreamBufferPosition];
 				FMemory::Memcpy(CopyTo, CopyFrom, CopySize);
 			}
-			StreamBuffer.SetNum(CopySize, bAllowShrinking);
+			StreamBuffer.SetNum(CopySize, AllowShrinking);
 			StreamStartPosition -= StreamBuffer.Num();
 
 			const double PercentChunked = (double)StreamStartPosition / (double)ManifestAStreamSize;

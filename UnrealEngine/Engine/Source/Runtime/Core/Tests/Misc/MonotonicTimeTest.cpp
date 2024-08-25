@@ -6,6 +6,8 @@
 
 #include "Tests/TestHarnessAdapter.h"
 
+UE_DISABLE_OPTIMIZATION_SHIP
+
 namespace UE
 {
 
@@ -138,5 +140,7 @@ TEST_CASE_NAMED(FMonotonicTimePointTest, "System::Core::Time::MonotonicTimePoint
 }
 
 } // namespace UE
+
+UE_ENABLE_OPTIMIZATION_SHIP
 
 #endif // WITH_TESTS

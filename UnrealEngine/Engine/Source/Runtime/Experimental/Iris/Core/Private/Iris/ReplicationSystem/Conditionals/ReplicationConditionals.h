@@ -62,6 +62,9 @@ public:
 	void InitPropertyCustomConditions(FInternalNetRefIndex ObjectIndex);
 	bool SetPropertyCustomCondition(FInternalNetRefIndex ObjectIndex, const void* Owner, uint16 RepIndex, bool bIsActive);
 	bool SetPropertyDynamicCondition(FInternalNetRefIndex ObjectIndex, const void* Owner, uint16 RepIndex, ELifetimeCondition Condition);
+	
+	/** Unconditionally marks a property as dirty, causing it to replicate with the object at the earliest convenience. */
+	void MarkPropertyDirty(FInternalNetRefIndex ObjectIndex, uint16 RepIndex);
 
 	void Update();
 
@@ -121,19 +124,25 @@ private:
 	void SetDynamicCondition(FInternalNetRefIndex ObjectIndex, uint16 RepIndex, ELifetimeCondition Condition);
 	bool DynamicConditionChangeRequiresBaselineInvalidation(ELifetimeCondition OldCondition, ELifetimeCondition NewCondition) const;
 
+	void MarkRemoteRoleDirty(FInternalNetRefIndex ObjectIndex);
+	uint16 GetRemoteRoleRepIndex(const FReplicationProtocol* Protocol);
+
 private:
+	static constexpr uint16 InvalidRepIndex = 65535U;
+
 	const FNetRefHandleManager* NetRefHandleManager = nullptr;
 	const FReplicationFiltering* ReplicationFiltering = nullptr;
 	const FReplicationConnections* ReplicationConnections = nullptr;
 	FDeltaCompressionBaselineInvalidationTracker* BaselineInvalidationTracker = nullptr;
 	const FNetObjectGroups* NetObjectGroups = nullptr;
 
-	uint32 MaxObjectCount = 0;
-	uint32 MaxConnectionCount = 0;
-
 	TArray<FPerObjectInfo> PerObjectInfos;
 	TArray<FPerConnectionInfo> ConnectionInfos;
 	TMap<FInternalNetRefIndex, FObjectDynamicConditions> DynamicConditions;
+
+	uint32 MaxObjectCount = 0;
+	uint32 MaxConnectionCount = 0;
+	uint16 CachedRemoteRoleRepIndex = InvalidRepIndex;
 };
 
 inline FReplicationConditionals::FPerObjectInfo* FReplicationConditionals::GetPerObjectInfo(FInternalNetRefIndex ObjectIndex)

@@ -2,20 +2,31 @@
 
 #pragma once
 
+#include "IOptimusPersistentBufferProvider.h"
 #include "ComputeFramework/ComputeDataProvider.h"
 #include "ComputeFramework/ShaderParamTypeDefinition.h"
 #include "OptimusComputeDataInterface.h"
+#include "OptimusConstant.h"
 #include "OptimusDataDomain.h"
+#include "OptimusDeformerInstance.h"
 #include "RenderGraphFwd.h"
 
 #include "OptimusDataInterfaceRawBuffer.generated.h"
 
 class FOptimusPersistentBufferPool;
-class FPersistentBufferDataInterfaceParameters;
 class FTransientBufferDataInterfaceParameters;
+class FImplicitPersistentBufferDataInterfaceParameters;
+class FPersistentBufferDataInterfaceParameters;
 class UOptimusComponentSource;
 class UOptimusComponentSourceBinding;
 class UOptimusRawBufferDataProvider;
+
+enum class EOptimusBufferReadType : uint8
+{
+	ReadSize,
+	Default,
+	ForceUAV
+};
 
 /** Write to buffer operation types. */
 UENUM()
@@ -34,7 +45,7 @@ class OPTIMUSCORE_API UOptimusRawBufferDataInterface : public UOptimusComputeDat
 	GENERATED_BODY()
 
 public:
-	static int32 GetReadValueInputIndex();
+	static int32 GetReadValueInputIndex(EOptimusBufferReadType ReadType = EOptimusBufferReadType::Default);
 	static int32 GetWriteValueOutputIndex(EOptimusBufferWriteType WriteType);
 	
 	//~ Begin UOptimusComputeDataInterface Interface
@@ -63,6 +74,9 @@ public:
 	UPROPERTY()
 	TWeakObjectPtr<UOptimusComponentSourceBinding> ComponentSourceBinding;
 
+	UPROPERTY()
+	FOptimusConstantIdentifier DomainConstantIdentifier_DEPRECATED;
+	
 protected:
 	virtual bool UseSplitBuffers() const { return true; }
 
@@ -109,6 +123,32 @@ public:
 	void GetShaderParameters(TCHAR const* UID, FShaderParametersMetadataBuilder& InOutBuilder, FShaderParametersMetadataAllocations& InOutAllocations) const override;
 	UComputeDataProvider* CreateDataProvider(TObjectPtr<UObject> InBinding, uint64 InInputMask, uint64 InOutputMask) const override;
 	//~ End UComputeDataInterface Interface
+
+	UPROPERTY()
+	bool bZeroInitForAtomicWrites = false;	
+};
+
+/** Compute Framework Data Interface for a implicit persistent buffer. */
+UCLASS(Category = ComputeFramework)
+class OPTIMUSCORE_API UOptimusImplicitPersistentBufferDataInterface : public UOptimusRawBufferDataInterface
+{
+	GENERATED_BODY()
+
+public:
+	//~ Begin UOptimusComputeDataInterface Interface
+	FString GetDisplayName() const override;
+	//~ End UOptimusComputeDataInterface Interface
+
+
+	//~ Begin UComputeDataInterface Interface
+	TCHAR const* GetClassName() const override { return TEXT("ImplicitPersistentBuffer"); }
+	bool CanSupportUnifiedDispatch() const override { return true; }
+	void GetShaderParameters(TCHAR const* UID, FShaderParametersMetadataBuilder& InOutBuilder, FShaderParametersMetadataAllocations& InOutAllocations) const override;
+	UComputeDataProvider* CreateDataProvider(TObjectPtr<UObject> InBinding, uint64 InInputMask, uint64 InOutputMask) const override;
+	//~ End UComputeDataInterface Interface
+
+	UPROPERTY()
+	bool bZeroInitForAtomicWrites = false;
 };
 
 
@@ -142,7 +182,8 @@ protected:
 
 /** Compute Framework Data Provider for a transient buffer. */
 UCLASS(Abstract)
-class OPTIMUSCORE_API UOptimusRawBufferDataProvider : public UComputeDataProvider
+class OPTIMUSCORE_API UOptimusRawBufferDataProvider :
+	public UComputeDataProvider
 {
 	GENERATED_BODY()
 
@@ -155,22 +196,17 @@ public:
 		int32& OutLodIndex,
 		TArray<int32>& OutInvocationElementCounts
 		) const;
-	
+
 	/** The skinned mesh component that governs the sizing and LOD of this buffer */
-	UPROPERTY()
 	TWeakObjectPtr<const UActorComponent> Component = nullptr;
 
-	UPROPERTY()
 	TWeakObjectPtr<const UOptimusComponentSource> ComponentSource = nullptr;
 
 	/** The data domain this buffer covers */
-	UPROPERTY()
 	FOptimusDataDomain DataDomain;
 
-	UPROPERTY()
 	int32 ElementStride = 4;
 
-	UPROPERTY()
 	int32 RawStride = 0;
 };
 
@@ -185,12 +221,16 @@ public:
 	//~ Begin UComputeDataProvider Interface
 	FComputeDataProviderRenderProxy* GetRenderProxy() override;
 	//~ End UComputeDataProvider Interface
+
+	bool bZeroInitForAtomicWrites = false;
 };
 
 
 /** Compute Framework Data Provider for a transient buffer. */
 UCLASS(BlueprintType, editinlinenew, Category = ComputeFramework)
-class OPTIMUSCORE_API UOptimusPersistentBufferDataProvider : public UOptimusRawBufferDataProvider
+class OPTIMUSCORE_API UOptimusImplicitPersistentBufferDataProvider :
+	public UOptimusRawBufferDataProvider,
+	public IOptimusPersistentBufferProvider
 {
 	GENERATED_BODY()
 
@@ -199,13 +239,45 @@ public:
 	FComputeDataProviderRenderProxy* GetRenderProxy() override;
 	//~ End UComputeDataProvider Interface
 
+	//~ Begin IOptimusPersistentBufferPoolUser Interface
+	void SetBufferPool(TSharedPtr<FOptimusPersistentBufferPool> InBufferPool) override { BufferPool = InBufferPool; };
+	//~ Begin IOptimusPersistentBufferPoolUser Interface
+	
+	bool bZeroInitForAtomicWrites = false;
+	
+	FName DataInterfaceName = NAME_None;
+private:
 	/** The buffer pool we refer to. Set by UOptimusDeformerInstance::SetupFromDeformer after providers have been
 	 *  created
 	 */
 	TSharedPtr<FOptimusPersistentBufferPool> BufferPool;
+};
 
+/** Compute Framework Data Provider for a transient buffer. */
+UCLASS(BlueprintType, editinlinenew, Category = ComputeFramework)
+class OPTIMUSCORE_API UOptimusPersistentBufferDataProvider :
+	public UOptimusRawBufferDataProvider,
+	public IOptimusPersistentBufferProvider
+{
+	GENERATED_BODY()
+
+public:
+	//~ Begin UComputeDataProvider Interface
+	FComputeDataProviderRenderProxy* GetRenderProxy() override;
+	//~ End UComputeDataProvider Interface
+	
+	//~ Begin IOptimusPersistentBufferPoolUser Interface
+	void SetBufferPool(TSharedPtr<FOptimusPersistentBufferPool> InBufferPool) override { BufferPool = InBufferPool; };
+	//~ Begin IOptimusPersistentBufferPoolUser Interface
+	
 	/** The resource this buffer is provider to */
 	FName ResourceName;
+	
+private:
+	/** The buffer pool we refer to. Set by UOptimusDeformerInstance::SetupFromDeformer after providers have been
+	 *  created
+	 */
+	TSharedPtr<FOptimusPersistentBufferPool> BufferPool;
 };
 
 class FOptimusTransientBufferDataProviderProxy :
@@ -215,7 +287,8 @@ public:
 	FOptimusTransientBufferDataProviderProxy(
 		TArray<int32> InInvocationElementCounts,
 		int32 InElementStride,
-		int32 InRawStride
+		int32 InRawStride,
+		bool bInZeroInitForAtomicWrites
 		);
 
 	//~ Begin FComputeDataProviderRenderProxy Interface
@@ -231,12 +304,50 @@ private:
 	int32 TotalElementCount;
 	const int32 ElementStride;
 	const int32 RawStride;
+	const bool bZeroInitForAtomicWrites;
 
 	FRDGBufferRef Buffer;
 	FRDGBufferSRVRef BufferSRV;
 	FRDGBufferUAVRef BufferUAV;
 };
 
+class FOptimusImplicitPersistentBufferDataProviderProxy :
+	public FComputeDataProviderRenderProxy
+{
+public:
+	FOptimusImplicitPersistentBufferDataProviderProxy(
+		TArray<int32> InInvocationElementCounts,
+		int32 InElementStride,
+		int32 InRawStride,
+		bool bInZeroInitForAtomicWrites,
+		TSharedPtr<FOptimusPersistentBufferPool> InBufferPool,
+		FName InDataInterfaceName,
+		int32 InLODIndex
+		);
+
+	//~ Begin FComputeDataProviderRenderProxy Interface
+	bool IsValid(FValidationData const& InValidationData) const override;
+	void AllocateResources(FRDGBuilder& GraphBuilder) override;
+	void GatherDispatchData(FDispatchData const& InDispatchData) override;
+	//~ End FComputeDataProviderRenderProxy Interface
+
+	private:
+	using FParameters = FImplicitPersistentBufferDataInterfaceParameters;
+
+	const TArray<int32> InvocationElementCounts;
+	int32 TotalElementCount;
+	const int32 ElementStride;
+	const int32 RawStride;
+	const bool bZeroInitForAtomicWrites;
+	
+	const TSharedPtr<FOptimusPersistentBufferPool> BufferPool;
+	FName DataInterfaceName;
+	int32 LODIndex;
+
+	FRDGBufferRef Buffer;
+	FRDGBufferSRVRef BufferSRV;
+	FRDGBufferUAVRef BufferUAV;
+};
 
 class FOptimusPersistentBufferDataProviderProxy :
 	public FComputeDataProviderRenderProxy

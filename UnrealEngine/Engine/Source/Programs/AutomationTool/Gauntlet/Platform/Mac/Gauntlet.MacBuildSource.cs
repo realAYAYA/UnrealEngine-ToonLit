@@ -45,12 +45,21 @@ namespace Gauntlet
 		}
 	}
 
+	public class MacStagedBuild : StagedBuild
+	{
+		public MacStagedBuild(UnrealTargetPlatform InPlatform, UnrealTargetConfiguration InConfig, UnrealTargetRole InRole, string InBuildPath, string InExecutablePath, string InFlavor = "")
+		: base(InPlatform, InConfig, InRole, InBuildPath, InExecutablePath, InFlavor)
+		{
+		}
+
+		public override int PreferenceOrder { get { return 0; } }
+	}
 
 	/// <summary>
 	/// Represents a loose collection of files. For Mac the executable will point to the binary.app bundle and
 	/// not the inner executable file
 	/// </summary>
-	public class MacStagedBuildSource : StagedBuildSource<StagedBuild>
+	public class MacStagedBuildSource : StagedBuildSource<MacStagedBuild>
 	{
 		public override string BuildName { get { return "MacStagedBuildSource"; } }
 
@@ -74,6 +83,8 @@ namespace Gauntlet
 			: base(InPlatform, InConfig, InRole, InBuildPath, InFlags)
 		{
 		}
+
+		public override int PreferenceOrder { get { return 1; } }
 	}
 
 	/// <summary>

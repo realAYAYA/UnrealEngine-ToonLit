@@ -10,17 +10,7 @@
 
 static FString GetBindingName(const TSharedPtr<FCEFJSScripting>& Scripting, const FProperty* ValueProperty)
 {
-	//@todo samz - HACK
-	static const bool bIsKairos = FParse::Param(FCommandLine::Get(), TEXT("KairosOnly"));
-	if (bIsKairos)
-	{
-		// skip lowercasing property field names for compatibility with FNativeJSStructSerializerBackend/FMobileJSStructSerializerBackend
-		return ValueProperty->GetName();
-	}
-	else
-	{
-		return Scripting->GetBindingName(ValueProperty);
-	}
+	return Scripting->GetBindingName(ValueProperty);
 }
 
 /* Private methods

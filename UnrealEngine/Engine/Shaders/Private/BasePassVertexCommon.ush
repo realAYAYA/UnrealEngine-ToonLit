@@ -24,7 +24,7 @@ struct FBasePassVSToPS
 {
 	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
 	FBasePassInterpolantsVSToPS BasePassInterpolants;
-	float4 Position : SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 };
 
 #define FBasePassVSOutput FBasePassVSToPS

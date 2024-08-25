@@ -304,12 +304,32 @@ FLiveCodingModule::FLiveCodingModule()
 	, FullProjectPluginsDir(FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir()))
 {
 	GLiveCodingModule = this;
+
+	const FString ExecutablePath = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+	FullEngineDirFromExecutable = ExecutablePath / FPaths::EngineDir();
+	FPaths::NormalizeDirectoryName(FullEngineDirFromExecutable);
+	FPaths::CollapseRelativeDirectories(FullEngineDirFromExecutable);
+	FullEnginePluginsDirFromExecutable = ExecutablePath / FPaths::EnginePluginsDir();
+	FPaths::NormalizeDirectoryName(FullEnginePluginsDirFromExecutable);
+	FPaths::CollapseRelativeDirectories(FullEnginePluginsDirFromExecutable);
+	FullProjectDirFromExecutable = ExecutablePath / FPaths::ProjectDir();
+	FPaths::NormalizeDirectoryName(FullProjectDirFromExecutable);
+	FPaths::CollapseRelativeDirectories(FullProjectDirFromExecutable);
+	FullProjectPluginsDirFromExecutable = ExecutablePath / FPaths::ProjectPluginsDir();
+	FPaths::NormalizeDirectoryName(FullProjectPluginsDirFromExecutable);
+	FPaths::CollapseRelativeDirectories(FullProjectPluginsDirFromExecutable);
 }
 
 FLiveCodingModule::~FLiveCodingModule()
 {
 	GLiveCodingModule = nullptr;
 }
+
+#if USE_DEBUG_LIVE_CODING_CONSOLE
+	static const TCHAR* DefaultConsolePath = TEXT("Binaries/Win64/LiveCodingConsole-Win64-Debug.exe");
+#else
+	static const TCHAR* DefaultConsolePath = TEXT("Binaries/Win64/LiveCodingConsole.exe");
+#endif 
 
 void FLiveCodingModule::StartupModule()
 {
@@ -408,11 +428,6 @@ void FLiveCodingModule::StartupModule()
 #else
 	FString DefaultEngineDir = FPaths::EngineDir();
 #endif
-#if USE_DEBUG_LIVE_CODING_CONSOLE
-	static const TCHAR* DefaultConsolePath = TEXT("Binaries/Win64/LiveCodingConsole-Win64-Debug.exe");
-#else
-	static const TCHAR* DefaultConsolePath = TEXT("Binaries/Win64/LiveCodingConsole.exe");
-#endif 
 	ConsolePathVariable = ConsoleManager.RegisterConsoleVariable(
 		TEXT("LiveCoding.ConsolePath"),
 		FPaths::ConvertRelativePathToFull(DefaultEngineDir / DefaultConsolePath),
@@ -450,12 +465,25 @@ void FLiveCodingModule::StartupModule()
 
 	LppStartup();
 
+	bool bAllowAutoStart = true;
+	bool bForceStart = false;
+
+	if (bool bCommandLineEnable; FParse::Bool(FCommandLine::Get(), TEXT("-LiveCoding="), bCommandLineEnable))
+	{
+		bAllowAutoStart &= bCommandLineEnable;
+		bForceStart = bCommandLineEnable;
+	}
+	else if (FParse::Param(FCommandLine::Get(), TEXT("LiveCoding")))
+	{
+		bForceStart = true;
+	}
+
 	bSettingsEnabledLastTick = Settings->bEnabled;
-	if (Settings->bEnabled && Settings->Startup != ELiveCodingStartupMode::Manual && !FApp::IsUnattended())
+	if (Settings->bEnabled && Settings->Startup != ELiveCodingStartupMode::Manual && !FApp::IsUnattended() && bAllowAutoStart)
 	{
 		StartLiveCodingAsync(Settings->Startup);
-	} 
-	else if (FParse::Param(FCommandLine::Get(), TEXT("LiveCoding")))
+	}
+	else if (bForceStart)
 	{
 		StartLiveCodingAsync(ELiveCodingStartupMode::Manual);
 	}
@@ -1040,17 +1068,37 @@ bool FLiveCodingModule::StartLiveCoding(ELiveCodingStartupMode StartupMode)
 		GLiveCodingConsolePath = ConsolePathVariable->GetString();
 		if (!FPaths::FileExists(GLiveCodingConsolePath))
 		{
-			FFormatNamedArguments Args;
-			Args.Add(TEXT("Executable"), FText::FromString(GLiveCodingConsolePath));
-			const static FText FormatString = LOCTEXT("LiveCodingMissingExecutable", "Unable to start live coding session. Missing executable '{Executable}'. Use the LiveCoding.ConsolePath console variable to modify.");
-			EnableErrorText = FText::Format(FormatString, Args);
-			UE_LOG(LogLiveCoding, Error, TEXT("Unable to start live coding session. Missing executable '%s'. Use the LiveCoding.ConsolePath console variable to modify."), *GLiveCodingConsolePath);
-			State = EState::NotRunning;
-			return false;
+			// Check from the executable as the user might have specified different base dir
+			FString CodingConsolePathFromExecutable = FullEngineDirFromExecutable / DefaultConsolePath;
+			FPaths::CollapseRelativeDirectories(CodingConsolePathFromExecutable);
+			if (!FPaths::FileExists(CodingConsolePathFromExecutable))
+			{
+				FFormatNamedArguments Args;
+				Args.Add(TEXT("Executable"), FText::FromString(GLiveCodingConsolePath));
+				const static FText FormatString = LOCTEXT("LiveCodingMissingExecutable", "Unable to start live coding session. Missing executable '{Executable}'. Use the LiveCoding.ConsolePath console variable to modify.");
+				EnableErrorText = FText::Format(FormatString, Args);
+				UE_LOG(LogLiveCoding, Error, TEXT("Unable to start live coding session. Missing executable '%s'. Use the LiveCoding.ConsolePath console variable to modify."), *GLiveCodingConsolePath);
+				State = EState::NotRunning;
+				return false;
+			}
+			else
+			{
+				GLiveCodingConsolePath = CodingConsolePathFromExecutable;
+
+				// If we found the console from the executable path, chances are users wants the project from there as well
+				const FString ExecutablePath = FPaths::GetPath(FPlatformProcess::ExecutablePath());
+				FString SourceProjectFromExecutable = ExecutablePath / FPaths::GetProjectFilePath();
+				FPaths::NormalizeDirectoryName(SourceProjectFromExecutable);
+				FPaths::CollapseRelativeDirectories(SourceProjectFromExecutable);
+				if(SourceProjectFromExecutable.Len() > 0 && FPaths::FileExists(SourceProjectFromExecutable))
+				{
+					SourceProjectVariable->Set(*SourceProjectFromExecutable);
+				}
+			}
 		}
 
 		// Get the source project filename
-		FString SourceProject = SourceProjectVariable->GetString();
+		const FString SourceProject = SourceProjectVariable->GetString();
 		if (SourceProject.Len() > 0 && !FPaths::FileExists(SourceProject))
 		{
 			FFormatNamedArguments Args;
@@ -1477,7 +1525,11 @@ bool FLiveCodingModule::IsUEDll(const FString& FullPath)
 	if (!FullPath.StartsWith(FullEngineDir, ESearchCase::IgnoreCase) &&
 		!FullPath.StartsWith(FullEnginePluginsDir, ESearchCase::IgnoreCase) &&
 		!FullPath.StartsWith(FullProjectDir, ESearchCase::IgnoreCase) &&
-		!FullPath.StartsWith(FullProjectPluginsDir, ESearchCase::IgnoreCase))
+		!FullPath.StartsWith(FullProjectPluginsDir, ESearchCase::IgnoreCase) &&
+		!FullPath.StartsWith(FullEngineDirFromExecutable, ESearchCase::IgnoreCase) &&
+		!FullPath.StartsWith(FullEnginePluginsDirFromExecutable, ESearchCase::IgnoreCase) &&
+		!FullPath.StartsWith(FullProjectDirFromExecutable, ESearchCase::IgnoreCase) &&
+		!FullPath.StartsWith(FullProjectPluginsDirFromExecutable, ESearchCase::IgnoreCase))
 	{
 		return false;
 	}

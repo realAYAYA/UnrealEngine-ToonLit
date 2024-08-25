@@ -33,6 +33,11 @@ EBlackboardCompare::Type UBlackboardKeyType_Int::CompareValues(const UBlackboard
 		EBlackboardCompare::Equal;
 }
 
+void UBlackboardKeyType_Int::InitializeMemory(UBlackboardComponent& OwnerComp, uint8* MemoryBlock)
+{
+	SetValue(this, MemoryBlock, DefaultValue);
+}
+
 FString UBlackboardKeyType_Int::DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const
 {
 	return FString::Printf(TEXT("%d"), GetValue(this, RawData));

@@ -190,11 +190,8 @@ def p4(
 
     logging.debug(f'p4(): invoking subprocess: args={args}')
 
-    # stdin=subprocess.DEVNULL is required when launched via
-    # SwitchboardListener; otherwise this call tries to make the non-existent
-    # stdin inheritable, raising `OSError: [WinError 6] The handle is invalid`
     return subprocess.Popen(args, stdout=subprocess.PIPE,
-                            stdin=subprocess.DEVNULL)
+                            startupinfo=sb_utils.get_hidden_sp_startupinfo())
 
 
 def p4_get_records(

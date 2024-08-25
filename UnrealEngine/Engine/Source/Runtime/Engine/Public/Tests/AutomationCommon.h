@@ -35,7 +35,7 @@ namespace AutomationCommon
 		TestName/PlatformName/DeviceName.png. It's important to understand that a screenshot
 		generated on a device will likely have a different absolute path than the editor so this
 		name should be used with	*/
-	ENGINE_API FString GetScreenshotName(const FString& TestName);
+	ENGINE_API FString GetScreenshotPath(const FString& TestName);
 
 	/** 
 	This function takes the result of GetScreenshotName and will return the complete path to where a
@@ -234,6 +234,22 @@ private:
 	// Frame to be passed to consider the waiting over
 	uint64 LastFrame = 0;
 };
+
+/**
+ * Latent command to wait for a given number of engine frames
+ */
+class FWaitForEngineFramesCommand : public IAutomationLatentCommand
+{
+public:
+	ENGINE_API explicit FWaitForEngineFramesCommand(int32 InFramesToWait = 1);
+
+	ENGINE_API bool Update() override;
+
+private:
+	int32 FrameCounter = 0;
+	int32 FramesToWait = 1;
+};
+
 
 /**
 * Request an Image Comparison and queue the result to the test report

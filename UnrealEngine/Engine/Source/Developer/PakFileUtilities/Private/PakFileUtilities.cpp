@@ -339,7 +339,7 @@ bool FPakOrderMap::ProcessOrderFile(const TCHAR* ResponseFile, bool bSecondaryOr
 			if(Lines[EntryIndex].FindLastChar('"', OpenOrderNumber))
 			{
 				FString ReadNum = Lines[EntryIndex].RightChop(OpenOrderNumber + 1);
-				Lines[EntryIndex].LeftInline(OpenOrderNumber + 1, false);
+				Lines[EntryIndex].LeftInline(OpenOrderNumber + 1, EAllowShrinking::No);
 				ReadNum.TrimStartInline();
 				if(ReadNum.Len() == 0)
 				{
@@ -800,7 +800,7 @@ FString GetCommonRootPath(const TArray<FPakInputPair>& FilesToAdd)
 		}
 		if ((CommonSeparatorIndex + 1) < Root.Len())
 		{
-			Root.MidInline(0, CommonSeparatorIndex + 1, false);
+			Root.MidInline(0, CommonSeparatorIndex + 1, EAllowShrinking::No);
 		}
 	}
 	return Root;
@@ -1386,7 +1386,7 @@ void ProcessPakFileSpecificCommandLine(const TCHAR* CmdLine, const TArray<FStrin
 					}
 					if (!bHasParsedSource)
 					{
-						Entries.Pop(false);
+						Entries.Pop(EAllowShrinking::No);
 						continue;
 					}
 					
@@ -3420,7 +3420,7 @@ int32 GetPakPriorityFromFilename( const FString& PakFilename )
 		PakIndexFromFilename.FindLastChar('_', PakIndexStart);
 		if (PakIndexStart != INDEX_NONE)
 		{
-			PakIndexFromFilename.RightChopInline(PakIndexStart + 1, false);
+			PakIndexFromFilename.RightChopInline(PakIndexStart + 1, EAllowShrinking::No);
 			if (PakIndexFromFilename.IsNumeric())
 			{
 				PakPriority = FCString::Atoi(*PakIndexFromFilename);
@@ -5024,7 +5024,7 @@ void RemoveIdenticalFiles( TArray<FPakInputPair>& FilesToPak, const FString& Sou
 	}
 }
 	int NumToRemove = FilesToPak.Num() - WriteIndex;
-	FilesToPak.RemoveAt(WriteIndex, NumToRemove, true);
+	FilesToPak.RemoveAt(WriteIndex, NumToRemove, EAllowShrinking::Yes);
 
 	if (ChangedFilesArchive)
 	{
@@ -5399,12 +5399,11 @@ bool MakeBinaryConfig(const TCHAR* CmdLine)
 		}
 
 		// now go over any remaining sections and remove keys
-		for (TPair<FString, FConfigSection>& SectionPair : *File)
+		for (const TPair<FString, FConfigSection>& SectionPair : *(const FConfigFile*)File)
 		{
-			FConfigSection& Section = SectionPair.Value;
 			for (FName Key : KeysDenyList)
 			{
-				Section.Remove(Key);
+				File->RemoveKeyFromSection(*SectionPair.Key, Key);
 			}
 		}
 	}
@@ -5458,9 +5457,32 @@ bool ExecuteUnrealPak(const TCHAR* CmdLine)
 			return CreateIoStoreContainerFiles(CmdLine) == 0;
 		}
 
-		if (FParse::Value(CmdLine, TEXT("-Upload="), IoStoreArg))
+		// IAS commands
 		{
-			return UploadIoStoreContainerFiles(*IoStoreArg) == 0;
+			if (FParse::Value(CmdLine, TEXT("-Upload="), IoStoreArg))
+			{
+				return UploadIoStoreContainerFiles(*IoStoreArg) == 0;
+			}
+
+			if (FParse::Value(CmdLine, TEXT("-Download="), IoStoreArg))
+			{
+				return DownloadIoStoreContainerFiles(*IoStoreArg) == 0;
+			}
+
+			if (FParse::Param(CmdLine, TEXT("ListTocs")))
+			{
+				return ListOnDemandTocs();
+			}
+
+			if (FParse::Value(CmdLine, TEXT("-ListContainer="), IoStoreArg))
+			{
+				return ListIoStoreContainer(CmdLine);
+			}
+
+			if (FParse::Value(CmdLine, TEXT("-ListContainerBulkData="), IoStoreArg))
+			{
+				return ListIoStoreContainerBulkData(CmdLine);
+			}
 		}
 	}
 
@@ -5655,7 +5677,7 @@ bool ExecuteUnrealPak(const TCHAR* CmdLine)
 					UE_LOG(LogPakFile, Display, TEXT("Source PakFile '%s' is missing in target folder"),
 						*SourcePakFiles[I]);
 				}
-				SourcePakFiles.RemoveAtSwap(I, 1, false);
+				SourcePakFiles.RemoveAtSwap(I, 1, EAllowShrinking::No);
 			}
 		}
 		if (bLogUniques2)

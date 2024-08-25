@@ -54,10 +54,10 @@ bool GetRawResolution(const TCHAR* InFilename, FLandscapeFileResolution& OutReso
 		TSharedPtr<FJsonObject> JsonObject;
 		if (FJsonSerializer::Deserialize(JsonReader, JsonObject))
 		{
-			OutResolution.Width = JsonObject->GetIntegerField("width");
-			OutResolution.Height = JsonObject->GetIntegerField("height");
+			OutResolution.Width = JsonObject->GetIntegerField(TEXT("width"));
+			OutResolution.Height = JsonObject->GetIntegerField(TEXT("height"));
 
-			OutBitsPerPixel = JsonObject->GetIntegerField("bpp");
+			OutBitsPerPixel = JsonObject->GetIntegerField(TEXT("bpp"));
 			
 			return true;
 		}
@@ -65,8 +65,8 @@ bool GetRawResolution(const TCHAR* InFilename, FLandscapeFileResolution& OutReso
 		return false;
 	}
 
-	const bool bIs16Bit = Extension == FString("r16");
-	const bool bIs8Bit = Extension == FString("r8");
+	const bool bIs16Bit = Extension == FString(TEXT("r16"));
+	const bool bIs8Bit = Extension == FString(TEXT("r8"));
 
 	if (!(bIs16Bit || bIs8Bit))
 	{
@@ -141,7 +141,7 @@ FLandscapeFileInfo FLandscapeHeightmapFileFormat_Raw::Validate(const TCHAR* Heig
 			else
 			{
 				Result.ResultCode = ELandscapeImportResult::Error;
-				Result.ErrorMessage = LOCTEXT("Import_HeightmapFileInvalidSize", "The heightmap file has an invalid size");
+				Result.ErrorMessage = LOCTEXT("Import_HeightmapFileInvalidSize", "The heightmap file has an invalid size (possibly not 16-bit?)");
 			}
 			
 		}

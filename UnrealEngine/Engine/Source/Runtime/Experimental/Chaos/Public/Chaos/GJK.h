@@ -239,7 +239,7 @@ namespace Chaos
 		@param A The first geometry
 		@param B The second geometry
 		@param ThicknessA The amount of geometry inflation for Geometry A(for example if the surface distance of two geometries with thickness 0 would be 2, a thickness of 0.5 would give a distance of 1.5)
-		@param InitialDir The first direction we use to search the CSO
+		@param InitialDir The first direction we use to search the CSO (Must be normalized)
 		@param ThicknessB The amount of geometry inflation for Geometry B(for example if the surface distance of two geometries with thickness 0 would be 2, a thickness of 0.5 would give a distance of 1.5)
 		@return True if the geometries overlap, False otherwise 
 	*/
@@ -248,6 +248,8 @@ namespace Chaos
 	bool GJKIntersectionSameSpaceSimd(const TGeometryA& A, const TGeometryB& B, FReal InThicknessA, const VectorRegister4Float& InitialDir)
 	{
 		VectorRegister4Float V = VectorNegate(InitialDir);
+
+		//ensure(FMath::Abs(VectorDot3Scalar(V, V) - 1.0f) < 1e-3f ); // Check that the vector is normalized, comment out for performance
 
 		FSimplex SimplexIDs;
 		VectorRegister4Float Simplex[4] = { VectorZero(), VectorZero(), VectorZero(), VectorZero() };

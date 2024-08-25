@@ -26,6 +26,8 @@ DEFINE_NDI_FUNC_BINDER(UNiagaraDataInterfaceSkeletalMesh, GetFilteredVertexAt);
 const FName FSkeletalMeshInterfaceHelper::GetVertexDataName("GetVertexData");
 const FName FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataName("GetSkinnedVertexData");
 const FName FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataWSName("GetSkinnedVertexDataWS");
+const FName FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataInterpolatedName("GetSkinnedVertexDataInterpolated");
+const FName FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataInterpolatedWSName("GetSkinnedVertexDataInterpolatedWS");
 const FName FSkeletalMeshInterfaceHelper::GetVertexColorName("GetVertexColor");
 const FName FSkeletalMeshInterfaceHelper::GetVertexUVName("GetVertexUV");
 
@@ -38,7 +40,8 @@ const FName FSkeletalMeshInterfaceHelper::RandomFilteredVertexName("RandomFilter
 const FName FSkeletalMeshInterfaceHelper::GetFilteredVertexCountName("GetFilteredVertexCount");
 const FName FSkeletalMeshInterfaceHelper::GetFilteredVertexAtName("GetFilteredVertex");
 
-void UNiagaraDataInterfaceSkeletalMesh::GetVertexSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceSkeletalMesh::GetVertexSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature Sig;
@@ -51,9 +54,7 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexSamplingFunctions(TArray<FNiaga
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Tangent")));
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("GetVertexDataDesc", "Returns bind pose for the vertex");
-#endif
 		OutFunctions.Add(Sig);
 	}
 	{
@@ -68,9 +69,7 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexSamplingFunctions(TArray<FNiaga
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Tangent")));
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("GetSkinnedDataDesc", "Returns skinning dependant data for the pased vertex in local space. All outputs are optional and you will incur zero to minimal cost if they are not connected.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -86,9 +85,41 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexSamplingFunctions(TArray<FNiaga
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Tangent")));
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("GetSkinnedDataWSDesc", "Returns skinning dependant data for the pased vertex in world space. All outputs are optional and you will incur zero to minimal cost if they are not connected.");
-#endif
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataInterpolatedName;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("SkeletalMesh")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Vertex")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Interp")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("Position")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Velocity")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Normal")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Binormal")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Tangent")));
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.Description = LOCTEXT("GetSkinnedDataDesc", "Returns skinning dependant data for the pased vertex in local space. All outputs are optional and you will incur zero to minimal cost if they are not connected.");
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataInterpolatedWSName;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("SkeletalMesh")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Vertex")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Interp")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("Position")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Velocity")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Normal")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Binormal")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Tangent")));
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.Description = LOCTEXT("GetSkinnedDataWSDesc", "Returns skinning dependant data for the pased vertex in world space. All outputs are optional and you will incur zero to minimal cost if they are not connected.");
 		OutFunctions.Add(Sig);
 	}
 
@@ -186,9 +217,13 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexSamplingFunctions(TArray<FNiaga
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceSkeletalMesh::BindVertexSamplingFunction(const FVMExternalFunctionBindingInfo& BindingInfo, FNDISkeletalMesh_InstanceData* InstanceData, FVMExternalFunction &OutFunc)
 {
+	using TInterpOff = TIntegralConstant<bool, false>;
+	using TInterpOn = TIntegralConstant<bool, true>;
+
 	//////////////////////////////////////////////////////////////////////////
 	if (BindingInfo.Name == FSkeletalMeshInterfaceHelper::GetVertexDataName)
 	{
@@ -198,12 +233,22 @@ void UNiagaraDataInterfaceSkeletalMesh::BindVertexSamplingFunction(const FVMExte
 	else if (BindingInfo.Name == FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataName)
 	{
 		check(BindingInfo.GetNumInputs() == 2 && BindingInfo.GetNumOutputs() == 15);
-		TSkinningModeBinder<TNDIExplicitBinder<FNDITransformHandlerNoop, TVertexAccessorBinder<NDI_FUNC_BINDER(UNiagaraDataInterfaceSkeletalMesh, GetVertexSkinnedData)>>>::BindCheckCPUAccess(this, BindingInfo, InstanceData, OutFunc);
+		TSkinningModeBinder<TNDIExplicitBinder<FNDITransformHandlerNoop, TNDIExplicitBinder<TInterpOff, TVertexAccessorBinder<NDI_FUNC_BINDER(UNiagaraDataInterfaceSkeletalMesh, GetVertexSkinnedData)>>>>::BindCheckCPUAccess(this, BindingInfo, InstanceData, OutFunc);
 	}
 	else if (BindingInfo.Name == FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataWSName)
 	{
 		check(BindingInfo.GetNumInputs() == 2 && BindingInfo.GetNumOutputs() == 15);
-		TSkinningModeBinder<TNDIExplicitBinder<FNDITransformHandler, TVertexAccessorBinder<NDI_FUNC_BINDER(UNiagaraDataInterfaceSkeletalMesh, GetVertexSkinnedData)>>>::BindCheckCPUAccess(this, BindingInfo, InstanceData, OutFunc);
+		TSkinningModeBinder<TNDIExplicitBinder<FNDITransformHandler, TNDIExplicitBinder<TInterpOff, TVertexAccessorBinder<NDI_FUNC_BINDER(UNiagaraDataInterfaceSkeletalMesh, GetVertexSkinnedData)>>>>::BindCheckCPUAccess(this, BindingInfo, InstanceData, OutFunc);
+	}
+	else if (BindingInfo.Name == FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataInterpolatedName)
+	{
+		check(BindingInfo.GetNumInputs() == 3 && BindingInfo.GetNumOutputs() == 15);
+		TSkinningModeBinder<TNDIExplicitBinder<FNDITransformHandlerNoop, TNDIExplicitBinder<TInterpOn, TVertexAccessorBinder<NDI_FUNC_BINDER(UNiagaraDataInterfaceSkeletalMesh, GetVertexSkinnedData)>>>>::BindCheckCPUAccess(this, BindingInfo, InstanceData, OutFunc);
+	}
+	else if (BindingInfo.Name == FSkeletalMeshInterfaceHelper::GetSkinnedVertexDataInterpolatedWSName)
+	{
+		check(BindingInfo.GetNumInputs() == 3 && BindingInfo.GetNumOutputs() == 15);
+		TSkinningModeBinder<TNDIExplicitBinder<FNDITransformHandler, TNDIExplicitBinder<TInterpOn, TVertexAccessorBinder<NDI_FUNC_BINDER(UNiagaraDataInterfaceSkeletalMesh, GetVertexSkinnedData)>>>>::BindCheckCPUAccess(this, BindingInfo, InstanceData, OutFunc);
 	}
 	else if (BindingInfo.Name == FSkeletalMeshInterfaceHelper::GetVertexColorName)
 	{
@@ -750,7 +795,7 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexData(FVectorVMExternalFunctionC
 	}
 }
 
-template<typename SkinningHandlerType, typename TransformHandlerType, typename VertexAccessorType>
+template<typename SkinningHandlerType, typename TransformHandlerType, typename Interpolated, typename VertexAccessorType>
 void UNiagaraDataInterfaceSkeletalMesh::GetVertexSkinnedData(FVectorVMExternalFunctionContext& Context)
 {
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraSkel_Vertex_Sample);
@@ -759,6 +804,12 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexSkinnedData(FVectorVMExternalFu
 	SkinningHandlerType SkinningHandler;
 	TransformHandlerType TransformHandler;
 	FNDIInputParam<int32> VertParam(Context);
+	FNDIInputParam<float> InterpParam;
+
+	if constexpr (Interpolated::Value)
+	{
+		InterpParam.Init(Context);
+	}
 
 	checkfSlow(InstData.Get(), TEXT("Skeletal Mesh Interface has invalid instance data. %s"), *GetPathName());
 
@@ -780,20 +831,37 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexSkinnedData(FVectorVMExternalFu
 			for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 			{
 				const int32 Vertex = FMath::Clamp(VertParam.GetAndAdvance(), 0, VertMax);
+				float Interp = 1.0f;
+				if constexpr (Interpolated::Value)
+				{
+					Interp = InterpParam.GetAndAdvance();
+				}
 
-				FVector3f Pos = FVector3f::ZeroVector;
+				FVector3f CurrPos = FVector3f::ZeroVector;
+				FVector3f PrevPos = FVector3f::ZeroVector;
 				if (Output.bNeedsPosition || Output.bNeedsVelocity)
 				{
-					Pos = SkinningHandler.GetSkinnedVertexPosition(Accessor, Vertex);
-					TransformHandler.TransformPosition(Pos, Transform);
-					Output.Position.SetAndAdvance(Pos);
+					CurrPos = SkinningHandler.GetSkinnedVertexPosition(Accessor, Vertex);
+					TransformHandler.TransformPosition(CurrPos, Transform);
+					if (Output.bNeedsVelocity || Interpolated::Value)
+					{
+						PrevPos = SkinningHandler.GetSkinnedVertexPreviousPosition(Accessor, Vertex);
+						TransformHandler.TransformPosition(PrevPos, PrevTransform);
+					}
+
+					if constexpr (Interpolated::Value)
+					{
+						Output.Position.SetAndAdvance(FMath::Lerp(PrevPos, CurrPos, Interp));
+					}
+					else
+					{
+						Output.Position.SetAndAdvance(CurrPos);
+					}
 				}
 
 				if (Output.bNeedsVelocity)
 				{
-					FVector3f Prev = SkinningHandler.GetSkinnedVertexPreviousPosition(Accessor, Vertex);
-					TransformHandler.TransformPosition(Prev, PrevTransform);
-					const FVector3f Velocity = (Pos - Prev) * InvDt;
+					const FVector3f Velocity = (CurrPos - PrevPos) * InvDt;
 					Output.Velocity.SetAndAdvance(Velocity);
 				}
 
@@ -806,19 +874,19 @@ void UNiagaraDataInterfaceSkeletalMesh::GetVertexSkinnedData(FVectorVMExternalFu
 
 					if (Output.bNeedsTangentX)
 					{
-						TransformHandler.TransformVector(TangentX, Transform);
+						TransformHandler.TransformUnitVector(TangentX, Transform);
 						Output.TangentX.SetAndAdvance(TangentX);
 					}
 
 					if (Output.bNeedsTangentY)
 					{
-						TransformHandler.TransformVector(TangentY, Transform);
+						TransformHandler.TransformUnitVector(TangentY, Transform);
 						Output.TangentY.SetAndAdvance(TangentY);
 					}
 
 					if (Output.bNeedsTangentZ)
 					{
-						TransformHandler.TransformVector(TangentZ, Transform);
+						TransformHandler.TransformUnitVector(TangentZ, Transform);
 						Output.TangentZ.SetAndAdvance(TangentZ);
 					}
 				}

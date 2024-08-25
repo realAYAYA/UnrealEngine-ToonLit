@@ -50,6 +50,8 @@ void SRigStackItem::Construct(const FArguments& InArgs, const TSharedRef<STableV
 	WeakStackEntry = InStackEntry;
 	WeakBlueprint = InBlueprint;
 	WeakCommandList = InCommandList;
+	MicroSeconds = 0;
+	MicroSecondsFrames.Reset();
 
 	TSharedPtr< STextBlock > NumberWidget;
 	TSharedPtr< STextBlock > TextWidget;
@@ -200,7 +202,7 @@ FText SRigStackItem::GetVisitedCountText() const
 				{
 					if(URigVM* VM = RigVMHost->GetVM())
 					{
-						const int32 Count = VM->GetInstructionVisitedCount(RigVMHost->GetExtendedExecuteContext(), WeakStackEntry.Pin()->InstructionIndex);
+						const int32 Count = VM->GetInstructionVisitedCount(RigVMHost->GetRigVMExtendedExecuteContext(), WeakStackEntry.Pin()->InstructionIndex);
 						if(Count > 0)
 						{
 							return FText::FromString(FString::FromInt(Count));
@@ -225,10 +227,11 @@ FText SRigStackItem::GetDurationText() const
 				{
 					if(URigVM* VM = RigVMHost->GetVM())
 					{
-						const double MicroSeconds = VM->GetInstructionMicroSeconds(RigVMHost->GetExtendedExecuteContext(), WeakStackEntry.Pin()->InstructionIndex);
+						const double CurrentMicroSeconds = VM->GetInstructionMicroSeconds(RigVMHost->GetRigVMExtendedExecuteContext(), WeakStackEntry.Pin()->InstructionIndex);
+						MicroSeconds = WeakBlueprint->RigGraphDisplaySettings.AggregateAverage(MicroSecondsFrames, MicroSeconds, CurrentMicroSeconds);
 						if(MicroSeconds > 0.0)
 						{
-							return FText::FromString(FString::Printf(TEXT("%d µs"), (int32)MicroSeconds));
+							return FText::FromString(FString::Printf(TEXT("%.02f µs"), (float)MicroSeconds));
 						}
 					}
 				}
@@ -331,7 +334,7 @@ void SRigVMExecutionStackView::Construct( const FArguments& InArgs, TSharedRef<F
 		]
 	];
 
-	RefreshTreeView(nullptr);
+	RefreshTreeView(nullptr, nullptr);
 
 	if (RigVMBlueprint.IsValid())
 	{
@@ -350,7 +353,7 @@ void SRigVMExecutionStackView::Construct( const FArguments& InArgs, TSharedRef<F
 		{
 			if (URigVMHost* RigVMHost = RigVMEditor.Pin()->GetRigVMHost())
 			{
-				OnVMCompiled(RigVMBlueprint.Get(), RigVMHost->GetVM());
+				OnVMCompiled(RigVMBlueprint.Get(),  RigVMHost->GetVM(),  RigVMHost->GetRigVMExtendedExecuteContext());
 			}
 		}
 	}
@@ -425,6 +428,8 @@ void SRigVMExecutionStackView::OnSelectionChanged(TSharedPtr<FRigStackEntry> Sel
 			RigVMBlueprint->GetOrCreateController(Pair.Key)->SetNodeSelection(Pair.Value);
 		}
 	}
+
+	UpdateTargetItemHighlighting();
 }
 
 void SRigVMExecutionStackView::BindCommands()
@@ -433,6 +438,7 @@ void SRigVMExecutionStackView::BindCommands()
 	const FRigVMExecutionStackCommands& Commands = FRigVMExecutionStackCommands::Get();
 	CommandList->MapAction(Commands.FocusOnSelection, FExecuteAction::CreateSP(this, &SRigVMExecutionStackView::HandleFocusOnSelectedGraphNode));
 	CommandList->MapAction(Commands.GoToInstruction, FExecuteAction::CreateSP(this, &SRigVMExecutionStackView::HandleGoToInstruction));
+	CommandList->MapAction(Commands.SelectTargetInstructions, FExecuteAction::CreateSP(this, &SRigVMExecutionStackView::HandleSelectTargetInstructions));
 }
 
 TSharedRef<ITableRow> SRigVMExecutionStackView::MakeTableRowWidget(TSharedPtr<FRigStackEntry> InItem, const TSharedRef<STableViewBase>& OwnerTable, TWeakObjectPtr<URigVMBlueprint> InBlueprint)
@@ -445,9 +451,9 @@ void SRigVMExecutionStackView::HandleGetChildrenForTree(TSharedPtr<FRigStackEntr
 	OutChildren = InItem->Children;
 }
 
-void SRigVMExecutionStackView::PopulateStackView(URigVM* InVM)
+void SRigVMExecutionStackView::PopulateStackView(URigVM* InVM, FRigVMExtendedExecuteContext* InVMContext)
 {
-	if (InVM)
+	if (InVM && InVMContext)
 	{
 		URigVMBlueprint* Blueprint = RigVMEditor.Pin()->GetRigVMBlueprint();
 
@@ -574,6 +580,12 @@ void SRigVMExecutionStackView::PopulateStackView(URigVM* InVM)
 						Label = TEXT("Jump To Branch");
 						break;
 					}
+					case ERigVMOpCode::RunInstructions:
+					{
+						const FRigVMRunInstructionsOp& Op = ByteCode.GetOpAt<FRigVMRunInstructionsOp>(Instructions[InstructionIndex]);
+						Label = FString::Printf(TEXT("Run Instructions %d-%d"), Op.StartInstruction, Op.EndInstruction);
+						break;
+					}
 					case ERigVMOpCode::Exit:
 					{
 						Label = TEXT("Exit");
@@ -591,7 +603,7 @@ void SRigVMExecutionStackView::PopulateStackView(URigVM* InVM)
 				if (FilterText.IsEmpty() || Label.Contains(FilterText.ToString()))
 				{
 					FRigVMASTProxy Proxy;
-					if(const TArray<UObject*>* Callstack = ByteCode.GetCallstackForInstruction(InstructionIndex))
+					if(const TArray<TWeakObjectPtr<UObject>>* Callstack = ByteCode.GetCallstackForInstruction(InstructionIndex))
 					{
 						Proxy = FRigVMASTProxy::MakeFromCallstack(Callstack);
 					}
@@ -635,7 +647,7 @@ void SRigVMExecutionStackView::PopulateStackView(URigVM* InVM)
 		}
 
 		// 2. replace raw operand names with NodeTitle.PinName/PropertyName.OffsetName
-		TArray<FString> Labels = InVM->DumpByteCodeAsTextArray(TArray<int32>(), false, [OperandFormatMap](const FString& RegisterName, const FString& RegisterOffsetName)
+		TArray<FString> Labels = InVM->DumpByteCodeAsTextArray(*InVMContext, TArray<int32>(), false, [OperandFormatMap](const FString& RegisterName, const FString& RegisterOffsetName)
 		{
 			FString NewRegisterName = RegisterName;
 			FString NodeName;
@@ -654,7 +666,10 @@ void SRigVMExecutionStackView::PopulateStackView(URigVM* InVM)
 			return OperandLabel;
 		});
 
-		ensure(Labels.Num() == Instructions.Num());
+		if (!ensure(Labels.Num() == Instructions.Num()))
+		{
+			return;
+		}
 		
 		// 3. replace instruction names with node titles
 		for (int32 InstructionIndex = 0; InstructionIndex < Labels.Num(); InstructionIndex++)
@@ -709,14 +724,14 @@ void SRigVMExecutionStackView::PopulateStackView(URigVM* InVM)
 	}
 }
 
-void SRigVMExecutionStackView::RefreshTreeView(URigVM* InVM)
+void SRigVMExecutionStackView::RefreshTreeView(URigVM* InVM, FRigVMExtendedExecuteContext* InVMContext)
 {
 	Operators.Reset();
 
 	// populate the stack with node names/instruction names
-	PopulateStackView(InVM);
+	PopulateStackView(InVM, InVMContext);
 	
-	if (InVM)
+	if (InVM && InVMContext)
 	{
 		// fill the children from the log
 		if (RigVMEditor.IsValid())
@@ -727,7 +742,7 @@ void SRigVMExecutionStackView::RefreshTreeView(URigVM* InVM)
 				const TArray<FRigVMLog::FLogEntry>& LogEntries = Host->GetLog()->Entries;
 				for (const FRigVMLog::FLogEntry& LogEntry : LogEntries)
 				{
-					if (Operators.Num() <= LogEntry.InstructionIndex)
+					if (!Operators.IsValidIndex(LogEntry.InstructionIndex))
 					{
 						continue;
 					}
@@ -757,7 +772,7 @@ void SRigVMExecutionStackView::RefreshTreeView(URigVM* InVM)
 					}
 				}
 
-				Host->GetExtendedExecuteContext().ExecutionHalted().AddSP(this, &SRigVMExecutionStackView::HandleExecutionHalted);
+				Host->GetDebugInfo().ExecutionHalted().AddSP(this, &SRigVMExecutionStackView::HandleExecutionHalted);
 			}
 		}
 	}
@@ -781,6 +796,21 @@ TSharedPtr< SWidget > SRigVMExecutionStackView::CreateContextMenu()
 		MenuBuilder.BeginSection("RigStackToolsAction", LOCTEXT("ToolsAction", "Tools"));
 		MenuBuilder.AddMenuEntry(Actions.FocusOnSelection);
 		MenuBuilder.AddMenuEntry(Actions.GoToInstruction);
+
+		if(SelectedItems.ContainsByPredicate([](const TSharedPtr<FRigStackEntry>& InEntry) -> bool
+		{
+			return InEntry->OpCode == ERigVMOpCode::JumpAbsolute ||
+				InEntry->OpCode == ERigVMOpCode::JumpBackward || 
+				InEntry->OpCode == ERigVMOpCode::JumpForward ||
+				InEntry->OpCode == ERigVMOpCode::JumpAbsoluteIf || 
+				InEntry->OpCode == ERigVMOpCode::JumpBackwardIf || 
+				InEntry->OpCode == ERigVMOpCode::JumpForwardIf ||
+				InEntry->OpCode == ERigVMOpCode::RunInstructions;
+		}))
+		{
+			MenuBuilder.AddMenuEntry(Actions.SelectTargetInstructions);
+		}
+		
 		MenuBuilder.EndSection();
 	}
 
@@ -877,9 +907,131 @@ void SRigVMExecutionStackView::HandleGoToInstruction()
 	}
 }
 
-void SRigVMExecutionStackView::OnVMCompiled(UObject* InCompiledObject, URigVM* InCompiledVM)
+void SRigVMExecutionStackView::HandleSelectTargetInstructions()
 {
-	RefreshTreeView(InCompiledVM);
+	const TArray<TSharedPtr<FRigStackEntry>> TargetItems = GetTargetItems(TreeView->GetSelectedItems());
+	if(!TargetItems.IsEmpty())
+	{
+		TreeView->ClearSelection();
+		for(const TSharedPtr<FRigStackEntry>& TargetItem : TargetItems)
+		{
+			TreeView->SetItemSelection(TargetItem, true, ESelectInfo::Direct);
+		}
+		TreeView->RequestScrollIntoView(TargetItems[0]);
+	}
+}
+
+TArray<TSharedPtr<FRigStackEntry>> SRigVMExecutionStackView::GetTargetItems(const TArray<TSharedPtr<FRigStackEntry>>& InItems) const
+{
+	TArray<TSharedPtr<FRigStackEntry>> TargetItems;
+	
+	URigVMHost* Host = RigVMEditor.Pin()->GetRigVMHost();
+	if (Host == nullptr || Host->GetVM() == nullptr)
+	{
+		return TargetItems;
+	}
+
+	const FRigVMByteCode& ByteCode = Host->GetVM()->GetByteCode();
+	const FRigVMInstructionArray Instructions = ByteCode.GetInstructions();
+
+	TArray<int32> TargetInstructionIndices;
+	const TArray<TSharedPtr<FRigStackEntry>> SelectedItems = TreeView->GetSelectedItems();
+	for(const TSharedPtr<FRigStackEntry>& SelectedItem : SelectedItems)
+	{
+		if(!Instructions.IsValidIndex(SelectedItem->InstructionIndex))
+		{
+			continue;
+		}
+		
+		const FRigVMInstruction& Instruction = Instructions[SelectedItem->InstructionIndex];
+		switch(SelectedItem->OpCode)
+		{
+			case ERigVMOpCode::JumpAbsolute:
+			{
+				const FRigVMJumpOp& Op = ByteCode.GetOpAt<FRigVMJumpOp>(Instruction);
+				TargetInstructionIndices.AddUnique(Op.InstructionIndex);
+				break;
+			}
+			case ERigVMOpCode::JumpAbsoluteIf:
+			{
+				const FRigVMJumpIfOp& Op = ByteCode.GetOpAt<FRigVMJumpIfOp>(Instruction);
+				TargetInstructionIndices.AddUnique(Op.InstructionIndex);
+				break;
+			}
+			case ERigVMOpCode::JumpForward:
+			{
+				const FRigVMJumpOp& Op = ByteCode.GetOpAt<FRigVMJumpOp>(Instruction);
+				TargetInstructionIndices.AddUnique(SelectedItem->InstructionIndex + Op.InstructionIndex);
+				break;
+			}
+			case ERigVMOpCode::JumpForwardIf:
+			{
+				const FRigVMJumpIfOp& Op = ByteCode.GetOpAt<FRigVMJumpIfOp>(Instruction);
+				TargetInstructionIndices.AddUnique(SelectedItem->InstructionIndex + Op.InstructionIndex);
+				break;
+			}
+			case ERigVMOpCode::JumpBackward:
+			{
+				const FRigVMJumpOp& Op = ByteCode.GetOpAt<FRigVMJumpOp>(Instruction);
+				TargetInstructionIndices.AddUnique(SelectedItem->InstructionIndex - Op.InstructionIndex);
+				break;
+			}
+			case ERigVMOpCode::JumpBackwardIf:
+			{
+				const FRigVMJumpIfOp& Op = ByteCode.GetOpAt<FRigVMJumpIfOp>(Instruction);
+				TargetInstructionIndices.AddUnique(SelectedItem->InstructionIndex - Op.InstructionIndex);
+				break;
+			}
+			case ERigVMOpCode::RunInstructions:
+			{
+				const FRigVMRunInstructionsOp& Op = ByteCode.GetOpAt<FRigVMRunInstructionsOp>(Instruction);
+				for(int32 Index = Op.StartInstruction; Index <= Op.EndInstruction; Index++)
+				{
+					TargetInstructionIndices.AddUnique(Index);
+				}
+				break;
+			}
+			default:
+			{
+				break;
+			}
+		}
+	}
+
+	TMap<int32, TSharedPtr<FRigStackEntry>> InstructionToEntry;
+	for(const TSharedPtr<FRigStackEntry>& Entry : Operators)
+	{
+		InstructionToEntry.Add(Entry->InstructionIndex, Entry);
+	}
+
+	for(const int32 TargetInstructionIndex : TargetInstructionIndices)
+	{
+		if(const TSharedPtr<FRigStackEntry>* EntryPtr = InstructionToEntry.Find(TargetInstructionIndex))
+		{
+			TargetItems.Add(*EntryPtr);
+		}
+	}
+
+	return TargetItems;
+}
+
+void SRigVMExecutionStackView::UpdateTargetItemHighlighting()
+{
+	TreeView->ClearHighlightedItems();
+	
+	const TArray<TSharedPtr<FRigStackEntry>> TargetItems = GetTargetItems(TreeView->GetSelectedItems());
+	for(const TSharedPtr<FRigStackEntry>& TargetItem : TargetItems)
+	{
+		if(!TreeView->IsItemSelected(TargetItem))
+		{
+			TreeView->SetItemHighlighted(TargetItem, true);
+		}
+	}
+}
+
+void SRigVMExecutionStackView::OnVMCompiled(UObject* InCompiledObject, URigVM* InCompiledVM, FRigVMExtendedExecuteContext& InVMContext)
+{
+	RefreshTreeView(InCompiledVM, &InVMContext);
 
 	if (RigVMEditor.IsValid() && !OnHostInitializedHandle.IsValid())
 	{
@@ -914,7 +1066,11 @@ void SRigVMExecutionStackView::HandleExecutionHalted(const int32 InHaltedAtInstr
 void SRigVMExecutionStackView::OnFilterTextChanged(const FText& SearchText)
 {
 	FilterText = SearchText;
-	RefreshTreeView(RigVMEditor.Pin()->GetRigVMHost()->GetVM());
+	URigVMHost* RigVMHost = RigVMEditor.Pin()->GetRigVMHost();
+	if (RigVMHost != nullptr)
+	{
+		RefreshTreeView(RigVMHost->GetVM(), &RigVMHost->GetRigVMExtendedExecuteContext());
+	}
 }
 
 void SRigVMExecutionStackView::HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URigVMGraph* InGraph, UObject* InSubject)
@@ -960,7 +1116,14 @@ void SRigVMExecutionStackView::HandleModifiedEvent(ERigVMGraphNotifType InNotifT
 					}
 				}
 			}
-			TreeView->SetItemSelection(SelectedItems, true, ESelectInfo::Direct);
+
+			if(!SelectedItems.IsEmpty())
+			{
+				TreeView->SetItemSelection(SelectedItems, true, ESelectInfo::Direct);
+				TreeView->RequestScrollIntoView(SelectedItems[0]);
+			}
+
+			UpdateTargetItemHighlighting();
 			break;
 		}
 		default:
@@ -974,7 +1137,7 @@ void SRigVMExecutionStackView::HandleHostInitializedEvent(URigVMHost* InHost, co
 {
 	TGuardValue<bool> SuspendControllerSelection(bSuspendControllerSelection, true);
 
-	RefreshTreeView(InHost->GetVM());
+	RefreshTreeView(InHost->GetVM(), &InHost->GetRigVMExtendedExecuteContext());
 	OnSelectionChanged(TSharedPtr<FRigStackEntry>(), ESelectInfo::Direct);
 
 	for (TSharedPtr<FRigStackEntry>& Operator : Operators)
@@ -1013,6 +1176,10 @@ void SRigVMExecutionStackView::HandleHostInitializedEvent(URigVMHost* InHost, co
 
 void SRigVMExecutionStackView::HandlePreviewHostUpdated(FRigVMEditor* InEditor)
 {
+	if(URigVMHost* RigVMHost = InEditor->GetRigVMHost())
+	{
+		RefreshTreeView(RigVMHost->GetVM(), &RigVMHost->GetRigVMExtendedExecuteContext());
+	}
 }
 
 void SRigVMExecutionStackView::HandleItemMouseDoubleClick(TSharedPtr<FRigStackEntry> InItem)

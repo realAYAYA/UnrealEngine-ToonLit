@@ -149,7 +149,7 @@ void UMovieSceneAudioTrack::PostRename(UObject* OldOuter, const FName OldName)
 	Super::PostRename(OldOuter, OldName);
 
 	// Recache the channel proxy because attach in FAudioChannelEditorData is dependent upon the outer chain
-	for (TObjectPtr<UMovieSceneSection> Section : AudioSections)
+	for (TObjectPtr<UMovieSceneSection>& Section : AudioSections)
 	{
 		if (UMovieSceneAudioSection* AudioSection = Cast<UMovieSceneAudioSection>(Section.Get()))
 		{

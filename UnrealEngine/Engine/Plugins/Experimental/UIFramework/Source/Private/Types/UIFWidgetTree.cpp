@@ -167,9 +167,6 @@ void FUIFrameworkWidgetTree::PostReplicatedChange(const TArrayView<int32>& Chang
 	}
 }
 
-void FUIFrameworkWidgetTree::PostReplicatedReceive(FPostReplicatedReceiveParameters Param)
-{}
-
 bool FUIFrameworkWidgetTree::ReplicateSubWidgets(UActorChannel* Channel, FOutBunch* Bunch, FReplicationFlags* RepFlags)
 {
 	bool bWroteSomething = false;
@@ -219,7 +216,18 @@ void FUIFrameworkWidgetTree::AuthorityAddChildInternal(UUIFrameworkWidget* Paren
 			//If the outer is the transient package, then there are no replication owner yetand it safe to rename it with the correct new outer.
 			//If the Outer is not the transient, then the widget got replicated with another player.There are no "reset" and we should duplicate and delete the object.
 			//For now only do the rename.It works but it is not the best.
-			Child->Rename(nullptr, ReplicatedOwner);
+
+			UObject* OldOuter = Child->GetOuter();
+
+			UE_AUTORTFM_OPEN(
+			{
+				Child->Rename(nullptr, ReplicatedOwner);
+			});
+
+			UE_AUTORTFM_ONABORT(
+			{
+				Child->Rename(nullptr, OldOuter);
+			});
 		}
 	}
 

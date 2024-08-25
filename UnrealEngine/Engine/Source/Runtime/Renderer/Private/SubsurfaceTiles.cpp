@@ -138,5 +138,4 @@ const TCHAR* ToString(FSubsurfaceTiles::ETileType Type)
 	case FSubsurfaceTiles::ETileType::SEPARABLE:		return TEXT("SSS(Separable)");
 	default:											return TEXT("Unknown");
 	}
-	return TEXT("Unknown");
 }

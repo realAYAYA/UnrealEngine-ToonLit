@@ -16,6 +16,7 @@ public:
 	virtual ~FValidationTransientResourceAllocator();
 
 	// Implementation of FRHITransientResourceAllocator interface
+	virtual bool SupportsResourceType(ERHITransientResourceType InType) const override final { return RHIAllocator->SupportsResourceType(InType); }
 	virtual FRHITransientTexture* CreateTexture(const FRHITextureCreateInfo& InCreateInfo, const TCHAR* InDebugName, uint32 InPassIndex) override final;
 	virtual FRHITransientBuffer* CreateBuffer(const FRHIBufferCreateInfo& InCreateInfo, const TCHAR* InDebugName, uint32 InPassIndex) override final;
 	virtual void DeallocateMemory(FRHITransientTexture* InTexture, uint32 InPassIndex) override final;

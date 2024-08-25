@@ -201,7 +201,8 @@ void UNiagaraDataInterfaceVolumeCache::ProvidePerInstanceDataForRenderThread(voi
 	DataFromGT->NumCells = InstanceData->NumCells;
 }
 
-void UNiagaraDataInterfaceVolumeCache::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceVolumeCache::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {	
 	{
 		FNiagaraFunctionSignature Sig;
@@ -315,6 +316,7 @@ void UNiagaraDataInterfaceVolumeCache::GetFunctions(TArray<FNiagaraFunctionSigna
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceVolumeCache::SetFrame(FVectorVMExternalFunctionContext& Context)
 {

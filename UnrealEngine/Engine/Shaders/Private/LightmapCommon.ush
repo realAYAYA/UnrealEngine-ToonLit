@@ -274,7 +274,7 @@ half4 GetPrecomputedShadowMasks(VTPageTableResult LightmapVTPageTableResult, FVe
 		{
 			#if !PRECOMPUTED_IRRADIANCE_VOLUME_LIGHTING
 				// Compute brick UVs if we haven't already
-				VolumetricLightmapBrickTextureUVs = ComputeVolumetricLightmapBrickTextureUVs(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition));
+				VolumetricLightmapBrickTextureUVs = ComputeVolumetricLightmapBrickTextureUVs(WSHackToFloat(GetWorldPosition(MaterialParameters)));
 			#endif
 
 			DirectionalLightShadowing = GetVolumetricLightmapDirectionalLightShadowing(VolumetricLightmapBrickTextureUVs);

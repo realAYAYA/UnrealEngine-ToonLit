@@ -25,6 +25,8 @@ protected:
 	virtual TSharedRef<SWidget> AddContainerForRowWidgets(TSharedRef<SWidget> RowWidgets);
 
 private:
+	void ConstructHeaderValues(TSharedRef<SHorizontalBox> HorizontalBox);
+
 	FReply EditModeButtonClicked();
 	EVisibility IsEditButtonVisible() const;
 	FText GetEditModeButtonToolTipText() const;
@@ -46,6 +48,8 @@ private:
 	ECheckBoxState CheckEnabledStatus() const;
 
 	bool GetEnabledCheckBoxEnabled() const;
+
+	bool GetEntryIsEnabled() const;
 
 private:
 	UNiagaraStackItem* Item;

@@ -19,24 +19,20 @@
 			"Name": "PixelStreamingPlayer",
 			"Type": "Runtime",
 			"LoadingPhase": "PreDefault",
-			"PlatformAllowList": [ "Win64" ],
+			"PlatformAllowList": [ "Win64", "Linux" ],
 			"TargetDenyList": [ "Server" ]
 		},
 		{
 			"Name": "PixelStreamingPlayerEditor",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit",
-			"PlatformAllowList": [ "Win64" ],
+			"PlatformAllowList": [ "Win64", "Linux" ],
 			"TargetDenyList": [ "Server" ]
 		}
 	],
 	"Plugins": [
 		{
 			"Name": "PixelStreaming",
-			"Enabled": true
-		},
-		{
-			"Name": "TextureMediaPlayer",
 			"Enabled": true
 		}
 	]

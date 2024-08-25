@@ -133,7 +133,7 @@ namespace Generator
 	{
 		TextureMipGenSettings MipGenSettings = Property.MipGenSettings;
 
-		if (!Texture->Source.IsPowerOfTwo())
+		if (!Texture->Source.AreAllBlocksPowerOfTwo())
 		{
 			MipGenSettings = TMGS_NoMipmaps;
 

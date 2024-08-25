@@ -9,6 +9,7 @@
 #include "MassGameplaySettings.h"
 #include "MassSpawnLocationProcessor.h"
 #include "Engine/World.h"
+#include "MassCommonUtils.h"
 
 void UMassEntityZoneGraphSpawnPointsGenerator::Generate(UObject& QueryOwner, TConstArrayView<FMassSpawnedEntityType> EntityTypes, int32 Count, FFinishedGeneratingSpawnDataSignature& FinishedGeneratingSpawnPointsDelegate) const
 {
@@ -27,7 +28,7 @@ void UMassEntityZoneGraphSpawnPointsGenerator::Generate(UObject& QueryOwner, TCo
 
 	TArray<FVector> Locations;
 	
-	const FRandomStream RandomStream(GetRandomSelectionSeed());
+	const FRandomStream RandomStream(UE::Mass::Utils::OverrideRandomSeedForTesting(GetRandomSelectionSeed()));
 	const TConstArrayView<FRegisteredZoneGraphData> RegisteredZoneGraphs = ZoneGraph->GetRegisteredZoneGraphData();
 	if (RegisteredZoneGraphs.IsEmpty())
 	{

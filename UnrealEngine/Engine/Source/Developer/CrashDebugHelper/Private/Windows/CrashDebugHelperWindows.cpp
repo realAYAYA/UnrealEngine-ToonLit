@@ -8,7 +8,6 @@
 
 #include "Misc/EngineVersion.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <DbgHelp.h>
 

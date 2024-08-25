@@ -1,0 +1,31 @@
+{
+	"FileVersion": 3,
+	"bIsPluginExtension": true,
+	"SupportedTargetPlatforms": [
+		"VisionOS"
+	],
+	"Modules": [
+		{
+			"Name": "OpenXRHMD",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"VisionOS"
+			]
+		},
+		{
+			"Name": "OpenXRInput",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"VisionOS"
+			]
+		},
+		{
+			"Name": "OpenXRAR",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"VisionOS"
+			]
+		}
+	]
+}
+

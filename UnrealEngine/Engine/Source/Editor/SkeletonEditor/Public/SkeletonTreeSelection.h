@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Algo/AnyOf.h"
 #include "ISkeletonTreeItem.h"
 
 /** Helper for processing tree selections */
@@ -42,6 +43,17 @@ public:
 		return false;
 	}
 
+	template<typename... ItemTypes>
+	bool IsSingleOfTypesSelected() const
+	{
+		if (IsSingleItemSelected())
+		{
+			const bool bTypeResults[] = { false, (SelectedItems[0]->IsOfType<ItemTypes>())... };
+			return Algo::AnyOf(bTypeResults);
+		}
+		return false;
+	}
+
 	TSharedPtr<ISkeletonTreeItem> GetSingleSelectedItem()
 	{
 		check(IsSingleItemSelected());
@@ -62,6 +74,21 @@ public:
 		return false;
 	}
 
+	template<typename... ItemTypes>
+	bool HasSelectedOfTypes() const
+	{
+		for (const TSharedPtr<ISkeletonTreeItem>& SelectedItem : SelectedItems)
+		{
+			const bool bTypeResults[] = { false, (SelectedItem->IsOfType<ItemTypes>())... };
+			if (Algo::AnyOf(bTypeResults))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	template<typename ItemType>
 	TArray<TSharedPtr<ItemType>> GetSelectedItems() const
 	{
@@ -71,6 +98,21 @@ public:
 			if (SelectedItem->IsOfType<ItemType>())
 			{
 				Items.Add(StaticCastSharedPtr<ItemType>(SelectedItem));
+			}
+		}
+		return Items;
+	}
+
+	template<typename... ItemTypes>
+	TArray<TSharedPtr<ISkeletonTreeItem>> GetSelectedItemsOfTypes() const
+	{
+		TArray<TSharedPtr<ISkeletonTreeItem>> Items;
+		for (const TSharedPtr<ISkeletonTreeItem>& SelectedItem : SelectedItems)
+		{
+			const bool bTypeResults[] = { false, (SelectedItem->IsOfType<ItemTypes>())... };
+			if (Algo::AnyOf(bTypeResults))
+			{
+				Items.Add(SelectedItem);
 			}
 		}
 		return Items;

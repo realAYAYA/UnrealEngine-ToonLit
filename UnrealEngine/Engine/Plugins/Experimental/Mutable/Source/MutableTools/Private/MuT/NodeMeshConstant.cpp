@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshConstant::Private::s_type =
-			NODE_TYPE( "MeshConstant", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshConstant::Private::s_type =
+			FNodeType( "MeshConstant", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,32 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeMeshConstant, EType::Constant, Node, Node::EType::Mesh);
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshConstant::GetInputCount() const
-	{
-		return m_pD->m_layouts.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshConstant::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<m_pD->m_layouts.Num() );
-		return m_pD->m_layouts[i].get();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshConstant::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<m_pD->m_layouts.Num() );
-
-		m_pD->m_layouts[i] = dynamic_cast<NodeLayout*>( pNode.get() );
-	}
 
 
 	//---------------------------------------------------------------------------------------------

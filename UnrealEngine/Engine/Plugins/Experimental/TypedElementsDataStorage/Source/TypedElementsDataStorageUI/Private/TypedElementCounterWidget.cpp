@@ -19,18 +19,31 @@
 #define LOCTEXT_NAMESPACE "TypedElementUI_CounterWidget"
 
 
+FAutoConsoleCommand EnableCounterWidgetsConsoleCommand(
+	TEXT("TEDS.UI.EnableCounterWidgets"),
+	TEXT("Adds registered counter widgets to the bottom right status bar of the main editor window."),
+	FConsoleCommandDelegate::CreateLambda([]()
+		{
+			UTypedElementCounterWidgetFactory::EnableCounterWidgets();
+		}));
+
 //
 // UTypedElementCounterWidgetFactory
 //
 
 FName UTypedElementCounterWidgetFactory::WigetPurpose(TEXT("LevelEditor.StatusBar.ToolBar"));
+bool UTypedElementCounterWidgetFactory::bAreCounterWidgetsEnabled{ false };
+bool UTypedElementCounterWidgetFactory::bHasBeenSetup{ false };
 
 UTypedElementCounterWidgetFactory::UTypedElementCounterWidgetFactory()
 {
-	IMainFrameModule::Get().OnMainFrameCreationFinished().AddStatic(&UTypedElementCounterWidgetFactory::SetupMainWindowIntegrations);
+	if (bAreCounterWidgetsEnabled)
+	{
+		IMainFrameModule::Get().OnMainFrameCreationFinished().AddStatic(&UTypedElementCounterWidgetFactory::SetupMainWindowIntegrations);
+	}
 }
 
-void UTypedElementCounterWidgetFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const
+void UTypedElementCounterWidgetFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage)
 {
 	using namespace TypedElementQueryBuilder;
 	using DSI = ITypedElementDataStorageInterface;
@@ -101,39 +114,49 @@ void UTypedElementCounterWidgetFactory::RegisterWidgetConstructors(ITypedElement
 	DataStorageUi.RegisterWidgetFactory(WigetPurpose, MoveTemp(WidgetCounter));
 }
 
+void UTypedElementCounterWidgetFactory::EnableCounterWidgets()
+{
+	bAreCounterWidgetsEnabled = true;
+	UTypedElementCounterWidgetFactory::SetupMainWindowIntegrations(nullptr, false);
+}
+
 void UTypedElementCounterWidgetFactory::SetupMainWindowIntegrations(TSharedPtr<SWindow> ParentWindow, bool bIsRunningStartupDialog)
 {
-	UTypedElementRegistry* Registry = UTypedElementRegistry::GetInstance();
-	checkf(Registry, TEXT(
-		"FTypedElementsDataStorageUiModule didn't find the UTypedElementRegistry during main window integration when it should be available."));
-
-	ITypedElementDataStorageUiInterface* UiInterface = Registry->GetMutableDataStorageUi();
-	checkf(UiInterface, TEXT(
-		"FTypedElementsDataStorageUiModule tried to integrate with the main window before the "
-		"Typed Elements Data Storage UI interface is available."));
-
-	UToolMenu* Menu = UToolMenus::Get()->ExtendMenu(WigetPurpose);
-
-	TArray<TSharedRef<SWidget>> Widgets;
-	UiInterface->ConstructWidgets(WigetPurpose, {},
-		[&Widgets](const TSharedRef<SWidget>& NewWidget, TypedElementRowHandle Row)
-		{
-			Widgets.Add(NewWidget);
-		});
-
-	if (!Widgets.IsEmpty())
+	if (!bHasBeenSetup)
 	{
-		FToolMenuSection& Section = Menu->AddSection("DataStorageSection");
-		int32 WidgetCount = Widgets.Num();
+		UTypedElementRegistry* Registry = UTypedElementRegistry::GetInstance();
+		checkf(Registry, TEXT(
+			"FTypedElementsDataStorageUiModule didn't find the UTypedElementRegistry during main window integration when it should be available."));
 
-		Section.AddEntry(FToolMenuEntry::InitWidget("DataStorageStatusBarWidget_0", MoveTemp(Widgets[0]), FText::GetEmpty()));
-		for (int32 I = 1; I < WidgetCount; ++I)
+		ITypedElementDataStorageUiInterface* UiInterface = Registry->GetMutableDataStorageUi();
+		checkf(UiInterface, TEXT(
+			"FTypedElementsDataStorageUiModule tried to integrate with the main window before the "
+			"Typed Elements Data Storage UI interface is available."));
+
+		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu(WigetPurpose);
+
+		TArray<TSharedRef<SWidget>> Widgets;
+		UiInterface->ConstructWidgets(WigetPurpose, {},
+			[&Widgets](const TSharedRef<SWidget>& NewWidget, TypedElementRowHandle Row)
+			{
+				Widgets.Add(NewWidget);
+			});
+
+		if (!Widgets.IsEmpty())
 		{
-			Section.AddSeparator(FName(*FString::Format(TEXT("DataStorageStatusBarWidgetDivider_{0}"), { FString::FromInt(I) })));
-			Section.AddEntry(FToolMenuEntry::InitWidget(
-				FName(*FString::Format(TEXT("DataStorageStatusBarWidget_{0}"), { FString::FromInt(I) })),
-				MoveTemp(Widgets[I]), FText::GetEmpty()));
+			FToolMenuSection& Section = Menu->AddSection("DataStorageSection");
+			int32 WidgetCount = Widgets.Num();
+
+			Section.AddEntry(FToolMenuEntry::InitWidget("DataStorageStatusBarWidget_0", MoveTemp(Widgets[0]), FText::GetEmpty()));
+			for (int32 I = 1; I < WidgetCount; ++I)
+			{
+				Section.AddSeparator(FName(*FString::Format(TEXT("DataStorageStatusBarWidgetDivider_{0}"), { FString::FromInt(I) })));
+				Section.AddEntry(FToolMenuEntry::InitWidget(
+					FName(*FString::Format(TEXT("DataStorageStatusBarWidget_{0}"), { FString::FromInt(I) })),
+					MoveTemp(Widgets[I]), FText::GetEmpty()));
+			}
 		}
+		bHasBeenSetup = true;
 	}
 }
 
@@ -154,12 +177,7 @@ TConstArrayView<const UScriptStruct*> FTypedElementCounterWidgetConstructor::Get
 	return Columns;
 }
 
-bool FTypedElementCounterWidgetConstructor::CanBeReused() const
-{
-	return true;
-}
-
-TSharedPtr<SWidget> FTypedElementCounterWidgetConstructor::CreateWidget()
+TSharedPtr<SWidget> FTypedElementCounterWidgetConstructor::CreateWidget(const TypedElementDataStorage::FMetaDataView& Arguments)
 {
 	return SNew(STextBlock)
 		.Text(FText::Format(LabelText, 0))

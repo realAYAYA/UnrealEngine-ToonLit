@@ -35,6 +35,11 @@ public:
 	virtual FString GetSessionID() const override;
 	virtual bool SetSessionID(const FString& InSessionID) override;
 
+	virtual void SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)  override;
+	virtual TArray<FAnalyticsEventAttribute> GetDefaultEventAttributesSafe() const override;
+	virtual int32 GetDefaultEventAttributeCount() const  override;
+	virtual FAnalyticsEventAttribute GetDefaultEventAttribute(int AttributeIndex) const  override;
+
 	virtual void RecordEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes) override;
 	virtual void RecordItemPurchase(const FString& ItemId, const FString& Currency, int PerItemCost, int ItemQuantity) override;
 	virtual void RecordCurrencyPurchase(const FString& GameCurrencyType, int GameCurrencyAmount, const FString& RealCurrencyType, float RealMoneyCost, const FString& PaymentProvider) override;
@@ -74,6 +79,8 @@ private:
 	int EventRateDetectionWindowCount;
 	static double kEventRateDetectionWindowTimeSec;
 	static int kEventRateDetectionCountThreshold;
+
+	TArray<FAnalyticsEventAttribute>		DefaultEventAttributes;
 
 	/**
 	 * Delegate called when an event Http request completes
@@ -348,9 +355,22 @@ void FAnalyticsProviderSwrve::RecordEvent(const FString& EventName, const TArray
 {
 	// encode params as Json
 	FString EventParams = TEXT("swrve_payload=");
+
 	if (Attributes.Num() > 0)
 	{
 		EventParams += TEXT("{");
+
+		// Add the default attributes
+		for (int Ndx = 0; Ndx < DefaultEventAttributes.Num(); ++Ndx)
+		{
+			if (Ndx > 0)
+			{
+				EventParams += TEXT(",");
+			}
+			EventParams += FString(TEXT("\"")) + DefaultEventAttributes[Ndx].GetName() + TEXT("\": \"") + DefaultEventAttributes[Ndx].GetValue() + TEXT("\"");
+		}
+
+		// Add the event attributes
 		for (int Ndx=0;Ndx<Attributes.Num();++Ndx)
 		{
 			if (Ndx > 0)
@@ -422,6 +442,26 @@ void FAnalyticsProviderSwrve::ABTestRequestComplete(
 		UE_LOG(LogAnalytics, Warning, TEXT("Swrve ABTest response for [%s]. No response"), 
 			*HttpRequest->GetURL());
 	}
+}
+
+void FAnalyticsProviderSwrve::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
+{
+	DefaultEventAttributes = Attributes;
+}
+
+TArray<FAnalyticsEventAttribute> FAnalyticsProviderSwrve::GetDefaultEventAttributesSafe() const
+{
+	return DefaultEventAttributes;
+}
+
+int32 FAnalyticsProviderSwrve::GetDefaultEventAttributeCount() const
+{
+	return DefaultEventAttributes.Num();
+}
+
+FAnalyticsEventAttribute FAnalyticsProviderSwrve::GetDefaultEventAttribute(int AttributeIndex) const
+{
+	return DefaultEventAttributes[AttributeIndex];
 }
 
 #endif // PLATFORM_DESKTOP

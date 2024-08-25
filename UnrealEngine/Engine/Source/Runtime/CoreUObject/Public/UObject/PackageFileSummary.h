@@ -12,6 +12,10 @@
 #include "Serialization/StructuredArchive.h"
 #include "UObject/ObjectVersion.h"
 
+#if WITH_EDITORONLY_DATA
+#include "IO/IoHash.h"
+#endif
+
 class FArchive;
 struct FCompressedChunk;
 
@@ -162,10 +166,7 @@ public:
 	*/
 	int32		ThumbnailTableOffset;
 
-	/**
-	* Current id for this package
-	*/
-	UE_DEPRECATED(4.27, "UPackage::Guid has not been used by the engine for a long time and FPackageFileSummary::Guid will be removed.")
+	UE_DEPRECATED(5.4, "Use GetSavedHash/SetSavedHash instead.")
 	FGuid	Guid;
 
 #if WITH_EDITORONLY_DATA
@@ -330,6 +331,12 @@ public:
 
 	/** Set the summary package flags while stripping out temporary flags (i.e. NewlyCreated, IsSaving) */
 	void SetPackageFlags(uint32 InPackageFlags);
+
+#if WITH_EDITORONLY_DATA
+	/** Hash of the package's .uasset/.umap file when it was last saved by the editor. */
+	COREUOBJECT_API FIoHash GetSavedHash() const;
+	COREUOBJECT_API void SetSavedHash(const FIoHash& InSavedHash);
+#endif
 
 	/** I/O functions */
 	friend COREUOBJECT_API FArchive& operator<<(FArchive& Ar, FPackageFileSummary& Sum);

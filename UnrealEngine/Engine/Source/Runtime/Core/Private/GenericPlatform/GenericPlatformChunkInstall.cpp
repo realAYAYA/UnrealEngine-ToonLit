@@ -1,58 +1,48 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GenericPlatform/GenericPlatformChunkInstall.h"
-#include "HAL/PlatformMisc.h"
+#include "Containers/Ticker.h"
 
 DEFINE_LOG_CATEGORY(LogChunkInstaller)
 
-
-
-/*
- *  Functionality to to implement the deprecated 'FCustomChunk' API using the new 'named chunk' API
- */
-
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-
-
-bool FGenericPlatformChunkInstall_WithEmulatedCustomChunks::IsChunkInstallationPending(const TArray<FCustomChunk>& ChunkTagsID)
+void FGenericPlatformChunkInstall::DoNamedChunkCompleteCallbacks( const FName NamedChunk, EChunkLocation::Type Location, bool bHasSucceeded ) const
 {
-	for (const FCustomChunk& CustomChunk : ChunkTagsID)
-	{
-		if (IsNamedChunkInProgress(FName(CustomChunk.ChunkTag)) || IsNamedChunkInProgress(FName(CustomChunk.ChunkTag2)) )
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
-bool FGenericPlatformChunkInstall_WithEmulatedCustomChunks::InstallChunks(const TArray<FCustomChunk>& ChunkTagsID)
-{
-	for (const FCustomChunk& CustomChunk : ChunkTagsID)
-	{
-		if (!InstallNamedChunk(FName(CustomChunk.ChunkTag)) && !InstallNamedChunk(FName(CustomChunk.ChunkTag2)))
-		{
-			return false;
-		}
-	}
-
-	return true;
-}
-
-bool FGenericPlatformChunkInstall_WithEmulatedCustomChunks::UninstallChunks(const TArray<FCustomChunk>& ChunkTagsID)
-{
-	for (const FCustomChunk& CustomChunk : ChunkTagsID)
-	{
-		if (!UninstallNamedChunk(FName(CustomChunk.ChunkTag)) && !UninstallNamedChunk(FName(CustomChunk.ChunkTag2)))
-		{
-			return false;
-		}
-	}
-
-	return true;
+	DoNamedChunkCompleteCallbacks( MakeArrayView(&NamedChunk,1), Location, bHasSucceeded );
 }
 
 
+void FGenericPlatformChunkInstall::DoNamedChunkCompleteCallbacks( const TArrayView<const FName>& NamedChunks, EChunkLocation::Type Location, bool bHasSucceeded ) const
+{
+	if (NamedChunks.Num() == 0)
+	{
+		return;
+	}
 
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	// always defer the callback until the next gamethread tick even if we're on the gamethread already to ensure consistency
+	TArray<FName> CachedNamedChunks(NamedChunks);
+	ExecuteOnGameThread(UE_SOURCE_LOCATION, [this, NamedChunks = MoveTemp(CachedNamedChunks), Location, bHasSucceeded]()
+	{
+		bool bIsInstalled = (Location == EChunkLocation::LocalFast) || (Location == EChunkLocation::LocalSlow);
+
+		for (const FName& NamedChunk : NamedChunks)
+		{
+			if (NamedChunkCompleteDelegate.IsBound())
+			{
+				FNamedChunkCompleteCallbackParam Param;
+				Param.NamedChunk = NamedChunk;
+				Param.Location = Location;
+				Param.bIsInstalled = bIsInstalled;
+				Param.bHasSucceeded = bHasSucceeded;
+
+				NamedChunkCompleteDelegate.Broadcast(Param);
+			}
+
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			if (bIsInstalled && NamedChunkInstallDelegate.IsBound())
+			{
+				NamedChunkInstallDelegate.Broadcast(NamedChunk, bHasSucceeded);
+			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		}
+	});
+}

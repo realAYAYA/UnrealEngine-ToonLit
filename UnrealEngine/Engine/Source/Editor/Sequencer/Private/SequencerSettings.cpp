@@ -4,6 +4,7 @@
 #include "KeyParams.h"
 #include "ISequencer.h"
 #include "SSequencer.h"
+#include "MVVM/ViewModels/ViewDensity.h"
 
 USequencerSettings::USequencerSettings( const FObjectInitializer& ObjectInitializer )
 	: Super( ObjectInitializer )
@@ -49,7 +50,7 @@ USequencerSettings::USequencerSettings( const FObjectInitializer& ObjectInitiali
 	bShowKeyBars = true;
 	bInfiniteKeyAreas = false;
 	bShowChannelColors = false;
-	bShowStatusBar = true;
+	bShowInfoButton = true;
 	ReduceKeysTolerance = KINDA_SMALL_NUMBER;
 	KeyAreaHeightWithCurves = SequencerLayoutConstants::KeyAreaHeight;
 	bDeleteKeysWhenTrimming = true;
@@ -62,9 +63,11 @@ USequencerSettings::USequencerSettings( const FObjectInitializer& ObjectInitiali
 	TrajectoryPathCap = 250;
 	FrameNumberDisplayFormat = EFrameNumberDisplayFormats::Seconds;
 	bAutoExpandNodesOnSelection = true;
+	bRestoreOriginalViewportOnCameraCutUnlock = true;
 	TreeViewWidth = 0.3f;
 	bShowTickLines = true;
 	bShowSequencerToolbar = true;
+	ViewDensity = "Relaxed";
 
 	SectionColorTints.Add(FColor(88, 102, 142, 255)); // blue
 	SectionColorTints.Add(FColor(99, 137, 132, 255)); // blue-green
@@ -623,16 +626,16 @@ void USequencerSettings::SetShowChannelColors(bool InbShowChannelColors)
 	}
 }
 
-bool USequencerSettings::GetShowStatusBar() const
+bool USequencerSettings::GetShowInfoButton() const
 {
-	return bShowStatusBar;
+	return bShowInfoButton;
 }
 
-void USequencerSettings::SetShowStatusBar(bool InbShowStatusBar)
+void USequencerSettings::SetShowInfoButton(bool InbShowInfoButton)
 {
-	if (bShowStatusBar != InbShowStatusBar)
+	if (bShowInfoButton != InbShowInfoButton)
 	{
-		bShowStatusBar = InbShowStatusBar;
+		bShowInfoButton = InbShowInfoButton;
 		SaveConfig();
 	}
 }
@@ -960,11 +963,44 @@ void USequencerSettings::SetAutoExpandNodesOnSelection(bool bInAutoExpandNodesOn
 	}
 }
 
+void USequencerSettings::SetRestoreOriginalViewportOnCameraCutUnlock(bool bInRestoreOriginalViewportOnCameraCutUnlock)
+{
+	if (bInRestoreOriginalViewportOnCameraCutUnlock != bRestoreOriginalViewportOnCameraCutUnlock)
+	{
+		bRestoreOriginalViewportOnCameraCutUnlock = bInRestoreOriginalViewportOnCameraCutUnlock;
+		SaveConfig();
+	}
+}
+
 void USequencerSettings::SetTreeViewWidth(float InTreeViewWidth)
 {
 	if (InTreeViewWidth != TreeViewWidth)
 	{
 		TreeViewWidth = InTreeViewWidth;
+		SaveConfig();
+	}
+}
+
+UE::Sequencer::EViewDensity USequencerSettings::GetViewDensity() const
+{
+	static FName NAME_Compact("Compact");
+	static FName NAME_Relaxed("Relaxed");
+	if (ViewDensity == NAME_Compact)
+	{
+		return UE::Sequencer::EViewDensity::Compact;
+	}
+	if (ViewDensity == NAME_Relaxed)
+	{
+		return UE::Sequencer::EViewDensity::Relaxed;
+	}
+	return UE::Sequencer::EViewDensity::Variable;
+}
+
+void USequencerSettings::SetViewDensity(FName InViewDensity)
+{
+	if (InViewDensity != ViewDensity)
+	{
+		ViewDensity = InViewDensity;
 		SaveConfig();
 	}
 }
@@ -991,5 +1027,14 @@ void USequencerSettings::SetTrackFilterEnabled(const FString & TrackFilter, bool
 			TrackFilters.Remove(TrackFilter);
 			SaveConfig();
 		}
+	}
+}
+
+void USequencerSettings::SetOutlinerColumnVisibility(const TArray<FColumnVisibilitySetting>& InColumnVisibilitySettings)
+{
+	if (InColumnVisibilitySettings != ColumnVisibilitySettings)
+	{
+		ColumnVisibilitySettings = InColumnVisibilitySettings;
+		SaveConfig();
 	}
 }

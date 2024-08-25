@@ -23,20 +23,21 @@
 #include "IDetailPropertyRow.h"
 
 class AActor;
-struct FAssetData;
 class FAssetThumbnailPool;
 class FPropertyEditor;
+class IClassViewerFilter;
+class IDetailCategoryBuilder;
 class IDetailChildrenBuilder;
+class IDetailGroup;
 class IDetailLayoutBuilder;
+class IPropertyHandle;
 class SPropertyEditorAsset;
 class SPropertyEditorClass;
 class SPropertyEditorStruct;
+class SToolTip;
 class UActorComponent;
 class UFactory;
-class SToolTip;
-class IPropertyHandle;
-class IDetailGroup;
-class IDetailCategoryBuilder;
+struct FAssetData;
 struct FSceneOutlinerFilters;
 
 DECLARE_DELEGATE_OneParam(FOnAssetSelected, const FAssetData& /*AssetData*/);
@@ -99,7 +100,7 @@ namespace PropertyCustomizationHelpers
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeClearButton( FSimpleDelegate OnClearClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true );
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeVisibilityButton(FOnClicked OnVisibilityClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> VisibilityDelegate = true);
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeNewBlueprintButton( FSimpleDelegate OnNewBlueprintClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true );
-	PROPERTYEDITOR_API TSharedRef<SWidget> MakeUseSelectedButton( FSimpleDelegate OnUseSelectedClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true );
+	PROPERTYEDITOR_API TSharedRef<SWidget> MakeUseSelectedButton( FSimpleDelegate OnUseSelectedClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true, const bool IsActor = false );
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeBrowseButton( FSimpleDelegate OnFindClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true, const bool IsActor = false);
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeAssetPickerAnchorButton( FOnGetAllowedClasses OnGetAllowedClasses, FOnAssetSelected OnAssetSelectedFromPicker, const TSharedPtr<IPropertyHandle>& PropertyHandle = TSharedPtr<IPropertyHandle>());
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeAssetPickerWithMenu( const FAssetData& InitialObject, const bool AllowClear, const TArray<const UClass*>& AllowedClasses, const TArray<UFactory*>& NewAssetFactories, FOnShouldFilterAsset OnShouldFilterAsset, FOnAssetSelected OnSet, FSimpleDelegate OnClose, const TSharedPtr<IPropertyHandle>& PropertyHandle = TSharedPtr<IPropertyHandle>(), const TArray<FAssetData>& OwnerAssetArray = TArray<FAssetData>());
@@ -108,12 +109,15 @@ namespace PropertyCustomizationHelpers
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeAssetPickerWithMenu( const FAssetData& InitialObject, const bool AllowClear, const bool AllowCopyPaste, const TArray<const UClass*>& AllowedClasses, const TArray<const UClass*>& DisallowedClasses, const TArray<UFactory*>& NewAssetFactories, FOnShouldFilterAsset OnShouldFilterAsset, FOnAssetSelected OnSet, FSimpleDelegate OnClose, const TSharedPtr<IPropertyHandle>& PropertyHandle = TSharedPtr<IPropertyHandle>(), const TArray<FAssetData>& OwnerAssetArray = TArray<FAssetData>());
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeActorPickerAnchorButton( FOnGetActorFilters OnGetActorFilters, FOnActorSelected OnActorSelectedFromPicker );
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeActorPickerWithMenu( AActor* const InitialActor, const bool AllowClear, FOnShouldFilterActor ActorFilter, FOnActorSelected OnSet, FSimpleDelegate OnClose, FSimpleDelegate OnUseSelected );
+	PROPERTYEDITOR_API TSharedRef<SWidget> MakeActorPickerWithMenu(AActor* const InitialActor, const bool AllowClear, const bool AllowPickingLevelInstanceContent, FOnShouldFilterActor ActorFilter, FOnActorSelected OnSet, FSimpleDelegate OnClose, FSimpleDelegate OnUseSelected);
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeComponentPickerWithMenu( UActorComponent* const InitialComponent, const bool AllowClear, FOnShouldFilterActor ActorFilter, FOnShouldFilterComponent ComponentFilter, FOnComponentSelected OnSet, FSimpleDelegate OnClose );
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeInteractiveActorPicker(FOnGetAllowedClasses OnGetAllowedClasses, FOnShouldFilterActor OnShouldFilterActor, FOnActorSelected OnActorSelectedFromPicker);
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeSceneDepthPicker(FOnSceneDepthLocationSelected OnSceneDepthLocationSelected);
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeEditConfigHierarchyButton(FSimpleDelegate OnEditConfigClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true);
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeDocumentationButton(const TSharedRef<FPropertyEditor>& InPropertyEditor);
 	PROPERTYEDITOR_API TSharedRef<SWidget> MakeSaveButton(FSimpleDelegate OnSaveClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true);
+	PROPERTYEDITOR_API TSharedRef<SWidget> MakeSetOptionalButton(FSimpleDelegate OnSetOptionalClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true);
+	PROPERTYEDITOR_API TSharedRef<SWidget> MakeClearOptionalButton(FSimpleDelegate OnClearOptionalClicked, TAttribute<FText> OptionalToolTipText = FText(), TAttribute<bool> IsEnabled = true);
 
 	/** @return the FBoolProperty edit condition property if one exists. */
 	PROPERTYEDITOR_API FBoolProperty* GetEditConditionProperty(const FProperty* InProperty, bool& bNegate);
@@ -191,7 +195,7 @@ public:
 		/** Thumbnail pool */
 		SLATE_ARGUMENT( TSharedPtr<FAssetThumbnailPool>, ThumbnailPool )
 		/** Class that is allowed in the asset picker */
-		SLATE_ARGUMENT( UClass*, AllowedClass )
+		SLATE_ARGUMENT( const UClass*, AllowedClass )
 		/** Optional list of factories which may be used to create new assets */
 		SLATE_ARGUMENT( TOptional<TArray<UFactory*>>, NewAssetFactories )
 		/** Called to check if an asset should be set */
@@ -301,6 +305,8 @@ public:
 		SLATE_ATTRIBUTE(const UClass*, SelectedClass)
 		/** Delegate used to set the currently selected class (required) */
 		SLATE_EVENT(FOnSetClass, OnSetClass)
+		/** Custom class filter(s) to be applied on the derived classes of the Metaclass (may be empty)*/
+		SLATE_ARGUMENT(TArray<TSharedRef<IClassViewerFilter>>, ClassViewerFilters)	
 	SLATE_END_ARGS()
 
 	PROPERTYEDITOR_API void Construct(const FArguments& InArgs);
@@ -553,12 +559,15 @@ private:
 class SMaterialSlotWidget : public SCompoundWidget
 {
 	SLATE_BEGIN_ARGS(SMaterialSlotWidget)
+		: _DeleteMaterialSlotVisibility(EVisibility::Visible)
 	{}
 		SLATE_ATTRIBUTE(FText, MaterialName)
+		SLATE_ATTRIBUTE(bool, IsMaterialSlotNameReadOnly)
 		SLATE_EVENT(FOnTextChanged, OnMaterialNameChanged)
 		SLATE_EVENT(FOnTextCommitted, OnMaterialNameCommitted)
 		SLATE_ATTRIBUTE(bool, CanDeleteMaterialSlot)
 		SLATE_EVENT(FSimpleDelegate, OnDeleteMaterialSlot)
+		SLATE_ATTRIBUTE(EVisibility, DeleteMaterialSlotVisibility)
 	SLATE_END_ARGS()
 
 	PROPERTYEDITOR_API void Construct(const FArguments& InArgs, int32 SlotIndex, bool bIsMaterialUsed);

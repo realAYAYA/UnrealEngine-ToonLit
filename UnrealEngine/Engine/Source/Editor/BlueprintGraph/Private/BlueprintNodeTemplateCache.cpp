@@ -22,7 +22,6 @@
 #include "Misc/AssertionMacros.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Templates/Tuple.h"
 #include "Trace/Detail/Channel.h"

@@ -16,6 +16,13 @@
 DECLARE_CYCLE_STAT(TEXT("Slate PostProcessing RT"), STAT_SlatePostProcessingRTTime, STATGROUP_Slate);
 DECLARE_CYCLE_STAT(TEXT("Slate ColorDeficiency RT"), STAT_SlateColorDeficiencyRTTime, STATGROUP_Slate);
 
+int GSlateEnableDeleteUnusedPostProcess = 0;
+static FAutoConsoleVariableRef CVarSlateEnableDeleteUnusedPostProcess(
+	TEXT("Slate.EnableDeleteUnusedPostProcess"),
+	GSlateEnableDeleteUnusedPostProcess,
+	TEXT("Greater than zero implies that post process render targets will be deleted when they are not used after n frames.")
+);
+
 static const int32 NumIntermediateTargets = 2;
 
 FSlatePostProcessResource* FindSlatePostProcessResource(TArray<FSlatePostProcessResource*>& IntermediateTargetsArray, EPixelFormat PixelFormat)
@@ -144,11 +151,13 @@ static void BlitUIToHDRScene(FRHICommandListImmediate& RHICmdList, IRendererModu
 {
 	SCOPED_DRAW_EVENT(RHICmdList, SlatePostProcessBlitUIToHDR);
 
-	FRHITexture* UITexture = RectParams.UITarget->GetRHI();
+	FRHITexture* UITexture = RectParams.PostProcessDest == EPostProcessDestination::DestTexture 
+		? RectParams.DestTexture->GetTexture2D() 
+		: RectParams.UITarget->GetRHI();
 
 	RHICmdList.Transition(FRHITransitionInfo(UITexture, ERHIAccess::Unknown, ERHIAccess::SRVMask));
 	TRefCountPtr<IPooledRenderTarget> UITargetRTMask;
-	if (RHISupportsRenderTargetWriteMask(GMaxRHIShaderPlatform))
+	if (RHISupportsRenderTargetWriteMask(GMaxRHIShaderPlatform) && RectParams.PostProcessDest != EPostProcessDestination::DestTexture)
 	{
 		const auto FeatureLevel = GMaxRHIFeatureLevel;
 		auto ShaderMap = GetGlobalShaderMap(FeatureLevel);
@@ -200,9 +209,14 @@ static void BlitUIToHDRScene(FRHICommandListImmediate& RHICmdList, IRendererModu
 
 	const FVector2f InvSrcTextureSize(1.f / SrcTextureWidth, 1.f / SrcTextureHeight);
 
+	// If using a custom output target, sample the source rect for UV's, else do not as the dest rect may be a subsection
+	const FSlateRect& UVRect = RectParams.PostProcessDest == EPostProcessDestination::DestTexture
+		? SourceRect
+		: DestRect;
+
 	// no guard band is actually needed because GaussianBlurMain already takes ensure that sampling happens inside the rectangle
-	const FVector2f UVStart = FVector2f(DestRect.Left - 0.0f, DestRect.Top - 0.0f) * InvSrcTextureSize;
-	const FVector2f UVEnd = FVector2f(DestRect.Right + 0.0f, DestRect.Bottom + 0.0f) * InvSrcTextureSize;
+	const FVector2f UVStart = FVector2f(UVRect.Left - 0.0f, UVRect.Top - 0.0f) * InvSrcTextureSize;
+	const FVector2f UVEnd = FVector2f(UVRect.Right + 0.0f, UVRect.Bottom + 0.0f) * InvSrcTextureSize;
 	const FVector2f SizeUV = UVEnd - UVStart;
 
 	RHICmdList.SetViewport(0, 0, 0, SrcTextureWidth, SrcTextureHeight, 0.0f);
@@ -367,8 +381,13 @@ void FSlatePostProcessor::BlurRect(FRHICommandListImmediate& RHICmdList, IRender
 				{
 					const FVector2f InvSrcTextureSize(1.f / SrcTextureWidth, 1.f / SrcTextureHeight);
 
-					const FVector2f UVStart = FVector2f(DestRect.Left, DestRect.Top) * InvSrcTextureSize;
-					const FVector2f UVEnd = FVector2f(DestRect.Right, DestRect.Bottom) * InvSrcTextureSize;
+					// If using a custom output target, sample the source rect for UV's, else do not as the dest rect may be a subsection
+					const FSlateRect& UVRect = RectParams.PostProcessDest == EPostProcessDestination::DestTexture
+						? SourceRect
+						: DestRect;
+
+					const FVector2f UVStart = FVector2f(UVRect.Left, UVRect.Top) * InvSrcTextureSize;
+					const FVector2f UVEnd = FVector2f(UVRect.Right, UVRect.Bottom) * InvSrcTextureSize;
 					const FVector2f SizeUV = UVEnd - UVStart;
 
 					PixelShader->SetUVBounds(BatchedParameters, FVector4f(UVStart, UVEnd));
@@ -535,6 +554,7 @@ void FSlatePostProcessor::ReleaseRenderTargets()
 	}
 }
 
+
 void FSlatePostProcessor::DownsampleRect(FRHICommandListImmediate& RHICmdList, IRendererModule& RendererModule, const FPostProcessRectParams& Params, const FIntPoint& DownsampleSize, FSlatePostProcessResource* IntermediateTargets)
 {
 	SCOPED_DRAW_EVENT(RHICmdList, SlatePostProcessDownsample);
@@ -569,8 +589,13 @@ void FSlatePostProcessor::DownsampleRect(FRHICommandListImmediate& RHICmdList, I
 
 		const FVector2f InvSrcTextureSize(1.f/SrcTextureWidth, 1.f/SrcTextureHeight);
 
-		const FVector2f UVStart = FVector2f(DestRect.Left, DestRect.Top) * InvSrcTextureSize;
-		const FVector2f UVEnd = FVector2f(DestRect.Right, DestRect.Bottom) * InvSrcTextureSize;
+		// If using a custom output target, sample the source rect for UV's, else do not as the dest rect may be a subsection
+		const FSlateRect& UVRect = Params.PostProcessDest == EPostProcessDestination::DestTexture
+			? SourceRect
+			: DestRect;
+
+		const FVector2f UVStart = FVector2f(UVRect.Left, UVRect.Top) * InvSrcTextureSize;
+		const FVector2f UVEnd = FVector2f(UVRect.Right, UVRect.Bottom) * InvSrcTextureSize;
 		const FVector2f SizeUV = UVEnd - UVStart;
 		
 		RHICmdList.SetViewport(0.f, 0.f, 0.f, (float)DestTextureWidth, (float)DestTextureHeight, 0.0f);
@@ -631,9 +656,11 @@ void FSlatePostProcessor::UpsampleRect(FRHICommandListImmediate& RHICmdList, IRe
 	GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
 
 	// Original source texture is now the destination texture
-	FTexture2DRHIRef DestTexture = Params.SourceTexture;
-	const int32 DestTextureWidth = Params.SourceTextureSize.X;
-	const int32 DestTextureHeight = Params.SourceTextureSize.Y;
+	FTexture2DRHIRef DestTexture = Params.PostProcessDest == EPostProcessDestination::DestTexture && Params.DestTexture 
+		? Params.DestTexture 
+		: Params.SourceTexture;
+	const int32 DestTextureWidth = DestTexture->GetSizeX();
+	const int32 DestTextureHeight = DestTexture->GetSizeY();
 
 	const int32 DownsampledWidth = DownsampleSize.X;
 	const int32 DownsampledHeight = DownsampleSize.Y;
@@ -665,6 +692,9 @@ void FSlatePostProcessor::UpsampleRect(FRHICommandListImmediate& RHICmdList, IRe
 	bool bIsSCRGB = false;
 
 	FRHITexture* UITargetTexture = Params.UITarget.IsValid() ? Params.UITarget->GetRHI() : nullptr;
+	UITargetTexture = Params.PostProcessDest == EPostProcessDestination::DestTexture && Params.DestTexture 
+		? Params.DestTexture->GetTexture2D() 
+		: UITargetTexture;
 
 	if (UITargetTexture != nullptr && DestTexture != UITargetTexture)
 	{
@@ -730,7 +760,7 @@ void FSlatePostProcessor::UpsampleRect(FRHICommandListImmediate& RHICmdList, IRe
 			Size.X, Size.Y,
 			0, 0,
 			SizeUV.X, SizeUV.Y,
-			Params.SourceTextureSize,
+			DestTexture->GetSizeXY(),
 			FIntPoint(1, 1),
 			VertexShader,
 			EDRF_Default);
@@ -820,4 +850,21 @@ static int32 ComputeWeights(int32 KernelSize, float Sigma, TArray<FVector4f>& Ou
 int32 FSlatePostProcessor::ComputeBlurWeights(int32 KernelSize, float StdDev, TArray<FVector4f>& OutWeightsAndOffsets)
 {
 	return ComputeWeights(KernelSize, StdDev, OutWeightsAndOffsets);
+}
+
+void FSlatePostProcessor::TickPostProcessResources()
+{
+	if (GSlateEnableDeleteUnusedPostProcess > 0)
+	{
+		check(IsInRenderingThread());
+
+		for (TArray<FSlatePostProcessResource*>::TIterator It = IntermediateTargetsArray.CreateIterator(); It; ++It)
+		{
+			if (GFrameCounter - (*It)->GetFrameUsed() > GSlateEnableDeleteUnusedPostProcess)
+			{
+				(*It)->CleanUp();
+				It.RemoveCurrent();
+			}
+		}
+	}
 }

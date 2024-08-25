@@ -5,10 +5,8 @@
 #include "CoreTypes.h"
 #include "Misc/AssertionMacros.h"
 #include "HAL/UnrealMemory.h"
-#include "Templates/IsTriviallyCopyConstructible.h"
 #include "Templates/UnrealTypeTraits.h"
 #include "Templates/UnrealTemplate.h"
-#include "Templates/IsTriviallyDestructible.h"
 #include "Containers/ContainerAllocationPolicies.h"
 #include "Templates/Less.h"
 #include "Containers/Array.h"
@@ -333,7 +331,7 @@ public:
 	/** Removes Count elements from the array, starting from Index. */
 	void RemoveAt(int32 Index,int32 Count = 1)
 	{
-		if (!TIsTriviallyDestructible<ElementType>::Value)
+		if constexpr (!std::is_trivially_destructible_v<ElementType>)
 		{
 			FElementOrFreeListLink* DataPtr = (FElementOrFreeListLink*)Data.GetData();
 			for (int32 It = Index, ItCount = Count; ItCount; ++It, --ItCount)
@@ -376,9 +374,9 @@ public:
 	void Empty(int32 ExpectedNumElements = 0)
 	{
 		// Destruct the allocated elements.
-		if( !TIsTriviallyDestructible<ElementType>::Value )
+		if constexpr (!std::is_trivially_destructible_v<ElementType>)
 		{
-			for(TIterator It(*this);It;++It)
+			for (TIterator It(*this); It; ++It)
 			{
 				ElementType& Element = *It;
 				Element.~ElementType();
@@ -396,9 +394,9 @@ public:
 	void Reset()
 	{
 		// Destruct the allocated elements.
-		if( !TIsTriviallyDestructible<ElementType>::Value )
+		if constexpr (!std::is_trivially_destructible_v<ElementType>)
 		{
-			for(TIterator It(*this);It;++It)
+			for (TIterator It(*this); It; ++It)
 			{
 				ElementType& Element = *It;
 				Element.~ElementType();
@@ -497,7 +495,7 @@ public:
 			}
 
 			// Truncate unallocated elements at the end of the data array.
-			Data.RemoveAt(FirstIndexToRemove, Data.Num() - FirstIndexToRemove, false);
+			Data.RemoveAt(FirstIndexToRemove, Data.Num() - FirstIndexToRemove, EAllowShrinking::No);
 			AllocationFlags.RemoveAt(FirstIndexToRemove,AllocationFlags.Num() - FirstIndexToRemove);
 		}
 
@@ -543,7 +541,7 @@ public:
 			FreeIndex = NextFreeIndex;
 		}
 
-		Data.RemoveAt(TargetIndex, NumFree, false);
+		Data.RemoveAt(TargetIndex, NumFree, EAllowShrinking::No);
 		AllocationFlags.RemoveAt(TargetIndex, NumFree);
 
 		NumFreeIndices = 0;
@@ -774,7 +772,7 @@ public:
 			const FElementOrFreeListLink* SrcData  = (const FElementOrFreeListLink*)InCopy.Data.GetData();
 
 			// Determine whether we need per element construction or bulk copy is fine
-			if (!TIsTriviallyCopyConstructible<ElementType>::Value)
+			if constexpr (!std::is_trivially_copy_constructible_v<ElementType>)
 			{
 				// Use the inplace new to copy the element to an array element
 				for (int32 Index = 0; Index < SrcMax; ++Index)
@@ -809,7 +807,7 @@ private:
 	FORCEINLINE static void Move(SparseArrayType& ToArray, SparseArrayType& FromArray)
 	{
 		// Destruct the allocated elements.
-		if( !TIsTriviallyDestructible<ElementType>::Value )
+		if constexpr (!std::is_trivially_destructible_v<ElementType>)
 		{
 			for (ElementType& Element : ToArray)
 			{
@@ -877,8 +875,8 @@ private:
 		typedef TConstSetBitIterator<typename Allocator::BitArrayAllocator> BitArrayItType;
 
 	private:
-		typedef typename TChooseClass<bConst,const TSparseArray,TSparseArray>::Result ArrayType;
-		typedef typename TChooseClass<bConst,const ElementType,ElementType>::Result ItElementType;
+		typedef std::conditional_t<bConst,const TSparseArray,TSparseArray> ArrayType;
+		typedef std::conditional_t<bConst,const ElementType,ElementType> ItElementType;
 
 	public:
 		explicit TBaseIterator(ArrayType& InArray, const BitArrayItType& InBitArrayIt)
@@ -1060,8 +1058,8 @@ public:
 			return !(bool)*this;
 		}
 
-		FORCEINLINE const ElementType& operator*() const { return Array(GetIndex()); }
-		FORCEINLINE const ElementType* operator->() const { return &Array(GetIndex()); }
+		FORCEINLINE const ElementType& operator*() const { return Array[GetIndex()]; }
+		FORCEINLINE const ElementType* operator->() const { return &Array[GetIndex()]; }
 		FORCEINLINE const FRelativeBitReference& GetRelativeBitReference() const { return BitArrayIt; }
 	private:
 		const TSparseArray& Array;
@@ -1270,7 +1268,7 @@ struct FScriptSparseArrayLayout
 template <typename AllocatorType, typename InDerivedType>
 class TScriptSparseArray
 {
-	using DerivedType = typename TChooseClass<std::is_void_v<InDerivedType>, TScriptSparseArray, InDerivedType>::Result;
+	using DerivedType = std::conditional_t<std::is_void_v<InDerivedType>, TScriptSparseArray, InDerivedType>;
 
 public:
 	static FScriptSparseArrayLayout GetScriptLayout(int32 ElementSize, int32 ElementAlignment)
@@ -1534,3 +1532,8 @@ void operator<<(FStructuredArchive::FSlot Slot, TSparseArray<ElementType, Alloca
 		}
 	}
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/IsTriviallyCopyConstructible.h"
+#include "Templates/IsTriviallyDestructible.h"
+#endif

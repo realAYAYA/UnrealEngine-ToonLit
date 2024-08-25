@@ -132,6 +132,19 @@ TSharedRef<SWidget> FAnimTimelineTrack_Curves::BuildCurvesSubMenu()
 			NAME_None,
 			EUserInterfaceActionType::ToggleButton
 		);
+
+		MenuBuilder.AddMenuEntry(
+			FAnimSequenceTimelineCommands::Get().UseTreeView->GetLabel(),
+			FAnimSequenceTimelineCommands::Get().UseTreeView->GetDescription(),
+			FAnimSequenceTimelineCommands::Get().UseTreeView->GetIcon(),
+			FUIAction(
+				FExecuteAction::CreateSP(this, &FAnimTimelineTrack_Curves::HandleUseTreeView),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateSP(this, &FAnimTimelineTrack_Curves::IsUseTreeViewEnabled)
+			),
+			NAME_None,
+			EUserInterfaceActionType::ToggleButton
+		);
 	}
 	MenuBuilder.EndSection();
 
@@ -286,6 +299,17 @@ void FAnimTimelineTrack_Curves::HandleShowCurvePoints()
 bool FAnimTimelineTrack_Curves::IsShowCurvePointsEnabled() const
 {
 	return GetDefault<UPersonaOptions>()->bTimelineDisplayCurveKeys;
+}
+
+void FAnimTimelineTrack_Curves::HandleUseTreeView()
+{
+	GetMutableDefault<UPersonaOptions>()->bUseTreeViewForAnimationCurves = !GetDefault<UPersonaOptions>()->bUseTreeViewForAnimationCurves;
+	GetModel()->RefreshTracks();
+}
+
+bool FAnimTimelineTrack_Curves::IsUseTreeViewEnabled() const
+{
+	return GetDefault<UPersonaOptions>()->bUseTreeViewForAnimationCurves;
 }
 
 void FAnimTimelineTrack_Curves::OnMetadataCurveNamePicked(const FName& InCurveName)

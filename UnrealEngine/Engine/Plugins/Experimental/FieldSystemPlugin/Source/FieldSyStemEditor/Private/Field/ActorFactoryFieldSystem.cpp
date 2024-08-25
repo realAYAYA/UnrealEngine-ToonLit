@@ -47,15 +47,4 @@ void UActorFactoryFieldSystem::PostSpawnActor(UObject* Asset, AActor* NewActor)
 	NewFieldSystemActor->GetFieldSystemComponent()->RegisterComponent();
 }
 
-void UActorFactoryFieldSystem::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != NULL && CDO != NULL)
-	{
-		UFieldSystem* FieldSystem = CastChecked<UFieldSystem>(Asset);
-		AFieldSystemActor* FieldSystemActor = CastChecked<AFieldSystemActor>(CDO);
-
-		FieldSystemActor->GetFieldSystemComponent()->FieldSystem = FieldSystem;
-	}
-}
-
 #undef LOCTEXT_NAMESPACE

@@ -27,7 +27,7 @@ class UMovieSceneTrack;
 namespace UE { namespace MovieScene { class IFolderEventHandler; } }
 
 /** Represents a folder used for organizing objects in tracks in a movie scene. */
-UCLASS(DefaultToInstanced, MinimalAPI)
+UCLASS(DefaultToInstanced, MinimalAPI, BlueprintType)
 class UMovieSceneFolder : public UObject
 {
 	GENERATED_UCLASS_BODY()

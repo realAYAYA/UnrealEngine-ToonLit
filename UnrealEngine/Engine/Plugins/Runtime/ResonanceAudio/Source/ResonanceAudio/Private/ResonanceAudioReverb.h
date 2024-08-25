@@ -114,6 +114,7 @@ namespace ResonanceAudio
 		virtual void OnReleaseSource(const uint32 SourceId) override;
 		virtual FSoundEffectSubmixPtr GetEffectSubmix() override;
 		virtual USoundSubmix* GetSubmix() override;
+		virtual USoundSubmix* LoadSubmix() override;
 		virtual void ProcessSourceAudio(const FAudioPluginSourceInputData& InputData, FAudioPluginSourceOutputData& OutputData) override;
 
 		void SetResonanceAudioApi(vraudio::ResonanceAudioApi* InResonanceAudioApi) { ResonanceAudioApi = InResonanceAudioApi; };
@@ -121,7 +122,7 @@ namespace ResonanceAudio
 		void ProcessMixedAudio(const FSoundEffectSubmixInputData& InData, FSoundEffectSubmixOutputData& OutData);
 		
 		void SetGlobalReverbPluginPreset(UResonanceAudioReverbPluginPreset* InPreset);
-		UResonanceAudioReverbPluginPreset* GetGlobalReverbPluginPreset() { return GlobalReverbPluginPreset; };
+		UResonanceAudioReverbPluginPreset* GetGlobalReverbPluginPreset();
 
 		// Sets & updates Room Effect params from current |ReverbPluginPreset|.
 		void UpdateRoomEffects();
@@ -147,10 +148,12 @@ namespace ResonanceAudio
 		vraudio::ResonanceAudioApi* ResonanceAudioApi;
 		FResonanceAudioModule* ResonanceAudioModule;
 		UResonanceAudioReverbPluginPreset* ReverbPluginPreset;
-		UResonanceAudioReverbPluginPreset* GlobalReverbPluginPreset;
 		Audio::AlignedFloatBuffer TemporaryStereoBuffer;
 
 		FSoundEffectSubmixPtr SubmixEffect;
+
+		// Reverb submix to be used only when Resonance fails to load the submix asset.
+		USoundSubmix* ReverbSubmixPtr;
 	};
 
 } // namespace ResonanceAudio

@@ -13,6 +13,7 @@
 #include "Async/ParallelFor.h"
 #include "MovieSceneSequenceID.h"
 #include "MovieRenderDebugWidget.h"
+#include "Graph/MovieGraphRenderDataIdentifier.h"
 #include "MovieRenderPipelineDataTypes.generated.h"
 
 class UMovieSceneCinematicShotSection;
@@ -34,6 +35,7 @@ class FRenderTarget;
 class UMoviePipeline;
 struct FMoviePipelineFormatArgs;
 class UMoviePipelineExecutorShot;
+class UMovieGraphDataSourceBase;
 
 namespace Audio { class FMixerSubmix; }
 
@@ -522,7 +524,7 @@ public:
 	
 	/** Cached Tick Resolution the movie scene this range was generated for is in. Can be different than the root due to mixed tick resolutions. */
 	FFrameRate CachedShotTickResolution;
-public:
+
 	/** The current state of processing this Shot is in. Not all states will be passed through. */
 	EMovieRenderShotState State;
 
@@ -533,7 +535,7 @@ public:
 	FFrameTime CurrentTimeInRoot;
 
 	/** Converts from the outermost space into the innermost space. Only works with linear transforms. */
-	FMovieSceneTimeTransform OuterToInnerTransform;
+	FMovieSceneSequenceTransform OuterToInnerTransform;
 	
 	/** The total range of output frames in root space */
 	TRange<FFrameNumber> TotalOutputRangeRoot;
@@ -544,14 +546,13 @@ public:
 	/** Metrics - How much work has been done for this particular shot and how much do we estimate we have to do? */
 	FMoviePipelineSegmentWorkMetrics WorkMetrics;
 
-public:
 	/** Have we evaluated the motion blur frame? Only used if bEvaluateMotionBlurOnFirstFrame is set */
 	bool bHasEvaluatedMotionBlurFrame;
 
 	/** How many engine warm up frames are left to process for this shot. May be zero. */
 	int32 NumEngineWarmUpFramesRemaining;
 
-	/** What version number should this shot use when resolving format arguments. */
+	/** What version number should this shot use when resolving format arguments. This is the highest version number found across all branches. */
 	int32 VersionNumber;
 };
 
@@ -854,6 +855,10 @@ struct FMoviePipelineFilenameResolveParams
 	/** The initialization time for this job. Used to resolve time-based format arguments. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Render Pipeline")
 	FDateTime InitializationTime;
+
+	/** What offset should be applied to InitializationTime when generating {time} related filename tokens? Likely your offset from UTC if you want local time. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Render Pipeline")
+	FTimespan InitializationTimeOffset;
 
 	/** The version for this job. Used to resolve version format arguments. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Render Pipeline")
@@ -1217,12 +1222,14 @@ namespace MoviePipeline
 			: bIsRecordingAudio(false)
 			, PrevUnfocusedAudioMultiplier(1.f)
 			, PrevRenderEveryTickValue(1)
+			, PrevNeverMuteNRTAudioValue(0)
 		{}
 
 		bool bIsRecordingAudio;
 
 		float PrevUnfocusedAudioMultiplier;
 		int32 PrevRenderEveryTickValue;
+		int32 PrevNeverMuteNRTAudioValue;
 
 		/** Float Buffers for Movie Segments we've finished rendering. Stored until shutdown. Fully available during Finalize stage. */
 		TArray<FAudioSegment> FinishedSegments;
@@ -1247,7 +1254,7 @@ struct FMoviePipelineShotOutputData
 	GENERATED_BODY()
 
 	/** Which shot was this output data for? */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Pipeline")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Movie Pipeline")
 	TWeakObjectPtr<UMoviePipelineExecutorShot> Shot;
 
 	/** 
@@ -1306,11 +1313,14 @@ struct FMoviePipelineOutputData
 	*
 	* Provided here for backwards compatibility.
 	*/
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Pipeline")
-	TObjectPtr<UMoviePipeline> Pipeline;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Movie Pipeline")
+	TObjectPtr<class UMoviePipelineBase> Pipeline;
 	
-	/** Job the data is for. Job may still be in progress (if a shot callback) so be careful about modifying properties on it */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Pipeline")
+	/** 
+	* Job the data is for. Job may still be in progress (if a shot callback) so be careful about modifying properties on it 
+	* When using the Movie Render Graph this will point to the duplicated job created during execution.
+	*/
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Movie Pipeline")
 	TObjectPtr<UMoviePipelineExecutorJob> Job;
 	
 	/** Did the job succeed, or was it canceled early due to an error (such as failure to write file to disk)? */
@@ -1321,9 +1331,23 @@ struct FMoviePipelineOutputData
 	* The file data for each shot that was rendered. If no files were written this will be empty. If this is from the per-shot work
 	* finished callback it will only have one entry (for the just finished shot). Will not include shots that did not get rendered
 	* due to the pipeline encountering an error.
+	*
+	* This will be empty when using the Movie Render Graph. If a job is a Movie Render Graph job, use GraphData instead, which has
+	* a similar layout but with different data types.
 	*/
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Pipeline")
 	TArray<FMoviePipelineShotOutputData> ShotData;
+
+	/** 
+	* The file data for each shot that was rendered. If no files were written this will be empty. If this is from the per-shot work
+	* finished callback it will only have one entry (for the just finished shot). Will not include shots that did not get rendered
+	* due to the pipeline encountering an error.
+	*
+	* This will be empty when using the legacy Movie Pipeline Configurations. If a job is a legacy configuration, use ShotData instead, which has
+	* a similar layout but with different data types.
+	*/
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Pipeline")
+	TArray<FMovieGraphRenderOutputData> GraphData;
 };
 
 /**

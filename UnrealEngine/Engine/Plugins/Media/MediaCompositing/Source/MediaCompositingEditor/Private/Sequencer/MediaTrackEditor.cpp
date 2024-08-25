@@ -16,7 +16,7 @@
 #include "MovieSceneMediaSection.h"
 #include "MovieSceneMediaTrack.h"
 #include "MovieSceneToolsUserSettings.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "TrackEditorThumbnail/TrackEditorThumbnailPool.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SBox.h"
@@ -136,14 +136,7 @@ TSharedPtr<SWidget> FMediaTrackEditor::BuildOutlinerEditWidget(const FGuid& Obje
 		return MenuBuilder.MakeWidget();
 	};
 
-	return SNew(SHorizontalBox)
-
-	+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		[
-			FSequencerUtilities::MakeAddButton(LOCTEXT("AddMediaSection_Text", "Media"), FOnGetContent::CreateLambda(CreatePicker), Params.NodeIsHovered, GetSequencer())
-		];
+	return UE::Sequencer::MakeAddButton(LOCTEXT("AddMediaSection_Text", "Media"), FOnGetContent::CreateLambda(CreatePicker), Params.ViewModel);
 }
 
 

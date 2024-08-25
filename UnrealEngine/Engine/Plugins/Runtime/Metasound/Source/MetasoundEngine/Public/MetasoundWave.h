@@ -6,8 +6,6 @@
 #include "MetasoundDataTypeRegistrationMacro.h"
 #include "IAudioProxyInitializer.h"
 #include "Sound/SoundWave.h"
-#include "IAudioCodecRegistry.h"
-#include "IAudioCodec.h"
 #include "DSP/InterpolatedLinearPitchShifter.h"
 
 

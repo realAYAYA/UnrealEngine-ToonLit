@@ -78,6 +78,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Light Rendering", meta = (ClampMin = "0", EditCondition = "!bUseInverseSquaredFalloff", EditConditionHides))
 	float DefaultExponent;
 
+	/** The specular scale to use for all lights if no binding was found */
+	UPROPERTY(EditAnywhere, Category = "Light Rendering", meta = (ClampMin = "0"))
+	float SpecularScale = 1.0f;
+
 	/** A static color shift applied to each rendered light */
 	UPROPERTY(EditAnywhere, Category = "Light Rendering")
 	FVector3f ColorAdd;
@@ -122,6 +126,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Bindings")
 	FNiagaraVariableAttributeBinding RendererVisibilityTagBinding;
 
+	/** Which attribute should we use for the specular scale when generating lights?*/
+	UPROPERTY(EditAnywhere, Category = "Bindings")
+	FNiagaraVariableAttributeBinding SpecularScaleBinding;
+
 	FNiagaraDataSetAccessor<FNiagaraPosition> PositionDataSetAccessor;
 	FNiagaraDataSetAccessor<FLinearColor> ColorDataSetAccessor;
 	FNiagaraDataSetAccessor<float> RadiusDataSetAccessor;
@@ -129,6 +137,7 @@ public:
 	FNiagaraDataSetAccessor<float> ScatteringDataSetAccessor;
 	FNiagaraDataSetAccessor<FNiagaraBool> EnabledDataSetAccessor;
 	FNiagaraDataSetAccessor<int32> RendererVisibilityTagAccessor;
+	FNiagaraDataSetAccessor<float> SpecularScaleAccessor;
 
 private:
 	static TArray<TWeakObjectPtr<UNiagaraLightRendererProperties>> LightRendererPropertiesToDeferredInit;

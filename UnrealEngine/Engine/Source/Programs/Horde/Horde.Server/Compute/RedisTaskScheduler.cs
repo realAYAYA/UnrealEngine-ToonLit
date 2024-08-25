@@ -20,8 +20,8 @@ namespace Horde.Server.Compute
 	/// </summary>
 	/// <typeparam name="TQueueId">Type used to identify a particular queue</typeparam>
 	/// <typeparam name="TTask">Type used to describe a task to be performed</typeparam>
-	interface ITaskScheduler<TQueueId, TTask> 
-		where TQueueId : notnull 
+	interface ITaskScheduler<TQueueId, TTask>
+		where TQueueId : notnull
 		where TTask : class
 	{
 		/// <summary>
@@ -52,7 +52,7 @@ namespace Horde.Server.Compute
 		/// </summary>
 		/// <returns></returns>
 		Task<List<TQueueId>> GetInactiveQueuesAsync();
-		
+
 		/// <summary>
 		/// Get number of tasks that a given pool/agent can execute
 		/// A read-only operation and will not affect any queue.
@@ -68,7 +68,7 @@ namespace Horde.Server.Compute
 	/// </summary>
 	/// <typeparam name="TQueueId">Type used to identify a particular queue</typeparam>
 	/// <typeparam name="TTask">Type used to describe a task to be performed</typeparam>
-	class RedisTaskScheduler<TQueueId, TTask> : ITaskScheduler<TQueueId, TTask>, IDisposable 
+	class RedisTaskScheduler<TQueueId, TTask> : ITaskScheduler<TQueueId, TTask>, IAsyncDisposable
 		where TQueueId : notnull
 		where TTask : class
 	{
@@ -80,7 +80,7 @@ namespace Horde.Server.Compute
 			public Listener(Func<TQueueId, ValueTask<bool>> predicate)
 			{
 				_predicate = predicate;
-				CompletionSource = new TaskCompletionSource<(TQueueId, TTask)?>();
+				CompletionSource = new TaskCompletionSource<(TQueueId, TTask)?>(TaskCreationOptions.RunContinuationsAsynchronously);
 			}
 		}
 
@@ -108,7 +108,7 @@ namespace Horde.Server.Compute
 			_baseKey = baseKey;
 			_queueIndex = new RedisSetKey<TQueueId>(baseKey.Append("index"));
 			_activeQueues = new RedisHashKey<TQueueId, DateTime>(baseKey.Append("active"));
-			_newQueueChannel = new RedisChannel<TQueueId>(baseKey.Append("new_queues").ToString());
+			_newQueueChannel = new RedisChannel<TQueueId>(RedisChannel.Literal(baseKey.Append("new_queues").ToString()));
 			_logger = logger;
 
 			_queueUpdateTask = Task.Run(() => UpdateQueuesAsync(_cancellationSource.Token));
@@ -119,7 +119,7 @@ namespace Horde.Server.Compute
 		{
 			if (!_queueUpdateTask.IsCompleted)
 			{
-				_cancellationSource.Cancel();
+				await _cancellationSource.CancelAsync();
 				try
 				{
 					await _queueUpdateTask;
@@ -129,12 +129,6 @@ namespace Horde.Server.Compute
 				}
 			}
 			_cancellationSource.Dispose();
-		}
-
-		/// <inheritdoc/>
-		public void Dispose()
-		{
-			DisposeAsync().AsTask().Wait();
 		}
 
 		/// <summary>
@@ -285,7 +279,7 @@ namespace Horde.Server.Compute
 		/// <returns>The dequeued item, or null if the queue is empty</returns>
 		public async Task<TTask?> DequeueAsync(TQueueId queueId)
 		{
-			await AddActiveQueue(queueId);
+			await AddActiveQueueAsync(queueId);
 
 			IDatabase database = _redisConnectionPool.GetDatabase();
 
@@ -310,7 +304,7 @@ namespace Horde.Server.Compute
 		/// </summary>
 		/// <param name="queueId">The queue key</param>
 		/// <returns></returns>
-		async ValueTask AddActiveQueue(TQueueId queueId)
+		async ValueTask AddActiveQueueAsync(TQueueId queueId)
 		{
 			// Periodically clear out the set of active keys
 			TimeSpan resetTime = TimeSpan.FromSeconds(10.0);
@@ -329,7 +323,7 @@ namespace Horde.Server.Compute
 			// Check if the set of active keys already contains the key we're adding. In order to optimize the 
 			// common case under heavy load where the key is in the set, updating it creates a full copy of it. Any
 			// readers can thus access it without the need for any locking.
-			for(; ;)
+			for (; ; )
 			{
 				IReadOnlySet<TQueueId> localActiveQueuesCopy = _localActiveQueues;
 				if (localActiveQueuesCopy.Contains(queueId))
@@ -383,7 +377,7 @@ namespace Horde.Server.Compute
 
 		public async Task<int> GetNumQueuedTasksAsync(Func<TQueueId, ValueTask<bool>> predicate, CancellationToken token = default)
 		{
-			HashSet<TQueueId> queueIds = new (await _redisConnectionPool.GetDatabase().SetMembersAsync(_queueIndex));
+			HashSet<TQueueId> queueIds = new(await _redisConnectionPool.GetDatabase().SetMembersAsync(_queueIndex));
 			long totalTaskCount = 0;
 			foreach (TQueueId queueId in queueIds)
 			{
@@ -430,7 +424,7 @@ namespace Horde.Server.Compute
 
 					// Look for a listener that can execute the task
 					HashSet<Listener> checkedListeners = new HashSet<Listener>();
-					while(listener == null)
+					while (listener == null)
 					{
 						// Find up to 10 listeners we haven't seen before
 						List<Listener> newListeners = new List<Listener>();

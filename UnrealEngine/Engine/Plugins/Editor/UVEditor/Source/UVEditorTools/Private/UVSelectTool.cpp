@@ -314,7 +314,7 @@ void UUVSelectTool::Shutdown(EToolShutdownType ShutdownType)
 			GizmoChangeTransactionName);
 	}
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->OnCanonicalModified.RemoveAll(this);
 	}

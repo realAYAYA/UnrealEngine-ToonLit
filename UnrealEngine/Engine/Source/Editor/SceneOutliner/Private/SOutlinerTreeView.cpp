@@ -140,6 +140,11 @@ FReply SSceneOutlinerTreeView::OnDragOver(const FGeometry& MyGeometry, const FDr
 
 void SSceneOutlinerTreeView::OnDragLeave(const FDragDropEvent& DragDropEvent)
 {
+	if (!SceneOutlinerWeak.IsValid())
+	{
+		return;
+	}
+
 	if( SceneOutlinerWeak.Pin()->GetSharedData().bShowParentTree )
 	{
 		ResetOperationDecorator(DragDropEvent);

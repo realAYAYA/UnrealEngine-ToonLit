@@ -5,12 +5,10 @@
 #include "USDMemory.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/base/vt/value.h"
+#include "pxr/base/vt/value.h"
 #include "USDIncludesEnd.h"
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -22,50 +20,50 @@ namespace UE
 			FVtValueImpl() = default;
 
 #if USE_USD_SDK
-			explicit FVtValueImpl( const pxr::VtValue& InVtValue )
-				: PxrVtValue( InVtValue )
+			explicit FVtValueImpl(const pxr::VtValue& InVtValue)
+				: PxrVtValue(InVtValue)
 			{
 			}
 
-			explicit FVtValueImpl( pxr::VtValue&& InVtValue )
-				: PxrVtValue( MoveTemp( InVtValue ) )
+			explicit FVtValueImpl(pxr::VtValue&& InVtValue)
+				: PxrVtValue(MoveTemp(InVtValue))
 			{
 			}
 
-			TUsdStore< pxr::VtValue > PxrVtValue;
-#endif // #if USE_USD_SDK
+			TUsdStore<pxr::VtValue> PxrVtValue;
+#endif	  // #if USE_USD_SDK
 		};
 	}
 
 	FVtValue::FVtValue()
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FVtValueImpl >();
+		Impl = MakeUnique<Internal::FVtValueImpl>();
 	}
 
-	FVtValue::FVtValue( const FVtValue& Other )
+	FVtValue::FVtValue(const FVtValue& Other)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl =  MakeUnique< Internal::FVtValueImpl >( Other.Impl->PxrVtValue.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FVtValueImpl>(Other.Impl->PxrVtValue.Get());
+#endif	  // #if USE_USD_SDK
 	}
 
-	FVtValue::FVtValue( FVtValue&& Other ) = default;
+	FVtValue::FVtValue(FVtValue&& Other) = default;
 
-	FVtValue& FVtValue::operator=( const FVtValue& Other )
+	FVtValue& FVtValue::operator=(const FVtValue& Other)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FVtValueImpl >( Other.Impl->PxrVtValue.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FVtValueImpl>(Other.Impl->PxrVtValue.Get());
+#endif	  // #if USE_USD_SDK
 		return *this;
 	}
 
-	FVtValue& FVtValue::operator=( FVtValue&& Other )
+	FVtValue& FVtValue::operator=(FVtValue&& Other)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MoveTemp( Other.Impl );
+		Impl = MoveTemp(Other.Impl);
 
 		return *this;
 	}
@@ -76,40 +74,40 @@ namespace UE
 		Impl.Reset();
 	}
 
-	bool FVtValue::operator==( const FVtValue& Other ) const
+	bool FVtValue::operator==(const FVtValue& Other) const
 	{
 #if USE_USD_SDK
 		return Impl->PxrVtValue.Get() == Other.Impl->PxrVtValue.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FVtValue::operator!=( const FVtValue& Other ) const
+	bool FVtValue::operator!=(const FVtValue& Other) const
 	{
-		return !( *this == Other );
+		return !(*this == Other);
 	}
 
 #if USE_USD_SDK
-	FVtValue::FVtValue( const pxr::VtValue& InVtValue )
-		: Impl( MakeUnique< Internal::FVtValueImpl >( InVtValue ) )
+	FVtValue::FVtValue(const pxr::VtValue& InVtValue)
+		: Impl(MakeUnique<Internal::FVtValueImpl>(InVtValue))
 	{
 	}
 
-	FVtValue::FVtValue( pxr::VtValue&& InVtValue )
-		: Impl( MakeUnique< Internal::FVtValueImpl >( MoveTemp( InVtValue ) ) )
+	FVtValue::FVtValue(pxr::VtValue&& InVtValue)
+		: Impl(MakeUnique<Internal::FVtValueImpl>(MoveTemp(InVtValue)))
 	{
 	}
 
-	FVtValue& FVtValue::operator=(  const pxr::VtValue& InVtValue )
+	FVtValue& FVtValue::operator=(const pxr::VtValue& InVtValue)
 	{
-		Impl = MakeUnique< Internal::FVtValueImpl >( InVtValue );
+		Impl = MakeUnique<Internal::FVtValueImpl>(InVtValue);
 		return *this;
 	}
 
-	FVtValue& FVtValue::operator=( pxr::VtValue&& InVtValue )
+	FVtValue& FVtValue::operator=(pxr::VtValue&& InVtValue)
 	{
-		Impl = MakeUnique< Internal::FVtValueImpl >( MoveTemp( InVtValue ) );
+		Impl = MakeUnique<Internal::FVtValueImpl>(MoveTemp(InVtValue));
 		return *this;
 	}
 
@@ -122,17 +120,17 @@ namespace UE
 	{
 		return Impl->PxrVtValue.Get();
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	FString FVtValue::GetTypeName() const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
 
-		return FString( ANSI_TO_TCHAR( Impl->PxrVtValue.Get().GetTypeName().c_str() ) );
+		return FString(ANSI_TO_TCHAR(Impl->PxrVtValue.Get().GetTypeName().c_str()));
 #else
 		return FString();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FVtValue::IsArrayValued() const
@@ -141,7 +139,7 @@ namespace UE
 		return Impl->PxrVtValue.Get().IsArrayValued();
 #else
 		return true;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FVtValue::IsEmpty() const
@@ -150,6 +148,6 @@ namespace UE
 		return Impl->PxrVtValue.Get().IsEmpty();
 #else
 		return true;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
-}
+}	 // namespace UE

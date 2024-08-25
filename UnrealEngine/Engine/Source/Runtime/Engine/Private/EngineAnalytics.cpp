@@ -138,12 +138,6 @@ void FEngineAnalytics::Initialize()
 			TArray<FAnalyticsEventAttribute> StartSessionAttributes;
 			AppendMachineStats(StartSessionAttributes);
 
-			// allow editor events to be correlated to StudioAnalytics events (if there is a studio analytics provider)
-			if (FStudioAnalytics::IsAvailable())
-			{
-				Analytics->SetDefaultEventAttributes(MakeAnalyticsEventAttributeArray(TEXT("StudioAnalyticsSessionID"), FStudioAnalytics::GetProvider().GetSessionID()));
-			}
-
 			Analytics->StartSession(MoveTemp(StartSessionAttributes));
 			SendMachineInfoForAccount(FPlatformMisc::GetEpicAccountId());
 			bIsInitialized = true;

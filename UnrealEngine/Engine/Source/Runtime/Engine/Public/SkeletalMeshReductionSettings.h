@@ -156,9 +156,14 @@ struct FSkeletalMeshOptimizationSettings
 	UPROPERTY(EditAnywhere, Category = FSkeletalMeshOptimizationSettings, meta = (DisplayName = "Lock Vertex Color Boundaries"))
 	uint8 bLockColorBounaries : 1;
 
+	/** Better distribution of triangles on 2d meshes, such as flat cloth, but at the cost of potentially worse UVs in those areas.  This generally has little or no effect for mesh regions that aren't laid out on a plane intersecting the origin such as the xy-plane. When this is disabled, the planar regions may simplify to fewer large triangles.*/
+	UPROPERTY(EditAnywhere, Category = FSkeletalMeshOptimizationSettings)
+	uint8 bImproveTrianglesForCloth : 1;
+
 	/** Base LOD index to generate this LOD. By default, we generate from LOD 0 */
 	UPROPERTY(EditAnywhere, Category = FSkeletalMeshOptimizationSettings)
 	int32 BaseLOD;
+
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()
@@ -197,6 +202,7 @@ struct FSkeletalMeshOptimizationSettings
 		, VolumeImportance(1.f)
 		, bLockEdges(false)
 		, bLockColorBounaries(false)
+		, bImproveTrianglesForCloth(true)
 		, BaseLOD(0)
 #if WITH_EDITORONLY_DATA
 		, BakePose_DEPRECATED(nullptr)

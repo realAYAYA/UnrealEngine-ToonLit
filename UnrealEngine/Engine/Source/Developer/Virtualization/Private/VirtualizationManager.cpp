@@ -6,6 +6,7 @@
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
 #include "Logging/MessageLog.h"
+#include "Misc/App.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/MessageDialog.h"
@@ -19,6 +20,7 @@
 #include "PackageVirtualizationProcess.h"
 #include "ProfilingDebugging/CookStats.h"
 #include "VirtualizationFilterSettings.h"
+#include "VirtualizationUtilities.h"
 
 #define LOCTEXT_NAMESPACE "Virtualization"
 
@@ -87,6 +89,38 @@ struct FConditionalScopeLock
 
 private:
 	FCriticalSection* SyncObject;
+};
+
+/**
+ * Utility to disable 'GIsRunningUnattendedScript' for a given scope.
+ * We only change 'GIsRunningUnattendedScript' if called on the GameThread as the
+ * value is not thread safe and is generally only changed on that thread.
+ * 
+ * We need this so that we can try to force a modal dialog to be shown during
+ * the editor if a payload fails to pull as our only other option is to
+ * terminate the process.
+ */
+struct FDisableUnattendedScriptGlobal
+{
+	FDisableUnattendedScriptGlobal()
+	{
+		if (IsInGameThread())
+		{
+			bOriginalValue = GIsRunningUnattendedScript;
+			GIsRunningUnattendedScript = false;
+		}
+	}
+
+	~FDisableUnattendedScriptGlobal()
+	{
+		if (IsInGameThread())
+		{
+			GIsRunningUnattendedScript = bOriginalValue;
+		}
+	}
+
+private:
+	bool bOriginalValue = false;
 };
 
 /** 
@@ -193,6 +227,21 @@ public:
 	TArrayView<FPullRequest> GetRequests()
 	{
 		return CurrentRequests;
+	}
+
+	TArray<FIoHash> GetFailedPayloads() const
+	{
+		TArray<FIoHash> FailedPayloads;
+
+		for (const FPullRequest& Request : CurrentRequests)
+		{
+			if (!Request.IsSuccess())
+			{
+				FailedPayloads.Add(Request.GetIdentifier());
+			}
+		}
+
+		return FailedPayloads;
 	}
 
 	/** Returns if there are still requests that need servicing or not */
@@ -513,7 +562,7 @@ FVirtualizationManager::~FVirtualizationManager()
 		IConsoleManager::Get().UnregisterConsoleObject(ConsoleObject);
 	}
 
-	UE_LOG(LogVirtualization, Log, TEXT("Destroying backends"));
+	UE_LOG(LogVirtualization, Verbose, TEXT("Destroying backends"));
 
 	CacheStorageBackends.Empty();
 	PersistentStorageBackends.Empty();
@@ -521,7 +570,7 @@ FVirtualizationManager::~FVirtualizationManager()
 
 	AllBackends.Empty(); // This will delete all backends and beyond this point all references to them are invalid
 
-	UE_LOG(LogVirtualization, Log, TEXT("Virtualization manager destroyed"));
+	UE_LOG(LogVirtualization, Verbose, TEXT("Virtualization manager destroyed"));
 }
 
 bool FVirtualizationManager::Initialize(const FInitParams& InitParams)
@@ -802,9 +851,14 @@ bool FVirtualizationManager::PullData(TArrayView<FPullRequest> Requests)
 
 		if (Request.IsSuccess())
 		{
-			checkf(Request.GetIdentifier() == Request.GetPayload().GetRawHash(), TEXT("[%s] Invalid payload for '%s'"), *LexToString(Request.GetIdentifier()));
+			checkf(Request.GetIdentifier() == Request.GetPayload().GetRawHash(), TEXT("Invalid payload for '%s'"), *LexToString(Request.GetIdentifier()));
 		}
-	}	
+	}
+
+	if (bSuccess)
+	{
+		UnattendedFailureMsgCount = 0;
+	}
 
 	return bSuccess;
 }
@@ -1120,6 +1174,25 @@ void FVirtualizationManager::ApplySettingsFromConfigFiles(const FConfigFile& Con
 
 #if UE_VIRTUALIZATION_CONNECTION_LAZY_INIT == 0
 	ConfigFile.GetBool(ConfigSection, TEXT("LazyInitConnections"), bLazyInitConnections);
+
+	if (bLazyInitConnections)
+	{
+		// Check if we should override the value of bLazyInitConnections depending on if the current process is interactive or not
+		bool bDisableLazyInitIfInteractive = false;
+		ConfigFile.GetBool(ConfigSection, TEXT("DisableLazyInitIfInteractive"), bDisableLazyInitIfInteractive);
+
+		const bool bIsUsingSlate = UE_VA_WITH_SLATE != 0;
+		const bool bIsUnattended = FApp::IsUnattended();
+		const bool bIsRunningCommandlet = IsRunningCommandlet();
+
+		const bool bIsInteractive = bIsUsingSlate && !bIsUnattended && !bIsRunningCommandlet;
+
+		if (bDisableLazyInitIfInteractive && bIsInteractive)
+		{
+			bLazyInitConnections = false;
+		}
+	}
+
 	UE_LOG(LogVirtualization, Display, TEXT("\tLazyInitConnections : %s"), bLazyInitConnections ? TEXT("true") : TEXT("false"));
 #else
 	bLazyInitConnections = true;
@@ -1146,6 +1219,20 @@ void FVirtualizationManager::ApplySettingsFromConfigFiles(const FConfigFile& Con
 		UE_LOG(LogVirtualization, Display, TEXT("\tForceCachingOnPull : %s"), bForceCachingOnPull ? TEXT("true") : TEXT("false"));
 	}
 
+	{
+		ConfigFile.GetInt(ConfigSection, TEXT("UnattendedRetryTimer"), UnattendedRetryTimer);
+		ConfigFile.GetInt(ConfigSection, TEXT("UnattendedRetryCount"), UnattendedRetryCount);
+		
+		if (ShouldRetryWhenUnattended())
+		{
+			UE_LOG(LogVirtualization, Display, TEXT("\tUnattendedRetryTimer : %d retries every %d(s)"), UnattendedRetryCount, UnattendedRetryTimer);
+		}
+		else
+		{
+			UE_LOG(LogVirtualization, Display, TEXT("\tUnattendedRetries : disabled"));
+		}
+	}
+
 	// Deprecated
 	{
 		bool bDummyValue = true;
@@ -1168,7 +1255,7 @@ void FVirtualizationManager::ApplySettingsFromConfigFiles(const FConfigFile& Con
 		static const TArray<FString> AllowedEntries = { TEXT("SystemName") , TEXT("LazyInit"), TEXT("InitPreSlate") };
 		
 		TArray<FString> LegacyEntries;	
-		if (const FConfigSection* LegacySection = ConfigFile.Find(LegacyConfigSection))
+		if (const FConfigSection* LegacySection = ConfigFile.FindSection(LegacyConfigSection))
 		{
 			for (const TPair<FName, FConfigValue>& It : *LegacySection)
 			{
@@ -1920,7 +2007,7 @@ void FVirtualizationManager::PullDataFromAllBackends(TArrayView<FPullRequest> Re
 		{
 			return; // All payloads pulled
 		}
-		else if (OnPayloadPullError(BackendErrors) != ErrorHandlingResult::Retry)
+		else if (OnPayloadPullError(RequestsCollection, BackendErrors) != ErrorHandlingResult::Retry)
 		{
 			return; // Some payloads failed to pull
 		}
@@ -1932,9 +2019,9 @@ void FVirtualizationManager::PullDataFromBackend(IVirtualizationBackend& Backend
 	COOK_STAT(FCookStats::CallStats & Stats = Profiling::GetPullStats(Backend));
 	COOK_STAT(FCookStats::FScopedStatsCounter Timer(Stats));
 	COOK_STAT(Timer.TrackCyclesOnly());
-	
+
 	Backend.PullData(Requests, IVirtualizationBackend::EPullFlags::None, OutErrors);
-	
+
 #if ENABLE_COOK_STATS
 	const bool bIsInGameThread = IsInGameThread();
 
@@ -1951,23 +2038,27 @@ void FVirtualizationManager::PullDataFromBackend(IVirtualizationBackend& Backend
 #endif //ENABLE_COOK_STATS
 }
 
-FVirtualizationManager::ErrorHandlingResult FVirtualizationManager::OnPayloadPullError(FStringView BackendErrors)
+FVirtualizationManager::ErrorHandlingResult FVirtualizationManager::OnPayloadPullError(const FPullRequestCollection& Requests, FStringView BackendErrors) const
 {
 	if (bUseLegacyErrorHandling)
 	{
 		return ErrorHandlingResult::AcceptFailedPayloads;
 	}
 
+	for (const FIoHash& FailedPayload : Requests.GetFailedPayloads())
+	{
+		UE_LOG(LogVirtualization, Error, TEXT("Failed to pull payload '%s'"), *LexToString(FailedPayload));
+	}
+
 	static FCriticalSection CriticalSection;
 
 	if (CriticalSection.TryLock())
 	{
-		
 		const FText Title(LOCTEXT("VAPullTitle", "Failed to pull virtualized data!"));
 
 		FTextBuilder MsgBuilder;
 		MsgBuilder.AppendLine(LOCTEXT("VAPullMsgHeader", "Failed to pull payload(s) from virtualization storage and allowing the editor to continue could corrupt data!"));
-		
+
 		if (!BackendErrors.IsEmpty())
 		{
 			MsgBuilder.AppendLine(FString(TEXT("")));
@@ -1980,16 +2071,51 @@ FVirtualizationManager::ErrorHandlingResult FVirtualizationManager::OnPayloadPul
 			MsgBuilder.AppendLine(PullErrorAdditionalMsg);
 		}
 
-		MsgBuilder.AppendLine(FString(TEXT("")));
-		MsgBuilder.AppendLine(LOCTEXT("VAPullMsgYes", "[Yes] Retry pulling the data"));
-		MsgBuilder.AppendLine(LOCTEXT("VAPullMsgNo", "[No] Quit the editor"));
+		// By default we should quit the process unless the user can opt to retry
+		EAppReturnType::Type Result = EAppReturnType::No;
 
-		const FText Message = MsgBuilder.ToText();
+		if (Utils::IsProcessInteractive())
+		{
+			MsgBuilder.AppendLine(FString(TEXT("")));
+			MsgBuilder.AppendLine(LOCTEXT("VAPullMsgYes", "[Yes] Retry pulling the data"));
+			MsgBuilder.AppendLine(LOCTEXT("VAPullMsgNo", "[No] Quit the editor"));
 
-		EAppReturnType::Type Result = FMessageDialog::Open(EAppMsgType::YesNo, EAppReturnType::No, Message, Title);
+			const FText Message = MsgBuilder.ToText();
+
+			FDisableUnattendedScriptGlobal DisableScope;
+			Result = FMessageDialog::Open(EAppMsgType::YesNo, EAppReturnType::No, Message, Title);
+		}
+		else
+		{
+			const FText Message = MsgBuilder.ToText();
+
+			if (!ShouldRetryWhenUnattended() || UnattendedFailureMsgCount >= UnattendedRetryCount)
+			{
+				UE_LOG(LogVirtualization, Error, TEXT("%s"), *Message.ToString());
+			}
+			else
+			{
+				// Only log as a warning while we are retrying so that if we do recover out logging will
+				// not cause the running process to be considered a failure due to an error.
+				UE_LOG(LogVirtualization, Warning, TEXT("Failed to pull payload(s) on attempt (%d/%d)"), UnattendedFailureMsgCount.load(), UnattendedRetryCount);
+
+				Result = EAppReturnType::Yes; // Attempt to retry the failed pull
+
+				if (UnattendedRetryTimer > 0)
+				{
+					UE_LOG(LogVirtualization, Warning, TEXT("Waiting for %d seconds before trying to pull again..."), UnattendedRetryTimer);
+					FPlatformProcess::SleepNoStats(static_cast<float>(UnattendedRetryTimer));
+				}
+
+				UnattendedFailureMsgCount++;
+			}
+		}
 
 		if (Result == EAppReturnType::No)
 		{
+			// Reporting a fatal error will print the callstack and initiate the crash handling system to be treated like a bug
+			// where as this error indicates an infrastructure failure or other connection issue which needs to be solved.
+			// So we will force the process to close after logging our errors instead.
 			UE_LOG(LogVirtualization, Error, TEXT("Failed to pull payloads from persistent storage and the connection could not be re-established, exiting..."));
 			GIsCriticalError = 1;
 			FPlatformMisc::RequestExit(true);
@@ -1999,6 +2125,8 @@ FVirtualizationManager::ErrorHandlingResult FVirtualizationManager::OnPayloadPul
 	}
 	else
 	{
+		// Since we failed to get the lock the error is being dealt with on another thread so we need to wait here until
+		// that thread has resolved the problem or terminated the process.
 		FScopeLock _(&CriticalSection);
 	}
 
@@ -2128,6 +2256,11 @@ bool FVirtualizationManager::ShouldVirtualizeAsDefault() const
 			checkNoEntry();
 			return false;
 	}
+}
+
+bool FVirtualizationManager::ShouldRetryWhenUnattended() const
+{
+	return UnattendedRetryCount > 0;
 }
 
 void FVirtualizationManager::BroadcastEvent(TConstArrayView<FPullRequest> Requests, ENotification Event)

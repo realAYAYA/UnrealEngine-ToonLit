@@ -1267,10 +1267,13 @@ bool UE::Geometry::ConvertSelection(
 		checkSlow(ToSelectionOut.TopologyType == EGeometryTopologyType::Triangle);
 		checkSlow(ToSelectionOut.ElementType == EGeometryElementType::Vertex);
 
-		for (FGroupTopology::FCorner Corner : GroupTopology->Corners)
-		{
-			ToSelectionOut.Selection.Add( FGeoSelectionID::MeshVertex((int32)Corner.VertexID).Encoded() );
-		}
+		// TODO Add a function which gets the Vids only, to remove the matrix-vector multiplication we just ignore
+		const FTransform Transform = FTransform::Identity;
+		EnumeratePolygroupSelectionVertices(FromSelectionIn, Mesh, GroupTopology, Transform,
+			[&ToSelectionOut](uint64 Vid, const FVector3d& Unused)
+			{
+				ToSelectionOut.Selection.Add( FGeoSelectionID::MeshVertex((int32)Vid).Encoded() );
+			});
 
 		return true;
 	};
@@ -1299,10 +1302,11 @@ bool UE::Geometry::ConvertSelection(
 }
 
 bool UE::Geometry::ConvertTriangleSelectionToOverlaySelection(
-	const UE::Geometry::FDynamicMesh3& Mesh,
+	const FDynamicMesh3& Mesh,
 	const FGeometrySelection& MeshSelection,
 	TSet<int>& TrianglesOut,
-	TSet<int>& VerticesOut)
+	TSet<int>& VerticesOut,
+	FGeometrySelection* IncidentSelection)
 {
 	if (!ensure(MeshSelection.TopologyType == EGeometryTopologyType::Triangle))
 	{
@@ -1330,6 +1334,25 @@ bool UE::Geometry::ConvertTriangleSelectionToOverlaySelection(
 			VerticesOut.Add(Verts.C);
 		});
 	}
+	else if (MeshSelection.ElementType == EGeometryElementType::Edge && IncidentSelection)
+	{
+		IncidentSelection->InitializeTypes(EGeometryElementType::Vertex, EGeometryTopologyType::Triangle);
+
+		EnumerateTriangleSelectionTriangles(MeshSelection, Mesh,
+			[&TrianglesOut](int32 ValidTid)
+		{
+			TrianglesOut.Add(ValidTid);
+		});
+
+		// TODO Add a function which gets the Vids only, to remove the matrix-vector multiplication we just ignore
+		const FTransform Transform = FTransform::Identity;
+		EnumerateTriangleSelectionVertices(MeshSelection, Mesh, Transform,
+			[&VerticesOut, IncidentSelection](uint64 Vid, const FVector3d& Unused)
+		{
+			IncidentSelection->Selection.Add(FGeoSelectionID::MeshVertex((int)Vid).Encoded() );
+			VerticesOut.Add((int)Vid);
+		});
+	}
 	else
 	{
 		EnumerateTriangleSelectionTriangles(MeshSelection, Mesh,
@@ -1348,6 +1371,79 @@ bool UE::Geometry::ConvertTriangleSelectionToOverlaySelection(
 	}
 
 	return true;
+}
+
+bool UE::Geometry::ConvertPolygroupSelectionToOverlaySelection(
+	const FDynamicMesh3& Mesh,
+	const FPolygroupSet& GroupSet,
+	const FGeometrySelection& MeshSelection,
+	TSet<int>& TrianglesOut,
+	TSet<int>& VerticesOut)
+{
+	return EnumeratePolygroupSelectionTriangles(MeshSelection, Mesh, GroupSet,
+		[&TrianglesOut, &VerticesOut, &Mesh](int32 ValidTid)
+	{
+		TrianglesOut.Add(ValidTid);
+		const FIndex3i Verts = Mesh.GetTriangle(ValidTid);
+		VerticesOut.Add(Verts.A);
+		VerticesOut.Add(Verts.B);
+		VerticesOut.Add(Verts.C);
+	});
+}
+
+bool UE::Geometry::ConvertPolygroupSelectionToIncidentOverlaySelection(
+	const FDynamicMesh3& Mesh,
+	const FGroupTopology& GroupTopology,
+	const FGeometrySelection& MeshSelection,
+	TSet<int>& TrianglesOut,
+	TSet<int>& VerticesOut,
+	FGeometrySelection* IncidentSelection)
+{
+	if (!ensure(MeshSelection.TopologyType == EGeometryTopologyType::Polygroup))
+	{
+		return false;
+	}
+
+	if (MeshSelection.ElementType == EGeometryElementType::Face)
+	{
+		if (MeshSelection.TopologyType == EGeometryTopologyType::Polygroup)
+		{
+			// TODO This uses the polygroup set stored directly in the mesh, this is a source of potential inconsistency
+			// with the given GroupTopology
+			const FPolygroupSet GroupSet = FPolygroupSet(&Mesh);
+
+			return EnumeratePolygroupSelectionTriangles(MeshSelection, Mesh, GroupSet,
+				[&TrianglesOut, &VerticesOut, &Mesh](int32 ValidTid)
+			{
+				TrianglesOut.Add(ValidTid);
+				const FIndex3i Verts = Mesh.GetTriangle(ValidTid);
+				VerticesOut.Add(Verts.A);
+				VerticesOut.Add(Verts.B);
+				VerticesOut.Add(Verts.C);
+			});
+		}
+		else
+		{
+			return ConvertTriangleSelectionToOverlaySelection(Mesh, MeshSelection, TrianglesOut, VerticesOut);
+		}
+	}
+	else
+	{
+		FGeometrySelection TempIncidentSelection;
+		if (IncidentSelection == nullptr)
+		{
+			IncidentSelection = &TempIncidentSelection;
+		}
+
+		IncidentSelection->InitializeTypes(EGeometryElementType::Vertex, EGeometryTopologyType::Triangle);
+
+		// GroupTopology argument is ignored if MeshSelection has Triangle topology
+		bool bSuccess = ConvertSelection(Mesh, &GroupTopology, MeshSelection, *IncidentSelection);
+		ensure(bSuccess == true);
+		ensure(!IncidentSelection->IsEmpty());
+
+		return ConvertTriangleSelectionToOverlaySelection(Mesh, *IncidentSelection, TrianglesOut, VerticesOut);
+	}
 }
 
 bool UE::Geometry::MakeSelectAllSelection(
@@ -1549,7 +1645,7 @@ bool UE::Geometry::MakeSelectAllConnectedSelection(
 			TArray<int32> NbrCornerIDs;
 			while (Queue.Num() > 0)
 			{
-				FGeoSelectionID CurCornerSelectionID = FGeoSelectionID(Queue.Pop(false));
+				FGeoSelectionID CurCornerSelectionID = FGeoSelectionID(Queue.Pop(EAllowShrinking::No));
 				const FGroupTopology::FCorner& Corner = GroupTopology->Corners[CurCornerSelectionID.TopologyID];
 				NbrCornerIDs.Reset();
 				GroupTopology->FindCornerNbrCorners(CurCornerSelectionID.TopologyID, NbrCornerIDs);
@@ -1571,7 +1667,7 @@ bool UE::Geometry::MakeSelectAllConnectedSelection(
 			TArray<int32> NbrEdgeIDs;
 			while (Queue.Num() > 0)
 			{
-				FGeoSelectionID CurEdgeSelectionID = FGeoSelectionID(Queue.Pop(false));
+				FGeoSelectionID CurEdgeSelectionID = FGeoSelectionID(Queue.Pop(EAllowShrinking::No));
 				const FGroupTopology::FGroupEdge& Edge = GroupTopology->Edges[CurEdgeSelectionID.TopologyID];
 				NbrEdgeIDs.Reset();
 				GroupTopology->FindEdgeNbrEdges(CurEdgeSelectionID.TopologyID, NbrEdgeIDs);
@@ -1594,7 +1690,7 @@ bool UE::Geometry::MakeSelectAllConnectedSelection(
 			TArray<int32> NbrGroupIDs;
 			while (Queue.Num() > 0)
 			{
-				FGeoSelectionID CurGroupSelectionID = FGeoSelectionID(Queue.Pop(false));
+				FGeoSelectionID CurGroupSelectionID = FGeoSelectionID(Queue.Pop(EAllowShrinking::No));
 				NbrGroupIDs.Reset();
 				for ( int32 NbrGroupID : GroupTopology->GetGroupNbrGroups(CurGroupSelectionID.TopologyID) )
 				{

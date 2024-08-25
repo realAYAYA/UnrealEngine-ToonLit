@@ -2093,6 +2093,23 @@
             <param name="cancellationToken">Token used to cancel the operation</param>
             <returns>Stream information record</returns>
         </member>
+        <member name="M:EpicGames.Perforce.PerforceConnectionExtensions.TryUpdateStreamAsync(EpicGames.Perforce.IPerforceConnection,EpicGames.Perforce.StreamRecord,System.Threading.CancellationToken)">
+            <summary>
+            Updates an existing stream
+            </summary>
+            <param name="connection">Connection to the Perforce server</param>
+            <param name="record">Information of the stream to update</param>
+            <param name="cancellationToken">Token used to cancel the operation</param>
+            <returns>Stream information record</returns>
+        </member>
+        <member name="M:EpicGames.Perforce.PerforceConnectionExtensions.SerializeRecord(EpicGames.Perforce.IPerforceConnection,EpicGames.Perforce.StreamRecord)">
+            <summary>
+            Serializes a client record to a byte array
+            </summary>
+            <param name="connection">Connection to the Perforce server</param>
+            <param name="input">The input record</param>
+            <returns>Serialized record data</returns>
+        </member>
         <member name="M:EpicGames.Perforce.PerforceConnectionExtensions.GetStreamsAsync(EpicGames.Perforce.IPerforceConnection,System.String,System.Threading.CancellationToken)">
             <summary>
             Enumerates all streams in a depot
@@ -4277,6 +4294,16 @@
             Opposite of Rmdir.
             </summary>
         </member>
+        <member name="F:EpicGames.Perforce.ClientOptions.AltSync">
+            <summary>
+            If set, and a Helix Core Virtual File Service (P4VFS) application is installed to make use of P4ALTSYNC, the client can create, delete, or update placeholders of the file metadata instead of always taking time to download the full file content. 
+            </summary>
+        </member>
+        <member name="F:EpicGames.Perforce.ClientOptions.NoAltSync">
+            <summary>
+            Opposite of AltSync.
+            </summary>
+        </member>
         <member name="T:EpicGames.Perforce.ClientRecord">
             <summary>
             Represents a Perforce clientspec
@@ -4639,12 +4666,23 @@
         </member>
         <member name="P:EpicGames.Perforce.DepotRecord.Type">
             <summary>
-            Creation time
+            Depot Type 
             </summary>
         </member>
         <member name="P:EpicGames.Perforce.DepotRecord.Description">
             <summary>
-            Creation time
+            Depot Description
+            </summary>
+        </member>
+        <member name="P:EpicGames.Perforce.DepotRecord.StreamDepthString">
+            <summary>
+            Depot Stream Depth (number of slashes after depot that define the stream name)
+            A string containing either an integer value or an example path (i.e. //depot/foo/bar represents a depth of 2)
+            </summary>
+        </member>
+        <member name="M:EpicGames.Perforce.DepotRecord.GetStreamDepth">
+            <summary>
+            Helper to get Depot Stream Depth (number of slashes after depot that define the stream name) as an integer
             </summary>
         </member>
         <member name="T:EpicGames.Perforce.DescribeFileRecord">
@@ -5904,6 +5942,36 @@
             Preview the merge
             </summary>
         </member>
+        <member name="F:EpicGames.Perforce.MergeOptions.Force">
+            <summary>
+            Forces the operation
+            </summary>
+        </member>
+        <member name="F:EpicGames.Perforce.MergeOptions.AsFiles">
+            <summary>
+            Performs the merge with files only
+            </summary>
+        </member>
+        <member name="F:EpicGames.Perforce.MergeOptions.AsStreamSpec">
+            <summary>
+            Performs the merge as a stream spec
+            </summary>
+        </member>
+        <member name="F:EpicGames.Perforce.MergeOptions.Stream">
+            <summary>
+            Use stream based merging
+            </summary>
+        </member>
+        <member name="F:EpicGames.Perforce.MergeOptions.ReverseMapping">
+            <summary>
+            Revere the mapping direction
+            </summary>
+        </member>
+        <member name="F:EpicGames.Perforce.MergeOptions.Source">
+            <summary>
+            Treat the from path as the source
+            </summary>
+        </member>
         <member name="T:EpicGames.Perforce.MergeRecord">
             <summary>
             Response from a merge
@@ -6020,9 +6088,14 @@
             Record returned by the opened command
             </summary>
         </member>
+        <member name="P:EpicGames.Perforce.OpenedRecord.Stream">
+            <summary>
+            The stream spec opened for edit
+            </summary>
+        </member>
         <member name="P:EpicGames.Perforce.OpenedRecord.DepotFile">
             <summary>
-            Depot path to file
+            Depot path to file. May be unset if this record describes a stream spec.
             </summary>
         </member>
         <member name="P:EpicGames.Perforce.OpenedRecord.ClientFile">
@@ -6746,6 +6819,11 @@
             Options for this stream
             </summary>
         </member>
+        <member name="P:EpicGames.Perforce.StreamRecord.ParentView">
+            <summary>
+            Parent view
+            </summary>
+        </member>
         <member name="P:EpicGames.Perforce.StreamRecord.Paths">
             <summary>
             List of paths in the stream spec
@@ -6765,6 +6843,18 @@
             <summary>
             Private constructor for serialization
             </summary>
+        </member>
+        <member name="M:EpicGames.Perforce.StreamRecord.#ctor(System.String,System.String,System.String,System.String,System.String,System.String,System.Collections.Generic.List{System.String})">
+            <summary>
+            Constructor
+            </summary>
+            <param name="stream">Stream</param>
+            <param name="owner">Owner</param>
+            <param name="name">Name of the stream</param>
+            <param name="parent">Parent stream</param>
+            <param name="type">Stream type</param>
+            <param name="parentView">Parent view</param>
+            <param name="paths">List of paths in the stream spec</param>
         </member>
         <member name="T:EpicGames.Perforce.StreamsOptions">
             <summary>

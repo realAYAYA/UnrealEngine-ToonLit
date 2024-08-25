@@ -70,7 +70,7 @@ void FRuntimeVirtualTextureFinalizer::Finalize(FRDGBuilder& GraphBuilder)
 	RenderPageBatchDesc.MaxLevel = Desc.MaxLevel;
 	RenderPageBatchDesc.bClearTextures = bClearTextures;
 	RenderPageBatchDesc.bIsThumbnails = false;
-	RenderPageBatchDesc.DebugType = ERuntimeVirtualTextureDebugType::None;
+	RenderPageBatchDesc.FixedColor = FLinearColor::Transparent;
 	
 	for (int LayerIndex = 0; LayerIndex < RuntimeVirtualTexture::MaxTextureLayers; ++LayerIndex)
 	{

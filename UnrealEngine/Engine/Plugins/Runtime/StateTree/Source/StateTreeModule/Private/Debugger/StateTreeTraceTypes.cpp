@@ -7,6 +7,25 @@
 
 #if WITH_STATETREE_DEBUGGER
 
+namespace UE::StateTreeTrace
+{
+	FString GetStateName(const UStateTree& StateTree, const FCompactStateTreeState* CompactState)
+	{
+		check(CompactState);
+
+		if (const UStateTree* LinkedAsset = CompactState->LinkedAsset.Get())
+		{
+			return FString::Printf(TEXT("%s > [%s]"), *CompactState->Name.ToString(), *LinkedAsset->GetName());
+		}
+
+		if (const FCompactStateTreeState* LinkedState = StateTree.GetStateFromHandle(CompactState->LinkedState))
+		{
+			return FString::Printf(TEXT("%s > %s"), *CompactState->Name.ToString(), *LinkedState->Name.ToString());
+		}
+
+		return CompactState->Name.ToString();
+	}
+}
 
 //----------------------------------------------------------------------//
 // FStateTreeTracePhaseEvent
@@ -19,12 +38,38 @@ FString FStateTreeTracePhaseEvent::ToFullString(const UStateTree& StateTree) con
 FString FStateTreeTracePhaseEvent::GetValueString(const UStateTree& StateTree) const
 {
 	FStringBuilderBase StrBuilder;
-	StrBuilder.Append(UEnum::GetDisplayValueAsText(Phase).ToString());
+
+	// Override to display only selection behavior
+	if (Phase == EStateTreeUpdatePhase::TrySelectBehavior
+		&& StateHandle.IsValid())
+	{
+		if (const FCompactStateTreeState* CompactState = StateTree.GetStateFromHandle(StateHandle))
+		{
+			return UEnum::GetDisplayValueAsText(CompactState->SelectionBehavior).ToString();
+		}
+
+		return FString::Printf(TEXT("Invalid State Index %s for '%s'"), *StateHandle.Describe(), *StateTree.GetFullName());
+	}
+
+	// Otherwise build either: "<PhaseDescription> '<StateName>'" or "<StateName>"
+	if (Phase != EStateTreeUpdatePhase::Unset)
+	{
+		StrBuilder.Append(UEnum::GetDisplayValueAsText(Phase).ToString());
+	}
 
 	const FCompactStateTreeState* CompactState = StateTree.GetStateFromHandle(StateHandle);
 	if (CompactState != nullptr || StateHandle.IsValid())
 	{
-		StrBuilder.Appendf(TEXT(" '%s'"), CompactState != nullptr ? *CompactState->Name.ToString() : *StateHandle.Describe());
+		if (StrBuilder.Len())
+		{
+			StrBuilder.Appendf(TEXT(" '%s'"),
+				CompactState != nullptr ? *UE::StateTreeTrace::GetStateName(StateTree, CompactState) : *StateHandle.Describe());
+		}
+		else
+		{
+			StrBuilder.Appendf(TEXT("%s"),
+				CompactState != nullptr ? *UE::StateTreeTrace::GetStateName(StateTree, CompactState) : *StateHandle.Describe());
+		}
 	}
 
 	return StrBuilder.ToString();
@@ -85,7 +130,7 @@ FString FStateTreeTraceTransitionEvent::GetValueString(const UStateTree& StateTr
 {
 	const FCompactStateTreeState* CompactState = StateTree.GetStateFromHandle(TransitionSource.TargetState);
 	FStringBuilderBase StrBuilder;
-	StrBuilder.Appendf(TEXT("go to State '%s'"), CompactState != nullptr ? *CompactState->Name.ToString() : *TransitionSource.TargetState.Describe());
+	StrBuilder.Appendf(TEXT("go to State '%s'"), CompactState != nullptr ? *UE::StateTreeTrace::GetStateName(StateTree, CompactState) : *TransitionSource.TargetState.Describe());
 
 	if (TransitionSource.Priority != EStateTreeTransitionPriority::None)
 	{
@@ -172,22 +217,18 @@ FString FStateTreeTraceStateEvent::ToFullString(const UStateTree& StateTree) con
 	const FStateTreeStateHandle StateHandle(Index.Get());
 	if (const FCompactStateTreeState* CompactState = StateTree.GetStateFromHandle(StateHandle))
 	{
-		if (SelectionBehavior != EStateTreeStateSelectionBehavior::None)
+		if (CompactState->SelectionBehavior != EStateTreeStateSelectionBehavior::None)
 		{
 			return FString::Printf(TEXT("%s '%s' (%s)"),
-					*UEnum::GetDisplayValueAsText(EventType).ToString(),
-					*CompactState->Name.ToString(),
-					*UEnum::GetDisplayValueAsText(SelectionBehavior).ToString());
-		}
-		else
-		{
-			return FString::Printf(TEXT("%s '%s'"),
 				*UEnum::GetDisplayValueAsText(EventType).ToString(),
-				*CompactState->Name.ToString());
+				*GetValueString(StateTree),
+				*UEnum::GetDisplayValueAsText(CompactState->SelectionBehavior).ToString());
 		}
 	}
 
-	return FString::Printf(TEXT("Invalid State Index %s for '%s'"), *StateHandle.Describe(), *StateTree.GetFullName());
+	return FString::Printf(TEXT("%s '%s'"),
+		*UEnum::GetDisplayValueAsText(EventType).ToString(),
+		*GetValueString(StateTree));
 }
 
 FString FStateTreeTraceStateEvent::GetValueString(const UStateTree& StateTree) const
@@ -195,7 +236,7 @@ FString FStateTreeTraceStateEvent::GetValueString(const UStateTree& StateTree) c
 	const FStateTreeStateHandle StateHandle(Index.Get());
 	if (const FCompactStateTreeState* CompactState = StateTree.GetStateFromHandle(StateHandle))
 	{
-		return FString::Printf(TEXT("%s"), *CompactState->Name.ToString());
+		return UE::StateTreeTrace::GetStateName(StateTree, CompactState);
 	}
 
 	return FString::Printf(TEXT("Invalid State Index %s for '%s'"), *StateHandle.Describe(), *StateTree.GetFullName());
@@ -203,18 +244,7 @@ FString FStateTreeTraceStateEvent::GetValueString(const UStateTree& StateTree) c
 
 FString FStateTreeTraceStateEvent::GetTypeString(const UStateTree& StateTree) const
 {
-	const FStateTreeStateHandle StateHandle(Index.Get());
-	if (const FCompactStateTreeState* CompactState = StateTree.GetStateFromHandle(StateHandle))
-	{
-		if (SelectionBehavior != EStateTreeStateSelectionBehavior::None)
-		{
-			return FString::Printf(TEXT("%s '%s'"), *UEnum::GetDisplayValueAsText(SelectionBehavior).ToString(), *CompactState->Name.ToString());
-		}
-
-		return FString::Printf(TEXT(""));
-	}
-
-	return FString::Printf(TEXT("Invalid State Index %s for '%s'"), *StateHandle.Describe(), *StateTree.GetFullName());
+	return TEXT("State");
 }
 
 
@@ -223,7 +253,7 @@ FString FStateTreeTraceStateEvent::GetTypeString(const UStateTree& StateTree) co
 //----------------------------------------------------------------------//
 FString FStateTreeTraceTaskEvent::ToFullString(const UStateTree& StateTree) const
 {
-	return FString::Printf(TEXT("%s -> %s"),	*FStateTreeTraceNodeEvent::ToFullString(StateTree), *UEnum::GetDisplayValueAsText(Status).ToString());
+	return FString::Printf(TEXT("%s -> %s"), *FStateTreeTraceNodeEvent::ToFullString(StateTree), *UEnum::GetDisplayValueAsText(Status).ToString());
 }
 
 FString FStateTreeTraceTaskEvent::GetValueString(const UStateTree& StateTree) const
@@ -281,6 +311,7 @@ FString FStateTreeTraceConditionEvent::GetTypeString(const UStateTree& StateTree
 	return FStateTreeTraceNodeEvent::GetTypeString(StateTree);
 }
 
+
 //----------------------------------------------------------------------//
 // FStateTreeTraceActiveStatesEvent
 //----------------------------------------------------------------------//
@@ -291,21 +322,28 @@ FStateTreeTraceActiveStatesEvent::FStateTreeTraceActiveStatesEvent(const double 
 
 FString FStateTreeTraceActiveStatesEvent::ToFullString(const UStateTree& StateTree) const
 {
-	if (ActiveStates.Num() > 0)
+	if (ActiveStates.PerAssetStates.Num() > 0)
 	{
 		return FString::Printf(TEXT("%s: %s"), *GetTypeString(StateTree), *GetValueString(StateTree));
 	}
 	return TEXT("No active states");
 }
 
-FString FStateTreeTraceActiveStatesEvent::GetValueString(const UStateTree& StateTree) const
+FString FStateTreeTraceActiveStatesEvent::GetValueString(const UStateTree&) const
 {
 	FStringBuilderBase StatePath;
-	for (int32 i = 0; i < ActiveStates.Num(); i++)
+	for (const FStateTreeTraceActiveStates::FAssetActiveStates& PerAssetStates : ActiveStates.PerAssetStates)
 	{
-		TConstArrayView<FCompactStateTreeState> StatesView = StateTree.GetStates();
-		const FCompactStateTreeState& State = StatesView[ActiveStates[i].Index];
-		StatePath.Appendf(TEXT("%s%s"), i == 0 ? TEXT("") : TEXT("."), *State.Name.ToString());
+		if (const UStateTree* StateTree = PerAssetStates.WeakStateTree.Get())
+		{
+			for (const FStateTreeStateHandle Handle : PerAssetStates.ActiveStates)
+			{
+				const FCompactStateTreeState* State = StateTree->GetStateFromHandle(Handle);
+				StatePath.Appendf(TEXT("%s%s"),
+					StatePath.Len() == 0 ? TEXT("") : TEXT("."),
+					State == nullptr ? TEXT("Invalid") : *UE::StateTreeTrace::GetStateName(*StateTree, State));
+			}
+		}
 	}
 	return StatePath.ToString();
 }
@@ -313,6 +351,31 @@ FString FStateTreeTraceActiveStatesEvent::GetValueString(const UStateTree& State
 FString FStateTreeTraceActiveStatesEvent::GetTypeString(const UStateTree& StateTree) const
 {
 	return TEXT("New active states");
+}
+
+
+//----------------------------------------------------------------------//
+// FStateTreeTraceInstanceFrameEvent
+//----------------------------------------------------------------------//
+FStateTreeTraceInstanceFrameEvent::FStateTreeTraceInstanceFrameEvent(const double RecordingWorldTime, const EStateTreeTraceEventType EventType, const UStateTree* StateTree)
+	: FStateTreeTraceBaseEvent(RecordingWorldTime, EventType)
+	, WeakStateTree(StateTree)
+{
+}
+
+FString FStateTreeTraceInstanceFrameEvent::ToFullString(const UStateTree& StateTree) const
+{
+	return FString::Printf(TEXT("%s: %s"), *GetTypeString(StateTree), *GetValueString(StateTree));
+}
+
+FString FStateTreeTraceInstanceFrameEvent::GetValueString(const UStateTree& StateTree) const
+{
+	return GetNameSafe(WeakStateTree.Get());
+}
+
+FString FStateTreeTraceInstanceFrameEvent::GetTypeString(const UStateTree& StateTree) const
+{
+	return TEXT("New instance frame");
 }
 
 #endif // WITH_STATETREE_DEBUGGER

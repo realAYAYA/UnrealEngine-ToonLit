@@ -181,7 +181,8 @@ extern void SetupLumenMeshSDFTracingParameters(FRDGBuilder& GraphBuilder, const 
 extern FLumenHZBScreenTraceParameters SetupHZBScreenTraceParameters(
 	FRDGBuilder& GraphBuilder, 
 	const FViewInfo& View,
-	const FSceneTextures& SceneTextures);
+	const FSceneTextures& SceneTextures,
+	bool bBindLumenHistory = true);
 
 extern int32 GLumenIrradianceFieldGather;
 
@@ -192,5 +193,6 @@ namespace LumenIrradianceFieldGather
 
 namespace LumenDiffuseIndirect
 {
+	bool IsAllowed();
 	bool UseAsyncCompute(const FViewFamilyInfo& ViewFamily);
 }

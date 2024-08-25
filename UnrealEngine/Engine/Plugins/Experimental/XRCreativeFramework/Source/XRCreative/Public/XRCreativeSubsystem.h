@@ -3,15 +3,10 @@
 #pragma once
 
 #include "Subsystems/EngineSubsystem.h"
-
 #include "XRCreativeSubsystem.generated.h"
 
 
-UCLASS(Abstract, Blueprintable)
-class XRCREATIVE_API UXRCreativeSubsystemHelpers : public UObject
-{
-	GENERATED_BODY()
-};
+class UMVVMViewModelCollectionObject;
 
 
 UCLASS()
@@ -21,6 +16,12 @@ class XRCREATIVE_API UXRCreativeSubsystem : public UEngineSubsystem
 
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+
+	UFUNCTION(BlueprintCallable, Category="XR Creative|Viewmodel")
+	UMVVMViewModelCollectionObject* GetViewModelCollection() const
+	{
+		return ViewModelCollection;
+	}
 
 #if WITH_EDITOR
 	/** Enter VR Mode */
@@ -32,12 +33,7 @@ public:
 	static void ExitVRMode();
 #endif // #if WITH_EDITOR
 
-protected:
-	void OnEngineInitComplete();
-
-protected:
-	UPROPERTY(BlueprintReadOnly, Category="XR Creative")
-	TObjectPtr<UXRCreativeSubsystemHelpers> Helpers;
-
-	FDelegateHandle EngineInitCompleteDelegate;
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<UMVVMViewModelCollectionObject> ViewModelCollection;
 };

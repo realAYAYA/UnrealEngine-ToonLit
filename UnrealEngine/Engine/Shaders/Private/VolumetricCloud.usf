@@ -1,9 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 /**
- * VolumetricCloud.usf: Render volumetric cloud on screen.   
+ * VolumetricCloud.usf: Render volumetric cloud on screen.    
  */  
 
+
+ // Change this to force recompilation of all volumetric cloud material shaders
+#pragma message("UESHADERMETADATA_VERSION BFF66DE1-56ED-4BFA-AE26-D7FCF6E790CE")
 
 
 #include "Common.ush"
@@ -14,10 +17,11 @@
 
 #include "Random.ush"
 #include "VolumetricCloudCommon.ush"
+#include "/Engine/Shared/EnvironmentComponentsFlags.h"
 
-#if STRATA_ENABLED && !MATERIAL_IS_STRATA
-#undef STRATA_ENABLED
-#define STRATA_ENABLED 0
+#if SUBSTRATE_ENABLED && !MATERIAL_IS_SUBSTRATE
+#undef SUBSTRATE_ENABLED
+#define SUBSTRATE_ENABLED 0
 #endif
 
 #ifndef SHADER_RENDERVIEW_CS
@@ -64,6 +68,10 @@
 #define CLOUD_MIN_AND_MAX_DEPTH 0
 #endif
 
+#ifndef PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+#define PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME 0
+#endif
+
 // Draw debug sample positions
 #if CLOUD_DEBUG_SAMPLES || EMPTY_SPACE_SKIPPING_DEBUG
 #include "ShaderPrint.ush"
@@ -81,14 +89,18 @@
 #include "ReflectionEnvironmentShared.ush"
 #include "ParticipatingMediaCommon.ush"
 
+#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+#define LFVStruct RenderVolumetricCloudParameters
+#include "LocalFogVolumes/LocalFogVolumeCommon.ush"
+#endif
 
 #if defined(SHADER_SHADOW_PS) || SHADER_RENDERVIEW_PS || SHADER_RENDERVIEW_CS || SHADER_EMPTY_SPACE_SKIPPING_CS
 
 float3 SampleExtinctionCoefficients(in FPixelMaterialInputs PixelMaterialInputs)
 {
 	float3 Extinction = 0.0f;
-#if STRATA_ENABLED
-	FStrataBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+#if SUBSTRATE_ENABLED
+	FSubstrateBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
 	Extinction = VOLUMETRICFOGCLOUD_EXTINCTION(BSDF).rgb;
 #else
 	#if !MATERIAL_SHADINGMODEL_UNLIT
@@ -101,8 +113,8 @@ float3 SampleExtinctionCoefficients(in FPixelMaterialInputs PixelMaterialInputs)
 float3 SampleEmissive(in FPixelMaterialInputs PixelMaterialInputs)
 {
 	float3 EmissiveColor = 0.0f;
-#if STRATA_ENABLED
-	FStrataBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+#if SUBSTRATE_ENABLED
+	FSubstrateBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
 	EmissiveColor = BSDF_GETEMISSIVE(BSDF).rgb;
 #else
 	EmissiveColor = GetMaterialEmissiveRaw(PixelMaterialInputs).rgb;
@@ -113,8 +125,8 @@ float3 SampleEmissive(in FPixelMaterialInputs PixelMaterialInputs)
 float3 SampleAlbedo(in FPixelMaterialInputs PixelMaterialInputs)
 {
 	float3 Albedo = 0.0f;
-#if STRATA_ENABLED
-	FStrataBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+#if SUBSTRATE_ENABLED
+	FSubstrateBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
 	Albedo = VOLUMETRICFOGCLOUD_ALBEDO(BSDF).rgb;
 #else
 	#if !MATERIAL_SHADINGMODEL_UNLIT
@@ -127,8 +139,8 @@ float3 SampleAlbedo(in FPixelMaterialInputs PixelMaterialInputs)
 float SampleAmbientOcclusion(in FPixelMaterialInputs PixelMaterialInputs)
 {
 	float AO = 0.0f;
-#if STRATA_ENABLED
-	FStrataBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+#if SUBSTRATE_ENABLED
+	FSubstrateBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
 	AO = VOLUMETRICFOGCLOUD_AO(BSDF);
 #else
 	AO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
@@ -153,7 +165,7 @@ void ConvertCloudPixelMaterialInputsToWorkingColorSpace(inout FPixelMaterialInpu
 	float3 AlbedoWCS		= SRGBColorToWorkingColorSpace(AlbedoSRGB);
 	float3 EmissiveWCS		= SRGBColorToWorkingColorSpace(EmissiveSRGB);
 
-#if STRATA_ENABLED	
+#if SUBSTRATE_ENABLED	
 	VOLUMETRICFOGCLOUD_EXTINCTION(PixelMaterialInputs.FrontMaterial.InlinedBSDF)	= ExtinctionWCS;
 	VOLUMETRICFOGCLOUD_ALBEDO(PixelMaterialInputs.FrontMaterial.InlinedBSDF)		= AlbedoWCS;
 	BSDF_GETEMISSIVE(PixelMaterialInputs.FrontMaterial.InlinedBSDF)					= EmissiveWCS;
@@ -162,7 +174,7 @@ void ConvertCloudPixelMaterialInputsToWorkingColorSpace(inout FPixelMaterialInpu
 	PixelMaterialInputs.Subsurface.rgb	= ExtinctionWCS;
 	PixelMaterialInputs.BaseColor		= AlbedoWCS;
 	PixelMaterialInputs.EmissiveColor	= EmissiveWCS;
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 #endif // WORKING_COLOR_SPACE_IS_SRGB
 }
 
@@ -426,7 +438,9 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 #if CLOUD_MIN_AND_MAX_DEPTH
 	, inout float4 OutColor1 
 #endif
-	, inout float4 OutDepth)
+	, inout float4 OutDepth
+	, inout float  OutHoldOutCoverage
+	, inout float  OutAboveCloudHoldOut)
 {
 	ResolvedView = ResolveView();
 
@@ -450,7 +464,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 	FPixelMaterialInputs PixelMaterialInputs	= (FPixelMaterialInputs)0;
 	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, true);
 
-	float3 RayWorldOriginKm				= LWCHackToFloat(ResolvedView.WorldCameraOrigin) * CENTIMETER_TO_KILOMETER;
+	float3 RayWorldOriginKm				= DFHackToFloat(ResolvedView.WorldCameraOrigin) * CENTIMETER_TO_KILOMETER;
 	float3 RayTranslatedWorldOriginKm	= View.TranslatedWorldCameraOrigin * CENTIMETER_TO_KILOMETER;
 	float3 Raydir						= -MaterialParameters.CameraVector;
 	float TMin							= -999999999.0f;
@@ -647,6 +661,10 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 			}
 		}
 
+		// Account for the tracing start distance
+		TMin = max(TMin, RenderVolumetricCloudParameters.TracingStartDistanceFromCamera);
+		TMax = max(TMin, TMax);
+
 		// When we do trace, we want a minimum amount of sample count. This avoid situation with 0 sample count due to InvDistanceToSampleCountMax.
 		const uint  IStepCount = max(RenderVolumetricCloudParameters.SampleCountMin, RenderVolumetricCloudParameters.SampleCountMax * saturate((TMax - TMin) * RenderVolumetricCloudParameters.InvDistanceToSampleCountMax));
 		const float StepCount = float(IStepCount);
@@ -771,7 +789,6 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 		{
 			int ms;
 			float3	  SampleTranslatedWorldPosition = RayTranslatedWorldOriginKm + t * Raydir;
-			FLWCVector3 SampleWorldPosition = LWCSubtract(LWCPromote(SampleTranslatedWorldPosition), PrimaryView.PreViewTranslation);
 #if CLOUD_MIN_AND_MAX_DEPTH
 			const bool SampleContributeToClosest = t <= TClosestDepthBufferCm;
 #endif // CLOUD_MIN_AND_MAX
@@ -780,7 +797,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 			//////////////////////////////
 			// Update FMaterialPixelParameters according to current sample.
 			//////////////////////////////
-			UpdateMaterialCloudParam(MaterialParameters, SampleWorldPosition,
+			UpdateMaterialCloudParam(MaterialParameters, SampleTranslatedWorldPosition,
 				ResolvedView, CloudLayerParams, TRACING_SHADOW_DISTANCE_OFF, RenderVolumetricCloudParameters.EmptySpaceSkippingSliceDepth);
 
 #if MATERIAL_VOLUMETRIC_ADVANCED_CONSERVATIVE_DENSITY && !CLOUD_DEBUG_VIEW_MODE
@@ -790,14 +807,14 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 				t += StepSizeOnZeroConservativeDensity * StepT;
 
 			#if CLOUD_DEBUG_SAMPLES
-				if (bDrawDebugEnabled) AddCrossTWS(LWCToFloat(SampleTranslatedWorldPosition), 60000.0f, float4(1, 0, 0, 0.5));
+				if (bDrawDebugEnabled) AddCrossTWS(SampleTranslatedWorldPosition, 60000.0f, float4(1, 0, 0, 0.5));
 			#endif
 				continue; // Conservative density is 0 so skip and go to the next sample
 			}
 			#if CLOUD_DEBUG_SAMPLES
 			else
 			{
-				if(bDrawDebugEnabled) AddCrossTWS(LWCToFloat(SampleTranslatedWorldPosition), 60000.0f, float4(0, 1, 0, 0.5));
+				if(bDrawDebugEnabled) AddCrossTWS(SampleTranslatedWorldPosition, 60000.0f, float4(0, 1, 0, 0.5));
 			}
 			#endif // CLOUD_DEBUG_SAMPLES
 #endif
@@ -913,7 +930,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 						float CurrentNormT = ShadowT * ShadowT; // CurrentNormT is the end of the considered segment to integrate, PreviousNormT is its beginning.
 						const float DetlaNormT = CurrentNormT - PreviousNormT;
 						const float ShadowSampleDistance = ShadowLengthTest * (CurrentNormT - 0.5 * DetlaNormT);
-						UpdateMaterialCloudParam(MaterialParameters, LWCAdd(SampleWorldPosition, LWCPromote(GroundDirection * ShadowSampleDistance)),
+						UpdateMaterialCloudParam(MaterialParameters, SampleTranslatedWorldPosition + GroundDirection * ShadowSampleDistance,
 							ResolvedView, CloudLayerParams, ShadowSampleDistance, SPACE_SKIPPING_SLICE_DEPTH_OFF);
 						PreviousNormT = CurrentNormT;
 #if MATERIAL_VOLUMETRIC_ADVANCED_CONSERVATIVE_DENSITY
@@ -934,7 +951,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 					for (float ShadowT = 0.5; ShadowT < ShadowStepCount; ShadowT += 1.0f)
 					{
 						const float ShadowSampleDistance = ShadowLengthTest * (ShadowT * InvShadowStepCount);
-						UpdateMaterialCloudParam(MaterialParameters, LWCAdd(SampleWorldPosition, LWCPromote(float3(0.0f, 0.0f, -1.0f) * ShadowSampleDistance)),
+						UpdateMaterialCloudParam(MaterialParameters, SampleTranslatedWorldPosition + float3(0.0f, 0.0f, -1.0f) * ShadowSampleDistance,
 							ResolvedView, CloudLayerParams, ShadowSampleDistance, SPACE_SKIPPING_SLICE_DEPTH_OFF);
 #if MATERIAL_VOLUMETRIC_ADVANCED_CONSERVATIVE_DENSITY
 						if (MaterialParameters.VolumeSampleConservativeDensity.x <= 0.0f)
@@ -971,7 +988,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 #if VIRTUAL_SHADOW_MAP 
 				if (RenderVolumetricCloudParameters.VirtualShadowMapId0 != INDEX_NONE)
 				{
-					FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapTranslatedWorld(RenderVolumetricCloudParameters.VirtualShadowMapId0, SampleTranslatedWorldPosition);
+					FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapDirectional(RenderVolumetricCloudParameters.VirtualShadowMapId0, SampleTranslatedWorldPosition);
 					OpaqueShadow *= VirtualShadowMapSample.ShadowFactor;
 				}
 #endif // VIRTUALSHADOW_MAP
@@ -1014,7 +1031,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 				for (float ShadowT = ShadowJitterNorm; ShadowT < ShadowStepCount; ShadowT += 1.0f)
 				{
 					const float ShadowSampleDistance = ShadowLengthTest * (ShadowT * InvShadowStepCount);
-					UpdateMaterialCloudParam(MaterialParameters, LWCAdd(SampleWorldPosition, LWCPromote(Light0Direction * ShadowSampleDistance)),
+					UpdateMaterialCloudParam(MaterialParameters, SampleTranslatedWorldPosition + Light0Direction * ShadowSampleDistance,
 						ResolvedView, CloudLayerParams, ShadowSampleDistance, SPACE_SKIPPING_SLICE_DEPTH_OFF);
 					const float ExtinctionFactor = 1.0f;
 #else
@@ -1027,8 +1044,8 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 					const float DetlaNormT = CurrentNormT - PreviousNormT;
 					const float ExtinctionFactor = DetlaNormT;
 					const float ShadowSampleDistance = ShadowLengthTest * (PreviousNormT + DetlaNormT * ShadowJitterNorm);
-					const FLWCVector3 ShadowSampleWorldPos = LWCAdd(SampleWorldPosition, LWCPromote(Light0Direction * ShadowSampleDistance));
-					UpdateMaterialCloudParam(MaterialParameters, ShadowSampleWorldPos,
+					const float3 ShadowSampleTranslatedWorldPos = SampleTranslatedWorldPosition + Light0Direction * ShadowSampleDistance;
+					UpdateMaterialCloudParam(MaterialParameters, ShadowSampleTranslatedWorldPos,
 						ResolvedView, CloudLayerParams, ShadowSampleDistance, SPACE_SKIPPING_SLICE_DEPTH_OFF);
 					PreviousNormT = CurrentNormT;
 #endif
@@ -1037,14 +1054,14 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 					if (MaterialParameters.VolumeSampleConservativeDensity.x <= 0.0f)
 					{
 					#if CLOUD_DEBUG_SAMPLES
-						if (bDrawDebugEnabled) AddCrossWS(LWCToFloat(ShadowSampleWorldPos), 30000.0f, float4(1, 0, 1, 0.5));
+						if (bDrawDebugEnabled) AddCrossWS(ShadowSampleTranslatedWorldPos - DFDemote(ResolvedView.PreViewTranslation), 30000.0f, float4(1, 0, 1, 0.5));
 					#endif
 						continue; // Conservative density is 0 so skip and go to the next sample
 					}
 					#if CLOUD_DEBUG_SAMPLES
 					else
 					{
-						if (bDrawDebugEnabled) AddCrossWS(LWCToFloat(ShadowSampleWorldPos), 30000.0f, float4(0, 1, 1, 0.5));
+						if (bDrawDebugEnabled) AddCrossWS(ShadowSampleTranslatedWorldPos - DFDemote(ResolvedView.PreViewTranslation), 30000.0f, float4(0, 1, 1, 0.5));
 					}
 					#endif // CLOUD_DEBUG_SAMPLES
 #endif
@@ -1103,7 +1120,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 						const float DetlaNormT = CurrentNormT - PreviousNormT;
 						const float ExtinctionFactor = DetlaNormT;
 						const float ShadowSampleDistance = ShadowLengthTest * (PreviousNormT + DetlaNormT * ShadowJitterNorm);
-						UpdateMaterialCloudParam(MaterialParameters, LWCAdd(SampleWorldPosition, LWCPromote(Light1Direction * ShadowSampleDistance)),
+						UpdateMaterialCloudParam(MaterialParameters, SampleTranslatedWorldPosition + Light1Direction * ShadowSampleDistance,
 							ResolvedView, CloudLayerParams, ShadowSampleDistance, SPACE_SKIPPING_SLICE_DEPTH_OFF);
 						PreviousNormT = CurrentNormT;
 
@@ -1185,9 +1202,9 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 
 				// This loop will process all unshadowed lights only.
 				LOOP
-				for (uint LocalLightListIndex = 0; LocalLightListIndex < CulledLightsGrid.NumLocalLights; LocalLightListIndex++)
+				for (uint GridLightListIndex = 0; GridLightListIndex < CulledLightsGrid.NumLights; GridLightListIndex++)
 				{
-					const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + LocalLightListIndex, 0);
+					const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + GridLightListIndex, 0);
 			
 					const float VolumetricScatteringIntensity = UnpackVolumetricScatteringIntensity(LocalLight);
 
@@ -1239,7 +1256,7 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 							// Non-linear shadow sample distribution, hardcoded to x^2
 							for (float ShadowT = ShadowJitterNorm; ShadowT < ShadowStepCount; ShadowT += 1.0f)
 							{
-								UpdateMaterialCloudParam(MaterialParameters, LWCAdd(SampleWorldPosition, LWCPromote(SampleToLightNorm * ShadowLengthTest * (ShadowT * InvShadowStepCount))),
+								UpdateMaterialCloudParam(MaterialParameters, SampleTranslatedWorldPosition + SampleToLightNorm * ShadowLengthTest * (ShadowT * InvShadowStepCount),
 									ResolvedView, CloudLayerParams, TRACING_SHADOW_DISTANCE_OFF, SPACE_SKIPPING_SLICE_DEPTH_OFF);
 								const float ExtinctionFactor = 1.0f;
 
@@ -1396,7 +1413,17 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 	// When rendering a real time reflection capture (sky envmap) whe use a different exposure
 	const float OutputPreExposure = (ResolvedView.RealTimeReflectionCapture ? ResolvedView.RealTimeReflectionCapturePreExposure : ResolvedView.PreExposure);
 
+#if POST_PROCESS_ALPHA
+	if (IsVolumetricCloudHoldout(View.EnvironmentComponentsFlags) && View.RenderingReflectionCaptureMask == 0.0f)
+	{
+		Luminance *= 0;
+	#if CLOUD_MIN_AND_MAX_DEPTH
+		ClosestLuminance *= 0;
+	#endif
 
+		OutHoldOutCoverage = saturate(1.0f - dot(TransmittanceToView.MATSUF, 1.0f / 3.0f));
+	}
+#endif
 
 	//
 	// Apply aerial perspective if needed
@@ -1440,18 +1467,48 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 
 		// Apply aerial perspective OVER the cloud, assiming coverage is from the full transmittance.
 		// skip if MeanTransmittance is 1
-		float MeanCoverage = 1.0 - MeanTransmittance;
-		Luminance = AerialPerspective.rgb * MeanCoverage + AerialPerspective.a * Luminance;
+		float CloudMeanCoverage = 1.0 - MeanTransmittance;
+		Luminance = AerialPerspective.rgb * CloudMeanCoverage + AerialPerspective.a * Luminance;
+
+#if POST_PROCESS_ALPHA
+		if(View.RenderingReflectionCaptureMask == 0.0f)
+		{
+			const float AerialPespectiveTransmittance = AerialPerspective.a;
+			const float AerialPespectiveCoverage = saturate(1.0 - AerialPespectiveTransmittance);
+
+			// Fade out holdout coverage as a function of the aerial perspective above, if the sky atmosphere is not hold out
+			OutHoldOutCoverage   *= saturate(1.0 - AerialPespectiveCoverage);
+
+			if(IsSkyAtmosphereHoldout(View.EnvironmentComponentsFlags))
+			{
+				OutAboveCloudHoldOut = OutAboveCloudHoldOut * AerialPespectiveTransmittance + CloudMeanCoverage * AerialPespectiveCoverage;
+			}
+		}
+#endif
 	}
 
 
 	//
 	// Apply height fog if needed
 	//
-	if (RenderVolumetricCloudParameters.EnableHeightFog && tAPWeightsSum > 0.0f)
+	if (tAPWeightsSum > 0.0f)
 	{
-		float4 HeightFogInscatteringAndTransmittance = CalculateHeightFog(FogSampleWorldPositionRelativeToCameraCm);
-		
+		float4 HeightFogInscatteringAndTransmittance = float4(0, 0, 0, 1);
+
+		if (RenderVolumetricCloudParameters.EnableHeightFog)
+		{
+			HeightFogInscatteringAndTransmittance = CalculateHeightFog(FogSampleWorldPositionRelativeToCameraCm);
+		}
+
+	#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+		uint2 TilePos = uint2(SvPosition.xy * RenderVolumetricCloudParameters.TracingCoordToFullResPixelCoordScaleBias.xy - View.ViewRectMin.xy) / LFVTilePixelSize.xx;
+		float4 LFVContribution = GetLFVContribution(PrimaryView, TilePos, FogSampleWorldPositionRelativeToCameraCm);
+		if (LFVRenderInVolumetricFog > 0)
+		{
+			HeightFogInscatteringAndTransmittance = float4(LFVContribution.rgb + HeightFogInscatteringAndTransmittance.rgb * LFVContribution.a, LFVContribution.a * HeightFogInscatteringAndTransmittance.a);
+		}
+	#endif
+
 		if (FogStruct.ApplyVolumetricFog > 0)
 		{
 			float3 VolumeUV = ComputeVolumeUVFromNDC(ClipPos);
@@ -1459,14 +1516,37 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 			HeightFogInscatteringAndTransmittance = CombineVolumetricFog(HeightFogInscatteringAndTransmittance, VolumeUV, EyeIndex, length(FogSampleWorldPositionRelativeToCameraCm));
 		}
 
+	#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+		if (LFVRenderInVolumetricFog == 0)
+		{
+			HeightFogInscatteringAndTransmittance = float4(LFVContribution.rgb + HeightFogInscatteringAndTransmittance.rgb * LFVContribution.a, LFVContribution.a * HeightFogInscatteringAndTransmittance.a);
+		}
+	#endif
+
 		// Apply aerial perspective OVER the cloud, assiming coverage is from the full transmittance.
 		// skip if MeanTransmittance is 1
-		float MeanCoverage = 1.0 - MeanTransmittance;
-		Luminance = HeightFogInscatteringAndTransmittance.rgb * MeanCoverage + HeightFogInscatteringAndTransmittance.a * Luminance;
+		float CloudMeanCoverage = 1.0 - MeanTransmittance;
+		Luminance = HeightFogInscatteringAndTransmittance.rgb * CloudMeanCoverage + HeightFogInscatteringAndTransmittance.a * Luminance;
+
+#if POST_PROCESS_ALPHA
+		if(View.RenderingReflectionCaptureMask == 0.0f)
+		{
+			const float ExponentialFogTransmittance = HeightFogInscatteringAndTransmittance.a;
+			const float ExponentialFogCoverage = saturate(1.0 - ExponentialFogTransmittance);
+
+			// Fade out holdout coverage as a function of the fog above, if the fog is not hold out
+			OutHoldOutCoverage *= ExponentialFogTransmittance;
+
+			if(IsExponentialFogHoldout(View.EnvironmentComponentsFlags))
+			{
+				OutAboveCloudHoldOut = OutAboveCloudHoldOut * ExponentialFogTransmittance + CloudMeanCoverage * ExponentialFogCoverage;
+			}
+		}
+#endif
 	}
 
 
-	// Apply atmospehre and and fog on closest
+	// Apply atmosphere and fog on closest if needed
 #if CLOUD_MIN_AND_MAX_DEPTH
 	{
 		float3 FogSampleWorldPositionRelativeToCameraCm = ClosestTAP * Raydir;
@@ -1504,9 +1584,23 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 		//
 		// Apply height fog if needed
 		//
-		if (RenderVolumetricCloudParameters.EnableHeightFog && ClostestTAPWeightsSum > 0.0f)
+		if (ClostestTAPWeightsSum > 0.0f)
 		{
-			float4 HeightFogInscatteringAndTransmittance = CalculateHeightFog(FogSampleWorldPositionRelativeToCameraCm);
+			float4 HeightFogInscatteringAndTransmittance = float4(0, 0, 0, 1);
+
+			if (RenderVolumetricCloudParameters.EnableHeightFog)
+			{
+				HeightFogInscatteringAndTransmittance = CalculateHeightFog(FogSampleWorldPositionRelativeToCameraCm);
+			}
+
+		#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+			uint2 TilePos = uint2(SvPosition.xy * RenderVolumetricCloudParameters.TracingCoordToFullResPixelCoordScaleBias.xy - View.ViewRectMin.xy) / LFVTilePixelSize.xx;
+			float4 LFVContribution = GetLFVContribution(PrimaryView, TilePos, FogSampleWorldPositionRelativeToCameraCm);
+			if (LFVRenderInVolumetricFog > 0)
+			{
+				HeightFogInscatteringAndTransmittance = float4(LFVContribution.rgb + HeightFogInscatteringAndTransmittance.rgb * LFVContribution.a, LFVContribution.a * HeightFogInscatteringAndTransmittance.a);
+			}
+		#endif
 
 			if (FogStruct.ApplyVolumetricFog > 0)
 			{
@@ -1514,6 +1608,13 @@ void MainCommon(in FMaterialPixelParameters MaterialParameters, in float4 SvPosi
 				const uint EyeIndex = 0;
 				HeightFogInscatteringAndTransmittance = CombineVolumetricFog(HeightFogInscatteringAndTransmittance, VolumeUV, EyeIndex, length(FogSampleWorldPositionRelativeToCameraCm));
 			}
+
+		#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+			if (LFVRenderInVolumetricFog == 0)
+			{
+				HeightFogInscatteringAndTransmittance = float4(LFVContribution.rgb + HeightFogInscatteringAndTransmittance.rgb * LFVContribution.a, LFVContribution.a * HeightFogInscatteringAndTransmittance.a);
+			}
+		#endif
 
 			// Apply aerial perspective OVER the cloud, assiming coverage is from the full transmittance.
 			// skip if MeanTransmittance is 1
@@ -1568,7 +1669,9 @@ void MainPS(
 	FMaterialPixelParameters MaterialParameters = MakeInitializedMaterialPixelParameters();
 	
 	float4 OutDepth4 = 0;
-	MainCommon(MaterialParameters, SvPosition, OutColor0, OutDepth4);
+	float OutHoldOutCoverage = 0.0f;
+	float OutAboveCloudHoldOut = 0.0f;
+	MainCommon(MaterialParameters, SvPosition, OutColor0, OutDepth4, OutHoldOutCoverage, OutAboveCloudHoldOut);
 	OutDepth = float4(OutDepth4.xy, 0.0f, 0.0f);	// PS path never writes min and max tracing depth in zw.
 }
 
@@ -1579,6 +1682,7 @@ void MainPS(
 float4 OutputViewRect;
 int bBlendCloudColor;
 int TargetCubeFace;
+int bAccumulateAlphaHoldOut;
 
 RWTexture2D<float4> OutCloudColor0;
 #if CLOUD_MIN_AND_MAX_DEPTH
@@ -1602,11 +1706,15 @@ void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 
 		FMaterialPixelParameters MaterialParameters = MakeInitializedMaterialPixelParameters();
 
+		float OutHoldOutCoverage = 0.0f;
+		float OutAboveCloudHoldOut = 0.0f;
 		MainCommon(MaterialParameters, SvPosition, OutColor0
 #if CLOUD_MIN_AND_MAX_DEPTH
 			, OutColor1
 #endif
-			, OutDepth);
+			, OutDepth
+			, OutHoldOutCoverage
+			, OutAboveCloudHoldOut);
 
 		if (TargetCubeFace >= 0)
 		{
@@ -1626,7 +1734,26 @@ void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 			if (bBlendCloudColor)
 			{
 				float4 CurColor0 = OutCloudColor0[DispatchThreadId];
-				OutCloudColor0[DispatchThreadId] = float4(CurColor0.rgb * OutColor0.a + OutColor0.rgb, CurColor0.a * OutColor0.a);
+			#if POST_PROCESS_ALPHA
+				if (View.RenderingReflectionCaptureMask == 0.0f)
+				{
+					if(IsVolumetricCloudHoldout(View.EnvironmentComponentsFlags) && bAccumulateAlphaHoldOut > 0)
+					{
+						// Operations for Holdout for when we blend directly with scene color Buffer read to CurColor0.
+						// We maintain the color of the scene since it has alreayd been composed
+						// Then we simply add the holdout value on top. Since the alpha has already been impacted by cloud GetCloudLuminanceTransmittanceOverFog when the clouds ahve been composed.
+						OutCloudColor0[DispatchThreadId] = float4(CurColor0.rgb, CurColor0.a + OutHoldOutCoverage + OutAboveCloudHoldOut);
+					}
+					else
+					{
+						OutCloudColor0[DispatchThreadId] = float4(CurColor0.rgb * OutColor0.a + OutColor0.rgb, CurColor0.a + OutAboveCloudHoldOut);
+					}
+				}
+			#else
+				{
+					OutCloudColor0[DispatchThreadId] = float4(CurColor0.rgb * OutColor0.a + OutColor0.rgb, CurColor0.a);
+				}
+			#endif
 			}
 			else
 			{
@@ -1698,7 +1825,7 @@ float GetSvPositionEmptySpaceSkippingValue(in ViewState ResolvedView, in uint3 D
 
 	const float SampleDistanceFromCamera = (float(GroupThreadId.z) + SampleFroxelOffset.z) * GetSliceDepth();
 	const float3 Raydir = -MaterialParameters.CameraVector;
-	UpdateMaterialCloudParam(MaterialParameters, LWCAdd(ResolvedView.WorldCameraOrigin, LWCPromote(Raydir * SampleDistanceFromCamera)),
+	UpdateMaterialCloudParam(MaterialParameters, ResolvedView.TranslatedWorldCameraOrigin + Raydir * SampleDistanceFromCamera,
 		ResolvedView, CloudLayerParams, TRACING_SHADOW_DISTANCE_OFF, GetSliceDepth());
 
 	const float CloudEmptySpaceSkippingOutput0 = GetVolumetricCloudEmptySpaceSkippingOutput0(MaterialParameters);
@@ -1889,7 +2016,7 @@ void MainPS(
 	float2 UV = float2(SvPosition.xy * TraceContext.TracingPixelScaleOffset.xy + TraceContext.TracingPixelScaleOffset.zw) * TraceContext.SizeInvSize.zw;
 
 	const float NearZDepth = 1.0f; // using FReversedZOrthoMatrix
-	float3 NearClipPlaneWorldPos = CloudShadowUvToWorldSpace(NearZDepth, UV, TraceContext.TranslatedWorldToLightClipMatrixInv) - LWCHackToFloat(PrimaryView.PreViewTranslation); // TODO_ keep world pos as LWCVEctor
+	float3 NearClipPlaneWorldPos = CloudShadowUvToWorldSpace(NearZDepth, UV, TraceContext.TranslatedWorldToLightClipMatrixInv) - DFHackToFloat(PrimaryView.PreViewTranslation); // TODO_ keep world pos as LWCVEctor
 	const float3 LightDirection = TraceContext.TraceDir; // It points from light to surface
 
 
@@ -1963,7 +2090,7 @@ void MainPS(
 		for (float ShadowT = 0.5; ShadowT < ShadowStepCount; ShadowT += 1.0f)
 		{
 			const float SampleT = ShadowLengthTest * (ShadowT * InvShadowStepCount);
-			UpdateMaterialCloudParam(MaterialParameters, LWCPromote(WorldPosOnLayer + LightDirection * SampleT),			// LWC TODO FIX ME
+			UpdateMaterialCloudParam(MaterialParameters, (WorldPosOnLayer + LightDirection * SampleT) + DFHackToFloat(PrimaryView.PreViewTranslation),			// LWC TODO FIX ME
 				ResolvedView, CloudLayerParams, SampleT, SPACE_SKIPPING_SLICE_DEPTH_OFF);
 
 		#if MATERIAL_VOLUMETRIC_ADVANCED_CONSERVATIVE_DENSITY

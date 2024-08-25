@@ -26,6 +26,7 @@ public class GeForceNOWWrapper : ModuleRules
 		);
 
 		bool bNVGFN = Target.Type != TargetRules.TargetType.Server
+				   && Target.Type != TargetRules.TargetType.Program
 				   && Target.Configuration != UnrealTargetConfiguration.Unknown
 				   && Target.Configuration != UnrealTargetConfiguration.Debug
 				   && Target.Platform == UnrealTargetPlatform.Win64;

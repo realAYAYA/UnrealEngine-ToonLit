@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionDisjointOver.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "HLSLTree/HLSLTree.h"
+#include "HLSLTree/HLSLTreeCommon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionDisjointOver)
 
@@ -64,6 +67,41 @@ int32 UMaterialExpressionMaterialXDisjointOver::Compile(FMaterialCompiler* Compi
 void UMaterialExpressionMaterialXDisjointOver::GetCaption(TArray<FString>& OutCaptions) const
 {
 	OutCaptions.Add(TEXT("MaterialX DisjointOver"));
+}
+
+bool UMaterialExpressionMaterialXDisjointOver::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionA = A.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionB = B.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionAlpha = Alpha.AcquireHLSLExpressionOrConstant(Generator, Scope, ConstAlpha);
+
+	if(!ExpressionA || !ExpressionB || !ExpressionAlpha)
+	{
+		return false;
+	}
+
+	FTree& Tree = Generator.GetTree();
+
+	const FExpression* ExpressionAlphaA = Tree.NewSwizzle(FSwizzleParameters(3), ExpressionA);
+	const FExpression* ExpressionAlphaB = Tree.NewSwizzle(FSwizzleParameters(3), ExpressionB);
+	const FExpression* ExpressionSumAlpha = Tree.NewAdd(ExpressionAlphaA, ExpressionAlphaB);
+
+	const FExpression* ExpressionRgbA = Tree.NewSwizzle(FSwizzleParameters(0, 1, 2), ExpressionA);
+	const FExpression* ExpressionRgbB = Tree.NewSwizzle(FSwizzleParameters(0, 1, 2), ExpressionB);
+	const FExpression* ExpressionSumRgb = Tree.NewAdd(ExpressionRgbA, ExpressionRgbB);
+
+	const FExpression* ExpressionOne = Tree.NewConstant(1.f);
+	const FExpression* ExpressionDisjoint = Tree.NewAdd(ExpressionRgbA, Tree.NewMul(ExpressionRgbB, Tree.NewDiv(Tree.NewSub(ExpressionOne, ExpressionAlphaA), ExpressionAlphaB)));
+	
+	const FExpression* ExpressionResult = Generator.GenerateBranch(Scope, Tree.NewGreater(ExpressionSumAlpha, ExpressionOne), ExpressionDisjoint, ExpressionSumRgb);
+
+	OutExpression = Tree.NewLerp(ExpressionB,
+								 Tree.NewExpression<FExpressionAppend>(ExpressionResult,
+																	   Tree.NewMin(ExpressionSumAlpha, ExpressionOne)),
+								 ExpressionAlpha);
+	return true;
 }
 #endif
 

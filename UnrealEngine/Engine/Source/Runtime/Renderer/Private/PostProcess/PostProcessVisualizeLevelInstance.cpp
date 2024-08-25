@@ -4,9 +4,9 @@
 
 #include "PostProcess/PostProcessVisualizeLevelInstance.h"
 #include "PostProcess/PostProcessCompositePrimitivesCommon.h"
+#include "SceneRendering.h"
 #include "SceneTextureParameters.h"
 #include "CanvasTypes.h"
-#include "RenderTargetTemp.h"
 #include "ClearQuad.h"
 #include "ScenePrivate.h"
 

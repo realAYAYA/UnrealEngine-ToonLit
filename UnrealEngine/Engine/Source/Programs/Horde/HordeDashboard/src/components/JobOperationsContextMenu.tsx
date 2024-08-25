@@ -57,25 +57,28 @@ export const JobOperationsContextMenu: React.FC<{ job: GetJobResponse, children?
          key: 'copy_cl_to_clipboard',
          text: 'Copy CL to Clipboard',
          onClick: () => copyToClipboard(change),
-      },
-      {
-         key: 'open_in_swarm', text: 'Open CL in Swarm', onClick: () => {
-            window.open(`${dashboard.swarmUrl}/changes/${change}`);
-         }
-      },
-      {
-         key: 'open_in_swarm_history', text: 'Open CL History in Swarm', onClick: () => {
-
-            const stream = projectStore.streamById(job.streamId)!;
-            const project = projectStore.byId(stream!.projectId)!;
-            const name = project.name === "Engine" ? "UE4" : project.name;
-            const rangeUrl = `${dashboard.swarmUrl}/files/${name}/${stream.name}?range=@${change}#commits`;
-
-            window.open(rangeUrl)
-         }
       }
-
    ];
+
+   if (dashboard.swarmUrl) {
+      menuItems.push(...[
+         {
+            key: 'open_in_swarm', text: 'Open CL in Swarm', onClick: () => {
+               window.open(`${dashboard.swarmUrl}/changes/${change}`);
+            }
+         },
+         {
+            key: 'open_in_swarm_history', text: 'Open CL History in Swarm', onClick: () => {
+
+               const stream = projectStore.streamById(job.streamId)!;
+               const project = projectStore.byId(stream!.projectId)!;
+               const name = project.name === "Engine" ? "UE4" : project.name;
+               const rangeUrl = `${dashboard.swarmUrl}/files/${name}/${stream.name}?range=@${change}#commits`;
+
+               window.open(rangeUrl)
+            }
+         }])
+   }
 
    const abortDisabled = job.state === JobState.Complete;
 

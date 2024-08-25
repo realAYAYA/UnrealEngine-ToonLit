@@ -14,6 +14,9 @@ namespace UnrealBuildTool.Rules
 			// warning C5103: pasting '"TF_LOG_STACK_TRACE_ON_ERROR"' and '"TF_LOG_STACK_TRACE_ON_WARNING"' does not result in a valid preprocessing token
 			CppStandard = CppStandardVersion.Cpp17;
 
+			// Replace with PCHUsageMode.UseExplicitOrSharedPCHs when this plugin can compile with cpp20
+			PCHUsage = PCHUsageMode.NoPCHs;
+
 			bUseRTTI = true;
 
 			PublicDependencyModuleNames.AddRange(
@@ -23,6 +26,7 @@ namespace UnrealBuildTool.Rules
 					"Core",
 					"CoreUObject",
 					"UnrealUSDWrapper",
+					"USDClasses", // So that consumers can also include IUsdClassesModule for the new definition of FDisplayColorMaterial
 				}
 			);
 
@@ -41,12 +45,12 @@ namespace UnrealBuildTool.Rules
 					"MeshDescription",
 					"MovieScene",
 					"MovieSceneTracks",
+					"OpenSubdiv",
 					"RenderCore",
 					"RHI", // So that we can use GMaxRHIFeatureLevel when force-loading textures before baking materials
 					"Slate",
 					"SlateCore",
 					"StaticMeshDescription",
-					"USDClasses",
 				}
 			);
 

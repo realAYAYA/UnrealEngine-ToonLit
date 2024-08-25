@@ -63,13 +63,15 @@ UInterchangeSceneNode::UInterchangeSceneNode()
 }
 
 /**
-	* Return the node type name of the class, we use this when reporting error
+	* Return the node type name of the class. This is used when reporting errors.
 	*/
 FString UInterchangeSceneNode::GetTypeName() const
 {
 	const FString TypeName = TEXT("SceneNode");
 	return TypeName;
 }
+
+#if WITH_EDITOR
 
 FString UInterchangeSceneNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
@@ -135,6 +137,8 @@ FString UInterchangeSceneNode::GetAttributeCategory(const UE::Interchange::FAttr
 	
 	return Super::GetAttributeCategory(NodeAttributeKey);
 }
+
+#endif //WITH_EDITOR
 
 FName UInterchangeSceneNode::GetIconName() const
 {

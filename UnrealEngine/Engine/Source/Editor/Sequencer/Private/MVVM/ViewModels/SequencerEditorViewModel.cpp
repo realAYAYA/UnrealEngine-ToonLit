@@ -5,15 +5,15 @@
 #include "MVVM/ViewModels/SequencerTrackAreaViewModel.h"
 #include "MVVM/Selection/Selection.h"
 #include "MVVM/CurveEditorExtension.h"
+#include "MVVM/PinEditorExtension.h"
 #include "MVVM/Extensions/IOutlinerExtension.h"
 #include "MVVM/SharedViewModelData.h"
+#include "Scripting/SequencerModuleScriptingLayer.h"
 #include "ISequencerModule.h"
 #include "Sequencer.h"
 #include "MovieSceneSequenceID.h"
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
 TMap<TWeakPtr<FViewModel>, FString> GetNodePaths(FViewModelPtr RootModel)
@@ -46,6 +46,8 @@ void FSequencerEditorViewModel::PreInitializeEditorImpl()
 	{
 		AddDynamicExtension(FCurveEditorExtension::ID);
 	}
+
+	AddDynamicExtension(FPinEditorExtension::ID);
 }
 
 TSharedPtr<FViewModel> FSequencerEditorViewModel::CreateRootModelImpl()
@@ -68,6 +70,16 @@ TSharedPtr<FTrackAreaViewModel> FSequencerEditorViewModel::CreateTrackAreaImpl()
 	TSharedRef<FSequencerTrackAreaViewModel> NewTrackArea = MakeShared<FSequencerTrackAreaViewModel>(Sequencer.ToSharedRef());
 	NewTrackArea->GetOnHotspotChangedDelegate().AddSP(SharedThis(this), &FSequencerEditorViewModel::OnTrackAreaHotspotChanged);
 	return NewTrackArea;
+}
+
+USequencerScriptingLayer* FSequencerEditorViewModel::CreateScriptingLayerImpl()
+{
+	return NewObject<USequencerModuleScriptingLayer>();
+}
+
+TViewModelPtr<FSequenceModel> FSequencerEditorViewModel::GetRootSequenceModel() const
+{
+	return GetRootModel().ImplicitCast();
 }
 
 void FSequencerEditorViewModel::InitializeEditorImpl()
@@ -241,6 +253,5 @@ TSharedPtr<FExtender> FSequencerEditorViewModel::GetSequencerMenuExtender(
 	return FExtender::Combine(Extenders);
 }
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 

@@ -22,11 +22,11 @@ public:
 
 public:
 	/** Return the screen size adjusted by its transform scale. */
-	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Get screen size"), Category = "NDisplay")
+	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Get screen size"), Category = "NDisplay|Components")
 	FVector2D GetScreenSize() const;
 
 	/** Set screen size (update transform scale). */
-	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Set screen size"), Category = "NDisplay")
+	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Set screen size"), Category = "NDisplay|Components")
 	void SetScreenSize(const FVector2D& Size);
 
 	virtual void Serialize(FArchive& Ar) override;

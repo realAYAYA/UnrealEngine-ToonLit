@@ -3,6 +3,8 @@
 #include "Cooker/DiffWriterArchive.h"
 
 #include "Compression/CompressionUtil.h"
+#include "Cooker/DiffWriterLinkerLoadHeader.h"
+#include "Cooker/DiffWriterZenHeader.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformStackWalk.h"
@@ -12,25 +14,40 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeExit.h"
+#include "PackageStoreOptimizer.h"
+#include "Serialization/AsyncLoading2.h"
+#include "Serialization/MemoryReader.h"
 #include "Serialization/StaticMemoryReader.h"
 #include "UObject/LinkerLoad.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/Package.h"
+#include "UObject/PropertyOptional.h"
 #include "UObject/PropertyTempVal.h"
 #include "UObject/UnrealType.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UObjectThreadContext.h"
 
-static const ANSICHAR* DebugDataStackMarker = "\r\nDebugDataStack:\r\n";
-namespace UE::DiffWriterArchive
+namespace UE::DiffWriter
 {
 
+static const ANSICHAR* DebugDataStackMarker = "\r\nDebugDataStack:\r\n";
 const TCHAR* const IndentToken = TEXT("%DWA%    ");
 const TCHAR* const NewLineToken = TEXT("%DWA%\n");
 
-}
+/** Logs any mismatching header data. */
+void DumpPackageHeaderDiffs(
+	FAccumulatorGlobals& Globals, const FPackageData& SourcePackage, const FPackageData& DestPackage,
+	const FString& AssetFilename, const int32 MaxDiffsToLog, const EPackageHeaderFormat PackageHeaderFormat,
+	const FMessageCallback& MessageCallback);
+/** Returns a new linker for loading the specified package. */
+FLinkerLoad* CreateLinkerForPackage(
+	FUObjectSerializeContext* LoadContext,
+	const FString& InPackageName,
+	const FString& InFilename,
+	const FPackageData& PackageData);
 
-FDiffWriterCallstacks::FCallstackData::FCallstackData(TUniquePtr<ANSICHAR[]>&& InCallstack, UObject* InSerializedObject, FProperty* InSerializedProperty)
+
+FCallstacks::FCallstackData::FCallstackData(TUniquePtr<ANSICHAR[]>&& InCallstack, UObject* InSerializedObject, FProperty* InSerializedProperty)
 	: Callstack(MoveTemp(InCallstack))
 	, SerializedProp(InSerializedProperty)
 {
@@ -44,7 +61,7 @@ FDiffWriterCallstacks::FCallstackData::FCallstackData(TUniquePtr<ANSICHAR[]>&& I
 	}
 }
 
-FString FDiffWriterCallstacks::FCallstackData::ToString(const TCHAR* CallstackCutoffText) const
+FString FCallstacks::FCallstackData::ToString(const TCHAR* CallstackCutoffText) const
 {
 	FString HumanReadableString;
 
@@ -72,37 +89,37 @@ FString FDiffWriterCallstacks::FCallstackData::ToString(const TCHAR* CallstackCu
 			int32 CutoffIndex = StackLine.Find(TEXT(" "), ESearchCase::CaseSensitive);
 			if (CutoffIndex >= -1 && CutoffIndex < StackLine.Len() - 2)
 			{
-				StackLine.MidInline(CutoffIndex + 1, MAX_int32, false);
+				StackLine.MidInline(CutoffIndex + 1, MAX_int32, EAllowShrinking::No);
 			}
 		}
-		HumanReadableString += UE::DiffWriterArchive::IndentToken;
+		HumanReadableString += IndentToken;
 		HumanReadableString += StackLine;
-		HumanReadableString += UE::DiffWriterArchive::NewLineToken;
+		HumanReadableString += NewLineToken;
 	}
 
 	if (!SerializedObjectName.IsEmpty())
 	{
-		HumanReadableString += UE::DiffWriterArchive::NewLineToken;
-		HumanReadableString += UE::DiffWriterArchive::IndentToken;
+		HumanReadableString += NewLineToken;
+		HumanReadableString += IndentToken;
 		HumanReadableString += TEXT("Serialized Object: ");
 		HumanReadableString += SerializedObjectName;
-		HumanReadableString += UE::DiffWriterArchive::NewLineToken;
+		HumanReadableString += NewLineToken;
 	}
 	if (!SerializedPropertyName.IsEmpty())
 	{
 		if (SerializedObjectName.IsEmpty())
 		{
-			HumanReadableString += UE::DiffWriterArchive::NewLineToken;
+			HumanReadableString += NewLineToken;
 		}
-		HumanReadableString += UE::DiffWriterArchive::IndentToken;
+		HumanReadableString += IndentToken;
 		HumanReadableString += TEXT("Serialized Property: ");
 		HumanReadableString += SerializedPropertyName;
-		HumanReadableString += UE::DiffWriterArchive::NewLineToken;
+		HumanReadableString += NewLineToken;
 	}
 	return HumanReadableString;
 }
 
-FDiffWriterCallstacks::FCallstackData FDiffWriterCallstacks::FCallstackData::Clone() const
+FCallstacks::FCallstackData FCallstacks::FCallstackData::Clone() const
 {
 	TUniquePtr<ANSICHAR[]> CallstackCopy;
 	if (const int32 Len = FCStringAnsi::Strlen(Callstack.Get()); Len > 0)
@@ -117,23 +134,27 @@ FDiffWriterCallstacks::FCallstackData FDiffWriterCallstacks::FCallstackData::Clo
 	return Clone;
 }
 
-FDiffWriterCallstacks::FDiffWriterCallstacks(UObject* InAsset)
-	: Asset(InAsset)
-	, bCallstacksDirty(true)
+FCallstacks::FCallstacks()
+	: bCallstacksDirty(true)
 	, StackTraceSize(65535)
 	, LastSerializeCallstack(nullptr)
-	, TotalSize(0)
+	, EndOffset(0)
 {
 	StackTrace = MakeUnique<ANSICHAR[]>(StackTraceSize);
 	StackTrace[0] = 0;
 }
 
-FName FDiffWriterCallstacks::GetAssetClass() const
+void FCallstacks::Reset()
 {
-	return Asset != nullptr ? Asset->GetClass()->GetFName() : NAME_None;
+	CallstackAtOffsetMap.Reset();
+	UniqueCallstacks.Reset();
+	bCallstacksDirty = true;
+	LastSerializeCallstack = nullptr;
+	StackTrace[0] = 0;
+	EndOffset = 0;
 }
 
-ANSICHAR* FDiffWriterCallstacks::AddUniqueCallstack(bool bIsCollectingCallstacks, UObject* SerializedObject, FProperty* SerializedProperty, uint32& OutCallstackCRC)
+ANSICHAR* FCallstacks::AddUniqueCallstack(bool bIsCollectingCallstacks, UObject* SerializedObject, FProperty* SerializedProperty, uint32& OutCallstackCRC)
 {
 	ANSICHAR* Callstack = nullptr;
 	if (bIsCollectingCallstacks)
@@ -160,7 +181,7 @@ ANSICHAR* FDiffWriterCallstacks::AddUniqueCallstack(bool bIsCollectingCallstacks
 	return Callstack;
 }
 
-void FDiffWriterCallstacks::Add(
+void FCallstacks::Add(
 	int64 Offset,
 	int64 Length,
 	UObject* SerializedObject,
@@ -174,9 +195,10 @@ void FDiffWriterCallstacks::Add(
 	{
 		return;
 	}
+	++StackIgnoreCount;
 
 	const int64 CurrentOffset = Offset;
-	TotalSize = FMath::Max(TotalSize, CurrentOffset + Length); 
+	EndOffset = FMath::Max(EndOffset, CurrentOffset + Length); 
 
 	const bool bShouldCollectCallstack = bIsCollectingCallstacks && bCollectCurrentCallstack && !UE::ArchiveStackTrace::ShouldIgnoreDiff();
 	if (bShouldCollectCallstack)
@@ -188,7 +210,7 @@ void FDiffWriterCallstacks::Add(
 		{
 			FCStringAnsi::Strcat(StackTrace.Get(), StackTraceSize, DebugDataStackMarker);
 
-			const FString SubIndent = FString(UE::DiffWriterArchive::IndentToken) + FString(TEXT("    "));
+			const FString SubIndent = FString(IndentToken) + FString(TEXT("    "));
 
 			bool bIsIndenting = true;
 			for (const auto& DebugData : DebugDataStack)
@@ -216,11 +238,12 @@ void FDiffWriterCallstacks::Add(
 	if (LastSerializeCallstack == nullptr || (bCallstacksDirty && FCStringAnsi::Strcmp(LastSerializeCallstack, StackTrace.Get()) != 0))
 	{
 		uint32 CallstackCRC = 0;
+		bool bSuppressLogging = UE::ArchiveStackTrace::ShouldIgnoreDiff();
 		if (CallstackAtOffsetMap.Num() == 0 || CurrentOffset > CallstackAtOffsetMap.Last().Offset)
 		{
 			// New data serialized at the end of archive buffer
 			LastSerializeCallstack = AddUniqueCallstack(bIsCollectingCallstacks, SerializedObject, SerializedProperty, CallstackCRC);
-			CallstackAtOffsetMap.Add(FCallstackAtOffset {CurrentOffset, CallstackCRC, UE::ArchiveStackTrace::ShouldIgnoreDiff()});
+			CallstackAtOffsetMap.Add(FCallstackAtOffset { CurrentOffset, CallstackCRC, bSuppressLogging });
 		}
 		else
 		{
@@ -237,7 +260,7 @@ void FDiffWriterCallstacks::Add(
 			{
 				// Insert a new callstack
 				check(CallstackToUpdate.Offset < CurrentOffset);
-				CallstackAtOffsetMap.Insert(FCallstackAtOffset {CurrentOffset, CallstackCRC, UE::ArchiveStackTrace::ShouldIgnoreDiff()}, CallstackToUpdateIndex + 1);
+				CallstackAtOffsetMap.Insert(FCallstackAtOffset {CurrentOffset, CallstackCRC, bSuppressLogging }, CallstackToUpdateIndex + 1);
 			}
 		}
 		check(CallstackCRC != 0 || !bShouldCollectCallstack);
@@ -249,15 +272,16 @@ void FDiffWriterCallstacks::Add(
 	}
 }
 
-int32 FDiffWriterCallstacks::GetCallstackIndexAtOffset(int64 Offset, int32 MinOffsetIndex) const
+int32 FCallstacks::GetCallstackIndexAtOffset(int64 Offset, int32 MinOffsetIndex) const
 {
-	if (Offset < 0 || Offset > TotalSize || MinOffsetIndex < 0 || MinOffsetIndex >= CallstackAtOffsetMap.Num())
+	if (Offset < 0 || Offset >= EndOffset || MinOffsetIndex >= CallstackAtOffsetMap.Num())
 	{
 		return -1;
 	}
 
 	// Find the index of the offset the InOffset maps to
 	int32 OffsetForCallstackIndex = -1;
+	MinOffsetIndex = FMath::Max(MinOffsetIndex, 0);
 	int32 MaxOffsetIndex = CallstackAtOffsetMap.Num() - 1;
 
 	// Binary search
@@ -291,20 +315,30 @@ int32 FDiffWriterCallstacks::GetCallstackIndexAtOffset(int64 Offset, int32 MinOf
 				break;
 			}
 		}
-		check(OffsetForCallstackIndex != -1);
-		check(CallstackAtOffsetMap[OffsetForCallstackIndex].Offset < Offset);
-		check(OffsetForCallstackIndex == (CallstackAtOffsetMap.Num() - 1) || CallstackAtOffsetMap[OffsetForCallstackIndex + 1].Offset > Offset);
+		if (OffsetForCallstackIndex != -1)
+		{
+			check(CallstackAtOffsetMap[OffsetForCallstackIndex].Offset < Offset);
+			check(OffsetForCallstackIndex == (CallstackAtOffsetMap.Num() - 1) || CallstackAtOffsetMap[OffsetForCallstackIndex + 1].Offset > Offset);
+		}
 	}
 
 	return OffsetForCallstackIndex;
 }
 
-void FDiffWriterCallstacks::Append(const FDiffWriterCallstacks& Other, int64 Offset)
+void FCallstacks::RemoveRange(int64 StartOffset, int64 Length)
+{
+	CallstackAtOffsetMap.RemoveAll([StartOffset, Length](const FCallstackAtOffset& Entry)
+		{
+			return StartOffset <= Entry.Offset && Entry.Offset < StartOffset + Length;
+		});
+}
+
+void FCallstacks::Append(const FCallstacks& Other, int64 OtherStartOffset)
 {
 	for (const FCallstackAtOffset& OtherOffset : Other.CallstackAtOffsetMap)
 	{
 		FCallstackAtOffset& New = CallstackAtOffsetMap.Add_GetRef(OtherOffset);
-		New.Offset += Offset;
+		New.Offset += OtherStartOffset;
 	}
 
 	CallstackAtOffsetMap.Sort([](const FCallstackAtOffset& LHS,const FCallstackAtOffset& RHS)
@@ -325,241 +359,413 @@ void FDiffWriterCallstacks::Append(const FDiffWriterCallstacks& Other, int64 Off
 		UniqueCallstacks.Emplace(Kv.Key, Kv.Value.Clone());
 	}
 
-	TotalSize = FMath::Max(TotalSize, Other.TotalSize);
+	EndOffset = FMath::Max(EndOffset, Other.EndOffset + OtherStartOffset);
 }
 
-FDiffWriterArchiveWriter::FDiffWriterArchiveWriter(
-	FArchive& InInner,
-	FDiffWriterCallstacks& InCallstacks,
-	const FDiffWriterDiffMap* InDiffMap,
-	int64 InDiffMapOffset)
-		: FArchiveProxy(InInner)
-		, Callstacks(InCallstacks)
-		, DiffMap(InDiffMap)
-		, DiffMapOffset(InDiffMapOffset)
-		, bInnerArchiveDisabled(false)
+struct FBreakAtOffsetSettings
 {
-}
+	FString PackageToBreakOn;
+	int64 OffsetToBreakOn = -1;
+	bool bInitialized = false;
 
-FDiffWriterArchiveWriter::~FDiffWriterArchiveWriter() = default;
-
-void FDiffWriterArchiveWriter::Serialize(void* Data, int64 Length)
-{
-	static struct FBreakAtOffsetSettings
+	void Initialize()
 	{
-		FString PackageToBreakOn;
-		int64 OffsetToBreakOn;
-
-		FBreakAtOffsetSettings()
-			: OffsetToBreakOn(-1)
+		if (bInitialized)
 		{
-			if (!FParse::Param(FCommandLine::Get(), TEXT("cooksinglepackage")))
-			{
-				return;
-			}
-
-			FString Package;
-			if (!FParse::Value(FCommandLine::Get(), TEXT("map="), Package))
-			{
-				return;
-			}
-
-			int64 Offset;
-			if (!FParse::Value(FCommandLine::Get(), TEXT("diffonlybreakoffset="), Offset) || Offset <= 0)
-			{
-				return;
-			}
-
-			OffsetToBreakOn = Offset;
-			PackageToBreakOn = TEXT("/") + FPackageName::GetShortName(Package);
+			return;
 		}
-	} BreakAtOffsetSettings;
+		bInitialized = true;
+		OffsetToBreakOn = -1;
+		PackageToBreakOn.Empty();
 
-	const int64 CurrentOffset = DiffMapOffset + Tell();
-
-	if (BreakAtOffsetSettings.OffsetToBreakOn >= 0 && BreakAtOffsetSettings.OffsetToBreakOn >= CurrentOffset && BreakAtOffsetSettings.OffsetToBreakOn < CurrentOffset + Length)
-	{
-		FString ArcName = GetArchiveName();
-		int32 SubnameIndex = ArcName.Find(BreakAtOffsetSettings.PackageToBreakOn, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
-		if (SubnameIndex >= 0)
+		if (!FParse::Param(FCommandLine::Get(), TEXT("cooksinglepackage")) &&
+			!FParse::Param(FCommandLine::Get(), TEXT("cooksinglepackagenorefs")))
 		{
-			int32 SubnameEndIndex = SubnameIndex + BreakAtOffsetSettings.PackageToBreakOn.Len();
-			if (SubnameEndIndex == ArcName.Len() || ArcName[SubnameEndIndex] == TEXT('.'))
+			return;
+		}
+
+		FString Package;
+		if (!FParse::Value(FCommandLine::Get(), TEXT("map="), Package) &&
+			!FParse::Value(FCommandLine::Get(), TEXT("package="), Package))
+		{
+			return;
+		}
+
+		int64 Offset;
+		// DiffOnlyBreakOffset should be the Combined/DiffBreak Offset from the warning message
+		if (!FParse::Value(FCommandLine::Get(), TEXT("diffonlybreakoffset="), Offset) || Offset <= 0)
+		{
+			return;
+		}
+
+		OffsetToBreakOn = Offset;
+		PackageToBreakOn = TEXT("/") + FPackageName::GetShortName(Package);
+	}
+
+	bool MatchesFilename(const FString& Filename) const
+	{
+		int32 SubnameIndex = Filename.Find(PackageToBreakOn, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+		if (SubnameIndex < 0)
+		{
+			return false;
+		}
+		int32 SubnameEndIndex = SubnameIndex + PackageToBreakOn.Len();
+		return SubnameEndIndex == Filename.Len() || Filename[SubnameEndIndex] == TEXT('.');
+	}
+
+} GBreakAtOffsetSettings;
+
+
+void FCallstacks::RecordSerialize(EOffsetFrame OffsetFrame, int64 CurrentOffset, int64 Length,
+	const FAccumulator& Accumulator, FDiffArchive& Ar, int32 StackIgnoreCount)
+{
+	int64 LinkerOffset = -1;
+
+	// If the writer is using postsave transforms, then we need to know what segment we are in before deciding whether
+	// to allow use of the LinkerOffset for diffonlybreakoffset or for recording the LinkerOffset for each callstack.
+	// The segment information is only known after the first save.
+	if (!Accumulator.IsWriterUsingPostSaveTransforms() || Accumulator.bFirstSaveComplete)
+	{
+		switch (OffsetFrame)
+		{
+		case EOffsetFrame::Linker:
+			LinkerOffset = CurrentOffset;
+			break;
+		case EOffsetFrame::Exports:
+			if (Accumulator.bFirstSaveComplete)
 			{
-				UE_DEBUG_BREAK();
+				LinkerOffset = CurrentOffset + Accumulator.HeaderSize;
+			}
+			break;
+		default:
+			checkNoEntry();
+			break;
+		}
+	}
+
+	++StackIgnoreCount;
+
+	if (LinkerOffset >= 0)
+	{
+		if (GBreakAtOffsetSettings.OffsetToBreakOn >= 0 &&
+			LinkerOffset <= GBreakAtOffsetSettings.OffsetToBreakOn && GBreakAtOffsetSettings.OffsetToBreakOn < LinkerOffset + Length)
+		{
+			if (GBreakAtOffsetSettings.MatchesFilename(Accumulator.Filename))
+			{
+				if (Accumulator.IsWriterUsingPostSaveTransforms() && OffsetFrame == EOffsetFrame::Linker &&
+					LinkerOffset < Accumulator.PreTransformHeaderSize)
+				{
+					// Do not break at this serialize call; it's in the pre-transformed header. If the requested
+					// breakoffset is not within the post-transformed header, then this offset is in the wrong segment
+					// and is not a match. If the breakoffset is within the post-transformed header we break and give
+					// instructions during OnFirstSaveComplete.
+				}
+				else
+				{
+					if (!UE::ArchiveStackTrace::ShouldBypassDiff() && !UE::ArchiveStackTrace::ShouldIgnoreDiff())
+					{
+						UE_DEBUG_BREAK();
+					}
+				}
 			}
 		}
 	}
 
 	if (Length > 0)
 	{
-		UObject* SerializedObject = SerializeContext ? SerializeContext->SerializedObject : nullptr;
-		TArrayView<const FName> DebugStack;
-		DebugStack = DebugDataStack;
+		UObject* SerializedObject = Ar.GetSerializeContext() ? Ar.GetSerializeContext()->SerializedObject : nullptr;
+		TArrayView<const FName> DebugStack = Ar.GetDebugDataStack();
 
-		const bool bIsCollectingCallstacks = DiffMap != nullptr;
-		const bool bCollectCurrentCallstack = bIsCollectingCallstacks && DiffMap->ContainsOffset(CurrentOffset);
+		const bool bCollectingCallstacks = Accumulator.bFirstSaveComplete;
+		const bool bCollectCurrentCallstack = bCollectingCallstacks && LinkerOffset >= 0 &&
+			(!Accumulator.IsWriterUsingPostSaveTransforms() || LinkerOffset >= Accumulator.HeaderSize) &&
+			Accumulator.DiffMap.ContainsOffset(LinkerOffset);
 
-		Callstacks.Add(
-			CurrentOffset,
-			Length,
-			SerializedObject,
-			GetSerializedProperty(),
-			DebugStack,
-			bIsCollectingCallstacks,
-			bCollectCurrentCallstack,
-			StackIgnoreCount);
+		Add(CurrentOffset, Length, SerializedObject, Ar.GetSerializedProperty(), DebugStack, bCollectingCallstacks,
+			bCollectCurrentCallstack, StackIgnoreCount);
 	}
+}
 
-	if (bInnerArchiveDisabled == false)
+FAccumulatorGlobals::FAccumulatorGlobals(ICookedPackageWriter* InnerPackageWriter)
+	: PackageWriter(InnerPackageWriter)
+{
+}
+
+void FAccumulatorGlobals::Initialize(EPackageHeaderFormat InFormat)
+{
+	if (bInitialized)
 	{
-		InnerArchive.Serialize(Data, Length);
+		return;
 	}
-}
-
-void FDiffWriterArchiveWriter::SetSerializeContext(FUObjectSerializeContext* Context)
-{
-	SerializeContext = Context;
-
-	if (bInnerArchiveDisabled == false)
+	bInitialized = true;
+	Format = InFormat;
+	switch (Format)
 	{
-		InnerArchive.SetSerializeContext(Context);
+	case EPackageHeaderFormat::PackageFileSummary:
+		break;
+	case EPackageHeaderFormat::ZenPackageSummary:
+		FPackageStoreOptimizer::FindScriptObjects(ScriptObjectsMap);
+		break;
+	default:
+		checkNoEntry();
+		break;
 	}
 }
 
-FUObjectSerializeContext* FDiffWriterArchiveWriter::GetSerializeContext()
-{
-	return SerializeContext;
-}
-
-FDiffWriterArchiveMemoryWriter::FDiffWriterArchiveMemoryWriter(
-	FDiffWriterCallstacks& Callstacks,
-	const FDiffWriterDiffMap* DiffMap,
-	const int64 DiffMapOffset,
-	const int64 PreAllocateBytes,
-	bool bIsPersistent,
-	const TCHAR* Filename)
-		: FLargeMemoryWriter(PreAllocateBytes, bIsPersistent, Filename)
-		, StackTraceWriter(*this, Callstacks, DiffMap, DiffMapOffset)
-{
-	// Hack to prevent recursive calls to serialize when passing in this.
-	StackTraceWriter.SetDisableInnerArchive(true);
-	StackTraceWriter.SetStackIgnoreCount(StackTraceWriter.GetStackIgnoreCount() + 1);
-}
-
-void FDiffWriterArchiveMemoryWriter::Serialize(void* Memory, int64 Length)
-{
-	StackTraceWriter.Serialize(Memory, Length);
-	FLargeMemoryWriter::Serialize(Memory, Length);
-}
-
-void FDiffWriterArchiveMemoryWriter::SetSerializeContext(FUObjectSerializeContext* Context)
-{
-	StackTraceWriter.SetSerializeContext(Context);
-}
-
-FUObjectSerializeContext* FDiffWriterArchiveMemoryWriter::GetSerializeContext()
-{
-	return StackTraceWriter.GetSerializeContext();
-}
-
-FDiffWriterArchive::FDiffWriterArchive(UObject* InAsset, const TCHAR* InFilename, UE::DiffWriterArchive::FMessageCallback&& InMessageCallback,
-	bool bInCollectCallstacks, const FDiffWriterDiffMap* InDiffMap)
-	: FLargeMemoryWriter(0, false, InFilename)
-	, Callstacks(InAsset)
-	, StackTraceWriter(*this, Callstacks, InDiffMap, 0)
+FAccumulator::FAccumulator(FAccumulatorGlobals& InGlobals, UObject* InAsset, FName InPackageName,
+	int32 InMaxDiffsToLog, bool bInIgnoreHeaderDiffs, FMessageCallback&& InMessageCallback,
+	EPackageHeaderFormat InPackageHeaderFormat)
+	: LinkerCallstacks()
+	, ExportsCallstacks()
+	, Globals(InGlobals)
 	, MessageCallback(MoveTemp(InMessageCallback))
+	, PackageName(InPackageName)
+	, Asset(InAsset)
+	, MaxDiffsToLog(InMaxDiffsToLog)
+	, PackageHeaderFormat(InPackageHeaderFormat)
+	, bIgnoreHeaderDiffs(bInIgnoreHeaderDiffs)
 {
-	// Hack to prevent recursive calls to serialize when passing in this.
-	StackTraceWriter.SetDisableInnerArchive(true);
-	StackTraceWriter.SetStackIgnoreCount(StackTraceWriter.GetStackIgnoreCount() + 1);
+	GBreakAtOffsetSettings.Initialize();
 }
 
-FDiffWriterArchive::~FDiffWriterArchive()
+FAccumulator::~FAccumulator()
 {
 }
 
-void FDiffWriterArchive::Serialize(void* Memory, int64 Length)
+void FAccumulator::SetHeaderSize(int64 InHeaderSize)
 {
-	StackTraceWriter.Serialize(Memory, Length);
-	FLargeMemoryWriter::Serialize(Memory, Length);
+	HeaderSize = InHeaderSize;
 }
 
-void FDiffWriterArchive::SetSerializeContext(FUObjectSerializeContext* Context)
+FName FAccumulator::GetAssetClass() const
 {
-	StackTraceWriter.SetSerializeContext(Context);
+	return Asset != nullptr ? Asset->GetClass()->GetFName() : NAME_None;
 }
 
-FUObjectSerializeContext* FDiffWriterArchive::GetSerializeContext()
+bool FAccumulator::IsWriterUsingPostSaveTransforms() const
 {
-	return StackTraceWriter.GetSerializeContext();
+	return PackageHeaderFormat != EPackageHeaderFormat::PackageFileSummary;
 }
 
-namespace
+void FAccumulator::OnFirstSaveComplete(FStringView LooseFilePath, int64 InHeaderSize, int64 InPreTransformHeaderSize,
+	ICookedPackageWriter::FPreviousCookedBytesData&& InPreviousPackageData)
 {
-	bool ShouldDumpPropertyValueState(FProperty* Prop)
+	Filename = LooseFilePath;
+	HeaderSize = InHeaderSize;
+	PreTransformHeaderSize = InPreTransformHeaderSize;
+	PreviousPackageData = MoveTemp(InPreviousPackageData);
+
+	if (IsWriterUsingPostSaveTransforms())
 	{
-		if (Prop->IsA<FNumericProperty>()
-			|| Prop->IsA<FStrProperty>()
-			|| Prop->IsA<FBoolProperty>()
-			|| Prop->IsA<FNameProperty>())
+		// The header has been transformed, so all callstacks in it are invalid; remove them
+		LinkerCallstacks.RemoveRange(0, PreTransformHeaderSize);
+	}
+	LinkerCallstacks.Append(ExportsCallstacks, HeaderSize);
+	ExportsCallstacks.Reset();
+
+	GenerateDiffMap();
+	if (HasDifferences())
+	{
+		// Make a copy of the LinkerArchive for comparison in case it differs even in the second memory save
+		check(LinkerArchive);
+		FirstSaveLinkerData.Empty(LinkerArchive->TotalSize());
+		FirstSaveLinkerData.Append(LinkerArchive->GetData(), LinkerArchive->TotalSize());
+	}
+
+	LinkerCallstacks.Reset();
+	bFirstSaveComplete = true;
+
+
+	if (IsWriterUsingPostSaveTransforms() &&
+		GBreakAtOffsetSettings.MatchesFilename(Filename) &&
+		GBreakAtOffsetSettings.OffsetToBreakOn < HeaderSize)
+	{
+		// The package writer used for this cook transforms the header before saving it to disk, for e.g. compression.
+		// This means that we don't in general know which offsets in the pre-transform header correspond to
+		// the offsets in the header on disk, and we only know the callstack for the offsets in the pre-transform
+		// header. So we don't know where to break during serialization of the header.
+		// If you specified settings to break at an offset in the pre-transform header, you need instead to debug
+		// using the information reported by DumpPackageHeaderDiffs.
+		UE_DEBUG_BREAK();
+	}
+}
+
+void FAccumulator::OnSecondSaveComplete(int64 InHeaderSize)
+{
+	check(bFirstSaveComplete); // Should have been set in OnFirstSaveComplete
+	if (HeaderSize != InHeaderSize)
+	{
+		MessageCallback(ELogVerbosity::Error, FString::Printf(
+			TEXT("%s: Indeterministic header size. When saving the package twice into memory, first header size %d != second header size %d. Callstacks for indeterminism in the exports will be incorrect.")
+			TEXT("\n\tDumping differences from first and second memory saves."),
+			*this->Filename, HeaderSize, InHeaderSize));
+
+		check(bFirstSaveComplete);
+		check(FirstSaveLinkerData.Num() >= HeaderSize);
+		check(LinkerArchive && LinkerArchive->TotalSize() >= InHeaderSize);
+
+		FPackageData FirstSaveHeader{ FirstSaveLinkerData.GetData(), HeaderSize};
+		FPackageData SecondSaveHeader{ LinkerArchive->GetData(), InHeaderSize };
+		int32 NumHeaderDiffMessages = 0;
+		DumpPackageHeaderDiffs(Globals, FirstSaveHeader, SecondSaveHeader, Filename, MaxDiffsToLog,
+			PackageHeaderFormat,
+			[&NumHeaderDiffMessages, this](ELogVerbosity::Type Verbosity, FStringView Message)
+			{
+				MessageCallback(Verbosity, Message);
+				++NumHeaderDiffMessages;
+			});
+		if (NumHeaderDiffMessages == 0)
+		{
+			MessageCallback(ELogVerbosity::Warning, FString::Printf(
+				TEXT("%s: headers are different, but DumpPackageHeaderDiffs does not yet implement describing the difference."),
+				*Filename));
+		}
+	}
+
+	if (IsWriterUsingPostSaveTransforms())
+	{
+		// The header has been transformed, so all callstacks in it are invalid; remove them
+		LinkerCallstacks.RemoveRange(0, PreTransformHeaderSize);
+	}
+	LinkerCallstacks.Append(ExportsCallstacks, HeaderSize);
+	ExportsCallstacks.Reset();
+}
+
+bool FAccumulator::HasDifferences() const
+{
+	return bHasDifferences;
+}
+
+FDiffArchive::FDiffArchive(FAccumulator& InAccumulator)
+	: Accumulator(&InAccumulator)
+{
+	SetIsPersistent(true /* bIsPersistent */);
+}
+
+FString FDiffArchive::GetArchiveName() const
+{
+	return Accumulator->Filename;
+}
+
+void FDiffArchive::PushDebugDataString(const FName& DebugData)
+{
+	DebugDataStack.Push(DebugData);
+}
+
+void FDiffArchive::PopDebugDataString()
+{
+	DebugDataStack.Pop();
+}
+
+TArray<FName>& FDiffArchive::GetDebugDataStack()
+{
+	return DebugDataStack;
+}
+
+FDiffArchiveForLinker::FDiffArchiveForLinker(FAccumulator& InAccumulator)
+	: FDiffArchive(InAccumulator)
+{
+	// SavePackage is supposed to destroy the archive before returning, we rely on that so that the linkerarchive
+	// in the second save can use the same data that was used in the first save
+	check(!Accumulator->LinkerArchive);
+	Accumulator->LinkerArchive = this;
+}
+
+FDiffArchiveForLinker::~FDiffArchiveForLinker()
+{
+	check(Accumulator->LinkerArchive == this)
+	Accumulator->LinkerArchive = nullptr;
+}
+
+void FDiffArchiveForLinker::Serialize(void* InData, int64 Num)
+{
+	int32 StackIgnoreCount = 1;
+	int64 CurrentOffset = Tell();
+	Accumulator->LinkerCallstacks.RecordSerialize(EOffsetFrame::Linker, CurrentOffset, Num, *Accumulator,
+		*this, StackIgnoreCount);
+	FDiffArchive::Serialize(InData, Num);
+}
+
+FDiffArchiveForExports::FDiffArchiveForExports(FAccumulator& InAccumulator)
+	: FDiffArchive(InAccumulator)
+{
+	// SavePackage is supposed to destroy the archive before returning, we rely on that so that the exportsarchive
+	// in the second save can use the same data that was used in the first save
+	check(!Accumulator->ExportsArchive);
+	Accumulator->ExportsArchive = this;
+}
+
+FDiffArchiveForExports::~FDiffArchiveForExports()
+{
+	check(Accumulator->ExportsArchive == this);
+	Accumulator->ExportsArchive = nullptr;
+}
+
+void FDiffArchiveForExports::Serialize(void* InData, int64 Num)
+{
+	int32 StackIgnoreCount = 1;
+	int64 CurrentOffset = Tell();
+	Accumulator->ExportsCallstacks.RecordSerialize(EOffsetFrame::Exports, CurrentOffset, Num, *Accumulator,
+		*this, StackIgnoreCount);
+	FDiffArchive::Serialize(InData, Num);
+}
+
+bool ShouldDumpPropertyValueState(FProperty* Prop)
+{
+	if (Prop->IsA<FNumericProperty>()
+		|| Prop->IsA<FStrProperty>()
+		|| Prop->IsA<FBoolProperty>()
+		|| Prop->IsA<FNameProperty>())
+	{
+		return true;
+	}
+
+	if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Prop))
+	{
+		return ShouldDumpPropertyValueState(ArrayProp->Inner);
+	}
+
+	if (FMapProperty* MapProp = CastField<FMapProperty>(Prop))
+	{
+		return ShouldDumpPropertyValueState(MapProp->KeyProp) && ShouldDumpPropertyValueState(MapProp->ValueProp);
+	}
+
+	if (FSetProperty* SetProp = CastField<FSetProperty>(Prop))
+	{
+		return ShouldDumpPropertyValueState(SetProp->ElementProp);
+	}
+
+	if (FStructProperty* StructProp = CastField<FStructProperty>(Prop))
+	{
+		if (StructProp->Struct == TBaseStructure<FVector>::Get()
+			|| StructProp->Struct == TBaseStructure<FGuid>::Get())
 		{
 			return true;
 		}
-
-		if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Prop))
-		{
-			return ShouldDumpPropertyValueState(ArrayProp->Inner);
-		}
-
-		if (FMapProperty* MapProp = CastField<FMapProperty>(Prop))
-		{
-			return ShouldDumpPropertyValueState(MapProp->KeyProp) && ShouldDumpPropertyValueState(MapProp->ValueProp);
-		}
-
-		if (FSetProperty* SetProp = CastField<FSetProperty>(Prop))
-		{
-			return ShouldDumpPropertyValueState(SetProp->ElementProp);
-		}
-
-		if (FStructProperty* StructProp = CastField<FStructProperty>(Prop))
-		{
-			if (StructProp->Struct == TBaseStructure<FVector>::Get()
-				|| StructProp->Struct == TBaseStructure<FGuid>::Get())
-			{
-				return true;
-			}
-		}
-
-		return false;
 	}
+
+	if (FOptionalProperty* OptionalProp = CastField<FOptionalProperty>(Prop))
+	{
+		return ShouldDumpPropertyValueState(OptionalProp->GetValueProperty());
+	}
+
+	return false;
 }
 
-void FDiffWriterArchiveWriter::Compare(
-	const FPackageData& SourcePackage,
-	const FPackageData& DestPackage,
-	const FDiffWriterCallstacks& Callstacks,
-	const FDiffWriterDiffMap& DiffMap,
-	const TCHAR* AssetFilename,
-	const TCHAR* CallstackCutoffText,
-	const int64 MaxDiffsToLog,
-	int32& InOutDiffsLogged,
-	TMap<FName, FArchiveDiffStats>& OutStats,
-	const UE::DiffWriterArchive::FMessageCallback& MessageCallback,
-	bool bSuppressLogging)
+void FAccumulator::CompareWithPreviousForSection(const FPackageData& SourcePackage, const FPackageData& DestPackage,
+	const TCHAR* CallstackCutoffText, int32& InOutDiffsLogged, TMap<FName, FArchiveDiffStats>& OutStats,
+	const FString& SectionFilename)
 {
+	FCallstacks& Callstacks = this->LinkerCallstacks;
 	const int64 SourceSize = SourcePackage.Size - SourcePackage.StartOffset;
 	const int64 DestSize = DestPackage.Size - DestPackage.StartOffset;
 	const int64 SizeToCompare = FMath::Min(SourceSize, DestSize);
-	const FName AssetClass = Callstacks.GetAssetClass();
+	const FName AssetClass = GetAssetClass();
 	
 	if (SourceSize != DestSize)
 	{
-		if (!bSuppressLogging)
-		{
-			MessageCallback(ELogVerbosity::Warning, FString::Printf(
-				TEXT("%s: Size mismatch: on disk: %lld vs memory: %lld"), AssetFilename, SourceSize, DestSize));
-		}
+		MessageCallback(ELogVerbosity::Warning, FString::Printf(
+			TEXT("%s: Size mismatch: on disk: %lld vs memory: %lld"), *SectionFilename, SourceSize, DestSize));
 		int64 SizeDiff = DestPackage.Size - SourcePackage.Size;
 		OutStats.FindOrAdd(AssetClass).DiffSize += SizeDiff;
 	}
@@ -567,6 +773,7 @@ void FDiffWriterArchiveWriter::Compare(
 	FString LastDifferenceCallstackDataText;
 	int32 LastDifferenceCallstackOffsetIndex = -1;
 	int64 NumDiffsLocal = 0;
+	int64 NumDiffsForLogStatLocal = 0;
 	int64 NumDiffsLoggedLocal = 0;
 	int64 FirstUnreportedDiffIndex = -1;
 
@@ -582,276 +789,297 @@ void FDiffWriterArchiveWriter::Compare(
 			continue;
 		}
 
-		bool bDifferenceLogged = false;
-		ON_SCOPE_EXIT
+		constexpr int BytesToLog = 128;
+		int32 DifferenceCallstackOffsetIndex = Callstacks.GetCallstackIndexAtOffset(DestAbsoluteOffset,
+			LastDifferenceCallstackOffsetIndex < 0 ? 0 : LastDifferenceCallstackOffsetIndex);
+
+		// Skip reporting the difference if we are still within the same Serialize call, or for any bytes after
+		// the first different byte if we don't know the callstack.
+		if (NumDiffsLocal > 0 &&
+			DifferenceCallstackOffsetIndex == LastDifferenceCallstackOffsetIndex)
 		{
-			if (bDifferenceLogged)
-			{
-				InOutDiffsLogged++;
-				NumDiffsLoggedLocal++;
-			}
-		};
-
-		if (DiffMap.ContainsOffset(DestAbsoluteOffset))
-		{
-			int32 DifferenceCallstackoffsetIndex = Callstacks.GetCallstackIndexAtOffset(DestAbsoluteOffset, FMath::Max(LastDifferenceCallstackOffsetIndex, 0));
-			ON_SCOPE_EXIT
-			{
-				LastDifferenceCallstackOffsetIndex = DifferenceCallstackoffsetIndex;
-			};
-
-			if (DifferenceCallstackoffsetIndex < 0)
-			{
-				if (!bSuppressLogging)
-				{
-					MessageCallback(ELogVerbosity::Warning, FString::Printf(
-						TEXT("%s: Difference at offset %lld (absolute offset: %lld), unknown callstack"), AssetFilename, LocalOffset, DestAbsoluteOffset));
-				}
-				continue;
-			}
-
-			if (DifferenceCallstackoffsetIndex == LastDifferenceCallstackOffsetIndex)
-			{
-				continue;
-			}
-
-			const FDiffWriterCallstacks::FCallstackAtOffset& CallstackAtOffset = Callstacks.GetCallstack(DifferenceCallstackoffsetIndex);
-			const FDiffWriterCallstacks::FCallstackData& DifferenceCallstackData = Callstacks.GetCallstackData(CallstackAtOffset);
-			FString DifferenceCallstackDataText = DifferenceCallstackData.ToString(CallstackCutoffText);
-			if (LastDifferenceCallstackDataText.Compare(DifferenceCallstackDataText, ESearchCase::CaseSensitive) == 0)
-			{
-				continue;
-			}
-			ON_SCOPE_EXIT
-			{
-				LastDifferenceCallstackDataText = MoveTemp(DifferenceCallstackDataText);
-			};
-
-			if (!CallstackAtOffset.bIgnore && (MaxDiffsToLog < 0 || InOutDiffsLogged < MaxDiffsToLog))
-			{
-				FString BeforePropertyVal;
-				FString AfterPropertyVal;
-				if (FProperty* SerProp = DifferenceCallstackData.SerializedProp)
-				{
-					if (SourceSize == DestSize && ShouldDumpPropertyValueState(SerProp))
-					{
-						// Walk backwards until we find a callstack which wasn't from the given property
-						int64 OffsetX = DestAbsoluteOffset;
-						for (;;)
-						{
-							if (OffsetX == 0)
-							{
-								break;
-							}
-
-							const int32 CallstackIndex = Callstacks.GetCallstackIndexAtOffset(OffsetX - 1, 0);
-							const FDiffWriterCallstacks::FCallstackAtOffset& PreviousCallstack = Callstacks.GetCallstack(CallstackIndex);
-							const FDiffWriterCallstacks::FCallstackData& PreviousCallstackData = Callstacks.GetCallstackData(PreviousCallstack);
-							if (PreviousCallstackData.SerializedProp != SerProp)
-							{
-								break;
-							}
-
-							--OffsetX;
-						}
-
-						FPropertyTempVal SourceVal(SerProp);
-						FPropertyTempVal DestVal  (SerProp);
-
-						FStaticMemoryReader SourceReader(&SourcePackage.Data[SourceAbsoluteOffset - (DestAbsoluteOffset - OffsetX)], SourcePackage.Size - SourceAbsoluteOffset);
-						FStaticMemoryReader DestReader(&DestPackage.Data[OffsetX], DestPackage.Size - DestAbsoluteOffset);
-
-						SourceVal.Serialize(SourceReader);
-						DestVal  .Serialize(DestReader);
-
-									if (!SourceReader.IsError() && !DestReader.IsError())
-									{
-										SourceVal.ExportText(BeforePropertyVal);
-										DestVal  .ExportText(AfterPropertyVal);
-									}
-								}
-							}
-
-				FString DiffValues;
-				if (BeforePropertyVal != AfterPropertyVal)
-				{
-					DiffValues = FString::Printf(TEXT("\r\n%sBefore: %s\r\n%sAfter:  %s"),
-						UE::DiffWriterArchive::IndentToken, *BeforePropertyVal,
-						UE::DiffWriterArchive::IndentToken, *AfterPropertyVal);
-				}
-
-				FString DebugDataStackText;
-				//check for a debug data stack as part of the unique stack entry, and log it out if we find it.
-				FString FullStackText = DifferenceCallstackData.Callstack.Get();
-				int32 DebugDataIndex = FullStackText.Find(ANSI_TO_TCHAR(DebugDataStackMarker), ESearchCase::CaseSensitive);
-				if (DebugDataIndex > 0)
-				{
-					DebugDataStackText = FString::Printf(TEXT("\r\n%s"),
-						UE::DiffWriterArchive::IndentToken)
-						+ FullStackText.RightChop(DebugDataIndex + 2);
-				}
-
-				if (!bSuppressLogging)
-				{
-					MessageCallback(ELogVerbosity::Warning, FString::Printf(
-						TEXT("%s: Difference at offset %lld%s (absolute offset: %lld): byte %d on disk, byte %d in memory, callstack:%s%s%s%s%s"),
-						AssetFilename,
-						CallstackAtOffset.Offset - DestPackage.StartOffset,
-						DestAbsoluteOffset > CallstackAtOffset.Offset ? *FString::Printf(TEXT("(+%lld)"), DestAbsoluteOffset - CallstackAtOffset.Offset) : TEXT(""),
-						DestAbsoluteOffset,
-						SourceByte, DestByte,
-						UE::DiffWriterArchive::NewLineToken,
-						UE::DiffWriterArchive::NewLineToken,
-						*DifferenceCallstackDataText,
-						*DiffValues,
-						*DebugDataStackText
-					));
-				}
-
-				const int BytesToLog = 128;
-				if (!bSuppressLogging)
-				{
-					MessageCallback(ELogVerbosity::Display, FString::Printf(
-						TEXT("%s: Logging %d bytes around absolute offset: %lld (%016X) in the on disk (existing) package, (which corresponds to offset %lld (%016X) in the in-memory package)"),
-						AssetFilename,
-						BytesToLog,
-						SourceAbsoluteOffset,
-						SourceAbsoluteOffset,
-						DestAbsoluteOffset,
-						DestAbsoluteOffset
-					));
-				}
-				FCompressionUtil::LogHexDump(SourcePackage.Data, SourcePackage.Size, SourceAbsoluteOffset - BytesToLog / 2, SourceAbsoluteOffset + BytesToLog / 2);
-
-				if (!bSuppressLogging)
-				{
-					MessageCallback(ELogVerbosity::Display, FString::Printf(
-						TEXT("%s: Logging %d bytes around absolute offset: %lld (%016X) in the in memory (new) package"),
-						AssetFilename,
-						BytesToLog,
-						DestAbsoluteOffset,
-						DestAbsoluteOffset
-					));
-				}
-				FCompressionUtil::LogHexDump(DestPackage.Data, DestPackage.Size, DestAbsoluteOffset - BytesToLog / 2, DestAbsoluteOffset + BytesToLog / 2);
-
-				bDifferenceLogged = true;
-			}
-			else if (FirstUnreportedDiffIndex == -1)
-			{
-				FirstUnreportedDiffIndex = DestAbsoluteOffset;
-			}
-			OutStats.FindOrAdd(AssetClass).NumDiffs++;
-			NumDiffsLocal++;
+			continue;
 		}
-		else
+
+		// Also skip reporting the difference if it is another occurrence of the last reported callstack
+		const FCallstacks::FCallstackAtOffset* CallstackAtOffsetPtr = nullptr;
+		const FCallstacks::FCallstackData* DifferenceCallstackDataPtr = nullptr;
+		FString DifferenceCallstackDataText;
+		bool bCallstackSuppressLogging = false;
+		if (DifferenceCallstackOffsetIndex >= 0)
 		{
-			// Each byte will count as a difference but without callstack data there's no way around it
-			OutStats.FindOrAdd(AssetClass).NumDiffs++;
-			NumDiffsLocal++;
+			CallstackAtOffsetPtr = &Callstacks.GetCallstack(DifferenceCallstackOffsetIndex);
+			bCallstackSuppressLogging = CallstackAtOffsetPtr->bSuppressLogging;
+
+			DifferenceCallstackDataPtr = &Callstacks.GetCallstackData(*CallstackAtOffsetPtr);
+			DifferenceCallstackDataText = DifferenceCallstackDataPtr->ToString(CallstackCutoffText);
+			if (NumDiffsLocal > 0 && 
+				LastDifferenceCallstackDataText.Compare(DifferenceCallstackDataText, ESearchCase::CaseSensitive) == 0)
+			{
+				continue;
+			}
+		}
+
+		// Update counter for number of existing diffs
+		OutStats.FindOrAdd(AssetClass).NumDiffs++;
+		NumDiffsLocal++;
+		// Update LastReported fields
+		LastDifferenceCallstackOffsetIndex = DifferenceCallstackOffsetIndex;
+		LastDifferenceCallstackDataText = MoveTemp(DifferenceCallstackDataText);
+
+		// Skip logging of the difference if the callstack has a suppresslogging scope 
+		if (bCallstackSuppressLogging)
+		{
+			return;
+		}
+		// Skip logging of header differences if requested
+		if (bIgnoreHeaderDiffs && DestAbsoluteOffset < HeaderSize)
+		{
+			continue;
+		}
+
+		// Update counter for number of diffs that should be reported as existing when over the limit
+		// Ignored header diffs and suppressed callstacks do not contribute to this count
+		NumDiffsForLogStatLocal++;
+
+		// Skip logging of the difference if we are over the limit
+		if (bCallstackSuppressLogging || (MaxDiffsToLog >= 0 && InOutDiffsLogged >= MaxDiffsToLog))
+		{
 			if (FirstUnreportedDiffIndex == -1)
 			{
-				FirstUnreportedDiffIndex = DestAbsoluteOffset;
+				FirstUnreportedDiffIndex = LocalOffset;
 			}
+			continue;
 		}
-		OutStats.FindOrAdd(AssetClass).DiffSize++;
-	}
 
-	if (MaxDiffsToLog >= 0 && NumDiffsLocal > NumDiffsLoggedLocal)
-	{
-		if (FirstUnreportedDiffIndex != -1)
+		// Update counter for number of logged diffs
+		InOutDiffsLogged++;
+		NumDiffsLoggedLocal++;
+
+		if (DifferenceCallstackOffsetIndex < 0)
 		{
-			if (!bSuppressLogging)
+			if (IsWriterUsingPostSaveTransforms() && DestAbsoluteOffset < HeaderSize)
 			{
 				MessageCallback(ELogVerbosity::Warning, FString::Printf(
-					TEXT("%s: %lld difference(s) not logged (first at absolute offset: %lld)."),
-					AssetFilename, NumDiffsLocal - NumDiffsLoggedLocal, FirstUnreportedDiffIndex));
+					TEXT("%s: Difference at offset %lld (Combined/DiffBreak Offset: %" INT64_FMT "): OnDisk %d != %d InMemory.%s")
+					TEXT("Callstack is unknown because the offset is in the header and the header has been optimized. See the output of DumpPackageHeaderDiffs to debug this difference."),
+					*SectionFilename, LocalOffset, DestAbsoluteOffset, SourceByte, DestByte, NewLineToken
+				));
+			}
+			else
+			{
+				MessageCallback(ELogVerbosity::Warning, FString::Printf(
+					TEXT("%s: Difference at offset %lld (Combined/DiffBreak Offset: %" INT64_FMT "): OnDisk %d != %d InMemory.%s")
+					TEXT("Callstack is unknown."),
+					*SectionFilename, LocalOffset, DestAbsoluteOffset, SourceByte, DestByte, NewLineToken
+				));
 			}
 		}
 		else
 		{
-			if (!bSuppressLogging)
+			check(CallstackAtOffsetPtr && DifferenceCallstackDataPtr); // These were set up above.
+			const FCallstacks::FCallstackAtOffset& CallstackAtOffset = *CallstackAtOffsetPtr;
+			const FCallstacks::FCallstackData& DifferenceCallstackData = *DifferenceCallstackDataPtr;
+
+			FString BeforePropertyVal;
+			FString AfterPropertyVal;
+			if (FProperty* SerProp = DifferenceCallstackData.SerializedProp)
 			{
-				MessageCallback(ELogVerbosity::Warning, FString::Printf(
-					TEXT("%s: %lld difference(s) not logged."), AssetFilename, NumDiffsLocal - NumDiffsLoggedLocal));
+				// We don't attempt to serialize properties when we have already encountered at least one diff in the asset.
+				// That is because we don't handle length differences in the source and destination data caused by the previous
+				// diffs.  Those previous length differences could mean the current diff is at a position that is offset and
+				// invalid to serialize the property from.  That can result in things like serializing an array or string which has
+				// a negative number of elements, or other invalid situations that lead to an assert or crash.  If we must
+				// sesrialize these properties, we would have to ensure that we keep an appropriate offset separate for the source
+				// archive and the dest archive.
+				if ((SourceSize == DestSize) && (InOutDiffsLogged < 2) && ShouldDumpPropertyValueState(SerProp))
+				{
+					// Walk backwards until we find a callstack which wasn't from the given property
+					int64 OffsetX = DestAbsoluteOffset;
+					for (;;)
+					{
+						if (OffsetX == 0)
+						{
+							break;
+						}
+
+						const int32 CallstackIndex = Callstacks.GetCallstackIndexAtOffset(OffsetX - 1, 0);
+						if (CallstackIndex < 0)
+						{
+							break;
+						}
+						const FCallstacks::FCallstackAtOffset& PreviousCallstack = Callstacks.GetCallstack(CallstackIndex);
+						const FCallstacks::FCallstackData& PreviousCallstackData = Callstacks.GetCallstackData(PreviousCallstack);
+						if (PreviousCallstackData.SerializedProp != SerProp)
+						{
+							break;
+						}
+
+						--OffsetX;
+					}
+
+					FPropertyTempVal SourceVal(SerProp);
+					FPropertyTempVal DestVal(SerProp);
+
+					FStaticMemoryReader SourceReader(&SourcePackage.Data[SourceAbsoluteOffset - (DestAbsoluteOffset - OffsetX)], SourcePackage.Size - SourceAbsoluteOffset);
+					FStaticMemoryReader DestReader(&DestPackage.Data[OffsetX], DestPackage.Size - DestAbsoluteOffset);
+
+					SourceVal.Serialize(SourceReader);
+					DestVal.Serialize(DestReader);
+
+					if (!SourceReader.IsError() && !DestReader.IsError())
+					{
+						SourceVal.ExportText(BeforePropertyVal);
+						DestVal.ExportText(AfterPropertyVal);
+					}
+				}
 			}
+
+			FString DiffValues;
+			if (BeforePropertyVal != AfterPropertyVal)
+			{
+				DiffValues = FString::Printf(TEXT("\r\n%sBefore: %s\r\n%sAfter:  %s"),
+					IndentToken, *BeforePropertyVal,
+					IndentToken, *AfterPropertyVal);
+			}
+
+			FString DebugDataStackText;
+			//check for a debug data stack as part of the unique stack entry, and log it out if we find it.
+			FString FullStackText = DifferenceCallstackData.Callstack.Get();
+			int32 DebugDataIndex = FullStackText.Find(ANSI_TO_TCHAR(DebugDataStackMarker), ESearchCase::CaseSensitive);
+			if (DebugDataIndex > 0)
+			{
+				DebugDataStackText = FString::Printf(TEXT("\r\n%s"), IndentToken)
+					+ FullStackText.RightChop(DebugDataIndex + 2);
+			}
+
+			MessageCallback(ELogVerbosity::Warning, FString::Printf(
+				TEXT("%s: Difference at offset %lld (Combined/DiffBreak Offset: %" INT64_FMT "): OnDisk %d != %d InMemory.%s")
+					TEXT("Difference occurs at index %lld within Serialize call at callstack:%s%s%s%s"),
+				*SectionFilename, LocalOffset, DestAbsoluteOffset, SourceByte, DestByte, NewLineToken,
+				DestAbsoluteOffset - CallstackAtOffset.Offset, NewLineToken,
+				*LastDifferenceCallstackDataText, *DiffValues, *DebugDataStackText
+			));
 		}
+
+		MessageCallback(ELogVerbosity::Display, FString::Printf(
+			TEXT("%s: Logging %d bytes around offset: %lld (%016X) in the OnDisk package:"),
+			*SectionFilename,
+			BytesToLog, LocalOffset, LocalOffset
+		));
+		TArray<FString> HexDumpLines = FCompressionUtil::HexDumpLines(SourcePackage.Data + SourcePackage.StartOffset,
+			SourcePackage.Size - SourcePackage.StartOffset,
+			LocalOffset - BytesToLog / 2, LocalOffset + BytesToLog / 2);
+		for (FString& Line : HexDumpLines)
+		{
+			MessageCallback(ELogVerbosity::Display, Line);
+		}
+
+		MessageCallback(ELogVerbosity::Display, FString::Printf(
+			TEXT("%s: Logging %d bytes around offset: %lld (%016X) in the InMemory package:"),
+			*SectionFilename, BytesToLog, LocalOffset, LocalOffset
+		));
+		HexDumpLines = FCompressionUtil::HexDumpLines(DestPackage.Data + DestPackage.StartOffset,
+			DestPackage.Size - DestPackage.StartOffset,
+			LocalOffset - BytesToLog / 2, LocalOffset + BytesToLog / 2);
+		for (FString& Line : HexDumpLines)
+		{
+			MessageCallback(ELogVerbosity::Display, Line);
+		}
+	}
+
+	if (MaxDiffsToLog >= 0 && NumDiffsForLogStatLocal > NumDiffsLoggedLocal)
+	{
+		MessageCallback(ELogVerbosity::Warning, FString::Printf(
+			TEXT("%s: %lld difference(s) not logged (first at offset: %lld)."),
+			*SectionFilename, NumDiffsForLogStatLocal - NumDiffsLoggedLocal, FirstUnreportedDiffIndex));
 	}
 }
 
-void FDiffWriterArchive::CompareWith(const TCHAR* InFilename, const int64 TotalHeaderSize, const TCHAR* CallstackCutoffText, const int32 MaxDiffsToLog, TMap<FName, FArchiveDiffStats>& OutStats)
+void FAccumulator::CompareWithPrevious(const TCHAR* CallstackCutoffText, TMap<FName, FArchiveDiffStats>&OutStats)
 {
-	TUniquePtr<uint8> SourcePackageBytes;
-	FPackageData SourcePackage;
-	UE::ArchiveStackTrace::LoadPackageIntoMemory(InFilename, SourcePackage, SourcePackageBytes);
-	CompareWith(SourcePackage, InFilename, TotalHeaderSize, CallstackCutoffText, MaxDiffsToLog, OutStats);
-}
+	// An FDiffArchiveForLinker should have been constructed by SavePackage and should still be in memory
+	check(LinkerArchive);
 
-void FDiffWriterArchive::CompareWith(const FPackageData& SourcePackage, const TCHAR* FileDisplayName, const int64 TotalHeaderSize,
-	const TCHAR* CallstackCutoffText, const int32 MaxDiffsToLog, TMap<FName, FArchiveDiffStats>&OutStats,
-	const FDiffWriterArchiveWriter::EPackageHeaderFormat PackageHeaderFormat /* = FDiffWriterArchiveWriter::EPackageHeaderFormat::PackageFileSummary */)
-{
-	const FName AssetClass = Callstacks.GetAssetClass();
-	OutStats.FindOrAdd(AssetClass).NewFileTotalSize = TotalSize();
-	if (SourcePackage.Size == 0)
+	Globals.Initialize(PackageHeaderFormat);
+
+	const FName AssetClass = GetAssetClass();
+	OutStats.FindOrAdd(AssetClass).NewFileTotalSize = LinkerArchive->TotalSize();
+	if (PreviousPackageData.Size == 0)
 	{
-		MessageCallback(ELogVerbosity::Warning, FString::Printf(TEXT("New package: %s"), *GetArchiveName()));
+		MessageCallback(ELogVerbosity::Warning, FString::Printf(TEXT("New package: %s"), *Filename));
 		OutStats.FindOrAdd(AssetClass).DiffSize = OutStats.FindOrAdd(AssetClass).NewFileTotalSize;
 		return;
 	}
 
+	FPackageData SourcePackage;
+	SourcePackage.Data = PreviousPackageData.Data.Get();
+	SourcePackage.Size = PreviousPackageData.Size;
+	SourcePackage.HeaderSize = PreviousPackageData.HeaderSize;
+	SourcePackage.StartOffset = PreviousPackageData.StartOffset;
+
 	FPackageData DestPackage;
-	DestPackage.Data = GetData();
-	DestPackage.Size = TotalSize();
-	DestPackage.HeaderSize = TotalHeaderSize;
+	DestPackage.Data = LinkerArchive->GetData();
+	DestPackage.Size = LinkerArchive->TotalSize();
+	DestPackage.HeaderSize = HeaderSize;
 	DestPackage.StartOffset = 0;
 
-	MessageCallback(ELogVerbosity::Display, FString::Printf(TEXT("Comparing: %s"), *GetArchiveName()));
+	MessageCallback(ELogVerbosity::Display, FString::Printf(TEXT("Comparing: %s"), *Filename));
 	MessageCallback(ELogVerbosity::Warning, FString::Printf(TEXT("Asset class: %s"), *AssetClass.ToString()));
 
 	int32 NumLoggedDiffs = 0;
-
+	
 	FPackageData SourcePackageHeader = SourcePackage;
-	SourcePackageHeader.Size = SourcePackageHeader.HeaderSize;
+	SourcePackageHeader.Size = SourcePackage.HeaderSize;
 	SourcePackageHeader.HeaderSize = 0;
 	SourcePackageHeader.StartOffset = 0;
 
 	FPackageData DestPackageHeader = DestPackage;
-	DestPackageHeader.Size = TotalHeaderSize;
+	DestPackageHeader.Size = HeaderSize;
 	DestPackageHeader.HeaderSize = 0;
 	DestPackageHeader.StartOffset = 0;
 
-	FDiffWriterArchiveWriter::Compare(SourcePackageHeader, DestPackageHeader, Callstacks,
-		StackTraceWriter.GetDiffMap(), FileDisplayName, CallstackCutoffText, MaxDiffsToLog, NumLoggedDiffs,
-		OutStats, MessageCallback);
+	CompareWithPreviousForSection(SourcePackageHeader, DestPackageHeader, CallstackCutoffText,
+		NumLoggedDiffs, OutStats, Filename);
 
-	if (TotalHeaderSize > 0 && OutStats.FindOrAdd(AssetClass).NumDiffs > 0)
+	if (HeaderSize > 0 && OutStats.FindOrAdd(AssetClass).NumDiffs > 0)
 	{
-		FDiffWriterArchiveWriter::DumpPackageHeaderDiffs(SourcePackage, DestPackage, FileDisplayName, MaxDiffsToLog,
-			PackageHeaderFormat, MessageCallback);
+		int32 NumHeaderDiffMessages = 0;
+		DumpPackageHeaderDiffs(Globals, SourcePackage, DestPackage, Filename, MaxDiffsToLog,
+			PackageHeaderFormat,
+			[&NumHeaderDiffMessages, this](ELogVerbosity::Type Verbosity, FStringView Message)
+			{
+				MessageCallback(Verbosity, Message);
+				++NumHeaderDiffMessages;
+			});
+		if (NumHeaderDiffMessages == 0)
+		{
+			MessageCallback(ELogVerbosity::Warning, FString::Printf(
+				TEXT("%s: headers are different, but DumpPackageHeaderDiffs does not yet implement describing the difference."),
+				*Filename));
+		}
 	}
 
 	FPackageData SourcePackageExports = SourcePackage;
 	SourcePackageExports.HeaderSize = 0;
-	SourcePackageExports.StartOffset = SourcePackage.HeaderSize;
+	SourcePackageExports.StartOffset = PreviousPackageData.HeaderSize;
 
 	FPackageData DestPackageExports = DestPackage;
 	DestPackageExports.HeaderSize = 0;
-	DestPackageExports.StartOffset = TotalHeaderSize;
+	DestPackageExports.StartOffset = HeaderSize;
 
-	FString AssetName;
+	FString ExportsFilename;
 	if (DestPackage.HeaderSize > 0)
 	{
-		AssetName = FPaths::ChangeExtension(FileDisplayName, TEXT("uexp"));
+		ExportsFilename = FPaths::ChangeExtension(Filename, TEXT("uexp"));
 	}
 	else
 	{
-		AssetName = FileDisplayName;
+		ExportsFilename = Filename;
 	}
 
-	FDiffWriterArchiveWriter::Compare(SourcePackageExports, DestPackageExports, Callstacks,
-		StackTraceWriter.GetDiffMap(), *AssetName, CallstackCutoffText, MaxDiffsToLog, NumLoggedDiffs,
-		OutStats, MessageCallback);
+	CompareWithPreviousForSection(SourcePackageExports, DestPackageExports, CallstackCutoffText,
+		NumLoggedDiffs, OutStats, ExportsFilename);
 
 	// Optionally save out any differences we detected.
 	const FArchiveDiffStats& Stats = OutStats.FindOrAdd(AssetClass);
@@ -877,7 +1105,7 @@ void FDiffWriterArchive::CompareWith(const FPackageData& SourcePackage, const TC
 		// Only save out the differences if we have a -diffoutputdir set.
 		if (!DiffOutputSettings.DiffOutputDir.IsEmpty())
 		{
-			FString OutputFilename = FPaths::ConvertRelativePathToFull(FileDisplayName);
+			FString OutputFilename = FPaths::ConvertRelativePathToFull(Filename);
 			FString SavedDir       = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
 			if (OutputFilename.StartsWith(SavedDir))
 			{
@@ -887,7 +1115,7 @@ void FDiffWriterArchive::CompareWith(const FPackageData& SourcePackage, const TC
 
 				// Copy the original asset as '.before.uasset'.
 				{
-					TUniquePtr<FArchive> DiffUAssetArchive(FileManager.CreateFileWriter(*FPaths::SetExtension(OutputFilename, TEXT(".before.") + FPaths::GetExtension(FileDisplayName))));
+					TUniquePtr<FArchive> DiffUAssetArchive(FileManager.CreateFileWriter(*FPaths::SetExtension(OutputFilename, TEXT(".before.") + FPaths::GetExtension(Filename))));
 					DiffUAssetArchive->Serialize(SourcePackageHeader.Data + SourcePackageHeader.StartOffset, SourcePackageHeader.Size - SourcePackageHeader.StartOffset);
 				}
 				{
@@ -897,7 +1125,7 @@ void FDiffWriterArchive::CompareWith(const FPackageData& SourcePackage, const TC
 
 				// Save out the in-memory data as '.after.uasset'.
 				{
-					TUniquePtr<FArchive> DiffUAssetArchive(FileManager.CreateFileWriter(*FPaths::SetExtension(OutputFilename, TEXT(".after.") + FPaths::GetExtension(FileDisplayName))));
+					TUniquePtr<FArchive> DiffUAssetArchive(FileManager.CreateFileWriter(*FPaths::SetExtension(OutputFilename, TEXT(".after.") + FPaths::GetExtension(Filename))));
 					DiffUAssetArchive->Serialize(DestPackageHeader.Data + DestPackageHeader.StartOffset, DestPackageHeader.Size - DestPackageHeader.StartOffset);
 				}
 				{
@@ -914,11 +1142,13 @@ void FDiffWriterArchive::CompareWith(const FPackageData& SourcePackage, const TC
 	}
 }
 
-bool FDiffWriterArchiveWriter::GenerateDiffMap(const FPackageData& SourcePackage, const FPackageData& DestPackage, const FDiffWriterCallstacks& Callstacks, int32 MaxDiffsToFind, FDiffWriterDiffMap& OutDiffMap)
+void FAccumulator::GenerateDiffMapForSection(const FPackageData& SourcePackage, const FPackageData& DestPackage,
+	bool& bOutSectionIdentical)
 {
+	FCallstacks& Callstacks = this->LinkerCallstacks;
 	bool bIdentical = true;
 	int32 LastDifferenceCallstackOffsetIndex = -1;
-	FDiffWriterCallstacks::FCallstackData* DifferenceCallstackData = nullptr;
+	FCallstacks::FCallstackData* DifferenceCallstackData = nullptr;
 
 	const int64 SourceSize = SourcePackage.Size - SourcePackage.StartOffset;
 	const int64 DestSize = DestPackage.Size - DestPackage.StartOffset;
@@ -931,18 +1161,18 @@ bool FDiffWriterArchiveWriter::GenerateDiffMap(const FPackageData& SourcePackage
 		if (SourcePackage.Data[SourceAbsoluteOffset] != DestPackage.Data[DestAbsoluteOffset])
 		{
 			bIdentical = false;
-			if (OutDiffMap.Num() < MaxDiffsToFind)
+			if (DiffMap.Num() < MaxDiffsToLog)
 			{
 				const int32 DifferenceCallstackOffsetIndex = Callstacks.GetCallstackIndexAtOffset(DestAbsoluteOffset, FMath::Max<int32>(LastDifferenceCallstackOffsetIndex, 0));
 				if (DifferenceCallstackOffsetIndex >= 0 && DifferenceCallstackOffsetIndex != LastDifferenceCallstackOffsetIndex)
 				{
-					const FDiffWriterCallstacks::FCallstackAtOffset& CallstackAtOffset = Callstacks.GetCallstack(DifferenceCallstackOffsetIndex);
-					if (!CallstackAtOffset.bIgnore)
+					const FCallstacks::FCallstackAtOffset& CallstackAtOffset = Callstacks.GetCallstack(DifferenceCallstackOffsetIndex);
+					if (!CallstackAtOffset.bSuppressLogging)
 					{
-						FDiffWriterDiffInfo OffsetAndSize;
+						FDiffInfo OffsetAndSize;
 						OffsetAndSize.Offset = CallstackAtOffset.Offset;
 						OffsetAndSize.Size = Callstacks.GetSerializedDataSizeForOffsetIndex(DifferenceCallstackOffsetIndex);
-						OutDiffMap.Add(OffsetAndSize);
+						DiffMap.Add(OffsetAndSize);
 					}
 				}
 				LastDifferenceCallstackOffsetIndex = DifferenceCallstackOffsetIndex;
@@ -955,18 +1185,18 @@ bool FDiffWriterArchiveWriter::GenerateDiffMap(const FPackageData& SourcePackage
 		bIdentical = false;
 
 		// Add all the remaining callstacks to the diff map
-		for (int32 OffsetIndex = LastDifferenceCallstackOffsetIndex + 1; OffsetIndex < Callstacks.Num() && OutDiffMap.Num() < MaxDiffsToFind; ++OffsetIndex)
+		for (int32 OffsetIndex = LastDifferenceCallstackOffsetIndex + 1; OffsetIndex < Callstacks.Num() && DiffMap.Num() < MaxDiffsToLog; ++OffsetIndex)
 		{
-			const FDiffWriterCallstacks::FCallstackAtOffset& CallstackAtOffset = Callstacks.GetCallstack(OffsetIndex);
+			const FCallstacks::FCallstackAtOffset& CallstackAtOffset = Callstacks.GetCallstack(OffsetIndex);
 			// Compare against the size without start offset as all callstack offsets are absolute (from the merged header + exports file)
 			if (CallstackAtOffset.Offset < DestPackage.Size)
 			{
-				if (!CallstackAtOffset.bIgnore)
+				if (!CallstackAtOffset.bSuppressLogging)
 				{
-					FDiffWriterDiffInfo OffsetAndSize;
+					FDiffInfo OffsetAndSize;
 					OffsetAndSize.Offset = CallstackAtOffset.Offset;
 					OffsetAndSize.Size = Callstacks.GetSerializedDataSizeForOffsetIndex(OffsetIndex);
-					OutDiffMap.Add(OffsetAndSize);
+					DiffMap.Add(OffsetAndSize);
 				}
 			}
 			else
@@ -979,46 +1209,46 @@ bool FDiffWriterArchiveWriter::GenerateDiffMap(const FPackageData& SourcePackage
 	{
 		bIdentical = false;
 	}
-	return bIdentical;
+	bOutSectionIdentical = bIdentical;
 }
 
-bool FDiffWriterArchive::GenerateDiffMap(const TCHAR* InFilename, int64 TotalHeaderSize, int32 MaxDiffsToFind, FDiffWriterDiffMap& OutDiffMap)
+void FAccumulator::GenerateDiffMap()
 {
-	TUniquePtr<uint8> SourcePackageBytes;
+	check(MaxDiffsToLog > 0);
+	// An FDiffArchiveForLinker should have been constructed by SavePackage and should still be in memory
+	check(LinkerArchive != nullptr);
+
+	bHasDifferences = true;
+	DiffMap.Reset();
+
 	FPackageData SourcePackage;
-	if (!UE::ArchiveStackTrace::LoadPackageIntoMemory(InFilename, SourcePackage, SourcePackageBytes))
-	{
-		return false;
-	}
-	return GenerateDiffMap(SourcePackage, TotalHeaderSize, MaxDiffsToFind, OutDiffMap);
-}
-
-bool FDiffWriterArchive::GenerateDiffMap(const FPackageData& SourcePackage, int64 TotalHeaderSize, int32 MaxDiffsToFind, FDiffWriterDiffMap& OutDiffMap)
-{
-	check(MaxDiffsToFind > 0);
+	SourcePackage.Data = PreviousPackageData.Data.Get();
+	SourcePackage.Size = PreviousPackageData.Size;
+	SourcePackage.HeaderSize = PreviousPackageData.HeaderSize;
+	SourcePackage.StartOffset = PreviousPackageData.StartOffset;
 
 	bool bIdentical = true;
 	bool bHeaderIdentical = true;
 	bool bExportsIdentical = true;
 
 	FPackageData DestPackage;
-	DestPackage.Data = GetData();
-	DestPackage.Size = TotalSize();
-	DestPackage.HeaderSize = TotalHeaderSize;
+	DestPackage.Data = LinkerArchive->GetData();
+	DestPackage.Size = LinkerArchive->TotalSize();
+	DestPackage.HeaderSize = HeaderSize;
 	DestPackage.StartOffset = 0;
 
 	{
 		FPackageData SourcePackageHeader = SourcePackage;
-		SourcePackageHeader.Size = SourcePackageHeader.HeaderSize;
+		SourcePackageHeader.Size = SourcePackage.HeaderSize;
 		SourcePackageHeader.HeaderSize = 0;
 		SourcePackageHeader.StartOffset = 0;
 
 		FPackageData DestPackageHeader = DestPackage;
-		DestPackageHeader.Size = TotalHeaderSize;
+		DestPackageHeader.Size = HeaderSize;
 		DestPackageHeader.HeaderSize = 0;
 		DestPackageHeader.StartOffset = 0;
 
-		bHeaderIdentical = FDiffWriterArchiveWriter::GenerateDiffMap(SourcePackageHeader, DestPackageHeader, Callstacks, MaxDiffsToFind, OutDiffMap);
+		GenerateDiffMapForSection(SourcePackageHeader, DestPackageHeader, bHeaderIdentical);
 	}
 
 	{
@@ -1028,43 +1258,16 @@ bool FDiffWriterArchive::GenerateDiffMap(const FPackageData& SourcePackage, int6
 
 		FPackageData DestPackageExports = DestPackage;
 		DestPackageExports.HeaderSize = 0;
-		DestPackageExports.StartOffset = TotalHeaderSize;
+		DestPackageExports.StartOffset = HeaderSize;
 
-		bExportsIdentical = FDiffWriterArchiveWriter::GenerateDiffMap(SourcePackageExports, DestPackageExports, Callstacks, MaxDiffsToFind, OutDiffMap);
+		GenerateDiffMapForSection(SourcePackageExports, DestPackageExports, bExportsIdentical);
 	}
 
 	bIdentical = bHeaderIdentical && bExportsIdentical;
-
-	return bIdentical;
+	bHasDifferences = !bIdentical;
 }
 
-bool FDiffWriterArchive::IsIdentical(const TCHAR* InFilename, int64 BufferSize, const uint8* BufferData)
-{
-	TUniquePtr<uint8> SourcePackageBytes;
-	FPackageData SourcePackage;
-	if (!UE::ArchiveStackTrace::LoadPackageIntoMemory(InFilename, SourcePackage, SourcePackageBytes))
-	{
-		return false;
-	}
-
-	return IsIdentical(SourcePackage, BufferSize, BufferData);
-}
-
-bool FDiffWriterArchive::IsIdentical(const FPackageData& SourcePackage, int64 BufferSize, const uint8* BufferData)
-{
-	bool bIdentical = false;
-	if (BufferSize == SourcePackage.Size)
-	{
-		bIdentical = (FMemory::Memcmp(SourcePackage.Data, BufferData, BufferSize) == 0);
-	}
-	else
-	{
-		bIdentical = false;
-	}
-	return bIdentical;
-}
-
-FLinkerLoad* FDiffWriterArchiveWriter::CreateLinkerForPackage(FUObjectSerializeContext* LoadContext, const FString& InPackageName, const FString& InFilename, const FPackageData& PackageData)
+FLinkerLoad* CreateLinkerForPackage(FUObjectSerializeContext* LoadContext, const FString& InPackageName, const FString& InFilename, const FPackageData& PackageData)
 {
 	// First create a temp package to associate the linker with
 	UPackage* Package = FindObjectFast<UPackage>(nullptr, *InPackageName);
@@ -1082,243 +1285,6 @@ FLinkerLoad* FDiffWriterArchiveWriter::CreateLinkerForPackage(FUObjectSerializeC
 	}
 
 	return Linker;
-}
-
-static FString GetTableKey(const FLinkerLoad* Linker, const FObjectExport& Export)
-{
-	FName ClassName = Export.ClassIndex.IsNull() ? FName(NAME_Class) : Linker->ImpExp(Export.ClassIndex).ObjectName;
-	return FString::Printf(TEXT("%s %s.%s"),
-		*ClassName.ToString(),
-		!Export.OuterIndex.IsNull() ? *Linker->ImpExp(Export.OuterIndex).ObjectName.ToString() : *FPackageName::GetShortName(Linker->LinkerRoot),
-		*Export.ObjectName.ToString());
-}
-
-static FString GetTableKey(const FLinkerLoad* Linker, const FObjectImport& Import)
-{
-	return FString::Printf(TEXT("%s %s.%s"),
-		*Import.ClassName.ToString(),
-		!Import.OuterIndex.IsNull() ? *Linker->ImpExp(Import.OuterIndex).ObjectName.ToString() : TEXT("NULL"),
-		*Import.ObjectName.ToString());
-}
-
-static inline FString GetTableKey(const FLinkerLoad* Linker, const FName& Name)
-{
-	return *Name.ToString();
-}
-
-static inline FString GetTableKey(const FLinkerLoad* Linker, FNameEntryId Id)
-{
-	return FName::GetEntry(Id)->GetPlainNameString();
-}
-
-static inline FString GetTableKeyForIndex(const FLinkerLoad* Linker, FPackageIndex Index)
-{
-	if (Index.IsNull())
-	{
-		return TEXT("NULL");
-	}
-	else if (Index.IsExport())
-	{
-		return GetTableKey(Linker, Linker->Exp(Index));
-	}
-	else
-	{
-		return GetTableKey(Linker, Linker->Imp(Index));
-	}
-}
-
-static bool ComparePackageIndices(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker, const FPackageIndex& SourceIndex,
-	const FPackageIndex& DestIndex, const UE::DiffWriterArchive::FMessageCallback& MessageCallback);
-
-static bool CompareTableItem(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker,
-	const FName& SourceName, const FName& DestName, const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
-{
-	return SourceName == DestName;
-}
-
-static bool CompareTableItem(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker,
-	FNameEntryId SourceName, FNameEntryId DestName, const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
-{
-	return SourceName == DestName;
-}
-
-static FString ConvertItemToText(const FName& Name, FLinkerLoad* Linker)
-{
-	return Name.ToString();
-}
-
-static FString ConvertItemToText(FNameEntryId Id, FLinkerLoad* Linker)
-{
-	return FName::GetEntry(Id)->GetPlainNameString();
-}
-
-static bool CompareTableItem(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker, const FObjectImport& SourceImport,
-	const FObjectImport& DestImport, const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
-{
-	if (SourceImport.ObjectName != DestImport.ObjectName ||
-		SourceImport.ClassName != DestImport.ClassName ||
-		SourceImport.ClassPackage != DestImport.ClassPackage ||
-		!ComparePackageIndices(SourceLinker, DestLinker, SourceImport.OuterIndex,
-			DestImport.OuterIndex, MessageCallback))
-	{
-		return false;
-	}
-	else
-	{
-		return true;
-	}
-}
-
-static FString ConvertItemToText(const FObjectImport& Import, FLinkerLoad* Linker)
-{
-	return FString::Printf(
-		TEXT("%s ClassPackage: %s"),
-		*GetTableKey(Linker, Import),
-		*Import.ClassPackage.ToString()
-	);
-}
-
-static bool CompareTableItem(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker, const FObjectExport& SourceExport,
-	const FObjectExport& DestExport, const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
-{
-	if (SourceExport.ObjectName != DestExport.ObjectName ||
-		SourceExport.PackageFlags != DestExport.PackageFlags ||
-		SourceExport.ObjectFlags != DestExport.ObjectFlags ||
-		SourceExport.SerialSize != DestExport.SerialSize ||
-		SourceExport.bForcedExport != DestExport.bForcedExport ||
-		SourceExport.bNotForClient != DestExport.bNotForClient ||
-		SourceExport.bNotForServer != DestExport.bNotForServer ||
-		SourceExport.bNotAlwaysLoadedForEditorGame != DestExport.bNotAlwaysLoadedForEditorGame ||
-		SourceExport.bIsAsset != DestExport.bIsAsset ||
-		SourceExport.bIsInheritedInstance != DestExport.bIsInheritedInstance ||
-		SourceExport.bGeneratePublicHash != DestExport.bGeneratePublicHash ||
-		!ComparePackageIndices(SourceLinker, DestLinker, SourceExport.TemplateIndex,
-			DestExport.TemplateIndex, MessageCallback) ||
-		!ComparePackageIndices(SourceLinker, DestLinker, SourceExport.OuterIndex,
-			DestExport.OuterIndex, MessageCallback) ||
-		!ComparePackageIndices(SourceLinker, DestLinker, SourceExport.ClassIndex,
-			DestExport.ClassIndex, MessageCallback) ||
-		!ComparePackageIndices(SourceLinker, DestLinker, SourceExport.SuperIndex, 
-			DestExport.SuperIndex, MessageCallback))
-	{
-		return false;
-	}
-	else
-	{
-		return true;
-	}
-}
-
-static bool IsImportMapIdentical(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker,
-	const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
-{
-	bool bIdentical = (SourceLinker->ImportMap.Num() == DestLinker->ImportMap.Num());
-	if (bIdentical)
-	{
-		for (int32 ImportIndex = 0; ImportIndex < SourceLinker->ImportMap.Num(); ++ImportIndex)
-		{
-			if (!CompareTableItem(SourceLinker, DestLinker, SourceLinker->ImportMap[ImportIndex],
-				DestLinker->ImportMap[ImportIndex], MessageCallback))
-			{
-				bIdentical = false;
-				break;
-			}
-		}
-	}
-	return bIdentical;
-}
-
-static bool ComparePackageIndices(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker, const FPackageIndex& SourceIndex,
-	const FPackageIndex& DestIndex, const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
-{
-	if (SourceIndex.IsNull() && DestIndex.IsNull())
-	{
-		return true;
-	}
-
-	if (SourceIndex.IsExport() && DestIndex.IsExport())
-	{
-		int32 SourceArrayIndex = SourceIndex.ToExport();
-		int32 DestArrayIndex   = DestIndex  .ToExport();
-
-		if (!SourceLinker->ExportMap.IsValidIndex(SourceArrayIndex) || !DestLinker->ExportMap.IsValidIndex(DestArrayIndex))
-		{
-			MessageCallback(ELogVerbosity::Warning, FString::Printf(
-				TEXT("Invalid export indices found, source: %d (of %d), dest: %d (of %d)"),
-				SourceArrayIndex, SourceLinker->ExportMap.Num(), DestArrayIndex, DestLinker->ExportMap.Num()));
-			return false;
-		}
-
-		const FObjectExport& SourceOuterExport = SourceLinker->Exp(SourceIndex);
-		const FObjectExport& DestOuterExport   = DestLinker  ->Exp(DestIndex);
-
-		FString SourceOuterExportKey = GetTableKey(SourceLinker, SourceOuterExport);
-		FString DestOuterExportKey   = GetTableKey(DestLinker,   DestOuterExport);
-
-		return SourceOuterExportKey == DestOuterExportKey;
-	}
-
-	if (SourceIndex.IsImport() && DestIndex.IsImport())
-	{
-		int32 SourceArrayIndex = SourceIndex.ToImport();
-		int32 DestArrayIndex   = DestIndex  .ToImport();
-
-		if (!SourceLinker->ImportMap.IsValidIndex(SourceArrayIndex) || !DestLinker->ImportMap.IsValidIndex(DestArrayIndex))
-		{
-			MessageCallback(ELogVerbosity::Warning, FString::Printf(
-				TEXT("Invalid import indices found, source: %d (of %d), dest: %d (of %d)"),
-				SourceArrayIndex, SourceLinker->ImportMap.Num(), DestArrayIndex, DestLinker->ImportMap.Num()));
-			return false;
-		}
-
-		const FObjectImport& SourceOuterImport = SourceLinker->Imp(SourceIndex);
-		const FObjectImport& DestOuterImport   = DestLinker  ->Imp(DestIndex);
-
-		FString SourceOuterImportKey = GetTableKey(SourceLinker, SourceOuterImport);
-		FString DestOuterImportKey   = GetTableKey(DestLinker,   DestOuterImport);
-
-		return SourceOuterImportKey == DestOuterImportKey;
-	}
-
-	return false;
-}
-
-static FString ConvertItemToText(const FObjectExport& Export, FLinkerLoad* Linker)
-{
-	FName ClassName = Export.ClassIndex.IsNull() ? FName(NAME_Class) : Linker->ImpExp(Export.ClassIndex).ObjectName;
-	return FString::Printf(TEXT("%s Super: %s, Template: %s, Flags: %d, Size: %lld, PackageFlags: %d, ForcedExport: %d, NotForClient: %d, NotForServer: %d, NotAlwaysLoadedForEditorGame: %d, IsAsset: %d, IsInheritedInstance: %d, GeneratePublicHash: %d"),
-		*GetTableKey(Linker, Export),
-		*GetTableKeyForIndex(Linker, Export.SuperIndex),
-		*GetTableKeyForIndex(Linker, Export.TemplateIndex),
-		(int32)Export.ObjectFlags,
-		Export.SerialSize,
-		Export.PackageFlags,
-		Export.bForcedExport,
-		Export.bNotForClient,
-		Export.bNotForServer,
-		Export.bNotAlwaysLoadedForEditorGame,
-		Export.bIsAsset,
-		Export.bIsInheritedInstance,
-		Export.bGeneratePublicHash);
-}
-
-static bool IsExportMapIdentical(FLinkerLoad* SourceLinker, FLinkerLoad* DestLinker,
-	const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
-{
-	bool bIdentical = (SourceLinker->ExportMap.Num() == DestLinker->ExportMap.Num());
-	if (bIdentical)
-	{
-		for (int32 ExportIndex = 0; ExportIndex < SourceLinker->ExportMap.Num(); ++ExportIndex)
-		{
-			if (!CompareTableItem(SourceLinker, DestLinker, SourceLinker->ExportMap[ExportIndex],
-				DestLinker->ExportMap[ExportIndex], MessageCallback))
-			{
-				bIdentical = false;
-				break;
-			}
-		}
-	}
-	return bIdentical;
 }
 
 /** Structure that holds an item from the NameMap/ImportMap/ExportMap in a TSet for diffing */
@@ -1351,16 +1317,15 @@ struct TTableItem
 };
 
 /** Dumps differences between Linker tables */
-template <typename T>
+template <typename T, typename ContextProvider>
 static void DumpTableDifferences(
-	FLinkerLoad* SourceLinker, 
-	FLinkerLoad* DestLinker, 
-	TArray<T>& SourceTable, 
-	TArray<T>& DestTable,
+	ContextProvider& SourceContext,
+	ContextProvider& DestContext,
+	TConstArrayView<T> SourceTable, 
+	TConstArrayView<T> DestTable,
 	const TCHAR* AssetFilename,
 	const TCHAR* ItemName,
-	const int32 MaxDiffsToLog,
-	const UE::DiffWriterArchive::FMessageCallback& MessageCallback
+	const int32 MaxDiffsToLog
 )
 {
 	FString HumanReadableString;
@@ -1376,12 +1341,12 @@ static void DumpTableDifferences(
 	for (int32 Index = 0; Index < SourceTable.Num(); ++Index)
 	{
 		const T& Item = SourceTable[Index];
-		SourceSet.Add(TTableItem<T>(GetTableKey(SourceLinker, Item), &Item, Index));
+		SourceSet.Add(TTableItem<T>(SourceContext.GetTableKey(Item), &Item, Index));
 	}
 	for (int32 Index = 0; Index < DestTable.Num(); ++Index)
 	{
 		const T& Item = DestTable[Index];
-		DestSet.Add(TTableItem<T>(GetTableKey(DestLinker, Item), &Item, Index));
+		DestSet.Add(TTableItem<T>(DestContext.GetTableKey(Item), &Item, Index));
 	}
 
 	// Determine the list of items removed from the source package and added to the dest package
@@ -1393,8 +1358,8 @@ static void DumpTableDifferences(
 	{
 		if (const TTableItem<T>* ChangedDestItem = DestSet.Find(ChangedSourceItem))
 		{
-			if (!CompareTableItem(SourceLinker, DestLinker, *ChangedSourceItem.Item,
-				*ChangedDestItem->Item, MessageCallback))
+			if (!SourceContext.CompareTableItem(DestContext, *ChangedSourceItem.Item,
+				*ChangedDestItem->Item))
 			{
 				RemovedItems.Add(ChangedSourceItem);
 				AddedItems  .Add(*ChangedDestItem);
@@ -1409,15 +1374,15 @@ static void DumpTableDifferences(
 	// Dump all changes
 	for (const TTableItem<T>& RemovedItem : RemovedItems)
 	{
-		HumanReadableString += UE::DiffWriterArchive::IndentToken;
-		HumanReadableString += FString::Printf(TEXT("-[%d] %s"), RemovedItem.Index, *ConvertItemToText(*RemovedItem.Item, SourceLinker));
-		HumanReadableString += UE::DiffWriterArchive::NewLineToken;
+		HumanReadableString += IndentToken;
+		HumanReadableString += FString::Printf(TEXT("-[%d] %s"), RemovedItem.Index, *SourceContext.ConvertItemToText(*RemovedItem.Item));
+		HumanReadableString += NewLineToken;
 	}
 	for (const TTableItem<T>& AddedItem : AddedItems)
 	{
-		HumanReadableString += UE::DiffWriterArchive::IndentToken;
-		HumanReadableString += FString::Printf(TEXT("+[%d] %s"), AddedItem.Index, *ConvertItemToText(*AddedItem.Item, DestLinker));
-		HumanReadableString += UE::DiffWriterArchive::NewLineToken;
+		HumanReadableString += IndentToken;
+		HumanReadableString += FString::Printf(TEXT("+[%d] %s"), AddedItem.Index, *DestContext.ConvertItemToText(*AddedItem.Item));
+		HumanReadableString += NewLineToken;
 	}
 
 	// For now just log everything out. When this becomes too spammy, respect the MaxDiffsToLog parameter
@@ -1426,12 +1391,12 @@ static void DumpTableDifferences(
 
 	if (NumDiffs > LoggedDiffs)
 	{
-		HumanReadableString += UE::DiffWriterArchive::IndentToken;
+		HumanReadableString += IndentToken;
 		HumanReadableString += FString::Printf(TEXT("+ %d differences not logged."), (NumDiffs - LoggedDiffs));
-		HumanReadableString += UE::DiffWriterArchive::NewLineToken;
+		HumanReadableString += NewLineToken;
 	}
 
-	MessageCallback(ELogVerbosity::Warning, FString::Printf(
+	SourceContext.LogMessage(ELogVerbosity::Warning, FString::Printf(
 		TEXT("%s: %sMap is different (%d %ss in source package vs %d %ss in dest package):%s%s"),		
 		AssetFilename,
 		ItemName,
@@ -1439,16 +1404,17 @@ static void DumpTableDifferences(
 		ItemName,
 		DestTable.Num(),
 		ItemName,
-		UE::DiffWriterArchive::NewLineToken,
+		NewLineToken,
 		*HumanReadableString));
 }
 
-static void DumpPackageHeaderDiffs_LinkerLoad(
-	const FDiffWriterArchiveWriter::FPackageData& SourcePackage,
-	const FDiffWriterArchiveWriter::FPackageData& DestPackage,
+void DumpPackageHeaderDiffs_LinkerLoad(
+	FAccumulatorGlobals& Globals,
+	const FPackageData& SourcePackage,
+	const FPackageData& DestPackage,
 	const FString& AssetFilename,
 	const int32 MaxDiffsToLog,
-	const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
+	const FMessageCallback& MessageCallback)
 {
 	FString AssetPathName = FPaths::Combine(*FPaths::GetPath(AssetFilename.Mid(AssetFilename.Find(TEXT(":"), ESearchCase::CaseSensitive) + 1)), *FPaths::GetBaseFilename(AssetFilename));
 	// The root directory could have a period in it (d:/Release5.0/EngineTest/Saved/Cooked),
@@ -1471,35 +1437,38 @@ static void DumpPackageHeaderDiffs_LinkerLoad(
 	{
 		TRefCountPtr<FUObjectSerializeContext> LinkerLoadContext(FUObjectThreadContext::Get().GetSerializeContext());
 		BeginLoad(LinkerLoadContext);
-		SourceLinker = FDiffWriterArchiveWriter::CreateLinkerForPackage(LinkerLoadContext, SourceAssetPackageName, AssetFilename, SourcePackage);
+		SourceLinker = CreateLinkerForPackage(LinkerLoadContext, SourceAssetPackageName, AssetFilename, SourcePackage);
 		EndLoad(SourceLinker ? SourceLinker->GetSerializeContext() : LinkerLoadContext.GetReference());
 	}
 	
 	{
 		TRefCountPtr<FUObjectSerializeContext> LinkerLoadContext(FUObjectThreadContext::Get().GetSerializeContext());
 		BeginLoad(LinkerLoadContext);
-		DestLinker = FDiffWriterArchiveWriter::CreateLinkerForPackage(LinkerLoadContext, DestAssetPackageName, AssetFilename, DestPackage);
+		DestLinker = CreateLinkerForPackage(LinkerLoadContext, DestAssetPackageName, AssetFilename, DestPackage);
 		EndLoad(DestLinker ? DestLinker->GetSerializeContext() : LinkerLoadContext.GetReference());
 	}
 
 	if (SourceLinker && DestLinker)
 	{
+		FDiffWriterLinkerLoadHeader SourceContext(SourceLinker, MessageCallback);
+		FDiffWriterLinkerLoadHeader DestContext(DestLinker, MessageCallback);
+
 		if (SourceLinker->NameMap != DestLinker->NameMap)
 		{
-			DumpTableDifferences<FNameEntryId>(SourceLinker, DestLinker, SourceLinker->NameMap, DestLinker->NameMap,
-				*AssetFilename, TEXT("Name"), MaxDiffsToLog, MessageCallback);
+			DumpTableDifferences<FNameEntryId>(SourceContext, DestContext, SourceLinker->NameMap, DestLinker->NameMap,
+				*AssetFilename, TEXT("Name"), MaxDiffsToLog);
 		}
 
-		if (!IsImportMapIdentical(SourceLinker, DestLinker, MessageCallback))
+		if (!SourceContext.IsImportMapIdentical(DestContext))
 		{
-			DumpTableDifferences<FObjectImport>(SourceLinker, DestLinker, SourceLinker->ImportMap, DestLinker->ImportMap,
-				*AssetFilename, TEXT("Import"), MaxDiffsToLog, MessageCallback);
+			DumpTableDifferences<FObjectImport>(SourceContext, DestContext, SourceLinker->ImportMap, DestLinker->ImportMap,
+				*AssetFilename, TEXT("Import"), MaxDiffsToLog);
 		}
 
-		if (!IsExportMapIdentical(SourceLinker, DestLinker, MessageCallback))
+		if (!SourceContext.IsExportMapIdentical(DestContext))
 		{
-			DumpTableDifferences<FObjectExport>(SourceLinker, DestLinker, SourceLinker->ExportMap, DestLinker->ExportMap,
-				*AssetFilename, TEXT("Export"), MaxDiffsToLog, MessageCallback);
+			DumpTableDifferences<FObjectExport>(SourceContext, DestContext, SourceLinker->ExportMap, DestLinker->ExportMap,
+				*AssetFilename, TEXT("Export"), MaxDiffsToLog);
 		}
 	}
 
@@ -1513,33 +1482,100 @@ static void DumpPackageHeaderDiffs_LinkerLoad(
 	}
 }
 
-static void DumpPackageHeaderDiffs_ZenPackage(
-	const FDiffWriterArchiveWriter::FPackageData& SourcePackage,
-	const FDiffWriterArchiveWriter::FPackageData& DestPackage,
+void DumpPackageHeaderDiffs_ZenPackage(
+	FAccumulatorGlobals& Globals,
+	const FPackageData& SourcePackage,
+	const FPackageData& DestPackage,
 	const FString& AssetFilename,
 	const int32 MaxDiffsToLog,
-	const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
+	const FMessageCallback& MessageCallback)
 {
-	// TODO: Fill in detailed diffing of Zen Package Summary
+	FDiffWriterZenHeader SourceHeader(Globals, MessageCallback, true /* bUseZenStore */, SourcePackage, AssetFilename,
+		TEXT("source"));
+	FDiffWriterZenHeader DestHeader(Globals, MessageCallback, false /* bUseZenStore */, DestPackage, AssetFilename,
+		TEXT("dest"));
+	if (!SourceHeader.IsValid() || !DestHeader.IsValid())
+	{
+		// Explanation was logged by TryConstructSummary
+		return;
+	}
+
+	TArray<FString> SourceNames;
+	TArray<FString> DestNames;
+	for (FDisplayNameEntryId Id : SourceHeader.GetPackageHeader().NameMap)
+	{
+		SourceNames.Add(Id.ToName(0).ToString());
+	}
+	for (FDisplayNameEntryId Id : DestHeader.GetPackageHeader().NameMap)
+	{
+		DestNames.Add(Id.ToName(0).ToString());
+	}
+	auto StringSortByNoCaseThenCase = [](const FString& A, const FString& B)
+	{
+		int32 NoCase = A.Compare(B, ESearchCase::IgnoreCase);
+		if (NoCase != 0)
+		{
+			return NoCase < 0;
+		}
+		int32 Case = A.Compare(B, ESearchCase::CaseSensitive);
+		return Case < 0;
+	};
+	Algo::Sort(SourceNames, StringSortByNoCaseThenCase);
+	Algo::Sort(DestNames, StringSortByNoCaseThenCase);
+
+	if (!SourceHeader.IsNameMapIdentical(DestHeader, SourceNames, DestNames))
+	{
+		DumpTableDifferences<FString>(SourceHeader, DestHeader, SourceNames, DestNames,
+			*AssetFilename, TEXT("Name"), MaxDiffsToLog);
+	}
+
+	if (!SourceHeader.IsImportMapIdentical(DestHeader))
+	{
+		DumpTableDifferences<FPackageObjectIndex>(SourceHeader, DestHeader, SourceHeader.GetPackageHeader().ImportMap,
+			DestHeader.GetPackageHeader().ImportMap, *AssetFilename, TEXT("Import"), MaxDiffsToLog);
+	}
+
+	if (!SourceHeader.IsExportMapIdentical(DestHeader))
+	{
+		int32 SourceNum = SourceHeader.GetPackageHeader().ExportMap.Num();
+		int32 DestNum = DestHeader.GetPackageHeader().ExportMap.Num();
+		TArray<FZenHeaderIndexIntoExportMap> SourceIndices;
+		SourceIndices.Reserve(SourceNum);
+		for (int N = 0; N < SourceNum; ++N)
+		{
+			SourceIndices.Add(FZenHeaderIndexIntoExportMap{ N });
+		}
+		TArray<FZenHeaderIndexIntoExportMap> DestIndices;
+		DestIndices.Reserve(DestNum);
+		for (int N = 0; N < DestNum; ++N)
+		{
+			DestIndices.Add(FZenHeaderIndexIntoExportMap{ N });
+		}
+		DumpTableDifferences<FZenHeaderIndexIntoExportMap>(SourceHeader, DestHeader, SourceIndices, DestIndices,
+			*AssetFilename, TEXT("Export"), MaxDiffsToLog);
+	}
 }
 
-void FDiffWriterArchiveWriter::DumpPackageHeaderDiffs(
+void DumpPackageHeaderDiffs(
+	FAccumulatorGlobals& Globals,
 	const FPackageData& SourcePackage,
 	const FPackageData& DestPackage,
 	const FString& AssetFilename,
 	const int32 MaxDiffsToLog,
 	const EPackageHeaderFormat PackageHeaderFormat,
-	const UE::DiffWriterArchive::FMessageCallback& MessageCallback)
+	const FMessageCallback& MessageCallback)
 {
 	switch (PackageHeaderFormat)
 	{
 	case EPackageHeaderFormat::PackageFileSummary:
-		DumpPackageHeaderDiffs_LinkerLoad(SourcePackage, DestPackage, AssetFilename, MaxDiffsToLog, MessageCallback);
+		DumpPackageHeaderDiffs_LinkerLoad(Globals, SourcePackage, DestPackage, AssetFilename, MaxDiffsToLog, MessageCallback);
 		break;
 	case EPackageHeaderFormat::ZenPackageSummary:
-		DumpPackageHeaderDiffs_ZenPackage(SourcePackage, DestPackage, AssetFilename, MaxDiffsToLog, MessageCallback);
+		DumpPackageHeaderDiffs_ZenPackage(Globals, SourcePackage, DestPackage, AssetFilename, MaxDiffsToLog, MessageCallback);
 		break;
 	default:
 		unimplemented();
 	}
 }
+
+} // namespace UE::DiffWriter

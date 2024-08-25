@@ -455,6 +455,21 @@ FString FSetCurveColorAction::ToStringInternal() const
 	return FText::Format(LOCTEXT("SetCurveColorAction_Description", "Setting curve color '{0}'."), FText::FromName(CurveId.CurveName)).ToString();
 }
 
+TUniquePtr<FChange> FSetCurveCommentAction::ExecuteInternal(IAnimationDataModel* Model, IAnimationDataController* Controller)
+{
+	const FAnimCurveBase& AnimationCurve = Model->GetCurve(CurveId);
+	const FString& CurrentComment = AnimationCurve.Comment;
+
+	Controller->SetCurveComment(CurveId, Comment, false);
+
+	return MakeUnique<FSetCurveCommentAction>(CurveId, CurrentComment);
+}
+
+FString FSetCurveCommentAction::ToStringInternal() const
+{
+	return FText::Format(LOCTEXT("SetCurveCommentAction_Description", "Setting curve comment '{0}'."), FText::FromName(CurveId.CurveName)).ToString();
+}
+
 FAddAtributeAction::FAddAtributeAction(const FAnimatedBoneAttribute& InAttribute) : AttributeId(InAttribute.Identifier)
 {
 	Keys = InAttribute.Curve.GetConstRefOfKeys();

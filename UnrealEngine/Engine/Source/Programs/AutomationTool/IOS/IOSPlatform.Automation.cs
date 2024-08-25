@@ -1701,9 +1701,24 @@ public class IOSPlatform : ApplePlatform
 			IdeviceInstallerArgs = GetLibimobileDeviceNetworkedArgument(IdeviceInstallerArgs, Params.DeviceNames[0]);
 
 			var DeviceInstaller = GetPathToLibiMobileDeviceTool("ideviceinstaller");
-			Logger.LogInformation("Checking if bundle {BundleIdentifier} is installed", BundleIdentifier);
+			Logger.LogInformation("Checking if bundle '{BundleIdentifier}' is installed", BundleIdentifier);
 
-			string Output = CommandUtils.RunAndLog(DeviceInstaller, IdeviceInstallerArgs);
+			string Output = "";
+			IProcessResult RunResult = CommandUtils.Run(DeviceInstaller, IdeviceInstallerArgs, null, CommandUtils.ERunOptions.NoLoggingOfRunCommand | CommandUtils.ERunOptions.AppMustExist);
+			if (RunResult.ExitCode == 0)
+			{
+				if (!String.IsNullOrEmpty(RunResult.Output))
+				{
+					Output = RunResult.Output;
+				}
+			}
+			else
+			{
+				throw new CommandFailedException((ExitCode)RunResult.ExitCode, 
+												 String.Format("Command failed (Result:{3}): {0} {1}",
+												 DeviceInstaller, IdeviceInstallerArgs, RunResult.ExitCode)){ OutputFormat = AutomationExceptionOutputFormat.Minimal };
+			}
+
 			bool bBundleIsInstalled = Output.Contains(string.Format("CFBundleIdentifier -> {0}{1}", BundleIdentifier, Environment.NewLine));
 			int ExitCode = 0;
 
@@ -1734,7 +1749,7 @@ public class IOSPlatform : ApplePlatform
 			}
 			else
 			{
-				Logger.LogInformation("Bundle {BundleIdentifier} not found, skipping retrieving deployed manifests", BundleIdentifier);
+				Logger.LogInformation("Bundle '{BundleIdentifier}' not found, skipping retrieving deployed manifests", BundleIdentifier);
 			}
 		}
 		catch (System.Exception)
@@ -1914,6 +1929,16 @@ public class IOSPlatform : ApplePlatform
 
 		string LibimobileDeviceArguments =  "-u " + Params.DeviceNames[0] + " -i " + "\"" +  Path.GetFullPath(AppToDeploy) + "\"";
 		LibimobileDeviceArguments = GetLibimobileDeviceNetworkedArgument(LibimobileDeviceArguments, Params.DeviceNames[0]);
+
+		// If we deploying to a Simulator, use "xcrun simctl" instead
+		{
+			TargetReceipt Targets = SC.StageTargets[0].Receipt;
+			if (Targets.Architectures.SingleArchitecture == UnrealArch.IOSSimulator)
+			{
+				DeviceInstaller = "xcrun";
+				LibimobileDeviceArguments = "simctl install " + Params.DeviceNames[0] + " \"" + Path.GetFullPath(AppToDeploy) + "\"";
+			}
+		}
 
 		// check for it in the stage directory
 		string CurrentDir = Directory.GetCurrentDirectory();

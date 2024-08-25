@@ -33,7 +33,7 @@ public:
 		FQualityInfo Quality;
 	};
 
-	static TSharedPtrTS<IHTTPResponseCache> Create(IPlayerSessionServices* SessionServices, const FParamDict& Options, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> ExternalCache);
+	static TSharedPtrTS<IHTTPResponseCache> Create(IPlayerSessionServices* SessionServices, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> ExternalCache);
 
 	virtual ~IHTTPResponseCache() = default;
 

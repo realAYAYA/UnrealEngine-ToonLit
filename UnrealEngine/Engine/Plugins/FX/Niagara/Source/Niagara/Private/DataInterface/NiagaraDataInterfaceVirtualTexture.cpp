@@ -174,7 +174,8 @@ bool UNiagaraDataInterfaceVirtualTexture::Equals(const UNiagaraDataInterface* Ot
 		OtherTexture->TextureUserParameter == TextureUserParameter;
 }
 
-void UNiagaraDataInterfaceVirtualTexture::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceVirtualTexture::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIVirtualTextureLocal;
 
@@ -216,6 +217,7 @@ void UNiagaraDataInterfaceVirtualTexture::GetFunctions(TArray<FNiagaraFunctionSi
 		Sig.Outputs.Emplace(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Mask"));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceVirtualTexture::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)
 {

@@ -1,91 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "FloatRangeColumn.h"
-
+#include "ChooserIndexArray.h"
 #include "ChooserPropertyAccess.h"
+#include "ChooserTrace.h"
+#if WITH_EDITOR
+#include "PropertyBag.h"
+#endif
 
 bool FFloatContextProperty::SetValue(FChooserEvaluationContext& Context, double InValue) const
 {
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-	
-	if (UE::Chooser::ResolvePropertyChain(Context, Binding, Container, StructType))
-	{
-		if (FDoubleProperty* DoubleProperty = FindFProperty<FDoubleProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			// const cast is here just because ResolvePropertyChain expects a const void*&
-			*DoubleProperty->ContainerPtrToValuePtr<double>(const_cast<void*>(Container)) = InValue;
-			return true;
-		}
-		if (FFloatProperty* FloatProperty = FindFProperty<FFloatProperty>(StructType, Binding.PropertyBindingChain.Last()))
-        {
-			// const cast is here just because ResolvePropertyChain expects a const void*&
-        	*FloatProperty->ContainerPtrToValuePtr<float>(const_cast<void*>(Container)) = InValue;
-        	return true;
-        }
-	}
-
-	return false;
+	return Binding.SetValue(Context, InValue);
 }
 
 bool FFloatContextProperty::GetValue(FChooserEvaluationContext& Context, double& OutResult) const
 {
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-
-	if (UE::Chooser::ResolvePropertyChain(Context, Binding, Container, StructType))
-	{
-		if (const FDoubleProperty* DoubleProperty = FindFProperty<FDoubleProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			OutResult = *DoubleProperty->ContainerPtrToValuePtr<double>(Container);
-			return true;
-		}
-		
-		if (const FFloatProperty* FloatProperty = FindFProperty<FFloatProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			OutResult = *FloatProperty->ContainerPtrToValuePtr<float>(Container);
-			return true;
-		}
-
-	    if (const UClass* ClassType = Cast<const UClass>(StructType))
-	    {
-			if (UFunction* Function = ClassType->FindFunctionByName(Binding.PropertyBindingChain.Last()))
-			{
-				const bool bReturnsDouble = CastField<FDoubleProperty>(Function->GetReturnProperty()) != nullptr;
-					
-				UObject* Object = reinterpret_cast<UObject*>(const_cast<void*>(Container));
-				if (Function->IsNative())
-				{
-					FFrame Stack(Object, Function, nullptr, nullptr, Function->ChildProperties);
-					if (bReturnsDouble)
-					{
-						Function->Invoke(Object, Stack, &OutResult);
-					}
-					else
-					{
-						float result = 0;
-						Function->Invoke(Object, Stack, &result);
-						OutResult = result;
-					}
-				}
-				else
-				{
-					if (bReturnsDouble)
-					{
-						Object->ProcessEvent(Function, &OutResult);
-					}
-					else
-					{
-						float result = 0;
-						Object->ProcessEvent(Function, &result);
-						OutResult = result;
-					}
-				}
-				return true;
-			} 
-		}
-	}
-
-	return false;
+	return Binding.GetValue(Context, OutResult);
 }
 
 FFloatRangeColumn::FFloatRangeColumn()
@@ -93,12 +22,14 @@ FFloatRangeColumn::FFloatRangeColumn()
 	InputValue.InitializeAs(FFloatContextProperty::StaticStruct());
 }
 
-void FFloatRangeColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const
+void FFloatRangeColumn::Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const
 {
 	if (InputValue.IsValid())
 	{
 		double Result = 0.0f;
 		InputValue.Get<FChooserParameterFloatBase>().GetValue(Context, Result);
+		
+		TRACE_CHOOSER_VALUE(Context, ToCStr(InputValue.Get<FChooserParameterBase>().GetDebugName()), Result);
 
 #if WITH_EDITOR
 		if (Context.DebuggingInfo.bCurrentDebugTarget)
@@ -125,3 +56,28 @@ void FFloatRangeColumn::Filter(FChooserEvaluationContext& Context, const TArray<
 		IndexListOut = IndexListIn;
 	}
 }
+
+#if WITH_EDITOR
+	void FFloatRangeColumn::AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FText DisplayName;
+		InputValue.Get<FChooserParameterFloatBase>().GetDisplayName(DisplayName);
+		FName PropertyName("RowData", ColumnIndex);
+		FPropertyBagPropertyDesc PropertyDesc(PropertyName,  EPropertyBagPropertyType::Struct, FChooserFloatRangeRowData::StaticStruct());
+		PropertyDesc.MetaData.Add(FPropertyBagPropertyDescMetaData("DisplayName", DisplayName.ToString()));
+		PropertyBag.AddProperties({PropertyDesc});
+		
+		PropertyBag.SetValueStruct(PropertyName, RowValues[RowIndex]);
+	}
+
+	void FFloatRangeColumn::SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FName PropertyName("RowData", ColumnIndex);
+		
+   		TValueOrError<FStructView, EPropertyBagResult> Result = PropertyBag.GetValueStruct(PropertyName, FChooserFloatRangeRowData::StaticStruct());
+		if (FStructView* StructView = Result.TryGetValue())
+		{
+			RowValues[RowIndex] = StructView->Get<FChooserFloatRangeRowData>();
+		}
+	}
+#endif

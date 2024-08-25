@@ -463,7 +463,7 @@ namespace Agent
 
         public string DumpTimings()
         {
-            string Output = "Machine: " + Environment.MachineName + Environment.NewLine + Environment.NewLine;
+            string Output = "Machine: " + System.Net.Dns.GetHostName() + Environment.NewLine + Environment.NewLine;
 
     		double TotalTime = 0.0;
 	    	foreach( PerfTiming Timing in Timings.Values )

@@ -5,6 +5,27 @@
 #define IDI_EXEC_FILE 201
 #define IDI_EXEC_ARGS 202
 
+struct VersionInfo
+{
+	DWORD Major = 0;
+	DWORD Minor = 0;
+	DWORD Bld = 0;
+	DWORD Rbld = 0;
+};
+
+// This minimum should match the version installed by
+// Engine/Source/Programs/PrereqInstaller/Resources/VCRedist/VC_redist.x64.exe
+static const VersionInfo MinRedistVersion = { 14, 38, 33130, 0 };
+
+bool IsVersionValid(const VersionInfo& Version, const VersionInfo& MinVersion)
+{
+	if (Version.Major > MinVersion.Major) return true;
+	if (Version.Major == MinVersion.Major && Version.Minor > MinVersion.Minor) return true;
+	if (Version.Major == MinVersion.Major && Version.Minor == MinVersion.Minor && Version.Bld > MinVersion.Bld) return true;
+	if (Version.Major == MinVersion.Major && Version.Minor == MinVersion.Minor && Version.Bld == MinVersion.Bld && Version.Rbld >= MinVersion.Rbld) return true;
+	return false;
+}
+
 WCHAR* ReadResourceString(HMODULE ModuleHandle, LPCWSTR Name)
 {
 	WCHAR* Result = NULL;
@@ -29,107 +50,140 @@ WCHAR* ReadResourceString(HMODULE ModuleHandle, LPCWSTR Name)
 
 bool TryLoadDll(const WCHAR* ExecDirectory, const WCHAR* Name)
 {
-	// Try to load it from the system path
-	if (LoadLibrary(Name) != nullptr)
-	{
-		return true;
-	}
-
-	// Try to load it from the application directory
 	WCHAR AppLocalPath[MAX_PATH];
-	PathCombine(AppLocalPath, ExecDirectory, Name);
-	if (LoadLibrary(AppLocalPath) != nullptr)
+	if (PathCombine(AppLocalPath, ExecDirectory, Name) == nullptr)
 	{
+		return false;
+	}
+	HMODULE Handle = LoadLibrary(AppLocalPath);
+	if (Handle != nullptr)
+	{
+		FreeLibrary(Handle);
 		return true;
 	}
-
-	// Otherwise fail
 	return false;
+}
+
+bool TryLoadDll(const WCHAR* Name)
+{
+	return TryLoadDll(nullptr, Name);
+}
+
+bool TryGetFileVersionInfo(const WCHAR* ExecDirectory, const WCHAR* Name, VersionInfo& outVersionInfo)
+{
+	WCHAR Path[MAX_PATH];
+	if (PathCombine(Path, ExecDirectory, Name) == nullptr)
+	{
+		return false;
+	}
+
+	DWORD VersionSize = GetFileVersionInfoSize(Path, nullptr);
+	if (VersionSize == 0)
+	{
+		return false;
+	}
+
+	LPSTR pVersionData = new char[VersionSize];
+	if (!GetFileVersionInfo(Path, 0, VersionSize, pVersionData))
+	{
+		delete[] pVersionData;
+		return false;
+	}
+
+	VS_FIXEDFILEINFO* pFileInfo = nullptr;
+	UINT FileInfoLen = 0;
+	if (!VerQueryValue(pVersionData, L"\\", (LPVOID*)&pFileInfo, &FileInfoLen) && FileInfoLen != 0)
+	{
+		delete[] pVersionData;
+		return false;
+	}
+
+	outVersionInfo.Major = (pFileInfo->dwFileVersionMS >> 16) & 0xffff;
+	outVersionInfo.Minor = (pFileInfo->dwFileVersionMS >> 0) & 0xffff;
+	outVersionInfo.Bld = (pFileInfo->dwFileVersionLS >> 16) & 0xffff;
+	outVersionInfo.Rbld = (pFileInfo->dwFileVersionLS >> 0) & 0xffff;
+
+	delete[] pVersionData;
+	return true;
+}
+
+bool TryGetFileVersionInfo(const WCHAR* Name, VersionInfo& outVersionInfo)
+{
+	return TryGetFileVersionInfo(nullptr, Name, outVersionInfo);
+}
+
+bool IsDllValid(const WCHAR* ExecDirectory, const WCHAR* Name, const VersionInfo& RequiredVersion)
+{
+	VersionInfo DllInfo;
+	return TryGetFileVersionInfo(ExecDirectory, Name, DllInfo) && IsVersionValid(DllInfo, RequiredVersion) && TryLoadDll(ExecDirectory, Name);
+}
+
+bool IsDllValid(const WCHAR* Name, const VersionInfo& RequiredVersion)
+{
+	return IsDllValid(nullptr, Name, RequiredVersion);
 }
 
 int InstallMissingPrerequisites(const WCHAR* BaseDirectory, const WCHAR* ExecDirectory)
 {
-#ifdef _M_X64
-	bool bIsX64Target = true;
-#else
-	bool bIsX64Target = false;
-#endif
-
 	// Look for missing prerequisites
 	WCHAR MissingPrerequisites[1024] = { 0, };
 
 	// The Microsoft Visual C++ Runtime includes support for VS2015, VS2017, VS2019, and VS2022
 	// https://docs.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files?view=msvc-170
-
+	
 	{
-		HKEY Hkey;
-		LSTATUS KeyOpenStatus;
-
-		if (bIsX64Target)
-		{
-			KeyOpenStatus = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64", 0, KEY_READ, &Hkey);
-		}
-		else
-		{
-			// 32bit build running on an 32bit host
-			KeyOpenStatus = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x86", 0, KEY_READ, &Hkey);
-
-			if (ERROR_SUCCESS != KeyOpenStatus)
-			{
-				// 32bit build running on 64bit host
-				KeyOpenStatus = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Wow6432Node\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x86", 0, KEY_READ, &Hkey);
-			}
-		}
-
 		bool bInstallVCRedist = true;
 
-		if (KeyOpenStatus == ERROR_SUCCESS)
+		// Check the file version of bundled redist dlls
+		if (IsDllValid(ExecDirectory, L"msvcp140_2.dll", MinRedistVersion) &&
+			IsDllValid(ExecDirectory, L"vcruntime140_1.dll", MinRedistVersion))
 		{
-			auto RegGetDwordOrZero = [](HKEY Hkey, LPCWSTR Name) -> DWORD
-			{
-				DWORD Value = 0;
-				DWORD ValueSize = sizeof Value;
-				LSTATUS Status = RegQueryValueExW(Hkey, Name, NULL, NULL, (LPBYTE)&Value, &ValueSize);
-				return ERROR_SUCCESS == Status ? Value : 0;
-			};
-
-			// This minimum should match the version installed by
-			// Engine/Source/Programs/PrereqInstaller/Resources/VCRedist/VC_redist.x64.exe
-			const DWORD RequiredMajor = 14;
-			const DWORD RequiredMinor = 36;
-			const DWORD RequiredBld = 32532;
-			const DWORD RequiredRbld = 0;
-
-			const DWORD InstalledMajor = RegGetDwordOrZero(Hkey, L"Major");
-			const DWORD InstalledMinor = RegGetDwordOrZero(Hkey, L"Minor");
-			const DWORD InstalledBld = RegGetDwordOrZero(Hkey, L"Bld");
-			const DWORD InstalledRbld = RegGetDwordOrZero(Hkey, L"Rbld");
-
-			if ((InstalledMajor > RequiredMajor) ||
-				(InstalledMajor == RequiredMajor && InstalledMinor > RequiredMinor) ||
-				(InstalledMajor == RequiredMajor && InstalledMinor == RequiredMinor && InstalledBld > RequiredBld) ||
-				(InstalledMajor == RequiredMajor && InstalledMinor == RequiredMinor && InstalledBld == RequiredBld && InstalledRbld >= RequiredRbld))
-			{
-				// it is possible that the redist has been uninstalled but the registry entries have not been removed
-				// test that some relatively new dlls are able to be loaded
-				if (TryLoadDll(ExecDirectory, L"msvcp140_2.dll") &&
-					(!bIsX64Target || TryLoadDll(ExecDirectory, L"vcruntime140_1.dll")))
-				{
-					bInstallVCRedist = false;
-				}
-			}
-			RegCloseKey(Hkey);
+			bInstallVCRedist = false;
 		}
+
+		// If no bundled redist dlls are available, check the registry for the installed redist, 
 		if (bInstallVCRedist)
 		{
-			wcscat_s(MissingPrerequisites, TEXT("Microsoft Visual C++ Runtime\n"));
+			HKEY Hkey;
+			LSTATUS KeyOpenStatus = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64", 0, KEY_READ, &Hkey);
+
+			if (KeyOpenStatus == ERROR_SUCCESS)
+			{
+				auto RegGetDwordOrZero = [](HKEY Hkey, LPCWSTR Name) -> DWORD
+					{
+						DWORD Value = 0;
+						DWORD ValueSize = sizeof Value;
+						LSTATUS Status = RegQueryValueExW(Hkey, Name, NULL, NULL, (LPBYTE)&Value, &ValueSize);
+						return ERROR_SUCCESS == Status ? Value : 0;
+					};
+
+				const VersionInfo InstalledVersion = {
+					RegGetDwordOrZero(Hkey, L"Major"),
+					RegGetDwordOrZero(Hkey, L"Minor"),
+					RegGetDwordOrZero(Hkey, L"Bld"),
+					RegGetDwordOrZero(Hkey, L"Rbld")
+				};
+
+				RegCloseKey(Hkey);
+
+				if (IsVersionValid(InstalledVersion, MinRedistVersion))
+				{
+					// it is possible that the redist has been uninstalled but the registry entries have not been removed
+					// test that some relatively new dlls are able to be loaded
+					if (IsDllValid(L"msvcp140_2.dll", MinRedistVersion) &&
+						IsDllValid(L"vcruntime140_1.dll", MinRedistVersion))
+					{
+						bInstallVCRedist = false;
+					}
+				}
+			}
+			if (bInstallVCRedist)
+			{
+				wcscat_s(MissingPrerequisites, TEXT("Microsoft Visual C++ Runtime\n"));
+			}
 		}
 	}
 
-	if(!TryLoadDll(ExecDirectory, L"XINPUT1_3.DLL"))
-	{
-		wcscat_s(MissingPrerequisites, TEXT("DirectX Runtime\n"));
-	}
 
 	// Check if there's anything missing
 	if(MissingPrerequisites[0] != 0)
@@ -139,14 +193,7 @@ int InstallMissingPrerequisites(const WCHAR* BaseDirectory, const WCHAR* ExecDir
 
 		// If we don't have the installer, just notify the user and quit
 		WCHAR PrereqInstaller[MAX_PATH];
-		if (bIsX64Target)
-		{
-			PathCombine(PrereqInstaller, BaseDirectory, L"Engine\\Extras\\Redist\\en-us\\UEPrereqSetup_x64.exe");
-		}
-		else
-		{
-			PathCombine(PrereqInstaller, BaseDirectory, L"Engine\\Extras\\Redist\\en-us\\UEPrereqSetup_x86.exe");
-		}
+		PathCombine(PrereqInstaller, BaseDirectory, L"Engine\\Extras\\Redist\\en-us\\UEPrereqSetup_x64.exe");
 		if(GetFileAttributes(PrereqInstaller) == INVALID_FILE_ATTRIBUTES)
 		{
 			MessageBox(NULL, MissingPrerequisitesMsg, NULL, MB_OK);
@@ -215,14 +262,14 @@ int SpawnTarget(WCHAR* CmdLine)
 	return (int)ExitCode;
 }
 
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, TCHAR* CmdLine, int ShowCmd)
+int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR CmdLine, _In_ int ShowCmd)
 {
 	(void)hPrevInstance;
 	(void)ShowCmd;
 
 	// Get the current module filename
 	WCHAR CurrentModuleFile[MAX_PATH];
-	GetModuleFileNameW(hInstance, CurrentModuleFile, sizeof(CurrentModuleFile));
+	GetModuleFileNameW(hInstance, CurrentModuleFile, MAX_PATH);
 
 	// Get the base directory from the current module filename
 	WCHAR BaseDirectory[MAX_PATH];

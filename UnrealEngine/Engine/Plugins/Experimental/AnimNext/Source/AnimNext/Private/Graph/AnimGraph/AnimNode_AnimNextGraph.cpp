@@ -11,11 +11,15 @@
 #include "GenerationTools.h"
 #include "ReferencePose.h"
 #include "Graph/AnimNext_LODPose.h"
-#include "Animation/AnimSequence.h" // TEST
-#include "Graph/RigUnit_AnimNextAnimSequence.h" // TEST
+#include "Graph/AnimNextExecuteContext.h"
 #include "Engine/SkeletalMesh.h"
 #include "BoneContainer.h"
 #include "Param/ParamStack.h"
+#include "AnimGraphParamStackScope.h"
+#include "Scheduler/ScheduleContext.h"
+#include "DecoratorInterfaces/IEvaluate.h"
+#include "DecoratorInterfaces/IUpdate.h"
+#include "EvaluationVM/EvaluationVM.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_AnimNextGraph)
 
@@ -23,12 +27,13 @@
 #include "Editor.h"
 #endif
 
+TAutoConsoleVariable<int32> CVarAnimNextForceAnimBP(TEXT("a.AnimNextForceAnimBP"), 0, TEXT("If != 0, then we use the input pose of the AnimNext AnimBP node instead of the AnimNext graph."));
+
 FAnimNode_AnimNextGraph::FAnimNode_AnimNextGraph()
 	: FAnimNode_CustomProperty()
 	, AnimNextGraph(nullptr)
 	, LODThreshold(INDEX_NONE)
 {
-
 }
 
 void FAnimNode_AnimNextGraph::OnInitializeAnimInstance(const FAnimInstanceProxy* InProxy, const UAnimInstance* InAnimInstance)
@@ -51,15 +56,28 @@ void FAnimNode_AnimNextGraph::Update_AnyThread(const FAnimationUpdateContext& Co
 {
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
 
-	GraphDeltaTime += Context.GetDeltaTime();
+	using namespace UE::AnimNext;
 
 	SourceLink.Update(Context);
 
-	if (IsLODEnabled(Context.AnimInstanceProxy))
+	if (IsLODEnabled(Context.AnimInstanceProxy) && !CVarAnimNextForceAnimBP.GetValueOnAnyThread() && GraphInstance.IsValid())
 	{
 		GetEvaluateGraphExposedInputs().Execute(Context);
 
 		PropagateInputProperties(Context.AnimInstanceProxy->GetAnimInstanceObject());
+
+		const int32 LODLevel = Context.AnimInstanceProxy->GetLODLevel();
+
+		UE::AnimNext::FAnimGraphParamStackScope Scope(Context);
+
+		FParamStack& ParamStack = FParamStack::Get();
+		FParamStack::FPushedLayerHandle LayerHandle = ParamStack.PushValues(
+			AnimNextGraph->GetCurrentLODParam(), LODLevel
+		);
+
+		UE::AnimNext::UpdateGraph(GraphInstance, Context.GetDeltaTime());
+
+		ParamStack.PopLayer(LayerHandle);
 	}
 
 	FAnimNode_CustomProperty::Update_AnyThread(Context);
@@ -71,7 +89,27 @@ void FAnimNode_AnimNextGraph::Initialize_AnyThread(const FAnimationInitializeCon
 {
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
 
+	using namespace UE::AnimNext;
+
 	SourceLink.Initialize(Context);
+
+	if (!GraphInstance.IsValid() && AnimNextGraph)
+	{
+		// If we don't have an instance yet, create one
+		UE::AnimNext::FAnimGraphParamStackScope Scope(Context);
+
+		// Populate our param stack since our instance data might need it during construction
+		const int32 LODLevel = Context.AnimInstanceProxy->GetLODLevel();
+
+		FParamStack& ParamStack = FParamStack::Get();
+		FParamStack::FPushedLayerHandle LayerHandle = ParamStack.PushValues(
+			AnimNextGraph->GetCurrentLODParam(), LODLevel
+		);
+
+		AnimNextGraph->AllocateInstance(GraphInstance);
+
+		ParamStack.PopLayer(LayerHandle);
+	}
 
 	FAnimNode_CustomProperty::Initialize_AnyThread(Context);
 }
@@ -85,56 +123,69 @@ void FAnimNode_AnimNextGraph::CacheBones_AnyThread(const FAnimationCacheBonesCon
 	SourceLink.CacheBones(Context);
 }
 
-void FAnimNode_AnimNextGraph::Evaluate_AnyThread(FPoseContext & Output)
+void FAnimNode_AnimNextGraph::Evaluate_AnyThread(FPoseContext& Output)
 {
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
 
 	using namespace UE::AnimNext;
 
-	FPoseContext SourcePose(Output);
-
-	if (SourceLink.GetLinkNode())
+	if (!CVarAnimNextForceAnimBP.GetValueOnAnyThread() && GraphInstance.IsValid())
 	{
-		SourceLink.Evaluate(SourcePose);
+		USkeletalMeshComponent* SkeletalMeshComponent = Output.AnimInstanceProxy->GetSkelMeshComponent();
+		check(SkeletalMeshComponent != nullptr);
+
+		FDataHandle RefPoseHandle = FDataRegistry::Get()->GetOrGenerateReferencePose(SkeletalMeshComponent);
+		FAnimNextGraphReferencePose GraphReferencePose(RefPoseHandle);
+
+		const int32 LODLevel = Output.AnimInstanceProxy->GetLODLevel();
+
+		const UE::AnimNext::FReferencePose& RefPose = RefPoseHandle.GetRef<UE::AnimNext::FReferencePose>();
+		FAnimNextGraphLODPose ResultPose(FLODPoseHeap(RefPose, LODLevel, true, Output.ExpectsAdditivePose()));
+
+		FAnimGraphParamStackScope Scope(Output);
+		FParamStack& ParamStack = FParamStack::Get();
+		FParamStack::FPushedLayerHandle LayerHandle = ParamStack.PushValues(
+			AnimNextGraph->GetReferencePoseParam(), GraphReferencePose,
+			AnimNextGraph->GetCurrentLODParam(), LODLevel
+		);
+
+		{
+			const FEvaluationProgram EvaluationProgram = UE::AnimNext::EvaluateGraph(GraphInstance);
+
+			FEvaluationVM EvaluationVM(EEvaluationFlags::All, RefPose, LODLevel);
+			bool bHasValidOutput = false;
+
+			if (!EvaluationProgram.IsEmpty())
+			{
+				EvaluationProgram.Execute(EvaluationVM);
+
+				TUniquePtr<FKeyframeState> EvaluatedKeyframe;
+				if (EvaluationVM.PopValue(KEYFRAME_STACK_NAME, EvaluatedKeyframe))
+				{
+					ResultPose.LODPose.CopyFrom(EvaluatedKeyframe->Pose);
+					bHasValidOutput = true;
+				}
+			}
+
+			if (!bHasValidOutput)
+			{
+				// We need to output a valid pose, generate one
+				FKeyframeState ReferenceKeyframe = EvaluationVM.MakeReferenceKeyframe(Output.ExpectsAdditivePose());
+				ResultPose.LODPose.CopyFrom(ReferenceKeyframe.Pose);
+			}
+		}
+
+		FGenerationTools::RemapPose(ResultPose.LODPose, Output);
+
+		ParamStack.PopLayer(LayerHandle);
 	}
 	else
 	{
-		SourcePose.ResetToRefPose();
+		if (SourceLink.GetLinkNode())
+		{
+			SourceLink.Evaluate(Output);
+		}
 	}
-
-	USkeletalMeshComponent* SkeletalMeshComponent = Output.AnimInstanceProxy->GetSkelMeshComponent();
-	check(SkeletalMeshComponent != nullptr);
-
-	FDataHandle RefPoseHandle = FDataRegistry::Get()->GetOrGenerateReferencePose(SkeletalMeshComponent);
-	const UE::AnimNext::FReferencePose& RefPose = RefPoseHandle.GetRef<UE::AnimNext::FReferencePose>();
-
-	const int32 LODLevel = Output.AnimInstanceProxy->GetLODLevel();
-	
-	// TODO : Using AnimInstanceProxy->GetDeltaSeconds() makes the preview to advance  multiple times when debug options are activated (i.e. ShowUncompressedAnim)
-	// See where to get / how to calculate the correct delta value
-	UE::AnimNext::FContext Context(GraphDeltaTime);
-	GraphDeltaTime = 0.f; // Reset for the case that we receive multiple calls to Evaluate (debug options)
-
-	FAnimNextGraphReferencePose GraphReferencePose(&RefPose);
-	FAnimNextGraph_AnimSequence GraphTestSequence(TestSequence);  // TEST
-
-	FAnimNextGraphLODPose GraphSourceLODPose(FLODPose(RefPose, LODLevel, false, Output.ExpectsAdditivePose()));
-	FAnimNextGraphLODPose ResultPose(FLODPose(RefPose, LODLevel, true, Output.ExpectsAdditivePose()));
-	FGenerationTools::RemapPose(LODLevel, SourcePose, RefPose, GraphSourceLODPose.LODPose);
-
-	Context.GetMutableParamStack().PushValues(
-		"AnimSequencePlayerState", SequencePlayerState,
-		"GraphReferencePose", GraphReferencePose,
-		"ResultPose", ResultPose,
-		"GraphLODLevel", LODLevel,
-		"GraphExpectsAdditive", Output.ExpectsAdditivePose(),
-		"SourcePose", GraphSourceLODPose,						// TODO : Pass this as a external variable maybe ? When we have support for variables in the rigvm graph
-		"TestSequence", GraphTestSequence						// TEST anim decompression - Anim Sequence to decompress);
-	);
-
-	AnimNextGraph->Run(Context);
-
-	FGenerationTools::RemapPose(LODLevel, RefPose, ResultPose.LODPose, Output);
 
 	FAnimNode_CustomProperty::Evaluate_AnyThread(Output);
 }

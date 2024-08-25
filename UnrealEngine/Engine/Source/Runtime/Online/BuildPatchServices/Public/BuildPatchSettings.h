@@ -13,6 +13,7 @@
 #include "CoreMinimal.h"
 #include "HAL/Platform.h"
 #include "Interfaces/IBuildManifest.h"
+#include "Interfaces/IBuildInstallerSharedContext.h"
 #include "Misc/Variant.h"
 #include "Templates/UnrealTemplate.h"
 
@@ -50,51 +51,61 @@ namespace BuildPatchServices
 		 * Creates an install action.
 		 * @param Manifest          The manifest for the build to be installed.
 		 * @param InstallTags       The install tags to use if selectively installing files. If empty set, all files will be installed.
+		 * @param InstallSubdirectory  The subdirectory to install this data to inside of the main install directory.
+		 * @param CloudSubdirectory    The subdirectory of the cloud distribution root that this patch data should be sourced.
 		 * @return the action setup for performing an installation.
 		 */
-		static BUILDPATCHSERVICES_API FInstallerAction MakeInstall(const IBuildManifestRef& Manifest, TSet<FString> InstallTags = TSet<FString>());
+		static BUILDPATCHSERVICES_API FInstallerAction MakeInstall(const IBuildManifestRef& Manifest, TSet<FString> InstallTags = TSet<FString>(), FString InstallSubdirectory = FString(), FString CloudSubdirectory = FString());
 
 		/**
 		 * Creates an update action.
 		 * @param CurrentManifest   The manifest for the build currently installed.
 		 * @param InstallManifest   The manifest for the build to be installed.
 		 * @param InstallTags       The install tags to use if selectively installing files. If empty set, all files will be updated, or added if missing.
+		 * @param InstallSubdirectory  The subdirectory to install this data to inside of the main install directory.
+		 * @param CloudSubdirectory    The subdirectory of the cloud distribution root that this patch data should be sourced.
 		 * @return the action setup for performing an update.
 		 */
-		static BUILDPATCHSERVICES_API FInstallerAction MakeUpdate(const IBuildManifestRef& CurrentManifest, const IBuildManifestRef& InstallManifest, TSet<FString> InstallTags = TSet<FString>());
+		static BUILDPATCHSERVICES_API FInstallerAction MakeUpdate(const IBuildManifestRef& CurrentManifest, const IBuildManifestRef& InstallManifest, TSet<FString> InstallTags = TSet<FString>(), FString InstallSubdirectory = FString(), FString CloudSubdirectory = FString());
 
 		/**
 		 * Creates an install action.
 		 * @param Manifest          The manifest for the build to be installed.
 		 * @param InstallTags       The install tags to use if selectively installing files. If empty set, all files will be repaired.
+		 * @param InstallSubdirectory  The subdirectory to install this data to inside of the main install directory.
+		 * @param CloudSubdirectory    The subdirectory of the cloud distribution root that this patch data should be sourced.
 		 * @return the action setup forcing an SHA check, and repair of all tagged files.
 		 */
-		static BUILDPATCHSERVICES_API FInstallerAction MakeRepair(const IBuildManifestRef& Manifest, TSet<FString> InstallTags = TSet<FString>());
+		static BUILDPATCHSERVICES_API FInstallerAction MakeRepair(const IBuildManifestRef& Manifest, TSet<FString> InstallTags = TSet<FString>(), FString InstallSubdirectory = FString(), FString CloudSubdirectory = FString());
 
 
 		/**
 		 * Creates an uninstall action.
 		 * @param Manifest          The manifest for the build currently installed.
+		 * @param InstallSubdirectory  The subdirectory to install this data to inside of the main install directory.
+		 * @param CloudSubdirectory    The subdirectory of the cloud distribution root that this patch data should be sourced.
 		 * @return the action setup for performing an uninstall, deleting all files referenced by the manifest.
 		 */
-		static BUILDPATCHSERVICES_API FInstallerAction MakeUninstall(const IBuildManifestRef& Manifest);
+		static BUILDPATCHSERVICES_API FInstallerAction MakeUninstall(const IBuildManifestRef& Manifest, FString InstallSubdirectory = FString(), FString CloudSubdirectory = FString());
 
 		/**
 		 * Helper for creating an install action or update action based on validity of CurrentManifest.
 		 * @param CurrentManifest   The manifest for the build currently installed, invalid if no build installed.
 		 * @param InstallManifest   The manifest for the build to be installed.
 		 * @param InstallTags       The install tags to use if selectively installing files. If empty set, all files will be installed/updated, or added if missing.
+		 * @param InstallSubdirectory  The subdirectory to install this data to inside of the main install directory.
+		 * @param CloudSubdirectory    The subdirectory of the cloud distribution root that this patch data should be sourced.
 		 * @return the action setup for performing an install or update.
 		 */
-		static FInstallerAction MakeInstallOrUpdate(const IBuildManifestPtr& CurrentManifest, const IBuildManifestRef& InstallManifest, TSet<FString> InstallTags = TSet<FString>())
+		static FInstallerAction MakeInstallOrUpdate(const IBuildManifestPtr& CurrentManifest, const IBuildManifestRef& InstallManifest, TSet<FString> InstallTags = TSet<FString>(), FString InstallSubdirectory = FString(), FString CloudSubdirectory = FString())
 		{
 			if (!CurrentManifest.IsValid())
 			{
-				return MakeInstall(InstallManifest, MoveTemp(InstallTags));
+				return MakeInstall(InstallManifest, MoveTemp(InstallTags), MoveTemp(InstallSubdirectory), MoveTemp(CloudSubdirectory));
 			}
 			else
 			{
-				return MakeUpdate(CurrentManifest.ToSharedRef(), InstallManifest, MoveTemp(InstallTags));
+				return MakeUpdate(CurrentManifest.ToSharedRef(), InstallManifest, MoveTemp(InstallTags), MoveTemp(InstallSubdirectory), MoveTemp(CloudSubdirectory));
 			}
 		}
 
@@ -133,6 +144,16 @@ namespace BuildPatchServices
 		 * @return the install tags for the action.
 		 */
 		BUILDPATCHSERVICES_API const TSet<FString>& GetInstallTags() const;
+
+		/**
+		 * @return the install subdirectory for the action.
+		 */
+		BUILDPATCHSERVICES_API const FString& GetInstallSubdirectory() const;
+
+		/**
+		 * @return the cloud subdirectory for the action.
+		 */
+		BUILDPATCHSERVICES_API const FString& GetCloudSubdirectory() const;
 
 		/**
 		 * @return the manifest for the current installation, this will runtime assert if called invalidly (see TryGetCurrentManifest).
@@ -194,6 +215,8 @@ namespace BuildPatchServices
 		IBuildManifestPtr CurrentManifest;
 		IBuildManifestPtr InstallManifest;
 		TSet<FString> InstallTags;
+		FString InstallSubdirectory;
+		FString CloudSubdirectory;
 		EInstallActionIntent ActionIntent;
 	};
 
@@ -233,19 +256,11 @@ namespace BuildPatchServices
 		 */
 		BUILDPATCHSERVICES_API FBuildInstallerConfiguration(TArray<FInstallerAction> InstallerActions);
 
-		/**
-		 * Copy constructor.
-		 */
-		BUILDPATCHSERVICES_API FBuildInstallerConfiguration(const FBuildInstallerConfiguration& CopyFrom);
-
-		/**
-		 * RValue constructor to allow move semantics.
-		 */
-		BUILDPATCHSERVICES_API FBuildInstallerConfiguration(FBuildInstallerConfiguration&& MoveFrom);
-
 	public:
 		// The array of intended actions to perform.
 		TArray<FInstallerAction> InstallerActions;
+		// The context for allocating shared resources.
+		IBuildInstallerSharedContextPtr SharedContext;
 		// The directory to install to.
 		FString InstallDirectory;
 		// The directory for storing the intermediate files. This would usually be inside the InstallDirectory. Empty string will use module's global setting.
@@ -266,6 +281,8 @@ namespace BuildPatchServices
 		bool bRunRequiredPrereqs;
 		// Whether to allow this installation to run concurrently with any existing installations.
 		bool bAllowConcurrentExecution;
+		// Whether to gather individual file operation statistics during install
+		bool bTrackFileOperations;
 	};
 
 	/**

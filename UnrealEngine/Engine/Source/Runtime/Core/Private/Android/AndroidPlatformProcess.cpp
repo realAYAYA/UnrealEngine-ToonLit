@@ -157,7 +157,7 @@ FString FAndroidPlatformProcess::GetGameBundleId()
 	JNIEnv* JEnv = AndroidJavaEnv::GetJavaEnv();
 	if (nullptr != JEnv)
 	{
-		jclass Class = AndroidJavaEnv::FindJavaClassGlobalRef("com/epicgames/unreal/GameActivity");
+		jclass Class = AndroidJavaEnv::FindJavaClassGlobalRef(ANDROID_GAMEACTIVITY_BASE_CLASSPATH);
 		if (nullptr != Class)
 		{
 			jmethodID getAppPackageNameMethodId = JEnv->GetStaticMethodID(Class, "getAppPackageName", "()Ljava/lang/String;");

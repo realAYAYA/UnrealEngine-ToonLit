@@ -49,10 +49,12 @@ public:
 		: _ViewMinInput(0.0f)
 		, _ViewMaxInput(0.0f)
 		, _IsEditingEnabled( true )
+		, _ClampStopsToViewRange( false )
 	{}
 		SLATE_ATTRIBUTE( float, ViewMinInput )
 		SLATE_ATTRIBUTE( float, ViewMaxInput )
 		SLATE_ATTRIBUTE( bool, IsEditingEnabled )
+		SLATE_ARGUMENT( bool, ClampStopsToViewRange )
 	SLATE_END_ARGS()
 
 
@@ -152,20 +154,6 @@ private:
 	UNREALED_API void DrawGradientStopMark( const FGradientStopMark& Mark, const FGeometry& Geometry, float XPos, const FLinearColor& Color, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FSlateRect& InClippingRect, ESlateDrawEffect DrawEffects, bool bColor, const FWidgetStyle& InWidgetStyle ) const;
 
 	/**
-	 * Calculates the geometry of the gradient stop color mark area
-	 *
-	 * @param InGeometry The parent geometry of the area
-	 */
-	UNREALED_API FGeometry GetColorMarkAreaGeometry( const FGeometry& InGeometry ) const;
-
-	/**
-	 * Calculates the geometry of the gradient stop alpha mark area
-	 *
-	 * @param InGeometry The parent geometry of the area
-	 */
-	UNREALED_API FGeometry GetAlphaMarkAreaGeometry( const FGeometry& InGeometry ) const;
-
-	/**
 	 * Gets the gradient stop (if any) of at the current mouse position
 	 *
 	 * @param MousePos		The screen space mouse position to check
@@ -204,9 +192,6 @@ private:
 	UNREALED_API void MoveStop( FGradientStopMark& Mark, float NewTime );
 
 private:
-	/** Local space rectangle of each gradient stop handle */
-	static UNREALED_API const FSlateRect HandleRect;
-
 	/** The currently selected stop */
 	FGradientStopMark SelectedStop;
 	/** The color that was last modified. New stops are added with this color */
@@ -219,6 +204,8 @@ private:
 	TAttribute<float> ViewMaxInput;
 	/** Whether or not the gradient is editable or just viewed */
 	TAttribute<bool> IsEditingEnabled;
+	/** Whether or not to clamp the time value of stops to the view range. */
+	bool bClampStopsToViewRange;
 	/** Cached position where context menus should appear */
 	FVector2D ContextMenuPosition;
 	/** Whether or not the color gradient stop area is hovered */

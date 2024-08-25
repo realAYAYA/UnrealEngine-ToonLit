@@ -7,6 +7,7 @@
 
 #include "MetasoundDataReference.h"
 #include "MetasoundFrontendRegistries.h"
+#include "MetasoundFrontendRegistryKey.h"
 #include "MetasoundInputNode.h"
 #include "MetasoundLog.h"
 #include "MetasoundOperatorInterface.h"
@@ -40,7 +41,7 @@ bool RegisterConversionNode(const Metasound::FVertexName& FromPin, const Metasou
 	{
 		FromPin,
 		ToPin,
-		FMetasoundFrontendRegistryContainer::GetRegistryKey(InNodeMetadata)
+		Metasound::Frontend::FNodeRegistryKey(InNodeMetadata)
 	};
 
 	return FMetasoundFrontendRegistryContainer::Get()->RegisterConversionNode(RegistryKey, ConverterNodeInfo);

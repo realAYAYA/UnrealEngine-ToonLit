@@ -105,7 +105,7 @@ void FEmitShaderStatement::EmitShaderCode(FEmitShaderScopeStack& Stack, int32 In
 		{
 			Stack.Emplace(NestedScopes[i], NestedScopeIndent, ScopeCode);
 			NestedScope->EmitShaderCode(Stack);
-			Stack.Pop(false);
+			Stack.Pop(EAllowShrinking::No);
 		}
 
 		if (bNeedToCloseScope)
@@ -208,6 +208,15 @@ FEmitContext::~FEmitContext()
 	{
 		delete It.Value;
 	}
+	for (TMap<FXxHash64, FPrepareValueResult*>::TIterator It(PrepareValueMap); It; ++It)
+	{
+		FPrepareValueResult* Value = It.Value();
+		if (Value)
+		{
+			Value->~FPrepareValueResult();
+		}
+	}
+	ResetPastRequestedTypes();
 }
 
 bool FEmitContext::InternalError(FStringView ErrorMessage)
@@ -263,7 +272,7 @@ void EmitCustomHLSL(const FEmitCustomHLSL& EmitCustomHLSL, const TCHAR* Paramete
 			if (InputType.IsNumericLWC())
 			{
 				// Add an additional input for LWC type with the LWC-prefix
-				OutCode.Appendf(TEXT(", %s LWC"), InputType.GetName());
+				OutCode.Appendf(TEXT(", %s WS"), InputType.GetName());
 				OutCode.Append(Input.Name);
 				// Regular, unprefixed input uses non-LWC type
 				InputType = InputType.GetNonLWCType();
@@ -317,7 +326,7 @@ void EmitCustomHLSL(const FEmitCustomHLSL& EmitCustomHLSL, const TCHAR* Paramete
 			OutCode.Append(Input.Name);
 			if (Input.Type.IsNumericLWC())
 			{
-				OutCode.Append(TEXT(", LWCToFloat("));
+				OutCode.Append(TEXT(", WSDemote("));
 				OutCode.Append(Input.Name);
 				OutCode.Append(TEXT(")"));
 			}
@@ -331,6 +340,19 @@ void EmitCustomHLSL(const FEmitCustomHLSL& EmitCustomHLSL, const TCHAR* Paramete
 	OutCode.Append(TEXT(");\n"));
 	OutCode.Append(TEXT("\treturn Result;\n"));
 	OutCode.Append(TEXT("}\n"));
+}
+
+FXxHash64 GetPrepareValueHash(const FExpression* Expression, bool bRequestedStruct)
+{
+	FXxHash64Builder Hasher;
+	Hasher.Update(&Expression, sizeof(Expression));
+	Hasher.Update(&bRequestedStruct, sizeof(bRequestedStruct));
+	return Hasher.Finalize();
+}
+
+FXxHash64 GetPrepareValueHash(const FExpression* Expression, const FRequestedType& RequestedType)
+{
+	return GetPrepareValueHash(Expression, RequestedType.IsStruct());
 }
 } // namespace Private
 
@@ -354,31 +376,57 @@ void FEmitContext::EmitDeclarationsCode(FStringBuilderBase& OutCode)
 	}
 }
 
-const FPreparedType& FEmitContext::GetPreparedType(const FExpression* Expression) const
+FPreparedType FEmitContext::GetPreparedType(const FExpression* Expression, const FRequestedType& RequestedType) const
 {
-	static const FPreparedType VoidType;
-	FPrepareValueResult const* const* PrevResult = PrepareValueMap.Find(Expression);
-	const FPrepareValueResult* Result = PrevResult ? *PrevResult : nullptr;
-	if (Result)
+	const FXxHash64 Hash = Private::GetPrepareValueHash(Expression, RequestedType);
+	FPrepareValueResult const* const* PrevResult = PrepareValueMap.Find(Hash);
+	return PrevResult ? (*PrevResult)->PreparedType : FPreparedType();
+}
+
+Shader::FType FEmitContext::GetResultType(const FExpression* Expression, const FRequestedType& RequestedType) const
+{
+	return GetPreparedType(Expression, RequestedType).GetResultType();
+}
+
+Shader::FType FEmitContext::GetTypeForPinColoring(const FExpression* Expression) const
+{
+	FXxHash64 Hash = Private::GetPrepareValueHash(Expression, true);
+	FPrepareValueResult const* const* Found = PrepareValueMap.Find(Hash);
+	if (!Found)
 	{
-		return Result->PreparedType;
+		Hash = Private::GetPrepareValueHash(Expression, false);
+		Found = PrepareValueMap.Find(Hash);
 	}
-	return VoidType;
-}
-
-FRequestedType FEmitContext::GetRequestedType(const FExpression* Expression) const
-{
-	return GetPreparedType(Expression).GetRequestedType();
-}
-
-Shader::FType FEmitContext::GetType(const FExpression* Expression) const
-{
-	return GetPreparedType(Expression).GetResultType();
+	return Found ? (*Found)->PreparedType.GetResultType() : Shader::FType();
 }
 
 EExpressionEvaluation FEmitContext::GetEvaluation(const FExpression* Expression, const FEmitScope& Scope, const FRequestedType& RequestedType) const
 {
-	return GetPreparedType(Expression).GetEvaluation(Scope, RequestedType);
+	return GetPreparedType(Expression, RequestedType).GetEvaluation(Scope, RequestedType);
+}
+
+bool AllComponentsRequestedInPast(const FRequestedType& RequestedType, const FRequestedType& PastRequestedType)
+{
+	bool bResult = true;
+	TBitArray<>::FConstWordIterator ItA(RequestedType.RequestedComponents);
+	TBitArray<>::FConstWordIterator ItB(PastRequestedType.RequestedComponents);
+	for (; ItA && ItB; ++ItA, ++ItB)
+	{
+		if ((ItA.GetWord() & ItB.GetWord()) != ItA.GetWord())
+		{
+			bResult = false;
+			break;
+		}
+	}
+	for (; ItA; ++ItA)
+	{
+		if (ItA.GetWord() != 0u)
+		{
+			bResult = false;
+			break;
+		}
+	}
+	return bResult;
 }
 
 FPreparedType FEmitContext::PrepareExpression(const FExpression* InExpression, FEmitScope& Scope, const FRequestedType& RequestedType)
@@ -388,13 +436,14 @@ FPreparedType FEmitContext::PrepareExpression(const FExpression* InExpression, F
 		return FPreparedType();
 	}
 
-	FPrepareValueResult** PrevResult = PrepareValueMap.Find(InExpression);
+	FXxHash64 Hash = Private::GetPrepareValueHash(InExpression, RequestedType);
+	FPrepareValueResult** PrevResult = PrepareValueMap.Find(Hash);
 	FPrepareValueResult* Result = PrevResult ? *PrevResult : nullptr;
 	if (!Result)
 	{
 		check(!bMarkLiveValues); // value should already be prepared at this point
 		Result = new(*Allocator) FPrepareValueResult();
-		PrepareValueMap.Add(InExpression, Result);
+		PrepareValueMap.Add(Hash, Result);
 	}
 
 	if (RequestedType.IsEmpty() && !Result->PreparedType.IsVoid())
@@ -417,6 +466,56 @@ FPreparedType FEmitContext::PrepareExpression(const FExpression* InExpression, F
 		return Result->PreparedType;
 	}
 
+	{
+		FXxHash64Builder Hasher;
+		Hasher.Update(&InExpression, sizeof(InExpression));
+		Hasher.Update(&bMarkLiveValues, sizeof(bMarkLiveValues));
+		Hasher.Update(&RequestedType.Type.StructType, sizeof(RequestedType.Type.StructType)); //-V568
+		Hash = Hasher.Finalize();
+	}
+
+	FRequestedType** PastRequestedTypePtr = RequestedTypeTracker.Find(Hash);
+	if (PastRequestedTypePtr)
+	{
+		FRequestedType& PastRequestedType = **PastRequestedTypePtr;
+		if (RequestedType.Type.IsAny() || PastRequestedType.Type.IsAny())
+		{
+			if (PastRequestedType.Type.IsAny())
+			{
+				return Result->PreparedType;
+			}
+			else
+			{
+				PastRequestedType = FRequestedType(Shader::EValueType::Any, false);
+			}
+		}
+		else
+		{
+			checkf(!RequestedType.Type.IsNumericMatrix() || RequestedType.Type.ValueType != Shader::EValueType::DoubleInverse4x4,
+				TEXT("DoubleInverse4x4 shouldn't be explicitly requested"));
+			const Shader::FType CombinedType = Shader::CombineTypes(RequestedType.Type, PastRequestedType.Type, true);
+			check(!CombinedType.IsVoid());
+
+			if (CombinedType == PastRequestedType.Type && AllComponentsRequestedInPast(RequestedType, PastRequestedType))
+			{
+				return Result->PreparedType;
+			}
+			else
+			{
+				PastRequestedType.Type = CombinedType;
+				PastRequestedType.RequestedComponents.CombineWithBitwiseOR(RequestedType.RequestedComponents, EBitwiseOperatorFlags::MaxSize);
+			}
+		}
+	}
+	else
+	{
+		FRequestedType* StackRequestedType = new (*Allocator) FRequestedType(RequestedType);
+		// Turn Bool into Int
+		StackRequestedType->Type = Shader::CombineTypes(StackRequestedType->Type, StackRequestedType->Type);
+		check(!StackRequestedType->Type.IsVoid());
+		RequestedTypeTracker.Add(Hash, StackRequestedType);
+	}
+
 	bool bResult = false;
 	{
 		FEmitOwnerScope OwnerScope(*this, InExpression);
@@ -433,10 +532,7 @@ FPreparedType FEmitContext::PrepareExpression(const FExpression* InExpression, F
 		check(!ResultType.IsVoid());
 		MarkInputType(InExpression, RequestedType.Type.GetConcreteType());
 	}
-	else
-	{
-		int a = 0;
-	}
+	
 	return ResultType;
 }
 
@@ -775,11 +871,6 @@ FEmitShaderExpression* FEmitContext::InternalEmitExpression(FEmitScope& Scope, T
 {
 	FEmitShaderExpression* ShaderValue = nullptr;
 
-	if (Code.Contains(TEXT("((float2)Local21).xyz")))
-	{
-		int a = 0;
-	}
-
 	FXxHash64Builder Hasher;
 	Hasher.Update(Code.GetData(), Code.Len() * sizeof(TCHAR));
 	if (bInline)
@@ -908,6 +999,100 @@ void WriteMaterialUniformAccess(Shader::EValueComponentType ComponentType, uint3
 		OutResult.Append(TEXT(")"));
 	}
 }
+
+void EmitPreshaderField(
+	FEmitContext& Context,
+	TMemoryImageArray<FMaterialUniformPreshaderHeader>& UniformPreshaders,
+	TMemoryImageArray<FMaterialUniformPreshaderField>& UniformPreshaderFields,
+	Shader::FPreshaderData& UniformPreshaderData,
+	FMaterialUniformPreshaderHeader*& PreshaderHeader,
+	TFunction<void (FEmitValuePreshaderResult&)> EmitPreshaderOpcode,
+	const Shader::FValueTypeDescription& TypeDesc,
+	int32 ComponentIndex,
+	FStringBuilderBase& FormattedCode)
+{
+	// Only need to allocate uniform buffer for non-constant components
+	// Constant components can have their value inlined into the shader directly
+	if (!PreshaderHeader)
+	{
+		// Allocate a preshader header the first time we hit a non-constant field
+		PreshaderHeader = &UniformPreshaders.AddDefaulted_GetRef();
+		PreshaderHeader->FieldIndex = UniformPreshaderFields.Num();
+		PreshaderHeader->NumFields = 0u;
+		PreshaderHeader->OpcodeOffset = UniformPreshaderData.Num();
+		FEmitValuePreshaderResult PreshaderResult(UniformPreshaderData);
+		EmitPreshaderOpcode(PreshaderResult);
+		PreshaderHeader->OpcodeSize = UniformPreshaderData.Num() - PreshaderHeader->OpcodeOffset;
+	}
+
+	FMaterialUniformPreshaderField& PreshaderField = UniformPreshaderFields.AddDefaulted_GetRef();
+	PreshaderField.ComponentIndex = ComponentIndex;
+	PreshaderField.Type = TypeDesc.ValueType;
+	PreshaderHeader->NumFields++;
+
+	const int32 NumFieldComponents = TypeDesc.NumComponents;
+	
+	if (TypeDesc.ComponentType == Shader::EValueComponentType::Bool)
+	{
+		// 'Bool' uniforms are packed into bits
+		if (Context.CurrentNumBoolComponents + NumFieldComponents > 32u)
+		{
+			Context.CurrentBoolUniformOffset = Context.UniformPreshaderOffset++;
+			Context.CurrentNumBoolComponents = 0u;
+		}
+
+		const uint32 RegisterIndex = Context.CurrentBoolUniformOffset / 4;
+		const uint32 RegisterOffset = Context.CurrentBoolUniformOffset % 4;
+		FormattedCode.Appendf(TEXT("UnpackUniform_%s(asuint(Material.PreshaderBuffer[%u][%u]), %u)"),
+			TypeDesc.Name,
+			RegisterIndex,
+			RegisterOffset,
+			Context.CurrentNumBoolComponents);
+
+		PreshaderField.BufferOffset = Context.CurrentBoolUniformOffset * 32u + Context.CurrentNumBoolComponents;
+		Context.CurrentNumBoolComponents += NumFieldComponents;
+	}
+	else if (TypeDesc.ComponentType == Shader::EValueComponentType::Double)
+	{
+		// Double uniforms are split into Tile/Offset components to make FLWCScalar/FLWCVectors
+		PreshaderField.BufferOffset = Context.UniformPreshaderOffset;
+
+		if (NumFieldComponents > 1)
+		{
+			FormattedCode.Appendf(TEXT("MakeLWCVector%d("), NumFieldComponents);
+		}
+		else
+		{
+			FormattedCode.Append(TEXT("MakeLWCScalar("));
+		}
+
+		// Write the tile uniform
+		Private::WriteMaterialUniformAccess(Shader::EValueComponentType::Float, NumFieldComponents, Context.UniformPreshaderOffset, FormattedCode);
+		Context.UniformPreshaderOffset += NumFieldComponents;
+		FormattedCode.Append(TEXT(", "));
+
+		// Write the offset uniform
+		Private::WriteMaterialUniformAccess(Shader::EValueComponentType::Float, NumFieldComponents, Context.UniformPreshaderOffset, FormattedCode);
+		Context.UniformPreshaderOffset += NumFieldComponents;
+		FormattedCode.Append(TEXT(")"));
+	}
+	else
+	{
+		// Float/Int uniforms are written directly to the uniform buffer
+		const uint32 RegisterOffset = Context.UniformPreshaderOffset % 4;
+		if (RegisterOffset + NumFieldComponents > 4u)
+		{
+			// If this uniform would span multiple registers, align offset to the next register to avoid this
+			// TODO - we could keep track of this empty padding space, and pack other smaller uniform types here
+			Context.UniformPreshaderOffset = Align(Context.UniformPreshaderOffset, 4u);
+		}
+
+		PreshaderField.BufferOffset = Context.UniformPreshaderOffset;
+		Private::WriteMaterialUniformAccess(TypeDesc.ComponentType, NumFieldComponents, Context.UniformPreshaderOffset, FormattedCode);
+		Context.UniformPreshaderOffset += NumFieldComponents;
+	}
+}
+
 } // namespace Private
 
 FEmitShaderExpression* FEmitContext::EmitPreshaderOrConstant(FEmitScope& Scope, const FRequestedType& RequestedType, const Shader::FType& ResultType, const FExpression* Expression)
@@ -940,7 +1125,7 @@ FEmitShaderExpression* FEmitContext::EmitPreshaderOrConstant(FEmitScope& Scope, 
 		return ShaderValue;
 	}
 
-	const FPreparedType& PreparedType = GetPreparedType(Expression);
+	const FPreparedType& PreparedType = GetPreparedType(Expression, RequestedType);
 
 	Shader::FPreshaderStack Stack;
 	const Shader::FPreshaderValue PreshaderConstantValue = LocalPreshader.EvaluateConstant(*Material, Stack);
@@ -963,7 +1148,7 @@ FEmitShaderExpression* FEmitContext::EmitPreshaderOrConstant(FEmitScope& Scope, 
 		}
 
 		const Shader::EValueType FieldType = ResultType.GetFlatFieldType(FieldIndex);
-		const Shader::FValueTypeDescription TypeDesc = Shader::GetValueTypeDescription(FieldType);
+		const Shader::FValueTypeDescription& TypeDesc = Shader::GetValueTypeDescription(FieldType);
 		const int32 NumFieldComponents = TypeDesc.NumComponents;
 
 		// If this is a struct, use GetFieldEvaluation()
@@ -974,85 +1159,21 @@ FEmitShaderExpression* FEmitContext::EmitPreshaderOrConstant(FEmitScope& Scope, 
 
 		if (FieldEvaluation == EExpressionEvaluation::Preshader)
 		{
-			// Only need to allocate uniform buffer for non-constant components
-			// Constant components can have their value inlined into the shader directly
 			FUniformExpressionSet& UniformExpressionSet = MaterialCompilationOutput->UniformExpressionSet;
-			if (!PreshaderHeader)
-			{
-				// Allocate a preshader header the first time we hit a non-constant field
-				PreshaderHeader = &UniformExpressionSet.UniformPreshaders.AddDefaulted_GetRef();
-				PreshaderHeader->FieldIndex = UniformExpressionSet.UniformPreshaderFields.Num();
-				PreshaderHeader->NumFields = 0u;
-				PreshaderHeader->OpcodeOffset = UniformExpressionSet.UniformPreshaderData.Num();
-				FEmitValuePreshaderResult PreshaderResult(UniformExpressionSet.UniformPreshaderData);
-				Expression->EmitValuePreshader(*this, Scope, RequestedType, PreshaderResult);
-				PreshaderHeader->OpcodeSize = UniformExpressionSet.UniformPreshaderData.Num() - PreshaderHeader->OpcodeOffset;
-			}
 
-			FMaterialUniformPreshaderField& PreshaderField = UniformExpressionSet.UniformPreshaderFields.AddDefaulted_GetRef();
-			PreshaderField.ComponentIndex = ComponentIndex;
-			PreshaderField.Type = FieldType;
-			PreshaderHeader->NumFields++;
-
-			if (TypeDesc.ComponentType == Shader::EValueComponentType::Bool)
-			{
-				// 'Bool' uniforms are packed into bits
-				if (CurrentNumBoolComponents + NumFieldComponents > 32u)
+			Private::EmitPreshaderField(
+				*this,
+				UniformExpressionSet.UniformPreshaders,
+				UniformExpressionSet.UniformPreshaderFields,
+				UniformExpressionSet.UniformPreshaderData,
+				PreshaderHeader,
+				[Expression, &Context = *this, &Scope, &RequestedType](FEmitValuePreshaderResult& OutResult)
 				{
-					CurrentBoolUniformOffset = UniformPreshaderOffset++;
-					CurrentNumBoolComponents = 0u;
-				}
-
-				const uint32 RegisterIndex = CurrentBoolUniformOffset / 4;
-				const uint32 RegisterOffset = CurrentBoolUniformOffset % 4;
-				FormattedCode.Appendf(TEXT("UnpackUniform_%s(asuint(Material.PreshaderBuffer[%u][%u]), %u)"),
-					TypeDesc.Name,
-					RegisterIndex,
-					RegisterOffset,
-					CurrentNumBoolComponents);
-
-				PreshaderField.BufferOffset = CurrentBoolUniformOffset * 32u + CurrentNumBoolComponents;
-				CurrentNumBoolComponents += NumFieldComponents;
-			}
-			else if (TypeDesc.ComponentType == Shader::EValueComponentType::Double)
-			{
-				// Double uniforms are split into Tile/Offset components to make FLWCScalar/FLWCVectors
-				PreshaderField.BufferOffset = UniformPreshaderOffset;
-
-				if (NumFieldComponents > 1)
-				{
-					FormattedCode.Appendf(TEXT("MakeLWCVector%d("), NumFieldComponents);
-				}
-				else
-				{
-					FormattedCode.Append(TEXT("MakeLWCScalar("));
-				}
-
-				// Write the tile uniform
-				Private::WriteMaterialUniformAccess(Shader::EValueComponentType::Float, NumFieldComponents, UniformPreshaderOffset, FormattedCode);
-				UniformPreshaderOffset += NumFieldComponents;
-				FormattedCode.Append(TEXT(", "));
-
-				// Write the offset uniform
-				Private::WriteMaterialUniformAccess(Shader::EValueComponentType::Float, NumFieldComponents, UniformPreshaderOffset, FormattedCode);
-				UniformPreshaderOffset += NumFieldComponents;
-				FormattedCode.Append(TEXT(")"));
-			}
-			else
-			{
-				// Float/Int uniforms are written directly to the uniform buffer
-				const uint32 RegisterOffset = UniformPreshaderOffset % 4;
-				if (RegisterOffset + NumFieldComponents > 4u)
-				{
-					// If this uniform would span multiple registers, align offset to the next register to avoid this
-					// TODO - we could keep track of this empty padding space, and pack other smaller uniform types here
-					UniformPreshaderOffset = Align(UniformPreshaderOffset, 4u);
-				}
-
-				PreshaderField.BufferOffset = UniformPreshaderOffset;
-				Private::WriteMaterialUniformAccess(TypeDesc.ComponentType, NumFieldComponents, UniformPreshaderOffset, FormattedCode);
-				UniformPreshaderOffset += NumFieldComponents;
-			}
+					Expression->EmitValuePreshader(Context, Scope, RequestedType, OutResult);
+				},
+				TypeDesc,
+				ComponentIndex,
+				FormattedCode);
 		}
 		else
 		{
@@ -1082,28 +1203,28 @@ FEmitShaderExpression* FEmitContext::EmitPreshaderOrConstant(FEmitScope& Scope, 
 			if (TypeDesc.ComponentType == Shader::EValueComponentType::Double)
 			{
 				const Shader::FDoubleValue DoubleValue = FieldConstantValue.AsDouble();
-				TStringBuilder<256> TileValue;
-				TStringBuilder<256> OffsetValue;
+				TStringBuilder<256> ValueHigh;
+				TStringBuilder<256> ValueLow;
 				for (int32 Index = 0; Index < NumFieldComponents; ++Index)
 				{
 					if (Index > 0)
 					{
-						TileValue.Append(TEXT(", "));
-						OffsetValue.Append(TEXT(", "));
+						ValueHigh.Append(TEXT(", "));
+						ValueLow.Append(TEXT(", "));
 					}
 
-					const FLargeWorldRenderScalar Value(DoubleValue[Index]);
-					TileValue.Appendf(TEXT("%#.9gf"), Value.GetTile());
-					OffsetValue.Appendf(TEXT("%#.9gf"), Value.GetOffset());
+					const FDFScalar Value(DoubleValue[Index]);
+					ValueHigh.Appendf(TEXT("%#.9gf"), Value.High);
+					ValueLow.Appendf(TEXT("%#.9gf"), Value.Low);
 				}
 
 				if (NumFieldComponents > 1)
 				{
-					FormattedCode.Appendf(TEXT("MakeLWCVector%d(float%d(%s), float%d(%s))"), NumFieldComponents, NumFieldComponents, TileValue.ToString(), NumFieldComponents, OffsetValue.ToString());
+					FormattedCode.Appendf(TEXT("DFToWS(MakeDFVector%d(float%d(%s), float%d(%s)))"), NumFieldComponents, NumFieldComponents, ValueHigh.ToString(), NumFieldComponents, ValueLow.ToString());
 				}
 				else
 				{
-					FormattedCode.Appendf(TEXT("MakeLWCScalar(%s, %s)"), TileValue.ToString(), OffsetValue.ToString());
+					FormattedCode.Appendf(TEXT("DFToWS(MakeDFScalar(%s, %s))"), ValueHigh.ToString(), ValueLow.ToString());
 				}
 			}
 			else
@@ -1181,12 +1302,12 @@ FEmitShaderExpression* FEmitContext::EmitCast(FEmitScope& Scope, FEmitShaderExpr
 			{
 				// float->LWC
 				ShaderValue = EmitCast(Scope, ShaderValue, Shader::MakeValueType(Shader::EValueComponentType::Float, DestTypeDesc.NumComponents));
-				FormattedCode.Appendf(TEXT("LWCPromote(%s)"), ShaderValue->Reference);
+				FormattedCode.Appendf(TEXT("WSPromote(%s)"), ShaderValue->Reference);
 			}
 			else
 			{
 				//LWC->float
-				FormattedCode.Appendf(TEXT("LWCToFloat(%s)"), ShaderValue->Reference);
+				FormattedCode.Appendf(TEXT("WSDemote(%s)"), ShaderValue->Reference);
 				IntermediateType = Shader::MakeValueType(Shader::EValueComponentType::Float, SourceTypeDesc.NumComponents);
 				bInline = false; // LWCToFloat has non-zero cost
 			}
@@ -1202,12 +1323,17 @@ FEmitShaderExpression* FEmitContext::EmitCast(FEmitScope& Scope, FEmitShaderExpr
 			bool bNeedClosingParen = false;
 			if (bIsLWC)
 			{
-				FormattedCode.Append(TEXT("MakeLWCVector("));
+				FormattedCode.Append(TEXT("MakeWSVector("));
 				bNeedClosingParen = true;
 			}
 			else
 			{
-				if ((SourceTypeDesc.NumComponents == 1 && bReplicateScalar) || SourceTypeDesc.NumComponents == DestTypeDesc.NumComponents)
+				if (SourceTypeDesc.NumComponents == DestTypeDesc.NumComponents)
+				{
+					NumComponents = DestTypeDesc.NumComponents;
+					FormattedCode.Append(ShaderValue->Reference);
+				}
+				else if (bReplicateScalar)
 				{
 					NumComponents = DestTypeDesc.NumComponents;
 					// Cast the scalar to the correct type, HLSL language will replicate the scalar if needed when performing this cast
@@ -1221,16 +1347,16 @@ FEmitShaderExpression* FEmitContext::EmitCast(FEmitScope& Scope, FEmitShaderExpr
 						FormattedCode.Appendf(TEXT("%s("), DestTypeDesc.Name);
 						bNeedClosingParen = true;
 					}
-					if (NumComponents == SourceTypeDesc.NumComponents && SourceTypeDesc.ComponentType == DestTypeDesc.ComponentType)
+					if (NumComponents == SourceTypeDesc.NumComponents)
 					{
 						// If we're taking all the components from the source, can avoid adding a swizzle
 						FormattedCode.Append(ShaderValue->Reference);
 					}
 					else
 					{
-						// Use a cast to truncate the source to the correct number of types
-						const Shader::EValueType LocalType = Shader::MakeValueType(DestTypeDesc.ComponentType, NumComponents);
-						FormattedCode.Appendf(TEXT("((%s)%s)"), Shader::GetValueTypeDescription(LocalType).Name, ShaderValue->Reference);
+						// Truncate using a swizzle
+						static const TCHAR* Mask[] = { nullptr, TEXT("x"), TEXT("xy"), TEXT("xyz"), TEXT("xyzw") };
+						FormattedCode.Appendf(TEXT("%s.%s"), ShaderValue->Reference, Mask[NumComponents]);
 					}
 				}
 			}
@@ -1248,11 +1374,11 @@ FEmitShaderExpression* FEmitContext::EmitCast(FEmitScope& Scope, FEmitShaderExpr
 					{
 						if (!bReplicateScalar && ComponentIndex >= SourceTypeDesc.NumComponents)
 						{
-							FormattedCode.Append(TEXT("LWCPromote(0.0f)"));
+							FormattedCode.Append(TEXT("WSPromote(0.0f)"));
 						}
 						else
 						{
-							FormattedCode.Appendf(TEXT("LWCGetComponent(%s, %d)"), ShaderValue->Reference, bReplicateScalar ? 0 : ComponentIndex);
+							FormattedCode.Appendf(TEXT("WSGetComponent(%s, %d)"), ShaderValue->Reference, bReplicateScalar ? 0 : ComponentIndex);
 						}
 					}
 					else
@@ -1302,7 +1428,7 @@ FEmitShaderExpression* FEmitContext::EmitCustomHLSL(FEmitScope& Scope, FStringVi
 	FHasher Hasher;
 	for (const FCustomHLSLInput& Input : Inputs)
 	{
-		const Shader::FType InputType = GetType(Input.Expression);
+		const Shader::FType InputType = GetResultType(Input.Expression, Shader::EValueType::Any);
 		AppendHash(Hasher, Input.Name);
 		AppendHash(Hasher, InputType);
 
@@ -1347,9 +1473,10 @@ FEmitShaderExpression* FEmitContext::EmitCustomHLSL(FEmitScope& Scope, FStringVi
 
 	TStringBuilder<1024> FormattedCode;
 	FormattedCode.Appendf(TEXT("CustomExpression%d(Parameters"), EmitCustomHLSL->Index);
-	for (const FCustomHLSLInput& Input : Inputs)
+	for (int32 InputIndex = 0; InputIndex < Inputs.Num(); ++InputIndex)
 	{
-		FEmitShaderExpression* EmitInputExpression = Input.Expression->GetValueShader(*this, Scope);
+		const FCustomHLSLInput& Input = Inputs[InputIndex];
+		FEmitShaderExpression* EmitInputExpression = Input.Expression->GetValueShader(*this, Scope, EmitInputs[InputIndex].Type);
 		FormattedCode.Appendf(TEXT(", %s"), EmitInputExpression->Reference);
 		Dependencies.Add(EmitInputExpression);
 	}
@@ -1369,12 +1496,35 @@ void FEmitContext::Finalize()
 	
 	// Don't reset Expression/Preshader maps, allow future passes to share matching preshaders/expressions
 
+	for (TMap<FXxHash64, FPrepareValueResult*>::TIterator It(PrepareValueMap); It; ++It)
+	{
+		FPrepareValueResult* Value = It.Value();
+		if (Value)
+		{
+			Value->~FPrepareValueResult();
+		}
+	}
 	PrepareValueMap.Reset();
+	ResetPastRequestedTypes();
 	EmitScopeMap.Reset();
 	EmitFunctionMap.Reset();
 	EmitLocalPHIMap.Reset();
+	EmitValueMap.Reset();
 
 	MaterialCompilationOutput->UniformExpressionSet.UniformPreshaderBufferSize = (UniformPreshaderOffset + 3u) / 4u;
+}
+
+void FEmitContext::ResetPastRequestedTypes()
+{
+	for (TMap<FXxHash64, FRequestedType*>::TIterator It(RequestedTypeTracker); It; ++It)
+	{
+		FRequestedType* Value = It.Value();
+		if (Value)
+		{
+			Value->~FRequestedType();
+		}
+	}
+	RequestedTypeTracker.Reset();
 }
 
 } // namespace UE::HLSLTree

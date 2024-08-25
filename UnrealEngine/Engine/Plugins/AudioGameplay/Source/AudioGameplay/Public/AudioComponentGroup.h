@@ -68,6 +68,9 @@ public:
 	void AddExternalComponent(UAudioComponent* ComponentToAdd);
 
 	UFUNCTION(BlueprintCallable, BlueprintCosmetic, Category = AudioComponentGroup)
+	void RemoveExternalComponent(UAudioComponent* ComponentToRemove);
+
+	UFUNCTION(BlueprintCallable, BlueprintCosmetic, Category = AudioComponentGroup)
 	void EnableVirtualization();
 
 	UFUNCTION(BlueprintCallable, BlueprintCosmetic, Category = AudioComponentGroup)

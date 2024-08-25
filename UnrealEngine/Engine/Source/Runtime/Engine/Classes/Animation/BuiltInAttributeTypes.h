@@ -87,6 +87,11 @@ struct FStringAnimationAttribute
 	FString Value;
 };
 
+inline uint32 GetTypeHash(const FStringAnimationAttribute& Key)
+{
+	return GetTypeHash(Key.Value);
+}
+
 /** Attribute type supporting the legacy TVariant<FTransform> attributes */
 USTRUCT(BlueprintType)
 struct FTransformAnimationAttribute

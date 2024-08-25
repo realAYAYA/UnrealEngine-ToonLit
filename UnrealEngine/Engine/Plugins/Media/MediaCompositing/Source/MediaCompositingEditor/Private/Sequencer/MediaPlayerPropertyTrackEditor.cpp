@@ -11,7 +11,7 @@
 #include "SequencerSectionPainter.h"
 #include "MovieSceneMediaPlayerPropertySection.h"
 #include "MovieSceneMediaPlayerPropertyTrack.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Layout/SBox.h"
 #include "MediaSource.h"
@@ -174,14 +174,7 @@ TSharedPtr<SWidget> FMediaPlayerPropertyTrackEditor::BuildOutlinerEditWidget(con
 		return Picker;
 	};
 
-	return SNew(SHorizontalBox)
-
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		[
-			FSequencerUtilities::MakeAddButton(LOCTEXT("AddMediaSection_Text", "Media"), FOnGetContent::CreateLambda(CreatePicker), Params.NodeIsHovered, GetSequencer())
-		];
+	return UE::Sequencer::MakeAddButton(LOCTEXT("AddMediaSection_Text", "Media"), FOnGetContent::CreateLambda(CreatePicker), Params.ViewModel);
 }
 
 TSharedRef<ISequencerSection> FMediaPlayerPropertyTrackEditor::MakeSectionInterface(UMovieSceneSection& SectionObject, UMovieSceneTrack& Track, FGuid ObjectBinding)

@@ -56,7 +56,7 @@ public:
 	virtual void BindCommands(TSharedRef<FUICommandList> SequencerCommandBindings) override;
 	virtual void BuildAddTrackMenu(FMenuBuilder& MenuBuilder) override;
 	virtual void BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track) override;
-	virtual TSharedPtr<SWidget> BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params) override;
+	virtual TSharedPtr<SWidget> BuildOutlinerColumnWidget(const FBuildColumnWidgetParams& Params, const FName& ColumnName) override;
 	virtual TSharedRef<ISequencerSection> MakeSectionInterface(UMovieSceneSection& SectionObject, UMovieSceneTrack& Track, FGuid ObjectBinding) override;
 	virtual void OnRelease() override;
 	virtual bool SupportsType(TSubclassOf<UMovieSceneTrack> Type) const override;
@@ -98,6 +98,9 @@ private:
 
 	/** Called when toggling whether the track can blend camera cuts. */
 	void HandleToggleCanBlendExecute(UMovieSceneCameraCutTrack* CameraCutTrack);
+
+	/** Called when toggling whether the track auto-manages camera cuts. */
+	void HandleToggleAutoArrangeSectionsExecute(UMovieSceneCameraCutTrack* CameraCutTrack);
 
 	/** Delegate for camera button lock state */
 	ECheckBoxState IsCameraLocked() const; 

@@ -1055,6 +1055,9 @@ public:
 	/** Replaces all variable references in the specified blueprint */
 	static UNREALED_API void ReplaceVariableReferences(UBlueprint* Blueprint, const FProperty* OldVariable, const FProperty* NewVariable);
 
+	/** Replaces all function references in the specified blueprint */
+	static UNREALED_API void ReplaceFunctionReferences(UBlueprint* Blueprint, const FName OldName, const FName NewName);
+
 	/** Check blueprint variable metadata keys/values for validity and make adjustments if needed */
 	static UNREALED_API void FixupVariableDescription(UBlueprint* Blueprint, FBPVariableDescription& VarDesc);
 
@@ -1885,6 +1888,21 @@ public:
 	 * @param  NewVarName		The name that we wish to change all references to
 	 */
 	static UNREALED_API void RenameVariableReferences(UBlueprint* Blueprint, UClass* VariableClass, const FName& OldVarName, const FName& NewVarName);
+
+	/** Event fired after RenameFunctionReferences is called */
+	DECLARE_MULTICAST_DELEGATE_FourParams(FOnRenameFunctionReferences, UBlueprint* /*Blueprint*/, UClass* /*FunctionClass*/, const FName& /*OldFuncName*/, const FName& /*NewFuncName*/);
+	static UNREALED_API FOnRenameFunctionReferences OnRenameFunctionReferencesEvent;
+
+	/**
+	 * Looks through the specified blueprint for any references to the specified 
+	 * function, and renames them accordingly.
+	 * 
+	 * @param  Blueprint		The blueprint that you want to search through.
+	 * @param  FunctionClass	The class that owns the function that we're renaming
+	 * @param  OldFuncName		The current name of the function we want to replace
+	 * @param  NewFuncName		The name that we wish to change all references to
+	 */
+	static UNREALED_API void RenameFunctionReferences(UBlueprint* Blueprint, UClass* FunctionClass, const FName& OldFuncName, const FName& NewFuncName);
 
 public:
 	static UNREALED_API FName GetFunctionNameFromClassByGuid(const UClass* InClass, const FGuid FunctionGuid);

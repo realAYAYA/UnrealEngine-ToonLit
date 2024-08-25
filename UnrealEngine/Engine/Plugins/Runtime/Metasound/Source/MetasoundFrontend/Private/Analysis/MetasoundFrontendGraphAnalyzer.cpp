@@ -52,8 +52,7 @@ namespace Metasound
 						ReceiverAddresses.Remove(AnalyzerAddress);
 					}
 
-					constexpr bool bAllowShrinking = false;
-					Analyzers.RemoveAtSwap(i, 1, bAllowShrinking);
+					Analyzers.RemoveAtSwap(i, 1, EAllowShrinking::No);
 				}
 			}
 

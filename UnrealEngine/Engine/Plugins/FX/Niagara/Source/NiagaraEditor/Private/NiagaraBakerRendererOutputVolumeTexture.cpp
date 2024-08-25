@@ -8,10 +8,9 @@
 #include "NiagaraSystemInstance.h"
 #include "NiagaraSystemInstanceController.h"
 #include "NiagaraComputeExecutionContext.h"
+#include "NiagaraBatchedElements.h"
 #include "NiagaraDataInterfaceGrid3DCollection.h"
 #include "NiagaraDataInterfaceRenderTargetVolume.h"
-#include "NiagaraBatchedElements.h"
-
 #include "Engine/Canvas.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/VolumeTexture.h"
@@ -24,97 +23,6 @@
 
 #include "VolumeCache.h"
 #include "VolumeCacheFactory.h"
-
-DEFINE_LOG_CATEGORY_STATIC(LogNiagaraBaker, Log, All);
-
-struct FVolumeDataInterfaceHelper
-{
-	UNiagaraComponent*										NiagaraComponent = nullptr;
-	FNiagaraSystemInstance*									SystemInstance = nullptr;
-	TArray<FString>											DataInterfacePath;
-
-	UNiagaraDataInterfaceGrid3DCollection*					Grid3DDataInterface = nullptr;
-	FNiagaraDataInterfaceProxyGrid3DCollectionProxy*		Grid3DProxy = nullptr;
-	FGrid3DCollectionRWInstanceData_GameThread*				Grid3DInstanceData_GameThread = nullptr;
-	FName													Grid3DAttributeName;
-	int32													Grid3DVariableIndex = INDEX_NONE;
-	int32													Grid3DAttributeStart = INDEX_NONE;
-	int32													Grid3DAttributeChannels = 0;
-	FIntVector												Grid3DTextureSize = FIntVector::ZeroValue;
-
-	UNiagaraDataInterfaceRenderTargetVolume*				VolumeRenderTargetDataInterface = nullptr;
-	FNiagaraDataInterfaceProxyRenderTargetVolumeProxy*		VolumeRenderTargetProxy = nullptr;
-	FRenderTargetVolumeRWInstanceData_GameThread*			VolumeRenderTargetInstanceData_GameThread = nullptr;
-
-	bool Initialize(UNiagaraBakerOutputVolumeTexture* OutputVolumeTexture, UNiagaraComponent* InNiagaraComponent)
-	{
-		NiagaraComponent = InNiagaraComponent;
-
-		OutputVolumeTexture->SourceBinding.SourceName.ToString().ParseIntoArray(DataInterfacePath, TEXT("."));
-		if (DataInterfacePath.Num() < 2)
-		{
-			return false;
-		}
-
-		const FName DataInterfaceName(DataInterfacePath[0] + "." + DataInterfacePath[1]);
-		UNiagaraDataInterface* DataInterface = FNiagaraBakerOutputBindingHelper::GetDataInterface(NiagaraComponent, DataInterfaceName);
-		if (DataInterface == nullptr)
-		{
-			return false;
-		}
-
-		// Guaranteed since we got a data interface
-		SystemInstance = NiagaraComponent->GetSystemInstanceController()->GetSoloSystemInstance();
-
-		// Render Target Volume
-		if (DataInterface->IsA<UNiagaraDataInterfaceRenderTargetVolume>())
-		{
-			VolumeRenderTargetDataInterface = CastChecked<UNiagaraDataInterfaceRenderTargetVolume>(DataInterface);
-			VolumeRenderTargetProxy = static_cast<FNiagaraDataInterfaceProxyRenderTargetVolumeProxy*>(VolumeRenderTargetDataInterface->GetProxy());
-			VolumeRenderTargetInstanceData_GameThread = reinterpret_cast<FRenderTargetVolumeRWInstanceData_GameThread*>(SystemInstance->FindDataInterfaceInstanceData(VolumeRenderTargetDataInterface));
-			if (VolumeRenderTargetInstanceData_GameThread == nullptr)
-			{
-				return false;
-			}
-		}
-		// Grid 3D
-		else if ( DataInterface->IsA<UNiagaraDataInterfaceGrid3DCollection>() )
-		{
-			Grid3DDataInterface = CastChecked<UNiagaraDataInterfaceGrid3DCollection>(DataInterface);
-			Grid3DProxy = static_cast<FNiagaraDataInterfaceProxyGrid3DCollectionProxy*>(Grid3DDataInterface->GetProxy());
-			Grid3DInstanceData_GameThread = reinterpret_cast<FGrid3DCollectionRWInstanceData_GameThread*>(SystemInstance->FindDataInterfaceInstanceData(Grid3DDataInterface));
-			if (Grid3DInstanceData_GameThread == nullptr)
-			{
-				return false;
-			}
-
-			if (DataInterfacePath.Num() != 3)
-			{
-				// Perhaps a path to pull all attributes, i.e. whole texture?
-				return false;
-			}
-
-			Grid3DAttributeName = FName(DataInterfacePath[2]);
-			Grid3DVariableIndex = Grid3DInstanceData_GameThread->Vars.IndexOfByPredicate([&](const FNiagaraVariableBase& VariableBase) { return VariableBase.GetName() == Grid3DAttributeName; });
-			if (Grid3DVariableIndex == INDEX_NONE)
-			{
-				return false;
-			}
-			Grid3DAttributeStart	= Grid3DInstanceData_GameThread->Offsets[Grid3DVariableIndex];
-			Grid3DAttributeChannels	= Grid3DInstanceData_GameThread->Vars[Grid3DVariableIndex].GetType().GetSize() / sizeof(float);
-			Grid3DTextureSize.X		= Grid3DInstanceData_GameThread->NumCells.X * Grid3DInstanceData_GameThread->NumTiles.X;
-			Grid3DTextureSize.Y		= Grid3DInstanceData_GameThread->NumCells.Y * Grid3DInstanceData_GameThread->NumTiles.Y;
-			Grid3DTextureSize.Z		= Grid3DInstanceData_GameThread->NumCells.Z * Grid3DInstanceData_GameThread->NumTiles.Z;
-		}
-		// Unsupported type
-		else
-		{
-			return false;
-		}
-
-		return true;
-	}
-};
 
 TArray<FNiagaraBakerOutputBinding> FNiagaraBakerRendererOutputVolumeTexture::GetRendererBindings(UNiagaraBakerOutput* InBakerOutput) const
 {
@@ -170,7 +78,10 @@ void FNiagaraBakerRendererOutputVolumeTexture::RenderPreview(UNiagaraBakerOutput
 	ON_SCOPE_EXIT{ Canvas.Flush_GameThread(); };
 
 	FVolumeDataInterfaceHelper DataInterface;
-	if (DataInterface.Initialize(OutputVolumeTexture, BakerRenderer.GetPreviewComponent()) == false)
+
+	TArray<FString> DataInterfacePath;
+	OutputVolumeTexture->SourceBinding.SourceName.ToString().ParseIntoArray(DataInterfacePath, TEXT("."));
+	if (DataInterface.Initialize(DataInterfacePath, BakerRenderer.GetPreviewComponent()) == false)
 	{
 		OutErrorString = TEXT("Could not find data to preview from.\nPlease ensure binding is set to a valid source.");
 		return;
@@ -406,7 +317,10 @@ void FNiagaraBakerRendererOutputVolumeTexture::BakeFrame(FNiagaraBakerFeedbackCo
 	UNiagaraBakerOutputVolumeTexture* OutputVolumeTexture = CastChecked<UNiagaraBakerOutputVolumeTexture>(InBakerOutput);
 
 	FVolumeDataInterfaceHelper DataInterface;
-	if ( DataInterface.Initialize(OutputVolumeTexture, BakerRenderer.GetPreviewComponent()) == false )
+
+	TArray<FString> DataInterfacePath;
+	OutputVolumeTexture->SourceBinding.SourceName.ToString().ParseIntoArray(DataInterfacePath, TEXT("."));
+	if ( DataInterface.Initialize(DataInterfacePath, BakerRenderer.GetPreviewComponent()) == false )
 	{
 		return;
 	}

@@ -19,6 +19,43 @@ namespace AssetViewUtils
 	/** Opens the asset editor for the specified assets */
 	ASSETTOOLS_API bool OpenEditorForAsset(const TArray<UObject*>& Assets);
 
+	struct FLoadAssetsSettings
+	{
+		// Prompt the user with the number of unloaded assets before continuing to load
+		bool bAlwaysPromptBeforeLoading = false;
+		// Show a notification to the user that some assets failed to load
+		bool bShowFailureNotification = true;
+		// Follow redirectors and return the target assets.
+		// We usually don't want to follow redirects when loading objects for the Content Browser.  It would
+		// allow a user to interact with a ghost/unverified asset as if it were still alive.
+		bool bFollowRedirectors = false;
+		// Allow the user to cancel the load operation
+		bool bAllowCancel = false;
+		// Advanced setting: allow loading of world partition map packages.
+		bool bLoadWorldPartitionMaps = false;
+		// Advanced setting: load all external objects/actors with e.g. world partition map packages.
+		bool bLoadAllExternalObjects = false;
+	};
+
+	enum class ELoadAssetsResult : uint8
+	{
+		Success,    // The user didn't cancel and all requested assets were successfully loaded
+		Cancelled,  // The user cancelled the load operation
+		SomeFailed, // Some or all of the assets failed to load
+	};
+
+	/**
+	 * Makes sure the specified assets are loaded into memory, with displayed progress and optional cancellation for the user.
+	 * Prefer the overload taking FAssetData if possible.
+	 *
+	 * @param Assets The assets to load
+	 * @param LoadedObjects The returned list of objects that were already loaded or loaded by this method.
+	 * @return enum specifying whether the load was successful, cancelled or if some or all assets failed to load
+	 */
+	ASSETTOOLS_API ELoadAssetsResult LoadAssetsIfNeeded(TConstArrayView<FAssetData> Assets, TArray<UObject*>& LoadedObjects, const FLoadAssetsSettings& InSettings);
+	ASSETTOOLS_API ELoadAssetsResult LoadAssetsIfNeeded(TConstArrayView<FString> ObjectPaths, TArray<UObject*>& LoadedObjects, const FLoadAssetsSettings& InSettings);
+	ASSETTOOLS_API ELoadAssetsResult LoadAssetsIfNeeded(TConstArrayView<FSoftObjectPath> ObjectPaths, TArray<UObject*>& LoadedObjects, const FLoadAssetsSettings& InSettings);
+
 	/**
 	  * Makes sure the specified assets are loaded into memory.
 	  * 
@@ -26,6 +63,7 @@ namespace AssetViewUtils
 	  * @param LoadedObjects The returned list of objects that were already loaded or loaded by this method.
 	  * @return false if user canceled after being warned about loading very many packages.
 	  */
+	UE_DEPRECATED(5.5, "Use LoadAssetsIfNeeded taking struct FLoadAssetsSettings instead.")
 	ASSETTOOLS_API bool LoadAssetsIfNeeded(const TArray<FString>& ObjectPaths, TArray<UObject*>& LoadedObjects, bool bAllowedToPromptToLoadAssets = true, bool bLoadRedirects = false);
 
 	/**
@@ -217,6 +255,9 @@ namespace AssetViewUtils
 
 	/** Syncs the specified paths from source control. */
 	ASSETTOOLS_API bool SyncPathsFromSourceControl(const TArray<FString>& Paths);
+
+	/** Syncs a specific revision from source control. */
+	ASSETTOOLS_API bool SyncRevisionFromSourceControl(const FString& Revision);
 
 	/** Syncs latest from source control. */
 	ASSETTOOLS_API bool SyncLatestFromSourceControl();

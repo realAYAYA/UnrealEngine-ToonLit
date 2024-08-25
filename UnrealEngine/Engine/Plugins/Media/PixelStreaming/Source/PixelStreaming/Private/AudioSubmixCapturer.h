@@ -36,6 +36,7 @@ namespace UE::PixelStreaming
 		void SetAudioInputMixerPatch(TSharedPtr<class FAudioInput> InPatchInput);
 
 		// ISubmixBufferListener interface
+		const FString& GetListenerName() const override;
 		void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData,
 			int32 NumSamples, int32 NumChannels,
 			const int32 SampleRate, double AudioClock) override;

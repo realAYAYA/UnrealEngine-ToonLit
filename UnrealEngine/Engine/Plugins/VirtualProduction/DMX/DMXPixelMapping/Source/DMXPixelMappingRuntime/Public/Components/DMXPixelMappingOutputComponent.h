@@ -3,24 +3,17 @@
 #pragma once
 
 #include "Components/DMXPixelMappingBaseComponent.h"
-
-#if WITH_EDITOR
-#include "Widgets/Layout/SConstraintCanvas.h"
-#endif
+#include "Components/DMXPixelMappingComponentGeometryCache.h"
 
 #include "DMXPixelMappingOutputComponent.generated.h"
 
 struct FDMXPixelMappingLayoutToken;
 class SBox;
 class UDMXEntityFixturePatch;
+class UDMXPixelMappingComponentGeometryCache;
 class UDMXPixelMappingRendererComponent;
 namespace UE::DMXPixelMapping::Rendering::PixelMapRenderer { class FPixelMapRenderElement; }
 
-
-#if WITH_EDITOR
-enum class EDMXPixelMappingComponentLabelAlignment : uint8;
-class FDMXPixelMappingComponentWidget;
-#endif
 
 
 /**
@@ -36,23 +29,19 @@ public:
 	/** Default Constructor */
 	UDMXPixelMappingOutputComponent();
 
-protected:
 	//~ Begin UObject Interface
+	virtual void PostInitProperties() override;
+	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-	virtual void PreEditUndo() override;
-	virtual void PostEditUndo() override;
 #endif // WITH_EDITOR
-	virtual void BeginDestroy() override;
 	//~ End UObject Interface
 
 public:
 	//~ Begin DMXPixelMappingBaseComponent interface
 	virtual bool CanBeMovedTo(const UDMXPixelMappingBaseComponent* Component) const override;
-	virtual void NotifyAddedToParent() override;
-	virtual void NotifyRemovedFromParent() override;
 	//~ End DMXPixelMappingBaseComponent interface
- 
+
 	/*----------------------------------
 		UDMXPixelMappingOutputComponent Interface
 	----------------------------------*/
@@ -62,12 +51,6 @@ public:
 
 	/** Returns the text of palette category*/
 	virtual const FText GetPaletteCategory();
-
-	/** Rebuild widget for designer view */
-	UE_DEPRECATED(5.1, "Pixel Mapping Components no longer hold their own widget, in an effort to separate Views from Data.")
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // FDMXPixelMappingComponentWidget is deprecated
-	virtual TSharedRef<FDMXPixelMappingComponentWidget> BuildSlot(TSharedRef<SConstraintCanvas> InCanvas);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/** Whether component should be visible */
 	virtual bool IsVisible() const;
@@ -82,7 +65,7 @@ public:
 	virtual int32 GetZOrder() const { return ZOrder; }
 
 	/** Returns an editor color for the widget */
-	virtual FLinearColor GetEditorColor() const { return EditorColor; }
+	virtual FLinearColor GetEditorColor() const;
 #endif // WITH_EDITOR
 
 	/** Returns true if the the component's over all its parents. */
@@ -92,6 +75,7 @@ public:
 	virtual bool IsOverPosition(const FVector2D& Position) const;
 
 	/** Returns true if the component overlaps the other */
+	UE_DEPRECATED(5.4, "Removed without replacement. GetEdges and test against other if this method is needed.")
 	virtual bool OverlapsComponent(UDMXPixelMappingOutputComponent* Other) const;
 
 	/** Get pixel index in downsample texture */
@@ -102,17 +86,32 @@ public:
 	UE_DEPRECATED(5.3, "Please use UDMXPixelMappingPixelMapRenderer to render the pixel map")
 	virtual void QueueDownsample() {}
 
-	/** Sets the position */
-	virtual void SetPosition(const FVector2D& NewPosition);
-
-	/** Returns the position */
+	/** Returns the absolute position, without rotation */
 	FVector2D GetPosition() const;
 
-	/** Sets the size */
+	/** Sets the absolute position of the component, without rotation. */
+	virtual void SetPosition(const FVector2D& NewPosition);
+
+	/** Returns the absolute position with rotation. */
+	FVector2D GetPositionRotated() const;
+
+	/** Sets the the absolute position with rotation. */
+	virtual void SetPositionRotated(FVector2D NewRotatedPosition);
+
+	/** Returns the edges of the component, absolute, rotated, clockwise order */
+	void GetEdges(FVector2D& A, FVector2D& B, FVector2D& C, FVector2D& D) const;
+
+	/** Get the absolute size */
+	FVector2D GetSize() const;
+
+	/** Sets the absolue size */
 	virtual void SetSize(const FVector2D& NewSize);
 
-	/** Get the size */
-	FVector2D GetSize() const { return FVector2D(SizeX, SizeY); }
+	/** Gets the absolute rotation, in degrees */
+	double GetRotation() const;
+
+	/** Sets the absolute rotation, in degrees */
+	virtual void SetRotation(double NewRotation);
 
 	/** Invalidates the pixel map, effectively causing the renderer component to aquire a new pixel map */
 	void InvalidatePixelMapRenderer();
@@ -122,21 +121,8 @@ public:
 	/** Updates children to match the size of this instance */
 
 #if WITH_EDITOR
-	/** Makes the component the highest ZOrdered of components in the component rectangle, updates childs if needed */
+	/** Z-orders this component and its children topmost */
 	void ZOrderTopmost();
-#endif // WITH_EDITOR
-
-public:
-#if WITH_EDITOR
-	/** Returns the component widget */
-	UE_DEPRECATED(5.1, "Pixel Mapping Components no longer hold their own widget, in an effort to separate Views from Data.")
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // FDMXPixelMappingComponentWidget is deprecated
-	FORCEINLINE const TSharedPtr<FDMXPixelMappingComponentWidget> GetComponentWidget() { return ComponentWidget_DEPRECATED; }
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-protected:
-	/** Udpates the component widget. If bWithChildrenRecursive, updates child Components' Component Widget recursively */
-	void UpdateComponentWidget(EVisibility NewVisibility = EVisibility::Visible, bool bWithChildrenRecursive = false);
 #endif // WITH_EDITOR
 
 public:
@@ -146,27 +132,11 @@ public:
 	int32 ZOrder = 1;
 
 	/** The color displayed in editor */
+	UE_DEPRECATED(5.4, "Should no longer be publicly accessed, instead call GetEditorColor.")
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Editor Settings")
 	FLinearColor EditorColor = FLinearColor::Blue;
-
-	/** Where the component's label is shown, if it uses one. */
-	EDMXPixelMappingComponentLabelAlignment LabelAlignment;
-
-protected:
-	/** Children available PreEditUndo, useful to hide all removed ones in post edit undo */
-	TArray<UDMXPixelMappingBaseComponent*> PreEditUndoChildren;
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	/** The widget shown for this component */
-	TSharedPtr<FDMXPixelMappingComponentWidget> ComponentWidget_DEPRECATED;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif // WITH_EDITORONLY_DATA
 
-
-	/*----------------------------------
-		Blueprint interface
-	----------------------------------*/
-public:
 #if WITH_EDITOR
 	// Property Name getters
 	FORCEINLINE static FName GetLockInDesignerPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXPixelMappingOutputComponent, bLockInDesigner); }
@@ -175,22 +145,33 @@ public:
 	FORCEINLINE static FName GetPositionYPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXPixelMappingOutputComponent, PositionY); }
 	FORCEINLINE static FName GetSizeXPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXPixelMappingOutputComponent, SizeX); }
 	FORCEINLINE static FName GetSizeYPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXPixelMappingOutputComponent, SizeY); }
+	FORCEINLINE static FName GetRotationPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXPixelMappingOutputComponent, Rotation); }
 #endif
 
-private:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transform", Meta = (EditCondition = "!bLockInDesigner", AllowPrivateAccess = true))
-	float PositionX;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transform", Meta = (EditCondition = "!bLockInDesigner", AllowPrivateAccess = true))
-	float PositionY;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transform", Meta = (ClampMin = 1, UIMin = 1, EditCondition = "!bLockInDesigner", AllowPrivateAccess = true))
-	float SizeX;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transform", Meta = (ClampMin = 1, UIMin = 1, EditCondition = "!bLockInDesigner", AllowPrivateAccess = true))
-	float SizeY;
-
 protected:
+	UPROPERTY(BlueprintReadOnly, Category = "Transform", Meta = (AllowPrivateAccess = true))
+	float PositionX = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Transform", Meta = (AllowPrivateAccess = true))
+	float PositionY = 0.f;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(EditAnywhere, Transient, Category = "Transform", Meta = (EditCondition = "!bLockInDesigner", DisplayName = "Position (with Rotation)"))
+	FVector2D EditorPositionWithRotation = FVector2D::ZeroVector;
+#endif // WITH_EDITORONLY_DATA
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transform", Meta = (ClampMin = 0.0001, EditCondition = "!bLockInDesigner"))
+	float SizeX = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transform", Meta = (ClampMin = 0.0001, EditCondition = "!bLockInDesigner"))
+	float SizeY = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transform", Meta = (UIMin = -180, UIMax = 180, EditCondition = "!bLockInDesigner"))
+	double Rotation = 0.0;
+
+	UPROPERTY(Transient)
+	FDMXPixelMappingComponentGeometryCache CachedGeometry;
+
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Editor Settings")
 	bool bLockInDesigner;

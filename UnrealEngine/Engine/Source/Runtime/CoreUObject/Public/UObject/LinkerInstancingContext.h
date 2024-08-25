@@ -21,6 +21,7 @@ public:
 
 	explicit FLinkerInstancedPackageMap(EInstanceMappingDirection MappingDirection)
 		: InstanceMappingDirection(MappingDirection)
+		, bIsInstanced(false)
 #if WITH_EDITOR
 		, bEnableNonEditorPath(false)
 #else
@@ -31,7 +32,7 @@ public:
 
 	bool IsInstanced() const
 	{
-		return InstancedPackageMapping.Num() > 0;
+		return bIsInstanced;
 	}
 
 	/** Remap the package name from the import table to its instanced counterpart, otherwise return the name unmodified. */
@@ -73,6 +74,9 @@ private:
 	FString InstancedPackagePrefix;
 	FString InstancedPackageSuffix;
 
+	/** Whether InstancedPackageMapping contains remapping data other that none */
+	bool bIsInstanced;
+
 	/** Allows tests to run non editor path from editor build. */
 	bool bEnableNonEditorPath;
 };
@@ -86,81 +90,37 @@ private:
 class FLinkerInstancingContext
 {
 public:
-	FLinkerInstancingContext() = default;
-	explicit FLinkerInstancingContext(TSet<FName> InTags)
-		: Tags(MoveTemp(InTags))
-	{
-	}
-	explicit FLinkerInstancingContext(bool bInSoftObjectPathRemappingEnabled)
-		: bSoftObjectPathRemappingEnabled(bInSoftObjectPathRemappingEnabled)
-	{
-	}
+	COREUOBJECT_API FLinkerInstancingContext();
+	COREUOBJECT_API explicit FLinkerInstancingContext(TSet<FName> InTags);
+	COREUOBJECT_API explicit FLinkerInstancingContext(bool bInSoftObjectPathRemappingEnabled);
 
-	bool IsInstanced() const
-	{
-		return InstancedPackageMap.IsInstanced() || PathMapping.Num() > 0;
-	}
+	COREUOBJECT_API static FLinkerInstancingContext DuplicateContext(const FLinkerInstancingContext& InLinkerInstancingContext);
+
+	COREUOBJECT_API bool IsInstanced() const;
 
 	/** Remap the package name from the import table to its instanced counterpart, otherwise return the name unmodified. */
-	FName RemapPackage(const FName& PackageName) const
-	{
-		return InstancedPackageMap.RemapPackage(PackageName);
-	}
+	COREUOBJECT_API FName RemapPackage(const FName& PackageName) const;
 
 	/**
 	 * Remap the top level asset part of the path name to its instanced counterpart, otherwise return the name unmodified. 
 	 * i.e. remaps /Path/To/Package.AssetName:Inner to /NewPath/To/NewPackage.NewAssetName:Inner 
 	 */
-	FSoftObjectPath RemapPath(const FSoftObjectPath& Path) const
-	{
-		if (const FTopLevelAssetPath* Remapped = PathMapping.Find(Path.GetAssetPath()))
-		{
-			return FSoftObjectPath(*Remapped, Path.GetSubPathString());
-		}
-		return Path;
-	}
+	COREUOBJECT_API FSoftObjectPath RemapPath(const FSoftObjectPath& Path) const;
 
 	/** Add a mapping from a package name to a new package name. There should be no separators (. or :) in these strings. */
-	void AddPackageMapping(FName Original, FName Instanced)
-	{
-		InstancedPackageMap.AddPackageMapping(Original, Instanced);
-	}
+	COREUOBJECT_API void AddPackageMapping(FName Original, FName Instanced);
 
-	/** Add a mapping from a top level asset path (/Path/To/Package.AssetName) to another. */
-	void AddPathMapping(FSoftObjectPath Original, FSoftObjectPath Instanced)
-	{
-		ensureAlwaysMsgf(Original.GetSubPathString().IsEmpty(), 
-			TEXT("Linker instance remap paths should be top-level assets only: %s->"), *Original.ToString());
-		ensureAlwaysMsgf(Instanced.GetSubPathString().IsEmpty(), 
-			TEXT("Linker instance remap paths should be top-level assets only: ->%s"), *Instanced.ToString());
+	/** Add a mapping function from a package name to a new package name. This function should be thread-safe, as it can be invoked from ALT. */
+	COREUOBJECT_API void AddPackageMappingFunc(TFunction<FName(FName)> InInstancedPackageMapFunc);
 	
-		PathMapping.Emplace(Original.GetAssetPath(), Instanced.GetAssetPath());
-	}
+	/** Add a mapping from a top level asset path (/Path/To/Package.AssetName) to another. */
+	COREUOBJECT_API void AddPathMapping(FSoftObjectPath Original, FSoftObjectPath Instanced);
 
-	void AddTag(FName NewTag)
-	{
-		Tags.Add(NewTag);
-	}
-
-	void AppendTags(const TSet<FName>& NewTags)
-	{
-		Tags.Append(NewTags);
-	}
-
-	bool HasTag(FName Tag) const
-	{
-		return Tags.Contains(Tag);
-	}
-
-	void SetSoftObjectPathRemappingEnabled(bool bInSoftObjectPathRemappingEnabled)
-	{
-		bSoftObjectPathRemappingEnabled = bInSoftObjectPathRemappingEnabled;
-	}
-
-	bool GetSoftObjectPathRemappingEnabled() const 
-	{ 
-		return bSoftObjectPathRemappingEnabled; 
-	}
+	COREUOBJECT_API void AddTag(FName NewTag);
+	COREUOBJECT_API void AppendTags(const TSet<FName>& NewTags);
+	COREUOBJECT_API bool HasTag(FName Tag) const;
+	COREUOBJECT_API void SetSoftObjectPathRemappingEnabled(bool bInSoftObjectPathRemappingEnabled);
+	COREUOBJECT_API bool GetSoftObjectPathRemappingEnabled() const;
 
 	UE_DEPRECATED(5.2, "No longer used, pass ELoadFlags::LOAD_RegenerateBulkDataGuids to LoadPackage instead")
 	void SetRegenerateUniqueBulkDataGuids(bool bFlag) { }
@@ -174,31 +134,17 @@ public:
 		return FString::Printf(TEXT("%s_InstanceOf_%s"), *InOuterPackageName, *InPackageName);
 	}
 
-	void FixupSoftObjectPath(FSoftObjectPath& InOutSoftObjectPath) const;
+	COREUOBJECT_API void FixupSoftObjectPath(FSoftObjectPath& InOutSoftObjectPath) const;
 
 private:
-	void EnableAutomationTest() { InstancedPackageMap.EnableAutomationTest(); }
-
-	void BuildPackageMapping(FName Original, FName Instanced)
-	{
-		InstancedPackageMap.BuildPackageMapping(Original, Instanced, GetSoftObjectPathRemappingEnabled());
-	}
-
-	FName& FindOrAddPackageMapping(FName Original)
-	{
-		return InstancedPackageMap.InstancedPackageMapping.FindOrAdd(Original);
-	}
+	void EnableAutomationTest();
+	void BuildPackageMapping(FName Original, FName Instanced);
+	bool FindPackageMapping(FName Original, FName& Instanced) const;
 
 	friend class FLinkerLoad;
 	friend struct FAsyncPackage2;
 	friend class FLinkerInstancingContextTests;
+	class FSharedLinkerInstancingContextData;
 
-	/** Map of original package name to their instance counterpart. */
-	FLinkerInstancedPackageMap InstancedPackageMap;
-	/** Map of original top level asset path to their instance counterpart. */
-	TMap<FTopLevelAssetPath, FTopLevelAssetPath> PathMapping;
-	/** Tags can be used to determine some loading behavior. */
-	TSet<FName> Tags;
-	/** Remap soft object paths */
-	bool bSoftObjectPathRemappingEnabled = true;
+	TSharedPtr<FSharedLinkerInstancingContextData> SharedData;
 };

@@ -55,7 +55,6 @@ void FContentProducerEntry::RemoveProducer()
 {
 	if( UDataprepAssetProducers* AssetProducers = AssetProducersPtr.Get() )
 	{
-		const FScopedTransaction Transaction( LOCTEXT("Producers_RemoveProducer", "Remove Producer") );
 		AssetProducers->RemoveProducer( ProducerIndex );
 	}
 }
@@ -308,7 +307,6 @@ TSharedRef<SWidget> SDataprepProducersWidget::CreateAddProducerMenuWidget()
 	MenuBuilder.BeginSection("AddNewProducer", LOCTEXT("DataprepProducersWidget_AddImports", "Add Producer"));
 	{
 		FUIAction MenuAction;
-		int32 Index = 0;
 
 		// Find content producers the user could use for their data preparation
 		for( TObjectIterator< UClass > It ; It ; ++It )
@@ -319,10 +317,13 @@ TSharedRef<SWidget> SDataprepProducersWidget::CreateAddProducerMenuWidget()
 			{
 				if( CurrentClass->IsChildOf( UDataprepContentProducer::StaticClass() ) )
 				{
-					MenuAction.ExecuteAction.BindSP(this, &SDataprepProducersWidget::OnAddProducer, CurrentClass);
-
 					UDataprepContentProducer* DefaultProducer = CurrentClass->GetDefaultObject<UDataprepContentProducer>();
-					check( DefaultProducer );
+					if (!ensure(DefaultProducer) || !DefaultProducer->IsActive())
+					{
+						continue;
+					}
+
+					MenuAction.ExecuteAction.BindSP(this, &SDataprepProducersWidget::OnAddProducer, CurrentClass);
 
 					MenuBuilder.AddMenuEntry(
 						DefaultProducer->GetLabel(),
@@ -332,8 +333,6 @@ TSharedRef<SWidget> SDataprepProducersWidget::CreateAddProducerMenuWidget()
 						NAME_None,
 						EUserInterfaceActionType::Button
 					);
-
-					++Index;
 				}
 			}
 		}

@@ -18,6 +18,7 @@ bool FNullPlatformApplicationMisc::IsUsingNullApplication()
 #if PLATFORM_WINDOWS || PLATFORM_LINUX
 	static bool bIsRenderingOffScreen = FParse::Param(FCommandLine::Get(), TEXT("RenderOffScreen"));
 	return bIsRenderingOffScreen;
-#endif
+#else
 	return false;
+#endif
 }

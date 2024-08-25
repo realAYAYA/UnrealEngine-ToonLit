@@ -39,15 +39,15 @@ public:
 	UInterchangeAnimSequenceFactoryNode();
 
 	/**
-	 * Initialize node data
-	 * @param UniqueID - The uniqueId for this node
-	 * @param DisplayLabel - The name of the node
+	 * Initialize node data.
+	 * @param UniqueID - The unique ID for this node.
+	 * @param DisplayLabel - The name of the node.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	void InitializeAnimSequenceNode(const FString& UniqueID, const FString& DisplayLabel);
 
 	/**
-	 * Override serialize to restore SlotMaterialDependencies on load.
+	 * Override Serialize() to restore SlotMaterialDependencies on load.
 	 */
 	virtual void Serialize(FArchive& Ar) override
 	{
@@ -64,22 +64,26 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override;
 
+#if WITH_EDITOR
 	virtual FString GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
+	virtual FString GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
+	virtual bool ShouldHideAttribute(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
+#endif //WITH_EDITOR
 
-	/** Get the class this node want to create */
+	/** Get the class this node creates. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	virtual class UClass* GetObjectClass() const override;
 
 public:
-	/** Get the skeleton factory node unique id. Return false if the attribute is not set. */
+	/** Get the unique ID of the skeleton factory node. Return false if the attribute is not set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomSkeletonFactoryNodeUid(FString& AttributeValue) const;
 
-	/** Set the skeleton factory node unique id. Return false if the attribute cannot be set. */
+	/** Set the unique ID of the skeleton factory node. Return false if the attribute cannot be set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomSkeletonFactoryNodeUid(const FString& AttributeValue);
 
@@ -89,15 +93,15 @@ public:
 	 */
 
 	/**
-	 * Get the import bone tracks state. The attribute will be true if we need to import bone tracks.
-	 * False if we do not import bone tracks.
+	 * Get the import bone tracks state. If the attribute is true, bone tracks are imported. If the attribute 
+	 * is false, bone tracks are not imported.
 	 * 
-	 * Note - Return false if the attribute is not set. Return true if the attribute exist and can be query.
+	 * Return false if the attribute is not set. Return true if the attribute exists and can be queried.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomImportBoneTracks(bool& AttributeValue) const;
 
-	/** Set the import bone tracks state. Pass true to import bone tracks, false to not import bone tracks. */
+	/** Set the import bone tracks state. Pass true to import bone tracks, or false to not import bone tracks. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomImportBoneTracks(const bool& AttributeValue);
 
@@ -105,23 +109,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomImportBoneTracksSampleRate(double& AttributeValue) const;
 
-	/** Set the import bone tracks sample rate. Return false if the attribute cannot be set. */
+	/** Set the import bone tracks sample rate. Return false if the attribute could not be set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomImportBoneTracksSampleRate(const double& AttributeValue);
 
-	/** Get the import bone tracks start time in second. Return false if the attribute is not set. */
+	/** Get the import bone tracks start time in seconds. Return false if the attribute is not set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomImportBoneTracksRangeStart(double& AttributeValue) const;
 
-	/** Set the import bone tracks start time in second. Return false if the attribute cannot be set. */
+	/** Set the import bone tracks start time in seconds. Return false if the attribute could not be set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomImportBoneTracksRangeStart(const double& AttributeValue);
 
-	/** Get the import bone tracks end time in second. Return false if the attribute is not set. */
+	/** Get the import bone tracks end time in seconds. Return false if the attribute is not set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomImportBoneTracksRangeStop(double& AttributeValue) const;
 
-	/** Set the import bone tracks end time in second. Return false if the attribute cannot be set. */
+	/** Set the import bone tracks end time in seconds. Return false if the attribute could not be set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomImportBoneTracksRangeStop(const double& AttributeValue);
 
@@ -136,58 +140,57 @@ public:
 
 
 	 /**
-	  * Get the import attribute curves state. If true this mean we want to import all user custom attributes
-	  * we can find on a node.
+	  * Get the import attribute curves state. If true, all user custom attributes on nodes are imported.
 	  * 
 	  * Return false if the attribute is not set.
 	  */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomImportAttributeCurves(bool& AttributeValue) const;
 
-	/** Set the import attribute curves state. Return false if the attribute cannot be set. */
+	/** Set the import attribute curves state. Return false if the attribute could not be set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomImportAttributeCurves(const bool& AttributeValue);
 
 	/**
-	 * Get the custom attribute DoNotImportCurveWithZero, return false if the attribute is not set.
+	 * Get the custom attribute DoNotImportCurveWithZero. Return false if the attribute is not set.
 	 * 
-	 * Note - If value is true, do not import if it doesn't have any value other than zero. This is to avoid adding extra curves to evaluate.
+	 * Note - If this attribute is enabled, only curves that have a value other than zero will be imported. This is to avoid adding extra curves to evaluate.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomDoNotImportCurveWithZero(bool& AttributeValue) const;
 
 	/**
-	 * Set the custom attribute DoNotImportCurveWithZero. Return false if the attribute cannot be set.
+	 * Set the custom attribute DoNotImportCurveWithZero. Return false if the attribute could not be set.
 	 * 
-	 * Note - If value is true, do not import if it doesn't have any value other than zero. This is to avoid adding extra curves to evaluate.
+	 * Note - If this attribute is enabled, only curves that have a value other than zero will be imported. This is to avoid adding extra curves to evaluate.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomDoNotImportCurveWithZero(const bool& AttributeValue);
 
 	/**
-	 * Get the custom attribute AddCurveMetadataToSkeleton, return false if the attribute is not set.
+	 * Get the custom attribute AddCurveMetadataToSkeleton. Return false if the attribute is not set.
 	 * 
-	 * Note - If value is true, do not import if it doesn't have any value other than zero. This is to avoid dirtying the skeleton on import.
+	 * Note - If this setting is disabled, curve metadata will be added to skeletal meshes for morph targets, but no metadata entry will be created for general curves.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomAddCurveMetadataToSkeleton(bool& AttributeValue) const;
 
 	/**
-	 * Set the custom attribute AddCurveMetadataToSkeleton. Return false if the attribute cannot be set.
+	 * Set the custom attribute AddCurveMetadataToSkeleton. Return false if the attribute could not be set.
 	 * 
-	 * Note - If value is true, do not import if it doesn't have any value other than zero. This is to avoid dirtying the skeleton on import.
+	 * Note - If this setting is disabled, curve metadata will be added to skeletal meshes for morph targets, but no metadata entry will be created for general curves.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomAddCurveMetadataToSkeleton(const bool& AttributeValue);
 	
 	/**
-	 * Get the custom attribute RemoveCurveRedundantKeys, return false if the attribute is not set.
+	 * Get the custom attribute RemoveCurveRedundantKeys. Return false if the attribute is not set.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomRemoveCurveRedundantKeys(bool& AttributeValue) const;
 
 	/**
-	 * Set the custom attribute RemoveCurveRedundantKeys. Return false if the attribute cannot be set.
+	 * Set the custom attribute RemoveCurveRedundantKeys. Return false if the attribute could not be set.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomRemoveCurveRedundantKeys(const bool& AttributeValue);
@@ -198,21 +201,21 @@ public:
 	/*********************************************************************************************************
 	 * Morph target curve API Begin
 	 *
-	 * Note - Morpgh target curve payload is FRichCurve.
+	 * Note: Morph target curve payload is FRichCurve.
 	 */
 
 	/**
-	 * Get the custom attribute DeleteExistingMorphTargetCurves, return false if the attribute is not set.
+	 * Get the custom attribute DeleteExistingMorphTargetCurves. Return false if the attribute is not set.
 	 * 
-	 * Note - If true, all previous moprh target curves will be deleted when doing a re-import.
+	 * Note: If true, all previous morph target curves are deleted if you reimport.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomDeleteExistingMorphTargetCurves(bool& AttributeValue) const;
 
 	/**
-	 * Set the custom attribute DeleteExistingMorphTargetCurves. Return false if the attribute cannot be set.
+	 * Set the custom attribute DeleteExistingMorphTargetCurves. Return false if the attribute could not be set.
 	 * 
-	 * Note - If true, all previous moprh target curves will be deleted when doing a re-import.
+	 * Note: If true, all previous morph target curves are deleted if you reimport.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomDeleteExistingMorphTargetCurves(const bool& AttributeValue);
@@ -230,7 +233,7 @@ public:
 	 *        Attribute curves are import has float FRichCurve
 	 */
 
-	 /** Return how many animated attribute curve names this anim sequence drive (curve are FRichCurve of type float). */
+	 /** Return the number of animated attribute curve names this anim sequence drives. Curves are FRichCurve of type float. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	int32 GetAnimatedAttributeCurveNamesCount() const;
 
@@ -238,7 +241,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	void GetAnimatedAttributeCurveNames(TArray<FString>& OutAttributeCurveNames) const;
 
-	/** Get an animated attribute curve name point by the specified index. */
+	/** Get the animated attribute curve name at the specified index. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	void GetAnimatedAttributeCurveName(const int32 Index, FString& OutAttributeCurveName) const;
 
@@ -246,7 +249,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetAnimatedAttributeCurveName(const FString& AttributeCurveName);
 
-	/** Remove one animated attribute curve name. */
+	/** Remove the specified animated attribute curve name. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool RemoveAnimatedAttributeCurveName(const FString& AttributeCurveName);
 
@@ -259,26 +262,26 @@ public:
 	 /*********************************************************************************************************
 	  * Material curve API Begin
 	  *
-	  * Note - Material curve are attribute curve that can animate a material parameter.
+	  * Note - Material curves are attribute curves that can animate a material parameter.
 	  */
 
 	/**
-	 * Get the custom attribute MaterialDriveParameterOnCustomAttribute, return false if the attribute is not set.
+	 * Get the custom attribute MaterialDriveParameterOnCustomAttribute. Return false if the attribute is not set.
 	 *
-	 * Note - If true, Set Material Curve Type for all custom attributes that exists.
+	 * Note: If true, sets Material Curve Type for all custom attributes.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomMaterialDriveParameterOnCustomAttribute(bool& AttributeValue) const;
 
 	/**
-	 * Set the custom attribute MaterialDriveParameterOnCustomAttribute. Return false if the attribute cannot be set.
+	 * Set the custom attribute MaterialDriveParameterOnCustomAttribute. Return false if the attribute could not be set.
 	 *
-	 * Note - If true, Set Material Curve Type for all custom attributes that exists.
+	 * Note: If true, sets Material Curve Type for all custom attributes.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomMaterialDriveParameterOnCustomAttribute(const bool& AttributeValue);
 
-	/** Return how many animated material curve suffixes this anim sequence drive (curve are FRichCurve of type float). */
+	/** Return the number of animated material curve suffixes this anim sequence drives. Curves are FRichCurve of type float. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	int32 GetAnimatedMaterialCurveSuffixesCount() const;
 
@@ -286,15 +289,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	void GetAnimatedMaterialCurveSuffixes(TArray<FString>& OutMaterialCurveSuffixes) const;
 
-	/** Get an animated material curve suffixe point by the specified index. */
+	/** Get the animated material curve suffix with the specified index. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	void GetAnimatedMaterialCurveSuffixe(const int32 Index, FString& OutMaterialCurveSuffixe) const;
 
-	/** Add an animated material curve suffixe. */
+	/** Add an animated material curve suffix. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetAnimatedMaterialCurveSuffixe(const FString& MaterialCurveSuffixe);
 
-	/** Remove one animated material curve suffixe. */
+	/** Remove the specified animated material curve suffix. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool RemoveAnimatedMaterialCurveSuffixe(const FString& MaterialCurveSuffixe);
 
@@ -307,12 +310,12 @@ public:
 	/*********************************************************************************************************
 	 * Attribute step curve API Begin
 	 * 
-	 * Note - Attribute step curve payload information can be retrieve via the UInterchangeUserDefinedAttributesAPI.
-	 *        Attribute step curves are import has a TArray<float> for key time and a TArray<ValueType> for the value.
+	 * Note - Attribute step curve payload information can be retrieved via the UInterchangeUserDefinedAttributesAPI.
+	 *        Imported attribute step curves have a TArray<float> for the key times and a TArray<ValueType> for the values.
 	 *        Supported value type are: int32, float, FString.
 	 */
 
-	 /** Return how many animated attribute step curve names this anim sequence drive. */
+	 /** Return the number of animated attribute step curve names this anim sequence drives. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	int32 GetAnimatedAttributeStepCurveNamesCount() const;
 
@@ -320,7 +323,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	void GetAnimatedAttributeStepCurveNames(TArray<FString>& OutAttributeStepCurveNames) const;
 
-	/** Get an animated attribute step curve name point by the specified index. */
+	/** Get the animated attribute step curve name at the specified index. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	void GetAnimatedAttributeStepCurveName(const int32 Index, FString& OutAttributeStepCurveName) const;
 
@@ -328,7 +331,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetAnimatedAttributeStepCurveName(const FString& AttributeStepCurveName);
 
-	/** Remove one animated attribute step curve name. */
+	/** Remove the specified animated attribute step curve name. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool RemoveAnimatedAttributeStepCurveName(const FString& AttributeStepCurveName);
 
@@ -339,17 +342,17 @@ public:
 
 
 	/**
-	 * Get the custom attribute DeleteExistingCustomAttributeCurves, return false if the attribute is not set.
+	 * Get the custom attribute DeleteExistingCustomAttributeCurves. Return false if the attribute is not set.
 	 * 
-	 * Note - If true, all previous custom attribute curves will be deleted when doing a re-import.
+	 * Note - If true, all previous custom attribute curves are deleted if you reimport.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomDeleteExistingCustomAttributeCurves(bool& AttributeValue) const;
 
 	/**
-	 * Set the custom attribute DeleteExistingCustomAttributeCurves. Return false if the attribute cannot be set.
+	 * Set the custom attribute DeleteExistingCustomAttributeCurves. Return false if the attribute could not be set.
 	 * 
-	 * Note - If true, all previous custom attribute curves will be deleted when doing a re-import.
+	 * Note - If true, all previous custom attribute curves are deleted if you reimport.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomDeleteExistingCustomAttributeCurves(const bool& AttributeValue);
@@ -360,34 +363,34 @@ public:
 
 
 	/**
-	 * Get the custom attribute DeleteExistingNonCurveCustomAttributes, return false if the attribute is not set.
+	 * Get the custom attribute DeleteExistingNonCurveCustomAttributes. Return false if the attribute is not set.
 	 * 
-	 * Note - If true, all previous non-curve custom attributes will be deleted when doing a re-import.
+	 * Note - If true, all previous non-curve custom attributes are deleted if you reimport.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomDeleteExistingNonCurveCustomAttributes(bool& AttributeValue) const;
 
 	/**
-	 * Set the custom attribute DeleteExistingNonCurveCustomAttributes. Return false if the attribute cannot be set.
+	 * Set the custom attribute DeleteExistingNonCurveCustomAttributes. Return false if the attribute could not be set.
 	 * 
-	 * Note - If true, all previous non-curve custom attributes will be deleted when doing a re-import.
+	 * Note - If true, all previous non-curve custom attributes are deleted if you reimport.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomDeleteExistingNonCurveCustomAttributes(const bool& AttributeValue);
 
 	/**
-	 * Query the optional existing USkeleton this anim must use. The anim sequence factory will use this skeleton instead of the imported one
-	 * (from GetCustomSkeletonFactoryNodeUid) if this attribute is set and the skeleton pointer is valid.
-	 * Pipeline set this attribute in case the user want to specify an existing skeleton.
+	 * Query the optional existing USkeleton this animation must use. If this attribute is set and the skeleton is valid, 
+	 * the AnimSequence factory uses this skeleton instead of the one imported from GetCustomSkeletonFactoryNodeUid.
+	 * Pipelines set this attribute when the user wants to specify an existing skeleton.
 	 * Return false if the attribute was not set.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool GetCustomSkeletonSoftObjectPath(FSoftObjectPath& AttributeValue) const;
 
 	/**
-	 * Set the optional existing USkeleton this anim must use. The AnimSequence factory will use this skeleton instead of the imported one
-	 * (from GetCustomSkeletonFactoryNodeUid) if this attribute is set and the skeleton pointer is valid.
-	 * Pipeline set this attribute in case the user want to specify an existing skeleton.
+	 * Set the optional existing USkeleton this animation must use. If this attribute is set and the skeleton is valid, 
+	 * the AnimSequence factory uses this skeleton instead of the one imported from GetCustomSkeletonFactoryNodeUid.
+	 * Pipelines set this attribute when the user wants to specify an existing skeleton.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimSequence")
 	bool SetCustomSkeletonSoftObjectPath(const FSoftObjectPath& AttributeValue);

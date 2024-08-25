@@ -30,6 +30,7 @@
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Input/SComboButton.h"
 #include "ObjectPropertyNode.h"
+#include "PropertyEditorConstants.h"
 
 #include "Math/UnitConversion.h"
 #include "Widgets/Input/NumericUnitTypeInterface.inl"
@@ -61,7 +62,7 @@ public:
 		{
 			auto CreateBitmaskFlagsArray = [PropertyHandle]()
 			{
-				const int32 BitmaskBitCount = sizeof(NumericType) << 3;
+				constexpr int32 BitmaskBitCount = sizeof(NumericType) << 3;
 
 				TArray<FBitmaskFlagInfo> Result;
 				Result.Empty(BitmaskBitCount);
@@ -78,8 +79,8 @@ public:
 				{
 					const TMap<FName, FText> EnumValueDisplayNameOverrides = PropertyEditorHelpers::GetEnumValueDisplayNamesFromPropertyOverride(PropertyHandle->GetProperty(), BitmaskEnum);
 
-					const bool bUseEnumValuessAsMaskValues = BitmaskEnum->GetBoolMetaData(PropertyEditorConstants::MD_UseEnumValuesAsMaskValuesInEditor);
-					auto AddNewBitmaskFlagLambda = [BitmaskEnum, &Result, &EnumValueDisplayNameOverrides](int32 InEnumIndex, int64 InFlagValue)
+					const bool bUseEnumValuesAsMaskValues = BitmaskEnum->GetBoolMetaData(PropertyEditorConstants::MD_UseEnumValuesAsMaskValuesInEditor);
+					auto AddNewBitmaskFlagLambda = [BitmaskEnum, &Result, &EnumValueDisplayNameOverrides](int32 InEnumIndex, NumericType InFlagValue)
 					{
 						Result.Emplace();
 						FBitmaskFlagInfo* BitmaskFlag = &Result.Last();
@@ -102,7 +103,6 @@ public:
 					// Note: This loop doesn't include (BitflagsEnum->NumEnums() - 1) in order to skip the implicit "MAX" value that gets added to the enum type at compile time.
 					for (int32 BitmaskEnumIndex = 0; BitmaskEnumIndex < BitmaskEnum->NumEnums() - 1; ++BitmaskEnumIndex)
 					{
-						const int64 EnumValue = BitmaskEnum->GetValueByIndex(BitmaskEnumIndex);
 						bool bShouldBeHidden = BitmaskEnum->HasMetaData(TEXT("Hidden"), BitmaskEnumIndex);
 						if (!bShouldBeHidden)
 						{
@@ -116,11 +116,15 @@ public:
 								bShouldBeHidden = DisallowedPropertyEnums.Find(BitmaskEnum->GetNameByIndex(BitmaskEnumIndex)) != INDEX_NONE;
 							}
 						}
+
+						const int64 EnumValue64 = BitmaskEnum->GetValueByIndex(BitmaskEnumIndex);
+						const NumericType EnumValue = static_cast<NumericType>(EnumValue64);
+
 						if (EnumValue >= 0 && !bShouldBeHidden)
 						{
-							if (bUseEnumValuessAsMaskValues)
+							if (bUseEnumValuesAsMaskValues)
 							{
-								if (EnumValue < MAX_int64 && FMath::IsPowerOfTwo(EnumValue))
+								if (EnumValue64 < static_cast<int64>(TNumericLimits<NumericType>::Max()) &&FMath::IsPowerOfTwo(EnumValue64))
 								{
 									AddNewBitmaskFlagLambda(BitmaskEnumIndex, EnumValue);
 								}
@@ -183,7 +187,7 @@ public:
 				}
 				else
 				{
-					return LOCTEXT("MultipleValues", "Multiple Values");
+					return PropertyEditorConstants::DefaultUndeterminedText;
 				}
 			};
 
@@ -345,7 +349,7 @@ public:
 				.LinearDeltaSensitivity(NumericPropertyParams.GetLinearDeltaSensitivityAttribute())
 				.AllowWheel(bAllowSpin)
 				.WheelStep(NumericPropertyParams.WheelStep)
-				.UndeterminedString(LOCTEXT("MultipleValues", "Multiple Values"))
+				.UndeterminedString(PropertyEditorConstants::DefaultUndeterminedText)
 				.OnValueChanged(this, &SPropertyEditorNumeric<NumericType>::OnValueChanged)
 				.OnValueCommitted(this, &SPropertyEditorNumeric<NumericType>::OnValueCommitted)
 				.OnUndeterminedValueCommitted(this, &SPropertyEditorNumeric<NumericType>::OnUndeterminedValueCommitted)
@@ -505,7 +509,7 @@ private:
 			EPropertyValueSetFlags::Type Flags = (EPropertyValueSetFlags::InteractiveChange | EPropertyValueSetFlags::NotTransactable);
 			PropertyHandle->SetValue( NewValue, Flags );
 
-			if (TypeInterface.IsValid() && !TypeInterface->FixedDisplayUnits.IsSet())
+			if (TypeInterface.IsValid())
 			{
 				TypeInterface->SetupFixedDisplay(NewValue);
 			}
@@ -527,7 +531,7 @@ private:
 				LastSliderCommittedValue = NewValue;
 			}
 
-			if (TypeInterface.IsValid() && !TypeInterface->FixedDisplayUnits.IsSet())
+			if (TypeInterface.IsValid())
 			{
 				TypeInterface->SetupFixedDisplay(NewValue);
 			}
@@ -547,7 +551,8 @@ private:
 		{
 			NumericType OldNumericValue;
 			TTypeFromString<NumericType>::FromString(OldNumericValue, *Value);
-			TOptional<NumericType> NewNumericValue = TypeInterface->FromString(NewValueString, OldNumericValue);
+			const FString ReplacedNewValueString = NewValueString.Replace(*PropertyEditorConstants::DefaultUndeterminedText.ToString(), *Value);
+			TOptional<NumericType> NewNumericValue = TypeInterface->FromString(ReplacedNewValueString, OldNumericValue);
 
 			if (NewNumericValue.IsSet())
 			{

@@ -298,6 +298,16 @@ public:
 	ENGINE_API void RecursiveFindAttenuation(USoundNode* Node, TArray<USoundNodeAttenuation*> &OutNodes);
 	ENGINE_API void RecursiveFindAttenuation(const USoundNode* Node, TArray<const USoundNodeAttenuation*>& OutNodes) const;
 
+	/**
+	 * For SoundCues, use this instead of GetAttenuationSettingsToApply() -> Evaluate
+	 * 
+	 * In cases where a SoundCue has multiple Attenuation nodes within it, 
+	 * this function evaluates them all and returns the maximum value
+	 * 
+	 * @return float representing the max evaluated attenuation curve value based on distance from Origin to Location (will be 1.0 if no attenuation is set)
+	 */
+	ENGINE_API float EvaluateMaxAttenuation(const FTransform& Origin, FVector Location, float DistanceScale = 1.f) const;
+
 #if WITH_EDITOR
 	/** Create the basic sound graph */
 	ENGINE_API void CreateGraph();

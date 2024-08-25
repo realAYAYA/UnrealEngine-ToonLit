@@ -107,6 +107,16 @@ uint16 UBTDecorator_Loop::GetInstanceMemorySize() const
 	return sizeof(FBTLoopDecoratorMemory);
 }
 
+void UBTDecorator_Loop::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTLoopDecoratorMemory>(NodeMemory, InitType);
+}
+
+void UBTDecorator_Loop::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTLoopDecoratorMemory>(NodeMemory, CleanupType);
+}
+
 #if WITH_EDITOR
 
 FName UBTDecorator_Loop::GetNodeIconName() const

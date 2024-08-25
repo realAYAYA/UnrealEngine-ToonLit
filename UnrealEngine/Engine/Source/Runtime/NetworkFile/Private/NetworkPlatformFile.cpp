@@ -32,6 +32,18 @@ FString FNetworkPlatformFile::BulkFileExtension = TEXT(".ubulk");
 FString FNetworkPlatformFile::ExpFileExtension = TEXT(".uexp");
 FString FNetworkPlatformFile::FontFileExtension = TEXT(".ufont");
 
+// These are marked unsafe because they do not work with Programs. However, COTF is unlikely to be used with Programs
+// These are also temporary until some issues can be debugged
+static FString UnsafeEnginePlatformExtensionDir()
+{
+	return FPaths::EnginePlatformExtensionDir(TEXT("")).TrimChar('/');
+}
+
+static FString UnsafeProjectPlatformExtensionDir()
+{
+	return FPaths::ProjectPlatformExtensionDir(TEXT("")).TrimChar('/');
+}
+
 FNetworkPlatformFile::FNetworkPlatformFile()
 	: bHasLoadedDDCDirectories(false)
 	, InnerPlatformFile(NULL)
@@ -156,8 +168,15 @@ bool FNetworkPlatformFile::SendPayloadAndReceiveResponse(TArray<uint8>& In, TArr
 	}
 
 	TUniquePtr<FArchive> ResponsePayload = Response.ReadBody();
-	Out.SetNum(ResponsePayload->TotalSize());
-	ResponsePayload->Serialize(Out.GetData(), ResponsePayload->TotalSize());
+	
+	if (!IntFitsIn<int32, int64>(ResponsePayload->TotalSize()))
+	{
+		UE_LOG(LogCookOnTheFly, Warning, TEXT("Failed to parse 'CookOnTheFlyResponse' because the payload was too large"));
+		return false;
+	}
+	
+	Out.SetNum(static_cast<int32>(ResponsePayload->TotalSize()));
+	ResponsePayload->Serialize(Out.GetData(), Out.Num());
 	return true;
 }
 
@@ -170,8 +189,15 @@ void FNetworkPlatformFile::OnCookOnTheFlyMessage(const UE::Cook::FCookOnTheFlyMe
 	{
 		TUniquePtr<FArchive> PayloadReader = Message.ReadBody();
 		TArray<uint8> Payload;
-		Payload.SetNum(PayloadReader->TotalSize());
-		PayloadReader->Serialize(Payload.GetData(), PayloadReader->TotalSize());
+
+		if (!IntFitsIn<int32, int64>(PayloadReader->TotalSize()))
+		{
+			UE_LOG(LogCookOnTheFly, Warning, TEXT("Failed to parse 'CookOnTheFlyMessage' because the payload was too large"));
+			return;
+		}
+
+		Payload.SetNum(static_cast<int32>(PayloadReader->TotalSize()));
+		PayloadReader->Serialize(Payload.GetData(), Payload.Num());
 		PendingPayloads.Enqueue(MoveTemp(Payload));
 		NewPayloadEvent->Trigger();
 	}
@@ -555,7 +581,7 @@ bool FNetworkPlatformFile::IterateDirectory(const TCHAR* InDirectory, IPlatformF
 				bool bIsDirectory = It.Value() == 0;
 			
 				// visit (stripping off the path if needed)
-				RetVal = Visitor.Visit(bHadNoPath ? *FPaths::GetCleanFilename(It.Key()) : *It.Key(), bIsDirectory);
+				RetVal = Visitor.CallShouldVisitAndVisit(bHadNoPath ? *FPaths::GetCleanFilename(It.Key()) : *It.Key(), bIsDirectory);
 			}
 		}
 	}
@@ -592,7 +618,7 @@ bool FNetworkPlatformFile::IterateDirectoryRecursively(const TCHAR* InDirectory,
 				bool bIsDirectory = It.Value() == 0;
 
 				// visit!
-				RetVal = Visitor.Visit(*It.Key(), bIsDirectory);
+				RetVal = Visitor.CallShouldVisitAndVisit(*It.Key(), bIsDirectory);
 			}
 		}
 	}
@@ -641,7 +667,7 @@ bool FNetworkPlatformFile::IterateDirectoryStat(const TCHAR* InDirectory, IPlatf
 					);
 
 				// visit (stripping off the path if needed)
-				RetVal = Visitor.Visit(bHadNoPath ? *FPaths::GetCleanFilename(It.Key()) : *It.Key(), StatData);
+				RetVal = Visitor.CallShouldVisitAndVisit(bHadNoPath ? *FPaths::GetCleanFilename(It.Key()) : *It.Key(), StatData);
 			}
 		}
 	}
@@ -688,7 +714,7 @@ bool FNetworkPlatformFile::IterateDirectoryStatRecursively(const TCHAR* InDirect
 					);
 
 				// visit!
-				RetVal = Visitor.Visit(*It.Key(), StatData);
+				RetVal = Visitor.CallShouldVisitAndVisit(*It.Key(), StatData);
 			}
 		}
 	}
@@ -798,8 +824,8 @@ void FNetworkPlatformFile::FillGetFileList(FNetworkFileArchive& Payload)
 	FString EngineRelPluginPath = FPaths::EnginePluginsDir();
 	FString GameRelPath = FPaths::ProjectDir();
 	FString GameRelPluginPath = FPaths::ProjectPluginsDir();
-	FString EnginePlatformExtensionsDir = FPaths::EnginePlatformExtensionsDir();
-	FString ProjectPlatformExtensionsDir = FPaths::ProjectPlatformExtensionsDir();
+	FString EnginePlatformExtensionsDir = UnsafeEnginePlatformExtensionDir();
+	FString ProjectPlatformExtensionsDir = UnsafeProjectPlatformExtensionDir();
 
 	TArray<FString> Directories;
 	Directories.Add(EngineRelPath);
@@ -846,9 +872,9 @@ void FNetworkPlatformFile::ProcessServerInitialResponse(FArrayReader& InResponse
 	UE_LOG(LogNetworkPlatformFile, Display, TEXT("    Server ProjectDir     = %s"), *ServerProjectDir);
 	UE_LOG(LogNetworkPlatformFile, Display, TEXT("     Local ProjectDir     = %s"), *FPaths::ProjectDir());
 	UE_LOG(LogNetworkPlatformFile, Display, TEXT("    Server EnginePlatformExtDir = %s"), *ServerEnginePlatformExtensionsDir);
-	UE_LOG(LogNetworkPlatformFile, Display, TEXT("     Local EnginePlatformExtDir = %s"), *FPaths::EnginePlatformExtensionsDir());
+	UE_LOG(LogNetworkPlatformFile, Display, TEXT("     Local EnginePlatformExtDir = %s"), *UnsafeEnginePlatformExtensionDir());
 	UE_LOG(LogNetworkPlatformFile, Display, TEXT("    Server ProjectPlatformExtDir = %s"), *ServerProjectPlatformExtensionsDir);
-	UE_LOG(LogNetworkPlatformFile, Display, TEXT("     Local ProjectPlatformExtDir = %s"), *FPaths::ProjectPlatformExtensionsDir());
+	UE_LOG(LogNetworkPlatformFile, Display, TEXT("     Local ProjectPlatformExtDir = %s"), *UnsafeProjectPlatformExtensionDir());
 
 	// Receive a list of files and their timestamps.
 	TMap<FString, FDateTime> ServerFileMap;
@@ -1479,11 +1505,11 @@ void FNetworkPlatformFile::ConvertServerFilenameToClientFilename(FString& Filena
 	}
 	else if (FilenameToConvert.StartsWith(InServerEnginePlatformExtensionsDir))
 	{
-		FilenameToConvert = FilenameToConvert.Replace(*InServerEnginePlatformExtensionsDir, *(FPaths::EnginePlatformExtensionsDir()));
+		FilenameToConvert = FilenameToConvert.Replace(*InServerEnginePlatformExtensionsDir, *(UnsafeEnginePlatformExtensionDir()));
 	}
 	else if (FilenameToConvert.StartsWith(InServerProjectPlatformExtensionsDir))
 	{
-		FilenameToConvert = FilenameToConvert.Replace(*InServerProjectPlatformExtensionsDir, *(FPaths::ProjectPlatformExtensionsDir()));
+		FilenameToConvert = FilenameToConvert.Replace(*InServerProjectPlatformExtensionsDir, *(UnsafeProjectPlatformExtensionDir()));
 	}
 }
 

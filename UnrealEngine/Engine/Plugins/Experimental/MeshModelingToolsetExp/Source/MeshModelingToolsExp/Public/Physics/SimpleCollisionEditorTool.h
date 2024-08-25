@@ -18,6 +18,8 @@ class MESHMODELINGTOOLSEXP_API USimpleCollisionEditorToolBuilder : public USingl
 	GENERATED_BODY()
 
 public:
+	virtual bool CanBuildTool(const FToolBuilderState& SceneState) const override;
+
 	virtual USingleSelectionMeshEditingTool* CreateNewTool(const FToolBuilderState& SceneState) const override;
 
 protected:
@@ -94,7 +96,7 @@ public:
  * Simple Collision Editing tool for updating the simple collision geometry on meshes
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API USimpleCollisionEditorTool : public USingleSelectionMeshEditingTool
+class MESHMODELINGTOOLSEXP_API USimpleCollisionEditorTool : public USingleSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 public:
@@ -109,6 +111,12 @@ public:
 	virtual bool HasCancel() const override { return true; }
 	virtual bool HasAccept() const override { return true; }
 	virtual bool CanAccept() const override { return true; }
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 

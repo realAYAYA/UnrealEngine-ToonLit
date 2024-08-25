@@ -112,8 +112,6 @@ FBlueprintDebuggerImpl::~FBlueprintDebuggerImpl()
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(FBlueprintEditorTabs::BlueprintDebuggerID);
 	}
 
-	const IWorkspaceMenuStructure& MenuStructure = WorkspaceMenu::GetMenuStructure();
-
 	if (DebuggingToolsTabManager.IsValid())
 	{
 		FGlobalTabmanager::Get()->UnregisterTabSpawner(FBlueprintEditorTabs::BlueprintDebuggerID);

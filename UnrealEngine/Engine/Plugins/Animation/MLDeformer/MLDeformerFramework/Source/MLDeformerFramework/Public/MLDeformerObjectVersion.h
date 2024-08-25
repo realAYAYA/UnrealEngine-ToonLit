@@ -16,6 +16,9 @@ namespace UE::MLDeformer
 			// Before any version changes were made.
 			BeforeCustomVersionWasAdded,
 
+			// We added LOD support.
+			LODSupportAdded,
+
 			// ----- New versions can be added above this line -----
 			VersionPlusOne,
 			LatestVersion = VersionPlusOne - 1

@@ -16,7 +16,8 @@ namespace UnrealBuildTool.Rules
 			PublicDependencyModuleNames.AddRange(
 				new string[] {
 					"Settings", 
-					"Engine"
+					"Engine", 
+					"MutableRuntime"
 				});
 			
 			PrivateDependencyModuleNames.AddRange(
@@ -28,6 +29,8 @@ namespace UnrealBuildTool.Rules
 					
 					"DataValidation",
 					"CustomizableObject", 
+					"CustomizableObjectEditor", 
+					"MutableTools",
 				}
 			);
 		}

@@ -179,6 +179,7 @@ void SDockingTabStack::Construct( const FArguments& InArgs, const TSharedRef<FTa
 				.BorderImage(this, &SDockingTabStack::GetContentAreaBrush)
 				.Padding(this, &SDockingTabStack::GetContentPadding)
 				.Clipping(EWidgetClipping::ClipToBounds)
+				.IsEnabled(this, &SDockingTabStack::IsContentEnabled)
 				[
 					SNew(STextBlock)
 					.Text(LOCTEXT("EmptyTabMessage", "Empty Tab!"))
@@ -865,36 +866,56 @@ void SDockingTabStack::ClearReservedSpace()
 
 void SDockingTabStack::ReserveSpaceForWindowChrome(EChromeElement Element, bool bIncludePaddingForMenuBar, bool bOnlyMinorTabs)
 {
-	#if PLATFORM_MAC
-		static const FMargin ControlsPadding = FMargin(64, 0, 0, 0);
-		static const FMargin IconPadding = FMargin(0);
-	#else
-		static const float TopPaddingForMenuBar = 27.0f;
-		static const float LeftPaddingForIcon = FSlateApplication::Get().GetAppIcon()->GetImageSize().X;
-		const FMargin ControlsPadding = FMargin(8.f, bIncludePaddingForMenuBar ? TopPaddingForMenuBar : 5.f, 0.f, 0.f);
-		// If we are including top padding for the menu bar we do not need to pad the left side since we will be below the left icon
-		const FMargin IconPadding = FMargin(bIncludePaddingForMenuBar ? LeftPaddingForIcon + 12.f : 25.f, bOnlyMinorTabs ? 5.f : 0.f, 0.f, 0.f);
-	#endif
+	FMargin ControlsPadding;
+	FMargin IconPadding;
+
+#if PLATFORM_MAC
+	if (bIncludePaddingForMenuBar)
+	{
+		static const float TopPaddingForTrafficLightsAndMenuBar = 30.0f;
+		// Always add padding on top, because on the Mac there is always either a main menu bar or the "traffic light" buttons (close, minimize, and maximize) above controls.
+		// Always add padding to the left, because on the Mac there's no Unreal icon to the left of controls, only the window edge, so we need some space.
+		ControlsPadding = FMargin(8.0f, TopPaddingForTrafficLightsAndMenuBar, 0, 0);
+	}
+	else
+	{
+		// Without a main menu bar in the title bar, we just need to pad on the left to avoid overlapping with the "traffic light" buttons (close, minimize, and maximize).
+		ControlsPadding = FMargin(67.0f, 0, 0, 0);
+	}
+#else
+	static const float TopPaddingForMenuBar = 25.0f;
+
+	static const float LeftPaddingForIcon = FSlateApplication::Get().GetAppIcon()->GetImageSize().X;
+	// If we are including top padding for the menu bar we do not need to pad the outer sides since we will be below the left icon and the right controls.
+	if (bIncludePaddingForMenuBar)
+	{
+		ControlsPadding = FMargin(8.f, TopPaddingForMenuBar, 0.f, 0.f);
+		IconPadding = FMargin(LeftPaddingForIcon + 12.f, bOnlyMinorTabs ? 5.f : 0.f, 0.f, 0.f);
+	}
+	else
+	{
+		ControlsPadding = FMargin(8.f, 2.f, 128.f, 0.f);
+		IconPadding = FMargin(25.f, bOnlyMinorTabs ? 5.f : 0.f, 0.f, 0.f);
+	}
+#endif
 
 	bShowingTitleBarArea = true;
 	const FMargin CurrentPadding = TitleBarSlot->GetPadding();
 	switch (Element)
 	{
-	case EChromeElement::Controls:
-		TitleBarSlot->SetPadding(CurrentPadding + ControlsPadding);
-		break;
+		case EChromeElement::Controls:
+			TitleBarSlot->SetPadding(CurrentPadding + ControlsPadding);
+			break;
 
-	case EChromeElement::Icon:
-		TitleBarSlot->SetPadding(CurrentPadding + IconPadding);
-		break;
+		case EChromeElement::Icon:
+			TitleBarSlot->SetPadding(CurrentPadding + IconPadding);
+			break;
 
-	default:
-		ensure(false);
-		break;
+		default:
+			ensure(false);
+			break;
 	}
 }
-
-
 
 TSharedRef< SDockingTabStack > SDockingTabStack::CreateNewTabStackBySplitting( const SDockingNode::RelativeDirection Direction )
 {
@@ -910,16 +931,30 @@ TSharedRef< SDockingTabStack > SDockingTabStack::CreateNewTabStackBySplitting( c
 	return NewStack;
 }
 
-
 void SDockingTabStack::SetParentNode( TSharedRef<class SDockingSplitter> InParent )
 {
 	SDockingNode::SetParentNode(InParent);
 
-	// OK, if this docking area has a parent window, we'll assume the window was created with no title bar, and we'll
-	// place the title bar widgets into our content instead!
-	const TSharedPtr<SDockingArea>& DockArea = GetDockArea();
-
 	TitleBarSlot->AttachWidget(TitleBarContent.ToSharedRef());
+}
+
+bool SDockingTabStack::IsContentEnabled() const
+{
+	TSharedRef<FTabManager> TabManager = GetDockArea()->GetTabManager();
+
+	if(!TabManager->IsReadOnly())
+	{
+		return true;
+	}
+
+	// If we are in read only mode, and the foreground tab desires custom behavior (i.e not hidden or disabled) it is enabled
+	// and the tab owner is responsible for handling the content in read only mode
+	if(TSharedPtr<SDockTab> ForegroundTab = TabWell->GetForegroundTab())
+	{
+		return TabManager->GetTabReadOnlyBehavior(ForegroundTab->GetLayoutIdentifier()) == ETabReadOnlyBehavior::Custom;
+	}
+
+	return true;
 }
 
 
@@ -1153,6 +1188,12 @@ SSplitter::ESizeRule SDockingTabStack::GetSizeRule() const
 
 void SDockingTabStack::SetTabWellHidden( bool bShouldHideTabWell )
 {
+	// If the tab well is already hidden or visible, don't replay the animations.
+	if ( (bShouldHideTabWell && IsTabWellHidden()) || (!bShouldHideTabWell && !IsTabWellHidden()))
+	{
+		return;
+	}
+	
 	if (bShouldHideTabWell)
 	{
 		ShowHideTabWell.PlayReverse( this->AsShared() );
@@ -1276,7 +1317,10 @@ int32 SDockingTabStack::ClosePersistentTab( const FTabId& TabId )
 void SDockingTabStack::RemovePersistentTab( const FTabId& TabId )
 {
 	const int32 TabIndex = Tabs.IndexOfByPredicate(FTabMatcher(TabId));
-	Tabs.RemoveAtSwap(TabIndex);
+	if(TabIndex != INDEX_NONE)
+	{
+		Tabs.RemoveAtSwap(TabIndex);
+	}
 }
 
 EVisibility SDockingTabStack::GetMaximizeSpacerVisibility() const
@@ -1322,6 +1366,7 @@ void SDockingTabStack::BindTabCommands()
 	const FTabCommands& Commands = FTabCommands::Get();
 	ActionList->MapAction(Commands.CloseMajorTab, FExecuteAction::CreateSP(this, &SDockingTabStack::ExecuteCloseMajorTabCommand), FCanExecuteAction::CreateSP(this, &SDockingTabStack::CanExecuteCloseMajorTabCommand));
 	ActionList->MapAction(Commands.CloseMinorTab, FExecuteAction::CreateSP(this, &SDockingTabStack::ExecuteCloseMinorTabCommand), FCanExecuteAction::CreateSP(this, &SDockingTabStack::CanExecuteCloseMinorTabCommand));
+	ActionList->MapAction(Commands.CloseFocusedTab, FExecuteAction::CreateSP(this, &SDockingTabStack::ExecuteCloseFocusedTabCommand), FCanExecuteAction::CreateSP(this, &SDockingTabStack::CanExecuteCloseFocusedTabCommand));
 }
 
 void SDockingTabStack::ExecuteCloseMajorTabCommand()
@@ -1365,6 +1410,23 @@ bool SDockingTabStack::CanExecuteCloseMinorTabCommand()
 		}
 	}
 	return false;
+}
+
+void SDockingTabStack::ExecuteCloseFocusedTabCommand()
+{
+	if (CanExecuteCloseMinorTabCommand())
+	{
+		ExecuteCloseMinorTabCommand();
+	}
+	else
+	{
+		ExecuteCloseMajorTabCommand();
+	}
+}
+
+bool SDockingTabStack::CanExecuteCloseFocusedTabCommand()
+{
+	return CanExecuteCloseMinorTabCommand() || CanExecuteCloseMajorTabCommand();
 }
 
 void SDockingTabStack::OnResized()

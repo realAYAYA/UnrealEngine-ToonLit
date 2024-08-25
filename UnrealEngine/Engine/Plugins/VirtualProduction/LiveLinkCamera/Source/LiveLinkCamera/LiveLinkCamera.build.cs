@@ -19,5 +19,12 @@ public class LiveLinkCamera : ModuleRules
 				"LiveLinkComponents",
 			}
 		);
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"LensComponent",
+			}
+		);
 	}
 }

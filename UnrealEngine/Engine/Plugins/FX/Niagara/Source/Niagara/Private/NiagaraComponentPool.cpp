@@ -89,7 +89,7 @@ UNiagaraComponent* FNCPool::Acquire(UWorld* World, UNiagaraSystem* Template, ENC
 	FNCPoolElement RetElem;
 	while (FreeElements.Num() && !bForceNew)//Loop until we pop a valid free element or we're empty.
 	{
-		RetElem = FreeElements.Pop(false);
+		RetElem = FreeElements.Pop(EAllowShrinking::No);
 		if (!RetElem.Component || !IsValidChecked(RetElem.Component))
 		{			
 			// Possible someone still has a reference to our NC and destroyed it while it was sat in the pool. Or possibly a teardown edgecase path that is GCing components from the pool be
@@ -176,7 +176,7 @@ bool FNCPool::RemoveComponent(UNiagaraComponent* Component)
 	{
 		if (FreeElements[i].Component == Component)
 		{
-			FreeElements.RemoveAtSwap(i, 1, false);
+			FreeElements.RemoveAtSwap(i, 1, EAllowShrinking::No);
 			return true;
 		}
 		++i;
@@ -202,7 +202,7 @@ void FNCPool::KillUnusedComponents(double KillTime, UNiagaraSystem* Template)
 				Component->DestroyComponent();
 			}
 
-			FreeElements.RemoveAtSwap(i, 1, false);
+			FreeElements.RemoveAtSwap(i, 1, EAllowShrinking::No);
 		}
 		else
 		{
@@ -461,16 +461,8 @@ void UNiagaraComponentPool::ReclaimWorldParticleSystem(UNiagaraComponent* Compon
 				Pair.Value.KillUnusedComponents(CurrentTime - GNiagaraSystemPoolKillUnusedTime, Asset);
 			}
 		}
-		
-		FNCPool* NCPool = WorldParticleSystemPools.Find(Asset);
-		if (!NCPool)
-		{
-			UE_LOG(LogNiagara, Warning, TEXT("WorldNC Pool trying to reclaim a system for which it doesn't have a pool! Likely because SetAsset() has been called on this NC. | World: %p | NC: %p | Sys: %s"), Component->GetWorld(), Component, *Component->GetAsset()->GetFullName());
-			//Just add the new pool and reclaim to that one.
-			NCPool = &WorldParticleSystemPools.Add(Asset);
-		}
 
-	#if ENABLE_NC_POOL_DEBUGGING
+#if ENABLE_NC_POOL_DEBUGGING
 		bool bWasInList = false;
 		if (Component->PoolingMethod == ENCPoolMethod::AutoRelease)
 		{
@@ -485,11 +477,30 @@ void UNiagaraComponentPool::ReclaimWorldParticleSystem(UNiagaraComponent* Compon
 		{
 			UE_LOG(LogNiagara, Error, TEXT("World Niagara System Pool is reclaiming a component that is not in it's InUse list!"));
 		}
-	#endif
+#else
+		constexpr bool bWasInList = false;
+#endif
+
+		FNCPool* NCPool = WorldParticleSystemPools.Find(Asset);
+		if (!NCPool)
+		{
+			// We only need to warn if it was in the in use list
+			// When in the editor update context's can clear out the existing pools so this will fire incorrectly.
+			if (!bWasInList)
+			{
+				UE_LOG(LogNiagara, Warning, TEXT("WorldNC Pool trying to reclaim a system for which it doesn't have a pool! Likely because SetAsset() has been called on this NC. | World: %p | NC: %p | Sys: %s"), Component->GetWorld(), Component, *Component->GetAsset()->GetFullName());
+			}
+
+			//Just add the new pool and reclaim to that one.
+			NCPool = &WorldParticleSystemPools.Add(Asset);
+		}
+
 		NCPool->Reclaim(Component, CurrentTime);
 	}
 	else
 	{
+		// We've stopped pooling while some effects were in flight so ensure they're destroyed now.
+		Component->PoolingMethod = ENCPoolMethod::None;
 		Component->DestroyComponent();
 	}
 }

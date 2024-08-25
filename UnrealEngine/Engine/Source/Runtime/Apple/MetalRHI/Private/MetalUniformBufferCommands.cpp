@@ -35,20 +35,27 @@ void FMetalDynamicRHI::RHIUpdateUniformBuffer(FRHICommandListBase& RHICmdList, F
 template<EMetalShaderStages Stage, typename RHIShaderType>
 static void SetUniformBufferInternal(FMetalContext* Context, RHIShaderType* ShaderRHI, uint32 BufferIndex, FRHIUniformBuffer* UBRHI)
 {
-    @autoreleasepool
-    {
-        auto Shader = ResourceCast(ShaderRHI);
-        Context->GetCurrentState().BindUniformBuffer(Stage, BufferIndex, UBRHI);
+    MTL_SCOPED_AUTORELEASE_POOL;
+
+    auto Shader = ResourceCast(ShaderRHI);
+    Context->GetCurrentState().BindUniformBuffer(Stage, BufferIndex, UBRHI);
         
-        auto& Bindings = Shader->Bindings;
-        if((Bindings.ConstantBuffers) & (1 << BufferIndex))
-        {
-            FMetalUniformBuffer* UB = ResourceCast(UBRHI);
-            UB->PrepareToBind();
-            
-            FMetalBuffer Buf(UB->Backing, ns::Ownership::AutoRelease);
-            Context->GetCurrentState().SetShaderBuffer(Stage, Buf, nil, UB->Offset, UB->GetSize(), BufferIndex, mtlpp::ResourceUsage::Read);
-        }
+    auto& Bindings = Shader->Bindings;
+    if((Bindings.ConstantBuffers) & (1 << BufferIndex))
+    {
+        FMetalUniformBuffer* UB = ResourceCast(UBRHI);
+        UB->PrepareToBind();
+#if METAL_USE_METAL_SHADER_CONVERTER
+		if(IsMetalBindlessEnabled())
+		{
+			Context->GetCurrentState().IRBindUniformBuffer(Stage, BufferIndex, UB);
+		}
+		else
+#endif
+		{
+			FMetalBufferPtr Buf = FMetalBufferPtr(new FMetalBuffer(UB->Backing));
+			Context->GetCurrentState().SetShaderBuffer(Stage, Buf, nullptr, UB->Offset, UB->GetSize(), BufferIndex, MTL::ResourceUsageRead);
+		}
     }
 }
 
@@ -61,12 +68,26 @@ void FMetalRHICommandContext::RHISetShaderUniformBuffer(FRHIGraphicsShader* Shad
 			break;
 
 		case SF_Geometry:
+#if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+            SetUniformBufferInternal<EMetalShaderStages::Geometry, FRHIGeometryShader>(Context, static_cast<FRHIGeometryShader*>(Shader), BufferIndex, Buffer);
+#else
 			NOT_SUPPORTED("RHISetShaderUniformBuffer-Geometry");
+#endif
 			break;
 
 		case SF_Pixel:
 			SetUniformBufferInternal<EMetalShaderStages::Pixel, FRHIPixelShader>(Context, static_cast<FRHIPixelShader*>(Shader), BufferIndex, Buffer);
 			break;
+
+#if PLATFORM_SUPPORTS_MESH_SHADERS
+        case SF_Mesh:
+            SetUniformBufferInternal<EMetalShaderStages::Mesh, FRHIMeshShader>(Context, static_cast<FRHIMeshShader*>(Shader), BufferIndex, Buffer);
+            break;
+
+        case SF_Amplification:
+            SetUniformBufferInternal<EMetalShaderStages::Amplification, FRHIAmplificationShader>(Context, static_cast<FRHIAmplificationShader*>(Shader), BufferIndex, Buffer);
+            break;
+#endif
 
 		default:
 			checkf(0, TEXT("FRHIShader Type %d is invalid or unsupported!"), (int32)Shader->GetFrequency());

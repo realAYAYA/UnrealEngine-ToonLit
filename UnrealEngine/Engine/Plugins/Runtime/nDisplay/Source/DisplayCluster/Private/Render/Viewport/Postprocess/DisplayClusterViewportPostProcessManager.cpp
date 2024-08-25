@@ -1,26 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Render/Viewport/Postprocess/DisplayClusterViewportPostProcessManager.h"
+#include "Render/Viewport/Postprocess/DisplayClusterViewportPostProcessOutputRemap.h"
+#include "Render/Viewport/DisplayClusterViewportManager.h"
+#include "Render/Viewport/DisplayClusterViewportManagerProxy.h"
+#include "Render/Viewport/DisplayClusterViewportProxy.h"
+#include "Render/Viewport/Configuration/DisplayClusterViewportConfiguration.h"
+#include "Render/PostProcess/IDisplayClusterPostProcessFactory.h"
+#include "Render/IPDisplayClusterRenderManager.h"
+#include "Render/IDisplayClusterRenderManager.h"
+#include "DisplayClusterConfigurationTypes.h"
 
 #include "Misc/DisplayClusterHelpers.h"
 #include "Misc/DisplayClusterLog.h"
-
-#include "HAL/IConsoleManager.h"
-
-#include "Render/IPDisplayClusterRenderManager.h"
-#include "Render/IDisplayClusterRenderManager.h"
-#include "Render/PostProcess/IDisplayClusterPostProcessFactory.h"
-
-#include "Render/Viewport/DisplayClusterViewportManager.h"
-
-#include "Render/Viewport/DisplayClusterViewportManagerProxy.h"
-#include "Render/Viewport/DisplayClusterViewportProxy.h"
-
-#include "Render/Viewport/Postprocess/DisplayClusterViewportPostProcessOutputRemap.h"
-
 #include "Misc/DisplayClusterGlobals.h"
-
-#include "DisplayClusterConfigurationTypes.h"
+#include "HAL/IConsoleManager.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Round 1: VIEW before warp&blend
@@ -61,61 +55,62 @@ static TAutoConsoleVariable<int32> CVarPostprocessFrameAfterWarpBlend(
 //----------------------------------------------------------------------------------------------------------
 // FDisplayClusterViewportPostProcessManager
 //----------------------------------------------------------------------------------------------------------
-FDisplayClusterViewportPostProcessManager::FDisplayClusterViewportPostProcessManager(FDisplayClusterViewportManager& InViewportManager)
-	: ViewportManagerWeakPtr(InViewportManager.AsShared())
+FDisplayClusterViewportPostProcessManager::FDisplayClusterViewportPostProcessManager(const TSharedRef<const FDisplayClusterViewportConfiguration, ESPMode::ThreadSafe>& InConfiguration)
+	: Configuration(InConfiguration)
 {
 	OutputRemap = MakeShared<FDisplayClusterViewportPostProcessOutputRemap, ESPMode::ThreadSafe>();
 }
 
 FDisplayClusterViewportPostProcessManager::~FDisplayClusterViewportPostProcessManager()
 {
-	Release();
+	check(Postprocess.IsEmpty());
+	check(PostprocessProxy.IsEmpty());
+	check(!OutputRemap.IsValid());
 }
 
-FDisplayClusterViewportManager* FDisplayClusterViewportPostProcessManager::GetViewportManager() const
+void FDisplayClusterViewportPostProcessManager::Release_GameThread()
 {
-	return ViewportManagerWeakPtr.IsValid() ? ViewportManagerWeakPtr.Pin().Get() : nullptr;
+	check(IsInGameThread());
+
+	Postprocess.Empty();
+	OutputRemap.Reset();
+
+	ENQUEUE_RENDER_COMMAND(DisplayClusterViewportPostProcessManager_Release)(
+		[PostprocessManager = SharedThis(this)](FRHICommandListImmediate& RHICmdList)
+		{
+			PostprocessManager->PostprocessProxy.Empty();
+		});
 }
 
-void FDisplayClusterViewportPostProcessManager::Release()
+bool FDisplayClusterViewportPostProcessManager::OnHandleStartScene()
 {
-	if (IsInGameThread())
-	{
-		Postprocess.Empty();
-		OutputRemap.Reset();
+	check(IsInGameThread());
 
-		ENQUEUE_RENDER_COMMAND(DisplayClusterViewportPostProcessManager_Release)(
-			[this](FRHICommandListImmediate& RHICmdList)
-			{
-				PostprocessProxy.Empty();
-			});
-	}
-}
+	bool bResult = true;
 
-bool FDisplayClusterViewportPostProcessManager::HandleStartScene()
-{
-	check(IsInGameThread());;
-
-	FDisplayClusterViewportManager* ViewportManager = GetViewportManager();
-	if (ViewportManager && ViewportManager->IsSceneOpened())
+	IDisplayClusterViewportManager* ViewportManager = Configuration->GetViewportManager();
+	if (ViewportManager && Configuration->IsSceneOpened())
 	{
 		for (const TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe>& It : Postprocess)
 		{
 			if (It.IsValid())
 			{
-				It->HandleStartScene(ViewportManager);
+				if (!It->HandleStartScene(ViewportManager))
+				{
+					bResult = false;
+				}
 			}
 		}
 	}
 
-	return false;
+	return bResult;
 }
 
-void FDisplayClusterViewportPostProcessManager::HandleEndScene()
+void FDisplayClusterViewportPostProcessManager::OnHandleEndScene()
 {
 	check(IsInGameThread());
 
-	if (FDisplayClusterViewportManager* ViewportManager = GetViewportManager())
+	if (IDisplayClusterViewportManager* ViewportManager = Configuration->GetViewportManager())
 	{
 		for (const TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe>& It : Postprocess)
 		{
@@ -179,8 +174,8 @@ bool FDisplayClusterViewportPostProcessManager::CreatePostprocess(const FString&
 		{
 			UE_LOG(LogDisplayClusterRender, Log, TEXT("PostProcess '%s', type '%s' : Created"), *InConfigurationPostprocess->Type, *InPostprocessId);
 
-			FDisplayClusterViewportManager* ViewportManager = GetViewportManager();
-			if (ViewportManager && ViewportManager->IsSceneOpened())
+			IDisplayClusterViewportManager* ViewportManager = Configuration->GetViewportManager();
+			if (ViewportManager && Configuration->IsSceneOpened())
 			{
 				PostProcessInstance->HandleStartScene(ViewportManager);
 			}
@@ -357,7 +352,7 @@ void FDisplayClusterViewportPostProcessManager::Tick()
 
 void FDisplayClusterViewportPostProcessManager::HandleSetupNewFrame()
 {
-	FDisplayClusterViewportManager* ViewportManager = GetViewportManager();
+	IDisplayClusterViewportManager* ViewportManager = Configuration->GetViewportManager();
 	if (ViewportManager && CVarCustomPPEnabled.GetValueOnGameThread() != 0)
 	{
 		for (const TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe >& It : Postprocess)
@@ -369,7 +364,7 @@ void FDisplayClusterViewportPostProcessManager::HandleSetupNewFrame()
 
 void FDisplayClusterViewportPostProcessManager::HandleBeginNewFrame(FDisplayClusterRenderFrame& InOutRenderFrame)
 {
-	FDisplayClusterViewportManager* ViewportManager = GetViewportManager();
+	IDisplayClusterViewportManager* ViewportManager = Configuration->GetViewportManager();
 	if (ViewportManager && CVarCustomPPEnabled.GetValueOnGameThread() != 0)
 	{
 		for (const TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe >& It : Postprocess)

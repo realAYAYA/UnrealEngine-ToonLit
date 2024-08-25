@@ -8,7 +8,7 @@
 #include "Random.ush"
 #include "DeferredShadingCommon.ush"
 #include "MonteCarlo.ush"
-#include "Strata/Strata.ush"
+#include "Substrate/Substrate.ush"
 
 // Setup the max number of Burley samples
 #define BURLEY_NUM_SAMPLES	64
@@ -303,20 +303,20 @@ FBurleySampleInfo GenerateSampleInfo(float2 Rand0T1, float DiffuseMeanFreePathFo
 	return BurleySampleInfo;
 }
 
-#if STRATA_ENABLED
-FStrataTopLayerData LoadStrataTopLayerData(float2 UV)
+#if SUBSTRATE_ENABLED
+FSubstrateTopLayerData LoadSubstrateTopLayerData(float2 UV)
 {
 	const float2 PixelPos = UV.xy * View.BufferSizeAndInvSize.xy;
-	return StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelPos, 0)));
+	return SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelPos, 0)));
 }
 #endif
 
 
 float GetProfileMask(float2 BufferUV)
 {
-#if STRATA_ENABLED
-	const FStrataSubsurfaceHeader SSSHeader = LoadStrataSSSHeader(BufferUV);
-	const bool bIsProfile = StrataSubSurfaceHeaderGetIsValid(SSSHeader);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceHeader SSSHeader = LoadSubstrateSSSHeader(BufferUV);
+	const bool bIsProfile = SubstrateSubSurfaceHeaderGetIsValid(SSSHeader);
 #else
 	const FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(BufferUV);
 	const bool bIsProfile = UseSubsurfaceProfile(ScreenSpaceData.GBuffer.ShadingModelID);	
@@ -472,10 +472,10 @@ int GetNumOfSamplesBasedOnQuality(float2 UV)
 
 // If the shading model is valid, return the profile. Otherwise, return SSS_PROFILE_ID_INVALID.
 // That way if we have a valid profile, we can check of the other profile is valid with a single boolean expression.
-#if STRATA_ENABLED
-uint ExtractSubsurfaceProfileIntWithInvalid(FStrataSubsurfaceHeader SSSHeader)
+#if SUBSTRATE_ENABLED
+uint ExtractSubsurfaceProfileIntWithInvalid(FSubstrateSubsurfaceHeader SSSHeader)
 {
-	return StrataSubSurfaceHeaderGetProfileId(SSSHeader);
+	return SubstrateSubSurfaceHeaderGetProfileId(SSSHeader);
 }
 #else
 uint ExtractSubsurfaceProfileIntWithInvalid(FGBufferData BufferData)
@@ -695,9 +695,9 @@ float3 GetBilateralNormal(float2 ClampedUV, float2 Extent)
 {
 	//BRANCH to avoid extra evaluation of the GBuffer.
 #if BILATERAL_FILTER_KERNEL_FUNCTION_TYPE == BILATERAL_FILTER_KERNEL_FUNCTION_DEPTH_AND_NORMAL
-	#if STRATA_ENABLED
+	#if SUBSTRATE_ENABLED
 	const uint2 BufferPos = ClampedUV * Extent;
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(BufferPos, 0)));
+	const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(BufferPos, 0)));
 	return TopLayerData.WorldNormal;
 	#else
 	return GetScreenSpaceData(ClampedUV).GBuffer.WorldNormal;
@@ -734,8 +734,8 @@ BurleySampleDiffuseNormal SampleSSSColorConsideringLocalShared(float2 CenterUV, 
 	float2 ClampedUV = ClampUVLevel(CenterUV + UVOffset, SubsurfaceInput0_UVViewportBilinearMin, SubsurfaceInput0_UVViewportBilinearMax, MipLevel);
 
 #if !(ENABLE_PROFILE_ID_CACHE && (SUBSURFACE_FORCE_SEPARABLE !=1))
-	#if STRATA_ENABLED
-	const FStrataSubsurfaceHeader SSSHeader = LoadStrataSSSHeader(ClampedUV);
+	#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceHeader SSSHeader = LoadSubstrateSSSHeader(ClampedUV);
 	#else
 	const FGBufferData SSSHeader = GetScreenSpaceData(ClampedUV).GBuffer;
 	#endif
@@ -908,11 +908,11 @@ float4 BurleyNormalizedSS(float2 BufferUV, uint2 GroupThreadID)
 		return OutColor;
 	}
 
-#if STRATA_ENABLED
-	const FStrataSubsurfaceData SSSData = LoadStrataSSSData(BufferUV);
-	const FStrataTopLayerData TopLayerData = LoadStrataTopLayerData(BufferUV);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceData SSSData = LoadSubstrateSSSData(BufferUV);
+	const FSubstrateTopLayerData TopLayerData = LoadSubstrateTopLayerData(BufferUV);
 	const float3 WorldNormal = TopLayerData.WorldNormal;
-	const uint SubsurfaceProfileInt = StrataSubSurfaceHeaderGetProfileId(SSSData.Header);
+	const uint SubsurfaceProfileInt = SubstrateSubSurfaceHeaderGetProfileId(SSSData.Header);
 	const FBurleyParameter BurleyParameter = GetBurleyParameters(SSSData);
 #else
 	const FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(BufferUV);
@@ -1013,8 +1013,8 @@ float4 BurleyNormalizedSS(float2 BufferUV, uint2 GroupThreadID)
 			SDiffuseAndSpecular SampledDiffuseAndSpecular = ReconstructLighting(SampledDiscUV, ReconstructMethod);
 			float4 SampledRadianceAndDepth = float4(SampledDiffuseAndSpecular.Diffuse, CalcSceneDepth(SampledDiscUV));
 
-		#if STRATA_ENABLED
-			const FStrataTopLayerData TopLayerData = LoadStrataTopLayerData(SampleDiscUV);
+		#if SUBSTRATE_ENABLED
+			const FSubstrateTopLayerData TopLayerData = LoadSubstrateTopLayerData(SampleDiscUV);
 			const float3 SampleWorldNormal = TopLayerData.WorldNormal;
 		#else
 			const FScreenSpaceData SampleScreenSpaceData = GetScreenSpaceData(SampledDiscUV);
@@ -1207,10 +1207,10 @@ void BurleyComputeMain(uint2 DT_ID, uint2 G_ID, uint GI)
 			SharedSubsurfaceDiffuseLighting[LocalSharedIndex] = SubsurfaceColorWithSSSIndicator;
 
 			// Also fetch the normal and profile ID
-		#if STRATA_ENABLED
-			const FStrataTopLayerData TopLayerData = LoadStrataTopLayerData(SampleUV);
+		#if SUBSTRATE_ENABLED
+			const FSubstrateTopLayerData TopLayerData = LoadSubstrateTopLayerData(SampleUV);
 			const float3 SampleWorldNormal = TopLayerData.WorldNormal;
-			const FStrataSubsurfaceHeader SampleSSSHeader = LoadStrataSSSHeader(SampleUV);
+			const FSubstrateSubsurfaceHeader SampleSSSHeader = LoadSubstrateSSSHeader(SampleUV);
 		#else
 			const FGBufferData SampleSSSHeader = GetScreenSpaceData(SampleUV).GBuffer;
 			const float3 SampleWorldNormal = SampleSSSHeader.WorldNormal;

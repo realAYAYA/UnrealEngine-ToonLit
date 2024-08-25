@@ -13,40 +13,42 @@
 class FHttpRequestAdapterBase : public FHttpRequestImpl
 {
 public:
-    FHttpRequestAdapterBase(const TSharedRef<IHttpRequest, ESPMode::ThreadSafe>& InHttpRequest) 
-		: HttpRequest(InHttpRequest)
-    {}
+	HTTP_API FHttpRequestAdapterBase(const TSharedRef<IHttpRequest>& InHttpRequest);
 
 	// IHttpRequest interface
-    virtual FString                       GetURL() const override                                                  { return HttpRequest->GetURL(); }
-	virtual FString                       GetURLParameter(const FString& ParameterName) const override             { return HttpRequest->GetURLParameter(ParameterName); }
-	virtual FString                       GetHeader(const FString& HeaderName) const override                      { return HttpRequest->GetHeader(HeaderName); }
-	virtual TArray<FString>               GetAllHeaders() const override                                           { return HttpRequest->GetAllHeaders(); }
-	virtual FString                       GetContentType() const override                                          { return HttpRequest->GetContentType(); }
-	virtual uint64                        GetContentLength() const override                                        { return HttpRequest->GetContentLength(); }
-	virtual const TArray<uint8>&          GetContent() const override                                              { return HttpRequest->GetContent(); }
-	virtual FString                       GetVerb() const override                                                 { return HttpRequest->GetVerb(); }
-	virtual void                          SetVerb(const FString& Verb) override                                    { HttpRequest->SetVerb(Verb); }
-	virtual void                          SetURL(const FString& URL) override                                      { HttpRequest->SetURL(URL); }
-	virtual void                          SetContent(const TArray<uint8>& ContentPayload) override                 { HttpRequest->SetContent(ContentPayload); }
-	virtual void                          SetContent(TArray<uint8>&& ContentPayload) override                      { HttpRequest->SetContent(MoveTemp(ContentPayload)); }
-	virtual void                          SetContentAsString(const FString& ContentString) override                { HttpRequest->SetContentAsString(ContentString); }
-    virtual bool                          SetContentAsStreamedFile(const FString& Filename) override               { return HttpRequest->SetContentAsStreamedFile(Filename); }
-	virtual bool                          SetContentFromStream(TSharedRef<FArchive, ESPMode::ThreadSafe> Stream) override { return HttpRequest->SetContentFromStream(Stream); }
-	virtual bool						  SetResponseBodyReceiveStream(TSharedRef<FArchive> Stream) override       { return HttpRequest->SetResponseBodyReceiveStream(Stream); }
-	virtual void                          SetHeader(const FString& HeaderName, const FString& HeaderValue) override { HttpRequest->SetHeader(HeaderName, HeaderValue); }
-	virtual void                          AppendToHeader(const FString& HeaderName, const FString& AdditionalHeaderValue) override { HttpRequest->AppendToHeader(HeaderName, AdditionalHeaderValue); }
-	virtual void                          SetTimeout(float InTimeoutSecs) override                                 { HttpRequest->SetTimeout(InTimeoutSecs); }
-	virtual void                          ClearTimeout() override                                                  { HttpRequest->ClearTimeout(); }
-	virtual TOptional<float>              GetTimeout() const override                                              { return HttpRequest->GetTimeout(); }
-	virtual const FHttpResponsePtr        GetResponse() const override                                             { return HttpRequest->GetResponse(); }
-	virtual float                         GetElapsedTime() const override                                          { return HttpRequest->GetElapsedTime(); }
-	virtual EHttpRequestStatus::Type	  GetStatus() const override                                               { return HttpRequest->GetStatus(); }
-	virtual void                          Tick(float DeltaSeconds) override                                        { HttpRequest->Tick(DeltaSeconds); }
-	virtual void                          SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy InThreadPolicy) override{ HttpRequest->SetDelegateThreadPolicy(InThreadPolicy); }
-	virtual EHttpRequestDelegateThreadPolicy GetDelegateThreadPolicy() const override                                 { return HttpRequest->GetDelegateThreadPolicy(); }
+	HTTP_API virtual FString GetURL() const override;
+	HTTP_API virtual FString GetURLParameter(const FString& ParameterName) const override;
+	HTTP_API virtual FString GetHeader(const FString& HeaderName) const override;
+	HTTP_API virtual TArray<FString> GetAllHeaders() const override;
+	HTTP_API virtual FString GetContentType() const override;
+	HTTP_API virtual uint64 GetContentLength() const override;
+	HTTP_API virtual const TArray<uint8>& GetContent() const override;
+	HTTP_API virtual FString GetVerb() const override;
+	HTTP_API virtual void SetVerb(const FString& Verb) override;
+	HTTP_API virtual void SetURL(const FString& URL) override;
+	HTTP_API virtual void SetContent(const TArray<uint8>& ContentPayload) override;
+	HTTP_API virtual void SetContent(TArray<uint8>&& ContentPayload) override;
+	HTTP_API virtual void SetContentAsString(const FString& ContentString) override;
+	HTTP_API virtual bool SetContentAsStreamedFile(const FString& Filename) override;
+	HTTP_API virtual bool SetContentFromStream(TSharedRef<FArchive, ESPMode::ThreadSafe> Stream) override;
+	HTTP_API virtual bool SetResponseBodyReceiveStream(TSharedRef<FArchive> Stream) override;
+	HTTP_API virtual void SetHeader(const FString& HeaderName, const FString& HeaderValue) override;
+	HTTP_API virtual void AppendToHeader(const FString& HeaderName, const FString& AdditionalHeaderValue) override;
+	HTTP_API virtual void SetTimeout(float InTimeoutSecs) override;
+	HTTP_API virtual void ClearTimeout() override;
+	HTTP_API virtual TOptional<float> GetTimeout() const override;
+	HTTP_API virtual void SetActivityTimeout(float InTimeoutSecs) override;
+	HTTP_API virtual void ProcessRequestUntilComplete() override;
+	HTTP_API virtual const FHttpResponsePtr GetResponse() const override;
+	HTTP_API virtual float GetElapsedTime() const override;
+	HTTP_API virtual EHttpRequestStatus::Type GetStatus() const override;
+	HTTP_API virtual EHttpFailureReason GetFailureReason() const override;
+	HTTP_API virtual const FString& GetEffectiveURL() const override;
+	HTTP_API virtual void Tick(float DeltaSeconds) override;
+	HTTP_API virtual void SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy InThreadPolicy) override;
+	HTTP_API virtual EHttpRequestDelegateThreadPolicy GetDelegateThreadPolicy() const override;
 
 protected:
-    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest;
+	TSharedRef<IHttpRequest> HttpRequest;
 };
 

@@ -211,7 +211,7 @@ void ReflectionPassVS(
 
 	float3 RotatedPosition = LocalToWorld[0].xyz * LocalPosition.xxx + LocalToWorld[1].xyz * LocalPosition.yyy + LocalToWorld[2].xyz * LocalPosition.zzz;
 	
-	float4 TranslatedWorldPosition = float4(RotatedPosition + (LocalToWorld[3].xyz + LWCHackToFloat(ResolvedView.PreViewTranslation)), 1);
+	float4 TranslatedWorldPosition = float4(RotatedPosition + (LocalToWorld[3].xyz + DFHackToFloat(ResolvedView.PreViewTranslation)), 1);
 
 	OutPosition = mul(TranslatedWorldPosition, ResolvedView.TranslatedWorldToClip);
 

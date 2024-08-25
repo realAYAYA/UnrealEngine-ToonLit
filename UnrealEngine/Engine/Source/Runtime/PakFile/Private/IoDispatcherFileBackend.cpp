@@ -97,6 +97,15 @@ static FAutoConsoleVariableRef CVar_IoDispatcherTocsEnablePerfectHashing(
 	TEXT("Enable perfect hashmap lookups for iostore tocs")
 );
 
+int32 GIoDispatcherForceSynchronousScatter = 0;
+static FAutoConsoleVariableRef CVar_IoDispatcherForceSynchronousScatter(
+	TEXT("s.IoDispatcherForceSynchronousScatter"),
+	GIoDispatcherForceSynchronousScatter,
+	TEXT("Force scatter jobs to be synchronous on the IODispatcher thread.\n")
+	TEXT("This can avoid deadlocks in cases where background tasks end up waiting on I/O and we don't have enough background task threads to fulfill decompression requests.")
+);
+
+
 uint32 FFileIoStoreReadRequest::NextSequence = 0;
 #if CHECK_IO_STORE_READ_REQUEST_LIST_MEMBERSHIP
 uint32 FFileIoStoreReadRequestList::NextListCookie = 0;
@@ -310,7 +319,7 @@ TArray<FFileIoStoreReadRequest*> FFileIoStoreOffsetSortedRequestQueue::RemoveMis
 		{
 			RequestsToReturn.Add(Requests[i]);
 			RequestsBySequence.Remove(Requests[i]);
-			Requests.RemoveAt(i, 1, false);
+			Requests.RemoveAt(i, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -512,7 +521,7 @@ FFileIoStoreReadRequest* FFileIoStoreRequestQueue::Pop()
 		{
 			return nullptr;
 		}
-		Heap.HeapPop(Result, QueueSortFunc, false);
+		Heap.HeapPop(Result, QueueSortFunc, EAllowShrinking::No);
 	}
 	
 	check(Result->QueueStatus == FFileIoStoreReadRequest::QueueStatus_InQueue);
@@ -1826,7 +1835,7 @@ FIoRequestImpl* FFileIoStore::GetCompletedRequests()
 		}
 
 		// Scatter block asynchronous when the block is compressed, encrypted or signed
-		const bool bScatterAsync = bIsMultithreaded && (!BlockToDecompress->CompressionMethod.IsNone() || BlockToDecompress->EncryptionKey.IsValid() || BlockToDecompress->SignatureHash);
+		bool bScatterAsync = bIsMultithreaded && GIoDispatcherForceSynchronousScatter==0 && (!BlockToDecompress->CompressionMethod.IsNone() || BlockToDecompress->EncryptionKey.IsValid() || BlockToDecompress->SignatureHash);
 		if (bScatterAsync)
 		{
 			TGraphTask<FDecompressAsyncTask>::CreateTask().ConstructAndDispatchWhenReady(*this, BlockToDecompress);

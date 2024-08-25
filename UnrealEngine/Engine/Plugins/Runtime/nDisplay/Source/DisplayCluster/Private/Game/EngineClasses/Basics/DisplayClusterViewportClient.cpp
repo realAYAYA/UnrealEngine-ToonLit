@@ -44,6 +44,7 @@
 #include "Misc/DisplayClusterGlobals.h"
 
 #include "IDisplayCluster.h"
+#include "IDisplayClusterCallbacks.h"
 #include "Game/IDisplayClusterGameManager.h"
 
 #include "Render/Viewport/IDisplayClusterViewportManager.h"
@@ -103,6 +104,16 @@ static FAutoConsoleVariableRef CVarDisplayClusterDebugDraw(
 	TEXT("Enable debug draw for nDisplay views.  Debug draw features are separately enabled, and default to off, this just provides an additional global toggle."),
 	ECVF_RenderThreadSafe
 );
+
+// Replaces FApp::HasFocus
+bool GDisplayClusterReplaceHasFocusFunction = true;
+static FAutoConsoleVariableRef CVarDisplayClusterReplaceHasFocusFunction(
+	TEXT("DC.ReplaceHasFocusFunction"),
+	GDisplayClusterReplaceHasFocusFunction,
+	TEXT("Replaces the function that FApp::HasFocus() uses, to mitigate OS stalls that happen in some systems."),
+	ECVF_ReadOnly
+);
+
 
 struct FCompareViewFamilyBySizeAndGPU
 {
@@ -374,6 +385,13 @@ void UDisplayClusterViewportClient::Init(struct FWorldContext& WorldContext, UGa
 		{
 			AllowMotionBlurInVR->Set(int32(1));
 		}
+
+		// Replace FApp::HasFocus to avoid stalls observed in some render nodes. 
+		// It always return true, so all code behaves as if the application were in focus, even when rendering offscreen.
+		if (GDisplayClusterReplaceHasFocusFunction)
+		{
+			FApp::SetHasFocusFunction([]() { return true; });
+		}
 	}
 
 	Super::Init(WorldContext, OwningGameInstance, bCreateNewAudioDevice);
@@ -561,7 +579,7 @@ void UDisplayClusterViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCa
 				FRotator	ViewRotation;
 				FSceneView* View = RenderFrameViewportManager->CalcSceneView(LocalPlayer, &ViewFamily, ViewLocation, ViewRotation, InViewport, nullptr, ViewportContext.StereoViewIndex);
 
-				if (View && !DCView.IsViewportContextCanBeRendered())
+				if (View && (!DCView.IsViewportContextCanBeRendered() || ViewFamily.RenderTarget == nullptr))
 				{
 					ViewFamily.Views.Remove(View);
 
@@ -617,9 +635,6 @@ void UDisplayClusterViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCa
 					View->CurrentBufferVisualizationMode = GetCurrentBufferVisualizationMode();
 
 					View->CameraConstrainedViewRect = View->UnscaledViewRect;
-
-					// Enable per-view virtual shadow map caching
-					View->State->AddVirtualShadowMapCache(MyWorld->Scene);
 
 					// Enable per-view Lumen scene
 					if (GDisplayClusterLumenPerView)
@@ -841,6 +856,9 @@ void UDisplayClusterViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCa
 		}
 	}
 
+	// Trigger PreSubmitViewFamilies event before submitting to render
+	IDisplayCluster::Get().GetCallbacks().OnDisplayClusterPreSubmitViewFamilies().Broadcast(ViewFamilies);
+
 	// We gathered all the view families, now render them
 	if (!ViewFamilies.IsEmpty())
 	{
@@ -897,13 +915,6 @@ void UDisplayClusterViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCa
 	{
 		// Or if none to render, do logic for when rendering is skipped
 		GetRendererModule().PerFrameCleanupIfSkipRenderer();
-
-		// Make sure RHI resources get flushed if we're not using a renderer
-		ENQUEUE_RENDER_COMMAND(UDisplayClusterViewportClient_FlushRHIResources)(
-			[](FRHICommandListImmediate& RHICmdList)
-			{
-				RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThreadFlushResources);
-			});
 	}
 
 	// Handle special viewports game-thread logic at frame end
@@ -1002,61 +1013,48 @@ bool UDisplayClusterViewportClient::Draw_PIE(FViewport* InViewport, FCanvas* Sce
 {
 	IDisplayClusterGameManager* GameMgr = GDisplayCluster->GetGameMgr();
 
-	if (GameMgr == nullptr)
+	if (GameMgr == nullptr || !IsInGameThread())
 	{
 		return false;
 	}
 
-	// Get root actor from viewport
+	// Obtaining the primary root vector that can be used for PIE mode
 	ADisplayClusterRootActor* const RootActor = GameMgr->GetRootActor();
-	if (RootActor == nullptr)
+	if (!RootActor || !RootActor->IsPrimaryRootActorForPIE())
 	{
 		return false;
 	}
 
-	//@todo Implement this logic inside function DisplayCluster.GetConfigMgr()->GetLocalNodeId()
-	//@todo: change local node selection for customers
-	FString LocalNodeId = RootActor->PreviewNodeId;
-	if (LocalNodeId == DisplayClusterConfigurationStrings::gui::preview::PreviewNodeAll || LocalNodeId == DisplayClusterConfigurationStrings::gui::preview::PreviewNodeNone)
+	check(SceneCanvas);
+	check(GEngine);
+
+	// When the PIE is used by this DCRA, we must create a new ViewportManager
+	if(IDisplayClusterViewportManager* ViewportManager = RootActor->GetOrCreateViewportManager())
 	{
-		return false;
+		FDisplayClusterViewport_PreviewSettings NewPreviewSettings = RootActor->GetPreviewSettings();
+		{
+			// Disable frustum preview rendering in PIE
+			NewPreviewSettings.bPreviewICVFXFrustums = false;
+
+			// Note: Normally these settings are not used for previewing in PIE and are ignored.
+			ViewportManager->GetConfiguration().SetPreviewSettings(NewPreviewSettings);
+		}
+
+		const EDisplayClusterRenderFrameMode RenderFrameMode = ViewportManager->GetConfiguration().GetRenderModeForPIE();
+		if (ViewportManager->GetViewportManagerPreview().InitializeClusterNodePreview(RenderFrameMode, GetWorld(), RootActor->PreviewNodeId, InViewport))
+		{
+			OnBeginDraw().Broadcast();
+
+			ViewportManager->GetViewportManagerPreview().RenderClusterNodePreview(INDEX_NONE, InViewport, SceneCanvas);
+			//ensure canvas has been flushed before rendering UI
+			SceneCanvas->Flush_GameThread();
+
+			OnEndDraw().Broadcast();
+
+			return true;
+		}
 	}
 
-
-	//Get world for render
-	UWorld* const MyWorld = GetWorld();
-
-	IDisplayClusterViewportManager* ViewportManager = RootActor->GetViewportManager();
-	if (ViewportManager == nullptr)
-	{
-		return false;
-	}
-
-	FDisplayClusterPreviewSettings PreviewSettings;
-	PreviewSettings.bPreviewEnablePostProcess = true;
-	PreviewSettings.bIsPIE = true;
-
-	// Update local node viewports (update\create\delete) and build new render frame
-	const EDisplayClusterRenderFrameMode PreviewRenderMode = RootActor->GetPreviewRenderMode();
-	if (ViewportManager->UpdateConfiguration(PreviewRenderMode, LocalNodeId, RootActor, &PreviewSettings) == false)
-	{
-		return false;
-	}
-
-	FDisplayClusterRenderFrame RenderFrame;
-	if (ViewportManager->BeginNewFrame(InViewport, MyWorld, RenderFrame) == false)
-	{
-		return false;
-	}
-
-	bool bOutFrameRendered = false;
-	int32 RenderedViewportsAmount = 0;
-	if (ViewportManager->RenderInEditor(RenderFrame, InViewport, 0, -1, RenderedViewportsAmount, bOutFrameRendered) == false)
-	{
-		return false;
-	}
-
-	return true;
+	return false;
 }
 #endif /*WITH_EDITOR*/
-

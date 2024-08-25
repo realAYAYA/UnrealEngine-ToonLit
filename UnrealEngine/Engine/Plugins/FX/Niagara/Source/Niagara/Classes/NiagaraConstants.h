@@ -46,6 +46,7 @@
 #define SYS_PARAM_ENGINE_ROTATION                        INiagaraModule::GetVar_Engine_Owner_Rotation()
 #define SYS_PARAM_ENGINE_SCALE                           INiagaraModule::GetVar_Engine_Owner_Scale()
 #define SYS_PARAM_ENGINE_LWC_TILE                        INiagaraModule::GetVar_Engine_Owner_LWC_Tile()
+#define SYS_PARAM_ENGINE_EXEC_INDEX                      INiagaraModule::GetVar_Engine_ExecIndex()
 
 #define SYS_PARAM_ENGINE_LOCAL_TO_WORLD                  INiagaraModule::GetVar_Engine_Owner_SystemLocalToWorld()
 #define SYS_PARAM_ENGINE_WORLD_TO_LOCAL                  INiagaraModule::GetVar_Engine_Owner_SystemWorldToLocal()
@@ -68,6 +69,7 @@
 #define SYS_PARAM_ENGINE_EMITTER_TOTAL_SPAWNED_PARTICLES INiagaraModule::GetVar_Engine_Emitter_TotalSpawnedParticles()
 #define SYS_PARAM_ENGINE_EMITTER_SPAWN_COUNT_SCALE       INiagaraModule::GetVar_Engine_Emitter_SpawnCountScale()
 #define SYS_PARAM_ENGINE_EMITTER_INSTANCE_SEED           INiagaraModule::GetVar_Engine_Emitter_InstanceSeed()
+#define SYS_PARAM_ENGINE_EMITTER_ID		                 INiagaraModule::GetVar_Engine_Emitter_ID()
 #define SYS_PARAM_ENGINE_SYSTEM_NUM_EMITTERS_ALIVE       INiagaraModule::GetVar_Engine_System_NumEmittersAlive()
 #define SYS_PARAM_ENGINE_SYSTEM_SIGNIFICANCE_INDEX		 INiagaraModule::GetVar_Engine_System_SignificanceIndex()
 #define SYS_PARAM_ENGINE_SYSTEM_RANDOM_SEED				INiagaraModule::GetVar_Engine_System_RandomSeed()
@@ -125,6 +127,7 @@
 #define SYS_PARAM_PARTICLES_LIGHT_EXPONENT               INiagaraModule::GetVar_Particles_LightExponent()
 #define SYS_PARAM_PARTICLES_LIGHT_ENABLED                INiagaraModule::GetVar_Particles_LightEnabled()
 #define SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING  INiagaraModule::GetVar_Particles_LightVolumetricScattering()
+#define SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE         INiagaraModule::GetVar_Particles_LightSpecularScale()
 #define SYS_PARAM_PARTICLES_VISIBILITY_TAG				 INiagaraModule::GetVar_Particles_VisibilityTag()
 #define SYS_PARAM_PARTICLES_MESH_INDEX					 INiagaraModule::GetVar_Particles_MeshIndex()
 #define SYS_PARAM_PARTICLES_COMPONENTS_ENABLED           INiagaraModule::GetVar_Particles_ComponentsEnabled()

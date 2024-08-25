@@ -33,6 +33,18 @@ public:
 	};
 
 
+	enum class EApproximationType
+	{
+		NoConstraint = 0,
+		AxisAlignedBox = 1 << 0,
+		OrientedBox = 1 << 1,
+		SweptHull = 1 << 2,
+		ConvexHull = 1 << 3,
+		SweptProjection = 1 << 4,
+		All = 0xFFFF
+	};
+
+
 	/**
 	 * FMeshInstanceGroupData is data shared among one or more FBaseMeshInstances.
 	 * For example all instances in an ISMC can share a single FMeshInstanceGroupData.
@@ -46,6 +58,13 @@ public:
 
 		bool bPreserveUVs = false;
 		bool bAllowMerging = true;		// if false, cannot merge the geometry from this mesh with adjacent meshes to reduce triangle count
+
+		bool bAllowApproximation = true;			// if false, only Copied or Simplified LODs will be used for this Part. This flag will be combined w/ the Instance-level flag.
+
+		// ApproximationConstraint can be used to control which types of Approximation are used for LODs of this Part.
+		// This is a bitmask, any unset EApproximationType bits should be ignored by the CombineMeshInstances implementation
+		// Note however that 0 (all bits unset) is 'NoConstraint', implementations are intended to treat this as 'Allow All Types'
+		EApproximationType ApproximationConstraint = EApproximationType::NoConstraint;
 	};
 
 
@@ -58,7 +77,9 @@ public:
 		TArray<FTransform3d> TransformSequence;		// set of transforms on this instance. Often just a single transform.
 		int32 GroupDataIndex = -1;					// index into FSourceInstanceList::InstanceGroupDatas
 
-		bool bAllowApproximation = true;			// if false, only Copied or Simplified LODs will be used for this part instance
+		bool bAllowApproximation = true;			// if false, only Copied or Simplified LODs will be used for this part Instance. Will be combined w/ the GroupData flag.
+
+		int32 FilterLODLevel = -1;					// LOD level to filter out this mesh, value -1 disable this option. 
 
 		// in some cases it may be desirable to have "groups" of instances which should be output as separate meshes, but
 		// be jointly processed in terms of (eg) the part LODs. If any InstanceSubsetID is non-zero, then instance subsets
@@ -155,6 +176,11 @@ public:
 		int32 NumSimplifiedLODs = 3;
 		double SimplifyBaseTolerance = 1.0;
 		double SimplifyLODLevelToleranceScale = 2.0;
+		// if true, UVs will be preserved in Simplified LODs. This generally will result in lower-quality geometric shape approximation.
+		bool bSimplifyPreserveUVs = false;
+		// if true, vertex colors will be preserved in Simplified LODs. This generally will result in lower-quality geometric shape approximation.
+		bool bSimplifyPreserveVertexColors = false;
+		// if true, geometrically-detected "sharp" corners (eg like the corners of a box) will be preserved with hard constraints in Simplified LODs. This can be desirable on mechanical/geometric shapes.
 		bool bSimplifyPreserveCorners = true;
 		double SimplifySharpEdgeAngleDeg = 44.0;
 		double SimplifyMinSalientDimension = 1.0;
@@ -210,6 +236,12 @@ public:
 
 		// opening angle used to detect/assign sharp edges
 		double HardNormalAngleDeg = 15.0;
+
+		// UVs on input geometry will be preserved up to this LOD level (inclusive). 
+		// Note that this setting will severely constrain and/or fully disable many other optimizations. 
+		// In particular, Coplanar merging and retriangulation cannot be applied if UVs are to be preserved. 
+		// WARNING: this LOD level must be <= (NumCopiedLODs+NumSimplifiedLODs)
+		int PreserveUVLODLevel = -1;
 
 		// Attempt to merge/weld coplanar areas after hidden removal, and then further simplify those merged areas
 		// Coplanar merging is never applied between areas with different Materials. 

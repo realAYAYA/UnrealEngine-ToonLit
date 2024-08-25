@@ -13,7 +13,6 @@
 #include "Serialization/MemoryImageWriter.h"
 #include "Serialization/MemoryImageWriter.h"
 #include "Serialization/MemoryLayout.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/UnrealTemplate.h"
 
 #include <initializer_list>
@@ -216,6 +215,8 @@ public:
 	// Average # of compares per search
 	CORE_API float	AverageSearch() const;
 
+	FHashTable&		operator=(const FHashTable& Other);
+
 protected:
 	// Avoids allocating hash until first add
 	CORE_API static uint32	EmptyHash[1];
@@ -264,6 +265,24 @@ FORCEINLINE FHashTable::FHashTable( const FHashTable& Other )
 		FMemory::Memcpy( Hash, Other.Hash, HashSize * 4 );
 		FMemory::Memcpy( NextIndex, Other.NextIndex, IndexSize * 4 );
 	}
+}
+
+FORCEINLINE FHashTable& FHashTable::operator=(const FHashTable& Other)
+{
+	Free();
+	HashSize = Other.HashSize;
+	HashMask = Other.HashMask;
+	IndexSize = Other.IndexSize;
+
+	if (IndexSize)
+	{
+		Hash = new uint32[HashSize];
+		NextIndex = new uint32[IndexSize];
+
+		FMemory::Memcpy(Hash, Other.Hash, HashSize * 4);
+		FMemory::Memcpy(NextIndex, Other.NextIndex, IndexSize * 4);
+	}
+	return *this;
 }
 
 FORCEINLINE FHashTable::~FHashTable()
@@ -392,11 +411,11 @@ class THashTable
 public:
 	using Allocator = InAllocator;
 
-	using ElementAllocatorType = typename TChooseClass<
+	using ElementAllocatorType = std::conditional_t<
 		Allocator::NeedsElementType,
 		typename Allocator::template ForElementType<uint32>,
 		typename Allocator::ForAnyElementType
-	>::Result;
+	>;
 
 	explicit THashTable(uint32 InHashSize = 1024, uint32 InIndexSize = 0);
 	THashTable(const THashTable& Other) = delete;

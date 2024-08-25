@@ -18,6 +18,8 @@ struct CONTROLRIG_API FAnimNode_ControlRig : public FAnimNode_ControlRigBase
 {
 	GENERATED_BODY()
 
+public:
+
 	FAnimNode_ControlRig();
 	~FAnimNode_ControlRig();
 
@@ -45,12 +47,22 @@ private:
 #endif
 private:
 
-	/** Cached ControlRig */
+	// The class to use for the rig. 
 	UPROPERTY(EditAnywhere, Category = ControlRig)
 	TSubclassOf<UControlRig> ControlRigClass;
 
+	// The default class to use for the rig. This is needed
+	// only if the Control Rig Class is exposed as a pin.
+	UPROPERTY()
+	TSubclassOf<UControlRig> DefaultControlRigClass;
+
+	/** Cached ControlRig */
 	UPROPERTY(transient)
 	TObjectPtr<UControlRig> ControlRig;
+
+	/** Cached ControlRigs per class */
+	UPROPERTY(transient)
+	TMap<UClass*, TObjectPtr<UControlRig>> ControlRigPerClass;
 
 	// alpha value handler
 	UPROPERTY(EditAnywhere, Category = Settings, meta = (PinShownByDefault))
@@ -97,7 +109,7 @@ private:
 	 * when the component LOD becomes 3, it will stop update/evaluate
 	 * currently transition would be issue and that has to be re-visited
 	 */
-	UPROPERTY(EditAnywhere, Category = Performance, meta = (DisplayName = "LOD Threshold"))
+	UPROPERTY(EditAnywhere, Category = Performance, meta = (PinHiddenByDefault, DisplayName = "LOD Threshold"))
 	int32 LODThreshold;
 
 private:
@@ -121,9 +133,12 @@ private:
 	FCurveMappings OutputCurveMappings;
 
 protected:
-	virtual UClass* GetTargetClass() const override { return *ControlRigClass; }
+	virtual UClass* GetTargetClass() const override;
 	virtual void UpdateInput(UControlRig* InControlRig, const FPoseContext& InOutput) override;
 	virtual void UpdateOutput(UControlRig* InControlRig, FPoseContext& InOutput) override;
+
+	void SetControlRigClass(TSubclassOf<UControlRig> InControlRigClass);
+	bool UpdateControlRigIfNeeded(const UAnimInstance* InAnimInstance, const FBoneContainer& InRequiredBones);
 
 	// Helper function to update the initial ref pose within the Control Rig if needed
 	void UpdateControlRigRefPoseIfNeeded(const FAnimInstanceProxy* InProxy, bool bIncludePoseInHash = false);
@@ -136,6 +151,7 @@ public:
 	void PostSerialize(const FArchive& Ar);
 
 	friend class UAnimGraphNode_ControlRig;
+	friend class UAnimNodeControlRigLibrary;
 };
 
 template<>

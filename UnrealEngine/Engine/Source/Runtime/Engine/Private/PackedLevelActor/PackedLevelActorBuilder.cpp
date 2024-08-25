@@ -34,6 +34,8 @@
 #include "WorldPartition/Filter/WorldPartitionActorFilter.h"
 #include "Serialization/ArchiveCrc32.h"
 
+#include "Components/InstancedStaticMeshComponent.h"
+
 
 #define LOCTEXT_NAMESPACE "FPackedLevelActorBuilder"
 
@@ -204,6 +206,10 @@ bool FPackedLevelActorBuilder::PackActor(FPackedLevelActorBuilderContext& InCont
 	}
 	HashArray.Sort();
 	FArchiveCrc32 Ar;
+
+	// Change this Guid if existing hashes need to be invalidated (code changes that aren't part of the computed hash)
+	static FGuid CodeVersionGuid = FGuid(0xE023D897, 0x4F404333, 0xAD604BB9, 0x8CC6B959);
+	Ar << CodeVersionGuid;
 	Ar << HashArray;
 	InContext.GetPackedLevelActor()->SetPackedHash(Ar.GetCrc());
 	InContext.Report(Log);
@@ -454,6 +460,8 @@ bool FPackedLevelActorBuilder::CreateOrUpdateBlueprintFromPacked(APackedLevelAct
 		
 	// Avoid running construction script while dragging an instance of that BP for performance reasons
 	BP->bRunConstructionScriptOnDrag = false;
+
+	// New Guid everytime we pack a BP so that we can avoid running construction scripts in PIE for Instances that have a matching version
 	FGuid NewVersion = FGuid::NewGuid();
 	APackedLevelActor* CDO = CastChecked<APackedLevelActor>(BP->GeneratedClass->GetDefaultObject());
 			
@@ -466,9 +474,16 @@ bool FPackedLevelActorBuilder::CreateOrUpdateBlueprintFromPacked(APackedLevelAct
 	TArray<UActorComponent*> PackedComponents;
 	InActor->GetPackedComponents(PackedComponents);
 	
-	// To avoid any delta serialization happening on those generated components, we make them non editable.
 	for (UActorComponent* PackedComponent : PackedComponents)
 	{
+		// To avoid any custom serialization on PerInstance data we make PerInstance data inherited always
+		if (UInstancedStaticMeshComponent* ISMComponent = Cast<UInstancedStaticMeshComponent>(PackedComponent))
+		{
+			ISMComponent->bInheritPerInstanceData = true;
+		}
+		// Set bEditableWhenInherited to false to disable editing of properties on components.
+		// This was enabled in 5.4, but is not properly handled, so for now we are disabling it.
+		// @todo_ow: See https://jira.it.epicgames.com/browse/UE-216035
 		PackedComponent->bEditableWhenInherited = false;
 	}
 

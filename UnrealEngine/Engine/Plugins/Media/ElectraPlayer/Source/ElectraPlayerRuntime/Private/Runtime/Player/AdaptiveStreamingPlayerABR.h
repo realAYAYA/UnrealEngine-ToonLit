@@ -120,7 +120,7 @@ public:
 
 	// Call when rebuffering occurs to get the recommended action. This implies that rebuffering has actually occurred.
 	// The ABR may take internal action to switch quality when this is called!
-	virtual FRebufferAction GetRebufferAction(const FParamDict& CurrentPlayerOptions) = 0;
+	virtual FRebufferAction GetRebufferAction() = 0;
 
 	struct FDenylistedStream
 	{

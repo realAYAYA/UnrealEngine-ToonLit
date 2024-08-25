@@ -138,7 +138,11 @@ public:
 	{ return bNeedsCPUAccess; }
 
 	/** Create an RHI vertex buffer with CPU data. CPU data may be discarded after creation (see TResourceArray::Discard) */
+	FBufferRHIRef CreateRHIBuffer(FRHICommandListBase& RHICmdList);
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_Async();
 
 	/** Similar to Init/ReleaseRHI but only update existing SRV so references to the SRV stays valid */
@@ -157,9 +161,6 @@ private:
 
 	/** Allocates the vertex data storage type. */
 	ENGINE_API void AllocateData();
-
-	template <bool bRenderThread>
-	FBufferRHIRef CreateRHIBuffer_Internal();
 
 	/** true if this vertex buffer will be used with CPU skinning. Resource arrays are set to cpu accessible if this is true */
 	bool bNeedsCPUAccess;
@@ -300,7 +301,11 @@ public:
 	ENGINE_API void CopyDataFromBuffer(const uint8* InSkinWeightData, uint32 InNumVertices);
 
 	/** Create an RHI vertex buffer with CPU data. CPU data may be discarded after creation (see TResourceArray::Discard) */
+	FBufferRHIRef CreateRHIBuffer(FRHICommandListBase& RHICmdList);
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_Async();
 
 	/** Similar to Init/ReleaseRHI but only update existing SRV so references to the SRV stays valid */
@@ -360,9 +365,6 @@ private:
 
 	/** Allocates the vertex data storage type. */
 	ENGINE_API void AllocateData();
-
-	template <bool bRenderThread>
-	FBufferRHIRef CreateRHIBuffer_Internal();
 };
 
 /** A container for skin weights data vertex buffer and lookup vertex buffer. */
@@ -463,7 +465,11 @@ public:
 	const FSkinWeightLookupVertexBuffer* GetLookupVertexBuffer() const
 	{ return &LookupVertexBuffer; }
 
+	FSkinWeightRHIInfo CreateRHIBuffer(FRHICommandListBase& RHICmdList);
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FSkinWeightRHIInfo CreateRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FSkinWeightRHIInfo CreateRHIBuffer_Async();
 
 	ENGINE_API GPUSkinBoneInfluenceType GetBoneInfluenceType() const;

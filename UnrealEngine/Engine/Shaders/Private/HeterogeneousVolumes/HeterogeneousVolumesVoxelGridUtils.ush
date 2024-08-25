@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#pragma once
+
 #include "../MortonCode.ush"
 
 #define EMPTY_VOXEL_INDEX 0x1FFFFFFF

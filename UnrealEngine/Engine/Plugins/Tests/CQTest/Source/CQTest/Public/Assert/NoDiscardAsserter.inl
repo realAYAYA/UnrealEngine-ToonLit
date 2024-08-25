@@ -6,18 +6,7 @@
 
 inline void FNoDiscardAsserter::ExpectError(FString Error, int32 Count)
 {
-	static const FRegexPattern Pattern(TEXT("([\\[\\]{}()^$.?\\\\*+|])"));
-	FRegexMatcher Matcher(Pattern, Error);
-	FString SanitizedError(Error);
-	int32 Offset = 0;
-
-	while (Matcher.FindNext())
-	{
-		int32 Pos = Matcher.GetMatchBeginning() + Offset++;
-		SanitizedError.InsertAt(Pos, TEXT("\\"));
-	}
-
-	TestRunner.AddExpectedError(SanitizedError, EAutomationExpectedErrorFlags::Contains, Count);
+	TestRunner.AddExpectedError(Error, EAutomationExpectedErrorFlags::Contains, Count, false);
 }
 
 inline void FNoDiscardAsserter::ExpectErrorRegex(FString Error, int32 Count)
@@ -30,22 +19,22 @@ FORCEINLINE void FNoDiscardAsserter::Fail(FString Error)
 	TestRunner.AddError(Error);
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition)
 {
 	return IsTrue(Condition, TEXT("Expected condition to be true."));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition, const char* FailureMessage)
 {
 	return IsTrue(Condition, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition, const TCHAR* FailureMessage)
 {
 	return IsTrue(Condition, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition, const FString& FailureMessage)
 {
 	if (!Condition)
 	{
@@ -55,22 +44,22 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsTrue(bool Condition, const F
 	return true;
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition)
 {
 	return IsFalse(Condition, TEXT("Expected condition to be false."));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition, const char* FailureMessage)
 {
 	return IsFalse(Condition, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition, const TCHAR* FailureMessage)
 {
 	return IsFalse(Condition, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition, const FString& FailureMessage)
 {
 	if (Condition)
 	{
@@ -81,25 +70,25 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsFalse(bool Condition, const 
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr)
 {
 	return IsNull(Ptr, TEXT("Expected pointer to be Null"));
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr, const char* FailureMessage)
 {
 	return IsNull(Ptr, FString(FailureMessage));
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr, const TCHAR* FailureMessage)
 {
 	return IsNull(Ptr, FString(FailureMessage));
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr, const FString& FailureMessage)
 {
 	if (Ptr != nullptr)
 	{
@@ -110,25 +99,25 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNull(const T& Ptr, const FSt
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr)
 {
 	return IsNotNull(Ptr, TEXT("Expected pointer to be not Null"));
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr, const char* FailureMessage)
 {
 	return IsNotNull(Ptr, FString(FailureMessage));
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr, const TCHAR* FailureMessage)
 {
 	return IsNotNull(Ptr, FString(FailureMessage));
 }
 
 template <typename T>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr, const FString& FailureMessage)
 {
 	if (Ptr == nullptr)
 	{
@@ -139,7 +128,7 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNotNull(const T& Ptr, const 
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual)
 {
 	if (CQTestCondition::IsNotEqual(Expected, Actual))
 	{
@@ -150,19 +139,19 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expe
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage)
 {
 	return AreEqual(Expected, Actual, FString(FailureMessage));
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage)
 {
 	return AreEqual(Expected, Actual, FString(FailureMessage));
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage)
 {
 	if (CQTestCondition::IsNotEqual(Expected, Actual))
 	{
@@ -172,7 +161,7 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqual(const TExpected& Expe
 	return true;
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual)
 {
 	if (CQTestCondition::IsNotEqualIgnoreCase(Expected, Actual))
 	{
@@ -182,17 +171,17 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FStri
 	return true;
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage)
 {
 	return AreEqualIgnoreCase(Expected, Actual, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage)
 {
 	return AreEqualIgnoreCase(Expected, Actual, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage)
 {
 	if (CQTestCondition::IsNotEqualIgnoreCase(Expected, Actual))
 	{
@@ -203,7 +192,7 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreEqualIgnoreCase(const FStri
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual)
 {
 	if (CQTestCondition::IsEqual(Expected, Actual))
 	{
@@ -214,19 +203,19 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& E
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual, const char* FailureMessage)
 {
 	return AreNotEqual(Expected, Actual, FString(FailureMessage));
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual, const TCHAR* FailureMessage)
 {
 	return AreNotEqual(Expected, Actual, FString(FailureMessage));
 }
 
 template <typename TExpected, typename TActual>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& Expected, const TActual& Actual, const FString& FailureMessage)
 {
 	if (CQTestCondition::IsEqual(Expected, Actual))
 	{
@@ -236,7 +225,7 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqual(const TExpected& E
 	return true;
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual)
 {
 	if (CQTestCondition::IsEqualIgnoreCase(Expected, Actual))
 	{
@@ -246,17 +235,17 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FS
 	return true;
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const char* FailureMessage)
 {
 	return AreNotEqualIgnoreCase(Expected, Actual, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const TCHAR* FailureMessage)
 {
 	return AreNotEqualIgnoreCase(Expected, Actual, FString(FailureMessage));
 }
 
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FString& Expected, const FString& Actual, const FString& FailureMessage)
 {
 	if (CQTestCondition::IsEqualIgnoreCase(Expected, Actual))
 	{
@@ -267,7 +256,7 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::AreNotEqualIgnoreCase(const FS
 }
 
 template <typename TExpected, typename TActual, typename TEpsilon>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon)
 {
 	if (CQTestCondition::IsNotNearlyEqual(Expected, Actual, Epsilon))
 	{
@@ -278,19 +267,19 @@ UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TAc
 }
 
 template <typename TExpected, typename TActual, typename TEpsilon>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const char* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const char* FailureMessage)
 {
 	return IsNear(Expected, Actual, Epsilon, FString(FailureMessage));
 }
 
 template <typename TExpected, typename TActual, typename TEpsilon>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const TCHAR* FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const TCHAR* FailureMessage)
 {
 	return IsNear(Expected, Actual, Epsilon, FString(FailureMessage));
 }
 
 template <typename TExpected, typename TActual, typename TEpsilon>
-UE_NODISCARD FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const FString& FailureMessage)
+[[nodiscard]] FORCEINLINE bool FNoDiscardAsserter::IsNear(TExpected Expected, TActual Actual, TEpsilon Epsilon, const FString& FailureMessage)
 {
 	if (CQTestCondition::IsNotNearlyEqual(Expected, Actual, Epsilon))
 	{

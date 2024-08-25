@@ -181,4 +181,7 @@ private:
 
 	/** The jobs that are available to be selected in the evaluation context settings. */
 	TArray<TSharedPtr<FString>> AvailableJobsInQueue;
+
+	/** An error that was set during traversal. This will show up in the UI and prevent the tree from being shown. */
+	FString TraversalError;
 };

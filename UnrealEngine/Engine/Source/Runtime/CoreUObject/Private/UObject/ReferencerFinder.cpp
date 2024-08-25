@@ -43,7 +43,7 @@ public:
 		}
 	}
 
-	bool MarkWeakObjectReferenceForClearing(UObject** WeakReference)
+	bool MarkWeakObjectReferenceForClearing(UObject** WeakReference, UObject* ReferenceOwner)
 	{
 		return (Flags & EReferencerFinderFlags::SkipWeakReferences) == EReferencerFinderFlags::SkipWeakReferences;
 	}
@@ -55,9 +55,9 @@ class FAllReferencesCollector : public UE::GC::TDefaultCollector<FAllReferencesP
 public:
 	using Super::Super;
 
-	virtual bool MarkWeakObjectReferenceForClearing(UObject** WeakReference) override
+	virtual bool MarkWeakObjectReferenceForClearing(UObject** WeakReference, UObject* ReferenceOwner) override
 	{
-		return Processor.MarkWeakObjectReferenceForClearing(WeakReference);
+		return Processor.MarkWeakObjectReferenceForClearing(WeakReference, ReferenceOwner);
 	}
 };
 

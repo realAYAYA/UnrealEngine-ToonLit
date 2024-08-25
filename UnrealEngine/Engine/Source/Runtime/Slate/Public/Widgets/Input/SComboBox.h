@@ -74,7 +74,7 @@ public:
 		{
 			TSharedPtr< ITypedTableView<OptionType> > OwnerWidget = this->OwnerTablePtr.Pin();
 
-			const OptionType* MyItem = OwnerWidget->Private_ItemFromWidget( this );
+			const TObjectPtrWrapTypeOf<OptionType>* MyItem = OwnerWidget->Private_ItemFromWidget( this );
 			const bool bIsSelected = OwnerWidget->Private_IsItemSelected( *MyItem );
 				
 			if (bIsSelected)
@@ -114,7 +114,6 @@ public:
 		, _ScrollBarStyle(&FAppStyle::Get().GetWidgetStyle<FScrollBarStyle>("ScrollBar"))
 		, _ContentPadding(_ComboBoxStyle->ContentPadding)
 		, _ForegroundColor(FSlateColor::UseStyle())
-		, _OptionsSource()
 		, _OnSelectionChanged()
 		, _OnGenerateWidget()
 		, _InitiallySelectedItem(ListTypeTraits::MakeNullPtr())
@@ -140,7 +139,7 @@ public:
 		SLATE_ATTRIBUTE( FMargin, ContentPadding )
 		SLATE_ATTRIBUTE( FSlateColor, ForegroundColor )
 
-		SLATE_ARGUMENT( const TArray< OptionType >*, OptionsSource )
+		SLATE_ITEMS_SOURCE_ARGUMENT( OptionType, OptionsSource )
 		SLATE_EVENT( FOnSelectionChanged, OnSelectionChanged )
 		SLATE_EVENT( FOnGenerateWidget, OnGenerateWidget )
 
@@ -196,6 +195,7 @@ public:
 		ItemStyle = InArgs._ItemStyle;
 		ComboBoxStyle = InArgs._ComboBoxStyle;
 		MenuRowPadding = ComboBoxStyle->MenuRowPadding;
+		bShowMenuBackground = false;
 
 		// Work out which values we should use based on whether we were given an override, or should use the style's version
 		const FComboButtonStyle& OurComboButtonStyle = ComboBoxStyle->ComboButtonStyle;
@@ -209,7 +209,6 @@ public:
 		this->EnableGamepadNavigationMode = InArgs._EnableGamepadNavigationMode;
 		this->bControllerInputCaptured = false;
 
-		OptionsSource = InArgs._OptionsSource;
 		CustomScrollbar = InArgs._CustomScrollbar;
 
 		ComboBoxMenuContent =
@@ -217,7 +216,7 @@ public:
 			.MaxDesiredHeight(InArgs._MaxListHeight)
 			[
 				SAssignNew(this->ComboListView, SComboListType)
-				.ListItemsSource(InArgs._OptionsSource)
+				.ListItemsSource(InArgs.GetOptionsSource())
 				.OnGenerateRow(this, &SComboBox< OptionType >::GenerateMenuItemRow)
 				.OnSelectionChanged(this, &SComboBox< OptionType >::OnSelectionChanged_Internal)
 				.OnKeyDownHandler(this, &SComboBox< OptionType >::OnKeyDownHandler)
@@ -268,6 +267,7 @@ public:
 			ComboListView->RequestScrollIntoView(ValidatedItem, 0);
 		}
 
+		ComboListView->SetBackgroundBrush(FStyleDefaults::GetNoBrush());
 	}
 
 		SComboBox()
@@ -408,6 +408,23 @@ public:
 		return SelectedItem;
 	}
 
+	/** Sets new item source */
+	void SetItemsSource(const TArray<OptionType>* InListItemsSource)
+	{
+		ComboListView->SetItemsSource(InListItemsSource);
+	}
+
+	/** Sets new item source */
+	void SetItemsSource(TSharedRef<::UE::Slate::Containers::TObservableArray<OptionType>> InListItemsSource)
+	{
+		ComboListView->SetItemsSource(InListItemsSource);
+	}
+
+	/** Clears current item source */
+	void ClearItemsSource()
+	{
+		ComboListView->ClearItemsSource();
+	}
 
 	/** 
 	 * Requests a list refresh after updating options 
@@ -486,11 +503,12 @@ protected:
 					if (TListTypeTraits<OptionType>::IsPtrValid(NullableSelected))
 					{
 						OptionType ActuallySelected = TListTypeTraits<OptionType>::NullableItemTypeConvertToItemType(NullableSelected);
-						const int32 SelectionIndex = OptionsSource->Find(ActuallySelected);
+						const TArrayView<const OptionType> OptionsSource = ComboListView->GetItems();
+						const int32 SelectionIndex = OptionsSource.Find(ActuallySelected);
 						if (SelectionIndex >= 1)
 						{
 							// Select an item on the prev row
-							SetSelectedItem((*OptionsSource)[SelectionIndex - 1]);
+							SetSelectedItem(OptionsSource[SelectionIndex - 1]);
 						}
 					}
 
@@ -502,11 +520,12 @@ protected:
 					if (TListTypeTraits<OptionType>::IsPtrValid(NullableSelected))
 					{
 						OptionType ActuallySelected = TListTypeTraits<OptionType>::NullableItemTypeConvertToItemType(NullableSelected);
-						const int32 SelectionIndex = OptionsSource->Find(ActuallySelected);
-						if (SelectionIndex < OptionsSource->Num() - 1)
+						const TArrayView<const OptionType> OptionsSource = ComboListView->GetItems();
+						const int32 SelectionIndex = OptionsSource.Find(ActuallySelected);
+						if (SelectionIndex < OptionsSource.Num() - 1)
 						{
 							// Select an item on the next row
-							SetSelectedItem((*OptionsSource)[SelectionIndex + 1]);
+							SetSelectedItem(OptionsSource[SelectionIndex + 1]);
 						}
 					}
 					return FReply::Handled();
@@ -685,7 +704,5 @@ private:
 	bool bControllerInputCaptured;
 
 	TSharedPtr<SBox> ComboBoxMenuContent;
-
-	const TArray< OptionType >* OptionsSource;
 };
 

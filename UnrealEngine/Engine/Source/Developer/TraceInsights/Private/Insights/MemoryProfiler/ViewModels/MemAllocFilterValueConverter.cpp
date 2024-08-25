@@ -55,7 +55,7 @@ bool FMemoryFilterValueConverter::Convert(const FString& Input, int64& Output, F
 
 			const int64 Unit = 1LL << ((PrefixPos - Prefixes + 1) * 10);
 			double Value = FCString::Atod(*TrimmedInput.Left(Index));
-			Output = static_cast<int64>(Value * Unit);
+			Output = static_cast<int64>(Value * static_cast<double>(Unit));
 			break;
 		}
 		else

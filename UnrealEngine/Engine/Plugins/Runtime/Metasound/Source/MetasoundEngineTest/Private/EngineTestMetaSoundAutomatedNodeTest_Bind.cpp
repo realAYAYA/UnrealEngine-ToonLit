@@ -9,6 +9,7 @@
 #include "MetasoundFrontendDataTypeRegistry.h"
 #include "MetasoundOperatorInterface.h"
 #include "MetasoundLog.h"
+#include "MetasoundFrontendRegistryKey.h"
 #include "MetasoundVertex.h"
 #include "MetasoundVertexData.h"
 #include "Templates/UniquePtr.h"
@@ -18,27 +19,35 @@
 
 #if WITH_EDITORONLY_DATA
 
-IMPLEMENT_COMPLEX_AUTOMATION_TEST(FMetasoundAutomatedNodeTest_Bind, "Audio.Metasound.AutomatedNodeTest.Bind", EAutomationTestFlags::EditorContext | EAutomationTestFlags::StressFilter)
+IMPLEMENT_COMPLEX_AUTOMATION_TEST(FMetasoundAutomatedNodeTest_Bind, "Audio.Metasound.AutomatedNodeTest.Bind", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 void FMetasoundAutomatedNodeTest_Bind::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
 {
 	using namespace Metasound::EngineTest;
-	GetAllRegisteredNodes(OutBeautifiedNames, OutTestCommands);
+	GetAllRegisteredNativeNodes(OutBeautifiedNames, OutTestCommands);
 
 	UE_LOG(LogMetaSound, Verbose, TEXT("Found %d metasound nodes to test"), OutTestCommands.Num());
 }
 
-bool FMetasoundAutomatedNodeTest_Bind::RunTest(const FString& InRegistryKey)
+bool FMetasoundAutomatedNodeTest_Bind::RunTest(const FString& InRegistryKeyString)
 {
 	using namespace Metasound;
 	using namespace Metasound::EngineTest;
+	using namespace Metasound::Frontend;
 
 	static const FOperatorSettings OperatorSettings{48000  /* samplerate */, 100.f /* block rate */};
 	static const FMetasoundEnvironment SourceEnvironment = GetSourceEnvironmentForTest();
 
-	TUniquePtr<INode> Node = CreateNodeFromRegistry(InRegistryKey);
+	FNodeRegistryKey RegistryKey;
+	if (!FNodeRegistryKey::Parse(InRegistryKeyString, RegistryKey))
+	{
+		AddError(FString::Printf(TEXT("Failed to parse registry key string %s"), *InRegistryKeyString));
+		return false;
+	}
+
+	TUniquePtr<INode> Node = CreateNodeFromRegistry(RegistryKey);
 	if (!Node.IsValid())
 	{
-		AddError(FString::Printf(TEXT("Failed to create node %s from registry"), *InRegistryKey));
+		AddError(FString::Printf(TEXT("Failed to create node %s from registry"), *InRegistryKeyString));
 		return false;
 	}
 
@@ -64,7 +73,7 @@ bool FMetasoundAutomatedNodeTest_Bind::RunTest(const FString& InRegistryKey)
 	TUniquePtr<IOperator> Operator = Node->GetDefaultOperatorFactory()->CreateOperator(BuildParams, BuildResults);
 	if (!Operator.IsValid())
 	{
-		AddError(FString::Printf(TEXT("Failed to create operator from node %s - %s."), *InRegistryKey, *GetPrettyName(InRegistryKey)));
+		AddError(FString::Printf(TEXT("Failed to create operator from node %s - %s."), *InRegistryKeyString, *GetPrettyName(RegistryKey)));
 	}
 
 	// Query the data on the operator
@@ -85,7 +94,7 @@ bool FMetasoundAutomatedNodeTest_Bind::RunTest(const FString& InRegistryKey)
 			// is not bound with any data. If data is sent to the CreateOperator(...)
 			// InputData, it should be reflected in the inputs of the IOperator through
 			// the BindInputs(...) method.
-			AddError(FString::Printf(TEXT("Input vertex (%s) of node (%s) does not bind supplied input data. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(InRegistryKey)));
+			AddError(FString::Printf(TEXT("Input vertex (%s) of node (%s) does not bind supplied input data. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(RegistryKey)));
 		}
 		else if (bIsVertexBoundDuringBuild && bIsVertexBoundAfterBuild)
 		{
@@ -110,7 +119,7 @@ bool FMetasoundAutomatedNodeTest_Bind::RunTest(const FString& InRegistryKey)
 					// is bound to different data. If data is sent to the CreateOperator(...)
 					// InputData, it should be reflected in the inputs of the IOperator through
 					// the BindInputs(...) method and be unchanged in this scenario.
-					AddError(FString::Printf(TEXT("Input vertex (%s) of node (%s) binds different data than the supplied at input data. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(InRegistryKey)));
+					AddError(FString::Printf(TEXT("Input vertex (%s) of node (%s) binds different data than the supplied at input data. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(RegistryKey)));
 				}
 			}
 		}
@@ -154,7 +163,7 @@ bool FMetasoundAutomatedNodeTest_Bind::RunTest(const FString& InRegistryKey)
 			// on subsequent calls to IOperator::BindInputs(...).  If new data is 
 			// bound to the operator inputs, it should reflect that new data on subsequent
 			// calls to IOperator::BindInputs(...)
-			AddWarning(FString::Printf(TEXT("Input vertex (%s) of node (%s) does not reflect updated data reference when rebound. This node will not operator as expected in a dynamic graph. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(InRegistryKey)));
+			AddWarning(FString::Printf(TEXT("Input vertex (%s) of node (%s) does not reflect updated data reference when rebound. This node will not operator as expected in a dynamic graph. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(RegistryKey)));
 		}
 		else if (!bIsUpdateExpected && bIsUpdateActualized)
 		{
@@ -163,7 +172,7 @@ bool FMetasoundAutomatedNodeTest_Bind::RunTest(const FString& InRegistryKey)
 			// on subsequent calls to IOperator::BindInputs(...).  If new data is 
 			// bound to the operator inputs, it should reflect that new data on subsequent
 			// calls to IOperator::BindInputs(...)
-			AddWarning(FString::Printf(TEXT("Input vertex (%s) of node (%s) reflects unintended updated of data reference when rebound. This node will not operator as expected in a dynamic graph. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(InRegistryKey)));
+			AddWarning(FString::Printf(TEXT("Input vertex (%s) of node (%s) reflects unintended updated of data reference when rebound. This node will not operator as expected in a dynamic graph. Check that CreateOperator(...) and BindInputs(...) are correctly implemented for the node's operator."), *InputVertex.VertexName.ToString(), *GetPrettyName(RegistryKey)));
 		}
 	}
 

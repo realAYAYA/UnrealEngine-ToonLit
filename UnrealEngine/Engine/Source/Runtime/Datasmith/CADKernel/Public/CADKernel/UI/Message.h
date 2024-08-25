@@ -28,14 +28,14 @@ public:
 	template <typename FmtType, typename... Types>
 	static void Printf(EVerboseLevel Level, const FmtType& Text, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FString::Printf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FString::Printf");
 		VPrintf(Level, Text, Args...);
 	}
 
 	template <typename FmtType, typename... Types>
 	static void Error(const FmtType& Text, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FString::Printf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FString::Printf");
 		FString CompleteText = TEXT("ERROR: ");
 		CompleteText += Text;
 		VPrintf(Log, *CompleteText, Args...);
@@ -44,7 +44,7 @@ public:
 	template <typename FmtType, typename... Types>
 	static void Warning(const FmtType& Text, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FString::Printf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FString::Printf");
 		FString CompleteText = TEXT("WARNING: ");
 		CompleteText += Text;
 		VPrintf(Log, *CompleteText, Args...);
@@ -53,7 +53,7 @@ public:
 	template <typename FmtType, typename... Types>
 	static void FillReportFile(const FmtType Header, const FmtType Text, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FString::Printf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FString::Printf");
 		VReportPrintF(Header, Text, Args...);
 	}
 

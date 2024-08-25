@@ -45,12 +45,12 @@ public:
 
 	bool Version(FD3D12ResourceLocation& BufferOut, bool bDiscardSharedConstants);
 
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 	inline D3D12_CPU_DESCRIPTOR_HANDLE GetOfflineCpuHandle() const { return View->GetOfflineCpuHandle(); }
 #endif
 
 protected:
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 	FD3D12ConstantBufferView* View = nullptr;
 #endif
 

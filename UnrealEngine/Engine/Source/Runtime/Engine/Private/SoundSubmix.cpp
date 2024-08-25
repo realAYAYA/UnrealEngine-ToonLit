@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Sound/SampleBufferIO.h"
+#include "Stats/Stats2.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SoundSubmix)
 
@@ -18,6 +19,8 @@
 #include "Async/Async.h"
 #endif // WITH_EDITOR
 
+#include "SoundSubmixCustomVersion.h"
+
 static int32 ClearBrokenSubmixAssetsCVar = 0;
 FAutoConsoleVariableRef CVarFixUpBrokenSubmixAssets(
 	TEXT("au.submix.clearbrokensubmixassets"),
@@ -26,9 +29,18 @@ FAutoConsoleVariableRef CVarFixUpBrokenSubmixAssets(
 	TEXT("0: Disable, >0: Enable"),
 	ECVF_Default);
 
+namespace SoundSubmixPrivate
+{
+	// Modulators default. 
+	static const float Default_OutputVolumeModulation = 0.f;
+	static const float Default_WetLevelModulation = 0.f;
+	static const float Default_DryLevelModulation = -96.f;
+}
+
 USoundSubmixWithParentBase::USoundSubmixWithParentBase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ParentSubmix(nullptr)
+	, bIsDynamic(0)
 {}
 
 USoundSubmixBase::USoundSubmixBase(const FObjectInitializer& ObjectInitializer)
@@ -43,86 +55,34 @@ USoundSubmix::USoundSubmix(const FObjectInitializer& ObjectInitializer)
 	, AmbisonicsPluginSettings(nullptr)
 	, EnvelopeFollowerAttackTime(10)
 	, EnvelopeFollowerReleaseTime(500)
-	, OutputVolume(-1.0f)
-	, WetLevel(-1.0f)
-	, DryLevel(-1.0f)
 {
-	OutputVolumeModulation.Value = 0.f;
-	WetLevelModulation.Value = 0.f;
-	DryLevelModulation.Value = -96.f;
+	using namespace SoundSubmixPrivate;
+	OutputVolumeModulation.Value	= Default_OutputVolumeModulation;
+	WetLevelModulation.Value		= Default_WetLevelModulation;
+	DryLevelModulation.Value		= Default_DryLevelModulation;
+
+#if WITH_EDITORONLY_DATA
+	InitDeprecatedDefaults();
+#endif //WITH_EDITORONLY_DATA
 }
 
 void USoundSubmix::Serialize(FArchive& Ar)
 {
 	Super::Serialize(Ar);
+	Ar.UsingCustomVersion(FSoundSubmixCustomVersion::GUID);
+}
+
+void USoundSubmix::PostLoad()
+{
+	Super::PostLoad();
 
 #if WITH_EDITORONLY_DATA
-	if (Ar.IsLoading() || Ar.IsSaving())
-	{
-		// use -96dB as a noise floor when fixing up linear volume settings
-		static constexpr float LinearNeg96dB = 0.0000158489319f;
 
-		// convert any old deprecated values to the new value
-		if (OutputVolume >= 0.0f)
-		{
-			if (OutputVolume <= LinearNeg96dB)
-			{
-				OutputVolumeModulation.Value = -96.f;
-			}
-			else
-			{
-				OutputVolumeModulation.Value = Audio::ConvertToDecibels(OutputVolume);
-			}
-			OutputVolume = -1.0f;
-		}
+	const int32 Version = GetLinkerCustomVersion(FSoundSubmixCustomVersion::GUID);
+	HandleVersionMigration(Version);
 
-		if (WetLevel >= 0.0f)
-		{
-			if (WetLevel <= LinearNeg96dB)
-			{
-				WetLevelModulation.Value = -96.f;
-			}
-			else
-			{
-				WetLevelModulation.Value = Audio::ConvertToDecibels(WetLevel);
-			}
-			WetLevel = -1.0f;
-		}
-
-		if (DryLevel >= 0.0f)
-		{
-			if (DryLevel <= LinearNeg96dB)
-			{
-				DryLevelModulation.Value = -96.f;
-			}
-			else
-			{
-				DryLevelModulation.Value = Audio::ConvertToDecibels(DryLevel);
-			}
-			DryLevel = -1.0f;
-		}
-
-		// fix values previously saved as linear values
-		if (OutputVolumeModulation.Value > 0.0f)
-		{
-			OutputVolumeModulation.Value = Audio::ConvertToDecibels(OutputVolumeModulation.Value);
-		}
-
-		if (WetLevelModulation.Value > 0.0f)
-		{
-			WetLevelModulation.Value = Audio::ConvertToDecibels(WetLevelModulation.Value);
-		}
-
-		if (DryLevelModulation.Value > 0.0f)
-		{
-			DryLevelModulation.Value = Audio::ConvertToDecibels(DryLevelModulation.Value);
-		}
-
-		OutputVolumeModulation.VersionModulators();
-		WetLevelModulation.VersionModulators();
-		DryLevelModulation.VersionModulators();
-	}
 #endif // WITH_EDITORONLY_DATA
+
 }
 
 UEndpointSubmix::UEndpointSubmix(const FObjectInitializer& ObjectInitializer)
@@ -621,6 +581,213 @@ void USoundSubmixBase::PostLoad()
 	}
 }
 
+TObjectPtr<USoundSubmixBase> USoundSubmixWithParentBase::GetParent(Audio::FDeviceId InDeviceId) const
+{
+	// Dynamic parent?
+	if (const TObjectPtr<USoundSubmixBase>* pFound = DynamicParentSubmix.Find(InDeviceId))
+	{
+		return *pFound;
+	}
+	return ParentSubmix;
+}
+
+bool USoundSubmixWithParentBase::DynamicConnect(const UObject* WorldContextObject, USoundSubmixBase* InParent)
+{	
+	if (!WorldContextObject)
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicConnect): World Context is null for [%s]"), *GetName());
+		return false;
+	}
+		
+	const UWorld* World = WorldContextObject->GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicConnect): World is null for [%s]"), *GetName());		
+		return false;
+	}
+
+	return DynamicConnect(World->GetAudioDevice(), InParent);
+}
+
+bool USoundSubmixWithParentBase::DynamicConnect(FAudioDeviceHandle Handle, USoundSubmixBase* InParent)
+{
+	if (!IsDynamic(false /* bIncludeAncestors */))
+	{
+		const USoundSubmixBase* DynamicAncestor = FindDynamicAncestor();
+		UE_CLOG(DynamicAncestor, LogAudio, Warning, TEXT("Submix (DynamicConnect): Dynamic Flag not set for [%s], you need its ancestor [%s]. Call FindDynamicAncestor on this submix to find it. Ignoring..." ), *GetName(), *DynamicAncestor->GetName());
+		UE_CLOG(!DynamicAncestor, LogAudio, Warning, TEXT("Submix (DynamicConnect): Dynamic Flag not set for [%s] or any of its parents, ignoring... "), *GetName());
+		return false;
+	}
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicConnect): No valid audio device in this world for [%s]"), *GetName());
+		return false;
+	}
+
+	if (InParent && !SubmixUtils::AreSubmixFormatsCompatible(this, InParent))
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicConnect): Submix connot be connected are they are incompatible [%s] and [%s]"), *GetName(), *GetNameSafe(InParent));
+		return false;
+	}
+
+	// Already part of the graph?
+	if (InParent && SubmixUtils::FindInGraph(InParent, this, true, Handle))
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicConnect): Submix [%s] is already part of the graph"), *GetName());
+		return false;
+	}
+
+	const Audio::DeviceID Id = Handle.GetDeviceID();
+
+	TObjectPtr<USoundSubmixBase>& CurrentParent = DynamicParentSubmix.FindOrAdd(Id);
+
+	if (CurrentParent != InParent)
+	{
+
+		if (CurrentParent)
+		{
+			CurrentParent->DynamicChildSubmixes.FindOrAdd(Id).ChildSubmixes.Remove(this);
+			UE_LOG(LogAudio, Verbose, TEXT("Submix (DynamicConnect): Reparenting [%s] and removing from it's parent [%s]"), *GetName(), *CurrentParent->GetName());
+		}
+
+		CurrentParent = InParent;
+		if (CurrentParent)
+		{
+			CurrentParent->DynamicChildSubmixes.FindOrAdd(Id).ChildSubmixes.AddUnique(this);
+			UE_LOG(LogAudio, Verbose, TEXT("Submix (DynamicConnect): Reparenting [%s] and adding to it's new parent [%s]"), *GetName(), *CurrentParent->GetName());
+
+			// Disable our parents auto disable feature.
+			Handle->SetSubmixAutoDisable(Cast<USoundSubmix>(CurrentParent.Get()), false);
+		}
+
+		// Register us and our children
+		SubmixUtils::ForEachStaticChildRecursive(
+			this,
+			[&Handle, Id](USoundSubmixBase* Iter)-> void
+			{
+				UE_LOG(LogAudio, Verbose, TEXT("Submix (DynamicConnect): Registering [%s] with AudioDevice [%u]"), *Iter->GetName(), Id);
+				Handle->RegisterSoundSubmix(Iter, /* bInit*/ true);
+			});
+			
+		// ... and disable parents auto disable feature.
+		Handle->SetSubmixAutoDisable(Cast<USoundSubmix>(this), CurrentParent == nullptr);
+
+
+
+		return CurrentParent != nullptr;
+	}
+
+	UE_CLOG(InParent, LogAudio, Warning, TEXT("Submix (DynamicConnect): Submix [%s] was already connected to [%s]"), *GetName(), *GetNameSafe(CurrentParent));
+	UE_CLOG(InParent == nullptr, LogAudio, Warning, TEXT("Submix (DynamicConnect): Connecting a [%s] to a null parent, but our parent is already null"), *GetName());
+	return false;
+
+}
+
+bool USoundSubmixWithParentBase::DynamicDisconnect(const UObject* WorldContextObject)
+{
+	if (!WorldContextObject)
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicDisconnect): World Context is null for [%s]"), *GetName());
+		return false;
+	}
+		
+	const UWorld* World = WorldContextObject->GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicDisconnect): World is null for [%s]"), *GetName());		
+		return false;
+	}
+
+	return DynamicDisconnect(World->GetAudioDevice());
+}
+
+bool USoundSubmixWithParentBase::DynamicDisconnect(FAudioDeviceHandle Handle)
+{
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicDisconnect): No valid audio device in this world for [%s]"), *GetName());
+		return false;
+	}
+
+	if (!IsDynamic(false /* bIncludeAncestors */))
+	{
+		UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicDisconnect): Dynamic Flag not set for [%s] ignoring."), *GetName());
+		return false;
+	}
+
+	const Audio::DeviceID Id = Handle.GetDeviceID();
+
+	TObjectPtr<USoundSubmixBase>& CurrentParent = DynamicParentSubmix.FindOrAdd(Id);
+
+	if (CurrentParent)
+	{
+		UE_LOG(LogAudio, Verbose, TEXT("Submix (DynamicDisconnect): Removing [%s] from it's parent [%s]"), *GetName(), *CurrentParent->GetName());
+
+		CurrentParent->DynamicChildSubmixes.FindOrAdd(Id).ChildSubmixes.Remove(this);
+		CurrentParent = nullptr;
+
+		 SubmixUtils::ForEachStaticChildRecursive(
+			this,
+			[&Handle](USoundSubmixBase* Iter)-> void
+			{
+				Handle->UnregisterSoundSubmix(Iter,  /* bReparentChildren*/ false);
+			});	
+				
+		// If we still have a valid parent static submix? Make sure that's still live and registered.
+		if (ParentSubmix)
+		{
+			Handle->RegisterSoundSubmix(this, false);
+		}
+		
+		UE_LOG(LogAudio, Verbose, TEXT("Submix (DynamicDisconnect): Unregistering [%s] with AudioDevice [%u]"), *GetName(), Id);
+
+		return true;
+	}
+
+	UE_LOG(LogAudio, Warning, TEXT("Submix (DynamicDisconnect): Submix was not connected to any dynamic parent [%s]"), *GetName());
+	return false;
+}
+
+bool USoundSubmixWithParentBase::IsDynamic(const bool bIncludeAncestors) const
+{
+	// If we don't care about ancestors, just return if we're dynamic.
+	if (!bIncludeAncestors)
+	{
+		return bIsDynamic;
+	}
+
+	// Find the first dynamic ancestor.
+	const USoundSubmixBase* Found = FindDynamicAncestor();
+	return Found != nullptr;
+}
+
+USoundSubmixBase* USoundSubmixWithParentBase::FindDynamicAncestor()
+{
+	const USoundSubmixBase* Found = const_cast<const USoundSubmixWithParentBase*>(this)->FindDynamicAncestor();
+	return const_cast<USoundSubmixBase*>(Found);
+}
+
+const USoundSubmixBase* USoundSubmixWithParentBase::FindDynamicAncestor() const
+{
+	// Walk up parents from here checking for dynamic flag.
+	for (const USoundSubmixWithParentBase* Current = this; Current; /* Incremented below */)
+	{
+		if (Current->bIsDynamic)
+		{
+			return Current;
+		}
+		if (const USoundSubmixWithParentBase* Parent = Cast<USoundSubmixWithParentBase>(Current->ParentSubmix))
+		{
+			Current = Parent;
+		}
+		else
+		{
+			break;
+		}
+	}
+	return nullptr;
+}
+
 #if WITH_EDITOR
 
 void USoundSubmixBase::PostDuplicate(EDuplicateMode::Type DuplicateMode)
@@ -656,7 +823,7 @@ void USoundSubmixBase::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 			{
 				if (ChildSubmixes[ChildIndex] != nullptr && !BackupChildSubmixes.Contains(ChildSubmixes[ChildIndex]))
 				{
-					if (ChildSubmixes[ChildIndex]->RecurseCheckChild(this))
+					if (SubmixUtils::FindInGraph(this, ChildSubmixes[ChildIndex], false))
 					{
 						// Contains cycle so revert to old layout - launch notification to inform user
 						FNotificationInfo Info(NSLOCTEXT("Engine", "UnableToChangeSoundSubmixChildDueToInfiniteLoopNotification", "Could not change SoundSubmix child as it would create a loop"));
@@ -672,6 +839,9 @@ void USoundSubmixBase::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 						// Update parentage
 						SubmixWithParent->SetParentSubmix(this);
 					}
+					
+					ChildSubmixes[ChildIndex]->PostEditChangeProperty(PropertyChangedEvent);
+
 					break;
 				}
 			}
@@ -686,13 +856,16 @@ void USoundSubmixBase::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 					{
 						SubmixWithParent->ParentSubmix = nullptr;
 					}
-				}
-			}
 
-			// Force the properties to be initialized for this SoundSubmix on all active audio devices
-			if (FAudioDeviceManager* AudioDeviceManager = GEngine->GetAudioDeviceManager())
-			{
-				AudioDeviceManager->RegisterSoundSubmix(this);
+					// Force the properties to be initialized for this SoundSubmix on all active audio devices
+					if (FAudioDeviceManager* AudioDeviceManager = GEngine->GetAudioDeviceManager())
+					{
+						if (!IsDynamic(true /* bIncludeAncestors */ )) // Exclude dynamic submixes from registration
+						{
+							AudioDeviceManager->RegisterSoundSubmix(this);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -703,39 +876,26 @@ void USoundSubmixBase::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 }
 
 TArray<TObjectPtr<USoundSubmixBase>> USoundSubmixBase::BackupChildSubmixes;
+#endif
 
-bool USoundSubmixBase::RecurseCheckChild(const USoundSubmixBase* ChildSoundSubmix) const
-{
-	for (int32 Index = 0; Index < ChildSubmixes.Num(); Index++)
-	{
-		if (ChildSubmixes[Index])
-		{
-			if (ChildSubmixes[Index] == ChildSoundSubmix)
-			{
-				return true;
-			}
 
-			if (ChildSubmixes[Index]->RecurseCheckChild(ChildSoundSubmix))
-			{
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
-
-void USoundSubmixWithParentBase::SetParentSubmix(USoundSubmixBase* InParentSubmix)
+void USoundSubmixWithParentBase::SetParentSubmix(USoundSubmixBase* InParentSubmix, bool bModifyAssets)
 {
 	if (ParentSubmix != InParentSubmix)
 	{
 		if (ParentSubmix)
 		{
-			ParentSubmix->Modify();
+			if (bModifyAssets)
+			{
+				ParentSubmix->Modify();
+			}
 			ParentSubmix->ChildSubmixes.Remove(this);
 		}
 
-		Modify();
+		if (bModifyAssets)
+		{
+			Modify();
+		}
 		ParentSubmix = InParentSubmix;
 		if (ParentSubmix)
 		{
@@ -743,6 +903,7 @@ void USoundSubmixWithParentBase::SetParentSubmix(USoundSubmixBase* InParentSubmi
 		}
 	}
 }
+
 
 #if WITH_EDITOR
 void USoundSubmixWithParentBase::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
@@ -801,7 +962,6 @@ void USoundSubmixWithParentBase::PostDuplicate(EDuplicateMode::Type DuplicateMod
 
 	Super::PostDuplicate(DuplicateMode);
 }
-#endif
 
 void USoundSubmixBase::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
 {
@@ -1226,6 +1386,77 @@ ENGINE_API bool SubmixUtils::AreSubmixFormatsCompatible(const USoundSubmixBase* 
 	return true;
 }
 
+bool SubmixUtils::FindInGraph(
+	const USoundSubmixBase* InEntryPoint, 
+	const USoundSubmixBase* InToMatch, 
+	const bool bStartFromRoot,
+	FAudioDeviceHandle InDevice /*= {}*/)
+{
+	TSet<const USoundSubmixBase*> Visited;
+	TArray<const USoundSubmixBase*> Stack;
+
+	// Optionally ascend to the root
+	const USoundSubmixBase* StartingPoint = InEntryPoint;
+	if (bStartFromRoot)
+	{
+		StartingPoint = FindRoot(InEntryPoint, InDevice);
+	}
+	
+	Stack.Push(StartingPoint);
+	while (Stack.Num() > 0)
+	{
+		if (const USoundSubmixBase* Vertex = Stack.Pop())
+		{
+			if (Vertex == InToMatch)
+			{
+				return true;
+			}
+			else if (!Visited.Contains(Vertex))
+			{
+				// Unlike parents, submixes can have both dynamic and static children so search both.
+				Stack.Append(Vertex->ChildSubmixes);
+				if (const FDynamicChildSubmix* Dynamics = Vertex->DynamicChildSubmixes.Find(InDevice.GetDeviceID()))
+				{
+					Stack.Append(Dynamics->ChildSubmixes);
+				}
+			}
+		}
+	}
+	return false;
+
+}
+
+void SubmixUtils::ForEachStaticChildRecursive(USoundSubmixBase* StartingPoint, const TFunction<void(USoundSubmixBase*)>& Op)
+{
+	Op(StartingPoint);
+	for (TObjectPtr<USoundSubmixBase> i : StartingPoint->ChildSubmixes)
+	{
+		ForEachStaticChildRecursive(i,Op);
+	}
+}
+
+const USoundSubmixBase* SubmixUtils::FindRoot(const USoundSubmixBase* InStartingPoint, FAudioDeviceHandle InDevice)
+{	
+	const USoundSubmixBase* HighestPoint = InStartingPoint;
+	while (HighestPoint)
+	{
+		const USoundSubmixWithParentBase* WithParent = Cast<const USoundSubmixWithParentBase>(HighestPoint);
+		if (!WithParent)
+		{
+			break;
+		}
+
+		const USoundSubmixBase* Parent = WithParent->GetParent(InDevice.GetDeviceID());
+		if (!Parent)
+		{
+			break;
+		}
+
+		HighestPoint = Parent;
+	}
+	return HighestPoint;
+}
+
 #if WITH_EDITOR
 
 ENGINE_API void SubmixUtils::RefreshEditorForSubmix(const USoundSubmixBase* InSubmix)
@@ -1257,3 +1488,90 @@ ENGINE_API void SubmixUtils::RefreshEditorForSubmix(const USoundSubmixBase* InSu
 
 #endif // WITH_EDITOR
 
+// Versioning and Deprecated Property Migration.
+// --------------------------------------------
+
+#if WITH_EDITORONLY_DATA
+
+namespace SoundSubmixMigration
+{
+	// Old defaults.
+	static const float OldDefault_OutputVolume(-1.0f);
+	static const float OldDefault_WetLevel(-1.0f);
+	static const float OldDefault_DryLevel(-1.0f);
+}
+
+void USoundSubmix::InitDeprecatedDefaults()
+{
+	using namespace SoundSubmixMigration;
+	
+	// We must init these to their old defaults prior to serialization to test if they are in fact serialized.
+	OutputVolume_DEPRECATED = OldDefault_OutputVolume;
+	DryLevel_DEPRECATED = OldDefault_DryLevel;
+	WetLevel_DEPRECATED = OldDefault_WetLevel;
+}
+
+void USoundSubmix::HandleVersionMigration(const int32 Version)
+{
+	if (Version < FSoundSubmixCustomVersion::MigrateModulatedSendProperties)
+	{
+		using namespace SoundSubmixPrivate;
+		using namespace SoundSubmixMigration;
+
+		auto ConvertToModulatedDb = [this](const float InValue, const float InDefault, const float InDefaultModulationValue, FSoundModulationDestinationSettings& OutModulator, const TCHAR* InParamName) 
+		{
+			// IF after load this old property has non-default value.
+			// AND the newer form is still at a default value.
+			// THEN we can safely convert the value over.
+
+			if (!FMath::IsNearlyEqual(InValue, InDefault) &&
+				FMath::IsNearlyEqual(OutModulator.Value, InDefaultModulationValue))
+			{
+				// use -96dB as a noise floor when fixing up linear volume settings
+				static constexpr float LinearNeg96dB = 0.0000158489319f;
+
+				if (InValue <= LinearNeg96dB)
+				{
+					OutModulator.Value = -96.f;
+				}
+				else
+				{
+					OutModulator.Value = Audio::ConvertToDecibels(InValue);
+				}
+
+				UE_LOG(LogAudio, Display, TEXT("SoundSubmix::HandleVersionMigration, ConvertToModulatedDb, Asset = %s, %s = %2.2f dB from %2.2f"), *GetName(), InParamName, OutModulator.Value, InValue);
+			}
+		};
+
+		// Convert.
+		ConvertToModulatedDb(OutputVolume_DEPRECATED, OldDefault_OutputVolume, Default_OutputVolumeModulation, OutputVolumeModulation, TEXT("OutputVoluime"));
+		ConvertToModulatedDb(WetLevel_DEPRECATED, OldDefault_WetLevel, Default_WetLevelModulation, WetLevelModulation, TEXT("WetLevel"));
+		ConvertToModulatedDb(DryLevel_DEPRECATED, OldDefault_DryLevel, Default_DryLevelModulation, DryLevelModulation, TEXT("DryLevel"));
+	}
+
+	// Convert linear modulators to dB. (this has most likely happened as part of above update, but just in case we have some outliers, handle this separately).
+	if (Version < FSoundSubmixCustomVersion::ConvertLinearModulatorsToDb)
+	{
+		auto ConvertToDb = [this](FSoundModulationDestinationSettings& OutValue, const TCHAR* InName) 
+		{
+			// Assume anything > 0.f is in a linear scale and convert, otherwise ignore it.
+			if (OutValue.Value > 0.0f)
+			{
+				const float dbValue = Audio::ConvertToDecibels(OutValue.Value);
+				UE_LOG(LogAudio, Display, TEXT("SoundSubmix::HandleVersionMigration, ConvertToDb, Asset = %s, %s = %2.2f dB from %2.2f"), *GetName(), InName, dbValue, OutValue.Value)
+				OutValue.Value = dbValue;
+			}
+		};
+
+		// Convert.
+		ConvertToDb(OutputVolumeModulation, TEXT("OutputVolume"));
+		ConvertToDb(WetLevelModulation, TEXT("WetLevel"));
+		ConvertToDb(DryLevelModulation, TEXT("DryLevel"));
+
+		OutputVolumeModulation.VersionModulators();
+		WetLevelModulation.VersionModulators();
+		DryLevelModulation.VersionModulators();
+	}
+}
+
+#endif //WITH_EDITORONLY_DATA

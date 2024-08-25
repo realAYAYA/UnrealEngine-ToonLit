@@ -3,6 +3,7 @@
 #include "OptimusDataInterfaceCustomComputeKernel.h"
 
 #include "OptimusComponentSource.h"
+#include "OptimusDeformerInstance.h"
 #include "OptimusExpressionEvaluator.h"
 #include "ShaderParameterMetadataBuilder.h"
 #include "ComputeFramework/ComputeMetadataBuilder.h"
@@ -14,19 +15,6 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OptimusDataInterfaceCustomComputeKernel)
 
 const FString UOptimusCustomComputeKernelDataInterface::NumThreadsReservedName = TEXT("NumThreads");
-
-void UOptimusCustomComputeKernelDataInterface::InitFromKernelNode(const UOptimusNode_CustomComputeKernel* InKernelNode)
-{
-	NumThreadsExpression = InKernelNode->ExecutionDomain.Name.ToString();
-
-	TSet<UOptimusComponentSourceBinding*> PrimaryBinding = InKernelNode->GetGroupComponentSourceBindings(InKernelNode->GetPrimaryGroupPin());
-
-	// Kernel node's ValidateForCompile() should guaranteed the existence of unique primary binding
-	if (ensure(PrimaryBinding.Num() == 1))
-	{
-		ComponentSourceBinding = PrimaryBinding.Array()[0];
-	}
-}
 
 void UOptimusCustomComputeKernelDataInterface::GetSupportedInputs(TArray<FShaderFunctionDefinition>& OutFunctions) const
 {
@@ -42,7 +30,7 @@ void UOptimusCustomComputeKernelDataInterface::GetShaderParameters(TCHAR const* 
 	TArray<FShaderParametersMetadata*> DummyNestedStructs;
 	ComputeFramework::AddParamForType(Builder, *NumThreadsReservedName, FShaderValueType::Get(EShaderFundamentalType::Int, 3),DummyNestedStructs);
 
-	FShaderParametersMetadata* ShaderParameterMetadata = Builder.Build(FShaderParametersMetadata::EUseCase::ShaderParameterStruct, TEXT("UAnimAttributeDataInterface"));
+	FShaderParametersMetadata* ShaderParameterMetadata = Builder.Build(FShaderParametersMetadata::EUseCase::ShaderParameterStruct, TEXT("UCustomComputeKernelDataInterface"));
 
 	InOutAllocations.ShaderParameterMetadatas.Add(ShaderParameterMetadata);
 	InOutAllocations.ShaderParameterMetadatas.Append(DummyNestedStructs);
@@ -54,7 +42,8 @@ void UOptimusCustomComputeKernelDataInterface::GetShaderParameters(TCHAR const* 
 
 void UOptimusCustomComputeKernelDataInterface::GetShaderHash(FString& InOutKey) const
 {
-	
+	// UComputeGraph::BuildKernelSource hashes the result of GetHLSL()
+	// Only append additional hashes here if the HLSL contains any additional includes	
 }
 
 void UOptimusCustomComputeKernelDataInterface::GetHLSL(FString& OutHLSL, FString const& InDataInterfaceName) const
@@ -89,6 +78,16 @@ UComputeDataProvider* UOptimusCustomComputeKernelDataInterface::CreateDataProvid
 	return Provider;
 }
 
+void UOptimusCustomComputeKernelDataInterface::SetExecutionDomain(const FString& InExecutionDomain)
+{
+	NumThreadsExpression = InExecutionDomain;
+}
+
+void UOptimusCustomComputeKernelDataInterface::SetComponentBinding(const UOptimusComponentSourceBinding* InBinding)
+{
+	ComponentSourceBinding = InBinding;
+}
+
 void UOptimusCustomComputeKernelDataProvider::InitFromDataInterface(const UOptimusCustomComputeKernelDataInterface* InDataInterface, const UObject* InBinding)
 {
 	WeakComponent = Cast<UActorComponent>(InBinding);
@@ -98,7 +97,7 @@ void UOptimusCustomComputeKernelDataProvider::InitFromDataInterface(const UOptim
 FComputeDataProviderRenderProxy* UOptimusCustomComputeKernelDataProvider::GetRenderProxy()
 {
 	TArray<int32> InvocationCounts;
-	int32 TotalThreadCount;
+	int32 TotalThreadCount = 0;
 	
 	if (!GetInvocationThreadCounts(InvocationCounts, TotalThreadCount))
 	{
@@ -144,7 +143,7 @@ bool UOptimusCustomComputeKernelDataProvider::GetInvocationThreadCounts(
 		return false;
 	}
 	
-	TMap<FName, int32> EngineConstants;
+	TMap<FName, float> EngineConstants;
 	TMap<FName, TArray<int32>> ElementCountsPerDomain;
 
 	for(FName ExecutionDomain: ComponentSource->GetExecutionDomains())
@@ -170,8 +169,17 @@ bool UOptimusCustomComputeKernelDataProvider::GetInvocationThreadCounts(
 
 	using namespace Optimus::Expression;
 
-	FEngine Engine(EngineConstants);
-	TVariant<FExpressionObject, FParseError> ParseResult = Engine.Parse(NumThreadsExpression);
+	FEngine Engine;
+	TVariant<FExpressionObject, FParseError> ParseResult = Engine.Parse(NumThreadsExpression, [EngineConstants](FName InName)->TOptional<float>
+	{
+		if (const float* Value = EngineConstants.Find(InName))
+		{
+			return *Value;
+		};
+
+		return {};
+	});
+	
 	if (ParseResult.IsType<FParseError>())
 	{
 		return false;
@@ -180,16 +188,25 @@ bool UOptimusCustomComputeKernelDataProvider::GetInvocationThreadCounts(
 	OutInvocationThreadCount.Reset(NumInvocations);
 	for (int32 Index = 0; Index < NumInvocations; Index++)
 	{
-		for (TPair<FName, int32>& Constant: EngineConstants)
+		for (TPair<FName, float>& Constant: EngineConstants)
 		{
 			const FName ConstantName = Constant.Key;
-			int32& Value = Constant.Value;
+			float& Value = Constant.Value;
 			
 			const TArray<int32>& ElementCounts = ElementCountsPerDomain[ConstantName]; 
 			Value = ElementCounts.IsValidIndex(Index) ? ElementCounts[Index] : 1;
 		}
-		Engine.UpdateConstantValues(EngineConstants);
-		const int32 Count = Engine.Execute(ParseResult.Get<FExpressionObject>());
+		
+		const int32 Count = static_cast<int32>(Engine.Execute(ParseResult.Get<FExpressionObject>(),
+			[EngineConstants](FName InName)->TOptional<float>
+			{
+				if (const float* Value = EngineConstants.Find(InName))
+				{
+					return *Value;
+				};
+
+				return {};
+			}));
 
 		if (Count < 0)
 		{
@@ -209,8 +226,10 @@ bool UOptimusCustomComputeKernelDataProvider::GetInvocationThreadCounts(
 
 	// We want to make sure the results are the same for unified and non-unified
 	// Do the sum across invocations first and then evaluate the expression
-	for (auto& [ConstantName, Value]: EngineConstants)
+	for (TPair<FName, float>& Constant : EngineConstants)
 	{
+		const FName ConstantName = Constant.Key;
+		float& Value = Constant.Value;
 		Value = 0;
 		const TArray<int32>& ElementCounts = ElementCountsPerDomain[ConstantName];
 		
@@ -220,8 +239,17 @@ bool UOptimusCustomComputeKernelDataProvider::GetInvocationThreadCounts(
 		}
 	}
 	
-	Engine.UpdateConstantValues(EngineConstants);
-	const int32 TotalElementCountForUnifiedDispatch = Engine.Execute(ParseResult.Get<FExpressionObject>());
+	
+	const int32 TotalElementCountForUnifiedDispatch = static_cast<int32>(Engine.Execute(ParseResult.Get<FExpressionObject>(), 
+		[EngineConstants](FName InName)->TOptional<float>
+		{
+			if (const float* Value = EngineConstants.Find(InName))
+			{
+				return *Value;
+			};
+
+			return {};
+		}));
 	
 	if (OutTotalThreadCount != TotalElementCountForUnifiedDispatch)
 	{
@@ -243,6 +271,11 @@ FOptimusCustomComputeKernelDataProviderProxy::FOptimusCustomComputeKernelDataPro
 bool FOptimusCustomComputeKernelDataProviderProxy::IsValid(FValidationData const& InValidationData) const
 {
 	if (InvocationThreadCounts.Num() == 0)
+	{
+		return false;
+	}
+
+	if (TotalThreadCount <= 0)
 	{
 		return false;
 	}

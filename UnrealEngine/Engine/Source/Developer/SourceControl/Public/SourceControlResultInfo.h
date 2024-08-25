@@ -37,6 +37,11 @@ struct FSourceControlResultInfo
 
 	SOURCECONTROL_API bool DidConnectionFail() const;
 
+	bool HasErrors() const
+	{
+		return !ErrorMessages.IsEmpty();
+	}
+
 	/** Info and/or warning message storage */
 	TArray<FText> InfoMessages;
 

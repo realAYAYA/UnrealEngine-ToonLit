@@ -105,6 +105,12 @@ FNetHandle FReplicationSystemUtil::GetNetHandle(const UActorComponent* SubObject
 	return NetHandle;
 }
 
+FNetHandle FReplicationSystemUtil::GetNetHandle(const UObject* Object)
+{
+	FNetHandle NetHandle = FNetHandleManager::GetNetHandle(Object);
+	return NetHandle;
+}
+
 void FReplicationSystemUtil::BeginReplication(AActor* Actor, const FActorBeginReplicationParams& Params)
 {
 	if (const UWorld* World = Actor->GetWorld())
@@ -279,25 +285,20 @@ void FReplicationSystemUtil::BeginReplicationForActorComponentSubObject(UActorCo
 	}
 }
 
-void FReplicationSystemUtil::EndReplicationForActorComponent(UActorComponent* SubObject)
+void FReplicationSystemUtil::EndReplicationForActorComponent(UActorComponent* ActorComponent)
 {
-	ReplicationSystemUtil::ForEachReplicationSystem([SubObject](UReplicationSystem* ReplicationSystem)
+	ReplicationSystemUtil::ForEachReplicationSystem([ActorComponent](UReplicationSystem* ReplicationSystem)
 	{
 		if (UActorReplicationBridge* Bridge = Cast<UActorReplicationBridge>(ReplicationSystem->GetReplicationBridge()))
 		{
 			constexpr EEndReplicationFlags EndReplicationFlags = EEndReplicationFlags::DestroyNetHandle | EEndReplicationFlags::ClearNetPushId;
-			Bridge->EndReplicationForActorComponent(SubObject, EndReplicationFlags);
+			Bridge->EndReplicationForActorComponent(ActorComponent, EndReplicationFlags);
 		}
 	});
 }
 
 void FReplicationSystemUtil::EndReplicationForActorSubObject(const AActor* Actor, UObject* SubObject)
 {
-	if (!IsValid(SubObject))
-	{
-		return;
-	}
-
 	ReplicationSystemUtil::ForEachReplicationSystem([SubObject](UReplicationSystem* ReplicationSystem)
 	{
 		if (UActorReplicationBridge* Bridge = Cast<UActorReplicationBridge>(ReplicationSystem->GetReplicationBridge()))
@@ -461,6 +462,12 @@ void FReplicationSystemUtil::FlushNetDormancy(UReplicationSystem* ReplicationSys
 		return;
 	}
 
+	if (!Actor->IsActorInitialized())
+	{
+		UE_LOG(LogIris, Verbose, TEXT("FReplicationSystemUtil::FlushNetDormancy called on %s that isn't fully initialized yet. Ingoring."), ToCStr(GetFullNameSafe(Actor)));
+		return;
+	}
+
 	FNetHandle ActorHandle = GetNetHandle(Actor);
 	if (ActorHandle.IsValid())
 	{
@@ -535,7 +542,7 @@ void FReplicationSystemUtil::UpdateSubObjectGroupMemberships(const APlayerContro
 	{
 		if (UReplicationSystem* ReplicationSystem = Conn->GetDriver() ? Conn->GetDriver()->GetReplicationSystem() : nullptr)
 		{
-			const uint32 ConnId = Conn->GetConnectionId();
+			const uint32 ConnId = Conn->GetParentConnectionId();
 			for (const FName NetGroup : PC->GetNetConditionGroups())
 			{
 				if (!IsSpecialNetConditionGroup(NetGroup))
@@ -629,6 +636,30 @@ void FReplicationSystemUtil::ClearCullDistanceSqrOverride(const AActor* Actor)
 				if (RefHandle.IsValid())
 				{
 					ReplicationSystem->ClearCullDistanceSqrOverride(RefHandle);
+				}
+			}
+		}
+	});
+}
+
+void FReplicationSystemUtil::SetPollFrequency(const UObject* Object, float PollFrequency)
+{
+	FNetHandle NetHandle = GetNetHandle(Object);
+	if (!NetHandle.IsValid())
+	{
+		return;
+	}
+	
+	ReplicationSystemUtil::ForEachReplicationSystem([NetHandle, PollFrequency](UReplicationSystem* ReplicationSystem)
+	{
+		if (ReplicationSystem->IsServer())
+		{
+			if (UObjectReplicationBridge* Bridge = ReplicationSystem->GetReplicationBridgeAs<UObjectReplicationBridge>())
+			{
+				FNetRefHandle RefHandle = Bridge->GetReplicatedRefHandle(NetHandle);
+				if (RefHandle.IsValid())
+				{
+					Bridge->SetPollFrequency(RefHandle, PollFrequency);
 				}
 			}
 		}

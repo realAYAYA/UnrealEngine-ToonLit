@@ -5,16 +5,19 @@
 #include "Engine/StaticMesh.h"
 #include "MuCOE/CustomizableObjectCompiler.h"
 #include "MuCOE/GenerateMutableSource/GenerateMutableSourceMesh.h"
+#include "MuCOE/GenerateMutableSource/GenerateMutableSourceImage.h"
 #include "MuCOE/GraphTraversal.h"
 #include "MuCOE/MutableUtils.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipDeform.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipMorph.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipWithMesh.h"
+#include "MuCOE/Nodes/CustomizableObjectNodeModifierClipWithUVMask.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeStaticMesh.h"
 #include "MuR/Mesh.h"
 #include "MuT/NodeMeshTransform.h"
 #include "MuT/NodeModifierMeshClipDeform.h"
 #include "MuT/NodeModifierMeshClipMorphPlane.h"
+#include "MuT/NodeModifierMeshClipWithUVMask.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
@@ -60,9 +63,10 @@ mu::NodeModifierPtr GenerateMutableSourceModifier(const UEdGraphPin * Pin, FMuta
 
 		ClipNode->SetVertexSelectionBone(GenerationContext.BoneNames.AddUnique(TypedNodeClip->BoneName), TypedNodeClip->MaxEffectRadius);
 
+		ClipNode->SetMultipleTagPolicy( TypedNodeClip->MultipleTagPolicy );
 		for (const FString& Tag : TypedNodeClip->Tags)
 		{
-			 ClipNode->AddTag(StringCast<ANSICHAR>(*Tag).Get());
+			 ClipNode->AddTag(Tag);
 		}
 	}
 
@@ -97,10 +101,17 @@ mu::NodeModifierPtr GenerateMutableSourceModifier(const UEdGraphPin * Pin, FMuta
 
 			ClipNode->SetBindingMethod(BindingMethod);
 		}
+		else
+		{
+			FText ErrorMsg = LOCTEXT("ClipDeform mesh", "The clip deform node requires an input clip shape.");
+			GenerationContext.Compiler->CompilerLog(ErrorMsg, TypedNodeClipDeform, EMessageSeverity::Error);
+			Result = nullptr;
+		}
 	
+		ClipNode->SetMultipleTagPolicy(TypedNodeClipDeform->MultipleTagPolicy);
 		for (const FString& Tag : TypedNodeClipDeform->Tags)
 		{
-			ClipNode->AddTag(StringCast<ANSICHAR>(*Tag).Get());
+			ClipNode->AddTag(Tag);
 		}		
 	}
 
@@ -110,7 +121,7 @@ mu::NodeModifierPtr GenerateMutableSourceModifier(const UEdGraphPin * Pin, FMuta
 		// needs to be different for each object. If it were added to the Generated cache, all the objects would get the same.
 		bDoNotAddToGeneratedCache = true;
 
-		mu::NodeModifierMeshClipWithMeshPtr ClipNode = new mu::NodeModifierMeshClipWithMesh();
+		mu::Ptr<mu::NodeModifierMeshClipWithMesh> ClipNode = new mu::NodeModifierMeshClipWithMesh();
 		Result = ClipNode;
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeClipMesh->ClipMeshPin()))
@@ -133,6 +144,8 @@ mu::NodeModifierPtr GenerateMutableSourceModifier(const UEdGraphPin * Pin, FMuta
 				}
 				else
 				{
+					// TODO: We support the clip mesh not being constant. This message is not precise enough. It should say that it hasn't been 
+					// possible to check if the mesh is closed or not.
 					GenerationContext.Compiler->CompilerLog(LOCTEXT("UnimplementedNode", "Node type not implemented yet."), MeshData.Node);
 				}
 
@@ -149,32 +162,32 @@ mu::NodeModifierPtr GenerateMutableSourceModifier(const UEdGraphPin * Pin, FMuta
 				TransformMesh->SetSource(ClipMesh.get());
 
 				FMatrix Matrix = TypedNodeClipMesh->Transform.ToMatrixWithScale();
-				const float M[16] = {
-				  	float(Matrix.M[0][0]),float(Matrix.M[1][0]),float(Matrix.M[2][0]),float(Matrix.M[3][0]),
-					float(Matrix.M[0][1]),float(Matrix.M[1][1]),float(Matrix.M[2][1]),float(Matrix.M[3][1]),
-					float(Matrix.M[0][2]),float(Matrix.M[1][2]),float(Matrix.M[2][2]),float(Matrix.M[3][2]),
-					float(Matrix.M[0][3]),float(Matrix.M[1][3]),float(Matrix.M[2][3]),float(Matrix.M[3][3])
-				};
-
-				TransformMesh->SetTransform(M);
+				TransformMesh->SetTransform(FMatrix44f(Matrix));
 				ClipMesh = TransformMesh;
 			}
 
 			ClipNode->SetClipMesh(ClipMesh.get());
 		}
+		else
+		{
+			FText ErrorMsg = LOCTEXT("Clipping mesh missing", "The clip mesh with mesh node requires an input clip mesh.");
+			GenerationContext.Compiler->CompilerLog(ErrorMsg, TypedNodeClipMesh, EMessageSeverity::Error);
+			Result = nullptr;
+		}
 
+		ClipNode->SetMultipleTagPolicy(TypedNodeClipMesh->MultipleTagPolicy);
 		for (const FString& Tag : TypedNodeClipMesh->Tags)
 		{
-			 ClipNode->AddTag(StringCast<ANSICHAR>(*Tag).Get());
+			 ClipNode->AddTag(Tag);
 		}
 
 		if (TypedNodeClipMesh->CustomizableObjectToClipWith != nullptr)
 		{
-			TArray<mu::NodeModifierMeshClipWithMeshPtr>* ArrayDataPtr = GenerationContext.MapClipMeshNodeToMutableClipMeshNodeArray.Find(Cast<UCustomizableObjectNodeMeshClipWithMesh>(Pin->GetOwningNode()));
+			TArray<mu::Ptr<mu::NodeModifierMeshClipWithMesh>>* ArrayDataPtr = GenerationContext.MapClipMeshNodeToMutableClipMeshNodeArray.Find(Cast<UCustomizableObjectNodeMeshClipWithMesh>(Pin->GetOwningNode()));
 
 			if (ArrayDataPtr == nullptr)
 			{
-				TArray<mu::NodeModifierMeshClipWithMeshPtr> ArrayData;
+				TArray<mu::Ptr<mu::NodeModifierMeshClipWithMesh>> ArrayData;
 				ArrayData.Add(ClipNode);
 				UCustomizableObjectNodeMeshClipWithMesh* CastedNode = Cast<UCustomizableObjectNodeMeshClipWithMesh>(Pin->GetOwningNode());
 				GenerationContext.MapClipMeshNodeToMutableClipMeshNodeArray.Add(CastedNode, ArrayData);
@@ -183,6 +196,39 @@ mu::NodeModifierPtr GenerateMutableSourceModifier(const UEdGraphPin * Pin, FMuta
 			{
 				ArrayDataPtr->AddUnique(ClipNode);
 			}
+		}
+	}
+
+	else if (const UCustomizableObjectNodeModifierClipWithUVMask* TypedNodeClipUVMask = Cast<UCustomizableObjectNodeModifierClipWithUVMask>(Node))
+	{
+		// This modifier can be connected to multiple objects, so the compiled node
+		// needs to be different for each object. If it were added to the Generated cache, all the objects would get the same.
+		bDoNotAddToGeneratedCache = true;
+
+		mu::Ptr<mu::NodeModifierMeshClipWithUVMask> ClipNode = new mu::NodeModifierMeshClipWithUVMask();
+		Result = ClipNode;
+
+		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeClipUVMask->ClipMaskPin()))
+		{
+			FMutableGraphMeshGenerationData DummyMeshData;
+
+			mu::Ptr<mu::NodeImage> ClipMask = GenerateMutableSourceImage(ConnectedPin, GenerationContext, 0);
+
+			ClipNode->SetClipMask(ClipMask.get());
+		}
+		else
+		{
+			FText ErrorMsg = LOCTEXT("ClipUVMask mesh", "The clip mesh with UV Mask node requires an input texture mask.");
+			GenerationContext.Compiler->CompilerLog(ErrorMsg, TypedNodeClipUVMask, EMessageSeverity::Error);
+			Result = nullptr;
+		}
+
+		ClipNode->SetLayoutIndex(TypedNodeClipUVMask->UVChannelForMask);
+
+		ClipNode->SetMultipleTagPolicy(TypedNodeClipUVMask->MultipleTagPolicy);
+		for (const FString& Tag : TypedNodeClipUVMask->Tags)
+		{
+			ClipNode->AddTag(Tag);
 		}
 	}
 

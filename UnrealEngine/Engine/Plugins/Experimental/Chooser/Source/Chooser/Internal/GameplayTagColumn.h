@@ -7,6 +7,7 @@
 #include "ChooserPropertyAccess.h"
 #include "GameplayTagContainer.h"
 #include "InstancedStruct.h"
+#include "Serialization/MemoryReader.h"
 #include "GameplayTagColumn.generated.h"
 
 struct FBindingChainElement;
@@ -33,26 +34,8 @@ public:
 			PropertyBindingChain_DEPRECATED.SetNum(0);
 		}
 	}
-#if WITH_EDITOR
-	static bool CanBind(const FProperty& Property)
-	{
-		static FString TypeName = "FGameplayTagContainer";
-		return Property.GetCPPType() == TypeName;
-	}
 
-	void SetBinding(const TArray<FBindingChainElement>& InBindingChain)
-	{
-		UE::Chooser::CopyPropertyChain(InBindingChain, Binding);
-	}
-
-	virtual void GetDisplayName(FText& OutName) const override
-	{
-		if (!Binding.PropertyBindingChain.IsEmpty())
-		{
-			OutName = FText::FromName(Binding.PropertyBindingChain.Last());
-		}
-	}
-#endif
+	CHOOSER_PARAMETER_BOILERPLATE();
 };
 
 USTRUCT()
@@ -79,7 +62,7 @@ struct CHOOSER_API FGameplayTagColumn : public FChooserColumnBase
 	// should match the length of the Results array 
 	TArray<FGameplayTagContainer> RowValues;
 	
-	virtual void Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const override;
+	virtual void Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const override;
 
 #if WITH_EDITOR
 	mutable FGameplayTagContainer TestValue;
@@ -98,6 +81,17 @@ struct CHOOSER_API FGameplayTagColumn : public FChooserColumnBase
 		}
 		return false;
 	}
+
+	virtual void SetTestValue(TArrayView<const uint8> Value) override
+    {
+    	FMemoryReaderView Reader(Value);
+		FString Tags;
+    	Reader << Tags;
+		TestValue.FromExportString(Tags);
+    }
+	
+	virtual void AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
+	virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
 #endif
 
 	virtual void PostLoad() override

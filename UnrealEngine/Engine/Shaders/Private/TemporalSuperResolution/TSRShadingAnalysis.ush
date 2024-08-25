@@ -1,0 +1,493 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+
+//------------------------------------------------------- INCLUDES
+
+#include "TSRConvolutionNetworkPass.ush"
+
+
+//------------------------------------------------------- CONSTANTS
+
+static const float kHistoryGuidePreceptionAdd = 1.0;
+
+static const tsr_half FilteringWeight = rcp(tsr_half(1.0 + 4 * 0.5 + 4 * 0.25));
+
+
+//------------------------------------------------------- PARAMETERS
+
+float PerceptionAdd;
+float FlickeringFramePeriod;
+
+
+//------------------------------------------------------- COMPOSE SEPARATE TRANSLUCENCY
+
+/** Compose translucency in linear color space. */
+CALL_SITE_DEBUGLOC
+tsr_tensor_halfC ComposeTranslucency(tsr_tensor_halfC Color, tsr_tensor_half4 Translucency)
+{
+	tsr_tensor_halfC ComposedColor;
+	ComposedColor = Color * tsr_tensor_halfC::Vectorize(Translucency[3]) + ResizeChannels<CONFIG_CHANNEL_COUNT>(Translucency);
+	#if CONFIG_SCENE_COLOR_ALPHA
+		ComposedColor.SetComponent(3, Color[3] * Translucency[3]);
+	#endif
+	#if CONFIG_SCENE_COLOR_ALPHA
+		ComposedColor = min(ComposedColor, tsr_tensor_halfC::Const(LargestSceneColorRGBA));
+	#else
+		ComposedColor = min(ComposedColor, tsr_tensor_halfC::Const(LargestSceneColorRGB));
+	#endif
+	return ComposedColor;
+}
+
+/** Compose blury translucency for tighther rejection in linear color space. */
+tsr_tensor_halfC ComposeTranslucencyForRejection(tsr_tensor_halfC OriginalOpaqueInput, tsr_tensor_half4 OriginalTranslucencyInput, tsr_tensor_bool bHasPixelAnimation)
+{
+	tsr_tensor_halfC SharpInput = OriginalOpaqueInput;
+	tsr_tensor_half4 BlurInput = OriginalTranslucencyInput;
+
+	{
+		tsr_tensor_halfC CenterFinalSceneColor = ComposeTranslucency(OriginalOpaqueInput, OriginalTranslucencyInput);
+			
+		tsr_tensor_half4 HasAnimationBlurInput = ResizeChannels<4>(CenterFinalSceneColor);
+			
+		BlurInput  = select(tsr_tensor_bool4::Vectorize(bHasPixelAnimation), HasAnimationBlurInput, BlurInput);
+		SharpInput = select(tsr_tensor_boolC::Vectorize(bHasPixelAnimation), tsr_tensor_halfC::Const(0.0), SharpInput);
+	}
+		
+	return ComposeTranslucency(SharpInput, Blur3x3(BlurInput));
+}
+
+
+//------------------------------------------------------- CHANGE LDR EXPOSURE
+
+CALL_SITE_DEBUGLOC
+tsr_tensor_halfC RemovePerceptionAdd(tsr_tensor_halfC SrcColor, const float SourcePerceptionAdd)
+{
+	tsr_tensor_halfC Minus = tsr_tensor_halfC::Const(tsr_half(1.0)) - SrcColor;
+	tsr_tensor_halfC LDRToLinear = min(tsr_tensor_halfC::Const(tsr_half(SourcePerceptionAdd)) * rcp(Minus), tsr_tensor_halfC::Const(tsr_half(MaxHalfFloat)));
+
+	return SrcColor * LDRToLinear;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_tensor_halfC AddPerceptionAdd(tsr_tensor_halfC SrcColor, const float DestPerceptionAdd)
+{
+	SrcColor = SrcColor * rcp(SrcColor + tsr_tensor_halfC::Const(tsr_half(DestPerceptionAdd)));
+	return SrcColor;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_tensor_halfC ChangePerceptionAdd(tsr_tensor_halfC SrcColor, const float SourcePerceptionAdd, const float DestPerceptionAdd)
+{
+	SrcColor = RemovePerceptionAdd(SrcColor, SourcePerceptionAdd);
+	SrcColor = AddPerceptionAdd(SrcColor, DestPerceptionAdd);
+	return SrcColor;
+}
+
+
+//------------------------------------------------------- SPATIAL ANTI-ALIASER
+
+// Compute the LDR luminance the spatial anti-aliaser should anti-alias.
+CALL_SITE_DEBUGLOC
+tsr_tensor_half ComputeSpatialAntiAliaserLumaLDR(tsr_tensor_halfC SceneColor)
+{
+	const tsr_half SpatialAAExposure = tsr_half(0.5);
+		
+	tsr_tensor_half AALumaLDR;
+
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_half PixelLuma = dot(SceneColor.GetElement(ElementIndex).rgb, tsr_half3(0.299f, 0.587f, 0.114f));
+		AALumaLDR.SetElement(ElementIndex, PixelLuma / (SpatialAAExposure + PixelLuma));
+	}
+
+	return AALumaLDR;
+}
+
+// Returns whether the aliasing is visible at all, to avoid paying spatial-antialiaser on low contrasts areas.
+CALL_SITE_DEBUGLOC
+tsr_tensor_bool IsAliasingVisible(tsr_tensor_halfC ExposedInputBoxSize)
+{
+	#if CONFIG_SCENE_COLOR_ALPHA
+		tsr_tensor_half ExposedInputLuminanceBox = dot(ExposedInputBoxSize, tsr_tensor_halfC::Const(tsr_halfC(0.299f, 0.587f, 0.114f, 0.0)));
+	#else
+		tsr_tensor_half ExposedInputLuminanceBox = dot(ExposedInputBoxSize, tsr_tensor_halfC::Const(tsr_halfC(0.299f, 0.587f, 0.114f)));
+	#endif
+
+	tsr_tensor_bool bAliasingIsVisible = ExposedInputLuminanceBox > tsr_tensor_half::Const(SPATIAL_ANTI_ALIASER_MIN_LUMIMANCE);
+
+	return bAliasingIsVisible;
+}
+
+// Whether to run spatial anti-aliaser on the frame. Must match SpatialAntiAliasingLerp.
+CALL_SITE_DEBUGLOC
+tsr_tensor_bool ShouldSpatialAntiAlias(tsr_tensor_bool bIsDisoccluded, tsr_tensor_bool bResurrectHistory, tsr_tensor_bool bAliasingIsVisible, tsr_tensor_half RejectionBlendFinal)
+{
+	tsr_tensor_bool bSpatialAntiAlias = and(bAliasingIsVisible, or(RejectionBlendFinal < tsr_tensor_half::Const(tsr_half(0.25)), and(bIsDisoccluded, not(bResurrectHistory))));
+	
+	return bSpatialAntiAlias;
+}
+
+
+//------------------------------------------------------- FLICKERING TEMPORAL ANALYSIS
+
+void ComputeMoireError(
+	tsr_tensor_bool  bIsDisoccluded,
+	tsr_tensor_half  bIsStatic,
+	tsr_tensor_half  MoireInput,
+	tsr_tensor_halfC OriginalOpaqueInput,
+	tsr_tensor_half4 OriginalTranslucencyInput,
+	tsr_tensor_half4 PrevMoireHistory,
+	out tsr_tensor_half4 OutMoireHistory,
+	out tsr_tensor_half  OutMoireError)
+{
+	const tsr_half MinBlendFinal = tsr_half(0.05);
+	const tsr_half MoireEncodingError = tsr_half(rcp(127.0));
+	const tsr_half MaxPrevTotalVariationCount = tsr_half(20.0);
+
+	// Compute the threshold at which the variation count should quick in
+	const tsr_half TotalVariationCountThreshold = tsr_half(1.0 / (1.0 - pow(1.0 - MinBlendFinal, tsr_half(FlickeringFramePeriod))));
+
+	// Input luminance to monitor flickering from.
+	tsr_tensor_half InputLuma = MoireInput;
+
+	// How much input luminance from the TSRComputeMoireLuma.usf measurement has been modified since for instance with fog, water.
+	tsr_tensor_half InputLumaModification;
+	{
+		const tsr_half InputLumaEncodingError = tsr_half(0.5 / 255.0);
+			
+		tsr_tensor_halfC OriginalInput = ComposeTranslucency(OriginalOpaqueInput, OriginalTranslucencyInput);
+
+		OriginalInput       = AddPerceptionAdd(OriginalInput, PerceptionAdd);
+		OriginalOpaqueInput = AddPerceptionAdd(OriginalOpaqueInput, PerceptionAdd);
+
+		tsr_tensor_half SceneColorLuma;
+		tsr_tensor_half TranslucencyChange;
+		UNROLL_N(SIMD_SIZE)
+		for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+		{
+			SceneColorLuma.SetElement(ElementIndex, dot(OriginalOpaqueInput.GetElement(ElementIndex).rgb, kMoireLumaWeights));
+			TranslucencyChange.SetElement(ElementIndex, dot(abs(OriginalOpaqueInput.GetElement(ElementIndex).rgb - OriginalInput.GetElement(ElementIndex).rgb), kMoireLumaWeights));
+		}
+
+		InputLumaModification = tsr_tensor_half::Const(0.0);
+		InputLumaModification = max(InputLumaModification, abs(InputLuma - SceneColorLuma) - tsr_tensor_half::Const(InputLumaEncodingError));
+		InputLumaModification = max(InputLumaModification, TranslucencyChange);
+		InputLumaModification = max(InputLumaModification, tsr_tensor_half::Const(1.0) - OriginalTranslucencyInput[3]);
+	}
+
+	// Unpack history
+	tsr_tensor_half PrevFlickeringHistory = PrevMoireHistory[0];
+	tsr_tensor_half PrevGradient = PrevMoireHistory[1] * tsr_half(255.0 / 127.0) - tsr_half(1.0);
+	//tsr_tensor_half PrevTotalVariation = PrevMoireHistory[2] * tsr_tensor_half::Const(1.0 - MinBlendFinal);
+	tsr_tensor_half PrevTotalVariation = PrevMoireHistory[2] * tsr_tensor_half::Const(tsr_half(1.0) - MinBlendFinal);
+	tsr_tensor_half PrevTotalVariationCount = PrevMoireHistory[3] * MaxPrevTotalVariationCount * tsr_tensor_half::Const(tsr_half(1.0) - MinBlendFinal);
+	
+	// Discard history on moving objects.
+	PrevTotalVariation = PrevTotalVariation * bIsStatic;
+	PrevTotalVariationCount = PrevTotalVariationCount * bIsStatic;
+
+	// Run the exact same heuristic as MeasureRejection on a single channel.
+	tsr_tensor_half FilteredInputLumaModification;
+	tsr_tensor_half OutRejectionBlendFinal;
+	tsr_tensor_half OutRejectionClampBlend;
+	{
+		tsr_tensor_half BackbufferQuantizationErrorVector = tsr_tensor_half::Const(MoireEncodingError);
+		
+		tsr_tensor_half InputC0 = InputLuma;
+		tsr_tensor_half HistoryC0 = PrevFlickeringHistory;
+
+		// Anhilate history
+		tsr_tensor_half InputC2 = InputC0;
+		tsr_tensor_half HistoryC2 = HistoryC0;
+		AnnihilateMutuallySingleChannel3x3(InputLuma, HistoryC0, /* out */ InputC2, /* out */ HistoryC2);
+
+		// Convolve the input luma to have the exact same moire pattern as FilteredInput below.
+		tsr_tensor_half FilteredInput;
+		tsr_tensor_half FilteredHistory;
+		Deconcatenate(Blur3x3(Concatenate(InputC2, InputLumaModification, HistoryC2)), /* out */ FilteredInput, /* out */ FilteredInputLumaModification, /* out */ FilteredHistory);
+		
+		// Compute clamping box of the limance.
+		tsr_tensor_half FilteredBoxMin;
+		tsr_tensor_half FilteredBoxMax;
+		tsr_tensor_half InputC2BoxSize;
+		{
+			tsr_tensor_half2 Min;
+			tsr_tensor_half2 Max;
+			MinMax3x3(Concatenate(FilteredInput, InputC2), /* out */ Min, /* out */ Max);
+			FilteredBoxMin = Min[0];
+			FilteredBoxMax = Max[0];
+		
+			InputC2BoxSize = Max[1] - Min[1];
+		}
+
+		// Compute the clamp error
+		tsr_tensor_half ClampError;
+		{
+			tsr_tensor_half TotalVarInputDiffC0C2;
+			tsr_tensor_half TotalVarInputC2;
+			Deconcatenate(abs(TotalVariation3x3(Concatenate(abs(InputC0 - InputC2), InputC2))), /* out */ TotalVarInputDiffC0C2, /* out */ TotalVarInputC2);
+		
+			ClampError = BackbufferQuantizationErrorVector;
+			ClampError = max(ClampError, Blur3x3(min(TotalVarInputDiffC0C2, TotalVarInputC2)));
+			ClampError = max(ClampError, InputC2BoxSize * tsr_half(FilteringWeight * 0.25));
+			ClampError = ClampError + BackbufferQuantizationErrorVector;
+		}
+
+		// Apply clamp error
+		FilteredBoxMin = FilteredBoxMin - ClampError;
+		FilteredBoxMax = FilteredBoxMax + ClampError;
+
+		tsr_tensor_half BoxSize = (
+			InputC2BoxSize * tsr_tensor_half::Const(FilteringWeight) +
+			(BackbufferQuantizationErrorVector * tsr_half(2 * FilteringWeight)));
+
+		tsr_tensor_half ClampedFilteredHistory = fastClamp(FilteredHistory, FilteredBoxMin, FilteredBoxMax);
+
+		tsr_tensor_half Delta = max(abs(FilteredInput - FilteredHistory), BoxSize);
+	
+		tsr_tensor_half RawClampedEnergy = abs(ClampedFilteredHistory - FilteredHistory);
+		tsr_tensor_half RawRejection     = saturate(tsr_tensor_half::Const(1.0) - max(RawClampedEnergy, tsr_tensor_half::Const(0.0)) * rcp(Delta));
+
+		tsr_tensor_half FilteredClampedEnergy;
+		Deconcatenate(MaxRMinG3x3(Median3x3(Concatenate(RawClampedEnergy, RawRejection))), /* out */ FilteredClampedEnergy, /* out */ OutRejectionClampBlend);
+
+		OutRejectionBlendFinal = saturate(tsr_tensor_half::Const(1.0) - max(FilteredClampedEnergy, tsr_tensor_half::Const(0.0)) * rcp(Delta));
+	}
+	
+	// Simulate what happens in TSRUpdateHistory.usf
+	tsr_tensor_half FinalFlickeringHistory;
+	tsr_tensor_half CurrentGradient;
+	{
+		tsr_tensor_half ClampedPrevFlickeringHistory = ClampPlus3x3(PrevFlickeringHistory, InputLuma);
+		tsr_tensor_half FinalPrevFlickeringHistory = lerp(ClampedPrevFlickeringHistory, PrevFlickeringHistory, OutRejectionClampBlend);
+
+		tsr_tensor_half FinalBlendFinal = max(tsr_tensor_half::Const(1.0) - OutRejectionBlendFinal, tsr_tensor_half::Const(MinBlendFinal));
+		
+		FinalFlickeringHistory = InputLuma * FinalBlendFinal - FinalPrevFlickeringHistory * (FinalBlendFinal - tsr_tensor_half::Const(1.0));
+		
+		tsr_tensor_half GhostingHistory = InputLuma * tsr_tensor_half::Const(MinBlendFinal) - PrevFlickeringHistory * tsr_tensor_half::Const(MinBlendFinal - (1.0));
+
+		CurrentGradient = FinalFlickeringHistory - GhostingHistory;
+	}
+
+	// Remove how much luma has changed from luma measurement to final scene color from the gradient.
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_half LocalCurrentGradient = CurrentGradient.GetElement(ElementIndex);
+		tsr_half LocalInputLumaModification = FilteredInputLumaModification.GetElement(ElementIndex);
+			
+		CurrentGradient.SetElement(ElementIndex, clamp(LocalCurrentGradient * tsr_half(POSITIVE_INFINITY), tsr_half(-1.0), tsr_half(1.0)) * max(abs(LocalCurrentGradient) - LocalInputLumaModification, tsr_half(0.0)));
+	}
+
+	#if 0
+		tsr_tensor_half InputBoxSize = InputLumaMax - InputLumaMin;
+		CurrentGradient = sign(CurrentGradient) * max(abs(CurrentGradient) - tsr_tensor_half::Const(0.5) * InputBoxSize, tsr_tensor_half::Const(0.0));
+	#endif
+
+	tsr_tensor_half IsFlicker;
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_half LocalCurrentGradient = CurrentGradient.GetElement(ElementIndex);
+		tsr_half LocalPrevGradient = PrevGradient.GetElement(ElementIndex);
+
+		bool bGradientsAreSameSign = LocalCurrentGradient * LocalPrevGradient > tsr_half(0.0);
+		bool bGradientsAreWithinError = abs(LocalCurrentGradient) < MoireEncodingError || abs(LocalPrevGradient) < MoireEncodingError;
+		//bool bCurrentGradientSubstentialEnough = abs(LocalCurrentGradient) > View.GeneralPurposeTweak * abs(LocalPrevGradient); // - 2.0 * MoireEncodingError;
+
+		tsr_half LocalIsFlicker = select((
+			bGradientsAreSameSign ||
+			bGradientsAreWithinError ||
+			//!bCurrentGradientSubstentialEnough ||
+			bCameraCut), tsr_half(0.0), tsr_half(1.0));
+
+		IsFlicker.SetElement(ElementIndex, LocalIsFlicker);
+	}
+
+	// Compute the total variation of the gradient over time.
+	tsr_tensor_half GradientVariation = min(abs(PrevGradient), abs(CurrentGradient)) * IsFlicker;
+
+	// Dilates the total variation and contribution to keep stability despite inacuracies in the history reprojection
+	// of these need a nearest filter which isn't precise at all.
+	tsr_tensor_half TotalVariationContribution;
+	tsr_tensor_half TotalVariationCountContribution;
+	Deconcatenate(Max3x3(Max3x3(Concatenate(GradientVariation, IsFlicker))), /* out */ TotalVariationContribution, /* out */ TotalVariationCountContribution);
+
+	UNROLL_N(SIMD_SIZE)
+	for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+	{
+		tsr_half LocalCurrentGradient = CurrentGradient.GetElement(ElementIndex);
+
+		tsr_half LocalPrevGradient = PrevGradient.GetElement(ElementIndex);
+		tsr_half LocalPrevTotalVariation = PrevTotalVariation.GetElement(ElementIndex);
+		tsr_half LocalPrevTotalVariationCount = PrevTotalVariationCount.GetElement(ElementIndex);
+		bool LocalIsDisoccluded = bIsDisoccluded.GetElement(ElementIndex);
+
+		tsr_half LocalIsFlicker = IsFlicker.GetElement(ElementIndex);
+
+		tsr_half LocalTotalVariationContribution = TotalVariationContribution.GetElement(ElementIndex);
+		tsr_half LocalTotalVariationCountContribution = TotalVariationCountContribution.GetElement(ElementIndex);
+			
+		// Blend out previous gradient
+		tsr_half LocalPrevBlendedGradient = LocalPrevGradient * (tsr_half(1.0) - MinBlendFinal) * (tsr_half(1.0) - LocalIsFlicker);
+
+		// Compute new gradient.
+		#if 1
+			tsr_half LocalNewGradient = LocalPrevBlendedGradient + LocalCurrentGradient;
+		#else
+			tsr_half LocalNewGradient = abs(LocalPrevBlendedGradient) > abs(LocalCurrentGradient) ? LocalPrevBlendedGradient : LocalCurrentGradient;
+		#endif
+			
+		// Accumulate current frame variation.
+		tsr_half LocalNewTotalVariation = LocalPrevTotalVariation + LocalTotalVariationContribution;
+		tsr_half LocalNewTotalVariationCount = LocalPrevTotalVariationCount + LocalTotalVariationCountContribution;
+
+		// Discard all moire history on parallax disocclusion.
+		LocalNewGradient            = select(LocalIsDisoccluded, tsr_half(0.0), LocalNewGradient);
+		LocalNewTotalVariation      = select(LocalIsDisoccluded, tsr_half(0.0), LocalNewTotalVariation);
+		LocalNewTotalVariationCount = select(LocalIsDisoccluded, tsr_half(0.0), LocalNewTotalVariationCount);
+
+		// Quantise total variation and count to history bit depth to variation drift in the history over time.
+		tsr_half LocalQuantizedNewTotalVariationCount = floor(LocalNewTotalVariationCount * (tsr_half(255.0) / MaxPrevTotalVariationCount)) * (MaxPrevTotalVariationCount / tsr_half(255.0));
+		LocalNewTotalVariation *= LocalQuantizedNewTotalVariationCount * SafeRcp(LocalNewTotalVariationCount);
+
+		// Compute the final luminance 
+		#if 1
+			tsr_half LocalCountFadeIn = saturate(LocalNewTotalVariationCount / TotalVariationCountThreshold - tsr_half(0.5));
+		#else
+			tsr_half LocalCountFadeIn = saturate(LocalNewTotalVariationCount - TotalVariationCountThreshold);
+		#endif
+		tsr_half LocalMoireError = (abs(LocalNewTotalVariation * SafeRcp(LocalNewTotalVariationCount)) + LocalNewTotalVariationCount * MoireEncodingError) * LocalCountFadeIn;
+
+		tsr_half4 PackedMoireHistory = tsr_half4(
+			FinalFlickeringHistory.GetElement(ElementIndex),
+			LocalNewGradient * tsr_half(127.0 / 255.0) + tsr_half(127.0 / 255.0),
+			LocalNewTotalVariation,
+			LocalQuantizedNewTotalVariationCount * rcp(MaxPrevTotalVariationCount));
+
+		OutMoireHistory.SetElement(ElementIndex, PackedMoireHistory);
+
+		OutMoireError.SetElement(ElementIndex, LocalMoireError);
+	}
+		
+	// Moving object in the scene have very low chance of creating moire pattern with TAA jitter, so discard the moire error to still
+	// have character animation ghost free evem as environement shadow project different things on character.
+	OutMoireError = saturate(OutMoireError * bIsStatic - InputLumaModification);
+} // ComputeMoireError()
+
+
+//------------------------------------------------------- SHADING REJECTION
+
+void MeasureRejection(
+	tsr_tensor_halfC InputC0,
+	tsr_tensor_halfC InputC2,
+	tsr_tensor_halfC HistoryC2,
+	tsr_tensor_half  MoireError,
+	bool bEnableMoireError,
+	out tsr_tensor_half OutRejectionBlendFinal,
+	out tsr_tensor_half OutRejectionClampBlend)
+{
+	tsr_tensor_halfC BackbufferQuantizationErrorVector = tsr_tensor_halfC::Const(MeasureBackbufferLDRQuantizationError());
+		
+	tsr_tensor_halfC FilteredHistory = Blur3x3(HistoryC2);
+	
+	tsr_tensor_halfC TotalVarInputDiffC0C2 = abs(TotalVariation3x3(abs(InputC0 - InputC2)));
+	tsr_tensor_halfC TotalVarInputC2 = abs(TotalVariation3x3(InputC2));
+
+	tsr_tensor_halfC ClampError = BackbufferQuantizationErrorVector;
+	ClampError = max(ClampError, Blur3x3(min(TotalVarInputDiffC0C2, TotalVarInputC2)));
+	
+	tsr_tensor_halfC InputC2BoxSize = MaxMinusMin3x3(InputC2);
+	ClampError = max(ClampError, InputC2BoxSize * tsr_half(FilteringWeight * 0.25));
+	ClampError = ClampError + BackbufferQuantizationErrorVector;
+
+	tsr_tensor_halfC FilteredInput   = Blur3x3(InputC2);
+
+	// Build the clamping box of the filtered signal
+	tsr_tensor_halfC FilteredBoxMin;
+	tsr_tensor_halfC FilteredBoxMax;
+	MinMax3x3(FilteredInput, /* out */ FilteredBoxMin, /* out */ FilteredBoxMax);
+	FilteredBoxMin = FilteredBoxMin - ClampError;
+	FilteredBoxMax = FilteredBoxMax + ClampError;
+		
+	// Clamp filtered signal
+	tsr_tensor_halfC ClampedFilteredHistory = fastClamp(FilteredHistory, FilteredBoxMin, FilteredBoxMax);
+	BRANCH
+	if (bEnableMoireError)
+	{
+		tsr_tensor_halfC MoireErrorSize;
+			
+		UNROLL_N(SIMD_SIZE)
+		for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+		#if 0
+		{
+			tsr_halfC ClampedEnergy = abs(FlickeringClampedFilteredHistory.GetElement(ElementIndex) - FilteredHistory.GetElement(ElementIndex));
+			tsr_halfC ClampedEnergyAmount = ClampedEnergy * SafeRcp(ClampedEnergy[0] + ClampedEnergy[1] + ClampedEnergy[2]);
+
+			// Apply the moire error on each individual channel based on how much they need to clamp.
+			MoireErrorSize.SetElement(ElementIndex, ClampedEnergyAmount * (kMoireLumaToChannel * MoireError.GetElement(ElementIndex)));
+		}
+		#else
+		{
+			MoireErrorSize.SetElement(ElementIndex, kMoireLumaToChannel * MoireError.GetElement(ElementIndex));
+		}
+		#endif
+
+		tsr_tensor_halfC StableFilteredBoxMin = min(FilteredBoxMin, FilteredBoxMax - MoireErrorSize);
+		tsr_tensor_halfC StableFilteredBoxMax = max(FilteredBoxMax, FilteredBoxMin + MoireErrorSize);
+			
+		ClampedFilteredHistory = fastClamp(FilteredHistory, StableFilteredBoxMin, StableFilteredBoxMax);
+	}
+		
+	// Compute the box size.
+	tsr_tensor_halfC BoxSize;
+	{
+		BoxSize = (
+			InputC2BoxSize * tsr_tensor_halfC::Const(FilteringWeight) +
+			(BackbufferQuantizationErrorVector * tsr_half(2 * FilteringWeight)));
+
+		BRANCH
+		if (bEnableMoireError)
+		{
+			tsr_tensor_halfC MoireErrorSize;
+			UNROLL_N(SIMD_SIZE)
+			for (uint ElementIndex = 0; ElementIndex < SIMD_SIZE; ElementIndex++)
+			{
+				tsr_halfC ClampedEnergy = abs(ClampedFilteredHistory.GetElement(ElementIndex) - FilteredHistory.GetElement(ElementIndex));
+				tsr_halfC ClampedEnergyAmount = ClampedEnergy * SafeRcp(ClampedEnergy[0] + ClampedEnergy[1] + ClampedEnergy[2]);
+
+				// Apply the moire error on each individual channel based on how much they need to clamp.
+				MoireErrorSize.SetElement(ElementIndex, ClampedEnergyAmount * ((FilteringWeight * tsr_half(3.0)) * MoireError.GetElement(ElementIndex)));
+			}
+			BoxSize = max(BoxSize, MoireErrorSize);
+		}
+	}
+
+	tsr_tensor_halfC Delta = max(abs(FilteredInput - FilteredHistory), BoxSize);
+
+	tsr_tensor_halfC RawClampedEnergy      = abs(ClampedFilteredHistory - FilteredHistory);
+
+	tsr_tensor_halfC RawFactor        = saturate(tsr_tensor_halfC::Const(1.0) - RawClampedEnergy * rcp(Delta));
+	tsr_tensor_half RawRejection      = min3(RawFactor[0], RawFactor[1], RawFactor[2]);
+	#if CONFIG_SCENE_COLOR_ALPHA
+		RawRejection = min(RawRejection, RawFactor[3]);
+	#endif
+
+	#if CONFIG_SCENE_COLOR_ALPHA
+		OutRejectionClampBlend = Min3x3(Median3x3(RawRejection));
+		tsr_tensor_halfC FilteredClampedEnergy = Max3x3(Median3x3(RawClampedEnergy));
+	#else
+		tsr_tensor_halfC FilteredClampedEnergy;
+		Deconcatenate(MaxRGBMinA3x3(Median3x3(Concatenate(RawClampedEnergy, RawRejection))), /* out */ FilteredClampedEnergy, /* out */ OutRejectionClampBlend);
+	#endif
+
+	tsr_tensor_halfC FilteredFactor   = saturate(tsr_tensor_halfC::Const(1.0) - FilteredClampedEnergy * rcp(Delta));
+	tsr_tensor_half FilteredRejection = min3(FilteredFactor[0], FilteredFactor[1], FilteredFactor[2]);
+	#if CONFIG_SCENE_COLOR_ALPHA
+		FilteredRejection = min(FilteredRejection, FilteredFactor[3]);
+	#endif
+	OutRejectionBlendFinal          = FilteredRejection;
+} // MeasureRejection()

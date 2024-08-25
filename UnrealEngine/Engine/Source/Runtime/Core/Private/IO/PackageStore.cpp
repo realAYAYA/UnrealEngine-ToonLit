@@ -158,12 +158,13 @@ void FPackageStore::Mount(TSharedRef<IPackageStoreBackend> Backend, int32 Priori
 	Backend->OnMounted(BackendContext);
 }
 
-EPackageStoreEntryStatus FPackageStore::GetPackageStoreEntry(FPackageId PackageId, FPackageStoreEntry& OutPackageStoreEntry)
+EPackageStoreEntryStatus FPackageStore::GetPackageStoreEntry(FPackageId PackageId, FName PackageName,
+	FPackageStoreEntry& OutPackageStoreEntry)
 {
 	check(ThreadReadCount);
 	for (const FBackendAndPriority& Backend : Backends)
 	{
-		EPackageStoreEntryStatus Status = Backend.Value->GetPackageStoreEntry(PackageId, OutPackageStoreEntry);
+		EPackageStoreEntryStatus Status = Backend.Value->GetPackageStoreEntry(PackageId, PackageName, OutPackageStoreEntry);
 		if (Status >= EPackageStoreEntryStatus::Pending)
 		{
 			return Status;

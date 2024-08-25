@@ -4,76 +4,16 @@
 #include "../SceneData.ush"
 #include "../WaveOpUtil.ush"
 #include "../ComputeShaderUtils.ush"
+#include "../SceneCulling/SceneCulling.ush"
 
 #include "NaniteCullingCommon.ush"
 #include "NaniteCulling.ush"
 #include "NaniteDataDecode.ush"
 #include "NaniteHZBCull.ush"
 
-#include "/Engine/Shared/SceneCullingDefinitions.h"
-
 #if DEBUG_FLAGS
 RWStructuredBuffer<FNaniteStats>		OutStatsBuffer;
 #endif
-
-/**
- * Unpacked cell data.
- */
-struct FSceneHiearchyCellData
-{
-	uint3 LocalCellCoord;
-	float3 LocalBoundsCenter; // Bounds center is local to the cell block
-	float3 LocalBoundsExtent;
-	uint BlockId;
-
-	FCellBlockData BlockData;
-};
-
-// Make these compile time constants?
-uint NumCellsPerBlockLog2;
-uint LocalCellCoordMask;
-uint CellBlockDimLog2;
-int FirstLevel;
-
-StructuredBuffer<FCellBlockData> InstanceHierarchyCellBlockData;
-
-FCellBlockData GetCellBlockData(uint BlockId)
-{
-	return InstanceHierarchyCellBlockData[BlockId];
-}
-
-StructuredBuffer<FCellHeader> InstanceHierarchyCellHeaders;
-
-FCellHeader GetCellHeader(uint CellId)
-{
-	return InstanceHierarchyCellHeaders[CellId];
-}
-StructuredBuffer<uint> InstanceHierarchyItemChunks;
-
-inline uint CellIndexToBlockId(uint CellIndex)
-{
-	return CellIndex >> NumCellsPerBlockLog2;
-}
-
-FSceneHiearchyCellData GetSceneHiearchyCellData(uint CellId)
-{
-	FSceneHiearchyCellData CellData;
-	CellData.BlockId = CellIndexToBlockId(CellId);
-
-	// These data sizes are small enough that we could tabulate this if it were ever important (unlikely)
-	CellData.LocalCellCoord.x = CellId & LocalCellCoordMask;
-	CellData.LocalCellCoord.y = (CellId >> CellBlockDimLog2) & LocalCellCoordMask;
-	CellData.LocalCellCoord.z = (CellId >> (CellBlockDimLog2 * 2u)) & LocalCellCoordMask;
-	// Cache the block data for future use.
-	CellData.BlockData = GetCellBlockData(CellData.BlockId);
-	const float LevelCellSize = CellData.BlockData.LevelCellSize;
-	// Note: extent is _not_ half the cell size as we have loose bounds.
-	CellData.LocalBoundsExtent = LevelCellSize;
-	// TODO: roll half-offset into the block world position?
-	CellData.LocalBoundsCenter = float3(CellData.LocalCellCoord) * LevelCellSize + (LevelCellSize * 0.5f).xxx;
-
-	return CellData;
-}
 
 // Occluded cells fed back to post-pass.
 RWStructuredBuffer<FOccludedCellDraw> OutOccludedCells;
@@ -109,7 +49,7 @@ void AppendInstanceCullingWorkGroups(uint ItemChunksOffset, uint NumItemChunks, 
 
 	// TODO: stats?
 #if 0// DEBUG_FLAGS
-	if ((DebugFlags & NANITE_DEBUG_FLAG_WRITE_STATS) != 0u)
+	if ((RenderFlags & NANITE_RENDER_FLAG_WRITE_STATS) != 0u)
 	{
 #if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
 		WaveInterlockedAddScalar( OutStatsBuffer[0].NumPostCellsPostCull, 1 );
@@ -156,7 +96,7 @@ void HierarchyCellInstanceCull(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_
 #endif
 
 #if DEBUG_FLAGS
-	if ((DebugFlags & NANITE_DEBUG_FLAG_WRITE_STATS) != 0u && DispatchIndex == 0)
+	if ((RenderFlags & NANITE_RENDER_FLAG_WRITE_STATS) != 0u && DispatchIndex == 0)
 	{
 #if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
 		OutStatsBuffer[0].NumPostHierarchyCellsPreCull = NumCellDrawsLocal;
@@ -202,8 +142,10 @@ void HierarchyCellInstanceCull(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_
 			const bool bViewHZB = (NaniteView.Flags & NANITE_VIEW_FLAG_HZBTEST) != 0u;
 			const bool bIsViewUncached = (NaniteView.Flags & NANITE_VIEW_FLAG_UNCACHED) != 0u;
 
-			float4x4 LocalToTranslatedWorld = MakeTranslationMatrix(LWCToFloat(LWCAdd(NaniteView.PreViewTranslation, CellData.BlockData.WorldPos)));
-			float4x4 PrevLocalToTranslatedWorld = MakeTranslationMatrix(LWCToFloat(LWCAdd(NaniteView.PrevPreViewTranslation, CellData.BlockData.WorldPos)));
+			// TODO: Move out of the loop, logically all views in a group should share the preview translation
+			// TODO: Make the view compaction pull this data out of the view and store with the group?
+			float4x4 LocalToTranslatedWorld = MakeTranslationMatrix(DFFastToTranslatedWorld(CellData.BlockData.WorldPos, NaniteView.PreViewTranslation));
+			float4x4 PrevLocalToTranslatedWorld = MakeTranslationMatrix(DFFastToTranslatedWorld(CellData.BlockData.WorldPos, NaniteView.PrevPreViewTranslation));
 
 			FBoxCull Cull;
 			Cull.Init(NaniteView, CellData.LocalBoundsCenter, CellData.LocalBoundsExtent, float3(1.0f, 1.0f, 1.0f), LocalToTranslatedWorld, PrevLocalToTranslatedWorld);
@@ -214,7 +156,8 @@ void HierarchyCellInstanceCull(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_
 			}
 
 #if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
-		Cull.GlobalClipPlane();
+			Cull.Distance();
+			Cull.GlobalClipPlane();
 #endif
 			BRANCH
             if( Cull.bIsVisible )

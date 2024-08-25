@@ -21,6 +21,7 @@ public:
 
 	virtual void ForceRefresh() override;
 	virtual void RequestRefresh() override;
+	virtual void RequestForceRefresh() override;
 
 	virtual class FNotifyHook* GetNotifyHook() const override;
 	virtual bool AreFavoritesEnabled() const override;

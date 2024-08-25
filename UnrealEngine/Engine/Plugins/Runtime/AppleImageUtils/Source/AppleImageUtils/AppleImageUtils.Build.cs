@@ -15,7 +15,7 @@ namespace UnrealBuildTool.Rules
                 }
                 );
 
-    		if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.Mac)
+    		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
     		{
                 PublicFrameworks.AddRange(
                     new string[]

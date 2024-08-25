@@ -340,7 +340,7 @@ bool TTypedElementList<HandleType>::RemoveElementImpl(const FTypedElementId& InE
 		checkSlow(ElementHandleIndexToRemove != INDEX_NONE);
 
 		HandleType RemovedElementHandle = MoveTemp(ElementHandles[ElementHandleIndexToRemove]);
-		ElementHandles.RemoveAt(ElementHandleIndexToRemove, 1, /*bAllowShrinking*/false);
+		ElementHandles.RemoveAt(ElementHandleIndexToRemove, 1, EAllowShrinking::No);
 
 		if constexpr (std::is_same<HandleType, FTypedElementHandle>::value)
 		{

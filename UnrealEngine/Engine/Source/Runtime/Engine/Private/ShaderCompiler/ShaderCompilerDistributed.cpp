@@ -206,7 +206,7 @@ int32 FShaderCompileDistributedThreadRunnable_Interface::CompilingLoop()
 		// Just to provide typical numbers: the number of total jobs is usually in tens of thousands at most, oftentimes in low thousands. Thus JobsPerBatch when calculated as a log2 rarely reaches the value of 16,
 		// and that seems to be a sweet spot: lowering it does not result in faster completion, while increasing the number of jobs per batch slows it down.
 		const uint32 JobsPerBatch = FMath::Max(MinJobsPerBatch, FMath::FloorToInt(FMath::LogX(2.f, PendingJobs.Num() + NumDispatchedJobs)));
-		UE_LOG(LogShaderCompilers, Display, TEXT("Current jobs: %d, Batch size: %d, Num Already Dispatched: %d"), PendingJobs.Num(), JobsPerBatch, NumDispatchedJobs);
+		UE_LOG(LogShaderCompilers, Log, TEXT("Current jobs: %d, Batch size: %d, Num Already Dispatched: %d"), PendingJobs.Num(), JobsPerBatch, NumDispatchedJobs);
 
 
 		struct FJobBatch
@@ -322,18 +322,21 @@ int32 FShaderCompileDistributedThreadRunnable_Interface::CompilingLoop()
 		if (Result.bCompleted)
 		{
 			// Check the output file exists. If it does, attempt to open it and serialize in the completed jobs.
+			bool bCompileJobsSucceeded = false;
+
 			if (IFileManager::Get().FileExists(*Task->OutputFilePath))
 			{
-				FArchive* OutputFileAr = IFileManager::Get().CreateFileReader(*Task->OutputFilePath, FILEREAD_Silent);
-				if (OutputFileAr)
+				if (TUniquePtr<FArchive> OutputFileAr = TUniquePtr<FArchive>(IFileManager::Get().CreateFileReader(*Task->OutputFilePath, FILEREAD_Silent)))
 				{
 					bOutputFileReadFailed = false;
-					FShaderCompileUtilities::DoReadTaskResults(Task->ShaderJobs, *OutputFileAr);
-					delete OutputFileAr;
+					if (FShaderCompileUtilities::DoReadTaskResults(Task->ShaderJobs, *OutputFileAr) == FSCWErrorCode::Success)
+					{
+						bCompileJobsSucceeded = true;
+					}
 				}
 			}
 
-			if (bOutputFileReadFailed)
+			if (!bCompileJobsSucceeded)
 			{
 				// Reading result from XGE job failed, so recompile shaders in current job batch locally
 				UE_LOG(LogShaderCompilers, Log, TEXT("Rescheduling shader compilation to run locally after distributed job failed: %s"), *Task->OutputFilePath);
@@ -394,4 +397,9 @@ int32 FShaderCompileDistributedThreadRunnable_Interface::CompilingLoop()
 
 	// Return true if there is more work to be done.
 	return Manager->AllJobs.GetNumOutstandingJobs() > 0;
+}
+
+const TCHAR* FShaderCompileDistributedThreadRunnable_Interface::GetThreadName() const
+{
+	return TEXT("ShaderCompilingThread-Distributed");
 }

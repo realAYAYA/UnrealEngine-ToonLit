@@ -17,8 +17,8 @@ namespace UE::PixelStreaming
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProtocolTestAddMessage, "System.Plugins.PixelStreaming.FProtocolTestAddMessage", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter)
 	bool FProtocolTestAddMessage::RunTest(const FString& Parameters)
 	{
-		int32 StreamerPort = 7569;
-		int32 PlayerPort = 4583;
+		int32 StreamerPort = TestUtils::NextStreamerPort();
+		int32 PlayerPort = TestUtils::NextPlayerPort();
 
 		TSharedPtr<UE::PixelStreamingServers::IServer> SignallingServer = CreateSignallingServer(StreamerPort, PlayerPort);
 
@@ -26,16 +26,14 @@ namespace UE::PixelStreaming
 		TSharedPtr<FPixelStreamingVideoInputI420> VideoInput = MakeShared<FPixelStreamingVideoInputI420>();
 		Streamer->SetVideoInput(VideoInput);
 
-		IPixelStreamingInputModule& PixelStreamingInputModule = IPixelStreamingInputModule::Get();
-		EPixelStreamingMessageDirection MessageDirection = EPixelStreamingMessageDirection::ToStreamer;
-
+		// Define our message
 		FPixelStreamingInputMessage Message = FPixelStreamingInputMessage({ EPixelStreamingMessageTypes::Uint16 } /* Structure */);
-
-		const TFunction<void(FMemoryReader)> Handler = [this](FMemoryReader Ar) { /* Do nothing */ };
-
-		TSharedPtr<IPixelStreamingInputHandler> InputHandler = Streamer->GetInputHandler().Pin();
+		// Add it to the protocol
 		FPixelStreamingInputProtocol::ToStreamerProtocol.Add("CustomMessage", Message);
-		InputHandler->RegisterMessageHandler("CustomMessage", Handler);
+		// Define a handler function
+		const TFunction<void(FString, FMemoryReader)> Handler = [this](FString, FMemoryReader Ar) { /* Do nothing */ };
+		// Add it to the streamer
+		Streamer->GetInputHandler().Pin()->RegisterMessageHandler("CustomMessage", Handler);
 
 		TSharedPtr<FMockPlayer> Player = CreatePlayer(FMockPlayer::EMode::AcceptOffers);
 		TSharedPtr<FMockVideoSink> VideoSink = MakeShared<FMockVideoSink>();
@@ -53,7 +51,7 @@ namespace UE::PixelStreaming
 				TSharedRef<TJsonReader<TCHAR>> JsonReader = TJsonReaderFactory<TCHAR>::Create(JsonRaw);
 				if (FJsonSerializer::Deserialize(JsonReader, JsonParsed))
 				{
-					double Direction = JsonParsed->GetNumberField("Direction");
+					double Direction = JsonParsed->GetNumberField(TEXT("Direction"));
 					if (!(Direction == static_cast<double>(EPixelStreamingMessageDirection::ToStreamer)))
 					{
 						return;
@@ -84,8 +82,8 @@ namespace UE::PixelStreaming
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProtocolTestUseCustomMessage, "System.Plugins.PixelStreaming.FProtocolTestUseCustomMessage", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter)
 	bool FProtocolTestUseCustomMessage::RunTest(const FString& Parameters)
 	{
-		int32 StreamerPort = 7571;
-		int32 PlayerPort = 4585;
+		int32 StreamerPort = TestUtils::NextStreamerPort();
+		int32 PlayerPort = TestUtils::NextPlayerPort();
 
 		TSharedPtr<UE::PixelStreamingServers::IServer> SignallingServer = CreateSignallingServer(StreamerPort, PlayerPort);
 
@@ -93,23 +91,24 @@ namespace UE::PixelStreaming
 		TSharedPtr<FPixelStreamingVideoInputI420> VideoInput = MakeShared<FPixelStreamingVideoInputI420>();
 		Streamer->SetVideoInput(VideoInput);
 
-		IPixelStreamingInputModule& PixelStreamingInputModule = IPixelStreamingInputModule::Get();
-		EPixelStreamingMessageDirection MessageDirection = EPixelStreamingMessageDirection::ToStreamer;
-
+		// Define our message
 		FPixelStreamingInputMessage Message = FPixelStreamingInputMessage({ EPixelStreamingMessageTypes::Uint16 } /* Structure */);
-
-		TFunction<void(uint8, const webrtc::DataBuffer&)> Callback = [](uint8 Type, const webrtc::DataBuffer& RawBuffer) { /* Do nothing */ };
+		// Add it to the protocol
+		FPixelStreamingInputProtocol::ToStreamerProtocol.Add("CustomMessage", Message);
+		// Define a handler function
 		TSharedPtr<bool> bComplete = MakeShared<bool>(false);
-		const TFunction<void(FMemoryReader)> Handler = [this, bComplete](FMemoryReader Ar) {
+		const TFunction<void(FString, FMemoryReader)> Handler = [this, bComplete](FString, FMemoryReader Ar) {
 			*bComplete.Get() = true;
 			uint16 Out;
 			Ar << Out;
 			TestTrue(TEXT("Expected message content to be 1337."), Out == 1337);
 		};
+		// Add it to the streamer
+		Streamer->GetInputHandler().Pin()->RegisterMessageHandler("CustomMessage", Handler);
 
-		TSharedPtr<IPixelStreamingInputHandler> InputHandler = Streamer->GetInputHandler().Pin();
-		FPixelStreamingInputProtocol::ToStreamerProtocol.Add("CustomMessage", Message);
-		InputHandler->RegisterMessageHandler("CustomMessage", Handler);
+		
+		TFunction<void(uint8, const webrtc::DataBuffer&)> Callback = [](uint8 Type, const webrtc::DataBuffer& RawBuffer) { /* Do nothing */ };
+
 
 		TSharedPtr<FMockPlayer> Player = CreatePlayer(FMockPlayer::EMode::AcceptOffers);
 		TSharedPtr<FMockVideoSink> VideoSink = MakeShared<FMockVideoSink>();

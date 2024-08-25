@@ -2,7 +2,9 @@
 
 #pragma once 
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "NavFilters/NavigationQueryFilter.h"
 #endif //UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
@@ -10,7 +12,10 @@
 #include "AI/Navigation/NavQueryFilter.h"
 
 #if WITH_RECAST
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Detour/DetourNavMesh.h"
+#endif
 #include "Detour/DetourNavMeshQuery.h"
 
 #define RECAST_VERY_SMALL_AGENT_RADIUS 0.0f

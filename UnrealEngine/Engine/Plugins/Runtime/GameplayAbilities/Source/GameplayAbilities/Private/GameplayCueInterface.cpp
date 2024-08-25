@@ -20,6 +20,9 @@ namespace GameplayCueInterfacePrivate
 	};
 	typedef TMap<FGameplayTag, TArray<FCueNameAndUFunction> > FGameplayCueTagFunctionList;
 	static TMap<FObjectKey, FGameplayCueTagFunctionList > PerClassGameplayTagToFunctionMap;
+
+	bool bUseEqualTagCountAndRemovalCallbacks = true;
+	static FAutoConsoleVariableRef CVarUseEqualTagCountAndRemovalCallbacks(TEXT("GameplayCue.Fix.UseEqualTagCountAndRemovalCallbacks"), bUseEqualTagCountAndRemovalCallbacks, TEXT("Default: True. When calling RemoveCue, get an equal number of TagCountUpdated callbacks and Removal callbacks rather than 1:many"));
 }
 
 
@@ -243,24 +246,44 @@ void FActiveGameplayCueContainer::RemoveCue(const FGameplayTag& Tag)
 		return;
 	}
 
+	int32 CountDelta = 0;
+
+	// This is the old behavior (tentatively removed in UE5.5):  A single callback per multiple removals
+	if (!GameplayCueInterfacePrivate::bUseEqualTagCountAndRemovalCallbacks)
+	{
+		for (const FActiveGameplayCue& GameplayCue : GameplayCues)
+		{
+			CountDelta += (GameplayCue.GameplayCueTag == Tag);
+		}
+
+		if (CountDelta > 0)
+		{
+			Owner->UpdateTagMap(Tag, -CountDelta);
+		}
+	}
 	
 	// Iterate backwards so we can remove during loop
-	int32 CountDelta = 0;
 	for (int32 idx=GameplayCues.Num()-1; idx >= 0; --idx)
 	{
 		FActiveGameplayCue& Cue = GameplayCues[idx];
 
 		if (Cue.GameplayCueTag == Tag)
 		{
+			if (GameplayCueInterfacePrivate::bUseEqualTagCountAndRemovalCallbacks)
+			{
+				++CountDelta;
+				Owner->UpdateTagMap(Tag, -1);
+			}
+
+			Owner->InvokeGameplayCueEvent(Tag, EGameplayCueEvent::Removed, Cue.Parameters);
 			GameplayCues.RemoveAt(idx);
-			CountDelta -= 1;
 		}
 	}
 
-	if (CountDelta < 0)
+	if (CountDelta > 0)
 	{
 		MarkArrayDirty();
-		Owner->UpdateTagMap(Tag, CountDelta);
+		Owner->ForceReplication();
 	}
 }
 
@@ -395,8 +418,8 @@ void FMinimalGameplayCueReplicationProxy::PreReplication(const FActiveGameplayCu
 	if (LastSourceArrayReplicationKey != SourceContainer.ArrayReplicationKey)
 	{
 		LastSourceArrayReplicationKey = SourceContainer.ArrayReplicationKey;
-		ReplicatedTags.SetNum(SourceContainer.GameplayCues.Num(), false);
-		ReplicatedLocations.SetNum(SourceContainer.GameplayCues.Num(), false);
+		ReplicatedTags.SetNum(SourceContainer.GameplayCues.Num(), EAllowShrinking::No);
+		ReplicatedLocations.SetNum(SourceContainer.GameplayCues.Num(), EAllowShrinking::No);
 		for (int32 idx=0; idx < SourceContainer.GameplayCues.Num(); ++idx)
 		{
 			ReplicatedTags[idx] = SourceContainer.GameplayCues[idx].GameplayCueTag;
@@ -478,8 +501,8 @@ bool FMinimalGameplayCueReplicationProxy::NetSerialize(FArchive& Ar, class UPack
 		LocalTags = MoveTemp(ReplicatedTags);
 		LocalBitMask.Init(true, LocalTags.Num());
 		
-		ReplicatedTags.SetNumUninitialized(NumElements, false);
-		ReplicatedLocations.SetNum(NumElements, false);
+		ReplicatedTags.SetNumUninitialized(NumElements, EAllowShrinking::No);
+		ReplicatedLocations.SetNum(NumElements, EAllowShrinking::No);
 
 		// This struct does not serialize GC parameters but will synthesize them on the receiving side.
 		FGameplayCueParameters Parameters;

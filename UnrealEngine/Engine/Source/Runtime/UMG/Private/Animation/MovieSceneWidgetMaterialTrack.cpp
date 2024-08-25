@@ -10,6 +10,20 @@
 UMovieSceneWidgetMaterialTrack::UMovieSceneWidgetMaterialTrack( const FObjectInitializer& ObjectInitializer )
 	: Super(ObjectInitializer)
 {
+
+}
+
+UMovieSceneSection* UMovieSceneWidgetMaterialTrack::CreateNewSection()
+{
+	UMovieSceneSection* NewSection = NewObject<UMovieSceneParameterSection>(this, NAME_None, RF_Transactional);
+	NewSection->SetBlendType(EMovieSceneBlendType::Absolute);
+	NewSection->SetRange(TRange<FFrameNumber>::All());
+	return NewSection;
+}
+
+bool UMovieSceneWidgetMaterialTrack::SupportsType(TSubclassOf<UMovieSceneSection> SectionClass) const
+{
+	return SectionClass == UMovieSceneParameterSection::StaticClass();
 }
 
 void UMovieSceneWidgetMaterialTrack::ImportEntityImpl(UMovieSceneEntitySystemLinker* EntityLinker, const FEntityImportParams& Params, FImportedEntity* OutImportedEntity)

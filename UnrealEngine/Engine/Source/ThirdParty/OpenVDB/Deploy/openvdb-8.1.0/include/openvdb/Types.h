@@ -4,6 +4,10 @@
 #ifndef OPENVDB_TYPES_HAS_BEEN_INCLUDED
 #define OPENVDB_TYPES_HAS_BEEN_INCLUDED
 
+#ifndef VDB_WITH_EPIC_EXTENSIONS
+#define VDB_WITH_EPIC_EXTENSIONS 0
+#endif
+
 #include "version.h"
 #include "Platform.h"
 #include "TypeList.h" // backwards compat
@@ -391,7 +395,12 @@ enum MergePolicy {
 ////////////////////////////////////////
 
 
+#if VDB_WITH_EPIC_EXTENSIONS
+// don't rely on rtti since we need to compile without it
+template<typename T> const char* typeNameAsString()                 { return "<unknown>"; }
+#else
 template<typename T> const char* typeNameAsString()                 { return typeid(T).name(); }
+#endif
 template<> inline const char* typeNameAsString<bool>()              { return "bool"; }
 template<> inline const char* typeNameAsString<ValueMask>()         { return "mask"; }
 template<> inline const char* typeNameAsString<math::half>()              { return "half"; }

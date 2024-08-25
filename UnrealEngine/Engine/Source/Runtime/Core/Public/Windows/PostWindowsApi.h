@@ -8,6 +8,11 @@
 	#include "Microsoft/PostWindowsApi.h"
 #else
 
+// this file should only be included from WindowsHWrapper.h
+#if !defined(WINDOWS_H_WRAPPER_GUARD) 
+#pragma message("WARNING: do not include Windows/PostWindowsApi.h directly. Use Windows/WindowsHWrapper.h or Windows/HideWindowsPlatformTypes.h instead") 
+#endif
+
 // Re-enable warnings
 THIRD_PARTY_INCLUDES_END
 

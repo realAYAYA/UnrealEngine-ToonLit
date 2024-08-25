@@ -31,6 +31,7 @@ TSharedPtr<IMovieSceneSectionRecorder> FMovieSceneMultiPropertyRecorderFactory::
 bool FMovieSceneMultiPropertyRecorderFactory::CanRecordObject(UObject* InObjectToRecord) const
 {
 	return true;
+#if 0
 	const USequenceRecorderSettings* Settings = GetDefault<USequenceRecorderSettings>();
 
 	for (const FPropertiesToRecordForClass& PropertiesToRecordForClass : Settings->ClassesAndPropertiesToRecord)
@@ -50,6 +51,7 @@ bool FMovieSceneMultiPropertyRecorderFactory::CanRecordObject(UObject* InObjectT
 	}
 
 	return false;
+#endif
 }
 
 FMovieSceneMultiPropertyRecorder::FMovieSceneMultiPropertyRecorder()

@@ -83,7 +83,6 @@
  *		- Shared pointers are not compatible with Unreal objects (UObject classes)!
  *		- Currently only types with that have regular destructors (no custom deleters)
  *		- Dynamically-allocated arrays are not supported yet (e.g. MakeShareable( new int32[20] ))
- *		- Implicit conversion of TSharedPtr/TSharedRef to bool is not supported yet
  *
  *
  *	Differences from other implementations (e.g. boost:shared_ptr, std::shared_ptr):
@@ -146,12 +145,11 @@ namespace UE::Core::Private
 // A type which does not inherit TSharedFromThis at all is ok.
 // We only check this inside the constructor because we don't necessarily have the full type of T when we declare a TSharedPtr<T>.
 #define UE_TSHAREDPTR_STATIC_ASSERT_VALID_MODE(ObjectType, Mode) \
-	enum \
-	{ \
-		ObjectTypeHasSameModeSharedFromThis = TPointerIsConvertibleFromTo<ObjectType, TSharedFromThis<ObjectType, Mode>>::Value, \
-		ObjectTypeHasOppositeModeSharedFromThis = TPointerIsConvertibleFromTo<ObjectType, TSharedFromThis<ObjectType, (Mode == ESPMode::NotThreadSafe) ? ESPMode::ThreadSafe : ESPMode::NotThreadSafe>>::Value \
-	}; \
-	static_assert(ObjectTypeHasSameModeSharedFromThis || !ObjectTypeHasOppositeModeSharedFromThis, "You cannot use a TSharedPtr of one mode with a type which inherits TSharedFromThis of another mode.");
+	static_assert( \
+		std::is_convertible_v<ObjectType*, TSharedFromThis<ObjectType, Mode>*> || \
+		!std::is_convertible_v<ObjectType*, TSharedFromThis<ObjectType, (Mode == ESPMode::NotThreadSafe) ? ESPMode::ThreadSafe : ESPMode::NotThreadSafe>*>, \
+		"You cannot use a TSharedPtr of one mode with a type which inherits TSharedFromThis of another mode." \
+	);
 
 /**
  * TSharedRef is a non-nullable, non-intrusive reference-counted authoritative object reference.
@@ -684,30 +682,6 @@ struct TCallTraits<TSharedRef<ObjectType, Mode>> : public TCallTraitsBase<TShare
 
 
 /**
- * Wrapper for a type that yields a reference to that type.
- */
-template<class T>
-struct FMakeReferenceTo
-{
-	typedef T& Type;
-};
-
-
-/**
- * Specialization for FMakeReferenceTo<void>.
- */
-template<>
-struct FMakeReferenceTo<void>
-{
-	typedef void Type;
-};
-template<>
-struct FMakeReferenceTo<const void>
-{
-	typedef void Type;
-};
-
-/**
  * TSharedPtr is a non-intrusive reference-counted authoritative object pointer.  This shared pointer
  * will be conditionally thread-safe when the optional Mode template argument is set to ThreadSafe.
  */
@@ -1123,7 +1097,7 @@ public:
 	 *
 	 * @return  Reference to the object
 	 */
-	[[nodiscard]] FORCEINLINE typename FMakeReferenceTo<ObjectType>::Type operator*() const
+	[[nodiscard]] FORCEINLINE decltype(auto) operator*() const
 	{
 		check( IsValid() );
 		return *Object;
@@ -1209,8 +1183,8 @@ private:
 	 *       pointer to a shared pointer.  Use the weak pointer's Pin() method instead!
 	 */
 	template <
-		typename OtherType,
-		typename = typename TEnableIf<TPointerIsConvertibleFromTo<OtherType, ObjectType>::Value>::Type
+		typename OtherType
+		UE_REQUIRES(std::is_convertible_v<OtherType*, ObjectType*>)
 	>
 	FORCEINLINE explicit TSharedPtr(TWeakPtr< OtherType, Mode >&& InWeakPtr)
 		: Object(nullptr)

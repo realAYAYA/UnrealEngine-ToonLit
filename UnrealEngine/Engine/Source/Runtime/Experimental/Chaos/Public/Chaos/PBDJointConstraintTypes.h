@@ -113,8 +113,6 @@ namespace Chaos
 	class FPBDJointSettings
 	{
 	public:
-		using FTransformPair = TVector<FRigidTransform3, 2>;
-
 		CHAOS_API FPBDJointSettings();
 
 		// Ensure that settings are consistent and within valid ranges. Should be called

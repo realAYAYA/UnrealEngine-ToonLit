@@ -6,6 +6,7 @@
 #include "MVVM/ViewModels/OutlinerItemModel.h"
 #include "MVVM/Extensions/ITrackExtension.h"
 #include "MVVM/Extensions/ITrackAreaExtension.h"
+#include "MVVM/Extensions/ILockableExtension.h"
 #include "MVVM/Extensions/IRenameableExtension.h"
 #include "MVVM/Extensions/IResizableExtension.h"
 #include "MVVM/Extensions/IDeletableExtension.h"
@@ -24,9 +25,10 @@ namespace Sequencer
 
 class FSectionModel;
 
-class FTrackRowModel
-	: public FOutlinerItemModel
+class SEQUENCER_API FTrackRowModel
+	: public FMuteSoloOutlinerItemModel
 	, public ITrackAreaExtension
+	, public ILockableExtension
 	, public ITrackExtension
 	, public IRenameableExtension
 	, public IResizableExtension
@@ -34,7 +36,7 @@ class FTrackRowModel
 {
 public:
 
-	UE_SEQUENCER_DECLARE_CASTABLE(FTrackRowModel, FOutlinerItemModel, ITrackAreaExtension, ITrackExtension, IDeletableExtension, IRenameableExtension);
+	UE_SEQUENCER_DECLARE_CASTABLE(FTrackRowModel, FMuteSoloOutlinerItemModel, ITrackAreaExtension, ILockableExtension, ITrackExtension, IDeletableExtension, IMutableExtension, ISoloableExtension, IRenameableExtension);
 
 	explicit FTrackRowModel(UMovieSceneTrack* InTrack, int32 InRowIndex);
 	~FTrackRowModel();
@@ -49,7 +51,7 @@ public:
 
 	/*~ IOutlinerExtension */
 	FOutlinerSizing GetOutlinerSizing() const override;
-	TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams) override;
+	TSharedPtr<SWidget> CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName) override;
 	FText GetLabel() const override;
 	FSlateColor GetLabelColor() const override;
 	FSlateFontInfo GetLabelFont() const override;
@@ -81,6 +83,10 @@ public:
 	/*~ IDeletableExtension */
 	bool CanDelete(FText* OutErrorMessage) const override;
 	void Delete() override;
+
+	/*~ ILockableExtension Interface */
+	ELockableLockState GetLockState() const override;
+	void SetIsLocked(bool bIsLocked) override;
 
 private:
 

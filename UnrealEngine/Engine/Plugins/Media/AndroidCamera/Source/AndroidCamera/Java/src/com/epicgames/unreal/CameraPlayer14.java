@@ -130,7 +130,7 @@ public class CameraPlayer14
 		*/
 
 		// check if camera supported
-		if (GameActivity._activity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))
+		if (GameActivity.Get().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))
 		{
 			CameraSupported = true;
 			GameActivity.Log.debug("Camera supported");
@@ -171,7 +171,7 @@ public class CameraPlayer14
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH)
 		{
 			// register lifecycle callbacks to unlock / reconnect to camera if application goes to background
-			GameActivity._activity.getApplication().registerActivityLifecycleCallbacks(
+			GameActivity.Get().getApplication().registerActivityLifecycleCallbacks(
 				new Application.ActivityLifecycleCallbacks() {
 					@Override
 					public void onActivityCreated(Activity activity, Bundle savedInstanceState) {}
@@ -1383,7 +1383,7 @@ public class CameraPlayer14
 
 			mSurfaceTexture.getTransformMatrix(mTransformMatrix);
 
-			int degrees = (GameActivity._activity.getCurrentDeviceRotationDegree() + CameraRotationOffset) % 360;
+			int degrees = (GameActivity.Get().getCurrentDeviceRotationDegree() + CameraRotationOffset) % 360;
 			if (degrees == 0) {
 				mScaleRotation00 = mTransformMatrix[1];
 				mScaleRotation01 = mTransformMatrix[5];
@@ -1923,7 +1923,7 @@ public class CameraPlayer14
 			GameActivity.Log.debug(mTransformMatrix[12] + ", " + mTransformMatrix[13] + ", " + mTransformMatrix[14] + ", " + mTransformMatrix[15]);
 			*/
 
-			int degrees = (GameActivity._activity.getCurrentDeviceRotationDegree() + CameraRotationOffset) % 360;
+			int degrees = (GameActivity.Get().getCurrentDeviceRotationDegree() + CameraRotationOffset) % 360;
 			if (degrees == 0) {
 				mScaleRotation00 = mTransformMatrix[1];
 				mScaleRotation01 = mTransformMatrix[5];

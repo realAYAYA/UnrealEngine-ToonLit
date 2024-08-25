@@ -333,7 +333,8 @@ bool UNiagaraDataInterfaceSimCacheReader::PerInstanceTick(void* PerInstanceData,
 	return false;
 }
 
-void UNiagaraDataInterfaceSimCacheReader::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceSimCacheReader::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDISimCacheReaderLocal;
 
@@ -383,6 +384,7 @@ void UNiagaraDataInterfaceSimCacheReader::GetFunctions(TArray<FNiagaraFunctionSi
 		Sig.Outputs.Emplace(GenFuncInfo.TypeDef, TEXT("Value"));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceSimCacheReader::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* PerInstanceData, FVMExternalFunction& OutFunc)
 {

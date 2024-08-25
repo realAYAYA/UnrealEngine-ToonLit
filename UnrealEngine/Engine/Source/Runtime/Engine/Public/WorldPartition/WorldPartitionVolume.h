@@ -15,7 +15,7 @@ class ADEPRECATED_WorldPartitionVolume : public AVolume
 
 private:
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const override { return false; }
+	virtual bool ActorTypeSupportsDataLayer() const override { return false; }
 #endif
 
 public:

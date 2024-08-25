@@ -65,7 +65,7 @@ ILegacyCacheStore* CreateCacheStoreAsync(ILegacyCacheStore* InnerBackend, IMemor
 ILegacyCacheStore* CreateCacheStoreHierarchy(ICacheStoreOwner*& OutOwner, TFunctionRef<void (IMemoryCacheStore*&)> MemoryCacheCreator);
 ILegacyCacheStore* CreateCacheStoreThrottle(ILegacyCacheStore* InnerCache, uint32 LatencyMS, uint32 MaxBytesPerSecond);
 ILegacyCacheStore* CreateCacheStoreVerify(ILegacyCacheStore* InnerCache, bool bPutOnError);
-ILegacyCacheStore* CreateFileSystemCacheStore(const TCHAR* Name, const TCHAR* Config, ICacheStoreOwner& Owner, FString& OutPath);
+ILegacyCacheStore* CreateFileSystemCacheStore(const TCHAR* Name, const TCHAR* Config, ICacheStoreOwner& Owner, ICacheStoreGraph* Graph, FString& OutPath, bool& OutRedirected);
 ILegacyCacheStore* CreateHttpCacheStore(const TCHAR* Name, const TCHAR* Config, ICacheStoreOwner* Owner);
 void CreateMemoryCacheStore(IMemoryCacheStore*& OutCache, const TCHAR* Name, const TCHAR* Config, ICacheStoreOwner* Owner);
 IPakFileCacheStore* CreatePakFileCacheStore(const TCHAR* Name, const TCHAR* Filename, bool bWriting, bool bCompressed, ICacheStoreOwner* Owner);
@@ -77,10 +77,10 @@ ILegacyCacheStore* TryCreateCacheStoreReplay(ILegacyCacheStore* InnerCache);
  * This class is used to create a singleton that represents the derived data cache hierarchy and all of the wrappers necessary
  * ideally this would be data driven and the backends would be plugins...
  */
-class FDerivedDataBackendGraph final : public FDerivedDataBackend, ICacheStoreOwner
+class FDerivedDataBackendGraph final : public FDerivedDataBackend, ICacheStoreOwner, ICacheStoreGraph
 {
 public:
-	using FParsedNode = TPair<ILegacyCacheStore*, ECacheStoreFlags>;
+	using FParsedNode = ILegacyCacheStore*;
 	using FParsedNodeMap = TMap<FString, FParsedNode>;
 
 	/**
@@ -117,6 +117,7 @@ public:
 
 		RootCache = nullptr;
 		FParsedNodeMap ParsedNodes;
+		TGuardValue ParsedNodeMapGuard(ActiveParsedNodeMap, &ParsedNodes);
 
 		ILegacyCacheStore* RootNode = nullptr;
 
@@ -148,7 +149,7 @@ public:
 			{
 				RootNode = CreateCacheStoreHierarchy(Hierarchy, [this](IMemoryCacheStore*& OutCache) { GetMemoryCache(OutCache); });
 
-				if (!ParseNode(RootName, GEngineIni, *GraphName, ParsedNodes))
+				if (!ParseNode(RootName, GEngineIni, *GraphName, ParsedNodes) || !Hierarchy->HasAllFlags(ECacheStoreFlags::Query | ECacheStoreFlags::Store))
 				{
 					// Destroy any cache stores that have been created.
 					delete RootNode;
@@ -166,7 +167,7 @@ public:
 					bVerifyFound = false;
 					bVerifyFix = false;
 					UE_LOG(LogDerivedDataCache, Warning,
-						TEXT("Unable to create cache graph '%s'. Reverting to the default graph."), *GraphName);
+						TEXT("Unable to create or use cache graph '%s'. Reverting to the default graph."), *GraphName);
 				}
 			}
 
@@ -176,7 +177,7 @@ public:
 				GraphName = FApp::IsEngineInstalled() ? TEXT("InstalledDerivedDataBackendGraph") : TEXT("DerivedDataBackendGraph");
 				RootNode = CreateCacheStoreHierarchy(Hierarchy, [this](IMemoryCacheStore*& OutCache) { GetMemoryCache(OutCache); });
 
-				if (!ParseNode(RootName, GEngineIni, *GraphName, ParsedNodes))
+				if (!ParseNode(RootName, GEngineIni, *GraphName, ParsedNodes) || !Hierarchy->HasAllFlags(ECacheStoreFlags::Query | ECacheStoreFlags::Store))
 				{
 					FString Entry;
 					if (!GConfig->DoesSectionExist(*GraphName, GEngineIni))
@@ -194,8 +195,10 @@ public:
 					else
 					{
 						UE_LOG(LogDerivedDataCache, Fatal,
-							TEXT("Unable to create default cache graph '%s' because no cache store was available."),
-							*GraphName);
+							TEXT("Unable to use default cache graph '%s' because there are no %s nodes available."),
+							*GraphName,
+							Hierarchy->HasAllFlags(ECacheStoreFlags::Query) ? TEXT("writable") :
+							Hierarchy->HasAllFlags(ECacheStoreFlags::Store) ? TEXT("readable") : TEXT("readable or writable"));
 					}
 				}
 			}
@@ -251,7 +254,7 @@ public:
 	{
 		if (const FParsedNode* ParsedNode = InParsedNodes.Find(NodeName))
 		{
-			UE_LOG(LogDerivedDataCache, Warning, TEXT("Node %s was referenced more than once in the graph. Nodes may not be shared."), *NodeName);
+			UE_LOG(LogDerivedDataCache, Display, TEXT("Node %s was referenced more than once in the graph. Nodes may not be shared."), *NodeName);
 			return false;
 		}
 
@@ -271,15 +274,15 @@ public:
 			{
 				if (NodeType == TEXT("FileSystem"))
 				{
-					return ParseDataCache(*NodeName, *Entry);
+					return ParseFileSystemCache(*NodeName, *Entry, InParsedNodes);
 				}
 				else if (NodeType == TEXT("Boot"))
 				{
-					return ParseBootCache(*NodeName, *Entry);
+					return ParseBootCache(*NodeName, *Entry, InParsedNodes);
 				}
 				else if (NodeType == TEXT("Memory"))
 				{
-					return ParseMemoryCache(*NodeName, *Entry);
+					return ParseMemoryCache(*NodeName, *Entry, InParsedNodes);
 				}
 				else if (NodeType == TEXT("Hierarchical"))
 				{
@@ -299,30 +302,33 @@ public:
 				}
 				else if (NodeType == TEXT("ReadPak"))
 				{
-					return ParsePak(*NodeName, *Entry, /*bWriting*/ false);
+					return ParsePak(*NodeName, *Entry, /*bWriting*/ false, InParsedNodes);
 				}
 				else if (NodeType == TEXT("WritePak"))
 				{
-					return ParsePak(*NodeName, *Entry, /*bWriting*/ true);
+					return ParsePak(*NodeName, *Entry, /*bWriting*/ true, InParsedNodes);
 				}
 				else if (NodeType == TEXT("S3"))
 				{
-					if (CreateS3CacheStore(*NodeName, *Entry, *this))
+					if (ILegacyCacheStore* CacheStore = CreateS3CacheStore(*NodeName, *Entry, *this))
 					{
+						InParsedNodes.Add(NodeName, CacheStore);
 						return true;
 					}
 				}
 				else if (NodeType == TEXT("Cloud") || NodeType == TEXT("Http"))
 				{
-					if (CreateHttpCacheStore(*NodeName, *Entry, this))
+					if (ILegacyCacheStore* CacheStore = CreateHttpCacheStore(*NodeName, *Entry, this))
 					{
+						InParsedNodes.Add(NodeName, CacheStore);
 						return true;
 					}
 				}
 				else if (NodeType == TEXT("Zen"))
 				{
-					if (CreateZenCacheStore(*NodeName, *Entry, this))
+					if (ILegacyCacheStore* CacheStore = CreateZenCacheStore(*NodeName, *Entry, this))
 					{
+						InParsedNodes.Add(NodeName,CacheStore);
 						return true;
 					}
 				}
@@ -340,7 +346,7 @@ public:
 	 * @param bWriting true to create pak interface for writing
 	 * @return Pak file data backend interface instance or nullptr if unsuccessful
 	 */
-	bool ParsePak(const TCHAR* NodeName, const TCHAR* Entry, const bool bWriting)
+	bool ParsePak(const TCHAR* NodeName, const TCHAR* Entry, const bool bWriting, FParsedNodeMap& InParsedNodes)
 	{
 		ILegacyCacheStore* PakNode = nullptr;
 		FString PakFilename;
@@ -357,7 +363,7 @@ public:
 		{
 			if (WritePakCache)
 			{
-				UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s pak cache because only one pak cache write node is supported."), *NodeName);
+				UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s pak cache because only one pak cache write node is supported."), NodeName);
 				return false;
 			}
 
@@ -366,6 +372,7 @@ public:
 			WritePakFilename = PakFilename + TEXT(".") + Temp.ToString();
 			WritePakCache = CreatePakFileCacheStore(NodeName, *WritePakFilename, /*bWriting*/ true, bCompressed, this);
 			PakNode = WritePakCache;
+			InParsedNodes.Add(NodeName, WritePakCache);
 			return true;
 		}
 		else
@@ -381,6 +388,7 @@ public:
 			ReadPakFilename = PakFilename;
 			PakNode = ReadPak;
 			ReadPakCache.Add(ReadPak);
+			InParsedNodes.Add(NodeName, ReadPak);
 			return true;
 		}
 	}
@@ -399,7 +407,7 @@ public:
 	{
 		if (bVerifyFound)
 		{
-			UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s Verify because only one Verify node is supported."), *NodeName);
+			UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s Verify because only one Verify node is supported."), NodeName);
 			return false;
 		}
 
@@ -430,7 +438,7 @@ public:
 	{
 		if (bAsyncFound)
 		{
-			UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s AsyncPut because only one AsyncPut node is supported."), *NodeName);
+			UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s AsyncPut because only one AsyncPut node is supported."), NodeName);
 			return false;
 		}
 
@@ -533,15 +541,21 @@ public:
 	 * @param Entry Node definition.
 	 * @return Filesystem data cache backend interface instance or nullptr if unsuccessful
 	 */
-	bool ParseDataCache(const TCHAR* NodeName, const TCHAR* Config)
+	bool ParseFileSystemCache(const TCHAR* NodeName, const TCHAR* Config, FParsedNodeMap& InParsedNodes)
 	{
+		bool bRedirected = false;
 		FString Path;
-		if (ILegacyCacheStore* Store = CreateFileSystemCacheStore(NodeName, Config, *this, Path))
+		if (ILegacyCacheStore* Store = CreateFileSystemCacheStore(NodeName, Config, *this, this, Path, bRedirected))
 		{
-			bUsingSharedDDC |= NodeName == TEXTVIEW("Shared");
-			Directories.AddUnique(Path);
+			if (!bRedirected)
+			{
+				bUsingSharedDDC |= NodeName == TEXTVIEW("Shared");
+				Directories.AddUnique(Path);
+			}
+			InParsedNodes.Add(NodeName, Store);
 			return true;
 		}
+
 		return false;
 	}
 
@@ -553,12 +567,12 @@ public:
 	 * @param OutFilename filename specified for the cache
 	 * @return Boot data cache backend interface instance or nullptr if unsuccessful
 	 */
-	bool ParseBootCache(const TCHAR* NodeName, const TCHAR* Entry)
+	bool ParseBootCache(const TCHAR* NodeName, const TCHAR* Entry, FParsedNodeMap& InParsedNodes)
 	{
 		UE_LOG(LogDerivedDataCache, Display, TEXT("Boot nodes are deprecated. Please remove the Boot node from the cache graph."));
 		if (bBootFound)
 		{
-			UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s Boot cache because only one Boot node is supported."), *NodeName);
+			UE_LOG(LogDerivedDataCache, Warning, TEXT("Unable to create %s Boot cache because only one Boot node is supported."), NodeName);
 			return false;
 		}
 
@@ -568,6 +582,11 @@ public:
 		// Only allow boot cache with the editor. We don't want other tools and utilities (eg. SCW) writing to the same file.
 		CreateMemoryCacheStore(BootCache, TEXT("Boot"), *WriteToString<128>(TEXT("-Boot "), Entry), this);
 	#endif
+
+		if (!!BootCache)
+		{
+			InParsedNodes.Add(NodeName, BootCache);
+		}
 
 		return !!BootCache;
 	}
@@ -579,13 +598,14 @@ public:
 	 * @param Entry Node definition.
 	 * @return Memory data cache backend interface instance or nullptr if unsuccessful
 	 */
-	bool ParseMemoryCache(const TCHAR* NodeName, const TCHAR* Entry)
+	bool ParseMemoryCache(const TCHAR* NodeName, const TCHAR* Entry, FParsedNodeMap& InParsedNodes)
 	{
 		FString Filename;
 		FParse::Value(Entry, TEXT("Filename="), Filename);
 		IMemoryCacheStore* Cache;
 		CreateMemoryCacheStore(Cache, NodeName, TEXT(""), this);
 		check(Cache);
+		InParsedNodes.Add(NodeName, Cache);
 		if (Filename.Len())
 		{
 			UE_LOG(LogDerivedDataCache, Display, TEXT("Memory nodes that load from a file are deprecated. Please remove the filename from the cache configuration."));
@@ -602,7 +622,7 @@ public:
 		else
 		{
 			// This is unconditionally added to the hierarchy and will be deleted by the hierarchy.
-			CreateMemoryCacheStore(OutCache, TEXT("Memory"), TEXT("-ReadOnly -NoStats"), this);
+			CreateMemoryCacheStore(OutCache, TEXT("Memory"), TEXT("-ReadOnly -StopGetStore -NoStats"), this);
 			MemoryCache = OutCache;
 		}
 	}
@@ -876,9 +896,19 @@ private:
 		}
 	}
 
+	bool HasAllFlags(ECacheStoreFlags Flags) const final
+	{
+		check(Hierarchy);
+		return Hierarchy->HasAllFlags(Flags);
+	}
+
 	ICacheStoreStats* CreateStats(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags, FStringView Type, FStringView Name, FStringView Path) final
 	{
 		check(Hierarchy);
+		if (ILegacyCacheStore* ThrottleNode = ThrottleNodes.FindRef(CacheStore))
+		{
+			CacheStore = ThrottleNode;
+		}
 		return Hierarchy->CreateStats(CacheStore, Flags, Type, Name, Path);
 	}
 
@@ -892,6 +922,32 @@ private:
 	{
 		check(Hierarchy);
 		Hierarchy->LegacyResourceStats(OutStats);
+	}
+
+	ILegacyCacheStore* FindOrCreate(const TCHAR* Name) final
+	{
+		if (!ActiveParsedNodeMap)
+		{
+			UE_LOG(LogDerivedDataCache, Warning, TEXT("Requesting creation of node %s during an unsupported time for node creation."), Name);
+			return nullptr;
+		}
+
+		if (const FParsedNode* ParsedNode = ActiveParsedNodeMap->Find(Name))
+		{
+			return *ParsedNode;
+		}
+
+		if (!ParseNode(Name, GEngineIni, *GraphName, *ActiveParsedNodeMap))
+		{
+			return nullptr;
+		}
+
+		const FParsedNode* ParsedNode = ActiveParsedNodeMap->Find(Name);
+		if (ParsedNode)
+		{
+			return *ParsedNode;
+		}
+		return nullptr;
 	}
 
 	/** MountPak console command handler. */
@@ -1042,6 +1098,7 @@ private:
 	FAutoConsoleCommand LoadReplayCommand;
 	TArray<FCacheReplayReader> Replays;
 
+	FParsedNodeMap* ActiveParsedNodeMap = nullptr;
 	FString ActiveNodeName;
 	FString ActiveNodeConfig;
 

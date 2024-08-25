@@ -7,6 +7,7 @@
 
 class IDetailLayoutBuilder;
 struct FPluginDescriptor;
+struct FPluginDisallowedDescriptor;
 struct FPluginReferenceDescriptor;
 class IPlugin;
 struct FPluginEditorExtension;
@@ -41,6 +42,30 @@ public:
 	 * Copy the metadata fields into a plugin descriptor.
 	 */
 	void CopyIntoDescriptor(FPluginReferenceDescriptor& OutDescriptor) const;
+};
+
+USTRUCT()
+struct FPluginDisallowedMetadata
+{
+public:
+	GENERATED_BODY()
+
+	/** Name of the dependency plugin */
+	UPROPERTY(EditAnywhere, Category = Details, meta = (GetOptions = GetDisallowedPluginsOptions))
+	FString Name;
+
+	UPROPERTY(EditAnywhere, Category = Details)
+	FString Comment;
+
+	/**
+	 * Populate the fields of this object from an existing descriptor.
+	 */
+	void PopulateFromDescriptor(const FPluginDisallowedDescriptor& InDescriptor);
+
+	/**
+	 * Copy the metadata fields into a plugin descriptor.
+	 */
+	void CopyIntoDescriptor(FPluginDisallowedDescriptor& OutDescriptor) const;	
 };
 
 /**
@@ -133,8 +158,8 @@ public:
 	TArray<FPluginReferenceMetadata> Plugins;
 
 	/** Plugins that cannot be used by this plugin */
-	UPROPERTY(EditAnywhere, Category = Dependencies, meta=(DisplayName="Disallowed", GetOptions= GetDisallowedPluginsOptions))
-	TArray<FString> DisallowedPlugins;
+	UPROPERTY(EditAnywhere, Category = Dependencies, meta = (DisplayName = "Disallowed"))
+	TArray<FPluginDisallowedMetadata> DisallowedPlugins;
 
 	/** Plugin this proxy object was constructed from */
 	TWeakPtr<IPlugin> SourcePlugin;

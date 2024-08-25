@@ -404,6 +404,21 @@ bool UAttributeSet::IsSupportedForNetworking() const
 	return true;
 }
 
+void UAttributeSet::GetAttributesFromSetClass(const TSubclassOf<UAttributeSet>& AttributeSetClass, TArray<FGameplayAttribute>& Attributes)
+{
+	for (TFieldIterator<FProperty> It(AttributeSetClass); It; ++It)
+	{
+		if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(*It))
+		{
+			Attributes.Add(FGameplayAttribute(FloatProperty));
+		}
+		else if (FGameplayAttribute::IsGameplayAttributeDataProperty(*It))
+		{
+			Attributes.Add(FGameplayAttribute(*It));
+		}
+	}
+}
+
 void UAttributeSet::SetNetAddressable()
 {
 	bNetAddressable = true;

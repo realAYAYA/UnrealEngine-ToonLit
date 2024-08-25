@@ -6,11 +6,92 @@
 #include "StateTreeDelegates.h"
 #include "IDetailChildrenBuilder.h"
 #include "IPropertyUtilities.h"
+#include "IStateTreeSchemaProvider.h"
+#include "PropertyBagDetails.h"
 #include "PropertyCustomizationHelpers.h"
 #include "StateTreeReference.h"
+#include "StateTreePropertyHelpers.h"
 #include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "StateTreeEditor"
+
+class FStateTreeRefParametersDetails : public FPropertyBagInstanceDataDetails
+{
+public:
+	FStateTreeRefParametersDetails(const TSharedPtr<IPropertyHandle> InStateTreeRefStructProperty, const TSharedPtr<IPropertyHandle> InParametersStructProperty, const TSharedPtr<IPropertyUtilities>& InPropUtils)
+		: FPropertyBagInstanceDataDetails(InParametersStructProperty, InPropUtils, /*bInFixedLayout*/true)
+		, StateTreeRefStructProperty(InStateTreeRefStructProperty)
+	{
+		check(UE::StateTree::PropertyHelpers::IsScriptStruct<FStateTreeReference>(StateTreeRefStructProperty));
+	}
+
+protected:
+	struct FStateTreeReferenceOverrideProvider : public IPropertyBagOverrideProvider
+	{
+		FStateTreeReferenceOverrideProvider(FStateTreeReference& InStateTreeRef)
+			: StateTreeRef(InStateTreeRef)
+		{
+		}
+		
+		virtual bool IsPropertyOverridden(const FGuid PropertyID) const override
+		{
+			return StateTreeRef.IsPropertyOverridden(PropertyID);
+		}
+		
+		virtual void SetPropertyOverride(const FGuid PropertyID, const bool bIsOverridden) const override
+		{
+			StateTreeRef.SetPropertyOverridden(PropertyID, bIsOverridden);
+		}
+
+	private:
+		FStateTreeReference& StateTreeRef;
+	};
+
+	virtual bool HasPropertyOverrides() const override
+	{
+		return true;
+	}
+
+	virtual void PreChangeOverrides() override
+	{
+		check(StateTreeRefStructProperty);
+		StateTreeRefStructProperty->NotifyPreChange();
+	}
+
+	virtual void PostChangeOverrides() override
+	{
+		check(StateTreeRefStructProperty);
+		StateTreeRefStructProperty->NotifyPostChange(EPropertyChangeType::ValueSet);
+		StateTreeRefStructProperty->NotifyFinishedChangingProperties();
+	}
+
+	virtual void EnumeratePropertyBags(TSharedPtr<IPropertyHandle> PropertyBagHandle, const EnumeratePropertyBagFuncRef& Func) const override
+	{
+		check(StateTreeRefStructProperty);
+		StateTreeRefStructProperty->EnumerateRawData([Func](void* RawData, const int32 /*DataIndex*/, const int32 /*NumDatas*/)
+		{
+			if (FStateTreeReference* StateTreeRef = static_cast<FStateTreeReference*>(RawData))
+			{
+				if (const UStateTree* StateTree = StateTreeRef->GetStateTree())
+				{
+					const FInstancedPropertyBag& DefaultParameters = StateTree->GetDefaultParameters();
+					FInstancedPropertyBag& Parameters = StateTreeRef->GetMutableParameters();
+					FStateTreeReferenceOverrideProvider OverrideProvider(*StateTreeRef);
+					if (!Func(DefaultParameters, Parameters, OverrideProvider))
+					{
+						return false;
+					}
+				}
+			}
+			return true;
+		});
+	}
+
+private:
+	
+	TSharedPtr<IPropertyHandle> StateTreeRefStructProperty;
+};
+
 
 TSharedRef<IPropertyTypeCustomization> FStateTreeReferenceDetails::MakeInstance()
 {
@@ -22,6 +103,9 @@ void FStateTreeReferenceDetails::CustomizeHeader(const TSharedRef<IPropertyHandl
 	StructPropertyHandle = InStructPropertyHandle;
 	PropUtils = InCustomizationUtils.GetPropertyUtilities();
 
+	ParametersHandle = StructPropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FStateTreeReference, Parameters));
+	check(ParametersHandle);
+	
 	// Make sure parameters are synced when displaying StateTreeReference.
 	// Associated StateTree asset might have been recompiled after the StateTreeReference was loaded.
 	// Note: SyncParameters() will create an undoable transaction, do not try to sync when called during Undo/redo as it would overwrite the undo.   
@@ -30,10 +114,10 @@ void FStateTreeReferenceDetails::CustomizeHeader(const TSharedRef<IPropertyHandl
 		SyncParameters();
 	}
 
-	const TSharedPtr<IPropertyHandle> StateTreeProperty = StructPropertyHandle->GetChildHandle(FName(TEXT("StateTree")));
+	const TSharedPtr<IPropertyHandle> StateTreeProperty = StructPropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FStateTreeReference, StateTree));
 	check(StateTreeProperty.IsValid());
 
-	const FString SchemaMetaDataValue = InStructPropertyHandle->GetMetaData(UE::StateTree::SchemaTag);
+	const FString SchemaMetaDataValue = GetSchemaPath(*StructPropertyHandle);
 
 	InHeaderRow
 	.NameContent()
@@ -65,18 +149,9 @@ void FStateTreeReferenceDetails::CustomizeHeader(const TSharedRef<IPropertyHandl
 
 void FStateTreeReferenceDetails::CustomizeChildren(const TSharedRef<IPropertyHandle> InStructPropertyHandle, IDetailChildrenBuilder& InChildrenBuilder, IPropertyTypeCustomizationUtils& InCustomizationUtils)
 {
-	uint32 NumChildren = 0;
-	InStructPropertyHandle->GetNumChildren(NumChildren);
-	for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ChildIndex++)
-	{
-		const TSharedRef<IPropertyHandle> ChildPropertyHandle = InStructPropertyHandle->GetChildHandle(ChildIndex).ToSharedRef();
-
-		// Skip StateTree that was used for the Header row
-		if (ChildPropertyHandle->GetProperty()->GetFName() != FName(TEXT("StateTree")))
-		{
-			InChildrenBuilder.AddProperty(ChildPropertyHandle);
-		}
-	}
+	// Show parameter values.
+	const TSharedRef<FStateTreeRefParametersDetails> ParameterInstanceDetails = MakeShareable(new FStateTreeRefParametersDetails(StructPropertyHandle, ParametersHandle, PropUtils));
+	InChildrenBuilder.AddCustomBuilder(ParameterInstanceDetails);
 }
 
 void FStateTreeReferenceDetails::OnTreeCompiled(const UStateTree& StateTree) const
@@ -123,6 +198,25 @@ void FStateTreeReferenceDetails::SyncParameters(const UStateTree* StateTreeToSyn
 	{
 		PropUtils->RequestRefresh();
 	}
+}
+
+FString FStateTreeReferenceDetails::GetSchemaPath(IPropertyHandle& StructPropertyHandle)
+{
+	TArray<UObject*> OuterObjects;
+	StructPropertyHandle.GetOuterObjects(OuterObjects);
+
+	for (const UObject* OuterObject : OuterObjects)
+	{
+		if (const IStateTreeSchemaProvider* SchemaProvider = Cast<IStateTreeSchemaProvider>(OuterObject))
+		{
+			if (const UClass* SchemaClass = SchemaProvider->GetSchema().Get())
+			{
+				return SchemaClass->GetPathName();
+			}
+		}
+	}
+
+	return StructPropertyHandle.GetMetaData(UE::StateTree::SchemaTag);
 }
 
 #undef LOCTEXT_NAMESPACE

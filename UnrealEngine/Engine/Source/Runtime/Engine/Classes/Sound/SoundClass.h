@@ -16,6 +16,7 @@
 #include "EdGraph/EdGraph.h"
 #endif // WITH_EDITOR
 #include "SoundWaveLoadingBehavior.h"
+#include "PerPlatformProperties.h"
 
 #include "SoundClass.generated.h"
 
@@ -130,8 +131,14 @@ struct FSoundClassProperties
 	TEnumAsByte<EAudioOutputTarget::Type> OutputTarget;
 
 	/** Specifies how and when compressed audio data is loaded for asset if stream caching is enabled. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Loading, meta = (DisplayName = "Loading Behavior Override"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Loading, meta = (DisplayName = "Loading Behavior Override"), AssetRegistrySearchable)
 	ESoundWaveLoadingBehavior LoadingBehavior;
+
+#if WITH_EDITORONLY_DATA
+   	/** How much audio to add to First Audio Chunk (in seconds) */
+	UPROPERTY(EditAnywhere, Category = Loading, meta = (UIMin = 0, UIMax = 10, EditCondition = "LoadingBehavior == ESoundWaveLoadingBehavior::RetainOnLoad || LoadingBehavior == ESoundWaveLoadingBehavior::PrimeOnLoad"), DisplayName="Size of First Audio Chunk (seconds)")
+   	FPerPlatformFloat SizeOfFirstAudioChunkInSeconds = 0.0f;
+#endif //WITH_EDITORONLY_DATA
 
 	/** Default output submix of referencing sounds. If unset, falls back to the 'Master Submix' as set in the 'Audio' category of Project Settings. 
 	  * (Unavailable if legacy 'Output to Master EQ Submix' is set) */

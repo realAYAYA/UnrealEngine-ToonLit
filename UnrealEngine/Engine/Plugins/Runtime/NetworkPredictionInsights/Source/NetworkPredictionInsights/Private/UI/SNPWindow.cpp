@@ -398,7 +398,7 @@ void SNPWindow::SetEngineFrame(uint64 InFrame, const bool bSetAutoScrollDirty)
 	
 	if (MaxEngineFrameHistory.Num() > 32)
 	{
-		MaxEngineFrameHistory.RemoveAt(0, 16, false);
+		MaxEngineFrameHistory.RemoveAt(0, 16, EAllowShrinking::No);
 		EngineFrameHistoryIndex -= 16;
 		check(EngineFrameHistoryIndex >= 0);
 	}

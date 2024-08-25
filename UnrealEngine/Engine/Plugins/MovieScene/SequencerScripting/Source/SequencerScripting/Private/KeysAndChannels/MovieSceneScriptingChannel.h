@@ -5,7 +5,7 @@
 #include "Channels/MovieSceneChannelHandle.h"
 #include "Channels/MovieSceneChannelTraits.h"
 #include "SequencerScriptingRange.h"
-#include "SequenceTimeUnit.h"
+#include "MovieSceneTimeUnit.h"
 #include "ExtensionLibraries/MovieSceneSequenceExtensions.h"
 #include "MovieSceneSection.h"
 #include "MovieSceneSequence.h"
@@ -23,7 +23,7 @@ public:
 	* @param TimeUnit (Optional) Should the time be returned in Display Rate frames (possibly with a sub-frame value) or in Tick Resolution with no sub-frame values? Defaults to Display Rate.
 	* @return					 The FrameTime of this key which combines both the frame number and the sub-frame it is on. Sub-frame will be zero if you request Tick Resolution.
 	*/
-	virtual FFrameTime GetTime(ESequenceTimeUnit TimeUnit = ESequenceTimeUnit::DisplayRate) const PURE_VIRTUAL(UMovieSceneScriptingKey::GetTime, return FFrameTime(););
+	virtual FFrameTime GetTime(EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate) const PURE_VIRTUAL(UMovieSceneScriptingKey::GetTime, return FFrameTime(););
 public:
 	FKeyHandle KeyHandle;
 	TWeakObjectPtr<UMovieSceneSequence> OwningSequence;
@@ -44,6 +44,15 @@ public:
 	*/
 	virtual TArray<UMovieSceneScriptingKey*> GetKeys() const PURE_VIRTUAL(UMovieSceneScriptingChannel::GetKeys, return TArray<UMovieSceneScriptingKey*>(););
 
+	/**
+	* Gets the keys in this channel specified by the specific index
+	* @Indices  The indices from which to get the keys from
+	* @return	An array of UMovieSceneScriptingKey's contained by this channel.
+	*			Returns all keys specified by the indices, even if out of range.
+	*/
+	virtual TArray<UMovieSceneScriptingKey*> GetKeysByIndex(const TArray<int32> &Indices) const PURE_VIRTUAL(UMovieSceneScriptingChannel::GetKeysByIndex, return TArray<UMovieSceneScriptingKey*>(););
+
+
 	UPROPERTY(BlueprintReadOnly, Category="Sequencer|Keys")
 	FName ChannelName;
 };
@@ -52,7 +61,7 @@ template<typename ChannelType, typename ScriptingKeyType, typename ScriptingKeyV
 struct TMovieSceneScriptingChannel
 {
 	static ScriptingKeyType* AddKeyInChannel(TMovieSceneChannelHandle<ChannelType> ChannelHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, 
-		TWeakObjectPtr<UMovieSceneSection> Section, const FFrameNumber InTime, ScriptingKeyValueType& NewValue, float SubFrame, ESequenceTimeUnit TimeUnit, EMovieSceneKeyInterpolation Interpolation)
+		TWeakObjectPtr<UMovieSceneSection> Section, const FFrameNumber InTime, ScriptingKeyValueType& NewValue, float SubFrame, EMovieSceneTimeUnit TimeUnit, EMovieSceneKeyInterpolation Interpolation)
 	{
 		ChannelType* Channel = ChannelHandle.Get();
 		if (Channel)
@@ -61,7 +70,7 @@ struct TMovieSceneScriptingChannel
 
 			// The Key's time is always going to be in Tick Resolution space, but the user may want to set it via Display Rate, so we convert.
 			FFrameNumber KeyTime = InTime;
-			if (TimeUnit == ESequenceTimeUnit::DisplayRate)
+			if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
 			{
 				KeyTime = FFrameRate::TransformTime(KeyTime, UMovieSceneSequenceExtensions::GetDisplayRate(Sequence.Get()), UMovieSceneSequenceExtensions::GetTickResolution(Sequence.Get())).RoundToFrame();
 			}
@@ -120,6 +129,42 @@ struct TMovieSceneScriptingChannel
 		}
 
 		FFrame::KismetExecutionMessage(TEXT("Invalid ChannelHandle for MovieSceneScriptingChannel, failed to remove key."), ELogVerbosity::Error);
+	}
+
+	static TArray<UMovieSceneScriptingKey*> GetKeysInChannelByIndex(TMovieSceneChannelHandle<ChannelType> ChannelHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, TWeakObjectPtr<UMovieSceneSection> Section,
+		const TArray<int32>& Indices)
+	{
+		TArray<UMovieSceneScriptingKey*> OutScriptingKeys;
+		ChannelType* Channel = ChannelHandle.Get();
+		if (Channel)
+		{
+			TArray<FFrameNumber> OutTimes;
+			TArray<FKeyHandle> OutKeys;
+			Channel->GetKeys(TRange<FFrameNumber>(), &OutTimes, &OutKeys);
+
+			for (int32 Index: Indices)
+			{
+				if (Index >= 0 && Index < OutTimes.Num())
+				{
+					ScriptingKeyType * Key = NewObject<ScriptingKeyType>();
+					Key->KeyHandle = OutKeys[Index];
+					Key->ChannelHandle = ChannelHandle;
+					Key->OwningSequence = Sequence;
+					Key->OwningSection = Section;
+					OutScriptingKeys.Add(Key);
+				}
+				else
+				{
+					FFrame::KismetExecutionMessage(TEXT("Invalid index for MovieSceneScriptingChannel, failed to get keys by index."), ELogVerbosity::Error);
+				}
+			}
+		}
+		else
+		{
+			FFrame::KismetExecutionMessage(TEXT("Invalid ChannelHandle for MovieSceneScriptingChannel, failed to get keys."), ELogVerbosity::Error);
+		}
+
+		return OutScriptingKeys;
 	}
 
 	static TArray<UMovieSceneScriptingKey*> GetKeysInChannel(TMovieSceneChannelHandle<ChannelType> ChannelHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, TWeakObjectPtr<UMovieSceneSection> Section)
@@ -277,7 +322,7 @@ struct TMovieSceneScriptingChannel
 template<typename ChannelType, typename ChannelDataType>
 struct TMovieSceneScriptingKey
 {
-	FFrameTime GetTimeFromChannel(FKeyHandle KeyHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, ESequenceTimeUnit TimeUnit) const
+	FFrameTime GetTimeFromChannel(FKeyHandle KeyHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, EMovieSceneTimeUnit TimeUnit) const
 	{
 		if (!Sequence.IsValid())
 		{
@@ -292,7 +337,7 @@ struct TMovieSceneScriptingKey
 			Channel->GetKeyTime(KeyHandle, KeyTime);
 
 			// The KeyTime is always going to be in Tick Resolution space, but the user may desire it in Play Rate /w a Subframe.
-			if (TimeUnit == ESequenceTimeUnit::DisplayRate)
+			if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
 			{
 				FFrameTime DisplayRateTime = FFrameRate::TransformTime(KeyTime, UMovieSceneSequenceExtensions::GetTickResolution(Sequence.Get()), UMovieSceneSequenceExtensions::GetDisplayRate(Sequence.Get()));
 				return DisplayRateTime;
@@ -306,7 +351,7 @@ struct TMovieSceneScriptingKey
 		return FFrameTime();
 	}
 
-	void SetTimeInChannel(FKeyHandle KeyHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, TWeakObjectPtr<UMovieSceneSection> Section, const FFrameNumber NewFrameNumber, ESequenceTimeUnit TimeUnit, float SubFrame)
+	void SetTimeInChannel(FKeyHandle KeyHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, TWeakObjectPtr<UMovieSceneSection> Section, const FFrameNumber NewFrameNumber, EMovieSceneTimeUnit TimeUnit, float SubFrame)
 	{
 		if (!Sequence.IsValid())
 		{
@@ -318,7 +363,7 @@ struct TMovieSceneScriptingKey
 		SubFrame = FMath::Clamp(SubFrame, 0.f, FFrameTime::MaxSubframe);
 
 		// TickResolution doesn't support a sub-frame as you can't get finer detailed than that.
-		if (TimeUnit == ESequenceTimeUnit::TickResolution && SubFrame > 0.f)
+		if (TimeUnit == EMovieSceneTimeUnit::TickResolution && SubFrame > 0.f)
 		{
 			FFrame::KismetExecutionMessage(TEXT("SetTime called with a SubFrame specified for a Tick Resolution type time! SubFrames are only allowed for Display Rate types, ignoring..."), ELogVerbosity::Error);
 			SubFrame = 0.f;
@@ -327,7 +372,7 @@ struct TMovieSceneScriptingKey
 		FFrameNumber KeyFrameNumber = NewFrameNumber;
 		
 		// Keys are always stored in Tick Resolution so we need to potentially convert their values.
-		if (TimeUnit == ESequenceTimeUnit::DisplayRate)
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
 		{
 			KeyFrameNumber = FFrameRate::TransformTime(FFrameTime(NewFrameNumber, SubFrame), UMovieSceneSequenceExtensions::GetDisplayRate(Sequence.Get()), UMovieSceneSequenceExtensions::GetTickResolution(Sequence.Get())).RoundToFrame();
 		}

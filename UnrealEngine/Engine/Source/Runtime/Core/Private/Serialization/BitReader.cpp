@@ -211,7 +211,7 @@ void FBitReader::SetData( FBitReader& Src, int64 CountBits )
 	Src.SerializeBits(Buffer.GetData(), CountBits);
 }
 
-void FBitReader::ResetData(FBitReader& Src, int64 CountBits)
+void FBitReader::ResetData(FBitReader& Src, int64 CountBits, int64 CountBitsWithSlack)
 {
 	Num = CountBits;
 	Pos = 0;
@@ -220,7 +220,7 @@ void FBitReader::ResetData(FBitReader& Src, int64 CountBits)
 	// Setup network version
 	this->SetNetVersionsFromArchive(Src);
 
-	Buffer.Reset();
+	Buffer.Reset((CountBitsWithSlack + 7) >> 3);
 	Buffer.AddUninitialized((CountBits + 7) >> 3);
 	Src.SerializeBits(Buffer.GetData(), CountBits);
 }

@@ -14,6 +14,7 @@ class TYPEDELEMENTSDATASTORAGEUI_API UTypedElementGeneralRegistrationFactory : p
 
 public:
 	static const FName CellPurpose;
+	static const FName HeaderPurpose;
 	static const FName CellDefaultPurpose;
 	static const FName HeaderDefaultPurpose;
 

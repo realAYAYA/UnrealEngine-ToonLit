@@ -3,6 +3,7 @@
 #include "GeometryCollection/GeometryCollectionEngineRemoval.h"
 #include "GeometryCollection/GeometryCollection.h"
 #include "GeometryCollection/Facades/CollectionRemoveOnBreakFacade.h"
+#include "GeometryCollectionProxyData.h"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -20,12 +21,11 @@ namespace
 	const FName DecayAttributeName = "Decay";
 }
 
-FGeometryCollectionRemoveOnBreakDynamicFacade::FGeometryCollectionRemoveOnBreakDynamicFacade(FManagedArrayCollection& InCollection)
+FGeometryCollectionRemoveOnBreakDynamicFacade::FGeometryCollectionRemoveOnBreakDynamicFacade(FGeometryDynamicCollection& InCollection)
 	: BreakTimerAttribute(InCollection, BreakTimerAttributeName, FGeometryCollection::TransformGroup)
 	, PostBreakDurationAttribute(InCollection, PostBreakDurationAttributeName, FGeometryCollection::TransformGroup)
 	, BreakRemovalDurationAttribute(InCollection, BreakRemovalDurationAttributeName, FGeometryCollection::TransformGroup)
-	, ChildrenAttribute(InCollection, FTransformCollection::ChildrenAttribute, FTransformCollection::TransformGroup)
-
+	, DynamicCollection(InCollection)
 {
 }
 
@@ -33,9 +33,7 @@ bool FGeometryCollectionRemoveOnBreakDynamicFacade::IsValid() const
 {
 	return BreakTimerAttribute.IsValid()
 		&& PostBreakDurationAttribute.IsValid()
-		&& BreakRemovalDurationAttribute.IsValid()
-		&& ChildrenAttribute.IsValid();
-	;
+		&& BreakRemovalDurationAttribute.IsValid();
 }
 
 bool FGeometryCollectionRemoveOnBreakDynamicFacade::IsConst() const
@@ -56,13 +54,11 @@ void FGeometryCollectionRemoveOnBreakDynamicFacade::SetAttributeValues(const Geo
 	check(!IsConst());
 	if (IsValid())
 	{
-		const TManagedArray<TSet<int32>>& Children = ChildrenAttribute.Get();
-
 		BreakTimerAttribute.Fill(DisabledBreakTimer);
 
 		// make sure we generate random value consistently between client and server 
 		// we can use the length of the transform group for that
-		const int32 RandomSeed = Children.Num();
+		const int32 RandomSeed = DynamicCollection.GetNumTransforms();
 		FRandomStream Random(RandomSeed);
 
 		TManagedArray<float>& PostBreakDuration = PostBreakDurationAttribute.Modify();
@@ -82,7 +78,7 @@ void FGeometryCollectionRemoveOnBreakDynamicFacade::SetAttributeValues(const Geo
 			const FVector2f RemovalTimer = RemoveOnBreakData.GetRemovalTimer();
 			const float MinRemovalTime = FMath::Max(0.0f, RemovalTimer.X);
 			const float MaxRemovalTime = FMath::Max(MinRemovalTime, RemovalTimer.Y);
-			const bool bIsCluster = (Children[Idx].Num() > 0);
+			const bool bIsCluster = DynamicCollection.HasChildren(Idx);
 			const bool bUseClusterCrumbling = (bIsCluster && RemoveOnBreakData.GetClusterCrumbling());
 			BreakRemovalDuration[Idx] = bUseClusterCrumbling ? CrumblingRemovalTimer : Random.FRandRange(MinRemovalTime, MaxRemovalTime);
 		}

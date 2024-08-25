@@ -35,8 +35,8 @@ void FDisplayClusterConfiguratorTreeItemHost::DeleteItem() const
 	UDisplayClusterConfigurationHostDisplayData* Host = GetObjectChecked<UDisplayClusterConfigurationHostDisplayData>();
 	if (UDisplayClusterConfigurationCluster* Cluster = Cast<UDisplayClusterConfigurationCluster>(Host->GetOuter()))
 	{
-		FString HostAddress = FDisplayClusterConfiguratorClusterUtils::GetAddressForHost(Host);
-		FDisplayClusterConfiguratorClusterUtils::RemoveHost(Cluster, HostAddress);
+		FString HostAddress = UE::DisplayClusterConfiguratorClusterUtils::GetAddressForHost(Host);
+		UE::DisplayClusterConfiguratorClusterUtils::RemoveHost(Cluster, HostAddress);
 	}
 }
 
@@ -100,7 +100,7 @@ FReply FDisplayClusterConfiguratorTreeItemHost::HandleAcceptDrop(const FDragDrop
 		FScopedTransaction Transaction(FText::Format(LOCTEXT("DropClusterNodes", "Drop {0}|plural(one=Cluster Node, other=Cluster Nodes)"), ClusterNodeDragDropOp->GetDraggedClusterNodes().Num()));
 
 		UDisplayClusterConfigurationHostDisplayData* HostDisplayData = GetObjectChecked<UDisplayClusterConfigurationHostDisplayData>();
-		const FString HostAddress = FDisplayClusterConfiguratorClusterUtils::GetAddressForHost(HostDisplayData);
+		const FString HostAddress = UE::DisplayClusterConfiguratorClusterUtils::GetAddressForHost(HostDisplayData);
 		bool bClusterModified = false;
 		for (TWeakObjectPtr<UDisplayClusterConfigurationClusterNode> ClusterNode : ClusterNodeDragDropOp->GetDraggedClusterNodes())
 		{
@@ -139,7 +139,7 @@ FName FDisplayClusterConfiguratorTreeItemHost::GetAttachName() const
 	// Use the host's address as the attach name, to ensure that the name is unique (the host's HostName property has no uniqueness enforced on it)
 	// so that child cluster nodes are correctly associated with their parent host nodes
 	UDisplayClusterConfigurationHostDisplayData* Host = GetObjectChecked<UDisplayClusterConfigurationHostDisplayData>();
-	FName AttachName = *FDisplayClusterConfiguratorClusterUtils::GetAddressForHost(Host);
+	FName AttachName = *UE::DisplayClusterConfiguratorClusterUtils::GetAddressForHost(Host);
 	return AttachName;
 }
 
@@ -269,7 +269,7 @@ FReply FDisplayClusterConfiguratorTreeItemHost::OnClusterItemGroupClicked(const 
 FText FDisplayClusterConfiguratorTreeItemHost::GetHostAddress() const
 {
 	UDisplayClusterConfigurationHostDisplayData* Host = GetObjectChecked<UDisplayClusterConfigurationHostDisplayData>();
-	return FText::Format(LOCTEXT("HostAddressFormattedLabel", "({0})"), FText::FromString(FDisplayClusterConfiguratorClusterUtils::GetAddressForHost(Host)));
+	return FText::Format(LOCTEXT("HostAddressFormattedLabel", "({0})"), FText::FromString(UE::DisplayClusterConfiguratorClusterUtils::GetAddressForHost(Host)));
 }
 
 bool FDisplayClusterConfiguratorTreeItemHost::CanDropClusterNodes(TSharedPtr<FDisplayClusterConfiguratorClusterNodeDragDropOp> ClusterNodeDragDropOp, FText& OutErrorMessage) const

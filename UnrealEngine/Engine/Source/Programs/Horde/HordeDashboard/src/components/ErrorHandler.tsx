@@ -217,8 +217,8 @@ export const ErrorDialog: React.FC = observer(() => {
       title: title
    };
 
-   const helpEmail = dashboard.helpEmail ?? "Not Configured";
-   const helpSlack = dashboard.helpSlack ?? "Not Configured";
+   const helpEmail = dashboard.helpEmail;
+   const helpSlack = dashboard.helpSlack;
 
    let fontSize = 13;
 
@@ -236,6 +236,8 @@ export const ErrorDialog: React.FC = observer(() => {
       }
    }
 
+   const anyHelp = !!helpEmail || !!helpSlack;
+
    return (
       <Dialog
          minWidth={width}
@@ -250,13 +252,13 @@ export const ErrorDialog: React.FC = observer(() => {
             <Text styles={{ root: { whiteSpace: "pre", fontSize: fontSize, color: "#EC4C47" } }}>{message}</Text>
             {!!error.url && <Text variant="medium">{`URL: ${error.url}`}</Text>}
             <Stack>
-               <Stack tokens={{ childrenGap: 18 }} style={{ paddingTop: 12 }}>
+               {anyHelp && <Stack tokens={{ childrenGap: 18 }} style={{ paddingTop: 12 }}>
                   <Text style={{ fontSize: 15 }}>If the issue persists, please contact us for assistance.</Text>
                   <Stack tokens={{ childrenGap: 14 }} style={{ paddingLeft: 12, paddingTop: 2 }}>
-                     <Stack horizontal tokens={{ childrenGap: 12 }}><Text style={{ fontSize: 15 }}>Email:</Text><Text style={{ fontSize: 15, fontWeight: 400, fontFamily: "Horde Open Sans SemiBold" }}>{helpEmail}</Text></Stack>
-                     <Stack horizontal tokens={{ childrenGap: 12 }}><Text style={{ fontSize: 15 }}>Slack:</Text><Text style={{ fontSize: 15, fontWeight: 400, fontFamily: "Horde Open Sans SemiBold" }}>{helpSlack}</Text></Stack>
+                     {!!helpEmail && <Stack horizontal tokens={{ childrenGap: 12 }}><Text style={{ fontSize: 15 }}>Email:</Text><Text style={{ fontSize: 15, fontWeight: 400, fontFamily: "Horde Open Sans SemiBold" }}>{helpEmail}</Text></Stack>}
+                     {!!helpSlack && <Stack horizontal tokens={{ childrenGap: 12 }}><Text style={{ fontSize: 15 }}>Slack:</Text><Text style={{ fontSize: 15, fontWeight: 400, fontFamily: "Horde Open Sans SemiBold" }}>{helpSlack}</Text></Stack>}
                   </Stack>
-               </Stack>
+               </Stack>}
 
                <Stack horizontal style={{ paddingTop: 24 }}>
                   <Stack grow />

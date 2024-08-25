@@ -45,14 +45,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        virtual int GetInputCount() const override;
-        virtual Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -75,6 +69,16 @@ namespace mu
 
 		EAddressMode GetAddressMode() const;
 		void SetAddressMode(EAddressMode AddressMode);
+
+		uint16 GetSizeX() const;
+		void SetSizeX(uint16 SizeX); 
+
+		uint16 GetSizeY() const;
+		void SetSizeY(uint16 SizeY); 
+
+		bool GetKeepAspectRatio() const;
+		void SetKeepAspectRatio(bool bKeepAspectRatio);
+
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern
 		//-----------------------------------------------------------------------------------------

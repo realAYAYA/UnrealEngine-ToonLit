@@ -514,7 +514,7 @@ void UPaperTerrainComponent::OnSplineEdited()
 						// Segment is too small, delete it
 						if (ActiveSegment->EndTime < ActiveSegment->StartTime + 2.0f * SegmentOverlapAmount)
 						{
-							Segments.Pop(false);
+							Segments.Pop(EAllowShrinking::No);
 						}
 
 						ActiveSegment = new (Segments)FTerrainSegment();

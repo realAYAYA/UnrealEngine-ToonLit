@@ -223,8 +223,7 @@ private:
 		FChunk(int32 InitialSize, int32 ChunkSize)
 		{
 			// Allocate the block which will contain the actual referencing elements
-			const bool bAllowShrinking = false;
-			Data.SetNumUninitialized(ChunkSize * InitialSize, bAllowShrinking);
+			Data.SetNumUninitialized(ChunkSize * InitialSize, EAllowShrinking::No);
 
 			// Initialize indexing structures
 			StartIndex.SetNumUninitialized(ChunkSize);

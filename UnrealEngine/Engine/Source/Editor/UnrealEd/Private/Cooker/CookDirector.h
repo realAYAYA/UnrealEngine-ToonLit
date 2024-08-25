@@ -7,8 +7,9 @@
 #include "Containers/ArrayView.h"
 #include "Containers/Map.h"
 #include "Containers/UnrealString.h"
-#include "CookSockets.h"
-#include "CookTypes.h"
+#include "Cooker/CookSockets.h"
+#include "Cooker/CookTypes.h"
+#include "Cooker/MPCollector.h"
 #include "HAL/CriticalSection.h"
 #include "HAL/Event.h"
 #include "HAL/LowLevelMemTracker.h"
@@ -27,8 +28,6 @@ class FCbWriter;
 class FRunnableThread;
 class UCookOnTheFlyServer;
 namespace UE::Cook { class FCookWorkerServer; }
-namespace UE::Cook { class FMPCollectorServerMessageContext; }
-namespace UE::Cook { class IMPCollector; }
 namespace UE::Cook { struct FCookWorkerProfileData; }
 namespace UE::Cook { struct FHeartbeatMessage; }
 namespace UE::Cook { struct FInitialConfigMessage; }
@@ -199,10 +198,9 @@ private:
 	 */
 	void SetWorkersStalled(bool bInWorkersStalled);
 	/** Callback for CookStats system to log our stats. */
+#if ENABLE_COOK_STATS
 	void LogCookStats(FCookStatsManager::AddStatFuncRef AddStat);
-	void TickRetractionFromSchedulerThread(bool bAnyIdle, int32 BusiestNumAssignments);
-	void HandleRetractionMessage(FMPCollectorServerMessageContext& Context, bool bReadSuccessful,
-		FRetractionResultsMessage&& Message);
+#endif
 	void AssignRequests(TArray<FWorkerId>&& InWorkers, TArray<TRefCountPtr<FCookWorkerServer>>& InRemoteWorkers, 
 		TArrayView<FPackageData*> Requests, TArray<FWorkerId>& OutAssignments,
 		TMap<FPackageData*, TArray<FPackageData*>>&& RequestGraph);
@@ -211,6 +209,7 @@ private:
 	void DisplayRemainingPackages() const;
 	FString GetDisplayName(const FWorkerId& WorkerId, int32 PreferredWidth = -1) const;
 	FString GetDisplayName(const FCookWorkerServer& RemoteWorker, int32 PreferredWidth=-1) const;
+	const TRefCountPtr<FCookWorkerServer>* FindRemoteWorkerInLock(const FWorkerId& WorkerId) const;
 
 private:
 	// Synchronization primitives that can be used from any thread
@@ -248,6 +247,7 @@ private:
 	int32 CoreLimit = 0;
 	EShowWorker ShowWorkerOption = EShowWorker::CombinedLogs;
 	ELoadBalanceAlgorithm LoadBalanceAlgorithm = ELoadBalanceAlgorithm::CookBurden;
+	/** Whether the director is allowed to cook any packages. True by default, false by commandline parameter. */
 	bool bAllowLocalCooks = true;
 
 	// Data only accessible from the CommunicationThread (or if the CommunicationThread is inactive)
@@ -273,12 +273,13 @@ struct FDirectorConnectionInfo
 };
 
 /** Message sent from a CookWorker to the Director to report that it is ready for setup messages and cooking. */
-struct FWorkerConnectMessage : public UE::CompactBinaryTCP::IMessage
+struct FWorkerConnectMessage : public IMPCollectorMessage
 {
 public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("WorkerConnectMessage"); }
 
 public:
 	int32 RemoteIndex = 0;
@@ -289,11 +290,12 @@ public:
  * Message sent from CookDirector to a CookWorker to cancel some of its assigned packages and return them
  * dispatch to idle workers.
  */
-struct FRetractionRequestMessage : public UE::CompactBinaryTCP::IMessage
+struct FRetractionRequestMessage : public IMPCollectorMessage
 {
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("RetractionRequestMessage"); }
 
 public:
 	int32 RequestedCount = 0;
@@ -304,11 +306,12 @@ public:
  * Message sent from CookWorker to CookDirector identifying which assigned packages it chose to satisfy a
  * a RetractionRequest.
  */
-struct FRetractionResultsMessage : public UE::CompactBinaryTCP::IMessage
+struct FRetractionResultsMessage : public IMPCollectorMessage
 {
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("RetractionResultsMessage"); }
 
 public:
 	TArray<FName> ReturnedPackages;

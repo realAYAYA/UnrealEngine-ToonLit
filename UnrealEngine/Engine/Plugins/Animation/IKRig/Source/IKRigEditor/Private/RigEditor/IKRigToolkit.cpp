@@ -18,7 +18,6 @@
 
 #include "Rig/IKRigDefinition.h"
 #include "IPersonaViewport.h"
-#include "PersonaPreviewSceneDescription.h"
 #include "RigEditor/IKRigAnimInstance.h"
 #include "RigEditor/IKRigCommands.h"
 #include "RigEditor/IKRigEditMode.h"
@@ -112,6 +111,29 @@ void FIKRigEditorToolkit::BindCommands()
         Commands.Reset,
         FExecuteAction::CreateSP(EditorController, &FIKRigEditorController::Reset),
 		EUIActionRepeatMode::RepeatDisabled);
+
+	ToolkitCommands->MapAction(
+		Commands.AutoRetargetChains,
+		FExecuteAction::CreateSP(EditorController, &FIKRigEditorController::AutoGenerateRetargetChains),
+		EUIActionRepeatMode::RepeatDisabled);
+	
+	ToolkitCommands->MapAction(
+			Commands.AutoSetupFBIK,
+			FExecuteAction::CreateSP(EditorController, &FIKRigEditorController::AutoGenerateFBIK),
+			EUIActionRepeatMode::RepeatDisabled);
+
+	ToolkitCommands->MapAction(
+		Commands.ShowAssetSettings,
+		FExecuteAction::CreateLambda([this]()
+		{
+			return EditorController->ShowAssetDetails();
+		}),
+		FCanExecuteAction(),
+		FIsActionChecked::CreateLambda([this]() ->bool
+		{
+			const UIKRigDefinition* Asset = EditorController->AssetController->GetAsset();
+			return EditorController->IsObjectInDetailsView(Asset);	
+		}));
 }
 
 void FIKRigEditorToolkit::ExtendToolbar()
@@ -138,6 +160,36 @@ void FIKRigEditorToolkit::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 			TAttribute<FText>(),
 			TAttribute<FText>(),
 			FSlateIcon(FAppStyle::Get().GetStyleSetName(),"Icons.Refresh"));
+
+		ToolbarBuilder.AddSeparator();
+
+		ToolbarBuilder.AddToolBarButton(
+			FIKRigCommands::Get().AutoRetargetChains,
+			NAME_None,
+			TAttribute<FText>(),
+			TAttribute<FText>(),
+			FSlateIcon(FIKRigEditorStyle::Get().GetStyleSetName(),"IKRig.AutoRetarget"));
+
+		ToolbarBuilder.AddToolBarButton(
+			FIKRigCommands::Get().AutoSetupFBIK,
+			NAME_None,
+			TAttribute<FText>(),
+			TAttribute<FText>(),
+			FSlateIcon(FIKRigEditorStyle::Get().GetStyleSetName(),"IKRig.AutoIK"));
+	}
+	ToolbarBuilder.EndSection();
+
+	ToolbarBuilder.AddSeparator();
+	ToolbarBuilder.AddWidget(SNew(SSpacer), NAME_None, true, HAlign_Right);
+
+	ToolbarBuilder.BeginSection("Show Settings");
+	{
+		ToolbarBuilder.AddToolBarButton(
+		FIKRigCommands::Get().ShowAssetSettings,
+		NAME_None,
+		TAttribute<FText>(),
+		TAttribute<FText>(),
+		FSlateIcon(FIKRigEditorStyle::Get().GetStyleSetName(),"IKRig.AssetSettings"));
 	}
 	ToolbarBuilder.EndSection();
 }
@@ -167,10 +219,10 @@ FString FIKRigEditorToolkit::GetWorldCentricTabPrefix() const
 	return TEXT("IKRigEditor");
 }
 
-void FIKRigEditorToolkit::AddReferencedObjects(FReferenceCollector& Collector)
+void FIKRigEditorToolkit::Tick(float DeltaTime)
 {
-	// hold the asset we are working on
-	Collector.AddReferencedObject(EditorController->AssetController->GetAssetPtr());
+	// forces viewport to always update, even when mouse pressed down in other tabs
+	GetPersonaToolkit()->GetPreviewScene()->InvalidateViews();
 }
 
 TStatId FIKRigEditorToolkit::GetStatId() const
@@ -188,12 +240,12 @@ void FIKRigEditorToolkit::HandleOnPreviewSceneSettingsCustomized(IDetailLayoutBu
 
 void FIKRigEditorToolkit::PostUndo(bool bSuccess)
 {
-	EditorController->AssetController->BroadcastNeedsReinitialized();
+	FScopedReinitializeIKRig Reinitialize(EditorController->AssetController);
 }
 
 void FIKRigEditorToolkit::PostRedo(bool bSuccess)
 {
-	EditorController->AssetController->BroadcastNeedsReinitialized();
+	FScopedReinitializeIKRig Reinitialize(EditorController->AssetController);
 }
 
 void FIKRigEditorToolkit::HandlePreviewSceneCreated(const TSharedRef<IPersonaPreviewScene>& InPersonaPreviewScene)
@@ -262,6 +314,35 @@ void FIKRigEditorToolkit::HandleViewportCreated(const TSharedRef<IPersonaViewpor
 			return 1.0f;
 		});
 	}
+
+	// highlight viewport when processor disabled
+	auto GetBorderColorAndOpacity = [this]()
+	{
+		// no processor or processor not initialized
+		const UIKRigProcessor* Processor = EditorController.Get().GetIKRigProcessor();
+		if (!Processor || !Processor->IsInitialized() )
+		{
+			return FLinearColor::Red;
+		}
+
+		// highlight viewport if warnings
+		const TArray<FText>& Warnings = Processor->Log.GetWarnings();
+		if (!Warnings.IsEmpty())
+		{
+			return FLinearColor::Yellow;
+		}
+
+		return FLinearColor::Transparent;
+	};
+
+	InViewport->AddOverlayWidget(
+		SNew(SBorder)
+		.BorderImage(FIKRigEditorStyle::Get().GetBrush("IKRig.Viewport.Border"))
+		.BorderBackgroundColor_Lambda(GetBorderColorAndOpacity)
+		.Visibility(EVisibility::HitTestInvisible)
+		.Padding(0.0f)
+		.ShowEffectWhenDisabled(false)
+	);
 }
 
 #undef LOCTEXT_NAMESPACE

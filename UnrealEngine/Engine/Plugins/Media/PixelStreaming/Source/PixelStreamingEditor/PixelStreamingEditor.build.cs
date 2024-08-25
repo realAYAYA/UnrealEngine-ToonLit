@@ -10,12 +10,6 @@ namespace UnrealBuildTool.Rules
 		{
 			var EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
 
-			// NOTE: General rule is not to access the private folder of another module
-			PrivateIncludePaths.AddRange(new string[]
-			{
-				Path.Combine(EngineDir, "Plugins/Media/PixelStreaming/Source/PixelStreaming/Private"),
-			});
-
 			PrivateDependencyModuleNames.AddRange(new string[]
 			{
 				"Core",
@@ -36,10 +30,11 @@ namespace UnrealBuildTool.Rules
 				"HTTP",
 				"Sockets",
 				"ApplicationCore",
-				"PixelStreamingInput"
+				"PixelStreamingInput",
+				"AVCodecsCore"
 			});
 
-			if(Target.bBuildEditor)
+			if (Target.bBuildEditor)
 			{
 				PrivateDependencyModuleNames.AddRange(new string[]
 				{
@@ -50,6 +45,11 @@ namespace UnrealBuildTool.Rules
 					"LevelEditor",
 					"MainFrame"
 				});
+			}
+
+			if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
+			{
+				AddEngineThirdPartyPrivateStaticDependencies(Target, "MetalCPP");
 			}
 		}
 	}

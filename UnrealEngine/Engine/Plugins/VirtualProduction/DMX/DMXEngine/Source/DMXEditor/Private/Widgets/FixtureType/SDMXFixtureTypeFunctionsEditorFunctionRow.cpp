@@ -9,13 +9,13 @@
 #include "DragDrop/DMXFixtureFunctionDragDropOp.h"
 #include "DragDrop/DMXFixtureMatrixDragDropOp.h"
 #include "Library/DMXEntityFixtureType.h"
+#include "ScopedTransaction.h"
 #include "Widgets/SNameListPicker.h"
 #include "Widgets/FixtureType/DMXFixtureTypeFunctionsEditorFunctionItem.h"
 #include "Widgets/FixtureType/DMXFixtureTypeFunctionsEditorMatrixItem.h"
 #include "Widgets/FixtureType/SDMXFixtureTypeFunctionsEditor.h"
 #include "Widgets/FixtureType/SDMXFixtureTypeFunctionsEditorMatrixRow.h"
-
-#include "ScopedTransaction.h"
+#include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Text/SInlineEditableTextBlock.h"
 
@@ -61,7 +61,7 @@ FReply SDMXFixtureTypeFunctionsEditorFunctionRow::OnDragDetected(const FGeometry
 
 TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorFunctionRow::GenerateWidgetForColumn(const FName& ColumnName)
 {
-	if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Status)
+	if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Status)
 	{
 		return
 			SNew(SBox)
@@ -99,7 +99,7 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorFunctionRow::GenerateWidgetFor
 					})
 			];
 	}
-	else if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Channel)
+	else if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Channel)
 	{
 		return
 			SNew(SBorder)
@@ -121,7 +121,7 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorFunctionRow::GenerateWidgetFor
 				.IsSelected(IsSelected)
 			];
 	}
-	else if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Name)
+	else if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Name)
 	{
 		return
 			SNew(SBorder)
@@ -162,7 +162,7 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorFunctionRow::GenerateWidgetFor
 				.IsSelected(IsSelected)
 			];
 	}
-	else if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Attribute)
+	else if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Attribute)
 	{
 		return
 			SNew(SBorder)
@@ -176,6 +176,24 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorFunctionRow::GenerateWidgetFor
 				.Value(this, &SDMXFixtureTypeFunctionsEditorFunctionRow::GetAttributeName)
 				.bDisplayWarningIcon(true)
 				.OnValueChanged(this, &SDMXFixtureTypeFunctionsEditorFunctionRow::OnUserChangedAttributeName)
+			];
+	}
+	else if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::DeleteAttribute)
+	{
+		return
+			SNew(SButton)
+			.ContentPadding(2.0f)
+			.ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
+			.OnClicked(this, &SDMXFixtureTypeFunctionsEditorFunctionRow::OnDeleteAttributeClicked)
+			.ToolTipText(LOCTEXT("RemoveCellAttributeTooltip", "Removes the Cell Attribute"))
+			.ForegroundColor(FSlateColor::UseForeground())
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.Content()
+			[
+				SNew(SImage)
+				.Image(FAppStyle::GetBrush("Icons.Delete"))
+				.ColorAndOpacity(FLinearColor(0.6f, 0.6f, 0.6f))
 			];
 	}
 
@@ -345,6 +363,13 @@ void SDMXFixtureTypeFunctionsEditorFunctionRow::OnUserChangedAttributeName(FName
 			SharedData->SetFunctionAndMatrixSelection({ FunctionItem->GetFunctionIndex() }, bMatrixSelected);
 		}
 	}
+}
+
+FReply SDMXFixtureTypeFunctionsEditorFunctionRow::OnDeleteAttributeClicked()
+{
+	FunctionItem->DeleteFunction();
+
+	return FReply::Handled();
 }
 
 #undef LOCTEXT_NAMESPACE

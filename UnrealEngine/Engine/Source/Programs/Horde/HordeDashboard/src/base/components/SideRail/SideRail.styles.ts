@@ -1,7 +1,7 @@
 //import { FontWeights, getFocusOutlineStyle, IStyleFunction } from '@fluentui/react/lib/index';
 import { FontWeights, getFocusOutlineStyle, IStyleFunction } from '@fluentui/react';
-import { modeColors } from '../../../styles/Styles';
 import { ISideRailStyleProps, ISideRailStyles } from './SideRail.types';
+import { getHordeStyling } from '../../../styles/Styles';
 
 
 const appPaddingSm = 28;
@@ -11,6 +11,9 @@ export const sideRailClassNames = {
 };
 
 export const getStyles: IStyleFunction<ISideRailStyleProps, ISideRailStyles> = props => {
+
+  const { modeColors } = getHordeStyling();
+
   const theme = props.theme!;
   return {
     root: {},
@@ -42,7 +45,7 @@ export const getStyles: IStyleFunction<ISideRailStyleProps, ISideRailStyles> = p
           {
             display: 'block',
             flex: '1',
-            padding: '4px 20px',
+            padding: '4px 0px',
             selectors: {              
               ':active,:visited,:hover': { color: modeColors.text, textDecoration: "none", background: theme.palette.neutralLight }
             }

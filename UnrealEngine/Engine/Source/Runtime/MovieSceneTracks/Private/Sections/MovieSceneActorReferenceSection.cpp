@@ -60,6 +60,16 @@ void FMovieSceneActorReferenceData::DeleteKeysFrom(FFrameNumber InTime, bool bDe
 	GetData().DeleteKeysFrom(InTime, bDeleteKeysBefore);
 }
 
+FKeyHandle FMovieSceneActorReferenceData::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneActorReferenceData::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
+}
+
 void FMovieSceneActorReferenceData::ChangeFrameResolution(FFrameRate SourceRate, FFrameRate DestinationRate)
 {
 	GetData().ChangeFrameResolution(SourceRate, DestinationRate);

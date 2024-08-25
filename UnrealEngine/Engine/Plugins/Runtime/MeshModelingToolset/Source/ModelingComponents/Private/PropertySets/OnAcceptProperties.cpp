@@ -2,9 +2,16 @@
 
 #include "PropertySets/OnAcceptProperties.h"
 
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "UObject/UObjectGlobals.h"
 #include "InteractiveToolManager.h"
+
+#if WITH_EDITOR
+#include "Editor/UnrealEdEngine.h"
+#include "Selection.h"
+#include "UnrealEdGlobals.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OnAcceptProperties)
 
@@ -51,7 +58,19 @@ void UOnAcceptHandleSourcesPropertiesBase::ApplyMethod(const TArray<AActor*>& Ac
 
 			if (bDelete)
 			{
-				Actor->Destroy();
+				if (UWorld* ActorWorld = Actor->GetWorld())
+				{
+#if WITH_EDITOR
+					if (GIsEditor && GUnrealEd)
+					{
+						GUnrealEd->DeleteActors(TArray{Actor}, ActorWorld, GUnrealEd->GetSelectedActors()->GetElementSelectionSet());
+					}
+					else
+#endif
+					{
+						ActorWorld->DestroyActor(Actor);
+					}
+				}
 			}
 			else
 			{

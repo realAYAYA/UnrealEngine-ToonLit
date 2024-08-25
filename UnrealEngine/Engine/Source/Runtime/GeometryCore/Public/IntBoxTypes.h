@@ -102,6 +102,15 @@ struct FAxisAlignedBox2i
 			FVector2i(-TNumericLimits<int32>::Max(), -TNumericLimits<int32>::Max()));
 	}
 
+	bool operator==(const FAxisAlignedBox2i& Other) const
+	{
+		return Max == Other.Max && Min == Other.Min;
+	}
+	bool operator!=(const FAxisAlignedBox2i& Other) const
+	{
+		return Max != Other.Max || Min != Other.Min;
+	}
+
 	/**
 	 * Corners are ordered to follow the perimeter of the bounding rectangle, starting from the (Min.X, Min.Y) corner and ending at (Min.X, Max.Y)
 	 * @param Index which corner to return, must be in range [0,3]
@@ -126,6 +135,43 @@ struct FAxisAlignedBox2i
 		Max.Y += Radius;
 		Min.X -= Radius;
 		Min.Y -= Radius;
+	}
+
+	int32 Area() const
+	{
+		const int32 XLength = TMathUtil<int32>::Max(Max.X - Min.X, 0);
+		const int32 YLength = TMathUtil<int32>::Max(Max.Y - Min.Y, 0);
+		return XLength * YLength;
+	}
+
+	FVector2i Diagonal() const
+	{
+		return FVector2i(Max.X - Min.X, Max.Y - Min.Y);
+	}
+
+	bool Contains(const FVector2i& V) const
+	{
+		return (Min.X <= V.X) && (Min.Y <= V.Y) && (Max.X >= V.X) && (Max.Y >= V.Y);
+	}
+
+	void Contain(const FVector2i& V)
+	{
+		if (V.X < Min.X)
+		{
+			Min.X = V.X;
+		}
+		if (V.X > Max.X)
+		{
+			Max.X = V.X;
+		}
+		if (V.Y < Min.Y)
+		{
+			Min.Y = V.Y;
+		}
+		if (V.Y > Max.Y)
+		{
+			Max.Y = V.Y;
+		}
 	}
 };
 

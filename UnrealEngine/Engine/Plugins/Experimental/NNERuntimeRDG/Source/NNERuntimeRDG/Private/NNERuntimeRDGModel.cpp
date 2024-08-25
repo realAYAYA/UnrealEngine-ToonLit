@@ -3,7 +3,6 @@
 #include "NNERuntimeRDGModel.h"
 
 #include "NNERuntimeFormat.h"
-#include "NNEUtilsModelOptimizer.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "RHIGPUReadback.h"
@@ -19,7 +18,7 @@ bool FModelInstanceRDG::LoadModel(TConstArrayView<uint8> ModelData, FNNERuntimeF
 
 	FMemoryReaderView Reader(ModelBuffer);
 
-	FNNERuntimeFormat::StaticStruct()->SerializeBin(Reader, &Format);
+	Format.Serialize(Reader);
 
 	// Data for base class
 	InputSymbolicTensors.Empty();
@@ -34,6 +33,8 @@ bool FModelInstanceRDG::LoadModel(TConstArrayView<uint8> ModelData, FNNERuntimeF
 	OperatorInputTensorIndices.Empty();
 	OperatorOutputTensorIndices.Empty();
 
+	TensorIdxSpan = Format.Tensors.Num();
+
 	// Add tensors
 	for (int32 Idx = 0; Idx < Format.Tensors.Num(); ++Idx)
 	{
@@ -42,7 +43,10 @@ bool FModelInstanceRDG::LoadModel(TConstArrayView<uint8> ModelData, FNNERuntimeF
 		const NNE::FSymbolicTensorShape SymbolicShape = NNE::FSymbolicTensorShape::Make(FormatTensorDesc.Shape);
 		const NNE::FTensorDesc SymbolicTensor = NNE::FTensorDesc::Make(FormatTensorDesc.Name, SymbolicShape, FormatTensorDesc.DataType);
 
-		AllSymbolicTensorDescs.Emplace(SymbolicTensor);
+		if (Format.Tensors[Idx].Type != ENNEFormatTensorType::Empty)
+		{
+			AllSymbolicTensorDescs.Emplace(Idx, SymbolicTensor);
+		}
 
 		if (FormatTensorDesc.Type == ENNEFormatTensorType::Input)
 		{
@@ -96,18 +100,18 @@ bool FModelInstanceRDG::LoadModel(TConstArrayView<uint8> ModelData, FNNERuntimeF
 
 
 
-int FModelInstanceRDG::SetInputTensorShapes(TConstArrayView<NNE::FTensorShape> InInputShapes)
+FModelInstanceRDG::ESetInputTensorShapesStatus FModelInstanceRDG::SetInputTensorShapes(TConstArrayView<NNE::FTensorShape> InInputShapes)
 {
 	OutputTensorShapes.Reset(OutputTensorIndices.Num());
 
 	//Verify input shape are valid for the model and set InputTensorShapes
-	if (FModelInstanceBase<NNE::IModelInstanceRDG>::SetInputTensorShapes(InInputShapes) != 0)
+	if (ESetInputTensorShapesStatus Status = FModelInstanceBase<NNE::IModelInstanceRDG>::SetInputTensorShapes(InInputShapes); Status != ESetInputTensorShapesStatus::Ok)
 	{
-		return -1;
+		return Status;
 	}
 
 	//Allocate and prime all AllTensorRDGRefs with concrete shapes defaulting variables dimension to 1 if needed
-	AllTensorRDGRefs.Init(nullptr, AllSymbolicTensorDescs.Num());
+	AllTensorRDGRefs.Reserve(AllSymbolicTensorDescs.Num());
 
 	InputTensorRDGs.Reset(InputTensorIndices.Num());
 	for (int32 i = 0; i < InputTensorIndices.Num(); ++i)
@@ -117,14 +121,14 @@ int FModelInstanceRDG::SetInputTensorShapes(TConstArrayView<NNE::FTensorShape> I
 		const NNE::FTensorShape& TensorShape = InputTensorShapes[i];
 
 		InputTensorRDGs.Emplace(FTensorRDG::Make(TensorDesc, TensorShape, nullptr));
-		AllTensorRDGRefs[Idx] = &InputTensorRDGs[i];
+		AllTensorRDGRefs.Emplace(Idx, &InputTensorRDGs[i]);
 	}
 
 	for (int32 i = 0; i < WeightTensorIndices.Num(); ++i)
 	{
 		const int32 Idx = WeightTensorIndices[i];
 
-		AllTensorRDGRefs[Idx] = &WeightTensorRDGs[i];
+		AllTensorRDGRefs.Emplace(Idx, &WeightTensorRDGs[i]);
 	}
 
 	IntermediateTensorRDGs.Reset(IntermediateTensorIndices.Num());
@@ -135,7 +139,7 @@ int FModelInstanceRDG::SetInputTensorShapes(TConstArrayView<NNE::FTensorShape> I
 		const NNE::FTensorShape TensorShape = NNE::FTensorShape::MakeFromSymbolic(TensorDesc.GetShape());
 
 		IntermediateTensorRDGs.Emplace(FTensorRDG::Make(TensorDesc, TensorShape, nullptr));
-		AllTensorRDGRefs[Idx] = &IntermediateTensorRDGs[i];
+		AllTensorRDGRefs.Emplace(Idx, &IntermediateTensorRDGs[i]);
 	}
 
 	OutputTensorRDGs.Reset(OutputTensorIndices.Num());
@@ -146,27 +150,23 @@ int FModelInstanceRDG::SetInputTensorShapes(TConstArrayView<NNE::FTensorShape> I
 		const NNE::FTensorShape TensorShape = NNE::FTensorShape::MakeFromSymbolic(TensorDesc.GetShape());
 
 		OutputTensorRDGs.Emplace(FTensorRDG::Make(TensorDesc, TensorShape, nullptr));
-		AllTensorRDGRefs[Idx] = &OutputTensorRDGs[i];
+		AllTensorRDGRefs.Emplace(Idx, &OutputTensorRDGs[i]);
 	}
 
 	checkCode(
-		for (int i = 0; i < AllTensorRDGRefs.Num(); ++i)
-		{
-			checkf(AllTensorRDGRefs[i] != nullptr, TEXT("Tensor at index %d, was not allocated for model preparation."), i);
-		};
+		checkf(AllTensorRDGRefs.Num() == AllSymbolicTensorDescs.Num(), TEXT("Some tensor was not allocated for model preparation."));
 	);
 
 	//Allow the specific runtime to run shape inference if supported
 	if (PrepareTensorShapesAndData() != 0)
 	{
-		return -1;
+		return ESetInputTensorShapesStatus::Fail;
 	}
 
 	checkCode(
-		for (int i = 0; i < AllTensorRDGRefs.Num(); ++i)
+		for (const TPair<int32, FTensorRDGRef>& Elem : AllTensorRDGRefs)
 		{
-			checkf(AllTensorRDGRefs[i] != nullptr, TEXT("Tensor at index %d, was not allocated after model preparation."), i);
-			checkf(AllTensorRDGRefs[i]->GetShape().IsCompatibleWith(AllSymbolicTensorDescs[i].GetShape()), TEXT("Tensor at index %d have a shape incompatible with model definition."), i);
+			checkf(Elem.Value->GetShape().IsCompatibleWith(AllSymbolicTensorDescs[Elem.Key].GetShape()), TEXT("Tensor at index %d have a shape incompatible with model definition."), Elem.Key);
 		};
 	);
 
@@ -182,14 +182,12 @@ int FModelInstanceRDG::SetInputTensorShapes(TConstArrayView<NNE::FTensorShape> I
 	check(WeightTensorIndices.Num() == WeightTensorRDGs.Num());
 	check(AllTensorRDGRefs.Num() == AllSymbolicTensorDescs.Num());
 	
-	return 0;
+	return ESetInputTensorShapesStatus::Ok;
 }
 
 FRDGBufferDesc CreateRDGBufferDescForTensorRDG(const FTensorRDG& Tensor)
 {
-	// FIXME: CreateStructuredDesc() creates a crash on VulkanRHI
-	//FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(Tensor.GetElemByteSize(), Tensor.GetVolume());
-	FRDGBufferDesc Desc = FRDGBufferDesc::CreateBufferDesc(Tensor.GetElemByteSize(), Tensor.GetVolume());
+	FRDGBufferDesc Desc = FRDGBufferDesc::CreateBufferDesc(Tensor.GetElementByteSize(), Tensor.GetVolume());
 
 	return Desc;
 }
@@ -197,31 +195,31 @@ FRDGBufferDesc CreateRDGBufferDescForTensorRDG(const FTensorRDG& Tensor)
 /**
  * Enqueue operators to RDG, the caller will run the GraphBuilder.Execute()
  */
-int FModelInstanceRDG::EnqueueRDG(FRDGBuilder& RDGBuilder, TConstArrayView<NNE::FTensorBindingRDG> InInputBindings, TConstArrayView<NNE::FTensorBindingRDG> InOutputBindings)
+FModelInstanceRDG::EEnqueueRDGStatus FModelInstanceRDG::EnqueueRDG(FRDGBuilder& RDGBuilder, TConstArrayView<NNE::FTensorBindingRDG> InInputBindings, TConstArrayView<NNE::FTensorBindingRDG> InOutputBindings)
 {
 	check(IsInRenderingThread());
 
-	int Res;
+	int32 Res;
 
 	// Verify the model inputs were prepared
 	if (InputTensorShapes.Num() == 0)
 	{
 		UE_LOG(LogNNE, Error, TEXT("EnqueueRDG(): Input shapes are not set, please call SetInputTensorShapes."));
-		return -1;
+		return EEnqueueRDGStatus::Fail;
 	}
 
 	Res = SetTensors(RDGBuilder, InputTensorRDGs, InInputBindings);
 	if (Res != -1)
 	{
 		UE_LOG(LogNNE, Warning, TEXT("Invalid buffer (was nullptr) for input tensor binding at index %d"), Res);
-		return -1;
+		return EEnqueueRDGStatus::Fail;
 	}
 
 	Res = SetTensors(RDGBuilder, OutputTensorRDGs, InOutputBindings);
 	if (Res != -1)
 	{
 		UE_LOG(LogNNE, Warning, TEXT("Invalid buffer (was nullptr) for output tensor binding at index %d"), Res);
-		return -1;
+		return EEnqueueRDGStatus::Fail;
 	}
 
 	
@@ -234,7 +232,7 @@ int FModelInstanceRDG::EnqueueRDG(FRDGBuilder& RDGBuilder, TConstArrayView<NNE::
 		if (!TensorRDG.HasPreparedData())
 		{
 			const FRDGBufferDesc BufferDesc = CreateRDGBufferDescForTensorRDG(TensorRDG);
-			const FRDGBufferRef TensorBuffer = RDGBuilder.CreateBuffer(BufferDesc, *TensorRDG.GetName(), ERDGBufferFlags::None);
+			const FRDGBufferRef TensorBuffer = RDGBuilder.CreateBuffer(BufferDesc, TEXT("NNE.Tensor.Intermediate"), ERDGBufferFlags::None);
 			check(!bBuffersUploadedAndRegisteredToRDGGraph || TensorRDG.GetBuffer() == nullptr);
 			TensorRDG.SetBuffer(TensorBuffer);
 		}
@@ -244,16 +242,21 @@ int FModelInstanceRDG::EnqueueRDG(FRDGBuilder& RDGBuilder, TConstArrayView<NNE::
 	//For now weights tensors are not uploaded to GPU thus GetBuffer will return nullptr for them.
 	if (bBuffersUploadedAndRegisteredToRDGGraph)
 	{
-		checkCode(for (const FTensorRDG* TensorRDG : AllTensorRDGRefs) { if (TensorRDG != nullptr) { check(TensorRDG->GetBuffer() != nullptr); } });
+		checkCode(
+			for (const TPair<int32, FTensorRDGRef>& TensorRDG : AllTensorRDGRefs) 
+			{ 
+				check(TensorRDG.Value->GetBuffer() != nullptr); 
+			}
+		);
 	}
 
 	// We can now dispatch operators
 	AddDispatchOps_RenderThread(RDGBuilder);
 
-	return 0;
+	return EEnqueueRDGStatus::Ok;
 }
 
-int FModelInstanceRDG::SetTensors(FRDGBuilder& GraphBuilder, FTensorRDGArray& InTensorRDGs, TConstArrayView<NNE::FTensorBindingRDG> InBindings)
+int32 FModelInstanceRDG::SetTensors(FRDGBuilder& GraphBuilder, FTensorRDGArray& InTensorRDGs, TConstArrayView<NNE::FTensorBindingRDG> InBindings)
 {
 	check(InBindings.Num() == InTensorRDGs.Num());
 	
@@ -271,4 +274,4 @@ int FModelInstanceRDG::SetTensors(FRDGBuilder& GraphBuilder, FTensorRDGArray& In
 	return -1;
 }
 
-}
+} // namespace UE::NNERuntimeRDG::Private

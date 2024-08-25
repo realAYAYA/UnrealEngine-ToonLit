@@ -11,14 +11,15 @@
 #include "Engine/Texture2D.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
+#include "MaterialUtilities.h"
 
 #include "Modules/ModuleManager.h"
 #include "IGeometryProcessingInterfacesModule.h"
 #include "GeometryProcessingInterfaces/ApproximateActors.h"
 
-#include "Materials/Material.h"
 #include "Engine/HLODProxy.h"
 #include "Serialization/ArchiveCrc32.h"
+#include "ObjectTools.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(HLODBuilderMeshApproximate)
 
@@ -45,20 +46,20 @@ uint32 UHLODBuilderMeshApproximateSettings::GetCRC() const
 
 	FArchiveCrc32 Ar;
 
+	// Base key, changing this will force a rebuild of all HLODs from this builder
+	FString HLODBaseKey = "1EC5FBC75A71412EB296F0E7E8424814";
+	Ar << HLODBaseKey;
+
 	Ar << This.MeshApproximationSettings;
 	UE_LOG(LogHLODBuilder, VeryVerbose, TEXT(" - MeshApproximationSettings = %d"), Ar.GetCrc());
 
 	uint32 Hash = Ar.GetCrc();
 
-	if (!HLODMaterial.IsNull())
+	if (HLODMaterial)
 	{
-		UMaterialInterface* Material = HLODMaterial.LoadSynchronous();
-		if (Material)
-		{
-			uint32 MaterialCRC = UHLODProxy::GetCRC(Material);
-			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT(" - Material = %d"), MaterialCRC);
-			Hash = HashCombine(Hash, MaterialCRC);
-		}
+		uint32 MaterialCRC = UHLODProxy::GetCRC(HLODMaterial);
+		UE_LOG(LogHLODBuilder, VeryVerbose, TEXT(" - Material = %d"), MaterialCRC);
+		Hash = HashCombine(Hash, MaterialCRC);
 	}
 
 	return Hash;
@@ -73,11 +74,9 @@ TArray<UActorComponent*> UHLODBuilderMeshApproximate::Build(const FHLODBuildCont
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UHLODBuilderMeshApproximate::Build);
 
-	TArray<UPrimitiveComponent*> PrimitiveComponents = FilterComponents<UPrimitiveComponent>(InSourceComponents);
+	IGeometryProcessing_ApproximateActors::FInput Input;
+	Input.Components = InSourceComponents;
 
-	TSet<AActor*> Actors;
-	Algo::Transform(PrimitiveComponents, Actors, [](UPrimitiveComponent* PrimitiveComponent) { return PrimitiveComponent->GetOwner(); });
-	
 	IGeometryProcessingInterfacesModule& GeomProcInterfaces = FModuleManager::Get().LoadModuleChecked<IGeometryProcessingInterfacesModule>("GeometryProcessingInterfaces");
 	IGeometryProcessing_ApproximateActors* ApproxActorsAPI = GeomProcInterfaces.GetApproximateActorsImplementation();
 
@@ -87,7 +86,7 @@ TArray<UActorComponent*> UHLODBuilderMeshApproximate::Build(const FHLODBuildCont
 
 	const UHLODBuilderMeshApproximateSettings* MeshApproximateSettings = CastChecked<UHLODBuilderMeshApproximateSettings>(HLODBuilderSettings);
 	FMeshApproximationSettings UseSettings = MeshApproximateSettings->MeshApproximationSettings; // Make a copy as we may tweak some values
-	UMaterialInterface* HLODMaterial = MeshApproximateSettings->HLODMaterial.LoadSynchronous();
+	UMaterialInterface* HLODMaterial = MeshApproximateSettings->HLODMaterial;
 
 	// When using automatic texture sizing based on draw distance, use the MinVisibleDistance for this HLOD.
 	if (UseSettings.MaterialSettings.TextureSizingType == TextureSizingType_AutomaticFromMeshDrawDistance)
@@ -102,37 +101,69 @@ TArray<UActorComponent*> UHLODBuilderMeshApproximate::Build(const FHLODBuildCont
 
 	// Material baking settings
 	Options.BakeMaterial = HLODMaterial;
-	Options.BaseColorTexParamName = FName("BaseColorTexture");
-	Options.NormalTexParamName = FName("NormalTexture");
-	Options.MetallicTexParamName = FName("MetallicTexture");
-	Options.RoughnessTexParamName = FName("RoughnessTexture");
-	Options.SpecularTexParamName = FName("SpecularTexture");
-	Options.EmissiveTexParamName = FName("EmissiveHDRTexture");
+	if (!FMaterialUtilities::IsValidFlattenMaterial(Options.BakeMaterial))
+	{
+		Options.BakeMaterial = GEngine->DefaultFlattenMaterial;
+	}
+	Options.BaseColorTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Diffuse, Options.BakeMaterial));
+	Options.NormalTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Normal, Options.BakeMaterial));
+	Options.MetallicTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Metallic, Options.BakeMaterial));
+	Options.RoughnessTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Roughness, Options.BakeMaterial));
+	Options.SpecularTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Specular, Options.BakeMaterial));
+	Options.EmissiveTexParamName = FName("EmissiveHDRTexture"); // TODO - Approximate actors should look up if the material sampler is expecting an HDR texture and capture accordingly
 	Options.bUsePackedMRS = true;
 	Options.PackedMRSTexParamName = FName("PackedTexture");
 
 	// Compute texel density if needed, depending on the TextureSizingType setting
+	TArray<UPrimitiveComponent*> PrimitiveComponents = FilterComponents<UPrimitiveComponent>(InSourceComponents);
 	if (UseSettings.MaterialSettings.ResolveTexelDensity(PrimitiveComponents, Options.MeshTexelDensity))
 	{ 
 		Options.TextureSizePolicy = IGeometryProcessing_ApproximateActors::ETextureSizePolicy::TexelDensity;
 	}
 
+	// Use temp packages - Needed to allow proper replacement of existing assets (performed below)
+	const FString NewAssetNamePrefix(TEXT("NEWASSET_"));
+	FString PackagePath = InHLODBuildContext.AssetsOuter->GetPackage()->GetName();
+	FString AssetName = InHLODBuildContext.AssetsBaseName;
+	Options.BasePackagePath = PackagePath / NewAssetNamePrefix + AssetName;
+
 	// run actor approximation computation
 	IGeometryProcessing_ApproximateActors::FResults Results;
-	ApproxActorsAPI->ApproximateActors(Actors.Array(), Options, Results);
+	ApproxActorsAPI->ApproximateActors(Input, Options, Results);
 
 	TArray<UActorComponent*> Components;
 	if (Results.ResultCode == IGeometryProcessing_ApproximateActors::EResultCode::Success)
 	{
-		auto FixupAsset = [InHLODBuildContext](UObject* Asset)
+		auto ProcessNewAsset = [&InHLODBuildContext, &NewAssetNamePrefix](UObject* NewAsset)
 		{
-			Asset->ClearFlags(RF_Public | RF_Standalone);
-			Asset->Rename(nullptr, InHLODBuildContext.AssetsOuter, REN_NonTransactional | REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
+			// Move asset out of the temp package and into its final package
+			{
+				FString AssetName = NewAsset->GetName();
+				AssetName.RemoveFromStart(NewAssetNamePrefix);
+
+				UObject* AssetToReplace = StaticFindObjectFast(UObject::StaticClass(), InHLODBuildContext.AssetsOuter, *AssetName);
+				if (AssetToReplace)
+				{
+					// Move the previous asset to the transient package
+					AssetToReplace->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders);
+				}
+
+				UPackage* TempPackage = NewAsset->GetPackage();
+
+				// Rename the asset to its final destination
+				NewAsset->Rename(*AssetName, InHLODBuildContext.AssetsOuter, REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders);
+				NewAsset->ClearFlags(RF_Public | RF_Standalone);
+
+				// Clean up flags on the temp package. It is not useful anymore.
+				TempPackage->ClearDirtyFlag();
+				TempPackage->SetFlags(RF_Transient);
+				TempPackage->ClearFlags(RF_Public | RF_Standalone);
+			}
 		};
 	
-		Algo::ForEach(Results.NewMeshAssets, FixupAsset);
-		Algo::ForEach(Results.NewMaterials, FixupAsset);
-		Algo::ForEach(Results.NewTextures, FixupAsset);
+		Algo::ForEach(Results.NewMeshAssets, ProcessNewAsset);
+		Algo::ForEach(Results.NewMaterials, ProcessNewAsset);
+		Algo::ForEach(Results.NewTextures, ProcessNewAsset);
 
 		for (UStaticMesh* StaticMesh : Results.NewMeshAssets)
 		{
@@ -162,9 +193,12 @@ TArray<UActorComponent*> UHLODBuilderMeshApproximate::Build(const FHLODBuildCont
 
 			// Set proper switches needed by our base flatten material
 			SetStaticSwitch("UseBaseColor", Options.bBakeBaseColor);
+			SetStaticSwitch("UseDiffuse", Options.bBakeBaseColor);
 			SetStaticSwitch("UseRoughness", Options.bBakeRoughness);
 			SetStaticSwitch("UseMetallic", Options.bBakeMetallic);
 			SetStaticSwitch("UseSpecular", Options.bBakeSpecular);
+			SetStaticSwitch("UseEmissive", Options.bBakeEmissive);
+			SetStaticSwitch("UseEmissiveColor", Options.bBakeEmissive);
 			SetStaticSwitch("UseEmissiveHDR", Options.bBakeEmissive);
 			SetStaticSwitch("UseNormal", Options.bBakeNormalMap);
 			SetStaticSwitch("PackMetallic", Options.bUsePackedMRS);

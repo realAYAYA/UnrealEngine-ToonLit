@@ -19,16 +19,8 @@ namespace Insights
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 FStoreBrowser::FStoreBrowser()
-	: bRunning(true)
-	, Thread(nullptr)
-	, TracesCriticalSection()
-	, bTracesLocked(false)
-	, StoreChangeSerial(0)
-	, TracesChangeSerial(0)
-	, Traces()
-	, TraceMap()
-	, LiveTraceMap()
 {
+	bRunning = true;
 	Thread = FRunnableThread::Create(this, TEXT("StoreBrowser"));
 }
 
@@ -82,12 +74,30 @@ void FStoreBrowser::Exit()
 
 void FStoreBrowser::Refresh()
 {
-	if (!IsLocked())
+	if (AreSettingsLocked() || AreTracesLocked())
+	{
+		return;
+	}
+
+	StoreChangeSerial = 0;
+	StoreSettingsChangeSerial = 0;
+
+	{
+		FScopeLock Lock(&SettingsCriticalSection);
+		SettingsChangeSerial = 0;
+		Host.Reset();
+		Version.Reset();
+		StoreDirectory.Reset();
+		WatchDirectories.Reset();
+	}
+
 	{
 		FScopeLock Lock(&TracesCriticalSection);
-
-		StoreChangeSerial = 0;
 		TracesChangeSerial = 0;
+		for (const TSharedPtr<FStoreBrowserTraceInfo>& Trace : Traces)
+		{
+			Trace->MetadataUpdateCount = 0;
+		}
 		Traces.Reset();
 		TraceMap.Reset();
 		LiveTraceMap.Reset();
@@ -122,9 +132,19 @@ void FStoreBrowser::UpdateTraces()
 	FStopwatch StopwatchTotal;
 	StopwatchTotal.Start();
 
+	// Update store host.
+	if (Host.IsEmpty())
+	{
+		FScopeLock Lock(&SettingsCriticalSection);
+		SettingsChangeSerial++;
+		Host = FInsightsManager::Get()->GetLastStoreHost();
+	}
+
 	// Check if connection to store is still active We want to do this without locking the critical
 	// section, in case the UI needs to read values. The output is an atomic anyway.
 	{
+		EConnectionStatus PreviousConnectionStatus = ConnectionStatus;
+
 		bool bIsValid = StoreClient->IsValid();
 		while (!bIsValid && bRunning) // TODO: Perhaps a max reconnection attempts is needed?
 		{
@@ -132,7 +152,7 @@ void FStoreBrowser::UpdateTraces()
 			uint32 SecondsToSleep = static_cast<uint32>(ReconnectionFrequency);
 			do
 			{
-				FPlatformProcess::Sleep(1.0);
+				FPlatformProcess::Sleep(1.0f);
 				ConnectionStatus.store(static_cast<EConnectionStatus>(--SecondsToSleep));
 			} while (SecondsToSleep);
 
@@ -152,20 +172,49 @@ void FStoreBrowser::UpdateTraces()
 			// If there is no connection, no point in checking for sessions
 			return;
 		}
-		else
+
+		if (ConnectionStatus == EConnectionStatus::Connected &&
+			(PreviousConnectionStatus != EConnectionStatus::Connected || StoreChangeSerial == 0))
 		{
-			FScopeLock Lock(&TracesCriticalSection);
-			Host = FInsightsManager::Get()->GetLastStoreHost();
+			// Get the server version.
+			FString StoreVersion;
+			{
+				FScopeLock StoreClientLock(&GetStoreClientCriticalSection());
+				const auto VersionResult = StoreClient->GetVersion();
+
+				if (VersionResult)
+				{
+					TStringBuilder<128> VersionString;
+					VersionString << VersionResult->GetMajorVersion() << TEXT(".") << VersionResult->GetMinorVersion();
+					if (!VersionResult->GetConfiguration().Equals("Release"))
+					{
+						VersionString << TEXT(" (") << VersionResult->GetConfiguration() << TEXT(")");
+					}
+					StoreVersion = VersionString.ToString();
+				}
+				else
+				{
+					StoreVersion = TEXT("Unknown");
+				}
+			}
+
+			// Update settings.
+			{
+				FScopeLock Lock(&SettingsCriticalSection);
+				SettingsChangeSerial++;
+				Host = FInsightsManager::Get()->GetLastStoreHost();
+				Version = StoreVersion;
+			}
 		}
 	}
 
-
 	// Check if the list of trace sessions or store settings have changed.
 	{
-		TArray<FString> NewWatchDirectories;
-		FString NewStoreDirectory;
-		uint32 NewSettingsChangeSerial = 0;
 		uint32 NewStoreChangeSerial = 0;
+		uint32 NewStoreSettingsChangeSerial = 0;
+		FString NewStoreDirectory;
+		TArray<FString> NewWatchDirectories;
+		TOptional<uint32> NewStorePort, NewRecorderPort;
 
 		{
 			// Get Trace Store status.
@@ -173,25 +222,30 @@ void FStoreBrowser::UpdateTraces()
 			const UE::Trace::FStoreClient::FStatus* Status = StoreClient->GetStatus();
 			if (Status)
 			{
-				NewSettingsChangeSerial = Status->GetSettingsSerial();
 				NewStoreChangeSerial = Status->GetChangeSerial();
-				if (SettingsChangeSerial != NewSettingsChangeSerial)
+				NewStoreSettingsChangeSerial = Status->GetSettingsSerial();
+				if (StoreSettingsChangeSerial != NewStoreSettingsChangeSerial)
 				{
-					Status->GetWatchDirectories(NewWatchDirectories);
 					NewStoreDirectory = FString(Status->GetStoreDir());
+					Status->GetWatchDirectories(NewWatchDirectories);
+					NewStorePort = Status->GetStorePort();
+					NewRecorderPort = Status->GetRecorderPort();
 				}
 			}
 		}
 
-		if (SettingsChangeSerial != NewSettingsChangeSerial)
+		if (StoreSettingsChangeSerial != NewStoreSettingsChangeSerial)
 		{
-			SettingsChangeSerial = NewSettingsChangeSerial;
+			StoreSettingsChangeSerial = NewStoreSettingsChangeSerial;
 
-			// Update watch dirs
-			FScopeLock Lock(&TracesCriticalSection);
+			// Update settings.
+			FScopeLock Lock(&SettingsCriticalSection);
+			SettingsChangeSerial++;
+			StoreDirectory = NewStoreDirectory;
 			WatchDirectories.Empty();
 			WatchDirectories = NewWatchDirectories;
-			StoreDirectory = NewStoreDirectory;
+			StorePort = NewStorePort.Get(StorePort);
+			RecorderPort = NewRecorderPort.Get(RecorderPort);
 		}
 
 		if (StoreChangeSerial != NewStoreChangeSerial)
@@ -243,7 +297,6 @@ void FStoreBrowser::UpdateTraces()
 							FStoreBrowserTraceInfo& Trace = *TracePtr;
 
 							Trace.TraceId = TraceId;
-							Trace.TraceIndex = TraceIndex;
 
 							const FUtf8StringView Utf8NameView = TraceInfo->GetName();
 							Trace.Name = FString(Utf8NameView);
@@ -254,7 +307,7 @@ void FStoreBrowser::UpdateTraces()
 							}
 							else
 							{
-								// Fallback for older versions of UTS which didn't write uri
+								// Fallback for older versions of UTS which didn't write URI.
 								Trace.Uri = FPaths::SetExtension(FPaths::Combine(StoreDirectory, Trace.Name), TEXT(".utrace"));
 								FPaths::MakePlatformFilename(Trace.Uri);
 							}
@@ -419,37 +472,34 @@ void FStoreBrowser::UpdateTraces()
 		FStopwatch Stopwatch;
 		Stopwatch.Start();
 
-		struct FStoreBrowserTraceInfoBox
-		{
-			FStoreBrowserTraceInfo* Ptr;
-		};
-		TArray<FStoreBrowserTraceInfoBox> TracesToUpdate;
+		TArray<TSharedPtr<FStoreBrowserTraceInfo>> TracesToUpdate;
 
-		for (TSharedPtr<FStoreBrowserTraceInfo>& TracePtr : Traces)
+		for (const TSharedPtr<FStoreBrowserTraceInfo>& TraceInfo : Traces)
 		{
-			if (TracePtr->MetadataUpdateCount > 0)
+			if (TraceInfo->MetadataUpdateCount > 0)
 			{
-				TracesToUpdate.Add({ TracePtr.Get() });
+				TracesToUpdate.Add(TraceInfo);
 			}
 		}
 
 		// Sort descending by timestamp (i.e. to update the newer traces first).
-		TracesToUpdate.Sort([](const FStoreBrowserTraceInfoBox& A, const FStoreBrowserTraceInfoBox& B)
+		TracesToUpdate.Sort([](const TSharedPtr<FStoreBrowserTraceInfo>& A, const TSharedPtr<FStoreBrowserTraceInfo>& B)
 			{
-				return A.Ptr->Timestamp.GetTicks() > B.Ptr->Timestamp.GetTicks();
+				return A->Timestamp.GetTicks() > B->Timestamp.GetTicks();
 			});
 
 #if 0
-		for (const FStoreBrowserTraceInfoBox& Trace : TracesToUpdate)
+		for (TSharedPtr<FStoreBrowserTraceInfo>& Trace : TracesToUpdate)
 		{
-			UpdateMetadata(*Trace.Ptr);
+			UpdateMetadata(Trace);
 		}
 #else
 		if (TracesToUpdate.Num() > 0)
 		{
+			UE_LOG(TraceInsights, Log, TEXT("[StoreBrowser] Starting metadata update for %d trace(s)."), TracesToUpdate.Num());
 			ParallelFor(TracesToUpdate.Num(), [this, &TracesToUpdate](uint32 Index)
 				{
-					UpdateMetadata(*TracesToUpdate[Index].Ptr);
+					UpdateMetadata(TracesToUpdate[Index]);
 				},
 				EParallelForFlags::BackgroundPriority);
 		}
@@ -482,6 +532,10 @@ void FStoreBrowser::ResetTraces()
 	{
 		FScopeLock Lock(&TracesCriticalSection);
 		TracesChangeSerial++;
+		for (const TSharedPtr<FStoreBrowserTraceInfo>& Trace : Traces)
+		{
+			Trace->MetadataUpdateCount = 0;
+		}
 		Traces.Reset();
 		TraceMap.Reset();
 	}
@@ -489,8 +543,14 @@ void FStoreBrowser::ResetTraces()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FStoreBrowser::UpdateMetadata(FStoreBrowserTraceInfo& Trace)
+void FStoreBrowser::UpdateMetadata(TSharedPtr<FStoreBrowserTraceInfo> TraceInfoPtr)
 {
+	FStoreBrowserTraceInfo& Trace = *TraceInfoPtr;
+	if (Trace.MetadataUpdateCount == 0)
+	{
+		return;
+	}
+
 	UE::Trace::FStoreClient* StoreClient = GetStoreClient();
 	if (StoreClient == nullptr)
 	{
@@ -514,6 +574,7 @@ void FStoreBrowser::UpdateMetadata(FStoreBrowserTraceInfo& Trace)
 			Ready = 0,
 			StoppedByReadSizeLimit,
 			StoppedByTimeLimit,
+			Cancelled
 		};
 
 		virtual int32 Read(void* Data, uint32 Size) override
@@ -521,6 +582,12 @@ void FStoreBrowser::UpdateMetadata(FStoreBrowserTraceInfo& Trace)
 			if (BytesRead >= 1024 * 1024)
 			{
 				Status = EReadStatus::StoppedByReadSizeLimit;
+				return 0;
+			}
+
+			if (Trace->MetadataUpdateCount == 0)
+			{
+				Status = EReadStatus::Cancelled;
 				return 0;
 			}
 
@@ -543,6 +610,7 @@ void FStoreBrowser::UpdateMetadata(FStoreBrowserTraceInfo& Trace)
 		}
 
 		UE::Trace::IInDataStream* Inner;
+		FStoreBrowserTraceInfo* Trace;
 		double TimeLimit = 1.0;
 		FStopwatch Stopwatch;
 		int32 BytesRead = 0;
@@ -551,6 +619,7 @@ void FStoreBrowser::UpdateMetadata(FStoreBrowserTraceInfo& Trace)
 
 	FDataStream DataStream;
 	DataStream.Inner = TraceData.Get();
+	DataStream.Trace = &Trace;
 	DataStream.TimeLimit = 1.0 + (double)(Trace.MetadataUpdateCount - 1) * 2.0; // 1s, 3s, 5s, ...
 	DataStream.Stopwatch.Start();
 
@@ -560,6 +629,7 @@ void FStoreBrowser::UpdateMetadata(FStoreBrowserTraceInfo& Trace)
 	Context.Process(DataStream).Wait();
 
 	// Update the FStoreBrowserTraceInfo object.
+	if (Trace.MetadataUpdateCount != 0)
 	{
 		FScopeLock Lock(&TracesCriticalSection);
 

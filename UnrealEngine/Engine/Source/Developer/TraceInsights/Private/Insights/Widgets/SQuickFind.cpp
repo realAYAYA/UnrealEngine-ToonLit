@@ -242,7 +242,6 @@ FReply SQuickFind::FindLast_OnClicked()
 
 FReply SQuickFind::FilterAll_OnClicked()
 {
-	QuickFindViewModel->GetFilterConfigurator()->GetRootNode()->ProcessFilter();
 	QuickFindViewModel->GetOnFilterAllEvent().Broadcast();
 
 	return FReply::Handled();

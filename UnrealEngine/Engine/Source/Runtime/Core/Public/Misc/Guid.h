@@ -20,6 +20,7 @@ class FOutputDevice;
 class FPointerTableBase;
 class FSHA1;
 class UObject;
+struct FBlake3Hash;
 template <typename CharType> class TStringBuilderBase;
 template <typename T> struct TCanBulkSerialize;
 template <typename T> struct TIsPODType;
@@ -360,6 +361,15 @@ public:
 	 * @return A new GUID.
 	 */
 	static CORE_API FGuid NewGuid();
+	/**
+	 * Create a guid by hashing the given path; this guid will be deterministic when called in multiple cook processes
+	 * and will thus avoid cook indeterminism caused by FGuid::NewGuid. ObjectPath and Seed must be deterministic.
+	 */
+	static CORE_API FGuid NewDeterministicGuid(FStringView ObjectPath, uint64 Seed = 0);
+	/**
+	 * Create a guid from a calculated Blake3 Hash
+	 */
+	static CORE_API FGuid NewGuidFromHash(const FBlake3Hash& Hash);
 
 	/**
 	 * Returns a GUID which is a combinationof the two provided ones.

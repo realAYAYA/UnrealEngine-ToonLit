@@ -142,7 +142,6 @@ public:
 			case ETableCellDataType::CString:	return FString(CString);
 			default:							return Custom.IsValid() ? Custom->AsText().ToString() : FString();
 		}
-		return FString();
 	}
 
 	FText AsText() const
@@ -182,7 +181,7 @@ public:
 		int64 Int64;
 		float Float;
 		double Double;
-		const TCHAR* CString; // should be valid for the lieftime of the owner table
+		const TCHAR* CString; // should be valid for the lifetime of the owner table
 		uint64 ValueId; // only used by Custom types
 	};
 

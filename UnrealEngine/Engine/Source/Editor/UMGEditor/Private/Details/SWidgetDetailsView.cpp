@@ -67,10 +67,13 @@ void SWidgetDetailsView::Construct(const FArguments& InArgs, TSharedPtr<FWidgetB
 	// Notify us of object selection changes so we can update the package re-mapping
 	PropertyView->SetOnObjectArrayChanged(FOnObjectArrayChanged::CreateSP(this, &SWidgetDetailsView::OnPropertyViewObjectArrayChanged));
 
+	PropertyView->SetIsPropertyEditingEnabledDelegate(FIsPropertyEditingEnabled::CreateSP(this, &SWidgetDetailsView::IsDetailsPanelEditingAllowed));
+
 	TSharedRef<SWidget> IsVariableCheckbox =
 		SNew(SCheckBox)
 		.IsChecked(this, &SWidgetDetailsView::GetIsVariable)
 		.OnCheckStateChanged(this, &SWidgetDetailsView::HandleIsVariableChanged)
+		.IsEnabled(this, &SWidgetDetailsView::IsDetailsPanelEditingAllowed)
 		.Padding(FMargin(3.0f, 1.0f, 18.0f, 1.0f))
 		[
 			SNew(STextBlock)
@@ -153,7 +156,7 @@ void SWidgetDetailsView::Construct(const FArguments& InArgs, TSharedPtr<FWidgetB
 							.SelectAllTextWhenFocused(true)
 							.HintText(LOCTEXT("Name", "Name"))
 							.Text(this, &SWidgetDetailsView::GetNameText)
-							.IsEnabled(this, &SWidgetDetailsView::IsSingleObjectSelected)
+							.IsEnabled(this, &SWidgetDetailsView::IsWidgetNameFieldEnabled)
 							.OnTextChanged(this, &SWidgetDetailsView::HandleNameTextChanged)
 							.OnTextCommitted(this, &SWidgetDetailsView::HandleNameTextCommitted)
 						]
@@ -337,6 +340,26 @@ void SWidgetDetailsView::ClearFocusIfOwned()
 		}
 		bIsReentrant = false;
 	}
+}
+
+bool SWidgetDetailsView::IsDetailsPanelEditingAllowed() const 
+{
+	return !SelectedObjects.ContainsByPredicate([](const TWeakObjectPtr<UObject> WeakObj)
+		{
+			if (UObject* ObjPtr = WeakObj.Get())
+			{
+				if (UWidget* Widget = Cast<UWidget>(ObjPtr))
+				{
+					return Widget->IsLockedInDesigner();
+				}
+			}
+			return false;
+		});
+}
+
+bool SWidgetDetailsView::IsWidgetNameFieldEnabled() const
+{
+	return IsSingleObjectSelected() && IsDetailsPanelEditingAllowed();
 }
 
 bool SWidgetDetailsView::IsPropertyVisible(const FPropertyAndParent& PropertyAndParent) const
@@ -524,7 +547,10 @@ void SWidgetDetailsView::HandleNameTextCommitted(const FText& Text, ETextCommit:
 			if ( HandleVerifyNameTextChanged(Text, DummyText) )
 			{
 				UWidget* Widget = Cast<UWidget>(SelectedObjects[0].Get());
-				FWidgetBlueprintEditorUtils::RenameWidget(BlueprintEditor.Pin().ToSharedRef(), Widget->GetFName(), Text.ToString());
+				if (!Widget->GetLabelText().EqualToCaseIgnored(Text))
+				{
+					FWidgetBlueprintEditorUtils::RenameWidget(BlueprintEditor.Pin().ToSharedRef(), Widget->GetFName(), Text.ToString());
+				}
 			}
 		}
 		IsReentrant = false;

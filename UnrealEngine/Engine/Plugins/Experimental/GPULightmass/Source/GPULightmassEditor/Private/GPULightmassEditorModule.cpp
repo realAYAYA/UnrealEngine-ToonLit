@@ -42,9 +42,10 @@ static bool IsRenderDocPresent()
 	// Run only once as this func is called each time the UI is rendered
 	static HMODULE RenderDocDLLHandle = GetModuleHandleW(L"renderdoc.dll");
 	return RenderDocDLLHandle != nullptr;
-#endif
+#else
 	// TODO: other platforms
 	return false;
+#endif
 }
 
 static bool IsCurrentRHIRayTracingCapable()
@@ -150,12 +151,6 @@ static FText GenerateRayTracingDisabledReasonMessage(ERayTracingDisabledReason R
 	default:
 		return FText();
 	}
-}
-
-static bool IsStaticLightingAllowed()
-{
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	return (AllowStaticLightingVar && AllowStaticLightingVar->GetValueOnAnyThread() > 0);
 }
 
 static bool IsPathTracingEnabled()
@@ -443,9 +438,9 @@ bool FGPULightmassEditorModule::IsBakeWhatYouSeeMode()
 	return false;
 }
 
-bool FGPULightmassEditorModule::IsRealtimeOn() 
+bool FGPULightmassEditorModule::IsRealtimeOn()
 {
-	return GCurrentLevelEditingViewportClient && GCurrentLevelEditingViewportClient->IsRealtime();
+	return FGPULightmassModule::IsRealtimeOn();
 }
 
 bool FGPULightmassEditorModule::IsRunning() 

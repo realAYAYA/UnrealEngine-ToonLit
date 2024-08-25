@@ -119,13 +119,13 @@ namespace SlateAttributePrivate
 
 	public:
 		/** @return if the reference is valid. A reference can be invalid if the SWidget is destroyed. */
-		UE_NODISCARD bool IsValid() const
+		[[nodiscard]] bool IsValid() const
 		{
 			return Owner.IsValid();
 		}
 
 		/** @return the SlateAttribute cached value; undefined when IsValid() returns false. */
-		UE_NODISCARD const ObjectType& Get() const
+		[[nodiscard]] const ObjectType& Get() const
 		{
 			if (TSharedPtr<const SWidget> Pin = Owner.Pin())
 			{
@@ -137,7 +137,7 @@ namespace SlateAttributePrivate
 		}
 
 		/** @return the SlateAttribute cached value or the DefaultValue if the reference is invalid. */
-		UE_NODISCARD const ObjectType& Get(const ObjectType& DefaultValue) const
+		[[nodiscard]] const ObjectType& Get(const ObjectType& DefaultValue) const
 		{
 			if (TSharedPtr<const SWidget> Pin = Owner.Pin())
 			{
@@ -159,7 +159,7 @@ namespace SlateAttributePrivate
 		 * Assumes the reference is valid.
 		 * Shorthand for the boilerplace code: MyAttribute.UpdateValueNow(); MyAttribute.Get();
 		 */
-		UE_NODISCARD const ObjectType& UpdateAndGet()
+		[[nodiscard]] const ObjectType& UpdateAndGet()
 		{
 			if (TSharedPtr<const SWidget> Pin = Owner.Pin())
 			{
@@ -173,7 +173,7 @@ namespace SlateAttributePrivate
 		 * Shorthand for the boilerplace code: MyAttribute.UpdateValueNow(); MyAttribute.Get(DefaultValue);
 		 * @return the SlateAttribute cached value or the DefaultValue if the reference is invalid.
 		 */
-		UE_NODISCARD const ObjectType& UpdateAndGet(const ObjectType& DefaultValue)
+		[[nodiscard]] const ObjectType& UpdateAndGet(const ObjectType& DefaultValue)
 		{
 			if (TSharedPtr<const SWidget> Pin = Owner.Pin())
 			{
@@ -184,7 +184,7 @@ namespace SlateAttributePrivate
 		}
 
 		/** Build a Attribute from this SlateAttribute. */
-		UE_NODISCARD TAttribute<ObjectType> ToAttribute() const
+		[[nodiscard]] TAttribute<ObjectType> ToAttribute() const
 		{
 			if (TSharedPtr<const SWidget> Pin = Owner.Pin())
 			{
@@ -194,7 +194,7 @@ namespace SlateAttributePrivate
 		}
 
 		/** @return True if the SlateAttribute is bound to a getter function. */
-		UE_NODISCARD bool IsBound() const
+		[[nodiscard]] bool IsBound() const
 		{
 			if (TSharedPtr<const SWidget> Pin = Owner.Pin())
 			{
@@ -204,7 +204,7 @@ namespace SlateAttributePrivate
 		}
 
 		/** @return True if they have the same Getter or the same value. */
-		UE_NODISCARD bool IdenticalTo(const TSlateMemberAttributeRef& Other) const
+		[[nodiscard]] bool IdenticalTo(const TSlateMemberAttributeRef& Other) const
 		{
 			TSharedPtr<const SWidget> SelfPin = Owner.Pin();
 			TSharedPtr<const SWidget> OtherPin = Other.Owner.Pin();
@@ -216,7 +216,7 @@ namespace SlateAttributePrivate
 		}
 
 		/** @return True if they have the same Getter or, if the Attribute is set, the same value. */
-		UE_NODISCARD bool IdenticalTo(const TAttribute<ObjectType>& Other) const
+		[[nodiscard]] bool IdenticalTo(const TAttribute<ObjectType>& Other) const
 		{
 			if (TSharedPtr<const SWidget> Pin = Owner.Pin())
 			{

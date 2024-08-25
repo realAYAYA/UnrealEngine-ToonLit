@@ -417,14 +417,20 @@ void FF5PlayerVideoDecoderOutputDX::ShutdownPoolable()
 /**
  * Decoded media sample
  */
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 class FVideoDecoderOutputH264_Windows : public FVideoDecoderOutput
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 public:
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderOutputH264_Windows()
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual ~FVideoDecoderOutputH264_Windows()
 	{}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	virtual int32 AddRef() override
 	{
@@ -480,7 +486,9 @@ public:
 		PTS = InPTS;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual const FVideoDecoderAllocFrameBufferResult* GetAllocatedBuffer() const
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		return &Buffer;
 	}
@@ -559,7 +567,9 @@ public:
 	}
 
 	// Internal for allocation.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderAllocFrameBufferResult* GetBuffer()
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		return &Buffer;
 	}
@@ -571,7 +581,9 @@ public:
 	}
 
 private:
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderAllocFrameBufferResult	Buffer = {};
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	int32	RefCount = 1;
 	int32	Width = 0;
 	int32	Height = 0;
@@ -601,10 +613,14 @@ public:
 
 	virtual ~FVideoDecoderH264_WindowsImpl();
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual bool Setup(const FInit& InInit) override;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual void Shutdown() override;
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual EDecodeResult Decode(const FVideoDecoderInput* InInput) override;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 
 
@@ -805,16 +821,20 @@ bool						FVideoDecoderH264_WindowsImpl::bGlobalMFStartedUp = false;
 /**
  * Registers this decoder with the decoder factory.
  */
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoDecoderH264_Windows::Register(FVideoDecoderFactory& InFactory)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderInfo	DecoderInfo;
 	DecoderInfo.CodecType = ECodecType::H264;
 	DecoderInfo.MaxWidth = 1920;
 	DecoderInfo.MaxHeight = 1088;
-
+	
 	InFactory.Register(DecoderInfo, []() {
 			return new FVideoDecoderH264_WindowsImpl();
 		});
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 /*********************************************************************************************************************/
@@ -887,12 +907,18 @@ bool FVideoDecoderH264_WindowsImpl::CreateD3DResources()
 	void* ApplicationD3DDevice = nullptr;
 	int32_t ApplicationD3DDeviceVersion = 0;
 	bool bOk = false;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderMethodsWindows* AllocationMethods = reinterpret_cast<FVideoDecoderMethodsWindows*>(GetAllocationInterfaceMethods());
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	if (AllocationMethods)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (AllocationMethods->MagicCookie == 0x57696e58) // 'WinX'
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			int32_t AppResult = AllocationMethods->GetD3DDevice.Execute(AllocationMethods->This, &ApplicationD3DDevice, &ApplicationD3DDeviceVersion);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			if (AppResult == 0)
 			{
 				// D3D version is returned as major*1000+minor.
@@ -919,7 +945,9 @@ bool FVideoDecoderH264_WindowsImpl::CreateD3DResources()
 		}
 		else
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			UE_LOG(LogVideoDecoder, Error, TEXT("Incorrect video decoder allocation interface is set. Is %08x, should be %08x"), AllocationMethods->MagicCookie, 0x57696e58);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 	else
@@ -1400,8 +1428,6 @@ bool FVideoDecoderH264_WindowsImpl::DecoderSetOutputType()
 			}
 		}
 	}
-	UE_LOG(LogVideoDecoder, Error, TEXT("Failed to set video decoder output type to desired format"));
-	return false;
 }
 
 
@@ -1603,11 +1629,14 @@ bool FVideoDecoderH264_WindowsImpl::AllocateApplicationOutputSampleBuffer(int32 
 
 	// Get the buffer for the output sample from the application. This is the part that gets wrapped in a
 	// webrtc structure and passed back out to the application.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderAllocFrameBufferParams ap {};
 	EFrameBufferAllocReturn ar;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	if (DecodeMode == EDecodeMode::Win8HW)
 	{
 		// We will pass a ID3D11Texture2D pointer to a texture of _our_ decoding device to _share_ with the renderer.
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		ap.FrameBufferType = EFrameBufferType::CODEC_TextureHandle;
 		ap.AllocSize = sizeof(ID3D11Texture2D*);
 		ap.AllocAlignment = alignof(ID3D11Texture2D*);
@@ -1616,10 +1645,12 @@ bool FVideoDecoderH264_WindowsImpl::AllocateApplicationOutputSampleBuffer(int32 
 		ap.Width = Width;
 		ap.Height = Height;
 		ap.BytesPerPixel = 1;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 	else if (DecodeMode == EDecodeMode::Win10HW || DecodeMode == EDecodeMode::Win10SW || DecodeMode == EDecodeMode::XB1)
 	{
 		// We need a byte buffer to put the image into. On the application side this may be realized as a TArray<uint8>.
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		ap.FrameBufferType = EFrameBufferType::CODEC_RawBuffer;
 		ap.AllocSize = Width * Height * 3 / 2;
 		ap.AllocAlignment = 1;
@@ -1627,10 +1658,12 @@ bool FVideoDecoderH264_WindowsImpl::AllocateApplicationOutputSampleBuffer(int32 
 		ap.Width = Width;
 		ap.Height = Height;
 		ap.BytesPerPixel = 1;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 	else if (DecodeMode == EDecodeMode::Win8SW)
 	{
 		// We want to have an ID3D11Texture2D we can give the decoder to decode into.
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		ap.FrameBufferType = EFrameBufferType::CODEC_TextureObject;
 		ap.AllocSize = sizeof(ID3D11Texture2D*);
 		ap.AllocAlignment = alignof(ID3D11Texture2D*);
@@ -1638,6 +1671,7 @@ bool FVideoDecoderH264_WindowsImpl::AllocateApplicationOutputSampleBuffer(int32 
 		ap.Width = Width;
 		ap.Height = Height;
 		ap.BytesPerPixel = 1;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 	else
 	{
@@ -1645,14 +1679,20 @@ bool FVideoDecoderH264_WindowsImpl::AllocateApplicationOutputSampleBuffer(int32 
 		return false;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	ar = AllocateOutputFrameBuffer(CurrentApplicationOutputSample->GetBuffer(), &ap);
 	if (ar == EFrameBufferAllocReturn::CODEC_Success)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		// Got an output buffer.
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		check(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return true;
 	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	else if (ar == EFrameBufferAllocReturn::CODEC_TryAgainLater)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		UE_LOG(LogVideoDecoder, Error, TEXT("Unsupported allocation return value"));
 		return false;
@@ -1668,10 +1708,12 @@ void FVideoDecoderH264_WindowsImpl::ReturnUnusedApplicationOutputSample()
 {
 	if (CurrentApplicationOutputSample)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (FVideoDecoderAllocFrameBufferResult* afb = CurrentApplicationOutputSample->GetBuffer())
 		{
 			afb->ReleaseCallback.ExecuteIfBound(afb->CallbackValue, afb->AllocatedBuffer);
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		CurrentApplicationOutputSample->Release();
 		CurrentApplicationOutputSample = nullptr;
 	}
@@ -1750,7 +1792,9 @@ bool FVideoDecoderH264_WindowsImpl::ProcessDecoding(FInputToDecode* InInput)
 			if (DecodeMode == EDecodeMode::Win8SW || DecodeMode == EDecodeMode::Win10SW)
 			{
 				// DX11 software mode needs a texture prepared by the application
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				if (DecodeMode == EDecodeMode::Win8SW && !CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer)
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				{
 					if (!AllocateApplicationOutputSampleBuffer(InWidth, InHeight))
 					{
@@ -1761,7 +1805,9 @@ bool FVideoDecoderH264_WindowsImpl::ProcessDecoding(FInputToDecode* InInput)
 				{
 					CurrentSoftwareDecoderOutput = new FF5PlayerVideoDecoderOutputDX;
 				}
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				if (!CurrentSoftwareDecoderOutput->PreInitForSoftwareDecode(FIntPoint(InWidth, InHeight), DecodeMode == EDecodeMode::Win8SW ? *static_cast<ID3D11Texture2D**>(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer) : nullptr))
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				{
 					return false;
 				}
@@ -1866,7 +1912,9 @@ bool FVideoDecoderH264_WindowsImpl::CopyTexture(const TRefCountPtr<IMFSample>& D
 
 	if (DecodeMode == EDecodeMode::Win8HW)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		check(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer == nullptr);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		if (!AllocateApplicationOutputSampleBuffer(OutputDim.X, OutputDim.Y))
 		{
 			UE_LOG(LogVideoDecoder, Error, TEXT("Failed to get a decode output buffer from the application!"));
@@ -1876,12 +1924,16 @@ bool FVideoDecoderH264_WindowsImpl::CopyTexture(const TRefCountPtr<IMFSample>& D
 	}
 	else if (DecodeMode == EDecodeMode::Win8SW)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		check(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer != nullptr);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		DecoderOutput->InitializeWithTextureBuffer(OutputDim.X, FIntPoint(OutputDim.X, OutputDim.Y));// * 3 / 2));
 	}
 	else if (DecodeMode == EDecodeMode::Win10SW)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		check(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer == nullptr);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		if (!AllocateApplicationOutputSampleBuffer(NativeDim.X, NativeDim.Y))
 		{
 			UE_LOG(LogVideoDecoder, Error, TEXT("Failed to get a decode output buffer from the application!"));
@@ -1908,8 +1960,10 @@ bool FVideoDecoderH264_WindowsImpl::CopyTexture(const TRefCountPtr<IMFSample>& D
 
 		// Copy NV12 texture data into external application buffer
 		check(CurrentApplicationOutputSample);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		check((DWORD)CurrentApplicationOutputSample->GetBuffer()->AllocatedSize >= BufferSize);
 		FMemory::Memcpy(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer, Data, BufferSize);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		Result = Buffer->Unlock();
 		if (FAILED(Result))
@@ -1961,7 +2015,9 @@ bool FVideoDecoderH264_WindowsImpl::CopyTexture(const TRefCountPtr<IMFSample>& D
 			return false;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		check(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer == nullptr);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		if (!AllocateApplicationOutputSampleBuffer(Pitch, TextureDesc.Height))
 		{
 			UE_LOG(LogVideoDecoder, Error, TEXT("Failed to get a decode output buffer from the application!"));
@@ -1976,8 +2032,10 @@ bool FVideoDecoderH264_WindowsImpl::CopyTexture(const TRefCountPtr<IMFSample>& D
 		DecoderOutput->InitializeWithBuffer(Pitch, FIntPoint(TextureDesc.Width, TextureDesc.Height * 3 / 2));
 
 		// Copy NV12 texture data into external application buffer
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		check((DWORD)CurrentApplicationOutputSample->GetBuffer()->AllocatedSize >= BufferSize);
 		FMemory::Memcpy(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer, Data, BufferSize);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		Result = Buffer2D->Unlock2D();
 		if (FAILED(Result))
@@ -2052,7 +2110,9 @@ bool FVideoDecoderH264_WindowsImpl::ConvertDecodedImage(const TRefCountPtr<IMFSa
 	CurrentApplicationOutputSample->SetNativeDecoderOutput(DecoderOutput);
 	if (DecodeMode == EDecodeMode::Win8HW)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		ID3D11Texture2D** ApplicationTexturePtr = reinterpret_cast<ID3D11Texture2D**>(CurrentApplicationOutputSample->GetBuffer()->AllocatedBuffer);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		// We set the texture in the user provided buffer. Note that we do NOT add the ref count here. This is ok because we have the
 		// DecoderOutput stored in CurrentApplicationOutputSample where it is held. If the user application code uses the texture it
 		// will/shall attach it to a ref counter pointer to retain it.
@@ -2143,10 +2203,12 @@ void FVideoDecoderH264_WindowsImpl::PurgeAllPendingOutput()
 	FVideoDecoderOutputH264_Windows* Output = nullptr;
 	while(OutputQueue.Dequeue(Output))
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (FVideoDecoderAllocFrameBufferResult* afb = Output->GetBuffer())
 		{
 			afb->ReleaseCallback.ExecuteIfBound(afb->CallbackValue, afb->AllocatedBuffer);
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		Output->Release();
 		Output = nullptr;
 	}
@@ -2188,11 +2250,15 @@ FVideoDecoderH264_WindowsImpl::~FVideoDecoderH264_WindowsImpl()
 /**
  * Called right after the constructor with initialization parameters.
  */
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 bool FVideoDecoderH264_WindowsImpl::Setup(const FInit& InInit)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	// Remember the decoder allocation interface factory methods.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	CreateDecoderAllocationInterfaceFN = InInit.CreateDecoderAllocationInterface;
 	ReleaseDecoderAllocationInterfaceFN = InInit.ReleaseDecoderAllocationInterface;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	// [...]
 	CreateWorkerThread();
 	return true;
@@ -2206,7 +2272,9 @@ void FVideoDecoderH264_WindowsImpl::PerformAsyncShutdown()
 	if (bIsInitialized)
 	{
 		ReleaseD3DResources();
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		ReleaseDecoderAllocationInterface();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		StaticReleaseResources();
 		bIsInitialized = false;
 	}
@@ -2233,7 +2301,9 @@ bool FVideoDecoderH264_WindowsImpl::SetupFirstUseResources()
 	if (!bIsInitialized)
 	{
 		if (StaticInitializeResources() &&
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			CreateDecoderAllocationInterface() &&
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			CreateD3DResources())
 		{
 			bIsInitialized = true;
@@ -2247,25 +2317,31 @@ bool FVideoDecoderH264_WindowsImpl::SetupFirstUseResources()
 /**
  * Called from webrtc indirectly to decode a frame.
  */
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FVideoDecoder::EDecodeResult FVideoDecoderH264_WindowsImpl::Decode(const FVideoDecoderInput* InInput)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	bool bOk = SetupFirstUseResources();
 	if (bOk)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (!InInput->GetData() || InInput->GetDataSize() <= 0)
 		{
 			return FVideoDecoder::EDecodeResult::Failure;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// Need to wait for the decoder thread to have spun up??
 
 		TUniquePtr<FInputToDecode> Input = MakeUnique<FInputToDecode>();
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Input->PTS = InInput->GetPTS();
 		Input->Width = InInput->GetWidth();
 		Input->Height = InInput->GetHeight();
 		Input->bIsKeyframe = InInput->IsKeyframe();
 		Input->Data.AddUninitialized(InInput->GetDataSize());
 		FMemory::Memcpy(Input->Data.GetData(), InInput->GetData(), InInput->GetDataSize());
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		InputQueue.Enqueue(MoveTemp(Input));
 
 		WorkerThreadSignalHaveWork.Signal();
@@ -2276,18 +2352,29 @@ FVideoDecoder::EDecodeResult FVideoDecoderH264_WindowsImpl::Decode(const FVideoD
 		{
 			if (Output->GetIsValid())
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				OnDecodedFrame(Output);
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
+			
 			else
 			{
 				delete Output;
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				return FVideoDecoder::EDecodeResult::Failure;
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
+			
 			Output = nullptr;
 		}
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		return FVideoDecoder::EDecodeResult::Success;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
+	
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	return FVideoDecoder::EDecodeResult::Failure;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 

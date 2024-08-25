@@ -4,13 +4,9 @@
 
 #include "UObject/ObjectMacros.h"
 #include "PhysicsEngine/ShapeElem.h"
+#include "Chaos/WeightedLatticeImplicitObject.h"
+#include "Chaos/Levelset.h"
 #include "SkinnedLevelSetElem.generated.h"
-
-namespace Chaos
-{
-class FLevelSet;
-template<typename TConcrete> class TWeightedLatticeImplicitObject;
-}
 
 USTRUCT()
 struct FKSkinnedLevelSetElem : public FKShapeElem
@@ -32,7 +28,10 @@ struct FKSkinnedLevelSetElem : public FKShapeElem
 		return *this;
 	}
 
-	ENGINE_API void SetWeightedLevelSet(TUniquePtr< Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>&& InWeightedLevelSet);
+	ENGINE_API void SetWeightedLevelSet(TRefCountPtr< Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>&& InWeightedLevelSet);
+	
+	UE_DEPRECATED(5.4, "Please use SetWeightedLevelSet with TRefCountPtr instead")
+	ENGINE_API void SetWeightedLevelSet(TUniquePtr< Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>&& InWeightedLevelSet) {check(false);}
 
 	ENGINE_API FTransform GetTransform() const;
 
@@ -47,14 +46,21 @@ struct FKSkinnedLevelSetElem : public FKShapeElem
 
 	ENGINE_API bool Serialize(FArchive& Ar);
 
-	const TSharedPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>& GetWeightedLevelSet() const
+	const TRefCountPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>& WeightedLevelSet() const
 	{
-		return WeightedLevelSet;
+		return WeightedLatticeLevelSet;
 	}
+
+	UE_DEPRECATED(5.4, "Please use WeightedLevelSet instead")
+	const TSharedPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>>& GetWeightedLevelSet() const
+    {
+		static TSharedPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>> DummyPtr;
+    	return DummyPtr;
+    }
 
 private:
 
-	TSharedPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>, ESPMode::ThreadSafe> WeightedLevelSet;
+	TRefCountPtr<Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>> WeightedLatticeLevelSet;
 
 	/** Helper function to safely copy instances of this shape*/
 	 ENGINE_API void CloneElem(const FKSkinnedLevelSetElem& Other);

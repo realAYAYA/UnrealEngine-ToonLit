@@ -4,11 +4,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
-using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Horde.Server.Acls;
-using Horde.Server.Projects;
-using Horde.Server.Secrets;
 using Horde.Server.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -73,27 +71,29 @@ namespace Horde.Server.Server
 		/// <summary>
 		/// Issues a token for the given roles. Issues a token for the current user if not specified.
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Administrative settings for the server</returns>
 		[HttpGet]
 		[Route("/api/v1/admin/token")]
-		public async Task<ActionResult<string>> GetTokenAsync()
+		public async Task<ActionResult<string>> GetTokenAsync(CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.Value.Authorize(ServerAclAction.IssueBearerToken, User))
 			{
 				return Forbid(ServerAclAction.IssueBearerToken);
 			}
 
-			return await _aclService.IssueBearerTokenAsync(User.Claims, GetDefaultExpiryTime());
+			return await _aclService.IssueBearerTokenAsync(User.Claims, GetDefaultExpiryTime(), cancellationToken);
 		}
 
 		/// <summary>
 		/// Issues a token for the given roles. Issues a token for the current user if not specified.
 		/// </summary>
 		/// <param name="roles">Roles for the new token</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Administrative settings for the server</returns>
 		[HttpGet]
 		[Route("/api/v1/admin/roletoken")]
-		public async Task<ActionResult<string>> GetRoleTokenAsync([FromQuery] string roles)
+		public async Task<ActionResult<string>> GetRoleTokenAsync([FromQuery] string roles, CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.Value.Authorize(AdminAclAction.AdminWrite, User))
 			{
@@ -103,16 +103,17 @@ namespace Horde.Server.Server
 			List<Claim> claims = new List<Claim>();
 			claims.AddRange(roles.Split('+').Select(x => new Claim(ClaimTypes.Role, x)));
 
-			return await _aclService.IssueBearerTokenAsync(claims, GetDefaultExpiryTime());
+			return await _aclService.IssueBearerTokenAsync(claims, GetDefaultExpiryTime(), cancellationToken);
 		}
 
 		/// <summary>
 		/// Issues a token for the given roles. Issues a token for the current user if not specified.
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Administrative settings for the server</returns>
 		[HttpGet]
 		[Route("/api/v1/admin/registrationtoken")]
-		public async Task<ActionResult<string>> GetRegistrationTokenAsync()
+		public async Task<ActionResult<string>> GetRegistrationTokenAsync(CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.Value.Authorize(AdminAclAction.AdminWrite, User))
 			{
@@ -123,16 +124,17 @@ namespace Horde.Server.Server
 			claims.Add(new AclClaimConfig(ClaimTypes.Name, User.Identity?.Name ?? "Unknown"));
 			claims.Add(HordeClaims.AgentRegistrationClaim);
 
-			return await _aclService.IssueBearerTokenAsync(claims, null);
+			return await _aclService.IssueBearerTokenAsync(claims, null, cancellationToken);
 		}
 
 		/// <summary>
 		/// Issues a token valid to upload new versions of the agent software.
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Administrative settings for the server</returns>
 		[HttpGet]
 		[Route("/api/v1/admin/softwaretoken")]
-		public async Task<ActionResult<string>> GetSoftwareTokenAsync()
+		public async Task<ActionResult<string>> GetSoftwareTokenAsync(CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.Value.Authorize(AdminAclAction.AdminWrite, User))
 			{
@@ -141,18 +143,19 @@ namespace Horde.Server.Server
 
 			List<AclClaimConfig> claims = new List<AclClaimConfig>();
 			claims.Add(new AclClaimConfig(ClaimTypes.Name, User.Identity?.Name ?? "Unknown"));
-			claims.Add(HordeClaims.UploadSoftwareClaim);
+			claims.Add(HordeClaims.UploadToolsClaim);
 
-			return await _aclService.IssueBearerTokenAsync(claims, null);
+			return await _aclService.IssueBearerTokenAsync(claims, null, cancellationToken);
 		}
 
 		/// <summary>
 		/// Issues a token valid to download new versions of the agent software.
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Administrative settings for the server</returns>
 		[HttpGet]
 		[Route("/api/v1/admin/softwaredownloadtoken")]
-		public async Task<ActionResult<string>> GetSoftwareDownloadTokenAsync()
+		public async Task<ActionResult<string>> GetSoftwareDownloadTokenAsync(CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.Value.Authorize(AdminAclAction.AdminRead, User))
 			{
@@ -163,16 +166,17 @@ namespace Horde.Server.Server
 			claims.Add(new AclClaimConfig(ClaimTypes.Name, User.Identity?.Name ?? "Unknown"));
 			claims.Add(HordeClaims.DownloadSoftwareClaim);
 
-			return await _aclService.IssueBearerTokenAsync(claims, null);
+			return await _aclService.IssueBearerTokenAsync(claims, null, cancellationToken);
 		}
 
 		/// <summary>
 		/// Issues a token valid to configure streams and projects
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Administrative settings for the server</returns>
 		[HttpGet]
 		[Route("/api/v1/admin/configtoken")]
-		public async Task<ActionResult<string>> GetConfigToken()
+		public async Task<ActionResult<string>> GetConfigTokenAsync(CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.Value.Authorize(AdminAclAction.AdminRead, User))
 			{
@@ -183,16 +187,17 @@ namespace Horde.Server.Server
 			claims.Add(new AclClaimConfig(ClaimTypes.Name, User.Identity?.Name ?? "Unknown"));
 			claims.Add(HordeClaims.ConfigureProjectsClaim);
 
-			return await _aclService.IssueBearerTokenAsync(claims, null);
+			return await _aclService.IssueBearerTokenAsync(claims, null, cancellationToken);
 		}
 
 		/// <summary>
 		/// Issues a token valid to start chained jobs
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Administrative settings for the server</returns>
 		[HttpGet]
 		[Route("/api/v1/admin/chainedjobtoken")]
-		public async Task<ActionResult<string>> GetChainedJobToken()
+		public async Task<ActionResult<string>> GetChainedJobTokenAsync(CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.Value.Authorize(AdminAclAction.AdminRead, User))
 			{
@@ -203,7 +208,7 @@ namespace Horde.Server.Server
 			//Claims.Add(new AclClaim(ClaimTypes.Name, User.Identity.Name ?? "Unknown"));
 			claims.Add(HordeClaims.StartChainedJobClaim);
 
-			return await _aclService.IssueBearerTokenAsync(claims, null);
+			return await _aclService.IssueBearerTokenAsync(claims, null, cancellationToken);
 		}
 
 		/// <summary>

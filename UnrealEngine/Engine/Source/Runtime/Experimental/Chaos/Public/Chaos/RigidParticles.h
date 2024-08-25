@@ -107,6 +107,8 @@ public:
 		, MAngularEtherDrag(MoveTemp(Other.MAngularEtherDrag))
 		, MaxLinearSpeedsSq(MoveTemp(Other.MaxLinearSpeedsSq))
 		, MaxAngularSpeedsSq(MoveTemp(Other.MaxAngularSpeedsSq))
+		, MInitialOverlapDepenetrationVelocity(MoveTemp(Other.MInitialOverlapDepenetrationVelocity))
+		, MSleepThresholdMultiplier(MoveTemp(Other.MSleepThresholdMultiplier))
 		, MCollisionParticles(MoveTemp(Other.MCollisionParticles))
 		, MSleepType(MoveTemp(Other.MSleepType))
 		, MSleepCounter(MoveTemp(Other.MSleepCounter))
@@ -136,6 +138,8 @@ public:
 		TArrayCollection::AddArray(&MAngularEtherDrag);
 		TArrayCollection::AddArray(&MaxLinearSpeedsSq);
 		TArrayCollection::AddArray(&MaxAngularSpeedsSq);
+		TArrayCollection::AddArray(&MInitialOverlapDepenetrationVelocity);
+		TArrayCollection::AddArray(&MSleepThresholdMultiplier);
 		TArrayCollection::AddArray(&MCollisionParticles);
 		TArrayCollection::AddArray(&MSleepType);
 		TArrayCollection::AddArray(&MSleepCounter);
@@ -196,6 +200,12 @@ public:
 
 	FORCEINLINE const T& MaxAngularSpeedSq(const int32 index) const { return MaxAngularSpeedsSq[index]; }
 	FORCEINLINE T& MaxAngularSpeedSq(const int32 index) { return MaxAngularSpeedsSq[index]; }
+
+	FORCEINLINE const FRealSingle& InitialOverlapDepenetrationVelocity(const int32 index) const { return MInitialOverlapDepenetrationVelocity[index]; }
+	FORCEINLINE FRealSingle& InitialOverlapDepenetrationVelocity(const int32 index) { return MInitialOverlapDepenetrationVelocity[index]; }
+
+	FORCEINLINE const FRealSingle& SleepThresholdMultiplier(const int32 Index) const { return MSleepThresholdMultiplier[Index]; }
+	FORCEINLINE FRealSingle& SleepThresholdMultiplier(const int32 Index) { return MSleepThresholdMultiplier[Index]; }
 
 	FORCEINLINE int32 CollisionParticlesSize(int32 Index) const { return MCollisionParticles[Index] == nullptr ? 0 : MCollisionParticles[Index]->Size(); }
 
@@ -407,6 +417,8 @@ private:
 	TArrayCollectionArray<T> MAngularEtherDrag;
 	TArrayCollectionArray<T> MaxLinearSpeedsSq;
 	TArrayCollectionArray<T> MaxAngularSpeedsSq;
+	TArrayCollectionArray<FRealSingle> MInitialOverlapDepenetrationVelocity;
+	TArrayCollectionArray<FRealSingle> MSleepThresholdMultiplier;
 	TArrayCollectionArray<TUniquePtr<TBVHParticles<T, d>>> MCollisionParticles;
 	TArrayCollectionArray<ESleepType> MSleepType;
 	TArrayCollectionArray<int8> MSleepCounter;

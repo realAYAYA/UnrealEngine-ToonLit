@@ -44,25 +44,30 @@ public:
 	/**
 	 * Holds the information about UI Command that deletes currently selected group/exposed entity.
 	 */
-	TSharedPtr< FUICommandInfo > DeleteEntity;
+	TSharedPtr<FUICommandInfo> DeleteEntity;
 
 	/**
 	 * Holds the information about UI Command that  renames selected group/exposed entity.
 	 */
-	TSharedPtr< FUICommandInfo > RenameEntity;
+	TSharedPtr<FUICommandInfo> RenameEntity;
 
 	/**
 	 * UI Command for copying a UI item in the Remote Control preset. Currently used for Logic panel
 	 */
-	TSharedPtr< FUICommandInfo > CopyItem;
+	TSharedPtr<FUICommandInfo> CopyItem;
 
 	/**
 	 * UI Command for pasting a UI item in the Remote Control preset. Currently used for Logic panel
 	 */
-	TSharedPtr< FUICommandInfo > PasteItem;
+	TSharedPtr<FUICommandInfo> PasteItem;
 
 	/**
 	 * UI Command for duplicating a UI item in the Remote Control preset. Currently used for Logic panel
 	 */
-	TSharedPtr< FUICommandInfo > DuplicateItem;
+	TSharedPtr<FUICommandInfo> DuplicateItem;
+
+	/**
+	 * UI Command for updating tha action in the action list with the value in the field list. Currently used for Logic panel
+	 */
+	TSharedPtr<FUICommandInfo> UpdateValue;
 };

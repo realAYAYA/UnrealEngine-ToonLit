@@ -5,22 +5,18 @@
 #include "MuR/Operations.h"
 #include "MuT/AST.h"
 
-#include <stdint.h>
-
 namespace mu { struct FProgram; }
 
 
-#define MUTABLE_HASH_SEED					((uint32_t)0xcadababa)
+#define MUTABLE_HASH_SEED					((uint32)0xcadababa)
 
 
 namespace mu
 {
+	class CompilerOptions;
 
-    //---------------------------------------------------------------------------------------------
-    //! Convert constant data to different formats, based on their usage
-    //---------------------------------------------------------------------------------------------
-    extern void DataOptimiseAST( int imageCompressionQuality, ASTOpList& roots,
-                                 const FModelOptimizationOptions& );
+    /** Convert constant data to different formats, based on their usage. */
+    extern void DataOptimise( const CompilerOptions*, ASTOpList& roots );
 
     //---------------------------------------------------------------------------------------------
     //! Find the given constant in a subtree

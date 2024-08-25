@@ -72,5 +72,5 @@ float RayIntersectBenchmark()
 	}
 
 	// to avoid getting optimized out
-	return HitCount / (float)StepCount;
+	return (float)HitCount / (float)StepCount;
 }

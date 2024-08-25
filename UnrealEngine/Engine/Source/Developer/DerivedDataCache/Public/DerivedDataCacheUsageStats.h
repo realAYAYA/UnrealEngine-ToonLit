@@ -178,6 +178,9 @@ public:
 		}
 	}
 
+	uint64 GetTotalPhysicalSize() const { return TotalPhysicalSize; }
+	void SetTotalPhysicalSize(uint64 InTotalPhysicalSize) { TotalPhysicalSize = InTotalPhysicalSize; }
+
 public:
 	void GatherLegacyUsageStats(TMap<FString, FDerivedDataCacheUsageStats>& UsageStatsMap, FString&& GraphPath) const
 	{
@@ -213,6 +216,7 @@ protected:
 	FString CacheType;
 	FString CacheName;
 	FString CacheStatusText;
+	uint64 TotalPhysicalSize = ~0ull;
 	EDerivedDataCacheStatus CacheStatus;
 	bool bIsLocal;
 };

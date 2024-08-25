@@ -8,10 +8,10 @@
 #include "Chaos/ShapeInstanceFwd.h"
 #include "Templates/UniquePtr.h"
 
-class FChaosPhysicsMaterial;
-
 namespace Chaos
 {
+	class FChaosPhysicsMaterial;
+
 	namespace Private
 	{
 		// Get the physical material for the specified Shape on the particle.

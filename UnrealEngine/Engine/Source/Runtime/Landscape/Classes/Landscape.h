@@ -17,6 +17,7 @@ class ULandscapeComponent;
 class ILandscapeEdModeInterface;
 class SNotificationItem;
 class UStreamableRenderAsset;
+class UTextureRenderTarget;
 class FMaterialResource;
 struct FLandscapeEditLayerComponentReadbackResult;
 struct FLandscapeNotification;
@@ -70,6 +71,7 @@ enum class EHeightmapRTType : uint8
 	HeightmapRT_Scratch1,
 	HeightmapRT_Scratch2,
 	HeightmapRT_Scratch3,
+	HeightmapRT_BoundaryNormal, // HACK [chris.tchou] remove once we have a better boundary normal solution
 	// Mips RT
 	HeightmapRT_Mip1,
 	HeightmapRT_Mip2,
@@ -263,12 +265,56 @@ public:
 	LANDSCAPE_API void SetLODGroupKey(uint32 InLODGroupKey);
 	LANDSCAPE_API uint32 GetLODGroupKey();
 
+	/**
+	* Render the final heightmap in the requested top-down window as one -atlased- texture in the provided render target 2D
+	*  Can be called at runtime.
+	* @param InWorldTransform World transform of the area where the texture should be rendered
+	* @param InExtents Extents of the area where the texture should be rendered (local to InWorldTransform). If size is zero, then the entire loaded landscape will be exported.
+	* @param OutRenderTarget Render target in which the texture will be rendered. The size/format of the render target will be respected.
+	* @return false in case of failure (e.g. invalid inputs, incompatible render target format...)
+	*/
 	UFUNCTION(BlueprintCallable, Category = "Landscape|Runtime")
-	LANDSCAPE_API void RenderHeightmap(const FTransform& InWorldTransform, const FBox2D& InExtents, UTextureRenderTarget2D* OutRenderTarget);
+	LANDSCAPE_API bool RenderHeightmap(FTransform InWorldTransform, FBox2D InExtents, UTextureRenderTarget2D* OutRenderTarget);
+
+	/**
+	* Render the final weightmap for the requested layer, in the requested top-down window, as one -atlased- texture in the provided render target 2D
+	*  Can be called at runtime.
+	* @param InWorldTransform World transform of the area where the texture should be rendered
+	* @param InExtents Extents of the area where the texture should be rendered (local to InWorldTransform). If size is zero, then the entire loaded landscape will be exported.
+	* @param InWeightmapLayerName Weightmap layer that is being requested to render
+	* @param OutRenderTarget Render target in which the texture will be rendered. The size/format of the render target will be respected.
+	* @return false in case of failure (e.g. invalid inputs, incompatible render target format...)
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Landscape|Runtime")
+	LANDSCAPE_API bool RenderWeightmap(FTransform InWorldTransform, FBox2D InExtents, FName InWeightmapLayerName, UTextureRenderTarget2D* OutRenderTarget);
+
+	/**
+	* Render the final weightmaps for the requested layers, in the requested top-down window, as one -atlased- texture in the provided render target (2D or 2DArray) 
+	*  Can be called at runtime.
+	* @param InWorldTransform World transform of the area where the texture should be rendered
+	* @param InExtents Extents of the area where the texture should be rendered (local to InWorldTransform). If size is zero, then the entire loaded landscape will be exported.
+	* @param InWeightmapLayerNames List of weightmap layers that are being requested to render
+	* @param OutRenderTarget Render target in which the texture will be rendered. The size/format of the render target will be respected.
+	*  - If a UTextureRenderTarget2D is passed, the requested layers will be packed in the RGBA channels in order (up to the number of channels available with the render target's format).
+	*  - If a UTextureRenderTarget2DArray is passed, the requested layers will be packed in the RGBA channels of each slice (up to the number of channels * slices available with the render target's format and number of slices).
+	* @return false in case of failure (e.g. invalid inputs, incompatible render target format...)
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Landscape|Runtime")
+	LANDSCAPE_API bool RenderWeightmaps(FTransform InWorldTransform, FBox2D InExtents, const TArray<FName>& InWeightmapLayerNames, UTextureRenderTarget* OutRenderTarget);
+
+	/** 
+	* Retrieves the names of valid paint layers on this landscape (editor-only : returns nothing at runtime) 
+	* @Param bInIncludeVisibilityLayer whether the visibility layer's name should be included in the list or not
+	* @return the list of paint layer names
+	*/
+	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category = "Landscape|Editor", meta=(DevelopmentOnly))
+	TArray<FName> GetTargetLayerNames(bool bInIncludeVisibilityLayer = false) const;
 
 	bool IsValidRenderTargetFormatHeightmap(EPixelFormat InRenderTargetFormat, bool& bOutCompressHeight);
+	bool IsValidRenderTargetFormatWeightmap(EPixelFormat InRenderTargetFormat, int32& OutNumChannels);
 
 #if WITH_EDITOR
+
 	/** Computes & returns bounds containing all landscape proxies (if any) or this landscape's bounds otherwise. Note that in non-WP worlds this will call GetLoadedBounds(). */
 	LANDSCAPE_API FBox GetCompleteBounds() const;
 	void RegisterLandscapeEdMode(ILandscapeEdModeInterface* InLandscapeEdMode) { LandscapeEdMode = InLandscapeEdMode; }
@@ -344,6 +390,7 @@ public:
 	
 	LANDSCAPE_API void ToggleCanHaveLayersContent();
 	LANDSCAPE_API void ForceUpdateLayersContent(bool bIntermediateRender = false);
+	UFUNCTION(BlueprintCallable, Category = "Landscape")
 	LANDSCAPE_API void ForceLayersFullUpdate();
 	LANDSCAPE_API void InitializeLandscapeLayersWeightmapUsage();
 
@@ -356,13 +403,24 @@ public:
 	LANDSCAPE_API bool PrepareTextureResources(bool bInWaitForStreaming);
 
 	bool GetVisibilityLayerAllocationIndex() const { return 0; }
+	
+	LANDSCAPE_API virtual void DeleteUnusedLayers() override;
+
+	LANDSCAPE_API void EnableNaniteSkirts(bool bInEnable, float InSkirtDepth, bool bInShouldDirtyPackage);
+
+	/** Set the target precision on nanite vertex position.  Precision is set to approximately (2^-InPrecision) in world units. */
+	LANDSCAPE_API void SetNanitePositionPrecision(int32 InPrecision,  bool bInShouldDirtyPackage);
+
+	LANDSCAPE_API void SetDisableRuntimeGrassMapGeneration(bool bInDisableRuntimeGrassMapGeneration);
 
 protected:
 	FName GenerateUniqueLayerName(FName InName = NAME_None) const;
 
 private:
 	bool SupportsEditLayersLocalMerge();
-	void CreateLayersRenderingResource();
+	bool HasNormalCaptureBPBrushLayer();
+
+	bool CreateLayersRenderingResource(bool bUseNormalCapture);
 	void PrepareEditLayersLocalMergeResources();
 	void UpdateLayersContent(bool bInWaitForStreaming = false, bool bInSkipMonitorLandscapeEdModeChanges = false, bool bIntermediateRender = false, bool bFlushRender = false);
 	void MonitorShaderCompilation();
@@ -427,7 +485,7 @@ private:
 
 	void CopyTexturePS(const FString& InSourceDebugName, FTextureResource* InSourceResource, const FString& InDestDebugName, FTextureResource* InDestResource) const;
 
-	void InitializeLayers();
+	void InitializeLayers(bool bUseNormalCapture);
 	
 	void PrintLayersDebugRT(const FString& InContext, UTextureRenderTarget2D* InDebugRT, uint8 InMipRender = 0, bool InOutputHeight = true, bool InOutputNormals = false) const;
 	void PrintLayersDebugTextureResource(const FString& InContext, FTextureResource* InTextureResource, uint8 InMipRender = 0, bool InOutputHeight = true, bool InOutputNormals = false) const;
@@ -439,12 +497,12 @@ private:
 	void UpdateHeightDirtyData(ULandscapeComponent* InLandscapeComponent, UTexture2D const* InHeightmap, FColor const* InOldData, FColor const* InNewData);
 	void OnDirtyHeightmap(FTextureToComponentHelper const& MapHelper, UTexture2D const* InWeightmap, FColor const* InOldData, FColor const* InNewData, int32 InMipLevel);
 
-	static bool IsTextureReady(UTexture2D* InTexture, bool bInWaitForStreaming);
 	static bool IsMaterialResourceCompiled(FMaterialResource* InMaterialResource, bool bInWaitForCompilation);
 #endif // WITH_EDITOR
 
 private:
 	void MarkAllLandscapeRenderStateDirty();
+	bool RenderMergedTextureInternal(const FTransform& InRenderAreaWorldTransform, const FBox2D& InRenderAreaExtents, const TArray<FName>& InWeightmapLayerNames, UTextureRenderTarget* OutRenderTarget);
 
 public:
 
@@ -486,6 +544,9 @@ public:
 	UPROPERTY(Transient)
 	bool bEnableEditorLayersTick = true;
 
+	UPROPERTY(Transient, DuplicateTransient, TextExportTransient, NonPIEDuplicateTransient)
+	bool bWarnedGlobalMergeDimensionsExceeded = false;
+
 	UPROPERTY()
 	TArray<FLandscapeLayer> LandscapeLayers;
 
@@ -525,7 +586,10 @@ private:
 
 	UPROPERTY(Transient)
 	bool bLandscapeLayersAreInitialized;
-	
+
+	UPROPERTY(Transient)
+	bool bLandscapeLayersAreInitializedForNormalCapture;
+
 	UPROPERTY(Transient)
 	bool bLandscapeLayersAreUsingLocalMerge;
 
@@ -548,7 +612,6 @@ private:
 	TSharedPtr<FLandscapeNotification> WaitingForTexturesNotification;
 	TSharedPtr<FLandscapeNotification> WaitingForBrushesNotification;
 	TSharedPtr<FLandscapeNotification> InvalidShadingModelNotification;
-	TSharedPtr<FLandscapeNotification> GrassRenderingNotification;
 
 	// Represent all the resolved paint layer, from all layers blended together (size of the landscape x material layer count)
 	class FLandscapeTexture2DArrayResource* CombinedLayersWeightmapAllMaterialLayersResource;

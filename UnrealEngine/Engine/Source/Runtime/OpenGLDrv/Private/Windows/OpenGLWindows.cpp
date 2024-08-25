@@ -217,11 +217,7 @@ static void GetOpenGLVersionForCoreProfile(int& OutMajorVersion, int& OutMinorVe
  */
 static bool PlatformOpenGLDebugCtx()
 {
-#if UE_BUILD_DEBUG
-	return ! FParse::Param(FCommandLine::Get(),TEXT("openglNoDebug"));
-#else
-	return FParse::Param(FCommandLine::Get(),TEXT("openglDebug"));
-#endif
+	return IsOGLDebugOutputEnabled();
 }
 
 
@@ -1010,7 +1006,7 @@ FOpenGLTexture* PlatformCreateBuiltinBackBuffer(FOpenGLDynamicRHI* OpenGLRHI, ui
 			.SetFlags(ETextureCreateFlags::RenderTargetable | ETextureCreateFlags::Presentable | ETextureCreateFlags::ResolveTargetable)
 			.DetermineInititialState();
 
-		return new FOpenGLTexture(Desc);
+		return new FOpenGLTexture(FRHICommandListImmediate::Get(), Desc);
 	}
 
 	return nullptr;

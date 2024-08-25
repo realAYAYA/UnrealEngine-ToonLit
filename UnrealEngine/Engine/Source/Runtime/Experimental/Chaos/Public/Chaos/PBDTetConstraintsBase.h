@@ -19,10 +19,10 @@ public:
 	{
 		for (const TVec4<int32>& Constraint : Constraints)
 		{
-			const FSolverVec3& P1 = InParticles.X(Constraint[0]);
-			const FSolverVec3& P2 = InParticles.X(Constraint[1]);
-			const FSolverVec3& P3 = InParticles.X(Constraint[2]);
-			const FSolverVec3& P4 = InParticles.X(Constraint[3]);
+			const FSolverVec3& P1 = InParticles.GetX(Constraint[0]);
+			const FSolverVec3& P2 = InParticles.GetX(Constraint[1]);
+			const FSolverVec3& P3 = InParticles.GetX(Constraint[2]);
+			const FSolverVec3& P4 = InParticles.GetX(Constraint[3]);
 			Volumes.Add(FSolverVec3::DotProduct(FSolverVec3::CrossProduct(P2 - P1, P3 - P1), P4 - P1) / (FSolverReal)6.);
 		}
 	}

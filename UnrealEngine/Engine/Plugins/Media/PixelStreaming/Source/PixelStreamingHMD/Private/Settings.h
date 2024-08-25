@@ -13,6 +13,9 @@ namespace UE::PixelStreamingHMD::Settings
 
 	// Begin CVars
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingEnableHMD;
+	extern TAutoConsoleVariable<bool> CVarPixelStreamingHMDMatchAspectRatio;
+	extern TAutoConsoleVariable<float> CVarPixelStreamingHMDHFOV;
+	extern TAutoConsoleVariable<float> CVarPixelStreamingHMDVFOV;
 	// End CVars
 
 } // namespace UE::PixelStreamingHMD::Settings

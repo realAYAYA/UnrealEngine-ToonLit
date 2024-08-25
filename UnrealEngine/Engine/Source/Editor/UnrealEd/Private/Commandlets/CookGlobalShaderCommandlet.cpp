@@ -2,6 +2,7 @@
 
 #include "Commandlets/CookGlobalShadersCommandlet.h"
 #include "Engine/Engine.h"
+#include "Misc/App.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "Misc/ConfigCacheIni.h"
@@ -320,7 +321,7 @@ int32 UCookGlobalShadersCommandlet::Main(const FString& Params)
 			if (ClassIt->IsChildOf(UCookGlobalShadersDeviceHelperBase::StaticClass()))
 			{
 				FString ClassName = ClassIt->GetName();
-				ClassName.RemoveAt(0, UE_ARRAY_COUNT(TEXT("CookGlobalShadersDeviceHelperBase")), false);
+				ClassName.RemoveAt(0, UE_ARRAY_COUNT(TEXT("CookGlobalShadersDeviceHelperBase")), EAllowShrinking::No);
 				if (ClassName.Equals(PlatformName))
 				{
 					DeviceHelper = NewObject<UCookGlobalShadersDeviceHelperBase>(GetTransientPackage(), *ClassIt);

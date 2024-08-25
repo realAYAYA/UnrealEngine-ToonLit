@@ -11,15 +11,39 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Misc/FrameNumber.h"
 #include "IDetailsView.h"
-#include "ControlRig.h"
 #include "Rigs/RigHierarchy.h"
-#include "IDetailKeyframeHandler.h"
 #include "IDetailCustomization.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailCategoryBuilder.h"
 #include "DetailWidgetRow.h"
+#include "AnimDetailsProxy.h"
+#include "Engine/TimerHandle.h"
 
 class ISequencer;
+class UControlRig;
+class FUICommandList;
+class UMovieSceneTrack;
+class SControlRigDetails;
+
+struct FArrayOfPropertyTracks
+{
+	TArray<UMovieSceneTrack*> PropertyTracks;
+};
+
+class FSequencerTracker
+{
+public:
+	FSequencerTracker() = default;
+	~FSequencerTracker();
+	void SetSequencerAndDetails(TWeakPtr<ISequencer> InWeakSequencer, SControlRigDetails* InControlRigDetails);
+	TMap<UObject*, FArrayOfPropertyTracks>& GetObjectsTracked() { return ObjectsTracked; }
+private:
+	void UpdateSequencerBindings(const TArray<FGuid>& SequencerBindings);
+	FDelegateHandle OnSelectionChangedHandle;
+	TWeakPtr<ISequencer> WeakSequencer;
+	TMap<UObject*, FArrayOfPropertyTracks> ObjectsTracked;
+	SControlRigDetails* ControlRigDetails = nullptr;
+};
 
 class FControlRigEditModeGenericDetails : public IDetailCustomization
 {
@@ -40,7 +64,7 @@ protected:
 	FEditorModeTools* ModeTools = nullptr;
 };
 
-class SControlRigDetails: public SCompoundWidget, public FControlRigBaseDockableView, public IDetailKeyframeHandler
+class SControlRigDetails: public SCompoundWidget, public FControlRigBaseDockableView
 {
 
 	SLATE_BEGIN_ARGS(SControlRigDetails)
@@ -50,53 +74,34 @@ class SControlRigDetails: public SCompoundWidget, public FControlRigBaseDockable
 
 	void Construct(const FArguments& InArgs, FControlRigEditMode& InEditMode);
 
-	// IDetailKeyframeHandler interface
-	virtual bool IsPropertyKeyable(const UClass* InObjectClass, const class IPropertyHandle& PropertyHandle) const override;
-	virtual bool IsPropertyKeyingEnabled() const override;
-	virtual void OnKeyPropertyClicked(const IPropertyHandle& KeyedPropertyHandle) override;
-	virtual bool IsPropertyAnimated(const class IPropertyHandle& PropertyHandle, UObject *ParentObject) const override;
+	//FControlRigBaseDockableView overrides
+	virtual void SetEditMode(FControlRigEditMode& InEditMode) override;
 
 	/** Display or edit set up for property */
 	bool ShouldShowPropertyOnDetailCustomization(const struct FPropertyAndParent& InPropertyAndParent) const;
 	bool IsReadOnlyPropertyOnDetailCustomization(const struct FPropertyAndParent& InPropertyAndParent) const;
+	void SelectedSequencerObjects(const TMap<UObject*, FArrayOfPropertyTracks>& ObjectsTracked);
 
 private:
 
-	/** Set the objects to be displayed in the details panel */
-	void SetSettingsDetailsObject(const TWeakObjectPtr<>& InObject);
-	void SetEulerTransformDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetTransformDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetTransformNoScaleDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetVectorDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetVector2DDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetFloatDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetBoolDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetIntegerDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-	void SetEnumDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects, bool bIsIndividual);
-
 	void UpdateProxies();
+	void HandleSequencerObjects(TMap<UObject*, FArrayOfPropertyTracks>& InObjectsTracked);
 	virtual void HandleControlSelected(UControlRig* Subject, FRigControlElement* InControl, bool bSelected) override;
 
-	//these views will hold more than one of the same tyhpe
-	TSharedPtr<IDetailsView> ControlEulerTransformDetailsView;
-	TSharedPtr<IDetailsView> ControlTransformDetailsView;
-	TSharedPtr<IDetailsView> ControlTransformNoScaleDetailsView;
-	TSharedPtr<IDetailsView> ControlFloatDetailsView;
-	TSharedPtr<IDetailsView> ControlBoolDetailsView;
-	TSharedPtr<IDetailsView> ControlIntegerDetailsView;
-	TSharedPtr<IDetailsView> ControlEnumDetailsView;
-	TSharedPtr<IDetailsView> ControlVector2DDetailsView;
-	TSharedPtr<IDetailsView> ControlVectorDetailsView;
-	//these will show more than one of the same type, will happen for controls with parents.
-	TSharedPtr<IDetailsView> IndividualControlEulerTransformDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlTransformDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlTransformNoScaleDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlFloatDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlBoolDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlIntegerDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlEnumDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlVector2DDetailsView;
-	TSharedPtr<IDetailsView> IndividualControlVectorDetailsView;
+	TSharedPtr<IDetailsView> AllControlsView;
+
+private:
+	/*~ Keyboard interaction */
+	virtual bool SupportsKeyboardFocus() const override { return true; }
+	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
+
+	FSequencerTracker SequencerTracker;
+
+	/** Handle for the timer used to recreate detail panel */
+	FTimerHandle NextTickTimerHandle;
 
 };
+
+
+
 

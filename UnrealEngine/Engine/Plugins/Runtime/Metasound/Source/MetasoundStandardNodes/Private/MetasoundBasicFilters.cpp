@@ -95,7 +95,7 @@ namespace Metasound
 
 		static FVertexInterface DeclareVertexInterface();
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override
 		{
@@ -214,17 +214,14 @@ namespace Metasound
 		return Interface;
 	}
 
-	TUniquePtr<IOperator> FLadderFilterOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FLadderFilterOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-		FVertexInterface Interface = DeclareVertexInterface();
-		const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// inputs
-		FAudioBufferReadRef AudioIn = InputDataRefs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
-		FFloatReadRef FrequencyIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
-		FFloatReadRef ResonanceIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamResonance), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
+		FFloatReadRef FrequencyIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
+		FFloatReadRef ResonanceIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamResonance), InParams.OperatorSettings);
 
 		return MakeUnique<FLadderFilterOperator>(
 			InParams.OperatorSettings
@@ -279,7 +276,7 @@ namespace Metasound
 
 		static FVertexInterface DeclareVertexInterface();
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override
 		{
@@ -422,18 +419,15 @@ namespace Metasound
 		return Interface;
 	}
 
-	TUniquePtr<IOperator> FStateVariableFilterOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FStateVariableFilterOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-		FVertexInterface Interface = DeclareVertexInterface();
-		const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// inputs
-		FAudioBufferReadRef AudioIn = InputDataRefs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
-		FFloatReadRef FrequencyIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
-		FFloatReadRef ResonanceIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamResonance), InParams.OperatorSettings);
-		FFloatReadRef PassBandGainCompensationIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamBandStopControl), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
+		FFloatReadRef FrequencyIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
+		FFloatReadRef ResonanceIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamResonance), InParams.OperatorSettings);
+		FFloatReadRef PassBandGainCompensationIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamBandStopControl), InParams.OperatorSettings);
 
 		return MakeUnique<FStateVariableFilterOperator>(
 			InParams.OperatorSettings
@@ -507,7 +501,7 @@ namespace Metasound
 
 		static FVertexInterface DeclareVertexInterface();
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override
 		{
@@ -615,16 +609,13 @@ namespace Metasound
 		return Interface;
 	}
 
-	TUniquePtr<IOperator> FOnePoleLowPassFilterOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FOnePoleLowPassFilterOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-		FVertexInterface Interface = DeclareVertexInterface();
-		const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// inputs
-		FAudioBufferReadRef AudioIn = InputDataRefs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
-		FFloatReadRef FrequencyIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
+		FFloatReadRef FrequencyIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
 
 		return MakeUnique<FOnePoleLowPassFilterOperator>(
 			InParams.OperatorSettings
@@ -661,7 +652,7 @@ namespace Metasound
 
 		static FVertexInterface DeclareVertexInterface();
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override
 		{
@@ -776,16 +767,13 @@ namespace Metasound
 		return Interface;
 	}
 
-	TUniquePtr<IOperator> FOnePoleHighPassFilterOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FOnePoleHighPassFilterOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-		FVertexInterface Interface = DeclareVertexInterface();
-		const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// inputs
-		FAudioBufferReadRef AudioIn = InputDataRefs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
-		FFloatReadRef FrequencyIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
+		FFloatReadRef FrequencyIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
 
 		return MakeUnique<FOnePoleHighPassFilterOperator>(
 			InParams.OperatorSettings
@@ -822,7 +810,7 @@ namespace Metasound
 
 		static FVertexInterface DeclareVertexInterface();
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override
 		{
@@ -974,19 +962,16 @@ namespace Metasound
 		return Interface;
 	}
 
-	TUniquePtr<IOperator> FBiquadFilterOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FBiquadFilterOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-		FVertexInterface Interface = DeclareVertexInterface();
-		const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// inputs
-		FAudioBufferReadRef AudioIn = InputDataRefs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
-		FFloatReadRef FrequencyIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
-		FFloatReadRef BandwidthIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamBandwidth), InParams.OperatorSettings);
-		FFloatReadRef FilterGainDbIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamGainDb), InParams.OperatorSettings);
-		FEnumBiQuadFilterReadRef FilterType = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<FEnumEBiquadFilterType>(InputInterface, METASOUND_GET_PARAM_NAME(ParamFilterType), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(ParamAudioInput), InParams.OperatorSettings);
+		FFloatReadRef FrequencyIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamCutoffFrequency), InParams.OperatorSettings);
+		FFloatReadRef BandwidthIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamBandwidth), InParams.OperatorSettings);
+		FFloatReadRef FilterGainDbIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamGainDb), InParams.OperatorSettings);
+		FEnumBiQuadFilterReadRef FilterType = InputData.GetOrCreateDefaultDataReadReference<FEnumEBiquadFilterType>(METASOUND_GET_PARAM_NAME(ParamFilterType), InParams.OperatorSettings);
 
 		return MakeUnique<FBiquadFilterOperator>(
 			InParams.OperatorSettings

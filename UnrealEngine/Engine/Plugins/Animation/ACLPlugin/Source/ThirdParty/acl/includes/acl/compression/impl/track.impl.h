@@ -26,6 +26,7 @@
 
 // Included only once from track.h
 
+#include "acl/version.h"
 #include "acl/core/iallocator.h"
 #include "acl/core/string.h"
 #include "acl/core/track_desc.h"
@@ -36,6 +37,8 @@
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	inline track::track() noexcept
 		: m_allocator(nullptr)
 		, m_data(nullptr)
@@ -250,6 +253,20 @@ namespace acl
 	}
 
 	template<track_type8 track_type_>
+	inline typename track_typed<track_type_>::sample_type* track_typed<track_type_>::get_data()
+	{
+		ACL_ASSERT(m_stride == sizeof(sample_type), "Samples are not contiguous in memory, this function is unsafe");
+		return reinterpret_cast<sample_type*>(m_data);
+	}
+
+	template<track_type8 track_type_>
+	inline const typename track_typed<track_type_>::sample_type* track_typed<track_type_>::get_data() const
+	{
+		ACL_ASSERT(m_stride == sizeof(sample_type), "Samples are not contiguous in memory, this function is unsafe");
+		return reinterpret_cast<const sample_type*>(m_data);
+	}
+
+	template<track_type8 track_type_>
 	inline typename track_typed<track_type_>::desc_type& track_typed<track_type_>::get_description()
 	{
 		return track::get_description<desc_type>();
@@ -351,4 +368,6 @@ namespace acl
 
 		return static_cast<const track_type*>(track_);
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }

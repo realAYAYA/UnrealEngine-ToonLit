@@ -3,6 +3,7 @@
 
 #include "SoundscapeColor.h"
 #include "Engine/GameInstance.h"
+#include "Engine/HitResult.h"
 #include "AudioDevice.h"
 #include "TimerManager.h"
 #include "SoundscapeSubsystem.h"

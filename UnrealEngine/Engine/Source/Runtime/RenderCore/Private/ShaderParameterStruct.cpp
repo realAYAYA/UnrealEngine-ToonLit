@@ -6,7 +6,6 @@
 
 #include "ShaderParameterStruct.h"
 
-
 /** Context of binding a map. */
 struct FShaderParameterStructBindingContext
 {
@@ -196,7 +195,7 @@ struct FShaderParameterStructBindingContext
 				}
 				else if (bIsRHIResource || bIsRDGResource)
 				{
-					if (ParameterAllocation->Type == EShaderParameterType::BindlessResourceIndex || ParameterAllocation->Type == EShaderParameterType::BindlessSamplerIndex)
+					if (IsParameterBindless(ParameterAllocation->Type))
 					{
 						FShaderParameterBindings::FBindlessResourceParameter Parameter;
 						Parameter.GlobalConstantOffset = ParameterAllocation->BaseIndex;
@@ -505,6 +504,8 @@ void ValidateShaderParameters(const TShaderRef<FShader>& Shader, const FShaderPa
 	const TCHAR* ShaderClassName = Shader.GetType()->GetName();
 	const TCHAR* ShaderParameterStructName = ParametersMetadata->GetStructTypeName();
 
+	FRHIShader* RHIShader = Shader.GetRHIShaderBase(Shader->GetFrequency());
+
 	for (const FShaderParameterBindings::FResourceParameter& Parameter : Bindings.ResourceParameters)
 	{
 		const EUniformBufferBaseType BaseType = static_cast<EUniformBufferBaseType>(Parameter.BaseType);
@@ -520,8 +521,8 @@ void ValidateShaderParameters(const TShaderRef<FShader>& Shader, const FShaderPa
 				{
 					EmitNullShaderParameterFatalError(Shader, ParametersMetadata, Parameter.ByteOffset);
 				}
+				break;
 			}
-			break;
 			case UBMT_RDG_TEXTURE:
 			{
 				const FRDGTexture* GraphTexture = Reader.Read<const FRDGTexture*>(Parameter);
@@ -529,20 +530,21 @@ void ValidateShaderParameters(const TShaderRef<FShader>& Shader, const FShaderPa
 				{
 					EmitNullShaderParameterFatalError(Shader, ParametersMetadata, Parameter.ByteOffset);
 				}
+				break;
 			}
-			break;
 			case UBMT_RDG_TEXTURE_SRV:
-			case UBMT_RDG_TEXTURE_UAV:
 			case UBMT_RDG_BUFFER_SRV:
+			case UBMT_RDG_TEXTURE_UAV:
 			case UBMT_RDG_BUFFER_UAV:
 			{
 				const FRDGResource* GraphResource = Reader.Read<const FRDGResource*>(Parameter);
+
 				if (!GraphResource)
 				{
 					EmitNullShaderParameterFatalError(Shader, ParametersMetadata, Parameter.ByteOffset);
 				}
+				break;
 			}
-			break;
 			default:
 				break;
 		}

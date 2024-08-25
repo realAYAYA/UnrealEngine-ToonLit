@@ -2,7 +2,7 @@
 
 #include "IOSEOSVoiceChat.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "IOSEOSVoiceChatUser.h"
 
@@ -192,4 +192,4 @@ void FIOSEOSVoiceChat::SendAECSettingToUsers(bool bEnableAEC)
 	}
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

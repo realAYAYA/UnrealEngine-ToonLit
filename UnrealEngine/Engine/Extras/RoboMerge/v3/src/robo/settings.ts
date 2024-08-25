@@ -7,6 +7,7 @@ import { VersionReader } from '../common/version';
 import { BranchGraph } from './branchgraph';
 import { PersistentConflict } from './conflict-interfaces';
 import { NOTIFICATIONS_PERSISTENCE_KEY, SLACK_MESSAGES_PERSISTENCE_KEY } from './notifications';
+import { PerforceContext, Workspace } from '../common/perforce';
 import semver = require('semver')
 
 /**
@@ -123,16 +124,21 @@ function getPersistenceFilepath(botname: string) {
 }
 
 export class Settings {
-	filename: string;
-	lokiFilename: string;
-	enableSave: boolean;
+	filename: string
+	enableSave: boolean
 	object: { [key: string]: any }
+	private	lastPersistBackupTime: Date
 	private readonly settingsLogger: ContextualLogger
+	private readonly p4workspace?: Workspace
 
-	constructor(botname: string, branchgraph: BranchGraph, parentLogger: ContextualLogger) {
+	constructor(botname: string, branchgraph: BranchGraph, parentLogger: ContextualLogger, private p4: PerforceContext) {
 		this.settingsLogger = parentLogger.createChild('Settings')
 
+		this.lastPersistBackupTime = new Date(Date.now())
 		this.filename = getPersistenceFilepath(botname)
+		if (args.persistenceBackupFrequency > 0) {
+			this.p4workspace = {directory: fs.realpathSync(args.persistenceDir), name: args.persistenceBackupWorkspace}
+		}
 
 		// see if we should enable saves
 		this.enableSave = !process.env["NOSAVE"];
@@ -216,7 +222,7 @@ export class Settings {
 		 */
 		
 		this.object.version = VERSION.raw
-		this._saveObject();
+		this._saveObject(true);
 	}
 
 	/**
@@ -423,7 +429,7 @@ export class Settings {
 		return this.filename + FilePurposeExtensionMap[purpose]
 	}
 
-	_saveObject() {
+	_saveObject(ensureInP4?: boolean) {
 		if (this.enableSave) {
 
 			const persistentFile = this.getFilename('PERSISTENCE')
@@ -436,7 +442,33 @@ export class Settings {
 			let filebits = JSON.stringify(this.object, null, '  ')
 			fs.writeFileSync(tempFile, filebits, "utf8")
 
-			fs.copyFileSync(tempFile,persistentFile)
+			fs.copyFileSync(tempFile, persistentFile)
+
+			if (this.p4workspace) {
+				if (ensureInP4) {
+					this.p4.fstat(this.p4workspace, persistentFile)
+					.then((fstat) => {
+						if (fstat.length == 0 || fstat[0].headAction == 'delete') {
+							this.p4.new_cl(this.p4workspace!, "Adding persistent backup", [])
+							.then((cl: number) => {
+								this.p4.add(this.p4workspace!, cl, persistentFile, "text+wS64")
+								.then(() => this.p4.submit(this.p4workspace!, cl))
+							})
+						}
+					})
+				}
+				else if ((Date.now() - this.lastPersistBackupTime.getTime()) / 60000 >= args.persistenceBackupFrequency) {
+					this.lastPersistBackupTime = new Date(Date.now())
+
+					this.p4.sync(this.p4workspace, persistentFile, {opts: ['-k']})
+					.then(() => this.p4.new_cl(this.p4workspace!, "Updating persistent backup"))
+					.then((cl: number) => {
+						this.p4.edit(this.p4workspace!, cl, persistentFile, ['-k'])
+						.then(() => this.p4.submit(this.p4workspace!, cl))
+					})
+					
+				}
+			}
 		}
 	}
 }

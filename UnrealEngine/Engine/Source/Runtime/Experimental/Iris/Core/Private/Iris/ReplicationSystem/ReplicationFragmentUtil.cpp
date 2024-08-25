@@ -45,7 +45,7 @@ uint32 FReplicationFragmentUtil::CreateAndRegisterFragmentsForObject(UObject* Ob
 
 	uint32 NumCreatedReplicationFragments = 0U;
 	// create fragments and let the instance protocol own them.
-	for (auto& Desc : Result)
+	for (TRefCountPtr<const FReplicationStateDescriptor>& Desc : Result)
 	{
 		if (bRegisterFunctionsOnly && (Desc->FunctionCount == 0))
 		{

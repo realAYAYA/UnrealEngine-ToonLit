@@ -4,6 +4,15 @@
 #define MAXON_TARGET_RELEASE 1
 #define MAXON_TARGET_64BIT 1
 
+// These UE defines conflict with the maxon headers, so remove them
+#ifdef LIGHT_TYPE_DIRECTIONAL
+#undef LIGHT_TYPE_DIRECTIONAL
+#undef LIGHT_TYPE_POINT
+#undef LIGHT_TYPE_SPOT
+#undef LIGHT_TYPE_RECT
+#undef LIGHT_TYPE_MAX
+#endif
+
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 

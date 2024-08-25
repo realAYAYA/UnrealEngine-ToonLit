@@ -3,6 +3,7 @@
 #include "AssetSelection.h"
 #include "Engine/Level.h"
 #include "Model.h"
+#include "UObject/ScriptInterface.h"
 #include "UObject/UnrealType.h"
 #include "GameFramework/Actor.h"
 #include "ActorFactories/ActorFactory.h"
@@ -21,6 +22,7 @@
 #include "Kismet2/ComponentEditorUtils.h"
 #include "Engine/Selection.h"
 #include "Editor.h"
+#include "EditorModeManager.h"
 #include "ScopedTransaction.h"
 
 #include "LevelUtils.h"
@@ -35,6 +37,7 @@
 #include "ContentBrowserModule.h"
 #include "SnappingUtils.h"
 #include "ActorEditorUtils.h"
+#include "LevelEditorSubsystem.h"
 #include "LevelEditorViewport.h"
 #include "LandscapeProxy.h"
 #include "Landscape.h"
@@ -52,7 +55,9 @@
 #include "ISourceControlProvider.h"
 #include "Misc/MessageDialog.h"
 #include "Subsystems/PlacementSubsystem.h"
+#include "Elements/Framework/EngineElementsLibrary.h"
 #include "Elements/Framework/TypedElementRegistry.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
 #include "Elements/Interfaces/TypedElementObjectInterface.h"
 
 namespace AssetSelectionUtils
@@ -526,24 +531,62 @@ namespace ActorPlacementUtils
 	}
 }
 
-/**
-* Creates an actor using the specified factory.  
-*
-* Does nothing if ActorClass is NULL.
-*/
-static AActor* PrivateAddActor( UObject* Asset, UActorFactory* Factory, bool SelectActor = true, EObjectFlags ObjectFlags = RF_Transactional, const FName Name = NAME_None )
+namespace AssetSelectionLocals {
+
+UTypedElementSelectionSet* GetEditorSelectionSet()
 {
-	if (!Factory)
+	if (!GEditor)
 	{
 		return nullptr;
+	}
+	
+	if (ULevelEditorSubsystem* LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>())
+	{
+		if (FEditorModeTools* ModeManager = LevelEditorSubsystem->GetLevelEditorModeManager())
+		{
+			return ModeManager->GetEditorSelectionSet();
+		}
 	}
 
-	AActor* Actor = NULL;
-	AActor* NewActorTemplate = Factory->GetDefaultActor( Asset );
-	if ( !NewActorTemplate )
+	return nullptr;
+}
+
+void ForEachObjectInHandles(TArray<FTypedElementHandle> Handles, TFunctionRef<void(UObject&)> Func)
+{
+	for (FTypedElementHandle Handle : Handles)
 	{
-		return nullptr;
+		TTypedElement<ITypedElementObjectInterface> ObjectInterface = UTypedElementRegistry::GetInstance()->GetElement<ITypedElementObjectInterface>(Handle);
+		if (!ObjectInterface)
+		{
+			continue;
+		}
+
+		UObject* Object = ObjectInterface.GetObject();
+		if (!Object)
+		{
+			continue;
+		}
+
+		Func(*Object);
 	}
+}
+
+/**
+ * Creates an object using the specified factory.
+ */
+TArray<FTypedElementHandle> PlaceAssetUsingFactory(UObject* Asset, TScriptInterface<IAssetFactoryInterface> Factory, bool bSelectResult = true, EObjectFlags ObjectFlags = RF_Transactional, const FName Name = NAME_None)
+{
+	TArray<FTypedElementHandle> PlacedItems;
+	if (!Factory)
+	{
+		return PlacedItems;
+	}
+
+	// Whereas going throught UPlacementSubsystem does not require the factory to be an actor factory,
+	// other legacy paths require actor factories. These two pointers, when non-null, can be used for 
+	// those paths.
+	UActorFactory* ActorFactory = Cast<UActorFactory>(Factory.GetObject());
+	AActor* NewActorTemplate = ActorFactory ? ActorFactory->GetDefaultActor(Asset) : nullptr;
 
 	UWorld* OldWorld = nullptr;
 
@@ -554,20 +597,23 @@ static AActor* PrivateAddActor( UObject* Asset, UActorFactory* Factory, bool Sel
 	}
 
 	// For Brushes/Volumes, use the default brush as the template rather than the factory default actor
-	if (NewActorTemplate->IsA(ABrush::StaticClass()) && GWorld->GetDefaultBrush() != nullptr)
+	if (NewActorTemplate && NewActorTemplate->IsA(ABrush::StaticClass()) && GWorld->GetDefaultBrush() != nullptr)
 	{
 		NewActorTemplate = GWorld->GetDefaultBrush();
 	}
 
+	// TODO: FSnappedPositioningData should probably not require the use of an actor factory
 	const FSnappedPositioningData PositioningData = FSnappedPositioningData(GCurrentLevelEditingViewportClient, GEditor->ClickLocation, GEditor->ClickPlane)
-		.UseFactory(Factory)
-		.UsePlacementExtent(NewActorTemplate->GetPlacementExtent());
+		.UseFactory(ActorFactory)
+		.UsePlacementExtent(NewActorTemplate ? NewActorTemplate->GetPlacementExtent() : FVector3d::Zero());
 
 	FTransform ActorTransform = FActorPositioning::GetSnappedSurfaceAlignedTransform(PositioningData);
 
-	if (GetDefault<ULevelEditorViewportSettings>()->SnapToSurface.bEnabled)
+	if (NewActorTemplate && GetDefault<ULevelEditorViewportSettings>()->SnapToSurface.bEnabled)
 	{
 		// HACK: If we are aligning rotation to surfaces, we have to factor in the inverse of the actor's rotation and translation so that the resulting transform after SpawnActor is correct.
+		
+		// TODO: Do this for non-actor placeable objects
 
 		if (auto* RootComponent = NewActorTemplate->GetRootComponent())
 		{
@@ -581,24 +627,26 @@ static AActor* PrivateAddActor( UObject* Asset, UActorFactory* Factory, bool Sel
 
 	// Do not fade snapping indicators over time if the viewport is not realtime
 	bool bClearImmediately = !GCurrentLevelEditingViewportClient || !GCurrentLevelEditingViewportClient->IsRealtime();
-	FSnappingUtils::ClearSnappingHelpers( bClearImmediately );
+	FSnappingUtils::ClearSnappingHelpers(bClearImmediately);
 
 	ULevel* DesiredLevel = GWorld->GetCurrentLevel();
 
-	bool bSpawnActor = true;
+	bool bShouldSpawnObject = true;
 
 	if ((ObjectFlags & RF_Transactional) != 0)
 	{
 		TArray<FTransform> SpawningActorTransforms;
 		SpawningActorTransforms.Add(ActorTransform);
-		bSpawnActor = ActorPlacementUtils::IsLevelValidForActorPlacement(DesiredLevel, SpawningActorTransforms);
+		// TODO: At the moment, the conditions for placing non-actor items in a level are the same as actor items, but
+		// we should probably rename this function so it is not actor-specific.
+		bShouldSpawnObject = ActorPlacementUtils::IsLevelValidForActorPlacement(DesiredLevel, SpawningActorTransforms);
 	}
 
-	if(bSpawnActor)
+	if (bShouldSpawnObject)
 	{
-		FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "CreateActor", "Create Actor"), (ObjectFlags & RF_Transactional) != 0 );
-		
-		// Create the actor.
+		FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "PlaceObject", "Place Object"), (ObjectFlags & RF_Transactional) != 0);
+
+		// Create the object.
 		UPlacementSubsystem* PlacementSubsystem = GEditor->GetEditorSubsystem<UPlacementSubsystem>();
 		if (PlacementSubsystem)
 		{
@@ -612,46 +660,62 @@ static AActor* PrivateAddActor( UObject* Asset, UActorFactory* Factory, bool Sel
 			FPlacementOptions PlacementOptions;
 			PlacementOptions.bIsCreatingPreviewElements = FLevelEditorViewportClient::IsDroppingPreviewActor();
 
-			TArray<FTypedElementHandle> PlacedElements = PlacementSubsystem->PlaceAsset(PlacementInfo, PlacementOptions);
-			if (PlacedElements.Num())
+			PlacedItems = PlacementSubsystem->PlaceAsset(PlacementInfo, PlacementOptions);
+
+			ForEachObjectInHandles(PlacedItems, [ObjectFlags](UObject& PlacedObject)
 			{
-				if (TTypedElement<ITypedElementObjectInterface> ObjectInterface = UTypedElementRegistry::GetInstance()->GetElement<ITypedElementObjectInterface>(PlacedElements[0]))
-				{
-					Actor = ObjectInterface.GetObjectAs<AActor>();
-					if (Actor)
-					{
-						Actor->SetFlags(ObjectFlags);
-					}
-				}
-			}
+				PlacedObject.SetFlags(ObjectFlags);
+			});
 		}
-		
-		if (!Actor)
+
+		// If we fail to place using the placement subsystem above for some reason, we keep this legacy path that 
+		// tries using an actor factory directly. We don't bother adding a fallback for non-actor factories, as
+		// those got introduced after the existence of the placement subsystem, and should rely on it.
+		if (!PlacedItems.Num() && ActorFactory)
 		{
 			FActorSpawnParameters SpawnParams;
 			SpawnParams.ObjectFlags = ObjectFlags;
 			SpawnParams.Name = Name;
-			Actor = Factory->CreateActor(Asset, DesiredLevel, ActorTransform, SpawnParams);
-		}
 
-		if (Actor)
-		{
-			if ( SelectActor )
+			if (AActor* PlacedActor = ActorFactory->CreateActor(Asset, DesiredLevel, ActorTransform, SpawnParams))
 			{
-				GEditor->SelectNone( false, true );
-				GEditor->SelectActor( Actor, true, true );
+				FTypedElementHandle Handle = UEngineElementsLibrary::AcquireEditorActorElementHandle(PlacedActor);
+				if (ensure(Handle))
+				{
+					PlacedItems.Add(Handle);
+				}
 			}
-
-			Actor->InvalidateLightingCache();
-			Actor->PostEditChange();
 		}
-
-		GEditor->RedrawLevelEditingViewports();
 	}
 
-	if ( Actor )
+	if (PlacedItems.Num())
 	{
-		Actor->MarkPackageDirty();
+		if (bSelectResult)
+		{
+			// TODO: It would be nice not to use this old form of selection clearing, but it has the benefit
+			// of clearing up legacy bsp selection as well...
+			GEditor->SelectNone(false, true);
+
+			UTypedElementSelectionSet* SelectionSet = GetEditorSelectionSet();
+			if (ensure(SelectionSet))
+			{
+				FTypedElementSelectionOptions SelectionOptions;
+				SelectionSet->SelectElements(PlacedItems, SelectionOptions);
+			}
+		}
+
+		ForEachObjectInHandles(PlacedItems, [](UObject& PlacedObject)
+		{
+			if (AActor* Actor = Cast<AActor>(&PlacedObject))
+			{
+				Actor->InvalidateLightingCache();
+			}
+
+			PlacedObject.PostEditChange();
+			PlacedObject.MarkPackageDirty();
+		});
+
+		GEditor->RedrawLevelEditingViewports();
 		ULevel::LevelDirtiedEvent.Broadcast();
 	}
 
@@ -661,8 +725,31 @@ static AActor* PrivateAddActor( UObject* Asset, UActorFactory* Factory, bool Sel
 		RestoreEditorWorld(OldWorld);
 	}
 
-	return Actor;
+	return PlacedItems;
 }
+
+/**
+ * Helper to pull out a single actor from an array of typed element handles. Used to convert
+ * output in some legacy paths.
+ */
+AActor* GetActorFromTypedElementHandles(const TArray<FTypedElementHandle>& Handles)
+{
+	for (const FTypedElementHandle& Handle : Handles)
+	{
+		TTypedElement<ITypedElementObjectInterface> ObjectInterface = UTypedElementRegistry::GetInstance()->GetElement<ITypedElementObjectInterface>(Handle);
+		if (!ObjectInterface)
+		{
+			continue;
+		}
+
+		if (AActor* Actor = ObjectInterface.GetObjectAs<AActor>())
+		{
+			return Actor;
+		}
+	}
+	return nullptr;
+}
+}//end namespace AssetSelectionLocals
 
 
 namespace AssetUtil
@@ -825,37 +912,29 @@ UActorFactory* FActorFactoryAssetProxy::GetFactoryForAssetObject( UObject* Asset
 	return Result;
 }
 
-AActor* FActorFactoryAssetProxy::AddActorForAsset( UObject* AssetObj, bool SelectActor, EObjectFlags ObjectFlags, UActorFactory* FactoryToUse /*= NULL*/, const FName Name )
+AActor* FActorFactoryAssetProxy::AddActorForAsset( UObject* AssetObj, bool bSelectActor, EObjectFlags ObjectFlags, 
+	UActorFactory* FactoryToUse /*= NULL*/, const FName Name )
 {
-	AActor* Result = NULL;
+	UE::AssetPlacementUtil::FExtraPlaceAssetOptions Options;
+	Options.bSelectOutput = bSelectActor;
+	Options.ObjectFlags = ObjectFlags;
+	Options.FactoryToUse = FactoryToUse;
+	Options.Name = Name;
 
-	const FAssetData AssetData(AssetObj, FAssetData::ECreationFlags::AllowBlueprintClass);
-	FText UnusedErrorMessage;
-	if ( AssetObj != NULL )
-	{
-		// If a specific factory has been provided, verify its validity and then use it to create the actor
-		if ( FactoryToUse )
-		{
-			if ( FactoryToUse->CanCreateActorFrom( AssetData, UnusedErrorMessage ) )
-			{
-				Result = PrivateAddActor( AssetObj, FactoryToUse, SelectActor, ObjectFlags, Name );
-			}
-		}
-		// If no specific factory has been provided, use the placement subsystem to find the appropriate factory and place
-		else
-		{
-			UPlacementSubsystem* PlacementSubsystem = GEditor->GetEditorSubsystem<UPlacementSubsystem>();
-			TScriptInterface<IAssetFactoryInterface> AssetFactory = PlacementSubsystem->FindAssetFactoryFromAssetData(AssetData);
-			Result = PrivateAddActor(AssetObj, Cast<UActorFactory>(AssetFactory.GetObject()), SelectActor, ObjectFlags, Name);
-		}
-	}
+	TArray<FTypedElementHandle> PlacedItems = UE::AssetPlacementUtil::PlaceAssetInCurrentLevel(AssetObj, Options);
 
+	AActor* Actor = AssetSelectionLocals::GetActorFromTypedElementHandles(PlacedItems);
 
-	return Result;
+	ensureMsgf(Actor || PlacedItems.Num() == 0, TEXT("FActorFactoryAssetProxy::AddActorForAsset produced an object, "
+		"but not an actor. Use UE::AssetFactoryUtils::AddObjectForAssetToCurrentLevel instead to use the result."));
+
+	return Actor;
 }
 
 AActor* FActorFactoryAssetProxy::AddActorFromSelection( UClass* ActorClass, const FVector* ActorLocation, bool SelectActor, EObjectFlags ObjectFlags, UActorFactory* ActorFactory, const FName Name )
 {
+	using namespace AssetSelectionLocals;
+
 	check( ActorClass != NULL );
 
 	if( !ActorFactory )
@@ -874,7 +953,11 @@ AActor* FActorFactoryAssetProxy::AddActorFromSelection( UClass* ActorClass, cons
 		if( TargetObject && ActorFactory->CanCreateActorFrom( FAssetData(TargetObject), ErrorMessage ) )
 		{
 			// Attempt to add the actor
-			Result = PrivateAddActor( TargetObject, ActorFactory, SelectActor, ObjectFlags );
+			TArray<FTypedElementHandle> PlacedItems = PlaceAssetUsingFactory(TargetObject, ActorFactory, SelectActor, ObjectFlags);
+			Result = GetActorFromTypedElementHandles(PlacedItems);
+
+			ensureMsgf(Result || PlacedItems.Num() == 0, TEXT("FActorFactoryAssetProxy::AddActorFromSelection produced a "
+				"result, but not an actor."));
 		}
 	}
 
@@ -980,8 +1063,30 @@ bool FActorFactoryAssetProxy::ApplyMaterialToActor( AActor* TargetActor, UMateri
 }
 
 
-// EOF
+// AssetPlacementUtil
 
+TArray<FTypedElementHandle> UE::AssetPlacementUtil::PlaceAssetInCurrentLevel(UObject* AssetObj, const FExtraPlaceAssetOptions& ExtraParms)
+{
+	using namespace AssetSelectionLocals;
 
+	if (!AssetObj)
+	{
+		return TArray<FTypedElementHandle>();
+	}
 
+	const FAssetData AssetData(AssetObj, FAssetData::ECreationFlags::AllowBlueprintClass);
 
+	if (!ExtraParms.FactoryToUse)
+	{
+		UPlacementSubsystem* PlacementSubsystem = GEditor->GetEditorSubsystem<UPlacementSubsystem>();
+		TScriptInterface<IAssetFactoryInterface> AssetFactory = PlacementSubsystem->FindAssetFactoryFromAssetData(AssetData);
+		return PlaceAssetUsingFactory(AssetObj, AssetFactory, ExtraParms.bSelectOutput, ExtraParms.ObjectFlags, ExtraParms.Name);
+	}
+
+	if (!ExtraParms.FactoryToUse->CanPlaceElementsFromAssetData(AssetData))
+	{
+		return TArray<FTypedElementHandle>();
+	}
+
+	return PlaceAssetUsingFactory(AssetObj, ExtraParms.FactoryToUse, ExtraParms.bSelectOutput, ExtraParms.ObjectFlags, ExtraParms.Name);
+}

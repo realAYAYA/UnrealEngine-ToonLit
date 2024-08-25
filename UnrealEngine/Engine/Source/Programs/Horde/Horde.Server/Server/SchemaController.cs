@@ -3,15 +3,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Net;
 using System.Reflection;
 using System.Text.Json.Serialization;
 using EpicGames.Core;
 using Horde.Server.Utilities;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Primitives;
 
 namespace Horde.Server.Server
 {

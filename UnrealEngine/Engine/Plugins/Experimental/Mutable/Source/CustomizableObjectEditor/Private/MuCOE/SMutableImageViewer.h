@@ -21,6 +21,9 @@ enum class EMutableImageChannels : uint8
 {
 	RGBA,
 	RGB,
+	R,
+	G,
+	B,
 	A
 };
 

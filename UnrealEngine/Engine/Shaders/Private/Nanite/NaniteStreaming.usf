@@ -24,9 +24,9 @@ void UpdateClusterLeafFlags(uint DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	const uint PackedValue	= PackedClusterUpdates[DispatchThreadId];
-	const bool bLeaf		= (PackedValue & 1u) != 0;
-	const uint Offset		= PackedValue >> 1;
+	const uint PackedUpdate	= PackedClusterUpdates[DispatchThreadId];
+	const uint Offset			= PackedUpdate & 0xFFFFFFFCu;
+	const bool bLeaf			= (PackedUpdate & 1u) != 0;
 
 	if (bLeaf)
 	{

@@ -1,48 +1,46 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CoreMinimal.h"
-#include "Engine/SkinnedAssetCommon.h"
-#include "HAL/FileManager.h"
-#include "Misc/Paths.h"
-#include "Misc/ConfigCacheIni.h"
-#include "Misc/AutomationTest.h"
-#include "Modules/ModuleManager.h"
+#include "Animation/AnimCurveTypes.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/DebugSkelMeshComponent.h"
 #include "Animation/Skeleton.h"
-#include "Engine/SkeletalMesh.h"
-#include "Engine/StaticMesh.h"
-#include "Materials/Material.h"
-#include "Materials/MaterialInstanceConstant.h"
 #include "AssetRegistry/AssetData.h"
-#include "IAssetTools.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "CoreMinimal.h"
+#include "Editor/EditorEngine.h"
+#include "Editor/Transactor.h"
 #include "EditorReimportHandler.h"
-#include "Factories/FbxFactory.h"
-#include "Factories/ReimportFbxSkeletalMeshFactory.h"
-#include "Factories/ReimportFbxStaticMeshFactory.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/SkinnedAssetCommon.h"
+#include "Engine/StaticMesh.h"
 #include "Factories/FbxAnimSequenceImportData.h"
+#include "Factories/FbxFactory.h"
+#include "Factories/FbxImportUI.h"
 #include "Factories/FbxSkeletalMeshImportData.h"
 #include "Factories/FbxStaticMeshImportData.h"
 #include "Factories/FbxTextureImportData.h"
-#include "Factories/FbxImportUI.h"
+#include "Factories/ReimportFbxSkeletalMeshFactory.h"
+#include "Factories/ReimportFbxStaticMeshFactory.h"
+#include "FbxMeshUtils.h"
+#include "HAL/FileManager.h"
+#include "IAssetTools.h"
+#include "InterchangeHelper.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "Misc/Paths.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/AutomationTest.h"
+#include "ObjectTools.h"
+#include "Modules/ModuleManager.h"
+#include "Rendering/SkeletalMeshModel.h"
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "SkinWeightsUtilities.h"
-#include "Animation/DebugSkelMeshComponent.h"
-#include "Rendering/SkeletalMeshModel.h"
-#include "Misc/Paths.h"
+#include "StaticMeshResources.h"
+#include "Templates/Function.h"
+#include "Tests/FbxAutomationCommon.h"
 #include "UObject/SavePackage.h"
 
-#include "Animation/AnimCurveTypes.h"
-#include "Animation/AnimSequence.h"
-
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "ObjectTools.h"
-#include "StaticMeshResources.h"
-
-#include "FbxMeshUtils.h"
-#include "Tests/FbxAutomationCommon.h"
-
-#include "Editor/Transactor.h"
-#include "Editor/EditorEngine.h"
 extern UNREALED_API UEditorEngine* GEditor;
 
 //////////////////////////////////////////////////////////////////////////
@@ -216,6 +214,15 @@ bool FFbxImportAssetsAutomationTest::RunTest(const FString& Parameters)
 	}
 
 	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+
+	static const auto CVarInterchangeFbx = IConsoleManager::Get().FindConsoleVariable(TEXT("Interchange.FeatureFlags.Import.FBX"));
+	bool IsInterchangeFbxEnabled = CVarInterchangeFbx->GetBool();
+	UE::Interchange::FScopedLambda IsInterchangeEnabledGuard([&IsInterchangeFbxEnabled]()
+		{ 
+			CVarInterchangeFbx->Set(IsInterchangeFbxEnabled, ECVF_SetByConsole);
+		});
+	//Make sure interchange is disabled for fbx
+	CVarInterchangeFbx->Set(false, ECVF_SetByConsole);
 
 	FString PackagePath;
 	check(GConfig);

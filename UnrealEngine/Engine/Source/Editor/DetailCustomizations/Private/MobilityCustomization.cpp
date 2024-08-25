@@ -2,6 +2,7 @@
 
 #include "Customizations/MobilityCustomization.h"
 
+#include "RenderUtils.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
 #include "Fonts/SlateFontInfo.h"
@@ -72,8 +73,7 @@ void FMobilityCustomization::GenerateHeaderRowContent(FDetailWidgetRow& WidgetRo
 	bool bShowStatic = !( RestrictedMobilityBits & StaticMobilityBitMask );
 	bool bShowStationary = !( RestrictedMobilityBits & StationaryMobilityBitMask );
 
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
+	const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 	if (bForLight && CVarHideLightStaticMobilityWhenStaticLightingDisabled.GetValueOnGameThread())
 	{

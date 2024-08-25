@@ -2,6 +2,7 @@
 
 #include "Video/Encoders/Configs/VideoEncoderConfigNVENC.h"
 
+#include "Video/Encoders/Configs/VideoEncoderConfigAV1.h"
 #include "Video/Encoders/Configs/VideoEncoderConfigH264.h"
 #include "Video/Encoders/Configs/VideoEncoderConfigH265.h"
 
@@ -158,6 +159,13 @@ DLLEXPORT FAVResult FAVExtension::TransformConfig(FVideoEncoderConfigNVENC& OutC
 		if (InConfig.KeyframeInterval > 0)
 		{
 			OutConfig.encodeConfig->encodeCodecConfig.hevcConfig.idrPeriod = InConfig.KeyframeInterval;
+		}
+	}
+	else if (!FMemory::Memcmp(&OutConfig.encodeGUID, &NV_ENC_CODEC_AV1_GUID, sizeof(GUID)))
+	{
+		if (InConfig.KeyframeInterval > 0)
+		{
+			OutConfig.encodeConfig->encodeCodecConfig.av1Config.idrPeriod = InConfig.KeyframeInterval;
 		}
 	}
 
@@ -405,6 +413,67 @@ DLLEXPORT FAVResult FAVExtension::TransformConfig(FVideoEncoderConfigNVENC& OutC
 		OutH265Config.enableIntraRefresh = 1;
 		OutH265Config.intraRefreshPeriod = InConfig.IntraRefreshPeriodFrames;
 		OutH265Config.intraRefreshCnt = InConfig.IntraRefreshCountFrames;
+	}
+
+	return FAVExtension::TransformConfig<FVideoEncoderConfigNVENC, FVideoEncoderConfig>(OutConfig, InConfig);
+}
+
+template <>
+DLLEXPORT FAVResult FAVExtension::TransformConfig(FVideoEncoderConfigNVENC& OutConfig, FVideoEncoderConfigAV1 const& InConfig)
+{
+	static auto const ConvertProfile = [](EAV1Profile Profile) -> TAVResult<GUID> {
+		switch (Profile)
+		{
+			case EAV1Profile::Auto:
+			case EAV1Profile::Main:
+				return NV_ENC_AV1_PROFILE_MAIN_GUID;
+			default:
+				return FAVResult(EAVResult::ErrorUnsupported, FString::Printf(TEXT("AV1 profile %d is not supported"), Profile), TEXT("NVENC"));
+		}
+	};
+
+	OutConfig.encodeGUID = NV_ENC_CODEC_AV1_GUID;
+
+	TAVResult<GUID> const ConvertedProfileGUID = ConvertProfile(InConfig.Profile);
+	if (ConvertedProfileGUID.IsNotSuccess())
+	{
+		return ConvertedProfileGUID;
+	}
+
+	OutConfig.encodeConfig->profileGUID = ConvertedProfileGUID;
+	OutConfig.encodeConfig->rcParams.version = NV_ENC_RC_PARAMS_VER;
+
+	NV_ENC_CONFIG_AV1& OutAV1Config = OutConfig.encodeConfig->encodeCodecConfig.av1Config;
+	OutAV1Config.chromaFormatIDC = 1;
+
+	if (InConfig.RateControlMode == ERateControlMode::CBR && InConfig.bFillData)
+	{
+		OutAV1Config.enableBitstreamPadding = InConfig.bFillData ? 1 : 0;
+	}
+
+	// Repeat sequence header - sends sequence header with every IDR frame - maximum stabilisation of the stream when IDR is sent.
+	OutAV1Config.repeatSeqHdr = InConfig.RepeatSeqHdr;
+	
+	OutAV1Config.level = NV_ENC_LEVEL_AV1_AUTOSELECT;
+	OutAV1Config.colorPrimaries = NV_ENC_VUI_COLOR_PRIMARIES_UNSPECIFIED;
+	OutAV1Config.transferCharacteristics = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_UNSPECIFIED;
+	OutAV1Config.matrixCoefficients = NV_ENC_VUI_MATRIX_COEFFS_UNSPECIFIED;
+
+	switch (InConfig.Profile)
+	{
+		case EAV1Profile::Auto:
+		case EAV1Profile::Main:
+		default:
+			OutAV1Config.pixelBitDepthMinus8 = 0;
+			break;
+	}
+
+	// Intra refresh - used to stabilise stream on the decoded side when frames are dropped/lost.
+	if (InConfig.IntraRefreshPeriodFrames > 0)
+	{
+		OutAV1Config.enableIntraRefresh = 1;
+		OutAV1Config.intraRefreshPeriod = InConfig.IntraRefreshPeriodFrames;
+		OutAV1Config.intraRefreshCnt = InConfig.IntraRefreshCountFrames;
 	}
 
 	return FAVExtension::TransformConfig<FVideoEncoderConfigNVENC, FVideoEncoderConfig>(OutConfig, InConfig);

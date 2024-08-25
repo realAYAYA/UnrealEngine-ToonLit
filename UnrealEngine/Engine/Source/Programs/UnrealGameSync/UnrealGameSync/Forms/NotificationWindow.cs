@@ -91,7 +91,7 @@ namespace UnrealGameSync
 		{
 			base.OnClosed(e);
 
-			if(_logoBitmap != null)
+			if (_logoBitmap != null)
 			{
 				_logoBitmap.Dispose();
 				_logoBitmap = null;
@@ -101,7 +101,7 @@ namespace UnrealGameSync
 		public void CalculateBounds()
 		{
 			int referenceSize8 = (int)(8 * Font.Height) / 16;
-			using(Graphics graphics = CreateGraphics())
+			using (Graphics graphics = CreateGraphics())
 			{
 				int gutterW = referenceSize8 + referenceSize8 / 2;
 				int gutterH = referenceSize8 + referenceSize8 / 2;
@@ -120,7 +120,7 @@ namespace UnrealGameSync
 
 				// Get the logo dimensions
 				int logoH = messageY + messageH - gutterH;
-				int logoW = (_logoBitmap == null)? 16 : (int)(_logoBitmap.Width * (float)logoH / (float)_logoBitmap.Height);
+				int logoW = (_logoBitmap == null) ? 16 : (int)(_logoBitmap.Width * (float)logoH / (float)_logoBitmap.Height);
 
 				// Set the window size
 				int textX = gutterW + logoW + referenceSize8 * 2;
@@ -163,7 +163,7 @@ namespace UnrealGameSync
 			base.OnMouseMove(e);
 
 			bool newHoverOverClose = _closeButtonBounds.Contains(e.Location);
-			if(_hoverOverClose != newHoverOverClose)
+			if (_hoverOverClose != newHoverOverClose)
 			{
 				_hoverOverClose = newHoverOverClose;
 				Invalidate(_closeButtonBounds);
@@ -174,7 +174,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseDown(e);
 
-			if(e.Button == System.Windows.Forms.MouseButtons.Left)
+			if (e.Button == System.Windows.Forms.MouseButtons.Left)
 			{
 				_mouseDownOverClose = _closeButtonBounds.Contains(e.Location);
 				Invalidate(_closeButtonBounds);
@@ -185,14 +185,14 @@ namespace UnrealGameSync
 		{
 			base.OnMouseUp(e);
 
-			if(e.Button == System.Windows.Forms.MouseButtons.Left)
+			if (e.Button == System.Windows.Forms.MouseButtons.Left)
 			{
-				if(_mouseDownOverClose)
+				if (_mouseDownOverClose)
 				{
 					_mouseDownOverClose = false;
 					Invalidate(_closeButtonBounds);
 					Hide();
-					if(OnDismiss != null)
+					if (OnDismiss != null)
 					{
 						OnDismiss();
 					}
@@ -200,7 +200,7 @@ namespace UnrealGameSync
 				else
 				{
 					Hide();
-					if(OnMoreInformation != null)
+					if (OnMoreInformation != null)
 					{
 						OnMoreInformation();
 					}
@@ -213,7 +213,7 @@ namespace UnrealGameSync
 			base.OnPaintBackground(e);
 
 			Color tintColor;
-			switch(_type)
+			switch (_type)
 			{
 				case NotificationType.Warning:
 					tintColor = Color.FromArgb(240, 240, 220);
@@ -226,7 +226,7 @@ namespace UnrealGameSync
 					break;
 			}
 
-			using(Brush backgroundBrush = new LinearGradientBrush(new Point(0, 0), new Point(0, Height), Color.White, tintColor))
+			using (Brush backgroundBrush = new LinearGradientBrush(new Point(0, 0), new Point(0, Height), Color.White, tintColor))
 			{
 				e.Graphics.FillRectangle(backgroundBrush, ClientRectangle);
 			}
@@ -244,22 +244,22 @@ namespace UnrealGameSync
 			e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
 			// Draw the close button
-			if(_hoverOverClose)
+			if (_hoverOverClose)
 			{
 				e.Graphics.FillRectangle(SystemBrushes.ActiveCaption, _closeButtonBounds);
 			}
-			else if(_mouseDownOverClose)
+			else if (_mouseDownOverClose)
 			{
 				e.Graphics.FillRectangle(SystemBrushes.InactiveCaption, _closeButtonBounds);
 			}
-			if(_hoverOverClose || _mouseDownOverClose)
+			if (_hoverOverClose || _mouseDownOverClose)
 			{
-				using(Pen borderPen = new Pen(SystemColors.InactiveCaptionText, 1.0f))
+				using (Pen borderPen = new Pen(SystemColors.InactiveCaptionText, 1.0f))
 				{
 					e.Graphics.DrawRectangle(borderPen, new Rectangle(_closeButtonBounds.X, _closeButtonBounds.Y, _closeButtonBounds.Width - 1, _closeButtonBounds.Height - 1));
 				}
 			}
-			using(Pen crossPen = new Pen(Brushes.Black, 2.0f))
+			using (Pen crossPen = new Pen(Brushes.Black, 2.0f))
 			{
 				float offset = (_closeButtonBounds.Width - 1) / 4.0f;
 				e.Graphics.DrawLine(crossPen, _closeButtonBounds.Left + offset, _closeButtonBounds.Top + offset, _closeButtonBounds.Right - 1 - offset, _closeButtonBounds.Bottom - 1 - offset);

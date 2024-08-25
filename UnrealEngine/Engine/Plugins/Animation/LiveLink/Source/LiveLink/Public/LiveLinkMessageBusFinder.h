@@ -40,8 +40,19 @@ public:
 		, MachineName(InMachineName)
 		, MachineTimeOffset(InMachineOffset)
 		, bIsValidProvider(bInIsValidProvider)
+		, Annotations()
 	{}
 
+	FProviderPollResult(const FMessageAddress& InAddress, const FString& InName, const FString& InMachineName, double InMachineOffset, bool bInIsValidProvider, TMap<FName, FString> InAnnotations)
+		: Address(InAddress)
+		, Name(InName)
+		, MachineName(InMachineName)
+		, MachineTimeOffset(InMachineOffset)
+		, bIsValidProvider(bInIsValidProvider)
+		, Annotations(MoveTemp(InAnnotations))
+	{}
+
+	// Messagebus address of the provider
 	FMessageAddress Address;
 
 	// The name of the provider
@@ -59,6 +70,9 @@ public:
 	// Whether the provider is valid (compatible with the current version of LiveLink)
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "LiveLink")
 	bool bIsValidProvider = true;
+
+	// Annotations present on the message
+	TMap<FName, FString> Annotations;
 };
 
 typedef TSharedPtr<FProviderPollResult, ESPMode::ThreadSafe> FProviderPollResultPtr;

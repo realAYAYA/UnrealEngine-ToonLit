@@ -11,7 +11,7 @@ public class Imath : ModuleRules
 
 		bool bDebug = (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT);
 
-		string DeploymentDirectory = Path.Combine(ModuleDirectory, "Deploy", "Imath-3.1.3");
+		string DeploymentDirectory = Path.Combine(ModuleDirectory, "Deploy", "Imath-3.1.9");
 
 		PublicSystemIncludePaths.Add(Path.Combine(DeploymentDirectory, "include"));
 

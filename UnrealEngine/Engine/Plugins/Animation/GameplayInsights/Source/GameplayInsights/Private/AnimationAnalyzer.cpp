@@ -25,6 +25,7 @@ void FAnimationAnalyzer::OnAnalysisBegin(const FOnAnalysisContext& Context)
 	Builder.RouteEvent(RouteId_SkeletalMeshComponent, "Animation", "SkeletalMeshComponent");
 	Builder.RouteEvent(RouteId_SkeletalMeshComponent2, "Animation", "SkeletalMeshComponent2");
 	Builder.RouteEvent(RouteId_SkeletalMeshComponent3, "Animation", "SkeletalMeshComponent3");
+	Builder.RouteEvent(RouteId_SkeletalMeshComponent4, "Animation", "SkeletalMeshComponent4");
 	Builder.RouteEvent(RouteId_SkeletalMeshFrame, "Animation", "SkeletalMeshFrame");
 	Builder.RouteEvent(RouteId_AnimGraph, "Animation", "AnimGraph");
 	Builder.RouteEvent(RouteId_AnimNodeStart, "Animation", "AnimNodeStart");
@@ -51,6 +52,7 @@ void FAnimationAnalyzer::OnAnalysisBegin(const FOnAnalysisContext& Context)
 	Builder.RouteEvent(RouteId_Sync, "Animation", "Sync");
 	Builder.RouteEvent(RouteId_PoseWatch, "Animation", "PoseWatch");
 	Builder.RouteEvent(RouteId_PoseWatch2, "Animation", "PoseWatch2");
+	Builder.RouteEvent(RouteId_Inertialization, "Animation", "Inertialization");
 }
 
 bool FAnimationAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventContext& Context)
@@ -174,6 +176,39 @@ bool FAnimationAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventCon
 		check(CurveIds.Num() == CurveValues.Num());
 
 		AnimationProvider.AppendSkeletalMeshComponent(ComponentId, MeshId, Context.EventTime.AsSeconds(Cycle), RecordingTime, LodIndex, FrameCounter, ComponentToWorldFloatArray, PoseFloatArray, CurveIds, CurveValues);
+		break;
+	}
+	case RouteId_SkeletalMeshComponent4:
+	{
+		uint64 Cycle = EventData.GetValue<uint64>("Cycle");
+		double RecordingTime = EventData.GetValue<double>("RecordingTime");
+		
+		uint64 ComponentId = EventData.GetValue<uint64>("ComponentId");
+		uint64 MeshId = EventData.GetValue<uint64>("MeshId");
+		uint32 BoneCount = EventData.GetValue<uint32>("BoneCount");
+		uint32 CurveCount = EventData.GetValue<uint32>("CurveCount");
+		uint16 FrameCounter = EventData.GetValue<uint16>("FrameCounter");
+		uint16 LodIndex = EventData.GetValue<uint16>("LodIndex");
+
+		TArrayView<const float> ComponentToWorldFloatArray = EventData.GetArrayView<float>("ComponentToWorld");
+		TArrayView<const float> PoseFloatArray = EventData.GetArrayView<float>("Pose");
+		TArrayView<const uint32> CurveIds = EventData.GetArrayView<uint32>("CurveIds");
+		TArrayView<const float> CurveValues = EventData.GetArrayView<float>("CurveValues");
+		check(CurveIds.Num() == CurveValues.Num());
+
+		AnimationProvider.AppendSkeletalMeshComponent(
+			ComponentId, 
+			MeshId,
+			Context.EventTime.AsSeconds(Cycle),
+			RecordingTime,
+			LodIndex,
+			FrameCounter,
+			ComponentToWorldFloatArray,
+			PoseFloatArray,
+			CurveIds,
+			CurveValues,
+			EventData.GetArrayView<float>("ExternalMorphSetWeights"),
+			EventData.GetArrayView<int32>("ExternalMorphSetWeightCounts"));
 		break;
 	}
 	case RouteId_Name:
@@ -458,6 +493,18 @@ bool FAnimationAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventCon
 		check(CurveIds.Num() == CurveValues.Num());
 
 		AnimationProvider.AppendPoseWatch(ComponentId, AnimInstanceId, Context.EventTime.AsSeconds(Cycle), RecordingTime, PoseWatchId, NameId, FColor(Color), BoneTransformsFloatArray, CurveIds, CurveValues, RequiredBonesIntArray, WorldTransformFloatArray, bIsEnabled);
+		break;
+	}
+	case RouteId_Inertialization:
+	{
+		uint64 Cycle = EventData.GetValue<uint64>("Cycle");
+		double RecordingTime = EventData.GetValue<double>("RecordingTime");
+		uint64 AnimInstanceId = EventData.GetValue<uint64>("AnimInstanceId");
+		int32 NodeId = EventData.GetValue<int32>("NodeId");
+		float Weight = EventData.GetValue<float>("Weight");
+		EInertializationType Type = static_cast<EInertializationType>(EventData.GetValue<uint8>("Type"));	
+			
+		AnimationProvider.AppendInertialization(AnimInstanceId, Context.EventTime.AsSeconds(Cycle), RecordingTime, NodeId, Weight, Type);
 		break;
 	}
 	}

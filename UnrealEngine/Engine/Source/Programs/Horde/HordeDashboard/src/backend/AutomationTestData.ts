@@ -37,6 +37,7 @@ type TestDataState = {
     tests?: string[];
     suites?: string[];
     weeks?: number;
+    autoExpand?: boolean;
 }
 
 export class TestDataHandler {
@@ -44,8 +45,7 @@ export class TestDataHandler {
     constructor(search: URLSearchParams) {
         TestDataHandler.instance = this;
         makeObservable(this);
-        this.state = this.stateFromSearch(search);
-        this.load();
+        this.state = this.stateFromSearch(search);        
     }
 
     setAutomation(automation: string, initStreams: boolean = false) {
@@ -79,6 +79,13 @@ export class TestDataHandler {
 
         }
 
+        if (this.updateSearch()) {
+            this.setUpdated();
+        }
+    }
+
+    setAutoExpand(value: boolean) {
+        this.state.autoExpand = value;
         if (this.updateSearch()) {
             this.setUpdated();
         }
@@ -660,6 +667,8 @@ export class TestDataHandler {
         state.tests = state.tests?.sort((a, b) => a.localeCompare(b));
         state.suites = state.suites?.sort((a, b) => a.localeCompare(b));
 
+        state.autoExpand = state.autoExpand ? state.autoExpand : undefined;
+
         const search = new URLSearchParams();
 
         const csearch = this.search.toString();
@@ -670,6 +679,10 @@ export class TestDataHandler {
 
         if (state.weeks) {
             search.append("weeks", state.weeks.toString());
+        }
+
+        if (state.autoExpand) {
+            search.append("autoexpand", "true");
         }
 
         state.streams?.forEach(s => {
@@ -739,6 +752,8 @@ export class TestDataHandler {
 
         const weeks = search.get("weeks") ?? undefined;
 
+        const autoExpand = search.get("autoexpand") ?? undefined;
+
         state.streams = streams?.sort((a, b) => a.localeCompare(b));
         state.automation = automation?.length ? automation : undefined;
         state.platforms = platforms?.sort((a, b) => a.localeCompare(b));
@@ -755,6 +770,8 @@ export class TestDataHandler {
         if (typeof (state.weeks) !== "number") {
             state.weeks = defaultQueryWeeks;
         }
+
+        state.autoExpand = autoExpand === "true" ? true : undefined;
 
         return state;
     }

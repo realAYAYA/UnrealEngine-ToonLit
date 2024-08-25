@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Amazon.CloudWatch;
 using Amazon.CloudWatch.Model;
@@ -24,19 +26,27 @@ namespace Horde.Server.Agents.Fleet
 		/// <summary>
 		/// Compute cluster ID to observe
 		/// </summary>
-		public string ComputeClusterId { get; set; }
-		
+		public string ComputeClusterId { get; set; } = "default";
+
 		/// <summary>
 		/// AWS CloudWatch namespace to write metrics in
 		/// </summary>
-		public string Namespace { get; set; }
-		
+		public string Namespace { get; set; } = "Horde";
+
+		/// <summary>
+		/// Constructor used for JSON serialization
+		/// </summary>
+		[JsonConstructor]
+		public ComputeQueueAwsMetricSettings()
+		{
+		}
+
 		/// <summary>
 		/// Constructor
 		/// </summary>
 		/// <param name="computeClusterId"></param>
 		/// <param name="cloudWatchNamespace"></param>
-		public ComputeQueueAwsMetricSettings(string computeClusterId, string cloudWatchNamespace = "HordeBuild")
+		public ComputeQueueAwsMetricSettings(string computeClusterId, string cloudWatchNamespace = "Horde")
 		{
 			ComputeClusterId = computeClusterId;
 			Namespace = cloudWatchNamespace;
@@ -45,7 +55,7 @@ namespace Horde.Server.Agents.Fleet
 
 	static class ComputeServiceExtensions
 	{
-		public static Task<int> GetNumQueuedTasksForPoolAsync(this ComputeTaskSource computeTaskSource, ClusterId clusterId, IPool pool)
+		public static Task<int> GetNumQueuedTasksForPoolAsync(this ComputeTaskSource computeTaskSource, ClusterId clusterId, IPoolConfig pool)
 		{
 			// Will need to reimplement this functionality in ComputeService if we want to use this strategy, but conditions on tasks
 			// may reference properties that are specific to an agent rather than a pool...
@@ -84,7 +94,7 @@ namespace Horde.Server.Agents.Fleet
 		public string Name { get; } = "ComputeQueueAwsMetric";
 
 		/// <inheritdoc/>
-		public async Task<PoolSizeResult> CalculatePoolSizeAsync(IPool pool, List<IAgent> agents)
+		public async Task<PoolSizeResult> CalculatePoolSizeAsync(IPoolConfig pool, List<IAgent> agents, CancellationToken cancellationToken)
 		{
 			using TelemetrySpan span = OpenTelemetryTracers.Horde.StartActiveSpan($"{nameof(ComputeQueueAwsMetricStrategy)}.{nameof(CalculatePoolSizeAsync)}");
 			span.SetAttribute(OpenTelemetryTracers.DatadogResourceAttribute, pool.Id.ToString());
@@ -93,7 +103,7 @@ namespace Horde.Server.Agents.Fleet
 			Dictionary<string, List<MetricDatum>> metricsPerCloudWatchNamespace = new();
 			int numAgents = agents.Count;
 			int totalCpuCores = agents.Select(x => x.Resources.TryGetValue(KnownPropertyNames.LogicalCores, out int numCpuCores) ? numCpuCores : 0).Sum();
-			int numQueuedComputeTasks =	await _computeTaskSource.GetNumQueuedTasksForPoolAsync(new ClusterId(_settings.ComputeClusterId), pool);
+			int numQueuedComputeTasks = await _computeTaskSource.GetNumQueuedTasksForPoolAsync(new ClusterId(_settings.ComputeClusterId), pool);
 
 			double numQueuedTasksPerAgent = numQueuedComputeTasks / (double)Math.Max(numAgents, 1);
 			double numQueuedTasksPerCores = numQueuedComputeTasks / (double)Math.Max(totalCpuCores, 1);
@@ -134,7 +144,7 @@ namespace Horde.Server.Agents.Fleet
 				cwSpan.SetAttribute("namespace", ns);
 
 				PutMetricDataRequest request = new() { Namespace = ns, MetricData = metricDatumsNs };
-				PutMetricDataResponse response = await _cloudWatch.PutMetricDataAsync(request);
+				PutMetricDataResponse response = await _cloudWatch.PutMetricDataAsync(request, cancellationToken);
 				cwSpan.SetAttribute("res.statusCode", (int)response.HttpStatusCode);
 				if (response.HttpStatusCode != HttpStatusCode.OK)
 				{

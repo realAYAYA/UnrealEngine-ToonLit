@@ -16,7 +16,7 @@ private:
 	TUniquePtr<FAudioCookInputs> CookInputs;
 
 public:
-	FDerivedAudioDataCompressor(USoundWave* InSoundNode, FName InBaseFormat, FName InHashedFormat, const FPlatformAudioCookOverrides* InCompressionOverrides);
+	ENGINE_API FDerivedAudioDataCompressor(USoundWave* InSoundNode, FName InBaseFormat, FName InHashedFormat, const FPlatformAudioCookOverrides* InCompressionOverrides, const ITargetPlatform* InTargetPlatform=nullptr);
 
 	virtual const TCHAR* GetPluginName() const override
 	{

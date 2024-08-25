@@ -1309,7 +1309,7 @@ int32 UTransBuffer::End()
 				if (GUndo->IsTransient())
 				{
 					check(UndoCount == 0);
-					UndoBuffer.Pop(false);
+					UndoBuffer.Pop(EAllowShrinking::No);
 					UndoBuffer.Reserve(UndoBuffer.Num() + RemovedTransactions.Num());
 
 					// Restore the transactions state to what it was before that transient (i.e. ineffective) transaction (like in the Cancel case : allows to not lose the Redo stack in case 
@@ -1410,7 +1410,7 @@ void UTransBuffer::Cancel( int32 StartIndex /*=0*/ )
 			// clear the global pointer to the soon-to-be-deleted transaction
 			GUndo = nullptr;
 			
-			UndoBuffer.Pop(false);
+			UndoBuffer.Pop(EAllowShrinking::No);
 			UndoBuffer.Reserve(UndoBuffer.Num() + RemovedTransactions.Num());
 
 			if (PreviousUndoCount > 0)

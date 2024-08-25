@@ -35,7 +35,7 @@ namespace GLTF
 		void SetupBufferExtensions(const FJsonObject& Object, FBuffer& Buffer) const;
 		void SetupBufferViewExtensions(const FJsonObject& Object, FBufferView& BufferView) const;
 		void SetupAccessorExtensions(const FJsonObject& Object, FAccessor& Accessor) const;
-		void SetupPrimitiveExtensions(const FJsonObject& Object, FPrimitive& Primitive) const;
+		void SetupPrimitiveExtensions(const FJsonObject& Object, FPrimitive& Primitive, uint32 PrimitiveIndex, const FString& MeshUniqueId) const;
 		void SetupMeshExtensions(const FJsonObject& Object, FMesh& Mesh) const;
 		void SetupSceneExtensions(const FJsonObject& Object, FScene& Scene) const;
 		void SetupNodeExtensions(const FJsonObject& Object, FNode& Node) const;

@@ -826,9 +826,9 @@ void LidarPointCloudMeshing::CalculateNormals(FLidarPointCloudOctree* Octree, FT
 						int32 B = FMath::RandRange(0, MaxPointIndex - 1);
 						int32 C = FMath::RandRange(0, MaxPointIndex - 2);
 						int32 X = Indices[A];
-						Indices.RemoveAtSwap(A, 1, false);
+						Indices.RemoveAtSwap(A, 1, EAllowShrinking::No);
 						int32 Y = Indices[B];
-						Indices.RemoveAtSwap(B, 1, false);
+						Indices.RemoveAtSwap(B, 1, EAllowShrinking::No);
 						int32 Z = Indices[C];
 						Indices.Add(X);
 						Indices.Add(Y);
@@ -929,7 +929,7 @@ void LidarPointCloudMeshing::CalculateNormals(FLidarPointCloudOctree* Octree, FT
 					{
 						(*Point)->Normal = Normal;
 						--DataEnd;
-						SamplingUnit->Points.RemoveAtSwap(Point-- - DataStart, 1, false);
+						SamplingUnit->Points.RemoveAtSwap(Point-- - DataStart, 1, EAllowShrinking::No);
 					}
 				}
 

@@ -114,7 +114,8 @@ public:
 	virtual TArray<FString> GetBuildFileList() const override;
 	virtual TArray<FStringView> GetBuildFileListView() const override;
 	virtual TArray<FString> GetBuildFileList(const TSet<FString>& Tags) const override;
-	virtual int64 GetFileSize(const FString& Filename) const override;
+	virtual TArray<FStringView> GetBuildFileListView(const TSet<FString>& Tags) const override;
+	virtual int64 GetFileSize(FStringView Filename) const override;
 	virtual int64 GetFileSize(const TArray<FString>& Filenames) const override;
 	virtual int64 GetFileSize(const TSet  <FString>& Filenames) const override;
 	virtual bool GetFileHash(const FString& Filename, FSHAHash& OutHash) const override;
@@ -228,8 +229,9 @@ public:
 	 * @param Tags					The tags for the required file groups.
 	 * @param TaggedFiles	OUT		Receives the tagged files.
 	 */
-	virtual void GetTaggedFileList(const TSet<FString>& Tags, TArray<FString>& TaggedFiles) const;
-	virtual void GetTaggedFileList(const TSet<FString>& Tags, TSet  <FString>& TaggedFiles) const;
+	virtual void GetTaggedFileList(const TSet<FString>& Tags, TArray<FString>&     TaggedFiles) const;
+	virtual void GetTaggedFileList(const TSet<FString>& Tags, TArray<FStringView>& TaggedFiles) const;
+	virtual void GetTaggedFileList(const TSet<FString>& Tags, TSet<FString>&       TaggedFiles) const;
 
 	/**
 	 * Get the list of Guids for all chunks referenced by this manifest

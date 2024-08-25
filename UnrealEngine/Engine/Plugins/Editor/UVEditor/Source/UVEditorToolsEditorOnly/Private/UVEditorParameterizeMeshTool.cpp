@@ -156,7 +156,7 @@ void UUVEditorParameterizeMeshTool::OnPropertyModified(UObject* PropertySet, FPr
 														   || (Settings->Method == EParameterizeMeshUVMethod::UVAtlas &&
 															   UVAtlasProperties->bUsePolygroups));
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->InvalidateResult();
 	}
@@ -172,7 +172,7 @@ void UUVEditorParameterizeMeshTool::OnMethodTypeChanged()
 	SetToolPropertySourceEnabled(XAtlasProperties, Settings->Method == EParameterizeMeshUVMethod::XAtlas);
 	SetToolPropertySourceEnabled(PatchBuilderProperties, Settings->Method == EParameterizeMeshUVMethod::PatchBuilder);
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->InvalidateResult();
 	}
@@ -188,7 +188,7 @@ void UUVEditorParameterizeMeshTool::Shutdown(EToolShutdownType ShutdownType)
 	XAtlasProperties->SaveProperties(this);
 	PatchBuilderProperties->SaveProperties(this);
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->OnMeshUpdated.RemoveAll(this);
 	}
@@ -199,7 +199,7 @@ void UUVEditorParameterizeMeshTool::Shutdown(EToolShutdownType ShutdownType)
 		const FText TransactionName(LOCTEXT("ParameterizeMeshTransactionName", "Auto UV Tool"));
 		ChangeAPI->BeginUndoTransaction(TransactionName);
 
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Set things up for undo. 
 			FDynamicMeshChangeTracker ChangeTracker(Target->UnwrapCanonical.Get());
@@ -223,13 +223,13 @@ void UUVEditorParameterizeMeshTool::Shutdown(EToolShutdownType ShutdownType)
 	else
 	{
 		// Reset the inputs
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			Target->UpdatePreviewsFromCanonical();
 		}
 	}
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->ClearOpFactory();
 		Target->AppliedPreview->OverrideMaterial = nullptr;
@@ -246,7 +246,7 @@ void UUVEditorParameterizeMeshTool::Shutdown(EToolShutdownType ShutdownType)
 
 void UUVEditorParameterizeMeshTool::OnTick(float DeltaTime)
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->Tick(DeltaTime);
 	}
@@ -254,7 +254,7 @@ void UUVEditorParameterizeMeshTool::OnTick(float DeltaTime)
 
 bool UUVEditorParameterizeMeshTool::CanAccept() const
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		if (!Target->AppliedPreview->HaveValidResult())
 		{
@@ -287,7 +287,7 @@ void UUVEditorParameterizeMeshTool::RecordAnalytics()
 	if (CanAccept())
 	{
 		TArray<double> PerAssetValidResultComputeTimes;
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Note: This would log -1 if the result was invalid, but checking CanAccept above ensures results are valid
 			PerAssetValidResultComputeTimes.Add(Target->AppliedPreview->GetValidResultComputeTime());

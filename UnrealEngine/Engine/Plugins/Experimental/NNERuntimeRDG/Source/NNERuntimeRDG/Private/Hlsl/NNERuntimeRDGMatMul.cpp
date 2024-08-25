@@ -22,7 +22,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 2);
 			check(OutputTensors.Num() == 1);
@@ -162,7 +162,10 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterMatMulOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("MatMul"), CreateMatMulOperator, ValidateMatMulOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("MatMul"), TEXT("Onnx")}, 1}, CreateMatMulOperator, ValidateMatMulOperator);
+		Registry.OpAdd({{TEXT("MatMul"), TEXT("Onnx")}, 9}, CreateMatMulOperator, ValidateMatMulOperator);
+		Registry.OpAdd({{TEXT("MatMul"), TEXT("Onnx")}, 13}, CreateMatMulOperator, ValidateMatMulOperator);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

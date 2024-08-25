@@ -85,13 +85,16 @@ struct FOptimusCompoundAction :
 
 	/// Add a sub-action from a heap-constructed action. This takes ownership of the pointer.
 	/// @param InAction The action to add.
-	void AddSubAction(FOptimusAction* InAction);
+	/// Returns a weakptr for subsequent actions reference the result of this action
+	TWeakPtr<FOptimusAction> AddSubAction(FOptimusAction* InAction);
 
 	template<typename T, typename... ArgTypes>
-	typename TEnableIf<TPointerIsConvertibleFromTo<T, FOptimusAction>::Value, void>::Type 
+	typename TEnableIf<TPointerIsConvertibleFromTo<T, FOptimusAction>::Value, TWeakPtr<T>>::Type 
 	AddSubAction(ArgTypes&& ...Args)
 	{
-		SubActions.Add(MakeShared<T>(Forward<ArgTypes>(Args)...));
+		TSharedPtr<T> Action = MakeShared<T>(Forward<ArgTypes>(Args)...);
+		SubActions.Add(Action);
+		return Action.ToWeakPtr();
 	}
 
 	bool HasSubActions() const

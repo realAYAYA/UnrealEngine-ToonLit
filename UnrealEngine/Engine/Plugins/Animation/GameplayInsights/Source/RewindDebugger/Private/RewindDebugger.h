@@ -5,6 +5,7 @@
 #include "IRewindDebugger.h"
 #include "RewindDebuggerTrack.h"
 #include "BindableProperty.h"
+#include "IRewindDebuggerTrackCreator.h"
 #include "Containers/Ticker.h"
 #include "UObject/WeakObjectPtr.h"
 
@@ -33,6 +34,7 @@ public:
 
 	// IRewindDebugger interface
 	virtual double CurrentTraceTime() const override { return TraceTime.Get(); }
+	virtual double GetScrubTime() const override { return CurrentScrubTime; }
 	virtual const TRange<double>& GetCurrentTraceRange() const override { return CurrentTraceRange; }
 	virtual const TRange<double>& GetCurrentViewRange() const override { return CurrentViewRange; }
 	virtual const TraceServices::IAnalysisSession* GetAnalysisSession() const override;
@@ -68,6 +70,9 @@ public:
 
 	bool ShouldAutoRecordOnPIE() const;
 	void SetShouldAutoRecordOnPIE(bool value);
+	
+	bool ShouldAutoEject() const;
+	void SetShouldAutoEject(bool value);
 
 	// Stop recording: Stop tracing Object + Animation Data.
 	void StopRecording();
@@ -93,7 +98,6 @@ public:
 
 	bool CanScrub() const;
 	void ScrubToTime(double ScrubTime, bool bIsScrubbing);
-	double GetScrubTime() { return CurrentScrubTime; }
 
 	// Tick function: While recording, update recording duration.  While paused, and we have recorded data, update skinned mesh poses for the current frame, and handle playback.
 	void Tick(float DeltaTime);
@@ -112,6 +116,7 @@ public:
 	
 	void UpdateDetailsPanel(TSharedRef<SDockTab> DetailsTab);
 	static void RegisterComponentContextMenu();
+	static void RegisterToolBar();
 	
 	DECLARE_DELEGATE_OneParam( FOnTrackCursor, bool)
 	void OnTrackCursor(const FOnTrackCursor& TrackCursorCallback);
@@ -123,6 +128,8 @@ public:
 	virtual void OpenDetailsPanel() override;
 	void SetIsDetailsPanelOpen(bool bIsOpen) { bIsDetailsPanelOpen = bIsOpen; }
 	bool IsDetailsPanelOpen(bool bIsOpen) { return bIsDetailsPanelOpen; }
+
+	TArrayView<RewindDebugger::FRewindDebuggerTrackType> GetTrackTypes() { return TrackTypes; };
 
 private:
 	void RefreshDebugComponents(TArray<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>& InTracks, TArray<TSharedPtr<FDebugObjectInfo>>& OutComponents);
@@ -196,6 +203,8 @@ private:
 
 	bool bTargetActorPositionValid;
 	FVector TargetActorPosition;
+
+	TArray<RewindDebugger::FRewindDebuggerTrackType> TrackTypes;
 
 	bool bIsDetailsPanelOpen;
 };

@@ -5,12 +5,11 @@
 #include "UObject/SoftObjectPath.h"
 
 /**
-*	Used for passing key-value pairs to the asset registry during cook, and is accessed off of
-*	FArchive::CookContext()
+*	Used for passing key-value pairs to the asset registry during serialization during cook,
+*	and is accessed off of FArchive::CookContext()
 * 
-*	This exists so that the asset registry can have per-platform data, as the general purpose 
-*	GetAssetRegistryTags function can't have a TargetPlatform and more generally can't assume 
-*	that platform data has had a chance to build.
+*	This duplicates functionality in GetAssetRegistryTags, but it exists because some tags are
+*	expensive to calculate and the calculation overlaps with other calculations done during serialize.
 *
 *	All tags added to this list have "Cook_" prepended to their names prior to being
 *	added to the asset registry.
@@ -33,7 +32,7 @@ struct FCookTagList
 {
 	UPackage* Package;
 	using FTagNameValuePair = TPair<FName, FString>;
-	TMap<FSoftObjectPath, TArray<FTagNameValuePair>> ObjectToTags;
+	TMap<UObject*, TArray<FTagNameValuePair>> ObjectToTags;
 
 	FCookTagList(UPackage* InPackage) : Package(InPackage) {}
 
@@ -47,14 +46,14 @@ struct FCookTagList
 	*/
 	void Add(UObject* InObject, FName InTagName, FString&& InTagValue)
 	{
-		if (!ensure(InObject->GetOutermost() == Package))
+		if (!Package || !ensure(InObject->GetOutermost() == Package))
 		{
 			return;
 		}
 
 		if (InObject->IsAsset())
 		{
-			TArray<FTagNameValuePair>& ObjectTags = ObjectToTags.FindOrAdd(FSoftObjectPath(InObject));
+			TArray<FTagNameValuePair>& ObjectTags = ObjectToTags.FindOrAdd(InObject);
 			ObjectTags.Add(FTagNameValuePair(InTagName, InTagValue));
 		}
 	}

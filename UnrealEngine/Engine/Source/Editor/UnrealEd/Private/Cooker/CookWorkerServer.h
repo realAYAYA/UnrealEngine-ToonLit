@@ -7,11 +7,11 @@
 #include "Containers/ArrayView.h"
 #include "Containers/RingBuffer.h"
 #include "Containers/Set.h"
+#include "Cooker/CookPackageData.h"
+#include "Cooker/CookSockets.h"
+#include "Cooker/CookTypes.h"
+#include "Cooker/MPCollector.h"
 #include "CookOnTheSide/CookOnTheFlyServer.h"
-#include "CookMPCollector.h"
-#include "CookPackageData.h"
-#include "CookSockets.h"
-#include "CookTypes.h"
 #include "HAL/CriticalSection.h"
 #include "Logging/LogVerbosity.h"
 #include "Misc/Guid.h"
@@ -67,7 +67,7 @@ public:
 	bool TryHandleConnectMessage(FWorkerConnectMessage& Message, FSocket* InSocket, TArray<UE::CompactBinaryTCP::FMarshalledMessage>&& OtherPacketMessages, ECookDirectorThread TickThread);
 
 	/** Send the message immediately to the Socket. If cannot complete immediately, it will be finished during Tick. */
-	void SendMessage(const UE::CompactBinaryTCP::IMessage& Message, ECookDirectorThread TickThread);
+	void SendMessage(const IMPCollectorMessage& Message, ECookDirectorThread TickThread);
 
 	/** Periodic Tick function to send and receive messages to the Client. */
 	void TickCommunication(ECookDirectorThread TickThread);
@@ -98,6 +98,9 @@ public:
 	int32 GetLastReceivedHeartbeatNumber() const;
 	/** Set the LastReceivedHeartbeatNumber. Assumes lock is already entered; can only be called from with a HandleReceivedMessages callback */
 	void SetLastReceivedHeartbeatNumberInLock(int32 InHeartbeatNumber);
+
+	int32 GetPackagesAssignedFenceMarker() const;
+	int32 GetPackagesRetiredFenceMarker() const;
 
 private:
 	enum class EConnectStatus
@@ -151,7 +154,7 @@ private:
 	/** The main implementation of AbortAllAssignments, only callable from inside the lock. */
 	void AbortAllAssignmentsInLock(TSet<FPackageData*>& OutPendingPackages);
 	/** Send the message immediately to the Socket. If cannot complete immediately, it will be finished during Tick. */
-	void SendMessageInLock(const UE::CompactBinaryTCP::IMessage& Message);
+	void SendMessageInLock(const IMPCollectorMessage& Message);
 	/** Send this into the given state. Update any state-dependent variables. */
 	void SendToState(EConnectStatus TargetStatus);
 	/** Close the connection and connection resources to the remote process. Does not kill the process. */
@@ -189,6 +192,8 @@ private:
 	uint32 CookWorkerProcessId = 0;
 	int32 ProfileId = 0;
 	int32 LastReceivedHeartbeatNumber = 0;
+	int32 PackagesAssignedFenceMarker = 0;
+	int32 PackagesRetiredFenceMarker = 0;
 	double ConnectStartTimeSeconds = 0.;
 	double ConnectTestStartTimeSeconds = 0.;
 	FWorkerId WorkerId = FWorkerId::Invalid();
@@ -196,6 +201,8 @@ private:
 	bool bTerminateImmediately = false;
 	bool bNeedCrashDiagnostics = false;
 };
+
+UE::CompactBinaryTCP::FMarshalledMessage MarshalToCompactBinaryTCP(const IMPCollectorMessage& Message);
 
 /** Information about a PackageData the director sends to cookworkers. */
 struct FAssignPackageData
@@ -213,7 +220,7 @@ FCbWriter& operator<<(FCbWriter& Writer, const FInstigator& Instigator);
 bool LoadFromCompactBinary(FCbFieldView Field, FInstigator& Instigator);
 
 /** Message from Server to Client to cook the given packages. */
-struct FAssignPackagesMessage : public UE::CompactBinaryTCP::IMessage
+struct FAssignPackagesMessage : public IMPCollectorMessage
 {
 public:
 	FAssignPackagesMessage() = default;
@@ -222,6 +229,7 @@ public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("AssignPackagesMessage"); }
 
 public:
 	TArray<FAssignPackageData> PackageDatas;
@@ -230,7 +238,7 @@ public:
 };
 
 /** Message from Server to Client to cancel the cook of the given packages. */
-struct FAbortPackagesMessage : public UE::CompactBinaryTCP::IMessage
+struct FAbortPackagesMessage : public IMPCollectorMessage
 {
 public:
 	FAbortPackagesMessage() = default;
@@ -239,6 +247,7 @@ public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("AbortPackagesMessage"); }
 
 public:
 	TArray<FName> PackageNames;
@@ -250,7 +259,7 @@ public:
  * If from Server, request that Client shutdown.
  * If from Client, notify Server it is shutting down.
  */
-struct FAbortWorkerMessage : public UE::CompactBinaryTCP::IMessage
+struct FAbortWorkerMessage : public IMPCollectorMessage
 {
 public:
 	enum EType
@@ -263,6 +272,7 @@ public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("AbortWorkerMessage"); }
 
 public:
 	EType Type;
@@ -270,12 +280,13 @@ public:
 };
 
 /** Message From Server to Client giving all of the COTFS settings the client needs. */
-struct FInitialConfigMessage : public UE::CompactBinaryTCP::IMessage
+struct FInitialConfigMessage : public IMPCollectorMessage
 {
 public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("InitialConfigMessage"); }
 
 	void ReadFromLocal(const UCookOnTheFlyServer& COTFS, const TArray<ITargetPlatform*>& InOrderedSessionPlatforms,
 		const FCookByTheBookOptions& InCookByTheBookOptions, const FCookOnTheFlyOptions& InCookOnTheFlyOptions,
@@ -323,12 +334,13 @@ bool LoadFromCompactBinary(FCbFieldView Field, FDiscoveredPackageReplication& Ou
  * Message from CookWorker to Director that reports dependency packages discovered during load/save of
  * a package that were not found in the earlier traversal of the packages dependencies.
  */
-struct FDiscoveredPackagesMessage : public UE::CompactBinaryTCP::IMessage
+struct FDiscoveredPackagesMessage : public IMPCollectorMessage
 {
 public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("DiscoveredPackagesMessage"); }
 
 public:
 	TArray<FDiscoveredPackageReplication> Packages;
@@ -383,13 +395,14 @@ private:
  * The Director intiates a heartbeat message; the CookWorker always responds to a heartbeat message with its own heartbeat message
  * in reply, with the same number.
  */
-struct FHeartbeatMessage : public UE::CompactBinaryTCP::IMessage
+struct FHeartbeatMessage : public IMPCollectorMessage
 {
 public:
 	FHeartbeatMessage(int32 InHeartbeatNumber=-1);
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("HeartbeatMessage"); }
 
 public:
 	int32 HeartbeatNumber;

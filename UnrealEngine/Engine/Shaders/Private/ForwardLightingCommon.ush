@@ -96,7 +96,7 @@ float2 CalculateNearestResolvedDepthScreenUV(float2 ScreenUV, float SceneDepth)
 
 float4 GetForwardDynamicShadowFactors(float2 ScreenUV)
 {
-	int2 IntScreenUV = int2(trunc(ScreenUV * View_BufferSizeAndInvSize.xy));
+	int2 IntScreenUV = int2(trunc(ScreenUV * View.BufferSizeAndInvSize.xy));
 	float4 Value = 1.0f;
 	// Avoid sampling the white texture fallback because Load returns 0 when out-of-bound.
 	BRANCH
@@ -129,7 +129,7 @@ FDeferredLightingSplit GetForwardDirectLightingSplit(
 	float InDirectionalLightCloudShadow, float3 InDirectionalLightAtmosphereTransmittance, inout float OutDirectionalLightShadow,
 	bool bSeparateMainDirLightLuminance, inout float3 SeparatedMainDirLightLuminance, bool bSkipDirLightVirtualShadowMapEvaluation)
 {
-	float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+	float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 
 	float4 DynamicShadowFactors = 1;
 
@@ -194,7 +194,7 @@ FDeferredLightingSplit GetForwardDirectLightingSplit(
 			{
 				#if SUPPORT_VSM_FOWARD_QUALITY == 1
 				{
-					const FLightShaderParameters DireciontalLight = ConvertToLightShaderParameters(LightData);
+					const FLightShaderParameters DirectionalLight = ConvertToLightShaderParameters(LightData);
 					FVirtualShadowMapSMRTSettings SMRTSettings = GetDirectionalLightSMRTSettings();
 
 					const bool bBackfaceCull = !IsSubsurfaceModel(GBufferData.ShadingModelID);
@@ -203,7 +203,7 @@ FDeferredLightingSplit GetForwardDirectLightingSplit(
 
 					FVirtualShadowMapSampleResult VirtualShadowMapSample = TraceDirectional(
 						ForwardLightData.DirectionalLightVSM,
-						DireciontalLight,
+						DirectionalLight,
 						PixelPos,
 						GBufferData.Depth,
 						TranslatedWorldPosition,
@@ -224,7 +224,7 @@ FDeferredLightingSplit GetForwardDirectLightingSplit(
 				}
 				#else
 				{
-					FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapTranslatedWorld( ForwardLightData.DirectionalLightVSM, TranslatedWorldPosition );
+					FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapDirectional( ForwardLightData.DirectionalLightVSM, TranslatedWorldPosition );
 					DynamicShadowFactor *= VirtualShadowMapSample.ShadowFactor;
 				}
 				#endif
@@ -267,14 +267,14 @@ FDeferredLightingSplit GetForwardDirectLightingSplit(
 	
 	// Limit max to ForwardLightData.NumLocalLights.
 	// This prevents GPU hangs when the PS tries to read from uninitialized NumCulledLightsGrid buffer
-	const uint NumLocalLights = min(CulledLightsGrid.NumLocalLights, GetNumLocalLights(EyeIndex));
+	const uint NumLightsInGridCell = min(CulledLightsGrid.NumLights, GetMaxLightsPerCell(EyeIndex));
 
 	LOOP
-	for (uint LocalLightListIndex = 0; LocalLightListIndex < NumLocalLights; LocalLightListIndex++)
+	for (uint GridLightListIndex = 0; GridLightListIndex < NumLightsInGridCell; GridLightListIndex++)
 	{
 		half4 PreviewShadowMapChannelMask = 1;
 		uint  LocalLightingChannelMask = LIGHTING_CHANNEL_MASK;
-		const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + LocalLightListIndex, EyeIndex);
+		const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + GridLightListIndex, EyeIndex);
 		FDeferredLightData LightData = ConvertToDeferredLight(LocalLight, SpecularScale, PreviewShadowMapChannelMask, LocalLightingChannelMask);
 		// Rect light optionally supported in forward.
 		LightData.bRectLight = LightData.bRectLight && SUPPORT_RECTLIGHT_ON_FORWARD_LIT_TRANSLUCENT;
@@ -283,6 +283,9 @@ FDeferredLightingSplit GetForwardDirectLightingSplit(
 		{
 			LightData.HairTransmittance = EvaluateDualScattering(GBufferData, -CameraVector, LightData.Direction);
 		}
+		#endif
+		#if USE_IES_PROFILE
+		LightData.Color *= ComputeLightProfileMultiplier(TranslatedWorldPosition, LightData.TranslatedWorldPosition, -LightData.Direction, LightData.Tangent, LightData.IESAtlasIndex);
 		#endif
 
 		float DynamicShadowing = dot(PreviewShadowMapChannelMask, DynamicShadowFactors);
@@ -348,12 +351,12 @@ float3 GetForwardDirectLightingForVertexLighting(uint GridIndex, float3 Translat
 
 	// Limit max to ForwardLightData.NumLocalLights.
 	// This prevents GPU hangs when the PS tries to read from uninitialized NumCulledLightsGrid buffer
-	const uint NumLocalLights = min(CulledLightsGrid.NumLocalLights, GetNumLocalLights(EyeIndex));
+	const uint NumLightsInGridCell = min(CulledLightsGrid.NumLights, GetMaxLightsPerCell(EyeIndex));
 
 	LOOP
-	for (uint LocalLightListIndex = 0; LocalLightListIndex < NumLocalLights; LocalLightListIndex++)
+	for (uint GridLightListIndex = 0; GridLightListIndex < NumLightsInGridCell; GridLightListIndex++)
 	{
-		const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + LocalLightListIndex, EyeIndex);
+		const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + GridLightListIndex, EyeIndex);
 		const FSimpleDeferredLightData LightData = ConvertToSimpleLight(LocalLight);
 
 		// No specular for vertex lighting
@@ -387,7 +390,7 @@ uint MortonCode( uint x )
 #define USE_BLENDED_REFLECTION_CAPTURES_FORWARD (FORWARD_SHADING && MATERIAL_HQ_FORWARD_REFLECTION_CAPTURES)
 #define REFLECTION_COMPOSITE_USE_BLENDED_REFLECTION_CAPTURES ((USE_BLENDED_REFLECTION_CAPTURES_DEFERRED || USE_BLENDED_REFLECTION_CAPTURES_FORWARD) && FEATURE_LEVEL >= FEATURE_LEVEL_SM5)
 // REFLECTION_COMPOSITE_SUPPORT_SKYLIGHT_BLEND covers forward rendered material for deferred and forward shading pathes.
-#define REFLECTION_COMPOSITE_SUPPORT_SKYLIGHT_BLEND (MATERIAL_FORWARD_BLENDS_SKYLIGHT_CUBEMAPS)
+#define REFLECTION_COMPOSITE_SUPPORT_SKYLIGHT_BLEND (MATERIAL_FORWARD_BLENDS_SKYLIGHT_CUBEMAPS || FORWARD_SHADING_FORCES_SKYLIGHT_CUBEMAPS_BLENDING)
 #define REFLECTION_COMPOSITE_HAS_BOX_CAPTURES 1
 #define REFLECTION_COMPOSITE_HAS_SPHERE_CAPTURES 1
 #include "ReflectionEnvironmentComposite.ush"
@@ -399,16 +402,19 @@ half3 GetImageBasedReflectionSpecular(FMaterialPixelParameters MaterialParameter
 
 #if (TRANSLUCENCY_LIGHTING_SURFACE_FORWARDSHADING || TRANSLUCENCY_LIGHTING_SURFACE_LIGHTINGVOLUME) && MATERIALBLENDING_ANY_TRANSLUCENT && PROJECT_SUPPORTS_LUMEN && !FORWARD_SHADING
 	
-	bUseLumenFrontLayerReflection = UseFrontLayerReflection(MaterialParameters.ViewBufferUV, MaterialParameters.ScreenPosition.w);
+	// For translucent rendered after motion blur, we cannot use Lumen front layer reflection because depth test is disabled in this case 
+	// (depth is jittered and post motion blur composition can happen at a different resolution with dynamic resolution scaling).
+	// Such Lumen reflections would look different on translucent meshes when occluded by opaque meshes.
+	bUseLumenFrontLayerReflection = UseFrontLayerReflection(MaterialParameters.ViewBufferUV, MaterialParameters.ScreenPosition.w) && !MATERIAL_TRANSLUCENT_PASS_AFTERMOTIONBLUR;
 
 	FRadianceCacheCoverage LumenRadianceCacheCoverage = InitRadianceCacheCoverage();
 	LumenRadianceCacheCoverage.bValid = false;
 
 	// Lumen Radiance Cache for reflections on translucency
-	if (TranslucentBasePass_FinalProbeResolution > 0 && !bUseLumenFrontLayerReflection)
+	if (FinalProbeResolution > 0 && !bUseLumenFrontLayerReflection)
 	{
 		float ClipmapDitherRandom = InterleavedGradientNoise(MaterialParameters.SvPosition.xy, View.StateFrameIndexMod8);
-		LumenRadianceCacheCoverage = GetRadianceCacheCoverage(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition), RayDirection, ClipmapDitherRandom);
+		LumenRadianceCacheCoverage = GetRadianceCacheCoverage(WSHackToFloat(GetWorldPosition(MaterialParameters)), RayDirection, ClipmapDitherRandom);
 	}
 
 	if (bUseLumenFrontLayerReflection)
@@ -418,7 +424,7 @@ half3 GetImageBasedReflectionSpecular(FMaterialPixelParameters MaterialParameter
 	else if (LumenRadianceCacheCoverage.bValid)
 	{
 		float ConeHalfAngle = 0;
-		SpecularIBL = SampleRadianceCacheInterpolated(LumenRadianceCacheCoverage, LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition), RayDirection, ConeHalfAngle);
+		SpecularIBL = SampleRadianceCacheInterpolated(LumenRadianceCacheCoverage, WSHackToFloat(GetWorldPosition(MaterialParameters)), RayDirection, ConeHalfAngle);
 	}
 	// Fallback to unshadowed skylight if no valid Radiance Cache
 	else

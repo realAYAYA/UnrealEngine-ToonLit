@@ -371,6 +371,8 @@ void SSlateFrameSchematicView::Construct(const FArguments& InArgs)
 	WidgetUpdateSortColumn = FName();
 	bWidgetUpdateSortAscending = false;
 
+	TimingViewSession = nullptr;
+
 	ChildSlot
 	[
 		SNew(SVerticalBox)
@@ -564,6 +566,11 @@ void SSlateFrameSchematicView::SetSession(Insights::ITimingViewSession* InTiming
 	}
 
 	RefreshNodes();
+}
+
+bool SSlateFrameSchematicView::IsSessionSet() const
+{
+	return TimingViewSession != nullptr;
 }
 
 TSharedRef<ITableRow> SSlateFrameSchematicView::HandleUniqueInvalidatedMakeTreeRowWidget(TSharedPtr<Private::FWidgetUniqueInvalidatedInfo> InInfo, const TSharedRef<STableViewBase>& OwnerTable)

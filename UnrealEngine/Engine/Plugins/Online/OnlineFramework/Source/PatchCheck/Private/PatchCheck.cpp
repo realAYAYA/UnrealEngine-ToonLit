@@ -70,6 +70,40 @@ void FPatchCheck::RefreshConfig()
 			ensureMsgf(false, TEXT("UpdateManager::bCheckOSSForUpdate is deprecated, Set FPatchCheck::bCheckOSSForUpdate using section [PatchCheck] instead."));
 		}
 	}
+
+	GConfig->GetBool(TEXT("PatchCheck"), TEXT("bPlatformEnvironmentDetectionEnabled"), bPlatformEnvironmentDetectionEnabled, GEngineIni);
+}
+
+void FPatchCheck::OnDetectPlatformEnvironmentComplete(const FOnlineError& Result)
+{
+	if (Result.WasSuccessful())
+	{
+		bPlatformEnvironmentDetected = true;
+		HandleOSSPatchCheck();
+	}
+	else
+	{
+		if (Result.GetErrorCode().Contains(TEXT("getUserAccessCode failed : 0x8055000f"), ESearchCase::IgnoreCase))
+		{
+			UE_LOG(LogPatchCheck, Warning, TEXT("Failed to complete login because patch is required"));
+			PatchCheckComplete(EPatchCheckResult::PatchRequired);
+		}
+		else
+		{
+			if (Result.GetErrorCode().Contains(TEXT("com.epicgames.identity.notloggedin"), ESearchCase::IgnoreCase))
+			{
+				UE_LOG(LogPatchCheck, Warning, TEXT("Failed to detect online environment for the platform, no user signed in"));
+				PatchCheckComplete(EPatchCheckResult::NoLoggedInUser);
+			}
+			else
+			{
+				// just a platform env error, assume production and keep going
+				UE_LOG(LogPatchCheck, Warning, TEXT("Failed to detect online environment for the platform"));
+				bPlatformEnvironmentDetected = true;
+				HandleOSSPatchCheck();
+			}
+		}
+	}
 }
 
 void FPatchCheck::StartPatchCheck()
@@ -79,6 +113,21 @@ void FPatchCheck::StartPatchCheck()
 
 	RefreshConfig();
 
+	if (bPlatformEnvironmentDetectionEnabled && !bPlatformEnvironmentDetected)
+	{
+#if PATCH_CHECK_PLATFORM_ENVIRONMENT_DETECTION
+		if (DetectPlatformEnvironment())
+		{
+			return;
+		}
+#endif
+	}
+
+	HandleOSSPatchCheck();
+}
+
+void FPatchCheck::HandleOSSPatchCheck()
+{
 	if (bCheckPlatformOSSForUpdate && IOnlineSubsystem::GetByPlatform() != nullptr)
 	{
 		bIsCheckInProgress = true;

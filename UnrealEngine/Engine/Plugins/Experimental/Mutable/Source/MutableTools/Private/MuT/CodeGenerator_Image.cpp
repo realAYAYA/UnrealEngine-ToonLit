@@ -30,6 +30,7 @@
 #include "MuT/ASTOpImageMakeGrowMap.h"
 #include "MuT/ASTOpImageSwizzle.h"
 #include "MuT/ASTOpImageRasterMesh.h"
+#include "MuT/ASTOpImageCrop.h"
 #include "MuT/ASTOpMeshExtractLayoutBlocks.h"
 #include "MuT/ASTOpMeshFormat.h"
 #include "MuT/ASTOpParameter.h"
@@ -40,7 +41,6 @@
 #include "MuT/CompilerPrivate.h"
 #include "MuT/ErrorLog.h"
 #include "MuT/ErrorLogPrivate.h"
-#include "MuT/ImageDescGenerator.h"
 #include "MuT/Node.h"
 #include "MuT/NodeBool.h"
 #include "MuT/NodeColour.h"
@@ -56,7 +56,6 @@
 #include "MuT/NodeImageConditionalPrivate.h"
 #include "MuT/NodeImageConstant.h"
 #include "MuT/NodeImageConstantPrivate.h"
-#include "MuT/NodeImageReferencePrivate.h"
 #include "MuT/NodeImageFormat.h"
 #include "MuT/NodeImageFormatPrivate.h"
 #include "MuT/NodeImageGradient.h"
@@ -161,7 +160,6 @@ namespace mu
 			case NodeImage::EType::Variation: GenerateImage_Variation(Options, Result, static_cast<const NodeImageVariation*>(Node)); break;
 			case NodeImage::EType::NormalComposite: GenerateImage_NormalComposite(Options, Result, static_cast<const NodeImageNormalComposite*>(Node)); break;
 			case NodeImage::EType::Transform: GenerateImage_Transform(Options, Result, static_cast<const NodeImageTransform*>(Node)); break;
-			case NodeImage::EType::Reference: GenerateImage_Reference(Options, Result, static_cast<const NodeImageReference*>(Node)); break;
 			case NodeImage::EType::None: check(false);
 			}
 
@@ -176,9 +174,6 @@ namespace mu
     {
 		const NodeImageConstant::Private& node = *InNode->GetPrivate();
 		
-        Ptr<ASTOpConstantResource> op = new ASTOpConstantResource();
-        op->type = OP_TYPE::IM_CONSTANT;
-
         // TODO: check duplicates
         Ptr<const Image> pImage;
 		if (node.m_pProxy)
@@ -194,6 +189,31 @@ namespace mu
             // Log an error message
             m_pErrorLog->GetPrivate()->Add( "Constant image not set.", ELMT_WARNING, node.m_errorContext );
         }
+
+
+		if (pImage->IsReference())
+		{
+			Ptr<ASTOpReferenceResource> ReferenceOp = new ASTOpReferenceResource();
+			ReferenceOp->type = OP_TYPE::IM_REFERENCE;
+			ReferenceOp->ID = pImage->GetReferencedTexture();
+			ReferenceOp->bForceLoad = pImage->IsForceLoad();
+
+			// Don't store the format. Format can vary between loaded constant image and reference and cause
+			// code optimization bugs.
+			// As it is now, reference will always have alpha channel but constant resolution can remove the 
+			// channel if not used.
+			// TODO: review this, probably the reference descriptor generation needs to check for alpha channels 
+			// as well.
+			ReferenceOp->ImageDesc = FImageDesc(pImage->GetSize(), EImageFormat::IF_NONE, pImage->GetLODCount());
+			Result.op = ReferenceOp;
+		}
+		else
+		{
+			Ptr<ASTOpConstantResource> op = new ASTOpConstantResource();
+			op->Type = OP_TYPE::IM_CONSTANT;
+			op->SetValue(pImage, m_compilerOptions->OptimisationOptions.DiskCacheContext);
+			Result.op = op;
+		}
 
 		if (Options.ImageLayoutStrategy!= CompilerOptions::TextureLayoutStrategy::None && Options.LayoutToApply)
 		{
@@ -227,45 +247,16 @@ namespace mu
 			// Do we need to crop?
 			if (rect.min[0]!=0 || rect.min[1]!=0 || pImage->GetSizeX() != rect.size[0] || pImage->GetSizeY() != rect.size[1])
 			{
-				FImageOperator ImOp
-				(
-					[](int32 x, int32 y, int32 m, EImageFormat f, EInitializationType i) { return new Image(x, y, m, f, i); },
-					[](Ptr<Image>& i) {i = nullptr; },
-					[](const Image* i) { return i->Clone(); }
-				);
-
-
-				Ptr<Image> pCropped = new Image(rect.size[0], rect.size[1], 1, pImage->GetFormat(), EInitializationType::NotInitialized);
-				ImOp.ImageCrop(pCropped.get(), m_compilerOptions->ImageCompressionQuality, pImage.get(), rect);
-				op->SetValue(pCropped, m_compilerOptions->OptimisationOptions.bUseDiskCache);
-			}
-			else
-			{
-				// No need to crop.
-				op->SetValue(pImage, m_compilerOptions->OptimisationOptions.bUseDiskCache);
+				Ptr<ASTOpImageCrop> CropOp = new ASTOpImageCrop();
+				CropOp->Source = Result.op;
+				CropOp->Min[0] = rect.min[0];
+				CropOp->Min[1] = rect.min[1];
+				CropOp->Size[0] = rect.size[0];
+				CropOp->Size[1] = rect.size[1];
+				Result.op = CropOp;
 			}
 		}
-        else
-        {
-            op->SetValue( pImage, m_compilerOptions->OptimisationOptions.bUseDiskCache );
-        }
-
-		Result.op = op;
     }
-
-
-	//---------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateImage_Reference(const FImageGenerationOptions& Options, FImageGenerationResult& Result, const NodeImageReference* InNode)
-	{
-		const NodeImageReference::Private& node = *InNode->GetPrivate();
-
-		Ptr<ASTOpReferenceResource> op = new ASTOpReferenceResource();
-		op->type = OP_TYPE::IM_REFERENCE;
-		op->ID = node.ImageReferenceID;
-
-		// TODO: check no crop
-		Result.op = op;
-	}
 
 
     //---------------------------------------------------------------------------------------------
@@ -275,30 +266,31 @@ namespace mu
 
         Ptr<ASTOpParameter> op;
 
-        auto it = m_nodeVariables.find( node.m_pNode );
-        if ( it == m_nodeVariables.end() )
+		Ptr<ASTOpParameter>* it = m_firstPass.ParameterNodes.Find( node.m_pNode );
+        if ( !it )
         {
             op = new ASTOpParameter();
             op->type = OP_TYPE::IM_PARAMETER;
 
 			op->parameter.m_name = node.m_name;
-			op->parameter.m_uid = node.m_uid;
-            op->parameter.m_type = PARAMETER_TYPE::T_IMAGE;
-        	op->parameter.m_defaultValue.Set<ParamImageType>(FName());
+        	const TCHAR* CStr = ToCStr(node.m_uid);
+        	op->parameter.m_uid.ImportTextItem(CStr, 0, nullptr, nullptr);
+        	op->parameter.m_type = PARAMETER_TYPE::T_IMAGE;
+        	op->parameter.m_defaultValue.Set<ParamImageType>(node.m_defaultValue);
 
 			// Generate the code for the ranges
 			for (int32 a = 0; a < node.m_ranges.Num(); ++a)
 			{
 				FRangeGenerationResult rangeResult;
-				GenerateRange(rangeResult, node.m_ranges[a]);
+				GenerateRange(rangeResult, Options, node.m_ranges[a]);
 				op->ranges.Emplace(op.get(), rangeResult.sizeOp, rangeResult.rangeName, rangeResult.rangeUID);
 			}
 
-            m_nodeVariables[node.m_pNode] = op;
-        }
+			m_firstPass.ParameterNodes.Add(node.m_pNode, op);
+		}
         else
         {
-            op = it->second;
+            op = *it;
         }
 
 		Result.op = op;
@@ -332,8 +324,15 @@ namespace mu
 
 		UE::Math::TIntVector2<int32> TargetSize = Options.RectSize;
 
-		EImageFormat baseFormat = base->GetImageDesc( true ).m_format;
-        //base = GenerateImageFormat( base, EImageFormat::IF_RGB_UBYTE );
+		FImageDesc BaseDesc = base->GetImageDesc(true);
+
+		// If no target size was specified in the generation options, get the base size to apply it to the mask and blend.
+		if (TargetSize == UE::Math::TIntVector2<int32>(0, 0))
+		{
+			TargetSize = UE::Math::TIntVector2<int32>(BaseDesc.m_size);
+		}
+
+		EImageFormat baseFormat = BaseDesc.m_format;
         base = GenerateImageSize( base, TargetSize);
         op->base = base;
 
@@ -342,7 +341,9 @@ namespace mu
         if ( node.m_pMask )
         {
 			FImageGenerationResult MaskResult;
-			GenerateImage(Options, MaskResult, node.m_pMask);
+			FImageGenerationOptions MaskOptions(Options);
+			MaskOptions.RectSize = TargetSize;
+			GenerateImage(MaskOptions, MaskResult, node.m_pMask);
 			mask = MaskResult.op;
 
             mask = GenerateImageFormat( mask, EImageFormat::IF_L_UBYTE );
@@ -355,7 +356,9 @@ namespace mu
         if ( node.m_pBlended )
         {
 			FImageGenerationResult BlendedResult;
-			GenerateImage(Options, BlendedResult, node.m_pBlended);
+			FImageGenerationOptions BlendOptions(Options);
+			BlendOptions.RectSize = TargetSize;
+			GenerateImage(BlendOptions, BlendedResult, node.m_pBlended);
 			blended = BlendedResult.op;
         }
         else
@@ -363,7 +366,6 @@ namespace mu
             // This argument is required
             blended = GeneratePlainImageCode(FVector4f( 1,1,0,1 ), Options );
         }
-        //blended = GenerateImageFormat( blended, EImageFormat::IF_RGB_UBYTE );
         blended = GenerateImageFormat( blended, baseFormat );
         blended = GenerateImageSize( blended, TargetSize);
         op->blend = blended;
@@ -395,8 +397,18 @@ namespace mu
             // This argument is required
             base = GenerateMissingImageCode(TEXT("Layer base image"), EImageFormat::IF_RGB_UBYTE, node.m_errorContext, Options );
         }
+
+		UE::Math::TIntVector2<int32> TargetSize = Options.RectSize;
+
+		// If no target size was specified in the generation options, get the base size to apply it to the mask and blend.
+		if (TargetSize == UE::Math::TIntVector2<int32>(0, 0))
+		{
+			FImageDesc BaseDesc = base->GetImageDesc(true);
+			TargetSize = UE::Math::TIntVector2<int32>(BaseDesc.m_size);
+		}
+
         base = GenerateImageFormat( base, EImageFormat::IF_RGB_UBYTE );
-        base = GenerateImageSize( base,Options.RectSize );
+        base = GenerateImageSize( base, TargetSize);
         op->base = base;
 
         // Mask of the effect
@@ -408,7 +420,7 @@ namespace mu
 			mask = MaskResult.op;
 			
 			mask = GenerateImageFormat( mask, EImageFormat::IF_L_UBYTE );
-            mask = GenerateImageSize( mask, Options.RectSize);
+            mask = GenerateImageSize( mask, TargetSize);
         }
         op->mask = mask;
 
@@ -417,7 +429,7 @@ namespace mu
         if ( node.m_pColour )
         {
 			FColorGenerationResult ColorResult;
-            GenerateColor(ColorResult, node.m_pColour);
+            GenerateColor(ColorResult, Options, node.m_pColour);
 			colour = ColorResult.op;
         }
         else
@@ -456,8 +468,18 @@ namespace mu
             base = GenerateMissingImageCode(TEXT("Image MultiLayer base"), EImageFormat::IF_RGB_UBYTE, node.m_errorContext, Options);
         }
 
-		EImageFormat baseFormat = base->GetImageDesc().m_format;
-        base = GenerateImageSize( base, Options.RectSize);
+		FImageDesc BaseDesc = base->GetImageDesc(true);
+
+		UE::Math::TIntVector2<int32> TargetSize = Options.RectSize;
+
+		// If no target size was specified in the generation options, get the base size to apply it to the mask and blend.
+		if (TargetSize == UE::Math::TIntVector2<int32>(0, 0))
+		{
+			TargetSize = UE::Math::TIntVector2<int32>(BaseDesc.m_size);
+		}
+
+		EImageFormat baseFormat = BaseDesc.m_format;
+        base = GenerateImageSize( base, TargetSize);
         op->base = base;
 
         // Mask of the effect
@@ -469,7 +491,7 @@ namespace mu
 			mask = MaskResult.op;
 
 			mask = GenerateImageFormat( mask, EImageFormat::IF_L_UBYTE );
-            mask = GenerateImageSize( mask, Options.RectSize);
+            mask = GenerateImageSize( mask, TargetSize);
         }
         op->mask = mask;
 
@@ -487,14 +509,14 @@ namespace mu
             blended = GeneratePlainImageCode(FVector4f( 1,1,0,1 ), Options);
         }
         blended = GenerateImageFormat( blended, baseFormat );
-        blended = GenerateImageSize( blended, Options.RectSize);
+        blended = GenerateImageSize( blended, TargetSize);
         op->blend = blended;
 
         // Range of iteration
         if ( node.m_pRange )
         {
             FRangeGenerationResult rangeResult;
-            GenerateRange( rangeResult, node.m_pRange );
+            GenerateRange( rangeResult, Options, node.m_pRange );
 
             op->range.rangeSize = rangeResult.sizeOp;
             op->range.rangeName = rangeResult.rangeName;
@@ -531,8 +553,19 @@ namespace mu
             base = GenerateMissingImageCode(TEXT("Image Composite Base"), EImageFormat::IF_RGB_UBYTE, node.m_errorContext, Options);
         }
 
-		EImageFormat baseFormat = base->GetImageDesc().m_format;
-        base = GenerateImageSize( base, Options.RectSize);
+		FImageDesc BaseDesc = base->GetImageDesc(true);
+
+		UE::Math::TIntVector2<int32> TargetSize = Options.RectSize;
+
+		// If no target size was specified in the generation options, get the base size to apply it to the mask and blend.
+		if (TargetSize == UE::Math::TIntVector2<int32>(0, 0))
+		{
+			TargetSize = UE::Math::TIntVector2<int32>(BaseDesc.m_size);
+		}
+
+
+		EImageFormat baseFormat = BaseDesc.m_format;
+        base = GenerateImageSize( base, TargetSize);
         op->Base = base;
 
         Ptr<ASTOp> normal;
@@ -543,13 +576,14 @@ namespace mu
 			normal = BaseResult.op;
 
             normal = GenerateImageFormat( normal, EImageFormat::IF_RGB_UBYTE );
-            normal = GenerateImageSize( normal, Options.RectSize);
         }
 		else
 		{
             // This argument is required
             normal = GenerateMissingImageCode(TEXT("Image Composite Normal"), EImageFormat::IF_RGB_UBYTE, node.m_errorContext, Options);
 		}
+
+		normal = GenerateImageSize(normal, TargetSize);
 
         op->Normal = normal;
         
@@ -558,69 +592,80 @@ namespace mu
 
 	void CodeGenerator::GenerateImage_Transform(const FImageGenerationOptions& Options, FImageGenerationResult& Result, const NodeImageTransform* InNode)
     {
-		const NodeImageTransform::Private& node = *InNode->GetPrivate();
+		const NodeImageTransform::Private& Node = *InNode->GetPrivate();
 
         MUTABLE_CPUPROFILER_SCOPE(NodeImageTransform);
 
-        Ptr<ASTOpImageTransform> op = new ASTOpImageTransform();
+        Ptr<ASTOpImageTransform> Op = new ASTOpImageTransform();
 
 		Ptr<ASTOp> OffsetX;
-		if (node.m_pOffsetX)
+		if (Node.m_pOffsetX)
 		{
-			OffsetX = Generate(node.m_pOffsetX);
+			OffsetX = Generate(Node.m_pOffsetX, Options);
 		}
 
 		Ptr<ASTOp> OffsetY;
-		if (node.m_pOffsetY)
+		if (Node.m_pOffsetY)
 		{
-			OffsetY = Generate(node.m_pOffsetY);
+			OffsetY = Generate(Node.m_pOffsetY, Options);
 		}
 	
 		Ptr<ASTOp> ScaleX;
-		if (node.m_pScaleX)
+		if (Node.m_pScaleX)
 		{
-			ScaleX = Generate(node.m_pScaleX);
+			ScaleX = Generate(Node.m_pScaleX, Options);
 		}
 	
 		Ptr<ASTOp> ScaleY;
-		if (node.m_pScaleY)
+		if (Node.m_pScaleY)
 		{
-			ScaleY = Generate(node.m_pScaleY);
+			ScaleY = Generate(Node.m_pScaleY, Options);
 		}
 
 		Ptr<ASTOp> Rotation;
-		if (node.m_pRotation)
+		if (Node.m_pRotation)
 		{
-			Rotation = Generate(node.m_pRotation);
+			Rotation = Generate(Node.m_pRotation, Options);
 		}
 
 		// If one of the inputs (offset or scale) is missig assume unifrom translation/scaling 
-		op->offsetX = OffsetX ? OffsetX : OffsetY;
-		op->offsetY = OffsetY ? OffsetY : OffsetX;
- 		op->scaleX = ScaleX ? ScaleX : ScaleY;
-		op->scaleY = ScaleY ? ScaleY : ScaleX;
-		op->rotation = Rotation; 
-		op->AddressMode = node.AddressMode;
+		Op->OffsetX = OffsetX ? OffsetX : OffsetY;
+		Op->OffsetY = OffsetY ? OffsetY : OffsetX;
+ 		Op->ScaleX = ScaleX ? ScaleX : ScaleY;
+		Op->ScaleY = ScaleY ? ScaleY : ScaleX;
+		Op->Rotation = Rotation; 
+		Op->AddressMode = Node.AddressMode;
+		Op->SizeX = Node.SizeX;
+		Op->SizeY = Node.SizeY;
+		Op->bKeepAspectRatio = Node.bKeepAspectRatio;
 
-        // Base image
-        Ptr<ASTOp> base;
-        if ( node.m_pBase )
+		// Base image
+        Ptr<ASTOp> Base;
+		FImageGenerationOptions NewOptions = Options;
+		NewOptions.ImageLayoutStrategy = CompilerOptions::TextureLayoutStrategy::None;
+		NewOptions.LayoutToApply = nullptr;
+		NewOptions.LayoutBlockId = -1;
+		NewOptions.RectSize = {};
+
+        if (Node.m_pBase)
         {
 			FImageGenerationResult BaseResult;
-			GenerateImage(Options, BaseResult, node.m_pBase);
-			base = BaseResult.op;
+			GenerateImage(NewOptions, BaseResult, Node.m_pBase);
+			Base = BaseResult.op;
 		}
         else
         {
             // This argument is required
-            base = GenerateMissingImageCode(TEXT("Image Transform Base"), EImageFormat::IF_RGB_UBYTE, node.m_errorContext, Options);
+            Base = GenerateMissingImageCode(TEXT("Image Transform Base"), EImageFormat::IF_RGB_UBYTE, Node.m_errorContext, NewOptions);
         }
+		
+		FImageDesc BaseDesc = Base->GetImageDesc();
+		
+        Op->Base = Base;
+		Op->SourceSizeX = BaseDesc.m_size.X;
+		Op->SourceSizeY = BaseDesc.m_size.Y;
 
-		EImageFormat baseFormat = base->GetImageDesc().m_format;
-        base = GenerateImageSize( base, Options.RectSize);
-        op->base = base;
-
-        Result.op = op; 
+        Result.op = Op; 
     }
 
     //---------------------------------------------------------------------------------------------
@@ -636,7 +681,7 @@ namespace mu
         // Factor
         if ( Node* pFactor = node.m_pFactor.get() )
         {
-            op->SetChild( op->op.args.ImageInterpolate.factor, Generate( pFactor ));
+            op->SetChild( op->op.args.ImageInterpolate.factor, Generate( pFactor, Options));
         }
         else
         {
@@ -648,19 +693,29 @@ namespace mu
         // Target images
         int numTargets = 0;
 
+		UE::Math::TIntVector2<int32> FinalRectSize = Options.RectSize;
+
         for ( std::size_t t=0
             ; t< node.m_targets.Num() && numTargets<MUTABLE_OP_MAX_INTERPOLATE_COUNT
             ; ++t )
         {
             if ( node.m_targets[t] )
             {
+				FImageGenerationOptions ChildOptions = Options;
+				ChildOptions.RectSize = FinalRectSize;
 				FImageGenerationResult BaseResult;
-				GenerateImage(Options, BaseResult, node.m_targets[t]);
+				GenerateImage(ChildOptions, BaseResult, node.m_targets[t]);
 				Ptr<ASTOp> target = BaseResult.op;
+
+				if (FinalRectSize[0] == 0)
+				{
+					FImageDesc ChildDesc = target->GetImageDesc();
+					FinalRectSize = UE::Math::TIntVector2<int32>(ChildDesc.m_size);
+				}
 
                 // TODO: Support other formats
                 target = GenerateImageFormat( target, EImageFormat::IF_RGB_UBYTE );
-                target = GenerateImageSize( target, Options.RectSize);
+                target = GenerateImageSize( target, FinalRectSize);
 
                 op->SetChild( op->op.args.ImageInterpolate.targets[numTargets], target);
                 numTargets++;
@@ -735,6 +790,7 @@ namespace mu
 
 		// First source, for reference in the size
         Ptr<ASTOp> first;
+		FImageDesc FirstDesc;
 		for (int32 t = 0; t<node.m_sources.Num(); ++t)
 		{
 			if (node.m_sources[t])
@@ -752,18 +808,15 @@ namespace mu
 				}
 
                 Ptr<ASTOp> sizedSource;
-				if (first)
+				if (first && FirstDesc.m_size[0])
 				{
-                    Ptr<ASTOpFixed> sop = new ASTOpFixed();
-                    sop->op.type = OP_TYPE::IM_RESIZELIKE;
-                    sop->SetChild( sop->op.args.ImageResizeLike.source, source);
-                    sop->SetChild( sop->op.args.ImageResizeLike.sizeSource, first);
-                    sizedSource = sop;
+					sizedSource = GenerateImageSize(source, FIntVector2(FirstDesc.m_size));
 				}
 				else
 				{
 					first = source;
 					sizedSource = source;
+					FirstDesc = first->GetImageDesc();
 				}
 
                 op->Sources[t] = sizedSource;
@@ -852,7 +905,7 @@ namespace mu
         // Factor
         if ( Node* pFactor = node.m_pFactor.get() )
         {
-            op->SetChild( op->op.args.ImageSaturate.factor, Generate( pFactor ));
+            op->SetChild( op->op.args.ImageSaturate.factor, Generate( pFactor, Options));
         }
         else
         {
@@ -972,7 +1025,7 @@ namespace mu
         Ptr<ASTOp> colour0 = 0;
         if ( Node* pColour0 = node.m_pColour0.get() )
         {
-            colour0 = Generate( pColour0 );
+            colour0 = Generate( pColour0, Options);
         }
         else
         {
@@ -985,7 +1038,7 @@ namespace mu
         Ptr<ASTOp> colour1 = 0;
         if ( Node* pColour1 = node.m_pColour1.get() )
         {
-            colour1 = Generate( pColour1 );
+            colour1 = Generate( pColour1, Options);
         }
         else
         {
@@ -1030,7 +1083,7 @@ namespace mu
         Ptr<ASTOp> b = 0;
         if ( Node* pScalar = node.m_pThreshold.get() )
         {
-            b = Generate( pScalar );
+            b = Generate( pScalar, Options);
         }
         else
         {
@@ -1086,10 +1139,35 @@ namespace mu
         }
         else
         {
+			// Apply the layout block to the rect size
+			UE::Math::TIntVector2<int32> FinalImageSize = { int32(node.m_sizeX), int32(node.m_sizeY) };
+			if (Options.LayoutToApply)
+			{
+				int32 BlockIndex = Options.LayoutToApply->FindBlock(Options.LayoutBlockId);
+				check(BlockIndex >= 0);
+
+				// Block in layout grid units
+				box< UE::Math::TIntVector2<uint16> > RectInCells;
+				Options.LayoutToApply->GetBlock
+				(
+					BlockIndex,
+					&RectInCells.min[0], &RectInCells.min[1],
+					&RectInCells.size[0], &RectInCells.size[1]
+				);
+
+				FIntPoint grid = Options.LayoutToApply->GetGridSize();
+				grid[0] = FMath::Max(1, grid[0]);
+				grid[1] = FMath::Max(1, grid[1]);
+
+				// Transform to pixels
+				FinalImageSize[0] = (RectInCells.size[0] * FinalImageSize[0]) / grid[0];
+				FinalImageSize[1] = (RectInCells.size[1] * FinalImageSize[1]) / grid[1];
+			}
+
             Ptr<ASTOpFixed> op = new ASTOpFixed();
             op->op.type = OP_TYPE::IM_RESIZE;
-            op->op.args.ImageResize.size[0] = (uint16)node.m_sizeX;
-            op->op.args.ImageResize.size[1] = (uint16)node.m_sizeY;
+            op->op.args.ImageResize.size[0] = (uint16)FinalImageSize[0];
+            op->op.args.ImageResize.size[1] = (uint16)FinalImageSize[1];
             op->SetChild( op->op.args.ImageResize.source, base);
             at = op;
         }
@@ -1107,7 +1185,7 @@ namespace mu
         Ptr<ASTOp> base = 0;
         if ( node.m_pColour )
         {
-            base = Generate( node.m_pColour.get() );
+            base = Generate( node.m_pColour.get(), Options);
         }
         else
         {
@@ -1115,12 +1193,48 @@ namespace mu
             base = GenerateMissingColourCode(TEXT("Image plain colour base"), node.m_errorContext );
         }
 
+		UE::Math::TIntVector2<int32> FinalImageSize = { 0, 0 };
+
+		if (Options.RectSize.X > 0)
+		{
+			FinalImageSize = Options.RectSize;
+		}
+		else
+		{
+			FinalImageSize = { node.m_sizeX, node.m_sizeY };
+
+			// Apply the layout block to the rect size
+			if (Options.LayoutToApply)
+			{
+				int32 BlockIndex = Options.LayoutToApply->FindBlock(Options.LayoutBlockId);
+				check(BlockIndex >= 0);
+
+				// Block in layout grid units
+				box< UE::Math::TIntVector2<uint16> > RectInCells;
+				Options.LayoutToApply->GetBlock
+				(
+					BlockIndex,
+					&RectInCells.min[0], &RectInCells.min[1],
+					&RectInCells.size[0], &RectInCells.size[1]
+				);
+
+				FIntPoint grid = Options.LayoutToApply->GetGridSize();
+				grid[0] = FMath::Max(1, grid[0]);
+				grid[1] = FMath::Max(1, grid[1]);
+
+				// Transform to pixels
+				FinalImageSize[0] = (RectInCells.size[0] * FinalImageSize[0]) / grid[0];
+				FinalImageSize[1] = (RectInCells.size[1] * FinalImageSize[1]) / grid[1];
+			}
+		}
+
+
         Ptr<ASTOpFixed> op = new ASTOpFixed();
         op->op.type = OP_TYPE::IM_PLAINCOLOUR;
         op->SetChild( op->op.args.ImagePlainColour.colour, base);
 		op->op.args.ImagePlainColour.format = node.Format;
-        op->op.args.ImagePlainColour.size[0] = (Options.RectSize[0] > 0) ? Options.RectSize[0] : node.m_sizeX;
-		op->op.args.ImagePlainColour.size[1] = (Options.RectSize[1] > 0) ? Options.RectSize[1] : node.m_sizeY;
+		op->op.args.ImagePlainColour.size[0] = FinalImageSize[0];
+		op->op.args.ImagePlainColour.size[1] = FinalImageSize[1];
 		op->op.args.ImagePlainColour.LODs = 1;
 
         Result.op = op;
@@ -1148,7 +1262,7 @@ namespace mu
 		// Variable value
 		if ( node.m_pParameter )
 		{
-            op->variable = Generate( node.m_pParameter.get() );
+            op->variable = Generate( node.m_pParameter.get(), Options);
 		}
 		else
 		{
@@ -1222,7 +1336,7 @@ namespace mu
         // Condition
         if ( node.m_parameter )
         {
-            op->condition = Generate( node.m_parameter.get() );
+            op->condition = Generate( node.m_parameter.get(), Options);
         }
         else
         {
@@ -1261,7 +1375,7 @@ namespace mu
         FProjectorGenerationResult projectorResult;
         if ( node.m_pProjector )
         {
-            GenerateProjector( projectorResult, node.m_pProjector );
+            GenerateProjector( projectorResult, Options, node.m_pProjector );
             //projectorAt = Generate( node.m_pProjector.get() );
         }
         else
@@ -1285,7 +1399,7 @@ namespace mu
 			// TODO: This will probably Result in a duplicated mesh subgraph, with the original mesh but new layout block ids.
 			// See if it can be optimized and try to reuse the existing layout block ids instead of generating new ones.
 			FMeshGenerationOptions MeshOptions;
-			MeshOptions.State = Options.CurrentStateIndex;
+			MeshOptions.State = Options.State;
 			MeshOptions.ActiveTags = Options.ActiveTags;
 			MeshOptions.bLayouts = true;			// We need the layout that we will use to render
 			MeshOptions.bNormalizeUVs = true;		// We need normalized UVs for the projection
@@ -1323,11 +1437,11 @@ namespace mu
                 // For wrapping projector we need the entire mesh. The actual project operation
                 // will remove the faces that are not in the layout block we are generating.
                 Ptr<ASTOpConstantResource> cop = new ASTOpConstantResource();
-                cop->type = OP_TYPE::ME_CONSTANT;
+                cop->Type = OP_TYPE::ME_CONSTANT;
 				Ptr<Mesh> FormatMeshResult = new Mesh();
 				CreateMeshOptimisedForWrappingProjection(FormatMeshResult.get(), node.m_layout);
 
-                cop->SetValue(FormatMeshResult, m_compilerOptions->OptimisationOptions.bUseDiskCache);
+                cop->SetValue(FormatMeshResult, m_compilerOptions->OptimisationOptions.DiskCacheContext);
 
                 Ptr<ASTOpMeshFormat> FormatOp = new ASTOpMeshFormat();
 				FormatOp->Buffers = OP::MeshFormatArgs::BT_VERTEX
@@ -1344,22 +1458,22 @@ namespace mu
                 if ( GeneratedLayoutBlockId>=0 )
                 {
                     Ptr<ASTOpMeshExtractLayoutBlocks> eop = new ASTOpMeshExtractLayoutBlocks();
-                    eop->source = CurrentMeshToProjectOp;
-                    eop->layout = node.m_layout;
+                    eop->Source = CurrentMeshToProjectOp;
+                    eop->Layout = node.m_layout;
 
-                    eop->blocks.Add(GeneratedLayoutBlockId);
+                    eop->Blocks.Add(GeneratedLayoutBlockId);
 
 					CurrentMeshToProjectOp = eop;
                 }
 
                 // Reformat the mesh to a more efficient format for this operation
                 Ptr<ASTOpConstantResource> cop = new ASTOpConstantResource();
-                cop->type = OP_TYPE::ME_CONSTANT;
+                cop->Type = OP_TYPE::ME_CONSTANT;
 
 				Ptr<Mesh> FormatMeshResult = new Mesh();
                 CreateMeshOptimisedForProjection(FormatMeshResult.get(), node.m_layout);
 
-                cop->SetValue(FormatMeshResult, m_compilerOptions->OptimisationOptions.bUseDiskCache);
+                cop->SetValue(FormatMeshResult, m_compilerOptions->OptimisationOptions.DiskCacheContext);
 
                 Ptr<ASTOpMeshFormat> FormatOp = new ASTOpMeshFormat();
 				FormatOp->Buffers = OP::MeshFormatArgs::BT_VERTEX
@@ -1379,8 +1493,8 @@ namespace mu
             // This argument is required
             Ptr<const Mesh> TempMesh = new Mesh();
             Ptr<ASTOpConstantResource> cop = new ASTOpConstantResource();
-            cop->type = OP_TYPE::ME_CONSTANT;
-            cop->SetValue(TempMesh, m_compilerOptions->OptimisationOptions.bUseDiskCache );
+            cop->Type = OP_TYPE::ME_CONSTANT;
+            cop->SetValue(TempMesh, m_compilerOptions->OptimisationOptions.DiskCacheContext);
 			ProjectOp->SetChild(ProjectOp->op.args.MeshProject.mesh, cop );
             m_pErrorLog->GetPrivate()->Add( "Projector mesh not set.", ELMT_ERROR, node.m_errorContext );
         }
@@ -1392,6 +1506,42 @@ namespace mu
 		ImageRasterOp->mesh = LastMeshOp;
 		ImageRasterOp->projector = projectorResult.op;
 
+		// Calculate size of image to raster:
+		// The full image is:
+		// 0) The hint value in the image options passed down.
+		// 1) whatever is specified in the node attributes.
+		// 2) if that is 0, the size of the mask
+		// 3) if still 0, take the size of the image to project (which is not necessarily related, but often)
+		// 4) if still 0, a default value bigger than 0
+		// then if we are applying a layout a layout block rect need to be calculated of that size, like in image constants.
+		UE::Math::TIntVector2<int32> RasterImageSize = Options.RectSize;
+		bool bApplyLayoutToSize = false;
+
+		if (RasterImageSize.X == 0)
+		{
+			RasterImageSize = UE::Math::TIntVector2<int32>(node.m_imageSize);
+			bApplyLayoutToSize = true;
+		}
+
+		// Target mask
+		if (node.m_pMask)
+		{
+			FImageGenerationResult MaskResult;
+			GenerateImage(Options, MaskResult, node.m_pMask);
+			Ptr<ASTOp> mask = MaskResult.op;
+
+			mask = GenerateImageFormat(mask, EImageFormat::IF_L_UBYTE);
+
+			ImageRasterOp->mask = GenerateImageSize(mask, RasterImageSize);
+
+			if (RasterImageSize.X == 0)
+			{
+				FImageDesc MaskDesc = ImageRasterOp->mask->GetImageDesc();
+				RasterImageSize = UE::Math::TIntVector2<int32>(MaskDesc.m_size);
+				bApplyLayoutToSize = true;
+			}
+		}
+
         // Image
         if ( node.m_pImage )
         {
@@ -1400,15 +1550,21 @@ namespace mu
 			NewOptions.ImageLayoutStrategy = CompilerOptions::TextureLayoutStrategy::None;
 			NewOptions.LayoutToApply = nullptr;
 			NewOptions.LayoutBlockId = -1;
-			NewOptions.RectSize = {};
+			NewOptions.RectSize = { 0,0 };
 
 			FImageGenerationResult ImageResult;
 			GenerateImage(NewOptions, ImageResult, node.m_pImage);
 			ImageRasterOp->image = ImageResult.op;
 
-			FImageDesc desc = CalculateImageDesc(*node.m_pImage->GetBasePrivate());
+			FImageDesc desc = ImageRasterOp->image->GetImageDesc();
 			ImageRasterOp->SourceSizeX = desc.m_size[0];
 			ImageRasterOp->SourceSizeY = desc.m_size[1];
+
+			if (RasterImageSize.X == 0)
+			{
+				RasterImageSize = UE::Math::TIntVector2<int32>(desc.m_size);
+				bApplyLayoutToSize = true;
+			}
         }
         else
         {
@@ -1416,9 +1572,39 @@ namespace mu
 			ImageRasterOp->image = GenerateMissingImageCode(TEXT("Projector image"), EImageFormat::IF_RGB_UBYTE, node.m_errorContext, Options);
         }
 
+		if (RasterImageSize.X == 0)
+		{
+			// Last resort
+			RasterImageSize = { 256, 256 };
+		}
+
+		// Apply the layout block to the rect size
+		if (bApplyLayoutToSize && Options.LayoutToApply)
+		{
+			int32 BlockIndex = Options.LayoutToApply->FindBlock(Options.LayoutBlockId);
+			check(BlockIndex >= 0);
+
+			// Block in layout grid units
+			box< UE::Math::TIntVector2<uint16> > RectInCells;
+			Options.LayoutToApply->GetBlock
+			(
+				BlockIndex,
+				&RectInCells.min[0], &RectInCells.min[1],
+				&RectInCells.size[0], &RectInCells.size[1]
+			);
+
+			FIntPoint grid = Options.LayoutToApply->GetGridSize();
+			grid[0] = FMath::Max(1, grid[0]);
+			grid[1] = FMath::Max(1, grid[1]);
+
+			// Transform to pixels
+			RasterImageSize[0] = (RectInCells.size[0] * RasterImageSize[0]) / grid[0];
+			RasterImageSize[1] = (RectInCells.size[1] * RasterImageSize[1]) / grid[1];
+		}
+
         // Image size, from the current block being generated
-		ImageRasterOp->SizeX = Options.RectSize[0];
-		ImageRasterOp->SizeY = Options.RectSize[1];
+		ImageRasterOp->SizeX = RasterImageSize[0];
+		ImageRasterOp->SizeY = RasterImageSize[1];
 		ImageRasterOp->BlockId = GeneratedLayoutBlockId;
 		ImageRasterOp->LayoutIndex = node.m_layout;
 
@@ -1441,19 +1627,8 @@ namespace mu
 			if (node.m_pAngleFadeEnd) pPropsNode->SetY(node.m_pAngleFadeEnd);
 			else pPropsNode->SetY(pDefaultFade);
 
-			ImageRasterOp->angleFadeProperties = Generate(pPropsNode);
+			ImageRasterOp->angleFadeProperties = Generate(pPropsNode, Options);
 		}
-
-        // Target mask
-        if ( node.m_pMask )
-        {
-			FImageGenerationResult MaskResult;
-			GenerateImage(Options, MaskResult, node.m_pMask);
-			Ptr<ASTOp> mask = MaskResult.op;
-
-            mask = GenerateImageFormat( mask, EImageFormat::IF_L_UBYTE );
-			ImageRasterOp->mask = GenerateImageSize( mask, Options.RectSize);
-        }
 
         // Seam correction operations
         //------------------------------
@@ -1610,17 +1785,12 @@ namespace mu
 			GenerateImage(Options, BranchResults, node.m_defaultImage);
 			currentOp = BranchResults.op;
         }
-        else
-        {
-            // This argument is required
-            currentOp = GenerateMissingImageCode(TEXT("Variation default"), EImageFormat::IF_RGBA_UBYTE, node.m_errorContext, Options);
-        }
-
+        
         // Process variations in reverse order, since conditionals are built bottom-up.
         for ( int t = int( node.m_variations.Num() ) - 1; t >= 0; --t )
         {
             int tagIndex = -1;
-            const string& tag = node.m_variations[t].m_tag;
+            const FString& tag = node.m_variations[t].m_tag;
             for ( int i = 0; i < int( m_firstPass.m_tags.Num() ); ++i )
             {
                 if ( m_firstPass.m_tags[i].tag == tag )
@@ -1631,7 +1801,7 @@ namespace mu
 
             if ( tagIndex < 0 )
             {
-				FString Msg = FString::Printf(TEXT("Unknown tag found in image variation [%s]."), tag.c_str() );
+				FString Msg = FString::Printf(TEXT("Unknown tag found in image variation [%s]."), *tag );
 
                 m_pErrorLog->GetPrivate()->Add( Msg, ELMT_WARNING, node.m_errorContext );
                 continue;
@@ -1689,166 +1859,168 @@ namespace mu
         Result.op = currentOp;
     }
 
-
+	
 	//---------------------------------------------------------------------------------------------
 	void CodeGenerator::GenerateImage_Table(const FImageGenerationOptions& Options, FImageGenerationResult& Result, const NodeImageTable* InNode)
 	{
 		const NodeImageTable::Private& node = *InNode->GetPrivate();
 
-		Result.op = GenerateTableSwitch<NodeImageTable::Private, TCT_IMAGE, OP_TYPE::IM_SWITCH>(node,
+		Result.op = GenerateTableSwitch<NodeImageTable::Private, ETableColumnType::Image, OP_TYPE::IM_SWITCH>(node,
 			[this,Options](const NodeImageTable::Private& node, int colIndex, int row, ErrorLog* pErrorLog)
 			{
-				TABLE_VALUE CellData = node.m_pTable->GetPrivate()->m_rows[row].m_values[colIndex];
+				const FTableValue& CellData = node.Table->GetPrivate()->Rows[row].Values[colIndex];
 				ImagePtrConst pImage = nullptr;
-				NodeImagePtr CellImage = nullptr;
 
-				if (Ptr<ResourceProxy<Image>> pProxyImage = CellData.m_pProxyImage)
+				if (Ptr<ResourceProxy<Image>> pProxyImage = CellData.ProxyImage)
 				{
 					pImage = pProxyImage->Get();
 				}
+
+				Ptr<ASTOp> ImageOp;
 
 				if (!pImage)
 				{
 					FString Msg = FString::Printf(TEXT("Table has a missing image in column %d, row %d."), colIndex, row);
 					pErrorLog->GetPrivate()->Add(Msg, ELMT_ERROR, node.m_errorContext);
+
+					return ImageOp;
 				}
 				else
 				{
-					if (pImage->IsReference())
-					{
-						Ptr<NodeImageReference> ImageRef = new NodeImageReference();
-						ImageRef->SetImageReference(pImage->GetReferencedTexture());
+					NodeImageConstantPtr ImageConst = new NodeImageConstant();
+					ImageConst->SetValue(pImage.get());
 
-						CellImage = ImageRef;
-					}
-					else
-					{
-						NodeImageConstantPtr ImageConst = new NodeImageConstant();
-						ImageConst->SetValue(pImage);
+					FImageGenerationResult Result;
+					GenerateImage(Options, Result, ImageConst);
+					ImageOp = Result.op;
 
-						CellImage = ImageConst;
+					int32 MaxTextureSize = FMath::Max(node.ReferenceImageDesc.m_size[0], node.ReferenceImageDesc.m_size[1]);
+
+					if (MaxTextureSize > 0 && (MaxTextureSize < pImage->GetSizeX() || MaxTextureSize < pImage->GetSizeY()))
+					{
+						float Factor = FMath::Min(MaxTextureSize / (float)(pImage->GetSizeX()), MaxTextureSize / (float)(pImage->GetSizeY()));
+						Ptr<ASTOpFixed> op = new ASTOpFixed();
+						op->op.type = OP_TYPE::IM_RESIZE;
+						op->op.args.ImageResize.size[0] = (uint16)pImage->GetSizeX() * Factor;
+						op->op.args.ImageResize.size[1] = (uint16)pImage->GetSizeY() * Factor;
+						op->SetChild(op->op.args.ImageResize.source, ImageOp);
+						ImageOp = op;
 					}
 				}
 
-				FImageGenerationResult Result;
-				GenerateImage(Options, Result, CellImage);
-				return Result.op;
+				return ImageOp;
 			});
 	}
 
 
-    //---------------------------------------------------------------------------------------------
-    Ptr<Image> CodeGenerator::GenerateMissingImage( EImageFormat format )
-    {
-        // Create the image node if it hasn't been created yet.
-        if (!m_missingImage[size_t(format)])
-        {
-            // Make a checkered debug image
-            const FImageSize size = MUTABLE_MISSING_IMAGE_DESC.m_size;
+	Ptr<Image> CodeGenerator::GenerateMissingImage(EImageFormat Format)
+	{
+		// Create the image node if it hasn't been created yet.
+		if (!m_missingImage[SIZE_T(Format)])
+		{
+			// Make a checkered debug image
+			const FImageSize Size(16, 16);
 
-            ImagePtr pImage = new Image( size[0], size[1], 1, format, EInitializationType::NotInitialized);
+			Ptr<Image> GeneratedImage = new Image(Size[0], Size[1], 1, Format, EInitializationType::NotInitialized);
 
-            switch (format)
-            {
-            case EImageFormat::IF_L_UBYTE:
-                {
-                    uint8_t* pData = pImage->GetData();
-                    for ( int p=0; p<size[0]*size[1]; ++p )
-                    {
-                        if ((p+p/size[0])%2)
-                        {
-                            pData[0] = 255;
-                        }
-                        else
-                        {
-                            pData[0] = 64;
-                        }
+			switch (Format)
+			{
+			case EImageFormat::IF_L_UBYTE:
+			{
+				uint8* DataPtr = GeneratedImage->GetLODData(0);
+				for (int32 P = 0; P < Size[0]*Size[1]; ++P)
+				{
+					if ((P + P/Size[0]) % 2)
+					{
+						DataPtr[0] = 255;
+					}
+					else
+					{
+						DataPtr[0] = 64;
+					}
 
-                        pData++;
-                    }
-                    break;
-                }
+					DataPtr++;
+				}
+				break;
+			}
+			case EImageFormat::IF_RGB_UBYTE:
+			{
+				uint8* DataPtr = GeneratedImage->GetLODData(0);
+				for (int32 P = 0; P < Size[0]*Size[1]; ++P)
+				{
+					if ((P + P/Size[0]) % 2)
+					{
+						DataPtr[0] = 255;
+						DataPtr[1] = 255;
+						DataPtr[2] = 64;
+					}
+					else
+					{
+						DataPtr[0] = 64;
+						DataPtr[1] = 64;
+						DataPtr[2] = 255;
+					}
 
-            case EImageFormat::IF_RGB_UBYTE:
-                {
-                    uint8_t* pData = pImage->GetData();
-                    for ( int p=0; p<size[0]*size[1]; ++p )
-                    {
-                        if ((p+p/size[0])%2)
-                        {
-                            pData[0] = 255;
-                            pData[1] = 255;
-                            pData[2] = 64;
-                        }
-                        else
-                        {
-                            pData[0] = 64;
-                            pData[1] = 64;
-                            pData[2] = 255;
-                        }
+					DataPtr += 3;
+				}
+				break;
+			}
+			case EImageFormat::IF_BGRA_UBYTE:
+			case EImageFormat::IF_RGBA_UBYTE:
+			{
+				uint8* DataPtr = GeneratedImage->GetLODData(0);
+				for (int32 P = 0; P < Size[0]*Size[1]; ++P)
+				{
+					if ((P + P/Size[0]) % 2)
+					{
+						DataPtr[0] = 255;
+						DataPtr[1] = 255;
+						DataPtr[2] = 64;
+						DataPtr[3] = 255;
+					}
+					else
+					{
+						DataPtr[0] = 64;
+						DataPtr[1] = 64;
+						DataPtr[2] = 255;
+						DataPtr[3] = 128;
+					}
 
-                        pData += 3;
-                    }
-                    break;
-                }
+					DataPtr += 4;
+				}
+				break;
+			}
 
-            case EImageFormat::IF_BGRA_UBYTE:
-            case EImageFormat::IF_RGBA_UBYTE:
-                {
-                    uint8_t* pData = pImage->GetData();
-                    for ( int p=0; p<size[0]*size[1]; ++p )
-                    {
-                        if ((p+p/size[0])%2)
-                        {
-                            pData[0] = 255;
-                            pData[1] = 255;
-                            pData[2] = 64;
-                            pData[3] = 255;
-                        }
-                        else
-                        {
-                            pData[0] = 64;
-                            pData[1] = 64;
-                            pData[2] = 255;
-                            pData[3] = 128;
-                        }
+			default:
+				check( false );
+				break;
 
-                        pData += 4;
-                    }
-                    break;
-                }
+			}
 
-            default:
-                check( false );
-                break;
+			m_missingImage[(SIZE_T)Format] = GeneratedImage;
+		}
 
-            }
-
-            m_missingImage[(size_t)format] = pImage;
-        }
-
-        return m_missingImage[(size_t)format].get();
-    }
+		return m_missingImage[(SIZE_T)Format].get();
+	}
 
 
-    //---------------------------------------------------------------------------------------------
-    Ptr<ASTOp> CodeGenerator::GenerateMissingImageCode(const TCHAR* strWhere, EImageFormat format, const void* errorContext, const FImageGenerationOptions& Options )
-    {
-        // Log an error message
+	Ptr<ASTOp> CodeGenerator::GenerateMissingImageCode(const TCHAR* strWhere, EImageFormat format, const void* errorContext, const FImageGenerationOptions& Options )
+	{
+		// Log an error message
 		FString Msg = FString::Printf(TEXT("Required connection not found: %s"), strWhere );
-        m_pErrorLog->GetPrivate()->Add( Msg, ELMT_ERROR, errorContext );
+		m_pErrorLog->GetPrivate()->Add( Msg, ELMT_ERROR, errorContext );
 
-        // Make a checkered debug image
-        ImagePtr pImage = GenerateMissingImage( format );
+		// Make a checkered debug image
+		Ptr<Image> GeneratedImage = GenerateMissingImage( format );
 
-        NodeImageConstantPtr pNode = new NodeImageConstant();
-        pNode->SetValue( pImage.get() );
+		NodeImageConstantPtr pNode = new NodeImageConstant();
+		pNode->SetValue(GeneratedImage.get());
 
 		FImageGenerationResult Result;
 		GenerateImage(Options, Result, pNode);
 
-        return Result.op;
-    }
+		return Result.op;
+	}
 
 
     //---------------------------------------------------------------------------------------------
@@ -1930,27 +2102,6 @@ namespace mu
 
         return Result;
     }
-
-
-    //---------------------------------------------------------------------------------------------
-    FImageDesc CodeGenerator::CalculateImageDesc( const Node::Private& node )
-    {
-        ImageDescGenerator imageDescGenerator;
-        imageDescGenerator.Generate( node );
-        return imageDescGenerator.m_desc;
-    }
-
-
-
-    //---------------------------------------------------------------------------------------------
-    //! This class contains the support data to accelerate the GetImageDesc recursive function.
-    //! _If none is provided in the call, one will be created at that level and used from there on.
-    class FGetImageDescContext
-    {
-    public:
-        vector<bool> m_visited;
-        vector<FImageDesc> m_results;
-    };
 
  
 }

@@ -5,10 +5,7 @@
 #include "AudioDevice.h"
 #include "AudioDeviceManager.h"
 #include "ContentStreaming.h"
-#include "DecoderInputFactory.h"
 #include "DSP/ParamInterpolator.h"
-#include "IAudioCodec.h"
-#include "IAudioCodecRegistry.h"
 #include "MetasoundPrimitives.h"
 #include "MetasoundTrace.h"
 #include "Sound/SoundWave.h"
@@ -57,7 +54,11 @@ namespace Metasound
 						{
 							if (SoundWaveProxy->GetNumChunks() > 1)
 							{
-								IStreamingManager::Get().GetAudioStreamingManager().RequestChunk(SoundWaveProxy, 1, [](EAudioChunkLoadResult) {});
+								if (FStreamingManagerCollection* StreamingMgr = IStreamingManager::Get_Concurrent())
+								{
+									IAudioStreamingManager& AudioStreamingMgr = StreamingMgr->GetAudioStreamingManager();
+									AudioStreamingMgr.RequestChunk(SoundWaveProxy, 1, [](EAudioChunkLoadResult) {});
+								}
 							}
 						}
 					}

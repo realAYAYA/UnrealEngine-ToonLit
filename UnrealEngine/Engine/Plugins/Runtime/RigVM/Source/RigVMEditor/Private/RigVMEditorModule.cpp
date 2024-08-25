@@ -69,6 +69,12 @@ void FRigVMEditorModule::StartupModule()
 		// Register Blueprint editor variable customization
 		FBlueprintEditorModule& BlueprintEditorModule = FModuleManager::LoadModuleChecked<FBlueprintEditorModule>("Kismet");
 		BlueprintVariableCustomizationHandle = BlueprintEditorModule.RegisterVariableCustomization(FProperty::StaticClass(), FOnGetVariableCustomizationInstance::CreateStatic(&FRigVMVariableDetailCustomization::MakeInstance));
+
+		IAssetRegistry* AssetRegistry = IAssetRegistry::Get();
+		if (ensure(AssetRegistry))
+		{
+			AssetRegistry->OnAssetRemoved().AddStatic(&FRigVMBlueprintUtils::HandleAssetDeleted);
+		}
 	}
 
 	StartupModuleCommon();
@@ -87,7 +93,7 @@ void FRigVMEditorModule::StartupModuleCommon()
 	BlueprintEditorModule.RegisterGraphCustomization(SchemaCDO, FOnGetGraphCustomizationInstance::CreateStatic(&FRigVMGraphDetailCustomization::MakeInstance, BlueprintClass));
 
 	// Register to fixup newly created BPs
-	FKismetEditorUtilities::RegisterOnBlueprintCreatedCallback(this, BlueprintCDO->GetRigVMHostClass(), FKismetEditorUtilities::FOnBlueprintCreated::CreateRaw(this, &FRigVMEditorModule::HandleNewBlueprintCreated));
+	FKismetEditorUtilities::RegisterOnBlueprintCreatedCallback(this, URigVMHost::StaticClass(), FKismetEditorUtilities::FOnBlueprintCreated::CreateRaw(this, &FRigVMEditorModule::HandleNewBlueprintCreated));
 }
 
 void FRigVMEditorModule::ShutdownModule()
@@ -359,6 +365,12 @@ void FRigVMEditorModule::GetTypeActions(URigVMBlueprint* RigVMBlueprint, FBluepr
 			{
 				PublicFunctionsString = ControlRigAssetData.GetTagValueRef<FString>(PublicFunctionsProperty->GetFName());
 			}
+
+			// For RigVMBlueprintGeneratedClass, the property doesn't exist
+			if (PublicGraphFunctionsString.IsEmpty())
+			{
+				PublicGraphFunctionsString = ControlRigAssetData.GetTagValueRef<FString>(TEXT("PublicGraphFunctions"));
+			}
 			
 			if(PublicFunctionsString.IsEmpty() && PublicGraphFunctionsString.IsEmpty())
 			{
@@ -378,16 +390,36 @@ void FRigVMEditorModule::GetTypeActions(URigVMBlueprint* RigVMBlueprint, FBluepr
 				}
 			}
 
-			if (PublicGraphFunctionsProperty && !PublicGraphFunctionsString.IsEmpty())
+			if (!PublicGraphFunctionsString.IsEmpty())
 			{
-				TArray<FRigVMGraphFunctionHeader> PublicFunctions;
-				PublicGraphFunctionsProperty->ImportText_Direct(*PublicGraphFunctionsString, &PublicFunctions, nullptr, EPropertyPortFlags::PPF_None);
-				for(const FRigVMGraphFunctionHeader& PublicFunction : PublicFunctions)
+				if (PublicGraphFunctionsProperty)
 				{
-					URigVMEdGraphNodeSpawner* NodeSpawner = URigVMEdGraphFunctionRefNodeSpawner::CreateFromAssetData(ControlRigAssetData, PublicFunction);
-					check(NodeSpawner != nullptr);
-					NodeSpawner->SetRelatedBlueprintClass(BlueprintClass);
-					ActionRegistrar.AddBlueprintAction(ActionKey, NodeSpawner);
+					TArray<FRigVMGraphFunctionHeader> PublicFunctions;
+					PublicGraphFunctionsProperty->ImportText_Direct(*PublicGraphFunctionsString, &PublicFunctions, nullptr, EPropertyPortFlags::PPF_None);
+					for(const FRigVMGraphFunctionHeader& PublicFunction : PublicFunctions)
+					{
+						URigVMEdGraphNodeSpawner* NodeSpawner = URigVMEdGraphFunctionRefNodeSpawner::CreateFromAssetData(ControlRigAssetData, PublicFunction);
+						check(NodeSpawner != nullptr);
+						NodeSpawner->SetRelatedBlueprintClass(BlueprintClass);
+						ActionRegistrar.AddBlueprintAction(ActionKey, NodeSpawner);
+					}
+				}
+				else
+				{
+					// extract public function headers from generated class
+					const FString& HeadersString = PublicGraphFunctionsString;
+			
+					FArrayProperty* HeadersArrayProperty = CastField<FArrayProperty>(FRigVMGraphFunctionHeaderArray::StaticStruct()->FindPropertyByName(TEXT("Headers")));
+					TArray<FRigVMGraphFunctionHeader> PublicFunctions;
+					HeadersArrayProperty->ImportText_Direct(*HeadersString, &PublicFunctions, nullptr, EPropertyPortFlags::PPF_None);
+			
+					for(const FRigVMGraphFunctionHeader& PublicFunction : PublicFunctions)
+					{
+						URigVMEdGraphNodeSpawner* NodeSpawner = URigVMEdGraphFunctionRefNodeSpawner::CreateFromAssetData(ControlRigAssetData, PublicFunction);
+						check(NodeSpawner != nullptr);
+						NodeSpawner->SetRelatedBlueprintClass(BlueprintClass);
+						ActionRegistrar.AddBlueprintAction(ActionKey, NodeSpawner);
+					}
 				}
 			}
 		}
@@ -428,8 +460,18 @@ void FRigVMEditorModule::GetInstanceActions(URigVMBlueprint* RigVMBlueprint, FBl
 		if (URigVMFunctionLibrary* LocalFunctionLibrary = RigVMBlueprint->GetLocalFunctionLibrary())
 		{
 			TArray<URigVMLibraryNode*> Functions = LocalFunctionLibrary->GetFunctions();
+			const FSoftObjectPath LocalLibrarySoftPath = LocalFunctionLibrary->GetFunctionHostObjectPath();
 			for (URigVMLibraryNode* Function : Functions)
 			{
+				// Avoid adding functions that are already added by the GetTypeActions functions (public functions that are already saved into the blueprint tag)
+				if (RigVMBlueprint->PublicGraphFunctions.ContainsByPredicate([LocalLibrarySoftPath, Function](const FRigVMGraphFunctionHeader& Header) -> bool
+				{
+					return FRigVMGraphFunctionIdentifier(LocalLibrarySoftPath, Function) == Header.LibraryPointer;
+				}))
+				{
+					continue;
+				}
+				
 				URigVMEdGraphNodeSpawner* NodeSpawner = URigVMEdGraphFunctionRefNodeSpawner::CreateFromFunction(Function);
 				check(NodeSpawner != nullptr);
 				NodeSpawner->SetRelatedBlueprintClass(BlueprintClass);
@@ -490,34 +532,37 @@ void FRigVMEditorModule::GetInstanceActions(URigVMBlueprint* RigVMBlueprint, FBl
 	}
 }
 
-void FRigVMEditorModule::GetNodeContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
-	// Only register menu actions for ourselves
-	UClass* BPClass = RigVMBlueprint->GetClass();
-	UClass* BaseClass = GetRigVMBlueprintClass();
-	if(BPClass != GetRigVMBlueprintClass() && !BPClass->IsChildOf(BaseClass))
+	// Only register menu actions for ourselves if we are a blueprint
+	if(URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(RigVMClientHost))
 	{
-		return;
+		UClass* BPClass = RigVMBlueprint->GetClass();
+		UClass* BaseClass = GetRigVMBlueprintClass();
+		if(BPClass != GetRigVMBlueprintClass() && !BPClass->IsChildOf(BaseClass))
+		{
+			return;
+		}
 	}
 
-	GetNodeWorkflowContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeEventsContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeConversionContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeDebugContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeVariablesContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeTemplatesContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeOrganizationContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeVersioningContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
-	GetNodeTestContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
+	GetNodeWorkflowContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeEventsContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeConversionContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeDebugContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeVariablesContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeTemplatesContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeOrganizationContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeVersioningContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+	GetNodeTestContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
 }
 
-void FRigVMEditorModule::GetNodeWorkflowContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeWorkflowContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
 	const TArray<FRigVMUserWorkflow> Workflows = ModelNode->GetSupportedWorkflows(ERigVMUserWorkflowType::NodeContext, ModelNode);
 	if(!Workflows.IsEmpty())
 	{
 		FToolMenuSection& SettingsSection = Menu->AddSection("RigVMEditorContextMenuWorkflow", LOCTEXT("WorkflowHeader", "Workflow"));
-		URigVMController* Controller = RigVMBlueprint->GetController(ModelNode->GetGraph());
+		URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelNode->GetGraph());
 
 		for(const FRigVMUserWorkflow& Workflow : Workflows)
 		{
@@ -545,9 +590,10 @@ void FRigVMEditorModule::GetNodeWorkflowContextMenuActions(URigVMBlueprint* RigV
 	}
 }
 
-void FRigVMEditorModule::GetNodeEventsContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeEventsContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
-	if(ModelNode->IsEvent())
+	URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(RigVMClientHost);
+	if(RigVMBlueprint && ModelNode->IsEvent())
 	{
 		const FName& EventName = ModelNode->GetEventName();
 		const bool bCanRunOnce = !CastChecked<URigVMEdGraphSchema>(EdGraphNode->GetSchema())->IsRigVMDefaultEvent(EventName);
@@ -600,7 +646,7 @@ void FRigVMEditorModule::GetNodeEventsContextMenuActions(URigVMBlueprint* RigVMB
 	}
 }
 
-void FRigVMEditorModule::GetNodeConversionContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeConversionContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
 	if(URigVMDispatchNode* DispatchNode = Cast<URigVMDispatchNode>(ModelNode))
 	{
@@ -611,7 +657,7 @@ void FRigVMEditorModule::GetNodeConversionContextMenuActions(URigVMBlueprint* Ri
 				// if the value pin has only links on the root pin
 				if((ValuePin->GetSourceLinks(false).Num() > 0) && (ValuePin->GetTargetLinks(false).Num() > 0))
 				{
-					URigVMController* Controller = RigVMBlueprint->GetController(ModelNode->GetGraph());
+					URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelNode->GetGraph());
 
 					FToolMenuSection& ConversionSection = Menu->AddSection("RigVMEditorContextMenuConversion", LOCTEXT("ConversionHeader", "Conversion"));
 					ConversionSection.AddMenuEntry(
@@ -645,157 +691,165 @@ void FRigVMEditorModule::GetNodeConversionContextMenuActions(URigVMBlueprint* Ri
 	}
 }
 
-void FRigVMEditorModule::GetNodeDebugContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeDebugContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
-	FToolMenuSection& DebugSection = Menu->AddSection("RigVMEditorContextMenuDebug", LOCTEXT("DebugHeader", "Debug"));
-	bool bNoneHasBreakpoint = true;
-
-	const URigVMGraph* Model = ModelNode->GetGraph();
-	URigVMController* Controller = RigVMBlueprint->GetController(Model);
-
-	TArray<URigVMNode*> SelectedNodes;
-	TArray<FName> SelectedNodeNames = Model->GetSelectNodes();
-	SelectedNodeNames.AddUnique(ModelNode->GetFName());
-
-	for (FName SelectedNodeName : SelectedNodeNames)
+	URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(RigVMClientHost);
+	if(RigVMBlueprint)
 	{
-		if (URigVMNode* FoundNode = Model->FindNodeByName(SelectedNodeName))
+		FToolMenuSection& DebugSection = Menu->AddSection("RigVMEditorContextMenuDebug", LOCTEXT("DebugHeader", "Debug"));
+		bool bNoneHasBreakpoint = true;
+
+		const URigVMGraph* Model = ModelNode->GetGraph();
+		URigVMController* Controller = RigVMBlueprint->GetController(Model);
+
+		TArray<URigVMNode*> SelectedNodes;
+		TArray<FName> SelectedNodeNames = Model->GetSelectNodes();
+		SelectedNodeNames.AddUnique(ModelNode->GetFName());
+
+		for (FName SelectedNodeName : SelectedNodeNames)
 		{
-			SelectedNodes.Add(FoundNode);
-			if (FoundNode->HasBreakpoint())
+			if (URigVMNode* FoundNode = Model->FindNodeByName(SelectedNodeName))
 			{
-				bNoneHasBreakpoint = false;
-			}
-		}
-	}
-	
-	if (bNoneHasBreakpoint)
-	{
-		DebugSection.AddMenuEntry(
-		"Add Breakpoint",
-		LOCTEXT("AddBreakpoint", "Add Breakpoint"),
-		LOCTEXT("AddBreakpoint_Tooltip", "Adds a breakpoint to the graph at this node"),
-		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateLambda([Controller, SelectedNodes, RigVMBlueprint]()
-		{
-			for (URigVMNode* SelectedNode : SelectedNodes)
-			{
-				if (RigVMBlueprint->AddBreakpoint(SelectedNode))
+				SelectedNodes.Add(FoundNode);
+				if (FoundNode->HasBreakpoint())
 				{
-					SelectedNode->SetHasBreakpoint(true);
+					bNoneHasBreakpoint = false;
 				}
 			}
-		})));
-	}
-	else
-	{						
-		DebugSection.AddMenuEntry(
-		"Remove Breakpoint",
-		LOCTEXT("RemoveBreakpoint", "Remove Breakpoint"),
-		LOCTEXT("RemoveBreakpoint_Tooltip", "Removes a breakpoint to the graph at this node"),
-		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateLambda([Controller, SelectedNodes, RigVMBlueprint]()
+		}
+	
+		if (bNoneHasBreakpoint)
 		{
-			for (URigVMNode* SelectedNode : SelectedNodes)
+			DebugSection.AddMenuEntry(
+			"Add Breakpoint",
+			LOCTEXT("AddBreakpoint", "Add Breakpoint"),
+			LOCTEXT("AddBreakpoint_Tooltip", "Adds a breakpoint to the graph at this node"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([Controller, SelectedNodes, RigVMBlueprint]()
 			{
-				if (SelectedNode->HasBreakpoint())
+				for (URigVMNode* SelectedNode : SelectedNodes)
 				{
-					if (RigVMBlueprint->RemoveBreakpoint(SelectedNode))
+					if (RigVMBlueprint->AddBreakpoint(SelectedNode))
 					{
-						SelectedNode->SetHasBreakpoint(false);
+						SelectedNode->SetHasBreakpoint(true);
 					}
 				}
-			}                            
-		})));
+			})));
+		}
+		else
+		{						
+			DebugSection.AddMenuEntry(
+			"Remove Breakpoint",
+			LOCTEXT("RemoveBreakpoint", "Remove Breakpoint"),
+			LOCTEXT("RemoveBreakpoint_Tooltip", "Removes a breakpoint to the graph at this node"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([Controller, SelectedNodes, RigVMBlueprint]()
+			{
+				for (URigVMNode* SelectedNode : SelectedNodes)
+				{
+					if (SelectedNode->HasBreakpoint())
+					{
+						if (RigVMBlueprint->RemoveBreakpoint(SelectedNode))
+						{
+							SelectedNode->SetHasBreakpoint(false);
+						}
+					}
+				}                            
+			})));
+		}
 	}
 }
 
-void FRigVMEditorModule::GetNodeVariablesContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeVariablesContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
-	const URigVMGraph* Model = ModelNode->GetGraph();
-	URigVMController* Controller = RigVMBlueprint->GetController(Model);
-
-	if (URigVMVariableNode* VariableNode = Cast<URigVMVariableNode>(EdGraphNode->GetModelNode()))
+	URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(RigVMClientHost);
+	if (RigVMBlueprint)
 	{
-		FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("VariablesSettingsHeader", "Variables"));
-		VariablesSection.AddMenuEntry(
-			"MakePindingsFromVariableNode",
-			LOCTEXT("MakeBindingsFromVariableNode", "Make Bindings From Node"),
-			LOCTEXT("MakeBindingsFromVariableNode_Tooltip", "Turns the variable node into one ore more variable bindings on the pin(s)"),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([RigVMBlueprint, Controller, VariableNode]() {
-				Controller->MakeBindingsFromVariableNode(VariableNode->GetFName());
-			})
-		));
-	}
+		const URigVMGraph* Model = ModelNode->GetGraph();
+		URigVMController* Controller = RigVMBlueprint->GetController(Model);
 
-	if (URigVMFunctionReferenceNode* FunctionReferenceNode = Cast<URigVMFunctionReferenceNode>(EdGraphNode->GetModelNode()))
-	{
-		TSoftObjectPtr<URigVMFunctionReferenceNode> RefPtr(FunctionReferenceNode);
-		if(RefPtr.GetLongPackageName() != FunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer.LibraryNode.GetLongPackageName())
+		if (URigVMVariableNode* VariableNode = Cast<URigVMVariableNode>(EdGraphNode->GetModelNode()))
 		{
-			if(!FunctionReferenceNode->IsFullyRemapped() && FunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer.LibraryNode.ResolveObject())
+			FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("VariablesSettingsHeader", "Variables"));
+			VariablesSection.AddMenuEntry(
+				"MakePindingsFromVariableNode",
+				LOCTEXT("MakeBindingsFromVariableNode", "Make Bindings From Node"),
+				LOCTEXT("MakeBindingsFromVariableNode_Tooltip", "Turns the variable node into one ore more variable bindings on the pin(s)"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([RigVMBlueprint, Controller, VariableNode]() {
+					Controller->MakeBindingsFromVariableNode(VariableNode->GetFName());
+				})
+			));
+		}
+
+		if (URigVMFunctionReferenceNode* FunctionReferenceNode = Cast<URigVMFunctionReferenceNode>(EdGraphNode->GetModelNode()))
+		{
+			TSoftObjectPtr<URigVMFunctionReferenceNode> RefPtr(FunctionReferenceNode);
+			if(RefPtr.GetLongPackageName() != FunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer.LibraryNode.GetLongPackageName())
 			{
-				FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("Variables", "Variables"));
-				VariablesSection.AddMenuEntry(
-                    "MakeVariablesFromFunctionReferenceNode",
-                    LOCTEXT("MakeVariablesFromFunctionReferenceNode", "Create required variables"),
-                    LOCTEXT("MakeVariablesFromFunctionReferenceNode_Tooltip", "Creates all required variables for this function and binds them"),
-                    FSlateIcon(),
-                    FUIAction(FExecuteAction::CreateLambda([Controller, FunctionReferenceNode, RigVMBlueprint]() {
+				if(!FunctionReferenceNode->IsFullyRemapped() && FunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer.LibraryNode.ResolveObject())
+				{
+					FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("Variables", "Variables"));
+					VariablesSection.AddMenuEntry(
+						"MakeVariablesFromFunctionReferenceNode",
+						LOCTEXT("MakeVariablesFromFunctionReferenceNode", "Create required variables"),
+						LOCTEXT("MakeVariablesFromFunctionReferenceNode_Tooltip", "Creates all required variables for this function and binds them"),
+						FSlateIcon(),
+						FUIAction(FExecuteAction::CreateLambda([Controller, FunctionReferenceNode, RigVMBlueprint]() {
 
-                        const TArray<FRigVMExternalVariable> ExternalVariables = FunctionReferenceNode->GetExternalVariables(false);
-                        if(!ExternalVariables.IsEmpty())
-                        {
-							FScopedTransaction Transaction(LOCTEXT("MakeVariablesFromFunctionReferenceNode", "Create required variables"));
-                            RigVMBlueprint->Modify();
+							const TArray<FRigVMExternalVariable> ExternalVariables = FunctionReferenceNode->GetExternalVariables(false);
+							if(!ExternalVariables.IsEmpty())
+							{
+								FScopedTransaction Transaction(LOCTEXT("MakeVariablesFromFunctionReferenceNode", "Create required variables"));
+								RigVMBlueprint->Modify();
 
-                            if (URigVMLibraryNode* LibraryNode = FunctionReferenceNode->LoadReferencedNode())
-                            {
-                                URigVMBlueprint* ReferencedBlueprint = LibraryNode->GetTypedOuter<URigVMBlueprint>();
-							   // ReferencedBlueprint != RigVMBlueprint - since only FunctionReferenceNodes from other assets have the potential to be unmapped
+								if (URigVMLibraryNode* LibraryNode = FunctionReferenceNode->LoadReferencedNode())
+								{
+									URigVMBlueprint* ReferencedBlueprint = LibraryNode->GetTypedOuter<URigVMBlueprint>();
+								   // ReferencedBlueprint != RigVMBlueprint - since only FunctionReferenceNodes from other assets have the potential to be unmapped
                             
-							   for(const FRigVMExternalVariable& ExternalVariable : ExternalVariables)
-							   {
-								   FString DefaultValue;
-								   if(ReferencedBlueprint)
+								   for(const FRigVMExternalVariable& ExternalVariable : ExternalVariables)
 								   {
-									   for(const FBPVariableDescription& NewVariable : ReferencedBlueprint->NewVariables)
+									   FString DefaultValue;
+									   if(ReferencedBlueprint)
 									   {
-										   if(NewVariable.VarName == ExternalVariable.Name)
+										   for(const FBPVariableDescription& NewVariable : ReferencedBlueprint->NewVariables)
 										   {
-											   DefaultValue = NewVariable.DefaultValue;
-											   break;
+											   if(NewVariable.VarName == ExternalVariable.Name)
+											   {
+												   DefaultValue = NewVariable.DefaultValue;
+												   break;
+											   }
 										   }
 									   }
-								   }
                                 
-								   FName NewVariableName = RigVMBlueprint->AddHostMemberVariableFromExternal(ExternalVariable, DefaultValue);
-								   if(!NewVariableName.IsNone())
-								   {
-									   Controller->SetRemappedVariable(FunctionReferenceNode, ExternalVariable.Name, NewVariableName);
+									   FName NewVariableName = RigVMBlueprint->AddHostMemberVariableFromExternal(ExternalVariable, DefaultValue);
+									   if(!NewVariableName.IsNone())
+									   {
+										   Controller->SetRemappedVariable(FunctionReferenceNode, ExternalVariable.Name, NewVariableName);
+									   }
 								   }
-							   }
-                            }
+								}
 
-                            FBlueprintEditorUtils::MarkBlueprintAsModified(RigVMBlueprint);
-                        }
+								FBlueprintEditorUtils::MarkBlueprintAsModified(RigVMBlueprint);
+							}
                         
-                    })
-                ));
+						})
+					));
+				}
 			}
 		}
 	}
 }
 
-void FRigVMEditorModule::GetNodeTemplatesContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeTemplatesContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
 	if (URigVMTemplateNode* TemplateNode = Cast<URigVMTemplateNode>(EdGraphNode->GetModelNode()))
 	{
 		if (!TemplateNode->IsSingleton())
 		{
 			const URigVMGraph* Model = ModelNode->GetGraph();
-			URigVMController* Controller = RigVMBlueprint->GetController(Model);
+			URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(Model);
 			
 			FToolMenuSection& TemplatesSection = Menu->AddSection("RigVMEditorContextMenuTemplates", LOCTEXT("TemplatesHeader", "Templates"));
 			TemplatesSection.AddMenuEntry(
@@ -812,10 +866,11 @@ void FRigVMEditorModule::GetNodeTemplatesContextMenuActions(URigVMBlueprint* Rig
 	}
 }
 
-void FRigVMEditorModule::GetNodeOrganizationContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeOrganizationContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
+	URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(RigVMClientHost);
 	const URigVMGraph* Model = ModelNode->GetGraph();
-	URigVMController* Controller = RigVMBlueprint->GetController(Model);
+	URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(Model);
 
 	FToolMenuSection& OrganizationSection = Menu->AddSection("RigVMEditorContextMenuOrganization", LOCTEXT("OrganizationHeader", "Organization"));
 	OrganizationSection.AddMenuEntry(
@@ -868,34 +923,37 @@ void FRigVMEditorModule::GetNodeOrganizationContextMenuActions(URigVMBlueprint* 
 		));
 	}
 
-	if (URigVMFunctionReferenceNode* FunctionReferenceNode = Cast<URigVMFunctionReferenceNode>(EdGraphNode->GetModelNode()))
+	if(RigVMBlueprint)
 	{
-		TSoftObjectPtr<URigVMFunctionReferenceNode> RefPtr(FunctionReferenceNode);
-		if(RefPtr.GetLongPackageName() != FunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer.LibraryNode.GetLongPackageName())
+		if (URigVMFunctionReferenceNode* FunctionReferenceNode = Cast<URigVMFunctionReferenceNode>(EdGraphNode->GetModelNode()))
+		{
+			TSoftObjectPtr<URigVMFunctionReferenceNode> RefPtr(FunctionReferenceNode);
+			if(RefPtr.GetLongPackageName() != FunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer.LibraryNode.GetLongPackageName())
+			{
+				OrganizationSection.AddMenuEntry(
+				   "Localize Function",
+				   LOCTEXT("LocalizeFunction", "Localize Function"),
+				   LOCTEXT("LocalizeFunction_Tooltip", "Creates a local copy of the function backing the node."),
+				   FSlateIcon(),
+				   FUIAction(FExecuteAction::CreateLambda([RigVMBlueprint, FunctionReferenceNode]() {
+					   RigVMBlueprint->BroadcastRequestLocalizeFunctionDialog(FunctionReferenceNode->GetFunctionIdentifier(), true);
+				   })
+				));
+			}
+		}
+
+		if (URigVMFunctionReferenceNode* FunctionRefNode = Cast<URigVMFunctionReferenceNode>(EdGraphNode->GetModelNode()))
 		{
 			OrganizationSection.AddMenuEntry(
-			   "Localize Function",
-			   LOCTEXT("LocalizeFunction", "Localize Function"),
-			   LOCTEXT("LocalizeFunction_Tooltip", "Creates a local copy of the function backing the node."),
-			   FSlateIcon(),
-			   FUIAction(FExecuteAction::CreateLambda([RigVMBlueprint, FunctionReferenceNode]() {
-				   RigVMBlueprint->BroadcastRequestLocalizeFunctionDialog(FunctionReferenceNode->GetFunctionIdentifier(), true);
-			   })
-		    ));
+				"Promote To Collapse Node",
+				LOCTEXT("PromoteToCollapseNode", "Promote To Collapse Node"),
+				LOCTEXT("PromoteToCollapseNode_Tooltip", "Turns the Function Ref Node into a Collapse Node"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([Controller, FunctionRefNode]() {
+					Controller->PromoteFunctionReferenceNodeToCollapseNode(FunctionRefNode->GetFName());
+					})
+				));
 		}
-	}
-
-	if (URigVMFunctionReferenceNode* FunctionRefNode = Cast<URigVMFunctionReferenceNode>(EdGraphNode->GetModelNode()))
-	{
-		OrganizationSection.AddMenuEntry(
-			"Promote To Collapse Node",
-			LOCTEXT("PromoteToCollapseNode", "Promote To Collapse Node"),
-			LOCTEXT("PromoteToCollapseNode_Tooltip", "Turns the Function Ref Node into a Collapse Node"),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([Controller, FunctionRefNode]() {
-				Controller->PromoteFunctionReferenceNodeToCollapseNode(FunctionRefNode->GetFName());
-				})
-			));
 	}
 
 	if (URigVMLibraryNode* LibraryNode = Cast<URigVMLibraryNode>(EdGraphNode->GetModelNode()))
@@ -943,10 +1001,10 @@ void FRigVMEditorModule::GetNodeOrganizationContextMenuActions(URigVMBlueprint* 
 	}));
 }
 
-void FRigVMEditorModule::GetNodeVersioningContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeVersioningContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
 	const URigVMGraph* Model = ModelNode->GetGraph();
-	URigVMController* Controller = RigVMBlueprint->GetController(Model);
+	URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(Model);
 
 	bool bCanNodeBeUpgraded = false;
 	TArray<FName> SelectedNodeNames = Model->GetSelectNodes();
@@ -976,7 +1034,7 @@ void FRigVMEditorModule::GetNodeVersioningContextMenuActions(URigVMBlueprint* Ri
 	}
 }
 
-void FRigVMEditorModule::GetNodeTestContextMenuActions(URigVMBlueprint* RigVMBlueprint, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
+void FRigVMEditorModule::GetNodeTestContextMenuActions(IRigVMClientHost* RigVMClientHost, const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
 	// this struct is only available in EngineTest for now
 	static const FString DecoratorObjectPath = TEXT("/Script/EngineTestEditor.EngineTestRigVM_SimpleDecorator");
@@ -987,7 +1045,7 @@ void FRigVMEditorModule::GetNodeTestContextMenuActions(URigVMBlueprint* RigVMBlu
 	}
 
 	const URigVMGraph* Model = ModelNode->GetGraph();
-	URigVMController* Controller = RigVMBlueprint->GetController(Model);
+	URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(Model);
 
 	FToolMenuSection& EngineTestSection = Menu->AddSection("RigVMEditorContextMenuEngineTest", LOCTEXT("EngineTestHeader", "EngineTest"));
 	EngineTestSection.AddMenuEntry(
@@ -1006,25 +1064,25 @@ void FRigVMEditorModule::GetNodeTestContextMenuActions(URigVMBlueprint* RigVMBlu
 	);
 }
 
-void FRigVMEditorModule::GetPinContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
-	GetPinWorkflowContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinDebugContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinArrayContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinAggregateContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinTemplateContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinConversionContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinVariableContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinResetDefaultContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
-	GetPinInjectedNodesContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
+	GetPinWorkflowContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinDebugContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinArrayContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinAggregateContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinTemplateContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinConversionContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinVariableContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinResetDefaultContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetPinInjectedNodesContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
 }
 
-void FRigVMEditorModule::GetPinWorkflowContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinWorkflowContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
 	const TArray<FRigVMUserWorkflow> Workflows = ModelPin->GetNode()->GetSupportedWorkflows(ERigVMUserWorkflowType::PinContext, ModelPin);
 	if(!Workflows.IsEmpty())
 	{
-		URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+		URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelPin->GetGraph());
 
 		FToolMenuSection& SettingsSection = Menu->AddSection("RigVMEditorContextMenuWorkflow", LOCTEXT("WorkflowHeader", "Workflow"));
 
@@ -1054,31 +1112,35 @@ void FRigVMEditorModule::GetPinWorkflowContextMenuActions(URigVMBlueprint* RigVM
 	}
 }
 
-void FRigVMEditorModule::GetPinDebugContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinDebugContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
-	const bool bIsEditablePin = !ModelPin->IsExecuteContext() && !ModelPin->IsWildCard();
-
-	if(Cast<URigVMEdGraphNode>(EdGraphPin->GetOwningNode()))
+	URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(RigVMClientHost);
+	if (RigVMBlueprint)
 	{
-		if(bIsEditablePin)
+		const bool bIsEditablePin = !ModelPin->IsExecuteContext() && !ModelPin->IsWildCard();
+
+		if(Cast<URigVMEdGraphNode>(EdGraphPin->GetOwningNode()))
 		{
-			// Add the watch pin / unwatch pin menu items
-			FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuWatches", LOCTEXT("WatchesHeader", "Watches"));
-			if (FKismetDebugUtilities::IsPinBeingWatched(RigVMBlueprint, EdGraphPin))
+			if(bIsEditablePin)
 			{
-				Section.AddMenuEntry(FGraphEditorCommands::Get().StopWatchingPin);
-			}
-			else
-			{
-				Section.AddMenuEntry(FGraphEditorCommands::Get().StartWatchingPin);
+				// Add the watch pin / unwatch pin menu items
+				FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuWatches", LOCTEXT("WatchesHeader", "Watches"));
+				if (FKismetDebugUtilities::IsPinBeingWatched(RigVMBlueprint, EdGraphPin))
+				{
+					Section.AddMenuEntry(FGraphEditorCommands::Get().StopWatchingPin);
+				}
+				else
+				{
+					Section.AddMenuEntry(FGraphEditorCommands::Get().StartWatchingPin);
+				}
 			}
 		}
 	}
 }
 
-void FRigVMEditorModule::GetPinArrayContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinArrayContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
-	URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+	URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelPin->GetGraph());
 	if (ModelPin->IsArray() && !ModelPin->IsExecuteContext())
 	{
 		FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuPinArrays", LOCTEXT("PinArrays", "Arrays"));
@@ -1117,9 +1179,9 @@ void FRigVMEditorModule::GetPinArrayContextMenuActions(URigVMBlueprint* RigVMBlu
 	}
 }
 
-void FRigVMEditorModule::GetPinAggregateContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinAggregateContextMenuActions(IRigVMClientHost* RigVMClient, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
-	URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+	URigVMController* Controller = RigVMClient->GetRigVMClient()->GetController(ModelPin->GetGraph());
 	if (Cast<URigVMAggregateNode>(ModelPin->GetNode()))
 	{
 		FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuAggregatePin", LOCTEXT("AggregatePin", "Aggregates"));
@@ -1135,33 +1197,33 @@ void FRigVMEditorModule::GetPinAggregateContextMenuActions(URigVMBlueprint* RigV
 	}
 }
 
-void FRigVMEditorModule::GetPinTemplateContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinTemplateContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
 	if (URigVMTemplateNode* TemplateNode = Cast<URigVMTemplateNode>(ModelPin->GetNode()))
 	{
 		if (!TemplateNode->IsSingleton())
 		{
-			URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+			URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelPin->GetGraph());
 			FToolMenuSection& TemplatesSection = Menu->AddSection("RigVMEditorContextMenuTemplates", LOCTEXT("TemplatesHeader", "Templates"));
 
 			if(const FRigVMTemplate* Template = TemplateNode->GetTemplate())
 			{
 				if(!ModelPin->IsExecuteContext())
 				{
-					if(const FRigVMTemplateArgument* Argument = Template->FindArgument(ModelPin->GetRootPin()->GetFName()))
+					URigVMPin* RootPin = ModelPin->GetRootPin();
+					if(const FRigVMTemplateArgument* Argument = Template->FindArgument(RootPin->GetFName()))
 					{
 						if(!Argument->IsSingleton())
 						{
 							TArray<TRigVMTypeIndex> ResolvedTypeIndices = Argument->GetSupportedTypeIndices(TemplateNode->GetResolvedPermutationIndices(true));
 							TSharedRef<SRigVMGraphChangePinType> ChangePinTypeWidget =
 							SNew(SRigVMGraphChangePinType)
-							.Blueprint(RigVMBlueprint)
 							.Types(ResolvedTypeIndices)
-							.OnTypeSelected_Lambda([RigVMBlueprint, ModelPin](const TRigVMTypeIndex& TypeSelected)
+							.OnTypeSelected_Lambda([RigVMClientHost, RootPin](const TRigVMTypeIndex& TypeSelected)
 							{
-								if (URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph()))
+								if (URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(RootPin->GetGraph()))
 								{
-									Controller->ResolveWildCardPin(ModelPin, TypeSelected, true, true);
+									Controller->ResolveWildCardPin(RootPin, TypeSelected, true, true);
 								}
 							});
 
@@ -1185,7 +1247,7 @@ void FRigVMEditorModule::GetPinTemplateContextMenuActions(URigVMBlueprint* RigVM
 	}
 }
 
-void FRigVMEditorModule::GetPinConversionContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinConversionContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
 	if (URigVMRerouteNode* RerouteNode = Cast<URigVMRerouteNode>(ModelPin->GetNode()))
 	{
@@ -1195,7 +1257,7 @@ void FRigVMEditorModule::GetPinConversionContextMenuActions(URigVMBlueprint* Rig
 			{
 				if(!ValuePin->IsExecuteContext())
 				{
-					URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+					URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelPin->GetGraph());
 					FToolMenuSection& ConversionSection = Menu->AddSection("RigVMEditorContextMenuConversion", LOCTEXT("ConversionHeader", "Conversion"));
 
 					if(ValuePin->IsArray())
@@ -1243,76 +1305,79 @@ void FRigVMEditorModule::GetPinConversionContextMenuActions(URigVMBlueprint* Rig
 	}
 }
 
-void FRigVMEditorModule::GetPinVariableContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinVariableContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
-	const bool bIsEditablePin = !ModelPin->IsExecuteContext() && !ModelPin->IsWildCard();
-
-	if (ModelPin->GetDirection() == ERigVMPinDirection::Input && bIsEditablePin)
+	if(URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(RigVMClientHost))
 	{
-		const UEdGraphNode* EdGraphNode = EdGraphPin->GetOwningNode();
-		URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+		const bool bIsEditablePin = !ModelPin->IsExecuteContext() && !ModelPin->IsWildCard();
 
-		if (ModelPin->IsBoundToVariable())
+		if (ModelPin->GetDirection() == ERigVMPinDirection::Input && bIsEditablePin)
 		{
-			FVector2D NodePosition = FVector2D(EdGraphNode->NodePosX - 200.f, EdGraphNode->NodePosY);
+			const UEdGraphNode* EdGraphNode = EdGraphPin->GetOwningNode();
+			URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
 
-			FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("Variables", "Variables"));
-			VariablesSection.AddMenuEntry(
-				"MakeVariableNodeFromBinding",
-				LOCTEXT("MakeVariableNodeFromBinding", "Make Variable Node"),
-				LOCTEXT("MakeVariableNodeFromBinding_Tooltip", "Turns the variable binding on the pin to a variable node"),
-				FSlateIcon(),
-				FUIAction(FExecuteAction::CreateLambda([Controller, ModelPin, NodePosition]() {
-					Controller->MakeVariableNodeFromBinding(ModelPin->GetPinPath(), NodePosition, true, true);
-				})
-			));
-		}
-		else
-		{
-			FVector2D NodePosition = FVector2D(EdGraphNode->NodePosX - 200.f, EdGraphNode->NodePosY);
-
-			FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("Variables", "Variables"));
-			VariablesSection.AddMenuEntry(
-				"PromotePinToVariable",
-				LOCTEXT("PromotePinToVariable", "Promote Pin To Variable"),
-				LOCTEXT("PromotePinToVariable_Tooltip", "Turns the pin into a variable"),
-				FSlateIcon(),
-				FUIAction(FExecuteAction::CreateLambda([Controller, ModelPin, NodePosition]() {
-
-					FModifierKeysState KeyState = FSlateApplication::Get().GetModifierKeys();
-					bool bCreateVariableNode = !KeyState.IsAltDown();
-
-					Controller->PromotePinToVariable(ModelPin->GetPinPath(), bCreateVariableNode, NodePosition, true, true);
-				})
-			));
-		}
-	}
-
-	if (Cast<URigVMUnitNode>(ModelPin->GetNode()) != nullptr || 
-		Cast<URigVMDispatchNode>(ModelPin->GetNode()) != nullptr || 
-		Cast<URigVMLibraryNode>(ModelPin->GetNode()) != nullptr)
-	{
-		if (ModelPin->GetDirection() == ERigVMPinDirection::Input &&
-			ModelPin->IsRootPin() &&
-			bIsEditablePin)
-		{
-			if (!ModelPin->IsBoundToVariable())
+			if (ModelPin->IsBoundToVariable())
 			{
-				FToolMenuSection& VariablesSection = Menu->FindOrAddSection(TEXT("Variables"));
+				FVector2D NodePosition = FVector2D(EdGraphNode->NodePosX - 200.f, EdGraphNode->NodePosY);
 
-				TSharedRef<SRigVMGraphVariableBinding> VariableBindingWidget =
-					SNew(SRigVMGraphVariableBinding)
-					.Blueprint(RigVMBlueprint)
-					.ModelPins({ModelPin})
-					.CanRemoveBinding(false);
+				FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("Variables", "Variables"));
+				VariablesSection.AddMenuEntry(
+					"MakeVariableNodeFromBinding",
+					LOCTEXT("MakeVariableNodeFromBinding", "Make Variable Node"),
+					LOCTEXT("MakeVariableNodeFromBinding_Tooltip", "Turns the variable binding on the pin to a variable node"),
+					FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([Controller, ModelPin, NodePosition]() {
+						Controller->MakeVariableNodeFromBinding(ModelPin->GetPinPath(), NodePosition, true, true);
+					})
+				));
+			}
+			else
+			{
+				FVector2D NodePosition = FVector2D(EdGraphNode->NodePosX - 200.f, EdGraphNode->NodePosY);
 
-				VariablesSection.AddEntry(FToolMenuEntry::InitWidget("BindPinToVariableWidget", VariableBindingWidget, FText(), true));
+				FToolMenuSection& VariablesSection = Menu->AddSection("RigVMEditorContextMenuVariables", LOCTEXT("Variables", "Variables"));
+				VariablesSection.AddMenuEntry(
+					"PromotePinToVariable",
+					LOCTEXT("PromotePinToVariable", "Promote Pin To Variable"),
+					LOCTEXT("PromotePinToVariable_Tooltip", "Turns the pin into a variable"),
+					FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([Controller, ModelPin, NodePosition]() {
+
+						FModifierKeysState KeyState = FSlateApplication::Get().GetModifierKeys();
+						bool bCreateVariableNode = !KeyState.IsAltDown();
+
+						Controller->PromotePinToVariable(ModelPin->GetPinPath(), bCreateVariableNode, NodePosition, true, true);
+					})
+				));
+			}
+		}
+
+		if (Cast<URigVMUnitNode>(ModelPin->GetNode()) != nullptr || 
+			Cast<URigVMDispatchNode>(ModelPin->GetNode()) != nullptr || 
+			Cast<URigVMLibraryNode>(ModelPin->GetNode()) != nullptr)
+		{
+			if (ModelPin->GetDirection() == ERigVMPinDirection::Input &&
+				ModelPin->IsRootPin() &&
+				bIsEditablePin)
+			{
+				if (!ModelPin->IsBoundToVariable())
+				{
+					FToolMenuSection& VariablesSection = Menu->FindOrAddSection(TEXT("Variables"));
+
+					TSharedRef<SRigVMGraphVariableBinding> VariableBindingWidget =
+						SNew(SRigVMGraphVariableBinding)
+						.Blueprint(RigVMBlueprint)
+						.ModelPins({ModelPin})
+						.CanRemoveBinding(false);
+
+					VariablesSection.AddEntry(FToolMenuEntry::InitWidget("BindPinToVariableWidget", VariableBindingWidget, FText(), true));
+				}
 			}
 		}
 	}
 }
 
-void FRigVMEditorModule::GetPinResetDefaultContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinResetDefaultContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
 	if (Cast<URigVMUnitNode>(ModelPin->GetNode()) != nullptr || 
 		Cast<URigVMDispatchNode>(ModelPin->GetNode()) != nullptr || 
@@ -1325,7 +1390,7 @@ void FRigVMEditorModule::GetPinResetDefaultContextMenuActions(URigVMBlueprint* R
 			bIsEditablePin)
 		{
 			FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuPinDefaults", LOCTEXT("PinDefaults", "Pin Defaults"));
-			URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+			URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelPin->GetGraph());
 
 			Section.AddMenuEntry(
 				"ResetPinDefaultValue",
@@ -1340,13 +1405,13 @@ void FRigVMEditorModule::GetPinResetDefaultContextMenuActions(URigVMBlueprint* R
 	}
 }
 
-void FRigVMEditorModule::GetPinInjectedNodesContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FRigVMEditorModule::GetPinInjectedNodesContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
 	if (ModelPin->GetRootPin() == ModelPin && (
 	Cast<URigVMUnitNode>(ModelPin->GetNode()) != nullptr ||
 	Cast<URigVMLibraryNode>(ModelPin->GetNode()) != nullptr))
 	{
-		URigVMController* Controller = RigVMBlueprint->GetController(ModelPin->GetGraph());
+		URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(ModelPin->GetGraph());
 
 		if (ModelPin->HasInjectedNodes())
 		{
@@ -1438,10 +1503,10 @@ void FRigVMEditorModule::GetPinInjectedNodesContextMenuActions(URigVMBlueprint* 
 						LOCTEXT("EditAlphaInterp", "Edit Interpolate"),
 						LOCTEXT("EditAlphaInterp_Tooltip", "Edit the interpolate node"),
 						FSlateIcon(),
-						FUIAction(FExecuteAction::CreateLambda([RigVMBlueprint, InterpNode]() {
+						FUIAction(FExecuteAction::CreateLambda([RigVMClientHost, InterpNode]() {
 						TArray<FName> NodeNames;
 						NodeNames.Add(InterpNode->GetFName());
-						RigVMBlueprint->GetController(InterpNode->GetGraph())->SetNodeSelection(NodeNames);
+						RigVMClientHost->GetRigVMClient()->GetController(InterpNode->GetGraph())->SetNodeSelection(NodeNames);
 					})
 						));
 					Section.AddMenuEntry(
@@ -1514,7 +1579,7 @@ void FRigVMEditorModule::GetPinInjectedNodesContextMenuActions(URigVMBlueprint* 
 						LOCTEXT("AddVisualDebug", "Add Visual Debug"),
 						LOCTEXT("AddVisualDebug_Tooltip", "Injects a visual debugging node"),
 						FSlateIcon(),
-						FUIAction(FExecuteAction::CreateLambda([RigVMBlueprint, Controller, EdGraphPin, ModelPin, ScriptStruct]() {
+						FUIAction(FExecuteAction::CreateLambda([RigVMClientHost, Controller, EdGraphPin, ModelPin, ScriptStruct]() {
 							URigVMInjectionInfo* Injection = Controller->AddInjectedNode(ModelPin->GetPinPath(), ModelPin->GetDirection() != ERigVMPinDirection::Output, ScriptStruct, FRigVMStruct::ExecuteName, TEXT("Value"), TEXT("Value"), FString(), true, true);
 							if (Injection)
 							{
@@ -1609,24 +1674,29 @@ void FRigVMEditorModule::GetContextMenuActions(const URigVMEdGraphSchema* Schema
 	{
 		Schema->UEdGraphSchema::GetContextMenuActions(Menu, Context);
 
-		if (const UEdGraphPin* InGraphPin = (UEdGraphPin* )Context->Pin)
+		if (const UEdGraphPin* InGraphPin = (UEdGraphPin*)Context->Pin)
 		{
-			if(URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>((UBlueprint*)Context->Blueprint))
+			if(const UEdGraph* Graph = Context->Graph)
 			{
-				const UEdGraph* Graph = InGraphPin->GetOwningNode()->GetGraph();
-				if (URigVMPin* ModelPin = RigVMBlueprint->GetModel(Graph)->FindPin(InGraphPin->GetName()))
+				if(IRigVMClientHost* RigVMClientHost = Graph->GetImplementingOuter<IRigVMClientHost>())
 				{
-					GetPinContextMenuActions(RigVMBlueprint, InGraphPin, ModelPin, Menu);
+					if (URigVMPin* ModelPin = RigVMClientHost->GetRigVMClient()->GetModel(Graph)->FindPin(InGraphPin->GetName()))
+					{
+						GetPinContextMenuActions(RigVMClientHost, InGraphPin, ModelPin, Menu);
+					}
 				}
 			}
 		}
 		else if(const URigVMEdGraphNode* EdGraphNode = Cast<URigVMEdGraphNode>(Context->Node))
 		{
-			if (URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>((UBlueprint*)Context->Blueprint))
+			if (const UEdGraph* Graph = Context->Graph)
 			{
-				if(URigVMNode* ModelNode = EdGraphNode->GetModelNode())
+				if (IRigVMClientHost* RigVMClientHost = Graph->GetImplementingOuter<IRigVMClientHost>())
 				{
-					GetNodeContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
+					if(URigVMNode* ModelNode = EdGraphNode->GetModelNode())
+					{
+						GetNodeContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
+					}
 				}
 			}
 		}
@@ -1695,7 +1765,7 @@ void FRigVMEditorModule::PreChange(const UUserDefinedStruct* Changed, FStructure
 	{
 		URigVMHost* Host = *It;
 		// rebuild property list and property path list
-		Host->InvalidateCachedMemory();
+		Host->RecreateCachedMemory();
 	}
 }
 
@@ -1707,6 +1777,8 @@ void FRigVMEditorModule::PostChange(const UUserDefinedStruct* Changed, FStructur
 	}
 
 	TArray<URigVMBlueprint*> BlueprintsToRefresh;
+	TArray<UEdGraph*> EdGraphsToRefresh;
+
 	for (TObjectIterator<URigVMPin> It(RF_Transient | RF_ClassDefaultObject, /** bIncludeDerivedClasses */ true, /** InternalExcludeFlags */ EInternalObjectFlags::Garbage); It; ++It)
 	{
 		const URigVMPin* Pin = *It;
@@ -1738,6 +1810,11 @@ void FRigVMEditorModule::PostChange(const UUserDefinedStruct* Changed, FStructur
 						}
 					}	
 				}
+
+				if (URigVMGraph* RigVMGraph = Pin->GetNode()->GetGraph())
+				{
+					EdGraphsToRefresh.AddUnique(Cast<UEdGraph>(RigVMBlueprint->GetEditorObjectForRigVMGraph(RigVMGraph)));
+				}
 			}
 		}
 	}
@@ -1747,7 +1824,13 @@ void FRigVMEditorModule::PostChange(const UUserDefinedStruct* Changed, FStructur
 		RigVMBlueprint->OnRigVMRegistryChanged();
 		(void)RigVMBlueprint->MarkPackageDirty();
 	}
-	
+
+	// Avoid slate crashing after pins get repopulated
+	for (UEdGraph* Graph : EdGraphsToRefresh)
+	{
+		Graph->NotifyGraphChanged();
+	}
+
 	for (URigVMBlueprint* RigVMBlueprint : BlueprintsToRefresh)
 	{
 		// this should make sure variables in BP are updated with the latest struct object
@@ -1767,7 +1850,7 @@ void FRigVMEditorModule::PostChange(const UUserDefinedStruct* Changed, FStructur
 			URigVMHost* CDO = Cast<URigVMHost>(RigClass->GetDefaultObject(true /* create if needed */));
 			if (CDO->GetVM() != nullptr)
 			{
-				CDO->GetVM()->Reset();
+				CDO->GetVM()->Reset(CDO->GetRigVMExtendedExecuteContext());
 			}
 			TArray<UObject*> ArchetypeInstances;
 			CDO->GetArchetypeInstances(ArchetypeInstances);
@@ -1775,7 +1858,7 @@ void FRigVMEditorModule::PostChange(const UUserDefinedStruct* Changed, FStructur
 			{
 				if (URigVMHost* InstanceHost = Cast<URigVMHost>(Instance))
 				{
-					InstanceHost->GetVM()->Reset();
+					InstanceHost->GetVM()->Reset(InstanceHost->GetRigVMExtendedExecuteContext());
 				}
 			}
 		}

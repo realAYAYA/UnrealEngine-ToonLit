@@ -2,8 +2,10 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
 #include "Stats/Stats.h"
+#endif
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
 #include "GameFramework/Actor.h"
@@ -114,6 +116,10 @@ public:
 	UPROPERTY(EditAnywhere, Category=Query)
 	uint32 bDrawDistanceToWall : 1;
 
+	/** If set, a cylinder is drawn to indicate if the navigation data is ready (has been generated) for the given radius (green when ready, red otherwise). */
+	UPROPERTY(EditAnywhere, Category=Query)
+	uint32 bDrawIfNavDataIsReadyInRadius : 1;
+	
 	/** show polys from open (orange) and closed (yellow) sets */
 	UPROPERTY(EditAnywhere, Category=Debug)
 	uint32 bShowNodePool : 1;
@@ -129,6 +135,10 @@ public:
 	UPROPERTY(EditAnywhere, Category=Debug)
 	uint32 bShouldBeVisibleInGame : 1;
 
+	/** NavData must be ready for all tiles within radius. When using 0, NavData must be ready at the actor location. */
+	UPROPERTY(EditAnywhere, Category=Query)
+	float RadiusUsedToValidateNavData = 0;
+	
 	/** determines which cost will be shown*/
 	UPROPERTY(EditAnywhere, Category=Debug)
 	TEnumAsByte<ENavCostDisplay::Type> CostDisplayMode;
@@ -163,13 +173,16 @@ public:
 	UPROPERTY(EditAnywhere, Category=Pathfinding)
 	TSubclassOf<class UNavigationQueryFilter> FilterClass;
 
-	UPROPERTY(transient, EditInstanceOnly, Category=Debug, meta=(ClampMin="-1", UIMin="-1"))
+	/** Show debug steps up to this index. Use -1 to disable. */
+	UPROPERTY(EditInstanceOnly, Category=Debug, meta=(ClampMin="-1", UIMin="-1"))
 	int32 ShowStepIndex;
 
 	UPROPERTY(EditAnywhere, Category=Pathfinding)
 	float OffsetFromCornersDistance;
 
 	FVector ClosestWallLocation;
+	
+	bool bNavDataIsReadyInRadius;
 
 #if WITH_RECAST && WITH_EDITORONLY_DATA
 	/** detail data gathered from each step of regular A* algorithm */
@@ -209,7 +222,6 @@ public:
 
 	NAVIGATIONSYSTEM_API void UpdateNavData();
 	NAVIGATIONSYSTEM_API void UpdatePathfinding();
-	NAVIGATIONSYSTEM_API void GatherDetailedData(ANavigationTestingActor* Goal);
 	NAVIGATIONSYSTEM_API virtual void SearchPathTo(ANavigationTestingActor* Goal);
 
 	/*	Called when given path becomes invalid (via @see PathObserverDelegate)
@@ -231,4 +243,5 @@ public:
 
 protected:
 	NAVIGATIONSYSTEM_API FVector FindClosestWallLocation() const;
+	bool CheckIfNavDataIsReadyInRadius();
 };

@@ -6,8 +6,10 @@
 #include "Layouts/DMXControlConsoleEditorGlobalLayoutBase.h"
 #include "Widgets/SCompoundWidget.h"
 
+class UDMXControlConsoleEditorModel;
 
-namespace UE::DMXControlConsoleEditor::Layout::Private
+
+namespace UE::DMX::Private
 { 
 	/** Base widget for Control Console layout */
 	class SDMXControlConsoleEditorLayout
@@ -20,7 +22,7 @@ namespace UE::DMXControlConsoleEditor::Layout::Private
 		SLATE_END_ARGS()
 
 		/** Constructs the widget */
-		void Construct(const FArguments& InArgs, UDMXControlConsoleEditorGlobalLayoutBase* InLayout);
+		void Construct(const FArguments& InArgs, UDMXControlConsoleEditorGlobalLayoutBase* InLayout, UDMXControlConsoleEditorModel* InEditorModel);
 
 		/** Gets the Layout this view is based on */
 		UDMXControlConsoleEditorGlobalLayoutBase* GetEditorLayout() const { return EditorLayout.IsValid() ? EditorLayout.Get() : nullptr; }
@@ -46,5 +48,8 @@ namespace UE::DMXControlConsoleEditor::Layout::Private
 
 		/** Weak Reference to the Editor Layout */
 		TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutBase> EditorLayout;
+
+		/** Weak reference to the Control Console editor model */
+		TWeakObjectPtr<UDMXControlConsoleEditorModel> EditorModel;
 	};
 }

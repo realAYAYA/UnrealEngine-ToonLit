@@ -23,6 +23,8 @@ FMassSubsystemAccess::FMassSubsystemAccess(UWorld* InWorld)
 
 USubsystem* FMassSubsystemAccess::FetchSubsystemInstance(UWorld* World, TSubclassOf<USubsystem> SubsystemClass)
 {
+	QUICK_SCOPE_CYCLE_COUNTER(Mass_FetchSubsystemInstance);
+
 	check(SubsystemClass);
 	if (SubsystemClass->IsChildOf<UWorldSubsystem>())
 	{

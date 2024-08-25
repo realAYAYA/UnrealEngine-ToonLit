@@ -11,7 +11,7 @@
 #define VULKAN_SHOULD_ENABLE_DRAW_MARKERS			(UE_BUILD_DEVELOPMENT || UE_BUILD_DEBUG)
 #define VULKAN_USE_IMAGE_ACQUIRE_FENCES				0
 #define VULKAN_USE_CREATE_ANDROID_SURFACE			1
-#define VULKAN_SHOULD_USE_LLM						(UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT)
+#define VULKAN_SHOULD_USE_LLM						(UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT) // If enabled Vulkan will report detailed allocation statistics, overrides some tags with custom ones
 #define VULKAN_SHOULD_USE_COMMANDWRAPPERS			VULKAN_SHOULD_USE_LLM //LLM on Vulkan needs command wrappers to account for vkallocs
 #define VULKAN_ENABLE_LRU_CACHE						1
 #define VULKAN_SUPPORTS_GOOGLE_DISPLAY_TIMING		1
@@ -23,16 +23,7 @@
 #define VULKAN_SUPPORTS_SCALAR_BLOCK_LAYOUT			(VULKAN_RHI_RAYTRACING)
 #define VULKAN_SUPPORTS_TRANSIENT_RESOURCE_ALLOCATOR 0
 #define VULKAN_SUPPORTS_DRIVER_PROPERTIES			0
-#define VULKAN_SUPPORTS_MULTIVIEW					1
 #define VULKAN_SUPPORTS_DESCRIPTOR_INDEXING			(VULKAN_RHI_RAYTRACING)
-
-// crashing during callback setup on Android, code will fallback to VK_EXT_debug_report instead
-#define VULKAN_SUPPORTS_DEBUG_UTILS					0
-
-// Android's hashes currently work fine as the problematic cases are:
-//	VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL = 1000117000,
-//	VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL = 1000117001,
-#define VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY	0
 
 #define UE_VK_API_VERSION							VK_API_VERSION_1_1
 
@@ -56,6 +47,8 @@ public:
 	static void FreeVulkanLibrary();
 
 	static void InitDevice(FVulkanDevice* InDevice);
+	static void PostInitGPU(const FVulkanDevice& InDevice);
+
 	static void GetInstanceExtensions(FVulkanInstanceExtensionArray& OutExtensions);
 	static void GetInstanceLayers(TArray<const ANSICHAR*>& OutLayers);
 	static void GetDeviceExtensions(FVulkanDevice* Device, FVulkanDeviceExtensionArray& OutExtensions);
@@ -100,8 +93,23 @@ public:
 
 	static bool RequiresMobileRenderer()
 	{
+		#if USE_STATIC_FEATURE_LEVEL_ENUMS
+		return (UE_ANDROID_STATIC_FEATURE_LEVEL == ERHIFeatureLevel::ES3_1);
+		#else	
 		return !FAndroidMisc::ShouldUseDesktopVulkan();
+		#endif
 	}
+
+	static ERHIFeatureLevel::Type GetFeatureLevel(ERHIFeatureLevel::Type RequestedFeatureLevel)
+	{
+		#if USE_STATIC_FEATURE_LEVEL_ENUMS
+		return UE_ANDROID_STATIC_FEATURE_LEVEL;
+		#else
+		return FVulkanGenericPlatform::GetFeatureLevel(RequestedFeatureLevel);
+		#endif
+	}
+
+	static bool HasCustomFrameTiming();
 
 	static bool SupportsVolumeTextureRendering() { return false; }
 
@@ -137,7 +145,7 @@ public:
 	static void DestroySwapchainKHR(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator);
 
 	// handle precompile of PSOs, send to an android specific precompile external process.
-	static VkPipelineCache PrecompilePSO(FVulkanDevice* Device, const VkGraphicsPipelineCreateInfo* PipelineInfo, FGfxPipelineDesc* GfxEntry, const FVulkanRenderTargetLayout* RTLayout, TArrayView<uint32_t> VS, TArrayView<uint32_t> PS, size_t& AfterSize);
+	static VkPipelineCache PrecompilePSO(FVulkanDevice* Device, const TArrayView<uint8> OptionalPSOCacheData, const VkGraphicsPipelineCreateInfo* PipelineInfo, FGfxPipelineDesc* GfxEntry, const FVulkanRenderTargetLayout* RTLayout, TArrayView<uint32_t> VS, TArrayView<uint32_t> PS, size_t& AfterSize);
 
 	static bool AreRemoteCompileServicesActive();
 	static bool StartAndWaitForRemoteCompileServices(int NumServices);
@@ -159,6 +167,12 @@ public:
 
 	// Returns the profile name to look up for a given feature level on a platform
 	static FString GetVulkanProfileNameForFeatureLevel(ERHIFeatureLevel::Type FeatureLevel, bool bRaytracing);
+
+	static VkShaderStageFlags RequiredWaveOpsShaderStageFlags(VkShaderStageFlags VulkanDeviceShaderStageFlags)
+	{
+		// Many Android Vulkan implementations do not support wave ops in vertex and geometry shaders and we don't need them there.
+		return VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+	}
 
 protected:
 	static void* VulkanLib;

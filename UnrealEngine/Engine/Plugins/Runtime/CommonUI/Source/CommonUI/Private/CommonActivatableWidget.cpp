@@ -77,6 +77,14 @@ UWidget* UCommonActivatableWidget::GetDesiredFocusTarget() const
 	return NativeGetDesiredFocusTarget();
 }
 
+void UCommonActivatableWidget::ClearFocusRestorationTarget()
+{
+	if (TSharedPtr<FActivatableTreeNode> PinnedTreeNode = InputTreeNode.Pin())
+	{
+		PinnedTreeNode->ClearFocusRestorationTarget();
+	}
+}
+
 TOptional<FActivationMetadata> UCommonActivatableWidget::GetActivationMetadata() const
 {
 	return TOptional<FActivationMetadata>();
@@ -84,12 +92,16 @@ TOptional<FActivationMetadata> UCommonActivatableWidget::GetActivationMetadata()
 
 UWidget* UCommonActivatableWidget::NativeGetDesiredFocusTarget() const
 {
-	if (bWarnDesiredFocusNotImplemented && !GetClass()->IsFunctionImplementedInScript(GET_FUNCTION_NAME_CHECKED(UCommonActivatableWidget, BP_GetDesiredFocusTarget)))
+	// Prioritize BP implementation of this function.
+	UWidget* DesiredFocusTarget = BP_GetDesiredFocusTarget();
+
+	if (!DesiredFocusTarget)
 	{
-		UE_LOG(LogCommonUI, Warning, TEXT("[%s] -> Desired Focus not implemented!"), *GetName());
+		// BP didn't specify focus target, fallback to DesiredFocusWidget property on UserWidget.
+		DesiredFocusTarget = GetDesiredFocusWidget();
 	}
 
-	return BP_GetDesiredFocusTarget();
+	return DesiredFocusTarget;
 }
 
 TOptional<FUIInputConfig> UCommonActivatableWidget::GetDesiredInputConfig() const
@@ -158,6 +170,11 @@ void UCommonActivatableWidget::InternalProcessDeactivation()
 
 	bIsActive = false;
 	NativeOnDeactivated();
+}
+
+TWeakPtr<FActivatableTreeNode> UCommonActivatableWidget::GetInputTreeNode() const
+{
+	return InputTreeNode;
 }
 
 void UCommonActivatableWidget::RegisterInputTreeNode(const TSharedPtr<FActivatableTreeNode>& OwnerNode)
@@ -246,7 +263,7 @@ void UCommonActivatableWidget::ReleaseSlateResources(bool bReleaseChildren)
 
 void UCommonActivatableWidget::NativeOnActivated()
 {
-	if (ensureMsgf(bIsActive, TEXT("[%s] has called NativeOnActivated, but isn't actually activated! Never call this directly - call ActivateWidget()")))
+	if (ensureMsgf(bIsActive, TEXT("[%s] has called NativeOnActivated, but isn't actually activated! Never call this directly - call ActivateWidget()"), *GetName()))
 	{
 		if (bSetVisibilityOnActivated)
 		{

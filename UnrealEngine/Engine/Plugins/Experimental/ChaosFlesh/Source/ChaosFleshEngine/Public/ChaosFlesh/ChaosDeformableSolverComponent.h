@@ -88,10 +88,31 @@ struct FSolverGridBasedCollisionsGroup
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(EditAnywhere, Category = "GridBasedCollisions")
-		bool bUseGridBasedConstraints = false;
+	bool bUseGridBasedConstraints = false;
 
 	UPROPERTY(EditAnywhere, Category = "GridBasedCollisions")
-		float GridDx = 25.;
+	float GridDx = 25.;
+};
+
+USTRUCT(BlueprintType)
+struct FCollisionSpringGroup
+{
+	GENERATED_USTRUCT_BODY()
+	/**
+	* Search radius for point triangle pairs
+	*/
+	UPROPERTY(EditAnywhere, Category = "CollisionSpring")
+	float CollisionSearchRadius = 10.f;
+	/**
+	* Collision spring stiffness; larger value will stop penetration better
+	*/
+	UPROPERTY(EditAnywhere, Category = "CollisionSpring")
+	float CollisionSpringStiffness = 500.f;
+	/**
+	* Anisotropic springs will allow sliding on the triangle
+	*/
+	UPROPERTY(EditAnywhere, Category = "CollisionSpring")
+	bool bAllowSliding = true;
 };
 
 USTRUCT(BlueprintType)
@@ -103,27 +124,32 @@ struct FSolverGaussSeidelConstraintsGroup
 	* Enable the Gauss Seidel solver instead of the existing XPBD.
 	*/
 	UPROPERTY(EditAnywhere, Category = "GaussSeidelConstraints")
-		bool bUseGaussSeidelConstraints = false;
+	bool bUseGaussSeidelConstraints = false;
 
 	/**
 	* Enable another model that runs simulation faster.
 	*/
 	UPROPERTY(EditAnywhere, Category = "GaussSeidelConstraints")
-		bool bUseGSNeohookean = false;
+	bool bUseGSNeohookean = false;
 
 	/**
 	* Enable acceleration technique for Gauss Seidel solver to make simulation look better within a limited budget.
 	*/
 	UPROPERTY(EditAnywhere, Category = "GaussSeidelConstraints")
-		bool bUseSOR = true;
+	bool bUseSOR = true;
 
 	/**
 	* Acceleration related parameter. Tune it down if simulation becomes unstable. 
 	*/
 	UPROPERTY(EditAnywhere, Category = "GaussSeidelConstraints")
-		float OmegaSOR = 1.6f;
-};
+	float OmegaSOR = 1.6f;
 
+	/**
+	* Collsion detection radius and stiffness
+	*/
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GaussSeidelConstraints")
+	FCollisionSpringGroup CollisionSpring;
+};
 
 USTRUCT(BlueprintType)
 struct FSolverCollisionsGroup

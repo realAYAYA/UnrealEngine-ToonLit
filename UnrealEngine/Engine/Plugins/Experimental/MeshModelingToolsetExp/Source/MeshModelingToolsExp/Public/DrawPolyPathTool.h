@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "BaseTools/MeshSurfacePointTool.h"
+#include "InteractiveToolBuilder.h"
 #include "Mechanics/PlaneDistanceFromHitMechanic.h"
 #include "Mechanics/SpatialCurveDistanceMechanic.h"
 #include "Mechanics/CollectSurfacePathMechanic.h"
@@ -21,7 +21,7 @@ class UTransformProxy;
  * ToolBuilder
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UDrawPolyPathToolBuilder : public UMeshSurfacePointToolBuilder
+class MESHMODELINGTOOLSEXP_API UDrawPolyPathToolBuilder : public UInteractiveToolBuilder
 {
 	GENERATED_BODY()
 public:
@@ -285,7 +285,7 @@ protected:
 	void InitializePreviewMesh();
 	void ClearPreview();
 
-	UE_NODISCARD FVector3d GeneratePathMesh(UE::Geometry::FDynamicMesh3& Mesh);
+	[[nodiscard]] FVector3d GeneratePathMesh(UE::Geometry::FDynamicMesh3& Mesh);
 	void GenerateExtrudeMesh(UE::Geometry::FDynamicMesh3& PathMesh);
 	void EmitNewObject();
 

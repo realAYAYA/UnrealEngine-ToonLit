@@ -26,23 +26,27 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MoviePipelineImageSequenceOutput)
 
 DECLARE_CYCLE_STAT(TEXT("ImgSeqOutput_RecieveImageData"), STAT_ImgSeqRecieveImageData, STATGROUP_MoviePipeline);
-struct FAsyncImageQuantization
+
+namespace UE
 {
-	FAsyncImageQuantization(FImageWriteTask* InWriteTask, const bool bInApplysRGB)
-		: ParentWriteTask(InWriteTask)
-		, bApplysRGB(bInApplysRGB)
-	{}
-
-	void operator()(FImagePixelData* PixelData)
+	namespace MoviePipeline
 	{
-		// Convert the incoming data to 8-bit, potentially with sRGB applied.
-		TUniquePtr<FImagePixelData> QuantizedPixelData = UE::MoviePipeline::QuantizeImagePixelDataToBitDepth(PixelData, 8, nullptr,  bApplysRGB);
-		ParentWriteTask->PixelData = MoveTemp(QuantizedPixelData);
-	}
+		FAsyncImageQuantization::FAsyncImageQuantization(FImageWriteTask* InWriteTask, const bool bInConvertToSRGB)
+			: ParentWriteTask(InWriteTask)
+			, bConvertToSRGB(bInConvertToSRGB)
+		{
+		}
 
-	FImageWriteTask* ParentWriteTask;
-	bool bApplysRGB;
-};
+		void FAsyncImageQuantization::operator()(FImagePixelData* PixelData)
+		{
+			// Note: Ideally we would use FImageCore routines here, but there is no easy way to construct pixel data from an FImage currently.
+
+			// Convert the incoming data to 8-bit, potentially with sRGB applied.
+			TUniquePtr<FImagePixelData> QuantizedPixelData = QuantizeImagePixelDataToBitDepth(PixelData, 8, nullptr, bConvertToSRGB);
+			ParentWriteTask->PixelData = MoveTemp(QuantizedPixelData);
+		}
+	}
+}
 
 UMoviePipelineImageSequenceOutputBase::UMoviePipelineImageSequenceOutputBase()
 {
@@ -95,6 +99,11 @@ void UMoviePipelineImageSequenceOutputBase::OnReceiveImageDataImpl(FMoviePipelin
 
 	FString OutputDirectory = OutputSettings->OutputDirectory.Path;
 
+	// The InMergedOutputFrame->ImageOutputData map contains both RenderPasses and CompositePasses.
+	// We determine how we gather pixel data based on the number of RenderPasses we have done, not counting the CompositePasses.
+	// This is the reason for using a separate RenderPassIteration counter with a foreach loop, only incrementing it for RenderPasses.
+	int32 RenderPassIteration = 0;
+	const int32 RenderPassCount = InMergedOutputFrame->ImageOutputData.Num() - CompositedPasses.Num();
 	for (TPair<FMoviePipelinePassIdentifier, TUniquePtr<FImagePixelData>>& RenderPassData : InMergedOutputFrame->ImageOutputData)
 	{
 		// Don't write out a composited pass in this loop, as it will be merged with the Final Image and not written separately. 
@@ -208,7 +217,7 @@ void UMoviePipelineImageSequenceOutputBase::OnReceiveImageDataImpl(FMoviePipelin
 			// All three of these formats only support 8 bit data, so we need to take the incoming buffer type,
 			// copy it into a new 8-bit array and apply a little noise to the data to help hide gradient banding.
 			const bool bApplysRGB = !(ColorSetting && ColorSetting->OCIOConfiguration.bIsEnabled);
-			TileImageTask->PixelPreProcessors.Add(FAsyncImageQuantization(TileImageTask.Get(), bApplysRGB));
+			TileImageTask->PixelPreProcessors.Add(UE::MoviePipeline::FAsyncImageQuantization(TileImageTask.Get(), bApplysRGB));
 
 			// The pixel type will get changed by this pre-processor so future calculations below need to know the correct type they'll be editing.
 			QuantizedPixelType = EImagePixelType::Color; 
@@ -223,7 +232,7 @@ void UMoviePipelineImageSequenceOutputBase::OnReceiveImageDataImpl(FMoviePipelin
 
 
 		// We composite before flipping the alpha so that it is consistent for all formats.
-		if (RenderPassData.Key.Name == TEXT("FinalImage"))
+		if (RenderPassData.Key.Name == TEXT("FinalImage") || RenderPassData.Key.Name == TEXT("PathTracer")) 
 		{
 			for (const MoviePipeline::FCompositePassInfo& CompositePass : CompositedPasses)
 			{
@@ -233,19 +242,23 @@ void UMoviePipelineImageSequenceOutputBase::OnReceiveImageDataImpl(FMoviePipelin
 					continue;
 				}
 
+				// If there's more than one render pass, we need to copy the composite passes for the first render pass then move for the remaining ones
+				const bool bShouldCopyImageData = RenderPassCount > 1 && RenderPassIteration == 0;
+				TUniquePtr<FImagePixelData> PixelData = bShouldCopyImageData ? CompositePass.PixelData->CopyImageData() : CompositePass.PixelData->MoveImageDataToNew();
+				
 				// We don't need to copy the data here (even though it's being passed to a async system) because we already made a unique copy of the
 				// burn in/widget data when we decided to composite it.
 				switch (QuantizedPixelType)
 				{
-				case EImagePixelType::Color:
-					TileImageTask->PixelPreProcessors.Add(TAsyncCompositeImage<FColor>(CompositePass.PixelData->MoveImageDataToNew()));
-					break;
-				case EImagePixelType::Float16:
-					TileImageTask->PixelPreProcessors.Add(TAsyncCompositeImage<FFloat16Color>(CompositePass.PixelData->MoveImageDataToNew()));
-					break;
-				case EImagePixelType::Float32:
-					TileImageTask->PixelPreProcessors.Add(TAsyncCompositeImage<FLinearColor>(CompositePass.PixelData->MoveImageDataToNew()));
-					break;
+					case EImagePixelType::Color:
+						TileImageTask->PixelPreProcessors.Add(TAsyncCompositeImage<FColor>(MoveTemp(PixelData)));
+						break;
+					case EImagePixelType::Float16:
+						TileImageTask->PixelPreProcessors.Add(TAsyncCompositeImage<FFloat16Color>(MoveTemp(PixelData)));
+						break;
+					case EImagePixelType::Float32:
+						TileImageTask->PixelPreProcessors.Add(TAsyncCompositeImage<FLinearColor>(MoveTemp(PixelData)));
+						break;
 				}
 			}
 		}
@@ -254,18 +267,7 @@ void UMoviePipelineImageSequenceOutputBase::OnReceiveImageDataImpl(FMoviePipelin
 		// no good without alpha, and we already did logic above to ensure it got turned into a filetype that could write alpha.
 		if (!IsAlphaAllowed() && !Payload->bRequireTransparentOutput)
 		{
-			switch (QuantizedPixelType)
-			{
-			case EImagePixelType::Color:
-				TileImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColor>(255));
-				break;
-			case EImagePixelType::Float16:
-				TileImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FFloat16Color>(1.0f));
-				break;
-			case EImagePixelType::Float32:
-				TileImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FLinearColor>(1.0f));
-				break;
-			}
+			TileImageTask->AddPreProcessorToSetAlphaOpaque();
 		}
 
 
@@ -276,6 +278,8 @@ void UMoviePipelineImageSequenceOutputBase::OnReceiveImageDataImpl(FMoviePipelin
 #endif
 
 		GetPipeline()->AddOutputFuture(ImageWriteQueue->Enqueue(MoveTemp(TileImageTask)), OutputData);
+
+		RenderPassIteration++;
 	}
 }
 

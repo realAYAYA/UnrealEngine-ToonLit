@@ -10,6 +10,7 @@
 #include "Cooker/CookTypes.h"
 #include "CookOnTheSide/CookLog.h"
 #include "CookOnTheSide/CookOnTheFlyServer.h"
+#include "Logging/LogMacros.h"
 #include "Misc/Optional.h"
 #include "Misc/StringBuilder.h"
 #include "Serialization/ArchiveSerializedPropertyChain.h"
@@ -20,6 +21,8 @@
 #include "UObject/UObjectGlobals.h"
 
 class ITargetPlatform;
+
+DEFINE_LOG_CATEGORY_STATIC(LogHiddenDependencies, Log, All);
 
 namespace UE::Cook
 {
@@ -96,9 +99,10 @@ public:
 	TArray<FPackageReferenceAndPropertyChain> Imports;
 };
 
-void FDiagnostics::AnalyzeOnlyEditorOnlySave(UCookOnTheFlyServer& COTFS, FPackageData& PackageData,
+void FDiagnostics::AnalyzeHiddenDependencies(UCookOnTheFlyServer& COTFS, FPackageData& PackageData,
 	TMap<FPackageData*, EInstigator>&& UnsolicitedForPackage, TSet<FPackageData*>& SaveReferences,
-	TConstArrayView<const ITargetPlatform*> ReachablePlatforms)
+	TConstArrayView<const ITargetPlatform*> ReachablePlatforms, bool bOnlyEditorOnlyDebug,
+	bool bHiddenDependenciesDebug)
 {
 	TOptional<TArray<FName>> ExpectedDependencies;
 	TOptional<TMap<FName, TMap<UObject*, TArray<FProperty*, TInlineAllocator<1>>>>> ExportsUsingPackageName;
@@ -118,9 +122,15 @@ void FDiagnostics::AnalyzeOnlyEditorOnlySave(UCookOnTheFlyServer& COTFS, FPackag
 	{
 		FPackageData* Unsolicited = UnsolicitedPair.Key;
 		EInstigator Instigator = UnsolicitedPair.Value;
-		if (SaveReferences.Contains(Unsolicited))
+		if (!bHiddenDependenciesDebug && SaveReferences.Contains(Unsolicited))
 		{
 			// This package is included by OnlyEditorOnly as well. Remove it from our list to investigate.
+			continue;
+		}
+		if (!bOnlyEditorOnlyDebug && Instigator != EInstigator::Unsolicited)
+		{
+			// Dependencies are only hidden if they're detected as Unsolicited; other instigator types
+			// are reported only for comparing SkipOnlyEditorOnly to legacy WhatGetsCooked rules.
 			continue;
 		}
 		FName UnsolicitedPackageName = Unsolicited->GetPackageName();
@@ -262,155 +272,163 @@ void FDiagnostics::AnalyzeOnlyEditorOnlySave(UCookOnTheFlyServer& COTFS, FPackag
 		// Try to find out how it was loaded so we can give information about what code needs to
 		// be modified to support OnlyEditorOnly.
 
-		
-		// Serialize all referenced exports in the source package and record all the packages each one
-		// references. If any of those packages is the unsolicited package, print out the export and property
-		// that refers to it.
-		if (!ExportsUsingPackageName)
+		if (bOnlyEditorOnlyDebug)
 		{
-			ExportsUsingPackageName.Emplace();
-			TSet<UObject*> Exports;
-			TRingBuffer<UObject*> ExportsQueue;
-			ForEachObjectWithPackage(Package, [&Exports, &ExportsQueue](UObject* Object)
+			// Serialize all referenced exports in the source package and record all the packages each one
+			// references. If any of those packages is the unsolicited package, print out the export and property
+			// that refers to it.
+			if (!ExportsUsingPackageName)
+			{
+				ExportsUsingPackageName.Emplace();
+				TSet<UObject*> Exports;
+				TRingBuffer<UObject*> ExportsQueue;
+				ForEachObjectWithPackage(Package, [&Exports, &ExportsQueue](UObject* Object)
+					{
+						if (Object->HasAnyFlags(RF_Public))
+						{
+							bool bAlreadyExists;
+							Exports.Add(Object, &bAlreadyExists);
+							if (!bAlreadyExists)
+							{
+								ExportsQueue.Add(Object);
+							}
+						}
+						return true;
+					});
+				FWhyImportedCollector Collector(Package);
+				while (!ExportsQueue.IsEmpty())
 				{
-					if (Object->HasAnyFlags(RF_Public))
+					UObject* Export = ExportsQueue.PopFrontValue();
+					Export->Serialize(Collector);
+					for (UObject* Dependency : Collector.Exports)
 					{
 						bool bAlreadyExists;
-						Exports.Add(Object, &bAlreadyExists);
+						Exports.Add(Dependency, &bAlreadyExists);
 						if (!bAlreadyExists)
 						{
-							ExportsQueue.Add(Object);
+							ExportsQueue.Add(Dependency);
 						}
 					}
-					return true;
-				});
-			FWhyImportedCollector Collector(Package);
-			while (!ExportsQueue.IsEmpty())
-			{
-				UObject* Export = ExportsQueue.PopFrontValue();
-				Export->Serialize(Collector);
-				for (UObject* Dependency : Collector.Exports)
-				{
-					bool bAlreadyExists;
-					Exports.Add(Dependency, &bAlreadyExists);
-					if (!bAlreadyExists)
+					for (FPackageReferenceAndPropertyChain& ImportChain : Collector.Imports)
 					{
-						ExportsQueue.Add(Dependency);
-					}
-				}
-				for (FPackageReferenceAndPropertyChain& ImportChain : Collector.Imports)
-				{
-					TArray<FProperty*, TInlineAllocator<1>>& ExistingChain = ExportsUsingPackageName->FindOrAdd(ImportChain.PackageName).FindOrAdd(Export);
-					if (ExistingChain.IsEmpty())
-					{
-						ExistingChain = MoveTemp(ImportChain.Properties);
-					}
-				}
-				Collector.Reset();
-			}
-		}
-		TMap<UObject*, TArray<FProperty*, TInlineAllocator<1>>>* ExportsUsingUnsolicited = ExportsUsingPackageName->Find(UnsolicitedPackageName);
-		TStringBuilder<256> WhyReferenced;
-
-		int32 PackageNameLen = Package->GetName().Len();
-		if (ExportsUsingUnsolicited)
-		{
-			int32 Count = 0;
-			constexpr int32 MaxCount = 3;
-			WhyReferenced << TEXT("\n\tReferencers:");
-			for (TPair<UObject*, TArray<FProperty*, TInlineAllocator<1>>>&Pair : *ExportsUsingUnsolicited)
-			{
-				UObject* Export = Pair.Key;
-				WhyReferenced << TEXT("\n\t\t");
-				if (Count++ == MaxCount)
-				{
-					WhyReferenced << TEXT("...");
-					break;
-				}
-				WhyReferenced << Export->GetClass()->GetPathName() << TEXT(" ");
-				WhyReferenced << Export->GetPathName().RightChop(PackageNameLen + 1);
-				WhyReferenced << TEXT("#");
-				if (Pair.Value.IsEmpty())
-				{
-					WhyReferenced << TEXT("<UnknownProperty>");
-				}
-				else
-				{
-					int32 NumProperties = Pair.Value.Num();
-					bool bAddedSeparator = false;
-					for (int32 PropertyIndex = 0; PropertyIndex < NumProperties; ++PropertyIndex)
-					{
-						FProperty* Property = Pair.Value[PropertyIndex];
-						if (PropertyIndex < NumProperties - 1 && Property->GetFName() == Pair.Value[PropertyIndex + 1]->GetFName() &&
-							Property->IsA(FArrayProperty::StaticClass()))
+						TArray<FProperty*, TInlineAllocator<1>>& ExistingChain = ExportsUsingPackageName->FindOrAdd(ImportChain.PackageName).FindOrAdd(Export);
+						if (ExistingChain.IsEmpty())
 						{
-							// Omit adding a duplicate entry for inner property of an array which has the same name as its array property
-							continue;
+							ExistingChain = MoveTemp(ImportChain.Properties);
 						}
-						WhyReferenced << Property->GetName() << TEXT("#");
-						bAddedSeparator = true;
 					}
-					if (bAddedSeparator)
-					{
-						WhyReferenced.RemoveSuffix(1);
-					}
+					Collector.Reset();
 				}
 			}
-		}
-		else
-		{
-			// If we didn't find any exports referring to the unsolicited package, then just print out the list of class types
-			// in the package to show which code needs to be investigated.
-			enum class EClassPriority
+			TMap<UObject*, TArray<FProperty*, TInlineAllocator<1>>>* ExportsUsingUnsolicited = ExportsUsingPackageName->Find(UnsolicitedPackageName);
+			TStringBuilder<256> WhyReferenced;
+
+			int32 PackageNameLen = Package->GetName().Len();
+			if (ExportsUsingUnsolicited)
 			{
-				PrimaryUAsset,
-				Asset,
-				Public,
-				Private,
-				Count,
-			};
-			TMap<UClass*, EClassPriority> ObjectClasses;
-			FName PackageLeafName = FName(*FPaths::GetBaseFilename(Package->GetName(), true /* bRemovePath */));
-			ForEachObjectWithPackage(Package, [&ObjectClasses, PackageLeafName](UObject* Object)
+				int32 Count = 0;
+				constexpr int32 MaxCount = 3;
+				WhyReferenced << TEXT("\n\tReferencers:");
+				for (TPair<UObject*, TArray<FProperty*, TInlineAllocator<1>>>&Pair : *ExportsUsingUnsolicited)
 				{
-					UClass* Class = Object->GetClass();
-					EClassPriority NewPriority = EClassPriority::Private;
-					if (Object->IsAsset())
+					UObject* Export = Pair.Key;
+					WhyReferenced << TEXT("\n\t\t");
+					if (Count++ == MaxCount)
 					{
-						NewPriority = Object->GetFName() == PackageLeafName ? EClassPriority::PrimaryUAsset : EClassPriority::Asset;
+						WhyReferenced << TEXT("...");
+						break;
+					}
+					WhyReferenced << Export->GetClass()->GetPathName() << TEXT(" ");
+					WhyReferenced << Export->GetPathName().RightChop(PackageNameLen + 1);
+					WhyReferenced << TEXT("#");
+					if (Pair.Value.IsEmpty())
+					{
+						WhyReferenced << TEXT("<UnknownProperty>");
 					}
 					else
 					{
-						NewPriority = Object->HasAnyFlags(RF_Public) ? EClassPriority::Public : EClassPriority::Private;
+						int32 NumProperties = Pair.Value.Num();
+						bool bAddedSeparator = false;
+						for (int32 PropertyIndex = 0; PropertyIndex < NumProperties; ++PropertyIndex)
+						{
+							FProperty* Property = Pair.Value[PropertyIndex];
+							if (PropertyIndex < NumProperties - 1 && Property->GetFName() == Pair.Value[PropertyIndex + 1]->GetFName() &&
+								Property->IsA(FArrayProperty::StaticClass()))
+							{
+								// Omit adding a duplicate entry for inner property of an array which has the same name as its array property
+								continue;
+							}
+							WhyReferenced << Property->GetName() << TEXT("#");
+							bAddedSeparator = true;
+						}
+						if (bAddedSeparator)
+						{
+							WhyReferenced.RemoveSuffix(1);
+						}
 					}
-					EClassPriority& OldPriority = ObjectClasses.FindOrAdd(Class, NewPriority);
-					OldPriority = static_cast<EClassPriority>(FMath::Min(static_cast<int32>(OldPriority), static_cast<int32>(NewPriority)));
-					return true;
-				});
-			WhyReferenced << TEXT("\n\tNo exports found referencing the dependency. Classes in the referencer package:");
-			int32 ClassCount = 0;
-			constexpr int32 MaxClassCount = 10;
-			ObjectClasses.ValueSort([](EClassPriority A, EClassPriority B)
-				{
-					if (A != B)
-					{
-						return (int32)A < (int32)B;
-					}
-					return false;
-				});
-			for (TPair<UClass*, EClassPriority>& ClassPair : ObjectClasses)
-			{
-				if (ClassCount++ >= MaxClassCount)
-				{
-					break;
 				}
-				WhyReferenced << TEXT("\n\t\t") << ClassPair.Key->GetPathName();
 			}
-		}
+			else
+			{
+				// If we didn't find any exports referring to the unsolicited package, then just print out the list of class types
+				// in the package to show which code needs to be investigated.
+				enum class EClassPriority
+				{
+					PrimaryUAsset,
+					Asset,
+					Public,
+					Private,
+					Count,
+				};
+				TMap<UClass*, EClassPriority> ObjectClasses;
+				FName PackageLeafName = FName(*FPaths::GetBaseFilename(Package->GetName(), true /* bRemovePath */));
+				ForEachObjectWithPackage(Package, [&ObjectClasses, PackageLeafName](UObject* Object)
+					{
+						UClass* Class = Object->GetClass();
+						EClassPriority NewPriority = EClassPriority::Private;
+						if (Object->IsAsset())
+						{
+							NewPriority = Object->GetFName() == PackageLeafName ? EClassPriority::PrimaryUAsset : EClassPriority::Asset;
+						}
+						else
+						{
+							NewPriority = Object->HasAnyFlags(RF_Public) ? EClassPriority::Public : EClassPriority::Private;
+						}
+						EClassPriority& OldPriority = ObjectClasses.FindOrAdd(Class, NewPriority);
+						OldPriority = static_cast<EClassPriority>(FMath::Min(static_cast<int32>(OldPriority), static_cast<int32>(NewPriority)));
+						return true;
+					});
+				WhyReferenced << TEXT("\n\tNo exports found referencing the dependency. Classes in the referencer package:");
+				int32 ClassCount = 0;
+				constexpr int32 MaxClassCount = 10;
+				ObjectClasses.ValueSort([](EClassPriority A, EClassPriority B)
+					{
+						if (A != B)
+						{
+							return (int32)A < (int32)B;
+						}
+						return false;
+					});
+				for (TPair<UClass*, EClassPriority>& ClassPair : ObjectClasses)
+				{
+					if (ClassCount++ >= MaxClassCount)
+					{
+						break;
+					}
+					WhyReferenced << TEXT("\n\t\t") << ClassPair.Key->GetPathName();
+				}
+			}
 
-		UE_LOG(LogCook, Display, TEXT("OnlyEditorOnly: Skipped adding %s %s -> %s%s"),
-			LexToString(Instigator), *WriteToString<256>(PackageData.GetPackageName()),
-			*WriteToString<256>(Unsolicited->GetPackageName()), *WhyReferenced);
+			UE_LOG(LogHiddenDependencies, Display, TEXT("Skipped adding %s -> (%s) %s%s"),
+				*WriteToString<256>(PackageData.GetPackageName()), LexToString(Instigator),
+				*WriteToString<256>(Unsolicited->GetPackageName()), *WhyReferenced);
+		}
+		else
+		{
+			UE_LOG(LogHiddenDependencies, Display, TEXT("HiddenDependency %s -> (%s) %s"),
+				*WriteToString<256>(PackageData.GetPackageName()), LexToString(Instigator),
+				*WriteToString<256>(Unsolicited->GetPackageName()));
+		}
 	}
 }
 

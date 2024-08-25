@@ -28,7 +28,9 @@
 #include "rtm/macros.h"
 #include "rtm/math.h"
 #include "rtm/scalarf.h"
+#include "rtm/version.h"
 #include "rtm/impl/compiler_utils.h"
+#include "rtm/impl/macros.mask4.impl.h"
 #include "rtm/impl/memory_utils.h"
 #include "rtm/impl/vector_common.h"
 
@@ -36,6 +38,8 @@ RTM_IMPL_FILE_PRAGMA_PUSH
 
 namespace rtm
 {
+	RTM_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Setters, getters, and casts
 	//////////////////////////////////////////////////////////////////////////
@@ -764,7 +768,7 @@ namespace rtm
 		float z = vgetq_lane_f32(lhs, 2) / vgetq_lane_f32(rhs, 2);
 		float w = vgetq_lane_f32(lhs, 3) / vgetq_lane_f32(rhs, 3);
 
-		float32x4_t result;
+		float32x4_t result = lhs;
 		result = vsetq_lane_f32(x, result, 0);
 		result = vsetq_lane_f32(y, result, 1);
 		result = vsetq_lane_f32(z, result, 2);
@@ -1608,399 +1612,667 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all 4 components are less than, otherwise false: all(lhs < rhs)
+	// Returns true if all 4 components are less than, otherwise false: all(lhs.xyzw < rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_less_than(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmplt_ps(lhs, rhs)) == 0xF;
+		const __m128 mask = _mm_cmplt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcltq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) == 0xFFFFFFFFU;
+		const uint32x4_t mask = vcltq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x < rhs.x && lhs.y < rhs.y && lhs.z < rhs.z && lhs.w < rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xy] components are less than, otherwise false: all(lhs < rhs)
+	// Returns true if all [xy] components are less than, otherwise false: all(lhs.xy < rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_less_than2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmplt_ps(lhs, rhs)) & 0x3) == 0x3;
+		const __m128 mask = _mm_cmplt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vclt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) == 0xFFFFFFFFFFFFFFFFu;
+		const uint32x2_t mask = vclt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x < rhs.x && lhs.y < rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xyz] components are less than, otherwise false: all(lhs < rhs)
+	// Returns true if all [xyz] components are less than, otherwise false: all(lhs.xyz < rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_less_than3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmplt_ps(lhs, rhs)) & 0x7) == 0x7;
+		const __m128 mask = _mm_cmplt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcltq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) == 0x00FFFFFFU;
+		const uint32x4_t mask = vcltq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x < rhs.x && lhs.y < rhs.y && lhs.z < rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any 4 components are less than, otherwise false: any(lhs < rhs)
+	// Returns true if any 4 components are less than, otherwise false: any(lhs.xyzw < rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_less_than(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmplt_ps(lhs, rhs)) != 0;
+		const __m128 mask = _mm_cmplt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcltq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) != 0;
+		const uint32x4_t mask = vcltq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x < rhs.x || lhs.y < rhs.y || lhs.z < rhs.z || lhs.w < rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xy] components are less than, otherwise false: any(lhs < rhs)
+	// Returns true if any [xy] components are less than, otherwise false: any(lhs.xy < rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_less_than2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmplt_ps(lhs, rhs)) & 0x3) != 0;
+		const __m128 mask = _mm_cmplt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vclt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) != 0;
+		const uint32x2_t mask = vclt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x < rhs.x || lhs.y < rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xyz] components are less than, otherwise false: any(lhs < rhs)
+	// Returns true if any [xyz] components are less than, otherwise false: any(lhs.xyz < rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_less_than3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmplt_ps(lhs, rhs)) & 0x7) != 0;
+		const __m128 mask = _mm_cmplt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcltq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) != 0;
+		const uint32x4_t mask = vcltq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x < rhs.x || lhs.y < rhs.y || lhs.z < rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all 4 components are less equal, otherwise false: all(lhs <= rhs)
+	// Returns true if all 4 components are less equal, otherwise false: all(lhs.xyzw <= rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_less_equal(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmple_ps(lhs, rhs)) == 0xF;
+		const __m128 mask = _mm_cmple_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcleq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) == 0xFFFFFFFFU;
+		const uint32x4_t mask = vcleq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x <= rhs.x && lhs.y <= rhs.y && lhs.z <= rhs.z && lhs.w <= rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xy] components are less equal, otherwise false: all(lhs <= rhs)
+	// Returns true if all [xy] components are less equal, otherwise false: all(lhs.xy <= rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_less_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmple_ps(lhs, rhs)) & 0x3) == 0x3;
+		const __m128 mask = _mm_cmple_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vcle_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) == 0xFFFFFFFFFFFFFFFFULL;
+		const uint32x2_t mask = vcle_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x <= rhs.x && lhs.y <= rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xyz] components are less equal, otherwise false: all(lhs <= rhs)
+	// Returns true if all [xyz] components are less equal, otherwise false: all(lhs.xyz <= rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_less_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmple_ps(lhs, rhs)) & 0x7) == 0x7;
+		const __m128 mask = _mm_cmple_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcleq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) == 0x00FFFFFFU;
+		const uint32x4_t mask = vcleq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x <= rhs.x && lhs.y <= rhs.y && lhs.z <= rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any 4 components are less equal, otherwise false: any(lhs <= rhs)
+	// Returns true if any 4 components are less equal, otherwise false: any(lhs.xyzw <= rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_less_equal(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmple_ps(lhs, rhs)) != 0;
+		const __m128 mask = _mm_cmple_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcleq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) != 0;
+		const uint32x4_t mask = vcleq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x <= rhs.x || lhs.y <= rhs.y || lhs.z <= rhs.z || lhs.w <= rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xy] components are less equal, otherwise false: any(lhs <= rhs)
+	// Returns true if any [xy] components are less equal, otherwise false: any(lhs.xy <= rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_less_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmple_ps(lhs, rhs)) & 0x3) != 0;
+		const __m128 mask = _mm_cmple_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vcle_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) != 0;
+		const uint32x2_t mask = vcle_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x <= rhs.x || lhs.y <= rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xyz] components are less equal, otherwise false: any(lhs <= rhs)
+	// Returns true if any [xyz] components are less equal, otherwise false: any(lhs.xyz <= rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_less_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmple_ps(lhs, rhs)) & 0x7) != 0;
+		const __m128 mask = _mm_cmple_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcleq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) != 0;
+		const uint32x4_t mask = vcleq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x <= rhs.x || lhs.y <= rhs.y || lhs.z <= rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all 4 components are greater than, otherwise false: all(lhs > rhs)
+	// Returns true if all 4 components are greater than, otherwise false: all(lhs.xyzw > rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_greater_than(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmpgt_ps(lhs, rhs)) == 0xF;
+		const __m128 mask = _mm_cmpgt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgtq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) == 0xFFFFFFFFU;
+		const uint32x4_t mask = vcgtq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x > rhs.x && lhs.y > rhs.y && lhs.z > rhs.z && lhs.w > rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xy] components are greater than, otherwise false: all(lhs > rhs)
+	// Returns true if all [xy] components are greater than, otherwise false: all(lhs.xy > rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_greater_than2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpgt_ps(lhs, rhs)) & 0x3) == 0x3;
+		const __m128 mask = _mm_cmpgt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vcgt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) == 0xFFFFFFFFFFFFFFFFULL;
+		const uint32x2_t mask = vcgt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x > rhs.x && lhs.y > rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xyz] components are greater than, otherwise false: all(lhs > rhs)
+	// Returns true if all [xyz] components are greater than, otherwise false: all(lhs.xyz > rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_greater_than3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpgt_ps(lhs, rhs)) & 0x7) == 0x7;
+		const __m128 mask = _mm_cmpgt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgtq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) == 0x00FFFFFFU;
+		const uint32x4_t mask = vcgtq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x > rhs.x && lhs.y > rhs.y && lhs.z > rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any 4 components are greater than, otherwise false: any(lhs > rhs)
+	// Returns true if any 4 components are greater than, otherwise false: any(lhs.xyzw > rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_greater_than(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmpgt_ps(lhs, rhs)) != 0;
+		const __m128 mask = _mm_cmpgt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgtq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) != 0;
+		const uint32x4_t mask = vcgtq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x > rhs.x || lhs.y > rhs.y || lhs.z > rhs.z || lhs.w > rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xy] components are greater than, otherwise false: any(lhs > rhs)
+	// Returns true if any [xy] components are greater than, otherwise false: any(lhs.xy > rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_greater_than2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpgt_ps(lhs, rhs)) & 0x3) != 0;
+		const __m128 mask = _mm_cmpgt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vcgt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) != 0;
+		const uint32x2_t mask = vcgt_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x > rhs.x || lhs.y > rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xyz] components are greater than, otherwise false: any(lhs > rhs)
+	// Returns true if any [xyz] components are greater than, otherwise false: any(lhs.xyz > rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_greater_than3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpgt_ps(lhs, rhs)) & 0x7) != 0;
+		const __m128 mask = _mm_cmpgt_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgtq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) != 0;
+		const uint32x4_t mask = vcgtq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x > rhs.x || lhs.y > rhs.y || lhs.z > rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all 4 components are greater equal, otherwise false: all(lhs >= rhs)
+	// Returns true if all 4 components are greater equal, otherwise false: all(lhs.xyzw >= rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_greater_equal(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmpge_ps(lhs, rhs)) == 0xF;
+		const __m128 mask = _mm_cmpge_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgeq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) == 0xFFFFFFFFU;
+		const uint32x4_t mask = vcgeq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x >= rhs.x && lhs.y >= rhs.y && lhs.z >= rhs.z && lhs.w >= rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xy] components are greater equal, otherwise false: all(lhs >= rhs)
+	// Returns true if all [xy] components are greater equal, otherwise false: all(lhs.xy >= rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_greater_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpge_ps(lhs, rhs)) & 0x3) == 0x3;
+		const __m128 mask = _mm_cmpge_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vcge_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) == 0xFFFFFFFFFFFFFFFFULL;
+		const uint32x2_t mask = vcge_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ALL_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x >= rhs.x && lhs.y >= rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xyz] components are greater equal, otherwise false: all(lhs >= rhs)
+	// Returns true if all [xyz] components are greater equal, otherwise false: all(lhs.xyz >= rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_greater_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpge_ps(lhs, rhs)) & 0x7) == 0x7;
+		const __m128 mask = _mm_cmpge_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgeq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) == 0x00FFFFFFU;
+		const uint32x4_t mask = vcgeq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x >= rhs.x && lhs.y >= rhs.y && lhs.z >= rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any 4 components are greater equal, otherwise false: any(lhs >= rhs)
+	// Returns true if any 4 components are greater equal, otherwise false: any(lhs.xyzw >= rhs.xyzw)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_greater_equal(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return _mm_movemask_ps(_mm_cmpge_ps(lhs, rhs)) != 0;
+		const __m128 mask = _mm_cmpge_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgeq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) != 0;
+		const uint32x4_t mask = vcgeq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x >= rhs.x || lhs.y >= rhs.y || lhs.z >= rhs.z || lhs.w >= rhs.w;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xy] components are greater equal, otherwise false: any(lhs >= rhs)
+	// Returns true if any [xy] components are greater equal, otherwise false: any(lhs.xy >= rhs.xy)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_greater_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpge_ps(lhs, rhs)) & 0x3) != 0;
+		const __m128 mask = _mm_cmpge_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE2(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x2_t mask = vcge_f32(vget_low_f32(lhs), vget_low_f32(rhs));
-		return vget_lane_u64(mask, 0) != 0;
+		const uint32x2_t mask = vcge_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ANY_TRUE(mask, result);
+		return result;
 #else
 		return lhs.x >= rhs.x || lhs.y >= rhs.y;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xyz] components are greater equal, otherwise false: any(lhs >= rhs)
+	// Returns true if any [xyz] components are greater equal, otherwise false: any(lhs.xyz >= rhs.xyz)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_greater_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
 	{
 #if defined(RTM_SSE2_INTRINSICS)
-		return (_mm_movemask_ps(_mm_cmpge_ps(lhs, rhs)) & 0x7) != 0;
+		const __m128 mask = _mm_cmpge_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t mask = vcgeq_f32(lhs, rhs);
-		uint8x8x2_t mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15 = vzip_u8(vget_low_u8(mask), vget_high_u8(mask));
-		uint16x4x2_t mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15 = vzip_u16(mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[0], mask_0_8_1_9_2_10_3_11_4_12_5_13_6_14_7_15.val[1]);
-		return (vget_lane_u32(mask_0_8_4_12_1_9_5_13_2_10_6_14_3_11_7_15.val[0], 0) & 0x00FFFFFFU) != 0;
+		const uint32x4_t mask = vcgeq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
 #else
 		return lhs.x >= rhs.x || lhs.y >= rhs.y || lhs.z >= rhs.z;
 #endif
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all 4 components are near equal, otherwise false: all(abs(lhs - rhs) <= threshold)
+	// Returns true if all [xyzw] components are equal, otherwise false: all(lhs.xyzw == rhs.xyzw)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_equal(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		const __m128 mask = _mm_cmpeq_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
+#elif defined(RTM_NEON_INTRINSICS)
+		const uint32x4_t mask = vceqq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
+#else
+		return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z && lhs.w == rhs.w;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if all [xy] components are equal, otherwise false: all(lhs.xy == rhs.xy)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		const __m128 mask = _mm_cmpeq_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE2(mask, result);
+		return result;
+#elif defined(RTM_NEON_INTRINSICS)
+		const uint32x2_t mask = vceq_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ALL_TRUE(mask, result);
+		return result;
+#else
+		return lhs.x == rhs.x && lhs.y == rhs.y;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if all [xyz] components are equal, otherwise false: all(lhs.xyz == rhs.xyz)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		const __m128 mask = _mm_cmpeq_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
+#elif defined(RTM_NEON_INTRINSICS)
+		const uint32x4_t mask = vceqq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE3(mask, result);
+		return result;
+#else
+		return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if any [xyzw] components are equal, otherwise false: any(lhs.xyzw == rhs.xyzw)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_equal(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		const __m128 mask = _mm_cmpeq_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
+#elif defined(RTM_NEON_INTRINSICS)
+		const uint32x4_t mask = vceqq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE(mask, result);
+		return result;
+#else
+		return lhs.x == rhs.x || lhs.y == rhs.y || lhs.z == rhs.z || lhs.w == rhs.w;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if any [xy] components are equal, otherwise false: any(lhs.xy == rhs.xy)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		const __m128 mask = _mm_cmpeq_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE2(mask, result);
+		return result;
+#elif defined(RTM_NEON_INTRINSICS)
+		const uint32x2_t mask = vceq_f32(vget_low_f32(lhs), vget_low_f32(rhs));
+
+		bool result;
+		RTM_MASK2F_ANY_TRUE(mask, result);
+		return result;
+#else
+		return lhs.x == rhs.x || lhs.y == rhs.y;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if any [xyz] components are equal, otherwise false: any(lhs.xyz == rhs.xyz)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		const __m128 mask = _mm_cmpeq_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
+#elif defined(RTM_NEON_INTRINSICS)
+		const uint32x4_t mask = vceqq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ANY_TRUE3(mask, result);
+		return result;
+#else
+		return lhs.x == rhs.x || lhs.y == rhs.y || lhs.z == rhs.z;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if all 4 components are near equal, otherwise false: all(abs(lhs - rhs).xyzw <= threshold)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_near_equal(vector4f_arg0 lhs, vector4f_arg1 rhs, float threshold = 0.00001F) RTM_NO_EXCEPT
 	{
@@ -2008,7 +2280,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xy] components are near equal, otherwise false: all(abs(lhs - rhs) <= threshold)
+	// Returns true if all [xy] components are near equal, otherwise false: all(abs(lhs - rhs).xy <= threshold)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_near_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs, float threshold = 0.00001F) RTM_NO_EXCEPT
 	{
@@ -2016,7 +2288,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xyz] components are near equal, otherwise false: all(abs(lhs - rhs) <= threshold)
+	// Returns true if all [xyz] components are near equal, otherwise false: all(abs(lhs - rhs).xyz <= threshold)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_all_near_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs, float threshold = 0.00001F) RTM_NO_EXCEPT
 	{
@@ -2024,7 +2296,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any 4 components are near equal, otherwise false: any(abs(lhs - rhs) <= threshold)
+	// Returns true if any 4 components are near equal, otherwise false: any(abs(lhs - rhs).xyzw <= threshold)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_near_equal(vector4f_arg0 lhs, vector4f_arg1 rhs, float threshold = 0.00001F) RTM_NO_EXCEPT
 	{
@@ -2032,7 +2304,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xy] components are near equal, otherwise false: any(abs(lhs - rhs) <= threshold)
+	// Returns true if any [xy] components are near equal, otherwise false: any(abs(lhs - rhs).xy <= threshold)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_near_equal2(vector4f_arg0 lhs, vector4f_arg1 rhs, float threshold = 0.00001F) RTM_NO_EXCEPT
 	{
@@ -2040,7 +2312,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xyz] components are near equal, otherwise false: any(abs(lhs - rhs) <= threshold)
+	// Returns true if any [xyz] components are near equal, otherwise false: any(abs(lhs - rhs).xyz <= threshold)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL vector_any_near_equal3(vector4f_arg0 lhs, vector4f_arg1 rhs, float threshold = 0.00001F) RTM_NO_EXCEPT
 	{
@@ -2136,6 +2408,49 @@ namespace rtm
 	template<mix4 comp0, mix4 comp1, mix4 comp2, mix4 comp3>
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE vector4f RTM_SIMD_CALL vector_mix(vector4f_arg0 input0, vector4f_arg1 input1) RTM_NO_EXCEPT
 	{
+#if defined(RTM_SSE4_INTRINSICS)
+        // Each component comes from the respective position of input 0 or input 1
+        if (rtm_impl::static_condition<(comp0 == mix4::a || comp0 == mix4::x) && (comp1 == mix4::b || comp1 == mix4::y) &&
+                                       (comp2 == mix4::c || comp2 == mix4::z) && (comp3 == mix4::d || comp3 == mix4::w)>::test())
+        {
+            constexpr int mask = (comp0 == mix4::a ? 1 : 0) | (comp1 == mix4::b ? 2 : 0) |
+                                 (comp2 == mix4::c ? 4 : 0) | (comp3 == mix4::d ? 8 : 0);
+            return _mm_blend_ps(input0, input1, mask);
+        }
+
+        // First component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<rtm_impl::is_mix_abcd(comp0) && comp1 == mix4::y && comp2 == mix4::z && comp3 == mix4::w>::test())
+            return _mm_insert_ps(input0, input1, (int(comp0) % 4) << 6);
+
+        // Second component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<comp0 == mix4::x && rtm_impl::is_mix_abcd(comp1) && comp2 == mix4::z && comp3 == mix4::w>::test())
+            return _mm_insert_ps(input0, input1, ((int(comp1) % 4) << 6) | (1 << 4));
+
+        // Third component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<comp0 == mix4::x && comp1 == mix4::y && rtm_impl::is_mix_abcd(comp2) && comp3 == mix4::w>::test())
+            return _mm_insert_ps(input0, input1, ((int(comp2) % 4) << 6) | (2 << 4));
+
+        // Fourth component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<comp0 == mix4::x && comp1 == mix4::y && comp2 == mix4::z && rtm_impl::is_mix_abcd(comp3)>::test())
+            return _mm_insert_ps(input0, input1, ((int(comp3) % 4) << 6) | (3 << 4));
+
+        // First component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<rtm_impl::is_mix_xyzw(comp0) && comp1 == mix4::b && comp2 == mix4::c && comp3 == mix4::d>::test())
+            return _mm_insert_ps(input1, input0, (int(comp0) % 4) << 6);
+
+        // Second component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<comp0 == mix4::a && rtm_impl::is_mix_xyzw(comp1) && comp2 == mix4::c && comp3 == mix4::d>::test())
+            return _mm_insert_ps(input1, input0, ((int(comp1) % 4) << 6) | (1 << 4));
+
+        // Third component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<comp0 == mix4::a && comp1 == mix4::b && rtm_impl::is_mix_xyzw(comp2) && comp3 == mix4::d>::test())
+            return _mm_insert_ps(input1, input0, ((int(comp2) % 4) << 6) | (2 << 4));
+
+        // Fourth component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<comp0 == mix4::a && comp1 == mix4::b && comp2 == mix4::c && rtm_impl::is_mix_xyzw(comp3)>::test())
+            return _mm_insert_ps(input1, input0, ((int(comp3) % 4) << 6) | (3 << 4));
+#endif // defined(RTM_SSE4_INTRINSICS)
+
 #if defined(RTM_SSE2_INTRINSICS)
 		// All four components come from input 0
 		if (rtm_impl::static_condition<rtm_impl::is_mix_xyzw(comp0) && rtm_impl::is_mix_xyzw(comp1) && rtm_impl::is_mix_xyzw(comp2) && rtm_impl::is_mix_xyzw(comp3)>::test())
@@ -2170,7 +2485,124 @@ namespace rtm
 			return _mm_unpackhi_ps(input1, input0);
 #endif	// defined(RTM_SSE2_INTRINSICS)
 
-		// Slow code path, not yet optimized or not using intrinsics
+#if defined(RTM_NEON64_INTRINSICS)
+        // Low words from both inputs are interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::x && comp1 == mix4::a && comp2 == mix4::y && comp3 == mix4::b>::test())
+            return vzip1q_f32(input0, input1);
+
+        // Low words from both inputs are interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::a && comp1 == mix4::x && comp2 == mix4::b && comp3 == mix4::y>::test())
+            return vzip1q_f32(input1, input0);
+
+        // High words from both inputs are interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::z && comp1 == mix4::c && comp2 == mix4::w && comp3 == mix4::d>::test())
+            return vzip2q_f32(input0, input1);
+
+        // High words from both inputs are interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::c && comp1 == mix4::z && comp2 == mix4::d && comp3 == mix4::w>::test())
+            return vzip2q_f32(input1, input0);
+
+        // Even-numbered vector elements, consecutively
+        if (rtm_impl::static_condition<comp0 == mix4::x && comp1 == mix4::z && comp2 == mix4::a && comp3 == mix4::c>::test())
+            return vuzp1q_f32(input0, input1);
+
+        // Even-numbered vector elements, consecutively
+        if (rtm_impl::static_condition<comp0 == mix4::a && comp1 == mix4::c && comp2 == mix4::x && comp3 == mix4::z>::test())
+            return vuzp1q_f32(input1, input0);
+
+        // Odd-numbered vector elements, consecutively
+        if (rtm_impl::static_condition<comp0 == mix4::y && comp1 == mix4::w && comp2 == mix4::b && comp3 == mix4::d>::test())
+            return vuzp2q_f32(input0, input1);
+
+        // Odd-numbered vector elements, consecutively
+        if (rtm_impl::static_condition<comp0 == mix4::b && comp1 == mix4::d && comp2 == mix4::y && comp3 == mix4::w>::test())
+            return vuzp2q_f32(input1, input0);
+
+        // Even-numbered vector elements, interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::x && comp1 == mix4::a && comp2 == mix4::z && comp3 == mix4::c>::test())
+            return vtrn1q_f32(input0, input1);
+
+        // Even-numbered vector elements, interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::a && comp1 == mix4::x && comp2 == mix4::c && comp3 == mix4::z>::test())
+            return vtrn1q_f32(input1, input0);
+
+        // Odd-numbered vector elements, interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::y && comp1 == mix4::b && comp2 == mix4::w && comp3 == mix4::d>::test())
+            return vtrn2q_f32(input0, input1);
+
+        // Odd-numbered vector elements, interleaved
+        if (rtm_impl::static_condition<comp0 == mix4::b && comp1 == mix4::y && comp2 == mix4::d && comp3 == mix4::w>::test())
+            return vtrn2q_f32(input1, input0);
+#endif // defined(RTM_NEON64_INTRINSICS)
+
+#if defined(RTM_NEON_INTRINSICS)
+        // The highest vector elements from input 0 and the lowest vector elements from input 1, consecutively
+        if (rtm_impl::static_condition<rtm_impl::is_mix_xyzw(comp0) &&
+                                       int(comp0) + 1 == int(comp1) &&
+                                       int(comp1) + 1 == int(comp2) &&
+                                       int(comp2) + 1 == int(comp3)>::test())
+            return vextq_f32(input0, input1, int(comp0) % 4);
+
+        // The highest vector elements from input 1 and the lowest vector elements from input 0, consecutively
+        if (rtm_impl::static_condition<rtm_impl::is_mix_abcd(comp0) &&
+                                       (int(comp0) + 1) % 8 == int(comp1) &&
+                                       (int(comp1) + 1) % 8 == int(comp2) &&
+                                       (int(comp2) + 1) % 8 == int(comp3)>::test())
+            return vextq_f32(input1, input0, int(comp0) % 4);
+
+        // All four components come from input 0, reversed order in each doubleword
+        if (rtm_impl::static_condition<comp0 == mix4::y && comp1 == mix4::x && comp2 == mix4::w && comp3 == mix4::z>::test())
+            return vrev64q_f32(input0);
+
+        // All four components come from input 1, reversed order in each doubleword
+        if (rtm_impl::static_condition<comp0 == mix4::b && comp1 == mix4::a && comp2 == mix4::d && comp3 == mix4::c>::test())
+            return vrev64q_f32(input1);
+
+        // First component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<rtm_impl::is_mix_abcd(comp0) && comp1 == mix4::y && comp2 == mix4::z && comp3 == mix4::w>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input1, int(comp0) % 4), input0, 0);
+
+        // Second component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<comp0 == mix4::x && rtm_impl::is_mix_abcd(comp1) && comp2 == mix4::z && comp3 == mix4::w>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input1, int(comp1) % 4), input0, 1);
+
+        // Third component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<comp0 == mix4::x && comp1 == mix4::y && rtm_impl::is_mix_abcd(comp2) && comp3 == mix4::w>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input1, int(comp2) % 4), input0, 2);
+
+        // Fourth component comes from input 1, others come from the respective positions of input 0
+        if (rtm_impl::static_condition<comp0 == mix4::x && comp1 == mix4::y && comp2 == mix4::z && rtm_impl::is_mix_abcd(comp3)>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input1, int(comp3) % 4), input0, 3);
+
+        // First component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<rtm_impl::is_mix_xyzw(comp0) && comp1 == mix4::b && comp2 == mix4::c && comp3 == mix4::d>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input0, int(comp0) % 4), input1, 0);
+
+        // Second component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<comp0 == mix4::a && rtm_impl::is_mix_xyzw(comp1) && comp2 == mix4::c && comp3 == mix4::d>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input0, int(comp1) % 4), input1, 1);
+
+        // Third component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<comp0 == mix4::a && comp1 == mix4::b && rtm_impl::is_mix_xyzw(comp2) && comp3 == mix4::d>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input0, int(comp2) % 4), input1, 2);
+
+        // Fourth component comes from input 0, others come from the respective positions of input 1
+        if (rtm_impl::static_condition<comp0 == mix4::a && comp1 == mix4::b && comp2 == mix4::c && rtm_impl::is_mix_xyzw(comp3)>::test())
+            return vsetq_lane_f32(vgetq_lane_f32(input0, int(comp3) % 4), input1, 3);
+
+
+        // All comes from the same position
+        if (rtm_impl::static_condition<comp0 == comp1 && comp0 == comp2 && comp0 == comp3>::test()) {
+            // All comes from the same position of input0
+            if (rtm_impl::static_condition<rtm_impl::is_mix_xyzw(comp0)>::test())
+                return vmovq_n_f32(vgetq_lane_f32(input0, int(comp0) % 4));
+            // All comes from the same position of input1
+            if (rtm_impl::static_condition<rtm_impl::is_mix_abcd(comp0)>::test())
+                return vmovq_n_f32(vgetq_lane_f32(input1, int(comp0) % 4));
+        }
+#endif // defined(RTM_NEON_INTRINSICS)
+
+        // Slow code path, not yet optimized or not using intrinsics
 		const float x = rtm_impl::is_mix_xyzw(comp0) ? vector_get_component<comp0>(input0) : vector_get_component<comp0>(input1);
 		const float y = rtm_impl::is_mix_xyzw(comp1) ? vector_get_component<comp1>(input0) : vector_get_component<comp1>(input1);
 		const float z = rtm_impl::is_mix_xyzw(comp2) ? vector_get_component<comp2>(input0) : vector_get_component<comp2>(input1);
@@ -2353,7 +2785,7 @@ namespace rtm
 		float z_sign = vector_get_z(control_sign);
 		float w_sign = vector_get_w(control_sign);
 
-		return vector_set(std::copysign(x, x_sign), std::copysign(y, y_sign), std::copysign(z, z_sign), std::copysign(w, w_sign));
+		return vector_set(rtm_impl::copysign(x, x_sign), rtm_impl::copysign(y, y_sign), rtm_impl::copysign(z, z_sign), rtm_impl::copysign(w, w_sign));
 #endif
 	}
 
@@ -2427,7 +2859,8 @@ namespace rtm
 		// Combine our masks to determine if we should return the original value
 		uint32x4_t use_original_input = vorrq_u32(is_input_large, is_nan);
 
-		uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(input), vdupq_n_f32(-0.0F));
+        uint32x4_t sign_mask = vreinterpretq_u32_f32(vdupq_n_f32(-0.0F));
+		uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(input), sign_mask);
 
 		// For positive values, we add a bias of 0.5.
 		// For negative values, we add a bias of -0.5.
@@ -2482,7 +2915,8 @@ namespace rtm
 #elif defined(RTM_NEON64_INTRINSICS)
 		return vrndnq_f32(input);
 #elif defined(RTM_NEON_INTRINSICS)
-		uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(input), vdupq_n_f32(-0.0F));
+        uint32x4_t sign_mask = vreinterpretq_u32_f32(vdupq_n_f32(-0.0F));
+		uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(input), sign_mask);
 
 		// We add the largest integer that a 32 bit floating point number can represent and subtract it afterwards.
 		// This relies on the fact that if we had a fractional part, the new value cannot be represented accurately
@@ -2516,21 +2950,21 @@ namespace rtm
 		// See: GPGPU Programming for Games and Science (David H. Eberly)
 
 		// Remap our input in the [-pi, pi] range
-		__m128 quotient = _mm_mul_ps(input, _mm_set_ps1(rtm::constants::one_div_two_pi()));
+		__m128 quotient = _mm_mul_ps(input, _mm_set_ps1(constants::one_div_two_pi()));
 		quotient = vector_round_bankers(quotient);
-		quotient = _mm_mul_ps(quotient, _mm_set_ps1(rtm::constants::two_pi()));
+		quotient = _mm_mul_ps(quotient, _mm_set_ps1(constants::two_pi()));
 		__m128 x = _mm_sub_ps(input, quotient);
 
 		// Remap our input in the [-pi/2, pi/2] range
 		const __m128 sign_mask = _mm_set_ps(-0.0F, -0.0F, -0.0F, -0.0F);
 		__m128 sign = _mm_and_ps(x, sign_mask);
-		__m128 reference = _mm_or_ps(sign, _mm_set_ps1(rtm::constants::pi()));
+		__m128 reference = _mm_or_ps(sign, _mm_set_ps1(constants::pi()));
 
 		const __m128 reflection = _mm_sub_ps(reference, x);
 		const __m128i abs_mask = _mm_set_epi32(0x7FFFFFFFULL, 0x7FFFFFFFULL, 0x7FFFFFFFULL, 0x7FFFFFFFULL);
 		const __m128 x_abs = _mm_and_ps(x, _mm_castsi128_ps(abs_mask));
 
-		__m128 is_less_equal_than_half_pi = _mm_cmple_ps(x_abs, _mm_set_ps1(rtm::constants::half_pi()));
+		__m128 is_less_equal_than_half_pi = _mm_cmple_ps(x_abs, _mm_set_ps1(constants::half_pi()));
 
 		x = RTM_VECTOR4F_SELECT(is_less_equal_than_half_pi, x, reflection);
 
@@ -2548,21 +2982,21 @@ namespace rtm
 		// See: GPGPU Programming for Games and Science (David H. Eberly)
 
 		// Remap our input in the [-pi, pi] range
-		float32x4_t quotient = vmulq_n_f32(input, rtm::constants::one_div_two_pi());
+		float32x4_t quotient = vmulq_n_f32(input, constants::one_div_two_pi());
 		quotient = vector_round_bankers(quotient);
-		quotient = vmulq_n_f32(quotient, rtm::constants::two_pi());
+		quotient = vmulq_n_f32(quotient, constants::two_pi());
 		float32x4_t x = vsubq_f32(input, quotient);
 
 		// Remap our input in the [-pi/2, pi/2] range
 		uint32x4_t sign_mask = vreinterpretq_u32_f32(vdupq_n_f32(-0.0F));
 		uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(x), sign_mask);
-		float32x4_t reference = vreinterpretq_f32_u32(vorrq_u32(sign, vreinterpretq_u32_f32(vdupq_n_f32(rtm::constants::pi()))));
+		float32x4_t reference = vreinterpretq_f32_u32(vorrq_u32(sign, vreinterpretq_u32_f32(vdupq_n_f32(constants::pi()))));
 
 		float32x4_t reflection = vsubq_f32(reference, x);
 #if !defined(RTM_IMPL_VCA_SUPPORTED)
-		float32x4_t is_less_equal_than_half_pi = vcleq_f32(vabsq_f32(x), vdupq_n_f32(rtm::constants::half_pi()));
+		uint32x4_t is_less_equal_than_half_pi = vcleq_f32(vabsq_f32(x), vdupq_n_f32(constants::half_pi()));
 #else
-		float32x4_t is_less_equal_than_half_pi = vcaleq_f32(x, vdupq_n_f32(rtm::constants::half_pi()));
+		uint32x4_t is_less_equal_than_half_pi = vcaleq_f32(x, vdupq_n_f32(constants::half_pi()));
 #endif
 		x = vbslq_f32(is_less_equal_than_half_pi, x, reflection);
 
@@ -2621,7 +3055,7 @@ namespace rtm
 		// As such, the offset is PI/2 and it takes the sign of the input
 		// This allows us to load a single constant from memory directly
 		__m128 input_sign = _mm_and_ps(input, sign_bit);
-		__m128 offset = _mm_or_ps(input_sign, _mm_set_ps1(rtm::constants::half_pi()));
+		__m128 offset = _mm_or_ps(input_sign, _mm_set_ps1(constants::half_pi()));
 
 		// And our result has the opposite sign of the input
 		result = _mm_xor_ps(result, _mm_xor_ps(input_sign, sign_bit));
@@ -2645,20 +3079,20 @@ namespace rtm
 		// See: GPGPU Programming for Games and Science (David H. Eberly)
 
 		// Remap our input in the [-pi, pi] range
-		__m128 quotient = _mm_mul_ps(input, _mm_set_ps1(rtm::constants::one_div_two_pi()));
+		__m128 quotient = _mm_mul_ps(input, _mm_set_ps1(constants::one_div_two_pi()));
 		quotient = vector_round_bankers(quotient);
-		quotient = _mm_mul_ps(quotient, _mm_set_ps1(rtm::constants::two_pi()));
+		quotient = _mm_mul_ps(quotient, _mm_set_ps1(constants::two_pi()));
 		__m128 x = _mm_sub_ps(input, quotient);
 
 		// Remap our input in the [-pi/2, pi/2] range
 		const __m128 sign_mask = _mm_set_ps(-0.0F, -0.0F, -0.0F, -0.0F);
 		__m128 x_sign = _mm_and_ps(x, sign_mask);
-		__m128 reference = _mm_or_ps(x_sign, _mm_set_ps1(rtm::constants::pi()));
+		__m128 reference = _mm_or_ps(x_sign, _mm_set_ps1(constants::pi()));
 		const __m128 reflection = _mm_sub_ps(reference, x);
 
 		const __m128i abs_mask = _mm_set_epi32(0x7FFFFFFFULL, 0x7FFFFFFFULL, 0x7FFFFFFFULL, 0x7FFFFFFFULL);
 		__m128 x_abs = _mm_and_ps(x, _mm_castsi128_ps(abs_mask));
-		__m128 is_less_equal_than_half_pi = _mm_cmple_ps(x_abs, _mm_set_ps1(rtm::constants::half_pi()));
+		__m128 is_less_equal_than_half_pi = _mm_cmple_ps(x_abs, _mm_set_ps1(constants::half_pi()));
 
 		x = RTM_VECTOR4F_SELECT(is_less_equal_than_half_pi, x, reflection);
 
@@ -2677,21 +3111,21 @@ namespace rtm
 		// See: GPGPU Programming for Games and Science (David H. Eberly)
 
 		// Remap our input in the [-pi, pi] range
-		float32x4_t quotient = vmulq_n_f32(input, rtm::constants::one_div_two_pi());
+		float32x4_t quotient = vmulq_n_f32(input, constants::one_div_two_pi());
 		quotient = vector_round_bankers(quotient);
-		quotient = vmulq_n_f32(quotient, rtm::constants::two_pi());
+		quotient = vmulq_n_f32(quotient, constants::two_pi());
 		float32x4_t x = vsubq_f32(input, quotient);
 
 		// Remap our input in the [-pi/2, pi/2] range
 		uint32x4_t sign_mask = vreinterpretq_u32_f32(vdupq_n_f32(-0.0F));
 		uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(x), sign_mask);
-		float32x4_t reference = vreinterpretq_f32_u32(vorrq_u32(sign, vreinterpretq_u32_f32(vdupq_n_f32(rtm::constants::pi()))));
+		float32x4_t reference = vreinterpretq_f32_u32(vorrq_u32(sign, vreinterpretq_u32_f32(vdupq_n_f32(constants::pi()))));
 
 		float32x4_t reflection = vsubq_f32(reference, x);
 #if !defined(RTM_IMPL_VCA_SUPPORTED)
-		float32x4_t is_less_equal_than_half_pi = vcleq_f32(vabsq_f32(x), vdupq_n_f32(rtm::constants::half_pi()));
+		uint32x4_t is_less_equal_than_half_pi = vcleq_f32(vabsq_f32(x), vdupq_n_f32(constants::half_pi()));
 #else
-		float32x4_t is_less_equal_than_half_pi = vcaleq_f32(x, vdupq_n_f32(rtm::constants::half_pi()));
+		uint32x4_t is_less_equal_than_half_pi = vcaleq_f32(x, vdupq_n_f32(constants::half_pi()));
 #endif
 		x = vbslq_f32(is_less_equal_than_half_pi, x, reflection);
 
@@ -2753,7 +3187,7 @@ namespace rtm
 
 		// As such, the offset is 0.0 when the input is positive and PI when negative
 		__m128 is_input_negative = _mm_cmplt_ps(input, _mm_setzero_ps());
-		__m128 offset = _mm_and_ps(is_input_negative, _mm_set_ps1(rtm::constants::pi()));
+		__m128 offset = _mm_and_ps(is_input_negative, _mm_set_ps1(constants::pi()));
 
 		// And our result has the same sign of the input
 		__m128 input_sign = _mm_and_ps(input, sign_bit);
@@ -2778,20 +3212,20 @@ namespace rtm
 		// See: GPGPU Programming for Games and Science (David H. Eberly)
 
 		// Remap our input in the [-pi, pi] range
-		__m128 quotient = _mm_mul_ps(input, _mm_set_ps1(rtm::constants::one_div_two_pi()));
+		__m128 quotient = _mm_mul_ps(input, _mm_set_ps1(constants::one_div_two_pi()));
 		quotient = vector_round_bankers(quotient);
-		quotient = _mm_mul_ps(quotient, _mm_set_ps1(rtm::constants::two_pi()));
+		quotient = _mm_mul_ps(quotient, _mm_set_ps1(constants::two_pi()));
 		__m128 x = _mm_sub_ps(input, quotient);
 
 		// Remap our input in the [-pi/2, pi/2] range
 		const __m128 sign_mask = _mm_set_ps(-0.0F, -0.0F, -0.0F, -0.0F);
 		__m128 x_sign = _mm_and_ps(x, sign_mask);
-		__m128 reference = _mm_or_ps(x_sign, _mm_set_ps1(rtm::constants::pi()));
+		__m128 reference = _mm_or_ps(x_sign, _mm_set_ps1(constants::pi()));
 		const __m128 reflection = _mm_sub_ps(reference, x);
 
 		const __m128i abs_mask = _mm_set_epi32(0x7FFFFFFFULL, 0x7FFFFFFFULL, 0x7FFFFFFFULL, 0x7FFFFFFFULL);
 		__m128 x_abs = _mm_and_ps(x, _mm_castsi128_ps(abs_mask));
-		__m128 is_less_equal_than_half_pi = _mm_cmple_ps(x_abs, _mm_set_ps1(rtm::constants::half_pi()));
+		__m128 is_less_equal_than_half_pi = _mm_cmple_ps(x_abs, _mm_set_ps1(constants::half_pi()));
 
 		x = RTM_VECTOR4F_SELECT(is_less_equal_than_half_pi, x, reflection);
 		const __m128 x2 = _mm_mul_ps(x, x);
@@ -2818,21 +3252,21 @@ namespace rtm
 		// See: GPGPU Programming for Games and Science (David H. Eberly)
 
 		// Remap our input in the [-pi, pi] range
-		float32x4_t quotient = vmulq_n_f32(input, rtm::constants::one_div_two_pi());
+		float32x4_t quotient = vmulq_n_f32(input, constants::one_div_two_pi());
 		quotient = vector_round_bankers(quotient);
-		quotient = vmulq_n_f32(quotient, rtm::constants::two_pi());
+		quotient = vmulq_n_f32(quotient, constants::two_pi());
 		float32x4_t x = vsubq_f32(input, quotient);
 
 		// Remap our input in the [-pi/2, pi/2] range
 		const uint32x4_t sign_mask = vreinterpretq_u32_f32(vdupq_n_f32(-0.0F));
 		const uint32x4_t sign = vandq_u32(vreinterpretq_u32_f32(x), sign_mask);
-		const float32x4_t reference = vreinterpretq_f32_u32(vorrq_u32(sign, vreinterpretq_u32_f32(vdupq_n_f32(rtm::constants::pi()))));
+		const float32x4_t reference = vreinterpretq_f32_u32(vorrq_u32(sign, vreinterpretq_u32_f32(vdupq_n_f32(constants::pi()))));
 
 		const float32x4_t reflection = vsubq_f32(reference, x);
 #if !defined(RTM_IMPL_VCA_SUPPORTED)
-		const float32x4_t is_less_equal_than_half_pi = vcleq_f32(vabsq_f32(x), vdupq_n_f32(rtm::constants::half_pi()));
+		const uint32x4_t is_less_equal_than_half_pi = vcleq_f32(vabsq_f32(x), vdupq_n_f32(constants::half_pi()));
 #else
-		const float32x4_t is_less_equal_than_half_pi = vcaleq_f32(x, vdupq_n_f32(rtm::constants::half_pi()));
+		const uint32x4_t is_less_equal_than_half_pi = vcaleq_f32(x, vdupq_n_f32(constants::half_pi()));
 #endif
 		x = vbslq_f32(is_less_equal_than_half_pi, x, reflection);
 		const float32x4_t x2 = vmulq_f32(x, x);
@@ -2913,7 +3347,7 @@ namespace rtm
 		result = _mm_add_ps(_mm_mul_ps(result, x2), _mm_set_ps1(1.0F));
 		result = _mm_mul_ps(result, x);
 
-		__m128 remapped = _mm_sub_ps(_mm_set_ps1(rtm::constants::half_pi()), result);
+		__m128 remapped = _mm_sub_ps(_mm_set_ps1(constants::half_pi()), result);
 
 		// pi/2 - result
 		result = vector_select(is_larger_than_one, remapped, result);
@@ -2935,7 +3369,7 @@ namespace rtm
 #endif
 		float32x4_t reciprocal = vector_reciprocal(abs_value);
 
-		float32x4_t x = vector_select(is_larger_than_one, reciprocal, abs_value);
+		float32x4_t x = vbslq_f32(is_larger_than_one, reciprocal, abs_value);
 
 		float32x4_t x2 = vmulq_f32(x, x);
 
@@ -2948,10 +3382,10 @@ namespace rtm
 
 		result = vmulq_f32(result, x);
 
-		float32x4_t remapped = vsubq_f32(vdupq_n_f32(rtm::constants::half_pi()), result);
+		float32x4_t remapped = vsubq_f32(vdupq_n_f32(constants::half_pi()), result);
 
 		// pi/2 - result
-		result = vector_select(is_larger_than_one, remapped, result);
+		result = vbslq_f32(is_larger_than_one, remapped, result);
 
 		// Keep the original sign
 		return vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(result), vandq_u32(vreinterpretq_u32_f32(input), vreinterpretq_u32_f32(vdupq_n_f32(-0.0F)))));
@@ -2990,8 +3424,8 @@ namespace rtm
 		__m128 y_sign = _mm_and_ps(y, sign_mask);
 
 		// If X == 0.0, our offset is PI/2 otherwise it is PI both with the sign of Y
-		__m128 half_pi = _mm_set_ps1(rtm::constants::half_pi());
-		__m128 pi = _mm_set_ps1(rtm::constants::pi());
+		__m128 half_pi = _mm_set_ps1(constants::half_pi());
+		__m128 pi = _mm_set_ps1(constants::pi());
 		__m128 offset = _mm_or_ps(_mm_and_ps(is_x_zero, half_pi), _mm_andnot_ps(is_x_zero, pi));
 		offset = _mm_or_ps(offset, y_sign);
 
@@ -3036,8 +3470,8 @@ namespace rtm
 		uint32x4_t y_sign = vandq_u32(vreinterpretq_u32_f32(y), vreinterpretq_u32_f32(vdupq_n_f32(-0.0F)));
 
 		// If X == 0.0, our offset is PI/2 otherwise it is PI both with the sign of Y
-		float32x4_t half_pi = vdupq_n_f32(rtm::constants::half_pi());
-		float32x4_t pi = vdupq_n_f32(rtm::constants::pi());
+		float32x4_t half_pi = vdupq_n_f32(constants::half_pi());
+		float32x4_t pi = vdupq_n_f32(constants::pi());
 		float32x4_t offset = vreinterpretq_f32_u32(vorrq_u32(vandq_u32(is_x_zero, vreinterpretq_u32_f32(half_pi)), vandq_u32(vmvnq_u32(is_x_zero), vreinterpretq_u32_f32(pi))));
 		offset = vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(offset), y_sign));
 
@@ -3065,6 +3499,8 @@ namespace rtm
 		return vector_set(x_, y_, z_, w_);
 #endif
 	}
+
+	RTM_IMPL_VERSION_NAMESPACE_END
 }
 
 RTM_IMPL_FILE_PRAGMA_POP

@@ -11,8 +11,6 @@
 #include "SceneManagement.h"
 #include "Engine/Light.h"
 #include "Engine/Engine.h"
-#include "Engine/LevelStreaming.h"
-#include "LevelUtils.h"
 #include "TextureResource.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BillboardComponent)
@@ -103,20 +101,6 @@ public:
 #else // WITH_EDITORONLY_DATA
 			bIsActorLocked = false;
 #endif // WITH_EDITORONLY_DATA
-
-			// Level colorization
-			ULevel* Level = Owner->GetLevel();
-			if (ULevelStreaming* LevelStreaming = FLevelUtils::FindStreamingLevel(Level))
-			{
-				// Selection takes priority over level coloration.
-				SetLevelColor(LevelStreaming->LevelColor);
-			}
-		}
-
-		FColor NewPropertyColor;
-		if (GEngine->GetPropertyColorationColor( (UObject*)InComponent, NewPropertyColor ))
-		{
-			SetPropertyColor(NewPropertyColor);
 		}
 	}
 
@@ -190,14 +174,11 @@ public:
 					{
 						ColorToUse = FColor::Red;
 					}
-					FLinearColor LevelColorToUse = IsSelected() ? ColorToUse : (FLinearColor)GetLevelColor();
-					FLinearColor PropertyColorToUse = GetPropertyColor();
+					FLinearColor PrimitiveColorToUse = IsSelected() ? ColorToUse : (FLinearColor)GetPrimitiveColor();
 
 					ColorToUse.A = 1.0f;
 
-					const FLinearColor& SpriteColor = View->Family->EngineShowFlags.LevelColoration ? LevelColorToUse :
-						( (View->Family->EngineShowFlags.PropertyColoration) ? PropertyColorToUse : ColorToUse );
-
+					const FLinearColor& SpriteColor = View->Family->EngineShowFlags.ActorColoration ? PrimitiveColorToUse : ColorToUse;
 
 					Collector.GetPDI(ViewIndex)->DrawSprite(
 						Origin,
@@ -243,7 +224,7 @@ public:
 		Result.bEditorPrimitiveRelevance = UseEditorCompositing(View);
 		return Result;
 	}
-	virtual void OnTransformChanged() override
+	virtual void OnTransformChanged(FRHICommandListBase& RHICmdList) override
 	{
 		Origin = GetLocalToWorld().GetOrigin();
 	}

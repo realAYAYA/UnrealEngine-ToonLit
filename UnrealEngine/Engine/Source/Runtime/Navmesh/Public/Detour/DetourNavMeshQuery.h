@@ -497,7 +497,7 @@ public:
 	///  @param[in]		filter		The polygon filter to apply to the query.
 	///  @param[out]	nearestRef	The reference id of the nearest polygon.
 	///  @param[out]	nearestPt	The nearest point on the polygon. [opt] [(x, y, z)]
-	///  @param[in]		referencePt	If supplied replaces @param center in terms of distance measurements. [opt] [(x, y, z)]
+	///  @param[in]		referencePt	If supplied replaces @param center in terms of distance measurements. Note that extents are not precise when using a referencePt. [opt] [(x, y, z)]
 	/// @returns The status flags for the query.
 	NAVMESH_API dtStatus findNearestPoly(const dtReal* center, const dtReal* extents,
 							 const dtQueryFilter* filter,
@@ -509,7 +509,7 @@ public:
 	///  @param[in]		filter		The polygon filter to apply to the query.
 	///  @param[out]	nearestRef	The reference id of the nearest polygon.
 	///  @param[out]	nearestPt	The nearest point on the polygon. [opt] [(x, y, z)]
-	///  @param[in]		referencePt	If supplied replaces @param center in terms of distance measurements. [opt] [(x, y, z)]
+	///  @param[in]		referencePt	If supplied replaces @param center in terms of distance measurements. Note that extents are not precise when using a referencePt. [opt] [(x, y, z)]
 	///  @param[in]		tolerance	Radius around best 2D point for picking vertical match
 	/// @returns The status flags for the query.
 	NAVMESH_API dtStatus findNearestPoly2D(const dtReal* center, const dtReal* extents,
@@ -778,6 +778,9 @@ private:
 	NAVMESH_API dtStatus projectedPointOnPolyInTile(const dtMeshTile* tile, const dtPoly* poly, const dtReal* pos, dtReal* projected) const;
 	
 	//@UE BEGIN
+	/// Handle 0 extents by having the vector components set to a minimum value.
+	static void dtApplyEpsilon(dtReal* extents);
+	
 	// exposing function to be able to generate navigation corridors as sequence of point pairs
 public:
 	/// Returns portal points between two polygons.

@@ -27,7 +27,7 @@ void FDataLayerInstanceDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBui
 	for (const TWeakObjectPtr<UObject>& SelectedObject : ObjectsBeingCustomized)
 	{
 		UDataLayerInstance* DataLayerInstance = Cast<UDataLayerInstance>(SelectedObject.Get());
-		if (DataLayerInstance && DataLayerInstance->IsRuntime())
+		if (DataLayerInstance && DataLayerInstance->IsRuntime() && !DataLayerInstance->IsClientOnly() && !DataLayerInstance->IsServerOnly())
 		{
 			bHasRuntime = true;
 			break;

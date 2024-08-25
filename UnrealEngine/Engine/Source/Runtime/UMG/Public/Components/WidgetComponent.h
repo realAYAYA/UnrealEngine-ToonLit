@@ -99,6 +99,7 @@ public:
 	//UObject interface
 	UMG_API virtual void Serialize(FArchive& Ar) override;
 	UMG_API virtual bool CanBeInCluster() const override;
+	UMG_API virtual void PostLoad() override;
 	//~ End UObject Interface
 
 	/** UActorComponent Interface */
@@ -116,7 +117,9 @@ public:
 	UMG_API UMaterialInterface* GetMaterial(int32 MaterialIndex) const override;
 	UMG_API virtual void SetMaterial(int32 ElementIndex, UMaterialInterface* Material) override;
 	UMG_API int32 GetNumMaterials() const override;
-	UMG_API virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction) override;
+	UMG_API virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;/** Collect all the PSO precache data used by the static mesh component */
+	UMG_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
+
 
 	UMG_API virtual TStructOnScope<FActorComponentInstanceData> GetComponentInstanceData() const override;
 	UMG_API void ApplyComponentInstanceData(struct FWidgetComponentInstanceData* ComponentInstanceData);
@@ -479,9 +482,16 @@ protected:
 	FIntPoint CurrentDrawSize;
 
 	/**
+	 * Use the invalidation system to update this widget.
+	 * Only valid in World space. In Screen space, the widget is updated by the viewport owners.
+	 */
+	UPROPERTY(EditAnywhere, Category = UserInterface, meta=(EditCondition="Space==EWidgetSpace::World", DisplayName="Use Invalidation"))
+	bool bUseInvalidationInWorldSpace;
+
+	/**
 	 * Causes the render target to automatically match the desired size.
 	 * 
-	 * WARNING: If you change this every frame, it will be very expensive.  If you need 
+	 * WARNING: If you change this every frame, it will be very expensive. If you need 
 	 *    that effect, you should keep the outer widget's sized locked and dynamically
 	 *    scale or resize some inner widget.
 	 */

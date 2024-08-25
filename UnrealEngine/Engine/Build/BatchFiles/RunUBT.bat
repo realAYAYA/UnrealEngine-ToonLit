@@ -65,7 +65,7 @@ goto Exit
 
 :Error_UBTRunFailed
 echo.
-echo RUNUBT ERROR: UnrealBuildTool exited with a failure
+echo RunUBT ERROR: UnrealBuildTool exited with a failure
 echo.
 set RUNUBT_EXITCODE=%ERRORLEVEL%
 goto Exit

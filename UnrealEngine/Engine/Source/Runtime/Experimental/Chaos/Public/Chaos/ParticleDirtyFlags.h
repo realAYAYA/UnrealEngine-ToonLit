@@ -62,20 +62,32 @@ class FParticlePositionRotation
 public:
 	void Serialize(FChaosArchive& Ar)
 	{
-		Ar << MX << MR;
+		Ar.UsingCustomVersion(FFortniteReleaseBranchCustomObjectVersion::GUID);
+
+		if (Ar.CustomVer(FFortniteReleaseBranchCustomObjectVersion::GUID) >= FFortniteReleaseBranchCustomObjectVersion::SinglePrecisonParticleData)
+		{
+			Ar << MX << MR;
+		}
+		else
+		{
+			FRotation3 DoublePrecisionRotation = FRotation3(MR);
+			Ar << MX << DoublePrecisionRotation;
+			MR = FRotation3f(MR);
+		}
+		
 	}
 
 	template <typename TOther>
 	void CopyFrom(const TOther& Other)
 	{
-		MX = Other.X();
-		MR = Other.R();
+		MX = Other.GetX();
+		MR = FRotation3f(Other.GetR());
 	}
 
 	template <typename TOther>
 	bool IsEqual(const TOther& Other) const
 	{
-		return MX == Other.X() && MR == Other.R();
+		return MX == Other.X() && MR == FRotation3f(Other.R());
 	}
 
 	bool operator==(const FParticlePositionRotation& Other) const
@@ -84,14 +96,16 @@ public:
 	}
 
 	const FVec3& X() const { return MX; }
+	const FVec3& GetX() const { return MX; }
 	void SetX(const FVec3& InX){ MX = InX; }
 
-	const FRotation3& R() const { return MR; }
-	void SetR(const FRotation3& InR) { MR = InR; }
+	const FRotation3 R() const { return FRotation3(MR); }
+	const FRotation3 GetR() const { return FRotation3(MR); }
+	void SetR(const FRotation3& InR) { MR = FRotation3f(InR); }
 	
 private:
 	FVec3 MX;
-	FRotation3 MR;
+	FRotation3f MR;
 
 };
 
@@ -106,20 +120,34 @@ class FParticleVelocities
 public:
 	void Serialize(FChaosArchive& Ar)
 	{
-		Ar << MV << MW;
+		Ar.UsingCustomVersion(FFortniteReleaseBranchCustomObjectVersion::GUID);
+
+		if (Ar.CustomVer(FFortniteReleaseBranchCustomObjectVersion::GUID) >= FFortniteReleaseBranchCustomObjectVersion::SinglePrecisonParticleData)
+		{
+			Ar << MV << MW;
+		}
+		else
+		{
+			FVec3 MVDouble(MV);
+			FVec3 MWDouble(MW);
+			Ar << MVDouble << MWDouble;
+			MV = FVec3f(MVDouble);
+			MW = FVec3f(MWDouble);
+		}
+
 	}
 
 	template <typename TOther>
 	void CopyFrom(const TOther& Other)
 	{
-		MV = Other.V();
-		MW = Other.W();
+		MV = Other.GetV();
+		MW = Other.GetW();
 	}
 
 	template <typename TOther>
 	bool IsEqual(const TOther& Other) const
 	{
-		return MV == Other.V() && MW == Other.W();
+		return MV == FVec3f(Other.GetV()) && MW == FVec3f(Other.GetW());
 	}
 
 	bool operator==(const FParticleVelocities& Other) const
@@ -127,15 +155,17 @@ public:
 		return IsEqual(Other);
 	}
 
-	const FVec3& V() const { return MV; }
-	void SetV(const FVec3& V) { MV = V; }
+	const FVec3 V() const { return FVec3(MV); }
+	const FVec3 GetV() const { return FVec3(MV); }
+	void SetV(const FVec3& V) { MV = FVec3f(V); }
 
-	const FVec3& W() const { return MW; }
-	void SetW(const FVec3& W){ MW = W; }
+	const FVec3 W() const { return FVec3(MW); }
+	const FVec3 GetW() const { return FVec3(MW); }
+	void SetW(const FVec3& W){ MW = FVec3f(W); }
 
 private:
-	FVec3 MV;
-	FVec3 MW;
+	FVec3f MV;
+	FVec3f MW;
 };
 
 inline FChaosArchive& operator<<(FChaosArchive& Ar,FParticleVelocities& Data)
@@ -149,10 +179,30 @@ class FParticleDynamics
 public:
 	void Serialize(FChaosArchive& Ar)
 	{
-		Ar << MAcceleration;
-		Ar << MAngularAcceleration;
-		Ar << MLinearImpulseVelocity;
-		Ar << MAngularImpulseVelocity;	
+		Ar.UsingCustomVersion(FFortniteReleaseBranchCustomObjectVersion::GUID);
+
+		if (Ar.CustomVer(FFortniteReleaseBranchCustomObjectVersion::GUID) >= FFortniteReleaseBranchCustomObjectVersion::SinglePrecisonParticleData)
+		{
+			Ar << MAcceleration;
+			Ar << MAngularAcceleration;
+			Ar << MLinearImpulseVelocity;
+			Ar << MAngularImpulseVelocity;
+		}
+		else
+		{
+			FVec3 AccelerationDouble(MAcceleration);
+			FVec3 AngularAccelerationDouble(MAngularAcceleration);
+			FVec3 LinearImpulseVelocityDouble(MLinearImpulseVelocity);
+			FVec3 AngularImpulseVelocityDouble(MAngularImpulseVelocity);
+			Ar << AccelerationDouble;
+			Ar << AngularAccelerationDouble;
+			Ar << LinearImpulseVelocityDouble;
+			Ar << AngularImpulseVelocityDouble;
+			MAcceleration = FVec3f(AccelerationDouble);
+			MAngularAcceleration = FVec3f(AngularAccelerationDouble);
+			MLinearImpulseVelocity = FVec3f(LinearImpulseVelocityDouble);
+			MAngularImpulseVelocity = FVec3f(AngularImpulseVelocityDouble);
+		}
 	}
 
 	template <typename TOther>
@@ -178,17 +228,17 @@ public:
 		return IsEqual(Other);
 	}
 
-	const FVec3& Acceleration() const { return MAcceleration; }
-	void SetAcceleration(const FVec3& Acceleration){ MAcceleration = Acceleration; }
+	FVec3 Acceleration() const { return FVec3(MAcceleration); }
+	void SetAcceleration(const FVec3& Acceleration){ MAcceleration = FVec3f(Acceleration); }
 
-	const FVec3& AngularAcceleration() const { return MAngularAcceleration; }
-	void SetAngularAcceleration(const FVec3& AngularAcceleration){ MAngularAcceleration = AngularAcceleration; }
+	FVec3 AngularAcceleration() const { return FVec3(MAngularAcceleration); }
+	void SetAngularAcceleration(const FVec3& AngularAcceleration){ MAngularAcceleration = FVec3f(AngularAcceleration); }
 
-	const FVec3& LinearImpulseVelocity() const { return MLinearImpulseVelocity; }
-	void SetLinearImpulseVelocity(const FVec3& LinearImpulseVelocity){ MLinearImpulseVelocity = LinearImpulseVelocity; }
+	FVec3 LinearImpulseVelocity() const { return FVec3(MLinearImpulseVelocity); }
+	void SetLinearImpulseVelocity(const FVec3& LinearImpulseVelocity){ MLinearImpulseVelocity = FVec3f(LinearImpulseVelocity); }
 
-	const FVec3& AngularImpulseVelocity() const { return MAngularImpulseVelocity; }
-	void SetAngularImpulseVelocity(const FVec3& AngularImpulseVelocity){ MAngularImpulseVelocity = AngularImpulseVelocity; }
+	FVec3 AngularImpulseVelocity() const { return FVec3(MAngularImpulseVelocity); }
+	void SetAngularImpulseVelocity(const FVec3& AngularImpulseVelocity){ MAngularImpulseVelocity = FVec3f(AngularImpulseVelocity); }
 
 	static FParticleDynamics ZeroValue()
 	{
@@ -202,10 +252,10 @@ public:
 	}
 
 private:
-	FVec3 MAcceleration;
-	FVec3 MAngularAcceleration;
-	FVec3 MLinearImpulseVelocity;
-	FVec3 MAngularImpulseVelocity;
+	FVec3f MAcceleration;
+	FVec3f MAngularAcceleration;
+	FVec3f MLinearImpulseVelocity;
+	FVec3f MAngularImpulseVelocity;
 
 };
 
@@ -216,12 +266,22 @@ struct FProxyBasePairProperty
 	FProxyBasePair ParticleProxies = { nullptr, nullptr };
 };
 
+struct FProxyBaseProperty
+{
+	IPhysicsProxyBase* Proxy = nullptr;
+};
+
 struct FPhysicsObject;
 typedef TVector<FPhysicsObject*, 2> FPhysicsObjectPair;
 
 struct FPhysicsObjectPairProperty
 {
 	FPhysicsObjectPair PhysicsBodies = { nullptr, nullptr };
+};
+
+struct FPhysicsObjectProperty
+{
+	FPhysicsObject* PhysicsBody = nullptr;
 };
 
 inline FChaosArchive& operator<<(FChaosArchive& Ar, FParticleDynamics& Data)
@@ -314,13 +374,29 @@ public:
 		Ar.UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
 		Ar.UsingCustomVersion(FExternalPhysicsCustomObjectVersion::GUID);
 		Ar.UsingCustomVersion(FPhysicsObjectVersion::GUID);
+		Ar.UsingCustomVersion(FFortniteReleaseBranchCustomObjectVersion::GUID);
+
+		const bool bSinglePrecision = Ar.CustomVer(FFortniteReleaseBranchCustomObjectVersion::GUID) >= FFortniteReleaseBranchCustomObjectVersion::SinglePrecisonParticleData;
+
+		if (bSinglePrecision)
+		{
+			Ar << MLinearEtherDrag;
+			Ar << MAngularEtherDrag;
+		}
+		else
+		{
+			FReal LinearEtherDragDouble = FReal(MLinearEtherDrag);
+			FReal AngularEtherDragDouble = FReal(MAngularEtherDrag);
+			Ar << LinearEtherDragDouble;
+			Ar << AngularEtherDragDouble;
+			MLinearEtherDrag = FRealSingle(LinearEtherDragDouble);
+			MAngularEtherDrag = FRealSingle(AngularEtherDragDouble);
+		}
+		
+		Ar << MObjectState;
 
 		// Flags moved into a bitmask
 		const bool bAddControlFlags = (Ar.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::AddRigidParticleControlFlags);
-
-		Ar << MLinearEtherDrag;
-		Ar << MAngularEtherDrag;
-		Ar << MObjectState;
 		if (!bAddControlFlags && Ar.IsLoading())
 		{
 			bool bGravityEnabled;
@@ -366,8 +442,29 @@ public:
 		const bool bAddChaosMaxLinearAngularSpeedUE5 = (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) >= FUE5ReleaseStreamObjectVersion::AddChaosMaxLinearAngularSpeed);
 		if (bAddChaosMaxLinearAngularSpeedUE4 || bAddChaosMaxLinearAngularSpeedUE5)
 		{
-			Ar << MMaxLinearSpeedSq;
-			Ar << MMaxAngularSpeedSq;
+			if (bSinglePrecision)
+			{
+				Ar << MMaxLinearSpeedSq;
+				Ar << MMaxAngularSpeedSq;
+			}
+			else
+			{
+				FReal MaxLinearSpeedSqDouble = FReal(MMaxLinearSpeedSq);
+				FReal MaxAngularSpeedSqDouble = FReal(MMaxAngularSpeedSq);
+				Ar << MaxLinearSpeedSqDouble;
+				Ar << MaxAngularSpeedSqDouble;
+				MMaxLinearSpeedSq = FRealSingle(MaxLinearSpeedSqDouble);
+				MMaxAngularSpeedSq = FRealSingle(MaxAngularSpeedSqDouble);
+			}
+		}
+
+		// @todo(chaos): add this
+		//Ar << MInitialOverlapDepenetrationVelocity;
+		//Ar << MSleepThresholdMultiplier;
+		if (Ar.IsLoading())
+		{
+			MInitialOverlapDepenetrationVelocity = 0;
+			MSleepThresholdMultiplier = 1.0f;
 		}
 
 		if (bAddControlFlags)
@@ -383,6 +480,8 @@ public:
 		SetAngularEtherDrag(Other.AngularEtherDrag());
 		SetMaxLinearSpeedSq(Other.MaxLinearSpeedSq());
 		SetMaxAngularSpeedSq(Other.MaxAngularSpeedSq());
+		SetInitialOverlapDepenetrationVelocity(Other.InitialOverlapDepenetrationVelocity());
+		SetSleepThresholdMultiplier(Other.SleepThresholdMultiplier());
 		SetObjectState(Other.ObjectState());
 		SetCollisionGroup(Other.CollisionGroup());
 		SetSleepType(Other.SleepType());
@@ -395,10 +494,12 @@ public:
 	bool IsEqual(const TOther& Other) const
 	{
 		return ObjectState() == Other.ObjectState()
-			&& LinearEtherDrag() == Other.LinearEtherDrag()
-			&& AngularEtherDrag() == Other.AngularEtherDrag()
-			&& MaxLinearSpeedSq() == Other.MaxLinearSpeedSq()
-			&& MaxAngularSpeedSq() == Other.MaxAngularSpeedSq()
+			&& MLinearEtherDrag == FRealSingle(Other.LinearEtherDrag())
+			&& MAngularEtherDrag == FRealSingle(Other.AngularEtherDrag())
+			&& MMaxLinearSpeedSq == FRealSingle(Other.MaxLinearSpeedSq())
+			&& MMaxAngularSpeedSq == FRealSingle(Other.MaxAngularSpeedSq())
+			&& InitialOverlapDepenetrationVelocity() == Other.InitialOverlapDepenetrationVelocity()
+			&& SleepThresholdMultiplier() == Other.SleepThresholdMultiplier()
 			&& CollisionGroup() == Other.CollisionGroup()
 			&& SleepType() == Other.SleepType()
 			&& CollisionConstraintFlags() == Other.CollisionConstraintFlags()
@@ -411,17 +512,23 @@ public:
 		return IsEqual(Other);
 	}
 
-	FReal LinearEtherDrag() const { return MLinearEtherDrag; }
-	void SetLinearEtherDrag(FReal InLinearEtherDrag) { MLinearEtherDrag = InLinearEtherDrag; }
+	FReal LinearEtherDrag() const { return FReal(MLinearEtherDrag); }
+	void SetLinearEtherDrag(FReal InLinearEtherDrag) { MLinearEtherDrag = FRealSingle(InLinearEtherDrag); }
 
-	FReal AngularEtherDrag() const { return MAngularEtherDrag; }
-	void SetAngularEtherDrag(FReal InAngularEtherDrag) { MAngularEtherDrag = InAngularEtherDrag; }
+	FReal AngularEtherDrag() const { return FReal(MAngularEtherDrag); }
+	void SetAngularEtherDrag(FReal InAngularEtherDrag) { MAngularEtherDrag = FRealSingle(InAngularEtherDrag); }
 
-	FReal MaxLinearSpeedSq() const { return MMaxLinearSpeedSq; }
-	void SetMaxLinearSpeedSq(FReal InMaxLinearSpeed) { MMaxLinearSpeedSq = InMaxLinearSpeed; }
+	FReal MaxLinearSpeedSq() const { return FReal(MMaxLinearSpeedSq); }
+	void SetMaxLinearSpeedSq(FReal InMaxLinearSpeed) { MMaxLinearSpeedSq = FRealSingle(InMaxLinearSpeed); }
 
-	FReal MaxAngularSpeedSq() const { return MMaxAngularSpeedSq; }
-	void SetMaxAngularSpeedSq(FReal InMaxAngularSpeed) { MMaxAngularSpeedSq = InMaxAngularSpeed; }
+	FReal MaxAngularSpeedSq() const { return FReal(MMaxAngularSpeedSq); }
+	void SetMaxAngularSpeedSq(FReal InMaxAngularSpeed) { MMaxAngularSpeedSq = FRealSingle(InMaxAngularSpeed); }
+
+	FRealSingle InitialOverlapDepenetrationVelocity() const { return MInitialOverlapDepenetrationVelocity; }
+	void SetInitialOverlapDepenetrationVelocity(FRealSingle InVel) { MInitialOverlapDepenetrationVelocity = InVel; }
+
+	FRealSingle SleepThresholdMultiplier() const { return MSleepThresholdMultiplier; }
+	void SetSleepThresholdMultiplier(FRealSingle InSleepThresholdMultiplier) { MSleepThresholdMultiplier = InSleepThresholdMultiplier; }
 
 	EObjectStateType ObjectState() const { return MObjectState; }
 	void SetObjectState(EObjectStateType InState){ MObjectState = InState; }
@@ -434,6 +541,9 @@ public:
 
 	bool CCDEnabled() const { return MControlFlags.GetCCDEnabled(); }
 	void SetCCDEnabled(bool bInCCDEnabled) { MControlFlags.SetCCDEnabled(bInCCDEnabled); }
+
+	bool MACDEnabled() const { return MControlFlags.GetMACDEnabled(); }
+	void SetMACDEnabled(bool bInCCDEnabled) { MControlFlags.SetMACDEnabled(bInCCDEnabled); }
 
 	bool Disabled() const { return bDisabled; }
 	void SetDisabled(bool bInDisabled) { bDisabled = bInDisabled; }
@@ -448,7 +558,7 @@ public:
 	void SetCollisionConstraintFlags(uint32 InCollisionConstraintFlag) { MCollisionConstraintFlag = InCollisionConstraintFlag; }
 	void AddCollisionConstraintFlag(const ECollisionConstraintFlags Flag) { MCollisionConstraintFlag |= uint32(Flag); }
 	void RemoveCollisionConstraintFlag(const ECollisionConstraintFlags Flag) { MCollisionConstraintFlag &= ~uint32(Flag); }
-	
+
 	bool OneWayInteraction() const { return MControlFlags.GetOneWayInteractionEnabled(); }
 	void SetOneWayInteraction(bool bInOneWayInteraction) { MControlFlags.SetOneWayInteractionEnabled(bInOneWayInteraction); }
 
@@ -462,10 +572,12 @@ private:
 	//NOTE: MObjectState is the only sim-writable data in this struct
 	//If you add any more, make sure to update SyncSimWritablePropsFromSim
 	//Or consider breaking it (and object state) out of this struct entirely
-	FReal MLinearEtherDrag;
-	FReal MAngularEtherDrag;
-	FReal MMaxLinearSpeedSq;
-	FReal MMaxAngularSpeedSq;
+	FRealSingle MLinearEtherDrag;
+	FRealSingle MAngularEtherDrag;
+	FRealSingle MMaxLinearSpeedSq;
+	FRealSingle MMaxAngularSpeedSq;
+	FRealSingle MInitialOverlapDepenetrationVelocity = 0;
+	FRealSingle MSleepThresholdMultiplier = 1;
 	int32 MCollisionGroup;
 
 	EObjectStateType MObjectState;
@@ -494,13 +606,13 @@ public:
 
 	void Serialize(FChaosArchive& Ar)
 	{
-		Ar.SerializeConstPtr(MGeometry);
+		Ar.SerializePtr(MGeometry);
 	}
 
 	template <typename TOther>
 	void CopyFrom(const TOther& Other)
 	{
-		SetGeometry(Other.SharedGeometryLowLevel());
+		SetGeometry(Other.GetGeometry());
 		SetUniqueIdx(Other.UniqueIdx());
 		SetSpatialIdx(Other.SpatialIdx());
 		SetResimType(Other.ResimType());
@@ -513,7 +625,7 @@ public:
 	template <typename TOther>
 	bool IsEqual(const TOther& Other) const
 	{
-		return Geometry() == Other.Geometry()
+		return GetGeometry() == Other.GetGeometry()
 			&& UniqueIdx() == Other.UniqueIdx()
 			&& SpatialIdx() == Other.SpatialIdx()
 			&& ResimType() == Other.ResimType()
@@ -527,12 +639,20 @@ public:
 
 	//This function should only be used when geometry is not used by physics thread. The owning particle should not have a solver yet
 	//Avoid using this function unless you know the threading model, see TGeometryParticle::ModifyGeometry
-	FImplicitObject* AccessGeometryDangerous() { return const_cast<FImplicitObject*>(MGeometry.Get()); }
+	FImplicitObject* AccessGeometryDangerous() { return const_cast<FImplicitObject*>(MGeometry.GetReference()); }
 
-	TSerializablePtr<FImplicitObject> Geometry() const { return TSerializablePtr<const FImplicitObject>(MGeometry);}
-	const TSharedPtr<const FImplicitObject,ESPMode::ThreadSafe>& SharedGeometryLowLevel() const { return MGeometry;}
-	void SetGeometry(const TSharedPtr<const FImplicitObject,ESPMode::ThreadSafe>& InGeometry) { MGeometry = InGeometry;}
+	const FImplicitObjectRef GetGeometry() const { return MGeometry.GetReference();}
+	void SetGeometry(const FImplicitObjectPtr& InGeometry) { MGeometry = InGeometry;}
 
+	UE_DEPRECATED(5.4, "Use GetGeometry instead")
+	TSerializablePtr<FImplicitObject> Geometry() const { check(false); return TSerializablePtr<FImplicitObject>();}
+
+	UE_DEPRECATED(5.4, "Use GetGeometry instead")
+	const TSharedPtr<const FImplicitObject,ESPMode::ThreadSafe>& SharedGeometryLowLevel() const {  check(false); static TSharedPtr<const FImplicitObject, ESPMode::ThreadSafe> DummyPtr(nullptr); return DummyPtr;}
+
+	UE_DEPRECATED(5.4, "Use SetGeometry with FImplicitObjectPtr instead")
+	void SetGeometry(const TSharedPtr<const FImplicitObject,ESPMode::ThreadSafe>& InGeometry) { check(false); }
+	
 	const FUniqueIdx& UniqueIdx() const { return MUniqueIdx; }
 	void SetUniqueIdx(FUniqueIdx InIdx){ MUniqueIdx = InIdx; }
 
@@ -561,7 +681,7 @@ public:
 	void SetDebugName(const TSharedPtr<FString, ESPMode::ThreadSafe>& InName) { MDebugName = InName; }
 #endif
 private:
-	TSharedPtr<const FImplicitObject,ESPMode::ThreadSafe> MGeometry;
+	FImplicitObjectPtr MGeometry;
 	FUniqueIdx MUniqueIdx;
 	FSpatialAccelerationIdx MSpatialIdx;
 	FParticleID MParticleID;

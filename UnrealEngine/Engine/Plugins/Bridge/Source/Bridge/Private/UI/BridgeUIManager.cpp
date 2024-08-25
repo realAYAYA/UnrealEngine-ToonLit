@@ -254,8 +254,8 @@ TSharedRef<SDockTab> FBridgeUIManagerImpl::CreateBridgeTab(const FSpawnTabArgs& 
 		TSharedRef<TJsonReader<TCHAR>> JsonReader = TJsonReaderFactory<TCHAR>::Create(Token);
 		if (FJsonSerializer::Deserialize(JsonReader, JsonParsed))
 		{
-			FString AccessToken = JsonParsed->GetStringField("token");
-			FString RefreshToken = JsonParsed->GetStringField("refreshToken");
+			FString AccessToken = JsonParsed->GetStringField(TEXT("token"));
+			FString RefreshToken = JsonParsed->GetStringField(TEXT("refreshToken"));
 			const FString FileUrl = FPaths::Combine(TEXT("file:///"), IndexUrl);
 			FinalUrl = FString::Printf(TEXT("%s?token=%s&refreshToken=%s"), *FileUrl, *AccessToken, *RefreshToken);
 		}

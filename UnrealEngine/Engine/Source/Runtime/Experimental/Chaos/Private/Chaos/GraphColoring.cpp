@@ -3,9 +3,11 @@
 #include "Chaos/Array.h"
 #include "ChaosLog.h"
 #include "Chaos/Framework/Parallel.h"
+#include "Containers/BitArray.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 
-template<typename T>
-static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec2<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles)
+template<typename DynamicParticlesType>
+static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec2<int32>>& Graph, const DynamicParticlesType& InParticles)
 {
 	for (int32 i = 0; i < ColorGraph.Num(); ++i)
 	{
@@ -37,8 +39,8 @@ static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TV
 	return true;
 }
 
-template<typename T>
-static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec3<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles)
+template<typename DynamicParticlesType>
+static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec3<int32>>& Graph, const DynamicParticlesType& InParticles)
 {
 	for (int32 i = 0; i < ColorGraph.Num(); ++i)
 	{
@@ -80,8 +82,8 @@ static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TV
 	return true;
 }
 
-template<typename T>
-static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles)
+template<typename DynamicParticlesType>
+static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec4<int32>>& Graph, const DynamicParticlesType& InParticles)
 {	
 	for (int32 i = 0; i < ColorGraph.Num(); ++i)
 	{
@@ -134,8 +136,8 @@ static bool VerifyGraph(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TV
 }
 
 
-template<typename T>
-static bool VerifyGraphAllDynamic(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles)
+template<typename DynamicParticlesType>
+static bool VerifyGraphAllDynamic(TArray<TArray<int32>> ColorGraph, const TArray<Chaos::TVec4<int32>>& Graph, const DynamicParticlesType& InParticles)
 {
 	for (int32 i = 0; i < ColorGraph.Num(); ++i)
 	{
@@ -327,8 +329,145 @@ static bool VerifyNodalColoring(const TArray<Chaos::TVec4<int32>>& Graph, const 
 
 }
 
-template<typename T>
-TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<Chaos::TVec2<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+template <typename T>
+static bool VerifyNodalColoring(const TArray<TArray<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex, const TArray<TArray<int32>> ParticlesPerColor)
+{
+ 	checkSlow(GraphParticlesStart <= GraphParticlesEnd);
+	checkSlow(GraphParticlesEnd <= (int32)InParticles.Size());
+	TArray<bool> ParticleIsIncluded;
+	ParticleIsIncluded.Init(false, InParticles.Size());
+	for (int32 i = 0; i < ParticlesPerColor.Num(); i++)
+	{
+		for (int32 j = 0; j < ParticlesPerColor[i].Num(); j++)
+		{
+			ParticleIsIncluded[ParticlesPerColor[i][j]] = true;
+		}
+	}
+
+	for (int32 p = 0; p < GraphParticlesEnd - GraphParticlesStart; p++)
+	{
+		int32 ParticleIndex = p + GraphParticlesStart;
+		if (InParticles.InvM(ParticleIndex) != (T)0. && IncidentElements[ParticleIndex].Num() > 0 )
+		{
+			if (!ParticleIsIncluded[ParticleIndex])
+			{
+				return false;
+			}
+		}
+	}
+
+	TArray<int32> Particle2Incident;
+	Particle2Incident.Init(INDEX_NONE, GraphParticlesEnd - GraphParticlesStart);
+	for (int32 i = 0; i < IncidentElements.Num(); i++)
+	{
+		if (IncidentElements[i].Num() > 0)
+		{
+			Particle2Incident[Graph[IncidentElements[i][0]][IncidentElementsLocalIndex[i][0]]] = i;
+		}
+	}
+
+	for (int32 i = 0; i < ParticlesPerColor.Num(); i++)
+	{
+		TSet<int32> IncidentParticles;
+		for (int32 j = 0; j < ParticlesPerColor[i].Num(); j++)
+		{
+			int32 ParticleIndex = ParticlesPerColor[i][j];
+			TSet<int32> LocalIncidentParticles;
+			for (int32 k = 0; k < IncidentElements[Particle2Incident[ParticleIndex]].Num(); k++)
+			{
+				int32 ElementIndex = IncidentElements[Particle2Incident[ParticleIndex]][k];
+				for (int32 ie = 0; ie < Graph[ElementIndex].Num(); ie++)
+				{
+					LocalIncidentParticles.Add(Graph[ElementIndex][ie]);
+				}
+			}
+			if (IncidentParticles.Contains(ParticleIndex))
+			{
+				return false;
+			}
+			else
+			{
+				for (int32 LocalParticle : LocalIncidentParticles)
+				{
+					IncidentParticles.Add(LocalParticle);
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+template <typename T>
+static bool VerifyExtraNodalColoring(const Chaos::TDynamicParticles<T, 3>& InParticles, const TArray<TArray<int32>>& Graph, const TArray<TArray<int32>>& ExtraGraph, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& ExtraIncidentElements,const TArray<int32>& ParticleColors,const TArray<TArray<int32>>& ParticlesPerColor)
+{
+	TBitArray ParticleIsIncluded(false, InParticles.Size());
+	for (int32 i = 0; i < ParticlesPerColor.Num(); i++)
+	{
+		for (int32 j = 0; j < ParticlesPerColor[i].Num(); j++)
+		{
+			ParticleIsIncluded[ParticlesPerColor[i][j]] = true;
+		}
+	}
+
+	for (int32 ParticleIndex = 0; ParticleIndex < (int32)InParticles.Size(); ParticleIndex++)
+	{
+		if (InParticles.InvM(ParticleIndex) != (T)0. && (IncidentElements[ParticleIndex].Num() > 0 || ExtraIncidentElements[ParticleIndex].Num() > 0))
+		{
+			if (!ParticleIsIncluded[ParticleIndex])
+			{
+				return false;
+			}
+		}
+	}
+
+
+	for (int32 i = 0; i < ParticlesPerColor.Num(); i++)
+	{
+		TSet<int32> IncidentParticles;
+		IncidentParticles.Reserve(ParticlesPerColor[i].Num());
+		for (int32 j = 0; j < ParticlesPerColor[i].Num(); j++)
+		{
+			int32 ParticleIndex = ParticlesPerColor[i][j];
+			TSet<int32> LocalIncidentParticles;
+			for (int32 k = 0; k < IncidentElements[ParticleIndex].Num(); k++)
+			{
+				int32 ElementIndex = IncidentElements[ParticleIndex][k];
+				for (int32 ie = 0; ie < Graph[ElementIndex].Num(); ie++)
+				{
+					LocalIncidentParticles.Add(Graph[ElementIndex][ie]);
+				}
+			}
+			if (ParticleIndex < ExtraIncidentElements.Num())
+			{
+				for (int32 k = 0; k < ExtraIncidentElements[ParticleIndex].Num(); k++)
+				{
+					int32 ElementIndex = ExtraIncidentElements[ParticleIndex][k];
+					for (int32 ie = 0; ie < ExtraGraph[ElementIndex].Num(); ie++)
+					{
+						LocalIncidentParticles.Add(ExtraGraph[ElementIndex][ie]);
+					}
+				}
+			}
+			if (IncidentParticles.Contains(ParticleIndex))
+			{
+				return false;
+			}
+			else
+			{
+				for (int32 LocalParticle : LocalIncidentParticles)
+				{
+					IncidentParticles.Add(LocalParticle);
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+template<typename DynamicParticlesType>
+TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVec2<int32>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
 {
 	checkSlow(GraphParticlesStart <= GraphParticlesEnd);
 	checkSlow(GraphParticlesEnd <= (int32)InParticles.Size());
@@ -357,7 +496,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<C
 
 	for (int32 ParticleNodeIndex = GraphParticlesStart; ParticleNodeIndex < GraphParticlesEnd; ++ParticleNodeIndex)
 	{
-		const bool bIsParticleDynamic = InParticles.InvM(ParticleNodeIndex) != (T)0.;
+		const bool bIsParticleDynamic = InParticles.InvM(ParticleNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 		if (ProcessedNodes.Contains(ParticleNodeIndex) || !bIsParticleDynamic)
 		{
 			continue;
@@ -370,7 +509,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<C
 			const int32 NodeIndex = NodesToProcess.Last();
 			FGraphNode& GraphNode = Nodes[NodeIndex];
 
-			NodesToProcess.SetNum(NodesToProcess.Num() - 1, /*bAllowShrinking=*/false);
+			NodesToProcess.SetNum(NodesToProcess.Num() - 1, EAllowShrinking::No);
 			ProcessedNodes.Add(NodeIndex);
 
 			for (const int32 EdgeIndex : GraphNode.Edges)
@@ -406,7 +545,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<C
 				{
 					FGraphNode& OtherNode = Nodes[OtherNodeIndex];
 
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						while (OtherNode.UsedColors.Contains(ColorToUse) || GraphNode.UsedColors.Contains(ColorToUse))
@@ -436,7 +575,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<C
 				if (OtherNodeIndex != INDEX_NONE)
 				{
 					FGraphNode& OtherGraphNode = Nodes[OtherNodeIndex];
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						// Mark other node as not allowing use of this color
@@ -460,8 +599,8 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<C
 	return ColorGraph;
 }
 
-template<typename T>
-TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<TVec3<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+template<typename DynamicParticlesType>
+TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<TVec3<int32>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
 {
 	using namespace Chaos;
 
@@ -495,7 +634,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 
 	for (int32 ParticleNodeIndex = GraphParticlesStart; ParticleNodeIndex < GraphParticlesEnd; ++ParticleNodeIndex)
 	{
-		const bool bIsParticleDynamic = InParticles.InvM(ParticleNodeIndex) != (T)0.;
+		const bool bIsParticleDynamic = InParticles.InvM(ParticleNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 		if (ProcessedNodes.Contains(ParticleNodeIndex) || !bIsParticleDynamic)
 		{
 			continue;
@@ -508,7 +647,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 			const int32 NodeIndex = NodesToProcess.Last();
 			FGraphNode& GraphNode = Nodes[NodeIndex];
 
-			NodesToProcess.SetNum(NodesToProcess.Num() - 1, /*bAllowShrinking=*/false);
+			NodesToProcess.SetNum(NodesToProcess.Num() - 1, EAllowShrinking::No);
 			ProcessedNodes.Add(NodeIndex);
 
 			for (const int32 EdgeIndex : GraphNode.Edges)
@@ -552,7 +691,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				{
 					FGraphNode& OtherNode = Nodes[OtherNodeIndex];
 
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						while (OtherNode.UsedColors.Contains(ColorToUse) || GraphNode.UsedColors.Contains(ColorToUse))
@@ -565,7 +704,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				{
 					FGraphNode& OtherNode = Nodes[OtherNodeIndex2];
 
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						if (OtherNodeIndex == INDEX_NONE)
@@ -606,7 +745,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				if (OtherNodeIndex != INDEX_NONE)
 				{
 					FGraphNode& OtherGraphNode = Nodes[OtherNodeIndex];
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						// Mark other node as not allowing use of this color
@@ -625,7 +764,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				if (OtherNodeIndex2 != INDEX_NONE)
 				{
 					FGraphNode& OtherGraphNode = Nodes[OtherNodeIndex2];
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						// Mark other node as not allowing use of this color
@@ -649,8 +788,8 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 	return ColorGraph;
 }
 
-template<typename T>
-TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+template<typename DynamicParticlesType>
+TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<TVec4<int32>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
 {
 	using namespace Chaos;
 
@@ -687,7 +826,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 
 	for (int32 ParticleNodeIndex = GraphParticlesStart; ParticleNodeIndex < GraphParticlesEnd; ++ParticleNodeIndex)
 	{
-		const bool bIsParticleDynamic = InParticles.InvM(ParticleNodeIndex) != (T)0.;
+		const bool bIsParticleDynamic = InParticles.InvM(ParticleNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 		if (ProcessedNodes.Contains(ParticleNodeIndex) || !bIsParticleDynamic)
 		{
 			continue;
@@ -700,7 +839,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 			const int32 NodeIndex = NodesToProcess.Last();
 			FGraphNode& GraphNode = Nodes[NodeIndex];
 
-			NodesToProcess.SetNum(NodesToProcess.Num() - 1, /*bAllowShrinking=*/false);
+			NodesToProcess.SetNum(NodesToProcess.Num() - 1, EAllowShrinking::No);
 			ProcessedNodes.Add(NodeIndex);
 
 			for (const int32 EdgeIndex : GraphNode.Edges)
@@ -754,7 +893,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				{
 					FGraphNode& OtherNode = Nodes[OtherNodeIndex];
 
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						while (OtherNode.UsedColors.Contains(ColorToUse) || GraphNode.UsedColors.Contains(ColorToUse))
@@ -767,7 +906,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				{
 					FGraphNode& OtherNode = Nodes[OtherNodeIndex2];
 
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						if (OtherNodeIndex == INDEX_NONE)
@@ -791,7 +930,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				{
 					FGraphNode& OtherNode = Nodes[OtherNodeIndex3];
 
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex3) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex3) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						if (OtherNodeIndex == INDEX_NONE && OtherNodeIndex2 == INDEX_NONE)
@@ -850,7 +989,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				if (OtherNodeIndex != INDEX_NONE)
 				{
 					FGraphNode& OtherGraphNode = Nodes[OtherNodeIndex];
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						// Mark other node as not allowing use of this color
@@ -869,7 +1008,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				if (OtherNodeIndex2 != INDEX_NONE)
 				{
 					FGraphNode& OtherGraphNode = Nodes[OtherNodeIndex2];
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex2) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						// Mark other node as not allowing use of this color
@@ -888,7 +1027,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 				if (OtherNodeIndex3 != INDEX_NONE)
 				{
 					FGraphNode& OtherGraphNode = Nodes[OtherNodeIndex3];
-					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex3) != (T)0.;
+					const bool bIsOtherGraphNodeDynamic = InParticles.InvM(OtherNodeIndex3) != (decltype(InParticles.InvM(ParticleNodeIndex)))0.;
 					if (bIsOtherGraphNodeDynamic)
 					{
 						// Mark other node as not allowing use of this color
@@ -912,8 +1051,8 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring(const TArray<T
 	return ColorGraph;
 }
 
-template<typename T>
-TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamic(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+template<typename DynamicParticlesType>
+TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamicParticlesOrRange(const TArray<TVec4<int32>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
 {
 	using namespace Chaos;
 
@@ -963,7 +1102,7 @@ TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamic(cons
 			const int32 NodeIndex = NodesToProcess.Last();
 			FGraphNode& GraphNode = Nodes[NodeIndex];
 
-			NodesToProcess.SetNum(NodesToProcess.Num() - 1, /*bAllowShrinking=*/false);
+			NodesToProcess.SetNum(NodesToProcess.Num() - 1, EAllowShrinking::No);
 			ProcessedNodes.Add(NodeIndex);
 
 			for (const int32 EdgeIndex : GraphNode.Edges)
@@ -1458,19 +1597,223 @@ TArray<TArray<int32>> Chaos::ComputeNodalColoring(const TArray<TVec4<int32>>& Gr
 }
 
 
+template<typename T>
+TArray<TArray<int32>> Chaos::ComputeNodalColoring(const TArray<TArray<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex, TArray<int32>* ParticleColorsOut)
+{
+	using namespace Chaos;
+
+	checkSlow(GraphParticlesStart <= GraphParticlesEnd);
+	checkSlow(GraphParticlesEnd <= (int32)InParticles.Size());
+	TArray<TArray<int32>> ParticlesPerColor;
+
+	TArray<int32> Particle2Incident;
+	Particle2Incident.Init(INDEX_NONE, GraphParticlesEnd - GraphParticlesStart);
+	//Assuming that offset of Graph is GraphParticlesStart
+	for (int32 i = 0; i < IncidentElements.Num(); i++) 
+	{
+		if (IncidentElements[i].Num() > 0)
+		{
+			Particle2Incident[Graph[IncidentElements[i][0]][IncidentElementsLocalIndex[i][0]] - GraphParticlesStart] = i;
+		}
+	}
+
+	TArray<TSet<int32>*> ElementColorsSet;
+	ElementColorsSet.Init(nullptr, Graph.Num());
+	TArray<int32> ParticleColors;
+	ParticleColors.Init(INDEX_NONE, GraphParticlesEnd - GraphParticlesStart);
+
+	for (int32 p = 0; p < GraphParticlesEnd - GraphParticlesStart; p++) 
+	{
+		int32 ParticleIndex = p + GraphParticlesStart;
+		if (InParticles.InvM(ParticleIndex) != (T)0. && Particle2Incident[ParticleIndex] != INDEX_NONE) 
+		{
+			for (int32 j = 0; j < IncidentElements[Particle2Incident[ParticleIndex]].Num(); j++) 
+			{
+				int32 LocalIndex = IncidentElementsLocalIndex[Particle2Incident[ParticleIndex]][j];
+				int32 e = IncidentElements[Particle2Incident[ParticleIndex]][j];
+				if (!ElementColorsSet[e]) 
+				{
+					ElementColorsSet[e] = new TSet<int32>();
+				}
+			}
+			int32 color_to_use = 0;
+			while (true) 
+			{
+				bool ColorFound = false;
+				for (int32 j = 0; j < IncidentElements[Particle2Incident[ParticleIndex]].Num(); j++) 
+				{
+					int32 e = IncidentElements[Particle2Incident[ParticleIndex]][j];
+					if (ElementColorsSet[e]->Contains(color_to_use)) 
+					{
+						ColorFound = true;
+						break;
+					}
+				}
+				if (!ColorFound) 
+				{
+					ParticleColors[p] = color_to_use;
+					for (int32 j = 0; j < IncidentElements[Particle2Incident[ParticleIndex]].Num(); j++) 
+					{
+						int32 e = IncidentElements[Particle2Incident[ParticleIndex]][j];
+						ElementColorsSet[e]->Emplace(color_to_use);
+						if (ElementColorsSet[e]->Num() == Graph[e].Num())
+						{
+							delete ElementColorsSet[e];
+							ElementColorsSet[e] = nullptr;
+						}
+					}
+					break;
+				}
+				color_to_use++;
+			}
+		}
+	}
+
+	for (int32 ii = 0; ii < ElementColorsSet.Num(); ii++) 
+	{
+		if (ElementColorsSet[ii]) 
+		{
+			delete (ElementColorsSet[ii]);
+		}
+	}
+
+	int32 SizeColors = FMath::Max<int32>(ParticleColors);
+
+	ParticlesPerColor.SetNum(0);
+	ParticlesPerColor.Init(TArray<int32>(), SizeColors + 1);
+
+	for (int32 j = 0; j < ParticleColors.Num(); j++) 
+	{
+		if (ParticleColors[j] != INDEX_NONE) 
+		{
+			ParticlesPerColor[ParticleColors[j]].Emplace(j + GraphParticlesStart);
+		}
+	}
+
+	if (ParticleColorsOut)
+	{
+		*ParticleColorsOut = ParticleColors;
+	}
+
+	checkSlow(VerifyNodalColoring<T>(Graph, InParticles, GraphParticlesStart, GraphParticlesEnd, IncidentElements, IncidentElementsLocalIndex, ParticlesPerColor));
+
+	return ParticlesPerColor;
+}
 
 
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring<Chaos::FRealSingle>(const TArray<Chaos::TVector<int32, 2>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring<Chaos::FRealDouble>(const TArray<Chaos::TVector<int32, 2>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring<Chaos::FRealSingle>(const TArray<Chaos::TVector<int32, 3>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring<Chaos::FRealDouble>(const TArray<Chaos::TVector<int32, 3>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring<Chaos::FRealSingle>(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoring<Chaos::FRealDouble>(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamic<Chaos::FRealSingle>(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
-template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamic<Chaos::FRealDouble>(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template<typename T>
+void Chaos::ComputeExtraNodalColoring(const TArray<TArray<int32>>& Graph, const TArray<TArray<int32>>& ExtraGraph, const Chaos::TDynamicParticles<T, 3>& InParticles, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& ExtraIncidentElements, TArray<int32>& ParticleColors, TArray<TArray<int32>>& ParticlesPerColor)
+{
+	TBitArray ParticleIsAffected(false, IncidentElements.Num());
+	for (int32 i = 0; i < ExtraIncidentElements.Num(); i++)
+	{
+		if (ExtraIncidentElements[i].Num() > 0)
+		{
+			ParticleIsAffected[i] = true;
+		}
+	}
+
+	TSet<int32> UsedColors;
+	for (int32 i = 0; i < ExtraIncidentElements.Num(); i++)
+	{
+		if (ParticleIsAffected[i])
+		{
+			int32 OriginalColor = ParticleColors[i];
+			ParticleColors[i] = INDEX_NONE;
+			if (OriginalColor != INDEX_NONE)
+			{
+				UsedColors.Reset();
+				UsedColors.Reserve(ExtraIncidentElements[i].Num() + IncidentElements[i].Num());
+				for (int32 j = 0; j < IncidentElements[i].Num(); j++)
+				{
+					int32 ConstraintIndex = IncidentElements[i][j];
+					for (int32 ie = 0; ie < Graph[ConstraintIndex].Num(); ie++)
+					{
+						UsedColors.Add(ParticleColors[Graph[ConstraintIndex][ie]]);
+					}
+				}
+				for (int32 j = 0; j < ExtraIncidentElements[i].Num(); j++)
+				{
+					int32 ConstraintIndex = ExtraIncidentElements[i][j];
+					for (int32 ie = 0; ie < ExtraGraph[ConstraintIndex].Num(); ie++)
+					{
+						UsedColors.Add(ParticleColors[ExtraGraph[ConstraintIndex][ie]]);
+					}
+				}
+				if (UsedColors.Contains(OriginalColor))
+				{
+					OriginalColor = 0;
+					while (UsedColors.Contains(OriginalColor))
+					{
+						OriginalColor++;
+					}
+					ParticleColors[i] = OriginalColor;
+				}
+				else
+				{
+					ParticleColors[i] = OriginalColor;
+					ParticleIsAffected[i] = false;
+				}
+			}
+		}
+	}
+
+
+	PhysicsParallelFor(ParticlesPerColor.Num(), [&](const int32 i)
+		{
+			int32 CurrentIndex = 0;
+			for (int32 j = 0; j < ParticlesPerColor[i].Num(); j++)
+			{
+				if (!ParticleIsAffected[ParticlesPerColor[i][j]])
+				{
+					if (CurrentIndex != j)
+					{
+						ParticlesPerColor[i][CurrentIndex] = ParticlesPerColor[i][j];
+					}
+					CurrentIndex += 1;
+				}
+			}
+			ParticlesPerColor[i].SetNum(CurrentIndex);
+		}, ParticlesPerColor[0].Num() < 1000);
+
+	ParticlesPerColor.SetNum(ParticleColors.Max() + 1);
+	for (int32 i = 0; i < ExtraIncidentElements.Num(); i++)
+	{
+		if (ParticleIsAffected[i] && ParticleColors[i] != INDEX_NONE)
+		{
+			ParticlesPerColor[ParticleColors[i]].Emplace(i);
+		}
+	}
+
+	checkSlow(VerifyExtraNodalColoring<T>(InParticles, Graph, ExtraGraph, IncidentElements, ExtraIncidentElements, ParticleColors, ParticlesPerColor));
+}
+
+
+
+
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 2>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 2>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 2>>&, const Chaos::Softs::FSolverParticles&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 2>>&, const Chaos::Softs::FSolverParticlesRange&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 3>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 3>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 3>>&, const Chaos::Softs::FSolverParticles&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 3>>&, const Chaos::Softs::FSolverParticlesRange&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::Softs::FSolverParticles&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::Softs::FSolverParticlesRange&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamicParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamicParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamicParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::Softs::FSolverParticles&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+template CHAOS_API TArray<TArray<int32>> Chaos::FGraphColoring::ComputeGraphColoringAllDynamicParticlesOrRange(const TArray<Chaos::TVector<int32, 4>>&, const Chaos::Softs::FSolverParticlesRange&, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
 template CHAOS_API void Chaos::ComputeGridBasedGraphSubColoringPointer(const TArray<TArray<int32>>& ElementsPerColor, const TMPMGrid<Chaos::FRealSingle>& Grid, const int32 GridSize, TArray<TArray<int32>>*& PreviousColoring, const TArray<TArray<int32>>& ConstraintsNodesSet, TArray<TArray<TArray<int32>>>& ElementsPerSubColors);
 template CHAOS_API void Chaos::ComputeGridBasedGraphSubColoringPointer(const TArray<TArray<int32>>& ElementsPerColor, const TMPMGrid<Chaos::FRealDouble>& Grid, const int32 GridSize, TArray<TArray<int32>>*& PreviousColoring, const TArray<TArray<int32>>& ConstraintsNodesSet, TArray<TArray<TArray<int32>>>& ElementsPerSubColors);
 template CHAOS_API void Chaos::ComputeWeakConstraintsColoring<Chaos::FRealSingle>(const TArray<TArray<int32>>& Indices, const TArray<TArray<int32>>& SecondIndices, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>& InParticles, TArray<TArray<int32>>& ConstraintsPerColor);
 template CHAOS_API void Chaos::ComputeWeakConstraintsColoring<Chaos::FRealDouble>(const TArray<TArray<int32>>& Indices, const TArray<TArray<int32>>& SecondIndices, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>& InParticles, TArray<TArray<int32>>& ConstraintsPerColor);
 template CHAOS_API TArray<TArray<int32>> Chaos::ComputeNodalColoring<Chaos::FRealSingle>(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex);
 template CHAOS_API TArray<TArray<int32>> Chaos::ComputeNodalColoring<Chaos::FRealDouble>(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex);
+template CHAOS_API TArray<TArray<int32>> Chaos::ComputeNodalColoring<Chaos::FRealSingle>(const TArray<TArray<int32>>& Graph, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex, TArray<int32>* ParticleColorsOut);
+template CHAOS_API TArray<TArray<int32>> Chaos::ComputeNodalColoring<Chaos::FRealDouble>(const TArray<TArray<int32>>& Graph, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex, TArray<int32>* ParticleColorsOut);
+template CHAOS_API void Chaos::ComputeExtraNodalColoring<Chaos::FRealSingle>(const TArray<TArray<int32>>& Graph, const TArray<TArray<int32>>& ExtraGraph, const Chaos::TDynamicParticles<Chaos::FRealSingle, 3>& InParticles, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& ExtraIncidentElements, TArray<int32>& ParticleColors, TArray<TArray<int32>>& ParticlesPerColor);
+template CHAOS_API void Chaos::ComputeExtraNodalColoring<Chaos::FRealDouble>(const TArray<TArray<int32>>& Graph, const TArray<TArray<int32>>& ExtraGraph, const Chaos::TDynamicParticles<Chaos::FRealDouble, 3>& InParticles, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& ExtraIncidentElements, TArray<int32>& ParticleColors, TArray<TArray<int32>>& ParticlesPerColor);

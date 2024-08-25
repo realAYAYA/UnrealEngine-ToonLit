@@ -31,7 +31,6 @@ public:
 	NIAGARA_API void OnSpriteRendererChanged(UNiagaraSpriteRendererProperties* NewSpriteRenderer);
 
 	//UNiagaraDataInterface Interface
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc) override;
 	NIAGARA_API virtual bool Equals(const UNiagaraDataInterface* Other) const override;
 #if WITH_EDITORONLY_DATA
@@ -49,6 +48,9 @@ public:
 	//UNiagaraDataInterface Interface	
 
 protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 	NIAGARA_API virtual void PushToRenderThreadImpl() override;
 

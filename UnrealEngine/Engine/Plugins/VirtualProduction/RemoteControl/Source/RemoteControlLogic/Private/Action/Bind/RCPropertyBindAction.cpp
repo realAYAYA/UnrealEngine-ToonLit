@@ -33,6 +33,14 @@ static void SetStructPropertyFromController(const FProperty* RemoteControlProper
 
 				RemoteControlHandle->SetValue(VectorValue);
 			}
+			// FVector2D
+			else if (TargetStructProperty->Struct == TBaseStructure<FVector2D>::Get())
+			{
+				FVector2D Vector2DValue;
+				Controller->GetValueVector2D(Vector2DValue);
+
+				RemoteControlHandle->SetValue(Vector2DValue);
+			}
 			// FColor
 			else if (TargetStructProperty->Struct == TBaseStructure<FColor>::Get())
 			{
@@ -89,7 +97,7 @@ static int32 GetPropertyIndexInArray(const TSharedRef<FRemoteControlProperty>& I
 	// Number of integer digits, so that we know how many characters to keep at the end of the string
 	const int32 Digits = FMath::Floor(FMath::LogX(10.0f, ElementsNum) + 1);
 	const int32 CharactersToRemove = FieldName.Len() - Digits;
-	FieldName.RemoveAt(0, CharactersToRemove, true);
+	FieldName.RemoveAt(0, CharactersToRemove, EAllowShrinking::Yes);
 	const int32 Index = FCString::Atoi(*FieldName);
 
 	return Index;
@@ -298,6 +306,28 @@ void URCPropertyBindAction::Execute() const
 				}
 
 				Handle->SetValue(StringValue);
+			}
+			// Numeric to Vector/Vector2D/Rotator
+			else if (const FStructProperty* TargetStructProperty = CastField<FStructProperty>(RemoteControlProperty))
+			{
+				// FVector
+				if (TargetStructProperty->Struct == TBaseStructure<FVector>::Get())
+				{
+					const FVector VectorValue(NumericValue, NumericValue, NumericValue);
+					Handle->SetValue(VectorValue);
+				}
+				// FVector2D
+				else if (TargetStructProperty->Struct == TBaseStructure<FVector2D>::Get())
+				{
+					const FVector2D Vector2DValue(NumericValue, NumericValue);
+					Handle->SetValue(Vector2DValue);
+				}
+				// FRotator
+				else if (TargetStructProperty->Struct == TBaseStructure<FRotator>::Get())
+				{
+					const FRotator RotatorValue(NumericValue, NumericValue, NumericValue);
+					Handle->SetValue(RotatorValue);
+				} 
 			}
 		}
 		// Boolean Controller

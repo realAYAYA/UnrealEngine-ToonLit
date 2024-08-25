@@ -689,9 +689,6 @@ void FNetworkProfiler::TrackSessionChange( bool bShouldContinueTracking, const F
 			uint8 Type = NPTYPE_EndOfStreamMarker;
 			( *FileWriter ) << Type;
 
-			// Close file writer so we can rename the file to its final destination.
-			FileWriter->Close();
-
 			if (OnNetworkProfileFinished().IsBound())
 			{
 				OnNetworkProfileFinished().Broadcast(FileWriter->GetArchiveName());
@@ -741,6 +738,11 @@ void FNetworkProfiler::TrackSessionChange( bool bShouldContinueTracking, const F
 
 			//Mark that tracking truly is enabled now
 			bIsTrackingEnabled = bShouldTrackingBeEnabled = true;
+
+			if (OnNetworkProfileStarted().IsBound())
+			{
+				OnNetworkProfileStarted().Broadcast(FileWriter->GetArchiveName());
+			}
 		}
 		else
 		{

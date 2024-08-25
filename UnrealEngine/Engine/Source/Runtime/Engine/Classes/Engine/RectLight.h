@@ -20,11 +20,4 @@ class ARectLight : public ALight
 	virtual void EditorApplyScale(const FVector& DeltaScale, const FVector* PivotLocation, bool bAltDown, bool bShiftDown, bool bCtrlDown) override;
 	//~ End AActor Interface.
 #endif
-
-	//~ Begin UObject Interface.
-	virtual void PostLoad() override;
-	//~ End UObject Interface.
 };
-
-
-

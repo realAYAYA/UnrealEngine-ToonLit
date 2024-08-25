@@ -410,8 +410,7 @@ void STimingDiagramWidget::UpdateSampleTimes(const TArray<FTimedDataChannelSampl
 	if (GraphicWidget->AllSampleTimes.Num() > FrameDataTimes.Num())
 	{
 		const int32 Count = (GraphicWidget->AllSampleTimes.Num() - FrameDataTimes.Num());
-		constexpr bool bAllowShrinking = true;
-		GraphicWidget->AllSampleTimes.RemoveAt(0, Count, bAllowShrinking);
+		GraphicWidget->AllSampleTimes.RemoveAt(0, Count, EAllowShrinking::Yes);
 	}
 	else if (GraphicWidget->AllSampleTimes.Num() < FrameDataTimes.Num())
 	{
@@ -428,8 +427,7 @@ void STimingDiagramWidget::UpdateSampleTimes(const TArray<FTimedDataChannelSampl
 			if (GraphicWidget->AllSampleTimes.Num() >= FrameDataTimes.Num())
 			{
 				constexpr int32 Count = 1;
-				constexpr bool bAllowShrinking = false;
-				GraphicWidget->AllSampleTimes.RemoveAt(0, Count, bAllowShrinking);
+				GraphicWidget->AllSampleTimes.RemoveAt(0, Count, EAllowShrinking::No);
 			}
 
 			GraphicWidget->AllSampleTimes.Add(SampleTimeInSeconds);

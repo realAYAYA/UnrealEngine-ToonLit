@@ -24,11 +24,11 @@ struct FLensFlareInputs
 	// [Required] The bloom convolution texture. If enabled, this will be composited with lens flares. Otherwise,
 	// a transparent black texture is used instead. Either way, the final output texture will use the this texture
 	// descriptor and viewport.
-	FScreenPassTexture Bloom;
+	FScreenPassTextureSlice Bloom;
 
 	// [Required] The scene color input, before bloom, which is used as the source of lens flares.
 	// This can be a downsampled input based on the desired quality level.
-	FScreenPassTexture Flare;
+	FScreenPassTextureSlice Flare;
 
 	// [Required] The bokeh shape texture to use to blur the lens flares.
 	FRHITexture* BokehShapeTexture;
@@ -65,4 +65,5 @@ FScreenPassTexture AddLensFlaresPass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	FScreenPassTexture Bloom,
-	const FSceneDownsampleChain& SceneDownsampleChain);
+	FScreenPassTextureSlice QualitySceneDownsample,
+	FScreenPassTextureSlice DefaultSceneDownsample);

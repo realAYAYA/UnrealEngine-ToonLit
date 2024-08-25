@@ -51,18 +51,17 @@ UMaterialInterface* FDataflowEngineSceneProxy::GetRenderMaterial() const
 	return RetRenderMaterial;
 }
 
-void FDataflowEngineSceneProxy::CreateRenderThreadResources()
+void FDataflowEngineSceneProxy::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	check(ConstantData);
 	check(RenderMaterial);
-	check(IsInRenderingThread());
 
 #if WITH_EDITOR
 	SetUsedMaterialForVerification({RenderMaterial});
 #endif
 
-	CreateInstancedVertexRenderThreadResources();
-	CreateMeshRenderThreadResources();
+	CreateInstancedVertexRenderThreadResources(RHICmdList);
+	CreateMeshRenderThreadResources(RHICmdList);
 }
 
 
@@ -125,7 +124,6 @@ void FDataflowEngineSceneProxy::GetDynamicMeshElements(const TArray<const FScene
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_OverlaySceneProxy_GetDynamicMeshElements);
 
 	check(RenderMaterial);
-	check(IsInRenderingThread());
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
@@ -141,13 +139,11 @@ void FDataflowEngineSceneProxy::GetDynamicMeshElements(const TArray<const FScene
 // Mesh Selection Rendering
 //
 
-void FDataflowEngineSceneProxy::CreateMeshRenderThreadResources()
+void FDataflowEngineSceneProxy::CreateMeshRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	GeometryCollection::Facades::FRenderingFacade Facade(*ConstantData);
 	const FDataflowSelectionState& State = DataflowComponent->GetSelectionState();
 	check(Facade.CanRenderSurface());
-
-	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
 
 	const int32 NumTriangleVertices = Facade.NumTriangles();
 	const int32 NumTriangleIndices = Facade.NumTriangles();
@@ -196,44 +192,41 @@ void FDataflowEngineSceneProxy::CreateMeshRenderThreadResources()
 		// back to linear. The ToFColor(false) call just scales back into 0-255
 		// space.
 		ParallelFor(Facade.NumTriangles(), [&](int32 i)
-					{
-						const int32 VertexBufferIndex = 3 * i;
-		const int32 IndexBufferIndex = 3 * i;
+		{
+			const int32 VertexBufferIndex = 3 * i;
+			const int32 IndexBufferIndex = 3 * i;
 
-		const auto& P1 = Vertex[Indices[i][0]];
-		const auto& P2 = Vertex[Indices[i][1]];
-		const auto& P3 = Vertex[Indices[i][2]];
+			const auto& P1 = Vertex[Indices[i][0]];
+			const auto& P2 = Vertex[Indices[i][1]];
+			const auto& P3 = Vertex[Indices[i][2]];
 
-		VertexBuffers.PositionVertexBuffer.VertexPosition(VertexBufferIndex + 0) = P1;
-		VertexBuffers.PositionVertexBuffer.VertexPosition(VertexBufferIndex + 1) = P2;
-		VertexBuffers.PositionVertexBuffer.VertexPosition(VertexBufferIndex + 2) = P3;
+			VertexBuffers.PositionVertexBuffer.VertexPosition(VertexBufferIndex + 0) = P1;
+			VertexBuffers.PositionVertexBuffer.VertexPosition(VertexBufferIndex + 1) = P2;
+			VertexBuffers.PositionVertexBuffer.VertexPosition(VertexBufferIndex + 2) = P3;
 
-		FVector3f Tangent1 = (P2 - P1).GetSafeNormal();
-		FVector3f Tangent2 = (P3 - P2).GetSafeNormal();
-		FVector3f Normal = (Tangent2 ^ Tangent1).GetSafeNormal();
+			FVector3f Tangent1 = (P2 - P1).GetSafeNormal();
+			FVector3f Tangent2 = (P3 - P2).GetSafeNormal();
+			FVector3f Normal = (Tangent2 ^ Tangent1).GetSafeNormal();
 
-		VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(VertexBufferIndex + 0, FVector3f(1, 0, 0), FVector3f(0, 1, 0), Normal);
-		VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(VertexBufferIndex + 1, FVector3f(1, 0, 0), FVector3f(0, 1, 0), Normal);
-		VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(VertexBufferIndex + 2, FVector3f(1, 0, 0), FVector3f(0, 1, 0), Normal);
+			VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(VertexBufferIndex + 0, FVector3f(1, 0, 0), FVector3f(0, 1, 0), Normal);
+			VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(VertexBufferIndex + 1, FVector3f(1, 0, 0), FVector3f(0, 1, 0), Normal);
+			VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(VertexBufferIndex + 2, FVector3f(1, 0, 0), FVector3f(0, 1, 0), Normal);
 
-		VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(VertexBufferIndex + 0, 0, FVector2f(0, 0));
-		VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(VertexBufferIndex + 1, 0, FVector2f(0, 0));
-		VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(VertexBufferIndex + 2, 0, FVector2f(0, 0));
+			VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(VertexBufferIndex + 0, 0, FVector2f(0, 0));
+			VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(VertexBufferIndex + 1, 0, FVector2f(0, 0));
+			VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(VertexBufferIndex + 2, 0, FVector2f(0, 0));
 
-		FColor SelectionColor = (State.Mode == FDataflowSelectionState::EMode::DSS_Dataflow_Object) ? IDataflowEnginePlugin::SelectionPrimaryColor : IDataflowEnginePlugin::SelectionLockedPrimaryColor;
-		VertexBuffers.ColorVertexBuffer.VertexColor(VertexBufferIndex + 0) = SelectionArray[GeomIndex[Indices[i][0]]] ? SelectionColor : VertexColor[Indices[i][0]].ToFColor(true);
-		VertexBuffers.ColorVertexBuffer.VertexColor(VertexBufferIndex + 1) = SelectionArray[GeomIndex[Indices[i][1]]] ? SelectionColor : VertexColor[Indices[i][1]].ToFColor(true);
-		VertexBuffers.ColorVertexBuffer.VertexColor(VertexBufferIndex + 2) = SelectionArray[GeomIndex[Indices[i][2]]] ? SelectionColor : VertexColor[Indices[i][2]].ToFColor(true);
+			FColor SelectionColor = (State.Mode == FDataflowSelectionState::EMode::DSS_Dataflow_Object) ? IDataflowEnginePlugin::SelectionPrimaryColor : IDataflowEnginePlugin::SelectionLockedPrimaryColor;
+			VertexBuffers.ColorVertexBuffer.VertexColor(VertexBufferIndex + 0) = SelectionArray[GeomIndex[Indices[i][0]]] ? SelectionColor : VertexColor[Indices[i][0]].ToFColor(true);
+			VertexBuffers.ColorVertexBuffer.VertexColor(VertexBufferIndex + 1) = SelectionArray[GeomIndex[Indices[i][1]]] ? SelectionColor : VertexColor[Indices[i][1]].ToFColor(true);
+			VertexBuffers.ColorVertexBuffer.VertexColor(VertexBufferIndex + 2) = SelectionArray[GeomIndex[Indices[i][2]]] ? SelectionColor : VertexColor[Indices[i][2]].ToFColor(true);
 
-		IndexBuffer.Indices[IndexBufferIndex + 0] = VertexBufferIndex + 0;
-		IndexBuffer.Indices[IndexBufferIndex + 1] = VertexBufferIndex + 1;
-		IndexBuffer.Indices[IndexBufferIndex + 2] = VertexBufferIndex + 2;
-
-					});
-
+			IndexBuffer.Indices[IndexBufferIndex + 0] = VertexBufferIndex + 0;
+			IndexBuffer.Indices[IndexBufferIndex + 1] = VertexBufferIndex + 1;
+			IndexBuffer.Indices[IndexBufferIndex + 2] = VertexBufferIndex + 2;
+		});
 	}
-
-
+	
 	VertexBuffers.PositionVertexBuffer.InitResource(RHICmdList);
 	VertexBuffers.StaticMeshVertexBuffer.InitResource(RHICmdList);
 	VertexBuffers.ColorVertexBuffer.InitResource(RHICmdList);
@@ -243,7 +236,7 @@ void FDataflowEngineSceneProxy::CreateMeshRenderThreadResources()
 	VertexBuffers.StaticMeshVertexBuffer.BindTangentVertexBuffer(&VertexFactory, Data);
 	VertexBuffers.StaticMeshVertexBuffer.BindTexCoordVertexBuffer(&VertexFactory, Data);
 	VertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(&VertexFactory, Data);
-	VertexFactory.SetData(Data);
+	VertexFactory.SetData(RHICmdList, Data);
 
 	VertexFactory.InitResource(RHICmdList);
 	IndexBuffer.InitResource(RHICmdList);
@@ -271,7 +264,7 @@ void FDataflowEngineSceneProxy::GetMeshDynamicMeshElements(int32 ViewIndex, FMes
 	for (const FDataflowTriangleSetMeshBatchData& MeshBatchData : MeshBatchDatas)
 	{
 		FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Collector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-		DynamicPrimitiveUniformBuffer.Set(GetLocalToWorld(), GetLocalToWorld(), GetBounds(), GetLocalBounds(), true, false, AlwaysHasVelocity());
+		DynamicPrimitiveUniformBuffer.Set(Collector.GetRHICommandList(), GetLocalToWorld(), GetLocalToWorld(), GetBounds(), GetLocalBounds(), true, false, AlwaysHasVelocity());
 
 		FMeshBatch& Mesh = Collector.AllocateMesh();
 		Mesh.bWireframe = false;
@@ -309,7 +302,7 @@ void FDataflowEngineSceneProxy::GetMeshDynamicMeshElements(int32 ViewIndex, FMes
 // Vertex Selection Rendering
 //
 
-void FDataflowEngineSceneProxy::CreateInstancedVertexRenderThreadResources()
+void FDataflowEngineSceneProxy::CreateInstancedVertexRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	const FDataflowSelectionState& State = DataflowComponent->GetSelectionState();
 	if (State.Mode == FDataflowSelectionState::EMode::DSS_Dataflow_Vertex)
@@ -330,9 +323,6 @@ void FDataflowEngineSceneProxy::CreateInstancedVertexRenderThreadResources()
 
 			if (NumRenderedVerts)
 			{
-				check(IsInRenderingThread());
-				FRHICommandListBase& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
-
 				BoxVertexBuffers.PositionVertexBuffer.Init(TotalNumElements);
 				BoxVertexBuffers.StaticMeshVertexBuffer.Init(TotalNumElements, NumTextureCoordinates);
 				BoxVertexBuffers.ColorVertexBuffer.Init(TotalNumElements);
@@ -396,7 +386,7 @@ void FDataflowEngineSceneProxy::CreateInstancedVertexRenderThreadResources()
 				BoxVertexBuffers.StaticMeshVertexBuffer.BindTangentVertexBuffer(&VertexFactory, Data);
 				BoxVertexBuffers.StaticMeshVertexBuffer.BindTexCoordVertexBuffer(&VertexFactory, Data);
 				BoxVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(&VertexFactory, Data);
-				BoxVertexFactory.SetData(Data);
+				BoxVertexFactory.SetData(RHICmdList, Data);
 
 				BoxVertexFactory.InitResource(RHICmdList);
 				BoxIndexBuffer.InitResource(RHICmdList);
@@ -407,7 +397,6 @@ void FDataflowEngineSceneProxy::CreateInstancedVertexRenderThreadResources()
 
 void FDataflowEngineSceneProxy::DestroyInstancedVertexRenderThreadResources()
 {
-	check(IsInRenderingThread());
 	if (NumRenderedVerts)
 	{
 		BoxVertexBuffers.PositionVertexBuffer.ReleaseResource();
@@ -433,7 +422,7 @@ void FDataflowEngineSceneProxy::GetDynamicInstancedVertexMeshElements(int32 View
 			for (const FDataflowVertexBatchData& VertexBatchData : VertexBatchDatas)
 			{
 				FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Collector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-				DynamicPrimitiveUniformBuffer.Set(GetLocalToWorld(), GetLocalToWorld(), GetBounds(), GetLocalBounds(), true, false, AlwaysHasVelocity());
+				DynamicPrimitiveUniformBuffer.Set(Collector.GetRHICommandList(), GetLocalToWorld(), GetLocalToWorld(), GetBounds(), GetLocalBounds(), true, false, AlwaysHasVelocity());
 
 				FMeshBatch& Mesh = Collector.AllocateMesh();
 				Mesh.CastShadow = false;

@@ -52,19 +52,24 @@ protected:
 	// The number of PCM samples we want to generate. This can't be larger than SamplesNeeded in GeneratePCMData callback, but can be less.
 	int32 NumSamplesToGeneratePerCallback;
 
+	// Procedural Sounds don't represent a wav file, don't do anything when serializing cue points
+	virtual void SerializeCuePoints(FArchive& Ar, const bool bIsLoadingFromCookedArchive) {}
+
 public:
 	ENGINE_API USoundWaveProcedural(const FObjectInitializer& ObjectInitializer);
 
 	//~ Begin UObject Interface. 
 	ENGINE_API virtual void Serialize( FArchive& Ar ) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	//~ End UObject Interface. 
 
 	//~ Begin USoundWave Interface.
 	ENGINE_API virtual int32 GeneratePCMData(uint8* PCMData, const int32 SamplesNeeded) override;
 	ENGINE_API virtual bool HasCompressedData(FName Format, ITargetPlatform* TargetPlatform) const override;
-	ENGINE_API virtual void BeginGetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides) override;
-	ENGINE_API virtual FByteBulkData* GetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides = nullptr) override;
+	ENGINE_API virtual void BeginGetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides, const ITargetPlatform* InTargetPlatform) override;
+	ENGINE_API virtual FByteBulkData* GetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides, const ITargetPlatform* InTargetPlatform) override;
 	ENGINE_API virtual void InitAudioResource( FByteBulkData& CompressedData ) override;
 	ENGINE_API virtual bool InitAudioResource(FName Format) override;
 	ENGINE_API virtual int32 GetResourceSizeForFormat(FName Format) override;

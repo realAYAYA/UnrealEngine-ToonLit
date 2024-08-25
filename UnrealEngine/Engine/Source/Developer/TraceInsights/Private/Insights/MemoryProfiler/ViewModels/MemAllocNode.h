@@ -41,6 +41,12 @@ class FMemAllocNode : public FTableTreeNode
 	INSIGHTS_DECLARE_RTTI(FMemAllocNode, FTableTreeNode)
 
 public:
+	enum ECallstackType : uint8
+	{
+		AllocCallstack,
+		FreeCallstack
+	};
+
 	/** Initialization constructor for the MemAlloc node. */
 	explicit FMemAllocNode(const FName InName, TWeakPtr<FMemAllocTable> InParentTable, int32 InRowIndex)
 		: FTableTreeNode(InName, InParentTable, InRowIndex)
@@ -61,18 +67,19 @@ public:
 	const FMemoryAlloc* GetMemAlloc() const { return GetMemTableChecked().GetMemAlloc(GetRowIndex()); }
 	const FMemoryAlloc& GetMemAllocChecked() const { return GetMemTableChecked().GetMemAllocChecked(GetRowIndex()); }
 
-	uint32 GetCallstackId() const;
+	uint32 GetAllocCallstackId() const;
 	uint32 GetFreeCallstackId() const;
 
-	FText GetFullCallstack() const;
-	FText GetFullCallstackSourceFiles() const;
-	FText GetTopFunction() const;
-	FText GetTopFunctionEx() const;
-	FText GetTopSourceFile() const;
-	FText GetTopSourceFileEx() const;
+	FText GetFullCallstack(ECallstackType InCallstackType) const;
+	FText GetFullCallstackSourceFiles(ECallstackType InCallstackType) const;
+	FText GetTopFunction(ECallstackType InCallstackType) const;
+	FText GetTopFunctionEx(ECallstackType InCallstackType) const;
+	FText GetTopSourceFile(ECallstackType InCallstackType) const;
+	FText GetTopSourceFileEx(ECallstackType InCallstackType) const;
 
 private:
-	FText GetTopFunctionOrSourceFile(uint8 Flags) const;
+	FText GetFullCallstackOrSourceFiles(ECallstackType InCallstackType, uint8 Flags) const;
+	FText GetTopFunctionOrSourceFile(ECallstackType InCallstackType, uint8 Flags) const;
 
 private:
 	FMemAllocTable* MemAllocTable;

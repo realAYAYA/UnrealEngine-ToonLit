@@ -14,7 +14,6 @@
 ENUM_VK_ENTRYPOINTS_ALL(DEFINE_VK_ENTRYPOINTS)
 
 static bool GRenderOffScreen = false;
-static bool GForceEnableDebugMarkers = false;
 
 void* FVulkanLinuxPlatform::VulkanLib = nullptr;
 bool FVulkanLinuxPlatform::bAttemptedLoad = false;
@@ -124,14 +123,7 @@ bool FVulkanLinuxPlatform::LoadVulkanLibrary()
 
 #undef GET_VK_ENTRYPOINTS
 
-	// Check for force enabling debug markers
-	GForceEnableDebugMarkers = FParse::Param(FCommandLine::Get(), TEXT("vulkandebugmarkers"));
 	return true;
-}
-
-bool FVulkanLinuxPlatform::ForceEnableDebugMarkers()
-{
-	return GForceEnableDebugMarkers;
 }
 
 bool FVulkanLinuxPlatform::LoadVulkanInstanceFunctions(VkInstance inInstance)

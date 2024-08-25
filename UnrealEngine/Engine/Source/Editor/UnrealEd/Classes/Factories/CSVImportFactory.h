@@ -48,6 +48,9 @@ struct FCSVImportSettings
 	UPROPERTY(BlueprintReadWrite, Category="Misc")
 	TEnumAsByte<ERichCurveInterpMode> ImportCurveInterpMode;
 
+	/** True to force IsAutomatedImport to return true during the import */
+	bool bForceAutomatedImport = false;
+
 	/** Despite its name, DataToImport can be JSON instead of CSV if this bool is set */
 	bool bDataIsJson = false;
 	FString DataToImport;
@@ -60,6 +63,7 @@ class UCSVImportFactory : public UFactory, public IImportSettingsParser
 
 public:
 	//~ Begin UFactory Interface
+	UNREALED_API virtual bool IsAutomatedImport() const override;
 	UNREALED_API virtual FText GetDisplayName() const override;
 	UNREALED_API virtual UObject* FactoryCreateFile(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags,
 		const FString& Filename, const TCHAR* Parms, FFeedbackContext* Warn, bool& bOutOperationCanceled) override;

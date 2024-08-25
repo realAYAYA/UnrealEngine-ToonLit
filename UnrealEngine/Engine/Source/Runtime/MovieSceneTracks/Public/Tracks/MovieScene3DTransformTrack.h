@@ -79,7 +79,7 @@ public:
 #if WITH_EDITOR
 
 	MOVIESCENETRACKS_API TArray<FTrajectoryKey> GetTrajectoryData(FFrameNumber Time, int32 MaxNumDataPoints, TRange<FFrameNumber>) const;
-
+	MOVIESCENETRACKS_API FSlateColor GetLabelColor(const FMovieSceneLabelParams& LabelParams) const override;
 #endif
 
 private:

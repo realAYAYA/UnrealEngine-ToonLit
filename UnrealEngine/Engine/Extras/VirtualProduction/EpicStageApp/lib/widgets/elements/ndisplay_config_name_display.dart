@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,7 +8,6 @@ import '../../models/settings/selected_actor_settings.dart';
 import '../../models/unreal_actor_manager.dart';
 import '../../models/unreal_types.dart';
 import '../../utilities/constants.dart';
-import 'asset_icon.dart';
 
 class NDisplayConfigNameDisplay extends StatefulWidget {
   const NDisplayConfigNameDisplay({Key? key}) : super(key: key);
@@ -45,7 +45,7 @@ class _NDisplayConfigNameDisplayState extends State<NDisplayConfigNameDisplay> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             AssetIcon(
-              path: 'assets/images/icons/ndisplay.svg',
+              path: 'packages/epic_common/assets/icons/ndisplay.svg',
               size: 20,
             ),
             const SizedBox(width: 8),

@@ -454,6 +454,10 @@ struct FCompositeFont
 	UPROPERTY()
 	TArray<FCompositeSubFont> SubTypefaces;
 
+	/** If set to false, the ascent and descent override specified in a Font face will be ignored, and the value from the font source file will be used instead. */
+	UPROPERTY(EditAnywhere, Category = RuntimeFont)
+	bool bEnableAscentDescentOverride = true;
+
 #if WITH_EDITORONLY_DATA
 	/** 
 	 * Transient value containing the current history ID of this composite font
@@ -461,6 +465,12 @@ struct FCompositeFont
 	 */
 	int32 HistoryRevision;
 #endif	// WITH_EDITORONLY_DATA
+
+	/** Returns the enabled state of ascent and descent override. */
+	SLATECORE_API bool IsAscentDescentOverrideEnabled() const
+	{
+		return bEnableAscentDescentOverride;
+	}
 };
 
 /**

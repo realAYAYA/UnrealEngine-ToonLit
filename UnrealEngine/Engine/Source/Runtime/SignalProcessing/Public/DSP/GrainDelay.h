@@ -13,7 +13,7 @@ namespace Audio
 		class FGrainDelay
 		{
 		public:
-			SIGNALPROCESSING_API FGrainDelay(const float InSampleRate);
+			SIGNALPROCESSING_API FGrainDelay(const float InSampleRate, const float InMaxDelaySeconds = 2.0f);
 			SIGNALPROCESSING_API ~FGrainDelay();
 
 			SIGNALPROCESSING_API void Reset();
@@ -112,6 +112,8 @@ namespace Audio
 			
 			// The base pitch shift ratio (pitch scale) of all grains in the grain delay
 			float PitchShiftRatioBase = 1.0f;
+
+			float MaxDelaySeconds = 2.0f;
 		};
 	}
 }

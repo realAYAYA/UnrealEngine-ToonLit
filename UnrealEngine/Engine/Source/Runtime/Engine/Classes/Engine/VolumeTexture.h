@@ -21,8 +21,6 @@ class UVolumeTexture : public UTexture
 	FTexturePlatformData* PrivatePlatformData;
 
 public:
-	UE_DEPRECATED(5.1, "Use GetPlatformData() / SetPlatformData() accessors instead.")
-	TFieldPtrAccessor<FTexturePlatformData> PlatformData;
 
 	/** Set the derived data for this texture on this platform. */
 	ENGINE_API void SetPlatformData(FTexturePlatformData* PlatformData);
@@ -72,6 +70,8 @@ public:
 	//~ Begin UObject Interface.
 	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	virtual FString GetDesc() override;
 	virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;

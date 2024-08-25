@@ -60,7 +60,6 @@ private:
 	TArray<IConsoleObject*> EditorCommands;
 
 	// Asset actions for new asset types
-	FAssetTypeActions_GeometryCollection* GeometryCollectionAssetActions;
 	FAssetTypeActions_GeometryCollectionCache* GeometryCollectionCacheAssetActions;
 	FGeometryCollectionAssetBroker* AssetBroker;
 

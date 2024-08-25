@@ -15,7 +15,6 @@
 #include "MovieScene.h"
 #include "MovieSceneBinding.h"
 #include "MovieSceneSequence.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/TypeHash.h"
 
 class UMovieSceneTrack;

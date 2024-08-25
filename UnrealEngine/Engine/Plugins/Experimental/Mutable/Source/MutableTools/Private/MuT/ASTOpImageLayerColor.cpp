@@ -35,8 +35,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpImageLayerColor::IsEqual(const ASTOp& InOtherUntyped) const
 	{
-		if (const ASTOpImageLayerColor* Other = dynamic_cast<const ASTOpImageLayerColor*>(&InOtherUntyped))
+		if (InOtherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpImageLayerColor* Other = static_cast<const ASTOpImageLayerColor*>(&InOtherUntyped);
 			return base == Other->base &&
 				color == Other->color &&
 				mask == Other->mask &&
@@ -177,17 +178,18 @@ namespace mu
 		Ptr<ASTOp> at;
 
 		// Plain masks optimization
-		if (!at && mask.child())
+		if (mask.child() && !(Flags & OP::ImageLayerArgs::F_USE_MASK_FROM_BLENDED) )
 		{
 			FVector4f colour;
 			if (mask.child()->IsImagePlainConstant(colour))
 			{
-				if (colour.IsNearlyZero3(UE_SMALL_NUMBER))
+				// For masks we only use one channel
+				if (FMath::IsNearlyZero(colour[0]))
 				{
 					// If the mask is black, we can skip the entire operation
 					at = base.child();
 				}
-				else if (colour.Equals(FVector4f(1, 1, 1, 1), UE_SMALL_NUMBER))
+				else if (FMath::IsNearlyEqual(colour[0], 1, UE_SMALL_NUMBER))
 				{
 					// If the mask is white, we can remove it
 					Ptr<ASTOpImageLayerColor> NewOp = mu::Clone<ASTOpImageLayerColor>(this);
@@ -208,7 +210,7 @@ namespace mu
 			{
 				if (color)
 				{
-					const ASTOpFixed* TypedColor = dynamic_cast<const ASTOpFixed*>(color.child().get());
+					const ASTOpFixed* TypedColor = static_cast<const ASTOpFixed*>(color.child().get());
 					const float* Value = TypedColor->op.args.ColourConstant.value;
 					ColorConst.Set(Value[0], Value[1], Value[2], Value[3]);
 				}
@@ -230,18 +232,35 @@ namespace mu
 					{
 						switch (blendType)
 						{
-						case EBlendType::BT_LIGHTEN: bRGBUnchanged = FMath::IsNearlyEqual(ColorConst[3],0.0f); break;
+						case EBlendType::BT_LIGHTEN: bRGBUnchanged = FMath::IsNearlyZero(ColorConst[3]); break;
 						case EBlendType::BT_MULTIPLY: bRGBUnchanged = FMath::IsNearlyEqual(ColorConst[3],1.0f); break;
 						default: break;
 						}
 					}
 					else
 					{
-						switch (blendType)
+						// How many channels are there in the base?
+						FImageDesc BaseDesc = base->GetImageDesc();
+						const FImageFormatData& FormatDesc = GetImageFormatData(BaseDesc.m_format);
+						if (FormatDesc.Channels == 1)
 						{
-						case EBlendType::BT_LIGHTEN: bRGBUnchanged = ColorConst.IsNearlyZero3(UE_SMALL_NUMBER); break;
-						case EBlendType::BT_MULTIPLY: bRGBUnchanged = ColorConst.Equals(FVector4f(1, 1, 1, 1)); break;
-						default: break;
+							// We only need to check R
+							switch (blendType)
+							{
+							case EBlendType::BT_LIGHTEN: bRGBUnchanged = FMath::IsNearlyZero(ColorConst[0]); break;
+							case EBlendType::BT_MULTIPLY: bRGBUnchanged = FMath::IsNearlyEqual(ColorConst[0],1.0); break;
+							default: break;
+							}
+						}
+						else
+						{
+							// Check RGB
+							switch (blendType)
+							{
+							case EBlendType::BT_LIGHTEN: bRGBUnchanged = ColorConst.IsNearlyZero3(UE_SMALL_NUMBER); break;
+							case EBlendType::BT_MULTIPLY: bRGBUnchanged = FVector3f(ColorConst).Equals(FVector3f(1, 1, 1)); break;
+							default: break;
+							}
 						}
 					}
 				}
@@ -261,7 +280,7 @@ namespace mu
 			// Is the base a swizzle getting expanding alpha from the same texture?
 			if (base.child()->GetOpType() == OP_TYPE::IM_SWIZZLE)
 			{
-				const ASTOpImageSwizzle* TypedBase = dynamic_cast<const ASTOpImageSwizzle*>(base.child().get());
+				const ASTOpImageSwizzle* TypedBase = static_cast<const ASTOpImageSwizzle*>(base.child().get());
 				bool bAreAllSameAlpha = true;
 				Ptr<ASTOp> Source = nullptr;
 				for (int32 c = 0; c < MUTABLE_OP_MAX_SWIZZLE_CHANNELS; ++c)
@@ -340,7 +359,7 @@ namespace mu
 			// all switch branches become unique constants
 
 			// See if the blended has an identical switch, to optimise it too
-			const ASTOpSwitch* baseSwitch = dynamic_cast<const ASTOpSwitch*>(baseAt.get());
+			const ASTOpSwitch* baseSwitch = static_cast<const ASTOpSwitch*>(baseAt.get());
 
 			// Mask not supported yet
 			if (maskAt)

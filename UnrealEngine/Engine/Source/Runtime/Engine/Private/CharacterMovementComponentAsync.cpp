@@ -2755,8 +2755,7 @@ bool FUpdatedComponentAsyncInput::MoveComponent(const FVector& Delta, const FQua
 					// Remove any pending overlaps after this point, we are not going as far as we swept.
 					if (FirstNonInitialOverlapIdx != INDEX_NONE)
 					{
-						const bool bAllowShrinking = false;
-						PendingOverlaps.SetNum(FirstNonInitialOverlapIdx, bAllowShrinking);
+						PendingOverlaps.SetNum(FirstNonInitialOverlapIdx, EAllowShrinking::No);
 					}
 				}
 			}
@@ -4033,7 +4032,7 @@ bool FCharacterMovementComponentAsyncInput::IsValidLandingSpot(const FVector& Ca
 		//CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(PawnRadius, PawnHalfHeight);
 
 		// Reject hits that are above our lower hemisphere (can happen when sliding down a vertical surface).
-		const float LowerHemisphereZ = Hit.Location.Z - PawnHalfHeight + PawnRadius;
+		const FVector::FReal LowerHemisphereZ = Hit.Location.Z - PawnHalfHeight + PawnRadius;
 		if (Hit.ImpactPoint.Z >= LowerHemisphereZ)
 		{
 			return false;

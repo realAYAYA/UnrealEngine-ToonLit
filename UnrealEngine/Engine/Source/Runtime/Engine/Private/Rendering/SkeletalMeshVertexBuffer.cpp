@@ -59,7 +59,7 @@ FArchive& operator<<(FArchive& Ar, FDummySkeletalMeshVertexBuffer& VertexBuffer)
 	}
 
 	// if Ar is counting, it still should serialize. Need to count VertexData
-	if (!StripFlags.IsDataStrippedForServer() || Ar.IsCountingMemory())
+	if (!StripFlags.IsAudioVisualDataStripped() || Ar.IsCountingMemory())
 	{
 		// Special handling for loading old content
 		if (Ar.IsLoading() && Ar.CustomVer(FSkeletalMeshCustomVersion::GUID) < FSkeletalMeshCustomVersion::UseSeparateSkinWeightBuffer)

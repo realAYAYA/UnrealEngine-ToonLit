@@ -87,7 +87,14 @@ inline void FormatStackFrame(const TraceServices::FStackFrame& Frame, FStringBui
 			}
 			if (EnumHasAnyFlags(FormatFlags, EStackFrameFormatFlags::Symbol))
 			{
-				OutString.Appendf(TEXT("0x%08x"), Frame.Addr);
+				if (Frame.Addr == 0)
+				{
+					OutString.Append(TEXT("0x00000000"));
+				}
+				else
+				{
+					OutString.Appendf(TEXT("0x%llX"), Frame.Addr);
+				}
 			}
 			if (EnumHasAnyFlags(FormatFlags, EStackFrameFormatFlags::ModuleAndSymbol))
 			{

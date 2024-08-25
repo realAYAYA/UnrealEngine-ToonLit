@@ -3,22 +3,19 @@
 #pragma once
 
 #if !defined(NO_UE_INCLUDES)
-#include "Containers/Array.h"
 #include "Containers/StringView.h"
-#include "HAL/CriticalSection.h"
-#include "Memory/MemoryView.h"
 #endif
 
-#include <atomic>
-
-#if !defined(COREHTTP_API)
-#	define COREHTTP_API IOSTOREONDEMAND_API
+#if !defined(IAS_HTTP_WITH_PERF)
+#	define IAS_HTTP_WITH_PERF !UE_BUILD_SHIPPING
 #endif
+
+#define UE_API
 
 ////////////////////////////////////////////////////////////////////////////////
 class FIoBuffer;
 
-namespace UE::HTTP
+namespace UE::IO::IAS::HTTP
 {
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -53,13 +50,16 @@ using	FTicket = uint64;
 struct	FActivity;
 
 ////////////////////////////////////////////////////////////////////////////////
-class COREHTTP_API FConnectionPool
+class UE_API FConnectionPool
 {
 public:
 	struct FParams
 	{
 		int32				SetHostFromUrl(FAnsiStringView Url);
-		uint32				ConnectionCount;
+		uint16				ConnectionCount = 1;
+		uint16				PipelineLength = 1;
+		int32				SendBufSize = -1;
+		int32				RecvBufSize = -1;
 		struct {
 			FAnsiStringView	Name;
 			uint32			Port = 80;
@@ -76,10 +76,14 @@ public:
 							~FConnectionPool();
 							FConnectionPool(FConnectionPool&& Rhs)	{ *this = MoveTemp(Rhs); }
 	FConnectionPool&		operator = (FConnectionPool&& Rhs)		{ Swap(Ptr, Rhs.Ptr); return *this; }
+	bool					Resolve();
+	void					Describe(FAnsiStringBuilderBase&) const;
+
+	static bool				IsValidHostUrl(FAnsiStringView Url);
 
 private:
 	friend					class FEventLoop;
-	class FSocketPool*		Ptr = nullptr;
+	class FHost*			Ptr = nullptr;
 
 private:
 							FConnectionPool(const FConnectionPool&) = delete;
@@ -87,7 +91,7 @@ private:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-class COREHTTP_API FRequest
+class UE_API FRequest
 {
 public:
 						~FRequest();
@@ -111,7 +115,7 @@ private:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-class COREHTTP_API FResponse
+class UE_API FResponse
 {
 public:
 	EStatusCodeClass	GetStatus() const;
@@ -132,7 +136,23 @@ private:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-class COREHTTP_API FTicketStatus
+class UE_API FTicketPerf
+{
+#if IAS_HTTP_WITH_PERF
+public:
+	struct FSample
+	{
+		uint32			TotalMs;
+		uint32			WaitMs;
+	};
+
+	FSample				GetSendSample() const;
+	FSample				GetRecvSample() const;
+#endif // IAS_HTTP_WITH_PERF
+};
+
+////////////////////////////////////////////////////////////////////////////////
+class UE_API FTicketStatus
 {
 public:
 	enum class EId : uint8 { Response, Content, Cancelled, Error };
@@ -143,6 +163,7 @@ public:
 	FResponse&			GetResponse() const;		// if GetId() == EId::Response
 	const FIoBuffer&	GetContent() const;			// if GetId() == EId::Content
 	uint32				GetContentLength() const;	//  |
+	const FTicketPerf&	GetPerf() const;			// _|_
 	const char*			GetErrorReason() const;		// if GetId() == EId::Error
 
 private:
@@ -156,9 +177,13 @@ private:
 using FTicketSink = TFunction<void (const FTicketStatus&)>;
 
 ////////////////////////////////////////////////////////////////////////////////
-class COREHTTP_API FEventLoop
+class UE_API FEventLoop
 {
+	class FImpl;
+
 public:
+	static const uint32		MaxActiveTickets = 64;
+
 	struct FRequestParams
 	{
 		uint32	BufferSize	= 256;
@@ -168,23 +193,19 @@ public:
 	template <typename... T> [[nodiscard]] FRequest Get(T&&... t)  { return Request("GET",  Forward<T&&>(t)...); }
 	template <typename... T> [[nodiscard]] FRequest Post(T&&... t) { return Request("POST", Forward<T&&>(t)...); }
 
-							FEventLoop() = default;
+							FEventLoop();
 							~FEventLoop();
-	uint32					Tick(uint32 PollTimeoutMs=0);
+	uint32					Tick(int32 PollTimeoutMs=0);
+	void					Throttle(uint32 KiBPerSec);
+	void					SetFailTimeout(int32 TimeoutMs);
 	bool					IsIdle() const;
 	void					Cancel(FTicket Ticket);
 	[[nodiscard]] FRequest	Request(FAnsiStringView Method, FAnsiStringView Url, const FRequestParams* Params=nullptr);
 	[[nodiscard]] FRequest	Request(FAnsiStringView Method, FAnsiStringView Path, FConnectionPool& Pool, const FRequestParams* Params=nullptr);
-	FTicket					Send(FRequest&& Request, FTicketSink Sink, UPTRINT Param=0);
+	FTicket					Send(FRequest&& Request, FTicketSink Sink, UPTRINT SinkParam=0);
 
 private:
-	FRequest				Request(FAnsiStringView Method, FAnsiStringView Path, FActivity* Activity);
-	FCriticalSection		Lock;
-	std::atomic<uint64>		FreeSlots		= ~0ull;
-	std::atomic<uint64>		Cancels			= 0;
-	uint64					PrevFreeSlots	= ~0ull;
-	TArray<FActivity*>		Pending;
-	TArray<FActivity*>		Active;
+	FImpl*					Impl;
 
 private:
 							FEventLoop(const FEventLoop&)	= delete;
@@ -193,6 +214,8 @@ private:
 	FEventLoop&				operator = (FEventLoop&&)		= delete;
 };
 
-} // namespace UE::HTTP
+} // namespace UE::IO::IAS::HTTP
+
+#undef UE_API
 
 /* vim: set noet : */

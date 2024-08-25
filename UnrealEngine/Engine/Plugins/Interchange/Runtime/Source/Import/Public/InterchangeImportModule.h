@@ -34,5 +34,12 @@ public:
 	{
 		return FModuleManager::Get().IsModuleLoaded( "InterchangeImport" );
 	}
+
+	/**
+	 * Checks to see if Substrate support is enabled both in the Project Settings and for Interchange
+	 * 
+	 * @return True if Substrate is enabled
+	 */
+	virtual bool IsSubstrateEnabled() const { return false; };
 };
 

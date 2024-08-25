@@ -91,10 +91,10 @@ public:
 	//
 	// Set the data on the vertex factory
 	//
-	void SetData(const FDataType& InData)
+	void SetData(FRHICommandListBase& RHICmdList, const FDataType& InData)
 	{
 		Data = InData;
-		UpdateRHI(FRHICommandListImmediate::Get());
+		UpdateRHI(RHICmdList);
 	}
 
 	//

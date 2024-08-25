@@ -146,6 +146,15 @@ public:
 	*/
 	SLATE_API bool GetUserDefinedChord(const FName InBindingContext, const FName InCommandName, const EMultipleKeyBindingIndex InChordIndex, FInputChord& OutUserDefinedChord);
 
+	/**
+	* Gets the project defined chord (if any) from the provided command name
+	*
+	* @param InBindingContext	The context in which the command is active
+	* @param InCommandName		The name of the command to get the chord from
+	* @param ChordIndex		The index of the key binding (in the multiple key bindings array)
+	*/
+	SLATE_API bool GetProjectDefinedChord(const FName InBindingContext, const FName InCommandName, const EMultipleKeyBindingIndex InChordIndex, FInputChord& OutUserDefinedChord);
+
 	// Type of filter
 	enum class ECommandFilterType
 	{
@@ -271,6 +280,9 @@ private:
 
 	/** User defined chord overrides for commands */
 	TSharedPtr< class FUserDefinedChords > UserDefinedChords;
+
+	/** Project defined chord overrides for commands */
+	TSharedPtr< class FUserDefinedChords > ProjectDefinedChords;
 
 	/** Delegate called when a user-defined chord is edited */
 	FOnUserDefinedChordChanged OnUserDefinedChordChanged;

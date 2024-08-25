@@ -22,6 +22,7 @@ public class LevelSequence : ModuleRules
 			new string[] {
 				"DeveloperSettings",
 				"MediaAssets",
+				"UniversalObjectLocator",
 			}
 		);
 

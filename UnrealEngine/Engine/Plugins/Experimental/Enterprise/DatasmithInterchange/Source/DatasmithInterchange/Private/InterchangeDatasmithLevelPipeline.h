@@ -13,6 +13,8 @@ class UInterchangeBaseNodeContainer;
 class UInterchangeSceneNode;
 class UInterchangeDatasmithAreaLightFactoryNode;
 class UInterchangeDatasmithAreaLightNode;
+class UInterchangeDecalActorFactoryNode;
+class UInterchangeDecalNode;
 
 UCLASS(BlueprintType, Experimental)
 class UInterchangeDatasmithLevelPipeline : public UInterchangeGenericLevelPipeline
@@ -20,7 +22,7 @@ class UInterchangeDatasmithLevelPipeline : public UInterchangeGenericLevelPipeli
 	GENERATED_BODY()
 
 protected:
-	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* BaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas) override;
+	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* BaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas, const FString& ContentBasePath) override;
 	virtual void ExecutePostImportPipeline(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FString& NodeKey, UObject* CreatedAsset, bool bIsAReimport) override;
 
 	virtual UInterchangeActorFactoryNode* CreateActorFactoryNode(const UInterchangeSceneNode* SceneNode, const UInterchangeBaseNode* TranslatedAssetNode) const override;
@@ -30,4 +32,6 @@ protected:
 private:
 
 	void SetupAreaLight(UInterchangeDatasmithAreaLightFactoryNode* AreaLightFactoryNode, const UInterchangeDatasmithAreaLightNode* AreaLightNode) const;
+
+	friend class UInterchangeDatasmithPipeline;
 };

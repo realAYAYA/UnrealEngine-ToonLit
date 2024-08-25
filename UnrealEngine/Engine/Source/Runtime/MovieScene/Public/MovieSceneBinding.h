@@ -132,6 +132,11 @@ struct FMovieSceneBinding
 	 */
 	MOVIESCENE_API void SetTracks(TArray<UMovieSceneTrack*>&& InTracks, UMovieScene* Owner);
 
+	/* For sorts so we can search quickly by Guid */
+	FORCEINLINE bool operator<(const FMovieSceneBinding& RHS) const { return ObjectGuid < RHS.ObjectGuid; }
+	FORCEINLINE bool operator<(const FGuid& InGuid) const { return ObjectGuid < InGuid; }
+	FORCEINLINE friend bool operator<(const FGuid& InGuid, const FMovieSceneBinding& RHS) { return InGuid < RHS.GetObjectGuid(); }
+
 #if WITH_EDITORONLY_DATA
 	/**
 	* Get this folder's desired sorting order

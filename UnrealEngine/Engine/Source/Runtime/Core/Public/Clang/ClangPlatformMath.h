@@ -98,4 +98,46 @@ struct FClangPlatformMath : public FGenericPlatformMath
 	{
 		return 63 - __builtin_clzll(Value | 1);
 	}
+	
+	/**
+	 * Adds two integers of any integer type, checking for overflow.
+	 * If there was overflow, it returns false, and OutResult may or may not be written.
+	 * If there wasn't overflow, it returns true, and the result of the addition is written to OutResult.
+	 */
+	template <
+		typename IntType
+		UE_REQUIRES(std::is_integral_v<IntType>)
+	>
+	static FORCEINLINE bool AddAndCheckForOverflow(IntType A, IntType B, IntType& OutResult)
+	{
+		return !__builtin_add_overflow(A, B, &OutResult);
+	}
+
+	/**
+	 * Subtracts two integers of any integer type, checking for overflow.
+	 * If there was overflow, it returns false, and OutResult may or may not be written.
+	 * If there wasn't overflow, it returns true, and the result of the subtraction is written to OutResult.
+	 */
+	template <
+		typename IntType
+		UE_REQUIRES(std::is_integral_v<IntType>)
+	>
+	static FORCEINLINE bool SubtractAndCheckForOverflow(IntType A, IntType B, IntType& OutResult)
+	{
+		return !__builtin_sub_overflow(A, B, &OutResult);
+	}
+
+	/**
+	 * Multiplies two integers of any integer type, checking for overflow.
+	 * If there was overflow, it returns false, and OutResult may or may not be written.
+	 * If there wasn't overflow, it returns true, and the result of the multiplication is written to OutResult.
+	 */
+	template <
+		typename IntType
+		UE_REQUIRES(std::is_integral_v<IntType>)
+	>
+	static FORCEINLINE bool MultiplyAndCheckForOverflow(IntType A, IntType B, IntType& OutResult)
+	{
+		return !__builtin_mul_overflow(A, B, &OutResult);
+	}
 };

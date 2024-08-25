@@ -45,6 +45,7 @@
 #include "LevelSequenceEditorBlueprintLibrary.h"
 #include "Misc/PackageName.h"
 #include "AssetToolsModule.h"
+#include "ControlRigEditModeToolkit.h"
 #include "PropertyEditorModule.h"
 
 
@@ -416,7 +417,7 @@ void SControlRigPoseAnimSelectionToolbar::Construct(const FArguments& InArgs)
 
 void SControlRigPoseAnimSelectionToolbar::MakeControlRigAssetDialog(FControlRigAssetType Type, bool bSelectAll)
 {
-	FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+	FControlRigEditMode* ControlRigEditMode = OwningControlRigWidget->GetEditMode();
 	if (!ControlRigEditMode)
 	{
 		return;
@@ -451,7 +452,7 @@ void SControlRigPoseAnimSelectionToolbar::MakeControlRigAssetDialog(FControlRigA
 		{
 			FString Path = OwningControlRigWidget->GetCurrentlySelectedPath();
 
-			FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+			FControlRigEditMode* ControlRigEditMode =  OwningControlRigWidget->GetEditMode();
 			if (ControlRigEditMode )
 			{
 				TMap<UControlRig*, TArray<FRigElementKey>> AllSelectedControls;
@@ -490,7 +491,7 @@ void SControlRigPoseAnimSelectionToolbar::MakeControlRigAssetDialog(FControlRigA
 
 bool SControlRigPoseAnimSelectionToolbar::CanExecuteMakeControlRigAsset()
 {
-	FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+	FControlRigEditMode* ControlRigEditMode =  OwningControlRigWidget->GetEditMode();
 	if (!ControlRigEditMode)
 	{
 		return false;
@@ -697,6 +698,7 @@ FString SPathDialogWithAllowList::GetAssetPath()
 
 void SControlRigBaseListWidget::Construct(const FArguments& InArgs)
 {
+	WeakToolkit = InArgs._InSharedToolkit;
 	FControlRigEditMode* EditMode = GetEditMode();
 	BindCommands();
 
@@ -865,7 +867,7 @@ void SControlRigBaseListWidget::NotifyUser(FNotificationInfo& NotificationInfo)
 
 FControlRigEditMode* SControlRigBaseListWidget::GetEditMode()
 {
-	FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+	FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(WeakToolkit.Pin()->GetEditorMode());
 	return ControlRigEditMode;
 }
 
@@ -985,7 +987,7 @@ void SControlRigBaseListWidget::OnAssetsActivated(const TArray<FAssetData>& Sele
 				// If alt is down, select controls
 				if (FSlateApplication::Get().GetModifierKeys().IsAltDown())
 				{
-					FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+					FControlRigEditMode* ControlRigEditMode = GetEditMode();
 					if (ControlRigEditMode)
 					{
 						TArray<UControlRig*> ControlRigs = ControlRigEditMode->GetControlRigsArray(true /*bIsVisible*/);
@@ -1363,7 +1365,7 @@ void SControlRigBaseListWidget::ExecutePastePose(UControlRigPoseAsset* PoseAsset
 {
 	if (PoseAsset)
 	{
-		FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+		FControlRigEditMode* ControlRigEditMode = GetEditMode();
 		if (ControlRigEditMode)
 		{
 			TArray<UControlRig*> ControlRigs = ControlRigEditMode->GetControlRigsArray(true /*bIsVisible*/);
@@ -1392,7 +1394,7 @@ void SControlRigBaseListWidget::ExecuteUpdatePose(UControlRigPoseAsset* PoseAsse
 
 void SControlRigBaseListWidget::ExecuteSelectControls(UControlRigPoseAsset* PoseAsset)
 {
-	FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+	FControlRigEditMode* ControlRigEditMode = GetEditMode();
 	if (ControlRigEditMode)
 	{
 		TArray<UControlRig*> ControlRigs = ControlRigEditMode->GetControlRigsArray(true /*bIsVisible*/);
@@ -1429,7 +1431,7 @@ void SControlRigBaseListWidget::ExecutePasteMirrorPose(UControlRigPoseAsset* Pos
 {
 	if (PoseAsset)
 	{
-		FControlRigEditMode* ControlRigEditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
+		FControlRigEditMode* ControlRigEditMode = GetEditMode();
 		if (ControlRigEditMode)
 		{
 			TArray<UControlRig*> ControlRigs = ControlRigEditMode->GetControlRigsArray(true /*bIsVisible*/);
@@ -1499,18 +1501,21 @@ void SControlRigBaseListWidget::CreateCurrentView(UObject* Asset)
 TSharedRef<class SControlRigPoseView> SControlRigBaseListWidget::CreatePoseView(UObject* InObject)
 {
 	UControlRigPoseAsset* PoseAsset = Cast<UControlRigPoseAsset>(InObject);
-	return SNew(SControlRigPoseView).
-		PoseAsset(PoseAsset);
+	return SNew(SControlRigPoseView)
+		.PoseAsset(PoseAsset)
+		.OwningWidget(SharedThis(this));
 }
 
 TSharedRef<class SControlRigPoseView> SControlRigBaseListWidget::CreateAnimationView(UObject* InObject)
 {
-	return SNew(SControlRigPoseView);
+	return SNew(SControlRigPoseView)
+		.OwningWidget(SharedThis(this));
 }
 
 TSharedRef<class SControlRigPoseView> SControlRigBaseListWidget::CreateSelectionSetView(UObject* InObject)
 {
-	return SNew(SControlRigPoseView);
+	return SNew(SControlRigPoseView)
+		.OwningWidget(SharedThis(this));
 }
 
 #undef LOCTEXT_NAMESPACE

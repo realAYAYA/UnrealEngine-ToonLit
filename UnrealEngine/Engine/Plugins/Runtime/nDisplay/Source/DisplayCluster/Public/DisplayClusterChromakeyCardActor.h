@@ -14,8 +14,15 @@ class DISPLAYCLUSTER_API ADisplayClusterChromakeyCardActor : public ADisplayClus
 	GENERATED_BODY()
 public:
 	ADisplayClusterChromakeyCardActor(const FObjectInitializer& ObjectInitializer);
+	virtual ~ADisplayClusterChromakeyCardActor() override;
 
 	virtual void Tick(float DeltaSeconds) override;
+
+#if WITH_EDITOR
+	// ~Begin UObject interface
+	virtual void PostEditUndo() override;
+	// ~End UObject interface
+#endif
 
 	// ~Begin ADisplayClusterLightCardActor interface
 	virtual void AddToRootActor(ADisplayClusterRootActor* InRootActor) override;
@@ -32,4 +39,14 @@ public:
 	bool IsReferencedByICVFXCamera(const UDisplayClusterICVFXCameraComponent* InCamera) const;
 protected:
 	void UpdateChromakeySettings();
+
+#if WITH_EDITOR
+private:
+	/** Called when any UObject has its property changed. */
+	void OnObjectPropertyChanged(UObject* InObject, FPropertyChangedEvent& InPropertyChangedEvent);
+
+private:
+	/** Handle for UObject property change. */
+	FDelegateHandle PropertyChangedHandle;
+#endif
 };

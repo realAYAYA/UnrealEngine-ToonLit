@@ -5,12 +5,12 @@
 #include "AssetEditor/CameraCalibrationStepsController.h"
 #include "AssetEditor/LensDistortionTool.h"
 #include "AssetEditor/SSimulcamViewport.h"
-#include "AssetRegistry/AssetData.h"
 #include "CalibrationPointComponent.h"
 #include "Camera/CameraActor.h"
 #include "CameraCalibrationCheckerboard.h"
 #include "CameraCalibrationEditorLog.h"
 #include "CameraCalibrationSolver.h"
+#include "CameraCalibrationUtilsPrivate.h"
 #include "Dom/JsonObject.h"
 #include "EditorFontGlyphs.h"
 #include "Engine/Texture2D.h"
@@ -18,10 +18,14 @@
 #include "ImageUtils.h"
 #include "JsonObjectConverter.h"
 #include "LensComponent.h"
+#include "LensFile.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/MessageDialog.h"
 #include "Models/AnamorphicLensModel.h"
+#include "Models/SphericalLensModel.h"
+#include "OpenCVHelper.h"
 #include "PropertyCustomizationHelpers.h"
-#include "SphericalLensDistortionModelHandler.h"
+#include "TextureResource.h"
 #include "UI/CameraCalibrationWidgetHelpers.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -45,6 +49,21 @@ const int UCameraLensDistortionAlgoCheckerboard::DATASET_VERSION = 1;
 namespace UE::CameraCalibration::Private::LensDistortionCheckerboardExportFields
 {
 	static const FString Version(TEXT("Version"));
+}
+
+namespace UE::CameraCalibration::Private
+{
+	void AdjustCorners(TArray<FVector2f>& Corners, FIntPoint TextureSize, FIntPoint ImageSize)
+	{
+		// It is possible that the size of the debug texture where we want to draw the checkerboard corners is different than the size of the image where the checkerboard corners were found.
+		// Before drawing, all of the corner positions should be shifted to account for the difference in size.
+		const FVector2f TopLeftCorner = (TextureSize - ImageSize) / 2.0f;
+
+		for (FVector2f& Corner : Corners)
+		{
+			Corner += TopLeftCorner;
+		}
+	}
 }
 
 namespace CameraLensDistortionAlgoCheckerboard
@@ -124,8 +143,7 @@ void UCameraLensDistortionAlgoCheckerboard::Initialize(ULensDistortionTool* InTo
 	// Guess which calibrator to use.
 	SetCalibrator(FindFirstCalibrator());
 
-#if WITH_OPENCV
-	// Initialize coverage matrix
+	// Initialize coverage texture
 	FCameraCalibrationStepsController* StepsController = Tool->GetCameraCalibrationStepsController();
 
 	if (!ensure(StepsController))
@@ -133,10 +151,10 @@ void UCameraLensDistortionAlgoCheckerboard::Initialize(ULensDistortionTool* InTo
 		return;
 	}
 
-	FIntPoint Size = StepsController->GetCompRenderResolution();
-	CvCoverage = cv::Mat(cv::Size(Size.X, Size.Y), CV_8UC4);
-	CoverageTexture = FOpenCVHelper::TextureFromCvMat(CvCoverage, CoverageTexture);
-#endif
+	const FIntPoint Size = StepsController->GetCompRenderResolution();
+
+	CoverageTexture = UTexture2D::CreateTransient(Size.X, Size.Y, EPixelFormat::PF_B8G8R8A8);
+	UE::CameraCalibration::Private::ClearTexture(CoverageTexture);
 
 	if (UMaterialInstanceDynamic* OverlayMID = Tool->GetOverlayMID())
 	{
@@ -167,6 +185,14 @@ void UCameraLensDistortionAlgoCheckerboard::Tick(float DeltaTime)
 	if (!ensure(StepsController))
 	{
 		return;
+	}
+
+	// If the resolution of the simulcam comp has changed, update the coverage texture to be the correct size
+	const FIntPoint Size = StepsController->GetCompRenderResolution();
+	if (CoverageTexture && ((CoverageTexture->GetSizeX() != Size.X) || (CoverageTexture->GetSizeY() != Size.Y)))
+	{
+		CoverageTexture = UTexture2D::CreateTransient(Size.X, Size.Y, EPixelFormat::PF_B8G8R8A8);
+		RefreshCoverage();
 	}
 
 	// If not paused, cache calibrator 3d point position
@@ -224,19 +250,17 @@ bool UCameraLensDistortionAlgoCheckerboard::OnViewportClicked(const FGeometry& M
 	}
 
 	// Left Mouse button means to add a new calibration row
+	FText ErrorMessage;
+
+	if (!AddCalibrationRow(ErrorMessage))
 	{
-		FText ErrorMessage;
+		FMessageDialog::Open(EAppMsgType::Ok, ErrorMessage);
+	}
 
-		if (!AddCalibrationRow(ErrorMessage))
-		{
-			FMessageDialog::Open(EAppMsgType::Ok, ErrorMessage);
-		}
-
-		// force play (whether we succeeded or not)
-		if (FCameraCalibrationStepsController* StepsController = GetStepsController())
-		{
-			StepsController->Play();
-		}
+	// force play (whether we succeeded or not)
+	if (FCameraCalibrationStepsController* StepsController = GetStepsController())
+	{
+		StepsController->Play();
 	}
 
 	return true;
@@ -254,7 +278,6 @@ FCameraCalibrationStepsController* UCameraLensDistortionAlgoCheckerboard::GetSte
 
 bool UCameraLensDistortionAlgoCheckerboard::AddCalibrationRow(FText& OutErrorMessage)
 {
-#if WITH_OPENCV
 	using namespace CameraLensDistortionAlgoCheckerboard;
 
 	if (!Tool.IsValid())
@@ -287,24 +310,11 @@ bool UCameraLensDistortionAlgoCheckerboard::AddCalibrationRow(FText& OutErrorMes
 
 	TArray<FColor> Pixels;
 	FIntPoint Size;
-	ETextureRenderTargetFormat PixelFormat;
 
-	if (!StepsController->ReadMediaPixels(Pixels, Size, PixelFormat, OutErrorMessage, ESimulcamViewportPortion::CameraFeed))
+	if (!StepsController->ReadMediaPixels(Pixels, Size, OutErrorMessage, ESimulcamViewportPortion::CameraFeed))
 	{
 		return false;
 	}
-
-	if (PixelFormat != ETextureRenderTargetFormat::RTF_RGBA8)
-	{
-		OutErrorMessage = LOCTEXT("InvalidFormat", "MediaPlateRenderTarget did not have the expected RTF_RGBA8 format");
-		return false;
-	}
-
-	// Create OpenCV Mat with those pixels
-	cv::Mat CvFrame(cv::Size(Size.X, Size.Y), CV_8UC4, Pixels.GetData());
-
-	cv::Mat CvGray;
-	cv::cvtColor(CvFrame, CvGray, cv::COLOR_RGBA2GRAY);
 
 	// Export the latest session data
 	ExportSessionData();
@@ -317,99 +327,31 @@ bool UCameraLensDistortionAlgoCheckerboard::AddCalibrationRow(FText& OutErrorMes
 
 	Row->Index = RowIndex;
 	Row->CameraData = LastCameraData;
-	Row->ImageHeight = CvGray.rows;
-	Row->ImageWidth = CvGray.cols;
+	Row->ImageWidth = Size.X;
+	Row->ImageHeight = Size.Y;
 
 	Row->NumCornerRows = Calibrator->NumCornerRows;
 	Row->NumCornerCols = Calibrator->NumCornerCols;
 	Row->SquareSideInCm = Calibrator->SquareSideLength;
 
-	// Identify checkerboard
-	{
-		cv::Size CheckerboardSize(Row->NumCornerCols, Row->NumCornerRows);
+	const FIntPoint CheckerboardDimensions = FIntPoint(Calibrator->NumCornerCols, Calibrator->NumCornerRows);
 
-		std::vector<cv::Point2f> Corners;
+	const bool bCornersFound = FOpenCVHelper::IdentifyCheckerboard(Pixels, Size, CheckerboardDimensions, Row->Points2d);
 
-		const bool bCornersFound = cv::findChessboardCorners(
-			CvGray,
-			CheckerboardSize,
-			Corners,
-			cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE
-		);
+ 	if (!bCornersFound || Row->Points2d.IsEmpty())
+ 	{
+ 		OutErrorMessage = FText::FromString(FString::Printf(TEXT(
+ 			"Could not identify the expected checkerboard points of interest. "
+ 			"The expected checkerboard has %dx%d inner corners."),
+ 			Row->NumCornerCols, Row->NumCornerRows)
+ 		);
+ 
+ 		return false;
+ 	}
 
-		if (!bCornersFound || Corners.empty())
-		{
-			OutErrorMessage = FText::FromString(FString::Printf(TEXT(
-				"Could not identify the expected checkerboard points of interest. "
-				"The expected checkerboard has %dx%d inner corners."),
-				Row->NumCornerCols, Row->NumCornerRows)
-			);
-
-			return false;
-		}
-
-		// cv::TermCriteria::Type::EPS will stop the search when the error is under the given epsilon.
-		// cv::TermCriteria::Type::COUNT will stop after the specified number of iterations regardless of epsilon.
-		cv::TermCriteria Criteria(cv::TermCriteria::Type::EPS | cv::TermCriteria::Type::COUNT, 30, 0.001);
-		cv::cornerSubPix(CvGray, Corners, cv::Size(11, 11), cv::Size(-1, -1), Criteria);
-
-		// Force first one to be top-left
-		if (Corners.front().y > Corners.back().y)
-		{
-			std::reverse(Corners.begin(), Corners.end());
-		}
-
-		for (const cv::Point2f& Corner : Corners)
-		{
-			Row->Points2d.Add(FVector2D(Corner.x, Corner.y));
-		}
-
-		// Save an image view of the captured frame with the corners overlaid on it (for exporting)
-		FImageView ImageView = FImageView(CvFrame.data, CvFrame.cols, CvFrame.rows, ERawImageFormat::BGRA8);
-		Row->ImageView = ImageView;
-
-		// Show the detection to the user
-		if (bShouldShowDetectionWindow)
-		{
-			cv::Mat CvFrameWithOverlay;
-			CvFrame.copyTo(CvFrameWithOverlay);
-			cv::drawChessboardCorners(CvFrameWithOverlay, CheckerboardSize, Corners, true);
-
-			FCameraCalibrationWidgetHelpers::DisplayTextureInWindowAlmostFullScreen(
-				FOpenCVHelper::TextureFromCvMat(CvFrameWithOverlay),
-				LOCTEXT("CheckerboardDetection", "Checkerboard Detection")
-			);
-		}
-
-		// The corners were found using only the camera feed, but the coverage overlay will be drawn over the entire comp
-		// Before updating the overlay texture, shift all the camera feed corner pixels to represent the correct position in the overlay texture
-		const FIntPoint CompSize = StepsController->GetCompRenderResolution();
-		const FIntPoint CameraFeedSize = StepsController->GetCameraFeedSize();
-
-		const FIntPoint TopLeftCorner = (CompSize - CameraFeedSize) / 2;
-
-		for (cv::Point2f& Corner : Corners)
-		{
-			Corner.x += TopLeftCorner.X;
-			Corner.y += TopLeftCorner.Y;
-		}
-
-		// Refresh the coverage overlay if the comp resolution has changed since the last image was taken
-		if ((CvCoverage.cols != CompSize.X) || (CvCoverage.rows != CompSize.Y))
-		{
-			RefreshCoverage();
-		}
-
-		// Update the coverage overlay image with information from the newly added row
-		cv::drawChessboardCorners(CvCoverage, CheckerboardSize, Corners, true);
-
-		CoverageTexture = FOpenCVHelper::TextureFromCvMat(CvCoverage, CoverageTexture);
-		StepsController->RefreshOverlay();
-	}
-
+	// Fill out the checkerboard's 3D points
 	if (CVarUseExtrinsicsGuess.GetValueOnGameThread())
 	{
-		// Fill out checkerboard 3d points
 		const FVector LocationTL = Calibrator->TopLeft->GetComponentLocation();
 		const FVector LocationTR = Calibrator->TopRight->GetComponentLocation();
 		const FVector LocationBL = Calibrator->BottomLeft->GetComponentLocation();
@@ -417,7 +359,6 @@ bool UCameraLensDistortionAlgoCheckerboard::AddCalibrationRow(FText& OutErrorMes
 		const FVector RightVector = LocationTR - LocationTL;
 		const FVector DownVector = LocationBL - LocationTL;
 
-		// Fill out checkerboard 3d points
 		const float HorizontalStep = (Row->NumCornerCols > 1) ? (1.0f / (Row->NumCornerCols - 1)) : 0.0f;
 		const float VerticalStep = (Row->NumCornerRows > 1) ? (1.0f / (Row->NumCornerRows - 1)) : 0.0f;
 
@@ -426,19 +367,12 @@ bool UCameraLensDistortionAlgoCheckerboard::AddCalibrationRow(FText& OutErrorMes
 			for (int32 ColIdx = 0; ColIdx < Row->NumCornerCols; ++ColIdx)
 			{
 				const FVector PointLocation = LocationTL + (RightVector * ColIdx * HorizontalStep) + (DownVector * RowIdx * VerticalStep);
-
-				// Convert from UE coordinates to OpenCV coordinates
-				FTransform Transform = FTransform::Identity;
-				Transform.SetLocation(PointLocation);
-				FOpenCVHelper::ConvertUnrealToOpenCV(Transform);
-
-				Row->Points3d.Add(Transform.GetLocation());
+				Row->Points3d.Add(PointLocation);
 			}
 		}
 	}
 	else
 	{
-		// Fill out checkerboard 3d points
 		for (int32 RowIdx = 0; RowIdx < Row->NumCornerRows; ++RowIdx)
 		{
 			for (int32 ColIdx = 0; ColIdx < Row->NumCornerCols; ++ColIdx)
@@ -448,26 +382,43 @@ bool UCameraLensDistortionAlgoCheckerboard::AddCalibrationRow(FText& OutErrorMes
 		}
 	}
 
-	// Create thumbnail and add it to the row
+	// Save an image view of the captured frame (for exporting)
+	FImageView ImageView = FImageView(Pixels.GetData(), Size.X, Size.Y, ERawImageFormat::BGRA8);
+	Row->ImageView = ImageView;
+
+	// Generate a thumbnail image for display in the tool for this row
+	FImage RowThumbnail;
+	constexpr int32 ResolutionDivider = 4;
+	FImageCore::ResizeTo(ImageView, RowThumbnail, Size.X / ResolutionDivider, Size.Y / ResolutionDivider, ERawImageFormat::BGRA8, ImageView.GetGammaSpace());
+
+	UTexture2D* ThumbnailTexture = FImageUtils::CreateTexture2DFromImage(RowThumbnail);
+	if (ThumbnailTexture)
 	{
-		// Resize the frame to thumbnail size
+		Row->Thumbnail = SNew(SSimulcamViewport, ThumbnailTexture).WithZoom(false).WithPan(false);
+	}
 
-		cv::Mat CvThumbnail;
-		const int32 ResolutionDivider = 4;
-		cv::resize(CvFrame, CvThumbnail, cv::Size(CvFrame.cols / ResolutionDivider, CvFrame.rows / ResolutionDivider));
+	// Update the coverage overlay with the latest checkerboard corners
+	TArray<FVector2f> CameraFeedAdjustedCorners = Row->Points2d;
+	const FIntPoint CoverageTextureSize = FIntPoint(CoverageTexture->GetSizeX(), CoverageTexture->GetSizeY());
+	UE::CameraCalibration::Private::AdjustCorners(CameraFeedAdjustedCorners, CoverageTextureSize, Size);
 
-		if (UTexture2D* ThumbnailTexture = FOpenCVHelper::TextureFromCvMat(CvThumbnail))
-		{
-			Row->Thumbnail = SNew(SSimulcamViewport, ThumbnailTexture).WithZoom(false).WithPan(false);
-		}
+	FOpenCVHelper::DrawCheckerboardCorners(CameraFeedAdjustedCorners, CheckerboardDimensions, CoverageTexture);
+	StepsController->RefreshOverlay();
+
+	// Show the detection to the user
+	if (bShouldShowDetectionWindow)
+	{
+		UTexture2D* DebugTexture = UTexture2D::CreateTransient(Size.X, Size.Y, EPixelFormat::PF_B8G8R8A8);
+		UE::CameraCalibration::Private::SetTextureData(DebugTexture, Pixels);
+		FOpenCVHelper::DrawCheckerboardCorners(Row->Points2d, CheckerboardDimensions, DebugTexture);
+
+		FCameraCalibrationWidgetHelpers::DisplayTextureInWindowAlmostFullScreen(DebugTexture, LOCTEXT("CheckerboardDetection", "Checkerboard Detection"));
 	}
 
 	// Validate the new row, show a message if validation fails.
+	if (!ValidateNewRow(Row, OutErrorMessage))
 	{
-		if (!ValidateNewRow(Row, OutErrorMessage))
-		{
-			return false;
-		}
+		return false;
 	}
 
 	// Add this data point
@@ -484,10 +435,6 @@ bool UCameraLensDistortionAlgoCheckerboard::AddCalibrationRow(FText& OutErrorMes
 	}
 
 	return true;
-#endif //WITH_OPENCV
-
-	OutErrorMessage = LOCTEXT("OpenCVRequired", "OpenCV is required");
-	return false;
 }
 
 TSharedRef<SWidget> UCameraLensDistortionAlgoCheckerboard::BuildUI()
@@ -662,24 +609,15 @@ bool UCameraLensDistortionAlgoCheckerboard::ValidateNewRow(TSharedPtr<FLensDisto
 	return true;
 }
 
-bool UCameraLensDistortionAlgoCheckerboard::GetLensDistortion(
-	float& OutFocus,
-	float& OutZoom,
-	FDistortionInfo& OutDistortionInfo,
-	FFocalLengthInfo& OutFocalLengthInfo,
-	FImageCenterInfo& OutImageCenterInfo,
-	TSubclassOf<ULensModel>& OutLensModel,
-	double& OutError,
-	FText& OutErrorMessage)
+FDistortionCalibrationTask UCameraLensDistortionAlgoCheckerboard::BeginCalibration(FText& OutErrorMessage)
 {
-	// Sanity checks
-	//
+	FDistortionCalibrationTask CalibrationTask = {};
 
-	// Enough points
+	// Validate that enough points were gathered to attempt a calibration
 	if (CalibrationRows.Num() < 1)
 	{
-		OutErrorMessage = LOCTEXT("NotEnoughSamples", "At least 1 calibration row is required");
-		return false;
+		OutErrorMessage = LOCTEXT("NotEnoughCalibrationRowsError", "Could not initiate distortion calibration. At least 1 calibration row is required.");
+		return CalibrationTask;
 	}
 
 	// All points are valid
@@ -687,71 +625,86 @@ bool UCameraLensDistortionAlgoCheckerboard::GetLensDistortion(
 	{
 		if (!ensure(Row.IsValid()))
 		{
-			return false;
+			return CalibrationTask;
 		}
 	}
 
-	if (!ensure(Tool.IsValid()))
+	ULensDistortionTool* LensDistortionTool = Tool.Get();
+	if (!ensureMsgf((LensDistortionTool != nullptr), TEXT("The Lens Distortion Tool was invalid.")))
 	{
-		return false;
+		return CalibrationTask;
 	}
 
-	FCameraCalibrationStepsController* StepsController = Tool->GetCameraCalibrationStepsController();
-
-	if (!ensure(StepsController))
+	FCameraCalibrationStepsController* StepsController = LensDistortionTool->GetCameraCalibrationStepsController();
+	if (!ensureMsgf((StepsController != nullptr), TEXT("The Calibration Steps Controller was invalid.")))
 	{
-		return false;
+		return CalibrationTask;
 	}
 
 	ULensFile* LensFile = StepsController->GetLensFile();
-
-	if (!ensure(LensFile))
+	if (!ensureMsgf((LensFile != nullptr), TEXT("The Lens File was invalid.")))
 	{
-		OutErrorMessage = LOCTEXT("LensFileNotFound", "LensFile not found");
-		return false;
+		return CalibrationTask;
 	}
 
-	const TSharedPtr<FLensDistortionCheckerboardRowData>& LastRow = CalibrationRows.Last();
+	// The evaluation focus and zoom values should not change during data collection, so all rows should have the same values.
+	const float Focus = CalibrationRows[0]->CameraData.InputFocus;
+	const float Zoom = CalibrationRows[0]->CameraData.InputZoom;
 
-	// Only parameters data mode supported at the moment
-	if (LensFile->DataMode != ELensDataMode::Parameters)
-	{
-		OutErrorMessage = LOCTEXT("OnlyParametersDataModeSupported", "Only Parameters Data Mode supported");
-		return false;
-	}
-
-#if WITH_OPENCV
-
-	// Initialize the camera matrix that will be used in each call to projectPoints()
-	float TestImageWidth = LensFile->CameraFeedInfo.GetDimensions().X;
-	float TestImageHeight = LensFile->CameraFeedInfo.GetDimensions().Y;
-
-	float TestSensorWidth = StepsController->GetLensFileEvaluationInputs().Filmback.SensorWidth;
+	const FIntPoint ImageSize = LensFile->CameraFeedInfo.GetDimensions();
 
 	const float PixelAspect = LensFile->LensInfo.SqueezeFactor;
 
-	TestSensorWidth = TestSensorWidth * PixelAspect;
-
-	float Fx = TestImageWidth;
-	if (!FMath::IsNearlyZero(TestSensorWidth))
+	if (FMath::IsNearlyZero(PixelAspect))
 	{
-		Fx = (FocalLengthEstimate / TestSensorWidth) * TestImageWidth;
+		OutErrorMessage = LOCTEXT("PixelAspectZeroError", "The pixel aspect ratio of the CineCamera is zero, which is invalid.");
+		return CalibrationTask;
 	}
 
-	FVector2f FocalLength = FVector2f(Fx, Fx);
-	FVector2f ImageCenter = FVector2f((TestImageWidth - 1) * 0.5f, (TestImageHeight - 1) * 0.5f);
+	const float PhysicalSensorWidth = StepsController->GetLensFileEvaluationInputs().Filmback.SensorWidth;
+	const float DesqueezeSensorWidth = PhysicalSensorWidth * PixelAspect;
 
-	TArray<TArray<FVector2D>> Samples2d;
-	TArray<TArray<FVector>> Samples3d;
+	if (FMath::IsNearlyZero(DesqueezeSensorWidth))
+	{
+		OutErrorMessage = LOCTEXT("SensorWidthZeroError", "One of the filmback dimensions of the CineCamera is zero, which is invalid.");
+		return CalibrationTask;
+	}
+
+	if (!FocalLengthEstimate.IsSet() || FMath::IsNearlyZero(FocalLengthEstimate.GetValue()))
+	{
+		OutErrorMessage = LOCTEXT("FocalLengthEstimateError", "Enter a non-zero value (in mm) for the focal length estimate.");
+		return CalibrationTask;
+	}
+
+	const float FocalLengthEstimateValue = FocalLengthEstimate.GetValue();
+	const double Fx = (FocalLengthEstimateValue / DesqueezeSensorWidth) * ImageSize.X;
+
+	// When operating on a desqueezed image, we expect our pixel aspect to be square, so horizontal and vertical field of view are assumed to be equal (i.e. Fx == Fy)
+	FVector2D FocalLength = FVector2D(Fx, Fx);
+	FVector2D ImageCenter = FVector2D((ImageSize.X - 1) * 0.5, (ImageSize.Y - 1) * 0.5);
+
+	TArray<FObjectPoints> Samples3d;
+	TArray<FImagePoints> Samples2d;
+	Samples3d.Reserve(CalibrationRows.Num());
+	Samples2d.Reserve(CalibrationRows.Num());
 
 	TArray<FTransform> CameraPoses;
+	CameraPoses.Reserve(CalibrationRows.Num());
 
 	for (const TSharedPtr<FLensDistortionCheckerboardRowData>& Row : CalibrationRows)
 	{
-		Samples2d.Add(Row->Points2d);
-		Samples3d.Add(Row->Points3d);
+		FObjectPoints Points3d;
+		Points3d.Points = Row->Points3d;
 
-		FOpenCVHelper::ConvertUnrealToOpenCV(Row->CameraData.Pose);
+		FImagePoints Points2d;
+		Points2d.Points.Reserve(Row->Points2d.Num());
+		for (const FVector2f& Point2d : Row->Points2d)
+		{
+			Points2d.Points.Add(FVector2D(Point2d.X, Point2d.Y));
+		}
+
+		Samples3d.Add(Points3d);
+		Samples2d.Add(Points2d);
 		CameraPoses.Add(Row->CameraData.Pose);
 	}
 
@@ -787,83 +740,53 @@ bool UCameraLensDistortionAlgoCheckerboard::GetLensDistortion(
 		EnumAddFlags(SolverFlags, ECalibrationFlags::FixPrincipalPoint);
 	}
 
-	TArray<float> DistortionCoefficients;
+	const TSubclassOf<ULensModel> Model = LensFile->LensInfo.LensModel;
+	
+	Solver = NewObject<ULensDistortionSolver>(this, Tool->GetSolverClass());
 
-	OutError = FCameraCalibrationSolver::CalibrateCamera(
-		LensFile->LensInfo.LensModel,
-		Samples3d,
-		Samples2d,
-		FIntPoint(LastRow->ImageWidth, LastRow->ImageHeight),
-		FocalLength,
-		ImageCenter,
-		DistortionCoefficients,
-		CameraPoses,
-		PixelAspect,
-		SolverFlags
-	);
-
-	OutLensModel = LensFile->LensInfo.LensModel;
-	OutDistortionInfo.Parameters = DistortionCoefficients;
-
-	// FocalLengthInfo
-	OutFocalLengthInfo.FxFy = FVector2D(
-		float(FocalLength.X / LastRow->ImageWidth),
-		float(FocalLength.Y / LastRow->ImageHeight)
-	);
-
-	// ImageCenterInfo
-	OutImageCenterInfo.PrincipalPoint = FVector2D(
-		float(ImageCenter.X / LastRow->ImageWidth),
-		float(ImageCenter.Y / LastRow->ImageHeight)
-	);
-
-	// FZ inputs to LUT
-	OutFocus = LastRow->CameraData.InputFocus;
-	OutZoom = LastRow->CameraData.InputZoom;
-
-	if (CVarUseExtrinsicsGuess.GetValueOnGameThread())
-	{
-		// See if the camera already had an offset applied, in which case we need to account for it.
-		FTransform ExistingOffset = FTransform::Identity;
-
-		if (CalibrationRows[0]->CameraData.bWasNodalOffsetApplied)
+	CalibrationTask = UE::Tasks::Launch(UE_SOURCE_LOCATION, [Solver=Solver, Model, Samples3d, Samples2d, ImageSize, FocalLength, ImageCenter, CameraPoses, PixelAspect, SolverFlags, Focus, Zoom]() mutable
 		{
-			FNodalPointOffset NodalPointOffset;
+			FDistortionCalibrationResult Result = Solver->Solve(
+				Samples3d,
+				Samples2d,
+				ImageSize,
+				FocalLength,
+				ImageCenter,
+				CameraPoses,
+				Model,
+				PixelAspect,
+				SolverFlags
+			);
 
-			if (LensFile->EvaluateNodalPointOffset(OutFocus, OutZoom, NodalPointOffset))
-			{
-				ExistingOffset.SetTranslation(NodalPointOffset.LocationOffset);
-				ExistingOffset.SetRotation(NodalPointOffset.RotationOffset);
-			}
-		}
+			// CalibrateCamera() returns focal length and image center in pixels, but the result is expected to be normalized by the image size
+			Result.FocalLength.FxFy = Result.FocalLength.FxFy / ImageSize;
+			Result.ImageCenter.PrincipalPoint = Result.ImageCenter.PrincipalPoint / ImageSize;
 
-		TArray<FNodalPointOffset> NewNodalOffsets;
-		NewNodalOffsets.Reserve(CameraPoses.Num());
+			// FZ inputs to LUT
+			Result.EvaluatedFocus = Focus;
+			Result.EvaluatedZoom = Zoom;
 
-		for (int32 RowIndex = 0; RowIndex < CalibrationRows.Num(); ++RowIndex)
-		{
-			FOpenCVHelper::ConvertOpenCVToUnreal(CalibrationRows[RowIndex]->CameraData.Pose);
+			return Result;
+		});
 
-			const FTransform DesiredCameraTransform = CameraPoses[RowIndex];
-			const FTransform DesiredOffset = DesiredCameraTransform * CalibrationRows[RowIndex]->CameraData.Pose.Inverse() * ExistingOffset;
+	return CalibrationTask;
+}
 
-			FNodalPointOffset NewNodalOffset;
-			NewNodalOffset.LocationOffset = DesiredOffset.GetLocation();
-			NewNodalOffset.RotationOffset = DesiredOffset.GetRotation();
-
-			NewNodalOffsets.Add(NewNodalOffset);
-		}
-
-		LensFile->AddNodalOffsetPoint(OutFocus, OutZoom, NewNodalOffsets[0]);
-	}
-
-	return true;
-#else
+void UCameraLensDistortionAlgoCheckerboard::CancelCalibration()
+{
+	if (Solver)
 	{
-		OutErrorMessage = LOCTEXT("OpenCVRequired", "OpenCV is required");
-		return false;
+		Solver->Cancel();
 	}
-#endif //WITH_OPENCV
+}
+
+bool UCameraLensDistortionAlgoCheckerboard::GetCalibrationStatus(FText& StatusText) const
+{
+	if (Solver)
+	{
+		return Solver->GetStatusText(StatusText);
+	}
+	return false;
 }
 
 TSharedRef<SWidget> UCameraLensDistortionAlgoCheckerboard::BuildCalibrationDevicePickerWidget()
@@ -970,8 +893,8 @@ TSharedRef<SWidget> UCameraLensDistortionAlgoCheckerboard::BuildFocalLengthEstim
 	.Padding(0, 0, 10, 0)
 	[
 		SNew(SNumericEntryBox<float>)
-		.Value(MakeAttributeLambda([this]() { return TOptional<float>(FocalLengthEstimate); }))
-		.OnValueChanged(SNumericEntryBox<float>::FOnValueChanged::CreateLambda([this](float NewValue) { FocalLengthEstimate = NewValue; }))
+		.Value_UObject(this, &UCameraLensDistortionAlgoCheckerboard::GetFocalLengthEstimate)
+		.OnValueChanged_UObject(this, &UCameraLensDistortionAlgoCheckerboard::SetFocalLengthEstimate)
 	]
 
 	+ SHorizontalBox::Slot()
@@ -979,19 +902,32 @@ TSharedRef<SWidget> UCameraLensDistortionAlgoCheckerboard::BuildFocalLengthEstim
 	[
 		SNew(SCheckBox)
 		.Padding(FMargin(5, 0, 15, 0))
-		.IsChecked_Lambda([&]() -> ECheckBoxState
-		{
-			return bFixFocalLength ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-		})
-		.OnCheckStateChanged_Lambda([&](ECheckBoxState NewState) -> void
-		{
-			bFixFocalLength = (NewState == ECheckBoxState::Checked);
-		})
+		.IsChecked_UObject(this, &UCameraLensDistortionAlgoCheckerboard::IsFixFocalLengthChecked)
+		.OnCheckStateChanged_UObject(this, &UCameraLensDistortionAlgoCheckerboard::OnFixFocalLengthCheckStateChanged)
 		[
-			SNew(STextBlock)
-			.Text(LOCTEXT("FixText", "Fix?"))
+			SNew(STextBlock).Text(LOCTEXT("FixText", "Fix?"))
 		]
 	];
+}
+
+TOptional<float> UCameraLensDistortionAlgoCheckerboard::GetFocalLengthEstimate() const
+{
+	return FocalLengthEstimate;
+}
+
+void UCameraLensDistortionAlgoCheckerboard::SetFocalLengthEstimate(float NewValue)
+{
+	FocalLengthEstimate = NewValue;
+}
+
+ECheckBoxState UCameraLensDistortionAlgoCheckerboard::IsFixFocalLengthChecked() const
+{
+	return bFixFocalLength ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+}
+
+void UCameraLensDistortionAlgoCheckerboard::OnFixFocalLengthCheckStateChanged(ECheckBoxState NewState)
+{
+	bFixFocalLength = (NewState == ECheckBoxState::Checked);
 }
 
 TSharedRef<SWidget> UCameraLensDistortionAlgoCheckerboard::BuildFixImageCenterWidget()
@@ -1194,7 +1130,6 @@ void UCameraLensDistortionAlgoCheckerboard::ClearCalibrationRows()
 
 void UCameraLensDistortionAlgoCheckerboard::RefreshCoverage()
 {
-#if WITH_OPENCV
 	FCameraCalibrationStepsController* StepsController = Tool->GetCameraCalibrationStepsController();
 
 	if (!ensure(StepsController))
@@ -1202,26 +1137,18 @@ void UCameraLensDistortionAlgoCheckerboard::RefreshCoverage()
 		return;
 	}
 
-	FIntPoint Size = StepsController->GetCompRenderResolution();
-
-	CvCoverage.release();
-	CvCoverage = cv::Mat(cv::Size(Size.X, Size.Y), CV_8UC4);
+	UE::CameraCalibration::Private::ClearTexture(CoverageTexture);
 
 	for (const TSharedPtr<FLensDistortionCheckerboardRowData>& Row : CalibrationRows)
 	{
-		cv::Size CheckerboardSize(Row->NumCornerCols, Row->NumCornerRows);
+		TArray<FVector2f> CameraFeedAdjustedCorners = Row->Points2d;
+		const FIntPoint CoverageTextureSize = FIntPoint(CoverageTexture->GetSizeX(), CoverageTexture->GetSizeY());
+		const FIntPoint ImageSize = FIntPoint(Row->ImageWidth, Row->ImageHeight);
+		UE::CameraCalibration::Private::AdjustCorners(CameraFeedAdjustedCorners, CoverageTextureSize, ImageSize);
 
-		std::vector<cv::Point2f> Corners;
-
-		for (const FVector2D& Corner : Row->Points2d)
-		{
-			Corners.push_back(cv::Point2f(Corner.X, Corner.Y));
-		}
-
-		cv::drawChessboardCorners(CvCoverage, CheckerboardSize, Corners, true);
+		const FIntPoint CheckerboardDimensions = FIntPoint(Row->NumCornerCols, Row->NumCornerRows);
+		FOpenCVHelper::DrawCheckerboardCorners(Row->Points2d, CheckerboardDimensions, CoverageTexture);
 	}
-
-	CoverageTexture = FOpenCVHelper::TextureFromCvMat(CvCoverage, CoverageTexture);
 
 	// The coverage texture may have changed as a result of a change in size or pixel format.
 	// Therefore, the material parameter should be updated to ensure it is up to date.
@@ -1234,7 +1161,6 @@ void UCameraLensDistortionAlgoCheckerboard::RefreshCoverage()
 	}
 
 	StepsController->RefreshOverlay();
-#endif
 }
 
 

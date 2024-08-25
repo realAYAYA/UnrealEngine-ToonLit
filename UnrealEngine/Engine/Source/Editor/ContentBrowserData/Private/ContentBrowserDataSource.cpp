@@ -6,6 +6,7 @@
 #include "ContentBrowserDataSubsystem.h"
 #include "ContentBrowserItemData.h"
 #include "ContentBrowserItemPath.h"
+#include "ContentBrowserVirtualFolderDataPayload.h"
 #include "CoreTypes.h"
 #include "Features/IModularFeatures.h"
 #include "Internationalization/Internationalization.h"
@@ -573,7 +574,12 @@ FContentBrowserItemData UContentBrowserDataSource::CreateVirtualFolderItem(const
 		FolderDisplayNameOverride = LOCTEXT("EngineDataFolderDisplayName", "Engine");
 	}
 
-	return FContentBrowserItemData(this, EContentBrowserItemFlags::Type_Folder, InFolderPath, *FolderItemName, MoveTemp(FolderDisplayNameOverride), nullptr);
+	return FContentBrowserItemData(this,
+		EContentBrowserItemFlags::Type_Folder,
+		InFolderPath,
+		*FolderItemName,
+		MoveTemp(FolderDisplayNameOverride),
+		nullptr);
 }
 
 #undef LOCTEXT_NAMESPACE

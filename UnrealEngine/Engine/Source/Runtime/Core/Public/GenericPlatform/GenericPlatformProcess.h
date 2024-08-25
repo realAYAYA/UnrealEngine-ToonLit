@@ -115,6 +115,22 @@ protected:
 
 struct FProcHandle;
 
+/** Generic implementation of the per-process memory stats. */
+struct FPlatformProcessMemoryStats
+{
+	/** The amount of physical memory used by the process, in bytes. */
+	uint64 UsedPhysical;
+
+	/** The peak amount of physical memory used by the process, in bytes. */
+	uint64 PeakUsedPhysical;
+
+	/** Total amount of virtual memory used by the process, in bytes. */
+	uint64 UsedVirtual;
+
+	/** The peak amount of virtual memory used by the process, in bytes. */
+	uint64 PeakUsedVirtual;
+};
+
 /**
 * Generic implementation for most platforms, these tend to be unused and unimplemented
 **/
@@ -763,6 +779,11 @@ struct FGenericPlatformProcess
 	static bool SkipWaitForStats() { return false; }
 
 	/**
+	 * Queries the memory usage of the process. Returns whether the operation is supported and succeeded.
+	 */
+	static CORE_API bool TryGetMemoryUsage(FProcHandle& ProcessHandle, FPlatformProcessMemoryStats& OutStats) { return false; }
+
+	/**
 	 * specifies the thread to use for UObject reference collection
 	 */
 	static CORE_API ENamedThreads::Type GetDesiredThreadForUObjectReferenceCollector();
@@ -819,7 +840,7 @@ struct FGenericPlatformProcess
 		if (FPlatformMisc::HasTimedPauseCPUFeature())
 		{
 			uint64 PauseCycles = ReadCycleCounter() + Cycles;
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 			_tpause(0, PauseCycles);
 #elif __has_builtin(__builtin_ia32_tpause)
 			__builtin_ia32_tpause(0, (uint32)(PauseCycles >> 32), (uint32)PauseCycles);

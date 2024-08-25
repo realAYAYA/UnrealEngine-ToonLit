@@ -7,6 +7,7 @@
 #include "Memory/CompositeBuffer.h"
 #include "Memory/MemoryFwd.h"
 #include "Memory/SharedBuffer.h"
+#include "Misc/EnumClassFlags.h"
 #include "Templates/RemoveReference.h"
 #include "Templates/UnrealTemplate.h"
 
@@ -20,6 +21,20 @@ namespace UE::CompressedBuffer::Private { struct FHeader; }
 
 using ECompressedBufferCompressionLevel = FOodleDataCompression::ECompressionLevel;
 using ECompressedBufferCompressor = FOodleDataCompression::ECompressor;
+
+enum class ECompressedBufferDecompressFlags : uint32
+{
+	None = 0,
+
+	/**
+	 * Decompress each block to an intermediate buffer before copying it to the target address.
+	 *
+	 * Use this flag to maintain performance when decompressing to uncached or write-combined memory.
+	 */
+	IntermediateBuffer = 1 << 0,
+};
+
+ENUM_CLASS_FLAGS(ECompressedBufferDecompressFlags);
 
 /**
  * A compressed buffer stores compressed data in a self-contained format.
@@ -138,7 +153,8 @@ public:
 	 *
 	 * @return True if the requested range was decompressed, otherwise false.
 	 */
-	[[nodiscard]] CORE_API bool TryDecompressTo(FMutableMemoryView RawView) const;
+	[[nodiscard]] CORE_API bool TryDecompressTo(FMutableMemoryView RawView,
+		ECompressedBufferDecompressFlags Flags = ECompressedBufferDecompressFlags::None) const;
 
 	/**
 	 * Decompress into an owned buffer.
@@ -249,7 +265,8 @@ public:
 	 * @param RawOffset   The offset into the raw data from which to decompress.
 	 * @return True if the requested range was decompressed, otherwise false.
 	 */
-	[[nodiscard]] CORE_API bool TryDecompressTo(FMutableMemoryView RawView, uint64 RawOffset = 0);
+	[[nodiscard]] CORE_API bool TryDecompressTo(FMutableMemoryView RawView, uint64 RawOffset = 0,
+		ECompressedBufferDecompressFlags Flags = ECompressedBufferDecompressFlags::None);
 
 	/**
 	 * Decompress into an owned buffer.

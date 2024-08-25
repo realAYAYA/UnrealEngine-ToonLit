@@ -49,6 +49,7 @@ namespace Audio
 		virtual void Pause() override;
 		virtual bool IsFinished() override;
 		virtual float GetPlaybackPercent() const override;
+		virtual int64 GetNumFramesPlayed() const override;
 		virtual float GetEnvelopeValue() const override;
 		//~ End FSoundSource Interface
 
@@ -119,13 +120,22 @@ namespace Audio
 		/** Whether or not to use the source data override plugin */
 		bool UseSourceDataOverridePlugin() const;
 
+		/** Gets an accumulated volume value based on the Modulation Destination data of the WaveInstance's submix and all of the submix's ancestors */
+		float GetInheritedSubmixVolumeModulation() const;
+
 	private:
+		void UpdateSubmixSendLevels(const FSoundSubmixSendInfoBase& InSendInfo, EMixerSourceSubmixSendStage InSendStage);
 
 		FMixerDevice* MixerDevice;
 		FMixerBuffer* MixerBuffer;
 		TSharedPtr<FMixerSourceBuffer, ESPMode::ThreadSafe> MixerSourceBuffer;
 		FMixerSourceVoice* MixerSourceVoice;
 		IAudioLinkFactory::FAudioLinkSourcePushedSharedPtr AudioLink;
+		FMixerSubmixWeakPtr PreviousSubmixResolved;
+		TObjectKey<USoundSubmixBase> PrevousSubmix;
+
+		// These modulators are obtained from the submix and used only on binaural assets
+		bool bBypassingSubmixModulation;
 
 		uint32 bPreviousBusEnablement;
 		uint32 bPreviousBaseSubmixEnablement;
@@ -172,12 +182,12 @@ namespace Audio
 
 		// An array of submix sends from previous update. Allows us to clear out submix sends if they are no longer being sent.
 		TArray<FSoundSubmixSendInfo> PreviousSubmixSendSettings;
+		TArray<FAttenuationSubmixSendSettings> PreviousAttenuationSendSettings;
 
 		// Whether or not we're currently releasing our resources. Prevents recycling the source until release is finished.
 		FThreadSafeBool bIsReleasing;
 
 		uint32 bEditorWarnedChangedSpatialization : 1;
-		uint32 bUsingHRTFSpatialization : 1;
 		uint32 bIs3D : 1;
 		uint32 bDebugMode : 1;
 		uint32 bIsVorbis : 1;

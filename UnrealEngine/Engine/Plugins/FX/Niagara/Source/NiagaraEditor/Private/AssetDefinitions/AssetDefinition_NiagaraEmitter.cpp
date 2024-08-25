@@ -97,28 +97,26 @@ namespace MenuExtension_NiagaraEmitter
 		const UContentBrowserAssetContextMenuContext* CBContext = UContentBrowserAssetContextMenuContext::FindContextWithAssets(InContext);
 		for (UNiagaraEmitter* Emitter : CBContext->LoadSelectedObjects<UNiagaraEmitter>())
 		{
-			if (Emitter->IsVersioningEnabled())
+			FString Name;
+			FString PackageName;
+			AssetToolsModule.Get().CreateUniqueAssetName(Emitter->GetOutermost()->GetName(), DefaultSuffix, PackageName, Name);
+
+			// Create the factory used to generate the asset
+			UNiagaraEmitter* NewEmitter = Cast<UNiagaraEmitter>(AssetToolsModule.Get().DuplicateAssetWithDialog(Name, FPackageName::GetLongPackagePath(PackageName), Emitter));
+
+			if (NewEmitter != nullptr)
 			{
-				FString Name;
-				FString PackageName;
-				AssetToolsModule.Get().CreateUniqueAssetName(Emitter->GetOutermost()->GetName(), DefaultSuffix, PackageName, Name);
+				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Emitter);
 
-				// Create the factory used to generate the asset
-				UNiagaraEmitter* NewEmitter = Cast<UNiagaraEmitter>(AssetToolsModule.Get().DuplicateAssetWithDialog(Name, FPackageName::GetLongPackagePath(PackageName), Emitter));
+				NewEmitter->Modify();
+				NewEmitter->bIsInheritable = true;
+				NewEmitter->GetLatestEmitterData()->GraphSource->MarkNotSynchronized(TEXT("Emitter created"));
 
-				if (NewEmitter != nullptr)
-				{
-					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Emitter);
+				Emitter->Modify();
+				Emitter->SetParent(FVersionedNiagaraEmitter(NewEmitter, NewEmitter->GetExposedVersion().VersionGuid));
+				Emitter->GetLatestEmitterData()->GraphSource->MarkNotSynchronized(TEXT("Emitter parent changed"));
 
-					NewEmitter->Modify();
-					NewEmitter->GetLatestEmitterData()->GraphSource->MarkNotSynchronized(TEXT("Emitter created"));
-
-					Emitter->Modify();
-					Emitter->SetParent(FVersionedNiagaraEmitter(NewEmitter, NewEmitter->GetExposedVersion().VersionGuid));
-					Emitter->GetLatestEmitterData()->GraphSource->MarkNotSynchronized(TEXT("Emitter parent changed"));
-
-					ObjectsToSync.Add(NewEmitter);
-				}
+				ObjectsToSync.Add(NewEmitter);
 			}
 		}
 
@@ -129,23 +127,6 @@ namespace MenuExtension_NiagaraEmitter
 			FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
 			ContentBrowserModule.Get().SyncBrowserToAssets(ObjectsToSync);
 		}
-	}
-	
-	bool CanExecuteCreateDuplicateParent(const FToolMenuContext& InContext)
-	{
-		const static FName NAME_VersioningEnabled("VersioningEnabled");
-	
-		const UContentBrowserAssetContextMenuContext* CBContext = UContentBrowserAssetContextMenuContext::FindContextWithAssets(InContext);
-        for (const FAssetData& SelectedAsset : CBContext->SelectedAssets)
-        {
-			bool VersioningEnabled = false;
-        	if (SelectedAsset.GetTagValue<bool>(NAME_VersioningEnabled, VersioningEnabled) && !VersioningEnabled)
-        	{
-        		return false;
-        	}
-        }
- 
-		return true;
 	}
 
 	static void ExecuteMarkDependentCompilableAssetsDirty(const FToolMenuContext& InContext)
@@ -179,7 +160,6 @@ namespace MenuExtension_NiagaraEmitter
 
 					FToolUIAction UIAction;
 					UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecuteCreateDuplicateParent);
-					UIAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateStatic(&CanExecuteCreateDuplicateParent);
 					InSection.AddMenuEntry("Emitter_CreateDuplicateParent", Label, ToolTip, Icon, UIAction);
 				}
 				{

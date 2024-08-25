@@ -19,7 +19,6 @@
 #include "Styling/CoreStyle.h"
 #include "Styling/ISlateStyle.h"
 #include "Styling/SlateTypes.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/NameTypes.h"
 #include "Widgets/SBoxPanel.h"

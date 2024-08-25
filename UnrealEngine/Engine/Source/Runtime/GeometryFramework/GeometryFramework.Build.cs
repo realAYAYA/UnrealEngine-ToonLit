@@ -8,8 +8,11 @@ public class GeometryFramework : ModuleRules
 	{
 		//PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		// this is required for raytracing suppport?
-		PublicIncludePaths.Add("../Shaders/Shared");
+		PublicIncludePathModuleNames.AddRange(
+			new string[] {
+				"Shaders" // this is required for raytracing suppport?
+			}
+		);
 		
 		// These are required to register filters to the Level Editor Outliner
 		if (Target.Type == TargetType.Editor)

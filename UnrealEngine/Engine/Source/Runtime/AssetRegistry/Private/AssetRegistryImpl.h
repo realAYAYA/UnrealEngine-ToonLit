@@ -80,13 +80,13 @@ namespace Impl
 		TMap<FTopLevelAssetPath, FTopLevelAssetPath> InheritanceMap;
 		/** Map from Class->(All subclasses) for all classes including native classes and blueprint classes. Updated on demand. */
 		TMap<FTopLevelAssetPath, TArray<FTopLevelAssetPath>> ReverseInheritanceMap;
-		/** Snapshot of GetRegisteredClassesVersionNumber() at the time of the last update, to invalidate on changes to classes. */
-		uint64 RegisteredClassesVersionNumber = MAX_uint64;
+		/** Snapshot of GetCurrentAllClassesVersionNumber() at the time of the last update, to invalidate on changes to classes. */
+		uint64 SavedAllClassesVersionNumber = MAX_uint64;
 		/** Dirty flag to invalidate on other changes requiring a recompute. */
 		bool bDirty = true;
 
 		/** Report whether the dirty flag and other checks indicate this buffer does not need to be updated. */
-		bool IsUpToDate(uint64 CurrentClassesVersionNumber) const;
+		bool IsUpToDate(uint64 CurrentAllClassesVersionNumber) const;
 		/** Delete data and free allocations. */
 		void Clear();
 		/** Report size of dynamic allocations. */
@@ -99,6 +99,17 @@ namespace Impl
 		Active,
 		Complete,
 		UnableToProgress,
+		WaitingForEvents,
+	};
+
+	/** Affects how rules are applied to improve loading/runtime performance */
+	enum EPerformanceMode : uint8
+	{
+		// Handling slow async load
+		BulkLoading,
+
+		// Not changing, optimize for runtime queries
+		MostlyStatic,
 	};
 }
 
@@ -118,22 +129,20 @@ public:
 	/** Construct the AssetRegistryImpl, including initial scans if applicable. */
 	void Initialize(Impl::FInitializeContext& Context);
 	void OnEnginePreExit();
-	void OnAllModuleLoadingPhasesComplete();
 
 	// Helpers for functions of the same name from UAssetRegistryImpl
 
 
 	bool HasAssets(const FName PackagePath, const bool bRecursive) const;
-	FSoftObjectPath GetRedirectedObjectPath(const FSoftObjectPath& ObjectPath) const;
-	UE_DEPRECATED(5.1, "Asset path FNames have been deprecated, use FSoftObjectPath instead.")
-	FName GetRedirectedObjectPath(const FName ObjectPath) const;
+	FSoftObjectPath GetRedirectedObjectPath(const FSoftObjectPath& ObjectPath, UE::AssetRegistry::Impl::FEventContext* EventContext, 
+		UE::AssetRegistry::Impl::FClassInheritanceContext* InheritanceContext, bool bNeedsScanning);
 	bool GetAncestorClassNames(Impl::FClassInheritanceContext& InheritanceContext, FTopLevelAssetPath ClassName,
 		TArray<FTopLevelAssetPath>& OutAncestorClassNames) const;
 	void CompileFilter(Impl::FClassInheritanceContext& InheritanceContext, const FARFilter& InFilter,
 		FARCompiledFilter& OutCompiledFilter) const;
 	void SetTemporaryCachingMode(bool bEnable);
 	void SetTemporaryCachingModeInvalidated();
-	bool AddPath(Impl::FEventContext& EventContext, const FString& PathToAdd);
+	bool AddPath(Impl::FEventContext& EventContext, FStringView PathToAdd);
 	void SearchAllAssets(Impl::FEventContext& EventContext, Impl::FClassInheritanceContext& InheritanceContext,
 		bool bSynchronousSearch);
 	bool GetVerseFilesByPath(FName PackagePath, TArray<FName>* OutFilePaths, bool bRecursive) const;
@@ -180,6 +189,8 @@ public:
 
 	/** Waits for the gatherer to be idle if it is operating synchronously. */
 	void WaitForGathererIdleIfSynchronous();
+	/** Waits for the gatherer to be idle. */
+	void WaitForGathererIdle(float TimeoutSeconds);
 	/** Callback type for TickGatherer */
 	typedef TFunctionRef<void(const TMultiMap<FName, FAssetData*>&)> FAssetsFoundCallback;
 	/** Consume any results from the gatherer and return its status */
@@ -189,13 +200,14 @@ public:
 	/** Send a log message with the search statistics. 
 	 *  StartTime is used to report wall clock search time in the case of background scan
 	 */
-	void LogSearchDiagnostics(double StartTime) const;
+	void LogSearchDiagnostics(double StartTime);
 	/** Look for and load a single AssetData result from the gatherer. */
 	void TickGatherPackage(Impl::FEventContext& EventContext, const FString& PackageName, const FString& LocalPath);
 	void ClearGathererCache();
 #if WITH_EDITOR
 	void AssetsSaved(UE::AssetRegistry::Impl::FEventContext& EventContext, TArray<FAssetData>&& Assets);
-	void GetProcessLoadedAssetsBatch(TArray<const UObject*>& OutLoadedAssets, uint32 BatchSize);
+	void GetProcessLoadedAssetsBatch(TArray<const UObject*>& OutLoadedAssets, uint32 BatchSize,
+		bool bUpdateDiskCacheAfterLoad);
 	void PushProcessLoadedAssetsBatch(Impl::FEventContext& EventContext,
 		TArrayView<FAssetData> LoadedAssetDatas, TArrayView<const UObject*> UnprocessedFromBatch);
 	/** Call LoadCalculatedDependencies on each Package updated after the last LoadCalculatedDependencies. */
@@ -227,6 +239,8 @@ public:
 	bool RemoveAssetPath(Impl::FEventContext& EventContext, FName PathToRemove, bool bEvenIfAssetsStillExist = false);
 	/** Removes the asset data associated with this package from the look-up maps */
 	void RemovePackageData(Impl::FEventContext& EventContext, const FName PackageName);
+	/** Adds the Verse file to the look up maps */
+	void AddVerseFile(Impl::FEventContext& EventContext, FName VerseFilePathToAdd);
 	/** Removes the Verse file from the look-up maps */
 	void RemoveVerseFile(Impl::FEventContext& EventContext, FName VerseFilePathToRemove);
 
@@ -234,16 +248,25 @@ public:
 	void GetSubClasses(Impl::FClassInheritanceContext& InheritanceContext, const TArray<FTopLevelAssetPath>& InClassNames,
 		const TSet<FTopLevelAssetPath>& ExcludedClassNames, TSet<FTopLevelAssetPath>& SubClassNames) const;
 
-	bool IsUpdateDiskCacheAfterLoad() const { return bUpdateDiskCacheAfterLoad; }
 	bool IsInitialSearchCompleted() const { return bInitialSearchCompleted; }
 	bool IsTempCachingEnabled() const { return bIsTempCachingEnabled; }
 	bool IsTempCachingAlwaysEnabled() const { return bIsTempCachingAlwaysEnabled; }
 	bool IsInitialSearchStarted() const { return bInitialSearchStarted; }
 	bool IsSearchAllAssets() const { return bSearchAllAssets; }
 	Impl::FClassInheritanceBuffer& GetTempCachedInheritanceBuffer() { return TempCachedInheritanceBuffer; }
-	uint64 GetClassGeneratorNamesRegisteredClassesVersionNumber() const { return ClassGeneratorNamesRegisteredClassesVersionNumber; }
+	uint64 GetSavedGeneratorClassesVersionNumber() const { return SavedGeneratorClassesVersionNumber; }
+	uint64 GetSavedAllClassesVersionNumber() const { return SavedAllClassesVersionNumber; }
+	static uint64 GetCurrentGeneratorClassesVersionNumber();
+	static uint64 GetCurrentAllClassesVersionNumber();
+
 	/** Get a copy of the cached serialization options that were parsed from ini */
 	void CopySerializationOptions(FAssetRegistrySerializationOptions& OutOptions, ESerializationTarget Target) const;
+	
+	/** Query the performance mode, which modifies how data structures are loaded */
+	Impl::EPerformanceMode GetPerformanceMode() const { return PerformanceMode; }
+	void SetPerformanceMode(Impl::EPerformanceMode NewMode);
+	bool ShouldSortDependencies() const;
+	bool ShouldSortReferencers() const;
 
 	const FAssetRegistryState& GetState() const;
 	const FPathTree& GetCachedPathTree() const;
@@ -346,6 +369,9 @@ private:
 	/** Moves a premade asset registry state into this AR */
 	void LoadPremadeAssetRegistry(Impl::FEventContext& Context,
 		Premade::ELoadResult LoadResult, FAssetRegistryState&& ARState);
+	/** Add MountPoints of all AssetDatas currently registered in this->State to the list of PersistentMountPoints. */
+	void UpdatePersistentMountPoints();
+	void OnInitialSearchCompleted(Impl::FEventContext& EventContext);
 
 private:
 
@@ -375,10 +401,8 @@ private:
 	/** Persistent InheritanceBuffer used when SetTemporaryCachingMode is on */
 	Impl::FClassInheritanceBuffer TempCachedInheritanceBuffer;
 
-	uint64 ClassGeneratorNamesRegisteredClassesVersionNumber;
-
-	/** If true, will cache AssetData loaded from in memory assets back into the disk cache */
-	bool bUpdateDiskCacheAfterLoad;
+	uint64 SavedGeneratorClassesVersionNumber;
+	uint64 SavedAllClassesVersionNumber;
 
 	/** The tree of known cached paths that assets may reside within */
 	FPathTree CachedPathTree;
@@ -388,6 +412,17 @@ private:
 
 	/** Lists of results from the background thread that are waiting to get processed by the main thread */
 	FAssetDataGatherer::FResults BackgroundResults;
+
+#if !NO_LOGGING
+	/** Memory profiling information: How much memory is being used by the tags for each class. */
+	TMap<FTopLevelAssetPath, int64> TagSizeByClass;
+#endif
+
+	/**
+	 * MountPoints, in the format of LongPackageName with no trailing slash, that should not have their
+	 * AssetDatas removed even if the MountPoint is dismounted.
+	 */
+	TSet<FName> PersistentMountPoints;
 
 	/** Time spent processing Gather results */
 	float StoreGatherResultsTimeSeconds;
@@ -405,14 +440,10 @@ private:
 	 * because preloading can add assets.
 	 */
 	bool bPreloadingComplete = false;
-	/**
-	 * Flag to indicate LaunchEngineLoop's AllModuleLoadingPhases is complete; finishing the background search is
-	 * blocked until preloading complete because plugins can be mounted during startup up until that point, and
-	 * we need to wait for all the plugins that will load before declaring completion.
-	 */
-	bool bAllModuleLoadingPhasesComplete = false;
 	/** Status of the background search, so we can take actions when it changes to or from idle */
 	Impl::EGatherStatus GatherStatus;
+	/** What kind of performance mode this is in, used to optimize for initial loading vs runtime */
+	Impl::EPerformanceMode PerformanceMode;
 
 	/**
 	 * Enables extra check to make sure path still mounted before adding.
@@ -422,6 +453,8 @@ private:
 
 	/** Record whether SearchAllAssets has been called; if so we will also search new mountpoints when added */
 	bool bSearchAllAssets;
+
+	bool bVerboseLogging;
 
 	/** List of all class names derived from Blueprint (including Blueprint itself) */
 	TSet<FTopLevelAssetPath> ClassGeneratorNames;
@@ -455,7 +488,7 @@ private:
 	TMultiMap<FString, FName> DirectoryReferencers;
 
 	/** A map of per asset class dependency gatherer called in LoadCalculatedDependencies */
-	TMultiMap<UClass*, UE::AssetDependencyGatherer::Private::FRegisteredAssetDependencyGatherer*> RegisteredDependencyGathererClasses;
+	TMultiMap<FTopLevelAssetPath, UE::AssetDependencyGatherer::Private::FRegisteredAssetDependencyGatherer*> RegisteredDependencyGathererClasses;
 	bool bRegisteredDependencyGathererClassesDirty;
 #endif
 #if WITH_ENGINE && WITH_EDITOR

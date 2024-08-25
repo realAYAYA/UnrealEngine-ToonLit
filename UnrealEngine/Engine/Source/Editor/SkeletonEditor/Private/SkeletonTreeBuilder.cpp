@@ -94,6 +94,11 @@ void FSkeletonTreeBuilder::Build(FSkeletonTreeBuilderOutput& Output)
 		AddBones(Output);
 	}
 
+	if (BuilderArgs.bShowVirtualBones)
+	{
+		AddVirtualBones(Output);
+	}
+
 	if (BuilderArgs.bShowSockets)
 	{
 		AddSockets(Output);
@@ -102,11 +107,6 @@ void FSkeletonTreeBuilder::Build(FSkeletonTreeBuilderOutput& Output)
 	if (BuilderArgs.bShowAttachedAssets)
 	{
 		AddAttachedAssets(Output);
-	}
-
-	if (BuilderArgs.bShowVirtualBones)
-	{
-		AddVirtualBones(Output);
 	}
 }
 
@@ -226,7 +226,7 @@ void FSkeletonTreeBuilder::AddBones(FSkeletonTreeBuilderOutput& Output)
 			{
 				SortNumber += static_cast<int32>(SortString[Index] - '0') * PlaceValue;
 			}
-			SortString.LeftInline(Index + 1, false);
+			SortString.LeftInline(Index + 1, EAllowShrinking::No);
 		}
 
 		bool operator<(const FBoneInfo& RHS)
@@ -355,7 +355,7 @@ void FSkeletonTreeBuilder::AddSocketsFromData(const TArray< USkeletalMeshSocket*
 			}
 		}
 
-		Output.Add(CreateSocketTreeItem(Socket, ParentType, bIsCustomized), Socket->BoneName, FSkeletonTreeBoneItem::GetTypeId(), /*bAddToHead*/ true);
+		Output.Add(CreateSocketTreeItem(Socket, ParentType, bIsCustomized), Socket->BoneName, { FSkeletonTreeBoneItem::GetTypeId(), FSkeletonTreeVirtualBoneItem::GetTypeId() }, /*bAddToHead*/ true);
 	}
 }
 

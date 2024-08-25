@@ -2,10 +2,10 @@
 
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
-using System.Diagnostics.CodeAnalysis;
 
 namespace UnrealGameSync
 {

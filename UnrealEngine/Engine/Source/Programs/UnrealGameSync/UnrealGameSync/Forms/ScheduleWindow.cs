@@ -38,7 +38,7 @@ namespace UnrealGameSync
 			AddProjects(scheduledProjects, localFileToProject);
 			AddProjects(openProjects, localFileToProject);
 
-			foreach(UserSelectedProjectSettings project in localFileToProject.Values.OrderBy(x => x.ToString()))
+			foreach (UserSelectedProjectSettings project in localFileToProject.Values.OrderBy(x => x.ToString()))
 			{
 				bool enabled = scheduledProjects.Any(x => x.LocalPath == project.LocalPath);
 				ProjectListBox.Items.Add(project, enabled);
@@ -105,9 +105,9 @@ namespace UnrealGameSync
 
 		private static void AddProjects(IEnumerable<UserSelectedProjectSettings> projects, Dictionary<string, UserSelectedProjectSettings> localFileToProject)
 		{
-			foreach(UserSelectedProjectSettings project in projects)
+			foreach (UserSelectedProjectSettings project in projects)
 			{
-				if(project.LocalPath != null)
+				if (project.LocalPath != null)
 				{
 					localFileToProject[project.LocalPath] = project;
 				}
@@ -122,9 +122,9 @@ namespace UnrealGameSync
 			settings.ScheduleAnyOpenProject = false;
 			settings.ScheduleProjects.Clear();
 
-			foreach(int index in ProjectListBox.CheckedIndices.OfType<int>())
+			foreach (int index in ProjectListBox.CheckedIndices.OfType<int>())
 			{
-				if(index == 0)
+				if (index == 0)
 				{
 					settings.ScheduleAnyOpenProject = true;
 				}

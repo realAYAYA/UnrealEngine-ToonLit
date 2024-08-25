@@ -264,6 +264,40 @@ float4 WaveBroadcast(const FWaveBroadcastSettings Settings, float4 v)
 } 
 
 
+CALL_SITE_DEBUGLOC
+bool WaveBroadcast(const FWaveBroadcastSettings Settings, bool x)
+{
+	return bool(WaveBroadcast(Settings, uint(x)));
+}
+
+CALL_SITE_DEBUGLOC
+bool2 WaveBroadcast(const FWaveBroadcastSettings Settings, bool2 v)
+{
+	return bool2(
+		WaveBroadcast(Settings, v.x),
+		WaveBroadcast(Settings, v.y));
+} 
+
+CALL_SITE_DEBUGLOC
+bool3 WaveBroadcast(const FWaveBroadcastSettings Settings, bool3 v)
+{
+	return bool3(
+		WaveBroadcast(Settings, v.x),
+		WaveBroadcast(Settings, v.y),
+		WaveBroadcast(Settings, v.z));
+}
+
+CALL_SITE_DEBUGLOC
+bool4 WaveBroadcast(const FWaveBroadcastSettings Settings, bool4 v)
+{
+	return bool4(
+		WaveBroadcast(Settings, v.x),
+		WaveBroadcast(Settings, v.y),
+		WaveBroadcast(Settings, v.z),
+		WaveBroadcast(Settings, v.w));
+} 
+
+
 #if PLATFORM_SUPPORTS_REAL_TYPES
 
 CALL_SITE_DEBUGLOC

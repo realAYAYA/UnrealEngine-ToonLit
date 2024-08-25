@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Acls;
+using EpicGames.Horde.Acls;
 
 namespace Horde.Server.Notifications
 {
@@ -12,6 +12,6 @@ namespace Horde.Server.Notifications
 		/// <summary>
 		/// Ability to subscribe to notifications
 		/// </summary>
-		public static readonly AclAction CreateSubscription = new AclAction("CreateSubscription");
+		public static AclAction CreateSubscription { get; } = new AclAction("CreateSubscription");
 	}
 }

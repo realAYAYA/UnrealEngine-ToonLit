@@ -131,6 +131,13 @@ public:
 	/** Returns the root model of the hierarchy, i.e. the parent model that has no parent */
 	FViewModelPtr GetRoot() const;
 
+
+	/** Get this model's unique, non-persistent and non-deterministic ID */
+	uint32 GetModelID() const
+	{
+		return ModelID;
+	}
+
 public:
 
 	bool IsConstructed() const;
@@ -278,6 +285,9 @@ private:
 	         looking at). Such models are safe to move due to children being linked lists
 	 */
 	int32 ActiveIterationCount;
+
+	/** Non-deterministic, non-persistent, serially increasing model ID unique to this instance */
+	uint32 ModelID;
 
 	/**
 	 * Flag to track whether this view model needs to be constructed

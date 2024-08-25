@@ -42,7 +42,6 @@
 
 
 #if PLATFORM_WINDOWS
-	#include "Windows/WindowsHWrapper.h"
 // For WAVEFORMATEXTENSIBLE
 	#include "Windows/AllowWindowsPlatformTypes.h"
 #include <mmreg.h>
@@ -72,8 +71,11 @@
 #include "AutoReimport/AutoReimportUtilities.h"
 #include "AssetToolsModule.h"
 
+#include "InterchangeAssetImportData.h"
 #include "InterchangeManager.h"
 #include "InterchangeResultsContainer.h"
+
+#include "AssetCompilingManager.h"
 
 #if WITH_EDITOR
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -105,11 +107,13 @@ FEditorDelegates::FOnEditorModeTransitioned				FEditorDelegates::EditorModeEnter
 FEditorDelegates::FOnEditorModeTransitioned				FEditorDelegates::EditorModeExit;
 FEditorDelegates::FOnEditorModeIDTransitioned			FEditorDelegates::EditorModeIDEnter;
 FEditorDelegates::FOnEditorModeIDTransitioned			FEditorDelegates::EditorModeIDExit;
+FEditorDelegates::FOnPIEEvent							FEditorDelegates::StartPIE;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::PreBeginPIE;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::BeginPIE;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::PrePIEEnded;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::PostPIEStarted;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::EndPIE;
+FEditorDelegates::FOnPIEEvent							FEditorDelegates::ShutdownPIE;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::PausePIE;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::ResumePIE;
 FEditorDelegates::FOnPIEEvent							FEditorDelegates::SingleStepPIE;
@@ -152,6 +156,7 @@ FEditorDelegates::FOnAssetsAddExtraObjectsToDelete		FEditorDelegates::OnAssetsAd
 FEditorDelegates::FOnAssetsPreDelete					FEditorDelegates::OnAssetsPreDelete;
 FEditorDelegates::FOnAssetsDeleted						FEditorDelegates::OnAssetsDeleted;
 FEditorDelegates::FOnAssetDragStarted					FEditorDelegates::OnAssetDragStarted;
+FEditorDelegates::FOnPreForceDeleteObjects				FEditorDelegates::OnPreForceDeleteObjects;
 FSimpleMulticastDelegate								FEditorDelegates::OnEnableGestureRecognizerChanged;
 FSimpleMulticastDelegate								FEditorDelegates::OnActionAxisMappingsChanged;
 FEditorDelegates::FOnAddLevelToWorld					FEditorDelegates::OnAddLevelToWorld;
@@ -172,6 +177,7 @@ FEditorDelegates::FOnViewAssetIdentifiers				FEditorDelegates::OnEditAssetIdenti
 FEditorDelegates::FOnRestartRequested					FEditorDelegates::OnRestartRequested;
 FEditorDelegates::FOnEditorBoot							FEditorDelegates::OnEditorBoot;
 FEditorDelegates::FOnEditorInitialized					FEditorDelegates::OnEditorInitialized;
+FEditorDelegates::FOnExternalContentResolved			FEditorDelegates::OnExternalContentResolved;
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
@@ -294,7 +300,9 @@ UE::Interchange::FAssetImportResultRef FReimportManager::ReimportAsync(UObject* 
 
 	bool bUseInterchangeFramework = UInterchangeManager::IsInterchangeImportEnabled();;
 	UInterchangeManager& InterchangeManager = UInterchangeManager::GetInterchangeManager();
-
+	
+	const int32 RealSourceFileIndex = SourceFileIndex == INDEX_NONE ? 0 : SourceFileIndex;
+	
 	bool bSuccess = false;
 	if ( Obj )
 	{
@@ -344,7 +352,6 @@ UE::Interchange::FAssetImportResultRef FReimportManager::ReimportAsync(UObject* 
 			}
 			else
 			{
-				int32 RealSourceFileIndex = SourceFileIndex == INDEX_NONE ? 0 : SourceFileIndex;
 				if (bForceNewFile)
 				{
 					if (SourceFilenames.IsValidIndex(RealSourceFileIndex))
@@ -409,10 +416,41 @@ UE::Interchange::FAssetImportResultRef FReimportManager::ReimportAsync(UObject* 
 			{
 				// Reimporting the asset from a new file
 				CanReimportHandler->SetReimportPaths(Obj, PreferredReimportFile, SourceFileIndex);
+				//Update the local source file
+				if (SourceFilenames.IsValidIndex(RealSourceFileIndex))
+				{
+					SourceFilenames[RealSourceFileIndex] = PreferredReimportFile;
+				}
 			}
 
 			if ( bValidSourceFilename )
 			{
+				//Convert the import data if it's needed and choose a new valid reimport handler after the conversion is done.
+				//This allow us to re-import:
+				// Interchange -> Legacy Fbx    ---> Asset was imported with Interchange (gltf, fbx, obj, ...), Interchange is turn off for fbx and the provided source file is fbx
+				// Legacy Fbx -> Interchange    ---> Asset was imported with Legacy Fbx, the file use for re-import is supported by Interchange (fbx, gltf, obj, ...)
+				{
+					const FString ReimportFilename = SourceFilenames.IsValidIndex(RealSourceFileIndex) ? SourceFilenames[RealSourceFileIndex] : FString();
+					const FString ReimportFilenameExtension = FPaths::GetExtension(ReimportFilename).ToLower();
+					//Convertion will return false if there is no conversion to do.
+					if (InterchangeManager.ConvertImportData(Obj, ReimportFilenameExtension))
+					{
+						for (int32 NewFileHandlerIndex = 0; NewFileHandlerIndex < Handlers.Num(); ++NewFileHandlerIndex)
+						{
+							SourceFilenames.Empty();
+							if (!PreferredReimportFile.IsEmpty())
+							{
+								Handlers[NewFileHandlerIndex]->SetPreferredReimportPath(PreferredReimportFile);
+							}
+							if (Handlers[NewFileHandlerIndex]->CanReimport(Obj, SourceFilenames))
+							{
+								CanReimportHandler = Handlers[NewFileHandlerIndex];
+								break;
+							}
+						}
+					}
+				}
+
 				if (bUseInterchangeFramework && CanReimportHandler->IsInterchangeFactory())
 				{
 					// Make sure SourceFilenames reflects the source filenames in Obj
@@ -421,7 +459,6 @@ UE::Interchange::FAssetImportResultRef FReimportManager::ReimportAsync(UObject* 
 					{
 						check( SourceFilenames.Num() > 0 );
 
-						int32 RealSourceFileIndex = SourceFileIndex == INDEX_NONE ? 0 : SourceFileIndex;
 						int32 RealValidSourceFileIndex = SourceFilenames.IsValidIndex(RealSourceFileIndex) ? RealSourceFileIndex : 0;
 						UE::Interchange::FScopedSourceData ScopedSourceData(SourceFilenames[RealValidSourceFileIndex]);
 						CanReimportHandler->SetReimportSourceIndex(Obj, SourceFileIndex);
@@ -531,6 +568,8 @@ UE::Interchange::FAssetImportResultRef FReimportManager::ReimportAsync(UObject* 
 		}
 	}
 
+	FAssetCompilingManager::Get().FinishCompilationForObjects({Obj});
+
 	// Let listeners know whether the reimport was successful or not
 	PostReimport.Broadcast( Obj, bSuccess );
 
@@ -542,6 +581,7 @@ UE::Interchange::FAssetImportResultRef FReimportManager::ReimportAsync(UObject* 
 		ImportResultSynchronous->GetResults()->Add<UInterchangeResultError_ReimportFail>();
 	}
 	ImportResultSynchronous->SetDone();
+
 	return ImportResultSynchronous;
 }
 
@@ -698,19 +738,23 @@ void FReimportManager::SortHandlersIfNeeded()
 
 void FReimportManager::OnInterchangePostReimported(UObject* ReimportAsset) const
 {
-	if (ReimportAsset)
+	if (!ReimportAsset)
 	{
-		TArray<UObject*> ObjectArray;
-		ObjectArray.Add(ReimportAsset);
-		//UAssetToolsImpl::Get().SyncBrowserToAssets(ObjectArray);
+		return;
+	}
+
+	if (FEngineAnalytics::IsAvailable())
+	{
+		TArray<FAnalyticsEventAttribute> Attributes;
+		Attributes.Add(FAnalyticsEventAttribute(TEXT("ObjectType"), ReimportAsset->GetClass()->GetName()));
+		FEngineAnalytics::GetProvider().RecordEvent(TEXT("Editor.Usage.AssetReimported"), Attributes);
+	}
+
+	PostReimport.Broadcast(ReimportAsset, true);
+
+	if (GEditor)
+	{
 		GEditor->BroadcastObjectReimported(ReimportAsset);
-		if (FEngineAnalytics::IsAvailable())
-		{
-			TArray<FAnalyticsEventAttribute> Attributes;
-			Attributes.Add(FAnalyticsEventAttribute(TEXT("ObjectType"), ReimportAsset->GetClass()->GetName()));
-			FEngineAnalytics::GetProvider().RecordEvent(TEXT("Editor.Usage.AssetReimported"), Attributes);
-		}
-		PostReimport.Broadcast(ReimportAsset, true);
 		GEditor->RedrawAllViewports();
 	}
 }
@@ -1879,13 +1923,13 @@ void ExecuteInvalidateCachedShaders(const TArray< FString >& Args)
 	IFileHandle* FileHandle = PlatformFile.OpenWrite(*FileName);
 	if(FileHandle)
 	{
-		FString Guid = FString(
+		FString Guid = FString::Printf(
+			TEXT("// Copyright Epic Games, Inc. All Rights Reserved.\n")
 			TEXT("// This file is automatically generated by the console command r.InvalidateCachedShaders\n")
 			TEXT("// Each time the console command is executed it generates a new GUID. As this file is included\n")
 			TEXT("// in Platform.ush (which should be included in any shader) it allows to invalidate the shader DDC.\n")
 			TEXT("// \n")
-			TEXT("// GUID = "))
-			+ FGuid::NewGuid().ToString();
+			TEXT("#pragma message(\"UESHADERMETADATA_VERSION %s\")"), *FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens));
 
 		FileHandle->Write((const uint8*)TCHAR_TO_ANSI(*Guid), Guid.Len());
 		delete FileHandle;

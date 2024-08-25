@@ -1136,10 +1136,10 @@ void RecombineMainCS(
 
 	// Ensure that alpha values that are expected to be opaque (but are only close to opaque) are forced to be opaque.
 	// (0.005 chosen to accomodate handling of 1/255)
-	if (OutputFinalSceneColor.a < 0.005)
-	{
-		OutputFinalSceneColor.a = 0;
-	}
+	#if CONFIG_DOF_ALPHA
+		OutputFinalSceneColor.a = select(OutputFinalSceneColor.a < 0.005, 0.0, OutputFinalSceneColor.a);
+		OutputFinalSceneColor.a = select(OutputFinalSceneColor.a > 0.995, 1.0, OutputFinalSceneColor.a);
+	#endif
 	
 	// Debug optimisation colors.
 	#if 0

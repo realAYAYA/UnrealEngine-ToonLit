@@ -6,9 +6,6 @@
 
 #include "Windows/AllowWindowsPlatformTypes.h"
 
-#if PLATFORM_WINDOWS
-#include "Windows/MinWindows.h"
-#endif //PLATFORM_WINDOWS
 
 THIRD_PARTY_INCLUDES_START
 #include <winerror.h>

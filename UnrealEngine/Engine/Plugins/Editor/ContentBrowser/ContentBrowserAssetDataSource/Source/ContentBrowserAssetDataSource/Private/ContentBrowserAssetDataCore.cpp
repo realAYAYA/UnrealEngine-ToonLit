@@ -3,48 +3,59 @@
 #include "ContentBrowserAssetDataCore.h"
 
 #include "AssetDefinition.h"
-#include "ContentBrowserDataSource.h"
-#include "ContentBrowserAssetDataPayload.h"
-#include "IAssetTools.h"
-#include "ContentBrowserDataSubsystem.h"
-#include "IContentBrowserDataModule.h"
+#include "AssetFileContextMenu.h"
+#include "AssetFolderContextMenu.h"
+#include "AssetPropertyTagCache.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetViewUtils.h"
-#include "AssetPropertyTagCache.h"
-#include "Editor/UnrealEdTypes.h"
-#include "ObjectTools.h"
-#include "HAL/FileManager.h"
-#include "FileHelpers.h"
-#include "Editor.h"
-#include "IAssetTypeActions.h"
-#include "Subsystems/AssetEditorSubsystem.h"
-#include "AssetFolderContextMenu.h"
-#include "AssetFileContextMenu.h"
-#include "ContentBrowserDataUtils.h"
+#include "ContentBrowserAssetDataPayload.h"
 #include "ContentBrowserDataMenuContexts.h"
+#include "ContentBrowserDataSource.h"
+#include "ContentBrowserDataSubsystem.h"
+#include "ContentBrowserDataUtils.h"
+#include "Editor.h"
+#include "Editor/UnrealEdTypes.h"
 #include "Engine/Level.h"
+#include "FileHelpers.h"
+#include "HAL/FileManager.h"
+#include "IAssetTools.h"
+#include "IAssetTypeActions.h"
+#include "IContentBrowserDataModule.h"
 #include "Misc/PackageName.h"
-#include "Misc/WarnIfAssetsLoadedInScope.h"
 #include "Misc/Paths.h"
+#include "Misc/WarnIfAssetsLoadedInScope.h"
+#include "ObjectTools.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "ToolMenu.h"
+#include "Virtualization/VirtualizationSystem.h"
 
 #define LOCTEXT_NAMESPACE "ContentBrowserAssetDataSource"
 
-DEFINE_LOG_CATEGORY_STATIC(LogContentBrowserAssetDataSource, Warning, Warning);
+DEFINE_LOG_CATEGORY(LogContentBrowserAssetDataSource);
 
 namespace ContentBrowserAssetData
 {
 
-FContentBrowserItemData CreateAssetFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath, const bool bIsCookedPath)
+FContentBrowserItemData CreateAssetFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath, const bool bIsCookedPath, const bool bIsPlugin)
 {
 	const FString FolderItemName = FPackageName::GetShortName(InFolderPath);
 	FText FolderDisplayNameOverride = ContentBrowserDataUtils::GetFolderItemDisplayNameOverride(InFolderPath, FolderItemName, /*bIsClassesFolder*/ false, bIsCookedPath);
-	return FContentBrowserItemData(InOwnerDataSource, EContentBrowserItemFlags::Type_Folder | EContentBrowserItemFlags::Category_Asset, InVirtualPath, *FolderItemName, MoveTemp(FolderDisplayNameOverride), MakeShared<FContentBrowserAssetFolderItemDataPayload>(InFolderPath));
+	return FContentBrowserItemData(InOwnerDataSource,
+		EContentBrowserItemFlags::Type_Folder | EContentBrowserItemFlags::Category_Asset | (bIsPlugin ? EContentBrowserItemFlags::Category_Plugin : EContentBrowserItemFlags::None ),
+		InVirtualPath,
+		*FolderItemName,
+		MoveTemp(FolderDisplayNameOverride),
+		MakeShared<FContentBrowserAssetFolderItemDataPayload>(InFolderPath));
 }
 
-FContentBrowserItemData CreateAssetFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FAssetData& InAssetData)
+FContentBrowserItemData CreateAssetFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FAssetData& InAssetData, const bool bIsPluginAsset)
 {
-	return FContentBrowserItemData(InOwnerDataSource, EContentBrowserItemFlags::Type_File | EContentBrowserItemFlags::Category_Asset, InVirtualPath, InAssetData.AssetName, FText(), MakeShared<FContentBrowserAssetFileItemDataPayload>(InAssetData));
+	return FContentBrowserItemData(InOwnerDataSource,
+		EContentBrowserItemFlags::Type_File | EContentBrowserItemFlags::Category_Asset | (bIsPluginAsset ? EContentBrowserItemFlags::Category_Plugin : EContentBrowserItemFlags::None),
+		InVirtualPath,
+		InAssetData.AssetName,
+		FText(),
+		MakeShared<FContentBrowserAssetFileItemDataPayload>(InAssetData));
 }
 
 FContentBrowserItemData CreateUnsupportedAssetFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FAssetData& InAssetData)
@@ -55,7 +66,10 @@ FContentBrowserItemData CreateUnsupportedAssetFileItem(UContentBrowserDataSource
 
 TSharedPtr<const FContentBrowserAssetFolderItemDataPayload> GetAssetFolderItemPayload(const UContentBrowserDataSource* InOwnerDataSource, const FContentBrowserItemData& InItem)
 {
-	if (InItem.GetOwnerDataSource() == InOwnerDataSource && InItem.IsFolder() && InItem.IsSupported())
+	if (InItem.GetOwnerDataSource() == InOwnerDataSource
+		// If both these flags are not present, it's a virtual folder
+		&& EnumHasAllFlags(InItem.GetItemFlags(), EContentBrowserItemFlags::Type_Folder | EContentBrowserItemFlags::Category_Asset)
+		&& InItem.IsSupported())
 	{
 		return StaticCastSharedPtr<const FContentBrowserAssetFolderItemDataPayload>(InItem.GetPayload());
 	}
@@ -321,6 +335,7 @@ bool EditOrPreviewAssetFileItems(TArrayView<const TSharedRef<const FContentBrows
 		: FText::Format(LOCTEXT("LoadingXAssets", "Loading {0} {0}|plural(one=Asset,other=Assets)..."), InAssetPayloads.Num());
 
 	FScopedSlowTask SlowTask(100, DefaultText);
+	SlowTask.MakeDialogDelayed(0.1f);
 
 	// Iterate over all activated assets to map them to AssetTypeActions.
 	// This way individual asset type actions will get a batched list of assets to operate on
@@ -351,11 +366,6 @@ bool EditOrPreviewAssetFileItems(TArrayView<const TSharedRef<const FContentBrows
 		
 		for (const FAssetData& AssetData : AssetsToLoad)
 		{
-			if (!AssetData.IsAssetLoaded() && FEditorFileUtils::IsMapPackageAsset(AssetData.GetObjectPathString()))
-			{
-				SlowTask.MakeDialog();
-			}
-
 			SlowTask.EnterProgressFrame(75.0f / InAssetPayloads.Num(), FText::Format(LOCTEXT("LoadingAssetName", "Loading {0}..."), FText::FromName(AssetData.AssetName)));
 
 			ObjList.Add(AssetData.GetAsset());
@@ -583,14 +593,23 @@ bool CanSaveAssetFileItem(IAssetTools* InAssetTools, const FContentBrowserAssetF
 		return false;
 	}
 
-	if (EnumHasAnyFlags(InSaveFlags, EContentBrowserItemSaveFlags::SaveOnlyIfLoaded))
+	if (EnumHasAnyFlags(InSaveFlags, EContentBrowserItemSaveFlags::SaveOnlyIfLoaded | EContentBrowserItemSaveFlags::SaveOnlyIfDirty))
 	{
 		// Can't save a package that hasn't been loaded
 		UPackage* Package = InAssetPayload.GetPackage(/*bTryRecacheIfNull*/true);
 		if (!Package)
 		{
-			ContentBrowserAssetData::SetOptionalErrorMessage(OutErrorMsg, LOCTEXT("Error_CannotSaveUnloadedAsset", "Cannot save unloaded asset"));
+			ContentBrowserAssetData::SetOptionalErrorMessage(OutErrorMsg, LOCTEXT("Error_CannotSaveUnloadedAsset", "Cannot save unloaded item"));
 			return false;
+		}
+		
+		if (EnumHasAnyFlags(InSaveFlags, EContentBrowserItemSaveFlags::SaveOnlyIfDirty))
+		{
+			if (!Package->IsDirty())
+			{
+				ContentBrowserAssetData::SetOptionalErrorMessage(OutErrorMsg, LOCTEXT("Error_CannotSaveNonDirtyAsset", "Cannot save an unmodified item"));
+				return false;
+			}
 		}
 	}
 
@@ -1434,10 +1453,32 @@ bool GetVirtualizationItemAttribute(const FAssetData& InAssetData, IAssetRegistr
 
 	if (TOptional<FAssetPackageData> PackageData = InAssetRegistry->GetAssetPackageDataCopy(InAssetData.PackageName))
 	{
-		// We could set a bool here but that will display the value in lower case, where as asset properties 
-		// use a string value with the first letter in upper case, so we replicate that here to avoid the 
-		// entry looking out of place.
-		OutAttributeValue.SetValue(PackageData->HasVirtualizedPayloads() ? TEXT("True") : TEXT("False"));
+		// Note that we do not localize True/False as nowhere else in the code base seems to do this
+		// and it would be odd for only a single entry in the tool tip to localize booleans.
+
+		if (UE::Virtualization::IVirtualizationSystem::Get().IsEnabled())
+		{
+			if (PackageData->FileVersionUE >= EUnrealEngineObjectUE5Version::PAYLOAD_TOC)
+			{
+				OutAttributeValue.SetValue(PackageData->HasVirtualizedPayloads() ? TEXT("True") : TEXT("False"));
+			}
+			else
+			{
+				OutAttributeValue.SetValue(LOCTEXT("AttributeDisplayName_OutOfDate", "Version too old, resave to enable"));
+			}
+		}
+		else
+		{
+			if (PackageData->HasVirtualizedPayloads())
+			{
+				OutAttributeValue.SetValue(TEXT("True"));
+			}
+			else
+			{
+				// The VA system is disabled and nothing in the package is virtualized, so no need to display this in the tool tip
+				return false;
+			}
+		}
 
 		if (InIncludeMetaData)
 		{
@@ -1511,6 +1552,32 @@ bool GetItemAttribute(const UContentBrowserDataSource* InOwnerDataSource, const 
 	if (TSharedPtr<const FContentBrowserUnsupportedAssetFileItemDataPayload> UnsupportedAssetPayload = GetUnsupportedAssetFileItemPayload(InOwnerDataSource, InItem))
 	{
 		return GetUnsupportedAssetFileItemAttribute(*UnsupportedAssetPayload, InIncludeMetaData, InAttributeKey, OutAttributeValue);
+	}
+
+	if (InItem.IsFolder() && InItem.IsDisplayOnlyFolder())
+	{
+		if (InAttributeKey == ContentBrowserItemAttributes::ItemIsCustomVirtualFolder)
+		{
+			// Exclude certain built-in folders from being visualized as "virtual" organizational folders
+			// This is somewhat hacky and could be avoided by constructing the virtual folders up front
+			// See UContentBrowserAssetDataSource::BuildRootPathVirtualTree and UContentBrowserDataSubsystem::ConvertInternalPathToVirtual
+			static TSet<FName> ExcludeFoldersFromCustomIcon = []() {
+				TSet<FName> Set;
+				Set.Add("/");
+				Set.Add("/All");
+				Set.Add("/GameData");
+				Set.Add("/All/GameData");
+				Set.Add("/EngineData");
+				Set.Add("/All/EngineData");
+				Set.Add("/Plugins");
+				Set.Add("/All/Plugins");
+				return Set;
+			}();
+
+			bool bIsCustomVirtual = !ExcludeFoldersFromCustomIcon.Contains(InItem.GetVirtualPath());
+			OutAttributeValue.SetValue<bool>(bIsCustomVirtual);
+			return true;
+		}
 	}
 
 	return false;

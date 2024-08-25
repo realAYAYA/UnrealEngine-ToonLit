@@ -368,6 +368,7 @@ namespace UE
 	public:
 		CORE_API FStallDetectorPause();
 		CORE_API ~FStallDetectorPause();
+		bool IsPaused() const;
 
 	private:
 		bool bPaused;

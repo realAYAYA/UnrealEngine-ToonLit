@@ -28,7 +28,7 @@ namespace UnrealBuildTool
 				{
 					throw new BuildException("Both -modernxcode and -legacyxcode were specified, please use one or the other.");
 				}
-				Log.TraceInformationOnce("Forcing MDOERN XCODE with -modernxcode");
+				Log.TraceInformationOnce("Forcing MODERN XCODE with -modernxcode");
 				return true;
 			}
 			if (bForceLegacyXcode)
@@ -50,6 +50,20 @@ namespace UnrealBuildTool
 				Log.TraceInformationOnce("Forcing LEGACY XCODE because host OS is not Mac");
 			}
 			return bUseModernXcode;
+		}
+
+		/// <summary>
+		/// Get the given project's Swift settings
+		/// </summary>
+		/// <param name="ProjectFile"></param>
+		/// <param name="Platform"></param>
+		/// <param name="bUseSwiftUIMain"></param>
+		/// <param name="bCreateBridgingHeader"></param>
+		public static void GetSwiftIntegrationSettings(FileReference? ProjectFile, UnrealTargetPlatform Platform, out bool bUseSwiftUIMain, out bool bCreateBridgingHeader)
+		{
+			ConfigHierarchy Ini = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, ProjectFile?.Directory, Platform);
+			Ini.TryGetValue("/Script/VisionOSRuntimeSettings.VisionOSRuntimeSettings", "bUseSwiftUIMain", out bUseSwiftUIMain);
+			Ini.TryGetValue("/Script/VisionOSRuntimeSettings.VisionOSRuntimeSettings", "bCreateBridgingHeader", out bCreateBridgingHeader);
 		}
 
 		/// <summary>
@@ -105,6 +119,10 @@ namespace UnrealBuildTool
 			else if (Platform == UnrealTargetPlatform.TVOS)
 			{
 				return Architectures.SingleArchitecture == UnrealArch.TVOSSimulator ? "tvOS Simulator" : "tvOS";
+			}
+			else if (Platform == UnrealTargetPlatform.VisionOS)
+			{
+				return Architectures.SingleArchitecture == UnrealArch.IOSSimulator ? "visionOS Simulator" : "visionOS";
 			}
 
 			throw new BuildException($"Unknown plaform {Platform}");

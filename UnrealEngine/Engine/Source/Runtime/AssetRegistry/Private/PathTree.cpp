@@ -2,100 +2,81 @@
 
 #include "AssetRegistry/PathTree.h"
 
+#include "Misc/ReverseIterate.h"
 #include "UObject/NameTypes.h"
 
-bool FPathTree::CachePath(FName Path, TFunctionRef<void(FName)> OnPathAdded)
+FPathTree::FPathTree()
 {
-	if (Path.IsNone())
+	// Ensure an entry for the root of the path
+	static const FName PathRoot = "/";
+
+	ParentPathToChildPaths.FindOrAdd(PathRoot, {});
+}
+
+void FPathTree::EnsureAdditionalCapacity(int32 NumNewPaths)
+{
+	ParentPathToChildPaths.Reserve(ParentPathToChildPaths.Num() + NumNewPaths); 
+	ChildPathToParentPath.Reserve(ChildPathToParentPath.Num() + NumNewPaths);
+}
+
+bool FPathTree::CachePath(FName InPath, TFunctionRef<void(FName)> OnPathAdded)
+{
+	if (InPath.IsNone())
 	{
 		return false;
 	}
 
-	if (ParentPathToChildPaths.Contains(Path))
+	if (ParentPathToChildPaths.Contains(InPath))
 	{
 		// Already cached - nothing more to do
 		return false;
 	}
 
-	FString PathStr = Path.ToString();
-	check(PathStr.Len() >= 2);	// Must be at least "/A"
-	check(PathStr[0] == '/');	// Must start with a "/"
+	TStringBuilder<FName::StringBufferSize> PathBuffer(InPlace, InPath);
+	FStringView PathView = PathBuffer.ToView();
+	check(PathView.Len() >= 2);	// Must be at least "/A"
+	check(PathView [0] == '/');	// Must start with a "/"
+	check(PathView[PathView.Len() - 1] != '/'); // Must not contain trailing slash 
 
-	// Paths are cached without their trailing slash, so if the given path has a trailing slash, test it again now as it may already be cached
-	if (PathStr[PathStr.Len() - 1] == '/')
+	static const FName Root("/");
+
+	TArray<FName, TInlineAllocator<16>> NewPaths;
+	NewPaths.Add(InPath);
+	ParentPathToChildPaths.FindOrAdd(InPath, {}); // Add this new path with no children
+
+	// Walk backwards through the string until we encounter a path we've already created
+	FName LastPath = InPath;
+	FName ParentPath;
+	while (ParentPath != Root)
 	{
-		PathStr.RemoveAt(PathStr.Len() - 1, 1, /*bAllowShrinking*/false);
-		Path = *PathStr;
+		// Strip the last path element from PathView to get the parent of LastPath
+		// i.e. /Game/Maps/Something -> /Game/Maps 
+		int32 SlashIndex = UE::String::FindLastChar(PathView, '/');	
+		PathView.LeftInline(SlashIndex);
+		ParentPath = PathView.IsEmpty() ? Root : FName(PathView);
+		
+		ChildPathToParentPath.FindOrAdd(LastPath, ParentPath);
 
-		if (ParentPathToChildPaths.Contains(Path))
+		uint32 Hash = GetTypeHash(ParentPath);
+		TSet<FName>* Children = ParentPathToChildPaths.FindByHash(Hash, ParentPath);
+		if (Children)
 		{
-			// Already cached - nothing more to do
-			return false;
+			// Parent path already existed in tree, no need to continue looking at parents
+			Children->Add(LastPath);
+			break; 
 		}
-	}
-
-	FName LastPath;
-
-	// Ensure an entry for the root of the path
+		else
+		{
+			ParentPathToChildPaths.AddByHash(Hash, ParentPath).Add(LastPath);
+			NewPaths.Add(ParentPath);
+			LastPath = ParentPath;
+		}
+	} 
+	
+	// Notify caller of each path created in order from root to leaf
+	for (FName NewPath : ReverseIterate(NewPaths))
 	{
-		static const FName PathRoot = "/";
-
-		if (!ParentPathToChildPaths.Contains(PathRoot))
-		{
-			ParentPathToChildPaths.Add(PathRoot);
-		}
-
-		LastPath = PathRoot;
-	}
-
-	// Walk each part of the path, adding known path entries if required
-	// This manipulates PathStr in-place to avoid making any string copies
-	TCHAR* PathCharPtr = &PathStr[1]; // Skip over the first / when scanning
-	for (;;)
-	{
-		const TCHAR PathChar = *PathCharPtr;
-		if (PathChar == '/' || PathChar == 0)
-		{
-			// We've found a path separator (or the end of the string), so process this part of the path
-			(*PathCharPtr) = 0;			// Null terminate this part of the string so we can create an FName from it
-			const FName CurrentPath = *PathStr;
-			(*PathCharPtr) = PathChar;	// Restore the original character now
-
-			check(!CurrentPath.IsNone());	// Path parts cannot be empty
-			check(*(PathCharPtr-1) != '/'); // The previous character cannot be a /, as that would suggest a malformed path such as "/Game//MyAsset"
-
-			bool bAddedPath = false;
-			if (!ParentPathToChildPaths.Contains(CurrentPath))
-			{
-				ParentPathToChildPaths.Add(CurrentPath);
-				bAddedPath = true;
-			}
-
-			if (!LastPath.IsNone())
-			{
-				// Add us as a known child of our parent path
-				TSet<FName>& ChildPaths = ParentPathToChildPaths.FindChecked(LastPath);
-				ChildPaths.Add(CurrentPath);
-
-				// Make sure we know how to find our parent again later on
-				ChildPathToParentPath.Add(CurrentPath, LastPath);
-			}
-
-			if (bAddedPath)
-			{
-				OnPathAdded(CurrentPath);
-			}
-
-			LastPath = CurrentPath;
-		}
-
-		if (PathChar == 0)
-		{
-			// End of the string
-			break;
-		}
-
-		++PathCharPtr;
+		OnPathAdded(NewPath);
 	}
 
 	return true;
@@ -108,27 +89,12 @@ bool FPathTree::RemovePath(FName Path, TFunctionRef<void(FName)> OnPathRemoved)
 		return false;
 	}
 
-	if (!ParentPathToChildPaths.Contains(Path))
+	TSet<FName>* Children = ParentPathToChildPaths.Find(Path);
+	if (!Children)
 	{
-		// Paths are cached without their trailing slash, so if the given path has a trailing slash, test it again now as it may already be cached
-		// We do this after the initial map test as: a) Most paths are well formed, b) This avoids string allocations until we know we need them
-		FString PathStr = Path.ToString();
-		if (PathStr[PathStr.Len() - 1] == '/')
-		{
-			PathStr.RemoveAt(PathStr.Len() - 1, 1, /*bAllowShrinking*/false);
-			Path = *PathStr;
-
-			if (!ParentPathToChildPaths.Contains(Path))
-			{
-				// Doesn't exist - nothing more to do
-				return false;
-			}
-		}
-		else
-		{
-			// Doesn't exist - nothing more to do
-			return false;
-		}
+		TStringBuilder<FName::StringBufferSize> PathString(InPlace, Path);
+		checkf(!PathString.ToView().EndsWith(TEXT("/")), TEXT("Path tree arguments should not have trailing slashes: %s"), *PathString);
+		return false;
 	}
 
 	// We also need to gather up and remove any children of this path
@@ -154,8 +120,8 @@ bool FPathTree::RemovePath(FName Path, TFunctionRef<void(FName)> OnPathRemoved)
 		const FName* ParentPathPtr = ChildPathToParentPath.Find(Path);
 		if (ParentPathPtr)
 		{
-			TSet<FName>& ChildPaths = ParentPathToChildPaths.FindChecked(*ParentPathPtr);
-			ChildPaths.Remove(Path);
+			TSet<FName>* ChildPaths = ParentPathToChildPaths.Find(*ParentPathPtr);
+			ChildPaths->Remove(Path);
 		}
 	}
 
@@ -181,7 +147,7 @@ bool FPathTree::PathExists(FName Path) const
 		FString PathStr = Path.ToString();
 		if (PathStr[PathStr.Len() - 1] == '/')
 		{
-			PathStr.RemoveAt(PathStr.Len() - 1, 1, /*bAllowShrinking*/false);
+			PathStr.RemoveAt(PathStr.Len() - 1, 1, EAllowShrinking::No);
 			Path = *PathStr;
 
 			ChildPathsPtr = ParentPathToChildPaths.Find(Path);
@@ -263,7 +229,7 @@ bool FPathTree::EnumerateSubPaths(FName BasePath, TFunctionRef<bool(FName)> Call
 
 	for (const FName& ChildPath : *ChildPathsPtr)
 	{
-		check(ParentPathToChildPaths.Contains(ChildPath)); // This failing is an integrity violation as this entry lists a child that we don't know about
+		checkf(ParentPathToChildPaths.Find(ChildPath) != nullptr, TEXT("PathTree integrity failure, expected to contain %s"), *WriteToString<FName::StringBufferSize>(ChildPath)); // This failing is an integrity violation as this entry lists a child that we don't know about
 
 		if (!Callback(ChildPath))
 		{

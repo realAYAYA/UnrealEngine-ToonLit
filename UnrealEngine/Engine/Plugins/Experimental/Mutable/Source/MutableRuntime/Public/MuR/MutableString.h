@@ -22,14 +22,14 @@ namespace mu
 		// Life cycle
 		//-----------------------------------------------------------------------------------------
 
-		String(const char* = nullptr);
+		String(const FString&);
 
 		//! Deep clone this string.
 		Ptr<String> Clone() const;
 
 		//! Serialisation
-		static void Serialise( const String* p, OutputArchive& arch );
-		static Ptr<String> StaticUnserialise( InputArchive& arch );
+		//static void Serialise( const String* p, OutputArchive& arch );
+		//static Ptr<String> StaticUnserialise( InputArchive& arch );
 
 		// Resource interface
 		int32 GetDataSize() const override;
@@ -39,7 +39,7 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 
 		//! Get the string data.
-		const char* GetValue() const;
+		const FString& GetValue() const;
 
 	protected:
 
@@ -49,31 +49,40 @@ namespace mu
 	public:
 
 		//!
-		string m_value;
+		FString Value;
 
 		//!
-		void Serialise(OutputArchive& arch) const
-		{
-			uint32 ver = 0;
-			arch << ver;
+		//void Serialise(OutputArchive& arch) const
+		//{
+		//	uint32 ver = 1;
+		//	arch << ver;
 
-			arch << m_value;
-		}
+		//	arch << Value;
+		//}
 
-		//!
-		void Unserialise(InputArchive& arch)
-		{
-			uint32 ver;
-			arch >> ver;
-			check(ver <= 0);
+		////!
+		//void Unserialise(InputArchive& arch)
+		//{
+		//	uint32 ver;
+		//	arch >> ver;
+		//	check(ver <= 1);
 
-			arch >> m_value;
-		}
+		//	if (ver == 0)
+		//	{
+		//		std::string Temp;
+		//		arch >> Temp;
+		//		Value = Temp.c_str();
+		//	}
+		//	else
+		//	{
+		//		arch >> Value;
+		//	}
+		//}
 
 		//!
 		inline bool operator==(const String& o) const
 		{
-			return (m_value == o.m_value);
+			return (Value == o.Value);
 		}
 
 	};

@@ -8,117 +8,29 @@
 
 #include "Chaos/ChaosArchive.h"
 #include "ChaosVDContextProvider.h"
+#include "ChaosVDOptionalDataChannel.h"
 #include "Chaos/ParticleIterator.h"
 #include "HAL/ThreadSafeBool.h"
 
 #ifndef CHAOS_VISUAL_DEBUGGER_ENABLED
-	#define CHAOS_VISUAL_DEBUGGER_ENABLED (WITH_CHAOS_VISUAL_DEBUGGER && UE_TRACE_ENABLED)
+	#define CHAOS_VISUAL_DEBUGGER_ENABLED WITH_CHAOS_VISUAL_DEBUGGER
 #endif
 
-// Define NO-OP versions of our macros if we can't Trace
-#if !CHAOS_VISUAL_DEBUGGER_ENABLED
-	#ifndef CVD_TRACE_PARTICLE
-		#define CVD_TRACE_PARTICLE(ParticleHandle)
-	#endif
+#include "ChaosVisualDebugger/ChaosVDTraceMacros.h"
 
-	#ifndef CVD_TRACE_PARTICLES
-		#define CVD_TRACE_PARTICLES(ParticleHandles)
-	#endif
+#if WITH_CHAOS_VISUAL_DEBUGGER
 
-	#ifndef CVD_TRACE_SOLVER_START_FRAME
-		#define CVD_TRACE_SOLVER_START_FRAME(SolverType, SolverRef)
-	#endif
-
-	#ifndef CVD_TRACE_SOLVER_END_FRAME
-		#define CVD_TRACE_SOLVER_END_FRAME(SolverType, SolverRef)
-	#endif
-
-	#ifndef CVD_SCOPE_TRACE_SOLVER_FRAME
-		#define CVD_SCOPE_TRACE_SOLVER_FRAME(SolverType, SolverRef)
-	#endif
-
-	#ifndef CVD_TRACE_SOLVER_STEP_START
-		#define CVD_TRACE_SOLVER_STEP_START(StepName)
-	#endif
-
-	#ifndef CVD_TRACE_SOLVER_STEP_END
-		#define CVD_TRACE_SOLVER_STEP_END()
-	#endif
-
-	#ifndef CVD_SCOPE_TRACE_SOLVER_STEP
-		#define CVD_SCOPE_TRACE_SOLVER_STEP(StepName)
-	#endif
-
-	#ifndef CVD_TRACE_BINARY_DATA
-		#define CVD_TRACE_BINARY_DATA(InData, TypeName)
-	#endif
-
-#ifndef CVD_TRACE_SOLVER_SIMULATION_SPACE
-		#define CVD_TRACE_SOLVER_SIMULATION_SPACE(InSimulationSpace)
-#endif
-
-#ifndef CVD_TRACE_PARTICLES_SOA
-	#define CVD_TRACE_PARTICLES_SOA(ParticleSoA)
-#endif
-
-#ifndef CVD_TRACE_PARTICLE_DESTROYED
-	#define CVD_TRACE_PARTICLE_DESTROYED(DestroyedParticleHandle)
-#endif
-
-#ifndef CVD_TRACE_MID_PHASE
-	#define CVD_TRACE_MID_PHASE(MidPhase)
-#endif
-#ifndef CVD_TRACE_COLLISION_CONSTRAINT
-	#define CVD_TRACE_COLLISION_CONSTRAINT(Constraint)
-#endif
-#ifndef CVD_TRACE_COLLISION_CONSTRAINT_VIEW
-	#define CVD_TRACE_COLLISION_CONSTRAINT_VIEW(ConstraintView)
-#endif
-
-#ifndef CVD_TRACE_PARTICLES_VIEW
-	#define CVD_TRACE_PARTICLES_VIEW(ParticleHandlesView)
-#endif
-
-#ifndef CVD_TRACE_MID_PHASES_FROM_COLLISION_CONSTRAINTS
-	#define CVD_TRACE_MID_PHASES_FROM_COLLISION_CONSTRAINTS(CollisionConstraints)
-#endif
-
-#else
-
+#include "ChaosVDMemWriterReader.h"
 #include "ChaosVDRuntimeModule.h"
 #include "DataWrappers/ChaosVDImplicitObjectDataWrapper.h"
 #include "Trace/Trace.h"
 #include "Trace/Trace.inl"
 
-#ifndef CVD_DEFINE_TRACE_VECTOR
-	#define CVD_DEFINE_TRACE_VECTOR(Type, Name) \
-		UE_TRACE_EVENT_FIELD(Type, Name##X) \
-		UE_TRACE_EVENT_FIELD(Type, Name##Y) \
-		UE_TRACE_EVENT_FIELD(Type, Name##Z)
-#endif
-
-#ifndef CVD_DEFINE_TRACE_ROTATOR
-	#define CVD_DEFINE_TRACE_ROTATOR(Type, Name) \
-	UE_TRACE_EVENT_FIELD(Type, Name##X) \
-	UE_TRACE_EVENT_FIELD(Type, Name##Y) \
-	UE_TRACE_EVENT_FIELD(Type, Name##Z) \
-	UE_TRACE_EVENT_FIELD(Type, Name##W)
-#endif
-
-#ifndef CVD_TRACE_VECTOR_ON_EVENT
-	#define CVD_TRACE_VECTOR_ON_EVENT(EventName, Name, Vector) \
-	EventName.Name##X(Vector.X) \
-	<< EventName.Name##Y(Vector.Y) \
-	<< EventName.Name##Z(Vector.Z)
-#endif
-
-#ifndef CVD_TRACE_ROTATOR_ON_EVENT
-	#define CVD_TRACE_ROTATOR_ON_EVENT(EventName, Name, Rotator) \
-	EventName.Name##X(Rotator.X) \
-	<< EventName.Name##Y(Rotator.Y) \
-	<< EventName.Name##Z(Rotator.Z) \
-	<< EventName.Name##W(Rotator.W)
-#endif
+namespace Chaos
+{
+class FPBDConstraintContainer;
+class FPBDJointConstraints;
+}
 
 UE_TRACE_CHANNEL_EXTERN(ChaosVDChannel, CHAOS_API)
 
@@ -127,6 +39,7 @@ UE_TRACE_EVENT_BEGIN_EXTERN(ChaosVDLogger, ChaosVDSolverFrameStart)
 	UE_TRACE_EVENT_FIELD(uint64, Cycle)
 	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, DebugName)
 	UE_TRACE_EVENT_FIELD(bool, IsKeyFrame)
+	UE_TRACE_EVENT_FIELD(bool, IsReSimulated)
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN_EXTERN(ChaosVDLogger, ChaosVDSolverFrameEnd)
@@ -185,103 +98,43 @@ UE_TRACE_EVENT_BEGIN_EXTERN(ChaosVDLogger, ChaosVDSolverSimulationSpace)
 	CVD_DEFINE_TRACE_ROTATOR(Chaos::FReal, Rotation)
 UE_TRACE_EVENT_END()
 
+UE_TRACE_EVENT_BEGIN_EXTERN(ChaosVDLogger, ChaosVDNonSolverLocation)
+	UE_TRACE_EVENT_FIELD(uint64, Cycle)
+	CVD_DEFINE_TRACE_VECTOR(Chaos::FReal, Position)
+	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, DebugName)
+UE_TRACE_EVENT_END()
+
+UE_TRACE_EVENT_BEGIN_EXTERN(ChaosVDLogger, ChaosVDNonSolverTransform)
+	UE_TRACE_EVENT_FIELD(uint64, Cycle)
+	CVD_DEFINE_TRACE_VECTOR(Chaos::FReal, Position)
+	CVD_DEFINE_TRACE_VECTOR(Chaos::FReal, Scale)
+	CVD_DEFINE_TRACE_ROTATOR(Chaos::FReal, Rotation)
+	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, DebugName)
+UE_TRACE_EVENT_END()
+
 UE_TRACE_EVENT_BEGIN_EXTERN(ChaosVDLogger, ChaosVDDummyEvent)
 	UE_TRACE_EVENT_FIELD(int32, SolverID)
 UE_TRACE_EVENT_END()
 
-#ifndef CVD_TRACE_PARTICLE
-	#define CVD_TRACE_PARTICLE(ParticleHandle) \
-		FChaosVisualDebuggerTrace::TraceParticle(ParticleHandle);
-#endif
-
-#ifndef CVD_TRACE_PARTICLES
-	#define CVD_TRACE_PARTICLES(ParticleHandles) \
-		FChaosVisualDebuggerTrace::TraceParticles(ParticleHandles);
-#endif
-
-#ifndef CVD_TRACE_PARTICLES_VIEW
-	#define CVD_TRACE_PARTICLES_VIEW(ParticleHandlesView) \
-	FChaosVisualDebuggerTrace::TraceParticlesView(ParticleHandlesView);
-#endif
-
-#ifndef CVD_TRACE_PARTICLES_SOA
-	#define CVD_TRACE_PARTICLES_SOA(ParticleSoA) \
-	FChaosVisualDebuggerTrace::TraceParticlesSoA(ParticleSoA);
-#endif
-
-#ifndef CVD_TRACE_SOLVER_START_FRAME
-	#define CVD_TRACE_SOLVER_START_FRAME(SolverType, SolverRef) \
-		FChaosVDContext StartContextData; \
-		FChaosVisualDebuggerTrace::GetCVDContext<SolverType>(SolverRef, StartContextData); \
-		FChaosVisualDebuggerTrace::TraceSolverFrameStart(StartContextData, FChaosVisualDebuggerTrace::GetDebugName<SolverType>(SolverRef));
-#endif
-
-#ifndef CVD_TRACE_SOLVER_END_FRAME
-	#define CVD_TRACE_SOLVER_END_FRAME(SolverType, SolverRef) \
-		FChaosVDContext EndContextData; \
-		FChaosVisualDebuggerTrace::GetCVDContext<SolverType>(SolverRef, EndContextData); \
-		FChaosVisualDebuggerTrace::TraceSolverFrameEnd(EndContextData);
-#endif
-
-#ifndef CVD_SCOPE_TRACE_SOLVER_FRAME
-	#define CVD_SCOPE_TRACE_SOLVER_FRAME(SolverType, SolverRef) \
-		FChaosVDScopeSolverFrame<SolverType> ScopeSolverFrame(SolverRef);
-#endif
-
-#ifndef CVD_TRACE_SOLVER_STEP_START
-	#define CVD_TRACE_SOLVER_STEP_START(StepName) \
-		FChaosVisualDebuggerTrace::TraceSolverStepStart(StepName);
-#endif
-
-#ifndef CVD_TRACE_SOLVER_STEP_END
-	#define CVD_TRACE_SOLVER_STEP_END() \
-		FChaosVisualDebuggerTrace::TraceSolverStepEnd();
-#endif
-
-#ifndef CVD_SCOPE_TRACE_SOLVER_STEP
-	#define CVD_SCOPE_TRACE_SOLVER_STEP(StepName) \
-		FChaosVDScopeSolverStep ScopeSolverStep(StepName);
-#endif
-
-#ifndef CVD_TRACE_BINARY_DATA
-	#define CVD_TRACE_BINARY_DATA(InData, TypeName) \
-	FChaosVisualDebuggerTrace::TraceBinaryData(InData, TypeName);
-#endif
-
-#ifndef CVD_TRACE_SOLVER_SIMULATION_SPACE
-	#define CVD_TRACE_SOLVER_SIMULATION_SPACE(InSimulationSpace) \
-	FChaosVisualDebuggerTrace::TraceSolverSimulationSpace(InSimulationSpace);
-#endif
-
-#ifndef CVD_TRACE_PARTICLE_DESTROYED
-	#define CVD_TRACE_PARTICLE_DESTROYED(DestroyedParticleHandle) \
-	FChaosVisualDebuggerTrace::TraceParticleDestroyed(DestroyedParticleHandle);
-#endif
-
-#ifndef CVD_TRACE_MID_PHASE
-	#define CVD_TRACE_MID_PHASE(MidPhase) \
-	FChaosVisualDebuggerTrace::TraceMidPhase(MidPhase);
-#endif
-
-#ifndef CVD_TRACE_COLLISION_CONSTRAINT
-	#define CVD_TRACE_COLLISION_CONSTRAINT(Constraint) \
-	FChaosVisualDebuggerTrace::TraceCollisionConstraint(Constraint);
-#endif
-
-#ifndef CVD_TRACE_COLLISION_CONSTRAINT_VIEW
-	#define CVD_TRACE_COLLISION_CONSTRAINT_VIEW(ConstraintView) \
-	FChaosVisualDebuggerTrace::TraceCollisionConstraintView(ConstraintView);
-#endif
-
-#ifndef CVD_TRACE_MID_PHASES_FROM_COLLISION_CONSTRAINTS
-	#define CVD_TRACE_MID_PHASES_FROM_COLLISION_CONSTRAINTS(CollisionConstraints) \
-	FChaosVisualDebuggerTrace::TraceMidPhasesFromCollisionConstraints(CollisionConstraints);
-#endif
-
 struct FChaosVDContext;
+struct FChaosVDQueryVisitStep;
+struct FChaosVDCollisionResponseParams;
+struct FChaosVDCollisionObjectQueryParams;
+struct FChaosVDCollisionQueryParams;
+enum class EChaosVDSceneQueryMode;
+enum class EChaosVDSceneQueryType;
+struct FCollisionObjectQueryParams;
+struct FCollisionResponseParams;
+struct FCollisionQueryParams;
+enum ECollisionChannel : int;
 
 namespace Chaos
 {
+	namespace VisualDebugger
+	{
+		class FChaosVDSerializableNameTable;
+	}
+
 	class FPBDCollisionConstraints;
 	class FPBDRigidsSOAs;
 	class FImplicitObject;
@@ -293,7 +146,15 @@ namespace Chaos
 	class FParticlePairMidPhase;
 }
 
-using FChaosVDImplicitObjectWrapper = FChaosVDImplicitObjectDataWrapper<Chaos::TSerializablePtr<Chaos::FImplicitObject>, Chaos::FChaosArchive>;
+using FChaosVDImplicitObjectWrapper = FChaosVDImplicitObjectDataWrapper<Chaos::FImplicitObjectPtr, Chaos::FChaosArchive>;
+using FChaosVDSerializableNameTable = Chaos::VisualDebugger::FChaosVDSerializableNameTable;
+
+enum class EChaosVDTraceBinaryDataOptions
+{
+	None = 0,
+	ForceTrace = 1 << 0
+};
+ENUM_CLASS_FLAGS(EChaosVDTraceBinaryDataOptions)
 
 /** Class containing  all the Tracing logic to record data for the Chaos Visual Debugger tool */
 class FChaosVisualDebuggerTrace
@@ -304,13 +165,6 @@ public:
 	 * @param ParticleHandle Handle to process and Trace
 	 */
 	static CHAOS_API void TraceParticle(const Chaos::FGeometryParticleHandle* ParticleHandle);
-	
-	/**
-	 * Traces data from a Particle Handle using the provided CVD Context
-	 * @param ParticleHandle Handle to process and Trace
-	 * @param ContextData Context to be used to tied this Trace event to a specific solver frame and step
-	 */
-	static CHAOS_API void TraceParticle(Chaos::FGeometryParticleHandle* ParticleHandle, const FChaosVDContext& ContextData);
 
 	/**
 	 * Traces data from a collection of Particle Handles using. The CVD context currently pushed into will be used to tie this particle data to a specific solver frame and step.
@@ -341,11 +195,17 @@ public:
 	/** Traces a Particle pair MidPhase as binary data from a provided CollisionConstraints object */
 	static CHAOS_API void TraceMidPhasesFromCollisionConstraints(Chaos::FPBDCollisionConstraints& InCollisionConstraints);
 
+	/** Traces all joint constraints in the provided container */
+	static CHAOS_API void TraceJointsConstraints(Chaos::FPBDJointConstraints& InJointConstraints);
+
 	/** Traces a Particle pair MidPhase as binary data */
 	static CHAOS_API void TraceCollisionConstraint(const Chaos::FPBDCollisionConstraint* CollisionConstraint);
 
 	/** Traces a Particle pair MidPhase as binary data in parallel */
 	static CHAOS_API void TraceCollisionConstraintView(TArrayView<Chaos::FPBDCollisionConstraint* const> CollisionConstraintView);
+
+	/** Traces all supported constraints in the provided containers view */
+	static CHAOS_API void TraceConstraintsContainer(TConstArrayView<Chaos::FPBDConstraintContainer*> ConstraintContainersView);
 
 	/** Traces the start of a solver frame and it pushes its context data to the CVD TLS context stack */
 	static CHAOS_API void TraceSolverFrameStart(const FChaosVDContext& ContextData, const FString& InDebugName);
@@ -370,7 +230,7 @@ public:
 	 * @param InData Data to trace
 	 * @param TypeName Type name the data represents. It is used during Trace Analysis serialize it back (this is not automatic)
 	 */
-	static CHAOS_API void TraceBinaryData(const TArray<uint8>& InData, FStringView TypeName);
+	static CHAOS_API void TraceBinaryData(TConstArrayView<uint8> InData, FStringView TypeName, EChaosVDTraceBinaryDataOptions Options = EChaosVDTraceBinaryDataOptions::None);
 
 	/**
 	 * Serializes the implicit object contained in the wrapper and trace its it as binary data
@@ -378,6 +238,15 @@ public:
 	 *  @param WrappedGeometryData Wrapper containing a ptr to the implicit and its ID
 	 */
 	static CHAOS_API void TraceImplicitObject(FChaosVDImplicitObjectWrapper WrappedGeometryData);
+
+	/**
+	 * Removes an implicit object from the serialized geometry IDs cache, to ensure we re-serialize it with any new changes
+	 *  @param CachedGeometryToInvalidate Ptr to the Geometry we want to invalidate from the cache
+	 */
+	static CHAOS_API void InvalidateGeometryFromCache(const Chaos::FImplicitObject* CachedGeometryToInvalidate);
+
+	static CHAOS_API void TraceSceneQueryStart(const Chaos::FImplicitObject* InputGeometry, const FQuat& GeometryOrientation, const FVector& Start, const FVector& End, ECollisionChannel TraceChannel, FChaosVDCollisionQueryParams&& Params, FChaosVDCollisionResponseParams&& ResponseParams, FChaosVDCollisionObjectQueryParams&& ObjectParams, EChaosVDSceneQueryType QueryType, EChaosVDSceneQueryMode QueryMode, int32 SolverID, bool bIsRetry);
+	static CHAOS_API void TraceSceneQueryVisit(FChaosVDQueryVisitStep&& InQueryVisitData);
 
 	/** Returns true if the provided solver ID needs a Full Capture */
 	static bool ShouldPerformFullCapture(int32 SolverID);
@@ -398,19 +267,46 @@ public:
 	static FString GetDebugName(T& ObjectWithDebugName);
 
 	/** Returns true if a CVD trace is running */
-	static bool IsTracing() { return bIsTracing;}
-
-private:
+	static CHAOS_API bool IsTracing();
 
 	/** Binds to the static events triggered by the ChaosVD Runtime module */
 	static void RegisterEventHandlers();
+	
 	/** Unbinds to the static events triggered by the ChaosVD Runtime module */
 	static void UnregisterEventHandlers();
+
+	static TSharedRef<FChaosVDSerializableNameTable>& GetNameTableInstance() { return CVDNameTable; }
+
+private:
+
+	/**
+	 * Traces data from a Particle Handle using the provided CVD Context
+	 * @param ParticleHandle Handle to process and Trace
+	 * @param ContextData Context to be used to tied this Trace event to a specific solver frame and step
+	 */
+	static CHAOS_API void TraceParticle(Chaos::FGeometryParticleHandle* ParticleHandle, const FChaosVDContext& ContextData);
+
+	/**
+	 * Traces the provided location using with the provided ID -
+	 * These are not tied to any solver step so they will be recorded as part of the current game frame data
+	 * @param InLocation Location to Trace
+	 * @param DebugNameID Name to use as ID
+	 */
+	static void TraceNonSolverLocation(const FVector& InLocation, FStringView DebugNameID);
+
+	/**
+	 * Traces the provided transform using with the provided ID -
+	 * These are not tied to any solver step so they will be recorded as part of the current game frame data
+	 * @param InTransform Transform to Trace
+	 * @param DebugNameID Name to use as ID
+	 */
+	static void TraceNonSolverTransform(const FTransform& InTransform, FStringView DebugNameID);
 	
 	/** Resets the state of the CVD Tracer */
 	static void Reset();
 
 	static void HandleRecordingStop();
+	static void TraceArchiveHeader();
 	static void HandleRecordingStart();
 
 	/** Sets up the tracer to perform a full capture in the next solver frame */
@@ -425,8 +321,9 @@ private:
 
 	static TSet<int32> SolverIDsForDeltaRecording;
 	static TSet<int32> RequestedFullCaptureSolverIDs;
+	static TSharedRef<FChaosVDSerializableNameTable> CVDNameTable;
 
-	static FThreadSafeBool bIsTracing;
+	static std::atomic<bool> bIsTracing;
 
 	static FRWLock DeltaRecordingStatesLock;
 
@@ -441,13 +338,13 @@ void FChaosVisualDebuggerTrace::TraceParticlesView(const Chaos::TParticleView<Pa
 		return;
 	}
 
-	const FChaosVDContext* CVDContextData = FChaosVDThreadContext::Get().GetCurrentContext();
+	const FChaosVDContext* CVDContextData = FChaosVDThreadContext::Get().GetCurrentContext(EChaosVDContextType::Solver);
 	if (!ensure(CVDContextData))
 	{
 		return;
 	}
 
-	FChaosVDContext CopyContext = *FChaosVDThreadContext::Get().GetCurrentContext();
+	FChaosVDContext CopyContext = *CVDContextData;
 	
 	ParticlesView.ParallelFor([CopyContext](auto& Particle, int32 Index)
 	{
@@ -500,4 +397,40 @@ struct FChaosVDScopeSolverFrame
 
 	T& SolverRef;
 };
-#endif // CHAOS_VISUAL_DEBUGGER_ENABLED
+
+struct FChaosVDScopeSceneQueryVisit
+{
+	FChaosVDScopeSceneQueryVisit(FChaosVDQueryVisitStep& InVisitData) : VisitData(InVisitData)
+	{
+	}
+
+	~FChaosVDScopeSceneQueryVisit()
+	{
+		CVD_TRACE_SCENE_QUERY_VISIT(MoveTemp(VisitData));
+	}
+
+	FChaosVDQueryVisitStep& VisitData;
+};
+
+namespace Chaos::VisualDebugger
+{
+	template<typename TDataToSerialize>
+	void WriteDataToBuffer(TArray<uint8>& InOutDataBuffer, TDataToSerialize& Data)
+	{
+		FChaosVDMemoryWriter MemWriterAr(InOutDataBuffer, FChaosVisualDebuggerTrace::GetNameTableInstance());
+		MemWriterAr.SetShouldSkipUpdateCustomVersion(true);
+
+		Data.Serialize(MemWriterAr);
+	}
+
+	template<typename TDataToSerialize, typename TArchive>
+	void WriteDataToBuffer(TArray<uint8>& InOutDataBuffer, TDataToSerialize& Data)
+	{
+		FChaosVDMemoryWriter MemWriterAr(InOutDataBuffer, FChaosVisualDebuggerTrace::GetNameTableInstance());
+		TArchive Ar(MemWriterAr);
+		Ar.SetShouldSkipUpdateCustomVersion(true);
+
+		Data.Serialize(Ar);
+	}
+}
+#endif // WITH_CHAOS_VISUAL_DEBUGGER

@@ -23,7 +23,6 @@
 #include "ScopedTransaction.h"
 #include "SlotBase.h"
 #include "Styling/AppStyle.h"
-#include "Templates/ChooseClass.h"
 #include "Types/SlateEnums.h"
 #include "UObject/NameTypes.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"

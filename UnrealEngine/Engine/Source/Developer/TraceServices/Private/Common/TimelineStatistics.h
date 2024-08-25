@@ -110,7 +110,7 @@ public:
 
 		// For very large numbers of timers or frames, an out of memory is possible so don't compute the median.
 		constexpr int64 MaxSize = 5 * 100 * 1000 * 1000;
-		bool bComputeMedian = InitialTimerMap.Num() * (int64) FramesNum < MaxSize;
+		bool bComputeMedian = InitialTimerMap.Num() * (int64)FramesNum < MaxSize;
 		for (auto& KV : InitialTimerMap)
 		{
 			FInternalFrameAggregationEntry Entry;
@@ -125,8 +125,8 @@ public:
 
 		TQueue<TSharedPtr<TMap<BucketKeyType, FAggregatedTimingStats>>, EQueueMode::Mpsc> FrameResultsQueue;
 
-		constexpr float RatioOfThreadsToUse = 0.75;
-		int32 NumTasks = FMath::Max(1, int32(GThreadPool->GetNumThreads() * RatioOfThreadsToUse));
+		constexpr float RatioOfThreadsToUse = 0.75f;
+		int32 NumTasks = FMath::Max(1, (int32)((float)GThreadPool->GetNumThreads() * RatioOfThreadsToUse));
 		NumTasks = FMath::Min((int32)NumTasks, Frames.Num());
 		int32 FramesPerTask = Frames.Num() / NumTasks;
 		int32 ExtraFrameTasks = Frames.Num() - NumTasks * FramesPerTask;
@@ -359,7 +359,7 @@ private:
 				check(EventInclusiveTime >= 0.0);
 				double EventExclusiveTime = StackEntry.ExclusiveTime;
 				check(EventExclusiveTime >= 0.0 && EventExclusiveTime <= EventInclusiveTime);
-				Stack.Pop(false);
+				Stack.Pop(EAllowShrinking::No);
 				double EventNonRecursiveInclusiveTime = EventInclusiveTime;
 				for (const FStackEntry& AncestorStackEntry : Stack)
 				{
@@ -411,7 +411,7 @@ private:
 				check(EventInclusiveTime >= 0.0);
 				double EventExclusiveTime = StackEntry.ExclusiveTime;
 				check(EventExclusiveTime >= 0.0 && EventExclusiveTime <= EventInclusiveTime);
-				Stack.Pop(false);
+				Stack.Pop(EAllowShrinking::No);
 				double EventNonRecursiveInclusiveTime = EventInclusiveTime;
 				for (const FStackEntry& AncestorStackEntry : Stack)
 				{

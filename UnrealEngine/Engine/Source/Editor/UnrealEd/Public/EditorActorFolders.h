@@ -14,6 +14,7 @@ class FObjectPostSaveContext;
 class AActor;
 class UActorFolder;
 class FWorldPartitionActorDesc;
+class FWorldPartitionActorDescInstance;
 
 /** Multicast delegates for broadcasting various folder events */
 
@@ -88,12 +89,18 @@ struct FActorFolders : public FGCObject, public IActorEditorContextClient
 	UE_DEPRECATED(5.0, "RenameFolderInWorld using FName  has been deprecated. Please use new interface using FFolder.")
 	UNREALED_API bool RenameFolderInWorld(UWorld& World, FName OldPath, FName NewPath);
 
+	UE_DEPRECATED(5.4, "Please use ForEachActorDescInstanceInFolders")
+	static UNREALED_API void ForEachActorDescInFolders(UWorld& InWorld, const TSet<FName>& InPaths, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Operation, const FFolder::FRootObject& InFolderRootObject = FFolder::GetInvalidRootObject()) {}
+	
+	UE_DEPRECATED(5.4, "Please use GetActorDescInstanceFolder")
+	static UNREALED_API FFolder GetActorDescFolder(UWorld& InWorld, const FWorldPartitionActorDesc* InActorDesc) { return FFolder::GetInvalidFolder(); }
 	//~ End Deprecated
-	static UNREALED_API FFolder GetActorDescFolder(UWorld& InWorld, const FWorldPartitionActorDesc* InActorDesc);
-
+	
+	static UNREALED_API FFolder GetActorDescInstanceFolder(UWorld& InWorld, const FWorldPartitionActorDescInstance* InActorDescInstance);
 	/** Apply an operation to each actor desc in the given list of folders. */
-	static UNREALED_API void ForEachActorDescInFolders(UWorld& InWorld, const TSet<FName>& InPaths, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Operation, const FFolder::FRootObject& InFolderRootObject = FFolder::GetInvalidRootObject());
-		
+			
+	static UNREALED_API void ForEachActorDescInstanceInFolders(UWorld& InWorld, const TSet<FName>& InPaths, TFunctionRef<bool(const FWorldPartitionActorDescInstance*)> Operation, const FFolder::FRootObject& InFolderRootObject = FFolder::GetInvalidRootObject());
+
 	/** Apply an operation to each actor in the given list of folders. Will stop when operation returns false. */
 	static UNREALED_API void ForEachActorInFolders(UWorld& InWorld, const TArray<FName>& InPaths, TFunctionRef<bool(AActor*)> Operation, const FFolder::FRootObject& InFolderRootObject = FFolder::GetInvalidRootObject());
 	static UNREALED_API void ForEachActorInFolders(UWorld& InWorld, const TSet<FName>& InPaths, TFunctionRef<bool(AActor*)> Operation, const FFolder::FRootObject& InFolderRootObject = FFolder::GetInvalidRootObject());

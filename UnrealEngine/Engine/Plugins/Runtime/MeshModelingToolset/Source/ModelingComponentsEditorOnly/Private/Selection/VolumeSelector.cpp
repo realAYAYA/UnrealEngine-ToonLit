@@ -227,7 +227,7 @@ void FVolumeSelector::CommitMeshTransform()
 {
 	FTransform SetTransform = ParentVolume->GetActorTransform();
 
-	ParentVolume->Modify();
+	ParentVolume->Modify(true);
 	BrushComponent->Modify();
 
 	UE::Conversion::FMeshToVolumeOptions ConvertOptions;

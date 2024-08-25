@@ -2,7 +2,9 @@
 
 #include "PluginReferenceViewerSchema.h"
 
+#include "AssetManagerEditorModule.h"
 #include "ConnectionDrawingPolicy.h"
+#include "EdGraphNode_PluginReference.h"
 #include "PluginReferencePinCategory.h"
 #include "PluginReferenceViewerCommands.h"
 #include "SPluginReferenceViewer.h"
@@ -50,6 +52,79 @@ void UPluginReferenceViewerSchema::GetContextMenuActions(UToolMenu* Menu, UGraph
 	{
 		FToolMenuSection& Section = Menu->AddSection(TEXT("Plugin"), NSLOCTEXT("PluginReferenceViewerSchema", "PluginSectionLabel", "Plugin"));
 		Section.AddMenuEntry(FPluginReferenceViewerCommands::Get().OpenPluginProperties);
+	}
+
+	{
+		FToolMenuSection& Section = Menu->AddSection(TEXT("AssetReferences"), NSLOCTEXT("PluginReferenceViewerSchema", "AssetReferencesSectionLabel", "Asset References"));
+
+		FText Title = NSLOCTEXT("PluginReferenceViewerSchema", "OpenReferenceViewer", "Open {0} Asset References...");
+
+		UEdGraph_PluginReferenceViewer* PluginReferenceViewer = const_cast<UEdGraph_PluginReferenceViewer*>(CastChecked<UEdGraph_PluginReferenceViewer>(Context->Graph));
+		const UEdGraphNode_PluginReference* ContextPluginNode = Cast<UEdGraphNode_PluginReference>(Context->Node);
+
+		// Opens the reference viewer for all assets belonging to the plugin.
+		check(!PluginReferenceViewer->GetCurrentGraphRootIdentifiers().IsEmpty());
+
+		FPluginIdentifier GraphRootPluginIdentifier = PluginReferenceViewer->GetCurrentGraphRootIdentifiers()[0];
+
+		if (ContextPluginNode->GetIdentifier() == GraphRootPluginIdentifier)
+		{
+			TArray<FAssetIdentifier> AssetIdentifiers;
+			PluginReferenceViewer->GetPluginAssets(ContextPluginNode->GetIdentifier(), AssetIdentifiers);
+
+			Section.AddEntry(FToolMenuEntry::InitMenuEntry(NAME_None,
+				FText::Format(Title, FText::AsNumber(AssetIdentifiers.Num())),
+				NSLOCTEXT("PluginReferenceViewerSchema", "PluginAssetReferences", "Launches the reference viewer showing the plugin asset references"),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda(
+					[AssetIdentifiers]()
+					{
+						IAssetManagerEditorModule::Get().OpenReferenceViewerUI(AssetIdentifiers);
+					}),
+					FCanExecuteAction::CreateLambda([AssetCount = AssetIdentifiers.Num()]() { return AssetCount > 0; })
+				)
+			));
+		}
+		else
+		{
+			/*	
+			*	Opens the reference viewer for all assets that have references across plugins.
+			*		a) from the root plugin node to the selected dependency plugin node.
+			*		b) from the selected referencer plugin node to the root plugin node. 
+			*/
+			FText Tooltip = NSLOCTEXT("PluginReferenceViewerSchema", "AssetReferencesAcrossPlugins", "Launches the reference viewer showing the plugin asset references from '{0}' to '{1}'");
+			TArray<FAssetIdentifier> AssetIdentifiers;
+			FReferenceViewerParams ReferenceViewerParams;
+			ReferenceViewerParams.bShowPluginFilter = true;
+
+			if (PluginReferenceViewer->IsDependencyNode(ContextPluginNode->GetIdentifier()))
+			{
+				Tooltip = FText::Format(Tooltip, FText::FromName(GraphRootPluginIdentifier.Name), FText::FromName(ContextPluginNode->GetIdentifier().Name));
+
+				ReferenceViewerParams.PluginFilter.Add(ContextPluginNode->GetIdentifier().Name);
+				PluginReferenceViewer->FindAssetReferencesAcrossPlugins(GraphRootPluginIdentifier, ContextPluginNode->GetIdentifier(), AssetIdentifiers);
+			}
+			else
+			{
+				Tooltip = FText::Format(Tooltip, FText::FromName(ContextPluginNode->GetIdentifier().Name), FText::FromName(GraphRootPluginIdentifier.Name));
+
+				ReferenceViewerParams.PluginFilter.Add(GraphRootPluginIdentifier.Name);
+				PluginReferenceViewer->FindAssetReferencesAcrossPlugins(ContextPluginNode->GetIdentifier(), GraphRootPluginIdentifier, AssetIdentifiers);
+			}
+
+			Section.AddEntry(FToolMenuEntry::InitMenuEntry(NAME_None,
+				FText::Format(Title, FText::AsNumber(AssetIdentifiers.Num())),
+				Tooltip,
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda(
+					[AssetIdentifiers, ReferenceViewerParams]()
+					{
+						IAssetManagerEditorModule::Get().OpenReferenceViewerUI(AssetIdentifiers, ReferenceViewerParams);
+					}),
+					FCanExecuteAction::CreateLambda([AssetCount=AssetIdentifiers.Num()]() { return AssetCount > 0; })
+				)
+			));
+		}
 	}
 
 	{

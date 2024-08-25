@@ -6,7 +6,6 @@
 #include "MoviePlayer.h"
 #include "IMediaTextureSample.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 THIRD_PARTY_INCLUDES_START

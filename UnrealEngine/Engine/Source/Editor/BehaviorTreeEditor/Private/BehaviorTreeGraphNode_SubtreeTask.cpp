@@ -2,6 +2,7 @@
 
 #include "BehaviorTreeGraphNode_SubtreeTask.h"
 
+#include "BehaviorTreeColors.h"
 #include "BehaviorTree/BTDecorator.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/Tasks/BTTask_RunBehavior.h"
@@ -53,7 +54,7 @@ bool UBehaviorTreeGraphNode_SubtreeTask::UpdateInjectedNodes()
 		if (Decorators[Index] && Decorators[Index]->bInjectedNode)
 		{
 			SubNodes.RemoveSingle(Decorators[Index]);
-			Decorators.RemoveAt(Index, 1, false);
+			Decorators.RemoveAt(Index, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -75,7 +76,7 @@ bool UBehaviorTreeGraphNode_SubtreeTask::UpdateInjectedNodes()
 	// add root level subnodes as injected nodes
 	if (SubRoot)
 	{
-		UBehaviorTree* BTAsset = Cast<UBehaviorTree>(GetBehaviorTreeGraph()->GetOuter());
+		UBehaviorTree* BTAsset = Cast<UBehaviorTree>(GetOwnerBehaviorTreeGraph()->GetOuter());
 
 		if(BTAsset)
 		{
@@ -138,4 +139,9 @@ bool UBehaviorTreeGraphNode_SubtreeTask::UpdateInjectedNodes()
 	}
 
 	return bUpdated;
+}
+
+FLinearColor UBehaviorTreeGraphNode_SubtreeTask::GetBackgroundColor(bool bIsActiveForDebugger) const
+{
+	return BehaviorTreeColors::NodeBody::TaskSpecial;
 }

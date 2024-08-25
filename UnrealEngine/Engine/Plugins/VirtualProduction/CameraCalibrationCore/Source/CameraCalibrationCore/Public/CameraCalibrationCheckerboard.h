@@ -64,15 +64,15 @@ public:
 	TObjectPtr<UCalibrationPointComponent> Center;
 
 
-	/** Number of rows. It is one of the parameters cv::findChessboardCorners needs */
+	/** Number of rows */
 	UPROPERTY(EditAnywhere, Category = "Calibration")
 	int32 NumCornerRows = 2;
 
-	/** Number of columns. It is one of the parameters cv::findChessboardCorners needs */
+	/** Number of columns */
 	UPROPERTY(EditAnywhere, Category = "Calibration")
 	int32 NumCornerCols = 2;
 
-	/** Length of the side of each square. It is used when building the object points that cv::calibrateCamera needs */
+	/** Length of the side of each square */
 	UPROPERTY(EditAnywhere, Category = "Calibration")
 	float SquareSideLength = 3.2089f;
 

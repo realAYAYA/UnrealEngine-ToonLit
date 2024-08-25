@@ -212,6 +212,9 @@ void InitBuffersCS()
  * Compute shader to traverse the virtual texture page table and generate an array of items to potentially render for a view.
  */
 
+#if COMPILER_SUPPORTS_WAVE_SIZE
+	WAVESIZE(32)
+#endif
 [numthreads(64, 1, 1)]
 void CollectQuadsCS(
 	uint3 DispatchThreadId : SV_DispatchThreadID,

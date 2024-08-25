@@ -248,10 +248,10 @@ public:
 	 *
 	 * @param Index Location in array of the element to remove.
 	 * @param Count (Optional) Number of elements to remove. Default is 1.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink array if
-	 *                        suitable after remove. Default is true.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink array if
+	 *                        suitable after remove. Default is yes.
 	 */
-	void RemoveAt(int32 Index, int32 Count = 1, bool bAllowShrinking = true)
+	void RemoveAt(int32 Index, int32 Count = 1, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		check(Index >= 0);
 		check(Index <= Array.Num());
@@ -262,7 +262,12 @@ public:
 			delete *Element;
 			++Element;
 		}
-		Array.RemoveAt(Index, Count, bAllowShrinking);
+		Array.RemoveAt(Index, Count, AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAt")
+	FORCEINLINE void RemoveAt(int32 Index, int32 Count, bool bAllowShrinking)
+	{
+		RemoveAt(Index, Count, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -274,10 +279,10 @@ public:
 	 *
 	 * @param Index Location in array of the element to remove.
 	 * @param Count (Optional) Number of elements to remove. Default is 1.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink array if
-	 *                        suitable after remove. Default is true.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink array if
+	 *                        suitable after remove. Default is yes.
 	 */
-	void RemoveAtSwap(int32 Index, int32 Count = 1, bool bAllowShrinking = true)
+	void RemoveAtSwap(int32 Index, int32 Count = 1, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		check(Index >= 0);
 		check(Index <= Array.Num());
@@ -288,7 +293,12 @@ public:
 			delete *Element;
 			++Element;
 		}
-		Array.RemoveAtSwap(Index, Count, bAllowShrinking);
+		Array.RemoveAtSwap(Index, Count, AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAtSwap")
+	FORCEINLINE void RemoveAtSwap(int32 Index, int32 Count, bool bAllowShrinking)
+	{
+		RemoveAtSwap(Index, Count, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**

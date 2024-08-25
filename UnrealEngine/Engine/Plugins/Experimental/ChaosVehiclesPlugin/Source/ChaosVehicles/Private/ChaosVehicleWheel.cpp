@@ -3,6 +3,7 @@
 #include "ChaosVehicleWheel.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
+#include "Engine/HitResult.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
 #include "Vehicles/TireType.h"
@@ -11,7 +12,7 @@
 #include "ChaosWheeledVehicleMovementComponent.h"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 
@@ -169,7 +170,7 @@ UPhysicalMaterial* UChaosVehicleWheel::GetContactSurfaceMaterial()
 
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif
 
 

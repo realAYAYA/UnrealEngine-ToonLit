@@ -7,6 +7,7 @@
 #include "Containers/Array.h"
 #include "Containers/Queue.h"
 #include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMesh/NonManifoldMappingSupport.h"
 #include "DynamicMesh/Operations/MergeCoincidentMeshEdges.h"
 #include "DynamicMeshToMeshDescription.h"
 #include "MeshAttributes.h"
@@ -341,14 +342,7 @@ void MeshOperator::ResolveTJunctions(FMeshDescription& MeshDescription, double T
 	}
 
 	// Check if there are boundary edges
-	int32 BoundaryEdgeCount = 0;
-	for (int32 eid : DynamicMesh.BoundaryEdgeIndicesItr())
-	{
-		BoundaryEdgeCount++;
-		break;
-	}
-
-	if (BoundaryEdgeCount == 0)
+	if (auto It(DynamicMesh.BoundaryEdgeIndicesItr()); It.begin() == It.end())
 	{
 		return;
 	}
@@ -363,7 +357,6 @@ void MeshOperator::ResolveTJunctions(FMeshDescription& MeshDescription, double T
 		MergeCoincidentEdges.MergeVertexTolerance = Tolerance;
 		MergeCoincidentEdges.MergeSearchTolerance = 2 * Tolerance;
 		MergeCoincidentEdges.Apply();
-		BoundaryEdgeCount = MergeCoincidentEdges.FinalNumBoundaryEdges;
 	}
 
 	CADLibrary::FMeshDescriptionDataCache MeshDescriptionDataCache(MeshDescription);
@@ -383,4 +376,61 @@ void MeshOperator::ResolveTJunctions(FMeshDescription& MeshDescription, double T
 	}
 
 	MeshDescriptionDataCache.RestoreMaterialSlotNames(MeshDescription);
+}
+
+
+void MeshOperator::FixNonManifoldMesh(FMeshDescription& MeshDescription)
+{
+	using namespace UE::Geometry;
+
+	FDynamicMesh3 DynamicMesh(UE::Geometry::EMeshComponents::All);
+	DynamicMesh.EnableAttributes();
+
+	TFunction<void()> ToDynamicMesh = [&MeshDescription, &DynamicMesh]()
+	{
+		DynamicMesh.Clear();
+
+		FMeshDescriptionToDynamicMesh ConverterToDynamicMesh;
+		ConverterToDynamicMesh.Convert(&MeshDescription, DynamicMesh);
+	};
+
+	TFunction<void()> ToMeshDescription = [&MeshDescription, &DynamicMesh]()
+	{
+		CADLibrary::FMeshDescriptionDataCache MeshDescriptionDataCache(MeshDescription);
+
+		{
+			FConversionToMeshDescriptionOptions ConversionOptions;
+			ConversionOptions.bSetPolyGroups = true;
+			ConversionOptions.bUpdatePositions = true;
+			ConversionOptions.bUpdateNormals = true;
+			ConversionOptions.bUpdateTangents = false;
+			ConversionOptions.bUpdateUVs = true;
+			ConversionOptions.bUpdateVtxColors = false;
+			ConversionOptions.bTransformVtxColorsSRGBToLinear = false;
+
+			FDynamicMeshToMeshDescription ConverterToMeshDescription(ConversionOptions);
+			ConverterToMeshDescription.Convert(&DynamicMesh, MeshDescription);
+		}
+
+		MeshDescriptionDataCache.RestoreMaterialSlotNames(MeshDescription);
+	};
+
+	ToDynamicMesh();
+
+	// Nothing to do if mesh is manifold (all edges are shared by at most 2 triangles)
+	if (DynamicMesh.CheckValidity(FDynamicMesh3::FValidityOptions(false, true), EValidityCheckFailMode::ReturnOnly))
+	{
+		return;
+	}
+
+	// Although the conversion from MeshDescription to DynamicMesh3 handles non-manifold edges
+	// Some edges may be shared by more than 3 triangles. To solve this, we must perform
+	// the conversion back and forth until all non-manifold edges have been eliminated.
+	do 
+	{
+		ToMeshDescription();
+		ToDynamicMesh();
+	} while (DynamicMesh.CheckValidity(FDynamicMesh3::FValidityOptions(false, true), EValidityCheckFailMode::ReturnOnly));
+
+	ToMeshDescription();
 }

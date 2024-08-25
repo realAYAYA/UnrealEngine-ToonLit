@@ -14,7 +14,7 @@
 #include "VariableRateShadingImageManager.h"
 #include "Lumen/LumenTranslucencyVolumeLighting.h"
 #include "VirtualShadowMaps/VirtualShadowMapArray.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "HairStrands/HairStrandsUtils.h"
 #include "PixelShaderUtils.h"
 #include "OIT/OIT.h"
@@ -746,7 +746,7 @@ const FRDGTextureDesc GetPostDOFTranslucentTextureDesc(
 	bool bIsModulate,
 	EShaderPlatform ShaderPlatform)
 {
-	const bool bNeedUAV = SeparateTranslucencyDimensions.NumSamples == 1 && OIT::IsEnabled(EOITSortingType::SortedPixels, ShaderPlatform);
+	const bool bNeedUAV = SeparateTranslucencyDimensions.NumSamples == 1 && OIT::IsSortedPixelsEnabled(ShaderPlatform);
 	return FRDGTextureDesc::Create2D(
 		SeparateTranslucencyDimensions.Extent,
 		bIsModulate ? PF_FloatR11G11B10 : PF_FloatRGBA,
@@ -823,9 +823,9 @@ TRDGUniformBufferRef<FTranslucentBasePassUniformParameters> CreateTranslucentBas
 		return GraphBuilder.RegisterExternalTexture(PooledRenderTarget, Flags);
 	};
 
-	SetupSharedBasePassParameters(GraphBuilder, View, bLumenGIEnabled, BasePassParameters.Shared);
+	SetupSharedBasePassParameters(GraphBuilder, View, ViewIndex, bLumenGIEnabled, BasePassParameters.Shared);
 	SetupSceneTextureUniformParameters(GraphBuilder, View.GetSceneTexturesChecked(), View.FeatureLevel, SceneTextureSetupMode, BasePassParameters.SceneTextures);
-	Strata::BindStrataForwardPasslUniformParameters(GraphBuilder, View, BasePassParameters.Strata);
+	Substrate::BindSubstrateForwardPasslUniformParameters(GraphBuilder, View, BasePassParameters.Substrate);
 
 	const FLightSceneProxy* SelectedForwardDirectionalLightProxy = View.ForwardLightingResources.SelectedForwardDirectionalLightProxy;
 	SetupLightCloudTransmittanceParameters(GraphBuilder, Scene, View, SelectedForwardDirectionalLightProxy ? SelectedForwardDirectionalLightProxy->GetLightSceneInfo() : nullptr, BasePassParameters.ForwardDirLightCloudShadow);
@@ -1005,6 +1005,8 @@ TRDGUniformBufferRef<FTranslucentBasePassUniformParameters> CreateTranslucentBas
 	{
 		BasePassParameters.BlueNoise = GetBlueNoiseDummyParameters();
 	}
+
+	BasePassParameters.AVSM = HeterogeneousVolumes::GetAdaptiveVolumetricCameraMapParameters(GraphBuilder, View.ViewState);
 
 	return GraphBuilder.CreateUniformBuffer(&BasePassParameters);
 }
@@ -1329,20 +1331,24 @@ void FDeferredShadingSceneRenderer::RenderTranslucencyInner(
 	ESceneTextureSetupMode SceneTextureSetupMode = ESceneTextureSetupMode::All;
 	EnumRemoveFlags(SceneTextureSetupMode, ESceneTextureSetupMode::SceneColor);
 
-	if (bRenderInSeparateTranslucency)
+	// Create resources shared by each view (each view data is tiled into each of the render target resources)
+	FRDGTextureMSAA SharedColorTexture = CreatePostDOFTranslucentTexture(GraphBuilder, TranslucencyPass, SeparateTranslucencyDimensions, bIsModulate, ShaderPlatform);
+
+	for (int32 ViewIndex = 0, NumProcessedViews = 0; ViewIndex < Views.Num(); ++ViewIndex)
 	{
-		// Create resources shared by each view (each view data is tiled into each of the render target resources)
-		FRDGTextureMSAA SharedColorTexture = CreatePostDOFTranslucentTexture(GraphBuilder, TranslucencyPass, SeparateTranslucencyDimensions, bIsModulate, ShaderPlatform);
+		FViewInfo& View = Views[ViewIndex];
+		const ETranslucencyView TranslucencyView = GetTranslucencyView(View);
 
-		for (int32 ViewIndex = 0, NumProcessedViews = 0; ViewIndex < Views.Num(); ++ViewIndex)
+		if (!EnumHasAnyFlags(TranslucencyView, ViewsToRender))
 		{
-			FViewInfo& View = Views[ViewIndex];
-			const ETranslucencyView TranslucencyView = GetTranslucencyView(View);
+			continue;
+		}
 
-			if (!EnumHasAnyFlags(TranslucencyView, ViewsToRender))
-			{
-				continue;
-			}
+		// We run separate and composited translucent only when the view is NOT under water.
+		// When under water, we render each translucency pass in forward on the water buffer itself.
+		const bool bViewIsUnderWater = EnumHasAnyFlags(TranslucencyView, ETranslucencyView::UnderWater);
+		if (bRenderInSeparateTranslucency && !bViewIsUnderWater)
+		{
 
 			RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
 			RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1, "View%d", ViewIndex);
@@ -1350,7 +1356,7 @@ void FDeferredShadingSceneRenderer::RenderTranslucencyInner(
 			FIntRect ScaledViewRect = GetScaledRect(View.ViewRect, SeparateTranslucencyDimensions.Scale);
 
 			const FScreenPassTextureViewport SeparateTranslucencyViewport = SeparateTranslucencyDimensions.GetInstancedStereoViewport(View);
-			const bool bCompositeBackToSceneColor = (IsMainTranslucencyPass(TranslucencyPass) && !bIsStandardSeparatedTranslucency) || EnumHasAnyFlags(TranslucencyView, ETranslucencyView::UnderWater);
+			const bool bCompositeBackToSceneColor = (IsMainTranslucencyPass(TranslucencyPass) && !bIsStandardSeparatedTranslucency);
 			const bool bLumenGIEnabled = GetViewPipelineState(View).DiffuseIndirectMethod == EDiffuseIndirectMethod::Lumen;
 
 			/** Separate translucency color is either composited immediately or later during post processing. If done immediately, it's because the view doesn't support
@@ -1453,21 +1459,16 @@ void FDeferredShadingSceneRenderer::RenderTranslucencyInner(
 
 			++NumProcessedViews;
 		}
-	}
-	else
-	{
-		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+		else
 		{
-			FViewInfo& View = Views[ViewIndex];
-			const ETranslucencyView TranslucencyView = GetTranslucencyView(View);
-
-			if (!EnumHasAnyFlags(TranslucencyView, ViewsToRender))
-			{
-				continue;
-			}
-
+			// When rendering translucent meshes under water, we skip modulate passes which are only required when compositing separate translucency passes from render target.
+			const bool bSkipPass = bViewIsUnderWater && bIsModulate; 
 			RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
-			RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1, "View%d", ViewIndex);
+			RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1 && !bSkipPass, "View%d", ViewIndex);
+			if (bSkipPass)
+			{
+				return;
+			}
 
 			const ERenderTargetLoadAction SceneColorLoadAction = ERenderTargetLoadAction::ELoad;
 			const FScreenPassTextureViewport Viewport(SceneTextures.Color.Target, View.ViewRect);

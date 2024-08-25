@@ -183,3 +183,8 @@ FOptimusActionScope::~FOptimusActionScope()
 {
 	ActionStack.CloseActionScope();
 }
+
+void FOptimusActionScope::SetTitle(const FString& InTitle)
+{
+	ActionStack.ActionScopes.Last()->SetTitle(InTitle);
+}

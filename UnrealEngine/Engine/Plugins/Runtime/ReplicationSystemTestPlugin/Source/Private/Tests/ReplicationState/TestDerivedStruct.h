@@ -36,7 +36,31 @@ struct FTestDerivedStruct_Inherited_WithNetSerializer_Inherited_WithoutNetSerial
 	UPROPERTY(Transient)
 	uint8 ByteMember2 = 125;
 
-	UPROPERTY(NotReplicated)
+	UPROPERTY(Transient, NotReplicated)
+	uint8 ByteMember3_NotReplicated = 0;
+};
+
+USTRUCT()
+struct FTestDerivedStruct_Inherited_WithNetSerializerWithApply : public FTestDerivedStruct_Base
+{
+	GENERATED_BODY()
+	
+	UPROPERTY(Transient)
+	uint8 ByteMember1 = 25;
+
+	UPROPERTY(Transient)
+	uint8 ByteMemberNotSetOnApply = 33;
+};
+
+USTRUCT()
+struct FTestDerivedStruct_Inherited_WithNetSerializerWithApply_Inherited_WithoutNetSerializer : public FTestDerivedStruct_Inherited_WithNetSerializerWithApply
+{
+	GENERATED_BODY()
+
+	UPROPERTY(Transient)
+	uint8 ByteMember2 = 125;
+
+	UPROPERTY(Transient, NotReplicated)
 	uint8 ByteMember3_NotReplicated = 0;
 };
 
@@ -96,9 +120,66 @@ protected:
 	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
 };
 
+UCLASS()
+class UTestDerivedStructWithNetSerializerWithApply_TestObject_Member : public UReplicatedTestObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Replicated, Transient)
+	FTestDerivedStruct_Inherited_WithNetSerializerWithApply DerivedStruct;
+
+protected:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
+};
+
+UCLASS()
+class UTestDerivedStructWithNetSerializerWithApply_TestObject_Array : public UReplicatedTestObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Replicated, Transient)
+	TArray<FTestDerivedStruct_Inherited_WithNetSerializerWithApply> DerivedStructArray;
+
+protected:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
+};
+
+UCLASS()
+class UTestDerivedStructWithNetSerializerWithApply_Inherited_TestObject_Member : public UReplicatedTestObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Replicated, Transient)
+	FTestDerivedStruct_Inherited_WithNetSerializerWithApply_Inherited_WithoutNetSerializer DerivedStruct;
+
+protected:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
+};
+
+UCLASS()
+class UTestDerivedStructWithNetSerializerWithApply_Inherited_TestObject_Array : public UReplicatedTestObject
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Replicated, Transient)
+	TArray<FTestDerivedStruct_Inherited_WithNetSerializerWithApply_Inherited_WithoutNetSerializer> DerivedStructArray;
+
+protected:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
+};
+
 namespace UE::Net::Private
 {
 
 UE_NET_DECLARE_SERIALIZER(FTestDerivedStruct_Inherited_WithNetSerializer_NetSerializer, REPLICATIONSYSTEMTESTPLUGIN_API);
+UE_NET_DECLARE_SERIALIZER(FTestDerivedStruct_Inherited_WithNetSerializerWithApply_NetSerializer, REPLICATIONSYSTEMTESTPLUGIN_API);
 
 }

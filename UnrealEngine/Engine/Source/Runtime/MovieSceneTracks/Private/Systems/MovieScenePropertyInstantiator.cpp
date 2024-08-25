@@ -1,18 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Systems/MovieScenePropertyInstantiator.h"
-#include "Algo/AllOf.h"
-#include "EntitySystem/MovieSceneEntityBuilder.h"
-#include "EntitySystem/MovieScenePropertyBinding.h"
-#include "EntitySystem/MovieSceneEntitySystemLinker.h"
-#include "EntitySystem/MovieSceneBlenderSystem.h"
-#include "EntitySystem/MovieScenePropertyRegistry.h"
-#include "Systems/MovieScenePiecewiseDoubleBlenderSystem.h"
-#include "EntitySystem/Interrogation/MovieSceneInterrogationLinker.h"
 
 #include "Algo/AllOf.h"
 #include "Algo/IndexOf.h"
+#include "EntitySystem/Interrogation/MovieSceneInterrogationLinker.h"
+#include "EntitySystem/MovieSceneBlenderSystem.h"
+#include "EntitySystem/MovieSceneEntityBuilder.h"
+#include "EntitySystem/MovieSceneEntityGroupingSystem.h"
+#include "EntitySystem/MovieSceneEntityIDs.h"
+#include "EntitySystem/MovieSceneEntitySystemLinker.h"
+#include "EntitySystem/MovieScenePropertyBinding.h"
+#include "EntitySystem/MovieScenePropertyRegistry.h"
 #include "ProfilingDebugging/CountersTrace.h"
+#include "Systems/MovieScenePiecewiseDoubleBlenderSystem.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieScenePropertyInstantiator)
 
@@ -20,6 +21,33 @@ DECLARE_CYCLE_STAT(TEXT("DiscoverInvalidatedProperties"), MovieSceneEval_Discove
 DECLARE_CYCLE_STAT(TEXT("ProcessInvalidatedProperties"), MovieSceneEval_ProcessInvalidatedProperties, STATGROUP_MovieSceneECS);
 DECLARE_CYCLE_STAT(TEXT("InitializePropertyMetaData"), MovieSceneEval_InitializePropertyMetaData, STATGROUP_MovieSceneECS);
 
+namespace UE::MovieScene
+{
+
+struct FPropertyInstantiatorGroupingPolicy
+{
+	using GroupKeyType = TTuple<UObject*, FName>;
+
+	bool GetGroupKey(UObject* Object, const FMovieScenePropertyBinding& PropertyBinding, GroupKeyType& OutGroupKey)
+	{
+		OutGroupKey = MakeTuple(Object, PropertyBinding.PropertyPath);
+		return true;
+	}
+
+#if WITH_EDITOR
+	bool OnObjectsReplaced(GroupKeyType& InOutKey, const TMap<UObject*, UObject*>& ReplacementMap)
+	{
+		if (UObject* const * NewObject = ReplacementMap.Find(InOutKey.Key))
+		{
+			InOutKey.Key = *NewObject;
+			return true;
+		}
+		return false;
+	}
+#endif
+};
+
+} // namespace UE::MovieScene
 
 void UMovieScenePropertyInstantiatorSystem::FHierarchicalMetaData::CombineWith(const FHierarchicalMetaData& Other)
 {
@@ -60,6 +88,8 @@ UMovieScenePropertyInstantiatorSystem::UMovieScenePropertyInstantiatorSystem(con
 	if (HasAnyFlags(RF_ClassDefaultObject))
 	{
 		DefineComponentConsumer(GetClass(), BuiltInComponents->BoundObject);
+		DefineComponentConsumer(GetClass(), BuiltInComponents->Group);
+
 		DefineComponentProducer(GetClass(), BuiltInComponents->BlendChannelInput);
 		DefineComponentProducer(GetClass(), BuiltInComponents->HierarchicalBlendTarget);
 		DefineComponentProducer(GetClass(), BuiltInComponents->SymbolicTags.CreatesEntities);
@@ -79,9 +109,20 @@ UE::MovieScene::FPropertyStats UMovieScenePropertyInstantiatorSystem::GetStatsFo
 
 void UMovieScenePropertyInstantiatorSystem::OnLink()
 {
+	using namespace UE::MovieScene;
+
 	CleanFastPathMask.Reset();
 	CleanFastPathMask.SetAll({ BuiltInComponents->FastPropertyOffset, BuiltInComponents->SlowProperty, BuiltInComponents->CustomPropertyIndex });
 	CleanFastPathMask.CombineWithBitwiseOR(Linker->EntityManager.GetComponents()->GetMigrationMask(), EBitwiseOperatorFlags::MaxSize);
+
+	UMovieSceneEntityGroupingSystem* GroupingSystem = Linker->LinkSystem<UMovieSceneEntityGroupingSystem>();
+	PropertyGroupingKey = GroupingSystem->AddGrouping(
+			FPropertyInstantiatorGroupingPolicy(),
+			BuiltInComponents->BoundObject, BuiltInComponents->PropertyBinding);
+			
+#if WITH_EDITOR
+	FCoreUObjectDelegates::OnObjectsReplaced.AddUObject(this, &UMovieScenePropertyInstantiatorSystem::OnObjectsReplaced);
+#endif
 }
 
 void UMovieScenePropertyInstantiatorSystem::OnUnlink()
@@ -91,16 +132,12 @@ void UMovieScenePropertyInstantiatorSystem::OnUnlink()
 	const bool bAllPropertiesClean = (
 				ResolvedProperties.Num() == 0 &&
 				Contributors.Num() == 0 &&
-				NewContributors.Num() == 0 &&
-				EntityToProperty.Num() == 0 &&
-				ObjectPropertyToResolvedIndex.Num() == 0);
+				NewContributors.Num() == 0);
 	if (!ensure(bAllPropertiesClean))
 	{
 		ResolvedProperties.Reset();
 		Contributors.Reset();
 		NewContributors.Reset();
-		EntityToProperty.Reset();
-		ObjectPropertyToResolvedIndex.Reset();
 		PropertyStats.Reset();
 	}
 
@@ -122,12 +159,27 @@ void UMovieScenePropertyInstantiatorSystem::OnUnlink()
 		InitializePropertyMetaDataTasks.Reset();
 		SaveGlobalStateTasks.Reset();
 	}
+
+	UMovieSceneEntityGroupingSystem* GroupingSystem = Linker->FindSystem<UMovieSceneEntityGroupingSystem>();
+	if (ensure(GroupingSystem))
+	{
+		GroupingSystem->RemoveGrouping(PropertyGroupingKey);
+	}
+	PropertyGroupingKey = FEntityGroupingPolicyKey();
+	
+#if WITH_EDITOR
+	FCoreUObjectDelegates::OnObjectsReplaced.RemoveAll(this);
+#endif
 }
 
 void UMovieScenePropertyInstantiatorSystem::OnCleanTaggedGarbage()
 {
+	using namespace UE::MovieScene;
+
 	// Only process expired properties for this GC pass to ensure we don't end up creating any new entities
 	DiscoverExpiredProperties(PendingInvalidatedProperties);
+
+	TArrayView<const FPropertyDefinition> Properties = this->BuiltInComponents->PropertyRegistry.GetProperties();
 
 	bool bAnyDestroyed = false;
 	// Look through our resolved properties to detect any outputs that have been destroyed
@@ -140,14 +192,61 @@ void UMovieScenePropertyInstantiatorSystem::OnCleanTaggedGarbage()
 
 		FObjectPropertyInfo& PropertyInfo = ResolvedProperties[Index];
 
-		// If the final output entity is being destroyed, clean up the property info and blender so it can be re-created next time if necessary
-		if (
-			(PropertyInfo.FinalBlendOutputID && Linker->EntityManager.HasComponent(PropertyInfo.FinalBlendOutputID, BuiltInComponents->Tags.NeedsUnlink)) ||
-			(PropertyInfo.PreviousFastPathID && Linker->EntityManager.HasComponent(PropertyInfo.PreviousFastPathID, BuiltInComponents->Tags.NeedsUnlink))
-			)
+		FContributorKey ContributorKey(Index);
+
+		const bool bFastPathOutputBeingDestroyed = PropertyInfo.PreviousFastPathID && Linker->EntityManager.HasComponent(PropertyInfo.PreviousFastPathID, BuiltInComponents->Tags.NeedsUnlink);
+
+		// If the fast path is being destroyed, we need to copy over any initial values from that fast path entity to
+		// any additional contributors that might still be alive. This can happen if a sequence gets GC'd and removes its entities while another is still alive animating the same thing.
+		if (bFastPathOutputBeingDestroyed)
 		{
-			// Really we shouldn't have any contributors any more if the output is being destroyed
-			ensure(!Contributors.Contains(FContributorKey(Index)));
+			FMovieSceneEntityID TemporaryFastPathEntity;
+			for (auto It = Contributors.CreateConstKeyIterator(ContributorKey); It; ++It)
+			{
+				Linker->EntityManager.AddComponent(It->Value, BuiltInComponents->Tags.NeedsLink);
+				TemporaryFastPathEntity = It->Value;
+			}
+
+			if (TemporaryFastPathEntity)
+			{
+				const FPropertyDefinition& PropertyDefinition = Properties[PropertyInfo.PropertyDefinitionIndex];
+				FComponentMask CopyMask;
+				CopyMask.Set(PropertyDefinition.InitialValueType);
+				CopyMask.Set(BuiltInComponents->Tags.HasAssignedInitialValue);
+				for (FComponentTypeID Component : PropertyDefinition.MetaDataTypes)
+				{
+					CopyMask.Set(Component);
+				}
+
+				Linker->EntityManager.CopyComponents(PropertyInfo.PreviousFastPathID, TemporaryFastPathEntity, CopyMask);
+				PropertyInfo.PreviousFastPathID = TemporaryFastPathEntity;
+			}
+			else
+			{
+				// There is nothing else animating this - destroy the property entirely
+				DestroyStaleProperty(Index);
+				bAnyDestroyed = true;
+
+				if (PendingInvalidatedProperties.IsValidIndex(Index) && PendingInvalidatedProperties[Index] == true)
+				{
+					// This property index is no longer valid at all
+					PendingInvalidatedProperties[Index] = false;
+				}
+			}
+		}
+		else if (PropertyInfo.FinalBlendOutputID && Linker->EntityManager.HasComponent(PropertyInfo.FinalBlendOutputID, BuiltInComponents->Tags.NeedsUnlink))
+		{
+			// Really we shouldn't have any contributors any more if the output is being destroyed since the target object must be going away
+			//    (which means all the contributors that reference that target object must also be going away)
+			if (!ensureMsgf(!Contributors.Contains(ContributorKey), TEXT("Blend output is being destroyed while there are still contributors.")))
+			{
+				// We still have contributors?? Shouldn't happen, but it's recoverable by just re-resolving all the contributors
+				for (auto It = Contributors.CreateKeyIterator(ContributorKey); It; ++It)
+				{
+					Linker->EntityManager.AddComponent(It->Value, BuiltInComponents->Tags.NeedsLink);
+					It.RemoveCurrent();
+				}
+			}
 
 			DestroyStaleProperty(Index);
 			bAnyDestroyed = true;
@@ -164,6 +263,20 @@ void UMovieScenePropertyInstantiatorSystem::OnCleanTaggedGarbage()
 	{
 		PostDestroyStaleProperties();
 	}
+}
+
+void UMovieScenePropertyInstantiatorSystem::OnObjectsReplaced(const TMap<UObject*, UObject*>& ReplacementMap)
+{
+#if WITH_EDITOR
+	for (auto It = ResolvedProperties.CreateIterator(); It; ++It)
+	{
+		FObjectPropertyInfo& ResolvedProperty = (*It);
+		if (UObject* const* NewObject = ReplacementMap.Find(ResolvedProperty.BoundObject))
+		{
+			ResolvedProperty.BoundObject = *NewObject;
+		}
+	}
+#endif
 }
 
 void UMovieScenePropertyInstantiatorSystem::OnRun(FSystemTaskPrerequisites& InPrerequisites, FSystemSubsequentTasks& Subsequents)
@@ -185,9 +298,6 @@ void UMovieScenePropertyInstantiatorSystem::OnRun(FSystemTaskPrerequisites& InPr
 	{
 		InitializePropertyMetaData(InPrerequisites, Subsequents);
 	}
-
-	ObjectPropertyToResolvedIndex.Compact();
-	EntityToProperty.Compact();
 }
 
 void UMovieScenePropertyInstantiatorSystem::DiscoverInvalidatedProperties(TBitArray<>& OutInvalidatedProperties)
@@ -196,7 +306,7 @@ void UMovieScenePropertyInstantiatorSystem::DiscoverInvalidatedProperties(TBitAr
 
 	MOVIESCENE_DETAILED_SCOPE_CYCLE_COUNTER(MovieSceneEval_DiscoverInvalidatedProperties);
 
-	TArrayView<const FPropertyDefinition> Properties = this->BuiltInComponents->PropertyRegistry.GetProperties();
+	TArrayView<const FPropertyDefinition> Properties = BuiltInComponents->PropertyRegistry.GetProperties();
 
 	PropertyStats.SetNum(Properties.Num());
 
@@ -210,7 +320,7 @@ void UMovieScenePropertyInstantiatorSystem::DiscoverNewProperties(TBitArray<>&Ou
 
 	TArrayView<const FPropertyDefinition> Properties = this->BuiltInComponents->PropertyRegistry.GetProperties();
 
-	auto VisitNewProperties = [this, Properties, &OutInvalidatedProperties](FEntityAllocationIteratorItem AllocationItem, const FMovieSceneEntityID* EntityIDs, UObject* const * ObjectPtrs, const FMovieScenePropertyBinding* PropertyPtrs, const int16* HierarchicalBiases)
+	auto VisitNewProperties = [this, Properties, &OutInvalidatedProperties](FEntityAllocationIteratorItem AllocationItem, const FMovieSceneEntityID* EntityIDs, UObject* const * ObjectPtrs, const FMovieScenePropertyBinding* PropertyPtrs, const FEntityGroupID* GroupIDs, const int16* HierarchicalBiases)
 	{
 		const FEntityAllocation* Allocation     = AllocationItem.GetAllocation();
 		const FComponentMask&    AllocationType = AllocationItem.GetAllocationType();
@@ -236,15 +346,11 @@ void UMovieScenePropertyInstantiatorSystem::DiscoverNewProperties(TBitArray<>&Ou
 
 		for (int32 Index = 0; Index < Allocation->Num(); ++Index)
 		{
-			const int32 PropertyIndex = this->ResolveProperty(CustomAccessors, ObjectPtrs[Index], PropertyPtrs[Index], PropertyDefinitionIndex);
-			
-			// If the property did not resolve, we still add it to the LUT
-			// So that the ensure inside VisitExpiredEntities only fires
-			// for genuine link/unlink disparities
-			this->EntityToProperty.Add(EntityIDs[Index], PropertyIndex);
-
-			if (PropertyIndex != INDEX_NONE)
+			const bool bResolved = this->ResolveProperty(CustomAccessors, ObjectPtrs[Index], PropertyPtrs[Index], GroupIDs[Index], PropertyDefinitionIndex);
+			if (bResolved)
 			{
+				const int32 PropertyIndex = GroupIDs[Index].GroupIndex;
+
 				FContributorKey Key { PropertyIndex, HierarchicalBiases ? HierarchicalBiases[Index] : DefaultHierarchicalBias };
 				this->Contributors.Add(Key, EntityIDs[Index]);
 				this->NewContributors.Add(Key, EntityIDs[Index]);
@@ -259,6 +365,7 @@ void UMovieScenePropertyInstantiatorSystem::DiscoverNewProperties(TBitArray<>&Ou
 	.ReadEntityIDs()
 	.Read(BuiltInComponents->BoundObject)
 	.Read(BuiltInComponents->PropertyBinding)
+	.Read(BuiltInComponents->Group)
 	.ReadOptional(BuiltInComponents->HierarchicalBias)
 	.FilterNone({ BuiltInComponents->BlendChannelOutput })
 	.FilterAll({ BuiltInComponents->Tags.NeedsLink })
@@ -269,27 +376,22 @@ void UMovieScenePropertyInstantiatorSystem::DiscoverExpiredProperties(TBitArray<
 {
 	using namespace UE::MovieScene;
 
-	auto VisitExpiredEntities = [this, &OutInvalidatedProperties](FMovieSceneEntityID EntityID)
+	auto VisitExpiredEntities = [this, &OutInvalidatedProperties](FMovieSceneEntityID EntityID, const FEntityGroupID& GroupID)
 	{
-		const int32* PropertyIndexPtr = this->EntityToProperty.Find(EntityID);
-		if (ensureMsgf(PropertyIndexPtr, TEXT("Could not find entity to clean up from linker entity ID - this indicates VisitNewProperties never got called for this entity, or a garbage collection has somehow destroyed the entity without flushing the ecs.")))
+		const int32 PropertyIndex = GroupID.GroupIndex;
+		if (PropertyIndex != INDEX_NONE)
 		{
-			const int32 PropertyIndex = *PropertyIndexPtr;
-			if (PropertyIndex != INDEX_NONE)
-			{
-				OutInvalidatedProperties.PadToNum(PropertyIndex + 1, false);
-				OutInvalidatedProperties[PropertyIndex] = true;
+			OutInvalidatedProperties.PadToNum(PropertyIndex + 1, false);
+			OutInvalidatedProperties[PropertyIndex] = true;
 
-				this->Contributors.Remove(PropertyIndex, EntityID);
-			}
-
-			// Always remove the entity ID from the LUT
-			this->EntityToProperty.Remove(EntityID);
+			this->Contributors.Remove(PropertyIndex, EntityID);
 		}
+
 	};
 
 	FEntityTaskBuilder()
 	.ReadEntityIDs()
+	.Read(BuiltInComponents->Group)
 	.FilterNone({ BuiltInComponents->BlendChannelOutput })
 	.FilterAll({ BuiltInComponents->BoundObject, BuiltInComponents->PropertyBinding, BuiltInComponents->Tags.NeedsUnlink })
 	.Iterate_PerEntity(&Linker->EntityManager, VisitExpiredEntities);
@@ -508,16 +610,6 @@ void UMovieScenePropertyInstantiatorSystem::DestroyStaleProperty(int32 PropertyI
 
 void UMovieScenePropertyInstantiatorSystem::PostDestroyStaleProperties()
 {
-	// @todo: If perf is a real issue with this look, we could call ObjectPropertyToResolvedIndex.Remove(MakeTuple(PropertyInfo->BoundObject, PropertyInfo->PropertyBinding.PropertyPath));
-	// In the loop above, but it is possible that BoundObject no longer relates to a valid object at that point
-	for (auto It = ObjectPropertyToResolvedIndex.CreateIterator(); It; ++It)
-	{
-		if (!ResolvedProperties.IsAllocated(It.Value()))
-		{
-			It.RemoveCurrent();
-		}
-	}
-
 	ResolvedProperties.Shrink();
 }
 
@@ -560,18 +652,23 @@ void UMovieScenePropertyInstantiatorSystem::UpdatePropertyInfo(const FPropertyPa
 		{
 			MetaDataToUpdate = &IgnoredHBiasEntry;
 		}
-		else if (ThisHBias >= ActiveBiasEntry.HBias)
+		else 
 		{
-			MetaDataToUpdate = &ActiveBiasEntry;
+			ActiveBiasEntry.BlendTarget.Add(ThisHBias);
 
-			if (ThisHBias > ActiveBiasEntry.HBias)
+			if (ThisHBias >= ActiveBiasEntry.HBias)
 			{
-				// We found a greater bias than any we've encountered this far
-				// Reset the empty channel list for the active hbias
-				ActiveBiasEmptyChannels = FChannelMask(true, Params.PropertyDefinition->CompositeSize);
-				ActiveBiasEntry.HBias = ThisHBias;
-
 				MetaDataToUpdate = &ActiveBiasEntry;
+
+				if (ThisHBias > ActiveBiasEntry.HBias)
+				{
+					// We found a greater bias than any we've encountered this far
+					// Reset the empty channel list for the active hbias
+					ActiveBiasEmptyChannels = FChannelMask(true, Params.PropertyDefinition->CompositeSize);
+					ActiveBiasEntry.HBias = ThisHBias;
+
+					MetaDataToUpdate = &ActiveBiasEntry;
+				}
 			}
 		}
 
@@ -662,9 +759,12 @@ void UMovieScenePropertyInstantiatorSystem::UpdatePropertyInfo(const FPropertyPa
 		}
 		else
 		{
-			ActiveBiasEntry = IgnoredHBiasEntry;
+			ActiveBiasEntry = MoveTemp(IgnoredHBiasEntry);
 		}
 	}
+
+	// -----------------------------------
+	// NOW UNSAFE TO USE IgnoredHBiasEntry
 
 	// Reset the restore state status of the property if we still have contributors
 	// We do not do this if there are no contributors to ensure that stale properties are restored correctly
@@ -683,7 +783,7 @@ void UMovieScenePropertyInstantiatorSystem::UpdatePropertyInfo(const FPropertyPa
 
 	Params.PropertyInfo->bIsPartiallyAnimated = bIsPartial;
 	Params.PropertyInfo->bMaxHBiasHasChanged  = Params.PropertyInfo->HierarchicalMetaData.HBias != ActiveBiasEntry.HBias;
-	Params.PropertyInfo->HierarchicalMetaData = ActiveBiasEntry;
+	Params.PropertyInfo->HierarchicalMetaData = MoveTemp(ActiveBiasEntry);
 }
 
 void UMovieScenePropertyInstantiatorSystem::InitializeFastPath(const FPropertyParameters& Params)
@@ -837,8 +937,10 @@ UMovieScenePropertyInstantiatorSystem::FSetupBlenderSystemResult UMovieSceneProp
 		NewBlenderClass = Params.PropertyDefinition->BlenderSystemClass;
 	}
 
-	if (!ensureMsgf(NewBlenderClass, TEXT("No default blender class specified on property, and no custom blender specified on entities. Falling back to double blender.")))
+	if (!NewBlenderClass)
 	{
+		UE_LOG(LogMovieScene, Warning, TEXT("No default blender class specified on property, and no custom blender specified on entities. Falling back to double blender."));
+
 		NewBlenderClass = UMovieScenePiecewiseDoubleBlenderSystem::StaticClass();
 	}
 
@@ -897,13 +999,20 @@ void UMovieScenePropertyInstantiatorSystem::InitializeBlendPath(const FPropertyP
 			? Contributors.CreateConstKeyIterator(ContributorKey)
 			: NewContributors.CreateConstKeyIterator(ContributorKey);
 
+		FTypelessMutation Mutation;
+		if (!Params.PropertyInfo->HierarchicalMetaData.bBlendHierarchicalBias)
+		{
+			// Make sure that the hierarchical blend target component does not exist if it no longer has one
+			Mutation.AddMask.Set(BuiltInComponents->Tags.RemoveHierarchicalBlendTarget);
+		}
+
 		for (; ContributorIt; ++ContributorIt)
 		{
 			FEntityBuilder()
 			.Add(BuiltInComponents->BlendChannelInput, BlendChannel)
 			.AddTag(SetupResult.CurrentInfo.BlenderTypeTag)
-			.AddConditional(BuiltInComponents->HierarchicalBlendTarget, Params.PropertyInfo->HierarchicalMetaData.HBias, Params.PropertyInfo->HierarchicalMetaData.bBlendHierarchicalBias)
-			.MutateExisting(&Linker->EntityManager, ContributorIt.Value());
+			.AddConditional(BuiltInComponents->HierarchicalBlendTarget, Params.PropertyInfo->HierarchicalMetaData.BlendTarget, Params.PropertyInfo->HierarchicalMetaData.bBlendHierarchicalBias)
+			.MutateExisting(&Linker->EntityManager, ContributorIt.Value(), Mutation);
 		}
 
 		check(!Linker->EntityManager.HasComponent(Params.PropertyInfo->FinalBlendOutputID, BuiltInComponents->BlendChannelInput));
@@ -924,6 +1033,11 @@ void UMovieScenePropertyInstantiatorSystem::InitializeBlendPath(const FPropertyP
 	InputMutation.RemoveMask = CleanFastPathMask;
 	InputMutation.RemoveMask.Set(Params.PropertyDefinition->InitialValueType);
 	InputMutation.RemoveMask.Set(BuiltInComponents->Tags.HasAssignedInitialValue);
+	if (!Params.PropertyInfo->HierarchicalMetaData.bBlendHierarchicalBias)
+	{
+		// Make sure that the hierarchical blend target component does not exist if it no longer has one
+		InputMutation.AddMask.Set(BuiltInComponents->Tags.RemoveHierarchicalBlendTarget);
+	}
 	for (FComponentTypeID Component : Params.PropertyDefinition->MetaDataTypes)
 	{
 		InputMutation.RemoveMask.Set(Component);
@@ -1055,7 +1169,7 @@ void UMovieScenePropertyInstantiatorSystem::InitializeBlendPath(const FPropertyP
 
 		FEntityBuilder()
 		.Add(BuiltInComponents->BlendChannelInput, NewBlendChannel)
-		.AddConditional(BuiltInComponents->HierarchicalBlendTarget, Params.PropertyInfo->HierarchicalMetaData.HBias, Params.PropertyInfo->HierarchicalMetaData.bBlendHierarchicalBias)
+		.AddConditional(BuiltInComponents->HierarchicalBlendTarget, Params.PropertyInfo->HierarchicalMetaData.BlendTarget, Params.PropertyInfo->HierarchicalMetaData.bBlendHierarchicalBias)
 		.AddTag(SetupResult.CurrentInfo.BlenderTypeTag)
 		.MutateExisting(&Linker->EntityManager, Contributor, InputMutation);
 	}
@@ -1063,55 +1177,55 @@ void UMovieScenePropertyInstantiatorSystem::InitializeBlendPath(const FPropertyP
 	check(!Linker->EntityManager.HasComponent(Params.PropertyInfo->FinalBlendOutputID, BuiltInComponents->BlendChannelInput));
 }
 
-int32 UMovieScenePropertyInstantiatorSystem::ResolveProperty(UE::MovieScene::FCustomAccessorView CustomAccessors, UObject* Object, const FMovieScenePropertyBinding& PropertyBinding, int32 PropertyDefinitionIndex)
+bool UMovieScenePropertyInstantiatorSystem::ResolveProperty(UE::MovieScene::FCustomAccessorView CustomAccessors, UObject* Object, const FMovieScenePropertyBinding& PropertyBinding, const UE::MovieScene::FEntityGroupID& GroupID, int32 PropertyDefinitionIndex)
 {
 	using namespace UE::MovieScene;
 
-	TTuple<UObject*, FName> Key = MakeTuple(Object, PropertyBinding.PropertyPath);
-	if (const int32* ExistingPropertyIndex = ObjectPropertyToResolvedIndex.Find(Key))
+	if (ResolvedProperties.IsValidIndex(GroupID.GroupIndex))
 	{
-		return *ExistingPropertyIndex;
+#if !UE_BUILD_SHIPPING
+		const FObjectPropertyInfo& ResolvedProperty = ResolvedProperties[GroupID.GroupIndex];
+		ensure(ResolvedProperty.BoundObject == Object);
+		ensure(ResolvedProperty.PropertyBinding.PropertyPath == PropertyBinding.PropertyPath);
+#endif
+		return true;
 	}
 
 	TOptional<FResolvedProperty> ResolvedProperty = FPropertyRegistry::ResolveProperty(Object, PropertyBinding, CustomAccessors);
 	if (!ResolvedProperty.IsSet())
 	{
 		UE_LOG(LogMovieScene, Warning, TEXT("Unable to resolve property '%s' from '%s' instance '%s'"), *PropertyBinding.PropertyPath.ToString(), *Object->GetClass()->GetName(), *Object->GetName());
-		return INDEX_NONE;
+		return false;
 	}
 
-	FObjectPropertyInfo NewInfo(MoveTemp(ResolvedProperty.GetValue()));
+	ResolvedProperties.EmplaceAt(GroupID.GroupIndex, MoveTemp(ResolvedProperty.GetValue()));
+	FObjectPropertyInfo& NewInfo = ResolvedProperties[GroupID.GroupIndex];
 
 	NewInfo.BoundObject = Object;
 	NewInfo.PropertyBinding = PropertyBinding;
 	NewInfo.PropertyDefinitionIndex = PropertyDefinitionIndex;
 
-	const int32 NewPropertyIndex = ResolvedProperties.Add(NewInfo);
-
-	ObjectPropertyToResolvedIndex.Add(Key, NewPropertyIndex);
-
 	++PropertyStats[PropertyDefinitionIndex].NumProperties;
 
-	return NewPropertyIndex;
+	return true;
 }
 
 UE::MovieScene::FPropertyRecomposerPropertyInfo UMovieScenePropertyInstantiatorSystem::FindPropertyFromSource(FMovieSceneEntityID EntityID, UObject* Object) const
 {
 	using namespace UE::MovieScene;
 
-	TOptionalComponentReader<int16>                      HBiasComponent  = Linker->EntityManager.ReadComponent(EntityID, BuiltInComponents->HierarchicalBias);
 	TOptionalComponentReader<FMovieScenePropertyBinding> PropertyBinding = Linker->EntityManager.ReadComponent(EntityID, BuiltInComponents->PropertyBinding);
-	if (!PropertyBinding)
+	TOptionalComponentReader<FEntityGroupID>             GroupID         = Linker->EntityManager.ReadComponent(EntityID, BuiltInComponents->Group);
+	if (!PropertyBinding || !GroupID)
 	{
 		return FPropertyRecomposerPropertyInfo::Invalid();
 	}
 
-	const int16 HBias = HBiasComponent ? *HBiasComponent : 0;
-	TTuple<UObject*, FName> Key = MakeTuple(Object, PropertyBinding->PropertyPath);
-	if (const int32* PropertyIndex = ObjectPropertyToResolvedIndex.Find(Key))
+	const int32 PropertyIndex = GroupID->GroupIndex;
+	if (PropertyIndex != INDEX_NONE && ensure(ResolvedProperties.IsValidIndex(PropertyIndex)))
 	{
-		const uint16 BlendChannel = ResolvedProperties[*PropertyIndex].BlendChannel;
-		const FObjectPropertyInfo& PropertyInfo = ResolvedProperties[*PropertyIndex];
+		const uint16 BlendChannel = ResolvedProperties[PropertyIndex].BlendChannel;
+		const FObjectPropertyInfo& PropertyInfo = ResolvedProperties[PropertyIndex];
 		return FPropertyRecomposerPropertyInfo { BlendChannel, PropertyInfo.Blender.Get(), PropertyInfo.FinalBlendOutputID };
 	}
 
@@ -1173,3 +1287,4 @@ void UMovieScenePropertyInstantiatorSystem::FPropertyParameters::MakeOutputCompo
 		OutComponentType.Remove(FBuiltInComponentTypes::Get()->Tags.RestoreState);
 	}
 }
+

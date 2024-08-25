@@ -4,15 +4,15 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { BatchData, GetBatchResponse, JobStepBatchError, JobStepBatchState, JobStepOutcome, JobStepState, NodeData, StepData } from "../../backend/Api";
 import dashboard, { StatusColor } from "../../backend/Dashboard";
-import { getDetailStyle } from "../../backend/JobDetails";
 import { ISideRailLink } from "../../base/components/SideRail";
 import { getBatchInitElapsed, getNiceTime, getStepElapsed, getStepETA, getStepFinishTime, getStepPercent, getStepStartTime, getStepTimingDelta } from "../../base/utilities/timeUtils";
-import { hordeClasses } from "../../styles/Styles";
 import { HistoryModal } from "../HistoryModal";
 import { getBatchText, getStepStatusMessage } from "../JobDetailCommon";
 import { StepStatusIcon } from "../StatusIcon";
 import { LabelsPanelV2 } from "./JobDetailLabels";
 import { JobDataView, JobDetailsV2, JobFilterBar, StateFilter } from "./JobDetailsViewCommon";
+import { getHordeTheme } from "../../styles/theme";
+import { getHordeStyling } from "../../styles/Styles";
 
 const stepsSideRail: ISideRailLink = { text: "Steps", url: "rail_steps" };
 const depSideRail: ISideRailLink = { text: "Dependencies", url: "rail_dependencies" };
@@ -168,6 +168,8 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
 
    dataView.subscribe();
 
+   const hordeTheme = getHordeTheme();
+
    const jobFilter = jobDetails.filter;
 
    // subscribe to input changes as user types
@@ -232,11 +234,22 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
       let batchText = getBatchText(item);
 
       if (!batchText) {
-         batchText = item.agentId ?? (item.batch?.state ?? "Unassigned");
+         if (item.agentId) {
+            batchText = item.agentId;
+         } else {
+            batchText = "Unassigned";
+         }
+         if (item.batch?.state) {
+            batchText += " - ";
+            batchText += item.batch.state;
+         }
       }
 
+      const failure = error && item.batch?.error !== JobStepBatchError.NoLongerNeeded;
+
       const statusColors = dashboard.getStatusColors();
-      const errorColor = error ? statusColors.get(StatusColor.Failure) : undefined;
+      const errorColor = failure ? (dashboard.darktheme ? "#F88070" : statusColors.get(StatusColor.Failure)) : undefined;
+      const errorWeight = failure ? "600" : undefined;
 
       switch (column!.key) {
 
@@ -244,18 +257,18 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
             if (!item.agentId) {
                if (item.agentPool && (item.batch?.state === JobStepBatchState.Ready || item.batch?.error === JobStepBatchError.NoAgentsOnline || item.batch?.error === JobStepBatchError.NoAgentsInPool)) {
                   return <Stack horizontal disableShrink={true} horizontalAlign="start">
-                     {(error || warning) && <Icon styles={{ root: { paddingTop: 3, paddingRight: 8, color: errorColor } }} iconName="Warning" />}
-                     <Link to={`/pools?pool=${encodeURI(item.agentPool)}`} ><Text styles={{ root: { color: errorColor } }} nowrap={true}>{batchText}</Text></Link>
+                     {(error || warning) && <Icon styles={{ root: { paddingTop: 3, paddingRight: 8, color: statusColors.get(StatusColor.Failure), fontWeight: errorWeight } }} iconName="Error" />}
+                     <Link to={`/pools?pool=${encodeURI(item.agentPool)}`} ><Text styles={{ root: { color: errorColor, fontWeight: errorWeight } }} nowrap={true}>{batchText}</Text></Link>
                   </Stack>
                }
                return <Stack horizontal disableShrink={true} horizontalAlign="start">
-                  {(error || warning) && <Icon styles={{ root: { paddingTop: 3, paddingRight: 8, color: errorColor } }} iconName="Warning" />}
+                  {(error || warning) && <Icon styles={{ root: { paddingTop: 3, paddingRight: 8, color: statusColors.get(StatusColor.Failure), fontWeight: errorWeight } }} iconName="Error" />}
                   <Text styles={{ root: { color: errorColor } }} nowrap={true}>{batchText}</Text>
                </Stack>;
             } else {
-               return <Stack horizontal disableShrink={true}>{(error || warning) && <Icon styles={{ root: { paddingTop: 3, paddingRight: 8, color: errorColor } }} iconName="Warning" />}
+               return <Stack horizontal disableShrink={true}>{(error || warning) && <Icon styles={{ root: { paddingTop: 3, paddingRight: 8, color: statusColors.get(StatusColor.Failure), fontWeight: errorWeight } }} iconName="Error" />}
                   <Stack>
-                     <Link to={url} onClick={(ev) => { ev.stopPropagation(); ev.preventDefault(); setLastSelectedAgent(item.agentId); }}><Text styles={{ root: { cursor: 'pointer', color: errorColor } }} >{batchText}</Text></Link>
+                     <Link to={url} onClick={(ev) => { ev.stopPropagation(); ev.preventDefault(); setLastSelectedAgent(item.agentId); }}><Text styles={{ root: { cursor: 'pointer', color: errorColor, fontWeight: errorWeight } }} >{batchText}</Text></Link>
                   </Stack>
                </Stack>
             }
@@ -336,7 +349,7 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
       if (props) {
          const item = props.item as StepItem;
          if (item.agentRow) {
-            props.styles = { ...props.styles, root: { background: 'rgb(233, 232, 231)', selectors: { "a, a:hover, a:visited": { color: "#FFFFFF" }, ":hover": { background: 'rgb(223, 222, 221)' }, ".ms-DetailsRow-cell": { "overflow": "visible" } } } };
+            props.styles = { ...props.styles, root: { background: `${hordeTheme.horde.dividerColor} !important`, selectors: { ".ms-DetailsRow-cell": { "overflow": "visible" } } } };
          } else {
             props.styles = { ...props.styles, root: { selectors: { ".ms-DetailsRow-cell": { "overflow": "visible" }, "div[data-automation-key=\"Name\"],div[data-automation-key=\"ViewLogColumn\"]": { padding: 0 } } } };
          }
@@ -353,8 +366,6 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
    }
 
    let items: StepItem[] = [];
-
-   let unassigned: StepData[] = [];
 
    const stepFilter: StepData[] = [];
 
@@ -488,11 +499,6 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
 
          }
 
-         if (filter && !b.agentId) {
-            unassigned.push(step);
-            return false;
-         }
-
          return filter;
 
       });
@@ -520,45 +526,6 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
             node: jobDetails.nodeByStepId(id),
          });
       });
-   });
-
-   let current = "";
-
-   unassigned.forEach(stepData => {
-
-      if (jobStateFilter.has(stepData.id)) {
-         return;
-      }
-
-      const b = jobDetails.batchByStepId(stepData.id)!;
-
-      if (batchFilter && b.id !== batchFilter) {
-         return;
-      }
-
-      const g = jobDetails.groups[b.groupIdx];
-      const p = jobDetails.stream!.agentTypes[g.agentType!];
-      const c = g.agentType?.toUpperCase() + " - " + p?.pool.toUpperCase() + " - " + b.state;
-
-      if (c !== current) {
-
-         items.push({
-            batch: b,
-            agentRow: true,
-            agentPool: p?.pool?.toUpperCase(),
-            agentType: g.agentType?.toUpperCase()
-         });
-
-         current = c;
-
-      }
-
-      items.push({
-         step: stepData,
-         node: jobDetails.nodeByStepId(stepData.id),
-      });
-
-
    });
 
    if (singleStep) {
@@ -653,6 +620,8 @@ export const StepsPanelInner: React.FC<{ jobDetails: JobDetailsV2, depStepId?: s
 });
 
 export const StepsPanelV2: React.FC<{ jobDetails: JobDetailsV2, depStepId?: string }> = observer(({ jobDetails, depStepId }) => {
+
+   const { hordeClasses } = getHordeStyling();
 
    jobDetails.subscribe();
 

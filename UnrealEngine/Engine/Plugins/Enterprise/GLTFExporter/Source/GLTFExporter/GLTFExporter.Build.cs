@@ -17,6 +17,22 @@ public class GLTFExporter : ModuleRules
 			}
 		);
 
+		if (Target.Platform == UnrealTargetPlatform.Win64 || Target.Platform == UnrealTargetPlatform.Linux || Target.Platform == UnrealTargetPlatform.Mac)
+		{
+			PublicDefinitions.Add("GLTF_EXPORT_ENABLE=1");
+
+			PrivateIncludePathModuleNames.AddRange(
+				new string[]
+				{
+					"InterchangeImport",
+				}
+			);
+		}
+		else
+		{
+			PublicDefinitions.Add("GLTF_EXPORT_ENABLE=0");
+		}
+
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
@@ -31,6 +47,7 @@ public class GLTFExporter : ModuleRules
 				"Projects",
 				"EngineSettings",
 				"Analytics",
+				"Landscape",
 			}
 		);
 
@@ -56,17 +73,15 @@ public class GLTFExporter : ModuleRules
 					"EditorStyle",
 					"PropertyEditor",
 					"ToolMenus",
+					"ToolWidgets",
 					"ContentBrowser",
 					"MaterialUtilities",
 					"MeshMergeUtilities",
 					"MeshDescription",
 					"StaticMeshDescription",
+					"MeshMergeUtilities",
 				}
 			);
-
-			PrivateIncludePaths.AddRange(new string[] {
-				System.IO.Path.Combine(GetModuleDirectory("MeshMergeUtilities"), "Private"),
-			});
 		}
 	}
 }

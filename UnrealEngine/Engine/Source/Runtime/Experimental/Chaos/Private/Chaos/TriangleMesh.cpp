@@ -13,6 +13,7 @@
 #include "Templates/Sorting.h"
 #include "Templates/TypeHash.h"
 #include "Chaos/HierarchicalSpatialHash.h"
+#include "Chaos/PBDFlatWeightMap.h"
 
 #include <algorithm>
 #include <iostream>
@@ -64,8 +65,84 @@ struct TTriangleMeshBvEntry
 		return Bounds;
 	}
 
+	typename FTriangleMesh::TSpatialHashType<T>::FVectorAABB VectorAABB() const
+	{
+		const TVec3<int32>& Tri = TmData->GetElements()[Index];
+		const TVec3<T>& A = (*Points)[Tri[0]];
+		const TVec3<T>& B = (*Points)[Tri[1]];
+		const TVec3<T>& C = (*Points)[Tri[2]];
+		typename FTriangleMesh::TSpatialHashType<T>::FVectorAABB AABB(A);
+		AABB.GrowToInclude(B);
+		AABB.GrowToInclude(C);
+		return AABB;
+	}
+
 	template<typename TPayloadType>
 	int32 GetPayload(int32 Idx) const { return Idx; }
+};
+
+template<typename T>
+struct TTriangleMeshBvData
+{
+	const FTriangleMesh* TmData;
+	const TConstArrayView<TVec3<T>>* Points;
+
+	TTriangleMeshBvEntry<T> operator[](const int32 ParticleIndex) const
+	{
+		return TTriangleMeshBvEntry<T>{ TmData, Points, ParticleIndex };
+	}
+
+	int32 Num() const
+	{
+		return TmData->GetNumElements();
+	}
+};
+
+struct FTriangleMeshBvDataWithThicknessEntry
+{
+	const FTriangleMesh* TmData;
+	const TConstArrayView<Softs::FSolverVec3>& Points;
+	const Softs::FPBDFlatWeightMap& PointThicknesses;
+	int32 ThicknessMapIndexOffset;
+	int32 Index;
+
+	bool HasBoundingBox() const
+	{
+		return true;
+	}
+
+	typename FTriangleMesh::TSpatialHashType<Softs::FSolverReal>::FVectorAABB VectorAABB() const
+	{
+		const TVec3<int32>& Tri = TmData->GetElements()[Index];
+		const Softs::FSolverVec3& A = Points[Tri[0]];
+		const Softs::FSolverVec3& B = Points[Tri[1]];
+		const Softs::FSolverVec3& C = Points[Tri[2]];
+		typename FTriangleMesh::TSpatialHashType<Softs::FSolverReal>::FVectorAABB AABB(A, PointThicknesses.GetValue(Tri[0] - ThicknessMapIndexOffset));
+		AABB.GrowToInclude(B, PointThicknesses.GetValue(Tri[1] - ThicknessMapIndexOffset));
+		AABB.GrowToInclude(C, PointThicknesses.GetValue(Tri[2] - ThicknessMapIndexOffset));
+		return AABB;
+	}
+
+	template<typename TPayloadType>
+	int32 GetPayload(int32 Idx) const { return Idx; }
+};
+
+struct FTriangleMeshBvDataWithThickness
+{
+	const FTriangleMesh* TmData;
+	const TConstArrayView<Softs::FSolverVec3>& Points;
+	const Softs::FPBDFlatWeightMap& PointThicknesses;
+	const int32 ThicknessMapIndexOffset;
+
+	FTriangleMeshBvDataWithThicknessEntry operator[](const int32 ParticleIndex) const
+	{
+		return FTriangleMeshBvDataWithThicknessEntry{ TmData, Points, PointThicknesses, ThicknessMapIndexOffset, ParticleIndex };
+	}
+
+	int32 Num() const
+	{
+		return TmData->GetNumElements();
+	}
 };
 
 FTriangleMesh::FTriangleMesh()
@@ -93,6 +170,7 @@ void FTriangleMesh::Init(TArray<TVec3<int32>>&& Elements, const int32 StartIdx, 
 	MElements = MoveTemp(Elements);
 	MStartIdx = 0;
 	MNumIndices = 0;
+	ResetAuxiliaryStructures();
 	InitHelper(StartIdx, EndIdx, CullDegenerateElements);
 }
 
@@ -101,6 +179,7 @@ void FTriangleMesh::Init(const TArray<TVec3<int32>>& Elements, const int32 Start
 	MElements = Elements;
 	MStartIdx = 0;
 	MNumIndices = 0;
+	ResetAuxiliaryStructures();
 	InitHelper(StartIdx, EndIdx, CullDegenerateElements);
 }
 
@@ -408,8 +487,7 @@ void FTriangleMesh::GetPointNormals(TArrayView<TVec3<T>> PointNormals, const TCo
 }
 template CHAOS_API void FTriangleMesh::GetPointNormals<FRealDouble>(TArrayView<TVec3<FRealDouble>>, const TConstArrayView<TVec3<FRealDouble>>&, const bool) const;
 
-template <>
-CHAOS_API void FTriangleMesh::GetPointNormals<FRealSingle>(TArrayView<TVec3<FRealSingle>> PointNormals, const TConstArrayView<TVec3<FRealSingle>>& FaceNormals, const bool bUseGlobalArray) const
+CHAOS_API void FTriangleMesh::GetPointNormals(TArrayView<TVec3<FRealSingle>> PointNormals, const TConstArrayView<TVec3<FRealSingle>>& FaceNormals, const bool bUseGlobalArray) const
 {
 	check(MPointToTriangleMap.Num() != 0);
 
@@ -442,6 +520,12 @@ CHAOS_API void FTriangleMesh::GetPointNormals<FRealSingle>(TArrayView<TVec3<FRea
 			PointNormals[NormalIndex] = Normal.GetSafeNormal();
 		}
 	}
+}
+
+template<>
+CHAOS_API void FTriangleMesh::GetPointNormals<FRealSingle>(TArrayView<TVec3<FRealSingle>> PointNormals, const TConstArrayView<TVec3<FRealSingle>>& FaceNormals, const bool bUseGlobalArray) const
+{
+	return GetPointNormals(PointNormals, FaceNormals, bUseGlobalArray);
 }
 
 template<class T>
@@ -779,7 +863,7 @@ const FSegmentMesh& FTriangleMesh::GetSegmentMesh() const
 			if (currNum <= EdgeIdx)
 			{
 				// Add and initialize new entries
-				MEdgeToFaces.SetNum(EdgeIdx + 1, false);
+				MEdgeToFaces.SetNum(EdgeIdx + 1, EAllowShrinking::No);
 				for (int32 k = currNum; k < EdgeIdx + 1; k++)
 				{
 					MEdgeToFaces[k] = TVec2<int32>(-1, -1);
@@ -1675,18 +1759,18 @@ template CHAOS_API bool FTriangleMesh::SmoothProject<FRealDouble>(const TBVHType
 template<typename T>
 void FTriangleMesh::BuildSpatialHash(const TConstArrayView<TVec3<T>>& Points, TSpatialHashType<T>& SpatialHash, const T MinSpatialLodSize) const
 {
-	TArray<TTriangleMeshBvEntry<T>> BVEntries;
-	const int32 NumTris = MElements.Num();
-	BVEntries.Reset(NumTris);
-	for (int32 Tri = 0; Tri < NumTris; ++Tri)
-	{
-		BVEntries.Add({ this, &Points, Tri });
-	}
+	const TTriangleMeshBvData<T> BvData({ this, &Points });
 
-	SpatialHash.Initialize(BVEntries, MinSpatialLodSize);
+	SpatialHash.Initialize(BvData, MinSpatialLodSize);
 }
 template void FTriangleMesh::BuildSpatialHash<FRealSingle>(const TConstArrayView<TVec3<FRealSingle>>& Points, TSpatialHashType<FRealSingle>& SpatialHash, const FRealSingle MinSpatialLodSize) const;
 template void FTriangleMesh::BuildSpatialHash<FRealDouble>(const TConstArrayView<TVec3<FRealDouble>>& Points, TSpatialHashType<FRealDouble>& SpatialHash, const FRealDouble MinSpatialLodSize) const;
+
+void FTriangleMesh::BuildSpatialHash(const TConstArrayView<Softs::FSolverVec3>& Points, TSpatialHashType<Softs::FSolverReal>& SpatialHash, const Softs::FPBDFlatWeightMap& PointThicknesses, int32 ThicknessMapIndexOffset, const Softs::FSolverReal MinSpatialLodSize) const
+{
+	const FTriangleMeshBvDataWithThickness BvData({ this, Points, PointThicknesses, ThicknessMapIndexOffset });
+	SpatialHash.Initialize(BvData, MinSpatialLodSize);
+}
 
 template<typename T>
 bool FTriangleMesh::PointProximityQuery(const TSpatialHashType<T>& SpatialHash, const TConstArrayView<TVec3<T>>& Points, const int32 PointIndex, const TVec3<T>& PointPosition, const T PointThickness, const T ThisThickness,
@@ -1694,19 +1778,19 @@ bool FTriangleMesh::PointProximityQuery(const TSpatialHashType<T>& SpatialHash, 
 {
 	const T TotalThickness = ThisThickness + PointThickness;
 	const T TotalThicknessSq = TotalThickness * TotalThickness;
-	TAABB<T,3> QueryBounds(PointPosition, PointPosition);
+	typename TSpatialHashType<T>::FVectorAABB QueryBounds(PointPosition);
 	QueryBounds.Thicken(TotalThickness);
 
-	const TArray<int32> PotentialIntersections = SpatialHash.FindAllIntersections(QueryBounds);
+	const TArray<int32> PotentialIntersections = SpatialHash.FindAllIntersections(QueryBounds,
+		[PointIndex, &BroadphaseTest](int32 Payload)
+	{
+		return BroadphaseTest(PointIndex, Payload);
+	});
 
 	Result.Reset(PotentialIntersections.Num());
 
 	for (int32 TriIdx : PotentialIntersections)
 	{
-		if (!BroadphaseTest(PointIndex, TriIdx))
-		{
-			continue;
-		}
 
 		const TVec3<T>& A = Points[MElements[TriIdx][0]];
 		const TVec3<T>& B = Points[MElements[TriIdx][1]];
@@ -1739,24 +1823,78 @@ bool FTriangleMesh::PointProximityQuery(const TSpatialHashType<T>& SpatialHash, 
 template bool FTriangleMesh::PointProximityQuery<FRealSingle>(const TSpatialHashType<FRealSingle>& SpatialHash, const TConstArrayView<TVector<FRealSingle, 3>>& Points, const int32 PointIndex, const TVector<FRealSingle, 3>& PointPosition, const FRealSingle PointThickness, const FRealSingle ThisThickness, TFunctionRef<bool(const int32 PointIndex, const int32 TriangleIndex)> BroadphaseTest, TArray<TTriangleCollisionPoint<FRealSingle>>& Result) const;
 template bool FTriangleMesh::PointProximityQuery<FRealDouble>(const TSpatialHashType<FRealDouble>& SpatialHash, const TConstArrayView<TVector<FRealDouble, 3>>& Points, const int32 PointIndex, const TVector<FRealDouble, 3>& PointPosition, const FRealDouble PointThickness, const FRealDouble ThisThickness, TFunctionRef<bool(const int32 PointIndex, const int32 TriangleIndex)> BroadphaseTest, TArray<TTriangleCollisionPoint<FRealDouble>>& Result) const;
 
-template<typename T>
-bool FTriangleMesh::EdgeIntersectionQuery(const TSpatialHashType<T>& SpatialHash, const TConstArrayView<TVec3<T>>& Points, const int32 EdgeIndex, const TVec3<T>& EdgePosition1, const TVec3<T>& EdgePosition2,
-	TFunctionRef<bool(const int32 EdgeIndex, const int32 TriangleIndex)> BroadphaseTest, TArray<TTriangleCollisionPoint<T>>& Result) const
+bool FTriangleMesh::PointProximityQuery(const TSpatialHashType<Softs::FSolverReal>& SpatialHash, const TConstArrayView<Softs::FSolverVec3>& Points, const int32 PointIndex, const Softs::FSolverVec3& PointPosition, const Softs::FSolverReal PointThickness, const Softs::FPBDFlatWeightMap& ThisThicknesses,
+	const Softs::FSolverReal ThisThicknessExtraMultiplier, int32 ThicknessMapIndexOffset, TFunctionRef<bool(const int32 PointIndex, const int32 TriangleIndex)> BroadphaseTest, TArray<TTriangleCollisionPoint<Softs::FSolverReal>>& Result) const
 {
-	TAABB<T, 3> QueryBounds(EdgePosition1, EdgePosition1);
-	QueryBounds.GrowToInclude(EdgePosition2);
+	typename TSpatialHashType<FRealSingle>::FVectorAABB QueryBounds(PointPosition);
+	QueryBounds.Thicken(PointThickness);
 
-	const TArray<int32> PotentialIntersections = SpatialHash.FindAllIntersections(QueryBounds);
+	const TArray<int32> PotentialIntersections = SpatialHash.FindAllIntersections(QueryBounds,
+		[PointIndex, &BroadphaseTest](int32 Payload)
+	{
+		return BroadphaseTest(PointIndex, Payload);
+	});
 
 	Result.Reset(PotentialIntersections.Num());
 
 	for (int32 TriIdx : PotentialIntersections)
 	{
-		if (!BroadphaseTest(EdgeIndex, TriIdx))
+
+		const Softs::FSolverVec3& A = Points[MElements[TriIdx][0]];
+		const Softs::FSolverVec3& B = Points[MElements[TriIdx][1]];
+		const Softs::FSolverVec3& C = Points[MElements[TriIdx][2]];
+		Softs::FSolverVec3 Bary;
+		const Softs::FSolverVec3 ClosestPoint = FindClosestPointAndBaryOnTriangle(A, B, C, PointPosition, Bary);
+
+		const Softs::FSolverReal TriangleThickness = (ThisThicknesses.GetValue(MElements[TriIdx][0] - ThicknessMapIndexOffset) * Bary[0] +
+			ThisThicknesses.GetValue(MElements[TriIdx][1] - ThicknessMapIndexOffset) * Bary[1] +
+			ThisThicknesses.GetValue(MElements[TriIdx][2] - ThicknessMapIndexOffset) * Bary[2]) * ThisThicknessExtraMultiplier;
+
+		const Softs::FSolverReal TotalThickness = PointThickness + TriangleThickness;
+		const Softs::FSolverReal TotalThicknessSq = TotalThickness * TotalThickness;
+
+		const Softs::FSolverReal DistSq = (PointPosition - ClosestPoint).SizeSquared();
+		if (DistSq > TotalThicknessSq)
 		{
+			// Failed narrow test.
 			continue;
 		}
 
+		Softs::FSolverVec3 Normal = Softs::FSolverVec3::CrossProduct(B - A, C - A).GetSafeNormal();
+		Normal = (Softs::FSolverVec3::DotProduct(Normal, PointPosition - A) > 0) ? Normal : -Normal;
+
+		TTriangleCollisionPoint<Softs::FSolverReal> CollisionPoint;
+		CollisionPoint.ContactType = TTriangleCollisionPoint<Softs::FSolverReal>::EContactType::PointFace;
+		CollisionPoint.Indices[0] = PointIndex;
+		CollisionPoint.Indices[1] = TriIdx;
+		CollisionPoint.Bary = TVec4<Softs::FSolverReal>((Softs::FSolverReal)1., Bary.X, Bary.Y, Bary.Z);
+		CollisionPoint.Location = ClosestPoint;
+		CollisionPoint.Normal = Normal;
+		CollisionPoint.Phi = FMath::Sqrt(DistSq);
+		Result.Add(CollisionPoint);
+	}
+	return Result.Num() > 0;
+
+}
+
+template<typename T>
+bool FTriangleMesh::EdgeIntersectionQuery(const TSpatialHashType<T>& SpatialHash, const TConstArrayView<TVec3<T>>& Points, const int32 EdgeIndex, const TVec3<T>& EdgePosition1, const TVec3<T>& EdgePosition2,
+	TFunctionRef<bool(const int32 EdgeIndex, const int32 TriangleIndex)> BroadphaseTest, TArray<TTriangleCollisionPoint<T>>& Result) const
+{
+	typename TSpatialHashType<T>::FVectorAABB QueryBounds(EdgePosition1);
+	QueryBounds.GrowToInclude(EdgePosition2);
+
+	const TArray<int32> PotentialIntersections = SpatialHash.FindAllIntersections(QueryBounds,
+		[EdgeIndex, &BroadphaseTest](int32 Payload)
+	{
+		return BroadphaseTest(EdgeIndex, Payload);
+	}
+	);
+
+	Result.Reset(PotentialIntersections.Num());
+
+	for (int32 TriIdx : PotentialIntersections)
+	{
 		const TVec3<T>& A = Points[MElements[TriIdx][0]];
 		const TVec3<T>& B = Points[MElements[TriIdx][1]];
 		const TVec3<T>& C = Points[MElements[TriIdx][2]];

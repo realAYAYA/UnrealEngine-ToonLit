@@ -91,6 +91,13 @@ namespace ContentBrowserItemAttributes
 	const FName ItemIsPluginContent = "ItemIsPluginContent";
 
 	/**
+	 * Attribute key that can be used to query whether the given item is considered to be a custom virtual folder for organizational purposes
+	 * that should be presented with a different folder icon.
+	 * Type: bool.
+	 */
+	const FName ItemIsCustomVirtualFolder = "ItemIsCustomVirtualFolder";
+
+	/**
 	 * Attribute key that can be used to query the display color of an item.
 	 * Type: FLinearColor (as FString).
 	 */
@@ -808,7 +815,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	const FContentBrowserVirtualPathTree& GetRootPathVirtualTree() const { return RootPathVirtualTree; }
 
 	/**
-	 * Creates item data for a fully virtual folder
+	 * Creates item data for a fully virtual folder.
 	 */
 	FContentBrowserItemData CreateVirtualFolderItem(const FName InFolderPath);
 

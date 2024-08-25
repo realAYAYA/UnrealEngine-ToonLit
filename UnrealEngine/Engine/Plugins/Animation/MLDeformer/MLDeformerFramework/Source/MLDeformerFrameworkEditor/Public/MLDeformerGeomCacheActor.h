@@ -18,7 +18,6 @@ namespace UE::MLDeformer
 	{
 	public:
 		FMLDeformerGeomCacheActor(const FConstructSettings& Settings);
-		virtual ~FMLDeformerGeomCacheActor() override;
 
 		void SetGeometryCacheComponent(UGeometryCacheComponent* Component)	{ GeomCacheComponent = Component; }
 		UGeometryCacheComponent* GetGeometryCacheComponent() const			{ return GeomCacheComponent; }

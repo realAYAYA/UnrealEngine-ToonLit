@@ -17,7 +17,9 @@ namespace UnrealBuildTool.Rules
 					"Core",
 					"CoreUObject",
 					"Engine",
+					"GameplayTags",
 					"GameplayTasks",
+					"NavigationSystem",
 					"StateTreeModule",
 					"StructUtils"
 				}

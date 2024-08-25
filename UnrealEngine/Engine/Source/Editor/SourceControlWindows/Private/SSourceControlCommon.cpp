@@ -4,6 +4,7 @@
 
 #include "Algo/Count.h"
 #include "Algo/Find.h"
+#include "Algo/Replace.h"
 #include "AssetRegistry/AssetData.h"
 #include "ActorFolder.h"
 #include "ActorFolderDesc.h"
@@ -68,9 +69,14 @@ static FString RetrieveAssetName(const FAssetData& InAssetData)
 
 	if (InAssetData.FindTag(NAME_ActorLabel))
 	{
-		FString ResultAssetName = TEXT("");
-
+		FString ResultAssetName;
 		InAssetData.GetTagValue(NAME_ActorLabel, ResultAssetName);
+		return ResultAssetName;
+	}
+	else if (InAssetData.FindTag(FPrimaryAssetId::PrimaryAssetDisplayNameTag))
+	{
+		FString ResultAssetName;
+		InAssetData.GetTagValue(FPrimaryAssetId::PrimaryAssetDisplayNameTag, ResultAssetName);
 		return ResultAssetName;
 	}
 	else if (InAssetData.AssetClassPath == UActorFolder::StaticClass()->GetClassPathName())
@@ -364,6 +370,33 @@ TSharedRef<SWidget> GetSCCFileWidget(FSourceControlStateRef InFileState, bool bI
 		];
 }
 
+TSharedRef<SWidget> GetSCCFileWidget()
+{
+	const FSlateBrush* IconBrush = FAppStyle::GetBrush("ContentBrowser.ColumnViewAssetIcon");
+
+	// Make icon overlays (eg, SCC and dirty status) a reasonable size in relation to the icon size (note: it is assumed this icon is square)
+	const float ICON_SCALING_FACTOR = 0.7f;
+	const float IconOverlaySize = IconBrush->ImageSize.X * ICON_SCALING_FACTOR;
+
+	return SNew(SOverlay)
+		// The actual icon
+		+ SOverlay::Slot()
+		[
+			SNew(SImage)
+			.Image(IconBrush)
+		.ColorAndOpacity(FSlateColor(FColor::White))
+		]
+	// Source control state
+	+ SOverlay::Slot()
+		.HAlign(HAlign_Left)
+		.VAlign(VAlign_Top)
+		[
+			SNew(SBox)
+			.WidthOverride(IconOverlaySize)
+		.HeightOverride(IconOverlaySize)
+		];
+}
+
 FText GetDefaultAssetName()
 {
 	return LOCTEXT("SourceControl_DefaultAssetName", "Unavailable");
@@ -384,22 +417,33 @@ FText GetDefaultMultipleAsset()
 	return LOCTEXT("SourceCOntrol_ManyAssetType", "Multiple Assets");
 }
 
-FText GetSingleLineChangelistDescription(const FText& InFullDescription)
+FText GetSingleLineChangelistDescription(const FText& InFullDescription, ESingleLineFlags Flags)
 {
 	FString DescriptionTextAsString = InFullDescription.ToString();
-	DescriptionTextAsString.TrimStartInline();
+	DescriptionTextAsString.TrimStartAndEndInline();
 
-	int32 NewlineStartIndex = INDEX_NONE;
-	DescriptionTextAsString.FindChar(TCHAR('\n'), NewlineStartIndex);
-	if (NewlineStartIndex != INDEX_NONE)
+	if ((Flags & ESingleLineFlags::Mask_NewlineBehavior) == ESingleLineFlags::NewlineConvertToSpace)
 	{
-		DescriptionTextAsString.LeftInline(NewlineStartIndex);
+		static constexpr TCHAR Replacer = TCHAR(' ');
+		// Replace all non-space whitespace characters with space
+		Algo::ReplaceIf(DescriptionTextAsString,
+			[](TCHAR C) { return FChar::IsWhitespace(C) && C != Replacer; },
+			Replacer);
 	}
-
-	// Trim any trailing carriage returns
-	if (DescriptionTextAsString.EndsWith(TEXT("\r"), ESearchCase::CaseSensitive))
+	else
 	{
-		DescriptionTextAsString.LeftChopInline(1);
+		int32 NewlineStartIndex = INDEX_NONE;
+		DescriptionTextAsString.FindChar(TCHAR('\n'), NewlineStartIndex);
+		if (NewlineStartIndex != INDEX_NONE)
+		{
+			DescriptionTextAsString.LeftInline(NewlineStartIndex);
+		}
+
+		// Trim any trailing carriage returns
+		if (DescriptionTextAsString.EndsWith(TEXT("\r"), ESearchCase::CaseSensitive))
+		{
+			DescriptionTextAsString.LeftChopInline(1);
+		}
 	}
 
 	return InFullDescription.IsCultureInvariant() ? FText::AsCultureInvariant(DescriptionTextAsString) : FText::FromString(DescriptionTextAsString);

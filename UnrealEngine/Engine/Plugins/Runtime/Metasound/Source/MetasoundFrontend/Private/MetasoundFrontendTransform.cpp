@@ -8,12 +8,12 @@
 #include "MetasoundAssetBase.h"
 #include "MetasoundFrontendDocument.h"
 #include "MetasoundFrontendDocumentController.h"
+#include "MetasoundFrontendDocumentIdGenerator.h"
 #include "MetasoundFrontendRegistries.h"
 #include "MetasoundFrontendSearchEngine.h"
 #include "MetasoundLog.h"
 #include "MetasoundTrace.h"
 #include "Misc/App.h"
-
 
 namespace Metasound
 {
@@ -21,6 +21,22 @@ namespace Metasound
 	{
 		namespace DocumentTransform
 		{
+			void LogAutoUpdateWarning(const FString& LogMessage)
+			{
+				// These should eventually move back to warning on cook 
+				// but are temporarily downgraded to prevent 
+				// warnings on things like unused test content from 
+				// blocking code checkins 
+				if (IsRunningCookCommandlet())
+				{
+					UE_LOG(LogMetaSound, Display, TEXT("%s"), *LogMessage);
+				}
+				else
+				{
+					UE_LOG(LogMetaSound, Warning, TEXT("%s"), *LogMessage);
+				}
+			}
+
 #if WITH_EDITOR
 			FGetNodeDisplayNameProjection NodeDisplayNameProjection;
 
@@ -40,6 +56,16 @@ namespace Metasound
 		{
 			FDocumentAccessPtr DocAccessPtr = MakeAccessPtr<FDocumentAccessPtr>(InOutDocument.AccessPoint, InOutDocument);
 			return Transform(FDocumentController::CreateDocumentHandle(DocAccessPtr));
+		}
+
+		bool INodeTransform::Transform(const FGuid& InNodeID, FMetaSoundFrontendDocumentBuilder& OutBuilder) const
+		{
+			return false;
+		}
+
+		bool INodeTransform::Transform(FMetasoundFrontendNode& InOutNode) const
+		{
+			return false;
 		}
 
 		FModifyRootGraphInterfaces::FModifyRootGraphInterfaces(const TArray<FMetasoundFrontendInterface>& InInterfacesToRemove, const TArray<FMetasoundFrontendInterface>& InInterfacesToAdd)
@@ -417,7 +443,7 @@ namespace Metasound
 				FVector2D NextLocation = { 0.0f, 0.0f };
 				{
 					int32 NumBeforeDefined = 1;
-					for (const TPair<int32, FNodeHandle>& Pair : SortOrderToName)
+					for (const TPair<int32, FNodeHandle>& Pair : SortOrderToName) //-V1078
 					{
 						const FConstNodeHandle& NodeHandle = Pair.Value;
 						const FName NodeName = NodeHandle->GetNodeName();
@@ -442,7 +468,7 @@ namespace Metasound
 				}
 
 				// Iterate through sorted map in sequence, slotting in new locations after existing swapped nodes with predefined locations.
-				for (TPair<int32, FNodeHandle>& Pair : SortOrderToName)
+				for (TPair<int32, FNodeHandle>& Pair : SortOrderToName) //-V1078
 				{
 					FNodeHandle& NodeHandle = Pair.Value;
 					const FName NodeName = NodeHandle->GetNodeName();
@@ -587,16 +613,22 @@ namespace Metasound
 				using namespace Metasound::Frontend;
 
 				const FMetasoundFrontendClassMetadata& ClassMetadata = NodeHandle->GetClassMetadata();
+				const FNodeRegistryKey RegistryKey(ClassMetadata);
 
-				if (bIsPreset)
+				if (FMetasoundAssetBase* ReferencedMetaSoundAsset = IMetaSoundAssetManager::GetChecked().TryLoadAssetFromKey(RegistryKey))
 				{
-					const FNodeRegistryKey RegistryKey = FMetasoundFrontendRegistryContainer::Get()->GetRegistryKey(ClassMetadata);
-					PresetReferencedMetaSoundAsset = IMetaSoundAssetManager::GetChecked().TryLoadAssetFromKey(RegistryKey);
-					if (!PresetReferencedMetaSoundAsset)
+					if (bIsPreset)
+					{
+						PresetReferencedMetaSoundAsset = ReferencedMetaSoundAsset;
+					}
+				}
+				else
+				{
+					if (bIsPreset)
 					{
 						UE_LOG(LogMetaSound, Error, TEXT("Auto-Updating preset '%s' failed: Referenced class '%s' missing."), *DebugAssetPath, *ClassMetadata.GetClassName().ToString());
+						return;
 					}
-					return;
 				}
 
 				FClassInterfaceUpdates InterfaceUpdates;
@@ -607,7 +639,7 @@ namespace Metasound
 
 				// Check if a updated minor version exists.
 				FMetasoundFrontendClass ClassWithHighestMinorVersion;
-				bool bFoundClassInSearchEngine = Frontend::ISearchEngine::Get().FindClassWithHighestMinorVersion(ClassMetadata.GetClassName(), ClassMetadata.GetVersion().Major, ClassWithHighestMinorVersion);
+				const bool bFoundClassInSearchEngine = Frontend::ISearchEngine::Get().FindClassWithHighestMinorVersion(ClassMetadata.GetClassName(), ClassMetadata.GetVersion().Major, ClassWithHighestMinorVersion);
 
 				if (bFoundClassInSearchEngine && (ClassWithHighestMinorVersion.Metadata.GetVersion() > ClassMetadata.GetVersion()))
 				{
@@ -644,7 +676,7 @@ namespace Metasound
 					{
 						FMetasoundFrontendClassMetadata PresetMetadata = InDocument->GetRootGraphClass().Metadata;
 						PresetMetadata.SetType(EMetasoundFrontendClassType::External);
-						const FNodeRegistryKey RegistryKey = FMetasoundFrontendRegistryContainer::Get()->GetRegistryKey(PresetMetadata);
+						const FNodeRegistryKey RegistryKey(PresetMetadata);
 						FMetasoundAssetBase* PresetMetaSoundAsset = IMetaSoundAssetManager::GetChecked().TryLoadAssetFromKey(RegistryKey);
 						if (ensure(PresetMetaSoundAsset))
 						{
@@ -680,12 +712,12 @@ namespace Metasound
 
 							for (const FVertexNameAndType& InputPin : DisconnectedInputs)
 							{
-								UE_LOG(LogMetaSound, Warning, TEXT("Auto-Updating '%s' node class '%s (%s)': Previously connected input '%s' with data type '%s' no longer exists."), *DebugAssetPath, *NodeClassName, *NewClassVersion, *InputPin.Get<0>().ToString(), *InputPin.Get<1>().ToString());
+								DocumentTransform::LogAutoUpdateWarning(FString::Printf(TEXT("Auto-Updating '%s' node class '%s (%s)': Previously connected input '%s' with data type '%s' no longer exists."), *DebugAssetPath, *NodeClassName, *NewClassVersion, *InputPin.Get<0>().ToString(), *InputPin.Get<1>().ToString()));
 							}
 
 							for (const FVertexNameAndType& OutputPin : DisconnectedOutputs)
 							{
-								UE_LOG(LogMetaSound, Warning, TEXT("Auto-Updating '%s' node class '%s (%s)': Previously connected output '%s' with data type '%s' no longer exists."), *DebugAssetPath, *NodeClassName, *NewClassVersion, *OutputPin.Get<0>().ToString(), *OutputPin.Get<1>().ToString());
+								DocumentTransform::LogAutoUpdateWarning(FString::Printf(TEXT("Auto-Updating '%s' node class '%s (%s)': Previously connected output '%s' with data type '%s' no longer exists."), *DebugAssetPath, *NodeClassName, *NewClassVersion, *OutputPin.Get<0>().ToString(), *OutputPin.Get<1>().ToString()));
 							}
 						}
 					}
@@ -700,6 +732,8 @@ namespace Metasound
 
 		bool FRebuildPresetRootGraph::Transform(FDocumentHandle InDocument) const
 		{
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::Frontend::FRebuildPresetRootGraph::Transform);
+
 			FGraphHandle PresetGraphHandle = InDocument->GetRootGraph();
 			if (!ensure(PresetGraphHandle->IsValid()))
 			{
@@ -725,18 +759,20 @@ namespace Metasound
 			// Determine the inputs and outputs needed in the wrapping graph. Also
 			// cache any exiting literals that have been set on the wrapping graph.
 			TSet<FName> InputsInheritingDefault;
-			TArray<FMetasoundFrontendClassInput> ClassInputs = GenerateRequiredClassInputs(PresetGraphHandle, InputsInheritingDefault);
-			TArray<FMetasoundFrontendClassOutput> ClassOutputs = GenerateRequiredClassOutputs(PresetGraphHandle);
+			TArray<FMetasoundFrontendClassInput> ClassInputs = GenerateRequiredClassInputs(InDocument, PresetGraphHandle, InputsInheritingDefault);
+			TArray<FMetasoundFrontendClassOutput> ClassOutputs = GenerateRequiredClassOutputs(InDocument, PresetGraphHandle);
 
 			FGuid PresetNodeID;
 			PresetGraphHandle->IterateConstNodes([InPresetNodeID = &PresetNodeID](FConstNodeHandle PresetNodeHandle)
 			{
 				*InPresetNodeID = PresetNodeHandle->GetID();
 			}, EMetasoundFrontendClassType::External); 
-
+			
 			if (!PresetNodeID.IsValid())
 			{
-				PresetNodeID = FGuid::NewGuid();
+				// This ID was originally being set to FGuid::NewGuid. 
+				// If you were reliant on that ID, please resave the asset so it is serialized with a valid ID
+				PresetNodeID = InDocument->GetRootGraph()->GetClassID();
 			}
 
 			// Clear the root graph so it can be rebuilt.
@@ -857,7 +893,7 @@ namespace Metasound
 
 			Style.SortDefaults(NodeHandles, DocumentTransform::GetNodeDisplayNameProjection());
 
-			// Set input node location
+			// Set output node location
 			for (const FNodeHandle& OutputNode : NodeHandles)
 			{
 				FMetasoundFrontendNodeStyle NodeStyle;
@@ -868,7 +904,7 @@ namespace Metasound
 #endif // WITH_EDITOR
 		}
 
-		TArray<FMetasoundFrontendClassInput> FRebuildPresetRootGraph::GenerateRequiredClassInputs(const FConstGraphHandle& InPresetGraph, TSet<FName>& OutInputsInheritingDefault) const
+		TArray<FMetasoundFrontendClassInput> FRebuildPresetRootGraph::GenerateRequiredClassInputs(FDocumentHandle& InDocumentHandle, const FConstGraphHandle& InPresetGraph, TSet<FName>& OutInputsInheritingDefault) const
 		{
 			TArray<FMetasoundFrontendClassInput> ClassInputs;
 
@@ -891,8 +927,10 @@ namespace Metasound
 					ClassInput.Metadata.SetDescription(InputNode->GetDescription());
 					ClassInput.Metadata.SetDisplayName(Input->GetMetadata().GetDisplayName());
 #endif // WITH_EDITOR
-
-					ClassInput.VertexID = FGuid::NewGuid();
+					FDocumentAccessPtr DocumentPtr = InDocumentHandle->GetDocumentPtr();
+					const FMetasoundFrontendDocument* Document = DocumentPtr.Get();
+					check(Document);
+					ClassInput.VertexID = FDocumentIDGenerator::Get().CreateVertexID(*Document);;
 
 					if (const FMetasoundFrontendClassInput* ExistingClassInput = InPresetGraph->FindClassInputWithName(NodeName).Get())
 					{
@@ -944,7 +982,7 @@ namespace Metasound
 			return ClassInputs;
 		}
 
-		TArray<FMetasoundFrontendClassOutput> FRebuildPresetRootGraph::GenerateRequiredClassOutputs(const FConstGraphHandle& InPresetGraph) const
+		TArray<FMetasoundFrontendClassOutput> FRebuildPresetRootGraph::GenerateRequiredClassOutputs(FDocumentHandle& InDocumentHandle, const FConstGraphHandle& InPresetGraph) const
 		{
 			TArray<FMetasoundFrontendClassOutput> ClassOutputs;
 
@@ -968,7 +1006,10 @@ namespace Metasound
 					ClassOutput.Metadata.SetDisplayName(Output->GetMetadata().GetDisplayName());
 #endif // WITH_EDITOR
 
-					ClassOutput.VertexID = FGuid::NewGuid();
+					FDocumentAccessPtr DocumentPtr = InDocumentHandle->GetDocumentPtr();
+					const FMetasoundFrontendDocument* Document = DocumentPtr.Get();
+					check(Document);
+					ClassOutput.VertexID = FDocumentIDGenerator::Get().CreateVertexID(*Document);
 
 					if (const FMetasoundFrontendClassOutput* ExistingClassOutput = InPresetGraph->FindClassOutputWithName(NodeName).Get())
 					{

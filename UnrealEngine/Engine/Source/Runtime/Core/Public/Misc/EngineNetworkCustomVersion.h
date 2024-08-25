@@ -84,8 +84,9 @@ struct FEngineNetworkCustomVersion
 		SoftObjectPtrNetGuids = 29,				// Bump version to support replicating SoftObjectPtrs by NetGuid instead of raw strings.
 		SubObjectDestroyFlag = 30,				// Bump version to support subobject destruction message flags
 		GameStateReplicatedTimeAsDouble = 31,	// Bump version to support AGameStateBase::ReplicatedWorldTimeSeconds as double instead of float.
-
 		CustomVersions = 32,                    // Bump version to switch to using custom versions
+		DynamicMontageSerialization = 33,		// Bump version to support dynamic montage serialization in the Gameplay Ability System
+		PredictionKeyBaseNotReplicated = 34,	// Bump version to stop FPredictionKey::Base from being replicated (it was unused).
 
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,

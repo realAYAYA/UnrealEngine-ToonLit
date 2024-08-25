@@ -23,7 +23,6 @@
 #include "SequencerSectionPainter.h"
 #include "TrackEditorThumbnail/TrackEditorThumbnailPool.h"
 #include "Compilation/MovieSceneCompiledDataManager.h"
-#include "CommonMovieSceneTools.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "TimeToPixel.h"
@@ -67,9 +66,9 @@ FMargin FMediaThumbnailSection::GetContentPadding() const
 }
 
 
-float FMediaThumbnailSection::GetSectionHeight() const
+float FMediaThumbnailSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
 {
-	return FThumbnailSection::GetSectionHeight() + 2 * 9.0f; // make space for the film border
+	return FThumbnailSection::GetSectionHeight(ViewDensity) + 2 * 9.0f; // make space for the film border
 }
 
 

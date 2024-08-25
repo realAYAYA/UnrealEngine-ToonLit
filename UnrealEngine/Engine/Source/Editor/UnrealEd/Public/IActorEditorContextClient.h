@@ -26,7 +26,9 @@ enum class EActorEditorContextAction
 	ApplyContext,
 	ResetContext,
 	PushContext,
-	PopContext
+	PushDuplicateContext,
+	PopContext,
+	InitializeContextFromActor,
 };
 
 struct IActorEditorContextClient

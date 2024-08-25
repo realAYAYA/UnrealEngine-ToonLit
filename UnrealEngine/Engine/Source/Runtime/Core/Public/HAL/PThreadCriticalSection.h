@@ -61,8 +61,11 @@ public:
 		return 0 == pthread_mutex_trylock(&Mutex);
 	}
 
+
 	/**
-	 * Releases the lock on the critical seciton
+	 * Releases the lock on the critical section
+	 *
+	 * Calling this when not locked is undefined behavior & may cause indefinite waiting on next lock.
 	 */
 	FORCEINLINE void Unlock(void)
 	{

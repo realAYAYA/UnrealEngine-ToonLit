@@ -143,7 +143,7 @@ namespace Metasound
 			if (TEnableAutoConverterNodeRegistration<TFromDataType, TToDataType>::Value)
 			{
 				const FNodeClassMetadata& Metadata = FConverterNode::GetAutoConverterNodeMetadata();
-				const Metasound::Frontend::FNodeRegistryKey Key = FMetasoundFrontendRegistryContainer::GetRegistryKey(Metadata);
+				const Metasound::Frontend::FNodeRegistryKey Key(Metadata);
 
 				if (!std::is_same<TFromDataType, TToDataType>::value && !FMetasoundFrontendRegistryContainer::Get()->IsNodeRegistered(Key))
 				{

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "MassGameplayDebugTypes.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassDebuggerSubsystem.generated.h"
 
 
@@ -11,7 +11,7 @@ class UMassDebugVisualizationComponent;
 class AMassDebugVisualizer;
 
 UCLASS()
-class MASSGAMEPLAYDEBUG_API UMassDebuggerSubsystem : public UWorldSubsystem
+class MASSGAMEPLAYDEBUG_API UMassDebuggerSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 public:

@@ -85,6 +85,14 @@ FRigVMFunction_MathQuaternionToAxisAndAngle_Execute()
 	Angle = Angle * AngleSign;
 }
 
+FRigVMFunction_MathQuaternionToVectors_Execute()
+{
+	const FQuat Rotation = Value.GetNormalized();
+	Forward = Rotation.GetForwardVector();
+	Right = Rotation.GetRightVector();
+	Up = Rotation.GetUpVector();
+}
+
 FRigVMFunction_MathQuaternionScale_Execute()
 {
 	FVector Axis = FVector::ZeroVector;

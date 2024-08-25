@@ -2,9 +2,58 @@
 
 #include "SDetailTableRowBase.h"
 
+#include "DetailRowMenuContext.h"
+#include "DetailRowMenuContextPrivate.h"
 #include "PropertyHandleImpl.h"
+#include "ToolMenus.h"
 
 const float SDetailTableRowBase::ScrollBarPadding = 16.0f;
+
+FReply SDetailTableRowBase::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+{
+	if( OwnerTreeNode.IsValid() && MouseEvent.GetEffectingButton() == EKeys::RightMouseButton && !StaticCastSharedRef<STableViewBase>( OwnerTablePtr.Pin()->AsWidget() )->IsRightClickScrolling() )
+	{
+		FDetailNodeList VisibleChildren;
+		OwnerTreeNode.Pin()->GetChildren( VisibleChildren );
+
+		// Open context menu if this node can be expanded 
+		bool bShouldOpenMenu = true;
+
+		if( bShouldOpenMenu )
+		{
+			if (UToolMenus* ToolMenus = UToolMenus::Get())
+			{
+				if (UToolMenu* ToolMenu = ToolMenus->FindMenu(UE::PropertyEditor::RowContextMenuName))
+				{
+					const FWidgetPath WidgetPath = MouseEvent.GetEventPath() != nullptr ? *MouseEvent.GetEventPath() : FWidgetPath();
+
+					UDetailRowMenuContext* RowMenuContext = NewObject<UDetailRowMenuContext>();					
+					RowMenuContext->PropertyHandles = GetPropertyHandles(true);
+					RowMenuContext->DetailsView = OwnerTreeNode.Pin()->GetDetailsView();
+					RowMenuContext->ForceRefreshWidget().AddSPLambda(this, [this]
+					{
+						ForceRefresh();						
+					});
+
+					UDetailRowMenuContextPrivate* RowMenuContextPrivate = NewObject<UDetailRowMenuContextPrivate>();
+					RowMenuContextPrivate->Row = SharedThis(this);
+
+					FToolMenuContext MenuContext;
+					MenuContext.AddObject(RowMenuContext);
+					MenuContext.AddObject(RowMenuContextPrivate);
+
+					const TSharedRef<SWidget> ToolMenuWidget = ToolMenus->GenerateWidget(UE::PropertyEditor::RowContextMenuName, MenuContext);
+
+					FSlateApplication::Get().PushMenu(AsShared(), WidgetPath, ToolMenuWidget, MouseEvent.GetScreenSpacePosition(), FPopupTransitionEffect::ContextMenu);
+				}
+			}
+
+			return FReply::Handled();
+		}
+	}
+
+	return STableRow< TSharedPtr< FDetailTreeNode > >::OnMouseButtonUp( MyGeometry, MouseEvent );
+}
 
 int32 SDetailTableRowBase::GetIndentLevelForBackgroundColor() const
 {
@@ -35,6 +84,35 @@ bool SDetailTableRowBase::IsScrollBarVisible(TWeakPtr<STableViewBase> OwnerTable
 		return OwnerTableView->GetScrollbarVisibility() == EVisibility::Visible;
 	}
 	return false;
+}
+
+void SDetailTableRowBase::PopulateContextMenu(UToolMenu* ToolMenu)
+{
+	FToolMenuSection& ExpansionSection = ToolMenu->FindOrAddSection(TEXT("Expansion"));
+	{
+		FDetailNodeList VisibleChildren;
+		OwnerTreeNode.Pin()->GetChildren( VisibleChildren );
+
+		// Open context menu if this node can be expanded 
+		if( VisibleChildren.Num() )
+		{
+			const FUIAction CollapseAllAction( FExecuteAction::CreateSP( this, &SDetailTableRowBase::OnCollapseAllClicked ) );
+			ExpansionSection.AddMenuEntry(
+				TEXT("CollapseAll"),
+				NSLOCTEXT("PropertyView", "CollapseAll", "Collapse All"),
+				NSLOCTEXT("PropertyView", "CollapseAll_ToolTip", "Collapses this item and all children"),
+				FSlateIcon(),
+				CollapseAllAction);
+				
+			const FUIAction ExpandAllAction( FExecuteAction::CreateSP( this, &SDetailTableRowBase::OnExpandAllClicked ) );
+			ExpansionSection.AddMenuEntry(
+				TEXT("ExpandAll"),
+				 NSLOCTEXT("PropertyView", "ExpandAll", "Expand All"),
+				NSLOCTEXT("PropertyView", "ExpandAll_ToolTip", "Expands this item and all children"),
+				FSlateIcon(),
+				ExpandAllAction);
+		}
+	}
 }
 
 TArray<TSharedPtr<FPropertyNode>> SDetailTableRowBase::GetPropertyNodes(const bool& bRecursive) const
@@ -94,4 +172,16 @@ TArray<TSharedPtr<IPropertyHandle>> SDetailTableRowBase::GetPropertyHandles(cons
 	PropertyHandles.Remove(nullptr);
 
 	return PropertyHandles;
+}
+
+void SDetailTableRowBase::ForceRefresh()
+{
+	if (const TSharedPtr<FDetailTreeNode> Owner = OwnerTreeNode.Pin();
+		Owner.IsValid())
+	{
+		if (IDetailsViewPrivate* DetailsView = Owner->GetDetailsView())
+		{
+			DetailsView->ForceRefresh();
+		}
+	}
 }

@@ -15,6 +15,7 @@ struct FPlatformMemoryStats : public FGenericPlatformMemoryStats
 {
 	FGenericPlatformMemoryStats::EMemoryPressureStatus GetMemoryPressureStatus() const;
 	uint64 VMSwap = 0;
+	uint64 VMRss = 0;
 };
 
 /**
@@ -31,6 +32,15 @@ struct FAndroidPlatformMemory : public FGenericPlatformMemory
 	static CORE_API FMalloc* BaseAllocator();
 	static CORE_API void* BinnedAllocFromOS(SIZE_T Size);
 	static CORE_API void BinnedFreeToOS(void* Ptr, SIZE_T Size);
+
+	CORE_API struct FMemAdviceStats
+	{
+		bool IsValid() const { return MemFree > 0 && MemUsed > 0; };
+		int64 TotalMem = 0; // total memory available to the device
+		int64 MemFree = 0;
+		int64 MemUsed = 0;  // mem used across the device, (simply returns total - free)
+	};
+	static CORE_API FMemAdviceStats GetDeviceMemAdviceStats();
 
 	class FPlatformVirtualMemoryBlock : public FBasicVirtualMemoryBlock
 	{

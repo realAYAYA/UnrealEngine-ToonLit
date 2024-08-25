@@ -13,6 +13,7 @@ class FScopedTransaction;
 class FUICommandList;
 class UPaperSpriteComponent;
 class UPaperTileSet;
+struct FGizmoState;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnSingleTileIndexChanged, int32 /*NewIndex*/, int32 /*OldIndex*/);
 
@@ -32,6 +33,8 @@ public:
 	virtual FLinearColor GetBackgroundColor() const override;
 	virtual void TrackingStarted(const FInputEventState& InInputState, bool bIsDragging, bool bNudge) override;
 	virtual void TrackingStopped() override;
+	virtual bool BeginTransform(const FGizmoState& InState) override;
+	virtual bool EndTransform(const FGizmoState& InState) override;
 	virtual void DrawCanvas(FViewport& Viewport, FSceneView& View, FCanvas& Canvas) override;
 	// End of FEditorViewportClient interface
 
@@ -98,4 +101,7 @@ private:
 
 	// Called when TileBeingEditedIndex changes
 	FOnSingleTileIndexChanged OnSingleTileIndexChanged;
+	
+	bool HandleBeginTransform();
+	bool HandleEndTransform();
 };

@@ -882,6 +882,14 @@ namespace EpicGames.Core
 					}
 					descriptionBuilder.Append(attribute.Description);
 				}
+				foreach (CommandLineAttribute attribute in target.Member.GetCustomAttributes<CommandLineAttribute>().Where(x => x.Description != null))
+				{
+					if (descriptionBuilder.Length > 0)
+					{
+						descriptionBuilder.Append('\n');
+					}
+					descriptionBuilder.Append(attribute.Description);
+				}
 
 				string description = descriptionBuilder.ToString();
 				if (description.Length == 0)

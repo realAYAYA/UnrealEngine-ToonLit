@@ -7,7 +7,7 @@
 #include "CoreMinimal.h"
 #include "Trace/Trace.h"
 
-#define ANIM_TRACE_ENABLED OBJECT_TRACE_ENABLED
+#define ANIM_TRACE_ENABLED (OBJECT_TRACE_ENABLED && !(UE_BUILD_SHIPPING || UE_BUILD_TEST))
 
 #if ANIM_TRACE_ENABLED
 
@@ -36,6 +36,8 @@ struct FAnimSyncMarker;
 struct FAnimMontageInstance;
 class UPoseWatchPoseElement;
 
+extern ENGINE_API FAutoConsoleVariable CVarRecordExternalMorphTargets;
+
 struct FAnimTrace
 {
 	/** The various phases of anim graph processing */
@@ -57,6 +59,12 @@ struct FAnimTrace
 		Tick = 3,
 		SyncMarker = 4	// We 'fake' sync markers with a notify type for convenience
 	};
+	
+	enum class EInertializationType : uint8
+    {
+    	Inertialization = 0,
+    	DeadBlending = 1
+    };
 
 	/** Helper for outputting anim nodes */
 	struct FScopedAnimNodeTrace
@@ -114,7 +122,7 @@ struct FAnimTrace
 		float Thickness;
 		bool bPersistentLines;
 	};
-	
+
 	/** Reset Caches so a new trace can be started*/
 	ENGINE_API static void Reset();
 
@@ -194,6 +202,9 @@ struct FAnimTrace
 
 	/** Helper function to output a pose watch record */
 	ENGINE_API static void OutputPoseWatch(const FAnimInstanceProxy& InSourceProxy, UPoseWatchPoseElement* InPoseWatchElement, int32 InPoseWatchId, const TArray<FTransform>& BoneTransforms, const FBlendedHeapCurve& InCurves, const TArray<FBoneIndexType>& RequiredBones, const FTransform& WorldTransform, const bool bIsEnabled);
+	
+	/** Helper function to output inertialization state */
+	ENGINE_API static void OutputInertialization(const FAnimInstanceProxy& InSourceProxy, int32 InNodeId, float InWeight, EInertializationType InType);
 };
 
 #define TRACE_ANIM_TICK_RECORD(Context, TickRecord) \
@@ -253,6 +264,9 @@ struct FAnimTrace
 #define TRACE_ANIM_POSE_WATCH(SourceProxy, PoseWatchElement, PoseWatchId, BoneTransforms, Curves, RequiredBones, WorldTransform, bIsEnabled) \
 	FAnimTrace::OutputPoseWatch(SourceProxy, PoseWatchElement, PoseWatchId, BoneTransforms, Curves, RequiredBones, WorldTransform, bIsEnabled);
 
+#define TRACE_ANIM_INERTIALIZATION(SourceProxy, NodeId, Weight, Type) \
+	FAnimTrace::OutputInertialization(SourceProxy, NodeId, Weight, Type);
+
 #else
 
 #define TRACE_ANIM_TICK_RECORD(Context, TickRecord)
@@ -274,5 +288,6 @@ struct FAnimTrace
 #define TRACE_ANIM_MONTAGE(AnimInstance, MontageInstance)
 #define TRACE_ANIM_NODE_SYNC(SourceProxy, SourceNodeId, GroupName)
 #define TRACE_ANIM_POSE_WATCH(SourceProxy, PoseWatchElement, PoseWatchId, BoneTransforms, Curves, RequiredBones, WorldTransform, bIsEnabled)
+#define TRACE_ANIM_INERTIALIZATION(SourceProxy, NodeId, Weight, Type)
 
 #endif

@@ -8,6 +8,7 @@
 #include "UnrealClient.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/Engine.h"
+#include "Misc/CommandLine.h"
 
 #if !defined(WITH_PIX_EVENT_RUNTIME)
 #define WITH_PIX_EVENT_RUNTIME 0

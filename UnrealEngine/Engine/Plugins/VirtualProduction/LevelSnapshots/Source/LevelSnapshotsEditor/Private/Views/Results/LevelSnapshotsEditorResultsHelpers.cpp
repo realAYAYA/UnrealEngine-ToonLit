@@ -7,9 +7,11 @@
 #include "SLevelSnapshotsEditorResults.h"
 
 #include "Algo/Find.h"
+#include "BlueprintEditorSettings.h"
 #include "IDetailPropertyRow.h"
 #include "IDetailTreeNode.h"
 #include "IPropertyRowGenerator.h"
+#include "Kismet2/ComponentEditorUtils.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
 
@@ -517,6 +519,54 @@ UObject* FLevelSnapshotsEditorResultsHelpers::FindCounterpartComponent(const UAc
 	}
 }
 
+bool FLevelSnapshotsEditorResultsHelpers::IsInstancedActorComponentDesirableForComponentArray(
+	UActorComponent* ActorComponent, const bool bHideConstructionScriptComponentsInDetailsView)
+{
+	const USceneComponent* AsSceneComponent = Cast<USceneComponent>(ActorComponent);
+	const USceneComponent* ParentSceneComponent = AsSceneComponent != nullptr ? AsSceneComponent->GetAttachParent() : nullptr;
+
+	// Exclude nested DSOs attached to BP-constructed instances, which are not mutable.
+	return (ActorComponent != nullptr
+		&& (!ActorComponent->IsVisualizationComponent())
+		&& (ActorComponent->CreationMethod != EComponentCreationMethod::UserConstructionScript || !bHideConstructionScriptComponentsInDetailsView)
+		&& (!ParentSceneComponent || !ParentSceneComponent->IsCreatedByConstructionScript() || !ActorComponent->HasAnyFlags(RF_DefaultSubObject)))
+		&& (ActorComponent->CreationMethod != EComponentCreationMethod::Native || FComponentEditorUtils::GetPropertyForEditableNativeComponent(ActorComponent));
+}
+
+TSet<UActorComponent*> FLevelSnapshotsEditorResultsHelpers::FilterOutActorComponentsBasedOnEditorSettings(
+	const TSet<UActorComponent*>& UnfilteredActorComponentList)
+{
+	const bool bHideConstructionScriptComponentsInDetailsView =
+		GetDefault<UBlueprintEditorSettings>()->bHideConstructionScriptComponentsInDetailsView;
+
+	// Filter the components by their visibility
+	TSet<UActorComponent*> ComponentsToAdd;
+	for (UActorComponent* ActorComp : UnfilteredActorComponentList)
+	{
+		if (ActorComp && IsInstancedActorComponentDesirableForComponentArray(ActorComp, bHideConstructionScriptComponentsInDetailsView))
+		{
+			ComponentsToAdd.Add(ActorComp);
+		}
+	}
+
+	return ComponentsToAdd;
+}
+
+TSet<UActorComponent*> FLevelSnapshotsEditorResultsHelpers::FilterOutActorComponentsBasedOnEditorSettings(
+	const TSet<TWeakObjectPtr<UActorComponent>>& UnfilteredActorComponentList)
+{
+	TSet<UActorComponent*> RawSet;
+	for(const TWeakObjectPtr<UActorComponent>& Component : UnfilteredActorComponentList)
+	{
+		if (UActorComponent* RawComponent = Component.Get())
+		{
+			RawSet.Add(RawComponent);
+		}
+	}
+
+	return FilterOutActorComponentsBasedOnEditorSettings(RawSet);
+}
+
 int32 FLevelSnapshotsEditorResultsHelpers::CreateNewHierarchyStructInLoop(const AActor* InActor, USceneComponent* SceneComponent, TArray<TWeakPtr<FComponentHierarchy>>& AllHierarchies)
 {
 	check(InActor);
@@ -533,7 +583,7 @@ int32 FLevelSnapshotsEditorResultsHelpers::CreateNewHierarchyStructInLoop(const 
 		int32 IndexOfParentHierarchy = AllHierarchies.IndexOfByPredicate(
 			[&ParentComponent](const TWeakPtr<FComponentHierarchy>& Hierarchy)
 			{
-				return Hierarchy.Pin()->Component == ParentComponent;
+				return Hierarchy.IsValid() && Hierarchy.Pin()->Component == ParentComponent;
 			});
 
 		if (IndexOfParentHierarchy == -1)
@@ -541,7 +591,14 @@ int32 FLevelSnapshotsEditorResultsHelpers::CreateNewHierarchyStructInLoop(const 
 			IndexOfParentHierarchy = CreateNewHierarchyStructInLoop(InActor, ParentComponent, AllHierarchies);
 		}
 
-		AllHierarchies[IndexOfParentHierarchy].Pin()->DirectChildren.Add(NewHierarchy);
+		const bool bIsParentHierarchyValid = ensureMsgf(AllHierarchies[IndexOfParentHierarchy].IsValid(),
+			TEXT("%hs: AllHierarchies at index %d for Component '%s' was not valid."),
+			__FUNCTION__, IndexOfParentHierarchy, *(ParentComponent->GetName()));
+
+		if (bIsParentHierarchyValid)
+		{
+			AllHierarchies[IndexOfParentHierarchy].Pin()->DirectChildren.Add(NewHierarchy);
+		}
 	}
 
 	return ReturnValue;
@@ -557,11 +614,12 @@ TSharedRef<FComponentHierarchy> FLevelSnapshotsEditorResultsHelpers::BuildCompon
 	TArray<TWeakPtr<FComponentHierarchy>> AllHierarchies;
 	AllHierarchies.Add(ReturnHierarchy);
 
-	TSet<UActorComponent*> AllActorComponents = InActor->GetComponents();
+	TSet<UActorComponent*> AllActorComponents = FilterOutActorComponentsBasedOnEditorSettings(InActor->GetComponents());
 
 	for (UActorComponent* Component : AllActorComponents)
 	{
-		if (USceneComponent* SceneComponent = Cast<USceneComponent>(Component))
+		USceneComponent* SceneComponent = Cast<USceneComponent>(Component);
+		if (IsValid(SceneComponent) && !SceneComponent->HasAnyFlags(RF_Transient))
 		{
 			const bool ComponentContained = AllHierarchies.ContainsByPredicate(
 				[&SceneComponent](const TWeakPtr<FComponentHierarchy>& Hierarchy)

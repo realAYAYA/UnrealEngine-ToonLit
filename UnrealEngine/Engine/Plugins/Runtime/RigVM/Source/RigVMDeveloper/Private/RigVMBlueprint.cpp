@@ -9,6 +9,7 @@
 #include "EdGraph/RigVMEdGraph.h"
 #include "EdGraph/RigVMEdGraphNode.h"
 #include "EdGraph/RigVMEdGraphSchema.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/UObjectGlobals.h"
 #include "RigVMObjectVersion.h"
@@ -66,6 +67,50 @@ static TArray<UClass*> GetClassObjectsInPackage(UPackage* InPackage)
 	return ClassObjects;
 }
 
+void FRigVMEdGraphDisplaySettings::SetTotalMicroSeconds(double InTotalMicroSeconds)
+{
+	TotalMicroSeconds = AggregateAverage(TotalMicroSecondsFrames, TotalMicroSeconds, InTotalMicroSeconds);
+}
+
+void FRigVMEdGraphDisplaySettings::SetLastMinMicroSeconds(double InMinMicroSeconds)
+{
+	LastMinMicroSeconds = AggregateAverage(MinMicroSecondsFrames, LastMinMicroSeconds, InMinMicroSeconds);
+}
+
+void FRigVMEdGraphDisplaySettings::SetLastMaxMicroSeconds(double InMaxMicroSeconds)
+{
+	LastMaxMicroSeconds = AggregateAverage(MaxMicroSecondsFrames, LastMaxMicroSeconds, InMaxMicroSeconds);
+}
+
+double FRigVMEdGraphDisplaySettings::AggregateAverage(TArray<double>& InFrames, double InPrevious, double InNext) const
+{
+	const int32 NbFrames = FMath::Min(AverageFrames, 256);
+	if(NbFrames < 2)
+	{
+		InFrames.Reset();
+		return InNext;
+	}
+	
+	InFrames.Add(InNext);
+	if(InFrames.Num() >= NbFrames)
+	{
+		double Average = 0;
+		for(const double Value : InFrames)
+		{
+			Average += Value;
+		}
+		Average /= double(NbFrames);
+		InFrames.Reset();
+		return Average;
+	}
+
+	if(InPrevious == DBL_MAX || InPrevious < -SMALL_NUMBER)
+	{
+		return InNext;
+	}
+	return InPrevious;
+}
+
 FEdGraphPinType FRigVMOldPublicFunctionArg::GetPinType() const
 {
 	FRigVMExternalVariable Variable;
@@ -106,6 +151,8 @@ TArray<URigVMBlueprint*> URigVMBlueprint::sCurrentlyOpenedRigVMBlueprints;
 #if WITH_EDITOR
 const FName URigVMBlueprint::RigVMPanelNodeFactoryName(TEXT("FRigVMEdGraphPanelNodeFactory"));
 const FName URigVMBlueprint::RigVMPanelPinFactoryName(TEXT("FRigVMEdGraphPanelPinFactory"));
+FCriticalSection URigVMBlueprint::QueuedCompilerMessageDelegatesMutex;
+TArray<FOnRigVMReportCompilerMessage::FDelegate> URigVMBlueprint::QueuedCompilerMessageDelegates;
 #endif
 
 URigVMBlueprint::URigVMBlueprint()
@@ -140,13 +187,22 @@ URigVMBlueprint::URigVMBlueprint(const FObjectInitializer& ObjectInitializer)
 	VMCompileSettings.ASTSettings.ReportDelegate.BindUObject(this, &URigVMBlueprint::HandleReportFromCompiler);
 
 #if WITH_EDITOR
+	TArray<FOnRigVMReportCompilerMessage::FDelegate> DelegatesForReportFromCompiler;
+	{
+		FScopeLock Lock(&QueuedCompilerMessageDelegatesMutex);
+		Swap(QueuedCompilerMessageDelegates, DelegatesForReportFromCompiler);
+	}
+
+	for(const FOnRigVMReportCompilerMessage::FDelegate& Delegate : DelegatesForReportFromCompiler)
+	{
+		ReportCompilerMessageEvent.Add(Delegate);
+	}
+
 	if (HasAnyFlags(RF_ClassDefaultObject))
 	{
 		CompileLog.bSilentMode = true;
 	}
 	CompileLog.SetSourcePath(GetPathName());
-	CompileLog.bLogDetailedResults = false;
-	CompileLog.EventDisplayThresholdMs = false;
 #endif
 
 	if(GetClass() == URigVMBlueprint::StaticClass())
@@ -194,11 +250,11 @@ void URigVMBlueprint::InitializeModelIfRequired(bool bRecompileVM)
 
 	if (RigVMClient.GetController(0) == nullptr)
 	{
-		check(RigVMClient.Num() == 1);
-		check(RigVMClient.GetFunctionLibrary());
-		
-		RigVMClient.GetOrCreateController(RigVMClient.GetDefaultModel());
-		RigVMClient.GetOrCreateController(RigVMClient.GetFunctionLibrary());
+		const TArray<URigVMGraph*> Models = RigVMClient.GetAllModels(true, false);
+		for(const URigVMGraph* Model : Models)
+		{
+			RigVMClient.GetOrCreateController(Model);
+		}
 
 		bool bRecompileRequired = false;
 		for (int32 i = 0; i < UbergraphPages.Num(); ++i)
@@ -408,6 +464,26 @@ UObject* URigVMBlueprint::GetEditorObjectForRigVMGraph(URigVMGraph* InVMGraph) c
 	return nullptr;
 }
 
+URigVMGraph* URigVMBlueprint::GetRigVMGraphForEditorObject(UObject* InObject) const
+{
+	if(URigVMEdGraph* RigVMEdGraph = Cast<URigVMEdGraph>(InObject))
+	{
+		if (RigVMEdGraph->bIsFunctionDefinition)
+		{
+			if (URigVMLibraryNode* LibraryNode = RigVMClient.GetFunctionLibrary()->FindFunction(*RigVMEdGraph->ModelNodePath))
+			{
+				return LibraryNode->GetContainedGraph();
+			}
+		}
+		else
+		{
+			return RigVMClient.GetModel(RigVMEdGraph->ModelNodePath);
+		}
+	}
+
+	return nullptr;
+}
+
 void URigVMBlueprint::HandleRigVMGraphAdded(const FRigVMClient* InClient, const FString& InNodePath)
 {
 	if(URigVMGraph* Model = InClient->GetModel(InNodePath))
@@ -614,28 +690,25 @@ void URigVMBlueprint::HandleConfigureRigVMController(const FRigVMClient* InClien
 		}
 	});
 
-	/*
-	 * todooooo
-	InControllerToConfigure->ConfigureWorkflowOptionsDelegate.BindLambda([WeakThis](URigVMUserWorkflowOptions* Options)
-	{
-		if(UControlRigWorkflowOptions* ControlRigNodeWorkflowOptions = Cast<UControlRigWorkflowOptions>(Options))
-		{
-			ControlRigNodeWorkflowOptions->Hierarchy = nullptr;
-			ControlRigNodeWorkflowOptions->Selection.Reset();
-			
-			if(const URigVMBlueprint* StrongThis = WeakThis.Get())
-			{
-				if(UControlRig* ControlRig = Cast<UControlRig>(StrongThis->GetObjectBeingDebugged()))
-				{
-					ControlRigNodeWorkflowOptions->Hierarchy = ControlRig->GetHierarchy();
-				}
-				ControlRigNodeWorkflowOptions->Selection = StrongThis->Hierarchy->GetSelectedKeys();
-			}
-		}
-	});
-	*/
-
 #endif
+}
+
+UObject* URigVMBlueprint::ResolveUserDefinedTypeById(const FString& InTypeName) const
+{
+	const FSoftObjectPath* ResultPathPtr = UserDefinedStructGuidToPathName.Find(InTypeName);
+	if (ResultPathPtr == nullptr)
+	{
+		return nullptr;
+	}
+
+	if (UObject* TypeObject = ResultPathPtr->TryLoad())
+	{
+		// Ensure we have a hold on this type so it doesn't get nixed on the next GC.
+		const_cast<URigVMBlueprint*>(this)->UserDefinedTypesInUse.Add(TypeObject);
+		return TypeObject;
+	}
+
+	return nullptr;
 }
 
 bool URigVMBlueprint::TryImportGraphFromText(const FString& InClipboardText, UEdGraph** OutGraphPtr)
@@ -707,7 +780,10 @@ IRigVMEditorModule* URigVMBlueprint::GetEditorModule() const
 
 void URigVMBlueprint::Serialize(FArchive& Ar)
 {
-	RigVMClient.SetOuterClientHost(this, GET_MEMBER_NAME_CHECKED(URigVMBlueprint, RigVMClient));
+	if(IsValid(this))
+	{
+		RigVMClient.SetOuterClientHost(this, GET_MEMBER_NAME_CHECKED(URigVMBlueprint, RigVMClient));
+	}
 	
 	Super::Serialize(Ar);
 
@@ -803,11 +879,49 @@ void URigVMBlueprint::PreSave(FObjectPreSaveContext ObjectSaveContext)
 	IAssetRegistry::GetChecked().AssetTagsFinalized(*this);
 
 	CachedAssetTags.Reset();
+
+	// also store the user defined struct guid to path name on the blueprint itself
+	// to aid the controller when recovering from user defined struct name changes or
+	// guid changes.
+	UserDefinedStructGuidToPathName.Reset();
+	UserDefinedTypesInUse.Reset();
+	TArray<URigVMGraph*> AllModels = GetAllModels();
+	for(const URigVMGraph* Graph : AllModels)
+	{
+		for(const URigVMNode* Node : Graph->GetNodes())
+		{
+			const TArray<URigVMPin*> AllPins = Node->GetAllPinsRecursively();
+			for(const URigVMPin* Pin : AllPins)
+			{
+				if(const UUserDefinedStruct* UserDefinedStruct = Cast<UUserDefinedStruct>(Pin->GetCPPTypeObject()))
+				{
+					const FString GuidBasedName = RigVMTypeUtils::GetUniqueStructTypeName(UserDefinedStruct);
+					UserDefinedStructGuidToPathName.FindOrAdd(GuidBasedName) = FSoftObjectPath(UserDefinedStruct);
+				}
+			}
+		}
+	}
+
+#if WITH_EDITORONLY_DATA
+	OldMemoryStorageGeneratorClasses.Reset();
+#endif
+}
+
+void URigVMBlueprint::PostSaveRoot(FObjectPostSaveRootContext ObjectSaveContext)
+{
+	Super::PostSaveRoot(ObjectSaveContext);
+
+	// Make sure all the tags are accounted for in the TypeActions after we save
+	FBlueprintActionDatabase& ActionDatabase = FBlueprintActionDatabase::Get();
+	ActionDatabase.ClearAssetActions(GetClass());
+	ActionDatabase.RefreshClassActions(GetClass());
 }
 
 void URigVMBlueprint::PostLoad()
 {
 	Super::PostLoad();
+
+	FRigVMRegistry::Get().RefreshEngineTypesIfRequired();
 
 	bVMRecompilationRequired = true;
 	{
@@ -971,8 +1085,6 @@ void URigVMBlueprint::PostLoad()
 	// in which case we have to refresh the model
 	FRigVMRegistry::Get().OnRigVMRegistryChanged().RemoveAll(this);
 	FRigVMRegistry::Get().OnRigVMRegistryChanged().AddUObject(this, &URigVMBlueprint::OnRigVMRegistryChanged);
-	
-	UEdGraphPin::ResolveAllPinReferences();
 }
 
 #if WITH_EDITORONLY_DATA
@@ -1052,7 +1164,10 @@ void URigVMBlueprint::HandlePackageDone()
 	}
 	
 	RemoveDeprecatedVMMemoryClass();
-	RecompileVM();
+	{
+		const FRigVMCompileSettingsDuringLoadGuard Guard(VMCompileSettings);
+		RecompileVM();
+	}
 	RequestRigVMInit();
 	BroadcastRigVMPackageDone();
 }
@@ -1076,18 +1191,22 @@ void URigVMBlueprint::BroadcastRigVMPackageDone()
 	}
 }
 
-void URigVMBlueprint::RemoveDeprecatedVMMemoryClass() const
+void URigVMBlueprint::RemoveDeprecatedVMMemoryClass() 
 {
 	TArray<UObject*> Objects;
 	GetObjectsWithOuter(this, Objects, false);
 
+#if WITH_EDITORONLY_DATA
+	OldMemoryStorageGeneratorClasses.Reserve(Objects.Num());
 	for (UObject* Object : Objects)
 	{
 		if (URigVMMemoryStorageGeneratorClass* DeprecatedClass = Cast<URigVMMemoryStorageGeneratorClass>(Object))
 		{
 			DeprecatedClass->Rename(nullptr, GetTransientPackage(), REN_ForceNoResetLoaders | REN_DoNotDirty | REN_DontCreateRedirectors | REN_NonTransactional);
+			OldMemoryStorageGeneratorClasses.Add(DeprecatedClass);
 		}
 	}
+#endif
 }
 #endif
 
@@ -1108,8 +1227,21 @@ void URigVMBlueprint::RecompileVM()
 	
 	bErrorsDuringCompilation = false;
 
-	RigGraphDisplaySettings.MinMicroSeconds = RigGraphDisplaySettings.LastMinMicroSeconds = DBL_MAX;
-	RigGraphDisplaySettings.MaxMicroSeconds = RigGraphDisplaySettings.LastMaxMicroSeconds = (double)INDEX_NONE;
+	if(RigGraphDisplaySettings.bAutoDetermineRange)
+	{
+		RigGraphDisplaySettings.MinMicroSeconds = RigGraphDisplaySettings.LastMinMicroSeconds = DBL_MAX;
+		RigGraphDisplaySettings.MaxMicroSeconds = RigGraphDisplaySettings.LastMaxMicroSeconds = (double)INDEX_NONE;
+	}
+	else if(RigGraphDisplaySettings.MaxMicroSeconds < RigGraphDisplaySettings.MinMicroSeconds)
+	{
+		RigGraphDisplaySettings.MinMicroSeconds = 0;
+		RigGraphDisplaySettings.MaxMicroSeconds = 5;
+	}
+	
+	RigGraphDisplaySettings.TotalMicroSeconds = 0.0;
+	RigGraphDisplaySettings.MinMicroSecondsFrames.Reset();
+	RigGraphDisplaySettings.MaxMicroSecondsFrames.Reset();
+	RigGraphDisplaySettings.TotalMicroSecondsFrames.Reset();
 
 	URigVMHost* CDO = Cast<URigVMHost>(RigClass->GetDefaultObject(true /* create if needed */));
 	if (CDO && CDO->VM != nullptr)
@@ -1123,7 +1255,7 @@ void URigVMBlueprint::RecompileVM()
 		{
 			CDO->Modify(false);
 		}
-		CDO->VM->Reset();
+		CDO->VM->Reset(CDO->GetRigVMExtendedExecuteContext());
 
 		// Clear all Errors
 		CompileLog.Messages.Reset();
@@ -1151,43 +1283,33 @@ void URigVMBlueprint::RecompileVM()
 
 		URigVMCompiler* Compiler = URigVMCompiler::StaticClass()->GetDefaultObject<URigVMCompiler>();
 		VMCompileSettings.SetExecuteContextStruct(RigVMClient.GetExecuteContextStruct());
-		Compiler->Settings = (bCompileInDebugMode) ? FRigVMCompileSettings::Fast(VMCompileSettings.GetExecuteContextStruct()) : VMCompileSettings;
-		Compiler->Compile(RigVMClient.GetAllModels(false, false), GetOrCreateController(), CDO->VM, CDO->GetExtendedExecuteContext(), CDO->GetExternalVariablesImpl(false), &PinToOperandMap);
+
+	    FRigVMExtendedExecuteContext& CDOContext = CDO->GetRigVMExtendedExecuteContext();
+		const FRigVMCompileSettings Settings = (bCompileInDebugMode) ? FRigVMCompileSettings::Fast(VMCompileSettings.GetExecuteContextStruct()) : VMCompileSettings;
+		Compiler->Compile(Settings, RigVMClient.GetAllModels(false, false), GetOrCreateController(), CDO->VM, CDOContext, CDO->GetExternalVariablesImpl(false), &PinToOperandMap);
+
+		CDO->VM->Initialize(CDOContext);
+		CDO->GenerateUserDefinedDependenciesData(CDOContext);
 
 		if (bErrorsDuringCompilation)
 		{
-			if(Compiler->Settings.SurpressErrors)
+			if(Settings.SurpressErrors)
 			{
-				Compiler->Settings.Reportf(EMessageSeverity::Info, this,
+				Settings.Reportf(EMessageSeverity::Info, this,
 					TEXT("Compilation Errors may be suppressed for ControlRigBlueprint: %s. See VM Compile Setting in Class Settings for more Details"), *this->GetName());
 			}
 			bVMRecompilationRequired = false;
 			if(CDO->VM)
 			{
-				VMCompiledEvent.Broadcast(this, CDO->VM);
+				VMCompiledEvent.Broadcast(this, CDO->GetVM(), CDO->GetRigVMExtendedExecuteContext());
 			}
 			return;
 		}
 
-		TArray<UObject*> ArchetypeInstances;
-		CDO->GetArchetypeInstances(ArchetypeInstances);
-		for (UObject* Instance : ArchetypeInstances)
-		{
-			if (URigVMHost* InstanceHost = Cast<URigVMHost>(Instance))
-			{
-				// No objects should be created during load, so PostInitInstanceIfRequired, which creates a new VM and
-				// DynamicHierarchy, should not be called during load
-				if (!InstanceHost->HasAllFlags(RF_NeedPostLoad))
-				{
-					InstanceHost->PostInitInstanceIfRequired();
-				}
-				InstanceHost->InstantiateVMFromCDO();
-				InstanceHost->CopyExternalVariableDefaultValuesFromCDO();
-			}
-		}
+		InitializeArchetypeInstances();
 
 		bVMRecompilationRequired = false;
-		VMCompiledEvent.Broadcast(this, CDO->VM);
+		VMCompiledEvent.Broadcast(this, CDO->GetVM(), CDO->GetRigVMExtendedExecuteContext());
 
 #if WITH_EDITOR
 		RefreshBreakpoints();
@@ -1233,9 +1355,9 @@ void URigVMBlueprint::DecrementVMRecompileBracket()
 	}
 }
 
-void URigVMBlueprint::RefreshAllModels(ERigVMBlueprintLoadType InLoadType)
+void URigVMBlueprint::RefreshAllModels(ERigVMLoadType InLoadType)
 {
-	const bool bIsPostLoad = InLoadType == ERigVMBlueprintLoadType::PostLoad;
+	const bool bIsPostLoad = InLoadType == ERigVMLoadType::PostLoad;
 
 	// avoid any compute if the current structure hashes match with the serialized ones
 	if(CVarRigVMEnablePostLoadHashing->GetBool() && RigVMClient.GetStructureHash() == RigVMClient.GetSerializedStructureHash())
@@ -1264,6 +1386,10 @@ void URigVMBlueprint::RefreshAllModels(ERigVMBlueprintLoadType InLoadType)
 
 	if (ensure(IsInGameThread()))
 	{
+		TArray<URigVMController::FRepopulatePinsNodeData> RepopulatePinsNodesData;
+		constexpr int32 REPOPULATE_NODES_NUM_RESERVED = 800;
+		RepopulatePinsNodesData.Reserve(REPOPULATE_NODES_NUM_RESERVED);
+
 		for (URigVMGraph* Graph : AllModelsLeavesFirst)
 		{
 			URigVMController* Controller = GetOrCreateController(Graph);
@@ -1272,11 +1398,24 @@ void URigVMBlueprint::RefreshAllModels(ERigVMBlueprintLoadType InLoadType)
 			TGuardValue<bool> GuardEditGraph(Graph->bEditable, true);
 			FRigVMControllerNotifGuard NotifGuard(Controller, true);
 			LinkedPaths.Add(Graph, Controller->GetLinkedPaths());
-			Controller->FastBreakLinkedPaths(LinkedPaths.FindChecked(Graph));
-			TArray<URigVMNode*> Nodes = Graph->GetNodes();
-			for (URigVMNode* Node : Nodes)
+
+			const TArray<URigVMNode*> Nodes = Graph->GetNodes();
+			if (Nodes.Num() > 0)
 			{
-				Controller->RepopulatePinsOnNode(Node, true, true);
+				RepopulatePinsNodesData.Reset();
+
+				for (URigVMNode* Node : Nodes)
+				{
+					Controller->GenerateRepopulatePinsNodeData(RepopulatePinsNodesData, Node, true, true);
+				}
+
+#if UE_RIGVMCONTROLLER_VERBOSE_REPOPULATE
+				UE_LOG(LogRigVMDeveloper, Display, TEXT("--- Graph: [%s/%s]  - NumNodes : [%d]"), *Graph->GetOuter()->GetName(), *Graph->GetName(), RepopulatePinsNodesData.Num());
+#endif
+
+				Controller->OrphanPins(RepopulatePinsNodesData);
+				Controller->FastBreakLinkedPaths(LinkedPaths.FindChecked(Graph));
+				Controller->RepopulatePins(RepopulatePinsNodesData);
 			}
 		}
 		SetupPinRedirectorsForBackwardsCompatibility();
@@ -1290,7 +1429,8 @@ void URigVMBlueprint::RefreshAllModels(ERigVMBlueprintLoadType InLoadType)
 		{
 			URigVMController::FRestoreLinkedPathSettings Settings;
 			Settings.bFollowCoreRedirectors = true;
-			Controller->RestoreLinkedPaths(LinkedPaths.FindChecked(Graph));
+			Settings.bRelayToOrphanPins = true;
+			Controller->RestoreLinkedPaths(LinkedPaths.FindChecked(Graph), Settings);
 		}
 
 		for(URigVMNode* ModelNode : Graph->GetNodes())
@@ -1455,13 +1595,19 @@ void URigVMBlueprint::HandleReportFromCompiler(EMessageSeverity::Type InSeverity
 			Log->Note(*InMessage);
 		}
 
+		static const FString Error = TEXT("Error");
+		static const FString Warning = TEXT("Warning");
+		if(InMessage.Contains(Error, ESearchCase::IgnoreCase) ||
+			InMessage.Contains(Warning, ESearchCase::IgnoreCase))
+		{
+			BroadCastReportCompilerMessage(InSeverity, InSubject, InMessage);
+		}
 		UE_LOG(LogRigVMDeveloper, Display, TEXT("%s"), *InMessage);
 	}
 
 	if (URigVMEdGraphNode* EdGraphNode = Cast<URigVMEdGraphNode>(SubjectForMessage))
 	{
-		EdGraphNode->ErrorType = (int32)InSeverity;
-		EdGraphNode->ErrorMsg = InMessage;
+		EdGraphNode->SetErrorInfo(InSeverity, InMessage);
 		EdGraphNode->bHasCompilerMessage = EdGraphNode->ErrorType <= int32(EMessageSeverity::Info);
 	}
 }
@@ -1515,6 +1661,11 @@ TArray<IRigVMGraphFunctionHost*> URigVMBlueprint::GetReferencedFunctionHosts(boo
 }
 
 #if WITH_EDITOR
+
+void URigVMBlueprint::SetDebugMode(const bool bValue)
+{
+	bCompileInDebugMode = bValue;
+}
 
 void URigVMBlueprint::ClearBreakpoints()
 {
@@ -1788,26 +1939,14 @@ void URigVMBlueprint::RequestRigVMInit()
 
 URigVMGraph* URigVMBlueprint::GetModel(const UEdGraph* InEdGraph) const
 {
-	if (InEdGraph == nullptr)
-	{
-		return GetDefaultModel();
-	}
-
-	if(InEdGraph->GetOutermost() != GetOutermost())
-	{
-		return nullptr;
-	}
-
 #if WITH_EDITORONLY_DATA
-	if (InEdGraph == FunctionLibraryEdGraph)
+	if (InEdGraph != nullptr && InEdGraph == FunctionLibraryEdGraph)
 	{
 		return RigVMClient.GetFunctionLibrary();
 	}
 #endif
 
-	const URigVMEdGraph* RigGraph = Cast< URigVMEdGraph>(InEdGraph);
-	check(RigGraph);
-	return GetModel(RigGraph->ModelNodePath);
+	return RigVMClient.GetModel(InEdGraph);
 }
 
 URigVMGraph* URigVMBlueprint::GetModel(const FString& InNodePath) const
@@ -1832,28 +1971,29 @@ URigVMFunctionLibrary* URigVMBlueprint::GetLocalFunctionLibrary() const
 
 URigVMGraph* URigVMBlueprint::AddModel(FString InName, bool bSetupUndoRedo, bool bPrintPythonCommand)
 {
-	const FString DesiredName = FString::Printf(TEXT("%s %s"),
-    	FRigVMClient::RigVMModelPrefix, *InName);
-
 	TGuardValue<bool> EnablePythonPrint(bSuspendPythonMessagesForRigVMClient, !bPrintPythonCommand);
-	return RigVMClient.AddModel(*DesiredName, bSetupUndoRedo);
+	return RigVMClient.AddModel(InName, bSetupUndoRedo, bPrintPythonCommand);
 }
 
 bool URigVMBlueprint::RemoveModel(FString InName, bool bSetupUndoRedo, bool bPrintPythonCommand)
 {
 	TGuardValue<bool> EnablePythonPrint(bSuspendPythonMessagesForRigVMClient, !bPrintPythonCommand);
-	return RigVMClient.RemoveModel(InName, bSetupUndoRedo);
+	return RigVMClient.RemoveModel(InName, bSetupUndoRedo, bPrintPythonCommand);
+}
+
+FRigVMGetFocusedGraph& URigVMBlueprint::OnGetFocusedGraph()
+{
+	return RigVMClient.OnGetFocusedGraph();
+}
+
+const FRigVMGetFocusedGraph& URigVMBlueprint::OnGetFocusedGraph() const
+{
+	return RigVMClient.OnGetFocusedGraph();
 }
 
 URigVMGraph* URigVMBlueprint::GetFocusedModel() const
 {
-#if WITH_EDITOR
-	if(OnGetFocusedGraphDelegate.IsBound())
-	{
-		return OnGetFocusedGraphDelegate.Execute(); 
-	}
-#endif
-	return RigVMClient.GetDefaultModel();
+	return RigVMClient.GetFocusedModel();
 }
 
 URigVMController* URigVMBlueprint::GetController(const URigVMGraph* InGraph) const
@@ -1863,23 +2003,7 @@ URigVMController* URigVMBlueprint::GetController(const URigVMGraph* InGraph) con
 
 URigVMController* URigVMBlueprint::GetControllerByName(const FString InGraphName) const
 {
-	if(InGraphName.IsEmpty())
-	{
-		if(const URigVMGraph* DefaultModel = GetRigVMClient()->GetDefaultModel())
-		{
-			return GetController(DefaultModel);
-		}
-	}
-	
-	for (const URigVMGraph* Graph : GetAllModels())
-	{
-		if (Graph->GetName() == InGraphName || Graph->GetGraphName() == InGraphName)
-		{
-			return GetController(Graph);
-		}
-	}
-	
-	return nullptr;
+	return RigVMClient.GetControllerByName(InGraphName);
 }
 
 URigVMController* URigVMBlueprint::GetOrCreateController(URigVMGraph* InGraph)
@@ -2416,7 +2540,7 @@ void URigVMBlueprint::PostTransacted(const FTransactionObjectEvent& TransactionE
  				return UberGraph == nullptr || !IsValid(UberGraph);
 			});
 			RigVMClient.PostTransacted(TransactionEvent);
-
+			
 			RecompileVM();
 			(void)MarkPackageDirty();			
 		}
@@ -2510,14 +2634,28 @@ void URigVMBlueprint::PostDuplicate(bool bDuplicateForPIE)
 
 void URigVMBlueprint::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void URigVMBlueprint::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	if (CachedAssetTags.IsEmpty())
 	{
-		Super::GetAssetRegistryTags(OutTags);
-		CachedAssetTags = OutTags;
+		Super::GetAssetRegistryTags(Context);
+		CachedAssetTags.Reset(Context.GetNumTags());
+		Context.EnumerateTags([this](const FAssetRegistryTag& Tag)
+			{
+				CachedAssetTags.Add(Tag);
+			});
 	}
 	else
 	{
-		OutTags = CachedAssetTags;
+		for (const FAssetRegistryTag& Tag : CachedAssetTags)
+		{
+			Context.AddTag(Tag);
+		}
 	}
 }
 
@@ -2873,7 +3011,7 @@ void URigVMBlueprint::HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URig
 							URigVMHost* CDO = Cast<URigVMHost>(RigClass->GetDefaultObject(true /* create if needed */));
 							if (CDO->VM != nullptr)
 							{
-								CDO->VM->SetPropertyValueFromString(*Operand, DefaultValue);
+								CDO->VM->SetPropertyValueFromString(CDO->GetRigVMExtendedExecuteContext(), *Operand, DefaultValue);
 							}
 
 							TArray<UObject*> ArchetypeInstances;
@@ -2885,7 +3023,7 @@ void URigVMBlueprint::HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URig
 								{
 									if (InstancedHost->VM)
 									{
-										InstancedHost->VM->SetPropertyValueFromString(*Operand, DefaultValue);
+										InstancedHost->VM->SetPropertyValueFromString(InstancedHost->GetRigVMExtendedExecuteContext(), *Operand, DefaultValue);
 									}
 								}
 							}
@@ -2992,7 +3130,6 @@ void URigVMBlueprint::HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URig
 				{
 					URigVMPin* Pin = CastChecked<URigVMPin>(InSubject)->GetRootPin(); 
 					URigVMCompiler* Compiler = URigVMCompiler::StaticClass()->GetDefaultObject<URigVMCompiler>();
-					Compiler->Settings = VMCompileSettings;
 
 					TSharedPtr<FRigVMParserAST> RuntimeAST = GetDefaultModel()->GetRuntimeAST();
 					
@@ -3006,20 +3143,20 @@ void URigVMBlueprint::HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URig
 						}
 						else
 						{
-							if(DebuggedHost->GetVM()->GetDebugMemory()->Num() == 0)
+							if(DebuggedHost->GetDebugMemory()->Num() == 0)
 							{
 								RequestAutoVMRecompilation();
 								(void)MarkPackageDirty();
 							}
 							else
 							{
-								Compiler->MarkDebugWatch(true, Pin, DebuggedHost->GetVM(), &PinToOperandMap, RuntimeAST);
+								Compiler->MarkDebugWatch(VMCompileSettings, true, Pin, DebuggedHost->GetVM(), &PinToOperandMap, RuntimeAST);
 							}
 						}
 					}
 					else
 					{
-						Compiler->MarkDebugWatch(false, Pin, DebuggedHost->GetVM(), &PinToOperandMap, RuntimeAST);
+						Compiler->MarkDebugWatch(VMCompileSettings, false, Pin, DebuggedHost->GetVM(), &PinToOperandMap, RuntimeAST);
 					}
 				}
 				// break; fall through
@@ -3587,6 +3724,36 @@ void URigVMBlueprint::PropagateRuntimeSettingsFromBPToInstances()
 	}
 }
 
+void URigVMBlueprint::InitializeArchetypeInstances()
+{
+	URigVMBlueprintGeneratedClass* RigClass = GetRigVMBlueprintGeneratedClass();
+	if(RigClass == nullptr)
+	{
+		return;
+	}
+
+	URigVMHost* CDO = Cast<URigVMHost>(RigClass->GetDefaultObject(true /* create if needed */));
+	if (CDO && CDO->VM != nullptr)
+	{
+		TArray<UObject*> ArchetypeInstances;
+		CDO->GetArchetypeInstances(ArchetypeInstances);
+		for (UObject* Instance : ArchetypeInstances)
+		{
+			if (URigVMHost* InstanceHost = Cast<URigVMHost>(Instance))
+			{
+				// No objects should be created during load, so PostInitInstanceIfRequired, which creates a new VM and
+				// DynamicHierarchy, should not be called during load
+				if (!InstanceHost->HasAllFlags(RF_NeedPostLoad))
+				{
+					InstanceHost->PostInitInstanceIfRequired();
+				}
+				InstanceHost->InstantiateVMFromCDO();
+				InstanceHost->CopyExternalVariableDefaultValuesFromCDO();
+			}
+		}
+	}
+}
+
 #if WITH_EDITOR
 
 void URigVMBlueprint::OnPreVariableChange(UObject* InObject)
@@ -4076,6 +4243,22 @@ bool URigVMBlueprint::RemoveEdGraphForCollapseNode(URigVMCollapseNode* InNode, b
 
 	return false;
 }
+
+#if WITH_EDITOR
+
+void URigVMBlueprint::QueueCompilerMessageDelegate(const FOnRigVMReportCompilerMessage::FDelegate& InDelegate)
+{
+	FScopeLock Lock(&QueuedCompilerMessageDelegatesMutex);
+	QueuedCompilerMessageDelegates.Add(InDelegate);
+}
+
+void URigVMBlueprint::ClearQueuedCompilerMessageDelegates()
+{
+	FScopeLock Lock(&QueuedCompilerMessageDelegatesMutex);
+	QueuedCompilerMessageDelegates.Reset();
+}
+
+#endif
 
 #undef LOCTEXT_NAMESPACE
 

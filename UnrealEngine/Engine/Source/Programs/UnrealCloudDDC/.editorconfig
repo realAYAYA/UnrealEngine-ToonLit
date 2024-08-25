@@ -177,6 +177,20 @@ dotnet_diagnostic.IDE2004.severity = warning
 
 dotnet_style_require_accessibility_modifiers = false
 
+# Async methods should have "Async" suffix
+dotnet_naming_rule.async_methods_end_in_async.symbols = any_async_methods
+dotnet_naming_rule.async_methods_end_in_async.style = end_in_async
+dotnet_naming_rule.async_methods_end_in_async.severity = warning
+
+dotnet_naming_symbols.any_async_methods.applicable_kinds = method
+dotnet_naming_symbols.any_async_methods.applicable_accessibilities = *
+dotnet_naming_symbols.any_async_methods.required_modifiers = async
+
+dotnet_naming_style.end_in_async.required_prefix = 
+dotnet_naming_style.end_in_async.required_suffix = Async
+dotnet_naming_style.end_in_async.capitalization = pascal_case
+dotnet_naming_style.end_in_async.word_separator = 
+
 # CSharp code style settings:
 [*.cs]
 csharp_prefer_simple_using_statement = false
@@ -1083,7 +1097,7 @@ dotnet_diagnostic.CA5405.severity = warning
 [*.cs]
 
 # ReSharper properties
-resharper_csharp_indent_style = space
+resharper_csharp_indent_style = tab
 
 # All Rules Enabled as build warnings
 # Description: All Rules are enabled as build warnings. Rules with IsEnabledByDefault = false are force enabled as build warnings.
@@ -1109,4 +1123,5 @@ dotnet_diagnostic.ca5351.severity = none
 # CA1716: Identifiers should not match keywords
 # Reason: We frequently use verbs as method names, like GET as well as terms like namespace which collide with built in keywords
 dotnet_diagnostic.CA1716.severity = none
-indent_style=space
+
+indent_style=tab

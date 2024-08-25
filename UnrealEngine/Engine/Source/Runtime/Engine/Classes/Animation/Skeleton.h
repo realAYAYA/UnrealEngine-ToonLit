@@ -23,6 +23,7 @@
 #include "Interfaces/Interface_AssetUserData.h"
 #include "Interfaces/Interface_PreviewMeshProvider.h"
 #include "Delegates/DelegateCombinations.h"
+#include "UObject/ObjectKey.h"
 #include "Skeleton.generated.h"
 
 class UAnimCurveMetaData;
@@ -217,21 +218,6 @@ struct FNameMapping
 };
 
 USTRUCT()
-struct FRigConfiguration
-{
-	GENERATED_USTRUCT_BODY()
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UPROPERTY()
-	TObjectPtr<class URig>  Rig = nullptr;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-	// @todo in the future we can make this to be run-time data
-	UPROPERTY()
-	TArray<FNameMapping> BoneMappingTable;
-};
-
-USTRUCT()
 struct FAnimSlotGroup
 {
 	GENERATED_USTRUCT_BODY()
@@ -339,7 +325,9 @@ protected:
 	TArray<FVirtualBone> VirtualBones;
 
 	/**
-	 * The list of compatible skeletons.
+	 * The list of compatible skeletons. This skeleton will be able to use animation data originating from skeletons within this array, such as animation sequences.
+	 * This property is not bi-directional.
+	 * 
 	 * This is an array of TSoftObjectPtr in order to prevent all skeletons to be loaded, as we only want to load things on demand.
 	 * As this is EditAnywhere and an array of TSoftObjectPtr, checking validity of pointers is needed.
 	 **/
@@ -516,6 +504,9 @@ public:
 	/** Create a new blend profile with the specified name */
 	ENGINE_API UBlendProfile* CreateNewBlendProfile(const FName& InProfileName);
 
+	/** Rename an existing blend profile with the specified name. Returns the pointer if success, nullptr on failure */
+	ENGINE_API UBlendProfile* RenameBlendProfile(const FName& InProfileName, const FName& InNewProfileName);
+
 	//////////////////////////////////////////////////////////////////////////
 
 	/************************************************************************/
@@ -594,12 +585,9 @@ private:
 	UPROPERTY(duplicatetransient, AssetRegistrySearchable)
 	TSoftObjectPtr<class UDataAsset> AdditionalPreviewSkeletalMeshes;
 
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UPROPERTY()
-	FRigConfiguration RigConfig;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 	/** rig property will be saved separately */
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 public:
@@ -649,15 +637,24 @@ public:
 
 	typedef TArray<FBoneNode> FBoneTreeType;
 
-	//Use this Lock everytime you change or access LinkupCache and SkelMesh2LinkupCache member.
+	
+	UE_DEPRECATED(5.4, "Public access to this member variable is deprecated.")
 	FCriticalSection LinkupCacheLock;
 
 	/** Non-serialised cache of linkups between different skeletal meshes and this Skeleton. */
+	UE_DEPRECATED(5.4, "Public access to this member variable is deprecated.")
 	TArray<struct FSkeletonToMeshLinkup> LinkupCache;
 
 private:
-	/** Runtime built mapping table between SkinnedAssets, and LinkupCache array indices. */
+	UE_DEPRECATED(5.4, "Please, use SkinnedAssetLinkupCache.")
 	TMap<TWeakObjectPtr<USkinnedAsset>, int32> SkinnedAsset2LinkupCache;
+	
+	//Use this Lock everytime you change or access SkinnedAssetLinkupCache member.
+	FRWLock SkinnedAssetLinkupCacheLock;
+
+	/** Runtime built mapping table between SkinnedAssets and Mesh Linkup Data*/
+	TMap<TObjectKey<USkinnedAsset>, TUniquePtr<FSkeletonToMeshLinkup>> SkinnedAssetLinkupCache;
+
 public:
 	UE_DEPRECATED(5.1, "Public access to this member variable is deprecated.")
 	TMap<TWeakObjectPtr<USkeletalMesh>, int32> SkelMesh2LinkupCache;
@@ -672,10 +669,7 @@ public:
 
 #if WITH_EDITORONLY_DATA
 
-	/*
-	 * Collect animation notifies that are referenced in all animations that use this skeleton (uses the asset registry).
-	 * Updates the cached AnimationNotifies array.
-	 */
+	UE_DEPRECATED(5.4, "Please do not use this function - notifies are stored collectively in the asset registry now rather than centrally on the skeleton")
 	ENGINE_API void CollectAnimationNotifies();
 
 	/*
@@ -808,11 +802,22 @@ public:
 	/** Clears all cache data **/
 	ENGINE_API void ClearCacheData();
 
-	/** 
+	UE_DEPRECATED(5.4, "Please use FindOrAddMeshLinkupData.")
+	ENGINE_API int32 GetMeshLinkupIndex(const USkinnedAsset* InSkinnedAsset);
+
+	/**
 	 * Find a mesh linkup table (mapping of skeleton bone tree indices to refpose indices) for a particular SkinnedAsset
 	 * If one does not already exist, create it now.
 	 */
-	ENGINE_API int32 GetMeshLinkupIndex(const USkinnedAsset* InSkinnedAsset);
+	ENGINE_API const FSkeletonToMeshLinkup& FindOrAddMeshLinkupData(const USkinnedAsset* InSkinnedAsset);
+
+	/**
+	 * Adds a new Mesh Linkup Table to the map  for a particular SkinnedAsset
+	 *
+	 * @param	InSkinnedAsset	: SkinnedAsset to build look up for
+	 * @return	Const ref to the added FSkeletonToMeshLinkup unique ptr
+	 */
+	ENGINE_API const FSkeletonToMeshLinkup& AddMeshLinkupData(const USkinnedAsset* InSkinnedAsset);
 
 	/** 
 	 * Merge Bones (RequiredBones from InSkinnedAsset) to BoneTrees if not exists
@@ -826,7 +831,7 @@ public:
 	 * 
 	 * @return true if success
 	 */
-	ENGINE_API bool MergeBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, const TArray<int32> &RequiredRefBones);
+	ENGINE_API bool MergeBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, const TArray<int32> &RequiredRefBones, bool bShowProgress = true);
 
 	/** 
 	 * Merge all Bones to BoneTrees if not exists
@@ -838,7 +843,7 @@ public:
 	 * 
 	 * @return true if success
 	 */
-	ENGINE_API bool MergeAllBonesToBoneTree(const USkinnedAsset* InSkinnedAsset);
+	ENGINE_API bool MergeAllBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, bool bShowProgress = true);
 
 	/** 
 	 * Merge has failed, then Recreate BoneTree
@@ -971,7 +976,16 @@ protected:
 	 * @param	InSkinnedAsset	: SkinnedAsset to build look up for
 	 * @return	Index of LinkupCache that this SkelMesh is linked to
 	 */
+	UE_DEPRECATED(5.4, "Please use BuildLinkup with USkinnedAsset and FSkeletonToMeshLinkup parameters.")
 	int32 BuildLinkup(const USkinnedAsset* InSkinnedAsset);
+
+	/**
+	 * Build Look up between SkinnedAsset to BoneTree
+	 *
+	 * @param	InSkinnedAsset			: SkinnedAsset to build look up for
+	 * @param	FSkeletonToMeshLinkup	: Out mesh linkup data
+	 */
+	void BuildLinkupData(const USkinnedAsset* InSkinnedAsset, FSkeletonToMeshLinkup& NewMeshLinkup);
 
 #if WITH_EDITORONLY_DATA
 	/**
@@ -994,7 +1008,7 @@ protected:
 	FOnSkeletonHierarchyChangedMulticaster OnSkeletonHierarchyChanged;
 
 	/** Call this when the skeleton has changed to fix dependent assets */
-	ENGINE_API void HandleSkeletonHierarchyChange();
+	ENGINE_API void HandleSkeletonHierarchyChange(bool bShowProgress = true);
 
 public:
 	typedef FOnSkeletonHierarchyChangedMulticaster::FDelegate FOnSkeletonHierarchyChanged;
@@ -1022,21 +1036,6 @@ public:
 	ENGINE_API static const FName CompatibleSkeletonsNameTag;
 	ENGINE_API static const FString CompatibleSkeletonsTagDelimiter;
 
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	// rig Configs
-	ENGINE_API static const FName RigTag;
-	ENGINE_API void SetRigConfig(URig * Rig);
-	ENGINE_API FName GetRigBoneMapping(const FName& NodeName) const;
-	ENGINE_API bool SetRigBoneMapping(const FName& NodeName, FName BoneName);
-	ENGINE_API FName GetRigNodeNameFromBoneName(const FName& BoneName) const;
-	// this make sure it stays within the valid range
-	ENGINE_API int32 GetMappedValidNodes(TArray<FName> &OutValidNodeNames);
-	// verify if it has all latest data
-	ENGINE_API void RefreshRigConfig();
-	int32 FindRigBoneMapping(const FName& NodeName) const;
-	ENGINE_API URig * GetRig() const;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 #endif
 
 public:
@@ -1062,6 +1061,13 @@ protected:
 	/** Array of user data stored with the asset */
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = Skeleton)
 	TArray<TObjectPtr<UAssetUserData>> AssetUserData;
+
+#if WITH_EDITORONLY_DATA
+	/** Array of user data stored with the asset */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = Skeleton)
+	TArray<TObjectPtr<UAssetUserData>> AssetUserDataEditorOnly;
+#endif
+
 
 	friend struct FReferenceSkeletonModifier;
 	friend class FEditableSkeleton;

@@ -39,7 +39,7 @@ public:
 	bool Initialize(
 		const void* InBuffer,
 		uint32 InSize,
-		FTimespan InTime,
+		FMediaTimeStamp InTime,
 		FTimespan InDuration)
 	{
 		if ((InBuffer == nullptr) || (InSize == 0))
@@ -77,7 +77,7 @@ public:
 
 	virtual FMediaTimeStamp GetTime() const override
 	{
-		return FMediaTimeStamp(Time);
+		return Time;
 	}
 
 private:
@@ -89,5 +89,5 @@ private:
 	FTimespan Duration;
 
 	/** Presentation time for which the sample was generated. */
-	FTimespan Time;
+	FMediaTimeStamp Time;
 };

@@ -139,4 +139,10 @@ private:
 
 	/** Internal SQLite database handle */
 	struct sqlite3* Database;
+	
+	/** Full original path for logging/profiling */
+	FString OriginalPath;
+
+	/** Short name for logging/profiling */
+	FString ShortName;
 };

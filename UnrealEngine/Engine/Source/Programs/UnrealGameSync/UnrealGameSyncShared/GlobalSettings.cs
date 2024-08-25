@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -56,6 +56,7 @@ namespace UnrealGameSync
 		public PerforceSyncOptions Perforce { get; set; } = new PerforceSyncOptions();
 		public FilterSettings Filter { get; set; } = new FilterSettings();
 		public bool AutoResolveConflicts { get; set; } = true;
+		public bool AlwaysClobberFiles { get; set; } = false;
 	}
 
 	public class GlobalSettingsFile

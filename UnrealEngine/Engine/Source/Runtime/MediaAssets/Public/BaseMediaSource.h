@@ -52,6 +52,8 @@ public:
 	MEDIAASSETS_API virtual void PreSave(const class ITargetPlatform* TargetPlatform);
 	MEDIAASSETS_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext);
+	MEDIAASSETS_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	MEDIAASSETS_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	MEDIAASSETS_API virtual void Serialize(FArchive& Ar) override;
 

@@ -67,10 +67,6 @@ public:
 
 public:
 
-	/** The movie scene section we're painting */
-	UE_DEPRECATED(5.1, "Please use SectionModel->GetSection() instead")
-	UMovieSceneSection& Section;
-
 	/** The section we are painting */
 	TSharedPtr<UE::Sequencer::FSectionModel> SectionModel;
 

@@ -21,33 +21,39 @@ namespace PlanarCut
 /**
  * Add attributes necessary for a dynamic mesh to represent geometry from an FGeometryCollection
  */
-void PLANARCUT_API SetGeometryCollectionAttributes(UE::Geometry::FDynamicMesh3& Mesh, int32 NumUVLayers);
+void SetGeometryCollectionAttributes(UE::Geometry::FDynamicMesh3& Mesh, int32 NumUVLayers);
+
+/**
+ * Clear custom FGeometryCollection-specific attributes from a FDynamicMesh3
+ * Note: Does not remove the general attribute layer and MaterialID attributes, as these are not specific to geometry collections
+ */
+void ClearCustomGeometryCollectionAttributes(UE::Geometry::FDynamicMesh3& Mesh);
 
 // functions for DynamicMesh3 meshes that have FGeometryCollection attributes set
 namespace AugmentedDynamicMesh
 {
-	void PLANARCUT_API SetVisibility(UE::Geometry::FDynamicMesh3& Mesh, int TID, bool bIsVisible);
-	bool PLANARCUT_API GetVisibility(const UE::Geometry::FDynamicMesh3& Mesh, int TID);
-	void PLANARCUT_API SetInternal(UE::Geometry::FDynamicMesh3& Mesh, int TID, bool bIsInternal);
-	bool PLANARCUT_API GetInternal(const UE::Geometry::FDynamicMesh3& Mesh, int TID);
-	void PLANARCUT_API SetUV(UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector2f UV, int UVLayer);
-	void PLANARCUT_API GetUV(const UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector2f& UV, int UVLayer);
-	void PLANARCUT_API SetTangent(UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector3f Normal, FVector3f TangentU, FVector3f TangentV);
-	void PLANARCUT_API GetTangent(const UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector3f& U, FVector3f& V);
+	void SetVisibility(UE::Geometry::FDynamicMesh3& Mesh, int TID, bool bIsVisible);
+	bool GetVisibility(const UE::Geometry::FDynamicMesh3& Mesh, int TID);
+	void SetInternal(UE::Geometry::FDynamicMesh3& Mesh, int TID, bool bIsInternal);
+	bool GetInternal(const UE::Geometry::FDynamicMesh3& Mesh, int TID);
+	void SetUV(UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector2f UV, int UVLayer);
+	void GetUV(const UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector2f& UV, int UVLayer);
+	void SetTangent(UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector3f Normal, FVector3f TangentU, FVector3f TangentV);
+	void GetTangent(const UE::Geometry::FDynamicMesh3& Mesh, int VID, FVector3f& U, FVector3f& V);
 	/// Initialize UV overlays based on the custom AugmentedDynamicMesh per-vertex UV attributes.  Optionally use FirstUVLayer to skip layers
-	void PLANARCUT_API InitializeOverlayToPerVertexUVs(UE::Geometry::FDynamicMesh3& Mesh, int32 NumUVLayers, int32 FirstUVLayer = 0);
-	void PLANARCUT_API InitializeOverlayToPerVertexTangents(UE::Geometry::FDynamicMesh3& Mesh);
-	void PLANARCUT_API ComputeTangents(UE::Geometry::FDynamicMesh3& Mesh, bool bOnlyInternalSurfaces,
+	void InitializeOverlayToPerVertexUVs(UE::Geometry::FDynamicMesh3& Mesh, int32 NumUVLayers, int32 FirstUVLayer = 0);
+	void InitializeOverlayToPerVertexTangents(UE::Geometry::FDynamicMesh3& Mesh);
+	void ComputeTangents(UE::Geometry::FDynamicMesh3& Mesh, bool bOnlyInternalSurfaces,
 		bool bRecomputeNormals = true, bool bMakeSharpEdges = false, float SharpAngleDegrees = 60);
-	void PLANARCUT_API AddCollisionSamplesPerComponent(UE::Geometry::FDynamicMesh3& Mesh, double Spacing);
-	void PLANARCUT_API SplitOverlayAttributesToPerVertex(UE::Geometry::FDynamicMesh3& Mesh, bool bSplitUVs = true, bool bSplitTangents = true);
+	void AddCollisionSamplesPerComponent(UE::Geometry::FDynamicMesh3& Mesh, double Spacing);
+	void SplitOverlayAttributesToPerVertex(UE::Geometry::FDynamicMesh3& Mesh, bool bSplitUVs = true, bool bSplitTangents = true);
 }
 
 
 /**
  * Dynamic mesh representation of cutting cells, to be used to fracture a mesh
  */
-struct PLANARCUT_API FCellMeshes
+struct FCellMeshes
 {
 	struct FCellInfo
 	{
@@ -150,7 +156,7 @@ private:
 
 // Holds Geometry from an FGeometryCollection in an FDynamicMesh3 representation, and convert both directions
 // Also supports cutting geometry with FCellMeshes
-struct PLANARCUT_API FDynamicMeshCollection
+struct FDynamicMeshCollection
 {
 	struct FMeshData
 	{
@@ -198,6 +204,15 @@ struct PLANARCUT_API FDynamicMeshCollection
 	TIndirectArray<FMeshData> Meshes;
 	UE::Geometry::FAxisAlignedBox3d Bounds;
 	
+	// Settings to control the geometry import
+	
+	// If true, triangles where the Visible property is false will not be added to the MeshData
+	bool bSkipInvisible = false;
+	// If false, Transforms passed to Init are interpreted as relative to the parent bone transform. If true, Transforms are all in the same 'global' / component-relative space
+	bool bComponentSpaceTransforms = false;
+	
+	FDynamicMeshCollection() {}
+
 	FDynamicMeshCollection(const FGeometryCollection* Collection, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false)
 	{
 		Init(Collection, TransformIndices, TransformCollection, bSaveIsolatedVertices);
@@ -208,12 +223,27 @@ struct PLANARCUT_API FDynamicMeshCollection
 		Init(Collection, Transforms, TransformIndices, TransformCollection, bSaveIsolatedVertices);
 	}
 
+	FDynamicMeshCollection(const FGeometryCollection* Collection, const TManagedArray<FTransform3f>& Transforms, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false)
+	{
+		Init(Collection, Transforms, TransformIndices, TransformCollection, bSaveIsolatedVertices);
+	}
+
 	void Init(const FGeometryCollection* Collection, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false)
 	{
 		Init(Collection, Collection->Transform, TransformIndices, TransformCollection, bSaveIsolatedVertices);
 	}
 
-	void Init(const FGeometryCollection* Collection, const TManagedArray<FTransform>& Transforms, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false);
+	void Init(const FGeometryCollection* Collection, const TManagedArray<FTransform>& Transforms, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false)
+	{
+		Init(Collection, TArrayView<const FTransform>(Transforms.GetConstArray()), TransformIndices, TransformCollection, bSaveIsolatedVertices);
+	}
+	void Init(const FGeometryCollection* Collection, const TManagedArray<FTransform3f>& Transforms, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false)
+	{
+		Init(Collection, TArrayView<const FTransform3f>(Transforms.GetConstArray()), TransformIndices, TransformCollection, bSaveIsolatedVertices);
+	}
+
+	void Init(const FGeometryCollection* Collection, TArrayView<const FTransform> Transforms, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false);
+	void Init(const FGeometryCollection* Collection, TArrayView<const FTransform3f> Transforms, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices = false);
 
 	int32 CutWithMultiplePlanes(
 		const TArrayView<const FPlane>& Planes,
@@ -275,6 +305,10 @@ struct PLANARCUT_API FDynamicMeshCollection
 	static int32 AppendToCollection(const FTransform& FromCollection, UE::Geometry::FDynamicMesh3& Mesh, double CollisionSampleSpacing, int32 TransformParent, FString BoneName, FGeometryCollection& Output, int32 InternalMaterialID);
 
 private:
+
+	template<typename TransformType>
+	void InitTemplate(const FGeometryCollection* Collection, TArrayView<const TransformType> Transforms, const TArrayView<const int32>& TransformIndices, FTransform TransformCollection, bool bSaveIsolatedVertices);
+
 
 	void SetGeometryVisibility(FGeometryCollection* Collection, const TArray<int32>& GeometryIndices, bool bVisible);
 

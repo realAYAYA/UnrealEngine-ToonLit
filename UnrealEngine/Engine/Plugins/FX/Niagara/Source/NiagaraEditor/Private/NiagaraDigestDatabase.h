@@ -13,7 +13,7 @@ class UNiagaraGraph;
 class UNiagaraParameterCollection;
 class UNiagaraScriptSourceBase;
 
-using FNiagaraDigestedGraphPtr = TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe>;
+using FNiagaraDigestedGraphPtr = TSharedPtr<FNiagaraCompilationGraphDigested, ESPMode::ThreadSafe>;
 
 class FNiagaraCompilationGraphHandle
 {
@@ -49,7 +49,7 @@ public:
 	TWeakObjectPtr<const UNiagaraParameterCollection> SourceCollection;
 	FString CollectionPath;
 	FString CollectionFullName;
-	TMap<FNiagaraVariableBase, UNiagaraDataInterface*> DefaultDataInterfaces;
+	TMap<FNiagaraVariableBase, TObjectPtr<UNiagaraDataInterface>> DefaultDataInterfaces;
 };
 
 class FNiagaraCompilationNPCHandle
@@ -88,6 +88,7 @@ protected:
 class FNiagaraDigestedParameterCollections
 {
 public:
+	TConstArrayView<FNiagaraCompilationNPCHandle> ReadCollections() const { return Collections; }
 	TArray<FNiagaraCompilationNPCHandle>& EditCollections() { return Collections; };
 
 	FNiagaraCompilationNPCHandle FindMatchingCollection(FName VariableName, bool bAllowPartialMatch, FNiagaraVariable& OutVar) const;
@@ -116,7 +117,6 @@ public:
 	void ReleaseDatabase();
 
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	
 	virtual FString GetReferencerName() const override;
 
 protected:

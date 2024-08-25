@@ -58,7 +58,7 @@ public:
 	 * in memory.
 	 */
 	const UConversationNode* TryToResolve(const FConversationContext& Context) const;
-	const UConversationNode* TryToResolve_Slow(UWorld* InWorld) const;
+	const UConversationNode* TryToResolve_Slow(UWorld* InWorld, const UConversationDatabase* Graph = nullptr) const;
 };
 
 inline bool operator==(const FConversationNodeHandle& Lhs, const FConversationNodeHandle& Rhs) { return Lhs.NodeGUID == Rhs.NodeGUID; }

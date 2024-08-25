@@ -306,7 +306,7 @@ void FOnlineIdentityIOS::RevokeAuthToken(const FUniqueNetId& UserId, const FOnRe
 	});
 }
 
-void FOnlineIdentityIOS::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineIdentityIOS::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	if (Privilege == EUserPrivileges::CanPlayOnline)
 	{

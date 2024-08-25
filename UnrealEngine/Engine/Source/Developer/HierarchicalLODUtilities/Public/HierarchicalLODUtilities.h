@@ -22,29 +22,20 @@ class FHierarchicalLODUtilities : public IHierarchicalLODUtilities
 {
 public:
 	~FHierarchicalLODUtilities() {}
-	UE_DEPRECATED(4.20, "Please use UHLODProxy::ExtractStaticMeshComponentsFromLODActor")
-	virtual void ExtractStaticMeshComponentsFromLODActor(AActor* Actor, TArray<UStaticMeshComponent*>& InOutComponents) override;
+	
 	virtual void ExtractSubActorsFromLODActor(AActor* Actor, TArray<AActor*>& InOutActors) override;
 	virtual float CalculateScreenSizeFromDrawDistance(const float SphereRadius, const FMatrix& ProjectionMatrix, const float Distance) override;
 	virtual float CalculateDrawDistanceFromScreenSize(const float SphereRadius, const float ScreenSize, const FMatrix& ProjectionMatrix) override;
-	UE_DEPRECATED(4.20, "This function signature is deprecated")
-	virtual UPackage* CreateOrRetrieveLevelHLODPackage(const ULevel* InLevel) override;
 	virtual UPackage* CreateOrRetrieveLevelHLODPackage(const ULevel* InLevel, const uint32 HLODLevelIndex) override;
 	virtual UPackage* RetrieveLevelHLODPackage(const ULevel* InLevel, const uint32 HLODLevelIndex) override;
 	virtual UHLODProxy* CreateOrRetrieveLevelHLODProxy(const ULevel* InLevel, const uint32 HLODLevelIndex) override;
 	virtual UHLODProxy* RetrieveLevelHLODProxy(const ULevel* InLevel, const uint32 HLODLevelIndex) override;
 	virtual FString GetWildcardOfHLODPackagesForPackage(const FString& PackageName) override;
 	virtual FString GetLevelHLODProxyName(const FString& InLevelPackageName, const uint32 HLODLevelIndex) override;
-	UE_DEPRECATED(4.20, "Use different signature containing BaseMaterial parameter")
-	virtual bool BuildStaticMeshForLODActor(ALODActor* LODActor, UPackage* AssetsOuter, const FHierarchicalSimplification& LODSetup) override;
-	UE_DEPRECATED(4.20, "Use different signature using UHLODProxy")
-	virtual bool BuildStaticMeshForLODActor(ALODActor* LODActor, UPackage* AssetsOuter, const FHierarchicalSimplification& LODSetup, UMaterialInterface* InBaseMaterial) override;
 	virtual bool BuildStaticMeshForLODActor(ALODActor* LODActor, UHLODProxy* Proxy, const FHierarchicalSimplification& LODSetup, UMaterialInterface* InBaseMaterial) override;
 	virtual EClusterGenerationError ShouldGenerateCluster(AActor* Actor, const int32 HLODLevelIndex) override;
 	virtual ALODActor* GetParentLODActor(const AActor* InActor) override;
 	virtual void DestroyCluster(ALODActor* InActor) override;
-	UE_DEPRECATED(4.20, "This function is no longer used")
-	virtual void DestroyClusterData(ALODActor* InActor) override;
 	virtual ALODActor* CreateNewClusterActor(UWorld* InWorld, const int32 InLODLevel, AWorldSettings* WorldSettings) override;
 	virtual ALODActor* CreateNewClusterFromActors(UWorld* InWorld, AWorldSettings* WorldSettings, const TArray<AActor*>& InActors, const int32 InLODLevel = 0) override;
 	virtual const bool RemoveActorFromCluster(AActor* InActor) override;

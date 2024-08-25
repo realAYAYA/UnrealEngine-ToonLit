@@ -62,6 +62,9 @@ public:
 	bool GetEnableCollectionFilter() const;
 	void SetEnableCollectionFilter(bool bEnabled);
 
+	bool GetEnablePluginFilter() const;
+	void SetEnablePluginFilter(bool bEnabled);
+
 	bool IsShowSoftReferences() const;
 	void SetShowSoftReferencesEnabled(bool bNewEnabled);
 
@@ -88,6 +91,9 @@ public:
 
 	bool IsCompactMode() const;
 	void SetCompactModeEnabled(bool bNewEnabled);
+
+	bool IsShowExternalReferencers() const;
+	void SetShowExternalReferencersEnabled(bool bNewEnabled);
 
 	bool IsShowPath() const;
 	void SetShowPathEnabled(bool bNewEnabled);
@@ -137,6 +143,10 @@ private:
 	UPROPERTY(config)
 	bool bEnableCollectionFilter;
 	
+	/* Whether or not to filter for assets by plugins. */
+	UPROPERTY(config)
+	bool bEnablePluginFilter;
+	
 	/* Show/Hide Soft References */
 	UPROPERTY(config)
 	bool bIsShowSoftReferences;
@@ -172,6 +182,10 @@ private:
 	/* Whether to show the nodes in a compact (no thumbnail) view */
 	UPROPERTY(config)
 	bool bIsCompactMode;
+
+	/* Whether to show external referencers or collapsed owner asset */
+	UPROPERTY(config)
+	bool bIsShowExternalReferencers;
 
 	/* Whether to show the package's path as a comment */
 	UPROPERTY(config)

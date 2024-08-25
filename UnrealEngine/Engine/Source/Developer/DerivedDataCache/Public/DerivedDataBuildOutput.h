@@ -15,6 +15,7 @@
 
 #define UE_API DERIVEDDATACACHE_API
 
+class FCbField;
 class FCbObject;
 class FCbWriter;
 
@@ -39,6 +40,7 @@ public:
 	virtual const FSharedString& GetName() const = 0;
 	virtual const FUtf8SharedString& GetFunction() const = 0;
 	virtual const FCbObject& GetMeta() const = 0;
+	virtual bool FindMeta(FUtf8StringView Key, FCbField& OutMeta) const = 0;
 	virtual const FValueWithId& GetValue(const FValueId& Id) const = 0;
 	virtual TConstArrayView<FValueWithId> GetValues() const = 0;
 	virtual TConstArrayView<FBuildOutputMessage> GetMessages() const = 0;
@@ -57,7 +59,7 @@ class IBuildOutputBuilderInternal
 {
 public:
 	virtual ~IBuildOutputBuilderInternal() = default;
-	virtual void SetMeta(FCbObject&& Meta) = 0;
+	virtual void AddMeta(FUtf8StringView Key, const FCbField& Meta) = 0;
 	virtual void AddValue(const FValueId& Id, const FValue& Value) = 0;
 	virtual void AddMessage(const FBuildOutputMessage& Message) = 0;
 	virtual void AddLog(const FBuildOutputLog& Log) = 0;
@@ -130,6 +132,9 @@ public:
 	/** Returns the optional metadata. */
 	inline const FCbObject& GetMeta() const { return Output->GetMeta(); }
 
+	/** Finds the metadata matching the key. Returns true if found. */
+	inline bool FindMeta(FUtf8StringView Key, FCbField& OutMeta) const { return Output->FindMeta(Key, OutMeta); }
+
 	/** Returns the value matching the ID. Null if no match. Buffer is null if skipped. */
 	inline const FValueWithId& GetValue(const FValueId& Id) const { return Output->GetValue(Id); }
 
@@ -193,10 +198,10 @@ private:
 class FBuildOutputBuilder
 {
 public:
-	/** Set the metadata for the output. Holds a reference and is cloned if not owned. */
-	inline void SetMeta(FCbObject&& Meta)
+	/** Add metadata to the output. The key must be unique in this output. */
+	inline void AddMeta(FUtf8StringView Key, const FCbField& Meta)
 	{
-		return OutputBuilder->SetMeta(MoveTemp(Meta));
+		return OutputBuilder->AddMeta(Key, Meta);
 	}
 
 	/** Add a value to the output. The ID must be unique in this output. */

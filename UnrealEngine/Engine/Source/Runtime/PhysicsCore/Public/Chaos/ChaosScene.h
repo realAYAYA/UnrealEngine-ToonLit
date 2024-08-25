@@ -144,6 +144,8 @@ public:
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnPhysScenePostTick,FChaosScene*);
 	FOnPhysScenePostTick OnPhysScenePostTick;
 
+	PHYSICSCORE_API void KillSafeAsyncTasks();
+	PHYSICSCORE_API void WaitSolverTasks();
 	PHYSICSCORE_API bool AreAnyTasksPending() const;
 	PHYSICSCORE_API void BeginDestroy();
 	PHYSICSCORE_API bool IsCompletionEventComplete() const;

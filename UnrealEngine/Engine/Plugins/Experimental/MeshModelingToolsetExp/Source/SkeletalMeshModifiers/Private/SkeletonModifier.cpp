@@ -65,49 +65,70 @@ FVector FMirrorOptions::MirrorVector(const FVector& InVector) const
 
 FTransform FOrientOptions::OrientTransform(const FVector& InPrimaryTarget, const FTransform& InTransform) const
 {
-	if (Primary == EAxis::None || InPrimaryTarget.IsNearlyZero())
+	if (Primary == EOrientAxis::None || InPrimaryTarget.IsNearlyZero())
 	{
 		return InTransform;
 	}
-
+	
+	auto GetOrientVector = [](const EOrientAxis& InOrientAxis)
+	{
+		switch(InOrientAxis)
+		{
+		case EOrientAxis::None:	return FVector::ZeroVector;
+		case EOrientAxis::PositiveX: return FVector::XAxisVector;
+		case EOrientAxis::PositiveY: return FVector::YAxisVector;
+		case EOrientAxis::PositiveZ: return FVector::ZAxisVector;
+		case EOrientAxis::NegativeX: return -FVector::XAxisVector;
+		case EOrientAxis::NegativeY: return -FVector::YAxisVector;
+		case EOrientAxis::NegativeZ: return -FVector::ZAxisVector;
+		default: break;
+		}
+		return FVector::ZeroVector;
+	};
+	
 	FTransform Transform = InTransform;
 
-	FVector PrimaryAxis(ForceInitToZero); PrimaryAxis.SetComponentForAxis(Primary, 1.f);
+	const FVector PrimaryOrientVector = GetOrientVector(Primary);
+	const FVector PrimaryAxis = Transform.TransformVectorNoScale(PrimaryOrientVector).GetSafeNormal();
 	const FVector PrimaryTarget = InPrimaryTarget.GetSafeNormal();
 	
 	// orient primary axis towards InPrimaryTarget
 	{
-		const FVector Axis = Transform.TransformVectorNoScale(PrimaryAxis).GetSafeNormal();
-		const FQuat Rotation = FQuat::FindBetweenNormals(Axis, PrimaryTarget);
+		const FQuat Rotation = FQuat::FindBetweenNormals(PrimaryAxis, PrimaryTarget);
 		const FQuat NewRotation = (Rotation * Transform.GetRotation()).GetNormalized();
 		Transform.SetRotation(NewRotation);
 	}
 
-	if (Secondary == EAxis::None || SecondaryTarget.IsNearlyZero())
-	{ // no need to use secondary axis
+	// no need to use secondary axis
+	if (Secondary == Primary || Secondary == EOrientAxis::None || SecondaryTarget.IsNearlyZero())
+	{
 		return Transform;
 	}
 
-	FVector Target = SecondaryTarget.GetSafeNormal();
-	if (FMath::IsNearlyEqual(FMath::Abs(FVector::DotProduct(PrimaryTarget, Target)), 1.0f))
-	{ // both targets are parallel
+	FVector SecondTarget = SecondaryTarget.GetSafeNormal();
+	if (FMath::IsNearlyEqual(FMath::Abs(FVector::DotProduct(PrimaryTarget, SecondTarget)), 1.0f))
+	{
+		// both targets are parallel
 		return Transform;
 	}
 
 	// orient secondary axis towards SecondaryDirection
 	{
-		FVector SecondaryAxis(ForceInitToZero); SecondaryAxis.SetComponentForAxis(Secondary, 1.f);
+		// project on primary 
+		SecondTarget = SecondTarget - FVector::DotProduct(SecondTarget, PrimaryTarget) * PrimaryTarget;
 		
+		if (!SecondTarget.IsNearlyZero())
 		{
-			const FVector Axis = Transform.TransformVectorNoScale(PrimaryAxis).GetSafeNormal();
-			Target = Target - FVector::DotProduct(Target, Axis) * Axis;
-		}
+			SecondTarget = SecondTarget.GetSafeNormal();
 
-		if (!Target.IsNearlyZero())
-		{
-			Target = Target.GetSafeNormal();
-			const FVector Axis = Transform.TransformVectorNoScale(SecondaryAxis).GetSafeNormal();
-			const FQuat Rotation = FQuat::FindBetweenNormals(Axis, Target);
+			const FVector SecondaryOrientVector = GetOrientVector(Secondary);
+			const FVector SecondaryAxis = Transform.TransformVectorNoScale(SecondaryOrientVector).GetSafeNormal();
+
+			// if they are opposites, we only need to rotate 180 degrees around PrimaryTarget
+			const double DotProduct = FVector::DotProduct(SecondaryAxis, SecondTarget);
+			const bool bAreOpposites = (DotProduct + 1.0) < KINDA_SMALL_NUMBER;
+			
+			const FQuat Rotation = bAreOpposites ? FQuat(PrimaryTarget, PI) : FQuat::FindBetweenNormals(SecondaryAxis, SecondTarget);
 			const FQuat NewRotation = (Rotation * Transform.GetRotation()).GetNormalized();
 			Transform.SetRotation(NewRotation);
 		}
@@ -193,7 +214,8 @@ bool USkeletonModifier::SetSkeletalMesh(USkeletalMesh* InSkeletalMesh)
 
 	// store mesh description to edit
 	MeshDescription = MakeUnique<FMeshDescription>();
-	SkeletalMesh->GetMeshDescription(USkeletonModifierLocals::LODIndex, *MeshDescription);
+	SkeletalMesh->CloneMeshDescription(USkeletonModifierLocals::LODIndex, *MeshDescription);
+	
 	if (MeshDescription->IsEmpty())
 	{
 		UE_LOG(LogAnimation, Error, TEXT("Skeleton Modifier: mesh description is emtpy."));
@@ -353,7 +375,9 @@ bool USkeletonModifier::CommitSkeletonToSkeletalMesh()
 	SkeletalMesh->CalculateInvRefMatrices();
 	
 	// update skeletal mesh LOD (cf. USkeletalMesh::CommitMeshDescription)
-	SkeletalMesh->CommitMeshDescription(USkeletonModifierLocals::LODIndex, *MeshDescription);
+	SkeletalMesh->ModifyMeshDescription(USkeletonModifierLocals::LODIndex);
+	SkeletalMesh->CreateMeshDescription(USkeletonModifierLocals::LODIndex, MoveTemp(*MeshDescription));
+	SkeletalMesh->CommitMeshDescription(USkeletonModifierLocals::LODIndex);
 
 	// update skeleton
 	if (Skeleton->RecreateBoneTree(SkeletalMesh.Get()))
@@ -967,7 +991,7 @@ bool USkeletonModifier::RemoveBones(const TArray<FName>& InBoneNames, const bool
 
 bool USkeletonModifier::RenameBone(const FName InOldBoneName, const FName InNewBoneName)
 {
-	if (InOldBoneName == NAME_None || InOldBoneName == NAME_None || InNewBoneName == InOldBoneName)
+	if (InOldBoneName == NAME_None || InNewBoneName == NAME_None || InNewBoneName == InOldBoneName)
 	{
 		UE_LOG(LogAnimation, Error, TEXT("Skeleton Modifier - Rename: cannot rename %s with %s."), *InOldBoneName.ToString(), *InNewBoneName.ToString());
 		return false;

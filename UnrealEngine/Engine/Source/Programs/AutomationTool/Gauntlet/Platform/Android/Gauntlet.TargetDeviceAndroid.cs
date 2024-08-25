@@ -118,7 +118,7 @@ namespace Gauntlet
 
 			// We have exited if our activity doesn't appear in the activity query or is not the focused activity.
 			bool bActivityPresent = ActivityQuery.Output.Contains(Install.AndroidPackageName);
-			bool bActivityInForeground = ActivityQuery.Output.Contains("mResumedActivity");
+			bool bActivityInForeground = ActivityQuery.Output.Contains("ResumedActivity");
 			bool bHasExited = !bActivityPresent || !bActivityInForeground;
 			if (bHasExited)
 			{
@@ -613,7 +613,7 @@ namespace Gauntlet
 		{
            var Result = RunAdbGlobalCommand("devices");
 
-            MatchCollection DeviceMatches = Regex.Matches(Result.Output, @"^([\d\w\.\:]{6,32})\s+(\w+)", RegexOptions.Multiline);
+            MatchCollection DeviceMatches = Regex.Matches(Result.Output, @"^([\d\w\.\:\-]{6,32})\s+(\w+)", RegexOptions.Multiline);
 
             var DeviceList = DeviceMatches.Cast<Match>().ToDictionary(
                 M => M.Groups[1].ToString(),
@@ -886,7 +886,7 @@ namespace Gauntlet
 
 			// kill any currently running instance:
 			KillRunningProcess(Build.AndroidPackageName);
-	
+
 			string DeviceStorageQueryCommand = AndroidPlatform.GetStorageQueryCommand();
 			IProcessResult StorageQueryResult = RunAdbDeviceCommand(DeviceStorageQueryCommand);
 			string StorageLocation = StorageQueryResult.Output.Trim(); // "/mnt/sdcard";
@@ -913,22 +913,20 @@ namespace Gauntlet
 			// clear all file store paths between installs:
 			RunAdbDeviceCommand(string.Format("shell rm -r {0}", DeviceExternalStorageSavedPath));
 			RunAdbDeviceCommand(string.Format("shell rm -r {0}", DeviceExternalFilesSavedPath));
-
-			if (Globals.Params.ParseParam("fullclean"))
+		
+			if (AppConfig.FullClean)
 			{
 				Log.Info("Fully cleaning console before install...");
 				RunAdbDeviceCommand(string.Format("shell rm -r {0}/UnrealGame/*", StorageLocation));
 				RunAdbDeviceCommand(string.Format("shell rm -r {0}/Android/data/{1}/*", StorageLocation, Build.AndroidPackageName));
 				RunAdbDeviceCommand(string.Format("shell rm -r {0}/Android/obb/{1}/*", StorageLocation, Build.AndroidPackageName));
 				RunAdbDeviceCommand(string.Format("shell rm -r {0}/Download/*", StorageLocation));
-			}
+			}			
 
-				bool SkipDeploy = Globals.Params.ParseParam("SkipDeploy");
-
-			if (SkipDeploy == false)
+			if (!AppConfig.SkipInstall)
 			{
 				if (Globals.Params.ParseParam("cleandevice")
-					|| Globals.Params.ParseParam("fullclean"))
+					|| AppConfig.FullClean)
 				{
 					Log.Info("Cleaning previous builds due to presence of -cleandevice");
 
@@ -1005,7 +1003,7 @@ namespace Gauntlet
                 }
             }
 
-			if (SkipDeploy == false)
+			if (!AppConfig.SkipInstall)
 			{
 				// obb files need to be named based on APK version (grrr), so find that out. This should return something like
 				// versionCode=2 minSdk=21 targetSdk=21
@@ -1098,6 +1096,31 @@ namespace Gauntlet
 			return AppInstall;
 		}
 
+		public void FullClean()
+		{
+
+		}
+
+		public void CleanArtifacts()
+		{
+
+		}
+
+		public void InstallBuild(UnrealAppConfig AppConfiguration)
+		{
+
+		}
+
+		public IAppInstall CreateAppInstall(UnrealAppConfig AppConfig)
+		{
+			return null;
+		}
+
+		public void CopyAdditionalFiles(IEnumerable<UnrealFileToCopy> FilesToCopy)
+		{
+
+		}
+
 		public IAppInstance Run(IAppInstall App)
 		{
 			AndroidAppInstall DroidAppInstall = App as AndroidAppInstall;
@@ -1179,7 +1202,7 @@ namespace Gauntlet
 		/// <returns></returns>
 		public static IProcessResult RunAdbGlobalCommand(string Args, bool Wait = true, bool bShouldLogCommand = false, bool bPauseErrorParsing = false)
 		{
-			CommandUtils.ERunOptions RunOptions = CommandUtils.ERunOptions.AppMustExist | CommandUtils.ERunOptions.NoWaitForExit;
+			CommandUtils.ERunOptions RunOptions = CommandUtils.ERunOptions.AppMustExist | CommandUtils.ERunOptions.NoWaitForExit | CommandUtils.ERunOptions.SpewIsVerbose;
 
 			if (Log.IsVeryVerbose)
 			{

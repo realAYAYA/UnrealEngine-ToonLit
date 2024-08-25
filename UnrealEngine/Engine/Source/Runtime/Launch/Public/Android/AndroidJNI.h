@@ -97,7 +97,6 @@ public:
 	// IDs related to google play services
 	static jclass GoogleServicesClassID;
 	static jobject GoogleServicesThis;
-	static jmethodID AndroidThunkJava_ResetAchievements;
 	static jmethodID AndroidThunkJava_ShowAdBanner;
 	static jmethodID AndroidThunkJava_HideAdBanner;
 	static jmethodID AndroidThunkJava_CloseAdBanner;
@@ -106,9 +105,7 @@ public:
 	static jmethodID AndroidThunkJava_IsInterstitialAdRequested;
 	static jmethodID AndroidThunkJava_ShowInterstitialAd;
 	static jmethodID AndroidThunkJava_GetAdvertisingId;
-	static jmethodID AndroidThunkJava_GoogleClientConnect;
-	static jmethodID AndroidThunkJava_GoogleClientDisconnect;
-
+	
 	// Optionally added if GCM plugin (or other remote notification system) enabled
 	static jmethodID AndroidThunkJava_RegisterForRemoteNotifications;
 	static jmethodID AndroidThunkJava_UnregisterForRemoteNotifications;
@@ -176,9 +173,16 @@ public:
 	static int32 CallIntMethod(JNIEnv* Env, jobject Object, jmethodID Method, ...);
 	static int64 CallLongMethod(JNIEnv* Env, jobject Object, jmethodID Method, ...);
 	static float CallFloatMethod(JNIEnv* Env, jobject Object, jmethodID Method, ...);
-	static double CallDoubleMethod(JNIEnv* Env, jobject Object, jmethodID Method, ...);
-	
+	static double CallDoubleMethod(JNIEnv* Env, jobject Object, jmethodID Method, ...);	
 	static bool CallBooleanMethod(JNIEnv* Env, jobject Object, jmethodID Method, ...);
+
+	static void CallStaticVoidMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...);
+	static jobject CallStaticObjectMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...);
+	static int32 CallStaticIntMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...);
+	static int64 CallStaticLongMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...);
+	static float CallStaticFloatMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...);
+	static double CallStaticDoubleMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...);
+	static bool CallStaticBooleanMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...);
 
 	// Delegate that can be registered to that is called when an activity is finished
 	static FOnActivityResult OnActivityResultDelegate;

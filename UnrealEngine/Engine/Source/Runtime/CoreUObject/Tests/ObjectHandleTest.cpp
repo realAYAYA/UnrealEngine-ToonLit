@@ -371,4 +371,102 @@ TEST_CASE_METHOD(FObjectHandleTestBase, "CoreUObject::FObjectHandle::Hash Object
 	CHECK(GetTypeHash(DummyObjectHandle) == GetTypeHash(&DummyObjectWithInvalidIndex));
 }
 
+#if UE_WITH_OBJECT_HANDLE_TYPE_SAFETY
+TEST_CASE_METHOD(FObjectHandleTestBase, "CoreUObject::FObjectHandle::Type Safety", "[CoreUObject][ObjectHandle]")
+{
+	const FName TestPackageName(TEXT("/Engine/Test/ObjectHandle/TypeSafety/Transient"));
+	UPackage* TestPackage = NewObject<UPackage>(nullptr, TestPackageName, RF_Transient);
+	TestPackage->AddToRoot();
+	ON_SCOPE_EXIT
+	{
+		TestPackage->RemoveFromRoot();
+	};
+
+	// simulate an unsafe class type
+	UClass* TestClass = NewObject<UClass>(TestPackage, TEXT("TestClass"), RF_Transient);
+	TestClass->SetSuperStruct(UObject::StaticClass());
+	TestClass->Bind();
+	TestClass->StaticLink(/*bRelinkExistingProperties =*/ true);
+	UObject* TestClassDefaults = TestClass->GetDefaultObject();
+	TestClass->PostLoadDefaultObject(TestClassDefaults);
+
+	// validate helper method(s)
+	CHECK_FALSE(UE::CoreUObject::Private::HasAnyFlags(TestClassDefaults, RF_NoFlags));
+	CHECK(UE::CoreUObject::Private::HasAnyFlags(TestClassDefaults, RF_ClassDefaultObject));
+
+	// construct objects for testing
+	UObject* TestSafeObject = NewObject<UObjectPtrTestClass>(TestPackage, TEXT("TestSafeObject"), RF_Transient);
+	UObject* TestUnsafeObject = NewObject<UObject>(TestPackage, TestClass, TEXT("TestUnsafeObject"), RF_Transient | RF_HasPlaceholderType);
+
+	// construct object handles for testing
+	FObjectHandle NullObjectHandle = UE::CoreUObject::Private::MakeObjectHandle(nullptr);
+	FObjectHandle TestSafeObjectHandle = UE::CoreUObject::Private::MakeObjectHandle(TestSafeObject);
+	FObjectHandle TestUnsafeObjectHandle = UE::CoreUObject::Private::MakeObjectHandle(TestUnsafeObject);
+#if UE_WITH_OBJECT_HANDLE_LATE_RESOLVE
+	// note that unresolved object handles are type safe by definition (since it implies the underlying type was not a placeholder)
+	FObjectRef TestSafeObjectRef(TestSafeObject);
+	UE::CoreUObject::Private::FPackedObjectRef PackedSafeObjectRef = UE::CoreUObject::Private::MakePackedObjectRef(TestSafeObjectRef);
+	FObjectHandle TestUnresolvedSafeObjectHandle = { PackedSafeObjectRef.EncodedRef };
+#endif
+
+	// NULL/type-safe objects should report as being safe
+	CHECK(IsObjectHandleTypeSafe(NullObjectHandle));
+	CHECK(IsObjectHandleTypeSafe(TestSafeObjectHandle));
+#if UE_WITH_OBJECT_HANDLE_LATE_RESOLVE
+	CHECK(IsObjectHandleTypeSafe(TestUnresolvedSafeObjectHandle));
+	CHECK(!IsObjectHandleResolved(TestUnresolvedSafeObjectHandle));	// the call above should not resolve the handle
+#endif
+
+	// unsafe type object handles should report as being unsafe
+	CHECK_FALSE(IsObjectHandleTypeSafe(TestUnsafeObjectHandle));
+
+	// object handles should resolve the class to the unsafe type
+	CHECK(UE::CoreUObject::Private::ResolveObjectHandleClass(TestUnsafeObjectHandle) == TestClass);
+
+	// object handles should resolve/evaluate to the original type object
+	CHECK(UE::CoreUObject::Private::ResolveObjectHandle(TestUnsafeObjectHandle) == TestUnsafeObject);
+
+	// an unsafe type object handle should not equate to other unsafe type object handles except for itself (including NULL)
+	CHECK(NullObjectHandle != TestUnsafeObjectHandle);			// note: this intentionally differs from object *pointers* (see below)
+	CHECK(TestUnsafeObjectHandle != NullObjectHandle);			// see note directly above
+	CHECK(TestSafeObjectHandle != TestUnsafeObjectHandle);
+	CHECK(TestUnsafeObjectHandle != TestSafeObjectHandle);
+	CHECK(TestUnsafeObjectHandle == TestUnsafeObjectHandle);
+
+	// construct object pointers for testing
+	TObjectPtr<UObject> NullObjectPtr(nullptr);
+	TObjectPtr<UObject> TestSafeObjectPtr(TestSafeObject);
+	TObjectPtr<UObject> TestUnsafeObjectPtr(TestUnsafeObject);
+
+	// unsafe type object pointers should evaluate to NULL/false (for type safety)
+	CHECK(!TestUnsafeObjectPtr);
+	CHECK_FALSE(!!TestUnsafeObjectPtr);
+	CHECK(NULL == TestUnsafeObjectPtr);
+	CHECK(TestUnsafeObjectPtr == NULL);
+	CHECK(nullptr == TestUnsafeObjectPtr);
+	CHECK(TestUnsafeObjectPtr == nullptr);
+
+	// an unsafe type object pointer should not equate to other pointers except for NULL and itself
+	CHECK(NullObjectPtr == TestUnsafeObjectPtr);				// note: this intentionally differs from object *handles* (see above)
+	CHECK(TestUnsafeObjectPtr == NullObjectPtr);				// see note directly above
+	CHECK(TestSafeObjectPtr != TestUnsafeObjectPtr);
+	CHECK(TestUnsafeObjectPtr != TestSafeObjectPtr);
+	CHECK(TestUnsafeObjectPtr == TestUnsafeObjectPtr);
+
+	// an unsafe type object should evaluate the object's attributes correctly
+	CHECK(TestUnsafeObjectPtr.GetName() == TestUnsafeObject->GetName());
+	CHECK(TestUnsafeObjectPtr.GetFName() == TestUnsafeObject->GetFName());
+	CHECK(TestUnsafeObjectPtr.GetPathName() == TestUnsafeObject->GetPathName());
+	CHECK(TestUnsafeObjectPtr.GetFullName() == TestUnsafeObject->GetFullName());
+	CHECK(TestUnsafeObjectPtr.GetOuter() == TestUnsafeObject->GetOuter());
+	CHECK(TestUnsafeObjectPtr.GetPackage() == TestUnsafeObject->GetPackage());
+
+	// an unsafe type object should not allow direct access to the underlying type
+	CHECK(TestUnsafeObjectPtr.GetClass() == nullptr);
+
+	// an unsafe type object pointer should resolve to NULL when dereferenced (for type safety)
+	CHECK(TestUnsafeObjectPtr.Get() == nullptr);
+}
+#endif
+
 #endif

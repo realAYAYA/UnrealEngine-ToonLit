@@ -263,81 +263,155 @@ FVector FRigVMMathLibrary::ClampSpatially(const FVector& Value, EAxis::Type Axis
 {
 	FVector Local = Space.InverseTransformPosition(Value);
 
+	auto Clamp = [](float InValue, float InMinimum, float InMaximum)
+	{
+		if(InMaximum <= InMinimum || InMaximum < SMALL_NUMBER)
+		{
+			return FMath::Max<float>(InValue, InMinimum);
+		}
+		return FMath::Clamp<float>(InValue, InMinimum, InMaximum);
+	};
+
+	auto CollidePlane = [Clamp, &Local, Axis, Minimum, &Maximum]
+	{
+		switch (Axis)
+		{
+		case EAxis::X:
+			{
+				Local.X = Clamp((float)Local.X, Minimum, Maximum);
+				break;
+			}
+		case EAxis::Y:
+			{
+				Local.Y = Clamp((float)Local.Y, Minimum, Maximum);
+				break;
+			}
+		default:
+			{
+				Local.Z = Clamp((float)Local.Z, Minimum, Maximum);
+				break;
+			}
+		}
+	};
+
+	auto CollideCylinder = [Clamp, &Local, Axis, Minimum, &Maximum]
+	{
+		switch (Axis)
+		{
+			case EAxis::X:
+			{
+				FVector OnPlane = Local * FVector(0.f, 1.f, 1.f);
+				if (!OnPlane.IsNearlyZero())
+				{
+					const float Length = (float)OnPlane.Size();
+					OnPlane = OnPlane * Clamp(Length, Minimum, Maximum) / Length;
+					Local.Y = OnPlane.Y;
+					Local.Z = OnPlane.Z;
+				}
+				break;
+			}
+			case EAxis::Y:
+			{
+				FVector OnPlane = Local * FVector(1.f, 0.f, 1.f);
+				if (!OnPlane.IsNearlyZero())
+				{
+					const float Length = (float)OnPlane.Size();
+					OnPlane = OnPlane * Clamp(Length, Minimum, Maximum) / Length;
+					Local.X = OnPlane.X;
+					Local.Z = OnPlane.Z;
+				}
+				break;
+			}
+			default:
+			{
+				FVector OnPlane = Local * FVector(1.f, 1.f, 0.f);
+				if (!OnPlane.IsNearlyZero())
+				{
+					const float Length = (float)OnPlane.Size();
+					OnPlane = OnPlane * Clamp(Length, Minimum, Maximum) / Length;
+					Local.X = OnPlane.X;
+					Local.Y = OnPlane.Y;
+				}
+				break;
+			}
+		}
+	};
+
+	auto CollideSphere = [Clamp, &Local, Minimum, &Maximum]
+	{
+		if (!Local.IsNearlyZero())
+		{
+			const float Length = (float)Local.Size();
+			Local = Local * Clamp(Length, Minimum, Maximum) / Length;
+		}
+	};
+	
 	switch (Type)
 	{
 		case ERigVMClampSpatialMode::Plane:
 		{
+			CollidePlane();
+			break;
+		}
+		case ERigVMClampSpatialMode::Capsule:
+		{
+			const float Radius = Minimum;
+			if(Maximum < Radius * 2.f)
+			{
+				Maximum = 0.f;
+				CollideSphere();
+				break;
+			}
+				
+			const float Length = FMath::Max(Maximum, Radius * 2);
+			const float HalfLength = Length * 0.5f;
+			const float HalfCylinderLength = HalfLength - Radius;
+				
+			FVector Normal = FVector::XAxisVector;
 			switch (Axis)
 			{
 				case EAxis::X:
 				{
-					Local.X = FMath::Clamp<float>(Local.X, Minimum, Maximum);
 					break;
 				}
 				case EAxis::Y:
 				{
-					Local.Y = FMath::Clamp<float>(Local.Y, Minimum, Maximum);
+					Normal = FVector::YAxisVector;
 					break;
 				}
 				default:
 				{
-					Local.Z = FMath::Clamp<float>(Local.Z, Minimum, Maximum);
+					Normal = FVector::ZAxisVector;
 					break;
 				}
 			}
+
+			const float DotOnNormal = Normal.Dot(Local);
+
+			// if we are on the cylinder part of the collision, fall through 
+			if(FMath::Abs(DotOnNormal) < HalfCylinderLength)
+			{
+				Maximum = 0.f;
+				CollideCylinder();
+				break;
+			}
+
+			// since now we are going to be colliding with either the upper of lower half sphere
+			const FVector LocalSphereCenter = Normal * FMath::Sign(DotOnNormal) * HalfCylinderLength;
+			Space = FTransform(LocalSphereCenter) * Space;
+			Local = Space.InverseTransformPosition(Value);
+			CollideSphere();
 			break;
 		}
 		case ERigVMClampSpatialMode::Cylinder:
 		{
-			switch (Axis)
-			{
-				case EAxis::X:
-				{
-					FVector OnPlane = Local * FVector(0.f, 1.f, 1.f);
-					if (!OnPlane.IsNearlyZero())
-					{
-						float Length = OnPlane.Size();
-						OnPlane = OnPlane * FMath::Clamp<float>(Length, Minimum, Maximum) / Length;
-						Local.Y = OnPlane.Y;
-						Local.Z = OnPlane.Z;
-					}
-					break;
-				}
-				case EAxis::Y:
-				{
-					FVector OnPlane = Local * FVector(1.f, 0.f, 1.f);
-					if (!OnPlane.IsNearlyZero())
-					{
-						float Length = OnPlane.Size();
-						OnPlane = OnPlane * FMath::Clamp<float>(Length, Minimum, Maximum) / Length;
-						Local.X = OnPlane.X;
-						Local.Z = OnPlane.Z;
-					}
-					break;
-				}
-				default:
-				{
-					FVector OnPlane = Local * FVector(1.f, 1.f, 0.f);
-					if (!OnPlane.IsNearlyZero())
-					{
-						float Length = OnPlane.Size();
-						OnPlane = OnPlane * FMath::Clamp<float>(Length, Minimum, Maximum) / Length;
-						Local.X = OnPlane.X;
-						Local.Y = OnPlane.Y;
-					}
-					break;
-				}
-			}
+			CollideCylinder();
 			break;
 		}
 		default:
 		case ERigVMClampSpatialMode::Sphere:
 		{
-			if (!Local.IsNearlyZero())
-			{
-				float Length = Local.Size();
-				Local = Local * FMath::Clamp<float>(Length, Minimum, Maximum) / Length;
-			}
+			CollideSphere();
 			break;
 		}
 

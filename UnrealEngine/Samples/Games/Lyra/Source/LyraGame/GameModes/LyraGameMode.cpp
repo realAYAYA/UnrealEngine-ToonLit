@@ -247,7 +247,7 @@ void ALyraGameMode::HostDedicatedServerMatch(ECommonSessionOnlineMode OnlineMode
 	if (ensure(FoundExperience && GameInstance))
 	{
 		// Actually host the game
-		UCommonSession_HostSessionRequest* HostRequest = FoundExperience->CreateHostingRequest();
+		UCommonSession_HostSessionRequest* HostRequest = FoundExperience->CreateHostingRequest(this);
 		if (ensure(HostRequest))
 		{
 			HostRequest->OnlineMode = OnlineMode;
@@ -272,19 +272,17 @@ void ALyraGameMode::OnUserInitializedForDedicatedServer(const UCommonUserInfo* U
 		UCommonUserSubsystem* UserSubsystem = GameInstance->GetSubsystem<UCommonUserSubsystem>();
 		UserSubsystem->OnUserInitializeComplete.RemoveDynamic(this, &ALyraGameMode::OnUserInitializedForDedicatedServer);
 
-		if (bSuccess)
+		// Dedicated servers do not require user login, but some online subsystems may expect it
+		if (bSuccess && ensure(UserInfo))
 		{
-			// Online login worked, start a full online game
-			UE_LOG(LogLyraExperience, Log, TEXT("Dedicated server online login succeeded, starting online server"));
-			HostDedicatedServerMatch(ECommonSessionOnlineMode::Online);
+			UE_LOG(LogLyraExperience, Log, TEXT("Dedicated server user login succeeded for id %s, starting online server"), *UserInfo->GetNetId().ToString());
 		}
 		else
 		{
-			// Go ahead and try to host anyway, but without online support
-			// This behavior is fairly game specific, but this behavior provides the most flexibility for testing
-			UE_LOG(LogLyraExperience, Log, TEXT("Dedicated server online login failed, starting LAN-only server"));
-			HostDedicatedServerMatch(ECommonSessionOnlineMode::LAN);
+			UE_LOG(LogLyraExperience, Log, TEXT("Dedicated server user login unsuccessful, starting online server as login is not required"));
 		}
+		
+		HostDedicatedServerMatch(ECommonSessionOnlineMode::Online);
 	}
 }
 

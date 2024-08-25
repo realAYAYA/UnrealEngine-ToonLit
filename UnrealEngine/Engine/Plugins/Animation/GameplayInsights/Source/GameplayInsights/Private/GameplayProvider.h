@@ -42,6 +42,7 @@ public:
 	virtual const TCHAR* GetPropertyName(uint32 InPropertyStringId) const override;
 	virtual const RecordingInfoTimeline* GetRecordingInfo(uint32 RecordingId) const override; 
 	virtual void ReadViewTimeline(TFunctionRef<void(const ViewTimeline&)> Callback) const override;
+	virtual double GetRecordingDuration() const override;
 
 
 	/** Add a class message */
@@ -185,6 +186,9 @@ private:
 
 	/** Whether we have any data */
 	bool bHasAnyData;
+	
+	/** Whether we have any data */
+	double RecordingDuration = 0.0;
 
 	/** Whether we have any object properties */
 	bool bHasObjectProperties;

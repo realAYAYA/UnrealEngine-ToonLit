@@ -2,9 +2,9 @@
 
 #include "PlasticSourceControlConsole.h"
 
-#include "ISourceControlModule.h"
-
 #include "PlasticSourceControlUtils.h"
+
+#include "ISourceControlModule.h"
 
 void FPlasticSourceControlConsole::Register()
 {
@@ -12,7 +12,7 @@ void FPlasticSourceControlConsole::Register()
 	{
 		CmConsoleCommand = MakeUnique<FAutoConsoleCommand>(
 			TEXT("cm"),
-			TEXT("PlasticSCM Command Line Interface.\n")
+			TEXT("Unity Version Control (formerly Plastic SCM) Command Line Interface (cm).\n")
 			TEXT("Run any 'cm' command directly from the Unreal Editor Console.\n")
 			TEXT("Type 'cm showcommands' to get a command list."),
 			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPlasticSourceControlConsole::ExecutePlasticConsoleCommand));

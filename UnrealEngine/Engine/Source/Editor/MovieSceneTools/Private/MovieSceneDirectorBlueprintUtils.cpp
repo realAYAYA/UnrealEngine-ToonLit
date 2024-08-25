@@ -295,7 +295,7 @@ FMovieSceneDirectorBlueprintEntrypointResult FMovieSceneDirectorBlueprintUtils::
 				continue;
 			}
 
-			const FString* PayloadVariable = EndpointCall.PayloadVariables.Find(Pin->PinName);
+			const FMovieSceneDirectorBlueprintVariableValue* PayloadVariable = EndpointCall.PayloadVariables.Find(Pin->PinName);
 			if (!PayloadVariable)
 			{
 				continue;
@@ -309,7 +309,14 @@ FMovieSceneDirectorBlueprintEntrypointResult FMovieSceneDirectorBlueprintUtils::
 			else
 			{
 				bool bMarkAsModified = false;
-				Schema->TrySetDefaultValue(*Pin, *PayloadVariable, bMarkAsModified);
+				if (PayloadVariable->ObjectValue.IsValid())
+				{
+					Schema->TrySetDefaultObject(*Pin, PayloadVariable->ObjectValue.ResolveObject(), bMarkAsModified);
+				}
+				else if (!PayloadVariable->Value.IsEmpty())
+				{
+					Schema->TrySetDefaultValue(*Pin, PayloadVariable->Value, bMarkAsModified);
+				}
 				bSuccess = true;
 			}
 
@@ -353,7 +360,7 @@ FMovieSceneDirectorBlueprintEntrypointResult FMovieSceneDirectorBlueprintUtils::
 
 bool FMovieSceneDirectorBlueprintUtils::GenerateEntryPointRawActorParameter(
 			FKismetCompilerContext* Compiler, UEdGraph* Graph, UEdGraphNode* Endpoint, 
-			UK2Node* OriginNode, UEdGraphPin* DestPin, const FString& PayloadValue)
+			UK2Node* OriginNode, UEdGraphPin* DestPin, const FMovieSceneDirectorBlueprintVariableValue& PayloadValue)
 {
 	// Raw actor properties are represented as soft object ptrs under the hood so that we can still serialize them
 	// To make this work, we have to make the following graph:
@@ -394,9 +401,16 @@ bool FMovieSceneDirectorBlueprintUtils::GenerateEntryPointRawActorParameter(
 
 	const UEdGraphSchema*  Schema = Graph->GetSchema();
 
-	// Set the default value for the path string
+	// Set the default value for the path string/object
 	const bool bMarkAsModified = false;
-	Schema->TrySetDefaultValue(*PathInput, PayloadValue, bMarkAsModified);
+	if (PayloadValue.ObjectValue.IsValid())
+	{
+		Schema->TrySetDefaultValue(*PathInput, PayloadValue.ObjectValue.ToString(), bMarkAsModified);
+	}
+	else if (!PayloadValue.Value.IsEmpty())
+	{
+		Schema->TrySetDefaultValue(*PathInput, PayloadValue.Value, bMarkAsModified);
+	}
 
 	bool bSuccess = true;
 	bSuccess &= Schema->TryCreateConnection(PathOutput, SoftRefInput);

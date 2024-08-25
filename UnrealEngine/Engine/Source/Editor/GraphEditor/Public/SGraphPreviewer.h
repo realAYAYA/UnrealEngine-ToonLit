@@ -29,6 +29,11 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs, UEdGraph* InGraphObj);
+
+protected:
+	/** Delegate handler for graph panel updates */
+	void OnUpdateGraphPanel();
+
 private:
 	/** Helper function used to refresh the graph */
 	EActiveTimerReturnType RefreshGraphTimer(const double InCurrentTime, const float InDeltaTime);

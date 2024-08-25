@@ -21,11 +21,15 @@ import android.os.RemoteException;
 import android.util.Log;
 import android.os.Trace;
 import androidx.annotation.Nullable;
+import android.os.ParcelFileDescriptor;
 
 import com.epicgames.unreal.Logger;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Date;
@@ -43,27 +47,33 @@ import java.util.logging.Level;
 public class PSOProgramService extends Service implements Logger.ILoggerCallback
 {
 	private final String TAG = this.getClass().getSimpleName();
-	
-	static final int MSG_LINKPROGRAM = 1; // incoming request message ID
-	static final int MSG_LINKPROGRAM_RESPONSE = 10; // message ID sent in reply to MSG_LINKPROGRAM
-	
+
+	static final int MSG_LINKPROGRAM			= 1; // incoming request message ID
+	static final int MSG_LINKPROGRAM_SHMEM 		= 2; // incoming request message ID, using shared memory.
+	static final int MSG_LINKPROGRAM_RESPONSE	= 10; // message ID sent in reply to MSG_LINKPROGRAM
+
 	static final String VS_Key = "v";
 	static final String PS_Key = "p";
 	static final String CS_Key = "c";
 	static final String PSOData_Key = "pso";
+	static final String PSOCacheData_Key = "psocache";
 	static final String JobContext_Key = "jtx";
 	static final String JobID_Key = "jid";
 	static final String ServiceID_Key = "sid";
 	static final String CompiledProgram_Key = "cpg";
+	static final String SHMem_Key = "shm";
 	static final String JobFail = "f";
+	static final String RobustContextKey = "rbc";
 	public static final String LogDir = "/oglservice/";
 	public static final String LogExt = ".txt";
 	public static final Level LogLevel = Level.WARNING;
 
 	public static final boolean bEnableTestFailures = false;
-
+	public static final boolean bReportMemUse = false;
+	public boolean bWantRobustContext = false;
+	public boolean bGFXInitialized = false;
 	private FileHandler logFileHandler;
-	
+
 	private void PrepareLogger() throws IOException
 	{
 		String name = getFilesDir().getAbsolutePath() + LogDir;
@@ -94,11 +104,11 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 				return returnmsg.toString();
 			}
 		}
-		
+
 		logFileHandler.setLevel(LogLevel);
 		logFileHandler.setFormatter(new BasicFormatter());
 	}
-	
+
 	public void LoggerCallback(String LevelIn, String Tag, String Message)
 	{
 		Level LogLevel = Level.INFO;
@@ -127,9 +137,9 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		}
 		logFileHandler.publish( new LogRecord(LogLevel, Message));
 	}
-	
+
 	private final Logger logger = new Logger(this.getClass().getSimpleName());
-	
+
 	private class OGLUncaughtExceptionHandler implements Thread.UncaughtExceptionHandler
 	{
 		private final Lock uncaughtWait = new ReentrantLock();
@@ -137,7 +147,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		{
 			Thread.setDefaultUncaughtExceptionHandler(this);
 		}
-		
+
 		public void uncaughtException(Thread t, Throwable e)
 		{
 			// serialize exception processing..
@@ -186,8 +196,47 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		}
 	}
 
-	final OGLUncaughtExceptionHandler OGLUncaughtExceptionHandler = new OGLUncaughtExceptionHandler();
+	void LogMemInfo()
+	{
+		if( bReportMemUse == false)
+		{
+			return;
+		}
+		
+		BufferedReader bufferedReader = null;
+		try
+		{
+			File file = new File("/proc/self/status");
+			bufferedReader = new BufferedReader(new FileReader(file));;
+			String line;
+			logger.verbose("---");
+			while ((line = bufferedReader.readLine()) != null)
+			{
+				if(line.startsWith("Vm") || line.startsWith("Pid:") || line.startsWith("Rss"))
+				{
+					logger.verbose("psomeminfo: "+line);
+				}
+			}
+			logger.verbose("---");
+			bufferedReader.close();
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
+		}
+		if (bufferedReader != null)
+		{
+			try
+			{
+				bufferedReader.close();
+			}
+			catch (Exception e) {
+			}
+		}
+	}
 	
+	final OGLUncaughtExceptionHandler OGLUncaughtExceptionHandler = new OGLUncaughtExceptionHandler();
+
 	static final boolean bEnableTrace = false;
 	static void beginTrace(String msg)
 	{
@@ -203,7 +252,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			Trace.endSection();
 		}
 	}
-	
+
 	public PSOProgramService()
 	{
 		OGLUncaughtExceptionHandler.init();
@@ -216,9 +265,36 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 
 	@Nullable
 	@Override
-	public IBinder onBind(Intent intent) 
+	public IBinder onBind(Intent intent)
 	{
 		logger.debug("onBind "  + intent.toString());
+
+		if(!bGFXInitialized)
+		{
+			if(!UseVulkan())
+			{
+				Bundle extras =intent.getExtras();
+				if(extras != null)
+				{
+					bWantRobustContext = extras.getBoolean(RobustContextKey, false);
+					logger.debug("robust "  + bWantRobustContext);
+				}
+				else
+				{
+					logger.debug("no robust set");
+				}
+				logger.verbose("initGLContext " );
+				initGLContext();
+			}
+			else
+			{
+				logger.verbose("initVulkanContext " );
+				initVulkanContext();
+			}
+			bGFXInitialized = true;
+		}
+		LogMemInfo();
+
 		return mMessenger.getBinder();
 	}
 
@@ -243,13 +319,15 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 						byte[] VS = msg.getData().getByteArray(VS_Key);
 						byte[] PS = msg.getData().getByteArray(PS_Key);
 						byte[] PSOData = msg.getData().getByteArray(PSOData_Key);
+						byte[] PSOCacheData = msg.getData().getByteArray(PSOCacheData_Key);
+
 						int JobID = msg.getData().getInt(JobID_Key);
 						int ServiceID = msg.getData().getInt(ServiceID_Key);
-					
+
 						byte[] JobContext = msg.getData().getByteArray(JobContext_Key);
 
 						//logger.verbose("Processing program job "+JobID);
-						ProcessVulkanProgramRequest(msg.replyTo, JobID, ServiceID, JobContext, VS, PS, PSOData);
+						ProcessVulkanProgramRequest(msg.replyTo, JobID, ServiceID, JobContext, VS, PS, PSOData, PSOCacheData);
 					}
 					else
 					{
@@ -258,7 +336,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 						String CS = msg.getData().getString(CS_Key);
 						int JobID = msg.getData().getInt(JobID_Key);
 						int ServiceID = msg.getData().getInt(ServiceID_Key);
-					
+
 						byte[] JobContext = msg.getData().getByteArray(JobContext_Key);
 
 						//logger.verbose("Processing program job "+JobID);
@@ -267,24 +345,54 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 					endTrace();
 
 					break;
+				case MSG_LINKPROGRAM_SHMEM:
+					beginTrace("PSOProgramService.handleMessage MSG_LINKPROGRAM_SHMEM");
+					if(UseVulkan())
+					{
+						ParcelFileDescriptor SharedFD 	= msg.getData().getParcelable(SHMem_Key);
+						long VSSize						= msg.getData().getLong(VS_Key);
+						long PSSize						= msg.getData().getLong(PS_Key);
+						long PSODataSize				= msg.getData().getLong(PSOData_Key);
+						long PSOCacheDataSize			= msg.getData().getLong(PSOCacheData_Key);
+						int JobID						= msg.getData().getInt(JobID_Key);
+						int ServiceID					= msg.getData().getInt(ServiceID_Key);
+						byte[] JobContext				= msg.getData().getByteArray(JobContext_Key);
+						int SHMemFD						= SharedFD.getFd();
+
+						//logger.verbose("Processing program job "+JobID);
+						ProcessVulkanProgramRequestSHM(msg.replyTo, JobID, ServiceID, JobContext, SHMemFD, VSSize, PSSize, PSODataSize, PSOCacheDataSize);
+						try
+						{
+							SharedFD.close();
+						}
+						catch (IOException e) 
+						{
+							logger.error("error closing SH mem "+e.getMessage());
+						}
+					}
+					else
+					{
+						logger.error("GLES Link program via SH mem is not yet supported");
+					}
+					endTrace();
 				default:
 					super.handleMessage(msg);
 			}
 		}
 	}
 
-	public void ProcessVulkanProgramRequest(Messenger replyTo, int JobID, int ServiceID, byte[] JobContext, byte[] VS, byte[] PS, byte[] PSOData)
+	public void ProcessVulkanProgramRequest(Messenger replyTo, int JobID, int ServiceID, byte[] JobContext, byte[] VS, byte[] PS, byte[] PSOData, byte[] PSOCacheData)
 	{
 		ByteBuffer Result = null;
 		try
 		{
-			byte[] PipelineCache = compileVulkanPSO(JobID, VS, PS, PSOData);
+			byte[] PipelineCache = compileVulkanPSO(JobID, VS, PS, PSOData, PSOCacheData);
 			Result = ByteBuffer.allocate(PipelineCache.length);
 			Result.order(ByteOrder.nativeOrder());
 			Result.put(PipelineCache);
 
 			//logger.verbose(JobID+" CompileAndLink()  "+ (Result == null ? "null res " : Result.toString()));
-			
+
 		} catch (Exception e)
 		{
 			SendFail(replyTo, ServiceID, JobID, JobContext, e.getMessage());
@@ -296,6 +404,33 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			SendSuccess(replyTo, ServiceID, JobID, JobContext, Result.array());
 		}
 	}
+
+	public void ProcessVulkanProgramRequestSHM(Messenger replyTo, int JobID, int ServiceID, byte[] JobContext, int SHMemFD, long VSSize, long PSSize, long PSODataSize, long PSOCacheDataSize)
+	{
+		int SHMResultFD = -1;
+		try
+		{
+			// native code returns a shared FD which must be adopted in java land.
+			SHMResultFD = compileVulkanPSOSHM(JobID, SHMemFD, VSSize, PSSize, PSODataSize, PSOCacheDataSize);
+		}
+		catch (Exception e)
+		{
+			SendFail(replyTo, ServiceID, JobID, JobContext, e.getMessage());
+		}
+
+		if(SHMResultFD != -1)
+		{
+			//logger.verbose(JobID+" SendSuccess()  ");
+			// SendSuccess will adopt the shared FD.
+			SendSuccess(replyTo, ServiceID, JobID, JobContext, SHMResultFD );
+		}
+		else
+		{
+			SendFail(replyTo, ServiceID, JobID, JobContext, "Failed to alloc bytes for PSO reply.");
+		}
+		LogMemInfo();
+	}
+
 
 	public void ProcessGLProgramRequest(Messenger replyTo, int JobID, int ServiceID, byte[] JobContext, String VS, String PS, String CS)
 	{
@@ -311,7 +446,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			}
 			Result = CompileAndLink(JobID, VS, PS, CS);
 			//logger.verbose(JobID+" CompileAndLink()  "+ (Result == null ? "null res " : Result.toString()));
-			
+
 		} catch (Exception e)
 		{
 			SendFail(replyTo, ServiceID, JobID, JobContext, e.getMessage());
@@ -323,7 +458,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			SendSuccess(replyTo, ServiceID, JobID, JobContext, Result.array());
 		}
 	}
-	
+
 	@Override
 	public void onCreate() {
 		super.onCreate();
@@ -331,24 +466,14 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		{
 			android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
 			PrepareLogger();
-		} 
+		}
 		catch (IOException e)
 		{
 			e.printStackTrace();
 		}
-		
+
 		Logger.RegisterCallback(this);
 		logger.verbose("oncreate " );
-		if(!UseVulkan())
-		{
-			logger.verbose("initGLContext " );
-			initGLContext();
-		}
-		else
-		{
-			logger.verbose("initVulkanContext " );
-			initVulkanContext();
-		}
 	}
 
 	@Override
@@ -365,8 +490,18 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		}
 		super.onDestroy();
 	}
-	
+
 	public void SendSuccess(Messenger replyTo, int ServiceID, int JobID, byte[] context, byte[] compiledbinary)
+	{
+		SendSuccess(replyTo, ServiceID, JobID, context, compiledbinary, -1);
+	}
+
+	public void SendSuccess(Messenger replyTo, int ServiceID, int JobID, byte[] context, int ShmMemCompiledFD)
+	{
+		SendSuccess(replyTo, ServiceID, JobID, context, null, ShmMemCompiledFD);
+	}
+
+	public void SendSuccess(Messenger replyTo, int ServiceID, int JobID, byte[] context, byte[] compiledbinary, int ShmMemCompiledFD)
 	{
 		if( bEnableTestFailures && JobID == 1000 )
 		{
@@ -380,18 +515,36 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			throw new RuntimeException("1000!");
 		}
 		beginTrace("PSOProgramService.SendSuccess");
-		Message msg = Message.obtain(null, PSOProgramService.MSG_LINKPROGRAM_RESPONSE, 0, 0);
-		Bundle params = new Bundle();
-		//intent.setAction("com.epicgames.fortnite.OGLProgram");
-		params.putByteArray(JobContext_Key, context);
-		params.putByteArray(CompiledProgram_Key, compiledbinary);
-		params.putInt(JobID_Key, JobID);
-		params.putInt(ServiceID_Key, ServiceID);
-		msg.setData(params);
 		try
 		{
+			Message msg = Message.obtain(null, com.epicgames.unreal.psoservices.PSOProgramService.MSG_LINKPROGRAM_RESPONSE, 0, 0);
+			Bundle params = new Bundle();
+
+			params.putByteArray(JobContext_Key, context);
+			if(compiledbinary != null)
+			{
+				params.putByteArray(CompiledProgram_Key, compiledbinary);
+			}
+
+			ParcelFileDescriptor parcelFD = null;
+
+			if(ShmMemCompiledFD != -1)
+			{
+				// the FD is discarded after the message is sent.
+				parcelFD = ParcelFileDescriptor.adoptFd(ShmMemCompiledFD);
+				params.putParcelable(SHMem_Key, parcelFD);
+			}
+			params.putInt(JobID_Key, JobID);
+			params.putInt(ServiceID_Key, ServiceID);
+			msg.setData(params);
+
 			replyTo.send(msg);
-		} catch (RemoteException e)
+			if(parcelFD != null)
+			{
+				parcelFD.close();
+			}
+		}
+		catch (Exception e)
 		{
 			logger.error(JobID+" SendSuccess(), failed to send reply : " + e);
 			e.printStackTrace();
@@ -400,7 +553,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 
 		endTrace();
 	}
-	
+
 	public void SendFail(Messenger replyTo, int ServiceID, int JobID, byte[] context, String FailMessage)
 	{
 		beginTrace("PSOProgramService.SendFail");
@@ -414,7 +567,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		try
 		{
 			replyTo.send(msg);
-		} 
+		}
 		catch (RemoteException e)
 		{
 			logger.error(JobID+" SendFail(), failed to send reply "+FailMessage+" : " + e);
@@ -427,7 +580,8 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 	////////////////////////////////////////////// Vulkan context stuff
 	public native void InitVKDevice();
 	public native void ShutdownVKDevice();
-	public native byte[] CompileVKGFXPSO(byte[] VertexShaderSource, byte[]  PixelShaderSource, byte[] PSOData);
+	public native byte[] CompileVKGFXPSO(byte[] VertexShaderSource, byte[]  PixelShaderSource, byte[] PSOData, byte[] PSOCacheData);
+	public native int CompileVKGFXPSOSHM(int SHMemFD, long VSSize, long PSSize, long PSODataSize, long PSOCacheDataSize);
 
 	private void initVulkanContext()
 	{
@@ -438,9 +592,14 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		endTrace();
 	}
 
-	private byte[] compileVulkanPSO(int JobID, byte [] VertexShaderSource, byte []  PixelShaderSource, byte [] PSOData)
+	private byte[] compileVulkanPSO(int JobID, byte [] VertexShaderSource, byte []  PixelShaderSource, byte [] PSOData, byte [] PSOCacheData)
 	{
-		return CompileVKGFXPSO(VertexShaderSource, PixelShaderSource, PSOData);
+		return CompileVKGFXPSO(VertexShaderSource, PixelShaderSource, PSOData, PSOCacheData);
+	}
+
+	private int compileVulkanPSOSHM(int JobID, int SHMemFD, long VSSize, long PSSize, long PSODataSize, long PSOCacheDataSize)
+	{
+		return CompileVKGFXPSOSHM(SHMemFD, VSSize, PSSize, PSODataSize, PSOCacheDataSize);
 	}
 
 	private void shutdownVulkanContext()
@@ -453,7 +612,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 	private EGLDisplay mEglDisplay = EGL14.EGL_NO_DISPLAY;
 	private EGLContext mEglContext = EGL14.EGL_NO_CONTEXT;
 	private EGLSurface mEglSurface = EGL14.EGL_NO_SURFACE;
-	
+
 	private void initGLContext()
 	{
 		beginTrace("PSOProgramService.InitContext");
@@ -480,15 +639,29 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			};
 		EGL14.eglChooseConfig(mEglDisplay, configSpec, 0, configs, 0, 1, num_config, 0);
 		//logger.verbose("2 eglChooseConfig "+num_config[0]+" err "+EGL14.eglGetError()+" configs: "+configs[0].toString());
-		int[] contextAttribsES31 = new int[]
+		int[] contextAttribsES32 = new int[]
 			{
 				EGLExt.EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
 				EGLExt.EGL_CONTEXT_MINOR_VERSION_KHR, 2,
 				EGL14.EGL_NONE
 			};
-		mEglContext = EGL14.eglCreateContext(mEglDisplay, configs[0], EGL14.EGL_NO_CONTEXT, contextAttribsES31, 0);
-		//logger.verbose("2 eglCreateContext "+mEglContext+" err "+EGL14.eglGetError());
-		
+
+		int EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT = 0x30BF;
+		int[] contextAttribsES32Robust = new int[]
+			{
+				EGLExt.EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
+				EGLExt.EGL_CONTEXT_MINOR_VERSION_KHR, 2,
+				EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT, 1,
+				EGL14.EGL_NONE
+			};
+
+		String eglExtensions = EGL14.eglQueryString(mEglDisplay, EGL14.EGL_EXTENSIONS);
+		boolean bUseRobustContext = bWantRobustContext && eglExtensions.contains("EGL_EXT_create_context_robustness");
+		logger.verbose("2 eglCreateContext rbst "+bWantRobustContext+" ext contains "+eglExtensions.contains("EGL_EXT_create_context_robustness") );
+
+		mEglContext = EGL14.eglCreateContext(mEglDisplay, configs[0], EGL14.EGL_NO_CONTEXT, bUseRobustContext ? contextAttribsES32Robust : contextAttribsES32, 0);
+		logger.verbose("2 eglCreateContext "+mEglContext+", robust "+bUseRobustContext+", err "+EGL14.eglGetError());
+
 		if (EGL14.eglQueryString(mEglDisplay, EGL14.EGL_EXTENSIONS).contains("EGL_KHR_surfaceless_context"))
 		{
 			mEglSurface = EGL14.EGL_NO_SURFACE;
@@ -503,7 +676,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			mEglSurface = EGL14.eglCreatePbufferSurface(mEglDisplay, configs[0], pbufferAttribs, 0);
 			//logger.verbose("2 eglCreatePbufferSurface "+mEglSurface.toString());
 		}
-		boolean bSuccess = EGL14.eglMakeCurrent(mEglDisplay, mEglSurface, mEglSurface, mEglContext); 
+		boolean bSuccess = EGL14.eglMakeCurrent(mEglDisplay, mEglSurface, mEglSurface, mEglContext);
 		if( !bSuccess )
 		{
 			logger.error("egl makecurrent failed. "+EGL14.eglGetError());
@@ -526,7 +699,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		}
 		mEglDisplay = EGL14.EGL_NO_DISPLAY;
 	}
-	
+
 	static class GLCompileException extends Exception
 	{
 		public GLCompileException(String message)
@@ -534,7 +707,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			super(message);
 		}
 	}
-	
+
 	private int createShader(int shaderType, String source) throws GLCompileException
 	{
 		int shader = GLES31.glCreateShader(shaderType);
@@ -547,11 +720,11 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		GLES31.glCompileShader(shader);
 		endTrace();
 		//logger.debug("2 glCompileShader err "+GLES31.glGetError());
-		
+
 		int[] compiled = new int[1];
 		GLES31.glGetShaderiv(shader, GLES31.GL_COMPILE_STATUS, compiled, 0);
 		//logger.debug("2 glGetShaderiv, compiled="+compiled[0]+" err "+GLES31.glGetError());
-		if (compiled[0] == 0) 
+		if (compiled[0] == 0)
 		{
 			String ShaderFailLog = GLES31.glGetShaderInfoLog(shader);
 			GLES31.glDeleteShader(shader);
@@ -578,7 +751,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		}
 		return shader;
 	}
-	
+
 	private ByteBuffer CompileAndLink(int JobID, String VertexShaderSource, String PixelShaderSource, String ComputeShaderSource)  throws GLCompileException
 	{
 		java.nio.ByteBuffer RetBuffer = null;
@@ -586,21 +759,21 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 		int mVertexShaderID = 0;
 		int mComputeShaderID = 0;
 		int mProgram = 0;
-		
+
 		try {
 			beginTrace("PSOProgramService.CompileAndLink "+JobID);
-			
+
 			mProgram = GLES31.glCreateProgram();
 			if (mProgram <= 0) {
 				throw new GLCompileException("Failed to create Program");
 			}
 			GLES31.glProgramParameteri(mProgram, GLES31.GL_PROGRAM_BINARY_RETRIEVABLE_HINT, 1);
-			
+
 			if( ComputeShaderSource == null)
 			{
 				mVertexShaderID = createShader(GLES31.GL_VERTEX_SHADER, VertexShaderSource);
 				mPixelShaderID = createShader(GLES31.GL_FRAGMENT_SHADER, PixelShaderSource);
-				
+
 				GLES31.glAttachShader(mProgram, mVertexShaderID);
 				GLES31.glAttachShader(mProgram, mPixelShaderID);
 			}
@@ -614,7 +787,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 			beginTrace("PSOProgramService.CompileAndLink LINKING"+JobID);
 			GLES31.glLinkProgram(mProgram);
 			endTrace();
-			
+
 			int LinkStatus[] = new int[]{0};
 			GLES31.glGetProgramiv(mProgram, GLES31.GL_LINK_STATUS, LinkStatus, 0);
 			if( LinkStatus[0] != GLES31.GL_TRUE)
@@ -622,7 +795,7 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 				String ProgramLinkFailLog = GLES31.glGetProgramInfoLog(mProgram);
 				throw new GLCompileException("Failed to link program: " + ProgramLinkFailLog);
 			}
-			
+
 			//logger.debug(JobID+" glLinkProgram() err "+GLES31.glGetError());
 			// pull binary from linked program
 			int BinaryLength[] = new int[]{0};
@@ -639,11 +812,11 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 				RetBuffer.order(ByteOrder.nativeOrder());
 				RetBuffer.putInt(BinaryFormatOUT[0]);
 				RetBuffer.put(Buffer);
-				
+
 				//logger.verbose(JobID+" glGetProgramBinary() BinaryLength="+BinaryLengthOUT[0]+" BinaryFormatOUT "+BinaryFormatOUT[0]+"err "+GLES31.glGetError());
 			}
 		}
-		finally 
+		finally
 		{
 			endTrace();
 			if(mVertexShaderID != 0)
@@ -656,18 +829,18 @@ public class PSOProgramService extends Service implements Logger.ILoggerCallback
 				GLES31.glDetachShader(mProgram, mPixelShaderID);
 				GLES31.glDeleteShader(mPixelShaderID);
 			}
-			
+
 			if(mComputeShaderID != 0)
 			{
 				GLES31.glDetachShader(mProgram, mComputeShaderID);
 				GLES31.glDeleteShader(mComputeShaderID);
 			}
-			
+
 			if(mProgram != 0)
 			{
 				GLES31.glDeleteProgram(mProgram);
 			}
-			
+
 			if(RetBuffer == null)
 			{
 				logger.error(JobID+" glGetProgramBinary() err "+GLES31.glGetError());

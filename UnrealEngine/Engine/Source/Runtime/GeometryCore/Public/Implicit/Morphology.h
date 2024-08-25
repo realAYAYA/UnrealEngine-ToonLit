@@ -148,10 +148,10 @@ protected:
 		ComputedSDF.ComputeMode = MeshSDFType::EComputeModes::NarrowBand_SpatialFloodFill;
 
 
-		ComputedSDF.CellSize = GridCellSize;
+		ComputedSDF.CellSize = (float)GridCellSize;
 		NarrowBandMaxDistance = UnsignedOffset + ComputedSDF.CellSize;
 		ComputedSDF.NarrowBandMaxDistance = NarrowBandMaxDistance;
-		ComputedSDF.ExactBandWidth = FMath::CeilToInt(ComputedSDF.NarrowBandMaxDistance / ComputedSDF.CellSize);
+		ComputedSDF.ExactBandWidth = FMath::CeilToInt32(ComputedSDF.NarrowBandMaxDistance / ComputedSDF.CellSize);
 
 		// for meshes with long triangles relative to the width of the narrow band, don't use the AABB tree
 		double AvgEdgeLen = TMeshQueries<TriangleMeshType>::AverageEdgeLength(*Source);
@@ -218,14 +218,14 @@ protected:
 
 		MeshSDFType SecondSDF;
 		SecondSDF.Mesh = &MCAdapter;
-		SecondSDF.CellSize = GridCellSize;
+		SecondSDF.CellSize = (float)GridCellSize;
 		SecondSDF.Spatial = nullptr;
 
 		FAxisAlignedBox3d Bounds = MarchingCubes.Bounds;
 		Bounds.Expand(MeshCellSize); // (because mesh may spill one cell over bounds)
 
 		SecondSDF.NarrowBandMaxDistance = UnsignedOffset + SecondSDF.CellSize;
-		SecondSDF.ExactBandWidth = FMath::CeilToInt(SecondSDF.NarrowBandMaxDistance / SecondSDF.CellSize);
+		SecondSDF.ExactBandWidth = FMath::CeilToInt32(SecondSDF.NarrowBandMaxDistance / SecondSDF.CellSize);
 
 		if (SecondSDF.ExactBandWidth > 1) // for larger band width, prefer using the AABB tree to do one distance per cell.  TODO: tune?
 		{

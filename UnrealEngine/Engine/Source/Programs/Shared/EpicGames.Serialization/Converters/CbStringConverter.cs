@@ -1,12 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.ComponentModel;
 
 namespace EpicGames.Serialization.Converters
 {
-	class CbStringConverter<T> : CbConverterBase<T>
+	class CbStringConverter<T> : CbConverter<T>
 	{
 		readonly TypeConverter _typeConverter;
 
@@ -20,20 +19,20 @@ namespace EpicGames.Serialization.Converters
 			return (T)_typeConverter.ConvertFromInvariantString(field.AsString())!;
 		}
 
-		public override void WriteNamed(CbWriter writer, Utf8String name, T value)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, T value)
 		{
 			writer.WriteString(name, _typeConverter.ConvertToInvariantString(value));
 		}
 
 		public override void Write(CbWriter writer, T value)
-		{ 
+		{
 			writer.WriteStringValue(_typeConverter.ConvertToInvariantString(value)!);
 		}
 	}
 
 	class CbStringConverterFactory : CbConverterFactory
 	{
-		public override ICbConverter? CreateConverter(Type type)
+		public override CbConverter? CreateConverter(Type type)
 		{
 			TypeConverter? frameworkTypeConverter = TypeDescriptor.GetConverter(type);
 			if (frameworkTypeConverter == null || !frameworkTypeConverter.CanConvertFrom(typeof(string)) || !frameworkTypeConverter.CanConvertTo(typeof(string)))
@@ -42,7 +41,7 @@ namespace EpicGames.Serialization.Converters
 			}
 
 			Type converterType = typeof(CbStringConverter<>).MakeGenericType(type);
-			return (ICbConverter)Activator.CreateInstance(converterType, frameworkTypeConverter)!;
+			return (CbConverter)Activator.CreateInstance(converterType, frameworkTypeConverter)!;
 		}
 	}
 }

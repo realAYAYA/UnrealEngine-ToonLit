@@ -7,6 +7,7 @@
 #include "Roles/LiveLinkAnimationRole.h"
 #include "Roles/LiveLinkTransformRole.h"
 #include "Roles/LiveLinkTransformTypes.h"
+#include "Roles/LiveLinkBasicRole.h"
 
 ILiveLinkClient* LiveLinkControlRigUtilities::TryGetLiveLinkClient()
 {
@@ -135,5 +136,31 @@ FRigUnit_LiveLinkEvaluteFrameTransform_Execute()
 
 		Context.DrawInterface->DrawHierarchy(DebugDrawOffset, DebugHierarchy, EControlRigDrawHierarchyMode::Axes, 1.0f, DebugColor, 1.0f);
 		*/
+	}
+}
+
+FRigUnit_LiveLinkEvaluateBasicValue_Execute()
+{
+	// Get value by property name from basic data struct
+	if (ILiveLinkClient* LiveLinkClient = LiveLinkControlRigUtilities::TryGetLiveLinkClient())
+	{
+		FLiveLinkSubjectFrameData FrameData;
+		if (LiveLinkClient->EvaluateFrame_AnyThread(SubjectName, ULiveLinkBasicRole::StaticClass(), FrameData))
+		{
+			const FLiveLinkBaseStaticData* StaticData = FrameData.StaticData.Cast<FLiveLinkBaseStaticData>();
+			if(StaticData)
+			{
+				const int32 FoundIndex = StaticData->PropertyNames.Find(PropertyName);
+
+				if(FoundIndex != INDEX_NONE)
+				{
+					FLiveLinkBaseFrameData* BasicData = FrameData.FrameData.Cast<FLiveLinkBaseFrameData>();
+					if(StaticData->PropertyNames.Num() == BasicData->PropertyValues.Num()) //Catch case where the number of PropertyNames and PropertyValues don't match. This can happen in Blueprint Virtual Subjects.
+					{
+					Value = BasicData->PropertyValues[FoundIndex];
+					}
+				}
+			}
+		}
 	}
 }

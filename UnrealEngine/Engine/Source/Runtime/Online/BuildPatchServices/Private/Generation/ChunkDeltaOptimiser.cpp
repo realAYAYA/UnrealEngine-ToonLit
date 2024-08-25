@@ -83,8 +83,9 @@ namespace DeltaOptimiseHelpers
 #if UE_BUILD_DEBUG
 		static const bool bSingleScannerThread = FParse::Param(FCommandLine::Get(), TEXT("singlescanneronly"));
 		return bSingleScannerThread ? false : bHasUnusedCpu;
-#endif
+#else
 		return bHasUnusedCpu;
+#endif
 	}
 
 	template <typename T>
@@ -101,8 +102,9 @@ namespace DeltaOptimiseHelpers
 #if UE_BUILD_DEBUG
 		static const bool bSingleScannerThread = FParse::Param(FCommandLine::Get(), TEXT("singlescanneronly"));
 		return bSingleScannerThread ? (FDataScannerCounter::GetNumIncompleteScanners() + FDataScannerCounter::GetNumRunningScanners()) > 0 : bScannerArrayFull;
-#endif
+#else
 		return bScannerArrayFull;
+#endif
 	}
 
 	FChunkPart SelectBytes(const FChunkPart& FullPart, uint32 LeftChop, uint32 Size)
@@ -564,7 +566,7 @@ namespace BuildPatchServices
 		~FChunkDeltaOptimiser();
 
 		// IChunkDeltaOptimiser interface begin.
-		virtual	bool Run() override;
+		virtual bool Run() override;
 		// IChunkDeltaOptimiser interface end.
 
 	private:
@@ -586,7 +588,6 @@ namespace BuildPatchServices
 		TUniquePtr<IDownloadService> DownloadService;
 		TUniquePtr<IMessagePump> MessagePump;
 		TUniquePtr<FStatsCollector> StatsCollector;
-		TArray<FMessageHandler*> MessageHandlers;
 		FThreadSafeBool bShouldRun;
 		FThreadSafeBool bSuccess;
 
@@ -610,7 +611,7 @@ namespace BuildPatchServices
 		, DownloadSpeedRecorder(FSpeedRecorderFactory::Create())
 		, InstallerAnalytics(FInstallerAnalyticsFactory::Create(nullptr))
 		, DownloadServiceStatistics(FDownloadServiceStatisticsFactory::Create(DownloadSpeedRecorder.Get(), ChunkDataSizeProvider.Get(), InstallerAnalytics.Get()))
-		, DownloadService(FDownloadServiceFactory::Create(CoreTicker, HttpManager.Get(), FileSystem.Get(), DownloadServiceStatistics.Get(), InstallerAnalytics.Get()))
+		, DownloadService(FDownloadServiceFactory::Create(HttpManager.Get(), FileSystem.Get(), DownloadServiceStatistics.Get(), InstallerAnalytics.Get()))
 		, MessagePump(FMessagePumpFactory::Create())
 		, StatsCollector(FStatsCollectorFactory::Create())
 		, bShouldRun(true)
@@ -669,7 +670,7 @@ namespace BuildPatchServices
 			FTSTicker::GetCoreTicker().Tick(DeltaTime);
 
 			// Message pump.
-			MessagePump->PumpMessages(MessageHandlers);
+			MessagePump->PumpMessages();
 
 			// Log collected stats.
 			GLog->FlushThreadedLogs();
@@ -803,7 +804,7 @@ namespace BuildPatchServices
 				TUniquePtr<DeltaFactories::FCloudChunkSourceFactory> CloudChunkSourceFactoryB(new DeltaFactories::FCloudChunkSourceFactory(Configuration.CloudDirectory, CloudChunkSourceFactorySharedB));
 
 				// Buffer for data streaming.
-				const bool bAllowShrinking = false;
+				const EAllowShrinking AllowShrinking = EAllowShrinking::No;
 				const uint32 StreamBufferReadSize = Configuration.ScanWindowSize * 32;
 				const uint32 ScannerDataSize = StreamBufferReadSize;
 				TArray<uint8> StreamBuffer;
@@ -848,7 +849,7 @@ namespace BuildPatchServices
 				FMeanValue MeanScannerTime(5);
 				int32 ConsumedBufferData = 0;
 				uint64 StreamStartPosition = 0;
-				StreamBuffer.SetNumUninitialized(0, bAllowShrinking);
+				StreamBuffer.SetNumUninitialized(0, AllowShrinking);
 				const TMap<FDeltaChunkId, FChunkBuildReference>& ChunkBuildReferences = DeltaChunkEnumeration->GetChunkBuildReferences();
 				uint64 BuildBScanTimer;
 				FStatsCollector::AccumulateTimeBegin(BuildBScanTimer);
@@ -870,9 +871,9 @@ namespace BuildPatchServices
 						ConsumedBufferData = 0;
 
 						// Fill the rest of the buffer.
-						StreamBuffer.SetNumUninitialized(BufferDataSize + StreamBufferReadSize, bAllowShrinking);
+						StreamBuffer.SetNumUninitialized(BufferDataSize + StreamBufferReadSize, AllowShrinking);
 						const uint32 SizeRead = ManifestBStream->DequeueData(StreamBuffer.GetData() + BufferDataSize, StreamBufferReadSize);
-						StreamBuffer.SetNumUninitialized(BufferDataSize + SizeRead, bAllowShrinking);
+						StreamBuffer.SetNumUninitialized(BufferDataSize + SizeRead, AllowShrinking);
 						BufferDataSize = StreamBuffer.Num();
 					}
 
@@ -988,7 +989,7 @@ namespace BuildPatchServices
 
 								// Adjust original meta.
 								DataScannerEntry.bIsFinalScanner = false;
-								DataScannerEntry.Data.SetNumUninitialized(UnscannedRange.GetFirst(), false);
+								DataScannerEntry.Data.SetNumUninitialized(UnscannedRange.GetFirst(), EAllowShrinking::No);
 							}
 							else
 							{
@@ -1057,7 +1058,7 @@ namespace BuildPatchServices
 				TUniquePtr<IChunkDataSerialization> ChunkDataSerializationWriter(FChunkDataSerializationFactory::Create(FileSystem.Get(), ManifestB->ManifestMeta.FeatureLevel));
 				FParallelChunkWriterConfig ChunkWriterConfig = FParallelChunkWriterConfig({5, 5, 50, 8, Configuration.CloudDirectory, ManifestB->ManifestMeta.FeatureLevel});
 				TUniquePtr<IParallelChunkWriter> ChunkWriter(FParallelChunkWriterFactory::Create(ChunkWriterConfig, FileSystem.Get(), ChunkDataSerializationWriter.Get(), StatsCollector.Get()));
-				StreamBuffer.SetNumUninitialized(0, bAllowShrinking);
+				StreamBuffer.SetNumUninitialized(0, AllowShrinking);
 				for (const TTuple<FBlockStructure, FChunkPart>& NewChunk : NewChunks)
 				{
 					const FBlockStructure& NewChunkStructure = NewChunk.Get<0>();
@@ -1068,7 +1069,7 @@ namespace BuildPatchServices
 
 					// Collect all the chunk data.
 					const FBlockEntry* NewChunkBlock = NewChunkStructure.GetHead();
-					StreamBuffer.SetNumUninitialized(NewChunkPart.Size, bAllowShrinking);
+					StreamBuffer.SetNumUninitialized(NewChunkPart.Size, AllowShrinking);
 					uint32 ChunkLocationOffset = 0;
 					while (NewChunkBlock)
 					{
@@ -1080,7 +1081,7 @@ namespace BuildPatchServices
 					check(ChunkLocationOffset == StreamBuffer.Num());
 
 					// Ensure padding if necessary.
-					StreamBuffer.SetNumZeroed(OutputChunkSize, bAllowShrinking);
+					StreamBuffer.SetNumZeroed(OutputChunkSize, AllowShrinking);
 
 					// Save out new chunk.
 					const uint64 NewChunkHash = FRollingHash::GetHashForDataSet(StreamBuffer.GetData(), StreamBuffer.Num());
@@ -1117,7 +1118,7 @@ namespace BuildPatchServices
 					{
 						const FChunkInfo* UpgradeChunkInfo = ManifestA->GetChunkInfo(UpgradeChunk);
 						IChunkDataAccess* UpgradeChunkDataAccess = UpgradeCloudChunkSource->Get(UpgradeChunk);
-						checkf(UpgradeChunkDataAccess != nullptr, TEXT("Failed to download chunk from source %s."), *FBuildPatchUtils::GetDataFilename(*ManifestA.Get(), Configuration.CloudDirectory, UpgradeChunk));
+						checkf(UpgradeChunkDataAccess != nullptr, TEXT("Failed to download chunk from source %s."), *FBuildPatchUtils::GetDataFilename(*ManifestA.Get(), UpgradeChunk));
 						FScopeLockedChunkData LockedChunkData(UpgradeChunkDataAccess);
 						TArray<uint8> ChunkDataArray(LockedChunkData.GetData(), LockedChunkData.GetHeader()->DataSizeUncompressed);
 						ChunkWriter->AddChunkData(MoveTemp(ChunkDataArray), UpgradeChunk, UpgradeChunkInfo->Hash, UpgradeChunkInfo->ShaHash);

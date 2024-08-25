@@ -26,6 +26,23 @@ public:
 	static constexpr FSolverReal MaxStiffness = (FSolverReal)1e7;
 
 	FXPBDAxialSpringConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVec3<int32>>& InConstraints,
+		const TConstArrayView<FRealSingle>& StiffnessMultipliers,
+		const FSolverVec2& InStiffness,
+		bool bTrimKinematicConstraints)
+		: Base(
+			Particles,
+			InConstraints,
+			StiffnessMultipliers,
+			InStiffness,
+			bTrimKinematicConstraints,
+			MaxStiffness)
+	{
+		Lambdas.Init(0.f, Constraints.Num());
+	}
+
+	FXPBDAxialSpringConstraints(
 		const FSolverParticles& Particles,
 		int32 ParticleOffset,
 		int32 ParticleCount,
@@ -54,7 +71,8 @@ public:
 
 	void Init() const { for (FSolverReal& Lambda : Lambdas) { Lambda = (FSolverReal)0.; } }
 
-	void Apply(FSolverParticles& Particles, const FSolverReal Dt) const
+	template<typename SolverParticlesOrRange>
+	void Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
 	{
 		SCOPE_CYCLE_COUNTER(STAT_XPBD_AxialSpring);
 		if (!Stiffness.HasWeightMap())
@@ -114,7 +132,8 @@ public:
 	}
 
 private:
-	FSolverVec3 GetDelta(const FSolverParticles& Particles, const FSolverReal Dt, const int32 InConstraintIndex, const FSolverReal StiffnessValue) const
+	template<typename SolverParticlesOrRange>
+	FSolverVec3 GetDelta(const SolverParticlesOrRange& Particles, const FSolverReal Dt, const int32 InConstraintIndex, const FSolverReal StiffnessValue) const
 	{
 		const TVector<int32, 3>& Constraint = Constraints[InConstraintIndex];
 		const int32 i1 = Constraint[0];
@@ -174,6 +193,21 @@ public:
 	{
 		return IsXPBDAreaSpringStiffnessEnabled(PropertyCollection, false);
 	}
+
+	FXPBDAreaSpringConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVec3<int32>>& InConstraints,
+		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+		const FCollectionPropertyConstFacade& PropertyCollection,
+		bool bTrimKinematicConstraints)
+		: FXPBDAxialSpringConstraints(
+			Particles,
+			InConstraints,
+			WeightMaps.FindRef(GetXPBDAreaSpringStiffnessString(PropertyCollection, XPBDAreaSpringStiffnessName.ToString())),
+			FSolverVec2(GetWeightedFloatXPBDAreaSpringStiffness(PropertyCollection, MaxStiffness)),
+			bTrimKinematicConstraints)
+		, XPBDAreaSpringStiffnessIndex(PropertyCollection)
+	{}
 
 	FXPBDAreaSpringConstraints(
 		const FSolverParticles& Particles,

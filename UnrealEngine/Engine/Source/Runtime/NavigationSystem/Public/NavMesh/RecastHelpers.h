@@ -10,11 +10,15 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "Math/Box.h"
 #include "Math/Color.h"
 #include "Math/Matrix.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Math/UnrealMathSSE.h"
+#endif
 #include "Math/Vector.h"
 
 

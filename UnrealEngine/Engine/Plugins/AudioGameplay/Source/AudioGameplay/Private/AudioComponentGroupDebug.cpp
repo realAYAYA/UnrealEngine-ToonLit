@@ -131,8 +131,6 @@ FString FAudioComponentGroupDebug::GetDebugParamString(const FAudioParameter& Pa
 	default:
 		return FString::Printf(TEXT("%s : Unsupported Type \n"), *Param.ParamName.ToString());
 	}
-
-	return FString();
 }
 
 FString FAudioComponentGroupDebug::DebugPrintActiveSounds(const UAudioComponentGroup* ComponentGroup)

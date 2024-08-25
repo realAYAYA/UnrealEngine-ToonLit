@@ -11,6 +11,7 @@
 #include "Chaos/ParticleHandle.h"
 #include "Chaos/BVHParticles.h"
 #include "Math/Vector.h"
+#include "Templates/TypeHash.h"
 
 struct FManagedArrayCollection;
 DEFINE_LOG_CATEGORY_STATIC(UManagedArrayLogging, NoLogging, All);
@@ -112,6 +113,12 @@ namespace ManagedArrayTypeSize
 	{
 		return Ptr ? ManagedArrayTypeSize::GetAllocatedSize(*Ptr) : 0;
 	}
+	
+	template<typename T>
+	inline SIZE_T GetAllocatedSize(const TRefCountPtr<T>& Ptr)
+	{
+		return Ptr ? ManagedArrayTypeSize::GetAllocatedSize(*Ptr) : 0;
+	}
 
 	template<typename T, ESPMode Mode>
 	inline SIZE_T GetAllocatedSize(const TSharedPtr<T, Mode>& Ptr)
@@ -171,6 +178,11 @@ protected:
 	* Init from a predefined Array
 	*/
 	virtual void Init(const FManagedArrayBase& ) {};
+
+	/**
+	* Convert from a predefined Array, the managed array itself should have defined its conversion procedure
+	*/
+	virtual void Convert(const FManagedArrayBase&) { ensureMsgf(false, TEXT("Type change not supported")); /* This type has no conversion process defined*/ };
 
 	/**
 	* Copy a range of values from the ConstArray into this
@@ -274,9 +286,13 @@ void InitHelper(TArray<T>& Array, const TManagedArrayBase<T>& NewTypedArray, int
 template <typename T>
 void InitHelper(TArray<TUniquePtr<T>>& Array, const TManagedArrayBase<TUniquePtr<T>>& NewTypedArray, int32 Size);
 template <typename T>
+void InitHelper(TArray<TRefCountPtr<T>>& Array, const TManagedArrayBase<TRefCountPtr<T>>& NewTypedArray, int32 Size);
+template <typename T>
 void CopyRangeHelper(TArray<T>& Target, const TManagedArrayBase<T>& Source, int32 Start, int32 Stop, int32 Offset);
 template <typename T>
 void CopyRangeHelper(TArray<TUniquePtr<T>>& Array, const TManagedArrayBase<TUniquePtr<T>>& ConstArray, int32 Start, int32 Stop, int32 Offset);
+template <typename T>
+void CopyRangeHelper(TArray<TRefCountPtr<T>>& Array, const TManagedArrayBase<TRefCountPtr<T>>& ConstArray, int32 Start, int32 Stop, int32 Offset);
 
 /***
 *  Managed Array
@@ -357,12 +373,12 @@ public:
 		{
 			if (ii == 0)
 			{
-				Array.RemoveAt(SortedDeletionList[0], RangeStart - SortedDeletionList[0] + 1, false);
+				Array.RemoveAt(SortedDeletionList[0], RangeStart - SortedDeletionList[0] + 1, EAllowShrinking::No);
 
 			}
 			else if (SortedDeletionList[ii] != (SortedDeletionList[ii - 1]+1)) // compare this and previous values to make sure the difference is only 1.
 			{
-				Array.RemoveAt(SortedDeletionList[ii], RangeStart - SortedDeletionList[ii] + 1, false);
+				Array.RemoveAt(SortedDeletionList[ii], RangeStart - SortedDeletionList[ii] + 1, EAllowShrinking::No);
 				RangeStart = SortedDeletionList[ii-1];
 			}
 		}
@@ -570,6 +586,14 @@ public:
 		}
 	}
 
+	/**
+	* This hash is using HashCombineFast and should not be serialized!
+	*/
+	FORCEINLINE uint32 GetTypeHash() const
+	{
+		return GetArrayHash(Array.GetData(), Array.Num());
+	}
+
 	typedef typename TArray<InElementType>::RangedForIteratorType		RangedForIteratorType;
 	typedef typename TArray<InElementType>::RangedForConstIteratorType	RangedForConstIteratorType;
 
@@ -582,7 +606,7 @@ public:
 	FORCEINLINE RangedForIteratorType      end  ()			{ return Array.end(); }
 	FORCEINLINE RangedForConstIteratorType end  () const	{ return Array.end(); }
 
-private:
+protected:
 	/**
 	* Protected Resize to prevent external resizing of the array
 	*
@@ -590,7 +614,7 @@ private:
 	*/
 	void Resize(const int32 Size) 
 	{ 
-		Array.SetNum(Size,true);
+		Array.SetNum(Size,EAllowShrinking::Yes);
 	}
 
 	/**
@@ -629,6 +653,12 @@ private:
 
 };
 
+template<class T>
+inline uint32 GetTypeHash(const TManagedArrayBase<T>& ManagedArray)
+{
+	return ManagedArray.GetTypeHash();
+}
+
 template <typename T>
 void InitHelper(TArray<T>& Array, const TManagedArrayBase<T>& NewTypedArray, int32 Size)
 {
@@ -638,14 +668,30 @@ void InitHelper(TArray<T>& Array, const TManagedArrayBase<T>& NewTypedArray, int
 	}
 }
 
+
+template <typename TSrc, typename TDst>
+void InitHelper(TArray<TDst>& Array, const TManagedArrayBase<TSrc>& NewTypedArray, int32 Size)
+{
+	for (int32 Index = 0; Index < Size; Index++)
+	{
+		Array[Index] = TDst(NewTypedArray[Index]);
+	}
+}
+
 template <typename T>
 void InitHelper(TArray<TUniquePtr<T>>& Array, const TManagedArrayBase<TUniquePtr<T>>& NewTypedArray, int32 Size)
+{
+	check(false);
+}
+
+template <typename T>
+void InitHelper(TArray<TRefCountPtr<T>>& Array, const TManagedArrayBase<TRefCountPtr<T>>& NewTypedArray, int32 Size)
 {
 	for (int32 Index = 0; Index < Size; Index++)
 	{
 		if (NewTypedArray[Index])
 		{
-			Array[Index].Reset((T*)NewTypedArray[Index]->Copy().Release());
+			Array[Index] = NewTypedArray[Index];
 		}
 	}
 }
@@ -662,9 +708,15 @@ void CopyRangeHelper(TArray<T>& Target, const TManagedArrayBase<T>& Source, int3
 template <typename T>
 void CopyRangeHelper(TArray<TUniquePtr<T>>& Target, const TManagedArrayBase<TUniquePtr<T>>& Source, int32 Start, int32 Stop, int32 Offset)
 {
+	check(false);
+}
+
+template <typename T>
+void CopyRangeHelper(TArray<TRefCountPtr<T>>& Target, const TManagedArrayBase<TRefCountPtr<T>>& Source, int32 Start, int32 Stop, int32 Offset)
+{
 	for (int32 Sdx = Start, Tdx = Start+Offset; Sdx<Source.Num() && Tdx<Target.Num() && Sdx<Stop; Sdx++, Tdx++)
 	{
-		Target[Tdx].Reset((T*)Source[Sdx]->Copy().Release());
+		Target[Tdx] = Source[Sdx];
 	}
 }
 
@@ -952,7 +1004,7 @@ public:
 		}
 
 	}
-private:
+protected:
 	/**
 	* Protected Resize to prevent external resizing of the array
 	*
@@ -1132,8 +1184,63 @@ public:
 
 
 template<>
+class TManagedArray<FTransform3f> : public TManagedArrayBase<FTransform3f>
+{
+public:
+	FORCEINLINE TManagedArray()
+	{}
+
+	FORCEINLINE TManagedArray(const TArray<FTransform3f>& Other)
+		: TManagedArrayBase<FTransform3f>(Other)
+	{}
+
+	FORCEINLINE TManagedArray(const TManagedArray<FTransform3f>& Other) = delete;
+	FORCEINLINE TManagedArray(TManagedArray<FTransform3f>&& Other) = default;
+	FORCEINLINE TManagedArray(TArray<FTransform3f>&& Other)
+		: TManagedArrayBase<FTransform3f>(MoveTemp(Other))
+	{}
+	FORCEINLINE TManagedArray& operator=(TManagedArray<FTransform3f>&& Other) = default;
+
+	virtual ~TManagedArray()
+	{}
+
+protected:
+	/**
+	* Init from a predefined Array of matching type
+	*/
+	virtual void Convert(const FManagedArrayBase& NewArray) override
+	{
+		check(NewArray.GetTypeSize() != GetTypeSize());
+		check(NewArray.GetTypeSize() == 2 * GetTypeSize());
+		check(NewArray.GetTypeSize() == sizeof(FTransform));
+		const TManagedArrayBase<FTransform>& NewTypedArray = static_cast<const TManagedArrayBase<FTransform>&>(NewArray);
+		const int32 Size = NewTypedArray.Num();
+		Resize(Size);
+		InitHelper(Array, NewTypedArray, Size);
+	}
+};
+
+template<>
 class TManagedArray<bool> : public FManagedBitArrayBase
-{};
+{
+protected:
+	/**
+	* Init from a predefined Array of matching type
+	*/
+	virtual void Convert(const FManagedArrayBase& NewArray) override
+	{
+		check(NewArray.GetTypeSize() != GetTypeSize());
+		check(NewArray.GetTypeSize() == sizeof(int32));
+		
+		const TManagedArrayBase<int32>& NewTypedArray = static_cast<const TManagedArrayBase<int32>&>(NewArray);
+		const int32 Size = NewTypedArray.Num();
+		Resize(Size);
+		for (int32 Index = 0; Index < Size; Index++)
+		{
+			Array[Index] = NewTypedArray[Index] != INDEX_NONE;
+		}
+	}
+};
 
 template<>
 class TManagedArray<TSet<int32>> : public TManagedArrayBase<TSet<int32>>
@@ -1569,6 +1676,80 @@ public:
 				if (RemapValArray[ArrayIndex] >= 0)
 				{
 					RemapValArray[ArrayIndex] = InverseNewOrder[RemapValArray[ArrayIndex]];
+				}
+			}
+		}
+	}
+};
+
+template<>
+class TManagedArray<TArray<FIntVector3>> : public TManagedArrayBase<TArray<FIntVector3>>
+{
+public:
+	using TManagedArrayBase<TArray<FIntVector3>>::Num;
+
+	TManagedArray() = default;
+
+	TManagedArray(const TArray<TArray<FIntVector3>>& Other)
+		: TManagedArrayBase<TArray<FIntVector3>>(Other)
+	{}
+
+	TManagedArray(const TManagedArray<TArray<FIntVector3>>& Other) = delete;
+	TManagedArray(TManagedArray<TArray<FIntVector3>>&& Other) = default;
+	TManagedArray(TArray<TArray<FIntVector3>>&& Other)
+		: TManagedArrayBase<TArray<FIntVector3>>(MoveTemp(Other))
+	{}
+	
+	TManagedArray& operator=(TManagedArray<TArray<FIntVector3>>&& Other) = default;
+
+	virtual ~TManagedArray() override = default;
+
+	virtual void Reindex(const TArray<int32>& Offsets, const int32& FinalSize, const TArray<int32>& SortedDeletionList, const TSet<int32>& DeletionSet) override
+	{
+		UE_LOG(UManagedArrayLogging, Log, TEXT("TManagedArray<FIntVector>[%p]::Reindex()"), this);
+		const int32 ArraySize = Num();
+		const int32 MaskSize = Offsets.Num();
+		for (int32 Index = 0; Index < ArraySize; ++Index)
+		{
+			const TArray<FIntVector3>& RemapValArray = this->operator[](Index);
+			for (int32 ArrayIndex = 0; ArrayIndex < RemapValArray.Num(); ++ArrayIndex)
+			{
+				const FIntVector3& RemapVal = RemapValArray[ArrayIndex];
+				for (int32 i = 0; i < FIntVector3::Num(); ++i)
+				{
+					if (0 <= RemapVal[i])
+					{
+						ensure(RemapVal[i] < MaskSize);
+						if (DeletionSet.Contains(this->operator[](Index)[ArrayIndex][i]))
+						{
+							this->operator[](Index)[ArrayIndex][i] = INDEX_NONE;
+						}
+						else
+						{
+							this->operator[](Index)[ArrayIndex][i] -= Offsets[RemapVal[i]];
+						}
+						ensure(-1 <= this->operator[](Index)[ArrayIndex][i] && this->operator[](Index)[ArrayIndex][i] <= FinalSize);
+					}
+				}
+			}
+		}
+	}
+
+	virtual void ReindexFromLookup(const TArray<int32>& InverseNewOrder) override
+	{
+		const int32 ArraySize = Num();
+		for (int32 Index = 0; Index < ArraySize; ++Index)
+		{
+			TArray<FIntVector3>& RemapValArray = this->operator[](Index);
+			for (int32 ArrayIndex = 0; ArrayIndex < RemapValArray.Num(); ++ArrayIndex)
+			{
+				FIntVector3& RemapVal = RemapValArray[ArrayIndex];
+				for (int32 i = 0; i < FIntVector3::Num(); ++i)
+				{
+					if (RemapVal[i] >= 0)
+					{
+						RemapVal[i] = InverseNewOrder[RemapVal[i]];
+					}
 				}
 			}
 		}

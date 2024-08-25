@@ -41,6 +41,12 @@ struct FCurveExpressionList
 	TArray<FCurveExpressionParsedAssignment> GetParsedAssignments() const;
 };
 
+struct FExpressionData
+{
+	TArray<FName> NamedConstants;
+	TMap<FName, CurveExpression::Evaluator::FExpressionObject> ExpressionMap;
+};
+
 
 UCLASS(BlueprintType)
 class CURVEEXPRESSION_API UCurveExpressionsDataAsset :
@@ -54,11 +60,7 @@ public:
 	FCurveExpressionList Expressions;
 #endif
 
-	/** Returns the list of named constants used by ExpressionList */
-	const TArray<FName>& GetCompiledExpressionConstants() const;
-
-	/** Returns the list of compiled expressions generated from ExpressionList */
-	const TMap<FName, CurveExpression::Evaluator::FExpressionObject>& GetCompiledExpressionMap() const;
+	TSharedPtr<const FExpressionData> GetCompiledExpressionData() const { return ExpressionData; }
 
 	// UObject overrides
 	void Serialize(FArchive& Ar) override;
@@ -70,22 +72,9 @@ private:
 #if WITH_EDITOR
 	void CompileExpressions();
 #endif
-
-	void SynchronizeThreadCopy() const;
-	
-	mutable FCriticalSection ExpressionMapWriteLock;
-	
-	std::atomic<uint32> SerialNumber{0};
 	
 	UPROPERTY()
-	TArray<FName> NamedConstants;
+	TArray<FName> NamedConstants_DEPRECATED;	
 	
-	TMap<FName, CurveExpression::Evaluator::FExpressionObject> ExpressionMap;
-
-	const struct FExpressionDataShadowCopy
-	{
-		uint32 SerialNumber{UINT_MAX};
-		TArray<FName> NamedConstants;
-		TMap<FName, CurveExpression::Evaluator::FExpressionObject> ExpressionMap;
-	} ThreadCopy;
+	TSharedPtr<FExpressionData> ExpressionData;
 };

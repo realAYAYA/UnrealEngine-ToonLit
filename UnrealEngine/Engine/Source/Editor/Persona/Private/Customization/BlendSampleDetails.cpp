@@ -193,6 +193,10 @@ void FBlendSampleDetails::CustomizeDetails(class IDetailLayoutBuilder& DetailBui
 			GET_MEMBER_NAME_CHECKED(FBlendSample, RateScale), FBlendSample::StaticStruct());
 		CategoryBuilder.AddProperty(RateScaleProperty);
 
+		TSharedPtr<IPropertyHandle> IncludeInAnalyseAllProperty = DetailBuilder.GetProperty(
+			GET_MEMBER_NAME_CHECKED(FBlendSample, bIncludeInAnalyseAll), FBlendSample::StaticStruct());
+		CategoryBuilder.AddProperty(IncludeInAnalyseAllProperty);
+
 		bool bShowAnalysis = false;
 		bool bAnalyzed[3] = { false, false, false };
 		// Note that the analyzed position won't change whilst this menu is open, but the original value might.

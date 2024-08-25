@@ -11,6 +11,7 @@
 #include "Engine/Level.h"
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/PlayerController.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 #include "Materials/MaterialRelevance.h"
 #include "UObject/UObjectIterator.h"
@@ -42,6 +43,7 @@
 #include "DeviceProfiles/DeviceProfile.h"
 #include "DeviceProfiles/DeviceProfileManager.h"
 #include "PSOPrecache.h"
+#include "PSOPrecacheMaterial.h"
 #include "PrimitiveSceneProxy.h"
 #include "RenderingThread.h"
 #include "SceneInterface.h"
@@ -142,60 +144,42 @@ void UFXSystemAsset::PostInitProperties()
 	CSVStat_Activation = *FString::Printf(TEXT("Activation/%s"), *GetFName().ToString());
 	CSVStat_Waits = *FString::Printf(TEXT("Waits/%s"), *GetFName().ToString());
 	CSVStat_Culled = *FString::Printf(TEXT("Culled/%s"), *GetFName().ToString());
+	CSVStat_MemoryKB = *FString::Printf(TEXT("MemoryKB/%s"), *GetFName().ToString());
 #endif
 }
 
-bool UFXSystemAsset::IsReadyForFinishDestroy()
+void UFXSystemAsset::LaunchPSOPrecaching(const FMaterialInterfacePSOPrecacheParamsList& PSOPrecacheParamsList)
 {
-	// Don't touch PrecachePSOsEvent directly because the cleanup task could set to a nullptr
-	if (PrecachePSOsEvent)
-	{
-		return false;
-	}
-
-	return Super::IsReadyForFinishDestroy();
-}
-
-void UFXSystemAsset::LaunchPSOPrecaching(TArrayView<VFsPerMaterialData> VFsPerMaterials)
-{
-	FPSOPrecacheParams PreCachePSOParams;
-	PreCachePSOParams.SetMobility(EComponentMobility::Movable);
-
 	FGraphEventArray PrecachePSOsEvents;
-	for (VFsPerMaterialData& VFsPerMaterial : VFsPerMaterials)
-	{
-		if (VFsPerMaterial.MaterialInterface)
-		{
-			PreCachePSOParams.PrimitiveType = (EPrimitiveType)VFsPerMaterial.PrimitiveType;
-			PreCachePSOParams.bDisableBackFaceCulling = VFsPerMaterial.bDisableBackfaceCulling;
-			PrecachePSOsEvents.Append(VFsPerMaterial.MaterialInterface->PrecachePSOs(VFsPerMaterial.VertexFactoryData, PreCachePSOParams,EPSOPrecachePriority::Medium, MaterialPSOPrecacheRequestIDs));
-		}
-	}
+	PrecacheMaterialPSOs(PSOPrecacheParamsList, MaterialPSOPrecacheRequestIDs, PrecachePSOsEvents);
 
 	// Create task to signal that the PSO precache events are done by adding them as prerequisite to the task.
 	if (PrecachePSOsEvents.Num() > 0)
 	{
 		struct FReleasePrecachePSOsEventTask
 		{
-			explicit FReleasePrecachePSOsEventTask(FGraphEventRef& InPrecachePSOsEvent)
-				: PrecachePSOsEvent(&InPrecachePSOsEvent)
+			explicit FReleasePrecachePSOsEventTask(UFXSystemAsset* OwnerAsset)
+				: WeakOwnerAsset(OwnerAsset)
 			{
 			}
 
 			static TStatId GetStatId() { return TStatId(); }
-			static ENamedThreads::Type GetDesiredThread() { return ENamedThreads::AnyThread; }
+			static ENamedThreads::Type GetDesiredThread() { return ENamedThreads::GameThread; }
 			static ESubsequentsMode::Type GetSubsequentsMode() { return ESubsequentsMode::TrackSubsequents; }
 
 			void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 			{
-				*PrecachePSOsEvent = nullptr;
+				if (UFXSystemAsset* Asset = WeakOwnerAsset.Get())
+				{
+					Asset->PrecachePSOsEvent = nullptr;
+				}
 			}
 
-			FGraphEventRef* PrecachePSOsEvent;
+			TWeakObjectPtr<UFXSystemAsset> WeakOwnerAsset;
 		};
 
 		// need to set `PrecachePSOsEvent` before the task is launched to not race with its execution
-		TGraphTask<FReleasePrecachePSOsEventTask>* ReleasePrecachePSOsEventTask = TGraphTask<FReleasePrecachePSOsEventTask>::CreateTask(&PrecachePSOsEvents).ConstructAndHold(PrecachePSOsEvent);
+		TGraphTask<FReleasePrecachePSOsEventTask>* ReleasePrecachePSOsEventTask = TGraphTask<FReleasePrecachePSOsEventTask>::CreateTask(&PrecachePSOsEvents).ConstructAndHold(this);
 		PrecachePSOsEvent = ReleasePrecachePSOsEventTask->GetCompletionEvent();
 		ReleasePrecachePSOsEventTask->Unlock();
 	}
@@ -250,6 +234,40 @@ ENGINE_API bool GIsAllowingParticles = true;
 
 /** Whether to calculate LOD on the GameThread in-game. */
 bool GbEnableGameThreadLODCalculation = true;
+
+namespace CascadeLocal
+{
+	bool			bUseTemplateDenyList = false;
+	TSet<FName>		TemplateDenyList;
+	FString			TemplateDenyListString;
+
+	static void UpdateTemplateDenyList(IConsoleVariable*)
+	{
+		TArray<FString> Names;
+		TemplateDenyListString.ParseIntoArray(Names, TEXT(","));
+
+		TemplateDenyList.Empty();
+		for (const FString& Name : Names)
+		{
+			TemplateDenyList.Emplace(Name);
+		}
+
+		bUseTemplateDenyList = TemplateDenyList.Num() > 0;
+	}
+
+	bool AllowTemplate(UParticleSystem* Template)
+	{
+		return !bUseTemplateDenyList || (Template && !TemplateDenyList.Contains(Template->GetFName()));
+	}
+
+	static FAutoConsoleVariableRef CVarCascadeSetTemplateDenyList(
+		TEXT("fx.Cascade.SetTemplateDenyList"),
+		TemplateDenyListString,
+		TEXT("Set the template deny List to use. (i.e. P_SystemA,P_SystemB)"),
+		FConsoleVariableDelegate::CreateStatic(UpdateTemplateDenyList),
+		ECVF_Scalability | ECVF_Default
+	);
+}
 
 // Comment this in to debug empty emitter instance templates...
 //#define _PSYSCOMP_DEBUG_INVALID_EMITTER_INSTANCE_TEMPLATES_
@@ -1959,7 +1977,7 @@ void UParticleEmitter::CacheEmitterModuleInfo()
 
 float UParticleEmitter::GetQualityLevelSpawnRateMult()
 {
-	int32 EffectsQuality = Scalability::GetEffectsQualityDirect(IsInGameThread());
+	int32 EffectsQuality = Scalability::GetEffectsQualityDirect(IsInGameThread() || IsInParallelGameThread());
 	int32 ReferenceLevel = CVarQLSpawnRateReferenceLevel.GetValueOnAnyThread(true);
 	float Level = (ReferenceLevel - EffectsQuality);
 	float Q = FMath::Pow(QualityLevelSpawnRateScale, Level);
@@ -2694,7 +2712,10 @@ void UParticleSystem::PrecachePSOs()
 		return;
 	}
 
-	TArray<VFsPerMaterialData, TInlineAllocator<4>> VFsPerMaterials;
+	FMaterialInterfacePSOPrecacheParamsList PSOPrecacheParamsList;
+
+	FMaterialInterfacePSOPrecacheParams NewEntry;
+	NewEntry.PSOPrecacheParams.SetMobility(EComponentMobility::Movable);
 
 	// No per component emitter materials known at this point in time
 	TArray<UMaterialInterface*> EmptyEmitterMaterials;
@@ -2734,29 +2755,17 @@ void UParticleSystem::PrecachePSOs()
 
 				for (UMaterialInterface* MaterialInterface : Materials)
 				{
-					EPrimitiveType PrimitiveType = PrecacheParams.PrimitiveType;
+					NewEntry.MaterialInterface = MaterialInterface;
+					NewEntry.VertexFactoryDataList = PrecacheParams.VertexFactoryDataList;
+					NewEntry.PSOPrecacheParams.PrimitiveType = PrecacheParams.PrimitiveType;
 
-					VFsPerMaterialData* VFsPerMaterial = VFsPerMaterials.FindByPredicate([MaterialInterface, PrimitiveType](const VFsPerMaterialData& Other)
-						{
-							return Other.MaterialInterface == MaterialInterface && Other.PrimitiveType == PrimitiveType;
-						});
-					if (VFsPerMaterial == nullptr)
-					{
-						VFsPerMaterial = &VFsPerMaterials.AddDefaulted_GetRef();
-						VFsPerMaterial->MaterialInterface = MaterialInterface;
-						VFsPerMaterial->PrimitiveType = PrimitiveType;
-					}
-					
-					for (FPSOPrecacheVertexFactoryData VFData : PrecacheParams.VertexFactoryDataList)
-					{
-						VFsPerMaterial->VertexFactoryData.AddUnique(VFData);
-					}
+					AddMaterialInterfacePSOPrecacheParamsToList(NewEntry, PSOPrecacheParamsList);
 				}
 			}
 		}
 	}
 
-	LaunchPSOPrecaching(VFsPerMaterials);
+	LaunchPSOPrecaching(PSOPrecacheParamsList);
 }
 
 void UParticleSystem::Serialize(FArchive& Ar)
@@ -2777,7 +2786,7 @@ void UParticleSystem::Serialize(FArchive& Ar)
 			if (DeviceProfile->GetConsolidatedCVarValue(TEXT("fx.PruneEmittersOnCookByDetailMode"), CVarDoPrune) && CVarDoPrune == 1)
 			{
 				// get the detail mode from the device platform ini; if it's not there, we assume all detail modes
-				int32 CVarDetailMode = 3;
+				int32 CVarDetailMode = PDM_DefaultValue;
 				if (DeviceProfile->GetConsolidatedCVarValue(TEXT("r.DetailMode"), CVarDetailMode))
 				{
 					CookTargetPlatformDetailModeMask = (1 << CVarDetailMode);
@@ -2815,16 +2824,23 @@ void UParticleSystem::UpdateColorModuleClampAlpha(UParticleModuleColorBase* Colo
 
 void UParticleSystem::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
-	OutTags.Add( FAssetRegistryTag("HasGPUEmitter", HasGPUEmitter() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical) );
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UParticleSystem::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Context.AddTag( FAssetRegistryTag("HasGPUEmitter", HasGPUEmitter() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical) );
 
 	const float BoundsSize = FixedRelativeBoundingBox.GetSize().GetMax();
-	OutTags.Add(FAssetRegistryTag("FixedBoundsSize", bUseFixedRelativeBoundingBox ? FString::Printf(TEXT("%.2f"), BoundsSize) : FString(TEXT("None")), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("FixedBoundsSize", bUseFixedRelativeBoundingBox ? FString::Printf(TEXT("%.2f"), BoundsSize) : FString(TEXT("None")), FAssetRegistryTag::TT_Numerical));
 
-	OutTags.Add(FAssetRegistryTag("NumEmitters", LexToString(Emitters.Num()), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("NumEmitters", LexToString(Emitters.Num()), FAssetRegistryTag::TT_Numerical));
 
-	OutTags.Add(FAssetRegistryTag("NumLODs", LexToString(LODDistances.Num()), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("NumLODs", LexToString(LODDistances.Num()), FAssetRegistryTag::TT_Numerical));
 
-	OutTags.Add(FAssetRegistryTag("WarmupTime", LexToString(WarmupTime), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("WarmupTime", LexToString(WarmupTime), FAssetRegistryTag::TT_Numerical));
 
 	// Done here instead of as an AssetRegistrySearchable string to avoid the long prefix on the enum value string
 	FString LODMethodString = TEXT("Unknown");
@@ -2843,13 +2859,13 @@ void UParticleSystem::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) c
 		check(false); // Missing enum entry
 		break;
 	}
-	OutTags.Add(FAssetRegistryTag("LODMethod", LODMethodString, FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("LODMethod", LODMethodString, FAssetRegistryTag::TT_Alphabetical));
 
-	OutTags.Add(FAssetRegistryTag("CPUCollision", UsesCPUCollision() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
-	OutTags.Add(FAssetRegistryTag("Looping", bAnyEmitterLoopsForever ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
-	OutTags.Add(FAssetRegistryTag("Immortal", IsImmortal() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
-	OutTags.Add(FAssetRegistryTag("Becomes Zombie", WillBecomeZombie() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
-	OutTags.Add(FAssetRegistryTag("CanBeOccluded", OcclusionBoundsMethod == EParticleSystemOcclusionBoundsMethod::EPSOBM_None ? TEXT("False") : TEXT("True"), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("CPUCollision", UsesCPUCollision() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("Looping", bAnyEmitterLoopsForever ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("Immortal", IsImmortal() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("Becomes Zombie", WillBecomeZombie() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("CanBeOccluded", OcclusionBoundsMethod == EParticleSystemOcclusionBoundsMethod::EPSOBM_None ? TEXT("False") : TEXT("True"), FAssetRegistryTag::TT_Alphabetical));
 
 	uint32 NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::Num] = { 0, 0, 0, 0 };
 	for (UParticleEmitter* Emitter : Emitters)
@@ -2859,12 +2875,12 @@ void UParticleSystem::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) c
 			++NumEmittersAtEachSig[(int32)Emitter->SignificanceLevel];			
 		}
 	}
-	OutTags.Add(FAssetRegistryTag("Critical Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::Critical]), FAssetRegistryTag::TT_Numerical));
-	OutTags.Add(FAssetRegistryTag("High Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::High]), FAssetRegistryTag::TT_Numerical));
-	OutTags.Add(FAssetRegistryTag("Medium Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::Medium]), FAssetRegistryTag::TT_Numerical));
-	OutTags.Add(FAssetRegistryTag("Low Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::Low]), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("Critical Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::Critical]), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("High Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::High]), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("Medium Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::Medium]), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("Low Emitters", LexToString(NumEmittersAtEachSig[(int32)EParticleSignificanceLevel::Low]), FAssetRegistryTag::TT_Numerical));
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 bool UParticleSystem::UsesCPUCollision() const
@@ -3543,6 +3559,7 @@ bool UFXSystemComponent::RequiresLWCTileRecache(const FVector3f CurrentTile, con
 
 void UFXSystemComponent::PrecacheAssetPSOs(UFXSystemAsset* FXSystemAsset)
 {
+#if UE_WITH_PSO_PRECACHING
 	if (!FApp::CanEverRender() || !IsComponentPSOPrecachingEnabled() || FXSystemAsset == nullptr)
 	{
 		return;
@@ -3568,6 +3585,7 @@ void UFXSystemComponent::PrecacheAssetPSOs(UFXSystemAsset* FXSystemAsset)
 	}
 
 	bPSOPrecacheCalled = true;
+#endif // UE_WITH_PSO_PRECACHING
 }
 
 FOnSystemPreActivationChange UParticleSystemComponent::OnSystemPreActivationChange;
@@ -4940,8 +4958,10 @@ FBoxSphereBounds UParticleSystemComponent::CalcBounds(const FTransform& LocalToW
 	FBox BoundingBox;
 	BoundingBox.Init();
 
+	// When inactive and using auto attachments do not include our bounds as they will be in an invalid location
+	// While active it's more complicated as we could become detatched and wish to play the remainder of the effect so we must include them
 	const USceneComponent* UseAutoParent = (bAutoManageAttachment && GetAttachParent() == nullptr) ? AutoAttachParent.Get() : nullptr;
-	if (UseAutoParent)
+	if (UseAutoParent && !IsActive())
 	{
 		// We use auto attachment but have detached, don't use our own bogus bounds (we're off near 0,0,0), use the usual parent's bounds.
 		return UseAutoParent->Bounds;
@@ -5279,8 +5299,8 @@ void UParticleSystemComponent::OnAttachmentChanged()
 
 	if (IsTickManaged())
 	{
-		FParticleSystemWorldManager* PSCMan = GetWorldManager();
-		if (ensure(PSCMan))
+		// Note: the PSCMan can become invalid during GC / level change
+		if (FParticleSystemWorldManager* PSCMan = GetWorldManager())
 		{
 			//Reregister component to recalculate dependencies and re add to manager's lists.
 			PSCMan->UnregisterComponent(this);
@@ -6191,6 +6211,11 @@ void UParticleSystemComponent::ActivateSystem(bool bFlagAsJustAttached)
 		return;
 	}
 
+	if (!CascadeLocal::AllowTemplate(Template))
+	{
+		Template = nullptr;
+	}
+
 	bOldPositionValid = false;
 	OldPosition = FVector::ZeroVector;
 	PartSysVelocity = FVector::ZeroVector;
@@ -6532,7 +6557,11 @@ void UParticleSystemComponent::CancelAutoAttachment(bool bDetachFromParent, cons
 
 		if (bDetachFromParent)
 		{
-			DetachFromComponent(FDetachmentTransformRules::KeepRelativeTransform);
+			UWorld* World = GetWorld();
+			if (!World || World->IsGameWorld())
+			{
+				DetachFromComponent(FDetachmentTransformRules(EDetachmentRule::KeepRelative, /*bCallModify=*/ false));
+			}
 		}
 	}
 }
@@ -8280,6 +8309,13 @@ UMaterialInstanceDynamic* UParticleSystemComponent::CreateNamedDynamicMaterialIn
 	return MID;
 }
 
+
+UMaterialInterface* UParticleSystemComponent::GetMaterialByName(FName MaterialSlotName) const
+{
+	return GetNamedMaterial(MaterialSlotName);
+}
+
+
 void UParticleSystemComponent::SetMaterialByName(FName MaterialSlotName, class UMaterialInterface* SourceMaterial)
 {
 	int32 Index = GetNamedMaterialIndex(MaterialSlotName);
@@ -8388,6 +8424,7 @@ uint32 UParticleSystemComponent::GetApproxMemoryUsage()const
 		if (FParticleDynamicData* DynamicData = PSysSceneProxy->GetDynamicData())
 		{
 			MemUsage += DynamicData->GetMemoryFootprint();
+		#if 0
 			for (FDynamicEmitterDataBase* DynEmitterData : DynamicData->DynamicEmitterDataArray)
 			{
 				if (DynEmitterData)
@@ -8401,6 +8438,7 @@ uint32 UParticleSystemComponent::GetApproxMemoryUsage()const
 					MemUsage += MemCounter.Max;
 				}
 			}
+		#endif
 		}
 	}
 

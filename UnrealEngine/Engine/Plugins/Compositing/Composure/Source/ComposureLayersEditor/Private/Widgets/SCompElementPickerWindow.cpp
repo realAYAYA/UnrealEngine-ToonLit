@@ -267,7 +267,7 @@ TSharedRef<SWidget> SCompElementColorPickerDialog::GeneratePreviewContent()
 		.AutoHeight()
 		.HAlign(HAlign_Right)
 		.VAlign(VAlign_Bottom)
-		.Padding(FMargin(8.f, 8.f, 8.f, 0.f))
+		.Padding(8.f)
 	[
 		SNew(SHorizontalBox)
 		+SHorizontalBox::Slot()

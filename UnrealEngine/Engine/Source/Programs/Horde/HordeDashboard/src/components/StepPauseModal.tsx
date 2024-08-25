@@ -7,11 +7,13 @@ import { GetTemplateRefResponse } from '../backend/Api';
 import dashboard from '../backend/Dashboard';
 import { projectStore } from '../backend/ProjectStore';
 import { getShortNiceTime } from '../base/utilities/timeUtils';
-import { hordeClasses } from '../styles/Styles';
+import { getHordeStyling } from '../styles/Styles';
 
 export const PauseStepModal: React.FC<{ streamId: string, templateName: string, stepName: string, onClose: () => void }> = ({ streamId, stepName, templateName, onClose }) => {
 
    const [state, setState] = useState<{ ref?: GetTemplateRefResponse, submitting?: boolean, pause?: boolean, error?: string }>({});
+
+   const { hordeClasses } = getHordeStyling();
 
    const stream = projectStore.streamById(streamId);
    if (!stream) {

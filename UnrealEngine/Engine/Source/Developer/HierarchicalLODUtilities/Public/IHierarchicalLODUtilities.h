@@ -41,14 +41,6 @@ public:
 	virtual ~IHierarchicalLODUtilities() {}
 
 	/**
-	* Recursively retrieves StaticMeshComponents from a LODActor and its child LODActors
-	*
-	* @param Actor - LODActor instance
-	* @param InOutComponents - Will hold the StaticMeshComponents
-	*/
-	virtual void ExtractStaticMeshComponentsFromLODActor(AActor* Actor, TArray<UStaticMeshComponent*>& InOutComponents) = 0;
-
-	/**
 	* Recursively retrieves Actors from a LODActor and its child LODActors
 	*
 	* @param Actor - LODActor instance
@@ -60,8 +52,6 @@ public:
 	virtual float CalculateScreenSizeFromDrawDistance(const float SphereRadius, const FMatrix& ProjectionMatrix, const float Distance) = 0;
 
 	virtual float CalculateDrawDistanceFromScreenSize(const float SphereRadius, const float ScreenSize, const FMatrix& ProjectionMatrix) = 0;
-
-	virtual UPackage* CreateOrRetrieveLevelHLODPackage(const ULevel* InLevel) = 0;
 
 	/** Creates or retrieves the HLOD package that is created for the given level */
 	virtual UPackage* CreateOrRetrieveLevelHLODPackage(const ULevel* InLevel, const uint32 HLODLevelIndex) = 0;
@@ -88,8 +78,6 @@ public:
 	* @param Outer - Outer object to store the mesh in
 	* @return UStaticMesh*
 	*/
-	virtual bool BuildStaticMeshForLODActor(ALODActor* LODActor, UPackage* AssetsOuter, const FHierarchicalSimplification& LODSetup) = 0;
-	virtual bool BuildStaticMeshForLODActor(ALODActor* LODActor, UPackage* AssetsOuter, const FHierarchicalSimplification& LODSetup, UMaterialInterface* InBaseMaterial) = 0;
 	virtual bool BuildStaticMeshForLODActor(ALODActor* LODActor, UHLODProxy* Proxy, const FHierarchicalSimplification& LODSetup, UMaterialInterface* InBaseMaterial) = 0;
 	
 	/**
@@ -105,9 +93,6 @@ public:
 
 	/** Deletes the given cluster's data and instance in the world */
 	virtual void DestroyCluster(ALODActor* InActor) = 0;
-
-	/** Deletes the given cluster's assets */
-	virtual void DestroyClusterData(ALODActor* InActor) = 0;
 
 	/** Creates a new cluster actor in the given InWorld with InLODLevel as HLODLevel */
 	virtual ALODActor* CreateNewClusterActor(UWorld* InWorld, const int32 InLODLevel, AWorldSettings* WorldSettings) = 0;

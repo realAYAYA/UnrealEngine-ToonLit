@@ -16,14 +16,23 @@ public class GameApplication extends Application implements LifecycleObserver {
 
 	private static boolean isForeground = false;
 
+	private static Context context;
+
+//$${gameApplicationClassAdditions}$$
+
 	@Override
 	public void onCreate() {
 		super.onCreate();
+		GameApplication.context = getApplicationContext();
 //$${gameApplicationOnCreateAdditions}$$
 
 		ProcessLifecycleOwner.get().getLifecycle().addObserver(this);
 
 		NetworkChangedManager.getInstance().initNetworkCallback(this);
+	}
+
+	public static Context getAppContext() {
+		return GameApplication.context;
 	}
 
 	@Override
@@ -47,7 +56,7 @@ public class GameApplication extends Application implements LifecycleObserver {
 	@Override
 	public void onConfigurationChanged (Configuration newConfig) {
 		super.onConfigurationChanged(newConfig);
-//$${gameApplicationOnConfigurationChangedAdditions}$$		
+//$${gameApplicationOnConfigurationChangedAdditions}$$
 	}
 
 	@OnLifecycleEvent(Lifecycle.Event.ON_START)

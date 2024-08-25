@@ -34,6 +34,7 @@
 #include "Serialization/UnversionedPropertySerialization.h"
 #include "UObject/DebugSerializationFlags.h"
 #include "UObject/EditorObjectVersion.h"
+#include "UObject/InstanceDataObjectUtils.h"
 #include "UObject/LinkerSave.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectMacros.h"
@@ -51,6 +52,7 @@
 #endif
 
 // defined in UObjectGlobals.cpp
+extern const FName NAME_UniqueObjectNameForCooking;
 COREUOBJECT_API extern bool GOutputCookingWarnings;
 
 namespace
@@ -455,8 +457,6 @@ ESavePackageResult HarvestPackage(FSaveContext& SaveContext)
 	return ReturnSuccessOrCancel();
 }
 
-static FNameEntryId NAME_UniqueObjectNameForCookingComparisonIndex = FName("UniqueObjectNameForCooking").GetComparisonIndex();
-
 ESavePackageResult ValidateRealms(FSaveContext& SaveContext)
 {
 	SCOPED_SAVETIMER(UPackage_Save_ValidateRealms);
@@ -630,16 +630,18 @@ ESavePackageResult ValidateExports(FSaveContext& SaveContext)
 	}
 
 	// Cooking checks
-#if WITH_EDITOR
+#if WITH_EDITOR && !UE_FNAME_OUTLINE_NUMBER
 	if (GOutputCookingWarnings)
 	{
-		// check the name list for UniqueObjectNameForCooking cooking
-		if (SaveContext.NameExists(NAME_UniqueObjectNameForCookingComparisonIndex))
+		// check the name list for UniqueObjectNameForCooking cooking. Since check is a fast check for any NAME_UniqueObjectNameForCooking
+		// we can only perform this check when UE_FNAME_OUTLINE_NUMBER=0 as otherwise all prefixed names will have a unique ComparisonIndex
+		if (SaveContext.NameExists(NAME_UniqueObjectNameForCooking))
 		{
+			const FNameEntryId UniqueObjectNameForCookingComparisonId = NAME_UniqueObjectNameForCooking.GetComparisonIndex();
 			for (const FTaggedExport& Export : SaveContext.GetExports())
 			{
-				FName NameInUse = Export.Obj->GetFName();
-				if (NameInUse.GetComparisonIndex() == NAME_UniqueObjectNameForCookingComparisonIndex)
+				const FName NameInUse = Export.Obj->GetFName();
+				if (NameInUse.GetComparisonIndex() == UniqueObjectNameForCookingComparisonId)
 				{
 					UObject* Outer = Export.Obj->GetOuter();
 					UE_LOG(LogSavePackage, Warning, TEXT("Saving object into cooked package %s which was created at cook time, Object Name %s, Full Path %s, Class %s, Outer %s, Outer class %s"), SaveContext.GetFilename(), *NameInUse.ToString(), *Export.Obj->GetFullName(), *Export.Obj->GetClass()->GetName(), Outer ? *Outer->GetName() : TEXT("None"), Outer ? *Outer->GetClass()->GetName() : TEXT("None"));
@@ -665,7 +667,8 @@ ESavePackageResult ValidateExports(FSaveContext& SaveContext)
 	return ReturnSuccessOrCancel();
 }
 
-ESavePackageResult ValidateIllegalReferences(FSaveContext& SaveContext, TArray<UObject*>& PrivateObjects, TArray<UObject*>& ObjectsInOtherMaps)
+ESavePackageResult ValidateIllegalReferences(FSaveContext& SaveContext, TArray<UObject*>& PrivateObjects,
+	TArray<UObject*>& PrivateContentObjects, TArray<UObject*>& ObjectsInOtherMaps)
 {
 	FFormatNamedArguments Args;
 
@@ -706,6 +709,25 @@ ESavePackageResult ValidateIllegalReferences(FSaveContext& SaveContext, TArray<U
 		if (SaveContext.IsGenerateSaveError())
 		{
 			SaveContext.GetError()->Logf(ELogVerbosity::Warning, TEXT("Can't save %s: Graph is linked to external private object %s"), SaveContext.GetFilename(), *CulpritString);
+		}
+		return ESavePackageResult::Error;
+	}
+
+	if (PrivateContentObjects.Num() > 0)
+	{
+		UObject* MostLikelyCulprit = nullptr;
+		FString CulpritString = TEXT("Unknown");
+		FString Referencer;
+		UE::SavePackageUtilities::FindMostLikelyCulprit(PrivateContentObjects, MostLikelyCulprit, Referencer, &SaveContext);
+		CulpritString = FString::Printf(TEXT("%s (%s)"),
+			(MostLikelyCulprit != nullptr) ? *MostLikelyCulprit->GetFullName() : TEXT("(unknown culprit)"),
+			*Referencer);
+
+		if (SaveContext.IsGenerateSaveError())
+		{
+			SaveContext.GetError()->Logf(ELogVerbosity::Warning,
+				TEXT("Can't save package: PKG_NotExternallyReferenceable: Package %s imports object %s, which is in a different mount point and its package is marked as PKG_NotExternallyReferenceable."),
+				SaveContext.GetFilename(), *CulpritString);
 		}
 		return ESavePackageResult::Error;
 	}
@@ -806,19 +828,21 @@ ESavePackageResult ValidateImports(FSaveContext& SaveContext)
 
 	// Warn for private objects & map object references
 	TArray<UObject*> PrivateObjects;
+	TArray<UObject*> PrivateContentObjects;
 	TArray<UObject*> ObjectsInOtherMaps;
 	const TSet<TObjectPtr<UObject>>& Imports = SaveContext.GetImports();
+	const TSet<TObjectPtr<UObject>>& DirectImports = SaveContext.GetDirectImports();
 	for (const TObjectPtr<UObject>& Import : Imports)
 	{
 		TObjectPtr<UPackage> ImportPackage = Import.GetPackage();
 		// All names should be properly harvested at this point
-		ensureAlwaysMsgf(SaveContext.NameExists(Import.GetFName().GetComparisonIndex())
+		ensureAlwaysMsgf(SaveContext.NameExists(Import.GetFName())
 			, TEXT("Missing import name %s while saving package %s. Did you rename an import during serialization?"), *Import->GetName(), *PackageName);
-		ensureAlwaysMsgf(SaveContext.NameExists(ImportPackage.GetFName().GetComparisonIndex())
+		ensureAlwaysMsgf(SaveContext.NameExists(ImportPackage.GetFName())
 			, TEXT("Missing import package name %s while saving package %s. Did you rename an import during serialization?"), *ImportPackage->GetName(), *PackageName);
-		ensureAlwaysMsgf(SaveContext.NameExists(Import.GetClass()->GetFName().GetComparisonIndex())
+		ensureAlwaysMsgf(SaveContext.NameExists(Import.GetClass()->GetFName())
 			, TEXT("Missing import class name %s while saving package %s"), *Import->GetClass()->GetName(), *PackageName);
-		ensureAlwaysMsgf(SaveContext.NameExists(Import.GetClass()->GetOuter()->GetFName().GetComparisonIndex())
+		ensureAlwaysMsgf(SaveContext.NameExists(Import.GetClass()->GetOuter()->GetFName())
 			, TEXT("Missing import class package name %s while saving package %s"), *Import.GetClass()->GetOuter()->GetName(), *PackageName);
 
 		// if the import is marked as a prestream package, we dont need to validate further
@@ -875,8 +899,10 @@ ESavePackageResult ValidateImports(FSaveContext& SaveContext)
 			}
 		}
 
-		// Enforce that Private content can only be referenced by something within the same Mount Point
-		if (!ImportPackage->IsExternallyReferenceable())
+		// Enforce that Private content can only be directly referenced by something within the same Mount Point
+		// This only applies to direct imports. Transitive imports (A -> PackageB.B, B -> B.Class -> PackageC) are
+		// allowed even for private content.
+		if (!ImportPackage->IsExternallyReferenceable() && DirectImports.Contains(Import))
 		{
 			FName MountPointName = FPackageName::GetPackageMountPoint(PackageName);
 
@@ -886,18 +912,18 @@ ESavePackageResult ValidateImports(FSaveContext& SaveContext)
 			{
 				if (MountPointName != ImportMountPointName)
 				{
-					PrivateObjects.Add(Import);
+					PrivateContentObjects.Add(Import);
 				}
 			}
 			else
 			{
-				PrivateObjects.Add(Import);
+				PrivateContentObjects.Add(Import);
 			}
 		}
 	}
-	if (PrivateObjects.Num() > 0 || ObjectsInOtherMaps.Num() > 0)
+	if (PrivateObjects.Num() > 0 || PrivateContentObjects.Num() > 0 || ObjectsInOtherMaps.Num() > 0)
 	{
-		return ValidateIllegalReferences(SaveContext, PrivateObjects, ObjectsInOtherMaps);
+		return ValidateIllegalReferences(SaveContext, PrivateObjects, PrivateContentObjects, ObjectsInOtherMaps);
 	}
 
 	// Validate External Import Rules
@@ -1039,17 +1065,14 @@ ESavePackageResult CreateLinker(FSaveContext& SaveContext)
 
 struct FNameEntryIdSortHelper
 {
-	/** Comparison function used by Sort */
-	FORCEINLINE bool operator()(const FName& A, const FName& B) const
+	/** Comparison function used when sorting Names in the package's name table. */
+	bool operator()(FNameEntryId A, FNameEntryId B) const
 	{
-		return A.Compare(B) < 0;
-	}
-
-	/** Comparison function used by Sort */
-	FORCEINLINE bool operator()(FNameEntryId A, FNameEntryId B) const
-	{
-		//@todo Could be implemented without constructing FName but need a would new FNameEntry comparison API
-		return A != B && operator()(FName::CreateFromDisplayId(A, 0), FName::CreateFromDisplayId(B, 0));
+		if (A == B) return false;
+		// Sort by ignore-case first, then by case-sensitive.
+		// So we will get { 'AAA', 'Aaa', 'aaa', 'BBB', 'Bbb', 'bbb' }
+		if (int32 Compare = A.CompareLexical(B)) return Compare < 0;
+		return A.CompareLexicalSensitive(B) < 0;
 	}
 };
 
@@ -1107,19 +1130,31 @@ ESavePackageResult BuildLinker(FSaveContext& SaveContext)
 		SaveContext.UpdatePackageLinkerVersions();
 	}
 
+#if WITH_EDITORONLY_DATA
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	if (SaveContext.GetSaveArgs().OutputPackageGuid)
+	const FGuid* OutputPackageGuid = SaveContext.GetSaveArgs().OutputPackageGuid.GetPtrOrNull();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+	if (OutputPackageGuid)
 	{
-		SaveContext.GetLinker()->Summary.Guid = *SaveContext.GetSaveArgs().OutputPackageGuid;
-		
+		FIoHash SavedHash;
+		FMemory::Memcpy(&SavedHash.GetBytes(), OutputPackageGuid,
+			FMath::Min(sizeof(decltype(SavedHash.GetBytes())), sizeof(*OutputPackageGuid)));
+		SaveContext.GetLinker()->Summary.SetSavedHash(SavedHash);
 	}
 	else
 	{
-		SaveContext.GetLinker()->Summary.Guid = SaveContext.IsKeepGuid() ?
-			SaveContext.GetPackage()->GetGuid() : SaveContext.GetPackage()->MakeNewGuid();
+		if (!SaveContext.IsKeepGuid())
+		{
+			// TODO: Change this to instead be calculated later after the save from a hash of the saved data.
+			// Remove IsKeepGuid and OutputPackageGuid when that occurs.
+			FGuid Guid = FGuid::NewGuid();
+			FIoHash SavedHash;
+			FMemory::Memcpy(&SavedHash.GetBytes(), &Guid,
+				FMath::Min(sizeof(decltype(SavedHash.GetBytes())), sizeof(Guid)));
+			SaveContext.GetPackage()->SetSavedHash(SavedHash);
+		}
+		SaveContext.GetLinker()->Summary.SetSavedHash(SaveContext.GetPackage()->GetSavedHash());
 	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
-#if WITH_EDITORONLY_DATA
 	SaveContext.GetLinker()->Summary.PersistentGuid = SaveContext.GetPackage()->GetPersistentGuid();
 #endif
 	SaveContext.GetLinker()->Summary.Generations = TArray<FGenerationInfo>{ FGenerationInfo(0, 0) };
@@ -1895,9 +1930,11 @@ ESavePackageResult WritePackageHeader(FStructuredArchive::FRecord& StructuredArc
 	{
 		// Save asset registry data so the editor can search for information about assets in this package
 		SCOPED_SAVETIMER(UPackage_Save_SaveAssetRegistryData);
-		UE::AssetRegistry::WritePackageData(StructuredArchiveRoot, SaveContext.IsCooking(), SaveContext.GetPackage(),
+		FArchiveCookData* CookData = SaveContext.GetCookData();
+		FArchiveCookContext* CookContext = CookData ? &CookData->CookContext : nullptr;
+		UE::AssetRegistry::WritePackageData(StructuredArchiveRoot, CookContext, SaveContext.GetPackage(),
 			Linker, SaveContext.GetImportsUsedInGame(), SaveContext.GetSoftPackagesUsedInGame(),
-			SaveContext.GetTargetPlatform(), &SaveContext.GetSavedAssets());
+			&SaveContext.GetSavedAssets(), SaveContext.IsProceduralSave());
 	}
 	// Save level information used by World browser
 	{
@@ -2034,6 +2071,18 @@ ESavePackageResult WritePackageTextHeader(FStructuredArchive::FRecord& Structure
 		Linker.CurrentlySavingExport = FPackageIndex();
 		Linker.CurrentlySavingExportObject = nullptr;
 		Export.SerialSize = ExportsArchive.Tell() - Export.SerialOffset;
+
+		if (Export.ScriptSerializationEndOffset - Export.ScriptSerializationStartOffset > 0)
+		{
+			// Offset is already relative to export offset because of FExportProxyArchive 
+			check(Export.ScriptSerializationStartOffset >= 0);
+			check(Export.ScriptSerializationEndOffset <= Export.SerialSize);
+		}
+		else
+		{
+			check(Export.ScriptSerializationEndOffset == 0);
+			check(Export.ScriptSerializationStartOffset == 0);
+		}
 	}
 
 	return Linker.IsError() ? ESavePackageResult::Error : ReturnSuccessOrCancel();
@@ -2122,6 +2171,19 @@ ESavePackageResult WriteExports(FStructuredArchive::FRecord& StructuredArchiveRo
 			Linker->CurrentlySavingExport = FPackageIndex();
 			Linker->CurrentlySavingExportObject = nullptr;
 			Export.SerialSize = Linker->Tell() - Export.SerialOffset;
+
+			if (Export.ScriptSerializationEndOffset - Export.ScriptSerializationStartOffset > 0)
+			{
+				Export.ScriptSerializationStartOffset -= Export.SerialOffset;
+				Export.ScriptSerializationEndOffset -= Export.SerialOffset;
+				check(Export.ScriptSerializationStartOffset >= 0);
+				check(Export.ScriptSerializationEndOffset <= Export.SerialSize);
+			}
+			else
+			{
+				check(Export.ScriptSerializationEndOffset == 0);
+				check(Export.ScriptSerializationStartOffset == 0);
+			}
 		}
 	}
 	// if an error occurred on the linker while serializing exports, return an error
@@ -2432,14 +2494,6 @@ ESavePackageResult FinalizeFile(FStructuredArchive::FRecord& StructuredArchiveRo
 {
 	SCOPED_SAVETIMER(UPackage_Save_FinalizeFile);
 
-	// In the concurrent case, it is called right after routing presave so it can be done in batch before going concurrent
-	if (!SaveContext.IsConcurrent())
-	{
-		// If we're writing to the existing file call ResetLoaders on the Package so that we drop the handle to the file on disk and can write to it
-		//COOK_STAT(FScopedDurationTimer SaveTimer(FSavePackageStats::ResetLoadersTimeSec));
-		ResetLoadersForSave(SaveContext.GetPackage(), SaveContext.GetFilename());
-	}
-
 	FSavePackageContext* SavePackageContext = SaveContext.GetSavePackageContext();
 	IPackageWriter* PackageWriter = SavePackageContext ? SavePackageContext->PackageWriter : nullptr;
 	if (PackageWriter || SaveContext.IsSaveToMemory())
@@ -2499,7 +2553,7 @@ ESavePackageResult FinalizeFile(FStructuredArchive::FRecord& StructuredArchiveRo
 		}
 
 		// Move file to its real destination
-		checkf(SaveContext.GetTempFilename().IsSet(), TEXT("The package should've been saved to a tmp file first! (%s)"), *SaveContext.GetFilename());
+		checkf(SaveContext.GetTempFilename().IsSet(), TEXT("The package should've been saved to a tmp file first! (%s)"), SaveContext.GetFilename());
 
 		// When saving in text format we will have two temp files, so we need to manually delete the non-textbased one
 		if (SaveContext.IsTextFormat())
@@ -2889,8 +2943,14 @@ ESavePackageResult InnerSave(FSaveContext& SaveContext)
 	SaveContext.SetSerializeContext(SerializeContext);
 	SaveContext.SetEDLCookChecker(&FEDLCookCheckerThreadState::Get());
 
+	TOptional<TGuardValue<bool>> IDOImpersonationScope;
+	if (UE::IsInstanceDataObjectSupportEnabled())
+	{
+		IDOImpersonationScope.Emplace(SerializeContext->bImpersonateProperties, true);
+	}
+
 	// Create slow task dialog if needed
-	const int32 TotalSaveSteps = 4;
+	const int32 TotalSaveSteps = 3;
 	FScopedSlowTask SlowTask(TotalSaveSteps, FText(), SaveContext.IsUsingSlowTask());
 	SlowTask.MakeDialogDelayed(3.0f, SaveContext.IsFromAutoSave());
 
@@ -2934,25 +2994,10 @@ ESavePackageResult InnerSave(FSaveContext& SaveContext)
 			return SaveContext.Result;
 		}
 	}
+	// Mark the Package RF_Loaded after its been serialized. 
+	// This was already done for each object in the package in SaveHarvestedRealms
+	SaveContext.GetPackage()->SetFlags(RF_WasLoaded | RF_LoadCompleted);
 
-	SlowTask.EnterProgressFrame();
-	{
-		// Mark the Package RF_Loaded after its been serialized. 
-		// This was already done for each object in the package in SaveHarvestedRealms
-		SaveContext.GetPackage()->SetFlags(RF_WasLoaded | RF_LoadCompleted);
-
-		// Clear dirty flag if desired
-		if (!SaveContext.IsKeepDirty())
-		{
-			SaveContext.GetPackage()->SetDirtyFlag(false);
-		}
-
-		// Update package FileSize value
-		if (SaveContext.IsUpdatingLoadedPath())
-		{
-			SaveContext.UpdatePackageFileSize(SaveContext.PackageHeaderAndExportSize);
-		}
-	}
 	return SaveContext.Result;
 }
 
@@ -3013,7 +3058,7 @@ FSavePackageResultStruct UPackage::Save2(UPackage* InPackage, UObject* InAsset, 
 	FSaveContext SaveContext(InPackage, InAsset, InFilename, SaveArgs);
 
 	// Create the slow task dialog if needed
-	const int32 TotalSaveSteps = 7;
+	const int32 TotalSaveSteps = 8;
 	FScopedSlowTask SlowTask(TotalSaveSteps, GetSlowTaskStatusMessage(SaveContext), SaveContext.IsUsingSlowTask());
 	SlowTask.MakeDialogDelayed(3.0f, SaveContext.IsFromAutoSave());
 
@@ -3026,21 +3071,20 @@ FSavePackageResultStruct UPackage::Save2(UPackage* InPackage, UObject* InAsset, 
 
 	// Ensures
 	SlowTask.EnterProgressFrame();
-	EnsurePackageLocalization(SaveContext.GetPackage());
 	{
-		// FullyLoad the package's Loader, so that anything we need to serialize (bulkdata, thumbnails) is available
-		//COOK_STAT(FScopedDurationTimer SaveTimer(FSavePackageStats::FullyLoadLoadersTimeSec));
-		EnsureLoadingComplete(SaveContext.GetPackage());
-
 		if (!SaveContext.IsConcurrent())
 		{
-			// We need to fulfill all pending streaming and async loading requests to then allow us to lock the global IO manager. 
-			// The latter implies flushing all file handles which is a pre-requisite of saving a package. The code basically needs 
-			// to be sure that we are not reading from a file that is about to be overwritten and that there is no way we might 
-			// start reading from the file till we are done overwriting it.
-			FlushAsyncLoading();
+			// We need to make sure to flush any pending request that may involve the existing linker of this package as we want to reset it
+			// to release any handle on the file prior to overwriting it.
+			UPackage* Package = SaveContext.GetPackage();
+			ConditionalFlushAsyncLoadingForSave(Package);
+			(*GFlushStreamingFunc)();
+
+			EnsurePackageLocalization(Package);
+
+			// FullyLoad the package's Loader, so that anything we need to serialize (bulkdata, thumbnails) is available
+			EnsureLoadingComplete(Package);
 		}
-		(*GFlushStreamingFunc)();
 	}
 
 	// PreSave Asset
@@ -3054,26 +3098,33 @@ FSavePackageResultStruct UPackage::Save2(UPackage* InPackage, UObject* InAsset, 
 		SaveContext.SetPreSaveCleanup(ObjectSaveContext.bCleanupRequired);
 	}
 
-	// Route Presave only if not calling concurrently or if the PackageWriter claims already completed, in those case they should be handled separately already
 	SlowTask.EnterProgressFrame();
-	IPackageWriter* PackageWriter = SaveContext.GetPackageWriter();
-	if (!SaveContext.IsConcurrent() && (!PackageWriter || !PackageWriter->IsPreSaveCompleted()))
+	if (!SaveContext.IsConcurrent())
 	{
-		SaveContext.Result = RoutePresave(SaveContext);
+		// Route Presave only if not calling concurrently or if the PackageWriter claims already completed, in those case they should be handled separately already
+		IPackageWriter* PackageWriter = SaveContext.GetPackageWriter();
+		if (!PackageWriter || !PackageWriter->IsPreSaveCompleted())
+		{
+			SaveContext.Result = RoutePresave(SaveContext);
+			if (SaveContext.Result != ESavePackageResult::Success)
+			{
+				return SaveContext.Result;
+			}
+		}
+
+		// Trigger platform cooked data caching after PreSave but before package harvesting 
+		// After PreSave because objects can be created during PreSave and we need to cache them
+		// Before package harvesting because it might modify some property and hence affect the harvested
+		// property name of a tagged property for example
+		SaveContext.Result = BeginCachePlatformCookedData(SaveContext);
 		if (SaveContext.Result != ESavePackageResult::Success)
 		{
 			return SaveContext.Result;
 		}
-	}
 
-	// Trigger platform cooked data caching after PreSave but before package harvesting 
-	// After PreSave because objects can be created during PreSave and we need to cache them
-	// Before package harvesting because it might modify some property and hence affect the harvested
-	// property name of a tagged property for example
-	SaveContext.Result = BeginCachePlatformCookedData(SaveContext);
-	if (SaveContext.Result != ESavePackageResult::Success)
-	{
-		return SaveContext.Result;
+		// If we're writing to the existing file call ResetLoaders on the Package so that we drop the handle to the file on disk and can write to it
+		// This might end flushing async loading for this package
+		ResetLoadersForSave(SaveContext.GetPackage(), SaveContext.GetFilename());
 	}
 
 	SlowTask.EnterProgressFrame();
@@ -3083,6 +3134,23 @@ FSavePackageResultStruct UPackage::Save2(UPackage* InPackage, UObject* InAsset, 
 		SaveContext.Result = InnerSave(SaveContext);
 
 		// in case of failure or cancellation, do not exit here, still run cleanup (e.g. PostSaveRoot)
+	}
+
+	SlowTask.EnterProgressFrame();
+	// If the save was successful, update dirty flag and file size if desired
+	if (SaveContext.Result == ESavePackageResult::Success)
+	{
+		// Clear dirty flag if desired
+		if (!SaveContext.IsKeepDirty())
+		{
+			SaveContext.GetPackage()->SetDirtyFlag(false);
+		}
+
+		// Update package FileSize value
+		if (SaveContext.IsUpdatingLoadedPath())
+		{
+			SaveContext.UpdatePackageFileSize(SaveContext.PackageHeaderAndExportSize);
+		}
 	}
 
 	// PostSave Asset
@@ -3172,6 +3240,22 @@ ESavePackageResult UPackage::SaveConcurrent(TArrayView<FPackageSaveInfo> InPacka
 		SCOPED_SAVETIMER(UPackage_SaveConcurrent_PostSave);
 		for (FSaveContext& SaveContext : PackageSaveContexts)
 		{
+			// If the save was successful, update dirty flag and file size if desired
+			if (SaveContext.Result == ESavePackageResult::Success)
+			{
+				// Clear dirty flag if desired
+				if (!SaveContext.IsKeepDirty())
+				{
+					SaveContext.GetPackage()->SetDirtyFlag(false);
+				}
+
+				// Update package FileSize value
+				if (SaveContext.IsUpdatingLoadedPath())
+				{
+					SaveContext.UpdatePackageFileSize(SaveContext.PackageHeaderAndExportSize);
+				}
+			}
+
 			// PostSave Asset
 			if (SaveContext.GetAsset())
 			{

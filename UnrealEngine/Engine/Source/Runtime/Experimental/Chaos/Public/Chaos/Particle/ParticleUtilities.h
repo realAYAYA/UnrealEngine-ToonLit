@@ -20,16 +20,17 @@ namespace Chaos
 	{
 	public:
 		template<typename T_PARTICLEHANDLE>
-		static inline FVec3& Position(T_PARTICLEHANDLE Particle) { return Particle->X(); }
+		static inline FVec3& Position(T_PARTICLEHANDLE Particle) { return Particle->GetX(); }
 		template<typename T_PARTICLEHANDLE>
-		static inline const FVec3& GetPosition(T_PARTICLEHANDLE Particle) { return Particle->X(); }
+		static inline const FVec3& GetPosition(T_PARTICLEHANDLE Particle) { return Particle->GetX(); }
 		template<typename T_PARTICLEHANDLE>
-		static inline FRotation3& Rotation(T_PARTICLEHANDLE Particle) { return Particle->R(); }
+		UE_DEPRECATED(5.4, "Use Particle->SetR() instead.")
+		static inline FRotation3 Rotation(T_PARTICLEHANDLE Particle) { return Particle->GetR(); }
 		template<typename T_PARTICLEHANDLE>
-		static inline const FRotation3& GetRotation(T_PARTICLEHANDLE Particle) { return Particle->R(); }
+		static inline const FRotation3 GetRotation(T_PARTICLEHANDLE Particle) { return Particle->GetR(); }
 
-		static inline FVec3& Position(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.X(Index); }
-		static inline FRotation3& Rotation(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.R(Index); }
+		static inline const FVec3& Position(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.GetX(Index); }
+		static inline const FRotation3 Rotation(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.GetR(Index); }
 	};
 
 	class FParticleSpatialAccessorPQ
@@ -38,14 +39,14 @@ namespace Chaos
 		template<typename T_PARTICLEHANDLE>
 		static inline FVec3& Position(T_PARTICLEHANDLE Particle) { return Particle->P(); }
 		template<typename T_PARTICLEHANDLE>
-		static inline const FVec3& GetPosition(T_PARTICLEHANDLE Particle) { return Particle->P(); }
+		static inline const FVec3& GetPosition(T_PARTICLEHANDLE Particle) { return Particle->GetP(); }
 		template<typename T_PARTICLEHANDLE>
-		static inline FRotation3& Rotation(T_PARTICLEHANDLE Particle) { return Particle->Q(); }
+		static inline FRotation3& Rotation(T_PARTICLEHANDLE Particle) { return Particle->GetQ(); }
 		template<typename T_PARTICLEHANDLE>
-		static inline const FRotation3& GetRotation(T_PARTICLEHANDLE Particle) { return Particle->Q(); }
+		static inline const FRotation3 GetRotation(T_PARTICLEHANDLE Particle) { return Particle->GetQ(); }
 
-		static inline FVec3& Position(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.P(Index); }
-		static inline FRotation3& Rotation(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.Q(Index); }
+		static inline const FVec3& Position(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.GetP(Index); }
+		static inline FRotation3 Rotation(TPBDRigidParticles<FReal, 3>& Particles, const int32 Index) { return Particles.GetQ(Index); }
 	};
 
 	/**

@@ -1142,11 +1142,16 @@ public:
      * which happen to have been chosen as Cluster starting points.  You want to be able to disregard those.
      */
     static void GenerateClusterCenters(TArray<TVector<T>>& Clusters, const TArray<TVector<T>>& Points, int32 NumIterations, int32 NumConnectionsToBeValid);
-
-    
+	
+	bool Serialize(FArchive& Ar)
+	{
+		Ar << *this;
+		return true;
+	}
+	
     bool Serialize(FStructuredArchive::FSlot Slot)
     {
-        Slot << (TVector<T>&)*this;
+        Slot << *this;
         return true;
     }
 
@@ -1183,6 +1188,57 @@ public:
 	template<typename FArg, TEMPLATE_REQUIRES(!std::is_same_v<T, FArg>)>
 	explicit TVector(const TVector<FArg>& From) : TVector<T>((T)From.X, (T)From.Y, (T)From.Z) {}
 };
+
+/**
+ * Serializer for FVector3f.
+ *
+ * @param Ar Serialization Archive.
+ * @param V Vector to serialize.
+ */
+inline FArchive& operator<<(FArchive& Ar, TVector<float>& V)
+{
+	// @warning BulkSerialize: FVector3f is serialized as memory dump
+	// See TArray::BulkSerialize for detailed description of implied limitations.
+	Ar << V.X << V.Y << V.Z;
+
+	V.DiagnosticCheckNaN();
+
+	return Ar;
+}
+
+/**
+ * Serializer for FVector3d.
+ *
+ * @param Ar Serialization Archive.
+ * @param V Vector to serialize.
+ */
+inline FArchive& operator<<(FArchive& Ar, TVector<double>& V)
+{
+	// @warning BulkSerialize: FVector3d is serialized as memory dump
+	// See TArray::BulkSerialize for detailed description of implied limitations.
+	if (Ar.UEVer() >= EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES)
+	{
+		Ar << V.X;
+		Ar << V.Y;
+		Ar << V.Z;
+	}
+	else
+	{
+		checkf(Ar.IsLoading(), TEXT("float -> double conversion applied outside of load!"));
+		// Stored as floats, so serialize float and copy.
+		float X, Y, Z;
+
+		Ar << X;
+		Ar << Y;
+		Ar << Z;
+
+		V = TVector<double>(X, Y, Z);
+	};
+
+	V.DiagnosticCheckNaN();
+
+	return Ar;
+}
 
 /**
  * Structured archive slot serializer for FVector3f.
@@ -2332,7 +2388,7 @@ FORCEINLINE bool TVector<T>::InitFromCompactString(const FString& InSourceString
 		return true;
 	}
 
-	const bool bSuccessful = FParse::Value(*InSourceString, TEXT("X="), X) | FParse::Value(*InSourceString, TEXT("Y="), Y) | FParse::Value(*InSourceString, TEXT("Z="), Z);
+	const bool bSuccessful = FParse::Value(*InSourceString, TEXT("X="), X) | FParse::Value(*InSourceString, TEXT("Y="), Y) | FParse::Value(*InSourceString, TEXT("Z="), Z); //-V792
 
 	return bSuccessful;
 }
@@ -2689,7 +2745,7 @@ inline TVector<T> TVector2<T>::SphericalToUnitCartesian() const
 	
 namespace LWC
 {
-constexpr FVector::FReal DefaultFloatPrecision = 1./16.;
+inline constexpr FVector::FReal DefaultFloatPrecision = 1./16.;
 
 // Validated narrowing cast for world positions. FVector -> FVector3f
 FORCEINLINE FVector3f NarrowWorldPositionChecked(const FVector& WorldPosition)

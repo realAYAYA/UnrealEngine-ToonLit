@@ -102,7 +102,6 @@ void FNDIGeometryCollectionData::Init(UNiagaraDataInterfaceGeometryCollection* I
 				Collection = Interface->GeometryCollectionActor->GetGeometryCollectionComponent()->RestCollection->GetGeometryCollection();
 			const TManagedArray<FBox>& BoundingBoxes = Collection->BoundingBox;
 			const TManagedArray<int32>& TransformIndex = Collection->TransformIndex;
-			const TManagedArray<FTransform>& Transforms = Interface->GeometryCollectionActor->GetGeometryCollectionComponent()->GetTransformArray();
 			const TManagedArray<TSet<int32>>& Children = Collection->Children;
 			const TManagedArray<int32>& TransformIndexArray = Collection->TransformIndex;
 
@@ -177,8 +176,7 @@ void FNDIGeometryCollectionData::Update(UNiagaraDataInterfaceGeometryCollection*
 				Collection = Interface->GeometryCollectionActor->GetGeometryCollectionComponent()->RestCollection->GetGeometryCollection();
 			const TManagedArray<FBox>& BoundingBoxes = Collection->BoundingBox;
 			const TManagedArray<int32>& TransformIndexArray = Collection->TransformIndex;
-			const TManagedArray<FTransform>& Transforms = Interface->GeometryCollectionActor->GetGeometryCollectionComponent()->GetTransformArray();
-			const TArray<FTransform>& ComponentSpaceTransforms = Interface->GeometryCollectionActor->GetGeometryCollectionComponent()->GetComponentSpaceTransforms();
+			const TArray<FTransform3f>& ComponentSpaceTransforms = Interface->GeometryCollectionActor->GetGeometryCollectionComponent()->GetComponentSpaceTransforms3f();
 			const TManagedArray<TSet<int32>>& Children = Collection->Children;
 			
 			int NumPieces = 0;
@@ -192,11 +190,6 @@ void FNDIGeometryCollectionData::Update(UNiagaraDataInterfaceGeometryCollection*
 				{
 					NumPieces++;
 				}
-			}
-
-			if (ComponentSpaceTransforms.Num() != Transforms.Num())
-			{
-				return;
 			}
 
 			if (NumPieces != AssetArrays->BoundsBuffer.Num())
@@ -232,7 +225,7 @@ void FNDIGeometryCollectionData::Update(UNiagaraDataInterfaceGeometryCollection*
 					FVector LocalTranslation = (CurrBox.Max + CurrBox.Min) * .5;
 					FTransform LocalOffset(LocalTranslation);
 
-					const FTransform3f CurrTransform(LocalOffset * ComponentSpaceTransforms[CurrTransformIndex] * ActorTransform);
+					const FTransform3f CurrTransform(LocalOffset * FTransform(ComponentSpaceTransforms[CurrTransformIndex]) * ActorTransform);
 					CurrTransform.ToMatrixWithScale().To3x4MatrixTranspose(&AssetArrays->WorldTransformBuffer[TransformIndex].X);
 
 					const FTransform3f CurrInverse = CurrTransform.Inverse();
@@ -411,7 +404,8 @@ void UNiagaraDataInterfaceGeometryCollection::PostInitProperties()
 	}
 }
 
-void UNiagaraDataInterfaceGeometryCollection::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceGeometryCollection::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature Sig;
@@ -431,6 +425,7 @@ void UNiagaraDataInterfaceGeometryCollection::GetFunctions(TArray<FNiagaraFuncti
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceGeometryCollection::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {

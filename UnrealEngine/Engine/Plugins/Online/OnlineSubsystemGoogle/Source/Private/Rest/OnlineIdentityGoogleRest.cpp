@@ -11,6 +11,10 @@ FOnlineIdentityGoogle::FOnlineIdentityGoogle(FOnlineSubsystemGoogle* InSubsystem
 	: FOnlineIdentityGoogleCommon(InSubsystem)
 	, bHasLoginOutstanding(false)
 {
+	if (!GConfig->GetString(TEXT("OnlineSubsystemGoogle"), TEXT("ClientSecret"), ClientSecret, GEngineIni))
+	{
+		UE_LOG_ONLINE_IDENTITY(Warning, TEXT("Missing ClientSecret= in [OnlineSubsystemGoogle] of DefaultEngine.ini"));
+	}
 	if (!GConfig->GetString(TEXT("OnlineSubsystemGoogle.OnlineIdentityGoogle"), TEXT("LoginRedirectUrl"), LoginURLDetails.LoginRedirectUrl, GEngineIni))
 	{
 		UE_LOG_ONLINE_IDENTITY(Warning, TEXT("Missing LoginRedirectUrl= in [OnlineSubsystemGoogle.OnlineIdentityGoogle] of DefaultEngine.ini"));
@@ -28,6 +32,7 @@ FOnlineIdentityGoogle::FOnlineIdentityGoogle(FOnlineSubsystemGoogle* InSubsystem
 	GConfig->GetArray(TEXT("OnlineSubsystemGoogle.OnlineIdentityGoogle"), TEXT("ScopeFields"), LoginURLDetails.ScopeFields, GEngineIni);
 	// always required login access fields
 	LoginURLDetails.ScopeFields.AddUnique(TEXT(GOOGLE_PERM_PUBLIC_PROFILE));
+	LoginURLDetails.bRequestOfflineAccess = ShouldRequestOfflineAccess();
 }
 
 void FOnlineIdentityGoogle::DiscoveryRequest_HttpRequestComplete(FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded, PendingLoginRequestCb LoginCb)

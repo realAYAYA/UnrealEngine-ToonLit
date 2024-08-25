@@ -16,7 +16,6 @@
 
 #if RHI_RAYTRACING
 
-#include "RayTracing/RayTracingDeferredMaterials.h"
 #include "RayTracing/RaytracingOptions.h"
 #include "RayTracing/RayTracingLighting.h"
 #include "LumenHardwareRayTracingCommon.h"
@@ -52,7 +51,7 @@ class FLumenTranslucencyVolumeHardwareRayTracing : public FLumenHardwareRayTraci
 	DECLARE_LUMEN_RAYTRACING_SHADER(FLumenTranslucencyVolumeHardwareRayTracing, Lumen::ERayTracingShaderDispatchSize::DispatchSize1D)
 
 	class FRadianceCache : SHADER_PERMUTATION_BOOL("USE_RADIANCE_CACHE");
-	using FPermutationDomain = TShaderPermutationDomain<FRadianceCache>;
+	using FPermutationDomain = TShaderPermutationDomain<FLumenHardwareRayTracingShaderBase::FBasePermutationDomain, FRadianceCache>;
 
 	// Parameters
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
@@ -141,27 +140,25 @@ void HardwareRayTraceTranslucencyVolume(
 
 		if (bInlineRayTracing)
 		{
-			const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(DispatchResolution, FLumenTranslucencyVolumeHardwareRayTracingCS::GetThreadGroupSize());
-
-			TShaderRef<FLumenTranslucencyVolumeHardwareRayTracingCS> ComputeShader = View.ShaderMap->GetShader<FLumenTranslucencyVolumeHardwareRayTracingCS>(PermutationVector);
-			FComputeShaderUtils::AddPass(
+			const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(DispatchResolution, FLumenTranslucencyVolumeHardwareRayTracingCS::GetThreadGroupSize(View.GetShaderPlatform()));
+			FLumenTranslucencyVolumeHardwareRayTracingCS::AddLumenRayTracingDispatch(
 				GraphBuilder,
 				RDG_EVENT_NAME("HardwareRayTracing (inline) %ux%u", DispatchResolution.X, DispatchResolution.Y),
-				ComputePassFlags,
-				ComputeShader,
+				View, 
+				PermutationVector,
 				PassParameters,
-				GroupCount);
+				GroupCount,
+				ComputePassFlags);
 		}
 		else
 		{
-			TShaderRef<FLumenTranslucencyVolumeHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenTranslucencyVolumeHardwareRayTracingRGS>(PermutationVector);
-			AddLumenRayTraceDispatchPass(
+			FLumenTranslucencyVolumeHardwareRayTracingRGS::AddLumenRayTracingDispatch(
 				GraphBuilder,
 				RDG_EVENT_NAME("HardwareRayTracing (raygen) %ux%u", DispatchResolution.X, DispatchResolution.Y),
-				RayGenerationShader,
+				View, 
+				PermutationVector,
 				PassParameters,
 				DispatchResolution,
-				View,
 				bUseMinimalPayload);
 		}
 	}

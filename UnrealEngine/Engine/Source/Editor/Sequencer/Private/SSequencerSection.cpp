@@ -6,6 +6,7 @@
 #include "MVVM/ViewModels/CategoryModel.h"
 #include "MVVM/ViewModels/ViewModelIterators.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
+#include "MVVM/ViewModels/EditorSharedViewModelData.h"
 #include "MVVM/Views/ITrackAreaHotspot.h"
 #include "MVVM/Views/STrackAreaView.h"
 #include "MVVM/Views/SCompoundTrackLaneView.h"
@@ -24,13 +25,14 @@
 #include "Sequencer.h"
 #include "SequencerSectionPainter.h"
 #include "MovieSceneSequence.h"
-#include "CommonMovieSceneTools.h"
 #include "ISequencerEditTool.h"
 #include "ISequencerSection.h"
 #include "SequencerHotspots.h"
 #include "Widgets/SOverlay.h"
 #include "MovieScene.h"
 #include "Fonts/FontCache.h"
+#include "Fonts/FontMeasure.h"
+#include "FrameNumberNumericInterface.h"
 #include "Framework/Application/SlateApplication.h"
 #include "MovieSceneTimeHelpers.h"
 #include "Tracks/MovieScenePropertyTrack.h"
@@ -742,7 +744,7 @@ struct FSequencerSectionPainterImpl : FSequencerSectionPainter
 				{
 					if (AllDescendents.Contains(Pair.Key))
 					{
-						EmptyChildLanes.RemoveAtSwap(Index, 1, false);
+						EmptyChildLanes.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 						// Move onto the next child lane
 						break;
 					}
@@ -750,7 +752,7 @@ struct FSequencerSectionPainterImpl : FSequencerSectionPainter
 			}
 			else
 			{
-				EmptyChildLanes.RemoveAtSwap(Index, 1, false);
+				EmptyChildLanes.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -1312,6 +1314,58 @@ TSharedPtr<FTrackAreaViewModel> SSequencerSection::GetTrackAreaViewModel() const
 	return nullptr;
 }
 
+void DrawFrameTimeHint(FSequencerSectionPainter& InPainter, const FFrameTime& CurrentTime, const FFrameTime& FrameTime, const FFrameNumberInterface* FrameNumberInterface, int32 LayerId)
+{
+	FString FrameTimeString;
+	if (FrameNumberInterface)
+	{
+		FrameTimeString = FrameNumberInterface->ToString(FrameTime.AsDecimal());
+	}
+	else
+	{
+		FrameTimeString = FString::FromInt(FrameTime.GetFrame().Value);
+	}
+
+	const FSlateFontInfo SmallLayoutFont = FCoreStyle::GetDefaultFontStyle("Bold", 10);
+	const TSharedRef< FSlateFontMeasure > FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+	FVector2D TextSize = FontMeasureService->Measure(FrameTimeString, SmallLayoutFont);
+
+	const float PixelX = InPainter.GetTimeConverter().FrameToPixel(CurrentTime);
+
+	// Flip the text position if getting near the end of the view range
+	static const float TextOffsetPx = 10.f;
+	bool  bDrawLeft = (InPainter.SectionGeometry.Size.X - PixelX) < (TextSize.X + 22.f) - TextOffsetPx;
+	float TextPosition = bDrawLeft ? PixelX - TextSize.X - TextOffsetPx : PixelX + TextOffsetPx;
+	//handle mirrored labels
+	const float MajorTickHeight = 9.0f;
+	FVector2D TextOffset(TextPosition, InPainter.SectionGeometry.Size.Y - (MajorTickHeight + TextSize.Y));
+
+	const FLinearColor DrawColor = FAppStyle::GetSlateColor("SelectionColor").GetColor(FWidgetStyle()).CopyWithNewOpacity(InPainter.GhostAlpha);
+	const FVector2D BoxPadding = FVector2D(4.0f, 2.0f);
+	// draw time string
+
+	FSlateDrawElement::MakeBox(
+		InPainter.DrawElements,
+		LayerId,
+		InPainter.SectionGeometry.ToPaintGeometry(TextSize + 2.0f * BoxPadding, FSlateLayoutTransform(TextOffset - BoxPadding)),
+		FAppStyle::GetBrush("WhiteBrush"),
+		ESlateDrawEffect::None,
+		FLinearColor::Black.CopyWithNewOpacity(0.5f * InPainter.GhostAlpha)
+	);
+
+	ESlateDrawEffect DrawEffects = InPainter.bParentEnabled ? ESlateDrawEffect::None : ESlateDrawEffect::DisabledEffect;
+
+	FSlateDrawElement::MakeText(
+		InPainter.DrawElements,
+		LayerId,
+		InPainter.SectionGeometry.ToPaintGeometry(TextSize, FSlateLayoutTransform(TextOffset)),
+		FrameTimeString,
+		SmallLayoutFont,
+		DrawEffects,
+		DrawColor
+	);
+}
+
 int32 SSequencerSection::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled ) const
 {
 	TSharedPtr<FSectionModel> SectionModel = WeakSectionModel.Pin();
@@ -1411,11 +1465,14 @@ int32 SSequencerSection::OnPaint( const FPaintArgs& Args, const FGeometry& Allot
 
 	if (!SectionTitle.IsEmpty())
 	{
+		TViewModelPtr<IGeometryExtension> Geometry = SectionModel->FindAncestorOfType<IOutlinerExtension>().ImplicitCast();
+		const float AllocatedFontHeight = (Geometry ? Geometry->GetVirtualGeometry().GetHeight() : SectionGeometry.Size.Y) - 4.f; // 2px minimum padding
+
+		// Align the section title within the actual track area geometry, excluding any expanded channels
 		FSlateClippingZone ClippingZone(Painter.SectionClippingRect);
 		OutDrawElements.PushClip(ClippingZone);
 
 		FVector2D TopLeft = SectionGeometry.AbsoluteToLocal(Painter.SectionClippingRect.GetTopLeft()) + FVector2D(1.f, -1.f);
-
 		FSlateFontInfo FontInfo = FAppStyle::GetFontStyle("NormalFont");
 
 		TSharedRef<FSlateFontCache> FontCache = FSlateApplication::Get().GetRenderer()->GetFontCache();
@@ -1424,17 +1481,37 @@ int32 SSequencerSection::OnPaint( const FPaintArgs& Args, const FGeometry& Allot
 		{
 			return FontCache->GetMaxCharacterHeight(FontInfo, 1.f) + FontCache->GetBaseline(FontInfo, 1.f);
 		};
-		while (GetFontHeight() > SectionGeometry.Size.Y && FontInfo.Size > 11)
+		while (GetFontHeight() > AllocatedFontHeight && FontInfo.Size > 7.f)
 		{
-			FontInfo.Size = FMath::Max(FMath::FloorToInt(FontInfo.Size - 6.f), 11);
+			FontInfo.Size = FMath::Max(FMath::FloorToInt(FontInfo.Size - 6.f), 7.f);
 		}
+
+		float TitlePosition = ContentPadding.Top;
+		if (FontInfo.Size + ContentPadding.Top + ContentPadding.Bottom > AllocatedFontHeight)
+		{
+			TitlePosition = (AllocatedFontHeight - FontInfo.Size) * 0.5f;
+		}
+
+		// Drop shadow
+		FSlateDrawElement::MakeText(
+			OutDrawElements,
+			LayerId,
+			SectionGeometry.MakeChild(
+				FVector2D(SectionGeometry.Size.X, GetFontHeight()),
+				FSlateLayoutTransform(TopLeft + FVector2D(ContentPadding.Left, TitlePosition) + FVector2D(1.f, 1.f))
+			).ToPaintGeometry(),
+			SectionTitle,
+			FontInfo,
+			DrawEffects,
+			FLinearColor(0, 0, 0, .5f * Painter.GhostAlpha)
+		);
 
 		FSlateDrawElement::MakeText(
 			OutDrawElements,
 			LayerId,
 			SectionGeometry.MakeChild(
 				FVector2D(SectionGeometry.Size.X, GetFontHeight()),
-				FSlateLayoutTransform(TopLeft + FVector2D(ContentPadding.Left, ContentPadding.Top))
+				FSlateLayoutTransform(TopLeft + FVector2D(ContentPadding.Left, TitlePosition))
 			).ToPaintGeometry(),
 			SectionTitle,
 			FontInfo,
@@ -1447,6 +1524,32 @@ int32 SSequencerSection::OnPaint( const FPaintArgs& Args, const FGeometry& Allot
 
 	++LayerId;
 
+	TOptional<FFrameTime> SectionTime = SectionInterface->GetSectionTime(Painter);
+	if (SectionTime.IsSet())
+	{
+		const FFrameRate DisplayRate = GetSequencer().GetFocusedDisplayRate();
+		const FFrameRate TickResolution = GetSequencer().GetFocusedTickResolution();
+
+		// Get the desired frame display format and zero padding from
+		// the sequencer settings, if possible.
+		TAttribute<EFrameNumberDisplayFormats> DisplayFormatAttr(EFrameNumberDisplayFormats::Frames);
+		TAttribute<uint8> ZeroPadFrameNumbersAttr(0u);
+		if (const USequencerSettings* SequencerSettings = GetSequencer().GetSequencerSettings())
+		{
+			DisplayFormatAttr.Set(SequencerSettings->GetTimeDisplayFormat());
+			ZeroPadFrameNumbersAttr.Set(SequencerSettings->GetZeroPadFrames());
+		}
+
+		const TAttribute<FFrameRate> TickResolutionAttr(TickResolution);
+		const TAttribute<FFrameRate> DisplayRateAttr(DisplayRate);
+
+		const FFrameNumberInterface FrameNumberInterface(DisplayFormatAttr, ZeroPadFrameNumbersAttr, TickResolutionAttr, DisplayRateAttr);
+
+		DrawFrameTimeHint(Painter, GetSequencer().GetLocalTime().Time, SectionTime.GetValue(), &FrameNumberInterface, LayerId);
+	}
+
+	++LayerId;
+
 	if (Painter.bClipRectEnabled)
 	{
 		OutDrawElements.PopClip();
@@ -1454,7 +1557,6 @@ int32 SSequencerSection::OnPaint( const FPaintArgs& Args, const FGeometry& Allot
 
 	return LayerId;
 }
-
 
 void SSequencerSection::PaintEasingHandles( FSequencerSectionPainter& InPainter, FLinearColor SelectionColor, TSharedPtr<ITrackAreaHotspot> Hotspot ) const
 {
@@ -1464,6 +1566,14 @@ void SSequencerSection::PaintEasingHandles( FSequencerSectionPainter& InPainter,
 	}
 
 	if (Hotspot && !Hotspot->IsA<FSectionHotspotBase>())
+	{
+		return;
+	}
+
+	TSharedPtr<FSectionModel>              SectionModel = WeakSectionModel.Pin();
+	TSharedPtr<FSharedViewModelData>       SharedModelData = SectionModel ? SectionModel->GetSharedData() : nullptr;
+	TSharedPtr<FEditorSharedViewModelData> EditorSharedModelData = SharedModelData ? SharedModelData->CastThisShared<FEditorSharedViewModelData>() : nullptr;
+	if (!SectionModel || !EditorSharedModelData)
 	{
 		return;
 	}
@@ -1487,9 +1597,9 @@ void SSequencerSection::PaintEasingHandles( FSequencerSectionPainter& InPainter,
 	}
 
 	FTimeToPixel TimeToPixelConverter = InPainter.GetTimeConverter();
-	for (const TSharedPtr<FSectionModel>& SectionModel : AllUnderlappingSections)
+	for (const TSharedPtr<FSectionModel>& UnderlappingSectionModel : AllUnderlappingSections)
 	{
-		UMovieSceneSection* UnderlappingSectionObj = SectionModel->GetSection();
+		UMovieSceneSection* UnderlappingSectionObj = UnderlappingSectionModel->GetSection();
 		if (UnderlappingSectionObj->GetRange() == TRange<FFrameNumber>::All())
 		{
 			continue;
@@ -1504,7 +1614,7 @@ void SSequencerSection::PaintEasingHandles( FSequencerSectionPainter& InPainter,
 		{
 			if (const FSectionEasingHandleHotspot* EasingHotspot = Hotspot->CastThis<FSectionEasingHandleHotspot>())
 			{
-				bDrawThisSectionsHandles = (EasingHotspot->WeakSectionModel.Pin() == SectionModel);
+				bDrawThisSectionsHandles = (EasingHotspot->WeakSectionModel.Pin() == UnderlappingSectionModel);
 				bLeftHandleActive = EasingHotspot->HandleType == ESequencerEasingType::In;
 				bRightHandleActive = EasingHotspot->HandleType == ESequencerEasingType::Out;
 			}
@@ -1547,14 +1657,14 @@ void SSequencerSection::PaintEasingHandles( FSequencerSectionPainter& InPainter,
 		const float MinHandleSize = 8.f;
 
 		const ESlateDrawEffect DrawEffects = InPainter.bParentEnabled ? ESlateDrawEffect::None : ESlateDrawEffect::DisabledEffect;
-		const bool bIsSectionToKey = Track && Track->GetAllSections().Num() > 1 && Track->GetSectionToKey() == UnderlappingSectionObj;
+		const bool bIsSectionToKey = Track->GetAllSections().Num() > 1 && Track->GetSectionToKey() == UnderlappingSectionObj;
 
 		// If this is the section to key, we draw the easing handle in the same bright green color as the border
 		// outline. We also make the handle a bit bigger, otherwise that border being drawn on top makes it look
 		// smaller.
 		// If there isn't any "section to key" border, we just draw the handle white.
 		const FLinearColor InactiveHandleColor = bIsSectionToKey ? FStyleColors::Success.GetColor(FWidgetStyle()) : FStyleColors::AccentYellow.GetColor(FWidgetStyle());
-		const float HalfSectionHeight = SectionInterface->GetSectionHeight() / 2.f;
+		const float HalfSectionHeight = SectionInterface->GetSectionHeight(EditorSharedModelData->GetEditor()->GetViewDensity()) / 2.f;
 		const float HandleSize = FMath::Max(MinHandleSize, FMath::Min(HalfSectionHeight, SectionInterface->GetSectionGripSize())) + (bIsSectionToKey ? 3.f : 0.f);
 
 		const FSlateBrush* HandleBrush = FAppStyle::GetBrush("Sequencer.Section.EasingHandle");

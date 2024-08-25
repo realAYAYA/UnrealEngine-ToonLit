@@ -3191,7 +3191,7 @@ void SEventGraph::ClearHistory_Execute()
 		const FEventGraphStateRef It = EventGraphStatesHistory[Nx];
 		if( It->MaximumEventGraph == EventGraphState->MaximumEventGraph && It->HistoryType != EEventHistoryTypes::NewEventGraph )
 		{
-			EventGraphStatesHistory.RemoveAt( Nx, 1, false );
+			EventGraphStatesHistory.RemoveAt( Nx, 1, EAllowShrinking::No);
 			Nx--;
 		}
 	}

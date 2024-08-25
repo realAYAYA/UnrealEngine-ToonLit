@@ -39,7 +39,8 @@ public:
 
 #if WITH_EDITORONLY_DATA
 	MOVIESCENETRACKS_API virtual FText GetDefaultDisplayName() const override;
-	MOVIESCENETRACKS_API virtual FText GetDisplayNameToolTipText() const override;
+	MOVIESCENETRACKS_API virtual FText GetDisplayNameToolTipText(const FMovieSceneLabelParams& LabelParams) const override;
+	MOVIESCENETRACKS_API virtual FSlateColor GetLabelColor(const FMovieSceneLabelParams& LabelParams) const override;
 	virtual bool CanRename() const override { return false; }
 	MOVIESCENETRACKS_API virtual FName GetTrackName() const override;
 #endif

@@ -77,7 +77,7 @@ bool UNiagaraCullProxyComponent::RegisterCulledComponent(UNiagaraComponent* Comp
 
 		SetPaused(false);
 
-		Component->MarkRenderDynamicDataDirty();
+		Component->MarkRenderStateDirty();
 
 		return true;
 	}
@@ -98,7 +98,7 @@ void UNiagaraCullProxyComponent::UnregisterCulledComponent(UNiagaraComponent* Co
 		SetPaused(true);
 	}
 
-	Component->MarkRenderDynamicDataDirty();
+	Component->MarkRenderStateDirty();
 }
 
 //////////////////////////////////////////////////////////////////////////

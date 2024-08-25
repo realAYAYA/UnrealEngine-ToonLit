@@ -11,10 +11,9 @@
 
 namespace mu
 {
-struct FProgram;
-template <class SCALAR> class vec4;
+	struct FProgram;
 
-	class ASTOpImageCompose : public ASTOp
+	class ASTOpImageCompose final : public ASTOp
 	{
 	public:
 

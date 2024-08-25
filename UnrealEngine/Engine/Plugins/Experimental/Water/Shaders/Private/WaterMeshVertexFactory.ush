@@ -2,6 +2,31 @@
 
 #include "/Engine/Private/VertexFactoryCommon.ush"
 
+#ifndef WATER_MESH_DRAW_INDIRECT
+#define WATER_MESH_DRAW_INDIRECT 0
+#endif
+
+#define WATER_MESH_DRAW_INDIRECT_INTERNAL WATER_MESH_DRAW_INDIRECT && !RAYHITGROUPSHADER && !COMPUTESHADER
+
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+float3 QuadTreePosition;
+uint bLODMorphingEnabled;
+
+#if INSTANCED_STEREO
+Buffer<uint> InstanceDataOffsetsBuffer;
+Buffer<uint> InstanceData0Buffer;
+Buffer<uint> InstanceData1Buffer;
+Buffer<uint> InstanceData2Buffer;
+#if WITH_WATER_SELECTION_SUPPORT_VF
+Buffer<uint> InstanceData3Buffer;
+#endif
+
+uint DrawBucketIndex;
+uint StereoPassInstanceFactor;
+#endif // INSTANCED_STEREO
+
+#endif // WATER_MESH_DRAW_INDIRECT_INTERNAL
+
 struct FVertexFactoryInterpolantsVSToPS
 {
 #if NUM_TEX_COORD_INTERPOLATORS
@@ -26,11 +51,23 @@ struct FVertexFactoryInput
 {
 	float4	Position	: ATTRIBUTE0;
 
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+#if !INSTANCED_STEREO // ISR uses manual vertex fetching instead
+	uint InstanceData0 : ATTRIBUTE8;
+	uint InstanceData1 : ATTRIBUTE9;
+	uint InstanceData2 : ATTRIBUTE10;
+#if HIT_PROXY_SHADER || WITH_WATER_SELECTION_SUPPORT_VF
+	uint InstanceData3 : ATTRIBUTE11;
+#endif
+#endif // !INSTANCED_STEREO
+
+#else // WATER_MESH_DRAW_INDIRECT_INTERNAL
 	float4 InstanceData0 : ATTRIBUTE8;
 	float4 InstanceData1 : ATTRIBUTE9; 
 #if HIT_PROXY_SHADER || WITH_WATER_SELECTION_SUPPORT_VF
 	float4 InstanceData2 : ATTRIBUTE10; // Store an HitProxyID per instance
 #endif
+#endif // WATER_MESH_DRAW_INDIRECT_INTERNAL
 
 	VF_GPUSCENE_DECLARE_INPUT_BLOCK(13)
 	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
@@ -43,8 +80,17 @@ struct FPositionOnlyVertexFactoryInput
 {
 	float4	Position	: ATTRIBUTE0;
 
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+#if !INSTANCED_STEREO // ISR uses manual vertex fetching instead
+	uint InstanceData0 : ATTRIBUTE8;
+	uint InstanceData1 : ATTRIBUTE9;
+	uint InstanceData2 : ATTRIBUTE10;
+#endif // !INSTANCED_STEREO
+
+#else // WATER_MESH_DRAW_INDIRECT_INTERNAL
 	float4 InstanceData0 : ATTRIBUTE8;
-	float4 InstanceData1 : ATTRIBUTE9; 
+	float4 InstanceData1 : ATTRIBUTE9;
+#endif // WATER_MESH_DRAW_INDIRECT_INTERNAL
 
 	VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
 	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
@@ -58,8 +104,17 @@ struct FPositionAndNormalOnlyVertexFactoryInput
 	float4	Position	: ATTRIBUTE0;
 	float4	Normal		: ATTRIBUTE2;
 
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+#if !INSTANCED_STEREO // ISR uses manual vertex fetching instead
+	uint InstanceData0 : ATTRIBUTE8;
+	uint InstanceData1 : ATTRIBUTE9;
+	uint InstanceData2 : ATTRIBUTE10;
+#endif // !INSTANCED_STEREO
+
+#else
 	float4 InstanceData0 : ATTRIBUTE8;
-	float4 InstanceData1 : ATTRIBUTE9; 
+	float4 InstanceData1 : ATTRIBUTE9;
+#endif // WATER_MESH_DRAW_INDIRECT_INTERNAL
 
 	VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
 	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
@@ -70,7 +125,6 @@ struct FPositionAndNormalOnlyVertexFactoryInput
  */
 struct FVertexFactoryIntermediates
 {
-	FLWCVector3 MorphedWorldPos;
 	float3 MorphedTranslatedWorldPos;
 	
 	uint WaveParamIndex;
@@ -157,17 +211,21 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 
 #if NUM_MATERIAL_TEXCOORDS_VERTEX
 	// Water doesn't get texcoords from its input verts, so all the vert texcoords will default to the same world position
+	// LWC note: this calculation was optimized to avoid a subtraction, which theoretically could have an impact near tile edges, but testing showed no additional artifacts.
+	float3 WorldPosOffset = Intermediates.MorphedTranslatedWorldPos - DFToTileOffset_Hack(ResolvedView.PreViewTranslation).Offset;
 	UNROLL
 	for(int CoordinateIndex = 0; CoordinateIndex < NUM_MATERIAL_TEXCOORDS_VERTEX; CoordinateIndex++)
 	{
 		// LWC_TODO: Using the LWC Offset here will result in seams at the tile edges.
-		Result.TexCoords[CoordinateIndex] = Intermediates.MorphedWorldPos.Offset.xy;
+		Result.TexCoords[CoordinateIndex] = WorldPosOffset.xy;
 	}
 #endif  //NUM_MATERIAL_TEXCOORDS_VERTEX
 
 #if WATER_MESH_FACTORY
 	Result.WaterWaveParamIndex = Intermediates.WaveParamIndex;
 #endif
+
+	Result.LWCData = MakeMaterialLWCData(Result);
 
 	return Result;
 }
@@ -204,46 +262,141 @@ float3 MorphTranslatedWorldPosition(float3 OriginalTranslatedWorldPos, float2 In
 	return TranslatedWorldPos;
 }
 
+struct FWaterVertexFactoryInstanceInput
+{
+	float2 Position;
+	float3 Translation;
+	uint WaterBodyIndex;
+	float LODLevel;
+	float2 Scale;
+	float HeightLODFactor;
+	uint NumQuadsPerTileSide;
+	bool bShouldMorph;
+	bool bCanMorphTwice;
+};
+
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+
+FWaterVertexFactoryInstanceInput UnpackWaterVertexFactoryInstanceInput(float4 InPosition, uint InData0, uint InData1, uint InData2)
+{
+	const uint2 NodeCoord = uint2(InData0 & 0x7FFu, (InData0 >> 11u) & 0x7FFu);
+	const uint RawLODLevel = (InData0 >> 22u) & 0x1Fu;
+	const uint RawDensityIndex = (InData0 >> 27u) & 0x1Fu;
+	const uint LODLevel = RawLODLevel + RawDensityIndex;
+	const uint DensityIndex = min(RawDensityIndex, (uint)WaterVF.NumDensities - 1);
+	const float WaterHeight = f16tof32(InData1) * WaterVF.CaptureDepthRange;
+	const uint2 TileCoord = uint2((InData1 >> 16u) & 0xFFu, (InData1 >> 24u) & 0xFFu);
+	const float HeightLODFactor = float(InData2 & 0xFFu) / 255.0f;
+	const uint WaterBodyIndex = InData2 >> 8u;
+	const float Scale = pow(2.0f, (float)RawLODLevel) * WaterVF.LeafSize;
+
+	bool bKilledTriangle = false;
+
+	// Shift and scale the tile according to its tile coord within the node and kill superfluous triangles
+	const uint NumQuadsPerLogicalTileSide = max(2u, (uint)WaterVF.NumQuadsLOD0 >> DensityIndex);
+	{
+		if ((uint)WaterVF.NumQuadsPerTileSide > NumQuadsPerLogicalTileSide)
+		{
+			InPosition.xy *= (float)WaterVF.NumQuadsPerTileSide / (float)NumQuadsPerLogicalTileSide;
+			if (any(InPosition.xy < -0.5f) || any(InPosition.xy > 0.5f))
+			{
+				// Kill triangle by setting position to NaN
+				InPosition = asfloat(0xFFFFFFFF).xxxx;
+				bKilledTriangle = true;
+			}
+		}
+
+		const uint NumTiles = max((uint)WaterVF.NumQuadsPerTileSide, NumQuadsPerLogicalTileSide) / (uint)WaterVF.NumQuadsPerTileSide;
+		const float PositionScale = 1.0f / NumTiles;
+		const float2 PositionBias = TileCoord * PositionScale;
+		InPosition.xy += 0.5f;
+		InPosition.xy = InPosition.xy * PositionScale + PositionBias;
+		InPosition.xy -= 0.5f;
+	}
+
+	FWaterVertexFactoryInstanceInput Result = (FWaterVertexFactoryInstanceInput)0;
+	Result.Position = InPosition.xy;
+	Result.Translation = float3((NodeCoord + 0.5f) * Scale, WaterHeight) + QuadTreePosition;
+	Result.WaterBodyIndex = WaterBodyIndex;
+	Result.LODLevel = (float)LODLevel;
+	Result.Scale = Scale.xx;
+	Result.NumQuadsPerTileSide = NumQuadsPerLogicalTileSide;
+	Result.HeightLODFactor = HeightLODFactor;
+	// Only allow a tile to morph if it's not the last density level and not the last LOD level, since there is no next level to morph to
+	Result.bShouldMorph = !bKilledTriangle && ((bLODMorphingEnabled != 0) && (DensityIndex != (uint)WaterVF.NumDensities - 1)) ? 1 : 0;
+	// Tiles can morph twice to be able to morph between 3 LOD levels. Next to last density level can only morph once
+	Result.bCanMorphTwice = !bKilledTriangle && (DensityIndex < (uint)WaterVF.NumDensities - 2) ? 1 : 0;
+
+	return Result;
+}
+
+#else // WATER_MESH_DRAW_INDIRECT_INTERNAL
+
+FWaterVertexFactoryInstanceInput UnpackWaterVertexFactoryInstanceInput(float4 InPosition, float4 InData0, float4 InData1)
+{
+	const uint PackedDataChannel = asuint(InData1.x);
+
+	FWaterVertexFactoryInstanceInput Result = (FWaterVertexFactoryInstanceInput)0;
+	Result.Position = InPosition.xy;
+	Result.Translation = InData0.xyz;
+	Result.WaterBodyIndex = asuint(InData0.w);
+	Result.LODLevel = (float)(PackedDataChannel & 0xFF);
+	Result.Scale = InData1.zw;
+	Result.HeightLODFactor = InData1.y;
+	Result.NumQuadsPerTileSide = (uint)WaterVF.NumQuadsPerTileSide;
+	Result.bShouldMorph = ((PackedDataChannel >> 8u) & 0x1u) != 0;
+	Result.bCanMorphTwice = ((PackedDataChannel >> 9u) & 0x1u) != 0;
+
+	return Result;
+}
+
+#endif // WATER_MESH_DRAW_INDIRECT_INTERNAL
+
 FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput Input)
 {
 	FVertexFactoryIntermediates Intermediates;
 
-	// Get the packed instance data
-	float4 Data0 = Input.InstanceData0;
-	float4 Data1 = Input.InstanceData1;
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+#if INSTANCED_STEREO
+	const uint InstanceIndex = Input.InstanceId / StereoPassInstanceFactor;
+	const uint InstanceDataIndex = InstanceDataOffsetsBuffer.Load(DrawBucketIndex) + InstanceIndex;
+	const uint InstanceData0 = InstanceData0Buffer.Load(InstanceDataIndex);
+	const uint InstanceData1 = InstanceData1Buffer.Load(InstanceDataIndex);
+	const uint InstanceData2 = InstanceData2Buffer.Load(InstanceDataIndex);
+#else
+	const uint InstanceData0 = Input.InstanceData0;
+	const uint InstanceData1 = Input.InstanceData1;
+	const uint InstanceData2 = Input.InstanceData2;
+#endif
 
-	const float3 Translation = Data0.xyz;
-	Intermediates.WaveParamIndex = asuint(Data0.w);
-	const float3 Scale = float3(Data1.zw, 1.0f);
-	const uint PackedDataChannel = asuint(Data1.x);
+	const FWaterVertexFactoryInstanceInput InstanceInput = UnpackWaterVertexFactoryInstanceInput(Input.Position, InstanceData0, InstanceData1, InstanceData2);
+#else
+	const FWaterVertexFactoryInstanceInput InstanceInput = UnpackWaterVertexFactoryInstanceInput(Input.Position, Input.InstanceData0, Input.InstanceData1);
+#endif
 
-	// Lod level is in first 8 bits and ShouldMorph bit is in the 9th bit
-	const float LODLevel = (float)(PackedDataChannel & 0xFF);
-	const uint ShouldMorph = ((PackedDataChannel >> 8) & 0x1); 
+	Intermediates.WaveParamIndex = InstanceInput.WaterBodyIndex;
 
 	// Calculate the world pos
-	float3 TranslatedWorldPosition = float3(Input.Position.xy, 0.0f) * Scale + Translation;
+	float3 TranslatedWorldPosition = float3(InstanceInput.Position.xy * InstanceInput.Scale, 0.0f) + InstanceInput.Translation;
 
 	Intermediates.SceneData = VF_GPUSCENE_GET_INTERMEDIATES(Input);
 	
-	if (ShouldMorph == 1)
+	if (InstanceInput.bShouldMorph)
 	{
 		// Factor that applies across the entire lowest LOD, based on height above water
 		// Then this reaches 1.0, the lowest LOD will pop out and be replaced by the next LOD, starting over at 0.0. Rinse and repeat.
-		//const float HeightLODFactor = 0.0f;
-		const float HeightLODFactor = Data1.y; 
+		const float HeightLODFactor = InstanceInput.HeightLODFactor;
 	
-		const float2 QuadSize = Scale.xy / WaterVF.NumQuadsPerTileSide;
+		const float2 QuadSize = InstanceInput.Scale.xy / InstanceInput.NumQuadsPerTileSide;
 	
 		float OutLODFactor = 0.0f;
-		float3 TempTranslatedWorldPosition = MorphTranslatedWorldPosition(TranslatedWorldPosition, Translation.xy - Scale.xy*0.5f, LODLevel, WaterVF.LODScale, QuadSize, HeightLODFactor, OutLODFactor);
+		float3 TempTranslatedWorldPosition = MorphTranslatedWorldPosition(TranslatedWorldPosition, InstanceInput.Translation.xy - InstanceInput.Scale.xy*0.5f, InstanceInput.LODLevel, WaterVF.LODScale, QuadSize, HeightLODFactor, OutLODFactor);
 	
 		// If the vert is fully morphed, we morph it again as if it was a vert from the next LOD. This effectively means one tile can morph between 3 different LOD levels. 
 		// This is needed because the current LOD level tile will stick in to the next LOD level since we move the observer around. Make sure to not add any heightLODFactor to this, since that only applies to lowest LOD
-		const uint CanMorphTwice = ((PackedDataChannel >> 9) & 0x1); 
-		if (OutLODFactor >= 1.0f && CanMorphTwice == 1)
+		if (OutLODFactor >= 1.0f && InstanceInput.bCanMorphTwice)
 		{
-			TempTranslatedWorldPosition = MorphTranslatedWorldPosition(TempTranslatedWorldPosition, Translation.xy - Scale.xy*0.5f, LODLevel + 1, WaterVF.LODScale, QuadSize * 2.0f, 0.0f, OutLODFactor);
+			TempTranslatedWorldPosition = MorphTranslatedWorldPosition(TempTranslatedWorldPosition, InstanceInput.Translation.xy - InstanceInput.Scale.xy*0.5f, InstanceInput.LODLevel + 1, WaterVF.LODScale, QuadSize * 2.0f, 0.0f, OutLODFactor);
 		}
 	
 		Intermediates.MorphedTranslatedWorldPos = TempTranslatedWorldPosition;
@@ -254,12 +407,18 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	}
 
 #if WITH_WATER_SELECTION_SUPPORT_VF
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+	#if INSTANCED_STEREO
+	float SelectedValue = UnpackRGBA8(InstanceData3Buffer.Load(InstanceDataIndex)).w;
+	#else
+	float SelectedValue = UnpackRGBA8(Input.InstanceData2).w;
+	#endif // INSTANCED_STEREO
+#else // WATER_MESH_DRAW_INDIRECT_INTERNAL
 	float SelectedValue = Input.InstanceData2.w;
+#endif
 	float IsVisible = WaterVF.bRenderSelected * SelectedValue + WaterVF.bRenderUnselected * (1-SelectedValue);
 	Intermediates.MorphedTranslatedWorldPos *= IsVisible;
 #endif // WITH_WATER_SELECTION_SUPPORT_VF
-
-	Intermediates.MorphedWorldPos = LWCSubtract(Intermediates.MorphedTranslatedWorldPos, ResolvedView.PreViewTranslation);
 
 	return Intermediates;
 }
@@ -268,7 +427,17 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 float4 VertexFactoryGetInstanceHitProxyId(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
 #if WITH_WATER_SELECTION_SUPPORT_VF
+#if WATER_MESH_DRAW_INDIRECT_INTERNAL
+	#if INSTANCED_STEREO
+	const uint InstanceIndex = Input.InstanceId / StereoPassInstanceFactor;
+	const uint InstanceDataIndex = InstanceDataOffsetsBuffer.Load(DrawBucketIndex) + InstanceIndex;
+	return float4(UnpackRGBA8(InstanceData3Buffer.Load(InstanceDataIndex)).bgr, 0);
+	#else
+	return float4(UnpackRGBA8(Input.InstanceData2).bgr, 0);
+	#endif // INSTANCED_STEREO
+#else // WATER_MESH_DRAW_INDIRECT_INTERNAL
 	return float4(Input.InstanceData2.rgb, 0);
+#endif // WATER_MESH_DRAW_INDIRECT_INTERNAL
 #else // WITH_WATER_SELECTION_SUPPORT_VF
 	return 0;
 #endif // !WITH_WATER_SELECTION_SUPPORT_VF
@@ -339,13 +508,13 @@ float4 VertexFactoryGetWorldPosition(FPositionOnlyVertexFactoryInput Input)
 // @return previous translated world position
 float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
-	return float4(LWCToFloat(LWCAdd(Intermediates.MorphedWorldPos, ResolvedView.PrevPreViewTranslation)), 1);
+	return float4(Intermediates.MorphedTranslatedWorldPos + DFFastLocalSubtractDemote(ResolvedView.PrevPreViewTranslation, ResolvedView.PreViewTranslation), 1);
 }
 
 float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
 {
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(GetPrimitiveId(Interpolants));
-	return float4(LWCToFloat(LWCAdd(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation)), PrimitiveData.ObjectRadius);
+	return float4(DFFastToTranslatedWorld(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation), PrimitiveData.ObjectRadius);
 }
 
 uint VertexFactoryGetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)

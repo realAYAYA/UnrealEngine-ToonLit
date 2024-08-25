@@ -20,6 +20,7 @@
 #include "SoundModulationGeneratorProxy.h"
 #include "Templates/Atomic.h"
 #include "Templates/Function.h"
+#include "UObject/GCObject.h"
 
 #if WITH_AUDIOMODULATION
 #if !UE_BUILD_SHIPPING
@@ -62,23 +63,35 @@ namespace AudioModulation
 #if WITH_AUDIOMODULATION
 namespace AudioModulation
 {
-	class FAudioModulationSystem
+	class FAudioModulationSystem : public FGCObject
 	{
 	public:
 		void Initialize(const FAudioPluginInitializationParams& InitializationParams);
 
+		UE_DEPRECATED(5.4, "Activation of modulators in this manner is now deprecated. Use USoundModulationDestinations to safely activate and track a given modulator")
 		void ActivateBus(const USoundControlBus& InBus);
+
 		void ActivateBusMix(FModulatorBusMixSettings&& InSettings);
 		void ActivateBusMix(const USoundControlBusMix& InBusMix);
+
+		UE_DEPRECATED(5.4, "Activation of modulators in this manner is now deprecated. Use USoundModulationDestinations to safely activate and track a given modulator")
 		void ActivateGenerator(const USoundModulationGenerator& InGenerator);
 
-		/**
-		 * Deactivates respectively typed (i.e. BusMix, Bus, Generator, etc.) object proxy if no longer referenced.
-		 * If still referenced, will wait until references are finished before destroying.
-		 */
+		// FGCObject interface
+		virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+		virtual FString GetReferencerName() const override;
+		// End of FGCObject interface
+
+		UE_DEPRECATED(5.4, "Deactivation of modulators in this manner is now deprecated. Use USoundModulationDestinations to safely activate and track a given modulator")
 		void DeactivateBus(const USoundControlBus& InBus);
+
+		/** Deactivates given bus mix */
 		void DeactivateBusMix(const USoundControlBusMix& InBusMix);
+
+		/** Deactivates all bus mixes */
 		void DeactivateAllBusMixes();
+
+		UE_DEPRECATED(5.4, "Deactivation of modulators in this manner is now deprecated. Use USoundModulationDestinations to safely activate and track a given modulator")
 		void DeactivateGenerator(const USoundModulationGenerator& InGenerator);
 
 		void ProcessModulators(const double InElapsed);
@@ -107,6 +120,8 @@ namespace AudioModulation
 
 		void UnregisterModulator(const Audio::FModulatorHandle& InHandle);
 
+		bool IsControlBusMixActive(const USoundControlBusMix& InBusMix);
+
 		/* Saves mix to .ini profile for fast iterative development that does not require re-cooking a mix */
 		void SaveMixToProfile(const USoundControlBusMix& InBusMix, const int32 InProfileIndex);
 
@@ -134,6 +149,9 @@ namespace AudioModulation
 
 		/* Clears all global bus mix values over the prescribed FadeTime. If FadeTime is non-positive, returns to the bus's respective parameter default immediately. */
 		void ClearAllGlobalBusMixValues(float FadeTime = -1.0f);
+
+		/* Create a mix from an array of buses where a supplied default value and associated timing parameters are applied for each bus's stage */
+		USoundControlBusMix* CreateBusMixFromValue(FName Name, const TArray<USoundControlBus*>& Buses, float Value, float AttackTime = -1.0f, float ReleaseTime = -1.0f);
 
 		/*
 		 * Commits any changes from a modulator type applied to a UObject definition
@@ -216,6 +234,8 @@ namespace AudioModulation
 		mutable FCriticalSection ThreadSafeModValueCritSection;
 		TMap<Audio::FModulatorId, float> ThreadSafeModValueMap;
 
+		TSet<FBusMixId> ActiveBusMixIds;
+
 		TSet<FBusHandle> ManuallyActivatedBuses;
 		TSet<FBusMixHandle> ManuallyActivatedBusMixes;
 		TSet<FGeneratorHandle> ManuallyActivatedGenerators;
@@ -272,10 +292,6 @@ namespace AudioModulation
 	public:
 		void Initialize(const FAudioPluginInitializationParams& InitializationParams) { }
 
-#if WITH_EDITOR
-		void SoloBusMix(const USoundControlBusMix& InBusMix) { }
-#endif // WITH_EDITOR
-
 		void OnAuditionEnd() { }
 
 #if !UE_BUILD_SHIPPING
@@ -302,14 +318,19 @@ namespace AudioModulation
 
 		Audio::FDeviceId GetAudioDeviceId() const { return 0; }
 
+		bool IsControlBusMixActive(const USoundControlBusMix& InBusMix) { return false; }
+
 		void SaveMixToProfile(const USoundControlBusMix& InBusMix, const int32 InProfileIndex) { }
-		TArray<FSoundControlBusMixStage> LoadMixFromProfile(const int32 InProfileIndex, USoundControlBusMix& OutBusMix) { }
+		TArray<FSoundControlBusMixStage> LoadMixFromProfile(const int32 InProfileIndex, USoundControlBusMix& OutBusMix) { return { }; }
 
 		void SetGlobalBusMixValue(USoundControlBus& Bus, float Value, float FadeTime) { }
 		void ClearGlobalBusMixValue(const USoundControlBus& InBus, float FadeTime) { }
 		void ClearAllGlobalBusMixValues(float FadeTime) { }
 
+		USoundControlBusMix* CreateBusMixFromValue(FName Name, const TArray<USoundControlBus*>& Buses, float Value, float AttackTime = -1.0f, float ReleaseTime = -1.0f) { return nullptr; }
+
 		void ProcessModulators(const double InElapsed) { }
+		void SoloBusMix(const USoundControlBusMix& InBusMix) { }
 
 		Audio::FModulatorTypeId RegisterModulator(Audio::FModulatorHandleId InHandleId, const FControlBusSettings& InSettings) { return 0; }
 		Audio::FModulatorTypeId RegisterModulator(Audio::FModulatorHandleId InHandleId, const FModulationGeneratorSettings& InSettings) { return 0; }
@@ -318,7 +339,13 @@ namespace AudioModulation
 		void RegisterModulator(Audio::FModulatorHandleId InHandleId, Audio::FModulatorId InModulatorId) { }
 		bool GetModulatorValue(const Audio::FModulatorHandle& ModulatorHandle, float& OutValue) const { return false; }
 		bool GetModulatorValueThreadSafe(const Audio::FModulatorHandle& ModulatorHandle, float& OutValue) const { return false; }
+		bool GetModulatorValueThreadSafe(uint32 ModulatorID, float& OutValue) const { return false; }
 		void UnregisterModulator(const Audio::FModulatorHandle& InHandle) { }
+
+		inline bool FAudioModulationSystem::IsControlBusMixActive(const USoundControlBusMix* InBusMix)
+		{
+			return false;
+		}
 
 		void UpdateMix(const USoundControlBusMix& InMix, float InFadeTime = -1.0f) { }
 		void UpdateMix(const TArray<FSoundControlBusMixStage>& InStages, USoundControlBusMix& InOutMix, bool bUpdateObject = false, float InFadeTime = -1.0f) { }

@@ -342,6 +342,11 @@ void UGroomCardsEditorTool::OnEndDrag(const FRay& Ray)
 	check(false);
 }
 
+void UGroomCardsEditorTool::OnCancelDrag()
+{
+	check(false);
+}
+
 
 bool UGroomCardsEditorTool::OnUpdateHover(const FInputDeviceRay& DevicePos)
 {

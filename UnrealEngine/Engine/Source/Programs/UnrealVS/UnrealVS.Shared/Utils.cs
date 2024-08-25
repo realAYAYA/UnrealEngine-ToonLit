@@ -452,6 +452,16 @@ namespace UnrealVS
 			return GetUProjects().ContainsKey(Project.Name);
 		}
 
+		public static bool IsTestTargetProject(Project Project)
+		{
+			ThreadHelper.ThrowIfNotOnUIThread();
+			if (Project.Globals.VariableExists["IsTestTarget"])
+			{
+				return Convert.ToBoolean(Project.Globals["IsTestTarget"]);
+			}
+			return false;
+		}
+
 		/// <summary>
 		/// Does the config build something that takes a .uproject on the command line?
 		/// </summary>

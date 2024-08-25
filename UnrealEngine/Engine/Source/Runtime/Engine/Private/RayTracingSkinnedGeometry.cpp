@@ -34,26 +34,30 @@ FAutoConsoleVariableRef CVarSkinnedGeometryMaxRayTracingPrimitivesPerCmdList(
 	ECVF_RenderThreadSafe
 );
 
-void FRayTracingSkinnedGeometryUpdateQueue::Add(FRayTracingGeometry* InRayTracingGeometry, const FRayTracingAccelerationStructureSize& StructureSize, EAccelerationStructureBuildMode InBuildMode)
+void FRayTracingSkinnedGeometryUpdateQueue::Add(FRayTracingGeometry* InRayTracingGeometry, const FRayTracingAccelerationStructureSize& StructureSize)
 {
+	FScopeLock Lock(&CS);
 	FRayTracingUpdateInfo* CurrentUpdateInfo = ToUpdate.Find(InRayTracingGeometry);
 	if (CurrentUpdateInfo == nullptr)
 	{
 		FRayTracingUpdateInfo UpdateInfo;
-		UpdateInfo.BuildMode = InBuildMode;
-		UpdateInfo.ScratchSize = InBuildMode == EAccelerationStructureBuildMode::Build ? StructureSize.BuildScratchSize : StructureSize.UpdateScratchSize;
+		UpdateInfo.BuildMode = InRayTracingGeometry->GetRequiresBuild() ? EAccelerationStructureBuildMode::Build : EAccelerationStructureBuildMode::Update;
+		UpdateInfo.ScratchSize = InRayTracingGeometry->GetRequiresBuild() ? StructureSize.BuildScratchSize : StructureSize.UpdateScratchSize;
 		ToUpdate.Add(InRayTracingGeometry, UpdateInfo);
 	}
 	// If currently updating but need full rebuild then update the stored build mode
-	else if (CurrentUpdateInfo->BuildMode == EAccelerationStructureBuildMode::Update && InBuildMode == EAccelerationStructureBuildMode::Build)
+	else if (CurrentUpdateInfo->BuildMode == EAccelerationStructureBuildMode::Update && InRayTracingGeometry->GetRequiresBuild())
 	{
-		CurrentUpdateInfo->BuildMode = InBuildMode;
+		CurrentUpdateInfo->BuildMode = EAccelerationStructureBuildMode::Build;
 		CurrentUpdateInfo->ScratchSize = StructureSize.BuildScratchSize;
 	}
+
+	InRayTracingGeometry->SetRequiresBuild(false);
 }
 
 void FRayTracingSkinnedGeometryUpdateQueue::Remove(FRayTracingGeometry* RayTracingGeometry, uint32 EstimatedMemory)
 {
+	FScopeLock Lock(&CS);
 	if (ToUpdate.Find(RayTracingGeometry) != nullptr)
 	{
 		ToUpdate.Remove(RayTracingGeometry);
@@ -86,6 +90,8 @@ void FRayTracingSkinnedGeometryUpdateQueue::Commit(FRHICommandListImmediate & RH
 
 	if (ToUpdate.Num())
 	{
+		FScopeLock Lock(&CS);
+
 		// If we have more deferred deleted data than set limit then force flush to make sure all pending releases have actually been freed
 		// before reallocating a lot of new BLAS data
 		if (EstimatedMemoryPendingRelease >= GMemoryLimitForBatchedRayTracingGeometryUpdates * 1024ull * 1024ull)

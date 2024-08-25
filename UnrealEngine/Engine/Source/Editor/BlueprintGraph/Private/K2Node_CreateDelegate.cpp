@@ -20,7 +20,6 @@
 #include "Kismet2/CompilerResultsLog.h"
 #include "Misc/AssertionMacros.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/Class.h"
 #include "UObject/Object.h"
@@ -467,6 +466,12 @@ void UK2Node_CreateDelegate::AddSearchMetaDataInfo(TArray<struct FSearchTagDataP
 	if (!FunctionName.IsNone())
 	{
 		OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_NativeName, FText::FromName(FunctionName)));
+
+		if (const UClass* ScopeClass = GetScopeClass(/*bDontUseSkeletalClassForSelf=*/true))
+		{
+			const FString FuncOriginClassName = ScopeClass->GetPathName();
+			OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_FuncOriginClass, FText::FromString(FuncOriginClassName)));
+		}
 	}
 }
 

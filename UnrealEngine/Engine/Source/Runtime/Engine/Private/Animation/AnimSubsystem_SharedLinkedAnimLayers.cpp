@@ -87,6 +87,8 @@ FLinkedAnimLayerInstanceData* FLinkedAnimLayerClassData::FindInstanceData(const 
 
 UAnimInstance* FLinkedAnimLayerClassData::FindOrAddInstanceForLinking(UAnimInstance* OwningInstance, FName Function, bool& bIsNewInstance)
 {
+	USkeletalMeshComponent* Mesh = OwningInstance->GetSkelMeshComponent();
+
 	for (FLinkedAnimLayerInstanceData& LayerInstanceData : InstancesData)
 	{
 		// Check if function is already linked
@@ -95,7 +97,6 @@ UAnimInstance* FLinkedAnimLayerClassData::FindOrAddInstanceForLinking(UAnimInsta
 			// Re-add persistent instance of first function re-bind
 			if (LayerInstanceData.IsPersistent() && LayerInstanceData.GetLinkedFunctions().Num() == 0)
 			{
-				USkeletalMeshComponent* Mesh = OwningInstance->GetSkelMeshComponent();
 				// Make sure the bones to update are up to date with LOD changes / bone visibility / cosmetics, etc.
 				LayerInstanceData.Instance->RecalcRequiredBones();
 				check(!Mesh->GetLinkedAnimInstances().Contains(LayerInstanceData.Instance));
@@ -111,9 +112,16 @@ UAnimInstance* FLinkedAnimLayerClassData::FindOrAddInstanceForLinking(UAnimInsta
 
 	// Create a new object
 	bIsNewInstance = true;
-	UAnimInstance* NewAnimInstance = NewObject<UAnimInstance>(OwningInstance->GetSkelMeshComponent(), Class);
+	UAnimInstance* NewAnimInstance = NewObject<UAnimInstance>(Mesh, Class);
 	NewAnimInstance->bCreatedByLinkedAnimGraph = true;
 	NewAnimInstance->InitializeAnimation();
+
+	if(Mesh->HasBegunPlay())
+	{
+		NewAnimInstance->NativeBeginPlay();
+		NewAnimInstance->BlueprintBeginPlay();
+	}
+	
 	FLinkedAnimLayerInstanceData& NewInstanceData = AddInstance(NewAnimInstance);
 	NewInstanceData.AddLinkedFunction(Function, NewAnimInstance);
 	OwningInstance->GetSkelMeshComponent()->GetLinkedAnimInstances().Add(NewAnimInstance);
@@ -213,8 +221,13 @@ FAnimSubsystem_SharedLinkedAnimLayers* FAnimSubsystem_SharedLinkedAnimLayers::Ge
 	}
 #endif
 	check(SkelMesh);
-	check(SkelMesh->GetAnimInstance());
-	return SkelMesh->GetAnimInstance()->FindSubsystem<FAnimSubsystem_SharedLinkedAnimLayers>();
+
+	// In some cases we have a PostProcessAnimInstance but no AnimScriptInstance
+	if (SkelMesh->GetAnimInstance())
+	{
+		return SkelMesh->GetAnimInstance()->FindSubsystem<FAnimSubsystem_SharedLinkedAnimLayers>();
+	}
+	return nullptr;
 }
 
 void FAnimSubsystem_SharedLinkedAnimLayers::Reset()

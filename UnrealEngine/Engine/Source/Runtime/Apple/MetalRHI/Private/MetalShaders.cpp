@@ -29,9 +29,9 @@
 #undef SHADERCOMPILERCOMMON_API
 
 
-NSString* DecodeMetalSourceCode(uint32 CodeSize, TArray<uint8> const& CompressedSource)
+NS::String* DecodeMetalSourceCode(uint32 CodeSize, TArray<uint8> const& CompressedSource)
 {
-	NSString* GlslCodeNSString = nil;
+	NS::String* GlslCodeNSString = nullptr;
 	if (CodeSize && CompressedSource.Num())
 	{
 		TArray<ANSICHAR> UncompressedCode;
@@ -39,63 +39,64 @@ NSString* DecodeMetalSourceCode(uint32 CodeSize, TArray<uint8> const& Compressed
 		bool bSucceed = FCompression::UncompressMemory(NAME_Zlib, UncompressedCode.GetData(), CodeSize, CompressedSource.GetData(), CompressedSource.Num());
 		if (bSucceed)
 		{
-			GlslCodeNSString = [[NSString stringWithUTF8String:UncompressedCode.GetData()] retain];
+			GlslCodeNSString = NS::String::string(UncompressedCode.GetData(), NS::UTF8StringEncoding);
+            GlslCodeNSString->retain();
 		}
 	}
 	return GlslCodeNSString;
 }
 
-mtlpp::LanguageVersion ValidateVersion(uint32 Version)
+MTL::LanguageVersion ValidateVersion(uint32 Version)
 {
-    mtlpp::LanguageVersion Result = mtlpp::LanguageVersion::Version2_4;
+    MTL::LanguageVersion Result = MTL::LanguageVersion2_4;
 #if PLATFORM_MAC
-    Result = mtlpp::LanguageVersion::Version2_4;
+    Result = MTL::LanguageVersion2_4;
     switch(Version)
     {
         case 8:
-            Result = mtlpp::LanguageVersion::Version3_0;
+            Result = MTL::LanguageVersion3_0;
             break;
         case 7:
-            Result = mtlpp::LanguageVersion::Version2_4;
+            Result = MTL::LanguageVersion2_4;
             break;
 		 case 6:
-            Result = mtlpp::LanguageVersion::Version2_3;
+            Result = MTL::LanguageVersion2_3;
             break;
 		case 5:
 			// Fall through
         case 0:
             Version = 7;
-            Result = mtlpp::LanguageVersion::Version2_2; // minimum version as of UE5.1
+            Result = MTL::LanguageVersion2_2; // minimum version as of UE5.1
             break;
         default:
             //EMacMetalShaderStandard::MacMetalSLStandard_Minimum is currently 2.2
             UE_LOG(LogTemp, Warning, TEXT("The Metal version currently set is not supported anymore. Set it in the Project Settings. Defaulting to the minimum version."));
             Version = 5;
-            Result = mtlpp::LanguageVersion::Version2_2;
+            Result = MTL::LanguageVersion2_2;
             break;
     }
 #else
-    Result = mtlpp::LanguageVersion::Version2_4;
+    Result = MTL::LanguageVersion2_4;
     switch(Version)
     {
         case 7:
-            Result = mtlpp::LanguageVersion::Version2_4;
+            Result = MTL::LanguageVersion2_4;
             break;
         case 8:
-            Result = mtlpp::LanguageVersion::Version3_0;
+            Result = MTL::LanguageVersion3_0;
             break;
         case 9:
-            Result = mtlpp::LanguageVersion::Version3_1;
+            Result = MTL::LanguageVersion3_1;
             break;
         case 0:
             Version = 8;
-            Result = mtlpp::LanguageVersion::Version2_4; // minimum version as of UE5.3
+            Result = MTL::LanguageVersion2_4; // minimum version as of UE5.3
             break;
         default:
             //EIOSMetalShaderStandard::IOSMetalSLStandard_Minimum is currently 2.4
             UE_LOG(LogTemp, Warning, TEXT("The Metal version currently set is not supported anymore. Set it in the Project Settings. Defaulting to the minimum version."));
             Version = 7;
-            Result = mtlpp::LanguageVersion::Version2_4;
+            Result = MTL::LanguageVersion2_4;
             break;
     }
 #endif

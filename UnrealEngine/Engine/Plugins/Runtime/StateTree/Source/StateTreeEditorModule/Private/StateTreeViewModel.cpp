@@ -1048,15 +1048,21 @@ void FStateTreeViewModel::MoveSelectedStates(UStateTreeState* TargetState, const
 void FStateTreeViewModel::BindToDebuggerDelegates()
 {
 #if WITH_STATETREE_DEBUGGER
-	Debugger->OnActiveStatesChanged.BindLambda([this](const TConstArrayView<FStateTreeStateHandle> NewActiveStates)
+	Debugger->OnActiveStatesChanged.BindSPLambda(this, [this](const FStateTreeTraceActiveStates& NewActiveStates)
 	{
 		if (const UStateTree* OuterStateTree = GetStateTree())
 		{
-			ActiveStates.Reset(NewActiveStates.Num());
-
-			for (const FStateTreeStateHandle Handle : NewActiveStates)
+			for (const FStateTreeTraceActiveStates::FAssetActiveStates& AssetActiveStates : NewActiveStates.PerAssetStates)
 			{
-				ActiveStates.Add(OuterStateTree->GetStateIdFromHandle(Handle));
+				// Only track states owned by the StateTree associated to the view model (skip linked assets)
+				if (AssetActiveStates.WeakStateTree == OuterStateTree)
+				{
+					ActiveStates.Reset(AssetActiveStates.ActiveStates.Num());
+					for (const FStateTreeStateHandle Handle : AssetActiveStates.ActiveStates)
+					{
+						ActiveStates.Add(OuterStateTree->GetStateIdFromHandle(Handle));
+					}
+				}
 			}
 		}
 	});

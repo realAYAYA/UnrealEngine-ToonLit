@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ShapeApproximation/ShapeDetection3.h"
-#include "Sampling/VectorSetAnalysis.h"
 #include "DynamicMesh/DynamicMesh3.h"
 #include "MeshQueries.h"
 #include "FitCapsule3.h"
@@ -9,7 +8,7 @@
 
 using namespace UE::Geometry;
 
-bool UE::Geometry::IsSphereMesh(const FDynamicMesh3& Mesh, FSphere3d& SphereOut, double RelativeDeviationTol)
+bool UE::Geometry::IsSphereMesh(const FDynamicMesh3& Mesh, FSphere3d& SphereOut, double RelativeDeviationTol, double MaxAngleRangeDegrees)
 {
 	// assume that we aren't going to count it as a sphere unless it has 4 slices/sections, which means at least 10 vertices
 	if (Mesh.VertexCount() < 10)
@@ -75,10 +74,19 @@ bool UE::Geometry::IsSphereMesh(const FDynamicMesh3& Mesh, FSphere3d& SphereOut,
 	// computed with formula sagitta = r - sqrt(r*r - l*l), where l = chordlen/2
 	double UseRadius = SphereOut.Radius;
 	double DeviationTol = 2.0 * UseRadius * RelativeDeviationTol;
+	double CosAngleTolerance = FMathd::Cos(FMathd::DegToRad * MaxAngleRangeDegrees);
 	for (int32 EdgeID : Mesh.EdgeIndicesItr())
 	{
 		FVector3d A, B;
 		Mesh.GetEdgeV(EdgeID, A, B);
+
+		// if a single edge spans too wide an angular range, the shape is too coarsely tesselated to be considered a sphere
+		FVector3d ToA = (A - SphereOut.Center).GetSafeNormal();
+		FVector3d ToB = (B - SphereOut.Center).GetSafeNormal();
+		if (ToA.Dot(ToB) <= CosAngleTolerance)
+		{
+			return false;
+		}
 
 		double HalfChordLen = Distance(A, B) * 0.5;
 		double MaxChordHeight = UseRadius - FMathd::Sqrt(UseRadius*UseRadius - HalfChordLen*HalfChordLen);   // "sagitta" height
@@ -95,7 +103,7 @@ bool UE::Geometry::IsSphereMesh(const FDynamicMesh3& Mesh, FSphere3d& SphereOut,
 
 
 
-bool UE::Geometry::IsBoxMesh(const FDynamicMesh3& Mesh, FOrientedBox3d& BoxOut, double AngleToleranceDeg)
+bool UE::Geometry::IsBoxMesh(const FDynamicMesh3& Mesh, FOrientedBox3d& BoxOut, double AngleToleranceDeg, double PlaneDistanceTolerance)
 {
 	// minimal box has at least 6 vertices
 	if (Mesh.VertexCount() < 6)
@@ -128,15 +136,55 @@ bool UE::Geometry::IsBoxMesh(const FDynamicMesh3& Mesh, FOrientedBox3d& BoxOut, 
 		}
 	}
 
-	// cluster normals
-	FVectorSetAnalysis3d Vectors;
-	Vectors.Initialize(Mesh.TriangleIndicesItr(),
-		[&](int32 TriangleID) { return Mesh.GetTriNormal(TriangleID); },
-		Mesh.TriangleCount(), true);
+	// Greedily cluster up to six planes
+	constexpr int32 ExpectPlanes = 6;
+	FVector3d Normals[ExpectPlanes];
+	double Distances[ExpectPlanes];
+	int32 FoundPlanes = 0;
 
-	// A box should have precisely 6 normals, in 3 parallel pairs
-	Vectors.GreedyClusterVectors(AngleToleranceDeg);
-	if (Vectors.NumClusters() != 6)		
+	// Helper to bin a new position+normal into a plane cluster, or return -1 if no valid cluster is found
+	auto NormalMatch = [&Normals, &Distances, &FoundPlanes, ExpectPlanes, ParallelDotTolerance, PlaneDistanceTolerance](FVector3d Pos, FVector3d Normal) -> int32
+	{
+		int32 Idx = 0;
+		for (; Idx < FoundPlanes; ++Idx)
+		{
+			if (Normals[Idx].Dot(Normal) > ParallelDotTolerance)
+			{
+				double Distance = Pos.Dot(Normal);
+				if (FMath::IsNearlyEqual(Distance, Distances[Idx], PlaneDistanceTolerance)) //-V614
+				{
+					return Idx;
+				}
+				else
+				{
+					// A box cannot have multiple parallel planes with the same normal
+					// (note opposite faces will be parallel but with opposite normals)
+					return INDEX_NONE;
+				}
+			}
+		}
+		if (FoundPlanes < ExpectPlanes)
+		{
+			Normals[Idx] = Normal;
+			Distances[Idx] = Pos.Dot(Normal);
+			FoundPlanes++;
+			return Idx;
+		}
+		return INDEX_NONE;
+	};
+
+	for (int32 TriID : Mesh.TriangleIndicesItr())
+	{
+		FIndex3i Tri = Mesh.GetTriangle(TriID);
+		FVector3d Vert = Mesh.GetVertex(Tri.A);
+		FVector3d Normal = Mesh.GetTriNormal(TriID);
+		int32 PlaneIdx = NormalMatch(Vert, Normal);
+		if (PlaneIdx == INDEX_NONE)
+		{
+			return false;
+		}
+	}
+	if (FoundPlanes != ExpectPlanes)
 	{
 		return false;
 	}
@@ -150,12 +198,12 @@ bool UE::Geometry::IsBoxMesh(const FDynamicMesh3& Mesh, FOrientedBox3d& BoxOut, 
 	{
 		if (bDone[k]) continue;
 
-		FVector3d Normal0 = Vectors.ClusterVectors[k];
+		FVector3d Normal0 = Normals[k];
 		int32 ParallelPair = -1;
 
 		for (int32 j = k + 1; j < 6; ++j)
 		{
-			double Dot = Normal0.Dot(Vectors.ClusterVectors[j]);
+			double Dot = Normal0.Dot(Normals[j]);
 			if (FMathd::Abs(Dot) > PerpDotTolerance)
 			{
 				if (Dot > -ParallelDotTolerance)		// if dot is not zero, it needs to be -1
@@ -176,14 +224,14 @@ bool UE::Geometry::IsBoxMesh(const FDynamicMesh3& Mesh, FOrientedBox3d& BoxOut, 
 		}
 	}
 			
-	// if we found the 3 unique axes, it's a box and we know it's orientation, so just fit minimal 
+	// if we found the 3 unique axes, it's a box and we know its orientation, so just fit minimal 
 	// container aligned to box axes, and shift center point to center of that oriented-AABB
 	if (UniqueCount == 3)
 	{
 		// would be nice to cycle these so that X = most-aligned-with-X, etc, or longest?
-		FVector3d X = Vectors.ClusterVectors[UniqueAxes[0]];
-		FVector3d Y = Vectors.ClusterVectors[UniqueAxes[1]];
-		FVector3d Z = Vectors.ClusterVectors[UniqueAxes[2]];
+		FVector3d X = Normals[UniqueAxes[0]];
+		FVector3d Y = Normals[UniqueAxes[1]];
+		FVector3d Z = Normals[UniqueAxes[2]];
 		// compute AABB in the frame of the box
 		FQuaterniond Rotation(FMatrix3d(X, Y, Z, false));
 		FMatrix3d UnorientRotation = Rotation.Inverse().ToRotationMatrix();
@@ -205,7 +253,7 @@ bool UE::Geometry::IsBoxMesh(const FDynamicMesh3& Mesh, FOrientedBox3d& BoxOut, 
 
 
 
-bool UE::Geometry::IsCapsuleMesh(const FDynamicMesh3& Mesh, FCapsule3d& CapsuleOut, double RelativeDeviationTol)
+bool UE::Geometry::IsCapsuleMesh(const FDynamicMesh3& Mesh, FCapsule3d& CapsuleOut, double RelativeDeviationTol, double MaxAngleRangeDegrees)
 {
 	// minimal 4-slice capsule has at least 10 vertices
 	if (Mesh.VertexCount() < 10)		
@@ -237,25 +285,71 @@ bool UE::Geometry::IsCapsuleMesh(const FDynamicMesh3& Mesh, FCapsule3d& CapsuleO
 		return false;
 	}
 
-	// See IsSphereMesh() for explanation of logic here, essentially we are checking that chordal deviation
-	// along edges is within tolerance. This works because endcaps are spheres and so sphere test applies,
-	// and along middle of capsule the deviation should be zero, but this is not currently measured.
-	// If false positives occur due to this, can check it by computing segment parameter, in t=[0,1] range distance should be epsilon-ish
+	// We use logic similar to IsSphereMesh() to test edge midpoints vs the capsule's spherical endcaps or cylindrical middle.
+	// When the edge midpoint projects to the cylindrical middle, we project the problem to a segment-aligned plane,
+	// so it becomes a test vs the circular cross-section.
 	double UseRadius = CapsuleOut.Radius;
 	double DeviationTol = 2.0 * UseRadius * RelativeDeviationTol;
+	double CosAngleTolerance = FMathd::Cos(FMathd::DegToRad * MaxAngleRangeDegrees);
+
 	for (int32 EdgeID : Mesh.EdgeIndicesItr())
 	{
 		FVector3d A, B;
 		Mesh.GetEdgeV(EdgeID, A, B);
 
+		FVector3d MidPoint = (A + B) * .5;
+		double ProjParam = CapsuleOut.Segment.Project(MidPoint);
+
+		// Find the relevant point on the segment to use for distance calculations
+		FVector3d RefSegmentPt;
+		if (ProjParam + UE_DOUBLE_KINDA_SMALL_NUMBER >= CapsuleOut.Segment.Extent)
+		{
+			RefSegmentPt = CapsuleOut.Segment.EndPoint();
+		}
+		else if (ProjParam - UE_DOUBLE_KINDA_SMALL_NUMBER <= -CapsuleOut.Segment.Extent)
+		{
+			RefSegmentPt = CapsuleOut.Segment.StartPoint();
+		}
+		else
+		{
+			// Cylinder case: do a projection so we only measure distances in the space of the circular cross section
+			A = A - (A - CapsuleOut.Segment.Center).Dot(CapsuleOut.Segment.Direction) * CapsuleOut.Segment.Direction;
+			B = B - (B - CapsuleOut.Segment.Center).Dot(CapsuleOut.Segment.Direction) * CapsuleOut.Segment.Direction;
+			MidPoint = (A + B) * .5;
+			RefSegmentPt = CapsuleOut.Segment.Center;
+		}
+		
+		// if a single edge spans too wide an angular range, the shape is too coarsely tesselated to be considered a capsule
+		FVector3d ToA = (A - RefSegmentPt).GetSafeNormal();
+		FVector3d ToB = (B - RefSegmentPt).GetSafeNormal();
+		if (ToA.Dot(ToB) <= CosAngleTolerance)
+		{
+			return false;
+		}
+
 		double HalfChordLen = Distance(A, B) * 0.5;
 		double MaxChordHeight = UseRadius - FMathd::Sqrt(UseRadius * UseRadius - HalfChordLen * HalfChordLen);   // "sagitta" height
 
-		double MidpointSignedDist = CapsuleOut.SignedDistance( (A + B)*0.5 );
+		double MidpointSignedDist = FVector3d::Distance(MidPoint, RefSegmentPt) - UseRadius;
 		if (FMathd::Abs(MidpointSignedDist) > (MaxChordHeight + DeviationTol))
 		{
 			return false;
 		}
+	}
+
+	// track where the vertices project to along the segment, to see if the capsule vertices cover the expected range along the capsule's major axis
+	FInterval1d ProjRange;
+	for (int32 VertID : Mesh.VertexIndicesItr())
+	{
+		FVector3d Vertex = Mesh.GetVertex(VertID);
+		double ProjParam = CapsuleOut.Segment.Project(Vertex);
+		ProjRange.Contain(ProjParam);
+	}
+
+	// Expect to come within DeviationTol of covering the full range of the capsule
+	if (ProjRange.Max < CapsuleOut.Segment.Extent + CapsuleOut.Radius - DeviationTol || ProjRange.Min > -CapsuleOut.Segment.Extent - CapsuleOut.Radius + DeviationTol)
+	{
+		return false;
 	}
 
 	return true;

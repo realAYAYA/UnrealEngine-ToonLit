@@ -7,33 +7,41 @@ namespace UE::DMXPixelMapping::Rendering
 {
 	void FPixelMapRenderElement::SetParameters(FPixelMapRenderElementParameters InParameters)
 	{
-#if !defined(_MSC_VER) 			// Atomic for MSVC only
 		const FScopeLock LockParameters(&AccessParametersMutex);
-#endif
+
 		Parameters = InParameters;
 	}
 
 	FPixelMapRenderElementParameters FPixelMapRenderElement::GetParameters() const
 	{
-#if !defined(_MSC_VER)  		// Atomic for MSVC only
 		const FScopeLock LockParameters(&AccessParametersMutex);
-#endif
+
 		return Parameters;
 	}
 
 	void FPixelMapRenderElement::SetColor(const FLinearColor& InColor)
 	{
-#if !defined(_MSC_VER)  		// Atomic for MSVC only
-		const FScopeLock LockColorMutex(&AccessColorMutex);
-#endif
-		Color = InColor;
+		if (!ProducerColorPtr)
+		{
+			ProducerColorPtr = ColorTipleBuffer.ExchangeProducerBuffer();
+		}
+
+		// This call now has exclusive ownership of the memory pointed to by Buffer.
+		*ProducerColorPtr = InColor;
+
+		// Push the new values to the consumer, and get a new buffer for next time.
+		ProducerColorPtr = ColorTipleBuffer.ExchangeProducerBuffer();
 	}
 
 	FLinearColor FPixelMapRenderElement::GetColor() const
 	{
-#if !defined(_MSC_VER)  		// Atomic for MSVC only
-		const FScopeLock LockColorMutex(&AccessColorMutex);
-#endif
-		return Color;
+		// Get a new view of the data, which can be null or old.
+		const FLinearColor* ConsumerColorPtr = ColorTipleBuffer.ExchangeConsumerBuffer();
+		if (ConsumerColorPtr)
+		{
+			ColorGameThread = *ConsumerColorPtr;
+		}
+		
+		return ColorGameThread;
 	}
 }

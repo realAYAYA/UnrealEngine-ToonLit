@@ -182,7 +182,7 @@ private:
 		}
 		else if constexpr (TIsTObjectPtr<Raw>::Value)
 		{
-			if (auto AsProperty = CastField<FObjectPtrProperty>(&Prop))
+			if (auto AsProperty = CastField<FObjectProperty>(&Prop))
 			{
 				return Raw::ElementType::StaticClass()->IsChildOf(AsProperty->PropertyClass);
 			}

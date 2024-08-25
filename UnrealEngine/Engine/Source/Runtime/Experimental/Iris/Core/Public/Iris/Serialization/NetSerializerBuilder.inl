@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "Templates/ChooseClass.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsPODType.h"
 #include "Iris/Serialization/NetBitStreamReader.h"
@@ -44,13 +43,23 @@ NetSerializeDeltaDefault(FNetSerializationContext& Context, const FNetSerializeD
 	Serialize(Context, Args);
 };
 
-template<uint32 QuantizedTypeSize, NetDeserializeFunction Deserialize, NetCloneDynamicStateFunction CloneDynamicState>
+template<uint32 QuantizedTypeSize, NetDeserializeFunction Deserialize, NetFreeDynamicStateFunction FreeDynamicState, NetCloneDynamicStateFunction CloneDynamicState>
 void
 NetDeserializeDeltaDefault(FNetSerializationContext& Context, const FNetDeserializeDeltaArgs& Args)
 {
 	if (Context.GetBitStreamReader()->ReadBool())
 	{
-		// Clone from Prev
+		// Clone from prev. Need to free target first.
+		if (FreeDynamicState != NetFreeDynamicStateFunction(nullptr))
+		{
+			FNetFreeDynamicStateArgs FreeArgs;
+			FreeArgs.Version = 0;
+			FreeArgs.NetSerializerConfig = Args.NetSerializerConfig;
+			FreeArgs.Source = Args.Target;
+
+			FreeDynamicState(Context, FreeArgs);
+		}
+
 		FMemory::Memcpy(reinterpret_cast<uint8*>(Args.Target), reinterpret_cast<uint8*>(Args.Prev), QuantizedTypeSize);
 
 		if (CloneDynamicState != NetCloneDynamicStateFunction(nullptr))
@@ -119,10 +128,10 @@ private:
 
 	struct FTraits
 	{
-		static constexpr bool bIsForwardingSerializer = true;
+		static constexpr bool bIsForwardingSerializer = false;
 		static constexpr bool bHasConnectionSpecificSerialization = false;
-		static constexpr bool bHasCustomNetReference = true;
-		static constexpr bool bHasDynamicState = true;
+		static constexpr bool bHasCustomNetReference = false;
+		static constexpr bool bHasDynamicState = false;
 		static constexpr bool bUseDefaultDelta = true;
 		static constexpr bool bUseSerializerIsEqual = false;
 	};
@@ -225,6 +234,9 @@ private:
 	template<typename U> static ETrueType TestHasCollectNetReferences(FSignatureCheck<NetCollectNetReferencesFunction, &U::CollectNetReferences>*);
 	template<typename> static EFalseType TestHasCollectNetReferences(...);
 
+	template<typename U> static ETrueType TestHasApply(FSignatureCheck<NetApplyFunction, &U::Apply>*);
+	template<typename> static EFalseType TestHasApply(...);
+
 	enum ETraits : unsigned
 	{
 		HasVersion = unsigned(decltype(TestHasVersion<NetSerializerImpl>(nullptr))::Value),
@@ -265,6 +277,7 @@ private:
 		HasFreeDynamicState = unsigned(decltype(TestHasFreeDynamicState<NetSerializerImpl>(nullptr))::Value),
 		HasCloneDynamicState = unsigned(decltype(TestHasCloneDynamicState<NetSerializerImpl>(nullptr))::Value),
 		HasCollectNetReferences = unsigned(decltype(TestHasCollectNetReferences<NetSerializerImpl>(nullptr))::Value),
+		HasApply = unsigned(decltype(TestHasApply<NetSerializerImpl>(nullptr))::Value),
 	};
 
 public:
@@ -343,11 +356,11 @@ public:
 	template<typename T = void, typename U = typename TEnableIf<!HasDeserializeDelta && !ShouldUseDefaultDelta(), T>::Type, int V = 0>
 	static NetDeserializeDeltaFunction GetDeserializeDeltaFunction(const void* = nullptr) { return NetDeserializeDeltaDefault<NetSerializerImpl::Deserialize>; }
 
-	template<typename T = void, typename U = typename TEnableIf<!HasDeserializeDelta && ShouldUseDefaultDelta() && HasCloneDynamicState, T>::Type, char V = 0>
-	static NetDeserializeDeltaFunction GetDeserializeDeltaFunction(const void* = nullptr) { return NetDeserializeDeltaDefault<GetQuantizedTypeSize(), NetSerializerImpl::Deserialize, NetSerializerImpl::CloneDynamicState>; }
+	template<typename T = void, typename U = typename TEnableIf<!HasDeserializeDelta && ShouldUseDefaultDelta() && (HasCloneDynamicState && HasFreeDynamicState), T>::Type, char V = 0>
+	static NetDeserializeDeltaFunction GetDeserializeDeltaFunction(const void* = nullptr) { return NetDeserializeDeltaDefault<GetQuantizedTypeSize(), NetSerializerImpl::Deserialize, NetSerializerImpl::FreeDynamicState, NetSerializerImpl::CloneDynamicState>; }
 
-	template<typename T = void, typename U = typename TEnableIf<!HasDeserializeDelta && ShouldUseDefaultDelta() && !HasCloneDynamicState, T>::Type, unsigned char V = 0>
-	static NetDeserializeDeltaFunction GetDeserializeDeltaFunction(const void* = nullptr) { return NetDeserializeDeltaDefault<GetQuantizedTypeSize(), NetSerializerImpl::Deserialize, NetCloneDynamicStateFunction(nullptr)>; }
+	template<typename T = void, typename U = typename TEnableIf<!HasDeserializeDelta && ShouldUseDefaultDelta() && !(HasCloneDynamicState && HasFreeDynamicState), T>::Type, unsigned char V = 0>
+	static NetDeserializeDeltaFunction GetDeserializeDeltaFunction(const void* = nullptr) { return NetDeserializeDeltaDefault<GetQuantizedTypeSize(), NetSerializerImpl::Deserialize, NetFreeDynamicStateFunction(nullptr), NetCloneDynamicStateFunction(nullptr)>; }
 
 	// Provide a default Quantize implementation if needed. The default will copy the value.
 	template<typename T = void, typename U = typename TEnableIf<HasQuantize, T>::Type, bool V = true>
@@ -382,6 +395,12 @@ public:
 
 	template<typename T = void, typename U = typename TEnableIf<!HasCollectNetReferences, T>::Type, char V = 0>
 	static NetCollectNetReferencesFunction GetCollectNetReferencesFunction() { return NetCollectNetReferencesFunction(nullptr); }
+
+	template<typename T = void, typename U = typename TEnableIf<HasApply, T>::Type, bool V = true>
+	static NetApplyFunction GetApplyFunction() { return NetSerializerImpl::Apply; }
+
+	template<typename T = void, typename U = typename TEnableIf<!HasApply, T>::Type, char V = 0>
+	static NetApplyFunction GetApplyFunction() { return NetApplyFunction(nullptr); }
 
 	// CloneDynamicState
 	template<typename T = void, typename U = typename TEnableIf<HasCloneDynamicState && (IsForwardingSerializer() || HasDynamicState()), T>::Type, bool V = true>
@@ -421,7 +440,7 @@ public:
 	static constexpr uint32 GetQuantizedTypeSize() { return sizeof(typename NetSerializerImpl::QuantizedType); }
 
 	template<typename T = void, typename U = typename TEnableIf<!HasQuantizedType && HasSourceType, T>::Type, bool V = true, char W = 0>
-	static constexpr uint32 GetQuantizedTypeSize() { return std::is_same_v<void, typename NetSerializerImpl::SourceType> ? uint32(0) : sizeof(typename TChooseClass<std::is_same_v<void, typename NetSerializerImpl::SourceType>, uint8, typename NetSerializerImpl::SourceType>::Result); }
+	static constexpr uint32 GetQuantizedTypeSize() { return std::is_same_v<void, typename NetSerializerImpl::SourceType> ? uint32(0) : sizeof(std::conditional_t<std::is_same_v<void, typename NetSerializerImpl::SourceType>, uint8, typename NetSerializerImpl::SourceType>); }
 
 	template<typename T = void, typename U = typename TEnableIf<!(HasSourceType || HasQuantizedType), T>::Type, char V = 0>
 	static constexpr uint32 GetQuantizedTypeSize() { return 0; }
@@ -430,7 +449,7 @@ public:
 	static constexpr uint32 GetQuantizedTypeAlignment() { return alignof(typename NetSerializerImpl::QuantizedType); }
 
 	template<typename T = void, typename U = typename TEnableIf<!HasQuantizedType && HasSourceType, T>::Type, bool V = true, char W = 0>
-	static constexpr uint32 GetQuantizedTypeAlignment() { return alignof(typename TChooseClass<std::is_same_v<void, typename NetSerializerImpl::SourceType>, uint8, typename NetSerializerImpl::SourceType>::Result); }
+	static constexpr uint32 GetQuantizedTypeAlignment() { return alignof(std::conditional_t<std::is_same_v<void, typename NetSerializerImpl::SourceType>, uint8, typename NetSerializerImpl::SourceType>); }
 
 	template<typename T = void, typename U = typename TEnableIf<!(HasSourceType || HasQuantizedType), T>::Type, char V = 0>
 	static constexpr uint32 GetQuantizedTypeAlignment() { return 1; }
@@ -443,6 +462,7 @@ public:
 		Traits |= (HasCustomNetReference() ? ENetSerializerTraits::HasCustomNetReference : ENetSerializerTraits::None);
 		Traits |= (HasDynamicState() ? ENetSerializerTraits::HasDynamicState : ENetSerializerTraits::None);
 		Traits |= (UseSerializerIsEqual() ? ENetSerializerTraits::UseSerializerIsEqual : ENetSerializerTraits::None);
+		Traits |= (HasApply ? ENetSerializerTraits::HasApply : ENetSerializerTraits::None);
 
 		return Traits;
 	}

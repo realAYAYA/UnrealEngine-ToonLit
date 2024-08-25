@@ -7,6 +7,20 @@
 #include "Editor/UnrealEdEngine.h"
 #include "UnrealEdGlobals.h"
 #include "SEditorViewport.h"
+#include "HAL/IConsoleManager.h"
+#include "EditorModeManager.h"
+#include "Elements/Framework/TypedElementSelectionSet.h"
+
+namespace ComponentVisualizers
+{
+	static bool GAutoSelectComponentWithPointSelection = true;
+	static FAutoConsoleVariableRef CVarAutoSelectComponentWithPointSelection(
+		TEXT("Editor.ComponentVisualizer.AutoSelectComponent"),
+		GAutoSelectComponentWithPointSelection,
+		TEXT("Automatically adds the spline component to the selection set if avaialable when a point is selected on the spline")
+	);
+
+}; // namespace ComponentVisualizers
 
 
 FComponentVisualizerManager::FComponentVisualizerManager()
@@ -63,18 +77,29 @@ bool FComponentVisualizerManager::HandleProxyForComponentVis(FEditorViewportClie
 			TSharedPtr<FComponentVisualizer> Visualizer = GUnrealEd->FindComponentVisualizer(ClickedComponent->GetClass());
 			if (Visualizer.IsValid())
 			{
+				FTypedElementHandle SelectedComponentHandle = VisProxy->GetElementHandle();
+				UTypedElementSelectionSet* ElementSelectionSet = (InViewportClient && InViewportClient->GetModeTools()) ? InViewportClient->GetModeTools()->GetEditorSelectionSet() : nullptr;
+
 				bool bIsActive = Visualizer->VisProxyHandleClick(InViewportClient, VisProxy, Click);
 				if (bIsActive)
 				{
-					// call EndEditing on any currently edited visualizer, if we are going to change it
-					TSharedPtr<FComponentVisualizer> EditedVisualizer = EditedVisualizerPtr.Pin();
-					if (EditedVisualizer.IsValid() && Visualizer.Get() != EditedVisualizer.Get())
+					// Set the selection set to the spline component, so clicking the component doesn't reselect and clear the current editing state.
+					if (ComponentVisualizers::GAutoSelectComponentWithPointSelection && ElementSelectionSet)
 					{
-						EditedVisualizer->EndEditing();
+						if (!ElementSelectionSet->IsElementSelected(SelectedComponentHandle, FTypedElementIsSelectedOptions()))
+						{
+							TArray<FTypedElementHandle> TmpArray = { SelectedComponentHandle };
+							ElementSelectionSet->SetSelection(TmpArray, FTypedElementSelectionOptions());
+						}
 					}
 
-					EditedVisualizerPtr = Visualizer;
-					EditedVisualizerViewportClient = InViewportClient;
+					SetActiveComponentVis(InViewportClient, Visualizer);
+
+					if (ComponentVisualizers::GAutoSelectComponentWithPointSelection && ElementSelectionSet)
+					{
+						ElementSelectionSet->NotifyPendingChanges();
+					}
+
 					return true;
 				}
 			}
@@ -87,6 +112,11 @@ bool FComponentVisualizerManager::HandleProxyForComponentVis(FEditorViewportClie
 	// would not be captured for undo/redo.
 
 	return false;
+}
+
+TSharedPtr<FComponentVisualizer> FComponentVisualizerManager::GetActiveComponentVis()
+{
+	return EditedVisualizerPtr.Pin();
 }
 
 bool FComponentVisualizerManager::SetActiveComponentVis(FEditorViewportClient* InViewportClient, TSharedPtr<FComponentVisualizer>& InVisualizer)
@@ -232,7 +262,7 @@ void FComponentVisualizerManager::TrackingStopped(FEditorViewportClient* InViewp
 {
 	TSharedPtr<FComponentVisualizer> EditedVisualizer = EditedVisualizerPtr.Pin();
 
-	if (EditedVisualizer.IsValid())
+	if (EditedVisualizer.IsValid() && EditedVisualizer->GetEditedComponent() != nullptr)
 	{
 		return EditedVisualizer->TrackingStopped(InViewportClient, bInDidMove);
 	}

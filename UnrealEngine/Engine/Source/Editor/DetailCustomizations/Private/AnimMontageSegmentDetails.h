@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "AdvancedPreviewScene.h"
 #include "Containers/Array.h"
 #include "Delegates/Delegate.h"
 #include "EditorViewportClient.h"
@@ -108,10 +109,8 @@ private:
 
 	TSharedPtr<class FSceneViewport> SceneViewport;
 
-
 	TObjectPtr<UAnimSequenceBase> CurrentAnimSequenceBase;
-
-	FPreviewScene PreviewScene;
+	FAdvancedPreviewScene AdvancedPreviewScene;
 	class UDebugSkelMeshComponent* PreviewComponent;
 
 	TSharedPtr<STextBlock> Description;
@@ -197,7 +196,7 @@ protected:
 class FAnimationSegmentViewportClient : public FEditorViewportClient
 {
 public:
-	FAnimationSegmentViewportClient(FPreviewScene& InPreviewScene, const TWeakPtr<SEditorViewport>& InEditorViewportWidget = nullptr);
+	FAnimationSegmentViewportClient(FAdvancedPreviewScene& InPreviewScene, const TWeakPtr<SEditorViewport>& InEditorViewportWidget = nullptr);
 
 	// FlEditorViewportClient interface
 	virtual FSceneInterface* GetScene() const override;

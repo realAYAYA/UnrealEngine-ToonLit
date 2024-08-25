@@ -94,6 +94,9 @@ namespace Windows
 	typedef _RTL_SRWLOCK RTL_SRWLOCK, *PRTL_SRWLOCK;
 	typedef RTL_SRWLOCK *PSRWLOCK;
 
+	typedef void (*PFLS_CALLBACK_FUNCTION) (void* lpFlsData);
+
+
 	// Opaque SRWLOCK structure
 	struct SRWLOCK
 	{
@@ -175,6 +178,12 @@ namespace Windows
 	MINIMAL_WINDOWS_API LPVOID WINAPI TlsGetValue(DWORD dwTlsIndex);
 	MINIMAL_WINDOWS_API BOOL WINAPI TlsSetValue(DWORD dwTlsIndex, LPVOID lpTlsValue);
 	MINIMAL_WINDOWS_API BOOL WINAPI TlsFree(DWORD dwTlsIndex);
+
+	// Fiber-local storage functions
+	MINIMAL_WINDOWS_API DWORD WINAPI FlsAlloc(PFLS_CALLBACK_FUNCTION lpCallback);
+	MINIMAL_WINDOWS_API LPVOID WINAPI FlsGetValue(DWORD dwFlsIndex);
+	MINIMAL_WINDOWS_API BOOL WINAPI FlsSetValue(DWORD dwFlsIndex, LPVOID lpFlsValue);
+	MINIMAL_WINDOWS_API BOOL WINAPI FlsFree(DWORD dwTlsIndex);
 
 	// System
 	MINIMAL_WINDOWS_API BOOL WINAPI IsProcessorFeaturePresent(DWORD ProcessorFeature);

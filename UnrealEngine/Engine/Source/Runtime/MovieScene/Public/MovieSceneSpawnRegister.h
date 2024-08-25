@@ -4,6 +4,7 @@
 
 #include "Containers/Map.h"
 #include "CoreMinimal.h"
+#include "Evaluation/IMovieScenePlaybackCapability.h"
 #include "HAL/Platform.h"
 #include "HAL/PlatformCrt.h"
 #include "IMovieSceneObjectSpawner.h"
@@ -24,10 +25,6 @@ class UClass;
 class UObject;
 template <typename FuncType> class TFunctionRef;
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "MovieSceneSpawnable.h"
-#endif
-
 enum class ESpawnOwnership : uint8;
 
 class IMovieScenePlayer;
@@ -39,12 +36,21 @@ struct FMovieSceneEvaluationState;
 struct FMovieSceneSpawnable;
 struct FTransformData;
 
+namespace UE::MovieScene
+{
+	struct FSharedPlaybackState;
+}  // namespace UE::MovieScene
+
 /**
  * Class responsible for managing spawnables in a movie scene
  */
 class FMovieSceneSpawnRegister : public TSharedFromThis<FMovieSceneSpawnRegister>
 {
 public:
+
+	using FSharedPlaybackState = UE::MovieScene::FSharedPlaybackState;
+
+	static MOVIESCENE_API UE::MovieScene::TPlaybackCapabilityID<FMovieSceneSpawnRegister> ID;
 
 	/**
 	 * Virtual destructor
@@ -69,7 +75,7 @@ public:
 	 * @param Player 		Movie scene player that is ultimately responsible for spawning the object
 	 * @return the spawned object, or nullptr on failure
 	 */
-	MOVIESCENE_API UObject* SpawnObject(const FGuid& BindingId, UMovieScene& MovieScene, FMovieSceneSequenceIDRef Template, IMovieScenePlayer& Player);
+	MOVIESCENE_API UObject* SpawnObject(const FGuid& BindingId, UMovieScene& MovieScene, FMovieSceneSequenceIDRef Template, TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
 
 	/**
 	 * Destroy a specific previously spawned object
@@ -80,7 +86,7 @@ public:
 	 *
 	 * @return True if an object was destroyed, false otherwise
 	 */
-	MOVIESCENE_API bool DestroySpawnedObject(const FGuid& BindingId, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player);
+	MOVIESCENE_API bool DestroySpawnedObject(const FGuid& BindingId, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
 
 	/**
 	 * Destroy a specific previously spawned object, where its binding ID and sequence ID is not known.
@@ -96,30 +102,42 @@ public:
 	 * @param Player 		Movie scene player that is ultimately responsible for destroying the objects
 	 * @param Predicate		Predicate used for testing whether an object should be destroyed. Returns true for destruction, false to skip.
 	 */
-	MOVIESCENE_API void DestroyObjectsByPredicate(IMovieScenePlayer& Player, const TFunctionRef<bool(const FGuid&, ESpawnOwnership, FMovieSceneSequenceIDRef)>& Predicate);
+	MOVIESCENE_API void DestroyObjectsByPredicate(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const TFunctionRef<bool(const FGuid&, ESpawnOwnership, FMovieSceneSequenceIDRef)>& Predicate);
 
 	/**
 	 * Purge any memory of any objects that are considered externally owned
 
 	 * @param Player 		Movie scene player that is ultimately responsible for destroying the objects
 	 */
-	MOVIESCENE_API void ForgetExternallyOwnedSpawnedObjects(FMovieSceneEvaluationState& State, IMovieScenePlayer& Player);
+	MOVIESCENE_API void ForgetExternallyOwnedSpawnedObjects(TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
 
 public:
 
 	/**
 	 * Called to indiscriminately clean up any spawned objects
 	 */
-	MOVIESCENE_API void CleanUp(IMovieScenePlayer& Player);
+	MOVIESCENE_API void CleanUp(TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
 
 	/**
 	 * Called to clean up any non-externally owned spawnables that were spawned from the specified instance
 	 */
-	MOVIESCENE_API void CleanUpSequence(FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player);
+	MOVIESCENE_API void CleanUpSequence(FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
 
 	/**
 	 * Called when the current time has moved beyond the specified sequence's play range
 	 */
+	MOVIESCENE_API void OnSequenceExpired(FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
+
+public:
+
+	// Backwards compatible API, to be deprecated later
+
+	MOVIESCENE_API UObject* SpawnObject(const FGuid& BindingId, UMovieScene& MovieScene, FMovieSceneSequenceIDRef Template, IMovieScenePlayer& Player);
+	MOVIESCENE_API bool DestroySpawnedObject(const FGuid& BindingId, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player);
+	MOVIESCENE_API void DestroyObjectsByPredicate(IMovieScenePlayer& Player, const TFunctionRef<bool(const FGuid&, ESpawnOwnership, FMovieSceneSequenceIDRef)>& Predicate);
+	MOVIESCENE_API void ForgetExternallyOwnedSpawnedObjects(FMovieSceneEvaluationState& State, IMovieScenePlayer& Player);
+	MOVIESCENE_API void CleanUp(IMovieScenePlayer& Player);
+	MOVIESCENE_API void CleanUpSequence(FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player);
 	MOVIESCENE_API void OnSequenceExpired(FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player);
 
 #if WITH_EDITOR
@@ -146,7 +164,7 @@ public:
 	/**
 	 * Called to save the default state of the specified spawnable
 	 */
-	virtual void SaveDefaultSpawnableState(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player) {}
+	virtual void SaveDefaultSpawnableState(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) {}
 
 	/**
 	 * Setup a new spawnable object with some default tracks and keys
@@ -166,8 +184,7 @@ public:
 	 * @param	Player		The current player
 	 * @param	OutTransformData	Transform data that can be used to recreate objects in the same location
 	 */
-	virtual void HandleConvertPossessableToSpawnable(UObject* OldObject, IMovieScenePlayer& Player, TOptional<FTransformData>& OutTransformData) {}
-
+	virtual void HandleConvertPossessableToSpawnable(UObject* OldObject, TSharedRef<const FSharedPlaybackState> SharedPlaybackState, TOptional<FTransformData>& OutTransformData) {}
 
 	/**
 	 * Check whether the specified Spawnable can become a Possessable.
@@ -175,6 +192,15 @@ public:
 	 * @return whether the conversion from Spawnable to Possessable can occur.
 	 */
 	virtual bool CanConvertSpawnableToPossessable(FMovieSceneSpawnable& Spawnable) const { return true; }
+
+public:
+
+	// Backwards compatible API, to be deprecated later
+
+	MOVIESCENE_API void SaveDefaultSpawnableState(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player);
+	MOVIESCENE_API void HandleConvertPossessableToSpawnable(UObject* OldObject, IMovieScenePlayer& Player, TOptional<FTransformData>& OutTransformData);
+	MOVIESCENE_API UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player);
+
 #endif
 
 protected:
@@ -187,7 +213,7 @@ protected:
 	 * @param Player 		Movie scene player that is ultimately responsible for spawning the object
 	 * @return the spawned object, or nullptr on failure
 	 */
-	virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player) = 0;
+	virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) = 0;
 
 	/**
 	 * Called right before a spawned object with the specified ID and template ID is destroyed
@@ -262,6 +288,6 @@ protected:
 class FNullMovieSceneSpawnRegister : public FMovieSceneSpawnRegister
 {
 public:
-	virtual UObject* SpawnObject(FMovieSceneSpawnable&, FMovieSceneSequenceIDRef, IMovieScenePlayer&) override { check(false); return nullptr; }
+	virtual UObject* SpawnObject(FMovieSceneSpawnable&, FMovieSceneSequenceIDRef, TSharedRef<const FSharedPlaybackState>) override { check(false); return nullptr; }
 	virtual void DestroySpawnedObject(UObject&) override { }
 };

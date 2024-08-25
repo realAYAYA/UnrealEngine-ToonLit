@@ -14,9 +14,14 @@ struct FShaderCompilerEnvironment;
  */
 BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FWaterVertexFactoryParameters, )
 	SHADER_PARAMETER(float, LODScale)
+	SHADER_PARAMETER(float, LeafSize)
+	SHADER_PARAMETER(float, CaptureDepthRange)
 	SHADER_PARAMETER(int32, NumQuadsPerTileSide)
+	SHADER_PARAMETER(int32, NumQuadsLOD0)
+	SHADER_PARAMETER(int32, NumDensities)
 	SHADER_PARAMETER(int32, bRenderSelected)
 	SHADER_PARAMETER(int32, bRenderUnselected)
+	SHADER_PARAMETER(int32, bLODMorphingEnabled)
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 
 typedef TUniformBufferRef<FWaterVertexFactoryParameters> FWaterVertexFactoryBufferRef;
@@ -164,18 +169,34 @@ enum class EWaterMeshRenderGroupType : uint8
 #endif // WITH_WATER_SELECTION_SUPPORT
 };
 
-template <bool bWithWaterSelectionSupport>
+// Water supports both a CPU-driven (non-indirect draws) and a GPU-driven (indirect draws) path.
+// The regular GPU-driven path does not support ISR out of the box, so there is a special path for indirect draws supporting ISR.
+enum class EWaterVertexFactoryDrawMode
+{
+	// Non-indirect draw calls for CPU-driven water rendering
+	NonIndirect,
+	
+	// Indirect draw calls for GPU-driven water rendering using the GPU water quadtree to generate indirect draw calls.
+	// Uses vertex streams (fixed function) to push instance data into the vertex shader.
+	Indirect,
+
+	// Indirect draw calls with support for ISR. Uses manual fetching of instance data in the vertex shader/factory.
+	IndirectInstancedStereo,
+};
+
+template <bool bWithWaterSelectionSupport, EWaterVertexFactoryDrawMode DrawMode>
 class TWaterVertexFactory : public FVertexFactory
 {
-	DECLARE_VERTEX_FACTORY_TYPE(TWaterVertexFactory<bWithWaterSelectionSupport>);
+	DECLARE_VERTEX_FACTORY_TYPE(FWaterVertexFactoryType);
 
 public:
 	using Super = FVertexFactory;
+	using FWaterVertexFactoryType = TWaterVertexFactory<bWithWaterSelectionSupport, DrawMode>;
 
 	static constexpr int32 NumRenderGroups = bWithWaterSelectionSupport ? 3 : 1; // Must match EWaterMeshRenderGroupType
 	static constexpr int32 NumAdditionalVertexStreams = TWaterInstanceDataBuffers<bWithWaterSelectionSupport>::NumBuffers;
 
-	TWaterVertexFactory(ERHIFeatureLevel::Type InFeatureLevel, int32 InNumQuadsPerSide,	float InLODScale);
+	TWaterVertexFactory(ERHIFeatureLevel::Type InFeatureLevel, const FVector& InQuadTreePositionWS, int32 InNumQuadsPerSide, int32 InNumQuadsLOD0, int32 InNumDensities, float InLeafSize, float InLODScale, float InCaptureDepthRange);
 	~TWaterVertexFactory();
 
 	/**
@@ -201,6 +222,11 @@ public:
 
 	inline const FUniformBufferRHIRef GetWaterVertexFactoryUniformBuffer(EWaterMeshRenderGroupType InRenderGroupType) const { return UniformBuffers[(int32)InRenderGroupType]; }
 
+	inline FVector GetQuadTreePositionWS() const { return QuadTreePositionWS; }
+
+	static constexpr bool UsesIndirectDraws() { return DrawMode == EWaterVertexFactoryDrawMode::Indirect || DrawMode == EWaterVertexFactoryDrawMode::IndirectInstancedStereo; }
+	static constexpr bool UsesInstancedStereo() { return DrawMode == EWaterVertexFactoryDrawMode::IndirectInstancedStereo; }
+
 private:
 	void SetupUniformDataForGroup(EWaterMeshRenderGroupType InRenderGroupType);
 
@@ -211,11 +237,16 @@ public:
 private:
 	TStaticArray<FWaterVertexFactoryBufferRef, NumRenderGroups> UniformBuffers;
 
+	const FVector QuadTreePositionWS = FVector::ZeroVector;
 	const int32 NumQuadsPerSide = 0;
+	const int32 NumQuadsLOD0 = 0;
+	const int32 NumDensities = 0;
+	const float LeafSize = 0.0f;
 	const float LODScale = 0.0f;
+	const float CaptureDepthRange = 0.0f;
 };
 
-extern const FVertexFactoryType* GetWaterVertexFactoryType(bool bWithWaterSelectionSupport);
+extern const FVertexFactoryType* GetWaterVertexFactoryType(bool bWithWaterSelectionSupport, EWaterVertexFactoryDrawMode DrawMode);
 
 
 /**
@@ -238,6 +269,16 @@ struct TWaterMeshUserData
 #if RHI_RAYTRACING	
 	FUniformBufferRHIRef WaterVertexFactoryRaytracingVFUniformBuffer = nullptr;
 #endif
+
+	FRHIBuffer* IndirectInstanceData0 = nullptr;
+	FRHIBuffer* IndirectInstanceData1 = nullptr;
+	FRHIBuffer* IndirectInstanceData2 = nullptr;
+	FRHIBuffer* IndirectInstanceData3 = nullptr;
+	FRHIShaderResourceView* IndirectInstanceDataOffsetsSRV = nullptr;
+	FRHIShaderResourceView* IndirectInstanceData0SRV = nullptr;
+	FRHIShaderResourceView* IndirectInstanceData1SRV = nullptr;
+	FRHIShaderResourceView* IndirectInstanceData2SRV = nullptr;
+	FRHIShaderResourceView* IndirectInstanceData3SRV = nullptr;
 };
 
 /**
@@ -267,7 +308,7 @@ struct TWaterMeshUserDataBuffers
 		return UserData[(int32)InRenderGroupType].Get();
 	}
 
-	TStaticArray<TUniquePtr<WaterMeshUserDataType>, TWaterVertexFactory<bWithWaterSelectionSupport>::NumRenderGroups> UserData;
+	TStaticArray<TUniquePtr<WaterMeshUserDataType>, TWaterVertexFactory<bWithWaterSelectionSupport, EWaterVertexFactoryDrawMode::NonIndirect>::NumRenderGroups> UserData;
 };
 
 #include "WaterVertexFactory.inl"

@@ -3,11 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Graph/ControlRigGraphNode.h"
+#include "EdGraph/RigVMEdGraphNode.h"
 #include "AnimNextParameterBlock_EdGraphNode.generated.h"
 
 UCLASS(MinimalAPI)
-class UAnimNextParameterBlock_EdGraphNode : public UControlRigGraphNode
+class UAnimNextParameterBlock_EdGraphNode : public URigVMEdGraphNode
 {
 	GENERATED_BODY()
 };

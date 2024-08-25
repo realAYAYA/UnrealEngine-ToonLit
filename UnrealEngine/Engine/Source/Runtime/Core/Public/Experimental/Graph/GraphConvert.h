@@ -188,7 +188,7 @@ inline FGraph ConvertToGraph(
 
 		// Normalize Step 3: Remove duplicates
 		VertexEdges = VertexEdges.Left(Algo::Unique(VertexEdges));
-		OutGraph.Buffer.SetNum(InitialOffset + VertexEdges.Num(), false /* bAllowShrinking */);
+		OutGraph.Buffer.SetNum(InitialOffset + VertexEdges.Num(), EAllowShrinking::No);
 
 		// Store the vertex's offset into GraphBuffer, for later fixup
 		// Edge list is guaranteed to fit within 32 bits after removal of duplicates

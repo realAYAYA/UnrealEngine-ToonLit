@@ -46,6 +46,8 @@ namespace EpicGames.Perforce.Managed
 		/// <summary>
 		/// Append the contents of this directory and subdirectories to a list
 		/// </summary>
+		/// <param name="snapshot"></param>
+		/// <param name="treeRef"></param>
 		/// <param name="files">List to append to</param>
 		static void AppendFiles(StreamSnapshot snapshot, StreamTreeRef treeRef, List<StreamFile> files)
 		{

@@ -4,6 +4,7 @@
 
 #include "Features/IModularFeature.h"
 #include "Internationalization/Text.h"
+#include "ToolTargets/ToolTarget.h"
 
 class UInteractiveToolsContext;
 class FUICommandInfo;
@@ -97,6 +98,12 @@ public:
 	 * be ignored unless it is overridden and returns true.
 	 */
 	virtual bool GetExtensionExtendedInfo(FModelingModeExtensionExtendedInfo& InfoOut) { return false; }
+
+	/** 
+	 * Query the extension for additional tool targets. This function is optional and the result will be
+	 * ignored unless it is overridden and returns true.
+	 */
+	virtual bool GetExtensionToolTargets(TArray<TSubclassOf<UToolTargetFactory>>& ToolTargetFactoriesOut) { return false; }
 
 	static FName GetModularFeatureName()
 	{

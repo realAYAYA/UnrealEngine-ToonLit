@@ -10,9 +10,8 @@ public class NNERuntimeRDG : ModuleRules
 	{
 		CppStandard = CppStandardVersion.Cpp17;
 
-		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-
-		PrivateIncludePaths.AddRange(new string[] { Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private") });
+		// Replace with PCHUsageMode.UseExplicitOrSharedPCHs when this plugin can compile with cpp20
+		PCHUsage = PCHUsageMode.NoPCHs;
 
 		PublicDependencyModuleNames.AddRange(new string[] 
 		{ 
@@ -26,11 +25,11 @@ public class NNERuntimeRDG : ModuleRules
         PrivateDependencyModuleNames.AddRange(new string[]
         {
             "NNE",
-			"NNEUtils",
 			"NNEHlslShaders",
             "RHI",
-			"Projects"
-        });
+			"Projects",
+			"TraceLog"
+		});
 
         if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
@@ -51,6 +50,14 @@ public class NNERuntimeRDG : ModuleRules
 		if (Target.Platform == UnrealTargetPlatform.Linux)
 		{	
 			PrivateDependencyModuleNames.Add("VulkanRHI");
+		}
+
+		if ((Target.Type == TargetType.Editor || Target.Type == TargetType.Program) &&
+			(Target.Platform == UnrealTargetPlatform.Win64 || Target.Platform == UnrealTargetPlatform.Linux || Target.Platform == UnrealTargetPlatform.Mac)
+			)
+		{
+			PrivateDefinitions.Add("NNE_UTILITIES_AVAILABLE");
+			PrivateDependencyModuleNames.Add("NNEUtilities");
 		}
 	}
 }

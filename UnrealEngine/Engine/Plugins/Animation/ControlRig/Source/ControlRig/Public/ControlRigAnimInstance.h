@@ -33,6 +33,7 @@ public:
 
 	TMap<FMeshPoseBoneIndex, FTransform> StoredTransforms;
 	TMap<FName, float> StoredCurves;
+	UE::Anim::FHeapAttributeContainer StoredAttributes;
 };
 
 UCLASS(transient, NotBlueprintable)

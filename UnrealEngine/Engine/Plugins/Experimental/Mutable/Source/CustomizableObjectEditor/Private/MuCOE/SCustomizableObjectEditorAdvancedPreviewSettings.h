@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "CustomizableObjectInstanceEditor.h"
 #include "AssetRegistry/AssetData.h"
 #include "SAdvancedPreviewDetailsTab.h"
 #include "Widgets/SWindow.h"
@@ -98,7 +99,7 @@ class SCustomizableObjectEditorAdvancedPreviewSettings : public SAdvancedPreview
 {
 public:
 	SLATE_BEGIN_ARGS(SCustomizableObjectEditorAdvancedPreviewSettings) {}
-		SLATE_ARGUMENT(UObject*, AdditionalSettings) // From SAdvancedPreviewDetailsTab
+		SLATE_ARGUMENT(UCustomSettings*, CustomSettings) // From SAdvancedPreviewDetailsTab
 		SLATE_ATTRIBUTE(FCustomizableObjectEditor*, CustomizableObjectEditor)
 	SLATE_END_ARGS()
 

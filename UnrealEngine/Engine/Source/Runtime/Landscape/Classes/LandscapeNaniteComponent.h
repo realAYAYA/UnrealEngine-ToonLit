@@ -91,10 +91,16 @@ public:
 		return bEnabled;
 	}
 
+	virtual bool NeedsLoadForServer() const override { return false; }
+	virtual bool NeedsLoadForTargetPlatform(const class ITargetPlatform* TargetPlatform) const override;
+
+	/** Copy the materials from the source ULandscapeComponents to this ULandscapeNaniteComponent's StaticMesh*/
+	void UpdateMaterials();
+	
 private:
 	
 	/** Collect all the PSO precache data used by the static mesh component */
-	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FComponentPSOPrecacheParamsList& OutParams) override;
+	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 
 	/* The landscape proxy identity this Nanite representation was generated for */
 	UPROPERTY()
@@ -102,6 +108,10 @@ private:
 
 	UPROPERTY(Transient)
 	bool bEnabled;
+
+	/** Landscape Components which were used to generate this ULandscapeNaniteComponent*/
+	UPROPERTY()
+	TArray<TObjectPtr<ULandscapeComponent>> SourceLandscapeComponents;
 
 public:
 #if WITH_EDITOR

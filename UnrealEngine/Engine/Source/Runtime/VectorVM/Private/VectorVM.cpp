@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "VectorVM.h"
+#include "VectorVMSerialization.h"
 #include "Modules/ModuleManager.h"
 #include "UObject/Class.h"
 #include "UObject/Package.h"
@@ -211,14 +212,6 @@ static FAutoConsoleVariableRef CVarVVMChunkSizeInBytes(
 	ECVF_Default
 );
 
-static int32 GVVMPageSizeInKB = 64;
-static FAutoConsoleVariableRef CVarVVMPageSizeInKB(
-	TEXT("vm.PageSizeInKB"),
-	GVVMPageSizeInKB,
-	TEXT("Minimum allocation per VM instance.  There are 64 of these, so multiply GVVMPageSizeInKB * 64 * 1024 to get total number of bytes used by the VVM\n"),
-	ECVF_ReadOnly 
-);
-
 static int32 GVVMMaxThreadsPerScript = 8;
 static FAutoConsoleVariableRef CVarVVMMaxThreadsPerScript(
 	TEXT("vm.MaxThreadsPerScript"),
@@ -282,8 +275,6 @@ static FAutoConsoleVariableRef CVarbBatchPackVMOutput(
 	TEXT("If > 0 output elements will be packed and batched branch free.\n"),
 	ECVF_Default
 );
-
-#include "VectorVMExperimental.inl"
 
 uint8 VectorVM::GetNumOpCodes()
 {
@@ -429,7 +420,7 @@ struct FVectorVMCodeOptimizerContext
 	void RollbackCodeState(const FOptimizerCodeState& State)
 	{
 		BaseContext.Code = State.BaseContextCode;
-		OptimizedCode.SetNum(State.OptimizedCodeLength, false /* allowShrink */);
+		OptimizedCode.SetNum(State.OptimizedCodeLength, EAllowShrinking::No);
 	}
 
 	// Jump table is encoded at the end of the optimized code, with the first int32 in the byte code
@@ -629,7 +620,7 @@ void FVectorVMContext::PrepareForExec(
 
 	TempRegisterSize = Align(MaxNumInstances * VectorVM::MaxInstanceSizeBytes, PLATFORM_CACHE_LINE_SIZE);
 	TempBufferSize = TempRegisterSize * NumTempRegisters;
-	TempRegTable.SetNumUninitialized(TempBufferSize, false);
+	TempRegTable.SetNumUninitialized(TempBufferSize, EAllowShrinking::No);
 
 	DataSetMetaTable = InDataSetMetaTable;
 
@@ -1366,7 +1357,7 @@ struct FVectorKernelExitStatScope
 			FStatStackEntry& StackEntry = Context.StatCounterStack.Last();
 			StackEntry.CycleCounter.Stop();
 			Context.ScopeExecCycles[StackEntry.VmCycleCounter.ScopeIndex] += FPlatformTime::Cycles64() - StackEntry.VmCycleCounter.ScopeEnterCycles;
-			Context.StatCounterStack.Pop(false);
+			Context.StatCounterStack.Pop(EAllowShrinking::No);
 		}
 #elif ENABLE_STATNAMEDEVENTS
 		if (Context.StatNamedEventScopes.Num())
@@ -2657,7 +2648,7 @@ struct FVectorKernelIntAsFloat : TUnaryKernel<FVectorKernelIntAsFloat, FRegister
 
 void VectorVM::Exec(FVectorVMExecArgs& Args, FVectorVMSerializeState *SerializeState)
 {
-	//TRACE_CPUPROFILER_EVENT_SCOPE("VMExec");
+	//TRACE_CPUPROFILER_EVENT_SCOPE(VMExec);
 	SCOPE_CYCLE_COUNTER(STAT_VVMExec);
 
 #if UE_BUILD_TEST
@@ -2875,7 +2866,7 @@ void VectorVM::Exec(FVectorVMExecArgs& Args, FVectorVMSerializeState *SerializeS
 	}
 #endif
 
-#ifdef VVM_INCLUDE_SERIALIZATION
+#if VECTORVM_SUPPORTS_SERIALIZATION
 	uint64 EndTime = FPlatformTime::Cycles64();
 	if (SerializeState) {
 		SerializeState->ExecDt = EndTime - StartTime; //NOTE: doesn't work if ParallelFor splits the work into multiple threads

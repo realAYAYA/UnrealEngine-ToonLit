@@ -6,18 +6,14 @@ public class DMXControlConsoleEditor : ModuleRules
 {
 	public DMXControlConsoleEditor(ReadOnlyTargetRules Target) : base(Target)
 	{
+		ShortName = "DMXCtrlConsoleEditor";
+
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"Core",
-			}
-		);
-
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				System.IO.Path.Combine(GetModuleDirectory("DMXControlConsole"), "Private"),
 			}
 		);
 
@@ -41,6 +37,7 @@ public class DMXControlConsoleEditor : ModuleRules
 				"Slate",
 				"SlateCore",
 				"ToolMenus",
+				"ToolWidgets",
 				"UnrealEd",
 			}
 		);

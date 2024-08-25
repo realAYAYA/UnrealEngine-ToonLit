@@ -492,6 +492,13 @@ struct FSystemResolution
 ENGINE_API extern FSystemResolution GSystemResolution;
 ENGINE_API extern int32 GUnbuiltHLODCount;
 
+#ifndef UE_ENABLE_LOG_STACK_ON_FORCE_GC
+#define UE_ENABLE_LOG_STACK_ON_FORCE_GC 0
+#endif
+#if UE_ENABLE_LOG_STACK_ON_FORCE_GC
+ENGINE_API extern bool GLogStackOnForceGC;
+#endif
+
 // Update the debugging aid GPlayInEditorContextString based on the current world context (does nothing in WITH_EDITOR=0 builds)
 ENGINE_API void UpdatePlayInEditorWorldDebugString(const FWorldContext* WorldContext);
 

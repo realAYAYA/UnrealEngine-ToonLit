@@ -8,9 +8,12 @@
 #include "NiagaraPerfBaseline.h"
 #include "NiagaraValidationRule.h"
 #include "NiagaraValidationRuleSet.h"
+#include "Particles/ParticlePerfStats.h"
 #include "NiagaraEffectType.generated.h"
 
 #define DEBUG_SCALABILITY_STATE (!UE_BUILD_SHIPPING)
+
+#define WITH_PER_FXTYPE_PARTICLE_PERF_STATS (WITH_PER_SYSTEM_PARTICLE_PERF_STATS && WITH_PARTICLE_PERF_CSV_STATS && !UE_BUILD_SHIPPING)
 
 /** Controls what action is taken by a Niagara system that fails it's cull checks. */
 UENUM()
@@ -397,6 +400,7 @@ class UNiagaraEffectType : public UObject
 	NIAGARA_API virtual void BeginDestroy()override;
 	NIAGARA_API virtual bool IsReadyForFinishDestroy()override;
 	NIAGARA_API virtual void Serialize(FArchive& Ar)override;
+	NIAGARA_API virtual void PostInitProperties()override;
 	NIAGARA_API virtual void PostLoad()override;
 #if WITH_EDITORONLY_DATA
 	static NIAGARA_API void DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConstructClasses, const UClass* SpecificSubclass);
@@ -500,6 +504,15 @@ public:
 	static FGeneratePerfBaselines& OnGeneratePerfBaselines(){ return GeneratePerfBaselinesDelegate; }
 	static NIAGARA_API void GeneratePerfBaselines();
 #endif
+
+#if WITH_PER_FXTYPE_PARTICLE_PERF_STATS
+	//Cached CSV Stat names for this system.
+	FName CSVStat_Count = NAME_None;
+	FName CSVStat_Total = NAME_None;
+	FName CSVStat_GTOnly = NAME_None;
+	FName CSVStat_RT = NAME_None;
+	FName CSVStat_GPU = NAME_None;
+#endif
 };
 
 /** Performs the passed action for all FNiagaraPlatformSets in this FXType. */
@@ -516,3 +529,25 @@ void UNiagaraEffectType::ForEachPlatformSet(TAction Func)
 		Func(Setting.Platforms);
 	}
 }
+
+//////////////////////////////////////////////////////////////////////////
+
+#if WITH_PER_FXTYPE_PARTICLE_PERF_STATS
+/** Listener to gather accumulated stats for all systems in a particular Effect Type. */
+class FParticlePerfStatsListener_EffectType : public FParticlePerfStatsListener
+{
+public:
+	FParticlePerfStatsListener_EffectType()
+	{}
+
+	virtual ~FParticlePerfStatsListener_EffectType() {}
+
+	virtual bool Tick() override;
+	virtual void TickRT() override;
+
+
+	virtual bool NeedsWorldStats() const { return false; }
+	virtual bool NeedsSystemStats() const { return true; }
+	virtual bool NeedsComponentStats() const { return false; }
+};
+#endif//WITH_PER_FXTYPE_PARTICLE_PERF_STATS

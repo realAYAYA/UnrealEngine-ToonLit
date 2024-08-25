@@ -505,7 +505,7 @@ void FDatasmithImporterImpl::DeleteImportSceneActorIfNeeded(FDatasmithActorImpor
 
 			while(RelatedActors.Num() > 0)
 			{
-				TSoftObjectPtr< AActor > ActorPtr = RelatedActors.Pop(false);
+				TSoftObjectPtr< AActor > ActorPtr = RelatedActors.Pop(EAllowShrinking::No);
 				if(AActor* RelatedActor = ActorPtr.Get())
 				{
 					FDatasmithImporterUtils::DeleteActor( *RelatedActor );

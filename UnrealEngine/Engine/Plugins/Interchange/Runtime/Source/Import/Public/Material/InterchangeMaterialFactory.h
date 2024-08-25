@@ -18,6 +18,49 @@ class UMaterialExpression;
 class UMaterialExpressionMaterialFunctionCall;
 class UMaterialInstance;
 
+namespace UE::Interchange::Materials::HashUtils
+{
+	class INTERCHANGEIMPORT_API FInterchangeMaterialInstanceOverridesAPI
+	{
+	public:
+		/**
+		 * Generates Attribute Key String from the AttributeType and Hash
+		 */
+		static FString MakeOverrideParameterName(UE::Interchange::EAttributeTypes AttributeType, int32 Hash, bool Prefix = true);
+
+		/**
+		 * Generates Attribute Key String from the DisplayLable
+		 */
+		static FString MakeOverrideParameterName(const FString& DisplayLabel);
+
+		/**
+		 * Generates Attribute Key for Expression Name
+		 */
+		static FString MakeExpressionNameString();
+
+		/**
+		 * Retrieves the Parameter Name from AttributeKey
+		 */
+		static bool GetOverrideParameterName(const UE::Interchange::FAttributeKey& AttributeKey, FString& OverrideParameterName);
+
+		/**
+		 * Checks if the Node has a MaterialExpressionName override
+		 */
+		static bool HasMaterialExpressionNameOverride(const UInterchangeBaseNode* BaseNode);
+
+		/**
+		 * Retrieves the Attribute Keys of the Leaf Inputs.
+		 */
+		static void GatherLeafInputs(const UInterchangeBaseNode* BaseNode, TArray<UE::Interchange::FAttributeKey>& OutLeafInputAttributeKeys);
+
+	private:
+		static const TCHAR* ExpressionNameAttributeKey;
+		static const TCHAR* OverrideParameterPrefix;
+		static const TCHAR* OverrideParameterSeparator;
+		static const TCHAR* OverrideHashSeparator;
+	};
+}
+
 UCLASS(BlueprintType)
 class INTERCHANGEIMPORT_API UInterchangeMaterialFactory : public UInterchangeFactoryBase
 {

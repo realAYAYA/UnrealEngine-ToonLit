@@ -116,7 +116,7 @@ namespace UE::ArchiveStackTrace
 {
 
 bool LoadPackageIntoMemory(const TCHAR* InFilename, UE::ArchiveStackTrace::FPackageData& OutPackageData,
-	TUniquePtr<uint8>& OutLoadedBytes)
+	TUniquePtr<uint8, FDeleteByFree>& OutLoadedBytes)
 {
 	TUniquePtr<FArchive> UAssetFileArchive(IFileManager::Get().CreateFileReader(InFilename));
 	if (!UAssetFileArchive || UAssetFileArchive->TotalSize() == 0)
@@ -145,7 +145,7 @@ bool LoadPackageIntoMemory(const TCHAR* InFilename, UE::ArchiveStackTrace::FPack
 				OutPackageData.Size += ExpFileArchive->TotalSize();
 			}
 		}
-		OutLoadedBytes.Reset(new uint8[OutPackageData.Size]);
+		OutLoadedBytes.Reset(reinterpret_cast<uint8*>(FMemory::Malloc(OutPackageData.Size)));
 		OutPackageData.Data = OutLoadedBytes.Get();
 		UAssetFileArchive->Serialize(OutPackageData.Data, UAssetFileArchive->TotalSize());
 
@@ -668,7 +668,8 @@ FUObjectSerializeContext* FArchiveStackTrace::GetSerializeContext()
 	return StackTraceWriter.GetSerializeContext();
 }
 
-bool FArchiveStackTrace::LoadPackageIntoMemory(const TCHAR* InFilename, FPackageData& OutPackageData, TUniquePtr<uint8>& OutLoadedBytes)
+bool FArchiveStackTrace::LoadPackageIntoMemory(const TCHAR* InFilename, FPackageData& OutPackageData,
+	TUniquePtr<uint8, UE::ArchiveStackTrace::FDeleteByFree>& OutLoadedBytes)
 {
 	UE::ArchiveStackTrace::FPackageData PackageData;
 	bool bResult = UE::ArchiveStackTrace::LoadPackageIntoMemory(InFilename, PackageData, OutLoadedBytes);
@@ -953,7 +954,7 @@ void FArchiveStackTraceWriter::Compare(
 
 void FArchiveStackTrace::CompareWith(const TCHAR* InFilename, const int64 TotalHeaderSize, const TCHAR* CallstackCutoffText, const int32 MaxDiffsToLog, TMap<FName, FArchiveDiffStats>& OutStats)
 {
-	TUniquePtr<uint8> SourcePackageBytes;
+	TUniquePtr<uint8, UE::ArchiveStackTrace::FDeleteByFree> SourcePackageBytes;
 	FPackageData SourcePackage;
 	LoadPackageIntoMemory(InFilename, SourcePackage, SourcePackageBytes);
 	CompareWith(SourcePackage, InFilename, TotalHeaderSize, CallstackCutoffText, MaxDiffsToLog, OutStats);
@@ -1150,7 +1151,7 @@ bool FArchiveStackTraceWriter::GenerateDiffMap(const FPackageData& SourcePackage
 
 bool FArchiveStackTrace::GenerateDiffMap(const TCHAR* InFilename, int64 TotalHeaderSize, int32 MaxDiffsToFind, FArchiveDiffMap& OutDiffMap)
 {
-	TUniquePtr<uint8> SourcePackageBytes;
+	TUniquePtr<uint8, UE::ArchiveStackTrace::FDeleteByFree> SourcePackageBytes;
 	FPackageData SourcePackage;
 	if (!LoadPackageIntoMemory(InFilename, SourcePackage, SourcePackageBytes))
 	{
@@ -1206,7 +1207,7 @@ bool FArchiveStackTrace::GenerateDiffMap(const FPackageData& SourcePackage, int6
 
 bool FArchiveStackTrace::IsIdentical(const TCHAR* InFilename, int64 BufferSize, const uint8* BufferData)
 {
-	TUniquePtr<uint8> SourcePackageBytes;
+	TUniquePtr<uint8, UE::ArchiveStackTrace::FDeleteByFree> SourcePackageBytes;
 	FPackageData SourcePackage;
 	if (!LoadPackageIntoMemory(InFilename, SourcePackage, SourcePackageBytes))
 	{
@@ -1624,14 +1625,14 @@ static void DumpPackageHeaderDiffs_LinkerLoad(
 		TRefCountPtr<FUObjectSerializeContext> LinkerLoadContext(FUObjectThreadContext::Get().GetSerializeContext());
 		BeginLoad(LinkerLoadContext);
 		SourceLinker = FArchiveStackTraceWriter::CreateLinkerForPackage(LinkerLoadContext, SourceAssetPackageName, AssetFilename, SourcePackage);
-		EndLoad(SourceLinker ? SourceLinker->GetSerializeContext() : LinkerLoadContext.GetReference());
+		EndLoad(LinkerLoadContext);
 	}
-	
+
 	{
 		TRefCountPtr<FUObjectSerializeContext> LinkerLoadContext(FUObjectThreadContext::Get().GetSerializeContext());
 		BeginLoad(LinkerLoadContext);
 		DestLinker = FArchiveStackTraceWriter::CreateLinkerForPackage(LinkerLoadContext, DestAssetPackageName, AssetFilename, DestPackage);
-		EndLoad(DestLinker ? DestLinker->GetSerializeContext() : LinkerLoadContext.GetReference());
+		EndLoad(LinkerLoadContext);
 	}
 
 	if (SourceLinker && DestLinker)
@@ -1741,7 +1742,7 @@ void FArchiveStackTraceReader::Serialize(void* OutData, int64 Num)
 FArchiveStackTraceReader* FArchiveStackTraceReader::CreateFromFile(const TCHAR* InFilename)
 {
 	FArchiveStackTraceReader* Reader = nullptr;
-	TUniquePtr<uint8> PackageBytes;
+	TUniquePtr<uint8, UE::ArchiveStackTrace::FDeleteByFree> PackageBytes;
 	UE::ArchiveStackTrace::FPackageData PackageData;
 	if (UE::ArchiveStackTrace::LoadPackageIntoMemory(InFilename, PackageData, PackageBytes))
 	{

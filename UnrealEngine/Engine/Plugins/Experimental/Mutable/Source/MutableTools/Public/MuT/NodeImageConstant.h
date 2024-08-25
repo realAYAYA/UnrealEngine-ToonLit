@@ -38,17 +38,12 @@ namespace mu
 		static void Serialise( const NodeImageConstant* pNode, OutputArchive& arch );
 		static NodeImageConstantPtr StaticUnserialise( InputArchive& arch );
 
-
 		//-----------------------------------------------------------------------------------------
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        virtual int GetInputCount() const override;
-        virtual Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -58,7 +53,7 @@ namespace mu
         Ptr<const Image> GetValue() const;
 
         //! Set the image to be output by this node
-        void SetValue( Ptr<const Image> pImage );
+        void SetValue( const Image* );
 
         //! Set the image proxy that will provide the image for this node when necessary
         void SetValue( Ptr<ResourceProxy<Image>> pImage );

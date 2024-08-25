@@ -61,12 +61,12 @@ void SFieldSelectorMenu::Construct(const FArguments& InArgs, const UWidgetBluepr
 	WidgetBlueprint = InWidgetBlueprint;
 	check(InWidgetBlueprint);
 
-	OnFieldSelectionChanged = InArgs._OnFieldSelectionChanged;
+	OnSelectionChanged = InArgs._OnSelectionChanged;
 	OnMenuCloseRequested = InArgs._OnMenuCloseRequested;
 	SelectionContext = InArgs._SelectionContext;
 
 	bIsMenuInitialized = false;
-	bIsClearEnabled = (InArgs._CurrentPropertyPathSelected.IsSet() && !InArgs._CurrentPropertyPathSelected.GetValue().IsEmpty()) || InArgs._CurrentFunctionSelected != nullptr;
+	bIsClearEnabled = InArgs._CurrentSelected.IsSet() && InArgs._CurrentSelected.GetValue().IsValid();
 
 	// If we're showing conversion functions, we don't want to set the AssignableTo property of SSourceBindingList, because then it will only show exact matches, 
 	// and since we're also showing conversion functions we know that's not what the user wants.
@@ -78,7 +78,7 @@ void SFieldSelectorMenu::Construct(const FArguments& InArgs, const UWidgetBluepr
 		AssignableToProperty = SelectionContext.AssignableTo;
 	}
 
-	if (SelectionContext.bAllowConversionFunctions)
+	if (bShowConversionFunctions)
 	{
 		GenerateConversionFunctionItems();
 	}
@@ -216,7 +216,7 @@ bool SFieldSelectorMenu::IsSelectEnabled() const
 	if (BindingList.IsValid())
 	{
 		FMVVMBlueprintPropertyPath Path = BindingList->GetSelectedProperty();
-		if (Path.IsFromViewModel() || Path.IsFromWidget())
+		if (Path.IsValid())
 		{
 			return true;
 		}
@@ -235,19 +235,37 @@ bool SFieldSelectorMenu::IsSelectEnabled() const
 
 FReply SFieldSelectorMenu::HandleSelectClicked()
 {
-	FMVVMBlueprintPropertyPath PropertyPath;
-	if (BindingList.IsValid())
+	if (OnSelectionChanged.IsBound())
 	{
-		PropertyPath = BindingList->GetSelectedProperty();
-	}
+		bool bSet = false;
+		FMVVMLinkedPinValue Value;
+		if (ConversionFunctionList.IsValid())
+		{
+			TArray<const UFunction*> Selection;
+			if (ConversionFunctionList.IsValid())
+			{
+				Selection = ConversionFunctionList->GetSelectedItems();
+			}
+			if (Selection.Num() > 0)
+			{
+				Value = FMVVMLinkedPinValue(Selection[0]);
+				bSet = true;
+			}
+		}
 
-	TArray<const UFunction*> Selection;
-	if (ConversionFunctionList.IsValid())
-	{
-		Selection = ConversionFunctionList->GetSelectedItems();
-	}
+		if (BindingList.IsValid())
+		{
+			FMVVMBlueprintPropertyPath SelectedProperty = BindingList->GetSelectedProperty();
+			if (SelectedProperty.IsValid())
+			{
+				ensure(bSet == false);
+				Value = FMVVMLinkedPinValue(MoveTemp(SelectedProperty));
+				bSet = true;
+			}
+		}
 
-	OnFieldSelectionChanged.ExecuteIfBound(PropertyPath, Selection.Num() > 0 ? Selection[0] : nullptr);
+		OnSelectionChanged.Execute(MoveTemp(Value));
+	}
 
 	return FReply::Handled();
 }
@@ -264,17 +282,10 @@ FReply SFieldSelectorMenu::HandleClearClicked()
 	if (SelectionContext.FixedBindingSource.IsSet())
 	{
 		FBindingSource Source = SelectionContext.FixedBindingSource.GetValue();
-		if (Source.ViewModelId.IsValid())
-		{
-			NewProperty.SetViewModelId(Source.ViewModelId);
-		}
-		else 
-		{
-			NewProperty.SetWidgetName(Source.Name);
-		}
+		Source.SetSourceTo(NewProperty);
 	}
 
-	OnFieldSelectionChanged.ExecuteIfBound(NewProperty, nullptr);
+	OnSelectionChanged.ExecuteIfBound(FMVVMLinkedPinValue(MoveTemp(NewProperty)));
 
 	return FReply::Handled();
 }
@@ -288,12 +299,12 @@ FReply SFieldSelectorMenu::HandleCancelClicked()
 
 void SFieldSelectorMenu::SetPropertyPathSelection(const FMVVMBlueprintPropertyPath& SelectedPath)
 {
-	OnFieldSelectionChanged.ExecuteIfBound(SelectedPath, nullptr);
+	OnSelectionChanged.ExecuteIfBound(FMVVMLinkedPinValue(SelectedPath));
 }
 
 void SFieldSelectorMenu::SetConversionFunctionSelection(const UFunction* SelectedFunction)
 {
-	OnFieldSelectionChanged.ExecuteIfBound(FMVVMBlueprintPropertyPath(), SelectedFunction);
+	OnSelectionChanged.ExecuteIfBound(FMVVMLinkedPinValue(SelectedFunction));
 }
 
 TSharedPtr<SFieldSelectorMenu::FConversionFunctionItem> SFieldSelectorMenu::FindConversionFunctionCategory(const TArray<TSharedPtr<FConversionFunctionItem>>& Items, TArrayView<FString> CategoryNameParts) const
@@ -453,7 +464,7 @@ TSharedRef<ITableRow> SFieldSelectorMenu::HandleGenerateViewModelRow(FBindingSou
 			.AutoWidth()
 			[
 				SNew(SImage)
-				.Image(FSlateIconFinder::FindIconBrushForClass(ViewModel.Class.Get()))
+				.Image(FSlateIconFinder::FindIconBrushForClass(ViewModel.GetClass()))
 				.ColorAndOpacity(FSlateColor::UseForeground())
 			]
 			+ SHorizontalBox::Slot()
@@ -462,7 +473,7 @@ TSharedRef<ITableRow> SFieldSelectorMenu::HandleGenerateViewModelRow(FBindingSou
 			.AutoWidth()
 			[
 				SNew(STextBlock)
-				.Text(ViewModel.DisplayName)
+				.Text(ViewModel.GetDisplayName())
 				.ColorAndOpacity(FSlateColor::UseForeground())
 				.HighlightText_Lambda([this]() { return SearchBox.IsValid() ? SearchBox->GetText() : FText::GetEmpty(); })
 			]
@@ -746,19 +757,17 @@ void SFieldSelectorMenu::FilterViewModels(const FText& NewText)
 		return;
 	}
 
-	for (const FBindingSource& ViewModel : ViewModelSources)
+	for (const FBindingSource& BindingSource : ViewModelSources)
 	{
-		const FString DisplayName = ViewModel.DisplayName.ToString();
-		const FString ClassName = ViewModel.Class != nullptr ? ViewModel.Class->GetName() : FString();
-		const FString Name = ViewModel.Name.ToString();
+		const FString DisplayName = BindingSource.GetDisplayName().ToString();
+		const FString ClassName = BindingSource.GetClass() != nullptr ? BindingSource.GetClass()->GetName() : FString();
 
 		bool bMatchesFilters = true;
 		
 		for (const FString& Filter : FilterStrings)
 		{
 			if (!DisplayName.Contains(Filter) && 
-				!ClassName.Contains(Filter) &&
-				!Name.Contains(Filter))
+				!ClassName.Contains(Filter))
 			{
 				bMatchesFilters = false;
 				break;
@@ -767,11 +776,7 @@ void SFieldSelectorMenu::FilterViewModels(const FText& NewText)
 
 		if (bMatchesFilters)
 		{
-			FBindingSource& NewSource = FilteredViewModelSources.Add_GetRef(FBindingSource());
-			NewSource.Class = ViewModel.Class;
-			NewSource.Name = ViewModel.Name;
-			NewSource.DisplayName = ViewModel.DisplayName;
-			NewSource.ViewModelId = ViewModel.ViewModelId;
+			FilteredViewModelSources.Add(BindingSource);
 		}
 	}
 }
@@ -781,11 +786,19 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingContextPanel(const FArgumen
 	// show source picker
 	TSharedRef<SVerticalBox> StackedSourcePicker = SNew(SVerticalBox);
 
+	const bool bUseFixedSource = SelectionContext.FixedBindingSource.IsSet() && SelectionContext.FixedBindingSource.GetValue().IsValid();
+	const EMVVMBlueprintFieldPathSource FixedFieldPathSource = bUseFixedSource ? SelectionContext.FixedBindingSource.GetValue().GetSource() : EMVVMBlueprintFieldPathSource::None;
+	EMVVMBlueprintFieldPathSource CurrentPropertyFieldPathSource = EMVVMBlueprintFieldPathSource::None;
+
+	FMVVMLinkedPinValue CurrentFieldSelectedLinkedValue = InArgs._CurrentSelected.IsSet() ? InArgs._CurrentSelected.GetValue() : FMVVMLinkedPinValue();
+	if (InArgs._CurrentSelected.IsSet() && CurrentFieldSelectedLinkedValue.IsPropertyPath())
+	{
+		CurrentPropertyFieldPathSource = CurrentFieldSelectedLinkedValue.GetPropertyPath().GetSource(WidgetBlueprint.Get());
+	}
+
 	if (SelectionContext.bAllowViewModels)
 	{
-		if (SelectionContext.FixedBindingSource.IsSet()
-			&& SelectionContext.FixedBindingSource.GetValue().IsValid()
-			&& SelectionContext.FixedBindingSource.GetValue().ViewModelId.IsValid())
+		if (FixedFieldPathSource == EMVVMBlueprintFieldPathSource::ViewModel)
 		{
 			ViewModelSources.Add(SelectionContext.FixedBindingSource.GetValue());
 		}
@@ -803,11 +816,13 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingContextPanel(const FArgumen
 			.OnSelectionChanged(this, &SFieldSelectorMenu::HandleViewModelSelected);
 
 		FBindingSource SelectedSource;
-		if (InArgs._CurrentPropertyPathSelected.IsSet() && InArgs._CurrentPropertyPathSelected.GetValue().IsFromViewModel())
+		if (CurrentPropertyFieldPathSource == EMVVMBlueprintFieldPathSource::ViewModel)
 		{
 			for (const FBindingSource& Source : FilteredViewModelSources)
 			{
-				if (Source.ViewModelId == InArgs._CurrentPropertyPathSelected.GetValue().GetViewModelId())
+				check(InArgs._CurrentSelected.IsSet());
+				check(CurrentFieldSelectedLinkedValue.IsPropertyPath());
+				if (Source.GetViewModelId() == CurrentFieldSelectedLinkedValue.GetPropertyPath().GetViewModelId())
 				{
 					SelectedSource = Source;
 				}
@@ -829,11 +844,13 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingContextPanel(const FArgumen
 	if (SelectionContext.bAllowWidgets)
 	{
 		TArray<FName> ShowOnly;
-		if (SelectionContext.FixedBindingSource.IsSet()
-			&& SelectionContext.FixedBindingSource.GetValue().IsValid()
-			&& !SelectionContext.FixedBindingSource.GetValue().Name.IsNone())
+		if (FixedFieldPathSource == EMVVMBlueprintFieldPathSource::Widget)
 		{
-			ShowOnly.Add(SelectionContext.FixedBindingSource.GetValue().Name);
+			ShowOnly.Add(SelectionContext.FixedBindingSource.GetValue().GetWidgetName());
+		}
+		else if (FixedFieldPathSource == EMVVMBlueprintFieldPathSource::SelfContext)
+		{
+			ShowOnly.Add(WidgetBlueprint.Get()->GetFName());
 		}
 
 		WidgetList = SNew(SReadOnlyHierarchyView, WidgetBlueprint.Get())
@@ -843,9 +860,15 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingContextPanel(const FArgumen
 			.ShowOnly(ShowOnly)
 			.ExpandAll(false);
 
-		if (InArgs._CurrentPropertyPathSelected.IsSet() && InArgs._CurrentPropertyPathSelected.GetValue().IsFromWidget())
+		if (CurrentPropertyFieldPathSource == EMVVMBlueprintFieldPathSource::Widget)
 		{
-			WidgetList->SetSelectedWidget(InArgs._CurrentPropertyPathSelected.GetValue().GetWidgetName());
+			check(InArgs._CurrentSelected.IsSet());
+			check(CurrentFieldSelectedLinkedValue.IsPropertyPath());
+			WidgetList->SetSelectedWidget(CurrentFieldSelectedLinkedValue.GetPropertyPath().GetWidgetName());
+		}
+		else if (CurrentPropertyFieldPathSource == EMVVMBlueprintFieldPathSource::SelfContext)
+		{
+			WidgetList->SetSelectedWidget(WidgetBlueprint.Get()->GetFName());
 		}
 
 		StackedSourcePicker->AddSlot()
@@ -866,14 +889,22 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingContextPanel(const FArgumen
 			.OnSelectionChanged(this, &SFieldSelectorMenu::HandleConversionFunctionCategorySelected)
 			.OnGetChildren(this, &SFieldSelectorMenu::HandleGetConversionFunctionCategoryChildren);
 
-		if (InArgs._CurrentFunctionSelected != nullptr)
+		if (CurrentFieldSelectedLinkedValue.IsConversionFunction())
 		{
-			TSharedPtr<FConversionFunctionItem> FunctionItem = ExpandFunctionCategoryTreeToItem(InArgs._CurrentFunctionSelected);
-			if (FunctionItem)
+			const UFunction* ConversionFunction = CurrentFieldSelectedLinkedValue.GetConversionFunction();
+			if (ConversionFunction)
 			{
-				TGuardValue<bool> TmpGuard(bIsMenuInitialized, true);
-				ConversionFunctionCategoryTree->SetItemSelection(FunctionItem, true);
+				TSharedPtr<FConversionFunctionItem> FunctionItem = ExpandFunctionCategoryTreeToItem(ConversionFunction);
+				if (FunctionItem)
+				{
+					TGuardValue<bool> TmpGuard(bIsMenuInitialized, true);
+					ConversionFunctionCategoryTree->SetItemSelection(FunctionItem, true);
+				}
 			}
+		}
+		else if (CurrentFieldSelectedLinkedValue.IsConversionNode())
+		{
+			check(false); // not supported yet
 		}
 
 		StackedSourcePicker->AddSlot()
@@ -892,24 +923,25 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingListPanel(const FArguments&
 		.ShowSearchBox(false)
 		.OnDoubleClicked(this, &SFieldSelectorMenu::SetPropertyPathSelection)
 		.FieldVisibilityFlags(Private::GetFieldVisibilityFlags(SelectionContext.BindingMode, SelectionContext.bReadable, SelectionContext.bWritable))
-		.AssignableTo(AssignableToProperty);
+		.AssignableTo(AssignableToProperty)
+		.IsBindingToEvent(InArgs._IsBindingToEvent);
+
+	const bool bValidSelectedProperty = InArgs._CurrentSelected.IsSet() && InArgs._CurrentSelected.GetValue().IsPropertyPath();
 
 	if (SelectionContext.FixedBindingSource.IsSet())
 	{
 		// Single fixed source, don't show the separate source panel.
 		BindingList->AddSource(SelectionContext.FixedBindingSource.GetValue());
 	}
-	else if (InArgs._CurrentPropertyPathSelected.IsSet())
+	else if (bValidSelectedProperty)
 	{
-		FBindingSource Source = InArgs._CurrentPropertyPathSelected.GetValue().IsFromViewModel() ?
-			FBindingSource::CreateForViewModel(WidgetBlueprint.Get(), InArgs._CurrentPropertyPathSelected.GetValue().GetViewModelId()) :
-			FBindingSource::CreateForWidget(WidgetBlueprint.Get(), InArgs._CurrentPropertyPathSelected.GetValue().GetWidgetName());
+		FBindingSource Source = FBindingSource::CreateFromPropertyPath(WidgetBlueprint.Get(), InArgs._CurrentSelected.GetValue().GetPropertyPath());
 		BindingList->AddSource(Source);
 	}
 
-	if (InArgs._CurrentPropertyPathSelected.IsSet())
+	if (bValidSelectedProperty)
 	{
-		BindingList->SetSelectedProperty(InArgs._CurrentPropertyPathSelected.GetValue());
+		BindingList->SetSelectedProperty(InArgs._CurrentSelected.GetValue().GetPropertyPath());
 	}
 
 
@@ -921,6 +953,8 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingListPanel(const FArguments&
 
 	if (SelectionContext.bAllowConversionFunctions)
 	{
+		const bool bValidSelectedFunction = InArgs._CurrentSelected.IsSet() && (InArgs._CurrentSelected.GetValue().IsConversionFunction() || InArgs._CurrentSelected.GetValue().IsConversionNode());
+
 		BindingListVBox->AddSlot()
 			.AutoHeight()
 			[
@@ -931,9 +965,10 @@ TSharedRef<SWidget> SFieldSelectorMenu::CreateBindingListPanel(const FArguments&
 				.OnGenerateRow(this, &SFieldSelectorMenu::HandleGenerateConversionFunctionRow)
 			];
 
-		if (InArgs._CurrentFunctionSelected != nullptr)
+		if (bValidSelectedFunction)
 		{
-			ConversionFunctionList->SetItemSelection(InArgs._CurrentFunctionSelected, true);
+			check(InArgs._CurrentSelected.GetValue().IsConversionFunction()); // node not implemented yet
+			ConversionFunctionList->SetItemSelection(InArgs._CurrentSelected.GetValue().GetConversionFunction(), true);
 		}
 	}
 
@@ -1159,6 +1194,8 @@ void SFieldSelectorMenu::HandleConversionFunctionCategorySelected(TSharedPtr<FCo
 		{
 			AddConversionFunctionChildrenRecursive(Item, ConversionFunctions);
 		}
+
+		Algo::SortBy(ConversionFunctions, &UFunction::GetDisplayNameText, FText::FSortPredicate());
 
 		FilterConversionFunctions();
 	}

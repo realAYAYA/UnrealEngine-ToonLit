@@ -284,6 +284,10 @@ input[type="radio"] {
 	background-position: -3px -87px;
 }
 
+.red-arrow {
+	background-position: -3px -105px;
+}
+
 .on-request-arrow {
 	background-position: -3px -18px;
 }

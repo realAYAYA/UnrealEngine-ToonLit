@@ -5,6 +5,7 @@
 #include "CanvasItem.h"
 #include "CanvasTypes.h"
 #include "Components/DMXPixelMappingRendererComponent.h"
+#include "DMXPixelMapping.h"
 #include "Engine/Texture.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Slate/SceneViewport.h"
@@ -81,8 +82,14 @@ void FDMXPixelMappingSourceTextureViewportClient::Draw(FViewport* InViewport, FC
 		return;
 	}
 	const TSharedRef<FDMXPixelMappingToolkit> Toolkit = WeakToolkit.Pin().ToSharedRef();
-	const TSharedRef<SDMXPixelMappingDesignerView> DesignerView = Toolkit->GetOrCreateDesignerView();
 
+	UDMXPixelMapping* PixelMapping = Toolkit->GetDMXPixelMapping();
+	if (!PixelMapping)
+	{
+		return;
+	}
+
+	const TSharedRef<SDMXPixelMappingDesignerView> DesignerView = Toolkit->GetOrCreateDesignerView();
 	UDMXPixelMappingRendererComponent* RendererComponent = Toolkit->GetActiveRendererComponent();
 	UTexture* InputTexture = RendererComponent ? RendererComponent->GetRenderedInputTexture() : nullptr;
 	if (!InputTexture || !InputTexture->GetResource())
@@ -101,10 +108,11 @@ void FDMXPixelMappingSourceTextureViewportClient::Draw(FViewport* InViewport, FC
 	const FBox2D TextureBox(FVector2D::ZeroVector, TextureDimensions);
 
 	// Get the visible rect in grap space, and the UVs
-	const FBox2D VisibleRectBox = GetVisibleTextureBoxGraphSpace();
-	const FVector2D UV0 = VisibleRectBox.Min / TextureBox.GetSize();
-	const FVector2D UV1 = VisibleRectBox.Max / TextureBox.GetSize();
+	const FBox2D VisibleRect = GetVisibleTextureBoxGraphSpace();
+	const FVector2D UV0 = VisibleRect.Min / TextureBox.GetSize();
+	const FVector2D UV1 = VisibleRect.Max / TextureBox.GetSize();
 
+	const FLinearColor ColorWithExposure = (FLinearColor::White * PixelMapping->DesignerExposure).CopyWithNewOpacity(1.f);
 	if (IsDrawingVisibleRectOnly())
 	{
 		const TSharedPtr<FSceneViewport> SceneViewport = ViewportWidget->GetViewport();
@@ -112,15 +120,19 @@ void FDMXPixelMappingSourceTextureViewportClient::Draw(FViewport* InViewport, FC
 		{
 			return;
 		}
-
-		FCanvasTileItem TileItem(FVector2D::ZeroVector, InputTexture->GetResource(), SceneViewport->GetSizeXY(), UV0, UV1, FLinearColor::White);
+	
+		FCanvasTileItem TileItem(FVector2D::ZeroVector, InputTexture->GetResource(), SceneViewport->GetSizeXY(), UV0, UV1, ColorWithExposure);
 		TileItem.BlendMode = ESimpleElementBlendMode::SE_BLEND_MAX;
+
+		bUseDPIScaling = false;
 		Canvas->DrawItem(TileItem);
 	}
 	else
 	{
-		FCanvasTileItem TileItem(VisibleRectBox.Min * DesignerView->GetZoomAmount(), InputTexture->GetResource(), VisibleRectBox.GetSize() * DesignerView->GetZoomAmount(), UV0, UV1, FLinearColor::White);
+		FCanvasTileItem TileItem(VisibleRect.Min * DesignerView->GetZoomAmount(), InputTexture->GetResource(), VisibleRect.GetSize() * DesignerView->GetZoomAmount(), UV0, UV1, ColorWithExposure);
 		TileItem.BlendMode = ESimpleElementBlendMode::SE_BLEND_MAX;
+		
+		bUseDPIScaling = true;
 		Canvas->DrawItem(TileItem);
 	}
 }

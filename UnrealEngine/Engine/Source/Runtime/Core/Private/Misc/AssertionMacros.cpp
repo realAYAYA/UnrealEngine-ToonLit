@@ -112,6 +112,13 @@ FAutoConsoleVariableRef CVarEnsuresAreErrors(
 	TEXT("True means failed ensures are logged as errors. False means they are logged as warnings."),
 	ECVF_Default);
 
+bool GEnsureAlwaysEnabled = true;
+FAutoConsoleVariableRef CVarEnsureAlwaysEnabled(
+	TEXT("core.EnsureAlwaysEnabled"),
+	GEnsureAlwaysEnabled,
+	TEXT("Set to false to turn ensureAlways into regular ensure"),
+	ECVF_Default);
+
 
 CORE_API void (*GPrintScriptCallStackFn)() = nullptr;
 
@@ -472,6 +479,18 @@ FORCENOINLINE void FDebug::EnsureFailed(const ANSICHAR* Expr, const ANSICHAR* Fi
 #endif
 			GLog->Flush();
 
+			// Trace the error
+#if !NO_LOGGING
+			if (GEnsuresAreErrors)
+			{
+				TRACE_LOG_MESSAGE(LogOutputDevice, Error, TEXT("%s"), ErrorMsg);
+			}
+			else
+			{
+				TRACE_LOG_MESSAGE(LogOutputDevice, Warning, TEXT("%s"), ErrorMsg);
+			}
+#endif
+			
 			// Submit the error report to the server! (and display a balloon in the system tray)
 			{
 				// How many unique previous errors we should keep track of
@@ -599,6 +618,44 @@ bool FORCENOINLINE FDebug::CheckVerifyFailedImpl(
 #endif
 }
 
+bool FORCENOINLINE FDebug::CheckVerifyFailedImpl2(
+	const ANSICHAR* Expr,
+	const ANSICHAR* File,
+	int32 Line,
+	const TCHAR* Format,
+	...)
+{
+	va_list Args;
+
+	va_start(Args, Format);
+	FDebug::LogAssertFailedMessageImplV(Expr, File, Line, PLATFORM_RETURN_ADDRESS(), Format, Args);
+	va_end(Args);
+
+	if (GLog)
+	{
+		// Flushing the logs here increases the likelihood that recent messages will be written to the log file, stdout and the debugger console.
+		// Without this, some of the recent messages may not be reported when debugger stops due to an assertion failure.
+		GLog->Flush();
+	}
+
+	if (!FPlatformMisc::IsDebuggerPresent())
+	{
+		FPlatformMisc::PromptForRemoteDebugging(false);
+
+		va_start(Args, Format);
+		AssertFailedImplV(Expr, File, Line, PLATFORM_RETURN_ADDRESS(), Format, Args);
+		va_end(Args);
+
+		return false;
+	}
+
+#if UE_BUILD_SHIPPING
+	return true;
+#else
+	return !GIgnoreDebugger;
+#endif
+}
+
 #endif // DO_CHECK || DO_GUARD_SLOW || DO_ENSURE
 
 void VARARGS FDebug::AssertFailed(const ANSICHAR* Expr, const ANSICHAR* File, int32 Line, const TCHAR* Format/* = TEXT("")*/, ...)
@@ -637,30 +694,35 @@ FORCENOINLINE bool VARARGS FDebug::OptionallyLogFormattedEnsureMessageReturningF
 	return false;
 }
 
+namespace AssertionMacros_Private
+{
+	const int32 FormatBufferSize = 65535;
+	TCHAR FormatBuffer[FormatBufferSize];
+	UE::FWordMutex FormatMutex;
+}
+
 FORCENOINLINE bool FDebug::OptionallyLogFormattedEnsureMessageReturningFalseImpl(bool bLog, const ANSICHAR* Expr, const ANSICHAR* File, int32 Line, void* ProgramCounter, const TCHAR* FormattedMsg, va_list Args)
 {
 	if (bLog)
 	{
-		const int32 TempStrSize = 4096;
-		TCHAR TempStr[TempStrSize];
-		FCString::GetVarArgs(TempStr, TempStrSize, FormattedMsg, Args);
-
-		EnsureFailed(Expr, File, Line, ProgramCounter, TempStr);
+		UE::TUniqueLock Lock(AssertionMacros_Private::FormatMutex);
+		FCString::GetVarArgs(AssertionMacros_Private::FormatBuffer, AssertionMacros_Private::FormatBufferSize, FormattedMsg, Args);
+		EnsureFailed(Expr, File, Line, ProgramCounter, AssertionMacros_Private::FormatBuffer);
 	}
 
 	return false;
 }
 #endif
 
-FORCENOINLINE void UE_DEBUG_SECTION VARARGS LowLevelFatalErrorHandler(const ANSICHAR* File, int32 Line, void* ProgramCounter, const TCHAR* Format, ...)
+FORCENOINLINE void UE_DEBUG_SECTION VARARGS LowLevelFatalErrorHandler(const ANSICHAR* File, int32 Line, const TCHAR* Format, ...)
 {
 	va_list Args;
 	va_start(Args, Format);
-	StaticFailDebugV(TEXT("LowLevelFatalError"), "", File, Line, /*bIsEnsure*/ false, ProgramCounter, Format, Args);
+	StaticFailDebugV(TEXT("LowLevelFatalError"), "", File, Line, /*bIsEnsure*/ false, PLATFORM_RETURN_ADDRESS(), Format, Args);
 	va_end(Args);
 
 	UE_DEBUG_BREAK_AND_PROMPT_FOR_REMOTE();
-	FDebug::ProcessFatalError(ProgramCounter);
+	FDebug::ProcessFatalError(PLATFORM_RETURN_ADDRESS());
 }
 
 void FDebug::DumpStackTraceToLog(const ELogVerbosity::Type LogVerbosity)
@@ -695,30 +757,52 @@ FORCENOINLINE void FDebug::DumpStackTraceToLog(const TCHAR* Heading, const ELogV
 }
 
 #if DO_ENSURE && !USING_CODE_ANALYSIS
-bool UE_DEBUG_SECTION VARARGS CheckVerifyImpl(bool& InOutExecuted, bool Always, const ANSICHAR* File, int32 Line, void* ProgramCounter, const ANSICHAR* Expr, const TCHAR* Format, ...)
+bool UE_DEBUG_SECTION VARARGS CheckVerifyImpl(std::atomic<bool>& bExecuted, bool bAlways, const ANSICHAR* File, int32 Line, void* ProgramCounter, const ANSICHAR* Expr, const TCHAR* Format, va_list Args)
 {
-	if ((!InOutExecuted || Always) && FPlatformMisc::IsEnsureAllowed())
-	{
-		InOutExecuted = true;
-		va_list Args;
-		va_start(Args, Format);
-		FDebug::OptionallyLogFormattedEnsureMessageReturningFalse(true, Expr, File, Line, ProgramCounter, Format, Args);
-		va_end(Args);
+	FDebug::OptionallyLogFormattedEnsureMessageReturningFalse(true, Expr, File, Line, ProgramCounter, Format, Args);
 
-		if (!FPlatformMisc::IsDebuggerPresent())
+	if (!FPlatformMisc::IsDebuggerPresent())
+	{
+		FPlatformMisc::PromptForRemoteDebugging(true);
+		return false;
+	}
+
+#if UE_BUILD_SHIPPING
+	return true;
+#else
+	return !GIgnoreDebugger;
+#endif
+}
+
+bool UE_DEBUG_SECTION UE::Assert::Private::ExecCheckImplInternal(std::atomic<bool>& bExecuted, bool bAlways, const ANSICHAR* File, int32 Line, const ANSICHAR* Expr)
+{
+	if (((bAlways && GEnsureAlwaysEnabled) || !bExecuted.load(std::memory_order_relaxed)) && FPlatformMisc::IsEnsureAllowed())
+	{
+		if (bExecuted.exchange(true, std::memory_order_release) && !bAlways)
 		{
-			FPlatformMisc::PromptForRemoteDebugging(true);
 			return false;
 		}
 
-#if UE_BUILD_SHIPPING
-		return true;
-#else
-		return !GIgnoreDebugger;
-#endif
+		va_list Args = {};
+		return CheckVerifyImpl(bExecuted, bAlways, File, Line, PLATFORM_RETURN_ADDRESS(), Expr, TEXT(""), Args);
 	}
 
 	return false;
+}
+
+bool UE_DEBUG_SECTION VARARGS UE::Assert::Private::EnsureFailed(std::atomic<bool>& bExecuted, const FStaticEnsureRecord* Ensure, ...)
+{
+	if (bExecuted.exchange(true, std::memory_order_release) && !(Ensure->bAlways && GEnsureAlwaysEnabled))
+	{
+		return false;
+	}
+
+	va_list Args;
+	va_start(Args, Ensure);
+	const bool bResult = CheckVerifyImpl(bExecuted, Ensure->bAlways, Ensure->File, Ensure->Line, PLATFORM_RETURN_ADDRESS(), Ensure->Expression, Ensure->Format, Args);
+	va_end(Args);
+
+	return bResult;
 }
 #endif
 

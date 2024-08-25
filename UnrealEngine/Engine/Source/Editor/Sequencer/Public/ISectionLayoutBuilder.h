@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Templates/Function.h"
+#include "Channels/MovieSceneChannelEditorData.h"
 
 class IKeyArea;
 
@@ -29,7 +30,7 @@ public:
 	 * @param CategoryName	The name of the category
 	 * @param DisplayLabel	The localized display label for the category
 	 */
-	virtual void PushCategory( FName CategoryName, const FText& DisplayLabel, TFunction<TSharedPtr<UE::Sequencer::FCategoryModel>(FName, const FText&)> OptionalFactory) = 0;
+	virtual void PushCategory( FName CategoryName, const FText& DisplayLabel, FGetMovieSceneTooltipText GetGroupTooltipTextDelegate, TFunction<TSharedPtr<UE::Sequencer::FCategoryModel>(FName, const FText&)> OptionalFactory) = 0;
 
 	/**
 	 * Sets the section as a key area itself

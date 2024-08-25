@@ -7,9 +7,9 @@ setlocal
 
 if [%1]==[] goto usage
 
-set OCIO_VERSION=2.2.0
+set OCIO_VERSION=2.3.1
 set OCIO_LIB_NAME=OpenColorIO-%OCIO_VERSION%
-set DEPLOY_FOLDER=..\Deploy\%OCIO_LIB_NAME%
+set ENGINE_ROOT=%~dp0..\..\..
 set ARCH_NAME=%1
 
 rem Remove previously extracted build library folder
@@ -17,11 +17,12 @@ if exist .\%OCIO_LIB_NAME% (
     rd /S /Q .\%OCIO_LIB_NAME%
 )
     
-git clone --depth 1 --branch v2.2.0 https://github.com/AcademySoftwareFoundation/OpenColorIO.git %OCIO_LIB_NAME%
+git clone --depth 1 --branch v%OCIO_VERSION% https://github.com/AcademySoftwareFoundation/OpenColorIO.git %OCIO_LIB_NAME%
 
 cd /d .\%OCIO_LIB_NAME%
+set DEPLOY_FOLDER=..\Deploy\OpenColorIO
 
-git apply ../ue_ocio_v22.patch
+git apply ../ue_ocio_v23.patch
 
 rem Configure OCIO cmake and launch a release build
 echo Configuring %ARCH_NAME% build...
@@ -47,7 +48,7 @@ echo Building %ARCH_NAME% Release build...
 cmake --build build --config Release --target INSTALL
 
 echo Copying deploy files...
-xcopy .\build\install\bin\OpenColorIO_2_2.dll %DEPLOY_FOLDER%\..\..\..\..\Binaries\ThirdParty\Win64\%ARCH_NAME%\* /Y
+xcopy .\build\install\bin\OpenColorIO_2_3.dll %ENGINE_ROOT%\Binaries\ThirdParty\OpenColorIO\Win64\%ARCH_NAME%\* /Y
 xcopy .\build\install\include\OpenColorIO\* %DEPLOY_FOLDER%\include\OpenColorIO\* /Y
 xcopy .\build\install\lib\OpenColorIO.lib %DEPLOY_FOLDER%\lib\Win64\%ARCH_NAME%\* /Y
 

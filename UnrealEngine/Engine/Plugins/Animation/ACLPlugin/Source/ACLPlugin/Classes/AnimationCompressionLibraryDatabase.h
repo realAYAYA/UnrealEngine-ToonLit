@@ -10,12 +10,12 @@ THIRD_PARTY_INCLUDES_START
 #include <acl/decompression/database/database_streamer.h>
 THIRD_PARTY_INCLUDES_END
 
-#include "Containers/Ticker.h"
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "PerPlatformProperties.h"
-#include "UObject/ObjectMacros.h"
-#include "Serialization/BulkData.h"
 #include "Engine/LatentActionManager.h"
+#include "Serialization/BulkData.h"
+#include "UObject/ObjectMacros.h"
 #include "AnimationCompressionLibraryDatabase.generated.h"
 
 /** An enum to represent the ACL visual fidelity level. */
@@ -64,20 +64,8 @@ private:
 	/** Bulk data that we'll stream. Present only in cooked builds. */
 	FByteBulkData CookedBulkData;
 
-	/**
-	 * The database decompression context object. Bound to the compressed database instance.
-	 * PAIN AND MISERY
-	 * UObjects don't support alignment above 16, see FUObjectAllocator::AllocateUObject(..).
-	 * TUniquePtr uses operator new but versions prior to UE 4.27 do not have overrides for the
-	 * aligned versions and thus do not support alignment above 8/16 depending on the allocator
-	 * as it uses DEFAULT_ALIGNMENT. And even with UE 4.27, aligned overrides aren't supported by MSVC.
-	 * Using a custom deleter and malloc/free could work but it would be ugly and require an extra memory access.
-	 * std::aligned_storage cannot be used because UE4 emulates an old incorrect behavior that does not
-	 * support extended alignment, see _DISABLE_EXTENDED_ALIGNED_STORAGE.
-	 * To avoid this issue, we reserve enough space here and handle alignment manually.
-	 * GetDatabaseContext() returns a reference to the type we need.
-	 */
-	uint8 DatabaseContextBuffer[sizeof(acl::database_context<UE4DefaultDatabaseSettings>) + alignof(acl::database_context<UE4DefaultDatabaseSettings>)];
+	/** The database decompression context object. Bound to the compressed database instance. */
+	acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;
 
 	/** The streamer instance used by the database context. Only used in cooked builds. */
 	TUniquePtr<acl::database_streamer> DatabaseStreamer;
@@ -183,13 +171,6 @@ private:
 
 	/** Core ticker update function to update our visual fidelity state. */
 	bool UpdateVisualFidelityTicker(float DeltaTime);
-
-	/** Returns a reference to the properly aligned acl::database_context. */
-	acl::database_context<UE4DefaultDatabaseSettings>& GetDatabaseContext()
-	{
-		uint8* AlignedDatabaseContextBuffer = Align(&DatabaseContextBuffer[0], alignof(acl::database_context<UE4DefaultDatabaseSettings>));
-		return *reinterpret_cast<acl::database_context<UE4DefaultDatabaseSettings>*>(AlignedDatabaseContextBuffer);
-	}
 
 	friend class FACLPlugin;
 	friend class FSetDatabaseVisualFidelityAction;

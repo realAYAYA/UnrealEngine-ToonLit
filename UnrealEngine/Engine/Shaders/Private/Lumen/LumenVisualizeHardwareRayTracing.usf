@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "/Engine/Shared/RayTracingTypes.h"
 #include "../Common.ush"
 #include "../MonteCarlo.ush"
 #include "../SceneTextureParameters.ush"
@@ -434,6 +435,7 @@ float NearFieldMaxTraceDistanceDitherScale;
 float NearFieldSceneRadius;
 uint ApplySkylightStage;
 uint MaxReflectionBounces;
+uint MaxRefractionBounces;
 
 LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenVisualizeHardwareRayTracing)
 {
@@ -503,6 +505,11 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenVisualizeHardwareRayTracing)
 		Context.MaxReflectionBounces = MaxReflectionBounces;
 		Context.FarFieldMaxTraceDistance = FarFieldMaxTraceDistance;
 		Context.FarFieldReferencePos = FarFieldReferencePos;
+
+	#if RECURSIVE_REFRACTION_TRACES
+		Context.MaxRefractionBounces = MaxRefractionBounces;
+		Context.InstanceMask |= RAY_TRACING_MASK_TRANSLUCENT;  
+	#endif
 
 		FRayTracedLightingResult Result = CreateRayTracedLightingResult();
 		#if DIM_HIT_LIGHTING
@@ -591,10 +598,12 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenVisualizeHardwareRayTracing)
 			TraceResult.Lighting.rgb = GetFogOnLuminance(TraceResult.Lighting.rgb, CoverageForFog, OriginToCollider);
 		}
 
-		// The overview outputs after the tonemapper to overwrite editor primitives and must apply its own tonemapping
-		float3 TonemappedLighting = VisualizeTonemap(TraceResult.Lighting);
+		LumenVisualizationFinalize(
+			ViewportUV,
+			Ray.Direction,
+			TraceResult.Lighting);
 
-		RWRadiance[OutputScreenCoord] = TonemappedLighting;
+		RWRadiance[OutputScreenCoord] = TraceResult.Lighting;
 	}
 }
 

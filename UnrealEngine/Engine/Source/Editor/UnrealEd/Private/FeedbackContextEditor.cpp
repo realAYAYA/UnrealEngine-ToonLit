@@ -421,8 +421,11 @@ static void TickSlate(TSharedPtr<SWindow> SlowTaskWindow)
 	// Avoid re-entrancy by ticking the active modal window again. This can happen if the slow task window is open and a sibling modal window is open as well.  We only tick slate if we are the active modal window or a child of the active modal window
 	if( SlowTaskWindow.IsValid() && ( FSlateApplication::Get().GetActiveModalWindow() == SlowTaskWindow || SlowTaskWindow->IsDescendantOf( FSlateApplication::Get().GetActiveModalWindow() ) ) )
 	{
+		// Testing if we are already ticking the rendering. That is to prevent a double "BeginFrame" in case the user wrongly uses the FSlateApplication::OnPreTick to start a slow task.
+		bool bIsTicking = FSlateApplication::Get().IsTicking();
+
 		// Mark begin frame
-		if (GIsRHIInitialized)
+		if (!bIsTicking && GIsRHIInitialized)
 		{
 			ENQUEUE_RENDER_COMMAND(BeginFrameCmd)([](FRHICommandListImmediate& RHICmdList) { RHICmdList.BeginFrame(); });
 		}
@@ -431,7 +434,7 @@ static void TickSlate(TSharedPtr<SWindow> SlowTaskWindow)
 		FSlateApplication::Get().Tick();
 
 		// End frame so frame fence number gets incremented
-		if (GIsRHIInitialized)
+		if (!bIsTicking && GIsRHIInitialized)
 		{
 			ENQUEUE_RENDER_COMMAND(EndFrameCmd)([](FRHICommandListImmediate& RHICmdList) { RHICmdList.EndFrame(); });
 		}
@@ -598,14 +601,33 @@ void FFeedbackContextEditor::ProgressReported( const float TotalProgressInterp, 
 	}
 	else if (FPlatformSplash::IsShown())
 	{
-		// Always show the top-most message
-		for (int i = ScopeStack.Num() - 1; i > -1; --i)
+		// look for important messages:
+		bool bFoundImportantMessage = false;
+		for (int32 i = ScopeStack.Num() - 1; i > -1; --i)
 		{
-			const FText ThisMessage = ScopeStack[i]->GetCurrentMessage();
-			if (!ThisMessage.IsEmpty())
+			if (ScopeStack[i]->Visibility == ESlowTaskVisibility::Important)
 			{
-				DisplayMessage = ThisMessage;
-				break;
+				const FText ThisMessage = ScopeStack[i]->GetCurrentMessage();
+				if (!ThisMessage.IsEmpty())
+				{
+					bFoundImportantMessage = true;
+					DisplayMessage = ThisMessage;
+					break;
+				}
+			}
+		}
+
+		// If nothing important, always show the top-most message
+		if (!bFoundImportantMessage)
+		{
+			for (int32 i = ScopeStack.Num() - 1; i > -1; --i)
+			{
+				const FText ThisMessage = ScopeStack[i]->GetCurrentMessage();
+				if (!ThisMessage.IsEmpty())
+				{
+					DisplayMessage = ThisMessage;
+					break;
+				}
 			}
 		}
 

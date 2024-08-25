@@ -21,15 +21,6 @@ struct FRigUnit_AddBoneTransform : public FRigUnitMutable
 		, CachedBone()
 	{}
 
-	virtual FRigElementKey DetermineSpaceForPin(const FString& InPinPath, void* InUserContext) const override
-	{
-		if (InPinPath.StartsWith(TEXT("Transform")))
-		{
-			return FRigElementKey(Bone, ERigElementType::Bone);
-		}
-		return FRigElementKey();
-	}
-
 	RIGVM_METHOD()
 	virtual void Execute() override;
 

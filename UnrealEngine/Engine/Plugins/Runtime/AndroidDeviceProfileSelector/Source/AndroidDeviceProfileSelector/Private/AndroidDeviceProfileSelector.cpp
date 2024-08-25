@@ -50,6 +50,7 @@ void FAndroidDeviceProfileSelector::VerifySelectorParams()
 	check(SelectorProperties.Find(FAndroidProfileSelectorSourceProperties::SRC_Chipset));
 	check(SelectorProperties.Find(FAndroidProfileSelectorSourceProperties::SRC_HMDSystemName));
 	check(SelectorProperties.Find(FAndroidProfileSelectorSourceProperties::SRC_TotalPhysicalGB));
+	check(SelectorProperties.Find(FAndroidProfileSelectorSourceProperties::SRC_SM5Available));
 }
 
 FString FAndroidDeviceProfileSelector::FindMatchingProfile(const FString& FallbackProfileName)
@@ -70,6 +71,7 @@ FString FAndroidDeviceProfileSelector::FindMatchingProfile(const FString& Fallba
 	FString Chipset				= SelectorProperties.FindChecked(FAndroidProfileSelectorSourceProperties::SRC_Chipset);
 	FString TotalPhysicalGB		= SelectorProperties.FindChecked(FAndroidProfileSelectorSourceProperties::SRC_TotalPhysicalGB);
 	FString HMDSystemName		= SelectorProperties.FindChecked(FAndroidProfileSelectorSourceProperties::SRC_HMDSystemName);
+	FString SM5Available		= SelectorProperties.FindChecked(FAndroidProfileSelectorSourceProperties::SRC_SM5Available);
 
 	for (const FProfileMatch& Profile : GetAndroidDeviceProfileMatchingRules()->MatchProfile)
 	{
@@ -123,6 +125,9 @@ FString FAndroidDeviceProfileSelector::FindMatchingProfile(const FString& Fallba
 				break;
 			case ESourceType::SRC_HMDSystemName:
 				SourceString = &HMDSystemName;
+				break;
+			case ESourceType::SRC_SM5Available:
+				SourceString = &SM5Available;
 				break;
 			case ESourceType::SRC_ConfigRuleVar:
 				{

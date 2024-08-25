@@ -53,11 +53,14 @@
 #include "TrackEditors/PrimitiveMaterialTrackEditor.h"
 #include "TrackEditors/CameraShakeSourceShakeTrackEditor.h"
 #include "TrackEditors/CVarTrackEditor.h"
+#include "TrackEditors/CustomPrimitiveDataTrackEditor.h"
+#include "TrackEditors/BindingLifetimeTrackEditor.h"
 
 #include "Channels/PerlinNoiseChannelInterface.h"
 
 #include "MVVM/ViewModels/CameraCutTrackModel.h"
 #include "MVVM/ViewModels/CinematicShotTrackModel.h"
+#include "MVVM/ViewModels/BindingLifetimeTrackModel.h"
 
 #include "MovieSceneBuiltInEasingFunctionCustomization.h"
 #include "MovieSceneAlphaBlendOptionCustomization.h"
@@ -179,10 +182,13 @@ void FMovieSceneToolsModule::StartupModule()
 		PrimitiveMaterialCreateEditorHandle = SequencerModule.RegisterTrackEditor(FOnCreateTrackEditor::CreateStatic(&FPrimitiveMaterialTrackEditor::CreateTrackEditor));
 		CameraShakeSourceShakeCreateEditorHandle = SequencerModule.RegisterTrackEditor(FOnCreateTrackEditor::CreateStatic(&FCameraShakeSourceShakeTrackEditor::CreateTrackEditor));
 		CVarTrackCreateEditorHandle = SequencerModule.RegisterTrackEditor(FOnCreateTrackEditor::CreateStatic(&FCVarTrackEditor::CreateTrackEditor));
+		CustomPrimitiveDataTrackCreateEditorHandle = SequencerModule.RegisterTrackEditor(FOnCreateTrackEditor::CreateStatic(&FCustomPrimitiveDataTrackEditor::CreateTrackEditor));
+		BindingLifetimeTrackCreateEditorHandle = SequencerModule.RegisterTrackEditor(FOnCreateTrackEditor::CreateStatic(&FBindingLifetimeTrackEditor::CreateTrackEditor));
 
 		// register track models
 		CameraCutTrackModelHandle = SequencerModule.RegisterTrackModel(FOnCreateTrackModel::CreateStatic(&FCameraCutTrackModel::CreateTrackModel));
 		CinematicShotTrackModelHandle = SequencerModule.RegisterTrackModel(FOnCreateTrackModel::CreateStatic(&FCinematicShotTrackModel::CreateTrackModel));
+		BindingLifetimeTrackModelHandle = SequencerModule.RegisterTrackModel(FOnCreateTrackModel::CreateStatic(&FBindingLifetimeTrackModel::CreateTrackModel));
 
 		RegisterClipboardConversions();
 
@@ -341,6 +347,8 @@ void FMovieSceneToolsModule::ShutdownModule()
 	SequencerModule.UnRegisterTrackEditor( ObjectTrackCreateEditorHandle );
 	SequencerModule.UnRegisterTrackEditor( PrimitiveMaterialCreateEditorHandle );
 	SequencerModule.UnRegisterTrackEditor( CVarTrackCreateEditorHandle );
+	SequencerModule.UnRegisterTrackEditor( CustomPrimitiveDataTrackCreateEditorHandle );
+	SequencerModule.UnRegisterTrackEditor( BindingLifetimeTrackCreateEditorHandle );
 
 	// unregister track models
 	SequencerModule.UnregisterTrackModel( CameraCutTrackModelHandle );
@@ -740,6 +748,29 @@ bool FMovieSceneToolsModule::ImportStringProperty(const FString& InPropertyName,
 	}
 
 	return false;
+}
+
+void FMovieSceneToolsModule::RegisterKeyStructInstancedPropertyTypeCustomizer(IMovieSceneToolsKeyStructInstancedPropertyTypeCustomizer* InCustomizer)
+{
+	checkf(!KeyStructInstancedPropertyTypeCustomizers.Contains(InCustomizer), TEXT("Key Struct Instanced Property Type Customizer is already registered"));
+	KeyStructInstancedPropertyTypeCustomizers.Add(InCustomizer);
+}
+
+void FMovieSceneToolsModule::UnregisterKeyStructInstancedPropertyTypeCustomizer(IMovieSceneToolsKeyStructInstancedPropertyTypeCustomizer* InCustomizer)
+{
+	checkf(KeyStructInstancedPropertyTypeCustomizers.Contains(InCustomizer), TEXT("Key Struct Instanced Property Type Customizer is not registered"));
+	KeyStructInstancedPropertyTypeCustomizers.Remove(InCustomizer);
+}
+
+void FMovieSceneToolsModule::CustomizeKeyStructInstancedPropertyTypes(TSharedRef<IStructureDetailsView> StructureDetailsView, TWeakObjectPtr<UMovieSceneSection> Section)
+{
+	for (IMovieSceneToolsKeyStructInstancedPropertyTypeCustomizer* Customizer : KeyStructInstancedPropertyTypeCustomizers)
+	{
+		if (Customizer)
+		{
+			Customizer->RegisterKeyStructInstancedPropertyTypeCustomization(StructureDetailsView, Section);
+		}
+	}
 }
 
 IMPLEMENT_MODULE( FMovieSceneToolsModule, MovieSceneTools );

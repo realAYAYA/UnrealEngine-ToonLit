@@ -281,7 +281,7 @@ namespace LowLevelTasks
 		TTaskDelegate(CallableT&& Callable)
 		{
 			using TCallableType = std::decay_t<CallableT>;
-			if ((sizeof(TCallableType) <= InlineStorageSize) && ((uintptr_t(InlineStorageSize) % alignof(TCallableType)) == 0))
+			if constexpr ((sizeof(TCallableType) <= InlineStorageSize) && ((uintptr_t(InlineStorageSize) % alignof(TCallableType)) == 0))
 			{
 				new (&CallableWrapper) TTaskDelegateImpl<TCallableType, false>(Forward<CallableT>(Callable), InlineStorage);
 			}
@@ -324,7 +324,7 @@ namespace LowLevelTasks
 		{
 			using TCallableType = std::decay_t<CallableT>;
 			GetWrapper()->Destroy(InlineStorage);
-			if ((sizeof(TCallableType) <= InlineStorageSize) && ((uintptr_t(InlineStorageSize) % alignof(TCallableType)) == 0))
+			if constexpr ((sizeof(TCallableType) <= InlineStorageSize) && ((uintptr_t(InlineStorageSize) % alignof(TCallableType)) == 0))
 			{
 				new (&CallableWrapper) TTaskDelegateImpl<TCallableType, false>(Forward<CallableT>(Callable), InlineStorage);
 			}

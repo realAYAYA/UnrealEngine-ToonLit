@@ -206,7 +206,7 @@ void FSlateProvider::ProcessWidgetUpdateSteps(const UE::Trace::IAnalyzer::FEvent
 	{
 		while (WidgetUpdateStepsEventIndexes.Num())
 		{
-			const TTuple<uint64, Message::FWidgetId> LastEntry = WidgetUpdateStepsEventIndexes.Pop(false);
+			const TTuple<uint64, Message::FWidgetId> LastEntry = WidgetUpdateStepsEventIndexes.Pop(EAllowShrinking::No);
 			WidgetPaintTimelines.EndEvent(LastEntry.Get<0>(), std::numeric_limits<double>::max());
 		}
 		bAcceptWidgetUpdateStepsComand = false;
@@ -260,7 +260,7 @@ void FSlateProvider::ProcessWidgetUpdateSteps(const UE::Trace::IAnalyzer::FEvent
 			const double Seconds = EventTime.AsSeconds(Cycle);
 			if (bAcceptWidgetUpdateStepsComand)
 			{
-				const TTuple<uint64, Message::FWidgetId> LastEntry = WidgetUpdateStepsEventIndexes.Pop(false);
+				const TTuple<uint64, Message::FWidgetId> LastEntry = WidgetUpdateStepsEventIndexes.Pop(EAllowShrinking::No);
 				WidgetPaintTimelines.EndEvent(LastEntry.Get<0>(), Seconds);
 			}
 		}

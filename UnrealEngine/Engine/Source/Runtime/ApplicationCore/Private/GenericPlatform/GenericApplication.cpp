@@ -5,7 +5,6 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/CoreDelegates.h"
 #include "Misc/CommandLine.h"
-#include "IInputDevice.h"
 
 const FGamepadKeyNames::Type FGamepadKeyNames::Invalid(NAME_None);
 
@@ -46,7 +45,14 @@ const FGamepadKeyNames::Type FGamepadKeyNames::RightStickDown("Gamepad_RightStic
 const FGamepadKeyNames::Type FGamepadKeyNames::RightStickRight("Gamepad_RightStick_Right");
 const FGamepadKeyNames::Type FGamepadKeyNames::RightStickLeft("Gamepad_RightStick_Left");
 
-TArray<FInputDeviceScope*> FInputDeviceScope::ScopeStack;
+namespace UE::InputDeviceScope::Private
+{
+TArray<FInputDeviceScope*>& GetScopeStack()
+{
+	static thread_local TArray<FInputDeviceScope*> ScopeStack;
+	return ScopeStack;
+}
+}
 
 FInputDeviceScope::FInputDeviceScope(IInputDevice* InInputDevice, FName InInputDeviceName, int32 InHardwareDeviceHandle, FString InHardwareDeviceIdentifier)
 	: InputDevice(InInputDevice)
@@ -54,31 +60,25 @@ FInputDeviceScope::FInputDeviceScope(IInputDevice* InInputDevice, FName InInputD
 	, HardwareDeviceHandle(InHardwareDeviceHandle)
 	, HardwareDeviceIdentifier(InHardwareDeviceIdentifier)
 {
-	if (ensure(IsInGameThread()))
-	{
-		// Add to scope stack
-		ScopeStack.Add(this);
-	}
+	// Add to scope stack
+	UE::InputDeviceScope::Private::GetScopeStack().Add(this);
 }
 
 FInputDeviceScope::~FInputDeviceScope()
 {
-	if (ensure(IsInGameThread()))
-	{
-		// This should always be the top of the stack
-		ensureMsgf((ScopeStack.Num() > 0 && ScopeStack.Last() == this), TEXT("FInputDeviceScope was not destroyed in correct order!"));
-		ScopeStack.Remove(this);
-	}
+	TArray<FInputDeviceScope*>& ScopeStack = UE::InputDeviceScope::Private::GetScopeStack();
+
+	// This should always be the top of the stack
+	ensureMsgf((ScopeStack.Num() > 0 && ScopeStack.Last() == this), TEXT("FInputDeviceScope was not destroyed in correct order!"));
+	ScopeStack.Remove(this);
 }
 
 const FInputDeviceScope* FInputDeviceScope::GetCurrent()
 {
-	if (ensure(IsInGameThread()))
+	TArray<FInputDeviceScope*>& ScopeStack = UE::InputDeviceScope::Private::GetScopeStack();
+	if (ScopeStack.Num() > 0)
 	{
-		if (ScopeStack.Num() > 0)
-		{
-			return ScopeStack.Last();
-		}
+		return ScopeStack.Last();
 	}
 	return nullptr;
 }
@@ -145,8 +145,8 @@ void FDisplayMetrics::ApplyDefaultSafeZones()
 	TitleSafePaddingSize = FVector4(0.0f, 0.0f, 0.0f, 0.0f);
 	bool bSetByCommandLine;
 	bSetByCommandLine = FParse::Value(FCommandLine::Get(), TEXT("SafeZonePaddingLeft="),   TitleSafePaddingSize.X);
-	bSetByCommandLine = FParse::Value(FCommandLine::Get(), TEXT("SafeZonePaddingRight="),  TitleSafePaddingSize.Y) || bSetByCommandLine;
-	bSetByCommandLine = FParse::Value(FCommandLine::Get(), TEXT("SafeZonePaddingTop="),    TitleSafePaddingSize.Z) || bSetByCommandLine;
+	bSetByCommandLine = FParse::Value(FCommandLine::Get(), TEXT("SafeZonePaddingTop="),  TitleSafePaddingSize.Y) || bSetByCommandLine;
+	bSetByCommandLine = FParse::Value(FCommandLine::Get(), TEXT("SafeZonePaddingRight="),    TitleSafePaddingSize.Z) || bSetByCommandLine;
 	bSetByCommandLine = FParse::Value(FCommandLine::Get(), TEXT("SafeZonePaddingBottom="), TitleSafePaddingSize.W) || bSetByCommandLine;
 
 	if (!bSetByCommandLine)

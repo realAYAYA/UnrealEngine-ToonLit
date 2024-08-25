@@ -18,16 +18,23 @@
 FMetalVertexShader::FMetalVertexShader(TArrayView<const uint8> InCode)
 {
 	FMetalCodeHeader Header;
-	Init(InCode, Header);
+	Init(InCode, Header, MTLLibraryPtr());
 }
 
-FMetalVertexShader::FMetalVertexShader(TArrayView<const uint8> InCode, mtlpp::Library InLibrary)
+FMetalVertexShader::FMetalVertexShader(TArrayView<const uint8> InCode, MTLLibraryPtr InLibrary)
 {
 	FMetalCodeHeader Header;
 	Init(InCode, Header, InLibrary);
 }
 
-mtlpp::Function FMetalVertexShader::GetFunction()
+MTLFunctionPtr FMetalVertexShader::GetFunction()
 {
 	return GetCompiledFunction();
 }
+
+#if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+MTLFunctionPtr FMetalVertexShader::GetObjectFunctionForGeometryEmulation()
+{
+    return GetCompiledFunction(false, 0);
+}
+#endif

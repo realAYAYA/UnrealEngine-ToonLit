@@ -18,27 +18,35 @@
 #if WITH_EDITORONLY_DATA
 
 
-IMPLEMENT_COMPLEX_AUTOMATION_TEST(FMetasoundAutomatedNodeTest_Reset, "Audio.Metasound.AutomatedNodeTest.Reset", EAutomationTestFlags::EditorContext | EAutomationTestFlags::StressFilter)
+IMPLEMENT_COMPLEX_AUTOMATION_TEST(FMetasoundAutomatedNodeTest_Reset, "Audio.Metasound.AutomatedNodeTest.Reset", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 void FMetasoundAutomatedNodeTest_Reset::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
 {
 	using namespace Metasound::EngineTest;
-	GetAllRegisteredNodes(OutBeautifiedNames, OutTestCommands);
+	GetAllRegisteredNativeNodes(OutBeautifiedNames, OutTestCommands);
 
 	UE_LOG(LogMetaSound, Verbose, TEXT("Found %d metasound nodes to test"), OutTestCommands.Num());
 }
 
-bool FMetasoundAutomatedNodeTest_Reset::RunTest(const FString& InRegistryKey)
+bool FMetasoundAutomatedNodeTest_Reset::RunTest(const FString& InRegistryKeyString)
 {
 	using namespace Metasound;
 	using namespace Metasound::EngineTest;
+	using namespace Metasound::Frontend;
 
 	static const FOperatorSettings OperatorSettings{48000  /* samplerate */, 100.f /* block rate */};
 	static const FMetasoundEnvironment SourceEnvironment = GetSourceEnvironmentForTest();
 
-	TUniquePtr<INode> Node = CreateNodeFromRegistry(InRegistryKey);
+	FNodeRegistryKey RegistryKey;
+	if (!FNodeRegistryKey::Parse(InRegistryKeyString, RegistryKey))
+	{
+		AddError(FString::Printf(TEXT("Failed to parse registry key string %s"), *InRegistryKeyString));
+		return false;
+	}
+
+	TUniquePtr<INode> Node = CreateNodeFromRegistry(RegistryKey);
 	if (!Node.IsValid())
 	{
-		AddError(FString::Printf(TEXT("Failed to create node %s from registry"), *InRegistryKey));
+		AddError(FString::Printf(TEXT("Failed to create node %s from registry"), *InRegistryKeyString));
 		return false;
 	}
 
@@ -74,7 +82,7 @@ bool FMetasoundAutomatedNodeTest_Reset::RunTest(const FString& InRegistryKey)
 
 		if (!Operator.IsValid())
 		{
-			AddError(FString::Printf(TEXT("Failed to create operator from node %s - %s."), *InRegistryKey, *GetPrettyName(InRegistryKey)));
+			AddError(FString::Printf(TEXT("Failed to create operator from node %s - %s."), *InRegistryKeyString, *GetPrettyName(RegistryKey)));
 		}
 
 		// Store a copy of the input values data values so the inputs
@@ -95,22 +103,43 @@ bool FMetasoundAutomatedNodeTest_Reset::RunTest(const FString& InRegistryKey)
 		OutputTester.CaptureCurrentOutputValues();
 
 		IOperator::FExecuteFunction OpExecFunc = Operator->GetExecuteFunction();
-		IOperator::FResetFunction OpResetFunc = Operator->GetResetFunction();
-		// Test execute function with input variations
-		if (OpExecFunc)
+		auto ConditionallyCallExecFunc = [&OpExecFunc] (IOperator* Operator)
 		{
-			OpExecFunc(Operator.Get());
-
+			if (OpExecFunc)
+			{
+				OpExecFunc(Operator);
+			}
+		};
+		IOperator::FPostExecuteFunction OpPostExecFunc = Operator->GetPostExecuteFunction();
+		auto ConditionallyCallPostExecFunc = [&OpPostExecFunc] (IOperator* Operator)
+        {
+        	if (OpPostExecFunc)
+        	{
+        		OpPostExecFunc(Operator);
+        	}
+        };
+		IOperator::FResetFunction OpResetFunc = Operator->GetResetFunction();
+		
+		// Test execute function with input variations
+		if (OpExecFunc || OpPostExecFunc)
+		{
+			ConditionallyCallExecFunc(Operator.Get());
+			ConditionallyCallPostExecFunc(Operator.Get());
+			
 			if (InputTester.GetNumMutableInputs() > 0)
 			{
 				InputTester.SetMutableInputsToDefault();
-				OpExecFunc(Operator.Get());
+				ConditionallyCallExecFunc(Operator.Get());
+				ConditionallyCallPostExecFunc(Operator.Get());
 				InputTester.SetMutableInputsToMin();
-				OpExecFunc(Operator.Get());
+				ConditionallyCallExecFunc(Operator.Get());
+				ConditionallyCallPostExecFunc(Operator.Get());
 				InputTester.SetMutableInputsToMax();
-				OpExecFunc(Operator.Get());
+				ConditionallyCallExecFunc(Operator.Get());
+				ConditionallyCallPostExecFunc(Operator.Get());
 				InputTester.SetMutableInputsToRandom();
-				OpExecFunc(Operator.Get());
+				ConditionallyCallExecFunc(Operator.Get());
+				ConditionallyCallPostExecFunc(Operator.Get());
 			}
 		}
 
@@ -121,16 +150,16 @@ bool FMetasoundAutomatedNodeTest_Reset::RunTest(const FString& InRegistryKey)
 		{
 			OpResetFunc(Operator.Get(), ResetParams);
 		}
-		else if (OpExecFunc)
+		else if (OpExecFunc || OpPostExecFunc)
 		{
-			AddError(FString::Printf(TEXT("Missing initialize function when execute function exists for node %s - %s"), *InRegistryKey, *GetPrettyName(InRegistryKey)));
+			AddError(FString::Printf(TEXT("Missing Reset(...) function when execute function exists for node %s - %s"), *InRegistryKeyString, *GetPrettyName(RegistryKey)));
 		}
 
 		// Check that after returning all inputs to their original state and calling
 		// reset on the operator, that all output values have returned to their initail state. 
 		if (!OutputTester.AreAllOutputValuesEqualToCapturedValues())
 		{
-			AddError(FString::Printf(TEXT("Reset function resulted in different starting conditions for node %s - %s"), *InRegistryKey, *GetPrettyName(InRegistryKey)));
+			AddError(FString::Printf(TEXT("Reset(...) function resulted in different starting conditions for node %s - %s"), *InRegistryKeyString, *GetPrettyName(RegistryKey)));
 		}
 	};
 

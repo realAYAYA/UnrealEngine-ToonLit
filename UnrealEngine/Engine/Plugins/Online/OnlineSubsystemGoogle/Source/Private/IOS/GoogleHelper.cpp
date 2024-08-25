@@ -8,29 +8,28 @@
 #include "IOS/IOSAppDelegate.h"
 #include "IOS/IOSAsyncTask.h"
 
-// Explicit refresh token
-//refreshTokensWithHandler:
 
-// Possibly refresh token, handled by SDK
-//getTokensWithHandler:
-
-bool GetAuthTokenFromGoogleUser(GIDGoogleUser* user, FAuthTokenGoogle& OutAuthToken)
+bool GetAuthTokenFromSignInResult(GIDGoogleUser* User, NSString* ServerAuthCode, FAuthTokenGoogle& OutAuthToken)
 {
 	bool bSuccess = false;
 
-	OutAuthToken.AccessToken = user.authentication.accessToken;
+	OutAuthToken.AccessToken = User.accessToken.tokenString;
 	if (!OutAuthToken.AccessToken.IsEmpty())
 	{
-		OutAuthToken.IdToken = user.authentication.idToken;
+		OutAuthToken.IdToken = User.idToken.tokenString;
 		if (!OutAuthToken.IdToken.IsEmpty() && OutAuthToken.IdTokenJWT.Parse(OutAuthToken.IdToken))
 		{
 			OutAuthToken.TokenType = TEXT("Bearer");
 			OutAuthToken.ExpiresIn = 3600.0;
-			OutAuthToken.RefreshToken = user.authentication.refreshToken;
+			OutAuthToken.RefreshToken = User.refreshToken.tokenString;
 
-			OutAuthToken.AuthData.Add("refresh_token", OutAuthToken.RefreshToken);
-			OutAuthToken.AuthData.Add("access_token", OutAuthToken.AccessToken);
-			OutAuthToken.AuthData.Add("id_token", OutAuthToken.IdToken);
+			OutAuthToken.AddAuthData(AUTH_ATTR_REFRESH_TOKEN, OutAuthToken.RefreshToken);
+			OutAuthToken.AddAuthData(TEXT("access_token"), OutAuthToken.AccessToken);
+			OutAuthToken.AddAuthData(AUTH_ATTR_ID_TOKEN, OutAuthToken.IdToken);
+			if (ServerAuthCode)
+			{
+				OutAuthToken.AddAuthData(AUTH_ATTR_AUTHORIZATION_CODE, FString(ServerAuthCode));
+			}
 			OutAuthToken.AuthType = EGoogleAuthTokenType::AccessToken;
 			OutAuthToken.ExpiresInUTC = FDateTime::UtcNow() + FTimespan(OutAuthToken.ExpiresIn * ETimespan::TicksPerSecond);
 			bSuccess = true;
@@ -43,36 +42,31 @@ bool GetAuthTokenFromGoogleUser(GIDGoogleUser* user, FAuthTokenGoogle& OutAuthTo
 	else
 	{
 		UE_LOG_ONLINE_IDENTITY(Verbose, TEXT("GetAuthTokenFromGoogleUser: Access token missing"));
-	}
+	}		
 
 	return bSuccess;
 }
 
 @implementation FGoogleHelper
 
-- (id) initwithClientId: (NSString*) inClientId withBasicProfile: (bool) bWithProfile
+- (id)initWithServerClientID: (nullable NSString *)ServerClientId
 {
 	self = [super init];
-	if (inClientId && ([inClientId length] > 0))
+
+	dispatch_async(dispatch_get_main_queue(), ^
 	{
-		[self printAuthStatus];
-
-		GIDSignIn* signIn = [GIDSignIn sharedInstance];
-		signIn.shouldFetchBasicProfile = bWithProfile;
-		signIn.delegate = self;
-		signIn.uiDelegate = self;
-		signIn.clientID = inClientId;
-
-		dispatch_async(dispatch_get_main_queue(), ^
+		if (ServerClientId != nil)
 		{
-			// Try to automatically sign in the user
-			[signIn signInSilently];
-		});
-	}
-	else
-	{
-		UE_LOG_ONLINE_IDENTITY(Error, TEXT("Google init missing clientId"));
-	}
+			NSString* ClientId = GIDSignIn.sharedInstance.configuration.clientID;
+			GIDSignIn.sharedInstance.configuration = [[GIDConfiguration alloc] initWithClientID: ClientId serverClientID: ServerClientId];
+		}
+
+		[GIDSignIn.sharedInstance restorePreviousSignInWithCompletion:^(GIDGoogleUser* User, NSError* Error)
+		 {
+			UE_CLOG_ONLINE_IDENTITY(User != nil, Display, TEXT("Restored previous sign in"));
+			[self PrintAuthStatus];
+		 }];
+	});
 
 	return self;
 }
@@ -89,62 +83,97 @@ bool GetAuthTokenFromGoogleUser(GIDGoogleUser* user, FAuthTokenGoogle& OutAuthTo
 	return Delegate.GetHandle();
 }
 
--(FDelegateHandle)AddOnGoogleDisconnectComplete: (const FOnGoogleSignOutCompleteDelegate&) Delegate
+- (void)ShowLoginUI: (NSArray*) InScopes
 {
-	_OnDisconnectComplete.Add(Delegate);
-	return Delegate.GetHandle();
+	[GIDSignIn.sharedInstance signInWithPresentingViewController:[IOSAppDelegate GetDelegate].IOSController
+							hint:nil
+							additionalScopes:InScopes
+							completion:^(GIDSignInResult* SignInResult, NSError* Error)
+							{
+								[self DidSignIn: SignInResult.user withServerAuthCode: SignInResult.serverAuthCode withError: Error];
+							}];
 }
 
-- (void) login: (NSArray*) InScopes
+- (void)Login: (NSArray*) InScopes attemptSilentSignIn:(bool) bAttemptSilentSignIn
 {
-	[self printAuthStatus];
+	[self PrintAuthStatus];
 
 	dispatch_async(dispatch_get_main_queue(), ^
 	{
-		GIDSignIn* signIn = [GIDSignIn sharedInstance];
-		[signIn setScopes: InScopes];
-		[signIn signIn];
+		GIDGoogleUser* User = [GIDSignIn.sharedInstance currentUser];
+		if (User == nil || !bAttemptSilentSignIn)
+		{
+			[self ShowLoginUI: InScopes];
+		}
+		else
+		{
+			NSMutableArray *MissingScopes = [NSMutableArray arrayWithArray:InScopes];
+			[MissingScopes removeObjectsInArray: User.grantedScopes];
+			if (MissingScopes.count == 0)
+			{
+				[User refreshTokensIfNeededWithCompletion: ^(GIDGoogleUser* SignedInUser, NSError* Error)
+				 {
+					if (Error != nil)
+					{
+						[self ShowLoginUI: InScopes];
+					}
+					else
+					{
+						[self DidSignIn: SignedInUser withServerAuthCode: nil withError: nil];
+					}
+				}];
+			}
+			else
+			{
+				[User addScopes: MissingScopes 
+					 presentingViewController: [IOSAppDelegate GetDelegate].IOSController
+					 completion: ^(GIDSignInResult* Result, NSError* Error)
+				{
+					[self DidSignIn: Result.user withServerAuthCode: Result.serverAuthCode withError: Error];
+				}];
+			}
+		}
 	});
+
 }
 
-- (void) logout
+- (void)Logout
 {
 	UE_LOG_ONLINE_IDENTITY(Display, TEXT("logout"));
 
 	dispatch_async(dispatch_get_main_queue(), ^
 	{
-		GIDSignIn* signIn = [GIDSignIn sharedInstance];
-		[signIn signOut];
-		
-		FGoogleSignOutData SignOutData;
-		SignOutData.Response = EGoogleLoginResponse::RESPONSE_OK;
-
-		[FIOSAsyncTask CreateTaskWithBlock : ^ bool(void)
-		{
-			UE_LOG_ONLINE_IDENTITY(Display, TEXT("logoutComplete: %s"), *SignOutData.ToDebugString());
-
-			// Notify on the game thread
-			_OnSignOutComplete.Broadcast(SignOutData);
-			return true;
-		}];
-
-		// Revokes access (use to clear keychain/cache), triggers didDisconnectWithUser
-		// [signIn disconnect];
+		[[GIDSignIn sharedInstance] disconnectWithCompletion: ^(NSError* Error)
+		 {
+			[self DidDisconnect: Error];
+		 }];
 	});
 }
 
-- (void)signIn:(GIDSignIn *)signIn didSignInForUser:(GIDGoogleUser *)user withError:(NSError *)error
+- (void)DidSignIn:(GIDGoogleUser*)User withServerAuthCode:(NSString*)ServerAuthCode withError:(NSError *)Error
 {
 	FGoogleSignInData SignInData;
-	FString Description = FString([error localizedDescription]);
-	SignInData.ErrorStr = MoveTemp(Description);
-
-	UE_LOG_ONLINE_IDENTITY(Display, TEXT("signIn didSignInForUser GID:%p User:%p Error:%s"), signIn, user, *SignInData.ErrorStr);
-	[self printAuthStatus];
-
-	if (user)
+	if (Error != nil)
 	{
-		if (GetAuthTokenFromGoogleUser(user, SignInData.AuthToken))
+		SignInData.ErrorStr = FString([Error localizedDescription]);
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("didSignInWithError Error: %s"), *SignInData.ErrorStr);
+
+		if (Error.code == kGIDSignInErrorCodeHasNoAuthInKeychain)
+		{
+			SignInData.Response = EGoogleLoginResponse::RESPONSE_NOAUTH;
+		}
+		else if (Error.code == kGIDSignInErrorCodeCanceled)
+		{
+			SignInData.Response = EGoogleLoginResponse::RESPONSE_CANCELED;
+		}
+		else
+		{
+			SignInData.Response = EGoogleLoginResponse::RESPONSE_ERROR;
+		}
+	}
+	else
+	{
+		if (GetAuthTokenFromSignInResult(User, ServerAuthCode, SignInData.AuthToken))
 		{
 			SignInData.Response = EGoogleLoginResponse::RESPONSE_OK;
 		}
@@ -152,18 +181,6 @@ bool GetAuthTokenFromGoogleUser(GIDGoogleUser* user, FAuthTokenGoogle& OutAuthTo
 		{
 			SignInData.Response = EGoogleLoginResponse::RESPONSE_ERROR;
 		}
-	}
-	else if (error.code == kGIDSignInErrorCodeHasNoAuthInKeychain)
-	{
-		SignInData.Response = EGoogleLoginResponse::RESPONSE_NOAUTH;
-	}
-	else if (error.code == kGIDSignInErrorCodeCanceled)
-	{
-		SignInData.Response = EGoogleLoginResponse::RESPONSE_CANCELED;
-	}
-	else
-	{
-		SignInData.Response = EGoogleLoginResponse::RESPONSE_ERROR;
 	}
 
 	UE_LOG_ONLINE_IDENTITY(Display, TEXT("SignIn: %s"), *SignInData.ToDebugString());
@@ -176,85 +193,58 @@ bool GetAuthTokenFromGoogleUser(GIDGoogleUser* user, FAuthTokenGoogle& OutAuthTo
 	}];
 }
 
-- (void)signIn:(GIDSignIn *)signIn didDisconnectWithUser:(GIDGoogleUser *)user withError:(NSError *)error
+- (void)DidDisconnect:(NSError *)Error
 {
 	FGoogleSignOutData SignOutData;
-	FString Description = FString([error localizedDescription]);
-	SignOutData.ErrorStr = MoveTemp(Description);
-	SignOutData.Response = SignOutData.ErrorStr.IsEmpty() ? EGoogleLoginResponse::RESPONSE_OK : EGoogleLoginResponse::RESPONSE_ERROR;
-
+	if (Error != nil)
+	{
+		SignOutData.ErrorStr = FString([Error localizedDescription]);
+		SignOutData.Response = EGoogleLoginResponse::RESPONSE_ERROR;
+	}
+	else
+	{
+		SignOutData.Response = EGoogleLoginResponse::RESPONSE_OK;
+	}
 	[FIOSAsyncTask CreateTaskWithBlock : ^ bool(void)
 	{
 		UE_LOG_ONLINE_IDENTITY(Display, TEXT("didDisconnectWithUser Complete: %s"), *SignOutData.ToDebugString());
 
 		// Notify on the game thread
-		_OnDisconnectComplete.Broadcast(SignOutData);
+		_OnSignOutComplete.Broadcast(SignOutData);
 		return true;
 	}];
 }
 
-- (void)signInWillDispatch:(GIDSignIn *)signIn error:(NSError *)error
+- (void)PrintAuthStatus
 {
-	UE_LOG_ONLINE_IDENTITY(Display, TEXT("signInWillDispatch %p %s"), signIn, *FString([error localizedDescription]));
-
-	// Google flow has figured out how to proceed, any engine related "please wait" is no longer necessary
-}
-
-- (void)signIn:(GIDSignIn *)signIn presentViewController:(UIViewController *)viewController
-{
-	UE_LOG_ONLINE_IDENTITY(Display, TEXT("presentViewController %p"), signIn);
-
-	// Google has provided a view controller for us to login, we present it.
-	[[IOSAppDelegate GetDelegate].IOSController
-	 presentViewController:viewController animated: YES completion: nil];
-}
-
-- (void)signIn:(GIDSignIn *)signIn dismissViewController:(UIViewController *)viewController
-{
-	UE_LOG_ONLINE_IDENTITY(Display, TEXT("dismissViewController %p"), signIn);
-
-	// Dismiss the Google sign in view
-	[viewController dismissViewControllerAnimated: YES completion: nil];
-}
-
-- (void)printAuthStatus
-{
-	GIDSignIn* signIn = [GIDSignIn sharedInstance];
-	GIDGoogleUser* googleUser = [signIn currentUser];
-
-	bool bHasAuth = [signIn hasAuthInKeychain];
+	bool bHasAuth = [[GIDSignIn sharedInstance] hasPreviousSignIn];
 	UE_LOG_ONLINE_IDENTITY(Display, TEXT("HasAuth: %d"), bHasAuth);
 
-	UE_LOG_ONLINE_IDENTITY(Display, TEXT("Authentication:"));
-	if (googleUser.authentication)
+	GIDGoogleUser* GoogleUser = [[GIDSignIn sharedInstance] currentUser];
+	if (GoogleUser)
 	{
-		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- Access: %s"), *FString(googleUser.authentication.accessToken));
-		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- Refresh: %s"), *FString(googleUser.authentication.refreshToken));
-	}
-	else
-	{
-		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- None"));
-	}
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("Authentication:"));
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- Access: %s"), *FString(GoogleUser.accessToken.tokenString));
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- Refresh: %s"), *FString(GoogleUser.refreshToken.tokenString));
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("Scopes:"));
+		for (NSString* scope in GoogleUser.grantedScopes)
+		{
+			UE_LOG_ONLINE_IDENTITY(Display, TEXT("- %s"), *FString(scope));
+		}
 
-	UE_LOG_ONLINE_IDENTITY(Display, TEXT("Scopes:"));
-	for (NSString* scope in signIn.scopes)
-	{
-		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- %s"), *FString(scope));
-	}
-
-	UE_LOG_ONLINE_IDENTITY(Display, TEXT("User:"));
-	if (googleUser)
-	{
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("User:"));
 		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- UserId: %s RealName: %s FirstName: %s LastName: %s Email: %s"),
-			   *FString(googleUser.userID),
-			   *FString(googleUser.profile.name),
-			   *FString(googleUser.profile.givenName),
-			   *FString(googleUser.profile.familyName),
-			   *FString(googleUser.profile.email));
-			   //*FString(googleUser.authentication.idToken));
+			   *FString(GoogleUser.userID),
+			   *FString(GoogleUser.profile.name),
+			   *FString(GoogleUser.profile.givenName),
+			   *FString(GoogleUser.profile.familyName),
+			   *FString(GoogleUser.profile.email));
 	}
 	else
 	{
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("Authentication:"));
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- None"));
+		UE_LOG_ONLINE_IDENTITY(Display, TEXT("User:"));
 		UE_LOG_ONLINE_IDENTITY(Display, TEXT("- None"));
 	}
 }

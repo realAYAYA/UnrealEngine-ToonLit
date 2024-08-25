@@ -8,6 +8,9 @@
 #include "Misc/Attribute.h"
 #include "MotionControllerComponent.h"
 #include "XRTrackingSystemBase.h"
+#if WITH_EDITOR
+#include "IVREditorModule.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(XRDeviceVisualizationComponent)
 
@@ -27,9 +30,23 @@ UXRDeviceVisualizationComponent::UXRDeviceVisualizationComponent(const FObjectIn
 	bWantsInitializeComponent = true;
 }
 
+#if WITH_EDITOR
 //=============================================================================
-void UXRDeviceVisualizationComponent::BeginPlay() {
-	Super::BeginPlay();
+void UXRDeviceVisualizationComponent::OnCloseVREditor()
+{
+	SetStaticMesh(nullptr);
+}
+#endif
+
+//=============================================================================
+void UXRDeviceVisualizationComponent::OnRegister() {
+	Super::OnRegister();
+
+	UMotionControllerComponent::OnActivateVisualizationComponent.RemoveAll(this);
+	FXRTrackingSystemDelegates::OnXRInteractionProfileChanged.RemoveAll(this);
+#if WITH_EDITOR
+	IVREditorModule::Get().OnVREditingModeExit().RemoveAll(this);
+#endif
 
 	UMotionControllerComponent* ParentController = FindParentMotionController();
 	if (ParentController != nullptr) 
@@ -38,8 +55,10 @@ void UXRDeviceVisualizationComponent::BeginPlay() {
 		// Wait for controller to activate the rendering for this component.
 		bIsRenderingActive = false;
 		FXRTrackingSystemDelegates::OnXRInteractionProfileChanged.AddUObject(this, &UXRDeviceVisualizationComponent::OnInteractionProfileChanged);
-
 		UMotionControllerComponent::OnActivateVisualizationComponent.AddUObject(this, &UXRDeviceVisualizationComponent::SetIsRenderingActive);
+#if WITH_EDITOR
+		IVREditorModule::Get().OnVREditingModeExit().AddUObject(this, &UXRDeviceVisualizationComponent::OnCloseVREditor);
+#endif
 	}
 	else 
 	{
@@ -60,6 +79,9 @@ void UXRDeviceVisualizationComponent::OnUnregister()
 	Super::OnUnregister();
 	FXRTrackingSystemDelegates::OnXRInteractionProfileChanged.RemoveAll(this);
 	UMotionControllerComponent::OnActivateVisualizationComponent.RemoveAll(this);
+#if WITH_EDITOR
+	IVREditorModule::Get().OnVREditingModeExit().RemoveAll(this);
+#endif
 }
 
 //=============================================================================
@@ -115,15 +137,6 @@ void UXRDeviceVisualizationComponent::SetCustomDisplayMesh(UStaticMesh* NewDispl
 		}
 	}
 }
-
-#if WITH_EDITOR
-//=============================================================================
-void UXRDeviceVisualizationComponent::PreEditChange(FProperty* PropertyAboutToChange)
-{
-	PreEditMaterialCount = DisplayMeshMaterialOverrides.Num();
-	Super::PreEditChange(PropertyAboutToChange);
-}
-#endif
 
 //=============================================================================
 void UXRDeviceVisualizationComponent::RefreshMesh()
@@ -236,7 +249,7 @@ void UXRDeviceVisualizationComponent::OnDisplayModelLoaded(UPrimitiveComponent* 
 	if (DisplayModelLoadState == EModelLoadStatus::Pending || DisplayModelLoadState == EModelLoadStatus::InProgress)
 	{
 		UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(InDisplayComponent);
-		if (StaticMeshComponent != nullptr && StaticMeshComponent->GetStaticMesh()) 
+		if (InDisplayComponent != nullptr && StaticMeshComponent != nullptr && StaticMeshComponent->GetStaticMesh())
 		{
 			SetStaticMesh(StaticMeshComponent->GetStaticMesh());
 			const int32 MatCount = FMath::Min(InDisplayComponent->GetNumMaterials(), DisplayMeshMaterialOverrides.Num());
@@ -248,6 +261,11 @@ void UXRDeviceVisualizationComponent::OnDisplayModelLoaded(UPrimitiveComponent* 
 			SetStaticMesh(nullptr);
 			UE_LOG(LogXRDeviceVisualizationComponent, Warning, TEXT("OnDisplayModelLoaded expects to received a UStaticMeshComponent with a valid StaticMesh. Setting a NULL StaticMesh."));
 		}
+	}
+
+	if (InDisplayComponent != nullptr)
+	{
+		InDisplayComponent->DestroyComponent();
 	}
 }
 

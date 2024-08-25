@@ -61,7 +61,10 @@ void FRemoteControlWebInterfaceModule::StartupModule()
 
 	FCoreDelegates::OnFEngineLoopInitComplete.AddLambda([WebAppLocal]()
 		{
-			WebAppLocal->Start();
+			if (GetDefault<URemoteControlSettings>()->bAutoStartWebSocketServer)
+			{
+				WebAppLocal->Start();
+			}
 		});
 
 	if (IWebRemoteControlModule* WebRemoteControlModule = FModuleManager::GetModulePtr<IWebRemoteControlModule>("WebRemoteControl"))

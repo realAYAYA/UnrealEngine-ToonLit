@@ -1,0 +1,13 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/TextureGraph/SamplerStates.ush"
+#include "/Plugin/TextureGraph/ShaderUtil.ush"
+
+Texture2D SourceTexture;
+
+float4 FSH_Grayscale(float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 SourceClr = SourceTexture.Sample(SamplerStates_NoBorder, uv);
+	float Gray = Grayscale(SourceClr.rgb);
+	return float4(Gray, Gray, Gray, SourceClr.a);
+}

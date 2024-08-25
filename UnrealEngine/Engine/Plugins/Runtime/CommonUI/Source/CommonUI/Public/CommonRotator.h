@@ -10,7 +10,15 @@
 
 class UCommonTextBlock;
 
+UENUM(BlueprintType)
+enum class ERotatorDirection : uint8
+{
+	Right,
+	Left,
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRotated, int32, Value);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnRotatedWithDirection, int32, Value, ERotatorDirection, RotatorDir);
 
 /**
 * A button that can rotate between given text labels.
@@ -21,6 +29,7 @@ class COMMONUI_API UCommonRotator : public UCommonButtonBase
 	GENERATED_UCLASS_BODY()
 
 public:
+
 	virtual bool Initialize() override;
 	virtual FNavigationReply NativeOnNavigation(const FGeometry& MyGeometry, const FNavigationEvent& InNavigationEvent, const FNavigationReply& InDefaultReply);
 
@@ -54,7 +63,12 @@ public:
 
 public:
 
+	/** Called when the Selected state of this button changes. Provides the direction of rotation. */
+	UPROPERTY(BlueprintAssignable, Category = "Events")
+	FOnRotatedWithDirection OnRotatedWithDirection;
+
 	/** Called when the Selected state of this button changes */
+	UE_DEPRECATED(5.4, "OnRotated is deprecated, please use OnRotatedWithDirection instead.")
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnRotated OnRotated;
 

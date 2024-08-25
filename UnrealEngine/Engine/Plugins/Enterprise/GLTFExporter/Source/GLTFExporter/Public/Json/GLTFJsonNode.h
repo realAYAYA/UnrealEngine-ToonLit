@@ -3,19 +3,16 @@
 #pragma once
 
 #include "Json/GLTFJsonCore.h"
+#include "Json/GLTFJsonTransform.h"
 
-struct GLTFEXPORTER_API FGLTFJsonNode : IGLTFJsonIndexedObject
+struct GLTFEXPORTER_API FGLTFJsonNode : FGLTFJsonTransform, IGLTFJsonIndexedObject
 {
 	FString Name;
 
-	FGLTFJsonVector3    Translation;
-	FGLTFJsonQuaternion Rotation;
-	FGLTFJsonVector3    Scale;
-
-	FGLTFJsonCamera*    Camera;
-	FGLTFJsonSkin*      Skin;
-	FGLTFJsonMesh*      Mesh;
-	FGLTFJsonLight*     Light;
+	FGLTFJsonCamera* Camera;
+	FGLTFJsonSkin*   Skin;
+	FGLTFJsonMesh*   Mesh;
+	FGLTFJsonLight*  Light;
 
 	TArray<FGLTFJsonNode*> Children;
 
@@ -27,9 +24,6 @@ protected:
 
 	FGLTFJsonNode(int32 Index)
 		: IGLTFJsonIndexedObject(Index)
-		, Translation(FGLTFJsonVector3::Zero)
-		, Rotation(FGLTFJsonQuaternion::Identity)
-		, Scale(FGLTFJsonVector3::One)
 		, Camera(nullptr)
 		, Skin(nullptr)
 		, Mesh(nullptr)

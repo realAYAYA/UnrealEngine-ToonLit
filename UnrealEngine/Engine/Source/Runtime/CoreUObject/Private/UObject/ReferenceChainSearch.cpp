@@ -77,7 +77,7 @@ namespace UE::ReferenceChainSearch
 		bool IsRoot(FVertex Vertex, EReferenceChainSearchMode SearchMode) const
 		{
 			const UObject* Object = VertexToObject(Vertex);
-			return Object->HasAnyInternalFlags(EInternalObjectFlags::GarbageCollectionKeepFlags | EInternalObjectFlags::RootSet)
+			return Object->HasAnyInternalFlags(EInternalObjectFlags_RootFlags)
 				|| (GARBAGE_COLLECTION_KEEPFLAGS != RF_NoFlags && Object->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS)
 					&& !(SearchMode & EReferenceChainSearchMode::FullChain));
 		}
@@ -187,7 +187,7 @@ namespace UE::ReferenceChainSearch
 		bool IsRoot(FVertex Vertex, EReferenceChainSearchMode SearchMode) const
 		{
 			ObjectType Object = VertexToObject(Vertex);
-			return Object->HasAnyInternalFlags(EInternalObjectFlags::GarbageCollectionKeepFlags | EInternalObjectFlags::RootSet)
+			return Object->HasAnyInternalFlags(EInternalObjectFlags_RootFlags)
 				|| (GARBAGE_COLLECTION_KEEPFLAGS != RF_NoFlags && Object->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS)
 					&& !(SearchMode & EReferenceChainSearchMode::FullChain));
 		}
@@ -259,6 +259,10 @@ namespace UE::ReferenceChainSearch
 					}
 				}
 			}
+			FORCEINLINE bool IsTimeLimitExceeded() const
+			{
+				return false;
+			}
 		};
 
 		template<bool bNeedsPropertyReferencer = false>
@@ -302,7 +306,7 @@ namespace UE::ReferenceChainSearch
 			{
 				return false;
 			}
-			virtual bool MarkWeakObjectReferenceForClearing(UObject** WeakReference)
+			virtual bool MarkWeakObjectReferenceForClearing(UObject** WeakReference, UObject* ReferenceOwner)
 			{
 				// To avoid false positives we need to implement this method just like GC does
 				// as these references will be treated as weak and should not be reported
@@ -310,6 +314,7 @@ namespace UE::ReferenceChainSearch
 			}
 		};
 
+		// Stores a set of edge lists for objects starting at StartVertex.
 		struct FThreadData
 		{
 			UObject* PreviousReferencingObject = nullptr;
@@ -324,12 +329,12 @@ namespace UE::ReferenceChainSearch
 				return CurrentEdgeList.GetAllocatedSize() + GraphBuffer.GetAllocatedSize() + EdgeLists.GetAllocatedSize();
 			}
 
-			void FlushEdgeList(const FPolicyUObjectHeap& Policy)
+			void FlushEdgeList(const FPolicyUObjectHeap& InPolicy)
 			{
 				if (PreviousReferencingObject && CurrentEdgeList.Num() > 0)
 				{
 					// Flush current edge list to graph buffer
-					FVertex SourceVertex = Policy.ObjectToVertex(PreviousReferencingObject);
+					FVertex SourceVertex = InPolicy.ObjectToVertex(PreviousReferencingObject);
 					TArray<FVertex> EdgeList = CurrentEdgeList.Array();
 					const int64 BufferStartIndex = GraphBuffer.Num();
 					// During construction store edge lists relative to null to be fixed up later
@@ -340,7 +345,8 @@ namespace UE::ReferenceChainSearch
 				}
 			}
 		};
-		TArray<FThreadData> AllThreadData;
+		FPolicyUObjectHeap& Policy;
+		TArray<FThreadData> AllThreadData; // Order of threads does not matter for MergeGraph
 
 		SIZE_T GetAllocatedSize() const
 		{
@@ -352,7 +358,7 @@ namespace UE::ReferenceChainSearch
 			return Size + AllThreadData.GetAllocatedSize();
 		}
 
-		void SetNumThreads(int32 InNumThreads, int32 NumberOfObjectsPerThread, int32 GlobalStartIndex, int32 MaxNumberOfObjects)
+		void SetNumThreads(int32 InNumThreads, int32 NumberOfObjectsPerThread, int32 GlobalStartIndex, int32 MaxNumberOfObjects, int32 ObjectReferencerIndex)
 		{
 			AllThreadData.Reset();
 			AllThreadData.AddDefaulted(InNumThreads);
@@ -365,6 +371,14 @@ namespace UE::ReferenceChainSearch
 				Thread.EdgeLists.Reserve(NumObjects);
 				Thread.EdgeLists.SetNumZeroed(NumObjects);
 			}
+
+			if (ObjectReferencerIndex != INDEX_NONE)
+			{
+				FThreadData& ObjectReferencerThreadData = AllThreadData.AddDefaulted_GetRef();
+				ObjectReferencerThreadData.StartVertex = ObjectReferencerIndex;
+				ObjectReferencerThreadData.EdgeLists.Reserve(1);
+				ObjectReferencerThreadData.EdgeLists.SetNumZeroed(1);
+			}
 		}
 
 		void CollectAllReferences(bool bGCOnly)
@@ -372,19 +386,26 @@ namespace UE::ReferenceChainSearch
 			constexpr bool bParallel = Derived::bParallel;
 			Derived* This = static_cast<Derived*>(this);
 			const int32 GlobalStartObjectIndex = bGCOnly ? GUObjectArray.GetFirstGCIndex() : 0;
+			int32 ObjectReferencerVertex = bGCOnly && FGCObject::GGCObjectReferencer ? Policy.ObjectToVertex(FGCObject::GGCObjectReferencer) : INDEX_NONE;
+			if (ObjectReferencerVertex >= GlobalStartObjectIndex)
+			{
+				ObjectReferencerVertex = INDEX_NONE;
+			}
+
 			const int32 MaxNumberOfObjects = GUObjectArray.GetObjectArrayNum() - GlobalStartObjectIndex;
+			
 			if constexpr (bParallel)
 			{
 				const int32 NumThreads = GetNumCollectReferenceWorkers();
 				const int32 NumberOfObjectsPerThread = (MaxNumberOfObjects / NumThreads) + 1;
 
-				SetNumThreads(NumThreads, NumberOfObjectsPerThread, GlobalStartObjectIndex, MaxNumberOfObjects);
+				SetNumThreads(NumThreads, NumberOfObjectsPerThread, GlobalStartObjectIndex, MaxNumberOfObjects, ObjectReferencerVertex);
 
 				ParallelFor(NumThreads,
-					[this, This, GlobalStartObjectIndex, MaxNumberOfObjects, NumThreads, NumberOfObjectsPerThread](int32 ThreadIndex) {
+					[this, bGCOnly, This, GlobalStartObjectIndex, MaxNumberOfObjects, NumThreads, NumberOfObjectsPerThread](int32 ThreadIndex) {
 						FProcessor Processor{ ThreadIndex, This };
-						TSet<UObject*> ThreadResult;
 						TArray<UObject*> ObjectsToSerialize;
+						
 						ObjectsToSerialize.Reserve(NumberOfObjectsPerThread);
 
 						const int32 FirstObjectIndex = GlobalStartObjectIndex + ThreadIndex * NumberOfObjectsPerThread;
@@ -407,31 +428,43 @@ namespace UE::ReferenceChainSearch
 						Context.SetInitialObjectsUnpadded(ObjectsToSerialize);
 						CollectReferences<FCollector<>>(Processor, Context);
 					});
-				return;
 			}
-
-			SetNumThreads(1, MaxNumberOfObjects, GlobalStartObjectIndex, MaxNumberOfObjects);
-			FProcessor Processor{ 0, This };
-			TArray<UObject*> ObjectsToProcess;
-			for (FRawObjectIterator It; It; ++It)
+			else 
 			{
-				FUObjectItem* ObjItem = *It;
-				UObject* Object = static_cast<UObject*>(ObjItem->Object);
-
-				// We can't ask the iterator for only GC objects because that would skip the GC Object referencer
-				if (bGCOnly && GUObjectArray.IsDisregardForGC(Object) && (Object != FGCObject::GGCObjectReferencer))
+				SetNumThreads(1, MaxNumberOfObjects, GlobalStartObjectIndex, MaxNumberOfObjects, ObjectReferencerVertex);
+				FProcessor Processor{ 0, This };
+				TArray<UObject*> ObjectsToProcess;
+				for (FRawObjectIterator It; It; ++It)
 				{
-					continue;
-				}
+					FUObjectItem* ObjItem = *It;
+					UObject* Object = static_cast<UObject*>(ObjItem->Object);
 
-				if (This->ShouldSkipReferencer(0, Object))
-				{
-					continue;
-				}
+					// // We can't ask the iterator for only GC objects because that would skip the GC Object referencer
+					// if (bGCOnly && GUObjectArray.IsDisregardForGC(Object) && (Object != FGCObject::GGCObjectReferencer))
+					// {
+					// 	continue;
+					// }
 
+					if (This->ShouldSkipReferencer(0, Object))
+					{
+						continue;
+					}
+
+					// Find direct references
+					UE::GC::FWorkerContext Context;
+					ObjectsToProcess = { Object };
+					Context.SetInitialObjectsUnpadded(ObjectsToProcess);
+					CollectReferences<FCollector<>>(Processor, Context);
+				}
+			}
+			
+			if (ObjectReferencerVertex != INDEX_NONE)
+			{
+				FProcessor Processor{ AllThreadData.Num() - 1, This };
+				TArray<UObject*> ObjectsToProcess;
 				// Find direct references
 				UE::GC::FWorkerContext Context;
-				ObjectsToProcess = { Object };
+				ObjectsToProcess = { FGCObject::GGCObjectReferencer };
 				Context.SetInitialObjectsUnpadded(ObjectsToProcess);
 				CollectReferences<FCollector<>>(Processor, Context);
 			}
@@ -448,16 +481,18 @@ namespace UE::ReferenceChainSearch
 			Context.SetInitialObjectsUnpadded(ObjectsToProcess);
 			CollectReferences<FCollector<true /* detailed property info */>>(Processor, Context);
 		}
+
+		TReferenceSearchBase(FPolicyUObjectHeap& InPolicy)
+			: Policy(InPolicy) { }
 	};
 
 	struct FDirectReferenceSearch : public TReferenceSearchBase<FDirectReferenceSearch>
 	{
 		using Super = TReferenceSearchBase<FDirectReferenceSearch>;
 		static constexpr bool bParallel = true;
-		FPolicyUObjectHeap& Policy;
 
 		FDirectReferenceSearch(FPolicyUObjectHeap& InPolicy)
-			: Policy(InPolicy) { }
+			: Super(InPolicy) { }
 
 		bool ShouldSkipReferencer(int32 ThreadIndex, UObject* Object)
 		{
@@ -500,12 +535,11 @@ namespace UE::ReferenceChainSearch
 	{
 		using Super = TReferenceSearchBase<FMinimalReferenceSearch>;
 		static constexpr bool bParallel = true;
-		FPolicyUObjectHeap& Policy;
 		TSet<const UObject*> TargetObjects;
 		TSet<UObject*> FoundTargets;
 
 		FMinimalReferenceSearch(FPolicyUObjectHeap& InPolicy)
-			: Policy(InPolicy) { }
+			: Super(InPolicy) { }
 
 		SIZE_T GetAllocatedSize() const
 		{
@@ -666,10 +700,13 @@ namespace UE::ReferenceChainSearch
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(UE::ReferenceChainSearch::PerformInitialGatherFromGCHistory);
 		int64 TotalEdges = 0;
-		for (const TPair<FGCObjectInfo*, TArray<FGCDirectReferenceInfo>*>& Pair : Policy.Snapshot.DirectReferences)
+		for (const TPair<FReferenceToken, TArray<FGCDirectReference>*>& Pair : Policy.Snapshot.DirectReferences)
 		{
-			FVertex FromVertex = Policy.ObjectToVertex(Pair.Key);
-			TotalEdges += Pair.Value->Num();
+			if (Pair.Key.IsGCObjectInfo())
+			{
+				FVertex FromVertex = Policy.ObjectToVertex(Pair.Key.AsGCObjectInfo());
+				TotalEdges += Pair.Value->Num();
+			}
 		}
 
 		FGraph TempGraph;
@@ -677,18 +714,24 @@ namespace UE::ReferenceChainSearch
 		TempGraph.EdgeLists.Reserve(Policy.GetNumVertices());
 		TempGraph.EdgeLists.SetNumZeroed(Policy.GetNumVertices());
 
-		for (const TPair<FGCObjectInfo*, TArray<FGCDirectReferenceInfo>*>& Pair : Policy.Snapshot.DirectReferences)
+		for (const TPair<FReferenceToken, TArray<FGCDirectReference>*>& Pair : Policy.Snapshot.DirectReferences)
 		{
-			int64 StartOffset = TempGraph.Buffer.Num();
-			FVertex FromVertex = Policy.ObjectToVertex(Pair.Key);
-			for (FGCDirectReferenceInfo& ReferenceInfo : *Pair.Value)
+			if (Pair.Key.IsGCObjectInfo())
 			{
-				FVertex ToVertex = Policy.ObjectToVertex(ReferenceInfo.ReferencedObjectInfo);
-				check(TempGraph.EdgeLists.IsValidIndex(ToVertex));
-				TempGraph.Buffer.Add(ToVertex);
+				int64 StartOffset = TempGraph.Buffer.Num();
+				FVertex FromVertex = Policy.ObjectToVertex(Pair.Key.AsGCObjectInfo());
+				for (FGCDirectReference& ReferenceInfo : *Pair.Value)
+				{
+					if (ReferenceInfo.Reference.IsGCObjectInfo())
+					{
+						FVertex ToVertex = Policy.ObjectToVertex(ReferenceInfo.Reference.AsGCObjectInfo());
+						check(TempGraph.EdgeLists.IsValidIndex(ToVertex));
+						TempGraph.Buffer.Add(ToVertex);
+					}
+				}
+				TempGraph.EdgeLists[FromVertex] =
+					TConstArrayView<int32>(TempGraph.Buffer.GetData() + StartOffset, static_cast<int32>(TempGraph.Buffer.Num() - StartOffset));
 			}
-			TempGraph.EdgeLists[FromVertex] =
-				TConstArrayView<int32>(TempGraph.Buffer.GetData() + StartOffset, static_cast<int32>(TempGraph.Buffer.Num() - StartOffset));
 		}
 
 		OutGraph = UE::Graph::ConstructTransposeGraph(TempGraph.EdgeLists);
@@ -1007,13 +1050,13 @@ namespace UE::ReferenceChainSearch
 
 	struct FReferenceInfoSearch : public TReferenceSearchBase<FReferenceInfoSearch>
 	{
-		FPolicyUObjectHeap& Policy;
+		using Super = TReferenceSearchBase<FReferenceInfoSearch>;
 		const TMap<const UObject*, FGCObjectInfo*>& ObjectToInfoMap;
 
 		TMap<FVertex, FReferenceChainSearch::FObjectReferenceInfo>* ReferenceInfoMap;
 
 		FReferenceInfoSearch(FPolicyUObjectHeap& InPolicy, const TMap<const UObject*, FGCObjectInfo*>& InObjectToInfoMap)
-			: Policy(InPolicy)
+			: Super(InPolicy)
 			, ObjectToInfoMap(InObjectToInfoMap)
 		{
 		}
@@ -1109,7 +1152,7 @@ namespace UE::ReferenceChainSearch
 		for (TPair<FVertex, TMap<FVertex, FReferenceChainSearch::FObjectReferenceInfo>>& SourcePair : InOutReferenceInfo)
 		{
 			FVertex SourceVertex = SourcePair.Key;
-			TArray<FGCDirectReferenceInfo>* DirectReferences = Snapshot.DirectReferences.FindRef(VertexToObject(SourceVertex));
+			TArray<FGCDirectReference>* DirectReferences = Snapshot.DirectReferences.FindRef(FReferenceToken(VertexToObject(SourceVertex)));
 			if (DirectReferences)
 			{
 				for (TPair<FVertex, FReferenceChainSearch::FObjectReferenceInfo>& TargetPair : SourcePair.Value)
@@ -1117,8 +1160,8 @@ namespace UE::ReferenceChainSearch
 					FVertex TargetVertex = TargetPair.Key;
 					FGCObjectInfo* TargetInfo = VertexToObject(TargetVertex);
 					// Linear search is not ideal, maybe build a map if we're looking for many references
-					FGCDirectReferenceInfo* RefInfo = DirectReferences->FindByPredicate(
-						[TargetInfo](const FGCDirectReferenceInfo& RefInfo) { return RefInfo.ReferencedObjectInfo == TargetInfo; });
+					FGCDirectReference* RefInfo = DirectReferences->FindByPredicate(
+						[TargetInfo](const FGCDirectReference& RefInfo) { return RefInfo.Reference == FReferenceToken(TargetInfo); });
 					if (RefInfo)
 					{
 						FReferenceChainSearch::EReferenceType ReferenceType = FReferenceChainSearch::EReferenceType::Unknown;
@@ -1220,62 +1263,79 @@ namespace UE::ReferenceChainSearch
 	}
 } // namespace UE::ReferenceChainSearch
 
-FString FReferenceChainSearch::GetObjectFlags(FGCObjectInfo* InObject)
+FString FReferenceChainSearch::GetObjectFlags(const FGCObjectInfo& InObject)
 {
 	FString Flags;
-	if (InObject->IsRooted())
+
+	if (!InObject.IsDisregardForGC())
+	{
+		if (!InObject.HasAnyInternalFlags(UE::GC::GReachableObjectFlag | UE::GC::GMaybeUnreachableObjectFlag | UE::GC::GUnreachableObjectFlag))
+		{
+			Flags += TEXT("(Error: No reachability flag) ");
+		}
+	}
+	else if (InObject.HasAnyInternalFlags(UE::GC::GReachableObjectFlag))
+	{
+		Flags += TEXT("(Error: Reachable but NeverGCed) ");
+	}
+
+	if (InObject.HasAnyInternalFlags(UE::GC::GMaybeUnreachableObjectFlag))
+	{
+		Flags += FString::Printf(TEXT("(MaybeUnreachable<%d>) "), (int32)UE::GC::GMaybeUnreachableObjectFlag);
+	}
+
+	if (InObject.HasAnyInternalFlags(UE::GC::GUnreachableObjectFlag))
+	{
+		Flags += FString::Printf(TEXT("(Unreachable<%d>) "), (int32)UE::GC::GUnreachableObjectFlag);
+	}
+
+	if (InObject.IsRooted())
 	{
 		Flags += TEXT("(root) ");
 	}
 
 	CA_SUPPRESS(6011)
-	if (InObject->IsNative())
+	if (InObject.IsNative())
 	{
 		Flags += TEXT("(native) ");
 	}
 
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (InObject->HasAnyInternalFlags(EInternalObjectFlags::PendingKill))
-	{
-		Flags += TEXT("(PendingKill) ");
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-	if (InObject->HasAnyInternalFlags(EInternalObjectFlags::Garbage))
+	if (InObject.HasAnyInternalFlags(EInternalObjectFlags::Garbage))
 	{
 		Flags += TEXT("(Garbage) ");
 	}
 
-	if (InObject->HasAnyFlags(RF_Standalone))
+	if (InObject.HasAnyFlags(RF_Standalone))
 	{
 		Flags += TEXT("(standalone) ");
 	}
 
-	if (InObject->HasAnyInternalFlags(EInternalObjectFlags::Async))
+	if (InObject.HasAnyInternalFlags(EInternalObjectFlags::Async))
 	{
 		Flags += TEXT("(async) ");
 	}
 
-	if (InObject->HasAnyInternalFlags(EInternalObjectFlags::AsyncLoading))
+	if (InObject.HasAnyInternalFlags(EInternalObjectFlags::AsyncLoading))
 	{
 		Flags += TEXT("(asyncloading) ");
 	}
 
-	if (InObject->HasAnyInternalFlags(EInternalObjectFlags::LoaderImport))
+	if (InObject.HasAnyInternalFlags(EInternalObjectFlags::LoaderImport))
 	{
 		Flags += TEXT("(loaderimport) ");
 	}
 
-	if (InObject->IsDisregardForGC())
+	if (InObject.IsDisregardForGC())
 	{
 		Flags += TEXT("(NeverGCed) ");
 	}
 
-	if (InObject->HasAnyInternalFlags(EInternalObjectFlags::ClusterRoot))
+	if (InObject.HasAnyInternalFlags(EInternalObjectFlags::ClusterRoot))
 	{
 		Flags += TEXT("(ClusterRoot) ");
 	}
-	if (InObject->GetOwnerIndex() > 0)
+
+	if (InObject.GetOwnerIndex() > 0)
 	{
 		Flags += TEXT("(Clustered) ");
 	}
@@ -1343,7 +1403,7 @@ void FReferenceChainSearch::DumpChain(FReferenceChainSearch::FReferenceChain* Ch
 
 			Out.Logf(ELogVerbosity::Log, TEXT("%s%s %s"),
 				FCString::Spc(Params.Indent),
-				*GetObjectFlags(ReferencerObject),
+				*GetObjectFlags(*ReferencerObject),
 				*ReferencerObject->GetFullName());
 
 			bPostCallbackContinue = ReferenceCallback(Params);
@@ -1406,7 +1466,7 @@ void FReferenceChainSearch::DumpChain(FReferenceChainSearch::FReferenceChain* Ch
 				Out.Logf(ELogVerbosity::Log, TEXT("%s-> %s = %s %s"),
 					FCString::Spc(Params.Indent),
 					*ReferencingPropertyName,
-					*GetObjectFlags(Object),
+					*GetObjectFlags(*Object),
 					*Object->GetFullName());
 			}
 			else if (ReferenceInfo && ReferenceInfo->Type == EReferenceType::AddReferencedObjects)
@@ -1433,7 +1493,7 @@ void FReferenceChainSearch::DumpChain(FReferenceChainSearch::FReferenceChain* Ch
 				Out.Logf(ELogVerbosity::Log, TEXT("%s-> %s::AddReferencedObjects(%s %s)"),
 					FCString::Spc(Params.Indent),
 					*UObjectOrGCObjectName,
-					*GetObjectFlags(Object),
+					*GetObjectFlags(*Object),
 					*Object->GetFullName());
 
 				if (ReferenceInfo->StackFrames.Num())
@@ -1450,7 +1510,7 @@ void FReferenceChainSearch::DumpChain(FReferenceChainSearch::FReferenceChain* Ch
 				Out.Logf(ELogVerbosity::Log, TEXT("%s-> %s = %s %s"),
 					FCString::Spc(Params.Indent),
 					TEXT("Outer Chain"),
-					*GetObjectFlags(Object),
+					*GetObjectFlags(*Object),
 					*Object->GetFullName());
 			}
 			else
@@ -1458,7 +1518,7 @@ void FReferenceChainSearch::DumpChain(FReferenceChainSearch::FReferenceChain* Ch
 				Out.Logf(ELogVerbosity::Log, TEXT("%s-> %s = %s %s"),
 					FCString::Spc(Params.Indent),
 					TEXT("UNKNOWN"),
-					*GetObjectFlags(Object),
+					*GetObjectFlags(*Object),
 					*Object->GetFullName());
 			}
 
@@ -1536,7 +1596,6 @@ FReferenceChainSearch::~FReferenceChainSearch()
 int64 FReferenceChainSearch::GetAllocatedSize() const
 {
 	int64 Size = 0;
-	// Size += ObjectsToFindReferencesTo.GetAllocatedSize();
 	// Size += ObjectInfosToFindReferencesTo.GetAllocatedSize();
 	Size += ReferenceChains.GetAllocatedSize();
 	for (const FReferenceChain* Chain : ReferenceChains)
@@ -1581,17 +1640,17 @@ void FReferenceChainSearch::PerformSearchFromGCSnapshot(TConstArrayView<UObject*
 		}
 	}
 
-	for (TPair<FGCObjectInfo*, TArray<FGCDirectReferenceInfo>*>& Pair : InSnapshot.DirectReferences)
+	for (TPair<FReferenceToken, TArray<FGCDirectReference>*>& Pair : InSnapshot.DirectReferences)
 	{
-		for (const FGCDirectReferenceInfo& RefInfo : *Pair.Value)
+		for (const FGCDirectReference& RefInfo : *Pair.Value)
 		{
-			if (ObjectInfosToFindReferencesTo.Contains(RefInfo.ReferencedObjectInfo))
+			if (RefInfo.Reference.IsGCObjectInfo() && ObjectInfosToFindReferencesTo.Contains(RefInfo.Reference.AsGCObjectInfo()))
 			{
 				UE_LOG(LogReferenceChain,
 					Display,
 					TEXT("Direct ref in GC history from %s to %s"),
-					*Pair.Key->GetPathName(),
-					*RefInfo.ReferencedObjectInfo->GetPathName());
+					*Pair.Key.GetDescription(),
+					*RefInfo.Reference.GetDescription());
 			}
 		}
 	}
@@ -1644,31 +1703,31 @@ int32 FReferenceChainSearch::PrintResults(TFunctionRef<bool(FCallbackParams& Par
 
 	if (NumPrintedChains == 0)
 	{
-		auto LogUnreachableObject = [this](FGCObjectInfo* ObjInfo) {
-			if (ObjInfo->HasAnyInternalFlags(EInternalObjectFlags::GarbageCollectionKeepFlags))
+		auto LogUnreachableObject = [this](const FGCObjectInfo& ObjInfo) {
+			if (ObjInfo.HasAnyInternalFlags(EInternalObjectFlags_RootFlags))
 			{
-				UE_LOG(LogReferenceChain, Log, TEXT("%s%s is not currently reachable but it does have some of EInternalObjectFlags::GarbageCollectionKeepFlags set."), *GetObjectFlags(ObjInfo), *ObjInfo->GetFullName());
+				UE_LOG(LogReferenceChain, Log, TEXT("%s%s is not currently reachable but it does have some of EInternalObjectFlags_RootFlags set."), *GetObjectFlags(ObjInfo), *ObjInfo.GetFullName());
 			}
-			else if (ObjInfo->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS))
+			else if (ObjInfo.HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS))
 			{
-				UE_LOG(LogReferenceChain, Log, TEXT("%s%s is not currently reachable but it does have some of GARBAGE_COLLECTION_KEEPFLAGS set."), *GetObjectFlags(ObjInfo), *ObjInfo->GetFullName());
+				UE_LOG(LogReferenceChain, Log, TEXT("%s%s is not currently reachable but it does have some of GARBAGE_COLLECTION_KEEPFLAGS set."), *GetObjectFlags(ObjInfo), *ObjInfo.GetFullName());
 			}
 			else
 			{
-				UE_LOG(LogReferenceChain, Log, TEXT("%s%s is not currently reachable. Try using GC history to debug transient leaks with 'gc.historysize 1'"), *GetObjectFlags(ObjInfo), *ObjInfo->GetFullName());
+				UE_LOG(LogReferenceChain, Log, TEXT("%s%s is not currently reachable. Try using GC history to debug transient leaks with 'gc.historysize 1'"), *GetObjectFlags(ObjInfo), *ObjInfo.GetFullName());
 			}
 		};
 		if (TargetObject)
 		{
 			FGCObjectInfo* ObjInfo = FGCObjectInfo::FindOrAddInfoHelper(TargetObject, const_cast<TMap<const UObject*, FGCObjectInfo*>&>(ObjectToInfoMap));
 			check(ObjInfo);
-			LogUnreachableObject(ObjInfo);
+			LogUnreachableObject(*ObjInfo);
 		}
 		else
 		{
 			for (FGCObjectInfo* ObjInfo : ObjectInfosToFindReferencesTo)
 			{
-				LogUnreachableObject(ObjInfo);
+				LogUnreachableObject(*ObjInfo);
 			}
 		}
 	}
@@ -1708,7 +1767,7 @@ FString FReferenceChainSearch::GetRootPath(TFunctionRef<bool(FCallbackParams& Pa
 		{
 			FGCObjectInfo ObjectInfo(TargetObject);
 			return FString::Printf(TEXT("%s%s is not currently reachable."),
-				*GetObjectFlags(&ObjectInfo),
+				*GetObjectFlags(ObjectInfo),
 				*ObjectInfo.GetFullName()
 			);
 		}
@@ -1743,7 +1802,7 @@ void FReferenceChainSearch::Cleanup()
 
 static FORCEINLINE bool HasGarbageCollectionKeepFlags(FGCObjectInfo* ObjectInfo)
 {
-	return ObjectInfo && (ObjectInfo->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS) || ObjectInfo->HasAnyInternalFlags(EInternalObjectFlags::GarbageCollectionKeepFlags | EInternalObjectFlags::RootSet));
+	return ObjectInfo && (ObjectInfo->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS) || ObjectInfo->HasAnyInternalFlags(EInternalObjectFlags_RootFlags));
 }
 
 static bool PrintStaleReferenceChainsAndFindReferencingObjects(UObject* ObjectToFindReferencesTo, FReferenceChainSearch& RefChainSearch, FGCObjectInfo*& OutGarbageObject, FGCObjectInfo*& OutReferencingObject, ELogVerbosity::Type Verbosity)

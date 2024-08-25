@@ -1,9 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using EpicGames.Serialization;
-using EpicGames.BuildGraph.Expressions;
-
 namespace EpicGames.BuildGraph
 {
 	/// <summary>
@@ -32,7 +28,7 @@ namespace EpicGames.BuildGraph
 		/// Logical AND
 		/// </summary>
 		BoolAnd = 0x03,
-		
+
 		/// <summary>
 		/// Logical OR
 		/// </summary>
@@ -108,7 +104,7 @@ namespace EpicGames.BuildGraph
 		IntNegate = 0x18,
 
 		/// <summary>
-		/// An integer option between two values (see <see cref="BgIntOption"/>)
+		/// An integer option between two values (see <see cref="Expressions.BgIntOption"/>)
 		/// </summary>
 		IntOption = 0x19,
 
@@ -132,7 +128,7 @@ namespace EpicGames.BuildGraph
 		StrLiteral = 0x21,
 
 		/// <summary>
-		/// Compares two strings for equality, using a <see cref="StringComparison"/> value encoded into the byte stream as an unsigned <see cref="EpicGames.Core.VarInt"/>.
+		/// Compares two strings for equality, using a <see cref="System.StringComparison"/> value encoded into the byte stream as an unsigned <see cref="EpicGames.Core.VarInt"/>.
 		/// </summary>
 		StrCompare = 0x22,
 
@@ -142,7 +138,7 @@ namespace EpicGames.BuildGraph
 		StrConcat = 0x23,
 
 		/// <summary>
-		/// Format a string, similar to <see cref="String.Format(String, Object?[])"/>
+		/// Format a string, similar to <see cref="System.String.Format(System.String, System.Object?[])"/>
 		/// </summary>
 		StrFormat = 0x24,
 
@@ -167,7 +163,7 @@ namespace EpicGames.BuildGraph
 		StrReplace = 0x28,
 
 		/// <summary>
-		/// A string option (see <see cref="BgStringOption"/>)
+		/// A string option (see <see cref="Expressions.BgStringOption"/>)
 		/// </summary>
 		StrOption = 0x29,
 
@@ -260,7 +256,7 @@ namespace EpicGames.BuildGraph
 		ListLazy = 0x4c,
 
 		/// <summary>
-		/// An option providing a list of strings (see <see cref="BgListOption"/>
+		/// An option providing a list of strings (see <see cref="Expressions.BgListOption"/>
 		/// </summary>
 		ListOption = 0x4d,
 

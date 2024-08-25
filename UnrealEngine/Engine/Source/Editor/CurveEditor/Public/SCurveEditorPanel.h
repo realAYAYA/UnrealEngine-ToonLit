@@ -109,6 +109,14 @@ class CURVEEDITOR_API SCurveEditorPanel : public SCompoundWidget
 		return FilterPanel;
 	}
 
+	/**
+	 * Access the tool properties panel
+	 */
+	TSharedPtr<class SCurveEditorToolProperties> GetToolPropertiesPanel() const
+	{
+		return ToolPropertiesPanel;
+	}
+
 	void AddView(TSharedRef<SCurveEditorView> ViewToAdd);
 
 	void RemoveView(TSharedRef<SCurveEditorView> ViewToRemove);

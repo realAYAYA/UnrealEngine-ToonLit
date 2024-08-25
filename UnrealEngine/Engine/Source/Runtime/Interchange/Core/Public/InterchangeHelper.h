@@ -12,4 +12,23 @@ namespace UE::Interchange
 	 * #todo_interchange: Replace with SanitizeObjectName from InterchangeManager.cpp
 	 */
 	INTERCHANGECORE_API FString MakeName(const FString& InName, bool bIsJoint = false);
+
+	class FScopedLambda
+	{
+	public:
+		FScopedLambda(TFunction<void(void)>&& Lambda)
+			: _Lambda(Lambda)
+		{}
+
+		~FScopedLambda()
+		{
+			if (_Lambda)
+			{
+				_Lambda();
+			}
+		}
+
+	private:
+		TFunction<void(void)> _Lambda;
+	};
 };

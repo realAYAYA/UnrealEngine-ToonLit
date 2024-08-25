@@ -9,6 +9,8 @@
 #include "IMediaSamples.h"
 #include "IMediaTracks.h"
 #include "IMediaView.h"
+#include "UObject/WeakObjectPtr.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 class FImgMediaLoader;
 class FImgMediaScheduler;
@@ -16,6 +18,7 @@ class IImgMediaReader;
 class IMediaEventSink;
 class IMediaTextureSample;
 class FImgMediaGlobalCache;
+class UMediaTexture;
 
 
 /**
@@ -108,7 +111,7 @@ protected:
 	virtual bool FetchVideo(TRange<FTimespan> TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample) override;
 	virtual void FlushSamples() override;
 
-	virtual EFetchBestSampleResult FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp> & TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse) override;
+	virtual EFetchBestSampleResult FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp>& TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse, bool bConsistentResult) override;
 	virtual bool PeekVideoSampleTime(FMediaTimeStamp & TimeStamp) override;
 	virtual bool DiscardVideoSamples(const TRange<FMediaTimeStamp>& TimeRange, bool bReverse) override;
 
@@ -183,4 +186,7 @@ private:
 
 	/** True if facade has signaled it uses blocking playback, false if not */
 	bool PlaybackIsBlocking;
+
+	/** Weak pointer to the active media texture. */
+	TWeakObjectPtr<UMediaTexture> MediaTextureWeakPtr;
 };

@@ -268,7 +268,7 @@ class TConcurrentLinearAllocator
 
 				// on the allocating side we only need to do a single atomic to reduce contention with the deletions
 				// this will leave the atomic in a state where it only counts the number of live allocations (before it was based of UINT_MAX)
-				if (Header->NumAllocations.fetch_sub(DeltaCount, std::memory_order_release) == DeltaCount)
+				if (Header->NumAllocations.fetch_sub(DeltaCount, std::memory_order_acq_rel) == DeltaCount)
 				{
 					//if all allocations are already freed we can reuse the Block again
 					Header->~FBlockHeader();
@@ -285,9 +285,10 @@ class TConcurrentLinearAllocator
 		if constexpr (!BlockAllocationTag::InlineBlockAllocation)
 		{
 			static_assert(BlockAllocationTag::BlockSize >= sizeof(FBlockHeader) + sizeof(FAllocationHeader));
-			Header = new (BlockAllocationTag::Allocator::Malloc(BlockAllocationTag::BlockSize, BlockAllocationTag::BlockSize)) FBlockHeader;
+			uint32 BlockAlignment = SupportsFastPath ? BlockAllocationTag::BlockSize : alignof(FBlockHeader);
+			Header = new (BlockAllocationTag::Allocator::Malloc(BlockAllocationTag::BlockSize, BlockAlignment)) FBlockHeader;
 			MemoryTrace_MarkAllocAsHeap(uint64(Header), EMemoryTraceRootHeap::SystemMemory);
-			checkSlow(IsAligned(Header, BlockAllocationTag::BlockSize));
+			checkSlow(IsAligned(Header, BlockAlignment));
 			if constexpr (!SupportsFastPath)
 			{
 				ASAN_POISON_MEMORY_REGION( Header + 1, BlockAllocationTag::BlockSize - sizeof(FBlockHeader) );
@@ -329,9 +330,10 @@ public:
 			if constexpr (BlockAllocationTag::InlineBlockAllocation)
 			{
 				static_assert(BlockAllocationTag::BlockSize >= sizeof(FBlockHeader) + sizeof(FAllocationHeader));
-				Header = new (BlockAllocationTag::Allocator::Malloc(BlockAllocationTag::BlockSize, BlockAllocationTag::BlockSize)) FBlockHeader;
+				uint32 BlockAlignment = SupportsFastPath ? BlockAllocationTag::BlockSize : alignof(FBlockHeader);
+				Header = new (BlockAllocationTag::Allocator::Malloc(BlockAllocationTag::BlockSize, BlockAlignment)) FBlockHeader;
 				MemoryTrace_MarkAllocAsHeap(uint64(Header), EMemoryTraceRootHeap::SystemMemory);
-				checkSlow(IsAligned(Header, BlockAllocationTag::BlockSize));
+				checkSlow(IsAligned(Header, BlockAlignment));
 				if constexpr (!SupportsFastPath)
 				{
 					ASAN_POISON_MEMORY_REGION( Header + 1, BlockAllocationTag::BlockSize - sizeof(FBlockHeader) );
@@ -403,7 +405,7 @@ public:
 				//support for oversized Blocks
 				if (HeaderSize + Size + Alignment > BlockAllocationTag::BlockSize)
 				{
-					FBlockHeader* LargeHeader = new (BlockAllocationTag::Allocator::Malloc(HeaderSize + Size + Alignment, BlockAllocationTag::BlockSize)) FBlockHeader;
+					FBlockHeader* LargeHeader = new (BlockAllocationTag::Allocator::Malloc(HeaderSize + Size + Alignment, alignof(FBlockHeader))) FBlockHeader;
 					MemoryTrace_MarkAllocAsHeap(uint64(LargeHeader), EMemoryTraceRootHeap::SystemMemory);
 					checkSlow(IsAligned(LargeHeader, alignof(FBlockHeader)));
 
@@ -429,7 +431,7 @@ public:
 
 		// on the allocating side we only need to do a single atomic to reduce contention with the deletions
 		// this will leave the atomic in a state where it only counts the number of live allocations (before it was based of UINT_MAX)
-		if (Header->NumAllocations.fetch_sub(DeltaCount, std::memory_order_release) == DeltaCount)
+		if (Header->NumAllocations.fetch_sub(DeltaCount, std::memory_order_acq_rel) == DeltaCount)
 		{
 			//if all allocations are already freed we can reuse the Block again
 			Header->~FBlockHeader();

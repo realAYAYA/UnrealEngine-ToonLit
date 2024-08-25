@@ -2,6 +2,7 @@
 
 #include "TakeMetaData.h"
 #include "TakePreset.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "TakesCoreBlueprintLibrary.h"
 #include "ObjectTools.h"
@@ -269,14 +270,22 @@ void UTakeMetaData::SetFrameRateFromTimecode(bool InFromTimecode)
 }
 
 
-void UTakeMetaData::ExtendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
+void UTakeMetaData::ExtendAssetRegistryTags(FAssetRegistryTagsContext Context) const
 {
-	OutTags.Emplace(AssetRegistryTag_Slate,       Slate,                     FAssetRegistryTag::ETagType::TT_Alphabetical,  FAssetRegistryTag::TD_None);
-	OutTags.Emplace(AssetRegistryTag_TakeNumber,  LexToString(TakeNumber),   FAssetRegistryTag::ETagType::TT_Numerical,     FAssetRegistryTag::TD_None);
-	OutTags.Emplace(AssetRegistryTag_Timestamp, Timestamp.ToString(), FAssetRegistryTag::ETagType::TT_Chronological, FAssetRegistryTag::TD_Date | FAssetRegistryTag::TD_Time);
-	OutTags.Emplace(AssetRegistryTag_TimecodeIn, TimecodeIn.ToString(), FAssetRegistryTag::ETagType::TT_Numerical, FAssetRegistryTag::TD_None);
-	OutTags.Emplace(AssetRegistryTag_TimecodeOut, TimecodeOut.ToString(), FAssetRegistryTag::ETagType::TT_Numerical, FAssetRegistryTag::TD_None);
-	OutTags.Emplace(AssetRegistryTag_Description, Description,               FAssetRegistryTag::ETagType::TT_Alphabetical,  FAssetRegistryTag::TD_None);
+	IMovieSceneMetaDataInterface::ExtendAssetRegistryTags(Context);
+
+	Context.AddTag(FAssetRegistryTag(	AssetRegistryTag_Slate,							Slate,                 
+										FAssetRegistryTag::ETagType::TT_Alphabetical,	FAssetRegistryTag::TD_None));
+	Context.AddTag(FAssetRegistryTag(	AssetRegistryTag_TakeNumber,					LexToString(TakeNumber),
+										FAssetRegistryTag::ETagType::TT_Numerical,		FAssetRegistryTag::TD_None));
+	Context.AddTag(FAssetRegistryTag(	AssetRegistryTag_Timestamp,						Timestamp.ToString(),
+										FAssetRegistryTag::ETagType::TT_Chronological,	FAssetRegistryTag::TD_Date | FAssetRegistryTag::TD_Time));
+	Context.AddTag(FAssetRegistryTag(	AssetRegistryTag_TimecodeIn,					TimecodeIn.ToString(),
+										FAssetRegistryTag::ETagType::TT_Numerical,		FAssetRegistryTag::TD_None));
+	Context.AddTag(FAssetRegistryTag(	AssetRegistryTag_TimecodeOut,					TimecodeOut.ToString(),
+										FAssetRegistryTag::ETagType::TT_Numerical,		FAssetRegistryTag::TD_None));
+	Context.AddTag(FAssetRegistryTag(	AssetRegistryTag_Description,					Description,
+										FAssetRegistryTag::ETagType::TT_Alphabetical,	FAssetRegistryTag::TD_None));
 }
 
 void UTakeMetaData::ExtendAssetRegistryTagMetaData(TMap<FName, FAssetRegistryTagMetadata>& OutMetadata) const

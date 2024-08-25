@@ -109,7 +109,7 @@ inline FScreenPassTextureSlice::FScreenPassTextureSlice(FRDGTextureSRVRef InText
 {
 	if (TextureSRV && TextureSRV->Desc.Texture->Desc.IsTextureArray())
 	{
-		check(TextureSRV->Desc.NumArraySlices == 1);
+		check(TextureSRV->Desc.NumArraySlices > 0);
 	}
 }
 
@@ -388,6 +388,15 @@ inline FScreenPassTextureInput GetScreenPassTextureInput(FScreenPassTexture Text
 	FScreenPassTextureInput Input;
 	Input.Viewport = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(TexturePair));
 	Input.Texture = TexturePair.Texture;
+	Input.Sampler = Sampler;
+	return Input;
+}
+
+inline FScreenPassTextureSliceInput GetScreenPassTextureInput(FScreenPassTextureSlice TexturePair, FRHISamplerState* Sampler)
+{
+	FScreenPassTextureSliceInput Input;
+	Input.Viewport = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(TexturePair));
+	Input.Texture = TexturePair.TextureSRV;
 	Input.Sampler = Sampler;
 	return Input;
 }

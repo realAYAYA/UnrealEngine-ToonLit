@@ -11,40 +11,51 @@
 #include "DMXControlConsoleFaderBase.h"
 #include "DMXControlConsoleRawFader.h"
 #include "IPropertyUtilities.h"
+#include "Layouts/Controllers/DMXControlConsoleElementController.h"
 #include "Models/DMXControlConsoleEditorModel.h"
 #include "PropertyHandle.h"
+#include "ScopedTransaction.h"
 
 
 #define LOCTEXT_NAMESPACE "DMXControlConsoleFaderDetails"
 
-namespace UE::DMXControlConsole
+namespace UE::DMX::Private
 {
+	FDMXControlConsoleFaderDetails::FDMXControlConsoleFaderDetails(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel)
+		: WeakEditorModel(InWeakEditorModel)
+	{}
+
+	TSharedRef<IDetailCustomization> FDMXControlConsoleFaderDetails::MakeInstance(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel)
+	{
+		return MakeShared<FDMXControlConsoleFaderDetails>(InWeakEditorModel);
+	}
+
 	void FDMXControlConsoleFaderDetails::CustomizeDetails(IDetailLayoutBuilder& InDetailLayout)
 	{
 		PropertyUtilities = InDetailLayout.GetPropertyUtilities();
 
 		// Value property handle
-		const TSharedPtr<IPropertyHandle> ValueHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetValuePropertyName());
+		const TSharedRef<IPropertyHandle> ValueHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetValuePropertyName());
 		ValueHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &FDMXControlConsoleFaderDetails::OnSelectedFadersValueChanged));
 
 		// MinValue property handle
-		const TSharedPtr<IPropertyHandle> MinValueHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetMinValuePropertyName(), UDMXControlConsoleFaderBase::StaticClass());
+		const TSharedRef<IPropertyHandle> MinValueHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetMinValuePropertyName(), UDMXControlConsoleFaderBase::StaticClass());
 		MinValueHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &FDMXControlConsoleFaderDetails::OnSelectedFadersMinValueChanged));
 
 		// MaxValue property handle
-		const TSharedPtr<IPropertyHandle> MaxValueHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetMaxValuePropertyName(), UDMXControlConsoleFaderBase::StaticClass());
+		const TSharedRef<IPropertyHandle> MaxValueHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetMaxValuePropertyName(), UDMXControlConsoleFaderBase::StaticClass());
 		MaxValueHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &FDMXControlConsoleFaderDetails::OnSelectedFadersMaxValueChanged));
 
 		// UniverseID property handle
-		const TSharedPtr<IPropertyHandle> UniverseIDHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetUniverseIDPropertyName(), UDMXControlConsoleFaderBase::StaticClass());
+		const TSharedRef<IPropertyHandle> UniverseIDHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetUniverseIDPropertyName(), UDMXControlConsoleFaderBase::StaticClass());
 		UniverseIDHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &FDMXControlConsoleFaderDetails::OnSelectedFadersUniverseIDChanged));
 
 		// StartingAddress property handle
-		const TSharedPtr<IPropertyHandle> StartingAddressHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetStartingAddressPropertyName(), UDMXControlConsoleFaderBase::StaticClass());
+		const TSharedRef<IPropertyHandle> StartingAddressHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetStartingAddressPropertyName(), UDMXControlConsoleFaderBase::StaticClass());
 		StartingAddressHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &FDMXControlConsoleFaderDetails::OnSelectedFadersDataTypeChanged));
 
 		// DataType property handle
-		const TSharedPtr<IPropertyHandle> DataTypeHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetDataTypePropertyName(), UDMXControlConsoleFaderBase::StaticClass());
+		const TSharedRef<IPropertyHandle> DataTypeHandle = InDetailLayout.GetProperty(UDMXControlConsoleFaderBase::GetDataTypePropertyName(), UDMXControlConsoleFaderBase::StaticClass());
 		DataTypeHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &FDMXControlConsoleFaderDetails::OnSelectedFadersDataTypeChanged));
 		if (!HasOnlyRawFadersSelected())
 		{
@@ -74,54 +85,49 @@ namespace UE::DMXControlConsole
 		}
 	}
 
-	void FDMXControlConsoleFaderDetails::ForceRefresh() const
-	{
-		if (!PropertyUtilities.IsValid())
-		{
-			return;
-		}
-
-		PropertyUtilities->ForceRefresh();
-	}
-
 	bool FDMXControlConsoleFaderDetails::HasOnlyRawFadersSelected() const
 	{
-		UDMXControlConsoleEditorModel* EditorConsoleModel = GetMutableDefault<UDMXControlConsoleEditorModel>();
-		const TSharedRef<FDMXControlConsoleEditorSelection> SelectionHandler = EditorConsoleModel->GetSelectionHandler();
-		TArray<TWeakObjectPtr<UObject>> SelectedFaderObjects = SelectionHandler->GetSelectedFaders();
+		TArray<UDMXControlConsoleFaderBase*> ValidSelectedFaders = GetValidFadersBeingEdited();
 		// Remove Faders which don't match filtering
-		SelectedFaderObjects.RemoveAll([](const TWeakObjectPtr<UObject>& SelectedFaderObject)
+		ValidSelectedFaders.RemoveAll([](const UDMXControlConsoleFaderBase* SelectedFader)
 			{
-				const UDMXControlConsoleFaderBase* SelectedFader = Cast<UDMXControlConsoleFaderBase>(SelectedFaderObject);
 				return SelectedFader && !SelectedFader->IsMatchingFilter();
 			});
 
-
-		auto AreAllRawFadersLambda = [](const TWeakObjectPtr<UObject>& SelectedFaderObject)
-		{
-			const UDMXControlConsoleRawFader* SelectedRawFader = Cast<UDMXControlConsoleRawFader>(SelectedFaderObject);
-			if (SelectedRawFader)
+		const bool bAreAllRawFaders = Algo::AllOf(ValidSelectedFaders, 
+			[](const UDMXControlConsoleFaderBase* SelectedFader)
 			{
-				return true;
-			}
+				return IsValid(Cast<UDMXControlConsoleRawFader>(SelectedFader));
+			});
 
-			return false;
-		};
-
-		return Algo::AllOf(SelectedFaderObjects, AreAllRawFadersLambda);
+		return bAreAllRawFaders;
 	}
 
 	void FDMXControlConsoleFaderDetails::OnSelectedFadersValueChanged() const
 	{
 		for (UDMXControlConsoleFaderBase* Fader : GetValidFadersBeingEdited())
 		{
-			if (!Fader || !Fader->IsMatchingFilter())
+			if (!Fader)
 			{
 				continue;
 			}
 
 			const uint32 CurrentValue = Fader->GetValue();
-			Fader->SetValue(CurrentValue);
+			Fader->SetValue(CurrentValue); 
+			
+			UDMXControlConsoleElementController* ElementController = Cast<UDMXControlConsoleElementController>(Fader->GetElementController());
+			if (!ElementController)
+			{
+				continue;
+			}
+
+			const uint8 NumChannels = static_cast<uint8>(Fader->GetDataType()) + 1;
+			const float ValueRange = FMath::Pow(2.f, 8.f * NumChannels) - 1;
+			const float NormalizedValue = CurrentValue / ValueRange;
+
+			ElementController->PreEditChange(UDMXControlConsoleElementController::StaticClass()->FindPropertyByName(UDMXControlConsoleElementController::GetValuePropertyName()));
+			ElementController->SetValue(NormalizedValue);
+			ElementController->PostEditChange();
 		}
 	}
 
@@ -129,13 +135,27 @@ namespace UE::DMXControlConsole
 	{
 		for (UDMXControlConsoleFaderBase* Fader : GetValidFadersBeingEdited())
 		{
-			if (!Fader || !Fader->IsMatchingFilter())
+			if (!Fader)
 			{
 				continue;
 			}
 
 			const uint32 CurrentMinValue = Fader->GetMinValue();
 			Fader->SetMinValue(CurrentMinValue);
+
+			UDMXControlConsoleElementController* ElementController = Cast<UDMXControlConsoleElementController>(Fader->GetElementController());
+			if (!ElementController)
+			{
+				continue;
+			}
+
+			const uint8 NumChannels = static_cast<uint8>(Fader->GetDataType()) + 1;
+			const float ValueRange = FMath::Pow(2.f, 8.f * NumChannels) - 1;
+			const float NormalizedMinValue = CurrentMinValue / ValueRange;
+
+			ElementController->PreEditChange(UDMXControlConsoleElementController::StaticClass()->FindPropertyByName(UDMXControlConsoleElementController::GetMinValuePropertyName()));
+			ElementController->SetMinValue(NormalizedMinValue);
+			ElementController->PostEditChange();
 		}
 	}
 
@@ -143,13 +163,27 @@ namespace UE::DMXControlConsole
 	{
 		for (UDMXControlConsoleFaderBase* Fader : GetValidFadersBeingEdited())
 		{
-			if (!Fader || !Fader->IsMatchingFilter())
+			if (!Fader)
 			{
 				continue;
 			}
 
 			const uint32 CurrentMaxValue = Fader->GetMaxValue();
 			Fader->SetMaxValue(CurrentMaxValue);
+
+			UDMXControlConsoleElementController* ElementController = Cast<UDMXControlConsoleElementController>(Fader->GetElementController());
+			if (!ElementController)
+			{
+				continue;
+			}
+
+			const uint8 NumChannels = static_cast<uint8>(Fader->GetDataType()) + 1;
+			const float ValueRange = FMath::Pow(2.f, 8.f * NumChannels) - 1;
+			const float NormalizedMaxValue = CurrentMaxValue / ValueRange;
+
+			ElementController->PreEditChange(UDMXControlConsoleElementController::StaticClass()->FindPropertyByName(UDMXControlConsoleElementController::GetMaxValuePropertyName()));
+			ElementController->SetMaxValue(NormalizedMaxValue);
+			ElementController->PostEditChange();
 		}
 	}
 
@@ -157,7 +191,7 @@ namespace UE::DMXControlConsole
 	{
 		for (UDMXControlConsoleFaderBase* Fader : GetValidFadersBeingEdited())
 		{
-			if (!Fader || !Fader->IsMatchingFilter())
+			if (!Fader)
 			{
 				continue;
 			}
@@ -173,7 +207,7 @@ namespace UE::DMXControlConsole
 	{
 		for (UDMXControlConsoleFaderBase* Fader : GetValidFadersBeingEdited())
 		{
-			if (!Fader || !Fader->IsMatchingFilter())
+			if (!Fader)
 			{
 				continue;
 			}
@@ -184,6 +218,19 @@ namespace UE::DMXControlConsole
 			Fader->SetMaxValue(MaxValue);
 
 			Fader->PostEditChange();
+
+			UDMXControlConsoleElementController* ElementController = Cast<UDMXControlConsoleElementController>(Fader->GetElementController());
+			if (!ElementController)
+			{
+				continue;
+			}
+
+			ElementController->PreEditChange(UDMXControlConsoleElementController::StaticClass()->FindPropertyByName(UDMXControlConsoleElementController::GetMaxValuePropertyName()));
+
+			constexpr float NormalizedMaxValue = 1.f;
+			ElementController->SetMaxValue(NormalizedMaxValue);
+
+			ElementController->PostEditChange();
 		}
 	}
 
@@ -192,7 +239,7 @@ namespace UE::DMXControlConsole
 		for (UDMXControlConsoleFaderBase* Fader : GetValidFadersBeingEdited())
 		{
 			UDMXControlConsoleRawFader* RawFader = Cast<UDMXControlConsoleRawFader>(Fader);
-			if (!RawFader || !RawFader->IsMatchingFilter())
+			if (!RawFader)
 			{
 				continue;
 			}
@@ -207,16 +254,38 @@ namespace UE::DMXControlConsole
 		for (UDMXControlConsoleFaderBase* Fader : GetValidFadersBeingEdited())
 		{
 			UDMXControlConsoleRawFader* RawFader = Cast<UDMXControlConsoleRawFader>(Fader);
-			if (!RawFader || !RawFader->IsMatchingFilter())
+			if (!RawFader)
 			{
 				continue;
 			}
 
+			RawFader->PreEditChange(nullptr);
 			const EDMXFixtureSignalFormat CurrentDataType = RawFader->GetDataType();
 			RawFader->SetDataType(CurrentDataType);
+			const uint32 CurrentMaxValue = RawFader->GetMaxValue();
+			RawFader->SetMaxValue(CurrentMaxValue);
 			const uint32 CurrentValue = RawFader->GetValue();
 			RawFader->SetValue(CurrentValue);
+			RawFader->PostEditChange();
+
+			UDMXControlConsoleElementController* ElementController = Cast<UDMXControlConsoleElementController>(RawFader->GetElementController());
+			if (!ElementController)
+			{
+				continue;
+			}
+
+			const uint8 NumChannels = static_cast<uint8>(CurrentDataType) + 1;
+			const float ValueRange = FMath::Pow(2.f, 8.f * NumChannels) - 1;
+			const float NormalizedMaxValue = CurrentMaxValue / ValueRange;
+			const float NormalizedValue = CurrentValue / ValueRange;
+
+			ElementController->PreEditChange(nullptr);
+			ElementController->SetMaxValue(NormalizedMaxValue);
+			ElementController->SetValue(NormalizedValue);
+			ElementController->PostEditChange();
 		}
+
+		PropertyUtilities->RequestRefresh();
 	}
 
 	uint32 FDMXControlConsoleFaderDetails::GetMaxValueForSignalFormat(EDMXFixtureSignalFormat SignalFormat) const
@@ -254,7 +323,8 @@ namespace UE::DMXControlConsole
 			[](TWeakObjectPtr<UObject> Object)
 			{
 				return Cast<UDMXControlConsoleFaderBase>(Object.Get());
-		});
+			}
+		);
 
 		return Result;
 	}

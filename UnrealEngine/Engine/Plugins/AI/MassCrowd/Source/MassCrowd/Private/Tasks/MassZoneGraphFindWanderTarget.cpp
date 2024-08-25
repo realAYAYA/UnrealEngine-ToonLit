@@ -10,6 +10,8 @@
 #include "MassCrowdSubsystem.h"
 #include "MassStateTreeExecutionContext.h"
 #include "StateTreeLinker.h"
+#include "MassDebugger.h"
+
 
 FMassZoneGraphFindWanderTarget::FMassZoneGraphFindWanderTarget()
 {

@@ -2,7 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using Horde.Server.Issues;
+using EpicGames.Horde.Issues;
 using Horde.Server.Utilities;
 
 namespace Horde.Server.Jobs.Graphs

@@ -6,9 +6,6 @@
 
 #include "CustomizableObjectNodeFloatSwitch.generated.h"
 
-class FArchive;
-class UObject;
-
 
 UCLASS()
 class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeFloatSwitch : public UCustomizableObjectNodeSwitchBase
@@ -16,14 +13,9 @@ class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeFloatSwitch : public U
 public:
 	GENERATED_BODY()
 
-	// UObject interface
-	virtual void Serialize(FArchive& Ar) override;
-	
+	// UCustomizableObjectNode interface
+	virtual void BackwardsCompatibleFixup() override;
+
 	// UCustomizableObjectNodeSwitchBase interface
-	FString GetOutputPinName() const override;
-
-	FName GetCategory() const override;
-
-	// Own interface
-	FString GetPinPrefix() const;
+	virtual FName GetCategory() const override;
 };

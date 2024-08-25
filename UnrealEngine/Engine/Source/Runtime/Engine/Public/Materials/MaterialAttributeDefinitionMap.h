@@ -140,6 +140,9 @@ public:
 	/** Returns the first custom attribute definition that has the specificed attribute name */
 	static ENGINE_API const FMaterialCustomOutputAttributeDefintion* GetCustomAttribute(const FString& AttributeName);
 
+	/** Returns the first custom attribute definition that has the specificed attribute AttributeID */
+	static ENGINE_API const FMaterialCustomOutputAttributeDefintion* GetCustomAttribute(const FGuid& AttributeID);
+
 	/** Returns a list of registered custom attributes */
 	static ENGINE_API void GetCustomAttributeList(TArray<FMaterialCustomOutputAttributeDefintion>& CustomAttributeList);
 

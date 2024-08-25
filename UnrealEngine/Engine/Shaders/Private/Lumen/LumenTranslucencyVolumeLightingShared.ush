@@ -14,11 +14,19 @@ uint TranslucencyGIGridPixelSizeShift;
 uint UseJitter;
 float3 FrameJitterOffset; 
 float4x4 UnjitteredClipToTranslatedWorld;    
+float GridCenterOffsetFromDepthBuffer;
+float GridCenterOffsetThresholdToAcceptDepthBufferOffset;
 
 float ComputeDepthFromZSlice(float ZSlice)
 {
 	float SliceDepth = (exp2(ZSlice / TranslucencyGIGridZParams.z) - TranslucencyGIGridZParams.y) / TranslucencyGIGridZParams.x;
 	return SliceDepth;
+}
+
+float ComputeZSliceFromDepth(float SliceDepth)
+{
+	float ZSlice = log2(SliceDepth * TranslucencyGIGridZParams.x + TranslucencyGIGridZParams.y) * TranslucencyGIGridZParams.z;
+	return ZSlice;
 }
 
 float3 ComputeCellTranslatedWorldPosition(uint3 GridCoordinate, float3 CellOffset, out float SceneDepth)
@@ -41,7 +49,7 @@ float3 ComputeCellTranslatedWorldPosition(uint3 GridCoordinate, float3 CellOffse
 
 float3 ComputeCellWorldPosition(uint3 GridCoordinate, float3 CellOffset)
 {
-	return ComputeCellTranslatedWorldPosition(GridCoordinate, CellOffset) - LWCHackToFloat(PrimaryView.PreViewTranslation);
+	return ComputeCellTranslatedWorldPosition(GridCoordinate, CellOffset) - DFHackToFloat(PrimaryView.PreViewTranslation);
 }
 
 float3 ComputeTranslucencyGIVolumeUV(float3 WorldPosition, float4x4 WorldToClip)

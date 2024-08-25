@@ -13,6 +13,8 @@
 #include "TextureDefines.generated.h"
 #endif // WITH_ENGINE
 
+enum EPixelFormat : uint8;
+
 /**
  * @warning: if this is changed:
  *     update BaseEngine.ini [SystemSettings]
@@ -168,7 +170,16 @@ namespace ETexturePowerOfTwoSetting
 		PadToPowerOfTwo,
 
 		/** Pad the texture to the nearest square power of two size. */
-		PadToSquarePowerOfTwo
+		PadToSquarePowerOfTwo,
+
+		/** Stretch the texture to the nearest power of two size. */
+		StretchToPowerOfTwo,
+
+		/** Stretch the texture to the nearest square power of two size. */
+		StretchToSquarePowerOfTwo,
+
+		/** Resize the texture to specific user defined resolution. */
+		ResizeToSpecificResolution
 
 		// Note: These are serialized as as raw values in the texture DDC key, so additional entries
 		// should be added at the bottom; reordering or removing entries will require changing the GUID
@@ -196,6 +207,13 @@ enum class ETextureMipLoadOptions : uint8
 	AllMips,
 	// Load only the first mip.
 	OnlyFirstMip,
+};
+
+UENUM()
+enum class ETextureAvailability : uint8
+{
+	GPU,
+	CPU
 };
 
 UENUM()
@@ -305,6 +323,7 @@ enum ETextureSourceCompressionFormat : int
 	TSCF_None	UMETA(DisplayName = "None"),
 	TSCF_PNG	UMETA(DisplayName = "PNG"),
 	TSCF_JPEG	UMETA(DisplayName = "JPEG"),
+	TSCF_UEJPEG	UMETA(DisplayName = "UE JPEG"),
 
 	TSCF_MAX
 };
@@ -338,6 +357,22 @@ enum ETextureSourceFormat : int
 	TSF_RGBE8 UE_DEPRECATED(5.1,"Legacy ETextureSourceFormat not supported, use BGRE8") = TSF_RGBE8_DEPRECATED
 };
 
+/**
+* Information about a texture source format
+*/
+struct FTextureSourceFormatInfo
+{
+	FTextureSourceFormatInfo() = delete;
+	FTextureSourceFormatInfo(ETextureSourceFormat InTextureSourceFormat, EPixelFormat InPixelFormat, const TCHAR* InName, int32 InNumComponents, int32 InBytesPerPixel);
+
+	ETextureSourceFormat TextureSourceFormat;
+	EPixelFormat PixelFormat;
+	const TCHAR* Name;
+	int32 NumComponents;
+	int32 BytesPerPixel;
+};
+extern ENGINE_API FTextureSourceFormatInfo GTextureSourceFormats[TSF_MAX];		// Maps members of ETextureSourceFormat to a FTextureSourceFormatInfo describing the format.
+
 // This needs to be mirrored in EditorFactories.cpp.
 // TC_EncodedReflectionCapture is no longer used and could be deleted
 UENUM()
@@ -367,7 +402,7 @@ enum TextureCompressionSettings : int
 UENUM()
 enum class ETextureSourceEncoding : uint8
 {
-	TSE_None		= 0 UMETA(DisplayName = "Default", ToolTip = "The source encoding is assumed to match the state of the sRGB checkbox parameter."),
+	TSE_None		= 0 UMETA(DisplayName = "Default", ToolTip = "The source encoding is not overridden."),
 	TSE_Linear		= 1 UMETA(DisplayName = "Linear", ToolTip = "The source encoding is considered linear (before optional sRGB encoding is applied)."),
 	TSE_sRGB		= 2 UMETA(DisplayName = "sRGB", ToolTip = "sRGB source encoding to be linearized (before optional sRGB encoding is applied)."),
 	TSE_ST2084		= 3 UMETA(DisplayName = "ST 2084/PQ", ToolTip = "SMPTE ST 2084/PQ source encoding to be linearized (before optional sRGB encoding is applied)."),

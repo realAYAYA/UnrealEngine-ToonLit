@@ -333,7 +333,7 @@ void FCsvProfilerAnalyzer::HandleMarker(const FOnEventContext& Context, FThreadS
 		{
 			if (ThreadState.ExclusiveMarkerStack.Num() > 0)
 			{
-				ThreadState.ExclusiveMarkerStack.Pop(false);
+				ThreadState.ExclusiveMarkerStack.Pop(EAllowShrinking::No);
 				if (ThreadState.ExclusiveMarkerStack.Num() > 0)
 				{
 					// Insert an artificial begin marker to resume the marker on the stack at the same timestamp
@@ -372,7 +372,7 @@ void FCsvProfilerAnalyzer::HandleMarker(const FOnEventContext& Context, FThreadS
 				if (ThreadState.MarkerStack[j].StatId == Marker.StatId) // Note: only works with scopes!
 				{
 					StartMarker = ThreadState.MarkerStack[j];
-					ThreadState.MarkerStack.RemoveAt(j, 1, false);
+					ThreadState.MarkerStack.RemoveAt(j, 1, EAllowShrinking::No);
 					bFoundStart = true;
 					break;
 				}

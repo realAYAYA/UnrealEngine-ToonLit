@@ -73,6 +73,17 @@ namespace GLTF
 		return GetUnsignedInt(Object, Name, INDEX_NONE);
 	}
 
+	inline bool GetIndex(const FJsonObject& Object, const TCHAR* Name, uint32& Value)
+	{
+		if (Object.HasTypedField<EJson::Number>(Name))
+		{
+			Value = Object.GetIntegerField(Name);
+			return true;
+		}
+
+		return false;
+	}
+
 	inline float GetScalar(const FJsonObject& Object, const TCHAR* Name, float DefaultValue = 0.0f)
 	{
 		if (Object.HasTypedField<EJson::Number>(Name))

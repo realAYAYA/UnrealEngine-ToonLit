@@ -9,6 +9,7 @@
 #include "Animation/AnimSequence.h"
 #include "AnimGraphNode_SequenceEvaluator.h"
 
+#include "AnimGraphNodeBinding.h"
 #include "BlueprintNodeSpawner.h"
 #include "EditorCategoryUtils.h"
 #include "IAnimBlueprintNodeOverrideAssetsContext.h"
@@ -61,7 +62,7 @@ FText UAnimGraphNode_SequenceEvaluator::GetMenuCategory() const
 FText UAnimGraphNode_SequenceEvaluator::GetNodeTitle(ENodeTitleType::Type TitleType) const
 {
 	UEdGraphPin* SequencePin = FindPin(GET_MEMBER_NAME_STRING_CHECKED(FAnimNode_SequenceEvaluator, Sequence));
-	return GetNodeTitleHelper(TitleType, SequencePin, LOCTEXT("PlayerDesc", "Sequence Evaluator"));
+	return GetNodeTitleHelper(TitleType, SequencePin, Node.ShouldUseExplicitFrame() ? LOCTEXT("PlayerDescByFrame", "Sequence Evaluator (by frame)") :  LOCTEXT("PlayerDescByTime", "Sequence Evaluator (by time)"));
 }
 
 FSlateIcon UAnimGraphNode_SequenceEvaluator::GetIconAndTint(FLinearColor& OutColor) const
@@ -133,6 +134,37 @@ void UAnimGraphNode_SequenceEvaluator::CopySettingsFromAnimationAsset(UAnimation
 	if (UAnimSequenceBase* Seq = Cast<UAnimSequence>(Asset))
 	{
 		Node.SetShouldLoop(Seq->bLoop);
+	}
+}
+
+void UAnimGraphNode_SequenceEvaluator::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	if( PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(FAnimNode_SequenceEvaluator, bUseExplicitFrame))
+	{
+		UEdGraphPin** Pin = nullptr;
+		if (Node.bUseExplicitFrame)
+		{
+			Pin = Pins.FindByPredicate([](const UEdGraphPin* InPin)
+			{
+				return InPin->PinName == GET_MEMBER_NAME_STRING_CHECKED(FAnimNode_SequenceEvaluator, ExplicitTime);
+			});
+		}
+		else
+		{
+			Pin = Pins.FindByPredicate([](const UEdGraphPin* InPin)
+			{
+				return InPin->PinName == GET_MEMBER_NAME_STRING_CHECKED(FAnimNode_SequenceEvaluator, ExplicitFrame);
+			});			
+		}
+
+		if (Pin)
+		{			
+			Modify();
+			(*Pin)->BreakAllPinLinks();
+			RemoveBindings((*Pin)->PinName);
+		}
 	}
 }
 

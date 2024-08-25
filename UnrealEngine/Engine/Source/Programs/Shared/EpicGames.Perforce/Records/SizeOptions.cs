@@ -15,29 +15,29 @@ namespace EpicGames.Perforce
 		/// </summary>
 		None = 0,
 
-        /// <summary>
-        /// For each file, list all revisions within a specified revision range, rather than only the highest revision in the range.
-        /// </summary>
-        AllRevisions = 1,
+		/// <summary>
+		/// For each file, list all revisions within a specified revision range, rather than only the highest revision in the range.
+		/// </summary>
+		AllRevisions = 1,
 
-        /// <summary>
-        /// Display files in archive depots.
-        /// </summary>
-        LimitToArchiveDepots = 2,
+		/// <summary>
+		/// Display files in archive depots.
+		/// </summary>
+		LimitToArchiveDepots = 2,
 
-        /// <summary>
-        /// Calculate the sum of the file sizes for the specified file argument.
-        /// </summary>
-        CalculateSum = 4,
+		/// <summary>
+		/// Calculate the sum of the file sizes for the specified file argument.
+		/// </summary>
+		CalculateSum = 4,
 
-        /// <summary>
-        /// Display size information for shelved files only. If you use this option, revision specifications are not permitted.
-        /// </summary>
-        DisplayForShelvedFilesOnly = 8,
+		/// <summary>
+		/// Display size information for shelved files only. If you use this option, revision specifications are not permitted.
+		/// </summary>
+		DisplayForShelvedFilesOnly = 8,
 
-        /// <summary>
-        /// When calculating size information, exclude lazy copies.
-        /// </summary>
-        ExcludeLazyCopies = 16,
-    }
+		/// <summary>
+		/// When calculating size information, exclude lazy copies.
+		/// </summary>
+		ExcludeLazyCopies = 16,
+	}
 }

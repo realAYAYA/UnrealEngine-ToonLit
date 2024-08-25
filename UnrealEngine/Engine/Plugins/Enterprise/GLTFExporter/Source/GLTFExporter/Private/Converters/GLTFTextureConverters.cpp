@@ -3,7 +3,7 @@
 #include "Converters/GLTFTextureConverters.h"
 #include "Tasks/GLTFDelayedTextureTasks.h"
 
-FGLTFJsonTexture* FGLTFTexture2DConverter::Convert(const UTexture2D* Texture2D, bool bToSRGB)
+FGLTFJsonTexture* FGLTFTexture2DConverter::Convert(const UTexture2D* Texture2D, bool bToSRGB, TextureAddress WrapS, TextureAddress WrapT)
 {
 	if (Builder.ExportOptions->TextureImageFormat == EGLTFTextureImageFormat::None)
 	{
@@ -11,7 +11,7 @@ FGLTFJsonTexture* FGLTFTexture2DConverter::Convert(const UTexture2D* Texture2D, 
 	}
 
 	FGLTFJsonTexture* JsonTexture = Builder.AddTexture();
-	Builder.ScheduleSlowTask<FGLTFDelayedTexture2DTask>(Builder, Texture2D, bToSRGB, JsonTexture);
+	Builder.ScheduleSlowTask<FGLTFDelayedTexture2DTask>(Builder, Texture2D, bToSRGB, JsonTexture, WrapS, WrapT);
 	return JsonTexture;
 }
 

@@ -24,8 +24,7 @@ void FD3D12CommandList::UpdateResidency(TConstArrayView<FD3D12ResidencyHandle*> 
 #if ENABLE_RESIDENCY_MANAGEMENT
 	for (FD3D12ResidencyHandle* Handle : Handles)
 	{
-		check(Handle);
-		if (D3DX12Residency::IsInitialized(*Handle))
+		if (D3DX12Residency::IsInitialized(Handle))
 		{
 			check(Device->GetGPUMask() == Handle->GPUObject->GetGPUMask());
 			D3DX12Residency::Insert(*ResidencySet, *Handle);
@@ -586,7 +585,7 @@ bool FD3D12ContextCommon::TransitionResource(FD3D12Resource* Resource, D3D12_RES
 	{
 		// Slow path. Want to transition the entire resource (with multiple subresources). But they aren't in the same state.
 
-		const uint8 SubresourceCount = Resource->GetSubresourceCount();
+		const uint32 SubresourceCount = Resource->GetSubresourceCount();
 		for (uint32 SubresourceIndex = 0; SubresourceIndex < SubresourceCount; SubresourceIndex++)
 		{
 			bool bForceInAfterState = true;

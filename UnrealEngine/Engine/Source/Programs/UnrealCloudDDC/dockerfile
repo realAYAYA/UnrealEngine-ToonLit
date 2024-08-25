@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.2
 
-FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
 WORKDIR /app
 
@@ -12,6 +12,7 @@ COPY Programs/Shared/EpicGames.AspNet/*.csproj ./Programs/Shared/EpicGames.AspNe
 COPY Programs/Shared/EpicGames.Horde/*.csproj ./Programs/Shared/EpicGames.Horde/
 COPY Programs/Shared/EpicGames.IoHash/*.csproj ./Programs/Shared/EpicGames.IoHash/
 COPY Programs/Shared/EpicGames.Oodle/*.csproj ./Programs/Shared/EpicGames.Oodle/
+COPY Programs/Shared/EpicGames.OIDC/*.csproj ./Programs/Shared/EpicGames.OIDC/
 COPY Programs/Shared/EpicGames.Serialization/*.csproj ./Programs/Shared/EpicGames.Serialization/
 COPY Programs/UnrealCloudDDC/Jupiter.Common/*.csproj ./Programs/UnrealCloudDDC/Jupiter.Common/
 COPY Programs/UnrealCloudDDC/Jupiter/*.csproj ./Programs/UnrealCloudDDC/Jupiter/
@@ -26,10 +27,12 @@ COPY Programs/UnrealCloudDDC/ Programs/UnrealCloudDDC/
 RUN dotnet publish -c Release -o out Programs/UnrealCloudDDC/Jupiter/Jupiter.csproj
 
 # setup the base version of UnrealCloudDDC
-FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS unreal-cloud-ddc-base
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS unreal-cloud-ddc-base
 WORKDIR /app
 COPY --from=build /app/out ./
+COPY Programs/UnrealCloudDDC/ThirdParty/license.txt license.txt
 LABEL org.opencontainers.image.documentation https://github.com/EpicGames/UnrealEngine/blob/ue5-main/Engine/Source/Programs/UnrealCloudDDC/README.md
+LABEL org.opencontainers.image.licenses "MIT"
 
 # create the actual deployable slim image
 FROM unreal-cloud-ddc-base AS unreal-cloud-ddc-slim
@@ -50,8 +53,8 @@ RUN apt-get update &&\
     rm -rf /var/lib/apt/lists/* &&\
     curl -sSL https://aka.ms/getvsdbgsh | /bin/sh /dev/stdin -v latest -l /vsdbg
 # Add the datadog tracer
-RUN curl -LO https://github.com/DataDog/dd-trace-dotnet/releases/download/v2.19.0/datadog-dotnet-apm_2.19.0_amd64.deb
-RUN dpkg -i ./datadog-dotnet-apm_2.19.0_amd64.deb
+RUN curl -LO https://github.com/DataDog/dd-trace-dotnet/releases/download/v2.46.0/datadog-dotnet-apm_2.46.0_amd64.deb
+RUN dpkg -i ./datadog-dotnet-apm_2.46.0_amd64.deb
 RUN /opt/datadog/createLogPath.sh
 
 # datadog APM requirments

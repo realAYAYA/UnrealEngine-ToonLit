@@ -16,9 +16,11 @@
 	<Property Name="IsPreflight" Value="false"/>
 	<Property Name="IsPreflight" Value="true" If="'$(PreflightChange)' != '' And $(SetPreflightFlag)"/>
 	<Property Name="PreflightSuffix" Value=""/>
-	<Property Name="PreflightSuffix" Value="-PF-$(PreflightChange)-$(UE_HORDE_JOBID)" If="$(IsPreflight)"/>
+	<Property Name="PreflightSuffix" Value="-PF-$(PreflightChange)-$(UE_HORDE_JOBID:-6)" If="$(IsPreflight)"/>
 	<Property Name="CL-String" Value="CL-$(Change)$(PreflightSuffix)"/>
 	<Property Name="BuildNamePath" Value="$(ProjectName)-$(CL-String)"/>
 	<Property Name="BuildVersion" Value="$(ProjectName)-CL-$(Change)"/>
+
+	<Include Script="SharedProperties.xml" />
 
 </BuildGraph>

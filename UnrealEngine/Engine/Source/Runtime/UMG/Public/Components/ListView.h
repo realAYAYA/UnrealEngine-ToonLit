@@ -123,6 +123,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = ListView)
 	UMG_API void NavigateToIndex(int32 Index);
 
+	UMG_API virtual UObject* GetListObjectFromEntry(UUserWidget& EntryWidget) override;
+
 protected:
 	UMG_API virtual void OnItemsChanged(const TArray<UObject*>& AddedItems, const TArray<UObject*>& RemovedItems);
 
@@ -275,7 +277,7 @@ private:
 	UMG_API void BP_CancelScrollIntoView();
 
 	/** Sets the array of objects to display rows for in the list */
-	UFUNCTION(BlueprintCallable, Category = ListView, meta = (AllowPrivateAccess = true, DisplayName = "Set List Items"))
+	UFUNCTION(BlueprintCallable, Category = ListView, meta = (AllowPrivateAccess = true, DisplayName = "Set List Items", ViewmodelBlueprintWidgetExtension = "EntryViewModel"))
 	UMG_API void BP_SetListItems(const TArray<UObject*>& InListItems);
 
 	/** Gets the first selected item, if any; recommended that you only use this for single selection lists. */

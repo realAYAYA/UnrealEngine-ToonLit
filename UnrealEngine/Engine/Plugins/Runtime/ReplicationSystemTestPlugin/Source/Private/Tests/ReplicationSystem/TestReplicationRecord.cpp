@@ -40,12 +40,12 @@ UE_NET_TEST(ReplicationRecord, PushInfoAndAddToList)
 	UE_NET_ASSERT_EQ(0U, (uint32)List.FirstRecordIndex);
 
 	// Iterate over entries from start to end
-	uint32 CurrentIndex = List.FirstRecordIndex;
-	uint32 CurrentExpectedIndex = 0;
+	uint16 CurrentIndex = List.FirstRecordIndex;
+	uint16 CurrentExpectedIndex = 0;
 	
 	while (CurrentIndex != InvalidReplicationRecordIndex)
 	{
-		UE_NET_ASSERT_EQ((uint32)CurrentExpectedIndex, CurrentIndex);
+		UE_NET_ASSERT_EQ(CurrentExpectedIndex, CurrentIndex);
 
 		const FReplicationRecord::FRecordInfo* CurrentRecordInfo = ReplicationRecord.GetInfoForIndex(CurrentIndex);
 		UE_NET_ASSERT_TRUE(CurrentRecordInfo != nullptr);
@@ -53,7 +53,7 @@ UE_NET_TEST(ReplicationRecord, PushInfoAndAddToList)
 		CurrentIndex = CurrentRecordInfo->NextIndex;
 		++CurrentExpectedIndex;
 	};
-	UE_NET_ASSERT_EQ(InfoCount, CurrentExpectedIndex);
+	UE_NET_ASSERT_EQ(InfoCount, static_cast<uint32>(CurrentExpectedIndex));
 }
 
 UE_NET_TEST(ReplicationRecord, PopInfoAndRemoveFromList)

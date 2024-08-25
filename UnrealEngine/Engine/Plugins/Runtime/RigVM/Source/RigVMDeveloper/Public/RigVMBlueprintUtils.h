@@ -23,6 +23,9 @@ static void HandleReconstructAllNodes(UBlueprint* InBlueprint);
 /** Handle blueprint node refresh */
 static void HandleRefreshAllNodes(UBlueprint* InBlueprint);
 
+/** Handle blueprint deleted */
+static void HandleAssetDeleted(const FAssetData& InAssetData);
+
 /** remove the variable if not used by anybody else but ToBeDeleted*/
 static void RemoveMemberVariableIfNotUsed(UBlueprint* Blueprint, const FName VarName);
 

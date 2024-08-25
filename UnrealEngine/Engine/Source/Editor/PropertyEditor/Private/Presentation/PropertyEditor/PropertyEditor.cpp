@@ -57,14 +57,10 @@ FText FPropertyEditor::GetDisplayName() const
 	{
 		return ItemPropertyNode->GetDisplayName();
 	}
-	else
-	{
-		FString DisplayName;
-		PropertyNode->GetQualifiedName( DisplayName, true );
-		return FText::FromString(DisplayName);
-	}
 
-	return FText::GetEmpty();
+	FString DisplayName;
+	PropertyNode->GetQualifiedName( DisplayName, true );
+	return FText::FromString(DisplayName);
 }
 
 FText FPropertyEditor::GetToolTipText() const
@@ -297,6 +293,42 @@ void FPropertyEditor::OnAddGivenItem(const FString InGivenItem)
 		{
 			ElementHandle->SetValueFromFormattedString(InGivenItem);
 		}
+	}
+}
+
+void FPropertyEditor::SetOptionalItem(FProperty* NewValue)
+{
+	// This action must be deferred until next tick so that we avoid accessing invalid data before we have a chance to tick
+	PropertyUtilities->EnqueueDeferredAction(FSimpleDelegate::CreateSP(this, &FPropertyEditor::OnSetOptionalValue, NewValue));
+}
+
+void FPropertyEditor::ClearOptionalItem()
+{
+	// This action must be deferred until next tick so that we avoid accessing invalid data before we have a chance to tick
+	PropertyUtilities->EnqueueDeferredAction(FSimpleDelegate::CreateSP(this, &FPropertyEditor::OnClearOptionalValue));
+}
+
+void FPropertyEditor::OnSetOptionalValue(FProperty* NewValue)
+{
+	TSharedPtr<IPropertyHandleOptional> OptionalHandle = PropertyHandle->AsOptional();
+	if (OptionalHandle.IsValid())
+	{
+		OptionalHandle->SetOptionalValue(NewValue);
+	}
+}
+
+void FPropertyEditor::OnClearOptionalValue()
+{
+	// This func is called by an options value, not the option itself.
+	if (!PropertyNode->IsOptionalValueNode())
+	{
+		return;
+	}
+
+	TSharedPtr<IPropertyHandleOptional> OptionalHandle = PropertyHandle->GetParentHandle()->AsOptional();
+	if (OptionalHandle.IsValid())
+	{
+		OptionalHandle->ClearOptionalValue();
 	}
 }
 

@@ -52,6 +52,16 @@ void FStaticMeshComponentAdapter::ApplySettings(int32 LODIndex, FMeshData& InOut
 			InOutMeshData.LightmapResourceCluster = MeshMapBuildData->ResourceCluster;
 		}
 	}
+
+	if (!StaticMeshComponent->GetCustomPrimitiveData().Data.IsEmpty())
+	{
+		if (!InOutMeshData.PrimitiveData.IsSet())
+		{
+			InOutMeshData.PrimitiveData = FPrimitiveData();
+		}
+
+		InOutMeshData.PrimitiveData->CustomPrimitiveData = &StaticMeshComponent->GetCustomPrimitiveData();
+	}
 }
 
 UPackage* FStaticMeshComponentAdapter::GetOuter() const

@@ -116,7 +116,7 @@ private:
 	{
 		TSharedRef<ITypedTableView<ItemType>> OwnerTable = this->OwnerTablePtr.Pin().ToSharedRef();
 
-		if (const ItemType* MyItemPtr = this->GetItemForThis(OwnerTable))
+		if (const TObjectPtrWrapTypeOf<ItemType>* MyItemPtr = this->GetItemForThis(OwnerTable))
 		{
 			OwnerTable->Private_OnItemClicked(*MyItemPtr);
 		}
@@ -126,7 +126,7 @@ private:
 	{
 		TSharedRef<ITypedTableView<ItemType>> OwnerTable = this->OwnerTablePtr.Pin().ToSharedRef();
 
-		if (const ItemType* MyItemPtr = this->GetItemForThis(OwnerTable))
+		if (const TObjectPtrWrapTypeOf<ItemType>* MyItemPtr = this->GetItemForThis(OwnerTable))
 		{
 			OwnerTable->Private_OnItemDoubleClicked(*MyItemPtr);
 		}
@@ -152,7 +152,7 @@ private:
 		{
 			TSharedRef<ITypedTableView<ItemType>> OwnerTable = this->OwnerTablePtr.Pin().ToSharedRef();
 
-			if (const ItemType* MyItemPtr = this->GetItemForThis(OwnerTable))
+			if (const TObjectPtrWrapTypeOf<ItemType>* MyItemPtr = this->GetItemForThis(OwnerTable))
 			{
 				if (bIsButtonSelected)
 				{

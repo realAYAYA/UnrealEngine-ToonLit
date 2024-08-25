@@ -3,7 +3,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
+#if SOURCE_CONTROL_WITH_SLATE
 #include "Textures/SlateIcon.h"
+#endif //SOURCE_CONTROL_WITH_SLATE
 
 class ISourceControlRevision;
 class ISourceControlState;
@@ -95,10 +98,12 @@ public:
 	 */
 	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> GetCurrentRevision() const = 0;
 
+#if SOURCE_CONTROL_WITH_SLATE
 	/**
 	 * Gets the icon we should use to display the state in a UI.
 	 */
 	virtual FSlateIcon GetIcon() const = 0;
+#endif // SOURCE_CONTROL_WITH_SLATE
 
 	/**
 	 * Get the name of the icon graphic we should use to display the state in a UI.

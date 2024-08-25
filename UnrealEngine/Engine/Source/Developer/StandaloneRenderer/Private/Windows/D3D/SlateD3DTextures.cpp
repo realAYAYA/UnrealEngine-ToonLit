@@ -304,11 +304,30 @@ void FSlateTextureAtlasD3D::ConditionalUpdateTexture()
 	}
 }
 
-FSlateFontAtlasD3D::FSlateFontAtlasD3D(uint32 Width, uint32 Height, const bool InIsGrayscale)
-	: FSlateFontAtlas(Width, Height, InIsGrayscale)
+FSlateFontAtlasD3D::FSlateFontAtlasD3D(uint32 Width, uint32 Height, ESlateFontAtlasContentType InContentType)
+	: FSlateFontAtlas(Width, Height, InContentType, NoPadding)
 {
 	FontTexture = new FSlateD3DTexture(Width, Height);
-	FontTexture->Init(InIsGrayscale ? DXGI_FORMAT_A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, NULL, true, false);
+	DXGI_FORMAT Format = DXGI_FORMAT_UNKNOWN;
+	switch (InContentType)
+	{
+		case ESlateFontAtlasContentType::Alpha:
+			Format = DXGI_FORMAT_A8_UNORM;
+			break;
+		case ESlateFontAtlasContentType::Color:
+			Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+			break;
+		case ESlateFontAtlasContentType::Msdf:
+			Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+			break;
+		default:
+			checkNoEntry();
+			// Default to Color
+			Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+			break;
+	}
+	check(Format != DXGI_FORMAT_UNKNOWN);
+	FontTexture->Init(Format, NULL, true, false);
 }
 
 FSlateFontAtlasD3D::~FSlateFontAtlasD3D()

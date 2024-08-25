@@ -26,7 +26,6 @@
 #include "Misc/LevelSequenceEditorActorSpawner.h"
 #include "Misc/LevelSequenceEditorHelpers.h"
 #include "Misc/LevelSequenceEditorSettings.h"
-#include "Misc/LevelSequenceFBXInterop.h"
 #include "Misc/MovieSceneSequenceEditor_LevelSequence.h"
 #include "SequencerCommands.h"
 #include "SequencerSettings.h"

@@ -50,6 +50,9 @@ public:
 	/** Get texture pixel format. */
 	virtual EPixelFormat GetPixelFormat() const = 0;
 
+	/** Get number of components. */
+	virtual uint32 GetComponentDepth() const = 0;
+
 	/** Get the RHI resource. */
 	virtual FRHITexture* GetRHITexture() const = 0;
 };

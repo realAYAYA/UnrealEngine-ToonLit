@@ -8,6 +8,8 @@
 #include "HAL/FileManager.h"
 #include "Misc/AssertionMacros.h"
 #include "Containers/StringConv.h"
+#include "Trace/Trace.h"
+#include "Trace/Trace.inl"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSQLiteDatabase, Log, All);
 
@@ -52,6 +54,9 @@ bool FSQLiteDatabase::Open(const TCHAR* InFilename, const ESQLiteDatabaseOpenMod
 	{
 		return false;
 	}
+	
+	OriginalPath = InFilename;
+	ShortName = FPaths::GetBaseFilename(InFilename);
 
 	int32 OpenFlags = 0;
 	switch (InOpenMode)
@@ -86,6 +91,7 @@ bool FSQLiteDatabase::Open(const TCHAR* InFilename, const ESQLiteDatabaseOpenMod
 		}
 		return false;
 	}
+	UE_LOG(LogSQLiteDatabase, Log, TEXT("Opened database '%s'"), InFilename);
 
 	return true;
 }
@@ -205,8 +211,16 @@ int64 FSQLiteDatabase::GetLastInsertRowId() const
 		: 0;
 }
 
+UE_TRACE_EVENT_BEGIN(Cpu, Sqlite_PerformQuickIntegrityCheck, NoSync)
+	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, Path)
+UE_TRACE_EVENT_END()
+
 bool FSQLiteDatabase::PerformQuickIntegrityCheck() const
 {
+#if CPUPROFILERTRACE_ENABLED
+	UE_TRACE_LOG_SCOPED_T(Cpu, Sqlite_PerformQuickIntegrityCheck, CpuChannel)
+		<< Sqlite_PerformQuickIntegrityCheck.Path(*OriginalPath);
+#endif // CPUPROFILERTRACE_ENABLED
 	bool OutIntegrityOk = true;
 	bool bSuccessful = const_cast<FSQLiteDatabase*>(this)->Execute(TEXT("pragma quick_check;"), [&OutIntegrityOk](const FSQLitePreparedStatement& InStatement)
 	{

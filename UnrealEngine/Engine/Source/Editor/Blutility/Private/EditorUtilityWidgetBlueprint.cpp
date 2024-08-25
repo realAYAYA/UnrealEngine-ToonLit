@@ -17,7 +17,6 @@
 #include "Modules/ModuleManager.h"
 #include "SlotBase.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Types/SlateEnums.h"
 #include "UObject/Package.h"
@@ -102,23 +101,8 @@ TSharedRef<SWidget> UEditorUtilityWidgetBlueprint::CreateUtilityWidget()
 		if (CreatedUMGWidget)
 		{
 			// Editor Utility is flagged as transient to prevent from dirty the World it's created in when a property added to the Utility Widget is changed
-			CreatedUMGWidget->SetFlags(RF_Transient);
-
-			// Also mark nested utility widgets as transient to prevent them from dirtying the world (since they'll be created via CreateWidget and not CreateUtilityWidget)
-			TArray<UWidget*> AllWidgets;
-			CreatedUMGWidget->WidgetTree->GetAllWidgets(AllWidgets);
-
-			for (UWidget* Widget : AllWidgets)
-			{
-				if (Widget->IsA(UEditorUtilityWidget::StaticClass()))
-				{
-					Widget->SetFlags(RF_Transient);
-					if (UPanelSlot* Slot = Widget->Slot)
-					{
-						Slot->SetFlags(RF_Transient);
-					}
-				}
-			}
+			// Also need to recursively mark nested utility widgets as transient to prevent them from dirtying the world (since they'll be created via CreateWidget and not CreateUtilityWidget)
+			MarkTransientRecursive(CreatedUMGWidget);
 		}
 	}
 
@@ -193,6 +177,26 @@ void UEditorUtilityWidgetBlueprint::ChangeTabWorld(UWorld* World, EMapChangeType
 	{
 		// Recreate the widget if we are loading a map or opening a new map
 		RegenerateCreatedTab(nullptr);
+	}
+}
+
+void UEditorUtilityWidgetBlueprint::MarkTransientRecursive(UEditorUtilityWidget* UtilityWidget)
+{
+	UtilityWidget->SetFlags(RF_Transient);
+
+	TArray<UWidget*> AllWidgets;
+	UtilityWidget->WidgetTree->GetAllWidgets(AllWidgets);
+
+	for (UWidget* Widget : AllWidgets)
+	{
+		if (UEditorUtilityWidget* ChildUtilityWidget = Cast<UEditorUtilityWidget>(Widget))
+		{
+			MarkTransientRecursive(ChildUtilityWidget);
+			if (UPanelSlot* Slot = Widget->Slot)
+			{
+				Slot->SetFlags(RF_Transient);
+			}
+		}
 	}
 }
 

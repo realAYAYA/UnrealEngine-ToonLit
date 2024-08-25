@@ -6,6 +6,8 @@
 
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
+#include "Materials/MaterialExpressionMaterialAttributeLayers.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Misc/App.h"
 
 #if WITH_EDITOR

@@ -10,14 +10,15 @@ enum class EOutputLogSettingsMenuFlags
 
 	/** The clear on Pie button should not be created */
 	SkipClearOnPie = 0x01,
+
 	/** The Enable world wrapping button should not be created */
 	SkipEnableWordWrapping = 0x02,
 
 	/** Skip the button that opens the source folder of the output log module */
-	SkipOpenSourceButton = 0x03,
+	SkipOpenSourceButton = 0x04,
+
 	/** Skip the button which opens the log in a text editor */
-	SkipOpenInExternalEditorButton = 0x04
-	
+	SkipOpenInExternalEditorButton = 0x08	
 };
 ENUM_CLASS_FLAGS(EOutputLogSettingsMenuFlags)
 

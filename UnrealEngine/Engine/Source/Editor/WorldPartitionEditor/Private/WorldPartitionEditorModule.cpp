@@ -6,19 +6,24 @@
 #include "WorldPartition/WorldPartitionMiniMapBuilder.h"
 #include "WorldPartition/WorldPartitionLandscapeSplineMeshesBuilder.h"
 #include "WorldPartition/WorldPartitionActorLoaderInterface.h"
-#include "WorldPartition/HLOD/HLODLayerAssetTypeActions.h"
+#include "WorldPartition/LoaderAdapter/LoaderAdapterShape.h"
 #include "WorldPartition/SWorldPartitionEditor.h"
 #include "WorldPartition/SWorldPartitionEditorGridSpatialHash.h"
+#include "WorldPartition/Customizations/ExternalDataLayerUIDStructCustomization.h"
 #include "WorldPartition/Customizations/WorldPartitionDetailsCustomization.h"
 #include "WorldPartition/Customizations/WorldPartitionHLODDetailsCustomization.h"
 #include "WorldPartition/Customizations/WorldPartitionRuntimeSpatialHashDetailsCustomization.h"
+#include "WorldPartition/Customizations/WorldDataLayersActorDetails.h"
+#include "WorldPartition/Customizations/WorldPartitionEditorPerProjectUserSettingsDetails.h"
 #include "WorldPartition/SWorldPartitionConvertDialog.h"
 #include "WorldPartition/WorldPartitionConvertOptions.h"
 #include "WorldPartition/WorldPartitionEditorSettings.h"
+#include "WorldPartition/HLOD/HLODActor.h"
 #include "WorldPartition/HLOD/SWorldPartitionBuildHLODsDialog.h"
 #include "WorldPartition/WorldPartitionClassDescRegistry.h"
 
 #include "LevelEditor.h"
+#include "LevelEditorViewport.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 
@@ -46,6 +51,7 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "Framework/Docking/LayoutExtender.h"
 #include "Widgets/Docking/SDockTab.h"
+#include "Filters/CustomClassFilterData.h"
 
 #include "Styling/AppStyle.h"
 #include "WorldPartition/ContentBundle/SContentBundleBrowser.h"
@@ -69,40 +75,100 @@ static void OnSelectedWorldPartitionVolumesToggleLoading(TArray<TWeakObjectPtr<A
 	{
 		if (Actor->Implements<UWorldPartitionActorLoaderInterface>())
 		{
-			IWorldPartitionActorLoaderInterface::ILoaderAdapter* LoaderAdapter = Cast<IWorldPartitionActorLoaderInterface>(Actor)->GetLoaderAdapter();
-
-			if (bLoad)
+			if (IWorldPartitionActorLoaderInterface::ILoaderAdapter* LoaderAdapter = Cast<IWorldPartitionActorLoaderInterface>(Actor)->GetLoaderAdapter())
 			{
-				LoaderAdapter->Load();
-			}
-			else
-			{
-				LoaderAdapter->Unload();
+				if (bLoad)
+				{
+					LoaderAdapter->Load();
+				}
+				else
+				{
+					LoaderAdapter->Unload();
+				}
 			}
 		}
 	}
 }
 
-static void CreateLevelViewportContextMenuEntries(FMenuBuilder& MenuBuilder, TArray<TWeakObjectPtr<AActor>> Volumes)
+static bool CanLoadUnloadSelectedVolumes(TArray<TWeakObjectPtr<AActor>> Volumes, bool bLoad)
+{
+	for (TWeakObjectPtr<AActor> Actor : Volumes)
+	{
+		if (Actor->Implements<UWorldPartitionActorLoaderInterface>())
+		{
+			if (IWorldPartitionActorLoaderInterface::ILoaderAdapter* LoaderAdapter = Cast<IWorldPartitionActorLoaderInterface>(Actor)->GetLoaderAdapter())
+			{
+				if (bLoad != LoaderAdapter->IsLoaded())
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+static void CreateLevelViewportContextMenuEntries(FMenuBuilder& MenuBuilder, TArray<TWeakObjectPtr<AActor>> Volumes, FBox SelectionBox)
 {
 	MenuBuilder.BeginSection("WorldPartition", LOCTEXT("WorldPartition", "World Partition"));
+	
+	if (!Volumes.IsEmpty())
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("WorldPartitionLoad", "Load selected volumes"),
+			LOCTEXT("WorldPartitionLoad_Tooltip", "Load selected volumes"),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateStatic(OnSelectedWorldPartitionVolumesToggleLoading, Volumes, true),
+				FCanExecuteAction::CreateLambda([Volumes]
+				{
+					return CanLoadUnloadSelectedVolumes(Volumes, true);
+				})
+			),
+			NAME_None,
+			EUserInterfaceActionType::Button);
 
-	MenuBuilder.AddMenuEntry(
-		LOCTEXT("WorldPartitionLoad", "Load selected volumes"),
-		LOCTEXT("WorldPartitionLoad_Tooltip", "Load selected volumes"),
-		FSlateIcon(),
-		FExecuteAction::CreateStatic(OnSelectedWorldPartitionVolumesToggleLoading, Volumes, true),
-		NAME_None,
-		EUserInterfaceActionType::Button);
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("WorldPartitionUnload", "Unload selected volumes"),
+			LOCTEXT("WorldPartitionUnload_Tooltip", "Load selected volumes"),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateStatic(OnSelectedWorldPartitionVolumesToggleLoading, Volumes, false),
+				FCanExecuteAction::CreateLambda([Volumes]
+				{
+					return CanLoadUnloadSelectedVolumes(Volumes, false);
+				})
+			),
+			NAME_None,
+			EUserInterfaceActionType::Button);
+	}
 
-	MenuBuilder.AddMenuEntry(
-		LOCTEXT("WorldPartitionUnload", "Unload selected volumes"),
-		LOCTEXT("WorldPartitionUnload_Tooltip", "Load selected volumes"),
-		FSlateIcon(),
-		FExecuteAction::CreateStatic(OnSelectedWorldPartitionVolumesToggleLoading, Volumes, false),
-		NAME_None,
-		EUserInterfaceActionType::Button);
+	// Load Region From Selection
+	if (GCurrentLevelEditingViewportClient && SelectionBox.GetSize().Size2D() > 0)
+	{
+		TWeakObjectPtr<UWorld> World = GCurrentLevelEditingViewportClient->GetWorld();
+		TWeakObjectPtr<UWorldPartition> WorldPartition = World->GetWorldPartition();
 
+		FUIAction LoadRegion(
+			FExecuteAction::CreateLambda([World, WorldPartition, SelectionBox]()
+			{
+				if (World.IsValid() && WorldPartition.IsValid())
+				{
+					UWorldPartitionEditorLoaderAdapter* EditorLoaderAdapter = WorldPartition.Get()->CreateEditorLoaderAdapter<FLoaderAdapterShape>(World.Get(), SelectionBox, TEXT("Loaded Region"));
+					EditorLoaderAdapter->GetLoaderAdapter()->SetUserCreated(true);
+					EditorLoaderAdapter->GetLoaderAdapter()->Load();
+				}
+			}),
+			FCanExecuteAction::CreateLambda([World, WorldPartition]()
+			{
+				return (World.IsValid() && WorldPartition.IsValid());
+			})
+		);
+
+		MenuBuilder.AddMenuEntry(LOCTEXT("LoadRegionFromSelection", "Load Region From Selection"), LOCTEXT("LoadRegionFromSelection_Tooltip", "Load region from selected actor(s) bounds"), FSlateIcon(), LoadRegion);
+	}
+	
 	MenuBuilder.EndSection();
 }
 
@@ -110,22 +176,28 @@ static TSharedRef<FExtender> OnExtendLevelEditorMenu(const TSharedRef<FUICommand
 {
 	TSharedRef<FExtender> Extender(new FExtender());
 
-	TArray<TWeakObjectPtr<AActor> > Volumes;
+	TArray<TWeakObjectPtr<AActor>> Volumes;
+	FBoxSphereBounds::Builder BoundsBuilder;
+
 	for (AActor* Actor : SelectedActors)
 	{
 		if (Actor->Implements<UWorldPartitionActorLoaderInterface>())
 		{
 			Volumes.Add(Actor);
 		}
+
+		FBoxSphereBounds ActorBounds;
+		Actor->GetActorBounds(false, ActorBounds.Origin, ActorBounds.BoxExtent);
+		BoundsBuilder += ActorBounds;
 	}
 
-	if (Volumes.Num())
+	if (!Volumes.IsEmpty() || BoundsBuilder.IsValid())
 	{
 		Extender->AddMenuExtension(
 			"ActorTypeTools",
 			EExtensionHook::After,
 			nullptr,
-			FMenuExtensionDelegate::CreateStatic(&CreateLevelViewportContextMenuEntries, Volumes));
+			FMenuExtensionDelegate::CreateStatic(&CreateLevelViewportContextMenuEntries, Volumes, FBoxSphereBounds(BoundsBuilder).GetBox()));
 	}
 
 	return Extender;
@@ -138,16 +210,43 @@ void FWorldPartitionEditorModule::StartupModule()
 	
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FWorldPartitionEditorModule::RegisterMenus));	
 
-	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-	HLODLayerAssetTypeActions = MakeShareable(new FHLODLayerAssetTypeActions);
-	AssetTools.RegisterAssetTypeActions(HLODLayerAssetTypeActions.ToSharedRef());
-
 	FPropertyEditorModule& PropertyEditor = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	PropertyEditor.RegisterCustomClassLayout("WorldPartition", FOnGetDetailCustomizationInstance::CreateStatic(&FWorldPartitionDetails::MakeInstance));
 	PropertyEditor.RegisterCustomClassLayout("WorldPartitionRuntimeSpatialHash", FOnGetDetailCustomizationInstance::CreateStatic(&FWorldPartitionRuntimeSpatialHashDetails::MakeInstance));
 	PropertyEditor.RegisterCustomClassLayout("WorldPartitionHLOD", FOnGetDetailCustomizationInstance::CreateStatic(&FWorldPartitionHLODDetailsCustomization::MakeInstance));
+	PropertyEditor.RegisterCustomClassLayout("WorldDataLayers", FOnGetDetailCustomizationInstance::CreateStatic(&FWorldDataLayersActorDetails::MakeInstance));
+	PropertyEditor.RegisterCustomClassLayout("WorldPartitionEditorPerProjectUserSettings", FOnGetDetailCustomizationInstance::CreateStatic(&FWorldPartitionEditorPerProjectUserSettingsCustomization::MakeInstance));
+	PropertyEditor.RegisterCustomPropertyTypeLayout("ExternalDataLayerUID", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FExternalDataLayerUIDStructCustomization::MakeInstance));
 
 	FWorldPartitionClassDescRegistry().Get().Initialize();
+
+	EditorInitializedHandle = FEditorDelegates::OnEditorInitialized.AddLambda([this](double TimeToInitializeEditor)
+	{
+		// Register the Scene Outliner "World" filter category
+		if (FModuleManager::Get().IsModuleLoaded("LevelEditor"))
+		{
+			FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
+			TSharedPtr<FFilterCategory> CommonFilterCategory = LevelEditorModule.GetOutlinerFilterCategory(FLevelEditorOutlinerBuiltInCategories::Common());
+			TSharedPtr<FFilterCategory> WorldFilterCategory = MakeShared<FFilterCategory>(LOCTEXT("WorldFilterCategory", "World"), FText::GetEmpty());
+
+			TArray<UClass*> WorldActorClasses =
+			{
+				AWorldPartitionHLOD::StaticClass()
+			};
+
+			for (UClass* Class : WorldActorClasses)
+			{
+				TSharedRef<FCustomClassFilterData> ClassFilterData = MakeShared<FCustomClassFilterData>(AWorldPartitionHLOD::StaticClass(), WorldFilterCategory, FLinearColor::White);
+
+				if (CommonFilterCategory.IsValid())
+				{
+					ClassFilterData->AddCategory(CommonFilterCategory);
+				}
+
+				LevelEditorModule.AddCustomClassFilterToOutliner(ClassFilterData);
+			}
+		}
+	});
 }
 
 void FWorldPartitionEditorModule::ShutdownModule()
@@ -175,22 +274,13 @@ void FWorldPartitionEditorModule::ShutdownModule()
 		UToolMenus::UnregisterOwner(this);
 	}
 
-	// Unregister the HLODLayer asset type actions
-	if (HLODLayerAssetTypeActions.IsValid())
-	{
-		if (FModuleManager::Get().IsModuleLoaded("AssetTools"))
-		{
-			IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();
-			AssetTools.UnregisterAssetTypeActions(HLODLayerAssetTypeActions.ToSharedRef());
-		}
-		HLODLayerAssetTypeActions.Reset();
-	}
-
 	if (FModuleManager::Get().IsModuleLoaded("PropertyEditor"))
 	{
 		FPropertyEditorModule& PropertyEditor = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyEditor.UnregisterCustomClassLayout("WorldPartition");
 	}
+
+	FEditorDelegates::OnEditorInitialized.Remove(EditorInitializedHandle);
 }
 
 void FWorldPartitionEditorModule::RegisterMenus()
@@ -205,7 +295,7 @@ void FWorldPartitionEditorModule::RegisterMenus()
 	LevelEditorExtenderDelegateHandle = MenuExtenderDelegates.Last().GetHandle();
 
 	FToolMenuOwnerScoped OwnerScoped(this);
-	UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Tools");
+	UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Tools");	
 	FToolMenuSection& Section = Menu->AddSection("WorldPartition", LOCTEXT("WorldPartition", "World Partition"));
 	Section.AddEntry(FToolMenuEntry::InitMenuEntry(
 		"WorldPartition",
@@ -258,14 +348,24 @@ int32 FWorldPartitionEditorModule::GetMinimapLowQualityWorldUnitsPerPixelThresho
 	return GetDefault<UWorldPartitionEditorSettings>()->MinimapLowQualityWorldUnitsPerPixelThreshold;
 }
 
-bool FWorldPartitionEditorModule::GetDisableLoadingInEditor() const
+bool FWorldPartitionEditorModule::GetEnableLoadingInEditor() const
 {
-	return GetDefault<UWorldPartitionEditorSettings>()->bDisableLoadingInEditor;
+	return GetDefault<UWorldPartitionEditorSettings>()->bEnableLoadingInEditor;
 }
 
-void FWorldPartitionEditorModule::SetDisableLoadingInEditor(bool bInDisableLoadingInEditor)
+void FWorldPartitionEditorModule::SetEnableLoadingInEditor(bool bInEnableLoadingInEditor)
 {
-	GetMutableDefault<UWorldPartitionEditorSettings>()->bDisableLoadingInEditor = bInDisableLoadingInEditor;
+	GetMutableDefault<UWorldPartitionEditorSettings>()->bEnableLoadingInEditor = bInEnableLoadingInEditor;
+}
+
+bool FWorldPartitionEditorModule::GetEnableStreamingGenerationLogOnPIE() const
+{
+	return GetDefault<UWorldPartitionEditorSettings>()->bEnableStreamingGenerationLogOnPIE;
+}
+
+void FWorldPartitionEditorModule::SetEnableStreamingGenerationLogOnPIE(bool bEnableStreamingGenerationLogOnPIE)
+{
+	GetMutableDefault<UWorldPartitionEditorSettings>()->bEnableStreamingGenerationLogOnPIE = bEnableStreamingGenerationLogOnPIE;
 }
 
 bool FWorldPartitionEditorModule::GetDisablePIE() const
@@ -296,6 +396,99 @@ bool FWorldPartitionEditorModule::GetAdvancedMode() const
 void FWorldPartitionEditorModule::SetAdvancedMode(bool bInAdvancedMode)
 {
 	GetMutableDefault<UWorldPartitionEditorSettings>()->bAdvancedMode = bInAdvancedMode;
+}
+
+bool FWorldPartitionEditorModule::GetShowHLODsInEditor() const
+{
+	return GetDefault<UWorldPartitionEditorSettings>()->bShowHLODsInEditor;
+}
+
+void FWorldPartitionEditorModule::SetShowHLODsInEditor(bool bInShowHLODsInEditor)
+{
+	if (GetMutableDefault<UWorldPartitionEditorSettings>()->bShowHLODsInEditor != bInShowHLODsInEditor)
+	{
+		GetMutableDefault<UWorldPartitionEditorSettings>()->bShowHLODsInEditor = bInShowHLODsInEditor;
+		GetMutableDefault<UWorldPartitionEditorSettings>()->SaveConfig();
+	}
+}
+
+bool FWorldPartitionEditorModule::GetShowHLODsOverLoadedRegions() const
+{
+	return GetDefault<UWorldPartitionEditorSettings>()->bShowHLODsOverLoadedRegions;
+}
+
+void FWorldPartitionEditorModule::SetShowHLODsOverLoadedRegions(bool bInShowHLODsOverLoadedRegions)
+{
+	if (GetMutableDefault<UWorldPartitionEditorSettings>()->bShowHLODsOverLoadedRegions != bInShowHLODsOverLoadedRegions)
+	{
+		GetMutableDefault<UWorldPartitionEditorSettings>()->bShowHLODsOverLoadedRegions = bInShowHLODsOverLoadedRegions;
+		GetMutableDefault<UWorldPartitionEditorSettings>()->SaveConfig();
+	}
+}
+
+double FWorldPartitionEditorModule::GetHLODInEditorMinDrawDistance() const
+{
+	return GetDefault<UWorldPartitionEditorSettings>()->HLODMinDrawDistance;
+}
+
+void FWorldPartitionEditorModule::SetHLODInEditorMinDrawDistance(double InMinDrawDistance)
+{
+	if (GetMutableDefault<UWorldPartitionEditorSettings>()->HLODMinDrawDistance != InMinDrawDistance)
+	{
+		GetMutableDefault<UWorldPartitionEditorSettings>()->HLODMinDrawDistance = InMinDrawDistance;
+		GetMutableDefault<UWorldPartitionEditorSettings>()->SaveConfig();
+	}
+}
+
+double FWorldPartitionEditorModule::GetHLODInEditorMaxDrawDistance() const
+{
+	return GetDefault<UWorldPartitionEditorSettings>()->HLODMaxDrawDistance;
+}
+
+void FWorldPartitionEditorModule::SetHLODInEditorMaxDrawDistance(double InMaxDrawDistance)
+{
+	if (GetMutableDefault<UWorldPartitionEditorSettings>()->HLODMaxDrawDistance != InMaxDrawDistance)
+	{
+		GetMutableDefault<UWorldPartitionEditorSettings>()->HLODMaxDrawDistance = InMaxDrawDistance;
+		GetMutableDefault<UWorldPartitionEditorSettings>()->SaveConfig();
+	}
+}
+
+bool FWorldPartitionEditorModule::IsHLODInEditorAllowed(UWorld* InWorld, FText* OutDisallowedReason) const
+{
+	auto SetDissallowedReason = [OutDisallowedReason](const FText& DisallowedReason)
+	{
+		if (OutDisallowedReason)
+		{
+			*OutDisallowedReason = DisallowedReason;
+		}
+	};
+
+	if (!InWorld)
+	{
+		SetDissallowedReason(LOCTEXT("HLODInEditor_InvalidWorld", "Invalid world"));
+		return false;
+	}
+
+	if (!InWorld->IsPartitionedWorld())
+	{
+		SetDissallowedReason(LOCTEXT("HLODInEditor_NoWorldPartition", "World is non partitioned"));
+		return false;
+	}
+
+	if (!InWorld->GetWorldPartition()->IsStreamingEnabledInEditor())
+	{
+		SetDissallowedReason(LOCTEXT("HLODInEditor_StreamingDisabled", "Streaming is disabled for this world"));
+		return false;
+	}
+
+	if (!InWorld->GetWorldPartition()->IsHLODsInEditorAllowed())
+	{
+		SetDissallowedReason(LOCTEXT("HLODInEditor_HLODsInEditorDisallowed", "HLOD in editor is disabled for this world"));
+		return false;
+	}
+
+	return true;
 }
 
 void FWorldPartitionEditorModule::OnConvertMap()
@@ -665,7 +858,7 @@ bool FWorldPartitionEditorModule::Build(const FRunBuilderParams& InParams)
 
 	// Unload map if required
 	FString MapPackage = ParamsCopy.World->GetPackage()->GetName();
-	if (ParamsCopy.bUnloadMap && !UnloadCurrentMap(MapPackage))
+	if (!UnloadCurrentMap(MapPackage))
 	{
 		return false;
 	}
@@ -693,18 +886,7 @@ bool FWorldPartitionEditorModule::Build(const FRunBuilderParams& InParams)
 	RunCommandletAsExternalProcess(CommandletArgs, OperationDescription, Result, bCancelled);
 
 	RescanAssets(MapPackage);
-
-	if (ParamsCopy.bUnloadMap)
-	{
-		LoadMap(MapPackage);
-	}
-	else
-	{
-		if (UWorldPartition* WorldPartition = ParamsCopy.World->GetWorldPartition())
-		{
-			WorldPartition->Update();
-		}
-	}
+	LoadMap(MapPackage);
 
 	if (bCancelled)
 	{
@@ -782,17 +964,6 @@ void FWorldPartitionEditorModule::RegisterWorldPartitionTabs(TSharedPtr<FTabMana
 void FWorldPartitionEditorModule::RegisterWorldPartitionLayout(FLayoutExtender& Extender)
 {
 	Extender.ExtendLayout(FTabId("LevelEditorSelectionDetails"), ELayoutExtensionPosition::After, FTabManager::FTab(WorldPartitionEditorTabId, ETabState::ClosedTab));
-}
-
-UWorldPartitionEditorSettings::UWorldPartitionEditorSettings()
-{
-	CommandletClass = UWorldPartitionConvertCommandlet::StaticClass();
-	InstancedFoliageGridSize = 25600;
-	MinimapLowQualityWorldUnitsPerPixelThreshold = 12800;
-	bDisableLoadingInEditor = false;
-	bDisablePIE = false;
-	bDisableBugIt = false;
-	bAdvancedMode = true;
 }
 
 FString UWorldPartitionConvertOptions::ToCommandletArgs() const

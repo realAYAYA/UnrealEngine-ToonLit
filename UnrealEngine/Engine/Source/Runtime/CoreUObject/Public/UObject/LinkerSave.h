@@ -155,6 +155,16 @@ public:
 	/** Returns the appropriate package index for the source object, or default value if not found in ObjectIndicesMap */
 	FPackageIndex MapObject(TObjectPtr<const UObject> Object) const;
 
+	/**
+	 * Called when an object begins serializing property data using script serialization.
+	 */
+	virtual void MarkScriptSerializationStart(const UObject* Obj) override;
+
+	/**
+	 * Called when an object stops serializing property data using script serialization.
+	 */
+	virtual void MarkScriptSerializationEnd(const UObject* Obj) override;
+
 	// FArchive interface.
 	using FArchiveUObject::operator<<; // For visibility of the overloads we don't override
 	FArchive& operator<<( FName& InName );

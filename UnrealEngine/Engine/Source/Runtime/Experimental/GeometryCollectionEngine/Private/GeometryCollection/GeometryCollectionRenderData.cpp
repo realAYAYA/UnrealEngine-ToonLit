@@ -46,7 +46,7 @@ void FBoneMapVertexBuffer::AllocateData(bool bInNeedsCPUAccess)
 void FBoneMapVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 {
 	const bool bHadData = BoneMapData != nullptr;
-	VertexBufferRHI = CreateRHIBuffer<true>(BoneMapData, NumVertices, BUF_Static | BUF_ShaderResource | BUF_SourceCopy, TEXT("FBoneMapVertexBuffer")); 
+	VertexBufferRHI = FRenderResource::CreateRHIBuffer(RHICmdList, BoneMapData, NumVertices, BUF_Static | BUF_ShaderResource | BUF_SourceCopy, TEXT("FBoneMapVertexBuffer")); 
 	if (VertexBufferRHI != nullptr)
 	{
 		VertexBufferSRV = RHICmdList.CreateShaderResourceView(FShaderResourceViewInitializer(bHadData ? VertexBufferRHI : nullptr, PixelFormat));
@@ -569,7 +569,7 @@ FBoxSphereBounds BuildPreSkinnedBounds(FGeometryCollection& InCollection)
 	TRACE_CPUPROFILER_EVENT_SCOPE(FGeometryCollectionRenderData::BuildBounds);
 
 	const TManagedArray<FBox>& BoundingBoxes = InCollection.BoundingBox;
-	const TManagedArray<FTransform>& Transform = InCollection.Transform;
+	const TManagedArray<FTransform3f>& Transform = InCollection.Transform;
 	const TManagedArray<int32>& Parent = InCollection.Parent;
 	const TManagedArray<int32>& TransformIndices = InCollection.TransformIndex;
 	const int32 NumBoxes = BoundingBoxes.Num();
@@ -724,7 +724,8 @@ FGeometryCollectionRenderData::~FGeometryCollectionRenderData()
 
 void FGeometryCollectionRenderData::Serialize(FArchive& Ar, UGeometryCollection& Owner)
 {
-	if (Owner.bStripRenderDataOnCook && Ar.IsCooking())
+	const bool bIsArchiveValidCandidateForStrip = (Ar.IsCooking() || (Ar.IsCountingMemory() && Ar.IsFilterEditorOnly()));
+	if (Owner.bStripRenderDataOnCook && bIsArchiveValidCandidateForStrip)
 	{
 		// Don't cook rendering data.
 		// This is used if we expect to use a custom GC render path such as the ISM pool.

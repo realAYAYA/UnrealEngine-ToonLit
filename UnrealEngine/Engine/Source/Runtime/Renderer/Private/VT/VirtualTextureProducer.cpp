@@ -1,8 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "VirtualTextureProducer.h"
-#include "VirtualTextureSystem.h"
-#include "VirtualTexturePhysicalSpace.h"
+
+#include "VT/VirtualTexturePhysicalSpace.h"
+#include "VT/VirtualTextureSystem.h"
 
 FVirtualTextureProducer::~FVirtualTextureProducer()
 {
@@ -53,9 +54,8 @@ FVirtualTextureProducerCollection::FVirtualTextureProducerCollection() : NumPend
 	}
 }
 
-FVirtualTextureProducerHandle FVirtualTextureProducerCollection::RegisterProducer(FVirtualTextureSystem* System, const FVTProducerDescription& InDesc, IVirtualTexture* InProducer)
+FVirtualTextureProducerHandle FVirtualTextureProducerCollection::RegisterProducer(FRHICommandListBase& RHICmdList, FVirtualTextureSystem* System, const FVTProducerDescription& InDesc, IVirtualTexture* InProducer)
 {
-	check(IsInRenderingThread());
 	const uint32 ProducerWidth = InDesc.BlockWidthInTiles * InDesc.WidthInBlocks * InDesc.TileSize;
 	const uint32 ProducerHeight = InDesc.BlockHeightInTiles * InDesc.HeightInBlocks * InDesc.TileSize;
 	check(ProducerWidth > 0u);
@@ -91,7 +91,7 @@ FVirtualTextureProducerHandle FVirtualTextureProducerCollection::RegisterProduce
 			}
 		}
 		check(PhysicalSpaceDesc.NumLayers > 0);
-		Entry.Producer.PhysicalGroups[PhysicalGroupIndex].PhysicalSpace = System->AcquirePhysicalSpace(PhysicalSpaceDesc);
+		Entry.Producer.PhysicalGroups[PhysicalGroupIndex].PhysicalSpace = System->AcquirePhysicalSpace(RHICmdList, PhysicalSpaceDesc);
 	}
 
 	const FVirtualTextureProducerHandle Handle(Index, Entry.Magic);
@@ -100,8 +100,6 @@ FVirtualTextureProducerHandle FVirtualTextureProducerCollection::RegisterProduce
 
 void FVirtualTextureProducerCollection::ReleaseProducer(FVirtualTextureSystem* System, const FVirtualTextureProducerHandle& Handle)
 {
-	check(IsInRenderingThread());
-
 	if (FProducerEntry* Entry = GetEntry(Handle))
 	{
 		uint32 CallbackIndex = Callbacks[Entry->DestroyedCallbacksIndex].NextIndex;
@@ -182,7 +180,6 @@ bool FVirtualTextureProducerCollection::HasPendingCallbacks() const
 
 void FVirtualTextureProducerCollection::AddDestroyedCallback(const FVirtualTextureProducerHandle& Handle, FVTProducerDestroyedFunction* Function, void* Baton)
 {
-	check(IsInRenderingThread());
 	check(Function);
 	check(Baton);
 
@@ -202,7 +199,6 @@ void FVirtualTextureProducerCollection::AddDestroyedCallback(const FVirtualTextu
 
 uint32 FVirtualTextureProducerCollection::RemoveAllCallbacks(const void* Baton)
 {
-	check(IsInRenderingThread());
 	check(Baton);
 
 	uint32 NumRemoved = 0u;

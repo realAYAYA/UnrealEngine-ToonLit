@@ -39,6 +39,7 @@ public class UMGEditor : ModuleRules
 				"BlueprintGraph",
 				"GraphEditor",
 				"Kismet",  // for FWorkflowCentricApplication
+				"Projects",
 				"PropertyPath",
 				"PropertyEditor",
 				"UMG",

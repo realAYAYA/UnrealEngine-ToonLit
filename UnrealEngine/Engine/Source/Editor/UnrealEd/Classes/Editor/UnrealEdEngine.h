@@ -733,6 +733,11 @@ public:
 	UNREALED_API void RebuildTemplateMapData();
 
 	/**
+	 * Appends the specified template maps to the list of available templates.
+	 */
+	UNREALED_API void AppendTemplateMaps( const TArray<FTemplateMapInfo>& TemplateMapInfos );
+
+	/**
 	 * Returns true if the user is currently interacting with a viewport.
 	 */
 	UNREALED_API bool IsUserInteracting();
@@ -855,8 +860,6 @@ public:
 
 	/** Return if we have write permission under the mount point this packages lives in. */
 	UNREALED_API bool HasMountWritePermissionForPackage(const FString& PackageName);
-	UE_DEPRECATED(5.0, "Use HasMountWritePermissionForPackage instead")
-	UNREALED_API bool HasMountWritePersmissionForPackage(const FString& PackageName);
 
 	/* Delegate to override TemplateMapInfos */
 	DECLARE_DELEGATE_RetVal(const TArray<FTemplateMapInfo>&, FGetTemplateMapInfos);
@@ -869,10 +872,6 @@ public:
 	UNREALED_API const TArray<FTemplateMapInfo>& GetProjectDefaultMapTemplates() const;
 
 protected:
-
-	/** Called when global editor selection changes */
-	UNREALED_API void OnEditorSelectionChanged(UObject* SelectionThatChanged);
-
 	/** Called when the element selection set pointer set on the global editor selection changes */
 	UNREALED_API void OnEditorElementSelectionPtrChanged(USelection* Selection, UTypedElementSelectionSet* OldSelectionSet, UTypedElementSelectionSet* NewSelectionSet);
 

@@ -33,7 +33,14 @@ FInterchangeTestFunctionResult UInterchangeResultImportTestFunctions::CheckIfErr
 
 	if (!bFoundType)
 	{
-		Result.AddError(FString::Printf(TEXT("No error or warning of class %s was generated."), *ErrorOrWarningClass.Get()->GetName()));
+		if(ErrorOrWarningClass)
+		{
+			Result.AddError(FString::Printf(TEXT("No error or warning of class %s was generated."), *ErrorOrWarningClass.Get()->GetName()));
+		}
+		else
+		{
+			Result.AddError(FString::Printf(TEXT("No error or warning class set.")));
+		}
 	}
 
 	return Result;

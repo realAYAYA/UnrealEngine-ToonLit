@@ -45,8 +45,11 @@ class FILEUTILITIES_API FZipArchiveWriter
 	inline void Write(uint64 V) { Write((void*)&V, sizeof(V)); }
 	inline void Write(void* Src, uint64 Size)
 	{
-		void* Dst = &Buffer[Buffer.AddUninitialized(Size)];
-		FMemory::Memcpy(Dst, Src, Size);
+		if (Size)
+		{
+			void* Dst = &Buffer[Buffer.AddUninitialized(Size)];
+			FMemory::Memcpy(Dst, Src, Size);
+		}
 	}
 	inline uint64 Tell() { return (File ? File->Tell() : 0) + Buffer.Num(); }
 	void Flush();

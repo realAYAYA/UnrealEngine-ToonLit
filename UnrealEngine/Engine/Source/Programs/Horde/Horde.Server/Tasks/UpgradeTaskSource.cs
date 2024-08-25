@@ -5,14 +5,17 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Tools;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Horde.Server.Agents;
-using Horde.Server.Agents.Leases;
-using Horde.Server.Jobs;
 using Horde.Server.Logs;
 using Horde.Server.Server;
 using Horde.Server.Tools;
+using Horde.Server.Utilities;
 using HordeCommon;
 using HordeCommon.Rpc.Tasks;
 using Microsoft.Extensions.Options;
@@ -46,50 +49,50 @@ namespace Horde.Server.Tasks
 		{
 			if (!_serverSettings.Value.EnableUpgradeTasks)
 			{
-				return Skip(cancellationToken);
+				return SkipAsync(cancellationToken);
 			}
 
-			(ITool, IToolDeployment)? required = await GetRequiredSoftwareVersion(agent);
+			(ITool, IToolDeployment)? required = await GetRequiredSoftwareVersionAsync(agent, cancellationToken);
 			if (required == null)
 			{
-				return Skip(cancellationToken);
+				return SkipAsync(cancellationToken);
 			}
 
-			(ITool tool, IToolDeployment deployment) = required.Value; 
+			(ITool tool, IToolDeployment deployment) = required.Value;
 			if (agent.Version == deployment.Version)
 			{
-				return Skip(cancellationToken);
+				return SkipAsync(cancellationToken);
 			}
 
-			string softwareId = $"{tool.Id}:{deployment.Version}";
-			if (agent.Leases.Count > 0 || !(agent.LastUpgradeTime == null || agent.LastUpgradeTime.Value + TimeSpan.FromMinutes(5.0) < _clock.UtcNow || agent.LastUpgradeVersion != softwareId))
+			if (agent.Leases.Count > 0 || (agent.LastUpgradeTime != null && agent.LastUpgradeVersion == deployment.Version && _clock.UtcNow < agent.LastUpgradeTime.Value + TimeSpan.FromMinutes(5.0)))
 			{
 				return await DrainAsync(cancellationToken);
 			}
 
-			LeaseId leaseId = LeaseId.GenerateNewId();
-			ILogFile logFile = await _logService.CreateLogFileAsync(JobId.Empty, leaseId, agent.SessionId, LogType.Json, useNewStorageBackend: false, cancellationToken: cancellationToken);
+			LeaseId leaseId = new LeaseId(BinaryIdUtils.CreateNew());
+			ILogFile logFile = await _logService.CreateLogFileAsync(JobId.Empty, leaseId, agent.SessionId, LogType.Json, cancellationToken: cancellationToken);
 
 			UpgradeTask task = new UpgradeTask();
-			task.SoftwareId = softwareId;
+			task.SoftwareId = $"{tool.Id}:{deployment.Version}";
 			task.LogId = logFile.Id.ToString();
 
 			byte[] payload = Any.Pack(task).ToByteArray();
-			return Lease(new AgentLease(leaseId, $"Upgrade to {tool.Id} {deployment.Version}", null, null, logFile.Id, LeaseState.Pending, null, true, payload));
+			return LeaseAsync(new AgentLease(leaseId, null, $"Upgrade to {tool.Id} {deployment.Version}", null, null, logFile.Id, LeaseState.Pending, null, true, payload));
 		}
 
 		/// <summary>
 		/// Determines the client software version that should be installed on an agent
 		/// </summary>
 		/// <param name="agent">The agent instance</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Unique id of the client version this agent should be running</returns>
-		public async Task<(ITool, IToolDeployment)?> GetRequiredSoftwareVersion(IAgent agent)
+		public async Task<(ITool, IToolDeployment)?> GetRequiredSoftwareVersionAsync(IAgent agent, CancellationToken cancellationToken)
 		{
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 
 			ToolId toolId = agent.GetSoftwareToolId(globalConfig);
 
-			ITool? tool = await _toolCollection.GetAsync(toolId, globalConfig);
+			ITool? tool = await _toolCollection.GetAsync(toolId, globalConfig, cancellationToken);
 			if (tool == null)
 			{
 				return null;

@@ -13,6 +13,7 @@
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSpacer.h"
 
+#include "StateTree.h"
 #include "StateTreeState.h"
 #include "StateTreeTaskBase.h"
 #include "StateTreeViewModel.h"
@@ -20,7 +21,21 @@
 
 #define LOCTEXT_NAMESPACE "StateTreeEditor"
 
-void SStateTreeViewRow::Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView, TWeakObjectPtr<UStateTreeState> InState, const TSharedPtr<SScrollBox>& ViewBox, TSharedRef<FStateTreeViewModel> InStateTreeViewModel)
+namespace UE::StateTree::Editor
+{
+	FLinearColor LerpColorSRGB(const FLinearColor ColorA, FLinearColor ColorB, float T)
+	{
+		const FColor A = ColorA.ToFColorSRGB();
+		const FColor B = ColorB.ToFColorSRGB();
+		return FLinearColor(FColor(
+			static_cast<uint8>(FMath::RoundToInt(static_cast<float>(A.R) * (1.f - T) + static_cast<float>(B.R) * T)),
+			static_cast<uint8>(FMath::RoundToInt(static_cast<float>(A.G) * (1.f - T) + static_cast<float>(B.G) * T)),
+			static_cast<uint8>(FMath::RoundToInt(static_cast<float>(A.B) * (1.f - T) + static_cast<float>(B.B) * T)),
+			static_cast<uint8>(FMath::RoundToInt(static_cast<float>(A.A) * (1.f - T) + static_cast<float>(B.A) * T))));
+	}
+} // UE:StateTree::Editor
+
+void SStateTreeViewRow::Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView, TWeakObjectPtr<UStateTreeState> InState, const TSharedPtr<SScrollBox>& ViewBox, TSharedPtr<FStateTreeViewModel> InStateTreeViewModel)
 {
 	StateTreeViewModel = InStateTreeViewModel;
 	WeakState = InState;
@@ -607,6 +622,7 @@ TSharedRef<SHorizontalBox> SStateTreeViewRow::CreateTasksWidget()
 					SNew(SBorder)
 					.VAlign(VAlign_Center)
 					.BorderImage(FStateTreeEditorStyle::Get().GetBrush("StateTree.Task.Rect"))
+					.BorderBackgroundColor(this, &SStateTreeViewRow::GetTitleColor)
 					.Padding(0)
 					.IsEnabled_Lambda(IsTaskEnabledFunc)
 					[
@@ -658,11 +674,18 @@ void SStateTreeViewRow::RequestRename() const
 
 FSlateColor SStateTreeViewRow::GetTitleColor() const
 {
-	if (const UStateTreeState* State = WeakState.Get())
+	const UStateTreeState* State = WeakState.Get();
+	const UStateTreeEditorData* EditorData = WeakTreeData.Get();
+
+	if (State != nullptr && EditorData != nullptr)
 	{
-		if (IsRootState() || State->Type == EStateTreeStateType::Subtree)
+		if (const FStateTreeEditorColor* FoundColor = EditorData->FindColor(State->ColorRef))
 		{
-			return FLinearColor(FColor(17, 117, 131));
+			if (IsRootState() || State->Type == EStateTreeStateType::Subtree)
+			{
+				return UE::StateTree::Editor::LerpColorSRGB(FoundColor->Color, FColor::Black, 0.25f);
+			}
+			return FoundColor->Color;
 		}
 	}
 
@@ -693,7 +716,8 @@ FSlateColor SStateTreeViewRow::GetSubTreeMarkerColor() const
 	{
 		if (IsRootState() || State->Type == EStateTreeStateType::Subtree)
 		{
-			return FLinearColor(FColor(136, 186, 193));
+			const FSlateColor TitleColor = GetTitleColor();
+			return UE::StateTree::Editor::LerpColorSRGB(TitleColor.GetSpecifiedColor(), FLinearColor::White, 0.2f);
 		}
 	}
 
@@ -875,7 +899,7 @@ EVisibility SStateTreeViewRow::GetLinkedStateVisibility() const
 {
 	if (const UStateTreeState* State = WeakState.Get())
 	{
-		return State->Type == EStateTreeStateType::Linked ? EVisibility::Visible : EVisibility::Collapsed;
+		return (State->Type == EStateTreeStateType::Linked || State->Type == EStateTreeStateType::LinkedAsset) ? EVisibility::Visible : EVisibility::Collapsed;
 	}
 	return EVisibility::Collapsed;
 }
@@ -891,6 +915,10 @@ FText SStateTreeViewRow::GetLinkedStateDesc() const
 	if (State->Type == EStateTreeStateType::Linked)
 	{
 		return FText::FromName(State->LinkedSubtree.Name);
+	}
+	else if (State->Type == EStateTreeStateType::LinkedAsset)
+	{
+		return FText::FromString(GetNameSafe(State->LinkedAsset.Get()));
 	}
 	
 	return FText::GetEmpty();
@@ -925,6 +953,9 @@ FText SStateTreeViewRow::GetLinkDescription(const FStateTreeStateLink& Link)
 		break;
 	case EStateTreeTransitionType::NextState:
 		return LOCTEXT("TransitionNextStateStyled", "[Next]");
+		break;
+	case EStateTreeTransitionType::NextSelectableState:
+		return LOCTEXT("TransitionNextSelectableStateStyled", "[Next Selectable]");
 		break;
 	case EStateTreeTransitionType::GotoState:
 		return FText::FromName(Link.Name);
@@ -1012,7 +1043,7 @@ FText SStateTreeViewRow::GetTransitionsDesc(const UStateTreeState& State, const 
 		}
 		else
 		{
-			DescItems.Add(LOCTEXT("TransitionActionMissingTransition", "Missing Transition"));
+			DescItems.Add(LOCTEXT("TransitionActionRoot", "[Root]"));
 		}
 	}
 	
@@ -1027,7 +1058,6 @@ FText SStateTreeViewRow::GetTransitionsIcon(const UStateTreeState& State, const 
 		IconRightArrow =	1 << 0,
 		IconDownArrow =		1 << 1,
 		IconLevelUp =		1 << 2,
-		IconWarning =		1 << 3,
 	};
 	uint8 IconType = IconNone;
 	
@@ -1068,6 +1098,7 @@ FText SStateTreeViewRow::GetTransitionsIcon(const UStateTreeState& State, const 
 				IconType |= IconRightArrow;
 				break;
 			case EStateTreeTransitionType::NextState:
+			case EStateTreeTransitionType::NextSelectableState:
 				IconType |= IconDownArrow;
 				break;
 			case EStateTreeTransitionType::GotoState:
@@ -1091,14 +1122,8 @@ FText SStateTreeViewRow::GetTransitionsIcon(const UStateTreeState& State, const 
 		&& IconType == IconNone
 		&& EnumHasAnyFlags(Trigger, EStateTreeTransitionTrigger::OnStateCompleted))
 	{
-		if (HasParentTransitionForTrigger(State, Trigger))
-		{
-			IconType = IconLevelUp;
-		}
-		else
-		{
-			IconType = IconWarning;
-		}
+		// Transition is handled on parent state, or implicit Root.
+		IconType = IconLevelUp;
 	}
 
 	switch (IconType)
@@ -1109,13 +1134,9 @@ FText SStateTreeViewRow::GetTransitionsIcon(const UStateTreeState& State, const 
 			return FEditorFontGlyphs::Long_Arrow_Down;
 		case IconLevelUp:
 			return FEditorFontGlyphs::Level_Up;
-		case IconWarning:
-			return FEditorFontGlyphs::Exclamation_Triangle;
 		default:
 			return FText::GetEmpty();
 	}
-
-	return FText::GetEmpty();
 }
 
 EVisibility SStateTreeViewRow::GetTransitionsVisibility(const UStateTreeState& State, const EStateTreeTransitionTrigger Trigger) const

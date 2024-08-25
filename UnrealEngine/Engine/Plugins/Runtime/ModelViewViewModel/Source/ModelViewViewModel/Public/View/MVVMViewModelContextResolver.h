@@ -25,8 +25,30 @@ public:
 		return K2_CreateInstance(ExpectedType, UserWidget).GetObject();
 	}
 
-	UFUNCTION(BlueprintImplementableEvent, Category="Viewmodel", DisplayName="Create Instance")
+	UFUNCTION(BlueprintImplementableEvent, Category = "Viewmodel", meta = (DisplayName = "Create Instance"))
 	TScriptInterface<INotifyFieldValueChanged> K2_CreateInstance(const UClass* ExpectedType, const UUserWidget* UserWidget) const;
 
-	virtual void DestroyInstance(const UObject* ViewModel, const UMVVMView* View) const {}
+	virtual void DestroyInstance(const UObject* ViewModel, const UMVVMView* View) const
+	{
+		K2_DestroyInstance(ViewModel, View);
+	}
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Viewmodel", meta = (DisplayName = "Destroy Instance"))
+	void K2_DestroyInstance(const UObject* ViewModel, const UMVVMView* View) const;
+
+public:
+#if WITH_EDITOR
+	virtual bool DoesSupportViewModelClass(const UClass* Class) const;
+#endif
+
+private:
+#if WITH_EDITORONLY_DATA
+	/** Viewmodel class that the resolver supports.*/
+	UPROPERTY(EditDefaultsOnly, Category = "Viewmodel", meta=(MustImplement="/Script/FieldNotification.NotifyFieldValueChanged", DisallowedClasses="/Script/UMG.Widget"))
+	TArray<FSoftClassPath> AllowedViewModelClasses;
+
+	/** Viewmodel class that the resolver explicitly does not support. */
+	UPROPERTY(EditDefaultsOnly, Category = "Viewmodel", meta=(MustImplement="/Script/FieldNotification.NotifyFieldValueChanged", DisallowedClasses="/Script/UMG.Widget"))
+	TArray<FSoftClassPath> DeniedViewModelClasses;
+#endif
 };

@@ -54,6 +54,16 @@ public:
 		return -LevelData[ClipmapIndex].WorldCenter;
 	}
 
+	FMatrix GetViewToClipMatrix(int32 ClipmapIndex) const
+	{
+		return LevelData[ClipmapIndex].ViewToClip;
+	}
+
+	FMatrix GetWorldToLightViewRotationMatrix() const
+	{
+		return WorldToLightViewRotationMatrix;
+	}
+
 	const FLightSceneInfo& GetLightSceneInfo() const
 	{
 		return LightSceneInfo;
@@ -99,7 +109,7 @@ public:
 
 private:
 	FVirtualShadowMapProjectionShaderData ComputeProjectionShaderData(int32 ClipmapIndex) const;
-	void ComputeBoundingVolumes(const FViewMatrices& CameraViewMatrices);
+	void ComputeBoundingVolumes(const FVector CameraOrigin);
 
 	const FLightSceneInfo& LightSceneInfo;
 
@@ -114,6 +124,9 @@ private:
 	* Note that the centers of each of the levels can be different as they are snapped to page alignment at their respective scales
 	* */
 	FVector WorldOrigin;
+	FVector CameraToViewTarget;
+
+	FVector LightDirection;
 
 	/** Directional light rotation matrix (no translation) */
 	FMatrix WorldToLightViewRotationMatrix;
@@ -130,6 +143,7 @@ private:
 		FInt64Point CornerOffset;
 		//Offset from LastLevel-snapped WorldCenter to clipmap corner, in level radii
 		FIntPoint RelativeCornerOffset;
+		double WPODistanceDisableThresholdSquared;
 	};
 	TArray< FLevelData, TInlineAllocator<32> > LevelData;
 

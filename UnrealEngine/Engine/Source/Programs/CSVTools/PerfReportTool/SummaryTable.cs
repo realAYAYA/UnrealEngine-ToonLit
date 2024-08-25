@@ -64,12 +64,12 @@ namespace PerfSummaries
 
 	class SummaryTableInfo
 	{
-		public SummaryTableInfo(XElement tableElement, Dictionary<string,string> substitutionsDict, string[] appendList, string[] rowSortAppendList)
+		public SummaryTableInfo(XElement tableElement, Dictionary<string,string> substitutionsDict, string[] appendList, string[] rowSortAppendList, XmlVariableMappings variableMappings )
 		{
-			XAttribute rowSortAt = tableElement.Attribute("rowSort");
-			if (rowSortAt != null)
+			string rowSortStr = tableElement.GetSafeAttribute<string>(variableMappings, "rowSort");
+			if (rowSortStr != null)
 			{
-				rowSortList.AddRange(rowSortAt.Value.Split(','));
+				rowSortList.AddRange(rowSortStr.Split(',').Select(s => s.Trim()));
 				ApplySubstitutionsToList(rowSortList, substitutionsDict);
 			}
 			if (rowSortAppendList != null)
@@ -77,16 +77,16 @@ namespace PerfSummaries
 				rowSortList.AddRange(rowSortAppendList);
 			}
 
-			XAttribute weightByColumnAt = tableElement.Attribute("weightByColumn");
-			if (weightByColumnAt != null)
+			weightByColumn = tableElement.GetSafeAttribute<string>(variableMappings, "weightByColumn");
+			if (weightByColumn != null)
 			{
-				weightByColumn = weightByColumnAt.Value.ToLower();
+				weightByColumn = weightByColumn.ToLower();
 			}
 
 			XElement filterEl = tableElement.Element("filter");
 			if (filterEl != null)
 			{
-				columnFilterList.AddRange(filterEl.Value.Split(','));
+				columnFilterList.AddRange(filterEl.GetValue(variableMappings).Split(',').Select(s => s.Trim()));
 				ApplySubstitutionsToList(columnFilterList, substitutionsDict);
 			}
 
@@ -95,10 +95,10 @@ namespace PerfSummaries
 				columnFilterList.AddRange(appendList);
 			}
 
-			bReverseSortRows = tableElement.GetSafeAttibute<bool>("reverseSortRows", false);
-			bScrollableFormatting = tableElement.GetSafeAttibute<bool>("scrollableFormatting", false);
+			bReverseSortRows = tableElement.GetSafeAttribute<bool>(variableMappings, "reverseSortRows", false);
+			bScrollableFormatting = tableElement.GetSafeAttribute<bool>(variableMappings, "scrollableFormatting", false);
 
-			string colorizeModeStr = tableElement.GetSafeAttibute<string>("colorizeMode", "").ToLower();
+			string colorizeModeStr = tableElement.GetSafeAttribute<string>(variableMappings, "colorizeMode", "").ToLower();
 			if (colorizeModeStr != "")
 			{
 				if (colorizeModeStr == "auto")
@@ -115,22 +115,22 @@ namespace PerfSummaries
 				}
 			}
 
-			statThreshold = tableElement.GetSafeAttibute<float>("statThreshold", 0.0f);
-			hideStatPrefix = tableElement.GetSafeAttibute<string>("hideStatPrefix");
+			statThreshold = tableElement.GetSafeAttribute<float>(variableMappings, "statThreshold", 0.0f);
+			hideStatPrefix = tableElement.GetSafeAttribute<string>(variableMappings, "hideStatPrefix");
 
 			foreach (XElement sectionBoundaryEl in tableElement.Elements("sectionBoundary"))
 			{
 				if (sectionBoundaryEl != null)
 				{
-					string statName = ApplySubstitution(sectionBoundaryEl.GetSafeAttibute<string>("statName"), substitutionsDict);
+					string statName = ApplySubstitution(sectionBoundaryEl.GetSafeAttribute<string>(variableMappings, "statName"), substitutionsDict);
 
 					SummarySectionBoundaryInfo sectionBoundary = new SummarySectionBoundaryInfo(
 						statName,
-						sectionBoundaryEl.GetSafeAttibute<string>("startToken"),
-						sectionBoundaryEl.GetSafeAttibute<string>("endToken"),
-						sectionBoundaryEl.GetSafeAttibute<int>("level", 0),
-						sectionBoundaryEl.GetSafeAttibute<bool>("inCollatedTable", true),
-						sectionBoundaryEl.GetSafeAttibute<bool>("inFullTable", true)
+						sectionBoundaryEl.GetSafeAttribute<string>(variableMappings, "startToken"),
+						sectionBoundaryEl.GetSafeAttribute<string>(variableMappings, "endToken"),
+						sectionBoundaryEl.GetSafeAttribute<int>(variableMappings, "level", 0),
+						sectionBoundaryEl.GetSafeAttribute<bool>(variableMappings, "inCollatedTable", true),
+						sectionBoundaryEl.GetSafeAttribute<bool>(variableMappings, "inFullTable", true)
 						);
 					sectionBoundaries.Add(sectionBoundary);
 				}
@@ -165,8 +165,8 @@ namespace PerfSummaries
 
 		public SummaryTableInfo(string filterListStr, string rowSortStr)
 		{
-			columnFilterList.AddRange(filterListStr.Split(','));
-			rowSortList.AddRange(rowSortStr.Split(','));
+			columnFilterList.AddRange(filterListStr.Split(',').Select(s => s.Trim()));
+			rowSortList.AddRange(rowSortStr.Split(',').Select(s => s.Trim()));
 		}
 
 		public SummaryTableInfo()
@@ -268,7 +268,7 @@ namespace PerfSummaries
 		{
 			name = element.Attribute("name").Value.ToLower();
 
-			string autoColorizeStr = element.GetSafeAttibute<string>("autoColorize", "highIsBad").ToLower();
+			string autoColorizeStr = element.GetSafeAttribute<string>("autoColorize", "highIsBad").ToLower();
 			var modeList = Enum.GetValues(typeof(AutoColorizeMode));
 			foreach (AutoColorizeMode mode in modeList)
 			{
@@ -278,20 +278,20 @@ namespace PerfSummaries
 					break;
 				}
 			}
-			numericFormat = element.GetSafeAttibute<string>("numericFormat");
-			maxStringLength = element.GetSafeAttibute<int>("maxStringLength", Int32.MaxValue );
-			maxStringLengthCollated = element.GetSafeAttibute<int>("maxStringLengthCollated", Int32.MaxValue );
+			numericFormat = element.GetSafeAttribute<string>("numericFormat");
+			maxStringLength = element.GetSafeAttribute<int>("maxStringLength", Int32.MaxValue );
+			maxStringLengthCollated = element.GetSafeAttribute<int>("maxStringLengthCollated", Int32.MaxValue );
 			if (maxStringLengthCollated == Int32.MaxValue)
 			{
 				maxStringLengthCollated = maxStringLength;
 			}
 
-			noWrap = element.GetSafeAttibute<string>("noWrap") == "true";
+			noWrap = element.GetSafeAttribute<string>("noWrap") == "true";
 
 			if (IsDate())
 			{
-				dateFormat = element.GetSafeAttibute<string>("dateFormat");
-				string timeZoneId = element.GetSafeAttibute<string>("dateTimeZoneId");
+				dateFormat = element.GetSafeAttribute<string>("dateFormat");
+				string timeZoneId = element.GetSafeAttribute<string>("dateTimeZoneId");
 				dateTimeZone = TimeZoneInfo.Utc;
 				if (timeZoneId != null)
 				{
@@ -301,13 +301,13 @@ namespace PerfSummaries
 				}
 			}
 
-			includeValueWithBucketName = element.GetSafeAttibute<bool>("includeValueWithBucketName", true);
-			string bucketNamesString = element.GetSafeAttibute<string>("valueBucketNames");
+			includeValueWithBucketName = element.GetSafeAttribute<bool>("includeValueWithBucketName", true);
+			string bucketNamesString = element.GetSafeAttribute<string>("valueBucketNames");
 			if (bucketNamesString != null)
 			{
 				bucketNames = bucketNamesString.Split(',').ToList();
 			}
-			string bucketThresholdsString = element.GetSafeAttibute<string>("valueBucketThresholds");
+			string bucketThresholdsString = element.GetSafeAttribute<string>("valueBucketThresholds");
 			if (bucketThresholdsString != null)
 			{
 				bucketThresholds = bucketThresholdsString.Split(',').Select(valStr =>
@@ -320,7 +320,7 @@ namespace PerfSummaries
 				}).ToList();
 			}
 
-			colourThresholdList = ColourThresholdList.ReadColourThresholdListXML(element.Element("colourThresholds"));
+			colourThresholdList = ColourThresholdList.ReadColourThresholdListXML(element.Element("colourThresholds"), null);
 		}
 
 		public bool IsDate() => numericFormat == "date";
@@ -911,7 +911,7 @@ namespace PerfSummaries
 
 				if (forceNumericFormat != null)
 				{
-					if (forceNumericFormat == "date")
+					if (forceNumericFormat == "date" && val != double.MaxValue)
 					{
 						DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds((long)val);
 						TimeSpan timeZoneOffset = formatInfo.dateTimeZone.GetUtcOffset(dateTimeOffset);
@@ -1903,8 +1903,12 @@ namespace PerfSummaries
 							if (column.isNumeric && column.formatInfo != null && column.formatInfo.IsDate())
 							{
 								// For dates use a standard UTC timestamp for the tooltip
-								DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds((long)column.GetValue(rowIndex));
-								toolTip = dateTimeOffset.ToString("yyyy-MM-dd HH:mm:ss (UTC)");
+								double val = column.GetValue(rowIndex);
+								if (val < double.MaxValue )
+								{
+									DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds((long)val);
+									toolTip = dateTimeOffset.ToString("yyyy-MM-dd HH:mm:ss (UTC)");
+								}
 							}
 							else
 							{
@@ -2016,7 +2020,7 @@ namespace PerfSummaries
 			}
 
 			htmlFile.WriteLine("<p style='font-size:8'>Created with PerfReportTool " + VersionString + extraString + "</p>");
-			htmlFile.WriteLine("</font></body></html>");
+			htmlFile.WriteLine("</body></html>");
 
 			htmlFile.Close();
 		}

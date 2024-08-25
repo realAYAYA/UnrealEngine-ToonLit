@@ -6,13 +6,10 @@
 #include "UsdWrappers/UsdStage.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/sdf/layer.h"
-	#include "pxr/usd/usd/editContext.h"
+#include "pxr/usd/usd/editContext.h"
 #include "USDIncludesEnd.h"
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -22,31 +19,31 @@ namespace UE
 		{
 #if USE_USD_SDK
 		public:
-			explicit FUsdEditContextImpl( const pxr::UsdStageWeakPtr& StageWeakPtr, const pxr::UsdEditTarget& EditTarget = pxr::UsdEditTarget() )
-				: UsdEditContext( StageWeakPtr, EditTarget )
+			explicit FUsdEditContextImpl(const pxr::UsdStageWeakPtr& StageWeakPtr, const pxr::UsdEditTarget& EditTarget = pxr::UsdEditTarget())
+				: UsdEditContext(StageWeakPtr, EditTarget)
 			{
 			}
 
 		private:
 			pxr::UsdEditContext UsdEditContext;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 		};
 	}
 
-	FUsdEditContext::FUsdEditContext( const FUsdStageWeak& Stage )
+	FUsdEditContext::FUsdEditContext(const FUsdStageWeak& Stage)
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
-		Impl = MakeUnique< Internal::FUsdEditContextImpl >(Stage);
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdEditContextImpl>(Stage);
+#endif	  // #if USE_USD_SDK
 	}
 
-	FUsdEditContext::FUsdEditContext( const FUsdStageWeak& Stage, const FSdfLayer& EditTarget )
+	FUsdEditContext::FUsdEditContext(const FUsdStageWeak& Stage, const FSdfLayer& EditTarget)
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
-		Impl = MakeUnique< Internal::FUsdEditContextImpl >( Stage, pxr::SdfLayerWeakPtr{ EditTarget } );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdEditContextImpl>(Stage, pxr::SdfLayerWeakPtr{EditTarget});
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdEditContext::~FUsdEditContext()
@@ -54,6 +51,6 @@ namespace UE
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 		Impl.Reset();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
-}
+}	 // namespace UE

@@ -55,6 +55,7 @@
 #include "UObject/Class.h"
 #include "UObject/Object.h"
 #include "UObject/UnrealType.h"
+#include "TextureCompiler.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SComboBox.h"
@@ -95,6 +96,7 @@ public:
 		SLATE_ARGUMENT(	TSharedPtr<IPropertyHandle>, ImageSizeProperty )
 		SLATE_ARGUMENT(	TSharedPtr<IPropertyHandle>, MarginProperty )
 		SLATE_ARGUMENT(	TSharedPtr<IPropertyHandle>, ResourceObjectProperty )
+		SLATE_ARGUMENT(	TSharedPtr<IPropertyHandle>, ImageTypeProperty )
 		SLATE_ARGUMENT( FSlateBrush*, SlateBrush )
 	SLATE_END_ARGS()
 
@@ -108,6 +110,7 @@ public:
 		ImageSizeProperty = InArgs._ImageSizeProperty;
 		MarginProperty = InArgs._MarginProperty;
 		ResourceObjectProperty = InArgs._ResourceObjectProperty;
+		ImageTypeProperty = InArgs._ImageTypeProperty;
 
 		FSimpleDelegate OnDrawAsChangedDelegate = FSimpleDelegate::CreateSP( this, &SSlateBrushPreview::OnDrawAsChanged );
 		DrawAsProperty->SetOnPropertyValueChanged( OnDrawAsChangedDelegate );
@@ -642,17 +645,25 @@ private:
 		UObject* ResourceObject;
 		FPropertyAccess::Result Result = ResourceObjectProperty->GetValue( ResourceObject );
 		if( Result == FPropertyAccess::Success )
-		{				
+		{
+			using ImageSizeType = decltype(FSlateBrush::ImageSize);
+
 			TArray<void*> RawData;
 			ImageSizeProperty->AccessRawData(RawData);
 			if (RawData.Num() > 0 && RawData[0] != NULL)
 			{
-				CachedImageSizeValue = *static_cast<FVector2D*>(RawData[0]);
+				CachedImageSizeValue = *static_cast<ImageSizeType*>(RawData[0]);
 			}
 
 			UTexture2D* BrushTexture = Cast<UTexture2D>(ResourceObject);
 			if( BrushTexture )
 			{
+				if ( BrushTexture->IsDefaultTexture() )
+				{
+					// GetSizeX/Y will return the incorrect value if this texture is being compiled so we need to wait for it here
+					UTexture* const BaseTexture = BrushTexture;
+					FTextureCompilingManager::Get().FinishCompilation( MakeArrayView(&BaseTexture, 1) );
+				}
 				CachedTextureSize = FVector2D( BrushTexture->GetSizeX(), BrushTexture->GetSizeY() );
 			}
 			else if ( ISlateTextureAtlasInterface* AtlasedTextureObject = Cast<ISlateTextureAtlasInterface>(ResourceObject) )
@@ -983,6 +994,7 @@ private:
 	TSharedPtr<IPropertyHandle> ImageSizeProperty;
 	TSharedPtr<IPropertyHandle> MarginProperty;
 	TSharedPtr<IPropertyHandle> ResourceObjectProperty;
+	TSharedPtr<IPropertyHandle> ImageTypeProperty;
 
 	/** Cached Slate Brush property values */
 	FVector2D CachedTextureSize;
@@ -1166,11 +1178,24 @@ class SBrushResourceObjectBox : public SCompoundWidget
 	
 	SLATE_END_ARGS()
 
-	void Construct(const FArguments& InArgs, IStructCustomizationUtils* StructCustomizationUtils, TSharedPtr<IPropertyHandle> InResourceObjectProperty, TSharedPtr<IPropertyHandle> InImageSizeProperty, TSharedPtr<IPropertyHandle> InDrawAsProperty)
+	struct FPropertyParams
 	{
-		ResourceObjectProperty = InResourceObjectProperty;
-		ImageSizeProperty = InImageSizeProperty;
-		DrawAsProperty = InDrawAsProperty;
+		TSharedPtr<IPropertyHandle> ResourceObjectProperty;
+		TSharedPtr<IPropertyHandle> ResourceNameProperty;
+		TSharedPtr<IPropertyHandle> ImageSizeProperty;
+		TSharedPtr<IPropertyHandle> ImageTypeProperty;
+		TSharedPtr<IPropertyHandle> DrawAsProperty;
+	};
+
+	void Construct(const FArguments& InArgs
+		, IStructCustomizationUtils* StructCustomizationUtils
+		, FPropertyParams InParams)
+	{
+		ResourceObjectProperty = InParams.ResourceObjectProperty;
+		ResourceNameProperty = InParams.ResourceNameProperty;
+		ImageSizeProperty = InParams.ImageSizeProperty;
+		ImageTypeProperty = InParams.ImageTypeProperty;
+		DrawAsProperty = InParams.DrawAsProperty;
 
 		FSimpleDelegate OnBrushResourceChangedDelegate = FSimpleDelegate::CreateSP(this, &SBrushResourceObjectBox::OnBrushResourceChanged);
 		ResourceObjectProperty->SetOnPropertyValueChanged(OnBrushResourceChangedDelegate);
@@ -1182,7 +1207,7 @@ class SBrushResourceObjectBox : public SCompoundWidget
 			.FillHeight(1)
 			[
 				SNew(SObjectPropertyEntryBox)
-				.PropertyHandle(InResourceObjectProperty)
+				.PropertyHandle(InParams.ResourceObjectProperty)
 				.ThumbnailPool(StructCustomizationUtils->GetThumbnailPool())
 			]
 			+ SVerticalBox::Slot()
@@ -1242,19 +1267,27 @@ private:
 					TemporaryBrush->InvalidateResourceHandle();
 				}
 			}
-			FVector2D CachedTextureSize;
+
+			using ImageSizeType = decltype(FSlateBrush::ImageSize);
+			ImageSizeType CachedTextureSize;
 
 			TArray<void*> RawData;
 			ImageSizeProperty->AccessRawData(RawData);
 			if ( RawData.Num() > 0 && RawData[0] != NULL )
 			{
-				CachedTextureSize = *static_cast<FVector2D*>( RawData[0] );
+				CachedTextureSize = *static_cast<ImageSizeType*>( RawData[0] );
 			}
 
 			UTexture2D* BrushTexture = Cast<UTexture2D>(ResourceObject);
 			if ( BrushTexture )
 			{
-				CachedTextureSize = FVector2D(BrushTexture->GetSizeX(), BrushTexture->GetSizeY());
+				if ( BrushTexture->IsDefaultTexture() )
+				{
+					UTexture* const BaseTexture = BrushTexture;
+					// GetSizeX/Y will return the incorrect value if this texture is being compiled so we need to wait for it here
+					FTextureCompilingManager::Get().FinishCompilation( MakeArrayView(&BaseTexture, 1) );
+				}
+				CachedTextureSize = ImageSizeType(BrushTexture->GetSizeX(), BrushTexture->GetSizeY());
 			}
 			else if ( ISlateTextureAtlasInterface* AtlasedTextureObject = Cast<ISlateTextureAtlasInterface>(ResourceObject) )
 			{
@@ -1267,6 +1300,7 @@ private:
 			ImageSizeProperty->SetValue(CachedTextureSize);
 
 			// When you assign a resource object, if the current draw type is 'None' we go ahead and update it to 'Image'.
+			// Also update ResourceName to be null (Object name will be used), & set ImageType
 			if (ResourceObject)
 			{
 				TArray<FString> OutPerObjectValues;
@@ -1280,6 +1314,12 @@ private:
 				}
 
 				DrawAsProperty->SetPerObjectValues(NewPerObjectValues);
+
+				ResourceNameProperty->SetValue(NAME_None);
+
+				static_assert(sizeof(decltype(FSlateBrush::ImageType)) == sizeof(uint8));
+				uint8 Value = ESlateBrushImageType::FullColor;
+				ImageTypeProperty->SetValue(Value);
 			}
 		}
 	}
@@ -1348,7 +1388,9 @@ private:
 
 private:
 	TSharedPtr<IPropertyHandle> ResourceObjectProperty;
+	TSharedPtr<IPropertyHandle> ResourceNameProperty;
 	TSharedPtr<IPropertyHandle> ImageSizeProperty;
+	TSharedPtr<IPropertyHandle> ImageTypeProperty;
 	TSharedPtr<IPropertyHandle> DrawAsProperty;
 	TSharedPtr<SBrushResourceError> ResourceError;
 	TSharedPtr<SHyperlink> ChangeDomainLink;
@@ -1396,8 +1438,17 @@ void FSlateBrushStructCustomization::CustomizeChildren( TSharedRef<IPropertyHand
 	TSharedPtr<IPropertyHandle> TintProperty = StructPropertyHandle->GetChildHandle( TEXT("TintColor") );
 	TSharedPtr<IPropertyHandle> OutlineSettingsProperty = StructPropertyHandle->GetChildHandle(TEXT("OutlineSettings"));
 	ResourceObjectProperty = StructPropertyHandle->GetChildHandle( TEXT("ResourceObject") );
+	ResourceNameProperty = StructPropertyHandle->GetChildHandle(TEXT("ResourceName"));
+	ImageTypeProperty = StructPropertyHandle->GetChildHandle(TEXT("ImageType"));
 	
 	FDetailWidgetRow& ResourceObjectRow = StructBuilder.AddProperty(ResourceObjectProperty.ToSharedRef()).CustomWidget();
+
+	SBrushResourceObjectBox::FPropertyParams Params;
+	Params.ResourceObjectProperty = ResourceObjectProperty;
+	Params.ResourceNameProperty = ResourceNameProperty;
+	Params.ImageSizeProperty = ImageSizeProperty;
+	Params.ImageTypeProperty = ImageTypeProperty;
+	Params.DrawAsProperty = DrawAsProperty;
 
 	ResourceObjectRow
 		.NameContent()
@@ -1408,7 +1459,7 @@ void FSlateBrushStructCustomization::CustomizeChildren( TSharedRef<IPropertyHand
 		.MinDesiredWidth(250.0f)
 		.MaxDesiredWidth(0.0f)
 		[
-			SNew(SBrushResourceObjectBox, &StructCustomizationUtils, ResourceObjectProperty, ImageSizeProperty, DrawAsProperty)
+			SNew(SBrushResourceObjectBox, &StructCustomizationUtils, Params)
 		];
 
 	// Add the image size property with custom reset delegates that also affect the child properties (the components)
@@ -1446,6 +1497,7 @@ void FSlateBrushStructCustomization::CustomizeChildren( TSharedRef<IPropertyHand
 				.ImageSizeProperty(ImageSizeProperty)
 				.MarginProperty(MarginProperty)
 				.ResourceObjectProperty(ResourceObjectProperty)
+				.ImageTypeProperty(ImageTypeProperty)
 				.SlateBrush(Brush);
 
 			IDetailGroup& PreviewGroup = StructBuilder.AddGroup(TEXT("Preview"), FText::GetEmpty());
@@ -1577,6 +1629,12 @@ FVector2D FSlateBrushStructCustomization::GetDefaultImageSize() const
 	{
 		if ( UTexture2D* Texture = Cast<UTexture2D>(ResourceObject) )
 		{
+			if ( Texture->IsDefaultTexture() )
+			{
+				// GetSizeX/Y will return the incorrect value if this texture is being compiled so we need to wait for it here
+				UTexture* const BaseTexture = Texture;
+				FTextureCompilingManager::Get().FinishCompilation(MakeArrayView(&BaseTexture, 1));
+			}
 			return FVector2D(Texture->GetSizeX(), Texture->GetSizeY());
 		}
 		else if ( ISlateTextureAtlasInterface* AtlasedTextureObject = Cast<ISlateTextureAtlasInterface>(ResourceObject) )

@@ -2,6 +2,7 @@
 
 #include "CommonActionWidget.h"
 
+#include "CommonInputBaseTypes.h"
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
 #include "CommonUITypes.h"
@@ -112,12 +113,42 @@ void UCommonActionWidget::SynchronizeProperties()
 
 FSlateBrush UCommonActionWidget::GetIcon() const
 {
-	if (const UCommonInputSubsystem* CommonInputSubsystem = GetInputSubsystem())
+	if (!IsDesignTime())
 	{
-		return EnhancedInputAction && CommonUI::IsEnhancedInputSupportEnabled()
-			? CommonUI::GetIconForEnhancedInputAction(CommonInputSubsystem, EnhancedInputAction)
-			: CommonUI::GetIconForInputActions(CommonInputSubsystem, InputActions);
+		if (const UCommonInputSubsystem* CommonInputSubsystem = GetInputSubsystem())
+		{
+			return EnhancedInputAction && CommonUI::IsEnhancedInputSupportEnabled()
+				? CommonUI::GetIconForEnhancedInputAction(CommonInputSubsystem, EnhancedInputAction)
+				: CommonUI::GetIconForInputActions(CommonInputSubsystem, InputActions);
+		}
 	}
+#if WITH_EDITORONLY_DATA
+	else
+	{
+		if (DesignTimeKey.IsValid())
+		{
+			ECommonInputType Dummy;
+			FName OutDefaultGamepadName;
+			FCommonInputBase::GetCurrentPlatformDefaults(Dummy, OutDefaultGamepadName);
+
+			ECommonInputType KeyInputType = ECommonInputType::MouseAndKeyboard;
+			if (DesignTimeKey.IsGamepadKey())
+			{
+				KeyInputType = ECommonInputType::Gamepad;
+			}
+			else if (DesignTimeKey.IsTouch())
+			{
+				KeyInputType = ECommonInputType::Touch;
+			}
+
+			FSlateBrush InputBrush;
+			if (UCommonInputPlatformSettings::Get()->TryGetInputBrush(InputBrush, TArray<FKey> { DesignTimeKey }, KeyInputType, OutDefaultGamepadName))
+			{
+				return InputBrush;
+			}
+		}
+	}
+#endif
 
 	return *FStyleDefaults::GetNoBrush();
 }
@@ -170,7 +201,7 @@ bool UCommonActionWidget::IsHeldAction() const
 {
 	if (EnhancedInputAction && CommonUI::IsEnhancedInputSupportEnabled())
 	{
-		for (const TObjectPtr<UInputTrigger> Trigger : EnhancedInputAction->Triggers)
+		for (const TObjectPtr<UInputTrigger>& Trigger : EnhancedInputAction->Triggers)
 		{
 			if (EnumHasAnyFlags(Trigger->GetSupportedTriggerEvents(), ETriggerEventsSupported::Ongoing))
 			{
@@ -264,57 +295,68 @@ void UCommonActionWidget::UpdateBindingHandleInternal(FUIActionBindingHandle Bin
 
 void UCommonActionWidget::UpdateActionWidget()
 {
-	if (!IsDesignTime() && GetWorld())
+	if (GetWorld())
 	{
 		const UCommonInputSubsystem* CommonInputSubsystem = GetInputSubsystem();
-		if (GetGameInstance() && ensure(CommonInputSubsystem) && CommonInputSubsystem->ShouldShowInputKeys())
+		if (IsDesignTime() || (GetGameInstance() && ensure(CommonInputSubsystem) && CommonInputSubsystem->ShouldShowInputKeys()))
 		{
-			const FCommonInputActionDataBase* InputActionData = GetInputActionData();
-			if (InputActionData || (EnhancedInputAction && CommonUI::IsEnhancedInputSupportEnabled()))
+			if (ShouldUpdateActionWidgetIcon())
 			{
-				if (bAlwaysHideOverride)
+				Icon = GetIcon();
+
+				if (Icon.DrawAs == ESlateBrushDrawType::NoDrawType)
 				{
 					SetVisibility(ESlateVisibility::Collapsed);
 				}
-				else
+				else if (MyIcon.IsValid())
 				{
-					Icon = GetIcon();
+					MyIcon->SetImage(&Icon);
 
-					if (Icon.DrawAs == ESlateBrushDrawType::NoDrawType)
+					if (GetVisibility() != ESlateVisibility::Collapsed)
 					{
-						SetVisibility(ESlateVisibility::Collapsed);
+						// The object being passed into SetImage is the same each time so layout is never invalidated
+						// Manually invalidate it here as the dimensions may have changed
+						MyIcon->Invalidate(EInvalidateWidgetReason::Layout);
 					}
-					else if (MyIcon.IsValid())
+
+					if (IsHeldAction())
 					{
-						MyIcon->SetImage(&Icon);
-
-						if (GetVisibility() != ESlateVisibility::Collapsed)
-						{
-							// The object being passed into SetImage is the same each time so layout is never invalidated
-							// Manually invalidate it here as the dimensions may have changed
-							MyIcon->Invalidate(EInvalidateWidgetReason::Layout);
-						}
-
-						if (IsHeldAction())
-						{
-							MyProgressImage->SetVisibility(EVisibility::SelfHitTestInvisible);
-						}
-						else
-						{
-							MyProgressImage->SetVisibility(EVisibility::Collapsed);
-						}
-
-						MyKeyBox->Invalidate(EInvalidateWidget::LayoutAndVolatility);
-						SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-
-						return;
+						MyProgressImage->SetVisibility(EVisibility::SelfHitTestInvisible);
 					}
+					else
+					{
+						MyProgressImage->SetVisibility(EVisibility::Collapsed);
+					}
+
+					MyKeyBox->Invalidate(EInvalidateWidget::LayoutAndVolatility);
+					SetVisibility(IsDesignTime() ? ESlateVisibility::Visible : ESlateVisibility::SelfHitTestInvisible);
+
+					return;
 				}
 			}
 		}
 
 		SetVisibility(ESlateVisibility::Collapsed);
 	}
+}
+
+bool UCommonActionWidget::ShouldUpdateActionWidgetIcon() const
+{
+	if (bAlwaysHideOverride)
+	{
+		return false;
+	}
+
+	const FCommonInputActionDataBase* InputActionData = GetInputActionData();
+	const bool bIsEnhancedInputAction = EnhancedInputAction && CommonUI::IsEnhancedInputSupportEnabled();
+
+#if WITH_EDITORONLY_DATA
+	const bool bIsDesignPreview = IsDesignTime() && DesignTimeKey.IsValid();
+#else
+	const bool bIsDesignPreview = false;
+#endif
+
+	return InputActionData || bIsEnhancedInputAction || bIsDesignPreview;
 }
 
 void UCommonActionWidget::ListenToInputMethodChanged(bool bListen)

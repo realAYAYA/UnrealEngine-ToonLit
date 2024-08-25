@@ -41,6 +41,8 @@ public:
 		return bRenderStatic;
 	}
 
+	ENGINE_API virtual TArray<FRayTracingGeometry*> GetStaticRayTracingGeometries() const override;
+
 	ENGINE_API virtual void GetDynamicRayTracingInstances(struct FRayTracingMaterialGatheringContext& Context, TArray<struct FRayTracingInstance>& OutRayTracingInstances) override;
 #endif // RHI_RAYTRACING
 
@@ -103,7 +105,7 @@ public:
 
 	friend class FSkeletalMeshSectionIter;
 
-	ENGINE_API virtual void OnTransformChanged() override;
+	ENGINE_API virtual void OnTransformChanged(FRHICommandListBase& RHICmdList) override;
 
 	virtual uint8 GetCurrentFirstLODIdx_RenderThread() const final override
 	{

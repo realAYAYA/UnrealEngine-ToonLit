@@ -99,6 +99,14 @@ struct FSequenceBuilder
 	}
 
 	template<typename TrackClass>
+	FSequenceTrackBuilder<TrackClass> AddRootTrack()
+	{
+		UMovieScene* MovieScene = Sequence->GetMovieScene();
+		TrackClass* Track = MovieScene->AddTrack<TrackClass>();
+		return FSequenceTrackBuilder<TrackClass>(*this, Track);
+	}
+
+	template<typename TrackClass>
 	FSequenceTrackBuilder<TrackClass> AddTrack()
 	{
 		checkf(CurrentBinding.IsValid(), TEXT("Specify an object binding first with AddObjectBinding"));

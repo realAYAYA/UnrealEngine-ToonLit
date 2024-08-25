@@ -57,8 +57,9 @@ namespace Horde.Server.Issues.External
 		/// Get issues associated with provided keys
 		/// </summary>
 		/// <param name="keys"></param>
+		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		Task<List<IExternalIssue>> GetIssuesAsync(string[] keys);
+		Task<List<IExternalIssue>> GetIssuesAsync(string[] keys, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Create and link an external issue
@@ -72,14 +73,16 @@ namespace Horde.Server.Issues.External
 		/// <param name="issueType"></param>
 		/// <param name="description"></param>
 		/// <param name="hordeIssueLink"></param>
-		Task<(string? key, string? url)> CreateIssueAsync(IUser user, string? externalIssueUser, int issueId, string summary, string projectId, string componentId, string issueType, string? description, string? hordeIssueLink);
+		/// <param name="cancellationToken"></param>
+		Task<(string? key, string? url)> CreateIssueAsync(IUser user, string? externalIssueUser, int issueId, string summary, string projectId, string componentId, string issueType, string? description, string? hordeIssueLink, CancellationToken cancellationToken);
 
 		/// <summary>
 		///  Get projects for provided keys
 		/// </summary>
 		/// <param name="streamConfig"></param>
+		/// <param name="cancellationToken"></param>
 		/// <returns></returns>;
-		Task<List<IExternalIssueProject>> GetProjects(StreamConfig streamConfig);
+		Task<List<IExternalIssueProject>> GetProjectsAsync(StreamConfig streamConfig, CancellationToken cancellationToken);
 	}
 
 	/// <summary>
@@ -94,19 +97,19 @@ namespace Horde.Server.Issues.External
 		}
 
 		/// <inheritdoc/>
-		public Task<List<IExternalIssue>> GetIssuesAsync(string[] keys)
+		public Task<List<IExternalIssue>> GetIssuesAsync(string[] keys, CancellationToken cancellationToken)
 		{
 			return Task.FromResult(new List<IExternalIssue>());
 		}
 
 		/// <inheritdoc/>
-		public Task<(string? key, string? url)> CreateIssueAsync(IUser user, string? externalIssueUser, int issueId, string summary, string projectId, string componentId, string issueType, string? description, string? hordeIssueLink)
+		public Task<(string? key, string? url)> CreateIssueAsync(IUser user, string? externalIssueUser, int issueId, string summary, string projectId, string componentId, string issueType, string? description, string? hordeIssueLink, CancellationToken cancellationToken)
 		{
 			throw new NotImplementedException();
 		}
 
 		/// <inheritdoc/>
-		public Task<List<IExternalIssueProject>> GetProjects(StreamConfig streamConfig)
+		public Task<List<IExternalIssueProject>> GetProjectsAsync(StreamConfig streamConfig, CancellationToken cancellationToken)
 		{
 			return Task.FromResult(new List<IExternalIssueProject>());
 		}

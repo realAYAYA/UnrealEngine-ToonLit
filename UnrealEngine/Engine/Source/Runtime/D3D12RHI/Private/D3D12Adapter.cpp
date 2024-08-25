@@ -43,6 +43,14 @@ static FAutoConsoleVariableRef CTrackedReleasedAllocationFrameRetention(
 );
 #endif
 
+int32 GAllowAsyncCompute = 1;
+static FAutoConsoleVariableRef CVarAllowAsyncCompute(
+	TEXT("r.D3D12.AllowAsyncCompute"),
+	GAllowAsyncCompute,
+	TEXT("Allow usage of async compute"),
+	ECVF_ReadOnly | ECVF_RenderThreadSafe
+);
+
 #if PLATFORM_WINDOWS
 
 #if UE_BUILD_SHIPPING || UE_BUILD_TEST
@@ -56,6 +64,8 @@ static int32 GD3D12EnableNvAftermath = 1;
 static int32 GD3D12EnableDRED = 0;
 static int32 GD3D12EnableLightweightDRED = 1;
 #endif // UE_BUILD_SHIPPING || UE_BUILD_TEST
+
+#endif // PLATFORM_WINDOWS
 
 TAutoConsoleVariable<int32> GD3D12DebugCvar (
 	TEXT("r.D3D12.EnableD3DDebug"),
@@ -82,6 +92,7 @@ bool D3D12_ShouldBreakOnD3DDebugWarnings()
 	return GD3D12DebugCvar.GetValueOnAnyThread() > 3;
 }
 
+#if PLATFORM_WINDOWS
 static FAutoConsoleVariableRef CVarD3D12EnableGPUBreadCrumbs(
 	TEXT("r.D3D12.BreadCrumbs"),
 	GD3D12EnableGPUBreadCrumbs,
@@ -301,7 +312,9 @@ FD3D12Adapter::FD3D12Adapter(FD3D12AdapterDesc& DescIn)
 	, DefaultContextRedirector(this, ED3D12QueueType::Direct, true)
 #if USE_STATIC_ROOT_SIGNATURE
 	, StaticGraphicsRootSignature(this)
+	, StaticGraphicsWithConstantsRootSignature(this)
 	, StaticComputeRootSignature(this)
+	, StaticComputeWithConstantsRootSignature(this)
 	, StaticRayTracingGlobalRootSignature(this)
 	, StaticRayTracingLocalRootSignature(this)
 #endif
@@ -398,7 +411,8 @@ void FD3D12Adapter::CreateRootDevice(bool bWithDebug)
 	if (bWithDebug)
 	{
 		TRefCountPtr<ID3D12Debug> DebugController;
-		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(DebugController.GetInitReference()))))
+		HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(DebugController.GetInitReference()));
+		if (SUCCEEDED(hr))
 		{
 			DebugController->EnableDebugLayer();
 			bDebugDevice = true;
@@ -415,7 +429,7 @@ void FD3D12Adapter::CreateRootDevice(bool bWithDebug)
 		}
 		else
 		{
-			UE_LOG(LogD3D12RHI, Fatal, TEXT("The debug interface requires the D3D12 SDK Layers. Please install the Graphics Tools for Windows. See: https://docs.microsoft.com/en-us/windows/uwp/gaming/use-the-directx-runtime-and-visual-studio-graphics-diagnostic-features"));
+			UE_LOG(LogD3D12RHI, Fatal, TEXT("Failed to create D3D debug interface, error %x. The debug interface requires the D3D12 SDK Layers. Please install the Graphics Tools for Windows. See: https://docs.microsoft.com/en-us/windows/uwp/gaming/use-the-directx-runtime-and-visual-studio-graphics-diagnostic-features"), hr);
 		}
 	}
 
@@ -483,7 +497,7 @@ void FD3D12Adapter::CreateRootDevice(bool bWithDebug)
 #endif // __ID3D12DeviceRemovedExtendedDataSettings1_INTERFACE_DEFINED__
 				}
 
-				else if(GD3D12EnableLightweightDRED)
+				else if(GD3D12EnableLightweightDRED && !IsRHIDeviceIntel()) // Intel suffers a significant performance hit.
 				{
 #ifdef __ID3D12DeviceRemovedExtendedDataSettings2_INTERFACE_DEFINED__
 					TRefCountPtr<ID3D12DeviceRemovedExtendedDataSettings2> DredSettings2;
@@ -622,6 +636,14 @@ void FD3D12Adapter::CreateRootDevice(bool bWithDebug)
 
 	if (!bDeviceCreated)
 	{
+#if INTEL_EXTENSIONS
+		// Enable Intel App Discovery
+		if (IsRHIDeviceIntel() && bAllowVendorDevice)
+		{
+			EnableIntelAppDiscovery(GRHIDeviceId);
+		}
+#endif
+
 		// Creating the Direct3D device.
 		VERIFYD3D12RESULT(D3D12CreateDevice(
 			GetAdapter(),
@@ -824,6 +846,13 @@ void FD3D12Adapter::CreateRootDevice(bool bWithDebug)
 				// TODO: Remove this when the debug layers work for executions which are guarded by a fence
 				D3D12_MESSAGE_ID_INVALID_USE_OF_NON_RESIDENT_RESOURCE,
 #endif
+
+				// When optimizing the graph DirectML tries various configurations to check if meta command can be used.
+				// If a particular configuration is not supported the debug log message will be displayed.
+				// For large DirectML graphs there can be dozens of messages like this.
+				// This is safe to ignore
+				D3D12_MESSAGE_ID_META_COMMAND_UNSUPPORTED_PARAMS,
+
 			};
 
 #if PLATFORM_DESKTOP
@@ -981,92 +1010,38 @@ void FD3D12Adapter::InitializeDevices()
 			}
 #endif
 
-			const bool bRenderDocPresent = D3D12RHI_IsRenderDocPresent(RootDevice);
-
+#if D3D12_MAX_FEATURE_OPTIONS >= 19
+			D3D12_FEATURE_DATA_D3D12_OPTIONS19 Features19{};
+			if (SUCCEEDED(RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS19, &Features19, sizeof(Features19))))
+			{
+				MaxNonSamplerDescriptors = Features19.MaxViewDescriptorHeapSize;
+				MaxSamplerDescriptors = Features19.MaxSamplerDescriptorHeapSizeWithStaticSamplers;
+			}
+			else
+#endif
 			if (GetResourceBindingTier() == D3D12_RESOURCE_BINDING_TIER_1)
 			{
 				MaxNonSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_1;
+				MaxSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
 			}
 			else if (GetResourceBindingTier() == D3D12_RESOURCE_BINDING_TIER_2)
 			{
 				MaxNonSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_2;
-			}
-			else if (GetResourceBindingTier() == D3D12_RESOURCE_BINDING_TIER_3)
-			{
-				// From: https://microsoft.github.io/DirectX-Specs/d3d/ResourceBinding.html#levels-of-hardware-support
-				//   For Tier 3, the max # descriptors is listed as 1000000+. The + indicates that the runtime allows applications
-				//   to try creating descriptor heaps with more than 1000000 descriptors, leaving the driver to decide whether 
-				//   it can support the request or fail the call. There is no cap exposed indicating how large of a descriptor 
-				//   heap the hardware could support – applications can just try what they want and fall back to 1000000 if 
-				//   larger doesn’t work.
-				// RenderDoc seems to give up on subsequent API calls if one of them return E_OUTOFMEMORY, so we don't use this
-				// detection method if the RD plug-in is loaded.
-				if (!bRenderDocPresent)
-				{
-#if D3D12_SUPPORTS_INFO_QUEUE
-					// Temporarily silence CREATE_DESCRIPTOR_HEAP_LARGE_NUM_DESCRIPTORS since we know we might break on it
-					TRefCountPtr<ID3D12InfoQueue> InfoQueue;
-					RootDevice->QueryInterface(IID_PPV_ARGS(InfoQueue.GetInitReference()));
-					if (InfoQueue)
-					{
-						D3D12_MESSAGE_ID MessageId = D3D12_MESSAGE_ID_CREATE_DESCRIPTOR_HEAP_LARGE_NUM_DESCRIPTORS;
-
-						D3D12_INFO_QUEUE_FILTER NewFilter{};
-						NewFilter.DenyList.NumIDs = 1;
-						NewFilter.DenyList.pIDList = &MessageId;
-
-						InfoQueue->PushStorageFilter(&NewFilter);
-					}
-#endif
-
-					// create an overly large heap and test for failure
-					D3D12_DESCRIPTOR_HEAP_DESC TempHeapDesc{};
-					TempHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-					TempHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-					TempHeapDesc.NodeMask = FRHIGPUMask::All().GetNative();
-					TempHeapDesc.NumDescriptors = 2 * D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_2;
-
-					TRefCountPtr<ID3D12DescriptorHeap> TempHeap;
-					HRESULT hr = RootDevice->CreateDescriptorHeap(&TempHeapDesc, IID_PPV_ARGS(TempHeap.GetInitReference()));
-					if (SUCCEEDED(hr))
-					{
-						MaxNonSamplerDescriptors = -1;
-					}
-					else
-					{
-						MaxNonSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_2;
-					}
-
-#if D3D12_SUPPORTS_INFO_QUEUE
-					// Restore the info queue to its old state to ensure we get CREATE_DESCRIPTOR_HEAP_LARGE_NUM_DESCRIPTORS.
-					if (InfoQueue)
-					{
-						InfoQueue->PopStorageFilter();
-					}
-#endif
-				}
-				else
-				{
-					MaxNonSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_2;
-				}
+				MaxSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
 			}
 			else
 			{
-				checkNoEntry();
-
 				MaxNonSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_2;
+				MaxSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
 			}
 
-			MaxSamplerDescriptors = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
+			const bool bRenderDocPresent = D3D12RHI_IsRenderDocPresent(RootDevice);
 
 			// From: https://microsoft.github.io/DirectX-Specs/d3d/HLSL_SM_6_6_DynamicResources.html
 			//     ResourceDescriptorHeap/SamplerDescriptorHeap must be supported on devices that support both D3D12_RESOURCE_BINDING_TIER_3 and D3D_SHADER_MODEL_6_6
 			if (GetHighestShaderModel() >= D3D_SHADER_MODEL_6_6 && GetResourceBindingTier() >= D3D12_RESOURCE_BINDING_TIER_3)
 			{
 				GRHIBindlessSupport = GMaxRHIFeatureLevel == ERHIFeatureLevel::SM5 ? ERHIBindlessSupport::RayTracingOnly : ERHIBindlessSupport::AllShaderTypes;
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-				GRHISupportsBindless = true;
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				UE_LOG(LogD3D12RHI, Log, TEXT("Bindless resources are supported"));
 			}
 
@@ -1075,22 +1050,33 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &Features, sizeof(Features));
 
 				GRHISupportsStencilRefFromPixelShader = (Features.PSSpecifiedStencilRefSupported != 0);
+				GRHISupportsRasterOrderViews = (Features.ROVsSupported != 0);
 
 				UE_LOG(LogD3D12RHI, Log, TEXT("Stencil ref from pixel shader is %s"), GRHISupportsStencilRefFromPixelShader ? TEXT("supported") : TEXT("not supported"));
+				UE_LOG(LogD3D12RHI, Log, TEXT("Raster order views are %s"), GRHISupportsRasterOrderViews ? TEXT("supported") : TEXT("not supported"));
 			}
 
 			// Detect availability of shader model 6.0 wave operations
 			{
-				D3D12_FEATURE_DATA_D3D12_OPTIONS1 Features{};
-				RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &Features, sizeof(Features));
-				GRHISupportsWaveOperations = Features.WaveOps;
-				GRHIMinimumWaveSize = Features.WaveLaneCountMin;
-				GRHIMaximumWaveSize = Features.WaveLaneCountMax;
+				if (GMaxRHIFeatureLevel >= ERHIFeatureLevel::SM6)
+				{
+					D3D12_FEATURE_DATA_D3D12_OPTIONS1 Features{};
+					RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &Features, sizeof(Features));
+					GRHISupportsWaveOperations = Features.WaveOps;
+					GRHIMinimumWaveSize = Features.WaveLaneCountMin;
+					GRHIMaximumWaveSize = Features.WaveLaneCountMax;
+				}
 
 				if (GRHISupportsWaveOperations)
 				{
 					UE_LOG(LogD3D12RHI, Log, TEXT("Wave Operations are supported (wave size: min=%d max=%d)."), GRHIMinimumWaveSize, GRHIMaximumWaveSize);
 				}
+			}
+
+			{
+				D3D12_FEATURE_DATA_D3D12_OPTIONS3 Features{};
+				RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &Features, sizeof(Features));
+				GRHIGlobals.SupportsBarycentricsSemantic = Features.BarycentricsSupported;
 			}
 
 			{
@@ -1213,6 +1199,40 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif // PLATFORM_WINDOWS
 		}
 
+		if (FParse::Param(FCommandLine::Get(), TEXT("DisableAsyncCompute")))
+		{
+			GSupportsEfficientAsyncCompute = false;
+		}
+		else if (FParse::Param(FCommandLine::Get(), TEXT("ForceAsyncCompute")))
+		{
+			GSupportsEfficientAsyncCompute = true;
+		}
+		else if (!GSupportsEfficientAsyncCompute && GAllowAsyncCompute && GRHISupportsParallelRHIExecute)
+		{
+			if (IsRHIDeviceAMD())
+			{
+				GSupportsEfficientAsyncCompute = true;
+			}
+			else if (IsRHIDeviceIntel() && GMaxRHIFeatureLevel >= ERHIFeatureLevel::SM6)
+			{
+				GSupportsEfficientAsyncCompute = true;
+			}
+#if PLATFORM_WINDOWS
+			else
+			{
+				D3D12_FEATURE_DATA_D3D12_OPTIONS6 D3D12Caps6{};
+				HRESULT Options6HR = RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &D3D12Caps6, sizeof(D3D12Caps6));
+
+				// Allow async compute by default on nVidia cards which support PerPrimitiveShadingRateSupportedWithViewportIndexing 
+				// this should be a good metric according to nVidia itself (this is set for Ampere and newer cards)
+				if (IsRHIDeviceNVIDIA() && Options6HR == S_OK && D3D12Caps6.PerPrimitiveShadingRateSupportedWithViewportIndexing)
+				{
+					GSupportsEfficientAsyncCompute = true;
+				}
+			}
+#endif
+		}
+
 #if PLATFORM_WINDOWS
 		D3D12_FEATURE_DATA_D3D12_OPTIONS2 D3D12Caps2 = {};
 		if (FAILED(RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS2, &D3D12Caps2, sizeof(D3D12Caps2))))
@@ -1320,7 +1340,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 
 		StaticGraphicsRootSignature.InitStaticGraphicsRootSignature(GraphicsFlags);
+		StaticGraphicsWithConstantsRootSignature.InitStaticGraphicsRootSignature(GraphicsFlags | ED3D12RootSignatureFlags::RootConstants);
 		StaticComputeRootSignature.InitStaticComputeRootSignatureDesc(GraphicsFlags);
+		StaticComputeWithConstantsRootSignature.InitStaticComputeRootSignatureDesc(GraphicsFlags | ED3D12RootSignatureFlags::RootConstants);
 
 #if D3D12_RHI_RAYTRACING
 		ED3D12RootSignatureFlags RayTracingFlags{};
@@ -1334,12 +1356,19 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 
 		StaticRayTracingGlobalRootSignature.InitStaticRayTracingGlobalRootSignatureDesc(RayTracingFlags);
-		StaticRayTracingLocalRootSignature.InitStaticRayTracingLocalRootSignatureDesc();
+		StaticRayTracingLocalRootSignature.InitStaticRayTracingLocalRootSignatureDesc(RayTracingFlags);
 #endif
 #endif // USE_STATIC_ROOT_SIGNATURE
 
 		// Creating command signatures relies on static ray tracing root signatures.
 		CreateCommandSignatures();
+	}
+}
+void FD3D12Adapter::InitializeExplicitDescriptorHeap()
+{
+	for (uint32 GPUIndex : FRHIGPUMask::All())
+	{
+		Devices[GPUIndex]->InitExplicitDescriptorHeap();
 	}
 }
 
@@ -1454,12 +1483,10 @@ void FD3D12Adapter::CleanupResources()
 
 	TransientMemoryCache = nullptr;
 
-#if D3D12_RHI_RAYTRACING
 	for (uint32 GPUIndex : FRHIGPUMask::All())
 	{
-		Devices[GPUIndex]->CleanupRayTracing();
+		Devices[GPUIndex]->CleanupResources();
 	}
-#endif // D3D12_RHI_RAYTRACING
 }
 
 FD3D12Adapter::~FD3D12Adapter()
@@ -1633,7 +1660,7 @@ void FD3D12Adapter::EndFrame()
 	}
 	if (ReleaseCount > 0)
 	{
-		ReleasedAllocationData.RemoveAt(0, ReleaseCount, false);
+		ReleasedAllocationData.RemoveAt(0, ReleaseCount, EAllowShrinking::No);
 	}
 #endif
 }
@@ -1942,22 +1969,16 @@ void FD3D12Adapter::DumpTrackedAllocationData(FOutputDevice& OutputDevice, bool 
 		if (ResourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
 		{
 			BufferAllocations.Add(AllocationData);
-			TotalAllocatedBufferSize += AllocationData.AllocationSize;			
-#if ENABLE_RESIDENCY_MANAGEMENT
-			TotalResidentBufferSize += (AllocationData.ResourceAllocation->GetResidencyHandle().ResidencyStatus == D3DX12Residency::ManagedObject::RESIDENCY_STATUS::RESIDENT) ? AllocationData.AllocationSize : 0;
-#else
-			TotalResidentBufferSize += AllocationData.AllocationSize;
-#endif 
+			TotalAllocatedBufferSize += AllocationData.AllocationSize;
+			// TODO: accurately account for partially-resident resources
+			TotalResidentBufferSize += (AllocationData.ResourceAllocation->GetResource()->IsResident()) ? AllocationData.AllocationSize : 0;
 		}
 		else
 		{
 			TextureAllocations.Add(AllocationData);
 			TotalAllocatedTextureSize += AllocationData.AllocationSize;
-#if ENABLE_RESIDENCY_MANAGEMENT
-			TotalResidentTextureSize += (AllocationData.ResourceAllocation->GetResidencyHandle().ResidencyStatus == D3DX12Residency::ManagedObject::RESIDENCY_STATUS::RESIDENT) ? AllocationData.AllocationSize : 0;
-#else
-			TotalResidentTextureSize += AllocationData.AllocationSize;
-#endif 
+			// TODO: accurately account for partially-resident resources
+			TotalResidentTextureSize += (AllocationData.ResourceAllocation->GetResource()->IsResident()) ? AllocationData.AllocationSize : 0;
 		}
 	}
 
@@ -1972,7 +1993,7 @@ void FD3D12Adapter::DumpTrackedAllocationData(FOutputDevice& OutputDevice, bool 
 
 		bool bResident = true;
 #if ENABLE_RESIDENCY_MANAGEMENT
-		bResident = AllocationData.ResourceAllocation->GetResidencyHandle().ResidencyStatus == D3DX12Residency::ManagedObject::RESIDENCY_STATUS::RESIDENT;
+		bResident = AllocationData.ResourceAllocation->GetResource()->IsResident();
 #endif 
 		if (!bResident && bResidentOnly)
 		{
@@ -2019,7 +2040,7 @@ void FD3D12Adapter::DumpTrackedAllocationData(FOutputDevice& OutputDevice, bool 
 
 		bool bResident = true;
 #if ENABLE_RESIDENCY_MANAGEMENT
-		bResident = AllocationData.ResourceAllocation->GetResidencyHandle().ResidencyStatus == D3DX12Residency::ManagedObject::RESIDENCY_STATUS::RESIDENT;
+		bResident = AllocationData.ResourceAllocation->GetResource()->IsResident();
 #endif 
 		if (!bResident && bResidentOnly)
 		{

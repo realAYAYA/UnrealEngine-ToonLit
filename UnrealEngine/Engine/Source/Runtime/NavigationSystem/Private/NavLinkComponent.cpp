@@ -3,6 +3,7 @@
 #include "NavLinkComponent.h"
 #include "NavLinkRenderingProxy.h"
 #include "AI/NavigationSystemHelpers.h"
+#include "AI/Navigation/NavigationRelevantData.h"
 #include "NavigationSystemTypes.h"
 #include "NavAreas/NavArea_Default.h"
 #include "Engine/CollisionProfile.h"

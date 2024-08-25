@@ -60,11 +60,11 @@ namespace UE::AudioEditor
 	}
 }
 
-EAssetCommandResult UAssetDefinition_SoundBase::ActivateAssets(const FAssetActivateArgs& ActivateArgs) const
+EAssetCommandResult UAssetDefinition_SoundBase::ActivateSoundBase(const FAssetActivateArgs& ActivateArgs)
 {
-	if ( ActivateArgs.ActivationMethod == EAssetActivationMethod::Previewed )
+	if (ActivateArgs.ActivationMethod == EAssetActivationMethod::Previewed)
 	{
-		if ( USoundBase* TargetSound = ActivateArgs.LoadFirstValid<USoundBase>() )
+		if (USoundBase* TargetSound = ActivateArgs.LoadFirstValid<USoundBase>())
 		{
 			UAudioComponent* PreviewComp = GEditor->GetPreviewAudioComponent();
 			if (PreviewComp && PreviewComp->IsPlaying())
@@ -84,17 +84,16 @@ EAssetCommandResult UAssetDefinition_SoundBase::ActivateAssets(const FAssetActiv
 				// Not already playing, play the target sound cue if it exists
 				UE::AudioEditor::PlaySound(TargetSound);
 			}
-			
+
 			return EAssetCommandResult::Handled;
 		}
 	}
-
-	return Super::ActivateAssets(ActivateArgs);
+	return EAssetCommandResult::Unhandled;
 }
 
-TSharedPtr<SWidget> UAssetDefinition_SoundBase::GetThumbnailOverlay(const FAssetData& InAssetData) const
+TSharedPtr<SWidget> UAssetDefinition_SoundBase::GetSoundBaseThumbnailOverlay(const FAssetData& InAssetData, TUniqueFunction<FReply()>&& OnClickedLambdaOverride)
 {
-	auto OnGetDisplayBrushLambda = [this, InAssetData]() -> const FSlateBrush*
+	auto OnGetDisplayBrushLambda = [InAssetData]() -> const FSlateBrush*
 	{
 		if (UE::AudioEditor::IsSoundPlaying(InAssetData))
 		{
@@ -104,7 +103,7 @@ TSharedPtr<SWidget> UAssetDefinition_SoundBase::GetThumbnailOverlay(const FAsset
 		return FAppStyle::GetBrush("MediaAsset.AssetActions.Play.Large");
 	};
 
-	auto OnClickedLambda = [this, InAssetData]() -> FReply
+	auto OnClickedLambda = [InAssetData]() -> FReply
 	{
 		if (UE::AudioEditor::IsSoundPlaying(InAssetData))
 		{
@@ -118,7 +117,7 @@ TSharedPtr<SWidget> UAssetDefinition_SoundBase::GetThumbnailOverlay(const FAsset
 		return FReply::Handled();
 	};
 
-	auto OnToolTipTextLambda = [this, InAssetData]() -> FText
+	auto OnToolTipTextLambda = [InAssetData]() -> FText
 	{
 		if (UE::AudioEditor::IsSoundPlaying(InAssetData))
 		{
@@ -134,7 +133,7 @@ TSharedPtr<SWidget> UAssetDefinition_SoundBase::GetThumbnailOverlay(const FAsset
 		.VAlign(VAlign_Center)
 		.Padding(FMargin(2));
 
-	auto OnGetVisibilityLambda = [this, Box, InAssetData]() -> EVisibility
+	auto OnGetVisibilityLambda = [Box, InAssetData]() -> EVisibility
 	{
 		if (Box.IsValid() && (Box->IsHovered() || UE::AudioEditor::IsSoundPlaying(InAssetData)))
 		{
@@ -164,12 +163,38 @@ TSharedPtr<SWidget> UAssetDefinition_SoundBase::GetThumbnailOverlay(const FAsset
 	return Box;
 }
 
+
+EAssetCommandResult UAssetDefinition_SoundBase::ActivateAssets(const FAssetActivateArgs& ActivateArgs) const
+{
+	if (ActivateSoundBase(ActivateArgs) == EAssetCommandResult::Handled)
+	{
+		return EAssetCommandResult::Handled;
+	}
+	return Super::ActivateAssets(ActivateArgs);
+}
+
+TSharedPtr<SWidget> UAssetDefinition_SoundBase::GetThumbnailOverlay(const FAssetData& InAssetData) const
+{
+	auto OnClickedLambda = [InAssetData]() -> FReply
+	{
+		if (UE::AudioEditor::IsSoundPlaying(InAssetData))
+		{
+			UE::AudioEditor::StopSound();
+		}
+		else
+		{
+			// Load and play sound
+			UE::AudioEditor::PlaySound(Cast<USoundBase>(InAssetData.GetAsset()));
+		}
+		return FReply::Handled();
+	};
+	return GetSoundBaseThumbnailOverlay(InAssetData, MoveTemp(OnClickedLambda));
+}
+
 // Menu Extensions
 //--------------------------------------------------------------------
 
-namespace MenuExtension_SoundBase
-{
-	void ExecutePlaySound(const FToolMenuContext& InContext)
+	void UAssetDefinition_SoundBase::ExecutePlaySound(const FToolMenuContext& InContext)
 	{
 		if (USoundBase* Sound = UContentBrowserAssetContextMenuContext::LoadSingleSelectedAsset<USoundBase>(InContext))
 		{
@@ -178,12 +203,12 @@ namespace MenuExtension_SoundBase
 		}
 	}
 
-	void ExecuteStopSound(const FToolMenuContext& InContext)
+	void UAssetDefinition_SoundBase::ExecuteStopSound(const FToolMenuContext& InContext)
 	{
 		UE::AudioEditor::StopSound();
 	}
 
-	bool CanExecutePlayCommand(const FToolMenuContext& InContext)
+	bool UAssetDefinition_SoundBase::CanExecutePlayCommand(const FToolMenuContext& InContext)
 	{
 		if (const UContentBrowserAssetContextMenuContext* CBContext = UContentBrowserAssetContextMenuContext::FindContextWithAssets(InContext))
 		{
@@ -193,7 +218,7 @@ namespace MenuExtension_SoundBase
 		return false;
 	}
 	
-	ECheckBoxState IsActionCheckedMute(const FToolMenuContext& InContext)
+	ECheckBoxState UAssetDefinition_SoundBase::IsActionCheckedMute(const FToolMenuContext& InContext)
 	{
 #if ENABLE_AUDIO_DEBUG
 		if (FAudioDeviceManager* ADM = GEditor->GetAudioDeviceManager())
@@ -224,7 +249,7 @@ namespace MenuExtension_SoundBase
 		return ECheckBoxState::Unchecked;
 	}
 	
-	ECheckBoxState IsActionCheckedSolo(const FToolMenuContext& InContext)
+	ECheckBoxState UAssetDefinition_SoundBase::IsActionCheckedSolo(const FToolMenuContext& InContext)
 	{
 #if ENABLE_AUDIO_DEBUG
 		// If *any* of the selection are solod, show the tick box as ticked.
@@ -255,7 +280,7 @@ namespace MenuExtension_SoundBase
 		return ECheckBoxState::Unchecked;
 	}
 
-	void ExecuteMuteSound(const FToolMenuContext& InContext)
+	void UAssetDefinition_SoundBase::ExecuteMuteSound(const FToolMenuContext& InContext)
 	{
 #if ENABLE_AUDIO_DEBUG
 		if (FAudioDeviceManager* ADM = GEditor->GetAudioDeviceManager())
@@ -282,7 +307,7 @@ namespace MenuExtension_SoundBase
 #endif
 	}
 
-	void ExecuteSoloSound(const FToolMenuContext& InContext)
+	void UAssetDefinition_SoundBase::ExecuteSoloSound(const FToolMenuContext& InContext)
 	{
 #if ENABLE_AUDIO_DEBUG
 		if (FAudioDeviceManager* ADM = GEditor->GetAudioDeviceManager())
@@ -310,7 +335,7 @@ namespace MenuExtension_SoundBase
 #endif
 	}	
 
-	bool CanExecuteMuteCommand(const FToolMenuContext& InContext)
+	bool UAssetDefinition_SoundBase::CanExecuteMuteCommand(const FToolMenuContext& InContext)
 	{
 #if ENABLE_AUDIO_DEBUG
 		if (FAudioDeviceManager* ADM = GEditor->GetAudioDeviceManager())
@@ -344,7 +369,7 @@ namespace MenuExtension_SoundBase
 		return false;
 	}
 
-	bool CanExecuteSoloCommand(const FToolMenuContext& InContext)
+	bool UAssetDefinition_SoundBase::CanExecuteSoloCommand(const FToolMenuContext& InContext)
 	{
 #if ENABLE_AUDIO_DEBUG
 		if (FAudioDeviceManager* ADM = GEditor->GetAudioDeviceManager())
@@ -377,61 +402,80 @@ namespace MenuExtension_SoundBase
 #endif
 		return false;
 	}
+
+namespace MenuExtension_SoundBase
+{
+	static void RegisterAssetActions(UClass* InClass)
+	{
+		UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(InClass);
+
+		FToolMenuSection& Section = Menu->FindOrAddSection("GetAssetActions");
+		Section.AddDynamicEntry(NAME_None, FNewToolMenuSectionDelegate::CreateLambda([](FToolMenuSection& InSection)
+			{
+				if (const UContentBrowserAssetContextMenuContext* Context = UContentBrowserAssetContextMenuContext::FindContextWithAssets(InSection))
+				{
+					if (Context->SelectedAssets.Num() > 0)
+					{
+						const FAssetData& AssetData = Context->SelectedAssets[0];
+						if (AssetData.AssetClassPath == USoundWave::StaticClass()->GetClassPathName() || AssetData.AssetClassPath == USoundCue::StaticClass()->GetClassPathName())
+						{
+							{
+								const TAttribute<FText> Label = LOCTEXT("Sound_PlaySound", "Play");
+								const TAttribute<FText> ToolTip = LOCTEXT("Sound_PlaySoundTooltip", "Plays the selected sound.");
+								const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Play.Small");
+
+								FToolUIAction UIAction;
+								UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&UAssetDefinition_SoundBase::ExecutePlaySound);
+								UIAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateStatic(&UAssetDefinition_SoundBase::CanExecutePlayCommand);
+								InSection.AddMenuEntry("Sound_PlaySound", Label, ToolTip, Icon, UIAction);
+							}
+							{
+								const TAttribute<FText> Label = LOCTEXT("Sound_StopSound", "Stop");
+								const TAttribute<FText> ToolTip = LOCTEXT("Sound_StopSoundTooltip", "Stops the selected sounds.");
+								const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Stop.Small");
+
+								FToolUIAction UIAction;
+								UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&UAssetDefinition_SoundBase::ExecuteStopSound);
+								InSection.AddMenuEntry("Sound_StopSound", Label, ToolTip, Icon, UIAction);
+							}
+							{
+								const TAttribute<FText> Label = LOCTEXT("Sound_MuteSound", "Mute");
+								const TAttribute<FText> ToolTip = LOCTEXT("Sound_MuteSoundTooltip", "Mutes the selected sounds.");
+								const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Mute.Small");
+
+								FToolUIAction UIAction;
+								UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&UAssetDefinition_SoundBase::ExecuteMuteSound);
+								UIAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateStatic(&UAssetDefinition_SoundBase::CanExecuteMuteCommand);
+								UIAction.GetActionCheckState = FToolMenuGetActionCheckState::CreateStatic(&UAssetDefinition_SoundBase::IsActionCheckedMute);
+								InSection.AddMenuEntry("Sound_SoundMute", Label, ToolTip, Icon, UIAction, EUserInterfaceActionType::ToggleButton);
+							}
+							{
+								const TAttribute<FText> Label = LOCTEXT("Sound_SoloSound", "Solo");
+								const TAttribute<FText> ToolTip = LOCTEXT("Sound_SoloSoundTooltip", "Solos the selected sounds.");
+								const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Solo.Small");
+
+								FToolUIAction UIAction;
+								UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&UAssetDefinition_SoundBase::ExecuteSoloSound);
+								UIAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateStatic(&UAssetDefinition_SoundBase::CanExecuteSoloCommand);
+								UIAction.GetActionCheckState = FToolMenuGetActionCheckState::CreateStatic(&UAssetDefinition_SoundBase::IsActionCheckedSolo);
+								InSection.AddMenuEntry("Sound_StopSolo", Label, ToolTip, Icon, UIAction, EUserInterfaceActionType::ToggleButton);
+							}
+						}
+					}
+				}
+			}));
+	}
+
 	
 	static FDelayedAutoRegisterHelper DelayedAutoRegister(EDelayedRegisterRunPhase::EndOfEngineInit, []{ 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateLambda([]()
 		{
 			FToolMenuOwnerScoped OwnerScoped(UE_MODULE_NAME);
-			UToolMenu* Menu = UE::ContentBrowser::ExtendToolMenu_AssetContextMenu(USoundBase::StaticClass());
-		
-			FToolMenuSection& Section = Menu->FindOrAddSection("GetAssetActions");
-			Section.AddDynamicEntry(NAME_None, FNewToolMenuSectionDelegate::CreateLambda([](FToolMenuSection& InSection)
-			{
-				if (const UContentBrowserAssetContextMenuContext* Context = UContentBrowserAssetContextMenuContext::FindContextWithAssets(InSection))
-				{
-					{
-						const TAttribute<FText> Label = LOCTEXT("Sound_PlaySound", "Play");
-						const TAttribute<FText> ToolTip = LOCTEXT("Sound_PlaySoundTooltip", "Plays the selected sound.");
-						const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Play.Small");
-						
-						FToolUIAction UIAction;
-						UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecutePlaySound);
-						UIAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateStatic(&CanExecutePlayCommand);
-						InSection.AddMenuEntry("Sound_PlaySound", Label, ToolTip, Icon, UIAction);
-					}
-					{
-						const TAttribute<FText> Label = LOCTEXT("Sound_StopSound", "Stop");
-						const TAttribute<FText> ToolTip = LOCTEXT("Sound_StopSoundTooltip", "Stops the selected sounds.");
-						const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Stop.Small");
-						
-						FToolUIAction UIAction;
-						UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecuteStopSound);
-						InSection.AddMenuEntry("Sound_StopSound", Label, ToolTip, Icon, UIAction);
-					}
-					{
-						const TAttribute<FText> Label = LOCTEXT("Sound_MuteSound", "Mute");
-						const TAttribute<FText> ToolTip = LOCTEXT("Sound_MuteSoundTooltip", "Mutes the selected sounds.");
-						const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Mute.Small");
-		
-						FToolUIAction UIAction;
-						UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecuteMuteSound);
-						UIAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateStatic(&CanExecuteMuteCommand);
-						UIAction.GetActionCheckState = FToolMenuGetActionCheckState::CreateStatic(&IsActionCheckedMute);
-						InSection.AddMenuEntry("Sound_SoundMute", Label, ToolTip, Icon, UIAction, EUserInterfaceActionType::ToggleButton);
-					}
-					{
-						const TAttribute<FText> Label = LOCTEXT("Sound_SoloSound", "Solo");
-						const TAttribute<FText> ToolTip = LOCTEXT("Sound_SoloSoundTooltip", "Solos the selected sounds.");
-						const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MediaAsset.AssetActions.Solo.Small");
 
-						FToolUIAction UIAction;
-						UIAction.ExecuteAction = FToolMenuExecuteAction::CreateStatic(&ExecuteSoloSound);
-						UIAction.CanExecuteAction = FToolMenuCanExecuteAction::CreateStatic(&CanExecuteSoloCommand);
-						UIAction.GetActionCheckState = FToolMenuGetActionCheckState::CreateStatic(&IsActionCheckedSolo);
-						InSection.AddMenuEntry("Sound_StopSolo", Label, ToolTip, Icon, UIAction, EUserInterfaceActionType::ToggleButton);
-					}
-				}
-			}));
+			// Note: we can't do this with USoundBase because UMetaSoundSource and others may need to do special actions on these actions.
+			// Since these actions are registered via delayed static callbacks, there's not a clean why to do this with inheritance.
+			RegisterAssetActions(USoundCue::StaticClass());
+			RegisterAssetActions(USoundWave::StaticClass());
 		}));
 	});
 }

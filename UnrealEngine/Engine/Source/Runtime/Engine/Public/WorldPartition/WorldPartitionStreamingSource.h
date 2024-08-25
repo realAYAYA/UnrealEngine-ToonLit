@@ -125,6 +125,8 @@ struct FStreamingSourceShape
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Streaming)
 	FRotator Rotation;
 
+	FString ToString() const;
+
 	friend uint32 GetTypeHash(const FStreamingSourceShape& InShape)
 	{
 		uint32 Hash = GetTypeHash(InShape.bUseGridLoadingRange);
@@ -151,15 +153,14 @@ enum class EStreamingSourceTargetBehavior : uint8
 class FStreamingSourceShapeHelper
 {
 public:
-
-	FORCEINLINE static bool IsSourceAffectingGrid(const TSet<FName>& InSourceTargetGrids, const TSet<FSoftObjectPath>& InSourceTargetHLODLayers, EStreamingSourceTargetBehavior InSourceTargetBehavior, FName InGridName, const FSoftObjectPath& InGridHLODLayer)
+	FORCEINLINE static bool IsSourceAffectingGrid(const TSet<FName>& InSourceTargetGrids, EStreamingSourceTargetBehavior InSourceTargetBehavior, FName InGridName)
 	{
 		switch (InSourceTargetBehavior)
 		{
 		case EStreamingSourceTargetBehavior::Include:
-			return (InSourceTargetGrids.IsEmpty() && InSourceTargetHLODLayers.IsEmpty()) || (InSourceTargetGrids.Contains(InGridName) || InSourceTargetHLODLayers.Contains(InGridHLODLayer));
+			return InSourceTargetGrids.IsEmpty() || InSourceTargetGrids.Contains(InGridName);
 		case EStreamingSourceTargetBehavior::Exclude:
-			return !(InSourceTargetGrids.Contains(InGridName) || InSourceTargetHLODLayers.Contains(InGridHLODLayer));
+			return !InSourceTargetGrids.Contains(InGridName);
 		default:
 			checkNoEntry();
 		}
@@ -167,23 +168,12 @@ public:
 		return false;
 	}
 
-	UE_DEPRECATED(5.1, "Use IsSourceAffectingGrid that takes Target Sets and Behavior instead.")
-	FORCEINLINE static bool IsSourceAffectingGrid(FName InSourceTargetGrid, const FSoftObjectPath& InSourceTargetHLODLayer, FName InGridName, const FSoftObjectPath& InGridHLODLayer)
-	{
-		if ((InSourceTargetGrid.IsNone() && InSourceTargetHLODLayer.IsNull()) ||
-			(InSourceTargetHLODLayer.IsNull() && (InSourceTargetGrid == InGridName)) ||
-			(!InSourceTargetHLODLayer.IsNull() && (InSourceTargetHLODLayer == InGridHLODLayer)))
-		{
-			return true;
-		}
-		return false;
-	}
-	FORCEINLINE static void ForEachShape(float InGridLoadingRange, float InDefaultRadius, bool bInProjectIn2D, const FVector& InLocation, const FRotator& InRotation, const TArray<FStreamingSourceShape>& InShapes, TFunctionRef<void(const FSphericalSector&)> InOperation)
+	FORCEINLINE static void ForEachShape(float InGridLoadingRange, float InDefaultRadius, bool bInProjectIn2D, const FVector& InLocation, const FRotator& InRotation, const TArray<FStreamingSourceShape>& InShapes, TFunctionRef<void(const FSphericalSector&)> InOperation, float InExtraRadius = 0.f, float InExtraAngle = 0.f)
 	{
 		const FTransform Transform(bInProjectIn2D ? FRotator(0, InRotation.Yaw, 0) : InRotation, InLocation);
 		if (InShapes.IsEmpty())
 		{
-			FSphericalSector LocalShape(FVector::ZeroVector, InDefaultRadius);
+			FSphericalSector LocalShape(FVector::ZeroVector, InDefaultRadius + InExtraRadius);
 			if (LocalShape.IsValid())
 			{
 				InOperation(LocalShape.TransformBy(Transform));
@@ -193,8 +183,8 @@ public:
 		{
 			for (const FStreamingSourceShape& Shape : InShapes)
 			{
-				const FVector::FReal ShapeRadius = Shape.bUseGridLoadingRange ? (InGridLoadingRange * Shape.LoadingRangeScale) : Shape.Radius;
-				const FVector::FReal ShapeAngle = Shape.bIsSector ? Shape.SectorAngle : 360.0f;
+				const FVector::FReal ShapeRadius = (Shape.bUseGridLoadingRange ? (InGridLoadingRange * Shape.LoadingRangeScale) : Shape.Radius) + InExtraRadius;
+				const FVector::FReal ShapeAngle = Shape.bIsSector ? (Shape.SectorAngle + InExtraAngle) : 360.0f;
 				const FVector ShapeAxis = bInProjectIn2D ? FRotator(0, Shape.Rotation.Yaw, 0).Vector() : Shape.Rotation.Vector();
 				FSphericalSector LocalShape(bInProjectIn2D ? FVector(Shape.Location.X, Shape.Location.Y, 0) : Shape.Location, ShapeRadius, ShapeAxis, ShapeAngle);
 				if (LocalShape.IsValid())
@@ -273,7 +263,6 @@ struct FWorldPartitionStreamingQuerySource
 		Rotation = Other.Rotation;
 		TargetBehavior = Other.TargetBehavior;
 		TargetGrids = Other.TargetGrids;
-		TargetHLODLayers = Other.TargetHLODLayers;
 		Shapes = Other.Shapes;
 		return *this;
 	}
@@ -305,30 +294,20 @@ struct FWorldPartitionStreamingQuerySource
 	/* Reserved settings used by UWorldPartitionStreamingSourceComponent::IsStreamingCompleted. */
 	FRotator Rotation;
 	
-	/** Defines how TargetGrids/TargetHLODLayers will be applied to this streaming source. */
+	/** Defines how TargetGrids will be applied to this streaming source. */
 	EStreamingSourceTargetBehavior TargetBehavior;
-
-	UE_DEPRECATED(5.1, "Use TargetGrids instead.")
-	FName TargetGrid;
 
 	TSet<FName> TargetGrids;
 
-	UE_DEPRECATED(5.1, "Use TargetHLODLayers")
-	FSoftObjectPath TargetHLODLayer;
-
+	UE_DEPRECATED(5.4, "TargetHLODLayers is depredcated, use TargetGrids instead.")
 	TSet<FSoftObjectPath> TargetHLODLayers;
 	
 	TArray<FStreamingSourceShape> Shapes;
 
 	/** Helper method that iterates over all shapes. If none is provided, it will still pass a sphere shape using Radius or grid's loading range (see bUseGridLoadingRange). */
-	FORCEINLINE void ForEachShape(float InGridLoadingRange, FName InGridName, const FSoftObjectPath& InGridHLODLayer, bool bInProjectIn2D, TFunctionRef<void(const FSphericalSector&)> InOperation) const
+	FORCEINLINE void ForEachShape(float InGridLoadingRange, FName InGridName, bool bInProjectIn2D, TFunctionRef<void(const FSphericalSector&)> InOperation) const
 	{
-		if (!bSpatialQuery)
-		{
-			return;
-		}
-
-		if (FStreamingSourceShapeHelper::IsSourceAffectingGrid(TargetGrids, TargetHLODLayers, TargetBehavior, InGridName, InGridHLODLayer))
+		if (bSpatialQuery && FStreamingSourceShapeHelper::IsSourceAffectingGrid(TargetGrids, TargetBehavior, InGridName))
 		{
 			FStreamingSourceShapeHelper::ForEachShape(InGridLoadingRange, bUseGridLoadingRange ? InGridLoadingRange : Radius, bInProjectIn2D, Location, Rotation, Shapes, InOperation);
 		}
@@ -361,7 +340,8 @@ struct FWorldPartitionStreamingSource
 		, TargetState(EStreamingSourceTargetState::Activated)
 		, bBlockOnSlowLoading(false)
 		, Priority(EStreamingSourcePriority::Default)
-		, Velocity(0.f)
+		, Velocity(FVector::Zero())
+		, bUseVelocityContributionToCellsSorting(false)
 		, DebugColor(ForceInit)
 		, TargetBehavior(EStreamingSourceTargetBehavior::Include)
 		, bReplay(false)
@@ -370,9 +350,11 @@ struct FWorldPartitionStreamingSource
 		, Hash3D(0)
 		, OldLocation(FVector::ZeroVector)
 		, OldRotation(FRotator::ZeroRotator)
+		, ExtraRadius(0)
+		, ExtraAngle(0)
 	{}
 
-	FWorldPartitionStreamingSource(FName InName, const FVector& InLocation, const FRotator& InRotation, EStreamingSourceTargetState InTargetState, bool bInBlockOnSlowLoading, EStreamingSourcePriority InPriority, bool bRemote, float InVelocity = 0.f)
+	FWorldPartitionStreamingSource(FName InName, const FVector& InLocation, const FRotator& InRotation, EStreamingSourceTargetState InTargetState, bool bInBlockOnSlowLoading, EStreamingSourcePriority InPriority, bool bRemote, FVector InVelocity = FVector::Zero())
 		: Name(InName)
 		, Location(InLocation)
 		, Rotation(InRotation)
@@ -380,6 +362,7 @@ struct FWorldPartitionStreamingSource
 		, bBlockOnSlowLoading(bInBlockOnSlowLoading)
 		, Priority(InPriority)
 		, Velocity(InVelocity)
+		, bUseVelocityContributionToCellsSorting(false)
 		, DebugColor(ForceInit)
 		, TargetBehavior(EStreamingSourceTargetBehavior::Include)
 		, bReplay(false)
@@ -388,6 +371,8 @@ struct FWorldPartitionStreamingSource
 		, Hash3D(0)
 		, OldLocation(InLocation)
 		, OldRotation(InRotation)
+		, ExtraRadius(0)
+		, ExtraAngle(0)
 	{}
 
 	// Define Copy Constructor to avoid deprecation warnings
@@ -404,16 +389,20 @@ struct FWorldPartitionStreamingSource
 		TargetState = Other.TargetState;
 		bBlockOnSlowLoading = Other.bBlockOnSlowLoading;
 		Priority = Other.Priority;
+		bUseVelocityContributionToCellsSorting = Other.bUseVelocityContributionToCellsSorting;
 		Velocity = Other.Velocity;
 		DebugColor = Other.DebugColor;
 		TargetBehavior = Other.TargetBehavior;
 		TargetGrids = Other.TargetGrids;
-		TargetHLODLayers = Other.TargetHLODLayers;
 		Shapes = Other.Shapes;
 		bReplay = Other.bReplay;
 		bRemote = Other.bRemote;
 		Hash2D = Other.Hash2D;
 		Hash3D = Other.Hash3D;
+		OldLocation = Other.OldLocation;
+		OldRotation = Other.OldRotation;
+		ExtraRadius = Other.ExtraRadius;
+		ExtraAngle = Other.ExtraAngle;
 		return *this;
 	}
 	
@@ -449,7 +438,10 @@ struct FWorldPartitionStreamingSource
 	EStreamingSourcePriority Priority;
 
 	/** Source velocity (computed automatically). */
-	float Velocity;
+	FVector Velocity;
+	
+	/** Use velocity contribution to streaming cells priority streaming. */
+	bool bUseVelocityContributionToCellsSorting;
 
 	/** Color used for debugging. */
 	FColor DebugColor;
@@ -461,6 +453,7 @@ struct FWorldPartitionStreamingSource
 	TSet<FName> TargetGrids;
 	
 	/** When set, this will change how this streaming source is applied to the provided HLODLayers based on the TargetBehavior. */
+	UE_DEPRECATED(5.4, "TargetHLODLayers is depredcated, use TargetGrids instead.")
 	TSet<FSoftObjectPath> TargetHLODLayers;
 
 	/** Source internal shapes. When none are provided, a sphere is automatically used. It's radius is equal to grid's loading range and center equals source's location. */
@@ -473,10 +466,10 @@ struct FWorldPartitionStreamingSource
 	bool bRemote;
 
 	/** Returns a box encapsulating all shapes. */
-	FBox CalcBounds(float InGridLoadingRange, FName InGridName, const FSoftObjectPath& InGridHLODLayer, bool bCalcIn2D = false) const
+	FBox CalcBounds(float InGridLoadingRange, FName InGridName, bool bCalcIn2D = false) const
 	{
 		FBox OutBounds(ForceInit);
-		ForEachShape(InGridLoadingRange, InGridName, InGridHLODLayer, bCalcIn2D, [&OutBounds](const FSphericalSector& Sector)
+		ForEachShape(InGridLoadingRange, InGridName, bCalcIn2D, [&OutBounds](const FSphericalSector& Sector)
 		{
 			OutBounds += Sector.CalcBounds();
 		});
@@ -484,28 +477,15 @@ struct FWorldPartitionStreamingSource
 	}
 
 	/** Helper method that iterates over all shapes. If none is provided, it will still pass a sphere shape using grid's loading range. */
-	void ForEachShape(float InGridLoadingRange, FName InGridName, const FSoftObjectPath& InGridHLODLayer, bool bInProjectIn2D, TFunctionRef<void(const FSphericalSector&)> InOperation) const
+	void ForEachShape(float InGridLoadingRange, FName InGridName, bool bInProjectIn2D, TFunctionRef<void(const FSphericalSector&)> InOperation) const
 	{
-		if (FStreamingSourceShapeHelper::IsSourceAffectingGrid(TargetGrids, TargetHLODLayers, TargetBehavior, InGridName, InGridHLODLayer))
+		if (FStreamingSourceShapeHelper::IsSourceAffectingGrid(TargetGrids, TargetBehavior, InGridName))
 		{
-			FStreamingSourceShapeHelper::ForEachShape(InGridLoadingRange, InGridLoadingRange, bInProjectIn2D, Location, Rotation, Shapes, InOperation);
+			FStreamingSourceShapeHelper::ForEachShape(InGridLoadingRange, InGridLoadingRange, bInProjectIn2D, Location, Rotation, Shapes, InOperation, ExtraRadius, ExtraAngle);
 		}
 	}
 
-	FString ToString() const
-	{
-		return FString::Printf(
-			TEXT("Priority: %d | %s | %s | %s | Pos: X=%lld,Y=%lld,Z=%lld | Rot: %s | Vel: %3.2f m/s (%d mph)"), 
-			Priority, 
-			bRemote ? TEXT("Remote") : TEXT("Local"),
-			GetStreamingSourceTargetStateName(TargetState),
-			bBlockOnSlowLoading ? TEXT("Blocking") : TEXT("NonBlocking"),
-			(int64)Location.X, (int64)Location.Y, (int64)Location.Z, 
-			*Rotation.ToCompactString(),
-			Velocity, 
-			(int32)(Velocity*2.23694f)
-		);
-	}
+	FString ToString() const;
 
 	static int32 GetLocationQuantization() { return LocationQuantization; }
 	static int32 GetRotationQuantization() { return RotationQuantization; }
@@ -523,6 +503,41 @@ private:
 	/** Source values used for hash computations. */
 	FVector OldLocation;
 	FRotator OldRotation;
+
+	/** Used internally for server streaming */
+	float ExtraRadius;
+	float ExtraAngle;
+
+	friend struct FSetStreamingSourceExtraRadius;
+	friend struct FSetStreamingSourceExtraAngle;
+};
+
+struct FSetStreamingSourceExtraRadius
+{
+private:
+	FSetStreamingSourceExtraRadius(FWorldPartitionStreamingSource& InStreamingSource, float InExtraRadius)
+	{
+		if (ensure(InExtraRadius >= 0.f))
+		{
+			InStreamingSource.ExtraRadius = InExtraRadius;
+		}
+	}
+
+	friend class UWorldPartitionSubsystem;
+};
+
+struct FSetStreamingSourceExtraAngle
+{
+private:
+	FSetStreamingSourceExtraAngle(FWorldPartitionStreamingSource& InStreamingSource, float InExtraAngle)
+	{
+		if (ensure(InExtraAngle >= 0.f))
+		{
+			InStreamingSource.ExtraAngle = InExtraAngle;
+		}
+	}
+
+	friend class UWorldPartitionSubsystem;
 };
 
 /**

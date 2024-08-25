@@ -4,6 +4,7 @@
 #include "Async/MappedFileHandle.h"
 #include "HAL/IConsoleManager.h"
 #include "IO/IoDispatcher.h"
+#include "IO/IoOffsetLength.h"
 #include "Math/GuardedInt.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Optional.h"
@@ -28,6 +29,61 @@
 #define ALLOW_OPTIONAL_DATA 1
 
 //////////////////////////////////////////////////////////////////////////////
+
+FStringBuilderBase& LexToString(EBulkDataFlags Flags, FStringBuilderBase& Sb)
+{
+	#define TEST_AND_ADD_FLAG(Sb, Flags, Contains)\
+	{\
+		if ((uint32(Flags) & uint32(Contains)) == uint32(Contains))\
+		{\
+			if (Sb.Len())\
+			{\
+				Sb.Append(TEXT("|"));\
+			}\
+			Sb.Append(TEXT(#Contains));\
+		}\
+	}
+
+	if (uint32(Flags) == BULKDATA_None)
+	{
+		Sb.Append("BULKDATA_None");
+		return Sb;
+	}
+
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_PayloadAtEndOfFile);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_SerializeCompressedZLIB);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_ForceSingleElementSerialization);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_SingleUse);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_ForceInlinePayload);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_SerializeCompressed);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_PayloadInSeperateFile);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_Force_NOT_InlinePayload);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_OptionalPayload);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_MemoryMappedPayload);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_Size64Bit);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_DuplicateNonOptionalPayload);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_NoOffsetFixUp);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_WorkspaceDomainPayload);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_LazyLoadable);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_UsesIoDispatcher);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_DataIsMemoryMapped);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_HasAsyncReadPending);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_AlwaysAllowDiscard);
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_BadDataVersion);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_ForceStreamPayload);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_SerializeCompressedBitWindow);
+	TEST_AND_ADD_FLAG(Sb, Flags, BULKDATA_Unused);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	return Sb;
+}
+
+FString LexToString(EBulkDataFlags Flags)
+{
+	TStringBuilder<256> Sb;
+	return LexToString(Flags, Sb).ToString();
+}
 
 const FIoFilenameHash FALLBACK_IO_FILENAME_HASH = INVALID_IO_FILENAME_HASH - 1;
 
@@ -87,7 +143,11 @@ bool OpenReadBulkData(
 	TFunction<void(FArchive& Ar)>&& Read);
 
 /** Open async read file handle for the specified bulk data chunk ID. */
-TUniquePtr<IAsyncReadFileHandle> OpenAsyncReadBulkData(const FBulkMetaData& BulkMeta, const FIoChunkId& BulkChunkId);
+TUniquePtr<IAsyncReadFileHandle> OpenAsyncReadBulkData(
+	const FBulkMetaData& BulkMeta,
+	const FIoChunkId& BulkChunkId,
+	uint64 ChunkSize,
+	uint64 AvailableChunkSize);
 
 /** Create bulk data streaming request. */
 TUniquePtr<IBulkDataIORequest> CreateStreamingRequest(
@@ -98,9 +158,6 @@ TUniquePtr<IBulkDataIORequest> CreateStreamingRequest(
 	EAsyncIOPriorityAndFlags Priority,
 	FBulkDataIORequestCallBack* CompleteCallback,
 	uint8* UserSuppliedMemory);
-
-/** Returns whether the bulk data chunk exist or not. */
-bool DoesBulkDataExist(const FIoChunkId& BulkChunkId);
 
 /** Try memory map the chunk specified by the bulk data ID. */
 bool TryMemoryMapBulkData(
@@ -284,6 +341,16 @@ bool FBulkMetaData::FromSerialized(FArchive& Ar, int64 ElementSize, FBulkMetaDat
 	OutDuplicateOffset = Resource.DuplicateOffset;
 
 	return true;
+}
+
+FIoOffsetAndLength FBulkMetaData::GetOffsetAndLength() const
+{
+	const uint64 Offset = GetOffset();
+	const uint64 Size = GetSize();
+
+	return Offset >= 0 && Size > 0
+		? FIoOffsetAndLength(static_cast<int64>(Offset), static_cast<int64>(Size))
+		: FIoOffsetAndLength();
 }
 
 /**
@@ -761,8 +828,7 @@ bool FBulkData::DoesExist() const
 		return false;
 	}
 #endif
-
-	return UE::BulkData::Private::DoesBulkDataExist(BulkChunkId);
+	return FIoDispatcher::Get().DoesChunkExist(BulkChunkId, BulkMeta.GetOffsetAndLength());
 }
 
 /**
@@ -1353,6 +1419,12 @@ void FBulkData::Serialize(FArchive& Ar, UObject* Owner, bool bAttemptFileMapping
 			SerializedMeta.ElementCount = GetBulkDataSize() / ElementSize;
 			SerializedMeta.SizeOnDisk = GetBulkDataSize();
 
+			if (SerializeBulkDataElements != nullptr)
+			{
+				// Force 64 bit precision when using custom element serialization
+				SetBulkDataFlagsOn(SerializedMeta.Flags, static_cast<EBulkDataFlags>(BULKDATA_Size64Bit));
+			}
+
 			const EBulkDataFlags FlagsToClear = static_cast<EBulkDataFlags>(BULKDATA_PayloadAtEndOfFile | BULKDATA_PayloadInSeperateFile | BULKDATA_WorkspaceDomainPayload | BULKDATA_ForceSingleElementSerialization);
 			FBulkData::ClearBulkDataFlagsOn(SerializedMeta.Flags, FlagsToClear);
 
@@ -1366,6 +1438,12 @@ void FBulkData::Serialize(FArchive& Ar, UObject* Owner, bool bAttemptFileMapping
 			}
 			SerializedMeta.Offset = Ar.Tell();
 			SerializedMeta.SizeOnDisk = SerializePayload(Ar, SerializedMeta.Flags, FileRegionTypeOptional);
+
+			if (SerializeBulkDataElements != nullptr)
+			{
+				SerializedMeta.ElementCount = SerializedMeta.SizeOnDisk / ElementSize;
+			}
+
 			{
 				FArchive::FScopeSeekTo _(Ar, MetaOffset);
 				Ar << SerializedMeta;
@@ -1549,7 +1627,11 @@ int64 FBulkData::SerializePayload(FArchive& Ar, EBulkDataFlags SerializationFlag
 
 	const int64 PayloadStart = Ar.Tell();
 
-	if (int64 PayloadSize = GetBulkDataSize(); PayloadSize > 0)
+	if (int64 PayloadSize = GetBulkDataSize(); PayloadSize > 0
+#if !USE_RUNTIME_BULKDATA
+	|| (SerializeBulkDataElements != nullptr)
+#endif
+	)
 	{
 		if (RegionType)
 		{
@@ -1569,7 +1651,14 @@ int64 FBulkData::SerializePayload(FArchive& Ar, EBulkDataFlags SerializationFlag
 
 IAsyncReadFileHandle* FBulkData::OpenAsyncReadHandle() const
 {
-	return UE::BulkData::Private::OpenAsyncReadBulkData(BulkMeta, BulkChunkId).Release();
+	uint64 AvailableChunkSize = 0;
+	TIoStatusOr<uint64> ChunkSize = FIoDispatcher::Get().GetSizeForChunk(BulkChunkId, BulkMeta.GetOffsetAndLength(), AvailableChunkSize);
+
+	return UE::BulkData::Private::OpenAsyncReadBulkData(
+		BulkMeta,
+		BulkChunkId,
+		ChunkSize.IsOk() ? ChunkSize.ValueOrDie() : 0,
+		AvailableChunkSize).Release();
 }
 
 IBulkDataIORequest* FBulkData::CreateStreamingRequest(EAsyncIOPriorityAndFlags Priority, FBulkDataIORequestCallBack* CompleteCallback, uint8* UserSuppliedMemory) const
@@ -1635,6 +1724,12 @@ void FBulkData::MakeSureBulkDataIsLoaded()
 	}
 
 	const int64 BulkDataSize = GetBulkDataSize();
+
+	if (BulkDataSize == 0)
+	{
+		return;
+	}
+
 	void* Dest = ReallocateData(BulkDataSize);
 
 	if (TryLoadDataIntoMemory(FIoBuffer(FIoBuffer::Wrap, Dest, BulkDataSize)) == false)

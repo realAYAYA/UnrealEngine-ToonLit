@@ -19,6 +19,7 @@ class USoundNodeAssetReferencer : public USoundNode
 public:
 	ENGINE_API virtual void LoadAsset(bool bAddToRoot = false) PURE_VIRTUAL(USoundNodeAssetReferencer::LoadAsset,);
 	ENGINE_API virtual void ClearAssetReferences() PURE_VIRTUAL(USoundNodeAssetReferencer::ClearAssetReferences, );
+	ENGINE_API virtual bool ContainsProceduralSoundReference() const { return false; }
 
 	ENGINE_API bool ShouldHardReferenceAsset(const class ITargetPlatform*) const;
 

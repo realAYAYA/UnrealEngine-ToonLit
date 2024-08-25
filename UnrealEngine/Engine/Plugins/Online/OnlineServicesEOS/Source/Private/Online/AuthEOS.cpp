@@ -2,14 +2,16 @@
 
 #include "Online/AuthEOS.h"
 
-#include "EOSShared.h"
-#include "Online/OnlineIdEOS.h"
-#include "Online/OnlineErrorEOSGS.h"
-#include "Online/OnlineServicesEOS.h"
 #include "Algo/Transform.h"
+#include "Containers/StaticArray.h"
+#include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/AuthErrors.h"
-
+#include "Online/OnlineErrorEOSGS.h"
+#include "Online/OnlineIdEOS.h"
+#include "Online/OnlineServicesEOS.h"
 #include "Online/OnlineUtils.h"
+
 #include "eos_auth.h"
 #include "eos_connect.h"
 #include "eos_userinfo.h"
@@ -46,7 +48,7 @@ void FAuthEOS::Initialize()
 {
 	Super::Initialize();
 
-	UserInfoHandle = EOS_Platform_GetUserInfoInterface(static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
+	UserInfoHandle = EOS_Platform_GetUserInfoInterface(*static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
 	check(UserInfoHandle != nullptr);
 }
 
@@ -195,24 +197,36 @@ TOnlineAsyncOpHandle<FAuthLogin> FAuthEOS::Login(FAuthLogin::Params&& Params)
 		const TSharedRef<FAccountInfoEOS>& AccountInfoEOS = GetOpDataChecked<TSharedRef<FAccountInfoEOS>>(InAsyncOp, UE_ONLINE_AUTH_EOS_ACCOUNT_INFO_KEY_NAME);
 
 		// Get display name
-		EOS_UserInfo_CopyUserInfoOptions Options = { };
-		Options.ApiVersion = 3;
-		UE_EOS_CHECK_API_MISMATCH(EOS_USERINFO_COPYUSERINFO_API_LATEST, 3);
+		EOS_UserInfo_CopyBestDisplayNameOptions Options = {};
+		Options.ApiVersion = 1;
+		UE_EOS_CHECK_API_MISMATCH(EOS_USERINFO_COPYBESTDISPLAYNAME_API_LATEST, 1);
 		Options.LocalUserId = AccountInfoEOS->EpicAccountId;
 		Options.TargetUserId = AccountInfoEOS->EpicAccountId;
 
-		EOS_UserInfo* UserInfo = nullptr;
+		EOS_UserInfo_BestDisplayName* BestDisplayName;
+		EOS_EResult CopyBestDisplayNameResult = EOS_UserInfo_CopyBestDisplayName(UserInfoHandle, &Options, &BestDisplayName);
 
-		EOS_EResult CopyUserInfoResult = EOS_UserInfo_CopyUserInfo(UserInfoHandle, &Options, &UserInfo);
-		if (CopyUserInfoResult == EOS_EResult::EOS_Success)
+		if (CopyBestDisplayNameResult == EOS_EResult::EOS_UserInfo_BestDisplayNameIndeterminate)
 		{
-			AccountInfoEOS->Attributes.Emplace(AccountAttributeData::DisplayName, UTF8_TO_TCHAR(UserInfo->DisplayName));
-			EOS_UserInfo_Release(UserInfo);
+			EOS_UserInfo_CopyBestDisplayNameWithPlatformOptions WithPlatformOptions = {};
+			WithPlatformOptions.ApiVersion = 1;
+			UE_EOS_CHECK_API_MISMATCH(EOS_USERINFO_COPYBESTDISPLAYNAMEWITHPLATFORM_API_LATEST, 1);
+			WithPlatformOptions.LocalUserId = AccountInfoEOS->EpicAccountId;
+			WithPlatformOptions.TargetUserId = AccountInfoEOS->EpicAccountId;
+			WithPlatformOptions.TargetPlatformType = EOS_OPT_Epic;
+
+			CopyBestDisplayNameResult = EOS_UserInfo_CopyBestDisplayNameWithPlatform(UserInfoHandle, &WithPlatformOptions, &BestDisplayName);
+		}
+
+		if (CopyBestDisplayNameResult == EOS_EResult::EOS_Success)
+		{
+			AccountInfoEOS->Attributes.Emplace(AccountAttributeData::DisplayName, *GetBestDisplayNameStr(*BestDisplayName));
+			EOS_UserInfo_BestDisplayName_Release(BestDisplayName);
 		}
 		else
 		{
-			FOnlineError CopyUserInfoError(Errors::FromEOSResult(CopyUserInfoResult));
-			UE_LOG(LogOnlineServices, Warning, TEXT("[FAuthEOS::Login] Failure: EOS_UserInfo_CopyUserInfo %s"), *CopyUserInfoError.GetLogString());
+			FOnlineError CopyUserInfoError(Errors::FromEOSResult(CopyBestDisplayNameResult));
+			UE_LOG(LogOnlineServices, Warning, TEXT("[FAuthEOS::Login] Failure: EOS_UserInfo_CopyBestDisplayName %s"), *CopyUserInfoError.GetLogString());
 			InAsyncOp.SetError(Errors::Unknown(MoveTemp(CopyUserInfoError)));
 
 			TPromise<void> Promise;
@@ -328,15 +342,50 @@ TOnlineAsyncOpHandle<FAuthQueryExternalAuthToken> FAuthEOS::QueryExternalAuthTok
 				return;
 			}
 
-			TDefaultErrorResult<FAuthGetExternalAuthTokenImpl> AuthTokenResult = GetExternalAuthTokenImpl(FAuthGetExternalAuthTokenImpl::Params{ AccountInfoEOS->EpicAccountId });
-			if (AuthTokenResult.IsError())
+			// The primary external auth method is an id token.
+			if (Params.Method == EExternalAuthTokenMethod::Primary)
 			{
-				UE_LOG(LogOnlineServices, Warning, TEXT("[FAuthEOS::QueryExternalAuthToken] Failure: GetExternalAuthTokenImpl %s"), *AuthTokenResult.GetErrorValue().GetLogString());
-				InAsyncOp.SetError(Errors::Unknown(MoveTemp(AuthTokenResult.GetErrorValue())));
-				return;
-			}
+				TDefaultErrorResult<FAuthGetExternalAuthTokenImpl> AuthTokenResult = GetExternalAuthTokenImpl(FAuthGetExternalAuthTokenImpl::Params{ AccountInfoEOS->EpicAccountId });
+				if (AuthTokenResult.IsError())
+				{
+					UE_LOG(LogOnlineServices, Warning, TEXT("[FAuthEOS::QueryExternalAuthToken] Failure: GetExternalAuthTokenImpl %s"), *AuthTokenResult.GetErrorValue().GetLogString());
+					InAsyncOp.SetError(Errors::Unknown(MoveTemp(AuthTokenResult.GetErrorValue())));
+					return;
+				}
 
-			InAsyncOp.SetResult(FAuthQueryExternalAuthToken::Result{ MoveTemp(AuthTokenResult.GetOkValue().Token) });
+				InAsyncOp.SetResult(FAuthQueryExternalAuthToken::Result{ MoveTemp(AuthTokenResult.GetOkValue().Token) });
+			}
+			// The secondary external auth method is an EAS refresh token.
+			else if (Params.Method == EExternalAuthTokenMethod::Secondary)
+			{
+				EOS_Auth_CopyUserAuthTokenOptions CopyUserAuthTokenOptions = {};
+				CopyUserAuthTokenOptions.ApiVersion = 1;
+				UE_EOS_CHECK_API_MISMATCH(EOS_AUTH_COPYUSERAUTHTOKEN_API_LATEST, 1);
+
+				EOS_Auth_Token* AuthToken = nullptr;
+
+				EOS_EResult Result = EOS_Auth_CopyUserAuthToken(AuthHandle, &CopyUserAuthTokenOptions, AccountInfoEOS->EpicAccountId, &AuthToken);
+				if (Result == EOS_EResult::EOS_Success)
+				{
+					ON_SCOPE_EXIT
+					{
+						EOS_Auth_Token_Release(AuthToken);
+					};
+
+					FExternalAuthToken ExternalAuthToken;
+					ExternalAuthToken.Type = ExternalLoginType::Epic;
+					ExternalAuthToken.Data = UTF8_TO_TCHAR(AuthToken->RefreshToken);
+					InAsyncOp.SetResult(FAuthQueryExternalAuthToken::Result{ MoveTemp(ExternalAuthToken) });
+				}
+				else
+				{
+					InAsyncOp.SetError(Errors::FromEOSResult(Result));
+				}
+			}
+			else
+			{
+				InAsyncOp.SetError(Errors::InvalidParams());
+			}
 		})
 		.Enqueue(GetSerialQueue());
 	}
@@ -354,7 +403,7 @@ TFuture<FAccountId> FAuthEOS::ResolveAccountId(const FAccountId& LocalAccountId,
 	return ResolveAccountIdImpl(*this, LocalAccountId, ProductUserId);
 }
 
-using FEpicAccountIdStrBuffer = char[EOS_EPICACCOUNTID_MAX_LENGTH + 1];
+using FEpicAccountIdStrBuffer = TStaticArray<char, EOS_EPICACCOUNTID_MAX_LENGTH + 1>;
 
 TFuture<TArray<FAccountId>> FAuthEOS::ResolveAccountIds(const FAccountId& LocalAccountId, const TArray<EOS_EpicAccountId>& InEpicAccountIds)
 {
@@ -401,7 +450,7 @@ TFuture<TArray<FAccountId>> FAuthEOS::ResolveAccountIds(const FAccountId& LocalA
 		FEpicAccountIdStrBuffer& EpicAccountIdStr = EpicAccountIdStrsToQuery.Emplace_GetRef();
 		int32_t BufferSize = sizeof(EpicAccountIdStr);
 		if (!EOS_EpicAccountId_IsValid(EpicAccountId) ||
-			EOS_EpicAccountId_ToString(EpicAccountId, EpicAccountIdStr, &BufferSize) != EOS_EResult::EOS_Success)
+			EOS_EpicAccountId_ToString(EpicAccountId, EpicAccountIdStr.GetData(), &BufferSize) != EOS_EResult::EOS_Success)
 		{
 			checkNoEntry();
 			return MakeFulfilledPromise<TArray<FAccountId>>().GetFuture();
@@ -417,7 +466,7 @@ TFuture<TArray<FAccountId>> FAuthEOS::ResolveAccountIds(const FAccountId& LocalA
 	Options.LocalUserId = GetProductUserIdChecked(LocalAccountId);
 	Options.AccountIdType = EOS_EExternalAccountType::EOS_EAT_EPIC;
 	Options.ExternalAccountIds = (const char**)EpicAccountIdStrPtrs.GetData();
-	Options.ExternalAccountIdCount = 1;
+	Options.ExternalAccountIdCount = EpicAccountIdStrPtrs.Num();
 
 	EOS_Async(EOS_Connect_QueryExternalAccountMappings, ConnectHandle, Options,
 	[this, WeakThis = AsWeak(), InEpicAccountIds, Promise = MoveTemp(Promise)](const EOS_Connect_QueryExternalAccountMappingsCallbackInfo* Data) mutable -> void
@@ -441,7 +490,7 @@ TFuture<TArray<FAccountId>> FAuthEOS::ResolveAccountIds(const FAccountId& LocalA
 					{
 						FEpicAccountIdStrBuffer EpicAccountIdStr;
 						int32_t BufferSize = sizeof(EpicAccountIdStr);
-						verify(EOS_EpicAccountId_ToString(EpicAccountId, EpicAccountIdStr, &BufferSize) == EOS_EResult::EOS_Success);
+						verify(EOS_EpicAccountId_ToString(EpicAccountId, EpicAccountIdStr.GetData(), &BufferSize) == EOS_EResult::EOS_Success);
 						Options.TargetExternalUserId = &EpicAccountIdStr[0];
 						const EOS_ProductUserId ProductUserId = EOS_Connect_GetExternalAccountMapping(ConnectHandle, &Options);
 						AccountId = CreateAccountId(EpicAccountId, ProductUserId);
@@ -527,10 +576,10 @@ TFuture<TArray<FAccountId>> FAuthEOS::ResolveAccountIds(const FAccountId& LocalA
 						FEpicAccountIdStrBuffer EpicAccountIdStr;
 						int32_t BufferLength = sizeof(EpicAccountIdStr);
 						EOS_EpicAccountId EpicAccountId = nullptr;
-						const EOS_EResult Result = EOS_Connect_GetProductUserIdMapping(ConnectHandle, &Options, EpicAccountIdStr, &BufferLength);
+						const EOS_EResult Result = EOS_Connect_GetProductUserIdMapping(ConnectHandle, &Options, EpicAccountIdStr.GetData(), &BufferLength);
 						if (Result == EOS_EResult::EOS_Success)
 						{
-							EpicAccountId = EOS_EpicAccountId_FromString(EpicAccountIdStr);
+							EpicAccountId = EOS_EpicAccountId_FromString(EpicAccountIdStr.GetData());
 							check(EOS_EpicAccountId_IsValid(EpicAccountId));
 						}
 						AccountId = CreateAccountId(EpicAccountId, ProductUserId);

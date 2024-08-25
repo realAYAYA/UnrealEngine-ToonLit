@@ -140,6 +140,7 @@ public:
 	static CORE_API const TCHAR* UserDir();
 	static CORE_API const TCHAR* UserTempDir();
 	static CORE_API const TCHAR* UserSettingsDir();
+	static CORE_API const TCHAR* UserSettingsDirMediumIntegrity();
 	static CORE_API const TCHAR* ApplicationSettingsDir();
 	static CORE_API FString GetApplicationSettingsDir(const ApplicationSettingsContext& Settings);
 	static CORE_API const TCHAR* ComputerName();
@@ -204,6 +205,16 @@ public:
 	 * @brief Releases locks that we held for IsFirstInstance check
 	 */
 	static CORE_API void CeaseBeingFirstInstance();
+
+	static CORE_API bool TryGetMemoryUsage(FProcHandle& ProcessHandle, FPlatformProcessMemoryStats& OutStats);
+	/**
+	 * Whether to expect to run at a low process integrity level or not. This affects the paths that must be used for user and temp storage.
+	 * The process may launch at default (medium) integrity level and then downgrade itself to low later for security benefits, so checking
+	 * the current integrity level alone is not sufficient.
+	 *
+	 * @return true if low integrity level should be expected, otherwise false.
+	 */
+	static CORE_API bool ShouldExpectLowIntegrityLevel();
 
 protected:
 

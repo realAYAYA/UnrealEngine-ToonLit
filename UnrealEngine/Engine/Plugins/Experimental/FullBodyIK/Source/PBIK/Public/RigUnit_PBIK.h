@@ -60,6 +60,7 @@ struct FPBIKEffector
 		PositionAlpha(1.0f),
 		RotationAlpha(1.0f),
 		StrengthAlpha(1.0f),
+		ChainDepth(0),
 		PullChainAlpha(1.0f),
 		PinRotation(1.0f){}
 
@@ -85,6 +86,13 @@ struct FPBIKEffector
 	 */
 	UPROPERTY(EditAnywhere, Category="Effector", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float StrengthAlpha = 1.0f;
+
+	/** Range 0-inf (default is 0). Explicitly set the number of bones up the hierarchy to consider part of this effector's 'chain'.
+	* The "chain" of bones is used to apply Preferred Angles, Pull Chain Alpha and "Sub Solve" iterations.
+	* If left at 0, the solver will attempt to determine the root of the chain by searching up the hierarchy until it finds a branch or another effector, whichever it finds first.
+	*/
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Full Body IK Effector", meta = (ClampMin = "0", UIMin = "0"))
+	int32 ChainDepth = 0;
 
 	/** Range 0-1 (default is 1.0). When enabled (greater than 0.0), the solver internally partitions the skeleton into 'chains' which extend from the effector to the nearest fork in the skeleton.
 	 *These chains are pre-rotated and translated, as a whole, towards the effector targets.

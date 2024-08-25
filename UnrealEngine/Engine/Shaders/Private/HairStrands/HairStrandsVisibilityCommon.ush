@@ -13,6 +13,7 @@
 
 #define HAIR_VISIBILITY_GROUP_COUNT_WIDTH 64
 
+#include "../PackUnpack.ush"
 #include "/Engine/Shared/HairStrandsDefinitions.h"
 #include "HairStrandsVisibilityCommonStruct.ush"
 
@@ -236,8 +237,8 @@ struct FHairSample
 	float	Specular;
 	float	Backlit;
 	uint	LightChannelMask;
-	bool	bScatterSceneLighting;
-	float3  Emissive;
+	float3	Emissive;
+	uint	Flags;
 };
 
 FPackedHairSample PackHairSample(const FHairSample In)
@@ -249,9 +250,7 @@ FPackedHairSample PackHairSample(const FHairSample In)
 	// Coverage is clamped o 255 as we only have 8 bits to store its value
 	const float3 T = saturate(EncodeTangent(In.Tangent));
 	Out.Tangent_Coverage8bit =
-		((0xFF & uint(T.x * 255)))      | 
-		((0xFF & uint(T.y * 255)) << 8) |
-		((0xFF & uint(T.z * 255)) << 16)| 
+		PackRGBA8(float4(T,0)) |
 		(min(uint(0xFF), In.Coverage8bit) << 24);
 
 	// ControlPointId and MacroGroupId
@@ -263,11 +262,11 @@ FPackedHairSample PackHairSample(const FHairSample In)
 
 	Out.Depth					= In.Depth;																			// 32bits float
 	Out.BaseColor_Roughness		= float4ToUint(float4(sqrt(In.BaseColor), In.Roughness));							// 32bits uint
-	Out.Specular_LightChannels_Backlit = 
-		clamp(uint(In.Specular * 0xFF), 0, 0xFF) | 
-		((In.LightChannelMask & 0x7) << 8)  | 
-		((In.bScatterSceneLighting ? 1 : 0) << 12) |
-		(clamp(uint(In.Backlit * 0xFF), 0, 0xFF) << 16);
+	Out.Data 					= 
+		(PackR8(In.Specular)              )| 
+		(PackR8(In.Backlit)          <<  8)| 
+		((In.Flags & 0xFF)           << 16)|
+		((In.LightChannelMask & 0x7) << 24);
 
 	// Emissive is not packed/unpacked
 	return Out;
@@ -278,10 +277,7 @@ FHairSample UnpackHairSample(const FPackedHairSample In)
 	FHairSample Out;
 	Out.Depth = In.Depth;
 
-	Out.Tangent = DecodeTangent(float3(
-		float((In.Tangent_Coverage8bit)       & 0xFF) / 255.f,
-		float((In.Tangent_Coverage8bit >> 8)  & 0xFF) / 255.f,
-		float((In.Tangent_Coverage8bit >> 16) & 0xFF) / 255.f));
+	Out.Tangent 	 = DecodeTangent(UnpackRGBA8(In.Tangent_Coverage8bit).xyz);
 	Out.Coverage8bit = (In.Tangent_Coverage8bit >> 24) & 0xFF;
 
 	Out.ControlPointId  = In.ControlPointID_MacroGroupID & 0x0FFFFFFF;
@@ -290,10 +286,10 @@ FHairSample UnpackHairSample(const FPackedHairSample In)
 	const float4 BaseColorAndRoughness = UintToFloat4(In.BaseColor_Roughness);
 	Out.BaseColor			= BaseColorAndRoughness.xyz * BaseColorAndRoughness.xyz;
 	Out.Roughness			= BaseColorAndRoughness.w;
-	Out.Specular			= float(0xFF & In.Specular_LightChannels_Backlit) / 0xFF;
-	Out.LightChannelMask	= (In.Specular_LightChannels_Backlit >>8) & 0x7;
-	Out.Backlit				= float(0xFF & (In.Specular_LightChannels_Backlit>>16)) / 0xFF;
-	Out.bScatterSceneLighting = (In.Specular_LightChannels_Backlit & (1<<12)) > 0;
+	Out.Specular			= UnpackR8(In.Data & 0xFF);
+	Out.Backlit				= UnpackR8((In.Data>>8) & 0xFF);
+	Out.Flags 				= (In.Data>>16) & 0xFF;
+	Out.LightChannelMask	= (In.Data>>24) & 0x7;
 
 	// Emissive is not packed/unpacked
 	return Out;
@@ -307,6 +303,17 @@ void PatchPackedHairSampleCoverage(inout FPackedHairSample Out, uint Coverage8bi
 uint GetPackedHairSampleCoverage8bit(in FPackedHairSample In)
 {
 	return 0xFF & (In.Tangent_Coverage8bit>>24);
+}
+
+uint2 GetHairSampleResolution(uint InNodeCount)
+{
+	uint Resolution = ceil(sqrt(InNodeCount));
+	return uint2(Resolution, Resolution);
+}
+
+uint2 GetHairSampleCoord(uint InLinearCoord, uint2 InResolution)
+{
+	return uint2(InLinearCoord % InResolution.x, InLinearCoord / InResolution.x);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -336,8 +343,8 @@ struct FHairRenderInfo
 	float RadiusAtDepth1Velocity;
 	float VelocityMagnitudeScale;
 
-	bool bIsOrthoView;
 	bool bIsGPUDriven;
+	bool bIsOrthoView; // Only used for shadow view
 
 	float3 ViewForward;
 	float3 TranslatedWorldCameraOrigin;
@@ -362,7 +369,7 @@ struct FHairViewInfo
 	float3 TranslatedWorldCameraOrigin;
 	float3 ViewForward;
 	float  RadiusAtDepth1;
-	bool	bIsOrthoView;
+	bool   bIsOrthoView;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

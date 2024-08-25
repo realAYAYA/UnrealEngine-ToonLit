@@ -2,6 +2,7 @@
 
 #include "Engine/EngineConsoleCommandExecutor.h"
 
+#include "ConsoleSettings.h"
 #include "Engine/GameEngine.h"
 #include "Engine/LocalPlayer.h"
 #include "Features/IModularFeatures.h"
@@ -65,6 +66,7 @@ void FEngineConsoleCommandExecutor::GetAutoCompleteSuggestions(const TCHAR* Inpu
 	};
 
 	IConsoleManager::Get().ForEachConsoleObjectThatContains(FConsoleObjectVisitor::CreateLambda(OnConsoleVariable), Input);
+	Out.Append(GetDefault<UConsoleSettings>()->GetFilteredManualAutoCompleteCommands(Input));
 }
 
 void FEngineConsoleCommandExecutor::GetExecHistory(TArray<FString>& Out)

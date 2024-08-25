@@ -220,6 +220,7 @@ enum class ERigVMOpCode : uint8
 	InvokeEntry, // invokes an entry from the entry list
 	JumpToBranch, // jumps to a branch based on a name operand
 	Execute, // single execute op (formerly Execute_0_Operands to Execute_64_Operands)
+	RunInstructions, // runs a set of instructions lazily
 	Invalid,
 	FirstArrayOpCode = ArrayReset,
 	LastArrayOpCode = ArrayReverse,
@@ -242,6 +243,11 @@ struct RIGVM_API FRigVMBaseOp
 	{
 		return GetTypeHash(Op.OpCode);
 	}
+
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		RigVM::ZeroPaddedMemory(&InMemory->OpCode, reinterpret_cast<uint8*>(InMemory) + sizeof(FRigVMBaseOp));
+	}
 };
 
 
@@ -256,7 +262,7 @@ struct RIGVM_API FRigVMExecuteOp : public FRigVMBaseOp
 	, FunctionIndex(INDEX_NONE)
 	, ArgumentCount(0)
 	, FirstPredicateIndex(INDEX_NONE)
-	, PredicateCount(INDEX_NONE)
+	, PredicateCount(0)
 	{
 	}
 
@@ -264,6 +270,8 @@ struct RIGVM_API FRigVMExecuteOp : public FRigVMBaseOp
 	: FRigVMBaseOp(ERigVMOpCode::Execute)
 	, FunctionIndex(InFunctionIndex)
 	, ArgumentCount(InArgumentCount)
+	, FirstPredicateIndex(INDEX_NONE)
+	, PredicateCount(0)
 	{
 	}
 
@@ -290,6 +298,12 @@ struct RIGVM_API FRigVMExecuteOp : public FRigVMBaseOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+	
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMExecuteOp* This = reinterpret_cast<FRigVMExecuteOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->FunctionIndex);
 	}
 };
 
@@ -319,7 +333,8 @@ struct RIGVM_API FRigVMUnaryOp : public FRigVMBaseOp
 			uint8(InOpCode) == uint8(ERigVMOpCode::JumpForwardIf) ||
 			uint8(InOpCode) == uint8(ERigVMOpCode::JumpBackwardIf) ||
 			uint8(InOpCode) == uint8(ERigVMOpCode::ChangeType) ||
-			uint8(InOpCode) == uint8(ERigVMOpCode::JumpToBranch)
+			uint8(InOpCode) == uint8(ERigVMOpCode::JumpToBranch) ||
+			uint8(InOpCode) == uint8(ERigVMOpCode::RunInstructions)
 		);
 	}
 
@@ -335,6 +350,13 @@ struct RIGVM_API FRigVMUnaryOp : public FRigVMBaseOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMUnaryOp* This = reinterpret_cast<FRigVMUnaryOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->Arg);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->Arg);
 	}
 };
 
@@ -374,6 +396,14 @@ struct RIGVM_API FRigVMBinaryOp : public FRigVMBaseOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+	
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMBinaryOp* This = reinterpret_cast<FRigVMBinaryOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgB);
 	}
 };
 
@@ -417,6 +447,15 @@ struct RIGVM_API FRigVMTernaryOp : public FRigVMBaseOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMTernaryOp* This = reinterpret_cast<FRigVMTernaryOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgB);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgC);
 	}
 };
 
@@ -468,6 +507,16 @@ struct RIGVM_API FRigVMQuaternaryOp : public FRigVMBaseOp
 		P.Serialize(Ar);
 		return Ar;
 	}
+	
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMQuaternaryOp* This = reinterpret_cast<FRigVMQuaternaryOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgB);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgC);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgD);
+	}
 };
 
 // operator used for some array operations
@@ -518,6 +567,17 @@ struct RIGVM_API FRigVMQuinaryOp : public FRigVMBaseOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+	
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMQuinaryOp* This = reinterpret_cast<FRigVMQuinaryOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgB);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgC);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgD);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgE);
 	}
 };
 
@@ -573,6 +633,18 @@ struct RIGVM_API FRigVMSenaryOp : public FRigVMBaseOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+	
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMSenaryOp* This = reinterpret_cast<FRigVMSenaryOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgA);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgB);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgC);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgD);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgE);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->ArgF);
 	}
 };
 
@@ -648,6 +720,16 @@ public:
 		P.Serialize(Ar);
 		return Ar;
 	}
+
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMCopyOp* This = reinterpret_cast<FRigVMCopyOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->Source);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->Source);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->Target);
+		RigVM::ZeroPaddedMemory(&This->RegisterType, &This->CopyType);
+		RigVM::ZeroPaddedMemory(&This->CopyType, reinterpret_cast<uint8*>(This) + sizeof(FRigVMCopyOp));
+	}
 };
 
 // used for equals and not equals comparisons
@@ -700,6 +782,15 @@ struct RIGVM_API FRigVMComparisonOp : public FRigVMBaseOp
 		P.Serialize(Ar);
 		return Ar;
 	}
+
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMComparisonOp* This = reinterpret_cast<FRigVMComparisonOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->A);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->A);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->B);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->Result);
+	}
 };
 
 // jump to a new instruction index.
@@ -738,6 +829,12 @@ struct RIGVM_API FRigVMJumpOp : public FRigVMBaseOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+	
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMJumpOp* This = reinterpret_cast<FRigVMJumpOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->InstructionIndex);
 	}
 };
 
@@ -781,6 +878,14 @@ struct RIGVM_API FRigVMJumpIfOp : public FRigVMUnaryOp
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+	
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMJumpIfOp* This = reinterpret_cast<FRigVMJumpIfOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->Arg);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(&This->Arg);
+		RigVM::ZeroPaddedMemory<bool>(&This->Condition, reinterpret_cast<uint8*>(This) + sizeof(FRigVMJumpIfOp));
 	}
 };
 
@@ -827,6 +932,12 @@ struct RIGVM_API FRigVMInvokeEntryOp : public FRigVMBaseOp
 		P.Serialize(Ar);
 		return Ar;
 	}
+
+	void ZeroPaddedMemoryIfNeeded(FRigVMBaseOp* InMemory) const
+	{
+		FRigVMInvokeEntryOp* This = reinterpret_cast<FRigVMInvokeEntryOp*>(InMemory);
+		RigVM::ZeroPaddedMemory(&This->OpCode, &This->EntryName);
+	}
 };
 
 // jump into a branch based on a name argument
@@ -864,6 +975,44 @@ struct RIGVM_API FRigVMJumpToBranchOp : public FRigVMUnaryOp
 	}
 };
 
+// runs a set of instructions lazily
+USTRUCT()
+struct RIGVM_API FRigVMRunInstructionsOp : public FRigVMUnaryOp
+{
+	GENERATED_USTRUCT_BODY()
+
+	FRigVMRunInstructionsOp()
+		: FRigVMUnaryOp()
+		, StartInstruction(INDEX_NONE)
+		, EndInstruction(INDEX_NONE)
+	{
+	}
+
+	FRigVMRunInstructionsOp(FRigVMOperand InExecutionStateArg, int32 InStartInstruction, int32 InEndInstruction)
+		: FRigVMUnaryOp(ERigVMOpCode::RunInstructions, InExecutionStateArg)
+		, StartInstruction(InStartInstruction)
+		, EndInstruction(InEndInstruction)
+	{
+	}
+
+	int32 StartInstruction;
+	int32 EndInstruction;
+
+	friend uint32 GetTypeHash(const FRigVMRunInstructionsOp& Op)
+	{
+		uint32 Hash = GetTypeHash((const FRigVMBaseOp&)Op);
+		Hash = HashCombine(Hash, GetTypeHash(Op.StartInstruction));
+		Hash = HashCombine(Hash, GetTypeHash(Op.EndInstruction));
+		return Hash;
+	}
+
+	void Serialize(FArchive& Ar);
+	friend FArchive& operator<<(FArchive& Ar, FRigVMRunInstructionsOp& P)
+	{
+		P.Serialize(Ar);
+		return Ar;
+	}
+};
 
 /**
  * The FRigVMInstruction represents
@@ -969,7 +1118,7 @@ public:
 	FRigVMByteCode();
 
 	void Serialize(FArchive& Ar);
-	void Save(FArchive& Ar) const;
+	void Save(FArchive& Ar);
 	void Load(FArchive& Ar);
 	friend FArchive& operator<<(FArchive& Ar, FRigVMByteCode& P)
 	{
@@ -1063,6 +1212,9 @@ public:
 
 	// adds a jump to branch operator
 	uint64 AddJumpToBranchOp(FRigVMOperand InBranchNameArg, int32 InFirstBranchInfoIndex);
+
+	// adds a run instructions op
+	uint64 AddRunInstructionsOp(FRigVMOperand InExecuteStateArg, int32 InStartInstruction, int32 InEndInstruction);
 
 	// adds information about a branch for an instruction's argument
 	int32 AddBranchInfo(const FRigVMBranchInfo& InBranchInfo);
@@ -1174,6 +1326,22 @@ public:
 
 	FString DumpToText() const;
 
+	bool HasPublicContextPathName() const
+	{
+		return bHasPublicContextPathName;
+	}
+
+	const FString& GetPublicContextPathName() const
+	{
+		return PublicContextPathName;
+	}
+
+	void SetPublicContextPathName(const FString& InPublicContextPathName)
+	{
+		PublicContextPathName = InPublicContextPathName;
+		bHasPublicContextPathName = true;
+	}
+
 #if WITH_EDITOR
 
 	// returns the subject which was used to inject a given instruction
@@ -1195,20 +1363,20 @@ public:
 	TArray<int32> GetAllInstructionIndicesForCallPath(const FString& InCallPath, bool bStartsWith = false, bool bEndsWith = false) const;
 
 	// returns the first hit instruction index for a given callpath (or INDEX_NONE)
-	int32 GetFirstInstructionIndexForCallstack(const TArray<UObject*>& InCallstack) const;
+	int32 GetFirstInstructionIndexForCallstack(const TArray<TWeakObjectPtr<UObject>>& InCallstack) const;
 
 	// returns all found instruction indices for a given callpath
-	const TArray<int32>& GetAllInstructionIndicesForCallstack(const TArray<UObject*>& InCallstack) const;
+	const TArray<int32>& GetAllInstructionIndicesForCallstack(const TArray<TWeakObjectPtr<UObject>>& InCallstack) const;
 
 	// returns the callstack which was used to inject a given instruction
-	const TArray<UObject*>* GetCallstackForInstruction(int32 InInstructionIndex) const;
+	const TArray<TWeakObjectPtr<UObject>>* GetCallstackForInstruction(int32 InInstructionIndex) const;
 
 	// returns the callstack hash which was used to inject a given instruction
 	uint32 GetCallstackHashForInstruction(int32 InInstructionIndex) const;
 
 	// computes a hash for a given callstack
-	static uint32 GetCallstackHash(const TArray<UObject*>& InCallstack);
-	static uint32 GetCallstackHash(const TArrayView<UObject* const>& InCallstack);
+	static uint32 GetCallstackHash(const TArray<TWeakObjectPtr<UObject>>& InCallstack);
+	static uint32 GetCallstackHash(const TArrayView<TWeakObjectPtr<UObject> const>& InCallstack);
 
 	// returns the input operands of a given instruction
 	FRigVMOperandArray GetInputOperands(int32 InInstructionIndex) const
@@ -1251,9 +1419,10 @@ private:
 			(InOp.OpCode < ERigVMOpCode::Invalid) 
 		);
 		
-		uint64 ByteIndex = (uint64)ByteCode.AddZeroed(sizeof(OpType));
+		const uint64 ByteIndex = (uint64)ByteCode.AddZeroed(sizeof(OpType));
 		uint8* Pointer = &ByteCode[ByteIndex];
 		FMemory::Memcpy(Pointer, &InOp, sizeof(OpType));
+		InOp.ZeroPaddedMemoryIfNeeded(reinterpret_cast<OpType*>(Pointer));
 		NumInstructions++;
 		return ByteIndex;
 	}
@@ -1270,11 +1439,11 @@ private:
 	
 #if WITH_EDITORONLY_DATA
 
-	TArray<UObject*> SubjectPerInstruction;
-	TMap<UObject*, TArray<int32>> SubjectToInstructions;
+	TArray<TWeakObjectPtr<UObject>> SubjectPerInstruction;
+	TMap<TWeakObjectPtr<UObject>, TArray<int32>> SubjectToInstructions;
 	TArray<FString> CallPathPerInstruction;
 	TMap<FString, TArray<int32>> CallPathToInstructions;
-	TArray<TArray<UObject*>> CallstackPerInstruction;
+	TArray<TArray<TWeakObjectPtr<UObject>>> CallstackPerInstruction;
 	TMap<uint32, TArray<int32>> CallstackHashToInstructions;
 	TArray<uint32> CallstackHashPerInstruction;
 	TArray<TArray<FRigVMOperand>> InputOperandsPerInstruction;
@@ -1284,7 +1453,8 @@ private:
 
 #if WITH_EDITOR
 
-	void SetSubject(int32 InInstructionIndex, const FString& InCallPath, const TArray<UObject*>& InCallstack);
+	void SetSubject(int32 InInstructionIndex, const FString& InCallPath, const TArray<TWeakObjectPtr<UObject>>& InCallstack);
+	void AddInstructionForSubject(UObject* InSubject, int32 InInstructionIndex);
 
 #endif
 
@@ -1300,11 +1470,16 @@ private:
 	UPROPERTY()
 	TArray<FRigVMPredicateBranch> PredicateBranches;
 
+	UPROPERTY()
+	FString PublicContextPathName;
+
 	const FRigVMBranchInfo* GetBranchInfo(const FRigVMBranchInfoKey& InBranchInfoKey) const;
 	mutable TMap<FRigVMBranchInfoKey, const FRigVMBranchInfo*> BranchInfoLookup;
 
 	// if this is set to true the stored bytecode is aligned / padded
 	bool bByteCodeIsAligned;
+	// If the serialization has loaded a PublicContextPathName, so we check on new versions and skip check on older
+	bool bHasPublicContextPathName = false;
 
 	static TArray<int32> EmptyInstructionIndices;
 

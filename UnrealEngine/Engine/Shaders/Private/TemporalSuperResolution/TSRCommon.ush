@@ -13,7 +13,8 @@
 
 
 //------------------------------------------------------- RECOMPILE HASH
-// 2A42D2EF-728A-4AC9-825F-2DC009BE04B0
+
+#pragma message("UESHADERMETADATA_VERSION F3C5FF82-E809-4903-98CD-5CC7E2254C77")
 
 
 //------------------------------------------------------- COMPILER CONFIG
@@ -42,13 +43,20 @@
 
 #define CONFIG_SCENE_COLOR_OVERFLOW 1
 
-#if POST_PROCESS_ALPHA
-	#define CONFIG_SCENE_COLOR_ALPHA 1
+#if defined(DIM_ALPHA_CHANNEL)
+	#define CONFIG_SCENE_COLOR_ALPHA DIM_ALPHA_CHANNEL
 #else
 	#define CONFIG_SCENE_COLOR_ALPHA 0
 #endif
 
 #define CONFIG_ENABLE_STOCASTIC_QUANTIZATION (!CONFIG_SCENE_COLOR_ALPHA)
+
+// DXC allows changing order between multiply and adds https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#precise-qualifier
+// which on 16bit, if linear color spaces ends up close to half(65504.0), this can go +inf on if the compiler transform a * 0.5 + b * 0.5 into (a + b) * 0.5.
+#define CONFIG_FP16_PRECISE_MULTIPLY_ORDER 1
+
+#define CONFIG_SUPPORT_ORTHO_VIEW 1
+
 
 //------------------------------------------------------- CONSTANTS
 
@@ -73,23 +81,14 @@
 
 #define MAX_PARALLAX_FACTOR 8.0
 
-// Size and payload size of the subpixel grid in the history
-#define SUB_PIXEL_GRID_SIZE 2
-#define SUB_PIXEL_COUNT (SUB_PIXEL_GRID_SIZE * SUB_PIXEL_GRID_SIZE)
-
-#define SUB_PIXEL_BIT_COUNT 4
-#define SUB_PIXEL_BIT_MASK ((1 << SUB_PIXEL_BIT_COUNT) - 1)
-
-#define SUB_PIXEL_PARALLAX_FACTOR_BIT_COUNT 4
-#define SUB_PIXEL_PARALLAX_FACTOR_BIT_OFFSET 0
-#define SUB_PIXEL_PARALLAX_FACTOR_BIT_MASK ((1 << SUB_PIXEL_PARALLAX_FACTOR_BIT_COUNT) - 1)
-
 // Minimum number of sample of each texel when reprojecting the high frequency history.
 // Value too low causes area of low sample count to have pixel dominating too much in reprojection causing input res aliasing on texture details
 #define MIN_REPROJECTION_SAMPLE_COUNT 2.0
 
 // Minimum weight of a pixel in history.
 #define MIN_IMPLICIT_HISTORY_WEIGHT ceil(tsr_half(255.0) * rcp(tsr_half(MAX_SAMPLE_COUNT)) * tsr_half(MIN_REPROJECTION_SAMPLE_COUNT)) * rcp(tsr_half(255.0))
+
+#define SPATIAL_ANTI_ALIASER_MIN_LUMIMANCE 0.05
 
 
 // K = Center of the nearest input pixel.
@@ -178,6 +177,10 @@ static const uint kPlusIndexes3x3[5] = { 4, 1, 3, 7, 5 };
 	#define tsr_ushort2x2 uint16_t2x2
 	#define tsr_ushort3x2 uint16_t3x2
 	#define tsr_ushort4x2 uint16_t4x2
+	
+	#define as_tsr_short(x)  asint16(x)
+	#define as_tsr_ushort(x) asuint16(x)
+	#define as_tsr_half(x)   asfloat16(x)
 
 #else
 	#define tsr_half  float
@@ -206,6 +209,10 @@ static const uint kPlusIndexes3x3[5] = { 4, 1, 3, 7, 5 };
 	#define tsr_ushort2x2 uint2x2
 	#define tsr_ushort3x2 uint3x2
 	#define tsr_ushort4x2 uint4x2
+	
+	#define as_tsr_short(x)  asint(x)
+	#define as_tsr_ushort(x) asuint(x)
+	#define as_tsr_half(x)   asfloat(x)
 
 #endif
 
@@ -286,6 +293,7 @@ float2 PrevHistoryInfo_UVViewportBilinearMin;
 float2 PrevHistoryInfo_UVViewportBilinearMax;
 FScreenTransform ScreenPosToPrevHistoryBufferUV;
 float HistoryPreExposureCorrection;
+float ResurrectionPreExposureCorrection;
 
 uint bCameraCut;
 
@@ -840,11 +848,10 @@ bool IsOffScreen(uint bCameraCut, float2 ScreenPos, tsr_half ParallaxRejectionMa
 }
 
 CALL_SITE_DEBUGLOC
-void IsOffScreenOrDisoccluded(uint bCameraCut, float2x2 ScreenPos, tsr_half2 ParallaxRejectionMask, out bool2 bIsOffScreen, out bool2 bIsDisoccluded)
+void IsOffScreenOrDisoccluded(uint bCameraCut, float2x2 ScreenPos, bool2 bIsParallaxRejected, out bool2 bIsOffScreen, out bool2 bIsDisoccluded)
 {
 	bool bIsCameraCut = bCameraCut != 0;
 	bool2 bIsOutOfBounds = max(abs(ScreenPos[0]), abs(ScreenPos[1])) >= 1.0;
-	bool2 bIsParallaxRejected = ParallaxRejectionMask < tsr_half(PARALLAX_REJECTION_MASK_THRESHOLD);
 
 	bIsOffScreen = or(bIsCameraCut, bIsOutOfBounds);
 	bIsDisoccluded = and(!bIsOffScreen, bIsParallaxRejected);
@@ -1102,50 +1109,45 @@ tsr_half2 RejectionFactorToBlendFactor(tsr_half2 RejectionFactor)
 	return tsr_half(1.0) - RejectionFactor;
 }
 
-/** Payload of a subpixel depth information in the history */
-struct FTSRSubpixelDepth
+FCatmullRomSamples GetBicubic2DCatmullRomSamples_Stubbe(float2 UV, float2 Size, in float2 InvSize)
 {
-	/** Depth of the pixel. */
-	float DeviceZ;
-	
-	/** Offset of the depth from the center of pixel. */
-	float2 Offset;
-	
-	/** Number of reprojected frame remaining before this depth is to be discarded. */
-	uint RemainingLifetime;
-};
+	float2 PixelCoord = UV * Size;
 
-uint CompressSubpixelDepth(FTSRSubpixelDepth SubpixelDepth)
-{
-	uint CompressedSubpixelDepth = 0u;
-	CompressedSubpixelDepth |= f32tof16(SubpixelDepth.DeviceZ) << 17u;
-	CompressedSubpixelDepth |= uint(fastClamp(int(round(SubpixelDepth.Offset.x * 16.00 + 16.0)), 0, 31)) << 12u;
-	CompressedSubpixelDepth |= uint(fastClamp(int(round(SubpixelDepth.Offset.y * 16.00 + 16.0)), 0, 31)) <<  7u;
-	CompressedSubpixelDepth |= (SubpixelDepth.RemainingLifetime) << 0u;
-	return CompressedSubpixelDepth;
+	float2 iuv = floor(PixelCoord - 0.5) + 1.0;
+	tsr_half2 f = tsr_half2(PixelCoord - iuv);
+	tsr_half2 f2 = f * f;
+	tsr_half2 f_2 = f + f;
+
+	tsr_half2 uv = (tsr_half(1.25) - f2) * f + tsr_half(0.5);
+	tsr_half2 t0 = (tsr_half(0.25) * f2 - tsr_half(0.0625)) * (tsr_half(1.125) - tsr_half(0.5) * f2.yx);
+	tsr_half2 w0 = t0 - f_2 * t0;
+	tsr_half2 w3 = t0 + f_2 * t0;
+
+	float2 cuv = (iuv - 0.5) * InvSize;
+	uv *= tsr_half2(InvSize);
+
+	FCatmullRomSamples Samples;
+	Samples.Count = BICUBIC_CATMULL_ROM_SAMPLES;
+
+	Samples.UV[0] = cuv + tsr_half2(               -InvSize.x,                      uv.y);
+	Samples.UV[1] = cuv + tsr_half2(tsr_half(2.0) * InvSize.x,                      uv.y);
+	Samples.UV[2] = cuv + uv;
+	Samples.UV[3] = cuv + tsr_half2(                     uv.x,                -InvSize.y);
+	Samples.UV[4] = cuv + tsr_half2(                     uv.x, tsr_half(2.0) * InvSize.y);
+	
+	Samples.Weight[0] = half(w0.x);
+	Samples.Weight[1] = half(w3.x);
+	Samples.Weight[2] = half(tsr_half(1.0) - w0.x - w3.x - w0.y - w3.y);
+	Samples.Weight[3] = half(w0.y);
+	Samples.Weight[4] = half(w3.y);
+
+	Samples.UVDir[0] = int2(-1,  0);
+	Samples.UVDir[1] = int2( 1,  0);
+	Samples.UVDir[2] = int2( 0,  0);
+	Samples.UVDir[3] = int2( 0, -1);
+	Samples.UVDir[4] = int2( 0,  1);
+	
+	Samples.FinalMultiplier = 1.0;
+	return Samples;
 }
 
-FTSRSubpixelDepth UncompressSubpixelDepth(uint CompressedSubpixelDepth)
-{
-	FTSRSubpixelDepth SubpixelDepth;
-	SubpixelDepth.DeviceZ  = f16tof32(CompressedSubpixelDepth >> 17u);
-	SubpixelDepth.Offset.x = float((CompressedSubpixelDepth >> 12u) & 0x1Fu) * rcp(16.0) - 1.0;
-	SubpixelDepth.Offset.y = float((CompressedSubpixelDepth >>  7u) & 0x1Fu) * rcp(16.0) - 1.0;
-	SubpixelDepth.RemainingLifetime = CompressedSubpixelDepth & 0x7Fu;
-	return SubpixelDepth;
-}
-
-void ForwardReprojectStaticDepth(float2 PrevScreenPosition, float PrevDeviceZ, out float2 ScreenPos, out float SceneDepth)
-{
-	float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
- 
-	// Compute position of the history in world space.
-	float PrevSceneDepth = ConvertFromDeviceZ(PrevDeviceZ);
-	float3 TranslatedWorldPosition = mul(float4(PrevScreenPosition * PrevSceneDepth, PrevSceneDepth, 1), View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
-	
-	// Reproject the world position into new viewport.
-	float4 ClipPos = mul(float4(TranslatedWorldPosition, 1.0), View.TranslatedWorldToClip);
-	
-	ScreenPos = ClipPos.xy / ClipPos.w;
-	SceneDepth = ClipPos.w;
-}

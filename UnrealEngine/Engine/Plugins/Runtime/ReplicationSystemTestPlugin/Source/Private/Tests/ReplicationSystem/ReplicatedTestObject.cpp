@@ -21,6 +21,7 @@
 #include "Templates/SharedPointer.h"
 #include "Containers/Map.h"
 #include "UObject/StrongObjectPtr.h"
+#include "Net/Core/PushModel/PushModel.h"
 #include "Net/UnrealNetwork.h"
 #include "Iris/Serialization/NetBitStreamUtil.h"
 
@@ -77,19 +78,22 @@ UE::Net::FNetRefHandle UReplicatedTestObjectBridge::BeginReplication(UReplicated
 	return Handle;
 }
 
-UE::Net::FNetRefHandle UReplicatedTestObjectBridge::BeginReplication(FNetRefHandle OwnerHandle, UReplicatedTestObject* Instance, FNetRefHandle InsertRelativeToSubObjectHandle, ESubObjectInsertionOrder InsertionOrder)
+UE::Net::FNetRefHandle UReplicatedTestObjectBridge::BeginReplication(FNetRefHandle OwnerHandle, UReplicatedTestObject* SubObjectInstance, FNetRefHandle InsertRelativeToSubObjectHandle, ESubObjectInsertionOrder InsertionOrder)
 {
+	check(OwnerHandle.IsValid());
+
 	// Create NetRefHandle for the registered fragments
 	Super::FCreateNetRefHandleParams Params = Super::DefaultCreateNetRefHandleParams;
 	Params.bCanReceive = true;
 
 	// Create NetRefHandle for the registered fragments
-	FNetRefHandle Handle = Super::BeginReplication(OwnerHandle, Instance, InsertRelativeToSubObjectHandle, InsertionOrder, Params);
+	FNetRefHandle Handle = Super::BeginReplication(OwnerHandle, SubObjectInstance, InsertRelativeToSubObjectHandle, InsertionOrder, Params);
 
 	if (Handle.IsValid())
 	{
 		// This is optional but typically we want to cache at least the NetRefHandle in the game instance to avoid doing map lookups to find it
-		Instance->NetRefHandle = Handle;
+		SubObjectInstance->NetRefHandle = Handle;
+		SubObjectInstance->bIsSubObject = true;
 	}
 	
 	return Handle;
@@ -104,15 +108,21 @@ bool UReplicatedTestObjectBridge::WriteCreationHeader(UE::Net::FNetSerialization
 	uint16 NumIrisComponentsToSpawn = 0U;
 	uint16 NumDynamicComponentsToSpawn = 0U;
 	uint16 NumConnectionFilteredComponentsToSpawn = 0U;
+	uint16 NumObjectReferenceComponentsToSpawn = 0U;
+	bool bForceFailToInstantiateOnRemote = false;
 
 	const UObject* Object = GetReplicatedObject(Handle);
-	
+	if (const UReplicatedTestObject* ReplicatedTestObject = Cast<UReplicatedTestObject>(Object))
+	{
+		bForceFailToInstantiateOnRemote = ReplicatedTestObject->bForceFailToInstantiateOnRemote;
+	}
 	if (const UTestReplicatedIrisObject* TestReplicatedIrisObject = Cast<UTestReplicatedIrisObject>(Object))
 	{
-		NumComponentsToSpawn = TestReplicatedIrisObject->Components.Num();
-		NumIrisComponentsToSpawn = TestReplicatedIrisObject->IrisComponents.Num();
-		NumDynamicComponentsToSpawn = TestReplicatedIrisObject->DynamicStateComponents.Num();
-		NumConnectionFilteredComponentsToSpawn = TestReplicatedIrisObject->ConnectionFilteredComponents.Num();
+		NumComponentsToSpawn = IntCastChecked<uint16>(TestReplicatedIrisObject->Components.Num());
+		NumIrisComponentsToSpawn = IntCastChecked<uint16>(TestReplicatedIrisObject->IrisComponents.Num());
+		NumDynamicComponentsToSpawn = IntCastChecked<uint16>(TestReplicatedIrisObject->DynamicStateComponents.Num());
+		NumConnectionFilteredComponentsToSpawn = IntCastChecked<uint16>(TestReplicatedIrisObject->ConnectionFilteredComponents.Num());
+		NumObjectReferenceComponentsToSpawn = IntCastChecked<uint16>(TestReplicatedIrisObject->ObjectReferenceComponents.Num());
 	}
 
 	UObject* Archetype = Object->GetArchetype();
@@ -123,6 +133,8 @@ bool UReplicatedTestObjectBridge::WriteCreationHeader(UE::Net::FNetSerialization
 	Writer.WriteBits(NumIrisComponentsToSpawn, 16);
 	Writer.WriteBits(NumDynamicComponentsToSpawn, 16);
 	Writer.WriteBits(NumConnectionFilteredComponentsToSpawn, 16);
+	Writer.WriteBits(NumObjectReferenceComponentsToSpawn, 16);
+	Writer.WriteBool(bForceFailToInstantiateOnRemote);
 
 	return !Writer.IsOverflown();
 }
@@ -140,6 +152,8 @@ UObjectReplicationBridge::FCreationHeader* UReplicatedTestObjectBridge::ReadCrea
 	Header->NumIrisComponentsToSpawn = Reader.ReadBits(16);
 	Header->NumDynamicComponentsToSpawn = Reader.ReadBits(16);
 	Header->NumConnectionFilteredComponentsToSpawn = Reader.ReadBits(16);
+	Header->NumObjectReferenceComponentsToSpawn = Reader.ReadBits(16);
+	Header->bForceFailCreateRemoteInstance = Reader.ReadBool();
 
 	if (Reader.IsOverflown())
 	{
@@ -149,9 +163,15 @@ UObjectReplicationBridge::FCreationHeader* UReplicatedTestObjectBridge::ReadCrea
 	return Header.Release();
 }
 
-FObjectReplicationBridgeInstantiateResult UReplicatedTestObjectBridge::BeginInstantiateFromRemote(FNetRefHandle SubObjectOwnerHandle, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* InHeader)
+FObjectReplicationBridgeInstantiateResult UReplicatedTestObjectBridge::BeginInstantiateFromRemote(FNetRefHandle RootObjectOfSubObject, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* InHeader)
 {
 	const FReplicationTestObjectCreationHeader* Header = static_cast<const FReplicationTestObjectCreationHeader*>(InHeader);
+
+	// Force fail to create this remote instance
+	if (Header->bForceFailCreateRemoteInstance)
+	{
+		return FObjectReplicationBridgeInstantiateResult();
+	}
 
 	UObject* ArcheType = StaticFindObject(UObject::StaticClass(), nullptr, *Header->ArchetypeName, false);
 
@@ -159,6 +179,11 @@ FObjectReplicationBridgeInstantiateResult UReplicatedTestObjectBridge::BeginInst
 
 	FStaticConstructObjectParameters ConstructObjectParameters(ArcheType->GetClass());
 	UObject* CreatedObject = StaticConstructObject_Internal(ConstructObjectParameters);
+
+	if (UReplicatedTestObject* BaseTestObject = Cast<UReplicatedTestObject>(CreatedObject))
+	{
+		BaseTestObject->bIsSubObject = RootObjectOfSubObject.IsValid();
+	}
 	
 	if (UTestReplicatedIrisObject* CreatedTestObject = Cast<UTestReplicatedIrisObject>(CreatedObject))
 	{
@@ -167,6 +192,7 @@ FObjectReplicationBridgeInstantiateResult UReplicatedTestObjectBridge::BeginInst
 		Components.IrisComponentCount = Header->NumIrisComponentsToSpawn;
 		Components.DynamicStateComponentCount = Header->NumDynamicComponentsToSpawn;
 		Components.ConnectionFilteredComponentCount = Header->NumConnectionFilteredComponentsToSpawn;
+		Components.ObjectReferenceComponentCount = Header->NumObjectReferenceComponentsToSpawn;
 
 		CreatedTestObject->AddComponents(Components);
 	}
@@ -190,25 +216,25 @@ void UReplicatedTestObjectBridge::EndInstantiateFromRemote(FNetRefHandle Handle)
 	Instance->NetRefHandle = Handle;
 }
 
-void UReplicatedTestObjectBridge::DestroyInstanceFromRemote(UObject* Instance, EReplicationBridgeDestroyInstanceReason DestroyReason, EReplicationBridgeDestroyInstanceFlags DestroyFlags)
+void UReplicatedTestObjectBridge::DestroyInstanceFromRemote(const FDestroyInstanceParams& Params)
 {
-	if (!Instance)
+	if (!Params.Instance)
 	{
 		return;
 	}
 
-	if (DestroyReason == EReplicationBridgeDestroyInstanceReason::Destroy)
+	if (Params.DestroyReason == EReplicationBridgeDestroyInstanceReason::Destroy)
 	{
-		if (EnumHasAnyFlags(DestroyFlags, EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote))
+		if (EnumHasAnyFlags(Params.DestroyFlags, EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote))
 		{
 			// Remove the object from the created objects on the node
 			if (CreatedObjectsOnNode)
 			{
-				CreatedObjectsOnNode->Remove(TStrongObjectPtr<UObject>(Instance));
+				CreatedObjectsOnNode->Remove(TStrongObjectPtr<UObject>(Params.Instance));
 			}
 
-			Instance->PreDestroyFromReplication();
-			Instance->MarkAsGarbage();
+			Params.Instance->PreDestroyFromReplication();
+			Params.Instance->MarkAsGarbage();
 		}
 	}
 }
@@ -259,6 +285,12 @@ void UTestReplicatedIrisPushModelComponentWithObjectReference::GetLifetimeReplic
 	DOREPLIFETIME_WITH_PARAMS(ThisClass, WeakObjectPtrObjectRef, LifetimeParams);
 }
 
+void UTestReplicatedIrisPushModelComponentWithObjectReference::ModifyIntA()
+{
+	IntA += 1;
+	MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, IntA, this);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Implementation for UTestReplicatedIrisDynamicStatePropertyComponent
 //////////////////////////////////////////////////////////////////////////
@@ -283,6 +315,7 @@ void UTestReplicatedIrisLifetimeConditionalsPropertyState::GetLifetimeReplicated
 {
 	DOREPLIFETIME_CONDITION(ThisClass, ToOwnerA, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(ThisClass, ToOwnerB, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(ThisClass, ReplayOrOwner, COND_ReplayOrOwner);
 
 	DOREPLIFETIME_CONDITION(ThisClass, SkipOwnerA, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(ThisClass, SkipOwnerB, COND_SkipOwner);
@@ -292,6 +325,10 @@ void UTestReplicatedIrisLifetimeConditionalsPropertyState::GetLifetimeReplicated
 	DOREPLIFETIME_CONDITION(ThisClass, SimulatedOrPhysicsInt, COND_SimulatedOrPhysics);
 	DOREPLIFETIME_CONDITION(ThisClass, SimulatedOnlyNoReplayInt, COND_SimulatedOnlyNoReplay);
 	DOREPLIFETIME_CONDITION(ThisClass, SimulatedOrPhysicsNoReplayInt, COND_SimulatedOrPhysicsNoReplay);
+	DOREPLIFETIME_CONDITION(ThisClass, NoneInt, COND_None);
+	DOREPLIFETIME_CONDITION(ThisClass, NeverInt, COND_Never);
+	DOREPLIFETIME_CONDITION(ThisClass, SkipReplayInt, COND_SkipReplay);
+	DOREPLIFETIME_CONDITION(ThisClass, ReplayOnlyInt, COND_ReplayOnly);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -437,6 +474,7 @@ void UTestReplicatedIrisObjectWithObjectReference::GetLifetimeReplicatedProps( T
 	DOREPLIFETIME(ThisClass, IntC);
 	DOREPLIFETIME(ThisClass, RawObjectPtrRef);
 	DOREPLIFETIME(ThisClass, WeakObjectPtrObjectRef);
+	DOREPLIFETIME(ThisClass, SoftObjectPtrRef);
 }
 
 UTestReplicatedIrisObjectWithObjectReference::UTestReplicatedIrisObjectWithObjectReference()
@@ -489,6 +527,40 @@ void UReplicatedSubObjectOrderObject::RegisterReplicationFragments(UE::Net::FFra
 		this->ReplicationFragments.Reset();
 		UE::Net::FReplicationFragmentUtil::CreateAndRegisterFragmentsForObject(this, Context, RegistrationFlags, &this->ReplicationFragments);
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Implementation for UTestReplicatedObjectWithRepNotifies
+//////////////////////////////////////////////////////////////////////////
+void UTestReplicatedObjectWithRepNotifies::GetLifetimeReplicatedProps(TArray< class FLifetimeProperty >& OutLifetimeProps) const
+{
+	DOREPLIFETIME_CONDITION_NOTIFY(UTestReplicatedObjectWithRepNotifies, IntA, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UTestReplicatedObjectWithRepNotifies, IntB, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME(UTestReplicatedObjectWithRepNotifies, IntC);
+}
+
+UTestReplicatedObjectWithRepNotifies::UTestReplicatedObjectWithRepNotifies()
+	: UReplicatedTestObject()
+{
+}
+
+void UTestReplicatedObjectWithRepNotifies::RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags)
+{
+	// Base object owns the fragment in this case
+	{
+		this->ReplicationFragments.Reset();
+		UE::Net::FReplicationFragmentUtil::CreateAndRegisterFragmentsForObject(this, Context, RegistrationFlags, &this->ReplicationFragments);
+	}
+}
+
+void UTestReplicatedObjectWithRepNotifies::OnRep_IntA(int32 OldInt)
+{
+	PrevIntAStoredInOnRep = OldInt;
+}
+
+void UTestReplicatedObjectWithRepNotifies::OnRep_IntB(int32 OldInt)
+{
+	PrevIntBStoredInOnRep = OldInt;
 }
 
 //////////////////////////////////////////////////////////////////////////

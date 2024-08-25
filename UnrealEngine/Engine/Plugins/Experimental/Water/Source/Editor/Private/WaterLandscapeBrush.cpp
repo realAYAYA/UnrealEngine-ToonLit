@@ -54,7 +54,7 @@ void AWaterLandscapeBrush::AddActorInternal(AActor* Actor, const UWorld* ThisWor
 
 		if (InCache)
 		{
-			Cache.Add(TWeakObjectPtr<AActor>(Actor), InCache);
+			Cache.Add(TSoftObjectPtr<AActor>(Actor), InCache);
 		}
 
 		if (bTriggerEvent)
@@ -75,7 +75,7 @@ void AWaterLandscapeBrush::RemoveActorInternal(AActor* Actor)
 	if (Index != INDEX_NONE)
 	{
 		ActorsAffectingLandscape.RemoveAt(Index);
-		Cache.Remove(TWeakObjectPtr<AActor>(Actor));
+		Cache.Remove(TSoftObjectPtr<AActor>(Actor));
 
 		OnActorsAffectingLandscapeChanged();
 
@@ -134,7 +134,7 @@ void AWaterLandscapeBrush::UpdateActors(bool bInTriggerEvents)
 	ClearActors();
 
 	// Backup Cache
-	TMap<TWeakObjectPtr<AActor>, TObjectPtr<UObject>> PreviousCache;
+	TMap<TSoftObjectPtr<AActor>, TObjectPtr<UObject>> PreviousCache;
 	Swap(Cache, PreviousCache);
 
 	if (UWorld* World = GetWorld())
@@ -144,7 +144,7 @@ void AWaterLandscapeBrush::UpdateActors(bool bInTriggerEvents)
 			AActor* Actor = *It;
 			if (IWaterBrushActorInterface* WaterBrushActor = Cast<IWaterBrushActorInterface>(Actor))
 			{
-				const TObjectPtr<UObject>* FoundCache = PreviousCache.Find(TWeakObjectPtr<AActor>(Actor));
+				const TObjectPtr<UObject>* FoundCache = PreviousCache.Find(TSoftObjectPtr<AActor>(Actor));
 				const bool bTriggerEvent = false;
 				const bool bModify = false;
 				AddActorInternal(Actor, World, FoundCache != nullptr ? *FoundCache : nullptr, bTriggerEvent, bModify);
@@ -202,15 +202,6 @@ void AWaterLandscapeBrush::OnWaterBrushActorChanged(const IWaterBrushActorInterf
 	{
 		RequestLandscapeUpdate(/* bInUserTriggered = */ InParams.bUserTriggered);
 	}
-
-	bool bAllowWaterMeshUpdate = (InParams.PropertyChangedEvent.ChangeType != EPropertyChangeType::Interactive) || WaterEditorSettings->GetUpdateWaterMeshDuringInteractiveChanges();
-	if (bForceUpdateWaterMesh || (bAffectsWaterMesh && bAllowWaterMeshUpdate))
-	{
-		if (UWaterSubsystem* WaterSubsystem = UWaterSubsystem::GetWaterSubsystem(GetWorld()))
-		{
-			WaterSubsystem->MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags::UpdateWaterMesh);
-		}
-	}
 }
 
 void AWaterLandscapeBrush::OnActorsAffectingLandscapeChanged()
@@ -219,7 +210,7 @@ void AWaterLandscapeBrush::OnActorsAffectingLandscapeChanged()
 	RequestLandscapeUpdate();
 	if (UWaterSubsystem* WaterSubsystem = UWaterSubsystem::GetWaterSubsystem(GetWorld()))
 	{
-		WaterSubsystem->MarkAllWaterZonesForRebuild();
+		WaterSubsystem->MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags::All, /* DebugRequestingObject = */ this);
 	}
 }
 
@@ -407,7 +398,7 @@ void AWaterLandscapeBrush::AddReferencedObjects(UObject* InThis, FReferenceColle
 	Super::AddReferencedObjects(This, Collector);
 
 	// TODO [jonathan.bard] : remove : probably not necessary since it's now a uproperty :
-	for (TPair<TWeakObjectPtr<AActor>, TObjectPtr<UObject>>& Pair : This->Cache)
+	for (TPair<TSoftObjectPtr<AActor>, TObjectPtr<UObject>>& Pair : This->Cache)
 	{
 		Collector.AddReferencedObject(Pair.Value);
 	}
@@ -443,14 +434,14 @@ void AWaterLandscapeBrush::SetActorCache(AActor* InActor, UObject* InCache)
 		return;
 	}
 
-	TObjectPtr<UObject>& Value = Cache.FindOrAdd(TWeakObjectPtr<AActor>(InActor));
+	TObjectPtr<UObject>& Value = Cache.FindOrAdd(TSoftObjectPtr<AActor>(InActor));
 	Value = InCache;
 }
 
 
 UObject* AWaterLandscapeBrush::GetActorCache(AActor* InActor, TSubclassOf<UObject> CacheClass) const
 {
-	TObjectPtr<UObject> const* ValuePtr = Cache.Find(TWeakObjectPtr<AActor>(InActor));
+	TObjectPtr<UObject> const* ValuePtr = Cache.Find(TSoftObjectPtr<AActor>(InActor));
 	if (ValuePtr && (*ValuePtr) && (*ValuePtr)->IsA(*CacheClass))
 	{
 		return *ValuePtr;
@@ -460,7 +451,7 @@ UObject* AWaterLandscapeBrush::GetActorCache(AActor* InActor, TSubclassOf<UObjec
 
 void AWaterLandscapeBrush::ClearActorCache(AActor* InActor)
 {
-	Cache.Remove(TWeakObjectPtr<AActor>(InActor));
+	Cache.Remove(TSoftObjectPtr<AActor>(InActor));
 }
 
 void AWaterLandscapeBrush::BlueprintGetRenderTargets_Implementation(UTextureRenderTarget2D* InHeightRenderTarget, UTextureRenderTarget2D*& OutVelocityRenderTarget)
@@ -498,7 +489,7 @@ void AWaterLandscapeBrush::OnFullHeightmapRenderDone(UTextureRenderTarget2D* InH
 	// #todo_water [roey]: This needs to be changed when the WaterZone can maintain it's own list of "ground actors" so that we don't needlessly update all water zones.
 	if (UWaterSubsystem* WaterSubsystem = UWaterSubsystem::GetWaterSubsystem(GetWorld()))
 	{
-		WaterSubsystem->MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags::UpdateWaterInfoTexture);
+		WaterSubsystem->MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags::UpdateWaterInfoTexture, /* DebugRequestingObject = */ this);
 	}
 }
 

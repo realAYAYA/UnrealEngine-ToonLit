@@ -3,16 +3,17 @@
 #include "../Common.ush"
 #include "HairStrandsClusterCommon.ush"
 #include "HairStrandsBindingCommon.ush"
+#include "HairStrandsVertexFactoryCommon.ush"
 
 #if SHADER_DEFORM_GUIDE
 
 float3 SimRestOffset;
 uint VertexCount;
+uint InstanceRegisteredIndex;
 
-Buffer<float4> SimDeformedOffsetBuffer;
-Buffer<uint4> SimRestPosePositionBuffer;
-RWBuffer<uint4> OutSimDeformedPositionBuffer;
-
+StructuredBuffer<float4> SimDeformedOffsetBuffer;
+ByteAddressBuffer SimRestPosePositionBuffer;
+RWByteAddressBuffer OutSimDeformedPositionBuffer;
 
 #define DEFORMATION_BYPASS 0
 #define DEFORMATION_OFFSET_GUIDE 1
@@ -25,9 +26,9 @@ RWBuffer<uint4> OutSimDeformedPositionBuffer;
 Buffer<float4>  SimRestPositionBuffer;
 Buffer<float4>  SimDeformedPositionBuffer;
 
-Buffer<uint>	SimRootBarycentricBuffer;
-Buffer<uint>    SimPointToCurveBuffer;
-Buffer<uint>	SimRootToUniqueTriangleIndexBuffer;
+Buffer<uint>	  SimRootBarycentricBuffer;
+ByteAddressBuffer SimPointToCurveBuffer;
+Buffer<uint>	  SimRootToUniqueTriangleIndexBuffer;
 
 // Return world position of a guide vertex deformed by a skinned triangle
 float3 DeformGuideByTriangle(
@@ -36,7 +37,7 @@ float3 DeformGuideByTriangle(
 	FHairMeshTriangle DeformedTriangle,
 	float3 RootBarycentric)
 {
-	const float3 WorldRestGuidePoint = UnpackHairControlPointPosition(SimRestPosePositionBuffer[GuideIndex], SimRestOffset);
+	const float3 WorldRestGuidePoint = ReadHairControlPointPosition(SimRestPosePositionBuffer, GuideIndex, SimRestOffset);
 	const float3 LocalRestGuidePoint = ToTriangle(WorldRestGuidePoint, RootBarycentric, RestTriangle);
 	const float3 WorldDeformedGuidePoint = ToWorld(LocalRestGuidePoint, RootBarycentric, DeformedTriangle);
 
@@ -54,13 +55,13 @@ Buffer<float4>  BoneDeformedPositionBuffer;
 
 #if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_GLOBAL
 uint SampleCount;
-Buffer<float4>  RestSamplePositionsBuffer;
-Buffer<float4>  MeshSampleWeightsBuffer;
+StructuredBuffer<float4>  RestSamplePositionsBuffer;
+StructuredBuffer<float4>  MeshSampleWeightsBuffer;
 #endif
 
 float3 DisplacePosition(uint VertexIndex, float3 Pos)
 {
-	const float3 OutSimHairPositionOffset = SimDeformedOffsetBuffer[0].xyz;
+	const float3 OutSimHairPositionOffset = ReadSimPositionOffset(SimDeformedOffsetBuffer, InstanceRegisteredIndex);
 
 // By pass
 #if PERMUTATION_DEFORMATION == DEFORMATION_BYPASS
@@ -72,7 +73,7 @@ float3 DisplacePosition(uint VertexIndex, float3 Pos)
 #endif
 
 #if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_DYNAMIC
-	const uint RootIndex = SimPointToCurveBuffer[VertexIndex];
+	const uint RootIndex = ReadHairPointToCurveIndex(SimPointToCurveBuffer, VertexIndex);
 	const float3 RootBarycentric = UnpackBarycentrics(SimRootBarycentricBuffer[RootIndex]);
 
 	const uint TriangleIndex = SimRootToUniqueTriangleIndexBuffer[RootIndex];
@@ -104,10 +105,11 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 	
 	if (VertexIndex < VertexCount)
 	{
-		const uint4  PackedCP			= SimRestPosePositionBuffer[VertexIndex];
+		const FPackedHairPosition PackedCP = ReadPackedHairPosition(SimRestPosePositionBuffer, VertexIndex);
 		const float3 CPPosition			= UnpackHairControlPointPosition(PackedCP);
-		const float3 DisplacedPosition	= DisplacePosition(VertexIndex, CPPosition);		
-		OutSimDeformedPositionBuffer[VertexIndex] = PackHairControlPointPosition(PackedCP, DisplacedPosition);
+		const float3 DisplacedPosition	= DisplacePosition(VertexIndex, CPPosition);
+		WritePackedHairControlPointPosition(OutSimDeformedPositionBuffer, VertexIndex, PackedCP, DisplacedPosition);
+//		OutSimDeformedPositionBuffer[VertexIndex] = PackHairControlPointPosition(PackedCP, DisplacedPosition);
 	}
 }
 

@@ -23,12 +23,6 @@ namespace mu
 	{
 	public:
 
-		//MUTABLE_DEFINE_CONST_VISITABLE()
-		
-		//-----------------------------------------------------------------------------------------
-		// Life cycle
-		//-----------------------------------------------------------------------------------------
-
 		NodeImageNormalComposite();
 
 		void SerialiseWrapper(OutputArchive& arch) const override;
@@ -40,12 +34,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-		virtual int GetInputCount() const override;
-		virtual Node* GetInputNode(int i)const override;
-		void SetInputNode(int i, NodePtr pNode) override;
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface

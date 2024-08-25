@@ -25,6 +25,7 @@ public:
 	// Override node functions
 	virtual FLinearColor GetNodeColor() const override;
 	virtual bool IsDefinedAsVarying() const override;
+	virtual bool IsWithinLoop() const override;
 
 	// URigVMNode interface
 	virtual FString GetNodeTitle() const override;

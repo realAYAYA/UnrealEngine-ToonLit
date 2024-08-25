@@ -87,18 +87,21 @@ bool UDataprepContentProducer::Produce(const FDataprepProducerContext& InContext
 	// Prefix all newly created actors with the namespace of the producer
 	const FString Namespace = GetNamespace();
 
-	for (TActorIterator<AActor> It(Context.WorldPtr.Get(), AActor::StaticClass(), Flags); It; ++It)
+	if (Namespace.Len() > 0)
 	{
-		if(*It != nullptr && ExistingActors.Find( *It ) == nullptr)
+		for (TActorIterator<AActor> It(Context.WorldPtr.Get(), AActor::StaticClass(), Flags); It; ++It)
 		{
-			AActor* Actor = *It;
+			if (*It != nullptr && ExistingActors.Find(*It) == nullptr)
+			{
+				AActor* Actor = *It;
 
-			FSoftObjectPath PreviousActorSoftPath(Actor);
+				FSoftObjectPath PreviousActorSoftPath(Actor);
 
-			const FString ActorName =  Namespace + TEXT("_") + Actor->GetName();
-			FDataprepCoreUtils::RenameObject( Actor, *ActorName );
+				const FString ActorName = Namespace + TEXT("_") + Actor->GetName();
+				FDataprepCoreUtils::RenameObject(Actor, *ActorName);
 
-			ActorRedirectorMap.Emplace( PreviousActorSoftPath, Actor );
+				ActorRedirectorMap.Emplace(PreviousActorSoftPath, Actor);
+			}
 		}
 	}
 

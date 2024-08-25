@@ -29,7 +29,7 @@
 #define SHADINGMODELID_EYE					9
 #define SHADINGMODELID_SINGLELAYERWATER		10
 #define SHADINGMODELID_THIN_TRANSLUCENT		11
-#define SHADINGMODELID_STRATA				12		// Temporary while we convert everything to Strata
+#define SHADINGMODELID_SUBSTRATE			12		// Temporary while we convert everything to Substrate
 
 // Change-begin
 #define SHADINGMODELID_TOON_LIT				13
@@ -37,6 +37,7 @@
 // Change-end
 
 #define SHADINGMODELID_NUM					15
+
 #define SHADINGMODELID_MASK					0xF		// 4 bits reserved for ShadingModelID			
 
 // The flags are defined so that 0 value has no effect!
@@ -67,13 +68,14 @@ float3 GetShadingModelColor(uint ShadingModelID)
 	else if (ShadingModelID == SHADINGMODELID_EYE) return float3(0.3f, 1.0f, 1.0f); 
 	else if (ShadingModelID == SHADINGMODELID_SINGLELAYERWATER) return float3(0.5f, 0.5f, 1.0f);
 	else if (ShadingModelID == SHADINGMODELID_THIN_TRANSLUCENT) return float3(1.0f, 0.8f, 0.3f);
-	else if (ShadingModelID == SHADINGMODELID_STRATA) return float3(1.0f, 1.0f, 0.0f);
+	else if (ShadingModelID == SHADINGMODELID_SUBSTRATE) return float3(1.0f, 1.0f, 0.0f);
 
 	// Change-begin
 	else if (ShadingModelID == SHADINGMODELID_TOON_LIT) return float3(0.4f, 1.0f, 0.8f);
 	else if (ShadingModelID == SHADINGMODELID_TOON_HAIR) return float3(0.1f, 0.1f, 0.9f);
 	// Change-end
 	
+>>>>>>> Stashed changes
 	else return float3(1.0f, 1.0f, 1.0f); // White
 #else
 	switch(ShadingModelID)
@@ -90,20 +92,20 @@ float3 GetShadingModelColor(uint ShadingModelID)
 		case SHADINGMODELID_EYE: return float3(0.3f, 1.0f, 1.0f);
 		case SHADINGMODELID_SINGLELAYERWATER: return float3(0.5f, 0.5f, 1.0f);
 		case SHADINGMODELID_THIN_TRANSLUCENT: return float3(1.0f, 0.8f, 0.3f);
-		case SHADINGMODELID_STRATA: return float3(1.0f, 1.0f, 0.0f);
-
+		case SHADINGMODELID_SUBSTRATE: return float3(1.0f, 1.0f, 0.0f);
+		
 		// Change-begin
 		case SHADINGMODELID_TOON_LIT: return float3(0.4f, 1.0f, 0.8f);
 		case SHADINGMODELID_TOON_HAIR: return float3(0.1f, 0.1f, 0.9f);
 		// Change-end
-		
+
 		default: return float3(1.0f, 1.0f, 1.0f); // White
 	}
 #endif
 }
 
 
-#define SHADINGMODEL_REQUIRES_BACKFACE_LIGHTING (MATERIAL_SHADINGMODEL_TWOSIDED_FOLIAGE || STRATA_ENABLED)
+#define SHADINGMODEL_REQUIRES_BACKFACE_LIGHTING (MATERIAL_SHADINGMODEL_TWOSIDED_FOLIAGE || SUBSTRATE_ENABLED)
 
 bool GetShadingModelRequiresBackfaceLighting(uint ShadingModelID)
 {

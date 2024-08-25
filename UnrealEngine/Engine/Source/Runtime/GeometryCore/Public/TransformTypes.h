@@ -187,24 +187,20 @@ public:
 	 * Attempts to return an inverse, but will give an incorrect result if the transform has both non-uniform scaling and rotation,
 	 * because TTransformSRT3<RealType> cannot represent the true inverse in that case.
 	 */
-	UE_DEPRECATED(5.1, "Use the InverseTransformPosition/Vector/Normal functions instead; TransformSRT3 cannot represent its own inverse.  If the exact previous behavior is needed, use InverseUnsafe.")
-	TTransformSRT3<RealType> Inverse() const
-	{
-		return InverseUnsafe();
-	}
-
-	/**
-	 * Attempts to return an inverse, but will give an incorrect result if the transform has both non-uniform scaling and rotation,
-	 * because TTransformSRT3<RealType> cannot represent the true inverse in that case.
-	 */
-	TTransformSRT3<RealType> InverseUnsafe() const
+	TTransformSRT3<RealType> InverseUnsafe(RealType Tolerance = TMathUtil<RealType>::ZeroTolerance) const
 	{
 		TQuaternion<RealType> InvRotation = Rotation.Inverse();
-		TVector<RealType> InvScale3D = GetSafeScaleReciprocal(Scale3D);
+		TVector<RealType> InvScale3D = GetSafeScaleReciprocal(Scale3D, Tolerance);
 		TVector<RealType> InvTranslation = InvRotation * (InvScale3D * -Translation);
 		return TTransformSRT3<RealType>(InvRotation, InvTranslation, InvScale3D);
 	}
 
+	/** Reports wheth the inverse is representable with a single TTransformSRT3. (Ignores zeros in scale.) */
+	bool CanRepresentInverse(RealType Tolerance = TMathUtil<RealType>::ZeroTolerance) const
+	{
+		// Note: Could also return true if there is a non-uniform scale aligned with the rotation axis ...
+		return Scale3D.AllComponentsEqual(Tolerance) || Rotation.IsIdentity(Tolerance);
+	}
 
 	/**
 	 * @return input point with QST transformation applied, ie QST(P) = Rotate(Scale*P) + Translate

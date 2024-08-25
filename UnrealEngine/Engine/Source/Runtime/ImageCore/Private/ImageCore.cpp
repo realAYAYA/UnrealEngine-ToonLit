@@ -3,8 +3,10 @@
 #include "ImageCore.h"
 #include "Modules/ModuleManager.h"
 #include "Async/ParallelFor.h"
+#include "Serialization/CompactBinaryWriter.h"
 #include "TransferFunctions.h"
 #include "ColorSpace.h"
+#include "ImageParallelFor.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogImageCore, Log, All);
 
@@ -45,6 +47,7 @@ static void InitImageStorage(FImage& Image)
 
 	check( Image.IsImageInfoValid() );
 
+	// if the Image.RawData is already the right size, this does not re-allocate
 	int64 NumBytes = Image.GetImageSizeBytes();
 	Image.RawData.Empty(NumBytes);
 	Image.RawData.AddUninitialized(NumBytes);
@@ -883,7 +886,8 @@ void FImage::TransformToWorkingColorSpace(const FVector2d& SourceRedChromaticity
 	return FImageCore::TransformToWorkingColorSpace(*this, SourceRedChromaticity, SourceGreenChromaticity, SourceBlueChromaticity, SourceWhiteChromaticity, Method, EqualityTolerance);
 }
 
-static FLinearColor SampleImage(const FLinearColor* Pixels, int Width, int Height, float X, float Y)
+// bad legacy resizer, do not use this except when required to maintain legacy behavior ; use "ResizeImage" instead
+static FLinearColor Bad_SampleImage(const FLinearColor* Pixels, int Width, int Height, float X, float Y)
 {
 	const int64 TexelX0 = FMath::FloorToInt(X);
 	const int64 TexelY0 = FMath::FloorToInt(Y);
@@ -907,7 +911,8 @@ static FLinearColor SampleImage(const FLinearColor* Pixels, int Width, int Heigh
 		Color11 * (FracX1 * FracY1);
 }
 
-static void ResizeImage(const FImageView & SrcImage, const FImageView & DestImage)
+// bad legacy resizer, do not use this except when required to maintain legacy behavior ; use "ResizeImage" instead
+static void Bad_ResizeImage_Bilinear(const FImageView & SrcImage, const FImageView & DestImage)
 {
 	// Src and Dest should both now be RGBA32F and Linear gamma
 	check( SrcImage.Format == ERawImageFormat::RGBA32F );
@@ -917,7 +922,7 @@ static void ResizeImage(const FImageView & SrcImage, const FImageView & DestImag
 	const float DestToSrcScaleX = (float)SrcImage.SizeX / (float)DestImage.SizeX;
 	const float DestToSrcScaleY = (float)SrcImage.SizeY / (float)DestImage.SizeY;
 
-	// @todo OodleImageResize : not a correct bilinear Resize?  missing 0.5 pixel center shift
+	// not a correct bilinear Resize?  missing 0.5 pixel center shift
 	//		deprecate this and redirect to new resizer
 	for (int64 DestY = 0; DestY < DestImage.SizeY; ++DestY)
 	{
@@ -925,7 +930,7 @@ static void ResizeImage(const FImageView & SrcImage, const FImageView & DestImag
 		for (int64 DestX = 0; DestX < DestImage.SizeX; ++DestX)
 		{
 			const float SrcX = (float)DestX * DestToSrcScaleX;
-			const FLinearColor Color = SampleImage(SrcPixels, SrcImage.SizeX, SrcImage.SizeY, SrcX, SrcY);
+			const FLinearColor Color = Bad_SampleImage(SrcPixels, SrcImage.SizeX, SrcImage.SizeY, SrcX, SrcY);
 			DestPixels[DestY * DestImage.SizeX + DestX] = Color;
 		}
 	}
@@ -1034,11 +1039,13 @@ void FImageView::CopyTo(FImage& DestImage, ERawImageFormat::Type DestFormat, EGa
 	FImageCore::CopyImage(*this, DestImage);
 }
 
+// bad legacy resizer, do not use this except when required to maintain legacy behavior ; use "ResizeImage" instead
 void FImage::ResizeTo(FImage& DestImage, int32 DestSizeX, int32 DestSizeY, ERawImageFormat::Type DestFormat, EGammaSpace DestGammaSpace) const
 {
 	FImageCore::ResizeTo(*this,DestImage,DestSizeX,DestSizeY,DestFormat,DestGammaSpace);
 }
 
+// bad legacy resizer, do not use this except when required to maintain legacy behavior ; use "ResizeImage" instead
 void FImageCore::ResizeTo(const FImageView & SourceImage,FImage& DestImage, int32 DestSizeX, int32 DestSizeY, ERawImageFormat::Type DestFormat, EGammaSpace DestGammaSpace)
 {
 	check(SourceImage.NumSlices == 1); // only support 1 slice for now
@@ -1070,7 +1077,7 @@ void FImageCore::ResizeTo(const FImageView & SourceImage,FImage& DestImage, int3
 		DestImage.Format = DestFormat;
 		DestImage.GammaSpace = DestGammaSpace;
 		InitImageStorage(DestImage);
-		ResizeImage(SrcImageView, DestImage);
+		Bad_ResizeImage_Bilinear(SrcImageView, DestImage);
 	}
 	else
 	{
@@ -1082,7 +1089,7 @@ void FImageCore::ResizeTo(const FImageView & SourceImage,FImage& DestImage, int3
 		TempDestImage.Format = ERawImageFormat::RGBA32F;
 		TempDestImage.GammaSpace = EGammaSpace::Linear;
 		InitImageStorage(TempDestImage);
-		ResizeImage(SrcImageView, TempDestImage);
+		Bad_ResizeImage_Bilinear(SrcImageView, TempDestImage);
 
 		// then convert to dest format/gamma :
 		if ( DestGammaSpace == EGammaSpace::Pow22 )
@@ -1310,6 +1317,26 @@ void FImage::Linearize(uint8 SourceEncoding, FImage& DestImage) const
 	}
 }
 
+const FUtf8StringView ERawImageFormat::GetNameView(Type Format)
+{
+	switch (Format)
+	{
+	case ERawImageFormat::G8:  return UTF8TEXTVIEW("G8");
+	case ERawImageFormat::G16: return UTF8TEXTVIEW("G16");
+	case ERawImageFormat::R16F: return UTF8TEXTVIEW("R16F");
+	case ERawImageFormat::R32F: return UTF8TEXTVIEW("R32F");
+	case ERawImageFormat::BGRA8: return UTF8TEXTVIEW("BGRA8");
+	case ERawImageFormat::BGRE8: return UTF8TEXTVIEW("BGRE8");
+	case ERawImageFormat::RGBA16: return UTF8TEXTVIEW("RGBA16");
+	case ERawImageFormat::RGBA16F: return UTF8TEXTVIEW("RGBA16F");
+	case ERawImageFormat::RGBA32F: return UTF8TEXTVIEW("RGBA32F");
+	default:
+		check(0);
+		return UTF8TEXTVIEW("invalid");
+	}
+}
+
+
 IMAGECORE_API const TCHAR * ERawImageFormat::GetName(Type Format)
 {
 	switch (Format)
@@ -1327,6 +1354,24 @@ IMAGECORE_API const TCHAR * ERawImageFormat::GetName(Type Format)
 		check(0);
 		return TEXT("invalid");
 	}
+}
+
+bool ERawImageFormat::GetFormatFromString(FUtf8StringView InString, ERawImageFormat::Type& OutType)
+{
+	if (InString.Compare(UTF8TEXTVIEW("G8"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::G8; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("G16"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::G16; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("R16F"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::R16F; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("R32F"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::R32F; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("BGRA8"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::BGRA8; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("BGRE8"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::BGRE8; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("RGBA16"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::RGBA16; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("RGBA16F"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::RGBA16F; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("RGBA32F"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::RGBA32F; return true; }
+	else if (InString.Compare(UTF8TEXTVIEW("Invalid"), ESearchCase::IgnoreCase) == 0) { OutType = ERawImageFormat::Invalid; return true; }
+
+	// We distinguish between "they stored invalid on purpose" and "we didn't recognize it" by the return value.
+	OutType = ERawImageFormat::Invalid;
+	return false;
 }
 
 IMAGECORE_API int64 ERawImageFormat::GetBytesPerPixel(Type Format)
@@ -1443,35 +1488,32 @@ IMAGECORE_API const FLinearColor ERawImageFormat::GetOnePixelLinear(const void *
 }
 
 
-void FImageCore::SanitizeFloat16AndSetAlphaOpaqueForBC6H(const FImageView & InOutImage)
+void FImageCore::SanitizeFloat16AndSetAlphaOpaqueForBC6H(const FImageView & InOutImageWhole)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Texture.SanitizeFloat16AndSetAlphaOpaqueForBC6H);
-	check(InOutImage.Format == ERawImageFormat::RGBA16F);
+	check(InOutImageWhole.Format == ERawImageFormat::RGBA16F);
 
-	const int64 TexelNum = InOutImage.GetNumPixels();
-	FFloat16Color* Data = reinterpret_cast<FFloat16Color*>(InOutImage.RawData);
-
-	// @todo Oodle : parallel for ?
-	for (int64 TexelIndex = 0; TexelIndex < TexelNum; ++TexelIndex)
+	ImageParallelFor(TEXT("PF.SanitizeFloat16AndSetAlphaOpaqueForBC6H"),InOutImageWhole,[](const FImageView & InOutImagePart,int64 RowY)
 	{
-		FFloat16Color& F16Color = Data[TexelIndex];
+		const int64 TexelNum = InOutImagePart.GetNumPixels();
+		FFloat16Color* Data = reinterpret_cast<FFloat16Color*>(InOutImagePart.RawData);
 
-		F16Color.R = F16Color.R.GetClampedNonNegativeAndFinite();
-		F16Color.G = F16Color.G.GetClampedNonNegativeAndFinite();
-		F16Color.B = F16Color.B.GetClampedNonNegativeAndFinite();
-		F16Color.A.SetOne();
-	}
+		for (int64 TexelIndex = 0; TexelIndex < TexelNum; ++TexelIndex)
+		{
+			FFloat16Color& F16Color = Data[TexelIndex];
+
+			F16Color.R = F16Color.R.GetClampedNonNegativeAndFinite();
+			F16Color.G = F16Color.G.GetClampedNonNegativeAndFinite();
+			F16Color.B = F16Color.B.GetClampedNonNegativeAndFinite();
+			F16Color.A.SetOne();
+		}
+	} );
 }
 
 bool FImageCore::DetectAlphaChannel(const FImageView & InImage)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Texture.DetectAlphaChannel);
 
-	// previous :
-	// "SMALL_NUMBER" is quite small, this provides almost no tolerance
-	// #define SMALL_NUMBER		(1.e-8f)
-	//const float FloatNonOpaqueAlpha = 1.0f - SMALL_NUMBER;
-	// 
 	// opaque alpha threshold where we'd quantize to < 255 in U8
 	//  images with only alpha larger than this are treated as opaque
 	const float FloatNonOpaqueAlpha = 254.5f / 255.f; // the U8 alpha threshold
@@ -1549,7 +1591,7 @@ bool FImageCore::DetectAlphaChannel(const FImageView & InImage)
 	return false;
 }
 
-void FImageCore::SetAlphaOpaque(const FImageView & InImage)
+static void SetAlphaOpaque_SingleThreaded(const FImageView & InImage)
 {
 	int64 NumPixels = (int64)InImage.SizeX * InImage.SizeY * InImage.NumSlices;
 
@@ -1622,37 +1664,11 @@ void FImageCore::SetAlphaOpaque(const FImageView & InImage)
 	}
 }
 
-
-void FImageCore::ComputeChannelLinearMinMax(const FImageView & InImage, FLinearColor & OutMin, FLinearColor & OutMax)
+void FImageCore::SetAlphaOpaque(const FImageView & InImage)
 {
-	// @todo Oodle : for speed, we should ideally scan the image for min/max in its native pixel format
-	//	then only convert the min/max colors to float linear after the scan
-	//	don't convert the whole image
-
-	FImage ImageLinear;
-	InImage.CopyTo(ImageLinear,ERawImageFormat::RGBA32F,EGammaSpace::Linear);
-	
-	TArrayView64<FLinearColor> Colors = ImageLinear.AsRGBA32F();
-	if ( Colors.Num() == 0 )
-	{
-		OutMin = FLinearColor(ForceInit);
-		OutMax = FLinearColor(ForceInit);
-		return;
-	}
-	
-	VectorRegister4Float VMin = VectorLoad(&Colors[0].Component(0));
-	VectorRegister4Float VMax = VMin;
-	
-	for ( const FLinearColor & Color : Colors )
-	{
-		VectorRegister4Float VCur = VectorLoad(&Color.Component(0));
-
-		VMin = VectorMin(VMin,VCur);
-		VMax = VectorMax(VMax,VCur);
-	}
-
-	VectorStore(VMin,&OutMin.Component(0));
-	VectorStore(VMax,&OutMax.Component(0));
+	ImageParallelFor(TEXT("PF.SetAlphaOpaque"),InImage,[](const FImageView & Part,int64 Row) {
+		SetAlphaOpaque_SingleThreaded(Part);
+	} );
 }
 
 void FImageCore::TransformToWorkingColorSpace(const FImageView& InLinearImage, const FVector2d& SourceRedChromaticity, const FVector2d& SourceGreenChromaticity, const FVector2d& SourceBlueChromaticity, const FVector2d& SourceWhiteChromaticity, UE::Color::EChromaticAdaptationMethod Method, double EqualityTolerance)
@@ -1685,3 +1701,396 @@ void FImageCore::TransformToWorkingColorSpace(const FImageView& InLinearImage, c
 			ImageColors[TexelIndex] = SaturateToHalfFloat(Color);
 		});
 }
+
+static constexpr uint32 ImageInfoSerializationVersion = 1;
+
+void FImageInfo::ImageInfoToCompactBinary(FCbObject& OutObject) const
+{
+	FCbWriter Writer;
+	Writer.BeginObject();
+	Writer.AddInteger("Version", ImageInfoSerializationVersion);
+	Writer.AddInteger("SizeX", SizeX);
+	Writer.AddInteger("SizeY", SizeY);
+	Writer.AddInteger("NumSlices", NumSlices);
+	Writer.AddInteger("GammaSpace", (uint8)GammaSpace);
+	Writer.AddString("Format", ERawImageFormat::GetNameView(Format));
+	Writer.EndObject();
+	OutObject = Writer.Save().AsObject();
+}
+
+bool FImageInfo::ImageInfoFromCompactBinary(const FCbObject& InObject)
+{
+	if (InObject["Version"].AsUInt32() != ImageInfoSerializationVersion)
+	{
+		return false;
+	}
+
+	SizeX = InObject["SizeX"].AsInt32();
+	SizeY = InObject["SizeY"].AsInt32();
+	NumSlices = InObject["NumSlices"].AsInt32();
+	GammaSpace = (EGammaSpace)InObject["GammaSpace"].AsUInt8();
+	if (ERawImageFormat::GetFormatFromString(InObject["Format"].AsString(), Format) == false)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+
+//--------------------------------------------------
+//{ resize
+
+#if USING_CODE_ANALYSIS
+	// disable static analysis warnings from inside stb_image_resize2.h
+	MSVC_PRAGMA( warning(push) )
+	MSVC_PRAGMA( warning( disable : ALL_CODE_ANALYSIS_WARNINGS ) )
+#endif
+
+THIRD_PARTY_INCLUDES_START
+#define STBIR_ASSERT(x) checkSlow(x)
+#define STBIR_MALLOC(size,user_data) FMemory::Malloc(size,16)
+#define STBIR_FREE(ptr,user_data)	 FMemory::Free(ptr)
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#define STBIR_DONT_CHANGE_FP_CONTRACT
+#include <stb_image_resize2.h>
+THIRD_PARTY_INCLUDES_END
+
+#if USING_CODE_ANALYSIS
+	MSVC_PRAGMA( warning(pop) )
+#endif
+
+namespace FImageCore
+{
+
+static bool GetFormatSTBIR(ERawImageFormat::Type Format,EGammaSpace GammaSpace,
+	int & DestNumChannels,
+	stbir_datatype & DestDataType,
+	stbir_pixel_layout & DestLayout)
+{
+	check( Format < ERawImageFormat::MAX ); // MAX is not max, it is count
+
+	// the "PM" Layouts mean STBIR doesn't change us to pre-multiplied
+	//	we are not pre-multiplied
+	//	the RGB channels are filtered without reference to the alpha values
+
+	switch(Format)
+	{
+		case ERawImageFormat::G8: // G8 = gray = replicate to RGB
+			DestNumChannels = 1;
+			if ( GammaSpace != EGammaSpace::Linear ) // Pow22 also
+				DestDataType = STBIR_TYPE_UINT8_SRGB;
+			else
+				DestDataType = STBIR_TYPE_UINT8;
+			DestLayout = STBIR_1CHANNEL;
+			return true;
+		case ERawImageFormat::BGRA8:
+			DestNumChannels = 4;
+			if ( GammaSpace != EGammaSpace::Linear ) // Pow22 also
+				DestDataType = STBIR_TYPE_UINT8_SRGB; // A is linear
+			else
+				DestDataType = STBIR_TYPE_UINT8;
+			DestLayout = STBIR_BGRA_PM;
+			return true;
+		case ERawImageFormat::BGRE8:
+			return false; // BGRE cannot use STB
+		case ERawImageFormat::RGBA16:
+			DestNumChannels = 4;
+			DestDataType = STBIR_TYPE_UINT16;
+			DestLayout = STBIR_RGBA_PM;
+			return true;
+		case ERawImageFormat::RGBA16F:
+			DestNumChannels = 4;
+			DestDataType = STBIR_TYPE_HALF_FLOAT;
+			DestLayout = STBIR_RGBA_PM;
+			return true;
+		case ERawImageFormat::RGBA32F:
+			DestNumChannels = 4;
+			DestDataType = STBIR_TYPE_FLOAT;
+			DestLayout = STBIR_RGBA_PM;
+			return true;
+		case ERawImageFormat::G16: // G16 = gray = replicate to RGB
+			DestNumChannels = 1;
+			DestDataType = STBIR_TYPE_UINT16;
+			DestLayout = STBIR_1CHANNEL;
+			return true;
+		case ERawImageFormat::R16F:
+			DestNumChannels = 1;
+			DestDataType = STBIR_TYPE_HALF_FLOAT;
+			DestLayout = STBIR_1CHANNEL;
+			return true;
+		case ERawImageFormat::R32F:
+			DestNumChannels = 1;
+			DestDataType = STBIR_TYPE_FLOAT;
+			DestLayout = STBIR_1CHANNEL;
+			return true;
+			
+		default: // Invalid!
+			return false;
+	}
+}
+
+static bool FilterIsNopWhenSameSize(EResizeImageFilter FilterWithFlags)
+{
+	EResizeImageFilter Filter = FilterWithFlags & EResizeImageFilter::WithoutFlagsMask;
+	switch(Filter)
+	{
+		case EResizeImageFilter::PointSample:
+		case EResizeImageFilter::Box:
+		case EResizeImageFilter::Triangle:
+		case EResizeImageFilter::Default: // see stbir__set_sampler
+		case EResizeImageFilter::AdaptiveSharp:
+		case EResizeImageFilter::AdaptiveSmooth:
+			return true;
+		
+		// Cubic filters still change the image with size the same
+		case EResizeImageFilter::CubicGaussian:
+		case EResizeImageFilter::CubicSharp:
+		case EResizeImageFilter::CubicMitchell:
+			return false;
+
+		default: // all enum values should be explicitly listed above
+			check(false);
+			return false;
+	}
+}
+
+static stbir_filter MapFilterToStb(EResizeImageFilter FilterWithFlags,int64 SizeFm,int64 SizeTo,uint32 WrapFlag, stbir_edge & OutStbirEdgeMode)
+{
+	if ( SizeFm == SizeTo && FilterIsNopWhenSameSize(FilterWithFlags) )
+	{
+		OutStbirEdgeMode = STBIR_EDGE_CLAMP;
+		return STBIR_FILTER_POINT_SAMPLE;
+	}
+	
+	OutStbirEdgeMode = WrapFlag ? STBIR_EDGE_WRAP : STBIR_EDGE_CLAMP;
+	
+	EResizeImageFilter Filter = FilterWithFlags & EResizeImageFilter::WithoutFlagsMask;
+
+	switch(Filter)
+	{
+		case EResizeImageFilter::Box: return STBIR_FILTER_BOX;
+		case EResizeImageFilter::Triangle: return STBIR_FILTER_TRIANGLE;
+		case EResizeImageFilter::CubicGaussian: return STBIR_FILTER_CUBICBSPLINE;
+		case EResizeImageFilter::CubicSharp: return STBIR_FILTER_CATMULLROM;
+		case EResizeImageFilter::CubicMitchell: return STBIR_FILTER_MITCHELL;
+		case EResizeImageFilter::PointSample: return STBIR_FILTER_POINT_SAMPLE;
+
+		case EResizeImageFilter::Default: // AdaptiveSharp matches STBIR_FILTER_DEFAULT
+		case EResizeImageFilter::AdaptiveSharp:
+			return ( SizeFm < SizeTo ) ? STBIR_FILTER_CATMULLROM : STBIR_FILTER_MITCHELL;
+			
+		case EResizeImageFilter::AdaptiveSmooth:
+			return ( SizeFm < SizeTo ) ? STBIR_FILTER_MITCHELL : STBIR_FILTER_CUBICBSPLINE;
+
+		default:
+			check(false);
+			return STBIR_FILTER_DEFAULT;
+	}
+}
+	
+}; // namespace
+
+IMAGECORE_API void FImageCore::ResizeImage(const FImageView & SourceImage,const FImageView & DestImage, EResizeImageFilter Filter)
+{
+	check( SourceImage.IsImageInfoValid() );
+	check( DestImage.IsImageInfoValid() );
+
+	int64 DestNumPixels = DestImage.GetNumPixels();
+	if ( DestNumPixels == 0 )
+	{
+		return;
+	}
+
+	if ( SourceImage.NumSlices != 1 || DestImage.NumSlices != 1 )
+	{
+		if ( SourceImage.NumSlices == DestImage.NumSlices )
+		{
+			// resize slices one by one (no filtering across slices)
+			//	eg. for arrays, not a 3d filter for cubes
+
+			ParallelFor(TEXT("ResizeImage.Slices"), SourceImage.NumSlices, 1, [&](int64 SliceIndex)
+			{
+				const FImageView SourceSlice = SourceImage.GetSlice(SliceIndex);
+				const FImageView DestSlice = DestImage.GetSlice(SliceIndex);
+				ResizeImage(SourceSlice,DestSlice,Filter);
+			}, EParallelForFlags::Unbalanced);
+		}
+		else
+		{
+			// different slice counts
+
+			UE_LOG(LogImageCore,Error,TEXT("ResizeImage: different slice count : %d -> %d"),
+				SourceImage.NumSlices,DestImage.NumSlices);
+
+			// zero out DestImage bytes?
+		}
+
+		return;
+	}
+
+	// single slice resize
+	check( SourceImage.NumSlices == 1 && DestImage.NumSlices == 1 );
+
+	if ( SourceImage.SizeX == DestImage.SizeX && SourceImage.SizeY == DestImage.SizeY &&
+		FilterIsNopWhenSameSize(Filter) )
+	{
+		// images are same size, just blit
+		//	note manually selected Cubic filters run on same-size image will still apply the filter
+		FImageCore::CopyImage(SourceImage,DestImage);
+		return;
+	}
+	
+	// can't write Pow22 :
+	check( DestImage.GetGammaSpace() != EGammaSpace::Pow22 );
+
+	int SourceNumChannels;
+	stbir_datatype SourceDataType;
+	stbir_pixel_layout SourceLayout;
+	bool SourceOk = GetFormatSTBIR(SourceImage.Format,SourceImage.GetGammaSpace(),
+		SourceNumChannels,SourceDataType,SourceLayout);
+		
+	int DestNumChannels;
+	stbir_datatype DestDataType;
+	stbir_pixel_layout DestLayout;
+	bool DestOk = GetFormatSTBIR(DestImage.Format,DestImage.GetGammaSpace(),
+		DestNumChannels,DestDataType,DestLayout);
+
+	if ( !SourceOk || !DestOk || SourceNumChannels != DestNumChannels )
+	{
+		// Source and Dest formats have different channel count
+		//	it's hard to get this right in all cases through the stb_resize API
+		//	so just convert through linear
+	
+		FImageView SourceImageF32Linear = SourceImage;
+		FImage SourceScratch;
+		if ( SourceImageF32Linear.Format != ERawImageFormat::RGBA32F )
+		{
+			// convert source to linear, alloc scratch
+			SourceImage.CopyTo(SourceScratch,ERawImageFormat::RGBA32F,EGammaSpace::Linear);
+			SourceImageF32Linear = SourceScratch;
+		}
+		
+		FImageView DestImageF32Linear = DestImage;
+		FImage DestScratch;
+		if ( DestImageF32Linear.Format != ERawImageFormat::RGBA32F )
+		{
+			// alloc empty linear DestScratch
+			DestScratch.Init(DestImage.SizeX,DestImage.SizeY,ERawImageFormat::RGBA32F,EGammaSpace::Linear);
+			DestImageF32Linear = DestScratch;
+		}
+
+		// do the resize on the linears :
+		ResizeImage(SourceImageF32Linear,DestImageF32Linear, Filter);
+
+		// if we didn't resize directly to dest, copy now :
+		if ( DestImageF32Linear.RawData != DestImage.RawData )
+		{
+			FImageCore::CopyImage(DestImageF32Linear,DestImage);
+		}
+
+		return;
+	}
+
+	// do the resize!
+		
+	STBIR_RESIZE resize;
+	stbir_resize_init( &resize,
+		SourceImage.RawData,SourceImage.SizeX,SourceImage.SizeY,SourceImage.GetBytesPerPixel()*SourceImage.SizeX,
+		DestImage.RawData,DestImage.SizeX,DestImage.SizeY,DestImage.GetBytesPerPixel()*DestImage.SizeX,
+		SourceLayout,SourceDataType);
+
+	stbir_edge StbirEdgeX,StbirEdgeY;
+	stbir_filter StbirFilterX = MapFilterToStb(Filter,SourceImage.SizeX,DestImage.SizeX, (uint32)(Filter & EResizeImageFilter::Flag_WrapX), StbirEdgeX);
+	stbir_filter StbirFilterY = MapFilterToStb(Filter,SourceImage.SizeY,DestImage.SizeY, (uint32)(Filter & EResizeImageFilter::Flag_WrapY), StbirEdgeY);
+
+	stbir_set_filters(&resize, StbirFilterX, StbirFilterY);
+	stbir_set_pixel_layouts(&resize,SourceLayout,DestLayout);
+	stbir_set_datatypes(&resize,SourceDataType,DestDataType);
+	stbir_set_edgemodes(&resize, StbirEdgeX, StbirEdgeY);
+
+	const int32 NumWorkers = FTaskGraphInterface::Get().GetNumWorkerThreads();
+
+	// 2 jobs per worker, minus 1 for some slack :
+	int32 MaxNumSplits = NumWorkers*2 - 1;
+	
+	// parallel over Dest pixels
+	if ( MaxNumSplits * MinPixelsPerJob > DestNumPixels )
+	{
+		MaxNumSplits = (int)(DestNumPixels/MinPixelsPerJob);
+	}
+
+	if ( MaxNumSplits <= 1 )
+	{
+		// just run synchronous :
+		bool ok = !! stbir_resize_extended(&resize);
+		check(ok);
+
+		return;
+	}
+
+	// threaded :
+
+	int64 NumSplits = stbir_build_samplers_with_splits(&resize,MaxNumSplits);
+	check( NumSplits > 0 );
+
+	if ( NumSplits == 1 )
+	{
+		stbir_resize_extended_split(&resize,0,1);
+	}
+	else
+	{
+		ParallelFor(TEXT("ResizeImage"), NumSplits, 1, [&](int64 SplitIndex)
+		{
+			stbir_resize_extended_split(&resize,SplitIndex,1);
+		}, EParallelForFlags::Unbalanced);
+	}
+
+	stbir_free_samplers(&resize);
+}
+	
+IMAGECORE_API void FImageCore::ResizeImageAllocDest(const FImageView & SourceImage,FImage & DestImage,int32 DestSizeX, int32 DestSizeY, ERawImageFormat::Type DestFormat, EGammaSpace DestGammaSpace, EResizeImageFilter Filter)
+{
+	check( DestImage.RawData.Num() == 0 || SourceImage.RawData != DestImage.GetPixelPointer(0,0) ); // must not be resizing onto self
+	
+	// can't write Pow22 :
+	check( DestGammaSpace != EGammaSpace::Pow22 );
+
+	// note that if DestImage was already allocated to the right size, this will not re-allocate it
+	DestImage.Init(DestSizeX,DestSizeY,SourceImage.NumSlices,DestFormat,DestGammaSpace);
+	ResizeImage(SourceImage,DestImage,Filter);
+}
+
+IMAGECORE_API void FImageCore::ResizeImageAllocDest(const FImageView & SourceImage,FImage & DestImage,int32 DestSizeX, int32 DestSizeY, EResizeImageFilter Filter)
+{
+	ResizeImageAllocDest(SourceImage,DestImage,DestSizeX,DestSizeY,SourceImage.Format,SourceImage.GetGammaSpace(),Filter);
+}
+
+IMAGECORE_API void FImageCore::ResizeImageInPlace(FImage & Image,int32 DestSizeX, int32 DestSizeY, ERawImageFormat::Type DestFormat, EGammaSpace DestGammaSpace, EResizeImageFilter Filter)
+{
+	if ( DestSizeX == Image.SizeX && DestSizeY == Image.SizeY && DestFormat == Image.Format && DestGammaSpace == Image.GetGammaSpace() &&
+		FilterIsNopWhenSameSize(Filter) )
+	{
+		// nop!
+		return;
+	}
+
+	// ResizeImageInPlace of Pow22 will change you to sRGB
+	if ( DestGammaSpace == EGammaSpace::Pow22 )
+	{
+		DestGammaSpace = EGammaSpace::sRGB;
+	}
+
+	FImage Source;
+	Image.Swap(Source);
+	ResizeImageAllocDest(Source,Image,DestSizeX,DestSizeY,DestFormat,DestGammaSpace, Filter);
+}
+
+IMAGECORE_API void FImageCore::ResizeImageInPlace(FImage & Image,int32 DestSizeX, int32 DestSizeY, EResizeImageFilter Filter)
+{
+	ResizeImageInPlace(Image,DestSizeX,DestSizeY,Image.Format,Image.GetGammaSpace(), Filter);
+}
+
+//} resize
+//----------------------

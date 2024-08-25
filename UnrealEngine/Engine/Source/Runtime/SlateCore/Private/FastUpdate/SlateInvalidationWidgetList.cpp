@@ -10,7 +10,6 @@
 #include "Layout/Children.h"
 #include "Misc/StringBuilder.h"
 #include "Rendering/SlateLayoutTransform.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/IsConst.h"
 #include "Templates/Tuple.h"
 #include "Types/ReflectionMetadata.h"
@@ -54,9 +53,13 @@ FSlateInvalidationWidgetList::FWidgetAttributeIterator::FWidgetAttributeIterator
 	, MoveToWidgetIndexOnNextAdvance(FSlateInvalidationWidgetIndex::Invalid)
 	, bNeedsWidgetFixUp(false)
 {
+	++WidgetList.NumberOfLock;
+
 	int32 ArrayIndex = WidgetList.FirstArrayIndex;
 	while(ArrayIndex != INDEX_NONE)
 	{
+		check(WidgetList.Data.IsValidIndex(ArrayIndex));
+
 		const FArrayNode& ArrayNode = WidgetList.Data[ArrayIndex];
 		if (ArrayNode.ElementIndexList_WidgetWithRegisteredSlateAttribute.Num() > 0)
 		{
@@ -66,6 +69,13 @@ FSlateInvalidationWidgetList::FWidgetAttributeIterator::FWidgetAttributeIterator
 		}
 		ArrayIndex = ArrayNode.NextArrayIndex;
 	}
+}
+
+
+FSlateInvalidationWidgetList::FWidgetAttributeIterator::~FWidgetAttributeIterator()
+{
+	--WidgetList.NumberOfLock;
+	check(WidgetList.NumberOfLock >= 0);
 }
 
 
@@ -149,6 +159,7 @@ void FSlateInvalidationWidgetList::FWidgetAttributeIterator::FixCurrentWidgetInd
 void FSlateInvalidationWidgetList::FWidgetAttributeIterator::Seek(FSlateInvalidationWidgetIndex SeekTo)
 {
 	check(SeekTo != FSlateInvalidationWidgetIndex::Invalid);
+	check(WidgetList.Data.IsValidIndex(SeekTo.ArrayIndex));
 
 	const FArrayNode& ArrayNode = WidgetList.Data[SeekTo.ArrayIndex];
 	AttributeIndex = ArrayNode.ElementIndexList_WidgetWithRegisteredSlateAttribute.FindLowerBound(SeekTo.ElementIndex);
@@ -168,7 +179,7 @@ void FSlateInvalidationWidgetList::FWidgetAttributeIterator::Seek(FSlateInvalida
 
 void FSlateInvalidationWidgetList::FWidgetAttributeIterator::Advance()
 {
-	check(MoveToWidgetIndexOnNextAdvance == FSlateInvalidationWidgetIndex::Invalid);
+	check(WidgetList.Data.IsValidIndex(CurrentWidgetIndex.ArrayIndex));
 
 	++AttributeIndex;
 
@@ -235,6 +246,8 @@ void FSlateInvalidationWidgetList::FWidgetAttributeIterator::AdvanceArrayIndex(i
 
 	while (ArrayIndex != INDEX_NONE)
 	{
+		check(WidgetList.Data.IsValidIndex(ArrayIndex));
+
 		const FArrayNode& NewArrayNode = WidgetList.Data[ArrayIndex];
 		if (NewArrayNode.ElementIndexList_WidgetWithRegisteredSlateAttribute.Num() > 0)
 		{
@@ -281,6 +294,8 @@ void FSlateInvalidationWidgetList::FWidgetVolatileUpdateIterator::Advance()
 
 void FSlateInvalidationWidgetList::FWidgetVolatileUpdateIterator::Internal_Advance()
 {
+	check(WidgetList.Data.IsValidIndex(CurrentWidgetIndex.ArrayIndex));
+
 	++AttributeIndex;
 
 	const FArrayNode& ArrayNode = WidgetList.Data[CurrentWidgetIndex.ArrayIndex];
@@ -320,6 +335,7 @@ void FSlateInvalidationWidgetList::FWidgetVolatileUpdateIterator::SkipToNextExpe
 void FSlateInvalidationWidgetList::FWidgetVolatileUpdateIterator::Seek(FSlateInvalidationWidgetIndex SeekTo)
 {
 	check(SeekTo != FSlateInvalidationWidgetIndex::Invalid);
+	check(WidgetList.Data.IsValidIndex(SeekTo.ArrayIndex));
 
 	const FArrayNode& ArrayNode = WidgetList.Data[SeekTo.ArrayIndex];
 	AttributeIndex = ArrayNode.ElementIndexList_VolatileUpdateWidget.FindLowerBound(SeekTo.ElementIndex);
@@ -340,6 +356,8 @@ void FSlateInvalidationWidgetList::FWidgetVolatileUpdateIterator::AdvanceArray(i
 {
 	while (ArrayIndex != INDEX_NONE)
 	{
+		check(WidgetList.Data.IsValidIndex(ArrayIndex));
+
 		const FArrayNode& NewArrayNode = WidgetList.Data[ArrayIndex];
 		if (NewArrayNode.ElementIndexList_VolatileUpdateWidget.Num() > 0)
 		{
@@ -484,6 +502,7 @@ FSlateInvalidationWidgetIndex FSlateInvalidationWidgetList::Internal_BuildWidget
 
 void FSlateInvalidationWidgetList::BuildWidgetList(const TSharedRef<SWidget>& InRoot)
 {
+	ensureMsgf(NumberOfLock == 0, TEXT("You are not allowed to modify the list while iterating on it."));
 	SCOPED_NAMED_EVENT(Slate_InvalidationList_ProcessBuild, FColorList::Blue);
 
 	Reset();
@@ -544,6 +563,7 @@ void FSlateInvalidationWidgetList::Internal_RebuildWidgetListTree(SWidget& Widge
 
 bool FSlateInvalidationWidgetList::ProcessChildOrderInvalidation(FSlateInvalidationWidgetIndex WidgetIndex, IProcessChildOrderInvalidationCallback& Callback)
 {
+	ensureMsgf(NumberOfLock == 0, TEXT("You are not allowed to modify the list while iterating on it."));
 	SCOPE_CYCLE_COUNTER(STAT_WidgetList_ProcessChildOrderInvalidation);
 
 	bool bIsInvalidationWidgetStillValid = true;
@@ -708,6 +728,8 @@ bool FSlateInvalidationWidgetList::ProcessChildOrderInvalidation(FSlateInvalidat
 
 void FSlateInvalidationWidgetList::ProcessAttributeRegistrationInvalidation(const InvalidationWidgetType& InvalidationWidget)
 {
+	ensureMsgf(NumberOfLock == 0, TEXT("You are not allowed to modify the list while iterating on it."));
+
 	SWidget* WidgetPtr = InvalidationWidget.GetWidget();
 	check(WidgetPtr);
 
@@ -724,6 +746,8 @@ void FSlateInvalidationWidgetList::ProcessAttributeRegistrationInvalidation(cons
 
 void FSlateInvalidationWidgetList::ProcessVolatileUpdateInvalidation(InvalidationWidgetType& InvalidationWidget)
 {
+	ensureMsgf(NumberOfLock == 0, TEXT("You are not allowed to modify the list while iterating on it."));
+
 	SWidget* WidgetPtr = InvalidationWidget.GetWidget();
 	check(WidgetPtr);
 
@@ -744,7 +768,7 @@ namespace InvalidationList
 	template<typename TSlateInvalidationWidgetList, typename Predicate>
 	void ForEachChildren(TSlateInvalidationWidgetList& Self, const typename TSlateInvalidationWidgetList::InvalidationWidgetType& InvalidationWidget, FSlateInvalidationWidgetIndex WidgetIndex, Predicate InPredicate)
 	{
-		using SlateInvalidationWidgetType = typename TChooseClass<TIsConst<TSlateInvalidationWidgetList>::Value, const typename TSlateInvalidationWidgetList::InvalidationWidgetType, typename TSlateInvalidationWidgetList::InvalidationWidgetType>::Result;
+		using SlateInvalidationWidgetType = std::conditional_t<TIsConst<TSlateInvalidationWidgetList>::Value, const typename TSlateInvalidationWidgetList::InvalidationWidgetType, typename TSlateInvalidationWidgetList::InvalidationWidgetType>;
 		if (InvalidationWidget.LeafMostChildIndex != WidgetIndex)
 		{
 			FSlateInvalidationWidgetIndex CurrentWidgetIndex = Self.IncrementIndex(WidgetIndex);
@@ -840,6 +864,8 @@ FSlateInvalidationWidgetIndex FSlateInvalidationWidgetList::FindNextSibling(FSla
 
 void FSlateInvalidationWidgetList::Empty()
 {
+	ensureMsgf(NumberOfLock == 0, TEXT("You are not allowed to modify the list while iterating on it."));
+
 	Data.Empty();
 	Root.Reset();
 	FirstArrayIndex = INDEX_NONE;
@@ -849,6 +875,8 @@ void FSlateInvalidationWidgetList::Empty()
 
 void FSlateInvalidationWidgetList::Reset()
 {
+	ensureMsgf(NumberOfLock == 0, TEXT("You are not allowed to modify the list while iterating on it."));
+
 	Data.Reset();
 	Root.Reset();
 	FirstArrayIndex = INDEX_NONE;
@@ -865,6 +893,8 @@ FSlateInvalidationWidgetList::IndexType FSlateInvalidationWidgetList::AddArrayNo
 			ensureAlwaysMsgf(false, TEXT("The widget array is split more time that we support. Widget will not be updated properly. Try to increase Slate.InvalidationList.MaxArrayElements"));
 			return (IndexType)LastArrayIndex;
 		}
+
+		check(NumberOfLock == 0);
 		const int32 Index = Data.Add(FArrayNode());
 		check(Index < std::numeric_limits<IndexType>::max());
 		if (bReserveElementList)
@@ -911,6 +941,7 @@ void FSlateInvalidationWidgetList::RebuildOrderIndex(IndexType StartFrom)
 	FSlateInvalidationWidgetList* Self = this;
 	auto SetValue = [Self](IndexType ArrayIndex, int32 NewSortOrder)
 		{
+			check(Self->NumberOfLock == 0);
 			ElementListType& ElementList = Self->Data[ArrayIndex].ElementList;
 			int32 ElementIndex = Self->Data[ArrayIndex].StartIndex;
 			const int32 PreviousSortOrder = Self->Data[ArrayIndex].SortOrder;
@@ -1026,6 +1057,7 @@ FSlateInvalidationWidgetList::IndexType FSlateInvalidationWidgetList::InsertData
 	}
 	else
 	{
+		check(NumberOfLock == 0);
 		check(AfterIndex != INDEX_NONE);
 
 		if (Data.Num() + 1 == FSlateInvalidationWidgetIndex::Invalid.ArrayIndex)
@@ -1073,6 +1105,7 @@ FSlateInvalidationWidgetList::IndexType FSlateInvalidationWidgetList::InsertData
 
 void FSlateInvalidationWidgetList::RemoveDataNode(IndexType Index)
 {
+	check(NumberOfLock == 0);
 	check(Index != INDEX_NONE && Index != std::numeric_limits<IndexType>::max());
 	FArrayNode& ArrayNode = Data[Index];
 	if (ArrayNode.PreviousArrayIndex != INDEX_NONE)
@@ -1280,7 +1313,7 @@ void FSlateInvalidationWidgetList::Internal_RemoveRangeFromSameParent(const FInd
 			}
 
 			const IndexType RemoveArrayAt = Range.GetInclusiveMinWidgetIndex().ElementIndex;
-			RemoveElementList.RemoveAt(RemoveArrayAt, RemoveElementList.Num() - RemoveArrayAt, true);
+			RemoveElementList.RemoveAt(RemoveArrayAt, RemoveElementList.Num() - RemoveArrayAt, EAllowShrinking::Yes);
 			if (!RemoveDataNodeIfNeeded(Range.GetInclusiveMinWidgetIndex().ArrayIndex))
 			{
 				ArrayNode.RemoveElementIndexBiggerOrEqualThan(RemoveArrayAt);
@@ -1310,7 +1343,7 @@ FSlateInvalidationWidgetList::FCutResult FSlateInvalidationWidgetList::CutArray(
 	{
 		FArrayNode& ArrayNode = Data[WhereToCut.ArrayIndex];
 		ElementListType& RemoveElementList = Data[WhereToCut.ArrayIndex].ElementList;
-		RemoveElementList.RemoveAt(CutResult.OldElementIndexStart, RemoveElementList.Num() - CutResult.OldElementIndexStart, true);
+		RemoveElementList.RemoveAt(CutResult.OldElementIndexStart, RemoveElementList.Num() - CutResult.OldElementIndexStart, EAllowShrinking::Yes);
 		if (RemoveElementList.Num() == 0)
 		{
 			RemoveDataNode(WhereToCut.ArrayIndex);
@@ -1337,6 +1370,8 @@ FSlateInvalidationWidgetList::FCutResult FSlateInvalidationWidgetList::Internal_
 	// N.B. We can cut/move anywhere. Cross family may occur. Fix up everything.
 	if (WhereToCut.ElementIndex < Data[WhereToCut.ArrayIndex].ElementList.Num() - 1)
 	{
+		check(NumberOfLock == 0);
+
 		//From where to where we are moving the item
 		const IndexType OldArrayIndex = WhereToCut.ArrayIndex;
 		const IndexType OldElementIndexStart = WhereToCut.ElementIndex + 1;

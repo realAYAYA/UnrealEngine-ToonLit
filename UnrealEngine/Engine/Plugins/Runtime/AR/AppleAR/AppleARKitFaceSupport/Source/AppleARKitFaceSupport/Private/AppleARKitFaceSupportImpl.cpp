@@ -292,17 +292,19 @@ void FAppleARKitFaceSupport::PublishLiveLinkData(const FGuid& SessionGuid, TShar
 #if PLATFORM_IOS
 			LiveLinkSource = FAppleARKitLiveLinkSourceFactory::CreateLiveLinkSource();
 #else
-			// This should be started already, but just in case
-			FAppleARKitLiveLinkSourceFactory::CreateLiveLinkRemoteListener();
+			// This will initialize the remote listener.
+			LiveLinkSource = FAppleARKitLiveLinkSourceFactory::CreateLiveLinkSource(FAppleARKitLiveLinkConnectionSettings());
 #endif
 		}
 	}
 	
+#if PLATFORM_IOS
 	if (LiveLinkSource.IsValid())
 	{
 		const FQualifiedFrameTime FrameTime(Anchor->Timecode, FFrameRate(Anchor->FrameRate, 1));
 		LiveLinkSource->PublishBlendShapes(GetLiveLinkSubjectName(Anchor->AnchorGUID), FrameTime, Anchor->BlendShapes, LocalDeviceId);
 	}
+#endif
 }
 
 bool FAppleARKitFaceSupport::DoesSupportFaceAR()

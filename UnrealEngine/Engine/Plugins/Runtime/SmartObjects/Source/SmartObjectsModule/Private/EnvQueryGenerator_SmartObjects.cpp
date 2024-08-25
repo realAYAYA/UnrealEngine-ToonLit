@@ -44,7 +44,7 @@ void UEnvQueryGenerator_SmartObjects::GenerateItems(FEnvQueryInstance& QueryInst
 
 		// @todo note that with this approach, if there's more than one Origin being used for generation we can end up 
 		// with duplicates in AllResults
-		NumberOfSuccessfulQueries += SmartObjectSubsystem->FindSmartObjects(Request, FoundSlots) ? 1 : 0;
+		NumberOfSuccessfulQueries += SmartObjectSubsystem->FindSmartObjects(Request, FoundSlots, Cast<AActor>(QueryOwner)) ? 1 : 0;
 	}
 
 	if (NumberOfSuccessfulQueries > 1)

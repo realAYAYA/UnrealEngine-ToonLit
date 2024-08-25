@@ -232,6 +232,16 @@ namespace EDefaultBackBufferPixelFormat
 	ENGINE_API EDefaultBackBufferPixelFormat::Type FromInt(int32 InDefaultBackBufferPixelFormat);
 }
 
+UENUM()
+namespace ELightFunctionAtlasPixelFormat
+{
+	enum Type : int
+	{
+		LFAPF_R8 = 0				UMETA(DisplayName = "8 bits Gray Scale"),
+		LFAPF_R8G8B8 = 1			UMETA(DisplayName = "8 bits RGB  Color")
+	};
+}
+
 /**
  * Enumerates supported shader compression formats.
  */
@@ -291,7 +301,7 @@ class URendererSettings : public UDeveloperSettings
 
 	UPROPERTY(config, EditAnywhere, Category = Mobile, meta = (
 		ConsoleVariable = "r.Mobile.ShadingPath", DisplayName = "Mobile Shading",
-		ToolTip = "The shading path to use on mobile platforms. Changing this setting requires restarting the editor.",
+		ToolTip = "The shading path to use on mobile platforms. Changing this setting requires restarting the editor. Mobile HDR is required for Deferred Shading.",
 		ConfigRestartRequired = true))
 	TEnumAsByte<EMobileShadingPath::Type> MobileShadingPath;
 
@@ -510,6 +520,11 @@ class URendererSettings : public UDeveloperSettings
 		ToolTip="Controls which tracing method Lumen uses when using Software Ray Tracing."))
 	TEnumAsByte<ELumenSoftwareTracingMode::Type> LumenSoftwareTracingMode;
 
+	UPROPERTY(config, EditAnywhere, Category = Lumen, meta = (
+		ConsoleVariable = "r.Lumen.Reflections.HardwareRayTracing.Translucent.Refraction.EnableForProject", DisplayName = "Ray Traced Translucent Refractions",
+		ToolTip = "Whether to use Lumen refraction tracing from surfaces when using harware ray tracing and hit lighting. This will require shader recompilation to compile of translucent card capture Lumen shaders. Increases GPU cost when enabled."))
+	uint32 LumenRayTracedTranslucentRefractions : 1;
+
 	UPROPERTY(config, EditAnywhere, Category = Shadows, meta = (
 		ConsoleVariable = "r.Shadow.Virtual.Enable", DisplayName = "Shadow Map Method",
 		ToolTip = "Select the primary shadow mapping method. Automatically uses 'Shadow Maps' when Forward Shading is enabled for the project as Virtual Shadow Maps are not supported."))
@@ -603,6 +618,11 @@ class URendererSettings : public UDeveloperSettings
 		ToolTip="The axis that sorting will occur along when Translucent Sort Policy is set to SortAlongAxis."))
 	FVector TranslucentSortAxis;
 
+	UPROPERTY(config, EditAnywhere, Category=Translucency, meta=(
+		ConsoleVariable="r.LocalFogVolume.ApplyOnTranslucent",
+		ToolTip="Allow translucency to be rendered to a separate render targeted and composited after depth of field. Prevents translucency from appearing out of focus."))
+	uint32 bLocalFogVolumeApplyOnTranslucent:1;
+
 	UPROPERTY(config, EditAnywhere, Category = VR, meta = (
 		ConsoleVariable = "xr.VRS.FoveationLevel", DisplayName = "Stereo Foveation Level (Experimental)",
 		ToolTip = "Set the level of foveation to apply when generating the Variable Rate Shading attachment. This feature is currently experimental.\nThis can yield some fairly significant performance benefits on GPUs that support Tier 2 VRS.\nLower settings will result in almost no discernible artifacting on most HMDs; higher settings will show some artifacts towards the edges of the view."))
@@ -667,14 +687,14 @@ class URendererSettings : public UDeveloperSettings
 	uint32 bExtendDefaultLuminanceRangeInAutoExposureSettings : 1;
 
 	UPROPERTY(config, EditAnywhere, Category = DefaultSettings, meta = (
-		ConsoleVariable = "r.DefaultFeature.LocalExposure.HighlightContrastScale", DisplayName = "Local Exposure Highlight Contrast Scale",
-		ToolTip = "Default Value for Local Exposure Highlight Contrast Scale.", ClampMin = "0.0", ClampMax = "1.0"))
-	float DefaultFeatureLocalExposureHighlightContrastScale;
+		ConsoleVariable = "r.DefaultFeature.LocalExposure.HighlightContrastScale", DisplayName = "Local Exposure Highlight Contrast",
+		ToolTip = "Default Value for Local Exposure Highlight Contrast.", ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultFeatureLocalExposureHighlightContrast;
 
 	UPROPERTY(config, EditAnywhere, Category = DefaultSettings, meta = (
-		ConsoleVariable = "r.DefaultFeature.LocalExposure.ShadowContrastScale", DisplayName = "Local Exposure Shadow Contrast Scale",
-		ToolTip = "Default Value for Local Exposure Shadow Contrast Scale.", ClampMin = "0.0", ClampMax = "1.0"))
-	float DefaultFeatureLocalExposureShadowContrastScale;
+		ConsoleVariable = "r.DefaultFeature.LocalExposure.ShadowContrastScale", DisplayName = "Local Exposure Shadow Contrast",
+		ToolTip = "Default Value for Local Exposure Shadow Contrast.", ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultFeatureLocalExposureShadowContrast;
 
 	UPROPERTY(config, EditAnywhere, Category = DefaultSettings, meta = (
 		ConsoleVariable = "r.DefaultFeature.MotionBlur", DisplayName = "Motion Blur",
@@ -831,6 +851,110 @@ class URendererSettings : public UDeveloperSettings
 		ToolTip = "Whether to use original CPU method (loop per morph then by vertex) or use a GPU-based method on Shader Model 5 hardware."))
 	uint32 bUseGPUMorphTargets : 1;
 
+	UPROPERTY(config, EditAnywhere, Category = DefaultSettings, meta = (
+		ConsoleVariable = "r.MorphTarget.MaxBlendWeight", DisplayName = "Maximum absolute value accepted as a morph target blend weight, positive or negative.",
+		ToolTip = "Blend target weights will be checked against this value for validation. Absolue values greather than this number will be clamped to [-MorphTargetMaxBlendWeight, MorphTargetMaxBlendWeight]."))
+	float MorphTargetMaxBlendWeight;
+
+	/**
+	"The sky atmosphere component requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation)."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = Optimizations, meta = (
+		ConsoleVariable = "r.SupportSkyAtmosphere", DisplayName = "Support Sky Atmosphere",
+		ToolTip = "The sky atmosphere component requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation).",
+		ConfigRestartRequired = true))
+		uint32 bSupportSkyAtmosphere : 1;
+
+	/**
+	"The sky atmosphere component can light up the height fog but it requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation)."
+	"It requires r.SupportSkyAtmosphere to be true."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = Optimizations, meta = (
+		ConsoleVariable = "r.SupportSkyAtmosphereAffectsHeightFog", DisplayName = "Support Sky Atmosphere Affecting Height Fog",
+		ToolTip = "The sky atmosphere component can light up the height fog but it requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation). It requires r.SupportSkyAtmosphere to be true.",
+		ConfigRestartRequired = true))
+		uint32 bSupportSkyAtmosphereAffectsHeightFog : 1;
+
+	/**
+	"Local fog volume components can will need to be applied on translucent, and opaque in forward, so resources will need to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation)."
+	"It requires r.SupportLocalFogVolumes to be true."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = Optimizations, meta = (
+		ConsoleVariable = "r.SupportLocalFogVolumes", DisplayName = "Support Local Fog Volumes",
+		ToolTip = "Local fog volume components can will need to be applied on translucent, and opaque in forward, so resources will need to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation). It requires r.SupportLocalFogVolumes to be true.",
+		ConfigRestartRequired = true))
+		uint32 bSupportLocalFogVolumes : 1;
+
+	/**
+	"Enable cloud shadow on translucent surface. This is evaluated per vertex to reduce GPU cost. The cloud system requires extra samplers/textures to be bound to vertex shaders."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = Optimizations, meta = (
+		ConsoleVariable = "r.SupportCloudShadowOnForwardLitTranslucent", DisplayName = "Support Cloud Shadow On Forward Lit Translucent",
+		ToolTip = "Enable cloud shadow on translucent surface not relying on the translucenct lighting volume, e.g. using Forward lighting. This is evaluated per vertex to reduce GPU cost and requires extra samplers/textures to be bound to vertex shaders. This is not implemented on mobile as VolumetricClouds are not available on these platforms.",
+		ConfigRestartRequired = true))
+		uint32 bSupportCloudShadowOnForwardLitTranslucent : 1;
+
+	/**
+	"Select the format of the light function atlas texture."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = LightFunctionAtlas, meta = (
+		ConsoleVariable = "r.LightFunctionAtlas.Format", DisplayName = "Light Function Atlas Format",
+		ToolTip = "Select the format of the light function atlas texture.",
+		ConfigRestartRequired = true))
+		TEnumAsByte<ELightFunctionAtlasPixelFormat::Type> LightFunctionAtlasPixelFormat;
+
+	/**
+	"Enable support for light function on volumetric fog, when the light function atlas is enabled."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = LightFunctionAtlas, meta = (
+		ConsoleVariable = "r.VolumetricFog.LightFunction", DisplayName = "Volumetric Fog Uses Light Function Atlas.",
+		ToolTip = "Enable support for light function on volumetric fog, when the light function atlas is enabled."))
+		uint32 bVolumetricFogUsesLightFunctionAtlas : 1;
+
+	/**
+	"Enable support for light function on deferred lighting (multi-pass and clustered), when the light function atlas is enabled."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = LightFunctionAtlas, meta = (
+		ConsoleVariable = "r.Deferred.UsesLightFunctionAtlas", DisplayName = "Deferred Lighting Uses Light Function Atlas.",
+		ToolTip = "Enable support for light function on deferred lighting (multi-pass and clustered), when the light function atlas is enabled."))
+		uint32 bDeferredLightingUsesLightFunctionAtlas : 1;
+
+	/**
+	"Enable support for light function on Single Layer Water when the light function atlas is enabled."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = LightFunctionAtlas, meta = (
+		ConsoleVariable = "r.SingleLayerWater.UsesLightFunctionAtlas", DisplayName = "Single Layer Water Uses Light Function Atlas.",
+		ToolTip = "Enable support for light function on Single Layer Water when the light function atlas is enabled.",
+		ConfigRestartRequired = true))
+		uint32 bSingleLayerWaterUsesLightFunctionAtlas : 1;
+
+	/**
+	"Enable support for light function on Translucent material using Forward Shading mode, when the light function atlas is enabled."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = LightFunctionAtlas, meta = (
+		ConsoleVariable = "r.Translucent.UsesLightFunctionAtlas", DisplayName = "Translucent Uses Light Function Atlas.",
+		ToolTip = "Enable support for light function on Translucent material using Forward Shading mode, when the light function atlas is enabled.",
+		ConfigRestartRequired = true))
+		uint32 bTranslucentUsesLightFunctionAtlas : 1;
+
+	/**
+		"Enable IES profile evaluation on translucent materials when using the Forward Shading mode."
+		*/
+	UPROPERTY(config, EditAnywhere, Category = Optimizations, meta = (
+		ConsoleVariable = "r.Translucent.UsesIESProfiles", DisplayName = "Support IES profiles On Translucent Materials (When Using ForwardShading)",
+		ToolTip = "Enable IES profile evaluation on translucent materials when using the Forward Shading mode.",
+		ConfigRestartRequired = true))
+	uint32 bSupportIESProfileOnTranslucent : 1;
+
+	/**
+	"Enable rect light evaluation on translucent materials when using the Forward Shading mode."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = Optimizations, meta = (
+		ConsoleVariable = "r.Translucent.UsesRectLights", DisplayName = "Support Rect Light On Translucent Materials (When Using ForwardShading)",
+		ToolTip = "Enable rect light evaluation on translucent materials when using the Forward Shading mode.",
+		ConfigRestartRequired = true))
+		uint32 bSupportRectLightOnTranslucent : 1;
+
 	UPROPERTY(config, EditAnywhere, Category = Debugging, meta = (
 		ConsoleVariable = "r.GPUCrashDebugging", DisplayName = "Enable vendor specific GPU crash analysis tools",
 		ToolTip = "Enables vendor specific GPU crash analysis tools.",
@@ -844,13 +968,13 @@ class URendererSettings : public UDeveloperSettings
 	uint32 bMultiView : 1;
 
 	UPROPERTY(config, EditAnywhere, Category = VR, meta=(
+		EditCondition = "MobileShadingPath == 0",
 		ConsoleVariable="r.MobileHDR", DisplayName="Mobile HDR",
 		ToolTip="If true, mobile pipelines include a full post-processing pass with tonemapping. Disable this setting for a performance boost and to enable stereoscopic rendering optimizations. Changing this setting requires restarting the editor.",
 		ConfigRestartRequired = true))
 	uint32 bMobilePostProcessing:1;
 
 	UPROPERTY(config, EditAnywhere, Category = VR, meta = (
-		EditCondition = "!bMobilePostProcessing",
 		ConsoleVariable = "vr.MobileMultiView", DisplayName = "Mobile Multi-View",
 		ToolTip = "Enable single-pass stereoscopic rendering on mobile platforms.",
 		ConfigRestartRequired = true))
@@ -874,11 +998,23 @@ class URendererSettings : public UDeveloperSettings
 		ConfigRestartRequired = true))
 		uint32 bMeshStreaming : 1;
 
-	UPROPERTY(config, EditAnywhere, Category = Experimental, meta = (
-		ConsoleVariable = "r.HeterogeneousVolumes", DisplayName = "Enable Heterogeneous Volumes",
+	UPROPERTY(config, EditAnywhere, Category = "Heterogeneous Volumes", meta = (
+		ConsoleVariable = "r.HeterogeneousVolumes", DisplayName = "Heterogeneous Volumes (Experimental)",
 		ToolTip = "Enable rendering with the heterogeneous volumes subsystem.",
 		ConfigRestartRequired = false))
 	uint32 bEnableHeterogeneousVolumes : 1;
+
+	UPROPERTY(config, EditAnywhere, Category = "Heterogeneous Volumes", meta = (
+		ConsoleVariable = "r.HeterogeneousVolumes.Shadows", DisplayName = "Shadow Casting",
+		ToolTip = "Enable heterogeneous volumes to cast shadows onto the environment.",
+		ConfigRestartRequired = true))
+		uint32 bShouldHeterogeneousVolumesCastShadows : 1;
+
+	UPROPERTY(config, EditAnywhere, Category = "Heterogeneous Volumes", meta = (
+		ConsoleVariable = "r.Translucency.HeterogeneousVolumes", DisplayName = "Composite with Translucency",
+		ToolTip = "Enable compositing with heterogeneous volumes when rendering translucency.",
+		ConfigRestartRequired = true))
+	uint32 bCompositeHeterogeneousVolumesWithTranslucency : 1;
 
 	UPROPERTY(config, EditAnywhere, Category=Editor, meta=(
 		ConsoleVariable="r.WireframeCullThreshold",DisplayName="Wireframe Cull Threshold",
@@ -910,34 +1046,6 @@ class URendererSettings : public UDeveloperSettings
 		uint32 bSupportPointLightWholeSceneShadows : 1;
 
 	/**
-	"The sky atmosphere component requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation)."
-	*/
-	UPROPERTY(config, EditAnywhere, Category = ShaderPermutationReduction, meta = (
-		ConsoleVariable = "r.SupportSkyAtmosphere", DisplayName = "Support Sky Atmosphere",
-		ToolTip = "The sky atmosphere component requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation).",
-		ConfigRestartRequired = true))
-		uint32 bSupportSkyAtmosphere : 1;
-
-	/**
-	"The sky atmosphere component can light up the height fog but it requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation)."
-	"It requires r.SupportSkyAtmosphere to be true."
-	*/
-	UPROPERTY(config, EditAnywhere, Category = ShaderPermutationReduction, meta = (
-		ConsoleVariable = "r.SupportSkyAtmosphereAffectsHeightFog", DisplayName = "Support Sky Atmosphere Affecting Height Fog",
-		ToolTip = "The sky atmosphere component can light up the height fog but it requires extra samplers/textures to be bound to apply aerial perspective on transparent surfaces (and all surfaces on mobile via per vertex evaluation). It requires r.SupportSkyAtmosphere to be true.",
-		ConfigRestartRequired = true))
-		uint32 bSupportSkyAtmosphereAffectsHeightFog : 1;
-
-	/**
-	"Enable cloud shadow on translucent surface. This is evaluated per vertex to reduce GPU cost. The cloud system requires extra samplers/textures to be bound to vertex shaders."
-	*/
-	UPROPERTY(config, EditAnywhere, Category = ShaderPermutationReduction, meta = (
-		ConsoleVariable = "r.SupportCloudShadowOnForwardLitTranslucent", DisplayName = "Support Cloud Shadow On Forward Lit Translucent",
-		ToolTip = "Enable cloud shadow on translucent surface not relying on the translucenct lighting volume, e.g. using Forward lighting. This is evaluated per vertex to reduce GPU cost and requires extra samplers/textures to be bound to vertex shaders. This is not implemented on mobile as VolumetricClouds are not available on these platforms.",
-		ConfigRestartRequired = true))
-		uint32 bSupportCloudShadowOnForwardLitTranslucent : 1;
-
-	/**
 	""Enable translucent volumetric self-shadow, requires vertex and pixel shader permutations for all tranlucent materials even if not used by any light."
 	*/
 	UPROPERTY(config, EditAnywhere, Category = ShaderPermutationReduction, meta = (
@@ -962,7 +1070,7 @@ class URendererSettings : public UDeveloperSettings
 		ConsoleVariable = "r.Substrate", DisplayName = "Substrate materials (Experimental)",
 		ToolTip = "Enable Substrate materials (Experimental).",
 		ConfigRestartRequired = true))
-		uint32 bEnableStrata : 1;
+		uint32 bEnableSubstrate : 1;
 
 	/**
 	"Enable Substrate opaque material rough refractions effect from top layers over layers below."
@@ -971,7 +1079,7 @@ class URendererSettings : public UDeveloperSettings
 		ConsoleVariable = "r.Substrate.OpaqueMaterialRoughRefraction", DisplayName = "Substrate opaque material rough refraction",
 		ToolTip = "Enable Substrate opaque material rough refractions effect from top layers over layers below.",
 		ConfigRestartRequired = true))
-		uint32 StrataOpaqueMaterialRoughRefraction : 1;
+		uint32 SubstrateOpaqueMaterialRoughRefraction : 1;
 
 	/**
 	"Enable advanced Substrate material debug visualization shaders. Base pas shaders can output such advanced data."
@@ -980,7 +1088,7 @@ class URendererSettings : public UDeveloperSettings
 		ConsoleVariable = "r.Substrate.Debug.AdvancedVisualizationShaders", DisplayName = "Substrate advanced visualization shaders",
 		ToolTip = "Enable advanced Substrate material debug visualization shaders. Base pass shaders can output such advanced data.",
 		ConfigRestartRequired = true))
-		uint32 StrataDebugAdvancedVisualizationShaders : 1;
+		uint32 SubstrateDebugAdvancedVisualizationShaders : 1;
 
 	/**
 	"Enable rough diffuse material."
@@ -1008,6 +1116,15 @@ class URendererSettings : public UDeveloperSettings
 		ToolTip = "Enable support for Order-Independent-Transparency on translucent surfaces, which remove most of the sorting artifact among translucent surfaces.",
 		ConfigRestartRequired = true))
 		uint32 bOrderedIndependentTransparencyEnable : 1;
+
+	/**
+	"Enable hair strands Auto LOD mode by default."
+	*/
+	UPROPERTY(config, EditAnywhere, Category = HairStrands, meta = (
+		ConsoleVariable = "r.HairStrands.LODMode", DisplayName = "Enable Hair Strands 'Auto' LOD mode",
+		ToolTip = "Enable hair strands Auto LOD mode by default. Otherwise use Manual LOD mode. Auto LOD mode adapts hair curves based on screen coverage. Manual LOD mode relies on LODs manually setup per groom asset. This global behavior can be overridden per groom asset",
+		ConfigRestartRequired = true))
+	uint32 bUseHairStrandsAutoLODMode  : 1;
 
 	/**
 	"Skin cache allows a compute shader to skin once each vertex, save those results into a new buffer and reuse those calculations when later running the depth, base and velocity passes. This also allows opting into the 'recompute tangents' for skinned mesh instance feature. Disabling will reduce the number of shader permutations required per material. Changing this setting requires restarting the editor."
@@ -1051,10 +1168,10 @@ class URendererSettings : public UDeveloperSettings
 
 	UPROPERTY(config, EditAnywhere, Category = Mobile, meta = (
 		ConsoleVariable = "r.Mobile.Forward.EnableLocalLights",
-		DisplayName = "Enable local lights support on mobile forward",
-		ToolTip = "Enable local lights support for mobile forward shading (including translucency in deferred). 0 is disabled, 1 is enabled (default). Changing this setting requires restarting the editor.",
+		DisplayName = "Mobile Local Light Setting",
+		ToolTip = "Select which Local Light Setting to use for Mobile. Changing this setting requires restarting the editor.",
 		ConfigRestartRequired = true))
-		uint32 bMobileForwardEnableLocalLights : 1;
+		TEnumAsByte<EMobileLocalLightSetting> MobileLocalLightSetting;
 
 	UPROPERTY(config, EditAnywhere, Category = Mobile, meta = (
 		ConsoleVariable = "r.Mobile.Forward.EnableClusteredReflections",
@@ -1122,11 +1239,23 @@ class URendererSettings : public UDeveloperSettings
 		ConfigRestartRequired = true))
 		uint32 bMobileAmbientOcclusion : 1;
 
+	UPROPERTY(config, EditAnywhere, Category = Mobile, meta = (
+		ConsoleVariable = "r.Mobile.DBuffer", DisplayName = "Mobile DBuffer Decals",
+		ToolTip = "Whether to accumulate decal properties to a buffer before the base pass with mobile rendering. DBuffer enabled forces a full prepass. Changing this setting requires restarting the editor.",
+		ConfigRestartRequired = true))
+		uint32 bMobileDBuffer : 1;
+
 	UPROPERTY(config, EditAnywhere, Category = Skinning, meta = (
 		ConsoleVariable = "r.GPUSkin.UnlimitedBoneInfluences", DisplayName = "Use Unlimited Bone Influences",
 		ToolTip = "If enabled, a new mesh imported will use unlimited bone buffer instead of fixed MaxBoneInfluences for rendering.",
 		ConfigRestartRequired = true))
 		uint32 bUseUnlimitedBoneInfluences : 1;
+		
+	UPROPERTY(config, EditAnywhere, Category = Skinning, meta = (
+		ConsoleVariable = "r.GPUSkin.AlwaysUseDeformerForUnlimitedBoneInfluences",
+		ToolTip = "Any mesh LODs using Unlimited Bone Influences will always be rendered with a Mesh Deformer. This reduces the number of shader permutations needed for skeletal mesh materials, saving memory at the cost of performance. Has no effect if either Unlimited Bone Influences or Deformer Graph is disabled.",
+		ConfigRestartRequired = true))
+		uint32 bAlwaysUseDeformerForUnlimitedBoneInfluences : 1;
 		
 	UPROPERTY(config, EditAnywhere, Category = Skinning, meta = (
 		ConsoleVariable = "r.GPUSkin.UnlimitedBoneInfluencesThreshold", DisplayName = "Unlimited Bone Influences Threshold",

@@ -468,6 +468,23 @@ FString ToLogString(const FVerifiedAuthSessionId& Id) { return ToLogStringImpl(I
 
 }	/* UE::Online */
 
+FString FUniqueNetIdWrapper::ToString() const
+{
+	FString Result;
+	if (IsValid())
+	{
+		if (IsV1())
+		{
+			Result = GetV1Unsafe()->ToString();
+		}
+		else if (IsV2())
+		{
+			Result = UE::Online::ToString(GetV2Unsafe());
+		}
+	}
+	return Result;
+}
+
 FString FUniqueNetIdWrapper::ToDebugString() const
 {
 	FString Result;

@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionScreen.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "HLSLTree/HLSLTree.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionScreen)
 
@@ -55,6 +57,35 @@ int32 UMaterialExpressionMaterialXScreen::Compile(FMaterialCompiler* Compiler, i
 void UMaterialExpressionMaterialXScreen::GetCaption(TArray<FString>& OutCaptions) const
 {
 	OutCaptions.Add(TEXT("MaterialX Screen"));
+}
+
+bool UMaterialExpressionMaterialXScreen::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionA = A.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionB = B.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionAlpha = Alpha.AcquireHLSLExpressionOrConstant(Generator, Scope, ConstAlpha);
+
+	if(!ExpressionA || !ExpressionB || !ExpressionAlpha)
+	{
+		return false;
+	}
+
+	FTree& Tree = Generator.GetTree();
+
+	const FExpression* ExpressionOne = Tree.NewConstant(1.f);
+
+	auto NewOneMinus = [&](const FExpression* Input)
+	{
+		return Tree.NewSub(ExpressionOne, Input);
+	};
+
+	OutExpression = Tree.NewLerp(ExpressionB,
+								 NewOneMinus(Tree.NewMul(NewOneMinus(ExpressionA), NewOneMinus(ExpressionB))),
+								 ExpressionAlpha);
+
+	return true;
 }
 #endif
 

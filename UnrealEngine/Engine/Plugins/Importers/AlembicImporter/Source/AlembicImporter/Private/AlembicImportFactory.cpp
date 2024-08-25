@@ -25,6 +25,8 @@
 #include "ImportUtils/StaticMeshImportUtils.h"
 #include "Subsystems/ImportSubsystem.h"
 #include "UObject/UObjectIterator.h"
+#include "AssetToolsModule.h"
+#include "Misc/NamePermissionList.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AlembicImportFactory)
 
@@ -191,12 +193,24 @@ UObject* UAlembicImportFactory::FactoryCreateFile(UClass* InClass, UObject* InPa
 		}
 		else
 		{
+			static bool bGeometryCacheAllowed = []() -> bool
+			{
+				IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
+				TSharedPtr<FPathPermissionList> AssetClassPermissionList = AssetTools.GetAssetClassPathPermissionList(EAssetClassAction::ImportAsset);
+				if (AssetClassPermissionList && AssetClassPermissionList->HasFiltering())
+				{
+					return AssetClassPermissionList->PassesFilter(TEXT("/Script/GeometryCache.GeometryCache"));
+				}
+
+				return true;
+			}();
+
 			if (ImportSettings->ImportType == EAlembicImportType::StaticMesh)
 			{
 				const TArray<UObject*> ResultStaticMeshes = ImportStaticMesh(Importer, InParent, Flags);
 				ResultAssets.Append(ResultStaticMeshes);
 			}
-			else if (ImportSettings->ImportType == EAlembicImportType::GeometryCache)
+			else if (bGeometryCacheAllowed && ImportSettings->ImportType == EAlembicImportType::GeometryCache)
 			{
 				UObject* GeometryCache = ImportGeometryCache(Importer, InParent, Flags);
 				if (GeometryCache)
@@ -218,8 +232,12 @@ UObject* UAlembicImportFactory::FactoryCreateFile(UClass* InClass, UObject* InPa
 			{
 				FAssetRegistryModule::AssetCreated(Object);
 				GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPostImport(this, Object);
-				Object->MarkPackageDirty();
-				Object->PostEditChange();
+				// Avoid redoing a PostEditChange since the importer will have most likely done it already
+				if (!Object->GetOutermost()->IsDirty())
+				{
+					Object->MarkPackageDirty();
+					Object->PostEditChange();
+				}
 				AdditionalImportedObjects.Add(Object);
 			}
 		}

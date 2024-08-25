@@ -115,6 +115,18 @@ public:
 	void SendDMX(TMap<FDMXAttributeName, int32> AttributeMap);
 
 	/** 
+	 * Sends the default value for all attributes, including matrix attributes. 
+	 * Note, this call will not raise send dmx traces.
+	 */
+	void SendDefaultValues();
+
+	/** 
+	 * Sends zeroes for all attributes, including matrix attributes.
+	 * Note, this call will not raise send dmx traces.
+	 */
+	void SendZeroValues();
+
+	/** 
 	 * Rebuilds the cache. Should be called when relevant properties, for example the starting channel changed. 
 	 * This will not clear cached DMX data.
 	 */
@@ -476,6 +488,12 @@ public:
 	bool GetAllMatrixCells(TArray<FDMXCell>& Cells);
 
 private:
+	/** 
+	 * Sends reset data to all channels. If bUseDefaultValues is true, sends default values. If it's false it sends zeroes.
+	 * Note, this call will not raise send DMX traces.
+	 */
+	void SendResetDataToAllAttributes(bool bUseDefaultValues);
+
 	/** Called when a Fixture Type changed */
 	void OnFixtureTypeChanged(const UDMXEntityFixtureType* FixtureType);
 

@@ -42,7 +42,7 @@ public:
  * The level editor version of the UV layout tool.
  */
 UCLASS()
-class MESHMODELINGTOOLS_API UUVLayoutTool : public UMultiSelectionMeshEditingTool
+class MESHMODELINGTOOLS_API UUVLayoutTool : public UMultiSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -63,6 +63,12 @@ public:
 	virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
 
 	int32 GetSelectedUVChannel() const;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 

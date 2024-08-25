@@ -7,6 +7,7 @@
 #include "GameFramework/Actor.h"
 #include "Engine/Engine.h"
 #include "MovieSceneSection.h"
+#include "TransformableHandleUtils.h"
 #include "Channels/MovieSceneFloatChannel.h"
 #include "Channels/MovieSceneDoubleChannel.h"
 #include "Channels/MovieSceneChannelProxy.h"
@@ -28,6 +29,20 @@ UTransformableHandle::FHandleModifiedEvent& UTransformableHandle::HandleModified
 	return OnHandleModified;
 }
 
+void UTransformableHandle::Notify(EHandleEvent InEvent, const bool bPreTickTarget) const
+{
+	if (!bNotifying && OnHandleModified.IsBound())
+	{
+		TGuardValue<bool> ReentrantGuardSelf(bNotifying, true);
+		if (bPreTickTarget)
+		{
+			TickTarget();
+		}
+		
+		OnHandleModified.Broadcast(const_cast<UTransformableHandle*>(this), InEvent);
+	}
+}
+
 bool UTransformableHandle::HasBoundObjects() const
 {
 	return ConstraintBindingID.IsValid();
@@ -46,6 +61,14 @@ void UTransformableHandle::OnBindingIDsUpdated(const TMap<UE::MovieScene::FFixed
 	}
 }
 
+void UTransformableHandle::PreEvaluate(const bool bTick) const
+{
+	if (bTick)
+	{
+		TickTarget();
+	}
+}
+
 /**
  * UTransformableComponentHandle
  */
@@ -61,39 +84,21 @@ void UTransformableComponentHandle::PostLoad()
 	RegisterDelegates();
 }
 
-bool UTransformableComponentHandle::IsValid() const
+bool UTransformableComponentHandle::IsValid(const bool bDeepCheck) const
 {
 	return Component.IsValid();
 }
 
 //need to tick any skelmesh component, sibling or parent
-void UTransformableComponentHandle::TickForBaking()
+void UTransformableComponentHandle::TickTarget() const
 {
 	if (!Component.IsValid())
 	{
 		return;
 	}
-
-	const AActor* Parent = Component->GetOwner();
-	while (Parent)
-	{
-		TArray<USkeletalMeshComponent*> MeshComps;
-		Parent->GetComponents(MeshComps, true);
-
-		for (USkeletalMeshComponent* MeshComp : MeshComps)
-		{
-			MeshComp->TickAnimation(0.03f, false);
-			MeshComp->RefreshBoneTransforms();
-			MeshComp->RefreshFollowerComponents();
-			MeshComp->UpdateComponentToWorld();
-			MeshComp->FinalizeBoneTransform();
-			MeshComp->MarkRenderTransformDirty();
-			MeshComp->MarkRenderDynamicDataDirty();
-		}
-
-		Parent = Parent->GetAttachParentActor();
-	}
+	TransformableHandleUtils::TickDependantComponents(Component.Get());
 }
+
 void UTransformableComponentHandle::SetGlobalTransform(const FTransform& InGlobal) const
 {
 	if (Component.IsValid())
@@ -223,16 +228,16 @@ FTickPrerequisite LookForPrimaryPrerequisite(USceneComponent* Component)
 		static constexpr bool bSorted = true;
 		
 		const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(World);
-		const TArray<TObjectPtr<UTickableConstraint>> ParentConstraints =
+		const TArray<TWeakObjectPtr<UTickableConstraint>> ParentConstraints =
 			Controller.GetParentConstraints(GetTypeHash(Component), bSorted);
 		
 		for (int Index = ParentConstraints.Num()-1; Index >= 0; Index--)
 		{
-			if (UTickableConstraint* Constraint = ParentConstraints[Index])
+			if (UTickableConstraint* Constraint = ParentConstraints[Index].Get())
 			{
-				if(IsValidTickFunction(&Constraint->ConstraintTick))
+				if(IsValidTickFunction(&Constraint->GetTickFunction(World)))
 				{
-					return FTickPrerequisite(Constraint->GetOuter(), Constraint->ConstraintTick);
+					return FTickPrerequisite(Constraint->GetOuter(), Constraint->GetTickFunction(World));
 				}
 			}
 		}	
@@ -287,6 +292,12 @@ void UTransformableComponentHandle::RegisterDelegates()
 #if WITH_EDITOR
 	if (GEngine)
 	{
+		// NOTE BINDER: this has to be done before binding UTransformableComponentHandle::OnActorMoving
+		if (!GEngine->OnActorMoving().IsBoundToObject(&GetEvaluationBinding()))
+		{
+			GEngine->OnActorMoving().AddRaw(&GetEvaluationBinding(), &FComponentEvaluationGraphBinding::OnActorMoving);
+		}
+		
 		GEngine->OnActorMoving().AddUObject(this, &UTransformableComponentHandle::OnActorMoving);
 	}
 	FCoreUObjectDelegates::OnObjectPropertyChanged.AddUObject(this, &UTransformableComponentHandle::OnPostPropertyChanged);
@@ -308,10 +319,9 @@ void UTransformableComponentHandle::OnActorMoving(AActor* InActor)
 		return;
 	}
 
-	if(OnHandleModified.IsBound())
-	{
-		OnHandleModified.Broadcast(this, EHandleEvent::GlobalTransformUpdated);
-	}
+	GetEvaluationBinding().bPendingFlush = true;
+	
+	Notify(EHandleEvent::GlobalTransformUpdated);
 }
 
 void UTransformableComponentHandle::OnPostPropertyChanged(
@@ -358,10 +368,7 @@ void UTransformableComponentHandle::OnPostPropertyChanged(
 		return;
 	}
 
-	if(OnHandleModified.IsBound())
-	{
-		OnHandleModified.Broadcast(this, EHandleEvent::GlobalTransformUpdated);
-	}
+	Notify(EHandleEvent::GlobalTransformUpdated);
 }
 
 void UTransformableComponentHandle::OnObjectsReplaced(const TMap<UObject*, UObject*>& InOldToNewInstances)
@@ -594,3 +601,25 @@ FString UTransformableComponentHandle::GetFullLabel() const
 };
 
 #endif
+
+FComponentEvaluationGraphBinding& UTransformableComponentHandle::GetEvaluationBinding()
+{
+	static FComponentEvaluationGraphBinding EvaluationBinding;
+	return EvaluationBinding;
+}
+
+void FComponentEvaluationGraphBinding::OnActorMoving(AActor* InActor)
+{
+	if (!bPendingFlush)
+	{
+		return;
+	}
+	
+	if (UWorld* World = InActor ? InActor->GetWorld() : nullptr)
+	{
+		// flush all pending evaluations if any
+		const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(World);
+		Controller.FlushEvaluationGraph();
+	}
+	bPendingFlush = false;
+}

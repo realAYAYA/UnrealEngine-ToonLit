@@ -30,7 +30,7 @@ namespace EpicGames.Core
 			using (HttpResponseMessage response = await client.GetAsync(url, cancellationToken))
 			{
 				response.EnsureSuccessStatusCode();
-				return await ParseJsonContent<TResponse>(response, cancellationToken);
+				return await ParseJsonContentAsync<TResponse>(response, cancellationToken);
 			}
 		}
 
@@ -40,7 +40,7 @@ namespace EpicGames.Core
 			using (HttpResponseMessage response = await client.GetAsync(url, cancellationToken))
 			{
 				response.EnsureSuccessStatusCode();
-				return await ParseJsonContent<TResponse>(response, cancellationToken);
+				return await ParseJsonContentAsync<TResponse>(response, cancellationToken);
 			}
 		}
 
@@ -81,7 +81,7 @@ namespace EpicGames.Core
 			using (HttpResponseMessage response = await PostAsync(client, url, request, cancellationToken))
 			{
 				response.EnsureSuccessStatusCode();
-				return await ParseJsonContent<TResponse>(response, cancellationToken);
+				return await ParseJsonContentAsync<TResponse>(response, cancellationToken);
 			}
 		}
 
@@ -91,7 +91,7 @@ namespace EpicGames.Core
 			using (HttpResponseMessage response = await PostAsync(client, url, request, cancellationToken))
 			{
 				response.EnsureSuccessStatusCode();
-				return await ParseJsonContent<TResponse>(response, cancellationToken);
+				return await ParseJsonContentAsync<TResponse>(response, cancellationToken);
 			}
 		}
 
@@ -132,7 +132,7 @@ namespace EpicGames.Core
 			using (HttpResponseMessage response = await PutAsync(client, url, request, cancellationToken))
 			{
 				response.EnsureSuccessStatusCode();
-				return await ParseJsonContent<TResponse>(response, cancellationToken);
+				return await ParseJsonContentAsync<TResponse>(response, cancellationToken);
 			}
 		}
 
@@ -142,7 +142,7 @@ namespace EpicGames.Core
 			using (HttpResponseMessage response = await PutAsync(client, url, request, cancellationToken))
 			{
 				response.EnsureSuccessStatusCode();
-				return await ParseJsonContent<TResponse>(response, cancellationToken);
+				return await ParseJsonContentAsync<TResponse>(response, cancellationToken);
 			}
 		}
 
@@ -164,7 +164,7 @@ namespace EpicGames.Core
 		/// <param name="message">The message received</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Parsed object instance</returns>
-		private static async Task<T> ParseJsonContent<T>(HttpResponseMessage message, CancellationToken cancellationToken)
+		private static async Task<T> ParseJsonContentAsync<T>(HttpResponseMessage message, CancellationToken cancellationToken)
 		{
 			byte[] bytes = await message.Content.ReadAsByteArrayAsync(cancellationToken);
 			return JsonSerializer.Deserialize<T>(bytes, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;

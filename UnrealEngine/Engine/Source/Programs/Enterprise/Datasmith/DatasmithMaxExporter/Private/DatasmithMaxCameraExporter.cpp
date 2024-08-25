@@ -4,7 +4,7 @@
 #include "DatasmithMaxDirectLink.h"
 #include "DatasmithMaxExporterDefines.h"
 #include "DatasmithMaxHelper.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxWriter.h"
 #include "DatasmithMaxLogger.h"
 #include "DatasmithSceneFactory.h"

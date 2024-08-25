@@ -5,7 +5,6 @@
 #include "Async/ParallelFor.h"
 #include "Containers/EnumAsByte.h"
 #include "Containers/UnrealString.h"
-#include "Delegates/Delegate.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraphSchema_K2.h"
 #include "Internationalization/Internationalization.h"
@@ -18,7 +17,6 @@
 #include "UObject/Class.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/Script.h"
-#include "UObject/UObjectGlobals.h"		// For FCoreUObjectDelegates::ReloadCompleteDelegate
 #include "UObject/UObjectHash.h"
 #include "UObject/UnrealNames.h"
 #include "UObject/UnrealType.h"
@@ -77,25 +75,10 @@ FTypePromotion::FTypePromotion()
 	: PromotionTable(CreatePromotionTable())
 {
 	CreateOpTable();
-	OnModulesChangedDelegateHandle = FModuleManager::Get().OnModulesChanged().AddStatic(&FTypePromotion::OnModulesChanged);
-	OnReloadCompleteDelegateHandle = FCoreUObjectDelegates::ReloadCompleteDelegate.AddStatic(&FTypePromotion::RefreshPromotionTables);
 }
 
 FTypePromotion::~FTypePromotion()
 {
-	FModuleManager::Get().OnModulesChanged().Remove(OnModulesChangedDelegateHandle);
-	FCoreUObjectDelegates::ReloadCompleteDelegate.Remove(OnReloadCompleteDelegateHandle);
-}
-
-void FTypePromotion::OnModulesChanged(FName ModuleThatChanged, EModuleChangeReason ReasonForChange)
-{
-	// Any time a module is changed, there could possibly be new UFunctions that we 
-	// need to process, so we need to recreate the op table and clear the node spawners
-	// that we are using in order to avoid invalid duplicates in the graph action menu
-	if (ReasonForChange == EModuleChangeReason::ModuleLoaded || ReasonForChange == EModuleChangeReason::ModuleUnloaded)
-	{
-		FTypePromotion::RefreshPromotionTables();
-	}
 }
 
 TMap<FName, TArray<FName>> FTypePromotion::CreatePromotionTable()
@@ -453,12 +436,12 @@ const FText& FTypePromotion::GetUserFacingOperatorName(const FName Operator)
 		{ OperatorNames::Multiply,  LOCTEXT("MultiplyDisplayName",		"Multiply") },
 		{ OperatorNames::Subtract,  LOCTEXT("SubtractDisplayName",		"Subtract") },
 		{ OperatorNames::Divide,	LOCTEXT("DivideDisplayName",		"Divide") },
-		{ OperatorNames::Greater,	LOCTEXT("GreaterDisplayName",		"Greater") },
-		{ OperatorNames::GreaterEq, LOCTEXT("GreaterEqDisplayName",		"Greater Equal") },
-		{ OperatorNames::Less,		LOCTEXT("LessDisplayName",			"Less") },
-		{ OperatorNames::LessEq,	LOCTEXT("LessEqDisplayName",		"Less Equal") },
-		{ OperatorNames::NotEq,		LOCTEXT("NotEqDisplayName",			"Not Equal") },
-		{ OperatorNames::Equal,		LOCTEXT("EqualDisplayName",			"Equal") },
+		{ OperatorNames::Greater,	LOCTEXT("GreaterDisplayName",		"Greater ( > )") },
+		{ OperatorNames::GreaterEq, LOCTEXT("GreaterEqDisplayName",		"Greater Equal ( >= )") },
+		{ OperatorNames::Less,		LOCTEXT("LessDisplayName",			"Less ( < )") },
+		{ OperatorNames::LessEq,	LOCTEXT("LessEqDisplayName",		"Less Equal ( <= )") },
+		{ OperatorNames::NotEq,		LOCTEXT("NotEqDisplayName",			"Not Equal ( != )") },
+		{ OperatorNames::Equal,		LOCTEXT("EqualDisplayName",			"Equal ( == )") },
 		{ OperatorNames::NoOp,		LOCTEXT("NoOpDisplayName",			"") },
 	};
 

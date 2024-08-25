@@ -29,7 +29,7 @@ FCollisionFilterData ToUnrealFilterData(const FChaosFilterData& FilterData)
 template <typename THitLocation>
 uint32 FindFaceIndexImp(const THitLocation& PHit, const FVector& UnitDir)
 {
-	const FTransform WorldTM(PHit.Actor->R(), PHit.Actor->X());
+	const FTransform WorldTM(PHit.Actor->GetR(), PHit.Actor->GetX());
 	const FVector LocalPosition = WorldTM.InverseTransformPositionNoScale(PHit.WorldPosition);
 	const FVector LocalUnitDir = WorldTM.InverseTransformVectorNoScale(UnitDir);
 	return PHit.Shape->GetGeometry()->FindMostOpposingFace(LocalPosition, LocalUnitDir, PHit.FaceIndex, 1);	//todo:this number matches the one above, but is it right?

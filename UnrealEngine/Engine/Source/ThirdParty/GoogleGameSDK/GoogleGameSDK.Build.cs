@@ -30,10 +30,7 @@ public class GoogleGameSDK : ModuleRules
 			if (bEnableGameSDKMemAdvisor)
 			{
 				PublicAdditionalLibraries.Add(Arm64GameSDKPath + "libmemory_advice_static.a");
-				PublicAdditionalLibraries.Add(Arm64GameSDKPath + "libtensorflow-lite.a");
 				PublicAdditionalLibraries.Add(x86_64GameSDKPath + "libmemory_advice_static.a");
-				PublicAdditionalLibraries.Add(x86_64GameSDKPath + "libtensorflow-lite.a");
-
 				PublicDefinitions.Add("HAS_ANDROID_MEMORY_ADVICE=1");
 			}
 			else

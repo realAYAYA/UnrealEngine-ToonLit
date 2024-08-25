@@ -1,9 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -12,6 +8,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Core;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -52,7 +52,7 @@ namespace UnrealGameSync
 			Task StopAsync()
 			{
 				Task stopTask = Task.CompletedTask;
-				if(_backgroundTask != null)
+				if (_backgroundTask != null)
 				{
 					_onComplete = null;
 
@@ -85,7 +85,7 @@ namespace UnrealGameSync
 
 				Task wakeTask = _wakeEvent.Task;
 				Task cancelTask = Task.Delay(-1, cancellationToken);
-				for(;;)
+				for (; ; )
 				{
 					await Task.WhenAny(wakeTask, cancelTask);
 
@@ -114,7 +114,7 @@ namespace UnrealGameSync
 		readonly FindChangesWorker _worker;
 #pragma warning restore CA2213
 		readonly IServiceProvider _serviceProvider;
-	
+
 		public IssueFixedWindow(IPerforceSettings perforceSettings, int initialChangeNumber, IServiceProvider serviceProvider)
 		{
 			InitializeComponent();
@@ -128,9 +128,9 @@ namespace UnrealGameSync
 			UserNameTextBox.Text = perforceSettings.UserName;
 			UserNameTextBox.SelectionStart = UserNameTextBox.Text.Length;
 
-			if(initialChangeNumber != 0)
+			if (initialChangeNumber != 0)
 			{
-				if(initialChangeNumber < 0)
+				if (initialChangeNumber < 0)
 				{
 					SpecifyChangeRadioButton.Checked = false;
 					SystemicFixRadioButton.Checked = true;
@@ -149,15 +149,15 @@ namespace UnrealGameSync
 		{
 			base.OnLoad(e);
 
-			if(SystemicFixRadioButton.Checked)
+			if (SystemicFixRadioButton.Checked)
 			{
 				SystemicFixRadioButton.Select();
 			}
-			else if(SpecifyChangeRadioButton.Checked)
+			else if (SpecifyChangeRadioButton.Checked)
 			{
 				SpecifyChangeRadioButton.Select();
 			}
-			else if(RecentChangeRadioButton.Checked)
+			else if (RecentChangeRadioButton.Checked)
 			{
 				ChangesListView.Select();
 			}
@@ -167,9 +167,9 @@ namespace UnrealGameSync
 
 		public static bool ShowModal(IWin32Window owner, IPerforceSettings perforce, IServiceProvider serviceProvider, ref int fixChangeNumber)
 		{
-			using(IssueFixedWindow fixedWindow = new IssueFixedWindow(perforce, fixChangeNumber, serviceProvider))
+			using (IssueFixedWindow fixedWindow = new IssueFixedWindow(perforce, fixChangeNumber, serviceProvider))
 			{
-				if(fixedWindow.ShowDialog(owner) == DialogResult.OK)
+				if (fixedWindow.ShowDialog(owner) == DialogResult.OK)
 				{
 					fixChangeNumber = fixedWindow._changeNumber;
 					return true;
@@ -198,25 +198,25 @@ namespace UnrealGameSync
 
 		private void PopulateChanges(string userName, List<DescribeRecord> changes)
 		{
-			if(!IsDisposed)
+			if (!IsDisposed)
 			{
 				ChangesListView.BeginUpdate();
 				ChangesListView.Items.Clear();
-				if(changes != null)
+				if (changes != null)
 				{
-					foreach(DescribeRecord change in changes)
+					foreach (DescribeRecord change in changes)
 					{
-						if(change.Description != null && !change.Description.Contains("#ROBOMERGE-SOURCE", StringComparison.Ordinal))
+						if (change.Description != null && !change.Description.Contains("#ROBOMERGE-SOURCE", StringComparison.Ordinal))
 						{
 							string stream = "";
-							if(change.Files.Count > 0)
+							if (change.Files.Count > 0)
 							{
 								string depotFile = change.Files[0].DepotFile;
 
 								int idx = 0;
-								for(int count = 0; idx < depotFile.Length; idx++)
+								for (int count = 0; idx < depotFile.Length; idx++)
 								{
-									if(depotFile[idx] == '/' && ++count >= 4)
+									if (depotFile[idx] == '/' && ++count >= 4)
 									{
 										break;
 									}
@@ -240,13 +240,13 @@ namespace UnrealGameSync
 
 		private void ChangesListView_MouseClick(object sender, MouseEventArgs args)
 		{
-			if(args.Button == MouseButtons.Right)
+			if (args.Button == MouseButtons.Right)
 			{
 				ListViewHitTestInfo hitTest = ChangesListView.HitTest(args.Location);
-				if(hitTest.Item != null && hitTest.Item.Tag != null)
+				if (hitTest.Item != null && hitTest.Item.Tag != null)
 				{
-					DescribeRecord? record = hitTest.Item.Tag as DescribeRecord; 
-					if(record != null)
+					DescribeRecord? record = hitTest.Item.Tag as DescribeRecord;
+					if (record != null)
 					{
 						ChangesListContextMenu.Tag = record;
 						ChangesListContextMenu.Show(ChangesListView, args.Location);
@@ -302,19 +302,19 @@ namespace UnrealGameSync
 
 		private bool TryGetSelectedChange(out int changeNumber)
 		{
-			if(SpecifyChangeRadioButton.Checked)
+			if (SpecifyChangeRadioButton.Checked)
 			{
 				return Int32.TryParse(ChangeNumberTextBox.Text, out changeNumber);
 			}
-			else if(SystemicFixRadioButton.Checked)
+			else if (SystemicFixRadioButton.Checked)
 			{
 				changeNumber = -1;
 				return true;
 			}
 			else
 			{
-				DescribeRecord? change = (ChangesListView.SelectedItems.Count > 0)? ChangesListView.SelectedItems[0].Tag as DescribeRecord : null;
-				if(change == null)
+				DescribeRecord? change = (ChangesListView.SelectedItems.Count > 0) ? ChangesListView.SelectedItems[0].Tag as DescribeRecord : null;
+				if (change == null)
 				{
 					changeNumber = 0;
 					return false;
@@ -334,7 +334,7 @@ namespace UnrealGameSync
 
 		private void SpecifyChangeRadioButton_CheckedChanged(object sender, EventArgs e)
 		{
-			if(SpecifyChangeRadioButton.Checked)
+			if (SpecifyChangeRadioButton.Checked)
 			{
 				RecentChangeRadioButton.Checked = false;
 				SystemicFixRadioButton.Checked = false;
@@ -344,7 +344,7 @@ namespace UnrealGameSync
 
 		private void RecentChangeRadioButton_CheckedChanged(object sender, EventArgs e)
 		{
-			if(RecentChangeRadioButton.Checked)
+			if (RecentChangeRadioButton.Checked)
 			{
 				SpecifyChangeRadioButton.Checked = false;
 				SystemicFixRadioButton.Checked = false;
@@ -354,7 +354,7 @@ namespace UnrealGameSync
 
 		private void SystemicFixRadioButton_CheckedChanged(object sender, EventArgs e)
 		{
-			if(SystemicFixRadioButton.Checked)
+			if (SystemicFixRadioButton.Checked)
 			{
 				RecentChangeRadioButton.Checked = false;
 				SpecifyChangeRadioButton.Checked = false;
@@ -365,7 +365,7 @@ namespace UnrealGameSync
 		private void UserBrowseBtn_Click(object sender, EventArgs e)
 		{
 			string? selectedUserName;
-			if(SelectUserWindow.ShowModal(this, _perforceSettings, _serviceProvider, out selectedUserName))
+			if (SelectUserWindow.ShowModal(this, _perforceSettings, _serviceProvider, out selectedUserName))
 			{
 				UserNameTextBox.Text = selectedUserName;
 			}

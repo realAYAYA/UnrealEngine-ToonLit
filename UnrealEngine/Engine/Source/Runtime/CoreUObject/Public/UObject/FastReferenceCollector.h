@@ -18,6 +18,14 @@
 #include "UObject/DynamicallyTypedValue.h"
 #include "UObject/GCObject.h"
 
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+#include "VerseVM/VVMValue.h"
+#endif
+
+#if ENABLE_GC_HISTORY
+#include "UObject/ReferenceToken.h"
+#endif
+
 /*=============================================================================
 	FastReferenceCollector.h: Unreal realtime garbage collection helpers
 =============================================================================*/
@@ -33,12 +41,17 @@ enum class EGCOptions : uint32
 	None = 0,
 	Parallel = 1 << 0,					// Use all task workers to collect references, must be started on main thread
 	AutogenerateSchemas = 1 << 1,		// Assemble schemas for new UClasses
-	WithPendingKill = 1 << 2,			// Internal flag used by reachability analysis
+	WithPendingKill UE_DEPRECATED(5.4, "WithPendingKill should no longer be used. Use EliminateGarbage.")  = 1 << 2,			// Internal flag used by reachability analysis
+	EliminateGarbage  = 1 << 2,			// Internal flag used by reachability analysis
+	IncrementalReachability = 1 << 3	// Run Reachability Analysis incrementally
 };
 ENUM_CLASS_FLAGS(EGCOptions);
 
 inline constexpr bool IsParallel(EGCOptions Options) { return !!(Options & EGCOptions::Parallel); }
-inline constexpr bool IsPendingKill(EGCOptions Options) { return !!(Options & EGCOptions::WithPendingKill); }
+
+inline constexpr bool IsEliminatingGarbage(EGCOptions Options) { return !!(Options & EGCOptions::EliminateGarbage); }
+UE_DEPRECATED(5.4, "IsPendingKill should no longer be used. Use IsEliminatingGarbage.")
+inline constexpr bool IsPendingKill(EGCOptions Options) { return !!(Options & EGCOptions::EliminateGarbage); }
 
 /** Helper to give GC internals friend access to certain core classes */
 struct FGCInternals
@@ -59,6 +72,8 @@ public:
 
 namespace UE::GC
 {
+
+struct FStructArrayBlock;
 
 static constexpr uint32 ObjectLookahead = 16;
 
@@ -176,7 +191,11 @@ public:
 	void SetWorkerIndex(int32 Idx) { WorkerIndex = Idx; }
 	int32 GetWorkerIndex() const { return WorkerIndex; }
 
-	
+	bool HasWork() const
+	{
+		return PartialNum() != 0;
+	}
+
 private:
 	UObject** WipIt; // Wip->Objects cursor
 	FWorkBlock* Wip;
@@ -219,16 +238,20 @@ struct FProcessorStats
 #if UE_BUILD_SHIPPING
 	static constexpr uint32 NumObjects = 0;
 	static constexpr uint32 NumReferences = 0;
+	static constexpr uint32 NumVerseCells = 0;
 	static constexpr bool bFoundGarbageRef = false;
 	FORCEINLINE constexpr void AddObjects(uint32) {}
 	FORCEINLINE constexpr void AddReferences(uint32) {}
+	FORCEINLINE constexpr void AddVerseCells(uint32) {}
 	FORCEINLINE constexpr void TrackPotentialGarbageReference(bool) {}
 #else
 	uint32 NumObjects = 0;
 	uint32 NumReferences = 0;
+	uint32 NumVerseCells = 0;
 	bool bFoundGarbageRef = false;
 	FORCEINLINE void AddObjects(uint32 Num) { NumObjects += Num; }
 	FORCEINLINE void AddReferences(uint32 Num) { NumReferences += Num; }
+	FORCEINLINE void AddVerseCells(uint32 Num) { NumVerseCells += Num; }
 	FORCEINLINE void TrackPotentialGarbageReference(bool bDetectedGarbage) { bFoundGarbageRef |= bDetectedGarbage; }
 #endif
 
@@ -236,8 +259,66 @@ struct FProcessorStats
 	{
 		AddObjects(Stats.NumObjects);
 		AddReferences(Stats.NumReferences);
+		AddVerseCells(Stats.NumVerseCells);
 		TrackPotentialGarbageReference(Stats.bFoundGarbageRef);
 	}
+};
+
+struct FStructArray
+{
+	FSchemaView Schema{ NoInit };
+	uint8* Data;
+	int32 Num;
+	uint32 Stride;
+};
+
+struct FSuspendedStructBatch
+{
+	FStructArrayBlock* Wip = nullptr;
+	FStructArray* WipIt = nullptr;
+
+	FORCEINLINE bool ContainsBatchData() const
+	{
+		return !!Wip;
+	}
+};
+
+struct FWeakReferenceInfo
+{
+	UObject* ReferencedObject = nullptr;
+	UObject** Reference = nullptr;
+	UObject* ReferenceOwner = nullptr;
+};
+
+/** Maintains a stack of schemas currently processed by reachability analysis for debugging referencing property names */
+struct FDebugSchemaStackNode
+{
+#if !UE_BUILD_SHIPPING
+	FMemberId Member;
+	FSchemaView Schema;
+	FDebugSchemaStackNode* Prev;
+	
+	FDebugSchemaStackNode()
+		: Member(0)
+		, Prev(nullptr)
+	{
+	}
+	FDebugSchemaStackNode(FSchemaView InSchema, FDebugSchemaStackNode* PrevNode)
+		: Member(0)
+		, Schema(InSchema)
+		, Prev(PrevNode)
+	{
+	}
+#endif // !UE_BUILD_SHIPPING
+
+	FORCEINLINE void SetMemberId(FMemberId MemberId)
+	{
+#if !UE_BUILD_SHIPPING
+		Member = MemberId;
+#endif
+	}
+
+	COREUOBJECT_API FString ToString() const;
 };
 
 /** Thread-local context containing initial objects and references to collect */
@@ -259,15 +340,21 @@ public:
 	FWorkBlockifier ObjectsToSerialize;
 	TConstArrayView<UObject**> InitialNativeReferences;
 	FWorkCoordinator* Coordinator = nullptr;
-	TArray<UObject**> WeakReferences;
+	TArray<FWeakReferenceInfo> WeakReferences;
 	FProcessorStats Stats;
 
 #if !UE_BUILD_SHIPPING
 	TArray<FGarbageReferenceInfo> GarbageReferences;
 #endif
 #if ENABLE_GC_HISTORY
-	TMap<const UObject*, TArray<FGCDirectReference>*> History;
+	TMap<FReferenceToken, TArray<FGCDirectReference>*> History;
 #endif
+
+	FSuspendedStructBatch IncrementalStructs;
+	bool bIsSuspended = false;
+	bool bDidWork = false;
+
+	FDebugSchemaStackNode* SchemaStack = nullptr;
 
 	FORCEINLINE UObject* GetReferencingObject()	{ return ReferencingObject;	}
 
@@ -301,6 +388,40 @@ public:
 
 //////////////////////////////////////////////////////////////////////////
 
+struct FDebugSchemaStackScope
+{
+#if !UE_BUILD_SHIPPING
+	FWorkerContext& Context;
+	FDebugSchemaStackNode Node;
+#endif
+
+	FDebugSchemaStackScope(FWorkerContext& InContext, FSchemaView Schema)
+#if !UE_BUILD_SHIPPING
+		: Context(InContext)
+		, Node(Schema, InContext.SchemaStack)
+#endif
+	{
+#if !UE_BUILD_SHIPPING
+		InContext.SchemaStack = &Node;
+#endif
+	}
+	~FDebugSchemaStackScope()
+	{
+#if !UE_BUILD_SHIPPING
+		Context.SchemaStack = Node.Prev;
+#endif
+	}
+};
+
+struct FDebugSchemaStackNoOpScope
+{
+	FDebugSchemaStackNoOpScope(FWorkerContext& InContext, FSchemaView Schema)
+	{
+	}
+};
+
+//////////////////////////////////////////////////////////////////////////
+
 namespace Private {
 
 struct FMemberUnpacked
@@ -319,14 +440,6 @@ struct FMemberWordUnpacked
 {
 	FMemberWordUnpacked(const FMemberPacked In[4]) : Members{In[0], In[1], In[2], In[3]} {}
 	FMemberUnpacked Members[4];
-};
-
-struct FStructArray
-{
-	FSchemaView Schema{NoInit};
-	uint8* Data;
-	int32 Num;
-	uint32 Stride;
 };
 
 struct FStridedReferenceArray
@@ -394,6 +507,7 @@ FORCEINLINE_DEBUGGABLE void VisitStructs(DispatcherType& Dispatcher, FSchemaView
 template<class DispatcherType, class ArrayType>
 FORCEINLINE_DEBUGGABLE void VisitStructArray(DispatcherType& Dispatcher, FSchemaView StructSchema, ArrayType& Array)
 {
+	typename DispatcherType::SchemaStackScopeType SchemaStack(Dispatcher.Context, StructSchema);
 	VisitStructs(Dispatcher, StructSchema, (uint8*)Array.GetData(), Array.Num());
 }
 
@@ -413,6 +527,7 @@ FORCEINLINE_DEBUGGABLE void VisitSparseStructArray(DispatcherType& Dispatcher, F
 		{
 			if (Array.IsAllocated(Idx))
 			{
+				typename DispatcherType::SchemaStackScopeType SchemaStack(Dispatcher.Context, StructSchema);
 				VisitNestedStructMembers(Dispatcher, StructSchema, It);
 			}
 		}
@@ -450,6 +565,7 @@ FORCEINLINE_DEBUGGABLE void VisitOptional(DispatcherType& Dispatcher, FSchemaVie
 	check(!StructSchema.IsEmpty());
 	uint32 ValueSize = StructSchema.GetStructStride();
 	bool bIsSet = *(bool*)(Instance + ValueSize);
+	typename DispatcherType::SchemaStackScopeType SchemaStack(Dispatcher.Context, StructSchema);
 	VisitStructs(Dispatcher, StructSchema, Instance, bIsSet);
 }
 
@@ -521,6 +637,7 @@ FORCEINLINE_DEBUGGABLE void VisitMembers(DispatcherType& Dispatcher, FSchemaView
 		for (FMemberUnpacked Member : Quad.Members)
 		{
 			uint8* MemberPtr = (uint8*)(InstanceCursor + Member.WordOffset);
+			Dispatcher.SetDebugSchemaStackMemberId(FMemberId(DebugIdx));
 
 			switch (Member.Type)
 			{
@@ -556,6 +673,12 @@ FORCEINLINE_DEBUGGABLE void VisitMembers(DispatcherType& Dispatcher, FSchemaView
 			return; // ARO is an implicit stop
 			case EMemberType::Stop:
 			return; // Stop schema without ARO call
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+			case EMemberType::VerseValue:				Dispatcher.HandleVerseValue(*(Verse::VValue*)MemberPtr, FMemberId(DebugIdx), Origin);
+			break;
+			case EMemberType::VerseValueArray:			Dispatcher.HandleVerseValueArray(*(TArray<Verse::VValue>*)MemberPtr, FMemberId(DebugIdx), Origin);
+			break;
+#endif
 			default:									LogIllegalTypeFatal(Member.Type, DebugIdx, Instance);
 			return;
 			}
@@ -583,6 +706,7 @@ struct TDirectDispatcher
 	static constexpr bool bBatching = false;
 	static constexpr bool bParallel = IsParallel(ProcessorType::Options);
 
+	typedef FDebugSchemaStackScope SchemaStackScopeType;
 	ProcessorType& Processor;
 	FWorkerContext& Context;
 	FReferenceCollector& Collector;
@@ -624,6 +748,56 @@ struct TDirectDispatcher
 	{
 		HandleKillableReferences(ToView(Array), MemberId, Origin);
 	}
+
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+	// Some helper templates to detect if the ProcessorType supports HasHandleTokenStreamVerseCellReference
+	template <typename T, typename = void>
+	struct HasHandleTokenStreamVerseCellReference : std::false_type {};
+
+	template <typename T>
+	using HandleTokenStreamVerseCellReference_t = decltype(std::declval<T>().HandleTokenStreamVerseCellReference(std::declval<FWorkerContext&>(), std::declval<UObject*>(), std::declval<Verse::VCell*>(), std::declval<FMemberId>(), std::declval<EOrigin>()));
+
+	template <typename T>
+	struct HasHandleTokenStreamVerseCellReference <T, std::void_t<HandleTokenStreamVerseCellReference_t<T>>> : std::true_type {};
+
+	FORCEINLINE_DEBUGGABLE void HandleVerseValueDirectly(UObject* ReferencingObject, Verse::VValue Value, FMemberId MemberId, EOrigin Origin) const
+	{
+		if (Verse::VCell* Cell = Value.ExtractCell())
+		{
+			if constexpr (HasHandleTokenStreamVerseCellReference<ProcessorType>::value)
+			{
+				Processor.HandleTokenStreamVerseCellReference(Context, ReferencingObject, Cell, MemberId, Origin);
+			}
+			Context.Stats.AddVerseCells(1);
+		}
+		else if (Value.IsUObject())
+		{
+			HandleImmutableReference(Value.AsUObject(), MemberId, Origin);
+		}
+	}
+
+	FORCEINLINE_DEBUGGABLE void HandleVerseValue(Verse::VValue Value, FMemberId MemberId, EOrigin Origin)
+	{
+		HandleVerseValueDirectly(Context.GetReferencingObject(), Value, MemberId, Origin);
+	}
+
+	FORCEINLINE void HandleVerseValueArray(TArrayView<Verse::VValue> Values, FMemberId MemberId, EOrigin Origin)
+	{
+		for (Verse::VValue Value : Values)
+		{
+			HandleVerseValueDirectly(Context.GetReferencingObject(), Value, MemberId, Origin);
+		}
+	}
+#endif
+
+	void Suspend()
+	{
+	}
+
+	void SetDebugSchemaStackMemberId(FMemberId Member)
+	{
+		Context.SchemaStack->SetMemberId(Member);
+	}
 };
 
 // Default implementation is to create new direct dispatcher
@@ -643,7 +817,9 @@ struct TGetDispatcherType
 //////////////////////////////////////////////////////////////////////////
 
 enum class ELoot { Nothing, Block, ARO, Context };
-COREUOBJECT_API ELoot StealWork(FWorkerContext& Context, FReferenceCollector& Collector, FWorkBlock*& OutBlock);
+COREUOBJECT_API ELoot StealWork(FWorkerContext& Context, FReferenceCollector& Collector, FWorkBlock*& OutBlock, EGCOptions Options);
+
+COREUOBJECT_API void SuspendWork(FWorkerContext& Context);
 
 /** Allocates contexts and coordinator, kicks worker tasks that also call ProcessSync. Processor is type-erased to void* to avoid templated code. */
 COREUOBJECT_API void ProcessAsync(void (*ProcessSync)(void*, FWorkerContext&), void* Processor, FWorkerContext& InitialContext);
@@ -667,6 +843,8 @@ public:
 
 	void ProcessObjectArray(FWorkerContext& Context)
 	{
+		Context.bDidWork = true;
+		Context.bIsSuspended = false;
 		static_assert(!EnumHasAllFlags(Options, EGCOptions::Parallel | EGCOptions::AutogenerateSchemas), "Can't assemble token streams in parallel");
 		
 		CollectorType Collector(Processor, Context);
@@ -694,6 +872,14 @@ StoleContext:
 				Context.ObjectsToSerialize.FreeOwningBlock(CurrentObjects.GetData());
 			}
 
+			if (Processor.IsTimeLimitExceeded())
+			{
+				FlushWork(Dispatcher);
+				Dispatcher.Suspend();
+				SuspendWork(Context);
+				return;
+			}
+
 			int32 BlockSize = FWorkBlock::ObjectCapacity;
 			FWorkBlockifier& RemainingObjects = Context.ObjectsToSerialize;
 			FWorkBlock* Block = RemainingObjects.PopFullBlock<Options>();
@@ -705,21 +891,13 @@ StoleContext:
 				}
 
 StoleARO:
-				if constexpr (DispatcherType::bBatching)
-				{
-					if (Dispatcher.FlushToStructBlocks())
-					{
-						ProcessStructs(Dispatcher);
-					}
-					
-					Dispatcher.FlushQueuedReferences();
-				}
+				FlushWork(Dispatcher);
 
 				if (	 Block = RemainingObjects.PopFullBlock<Options>(); Block);
 				else if (Block = RemainingObjects.PopPartialBlock(/* out if successful */ BlockSize); Block);
 				else if (bIsParallel) // if constexpr yields MSVC unreferenced label warning
 				{
-					switch (StealWork(/* in-out */ Context, Collector, /* out */ Block))
+					switch (StealWork(/* in-out */ Context, Collector, /* out */ Block, Options))
 					{
 						case ELoot::Nothing:	break;				// Done, stop working
 						case ELoot::Block:		break;				// Stole full block, process it
@@ -773,10 +951,36 @@ private:
 #endif
 			if (!Schema.IsEmpty())
 			{
+				typename DispatcherType::SchemaStackScopeType SchemaStack(Dispatcher.Context, Schema);
 				Processor.BeginTimingObject(CurrentObject);
 				Private::VisitMembers(Dispatcher, Schema, CurrentObject);
 				Processor.UpdateDetailedStats(CurrentObject);
 			}
+		}
+	}
+
+	// Some helper templates to detect if the DispatcherType supports FlushWord
+	template <typename T, typename = void>
+	struct HasFlushWork : std::false_type {};
+
+	template <typename T>
+	struct HasFlushWork <T, std::void_t<decltype(std::declval<T>().FlushWork())>> : std::true_type {};
+
+	FORCEINLINE_DEBUGGABLE void FlushWork(DispatcherType& Dispatcher)
+	{
+		if constexpr (DispatcherType::bBatching)
+		{
+			if (Dispatcher.FlushToStructBlocks())
+			{
+				ProcessStructs(Dispatcher);
+			}
+
+			Dispatcher.FlushQueuedReferences();
+		}
+
+		if constexpr (HasFlushWork<DispatcherType>::value)
+		{
+			Dispatcher.FlushWork();
 		}
 	}
 
@@ -801,10 +1005,18 @@ public:
 
 	virtual void HandleObjectReference(UObject*& Object, const UObject* ReferencingObject, const FProperty* ReferencingProperty) override
 	{
+		if (!ReferencingObject)
+		{
+			ReferencingObject = Context.GetReferencingObject();
+		}
 		Processor.HandleTokenStreamObjectReference(Context, const_cast<UObject*>(ReferencingObject), Object, EMemberlessId::Collector, EOrigin::Other, false);
 	}
 	virtual void HandleObjectReferences(UObject** InObjects, const int32 ObjectNum, const UObject* ReferencingObject, const FProperty* InReferencingProperty) override
 	{
+		if (!ReferencingObject)
+		{
+			ReferencingObject = Context.GetReferencingObject();
+		}
 		for (int32 ObjectIndex = 0; ObjectIndex < ObjectNum; ++ObjectIndex)
 		{
 			UObject*& Object = InObjects[ObjectIndex];
@@ -837,8 +1049,16 @@ public:
 	void UpdateDetailedStats(UObject* CurrentObject) {}
 	void LogDetailedStatsSummary() {}
 
+	FORCEINLINE bool IsTimeLimitExceeded() const
+	{
+		return false;
+	}
+
 	// Implement this in your derived class, don't make this virtual as it will affect performance!
 	//FORCEINLINE void HandleTokenStreamObjectReference(FWorkerContext& Context, UObject* ReferencingObject, UObject*& Object, FMemberId MemberId, EOrigin Origin, bool bAllowReferenceElimination)
+
+	// Implement this in your derived class to add VCell support, don't make this virtual as it will affect performance!
+	//FORCEINLINE void HandleTokenStreamVerseCellReference(FWorkerContext& Context, UObject* ReferencingObject, Verse::VCell* Cell, FMemberId MemberId, EOrigin Origin)
 };
 
 
@@ -848,7 +1068,7 @@ FORCEINLINE static void CollectReferences(ProcessorType& Processor, UE::GC::FWor
 	using namespace UE::GC;
 	using FastReferenceCollector = TFastReferenceCollector<ProcessorType, CollectorType>;
 	
-	if constexpr (IsParallel(ProcessorType::Options))
+	if (IsParallel(ProcessorType::Options) && !UE::GC::GIsIncrementalReachabilityPending)
 	{
 		ProcessAsync([](void* P, FWorkerContext& C) { FastReferenceCollector(*reinterpret_cast<ProcessorType*>(P)).ProcessObjectArray(C); }, &Processor, Context);
 	}

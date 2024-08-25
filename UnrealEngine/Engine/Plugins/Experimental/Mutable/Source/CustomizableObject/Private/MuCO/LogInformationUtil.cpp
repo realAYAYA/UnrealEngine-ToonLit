@@ -2,17 +2,19 @@
 
 #include "MuCO/LogInformationUtil.h"
 
+#include "MuCO/CustomizableObjectSystemPrivate.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
-#include "MuCO/CustomizableInstancePrivateData.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
 #include "TextureResource.h"
+#include "MuCO/CustomizableObject.h"
 
 int LogInformationUtil::CountLOD0 = 0;
 int LogInformationUtil::CountLOD1 = 0;
 int LogInformationUtil::CountLOD2 = 0;
 
-void LogInformationUtil::PrintGeneratedTextures(const TArray<struct FGeneratedTexture> GeneratedTextures, FString& Log, bool DoPrintInitialMessage)
+void LogInformationUtil::PrintGeneratedTextures(const TArray<FGeneratedTexture> GeneratedTextures, FString& Log, bool DoPrintInitialMessage)
 {
 	if (GeneratedTextures.Num() == 0)
 	{
@@ -107,13 +109,10 @@ void LogInformationUtil::LogShowInstanceData(const UCustomizableObjectInstance* 
 	LogData += FString::Printf(TEXT("Priority=%f "), FMath::Sqrt(CustomizableObjectInstance->GetPrivate()->LastMinSquareDistFromComponentToPlayer));
 
 	const uint32 InstanceFlags = CustomizableObjectInstance->GetPrivate()->GetCOInstanceFlags();
-	LogData += FString::Printf(TEXT("bIsUpdating=%d "), InstanceFlags & ECOInstanceFlags::Updating);
 	LogData += FString::Printf(TEXT("bShouldUpdateLODs=%d "), InstanceFlags & ECOInstanceFlags::PendingLODsUpdate);
 
 	LogData += FString::Printf(TEXT("CurrentMinLOD=%d "), CustomizableObjectInstance->GetCurrentMinLOD());
-	LogData += FString::Printf(TEXT("CurrentMaxLOD=%d "), CustomizableObjectInstance->GetCurrentMaxLOD());
 	LogData += FString::Printf(TEXT("MinLODToLoad=%d "), CustomizableObjectInstance->GetMinLODToLoad());
-	LogData += FString::Printf(TEXT("MaxLODToLoad=%d\n"), CustomizableObjectInstance->GetMaxLODToLoad());
 }
 
 
@@ -123,13 +122,11 @@ void LogInformationUtil::LogShowInstanceDataFull(const UCustomizableObjectInstan
 	FString LogData = "\n\n";
 
 	LogData += FString::Printf(TEXT("CustomizableObjectInstance %s, "), *CustomizableObjectInstance->GetName());
-	
-	PrintBoolParameters(CustomizableObjectInstance->GetBoolParameters(), LogData);
-	PrintIntParameters(CustomizableObjectInstance->GetIntParameters(), LogData);
-	PrintFloatParameters(CustomizableObjectInstance->GetFloatParameters(), LogData);
-	PrintVectorParameters(CustomizableObjectInstance->GetVectorParameters(), LogData);
-	PrintProjectorParameters(CustomizableObjectInstance->GetProjectorParameters(), LogData);
 
+	LogData += "Descriptor:\n";
+	LogData += CustomizableObjectInstance->GetPrivate()->CommittedDescriptor.ToString();
+	LogData += "\n";
+	
 	if (ShowMaterialInfo)
 	{
 		PrintGeneratedMaterial(CustomizableObjectInstance->GetPrivate()->GeneratedMaterials, LogData);
@@ -145,8 +142,8 @@ void LogInformationUtil::LogShowInstanceDataFull(const UCustomizableObjectInstan
 	FString MessageChunk;
 
 	MessageChunk += "\n\t";
-	MessageChunk += FString::Printf(TEXT("        bShowOnlyRuntimeParameters = %d\n"), CustomizableObjectInstance->bShowOnlyRuntimeParameters);
-	MessageChunk += FString::Printf(TEXT("        bShowOnlyRelevantParameters = %d\n"), CustomizableObjectInstance->bShowOnlyRelevantParameters);
+	MessageChunk += FString::Printf(TEXT("        bShowOnlyRuntimeParameters = %d\n"), CustomizableObjectInstance->GetPrivate()->bShowOnlyRuntimeParameters);
+	MessageChunk += FString::Printf(TEXT("        bShowOnlyRelevantParameters = %d\n"), CustomizableObjectInstance->GetPrivate()->bShowOnlyRelevantParameters);
 	MessageChunk += FString::Printf(TEXT("        MinSquareDistFromComponentToPlayer = %.2f\n"), CustomizableObjectInstance->GetPrivate()->MinSquareDistFromComponentToPlayer);
 	LogData += MessageChunk;
 
@@ -159,21 +156,16 @@ void LogInformationUtil::LogShowInstanceDataFull(const UCustomizableObjectInstan
 	LogData += MessageChunk;
 
 	MessageChunk = FString::Printf(TEXT("        CurrentMinLOD = %d\n"), CustomizableObjectInstance->GetCurrentMinLOD());
-	MessageChunk += FString::Printf(TEXT("        CurrentMaxLOD = %d\n"), CustomizableObjectInstance->GetCurrentMaxLOD());
 	MessageChunk += FString::Printf(TEXT("        MinLODToLoad = %d\n"), CustomizableObjectInstance->GetMinLODToLoad());
-	MessageChunk += FString::Printf(TEXT("        MaxLODToLoad = %d\n"), CustomizableObjectInstance->GetMaxLODToLoad());
 	MessageChunk += FString::Printf(TEXT("        bShouldUpdateLODs = %d\n"), InstanceFlags & ECOInstanceFlags::PendingLODsUpdate);
 	LogData += MessageChunk;
 
 	MessageChunk += FString::Printf(TEXT("        bIsDowngradeLODUpdate = %d\n"), InstanceFlags & ECOInstanceFlags::PendingLODsDowngrade);
-	MessageChunk += FString::Printf(TEXT("        bIsUpdating = %d\n"), InstanceFlags & ECOInstanceFlags::Updating);
-	MessageChunk += FString::Printf(TEXT("        bIsCreatingSkeletalMesh = %d\n"), InstanceFlags & ECOInstanceFlags::CreatingSkeletalMesh);
-	MessageChunk += FString::Printf(TEXT("        bIsGenerated = %d\n"), InstanceFlags & ECOInstanceFlags::Generated);
 	LogData += MessageChunk;
 
-	for (int32 ComponentIndex = 0; ComponentIndex < CustomizableObjectInstance->SkeletalMeshes.Num(); ++ComponentIndex)
+	for (int32 ComponentIndex = 0; ComponentIndex < CustomizableObjectInstance->GetNumComponents(); ++ComponentIndex)
 	{
-		if ((CustomizableObjectInstance->GetSkeletalMesh(ComponentIndex) != nullptr) && (CustomizableObjectInstance->GetSkeletalMesh(ComponentIndex)->GetResourceForRendering()))
+		if (CustomizableObjectInstance->GetSkeletalMesh(ComponentIndex))
 		{
 			if (CustomizableObjectInstance->GetCurrentMinLOD() < 1)
 			{
@@ -202,134 +194,6 @@ void LogInformationUtil::LogShowInstanceDataFull(const UCustomizableObjectInstan
 			PlayerController->ClientMessage(LogData);
 		}
 	}
-}
-
-
-void LogInformationUtil::PrintBoolParameters(const TArray<struct FCustomizableObjectBoolParameterValue>& BoolParameters, FString& Log)
-{
-	if (BoolParameters.Num() == 0)
-	{
-		return;
-	}
-
-	Log += "Boolean parameters:\n";
-
-	const int Max = BoolParameters.Num();
-	int i;
-
-	for (i = 0; i < Max; ++i)
-	{
-		Log += FString::Printf(TEXT("        %s="), *BoolParameters[i].ParameterName);
-		Log += FString::Printf(TEXT("%d\n"), BoolParameters[i].ParameterValue);
-	}
-
-	Log += "\n";
-}
-
-
-void LogInformationUtil::PrintIntParameters(const TArray<struct FCustomizableObjectIntParameterValue>& IntParameters, FString& Log)
-{
-	if (IntParameters.Num() == 0)
-	{
-		return;
-	}
-
-	FString MessageChunk;
-
-	MessageChunk += "\tInt parameters:\n";
-
-	const int Max = IntParameters.Num();
-	int i;
-
-	for (i = 0; i < Max; ++i)
-	{
-		MessageChunk += FString::Printf(TEXT("        %s="), *IntParameters[i].ParameterName);
-		MessageChunk += FString::Printf(TEXT("%s\n"), *IntParameters[i].ParameterValueName);
-		FillToLength(MessageChunk,25);
-	}
-
-	MessageChunk += "\n";
-
-	Log += MessageChunk;
-}
-
-
-void LogInformationUtil::PrintFloatParameters(const TArray<struct FCustomizableObjectFloatParameterValue>& FloatParameters, FString& Log)
-{
-	if (FloatParameters.Num() == 0)
-	{
-		return;
-	}
-
-	Log += "Float parameters:\n";
-
-	const int Max = FloatParameters.Num();
-	int i;
-
-	for (i = 0; i < Max; ++i)
-	{
-		Log += FString::Printf(TEXT("        %s="), *FloatParameters[i].ParameterName);
-		Log += FString::Printf(TEXT("%.2f\n"), FloatParameters[i].ParameterValue);
-	}
-
-	Log += "\n";
-}
-
-
-void LogInformationUtil::PrintVectorParameters(const TArray<struct FCustomizableObjectVectorParameterValue>& VectorParameters, FString& Log)
-{
-	if (VectorParameters.Num() == 0)
-	{
-		return;
-	}
-
-	Log += "Vector parameters:\n";
-
-	const int Max = VectorParameters.Num();
-	int i;
-
-	for (i = 0; i < Max; ++i)
-	{
-		Log += FString::Printf(TEXT("        %s="), *VectorParameters[i].ParameterName);
-		Log += FString::Printf(TEXT("(%.2f,"), VectorParameters[i].ParameterValue.R);
-		Log += FString::Printf(TEXT("%.2f,"), VectorParameters[i].ParameterValue.G);
-		Log += FString::Printf(TEXT("%.2f,"), VectorParameters[i].ParameterValue.B);
-		Log += FString::Printf(TEXT("%.2f)\n"), VectorParameters[i].ParameterValue.A);
-	}
-
-	Log += "\n";
-}
-
-
-void LogInformationUtil::PrintProjectorParameters(const TArray<struct FCustomizableObjectProjectorParameterValue>& ProjectorParameters, FString& Log)
-{
-	if (ProjectorParameters.Num() == 0)
-	{
-		return;
-	}
-
-	Log += "Projector parameters:\n";
-
-	const int Max = ProjectorParameters.Num();
-	int i;
-
-	for (i = 0; i < Max; ++i)
-	{
-		Log += FString::Printf(TEXT("        %s has "), *ProjectorParameters[i].ParameterName);
-		Log += FString::Printf(TEXT(" position=(%.2f,"), ProjectorParameters[i].Value.Position.X);
-		Log += FString::Printf(TEXT("%.2f,"), ProjectorParameters[i].Value.Position.Y);
-		Log += FString::Printf(TEXT("%.2f)"), ProjectorParameters[i].Value.Position.Z);
-		Log += FString::Printf(TEXT(" direction=(%.2f,"), ProjectorParameters[i].Value.Direction.X);
-		Log += FString::Printf(TEXT("%.2f,"), ProjectorParameters[i].Value.Direction.Y);
-		Log += FString::Printf(TEXT("%.2f)"), ProjectorParameters[i].Value.Direction.Z);
-		Log += FString::Printf(TEXT(" up=(%.2f,"), ProjectorParameters[i].Value.Up.X);
-		Log += FString::Printf(TEXT("%.2f,"), ProjectorParameters[i].Value.Up.Y);
-		Log += FString::Printf(TEXT("%.2f)"), ProjectorParameters[i].Value.Up.Z);
-		Log += FString::Printf(TEXT(" scale=(%.2f,"), ProjectorParameters[i].Value.Scale.X);
-		Log += FString::Printf(TEXT("%.2f)\n"), ProjectorParameters[i].Value.Scale.Y);
-	}
-
-	Log += "\n";
 }
 
 

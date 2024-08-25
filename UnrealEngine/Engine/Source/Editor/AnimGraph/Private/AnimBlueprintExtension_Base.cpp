@@ -31,6 +31,8 @@
 #include "IAnimBlueprintPostExpansionStepContext.h"
 #include "IAnimBlueprintCompilationBracketContext.h"
 #include "Features/IModularFeatures.h"
+#include "Animation/ExposedValueHandler.h"
+#include "AnimGraphNodeBinding_Base.h"
 
 #define LOCTEXT_NAMESPACE "AnimBlueprintExtension_Base"
 
@@ -47,6 +49,8 @@ void UAnimBlueprintExtension_Base::HandleCopyTermDefaultsToDefaultObject(UObject
 
 	if(DefaultAnimInstance)
 	{
+		Subsystem.PatchValueHandlers(DefaultAnimInstance->GetClass());
+
 		// Update blueprint usage of all graph nodes that have properties exposed
 		for (const TPair<UAnimGraphNode_Base*, FEvaluationHandlerRecord>& EvaluationHandlerPair : PerNodeStructEvalHandlers)
 		{
@@ -70,8 +74,13 @@ void UAnimBlueprintExtension_Base::HandleCopyTermDefaultsToDefaultObject(UObject
 					const FAnimNodeSinglePropertyHandler& Handler = EvaluationHandler.ServicedProperties.CreateConstIterator()->Value;
 					check(Handler.CopyRecords.Num() > 0);
 
-					const FExposedValueHandler& ValueHandler = Subsystem.ExposedValueHandlers[ EvaluationHandler.EvaluationHandlerIdx ];
-					TrueNode->BlueprintUsage = ValueHandler.BoundFunction != NAME_None ? EBlueprintUsage::UsesBlueprint : EBlueprintUsage::DoesNotUseBlueprint; 
+					bool bHandlerUsesBlueprint = false;
+					if(Subsystem.ExposedValueHandlers[EvaluationHandler.EvaluationHandlerIdx].GetHandlerStruct()->IsChildOf(FAnimNodeExposedValueHandler_Base::StaticStruct()))
+					{
+						const FAnimNodeExposedValueHandler_Base* BaseHandler = static_cast<const FAnimNodeExposedValueHandler_Base*>(Subsystem.ExposedValueHandlers[EvaluationHandler.EvaluationHandlerIdx].GetHandler());
+						bHandlerUsesBlueprint = BaseHandler->BoundFunction != NAME_None;
+					}
+					TrueNode->BlueprintUsage = bHandlerUsesBlueprint ? EBlueprintUsage::UsesBlueprint : EBlueprintUsage::DoesNotUseBlueprint;
 
 #if WITH_EDITORONLY_DATA // ANIMINST_PostCompileValidation
 					const bool bWarnAboutBlueprintUsage = InCompilationContext.GetAnimBlueprint()->bWarnAboutBlueprintUsage || DefaultAnimInstance->PCV_ShouldWarnAboutNodesNotUsingFastPath();
@@ -136,14 +145,12 @@ void UAnimBlueprintExtension_Base::HandlePostExpansionStep(const UEdGraph* InGra
 	}
 }
 
-void UAnimBlueprintExtension_Base::PatchEvaluationHandlers(IAnimBlueprintCompilationBracketContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData)
+void UAnimBlueprintExtension_Base::PatchEvaluationHandlers(const UClass* InClass, IAnimBlueprintCompilationBracketContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData)
 {
-	TArray<FExposedValueHandler>& ExposedValueHandlers = Subsystem.ExposedValueHandlers;
-
 	// Exposed value handlers indices must match the index of anim node properties, 
 	// so we iterate over anim node properties here when patching up
 	const int32 NumAllocatedNodes = InCompilationContext.GetAllocatedAnimNodeIndices().Num();
-	ExposedValueHandlers.SetNum(NumAllocatedNodes);
+
 	for(const TPair<UAnimGraphNode_Base*, int32>& GraphNodePair : InCompilationContext.GetAllocatedAnimNodeIndices())
 	{
 		if(int32* EvaluationHandlerIndexPtr = ValidEvaluationHandlerMap.Find(GraphNodePair.Key))
@@ -153,7 +160,7 @@ void UAnimBlueprintExtension_Base::PatchEvaluationHandlers(IAnimBlueprintCompila
 
 			FEvaluationHandlerRecord& EvaluationHandlerRecord = ValidEvaluationHandlerList[*EvaluationHandlerIndexPtr];
 			EvaluationHandlerRecord.EvaluationHandlerIdx = NodePropertyIndex;
-			EvaluationHandlerRecord.PatchFunctionNameAndCopyRecordsInto(ExposedValueHandlers[NodePropertyIndex]);
+			EvaluationHandlerRecord.PatchAnimNodeExposedValueHandler(InClass, InCompilationContext);
 		}
 	}
 }
@@ -195,7 +202,7 @@ void UAnimBlueprintExtension_Base::HandleStartCompilingClass(const UClass* InCla
 			PropertyAccessExtension->OnPreLibraryCompiled().Remove(PreLibraryCompiledDelegateHandle);
 		});
 
-		PostLibraryCompiledDelegateHandle = PropertyAccessExtension->OnPostLibraryCompiled().AddLambda([this, PropertyAccessExtension](IAnimBlueprintCompilationBracketContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData)
+		PostLibraryCompiledDelegateHandle = PropertyAccessExtension->OnPostLibraryCompiled().AddLambda([this, PropertyAccessExtension, InClass](IAnimBlueprintCompilationBracketContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData)
 		{
 			for(FEvaluationHandlerRecord& HandlerRecord : ValidEvaluationHandlerList)
 			{
@@ -217,17 +224,20 @@ void UAnimBlueprintExtension_Base::HandleStartCompilingClass(const UClass* InCla
 								BindingName.SetNumber(CopyRecord.DestArrayIndex + 1);
 							}
 
-							if(FAnimGraphNodePropertyBinding* Binding = OriginalNode->PropertyBindings.Find(BindingName))
+							if(UAnimGraphNodeBinding_Base* Binding = Cast<UAnimGraphNodeBinding_Base>(OriginalNode->GetMutableBinding()))
 							{
-								if(CopyRecord.LibraryCompiledHandle.IsValid())
+								if(FAnimGraphNodePropertyBinding* PropertyBinding = Binding->PropertyBindings.Find(BindingName))
 								{
-									Binding->CompiledContext = UAnimBlueprintExtension_PropertyAccess::GetCompiledHandleContext(CopyRecord.LibraryCompiledHandle);
-									Binding->CompiledContextDesc = UAnimBlueprintExtension_PropertyAccess::GetCompiledHandleContextDesc(CopyRecord.LibraryCompiledHandle);
-								}
-								else
-								{
-									Binding->CompiledContext = FText::GetEmpty();
-									Binding->CompiledContextDesc = FText::GetEmpty();
+									if(CopyRecord.LibraryCompiledHandle.IsValid())
+									{
+										PropertyBinding->CompiledContext = UAnimBlueprintExtension_PropertyAccess::GetCompiledHandleContext(CopyRecord.LibraryCompiledHandle);
+										PropertyBinding->CompiledContextDesc = UAnimBlueprintExtension_PropertyAccess::GetCompiledHandleContextDesc(CopyRecord.LibraryCompiledHandle);
+									}
+									else
+									{
+										PropertyBinding->CompiledContext = FText::GetEmpty();
+										PropertyBinding->CompiledContextDesc = FText::GetEmpty();
+									}
 								}
 							}
 						}
@@ -235,7 +245,7 @@ void UAnimBlueprintExtension_Base::HandleStartCompilingClass(const UClass* InCla
 				}
 			}
 
-			PatchEvaluationHandlers(InCompilationContext, OutCompiledData);
+			PatchEvaluationHandlers(InClass, InCompilationContext, OutCompiledData);
 
 			PropertyAccessExtension->OnPostLibraryCompiled().Remove(PostLibraryCompiledDelegateHandle);
 		});
@@ -248,11 +258,39 @@ void UAnimBlueprintExtension_Base::HandleFinishCompilingClass(const UClass* InCl
 	if(PropertyAccessExtension == nullptr)
 	{
 		// Without the property access system we need to patch generated function names here
-		PatchEvaluationHandlers(InCompilationContext, OutCompiledData);
+		PatchEvaluationHandlers(InClass, InCompilationContext, OutCompiledData);
 	}
 }
 
-void UAnimBlueprintExtension_Base::ProcessNodePins(UAnimGraphNode_Base* InNode, IAnimBlueprintCompilationContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData)
+void UAnimBlueprintExtension_Base::ProcessPosePins(UAnimGraphNode_Base* InNode, IAnimBlueprintCompilationContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData)
+{
+	const UAnimationGraphSchema* AnimGraphDefaultSchema = GetDefault<UAnimationGraphSchema>();
+
+	FStructProperty* NodeProperty = CastFieldChecked<FStructProperty>(InCompilationContext.GetAllocatedPropertiesByNode().FindChecked(InNode));
+
+	for (auto SourcePinIt = InNode->Pins.CreateIterator(); SourcePinIt; ++SourcePinIt)
+	{
+		UEdGraphPin* SourcePin = *SourcePinIt;
+
+		// Register pose links for future use
+		if ((SourcePin->Direction == EGPD_Input) && (AnimGraphDefaultSchema->IsPosePin(SourcePin->PinType)))
+		{
+			// Input pose pin, going to need to be linked up
+			FPoseLinkMappingRecord LinkRecord = InNode->GetLinkIDLocation(NodeProperty->Struct, SourcePin);
+			if (LinkRecord.IsValid())
+			{
+				InCompilationContext.AddPoseLinkMappingRecord(LinkRecord);
+			}
+			else
+			{
+				//@TODO: ANIMREFACTOR: It's probably OK to have certain pins ignored eventually, but this is very helpful during development
+				InCompilationContext.GetMessageLog().Note(TEXT("@@ was visible but ignored"), SourcePin);
+			}
+		}
+	}
+}
+
+void UAnimBlueprintExtension_Base::ProcessNonPosePins(UAnimGraphNode_Base* InNode, IAnimBlueprintCompilationContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData, EPinProcessingFlags InFlags)
 {
 	const UAnimationGraphSchema* AnimGraphDefaultSchema = GetDefault<UAnimationGraphSchema>();
 
@@ -263,18 +301,11 @@ void UAnimBlueprintExtension_Base::ProcessNodePins(UAnimGraphNode_Base* InNode, 
 		UEdGraphPin* SourcePin = *SourcePinIt;
 		bool bConsumed = false;
 
-		// Register pose links for future use
 		if ((SourcePin->Direction == EGPD_Input) && (AnimGraphDefaultSchema->IsPosePin(SourcePin->PinType)))
 		{
-			// Input pose pin, going to need to be linked up
-			FPoseLinkMappingRecord LinkRecord = InNode->GetLinkIDLocation(NodeProperty->Struct, SourcePin);
-			if (LinkRecord.IsValid())
-			{
-				InCompilationContext.AddPoseLinkMappingRecord(LinkRecord);
-				bConsumed = true;
-			}
+			bConsumed = true;
 		}
-		else if(!InNode->ShouldCreateStructEvalHandlers())
+		else if(!InNode->ShouldCreateStructEvalHandlers() || !EnumHasAnyFlags(InFlags, EPinProcessingFlags::All))
 		{
 			bConsumed = true;
 		}
@@ -308,39 +339,45 @@ void UAnimBlueprintExtension_Base::ProcessNodePins(UAnimGraphNode_Base* InNode, 
 
 				if (SourcePin->LinkedTo.Num() == 0)
 				{
-					// Literal that can be pushed into the CDO instead of re-evaluated every frame
-					bConsumed = true;
+					if(EnumHasAnyFlags(InFlags, EPinProcessingFlags::Constants))
+					{
+						// Literal that can be pushed into the CDO instead of re-evaluated every frame
+						bConsumed = true;
+					}
 				}
 				else
 				{
-					// Dynamic value that needs to be wired up and evaluated each frame
-					const FString& EvaluationHandlerStr = SourcePinProperty->GetMetaData(AnimGraphDefaultSchema->NAME_OnEvaluate);
-					FName EvaluationHandlerName(*EvaluationHandlerStr);
-					if (EvaluationHandlerName != NAME_None)
+					if (EnumHasAnyFlags(InFlags, EPinProcessingFlags::BlueprintHandlers))
 					{
-						// warn that NAME_OnEvaluate is deprecated:
-						InCompilationContext.GetMessageLog().Warning(*LOCTEXT("OnEvaluateDeprecated", "OnEvaluate meta data is deprecated, found on @@").ToString(), SourcePinProperty);
-					}
+						// Dynamic value that needs to be wired up and evaluated each frame
+						const FString& EvaluationHandlerStr = SourcePinProperty->GetMetaData(AnimGraphDefaultSchema->NAME_OnEvaluate);
+						FName EvaluationHandlerName(*EvaluationHandlerStr);
+						if (EvaluationHandlerName != NAME_None)
+						{
+							// warn that NAME_OnEvaluate is deprecated:
+							InCompilationContext.GetMessageLog().Warning(*LOCTEXT("OnEvaluateDeprecated", "OnEvaluate meta data is deprecated, found on @@").ToString(), SourcePinProperty);
+						}
 					
-					ensure(EvalHandler.NodeVariableProperty == nullptr || EvalHandler.NodeVariableProperty == NodeProperty);
-					EvalHandler.AnimGraphNode = InNode;
-					EvalHandler.NodeVariableProperty = NodeProperty;
-					EvalHandler.RegisterPin(SourcePin, SourcePinProperty, SourceArrayIndex);
-					// if it's not instance property, ensure we mark it
-					EvalHandler.bServicesNodeProperties = EvalHandler.bServicesNodeProperties | !bInstancePropertyExists;
+						ensure(EvalHandler.NodeVariableProperty == nullptr || EvalHandler.NodeVariableProperty == NodeProperty);
+						EvalHandler.AnimGraphNode = InNode;
+						EvalHandler.NodeVariableProperty = NodeProperty;
+						EvalHandler.RegisterPin(SourcePin, SourcePinProperty, SourceArrayIndex, EnumHasAnyFlags(InFlags, EPinProcessingFlags::PropertyAccessFastPath));
+						// if it's not instance property, ensure we mark it
+						EvalHandler.bServicesNodeProperties = EvalHandler.bServicesNodeProperties || !bInstancePropertyExists;
 
-					if (CustomPropertyNode)
-					{
-						EvalHandler.bServicesInstanceProperties = EvalHandler.bServicesInstanceProperties | bInstancePropertyExists;
+						if (CustomPropertyNode)
+						{
+							EvalHandler.bServicesInstanceProperties = EvalHandler.bServicesInstanceProperties || bInstancePropertyExists;
 
-						FAnimNodeSinglePropertyHandler* SinglePropHandler = EvalHandler.ServicedProperties.Find(SourcePinProperty->GetFName());
-						check(SinglePropHandler); // Should have been added in RegisterPin
+							FAnimNodeSinglePropertyHandler* SinglePropHandler = EvalHandler.ServicedProperties.Find(SourcePinProperty->GetFName());
+							check(SinglePropHandler); // Should have been added in RegisterPin
 
-						// Flag that the target property is actually on the instance class and not the node
-						SinglePropHandler->bInstanceIsTarget = bInstancePropertyExists;
+							// Flag that the target property is actually on the instance class and not the node
+							SinglePropHandler->bInstanceIsTarget = bInstancePropertyExists;
+						}
+
+						bConsumed = true;
 					}
-
-					bConsumed = true;
 				}
 
 				UEdGraphPin* TrueSourcePin = InCompilationContext.GetMessageLog().FindSourcePin(SourcePin);
@@ -351,40 +388,47 @@ void UAnimBlueprintExtension_Base::ProcessNodePins(UAnimGraphNode_Base* InNode, 
 			}
 		}
 
-		if (!bConsumed && (SourcePin->Direction == EGPD_Input))
+		if (!bConsumed && (SourcePin->Direction == EGPD_Input) && !AnimGraphDefaultSchema->IsPosePin(SourcePin->PinType))
 		{
 			//@TODO: ANIMREFACTOR: It's probably OK to have certain pins ignored eventually, but this is very helpful during development
 			InCompilationContext.GetMessageLog().Note(TEXT("@@ was visible but ignored"), SourcePin);
 		}
 	}
 
-	// Add any property bindings
-	for(const TPair<FName, FAnimGraphNodePropertyBinding>& PropertyBinding : InNode->PropertyBindings)
+	if (EnumHasAnyFlags(InFlags, EPinProcessingFlags::PropertyAccessBindings))
 	{
-		if(PropertyBinding.Value.bIsBound)
+		// Add any property bindings
+		if (UAnimGraphNodeBinding_Base* Binding = Cast<UAnimGraphNodeBinding_Base>(InNode->GetMutableBinding()))
 		{
-			FEvaluationHandlerRecord& EvalHandler = PerNodeStructEvalHandlers.FindOrAdd(InNode);
-			EvalHandler.AnimGraphNode = InNode;
+			for(auto Iter = Binding->PropertyBindings.CreateIterator(); Iter; ++Iter)
+			{
+				if(Iter.Value().bIsBound)
+				{
+					FEvaluationHandlerRecord& EvalHandler = PerNodeStructEvalHandlers.FindOrAdd(InNode);
+					EvalHandler.AnimGraphNode = InNode;
 
-			// for array properties we need to account for the extra FName number 
-			FName ComparisonName = PropertyBinding.Key;
-			ComparisonName.SetNumber(0);
+					// for array properties we need to account for the extra FName number 
+					FName ComparisonName = Iter.Key();
+					ComparisonName.SetNumber(0);
 
-			if (FProperty* Property = FindFProperty<FProperty>(NodeProperty->Struct, ComparisonName))
-			{
-				EvalHandler.NodeVariableProperty = NodeProperty;
-				EvalHandler.bServicesNodeProperties = true;
-				EvalHandler.RegisterPropertyBinding(Property, PropertyBinding.Value);
-			}
-			else if(FProperty* ClassProperty = FindFProperty<FProperty>(InCompilationContext.GetBlueprint()->SkeletonGeneratedClass, PropertyBinding.Value.PropertyName))
-			{
-				EvalHandler.NodeVariableProperty = NodeProperty;
-				EvalHandler.bServicesInstanceProperties = true;
-				EvalHandler.RegisterPropertyBinding(ClassProperty, PropertyBinding.Value);
-			}
-			else
-			{
-				InCompilationContext.GetMessageLog().Warning(*FString::Printf(TEXT("ICE: @@ Failed to find a property '%s'"), *ComparisonName.ToString()), InNode);
+					if (FProperty* Property = FindFProperty<FProperty>(NodeProperty->Struct, ComparisonName))
+					{
+						EvalHandler.NodeVariableProperty = NodeProperty;
+						EvalHandler.bServicesNodeProperties = true;
+						EvalHandler.RegisterPropertyBinding(Property, Iter.Value());
+					}
+					else if(FProperty* ClassProperty = FindFProperty<FProperty>(InCompilationContext.GetBlueprint()->SkeletonGeneratedClass, Iter.Value().PropertyName))
+					{
+						EvalHandler.NodeVariableProperty = NodeProperty;
+						EvalHandler.bServicesInstanceProperties = true;
+						EvalHandler.RegisterPropertyBinding(ClassProperty, Iter.Value());
+					}
+					else
+					{
+						// Binding is no longer valid, remove it
+						Iter.RemoveCurrent();
+					}
+				}
 			}
 		}
 	}
@@ -506,7 +550,7 @@ void UAnimBlueprintExtension_Base::CreateEvaluationHandler(IAnimBlueprintCompila
 	HandlerFunctionNames.Add(Record.HandlerFunctionName);
 
 	// Add a custom event in the graph
-	UK2Node_CustomEvent* CustomEventNode = InCompilationContext.SpawnIntermediateEventNode<UK2Node_CustomEvent>(InNode, nullptr, InCompilationContext.GetConsolidatedEventGraph());
+	UK2Node_CustomEvent* CustomEventNode = InCompilationContext.SpawnIntermediateNode<UK2Node_CustomEvent>(InNode, InCompilationContext.GetConsolidatedEventGraph());
 	CustomEventNode->bInternalEvent = true;
 	CustomEventNode->CustomFunctionName = Record.HandlerFunctionName;
 	CustomEventNode->AllocateDefaultPins();
@@ -739,13 +783,13 @@ void UAnimBlueprintExtension_Base::CreateEvaluationHandler(IAnimBlueprintCompila
 			ExecChain = K2Schema->FindExecutionPin(*AssignmentNode, EGPD_Output);
 		}
 
-		if(InstanceAssignmentNode != nullptr)
+		if (InstanceAssignmentNode != nullptr)
 		{
 			for (int32 PinIndex = 0; PinIndex < InstanceAssignmentNode->ShowPinForProperties.Num(); ++PinIndex)
 			{
 				FOptionalPinFromProperty& TestProperty = InstanceAssignmentNode->ShowPinForProperties[PinIndex];
-				if(TestProperty.bShowPin)
-				{				
+				if (TestProperty.bShowPin)
+				{
 					UEdGraphPin* ExecVariablesIn = K2Schema->FindExecutionPin(*InstanceAssignmentNode, EGPD_Input);
 					ExecChain->MakeLinkTo(ExecVariablesIn);
 					ExecChain = K2Schema->FindExecutionPin(*InstanceAssignmentNode, EGPD_Output);
@@ -759,18 +803,18 @@ void UAnimBlueprintExtension_Base::CreateEvaluationHandler(IAnimBlueprintCompila
 void UAnimBlueprintExtension_Base::RedirectPropertyAccesses(IAnimBlueprintCompilationContext& InCompilationContext, UAnimGraphNode_Base* InNode, FEvaluationHandlerRecord& InRecord)
 {
 	const FStructProperty* MutableDataProperty = InCompilationContext.GetMutableDataProperty();
-	if(InCompilationContext.IsAnimGraphNodeFolded(InNode) && MutableDataProperty != nullptr)
+	if (InCompilationContext.IsAnimGraphNodeFolded(InNode) && MutableDataProperty != nullptr)
 	{
-		for(TPair<FName, FAnimNodeSinglePropertyHandler>& NamePropertyPair : InRecord.ServicedProperties)
+		for (TPair<FName, FAnimNodeSinglePropertyHandler>& NamePropertyPair : InRecord.ServicedProperties)
 		{
-			if(const IAnimBlueprintCompilationContext::FFoldedPropertyRecord* FoldedPropertyRecord = InCompilationContext.GetFoldedPropertyRecord(InNode, NamePropertyPair.Key))
+			if (const IAnimBlueprintCompilationContext::FFoldedPropertyRecord* FoldedPropertyRecord = InCompilationContext.GetFoldedPropertyRecord(InNode, NamePropertyPair.Key))
 			{
-				for(FPropertyCopyRecord& CopyRecord : NamePropertyPair.Value.CopyRecords)
+				for (FPropertyCopyRecord& CopyRecord : NamePropertyPair.Value.CopyRecords)
 				{
-					if(CopyRecord.DestPropertyPath.Num() > 1)
+					if (CopyRecord.DestPropertyPath.Num() > 1)
 					{
 						// If this record writes to the node, switch it to the mutable data's property instead
-						if(CopyRecord.DestPropertyPath[0] == InRecord.NodeVariableProperty->GetName())
+						if (CopyRecord.DestPropertyPath[0] == InRecord.NodeVariableProperty->GetName())
 						{
 							CopyRecord.DestPropertyPath[0] = MutableDataProperty->GetName();
 
@@ -778,14 +822,14 @@ void UAnimBlueprintExtension_Base::RedirectPropertyAccesses(IAnimBlueprintCompil
 							FString DestPropertyPathWithoutArray = DestPropertyPathTail;
 							FString ArrayIndex;
 							int32 ArrayDelim = INDEX_NONE;
-							if(DestPropertyPathTail.FindChar(TEXT('['), ArrayDelim))
+							if (DestPropertyPathTail.FindChar(TEXT('['), ArrayDelim))
 							{
 								DestPropertyPathWithoutArray = DestPropertyPathTail.Left(ArrayDelim);
 								ArrayIndex = DestPropertyPathTail.RightChop(ArrayDelim);
 							}
 
 							// Switch the destination property from the node's property to the generated one
-							if(DestPropertyPathWithoutArray == FoldedPropertyRecord->Property->GetName())
+							if (DestPropertyPathWithoutArray == FoldedPropertyRecord->Property->GetName())
 							{
 								CopyRecord.DestPropertyPath[1] = FoldedPropertyRecord->GeneratedProperty->GetName() + ArrayIndex;
 							}
@@ -793,34 +837,50 @@ void UAnimBlueprintExtension_Base::RedirectPropertyAccesses(IAnimBlueprintCompil
 					}
 				}
 			}
-		}	
+		}
 	}
 }
 
-void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::PatchFunctionNameAndCopyRecordsInto(FExposedValueHandler& Handler) const
+void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::PatchAnimNodeExposedValueHandler(const UClass* InClass, IAnimBlueprintCompilationBracketContext& InCompilationContext) const
 {
-	Handler.CopyRecords.Empty();
+	UAnimBlueprintGeneratedClass* AnimClass = Cast<UAnimBlueprintGeneratedClass>(const_cast<UClass*>(InClass));
+	FStructProperty* HandlerProperty = CastFieldChecked<FStructProperty>(InCompilationContext.GetAllocatedHandlerPropertiesByNode().FindChecked(AnimGraphNode));
+	check(HandlerProperty->GetOwner<UScriptStruct>() == AnimClass->GetSparseClassDataStruct());
+	void* ConstantNodeData = const_cast<void*>(AnimClass->GetSparseClassData(EGetSparseClassDataMethod::ReturnIfNull));
+	check(ConstantNodeData);
 
-	for (const TPair<FName, FAnimNodeSinglePropertyHandler>& ServicedPropPair : ServicedProperties)
+	if (HandlerProperty->Struct == FAnimNodeExposedValueHandler_PropertyAccess::StaticStruct())
 	{
-		const FName& PropertyName = ServicedPropPair.Key;
-		const FAnimNodeSinglePropertyHandler& PropertyHandler = ServicedPropPair.Value;
+		FAnimNodeExposedValueHandler_PropertyAccess* Handler = HandlerProperty->ContainerPtrToValuePtr<FAnimNodeExposedValueHandler_PropertyAccess>(ConstantNodeData);
 
-		for (const FPropertyCopyRecord& PropertyCopyRecord : PropertyHandler.CopyRecords)
+		Handler->CopyRecords.Empty();
+
+		for (const TPair<FName, FAnimNodeSinglePropertyHandler>& ServicedPropPair : ServicedProperties)
 		{
-			// Only unbatched copies can be processed on a per-node basis
-			// Skip invalid copy indices as these are usually the result of BP errors/warnings
-			if(PropertyCopyRecord.LibraryCompiledHandle.IsValid() && PropertyCopyRecord.LibraryCompiledHandle.GetBatchId() == (int32)EAnimPropertyAccessCallSite::WorkerThread_Unbatched)
+			const FName& PropertyName = ServicedPropPair.Key;
+			const FAnimNodeSinglePropertyHandler& PropertyHandler = ServicedPropPair.Value;
+
+			for (const FPropertyCopyRecord& PropertyCopyRecord : PropertyHandler.CopyRecords)
 			{
-				Handler.CopyRecords.Emplace(PropertyCopyRecord.LibraryCompiledHandle.GetId(), PropertyCopyRecord.Operation);
+				// Only unbatched copies can be processed on a per-node basis
+				// Skip invalid copy indices as these are usually the result of BP errors/warnings
+				if (PropertyCopyRecord.LibraryCompiledHandle.IsValid() && PropertyCopyRecord.LibraryCompiledHandle.GetBatchId() == (int32)EAnimPropertyAccessCallSite::WorkerThread_Unbatched)
+				{
+					Handler->CopyRecords.Emplace(PropertyCopyRecord.LibraryCompiledHandle.GetId(), PropertyCopyRecord.Operation, PropertyCopyRecord.bOnlyUpdateWhenActive);
+				}
 			}
 		}
 	}
 
-	if (!IsFastPath())
+	if (HandlerProperty->Struct->IsChildOf(FAnimNodeExposedValueHandler_Base::StaticStruct()))
 	{
-		// not all of our pins use copy records so we will need to call our exposed value handler
-		Handler.BoundFunction = HandlerFunctionName;
+		FAnimNodeExposedValueHandler_Base* Handler = HandlerProperty->ContainerPtrToValuePtr<FAnimNodeExposedValueHandler_Base>(ConstantNodeData);
+
+		if (!IsFastPath())
+		{
+			// not all of our pins use copy records so we will need to call our exposed value handler
+			Handler->BoundFunction = HandlerFunctionName;
+		}
 	}
 }
 
@@ -890,7 +950,7 @@ static UEdGraphNode* FollowKnots(UEdGraphPin* FromPin, UEdGraphPin*& ToPin)
 	return nullptr;
 }
 
-void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::RegisterPin(UEdGraphPin* DestPin, FProperty* AssociatedProperty, int32 AssociatedPropertyArrayIndex)
+void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::RegisterPin(UEdGraphPin* DestPin, FProperty* AssociatedProperty, int32 AssociatedPropertyArrayIndex, bool bAllowFastPath)
 {
 	FAnimNodeSinglePropertyHandler& Handler = ServicedProperties.FindOrAdd(AssociatedProperty->GetFName());
 
@@ -912,6 +972,7 @@ void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::RegisterPin(UEdGrap
 	}
 
 	Handler.CopyRecords.Emplace(DestPin, AssociatedProperty, AssociatedPropertyArrayIndex, MoveTemp(DestPropertyPath));
+	Handler.CopyRecords.Last().bIsFastPath = bAllowFastPath;
 }
 
 void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::RegisterPropertyBinding(FProperty* InProperty, const FAnimGraphNodePropertyBinding& InBinding)
@@ -944,6 +1005,7 @@ void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::RegisterPropertyBin
 	CopyRecord.DestProperty = InProperty;
 	CopyRecord.DestArrayIndex = InBinding.ArrayIndex;
 	CopyRecord.BindingContextId = InBinding.ContextId;
+	CopyRecord.bOnlyUpdateWhenActive = InBinding.bOnlyUpdateWhenActive;
 }
 
 void UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::BuildFastPathCopyRecords(IAnimBlueprintPostExpansionStepContext& InCompilationContext)
@@ -1266,7 +1328,7 @@ bool UAnimBlueprintExtension_Base::FEvaluationHandlerRecord::CheckForMemberOnlyA
 		PinStack.Add(DestPin);
 		while(PinStack.Num() > 0)
 		{
-			UEdGraphPin* CurrentPin = PinStack.Pop(false);
+			UEdGraphPin* CurrentPin = PinStack.Pop(EAllowShrinking::No);
 			for(auto& LinkedPin : CurrentPin->LinkedTo)
 			{
 				UEdGraphNode* LinkedNode = LinkedPin->GetOwningNode();

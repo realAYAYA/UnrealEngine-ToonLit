@@ -85,12 +85,6 @@ public:
 	/** Step to previous key */
 	TSharedPtr< FUICommandInfo > StepToPreviousKey;
 
-	/** Step to next camera key */
-	TSharedPtr< FUICommandInfo > StepToNextCameraKey;
-
-	/** Step to previous camera key */
-	TSharedPtr< FUICommandInfo > StepToPreviousCameraKey;
-
 	/** Step to next shot */
 	TSharedPtr< FUICommandInfo > StepToNextShot;
 
@@ -102,6 +96,9 @@ public:
 
 	/** Set end playback range */
 	TSharedPtr< FUICommandInfo > SetEndPlaybackRange;
+
+	/** Focus the view range on the current playback time without changing zoom level */
+	TSharedPtr< FUICommandInfo > FocusPlaybackTime;
 
 	/** Reset the view range to the playback range */
 	TSharedPtr< FUICommandInfo > ResetViewRange;
@@ -156,6 +153,12 @@ public:
 
 	/** Toggle auto expand outliner tree on child selection */
 	TSharedPtr< FUICommandInfo > ToggleAutoExpandNodesOnSelection;
+
+	/**
+	 * Toggle whether unlocking a camera cut track should return the viewport to its original location, or keep it where
+	 * the camera cut was.
+	 */
+	TSharedPtr< FUICommandInfo > ToggleRestoreOriginalViewportOnCameraCutUnlock;
 
 	/** Expand/collapse nodes */
 	TSharedPtr< FUICommandInfo > ToggleExpandCollapseNodes;
@@ -295,6 +298,12 @@ public:
 	/** Toggle locking marks */
 	TSharedPtr< FUICommandInfo > ToggleMarksLocked;
 
+	/** Toggle show marked frames globally */
+	TSharedPtr< FUICommandInfo > ToggleShowMarkedFramesGlobally;
+
+	/** Clear global marked frames */
+	TSharedPtr< FUICommandInfo > ClearGlobalMarkedFrames;
+
 	/** Rotates through the supported formats for displaying times/frames/timecode. */
 	TSharedPtr< FUICommandInfo > ChangeTimeDisplayFormat;
 
@@ -379,8 +388,8 @@ public:
 	/** Toggles whether to show channel colors in the track area. */
 	TSharedPtr< FUICommandInfo > ToggleChannelColors;
 
-	/** Toggles whether to show the status bar. */
-	TSharedPtr< FUICommandInfo > ToggleShowStatusBar;
+	/** Toggles whether to show the info button in the playback controls. */
+	TSharedPtr< FUICommandInfo > ToggleShowInfoButton;
 
 	/** Turns auto scroll on and off. */
 	TSharedPtr< FUICommandInfo > ToggleAutoScroll;

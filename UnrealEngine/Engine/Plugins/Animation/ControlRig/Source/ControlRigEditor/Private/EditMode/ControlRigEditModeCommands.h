@@ -32,11 +32,17 @@ public:
 	/**  Change current Anim Slider Tool */
 	TSharedPtr< FUICommandInfo > ChangeAnimSliderTool;
 
-	/** Reset Transforms for Controls */
-	TSharedPtr< FUICommandInfo > ResetTransforms;
+	/** Invert Transforms to Rest Pose */
+	TSharedPtr< FUICommandInfo > InvertTransforms;
 
-	/** Reset Transforms for Controls */
-	TSharedPtr< FUICommandInfo > ResetAllTransforms;
+	/** Invert All Transforms to Rest Pose */
+	TSharedPtr< FUICommandInfo > InvertAllTransforms;
+
+	/** Set Transforms to Zero */
+	TSharedPtr< FUICommandInfo > ZeroTransforms;
+
+	/** Set All Transforms to Zero */
+	TSharedPtr< FUICommandInfo > ZeroAllTransforms;
 
 	/** Clear Selection*/
 	TSharedPtr< FUICommandInfo > ClearSelection;

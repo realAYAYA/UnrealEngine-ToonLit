@@ -16,6 +16,7 @@
 #include "SSimpleComboButton.h"
 #include "AutomationWindowStyle.h"
 #include "AutomationTestExcludelist.h"
+#include "AutomationTestPlatform.h"
 #include "SAutomationWindow.h"
 
 #if WITH_EDITOR
@@ -25,12 +26,108 @@
 	#include "AssetRegistry/AssetRegistryModule.h"
 	#include "Dialogs/Dialogs.h"
 	#include "SKismetInspector.h"
+	#include "Internationalization/Regex.h"
 #endif
 
 #include "Widgets/Input/SHyperlink.h"
 #include "SSimpleButton.h"
 
 #define LOCTEXT_NAMESPACE "AutomationTestItem"
+
+namespace
+{
+#if WITH_EDITOR
+	struct FTaskStringEntry
+	{
+	public:
+		/** Stores found full ticket string including hashtag. */
+		FString FullTicketString = {};
+		/** Stores found ticket identifier string. */
+		FString TicketIdString = {};
+		/** Stores starting position (in original string) where FullTicketString starts. */
+		int32 FullTicketBeginning = INDEX_NONE;
+		/** Stores starting position (in original string) where TicketIdString starts. */
+		int32 TicketIdBeginning = INDEX_NONE;
+
+		/**
+		 * Checks if the current instance stores valid data about task tracker's ticket.
+		 *
+		 * @return Return true if the instance is valid or false otherwise.
+		 */
+		bool IsValid() const
+		{
+			return !FullTicketString.IsEmpty() && (INDEX_NONE != FullTicketBeginning);
+		}
+
+		/**
+		 * Parses the given string in order to find the last occurence of a task tracker's ticket.
+		 * 
+		 * @param Source The string to be parsed.
+		 *
+		 * @return Return valid FTaskStringEntry instance if the ticket information is found successfully or invalid object otherwise.
+		 */
+		static FTaskStringEntry LocateLastEntry(const FString& Source)
+		{
+			FTaskStringEntry ResultData;
+
+			int32 LastEntryIndex = INDEX_NONE;
+			{
+				// First pass is to find the proper index of the last entry.
+				FRegexMatcher TicketRegexMatcher(GetTaskTrackerTicketRegexPattern(), Source);
+
+				while (TicketRegexMatcher.FindNext())
+				{
+					++LastEntryIndex;
+				}
+			}
+
+			{
+				// Second pass is to fill the ResultData
+				FRegexMatcher TicketRegexMatcher(GetTaskTrackerTicketRegexPattern(), Source);
+
+				for (int32 CurrentEntryIndex = 0; CurrentEntryIndex <= LastEntryIndex; ++CurrentEntryIndex)
+				{
+					TicketRegexMatcher.FindNext();
+				}
+
+				ResultData.FullTicketString = TicketRegexMatcher.GetCaptureGroup(0);
+				ResultData.FullTicketBeginning = TicketRegexMatcher.GetCaptureGroupBeginning(0);
+				// Note that the ticket id string might be empty
+				ResultData.TicketIdString = TicketRegexMatcher.GetCaptureGroup(3);
+				ResultData.TicketIdBeginning = TicketRegexMatcher.GetCaptureGroupBeginning(3);
+			}
+
+			return ResultData;
+		}
+
+	private:
+		static FRegexPattern GetTaskTrackerTicketRegexPattern()
+		{
+			static const UAutomationTestExcludelist* Excludelist = UAutomationTestExcludelist::Get();
+			check(nullptr != Excludelist);
+
+			return FRegexPattern(FString::Format(
+				TEXT("\\B({0})(\\s+([A-Za-z0-9\\-_]+))?\\b"),
+				{
+					Excludelist->GetTaskTrackerTicketTag()
+				}));
+		}
+	};
+
+	FString BuildTaskTrackerTicketURL(const FString& TaskTrackerURLBase, const FString& TaskTrackerTicketId)
+	{
+		check((!TaskTrackerURLBase.IsEmpty()) && (!TaskTrackerTicketId.IsEmpty()));
+
+		const TMap<FString, FStringFormatArg> Args =
+		{
+			{ TEXT("ID"), TaskTrackerTicketId }
+		};
+
+		return FString::Format(*TaskTrackerURLBase, Args);
+	}
+#endif // WITH_EDITOR
+
+} // anonymous namespace
 
 /* SAutomationTestItem interface
  *****************************************************************************/
@@ -72,13 +169,20 @@ TSharedRef<SWidget> SAutomationTestItem::GenerateWidgetForColumn( const FName& C
 			.AutoWidth()
 			[
 				SNew(SButton)
-				.ButtonStyle(FAutomationWindowStyle::Get(), "NoBorder")
+				.ButtonStyle(FAutomationWindowStyle::Get(), "SimpleButton")
 				.ToolTipText(this, &SAutomationTestItem::GetExcludeReason)
+				.IsEnabled(this, &SAutomationTestItem::CanSkipFlagBeChanged)
 				.OnClicked(FOnClicked::CreateSP(this, &SAutomationTestItem::SetSkipFlag))
+#if WITH_EDITOR
+				.Cursor_Lambda([this]() {return this->IsLocalSession ? EMouseCursor::Hand : EMouseCursor::Default;})
+				.OnHovered_Lambda([this]() {this->bIsToBeSkippedButtonHovered = true;})
+				.OnUnhovered_Lambda([this]() {this->bIsToBeSkippedButtonHovered = false;})
+#endif
 				[
 					SNew(SImage)
 					.Image(FAutomationWindowStyle::Get().GetBrush("AutomationWindow.ExcludedTestsFilter"))
 					.Visibility(this, &SAutomationTestItem::IsToBeSkipped_GetVisibility)
+					.ColorAndOpacity(this, &SAutomationTestItem::IsToBeSkipped_GetColorAndOpacity)
 				]
 			];
 	}
@@ -92,6 +196,7 @@ TSharedRef<SWidget> SAutomationTestItem::GenerateWidgetForColumn( const FName& C
 			[
 				SNew(SSimpleButton)
 				.Icon(FAutomationWindowStyle::Get().GetBrush("Icons.Edit"))
+				.Cursor_Lambda([this]() {return this->IsLocalSession ? EMouseCursor::Hand : EMouseCursor::Default;})
 				.Visibility(this, &SAutomationTestItem::IsDirectlyExcluded_GetVisibility)
 				.ToolTipText(LOCTEXT("EditExcludeOptions", "Edit exclude options"))
 				.OnClicked(FOnClicked::CreateSP(this, &SAutomationTestItem::OnEditExcludeOptionsClicked))
@@ -112,6 +217,7 @@ TSharedRef<SWidget> SAutomationTestItem::GenerateWidgetForColumn( const FName& C
 				.OnNavigate_Lambda([this] {
 					GEngine->Exec(nullptr, *TestStatus->GetOpenCommand());
 				})
+				.HighlightText(HighlightText)
 				.Text(FText::FromString(TestStatus->GetDisplayNameWithDecoration()));
 #endif
 		}
@@ -136,6 +242,7 @@ TSharedRef<SWidget> SAutomationTestItem::GenerateWidgetForColumn( const FName& C
 						}
 					}
 				})
+				.HighlightText(HighlightText)
 				.Text(FText::FromString(TestStatus->GetDisplayNameWithDecoration()));
 #endif
 		}
@@ -144,6 +251,7 @@ TSharedRef<SWidget> SAutomationTestItem::GenerateWidgetForColumn( const FName& C
 			TestNameWidget = SNew(SHyperlink)
 				.Style(FAutomationWindowStyle::Get(), "Common.GotoNativeCodeHyperlink")
 				.OnNavigate_Lambda([this] { FSlateApplication::Get().GotoLineInSource(TestStatus->GetSourceFile(), TestStatus->GetSourceFileLine()); })
+				.HighlightText(HighlightText)
 				.Text(FText::FromString(TestStatus->GetDisplayNameWithDecoration()));
 		}
 		else
@@ -359,19 +467,19 @@ FText SAutomationTestItem::GetTestToolTip( int32 ClusterIndex ) const
 	else
 	{
 		FFormatNamedArguments Args;
-		Args.Add(TEXT("GameName"), FText::FromString(TestStatus->GetGameInstanceName(ClusterIndex)));
+		Args.Add(TEXT("GameInstance"), FText::FromString(TestStatus->GetGameInstanceName(ClusterIndex)));
 
 		if (TestState == EAutomationState::InProcess)
 		{
-			TestToolTip = FText::Format(LOCTEXT("TestToolTipInProgress", "In progress on: {GameName}"), Args);
+			TestToolTip = FText::Format(LOCTEXT("TestToolTipInProgress", "In progress on: {GameInstance}"), Args);
 		}
 		else if (TestState == EAutomationState::Success)
 		{
-			TestToolTip = FText::Format(LOCTEXT("TestToolTipComplete", "Completed on: {GameName}"), Args);
+			TestToolTip = FText::Format(LOCTEXT("TestToolTipComplete", "Completed on: {GameInstance}"), Args);
 		}
 		else
 		{
-			TestToolTip = FText::Format(LOCTEXT("TestToolTipFailed", "Failed on: {GameName}"), Args);
+			TestToolTip = FText::Format(LOCTEXT("TestToolTipFailed", "Failed on: {GameInstance}"), Args);
 		}
 	}
 	return TestToolTip;
@@ -385,7 +493,27 @@ ECheckBoxState SAutomationTestItem::IsTestEnabled() const
 
 EVisibility SAutomationTestItem::IsToBeSkipped_GetVisibility() const
 {
+	if (bIsToBeSkippedButtonHovered && IsLocalSession)
+	{
+		return EVisibility::Visible;
+	}
 	return TestStatus->IsToBeSkipped() ? EVisibility::Visible : EVisibility::Hidden;
+}
+
+FSlateColor SAutomationTestItem::IsToBeSkipped_GetColorAndOpacity() const
+{
+	if (bIsToBeSkippedButtonHovered && !TestStatus->IsToBeSkipped())
+	{
+		return FLinearColor(1.0f, 1.0f, 1.0f, 0.4f);
+	}
+
+	// Identify visually if the test is to be skipped on certain condition.
+	if (TestStatus->IsToBeSkippedOnConditions())
+	{
+		return FLinearColor(1.0f, 1.0f, 0.2f, 0.6f);
+	}
+
+	return FLinearColor(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 bool SAutomationTestItem::IsDirectlyExcluded() const
@@ -403,12 +531,22 @@ FText SAutomationTestItem::GetExcludeReason() const
 	FName Reason;
 	bool IsToBeSkipped = TestStatus->IsToBeSkipped(&Reason);
 
-	return IsToBeSkipped ? FText::FromName(Reason) : FText();
+	if (IsToBeSkipped)
+	{
+		return FText::FromName(Reason);
+	}
+
+	return IsLocalSession ? LOCTEXT("ExludeTest", "Exclude test") : FText();
 }
 
 FReply SAutomationTestItem::SetSkipFlag()
 {
 #if WITH_EDITOR
+	// If it's not local session editing is disabled
+	if (IsLocalSession == false)
+	{
+		return FReply::Handled();
+	}
 	if (!TestStatus->IsToBeSkipped())
 	{
 		OnEditExcludeOptionsClicked();
@@ -421,47 +559,72 @@ FReply SAutomationTestItem::SetSkipFlag()
 	return FReply::Handled();
 }
 
-template<typename EnumType>
-void GenerateRHIMenuContentFromExcludeOptions(TSharedPtr<FAutomationTestExcludeOptions> Options, FMenuBuilder* MenuBuilder)
+bool SAutomationTestItem::CanSkipFlagBeChanged() const
 {
-	static const TSet<FName> AllRHI_OptionNames = FAutomationTestExcludeOptions::GetAllRHIOptionNames<EnumType>();
-	for (auto& Item : AllRHI_OptionNames)
+	return WITH_EDITOR && IsLocalSession && !TestStatus->IsToBeSkippedByPropagation();
+}
+
+#if WITH_EDITOR
+void PopulateMenuContent(FMenuBuilder* MenuBuilder, TSet<FName>* OptionsDestination, const TSet<FName>& ItemNames)
+{
+	for (const FName& Item : ItemNames)
 	{
 		TSharedRef<SWidget> FlagWidget =
 			SNew(SCheckBox)
-			.IsChecked(Options->RHIs.Contains(Item))
-			.OnCheckStateChanged_Lambda([Options, Item](ECheckBoxState NewState)
+			.IsChecked(OptionsDestination->Contains(Item))
+			.OnCheckStateChanged_Lambda([OptionsDestination, Item](ECheckBoxState NewState)
 				{
 					if (NewState == ECheckBoxState::Checked)
 					{
-						Options->RHIs.Add(Item);
+						OptionsDestination->Add(Item);
 					}
 					else
 					{
-						Options->RHIs.Remove(Item);
+						OptionsDestination->Remove(Item);
 					}
 				})
 			.Padding(FMargin(4.0f, 0.0f))
-			.Content()
-			[
-				SNew(STextBlock)
-				.Text(FText::FromName(Item))
-			];
+					.Content()
+					[
+						SNew(STextBlock)
+						.Text(FText::FromName(Item))
+					];
 
 		MenuBuilder->AddWidget(FlagWidget, FText::GetEmpty());
 	}
+}
+
+TSharedRef<SWidget> GeneratePlatformMenuContentFromExcludeOptions(TSharedPtr<FAutomationTestExcludeOptions> Options)
+{
+	static const TSet<FName>& AllPlatform_OptionNames = AutomationTestPlatform::GetAllAvailablePlatformNames();
+	FMenuBuilder MenuBuilder(false, nullptr);
+	PopulateMenuContent(&MenuBuilder, &Options->Platforms, AllPlatform_OptionNames);
+
+	return MenuBuilder.MakeWidget();
+}
+
+FText GeneratePlatformTextFromExcludeOptions(TSharedPtr<FAutomationTestExcludeOptions> Options)
+{
+	if (Options->Platforms.Num() == 0)
+	{
+		return LOCTEXT("ExcludeOptions_Platform_All", "All Platforms");
+	}
+
+	return FText::FromString(SetToString(Options->Platforms));
 }
 
 TSharedRef<SWidget> GenerateRHIMenuContentFromExcludeOptions(TSharedPtr<FAutomationTestExcludeOptions> Options)
 {
 	FMenuBuilder MenuBuilder(false, nullptr);
 
+	static const TSet<FName>& AllRHI_OptionNames = FAutomationTestExcludeOptions::GetAllRHIOptionNamesFromSettings();
 	MenuBuilder.BeginSection("AutomationWindow_ExcludeOptions_RHI", LOCTEXT("ExcludeOptions_RHI_Section", "Interfaces"));
-	GenerateRHIMenuContentFromExcludeOptions<ETEST_RHI_Options>(Options, &MenuBuilder);
+	PopulateMenuContent(&MenuBuilder, &Options->RHIs, AllRHI_OptionNames);
 	MenuBuilder.EndSection();
 
+	static const TSet<FName>& AllRHI_FeatureLevel_OptionNames = FAutomationTestExcludeOptions::GetAllRHIOptionNames<ETEST_RHI_FeatureLevel_Options>();
 	MenuBuilder.BeginSection("AutomationWindow_ExcludeOptions_RHI_FeatureLevel", LOCTEXT("ExcludeOptions_RHI_FeatureLevel_Section", "Feature Levels"));
-	GenerateRHIMenuContentFromExcludeOptions<ETEST_RHI_FeatureLevel_Options>(Options, &MenuBuilder);
+	PopulateMenuContent(&MenuBuilder, &Options->RHIs, AllRHI_FeatureLevel_OptionNames);
 	MenuBuilder.EndSection();
 
 	return MenuBuilder.MakeWidget();
@@ -474,121 +637,218 @@ FText GenerateRHITextFromExcludeOptions(TSharedPtr<FAutomationTestExcludeOptions
 		return LOCTEXT("ExcludeOptions_RHI_All", "All Interfaces");
 	}
 
-	TArray<FString> RHIs;
-	for (auto& Item : Options->RHIs)
-	{
-		RHIs.Add(Item.ToString());
-	}
-
-	return FText::FromString(FString::Join(RHIs, TEXT(", ")));
+	return FText::FromString(SetToString(Options->RHIs));
 }
+#endif
 
 FReply SAutomationTestItem::OnEditExcludeOptionsClicked()
 {
 #if WITH_EDITOR
 	TSharedPtr<FAutomationTestExcludeOptions> Options = TestStatus->GetExcludeOptions();
+	check(Options.IsValid());
+
+	static const UAutomationTestExcludelist* Excludelist = UAutomationTestExcludelist::Get();
+	check(nullptr != Excludelist);
+	const FString TaskTrackerURLBase = Excludelist->GetTaskTrackerURLBase();
+	const FString TaskTrackerURLHashtag = Excludelist->GetConfigTaskTrackerHashtag();
+	
+	const bool TaskTrackerSlotIsVisible =
+		!(TaskTrackerURLBase.IsEmpty() && TaskTrackerURLHashtag.IsEmpty());
+	const bool OpenHyperlinkButtonIsEnabled = 
+		(TaskTrackerSlotIsVisible && (!TaskTrackerURLBase.IsEmpty()));
+
+	FString BeautifiedReason = Options->Reason.ToString();
+	FString TaskTrackerTicketId;
+
+	if (TaskTrackerSlotIsVisible)
+	{
+		FTaskStringEntry TaskTrackerTicketEntry = FTaskStringEntry::LocateLastEntry(BeautifiedReason);
+
+		if (TaskTrackerTicketEntry.IsValid() && !TaskTrackerTicketEntry.TicketIdString.IsEmpty())
+		{
+			TaskTrackerTicketId = TaskTrackerTicketEntry.TicketIdString;
+			BeautifiedReason.RemoveAt(TaskTrackerTicketEntry.FullTicketBeginning, TaskTrackerTicketEntry.FullTicketString.Len());
+		}
+	}
 
 	// Define the dialog form.
+	TSharedPtr<SVerticalBox> VBox;
 	TSharedRef<SWidget> Form = SNew(SBox)
 		.WidthOverride(350)
 		[
-			SNew(SVerticalBox)
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(5.0f)
-			[
-				SNew(SHorizontalBox)
+			SAssignNew(VBox, SVerticalBox)
+		];
+
+	VBox->AddSlot().AutoHeight().Padding(5.0f)
+		[
+			SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
-				.MaxWidth(50)
+				.MaxWidth(55)
 				.HAlign(HAlign_Right)
 				.VAlign(VAlign_Center)
 				.Padding(5, 0)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ExcludeOptions_TestLabel", "Test"))
+						.Text(LOCTEXT("ExcludeOptions_TestLabel", "Test"))
 				]
 				+ SHorizontalBox::Slot()
 				.FillWidth(3)
 				[
 					SNew(SEditableTextBox)
-					.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
-					.Text(FText::FromName(Options->Test))
-					.ToolTipText(FText::FromName(Options->Test))
-					.IsReadOnly(true)
+						.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+						.Text(FText::FromName(Options->Test))
+						.ToolTipText(FText::FromName(Options->Test))
+						.IsReadOnly(true)
 				]
-			]
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(5.0f)
-			[
-				SNew(SHorizontalBox)
+		];
+
+	VBox->AddSlot().AutoHeight().Padding(5.0f)
+		[
+			SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
-				.MaxWidth(50)
+				.MaxWidth(55)
 				.HAlign(HAlign_Right)
 				.VAlign(VAlign_Center)
 				.Padding(5, 0)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ExcludeOptions_Reason", "Reason"))
+						.Text(LOCTEXT("ExcludeOptions_Reason", "Reason"))
 				]
 				+ SHorizontalBox::Slot()
 				.FillWidth(3)
 				[
 					SNew(SEditableTextBox)
-					.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
-					.Text(FText::FromName(Options->Reason))
-					.OnTextCommitted_Lambda([this, Options](const FText& NewReason, const ETextCommit::Type&) { Options->Reason = FName(NewReason.ToString()); })
-					.ToolTipText(LOCTEXT("ExcludeOptions_Reason_ToolTip", "The reason as to why the test is excluded"))
+						.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+						.Text(FText::FromString(BeautifiedReason))
+						.OnTextCommitted_Lambda([Options, &BeautifiedReason, &TaskTrackerTicketId](const FText& NewBeautifiedReason, const ETextCommit::Type&)
+						{
+							BeautifiedReason = NewBeautifiedReason.ToString();
+							Options->UpdateReason(BeautifiedReason, TaskTrackerTicketId);
+						})
+						.ToolTipText(LOCTEXT("ExcludeOptions_Reason_ToolTip", "The reason as to why the test is excluded"))
 				]
-			]
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(5.0f)
+		];
+
+	if (TaskTrackerSlotIsVisible)
+	{
+		VBox->AddSlot().AutoHeight().Padding(5.0f)
 			[
 				SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.MaxWidth(55)
+					.HAlign(HAlign_Right)
+					.VAlign(VAlign_Center)
+					.Padding(5, 0)
+					[
+						SNew(STextBlock)
+							.Text(FText::FromString(Excludelist->GetTaskTrackerName()))
+					]
+					+ SHorizontalBox::Slot()
+					.FillWidth(3.5)
+					[
+						SNew(SEditableTextBox)
+							.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+							.Text(FText::FromString(TaskTrackerTicketId))
+							.ToolTipText(LOCTEXT("ExcludeOptions_TaskTracker_ToolTip", "Task identifier related to the skipping reason"))
+							.OnTextCommitted_Lambda([Options, &BeautifiedReason, &TaskTrackerTicketId](const FText& NewTaskTrackerTicketId, const ETextCommit::Type& CommitType)
+							{
+								TaskTrackerTicketId = NewTaskTrackerTicketId.ToString();
+								Options->UpdateReason(BeautifiedReason, TaskTrackerTicketId);
+							})
+					]
+					+ SHorizontalBox::Slot()
+					.Padding(5, 0)
+					.HAlign(HAlign_Left)
+					.VAlign(VAlign_Center)
+					[
+						SNew(SHyperlink)
+							.Style(FAutomationWindowStyle::Get(), "Common.GotoNativeCodeHyperlink")
+							.IsEnabled_Lambda([OpenHyperlinkButtonIsEnabled, &TaskTrackerTicketId]() { return OpenHyperlinkButtonIsEnabled && (!TaskTrackerTicketId.IsEmpty()); })
+							.OnNavigate_Lambda([&TaskTrackerURLBase, &TaskTrackerTicketId]() { FPlatformProcess::LaunchURL(*(BuildTaskTrackerTicketURL(TaskTrackerURLBase, TaskTrackerTicketId)), nullptr, nullptr); })
+							.Text(FText::FromString(TEXT("Open")))
+					]
+			];
+	}
+
+	VBox->AddSlot().AutoHeight().Padding(5.0f)
+		[
+			SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
-				.MaxWidth(50)
+				.MaxWidth(55)
 				.HAlign(HAlign_Right)
 				.VAlign(VAlign_Center)
 				.Padding(5, 0)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ExcludeOptions_RHI", "RHIs"))
+						.Text(LOCTEXT("ExcludeOptions_Platform", "Platforms"))
 				]
 				+ SHorizontalBox::Slot()
-				.MaxWidth(120)
+				.MaxWidth(200)
 				.HAlign(HAlign_Left)
 				.VAlign(VAlign_Center)
 				[
-					SNew(SSimpleComboButton)
-					.OnGetMenuContent_Lambda([Options]() { return GenerateRHIMenuContentFromExcludeOptions(Options); })
-					.Text_Lambda([Options]() { return GenerateRHITextFromExcludeOptions(Options); })
-					.ToolTipText_Lambda([Options]() { return GenerateRHITextFromExcludeOptions(Options); })
-					.HasDownArrow(true)
+					SNew(SComboButton)
+						.OnGetMenuContent_Lambda([Options]() { return GeneratePlatformMenuContentFromExcludeOptions(Options); })
+						.HasDownArrow(true)
+						.ButtonContent()
+						[
+							SNew(STextBlock)
+								.Text_Lambda([Options]() { return GeneratePlatformTextFromExcludeOptions(Options); })
+								.ToolTipText_Lambda([Options]() { return GeneratePlatformTextFromExcludeOptions(Options); })
+								.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+						]
 				]
-			]
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(5.0f)
-			[
-				SNew(SHorizontalBox)
+		];
+
+	VBox->AddSlot().AutoHeight().Padding(5.0f)
+		[
+			SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
-				.MaxWidth(50)
+				.MaxWidth(55)
 				.HAlign(HAlign_Right)
 				.VAlign(VAlign_Center)
 				.Padding(5, 0)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ExcludeOptions_Warn", "Warn"))
+						.Text(LOCTEXT("ExcludeOptions_RHI", "RHIs"))
+				]
+				+ SHorizontalBox::Slot()
+				.MaxWidth(200)
+				.HAlign(HAlign_Left)
+				.VAlign(VAlign_Center)
+				[
+					SNew(SComboButton)
+						.OnGetMenuContent_Lambda([Options]() { return GenerateRHIMenuContentFromExcludeOptions(Options); })
+						.HasDownArrow(true)
+						.ButtonContent()
+						[
+							SNew(STextBlock)
+								.Text_Lambda([Options]() { return GenerateRHITextFromExcludeOptions(Options); })
+								.ToolTipText_Lambda([Options]() { return GenerateRHITextFromExcludeOptions(Options); })
+								.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+						]
+				]
+		];
+
+	VBox->AddSlot().AutoHeight().Padding(5.0f)
+		[
+			SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
+				.MaxWidth(55)
+				.HAlign(HAlign_Right)
+				.VAlign(VAlign_Center)
+				.Padding(5, 0)
+				[
+					SNew(STextBlock)
+						.Text(LOCTEXT("ExcludeOptions_Warn", "Warn"))
 				]
 				+ SHorizontalBox::Slot()
 				[
 					SNew(SCheckBox)
-					.ToolTipText(LOCTEXT("ExcludeOptions_Warn_ToolTip", "Raise a warning when skipping this test"))
-					.IsChecked(Options->Warn)
-					.OnCheckStateChanged_Lambda([this, Options](ECheckBoxState NewState) { Options->Warn = NewState == ECheckBoxState::Checked; })
+						.ToolTipText(LOCTEXT("ExcludeOptions_Warn_ToolTip", "Raise a warning when skipping this test"))
+						.IsChecked(Options->Warn)
+						.OnCheckStateChanged_Lambda([this, Options](ECheckBoxState NewState) { Options->Warn = NewState == ECheckBoxState::Checked; })
 				]
-			]
 		];
 
 	SGenericDialogWidget::FArguments DialogArguments;
@@ -599,7 +859,8 @@ FReply SAutomationTestItem::OnEditExcludeOptionsClicked()
 		});
 
 	SGenericDialogWidget::OpenDialog(LOCTEXT("ExcludeTestOptions", "Exclude Test Options"), Form, DialogArguments, true);
-#endif
+#endif // WITH_EDITOR
+	
 	return FReply::Handled();
 }
 

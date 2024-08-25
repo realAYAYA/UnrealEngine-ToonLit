@@ -358,7 +358,7 @@ void FDefaultRichTextMarkupWriter::EscapeText(FString& TextToEscape)
 		{
 			if (CharToEscape == EscapeCharacter.Key)
 			{
-				TextToEscape.RemoveAt(TextIndex, 1, false);
+				TextToEscape.RemoveAt(TextIndex, 1, EAllowShrinking::No);
 				TextToEscape.InsertAt(TextIndex, EscapeCharacter.Value);
 				break;
 			}

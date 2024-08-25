@@ -23,6 +23,16 @@ public:
 	{
 		return false;
 	}
+
+	virtual bool GetMaximumFrameLatency(uint32& OutMaximumFrameLatency)
+	{
+		return false;
+	}
+
+	virtual bool SetMaximumFrameLatency(uint32 MaximumFrameLatency)
+	{
+		return false;
+	}
 };
 
 
@@ -51,6 +61,8 @@ private:
 	{
 		virtual bool WaitForVBlank() override;
 		virtual bool IsWaitForVBlankSupported() override;
+		virtual bool GetMaximumFrameLatency(uint32& OutMaximumFrameLatency) override;
+		virtual bool SetMaximumFrameLatency(uint32 MaximumFrameLatency) override;
 	};
 #endif
 
@@ -60,6 +72,8 @@ private:
 	{
 		virtual bool WaitForVBlank() override;
 		virtual bool IsWaitForVBlankSupported() override;
+		virtual bool GetMaximumFrameLatency(uint32& OutMaximumFrameLatency) override;
+		virtual bool SetMaximumFrameLatency(uint32 MaximumFrameLatency) override;
 	};
 
 private:

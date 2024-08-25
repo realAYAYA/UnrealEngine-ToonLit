@@ -8,7 +8,6 @@
 class ALandscapeProxy;
 class ALandscapeStreamingProxy;
 class ULandscapeLayerInfoObject;
-class UWorldPartition;
 
 namespace LandscapeEditorUtils
 {
@@ -26,5 +25,5 @@ namespace LandscapeEditorUtils
 		UEditorLoadingAndSavingUtils::SavePackages(Packages, /* bOnlyDirty = */ false);
 	}
 
-	void SaveLandscapeProxies(TArrayView<ALandscapeProxy*> Proxies, UWorldPartition* WorldPartition);
+	void SaveLandscapeProxies(TArrayView<ALandscapeProxy*> Proxies);
 }

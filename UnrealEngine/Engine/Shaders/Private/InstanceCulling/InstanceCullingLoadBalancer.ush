@@ -34,6 +34,7 @@ StructuredBuffer<FPackedInstanceBatch> BatchBuffer;
 StructuredBuffer<FPackedInstanceBatchItem> ItemBuffer;
 uint NumBatches;
 uint NumItems;
+uint NumGroupsPerBatch;
 
 
 struct FInstanceBatch
@@ -118,11 +119,28 @@ uint PrefixMax(uint ElementIndex)
 	uint CurrentValue = ItemIndex[ElementIndex];
 	GroupMemoryBarrierWithGroupSync();
 
-	UNROLL
-	for (uint StepSize = 1U; StepSize < NUM_THREADS_PER_GROUP / 2U; ++StepSize)
-	{
-		PrefixMaxStep(ElementIndex, 1U, CurrentValue);
-	}
+	// Note: manually unrolled as UNROLL seems to not figure out *= 2, at least on some platforms
+	//for (uint StepSize = 1U; StepSize < NUM_THREADS_PER_GROUP / 2U; StepSize *= 2u)
+	//{
+	//	PrefixMaxStep(ElementIndex, StepSize, CurrentValue);
+	//}
+	PrefixMaxStep(ElementIndex, 1U, CurrentValue);
+	PrefixMaxStep(ElementIndex, 2U, CurrentValue);
+	PrefixMaxStep(ElementIndex, 4U, CurrentValue);
+	PrefixMaxStep(ElementIndex, 8U, CurrentValue);
+#if NUM_THREADS_PER_GROUP > 32u
+	PrefixMaxStep(ElementIndex, 16U, CurrentValue);
+#endif
+#if NUM_THREADS_PER_GROUP > 64u
+	PrefixMaxStep(ElementIndex, 32U, CurrentValue);
+#endif
+#if NUM_THREADS_PER_GROUP > 128u
+	PrefixMaxStep(ElementIndex, 64U, CurrentValue);
+#endif
+#if NUM_THREADS_PER_GROUP > 256u
+	PrefixMaxStep(ElementIndex, 128U, CurrentValue);
+#endif
+
 	return PrefixMaxLastStep(ElementIndex, CurrentValue);
 }
 
@@ -138,14 +156,23 @@ struct FInstanceWorkSetup
 	// Work out who I am in expansion of  the item in range [0,WorkItem.Count], may be negative when no work at end of batch
 	int LocalItemIndex;
 	uint WorkItemIndex;
+	uint GroupIndexPerBatch;		// 0..NumGroupsPerBatch if multiple groups per batch are requested
 };
 
 
-FInstanceWorkSetup InstanceCullingLoadBalancer_Setup(uint3 GroupId, uint GroupThreadIndex, uint ItemDataOffset)
+// Set bSupportMultipleBatches to true if this kernel is dispatched with more than 1 group per batch.
+FInstanceWorkSetup InstanceCullingLoadBalancer_Setup(uint3 GroupId, uint GroupThreadIndex, uint ItemDataOffset, bool bSupportMultipleBatches = false)
 {
 	FInstanceWorkSetup  Setup = (FInstanceWorkSetup)0;
 
 	uint BatchIndex = GetUnWrappedDispatchGroupId(GroupId);
+	// Interleave multiple groups per batch if multiple groups per batch are requested
+	if (bSupportMultipleBatches)
+	{
+		Setup.GroupIndexPerBatch = BatchIndex % NumGroupsPerBatch;
+		BatchIndex = BatchIndex / NumGroupsPerBatch;
+	}
+
 	if (BatchIndex >= NumBatches)
 	{
 		return Setup;

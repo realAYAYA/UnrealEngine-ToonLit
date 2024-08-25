@@ -37,8 +37,8 @@ FPropertyReplicationFragment::FPropertyReplicationFragment(EReplicationFragmentT
 			{
 				PrevReplicationState = MakeUnique<FPropertyReplicationState>(InDescriptor);
 
-				// Poll to get instance default for our previous state
-				PrevReplicationState->PollPropertyReplicationStateForRepNotifies(InOwner);
+				// Full store of initial value for repnotifies
+				PrevReplicationState->StoreCurrentPropertyReplicationStateForRepNotifies(InOwner, nullptr);
 
 				Traits |= EReplicationFragmentTraits::KeepPreviousState;
 			}
@@ -73,6 +73,8 @@ FPropertyReplicationFragment::FPropertyReplicationFragment(EReplicationFragmentT
 	}
 
 	Traits |= EReplicationFragmentTraits::HasPropertyReplicationState;
+	// We can handle partial state in all apply operations
+	Traits |= EReplicationFragmentTraits::SupportsPartialDequantizedState;
 }
 
 FPropertyReplicationFragment::~FPropertyReplicationFragment() = default;
@@ -106,7 +108,16 @@ void FPropertyReplicationFragment::CallRepNotifies(FReplicationStateApplyContext
 		// If we rely on received data for the onreps, we just copy the received state, otherwise we must store the local state before applying received data.
 		if (bUsePrevReceivedStateForOnReps && PrevReplicationState)
 		{
-			*PrevReplicationState = ReceivedState;
+			// Init is always a full state so we can just copy it
+			if (Context.bIsInit)
+			{
+				*PrevReplicationState = ReceivedState;
+			}
+			else
+			{
+				// As apply now might provide us with partial states we should only copy dirty members.
+				PrevReplicationState->CopyDirtyProperties(ReceivedState);
+			}
 		}
 	}
 	else
@@ -122,17 +133,17 @@ void FPropertyReplicationFragment::ApplyReplicatedState(FReplicationStateApplyCo
 {
 	IRIS_PROFILER_SCOPE(PropertyReplicationFragment_ApplyReplicatedState);
 
-	// If we do not rely on received data to issue rep notifies we need to store a copy of the local state before we apply the new received state.
-	if (!bUsePrevReceivedStateForOnReps && PrevReplicationState)
-	{
-		PrevReplicationState->PollPropertyReplicationStateForRepNotifies(Owner);
-	}
-
 	// Create a wrapping property replication state, cheap as we are simply injecting the already constructed state
 	const FPropertyReplicationState ReceivedState(Context.Descriptor, Context.StateBufferData.ExternalStateBuffer);
 
+	// If we do not rely on received data to issue rep notifies we need to store a copy of the local state before we apply the new received state.
+	if (!bUsePrevReceivedStateForOnReps && PrevReplicationState)
+	{
+		PrevReplicationState->StoreCurrentPropertyReplicationStateForRepNotifies(Owner, &ReceivedState);
+	}
+
 	// Just push the state data to owner
-	ReceivedState.PushPropertyReplicationState(Owner);
+	ReceivedState.PushPropertyReplicationState(Owner, static_cast<void*>(Owner));
 }
 
 bool FPropertyReplicationFragment::PollReplicatedState(EReplicationFragmentPollFlags PollOption)

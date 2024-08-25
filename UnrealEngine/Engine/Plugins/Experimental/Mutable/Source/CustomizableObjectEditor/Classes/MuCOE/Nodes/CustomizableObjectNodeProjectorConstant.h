@@ -14,7 +14,7 @@ class UObject;
 struct FPropertyChangedEvent;
 
 
-UCLASS(hideCategories = (CustomizableObjectHide))
+UCLASS()
 class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeProjectorConstant : public UCustomizableObjectNode
 {
 public:
@@ -23,14 +23,11 @@ public:
 	UCustomizableObjectNodeProjectorConstant();
 
 	/**  */
-	UPROPERTY(EditAnywhere, Category= CustomizableObjectHide)
+	UPROPERTY(EditAnywhere, Category = CustomizableObject, meta = (ShowOnlyInnerProperties))
 	FCustomizableObjectProjector Value;
 
 	UPROPERTY(EditAnywhere, Category = UI, meta = (DisplayName = "Parameter UI Metadata"))
 	FMutableParamUIMetadata ParamUIMetadata;
-
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
-	ECustomizableObjectProjectorType ProjectionType;
 
 	UPROPERTY(EditAnywhere, Category = CustomizableObject, Meta = (DisplayName = "Projection Angle (degrees)"))
 	float ProjectionAngle;
@@ -50,12 +47,6 @@ public:
 	/** Temporary variable where to put the direction information for bone combo box selection changes (in FCustomizableObjectNodeProjectorParameterDetails)*/
 	FVector BoneComboBoxUpDirection;
 
-	/** Flag to know which parameters have been modified of the node in the details tab.
-	* 0 Means projection type
-	* 1 projection angle
-	* 2 projector transform */
-	int32 ParameterSetModified;
-
 	// UObject interface.
 	void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 
@@ -66,7 +57,36 @@ public:
 
 	// UCustomizableObjectNode interface
 	void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
+	virtual void BackwardsCompatibleFixup() override;
 
+	// Own interface
 	UEdGraphPin* ValuePin();
+
+	ECustomizableObjectProjectorType GetProjectorType() const;
+
+	FVector GetProjectorPosition() const;
+
+	void SetProjectorPosition(const FVector& Position);
+
+	FVector GetProjectorDirection() const;
+
+	void SetProjectorDirection(const FVector& Direction);
+
+	FVector GetProjectorUp() const;
+
+	void SetProjectorUp(const FVector& Up);
+
+	FVector GetProjectorScale() const;
+
+	void SetProjectorScale(const FVector& Scale);
+
+	float GetProjectorAngle();
+
+	void SetProjectorAngle(float Angle);
+
+private:
+
+	UPROPERTY()
+	ECustomizableObjectProjectorType ProjectionType_DEPRECATED;
 };
 

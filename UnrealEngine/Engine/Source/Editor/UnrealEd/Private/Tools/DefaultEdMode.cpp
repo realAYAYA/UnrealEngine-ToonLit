@@ -44,3 +44,31 @@ TSharedRef<FLegacyEdModeWidgetHelper> UEdModeDefault::CreateWidgetHelper()
 {
 	return MakeShared<FLevelEditorSelectModeWidgetHelper>();
 }
+
+namespace FAssetEdModes
+{
+	const FEditorModeID EM_AssetDefault(TEXT("EM_AssetDefault"));
+}
+
+class FAssetEdModeWidgetHelper : public FLegacyEdModeWidgetHelper
+{
+public:
+	virtual bool ShouldDrawWidget() const override
+	{
+		return true;
+	}
+};
+
+UAssetEdModeDefault::UAssetEdModeDefault()
+{
+	Info = FEditorModeInfo(
+		FAssetEdModes::EM_AssetDefault,
+		NSLOCTEXT("AssetDefaultMode", "DisplayName", "AssetSelection"),
+		FSlateIcon("EditorStyle", "LevelEditor.SelectMode", "LevelEditor.SelectMode.Small"),
+		false, 0);
+}
+
+TSharedRef<FLegacyEdModeWidgetHelper> UAssetEdModeDefault::CreateWidgetHelper()
+{
+	return MakeShared<FAssetEdModeWidgetHelper>();
+}

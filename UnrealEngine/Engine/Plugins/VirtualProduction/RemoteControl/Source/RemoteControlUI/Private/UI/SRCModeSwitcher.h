@@ -230,6 +230,12 @@ private:
 
 private:
 
+	/**
+	 * Sets the given mode as active. Also allows to force the operation.
+	 * Useful e.g. when Widget is being created and the current mode already matches the required one.
+	 */
+	void SetModeEnabled_Internal(ECheckBoxState NewState, FRCMode* NewMode, bool bInForceModeEnabled = false);
+
 	/** Holdes the active mode. */
 	FName ActiveMode;
 	

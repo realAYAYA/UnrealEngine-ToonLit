@@ -27,6 +27,7 @@
 #include "LiveLinkClientPanel.h"
 #include "LiveLinkClientCommands.h"
 #include "LiveLinkEditorPrivate.h"
+#include "LiveLinkEditorSettings.h"
 #include "LiveLinkGraphPanelPinFactory.h"
 #include "LiveLinkSettings.h"
 #include "LiveLinkSourceSettingsDetailCustomization.h"
@@ -99,6 +100,15 @@ public:
 
 		StyleSet->Set("LiveLinkClient.Common.Icon", new IMAGE_PLUGIN_BRUSH(TEXT("LiveLink_40x"), Icon40x40));
 		StyleSet->Set("LiveLinkClient.Common.Icon.Small", new IMAGE_PLUGIN_BRUSH_SVG("Starship/LiveLink", Icon16x16));
+
+		StyleSet->Set("LiveLinkHub.Clients.Icon", new IMAGE_PLUGIN_BRUSH_SVG(TEXT("Starship/Clients"), Icon16x16));
+		StyleSet->Set("LiveLinkHub.Sources.Icon", new IMAGE_PLUGIN_BRUSH_SVG(TEXT("Starship/Sources"), Icon16x16));
+		StyleSet->Set("LiveLinkHub.Layout.Icon", new IMAGE_PLUGIN_BRUSH_SVG(TEXT("Starship/Layout"), Icon16x16));
+		StyleSet->Set("LiveLinkHub.Playback.Icon", new IMAGE_PLUGIN_BRUSH_SVG(TEXT("Starship/Playback"), Icon16x16));
+		StyleSet->Set("LiveLinkHub.Subjects.Icon", new IMAGE_PLUGIN_BRUSH_SVG(TEXT("Starship/Subjects"), Icon16x16));
+
+		StyleSet->Set("LiveLinkHub.Icon.Small", new IMAGE_PLUGIN_BRUSH(TEXT("Starship/LiveLinkHub_16x16"), Icon16x16));
+		StyleSet->Set("LiveLinkHub.Icon", new IMAGE_PLUGIN_BRUSH_SVG(TEXT("Starship/LiveLinkHub_Icon"), Icon40x40));
 
 		StyleSet->Set("ClassIcon.LiveLinkPreset",                      new IMAGE_PLUGIN_BRUSH_SVG("Starship/LiveLink", Icon16x16));
 		StyleSet->Set("ClassIcon.LiveLinkFrameInterpolationProcessor", new IMAGE_PLUGIN_BRUSH_SVG("Starship/LiveLink", Icon16x16));
@@ -219,9 +229,14 @@ private:
 
 	void RegisterSettings()
 	{
-		ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings");
-		if (SettingsModule != nullptr)
+		if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
 		{
+			SettingsModule->RegisterSettings("Editor", "Plugins", "LiveLink",
+				LOCTEXT("EditorSettingsName", "Live Link"),
+				LOCTEXT("EditorSettingsDescription", "Configure Live Link."),
+				GetMutableDefault<ULiveLinkEditorSettings>()
+			);
+
 			SettingsModule->RegisterSettings("Project", "Plugins", "LiveLink",
 				LOCTEXT("LiveLinkSettingsName", "Live Link"),
 				LOCTEXT("LiveLinkDescription", "Configure the Live Link plugin."),
@@ -244,6 +259,7 @@ private:
 		{
 			SettingsModule->UnregisterSettings("Project", "Plugins", "LiveLinkComponent");
 			SettingsModule->UnregisterSettings("Project", "Plugins", "LiveLink");
+			SettingsModule->UnregisterSettings("Editor", "Plugins", "LiveLink");
 		}
 	}
 

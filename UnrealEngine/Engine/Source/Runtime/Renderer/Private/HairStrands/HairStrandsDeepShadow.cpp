@@ -2,7 +2,6 @@
 
 #include "HairStrandsDeepShadow.h"
 #include "HairStrandsRasterCommon.h"
-#include "HairStrandsCluster.h"
 #include "HairStrandsUtils.h"
 #include "HairStrandsData.h"
 #include "LightSceneInfo.h"
@@ -221,6 +220,7 @@ public:
 IMPLEMENT_GLOBAL_SHADER(FDeepShadowCreateViewInfoCS, "/Engine/Private/HairStrands/HairStrandsDeepShadowAllocation.usf", "CreateViewInfo", SF_Compute);
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+bool IsHairStrandsForVoxelTransmittanceAndShadowEnable();
 float GetDeepShadowMaxFovAngle();
 float GetDeepShadowRasterizationScale();
 float GetDeepShadowAABBScale();
@@ -242,6 +242,13 @@ void RenderHairStrandsDeepShadows(
 	FHairStrandsMacroGroupResources MacroGroupResources = View.HairStrandsViewData.MacroGroupResources;
 	FHairStrandsDeepShadowResources& DeepShadowResources = View.HairStrandsViewData.DeepShadowResources;
 	FHairStrandsVoxelResources VirtualVoxelResources = View.HairStrandsViewData.VirtualVoxelResources;
+
+	// Reset view data
+	for (FHairStrandsMacroGroupData& MacroGroup : MacroGroupDatas)
+	{
+		MacroGroup.DeepShadowDatas.Empty();
+	}
+	DeepShadowResources = FHairStrandsDeepShadowResources();
 
 	{
 		if (!View.Family)
@@ -459,7 +466,6 @@ void RenderHairStrandsDeepShadows(
 						UniformParameters->AtlasRect = DomData.AtlasRect;
 						UniformParameters->AtlasSlotIndex = DomData.AtlasSlotIndex;
 						UniformParameters->LayerDepths = LayerDepths;
-						UniformParameters->ViewportResolution = AtlasSlotResolution;
 						UniformParameters->FrontDepthTexture = SystemTextures.DepthDummy;
 						UniformParameters->DeepShadowViewInfoBuffer = DeepShadowViewInfoBufferSRV;
 
@@ -499,7 +505,6 @@ void RenderHairStrandsDeepShadows(
 						UniformParameters->AtlasRect = DomData.AtlasRect;
 						UniformParameters->AtlasSlotIndex = DomData.AtlasSlotIndex;
 						UniformParameters->LayerDepths = LayerDepths;
-						UniformParameters->ViewportResolution = AtlasSlotResolution;
 						UniformParameters->FrontDepthTexture = FrontDepthAtlasTexture;
 						UniformParameters->DeepShadowViewInfoBuffer = DeepShadowViewInfoBufferSRV;
 

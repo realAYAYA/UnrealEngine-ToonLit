@@ -153,10 +153,10 @@ FPoly FBSPOps::BuildInfiniteFPoly( UModel* Model, int32 iNode )
 	EdPoly.Init();
 	EdPoly.Normal      = (FVector3f)Normal;
 	EdPoly.Base        = (FVector3f)Base;
-	new(EdPoly.Vertices) FVector3f(Base + Axis1*UE_OLD_WORLD_MAX + Axis2*UE_OLD_WORLD_MAX);
-	new(EdPoly.Vertices) FVector3f(Base - Axis1*UE_OLD_WORLD_MAX + Axis2*UE_OLD_WORLD_MAX);
-	new(EdPoly.Vertices) FVector3f(Base - Axis1*UE_OLD_WORLD_MAX - Axis2*UE_OLD_WORLD_MAX);
-	new(EdPoly.Vertices) FVector3f(Base + Axis1*UE_OLD_WORLD_MAX - Axis2*UE_OLD_WORLD_MAX);
+	EdPoly.Vertices.Emplace(Base + Axis1*UE_OLD_WORLD_MAX + Axis2*UE_OLD_WORLD_MAX);
+	EdPoly.Vertices.Emplace(Base - Axis1*UE_OLD_WORLD_MAX + Axis2*UE_OLD_WORLD_MAX);
+	EdPoly.Vertices.Emplace(Base - Axis1*UE_OLD_WORLD_MAX - Axis2*UE_OLD_WORLD_MAX);
+	EdPoly.Vertices.Emplace(Base + Axis1*UE_OLD_WORLD_MAX - Axis2*UE_OLD_WORLD_MAX);
 
 	return EdPoly;
 }
@@ -971,45 +971,45 @@ void FBSPOps::bspBuildBounds( UModel* Model )
 		PolyList[i]->iBrushPoly = INDEX_NONE;
 	}
 
-	new(Polys[0].Vertices)FVector3f(-HALF_WORLD_MAX,-HALF_WORLD_MAX,HALF_WORLD_MAX);
-	new(Polys[0].Vertices)FVector3f( HALF_WORLD_MAX,-HALF_WORLD_MAX,HALF_WORLD_MAX);
-	new(Polys[0].Vertices)FVector3f( HALF_WORLD_MAX, HALF_WORLD_MAX,HALF_WORLD_MAX);
-	new(Polys[0].Vertices)FVector3f(-HALF_WORLD_MAX, HALF_WORLD_MAX,HALF_WORLD_MAX);
+	Polys[0].Vertices.Emplace(-HALF_WORLD_MAX,-HALF_WORLD_MAX,HALF_WORLD_MAX);
+	Polys[0].Vertices.Emplace( HALF_WORLD_MAX,-HALF_WORLD_MAX,HALF_WORLD_MAX);
+	Polys[0].Vertices.Emplace( HALF_WORLD_MAX, HALF_WORLD_MAX,HALF_WORLD_MAX);
+	Polys[0].Vertices.Emplace(-HALF_WORLD_MAX, HALF_WORLD_MAX,HALF_WORLD_MAX);
 	Polys[0].Normal   =FVector3f( 0.000000,  0.000000,  1.000000 );
 	Polys[0].Base     =Polys[0].Vertices[0];
 
-	new(Polys[1].Vertices)FVector3f(-HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
-	new(Polys[1].Vertices)FVector3f( HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
-	new(Polys[1].Vertices)FVector3f( HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
-	new(Polys[1].Vertices)FVector3f(-HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[1].Vertices.Emplace(-HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[1].Vertices.Emplace( HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[1].Vertices.Emplace( HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[1].Vertices.Emplace(-HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
 	Polys[1].Normal   =FVector3f( 0.000000,  0.000000, -1.000000 );
 	Polys[1].Base     =Polys[1].Vertices[0];
 
-	new(Polys[2].Vertices)FVector3f(-HALF_WORLD_MAX,HALF_WORLD_MAX,-HALF_WORLD_MAX);
-	new(Polys[2].Vertices)FVector3f(-HALF_WORLD_MAX,HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[2].Vertices)FVector3f( HALF_WORLD_MAX,HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[2].Vertices)FVector3f( HALF_WORLD_MAX,HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[2].Vertices.Emplace(-HALF_WORLD_MAX,HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[2].Vertices.Emplace(-HALF_WORLD_MAX,HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[2].Vertices.Emplace( HALF_WORLD_MAX,HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[2].Vertices.Emplace( HALF_WORLD_MAX,HALF_WORLD_MAX,-HALF_WORLD_MAX);
 	Polys[2].Normal   =FVector3f( 0.000000,  1.000000,  0.000000 );
 	Polys[2].Base     =Polys[2].Vertices[0];
 
-	new(Polys[3].Vertices)FVector3f( HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
-	new(Polys[3].Vertices)FVector3f( HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[3].Vertices)FVector3f(-HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[3].Vertices)FVector3f(-HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[3].Vertices.Emplace( HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[3].Vertices.Emplace( HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[3].Vertices.Emplace(-HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[3].Vertices.Emplace(-HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
 	Polys[3].Normal   =FVector3f( 0.000000, -1.000000,  0.000000 );
 	Polys[3].Base     =Polys[3].Vertices[0];
 
-	new(Polys[4].Vertices)FVector3f(HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
-	new(Polys[4].Vertices)FVector3f(HALF_WORLD_MAX, HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[4].Vertices)FVector3f(HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[4].Vertices)FVector3f(HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[4].Vertices.Emplace(HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[4].Vertices.Emplace(HALF_WORLD_MAX, HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[4].Vertices.Emplace(HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[4].Vertices.Emplace(HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
 	Polys[4].Normal   =FVector3f( 1.000000,  0.000000,  0.000000 );
 	Polys[4].Base     =Polys[4].Vertices[0];
 
-	new(Polys[5].Vertices)FVector3f(-HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
-	new(Polys[5].Vertices)FVector3f(-HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[5].Vertices)FVector3f(-HALF_WORLD_MAX, HALF_WORLD_MAX, HALF_WORLD_MAX);
-	new(Polys[5].Vertices)FVector3f(-HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[5].Vertices.Emplace(-HALF_WORLD_MAX,-HALF_WORLD_MAX,-HALF_WORLD_MAX);
+	Polys[5].Vertices.Emplace(-HALF_WORLD_MAX,-HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[5].Vertices.Emplace(-HALF_WORLD_MAX, HALF_WORLD_MAX, HALF_WORLD_MAX);
+	Polys[5].Vertices.Emplace(-HALF_WORLD_MAX, HALF_WORLD_MAX,-HALF_WORLD_MAX);
 	Polys[5].Normal   =FVector3f(-1.000000,  0.000000,  0.000000 );
 	Polys[5].Base     =Polys[5].Vertices[0];
 	// Empty hulls.
@@ -1028,7 +1028,7 @@ void FBSPOps::bspBuildBounds( UModel* Model )
 void FBSPOps::bspValidateBrush( UModel* Brush, bool ForceValidate, bool DoStatusUpdate )
 {
 	check(Brush != nullptr);
-	Brush->Modify();
+	Brush->Modify(false);
 	if( ForceValidate || !Brush->Linked )
 	{
 		Brush->Linked = 1;
@@ -1072,7 +1072,7 @@ void FBSPOps::bspValidateBrush( UModel* Brush, bool ForceValidate, bool DoStatus
 
 void FBSPOps::bspUnlinkPolys( UModel* Brush )
 {
-	Brush->Modify();
+	Brush->Modify(false);
 	Brush->Linked = 1;
 	for( int32 i=0; i<Brush->Polys->Element.Num(); i++ )
 	{
@@ -1272,7 +1272,7 @@ int32	FBSPOps::bspAddNode( UModel* Model, int32 iParent, ENodePlace NodePlace, u
  */
 void FBSPOps::RebuildBrush(UModel* Brush)
 {
-	Brush->Modify();
+	Brush->Modify(false);
 	Brush->EmptyModel(1, 0);
 
 	// Build bounding box.

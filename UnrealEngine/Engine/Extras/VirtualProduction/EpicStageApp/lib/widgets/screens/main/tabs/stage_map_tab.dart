@@ -4,17 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
+import 'package:epic_common/theme.dart';
 
 import '../../../../models/settings/main_screen_settings.dart';
 import '../../../../models/unreal_types.dart';
-import '../../../../utilities/constants.dart';
-import '../../../../utilities/unreal_colors.dart';
 import '../../../elements/lightcard_map.dart';
 import '../sidebar/outliner_panel.dart';
 
 class StageMapTab extends StatefulWidget {
   const StageMapTab({Key? key}) : super(key: key);
-  static const String iconPath = 'assets/images/icons/world.svg';
+  static const String iconPath = 'packages/epic_common/assets/icons/world.svg';
 
   static String getTitle(BuildContext context) => AppLocalizations.of(context)!.tabTitleStageMap;
 
@@ -43,11 +42,11 @@ class _StageMapTabState extends State<StageMapTab> {
           if (bIsOutlinerPanelOpen)
             Container(
               key: const Key('OutlinerPanel'),
-              padding: EdgeInsets.all(cardMargin),
+              padding: EdgeInsets.all(UnrealTheme.cardMargin),
               decoration: BoxDecoration(
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(outerCornerRadius),
-                  bottomLeft: Radius.circular(outerCornerRadius),
+                  topLeft: Radius.circular(UnrealTheme.outerCornerRadius),
+                  bottomLeft: Radius.circular(UnrealTheme.outerCornerRadius),
                 ),
                 color: Theme.of(context).colorScheme.background,
               ),

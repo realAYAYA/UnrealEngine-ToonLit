@@ -168,7 +168,6 @@ public:
 	NIAGARA_API void GetSpectrumValue(FVectorVMExternalFunctionContext& Context);
 	NIAGARA_API void GetNumChannels(FVectorVMExternalFunctionContext& Context);
 
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override 
@@ -195,6 +194,10 @@ public:
 	NIAGARA_API virtual void PostLoad() override;
 
 protected:
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
+
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 private:
 

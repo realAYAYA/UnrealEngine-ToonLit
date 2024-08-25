@@ -10,6 +10,10 @@
 #include "Modules/ModuleManager.h"
 #include "UObject/LinkerLoad.h"
 
+#if WITH_EDITOR
+#include "Misc/RedirectCollector.h"
+#endif
+
 TScriptInterface<IAssetRegistry> UAssetRegistryHelpers::GetAssetRegistry()
 {
 	return &UAssetRegistryImpl::Get();
@@ -226,4 +230,30 @@ UAssetRegistryHelpers::FTemporaryCachingModeScope::FTemporaryCachingModeScope(bo
 UAssetRegistryHelpers::FTemporaryCachingModeScope::~FTemporaryCachingModeScope()
 {
 	UAssetRegistryHelpers::GetAssetRegistry()->SetTemporaryCachingMode(PreviousCachingMode);
+}
+
+void UAssetRegistryHelpers::FixupRedirectedAssetPath(FSoftObjectPath& InOutSoftObjectPath)
+{
+	FSoftObjectPath FoundRedirection;
+	InOutSoftObjectPath.FixupCoreRedirects();
+
+#if WITH_EDITOR
+	FoundRedirection = GRedirectCollector.GetAssetPathRedirection(InOutSoftObjectPath);
+	if (FoundRedirection.IsValid())
+	{
+		InOutSoftObjectPath = FoundRedirection;
+		return;
+	}
+#endif
+
+	IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
+	FoundRedirection = AssetRegistry.GetRedirectedObjectPath(InOutSoftObjectPath.GetWithoutSubPath());
+	InOutSoftObjectPath = FSoftObjectPath(FoundRedirection.GetAssetPath(), InOutSoftObjectPath.GetSubPathString());
+}
+
+void UAssetRegistryHelpers::FixupRedirectedAssetPath(FName& InOutAssetPath)
+{
+	FSoftObjectPath SoftObjectPath(InOutAssetPath.ToString());
+	FixupRedirectedAssetPath(SoftObjectPath);
+	InOutAssetPath = FName(*SoftObjectPath.ToString());
 }

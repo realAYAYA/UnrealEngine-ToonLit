@@ -33,9 +33,13 @@ namespace mu
 
 	bool ASTOpImageNormalComposite::IsEqual(const ASTOp& OtherUntyped) const
 	{
-		if (const ASTOpImageNormalComposite* Other = dynamic_cast<const ASTOpImageNormalComposite*>(&OtherUntyped))
+		if (OtherUntyped.GetOpType()==GetOpType())
 		{
-			return Base == Other->Base && Normal == Other->Normal && Power == Other->Power && Mode == Other->Mode;
+			const ASTOpImageNormalComposite* Other = static_cast<const ASTOpImageNormalComposite*>(&OtherUntyped);
+			return Base == Other->Base 
+				&& Normal == Other->Normal 
+				&& Power == Other->Power 
+				&& Mode == Other->Mode;
 		}
 
 		return false;

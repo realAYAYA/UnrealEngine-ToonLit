@@ -2,8 +2,8 @@
 
 from typing import Dict, Optional
 
-from PySide2.QtCore import QSortFilterProxyModel, Qt
-from PySide2.QtWidgets import QComboBox, QCompleter, QHBoxLayout, \
+from PySide6.QtCore import QSortFilterProxyModel, Qt
+from PySide6.QtWidgets import QComboBox, QCompleter, QHBoxLayout, \
     QHeaderView, QLabel, QPushButton, QSizePolicy, QStyledItemDelegate, \
     QTableView, QVBoxLayout, QWidget
 

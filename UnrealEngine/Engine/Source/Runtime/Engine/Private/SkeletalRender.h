@@ -15,6 +15,7 @@ class FSkeletalMeshRenderData;
 // smallest blend weight for vertex anims
 extern const float MinMorphTargetBlendWeight;
 // largest blend weight for vertex anims
+UE_DEPRECATED(5.4, "Please, use UE::SkeletalRender::Settings::GetMorphTargetMaxBlendWeight");
 extern const float MaxMorphTargetBlendWeight;
 
 

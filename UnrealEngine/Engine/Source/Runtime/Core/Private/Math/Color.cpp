@@ -511,7 +511,8 @@ FLinearColor FLinearColor::MakeFromColorTemperature( float Temp )
 	float G = -0.9692660f * X +  1.8760108f * Y +  0.0415560f * Z;
 	float B =  0.0556434f * X + -0.2040259f * Y +  1.0572252f * Z;
 
-	return FLinearColor(R,G,B);
+	// The XYZ to RGB transform can result in negative values, so we need to clamp here.
+	return FLinearColor(FMath::Max(0.0f, R), FMath::Max(0.0f, G), FMath::Max(0.0f, B));
 }
 
 FLinearColor FLinearColor::MakeRandomSeededColor(int32 Seed)
@@ -523,6 +524,25 @@ FLinearColor FLinearColor::MakeRandomSeededColor(int32 Seed)
 	float B = RandomStream.GetFraction();
 
 	return FLinearColor(R,G,B);
+}
+
+FString FLinearColor::ToString() const
+{
+	return FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), R, G, B, A);
+}
+
+bool FLinearColor::InitFromString(const FString& InSourceString)
+{
+	R = G = B = 0.f;
+	A = 1.f;
+
+	// The initialization is only successful if the R, G, and B values can all be parsed from the string
+	const bool bSuccessful = FParse::Value(*InSourceString, TEXT("R="), R) && FParse::Value(*InSourceString, TEXT("G="), G) && FParse::Value(*InSourceString, TEXT("B="), B);
+
+	// Alpha is optional, so don't factor in its presence (or lack thereof) in determining initialization success
+	FParse::Value(*InSourceString, TEXT("A="), A);
+
+	return bSuccessful;
 }
 
 FColor FColor::MakeRandomSeededColor(int32 Seed)
@@ -543,6 +563,30 @@ FColor FColor::MakeRedToGreenColorFromScalar(float Scalar)
 	const uint8 G = (uint8)FMath::TruncToInt(255 * GreenSclr);
 	const uint8 B = 0;
 	return FColor(R, G, B);
+}
+
+FString FColor::ToHex() const
+{
+	return FString::Printf(TEXT("%02X%02X%02X%02X"), R, G, B, A);
+}
+
+FString FColor::ToString() const
+{
+	return FString::Printf(TEXT("(R=%i,G=%i,B=%i,A=%i)"), R, G, B, A);
+}
+
+bool FColor::InitFromString(const FString& InSourceString)
+{
+	R = G = B = 0;
+	A = 255;
+
+	// The initialization is only successful if the R, G, and B values can all be parsed from the string
+	const bool bSuccessful = FParse::Value(*InSourceString, TEXT("R="), R) && FParse::Value(*InSourceString, TEXT("G="), G) && FParse::Value(*InSourceString, TEXT("B="), B);
+
+	// Alpha is optional, so don't factor in its presence (or lack thereof) in determining initialization success
+	FParse::Value(*InSourceString, TEXT("A="), A);
+
+	return bSuccessful;
 }
 
 void ComputeAndFixedColorAndIntensity(const FLinearColor& InLinearColor,FColor& OutColor,float& OutIntensity)

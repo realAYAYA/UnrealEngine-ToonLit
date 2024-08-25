@@ -25,11 +25,24 @@ private:
 	UPROPERTY()
 	FGuid LandscapeGuid;
 
-	/* The components this proxy was generated for */
+	/* The section coordinates of the landscape components that this proxy was generated for.  Used to register with LandscapeRender when LODGroupKey == 0 */
 	UPROPERTY()
 	TArray<FIntPoint> ProxyComponentBases;
 
-	/* LOD level proxy was generated for */
+	/* The center of the landscape components that this proxy was generated for, in local component space.  Used to register with LandscapeRender when LODGroupKey != 0 */
+	UPROPERTY()
+	TArray<FVector> ProxyComponentCentersObjectSpace;
+
+	UPROPERTY()
+	FVector ComponentXVectorObjectSpace;
+
+	UPROPERTY()
+	FVector ComponentYVectorObjectSpace;
+
+	UPROPERTY()
+	int32 ComponentResolution;
+
+	/* LOD level this proxy was generated for */
 	UPROPERTY()
 	int8 ProxyLOD;
 
@@ -40,5 +53,6 @@ public:
 	LANDSCAPE_API void InitializeForLandscape(ALandscapeProxy* Landscape, int8 InProxyLOD);
 	
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
+	virtual void PostLoad() override;
 };
 

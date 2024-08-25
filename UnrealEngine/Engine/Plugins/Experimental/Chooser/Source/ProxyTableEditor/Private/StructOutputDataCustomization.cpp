@@ -2,6 +2,7 @@
 
 #include "StructOutputDataCustomization.h"
 
+#include "AnimNode_ChooserPlayer.h"
 #include "Chooser.h"
 #include "ChooserPropertyAccess.h"
 #include "PropertyHandle.h"
@@ -14,6 +15,7 @@
 #include "SPropertyAccessChainWidget.h"
 #include "InstancedStructDetails.h"
 #include "ProxyTable.h"
+#include "IPropertyUtilities.h"
 
 #define LOCTEXT_NAMESPACE "StructOutputCustomization"
 
@@ -28,6 +30,9 @@ void FStructOutputDataCustomization::CustomizeHeader(TSharedRef<IPropertyHandle>
 
 	static FName ProxyPropertyName = "Proxy";
 
+	
+	TSharedPtr<IPropertyUtilities> PropUtils = CustomizationUtils.GetPropertyUtilities();
+         	 					
 	IHasContextClass* HasContext = nullptr;
 	// this details customization is hard coded to work in a ProxyTable where the StructOutputs array will be the parent
 	if (TSharedPtr<IPropertyHandle> ArrayHandle = PropertyHandle->GetParentHandle())
@@ -75,9 +80,9 @@ void FStructOutputDataCustomization::CustomizeHeader(TSharedRef<IPropertyHandle>
 		{
 			void* data;
 			BindingHandle->GetValueData(data);
-			return reinterpret_cast<const FChooserPropertyBinding*>(data);
+			return reinterpret_cast<FChooserPropertyBinding*>(data);
 		})
-		.OnAddBinding_Lambda([HasContext, ValueHandle, BindingHandle](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
+		.OnAddBinding_Lambda([HasContext, ValueHandle, BindingHandle, PropUtils](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
          	 	{
          	 		TArray<UObject*> OuterObjects;
          	 		BindingHandle->GetOuterObjects(OuterObjects);
@@ -96,6 +101,7 @@ void FStructOutputDataCustomization::CustomizeHeader(TSharedRef<IPropertyHandle>
          	 				
          	 				OuterObjects[i]->Modify(true);
          	 				Chooser::CopyPropertyChain(InBindingChain, *PropertyValue);
+         	 				PropertyValue->Compile(HasContext);
          	
 							FChooserStructPropertyBinding* StructPropertyBinding = static_cast<FChooserStructPropertyBinding*>(PropertyValue);
 
@@ -105,6 +111,7 @@ void FStructOutputDataCustomization::CustomizeHeader(TSharedRef<IPropertyHandle>
 								if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
 								{
 									StructPropertyBinding->StructType = StructProperty->Struct;
+									StructPropertyBinding->DisplayName = StructProperty->GetDisplayNameText().ToString();
 								}
          	 				}
          	 				else if (InBindingChain.Num() ==1)
@@ -122,7 +129,51 @@ void FStructOutputDataCustomization::CustomizeHeader(TSharedRef<IPropertyHandle>
 							// reset the type of the FInstancedStruct storing the value
 							ValueHandle->GetValueData(ValuePtr);
 							FInstancedStruct* ValueStruct = reinterpret_cast<FInstancedStruct*>(ValuePtr);
-							ValueStruct->InitializeAs(StructPropertyBinding->StructType);
+
+         	 				// begin Temporary data conversion codepath
+         	 				if (StructPropertyBinding->StructType == FChooserPlayerSettings::StaticStruct() &&
+								(ValueStruct->IsValid() && ValueStruct->GetScriptStruct()->GetName() == "ProxyPropPoseParams"))
+         	 				{
+         	 					const UScriptStruct* Struct = ValueStruct->GetScriptStruct();
+         	 					const void* StructData = ValueStruct->GetMemory();
+
+         	 					FDoubleProperty* FrameProperty = CastField<FDoubleProperty>(Struct->CustomFindProperty("Frame"));
+         	 					double Frame = 0.0;
+         	 					FrameProperty->GetValue_InContainer(StructData, &Frame);
+         	 							
+         	 					FBoolProperty* IsMirroredProperty = CastField<FBoolProperty>(Struct->CustomFindProperty("IsMirrored"));
+         	 					bool bIsMirrored = false;
+         	 					IsMirroredProperty->GetValue_InContainer(StructData, &bIsMirrored);
+         	 						
+         	 					FMapProperty* CurvesProperty = CastField<FMapProperty>(Struct->CustomFindProperty("Curves"));
+         	 					// copy Map
+         	 					TMap<FName,double> Map = *reinterpret_cast<const TMap<FName, double>*>(static_cast<const uint8*>(StructData) + CurvesProperty->GetOffset_ForInternal());
+         	 						
+								ValueStruct->InitializeAs(StructPropertyBinding->StructType);
+
+         	 					FChooserPlayerSettings* ChooserPlayerSettings = reinterpret_cast<FChooserPlayerSettings*>(ValueStruct->GetMutableMemory());
+
+         	 					ChooserPlayerSettings->PlaybackRate = 0.0;
+         	 					ChooserPlayerSettings->StartTime = Frame / 30.0;
+         	 					ChooserPlayerSettings->bMirror = bIsMirrored;
+
+         	 					for (auto& pair : Map)
+         	 					{
+         	 						ChooserPlayerSettings->CurveOverrides.Values.Add(FAnimCurveOverride{pair.Key, (float)pair.Value});
+         	 					}
+         	 						
+         	 				}
+         	 				else
+       	 					// END Temporary data conversion codepath
+         	 				if (ValueStruct->GetScriptStruct() != StructPropertyBinding->StructType)
+         	 				{
+         	 					ValueStruct->InitializeAs(StructPropertyBinding->StructType);
+								if (PropUtils.IsValid())
+								{
+									PropUtils->ForceRefresh();
+								}
+         	 					
+         	 				}
 	
          	 				BindingHandle->NotifyPostChange(EPropertyChangeType::ValueSet);
 							ValueHandle->NotifyPostChange(EPropertyChangeType::ValueSet);

@@ -137,8 +137,8 @@ public:
 	/**
 	* take high res screenshot in editor.
 	*/
-	UFUNCTION(BlueprintCallable, Category = "Automation", meta = (AdvancedDisplay="Camera, bMaskEnabled, bCaptureHDR, ComparisonTolerance, ComparisonNotes"))
-	static UAutomationEditorTask* TakeHighResScreenshot(int32 ResX, int32 ResY, FString Filename, ACameraActor* Camera = nullptr, bool bMaskEnabled = false, bool bCaptureHDR = false, EComparisonTolerance ComparisonTolerance = EComparisonTolerance::Low, FString ComparisonNotes = TEXT(""), float Delay = 0.0);
+	UFUNCTION(BlueprintCallable, Category = "Automation", meta = (AdvancedDisplay="Camera, bMaskEnabled, bCaptureHDR, ComparisonTolerance, ComparisonNotes, bForceGameView"))
+	static UAutomationEditorTask* TakeHighResScreenshot(int32 ResX, int32 ResY, FString Filename, ACameraActor* Camera = nullptr, bool bMaskEnabled = false, bool bCaptureHDR = false, EComparisonTolerance ComparisonTolerance = EComparisonTolerance::Low, FString ComparisonNotes = TEXT(""), float Delay = 0.0, bool bForceGameView = true);
 
 	/**
 	* request image comparison.
@@ -174,10 +174,29 @@ public:
 	static FAutomationScreenshotOptions GetDefaultScreenshotOptionsForRendering(EComparisonTolerance Tolerance = EComparisonTolerance::Low, float Delay = 0.2);
 
 	/**
-	 * Mute the report of log error and warning matching a pattern during an automated test
+	 * Mute the report of log error and warning matching a pattern during an automated test. Treat the pattern as regex by default.
+	 * @param ExpectedPatternString	Expects a Regex pattern.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Automation", meta = (AdvancedDisplay = "Occurrences, ExactMatch, IsRegex"))
+	static void AddExpectedLogError(FString ExpectedPatternString, int32 Occurrences = 1, bool ExactMatch = false, bool IsRegex = true);
+
+	/**
+	 * Mute the report of log error and warning matching a plain string during an automated test
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Automation", meta = (AdvancedDisplay = "Occurrences, ExactMatch"))
-	static void AddExpectedLogError(FString ExpectedPatternString, int32 Occurrences = 1, bool ExactMatch = false);
+	static void AddExpectedPlainLogError(FString ExpectedString, int32 Occurrences = 1, bool ExactMatch = false);
+
+	/**
+	 * Expect a specific log message to match a pattern during an automated test regardless of its verbosity. Treat the pattern as regex by default.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Automation", meta = (AdvancedDisplay = "Occurrences, ExactMatch, IsRegex"))
+	static void AddExpectedLogMessage(FString ExpectedPatternString, int32 Occurrences = 1, bool ExactMatch = false, bool IsRegex = true);
+
+	/**
+	 * Expect a specific log message to match a plain string during an automated test regardless of its verbosity
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Automation", meta = (AdvancedDisplay = "Occurrences, ExactMatch"))
+	static void AddExpectedPlainLogMessage(FString ExpectedString, int32 Occurrences = 1, bool ExactMatch = false);
 
 	/**
 	 * Sets all other settings based on an overall value
@@ -199,6 +218,24 @@ public:
 	/** Sets all viewports of the first found level editor to have the VisualizeBuffer ViewMode and also display a given buffer (BaseColor/Metallic/Roughness/etc.) **/
 	UFUNCTION(BlueprintCallable, Category = "Automation")
 	static void SetEditorViewportVisualizeBuffer(FName BufferName);
+
+	/**
+	 * Add info to currently running automated test.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Automation")
+	static void AddTestInfo(const FString& InLogItem);
+
+	/**
+	 * Add warning to currently running automated test.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Automation")
+	static void AddTestWarning(const FString& InLogItem);
+
+	/**
+	 * Add error to currently running automated test.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Automation")
+	static void AddTestError(const FString& InLogItem);
 };
 
 #if WITH_AUTOMATION_TESTS

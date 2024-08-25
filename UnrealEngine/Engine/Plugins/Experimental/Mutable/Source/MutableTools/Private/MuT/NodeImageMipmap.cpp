@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeImageMipmap::Private::s_type =
-            NODE_TYPE( "ImageMipmap", NodeImage::GetStaticType() );
+    FNodeType NodeImageMipmap::Private::s_type =
+            FNodeType( "ImageMipmap", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,43 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeImageMipmap, EType::Mipmap, Node, Node::EType::Image)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeImageMipmap::GetInputCount() const
-	{
-		return 1;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeImageMipmap::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-        case 0: pResult = m_pD->m_pSource.get(); break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeImageMipmap::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-
-		switch (i)
-		{
-        case 0: m_pD->m_pSource = dynamic_cast<NodeImage*>(pNode.get()); break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

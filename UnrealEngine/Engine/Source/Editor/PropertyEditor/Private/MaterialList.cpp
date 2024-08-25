@@ -38,11 +38,11 @@ public:
 	 * @param Material		The material being used
 	 * @param bCanBeReplced	Whether or not the material can be replaced by a user
 	 */
-	virtual void AddMaterial( uint32 SlotIndex, UMaterialInterface* Material, bool bCanBeReplaced, UActorComponent* InCurrentComponent ) override
+	virtual void AddMaterial( uint32 SlotIndex, UMaterialInterface* Material, bool bCanBeReplaced, UActorComponent* InCurrentComponent, FName SlotName ) override
 	{
 		int32 NumMaterials = MaterialSlots.Num();
 
-		FMaterialListItem MaterialItem( Material, SlotIndex, bCanBeReplaced, InCurrentComponent ); 
+		FMaterialListItem MaterialItem( Material, SlotIndex, bCanBeReplaced, InCurrentComponent, SlotName ); 
 		if( !UniqueMaterials.Contains( MaterialItem ) ) 
 		{
 			MaterialSlots.Add( MaterialItem );
@@ -187,7 +187,7 @@ TSharedRef<SWidget> FMaterialItemView::CreateValueContent(IDetailLayoutBuilder& 
 		[
 			SNew(SHorizontalBox)
 			+SHorizontalBox::Slot()
-			.AutoWidth()
+			.FillWidth(1.f)
 			[
 				SNew(SObjectPropertyEntryBox)
 				.ObjectPath(this, &FMaterialItemView::OnGetObjectPath)
@@ -234,7 +234,7 @@ TSharedRef<SWidget> FMaterialItemView::CreateValueContent(IDetailLayoutBuilder& 
 						]
 						+SHorizontalBox::Slot()
 						.Padding(3.0f, 0.0f)
-						.AutoWidth()
+						.FillWidth(1.f)
 						[
 							OnGenerateCustomMaterialWidgets.IsBound() ? OnGenerateCustomMaterialWidgets.Execute(MaterialItem.Material.Get(), MaterialItem.SlotIndex) : SNullWidget::NullWidget
 						]
@@ -320,13 +320,13 @@ TSharedRef<SWidget> FMaterialItemView::MakeBrowseNaniteOverrideMaterialButton() 
 		SNew(SBox)
 		.HAlign(HAlign_Center)
 		.VAlign(VAlign_Center)
-		.WidthOverride(22)
-		.HeightOverride(22)
+		.WidthOverride(22.0f)
+		.HeightOverride(22.0f)
 		.ToolTipText(LOCTEXT("BrowseToNaniteOverride_Tip", "Browse to the Nanite Override Material in Content Browser"))
 		[
 			SNew(SButton)
 			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-			.ContentPadding(0)
+			.ContentPadding(0.0f)
 			.IsFocusable(false)
 			.OnClicked(FOnClicked::CreateLambda([WeakMaterial = MaterialItem.Material]()
 				{
@@ -789,6 +789,17 @@ void FMaterialList::AddMaterialItem( FDetailWidgetRow& Row, int32 CurrentSlot, c
 	[
 		RightSideContent.ToSharedRef()
 	];
+
+	if(USceneComponent* SceneComponent = Cast<USceneComponent>(InActorComponent))
+	{
+		UObject* OwnerObject = nullptr;
+		FString PropertyPath;
+		FProperty* MaterialProperty = nullptr;
+		if (SceneComponent->GetMaterialPropertyPath(Item.SlotIndex, OwnerObject, PropertyPath, MaterialProperty))
+		{
+			Row.IsEnabled(SceneComponent->CanEditChange(MaterialProperty));
+		}		
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

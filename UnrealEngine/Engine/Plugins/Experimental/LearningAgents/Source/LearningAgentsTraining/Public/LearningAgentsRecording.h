@@ -20,7 +20,7 @@ public:
 
 	/** The number of observations and actions recorded. */
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "LearningAgents")
-	int32 SampleNum = 0;
+	int32 StepNum = 0;
 
 	/** The number of dimensions in the observation vector for this record */
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "LearningAgents")
@@ -30,23 +30,26 @@ public:
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "LearningAgents")
 	int32 ActionDimNum = 0;
 
-	bool Serialize(FArchive& Ar);
+	/** The compatibility hash for the recorded observation vectors */
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "LearningAgents")
+	int32 ObservationCompatibilityHash = 0;
 
-	TLearningArray<2, float> Observations;
-	TLearningArray<2, float> Actions;
-};
+	/** The compatibility hash for the recorded action vectors */
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "LearningAgents")
+	int32 ActionCompatibilityHash = 0;
 
-template<>
-struct TStructOpsTypeTraits<FLearningAgentsRecord> : public TStructOpsTypeTraitsBase2<FLearningAgentsRecord>
-{
-	enum
-	{
-		WithSerializer = true,
-	};
+	/** Observation data */
+	UPROPERTY(BlueprintReadOnly, Category = "LearningAgents")
+	TArray<float> ObservationData;
+
+	/** Action data */
+	UPROPERTY(BlueprintReadOnly, Category = "LearningAgents")
+	TArray<float> ActionData;
+
 };
 
 /** Data asset representing an array of records. */
-UCLASS(BlueprintType)
+UCLASS(BlueprintType, Blueprintable)
 class LEARNINGAGENTSTRAINING_API ULearningAgentsRecording : public UDataAsset
 {
 	GENERATED_BODY()
@@ -58,6 +61,10 @@ public:
 	virtual ~ULearningAgentsRecording();
 
 public:
+
+	/** Resets this recording asset to be empty. */
+	UFUNCTION(CallInEditor, Category = "LearningAgents")
+	void ResetRecording();
 
 	/** Load this recording from a file. */
 	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (RelativePath))
@@ -76,12 +83,42 @@ public:
 	void LoadRecordingFromAsset(ULearningAgentsRecording* RecordingAsset);
 
 	/** Saves this recording to the given recording asset */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DevelopmentOnly))
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
 	void SaveRecordingToAsset(ULearningAgentsRecording* RecordingAsset);
 
 	/** Appends this recording to the given recording asset */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DevelopmentOnly))
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
 	void AppendRecordingToAsset(ULearningAgentsRecording* RecordingAsset);
+
+	/** Get the number of records */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	int32 GetRecordNum() const;
+
+	/** Get the number of steps in a given record */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	int32 GetRecordStepNum(const int32 Record) const;
+
+	/**
+	 * Get the Observation Vector associated with a particular step of a given recording
+	 * 
+	 * @param OutObservationVector				Output Observation Vector
+	 * @param OutObservationCompatibilityHash	Output Compatibility Hash for the given Observation Vector
+	 * @param Record							Index of the record in the array of records.
+	 * @param Step								Step of the recording
+	 */
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
+	void GetObservationVector(TArray<float>& OutObservationVector, int32& OutObservationCompatibilityHash, const int32 Record, const int32 Step);
+
+	/**
+	 * Get the Action Vector associated with a particular step of a given recording
+	 *
+	 * @param OutActionVector					Output Action Vector
+	 * @param OutActionCompatibilityHash		Output Compatibility Hash for the given Action Vector
+	 * @param Record							Index of the record in the array of records.
+	 * @param Step								Step of the recording
+	 */
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
+	void GetActionVector(TArray<float>& OutActionVector, int32& OutActionCompatibilityHash, const int32 Record, const int32 Step);
 
 public:
 

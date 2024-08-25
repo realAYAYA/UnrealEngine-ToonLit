@@ -55,7 +55,7 @@ namespace FMLAdapter
 			ShapeString += FString::Printf(TEXT("%d,"), Option);
 		}
 		// python-side json parsing doesn't like dangling commas
-		ShapeString.RemoveAt(ShapeString.Len() - 1, 1, /*bAllowShrinking=*/false);
+		ShapeString.RemoveAt(ShapeString.Len() - 1, 1, EAllowShrinking::No);
 
 		return FString::Printf(TEXT("{\"%s\":[%s]}"), *EnumToString(Type), *ShapeString);
 	}
@@ -93,7 +93,7 @@ namespace FMLAdapter
 			ShapeString += FString::Printf(TEXT("%d,"), Size);
 		}
 		// python-side json parsing doesn't like dangling commas
-		ShapeString.RemoveAt(ShapeString.Len() - 1, 1, /*bAllowShrinking=*/false);
+		ShapeString.RemoveAt(ShapeString.Len() - 1, 1, EAllowShrinking::No);
 		return FString::Printf(TEXT("{\"%s\":[%f,%f,%s]}"), *EnumToString(Type), Low, High, *ShapeString);
 	}
 

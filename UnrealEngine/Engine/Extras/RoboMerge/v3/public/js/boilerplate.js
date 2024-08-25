@@ -166,7 +166,7 @@ function updateBranchList(graphBotName=null) {
 		}
 		// Fallback to window hash if it exists
 		else if (window.location.hash) {
-			const botlinkhash = `#link-${window.location.hash.substr(1).toUpperCase()}`
+			const botlinkhash = `#link-${window.location.hash.substring(1).toUpperCase()}`
 			//debug(`Using window.location.hash to click ${botlinkhash}`)
 			let bot = $(botlinkhash)
 			if (bot.length !== 0) {
@@ -385,6 +385,7 @@ function generateRobomergeHeader(createSignedInUserDiv = true) {
 		let logOutButton = $('<button id="log-out" class="btn btn-xs btn-warning">Sign out</button>')
 		logOutButton.click(function() {
 			document.cookie = 'auth=; path=; redirect_to=;';
+			document.cookie = 'signedOut=true;';
 			window.location.href = '/login';
 		})
 		loggedInUser.append(logOutButton)
@@ -483,6 +484,24 @@ function generateRobomergeFooter() {
 	branchesButton.click(function() { window.open('/api/branches', '_blank') })
 	branchesButton.text("Branch Data")
 	fteButtonDiv.append(branchesButton)
+
+	let trackChangeButton = $('<button id="trackChangeButton">')
+	trackChangeButton.addClass("btn btn-sm btn-outline-dark")
+	trackChangeButton.click(function() { 
+		let data = promptFor({
+			cl: `Enter the CL to track:`
+		})
+		if (data) {
+			// Ensure they entered a CL
+			if (isNaN(parseInt(data.cl))) {
+				displayErrorMessage("Please provide a valid changelist number to track.")
+				return
+			}
+			window.open(`/trackchange/${data.cl}`, '_blank') 
+		}
+	})
+	trackChangeButton.text("Track Change")
+	fteButtonDiv.append(trackChangeButton)
 
 	let currentlyRunningDiv = $('<div id="currentlyRunning">')
 	fixedFooterContents.append(currentlyRunningDiv)
@@ -1383,11 +1402,17 @@ function renderActionsCell_Common(actionCell, data, operationFunction, operation
 			}, `Retry merge of ${conflict.cl} and create a shelf in a specified P4 workspace`)
 			
 			// Stomp
-			const stompRequest = `/op/stomp?` + queryParams + location.hash
+			const stompRequest = '/op/stomp?' + queryParams + location.hash
 			const stompOption = createActionOption('Stomp Changes using ' + conflict.cl + toTargetText, function() {
 				window.location.href = stompRequest;
 			}, `Use ${conflict.cl} to stomp binary changes in ${conflict.target}`);
 
+			// Unlock files
+			const unlockFilesRequest = '/op/unlock?' + queryParams
+			const unlockOption = createActionOption('Unlock Files blocking ' + conflict.cl + toTargetText, function() {
+				window.location.href = unlockFilesRequest;
+			}, `Unlock files blocking ${conflict.cl} in ${conflict.target}`);
+			
 			// Can only create shelves for merge conflicts and commit failures
 			if (conflict.kind !== 'Merge conflict' &&
 				conflict.kind !== 'Commit failure') {
@@ -1397,16 +1422,27 @@ function renderActionsCell_Common(actionCell, data, operationFunction, operation
 				shelfOption.attr('data-original-title', `Shelving not available for ${conflict.kind.toLowerCase()}.`)
 			}
 
+			dropdownEntries.push(shelfOption)
+
 			// Can only perform stomps for merge conflicts
-			if (conflict.kind !== 'Merge conflict')
-			{
+			if (conflict.kind === 'Merge conflict') {
+				dropdownEntries.push(stompOption)
+			}
+			else {
 				stompOption.addClass("disabled")
 				stompOption.off('click')
 				stompOption.attr('data-original-title', `Stomp not available for ${conflict.kind.toLowerCase()}.`)
 			}
 
-			dropdownEntries.push(shelfOption)
-			dropdownEntries.push(stompOption)
+			if (conflict.kind === 'Exclusive check-out') {
+				dropdownEntries.push(unlockOption)
+			}
+			else {
+				unlockOption.addClass("disabled")
+				unlockOption.off('click')
+				unlockOption.attr('data-original-title', `Unlock not required for ${conflict.kind.toLowerCase()}.`)
+			}
+
 		}
 
 		// Exposing this section in the case of a blockage but no conflict

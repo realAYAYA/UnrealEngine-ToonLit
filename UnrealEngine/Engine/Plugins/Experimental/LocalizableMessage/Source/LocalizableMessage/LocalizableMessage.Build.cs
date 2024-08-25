@@ -10,7 +10,11 @@ namespace UnrealBuildTool.Rules
 				new string[] {
 					"Core",
 					"CoreUObject",
-					"StructUtils"
+				});
+
+			PublicDependencyModuleNames.AddRange(
+				new string[] {
+					"StructUtils" // used in header
 				});
 
 			bAllowAutoRTFMInstrumentation = true;

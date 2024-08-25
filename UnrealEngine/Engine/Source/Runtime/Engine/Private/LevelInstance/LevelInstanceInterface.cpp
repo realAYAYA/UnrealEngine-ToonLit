@@ -3,6 +3,7 @@
 #include "LevelInstance/LevelInstanceInterface.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "LevelInstance/LevelInstanceLevelStreaming.h"
+#include "WorldPartition/WorldPartition.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
@@ -25,7 +26,7 @@ bool ILevelInstanceInterface::SupportsPartialEditorLoading() const
 	{
 		if (ULevelInstanceSubsystem* LevelInstanceSubsystem = GetLevelInstanceSubsystem())
 		{
-			if (LevelInstanceSubsystem->IsEditingLevelInstance(this))
+			if (LevelInstanceSubsystem->IsEditingLevelInstance(this) || HasChildEdit())
 			{
 				return false;
 			}
@@ -42,6 +43,15 @@ bool ILevelInstanceInterface::SupportsPartialEditorLoading() const
 			if (Actor->GetPackage()->HasAllPackagesFlags(PKG_NewlyCreated))
 			{
 				return false;
+			}
+
+			// If the level is loaded, check that it has editor streaming enabled
+			if (ULevel* Level = GetLoadedLevel())
+			{
+				if (UWorldPartition* WorldPartition = Level->GetWorldPartition(); WorldPartition && WorldPartition->IsInitialized() && !WorldPartition->IsStreamingEnabledInEditor())
+				{
+					return false;
+				}
 			}
 
 			if (ILevelInstanceInterface* Parent = LevelInstanceSubsystem->GetParentLevelInstance(Actor))
@@ -121,23 +131,23 @@ TSubclassOf<ULevelStreamingLevelInstance> ILevelInstanceInterface::GetLevelStrea
 	return ULevelStreamingLevelInstance::StaticClass();
 }
 
-#if WITH_EDITOR
-ULevel* ILevelInstanceInterface::GetLoadedLevel() const
-{
-	if (ULevelInstanceSubsystem* LevelInstanceSubsystem = GetLevelInstanceSubsystem())
-	{
-		return LevelInstanceSubsystem->GetLevelInstanceLevel(this);
-	}
-
-	return nullptr;
-}
-
 void ILevelInstanceInterface::UpdateLevelInstanceFromWorldAsset()
 {
 	if (HasValidLevelInstanceID())
 	{
 		if (ULevelInstanceSubsystem* LevelInstanceSubsystem = GetLevelInstanceSubsystem())
 		{
+#if WITH_EDITOR
+			LevelInstanceSubsystem->ForEachLevelInstanceAncestorsAndSelf(CastChecked<AActor>(this), [](const ILevelInstanceInterface* Ancestor)
+			{
+				if (ULevelInstanceComponent* LevelInstanceComponent = Ancestor->GetLevelInstanceComponent())
+				{
+					LevelInstanceComponent->ClearCachedFilter();
+				}
+				return true;
+			});
+#endif
+
 			if (IsWorldAssetValid() && IsLoadingEnabled())
 			{
 				const bool bForceUpdate = true;
@@ -150,6 +160,18 @@ void ILevelInstanceInterface::UpdateLevelInstanceFromWorldAsset()
 		}
 	}
 }
+
+ULevel* ILevelInstanceInterface::GetLoadedLevel() const
+{
+	if (ULevelInstanceSubsystem* LevelInstanceSubsystem = GetLevelInstanceSubsystem())
+	{
+		return LevelInstanceSubsystem->GetLevelInstanceLevel(this);
+	}
+
+	return nullptr;
+}
+
+#if WITH_EDITOR
 
 bool ILevelInstanceInterface::IsEditing() const
 {

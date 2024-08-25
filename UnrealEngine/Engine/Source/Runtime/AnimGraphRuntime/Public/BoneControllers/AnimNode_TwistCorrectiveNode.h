@@ -56,7 +56,7 @@ struct FAnimNode_TwistCorrectiveNode : public FAnimNode_SkeletalControlBase
 
  	// Maximum limit of the input value (mapped to RemappedMax, only used when limiting the source range)
  	// We can't go more than 180 right now because this is dot product driver
-	UPROPERTY(EditAnywhere, Category = "Mapping", meta = (UIMin = 0.f, ClampMin = 0.f, UIMax = 90.f, ClampMax = 90.f, EditCondition = bUseRange, DisplayName = "Max Angle In Degree"))
+	UPROPERTY(EditAnywhere, Category = "Mapping", meta = (UIMin = 0.f, ClampMin = 0.f, UIMax = 90.f, ClampMax = 90.f, DisplayName = "Max Angle In Degree"))
  	float RangeMax;
 
  	// Minimum value to apply to the destination (remapped from the input range)

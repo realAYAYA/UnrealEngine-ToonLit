@@ -18,6 +18,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Logging/TokenizedMessage.h"
 #include "AbcImportLogger.h"
+#include "Misc/ScopedSlowTask.h"
 
 
 
@@ -36,6 +37,8 @@ THIRD_PARTY_INCLUDES_END
 
 
 #define LOCTEXT_NAMESPACE "AbcFile"
+
+const FString FAbcFile::NoFaceSetNameStr(TEXT("NoFaceSetName"));
 
 FAbcFile::FAbcFile(const FString& InFilePath)
 	: FilePath(InFilePath)
@@ -73,7 +76,7 @@ FAbcFile::~FAbcFile()
 
 EAbcImportError FAbcFile::Open()
 {
-	Factory.setPolicy(Alembic::Abc::ErrorHandler::kThrowPolicy);
+	Factory.setPolicy(Alembic::Abc::ErrorHandler::kQuietNoopPolicy);
 	Factory.setOgawaNumStreams(12);
 	
 	// Extract Archive and compression type from file
@@ -253,25 +256,25 @@ EAbcImportError FAbcFile::Import(UAbcImportSettings* InImportSettings)
 	}
 
 	SecondsPerFrame = TimeStep;
-	FramesPerSecond = TimeStep > 0.f ? FMath::RoundToInt(1.f / TimeStep) : 30;
+	FramesPerSecond = TimeStep > 0.f ? (1.f / TimeStep) : 30.f;
 	ImportLength = static_cast<float>(FrameSpan) * TimeStep;
 
 	// Calculate time offset from start of import animation range
-	ImportTimeOffset = static_cast<float>(StartFrameIndex) / static_cast<float>(FramesPerSecond);
+	ImportTimeOffset = static_cast<float>(StartFrameIndex) / FramesPerSecond;
 
 	// Read first-frames for both the transforms and poly meshes
 
 	bool bValidFirstFrames = true;
 	for (FAbcTransform* Transform : Transforms)
 	{
-		bValidFirstFrames &= Transform->ReadFirstFrame(static_cast<float>(StartFrameIndex) / static_cast<float>(FramesPerSecond), StartFrameIndex);
+		bValidFirstFrames &= Transform->ReadFirstFrame(static_cast<float>(StartFrameIndex) / FramesPerSecond, StartFrameIndex);
 	}
 
 	for (FAbcPolyMesh* PolyMesh : PolyMeshes)
 	{
 		if (PolyMesh->bShouldImport)
 		{
-			bValidFirstFrames &= PolyMesh->ReadFirstFrame(static_cast<float>(StartFrameIndex) / static_cast<float>(FramesPerSecond), StartFrameIndex);
+			bValidFirstFrames &= PolyMesh->ReadFirstFrame(static_cast<float>(StartFrameIndex) / FramesPerSecond, StartFrameIndex);
 		}
 	}	
 
@@ -377,30 +380,60 @@ EAbcImportError FAbcFile::Import(UAbcImportSettings* InImportSettings)
 		}
 	}
 
+	// Count total number of facesets (1 or more per mesh)
+	int32 NumFacesets = 0;
+	for (const FAbcPolyMesh* PolyMesh : PolyMeshes)
+	{
+		if (PolyMesh->bShouldImport)
+		{
+			check(!PolyMesh->FaceSetNames.IsEmpty());
+			NumFacesets += PolyMesh->FaceSetNames.Num();
+		}
+	}
+	
+	if (NumFacesets == 0)
+	{
+		return AbcImportError_NoMeshes;
+	}
+
 	// Populate the list of unique face set names from the meshes that should be imported regardless of the import material settings
-	bool bRequiresDefaultMaterial = false;
-	for (FAbcPolyMesh* PolyMesh : PolyMeshes)
+	// and construct mapping from faceset index (in flat list of imported mesh facesets) to material slot
+	LookupMaterialSlot.SetNum(NumFacesets);
+
+	int32 FacesetMaterialIndex = 0;
+	for (const FAbcPolyMesh* PolyMesh : PolyMeshes)
 	{
 		if (PolyMesh->bShouldImport)
 		{
 			for (const FString& FaceSetName : PolyMesh->FaceSetNames)
 			{
-				UniqueFaceSetNames.AddUnique(FaceSetName);
+				int32 MaterialSlotIndex = UniqueFaceSetNames.Find(FaceSetName);
+				if (MaterialSlotIndex == INDEX_NONE)
+				{
+					MaterialSlotIndex = UniqueFaceSetNames.Num();
+					UniqueFaceSetNames.Add(FaceSetName);
+				}
+
+				LookupMaterialSlot[FacesetMaterialIndex] = MaterialSlotIndex;
+				FacesetMaterialIndex++;
 			}
-			bRequiresDefaultMaterial |= PolyMesh->FaceSetNames.Num() == 0;
 		}
 	}
 
-	if (bRequiresDefaultMaterial)
-	{
-		UniqueFaceSetNames.Insert(TEXT("DefaultMaterial"), 0);
-	}
+	check(FacesetMaterialIndex == NumFacesets);
 
 	return AbcImportError_NoError;
 }
 
 void FAbcFile::TraverseAbcHierarchy(const Alembic::Abc::IObject& InObject, IAbcObject* InParent)
 {
+	if (!InObject)
+	{
+		TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Warning, LOCTEXT("AbcInvalidObject", "Invalid object detected: the Alembic file may be corrupted."));
+		FAbcImportLogger::AddImportMessage(Message);
+		return;
+	}
+
 	// Get Header and MetaData info from current Alembic Object
 	Alembic::AbcCoreAbstract::ObjectHeader Header = InObject.getHeader();
 	const Alembic::Abc::MetaData ObjectMetaData = InObject.getMetaData();
@@ -452,19 +485,44 @@ void FAbcFile::TraverseAbcHierarchy(const Alembic::Abc::IObject& InObject, IAbcO
 		}
 	}
 
+	// Check for animated visibility property
+	{
+		const Alembic::Abc::ICompoundProperty CompoundProperty = InObject.getProperties();
+
+		if (CompoundProperty.getPropertyHeader(Alembic::AbcGeom::kVisibilityPropertyName))
+		{
+			const Alembic::AbcGeom::IVisibilityProperty VisibilityProperty = Alembic::AbcGeom::IVisibilityProperty(CompoundProperty, Alembic::AbcGeom::kVisibilityPropertyName);
+
+			int32 NumSamplesVisibility = VisibilityProperty.getNumSamples();
+
+			if (NumSamplesVisibility > 1)
+			{
+				const Alembic::AbcCoreAbstract::TimeSamplingPtr TimeSampler = VisibilityProperty.getTimeSampling();
+				const Alembic::AbcCoreAbstract::TimeSamplingType SamplingType = TimeSampler->getTimeSamplingType();
+
+				const float StartTimeVisibility = (float)TimeSampler->getSampleTime(0);
+				const int32 MinFrameIndexVisibility = FMath::CeilToInt(StartTimeVisibility / (float)SamplingType.getTimePerCycle());
+				const int32 MaxFrameIndexVisibility = MinFrameIndexVisibility + NumSamplesVisibility - 1;
+
+				MinTime = FMath::Min(MinTime, StartTimeVisibility);
+				MaxTime = FMath::Max(MaxTime, (float)TimeSampler->getSampleTime(NumSamplesVisibility - 1));
+				NumFrames = FMath::Max(NumFrames, NumSamplesVisibility);
+				MinFrameIndex = FMath::Min(MinFrameIndex, MinFrameIndexVisibility);
+				MaxFrameIndex = FMath::Max(MaxFrameIndex, MaxFrameIndexVisibility);
+			}
+		}
+	}
+
 	if (RootObject == nullptr && CreatedObject != nullptr)
 	{
 		RootObject = CreatedObject;
 	}
 
 	// Recursive traversal of child objects
-	if (NumChildren > 0)
+	for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex)
 	{
-		for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex)
-		{
-			const Alembic::Abc::IObject& AbcChildObject = InObject.getChild(ChildIndex);
-			TraverseAbcHierarchy(AbcChildObject, CreatedObject);
-		}
+		const Alembic::Abc::IObject& AbcChildObject = InObject.getChild(ChildIndex);
+		TraverseAbcHierarchy(AbcChildObject, CreatedObject);
 	}
 }
 
@@ -501,7 +559,7 @@ void FAbcFile::ReadFrame(int32 FrameIndex, const EFrameReadFlags InFlags, const 
 {
 	for (IAbcObject* Object : Objects)
 	{
-		Object->SetFrameAndTime(static_cast<float>(FrameIndex) / static_cast<float>(FramesPerSecond), FrameIndex, InFlags, ReadIndex);
+		Object->SetFrameAndTime(static_cast<float>(FrameIndex) / FramesPerSecond, FrameIndex, InFlags, ReadIndex);
 	}
 }
 
@@ -513,16 +571,23 @@ void FAbcFile::CleanupFrameData(const int32 ReadIndex)
 	}
 }
 
-void FAbcFile::ProcessFrames(TFunctionRef<void(int32, FAbcFile*)> InCallback, const EFrameReadFlags InFlags)
+bool FAbcFile::ProcessFrames(TFunctionRef<void(int32, FAbcFile*)> InCallback, const EFrameReadFlags InFlags, const FSlowTask* SlowTask)
 {
 	const int32 NumWorkerThreads = FMath::Clamp(FTaskGraphInterface::Get().GetNumWorkerThreads(), 1, MaxNumberOfResidentSamples);
 	const bool bSingleThreaded = ImportSettings->NumThreads == 1 ||
 								 EnumHasAnyFlags(InFlags, EFrameReadFlags::ForceSingleThreaded) || !FApp::ShouldUseThreadingForPerformance();
 
+	volatile bool bIsCancelled = false;
+
 	if (bSingleThreaded)
 	{
 		for (int32 FrameIndex = StartFrameIndex; FrameIndex <= EndFrameIndex; ++FrameIndex)
 		{
+			if (SlowTask && SlowTask->ShouldCancel())
+			{
+				return false;
+			}
+
 			ReadFrame(FrameIndex, InFlags, 0);
 			InCallback(FrameIndex, this);
 			CleanupFrameData(0);
@@ -538,15 +603,21 @@ void FAbcFile::ProcessFrames(TFunctionRef<void(int32, FAbcFile*)> InCallback, co
 		{
 			TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Error, LOCTEXT("NoSynchEvent", "Unable to get synchronization event for parallelized Alembic frame data import."));
 			FAbcImportLogger::AddImportMessage(Message);
-			return;
+			return false;
 		}
 
-		ParallelFor(NumWorkerThreads, [this, InFlags, InCallback, bSingleThreaded, NumWorkerThreads, &WriteFrameIndex, &Mutex, &FrameWrittenEvent](int32 ThreadIndex)
+		ParallelFor(NumWorkerThreads, [this, InFlags, InCallback, bSingleThreaded, NumWorkerThreads, &WriteFrameIndex, &Mutex, &FrameWrittenEvent, &bIsCancelled, SlowTask](int32 ThreadIndex)
 		{
 			int32 FrameIndex = StartFrameIndex + ThreadIndex;
 
-			while (FrameIndex <= EndFrameIndex)
+			while (FrameIndex <= EndFrameIndex && !bIsCancelled)
 			{
+				if (IsInGameThread() && SlowTask && SlowTask->ShouldCancel())
+				{
+					bIsCancelled = true;
+					break;
+				}
+
 				// Read frame data into memory
 				ReadFrame(FrameIndex, InFlags, ThreadIndex);
 
@@ -578,6 +649,8 @@ void FAbcFile::ProcessFrames(TFunctionRef<void(int32, FAbcFile*)> InCallback, co
 
 		FPlatformProcess::ReturnSynchEventToPool(FrameWrittenEvent);
 	}
+
+	return !bIsCancelled;
 }
 
 const int32 FAbcFile::GetMinFrameIndex() const
@@ -640,7 +713,7 @@ const int32 FAbcFile::GetImportNumFrames() const
 	return EndFrameIndex - StartFrameIndex;
 }
 
-const int32 FAbcFile::GetFramerate() const
+const float FAbcFile::GetFramerate() const
 {
 	return FramesPerSecond;
 }

@@ -6,6 +6,7 @@
 #include "ControlFlowTask_Loop.h"
 #include "ControlFlows.h"
 #include "Containers/Ticker.h"
+#include "Misc/App.h"
 #include "Misc/TrackedActivity.h"
 
 static const int32 MAX_FLOW_LOOPS = 10000;
@@ -74,6 +75,14 @@ void FControlFlow::HandleControlFlowNodeCompleted(TSharedRef<const FControlFlowN
 {
 	UE_LOG(LogControlFlows, Verbose, TEXT("ControlFlow - Executing %s%s(x%d).%s (FlowControlNodeCompleted)"), *GetFlowPath(), *DebugName, GetRepeatedFlowCount(), *NodeCompleted->GetNodeName());
 
+#if CPUPROFILERTRACE_ENABLED
+	if (bProfilerEventStarted)
+	{
+		FCpuProfilerTrace::OutputEndEvent();
+		bProfilerEventStarted = false;
+	}
+#endif 
+
 	SubFlowStack_ForDebugging.Add(SharedThis(this));
 
 	if (ensureMsgf(CurrentNode.IsValid(), TEXT("CurrentNode isn't valid when handling control flow node (%s) being completed.  This will likely become a static_assert/compile-error"),
@@ -108,7 +117,10 @@ void FControlFlow::HandleControlFlowNodeCompleted(TSharedRef<const FControlFlowN
 						Activity->Update(*CurrentNode->GetNodeName());
 
 					FlowQueue.RemoveAt(0);
-					CurrentNode->CancelFlow();
+
+					/* Calling CancelFlow() on the next node will call CancelFlow() through the entire `FlowQueue` nodes because 
+					* Calling `FControlFlowNode::CancelFlow()` will call back into `FControlFlow::HandleControlFlowNodeCompleted()` and end here until `FlowQueue.Num() == 0` */
+					CurrentNode->CancelFlow(); 
 				}
 				else
 				{
@@ -292,18 +304,46 @@ TSharedPtr<FTrackedActivity> FControlFlow::GetTrackedActivity() const
 	return Activity;
 }
 
-FControlFlow& FControlFlow::QueueDelay(const float InDelay, const FString& NodeName)
+FControlFlow& FControlFlow::QueueDelay(const float InSeconds, const FString& NodeName)
 {
-	QueueWait(NodeName).BindLambda([InDelay](FControlFlowNodeRef FlowHandle)
+	QueueWait(NodeName).BindLambda([InSeconds](FControlFlowNodeRef FlowHandle)
 		{
-			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([FlowHandle](float)
+			TSharedRef<FControlFlow> OwningFlow = FlowHandle->Parent.Pin().ToSharedRef();
+
+			// If we already had a 0.0f delay this tick, add the delta time of this tick to the delay
+			const float AdditionalDelay = (InSeconds == 0.0f && OwningFlow->LastZeroSecondDelay.Key == FApp::GetCurrentTime()) ? OwningFlow->LastZeroSecondDelay.Value : 0.0f;
+			const float SecondsToDelay = InSeconds + AdditionalDelay;
+
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([FlowHandle, bIsZeroSecondDelay = SecondsToDelay == 0.0f](float DeltaTime)
 				{
 					if (FlowHandle->Parent.IsValid() && !FlowHandle->HasCancelBeenRequested())
 					{
+						// Notify ALL parents of 0.0f delay
+						if (bIsZeroSecondDelay)
+						{
+							TSharedPtr<FControlFlow> FlowIter = FlowHandle->Parent.Pin().ToSharedRef();
+							while (FlowIter.IsValid())
+							{
+								FlowIter->LastZeroSecondDelay = { FApp::GetCurrentTime(), DeltaTime };
+
+								FlowIter = FlowIter->ParentFlow.IsValid() ? FlowIter->ParentFlow.Pin() : nullptr;
+							}
+						}
+
 						FlowHandle->ContinueFlow();
 					}
 					return false;
-				}), InDelay);
+				}), SecondsToDelay);
+		});
+
+	return *this;
+}
+
+FControlFlow& FControlFlow::QueueSetCancelledNodeAsComplete(const bool bCancelledNodeIsComplete, const FString& NodeName /*= FString()*/)
+{
+	QueueFunction(NodeName).BindSPLambda(this, [this, bCancelledNodeIsComplete]()
+		{
+			this->SetCancelledNodeAsComplete(bCancelledNodeIsComplete);
 		});
 
 	return *this;
@@ -335,8 +375,12 @@ FControlFlowWaitDelegate& FControlFlow::QueueWait(const FString& FlowNodeDebugNa
 
 FControlFlowPopulator& FControlFlow::QueueControlFlow(const FString& TaskName /*= TEXT("")*/, const FString& FlowNodeDebugName /*= TEXT("")*/)
 {
-	TSharedRef<FControlFlowSimpleSubTask> NewTask = MakeShared<FControlFlowSimpleSubTask>(TaskName, MakeShared<FControlFlow>(TaskName));
+	TSharedRef<FControlFlowSimpleSubTask> NewTask = MakeShared<FControlFlowSimpleSubTask>(TaskName);
 	TSharedRef<FControlFlowNode_Task> NewNode = MakeShared<FControlFlowNode_Task>(SharedThis(this), NewTask, FormatOrGetNewNodeDebugName(FlowNodeDebugName));
+
+	NewTask->GetTaskFlow()->ParentFlow = AsWeak();
+
+	NewTask->SetOwningNode(NewNode);
 	NewTask->GetTaskFlow()->Activity = Activity;
 	NewNode->OnExecute().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeExecuted);
 	NewNode->OnCancelRequested().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeCancelled);
@@ -351,6 +395,7 @@ FControlFlowBranchDefiner& FControlFlow::QueueControlFlowBranch(const FString& T
 	TSharedRef<FControlFlowTask_Branch> NewTask = MakeShared<FControlFlowTask_Branch>(TaskName);
 	TSharedRef<FControlFlowNode_Task> NewNode = MakeShared<FControlFlowNode_Task>(SharedThis(this), NewTask, FormatOrGetNewNodeDebugName(FlowNodeDebugName));
 
+	NewTask->SetOwningNode(NewNode);
 	NewTask->Activity = Activity;
 	NewNode->OnExecute().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeExecuted);
 	NewNode->OnCancelRequested().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeCancelled);
@@ -365,6 +410,7 @@ FConcurrentFlowsDefiner& FControlFlow::QueueConcurrentFlows(const FString& TaskN
 	TSharedRef<FControlFlowTask_ConcurrentFlows> NewTask = MakeShared<FControlFlowTask_ConcurrentFlows>(TaskName);
 	TSharedRef<FControlFlowNode_Task> NewNode = MakeShared<FControlFlowNode_Task>(SharedThis(this), NewTask, FormatOrGetNewNodeDebugName(FlowNodeDebugName));
 
+	NewTask->SetOwningNode(NewNode);
 	NewNode->OnExecute().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeExecuted);
 	NewNode->OnCancelRequested().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeCancelled);
 
@@ -378,6 +424,7 @@ FControlFlowConditionalLoopDefiner& FControlFlow::QueueConditionalLoop(const FSt
 	TSharedRef<FControlFlowTask_ConditionalLoop> NewTask = MakeShared<FControlFlowTask_ConditionalLoop>(TaskName);
 	TSharedRef<FControlFlowNode_Task> NewNode = MakeShared<FControlFlowNode_Task>(SharedThis(this), NewTask, FormatOrGetNewNodeDebugName(FlowNodeDebugName));
 
+	NewTask->SetOwningNode(NewNode);
 	NewNode->OnExecute().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeExecuted);
 	NewNode->OnCancelRequested().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeCancelled);
 
@@ -393,6 +440,7 @@ TSharedRef<FControlFlowTask_BranchLegacy> FControlFlow::QueueBranch(FControlFlow
 	TSharedRef<FControlFlowTask_BranchLegacy> NewTask = MakeShared<FControlFlowTask_BranchLegacy>(BranchDecider, TaskName);
 	TSharedRef<FControlFlowNode_Task> NewNode = MakeShared<FControlFlowNode_Task>(SharedThis(this), NewTask, FormatOrGetNewNodeDebugName(FlowNodeDebugName));
 
+	NewTask->SetOwningNode(NewNode);
 	NewNode->OnExecute().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeExecuted);
 	NewNode->OnCancelRequested().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeCancelled);
 
@@ -403,8 +451,12 @@ TSharedRef<FControlFlowTask_BranchLegacy> FControlFlow::QueueBranch(FControlFlow
 
 FControlFlowPopulator& FControlFlow::QueueLoop(FControlFlowLoopComplete& LoopCompleteDelgate, const FString& TaskName /*= TEXT("")*/, const FString& FlowNodeDebugName /*= TEXT("")*/)
 {
-	TSharedRef<FControlFlowTask_LoopDeprecated> NewTask = MakeShared<FControlFlowTask_LoopDeprecated>(LoopCompleteDelgate, TaskName, MakeShared<FControlFlow>(TaskName));
+	TSharedRef<FControlFlowTask_LoopDeprecated> NewTask = MakeShared<FControlFlowTask_LoopDeprecated>(LoopCompleteDelgate, TaskName);
 	TSharedRef<FControlFlowNode_Task> NewNode = MakeShared<FControlFlowNode_Task>(SharedThis(this), NewTask, FormatOrGetNewNodeDebugName(FlowNodeDebugName));
+
+	NewTask->GetTaskFlow()->ParentFlow = AsWeak();
+
+	NewTask->SetOwningNode(NewNode);
 	NewTask->GetTaskFlow()->Activity = Activity;
 	NewNode->OnExecute().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeExecuted);
 	NewNode->OnCancelRequested().BindSP(SharedThis(this), &FControlFlow::HandleTaskNodeCancelled);

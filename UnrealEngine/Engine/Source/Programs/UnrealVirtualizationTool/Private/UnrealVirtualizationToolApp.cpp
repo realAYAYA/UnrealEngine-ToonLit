@@ -422,7 +422,6 @@ EInitResult FUnrealVirtualizationToolApp::TryParseGlobalOptions(const TCHAR* Cmd
 
 	if (FParse::Param(CmdLine, TEXT("MinimalLogging")))
 	{
-		UE_LOG(LogVirtualizationTool, Display, TEXT("Cmdline parameter '-MinimalLogging' found, supressing Display log messages"));
 		OutputDeviceOverride = MakeUnique<FOverrideOutputDevice>();
 
 		AddGlobalOption(TEXT("-MinimalLogging"));	
@@ -473,7 +472,7 @@ bool FUnrealVirtualizationToolApp::TrySortFilesByProject(const TArray<FString>& 
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(TrySortFilesByProject);
 
-	UE_LOG(LogVirtualizationTool, Display, TEXT("Sorting files by project..."));
+	UE_LOG(LogVirtualizationTool, Display, TEXT("\tSorting files by project..."));
 
 	for (const FString& PackagePath : Packages)
 	{

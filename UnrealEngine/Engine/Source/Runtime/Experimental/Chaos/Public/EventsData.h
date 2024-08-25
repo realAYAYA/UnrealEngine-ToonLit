@@ -64,6 +64,12 @@ namespace Chaos
 	{
 		FCollisionEventData() {}
 
+		void Reset()
+		{
+			PhysicsProxyToCollisionIndices.PhysicsProxyToIndicesMap.Reset();
+			CollisionData.Reset();
+		}
+
 		FAllCollisionData CollisionData;
 		FIndicesByPhysicsProxy PhysicsProxyToCollisionIndices;
 	};
@@ -80,6 +86,7 @@ namespace Chaos
 		void Reset()
 		{
 			AllBreakingsArray.Reset();
+			bHasGlobalEvent = false;
 		}
 
 		FBreakingDataArray AllBreakingsArray;
@@ -89,6 +96,12 @@ namespace Chaos
 	struct FBreakingEventData
 	{
 		FBreakingEventData() {}
+
+		void Reset()
+		{
+			BreakingData.Reset();
+			PhysicsProxyToBreakingIndices.PhysicsProxyToIndicesMap.Reset();
+		}
 
 		FAllBreakingData BreakingData;
 		FIndicesByPhysicsProxy PhysicsProxyToBreakingIndices;
@@ -116,6 +129,12 @@ namespace Chaos
 	{
 		FTrailingEventData() {}
 
+		void Reset()
+		{
+			TrailingData.Reset();
+			PhysicsProxyToTrailingIndices.Reset();
+		}
+
 		FAllTrailingData TrailingData;
 		FIndicesByPhysicsProxy PhysicsProxyToTrailingIndices;
 	};
@@ -142,6 +161,12 @@ namespace Chaos
 	{
 		FRemovalEventData() {}
 
+		void Reset()
+		{
+			RemovalData.Reset();
+			PhysicsProxyToRemovalIndices.PhysicsProxyToIndicesMap.Reset();
+		}
+
 		FAllRemovalData RemovalData;
 		FIndicesByPhysicsProxy PhysicsProxyToRemovalIndices;
 	};
@@ -149,6 +174,11 @@ namespace Chaos
 	struct FSleepingEventData
 	{
 		FSleepingEventData() {}
+
+		void Reset()
+		{
+			SleepingData.Reset();
+		}
 
 		FSleepingDataArray SleepingData;
 	};
@@ -163,6 +193,7 @@ namespace Chaos
 		void Reset()
 		{
 			AllCrumblingsArray.Reset();
+			bHasGlobalEvent = false;
 		}
 
 		FCrumblingDataArray AllCrumblingsArray;

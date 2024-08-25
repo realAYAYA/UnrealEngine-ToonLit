@@ -105,19 +105,11 @@ public:
 		FString ProjectNameWatermarkPrefix;
 		GConfig->GetString(TEXT("LevelEditor"), TEXT("ProjectNameWatermarkPrefix"), /*out*/ ProjectNameWatermarkPrefix, GEditorPerProjectIni);
 
-		FSlateColor BadgeBackgroundColor = FAppStyle::Get().GetSlateColor("Colors.Foldout");
-
-		FColor ConfigColor;
-		if (GConfig->GetColor(TEXT("LevelEditor"), TEXT("ProjectBadgeBackgroundColor"), /*out*/ ConfigColor, GEditorPerProjectIni))
-		{
-			BadgeBackgroundColor = FLinearColor(ConfigColor);
-		}
-
-		FColor BadgeTextColor = FColor(128,128,128,255);
+		FColor BadgeTextColor = FColor(128, 128, 128, 255);
 		GConfig->GetColor(TEXT("LevelEditor"), TEXT("ProjectBadgeTextColor"), /*out*/ BadgeTextColor, GEditorPerProjectIni);
 
 		const FString EngineVersionString = FEngineVersion::Current().ToString(FEngineVersion::Current().HasChangelist() ? EVersionComponent::Changelist : EVersionComponent::Patch);
-		
+
 		FFormatNamedArguments Args;
 
 		Args.Add(TEXT("ProjectNameWatermarkPrefix"), FText::FromString(ProjectNameWatermarkPrefix));
@@ -156,6 +148,7 @@ public:
 			.Text(RightContentText)
 			.Visibility(EVisibility::HitTestInvisible)
 			.TextStyle(FAppStyle::Get(), "SProjectBadge.Text")
+			.Margin(FAppStyle::Get().GetMargin("SProjectBadge.BadgePadding"))
 			.ColorAndOpacity(BadgeTextColor);
 
 		SBox::Construct(SBox::FArguments()
@@ -163,16 +156,10 @@ public:
 			.VAlign(VAlign_Top)
 			.Padding(FMargin(0.0f, 0.0f, 2.0f, 0.0f))
 			[
-				SNew(SBorder)
-				.BorderImage(FAppStyle::GetBrush("SProjectBadge.BadgeShape"))
-				.Padding(FAppStyle::Get().GetMargin("SProjectBadge.BadgePadding"))
-				.BorderBackgroundColor(BadgeBackgroundColor)
-				.VAlign(VAlign_Top)
-				[
-					SNew(SExtensionPanel)
-					.ExtensionPanelID("LevelEditorProjectNamePlate")
-					.DefaultWidget(DefaultNamePlate)
-				]
+				SNew(SExtensionPanel)
+				.ExtensionPanelID("LevelEditorProjectNamePlate")
+				.DefaultWidget(DefaultNamePlate)
+				.WindowZoneOverride(EWindowZone::TitleBar)
 			]);
 	}
 
@@ -835,31 +822,31 @@ void FLevelEditorModule::BindGlobalLevelEditorCommands()
 	ActionList.MapAction(
 		Commands.SnapOriginToGrid,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::MoveElementsToGrid_Clicked, /*bAlign*/false, /*bPerElement*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.SnapOriginToGridPerActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::MoveElementsToGrid_Clicked, /*bAlign*/false, /*bPerElement*/true),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 	
 	ActionList.MapAction(
 		Commands.AlignOriginToGrid,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::MoveElementsToGrid_Clicked, /*bAlign*/true, /*bPerElement*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.SnapOriginToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::MoveElementsToElement_Clicked, /*bAlign*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 	
 	ActionList.MapAction(
 		Commands.AlignOriginToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::MoveElementsToElement_Clicked, /*bAlign*/true),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
@@ -906,96 +893,96 @@ void FLevelEditorModule::BindGlobalLevelEditorCommands()
 	ActionList.MapAction(
 		Commands.SnapToFloor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapToFloor_Clicked, /*bAlign*/false, /*bUseLineTrace*/false, /*bUseBounds*/false, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.AlignToFloor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapToFloor_Clicked, /*bAlign*/true, /*bUseLineTrace*/false, /*bUseBounds*/false, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.SnapPivotToFloor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapToFloor_Clicked, /*bAlign*/false, /*bUseLineTrace*/true, /*bUseBounds*/false, /*bUsePivot*/true),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.AlignPivotToFloor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapToFloor_Clicked, /*bAlign*/true, /*bUseLineTrace*/true, /*bUseBounds*/false, /*bUsePivot*/true),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.SnapBottomCenterBoundsToFloor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapToFloor_Clicked, /*bAlign*/false, /*bUseLineTrace*/true, /*bUseBounds*/true, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.AlignBottomCenterBoundsToFloor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapToFloor_Clicked, /*bAlign*/true, /*bUseLineTrace*/true, /*bUseBounds*/true, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.SnapToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapElementsToElement_Clicked, /*bAlign*/false, /*bUseLineTrace*/false, /*bUseBounds*/false, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.AlignToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapElementsToElement_Clicked, /*bAlign*/true, /*bUseLineTrace*/false, /*bUseBounds*/false, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.SnapPivotToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapElementsToElement_Clicked, /*bAlign*/false, /*bUseLineTrace*/true, /*bUseBounds*/false, /*bUsePivot*/true),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.AlignPivotToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapElementsToElement_Clicked, /*bAlign*/true, /*bUseLineTrace*/true, /*bUseBounds*/false, /*bUsePivot*/true),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.SnapBottomCenterBoundsToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapElementsToElement_Clicked, /*bAlign*/false, /*bUseLineTrace*/true, /*bUseBounds*/true, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.AlignBottomCenterBoundsToActor,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::SnapElementsToElement_Clicked, /*bAlign*/true, /*bUseLineTrace*/true, /*bUseBounds*/true, /*bUsePivot*/false),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementsSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.DeltaTransformToActors, 
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::DeltaTransform ), 
-		FCanExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::ElementSelected_CanExecute) );
+		FCanExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove) );
 
 	ActionList.MapAction(
 		Commands.MirrorActorX,
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::ExecuteExecCommand, FString( TEXT("ELEMENT MIRROR X=-1") ) ),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.MirrorActorY,
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::ExecuteExecCommand, FString( TEXT("ELEMENT MIRROR Y=-1") ) ),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
 		Commands.MirrorActorZ,
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::ExecuteExecCommand, FString( TEXT("ELEMENT MIRROR Z=-1") ) ),
-		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecute)
+		FCanExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ElementSelected_CanExecuteMove)
 		);
 
 	ActionList.MapAction(
@@ -1029,7 +1016,7 @@ void FLevelEditorModule::BindGlobalLevelEditorCommands()
 	ActionList.MapAction(
 		Commands.RegroupActors,
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::RegroupActor_Clicked ),
-		FCanExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::ActorSelected_CanExecute )
+		FCanExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::GroupActors_CanExecute )
 		);
 
 	ActionList.MapAction(
@@ -1049,7 +1036,8 @@ void FLevelEditorModule::BindGlobalLevelEditorCommands()
 
 	ActionList.MapAction(
 		Commands.AddActorsToGroup,
-		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::AddActorsToGroup_Clicked )
+		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::AddActorsToGroup_Clicked ),
+		FCanExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::GroupActors_CanExecute )
 		);
 
 	ActionList.MapAction(
@@ -1826,11 +1814,20 @@ void FLevelEditorModule::BindGlobalLevelEditorCommands()
 		
 		if (ShaderPlatform < SP_NumPlatforms)
 		{
-			const ERHIFeatureLevel::Type FeatureLevel = GetMaxSupportedFeatureLevel(ShaderPlatform);
-
 			const bool bIsDefaultShaderPlatform = FDataDrivenShaderPlatformInfo::GetPreviewShaderPlatformParent(ShaderPlatform) == GMaxRHIShaderPlatform;
 
-			FPreviewPlatformInfo PreviewFeatureLevelInfo(bIsDefaultShaderPlatform ? GMaxRHIFeatureLevel : FeatureLevel, bIsDefaultShaderPlatform ? GMaxRHIShaderPlatform : (EShaderPlatform)ShaderPlatform, bIsDefaultShaderPlatform ? NAME_None : Item.PlatformName, bIsDefaultShaderPlatform ? NAME_None : Item.ShaderFormat, bIsDefaultShaderPlatform ? NAME_None : Item.DeviceProfileName, true, bIsDefaultShaderPlatform ? NAME_None : Item.PreviewShaderPlatformName);
+			auto GetPreviewFeatureLevelInfo = [&]()
+			{
+				if (bIsDefaultShaderPlatform)
+				{
+					return FPreviewPlatformInfo(GMaxRHIFeatureLevel, GMaxRHIShaderPlatform, NAME_None, NAME_None, NAME_None, true, NAME_None);
+				}
+
+				const ERHIFeatureLevel::Type FeatureLevel = GetMaxSupportedFeatureLevel(ShaderPlatform);
+				return FPreviewPlatformInfo(FeatureLevel, ShaderPlatform, Item.PlatformName, Item.ShaderFormat, Item.DeviceProfileName, true, Item.PreviewShaderPlatformName);
+			};
+
+			FPreviewPlatformInfo PreviewFeatureLevelInfo = GetPreviewFeatureLevelInfo();
 
 			ActionList.MapAction(
 				Commands.PreviewPlatformOverrides[Index],

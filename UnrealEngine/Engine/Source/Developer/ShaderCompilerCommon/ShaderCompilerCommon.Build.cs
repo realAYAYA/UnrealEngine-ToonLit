@@ -11,6 +11,7 @@ public class ShaderCompilerCommon : ModuleRules
 			new string[] {
 				"Core",
 				"RenderCore",
+				"ShaderPreprocessor",
 				"TargetPlatform",
 			}
 			);

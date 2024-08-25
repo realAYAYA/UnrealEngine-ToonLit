@@ -10,16 +10,6 @@
 class FOnlineSubsystemEOS;
 class FSocketSubsystemEOS;
 
-#define WANTS_NP_LOGGING 0
-
-#if WANTS_NP_LOGGING
-	#define NP_LOG(Msg, ...) NpLog(*FString::Printf(Msg, __VA_ARGS__))
-
-	void NpLog(const TCHAR* Msg);
-#else
-	#define NP_LOG(Msg, ...)
-#endif
-
 #if WITH_EOS_SDK
 	#include "eos_p2p_types.h"
 #endif

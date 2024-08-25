@@ -47,7 +47,7 @@ public:
 	void ProcessPacketDeliveryStatus(UE::Net::EPacketDeliveryStatus Status);
 
 	// Explicitly acknowledge exports, this is used for exports originating from out of band batches 
-	void AcknowledgeBatchExports(FNetExportContext::FBatchExports& BatchExports);
+	void AcknowledgeBatchExports(const FNetExportContext::FBatchExports& BatchExports);
 
 	// Construct a new export scope
 	FExportScope MakeExportScope(UE::Net::FNetSerializationContext& Context, FNetExportContext::FBatchExports& BatchExports) { return FExportScope(Context, AcknowledgedExports, BatchExports); }

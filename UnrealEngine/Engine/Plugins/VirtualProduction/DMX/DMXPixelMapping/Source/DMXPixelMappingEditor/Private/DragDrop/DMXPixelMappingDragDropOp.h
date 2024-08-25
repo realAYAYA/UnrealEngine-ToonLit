@@ -2,15 +2,12 @@
 
 #pragma once
 
-
-
 #include "DragAndDrop/DecoratedDragDropOp.h"
-
-class FDMXPixelMappingGroupChildDragDropHelper;
 
 class FDMXPixelMappingComponentTemplate;
 class FDMXPixelMappingComponentReference;
-class UDMXPixelMappingBaseComponent;
+class FDMXPixelMappingGroupChildDragDropHelper;
+class FDMXPixelMappingToolkit;
 class UDMXPixelMappingBaseComponent;
 
 
@@ -28,10 +25,10 @@ public:
 	virtual ~FDMXPixelMappingDragDropOp();
 
 	/** Constructs the drag drop operation. */
-	static TSharedRef<FDMXPixelMappingDragDropOp> New(const FVector2D& InGraphSpaceDragOffset, const TArray<TSharedPtr<FDMXPixelMappingComponentTemplate>>& InTemplates, UDMXPixelMappingBaseComponent* InParent);
+	static TSharedRef<FDMXPixelMappingDragDropOp> New(const TSharedRef<FDMXPixelMappingToolkit>& InToolkit, const FVector2D& InGraphSpaceDragOffset, const TArray<TSharedPtr<FDMXPixelMappingComponentTemplate>>& InTemplates, UDMXPixelMappingBaseComponent* InParent);
 	
 	/** Constructs the drag drop operation. Note, the component that initiated the drag drop op has to be the first element in the InDraggedComponents array. */
-	static TSharedRef<FDMXPixelMappingDragDropOp> New(const FVector2D& InGraphSpaceDragOffset, const TArray<TWeakObjectPtr<UDMXPixelMappingBaseComponent>>& InDraggedComponents);
+	static TSharedRef<FDMXPixelMappingDragDropOp> New(const TSharedRef<FDMXPixelMappingToolkit>& InToolkit, const FVector2D& InGraphSpaceDragOffset, const TArray<TWeakObjectPtr<UDMXPixelMappingBaseComponent>>& InDraggedComponents);
 
 	/** Sets dragged components. Clears the template, preventing from the template being used more than once. */
 	void SetDraggedComponents(const TArray<TWeakObjectPtr<UDMXPixelMappingBaseComponent>>& InDraggedComponents);
@@ -44,6 +41,7 @@ public:
 
 	/** Returns true if the drag drop op was created with the constructor that provides a template */
 	bool WasCreatedAsTemplate() const { return bWasCreatedAsTemplate; }
+
 
 	/** Can be used to store the parent of the dragged component(s) */
 	TWeakObjectPtr<UDMXPixelMappingBaseComponent> Parent;
@@ -59,6 +57,9 @@ public:
 
 	/** Returns the dragged component references */
 	FORCEINLINE const TArray<TSharedPtr<FDMXPixelMappingComponentTemplate>>& GetTemplates() const { return Templates; }
+	
+	/** Utiltity that returns the grid snapped position from a desired position. */
+	FVector2D ComputeGridSnapPosition(const FVector2D& DesiredPosition) const;
 
 private:
 	/** True if this was created with the New version was used that provides a template */
@@ -75,4 +76,7 @@ private:
 
 	/** Group Item drag drop helper */
 	TSharedPtr<FDMXPixelMappingGroupChildDragDropHelper> GroupChildDragDropHelper;
+
+	/** The toolkit that constructed this drag drop op */
+	TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
 };

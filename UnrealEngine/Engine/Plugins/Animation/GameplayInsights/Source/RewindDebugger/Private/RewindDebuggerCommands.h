@@ -31,6 +31,8 @@ public:
 		UI_COMMAND(Play, "Play", "Playback recorded data", EUserInterfaceActionType::Button, FInputChord(EKeys::Down));
 		UI_COMMAND(NextFrame, "Next Frame", "Step one frame forward", EUserInterfaceActionType::Button, FInputChord(EKeys::Right));
 		UI_COMMAND(LastFrame, "Last Frame", "Jump to last recorded frame", EUserInterfaceActionType::Button, FInputChord(EModifierKey::Control, EKeys::Up));
+		UI_COMMAND(AutoEject, "Auto Eject", "Automatically detach player control when PIE is paused", EUserInterfaceActionType::ToggleButton, FInputChord());
+		UI_COMMAND(AutoRecord, "Auto Record", "Automatically start recording when PIE is started", EUserInterfaceActionType::ToggleButton, FInputChord());
 	}
 
 
@@ -44,6 +46,8 @@ public:
 	TSharedPtr<FUICommandInfo> NextFrame;
 	TSharedPtr<FUICommandInfo> LastFrame;
 	TSharedPtr<FUICommandInfo> PauseOrPlay;
+	TSharedPtr<FUICommandInfo> AutoEject;
+	TSharedPtr<FUICommandInfo> AutoRecord;
 };
 
 

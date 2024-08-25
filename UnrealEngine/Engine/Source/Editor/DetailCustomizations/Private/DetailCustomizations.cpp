@@ -126,7 +126,6 @@
 #include "RawDistributionVectorStructCustomization.h"
 #include "ReflectionCaptureDetails.h"
 #include "RenderPassesCustomization.h"
-#include "RigDetails.h"
 #include "RotatorStructCustomization.h"
 #include "SceneCaptureDetails.h"
 #include "SceneComponentDetails.h"
@@ -151,7 +150,6 @@
 #include "StaticMeshComponentDetails.h"
 #include "SupportedRangeTypes.h"	// StructsSupportingRangeVisibility
 #include "TemplateStringStructCustomization.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SharedPointer.h"
 #include "TextCustomization.h"
 #include "TimecodeDetailsCustomization.h"
@@ -400,7 +398,6 @@ void FDetailCustomizationsModule::RegisterObjectCustomizations()
 	RegisterCustomClassLayout("K2Node_GetClassDefaults", FOnGetDetailCustomizationInstance::CreateStatic(&FSkeletalControlNodeDetails::MakeInstance));
 
 	RegisterCustomClassLayout("AnimSequence", FOnGetDetailCustomizationInstance::CreateStatic(&FAnimSequenceDetails::MakeInstance));
-	RegisterCustomClassLayout("Rig", FOnGetDetailCustomizationInstance::CreateStatic(&FRigDetails::MakeInstance));
 
 	RegisterCustomClassLayout("EditorAnimSegment", FOnGetDetailCustomizationInstance::CreateStatic(&FAnimMontageSegmentDetails::MakeInstance));
 	RegisterCustomClassLayout("EditorAnimCompositeSegment", FOnGetDetailCustomizationInstance::CreateStatic(&FAnimMontageSegmentDetails::MakeInstance));
@@ -821,6 +818,20 @@ void FDetailCustomizationsModule::RegisterSectionMappings()
 			Section->AddCategory("PostProcessVolumeSettings");
 			Section->AddCategory("Rendering Features");
 			Section->RemoveCategory("Brush Settings");
+		}
+	}
+
+	// RuntimeVirtualTextureComponent
+	{
+		{
+			TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection("RuntimeVirtualTextureComponent", "Rendering", LOCTEXT("Rendering", "Rendering"));
+			Section->AddCategory("Rendering");
+			Section->AddCategory("Runtime Virtual Texture");
+			Section->AddCategory("Streaming Virtual Texture");
+		}
+		{
+			TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection("RuntimeVirtualTextureComponent", "General", LOCTEXT("General", "General"));
+			Section->AddCategory("Volume Bounds");
 		}
 	}
 }

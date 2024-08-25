@@ -76,6 +76,50 @@ public:
 		return false;
 	}
 
+
+	void AppendInverse(const FTransform& Transform, const RealType Tolerance = TMathUtil<RealType>::ZeroTolerance)
+	{
+		AppendInverse(TTransformSRT3<RealType>(Transform), Tolerance);
+	}
+
+	void AppendInverse(const TTransformSRT3<RealType>& Transform, const RealType Tolerance = TMathUtil<RealType>::ZeroTolerance)
+	{
+		if (Transform.CanRepresentInverse(Tolerance))
+		{
+			Append(Transform.InverseUnsafe(Tolerance));
+		}
+		else
+		{
+			TTransformSRT3<RealType> InvS = TTransformSRT3<RealType>::Identity();
+			InvS.SetScale(TTransformSRT3<RealType>::GetSafeScaleReciprocal(Transform.GetScale3D(), Tolerance));
+
+			TTransformSRT3<RealType> InvRT = Transform;
+			InvRT.SetScale(TVector<RealType>::One());
+			InvRT = InvRT.InverseUnsafe();
+			Append(InvRT);
+			Append(InvS);
+		}
+	}
+
+	void AppendInverse(const TTransformSequence3<RealType>& SequenceToAppend, const RealType Tolerance = TMathUtil<RealType>::ZeroTolerance)
+	{
+		for (int32 Idx = Transforms.Num() - 1; Idx >= 0; --Idx)
+		{
+			AppendInverse(Transforms[Idx], Tolerance);
+		}
+	}
+
+	// Create the inverse of a transform sequence. Note: Transforms with both non-uniform scale and rotation may be split into two transforms. Zeros in scale will be replaced with unit scales.
+	TTransformSequence3<RealType> GetInverse(const RealType Tolerance = TMathUtil<RealType>::ZeroTolerance) const
+	{
+		TTransformSequence3<RealType> InverseTransformSeq;
+		for (int32 Idx = Transforms.Num() - 1; Idx >= 0; --Idx)
+		{
+			InverseTransformSeq.AppendInverse(Transforms[Idx]);
+		}
+		return InverseTransformSeq;
+	}
+
 	/**
 	 * @return Cumulative scale across Transforms.
 	 */

@@ -12,6 +12,7 @@
 #include "UObject/LinkerPlaceholderClass.h"
 #include "UObject/ObjectHandleTracking.h"
 #include "LowLevelTestsRunner/WarnFilterScope.h"
+#include "ObjectRefTrackingTestBase.h"
 
 TEST_CASE("UE::CoreUObject::FClassProperty::Identical")
 {
@@ -36,9 +37,47 @@ TEST_CASE("UE::CoreUObject::FClassProperty::Identical")
 	{
 		TestPackage->RemoveFromRoot();
 	};
-	UObjectWithClassProperty* Obj = NewObject<UObjectWithClassProperty>(TestPackage, TEXT("UObjectWithClassProperty"));
+	UObjectWithClassProperty* Obj1 = NewObject<UObjectWithClassProperty>(TestPackage, TEXT("UObjectWithClassProperty1"));
+	UObjectWithClassProperty* Obj2 = NewObject<UObjectWithClassProperty>(TestPackage, TEXT("UObjectWithClassProperty2"));
+	Obj1->ClassPtr = UObjectWithClassProperty::StaticClass();
 
-	CHECK(Property->Identical(Obj, Obj, 0u));
+	const void* Value1 = Property->ContainerPtrToValuePtr<void>(Obj1);
+	const void* Value2 = Property->ContainerPtrToValuePtr<void>(Obj2);
+	
+	//NonNull != nullptr
+	CHECK(!Property->Identical(Value1, Value2, 0u));
+	CHECK(!Property->Identical(Value2, Value1, 0u));
 
+	Obj2->ClassPtr = Obj1->ClassPtr;
+	CHECK(Property->Identical(Value1, Value2, 0u));
+	CHECK(Property->Identical(Value2, Value1, 0u));
+}
+
+
+TEST_CASE("UE::CoreUObject::FClassProperty::GetCPPType")
+{
+	FObjectProperty* PtrProperty = CastField<FObjectProperty>(UObjectWithClassProperty::StaticClass()->FindPropertyByName(TEXT("ClassPtr")));
+	FObjectProperty* RawProperty = CastField<FObjectProperty>(UObjectWithClassProperty::StaticClass()->FindPropertyByName(TEXT("ClassRaw")));
+	FObjectProperty* SubClassProperty = CastField<FObjectProperty>(UObjectWithClassProperty::StaticClass()->FindPropertyByName(TEXT("SubClass")));
+
+	CHECK(PtrProperty->GetClass() == RawProperty->GetClass());
+
+	FString RawType = RawProperty->GetCPPType(nullptr, 0u);
+	CHECK(RawType == TEXT("UClass*"));
+
+	RawType = RawProperty->GetCPPType(nullptr, EPropertyExportCPPFlags::CPPF_NoTObjectPtr);
+	CHECK(RawType == TEXT("UClass*"));
+
+	FString PtrType = PtrProperty->GetCPPType(nullptr, 0u);
+	CHECK(PtrType == TEXT("TObjectPtr<UClass>"));
+
+	PtrType = PtrProperty->GetCPPType(nullptr, EPropertyExportCPPFlags::CPPF_NoTObjectPtr);
+	CHECK(PtrType == TEXT("UClass*"));
+
+	FString SubClassType = SubClassProperty->GetCPPType(nullptr, EPropertyExportCPPFlags::CPPF_NoTObjectPtr);
+	CHECK(SubClassType == TEXT("TSubclassOf<UObjectPtrTestClass>"));
+
+	SubClassType = SubClassProperty->GetCPPType(nullptr, 0u);
+	CHECK(SubClassType == TEXT("TSubclassOf<UObjectPtrTestClass>"));
 }
 #endif

@@ -9,6 +9,7 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Guid.h"
 #include "HAL/FileManager.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #define LOCTEXT_NAMESPACE "DesktopPlatform"
 
@@ -127,8 +128,8 @@ private:
 	}
 	else
 	{
-		// Allow all file types
-		[DialogPanel setAllowedFileTypes:nil];
+		// Allow all file types (empty array means all types)
+		DialogPanel.allowedContentTypes = @[];
 	}
 }
 
@@ -146,7 +147,8 @@ private:
 	NSString* ExtsToParse = [AllowedFileTypes objectAtIndex:index * 2 + 1];
 	if( [ExtsToParse compare:@"*.*"] == NSOrderedSame )
 	{
-		[DialogPanel setAllowedFileTypes: nil];
+		// Allow all file types (empty array means all types)
+		DialogPanel.allowedContentTypes = @[];
 	}
 	else
 	{
@@ -156,10 +158,10 @@ private:
 		for( int32 Index = 0; Index < [ExtensionsWildcards count]; ++Index )
 		{
 			NSString* Temp = [[ExtensionsWildcards objectAtIndex:Index] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"*."]];
-			[Extensions addObject: Temp];
+			[Extensions addObject: [UTType typeWithFilenameExtension:Temp]];
 		}
 
-		[DialogPanel setAllowedFileTypes: Extensions];
+		DialogPanel.allowedContentTypes = Extensions;
 	}
 }
 
@@ -493,11 +495,9 @@ bool FDesktopPlatformMac::RegisterEngineInstallation(const FString &RootDir, FSt
 		FString ConfigPath = FString(FPlatformProcess::ApplicationSettingsDir()) / FString(TEXT("UnrealEngine")) / FString(TEXT("Install.ini"));
 		ConfigFile.Read(ConfigPath);
 
-		FConfigSection &Section = ConfigFile.FindOrAdd(TEXT("Installations"));
 		OutIdentifier = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensInBraces);
-		Section.AddUnique(*OutIdentifier, RootDir);
+		ConfigFile.AddToSection(TEXT("Installations"), *OutIdentifier, RootDir);
 
-		ConfigFile.Dirty = true;
 		ConfigFile.Write(ConfigPath);
 	}
 	return bRes;
@@ -525,10 +525,10 @@ void FDesktopPlatformMac::EnumerateEngineInstallations(TMap<FString, FString> &O
 	FString ConfigPath = FString(FPlatformProcess::ApplicationSettingsDir()) / FString(TEXT("UnrealEngine")) / FString(TEXT("Install.ini"));
 	ConfigFile.Read(ConfigPath);
 
-	FConfigSection &Section = ConfigFile.FindOrAdd(TEXT("Installations"));
+	const FConfigSection *Section = ConfigFile.FindOrAddConfigSection(TEXT("Installations"));
 	// Remove invalid entries
 	TArray<FName> KeysToRemove;
-	for (auto It : Section)
+	for (const TPair<FName, FConfigValue>& It : *Section)
 	{
 		const FString& EngineDir = It.Value.GetValue();
 		if (EngineDir.Contains("Unreal Engine.app/Contents/") || EngineDir.Contains("Epic Games Launcher.app/Contents/") || EngineDir.Contains("/Users/Shared/UnrealEngine/Launcher") || !IFileManager::Get().DirectoryExists(*EngineDir))
@@ -536,9 +536,9 @@ void FDesktopPlatformMac::EnumerateEngineInstallations(TMap<FString, FString> &O
 			KeysToRemove.Add(It.Key);
 		}
 	}
-	for (auto Key : KeysToRemove)
+	for (FName Key : KeysToRemove)
 	{
-		Section.Remove(Key);
+		ConfigFile.RemoveKeyFromSection(TEXT("Installations"), Key);
 	}
 
 	CFArrayRef AllApps = LSCopyApplicationURLsForURL((__bridge CFURLRef)[NSURL fileURLWithPath:UProjectPath.GetNSString()], kLSRolesAll);
@@ -554,7 +554,7 @@ void FDesktopPlatformMac::EnumerateEngineInstallations(TMap<FString, FString> &O
 				&& EngineDir.RemoveFromEnd(TEXT("/Engine/Binaries/Mac")) && !EngineDir.Contains("Unreal Engine.app/Contents/") && !EngineDir.Contains("Epic Games Launcher.app/Contents/") && !EngineDir.Contains("/Users/Shared/UnrealEngine/Launcher"))
 			{
 				FString EngineId;
-				const FName* Key = Section.FindKey(EngineDir);
+				const FName* Key = Section->FindKey(EngineDir);
 				if (Key)
 				{
 					FGuid IdGuid;
@@ -566,8 +566,7 @@ void FDesktopPlatformMac::EnumerateEngineInstallations(TMap<FString, FString> &O
 					if (!OutInstallations.FindKey(EngineDir))
 					{
 						EngineId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensInBraces);
-						Section.AddUnique(*EngineId, EngineDir);
-						ConfigFile.Dirty = true;
+						ConfigFile.AddToSection(TEXT("Installations"), *EngineId, EngineDir);
 					}
 				}
 				if (!EngineId.IsEmpty() && !OutInstallations.Find(EngineId))

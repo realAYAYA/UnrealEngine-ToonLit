@@ -38,10 +38,7 @@
 #include "MuT/NodeSurfaceNew.h"
 #include "MuT/Table.h"
 #include "MuT/TablePrivate.h"
-#include "MuT/Visitor.h"
 #include "Templates/TypeHash.h"
-
-#include <utility>
 
 
 namespace mu
@@ -59,7 +56,6 @@ namespace mu
 	class NodeImageColourMap;
 	class NodeImageConditional;
 	class NodeImageConstant;
-	class NodeImageReference;
 	class NodeImageFormat;
 	class NodeImageGradient;
 	class NodeImageInterpolate;
@@ -112,35 +108,74 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     //! Code generator
     //---------------------------------------------------------------------------------------------
-    class CodeGenerator : public Base,
-                          public BaseVisitor,
-
-                          public Visitor<NodeComponentNew::Private, Ptr<ASTOp>, true>,
-                          public Visitor<NodeComponentEdit::Private, Ptr<ASTOp>, true>,
-                          public Visitor<NodeLOD::Private, Ptr<ASTOp>, true>,
-                          public Visitor<NodeObjectNew::Private, Ptr<ASTOp>, true>,
-                          public Visitor<NodeObjectGroup::Private, Ptr<ASTOp>, true>,
-                          public Visitor<NodePatchImage::Private, Ptr<ASTOp>, true>
+    class CodeGenerator
     {
+		
+		friend class FirstPassGenerator;
+
     public:
 
         CodeGenerator( CompilerOptions::Private* options );
 
         //! Data will be stored in m_states
-        void GenerateRoot( const NodePtrConst pNode );
-
-	protected:
-
-        Ptr<ASTOp> Generate(const NodePtrConst pNode);
+        void GenerateRoot( const Ptr<const Node> );
 
 	public:
 
-        Ptr<ASTOp> Visit( const NodeComponentNew::Private& ) override;
-        Ptr<ASTOp> Visit( const NodeComponentEdit::Private& ) override;
-        Ptr<ASTOp> Visit( const NodeLOD::Private& ) override;
-        Ptr<ASTOp> Visit( const NodeObjectNew::Private& ) override;
-        Ptr<ASTOp> Visit( const NodeObjectGroup::Private& ) override;
-        Ptr<ASTOp> Visit( const NodePatchImage::Private& ) override;
+		// Generic top-level nodes
+		struct FGenericGenerationOptions
+		{
+			friend FORCEINLINE uint32 GetTypeHash(const FGenericGenerationOptions& InKey)
+			{
+				uint32 KeyHash = 0;
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.State));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.ActiveTags.Num()));
+				return KeyHash;
+			}
+
+			bool operator==(const FGenericGenerationOptions& InKey) const
+			{
+				if (State != InKey.State) return false;
+				if (ActiveTags != InKey.ActiveTags) return false;
+				return true;
+			}
+
+			int32 State = -1;
+			TArray<FString> ActiveTags;
+		};
+
+		struct FGenericGenerationResult
+		{
+			Ptr<ASTOp> op;
+		};
+
+		struct FGeneratedCacheKey
+		{
+			Ptr<const Node> Node;
+			FGenericGenerationOptions Options;
+
+			friend FORCEINLINE uint32 GetTypeHash(const FGeneratedCacheKey& InKey)
+			{
+				uint32 KeyHash = 0;
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.Node.get()));
+				KeyHash = HashCombineFast(KeyHash, GetTypeHash(InKey.Options));
+				return KeyHash;
+			}
+
+			FORCEINLINE bool operator==(const FGeneratedCacheKey& Other) const
+			{
+				return Node == Other.Node && Options == Other.Options;
+			}
+		};
+
+		typedef TMap<FGeneratedCacheKey, FGenericGenerationResult> FGeneratedGenericNodesMap;
+		FGeneratedGenericNodesMap GeneratedGenericNodes;
+
+		Ptr<ASTOp> Generate(const Ptr<const Node>, const FGenericGenerationOptions& );
+		void Generate_ComponentNew(const FGenericGenerationOptions&, FGenericGenerationResult&, const NodeComponentNew*);
+		void Generate_LOD(const FGenericGenerationOptions&, FGenericGenerationResult&, const NodeLOD*);
+		void Generate_ObjectNew(const FGenericGenerationOptions&, FGenericGenerationResult&, const NodeObjectNew*);
+		void Generate_ObjectGroup(const FGenericGenerationOptions&, FGenericGenerationResult&, const NodeObjectGroup*);
 
     public:
 
@@ -150,67 +185,21 @@ namespace mu
 		//!
 		FirstPassGenerator m_firstPass;
 
-        struct FVisitedKeyMap
-        {
-            FVisitedKeyMap()
-            {
-            }
-
-			friend FORCEINLINE uint32 GetTypeHash(const FVisitedKeyMap& InKey)
-			{
-				uint32 KeyHash = 0;
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.pNode.get()));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.state));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash((uint64)InKey.activeTags.Num()));
-				return KeyHash;
-			}
-
-			bool operator==(const FVisitedKeyMap& InKey) const
-			{
-				if (pNode != InKey.pNode) return false;
-				if (state != InKey.state) return false;
-				if (activeTags != InKey.activeTags) return false;
-				return true;
-			}
-
-            // This reference has to be the smart pointer to avoid memory aliasing, keeping
-            // processed nodes alive.
-            NodePtrConst pNode;
-            int state = -1;
-			TArray<mu::string> activeTags;
-        };
-
-        //! This struct contains additional state propagated from bottom to top of the object node graph.
-        //! It is stored for every visited node, and restored when the cache is used.
-        struct BOTTOM_UP_STATE
-        {
-            //! Generated root address for the node.
-            Ptr<ASTOp> m_address;
-        };
-        BOTTOM_UP_STATE m_currentBottomUpState;
-
-        typedef TMap<FVisitedKeyMap,BOTTOM_UP_STATE> VisitedMap;
-        VisitedMap m_compiled;
-
         //!
         ErrorLogPtr m_pErrorLog;
 
-        //! While generating code, this contains the index of the state being generated. This
-        //! can only be used with the state data in m_firstPass.
-        int m_currentStateIndex = -1;
-
         //! After the entire code generation this contains the information about all the states
-        typedef TArray< std::pair<FObjectState, Ptr<ASTOp>> > StateList;
+        typedef TArray< TPair<FObjectState, Ptr<ASTOp>> > StateList;
         StateList m_states;
 
     private:
 
         //! List of meshes generated to be able to reuse them
-		TArray<MeshPtr> m_constantMeshes;
+		TArray<Ptr<Mesh>> m_constantMeshes;
 
         //! List of image resources for every image formata that have been generated so far as
         //! palceholders for missing images.
-        ImagePtr m_missingImage[size_t(EImageFormat::IF_COUNT)];
+        Ptr<Image> m_missingImage[size_t(EImageFormat::IF_COUNT)];
 
         //! First free index for a layout block
         int32 m_absoluteLayoutIndex = 0;
@@ -219,7 +208,7 @@ namespace mu
         uint32 m_freeVertexIndex = 0;
 
 		// (top-down) Tags that are active when generating nodes.
-		TArray< TArray<mu::string> > m_activeTags;
+		TArray< TArray<FString> > m_activeTags;
 
         struct FParentKey
         {
@@ -247,119 +236,119 @@ namespace mu
 
         // List of additional components to add to an object that come from child objects.
         // The index is the object and lod that should receive the components.
-        struct ADDITIONAL_COMPONENT_KEY
+        struct FAdditionalComponentKey
         {
-            ADDITIONAL_COMPONENT_KEY()
+			FAdditionalComponentKey()
             {
                 m_pObject = nullptr;
                 m_lod = -1;
             }
 
             const NodeObjectNew::Private* m_pObject;
-            int m_lod;
+            int32 m_lod;
 
-            inline bool operator<(const ADDITIONAL_COMPONENT_KEY& o) const
-            {
-                if (m_pObject < o.m_pObject) return true;
-                if (m_pObject > o.m_pObject) return false;
-                return m_lod < o.m_lod;
-            }
-        };
-        std::map< ADDITIONAL_COMPONENT_KEY, TArray<Ptr<ASTOp>> > m_additionalComponents;
+			FORCEINLINE bool operator==(const FAdditionalComponentKey& Other) const
+			{
+				return m_pObject == Other.m_pObject
+					&&
+					m_lod == Other.m_lod;
+			}
+
+			friend FORCEINLINE uint32 GetTypeHash(const FAdditionalComponentKey& InKey)
+			{
+				uint32 KeyHash = 0;
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.m_pObject));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.m_lod));
+				return KeyHash;
+			}
+		};
+        TMap< FAdditionalComponentKey, TArray<Ptr<ASTOp>> > AdditionalComponents;
 
 
-        struct OBJECT_GENERATION_DATA
+        struct FObjectGenerationData
         {
             // Condition that enables a specific object
             Ptr<ASTOp> m_condition;
         };
-		TArray< OBJECT_GENERATION_DATA > m_currentObject;
+		TArray<FObjectGenerationData> m_currentObject;
 
-        map< std::pair<TablePtr,string>, std::pair<TablePtr,Ptr<ASTOp>> > m_generatedTables;
+		/** The key for generated tables is made of the source table and a parameter name. */
+		struct FTableCacheKey
+		{
+			Ptr<const Table> Table;
+			FString ParameterName;
 
-        //! Variables added for every node
-        map< Ptr<const Node>, Ptr<ASTOpParameter> > m_nodeVariables;
+			friend FORCEINLINE uint32 GetTypeHash(const FTableCacheKey& InKey)
+			{
+				uint32 KeyHash = ::GetTypeHash(InKey.Table.get());
+				KeyHash = HashCombineFast(KeyHash, GetTypeHash(InKey.ParameterName));
+				return KeyHash;
+			}
+
+			FORCEINLINE bool operator==(const FTableCacheKey& InKey) const
+			{
+				if (Table != InKey.Table) return false;
+				if (ParameterName != InKey.ParameterName) return false;
+				return true;
+			}
+		};
+		TMap< FTableCacheKey, Ptr<ASTOp> > GeneratedTables;
 
 		struct FConditionalExtensionDataOp
 		{
 			Ptr<ASTOp> Condition;
 			Ptr<ASTOp> ExtensionDataOp;
-			string ExtensionDataName;
+			FString ExtensionDataName;
 		};
 
-		TArray<FConditionalExtensionDataOp> m_conditionalExtensionDataOps;
+		TArray<FConditionalExtensionDataOp> ConditionalExtensionDataOps;
 
 		//-----------------------------------------------------------------------------------------
 
 		// Get the modifiers that have to be applied to elements with a specific tag.
-		void GetModifiersFor(const TArray<string>& tags, int LOD,
-			bool bModifiersForBeforeOperations, TArray<FirstPassGenerator::MODIFIER>& modifiers);
+		void GetModifiersFor(const TArray<FString>& SurfaceTags, int32 LOD,
+			bool bModifiersForBeforeOperations, TArray<FirstPassGenerator::FModifier>& OutModifiers);
 
 		// Apply the required mesh modifiers to the given operation.
-		Ptr<ASTOp> ApplyMeshModifiers( const Ptr<ASTOp>& sourceOp, const TArray<string>& tags,
+		Ptr<ASTOp> ApplyMeshModifiers(const FGenericGenerationOptions&, const Ptr<ASTOp>& SourceOp,
 			bool bModifiersForBeforeOperations, const void* errorContext);
-
-		// Get the modifiers that have to be applied to elements with a specific tag.
-        //void GetSurfacesWithTag(const string& tag, vector<FirstPassGenerator::SURFACE>& surfaces);
 
         //-----------------------------------------------------------------------------------------
         //!
-        Ptr<ASTOp> GenerateTableVariable( TablePtr pTable, const string& strName );
+        Ptr<ASTOp> GenerateTableVariable(Ptr<const Node>, const FTableCacheKey&, bool bAddNoneOption, const FString& DefaultRowName);
 
         //!
         Ptr<ASTOp> GenerateMissingBoolCode(const TCHAR* strWhere, bool value, const void* errorContext );
 
         //!
-		template<class NODE_TABLE_PRIVATE, TABLE_COLUMN_TYPE TYPE, OP_TYPE OPTYPE, typename F>
+		template<class NODE_TABLE_PRIVATE, ETableColumnType TYPE, OP_TYPE OPTYPE, typename F>
 		Ptr<ASTOp> GenerateTableSwitch( const NODE_TABLE_PRIVATE& node, F&& GenerateOption );
-
-
-    private:
-
-		//! Generate the key with all the relevant state that is used in generation of operations for a node.
-		FVisitedKeyMap GetCurrentCacheKey(const NodePtrConst& InNode) const
-		{
-			FVisitedKeyMap key;
-			key.pNode = InNode;
-			key.state = m_currentStateIndex;
-			if (!m_activeTags.IsEmpty())
-			{
-				key.activeTags = m_activeTags.Last();
-			}
-			return key;
-		}
 
 
 		//-----------------------------------------------------------------------------------------
 		// Images
 		
 		/** Options that affect the generation of images. It is like list of what required data we want while parsing down the image node graph. */
-		struct FImageGenerationOptions
+		struct FImageGenerationOptions : public FGenericGenerationOptions
 		{
 			/** */
 			CompilerOptions::TextureLayoutStrategy ImageLayoutStrategy = CompilerOptions::TextureLayoutStrategy::None;
 
-			/** This is used to introduce additional image generation safety. \TODO: Move this "safety" to optimization? */
-			UE::Math::TIntVector2<int32> RectSize;
-
-			/** */
-			int32 CurrentStateIndex = -1;
+			/** If different than {0,0} this is the mandatory size of the image that needs to be generated. */
+			UE::Math::TIntVector2<int32> RectSize = {0, 0};
 
 			/** Layout block that we are trying to generate if any. */
 			int32 LayoutBlockId = -1;
 			Ptr<const Layout> LayoutToApply;
 
-			/** Tags that are active at this point of the generation. */
-			TArray<mu::string> ActiveTags;
-
 			friend FORCEINLINE uint32 GetTypeHash(const FImageGenerationOptions& InKey)
 			{
 				uint32 KeyHash = 0;
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.ImageLayoutStrategy));
-				KeyHash = HashCombine(KeyHash, GetTypeHash(InKey.RectSize));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.CurrentStateIndex));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.LayoutBlockId));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.LayoutToApply.get()));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.ImageLayoutStrategy));
+				KeyHash = HashCombineFast(KeyHash, GetTypeHash(InKey.RectSize));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.State));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.LayoutBlockId));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.LayoutToApply.get()));
 				return KeyHash;
 			}
 
@@ -369,7 +358,7 @@ namespace mu
 					&&
 					RectSize == Other.RectSize
 					&&
-					CurrentStateIndex == Other.CurrentStateIndex
+					State == Other.State
 					&&
 					LayoutBlockId == Other.LayoutBlockId
 					&&
@@ -395,8 +384,8 @@ namespace mu
 			friend FORCEINLINE uint32 GetTypeHash(const FGeneratedImageCacheKey& InKey)
 			{
 				uint32 KeyHash = 0;
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.Node.get()));
-				KeyHash = HashCombine(KeyHash, GetTypeHash(InKey.Options));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.Node.get()));
+				KeyHash = HashCombineFast(KeyHash, GetTypeHash(InKey.Options));
 				return KeyHash;
 			}
 
@@ -411,7 +400,6 @@ namespace mu
 
 		void GenerateImage(const FImageGenerationOptions&, FImageGenerationResult& result, const NodeImagePtrConst& node);
 		void GenerateImage_Constant(const FImageGenerationOptions&, FImageGenerationResult&, const NodeImageConstant*);
-		void GenerateImage_Reference(const FImageGenerationOptions&, FImageGenerationResult&, const NodeImageReference*);
 		void GenerateImage_Interpolate(const FImageGenerationOptions&, FImageGenerationResult&, const NodeImageInterpolate*);
 		void GenerateImage_Saturate(const FImageGenerationOptions&, FImageGenerationResult&, const NodeImageSaturate*);
 		void GenerateImage_Table(const FImageGenerationOptions&, FImageGenerationResult&, const NodeImageTable*);
@@ -454,9 +442,6 @@ namespace mu
 		//!
 		Ptr<ASTOp> GenerateImageSize(Ptr<ASTOp>, UE::Math::TIntVector2<int32>);
 
-		//!
-		FImageDesc CalculateImageDesc(const Node::Private&);
-
 		/** Evaluate if the image to generate is big enough to be split in separate operations and tiled afterwards. */
 		Ptr<ASTOp> ApplyTiling(Ptr<ASTOp> Source, UE::Math::TIntVector2<int32> Size, EImageFormat Format);
 
@@ -469,14 +454,8 @@ namespace mu
 		/** Options that affect the generation of meshes. It is like list of what required data we want
 		* while parsing down the mesh node graph.
 		*/
-		struct FMeshGenerationOptions
+		struct FMeshGenerationOptions : public FGenericGenerationOptions
 		{
-			/** TODO: Review and document. */
-			int32 State = 0;
-
-			/** Tags that are active at this point of the generation. */
-			TArray<mu::string> ActiveTags;
-
 			/** Whatever mesh we reach at the leaves of the graph will need to have unique ids for its vertices.
 			* This is used to track mesh removal indices, morph data in other nodes, clothing data, etc.
 			*/
@@ -499,14 +478,18 @@ namespace mu
 			*/
 			TArray<Ptr<const Layout>> OverrideLayouts;			
 
+			/** Optional context to use instead of the node error context.
+			 * Be careful since it is not used everywhere. Check usages before assigning a value to it. */
+			TOptional<const void*> OverrideContext;
+			
 			friend FORCEINLINE uint32 GetTypeHash(const FMeshGenerationOptions& InKey)
 			{
 				uint32 KeyHash = 0;
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.bUniqueVertexIDs));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.bLayouts));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.OverrideLayouts.Num()));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.State));
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.ActiveTags.Num()));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.bUniqueVertexIDs));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.bLayouts));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.OverrideLayouts.Num()));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.State));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.ActiveTags.Num()));
 				return KeyHash;
 			}
 
@@ -552,8 +535,8 @@ namespace mu
 			friend FORCEINLINE uint32 GetTypeHash(const FGeneratedMeshCacheKey& InKey)
 			{
 				uint32 KeyHash = 0;
-				KeyHash = HashCombine(KeyHash, ::GetTypeHash(InKey.Node.get()));
-				KeyHash = HashCombine(KeyHash, GetTypeHash(InKey.Options));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.Node.get()));
+				KeyHash = HashCombineFast(KeyHash, GetTypeHash(InKey.Options));
 				return KeyHash;
 			}
 
@@ -574,7 +557,7 @@ namespace mu
 		//! Map of layouts found in the code already generated. The map is from the source layout
 		//! pointer of the layouts in the node meshes to the cloned and modified layout. 
 		//! The cloned layout will have absolute block ids assigned.
-		TMap<Ptr<const Layout>, Ptr<const Layout>> m_generatedLayouts;
+		TMap<Ptr<const Layout>, Ptr<const Layout>> GeneratedLayouts;
 
         void GenerateMesh(const FMeshGenerationOptions&, FMeshGenerationResult& result, const NodeMeshPtrConst&);
         void GenerateMesh_Constant(const FMeshGenerationOptions&, FMeshGenerationResult&, const NodeMeshConstant* );
@@ -595,9 +578,9 @@ namespace mu
 		void GenerateMesh_ClipDeform(const FMeshGenerationOptions&, FMeshGenerationResult&, const NodeMeshClipDeform*);
 
 		//-----------------------------------------------------------------------------------------
-		void PrepareForLayout(LayoutPtrConst GeneratedLayout,
-			MeshPtr currentLayoutMesh,
-			size_t currentLayoutChannel,
+		void PrepareForLayout( Ptr<const Layout> GeneratedLayout,
+			Ptr<Mesh> currentLayoutMesh,
+			int32 currentLayoutChannel,
 			const void* errorContext,
 			const FMeshGenerationOptions& MeshOptions);
 
@@ -610,13 +593,13 @@ namespace mu
 		};
 
 		typedef const NodeExtensionData* FGeneratedExtensionDataCacheKey;
-		typedef TMap<FGeneratedExtensionDataCacheKey, FExtensionDataGenerationResult> GeneratedExtensionDataMap;
-		GeneratedExtensionDataMap m_generatedExtensionData;
+		typedef TMap<FGeneratedExtensionDataCacheKey, FExtensionDataGenerationResult> FGeneratedExtensionDataMap;
+		FGeneratedExtensionDataMap GeneratedExtensionData;
 
-		void GenerateExtensionData(FExtensionDataGenerationResult& OutResult, const NodeExtensionDataPtrConst& InUntypedNode);
-		void GenerateExtensionData_Constant(FExtensionDataGenerationResult& OutResult, const class NodeExtensionDataConstant* Constant);
-		void GenerateExtensionData_Switch(FExtensionDataGenerationResult& OutResult, const class NodeExtensionDataSwitch* Switch);
-		void GenerateExtensionData_Variation(FExtensionDataGenerationResult& OutResult, const class NodeExtensionDataVariation* Variation);
+		void GenerateExtensionData(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions&, const NodeExtensionDataPtrConst&);
+		void GenerateExtensionData_Constant(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions&, const class NodeExtensionDataConstant*);
+		void GenerateExtensionData_Switch(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions&, const class NodeExtensionDataSwitch*);
+		void GenerateExtensionData_Variation(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions&, const class NodeExtensionDataVariation*);
 		Ptr<ASTOp> GenerateMissingExtensionDataCode(const TCHAR* StrWhere, const void* ErrorContext);
 
         //-----------------------------------------------------------------------------------------
@@ -627,12 +610,12 @@ namespace mu
             PROJECTOR_TYPE type;
         };
 
-        typedef TMap<FVisitedKeyMap,FProjectorGenerationResult> GeneratedProjectorsMap;
-        GeneratedProjectorsMap m_generatedProjectors;
+        typedef TMap<FGeneratedCacheKey,FProjectorGenerationResult> FGeneratedProjectorsMap;
+        FGeneratedProjectorsMap GeneratedProjectors;
 
-        void GenerateProjector( FProjectorGenerationResult&, const NodeProjectorPtrConst& );
-        void GenerateProjector_Constant( FProjectorGenerationResult&, const Ptr<const NodeProjectorConstant>& );
-        void GenerateProjector_Parameter( FProjectorGenerationResult&, const Ptr<const NodeProjectorParameter>& );
+        void GenerateProjector( FProjectorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeProjector>& );
+        void GenerateProjector_Constant( FProjectorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeProjectorConstant>& );
+        void GenerateProjector_Parameter( FProjectorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeProjectorParameter>& );
         void GenerateMissingProjectorCode( FProjectorGenerationResult&, const void* errorContext );
 
 		//-----------------------------------------------------------------------------------------
@@ -642,15 +625,14 @@ namespace mu
 			Ptr<ASTOp> op;
 		};
 
-		typedef TMap<FVisitedKeyMap, FBoolGenerationResult> GeneratedBoolsMap;
-		GeneratedBoolsMap m_generatedBools;
+		typedef TMap<FGeneratedCacheKey, FBoolGenerationResult> FGeneratedBoolsMap;
+		FGeneratedBoolsMap GeneratedBools;
 
-		void GenerateBool(FBoolGenerationResult&, const NodeBoolPtrConst&);
-		void GenerateBool_Constant(FBoolGenerationResult&, const Ptr<const NodeBoolConstant>&);
-		void GenerateBool_Parameter(FBoolGenerationResult&, const Ptr<const NodeBoolParameter>&);
-		void GenerateBool_IsNull(FBoolGenerationResult&, const Ptr<const NodeBoolIsNull>&);
-		void GenerateBool_Not(FBoolGenerationResult&, const Ptr<const NodeBoolNot>&);
-		void GenerateBool_And(FBoolGenerationResult&, const Ptr<const NodeBoolAnd>&);
+		void GenerateBool(FBoolGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeBool>&);
+		void GenerateBool_Constant(FBoolGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeBoolConstant>&);
+		void GenerateBool_Parameter(FBoolGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeBoolParameter>&);
+		void GenerateBool_Not(FBoolGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeBoolNot>&);
+		void GenerateBool_And(FBoolGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeBoolAnd>&);
 
 		//-----------------------------------------------------------------------------------------
 		// Scalars
@@ -659,18 +641,18 @@ namespace mu
 			Ptr<ASTOp> op;
 		};
 
-		typedef TMap<FVisitedKeyMap, FScalarGenerationResult> GeneratedScalarsMap;
-		GeneratedScalarsMap m_generatedScalars;
+		typedef TMap<FGeneratedCacheKey, FScalarGenerationResult> FGeneratedScalarsMap;
+		FGeneratedScalarsMap GeneratedScalars;
 
-		void GenerateScalar(FScalarGenerationResult&, const NodeScalarPtrConst&);
-		void GenerateScalar_Constant(FScalarGenerationResult&, const Ptr<const NodeScalarConstant>&);
-		void GenerateScalar_Parameter(FScalarGenerationResult&, const Ptr<const NodeScalarParameter>&);
-		void GenerateScalar_Switch(FScalarGenerationResult&, const Ptr<const NodeScalarSwitch>&);
-		void GenerateScalar_EnumParameter(FScalarGenerationResult&, const Ptr<const NodeScalarEnumParameter>&);
-		void GenerateScalar_Curve(FScalarGenerationResult&, const Ptr<const NodeScalarCurve>&);
-		void GenerateScalar_Arithmetic(FScalarGenerationResult&, const Ptr<const NodeScalarArithmeticOperation>&);
-		void GenerateScalar_Variation(FScalarGenerationResult&, const Ptr<const NodeScalarVariation>&);
-		void GenerateScalar_Table(FScalarGenerationResult&, const Ptr<const NodeScalarTable>&);
+		void GenerateScalar(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalar>&);
+		void GenerateScalar_Constant(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarConstant>&);
+		void GenerateScalar_Parameter(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarParameter>&);
+		void GenerateScalar_Switch(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarSwitch>&);
+		void GenerateScalar_EnumParameter(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarEnumParameter>&);
+		void GenerateScalar_Curve(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarCurve>&);
+		void GenerateScalar_Arithmetic(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarArithmeticOperation>&);
+		void GenerateScalar_Variation(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarVariation>&);
+		void GenerateScalar_Table(FScalarGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeScalarTable>&);
 		Ptr<ASTOp> GenerateMissingScalarCode(const TCHAR* strWhere, float value, const void* errorContext);
 
 		//-----------------------------------------------------------------------------------------
@@ -680,18 +662,18 @@ namespace mu
 			Ptr<ASTOp> op;
 		};
 
-		typedef TMap<FVisitedKeyMap, FColorGenerationResult> GeneratedColorsMap;
-		GeneratedColorsMap m_generatedColors;
+		typedef TMap<FGeneratedCacheKey, FColorGenerationResult> FGeneratedColorsMap;
+		FGeneratedColorsMap GeneratedColors;
 
-		void GenerateColor(FColorGenerationResult&, const NodeColourPtrConst&);
-		void GenerateColor_Constant(FColorGenerationResult&, const Ptr<const NodeColourConstant>&);
-		void GenerateColor_Parameter(FColorGenerationResult&, const Ptr<const NodeColourParameter>&);
-		void GenerateColor_Switch(FColorGenerationResult&, const Ptr<const NodeColourSwitch>&);
-		void GenerateColor_SampleImage(FColorGenerationResult&, const Ptr<const NodeColourSampleImage>&);
-		void GenerateColor_FromScalars(FColorGenerationResult&, const Ptr<const NodeColourFromScalars>&);
-		void GenerateColor_Arithmetic(FColorGenerationResult&, const Ptr<const NodeColourArithmeticOperation>&);
-		void GenerateColor_Variation(FColorGenerationResult&, const Ptr<const NodeColourVariation>&);
-		void GenerateColor_Table(FColorGenerationResult&, const Ptr<const NodeColourTable>&);
+		void GenerateColor(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColour>&);
+		void GenerateColor_Constant(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourConstant>&);
+		void GenerateColor_Parameter(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourParameter>&);
+		void GenerateColor_Switch(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourSwitch>&);
+		void GenerateColor_SampleImage(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourSampleImage>&);
+		void GenerateColor_FromScalars(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourFromScalars>&);
+		void GenerateColor_Arithmetic(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourArithmeticOperation>&);
+		void GenerateColor_Variation(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourVariation>&);
+		void GenerateColor_Table(FColorGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeColourTable>&);
 		Ptr<ASTOp> GenerateMissingColourCode(const TCHAR* strWhere, const void* errorContext);
 
 		//-----------------------------------------------------------------------------------------
@@ -701,12 +683,12 @@ namespace mu
 			Ptr<ASTOp> op;
 		};
 
-		typedef TMap<FVisitedKeyMap, FStringGenerationResult> GeneratedStringsMap;
-		GeneratedStringsMap m_generatedStrings;
+		typedef TMap<FGeneratedCacheKey, FStringGenerationResult> FGeneratedStringsMap;
+		FGeneratedStringsMap GeneratedStrings;
 
-		void GenerateString(FStringGenerationResult&, const NodeStringPtrConst&);
-		void GenerateString_Constant(FStringGenerationResult&, const Ptr<const NodeStringConstant>&);
-		void GenerateString_Parameter(FStringGenerationResult&, const Ptr<const NodeStringParameter>&);
+		void GenerateString(FStringGenerationResult&, const FGenericGenerationOptions&, const Ptr<const NodeString>&);
+		void GenerateString_Constant(FStringGenerationResult&, const FGenericGenerationOptions& Options, const Ptr<const NodeStringConstant>&);
+		void GenerateString_Parameter(FStringGenerationResult&, const FGenericGenerationOptions& Options, const Ptr<const NodeStringParameter>&);
 
         //-----------------------------------------------------------------------------------------
         // Ranges
@@ -716,16 +698,16 @@ namespace mu
             Ptr<ASTOp> sizeOp;
 
             //
-            string rangeName;
+            FString rangeName;
 
             //
-            string rangeUID;
+			FString rangeUID;
         };
 
-        typedef TMap<FVisitedKeyMap,FRangeGenerationResult> GeneratedRangeMap;
-        GeneratedRangeMap m_generatedRanges;
+        typedef TMap<FGeneratedCacheKey,FRangeGenerationResult> FGeneratedRangeMap;
+        FGeneratedRangeMap GeneratedRanges;
 
-        void GenerateRange( FRangeGenerationResult& result, Ptr<const NodeRange> node);
+        void GenerateRange(FRangeGenerationResult&, const FGenericGenerationOptions&, Ptr<const NodeRange>);
 
 
         //-----------------------------------------------------------------------------------------
@@ -734,88 +716,76 @@ namespace mu
             Ptr<ASTOp> surfaceOp;
         };
 
-        void GenerateSurface( FSurfaceGenerationResult& result,
-                              NodeSurfaceNewPtrConst node,
-                              const TArray<FirstPassGenerator::SURFACE::EDIT>& edits );
+        void GenerateSurface( FSurfaceGenerationResult&, const FGenericGenerationOptions&,
+                              Ptr<const NodeSurfaceNew>,
+                              const TArray<FirstPassGenerator::FSurface::FEdit>& Edits );
+
+		//-----------------------------------------------------------------------------------------
+		//Default Table Parameters
+		Ptr<ASTOp> GenerateDefaultTableValue(ETableColumnType NodeType);
     };
-
-
-    //---------------------------------------------------------------------------------------------
-    //! Analyse the code trying to guess the descriptor of the image genereated by the instruction
-    //! address.
-    //! \param returnBestOption If true, try to resolve ambiguities returning some value.
-    //---------------------------------------------------------------------------------------------
-    extern FImageDesc GetImageDesc( const FProgram& program, OP::ADDRESS at,
-                                    bool returnBestOption = false,
-                                    class FGetImageDescContext* context=nullptr );
-
-    //!
-    extern void PartialOptimise( Ptr<ASTOp>& op, const CompilerOptions* options );
-    
 
 	
     //---------------------------------------------------------------------------------------------
-    template<class NODE_TABLE_PRIVATE, TABLE_COLUMN_TYPE TYPE, OP_TYPE OPTYPE, typename F>
-    Ptr<ASTOp> CodeGenerator::GenerateTableSwitch
-        (
-            const NODE_TABLE_PRIVATE& node, F&& GenerateOption
-        )
+    template<class NODE_TABLE_PRIVATE, ETableColumnType TYPE, OP_TYPE OPTYPE, typename F>
+    Ptr<ASTOp> CodeGenerator::GenerateTableSwitch( const NODE_TABLE_PRIVATE& node, F&& GenerateOption )
     {
-        TablePtr pTable;
-        Ptr<ASTOp> variable;
+        Ptr<const Table> NodeTable = node.Table;
+        Ptr<ASTOp> Variable;
 
-        map< std::pair<TablePtr,string>, std::pair<TablePtr,Ptr<ASTOp>> >::iterator it
-                = m_generatedTables.find
-                ( std::pair<TablePtr,string>(node.m_pTable,node.m_parameterName) );
-        if ( it!=m_generatedTables.end() )
+		FTableCacheKey CacheKey = FTableCacheKey{ node.Table, node.ParameterName };
+        Ptr<ASTOp>* it = GeneratedTables.Find( CacheKey );
+        if ( it )
         {
-            pTable = it->second.first;
-            variable = it->second.second;
+            Variable = *it;
         }
 
-        if ( !pTable )
+        if ( !Variable)
         {
             // Create the table variable expression
-            pTable = node.m_pTable;
-            variable = GenerateTableVariable( pTable, node.m_parameterName );
+            Variable = GenerateTableVariable( node.m_pNode, CacheKey, node.bNoneOption, node.DefaultRowName);
 
-            m_generatedTables[ std::pair<TablePtr,string>(node.m_pTable,node.m_parameterName) ] =
-                    std::pair<TablePtr,Ptr<ASTOp>>( pTable, variable );
+            GeneratedTables.Add(CacheKey, Variable );
         }
 
+		int32 NumRows = NodeTable->GetPrivate()->Rows.Num();
+
         // Verify that the table column is the right type
-        int colIndex = pTable->FindColumn( node.m_columnName.c_str() );
-        if ( colIndex<0 )
+        int32 ColIndex = NodeTable->FindColumn( node.ColumnName );
+
+		if (NumRows == 0)
+		{
+			m_pErrorLog->GetPrivate()->Add("The table has no rows.", ELMT_ERROR, node.m_errorContext);
+			return nullptr;
+		}
+        else if (ColIndex < 0)
         {
             m_pErrorLog->GetPrivate()->Add("Table column not found.", ELMT_ERROR, node.m_errorContext);
             return nullptr;
         }
 
-        if ( pTable->GetPrivate()->m_columns[ colIndex ].m_type != TYPE )
+        if (NodeTable->GetPrivate()->Columns[ ColIndex ].Type != TYPE )
         {
-            m_pErrorLog->GetPrivate()->Add("Table column type is not the right type.",
-                                           ELMT_ERROR, node.m_errorContext);
+            m_pErrorLog->GetPrivate()->Add("Table column type is not the right type.", ELMT_ERROR, node.m_errorContext);
             return nullptr;
         }
 
         // Create the switch to cover all the options
         Ptr<ASTOp> lastSwitch;
-        std::size_t rows = pTable->GetPrivate()->m_rows.Num();
-
         Ptr<ASTOpSwitch> SwitchOp = new ASTOpSwitch();
 		SwitchOp->type = OPTYPE;
-		SwitchOp->variable = variable;
-		SwitchOp->def = nullptr;
+		SwitchOp->variable = Variable;
+		SwitchOp->def = GenerateDefaultTableValue(TYPE);
 
-		for (size_t i = 0; i < rows; ++i)
+		for (int32 i = 0; i < NumRows; ++i)
         {
-            check( pTable->GetPrivate()->m_rows[i].m_id <= 0xFFFF);
-            auto condition = (uint16)pTable->GetPrivate()->m_rows[i].m_id;
-            Ptr<ASTOp> Branch = GenerateOption( node, colIndex, (int)i, m_pErrorLog.get() );
+            check(NodeTable->GetPrivate()->Rows[i].Id <= 0xFFFF);
+            auto Condition = (uint16)NodeTable->GetPrivate()->Rows[i].Id;
+            Ptr<ASTOp> Branch = GenerateOption( node, ColIndex, (int)i, m_pErrorLog.get() );
 
-			if (Branch || TYPE != TCT_MESH)
+			if (Branch || TYPE != ETableColumnType::Mesh)
 			{
-				SwitchOp->cases.Add(ASTOpSwitch::FCase(condition, SwitchOp, Branch));
+				SwitchOp->cases.Add(ASTOpSwitch::FCase(Condition, SwitchOp, Branch));
 			}
         }
 

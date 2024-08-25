@@ -19,12 +19,14 @@ namespace CQTests
 			Assert.Fail(AnyError);
 		}
 
+		PRAGMA_DISABLE_UNREACHABLE_CODE_WARNINGS
 		TEST_METHOD(AssertFail_Macro_AddsErrorAndExits)
 		{
 			Assert.ExpectError(ExpectedError);
 			ASSERT_FAIL(ExpectedError);
 			ASSERT_FAIL(TEXT("It should not assert after the first expected assert since it exits"));
 		}
+		PRAGMA_RESTORE_UNREACHABLE_CODE_WARNINGS
 
 		TEST_METHOD(Assertions_Accept_RawStrings)
 		{

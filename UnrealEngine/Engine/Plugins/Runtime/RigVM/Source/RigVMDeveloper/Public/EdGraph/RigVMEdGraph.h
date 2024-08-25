@@ -13,6 +13,118 @@ class URigVMBlueprint;
 class URigVMEdGraphSchema;
 class URigVMController;
 
+struct FRigVMStringTag
+{
+public:
+	
+	FRigVMStringTag()
+		: Name(NAME_None)
+		, Color(FLinearColor::Red)
+	{}
+
+	explicit FRigVMStringTag(const FName& InName, const FLinearColor& InColor)
+		: Name(InName)
+		, Color(InColor)
+	{
+	}
+
+	const FName& GetName() const
+	{
+		return Name;
+	}
+	
+	const FLinearColor& GetColor() const
+	{
+		return Color;
+	}
+
+	bool IsValid() const
+	{
+		return !Name.IsNone();
+	}
+
+	bool Equals(const FName& InOther) const
+	{
+		return GetName().IsEqual(InOther, ENameCase::CaseSensitive);
+	}
+
+	bool Equals(const FRigVMStringTag& InOther) const
+	{
+		return Equals(InOther.GetName());
+	}
+
+private:
+	FName Name;
+	FLinearColor Color;
+};
+
+struct FRigVMStringWithTag
+{
+public:
+	
+	FRigVMStringWithTag() = default;
+
+	FRigVMStringWithTag(const FString& InString, const FRigVMStringTag& InTag = FRigVMStringTag())
+		: String(InString)
+		, Tag(InTag)
+	{
+	}
+
+	const FString& GetString() const
+	{
+		return String;
+	}
+
+	FString GetStringWithTag() const
+	{
+		if(HasTag())
+		{
+			static constexpr TCHAR Format[] = TEXT("%s (%s)");
+			return FString::Printf(Format, *GetString(), *GetTag().GetName().ToString());
+		}
+		return GetString();
+	}
+
+	bool HasTag() const
+	{
+		return Tag.IsValid();
+	}
+
+	const FRigVMStringTag& GetTag() const
+	{
+		return Tag;
+	}
+
+	bool operator ==(const FRigVMStringWithTag& InOther) const
+	{
+		return Equals(InOther);
+	}
+
+	bool operator >(const FRigVMStringWithTag& InOther) const
+	{
+		return GetString() > InOther.GetString();
+	}
+
+	bool operator <(const FRigVMStringWithTag& InOther) const
+	{
+		return GetString() < InOther.GetString();
+	}
+
+	bool Equals(const FString& InOther) const
+	{
+		return GetString().Equals(InOther, ESearchCase::CaseSensitive);
+	}
+
+	bool Equals(const FRigVMStringWithTag& InOther) const
+	{
+		return Equals(InOther.GetString());
+	}
+
+private:
+	FString String;
+	FRigVMStringTag Tag;
+};
+
 DECLARE_MULTICAST_DELEGATE_OneParam(FRigVMEdGraphNodeClicked, URigVMEdGraphNode*);
 
 UCLASS()
@@ -43,6 +155,7 @@ public:
 
 	bool bSuspendModelNotifications;
 	bool bIsTemporaryGraphForCopyPaste;
+	bool bIsSelecting;
 
 	UEdGraphNode* FindNodeForModelNodeName(const FName& InModelNodeName, const bool bCacheIfRequired = true);
 
@@ -58,9 +171,9 @@ public:
 	int32 GetInstructionIndex(const URigVMEdGraphNode* InNode, bool bAsInput);
 
 	void CacheEntryNameList();
-	const TArray<TSharedPtr<FString>>* GetEntryNameList(URigVMPin* InPin = nullptr) const;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>* GetEntryNameList(URigVMPin* InPin = nullptr) const;
 
-	virtual const TArray<TSharedPtr<FString>>* GetNameListForWidget(const FString& InWidgetName) const { return nullptr; }
+	virtual const TArray<TSharedPtr<FRigVMStringWithTag>>* GetNameListForWidget(const FString& InWidgetName) const { return nullptr; }
 
 	UPROPERTY()
 	FString ModelNodePath;
@@ -74,32 +187,19 @@ protected:
 
 private:
 
-	bool bIsSelecting;
-
 	FRigVMEdGraphNodeClicked OnGraphNodeClicked;
 
 	TMap<URigVMNode*, TPair<int32, int32>> CachedInstructionIndices;
 
 	void RemoveNode(UEdGraphNode* InNode);
 
-#endif
-#if WITH_EDITORONLY_DATA
-
-	UPROPERTY(transient)
-	TObjectPtr<URigVMController> TemplateController;
-
-#endif
-#if WITH_EDITOR
-
-	URigVMController* GetTemplateController();
-
 protected:
-	void HandleVMCompiledEvent(UObject* InCompiledObject, URigVM* InVM);
+	void HandleVMCompiledEvent(UObject* InCompiledObject, URigVM* InVM, FRigVMExtendedExecuteContext& InContext);
 
 private:
 	TMap<FName, UEdGraphNode*> ModelNodePathToEdNode;
 	mutable TWeakObjectPtr<URigVMGraph> CachedModelGraph;
-	TArray<TSharedPtr<FString>> EntryNameList;
+	TArray<TSharedPtr<FRigVMStringWithTag>> EntryNameList;
 
 #endif
 	friend class URigVMEdGraphNode;

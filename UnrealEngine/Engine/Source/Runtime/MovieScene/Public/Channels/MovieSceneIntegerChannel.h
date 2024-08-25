@@ -19,6 +19,7 @@
 #include "Templates/UnrealTemplate.h"
 #include "UObject/Class.h"
 #include "UObject/ObjectMacros.h"
+#include "Curves/RealCurve.h"
 
 #include "MovieSceneIntegerChannel.generated.h"
 
@@ -33,7 +34,7 @@ struct FMovieSceneIntegerChannel : public FMovieSceneChannel
 	GENERATED_BODY()
 
 	FMovieSceneIntegerChannel()
-		: DefaultValue(0), bHasDefaultValue(false)
+		: PreInfinityExtrap(RCCE_Constant), PostInfinityExtrap(RCCE_Constant), DefaultValue(0), bHasDefaultValue(false)
 	{}
 
 	/**
@@ -144,6 +145,8 @@ public:
 	MOVIESCENE_API virtual void Offset(FFrameNumber DeltaPosition) override;
 	MOVIESCENE_API virtual void Optimize(const FKeyDataOptimizationParams& InParameters) override;
 	MOVIESCENE_API virtual void ClearDefault() override;
+	MOVIESCENE_API virtual FKeyHandle GetHandle(int32 Index) override;
+	MOVIESCENE_API virtual int32 GetIndex(FKeyHandle Handle) override;
 
 public:
 
@@ -175,7 +178,14 @@ public:
 	{
 		bHasDefaultValue = false;
 	}
+public:
+	/** Pre-infinity extrapolation state, integer channel supports them all but linear since that requires a tangent*/
+	UPROPERTY()
+	TEnumAsByte<ERichCurveExtrapolation> PreInfinityExtrap;
 
+	/** Post-infinity extrapolation state, integer channel supports them all but linear since that requires a tangent*/
+	UPROPERTY()
+	TEnumAsByte<ERichCurveExtrapolation> PostInfinityExtrap;
 private:
 
 	UPROPERTY(meta=(KeyTimes))

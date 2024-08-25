@@ -9,6 +9,26 @@ namespace BuildSettings
 		return ENGINE_IS_LICENSEE_VERSION;
 	}
 
+	int GetEngineVersionMajor()
+	{
+		return ENGINE_VERSION_MAJOR;
+	}
+
+	int GetEngineVersionMinor()
+	{
+		return ENGINE_VERSION_MINOR;
+	}
+
+	int GetEngineVersionHotfix()
+	{
+		return ENGINE_VERSION_HOTFIX;
+	}
+
+	const TCHAR* GetEngineVersionString()
+	{
+		return TEXT(ENGINE_VERSION_STRING);
+	}
+
 	int GetCurrentChangelist()
 	{
 		return CURRENT_CHANGELIST;
@@ -51,11 +71,7 @@ namespace BuildSettings
 	
 	const TCHAR* GetBuildURL()
 	{
-#ifdef BUILD_SOURCE_URL
 		return TEXT(BUILD_SOURCE_URL);
-#else
-		return TEXT("");
-#endif	
 	}
 }
 

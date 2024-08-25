@@ -46,6 +46,9 @@ public:
 
 	ENiagaraFunctionDebugState GetDebugState() const;
 
+	void AddNamedChildResolver(FName ScopeName, const FNiagaraFixedConstantResolver& ChildResolver);
+	const FNiagaraFixedConstantResolver* FindChildResolver(FName ScopeName) const;
+
 private:
 	void InitConstants();
 	void SetScriptUsage(ENiagaraScriptUsage ScriptUsage);
@@ -66,6 +69,9 @@ private:
 	};
 
 	TArray<FNiagaraVariable, TFixedAllocator<(uint8)EResolvedConstant::Count>> ResolvedConstants;
+
+	using FNamedResolverPair = TTuple<FName, FNiagaraFixedConstantResolver>;
+	TArray<FNamedResolverPair> ChildResolversByName;
 };
 
 struct FNiagaraSimulationStageInfo
@@ -93,6 +99,8 @@ public:
 	FName ResolveEmitterAlias(FName VariableName) const;
 
 	const FString& GetUniqueEmitterName() const { return EmitterUniqueName; }
+	FNiagaraEmitterID GetEmitterID()const { return EmitterID; }
+
 	void FinishPrecompile(
 		const FNiagaraSystemCompilationTask& CompilationTask,
 		TConstArrayView<FNiagaraVariable> EncounterableVariables,
@@ -138,6 +146,7 @@ public:
 
 	TArray<FNiagaraVariable> EncounteredVariables;
 	FString EmitterUniqueName;
+	FNiagaraEmitterID EmitterID;
 	TArray<FSharedPrecompileData> EmitterData;
 	FNiagaraDigestedGraphPtr DigestedSourceGraph;
 	FString SourceName;
@@ -170,21 +179,20 @@ public:
 	using FParameterMapHistory = TNiagaraParameterMapHistory<FNiagaraCompilationDigestBridge>;
 	using FParameterMapHistoryWithMetaDataBuilder = TNiagaraParameterMapHistoryWithMetaDataBuilder<FNiagaraCompilationDigestBridge>;
 
-	const TMap<FName, UNiagaraDataInterface*>& GetObjectNameMap();
 	UNiagaraDataInterface* GetDuplicatedDataInterfaceCDOForClass(UClass* Class) const;
 
 	TArray<FParameterMapHistory>& GetPrecomputedHistories() { return PrecompiledHistories; }
 	const TArray<FParameterMapHistory>& GetPrecomputedHistories() const { return PrecompiledHistories; }
 
-	void InstantiateCompilationCopy(const FNiagaraCompilationGraph& SourceGraph, const FNiagaraPrecompileData* PrecompileData, ENiagaraScriptUsage InUsage, FNiagaraFixedConstantResolver ConstantResolver);
-	void CreateParameterMapHistory(const FNiagaraSystemCompilationTask& CompilationTask, const TArray<FNiagaraVariable>& EncounterableVariables, const TArray<FNiagaraVariable>& InStaticVariables, FNiagaraFixedConstantResolver ConstantResolver, TConstArrayView<FNiagaraSimulationStageInfo> SimStages);
+	void InstantiateCompilationCopy(const FNiagaraCompilationGraphDigested& SourceGraph, const FNiagaraPrecompileData* PrecompileData, ENiagaraScriptUsage InUsage, const FNiagaraFixedConstantResolver& ConstantResolver);
+	void CreateParameterMapHistory(const FNiagaraSystemCompilationTask& CompilationTask, const TArray<FNiagaraVariable>& EncounterableVariables, const TArray<FNiagaraVariable>& InStaticVariables, const FNiagaraFixedConstantResolver& ConstantResolver, TConstArrayView<FNiagaraSimulationStageInfo> SimStages);
 
 	int32 GetDependentRequestCount() const { return EmitterData.Num(); }
 	FSharedCompilationCopy GetDependentRequest(int32 Index) { return EmitterData[Index]; }
 
 	TArray<ENiagaraScriptUsage> ValidUsages;
 
-	TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> InstantiatedGraph;
+	TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> InstantiatedGraph;
 
 	TArray<FParameterMapHistory> PrecompiledHistories;
 
@@ -193,7 +201,7 @@ public:
 
 	TArray<FSharedCompilationCopy> EmitterData;
 
-	TMap<UClass*, UNiagaraDataInterface*> AggregatedDataInterfaceCDODuplicates;
+	TMap<TObjectPtr<UClass>, TObjectPtr<UNiagaraDataInterface>> AggregatedDataInterfaceCDODuplicates;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -245,6 +253,7 @@ public:
 
 	TArray<FNiagaraVariable> EncounteredVariables;
 	FString EmitterUniqueName;
+	FNiagaraEmitterID EmitterID;
 	TArray<TSharedPtr<FNiagaraCompileRequestData, ESPMode::ThreadSafe>> EmitterData;
 	TWeakObjectPtr<UNiagaraScriptSource> Source;
 	FString SourceName;
@@ -312,6 +321,7 @@ public:
 
 	TArray<FNiagaraVariable> ChangedFromNumericVars;
 	FString EmitterUniqueName;
+	FNiagaraEmitterID EmitterID;
 	TArray<TSharedPtr<FNiagaraCompileRequestDuplicateData, ESPMode::ThreadSafe>> EmitterData;
 
 	struct FDuplicatedGraphData

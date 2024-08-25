@@ -2,8 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml.Linq;
+using CSVStats;
 using PerfSummaries;
 
 namespace PerfReportTool
@@ -16,19 +18,28 @@ namespace PerfReportTool
 
 	class ReportTypeInfo
 	{
-		public ReportTypeInfo(XElement element, Dictionary<string, XElement> sharedSummaries, string baseXmlDirectory)
+		public ReportTypeInfo(XElement element, Dictionary<string, XElement> sharedSummaries, string baseXmlDirectory, XmlVariableMappings inVariableMappings, CsvMetadata csvMetadata )
 		{
 			graphs = new List<ReportGraph>();
 			summaries = new List<Summary>();
-			name = element.Attribute("name").Value;
-			title = element.Attribute("title").Value;
-			bStripEvents = element.GetSafeAttibute<bool>("stripEvents", true);
+
+			vars = inVariableMappings;
+
+			// Apply local variable sets
+			foreach (XElement variableSetEl in element.Elements("variableSet"))
+			{
+				vars.ApplyVariableSet(variableSetEl, csvMetadata);
+			}
+
+			name = element.GetRequiredAttribute<string>(vars, "name");
+			title = element.GetRequiredAttribute<string>(vars, "title");
+			bStripEvents = element.GetSafeAttribute<bool>(vars, "stripEvents", true);
 
 			foreach (XElement child in element.Elements())
 			{
 				if (child.Name == "graph")
 				{
-					ReportGraph graph = new ReportGraph(child);
+					ReportGraph graph = new ReportGraph(child, vars);
 					graphs.Add(graph);
 				}
 				else if (child.Name == "summary" || child.Name == "summaryRef")
@@ -36,14 +47,14 @@ namespace PerfReportTool
 					XElement summaryElement = null;
 					if (child.Name == "summaryRef")
 					{
-						summaryElement = sharedSummaries[child.Attribute("name").Value];
+						summaryElement = sharedSummaries[child.GetRequiredAttribute<string>(vars, "name")];
 					}
 					else
 					{
 						summaryElement = child;
 					}
-					string summaryType = summaryElement.Attribute("type").Value;
-					summaries.Add(SummaryFactory.Create(summaryType, summaryElement, baseXmlDirectory));
+					string summaryType = summaryElement.GetRequiredAttribute<string>(vars, "type");
+					summaries.Add(SummaryFactory.Create(summaryType, summaryElement, vars, baseXmlDirectory));
 				}
 				else if (child.Name == "metadataToShow")
 				{
@@ -82,5 +93,7 @@ namespace PerfReportTool
 		public string[] metadataToShowList;
 		public string summaryTableCacheID;
 		public bool bStripEvents;
+
+		public XmlVariableMappings vars;
 	};
 }

@@ -11,7 +11,7 @@ class UNearestNeighborOptimizedNetwork;
  *  LoadOptimizedNetwork is implemented in python.
  */
 UCLASS()
-class NEARESTNEIGHBORMODEL_API UNearestNeighborOptimizedNetworkLoader
+class UE_DEPRECATED(5.4, "UNearestNeighborOptimizedNetworkLoader is deprecated. Use NNE instead.")  NEARESTNEIGHBORMODEL_API UNearestNeighborOptimizedNetworkLoader
 	: public UObject
 {
 	GENERATED_BODY()

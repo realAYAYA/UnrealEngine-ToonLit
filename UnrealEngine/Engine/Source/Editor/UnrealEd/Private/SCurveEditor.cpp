@@ -2555,9 +2555,9 @@ TArray<FRealCurve*> SCurveEditor::GetCurvesToFit() const
 {
 	TArray<FRealCurve*> FitCurves;
 
-	for(auto CurveViewModel : CurveViewModels)
+	for(const TSharedPtr<FCurveViewModel>& CurveViewModel : CurveViewModels)
 	{
-		if (CurveViewModel->bIsVisible)
+		if (CurveViewModel->bIsVisible && CurveViewModel->CurveInfo.CurveToEdit != nullptr)
 		{
 			FitCurves.Add(CurveViewModel->CurveInfo.CurveToEdit);
 		}

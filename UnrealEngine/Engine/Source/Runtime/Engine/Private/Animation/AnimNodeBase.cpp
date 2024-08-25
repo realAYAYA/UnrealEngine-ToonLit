@@ -257,7 +257,8 @@ FAnimNode_Base* FPoseLinkBase::GetLinkNode()
 	return LinkedNode;
 }
 
-const FExposedValueHandler& FAnimNode_Base::GetEvaluateGraphExposedInputs() const
+// Don't inline this function to keep the stack usage down
+FORCENOINLINE const FExposedValueHandler& FAnimNode_Base::GetEvaluateGraphExposedInputs() const
 {
 	if(NodeData)
 	{
@@ -332,9 +333,12 @@ void FPoseLinkBase::Update(const FAnimationUpdateContext& InContext)
 	{
 		FAnimationUpdateContext LinkContext(InContext.WithNodeId(LinkID));
 		TRACE_SCOPED_ANIM_NODE(LinkContext);
-		UE::Anim::FNodeFunctionCaller::InitialUpdate(LinkContext, *LinkedNode);
-		UE::Anim::FNodeFunctionCaller::BecomeRelevant(LinkContext, *LinkedNode);
-		UE::Anim::FNodeFunctionCaller::Update(LinkContext, *LinkedNode);
+		if(LinkedNode->NodeData && LinkedNode->NodeData->HasNodeAnyFlags(EAnimNodeDataFlags::AllFunctions))
+		{
+			UE::Anim::FNodeFunctionCaller::InitialUpdate(LinkContext, *LinkedNode);
+			UE::Anim::FNodeFunctionCaller::BecomeRelevant(LinkContext, *LinkedNode);
+			UE::Anim::FNodeFunctionCaller::Update(LinkContext, *LinkedNode);
+		}
 		LinkedNode->Update_AnyThread(LinkContext);
 	}
 }

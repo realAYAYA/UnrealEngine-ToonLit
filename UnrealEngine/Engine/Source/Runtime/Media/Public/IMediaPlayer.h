@@ -348,6 +348,7 @@ public:
 		AlwaysPullNewestVideoFrame,		//!< Mediaframework will not gate video frame output with its own timing, but assumes "ASAP" as output time for every sample
 		PlayerUsesInternalFlushOnSeek,	//!< The player implements an internal flush logic on seeks and Mediaframework will not issue an explicit Flush() call to it on seeks
 		IsTrackSwitchSeamless,			//!< If track switching is seamless then a flush of sinks is not necessary.
+		PlayerSelectsDefaultTracks,		//!< Whether or not the player selects suitable track defaults.
 	};
 	
 	virtual bool GetPlayerFeatureFlag(EFeatureFlag /*flag*/) const

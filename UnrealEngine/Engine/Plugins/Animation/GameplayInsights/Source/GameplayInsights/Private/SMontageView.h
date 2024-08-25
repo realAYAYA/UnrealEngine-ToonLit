@@ -3,8 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "IRewindDebuggerView.h"
-#include "IRewindDebuggerViewCreator.h"
 #include "SPropertiesDebugViewBase.h"
 
 namespace TraceServices { class IAnalysisSession; }

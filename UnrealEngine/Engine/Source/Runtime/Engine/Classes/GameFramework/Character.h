@@ -45,9 +45,15 @@ struct FRepRootMotionMontage
 	UPROPERTY()
 	bool bIsActive = false;
 
+#if WITH_EDITORONLY_DATA
 	/** AnimMontage providing Root Motion */
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Use the GetAnimMontage function instead"))
+	TObjectPtr<UAnimMontage> AnimMontage_DEPRECATED = nullptr;
+#endif
+	
+	/** Animation providing Root Motion */
 	UPROPERTY()
-	TObjectPtr<UAnimMontage> AnimMontage = nullptr;
+	TObjectPtr<UAnimSequenceBase> Animation = nullptr;
 
 	/** Track position of Montage */
 	UPROPERTY()
@@ -93,15 +99,17 @@ struct FRepRootMotionMontage
 	void Clear()
 	{
 		bIsActive = false;
-		AnimMontage = nullptr;
+		Animation = nullptr;
 		AuthoritativeRootMotion.Clear();
 	}
 
 	/** Is Valid - animation root motion only */
 	bool HasRootMotion() const
 	{
-		return (AnimMontage != nullptr);
+		return (Animation != nullptr);
 	}
+
+	UAnimMontage* GetAnimMontage() const;
 };
 
 USTRUCT()

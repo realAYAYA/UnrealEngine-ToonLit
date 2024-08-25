@@ -102,12 +102,26 @@ public:
 		FProperty* CreateVariable(const FName Name, const FEdGraphPinType& Type) const;
 		void AddGeneratedFunctionGraph(UEdGraph* Graph) const;
 		UWidgetBlueprint* GetWidgetBlueprint() const;
+		UE_DEPRECATED(5.4, "GetSkeletonGeneratedClass renamed to GetGeneratedClass")
 		UWidgetBlueprintGeneratedClass* GetSkeletonGeneratedClass() const;
+		UWidgetBlueprintGeneratedClass* GetGeneratedClass() const;
 		EKismetCompileType::Type GetCompileType() const;
 
 	private:
 		friend FWidgetBlueprintCompilerContext;
 		FCreateVariableContext(FWidgetBlueprintCompilerContext& InContext);
+		FWidgetBlueprintCompilerContext& Context;
+	};
+
+	struct UMGEDITOR_API FCreateFunctionContext
+	{
+	public:
+		void AddGeneratedFunctionGraph(UEdGraph*) const;
+		UWidgetBlueprintGeneratedClass* GetGeneratedClass() const;
+
+	private:
+		friend FWidgetBlueprintCompilerContext;
+		FCreateFunctionContext(FWidgetBlueprintCompilerContext& InContext);
 		FWidgetBlueprintCompilerContext& Context;
 	};
 
@@ -124,6 +138,9 @@ protected:
 
 	// Map of properties created for widgets; to aid in debug data generation
 	TMap<UWidget*, FProperty*> WidgetToMemberVariableMap;
+
+	// Map of properties created in parent widget for bind widget validation
+	TMap<UWidget*, FProperty*> ParentWidgetToBindWidgetMap;
 
 	// Map of properties created for widget animations; to aid in debug data generation
 	TMap<UWidgetAnimation*, FProperty*> WidgetAnimToMemberVariableMap;

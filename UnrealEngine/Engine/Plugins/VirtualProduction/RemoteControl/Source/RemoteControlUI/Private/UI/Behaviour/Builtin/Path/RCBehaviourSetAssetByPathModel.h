@@ -26,6 +26,9 @@ class FRCSetAssetByPathBehaviourModel : public FRCBehaviourModel
 public:
 	FRCSetAssetByPathBehaviourModel(URCSetAssetByPathBehaviour* SetAssetByPathBehaviour);
 
+	/** Returns true if this behaviour have a details widget or false if not*/
+	virtual bool HasBehaviourDetailsWidget() override;
+
 	/** Builds a Behaviour specific widget as required for the Set Asset By Path Behaviour */
 	virtual TSharedRef<SWidget> GetBehaviourDetailsWidget() override;
 
@@ -77,6 +80,5 @@ private:
 	/** Regenerates and creates a new PathArray Widget if changed */
 	void RefreshPathAndPreview();
 
-	/** Creates a asset path, based on the selected Asset in the content browser. */
-	void CreateAssetPathFromSelection() const;
+	void RefreshPreview() const;
 };

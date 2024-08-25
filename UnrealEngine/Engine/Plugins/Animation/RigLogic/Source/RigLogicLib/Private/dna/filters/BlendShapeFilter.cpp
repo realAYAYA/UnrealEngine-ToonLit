@@ -18,6 +18,7 @@ BlendShapeFilter::BlendShapeFilter(MemoryResource* memRes_) :
 void BlendShapeFilter::configure(std::uint16_t blendShapeCount, UnorderedSet<std::uint16_t> allowedBlendShapeIndices) {
     passingIndices = std::move(allowedBlendShapeIndices);
     // Fill the structure that maps indices prior to deletion to indices after deletion
+    remappedIndices.clear();
     remap(blendShapeCount, passingIndices, remappedIndices);
 }
 
@@ -37,8 +38,24 @@ void BlendShapeFilter::apply(RawDefinition& dest) {
     dest.meshBlendShapeChannelMapping.updateTo(remappedIndices);
 }
 
+void BlendShapeFilter::apply(RawMesh& dest) {
+    // Remove blend shape targets of blend shapes to remove
+    extd::filter(dest.blendShapeTargets, [this](const RawBlendShapeTarget& bsTarget, std::size_t  /*unused*/) {
+            return passes(bsTarget.blendShapeChannelIndex);
+        });
+
+    // Remap blend shape targets
+    for (auto& bsTarget : dest.blendShapeTargets) {
+        bsTarget.blendShapeChannelIndex = remapped(bsTarget.blendShapeChannelIndex);
+    }
+}
+
 bool BlendShapeFilter::passes(std::uint16_t index) const {
     return extd::contains(passingIndices, index);
+}
+
+std::uint16_t BlendShapeFilter::remapped(std::uint16_t index) const {
+    return remappedIndices.at(index);
 }
 
 }  // namespace dna

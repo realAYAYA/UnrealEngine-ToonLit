@@ -53,6 +53,8 @@ public:
 	{
 #if WITH_EDITOR
 		bCanProcessAdditiveAnimations = false;
+		bIgnoreRootLock = false;
+		bIgnoreRootMotion = false;
 #endif
 	}
 
@@ -75,6 +77,8 @@ public:
 
 #if WITH_EDITOR
 		bCanProcessAdditiveAnimations = false;
+		bIgnoreRootLock = false;
+		bIgnoreRootMotion = false;
 #endif
 	}
 
@@ -200,6 +204,12 @@ protected:
 	/** If this is being used by a user (for instance on a skeletal mesh placed in a level) we don't want to allow
 	additives. But we need to be able to override this for editor preview windows */
 	bool bCanProcessAdditiveAnimations;
+
+	/** Allows editor previews to ignore root lock and show root motion in the editor, regardless of setting on sequence*/
+	bool bIgnoreRootLock;
+
+	/** Allows editor previews to ignore root motion in the editor, regardless of setting on sequence*/
+	bool bIgnoreRootMotion;
 #endif
 
 	/** Pose Weight value that can override curve data. In the future, we'd like to have UCurveSet that can play by default**/

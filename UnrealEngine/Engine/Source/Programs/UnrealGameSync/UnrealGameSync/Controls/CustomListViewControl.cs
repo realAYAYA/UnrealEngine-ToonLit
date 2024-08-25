@@ -41,9 +41,9 @@ namespace UnrealGameSync
 
 		public void ConditionalLayout(Control owner, Rectangle bounds)
 		{
-			if(RequiresLayout() || _previousBounds == null || _previousBounds.Value != bounds)
+			if (RequiresLayout() || _previousBounds == null || _previousBounds.Value != bounds)
 			{
-				using(Graphics graphics = owner.CreateGraphics())
+				using (Graphics graphics = owner.CreateGraphics())
 				{
 					Layout(graphics, bounds);
 				}
@@ -100,7 +100,7 @@ namespace UnrealGameSync
 		public override void OnMouseDown(Point location)
 		{
 			StatusElement? element;
-			if(Line.HitTest(location, out element))
+			if (Line.HitTest(location, out element))
 			{
 				_mouseDownElement = element;
 				_mouseDownElement.MouseDown = true;
@@ -111,14 +111,14 @@ namespace UnrealGameSync
 
 		public override void OnMouseUp(Point location)
 		{
-			if(_mouseDownElement != null)
+			if (_mouseDownElement != null)
 			{
 				StatusElement clickElement = _mouseDownElement;
 
 				_mouseDownElement.MouseDown = false;
 				_mouseDownElement = null;
 
-				if(clickElement.Bounds.Contains(location))
+				if (clickElement.Bounds.Contains(location))
 				{
 					clickElement.OnClick(location);
 				}
@@ -132,9 +132,9 @@ namespace UnrealGameSync
 			StatusElement? newMouseOverElement;
 			Line.HitTest(location, out newMouseOverElement);
 
-			if(_mouseOverElement != newMouseOverElement)
+			if (_mouseOverElement != newMouseOverElement)
 			{
-				if(_mouseOverElement != null)
+				if (_mouseOverElement != null)
 				{
 					Cursor = Cursors.Arrow;
 					_mouseOverElement.MouseOver = false;
@@ -142,7 +142,7 @@ namespace UnrealGameSync
 
 				_mouseOverElement = newMouseOverElement;
 
-				if(_mouseOverElement != null)
+				if (_mouseOverElement != null)
 				{
 					Cursor = _mouseOverElement.Cursor;
 					_mouseOverElement.MouseOver = true;
@@ -154,7 +154,7 @@ namespace UnrealGameSync
 
 		public override void OnMouseLeave()
 		{
-			if(_mouseOverElement != null)
+			if (_mouseOverElement != null)
 			{
 				_mouseOverElement.MouseOver = false;
 				_mouseOverElement = null;
@@ -170,12 +170,12 @@ namespace UnrealGameSync
 			int offsetY = bounds.Y + bounds.Height / 2;
 			Line.Layout(graphics, new Point(bounds.X, offsetY), Resources);
 
-			if(HorizontalAlignment == HorizontalAlignment.Center)
+			if (HorizontalAlignment == HorizontalAlignment.Center)
 			{
 				int offsetX = bounds.X + (bounds.Width - Line.Bounds.Width) / 2;
 				Line.Layout(graphics, new Point(offsetX, offsetY), Resources);
 			}
-			else if(HorizontalAlignment == HorizontalAlignment.Right)
+			else if (HorizontalAlignment == HorizontalAlignment.Right)
 			{
 				int offsetX = bounds.Right - Line.Bounds.Width;
 				Line.Layout(graphics, new Point(offsetX, offsetY), Resources);
@@ -194,7 +194,7 @@ namespace UnrealGameSync
 	{
 		readonly VisualStyleRenderer? _selectedItemRenderer;
 		readonly VisualStyleRenderer? _trackedItemRenderer;
-		
+
 		public int HoverItem = -1;
 
 		CustomListViewWidget? _mouseOverWidget;
@@ -202,28 +202,28 @@ namespace UnrealGameSync
 
 		public CustomListViewControl()
 		{
-            if (Application.RenderWithVisualStyles) 
-            { 
+			if (Application.RenderWithVisualStyles)
+			{
 				_selectedItemRenderer = new VisualStyleRenderer("Explorer::ListView", 1, 3);
-				_trackedItemRenderer = new VisualStyleRenderer("Explorer::ListView", 1, 2); 
+				_trackedItemRenderer = new VisualStyleRenderer("Explorer::ListView", 1, 2);
 			}
 		}
 
 		protected void ConditionalLayoutWidget(CustomListViewWidget widget)
 		{
-			if(widget.Item.Tag == widget)
+			if (widget.Item.Tag == widget)
 			{
 				widget.ConditionalLayout(this, widget.Item.Bounds);
 			}
 			else
 			{
-				for(int idx = 0; idx < widget.Item.SubItems.Count; idx++)
+				for (int idx = 0; idx < widget.Item.SubItems.Count; idx++)
 				{
 					ListViewItem.ListViewSubItem subItem = widget.Item.SubItems[idx];
-					if(subItem.Tag == widget)
+					if (subItem.Tag == widget)
 					{
 						Rectangle bounds = subItem.Bounds;
-						for(int endIdx = idx + 1; endIdx < widget.Item.SubItems.Count && widget.Item.SubItems[endIdx].Tag == widget; endIdx++)
+						for (int endIdx = idx + 1; endIdx < widget.Item.SubItems.Count && widget.Item.SubItems[endIdx].Tag == widget; endIdx++)
 						{
 							Rectangle endBounds = widget.Item.SubItems[endIdx].Bounds;
 							bounds = new Rectangle(bounds.X, bounds.Y, endBounds.Right - bounds.X, endBounds.Bottom - bounds.Y);
@@ -237,7 +237,7 @@ namespace UnrealGameSync
 
 		protected void ConditionalRedrawWidget(CustomListViewWidget widget)
 		{
-			if(widget.Item.Index != -1 && widget.RequiresLayout())
+			if (widget.Item.Index != -1 && widget.RequiresLayout())
 			{
 				ConditionalLayoutWidget(widget);
 				RedrawItems(widget.Item.Index, widget.Item.Index, true);
@@ -251,18 +251,18 @@ namespace UnrealGameSync
 
 		protected static CustomListViewWidget? FindWidget(ListViewHitTestInfo hitTest)
 		{
-			if(hitTest.Item != null)
+			if (hitTest.Item != null)
 			{
 				CustomListViewWidget? widget = hitTest.Item.Tag as CustomListViewWidget;
-				if(widget != null)
+				if (widget != null)
 				{
 					return widget;
 				}
 			}
-			if(hitTest.SubItem != null)
+			if (hitTest.SubItem != null)
 			{
 				CustomListViewWidget? widget = hitTest.SubItem.Tag as CustomListViewWidget;
-				if(widget != null)
+				if (widget != null)
 				{
 					return widget;
 				}
@@ -274,7 +274,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseLeave(e);
 
-			if(_mouseOverWidget != null)
+			if (_mouseOverWidget != null)
 			{
 				_mouseOverWidget.OnMouseLeave();
 				ConditionalRedrawWidget(_mouseOverWidget);
@@ -282,7 +282,7 @@ namespace UnrealGameSync
 				Invalidate();
 			}
 
-			if(HoverItem != -1)
+			if (HoverItem != -1)
 			{
 				HoverItem = -1;
 				Invalidate();
@@ -293,13 +293,13 @@ namespace UnrealGameSync
 		{
 			base.OnMouseDown(e);
 
-			if(_mouseDownWidget != null)
+			if (_mouseDownWidget != null)
 			{
 				_mouseDownWidget.OnMouseUp(e.Location);
 				ConditionalRedrawWidget(_mouseDownWidget);
 			}
 
-			if((e.Button & MouseButtons.Left) != 0)
+			if ((e.Button & MouseButtons.Left) != 0)
 			{
 				_mouseDownWidget = FindWidget(e.Location);
 			}
@@ -308,7 +308,7 @@ namespace UnrealGameSync
 				_mouseDownWidget = null;
 			}
 
-			if(_mouseDownWidget != null)
+			if (_mouseDownWidget != null)
 			{
 				_mouseDownWidget.OnMouseDown(e.Location);
 				ConditionalRedrawWidget(_mouseDownWidget);
@@ -319,7 +319,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseUp(e);
 
-			if(_mouseDownWidget != null)
+			if (_mouseDownWidget != null)
 			{
 				CustomListViewWidget widget = _mouseDownWidget;
 				_mouseDownWidget = null;
@@ -334,14 +334,14 @@ namespace UnrealGameSync
 			ListViewHitTestInfo hitTest = HitTest(e.Location);
 
 			CustomListViewWidget? newMouseOverWidget = FindWidget(hitTest);
-			if(_mouseOverWidget != null && _mouseOverWidget != newMouseOverWidget)
+			if (_mouseOverWidget != null && _mouseOverWidget != newMouseOverWidget)
 			{
 				Cursor = Cursors.Arrow;
 				_mouseOverWidget.OnMouseLeave();
 				ConditionalRedrawWidget(_mouseOverWidget);
 			}
 			_mouseOverWidget = newMouseOverWidget;
-			if(_mouseOverWidget != null)
+			if (_mouseOverWidget != null)
 			{
 				Cursor = _mouseOverWidget.Cursor;
 				_mouseOverWidget.OnMouseMove(e.Location);
@@ -349,14 +349,14 @@ namespace UnrealGameSync
 			}
 
 			int prevHoverItem = HoverItem;
-			HoverItem = (hitTest.Item == null)? -1 : hitTest.Item.Index;
-			if(HoverItem != prevHoverItem)
+			HoverItem = (hitTest.Item == null) ? -1 : hitTest.Item.Index;
+			if (HoverItem != prevHoverItem)
 			{
-				if(HoverItem != -1)
+				if (HoverItem != -1)
 				{
 					RedrawItems(HoverItem, HoverItem, true);
 				}
-				if(prevHoverItem != -1 && prevHoverItem < Items.Count)
+				if (prevHoverItem != -1 && prevHoverItem < Items.Count)
 				{
 					RedrawItems(prevHoverItem, prevHoverItem, true);
 				}
@@ -406,13 +406,13 @@ namespace UnrealGameSync
 		public void DrawCustomSubItem(Graphics graphics, ListViewItem.ListViewSubItem subItem)
 		{
 			CustomListViewWidget? widget = subItem.Tag as CustomListViewWidget;
-			if(widget != null)
+			if (widget != null)
 			{
-				foreach(ListViewItem.ListViewSubItem? otherSubItem in widget.Item.SubItems)
+				foreach (ListViewItem.ListViewSubItem? otherSubItem in widget.Item.SubItems)
 				{
-					if(otherSubItem != null && otherSubItem.Tag == widget)
+					if (otherSubItem != null && otherSubItem.Tag == widget)
 					{
-						if(otherSubItem == subItem)
+						if (otherSubItem == subItem)
 						{
 							ConditionalLayoutWidget(widget);
 							widget.Render(graphics);
@@ -425,11 +425,11 @@ namespace UnrealGameSync
 
 		public void DrawBackground(Graphics graphics, ListViewItem item)
 		{
-			if(item.Selected)
+			if (item.Selected)
 			{
 				DrawSelectedBackground(graphics, item.Bounds);
 			}
-			else if(item.Index == HoverItem)
+			else if (item.Index == HoverItem)
 			{
 				DrawTrackedBackground(graphics, item.Bounds);
 			}

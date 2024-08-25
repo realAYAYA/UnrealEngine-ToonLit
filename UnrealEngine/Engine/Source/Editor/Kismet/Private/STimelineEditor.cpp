@@ -887,7 +887,6 @@ FReply STimelineEdTrack::OnMoveUp()
 bool STimelineEdTrack::CanMoveUp() const
 {
 	return (Track->DisplayIndex > 0);
-	return false;
 }
 FReply STimelineEdTrack::OnMoveDown()
 {

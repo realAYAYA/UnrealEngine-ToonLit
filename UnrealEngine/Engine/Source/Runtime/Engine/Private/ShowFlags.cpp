@@ -5,6 +5,7 @@
 =============================================================================*/
 
 #include "ShowFlags.h"
+#include "RenderUtils.h"
 #include "Engine/EngineBaseTypes.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/ScopeRWLock.h"
@@ -373,11 +374,6 @@ void ApplyViewMode(EViewModeIndex ViewModeIndex, bool bPerspective, FEngineShowF
 			break;
 	}
 
-	if (!bPerspective)
-	{
-		bPostProcessing = false;
-	}
-
 	// set the EngineShowFlags:
 
 	// Assigning the new state like this ensures we always set the same variables (they depend on the view mode)
@@ -472,6 +468,12 @@ void EngineShowFlagOverride(EShowFlagInitMode ShowFlagInitMode, EViewModeIndex V
 		{
 			EngineShowFlags.SetSkyLighting(false);
 		}
+	}
+
+	if (!IsRayTracingEnabled())
+	{
+		EngineShowFlags.SetPathTracing(false);
+		EngineShowFlags.SetRayTracingDebug(false);
 	}
 
 	// Some view modes want some features off or on (no state)
@@ -580,14 +582,8 @@ void EngineShowFlagOverride(EShowFlagInitMode ShowFlagInitMode, EViewModeIndex V
 			EngineShowFlags.SetDecals(false); // Decals require the use of FDebugPSInLean.
 		}
 
-		if (ViewModeIndex == VMI_PathTracing)
+		if (IsRayTracingEnabled() && ViewModeIndex == VMI_RayTracingDebug)
 		{
-			EngineShowFlags.SetPathTracing(true);
-		}
-
-		if (ViewModeIndex == VMI_RayTracingDebug)
-		{
-			EngineShowFlags.SetRayTracingDebug(true);
 			EngineShowFlags.SetVisualizeHDR(false);
 			EngineShowFlags.SetVisualizeLocalExposure(false);
 			EngineShowFlags.SetVisualizeMotionBlur(false);
@@ -691,11 +687,13 @@ void EngineShowFlagOverride(EShowFlagInitMode ShowFlagInitMode, EViewModeIndex V
 
 void EngineShowFlagOrthographicOverride(bool bIsPerspective, FEngineShowFlags& EngineShowFlags)
 {
-	// Disable post processing that doesn't work in ortho viewports.
 	if (!bIsPerspective)
 	{
-		EngineShowFlags.SetTemporalAA(false);
-		EngineShowFlags.SetMotionBlur(false);
+		/**
+		 * Orthographic feature support has been improved so all features are now enabled by default.
+		 * If you wish to disable a specific feature, add the showflag disable call here.
+		 * e.g.	EngineShowFlags.SetMotionBlur(false);
+		 */
 	}
 }
 

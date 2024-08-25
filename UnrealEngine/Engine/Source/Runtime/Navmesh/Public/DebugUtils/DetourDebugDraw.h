@@ -60,7 +60,7 @@ NAVMESH_API void duDebugDrawTileCacheLayerDistance(struct duDebugDraw* dd, const
 									   const dtTileCacheDistanceField& dfield, const dtReal cs, const dtReal ch);
 NAVMESH_API void duDebugDrawTileCacheLayerRegions(struct duDebugDraw* dd, const dtTileCacheLayer& layer, const dtReal cs, const dtReal ch);
 NAVMESH_API void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheContourSet& lcset,
-								  const dtReal* orig, const dtReal cs, const dtReal ch);
+								  const int32 layerIdx, const dtReal* orig, const dtReal cs, const dtReal ch);
 NAVMESH_API void duDebugDrawTileCachePolyMesh(duDebugDraw* dd, const struct dtTileCachePolyMesh& lmesh,
 								  const dtReal* orig, const dtReal cs, const dtReal ch);
 NAVMESH_API void duDebugDrawTileCacheDetailMesh(duDebugDraw* dd, const struct dtTileCachePolyMeshDetail& dmesh);

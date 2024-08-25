@@ -48,6 +48,7 @@ namespace UnrealBuildTool.Rules
 					"UnrealEd",
 					"SubobjectEditor",
 					"SubobjectDataInterface",
+					"RenderCore",
 				}
 			);
 

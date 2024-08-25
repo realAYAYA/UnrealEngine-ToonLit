@@ -7,6 +7,8 @@
 #include "Components/SceneCaptureComponent.h"
 #include "Camera/CameraTypes.h"
 #include "UObject/EditorObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/UE5ReleaseStreamObjectVersion.h"
 #include "SceneInterface.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Components/StaticMeshComponent.h"
@@ -28,6 +30,10 @@
 #include "PlanarReflectionSceneProxy.h"
 #include "Components/BoxComponent.h"
 #include "Logging/MessageLog.h"
+#if WITH_EDITOR
+#include "Misc/UObjectToken.h"
+#include "Misc/MapErrors.h"
+#endif
 #include "Engine/SCS_Node.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "UnrealEngine.h"
@@ -546,7 +552,13 @@ USceneCaptureComponent2D::USceneCaptureComponent2D(const FObjectInitializer& Obj
 	: Super(ObjectInitializer)
 {
 	FOVAngle = 90.0f;
-	OrthoWidth = 512;
+
+	OrthoWidth = DEFAULT_ORTHOWIDTH;
+	bAutoCalculateOrthoPlanes = true;
+	AutoPlaneShift = 0.0f;
+	bUpdateOrthoPlanes = false;
+	bUseCameraHeightAsViewTarget = false;
+
 	bUseCustomProjectionMatrix = false;
 	bAutoActivate = true;
 	PrimaryComponentTick.bCanEverTick = true;
@@ -678,6 +690,18 @@ void USceneCaptureComponent2D::GetCameraView(float DeltaTime, FMinimalViewInfo& 
 	OutMinimalViewInfo.bConstrainAspectRatio = false;
 	OutMinimalViewInfo.ProjectionMode = ProjectionType;
 	OutMinimalViewInfo.OrthoWidth = OrthoWidth;
+	OutMinimalViewInfo.bAutoCalculateOrthoPlanes = bAutoCalculateOrthoPlanes;
+	OutMinimalViewInfo.AutoPlaneShift = AutoPlaneShift;
+	OutMinimalViewInfo.bUpdateOrthoPlanes = bUpdateOrthoPlanes;
+	OutMinimalViewInfo.bUseCameraHeightAsViewTarget = bUseCameraHeightAsViewTarget;
+
+	if (bAutoCalculateOrthoPlanes)
+	{
+		if(const AActor* ViewTarget = GetOwner())
+		{
+			OutMinimalViewInfo.SetCameraToViewTarget(ViewTarget->GetActorLocation());
+		}
+	}
 }
 
 void USceneCaptureComponent2D::CaptureSceneDeferred()
@@ -818,6 +842,18 @@ void USceneCaptureComponent2D::PostEditChangeProperty(FPropertyChangedEvent& Pro
 
 void USceneCaptureComponent2D::Serialize(FArchive& Ar)
 {
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
+	if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::OrthographicCameraDefaultSettings)
+	{
+		OrthoWidth = 512.0f;
+	}
+
+	Ar.UsingCustomVersion(FUE5ReleaseStreamObjectVersion::GUID);
+	if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::OrthographicAutoNearFarPlane)
+	{
+		bAutoCalculateOrthoPlanes = false;
+	}
+
 	Super::Serialize(Ar);
 
 	if (Ar.IsLoading())
@@ -831,6 +867,16 @@ void USceneCaptureComponent2D::Serialize(FArchive& Ar)
 			ShowFlags.TemporalAA = false;
 			ShowFlags.MotionBlur = false;
 		}
+
+#if WITH_EDITOR
+		if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::OrthographicCameraDefaultSettings && bUseFauxOrthoViewPos)
+		{
+			FMessageLog("MapCheck").Info()
+				->AddToken(FUObjectToken::Create(this))
+				->AddToken(FTextToken::Create(LOCTEXT("MapCheck_Message_UseFauxOrthoViewPosDeprecation", "bUseFauxOrthoViewPos is true but has been deprecated. The setting should be set to false unless any custom usage of this flag is not affected.")))
+				->AddToken(FMapErrorToken::Create(FMapErrors::UseFauxOrthoViewPosDeprecation_Warning));
+		}
+#endif
 	}
 }
 

@@ -11,14 +11,6 @@ namespace UE::MLDeformer
 	{
 	}
 
-	FMLDeformerGeomCacheActor::~FMLDeformerGeomCacheActor()
-	{
-		if (GeomCacheComponent)
-		{
-			Actor->RemoveOwnedComponent(GeomCacheComponent);
-		}
-	}
-
 	void FMLDeformerGeomCacheActor::SetVisibility(bool bIsVisible)
 	{
 		FMLDeformerEditorActor::SetVisibility(bIsVisible);

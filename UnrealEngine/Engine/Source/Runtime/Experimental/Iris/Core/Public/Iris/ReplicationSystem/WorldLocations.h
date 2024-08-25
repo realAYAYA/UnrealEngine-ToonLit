@@ -41,7 +41,6 @@ public:
 	};
 
 public:
-
 	// Internal API
 	void UpdateWorldLocation(uint32 ObjectIndex, const FVector& WorldLocation);
 
@@ -51,6 +50,23 @@ public:
 	void SetObjectInfo(uint32 ObjectIndex, const FObjectInfo& ObjectInfo);
     const FObjectInfo& GetObjectInfo(uint32 ObjectIndex) const;
 
+	/**
+	 * Objects are not necessarily marked as dirty just because they're moving, such as objects attached to other objects. If such objects are spatially filtered they need to update their world locations in order for replication to work as expected.
+	 * Use SetObjectRequiresFrequentWorldLocationUpdate to force frequent world location update on an object.
+	 */
+	void SetObjectRequiresFrequentWorldLocationUpdate(uint32 ObjectIndex, bool bRequiresFrequentUpdate);
+
+	/** Returns whether an object requires frequent world location updates. */
+	bool GetObjectRequiresFrequentWorldLocationUpdate(uint32 ObjectIndex) const;
+
+	FNetBitArrayView GetObjectsRequiringFrequentWorldLocationUpdate() const;
+
+	void ResetObjectsWithDirtyInfo();
+	FNetBitArrayView GetObjectsWithDirtyInfo() const;
+
+	/** Returns the list of objects that registered world location information */
+	const FNetBitArrayView GetObjectsWithWorldInfo() const { return MakeNetBitArrayView(ValidInfoIndexes); }
+
 private:
 	enum : uint32
 	{
@@ -59,6 +75,10 @@ private:
 
 	/** Set bits indicate that we have stored information for this internal object index */
 	FNetBitArray ValidInfoIndexes;
+	/** Set bits indicate that the world location or net cull distance has changed since last update */
+	FNetBitArray ObjectsWithDirtyInfo;
+	/** Set bits indicate that the object requires frequent world location updates */
+	FNetBitArray ObjectsRequiringFrequentWorldLocationUpdate;
 
 	TChunkedArray<FObjectInfo, BytesPerLocationChunk> StoredObjectInfo;
 };
@@ -103,5 +123,24 @@ inline float FWorldLocations::GetCullDistance(uint32 ObjectIndex) const
 	}
 }
 
+inline void FWorldLocations::SetObjectRequiresFrequentWorldLocationUpdate(uint32 ObjectIndex, bool bRequiresFrequentUpdate)
+{
+	ObjectsRequiringFrequentWorldLocationUpdate.SetBitValue(ObjectIndex, ValidInfoIndexes.GetBit(ObjectIndex) && bRequiresFrequentUpdate);
 }
 
+inline bool FWorldLocations::GetObjectRequiresFrequentWorldLocationUpdate(uint32 ObjectIndex) const
+{
+	return ObjectsRequiringFrequentWorldLocationUpdate.GetBit(ObjectIndex);
+}
+
+inline FNetBitArrayView FWorldLocations::GetObjectsRequiringFrequentWorldLocationUpdate() const
+{
+	return MakeNetBitArrayView(ObjectsRequiringFrequentWorldLocationUpdate);
+}
+
+inline FNetBitArrayView FWorldLocations::GetObjectsWithDirtyInfo() const
+{
+	return MakeNetBitArrayView(ObjectsWithDirtyInfo);
+}
+
+}

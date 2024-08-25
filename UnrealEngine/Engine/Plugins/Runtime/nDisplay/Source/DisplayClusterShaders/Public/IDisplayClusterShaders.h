@@ -9,18 +9,17 @@
 #include "RHICommandList.h"
 #include "RHIResources.h"
 
-
 class IDisplayClusterRender_MeshComponentProxy;
 class FDisplayClusterShaderParameters_ICVFX;
 class FDisplayClusterShaderParameters_Override;
+
 struct FDisplayClusterShaderParameters_GenerateMips;
 struct FDisplayClusterShaderParameters_PostprocessBlur;
 struct FDisplayClusterShaderParameters_WarpBlend;
 struct FDisplayClusterShaderParameters_UVLightCards;
-class IDisplayClusterWarpBlendManager;
+
 class FSceneInterface;
 class FRenderTarget;
-
 
 class IDisplayClusterShaders : public IModuleInterface
 {
@@ -53,13 +52,6 @@ public:
 	}
 
 public:
-	/**
-	* Warp&blend manager interface
-	*
-	* @return interface
-	*/
-	virtual const IDisplayClusterWarpBlendManager& GetWarpBlendManager() const = 0;
-
 	/**
 	* Render warp&blend
 	*

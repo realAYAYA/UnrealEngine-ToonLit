@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "/Engine/Shared/RayTracingTypes.h"
 #include "/Engine/Private/Common.ush"
 #include "/Engine/Private/SceneData.ush"
 #include "/Engine/Private/RayTracing/RayTracingHitGroupCommon.ush"
@@ -14,12 +15,11 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(LumenHardwareRayTracingMaterialCHS,
 	Payload.HitT = RayTCurrent();
 
 	const int Primitive = GetInstanceUserData();
-	Payload.SetPrimitiveIndex(Primitive);
-
 	const int PrimitiveInstanceIndex = InstanceIndex() - GetBaseInstanceIndex();
-	Payload.SetInstanceIndex(PrimitiveInstanceIndex);
+	const uint GPUSceneInstanceIndex = GetGPUSceneInstanceIndex(Primitive, PrimitiveInstanceIndex);
+	Payload.SetGPUSceneInstanceIndex(GPUSceneInstanceIndex);
 
-	uint MaterialShaderIndex = GetHitGroupUserData() & 0x3FFFFFFF;
+	uint MaterialShaderIndex = GetHitGroupUserData() & LUMEN_MATERIAL_SHADER_INDEX_MASK;
 	Payload.SetMaterialShaderIndex(MaterialShaderIndex);
 
 	uint bIsTranslucent = (GetHitGroupUserData() >> 31) & 0x1;
@@ -48,7 +48,8 @@ RAY_TRACING_ENTRY_ANY_HIT(
 	const bool bAcceptHit = LumenMinimalRayAnyHitShader(
 		GetHitGroupUserData(),
 		RayTCurrent(),
-		HitKind() == HIT_KIND_TRIANGLE_BACK_FACE);
+		HitKind() == HIT_KIND_TRIANGLE_BACK_FACE,
+		Payload.IsShadowRay());
 
 	if (!bAcceptHit)
 	{

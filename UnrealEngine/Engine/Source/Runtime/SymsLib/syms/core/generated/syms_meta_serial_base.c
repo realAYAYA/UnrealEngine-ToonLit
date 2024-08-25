@@ -45,7 +45,7 @@ SYMS_SerialType _syms_serial_type_SYMS_CoffMachineType = {{(SYMS_U8 *)0, (SYMS_U
 SYMS_SerialType _syms_serial_type_SYMS_CoffHeader = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CoffSectionAlign = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CoffSectionFlags = {{(SYMS_U8 *)0, (SYMS_U64)0}};
-SYMS_SerialType _syms_serial_type_SYMS_CoffSection = {{(SYMS_U8 *)0, (SYMS_U64)0}};
+SYMS_SerialType _syms_serial_type_SYMS_CoffSectionHeader = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CoffRelocTypeX64 = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CoffRelocTypeX86 = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CoffRelocTypeARM = {{(SYMS_U8 *)0, (SYMS_U64)0}};
@@ -57,6 +57,7 @@ SYMS_SerialType _syms_serial_type_SYMS_CoffSymDType = {{(SYMS_U8 *)0, (SYMS_U64)
 SYMS_SerialType _syms_serial_type_SYMS_CoffWeakExtType = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CoffImportHeaderType = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CoffImportHeaderNameType = {{(SYMS_U8 *)0, (SYMS_U64)0}};
+SYMS_SerialType _syms_serial_type_SYMS_CoffComdatSelectType = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 
 #endif
 
@@ -311,6 +312,7 @@ SYMS_SerialType _syms_serial_type_SYMS_CvLabelKind = {{(SYMS_U8 *)0, (SYMS_U64)0
 SYMS_SerialType _syms_serial_type_SYMS_CvFunctionAttribs = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvCallKind = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafPreComp = {{(SYMS_U8 *)0, (SYMS_U64)0}};
+SYMS_SerialType _syms_serial_type_SYMS_CvLeafTypeServer = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafTypeServer2 = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafBuildInfo = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafSkip_16t = {{(SYMS_U8 *)0, (SYMS_U64)0}};
@@ -331,6 +333,7 @@ SYMS_SerialType _syms_serial_type_SYMS_CvLeafEnum = {{(SYMS_U8 *)0, (SYMS_U64)0}
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafAlias = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafMember = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafStMember = {{(SYMS_U8 *)0, (SYMS_U64)0}};
+SYMS_SerialType _syms_serial_type_SYMS_CvLeafMethodListMember = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafMethod = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafOneMethod = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafEnumerate = {{(SYMS_U8 *)0, (SYMS_U64)0}};
@@ -341,6 +344,7 @@ SYMS_SerialType _syms_serial_type_SYMS_CvLeafVBClass = {{(SYMS_U8 *)0, (SYMS_U64
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafVFuncTab = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafVFuncOff = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafVFTable = {{(SYMS_U8 *)0, (SYMS_U64)0}};
+SYMS_SerialType _syms_serial_type_SYMS_CvLeafVFPath = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafFuncId = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafMFuncId = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafStringId = {{(SYMS_U8 *)0, (SYMS_U64)0}};
@@ -366,6 +370,7 @@ SYMS_SerialType _syms_serial_type_SYMS_CvInlineeSourceLineEx = {{(SYMS_U8 *)0, (
 //~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:1322
 SYMS_SerialValue _syms_serial_members_for_SYMS_TypeKind[] = {
 { { (SYMS_U8*)"Null", 4 }, (SYMS_U64)SYMS_TypeKind_Null },
+{ { (SYMS_U8*)"Stub", 4 }, (SYMS_U64)SYMS_TypeKind_Stub },
 { { (SYMS_U8*)"int8", 4 }, (SYMS_U64)SYMS_TypeKind_Int8 },
 { { (SYMS_U8*)"int16", 5 }, (SYMS_U64)SYMS_TypeKind_Int16 },
 { { (SYMS_U8*)"int32", 5 }, (SYMS_U64)SYMS_TypeKind_Int32 },
@@ -688,8 +693,8 @@ SYMS_SerialType _syms_serial_type_SYMS_DosHeader = {{(SYMS_U8 *)0, (SYMS_U64)0}}
 SYMS_SerialType _syms_serial_type_SYMS_PeWindowsSubsystem = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_ImageFileCharacteristics = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_DllCharacteristics = {{(SYMS_U8 *)0, (SYMS_U64)0}};
-SYMS_SerialType _syms_serial_type_SYMS_PeOptionalPe32 = {{(SYMS_U8 *)0, (SYMS_U64)0}};
-SYMS_SerialType _syms_serial_type_SYMS_PeOptionalPe32Plus = {{(SYMS_U8 *)0, (SYMS_U64)0}};
+SYMS_SerialType _syms_serial_type_SYMS_PeOptionalHeader32 = {{(SYMS_U8 *)0, (SYMS_U64)0}};
+SYMS_SerialType _syms_serial_type_SYMS_PeOptionalHeader32Plus = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_PeDataDirectoryIndex = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_PeDataDirectory = {{(SYMS_U8 *)0, (SYMS_U64)0}};
 SYMS_SerialType _syms_serial_type_SYMS_PeDebugDirectoryType = {{(SYMS_U8 *)0, (SYMS_U64)0}};

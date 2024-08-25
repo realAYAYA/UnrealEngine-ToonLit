@@ -10,6 +10,8 @@ UCommonWidgetCarousel::UCommonWidgetCarousel(const FObjectInitializer& ObjectIni
 {
 	bIsVariable = true;
 	SetClipping(EWidgetClipping::ClipToBounds);
+
+	MoveSpeed = 5.f;
 }
 
 void UCommonWidgetCarousel::ReleaseSlateResources(bool bReleaseChildren)
@@ -63,6 +65,28 @@ void UCommonWidgetCarousel::PreviousPage()
 	{
 		MyCommonWidgetCarousel->SetPreviousWidget();
 	}
+}
+
+void UCommonWidgetCarousel::SetMoveSpeed(float InMoveSpeed)
+{
+	MoveSpeed = InMoveSpeed;
+	if (MoveSpeed != InMoveSpeed)
+	{
+		if (MyCommonWidgetCarousel.IsValid())
+		{
+			MyCommonWidgetCarousel->SetMoveSpeed(MoveSpeed);
+		}
+	}
+}
+
+float UCommonWidgetCarousel::GetMoveSpeed() const
+{
+	if (MyCommonWidgetCarousel.IsValid())
+	{
+		return MyCommonWidgetCarousel->GetMoveSpeed();
+	}
+
+	return MoveSpeed;
 }
 
 int32 UCommonWidgetCarousel::GetActiveWidgetIndex() const
@@ -127,7 +151,7 @@ TSharedRef<SWidget> UCommonWidgetCarousel::RebuildWidget()
 		.FadeRate(0)
 		.SlideValueLeftLimit(-1)
 		.SlideValueRightLimit(1)
-		.MoveSpeed(5.f)
+		.MoveSpeed(MoveSpeed)
 		.OnGenerateWidget_UObject(this, &UCommonWidgetCarousel::OnGenerateWidgetForCarousel)
 		.OnPageChanged_UObject(this, &UCommonWidgetCarousel::HandlePageChanged);
 

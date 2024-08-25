@@ -7,6 +7,7 @@
 #include "Chaos/CollisionResolutionTypes.h"
 #include "Chaos/GeometryParticlesfwd.h"
 #include "ChaosStats.h"
+#include "Chaos/PhysicsObject.h"
 
 // Enable through build or just here in code to cause an untracked callback to fail to compile
 // Untracked callbacks will show up a such in profiling sessions and this can help track them down
@@ -38,7 +39,12 @@ enum class ESimCallbackOptions : uint16
 	ParticleRegister		= 1 << 6,
 	ParticleUnregister		= 1 << 7,
 	RunOnFrozenGameThread	= 1 << 8,
-	Rewind					= 1 << 9
+	Rewind					= 1 << 9,
+	PhysicsObjectUnregister	= 1 << 10,
+	PreIntegrate			= 1 << 11,
+	PostIntegrate			= 1 << 12,
+	PreSolve				= 1 << 13,
+	PostSolve				= 1 << 14,
 };
 ENUM_CLASS_FLAGS(ESimCallbackOptions)
 
@@ -73,9 +79,24 @@ public:
 
 	virtual bool IsFAsyncObjectManagerCallback() const { return false;}
 
+	void PostInitialize_Internal()
+	{
+		OnPostInitialize_Internal();
+	}
+
 	void PreSimulate_Internal()
 	{
 		OnPreSimulate_Internal();
+	}
+
+	void PreIntegrate_Internal()
+	{
+		OnPreIntegrate_Internal();
+	}
+
+	void PostIntegrate_Internal()
+	{
+		OnPostIntegrate_Internal();
 	}
 
 	void MidPhaseModification_Internal(FMidPhaseModifierAccessor& Modifier)
@@ -96,6 +117,16 @@ public:
 	void ContactModification_Internal(FCollisionContactModifier& Modifier)
 	{
 		OnContactModification_Internal(Modifier);
+	}
+
+	void PreSolve_Internal()
+	{
+		OnPreSolve_Internal();
+	}
+
+	void PostSolve_Internal()
+	{
+		OnPostSolve_Internal();
 	}
 
 	void FinalizeOutputData_Internal()
@@ -222,9 +253,34 @@ private:
 	virtual FSimCallbackInput* AllocateInputData_External() = 0;
 
 	/**
-	* Called before simulation step
+	* Called once when callback object is registered and after input data have been marshalled
+	*/
+	virtual void OnPostInitialize_Internal() { }
+
+	/**
+	* Called before simulation step (NOTE: not once per sub-step when sub-stepping is enabled)
 	*/
 	virtual void OnPreSimulate_Internal() = 0;
+
+	/**
+	* Called once per simulation sub-step, before Integrate. Can be used to modify particle positions, velocities etc.
+	*
+	* NOTE: you must explicitly request PreIntegrate when registering the callback for this to be called
+	*/
+	virtual void OnPreIntegrate_Internal()
+	{ 
+		check(false);
+	}
+
+	/**
+	* Called once per simulation sub-step. Can be used to modify particle positions, velocities etc.
+	*
+	* NOTE: you must explicitly request PostIntegrate when registering the callback for this to be called
+	*/
+	virtual void OnPostIntegrate_Internal()
+	{
+		check(false);
+	}
 
 	/**
 	* Called once per simulation step. Allows user to modify midphase pairs
@@ -235,7 +291,6 @@ private:
 	{
 		check(false);
 	}
-
 
 	/**
 	* Called once per simulation step. Allows user to modify CCD results
@@ -264,6 +319,26 @@ private:
 	}
 
 	/**
+	* Called once per simulation sub-step. Can be used to modify particle positions, velocities etc.
+	*
+	* NOTE: you must explicitly request PreSolve when registering the callback for this to be called
+	*/
+	virtual void OnPreSolve_Internal()
+	{
+		check(false);
+	}
+
+	/**
+	* Called once per simulation sub-step. Can be used to modify particle positions, velocities etc.
+	*
+	* NOTE: you must explicitly request PostSolve when registering the callback for this to be called
+	*/
+	virtual void OnPostSolve_Internal()
+	{
+		check(false);
+	}
+
+	/**
 	* Called once in a simulation step if any new particles were registered. Occurs after UniqueIdxs
 	* are valid.
 	*/
@@ -277,6 +352,12 @@ private:
 	* UniqueIdxs become invalid.
 	*/
 	virtual void OnParticleUnregistered_Internal(TArray<TTuple<Chaos::FUniqueIdx, FSingleParticlePhysicsProxy*>>& UnregisteredProxies)
+	{
+		check(false);
+	}
+
+	/** Called when physics proxies owning FPhysicsObjects unregister */
+	virtual void OnPhysicsObjectUnregistered_Internal(FConstPhysicsObjectHandle PhysicsObject)
 	{
 		check(false);
 	}

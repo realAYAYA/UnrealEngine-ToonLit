@@ -6,7 +6,7 @@
 #include "HAL/Platform.h"
 
 class FRDGBuilder;
-class FRHICommandListImmediate;
+class FRHICommandList;
 
 /** Easy to use interface for IRenderCaptureProvider. */
 namespace RenderCaptureInterface
@@ -21,7 +21,7 @@ namespace RenderCaptureInterface
 		/** Use this constructor if not on rendering thread. Use bEnable to allow control over the capture frequency. */
 		RENDERCORE_API FScopedCapture(bool bEnable, TCHAR const* InEventName = nullptr, TCHAR const* InFileName = nullptr);
 		/** Use this constructor if on rendering thread. Use bEnable to allow control over the capture frequency. */
-		RENDERCORE_API FScopedCapture(bool bEnable, FRHICommandListImmediate* InRHICommandList, TCHAR const* InEventName = nullptr, TCHAR const* InFileName = nullptr);
+		RENDERCORE_API FScopedCapture(bool bEnable, FRHICommandList* InRHICommandList, TCHAR const* InEventName = nullptr, TCHAR const* InFileName = nullptr);
 		/** Use this constructor if using RenderGraph to schedule work. Use bEnable to allow control over the capture frequency. */
 		RENDERCORE_API FScopedCapture(bool bEnable, FRDGBuilder& InGraphBuilder, TCHAR const* InEventName = nullptr, TCHAR const* InFileName = nullptr);
 
@@ -30,7 +30,7 @@ namespace RenderCaptureInterface
 	private:
 		bool bCapture;
 		bool bEvent;
-		FRHICommandListImmediate* RHICommandList;
+		FRHICommandList* RHICommandList;
 		FRDGBuilder* GraphBuilder;
 	};
 }

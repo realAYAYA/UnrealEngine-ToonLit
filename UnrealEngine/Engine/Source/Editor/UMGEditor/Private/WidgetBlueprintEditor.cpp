@@ -102,7 +102,7 @@ FWidgetBlueprintEditor::FWidgetBlueprintEditor()
 	, bUpdatingSequencerSelection(false)
 	, bUpdatingExternalSelection(false)
 {
-	PreviewScene.GetWorld()->bBegunPlay = false;
+	PreviewScene.GetWorld()->SetBegunPlay(false);
 
 	// Register sequencer menu extenders.
 	ISequencerModule& SequencerModule = FModuleManager::Get().LoadModuleChecked<ISequencerModule>( "Sequencer" );
@@ -205,7 +205,23 @@ void FWidgetBlueprintEditor::InitWidgetBlueprintEditor(const EToolkitMode::Type 
 		);
 
 	DesignerCommandList->MapAction(FGraphEditorCommands::Get().FindReferences,
-		FExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::OnFindWidgetReferences),
+		FExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::OnFindWidgetReferences, false, EGetFindReferenceSearchStringFlags::Legacy),
+		FCanExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::CanFindWidgetReferences));
+	
+	DesignerCommandList->MapAction(FGraphEditorCommands::Get().FindReferencesByNameLocal,
+		FExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::OnFindWidgetReferences, false, EGetFindReferenceSearchStringFlags::None),
+		FCanExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::CanFindWidgetReferences));
+
+	DesignerCommandList->MapAction(FGraphEditorCommands::Get().FindReferencesByNameGlobal,
+		FExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::OnFindWidgetReferences, true, EGetFindReferenceSearchStringFlags::None),
+		FCanExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::CanFindWidgetReferences));
+	
+	DesignerCommandList->MapAction(FGraphEditorCommands::Get().FindReferencesByClassMemberLocal,
+		FExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::OnFindWidgetReferences, false, EGetFindReferenceSearchStringFlags::UseSearchSyntax),
+		FCanExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::CanFindWidgetReferences));
+	
+	DesignerCommandList->MapAction(FGraphEditorCommands::Get().FindReferencesByClassMemberGlobal,
+		FExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::OnFindWidgetReferences, true, EGetFindReferenceSearchStringFlags::UseSearchSyntax),
 		FCanExecuteAction::CreateSP(this, &FWidgetBlueprintEditor::CanFindWidgetReferences));
 
 	TSharedPtr<class IToolkitHost> PinnedToolkitHost = ToolkitHost.Pin();
@@ -769,7 +785,7 @@ void FWidgetBlueprintEditor::OnObjectsReplaced(const TMap<UObject*, UObject*>& R
 bool FWidgetBlueprintEditor::CanDeleteSelectedWidgets()
 {
 	TSet<FWidgetReference> Widgets = GetSelectedWidgets();
-	return Widgets.Num() > 0;
+	return Widgets.Num() > 0 && !FWidgetBlueprintEditorUtils::IsAnySelectedWidgetLocked(Widgets);
 }
 
 void FWidgetBlueprintEditor::DeleteSelectedWidgets()
@@ -797,7 +813,7 @@ void FWidgetBlueprintEditor::CopySelectedWidgets()
 bool FWidgetBlueprintEditor::CanCutSelectedWidgets()
 {
 	TSet<FWidgetReference> Widgets = GetSelectedWidgets();
-	return Widgets.Num() > 0;
+	return Widgets.Num() > 0 && !FWidgetBlueprintEditorUtils::IsAnySelectedWidgetLocked(Widgets);
 }
 
 void FWidgetBlueprintEditor::CutSelectedWidgets()
@@ -814,6 +830,17 @@ const UWidgetAnimation* FWidgetBlueprintEditor::RefreshCurrentAnimation()
 bool FWidgetBlueprintEditor::CanPasteWidgets()
 {
 	TSet<FWidgetReference> Widgets = GetSelectedWidgets();
+
+	if (FWidgetBlueprintEditorUtils::IsAnySelectedWidgetLocked(Widgets))
+	{
+		return false;
+	}
+
+	if (!FWidgetBlueprintEditorUtils::DoesClipboardTextContainWidget(GetWidgetBlueprintObj()))
+	{
+		return false;
+	}
+
 	if ( Widgets.Num() == 1 )
 	{
 		// Always return true here now since we want to support pasting widgets as siblings
@@ -895,17 +922,19 @@ void FWidgetBlueprintEditor::DuplicateSelectedWidgets()
 	SelectWidgets(DuplicatedWidgetRefs, false);
 }
 
-void FWidgetBlueprintEditor::OnFindWidgetReferences()
+void FWidgetBlueprintEditor::OnFindWidgetReferences(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags)
 {
 	FWidgetReference WidgetReference = *GetSelectedWidgets().CreateConstIterator();
 	const FString VariableName = WidgetReference.GetTemplate()->GetName();
 
 	FMemberReference MemberReference;
 	MemberReference.SetSelfMember(*VariableName);
-	const FString SearchTerm = MemberReference.GetReferenceSearchString(GetBlueprintObj()->SkeletonGeneratedClass);
+	const FString SearchTerm = EnumHasAnyFlags(Flags, EGetFindReferenceSearchStringFlags::UseSearchSyntax) ? MemberReference.GetReferenceSearchString(GetBlueprintObj()->SkeletonGeneratedClass) : FString::Printf(TEXT("\"%s\""), *VariableName);
 
 	SetCurrentMode(FWidgetBlueprintApplicationModes::GraphMode);
-	SummonSearchUI(true, SearchTerm);
+	
+	const bool bSetFindWithinBlueprint = !bSearchAllBlueprints;
+	SummonSearchUI(bSetFindWithinBlueprint, SearchTerm);
 }
 
 bool FWidgetBlueprintEditor::CanFindWidgetReferences() const
@@ -2215,7 +2244,7 @@ void FWidgetBlueprintEditor::RemoveAllWidgetsFromTrack(FGuid ObjectId)
 	{
 		if (WidgetAnimation->AnimationBindings[Index].AnimationGuid == ObjectId)
 		{
-			WidgetAnimation->AnimationBindings.RemoveAt(Index, 1, false);
+			WidgetAnimation->AnimationBindings.RemoveAt(Index, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -2241,7 +2270,7 @@ void FWidgetBlueprintEditor::RemoveMissingWidgetsFromTrack(FGuid ObjectId)
 		const FWidgetAnimationBinding& Binding = WidgetAnimation->AnimationBindings[Index];
 		if (Binding.AnimationGuid == ObjectId && Binding.FindRuntimeObject(*PreviewRoot->WidgetTree, *PreviewRoot) == nullptr)
 		{
-			WidgetAnimation->AnimationBindings.RemoveAt(Index, 1, false);
+			WidgetAnimation->AnimationBindings.RemoveAt(Index, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -2262,7 +2291,7 @@ void FWidgetBlueprintEditor::ReplaceTrackWithWidgets(TArray<FWidgetReference> Wi
 		FGuid WidgetId = ActiveSequencer->FindObjectId(*PreviewWidget, MovieSceneSequenceID::Root);
 		if (WidgetId.IsValid() && WidgetId != ObjectId)
 		{
-			Widgets.RemoveAt(Index, 1, false);
+			Widgets.RemoveAt(Index, 1, EAllowShrinking::No);
 
 			if (ExistingBindingName.IsEmpty())
 			{

@@ -161,6 +161,16 @@ struct FPreAnimatedStateEntry
 	/** A handle for the actual storage location of the value */
 	FPreAnimatedStateCachedValueHandle ValueHandle;
 
+	bool IsValid() const
+	{
+		return ValueHandle.StorageIndex.IsValid();
+	}
+
+	explicit operator bool() const
+	{
+		return ValueHandle.StorageIndex.IsValid();
+	}
+
 	friend uint32 GetTypeHash(const FPreAnimatedStateEntry& InEntry)
 	{
 		return GetTypeHash(InEntry.GroupHandle) ^ GetTypeHash(InEntry.ValueHandle);

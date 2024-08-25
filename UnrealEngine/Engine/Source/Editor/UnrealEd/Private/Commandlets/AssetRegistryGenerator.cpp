@@ -6,16 +6,18 @@
 #include "Algo/StableSort.h"
 #include "Algo/Unique.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetRegistry/CookTagList.h"
 #include "CollectionManagerModule.h"
 #include "CollectionManagerTypes.h"
-#include "Cooker/CookMPCollector.h"
 #include "Cooker/CookPackageData.h"
 #include "Cooker/CookPlatformManager.h"
+#include "Cooker/CookProfiling.h"
+#include "Cooker/CookSandbox.h"
 #include "Cooker/CookWorkerClient.h"
+#include "Cooker/MPCollector.h"
 #include "CookMetadata.h"
 #include "Commandlets/ChunkDependencyInfo.h"
 #include "Commandlets/IChunkDataGenerator.h"
+#include "Containers/RingBuffer.h"
 #include "Engine/AssetManager.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
@@ -26,7 +28,6 @@
 #include "Hash/xxhash.h"
 #include "ICollectionManager.h"
 #include "Interfaces/ITargetPlatform.h"
-#include "IPlatformFileSandboxWrapper.h"
 #include "Misc/App.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/DataDrivenPlatformInfoRegistry.h"
@@ -35,7 +36,6 @@
 #include "Misc/PathViews.h"
 #include "PakFileUtilities.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
-#include "ProfilingDebugging/ScopedTimers.h"
 #include "Serialization/ArrayReader.h"
 #include "Serialization/ArrayWriter.h"
 #include "Serialization/CompactBinarySerialization.h"
@@ -52,6 +52,7 @@
 #include "TargetDomain/TargetDomainUtils.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/SoftObjectPath.h"
+#include "Logging/StructuredLog.h"
 
 #if WITH_EDITOR
 #include "HAL/ThreadHeartBeat.h"
@@ -117,7 +118,7 @@ public:
 		// Schema is defined in Engine\Config\BasePakFileRules.ini, see also GetPakFileRules in CopyBuildToStaging.Automation.cs
 
 		FString IniPlatformName = TargetPlatform->IniPlatformName();
-		for (TPair<FString, FConfigSection>& Pair : ConfigFile)
+		for (const TPair<FString, FConfigSection>& Pair : AsConst(ConfigFile))
 		{
 			const FString& SectionName = Pair.Key;
 			bool bMatchesAllPlatforms = true;
@@ -259,9 +260,10 @@ int64 FAssetRegistryGenerator::GetMaxChunkSizePerPlatform(const ITargetPlatform*
 TArray<int32> FAssetRegistryGenerator::GetExistingPackageChunkAssignments(FName PackageFName)
 {
 	TArray<int32> ExistingChunkIDs;
+	int32 PackageFNameHash = GetTypeHash(PackageFName);
 	for (uint32 ChunkIndex = 0, MaxChunk = ChunkManifests.Num(); ChunkIndex < MaxChunk; ++ChunkIndex)
 	{
-		if (ChunkManifests[ChunkIndex] && ChunkManifests[ChunkIndex]->Contains(PackageFName))
+		if (ChunkManifests[ChunkIndex] && ChunkManifests[ChunkIndex]->ContainsByHash(PackageFNameHash, PackageFName))
 		{
 			ExistingChunkIDs.AddUnique(ChunkIndex);
 		}
@@ -336,7 +338,7 @@ static void AssignLayerChunkDelegate(const FAssignLayerChunkMap* ChunkManifest, 
 }
 
 bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideChunkSize, const TCHAR* InManifestSubDir,
-	FSandboxPlatformFile& InSandboxFile)
+	UE::Cook::FCookSandbox& InSandboxFile)
 {
 	const FString Platform = TargetPlatform->PlatformName();
 	FString TmpPackagingDir = GetTempPackagingDirectoryForPlatform(Platform);
@@ -365,23 +367,8 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 		return false;
 	}
 
-	TArray<FString> CompressedChunkWildcards;
-	TOptional<FConfigFile> PlatformIniFile;
-	auto ConditionalLoadPlatformIniFile = [&PlatformIniFile, this]()
-	{
-		if (!PlatformIniFile)
-		{
-			PlatformIniFile.Emplace();
-			FConfigCacheIni::LoadLocalIniFile(*PlatformIniFile, TEXT("Game"), true, *TargetPlatform->IniPlatformName());
-		}
-	};
-	if (!TargetPlatform->IsServerOnly())
-	{
-		// Load the list of wildcards to specify which pakfiles should be compressed, if the targetplatform supports it.
-		// This is only used in client platforms.
-		ConditionalLoadPlatformIniFile();
-		PlatformIniFile->GetArray(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("CompressedChunkWildcard"), CompressedChunkWildcards);
-	}
+	FConfigFile PlatformIniFile;
+	FConfigCacheIni::LoadLocalIniFile(PlatformIniFile, TEXT("Game"), true, *TargetPlatform->IniPlatformName());
 
 	// Update manifests for any encryption groups that contain non-asset files
 	if (!TargetPlatform->HasSecurePackageFormat())
@@ -429,10 +416,9 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 	bool bUseSecondaryOpenOrder = false;
 	TArray<FString> OrderFileSpecStrings;
 	{
-		ConditionalLoadPlatformIniFile();
-		PlatformIniFile->GetBool(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("bEnableAssetRegistryGameOpenOrderSort"), bEnableGameOpenOrderSort);
-		PlatformIniFile->GetBool(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("bPakUsesSecondaryOrder"), bUseSecondaryOpenOrder);
-		PlatformIniFile->GetArray(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("PakOrderFileSpecs"), OrderFileSpecStrings);
+		PlatformIniFile.GetBool(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("bEnableAssetRegistryGameOpenOrderSort"), bEnableGameOpenOrderSort);
+		PlatformIniFile.GetBool(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("bPakUsesSecondaryOrder"), bUseSecondaryOpenOrder);
+		PlatformIniFile.GetArray(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("PakOrderFileSpecs"), OrderFileSpecStrings);
 	}
 
 	// if a game open order can be found then use that to sort the filenames
@@ -552,6 +538,22 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 		}
 	}
 
+	TArray<FString> CompressedChunkWildcards;
+	if (!TargetPlatform->IsServerOnly())
+	{
+		// Load the list of wildcards to specify which pakfiles should be compressed, if the targetplatform supports it.
+		// This is only used in client platforms.
+		PlatformIniFile.GetArray(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("CompressedChunkWildcard"), CompressedChunkWildcards);
+	}
+
+	// Load the list of wildcards to specify which pakfiles have per-chunk compression. These are allowed to 
+	// use individual compression settings even if the platform package doesn't want compression.
+	// NOTE: If DDPI specifies a hardware compression setting of 'None', this won't work as expected because there will be no global compression settings to opt in to. In this case, 
+	// set bForceUseProjectCompressionFormatIgnoreHardwareOverride=true and bCompressed=False in[/Script/UnrealEd.ProjectPackagingSettings], 
+	// then setup whatever project compression settings you would like chunks to be able to opt in to.
+	TArray<FString> AllowPerChunkCompressionWildcards;
+	PlatformIniFile.GetArray(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("AllowPerChunkCompressionWildcard"), AllowPerChunkCompressionWildcards);
+
 	// generate per-chunk pak list files
 	FDefaultPakFileRules DefaultPakFileRules;
 	bool bSucceeded = true;
@@ -632,24 +634,33 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 				}
 			}
 
+			for (const FString& AllowPerChunkCompressionWildcard : AllowPerChunkCompressionWildcards)
+			{
+				if (PakChunkFilename.MatchesWildcard(AllowPerChunkCompressionWildcard))
+				{
+					PakChunkOptions += " AllowPerChunkCompression";
+					break;
+				}
+			}
+
 			// For encryption chunks, PakchunkIndex equals ChunkID
 			FGuid Guid = UAssetManager::Get().GetChunkEncryptionKeyGuid(PakchunkIndex);
 			if (Guid.IsValid())
 			{
 				PakChunkOptions += TEXT(" encryptionkeyguid=") + Guid.ToString();
+			}
 
-				// If this chunk has a seperate unique asset registry, add it to first subchunk's manifest here
-				if (SubChunkIndex == 0)
+			// If this chunk has a seperate unique asset registry, add it to first subchunk's manifest here
+			if (SubChunkIndex == 0)
+			{
+				// For chunks with unique asset registry name, pakchunkIndex should equal chunkid
+				FName RegistryName = UAssetManager::Get().GetUniqueAssetRegistryName(PakchunkIndex);
+				if (RegistryName != NAME_None)
 				{
-					// For chunks with unique asset registry name, pakchunkIndex should equal chunkid
-					FName RegistryName = UAssetManager::Get().GetUniqueAssetRegistryName(PakchunkIndex);
-					if (RegistryName != NAME_None)
-					{
-						FString AssetRegistryFilename = FString::Printf(TEXT("%s%sAssetRegistry%s.bin"),
-							*InSandboxFile.GetSandboxDirectory(), *InSandboxFile.GetGameSandboxDirectoryName(),
-							*RegistryName.ToString());
-						ChunkFilenames.Add(AssetRegistryFilename);
-					}
+					FString AssetRegistryFilename = FString::Printf(TEXT("%s%sAssetRegistry%s.bin"),
+						*InSandboxFile.GetSandboxDirectory(), *InSandboxFile.GetGameSandboxDirectoryName(),
+						*RegistryName.ToString());
+					ChunkFilenames.Add(AssetRegistryFilename);
 				}
 			}
 
@@ -665,7 +676,10 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 
 				for (const TSharedRef<IChunkDataGenerator>& ChunkDataGenerator : ChunkDataGenerators)
 				{
-					ChunkDataGenerator->GenerateChunkDataFiles(PakchunkIndex, PackagesInChunk, TargetPlatform, &InSandboxFile, ChunkFilenames);
+					// TOOD: Need to make a public interface for FCookSandbox and pass it into GenerateChunkDataFiles instead of the
+					// internal FSandboxPlatformFile, in case any of the generators need to correctly map files in remapped plugins
+					FSandboxPlatformFile& SandboxPlatformFile = InSandboxFile.GetSandboxPlatformFile();
+					ChunkDataGenerator->GenerateChunkDataFiles(PakchunkIndex, PackagesInChunk, TargetPlatform, &SandboxPlatformFile, ChunkFilenames);
 				}
 			}
 
@@ -777,10 +791,13 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 					Unit = 1;
 					UnitsText = TEXT("bytes");
 				}
-				UE_LOG(LogAssetRegistryGenerator, Error, TEXT("Failed to add file %s to paklist '%s'. The maximum size for a Pakfile is %d %s, but the file to add is %d %s."),
-					*NextFilename, *PakListFilename,
-					MaxChunkSize/Unit, UnitsText, // Round the limit down and round the value up, so that the display always shows that the value is greater than the limit
-					(NextFileSize+Unit-1)/Unit, UnitsText);
+				UE_LOGFMT(LogAssetRegistryGenerator, Error, "Failed to add file {NextFilename} to paklist '{PakListFilename}'. The maximum size for a Pakfile is {MaxChunkFileSize}{UnitsText}, but the file to add is {ActualChunkFileSize}{UnitsText}.", 
+					("NextFilename", NextFilename),
+					("PakListFilename", PakListFilename),
+					("MaxChunkFileSize", MaxChunkSize / Unit),
+					("UnitsText", UnitsText),
+					("ActualChunkFileSize", (NextFileSize + Unit - 1) / Unit)	// Round the limit down and round the value up, so that the display always shows that the value is greater than the limit
+				);
 				bSucceeded = false;
 				break;
 			}
@@ -804,8 +821,7 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 	{
 		FString ChunkManifestDirectory = FPaths::ProjectDir() / TEXT("Metadata") / TEXT("ChunkManifest");
 		ChunkManifestDirectory =
-			InSandboxFile.ConvertToAbsolutePathForExternalAppForWrite(*ChunkManifestDirectory)
-				.Replace(TEXT("[Platform]"), *Platform);
+			InSandboxFile.ConvertToAbsolutePathForExternalAppForWrite(*ChunkManifestDirectory, Platform);
 
 		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 		if (!PlatformFile.CopyDirectoryTree(*ChunkManifestDirectory, *TmpPackagingDir, true))
@@ -819,7 +835,7 @@ bool FAssetRegistryGenerator::GenerateStreamingInstallManifest(int64 InOverrideC
 }
 
 void FAssetRegistryGenerator::CalculateChunkIdsAndAssignToManifest(const FName& PackageFName, const FString& PackagePathName,
-	const FString& SandboxFilename, const FString& LastLoadedMapName, FSandboxPlatformFile& InSandboxFile)
+	const FString& SandboxFilename, const FString& LastLoadedMapName, UE::Cook::FCookSandbox& InSandboxFile)
 {
 	TArray<int32> TargetChunks;
 	TArray<int32> ExistingChunkIDs;
@@ -964,7 +980,7 @@ void FAssetRegistryGenerator::InjectEncryptionData(FAssetRegistryState& TargetSt
 	}
 }
 
-bool FAssetRegistryGenerator::SaveManifests(FSandboxPlatformFile& InSandboxFile, int64 InOverrideChunkSize,
+bool FAssetRegistryGenerator::SaveManifests(UE::Cook::FCookSandbox& InSandboxFile, int64 InOverrideChunkSize,
 	const TCHAR* InManifestSubDir)
 {
 	LLM_SCOPE_BYTAG(Cooker_GeneratedAssetRegistry);
@@ -1041,45 +1057,6 @@ void FAssetRegistryGenerator::UpdateKeptPackages()
 		}
 	}
 	PreviousPackagesToUpdate.Empty();
-}
-
-static void AppendCookTagsToTagMap(TArray<TPair<FName, FString>>&& InTags, FAssetDataTagMap& OutTags)
-{
-	for (TPair<FName, FString>& Tag : InTags)
-	{
-		// Don't add empty tags
-		if (!Tag.Key.IsNone() && !Tag.Value.IsEmpty())
-		{
-			// Prepend Cook_
-			// Do the accumulation in a stack buffer to avoid a bit of work, but we still
-			// eat the FName generation.
-			FName TagName(WriteToString<256>(TEXTVIEW("Cook_"), Tag.Key));
-			OutTags.Add(TagName, MoveTemp(Tag.Value));
-		}
-	}
-}
-
-static void AddCookTagsToState(TMap<FSoftObjectPath, TArray<TPair<FName, FString>>>&& InCookTags, FAssetRegistryState& InState)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(AddCookTagToState)
-
-	uint32 ObjectCount = 0;
-	uint32 TagCount = 0;
-
-	for (TPair<FSoftObjectPath, TArray<TPair<FName, FString>>>& ObjectToTags : InCookTags)
-	{
-		ObjectCount++;
-		const FAssetData* AssetData = InState.GetAssetByObjectPath(FSoftObjectPath(WriteToString<256>(ObjectToTags.Key)));
-
-		// Migrate to FAssetDataTagMap
-		FAssetDataTagMap NewTags;
-		AppendCookTagsToTagMap(MoveTemp(ObjectToTags.Value), NewTags);
-		TagCount += NewTags.Num();
-		InState.AddTagsToAssetData(ObjectToTags.Key, MoveTemp(NewTags));
-	} // end for each object
-
-	UE_LOG(LogAssetRegistryGenerator, Verbose, TEXT("Added %d cook tags to %d objects"), TagCount, ObjectCount);
-	InCookTags.Reset();
 }
 
 void FAssetRegistryGenerator::UpdateCollectionAssetData()
@@ -1167,15 +1144,14 @@ void FAssetRegistryGenerator::Initialize(const TArray<FName> &InStartupPackages,
 
 	FAssetRegistrySerializationOptions SaveOptions;
 
-	// If the asset registry is still doing it's background scan, we need to wait for it to finish and tick it so that the results are flushed out
-	AssetRegistry.WaitForCompletion();
-
-	ensureMsgf(!AssetRegistry.IsLoadingAssets(), TEXT("Cannot initialize asset registry generator while asset registry is still scanning source assets "));
-
 	AssetRegistry.InitializeSerializationOptions(SaveOptions, TargetPlatform->IniPlatformName());
 
 	if (bInitializeFromExisting)
 	{
+		// If the asset registry is still doing its background scan, we need to wait for it to finish and tick it so that the results are flushed out
+		AssetRegistry.WaitForCompletion();
+		ensureMsgf(!AssetRegistry.IsLoadingAssets(), TEXT("Cannot initialize asset registry generator while asset registry is still scanning source assets "));
+
 		bClonedGlobalAssetRegistry = true;
 		AssetRegistry.InitializeTemporaryAssetRegistryState(State, SaveOptions);
 	}
@@ -1311,9 +1287,7 @@ void FAssetRegistryGenerator::ComputePackageDifferences(const FComputeDifference
 				else
 				{
 					FGeneratorPackageInfo& Info = OutDifference.GeneratorPackages.FindOrAdd(GeneratorName);
-					PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-					Info.Generated.Add(PackageName, PreviousPackageData->PackageGuid);
-					PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+					Info.Generated.Add(PackageName, PreviousPackageData->GetPackageSavedHash());
 				}
 			}
 			else
@@ -1349,7 +1323,7 @@ void FAssetRegistryGenerator::ComputePackageDifferences(const FComputeDifference
 		EDifference* GeneratorDifference = OutDifference.Packages.Find(GeneratorName);
 		if (GeneratorDifference && *GeneratorDifference == EDifference::RemovedCooked)
 		{
-			for (const TPair<FName, FGuid>& Generated : Iter->Value.Generated)
+			for (const TPair<FName, FIoHash>& Generated : Iter->Value.Generated)
 			{
 				OutDifference.Packages.Add(Generated.Key, EDifference::RemovedCooked);
 			}
@@ -1380,7 +1354,7 @@ void FAssetRegistryGenerator::ComputePackageDifferences(const FComputeDifference
 		}
 		while (!VisitStack.IsEmpty())
 		{
-			FName ModifiedPackage = VisitStack.Pop(false /* bAllowShrinking */);
+			FName ModifiedPackage = VisitStack.Pop(EAllowShrinking::No);
 			FString ModifiedPackageLeafName;
 
 			// Read referencers from the current state. If there are referencers in the old state that are not in the
@@ -1451,9 +1425,7 @@ bool FAssetRegistryGenerator::ComputePackageDifferences_IsPackageFileUnchanged(
 	const FComputeDifferenceOptions& Options, FName PackageName, const FAssetPackageData& CurrentPackageData,
 	const FAssetPackageData& PreviousPackageData)
 {
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (CurrentPackageData.PackageGuid != PreviousPackageData.PackageGuid)
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	if (CurrentPackageData.GetPackageSavedHash() != PreviousPackageData.GetPackageSavedHash())
 	{
 		return false;
 	}
@@ -1515,9 +1487,7 @@ void FAssetRegistryGenerator::ComputePackageRemovals(const FAssetRegistryState& 
 				}
 				else
 				{
-					PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-					OutGeneratorPackages.FindOrAdd(GeneratorName).Generated.Add(PackageName, PreviousPackageData->PackageGuid);
-					PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+					OutGeneratorPackages.FindOrAdd(GeneratorName).Generated.Add(PackageName, PreviousPackageData->GetPackageSavedHash());
 				}
 			}
 			else
@@ -1541,7 +1511,7 @@ void FAssetRegistryGenerator::ComputePackageRemovals(const FAssetRegistryState& 
 		FName GeneratorName = Iter->Key;
 		if (RemovedPackageSet.Contains(GeneratorName))
 		{
-			for (const TPair<FName, FGuid>& Generated : Iter->Value.Generated)
+			for (const TPair<FName, FIoHash>& Generated : Iter->Value.Generated)
 			{
 				RemovedPackageSet.Add(Generated.Key);
 			}
@@ -1553,7 +1523,7 @@ void FAssetRegistryGenerator::ComputePackageRemovals(const FAssetRegistryState& 
 }
 
 void FAssetRegistryGenerator::FinalizeChunkIDs(const TSet<FName>& InCookedPackages,
-	const TSet<FName>& InDevelopmentOnlyPackages, FSandboxPlatformFile& InSandboxFile,
+	const TSet<FName>& InDevelopmentOnlyPackages, UE::Cook::FCookSandbox& InSandboxFile,
 	bool bGenerateStreamingInstallManifest)
 {
 	LLM_SCOPE_BYTAG(Cooker_GeneratedAssetRegistry);
@@ -1699,12 +1669,11 @@ bool FAssetRegistryGenerator::SaveAssetRegistry(const FString& SandboxPath, bool
 {
 	LLM_SCOPE_BYTAG(Cooker_GeneratedAssetRegistry);
 	UE_LOG(LogAssetRegistryGenerator, Display, TEXT("Saving asset registry v%d."), FAssetRegistryVersion::Type::LatestVersion);
-	FAutoScopedDurationTimer Timer;
-
 	
 	// Write development first, this will always write
 	FAssetRegistrySerializationOptions DevelopmentSaveOptions;
 	AssetRegistry.InitializeSerializationOptions(DevelopmentSaveOptions, TargetPlatform->IniPlatformName(), UE::AssetRegistry::ESerializationTarget::ForDevelopment);
+	DevelopmentSaveOptions.bKeepDevelopmentAssetRegistryTags = true;
 
 	// Write runtime registry, this can be excluded per game/platform
 	FAssetRegistrySerializationOptions SaveOptions;
@@ -1726,13 +1695,10 @@ bool FAssetRegistryGenerator::SaveAssetRegistry(const FString& SandboxPath, bool
 
 		if (bSerializeDevelopmentAssetRegistry)
 		{
-			// Make a copy of the state so we can add tags to only the development registry.
+			// Make a copy of the state so it can be filtered independently
 			FAssetRegistryState DevelopmentState;
 			DevelopmentState.InitializeFromExisting(State, DevelopmentSaveOptions);
-
-			DevelopmentState.FilterTags(DevelopmentSaveOptions);
-
-			AddCookTagsToState(MoveTemp(CookTagsToAdd), DevelopmentState);
+			// No need to call FilterTags; it is called by InitializeFromExisting
 
 			// Create development registry data, used for DLC cooks, iterative cooks, and editor viewing
 			FArrayWriter SerializedAssetRegistry;
@@ -1755,7 +1721,7 @@ bool FAssetRegistryGenerator::SaveAssetRegistry(const FString& SandboxPath, bool
 
 			UE_LOG(LogAssetRegistryGenerator, Display, 
 				TEXT("Generated development asset registry %s num assets %d, size is %5.2fkb, ")
-				TEXT("XxHash64 = " UINT64_FMT ", waited on hash %.2f seconds"), 
+				TEXT("XxHash64[LE] = 0x%" UINT64_X_FMT ", waited on hash %.2f seconds"),
 				*PlatformSandboxPath, State.GetNumAssets(), (float)SerializedAssetRegistry.Num() / 1024.f, 
 				DevArXxHash, WaitTime
 				);
@@ -1869,20 +1835,18 @@ bool FAssetRegistryGenerator::SaveAssetRegistry(const FString& SandboxPath, bool
 		}
 	}
 	
-	UE_LOG(LogAssetRegistryGenerator, Display, TEXT("Done saving asset registry. Took %.1f seconds."), Timer.GetTime());
-
 	return true;
 }
 
 class FPackageCookerOpenOrderVisitor : public IPlatformFile::FDirectoryVisitor
 {
-	const FSandboxPlatformFile& SandboxFile;
+	const UE::Cook::FCookSandbox& SandboxFile;
 	const FString& PlatformSandboxPath;
 	const TSet<FStringView>& ValidExtensions;
 	TMultiMap<FString, FString>& PackageExtensions;
 public:
 	FPackageCookerOpenOrderVisitor(
-		const FSandboxPlatformFile& InSandboxFile,
+		const UE::Cook::FCookSandbox& InSandboxFile,
 		const FString& InPlatformSandboxPath,
 		const TSet<FStringView>& InValidExtensions,
 		TMultiMap<FString, FString>& OutPackageExtensions) :
@@ -1897,7 +1861,7 @@ public:
 		if (bIsDirectory)
 			return true;
 
-		FString Filename = FilenameOrDirectory;
+		const TCHAR* Filename = FilenameOrDirectory;
 		FStringView UnusedFilePath, FileBaseName, FileExtension;
 		FPathViews::Split(Filename, UnusedFilePath, FileBaseName, FileExtension);
 		if (ValidExtensions.Contains(FileExtension))
@@ -1909,8 +1873,7 @@ public:
 			}
 
 			FString PackageName;
-			Filename.ReplaceInline(*PlatformSandboxPath, *SandboxFile.GetSandboxDirectory());
-			FString AssetSourcePath = SandboxFile.ConvertFromSandboxPath(*Filename);
+			FString AssetSourcePath = SandboxFile.ConvertFromSandboxPathInPlatformRoot(Filename, PlatformSandboxPath);
 			FString StandardAssetSourcePath = FPaths::CreateStandardFilename(AssetSourcePath);
 			if (StandardAssetSourcePath.EndsWith(TEXT(".m.ubulk")))
 			{
@@ -1931,7 +1894,7 @@ public:
 	}
 };
 
-bool FAssetRegistryGenerator::WriteCookerOpenOrder(FSandboxPlatformFile& InSandboxFile)
+bool FAssetRegistryGenerator::WriteCookerOpenOrder(UE::Cook::FCookSandbox& InSandboxFile)
 {
 	LLM_SCOPE_BYTAG(Cooker_GeneratedAssetRegistry);
 	TSet<FName> PackageNameSet;
@@ -2130,6 +2093,30 @@ bool FAssetRegistryGenerator::GatherAllPackageDependencies(FName PackageName, TA
 	return true;
 }
 
+/**
+ * Helper struct to get the shortest reference chain in cook dependencies from one or more PackageNames
+ * to the set of packages that are hard-imported into a chunk. Constructs the distance graph for
+ * all packages reachable via cookdependencies from the input InSourceSet.
+ */
+class FAssetRegistryGenerator::FGetShortestReferenceChain
+{
+public:
+	void Initialize(const FAssetRegistryGenerator::FChunkPackageSet* InSourceSet);
+	FString Get(FName PackageName);
+
+private:
+	static constexpr int32 NoPath = MAX_int32;
+	struct FVertexData
+	{
+		FName NextTowardSource = NAME_None;
+		int32 SourceDistance = NoPath;
+	};
+
+private:
+	TMap<FName, FVertexData> Vertices;
+	bool bInitialized = false;
+};
+
 bool FAssetRegistryGenerator::GenerateAssetChunkInformationCSV(const FString& OutputPath, bool bWriteIndividualFiles)
 {
 	FString TmpString, TmpStringChunks;
@@ -2172,6 +2159,8 @@ bool FAssetRegistryGenerator::GenerateAssetChunkInformationCSV(const FString& Ou
 		}
 	}
 
+	TMap<int32, FGetShortestReferenceChain> ReferenceChainFinderForChunk;
+
 	for (const FAssetData* AssetDataPtr : AssetDataList)
 	{
 		const FAssetData& AssetData = *AssetDataPtr;
@@ -2192,12 +2181,10 @@ bool FAssetRegistryGenerator::GenerateAssetChunkInformationCSV(const FString& Ou
 
 					if (!bHardChunk)
 					{
-						SoftChain = GetShortestReferenceChain(AssetData.PackageName, PakchunkIndex);
+						FGetShortestReferenceChain& ChainFinder = ReferenceChainFinderForChunk.FindOrAdd(PakchunkIndex);
+						ChainFinder.Initialize(ChunkManifests[PakchunkIndex].Get());
+						SoftChain = ChainFinder.Get(AssetData.PackageName);
 					}
-				}
-				if (SoftChain.IsEmpty())
-				{
-					SoftChain = TEXT("Soft: Possibly Unassigned Asset");
 				}
 
 				// Build "other chunks" string or None if not part of
@@ -2344,7 +2331,7 @@ bool FAssetRegistryGenerator::CheckChunkAssetsAreNotInChild(const FChunkDependen
 }
 
 void FAssetRegistryGenerator::AddPackageToChunk(FChunkPackageSet& ThisPackageSet, FName InPkgName,
-	const FString& InSandboxFile, int32 PakchunkIndex, FSandboxPlatformFile& SandboxPlatformFile)
+	const FString& InSandboxFile, int32 PakchunkIndex, UE::Cook::FCookSandbox& SandboxPlatformFile)
 {
 	ThisPackageSet.Add(InPkgName, InSandboxFile);
 }
@@ -2354,10 +2341,9 @@ FString FAssetRegistryGenerator::GetTempPackagingDirectoryForPlatform(const FStr
 	return FPaths::ProjectSavedDir() / TEXT("TmpPackaging") / Platform;
 }
 
-void FAssetRegistryGenerator::FixupPackageDependenciesForChunks(FSandboxPlatformFile& InSandboxFile)
+void FAssetRegistryGenerator::FixupPackageDependenciesForChunks(UE::Cook::FCookSandbox& InSandboxFile)
 {
-	UE_LOG(LogAssetRegistryGenerator, Log, TEXT("Starting FixupPackageDependenciesForChunks..."));
-	SCOPE_LOG_TIME_IN_SECONDS(TEXT("... FixupPackageDependenciesForChunks complete."), nullptr);
+	UE_SCOPED_HIERARCHICAL_COOKTIMER(FixupPackageDependenciesForChunks);
 
 	// Clear any existing manifests from the final array
 	FinalChunkManifests.Empty(ChunkManifests.Num());
@@ -2379,7 +2365,7 @@ void FAssetRegistryGenerator::FixupPackageDependenciesForChunks(FSandboxPlatform
 	FConfigFile PlatformIniFile;
 	FConfigCacheIni::LoadLocalIniFile(PlatformIniFile, TEXT("Engine"), true, *TargetPlatform->IniPlatformName());
 	bool bSkipResolveChunkDependencyGraph = false;
-	PlatformIniFile.GetBool(TEXT("Script/UnrealEd.ChunkDependencyInfo"), TEXT("bSkipResolveChunkDependencyGraph"), bSkipResolveChunkDependencyGraph);
+	PlatformIniFile.GetBool(TEXT("/Script/UnrealEd.ChunkDependencyInfo"), TEXT("bSkipResolveChunkDependencyGraph"), bSkipResolveChunkDependencyGraph);
 
 	const FChunkDependencyTreeNode* ChunkDepGraph = DependencyInfo.GetOrBuildChunkDependencyGraph(!bSkipResolveChunkDependencyGraph ? HighestChunkId : 0);
 
@@ -2415,8 +2401,11 @@ void FAssetRegistryGenerator::FixupPackageDependenciesForChunks(FSandboxPlatform
 		const int32 ChunkManifestNum = ChunkManifests[PakchunkIndex] ? ChunkManifests[PakchunkIndex]->Num() : 0;
 		check(PakchunkIndex < FinalChunkManifests.Num() && FinalChunkManifests[PakchunkIndex]);
 		const int32 FinalChunkManifestNum = FinalChunkManifests[PakchunkIndex]->Num();
-		UE_LOG(LogAssetRegistryGenerator, Log, TEXT("Chunk: %i, Started with %i packages, Final after dependency resolve: %i"),
-			PakchunkIndex, ChunkManifestNum, FinalChunkManifestNum);
+		if (ChunkManifestNum != 0 || FinalChunkManifestNum != 0)
+		{
+			UE_LOG(LogAssetRegistryGenerator, Verbose, TEXT("Chunk: %i, Started with %i packages, Final after dependency resolve: %i"),
+				PakchunkIndex, ChunkManifestNum, FinalChunkManifestNum);
+		}
 	}
 	
 	// Fix up the data in the FAssetRegistryState to reflect this chunk layout
@@ -2434,67 +2423,84 @@ void FAssetRegistryGenerator::FixupPackageDependenciesForChunks(FSandboxPlatform
 	}
 }
 
-void FAssetRegistryGenerator::FindShortestReferenceChain(TArray<FReferencePair> PackageNames, int32 PakchunkIndex, uint32& OutParentIndex, FString& OutChainPath)
+void FAssetRegistryGenerator::FGetShortestReferenceChain::Initialize(const FAssetRegistryGenerator::FChunkPackageSet* SourceSet)
 {
-	TArray<FReferencePair> ReferencesToCheck;
-	uint32 Index = 0;
-	for (const auto& Pkg : PackageNames)
+	if (bInitialized)
 	{
-		if (ChunkManifests[PakchunkIndex] && ChunkManifests[PakchunkIndex]->Contains(Pkg.PackageName))
+		return;
+	}
+	bInitialized = true;
+	if (!SourceSet)
+	{
+		return;
+	}
+
+	IAssetRegistry& AssetRegistryShadowedVar = IAssetRegistry::GetChecked();
+	Vertices.Reset();
+
+	// BFS the entire graph of dependencies outward from the SourceSet to construct the distance graph
+	TRingBuffer<FName> BFSQueue;
+	for (const TPair<FName, FString>& Pair : *SourceSet)
+	{
+		BFSQueue.Add(Pair.Key);
+		Vertices.FindOrAdd(Pair.Key).SourceDistance = 0;
+	}
+
+	TArray<FName> AssetDependencies;
+	while (!BFSQueue.IsEmpty())
+	{
+		FName CurrentVertex = BFSQueue.PopFrontValue();
+		int32 NextDistance = Vertices[CurrentVertex].SourceDistance + 1;
+
+		AssetDependencies.Reset();
+		AssetRegistryShadowedVar.GetDependencies(CurrentVertex, AssetDependencies);
+		for (FName NextVertex : AssetDependencies)
 		{
-			OutChainPath += TEXT("Soft: ");
-			OutChainPath += Pkg.PackageName.ToString();
-			OutParentIndex = Pkg.ParentNodeIndex;
-			return;
-		}
-		TArray<FName> AssetReferences;
-		AssetRegistry.GetReferencers(Pkg.PackageName, AssetReferences);
-		for (const auto& Ref : AssetReferences)
-		{
-			if (!InspectedNames.Contains(Ref))
+			FVertexData& NextData = Vertices.FindOrAdd(NextVertex);
+			if (NextData.SourceDistance > NextDistance)
 			{
-				ReferencesToCheck.Add(FReferencePair(Ref, Index));
-				InspectedNames.Add(Ref);
+				NextData.SourceDistance = NextDistance;
+				NextData.NextTowardSource = CurrentVertex;
+				BFSQueue.Add(NextVertex);
 			}
 		}
-
-		++Index;
-	}
-
-	if (ReferencesToCheck.Num() > 0)
-	{
-		uint32 ParentIndex = INDEX_NONE;
-		FindShortestReferenceChain(ReferencesToCheck, PakchunkIndex, ParentIndex, OutChainPath);
-
-		if (ParentIndex < (uint32)PackageNames.Num())
-		{
-			OutChainPath += TEXT("->");
-			OutChainPath += PackageNames[ParentIndex].PackageName.ToString();
-			OutParentIndex = PackageNames[ParentIndex].ParentNodeIndex;
-		}
-	}
-	else if (PackageNames.Num() > 0)
-	{
-		//best guess
-		OutChainPath += TEXT("Soft From Unassigned Package? Best Guess: ");
-		OutChainPath += PackageNames[0].PackageName.ToString();
-		OutParentIndex = PackageNames[0].ParentNodeIndex;
 	}
 }
 
-FString FAssetRegistryGenerator::GetShortestReferenceChain(FName PackageName, int32 PakchunkIndex)
+FString FAssetRegistryGenerator::FGetShortestReferenceChain::Get(FName TargetPackageName)
 {
-	FString StringChain;
-	TArray<FReferencePair> ReferencesToCheck;
-	uint32 ParentIndex;
-	ReferencesToCheck.Add(FReferencePair(PackageName, 0));
-	InspectedNames.Empty();
-	InspectedNames.Add(PackageName);
-	FindShortestReferenceChain(ReferencesToCheck, PakchunkIndex, ParentIndex, StringChain);
+	FName CurrentVertex = TargetPackageName;
+	FVertexData* VertexData = &Vertices.FindOrAdd(CurrentVertex);
+	if (VertexData->SourceDistance == NoPath)
+	{
+		return TEXT("Soft: Unknown reference chain. Soft From Unassigned Package?");
+	}
+	if (VertexData->SourceDistance == 0)
+	{
+		return FString(TEXT("Hard"));
+	}
 
-	return StringChain;
+	TArray<FName> Chain;
+	Chain.Add(TargetPackageName);
+	int32 MaxPossibleLength = Vertices.Num();
+	for (; VertexData->SourceDistance != 0;)
+	{
+		CurrentVertex = VertexData->NextTowardSource;
+		checkf(!CurrentVertex.IsNone(), TEXT("Distance graph has incomplete path; this should be impossible."));
+		Chain.Add(CurrentVertex);
+		checkf(Chain.Num() <= MaxPossibleLength, TEXT("Cycle in Distance graph; this should be impossible."));
+		VertexData = &Vertices.FindOrAdd(CurrentVertex);
+	}
+	check(Chain.Num() > 1); // Loop runs at least once
+
+	TStringBuilder<1024> Result;
+	Result << TEXT("Soft: ") << Chain[Chain.Num() - 1];
+	for (int32 Index = Chain.Num() - 2; Index >= 0; --Index)
+	{
+		Result << TEXT("->") << Chain[Index];
+	}
+	return FString(Result);
 }
-
 
 bool FAssetRegistryGenerator::CreateOrEmptyCollection(FName CollectionName)
 {
@@ -2591,37 +2597,10 @@ void FAssetRegistryGenerator::GetChunkAssignments(TArray<TSet<FName>>& OutAssign
 	}
 }
 
-FAssetRegistryGenerator::FCreateOrFindArray FAssetRegistryGenerator::CreateOrFindAssetDatas(const UPackage& Package)
-{
-	FCreateOrFindArray OutputAssets;
-
-	ForEachObjectWithOuter(&Package, [&OutputAssets, this](UObject* const Object)
-	{
-		if (Object->IsAsset())
-		{
-			OutputAssets.Add(CreateOrFindAssetData(*Object));
-		}
-	}, /*bIncludeNestedObjects*/ false);
-
-	return OutputAssets;
-}
-
-const FAssetData* FAssetRegistryGenerator::CreateOrFindAssetData(UObject& Object)
-{
-	const FAssetData* const AssetData = State.GetAssetByObjectPath(FSoftObjectPath(&Object));
-	if (!AssetData)
-	{
-		FAssetData* const NewAssetData = new FAssetData(&Object, true /* bAllowBlueprintClass */);
-		State.AddAssetData(NewAssetData);
-		return NewAssetData;
-	}
-	return AssetData;
-}
-
 void FAssetRegistryGenerator::UpdateAssetRegistryData(FName PackageName, const UPackage* Package,
-	UE::Cook::ECookResult CookResult, FSavePackageResultStruct* SavePackageResult, FCookTagList&& InArchiveCookTagList,
-	bool bIncludeOnlyDiskAssets, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
-	TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies)
+	UE::Cook::ECookResult CookResult, FSavePackageResultStruct* SavePackageResult,
+	TOptional<TArray<FAssetData>>&& AssetDatasFromSave, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
+	TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies, UCookOnTheFlyServer& COTFS)
 {
 	LLM_SCOPE_BYTAG(Cooker_GeneratedAssetRegistry);
 	PreviousPackagesToUpdate.Remove(PackageName);
@@ -2630,18 +2609,17 @@ void FAssetRegistryGenerator::UpdateAssetRegistryData(FName PackageName, const U
 	bool bSaveSucceeded = CookResult == UE::Cook::ECookResult::Succeeded;
 
 	// Copy latest data for all Assets in the package into the cooked registry. This should be done even
-	// if not successful so that editor-only packages are recorded as well
-	TArray<FAssetData> AssetDatas;
-	AssetRegistry.GetAssetsByPackageName(PackageName, AssetDatas, bIncludeOnlyDiskAssets,
-		false /* SkipARFilteredAssets */);
-	for (FAssetData& AssetData : AssetDatas)
+	// if not successful so that editor-only packages are recorded as well. When the AssetDatas were not
+	// calculated by SavePackage, copy them instead from the on-disk AssetRegistry.
+	if (!AssetDatasFromSave)
+	{
+		AssetDatasFromSave.Emplace();
+		AssetRegistry.GetAssetsByPackageName(PackageName, *AssetDatasFromSave, true /* bIncludeOnlyDiskAssets */,
+			false /* SkipARFilteredAssets */);
+	}
+	for (FAssetData& AssetData : *AssetDatasFromSave)
 	{
 		State.UpdateAssetData(MoveTemp(AssetData), true /* bCreateIfNotExists */);
-	}
-	// Create a record for assets that were created during PostLoad or cooking and are not in the global assetregistry
-	if (Package)
-	{
-		CreateOrFindAssetDatas(*Package);
 	}
 
 	FAssetPackageData* AssetPackageData = GetAssetPackageData(PackageName);
@@ -2671,9 +2649,6 @@ void FAssetRegistryGenerator::UpdateAssetRegistryData(FName PackageName, const U
 	if (bSaveSucceeded)
 	{
 		check(SavePackageResult);
-		// Migrate cook tags over
-		CookTagsToAdd.Append(MoveTemp(InArchiveCookTagList.ObjectToTags));
-		InArchiveCookTagList.Reset();
 
 		// Set the PackageFlags to the recorded value from SavePackage
 		NewPackageFlags = SavePackageResult->SerializedPackageFlags;
@@ -2693,7 +2668,7 @@ void FAssetRegistryGenerator::UpdateAssetRegistryData(FName PackageName, const U
 	}
 
 	const bool bUpdated = UpdateAssetPackageFlags(PackageName, NewPackageFlags);
-	UE_CLOG(!bUpdated && bSaveSucceeded, LogAssetRegistryGenerator, Warning,
+	UE_CLOG(!bUpdated && bSaveSucceeded && !COTFS.bSkipSave, LogAssetRegistryGenerator, Warning,
 		TEXT("Trying to update asset package flags in package '%s' that does not exist"), *PackageName.ToString());
 }
 
@@ -2709,7 +2684,7 @@ void FAssetRegistryGenerator::SetOverridePackageDependencies(FName PackageName, 
 }
 
 void FAssetRegistryGenerator::UpdateAssetRegistryData(UE::Cook::FMPCollectorServerMessageContext& Context,
-	UE::Cook::FAssetRegistryPackageMessage&& Message)
+	UE::Cook::FAssetRegistryPackageMessage&& Message, UCookOnTheFlyServer& COTFS)
 {
 	LLM_SCOPE_BYTAG(Cooker_GeneratedAssetRegistry);
 	const FName PackageName = Context.GetPackageName();
@@ -2732,8 +2707,6 @@ void FAssetRegistryGenerator::UpdateAssetRegistryData(UE::Cook::FMPCollectorServ
 	{
 		SetOverridePackageDependencies(PackageName, *Message.OverridePackageDependencies);
 	}
-
-	CookTagsToAdd.Append(MoveTemp(Message.CookTags));
 }
 
 namespace UE::Cook
@@ -2746,9 +2719,9 @@ FAssetRegistryReporterRemote::FAssetRegistryReporterRemote(FCookWorkerClient& In
 }
 
 void FAssetRegistryReporterRemote::UpdateAssetRegistryData(FName PackageName, const UPackage* Package,
-	UE::Cook::ECookResult CookResult, FSavePackageResultStruct* SavePackageResult, FCookTagList&& InArchiveCookTagList,
-	bool bIncludeOnlyDiskAssets, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
-	TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies)
+	UE::Cook::ECookResult CookResult, FSavePackageResultStruct* SavePackageResult,
+	TOptional<TArray<FAssetData>>&& AssetDatasFromSave, TOptional<FAssetPackageData>&& OverrideAssetPackageData,
+	TOptional<TArray<FAssetDependency>>&& OverridePackageDependencies, UCookOnTheFlyServer& COTFS)
 {
 	uint32 NewPackageFlags = 0;
 	int64 DiskSize = -1;
@@ -2776,33 +2749,14 @@ void FAssetRegistryReporterRemote::UpdateAssetRegistryData(FName PackageName, co
 	Message.OverrideAssetPackageData = MoveTemp(OverrideAssetPackageData);
 	Message.OverridePackageDependencies = MoveTemp(OverridePackageDependencies);
 
-	// Add to the message all the AssetDatas in the package from the global AssetRegistry
-	IAssetRegistry::Get()->GetAssetsByPackageName(PackageName, Message.AssetDatas,
-		bIncludeOnlyDiskAssets, false /* SkipARFilteredAssets */);
-
-	// Also add AssetDatas for any assets that were created during PostLoad or cooking and are not in the global assetregistry
-	TSet<FName> ExistingAssets;
-	for (const FAssetData& AssetData : Message.AssetDatas)
+	// Add to the message all the AssetDatas in the package
+	if (!AssetDatasFromSave)
 	{
-		ExistingAssets.Add(AssetData.AssetName);
+		AssetDatasFromSave.Emplace();
+		IAssetRegistry::Get()->GetAssetsByPackageName(PackageName, *AssetDatasFromSave,
+			true /* bIncludeOnlyDiskAssets */, false /* SkipARFilteredAssets */);
 	}
-	if (Package)
-	{
-		ForEachObjectWithOuter(Package, [&Message, &ExistingAssets](UObject* const Object)
-			{
-				if (Object->IsAsset())
-				{
-					FName AssetName = Object->GetFName();
-					if (!ExistingAssets.Contains(AssetName))
-					{
-						Message.AssetDatas.Emplace(Object, true /* bAllowBlueprintClass */);
-					}
-				}
-			}, /*bIncludeNestedObjects*/ false);
-	}
-
-	// Add the cooktags that were recorded during serialization
-	Message.CookTags = MoveTemp(InArchiveCookTagList.ObjectToTags);
+	Message.AssetDatas = MoveTemp(*AssetDatasFromSave);
 
 	// Send the message to the director
 	FCbWriter Writer;
@@ -2830,9 +2784,7 @@ void FAssetRegistryPackageMessage::Write(FCbWriter& Writer) const
 		Writer.BeginObject("P");
 		{
 			// Currently we only replicate Guid and ImportedClasses, since these are the only fields set by generated pacakges
-			PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-			Writer << "G" << OverrideAssetPackageData->PackageGuid;
-			PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+			Writer << "H" << OverrideAssetPackageData->GetPackageSavedHash();
 			Writer << "C" << OverrideAssetPackageData->ImportedClasses;
 		}
 		Writer.EndObject();
@@ -2841,11 +2793,6 @@ void FAssetRegistryPackageMessage::Write(FCbWriter& Writer) const
 	{
 		Writer << "D" << *OverridePackageDependencies;
 	}
-	// We cast TMap<FSoftObjectPath,                     ValueType>
-	//      to TMap<FSoftObjectPathSerializationWrapper, ValueType>
-	// to workaround FSoftObjectPath's implicit constructor. See comment in CompactBinaryTCP.h
-	static_assert(std::is_same_v<decltype(CookTags)::KeyType, FSoftObjectPath>, "Expected KeyType of CookTags to be FSoftObjectPath");
-	Writer << "T" << reinterpret_cast<const TMap<FSoftObjectPathSerializationWrapper, decltype(CookTags)::ValueType>&>(CookTags);
 	Writer << "F" << PackageFlags;
 	Writer << "S" << DiskSize;
 }
@@ -2875,13 +2822,13 @@ bool FAssetRegistryPackageMessage::TryRead(FCbObjectView Object)
 	if (OverrideAssetPackageDataField.HasValue())
 	{
 		OverrideAssetPackageData.Emplace();
-		// Currently we only replicate Guid and ImportedClasses, since these are the only fields set by generated pacakges
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-		if (!LoadFromCompactBinary(OverrideAssetPackageDataField["G"], OverrideAssetPackageData->PackageGuid))
+		// Currently we only replicate Guid and ImportedClasses, since these are the only fields set by generated packages
+		FIoHash PackageSavedHash;
+		if (!LoadFromCompactBinary(OverrideAssetPackageDataField["H"], PackageSavedHash))
 		{
 			return false;
 		}
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+		OverrideAssetPackageData->SetPackageSavedHash(PackageSavedHash);
 		if (!LoadFromCompactBinary(OverrideAssetPackageDataField["C"], OverrideAssetPackageData->ImportedClasses))
 		{
 			return false;
@@ -2899,11 +2846,6 @@ bool FAssetRegistryPackageMessage::TryRead(FCbObjectView Object)
 		}
 	}
 
-	static_assert(std::is_same_v<decltype(CookTags)::KeyType, FSoftObjectPath>, "Expected KeyType of CookTags to be FSoftObjectPath");
-	if (!LoadFromCompactBinary(Object["T"], reinterpret_cast<TMap<FSoftObjectPathSerializationWrapper, decltype(CookTags)::ValueType>&>(CookTags)))
-	{
-		return false;
-	}
 	if (!LoadFromCompactBinary(Object["F"], PackageFlags))
 	{
 		return false;
@@ -2944,8 +2886,8 @@ void FAssetRegistryMPCollector::ClientTickPackage(FMPCollectorClientTickPackageC
 			{
 				// For a successful package, UpdateAssetRegistryData should have been called
 				UE_CLOG(!bLoggedWarning, LogAssetRegistryGenerator, Warning,
-					TEXT("ClientTickPackage was called for package %s, but UpdateAssetRegistryData was not called for that package. We will not have up to date AssetDataTags in the generated AssetRegistry."),
-					*Context.GetPackageName().ToString());
+					TEXT("ClientTickPackage was called for package %s, platform %s, but UpdateAssetRegistryData was not called for that package. We will not have up to date AssetDataTags in the generated AssetRegistry."),
+					*Context.GetPackageName().ToString(), *ContextPlatformData.TargetPlatform->PlatformName());
 				bLoggedWarning = true;
 			}
 		}
@@ -2974,7 +2916,7 @@ void FAssetRegistryMPCollector::ServerReceiveMessage(FMPCollectorServerMessageCo
 	{
 		FAssetRegistryGenerator* RegistryGenerator = COTFS.PlatformManager->GetPlatformData(TargetPlatform)->RegistryGenerator.Get();
 		check(RegistryGenerator); // The TargetPlatform came from OrderedSessionPlatforms, and the RegistryGenerator should exist for any of those platforms
-		RegistryGenerator->UpdateAssetRegistryData(Context, MoveTemp(ARMessage));
+		RegistryGenerator->UpdateAssetRegistryData(Context, MoveTemp(ARMessage), COTFS);
 	}
 }
 

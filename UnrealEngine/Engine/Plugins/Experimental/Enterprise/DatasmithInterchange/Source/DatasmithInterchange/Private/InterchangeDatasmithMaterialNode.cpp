@@ -17,6 +17,8 @@
 #include "InterchangeShaderGraphNode.h"
 #include "InterchangeTexture2DNode.h"
 #include "InterchangeTexture2DFactoryNode.h"
+#include "InterchangeDecalMaterialNode.h"
+#include "Nodes/InterchangeUserDefinedAttribute.h"
 
 #include "Async/TaskGraphInterfaces.h"
 #include "Materials/MaterialExpression.h"
@@ -100,7 +102,7 @@ namespace UE::DatasmithInterchange::MaterialUtils
 
 		static UMaterialExpression* GetDefaultMaterialExpression(const TCHAR* GenericExpressionname);
 
-		UInterchangeShaderNode* BuildGenericExpression(const IDatasmithMaterialExpressionGeneric& DatasmithExpression, UInterchangeShaderNode& ParentNode, TArray<FName>* OutputNames = nullptr);
+		UInterchangeShaderNode* BuildGenericExpression(const IDatasmithMaterialExpressionGeneric& DatasmithExpression, const UInterchangeShaderNode& ParentNode, TArray<FName>* OutputNames = nullptr);
 
 		template<class T = UInterchangeShaderNode>
 		T* CreateExpressionNode(const IDatasmithMaterialExpression& DatasmithExpression, const FString& ParentNodeUid)
@@ -112,9 +114,14 @@ namespace UE::DatasmithInterchange::MaterialUtils
 				return nullptr;
 			}
 
+			if (ProcessedExpressions[*ExpressionIndexPtr] != nullptr)
+			{
+				return Cast<T>(ProcessedExpressions[*ExpressionIndexPtr]);
+			}
+
 			const FString NodeName = FDatasmithUtils::SanitizeObjectName(DatasmithExpression.GetName());
 			const FString NodeUid = NodeUtils::MaterialExpressionPrefix + MaterialID + TEXT("_") + FString::FromInt(*ExpressionIndexPtr) + TEXT("_") + NodeName;
-
+			
 			UInterchangeShaderNode* ExpressionNode = NewObject< T >(&NodeContainer);
 			ExpressionNode->InitializeNode(NodeUid, NodeName, EInterchangeNodeContainerType::TranslatedAsset);
 			NodeContainer.AddNode(ExpressionNode);
@@ -228,19 +235,19 @@ namespace UE::DatasmithInterchange::MaterialUtils
 			return;
 		}
 
+		ExpressionNode->SetCustomShaderType(TextureSample::Name.ToString());
+		const bool bIsAParameter = true;
+		const FString TextureInputParameterName = TextureSample::Inputs::Texture.ToString();
 		if (FPackageName::IsValidObjectPath(DatasmithExpression.GetTexturePathName()))
 		{
-			// TODO: Handle case of existing asset
+			ExpressionNode->AddStringInput(TextureInputParameterName, DatasmithExpression.GetTexturePathName(), bIsAParameter);
 		}
 		else
 		{
-			ExpressionNode->SetCustomShaderType(TextureSample::Name.ToString());
-
 			const FString TextureUid = NodeUtils::TexturePrefix + FDatasmithUtils::SanitizeObjectName(DatasmithExpression.GetTexturePathName());
 			if (NodeContainer.GetNode(TextureUid))
 			{
-				const FString ValueKey = UInterchangeShaderPortsAPI::MakeInputValueKey(TextureSample::Inputs::Texture.ToString());
-				ExpressionNode->AddStringAttribute(ValueKey, TextureUid);
+				ExpressionNode->AddStringInput(TextureInputParameterName, TextureUid, bIsAParameter);
 			}
 			else
 			{
@@ -256,9 +263,10 @@ namespace UE::DatasmithInterchange::MaterialUtils
 										TextureSample::Outputs::A,
 										TextureSample::Outputs::RGBA };
 
+
 		ConnectionData.ConnectOuputToInput(ExpressionNode->GetUniqueID(), OutputNames[OutputIndex]);
 
-		FConnectionData CoordConnectionData{ExpressionNode, TextureSample::Inputs::Coordinates.ToString() };
+		FConnectionData CoordConnectionData{ ExpressionNode, TextureSample::Inputs::Coordinates.ToString() };
 
 		const IDatasmithExpressionInput& ExpressionInput = DatasmithExpression.GetInputCoordinate();
 		ConnectExpression(ExpressionInput.GetExpression(), CoordConnectionData, ExpressionInput.GetOutputIndex());
@@ -367,7 +375,7 @@ namespace UE::DatasmithInterchange::MaterialUtils
 		return ExpressionClass->GetDefaultObject<UMaterialExpression>();
 	}
 
-	UInterchangeShaderNode* FPbrMaterialHelper::BuildGenericExpression(const IDatasmithMaterialExpressionGeneric& DatasmithExpression, UInterchangeShaderNode& ParentNode, TArray<FName>* OutputNames)
+	UInterchangeShaderNode* FPbrMaterialHelper::BuildGenericExpression(const IDatasmithMaterialExpressionGeneric& DatasmithExpression, const UInterchangeShaderNode& ParentNode, TArray<FName>* OutputNames)
 	{
 		UInterchangeShaderNode* ExpressionNode = nullptr;
 
@@ -390,6 +398,55 @@ namespace UE::DatasmithInterchange::MaterialUtils
 		ExpressionNode->SetCustomShaderType(DatasmithExpression.GetExpressionName());
 
 		// TODO: What about if MaterialExpression->HasAParameterName()?
+
+		
+		for (int32 PropertyIndex = 0; PropertyIndex < DatasmithExpression.GetPropertiesCount(); ++PropertyIndex)
+		{
+			const TSharedPtr<IDatasmithKeyValueProperty> Property = DatasmithExpression.GetProperty(PropertyIndex);
+
+			switch (Property->GetPropertyType())
+			{
+			case EDatasmithKeyValuePropertyType::Float:
+			{
+				const FString PropertyKey = Property->GetName();
+				const float PropertyValue = FCString::Atof(Property->GetValue());
+				const bool bRequiresDelegate = true;
+				UInterchangeUserDefinedAttributesAPI::CreateUserDefinedAttribute_Float(ExpressionNode, PropertyKey, PropertyValue,FString(), bRequiresDelegate);
+				break;
+			}
+			case EDatasmithKeyValuePropertyType::Texture:
+			{
+				using namespace UE::Interchange::Materials::Standard::Nodes;
+				const FString TextureUid = NodeUtils::TexturePrefix + FDatasmithUtils::SanitizeObjectName(Property->GetValue());
+				if (NodeContainer.GetNode(TextureUid))
+				{
+					// Textures are set in the MaterialFactory that require the TextureFactoryUid as opposed to TextureUid, 
+					// hence assuming that the factory will be built for the texture, we are storing the TextureFactoryUid.
+					const FString TextureFactoryUid = UInterchangeFactoryBaseNode::BuildFactoryNodeUid(TextureUid);
+
+					// Passing it through the KeyValueProperty pipeline to ensure that it will be transferred to FactoryNode but no delegate would be added for this attribute.
+					UInterchangeUserDefinedAttributesAPI::CreateUserDefinedAttribute_FString(ExpressionNode, TextureSample::Inputs::Texture.ToString(), TextureFactoryUid, FString());
+				}
+				else
+				{
+					// Existing texture
+					UInterchangeUserDefinedAttributesAPI::CreateUserDefinedAttribute_FString(ExpressionNode, TextureSample::Inputs::Texture.ToString(), TextureUid, FString());
+				}
+				break;
+			}
+			// TODO: Can be added later.
+			case EDatasmithKeyValuePropertyType::Bool:
+			case EDatasmithKeyValuePropertyType::Vector:
+			case EDatasmithKeyValuePropertyType::String:
+			case EDatasmithKeyValuePropertyType::Color:
+			case EDatasmithKeyValuePropertyType::Integer:
+			default:
+			{
+				break;
+			}
+			}
+		}
+		
 
 		for (int32 InputIndex = 0; InputIndex < DatasmithExpression.GetInputCount(); ++InputIndex)
 		{
@@ -568,23 +625,76 @@ namespace UE::DatasmithInterchange::MaterialUtils
 			}
 		}
 
+		const FString ParameterName(MaterialExpression->GetName());
+		const bool bIsAParameter = !ParameterName.IsEmpty();
+
 		if (MaterialExpression->IsSubType(EDatasmithMaterialExpressionType::ConstantBool))
 		{
+			using namespace UE::Interchange::Materials::Standard::Nodes;
+
 			const IDatasmithMaterialExpressionBool* BoolExpression = static_cast<const IDatasmithMaterialExpressionBool*>(MaterialExpression);
-			const FString InputName(UInterchangeShaderPortsAPI::MakeInputValueKey(ConnectionData.InputName));
-			ConnectionData.InputNode->AddBooleanAttribute(InputName, BoolExpression->GetBool());
+			
+			ensure(!ParameterName.IsEmpty());
+
+			UInterchangeShaderNode* ExpressionNode = CreateExpressionNode(*BoolExpression, ConnectionData.InputNode->GetUniqueID());
+			if (!ensure(ExpressionNode))
+			{
+				// TODO: Log error
+				return;
+			}
+
+			const FString InputName(UInterchangeShaderPortsAPI::MakeInputParameterKey(StaticBoolParameter::Attributes::DefaultValue.ToString()));
+			ExpressionNode->AddBooleanAttribute(InputName, BoolExpression->GetBool());
+			ExpressionNode->SetCustomShaderType(StaticBoolParameter::Name.ToString());
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ConnectionData.InputNode, ConnectionData.InputName, ExpressionNode->GetUniqueID());
 		}
 		else if (MaterialExpression->IsSubType(EDatasmithMaterialExpressionType::ConstantScalar))
 		{
+			using namespace UE::Interchange::Materials::Standard::Nodes;
+
 			const IDatasmithMaterialExpressionScalar* ScalarExpression = static_cast<const IDatasmithMaterialExpressionScalar*>(MaterialExpression);
-			const FString InputName(UInterchangeShaderPortsAPI::MakeInputValueKey(ConnectionData.InputName));
-			ConnectionData.InputNode->AddFloatAttribute(InputName, ScalarExpression->GetScalar());
+
+			if (bIsAParameter)
+			{
+				UInterchangeShaderNode* ExpressionNode = CreateExpressionNode(*ScalarExpression, ConnectionData.InputNode->GetUniqueID());
+				if (!ensure(ExpressionNode))
+				{
+					// TODO: Log error
+					return;
+				}
+
+				ExpressionNode->AddFloatInput(ScalarParameter::Attributes::DefaultValue.ToString(), ScalarExpression->GetScalar(), bIsAParameter);
+				ExpressionNode->SetCustomShaderType(ScalarParameter::Name.ToString());
+				UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ConnectionData.InputNode, ConnectionData.InputName, ExpressionNode->GetUniqueID());
+			}
+			else
+			{
+				ConnectionData.InputNode->AddFloatInput(ConnectionData.InputName, ScalarExpression->GetScalar(), bIsAParameter);
+			}
 		}
 		else if (MaterialExpression->IsSubType(EDatasmithMaterialExpressionType::ConstantColor))
 		{
+			using namespace UE::Interchange::Materials::Standard::Nodes;
+
 			const IDatasmithMaterialExpressionColor* ColorExpression = static_cast<const IDatasmithMaterialExpressionColor*>(MaterialExpression);
-			const FString InputName(UInterchangeShaderPortsAPI::MakeInputValueKey(ConnectionData.InputName));
-			ConnectionData.InputNode->AddLinearColorAttribute(InputName, ColorExpression->GetColor());
+
+			if (bIsAParameter)
+			{
+				UInterchangeShaderNode* ExpressionNode = CreateExpressionNode(*ColorExpression, ConnectionData.InputNode->GetUniqueID());
+				if (!ensure(ExpressionNode))
+				{
+					// TODO: Log error
+					return;
+				}
+
+				ExpressionNode->AddLinearColorInput(VectorParameter::Attributes::DefaultValue.ToString(), ColorExpression->GetColor(), bIsAParameter);
+				ExpressionNode->SetCustomShaderType(VectorParameter::Name.ToString());
+				UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ConnectionData.InputNode, ConnectionData.InputName, ExpressionNode->GetUniqueID());
+			}
+			else
+			{
+				ConnectionData.InputNode->AddLinearColorInput(ConnectionData.InputName, ColorExpression->GetColor(), bIsAParameter);
+			}
 		}
 		else if (MaterialExpression->IsSubType(EDatasmithMaterialExpressionType::Texture))
 		{
@@ -762,6 +872,17 @@ namespace UE::DatasmithInterchange::MaterialUtils
 		return true;
 	}
 
+	bool BuildMaterialNode(IDatasmithDecalMaterialElement& MaterialElement, UInterchangeDecalMaterialNode& MaterialNode)
+	{
+		// #todo_Vedang_Javdekar Check if adding this attribute would help later in the Import Process.
+		//MaterialNode.AddInt32Attribute(MaterialTypeAttrName, int32(EDatasmithReferenceMaterialType::Decal));
+
+		MaterialNode.SetCustomDiffuseTexturePath(MaterialElement.GetDiffuseTexturePathName());
+		MaterialNode.SetCustomNormalTexturePath(MaterialElement.GetNormalTexturePathName());
+
+		return true;
+	}
+
 	void ProcessDependencies(IDatasmithUEPbrMaterialElement& MaterialElement, TArray<TSharedPtr<IDatasmithBaseMaterialElement>>& OutMaterialElements, TMap<FString, TSharedPtr<IDatasmithBaseMaterialElement>>& MaterialsToSort)
 	{
 		for (int32 ExpressionIndex = 0; ExpressionIndex < MaterialElement.GetExpressionsCount(); ExpressionIndex++)
@@ -922,6 +1043,21 @@ namespace UE::DatasmithInterchange::MaterialUtils
 				MaterialNode->InitializeNode(MaterialNodeUid, MaterialElement->GetLabel(), EInterchangeNodeContainerType::TranslatedAsset);
 
 				if (!BuildMaterialNode(PbrMaterialElement, *MaterialNode))
+				{
+					MaterialNode = nullptr;
+				}
+
+				BaseNode = MaterialNode;
+			}
+			else if (MaterialElement->IsA(EDatasmithElementType::DecalMaterial))
+			{
+				IDatasmithDecalMaterialElement& DecalMaterialElement = static_cast<IDatasmithDecalMaterialElement&>(*MaterialElement);
+
+				UInterchangeDecalMaterialNode* MaterialNode = NewObject<UInterchangeDecalMaterialNode>(&NodeContainer);
+				const FString MaterialNodeUid = NodeUtils::DecalMaterialPrefix + FDatasmithUtils::SanitizeObjectName(MaterialElement->GetName());
+				MaterialNode->InitializeNode(MaterialNodeUid, *FDatasmithUtils::SanitizeObjectName(MaterialElement->GetLabel()), EInterchangeNodeContainerType::TranslatedAsset);
+
+				if (!BuildMaterialNode(DecalMaterialElement, *MaterialNode))
 				{
 					MaterialNode = nullptr;
 				}

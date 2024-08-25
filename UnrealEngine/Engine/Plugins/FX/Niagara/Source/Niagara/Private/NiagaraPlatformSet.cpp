@@ -1439,14 +1439,9 @@ const FNiagaraCVarValues& FDeviceProfileValueCache::GetValues(const UDeviceProfi
 				{
 					DefaultStr = PlatformCVar->GetString();
 				}
-				else if (IConsoleVariable* DefaultCVar = CVar->GetDefaultValueVariable())
-				{
-					DefaultStr = DefaultCVar->GetString();
-				}
 				else
 				{
-					//Failing all that we just take the current value.
-					DefaultStr = CVar->GetString();
+					DefaultStr = CVar->GetDefaultValue();
 				}
 			}
 		}

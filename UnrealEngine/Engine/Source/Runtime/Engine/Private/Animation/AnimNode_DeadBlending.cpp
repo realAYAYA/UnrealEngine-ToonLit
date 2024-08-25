@@ -16,8 +16,10 @@ LLM_DEFINE_TAG(Animation_DeadBlending);
 
 #define LOCTEXT_NAMESPACE "AnimNode_DeadBlending"
 
-namespace UE::Anim {
+TAutoConsoleVariable<int32> CVarAnimDeadBlendingEnable(TEXT("a.AnimNode.DeadBlending.Enable"), 1, TEXT("Enable / Disable DeadBlending"));
 
+namespace UE::Anim
+{
 	// Inertialization request event bound to a node
 	class FDeadBlendingRequester : public IInertializationRequester
 	{
@@ -64,8 +66,6 @@ namespace UE::Anim {
 
 namespace UE::Anim::DeadBlending::Private
 {
-	static constexpr int32 MaxPoseSnapShotNum = 2;
-
 	static constexpr float Ln2 = 0.69314718056f;
 
 	static int32 GetNumSkeletonBones(const FBoneContainer& BoneContainer)
@@ -113,14 +113,17 @@ namespace UE::Anim::DeadBlending::Private
 	{
 		if (FVector::DistSquared(V, W) < Epsilon)
 		{
-			return FMath::Lerp(V, W, Alpha);
+			return FVector(
+				FMath::Lerp(FMath::Max(V.X, Epsilon), FMath::Max(W.X, Epsilon), Alpha),
+				FMath::Lerp(FMath::Max(V.Y, Epsilon), FMath::Max(W.Y, Epsilon), Alpha),
+				FMath::Lerp(FMath::Max(V.Z, Epsilon), FMath::Max(W.Z, Epsilon), Alpha));
 		}
 		else
 		{
 			return FVector(
-				FMath::Pow(V.X, (1.0f - Alpha)) * FMath::Pow(W.X, Alpha),
-				FMath::Pow(V.Y, (1.0f - Alpha)) * FMath::Pow(W.Y, Alpha),
-				FMath::Pow(V.Z, (1.0f - Alpha)) * FMath::Pow(W.Z, Alpha));
+				FMath::Pow(FMath::Max(V.X, Epsilon), (1.0f - Alpha)) * FMath::Pow(FMath::Max(W.X, Epsilon), Alpha),
+				FMath::Pow(FMath::Max(V.Y, Epsilon), (1.0f - Alpha)) * FMath::Pow(FMath::Max(W.Y, Epsilon), Alpha),
+				FMath::Pow(FMath::Max(V.Z, Epsilon), (1.0f - Alpha)) * FMath::Pow(FMath::Max(W.Z, Epsilon), Alpha));
 		}
 	}
 
@@ -258,128 +261,157 @@ void FAnimNode_DeadBlending::Deactivate()
 {
 	InertializationState = EInertializationState::Inactive;
 
-	if (!bPreallocateMemory)
-	{
-		BoneValid.Empty();
-		BoneTranslations.Empty();
-		BoneRotations.Empty();
-		BoneRotationDirections.Empty();
-		BoneScales.Empty();
+	BoneIndices.Empty();
 
-		BoneTranslationVelocities.Empty();
-		BoneRotationVelocities.Empty();
-		BoneScaleVelocities.Empty();
+	BoneTranslations.Empty();
+	BoneRotations.Empty();
+	BoneRotationDirections.Empty();
+	BoneScales.Empty();
 
-		BoneTranslationDecayHalfLives.Empty();
-		BoneRotationDecayHalfLives.Empty();
-		BoneScaleDecayHalfLives.Empty();
+	BoneTranslationVelocities.Empty();
+	BoneRotationVelocities.Empty();
+	BoneScaleVelocities.Empty();
 
-		InertializationDurationPerBone.Empty();
-	}
+	BoneTranslationDecayHalfLives.Empty();
+	BoneRotationDecayHalfLives.Empty();
+	BoneScaleDecayHalfLives.Empty();
+
+	InertializationDurationPerBone.Empty();
 }
 
-void FAnimNode_DeadBlending::InitFrom(
-	const FCompactPose& InPose,
-	const FBlendedCurve& InCurves,
-	const FInertializationPose& SrcPosePrev,
-	const FInertializationPose& SrcPoseCurr)
+void FAnimNode_DeadBlending::InitFrom(const FCompactPose& InPose, const FBlendedCurve& InCurves, const FInertializationSparsePose& SrcPosePrev, const FInertializationSparsePose& SrcPoseCurr)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FAnimNode_DeadBlending::InitFrom);
+
+	check(!SrcPosePrev.IsEmpty() && !SrcPoseCurr.IsEmpty());
 
 	const FBoneContainer& BoneContainer = InPose.GetBoneContainer();
 
 	const int32 NumSkeletonBones = UE::Anim::DeadBlending::Private::GetNumSkeletonBones(BoneContainer);
 
-	BoneValid.Init(false, NumSkeletonBones);
-	BoneTranslations.Init(FVector::ZeroVector, NumSkeletonBones);
-	BoneRotations.Init(FQuat::Identity, NumSkeletonBones);
-	BoneRotationDirections.Init(FQuat4f::Identity, NumSkeletonBones);
-	BoneScales.Init(FVector::OneVector, NumSkeletonBones);
+	// Compute the Inertialization Bone Indices which we will use to index into BoneTranslations, BoneRotations, etc
 
-	BoneTranslationVelocities.Init(FVector3f::ZeroVector, NumSkeletonBones);
-	BoneRotationVelocities.Init(FVector3f::ZeroVector, NumSkeletonBones);
-	BoneScaleVelocities.Init(FVector3f::ZeroVector, NumSkeletonBones);
+	BoneIndices.Init(INDEX_NONE, NumSkeletonBones);
 
-	BoneTranslationDecayHalfLives.Init(ExtrapolationHalfLifeMin * FVector3f::OneVector, NumSkeletonBones);
-	BoneRotationDecayHalfLives.Init(ExtrapolationHalfLifeMin * FVector3f::OneVector, NumSkeletonBones);
-	BoneScaleDecayHalfLives.Init(ExtrapolationHalfLifeMin * FVector3f::OneVector, NumSkeletonBones);
-
-	// Record bone state
+	int32 NumInertializationBones = 0;
 
 	for (FCompactPoseBoneIndex BoneIndex : InPose.ForEachBoneIndex())
 	{
 		const int32 SkeletonPoseBoneIndex = BoneContainer.GetSkeletonIndex(BoneIndex);
 
 		if (SkeletonPoseBoneIndex == INDEX_NONE ||
-			SrcPosePrev.BoneStates[SkeletonPoseBoneIndex] != EInertializationBoneState::Valid ||
-			SrcPoseCurr.BoneStates[SkeletonPoseBoneIndex] != EInertializationBoneState::Valid)
+			SrcPoseCurr.BoneIndices[SkeletonPoseBoneIndex] == INDEX_NONE ||
+			SrcPosePrev.BoneIndices[SkeletonPoseBoneIndex] == INDEX_NONE)
 		{
 			continue;
 		}
 
-		// Mark bone as valid
+		BoneIndices[SkeletonPoseBoneIndex] = NumInertializationBones;
+		NumInertializationBones++;
+	}
 
-		BoneValid[SkeletonPoseBoneIndex] = true;
+	// Allocate Inertialization Bones
+
+	BoneTranslations.Init(FVector::ZeroVector, NumInertializationBones);
+	BoneRotations.Init(FQuat::Identity, NumInertializationBones);
+	BoneRotationDirections.Init(FQuat4f::Identity, NumInertializationBones);
+	BoneScales.Init(FVector::OneVector, NumInertializationBones);
+
+	BoneTranslationVelocities.Init(FVector3f::ZeroVector, NumInertializationBones);
+	BoneRotationVelocities.Init(FVector3f::ZeroVector, NumInertializationBones);
+	BoneScaleVelocities.Init(FVector3f::ZeroVector, NumInertializationBones);
+
+	BoneTranslationDecayHalfLives.Init(ExtrapolationHalfLifeMin * FVector3f::OneVector, NumInertializationBones);
+	BoneRotationDecayHalfLives.Init(ExtrapolationHalfLifeMin * FVector3f::OneVector, NumInertializationBones);
+	BoneScaleDecayHalfLives.Init(ExtrapolationHalfLifeMin * FVector3f::OneVector, NumInertializationBones);
+
+	for (FCompactPoseBoneIndex BoneIndex : InPose.ForEachBoneIndex())
+	{
+		const int32 SkeletonPoseBoneIndex = BoneContainer.GetSkeletonIndex(BoneIndex);
+
+		if (SkeletonPoseBoneIndex == INDEX_NONE || 
+			SrcPoseCurr.BoneIndices[SkeletonPoseBoneIndex] == INDEX_NONE ||
+			SrcPosePrev.BoneIndices[SkeletonPoseBoneIndex] == INDEX_NONE)
+		{
+			continue;
+		}
+
+		// Get Bone Indices for Inertialization Bone, Prev and Curr Pose Bones
+
+		const int32 InertializationBoneIndex = BoneIndices[SkeletonPoseBoneIndex];
+		const int32 CurrPoseBoneIndex = SrcPoseCurr.BoneIndices[SkeletonPoseBoneIndex];
+		const int32 PrevPoseBoneIndex = SrcPosePrev.BoneIndices[SkeletonPoseBoneIndex];
+
+		check(InertializationBoneIndex != INDEX_NONE);
+		check(CurrPoseBoneIndex != INDEX_NONE);
+		check(PrevPoseBoneIndex != INDEX_NONE);
 
 		// Get Source Animation Transform
 
-		const FTransform SrcTransformCurr = SrcPoseCurr.BoneTransforms[SkeletonPoseBoneIndex];
+		const FVector SrcTranslationCurr = SrcPoseCurr.BoneTranslations[CurrPoseBoneIndex];
+		const FQuat SrcRotationCurr = SrcPoseCurr.BoneRotations[CurrPoseBoneIndex];
+		const FVector SrcScaleCurr = SrcPoseCurr.BoneScales[CurrPoseBoneIndex];
 
-		BoneTranslations[SkeletonPoseBoneIndex] = SrcTransformCurr.GetTranslation();
-		BoneRotations[SkeletonPoseBoneIndex] = SrcTransformCurr.GetRotation();
-		BoneScales[SkeletonPoseBoneIndex] = SrcTransformCurr.GetScale3D();
+		BoneTranslations[InertializationBoneIndex] = SrcTranslationCurr;
+		BoneRotations[InertializationBoneIndex] = SrcRotationCurr;
+		BoneScales[InertializationBoneIndex] = SrcScaleCurr;
 
 		if (SrcPoseCurr.DeltaTime > UE_SMALL_NUMBER)
 		{
 			// Get Source Animation Velocity
 
-			const FTransform SrcTransformPrev = SrcPosePrev.BoneTransforms[SkeletonPoseBoneIndex];
+			const FVector SrcTranslationPrev = SrcPosePrev.BoneTranslations[PrevPoseBoneIndex];
+			const FQuat SrcRotationPrev = SrcPosePrev.BoneRotations[PrevPoseBoneIndex];
+			const FVector SrcScalePrev = SrcPosePrev.BoneScales[PrevPoseBoneIndex];
 
-			const FVector TranslationDiff = SrcTransformCurr.GetTranslation() - SrcTransformPrev.GetTranslation();
+			const FVector TranslationDiff = SrcTranslationCurr - SrcTranslationPrev;
 
-			FQuat RotationDiff = SrcTransformCurr.GetRotation() * SrcTransformPrev.GetRotation().Inverse();
+			FQuat RotationDiff = SrcRotationCurr * SrcRotationPrev.Inverse();
 			RotationDiff.EnforceShortestArcWith(FQuat::Identity);
 
-			const FVector ScaleDiff = UE::Anim::DeadBlending::Private::VectorDivMax(SrcTransformCurr.GetScale3D(), SrcTransformPrev.GetScale3D());
+			const FVector ScaleDiffLinear = SrcScaleCurr - SrcScalePrev;
+			const FVector ScaleDiffExponential = UE::Anim::DeadBlending::Private::VectorDivMax(SrcScaleCurr, SrcScalePrev);
 
-			BoneTranslationVelocities[SkeletonPoseBoneIndex] = (FVector3f)(TranslationDiff / SrcPoseCurr.DeltaTime);
-			BoneRotationVelocities[SkeletonPoseBoneIndex] = (FVector3f)(RotationDiff.ToRotationVector() / SrcPoseCurr.DeltaTime);
-			BoneScaleVelocities[SkeletonPoseBoneIndex] = (FVector3f)(UE::Anim::DeadBlending::Private::VectorLogSafe(ScaleDiff) / SrcPoseCurr.DeltaTime);
+			BoneTranslationVelocities[InertializationBoneIndex] = (FVector3f)(TranslationDiff / SrcPoseCurr.DeltaTime);
+			BoneRotationVelocities[InertializationBoneIndex] = (FVector3f)(RotationDiff.ToRotationVector() / SrcPoseCurr.DeltaTime);
+			BoneScaleVelocities[InertializationBoneIndex] = bLinearlyInterpolateScales ?
+				(FVector3f)(ScaleDiffLinear / SrcPoseCurr.DeltaTime) :
+				(FVector3f)(UE::Anim::DeadBlending::Private::VectorLogSafe(ScaleDiffExponential) / SrcPoseCurr.DeltaTime);
 
 			// Clamp Maximum Velocity
 
-			BoneTranslationVelocities[SkeletonPoseBoneIndex] = BoneTranslationVelocities[SkeletonPoseBoneIndex].GetClampedToMaxSize(MaximumTranslationVelocity);
-			BoneRotationVelocities[SkeletonPoseBoneIndex] = BoneRotationVelocities[SkeletonPoseBoneIndex].GetClampedToMaxSize(FMath::DegreesToRadians(MaximumRotationVelocity));
-			BoneScaleVelocities[SkeletonPoseBoneIndex] = BoneScaleVelocities[SkeletonPoseBoneIndex].GetClampedToMaxSize(MaximumScaleVelocity);
+			BoneTranslationVelocities[InertializationBoneIndex] = BoneTranslationVelocities[InertializationBoneIndex].GetClampedToMaxSize(MaximumTranslationVelocity);
+			BoneRotationVelocities[InertializationBoneIndex] = BoneRotationVelocities[InertializationBoneIndex].GetClampedToMaxSize(FMath::DegreesToRadians(MaximumRotationVelocity));
+			BoneScaleVelocities[InertializationBoneIndex] = BoneScaleVelocities[InertializationBoneIndex].GetClampedToMaxSize(MaximumScaleVelocity);
 
 			// Compute Decay HalfLives
 
 			const FTransform DstTransform = InPose[BoneIndex];
 
-			const FVector TranslationSrcDstDiff = DstTransform.GetTranslation() - SrcTransformCurr.GetTranslation();
+			const FVector TranslationSrcDstDiff = DstTransform.GetTranslation() - SrcTranslationCurr;
 
-			FQuat RotationSrcDstDiff = DstTransform.GetRotation() * SrcTransformCurr.GetRotation().Inverse();
+			FQuat RotationSrcDstDiff = DstTransform.GetRotation() * SrcRotationCurr.Inverse();
 			RotationSrcDstDiff.EnforceShortestArcWith(FQuat::Identity);
 
-			const FVector ScaleSrcDstDiff = UE::Anim::DeadBlending::Private::VectorDivMax(DstTransform.GetScale3D(), SrcTransformCurr.GetScale3D());
+			const FVector ScaleSrcDstDiff = UE::Anim::DeadBlending::Private::VectorDivMax(DstTransform.GetScale3D(), SrcScaleCurr);
 
-			BoneTranslationDecayHalfLives[SkeletonPoseBoneIndex] = UE::Anim::DeadBlending::Private::ComputeDecayHalfLifeFromDiffAndVelocity(
+			BoneTranslationDecayHalfLives[InertializationBoneIndex] = UE::Anim::DeadBlending::Private::ComputeDecayHalfLifeFromDiffAndVelocity(
 				TranslationSrcDstDiff,
-				BoneTranslationVelocities[SkeletonPoseBoneIndex],
+				BoneTranslationVelocities[InertializationBoneIndex],
 				ExtrapolationHalfLife,
 				ExtrapolationHalfLifeMin,
 				ExtrapolationHalfLifeMax);
 
-			BoneRotationDecayHalfLives[SkeletonPoseBoneIndex] = UE::Anim::DeadBlending::Private::ComputeDecayHalfLifeFromDiffAndVelocity(
+			BoneRotationDecayHalfLives[InertializationBoneIndex] = UE::Anim::DeadBlending::Private::ComputeDecayHalfLifeFromDiffAndVelocity(
 				RotationSrcDstDiff.ToRotationVector(),
-				BoneRotationVelocities[SkeletonPoseBoneIndex],
+				BoneRotationVelocities[InertializationBoneIndex],
 				ExtrapolationHalfLife,
 				ExtrapolationHalfLifeMin,
 				ExtrapolationHalfLifeMax);
 
-			BoneScaleDecayHalfLives[SkeletonPoseBoneIndex] = UE::Anim::DeadBlending::Private::ComputeDecayHalfLifeFromDiffAndVelocity(
+			BoneScaleDecayHalfLives[InertializationBoneIndex] = UE::Anim::DeadBlending::Private::ComputeDecayHalfLifeFromDiffAndVelocity(
 				ScaleSrcDstDiff,
-				BoneScaleVelocities[SkeletonPoseBoneIndex],
+				BoneScaleVelocities[InertializationBoneIndex],
 				ExtrapolationHalfLife,
 				ExtrapolationHalfLifeMin,
 				ExtrapolationHalfLifeMax);
@@ -429,11 +461,19 @@ void FAnimNode_DeadBlending::InitFrom(
 				ExtrapolationHalfLifeMax);
 		});
 
-	// Apply filtering to remove anything we don't want to inertialize
-
+	// Apply filtering to remove filtered curves from extrapolation. This does not actually
+	// prevent these curves from being blended, but does stop them appearing as empty
+	// in the output curves created by the Union in ApplyTo unless they are already in the
+	// destination animation.
 	if (CurveFilter.Num() > 0)
 	{
 		UE::Anim::FCurveUtils::Filter(CurveData, CurveFilter);
+	}
+
+	// Apply filtering to remove curves that are not meant to be extrapolated
+	if (ExtrapolatedCurveFilter.Num() > 0)
+	{
+		UE::Anim::FCurveUtils::Filter(CurveData, ExtrapolatedCurveFilter);
 	}
 }
 
@@ -447,30 +487,48 @@ void FAnimNode_DeadBlending::ApplyTo(FCompactPose& InOutPose, FBlendedCurve& InO
 	{
 		const int32 SkeletonPoseBoneIndex = BoneContainer.GetSkeletonIndex(BoneIndex);
 
-		if (SkeletonPoseBoneIndex == INDEX_NONE || !BoneValid[SkeletonPoseBoneIndex] || BoneFilter.Contains(BoneIndex))
+		if (SkeletonPoseBoneIndex == INDEX_NONE || BoneIndices[SkeletonPoseBoneIndex] == INDEX_NONE || BoneFilter.Contains(BoneIndex))
 		{
 			continue;
 		}
 
+		const int32 InertializationBoneIndex = BoneIndices[SkeletonPoseBoneIndex];
+		check(InertializationBoneIndex != INDEX_NONE);
+
 		// Compute Extrapolated Bone State
 
 		const FVector ExtrapolatedTranslation = UE::Anim::DeadBlending::Private::ExtrapolateTranslation(
-			BoneTranslations[SkeletonPoseBoneIndex],
-			BoneTranslationVelocities[SkeletonPoseBoneIndex],
+			BoneTranslations[InertializationBoneIndex],
+			BoneTranslationVelocities[InertializationBoneIndex],
 			InertializationTime,
-			BoneTranslationDecayHalfLives[SkeletonPoseBoneIndex]);
+			BoneTranslationDecayHalfLives[InertializationBoneIndex]);
 
 		const FQuat ExtrapolatedRotation = UE::Anim::DeadBlending::Private::ExtrapolateRotation(
-			BoneRotations[SkeletonPoseBoneIndex],
-			BoneRotationVelocities[SkeletonPoseBoneIndex],
+			BoneRotations[InertializationBoneIndex],
+			BoneRotationVelocities[InertializationBoneIndex],
 			InertializationTime,
-			BoneRotationDecayHalfLives[SkeletonPoseBoneIndex]);
+			BoneRotationDecayHalfLives[InertializationBoneIndex]);
 
-		const FVector ExtrapolatedScale = UE::Anim::DeadBlending::Private::ExtrapolateScale(
-			BoneScales[SkeletonPoseBoneIndex],
-			BoneScaleVelocities[SkeletonPoseBoneIndex],
-			InertializationTime,
-			BoneScaleDecayHalfLives[SkeletonPoseBoneIndex]);
+		FVector ExtrapolatedScale = FVector::OneVector;
+
+		if (bLinearlyInterpolateScales)
+		{
+			// If we are handling scales linearly then treat them like a normal vector such as a translation.
+			ExtrapolatedScale = UE::Anim::DeadBlending::Private::ExtrapolateTranslation(
+				BoneScales[InertializationBoneIndex],
+				BoneScaleVelocities[InertializationBoneIndex],
+				InertializationTime,
+				BoneScaleDecayHalfLives[InertializationBoneIndex]);
+		}
+		else
+		{
+			// Otherwise extrapolate using the exponential version of scalar velocities.
+			ExtrapolatedScale = UE::Anim::DeadBlending::Private::ExtrapolateScale(
+				BoneScales[InertializationBoneIndex],
+				BoneScaleVelocities[InertializationBoneIndex],
+				InertializationTime,
+				BoneScaleDecayHalfLives[InertializationBoneIndex]);
+		}
 
 #if WITH_EDITORONLY_DATA
 		if (bShowExtrapolations)
@@ -488,15 +546,15 @@ void FAnimNode_DeadBlending::ApplyTo(FCompactPose& InOutPose, FBlendedCurve& InO
 		// side of this rotation.
 
 		FQuat RotationDiff = ExtrapolatedRotation * InOutPose[BoneIndex].GetRotation().Inverse();
-		RotationDiff.EnforceShortestArcWith((FQuat)BoneRotationDirections[SkeletonPoseBoneIndex]);
+		RotationDiff.EnforceShortestArcWith((FQuat)BoneRotationDirections[InertializationBoneIndex]);
 
 		// Update BoneRotationDirections to match our current path
-		BoneRotationDirections[SkeletonPoseBoneIndex] = (FQuat4f)RotationDiff;
+		BoneRotationDirections[InertializationBoneIndex] = (FQuat4f)RotationDiff;
 
 		// Compute Blend Alpha
 
 		const float Alpha = 1.0f - FAlphaBlend::AlphaToBlendOption(
-			InertializationTime / FMath::Max(InertializationDurationPerBone[SkeletonPoseBoneIndex], UE_SMALL_NUMBER),
+			FMath::Clamp(InertializationTime / FMath::Max(InertializationDurationPerBone[SkeletonPoseBoneIndex], UE_SMALL_NUMBER), 0.0f, 1.0f),
 			InertializationBlendMode, InertializationCustomBlendCurve);
 
 		// Perform Blend
@@ -508,9 +566,9 @@ void FAnimNode_DeadBlending::ApplyTo(FCompactPose& InOutPose, FBlendedCurve& InO
 
 			// Here we use `Eerp` rather than `Lerp` to interpolate scales by default (see: https://theorangeduck.com/page/scalar-velocity).
 			// This default is inconsistent with the rest of Unreal which (mostly) uses `Lerp` on scales. The decision 
-			// to use `Eerp` by default here is partially due to the fact we are also dealing properly with scalar 
-			// velocities in this node, and partially to try and not to lock this node into having the same less 
-			// accurate behavior by default. Users still have the option to interpolate scales with `Lerp` if they want.
+			// to use `Eerp` by default here is partially due to the fact we are also providing the option of dealing properly 
+			// with scalar velocities in this node, and partially to try and not to lock this node into having the same less 
+			// accurate behavior by default. Users still have the option to interpolate scales with `Lerp` if they want using bLinearlyInterpolateScales.
 			if (bLinearlyInterpolateScales)
 			{
 				InOutPose[BoneIndex].SetScale3D(FMath::Lerp(InOutPose[BoneIndex].GetScale3D(), ExtrapolatedScale, Alpha));
@@ -525,14 +583,28 @@ void FAnimNode_DeadBlending::ApplyTo(FCompactPose& InOutPose, FBlendedCurve& InO
 	// Compute Blend Alpha
 
 	const float CurveAlpha = 1.0f - FAlphaBlend::AlphaToBlendOption(
-		InertializationTime / FMath::Max(InertializationDuration, UE_SMALL_NUMBER),
+		FMath::Clamp(InertializationTime / FMath::Max(InertializationDuration, UE_SMALL_NUMBER), 0.0f, 1.0f),
 		InertializationBlendMode, InertializationCustomBlendCurve);
 
 	// Blend Curves
 
-	UE::Anim::FNamedValueArrayUtils::Union(InOutCurves, CurveData,
-		[CurveAlpha, this](UE::Anim::FCurveElement& OutResultElement, const FDeadBlendingCurveElement& InElement1, UE::Anim::ENamedValueUnionFlags InFlags)
+	PoseCurveData.CopyFrom(InOutCurves);
+
+	UE::Anim::FNamedValueArrayUtils::Union(InOutCurves, PoseCurveData, CurveData, [CurveAlpha, this](
+			UE::Anim::FCurveElement& OutResultElement, 
+			const UE::Anim::FCurveElement& InElement0,
+			const FDeadBlendingCurveElement& InElement1, 
+			UE::Anim::ENamedValueUnionFlags InFlags)
 		{
+			// For filtered Curves take destination value
+
+			if (FilteredCurves.Contains(OutResultElement.Name))
+			{
+				OutResultElement.Value = InElement0.Value;
+				OutResultElement.Flags = InElement0.Flags;
+				return;
+			}
+
 			// Compute Extrapolated Curve Value
 
 			const float ExtrapolatedCurve = UE::Anim::DeadBlending::Private::ExtrapolateCurve(
@@ -545,13 +617,13 @@ void FAnimNode_DeadBlending::ApplyTo(FCompactPose& InOutPose, FBlendedCurve& InO
 			if (bShowExtrapolations)
 			{
 				OutResultElement.Value = ExtrapolatedCurve;
-				OutResultElement.Flags |= InElement1.Flags;
+				OutResultElement.Flags = InElement0.Flags | InElement1.Flags;
 				return;
 			}
 #endif
 
-			OutResultElement.Value = FMath::Lerp(OutResultElement.Value, ExtrapolatedCurve, CurveAlpha);
-			OutResultElement.Flags |= InElement1.Flags;
+			OutResultElement.Value = FMath::Lerp(InElement0.Value, ExtrapolatedCurve, CurveAlpha);
+			OutResultElement.Flags = InElement0.Flags | InElement1.Flags;
 		});
 }
 
@@ -589,27 +661,31 @@ void FAnimNode_DeadBlending::Initialize_AnyThread(const FAnimationInitializeCont
 	CurveFilter.SetFilterMode(UE::Anim::ECurveFilterMode::DisallowFiltered);
 	CurveFilter.AppendNames(FilteredCurves);
 
-	BoneFilter.Init(FCompactPoseBoneIndex(INDEX_NONE), FilteredBones.Num());
+	ExtrapolatedCurveFilter.Empty();
+	ExtrapolatedCurveFilter.SetFilterMode(UE::Anim::ECurveFilterMode::DisallowFiltered);
+	ExtrapolatedCurveFilter.AppendNames(ExtrapolationFilteredCurves);
 
-	PoseSnapshots.Empty(UE::Anim::DeadBlending::Private::MaxPoseSnapShotNum);
+	BoneFilter.Init(FCompactPoseBoneIndex(INDEX_NONE), FilteredBones.Num());
+	
+	PrevPoseSnapshot.Empty();
+	CurrPoseSnapshot.Empty();
 
 	RequestQueue.Reserve(8);
 
-	const int32 NumSkeletonBones = bPreallocateMemory ? Context.AnimInstanceProxy->GetSkeleton()->GetReferenceSkeleton().GetNum() : 0;
+	BoneIndices.Empty();
+	
+	BoneTranslations.Empty();
+	BoneRotations.Empty();
+	BoneRotationDirections.Empty();
+	BoneScales.Empty();
 
-	BoneValid.Empty(NumSkeletonBones);
-	BoneTranslations.Empty(NumSkeletonBones);
-	BoneRotations.Empty(NumSkeletonBones);
-	BoneRotationDirections.Empty(NumSkeletonBones);
-	BoneScales.Empty(NumSkeletonBones);
+	BoneTranslationVelocities.Empty();
+	BoneRotationVelocities.Empty();
+	BoneScaleVelocities.Empty();
 
-	BoneTranslationVelocities.Empty(NumSkeletonBones);
-	BoneRotationVelocities.Empty(NumSkeletonBones);
-	BoneScaleVelocities.Empty(NumSkeletonBones);
-
-	BoneTranslationDecayHalfLives.Empty(NumSkeletonBones);
-	BoneRotationDecayHalfLives.Empty(NumSkeletonBones);
-	BoneScaleDecayHalfLives.Empty(NumSkeletonBones);
+	BoneTranslationDecayHalfLives.Empty();
+	BoneRotationDecayHalfLives.Empty();
+	BoneScaleDecayHalfLives.Empty();
 
 	CurveData.Empty();
 
@@ -619,7 +695,7 @@ void FAnimNode_DeadBlending::Initialize_AnyThread(const FAnimationInitializeCont
 	InertializationTime = 0.0f;
 
 	InertializationDuration = 0.0f;
-	InertializationDurationPerBone.Empty(NumSkeletonBones);
+	InertializationDurationPerBone.Empty();
 	InertializationMaxDuration = 0.0f;
 
 	InertializationBlendMode = DefaultBlendMode;
@@ -637,6 +713,7 @@ void FAnimNode_DeadBlending::CacheBones_AnyThread(const FAnimationCacheBonesCont
 	// Compute Compact Pose Bone Index for each bone in Filter
 
 	const FBoneContainer& RequiredBones = Context.AnimInstanceProxy->GetRequiredBones();
+	BoneFilter.Init(FCompactPoseBoneIndex(INDEX_NONE), FilteredBones.Num());
 	for (int32 FilterBoneIdx = 0; FilterBoneIdx < FilteredBones.Num(); FilterBoneIdx++)
 	{
 		FilteredBones[FilterBoneIdx].Initialize(Context.AnimInstanceProxy->GetSkeleton());
@@ -650,39 +727,28 @@ void FAnimNode_DeadBlending::Update_AnyThread(const FAnimationUpdateContext& Con
 	LLM_SCOPE_BYNAME(TEXT("Animation/DeadBlending"));
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_ANIMNODE(Update_AnyThread);
 
-	const int32 NodeId = Context.GetCurrentNodeId();
-	const FAnimInstanceProxy& Proxy = *Context.AnimInstanceProxy;
+	const bool bNeedsReset =
+		bResetOnBecomingRelevant &&
+		UpdateCounter.HasEverBeenUpdated() &&
+		!UpdateCounter.WasSynchronizedCounter(Context.AnimInstanceProxy->GetUpdateCounter());
 
-	// Allow nodes further towards the leaves to inertialize using this node
-	UE::Anim::TScopedGraphMessage<UE::Anim::FDeadBlendingRequester> Inertialization(Context, Context, this);
-
-	// Handle skipped updates for cached poses by forwarding to inertialization nodes in those residual stacks
-	UE::Anim::TScopedGraphMessage<UE::Anim::FCachedPoseSkippedUpdateHandler> CachedPoseSkippedUpdate(Context, [this, NodeId, &Proxy](TArrayView<const UE::Anim::FMessageStack> InSkippedUpdates)
+	if (bNeedsReset)
 	{
-		// If we have a pending request forward the request to other Inertialization nodes
-		// that were skipped due to pose caching.
-		if (RequestQueue.Num() > 0)
-		{
-			// Cached poses have their Update function called once even though there may be multiple UseCachedPose nodes for the same pose.
-			// Because of this, there may be Inertialization ancestors of the UseCachedPose nodes that missed out on requests.
-			// So here we forward 'this' node's requests to the ancestors of those skipped UseCachedPose nodes.
-			// Note that in some cases, we may be forwarding the requests back to this same node.  Those duplicate requests will ultimately
-			// be ignored by the 'AddUnique' in the body of FAnimNode_DeadBlending::RequestInertialization.
-			for (const UE::Anim::FMessageStack& Stack : InSkippedUpdates)
-			{
-				Stack.ForEachMessage<UE::Anim::IInertializationRequester>([this, NodeId, &Proxy](UE::Anim::IInertializationRequester& InMessage)
-				{
-					for (const FInertializationRequest& Request : RequestQueue)
-					{
-						InMessage.RequestInertialization(Request);
-					}
-					InMessage.AddDebugRecord(Proxy, NodeId);
+		// Clear any pending inertialization requests
+		RequestQueue.Reset();
 
-					return UE::Anim::FMessageStack::EEnumerate::Stop;
-				});
-			}
-		}
-	});
+		// Clear the inertialization state
+		Deactivate();
+
+		// Clear the pose history
+		PrevPoseSnapshot.Empty();
+		CurrPoseSnapshot.Empty();
+	}
+
+	UpdateCounter.SynchronizeWith(Context.AnimInstanceProxy->GetUpdateCounter());
+
+	// Catch the inertialization request message and call the node's RequestInertialization function with the request
+	UE::Anim::TScopedGraphMessage<UE::Anim::FDeadBlendingRequester> InertializationMessage(Context, Context, this);
 
 	Source.Update(Context);
 
@@ -699,6 +765,25 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 
 	Source.Evaluate(Output);
 
+	// Disable inertialization if requested (for testing / debugging)
+	if (!CVarAnimDeadBlendingEnable.GetValueOnAnyThread())
+	{
+		// Clear any pending inertialization requests
+		RequestQueue.Reset();
+
+		// Clear the inertialization state
+		Deactivate();
+
+		// Clear the pose history
+		PrevPoseSnapshot.Empty();
+		CurrPoseSnapshot.Empty();
+
+		// Reset the cached time accumulator
+		DeltaTime = 0.0f;
+
+		return;
+	}
+
 	// Automatically detect teleports... note that we do the teleport distance check against the root bone's location (world space) rather
 	// than the mesh component's location because we still want to inertialize instances where the skeletal mesh component has been moved
 	// while simultaneously counter-moving the root bone (as is the case when mounting and dismounting vehicles for example)
@@ -709,14 +794,20 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 
 	const float TeleportDistanceThreshold = Output.AnimInstanceProxy->GetSkelMeshComponent()->GetTeleportDistanceThreshold();
 
-	if (PoseSnapshots.Num() > 0 && TeleportDistanceThreshold > 0.0f)
+	if (!CurrPoseSnapshot.IsEmpty() && TeleportDistanceThreshold > 0.0f)
 	{
 		const FVector RootWorldSpaceLocation = ComponentTransform.TransformPosition(Output.Pose[FCompactPoseBoneIndex(0)].GetTranslation());
-		const FVector PrevRootWorldSpaceLocation = PoseSnapshots.Last().ComponentTransform.TransformPosition(PoseSnapshots.Last().BoneTransforms[0].GetTranslation());
+		
+		const int32 RootBoneIndex = CurrPoseSnapshot.BoneIndices[0];
 
-		if (FVector::DistSquared(RootWorldSpaceLocation, PrevRootWorldSpaceLocation) > FMath::Square(TeleportDistanceThreshold))
+		if (RootBoneIndex != INDEX_NONE)
 		{
-			bTeleported = true;
+			const FVector PrevRootWorldSpaceLocation = CurrPoseSnapshot.ComponentTransform.TransformPosition(CurrPoseSnapshot.BoneTranslations[RootBoneIndex]);
+
+			if (FVector::DistSquared(RootWorldSpaceLocation, PrevRootWorldSpaceLocation) > FMath::Square(TeleportDistanceThreshold))
+			{
+				bTeleported = true;
+			}
 		}
 	}
 
@@ -731,7 +822,7 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 	// which case there shouldn't be any discontinuity to remove, so no inertialization needs to be done, and we can 
 	// discard any requests.
 
-	if (PoseSnapshots.IsEmpty())
+	if (CurrPoseSnapshot.IsEmpty() && PrevPoseSnapshot.IsEmpty())
 	{
 		RequestQueue.Reset();
 	}
@@ -761,13 +852,14 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 		InertializationDuration = BlendTimeMultiplier * RequestQueue[ShortestRequestIdx].Duration;
 		InertializationDurationPerBone.Init(InertializationDuration, NumSkeletonBones);
 
+		const USkeleton* TargetSkeleton = Output.AnimInstanceProxy->GetRequiredBones().GetSkeletonAsset();
 		if (RequestQueue[ShortestRequestIdx].BlendProfile)
 		{
-			RequestQueue[ShortestRequestIdx].BlendProfile->FillSkeletonBoneDurationsArray(InertializationDurationPerBone, InertializationDuration);
+			RequestQueue[ShortestRequestIdx].BlendProfile->FillSkeletonBoneDurationsArray(InertializationDurationPerBone, InertializationDuration, TargetSkeleton);
 		}
 		else if (DefaultBlendProfile)
 		{
-			DefaultBlendProfile->FillSkeletonBoneDurationsArray(InertializationDurationPerBone, InertializationDuration);
+			DefaultBlendProfile->FillSkeletonBoneDurationsArray(InertializationDurationPerBone, InertializationDuration, TargetSkeleton);
 		}
 
 		// Cache the maximum duration across all bones (so we know when to deactivate the inertialization request)
@@ -780,7 +872,7 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 		}
 
 #if ANIM_TRACE_ENABLED
-		InertializationRequestDescription = RequestQueue[ShortestRequestIdx].Description;
+		InertializationRequestDescription = RequestQueue[ShortestRequestIdx].DescriptionString;
 		InertializationRequestNodeId = RequestQueue[ShortestRequestIdx].NodeId;
 		InertializationRequestAnimInstance = RequestQueue[ShortestRequestIdx].AnimInstance;
 #endif
@@ -805,25 +897,25 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 
 		// Initialize the recorded pose state at the point of transition
 
-		if (PoseSnapshots.Num() > 1)
+		if (!PrevPoseSnapshot.IsEmpty() && !CurrPoseSnapshot.IsEmpty())
 		{
 			// We have two previous poses and so can initialize as normal.
 
 			InitFrom(
 				Output.Pose,
 				Output.Curve,
-				PoseSnapshots[PoseSnapshots.Num() - 2],
-				PoseSnapshots[PoseSnapshots.Num() - 1]);
+				PrevPoseSnapshot,
+				CurrPoseSnapshot);
 		}
-		else if (PoseSnapshots.Num() > 0)
+		else if (!CurrPoseSnapshot.IsEmpty())
 		{
 			// We only have a single previous pose. Repeat this pose assuming zero velocity.
 
 			InitFrom(
 				Output.Pose,
 				Output.Curve,
-				PoseSnapshots.Last(),
-				PoseSnapshots.Last());
+				CurrPoseSnapshot,
+				CurrPoseSnapshot);
 		}
 		else
 		{
@@ -869,23 +961,14 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 
 	// Record Pose Snapshot
 
-	if (PoseSnapshots.Num() < UE::Anim::DeadBlending::Private::MaxPoseSnapShotNum)
+	if (!CurrPoseSnapshot.IsEmpty())
 	{
-		// Add the pose to the end of the buffer
-		PoseSnapshots.AddDefaulted_GetRef().InitFrom(Output.Pose, Output.Curve, ComponentTransform, AttachParentName, DeltaTime);
+		// Directly swap the memory of the current pose with the prev pose snapshot (to avoid allocations and copies)
+		Swap(PrevPoseSnapshot, CurrPoseSnapshot);
 	}
-	else
-	{
-		// Bubble the old poses forward in the buffer (using swaps to avoid allocations and copies)
-		for (int32 SnapshotIndex = 0; SnapshotIndex < UE::Anim::DeadBlending::Private::MaxPoseSnapShotNum - 1; ++SnapshotIndex)
-		{
-			Swap(PoseSnapshots[SnapshotIndex], PoseSnapshots[SnapshotIndex + 1]);
-		}
-
-		// Overwrite the (now irrelevant) pose in the last slot with the new post snapshot
-		// (thereby avoiding the reallocation costs we would have incurred had we simply added a new pose at the end)
-		PoseSnapshots.Last().InitFrom(Output.Pose, Output.Curve, ComponentTransform, AttachParentName, DeltaTime);
-	}
+	
+	// Initialize the current pose
+	CurrPoseSnapshot.InitFrom(Output.Pose, Output.Curve, ComponentTransform, AttachParentName, DeltaTime);
 
 	// Reset Delta Time
 
@@ -893,7 +976,7 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 
 	const float InertializationWeight = InertializationState == EInertializationState::Active ?
 		1.0f - FAlphaBlend::AlphaToBlendOption(
-			InertializationTime / FMath::Max(InertializationDuration, UE_SMALL_NUMBER),
+			FMath::Clamp(InertializationTime / FMath::Max(InertializationDuration, UE_SMALL_NUMBER), 0.0f, 1.0f),
 			InertializationBlendMode, InertializationCustomBlendCurve) : 0.0f;
 
 	TRACE_ANIM_NODE_VALUE_WITH_ID(Output, GetNodeIndex(), TEXT("State"), *UEnum::GetValueAsString(InertializationState));
@@ -902,8 +985,10 @@ void FAnimNode_DeadBlending::Evaluate_AnyThread(FPoseContext& Output)
 	TRACE_ANIM_NODE_VALUE_WITH_ID(Output, GetNodeIndex(), TEXT("Max Duration"), InertializationMaxDuration);
 	TRACE_ANIM_NODE_VALUE_WITH_ID(Output, GetNodeIndex(), TEXT("Normalized Time"), InertializationDuration > UE_KINDA_SMALL_NUMBER ? (InertializationTime / InertializationDuration) : 0.0f);
 	TRACE_ANIM_NODE_VALUE_WITH_ID(Output, GetNodeIndex(), TEXT("Inertialization Weight"), InertializationWeight);
-	TRACE_ANIM_NODE_VALUE_WITH_ID(Output, GetNodeIndex(), TEXT("Request Description"), *InertializationRequestDescription.ToString());
+	TRACE_ANIM_NODE_VALUE_WITH_ID(Output, GetNodeIndex(), TEXT("Request Description"), *InertializationRequestDescription);
 	TRACE_ANIM_NODE_VALUE_WITH_ID_ANIM_NODE(Output, GetNodeIndex(), TEXT("Request Node"), InertializationRequestNodeId, InertializationRequestAnimInstance);
+
+	TRACE_ANIM_INERTIALIZATION(*Output.AnimInstanceProxy, GetNodeIndex(), InertializationWeight, FAnimTrace::EInertializationType::DeadBlending);
 }
 
 bool FAnimNode_DeadBlending::NeedsDynamicReset() const

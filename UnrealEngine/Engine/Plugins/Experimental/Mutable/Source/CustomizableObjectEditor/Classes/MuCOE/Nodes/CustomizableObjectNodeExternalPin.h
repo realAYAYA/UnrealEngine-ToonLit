@@ -17,20 +17,6 @@ class UEdGraphPin;
 class UObject;
 
 
-/**
- * Custom remap pins by name action.
- *
- * If the node can not find the exposed pin, set the external pin as deprecated.
- */
-UCLASS()
-class UCustomizableObjectNodeRemapPinsCustomExternalPin : public UCustomizableObjectNodeRemapPinsByName
-{
-	GENERATED_BODY()
-
-public:
-	virtual void RemapPins(const UCustomizableObjectNode& Node, const TArray<UEdGraphPin*>& OldPins, const TArray<UEdGraphPin*>& NewPins, TMap<UEdGraphPin*, UEdGraphPin*>& PinsToRemap, TArray<UEdGraphPin*>& PinsToOrphan) override;
-};
-
 UCLASS()
 class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeExternalPin : public UCustomizableObjectNode
 {
@@ -46,7 +32,6 @@ public:
 	FText GetTooltipText() const override;
 	
 	// UCustomizableObjectNode interface
-	virtual void BeginConstruct() override;
 	virtual void BackwardsCompatibleFixup() override;
 	virtual void PostBackwardsCompatibleFixup() override;
 	void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
@@ -55,15 +40,7 @@ public:
 	virtual bool CanConnect(const UEdGraphPin* InOwnedInputPin, const UEdGraphPin* InOutputPin, bool& bOutIsOtherNodeBlocklisted, bool& bOutArePinsCompatible) const override;
 
 	void UpdateReferencedNodeId(const FGuid& NewGuid) override;
-
-	// Own interface
 	
-	/** Create the external pin. 
-	 *
-	 * @param NodeExposePin Used to obtain expose pin friendly name. If it is nullptr, the name will be set to a default.
-	 */
-	UEdGraphPin* CreateExternalPin(const UCustomizableObjectNodeExposePin* NodeExposePin);
-
 	/** Set the linked Node Expose Pin node guid. */
 	void SetExternalObjectNodeId(FGuid Guid);
 

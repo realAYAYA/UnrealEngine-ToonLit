@@ -1634,12 +1634,20 @@ FText SSubobject_RowWidget::GetTooltipText() const
 		if (Data->IsInheritedComponent())
 		{
 			return LOCTEXT("InheritedDefaultSceneRootToolTip",
-			               "This is the default scene root component. It cannot be copied, renamed or deleted.\nIt has been inherited from the parent class, so its properties cannot be edited here.\nNew scene components will automatically be attached to it.");
+			               "This is the default scene root component. It cannot be renamed or deleted.\nIt has been inherited from the parent class, so its properties cannot be edited here.\nNew scene components will automatically be attached to it.");
 		}
 		else
 		{
-			return LOCTEXT("DefaultSceneRootToolTip",
-			               "This is the default scene root component. It cannot be copied, renamed or deleted.\nIt can be replaced by drag/dropping another scene component over it.");
+			if (Data->CanDelete())
+			{
+				return LOCTEXT("DefaultSceneRootDeletableToolTip",
+					"This is the default scene root component.\nIt can be replaced by drag/dropping another scene component over it.");
+			}
+			else
+			{
+				return LOCTEXT("DefaultSceneRootToolTip",
+					"This is the default scene root component. It cannot be renamed or deleted.\nIt can be replaced by drag/dropping another scene component over it.");
+			}
 		}
 	}
 	else
@@ -2148,7 +2156,23 @@ void SSubobjectEditor::CreateCommandList()
 	);
 
 	CommandList->MapAction(FGraphEditorCommands::Get().GetFindReferences(),
-		FUIAction(FExecuteAction::CreateSP(this, &SSubobjectEditor::OnFindReferences))
+		FUIAction(FExecuteAction::CreateSP(this, &SSubobjectEditor::OnFindReferences, false, EGetFindReferenceSearchStringFlags::Legacy) )
+	);
+	
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByNameLocal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSubobjectEditor::OnFindReferences, false, EGetFindReferenceSearchStringFlags::None) )
+	);
+	
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByNameGlobal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSubobjectEditor::OnFindReferences, true, EGetFindReferenceSearchStringFlags::None) )
+	);
+	
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberLocal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSubobjectEditor::OnFindReferences, false, EGetFindReferenceSearchStringFlags::UseSearchSyntax) )
+	);
+
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberGlobal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSubobjectEditor::OnFindReferences, true, EGetFindReferenceSearchStringFlags::UseSearchSyntax) )
 	);
 }
 
@@ -2310,7 +2334,7 @@ void SSubobjectEditor::HandleItemDoubleClicked(FSubobjectEditorTreeNodePtrType I
 	OnItemDoubleClicked.ExecuteIfBound(InItem);
 }
 
-void SSubobjectEditor::OnFindReferences()
+void SSubobjectEditor::OnFindReferences(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags)
 {
 	TArray<FSubobjectEditorTreeNodePtrType> SelectedNodes = TreeWidget->GetSelectedItems();
 	if (SelectedNodes.Num() == 1)
@@ -2323,11 +2347,13 @@ void SSubobjectEditor::OnFindReferences()
 
 			FMemberReference MemberReference;
 			MemberReference.SetSelfMember(*VariableName);
-			const FString SearchTerm = MemberReference.GetReferenceSearchString(GetBlueprint()->SkeletonGeneratedClass);
+			const FString SearchTerm = EnumHasAnyFlags(Flags, EGetFindReferenceSearchStringFlags::UseSearchSyntax) ? MemberReference.GetReferenceSearchString(GetBlueprint()->SkeletonGeneratedClass) : FString::Printf(TEXT("\"%s\""), *VariableName);
 
 			TSharedRef<IBlueprintEditor> BlueprintEditor = StaticCastSharedRef<IBlueprintEditor>(
 				FoundAssetEditor.ToSharedRef());
-			BlueprintEditor->SummonSearchUI(true, SearchTerm);
+			
+			const bool bSetFindWithinBlueprint = !bSearchAllBlueprints;
+			BlueprintEditor->SummonSearchUI(bSetFindWithinBlueprint, SearchTerm);
 		}
 	}
 }
@@ -2602,13 +2628,14 @@ void SSubobjectEditor::RestoreSelectionState(TArray<FSubobjectEditorTreeNodePtrT
 			}
 			else
 			{
-				FSubobjectEditorTreeNodePtrType NodeToSelectPtr = FindSlateNodeForHandle(SelectedTreeNodes[i]->GetDataHandle());
+				FSubobjectDataHandle CurrentNodeDataHandle = SelectedTreeNodes[i]->GetDataHandle();
+				FSubobjectEditorTreeNodePtrType NodeToSelectPtr = FindSlateNodeForHandle(CurrentNodeDataHandle);
 
 				// If we didn't find something for this exact handle, fall back to just search for something
 				// with the same variable name. This helps to still preserve selection across re-compiles of a class.
-				if (!NodeToSelectPtr.IsValid() && bFallBackToVariableName)
+				if (!NodeToSelectPtr.IsValid() && CurrentNodeDataHandle.IsValid() && bFallBackToVariableName)
 				{
-					NodeToSelectPtr = FindSlateNodeForVariableName(SelectedTreeNodes[i]->GetVariableName());
+					NodeToSelectPtr = FindSlateNodeForVariableName(CurrentNodeDataHandle.GetSharedDataPtr()->GetVariableName());
 				}
 
 				if (NodeToSelectPtr.IsValid())
@@ -3253,7 +3280,16 @@ void SSubobjectEditor::GetSelectedItemsForContextMenu(TArray<FComponentEventCons
 		const FSubobjectEditorTreeNodePtrType& TreeNode = *NodeIter;
 		const FSubobjectData* Data = TreeNode->GetDataSource();
 		NewItem.VariableName = Data->GetVariableName();
-		NewItem.Component = const_cast<UActorComponent*>(TreeNode->GetComponentTemplate());
+		const UObject* ContextObject = GetObjectContext();
+		const AActor* ContextAsActor = Cast<AActor>(ContextObject);
+		if (!ContextObject->HasAnyFlags(RF_ClassDefaultObject) && ContextAsActor)
+		{
+			NewItem.Component = const_cast<UActorComponent*>(Data->FindComponentInstanceInActor(ContextAsActor));
+		}
+		else
+		{
+			NewItem.Component = const_cast<UObject*>(Data->GetObjectForBlueprint(GetBlueprint()));
+		}
 		OutSelectedItems.Add(NewItem);
 	}
 }

@@ -4,7 +4,10 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace EpicGames.Core
 {
@@ -149,7 +152,7 @@ namespace EpicGames.Core
 	/// </summary>
 	public class PooledMemoryWriter : IMemoryWriter, IDisposable
 	{
-		MemoryPool<byte> _pool;
+		readonly MemoryPool<byte> _pool;
 		IMemoryOwner<byte> _owner;
 		Memory<byte> _memory;
 		int _length;
@@ -252,29 +255,61 @@ namespace EpicGames.Core
 	/// <summary>
 	/// Class for building byte sequences, similar to StringBuilder. Allocates memory in chunks to avoid copying data.
 	/// </summary>
-	public sealed class ChunkedMemoryWriter : IMemoryWriter, IDisposable
+	public abstract class ChunkedMemoryWriterBase : IMemoryWriter
 	{
-		class Chunk
+		/// <summary>
+		/// Describes a chunk of data in the output stream
+		/// </summary>
+		protected class Chunk
 		{
-			public readonly int RunningIndex;
-			public readonly IMemoryOwner<byte> Owner;
-			public readonly Memory<byte> Data;
-			public int Length;
+			/// <summary>
+			/// Start position in the sequence
+			/// </summary>
+			public int RunningIndex { get; }
 
-			public Chunk(int runningIndex, int size)
+			/// <summary>
+			/// Data for this chunk
+			/// </summary>
+			public Memory<byte> Data { get; }
+
+			/// <summary>
+			/// Used length of the chunk
+			/// </summary>
+			public int Length { get; set; }
+
+			/// <summary>
+			/// Constructor
+			/// </summary>
+			public Chunk(int runningIndex, Memory<byte> data)
 			{
 				RunningIndex = runningIndex;
-				Owner = MemoryPool<byte>.Shared.Rent(size);
-				Data = Owner.Memory;
+				Data = data;
 			}
 
+			/// <summary>
+			/// Release any resources managed by this chunk. Note that ChunkedMemoryWriterBase does not implement IDisposable directly; derived classes should call Clear() on Dispose() if needed.
+			/// </summary>
+			public virtual void Release() { }
+
+			/// <summary>
+			/// Span that has been written to
+			/// </summary>
 			public ReadOnlySpan<byte> WrittenSpan => WrittenMemory.Span;
+
+			/// <summary>
+			/// Memory that has been written to
+			/// </summary>
 			public ReadOnlyMemory<byte> WrittenMemory => Data.Slice(0, Length);
 		}
 
 		readonly List<Chunk> _chunks = new List<Chunk>();
 		readonly int _chunkSize;
 		Chunk _currentChunk;
+
+		/// <summary>
+		/// Accessor for the allocated chunks
+		/// </summary>
+		protected IReadOnlyList<Chunk> Chunks => _chunks;
 
 		/// <summary>
 		/// Length of the current sequence
@@ -284,29 +319,17 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		/// <param name="chunkSize"></param>
-		public ChunkedMemoryWriter(int chunkSize)
-			: this(chunkSize, chunkSize)
+		protected ChunkedMemoryWriterBase(Chunk initialChunk, int chunkSize)
 		{
-		}
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		/// <param name="initialSize">Size of the initial chunk</param>
-		/// <param name="chunkSize">Default size for subsequent chunks</param>
-		public ChunkedMemoryWriter(int initialSize = 4096, int chunkSize = 4096)
-		{
-			_currentChunk = new Chunk(0, initialSize);
-			_chunks.Add(_currentChunk);
+			_currentChunk = initialChunk;
+			_chunks.Add(initialChunk);
 			_chunkSize = chunkSize;
 		}
 
-		/// <inheritdoc/>
-		public void Dispose()
-		{
-			Clear();
-		}
+		/// <summary>
+		/// Creates a new chunk for the buffer
+		/// </summary>
+		protected abstract Chunk CreateChunk(int runningIndex, int size);
 
 		/// <summary>
 		/// Clear the current builder
@@ -315,7 +338,7 @@ namespace EpicGames.Core
 		{
 			foreach (Chunk chunk in _chunks)
 			{
-				chunk.Owner.Dispose();
+				chunk.Release();
 			}
 
 			_chunks.Clear();
@@ -327,11 +350,34 @@ namespace EpicGames.Core
 
 		/// <inheritdoc/>
 		public Memory<byte> GetMemory(int sizeHint)
+			=> GetMemory(0, sizeHint);
+
+		/// <summary>
+		/// Gets a block of memory to write to, preserving existing (but uncommitted) data in previously returned buffers.
+		/// </summary>
+		/// <param name="usedSize">Size of data in the buffer which has not been committed via a call to Advance</param>
+		/// <param name="desiredSize">Desired size of the buffer to write to</param>
+		/// <returns>New block of memory to write to</returns>
+		public Memory<byte> GetMemory(int usedSize, int desiredSize)
 		{
-			int requiredSize = _currentChunk.Length + Math.Max(sizeHint, 1);
+			int requiredSize = _currentChunk.Length + Math.Max(desiredSize, 1);
 			if (requiredSize > _currentChunk.Data.Length)
 			{
-				_currentChunk = new Chunk(_currentChunk.RunningIndex + _currentChunk.Length, Math.Max(sizeHint, _chunkSize));
+				int runningIndex = _currentChunk.RunningIndex + _currentChunk.Length;
+				Chunk nextChunk = CreateChunk(runningIndex, Math.Max(desiredSize, _chunkSize));
+
+				if (usedSize > 0)
+				{
+					ReadOnlyMemory<byte> usedData = _currentChunk.Data.Slice(_currentChunk.Length, usedSize);
+					usedData.CopyTo(nextChunk.Data);
+				}
+				if (_currentChunk.Length == 0)
+				{
+					_currentChunk.Release();
+					_chunks.RemoveAt(_chunks.Count - 1);
+				}
+
+				_currentChunk = nextChunk;
 				_chunks.Add(_currentChunk);
 			}
 			return _currentChunk.Data.Slice(_currentChunk.Length);
@@ -392,7 +438,8 @@ namespace EpicGames.Core
 		public ReadOnlySequence<byte> AsSequence(int offset, int length)
 		{
 			// TODO: could do a binary search for offset and work fowards from there
-			return AsSequence().Slice(offset, length);
+			ReadOnlySequence<byte> sequence = AsSequence();
+			return sequence.Slice(offset, Math.Min(length, sequence.Length - offset));
 		}
 
 		/// <summary>
@@ -409,6 +456,19 @@ namespace EpicGames.Core
 		}
 
 		/// <summary>
+		/// Copies the data to a stream
+		/// </summary>
+		/// <param name="stream">Stream to write to</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task CopyToAsync(Stream stream, CancellationToken cancellationToken = default)
+		{
+			foreach (Chunk chunk in _chunks)
+			{
+				await stream.WriteAsync(chunk.WrittenMemory, cancellationToken);
+			}
+		}
+
+		/// <summary>
 		/// Create a byte array from the sequence
 		/// </summary>
 		/// <returns>Byte array containing the current buffer data</returns>
@@ -417,6 +477,234 @@ namespace EpicGames.Core
 			byte[] data = new byte[Length];
 			CopyTo(data);
 			return data;
+		}
+	}
+
+	/// <summary>
+	/// Class for building byte sequences, similar to StringBuilder. Allocates memory in chunks to avoid copying data.
+	/// </summary>
+	public sealed class ChunkedArrayMemoryWriter : ChunkedMemoryWriterBase
+	{
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="chunkSize">Size of each chunk</param>
+		public ChunkedArrayMemoryWriter(int chunkSize = 4096)
+			: this(chunkSize, chunkSize)
+		{ }
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="initialChunkSize">Size of the initial chunk</param>
+		/// <param name="nextChunkSize">Size of subsequent chunks</param>
+		public ChunkedArrayMemoryWriter(int initialChunkSize, int nextChunkSize)
+			: base(new Chunk(0, new byte[initialChunkSize]), nextChunkSize)
+		{ }
+
+		/// <inheritdoc/>
+		protected override Chunk CreateChunk(int runningIndex, int size) => new Chunk(runningIndex, new byte[size]);
+	}
+
+	/// <summary>
+	/// Class for building byte sequences, similar to StringBuilder. Allocates memory in chunks using a pool allocator to avoid copying data.
+	/// </summary>
+	public sealed class ChunkedMemoryWriter : ChunkedMemoryWriterBase, IDisposable
+	{
+		class PooledChunk : Chunk
+		{
+			public readonly IMemoryOwner<byte> Owner;
+
+			public PooledChunk(int runningIndex, IMemoryOwner<byte> owner)
+				: base(runningIndex, owner.Memory)
+			{
+				Owner = owner;
+			}
+
+			public override void Release() => Owner.Dispose();
+		}
+
+		readonly IMemoryAllocator<byte> _allocator;
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="chunkSize"></param>
+		public ChunkedMemoryWriter(int chunkSize)
+			: this(chunkSize, chunkSize)
+		{ }
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="initialSize">Size of the initial chunk</param>
+		/// <param name="chunkSize">Default size for subsequent chunks</param>
+		public ChunkedMemoryWriter(int initialSize = 4096, int chunkSize = 4096)
+			: this(PoolAllocator.Shared, initialSize, chunkSize)
+		{
+		}
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="allocator">Allocator to draw from</param>
+		/// <param name="initialSize">Size of the initial chunk</param>
+		/// <param name="chunkSize">Default size for subsequent chunks</param>
+		public ChunkedMemoryWriter(IMemoryAllocator<byte> allocator, int initialSize = 4096, int chunkSize = 4096)
+			: base(new PooledChunk(0, allocator.Alloc(initialSize, null)), chunkSize)
+		{
+			_allocator = allocator;
+		}
+
+		/// <inheritdoc/>
+		protected override Chunk CreateChunk(int runningIndex, int size) => new PooledChunk(runningIndex, _allocator.Alloc(size, null));
+
+		/// <inheritdoc/>
+		public void Dispose()
+		{
+			Clear();
+		}
+	}
+
+	/// <summary>
+	/// Implementation of <see cref="ChunkedMemoryWriterBase"/> which takes pages from a <see cref="IMemoryAllocator{Byte}"/>
+	/// </summary>
+	public sealed class RefCountedMemoryWriter : ChunkedMemoryWriterBase, IDisposable
+	{
+		class BufferChunk : Chunk
+		{
+			public readonly IRefCountedHandle<Memory<byte>> Handle;
+
+			public BufferChunk(int runningIndex, IRefCountedHandle<Memory<byte>> handle)
+				: base(runningIndex, handle.Target)
+			{
+				Handle = handle;
+			}
+
+			public override void Release()
+			{
+				Handle.Dispose();
+			}
+		}
+
+		class ArrayDisposer : IDisposable
+		{
+			readonly IDisposable[] _handles;
+
+			public ArrayDisposer(IDisposable[] handles) => _handles = handles;
+
+			public void Dispose()
+			{
+				for (int idx = 0; idx < _handles.Length; idx++)
+				{
+					_handles[idx].Dispose();
+				}
+			}
+		}
+
+		readonly IMemoryAllocator<byte> _allocator;
+		readonly object? _allocationTag;
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="allocator">Allocator for buffers</param>
+		/// <param name="chunkSize"></param>
+		/// <param name="allocationTag">Tag for allocated memory</param>
+		public RefCountedMemoryWriter(IMemoryAllocator<byte> allocator, int chunkSize, object? allocationTag = null)
+			: this(allocator, chunkSize, chunkSize, allocationTag)
+		{ }
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="allocator">Allocator for buffers</param>
+		/// <param name="initialSize">Size of the initial chunk</param>
+		/// <param name="chunkSize">Default size for subsequent chunks</param>
+		/// <param name="allocationTag">Tag for allocated memory</param>
+		public RefCountedMemoryWriter(IMemoryAllocator<byte> allocator, int initialSize, int chunkSize, object? allocationTag)
+			: base(new BufferChunk(0, RefCountedHandle.Create(allocator.Alloc(initialSize, allocationTag))), chunkSize)
+		{
+			_allocator = allocator;
+			_allocationTag = allocationTag;
+		}
+
+		/// <inheritdoc/>
+		protected override Chunk CreateChunk(int runningIndex, int size) => new BufferChunk(runningIndex, RefCountedHandle.Create(_allocator.Alloc(size, _allocationTag)));
+
+		/// <inheritdoc/>
+		public void Dispose()
+		{
+			Clear();
+		}
+
+		/// <summary>
+		/// Returns a contiguous block of memory containing the written data
+		/// </summary>
+		public IRefCountedHandle<ReadOnlyMemory<byte>> AsRefCountedMemory() => AsRefCountedMemory(0, Length);
+
+		/// <summary>
+		/// Returns a contiguous block of memory containing the written data
+		/// </summary>
+		public IRefCountedHandle<ReadOnlyMemory<byte>> AsRefCountedMemory(int offset) => AsRefCountedMemory(offset, Length - offset);
+
+		/// <summary>
+		/// Returns a contiguous block of memory containing the written data
+		/// </summary>
+		public IRefCountedHandle<ReadOnlyMemory<byte>> AsRefCountedMemory(int offset, int length)
+		{
+			IRefCountedHandle<ReadOnlySequence<byte>> sequence = AsRefCountedSequence(offset, length);
+			if (sequence.Target.IsSingleSegment)
+			{
+				return RefCountedHandle.Create(sequence.Target.First, sequence);
+			}
+
+			try
+			{
+				IRefCountedHandle<Memory<byte>> allocation = RefCountedHandle.Create(_allocator.Alloc(length, _allocationTag));
+				sequence.Target.CopyTo(allocation.Target.Span);
+				return RefCountedHandle.Create<ReadOnlyMemory<byte>>(allocation.Target.Slice(0, length), allocation);
+			}
+			finally
+			{
+				sequence.Dispose();
+			}
+		}
+
+		/// <summary>
+		/// Creates a reference counted sequence from the allocated data
+		/// </summary>
+		public IRefCountedHandle<ReadOnlySequence<byte>> AsRefCountedSequence() => AsRefCountedSequence(0, Length);
+
+		/// <summary>
+		/// Creates a reference counted sequence from the allocated data
+		/// </summary>
+		public IRefCountedHandle<ReadOnlySequence<byte>> AsRefCountedSequence(int offset) => AsRefCountedSequence(offset, Length - offset);
+
+		/// <summary>
+		/// Creates a reference counted sequence from the allocated data
+		/// </summary>
+		public IRefCountedHandle<ReadOnlySequence<byte>> AsRefCountedSequence(int offset, int length)
+		{
+			int minChunkIdx = 0;
+			while (minChunkIdx + 1 < Chunks.Count && offset > Chunks[minChunkIdx + 1].RunningIndex)
+			{
+				minChunkIdx++;
+			}
+
+			int maxChunkIdx = minChunkIdx + 1;
+			while (maxChunkIdx < Chunks.Count && offset + length > Chunks[maxChunkIdx].RunningIndex)
+			{
+				maxChunkIdx++;
+			}
+
+			IDisposable[] handles = new IDisposable[maxChunkIdx - minChunkIdx];
+			for (int chunkIdx = minChunkIdx; chunkIdx < maxChunkIdx; chunkIdx++)
+			{
+				handles[chunkIdx - minChunkIdx] = ((BufferChunk)Chunks[chunkIdx]).Handle.AddRef();
+			}
+
+			return new RefCountedHandle<ReadOnlySequence<byte>>(AsSequence(offset, length), new ArrayDisposer(handles));
 		}
 	}
 
@@ -566,17 +854,28 @@ namespace EpicGames.Core
 		}
 
 		/// <summary>
-		/// Writes a Guid to the memory writer
+		/// Writes a Guid to the memory writer using NET order serialization.
 		/// </summary>
 		/// <param name="writer">Writer to serialize to</param>
 		/// <param name="guid">Value to write</param>
-		public static void WriteGuid(this IMemoryWriter writer, Guid guid)
+		public static void WriteGuidNetOrder(this IMemoryWriter writer, Guid guid)
 		{
 			Memory<byte> buffer = writer.GetMemory(16);
 			if (!guid.TryWriteBytes(buffer.Slice(0, 16).Span))
 			{
 				throw new InvalidOperationException("Unable to write guid to buffer");
 			}
+			writer.Advance(16);
+		}
+
+		/// <summary>
+		/// Writes a Guid to the memory writer (uses UE rather than NET serialization order).
+		/// </summary>
+		/// <param name="writer">Writer to serialize to</param>
+		/// <param name="guid">Value to write</param>
+		public static void WriteGuidUnrealOrder(this IMemoryWriter writer, Guid guid)
+		{
+			GuidUtils.WriteGuidUnrealOrder(writer.GetSpan(16), guid);
 			writer.Advance(16);
 		}
 

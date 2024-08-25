@@ -495,12 +495,16 @@ public:
 
 	/**
 	* Wait until the job is complete, up to a time limit
-	* @param TimeLimitSeconds Must be positive, if you want to wait forever or poll, use a different call.
+	* @param TimeLimitSeconds Must be positive, otherwise polls -- same as calling IsDone()
 	* @return true if the task is completed
 	**/
 	bool WaitCompletionWithTimeout(float TimeLimitSeconds)
 	{
-		check(TimeLimitSeconds > 0.0f)
+		if (TimeLimitSeconds <= 0.0f)
+		{
+			return IsDone();
+		}
+
 		FPlatformMisc::MemoryBarrier();
 		if (QueuedPool)
 		{

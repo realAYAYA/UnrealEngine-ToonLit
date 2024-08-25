@@ -117,13 +117,17 @@ class UKismetTextLibrary : public UBlueprintFunctionLibrary
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "To String (Text)", CompactNodeTitle = "->", BlueprintAutocast), Category = "Utilities|String")
 	static ENGINE_API FString Conv_TextToString(const FText& InText);
 
-	/** Converts string to culture invariant text. Use Format or Make Literal Text to create localizable text */
+	/** Converts string to culture invariant text. Use 'Make Literal Text' to create localizable text, or 'Format' if concatenating localized text */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "To Text (String)", BlueprintAutocast), Category="Utilities|Text")
 	static ENGINE_API FText Conv_StringToText(const FString& InString);
 
 	/** Converts Name to culture invariant text */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "To Text (Name)", BlueprintAutocast), Category="Utilities|Text")
 	static ENGINE_API FText Conv_NameToText(FName InName);
+
+	/** Converts string to culture invariant text. Use 'Make Literal Text' to create localizable text, or 'Format' if concatenating localized text */
+	UFUNCTION(BlueprintPure, Category="Utilities|Text")
+	static ENGINE_API FText MakeInvariantText(const FString& InString);
 
 	/** Returns true if text is empty. */
 	UFUNCTION(BlueprintPure, Category="Utilities|Text")
@@ -287,11 +291,25 @@ class UKismetTextLibrary : public UBlueprintFunctionLibrary
 	static ENGINE_API FText TextFromStringTable(const FName TableId, const FString& Key);
 
 	/**
-	 * Attempts to find the String Table ID and key used by the given text.
+	 * Attempts to get the String Table ID and key used by the given text.
 	 * @return True if the String Table ID and key were found, false otherwise.
 	 */
-	UFUNCTION(BlueprintPure, Category="Utilities|Text", meta=(DisplayName="Find String Table ID and Key from Text"))
+	UFUNCTION(BlueprintPure, Category="Utilities|Text", meta=(DisplayName="Get String Table ID and Key from Text"))
 	static ENGINE_API bool StringTableIdAndKeyFromText(FText Text, FName& OutTableId, FString& OutKey);
+
+	/**
+	 * Attempts to get the ID (namespace and key) used by the given text.
+	 * @return True if the namespace (which may be empty) and key were found, false otherwise.
+	 */
+	UFUNCTION(BlueprintPure, Category="Utilities|Text", meta=(DisplayName="Get ID from Text"))
+	static ENGINE_API bool GetTextId(FText Text, FString& OutNamespace, FString& OutKey);
+
+	/**
+	 * Get the (non-localized) source string of the given text.
+	 * @note For a generated text (eg, the result of a Format), this will deep build the source string as if the generation had run for the native language.
+	 */
+	UFUNCTION(BlueprintPure, Category="Utilities|Text", meta=(DisplayName="Get Source String from Text"))
+	static ENGINE_API FString GetTextSourceString(FText Text);
 
 	/**
 	 * Check whether the given polyglot data is valid.
@@ -306,4 +324,20 @@ class UKismetTextLibrary : public UBlueprintFunctionLibrary
 	 */
 	UFUNCTION(BlueprintPure, Category="Utilities|Text")
 	static ENGINE_API FText PolyglotDataToText(const FPolyglotTextData& PolyglotData);
+
+	/**
+	 * Edit the source string of the given text property, akin to what happens when editing a text property in a details panel.
+	 * This will attempt to preserve the existing ID of the text property being edited, or failing that will attempt to build a deterministic ID based on the object and property info.
+	 * 
+	 * @note This is an ADVANCED function that is ONLY safe to be used in environments where the modified text property will be gathered for localization (eg, in the editor, or a game mode that collects text properties to be localized).
+	 * 
+	 * @param TextOwner		The object that owns the given Text to be edited.
+	 * @param Text			The text property to edit. This must be a property that exists on TextOwner.
+	 * @param SourceString	The source string that the edited text property should use.
+	 * 
+	 * @return True if edit was possible, or false if not.
+	 */
+	UFUNCTION(BlueprintCallable, CustomThunk, Category="Utilities|Text", meta=(DefaultToSelf="TextOwner"))
+	static ENGINE_API bool EditTextSourceString(UObject* TextOwner, UPARAM(ref) FText& Text, const FString& SourceString);
+	DECLARE_FUNCTION(execEditTextSourceString);
 };

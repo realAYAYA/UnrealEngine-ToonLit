@@ -643,7 +643,7 @@ void* _Nullable FApplePlatformMemory::BinnedAllocFromOS(SIZE_T Size)
 		AllocDescriptor->OriginalSizeAsPassed = Size;
 	}
 
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Pointer, Size));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Pointer, Size));
 	return Pointer;
 #else
 	void* Ptr = mmap(nullptr, Size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -652,7 +652,7 @@ void* _Nullable FApplePlatformMemory::BinnedAllocFromOS(SIZE_T Size)
 		UE_LOG(LogTemp, Warning, TEXT("mmap failure allocating %d, error code: %d"), Size, errno);
 		Ptr = nullptr;
 	}
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size));
 	return Ptr;
 #endif // USE_MALLOC_BINNED2
 }
@@ -661,7 +661,7 @@ void FApplePlatformMemory::BinnedFreeToOS(void* Ptr, SIZE_T Size)
 {
 	// Binned2 requires allocations to be BinnedPageSize-aligned. Simple mmap() does not guarantee this for recommended BinnedPageSize (64KB).
 #if USE_MALLOC_BINNED2
-	LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
 	// guard against someone not passing size in whole pages
 	static SIZE_T OSPageSize = FPlatformMemory::GetConstants().PageSize;
 	SIZE_T SizeInWholePages = (Size % OSPageSize) ? (Size + OSPageSize - (Size % OSPageSize)) : Size;
@@ -717,7 +717,7 @@ void FApplePlatformMemory::BinnedFreeToOS(void* Ptr, SIZE_T Size)
 		}
 	}
 #else
-	LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
 	if (munmap(Ptr, Size) != 0)
 	{
 		const int ErrNo = errno;

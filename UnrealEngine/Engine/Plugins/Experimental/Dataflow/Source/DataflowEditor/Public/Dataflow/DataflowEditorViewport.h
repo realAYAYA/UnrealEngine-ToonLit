@@ -1,55 +1,42 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
-#include "CanvasTypes.h"
 #include "CoreMinimal.h"
-#include "SAssetEditorViewport.h"
+#include "SBaseCharacterFXEditorViewport.h"
 #include "SCommonEditorViewportToolbarBase.h"
 
-class FDataflowEditorToolkit;
-class FAdvancedPreviewScene;
-class FEditorViewportClient;
-class FDataflowEditorViewportClient;
-class SEditorViewport;
 class ADataflowActor;
+class FAdvancedPreviewScene;
+class UDataflowEditorMode;
+class FDataflowEditorViewportClient;
 
 // ----------------------------------------------------------------------------------
 
-class SDataflowEditorViewport : public SAssetEditorViewport, public ICommonEditorViewportToolbarInfoProvider, public FGCObject
+class SDataflowEditorViewport : public SBaseCharacterFXEditorViewport, public ICommonEditorViewportToolbarInfoProvider
 {
 public:
 	SLATE_BEGIN_ARGS(SDataflowEditorViewport) {}
-		SLATE_ARGUMENT(TWeakPtr<FDataflowEditorToolkit>, DataflowEditorToolkit)
-	SLATE_END_ARGS()
+	SLATE_ARGUMENT(TSharedPtr<FDataflowEditorViewportClient>, ViewportClient)
+		SLATE_END_ARGS()
 
 	SDataflowEditorViewport();
 
-	void Construct(const FArguments& InArgs);
+	void Construct(const FArguments& InArgs, const FAssetEditorViewportConstructionArgs& InViewportConstructionArgs);
 
-	//~ ICommonEditorViewportToolbarInfoProvider interface
-	virtual TSharedRef<SEditorViewport> GetViewportWidget() override;
+	// SEditorViewport
+	virtual void BindCommands() override;
+	virtual TSharedPtr<SWidget> MakeViewportToolbar() override;
+	virtual bool IsVisible() const override;
+	virtual void OnFocusViewportToSelection() override;
+
+	// ICommonEditorViewportToolbarInfoProvider
+	virtual TSharedRef<class SEditorViewport> GetViewportWidget() override;
 	virtual TSharedPtr<FExtender> GetExtenders() const override;
 	virtual void OnFloatingButtonClicked() override;
 
-	//~ FGCObject Interface
-	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	virtual FString GetReferencerName() const override{return TEXT("SDataflowEditorViewport");}
-
-
-protected:
-	virtual TSharedRef<FEditorViewportClient> MakeEditorViewportClient() override;
-	virtual TSharedPtr<SWidget> MakeViewportToolbar() override;
 private:
+	float GetViewMinInput() const;
+	float GetViewMaxInput() const;
 
-	virtual void BindCommands() override;
-
-
-	/// The scene for this viewport. 
-	TSharedPtr<FAdvancedPreviewScene> PreviewScene;
-
-	/// Editor viewport client 
-	TSharedPtr<FDataflowEditorViewportClient> ViewportClient;
-
-	TWeakPtr<FDataflowEditorToolkit> DataflowEditorToolkitPtr;
-	TObjectPtr<ADataflowActor> CustomDataflowActor = nullptr;
+	UDataflowEditorMode* GetEdMode() const;
 };

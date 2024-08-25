@@ -8,6 +8,8 @@
 #include "Animation/PoseAsset.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "ContentBrowserModule.h"
+#include "CustomizableObjectCustomSettings.h"
+#include "CustomizableObjectEditor.h"
 #include "DetailsViewArgs.h"
 #include "FileHelpers.h"
 #include "Framework/Commands/UICommandList.h"
@@ -19,19 +21,20 @@
 #include "MuCO/CustomizableSkeletalComponent.h"
 #include "MuCOE/CustomizableObjectCompiler.h"
 #include "MuCOE/CustomizableObjectEditorActions.h"
-#include "MuCOE/CustomizableObjectEditorModule.h"
+#include "MuCO/ICustomizableObjectEditorModule.h"
 #include "MuCOE/CustomizableObjectEditorViewportClient.h"
 #include "MuCOE/CustomizableObjectInstanceEditorActions.h"
 #include "MuCOE/CustomizableObjectPreviewScene.h"
 #include "MuCOE/SCustomizableObjectEditorTextureAnalyzer.h"
-#include "MuCOE/SCustomizableObjectEditorViewport.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "PropertyEditorModule.h"
+#include "SCustomizableObjectEditorViewport.h"
 #include "Selection.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "WorkspaceMenuStructure.h"
 #include "WorkspaceMenuStructureModule.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
 
 class FAdvancedPreviewScene;
 class FProperty;
@@ -50,6 +53,81 @@ void UUpdateClassWrapperClass::DelegatedCallback(UCustomizableObjectInstance* In
 {
 	Delegate.ExecuteIfBound();
 }
+
+
+UProjectorParameter::UProjectorParameter()
+{
+	SetFlags(RF_Transactional);
+}
+
+
+void UProjectorParameter::SelectProjector(const FString& InParamName, const int32 InRangeIndex)
+{
+	ParamName = InParamName;
+	RangeIndex = InRangeIndex;
+}
+
+
+void UProjectorParameter::UnselectProjector()
+{
+	ParamName = "";
+	RangeIndex = -1;	
+}
+
+
+bool UProjectorParameter::IsProjectorSelected(const FString& InParamName, const int32 InRangeIndex) const
+{
+	return ParamName == InParamName && RangeIndex == InRangeIndex;
+}
+
+
+FVector UProjectorParameter::GetPosition() const
+{
+	return Position;
+}
+
+
+void UProjectorParameter::SetPosition(const FVector& InPosition)
+{
+	Position = InPosition;
+}
+
+
+FVector UProjectorParameter::GetDirection() const
+{
+	return Direction;
+}
+
+
+void UProjectorParameter::SetDirection(const FVector& InDirection)
+{
+	Direction = InDirection;
+}
+
+
+FVector UProjectorParameter::GetUp() const
+{
+	return Up;
+}
+
+
+void UProjectorParameter::SetUp(const FVector& InUp)
+{
+	Up = InUp;
+}
+
+
+FVector UProjectorParameter::GetScale() const
+{
+	return Scale;
+}
+
+
+void UProjectorParameter::SetScale(const FVector& InScale)
+{
+	Scale = InScale;
+}
+
 
 void FCustomizableObjectInstanceEditor::RegisterTabSpawners(const TSharedRef<class FTabManager>& InTabManager)
 {
@@ -80,10 +158,45 @@ void FCustomizableObjectInstanceEditor::UnregisterTabSpawners(const TSharedRef<c
 }
 
 
+ULightComponent* UCustomSettings::GetSelectedLight() const
+{
+	return SelectedLight;
+}
+
+
+void UCustomSettings::SetSelectedLight(ULightComponent* Light)
+{
+	SelectedLight = Light;
+}
+
+
+UCustomizableObjectEditorViewportLights* UCustomSettings::GetLightsPreset() const
+{
+	return LightsPreset;
+}
+
+
+void UCustomSettings::SetLightsPreset(UCustomizableObjectEditorViewportLights& InLightsPreset)
+{
+	LightsPreset = &InLightsPreset;
+}
+
+
+TWeakPtr<ICustomizableObjectInstanceEditor> UCustomSettings::GetEditor() const
+{
+	return Editor;
+}
+
+
+void UCustomSettings::SetEditor(TSharedPtr<ICustomizableObjectInstanceEditor> InEditor)
+{
+	Editor = InEditor;
+}
+
+
 FCustomizableObjectInstanceEditor::FCustomizableObjectInstanceEditor()
 {
 	CustomizableObjectInstance = nullptr;
-	PreviewStaticMeshComponent = nullptr;
 	HelperCallback = nullptr;
 	PoseAsset = nullptr;
 }
@@ -98,8 +211,6 @@ FCustomizableObjectInstanceEditor::~FCustomizableObjectInstanceEditor()
 		HelperCallback = nullptr;
 	}
 
-	CustomizableObjectInstance = nullptr;
-
 	for (UCustomizableSkeletalComponent* PreviewCustomizableSkeletalComponent : PreviewCustomizableSkeletalComponents)
 	{
 		if (PreviewCustomizableSkeletalComponent)
@@ -110,7 +221,6 @@ FCustomizableObjectInstanceEditor::~FCustomizableObjectInstanceEditor()
 
 	PreviewCustomizableSkeletalComponents.Reset();
 	PreviewSkeletalMeshComponents.Reset();
-	PreviewStaticMeshComponent = nullptr;
 
 	CustomizableInstanceDetailsView.Reset();
 	Viewport.Reset();
@@ -121,8 +231,10 @@ FCustomizableObjectInstanceEditor::~FCustomizableObjectInstanceEditor()
 		Compiler->ForceFinishCompilation();
 	}
 
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	AssetRegistryModule.Get().OnFilesLoaded().RemoveAll(this);
+	if (const UCustomizableObject* CustomizableObject = CustomizableObjectInstance->GetCustomizableObject())
+	{
+		CustomizableObject->GetPrivate()->Status.GetOnStateChangedDelegate().RemoveAll(this);		
+	}
 
 	FCoreUObjectDelegates::OnObjectPropertyChanged.RemoveAll(this);
 }
@@ -130,62 +242,36 @@ FCustomizableObjectInstanceEditor::~FCustomizableObjectInstanceEditor()
 
 void FCustomizableObjectInstanceEditor::InitCustomizableObjectInstanceEditor( const EToolkitMode::Type Mode, const TSharedPtr< class IToolkitHost >& InitToolkitHost, UCustomizableObjectInstance* InCustomizableObjectInstance )
 {
+	ProjectorParameter = NewObject<UProjectorParameter>();
+	
+	CustomSettings = NewObject<UCustomSettings>();
+	CustomSettings->SetEditor(SharedThis(this));
+
 	// Register our commands. This will only register them if not previously registered
 	FCustomizableObjectInstanceEditorCommands::Register();
 	FCustomizableObjectEditorViewportCommands::Register();
 
 	BindCommands();
 
-	bool bUpdateFromSelection = false;
-	bool bIsLockable = false;
-	bool bAllowSearch = true;
-
 	FPropertyEditorModule& PropPlugin = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 
 	FDetailsViewArgs DetailsViewArgs;
 	DetailsViewArgs.NameAreaSettings = FDetailsViewArgs::ENameAreaSettings::HideNameArea;
-	DetailsViewArgs.bAllowSearch = false;
-	//DetailsViewArgs.bShowActorLabel = false;
+	DetailsViewArgs.bAllowSearch = true;
 	DetailsViewArgs.bShowObjectLabel = false;
+	
 	CustomizableInstanceDetailsView = PropPlugin.CreateDetailView( DetailsViewArgs );
-	CustomizableInstanceDetailsView->SetObject(InCustomizableObjectInstance, true);
-	//CustomizableInstanceDetailsView->SetIsPropertyVisibleDelegate( FIsPropertyVisible::CreateStatic(&IsPropertyVisible) );
-
+	
 	TextureAnalyzer = SNew(SCustomizableObjecEditorTextureAnalyzer).CustomizableObjectInstanceEditor(this).CustomizableObjectEditor(nullptr);
 
 	Viewport = SNew(SCustomizableObjectEditorViewportTabBody)
 		.CustomizableObjectEditor(SharedThis(this));
-
+	
 	// Set the instance
 	check(InCustomizableObjectInstance);
 	CustomizableObjectInstance = InCustomizableObjectInstance;
-	bOnlyRelevantParameters = InCustomizableObjectInstance->bShowOnlyRelevantParameters;
-	bOnlyRuntimeParameters = InCustomizableObjectInstance->bShowOnlyRuntimeParameters;
-
-	// Check if the asset registry has finished loading assets before compiling the object or updating the instance
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	if (AssetRegistryModule.Get().IsLoadingAssets())
-	{
-		AssetRegistryModule.Get().OnFilesLoaded().AddRaw(this, &FCustomizableObjectInstanceEditor::OnAssetRegistryLoadComplete);
-		AssetRegistryLoaded = false;
-	}
-	else
-	{
-		UCustomizableObject* CustomizableObject = CustomizableObjectInstance->GetCustomizableObject();
-
-		// Compile for the first time if necessary
-		if (CustomizableObject && !CustomizableObject->IsCompiled())
-		{
-			
-			CompileObject(CustomizableObject);
-		}
-		else if (CustomizableObject)
-		{
-			CreatePreviewInstance();
-		}
-		
-		Viewport->SetAssetRegistryLoaded(true);
-	}
+	bOnlyRelevantParameters = InCustomizableObjectInstance->GetPrivate()->bShowOnlyRelevantParameters;
+	bOnlyRuntimeParameters = InCustomizableObjectInstance->GetPrivate()->bShowOnlyRuntimeParameters;
 
 	FAdvancedPreviewSceneModule& AdvancedPreviewSceneModule = FModuleManager::LoadModuleChecked<FAdvancedPreviewSceneModule>("AdvancedPreviewScene");
 
@@ -220,13 +306,31 @@ void FCustomizableObjectInstanceEditor::InitCustomizableObjectInstanceEditor( co
 	const bool bCreateDefaultToolbar = true;
 	FAssetEditorToolkit::InitAssetEditor( Mode, InitToolkitHost, CustomizableObjectInstanceEditorAppIdentifier, StandaloneDefaultLayout, bCreateDefaultStandaloneMenu, bCreateDefaultToolbar, CustomizableObjectInstance );
 
+	CustomizableInstanceDetailsView->SetObject(InCustomizableObjectInstance, true); // Can only be called after initializing the Asset Editor
+	
 	ExtendToolbar();
 	RegenerateMenusAndToolbars();
 
 	// Clears selection highlight.
 	OnInstancePropertySelectionChanged(NULL);
+	
+	if (const UCustomizableObject* CustomizableObject = CustomizableObjectInstance->GetCustomizableObject())
+	{
+		UCustomizableObjectPrivate* CustomizableObjectPrivate = CustomizableObject->GetPrivate();
 
-	OnObjectModifiedHandle = FCoreUObjectDelegates::OnObjectModified.AddRaw(this, &FCustomizableObjectInstanceEditor::OnObjectModified);
+		CustomizableObjectPrivate->Status.GetOnStateChangedDelegate().AddRaw(this, &FCustomizableObjectInstanceEditor::OnCustomizableObjectStatusChanged);
+		const FCustomizableObjectStatusTypes::EState CurrentStatus = CustomizableObjectPrivate->Status.Get();
+		OnCustomizableObjectStatusChanged(CurrentStatus, CurrentStatus);
+
+		int32 StateParameterCount = CustomizableObject->GetStateParameterCount(CustomizableObjectInstance->GetCurrentState());
+		int32 ParameterCount = CustomizableObject->GetParameterCount();
+
+		if (StateParameterCount == 0)
+		{
+			bOnlyRuntimeParameters = false;
+			InCustomizableObjectInstance->GetPrivate()->bShowOnlyRuntimeParameters = false;
+		}
+	}
 }
 
 
@@ -245,86 +349,43 @@ FText FCustomizableObjectInstanceEditor::GetBaseToolkitName() const
 void FCustomizableObjectInstanceEditor::CreatePreviewInstance()
 {
 	check(CustomizableObjectInstance);
-	UCustomizableObject* CustomizableObject = CustomizableObjectInstance->GetCustomizableObject();
-	
-	if (!CustomizableObject || (!CustomizableObject->IsCompiled() && !UCustomizableObjectSystem::GetInstance()->IsCompilationDisabled()))
+	if (!CustomizableObjectInstance->GetCustomizableObject())
 	{
 		return;
 	}
 
 	// Bind update delegate
-	HelperCallback = NewObject<UUpdateClassWrapperClass>(GetTransientPackage());
+	HelperCallback = NewObject<UUpdateClassWrapperClass>();
 	HelperCallback->Delegate.BindSP(this, &FCustomizableObjectInstanceEditor::OnUpdatePreviewInstance);
 	CustomizableObjectInstance->UpdatedDelegate.AddDynamic(HelperCallback, &UUpdateClassWrapperClass::DelegatedCallback);
 
-	PreviewStaticMeshComponent = nullptr;
-
 	// Create a SkeletalMeshComponent for each component in the CO
-	int32 NumMeshComponents = CustomizableObject->GetComponentCount();
-	PreviewSkeletalMeshComponents.AddZeroed(NumMeshComponents);
-	PreviewCustomizableSkeletalComponents.AddZeroed(NumMeshComponents);
+	const int32 NumMeshComponents = CustomizableObjectInstance->GetNumComponents();
+	PreviewSkeletalMeshComponents.SetNum(NumMeshComponents);
+	PreviewCustomizableSkeletalComponents.SetNum(NumMeshComponents);
 
-	if (CustomizableObject->ReferenceSkeletalMeshes.Num())
+	for (int32 ComponentIndex = 0; ComponentIndex < NumMeshComponents; ++ComponentIndex)
 	{
-		for (int32 ComponentIndex = 0; ComponentIndex < NumMeshComponents; ++ComponentIndex)
-		{
-			PreviewCustomizableSkeletalComponents[ComponentIndex] = NewObject<UCustomizableSkeletalComponent>(UCustomizableSkeletalComponent::StaticClass());
+		PreviewCustomizableSkeletalComponents[ComponentIndex] = NewObject<UCustomizableSkeletalComponent>();
+		check(PreviewCustomizableSkeletalComponents[ComponentIndex]);
 
-			if (PreviewCustomizableSkeletalComponents[ComponentIndex])
-			{
-				PreviewCustomizableSkeletalComponents[ComponentIndex]->CustomizableObjectInstance = CustomizableObjectInstance;
-				PreviewCustomizableSkeletalComponents[ComponentIndex]->ComponentIndex = ComponentIndex;
+		PreviewCustomizableSkeletalComponents[ComponentIndex]->CustomizableObjectInstance = CustomizableObjectInstance;
+		PreviewCustomizableSkeletalComponents[ComponentIndex]->ComponentIndex = ComponentIndex;
 
-				PreviewSkeletalMeshComponents[ComponentIndex] = NewObject<UDebugSkelMeshComponent>(GetTransientPackage(), NAME_None, RF_Transient);
+		PreviewSkeletalMeshComponents[ComponentIndex] = NewObject<UDebugSkelMeshComponent>();
+		check(PreviewSkeletalMeshComponents[ComponentIndex]);
 
-				if (PreviewSkeletalMeshComponents[ComponentIndex])
-				{
-					PreviewCustomizableSkeletalComponents[ComponentIndex]->AttachToComponent(PreviewSkeletalMeshComponents[ComponentIndex], FAttachmentTransformRules::KeepRelativeTransform);
-				}
-				else
-				{
-					return;
-				}
-			}
-			else
-			{
-				return;
-			}
-		}
-
-		CustomizableObjectInstance->UpdateSkeletalMeshAsync(true, true);
-		Viewport->SetPreviewComponents(PreviewSkeletalMeshComponents);
-	}
-}
-
-
-void FCustomizableObjectInstanceEditor::OnAssetRegistryLoadComplete()
-{
-	AssetRegistryLoaded = true;
-	Viewport->SetAssetRegistryLoaded(true);
-
-	check(CustomizableObjectInstance);
-	UCustomizableObject* CustomizableObject = CustomizableObjectInstance->GetCustomizableObject();
-	if (!CustomizableObject)
-	{
-		return;
+		PreviewCustomizableSkeletalComponents[ComponentIndex]->AttachToComponent(PreviewSkeletalMeshComponents[ComponentIndex], FAttachmentTransformRules::KeepRelativeTransform);
 	}
 
-	// Compile for the first time if necessary
-	if (!CustomizableObject->IsCompiled())
-	{
-		CompileObject(CustomizableObject);
-	}
-	else
-	{
-		CreatePreviewInstance();
-	}
+	CustomizableObjectInstance->UpdateSkeletalMeshAsync(true, true);
+	Viewport->SetPreviewComponents(PreviewSkeletalMeshComponents);
 }
 
 
 void FCustomizableObjectInstanceEditor::UpdatePreviewVisibility()
 {
-	const bool bEnableVisibility = CustomizableObjectInstance->SkeletalMeshStatus == ESkeletalMeshState::Correct;
+	const bool bEnableVisibility = CustomizableObjectInstance->GetPrivate()->SkeletalMeshStatus == ESkeletalMeshStatus::Success;
 	for (UDebugSkelMeshComponent* PreviewSkeletalMeshComponent : PreviewSkeletalMeshComponents)
 	{
 		PreviewSkeletalMeshComponent->SetVisibility(bEnableVisibility, true);
@@ -334,7 +395,7 @@ void FCustomizableObjectInstanceEditor::UpdatePreviewVisibility()
 
 void FCustomizableObjectInstanceEditor::SaveAsset_Execute()
 {
-	if (CustomizableObjectInstance)
+	if (!CustomizableObjectInstance)
 	{
 		return;
 	}
@@ -383,14 +444,14 @@ void FCustomizableObjectInstanceEditor::AddReferencedObjects( FReferenceCollecto
 		Collector.AddReferencedObject(PreviewCustomizableSkeletalComponent);
 	}
 
-	Collector.AddReferencedObject( PreviewStaticMeshComponent );
-
 	for (auto& PreviewSkeletalMeshComponent : PreviewSkeletalMeshComponents)
 	{
 		Collector.AddReferencedObject(PreviewSkeletalMeshComponent);
 	}
 
 	Collector.AddReferencedObject( HelperCallback );
+	Collector.AddReferencedObject( ProjectorParameter );
+	Collector.AddReferencedObject( CustomSettings );
 }
 
 
@@ -521,16 +582,13 @@ FLinearColor FCustomizableObjectInstanceEditor::GetWorldCentricTabColorScale() c
 
 void FCustomizableObjectInstanceEditor::RefreshTool()
 {
-	RefreshViewport();
+	Viewport->GetViewportClient()->Invalidate();
 }
 
 
-void FCustomizableObjectInstanceEditor::RefreshViewport()
+TSharedPtr<SCustomizableObjectEditorViewportTabBody> FCustomizableObjectInstanceEditor::GetViewport()
 {
-	if (Viewport)
-	{
-		Viewport->GetViewportClient()->Invalidate();
-	}
+	return Viewport;		
 }
 
 
@@ -562,92 +620,49 @@ void FCustomizableObjectInstanceEditor::SetPoseAsset(class UPoseAsset* PoseAsset
 }
 
 
-void FCustomizableObjectInstanceEditor::OnObjectModified(UObject* Object)
+UProjectorParameter* FCustomizableObjectInstanceEditor::GetProjectorParameter()
 {
-	UCustomizableObjectInstance* Instance = Cast<UCustomizableObjectInstance>(Object);
-
-	if ((Instance != nullptr) && (Instance == CustomizableObjectInstance))
-	{
-		if (Instance->ProjectorLayerChange)
-		{
-			// Variable used in a non multilayer projector to not lose the focus of the gizmo
-			Instance->ProjectorLayerChange = false;
-			return;
-		}
-
-		if (Viewport->GetGizmoHasAssignedData())
-		{
-			Instance->LastSelectedProjectorParameter = Viewport->GetGizmoProjectorParameterName();
-			Instance->LastSelectedProjectorParameterWithIndex = Viewport->GetGizmoProjectorParameterNameWithIndex();
-		}
-
-		// Update projector parameter information (not projector parameter node information,
-		// this is the case where a projector parameter in the object details is selected)
-		const TArray<FCustomizableObjectProjectorParameterValue>& Parameters = CustomizableObjectInstance->GetProjectorParameters();
-		const int32 MaxIndex = Parameters.Num();
-		bool AnySelected = false;
-
-		for (int32 i = 0; (!AnySelected && (i < MaxIndex)); ++i)
-		{
-			int32 RangeIndex = Parameters[i].RangeValues.Num() > 0 ? 0 : -1;
-
-			for (; RangeIndex < Parameters[i].RangeValues.Num(); ++RangeIndex)
-			{
-				const FCustomizableObjectProjector& Value = (RangeIndex == -1) ? Parameters[i].Value : Parameters[i].RangeValues[RangeIndex];
-
-				FString ParameterNameWithIndex = Parameters[i].ParameterName;
-
-				if (RangeIndex != -1)
-				{
-					ParameterNameWithIndex += FString::Printf(TEXT("__%d"), RangeIndex);
-				}
-
-				if (CustomizableObjectInstance->GetProjectorState(Parameters[i].ParameterName, RangeIndex) == EProjectorState::Selected ||
-					(CustomizableObjectInstance->GetProjectorState(Parameters[i].ParameterName, RangeIndex) == EProjectorState::TypeChanged &&
-						ParameterNameWithIndex != Instance->LastSelectedProjectorParameterWithIndex))
-				{
-					Viewport->SetGizmoCallUpdateSkeletalMesh(false);
-					Viewport->SetProjectorVisibility(true, Parameters[i].ParameterName, ParameterNameWithIndex, RangeIndex, Value, i);
-					Viewport->SetGizmoCallUpdateSkeletalMesh(true);
-				AnySelected = true;
-			}
-				else if (CustomizableObjectInstance->GetProjectorState(Parameters[i].ParameterName, RangeIndex) == EProjectorState::TypeChanged &&
-					Parameters[i].ParameterName == Instance->LastSelectedProjectorParameter)
-					{
-					Viewport->SetProjectorType(true, Parameters[i].ParameterName, ParameterNameWithIndex, RangeIndex, Value, i);
-						AnySelected = true;
-					}
-				}
-
-		}
-
-		if (!AnySelected && !Viewport->GetIsManipulatingGizmo())
-		{
-			Viewport->SetGizmoCallUpdateSkeletalMesh(false);
-			Viewport->ResetProjectorVisibility(false);
-			Viewport->SetGizmoCallUpdateSkeletalMesh(true);
-			Instance->LastSelectedProjectorParameter = "";
-			Instance->LastSelectedProjectorParameterWithIndex = "";
-		}
-	}
+	return ProjectorParameter;
 }
 
 
-bool FCustomizableObjectInstanceEditor::GetAssetRegistryLoaded()
+UCustomSettings* FCustomizableObjectInstanceEditor::GetCustomSettings()
 {
-	return AssetRegistryLoaded;
+	return CustomSettings;
+}
+
+
+void FCustomizableObjectInstanceEditor::HideGizmo()
+{
+	HideGizmo(SharedThis(this), Viewport, CustomizableInstanceDetailsView);
+}
+
+
+void FCustomizableObjectInstanceEditor::ShowGizmoProjectorParameter(const FString& ParamName, int32 RangeIndex)
+{
+	HideGizmo();
+
+	ShowGizmoProjectorParameter(ParamName, RangeIndex, SharedThis(this), Viewport, CustomizableInstanceDetailsView, ProjectorParameter, CustomizableObjectInstance);
+}
+
+
+void FCustomizableObjectInstanceEditor::HideGizmoProjectorParameter()
+{
+	HideGizmoProjectorParameter(SharedThis(this), Viewport, CustomizableInstanceDetailsView);
 }
 
 
 void FCustomizableObjectInstanceEditor::OnInstancePropertySelectionChanged(FProperty* InProperty)
 {
-	RefreshViewport();
+	Viewport->GetViewportClient()->Invalidate();
 }
 
 
 void FCustomizableObjectInstanceEditor::OnUpdatePreviewInstance()
 {
-	RefreshViewport();
+	check(CustomizableObjectInstance)
+
+	Viewport->GetViewportClient()->Invalidate();
 
 	UpdatePreviewVisibility();
 
@@ -669,54 +684,13 @@ void FCustomizableObjectInstanceEditor::OnUpdatePreviewInstance()
 		Viewport->SetPreviewComponents(ObjectPtrDecay(PreviewSkeletalMeshComponents));
 	}
 
-	if (!CustomizableObjectInstance) return;
-	
-	// If the instance is updated due to a change in a parameter projector, set again the LastSelectedProjectorParameter variable with the
-	// current projector the viewport gizmo has to continue having it as selected when rebuilding the parameter details widget.
-	// Otherwise, reset the value.
-	bool UpdateDetails = false;
-	if (Viewport->GetGizmoHasAssignedData())
-	{
-		CustomizableObjectInstance->LastSelectedProjectorParameter = Viewport->GetGizmoProjectorParameterName();
-		CustomizableObjectInstance->LastSelectedProjectorParameterWithIndex = Viewport->GetGizmoProjectorParameterNameWithIndex();
-		UpdateDetails = true;
-	}
-	else
-	{
-		CustomizableObjectInstance->LastSelectedProjectorParameter = "";
-		CustomizableObjectInstance->LastSelectedProjectorParameterWithIndex = "";
-	}
-
-	if (UpdateDetails && !CustomizableObjectInstance->ProjectorUpdatedInViewport)
-	{
-		CustomizableInstanceDetailsView->ForceRefresh();
-	}
+	// Sets which UV material to draw
+	Viewport->SetDrawDefaultUVMaterial();
 
 	if (TextureAnalyzer.IsValid())
 	{
 		TextureAnalyzer.Get()->RefreshTextureAnalyzerTable(CustomizableObjectInstance);
 	}
-}
-
-
-void FCustomizableObjectInstanceEditor::CompileObject(UCustomizableObject* Object)
-{
-
-	if (!Object || !Object->Source)
-	{
-		return;
-	}
-	
-	Viewport->UpdateGizmoDataToOrigin();
-
-	if (!Compiler)
-	{
-		Compiler = MakeUnique<FCustomizableObjectCompiler>();
-	}
-	
-	FCompilationOptions Options = Object->CompileOptions;
-	Options.bSilentCompilation = false;
-	Compiler->Compile(*Object, Options, true);
 }
 
 
@@ -749,33 +723,16 @@ void FCustomizableObjectInstanceEditor::Tick(float InDeltaTime)
 		Compiler.Reset();
 	}
 
-	// TEMP CODE
-	if (CustomizableObjectInstance->TempUpdateGizmoInViewport)
-	{
-		CustomizableObjectInstance->TempUpdateGizmoInViewport = false;
-		CustomizableObjectInstance->AvoidResetProjectorVisibilityForNonNode = true;
-		Viewport->CopyTransformFromOriginData();
-		CustomizableObjectInstance->UpdateSkeletalMeshAsync(true);
-
-		EProjectorState::Type ProjectorState = CustomizableObjectInstance->GetProjectorState(CustomizableObjectInstance->TempProjectorParameterName, CustomizableObjectInstance->TempProjectorParameterRangeIndex);
-		if (ProjectorState != EProjectorState::Selected)
-		{
-			// ResetProjectorVisibilityForNonNode = false;
-			CustomizableObjectInstance->SetProjectorState(CustomizableObjectInstance->TempProjectorParameterName, CustomizableObjectInstance->TempProjectorParameterRangeIndex, EProjectorState::Selected);
-			FCoreUObjectDelegates::BroadcastOnObjectModified(CustomizableObjectInstance);
-		}
-	}
-
 	// If we want to show the Relevant/Runtime parameters, we need to refresh the details view to make sure that the scroll bar appears		
-	if (bOnlyRelevantParameters != CustomizableObjectInstance->bShowOnlyRelevantParameters)
+	if (bOnlyRelevantParameters != CustomizableObjectInstance->GetPrivate()->bShowOnlyRelevantParameters)
 	{
-		bOnlyRelevantParameters = CustomizableObjectInstance->bShowOnlyRelevantParameters;
+		bOnlyRelevantParameters = CustomizableObjectInstance->GetPrivate()->bShowOnlyRelevantParameters;
 		CustomizableInstanceDetailsView->ForceRefresh();
 	}
 
-	if (bOnlyRuntimeParameters != CustomizableObjectInstance->bShowOnlyRuntimeParameters)
+	if (bOnlyRuntimeParameters != CustomizableObjectInstance->GetPrivate()->bShowOnlyRuntimeParameters)
 	{
-		bOnlyRuntimeParameters = CustomizableObjectInstance->bShowOnlyRuntimeParameters;
+		bOnlyRuntimeParameters = CustomizableObjectInstance->GetPrivate()->bShowOnlyRuntimeParameters;
 		CustomizableInstanceDetailsView->ForceRefresh();
 	}
 }
@@ -786,9 +743,293 @@ TStatId FCustomizableObjectInstanceEditor::GetStatId() const
 	RETURN_QUICK_DECLARE_CYCLE_STAT(FCustomizableObjectInstanceEditor, STATGROUP_Tickables);
 }
 
+
+void FCustomizableObjectInstanceEditor::OnCustomizableObjectStatusChanged(FCustomizableObjectStatus::EState, const FCustomizableObjectStatus::EState CurrentState)
+{
+	switch (CurrentState)
+	{
+	case FCustomizableObjectStatus::EState::ModelLoaded:
+		{
+			CreatePreviewInstance();
+			break;			
+		}
+		
+	case FCustomizableObjectStatus::EState::NoModel:
+		{
+			UCustomizableObject* CustomizableObject = CustomizableObjectInstance->GetCustomizableObject();
+			check(CustomizableObject)
+		
+			CustomizableObject->ConditionalAutoCompile();	
+			break;			
+		}
+
+	default:
+		break;
+	}	
+}
+
+
 void FCustomizableObjectInstanceEditor::OpenTextureAnalyzerTab()
 {
 	TabManager->TryInvokeTab(TextureAnalyzerTabId);
+}
+
+
+void FCustomizableObjectInstanceEditor::HideGizmo(const TSharedPtr<ICustomizableObjectInstanceEditor>& Editor,
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody>& Viewport,
+	const TSharedPtr<IDetailsView>& InstanceDetailsView)
+{
+	HideGizmoProjectorParameter(Editor, Viewport, InstanceDetailsView);
+}
+
+
+void FCustomizableObjectInstanceEditor::ShowGizmoProjectorParameter(const FString& ParamName, int32 RangeIndex,
+	const TSharedPtr<ICustomizableObjectInstanceEditor>& Editor, const TSharedPtr<SCustomizableObjectEditorViewportTabBody>& Viewport,
+	const TSharedPtr<IDetailsView>& InstanceDetailsView, UProjectorParameter* ProjectorParameter,
+	UCustomizableObjectInstance* Instance)
+{	
+	ProjectorParameter->SelectProjector(ParamName, RangeIndex);
+	
+	ProjectorParameter->SetPosition(Instance->GetProjectorPosition(ParamName, RangeIndex));
+	ProjectorParameter->SetDirection(Instance->GetProjectorDirection(ParamName, RangeIndex));
+	ProjectorParameter->SetUp(Instance->GetProjectorUp(ParamName, RangeIndex));
+	ProjectorParameter->SetScale(Instance->GetProjectorScale(ParamName, RangeIndex));
+
+	TWeakObjectPtr<UCustomizableObjectInstance> WeakInstance = Instance;
+
+	const TWeakPtr<ICustomizableObjectInstanceEditor> WeakEditor = Editor.ToWeakPtr();
+	
+	FProjectorTypeDelegate  ProjectorTypeDelegate;
+	ProjectorTypeDelegate.BindLambda([WeakInstance, ParamName, RangeIndex]() -> ECustomizableObjectProjectorType
+	{
+		const UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return {};
+		}
+
+		return Instance->GetProjectorParameterType(ParamName, RangeIndex);
+	});
+	
+	FWidgetColorDelegate WidgetColorDelegate;
+	WidgetColorDelegate.BindLambda([]() { return FColor::Green; });
+		
+	// Position
+	FWidgetLocationDelegate WidgetLocationDelegate;
+	WidgetLocationDelegate.BindLambda([WeakEditor, WeakInstance]() -> FVector
+	{
+		const UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return {};
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return {};
+		}
+		
+		return Editor->GetProjectorParameter()->GetPosition(); // We are not getting the value directly from the parameters since they get updated on ReloadParameters, making the gizmo jittery.
+	});
+
+	FOnWidgetLocationChangedDelegate OnWidgetLocationChangedDelegate;
+	OnWidgetLocationChangedDelegate.BindLambda([WeakEditor, WeakInstance, ParamName, RangeIndex](const FVector& Location)
+	{		
+		UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return;
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return;
+		}
+		
+		Editor->GetProjectorParameter()->SetPosition(Location);
+		
+		Instance->SetProjectorPosition(ParamName, Location, RangeIndex);
+		Instance->UpdateSkeletalMeshAsync(true, true);
+	});
+
+	// Direction
+	FWidgetDirectionDelegate WidgetDirectionDelegate;
+	WidgetDirectionDelegate.BindLambda([WeakEditor, WeakInstance]() -> FVector
+	{
+		const UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return {};
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return {};
+		}
+		
+		return Editor->GetProjectorParameter()->GetDirection();
+	});
+	
+	FOnWidgetDirectionChangedDelegate OnWidgetDirectionChangedDelegate;
+	OnWidgetDirectionChangedDelegate.BindLambda([WeakEditor, WeakInstance, ParamName, RangeIndex](const FVector& Direction)
+	{
+		UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return;
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return;
+		}
+		
+		Editor->GetProjectorParameter()->SetDirection(Direction);
+		
+		Instance->SetProjectorDirection(ParamName, Direction, RangeIndex);
+		Instance->UpdateSkeletalMeshAsync(true, true);
+	});
+
+	// Up
+	FWidgetUpDelegate WidgetUpDelegate;
+	WidgetUpDelegate.BindLambda([WeakEditor, WeakInstance]() -> FVector
+	{
+		const UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return {};
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return {};
+		}
+		
+		return Editor->GetProjectorParameter()->GetUp();
+	});
+
+	FOnWidgetUpChangedDelegate OnWidgetUpChangedDelegate;
+	OnWidgetUpChangedDelegate.BindLambda([WeakEditor, WeakInstance, ParamName, RangeIndex](const FVector& Up)
+	{
+		UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return;
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return;
+		}
+		
+		Editor->GetProjectorParameter()->SetUp(Up);
+
+		Instance->SetProjectorUp(ParamName, Up, RangeIndex);
+		Instance->UpdateSkeletalMeshAsync(true, true);
+	});
+
+	// Scale
+	FWidgetScaleDelegate WidgetScaleDelegate;
+	WidgetScaleDelegate.BindLambda([WeakEditor, WeakInstance]() -> FVector
+	{
+		const UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return {};
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return {};
+		}
+		
+		return Editor->GetProjectorParameter()->GetScale();
+	});
+	
+	FOnWidgetScaleChangedDelegate OnWidgetScaleChangedDelegate;
+	OnWidgetScaleChangedDelegate.BindLambda([WeakEditor, WeakInstance, ParamName, RangeIndex](const FVector& Scale)
+	{
+		UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return;
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return;
+		}
+		
+		Editor->GetProjectorParameter()->SetScale(Scale);
+		
+		Instance->SetProjectorScale(ParamName, Scale, RangeIndex);
+		Instance->UpdateSkeletalMeshAsync(true, true);
+	});
+
+	// Angle
+	FWidgetAngleDelegate WidgetAngleDelegate;
+	WidgetAngleDelegate.BindLambda([WeakInstance, ParamName, RangeIndex]() -> float
+	{
+		const UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return {};
+		}
+
+		return Instance->GetProjectorAngle(ParamName, RangeIndex);
+	});
+
+	// UObject transactions
+	FWidgetTrackingStartedDelegate WidgetTrackingStartedDelegate;
+	WidgetTrackingStartedDelegate.BindLambda([WeakEditor, WeakInstance]()
+	{
+		UCustomizableObjectInstance* Instance = WeakInstance.Get();
+		if (!Instance)
+		{
+			return;
+		}
+
+		const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+		if (!Editor)
+		{
+			return;
+		}
+		
+		Instance->Modify();
+		Editor->GetProjectorParameter()->Modify();
+	});
+
+	Viewport->ShowGizmoProjector(WidgetLocationDelegate, OnWidgetLocationChangedDelegate,
+		WidgetDirectionDelegate, OnWidgetDirectionChangedDelegate,
+		WidgetUpDelegate, OnWidgetUpChangedDelegate,
+		WidgetScaleDelegate, OnWidgetScaleChangedDelegate,
+		WidgetAngleDelegate,
+		ProjectorTypeDelegate,
+		WidgetColorDelegate,
+		WidgetTrackingStartedDelegate);
+	
+	InstanceDetailsView->ForceRefresh();
+}
+
+
+void FCustomizableObjectInstanceEditor::HideGizmoProjectorParameter(const TSharedPtr<ICustomizableObjectInstanceEditor>& Editor,
+		const TSharedPtr<SCustomizableObjectEditorViewportTabBody>& Viewport,
+		const TSharedPtr<IDetailsView>& InstanceDetailsView)
+{
+	Viewport->HideGizmoProjector();
+
+	UProjectorParameter* ProjectorParameter = Editor->GetProjectorParameter();
+	
+	ProjectorParameter->UnselectProjector();
+	InstanceDetailsView->ForceRefresh();		
 }
 
 

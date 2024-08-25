@@ -18,8 +18,8 @@ struct FHairVisibilityAccumulateVSToPS
 	float WorldStrandRadius : TEXCOORD8;
 #endif
 #if HAIR_RENDER_MODE == RENDER_MODE_PPLL
-	float4 PackedVelocityA : TEXCOORD9;
-	float4 PackedVelocityC : TEXCOORD12;
+	INVARIANT_OUTPUT float4 PackedVelocityA : TEXCOORD9;
+	INVARIANT_OUTPUT float4 PackedVelocityC : TEXCOORD12;
 #endif
 };
 

@@ -56,8 +56,9 @@ void FPlatformAudioCookOverrides::GetHashSuffix(const FPlatformAudioCookOverride
 	FPCU::AppendHash(OutSuffix, TEXT("QMOD"), InOverrides->CompressionQualityModifier);
 	FPCU::AppendHash(OutSuffix, TEXT("CQLT"), InOverrides->SoundCueCookQualityIndex);
 	FPCU::AppendHash(OutSuffix, TEXT("ASTH"), InOverrides->AutoStreamingThreshold);
-	FPCU::AppendHash(OutSuffix, TEXT("INLC"), InOverrides->bInlineStreamedAudioChunks);
-
+	FPCU::AppendHash(OutSuffix, TEXT("INLC"), InOverrides->bInlineFirstAudioChunk);
+	FPCU::AppendHash(OutSuffix, TEXT("LCK1"), InOverrides->LengthOfFirstAudioChunkInSecs);
+	
 	// FAudioStreamCachingSettings
 	FPCU::AppendHash(OutSuffix, TEXT("CSZE"), InOverrides->StreamCachingSettings.CacheSizeKB);
 	FPCU::AppendHash(OutSuffix, TEXT("LCF"), InOverrides->StreamCachingSettings.bForceLegacyStreamChunking);

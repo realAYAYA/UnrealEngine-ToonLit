@@ -13,6 +13,13 @@ namespace UnrealBuildTool.Rules
                     "SignalProcessing"
                 }
             );
-        }
+
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+					"Engine"
+				}
+			);
+		}
 	}
 }

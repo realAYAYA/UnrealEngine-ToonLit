@@ -53,7 +53,8 @@ public class EditorTests : ModuleRules
                 "RawMesh",
 				"AutomationController",
 				"Blutility",
-				//"SubobjectDataInterface",
+				"UMGEditor",
+				"UMG"
 			}
 		);
 	}

@@ -54,19 +54,6 @@ public:
 	 * @param Filter Whether to save all properties, or only ones marked with the EditorConfig metadata.
 	 */
 	bool SaveConfigObject(const UClass* Class, const UObject* Object, FEditorConfig::EPropertyFilter = FEditorConfig::EPropertyFilter::MetadataOnly);
-	
-	/** 
-	 * Find a config with the given name that has already been loaded, load it if it hasn't been, or create one with the given name.
-	 */
-	TSharedRef<FEditorConfig> FindOrLoadConfig(FStringView ConfigName);
-
-	/*
-	 * Save the given config to the location it was loaded.
-	 */
-	void SaveConfig(TSharedRef<FEditorConfig> Config);
-
-	/** Force reload the given config and all its (current and potential) parents from disk. */
-	bool ReloadConfig(TSharedRef<FEditorConfig> Config);
 
 	enum class ESearchDirectoryType : uint8
 	{
@@ -75,6 +62,21 @@ public:
 		ProjectOverrides,
 		User
 	};
+	
+	/** 
+	 * Find a config with the given name that has already been loaded, load it if it hasn't been, or create one with the given name.
+	 * 
+	 * @param IncludedTypes The "lowest" level of search directory types to include, ex. If IncludedTypes is set to Project, only Engine and Project paths will be loaded
+	 */
+	TSharedRef<FEditorConfig> FindOrLoadConfig(FStringView ConfigName, ESearchDirectoryType IncludedTypes = ESearchDirectoryType::User);
+
+	/*
+	 * Save the given config to the location it was loaded.
+	 */
+	void SaveConfig(TSharedRef<FEditorConfig> Config);
+
+	/** Force reload the given config and all its (current and potential) parents from disk. */
+	bool ReloadConfig(TSharedRef<FEditorConfig> Config);
 
 	/**
 	 * Append a new config search directory to the given type.

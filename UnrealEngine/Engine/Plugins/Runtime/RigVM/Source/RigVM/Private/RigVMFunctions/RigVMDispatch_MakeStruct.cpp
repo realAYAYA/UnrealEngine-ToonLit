@@ -11,16 +11,19 @@
 const FName FRigVMDispatch_MakeStruct::ElementsName = TEXT("Elements");
 const FName FRigVMDispatch_MakeStruct::StructName = TEXT("Struct");
 
-const TArray<FRigVMTemplateArgument>& FRigVMDispatch_MakeStruct::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigVMDispatch_MakeStruct::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleScriptStructValue
-	};
-	static TArray<FRigVMTemplateArgument> Arguments = {
-		{ElementsName, ERigVMPinDirection::Input, Categories},
-		{StructName, ERigVMPinDirection::Output, Categories}
-	};
-	return Arguments;
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if(Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleScriptStructValue
+		};
+		
+		Infos.Emplace(ElementsName, ERigVMPinDirection::Input, Categories);
+		Infos.Emplace(StructName, ERigVMPinDirection::Output, Categories);
+	}
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigVMDispatch_MakeStruct::OnNewArgumentType(const FName& InArgumentName, TRigVMTypeIndex InTypeIndex) const
@@ -73,6 +76,23 @@ FString FRigVMDispatch_MakeStruct::GetArgumentMetaData(const FName& InArgumentNa
 	return FRigVMDispatch_CoreBase::GetArgumentMetaData(InArgumentName, InMetaDataKey);
 }
 
+FString FRigVMDispatch_MakeStruct::GetKeywords() const
+{
+	const FRigVMRegistry& Registry = FRigVMRegistry::Get();
+	FString Keywords = FRigVMDispatch_CoreBase::GetKeywords();
+	const TArray<TRigVMTypeIndex>& StructTypeIndices = Registry.GetTypesForCategory(FRigVMTemplateArgument::ETypeCategory_SingleScriptStructValue);
+	for(const TRigVMTypeIndex& StructTypeIndex : StructTypeIndices)
+	{
+		const FRigVMTemplateArgumentType& Type = Registry.GetType(StructTypeIndex);
+		if(const UScriptStruct* ScriptStruct = Cast<UScriptStruct>(Type.CPPTypeObject))
+		{
+			static constexpr TCHAR Format[] = TEXT(",Make%s");
+			Keywords += FString::Printf(Format, *ScriptStruct->GetName());
+		}
+	}
+	return Keywords;
+}
+
 #endif
 
 void FRigVMDispatch_MakeStruct::Execute(FRigVMExtendedExecuteContext& InContext, FRigVMMemoryHandleArray Handles, FRigVMPredicateBranchArray RigVMBranches)
@@ -85,16 +105,19 @@ void FRigVMDispatch_MakeStruct::Execute(FRigVMExtendedExecuteContext& InContext,
 	URigVMMemoryStorage::CopyProperty(TargetProperty, TargetMemory, SourceProperty, SourceMemory);
 }
 
-const TArray<FRigVMTemplateArgument>& FRigVMDispatch_BreakStruct::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigVMDispatch_BreakStruct::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleScriptStructValue
-	};
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		{StructName, ERigVMPinDirection::Input, Categories},
-		{ElementsName, ERigVMPinDirection::Output, Categories}
-	};
-	return Arguments;
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if(Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleScriptStructValue
+		};
+
+		Infos.Emplace(StructName, ERigVMPinDirection::Input, Categories);
+		Infos.Emplace(ElementsName, ERigVMPinDirection::Output, Categories);
+	}
+	return Infos;
 }
 
 #if WITH_EDITOR
@@ -102,6 +125,23 @@ const TArray<FRigVMTemplateArgument>& FRigVMDispatch_BreakStruct::GetArguments()
 FText FRigVMDispatch_BreakStruct::GetNodeTooltip(const FRigVMTemplateTypeMap& InTypes) const
 {
 	return LOCTEXT("BreakStructToolTip", "Decomposes a struct into its elements");
+}
+
+FString FRigVMDispatch_BreakStruct::GetKeywords() const
+{
+	const FRigVMRegistry& Registry = FRigVMRegistry::Get();
+	FString Keywords = FRigVMDispatch_CoreBase::GetKeywords();
+	const TArray<TRigVMTypeIndex>& StructTypeIndices = Registry.GetTypesForCategory(FRigVMTemplateArgument::ETypeCategory_SingleScriptStructValue);
+	for(const TRigVMTypeIndex& StructTypeIndex : StructTypeIndices)
+	{
+		const FRigVMTemplateArgumentType& Type = Registry.GetType(StructTypeIndex);
+		if(const UScriptStruct* ScriptStruct = Cast<UScriptStruct>(Type.CPPTypeObject))
+		{
+			static constexpr TCHAR Format[] = TEXT(",Break%s");
+			Keywords += FString::Printf(Format, *ScriptStruct->GetName());
+		}
+	}
+	return Keywords;
 }
 
 #endif

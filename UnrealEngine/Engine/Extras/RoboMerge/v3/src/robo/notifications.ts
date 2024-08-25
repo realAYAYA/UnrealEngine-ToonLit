@@ -6,7 +6,7 @@ import { Args } from '../common/args';
 import { Badge } from '../common/badge';
 import { Random } from '../common/helper';
 import { ContextualLogger } from '../common/logger';
-import { Blockage, Branch, BranchArg, ForcedCl, MergeAction, NodeOpUrlGenerator, resolveBranchArg } from './branch-interfaces';
+import { Blockage, Branch, BranchArg, ExclusiveLockInfo, ForcedCl, MergeAction, NodeOpUrlGenerator, resolveBranchArg } from './branch-interfaces';
 import { PersistentConflict, Resolution } from './conflict-interfaces';
 import { BotEventHandler, BotEvents } from './events';
 import { NodeBot } from './nodebot';
@@ -78,7 +78,7 @@ export async function postToRobomergeAlerts(message: string) {
 
 export async function postMessageToChannel(message: string, channel: string, style: SlackMessageStyles = SlackMessageStyles.GOOD) {
 	if (SLACK_TOKENS.bot) {
-		return new Slack({id: channel, botToken: SLACK_TOKENS.bot, userToken: SLACK_TOKENS.user}, args.slackDomain).postMessageToDefaultChannel({
+		return new Slack({id: channel, botToken: SLACK_TOKENS.bot, userToken: SLACK_TOKENS.user}, args.slackDomain,new ContextualLogger(`Post Message to ${channel}`)).postMessageToDefaultChannel({
 			text: message,
 			style,
 			channel,
@@ -93,7 +93,7 @@ export async function postMessageToChannel(message: string, channel: string, sty
 // make a Slack notifcation link for a user
 function atifyUser(user: string) {
 	// don't @ names of bots (currently making them tt style for Slack)
-	return isUserAKnownBot(user) ? `\`${user}\`` : '@' + user
+	return isUserAKnownBot(user) ? `\`${user}\`` : user.startsWith('@') ? user : '@' + user
 }
 
 function generatePersistedSlackMessageKey(sourceCl: number, targetBranchArg: BranchArg, channel: string) {
@@ -545,7 +545,7 @@ export class BotNotifications implements BotEventHandler {
 			messagesToPost.push({ message })
 
 			if (blockage.failure.kind === 'Exclusive check-out') {
-				const exclusiveLockUsers = blockage.failure.additionalInfo as any[]			
+				const exclusiveLockUsers = (blockage.failure.additionalInfo as ExclusiveLockInfo).exclusiveLockUsers
 				let text = ''
 
 				for (const exclusiveLockUser of exclusiveLockUsers) {
@@ -994,11 +994,11 @@ export function bindBotNotifications(events: BotEvents, slackChannelOverrides: [
 
 	let slackMessages
 
-	const botToken = args.devMode && !args.useSlackInDev && SLACK_DEV_DUMMY_TOKEN || SLACK_TOKENS.bot
-	const userToken = args.devMode && !args.useSlackInDev && SLACK_DEV_DUMMY_TOKEN || SLACK_TOKENS.user
+	const botToken = (!args.devMode || args.useSlackInDev) && SLACK_TOKENS.bot || args.devMode && args.useSlackInDev && SLACK_DEV_DUMMY_TOKEN 
+	const userToken = (!args.devMode || args.useSlackInDev) && SLACK_TOKENS.user || args.devMode && args.useSlackInDev && SLACK_DEV_DUMMY_TOKEN
 	if (botToken && events.botConfig.slackChannel) {
 		logger.info('Enabling Slack messages for ' +  events.botname)
-		slackMessages = new SlackMessages(new Slack({id: events.botConfig.slackChannel, botToken, userToken}, args.slackDomain), persistence, logger)
+		slackMessages = new SlackMessages(new Slack({id: events.botConfig.slackChannel, botToken, userToken}, args.slackDomain, logger), persistence, logger)
 	}
 		
 	events.registerHandler(new BotNotifications(events.botname, events.botConfig.slackChannel, externalUrl, blockageUrlGenerator, logger, slackMessages, slackChannelOverrides))

@@ -11,15 +11,11 @@
 #include "GameplayEffectTypes.h"
 #include "GameplayPrediction.h"
 #include "GameplayAbilitySpec.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "UObject/Package.h"
-#include "Animation/AnimInstance.h"
-#include "Components/SkeletalMeshComponent.h"
-#endif
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "Abilities/GameplayAbilityRepAnimMontage.h"
 #endif
 #include "Abilities/GameplayAbilityTargetTypes.h"
+
 #include "GameplayAbilityTypes.generated.h"
 
 class APlayerController;
@@ -52,7 +48,7 @@ namespace EGameplayAbilityInstancingPolicy
 		// Each actor gets their own instance of this ability. State can be saved, replication is possible.
 		InstancedPerActor,
 
-		// We instance this ability each time it is executed. Replication possible but not recommended.
+		// We instance this ability each time it is executed. Replication currently unsupported.
 		InstancedPerExecution,
 	};
 }
@@ -498,6 +494,7 @@ private:
 
 	UAbilitySystemComponent* ASC;
 	FGameplayAbilitySpecHandle AbilityHandle;
+	FScopedPredictionWindow ScopedPredictionWindow;
 };
 
 

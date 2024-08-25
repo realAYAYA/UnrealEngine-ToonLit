@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionRampTopBottom.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "MaterialHLSLTree.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionRampTopBottom)
 
@@ -45,6 +47,28 @@ int32 UMaterialExpressionMaterialXRampTopBottom::Compile(FMaterialCompiler* Comp
 void UMaterialExpressionMaterialXRampTopBottom::GetCaption(TArray<FString>& OutCaptions) const
 {
 	OutCaptions.Add(TEXT("MaterialX RampTB"));
+}
+
+bool UMaterialExpressionMaterialXRampTopBottom::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionA = A.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionB = B.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionCoordinates = Coordinates.AcquireHLSLExpressionOrExternalInput(Generator, Scope, Material::MakeInputTexCoord(ConstCoordinate));
+
+	if(!ExpressionA || !ExpressionB || !ExpressionCoordinates)
+	{
+		return false;
+	}
+
+	FTree& Tree = Generator.GetTree();
+
+	OutExpression = Tree.NewLerp(ExpressionB,
+								 ExpressionA,
+								 Tree.NewSaturate(Tree.NewSwizzle(FSwizzleParameters(1), ExpressionCoordinates)));
+
+	return false;
 }
 #endif
 

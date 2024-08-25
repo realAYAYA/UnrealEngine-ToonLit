@@ -32,6 +32,7 @@
 #include "LevelSequenceActor.h"
 #include "Tools/BakingHelper.h"
 #include "Containers/SortedMap.h"
+#include "TransformConstraint.h"
 #include "Sequencer/ControlRigSequencerHelpers.h"
 #include "Constraints/MovieSceneConstraintChannelHelper.inl"
 
@@ -130,20 +131,30 @@ static bool LocalGetControlRigControlTransforms(IMovieScenePlayer* Player, const
 
 		FFrameRate TickResolution = MovieScene->GetTickResolution();
 		FFrameRate DisplayRate = MovieScene->GetDisplayRate();
-
+		
 		OutTransforms.SetNum(Frames.Num());
 		for (int32 Index = 0; Index < Frames.Num(); ++Index)
 		{
 			const FFrameNumber& FrameNumber = Frames[Index];
+			double DeltaTime = 0.0;
 			if (CurrentFrame.IsSet() == false || CurrentFrame.GetValue() != FrameNumber)
 			{
 				FFrameTime GlobalTime(FrameNumber);
-				GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly(); //player evals in root time so need to go back to it.
+				GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping(); //player evals in root time so need to go back to it.
 
 				FMovieSceneContext Context = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Player->GetPlaybackStatus()).SetHasJumped(true);
-				Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context, *Player);
+
+				DeltaTime = 1.0/Context.GetFrameRate().AsDecimal();
+				Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
 			}
-			ControlRig->Evaluate_AnyThread();
+			if (ControlRig->IsAdditive())
+			{
+				ControlRig->EvaluateSkeletalMeshComponent(DeltaTime);
+			}
+			else
+			{
+				ControlRig->Evaluate_AnyThread();
+			}
 			OutTransforms[Index] = ControlRig->GetControlGlobalTransform(ControlName) * ParentTransforms[Index];
 		}
 	}
@@ -157,7 +168,7 @@ bool FControlRigSnapper::GetControlRigControlTransforms(ISequencer* Sequencer,  
 	{
 		FMovieSceneSequenceIDRef Template = Sequencer->GetFocusedTemplateID();
 		FMovieSceneSequenceTransform RootToLocalTransform = Sequencer->GetFocusedMovieSceneSequenceTransform();
-		TOptional<FFrameNumber> FrameNumber = (Sequencer->GetLocalTime().Time * RootToLocalTransform.InverseLinearOnly()).RoundToFrame();
+		TOptional<FFrameNumber> FrameNumber;
 		return LocalGetControlRigControlTransforms(Sequencer, FrameNumber, Sequencer->GetFocusedMovieSceneSequence(), Template, RootToLocalTransform,
 			ControlRig, ControlName, Frames, ParentTransforms, OutTransforms);
 	
@@ -192,11 +203,11 @@ struct FGuidAndActor
 	AActor* Actor;
 
 	bool SetTransform(
-		ISequencer* Sequencer, const TArray<FFrameNumber>& Frames,
+		TSharedPtr<ISequencer>& Sequencer, const TArray<FFrameNumber>& Frames,
 		const TArray<FTransform>& WorldTransformsToSnapTo, const UControlRigSnapSettings* SnapSettings) const
 	{
 		// get section
-		UMovieScene3DTransformSection* TransformSection = MovieSceneToolHelpers::GetTransformSection(Sequencer, Guid);
+		UMovieScene3DTransformSection* TransformSection = MovieSceneToolHelpers::GetTransformSection(Sequencer.Get(), Guid);
 		if (!TransformSection)
 		{
 			return false;
@@ -208,8 +219,9 @@ struct FGuidAndActor
 		if (ParentActor)
 		{
 			FActorForWorldTransforms ActorSelection;
+			ActorSelection.Actor = ParentActor;
 			ActorSelection.SocketName = Actor->GetAttachParentSocketName();
-			MovieSceneToolHelpers::GetActorWorldTransforms(Sequencer, ActorSelection, Frames, ParentWorldTransforms);
+			MovieSceneToolHelpers::GetActorWorldTransforms(Sequencer.Get(), ActorSelection, Frames, ParentWorldTransforms);
 		}
 		else
 		{
@@ -248,9 +260,37 @@ struct FGuidAndActor
 			LocalTransforms.Add(WorldTransform.GetRelativeTransform(ParentTransform));
 		}
 
+		if (USceneComponent* SceneComponent = Actor->GetRootComponent())
+		{
+			UMovieScene* MovieScene = Sequencer->GetFocusedMovieSceneSequence()->GetMovieScene();
+			FFrameRate TickResolution = MovieScene->GetTickResolution();
+			FFrameRate DisplayRate = MovieScene->GetDisplayRate();
+			FMovieSceneSequenceTransform RootToLocalTransform = Sequencer->GetFocusedMovieSceneSequenceTransform();
+
+			//adjust keys for constraint
+			const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(Actor->GetWorld());
+
+			for (int32 Index = 0; Index < LocalTransforms.Num(); ++Index) 
+			{
+				const FFrameNumber Frame = Frames[Index];
+				FTransform& CurrentTransform = LocalTransforms[Index];
+
+				FFrameTime GlobalTime(Frame);
+				GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping();
+				FMovieSceneContext Context = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
+				if (Index == 0) // similar with baking first time in we need to evaluate twice (think due to double buffering that happens with skel mesh components).
+				{
+					Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
+				}
+				Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
+				Controller.EvaluateAllConstraints();
+				FTransformConstraintUtils::UpdateTransformBasedOnConstraint(CurrentTransform, SceneComponent);
+			}
+		}
+
 		// add keys
 		MovieSceneToolHelpers::AddTransformKeys(TransformSection, Frames, LocalTransforms, Channels);
-
+		
 		if (SnapSettings && SnapSettings->BakingKeySettings != EBakingKeySettings::KeysOnly
 			&& SnapSettings->bReduceKeys == true && Frames.Num() > 2)
 		{
@@ -263,7 +303,7 @@ struct FGuidAndActor
 		}
 
 
-		// notify
+	
 		Sequencer->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemsChanged);
 
 		return true;
@@ -400,7 +440,7 @@ static UMovieSceneControlRigParameterSection* GetControlRigSection(ISequencer* S
 }
 
 //Get Transform frames for specified snap items, will add them to the OutFrameMap
-static void GetTransformFrames(ISequencer * Sequencer, const FControlRigSnapperSelection& SnapItem, FFrameNumber StartFrame, FFrameNumber EndFrame, TSortedMap<FFrameNumber, FFrameNumber>& OutFrameMap)
+static void GetTransformFrames(TSharedPtr<ISequencer>&  Sequencer, const FControlRigSnapperSelection& SnapItem, FFrameNumber StartFrame, FFrameNumber EndFrame, TSortedMap<FFrameNumber, FFrameNumber>& OutFrameMap)
 {
 	TArray<FFrameNumber> FramesToUse;
 	TArray<FActorForWorldTransforms> ParentActors;
@@ -436,7 +476,7 @@ static void GetTransformFrames(ISequencer * Sequencer, const FControlRigSnapperS
 		}
 		if (Guid.IsValid())
 		{
-			if (UMovieScene3DTransformSection* TransformSection = MovieSceneToolHelpers::GetTransformSection(Sequencer, Guid))
+			if (UMovieScene3DTransformSection* TransformSection = MovieSceneToolHelpers::GetTransformSection(Sequencer.Get(), Guid))
 			{
 				TArrayView<FMovieSceneDoubleChannel*> Channels = TransformSection->GetChannelProxy().GetChannels<FMovieSceneDoubleChannel>();
 				TArray<FFrameNumber> TransformFrameTimes = FMovieSceneConstraintChannelHelper::GetTransformTimes(
@@ -450,7 +490,7 @@ static void GetTransformFrames(ISequencer * Sequencer, const FControlRigSnapperS
 	}
 	for (FControlRigForWorldTransforms& ControlRig : ParentControlRigs)
 	{
-		UMovieSceneControlRigParameterSection* Section = GetControlRigSection(Sequencer, ControlRig.ControlRig.Get());
+		UMovieSceneControlRigParameterSection* Section = GetControlRigSection(Sequencer.Get(), ControlRig.ControlRig.Get());
 		if (Section)
 		{
 			for (FName& ControlName : ControlRig.ControlNames)
@@ -473,7 +513,7 @@ bool FControlRigSnapper::SnapIt(FFrameNumber StartFrame, FFrameNumber EndFrame,c
 	TWeakPtr<ISequencer> InSequencer = GetSequencer();
 	if (InSequencer.IsValid() && InSequencer.Pin()->GetFocusedMovieSceneSequence() && ActorToSnap.IsValid())
 	{
-		ISequencer* Sequencer = InSequencer.Pin().Get();
+		TSharedPtr<ISequencer> Sequencer = InSequencer.Pin();
 		UMovieScene* MovieScene = Sequencer->GetFocusedMovieSceneSequence()->GetMovieScene();
 
 		TArray<FFrameNumber> Frames;
@@ -496,7 +536,7 @@ bool FControlRigSnapper::SnapIt(FFrameNumber StartFrame, FFrameNumber EndFrame,c
 		}
 		Sequencer->ForceEvaluate(); // force an evaluate so any control rig get's binding setup
 		TArray<FTransform> WorldTransformToSnap;
-		bool bSnapToFirstFrameNotParents = !CalculateWorldTransformsFromParents(Sequencer, ParentToSnap, Frames, WorldTransformToSnap);
+		bool bSnapToFirstFrameNotParents = !CalculateWorldTransformsFromParents(Sequencer.Get(), ParentToSnap, Frames, WorldTransformToSnap);
 		if (Frames.Num() != WorldTransformToSnap.Num())
 		{
 			UE_LOG(LogControlRig, Error, TEXT("Number of Frames %d to Snap different than Parent Frames %d"), Frames.Num(),WorldTransformToSnap.Num());
@@ -548,7 +588,7 @@ bool FControlRigSnapper::SnapIt(FFrameNumber StartFrame, FFrameNumber EndFrame,c
 				TArray<FTransform> OneTransform;
 				FActorForWorldTransforms ActorSelection;
 				ActorSelection.Actor = GuidActor.Actor;
-				MovieSceneToolHelpers::GetActorWorldTransforms(Sequencer, ActorSelection, OneFrame, OneTransform);
+				MovieSceneToolHelpers::GetActorWorldTransforms(Sequencer.Get(), ActorSelection, OneFrame, OneTransform);
 				if (bSnapToFirstFrameNotParents)
 				{
 					for (FTransform& Transform : WorldTransformToSnap)
@@ -597,7 +637,7 @@ bool FControlRigSnapper::SnapIt(FFrameNumber StartFrame, FFrameNumber EndFrame,c
 					TArray<FTransform> ControlRigParentWorldTransforms;
 					FActorForWorldTransforms ControlRigActorSelection;
 					ControlRigActorSelection.Actor = Actor;
-					MovieSceneToolHelpers::GetActorWorldTransforms(Sequencer, ControlRigActorSelection, Frames, ControlRigParentWorldTransforms);
+					MovieSceneToolHelpers::GetActorWorldTransforms(Sequencer.Get(), ControlRigActorSelection, Frames, ControlRigParentWorldTransforms);
 					FControlRigSnapper Snapper;
 					for (const FName& Name : ControlRigAndSelection.ControlNames)
 					{
@@ -610,7 +650,7 @@ bool FControlRigSnapper::SnapIt(FFrameNumber StartFrame, FFrameNumber EndFrame,c
 						{
 							OneFrame[0] = Frames[0];
 							CurrentParentWorldTransform[0] = ControlRigParentWorldTransforms[0];
-							Snapper.GetControlRigControlTransforms(Sequencer, ControlRig, Name, OneFrame, CurrentParentWorldTransform, CurrentControlRigTransform);
+							Snapper.GetControlRigControlTransforms(Sequencer.Get(), ControlRig, Name, OneFrame, CurrentParentWorldTransform, CurrentControlRigTransform);
 							if (bSnapToFirstFrameNotParents)
 							{
 								for (FTransform& Transform : WorldTransformToSnap)
@@ -652,7 +692,7 @@ bool FControlRigSnapper::SnapIt(FFrameNumber StartFrame, FFrameNumber EndFrame,c
 							OneFrame[0] = Frames[Index];
 							CurrentParentWorldTransform[0] = ControlRigParentWorldTransforms[Index];
 							//this will evaluate at the current frame which we want
-							GetControlRigControlTransforms(Sequencer, ControlRig, Name, OneFrame, CurrentParentWorldTransform, CurrentControlRigTransform);
+							GetControlRigControlTransforms(Sequencer.Get(), ControlRig, Name, OneFrame, CurrentParentWorldTransform, CurrentControlRigTransform);
 							if (SnapSettings)
 							{
 								FTransform& Transform = WorldTransformToSnap[Index];
@@ -680,7 +720,7 @@ bool FControlRigSnapper::SnapIt(FFrameNumber StartFrame, FFrameNumber EndFrame,c
 						}
 					}
 
-					UMovieSceneControlRigParameterSection* ControlRigSection = GetControlRigSection(Sequencer, ControlRig);
+					UMovieSceneControlRigParameterSection* ControlRigSection = GetControlRigSection(Sequencer.Get(), ControlRig);
 					if (ControlRigSection && SnapSettings && SnapSettings->BakingKeySettings != EBakingKeySettings::KeysOnly
 						&& SnapSettings->bReduceKeys == true && Frames.Num() > 2)
 					{

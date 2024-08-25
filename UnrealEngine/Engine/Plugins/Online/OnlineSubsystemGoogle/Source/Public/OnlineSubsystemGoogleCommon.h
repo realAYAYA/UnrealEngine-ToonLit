@@ -106,6 +106,15 @@ protected:
 
 	/** Server client id that this client will be engaging with */
 	FString ServerClientId;
+	
+	/** Does the implementation need a Client Id configured*/
+	bool bPlatformRequiresClientId;
+
+	/** Does the implementation need a Client Id configured*/
+	bool bPlatformAllowsClientIdOverride;
+
+	/** Does the implementation need a Server Client Id configured*/
+	bool bPlatformRequiresServerClientId;
 
 	/** Google implementation of identity interface */
 	FOnlineIdentityGoogleCommonPtr GoogleIdentity;

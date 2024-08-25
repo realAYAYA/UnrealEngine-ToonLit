@@ -24,8 +24,6 @@
 
 #define	WITH_EDITOR_AUTOMATION_TESTS	(WITH_EDITOR && WITH_AUTOMATION_TESTS)
 
-DEFINE_LOG_CATEGORY_STATIC(LogScreenshotFunctionalTest, Log, Log)
-
 static TAutoConsoleVariable<int32> GDumpGPUDumpOnScreenshotTest(
 	TEXT("r.DumpGPU.DumpOnScreenshotTest"), 0,
 	TEXT("Allows to filter the tree when using r.DumpGPU command, the pattern match is case sensitive."),
@@ -36,6 +34,7 @@ AScreenshotFunctionalTestBase::AScreenshotFunctionalTestBase(const FObjectInitia
 	, ScreenshotOptions(EComparisonTolerance::Low)
 	, bNeedsViewSettingsRestore(false)
 	, bNeedsViewportRestore(false)
+	, bScreenshotCompleted(false)
 {
 	ScreenshotCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	ScreenshotCamera->SetupAttachment(RootComponent);
@@ -84,11 +83,27 @@ void AScreenshotFunctionalTestBase::StartTest()
 
 void AScreenshotFunctionalTestBase::OnScreenshotTakenAndCompared()
 {
-	RestoreViewSettings();
-
-	FAutomationTestFramework::Get().OnScreenshotTakenAndCompared.RemoveAll(this);
+	bScreenshotCompleted = true;
 
 	FinishTest(EFunctionalTestResult::Succeeded, TEXT(""));
+}
+
+void AScreenshotFunctionalTestBase::FinishTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	if (!IsReady() ||  bScreenshotCompleted)
+	{
+		RestoreViewSettings();
+
+		FAutomationTestFramework::Get().OnScreenshotTakenAndCompared.RemoveAll(this);
+
+		Super::FinishTest(TestResult, Message);
+	}
+	else if (TestResult == EFunctionalTestResult::Error
+				|| TestResult == EFunctionalTestResult::Failed
+				|| TestResult == EFunctionalTestResult::Invalid)
+	{
+		AddError(Message);
+	}
 }
 
 void AScreenshotFunctionalTestBase::PrepareForScreenshot()
@@ -97,6 +112,8 @@ void AScreenshotFunctionalTestBase::PrepareForScreenshot()
 	check(GameViewportClient);
 	check(IsInGameThread());
 	check(!bNeedsViewSettingsRestore && !bNeedsViewportRestore);
+
+	bScreenshotCompleted = false;
 
 #if WITH_AUTOMATION_TESTS
 	bool bApplyScreenshotSettings = true;
@@ -178,7 +195,7 @@ void AScreenshotFunctionalTestBase::OnScreenShotCaptured(int32 InSizeX, int32 In
 
 	FAutomationTestFramework::Get().OnScreenshotAndTraceCaptured().ExecuteIfBound(InImageData, CapturedFrameTrace, Data);
 
-	UE_LOG(LogScreenshotFunctionalTest, Log, TEXT("Screenshot captured as %s"), *Data.ScreenshotName);
+	UE_LOG(LogScreenshotFunctionalTest, Log, TEXT("Screenshot captured as %s"), *Data.ScreenshotPath);
 #endif
 }
 
@@ -205,9 +222,14 @@ void AScreenshotFunctionalTestBase::OnComparisonComplete(const FAutomationScreen
 {
 	FAutomationTestFramework::Get().OnScreenshotCompared.RemoveAll(this);
 
+	if(!bIsRunning)
+	{
+		return;
+	}
+
 	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
 	{
-		CurrentTest->AddEvent(CompareResults.ToAutomationEvent(TestLabel));
+		CurrentTest->AddEvent(CompareResults.ToAutomationEvent());
 	}
 
 	FAutomationTestFramework::Get().NotifyScreenshotTakenAndCompared();
@@ -234,6 +256,14 @@ void AScreenshotFunctionalTestBase::RestoreViewSettings()
 
 	bNeedsViewSettingsRestore = false;
 	bNeedsViewportRestore = false;
+}
+
+void AScreenshotFunctionalTestBase::OnTimeout()
+{
+	// If the test timed out, make sure the screenshot comparison is cancelled.
+	bScreenshotCompleted = true;
+
+	Super::OnTimeout();
 }
 
 #if WITH_EDITOR

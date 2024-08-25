@@ -561,7 +561,7 @@ bool UPoseWatch::GetIsEnabled() const
  	bool bIsEnabled = false;
   
 	// Set visible if any child component is visible.
-	for (TObjectPtr<UPoseWatchElement> PoseWatchElement : Elements)
+	for (const TObjectPtr<UPoseWatchElement>& PoseWatchElement : Elements)
 	{
   		bIsEnabled |= PoseWatchElement->GetIsEnabled();
 	}
@@ -652,7 +652,7 @@ bool UPoseWatch::SetLabel(const FText& InLabel)
 
 void UPoseWatch::SetIsVisible(bool bInIsVisible)
 {
-	for (TObjectPtr<UPoseWatchElement> PoseWatchElement : Elements)
+	for (const TObjectPtr<UPoseWatchElement>& PoseWatchElement : Elements)
 	{
 		PoseWatchElement->SetIsVisible(bInIsVisible);
 	}
@@ -669,7 +669,7 @@ void UPoseWatch::SetColor(const FColor& InColor)
 {
 	Color_DEPRECATED = InColor;
 
-	for (TObjectPtr<UPoseWatchElement> PoseWatchElement : Elements)
+	for (const TObjectPtr<UPoseWatchElement>& PoseWatchElement : Elements)
 	{
 		PoseWatchElement->SetColor(InColor);
 	}
@@ -738,7 +738,7 @@ void UPoseWatch::UpdateVisibility()
 	bIsVisible = false;
 
 	// Set visible if any child component is visible.
-	for (TObjectPtr<UPoseWatchElement> PoseWatchElement : Elements)
+	for (const TObjectPtr<UPoseWatchElement>& PoseWatchElement : Elements)
 	{
 		bIsVisible |= PoseWatchElement->GetIsVisible();
 	}

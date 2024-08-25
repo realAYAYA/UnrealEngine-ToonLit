@@ -33,7 +33,11 @@ class FChunkedFixedUObjectArray;
 
 // Disable the replacement new/delete when running the Clang static analyzer, due to false positives in 15.0.x:
 // https://github.com/llvm/llvm-project/issues/58820
-#if !FORCE_ANSI_ALLOCATOR && !defined(__clang_analyzer__)
+// For AutoRTFM when FORCE_ANSI_ALLOCATOR is specified we still need to re-route operator new/delete (to deal
+// with transactionalization of memory allocation). Address sanitizer will still work even with this re-routing
+// because we point the underlying FMemory allocator at ansi malloc/free, which ASan still hijacks for its
+// purposes.
+#if !(FORCE_ANSI_ALLOCATOR && !(defined(__AUTORTFM) && __AUTORTFM)) && !defined(__clang_analyzer__)
 static_assert(__STDCPP_DEFAULT_NEW_ALIGNMENT__ <= 16, "Expecting 16-byte default operator new alignment - alignments > 16 may have bloat");
 #define REPLACEMENT_OPERATOR_NEW_AND_DELETE \
 	OPERATOR_NEW_MSVC_PRAGMA void* operator new  ( size_t Size                                                    ) OPERATOR_NEW_THROW_SPEC      { return FMemory::Malloc( Size ? Size : 1, __STDCPP_DEFAULT_NEW_ALIGNMENT__ ); } \

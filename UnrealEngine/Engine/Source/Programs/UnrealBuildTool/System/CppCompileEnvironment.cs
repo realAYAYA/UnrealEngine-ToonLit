@@ -230,6 +230,11 @@ namespace UnrealBuildTool
 		public PrecompiledHeaderAction PrecompiledHeaderAction = PrecompiledHeaderAction.None;
 
 		/// <summary>
+		/// Will replace pch with ifc and use header units instead
+		/// </summary>
+		public bool bUseHeaderUnitsForPch = false;
+
+		/// <summary>
 		/// Whether artifacts from this compile are shared with other targets. If so, we should not apply any target-wide modifications to the compile environment.
 		/// </summary>
 		public bool bUseSharedBuildEnvironment;
@@ -238,6 +243,12 @@ namespace UnrealBuildTool
 		/// Use run time type information
 		/// </summary>
 		public bool bUseRTTI = false;
+
+		/// <summary>
+		/// Whether to direct MSVC to remove unreferenced COMDAT functions and data.
+		/// </summary>
+		/// <seealso href="https://learn.microsoft.com/en-us/cpp/build/reference/zc-inline-remove-unreferenced-comdat">zc-inline-remove-unreferenced-comdat</seealso>
+		public bool bVcRemoveUnreferencedComdat = true;
 
 		/// <summary>
 		/// Use Position Independent Executable (PIE). Has an overhead cost
@@ -263,6 +274,11 @@ namespace UnrealBuildTool
 		/// Enable buffer security checks.   This should usually be enabled as it prevents severe security risks.
 		/// </summary>
 		public bool bEnableBufferSecurityChecks = true;
+
+		/// <summary>
+		/// Whether the AutoRTFM compiler is being used or not.
+		/// </summary>
+		public bool bUseAutoRTFMCompiler = false;
 
 		/// <summary>
 		/// Enables AutoRTFM instrumentation to this cpp file only when AutoRTFMCompiler is enabled
@@ -397,9 +413,19 @@ namespace UnrealBuildTool
 		public OptimizationMode OptimizationLevel = OptimizationMode.Speed;
 
 		/// <summary>
+		/// Determines the FP semantics.
+		/// </summary>
+		public FPSemanticsMode FPSemantics = FPSemanticsMode.Default;
+
+		/// <summary>
 		/// True if debug info should be created.
 		/// </summary>
 		public bool bCreateDebugInfo = true;
+
+		/// <summary>
+		/// True if debug info should only generate line number tables (clang)
+		/// </summary>
+		public bool bDebugLineTablesOnly = false;
 
 		/// <summary>
 		/// True if we're compiling .cpp files that will go into a library (.lib file)
@@ -610,6 +636,11 @@ namespace UnrealBuildTool
 		public bool bHideSymbolsByDefault = true;
 
 		/// <summary>
+		/// Whether this environment should be treated as an engine module.
+		/// </summary>
+		public bool bTreatAsEngineModule;
+
+		/// <summary>
 		/// Which C++ standard to support for engine modules. CppStandard will be set to this for engine modules and CppStandardEngine should not be checked in any toolchain. May not be compatible with all platforms.
 		/// </summary>
 		public CppStandardVersion CppStandardEngine = CppStandardVersion.EngineDefault;
@@ -658,6 +689,16 @@ namespace UnrealBuildTool
 		public WarningLevel DeterministicWarningLevel = WarningLevel.Off;
 
 		/// <summary>
+		/// Emits compilation errors for incorrect UE_LOG format strings.
+		/// </summary>
+		public bool bValidateFormatStrings = true;
+
+		/// <summary>
+		/// Emits deprecated warnings\errors for internal API usage for non-engine modules.
+		/// </summary>
+		public bool bValidateInternalApi = false;
+
+		/// <summary>
 		/// Directory where to put crash report files for platforms that support it
 		/// </summary>
 		public string? CrashDiagnosticDirectory;
@@ -694,6 +735,7 @@ namespace UnrealBuildTool
 			PrecompiledHeaderAction = Other.PrecompiledHeaderAction;
 			bUseSharedBuildEnvironment = Other.bUseSharedBuildEnvironment;
 			bUseRTTI = Other.bUseRTTI;
+			bVcRemoveUnreferencedComdat = Other.bVcRemoveUnreferencedComdat;
 			bUsePIE = Other.bUsePIE;
 			bUseStackProtection = Other.bUseStackProtection;
 			bUseInlining = Other.bUseInlining;
@@ -718,10 +760,13 @@ namespace UnrealBuildTool
 			StaticAnalyzerDisabledCheckers = new HashSet<string>(Other.StaticAnalyzerDisabledCheckers);
 			StaticAnalyzerAdditionalCheckers = new HashSet<string>(Other.StaticAnalyzerAdditionalCheckers);
 			bOptimizeCode = Other.bOptimizeCode;
+			bUseAutoRTFMCompiler = Other.bUseAutoRTFMCompiler;
 			bAllowAutoRTFMInstrumentation = Other.bAllowAutoRTFMInstrumentation;
 			bCodeCoverage = Other.bCodeCoverage;
 			OptimizationLevel = Other.OptimizationLevel;
+			FPSemantics = Other.FPSemantics;
 			bCreateDebugInfo = Other.bCreateDebugInfo;
+			bDebugLineTablesOnly = Other.bDebugLineTablesOnly;
 			bIsBuildingLibrary = Other.bIsBuildingLibrary;
 			bIsBuildingDLL = Other.bIsBuildingDLL;
 			bUseStaticCRT = Other.bUseStaticCRT;
@@ -740,6 +785,7 @@ namespace UnrealBuildTool
 			PGODirectory = Other.PGODirectory;
 			bPrintTimingInfo = Other.bPrintTimingInfo;
 			bAllowRemotelyCompiledPCHs = Other.bAllowRemotelyCompiledPCHs;
+			bUseHeaderUnitsForPch = Other.bUseHeaderUnitsForPch;
 			UserIncludePaths = new HashSet<DirectoryReference>(Other.UserIncludePaths);
 			SystemIncludePaths = new HashSet<DirectoryReference>(Other.SystemIncludePaths);
 			SharedUserIncludePaths = new HashSet<DirectoryReference>(Other.SharedUserIncludePaths);
@@ -758,6 +804,7 @@ namespace UnrealBuildTool
 			ParentPCHInstance = Other.ParentPCHInstance;
 			bHackHeaderGenerator = Other.bHackHeaderGenerator;
 			bHideSymbolsByDefault = Other.bHideSymbolsByDefault;
+			bTreatAsEngineModule = Other.bTreatAsEngineModule;
 			CppStandardEngine = Other.CppStandardEngine;
 			CppStandard = Other.CppStandard;
 			CStandard = Other.CStandard;
@@ -767,6 +814,8 @@ namespace UnrealBuildTool
 			bDeterministic = Other.bDeterministic;
 			DeterministicWarningLevel = Other.DeterministicWarningLevel;
 			CrashDiagnosticDirectory = Other.CrashDiagnosticDirectory;
+			bValidateFormatStrings = Other.bValidateFormatStrings;
+			bValidateInternalApi = Other.bValidateInternalApi;
 		}
 
 		public CppCompileEnvironment(CppCompileEnvironment Other, UnrealArch OverrideArchitecture)

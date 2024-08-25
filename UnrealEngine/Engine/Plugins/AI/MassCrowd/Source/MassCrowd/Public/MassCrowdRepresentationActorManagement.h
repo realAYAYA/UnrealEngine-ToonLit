@@ -39,7 +39,7 @@ protected:
 	 * @return the actor spawned
 	 */
 	virtual AActor* GetOrSpawnActor(UMassRepresentationSubsystem& RepresentationSubsystem, FMassEntityManager& EntitySubsystem
-		, const FMassEntityHandle MassAgent, FMassActorFragment& ActorInfo, const FTransform& Transform, const int16 TemplateActorIndex
+		, const FMassEntityHandle MassAgent, const FTransform& Transform, const int16 TemplateActorIndex
 		, FMassActorSpawnRequestHandle& SpawnRequestHandle, const float Priority) const override;
 
 	/**

@@ -196,7 +196,7 @@ void UVirtualTexture2D::BeginCacheForCookedPlatformData(const ITargetPlatform* T
 	// Even though we skip the cook of this object for non VT platforms in URuntimeVirtualTexture::Serialize()
 	// we still load the object at cook time and kick off the DDC build. This will trigger an error in the texture DDC code.
 	// Either we need to make the DDC code more robust for non VT platforms or we can skip the process here...
-	if (!UseVirtualTexturing(GMaxRHIFeatureLevel, TargetPlatform))
+	if (!UseVirtualTexturing(GMaxRHIShaderPlatform, TargetPlatform))
 	{
 		return;
 	}
@@ -206,7 +206,7 @@ void UVirtualTexture2D::BeginCacheForCookedPlatformData(const ITargetPlatform* T
 
 bool UVirtualTexture2D::IsCachedCookedPlatformDataLoaded(const ITargetPlatform* TargetPlatform)
 {
-	if (!UseVirtualTexturing(GMaxRHIFeatureLevel, TargetPlatform))
+	if (!UseVirtualTexturing(GMaxRHIShaderPlatform, TargetPlatform))
 	{
 		return true;
 	}
@@ -216,7 +216,7 @@ bool UVirtualTexture2D::IsCachedCookedPlatformDataLoaded(const ITargetPlatform* 
 
 void UVirtualTexture2D::ClearCachedCookedPlatformData(const ITargetPlatform* TargetPlatform)
 {
-	if (!UseVirtualTexturing(GMaxRHIFeatureLevel, TargetPlatform))
+	if (!UseVirtualTexturing(GMaxRHIShaderPlatform, TargetPlatform))
 	{
 		return;
 	}

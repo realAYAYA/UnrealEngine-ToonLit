@@ -191,7 +191,7 @@ TArray<UMetasoundEditorGraphMemberNode*> UMetasoundEditorGraphVertex::GetNodes()
 			UMetasoundEditorGraphNode* Node = Nodes[i];
 			if (Node && Node->GetNodeID() != NodeID)
 			{
-				Nodes.RemoveAtSwap(i, 1, false /* bAllowShrinking */);
+				Nodes.RemoveAtSwap(i, 1, EAllowShrinking::No);
 			}
 		}
 	}

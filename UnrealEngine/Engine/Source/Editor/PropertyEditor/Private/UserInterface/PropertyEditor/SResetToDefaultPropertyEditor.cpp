@@ -44,7 +44,7 @@ void SResetToDefaultPropertyEditor::Construct(const FArguments& InArgs, const TS
 		.IsFocusable(false)
 		.ToolTipText(this, &SResetToDefaultPropertyEditor::GetResetToolTip)
 		.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-		.ContentPadding(0) 
+		.ContentPadding(0.0f)
 		.Visibility(this, &SResetToDefaultPropertyEditor::GetDiffersFromDefaultAsVisibility )
 		.OnClicked(this, &SResetToDefaultPropertyEditor::OnResetClicked)
 		.Content()

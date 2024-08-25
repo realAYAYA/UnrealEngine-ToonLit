@@ -4,6 +4,7 @@
 #include "UObject/Class.h"
 #include "UObject/UnrealType.h"
 #include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
 #include "AssetRegistry/AssetData.h"
 #include "EdGraph/EdGraphSchema.h"
 #include "AIGraph.h"
@@ -374,18 +375,26 @@ void UAIGraphNode::UpdateNodeClassData()
 	if (NodeInstance)
 	{
 		UpdateNodeClassDataFrom(NodeInstance->GetClass(), ClassData);
-		ErrorMessage = ClassData.GetDeprecatedMessage();
+		UpdateErrorMessage();
 	}
+}
+
+void UAIGraphNode::UpdateErrorMessage()
+{
+	ErrorMessage = ClassData.GetDeprecatedMessage();
 }
 
 void UAIGraphNode::UpdateNodeClassDataFrom(UClass* InstanceClass, FGraphNodeClassData& UpdatedData)
 {
 	if (InstanceClass)
 	{
-		UBlueprint* BPOwner = Cast<UBlueprint>(InstanceClass->ClassGeneratedBy);
-		if (BPOwner)
+		if (UBlueprint* BPOwner = Cast<UBlueprint>(InstanceClass->ClassGeneratedBy))
 		{
 			UpdatedData = FGraphNodeClassData(BPOwner->GetName(), BPOwner->GetOutermost()->GetName(), InstanceClass->GetName(), InstanceClass);
+		}
+		else if (UBlueprintGeneratedClass* BPGC = Cast<UBlueprintGeneratedClass>(InstanceClass))
+		{
+			UpdatedData = FGraphNodeClassData(BPGC->GetClassPathName(), BPGC);
 		}
 		else
 		{

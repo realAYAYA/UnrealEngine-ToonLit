@@ -8,6 +8,7 @@
 #include "MetalFrameAllocator.h"
 #include "MetalUniformBuffer.h"
 #include "ShaderParameterStruct.h"
+#include "RHIUniformBufferDataShared.h"
 
 #pragma mark Suballocated Uniform Buffer Implementation
 
@@ -15,7 +16,6 @@ FMetalSuballocatedUniformBuffer::FMetalSuballocatedUniformBuffer(const void *Con
     : FRHIUniformBuffer(Layout)
     , LastFrameUpdated(0)
     , Offset(0)
-    , Backing(nil)
     , Shadow(FMemory::Malloc(GetSize()))
 #if METAL_UNIFORM_BUFFER_VALIDATION
     , Validation(InValidation)
@@ -23,7 +23,7 @@ FMetalSuballocatedUniformBuffer::FMetalSuballocatedUniformBuffer(const void *Con
 {
 	if (Contents)
 	{
-		FMemory::Memcpy(Shadow, Contents, GetSize());
+        UE::RHICore::UpdateUniformBufferConstants(Shadow, Contents, GetLayout());
 		CopyResourceTable(Contents, ResourceTable);
 	}
 }
@@ -38,9 +38,9 @@ FMetalSuballocatedUniformBuffer::~FMetalSuballocatedUniformBuffer()
 
 void FMetalSuballocatedUniformBuffer::Update(const void* Contents)
 {
-	FMemory::Memcpy(Shadow, Contents, GetSize());
+    UE::RHICore::UpdateUniformBufferConstants(Shadow, Contents, GetLayout());
 	CopyResourceTable(Contents, ResourceTable);
-	PushToGPUBacking(Contents);
+	PushToGPUBacking(Shadow);
 }
 
 // Acquires a region in the current frame's uniform buffer and
@@ -55,7 +55,7 @@ void FMetalSuballocatedUniformBuffer::PushToGPUBacking(const void* Contents)
     // copy contents into backing
     Backing = Entry.Backing;
     Offset = Entry.Offset;
-    uint8* ConstantSpace = reinterpret_cast<uint8*>([Backing contents]) + Entry.Offset;
+    uint8* ConstantSpace = reinterpret_cast<uint8*>(Backing->contents()) + Entry.Offset;
     FMemory::Memcpy(ConstantSpace, Contents, GetSize());
     LastFrameUpdated = DeviceContext.GetFrameNumberRHIThread();
 }

@@ -159,7 +159,7 @@ namespace Chaos
 
 		virtual const FAABB3 BoundingBox() const override { return MLocalBoundingBox; }
 
-		FReal GetRadius() const { return MRadius; }
+		virtual FReal GetRadius() const override { return MRadius; }
 		FReal GetHeight() const { return MHeight; }
 		const FVec3& GetX1() const { return MPlane1.X(); }
 		const FVec3& GetX2() const { return MPlane2.X(); }

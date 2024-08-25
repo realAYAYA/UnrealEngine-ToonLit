@@ -14,9 +14,7 @@ class FCustomizableObjectInstanceEditorCommands : public TCommands<FCustomizable
 
 public:
 	FCustomizableObjectInstanceEditorCommands();
-	
-	
-	/**  */
+
 	TSharedPtr< FUICommandInfo > SetDrawUVs;
 	TSharedPtr< FUICommandInfo > SetShowGrid;
 	TSharedPtr< FUICommandInfo > SetShowSky;
@@ -24,15 +22,6 @@ public:
 	TSharedPtr< FUICommandInfo > SetShowCollision;
 	TSharedPtr< FUICommandInfo > SetCameraLock;
 	TSharedPtr< FUICommandInfo > SaveThumbnail;
-
-	// View Menu Commands
-	TSharedPtr< FUICommandInfo > SetShowNormals;
-	TSharedPtr< FUICommandInfo > SetShowTangents;
-	TSharedPtr< FUICommandInfo > SetShowBinormals;
-	TSharedPtr< FUICommandInfo > SetShowPivot;
-
-	TSharedPtr< FUICommandInfo > BakeInstanceFromInstance;
-	TSharedPtr< FUICommandInfo > StateChangeTest;
 
 	//Toolbar Commands
 	TSharedPtr< FUICommandInfo > ShowParentCO;

@@ -247,9 +247,14 @@ int32 SInvalidationPanel::OnPaint( const FPaintArgs& Args, const FGeometry& Allo
 
 		const FSlateInvalidationResult Result = MutableThis->PaintInvalidationRoot(Context);
 
-		// add our widgets to the root hit test grid
-		Args.GetHittestGrid().AddGrid(HittestGrid);
+		const bool bInheritedHittestability = Args.GetInheritedHittestability();
+		const bool bOutgoingHittestability = bInheritedHittestability && GetVisibility().AreChildrenHitTestVisible();
 
+		// add our widgets to the root hit test grid
+		if (bOutgoingHittestability)
+		{
+			Args.GetHittestGrid().AddGrid(HittestGrid);
+		}
 		return Result.MaxLayerIdPainted;
 	}
 	else
@@ -277,6 +282,10 @@ bool SInvalidationPanel::CustomPrepass(float LayoutScaleMultiplier)
 
 	if (GetCanCache())
 	{
+		if (NeedsPrepass())
+		{
+			SetNeedsSlowPath(true);
+		}
 		ProcessInvalidation();
 		if (NeedsSlowPath())
 		{

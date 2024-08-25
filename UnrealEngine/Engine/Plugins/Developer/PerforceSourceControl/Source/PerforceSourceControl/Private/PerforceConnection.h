@@ -44,8 +44,10 @@ enum class EConnectionOptions : uint8
 {
 	/** No options are applied */
 	None				= 0,
-	/** The connection does not require a workspace to be considered valid*/
+	/** The connection does not require a workspace to be considered valid */
 	WorkspaceOptional	= 1 << 0,
+	/** Errors will not be logged but will still be returned to the caller */
+	SupressErrorLogging	= 1 << 1
 };
 ENUM_CLASS_FLAGS(EConnectionOptions);
 
@@ -72,19 +74,23 @@ public:
 	/** 
 	 * Attempts to automatically detect the workspace to use based on the working directory
 	 */
-	static bool AutoDetectWorkspace(const FPerforceConnectionInfo& InConnectionInfo, FPerforceSourceControlProvider& SCCProvider, FString& OutWorkspaceName);
+	static bool AutoDetectWorkspace(const FPerforceConnectionInfo& InConnectionInfo, FPerforceSourceControlProvider& SCCProvider, FString& OutWorkspaceName, TArray<FText>& OutErrorMessages);
 
 	/**
-	 * Static function in charge of making sure the specified connection is valid or requests that data from the user via dialog
-	 * @param InOutPortName			Port name in the inifile.  Out value is the port name from the connection dialog
-	 * @param InOutUserName			User name in the inifile.  Out value is the user name from the connection dialog
-	 * @param InOutWorkspaceName	Workspace name in the inifile.  Out value is the client spec from the connection dialog
-	 * @param InConnectionInfo		Connection credentials
-	 * @return - true if the connection, whether via dialog or otherwise, is valid.  False if source control should be disabled
+	 * Set up a connection to the server with the given credentials. The function can attempt to autodetect missing credentials or fix incorrect ones with
+	 * the final credentials being returned to the caller.
+	 * 
+	 * @param InSettings			The initial connection credentials.
+	 * @param SCCProvider			The provider that is setting up the connection.
+	 * @param Options				Used to specialize initialization behavior, @see EConnectionOptions.
+	 * @param OutSettings			The finalized connection credentials. If the connection failed then this will contain the credentials that were 
+	 *								used for the step that failed.
+	 * @param OutConnectionErrors	A collection of errors encountered.
+	 * 
+	 * @return - True if a valid connection was established, otherwise false.
 	 */
-	static bool EnsureValidConnection(	FString& InOutServerName, FString& InOutUserName, FString& InOutWorkspaceName,
-										const FPerforceConnectionInfo& InConnectionInfo, FPerforceSourceControlProvider& SCCProvider, 
-										EConnectionOptions Options = EConnectionOptions::None);
+	static bool EnsureValidConnection(	const FPerforceConnectionInfo& InSettings, FPerforceSourceControlProvider& SCCProvider, EConnectionOptions Options,
+										FPerforceConnectionInfo& OutSettings, ISourceControlProvider::FInitResult::FConnectionErrors& OutConnectionErrors);
 
 	/**
 	 * Get List of ClientSpecs
@@ -94,7 +100,7 @@ public:
 	 * @param OutErrorMessages	Any error messages output.
 	 * @return - True if successful
 	 */
-	bool GetWorkspaceList(const FPerforceConnectionInfo& InConnectionInfo, FOnIsCancelled InOnIsCancelled, TArray<FString>& OutWorkspaceList, TArray<FText>& OutErrorMessages);
+	bool GetWorkspaceList(const FPerforceConnectionInfo& InConnectionInfo, FOnIsCancelled InOnIsCancelled, TArray<FString>& OutWorkspaceList, FSourceControlResultInfo& OutResultInfo);
 
 	/** Returns true if connection is currently active */
 	bool IsValidConnection();
@@ -108,36 +114,36 @@ public:
 	/**
 	 * Runs internal perforce command, catches exceptions, returns results
 	 */
-	bool RunCommand(const FString& InCommand, const TArray<FString>& InParameters, FP4RecordSet& OutRecordSet, TArray<FText>&  OutErrorMessage, FOnIsCancelled InIsCancelled, bool& OutConnectionDropped)
+	bool RunCommand(const FString& InCommand, const TArray<FString>& InParameters, FP4RecordSet& OutRecordSet, FSourceControlResultInfo& OutResultInfo, FOnIsCancelled InIsCancelled, bool& OutConnectionDropped)
 	{
-		return RunCommand(InCommand, InParameters, OutRecordSet, nullptr, OutErrorMessage, InIsCancelled, OutConnectionDropped);
+		return RunCommand(InCommand, InParameters, OutRecordSet, nullptr, OutResultInfo, InIsCancelled, OutConnectionDropped);
 	}
 
 	/**
 	 * Runs internal perforce command, catches exceptions, returns results
 	 */
-	bool RunCommand(const FString& InCommand, const TArray<FString>& InParameters, FP4RecordSet& OutRecordSet, TArray<FSharedBuffer>* OutData, TArray<FText>& OutErrorMessage, FOnIsCancelled InIsCancelled, bool& OutConnectionDropped, ERunCommandFlags RunFlags = ERunCommandFlags::Default);
+	bool RunCommand(const FString& InCommand, const TArray<FString>& InParameters, FP4RecordSet& OutRecordSet, TArray<FSharedBuffer>* OutData, FSourceControlResultInfo& OutResultInfo, FOnIsCancelled InIsCancelled, bool& OutConnectionDropped, ERunCommandFlags RunFlags = ERunCommandFlags::Default);
 
 	/**
 	 * Creates a changelist with the specified description
 	 */
-	int32 CreatePendingChangelist(const FText &Description, const TArray<FString>& InFiles, FOnIsCancelled InIsCancelled, TArray<FText>& OutErrorMessages);
+	int32 CreatePendingChangelist(const FText &Description, const TArray<FString>& InFiles, FOnIsCancelled InIsCancelled, FSourceControlResultInfo& OutResultInfo);
 
 	/**
 	 * Edits a changelist with a new description
 	 */
-	int32 EditPendingChangelist(const FText& NewDescription, int32 ChangelistNumber, FOnIsCancelled InIsCancelled, TArray<FText>& OutErrorMessages);
+	int32 EditPendingChangelist(const FText& NewDescription, int32 ChangelistNumber, FOnIsCancelled InIsCancelled, FSourceControlResultInfo& OutResultInfo);
 
 	/** 
 	 * Creates a workspace based on the spec provided via the WorkspaceSpec.
 	 * 
 	 * @param WorkspaceSpec		The specification of the workspace to create
-	 * @param InIsCancelled		Delegate allowing the cancelling of the command if needed
-	 * @param OutErrorMessages	An array that will be filled with all errors encountered during the command
+	 * @param InIsCancelled		Delegate allowing the canceling of the command if needed
+	 * @param OutResultInfo		Struct that will end up containing info and error messages for the operation
 	 * 
 	 * @return Returns true if no errors were encountered, otherwise false
 	 */
-	bool CreateWorkspace(FStringView WorkspaceSpec, FOnIsCancelled InIsCancelled, TArray<FText>& OutErrorMessages);
+	bool CreateWorkspace(FStringView WorkspaceSpec, FOnIsCancelled InIsCancelled, FSourceControlResultInfo& OutResultInfo);
 
 	/**
 	 * Attempt to login - some servers will require this 

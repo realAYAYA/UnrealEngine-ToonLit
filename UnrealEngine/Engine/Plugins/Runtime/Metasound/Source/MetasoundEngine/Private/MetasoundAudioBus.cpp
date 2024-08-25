@@ -3,7 +3,6 @@
 #include "MetasoundAudioBus.h"
 
 #include "AudioDevice.h"
-#include "DecoderInputFactory.h"
 
 namespace Metasound
 {

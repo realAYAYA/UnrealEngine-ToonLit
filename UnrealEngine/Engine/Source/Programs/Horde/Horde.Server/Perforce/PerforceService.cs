@@ -14,6 +14,8 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using EpicGames.Perforce;
 using Horde.Server.Server;
 using Horde.Server.Streams;
@@ -29,7 +31,7 @@ namespace Horde.Server.Perforce
 	/// <summary>
 	/// P4API implementation of the Perforce service
 	/// </summary>
-	class PerforceService : IPerforceService, IDisposable
+	class PerforceService : IPerforceService, IAsyncDisposable
 	{
 		protected sealed class PooledConnection : IDisposable
 		{
@@ -130,12 +132,14 @@ namespace Horde.Server.Perforce
 		{
 			public string UserName { get; }
 			public string? Password { get; }
+			public string? Ticket { get; }
 			public DateTime? ExpiresAt { get; }
 
-			public Credentials(string userName, string? password, DateTime? expiresAt)
+			public Credentials(string userName, string? password, string? ticket, DateTime? expiresAt)
 			{
 				UserName = userName;
 				Password = password;
+				Ticket = ticket;
 				ExpiresAt = expiresAt;
 			}
 		}
@@ -193,7 +197,7 @@ namespace Horde.Server.Perforce
 			public async ValueTask<bool> MatchesFilterAsync(FileFilter filter, CancellationToken cancellationToken)
 			{
 				int maxFiles = 1000;
-				for(; ;)
+				for (; ; )
 				{
 					// Query the files up to the current maximum
 					IReadOnlyList<string> files = await GetFilesAsync(maxFiles, cancellationToken);
@@ -257,7 +261,7 @@ namespace Horde.Server.Perforce
 			_tracer = tracer;
 			_logger = logger;
 
-			if(settings.Value.UseLocalPerforceEnv)
+			if (settings.Value.UseLocalPerforceEnv)
 			{
 				IPerforceSettings perforceSettings = PerforceSettings.Default;
 				_perforceServerOverride = perforceSettings.ServerAndPort;
@@ -265,7 +269,7 @@ namespace Horde.Server.Perforce
 			}
 		}
 
-		public virtual void Dispose()
+		public virtual ValueTask DisposeAsync()
 		{
 			foreach (PooledConnection pooledConnection in _pooledConnections)
 			{
@@ -275,6 +279,7 @@ namespace Horde.Server.Perforce
 
 			_userCache.Dispose();
 			_streamCache.Dispose();
+			return new ValueTask();
 		}
 
 		async Task<PooledConnectionHandle> CreatePooledConnectionAsync(string serverAndPort, Credentials credentials, ClientRecord? clientRecord, CancellationToken cancellationToken)
@@ -283,7 +288,7 @@ namespace Horde.Server.Perforce
 
 			PerforceSettings settings = new PerforceSettings(serverAndPort, credentials.UserName);
 			settings.AppName = "Horde.Server";
-			settings.Password = credentials.Password;
+			settings.Password = String.IsNullOrEmpty(credentials.Ticket) ? credentials.Password : credentials.Ticket;
 			settings.HostName = clientRecord?.Host;
 			settings.ClientName = clientRecord?.Name ?? "__DOES_NOT_EXIST__";
 			settings.PreferNativeClient = true;
@@ -380,7 +385,7 @@ namespace Horde.Server.Perforce
 		{
 			if (_perforceUserOverride != null)
 			{
-				return new Credentials(_perforceUserOverride, null, null);
+				return new Credentials(_perforceUserOverride, null, null, null);
 			}
 			else if (cluster.ServiceAccount != null)
 			{
@@ -389,11 +394,19 @@ namespace Horde.Server.Perforce
 				{
 					throw new Exception($"No credentials defined for {cluster.ServiceAccount} on {cluster.Name}");
 				}
-				return new Credentials(credentials.UserName, credentials.Password, null);
+				return new Credentials(credentials.UserName, credentials.Password, credentials.Ticket, null);
 			}
 			else
 			{
-				return new Credentials(PerforceSettings.Default.UserName, null, null);
+				PerforceCredentials? credentials = cluster.Credentials.FirstOrDefault();
+				if (credentials != null)
+				{
+					return new Credentials(credentials.UserName, credentials.Password, credentials.Ticket, null);
+				}
+				else
+				{
+					return new Credentials(PerforceSettings.Default.UserName, null, null, null);
+				}
 			}
 		}
 
@@ -401,7 +414,7 @@ namespace Horde.Server.Perforce
 		{
 			if (_perforceUserOverride != null)
 			{
-				return new Credentials(_perforceUserOverride, null, null);
+				return new Credentials(_perforceUserOverride, null, null, null);
 			}
 			else if (userName != null)
 			{
@@ -411,7 +424,7 @@ namespace Horde.Server.Perforce
 				}
 				else
 				{
-					return new Credentials(userName, null, null);
+					return new Credentials(userName, null, null, null);
 				}
 			}
 			else
@@ -431,9 +444,14 @@ namespace Horde.Server.Perforce
 			PooledConnectionHandle? handle = GetPooledConnectionForUser(cluster, userName);
 			if (handle == null)
 			{
-				IPerforceServer server = await GetServerAsync(cluster);
+				IPerforceServer server = await GetServerAsync(cluster, cancellationToken);
 				Credentials credentials = await GetCredentialsAsync(cluster, userName, cancellationToken);
 				handle = await CreatePooledConnectionAsync(server.ServerAndPort, credentials, null, cancellationToken);
+
+				if (!String.IsNullOrEmpty(credentials.Password) && String.IsNullOrEmpty(credentials.Ticket))
+				{
+					await handle.LoginAsync(credentials.Password, cancellationToken);
+				}
 			}
 			return handle;
 		}
@@ -477,7 +495,7 @@ namespace Horde.Server.Perforce
 				// Otherwise connect to the default
 				if (serverAndPort == null)
 				{
-					IPerforceServer server = await GetServerAsync(cluster);
+					IPerforceServer server = await GetServerAsync(cluster, cancellationToken);
 					serverAndPort = server.ServerAndPort;
 				}
 
@@ -561,7 +579,7 @@ namespace Horde.Server.Perforce
 				}
 
 				DateTime expiresAt = DateTime.UtcNow + new TimeSpan(response.Data.TicketExpiration * TimeSpan.TicksPerSecond) - TimeSpan.FromMinutes(15.0);
-				ticketInfo = new Credentials(userName, response.Data.Ticket, expiresAt);
+				ticketInfo = new Credentials(userName, response.Data.Ticket, response.Data.Ticket, expiresAt);
 
 				lock (_userCredentialsByCluster)
 				{
@@ -583,11 +601,11 @@ namespace Horde.Server.Perforce
 			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(PerforceService)}.{nameof(FindOrAddUserAsync)}");
 			span.SetAttribute("clusterName", cluster.Name);
 			span.SetAttribute("userName", userName);
-			
+
 			IUser? user;
 			if (!_userCache.TryGetValue((cluster.Name, userName), out user))
 			{
-				user = await _userCollection.FindUserByLoginAsync(userName);
+				user = await _userCollection.FindUserByLoginAsync(userName, cancellationToken);
 				if (user == null)
 				{
 					UserRecord? userRecord = null;
@@ -603,7 +621,7 @@ namespace Horde.Server.Perforce
 							_logger.LogWarning("Unable to find user {UserName} on cluster {ClusterName}", userName, cluster.Name);
 						}
 					}
-					user = await _userCollection.FindOrAddUserByLoginAsync(userRecord?.UserName ?? userName, userRecord?.FullName, userRecord?.Email);
+					user = await _userCollection.FindOrAddUserByLoginAsync(userRecord?.UserName ?? userName, userRecord?.FullName, userRecord?.Email, cancellationToken);
 				}
 
 				using (ICacheEntry entry = _userCache.CreateEntry((cluster.Name, userName)))
@@ -616,12 +634,12 @@ namespace Horde.Server.Perforce
 			return user!;
 		}
 
-		async Task<IPerforceServer> GetServerAsync(PerforceCluster cluster)
+		async Task<IPerforceServer> GetServerAsync(PerforceCluster cluster, CancellationToken cancellationToken)
 		{
 			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(PerforceService)}.{nameof(GetServerAsync)}");
 			span.SetAttribute("clusterName", cluster.Name);
 
-			IPerforceServer? server = await _loadBalancer.SelectServerAsync(cluster);
+			IPerforceServer? server = await _loadBalancer.SelectServerAsync(cluster, cancellationToken);
 			if (server == null)
 			{
 				throw new Exception($"Unable to select server from '{cluster.Name}'");
@@ -772,13 +790,13 @@ namespace Horde.Server.Perforce
 			span.SetAttribute("clusterName", streamConfig.ClusterName);
 			span.SetAttribute("streamName", streamConfig.Name);
 			span.SetAttribute("changeNumber", changeNumber);
-			
+
 			PerforceCluster cluster = _globalConfig.CurrentValue.GetPerforceCluster(streamConfig.ClusterName);
 
 			using (IPooledPerforceConnection perforce = await ConnectAsync(cluster, null, cancellationToken))
 			{
 				PerforceResponse<DescribeRecord> response = await perforce.TryDescribeAsync(DescribeOptions.Shelved, -1, changeNumber, cancellationToken);
-				if(response.Error != null)
+				if (response.Error != null)
 				{
 					if (response.Error.Generic == PerforceGenericCode.Empty)
 					{
@@ -815,7 +833,7 @@ namespace Horde.Server.Perforce
 
 				if (hasUnmappedFile)
 				{
-					return ((mappedFiles.Count > 0)? CheckShelfResult.MixedStream : CheckShelfResult.WrongStream, null);
+					return ((mappedFiles.Count > 0) ? CheckShelfResult.MixedStream : CheckShelfResult.WrongStream, null);
 				}
 
 				List<CommitTag> tags = new List<CommitTag>();
@@ -844,7 +862,7 @@ namespace Horde.Server.Perforce
 			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(PerforceService)}.{nameof(DeleteShelvedChangeAsync)}");
 			span.SetAttribute("clusterName", clusterName);
 			span.SetAttribute("shelvedChange", shelvedChange);
-			
+
 			PerforceCluster cluster = _globalConfig.CurrentValue.GetPerforceCluster(clusterName);
 
 			using (IPerforceConnection perforce = await ConnectAsChangeOwnerAsync(cluster, shelvedChange, cancellationToken))
@@ -890,7 +908,7 @@ namespace Horde.Server.Perforce
 			await perforce.RevertAsync(-1, null, RevertOptions.KeepWorkspaceFiles, FileSpecList.Any, cancellationToken);
 
 			List<ChangesRecord> changes = await perforce.GetChangesAsync(ChangesOptions.None, perforce.Settings.ClientName, -1, ChangeStatus.Pending, null, FileSpecList.Any, cancellationToken);
-			foreach(ChangesRecord change in changes)
+			foreach (ChangesRecord change in changes)
 			{
 				await perforce.DeleteShelvedFilesAsync(change.Number, FileSpecList.Any, cancellationToken);
 				await perforce.DeleteChangeAsync(DeleteChangeOptions.None, change.Number, cancellationToken);
@@ -904,7 +922,7 @@ namespace Horde.Server.Perforce
 			span.SetAttribute("clusterName", clusterName);
 			span.SetAttribute("streamName", streamName);
 			span.SetAttribute("filePath", filePath);
-			
+
 			using (PooledConnectionHandle perforce = await ConnectWithStreamClientAsync(clusterName, null, streamName, cancellationToken))
 			{
 				string workspaceFilePath = $"//{perforce.Client!.Name}/{filePath.TrimStart('/')}";
@@ -914,7 +932,7 @@ namespace Horde.Server.Perforce
 				int attempt = 0;
 				const int MaxAttempts = 5;
 
-				for(; ;)
+				for (; ; )
 				{
 					attempt++;
 					await ResetClientAsync(perforce, cancellationToken);
@@ -994,7 +1012,15 @@ namespace Horde.Server.Perforce
 						change.Files.Add(depotPath);
 						change = await perforce.CreateChangeAsync(change, cancellationToken);
 
-						SubmitRecord submit = await perforce.SubmitAsync(change.Number, SubmitOptions.SubmitUnchanged, cancellationToken);
+						PerforceResponse<SubmitRecord> submitResponse = await perforce.TrySubmitAsync(change.Number, SubmitOptions.SubmitUnchanged, cancellationToken);
+						if (attempt < MaxAttempts && submitResponse.Error != null && submitResponse.Error.Generic == PerforceGenericCode.NotYet)
+						{
+							// File needs resolving; sync and retry.
+							_logger.LogDebug("Unable to submit new changelist (file: {File}, depotPath: {DepotPath}, description: \"{Description}\", attempt: {Attempt}/{MaxAttempts}, error: {Message}", filePath, depotPath, description, attempt, MaxAttempts, submitResponse.Error);
+							continue;
+						}
+
+						SubmitRecord submit = submitResponse.Data;
 						_logger.LogInformation("Submitted new changelist with {DepotPath}: CL {Change}", depotPath, submit.SubmittedChangeNumber);
 						return submit.SubmittedChangeNumber;
 					}
@@ -1148,15 +1174,15 @@ namespace Horde.Server.Perforce
 		/// </summary>
 		protected class CommitSource : ICommitCollection
 		{
-			protected readonly PerforceService _perforceService;
-			protected readonly StreamConfig _streamConfig;
-			protected readonly ILogger _logger;
+			protected PerforceService PerforceService { get; }
+			protected StreamConfig StreamConfig { get; }
+			protected ILogger Logger { get; }
 
 			public CommitSource(PerforceService perforceService, StreamConfig streamConfig, ILogger logger)
 			{
-				_perforceService = perforceService;
-				_streamConfig = streamConfig;
-				_logger = logger;
+				PerforceService = perforceService;
+				StreamConfig = streamConfig;
+				Logger = logger;
 			}
 
 			public async Task<int> CreateNewAsync(string path, string description, CancellationToken cancellationToken = default)
@@ -1164,23 +1190,23 @@ namespace Horde.Server.Perforce
 				Match match = Regex.Match(path, @"^(//[^/]+/[^/]+)/(.+)$");
 				if (match.Success)
 				{
-					return await _perforceService.CreateNewChangeAsync(_streamConfig.ClusterName, match.Groups[1].Value, match.Groups[2].Value, description, cancellationToken);
+					return await PerforceService.CreateNewChangeAsync(StreamConfig.ClusterName, match.Groups[1].Value, match.Groups[2].Value, description, cancellationToken);
 				}
 				else
 				{
-					return await _perforceService.CreateNewChangeAsync(_streamConfig.ClusterName, _streamConfig.Name, path, description, cancellationToken);
+					return await PerforceService.CreateNewChangeAsync(StreamConfig.ClusterName, StreamConfig.Name, path, description, cancellationToken);
 				}
 			}
 
 			public virtual async IAsyncEnumerable<ICommit> FindAsync(int? minChange, int? maxChange, int? maxResults, IReadOnlyList<CommitTag>? tags, [EnumeratorCancellation] CancellationToken cancellationToken = default)
 			{
-				using TelemetrySpan span = _perforceService._tracer.StartActiveSpan($"{nameof(PerforceService)}.{nameof(CommitSource)}.{nameof(FindAsync)}");
-				span.SetAttribute("stream", _streamConfig.ClusterName);
+				using TelemetrySpan span = PerforceService._tracer.StartActiveSpan($"{nameof(Perforce.PerforceService)}.{nameof(PerforceService.CommitSource)}.{nameof(FindAsync)}");
+				span.SetAttribute("stream", StreamConfig.ClusterName);
 				span.SetAttribute("minChange", minChange ?? -2);
 				span.SetAttribute("maxChange", maxChange ?? -2);
 				span.SetAttribute("maxResults", maxResults ?? -1);
 
-				using (PooledConnectionHandle perforce = await _perforceService.ConnectWithStreamClientAsync(_streamConfig, null, cancellationToken))
+				using (PooledConnectionHandle perforce = await PerforceService.ConnectWithStreamClientAsync(StreamConfig, null, cancellationToken))
 				{
 					InfoRecord info = await perforce.GetInfoAsync(cancellationToken);
 
@@ -1191,7 +1217,7 @@ namespace Horde.Server.Perforce
 						List<ChangesRecord> changes = await perforce.GetChangesAsync(ChangesOptions.IncludeTimes | ChangesOptions.LongOutput, maxResults ?? -1, ChangeStatus.Submitted, filter, cancellationToken);
 						foreach (ChangesRecord change in changes)
 						{
-							ICommit commit = await _perforceService.CreateCommitAsync(_streamConfig, change, info, cancellationToken);
+							ICommit commit = await PerforceService.CreateCommitAsync(StreamConfig, change, info, cancellationToken);
 							yield return commit;
 						}
 					}
@@ -1216,7 +1242,7 @@ namespace Horde.Server.Perforce
 							List<DescribeRecord> describeRecords = await perforce.DescribeAsync(DescribeOptions.None, MaxFiles, changesRecords.Select(x => x.Number).ToArray(), cancellationToken);
 							foreach (DescribeRecord describeRecord in describeRecords)
 							{
-								ICommit commit = await _perforceService.CreateCommitAsync(perforce, _streamConfig, describeRecord, MaxFiles, info, cancellationToken);
+								ICommit commit = await PerforceService.CreateCommitAsync(perforce, StreamConfig, describeRecord, MaxFiles, info, cancellationToken);
 
 								IReadOnlyList<CommitTag> commitTags = await commit.GetTagsAsync(cancellationToken);
 								if (commitTags.Intersect(tags).Any())
@@ -1238,7 +1264,7 @@ namespace Horde.Server.Perforce
 			/// <inheritdoc/>
 			public virtual Task<ICommit> GetAsync(int changeNumber, CancellationToken cancellationToken = default)
 			{
-				return _perforceService.GetChangeDetailsAsync(_streamConfig, changeNumber, cancellationToken);
+				return PerforceService.GetChangeDetailsAsync(StreamConfig, changeNumber, cancellationToken);
 			}
 
 			/// <inheritdoc/>
@@ -1249,6 +1275,7 @@ namespace Horde.Server.Perforce
 					await foreach (ICommit commit in FindAsync(minChange + 1, null, 10, tags, cancellationToken))
 					{
 						yield return commit;
+						minChange = commit.Number;
 					}
 					await Task.Delay(TimeSpan.FromSeconds(10.0), cancellationToken);
 				}

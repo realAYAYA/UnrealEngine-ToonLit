@@ -12,14 +12,6 @@ public class CustomizableObjectPopulationEditor : ModuleRules
 
 		DefaultBuildSettings = BuildSettingsVersion.V2;
 
-		PrivateIncludePathModuleNames.AddRange(
-			new string[] {
-				"AssetRegistry",
-				"WorkspaceMenuStructure",
-
-			}
-		);
-
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
@@ -48,17 +40,16 @@ public class CustomizableObjectPopulationEditor : ModuleRules
 				
 				"ContentBrowser",
 				"AssetDefinition",
-				"ToolMenus"
+				"ToolMenus",
+				"WorkspaceMenuStructure"
 			}
 		);
-
 
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[] {
 				"MainFrame",
 				"SceneOutliner",
 				"ClassViewer",
-				"WorkspaceMenuStructure",
 			}
 		);
 
@@ -70,9 +61,5 @@ public class CustomizableObjectPopulationEditor : ModuleRules
 				"CustomizableObjectPopulation",
 			}
 		);
-
-		PrivateIncludePaths.AddRange(new string[] {
-				"CustomizableObjectPopulation/Private",
-			});
 	}
 }

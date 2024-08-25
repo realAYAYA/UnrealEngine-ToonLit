@@ -79,7 +79,6 @@ UMediaTexture::UMediaTexture(const FObjectInitializer& ObjectInitializer)
 	, EnableGenMips(false)
 	, NumMips(1)
 	, NewStyleOutput(false)
-	, OutputFormat(MTOF_Default)
 	, CurrentAspectRatio(0.0f)
 	, CurrentOrientation(MTORI_Original)
 	, DefaultGuid(FGuid::NewGuid())
@@ -439,7 +438,7 @@ void UMediaTexture::TickResource(FTimespan Timecode)
 					RenderParams.SampleSource = SampleQueue;
 
 					RenderParams.Rate = CurrentPlayerPtr->GetRate();
-					RenderParams.Time = CurrentPlayerPtr->GetTime();
+					RenderParams.Time = FMediaTimeStamp(CurrentPlayerPtr->GetTime());
 				}
 				else
 				{

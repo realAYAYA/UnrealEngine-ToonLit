@@ -50,17 +50,15 @@ private:
 	
 	bool CreateConditions(UStateTreeState& State, TConstArrayView<FStateTreeEditorNode> Conditions);
 	bool CreateCondition(UStateTreeState& State, const FStateTreeEditorNode& CondNode, const EStateTreeConditionOperand Operand, const int8 DeltaIndent);
-	bool CreateTask(UStateTreeState* State, const FStateTreeEditorNode& TaskNode);
-	bool CreateEvaluator(const FStateTreeEditorNode& EvalNode);
-	bool GetAndValidateBindings(const FStateTreeBindableStructDesc& TargetStruct, FStateTreeDataView TargetValue, TArray<FStateTreePropertyPathBinding>& OutBindings) const;
-	bool IsPropertyAnyEnum(const FStateTreeBindableStructDesc& Struct, FStateTreePropertyPath Path) const;
+	bool CreateTask(UStateTreeState* State, const FStateTreeEditorNode& TaskNode, const FStateTreeDataHandle TaskDataHandle);
+	bool CreateEvaluator(const FStateTreeEditorNode& EvalNode, const FStateTreeDataHandle EvalDataHandle);
+	bool GetAndValidateBindings(const FStateTreeBindableStructDesc& TargetStruct, FStateTreeDataView TargetValue, TArray<FStateTreePropertyPathBinding>& OutCopyBindings, TArray<FStateTreePropertyPathBinding>& OutReferenceBindings) const;
+	bool IsPropertyOfType(UScriptStruct& Type, const FStateTreeBindableStructDesc& Struct, FStateTreePropertyPath Path) const;
 	bool ValidateStructRef(const FStateTreeBindableStructDesc& SourceStruct, FStateTreePropertyPath SourcePath,
 							const FStateTreeBindableStructDesc& TargetStruct, FStateTreePropertyPath TargetPath) const;
 	bool CompileAndValidateNode(const UStateTreeState* SourceState, const FStateTreeBindableStructDesc& NodeDesc, FStructView NodeView, const FStateTreeDataView InstanceData);
 
 	void InstantiateStructSubobjects(FStructView Struct);
-	
-	FStateTreeDataView GetBindingSourceValue(const int32 SourceIndex);
 	
 	FStateTreeCompilerLog& Log;
 	UStateTree* StateTree = nullptr;
@@ -74,8 +72,6 @@ private:
 	TArray<FInstancedStruct> Nodes;
 	TArray<FInstancedStruct> InstanceStructs;
 	TArray<FInstancedStruct> SharedInstanceStructs;
-	TArray<TObjectPtr<UObject>> InstanceObjects;
-	TArray<TObjectPtr<UObject>> SharedInstanceObjects;
 	
 	FStateTreePropertyBindingCompiler BindingsCompiler;
 };
@@ -154,14 +150,6 @@ namespace UE::StateTree::Compiler
 	 * @return Script struct defined by the BaseStruct or nullptr if not found.
 	 */
 	const UScriptStruct* GetBaseStructFromMetaData(const FProperty* Property, FString& OutBaseStructName);
-
-	/**
-	 * Returns property usage based on the Category metadata of given property.
-	 * @param Property Handle to property where value is got from.
-	 * @return found usage type, or EStateTreePropertyUsage::Invalid if not found.
-	 */
-	EStateTreePropertyUsage GetUsageFromMetaData(const FProperty* Property);
-
 
 }; // UE::StateTree::Compiler
 

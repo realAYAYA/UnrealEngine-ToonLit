@@ -63,6 +63,17 @@ enum class EModuleLoadResult
 	FailedToInitialize
 };
 
+/**
+ * Enumerates reasons for failed module unloads.
+ */
+enum class EModuleUnloadResult
+{
+	/** Module unloaded successfully. */
+	Success,
+
+	/** Module does not support dynamic reloading (see IModuleInterface::SupportsDynamicReloading). */
+	UnloadNotSupported
+};
 
 /**
  * Enumerates reasons for modules to change.
@@ -126,6 +137,18 @@ struct FModuleStatus
 
 	/** Whether this module contains game play code. */
 	bool bIsGameModule;
+};
+
+/**
+ * Structure for reporting module disk presence info.
+ */
+struct FModuleDiskInfo
+{
+	/** Short name for this module. */
+	FName Name;
+
+	/** Full path to this module file on disk. */
+	FString FilePath;
 };
 
 namespace UE::Core::Private
@@ -265,10 +288,11 @@ public:
 	 *
 	 * @param InModuleName The name of the module to unload.  Should not include path, extension or platform/configuration info.  This is just the "module name" part of the module file name.
 	 * @param bIsShutdown Is this unload module call occurring at shutdown (default = false).
+	 * @param bAllowUnloadCode Allow unloading of code library if possible (default = true).
 	 * @return true if module was unloaded successfully, false otherwise.
 	 * @see AbandonModule, IsModuleLoaded, LoadModule, LoadModuleWithFailureReason
 	 */
-	CORE_API bool UnloadModule( const FName InModuleName, bool bIsShutdown = false );
+	CORE_API bool UnloadModule( const FName InModuleName, bool bIsShutdown = false, bool bAllowUnloadCode = true );
 
 	/**
 	 * Calls PreUnload then either unloads or abandons a module in memory, depending on whether the module supports unloading.
@@ -364,15 +388,19 @@ public:
 	 * @param WildcardWithoutExtension Filename part (no path, no extension, no build config info) to search for.
 	 * @param OutModules List of modules found.
 	 */
-	CORE_API void FindModules( const TCHAR* WildcardWithoutExtension, TArray<FName>& OutModules ) const;
+	CORE_API void FindModules(const TCHAR* WildcardWithoutExtension, TArray<FName>& OutModules) const;
+	CORE_API void FindModules(const TCHAR* WildcardWithoutExtension, TArray<FModuleDiskInfo>& OutModules) const;
 
 	/**
 	 * Determines if a module with the given name exists, regardless of whether it is currently loaded.
 	 *
 	 * @param ModuleName Name of the module to look for.
+	 * @param OutModuleFilePath If non-null, the assembly filename of the module will be written. 
+	 *        Empty string will be written if ModuleExists returns false or assembly is unknown due to e.g.
+	 *        Monolithic executable.
 	 * @return Whether the module exists.
 	 */
-	CORE_API bool ModuleExists(const TCHAR* ModuleName) const;
+	CORE_API bool ModuleExists(const TCHAR* ModuleName, FString* OutModuleFilePath = nullptr) const;
 
 	/**
 	 * Gets the number of loaded modules.
@@ -474,14 +502,15 @@ public:
 #endif
 
 	/**
-	 * Gets an event delegate that is executed when the set of known modules changed, i.e. upon module load or unload.
+	 * Gets a multicast delegate that is executed when the set of known modules changed, i.e. upon module load or unload.
+	 * The delegate is thread-safe to allow subscribing from other than the game thread but is always broadcasted from the game thread.
 	 *
 	 * The first parameter is the name of the module that changed.
 	 * The second parameter is the reason for the change.
 	 *
-	 * @return The event delegate.
+	 * @return The multicast delegate.
 	 */
-	DECLARE_EVENT_TwoParams(FModuleManager, FModulesChangedEvent, FName, EModuleChangeReason);
+	using FModulesChangedEvent = TTSMulticastDelegate<void(FName ModuleName, EModuleChangeReason ChangeReason)>;
 	FModulesChangedEvent& OnModulesChanged( )
 	{
 		return ModulesChangedEvent;

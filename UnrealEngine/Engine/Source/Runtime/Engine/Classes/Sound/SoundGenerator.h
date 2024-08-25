@@ -4,7 +4,7 @@
 
 #include "AudioDeviceManager.h"
 #include "CoreMinimal.h"
-#include "Containers/Queue.h"
+#include "Containers/MpscQueue.h"
 #include "Templates/Function.h"
 
 namespace Audio
@@ -63,7 +63,7 @@ private:
 	ENGINE_API void PumpPendingMessages();
 
 	// The command queue used to convey commands from game thread to generator thread 
-	TQueue<TUniqueFunction<void()>> CommandQueue;
+	TMpscQueue<TUniqueFunction<void()>> CommandQueue;
 
 	friend class USynthComponent;
 };
@@ -74,6 +74,7 @@ class FSoundGeneratorNull : public ISoundGenerator
 public:
 	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override
 	{
+		FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 		return NumSamples;
 	}
 };

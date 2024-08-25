@@ -4,12 +4,14 @@
 
 #include "PlasticSourceControlChangelistState.h"
 #include "PlasticSourceControlCommand.h"
+#include "PlasticSourceControlModule.h"
 #include "PlasticSourceControlOperations.h"
 #include "PlasticSourceControlProjectSettings.h"
 #include "PlasticSourceControlSettings.h"
 #include "PlasticSourceControlShell.h"
 #include "PlasticSourceControlState.h"
 #include "PlasticSourceControlUtils.h"
+#include "PlasticSourceControlVersions.h"
 #include "SPlasticSourceControlSettings.h"
 
 #include "ISourceControlModule.h"
@@ -24,6 +26,8 @@
 #include "Misc/MessageDialog.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/QueuedThreadPool.h"
+#include "UObject/ObjectSaveContext.h"
+#include "UObject/SavePackage.h"
 
 #define LOCTEXT_NAMESPACE "PlasticSourceControl"
 
@@ -32,21 +36,31 @@ static FName ProviderName("Plastic SCM");
 FPlasticSourceControlProvider::FPlasticSourceControlProvider()
 {
 	PlasticSourceControlSettings.LoadSettings();
+
+	UPackage::PackageSavedWithContextEvent.AddRaw(this, &FPlasticSourceControlProvider::HandlePackageSaved);
+}
+
+FPlasticSourceControlProvider::~FPlasticSourceControlProvider()
+{
+	UPackage::PackageSavedWithContextEvent.RemoveAll(this);
 }
 
 void FPlasticSourceControlProvider::Init(bool bForceConnection)
 {
-	// Init() is called multiple times at startup: do not check Plastic SCM each time
+	// Init() is called multiple times at startup: do not check Unity Version Control each time
 	if (!bPlasticAvailable)
 	{
-		const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("PlasticSourceControl"));
+		const TSharedPtr<IPlugin> Plugin = FPlasticSourceControlModule::GetPlugin();
 		if (Plugin.IsValid())
 		{
 			PluginVersion = Plugin->GetDescriptor().VersionName;
-			UE_LOG(LogSourceControl, Log, TEXT("Plastic SCM plugin '%s'"), *PluginVersion);
+			UE_LOG(LogSourceControl, Log, TEXT("Unity Version Control (formerly Plastic SCM) plugin %s"), *PluginVersion);
 		}
 
 		CheckPlasticAvailability();
+
+		FMessageLog("SourceControl").Info(FText::Format(LOCTEXT("PluginVersion", "Unity Version Control (formerly Plastic SCM) {0} (plugin {1})"),
+			FText::FromString(PlasticScmVersion.String), FText::FromString(PluginVersion)));
 
 		// Override the source control logs verbosity level if needed based on settings
 		if (AccessSettings().GetEnableVerboseLogs())
@@ -57,14 +71,10 @@ void FPlasticSourceControlProvider::Init(bool bForceConnection)
 
 	if (bForceConnection && bPlasticAvailable && bWorkspaceFound && !bServerAvailable)
 	{
-		// Execute a 'checkconnection' command to set bServerAvailable based on the connectivity of the server
 		TArray<FString> InfoMessages, ErrorMessages;
 		TArray<FString> Parameters;
-		if (PlasticSourceControlUtils::GetWorkspaceInfo(BranchName, RepositoryName, ServerUrl, ErrorMessages))
-		{
-			Parameters.Add(FString::Printf(TEXT("--server=%s"), *ServerUrl));
-		}
-		bServerAvailable = PlasticSourceControlUtils::RunCommand(TEXT("checkconnection"), Parameters, TArray<FString>(), InfoMessages, ErrorMessages);
+		// Execute a 'checkconnection' command to set bServerAvailable based on the connectivity of the server
+		bServerAvailable = PlasticSourceControlUtils::RunCheckConnection(BranchName, RepositoryName, ServerUrl, InfoMessages, ErrorMessages);
 		if (!bServerAvailable)
 		{
 			FMessageLog SourceControlLog("SourceControl");
@@ -83,7 +93,7 @@ void FPlasticSourceControlProvider::CheckPlasticAvailability()
 	{
 		bPlasticAvailable = false;
 
-		// Try to find Plastic binary, and update settings accordingly
+		// Try to find cm binary, and update settings accordingly
 		PathToPlasticBinary = PlasticSourceControlUtils::FindPlasticBinaryPath();
 		if (!PathToPlasticBinary.IsEmpty())
 		{
@@ -93,10 +103,9 @@ void FPlasticSourceControlProvider::CheckPlasticAvailability()
 
 	if (!PathToPlasticBinary.IsEmpty())
 	{
-		// Find the path to the root Plastic directory (if any, else uses the ProjectDir)
 		const FString PathToProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 
-		// Launch the Plastic SCM cli shell on the background to issue all commands during this session
+		// Launch the Unity Version Control cli shell on the background to issue all commands during this session
 		bPlasticAvailable = PlasticSourceControlShell::Launch(PathToPlasticBinary, PathToProjectDir);
 		if (!bPlasticAvailable)
 		{
@@ -112,12 +121,12 @@ void FPlasticSourceControlProvider::CheckPlasticAvailability()
 		FString ActualPathToPlasticBinary;
 		PlasticSourceControlUtils::GetCmLocation(ActualPathToPlasticBinary);
 
+		// Find the path to the root Plastic directory (if any, else uses the ProjectDir)
 		bWorkspaceFound = PlasticSourceControlUtils::GetWorkspacePath(PathToProjectDir, PathToWorkspaceRoot);
-
 
 		bUsesLocalReadOnlyState = PlasticSourceControlUtils::GetConfigSetFilesAsReadOnly();
 
-		// Get user name (from the global Plastic SCM client config)
+		// Get user name (from the global Unity Version Control client config)
 		PlasticSourceControlUtils::GetUserName(UserName);
 
 		// Register Console Commands
@@ -129,6 +138,8 @@ void FPlasticSourceControlProvider::CheckPlasticAvailability()
 			FFormatNamedArguments Args;
 			Args.Add(TEXT("WorkspacePath"), FText::FromString(PathToWorkspaceRoot));
 			FMessageLog("SourceControl").Info(FText::Format(LOCTEXT("NotInAWorkspace", "{WorkspacePath} is not in a workspace."), Args));
+
+			ServerUrl = PlasticSourceControlUtils::GetConfigDefaultRepServer();
 		}
 	}
 }
@@ -184,6 +195,26 @@ TSharedRef<FPlasticSourceControlChangelistState, ESPMode::ThreadSafe> FPlasticSo
 	}
 }
 
+// Note: called once for each asset being saved, which can be hundreds in the case of a map using One File Per Actor (OFPA) in UE5
+void FPlasticSourceControlProvider::HandlePackageSaved(const FString& InPackageFilename, UPackage* InPackage, FObjectPostSaveContext InObjectSaveContext)
+{
+	const FString AbsoluteFilename = FPaths::ConvertRelativePathToFull(InPackageFilename);
+	auto FileState = GetStateInternal(AbsoluteFilename);
+
+	// Note: the Editor doesn't ask to refresh the source control status of an asset after it is saved, only *before* (to check that it's possible to save)
+	// So when an asset with no change is saved, update its state in cache to record the fact that the asset is now changed.
+	if (FileState->WorkspaceState == EWorkspaceState::Controlled)
+	{
+		// Note that updating the state in cache isn't enough to refresh the status icon in the Content Browser (since the Editor isn't made aware of the change)
+		// but source control operations are working as expected (eg. "Checkin" and "Revert" are available in the context menu)
+		FileState->WorkspaceState = EWorkspaceState::Changed; // The icon will only appears later when the UI is refreshed (eg switching directory in the Content Browser)
+	}
+	else if (FileState->WorkspaceState == EWorkspaceState::CheckedOutUnchanged)
+	{
+		FileState->WorkspaceState = EWorkspaceState::CheckedOutChanged; // In this case the "CheckedOut" icon is already displayed (both states are using the same status icon)
+	}
+}
+
 FText FPlasticSourceControlProvider::GetStatusText() const
 {
 	FFormatNamedArguments Args;
@@ -192,6 +223,8 @@ FText FPlasticSourceControlProvider::GetStatusText() const
 	Args.Add(TEXT("WorkspacePath"), FText::FromString(PathToWorkspaceRoot));
 	Args.Add(TEXT("WorkspaceName"), FText::FromString(WorkspaceName));
 	Args.Add(TEXT("BranchName"), FText::FromString(BranchName));
+	Args.Add(TEXT("RepositoryName"), FText::FromString(RepositoryName));
+	Args.Add(TEXT("ServerUrl"), FText::FromString(ServerUrl));
 	// Detect special case for a partial checkout (CS:-1 in Gluon mode)!
 	if (IsPartialWorkspace())
 	{
@@ -223,7 +256,7 @@ FText FPlasticSourceControlProvider::GetStatusText() const
 	}
 	Args.Add(TEXT("ErrorText"), FormattedError);
 
-	return FText::Format(LOCTEXT("PlasticStatusText", "{ErrorText}Plastic SCM {PlasticScmVersion}  (plugin v{PluginVersion})\nWorkspace: {WorkspaceName}  ({WorkspacePath})\n{BranchName}\nChangeset: {ChangesetNumber}\nUser: '{UserName}'  {DisplayName}"), Args);
+	return FText::Format(LOCTEXT("PlasticStatusText", "{ErrorText}Unity Version Control (formerly Plastic SCM) {PlasticScmVersion}\t(plugin v{PluginVersion})\nWorkspace: {WorkspaceName}  ({WorkspacePath})\nBranch: {BranchName}@{RepositoryName}@{ServerUrl}\nChangeset: {ChangesetNumber}\nUser: '{UserName}'  {DisplayName}"), Args);
 }
 
 TMap<ISourceControlProvider::EStatus, FString> FPlasticSourceControlProvider::GetStatus() const
@@ -232,13 +265,13 @@ TMap<ISourceControlProvider::EStatus, FString> FPlasticSourceControlProvider::Ge
 	Result.Add(EStatus::Enabled, IsEnabled() ? TEXT("Yes") : TEXT("No") );
 	Result.Add(EStatus::Connected, (IsEnabled() && IsAvailable()) ? TEXT("Yes") : TEXT("No") );
 	Result.Add(EStatus::User, UserName);
-	
+
 	Result.Add(EStatus::ScmVersion, PlasticScmVersion.String);
 	Result.Add(EStatus::PluginVersion, PluginVersion);
 	Result.Add(EStatus::WorkspacePath, PathToWorkspaceRoot);
 	Result.Add(EStatus::Workspace, WorkspaceName);
 	Result.Add(EStatus::Branch, BranchName);
-	if (-1 != ChangesetNumber)
+	if (IsPartialWorkspace())
 	{
 		Result.Add(EStatus::Changeset, FString::Printf(TEXT("%d"), ChangesetNumber));
 	}
@@ -260,6 +293,17 @@ bool FPlasticSourceControlProvider::IsAvailable() const
 const FName& FPlasticSourceControlProvider::GetName(void) const
 {
 	return ProviderName;
+}
+
+FString FPlasticSourceControlProvider::GetCloudOrganization() const
+{
+	const int32 CloudIndex = ServerUrl.Find(TEXT("@cloud"));
+	if (CloudIndex > INDEX_NONE)
+	{
+		return ServerUrl.Left(CloudIndex);
+	}
+
+	return FString();
 }
 
 void FPlasticSourceControlProvider::SetLastErrors(const TArray<FString>& InErrors)
@@ -387,7 +431,12 @@ ECommandResult::Type FPlasticSourceControlProvider::Execute(const FSourceControl
 		FFormatNamedArguments Arguments;
 		Arguments.Add(TEXT("OperationName"), FText::FromName(InOperation->GetName()));
 		Arguments.Add(TEXT("ProviderName"), FText::FromName(GetName()));
-		FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("UnsupportedOperation", "Operation '{OperationName}' not supported by source control provider '{ProviderName}'"), Arguments));
+		FText Message = FText::Format(LOCTEXT("UnsupportedOperation", "Operation '{OperationName}' not supported by revision control provider '{ProviderName}'"), Arguments);
+
+		FMessageLog("SourceControl").Error(Message);
+		InOperation->AddErrorMessge(Message);
+
+		InOperationCompleteDelegate.ExecuteIfBound(InOperation, ECommandResult::Failed);
 		return ECommandResult::Failed;
 	}
 
@@ -436,6 +485,7 @@ bool FPlasticSourceControlProvider::UsesLocalReadOnlyState() const
 
 bool FPlasticSourceControlProvider::UsesChangelists() const
 {
+	// We don't want to show ChangeList column anymore (Unity Version Control term would be ChangeSet) BUT we need this to display the changelists in the source control menu
 	return true;
 }
 
@@ -451,9 +501,10 @@ bool FPlasticSourceControlProvider::UsesCheckout() const
 
 bool FPlasticSourceControlProvider::UsesFileRevisions() const
 {
-	// Only a Partial/Gluon workspace can sync/update files individually, operating on revisions (can use the context menu)
-	// while a regular workspace can only update all the files as a whole, operating at the changeset level (requires the global menu)
-	return IsPartialWorkspace();
+	// This API introduced in UE5.1 is still broken as of UE5.3
+	// (preventing the user to use the source control context menu for checkin if returning false)
+	// return IsPartialWorkspace();
+	return true;
 }
 
 bool FPlasticSourceControlProvider::UsesSnapshots() const
@@ -494,16 +545,23 @@ void FPlasticSourceControlProvider::RegisterWorker(const FName& InName, const FG
 
 void FPlasticSourceControlProvider::OutputCommandMessages(const FPlasticSourceControlCommand& InCommand) const
 {
+	// Note: the Perforce provider added a way to call OutputCommandMessages() from FPerforceSourceControlProvider::TryToDownloadFileFromBackgroundThread()
+	// see Commit 18dc0643 by paul chipchase, 05/17/2021 11:06 AM [CL 16346666 by paul chipchase in ue5-main branch]
+	// but we don't have this new API yet so we don't need this thread safety
+	check(IsInGameThread()); // On the game thread we can use FMessageLog
+
 	FMessageLog SourceControlLog("SourceControl");
 
 	for (const FString& ErrorMessage : InCommand.ErrorMessages)
 	{
-		SourceControlLog.Error(FText::FromString(ErrorMessage));
+		SourceControlLog.Error(FText::Format(LOCTEXT("OutputCommandMessagesFormatError", "Command: {0}, Error: {1}"),
+			FText::FromName(InCommand.Operation->GetName()), FText::FromString(ErrorMessage)));
 	}
 
 	for (const FString& InfoMessage : InCommand.InfoMessages)
 	{
-		SourceControlLog.Info(FText::FromString(InfoMessage));
+		SourceControlLog.Info(FText::Format(LOCTEXT("OutputCommandMessagesFormatInfo", "Command: {0}, Info: {1}"),
+			FText::FromName(InCommand.Operation->GetName()), FText::FromString(InfoMessage)));
 	}
 }
 
@@ -524,19 +582,25 @@ void FPlasticSourceControlProvider::UpdateWorkspaceStatus(const class FPlasticSo
 		{
 			if (bPlasticAvailable)
 			{
-				if (PlasticScmVersion < PlasticSourceControlUtils::GetOldestSupportedPlasticScmVersion())
+				if (PlasticScmVersion < PlasticSourceControlVersions::OldestSupported)
 				{
 					FFormatNamedArguments Args;
 					Args.Add(TEXT("PlasticScmVersion"), FText::FromString(PlasticScmVersion.String));
-					Args.Add(TEXT("OldestSupportedPlasticScmVersion"), FText::FromString(PlasticSourceControlUtils::GetOldestSupportedPlasticScmVersion().String));
-					const FText UnsuportedVersionWarning = FText::Format(LOCTEXT("Plastic_UnsuportedVersion", "Plastic SCM {PlasticScmVersion} is not supported anymore by this plugin.\nPlastic SCM {OldestSupportedPlasticScmVersion} or a more recent version is required.\nPlease upgrade to the latest version."), Args);
-					FMessageLog("SourceControl").Warning(UnsuportedVersionWarning);
-					FMessageDialog::Open(EAppMsgType::Ok, UnsuportedVersionWarning);
+					Args.Add(TEXT("OldestSupportedPlasticScmVersion"), FText::FromString(PlasticSourceControlVersions::OldestSupported.String));
+					const FText UnsupportedVersionWarning = FText::Format(LOCTEXT("Plastic_UnsupportedVersion", "Unity Version Control {PlasticScmVersion} is not supported anymore by this plugin.\nUnity Version Control {OldestSupportedPlasticScmVersion} or a more recent version is required.\nPlease upgrade to the latest version."), Args);
+					FMessageLog("SourceControl").Warning(UnsupportedVersionWarning);
+					FMessageDialog::Open(
+						EAppMsgCategory::Warning,
+						EAppMsgType::Ok, UnsupportedVersionWarning
+						, LOCTEXT("Plastic_UnsuportedVersionTitle", "Unsupported version!")
+					);
 				}
 			}
 			else if (InCommand.ErrorMessages.Num() > 0)
 			{
-				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(InCommand.ErrorMessages[0]));
+				FMessageDialog::Open(
+					EAppMsgCategory::Error,
+					EAppMsgType::Ok, FText::FromString(InCommand.ErrorMessages[0]));
 			}
 		}
 
@@ -600,7 +664,7 @@ void FPlasticSourceControlProvider::Tick()
 
 			if (Command.Files.Num() > 1)
 			{
-				UE_LOG(LogSourceControl, Log, TEXT("%s of %d files processed in %.3lfs"), *Command.Operation->GetName().ToString(), Command.Files.Num(), (FPlatformTime::Seconds() - Command.StartTimestamp));
+				UE_LOG(LogSourceControl, Log, TEXT("%s of %d items processed in %.3lfs"), *Command.Operation->GetName().ToString(), Command.Files.Num(), (FPlatformTime::Seconds() - Command.StartTimestamp));
 			}
 			else if (Command.Files.Num() == 1)
 			{
@@ -612,8 +676,7 @@ void FPlasticSourceControlProvider::Tick()
 			}
 
 			// run the completion delegate callback if we have one bound
-			ECommandResult::Type Result = Command.bCommandSuccessful ? ECommandResult::Succeeded : ECommandResult::Failed;
-			Command.OperationCompleteDelegate.ExecuteIfBound(Command.Operation, Result);
+			Command.ReturnResults();
 
 			// commands that are left in the array during a tick need to be deleted
 			if (Command.bAutoDelete)
@@ -638,6 +701,10 @@ void FPlasticSourceControlProvider::Tick()
 TArray<TSharedRef<ISourceControlLabel>> FPlasticSourceControlProvider::GetLabels(const FString& InMatchingSpec) const
 {
 	TArray< TSharedRef<ISourceControlLabel> > Tags;
+
+	// NOTE list labels. Called by CrashDebugHelper() (to remote debug Engine crash)
+	//					 and by SourceControlHelpers::AnnotateFile() (to add source file to report)
+	// Reserved for internal use by Epic Games with Perforce only
 	return Tags;
 }
 
@@ -702,9 +769,6 @@ ECommandResult::Type FPlasticSourceControlProvider::ExecuteSynchronousCommand(FP
 		}
 		else
 		{
-			// TODO If the command failed, inform the user that they need to try again (see Perforce)
-			// FMessageDialog::Open( EAppMsgType::Ok, LOCTEXT("Plastic_ServerUnresponsive", "Plastic server is unresponsive. Please check your connection and try again.") );
-
 			UE_LOG(LogSourceControl, Error, TEXT("Command '%s' Failed!"), *InCommand.Operation->GetName().ToString());
 		}
 	}
@@ -733,8 +797,17 @@ ECommandResult::Type FPlasticSourceControlProvider::IssueCommand(FPlasticSourceC
 	}
 	else
 	{
-		return ECommandResult::Failed;
+		// NOTE: the Perforce & Subversion providers implement this, but looking at Git history of the code I think it has never been used in UE4
+		// If we need to support this, we will need to know the use cases in order to test it
+		FText Message(LOCTEXT("NoSCCThreads", "There are no threads available to process the revision control command."));
+
+		FMessageLog("SourceControl").Error(Message);
+		InCommand.bCommandSuccessful = false;
+		InCommand.Operation->AddErrorMessge(Message);
+
+		return InCommand.ReturnResults();
 	}
 }
 
 #undef LOCTEXT_NAMESPACE
+

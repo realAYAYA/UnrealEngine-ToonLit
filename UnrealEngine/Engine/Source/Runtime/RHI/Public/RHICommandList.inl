@@ -95,7 +95,6 @@ FORCEINLINE_DEBUGGABLE void FRHICommandListImmediate::ImmediateFlush(EImmediateF
 		if (FlushType >= EImmediateFlushType::FlushRHIThreadFlushResources)
 		{
 			CSV_SCOPED_TIMING_STAT(RHITFlushes, FlushRHIThreadFlushResourcesTotal);
-			PipelineStateCache::FlushResources();
 
 			// RHIPerFrameRHIFlushComplete was originally called from FlushPendingDeletes, which used to be here, so it was
 			// running as part of the next command list. FlushPendingDeletes now runs as part of the command list being finalized
@@ -172,12 +171,4 @@ inline FRHICommandListScopedPipelineGuard::~FRHICommandListScopedPipelineGuard()
 	{
 		RHICmdList.SwitchPipeline(ERHIPipeline::None);
 	}
-}
-
-FORCEINLINE void FRHICommandListImmediate::CopySharedMips(FRHITexture* DestTexture, FRHITexture* SrcTexture)
-{
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_RHIMETHOD_CopySharedMips_Flush);
-
-	// Use the version that assumes SRVMask state on both textures to maintain behaviour of the old code path.
-	UE::RHI::CopySharedMips_AssumeSRVMaskState(*this, SrcTexture, DestTexture);
 }

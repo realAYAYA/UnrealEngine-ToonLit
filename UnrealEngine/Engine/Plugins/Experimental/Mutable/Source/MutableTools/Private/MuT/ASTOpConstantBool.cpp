@@ -29,8 +29,9 @@ namespace mu
 
 	bool ASTOpConstantBool::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpConstantBool*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpConstantBool* other = static_cast<const ASTOpConstantBool*>(&otherUntyped);
 			return value == other->value;
 		}
 		return false;

@@ -7,6 +7,8 @@
 #include "CoreMinimal.h"
 #include "Internationalization/Text.h"
 
+class IClassViewerFilter;
+
 class PROPERTYEDITOR_API FPropertyRestriction
 {
 public:
@@ -22,9 +24,11 @@ public:
 	bool IsValueDisabled(const FString& Value) const;
 	void AddHiddenValue(FString Value);
 	void AddDisabledValue(FString Value);
+	void AddClassFilter(TSharedRef<IClassViewerFilter> ClassFilter);
 
 	void RemoveHiddenValue(FString Value);
 	void RemoveDisabledValue(FString Value);
+	void RemoveClassFilter(TSharedRef<IClassViewerFilter> ClassFilter);
 	void RemoveAll();
 
 	TArray<FString>::TConstIterator GetHiddenValuesIterator() const 
@@ -36,10 +40,15 @@ public:
 	{
 		return DisabledValues.CreateConstIterator();
 	}
+	
+	TArray<TSharedRef<IClassViewerFilter>>::TConstIterator GeClassViewFilterIterator() const
+	{
+		return ClassViewFilter.CreateConstIterator();
+	}
 
 private:
-
 	TArray<FString> HiddenValues;
 	TArray<FString> DisabledValues;
+	TArray<TSharedRef<IClassViewerFilter>> ClassViewFilter;
 	FText Reason;
 };

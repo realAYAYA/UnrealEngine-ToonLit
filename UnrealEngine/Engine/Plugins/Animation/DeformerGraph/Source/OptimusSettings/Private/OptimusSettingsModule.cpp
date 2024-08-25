@@ -84,8 +84,8 @@ void FOptimusSettingsModule::CacheDefaultMeshDeformers()
 void FOptimusSettingsModule::CacheDefaultMeshDeformers(UOptimusSettings const* InSettings)
 {
 	const bool bLoadDeformers = InSettings != nullptr && InSettings->DefaultMode != EOptimusDefaultDeformerMode::Never;
-	DefaultDeformer = bLoadDeformers && !InSettings->DefaultDeformer.IsNull() ? InSettings->DefaultDeformer.LoadSynchronous() : nullptr;
-	DefaultRecomputeTangentDeformer = bLoadDeformers && !InSettings->DefaultRecomputeTangentDeformer.IsNull() ? InSettings->DefaultRecomputeTangentDeformer.LoadSynchronous() : nullptr;
+	DefaultDeformer = TStrongObjectPtr<UMeshDeformer>(bLoadDeformers && !InSettings->DefaultDeformer.IsNull() ? InSettings->DefaultDeformer.LoadSynchronous() : nullptr);
+	DefaultRecomputeTangentDeformer = TStrongObjectPtr<UMeshDeformer>(bLoadDeformers && !InSettings->DefaultRecomputeTangentDeformer.IsNull() ? InSettings->DefaultRecomputeTangentDeformer.LoadSynchronous() : nullptr);
 }
 
 TObjectPtr<UMeshDeformer> FOptimusSettingsModule::GetDefaultMeshDeformer(FDefaultMeshDeformerSetup const& Setup)
@@ -93,15 +93,15 @@ TObjectPtr<UMeshDeformer> FOptimusSettingsModule::GetDefaultMeshDeformer(FDefaul
 	const UOptimusSettings* Settings = GetDefault<UOptimusSettings>();
 	if (Settings != nullptr && 
 		(Settings->DefaultMode == EOptimusDefaultDeformerMode::Always ||
-		(Settings->DefaultMode == EOptimusDefaultDeformerMode::SkinCacheOnly && Setup.bIsUsingSkinCache)))
+		(Settings->DefaultMode == EOptimusDefaultDeformerMode::OptIn && Setup.bIsRequestingDeformer)))
 	{
 		if (Setup.bIsRequestingRecomputeTangent && DefaultRecomputeTangentDeformer)
 		{
-			return DefaultRecomputeTangentDeformer;
+			return DefaultRecomputeTangentDeformer.Get();
 		}
 		if (DefaultDeformer)
 		{ 
-			return DefaultDeformer;
+			return DefaultDeformer.Get();
 		}
 	}
 	return nullptr;

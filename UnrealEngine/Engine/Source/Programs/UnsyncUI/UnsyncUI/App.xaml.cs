@@ -2,9 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Windows;
+using System.Xml.Linq;
 
 namespace UnsyncUI
 {
@@ -20,6 +23,49 @@ namespace UnsyncUI
 		public UserPreferences UserConfig { get; private set; }
 		public string DefaultSearchTerms { get; private set; } = "";
 
+		internal bool EnableExperimentalFeatures = false;
+		internal bool EnableUserAuthentication = true;
+
+		internal string ApplicationLog { get; private set; } = "";
+
+		internal void ClearApplicationLog()
+		{
+			Dispatcher.InvokeAsync(delegate
+			{
+				ApplicationLog = "";
+				var model = MainWindow.DataContext as MainWindowModel;
+				if (model != null)
+				{
+					model.OnLogUpdated();
+				}
+			});
+		}
+
+		internal void LogError(string message)
+		{
+			LogMessage("ERROR: " + message);
+		}
+
+		internal void LogMessage(string message)
+		{
+			LogDebug(message);
+
+			Dispatcher.InvokeAsync(delegate
+			{
+				ApplicationLog += message + "\n";
+				var model = MainWindow.DataContext as MainWindowModel;
+				if (model != null)
+				{
+					model.OnLogUpdated();
+				}
+			});
+		}
+
+		internal void LogDebug(string message)
+		{
+			Debug.WriteLine(message);
+		}
+
 		protected override void OnStartup(StartupEventArgs e)
 		{
 			string configFile = e.Args.Length > 0 ? e.Args[0] : "unsyncui.xml";
@@ -32,6 +78,10 @@ namespace UnsyncUI
 				{
 					DefaultSearchTerms = e.Args[i + 1];
 					++i;
+				}
+				else if (arg == "--experimental")
+				{
+					EnableExperimentalFeatures = true;
 				}
 			}
 
@@ -88,9 +138,12 @@ namespace UnsyncUI
 			}
 
 			UserConfig = UserPreferences.Load();
-			if (UserConfig.DFS == "")
+
+			if (Config != null)
 			{
-				UserConfig.DFS = null;
+				Config.UnsyncPath = UnsyncPath;
+				Config.EnableExperimentalFeatures = EnableExperimentalFeatures;
+				Config.EnableUserAuthentication = EnableUserAuthentication;
 			}
 
 			base.OnStartup(e);
@@ -111,13 +164,13 @@ namespace UnsyncUI
 		private static readonly string userFile = Path.Combine(userDir, $"user_{version}.json");
 
 		public string Proxy { get; set; }
-		public string DFS { get; set; }
 		public Dictionary<string, string> ProjectDestinationMap { get; set; } = new Dictionary<string, string>();
 		public string CustomSrcPath { get; set; }
 		public string CustomDstPath { get; set; }
 		public string CustomInclude { get; set; }
 		public string AdditionalArgs { get; set; }
 		public bool AppendBuildName { get; set; } = false;
+		public bool LogInOnStartup { get; set; } = false;
 
 		public static UserPreferences Load()
 		{

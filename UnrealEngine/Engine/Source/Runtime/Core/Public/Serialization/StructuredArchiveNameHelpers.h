@@ -73,8 +73,6 @@ namespace UE::StructuredArchive::Private
 	}
 }
 
-#define SA_FIELD_NAME(x) /*DEPRECATED_MACRO(5.1, "Field names no longer need to be wrapped in the SA_FIELD_NAME macro.")*/ FArchiveFieldName(x)
-
 /** Construct a TNamedValue given an ANSI string and value reference. */
 #define SA_VALUE(Name, Value) UE::StructuredArchive::Private::MakeNamedValue(FArchiveFieldName(Name), Value)
 

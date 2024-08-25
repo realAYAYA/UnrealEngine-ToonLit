@@ -57,23 +57,22 @@ bool FPerforceSourceControlLabel::GetFileRevisions( const TArray<FString>& InFil
 		FPerforceConnection& Connection = ScopedConnection.GetConnection();
 		FP4RecordSet Records;
 		TArray<FString> Parameters;
-		TArray<FText> ErrorMessages;
+		FSourceControlResultInfo ResultInfo;
 		for(auto Iter(InFiles.CreateConstIterator()); Iter; Iter++)
 		{
 			Parameters.Add(*Iter + TEXT("@") + Name);
 		}
 		bool bConnectionDropped = false;
-		bCommandOK = Connection.RunCommand(TEXT("files"), Parameters, Records, ErrorMessages, FOnIsCancelled(), bConnectionDropped);
+		bCommandOK = Connection.RunCommand(TEXT("files"), Parameters, Records, ResultInfo, FOnIsCancelled(), bConnectionDropped);
 		if(bCommandOK)
 		{
 			ParseFilesResults(GetSCCProvider(), Records, Connection.ClientRoot, OutRevisions);
 		}
 		else
 		{
-			// output errors if any
-			for (int32 ErrorIndex = 0; ErrorIndex < ErrorMessages.Num(); ++ErrorIndex)
+			for (const FText& ErrorMsg : ResultInfo.ErrorMessages)
 			{
-				FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetFileRevisionsErrorFormat","GetFileRevisions Error: {0}"), ErrorMessages[ErrorIndex]));
+				FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetFileRevisionsErrorFormat","GetFileRevisions Error: {0}"), ErrorMsg));
 			}
 		}
 	}
@@ -90,20 +89,19 @@ bool FPerforceSourceControlLabel::Sync( const TArray<FString>& InFilenames ) con
 	{
 		FPerforceConnection& Connection = ScopedConnection.GetConnection();
 		FP4RecordSet Records;
-		TArray<FText> ErrorMessages;
+		FSourceControlResultInfo ResultInfo;
 		TArray<FString> Parameters;
 		for(const auto& Filename : InFilenames)
 		{
 			Parameters.Add(Filename + TEXT("@") + Name);
 		}
 		bool bConnectionDropped = false;
-		bCommandOK = Connection.RunCommand(TEXT("sync"), Parameters, Records, ErrorMessages, FOnIsCancelled(), bConnectionDropped);
+		bCommandOK = Connection.RunCommand(TEXT("sync"), Parameters, Records, ResultInfo, FOnIsCancelled(), bConnectionDropped);
 		if(!bCommandOK)
 		{
-			// output errors if any
-			for (int32 ErrorIndex = 0; ErrorIndex < ErrorMessages.Num(); ++ErrorIndex)
+			for (const FText& ErrorMsg : ResultInfo.ErrorMessages)
 			{
-				FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetFileRevisionsSyncErrorFormat", "Sync Error: {0}"), ErrorMessages[ErrorIndex]));
+				FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetFileRevisionsSyncErrorFormat", "Sync Error: {0}"), ErrorMsg));
 			}
 		}
 	}

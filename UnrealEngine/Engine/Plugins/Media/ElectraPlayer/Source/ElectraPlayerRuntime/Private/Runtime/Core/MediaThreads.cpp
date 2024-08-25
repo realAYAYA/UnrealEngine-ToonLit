@@ -1,9 +1,59 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Core/MediaThreads.h"
+#include "Core/MediaMessageQueue.h"
 
 #include "HAL/RunnableThread.h"
 #include "Misc/ScopeLock.h"
+
+
+namespace MediaRunnablePrivate
+{
+
+static TMediaMessageQueueDynamicNoTimeout<TFunction<void()>> AsyncFunctionsToRun;
+static volatile bool bEndForShutdown = false;
+static FMediaThread* AsyncExecutionThread = nullptr;
+static void AsyncWorkerThreadFN()
+{
+	while(!bEndForShutdown)
+	{
+		TFunction<void()> AsyncRunFN = AsyncFunctionsToRun.ReceiveMessage();
+		if (AsyncRunFN)
+		{
+			AsyncRunFN();
+		}
+	}
+}
+
+}
+
+void FMediaRunnable::Startup()
+{
+	MediaRunnablePrivate::bEndForShutdown = false;
+	MediaRunnablePrivate::AsyncExecutionThread = new FMediaThread("Electra::ExecAsync");
+	MediaRunnablePrivate::AsyncExecutionThread->ThreadStart(FMediaRunnable::FStartDelegate::CreateStatic(&MediaRunnablePrivate::AsyncWorkerThreadFN));
+}
+
+void FMediaRunnable::Shutdown()
+{
+	check(MediaRunnablePrivate::AsyncExecutionThread);
+	
+	TFunction<void()> FinishTask = []()
+	{
+		MediaRunnablePrivate::bEndForShutdown = true;
+	};
+	EnqueueAsyncTask(MoveTemp(FinishTask));
+
+	MediaRunnablePrivate::AsyncExecutionThread->ThreadWaitDone();
+	delete MediaRunnablePrivate::AsyncExecutionThread;
+	MediaRunnablePrivate::AsyncExecutionThread = nullptr;
+}
+
+void FMediaRunnable::EnqueueAsyncTask(TFunction<void()>&& InFunctionToExecuteOnAsyncThread)
+{
+	MediaRunnablePrivate::AsyncFunctionsToRun.SendMessage(MoveTemp(InFunctionToExecuteOnAsyncThread));
+}
+
 
 // ----------------------------------------------------------------------------
 /**

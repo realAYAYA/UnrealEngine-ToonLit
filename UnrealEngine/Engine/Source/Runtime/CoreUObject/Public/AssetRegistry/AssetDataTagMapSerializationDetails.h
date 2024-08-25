@@ -34,6 +34,7 @@ namespace FixedTagPrivate
 		COREUOBJECT_API const FString& GetAsComplexString() const;
 		COREUOBJECT_API FText GetAsText() const;
 		COREUOBJECT_API int32 CompareToCaseIgnored(const FMarshalledText& Other) const;
+		COREUOBJECT_API int64 GetResourceSize() const;
 
 	private:
 		FString String;

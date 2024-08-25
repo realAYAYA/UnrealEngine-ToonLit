@@ -13,37 +13,45 @@
 
 DECLARE_CYCLE_STAT(TEXT("MVVM Bindings"), STAT_MVVMBindingTick, STATGROUP_Slate);
 
-void UMVVMBindingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+namespace UE::MVVM::Private
 {
-	Super::Initialize(Collection);
-
-	if (FSlateApplication::IsInitialized())
+struct FViewAndBinding
+{
+	FViewAndBinding(const TObjectKey<const UMVVMView>& InView, FMVVMViewClass_BindingKey InBinding)
+		: View(InView)
+		, Binding(InBinding)
 	{
-		FSlateApplication::Get().OnPreTick().AddUObject(this, &UMVVMBindingSubsystem::HandlePreTick);
 	}
+	TObjectKey<const UMVVMView> View;
+	FMVVMViewClass_BindingKey Binding;
+
+	bool operator== (const FViewAndBinding& Other) const
+	{
+		return View == Other.View && Binding == Other.Binding;
+	}
+
+	friend uint32 GetTypeHash(const FViewAndBinding& Key)
+	{
+		uint32 Value1 = GetTypeHash(Key.View);
+		uint32 Value2 = GetTypeHash(Key.Binding.GetIndex());
+		return HashCombine(Value1, Value2);
+	}
+};
 }
 
-void UMVVMBindingSubsystem::Deinitialize()
-{
-	if (FSlateApplication::IsInitialized())
-	{
-		FSlateApplication::Get().OnPreTick().RemoveAll(this);
-	}
-	Super::Deinitialize();
-}
-
-void UMVVMBindingSubsystem::HandlePreTick(float DeltaTime)
+void UMVVMBindingSubsystem::Tick(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_MVVMBindingTick);
 
-	if (EveryTickBindings.Num() > 0)
+	if (ViewsWithTickBindings.Num() > 0)
 	{
 		FMemMark Mark(FMemStack::Get());
 		TArray<const UMVVMView*, TMemStackAllocator<>> ToTick;
-		ToTick.Reserve(EveryTickBindings.Num());
-		for (TWeakObjectPtr<const UMVVMView> View : EveryTickBindings)
+		ToTick.Reserve(ViewsWithTickBindings.Num());
+		for (TWeakObjectPtr<const UMVVMView> View : ViewsWithTickBindings)
 		{
-			if (const UMVVMView* ViewPtr = View.Get())
+			const UMVVMView* ViewPtr = View.Get();
+			if (ensure(ViewPtr))
 			{
 				ToTick.Add(ViewPtr);
 			}
@@ -51,73 +59,118 @@ void UMVVMBindingSubsystem::HandlePreTick(float DeltaTime)
 
 		for (const UMVVMView* ViewPtr : ToTick)
 		{
-			ViewPtr->ExecuteEveryTickBindings();
+			ViewPtr->ExecuteTickBindings();
 		}
 	}
 
 	if (DelayedBindings.Num() > 0)
 	{
-		FDelayedMap AllDelayedBindingsExecutedThisFrame;
+		TSet<UE::MVVM::Private::FViewAndBinding> AllDelayedBindingsExecutedThisFrame;
 		AllDelayedBindingsExecutedThisFrame.Reserve(DelayedBindings.Num());
 
-		FDelayedMap DelayedBindingsWhileTicking = MoveTemp(DelayedBindings);
-		DelayedBindings = FDelayedMap();
+		FDelayedBindingMap DelayedBindingsWhileTicking = MoveTemp(DelayedBindings);
+		DelayedBindings = FDelayedBindingMap();
 
 		do 
 		{
 			for (const auto& DelayedBindingsPair : DelayedBindingsWhileTicking)
 			{
-				if (const UMVVMView* View = DelayedBindingsPair.Key.Get())
+				if (const UMVVMView* View = DelayedBindingsPair.Key.ResolveObjectPtr())
 				{
 					ensure(DelayedBindingsPair.Value.Num() > 0);
-					FDelayedBindingList& AllBindingList = AllDelayedBindingsExecutedThisFrame.FindOrAdd(DelayedBindingsPair.Key);
-					for (const FMVVMViewDelayedBinding& DelayedBinding : DelayedBindingsPair.Value)
+					for (const FMVVMViewClass_BindingKey& DelayedBinding : DelayedBindingsPair.Value)
 					{
 						View->ExecuteDelayedBinding(DelayedBinding);
-						AllBindingList.AddUnique(DelayedBinding);
+						UE::MVVM::Private::FViewAndBinding ViewAndBinding = UE::MVVM::Private::FViewAndBinding(DelayedBindingsPair.Key, DelayedBinding);
+						AllDelayedBindingsExecutedThisFrame.Add(ViewAndBinding);
 					}
 				}
 			}
 
 			DelayedBindingsWhileTicking.Reset();
 
-			// Test new binding added while executing the current binding list
-			for (const auto& DelayedBindingPair : DelayedBindings)
+			// Test new bindings added while executing the latest binding list.
+			//If it's a new  binding (not already executed this frame), execute it this frame. Else, execute it next frame.
+			for (auto DelayedBindingItt = DelayedBindings.CreateIterator(); DelayedBindingItt; ++DelayedBindingItt)
 			{
-				if (DelayedBindingPair.Key.Get())
+				FDelayedBindingList* FoundDelayedBindingListPtr = nullptr;
+				for (int32 DelayIndex = DelayedBindingItt.Value().Num() - 1; DelayIndex >= 0; --DelayIndex)
 				{
-					if (FDelayedBindingList* AllDelayedBindingsListPtr = AllDelayedBindingsExecutedThisFrame.Find(DelayedBindingPair.Key))
+					// Was it executed this frame
+					const FMVVMViewClass_BindingKey& DelayedBinding = DelayedBindingItt.Value()[DelayIndex];
+					UE::MVVM::Private::FViewAndBinding ViewAndBinding = UE::MVVM::Private::FViewAndBinding(DelayedBindingItt.Key(), DelayedBinding);
+					if (!AllDelayedBindingsExecutedThisFrame.Find(ViewAndBinding))
 					{
-						for (const FMVVMViewDelayedBinding& NewCompiledBinding : DelayedBindingPair.Value)
+						if (!FoundDelayedBindingListPtr)
 						{
-							if (!AllDelayedBindingsListPtr->Find(NewCompiledBinding))
-							{
-								// It was not executed. Add it to be executed this frame.
-								DelayedBindingsWhileTicking.FindOrAdd(DelayedBindingPair.Key).AddUnique(NewCompiledBinding);
-							}
+							FoundDelayedBindingListPtr = &DelayedBindingsWhileTicking.FindOrAdd(DelayedBindingItt.Key());
 						}
+						FoundDelayedBindingListPtr->AddUnique(DelayedBinding);
+						DelayedBindingItt.Value().RemoveAtSwap(DelayIndex);
+					}
+
+					// If they were all executed, remove the key from the next frame list.
+					if (DelayedBindingItt.Value().Num() == 0)
+					{
+						DelayedBindingItt.RemoveCurrent();
 					}
 				}
 			}
+
+			//DelayedBindings = FDelayedMap(); // do not reset the array. Bindings could be executed this frame and needs to be re executed next frame
+
 		} while (DelayedBindingsWhileTicking.Num() > 0);
 	}
 }
 
-void UMVVMBindingSubsystem::AddViewWithEveryTickBinding(const UMVVMView* InView)
+TStatId UMVVMBindingSubsystem::GetStatId() const
 {
-	check(!EveryTickBindings.Contains(InView));
+	RETURN_QUICK_DECLARE_CYCLE_STAT(UMVVMBindingSubsystem, STATGROUP_Tickables);
+}
+
+void UMVVMBindingSubsystem::AddViewWithTickBinding(const UMVVMView* InView)
+{
+	check(!ViewsWithTickBindings.Contains(InView));
 	ensureMsgf(FSlateApplication::IsInitialized(), TEXT("The Slate Application is not initialized. This is probably because you are running a server. The Delayed and Tick binding will not execute."));
 
-	EveryTickBindings.Add(InView);
+	ViewsWithTickBindings.Add(InView);
 }
 
-void UMVVMBindingSubsystem::RemoveViewWithEveryTickBinding(const UMVVMView* InView)
+void UMVVMBindingSubsystem::RemoveViewWithTickBinding(const UMVVMView* InView)
 {
-	EveryTickBindings.RemoveSingleSwap(InView);
+	ViewsWithTickBindings.RemoveSingleSwap(InView);
 }
 
-void UMVVMBindingSubsystem::AddDelayedBinding(const UMVVMView* View, FMVVMViewDelayedBinding InCompiledBinding)
+void UMVVMBindingSubsystem::AddDelayedBinding(const UMVVMView* View, FMVVMViewClass_BindingKey InCompiledBinding)
 {
 	ensureMsgf(FSlateApplication::IsInitialized(), TEXT("The Slate Application is not initialized. This is probably because you are running a server. The Delayed and Tick binding will not execute."));
 	DelayedBindings.FindOrAdd(View).AddUnique(InCompiledBinding);
+}
+
+void UMVVMBindingSubsystem::RemoveDelayedBindings(const UMVVMView* View)
+{
+	ensureMsgf(FSlateApplication::IsInitialized(), TEXT("The Slate Application is not initialized. This is probably because you are running a server. The Delayed and Tick binding will not execute."));
+	DelayedBindings.Remove(View);
+}
+
+void UMVVMBindingSubsystem::RemoveDelayedBindings(const UMVVMView* View, FMVVMViewClass_SourceKey SourceKey)
+{
+	ensureMsgf(FSlateApplication::IsInitialized(), TEXT("The Slate Application is not initialized. This is probably because you are running a server. The Delayed and Tick binding will not execute."));
+	if (FDelayedBindingList* FoundView = DelayedBindings.Find(View))
+	{
+		const UMVVMViewClass* ViewClass = View->GetViewClass();
+		for (int32 Index = FoundView->Num() - 1; Index >= 0; --Index)
+		{
+			const FMVVMViewClass_Binding& Binding = ViewClass->GetBinding((*FoundView)[Index]);
+			if ((Binding.GetSources() & SourceKey.GetBit()) != 0)
+			{
+				(*FoundView).RemoveAtSwap(Index);
+			}
+		}
+
+		if (FoundView->Num() == 0)
+		{
+			DelayedBindings.Remove(View);
+		}
+	}
 }

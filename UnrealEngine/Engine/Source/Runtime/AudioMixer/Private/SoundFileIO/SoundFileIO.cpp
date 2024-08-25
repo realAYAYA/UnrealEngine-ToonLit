@@ -16,7 +16,7 @@
 #include "Stats/Stats.h"
 
 
-namespace Audio
+namespace Audio::SoundFileUtils
 {
 	static void CopyOptionalWavChunks(TSharedPtr<ISoundFileReader>& InSoundDataReader, const int32 InInputFormat, TSharedPtr<ISoundFileWriter>& InSoundFileWriter, const int32 InOutputFormat);
 
@@ -28,6 +28,26 @@ namespace Audio
 	bool AUDIOMIXER_API ShutdownSoundFileIOManager()
 	{
 		return Audio::SoundFileIOManagerShutdown();
+	}
+
+	uint32 AUDIOMIXER_API GetNumSamples(const TArray<uint8>& InAudioData)
+	{
+		FSoundFileIOManager SoundIOManager;
+		TSharedPtr<ISoundFileReader> InputSoundDataReader = SoundIOManager.CreateSoundDataReader();
+
+		ESoundFileError::Type Error = InputSoundDataReader->Init(&InAudioData);
+		if (Error != ESoundFileError::Type::NONE)
+		{
+			return 0;
+		}
+
+		TArray<ESoundFileChannelMap::Type> ChannelMap;
+
+		FSoundFileDescription InputDescription;
+		InputSoundDataReader->GetDescription(InputDescription, ChannelMap);
+		InputSoundDataReader->Release();
+
+		return InputDescription.NumFrames * InputDescription.NumChannels;
 	}
 
 	bool AUDIOMIXER_API ConvertAudioToWav(const TArray<uint8>& InAudioData, TArray<uint8>& OutWaveData)

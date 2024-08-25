@@ -12,10 +12,20 @@
 #include "FbxMesh.h"
 #include "FbxScene.h"
 #include "InterchangeTextureNode.h"
+#if WITH_ENGINE
+#include "Mesh/InterchangeMeshPayload.h"
+#endif
 #include "Nodes/InterchangeBaseNodeContainer.h"
 #include "Misc/SecureHash.h"
 
 #define LOCTEXT_NAMESPACE "InterchangeFbxParser"
+
+#define DESTROY_FBX_OBJECT(Object) \
+if(Object) \
+{ \
+	Object->Destroy(); \
+	Object = nullptr; \
+}
 
 namespace UE
 {
@@ -25,10 +35,29 @@ namespace UE
 		{
 			FFbxParser::~FFbxParser()
 			{
-				PayloadContexts.Empty();
 				FbxHelper = nullptr;
+				Reset();
 			}
 			
+			void FFbxParser::Reset()
+			{
+				PayloadContexts.Reset();
+
+				DESTROY_FBX_OBJECT(SDKImporter);
+				DESTROY_FBX_OBJECT(SDKScene);
+				if (SDKGeometryConverter)
+				{
+					delete SDKGeometryConverter;
+					SDKGeometryConverter = nullptr;
+				}
+				DESTROY_FBX_OBJECT(SDKIoSettings);
+				DESTROY_FBX_OBJECT(SDKManager);
+				if (FbxHelper.IsValid())
+				{
+					FbxHelper->Reset();
+				}
+			}
+
 			const TSharedPtr<FFbxHelper> FFbxParser::GetFbxHelper()
 			{
 				if (!FbxHelper.IsValid())
@@ -54,18 +83,18 @@ namespace UE
 				}
 
 				//Create an IOSettings object. This object holds all import/export settings.
-				FbxIOSettings* ios = FbxIOSettings::Create(SDKManager, IOSROOT);
-				ios->SetBoolProp(IMP_FBX_MATERIAL, true);
-				ios->SetBoolProp(IMP_FBX_TEXTURE, true);
-				ios->SetBoolProp(IMP_FBX_LINK, true);
-				ios->SetBoolProp(IMP_FBX_SHAPE, true);
-				ios->SetBoolProp(IMP_FBX_GOBO, true);
-				ios->SetBoolProp(IMP_FBX_ANIMATION, true);
-				ios->SetBoolProp(IMP_SKINS, true);
-				ios->SetBoolProp(IMP_DEFORMATION, true);
-				ios->SetBoolProp(IMP_FBX_GLOBAL_SETTINGS, true);
-				ios->SetBoolProp(IMP_TAKE, true);
-				SDKManager->SetIOSettings(ios);
+				SDKIoSettings = FbxIOSettings::Create(SDKManager, IOSROOT);
+				SDKIoSettings->SetBoolProp(IMP_FBX_MATERIAL, true);
+				SDKIoSettings->SetBoolProp(IMP_FBX_TEXTURE, true);
+				SDKIoSettings->SetBoolProp(IMP_FBX_LINK, true);
+				SDKIoSettings->SetBoolProp(IMP_FBX_SHAPE, true);
+				SDKIoSettings->SetBoolProp(IMP_FBX_GOBO, true);
+				SDKIoSettings->SetBoolProp(IMP_FBX_ANIMATION, true);
+				SDKIoSettings->SetBoolProp(IMP_SKINS, true);
+				SDKIoSettings->SetBoolProp(IMP_DEFORMATION, true);
+				SDKIoSettings->SetBoolProp(IMP_FBX_GLOBAL_SETTINGS, true);
+				SDKIoSettings->SetBoolProp(IMP_TAKE, true);
+				SDKManager->SetIOSettings(SDKIoSettings);
 
 				SDKGeometryConverter = new FbxGeometryConverter(SDKManager);
 
@@ -101,7 +130,7 @@ namespace UE
 				bool bStatus = SDKImporter->Import(SDKScene);
 
 				//We always convert scene to UE axis and units
-				FFbxConvert::ConvertScene(SDKScene);
+				FFbxConvert::ConvertScene(SDKScene, bConvertScene, bForceFrontXAxis, bConvertSceneUnit);
 
 				FrameRate = FbxTime::GetFrameRate(SDKScene->GetGlobalSettings().GetTimeMode());
 
@@ -165,6 +194,25 @@ namespace UE
 				}
 			}
 
+#if WITH_ENGINE
+			bool FFbxParser::FetchMeshPayloadData(const FString& PayloadKey, const FTransform& MeshGlobalTransform, FMeshPayloadData& OutMeshPayloadData)
+			{
+				if (!PayloadContexts.Contains(PayloadKey))
+				{
+					UInterchangeResultError_Generic* Message = AddMessage<UInterchangeResultError_Generic>();
+					Message->Text = LOCTEXT("CannotRetrievePayload", "Cannot retrieve payload; payload key doesn't have any context.");
+					return false;
+				}
+
+				{
+					//Critical section to force payload to be fetch one by one with no concurrency.
+					FScopeLock Lock(&PayloadCriticalSection);
+					TSharedPtr<FPayloadContextBase>& PayloadContext = PayloadContexts.FindChecked(PayloadKey);
+					return PayloadContext->FetchMeshPayload(*this, MeshGlobalTransform, OutMeshPayloadData);
+				}
+			}
+#endif
+
 			bool FFbxParser::FetchAnimationBakeTransformPayload(const FString& PayloadKey, const double BakeFrequency, const double RangeStartTime, const double RangeEndTime, const FString& PayloadFilepath)
 			{
 				if (!PayloadContexts.Contains(PayloadKey))
@@ -193,11 +241,26 @@ namespace UE
 				SDKScene->GetFbxManager()->CreateMissingBindPoses(SDKScene);
 				//if we created missing bind poses, update the number of bind poses
 				const int32 NbPoses = SDKScene->GetFbxManager()->GetBindPoseCount(SDKScene);
-				if (NbPoses != Default_NbPoses)
+				if (NbPoses != Default_NbPoses && !GIsAutomationTesting)
 				{
 					UInterchangeResultWarning_Generic* Message = AddMessage<UInterchangeResultWarning_Generic>();
 					Message->Text = LOCTEXT("MissingBindPose", "Missing bind pose - the FBX SDK has created one.");
 				}
+
+				auto MakeFbxObjectNameUnique = [](FbxObject* Object, TMap<FString, int32>& Names)
+					{
+						FString ObjectName = UTF8_TO_TCHAR(Object->GetName());
+						if (int32* Count = Names.Find(ObjectName))
+						{
+							(*Count)++;
+							ObjectName += TEXT("_ncl_") + FString::FromInt(*Count);
+							Object->SetName(TCHAR_TO_UTF8(*ObjectName));
+						}
+						else
+						{
+							Names.Add(ObjectName, 0);
+						}
+					};
 
 				//////////////////////////////////////////////////////////////////////////
 				// Ensure Node Name Validity (uniqueness)
@@ -206,17 +269,26 @@ namespace UE
 				for (int32 NodeIndex = 0; NodeIndex < SDKScene->GetNodeCount(); ++NodeIndex)
 				{
 					FbxNode* Node = SDKScene->GetNode(NodeIndex);
-					FString NodeName = Node->GetName();
-					if (int32* Count = NodeNames.Find(NodeName))
+					MakeFbxObjectNameUnique(Node, NodeNames);
+				}
+
+				//////////////////////////////////////////////////////////////////////////
+				// Ensure Mesh Name Validity (uniqueness)
+				// Name clash must be global because we will build Unique ID from the mesh name
+				TMap<FString, int32> MeshNames;
+				for (int32 GeometryIndex = 0; GeometryIndex < SDKScene->GetGeometryCount(); ++GeometryIndex)
+				{
+					FbxGeometry* Geometry = SDKScene->GetGeometry(GeometryIndex);
+					if (Geometry->GetAttributeType() != FbxNodeAttribute::eMesh)
 					{
-						(*Count)++;
-						NodeName += TEXT("_ncl_") + FString::FromInt(*Count);
-						Node->SetName(TCHAR_TO_UTF8(*NodeName));
+						continue;
 					}
-					else
+					FbxMesh* Mesh = static_cast<FbxMesh*>(Geometry);
+					if (!Mesh)
 					{
-						NodeNames.Add(NodeName, 0);
+						continue;
 					}
+					MakeFbxObjectNameUnique(Mesh, MeshNames);
 				}
 			}
 		} //ns Private

@@ -359,6 +359,10 @@ void resolver_srv_free(xmpp_ctx_t *ctx, resolver_srv_rr_t *srv_rr_list)
 #include <windns.h>
 #include <Iphlpapi.h>
 
+#if !defined(DNS_QUERY_STANDARD)
+#define DNS_QUERY_STANDARD 0
+#endif
+
 struct dnsquery_header
 {
 	unsigned short id;

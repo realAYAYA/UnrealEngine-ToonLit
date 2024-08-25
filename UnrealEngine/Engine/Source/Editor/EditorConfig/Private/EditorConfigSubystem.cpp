@@ -162,16 +162,29 @@ bool UEditorConfigSubsystem::ReloadConfig(TSharedRef<FEditorConfig> Config)
 	return true;
 }
 
-TSharedRef<FEditorConfig> UEditorConfigSubsystem::FindOrLoadConfig(FStringView ConfigName)
+TSharedRef<FEditorConfig> UEditorConfigSubsystem::FindOrLoadConfig(FStringView ConfigName, ESearchDirectoryType IncludedTypes)
 {
 	checkf(!ConfigName.IsEmpty(), TEXT("Config name cannot be empty!"));
 
 	FString ConfigNameString(ConfigName);
+
+	// Construct a subset of SearchDirectories to be searched based on IncludedTypes
+	TArrayView<TPair<ESearchDirectoryType, FString>> IncludedSearchDirectories = SearchDirectories;
+	int32 LastSearchDirectoryIndex = SearchDirectories.Num() - 1;
+	for (; LastSearchDirectoryIndex >= 0; --LastSearchDirectoryIndex)
+	{
+		if (SearchDirectories[LastSearchDirectoryIndex].Key <= IncludedTypes)
+		{
+			break;
+		}
+	}
+	checkf(LastSearchDirectoryIndex > 0, TEXT("No valid search directories found for IncludedTypes = %i"), (int32)IncludedTypes);
+	IncludedSearchDirectories.LeftInline(LastSearchDirectoryIndex + 1);
 	
 	// look for the config in the final search directory and return if it's loaded
 	// this assumes that the hierarchy of configs is unchanged
 	// ie. given search directories [Foo, Bar], the existence of Bar/X.json is taken to mean that Foo/X.json has been loaded
-	const FString FinalPath = FPaths::Combine(SearchDirectories.Last().Value, ConfigNameString) + TEXT(".json");
+	const FString FinalPath = FPaths::Combine(IncludedSearchDirectories.Last().Value, ConfigNameString) + TEXT(".json");
 
 	const TSharedPtr<FEditorConfig>* FinalConfig = LoadedConfigs.Find(FinalPath);
 	if (FinalConfig != nullptr)
@@ -182,7 +195,7 @@ TSharedRef<FEditorConfig> UEditorConfigSubsystem::FindOrLoadConfig(FStringView C
 	// find or load all configs in all search directories with the given name
 	TSharedPtr<FEditorConfig> Parent;
 
-	for (const TPair<ESearchDirectoryType, FString>& Dir : SearchDirectories)
+	for (const TPair<ESearchDirectoryType, FString>& Dir : IncludedSearchDirectories)
 	{
 		const FString FullPath = FPaths::Combine(Dir.Value, ConfigNameString) + TEXT(".json");
 

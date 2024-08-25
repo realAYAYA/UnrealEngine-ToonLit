@@ -25,6 +25,7 @@ template <typename T>
 class FScopedJavaObject
 {
 public:
+	FScopedJavaObject() {}
 	FScopedJavaObject(JNIEnv* InEnv, const T& InObjRef) :
 	Env(InEnv),
 	ObjRef(InObjRef)
@@ -40,6 +41,13 @@ public:
 	
 	FScopedJavaObject(const FScopedJavaObject& Other) = delete;
 	FScopedJavaObject& operator=(const FScopedJavaObject& Other) = delete;
+
+	FScopedJavaObject& operator=(FScopedJavaObject&& Other)
+	{
+		Swap(Env, Other.Env);
+		Swap(ObjRef, Other.ObjRef);
+		return *this;
+	}
 	
 	~FScopedJavaObject()
 	{

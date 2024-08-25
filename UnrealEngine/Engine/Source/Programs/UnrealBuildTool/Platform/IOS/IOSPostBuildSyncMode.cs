@@ -75,6 +75,8 @@ namespace UnrealBuildTool
 			Arguments.ApplyTo(this);
 			Arguments.CheckAllArgumentsUsed();
 
+			IOSToolChainSettings.SelectXcode(false, Logger);
+
 			// Run the PostBuildSync command
 			IOSPostBuildSyncTarget Target = BinaryFormatterUtils.Load<IOSPostBuildSyncTarget>(InputFile!);
 			IOSToolChain.PostBuildSync(Target, Logger);

@@ -16,6 +16,8 @@
 #include "ComponentSources/OptimusSkinnedMeshComponentSource.h"
 #include "DataInterfaces/OptimusDataInterfaceCustomComputeKernel.h"
 #include "IOptimusDeprecatedExecutionDataInterface.h"
+#include "IOptimusUnnamedNodePinProvider.h"
+#include "OptimusNode_ResourceAccessorBase.h"
 #include "Engine/UserDefinedStruct.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OptimusNode_CustomComputeKernel)
@@ -64,6 +66,11 @@ static bool IsSecondaryGroupInputPin(const UOptimusNodePin *InPin)
 	return InPin->GetName() != PrimaryGroupPinName && InPin->GetDirection() == EOptimusNodePinDirection::Input && InPin->IsGroupingPin();
 }
 
+static bool DoesBindingSupportAtomic(const FOptimusParameterBinding& InBinding)
+{
+	return InBinding.bSupportAtomicIfCompatibleDataType && FOptimusDataTypeRegistry::Get().DoesTypeSupportAtomic(InBinding.DataType.Resolve()) ;	
+}
+
 bool UOptimusNode_CustomComputeKernel::DoesSourceSupportUnifiedDispatch(const UOptimusNodePin& InOtherNodesPin)
 {
 	if (InOtherNodesPin.GetDirection() == EOptimusNodePinDirection::Output )
@@ -95,7 +102,12 @@ UOptimusNode_CustomComputeKernel::UOptimusNode_CustomComputeKernel()
 
 FString UOptimusNode_CustomComputeKernel::GetKernelSourceText() const
 {
-	return GetCookedKernelSource(GetPathName(), ShaderSource.ShaderText, KernelName.ToString(), GroupSize);
+	return Optimus::GetCookedKernelSource(GetPathName(), ShaderSource.ShaderText, KernelName.ToString(), GroupSize);
+}
+
+FOptimusExecutionDomain UOptimusNode_CustomComputeKernel::GetExecutionDomain() const
+{
+	return ExecutionDomain;
 }
 
 const UOptimusNodePin* UOptimusNode_CustomComputeKernel::GetPrimaryGroupPin() const
@@ -103,13 +115,45 @@ const UOptimusNodePin* UOptimusNode_CustomComputeKernel::GetPrimaryGroupPin() co
 	return GetPrimaryGroupPin_Internal();
 }
 
-UComputeDataInterface* UOptimusNode_CustomComputeKernel::GetKernelDataInterface(UObject* InOuter) const
+UComputeDataInterface* UOptimusNode_CustomComputeKernel::MakeKernelDataInterface(UObject* InOuter) const
 {
 	UOptimusCustomComputeKernelDataInterface* KernelDataInterface = NewObject<UOptimusCustomComputeKernelDataInterface>(InOuter);
-	
-	KernelDataInterface->InitFromKernelNode(this);
-	
+
 	return KernelDataInterface;
+}
+
+bool UOptimusNode_CustomComputeKernel::DoesOutputPinSupportAtomic(const UOptimusNodePin* InPin) const
+{
+	if (ensure(InPin->GetDirection() == EOptimusNodePinDirection::Output))
+	{
+		if (const FOptimusParameterBinding* Binding = OutputBindingArray.FindByPredicate(
+			[InPin](const FOptimusParameterBinding& InBinding)
+				{
+					return InBinding.Name == InPin->GetFName(); 
+				}))
+		{
+			return DoesBindingSupportAtomic(*Binding);
+		}
+	}
+
+	return false;
+}
+
+bool UOptimusNode_CustomComputeKernel::DoesOutputPinSupportRead(const UOptimusNodePin* InPin) const
+{
+	if (ensure(InPin->GetDirection() == EOptimusNodePinDirection::Output))
+	{
+		if (const FOptimusParameterBinding* Binding = OutputBindingArray.FindByPredicate(
+			[InPin](const FOptimusParameterBinding& InBinding)
+				{
+					return InBinding.Name == InPin->GetFName(); 
+				}))
+		{
+			return Binding->bSupportRead;
+		}
+	}
+
+	return false;
 }
 
 #if WITH_EDITOR
@@ -141,6 +185,11 @@ void UOptimusNode_CustomComputeKernel::SetShaderText(const FString& NewText)
 	PostEditChangeProperty(PropertyChangedEvent);
 }
 
+bool UOptimusNode_CustomComputeKernel::IsShaderTextReadOnly() const
+{
+	return GetOwningGraph()->IsReadOnly();
+}
+
 #endif // WITH_EDITOR
 
 FString UOptimusNode_CustomComputeKernel::GetBindingDeclaration(
@@ -165,8 +214,68 @@ FString UOptimusNode_CustomComputeKernel::GetBindingDeclaration(
 	{
 		return GetDeclarationForBinding(*Binding, false);
 	}
+	for (const FOptimusSecondaryInputBindingsGroup& InputGroup: SecondaryInputBindingGroups)
+	{
+		if (const FOptimusParameterBinding* Binding = InputGroup.BindingArray.FindByPredicate(ParameterBindingPredicate))
+		{
+			return GetDeclarationForBinding(*Binding, true);
+		}
+	}
 
 	return FString();
+}
+
+bool UOptimusNode_CustomComputeKernel::GetBindingSupportAtomicCheckBoxVisibility(FName BindingName) const
+{
+	auto ParameterBindingPredicate = [BindingName](const FOptimusParameterBinding& InBinding)
+	{
+		if (InBinding.Name == BindingName)
+		{
+			return true;	
+		}
+			
+		return false;
+	};
+
+	if (const FOptimusParameterBinding* Binding = OutputBindingArray.FindByPredicate(ParameterBindingPredicate))
+	{
+		if (FOptimusDataTypeRegistry::Get().DoesTypeSupportAtomic(Binding->DataType.Resolve()))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UOptimusNode_CustomComputeKernel::GetBindingSupportReadCheckBoxVisibility(FName BindingName) const
+{
+	auto ParameterBindingPredicate = [BindingName](const FOptimusParameterBinding& InBinding)
+	{
+		if (InBinding.Name == BindingName)
+		{
+			return true;	
+		}
+			
+		return false;
+	};
+
+	if (const FOptimusParameterBinding* Binding = OutputBindingArray.FindByPredicate(ParameterBindingPredicate))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+EOptimusDataTypeUsageFlags UOptimusNode_CustomComputeKernel::GetTypeUsageFlags(const FOptimusDataDomain& InDataDomain) const
+{
+	if (InDataDomain.IsSingleton())
+	{
+		return EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes | EOptimusDataTypeUsageFlags::DataInterfaceOutput;
+	}
+
+	return EOptimusDataTypeUsageFlags::Resource;
 }
 
 
@@ -176,17 +285,21 @@ TArray<IOptimusNodeAdderPinProvider::FAdderPinAction> UOptimusNode_CustomCompute
 	FString* OutReason
 	) const
 {
-	if (InSourcePin->GetDataType().IsValid() && InSourcePin->GetDataType()->UsageFlags == EOptimusDataTypeUsageFlags::None)
+	if (InSourcePin->GetDataType().IsValid())
 	{
-		if (OutReason)
+		if (!EnumHasAnyFlags(InSourcePin->GetDataType()->UsageFlags, GetTypeUsageFlags(InSourcePin->GetDataDomain())))
 		{
-			*OutReason = TEXT("Can't add pin with this type");
+			if (OutReason)
+			{
+				*OutReason = TEXT("Can't add pin with this type");
+			}
+			
+			return {};
 		}
 
-		return {};
 	}
 	
-	TSet<UOptimusComponentSourceBinding*> SourceComponentBindings = InSourcePin->GetComponentSourceBindings();
+	TSet<UOptimusComponentSourceBinding*> SourceComponentBindings = InSourcePin->GetComponentSourceBindings({});
 	
 	TArray<UOptimusNodePin*> GroupPins;
 
@@ -221,7 +334,7 @@ TArray<IOptimusNodeAdderPinProvider::FAdderPinAction> UOptimusNode_CustomCompute
 		if (InSourcePin->GetDirection() != InNewPinDirection)
 		{
 			const UOptimusNodePin* PrimaryGroupPin = GetPrimaryGroupPin();
-			TSet<UOptimusComponentSourceBinding*> PrimaryGroupComponentBindings = GetGroupComponentSourceBindings(PrimaryGroupPin);
+			TSet<UOptimusComponentSourceBinding*> PrimaryGroupComponentBindings = PrimaryGroupPin->GetComponentSourceBindingsRecursively({});
 			TSet<UOptimusComponentSourceBinding*> MatchingBindings = PrimaryGroupComponentBindings.Intersect(SourceComponentBindings);
 		
 			if (MatchingBindings.Num() > 0 ||
@@ -271,7 +384,7 @@ TArray<IOptimusNodeAdderPinProvider::FAdderPinAction> UOptimusNode_CustomCompute
 				Action.DisplayName = GroupPin->GetFName();
 				Action.Key = GroupPin->GetFName();
 					
-				TSet<UOptimusComponentSourceBinding*> ComponentBindingsForGroup = GetGroupComponentSourceBindings(GroupPin);
+				TSet<UOptimusComponentSourceBinding*> ComponentBindingsForGroup = GroupPin->GetComponentSourceBindingsRecursively({});
 				TSet<UOptimusComponentSourceBinding*> MatchingBindings = ComponentBindingsForGroup.Intersect(SourceComponentBindings);
 	
 				if (MatchingBindings.Num() > 0 ||
@@ -336,7 +449,8 @@ TArray<IOptimusNodeAdderPinProvider::FAdderPinAction> UOptimusNode_CustomCompute
 
 TArray<UOptimusNodePin*> UOptimusNode_CustomComputeKernel::TryAddPinFromPin(
 	const FAdderPinAction& InSelectedAction,
-	UOptimusNodePin* InSourcePin
+	UOptimusNodePin* InSourcePin,
+	FName InNameToUse
 	)
 {
 	TArray<UOptimusNodePin*> AddedPins;
@@ -355,7 +469,7 @@ TArray<UOptimusNodePin*> UOptimusNode_CustomComputeKernel::TryAddPinFromPin(
 		{
 			//Creating a new group
 			
-			TSet<UOptimusComponentSourceBinding*> ComponentBindings = InSourcePin->GetComponentSourceBindings();
+			TSet<UOptimusComponentSourceBinding*> ComponentBindings = InSourcePin->GetComponentSourceBindings({});
 			
 			check(ComponentBindings.Num() != 0);
 
@@ -427,7 +541,7 @@ TArray<UOptimusNodePin*> UOptimusNode_CustomComputeKernel::TryAddPinFromPin(
 	}
 	
 	FOptimusParameterBinding Binding;
-	Binding.Name = GetSanitizedNewPinName(ParentPin, InSourcePin->GetFName());
+	Binding.Name = GetSanitizedNewPinName(ParentPin, InNameToUse);
 	Binding.DataType = {InSourcePin->GetDataType()};
 	Binding.DataDomain = InSourcePin->GetDataDomain();
 	
@@ -528,13 +642,13 @@ FName UOptimusNode_CustomComputeKernel::GetSanitizedNewPinName(
 	
 	if (InParentPin && InParentPin != PrimaryGroupPin)
 	{
-		NewName = Optimus::GetUniqueNameForScope(InParentPin, NewName);
+		NewName = GetAvailablePinNameStable(InParentPin, NewName);
 	}
 	else
 	{
 		// Primary Input and Output need to name check against node scope as well as primary group pin scope
-		NewName = Optimus::GetUniqueNameForScope(this, NewName);
-		NewName = Optimus::GetUniqueNameForScope(PrimaryGroupPin, NewName);
+		NewName = GetAvailablePinNameStable(this, NewName);
+		NewName = GetAvailablePinNameStable(PrimaryGroupPin, NewName);
 	}
 
 
@@ -545,7 +659,7 @@ TArray<FName> UOptimusNode_CustomComputeKernel::GetExecutionDomains() const
 {
 	// Find all component sources for the primary pins. If we end up with any other number
 	// than one, then something's gone wrong and we can't determine the execution domains.
-	TSet<UOptimusComponentSourceBinding*> PrimaryBindings = GetGroupComponentSourceBindings(GetPrimaryGroupPin());
+	TSet<UOptimusComponentSourceBinding*> PrimaryBindings = GetPrimaryGroupPin()->GetComponentSourceBindingsRecursively({});
 
 	if (PrimaryBindings.Num() == 1)
 	{
@@ -553,7 +667,7 @@ TArray<FName> UOptimusNode_CustomComputeKernel::GetExecutionDomains() const
 	}
 	else
 	{
-		return {};
+		return UOptimusComponentSource::GetAllExecutionDomains().Array();
 	}
 }
 
@@ -688,7 +802,7 @@ void UOptimusNode_CustomComputeKernel::PropertyValueChanged(
 	const FPropertyChangedEvent& InPropertyChangedEvent
 	)
 {
-	auto UpdatePinNamesFromBindings = [this](
+	auto UpdatePinsFromBindings = [this](
 		UOptimusNodePin* InParentPin,
 		TArrayView<UOptimusNodePin* const> InPins,
 		TFunction<bool(const UOptimusNodePin*)> InPinFilter,
@@ -717,12 +831,12 @@ void UOptimusNode_CustomComputeKernel::PropertyValueChanged(
 		if (InPropertyChangedEvent.GetMemberPropertyName() == InputBindingsName)
 		{
 			UOptimusNodePin* PrimaryGroupPin = GetPrimaryGroupPin_Internal();	
-			UpdatePinNamesFromBindings(PrimaryGroupPin,  PrimaryGroupPin->GetSubPins(), IsConnectableInputDataPin, InputBindingArray, InApplyFunc);
+			UpdatePinsFromBindings(PrimaryGroupPin,  PrimaryGroupPin->GetSubPins(), IsConnectableInputDataPin, InputBindingArray, InApplyFunc);
 			return true;
 		}
 		if (InPropertyChangedEvent.GetMemberPropertyName() == OutputBindingsName)
 		{
-			UpdatePinNamesFromBindings(nullptr, GetPins(), IsConnectableOutputPin, OutputBindingArray, InApplyFunc);
+			UpdatePinsFromBindings(nullptr, GetPins(), IsConnectableOutputPin, OutputBindingArray, InApplyFunc);
 			return true;
 		}
 		if (InPropertyChangedEvent.GetMemberPropertyName() == ExtraInputBindingGroupsName)
@@ -733,7 +847,7 @@ void UOptimusNode_CustomComputeKernel::PropertyValueChanged(
 				if (IsSecondaryGroupInputPin(GroupPin))
 				{
 					FOptimusSecondaryInputBindingsGroup& BindingsGroup = SecondaryInputBindingGroups[GroupIndex];
-					UpdatePinNamesFromBindings(GroupPin, GroupPin->GetSubPins(), IsConnectableInputDataPin, BindingsGroup.BindingArray, InApplyFunc);
+					UpdatePinsFromBindings(GroupPin, GroupPin->GetSubPins(), IsConnectableInputDataPin, BindingsGroup.BindingArray, InApplyFunc);
 
 					GroupIndex++;
 				}
@@ -834,6 +948,16 @@ void UOptimusNode_CustomComputeKernel::PropertyValueChanged(
 			return;
 		}
 	}
+	else if (InPropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_STRING_CHECKED(FOptimusParameterBinding, bSupportAtomicIfCompatibleDataType))
+	{
+		UpdatePreamble();
+		return;
+	}
+	else if (InPropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_STRING_CHECKED(FOptimusParameterBinding, bSupportRead))
+	{
+		UpdatePreamble();
+		return;
+	}
 	else if ( InPropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_STRING_CHECKED(FOptimusParameterBindingArray, InnerArray))
 	{
 		// Pasting into a specific binding
@@ -880,9 +1004,13 @@ void UOptimusNode_CustomComputeKernel::PropertyArrayItemAdded(
 		else
 		{
 			// Pick a suitable fallback for output pins.
-			FName DomainName = GetExecutionDomain();
-			if (DomainName.IsNone())
+			if (ExecutionDomain.IsDefined())
 			{
+				InBinding.DataDomain = FOptimusDataDomain(ExecutionDomain);
+			}
+			else
+			{
+				FName DomainName = NAME_None;
 				if (TArray<FName> ExecutionDomains = GetExecutionDomains(); !ExecutionDomains.IsEmpty())
 				{
 					DomainName = ExecutionDomains[0];
@@ -892,8 +1020,9 @@ void UOptimusNode_CustomComputeKernel::PropertyArrayItemAdded(
 					// FIXME: There should be a generic mechanism to get the most suitable default. 
 					DomainName = UOptimusSkeletalMeshComponentSource::Domains::Vertex;
 				}
+				
+				InBinding.DataDomain = FOptimusDataDomain(TArray<FName>({DomainName}));
 			}
-			InBinding.DataDomain = FOptimusDataDomain({DomainName});
 		}
 
 		AddPin(InBinding.Name, InDirection, InBinding.DataDomain, InBinding.DataType, InBeforePin, InGroupPin);
@@ -1240,45 +1369,39 @@ void UOptimusNode_CustomComputeKernel::PropertyArrayItemMoved(
 		TFunction<bool(const UOptimusNodePin *)> InPinPredicate
 		)
 	{
-		int32 BindingIndex = 0;
-		
-		// Find the first entry that's different. That's an element we can consider moved. Since array move only
-		// deals with a single item moving either forward or backward.
+		TArray<FName> PinNames;
+	
 		for (const UOptimusNodePin* Pin: InPins)
 		{
 			if (InPinPredicate(Pin))
 			{
-				if (Pin->GetFName() != BindingNameArray[BindingIndex])
-				{
-					break;
-				}
-				
-				BindingIndex++;
-				
-				if (BindingIndex == BindingNameArray.Num())
-				{
-					// Nothing got moved.
-					return;
-				}
+				PinNames.Add(Pin->GetFName());
 			}
 		}
 
-		UOptimusNodePin* MovedPin = *InPins.FindByPredicate([Name=BindingNameArray[BindingIndex]](const UOptimusNodePin* InPin)
-		{
-			return InPin->GetFName() == Name;
-		});
 
-		const UOptimusNodePin* NextPin = nullptr;
-		const FName NextPinName = (BindingIndex < (BindingNameArray.Num() - 1)) ? BindingNameArray[BindingIndex + 1] : NAME_None;
-		if (!NextPinName.IsNone())
+		
+		FName PinName = NAME_None;
+		FName NextPinName = NAME_None;
+
+		if (Optimus::FindMovedItemInNameArray(PinNames, BindingNameArray, PinName, NextPinName))
 		{
-			NextPin = *InPins.FindByPredicate([NextPinName](const UOptimusNodePin* InPin)
+			UOptimusNodePin* MovedPin = *InPins.FindByPredicate([PinName](const UOptimusNodePin* InPin)
 			{
-				return InPin->GetFName() == NextPinName;
+				return InPin->GetFName() == PinName;
 			});
-		}
 
-		MovePin(MovedPin, NextPin);
+			UOptimusNodePin* NextPin = nullptr;
+			if (!NextPinName.IsNone())
+			{
+				NextPin = *InPins.FindByPredicate([NextPinName](const UOptimusNodePin* InPin)
+				{
+					return InPin->GetFName() == NextPinName;
+				});	
+			}
+
+			MovePin(MovedPin, NextPin);
+		}
 	};
 
 	auto MakeBindingNameArray = [](const FOptimusParameterBindingArray& InBindings) -> TArray<FName>
@@ -1408,6 +1531,11 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		PostLoadAddMissingPrimaryGroupPin();
 	}
 
+	if (GetLinkerCustomVersion(FOptimusObjectVersion::GUID) < FOptimusObjectVersion::KernelParameterBindingToggleAtomic)
+	{
+		PostLoadExtractAtomicModeFromConnectedResource();
+	}
+
 	SetDisplayName(FText::FromName(KernelName));
 }
 
@@ -1468,9 +1596,9 @@ bool UOptimusNode_CustomComputeKernel::ValidateConnection(
 	return true;
 }
 
-TOptional<FText> UOptimusNode_CustomComputeKernel::ValidateForCompile() const
+TOptional<FText> UOptimusNode_CustomComputeKernel::ValidateForCompile(const FOptimusPinTraversalContext& InContext) const
 {
-	if (TOptional<FText> Result = Super::ValidateForCompile(); Result.IsSet())
+	if (TOptional<FText> Result = Super::ValidateForCompile(InContext); Result.IsSet())
 	{
 		return Result;
 	}
@@ -1564,13 +1692,7 @@ void UOptimusNode_CustomComputeKernel::UpdatePreamble()
 		{
 			AddCountFunctionIfNeeded(Binding.DataDomain.DimensionNames);
 		
-			TArray<FString> Indexes;
-			for (FString IndexName: GetIndexNamesFromDataDomainLevels(Binding.DataDomain.DimensionNames))
-			{
-				Indexes.Add(FString::Printf(TEXT("uint %s"), *IndexName));
-			}
-
-			if (Binding.DataType->ShaderValueType.IsValid())
+			if (Binding.DataType.IsValid() && Binding.DataType->ShaderValueType.IsValid())
 			{
 				Declarations.Add(GetDeclarationForBinding(Binding, true));
 			}
@@ -1637,8 +1759,7 @@ UOptimusNodePin* UOptimusNode_CustomComputeKernel::GetPrimaryGroupPin_Internal()
 
 void UOptimusNode_CustomComputeKernel::PostLoadExtractExecutionDomain()
 {
-	ExecutionDomain.Name = NAME_None;
-		
+	ExecutionDomain = {};
 	// Check if there's an execution node connected and grab the domain from it.
 	FOptimusDataTypeHandle IntVector3Type = FOptimusDataTypeRegistry::Get().FindType(Optimus::GetTypeName(TBaseStructure<FIntVector3>::Get()));
 
@@ -1654,7 +1775,7 @@ void UOptimusNode_CustomComputeKernel::PostLoadExtractExecutionDomain()
 					if (const IOptimusDeprecatedExecutionDataInterface* ExecDataInterface = Cast<IOptimusDeprecatedExecutionDataInterface>(DataInterfaceNode->GetDataInterface(GetTransientPackage())))
 					{
 						FName Domain = ExecDataInterface->GetSelectedExecutionDomainName();
-						ExecutionDomain.Name = Domain;
+						ExecutionDomain = {Domain};
 					}
 				}
 			}
@@ -1695,6 +1816,77 @@ void UOptimusNode_CustomComputeKernel::PostLoadAddMissingPrimaryGroupPin()
 	
 	PrimaryGroupPin->SetIsExpanded(PrimaryGroupPin->GetSubPins().Num() > 0);
 
+}
+
+void UOptimusNode_CustomComputeKernel::PostLoadExtractAtomicModeFromConnectedResource()
+{
+	FOptimusDataTypeHandle IntType = FOptimusDataTypeRegistry::Get().FindType(*FIntProperty::StaticClass());
+
+	TArray<TPair<UOptimusNodePin*, EOptimusBufferWriteType>> PinsToProcess;
+	
+	for (UOptimusNodePin* Pin: GetPins())
+	{
+		if (Pin->GetDirection() == EOptimusNodePinDirection::Output && Pin->GetDataType() == IntType)
+		{
+			TArray<FOptimusRoutedNodePin> ConnectedPins = Pin->GetConnectedPinsWithRouting();
+
+			for (const FOptimusRoutedNodePin& ConnectedPin : ConnectedPins)
+			{
+				if (const UOptimusNode_ResourceAccessorBase* ResourceNode = Cast<UOptimusNode_ResourceAccessorBase>(ConnectedPin.NodePin->GetOwningNode()))
+				{
+					if(ResourceNode->GetDeprecatedBufferWriteType() != EOptimusBufferWriteType::Write)
+					{
+						if (FOptimusParameterBinding* Binding = OutputBindingArray.FindByPredicate([Pin](const FOptimusParameterBinding& InBinding)
+							{
+								return InBinding.Name == Pin->GetFName(); 
+							}))
+						{
+							Binding->bSupportAtomicIfCompatibleDataType = true;
+
+							// Auto fixup is only possible for valid connections,
+							// where only a single resource node is connected to the atomic pin
+							if (ConnectedPins.Num() == 1)
+							{
+								PinsToProcess.Add({Pin, ResourceNode->GetDeprecatedBufferWriteType()});
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (!PinsToProcess.IsEmpty())
+	{
+		TArray<FString> Statements;
+		ShaderSource.ShaderText.ParseIntoArray(Statements, TEXT(";"));
+
+		bool bModified = false;
+		for (FString& Statement : Statements)
+		{
+			for (const TPair<UOptimusNodePin*, EOptimusBufferWriteType> PinInfo : PinsToProcess)
+			{
+				// See UOptimusNode_ComputeKernelBase::ProcessOutputPinForComputeKernel
+				FString OldName = FString::Printf(TEXT("Write%s"), *(PinInfo.Key->GetName()));;
+				
+				FString NewName = GetAtomicWriteFunctionName(PinInfo.Value, PinInfo.Key->GetName());
+
+				int32 NumReplaced = Statement.ReplaceInline(*OldName, *NewName, ESearchCase::CaseSensitive );
+				if (NumReplaced > 0)
+				{
+					// One function call per statement at most, no need to look further
+					bModified = true;
+					break;
+				}
+			}
+		}
+
+		if (bModified)
+		{
+			ShaderSource.ShaderText = FString::Join(Statements, TEXT(";"));
+			UpdatePreamble();	
+		}
+	}
 }
 
 
@@ -1742,7 +1934,7 @@ bool UOptimusNode_CustomComputeKernel::PostLoadRemoveDeprecatedNumThreadsPin()
 FString UOptimusNode_CustomComputeKernel::GetDeclarationForBinding(const FOptimusParameterBinding& Binding, bool bIsInput)
 {
 	TArray<FString> Indexes;
-	for (FString IndexName: GetIndexNamesFromDataDomainLevels(Binding.DataDomain.DimensionNames))
+	for (FString IndexName: GetIndexNamesFromDataDomain(Binding.DataDomain))
 	{
 		Indexes.Add(FString::Printf(TEXT("uint %s"), *IndexName));
 	}
@@ -1754,8 +1946,29 @@ FString UOptimusNode_CustomComputeKernel::GetDeclarationForBinding(const FOptimu
 	}
 	else
 	{
-		return FString::Printf(TEXT("void Write%s(%s, %s Value);"),
-					*Binding.Name.ToString(), *FString::Join(Indexes, TEXT(", ")), *GetShaderValueTypeFriendlyName(Binding.DataType));
+		TArray<FString> Declarations;
+		Declarations.Add(FString::Printf(TEXT("void Write%s(%s, %s Value);"),
+			*Binding.Name.ToString(), *FString::Join(Indexes, TEXT(", ")), *GetShaderValueTypeFriendlyName(Binding.DataType)));
+
+		if (DoesBindingSupportAtomic(Binding))
+		{
+			for (uint8 WriteType = uint8(EOptimusBufferWriteType::Write) + 1; WriteType < uint8(EOptimusBufferWriteType::Count); WriteType++)
+			{
+				FString FunctionName = GetAtomicWriteFunctionName((EOptimusBufferWriteType)WriteType, Binding.Name.ToString());
+				
+				FString TypeName = GetShaderValueTypeFriendlyName(Binding.DataType);
+				Declarations.Add(FString::Printf(TEXT("%s %s(%s, %s Value);"),
+					*TypeName, *FunctionName, *FString::Join(Indexes, TEXT(", ")), *TypeName));	
+			}
+		}
+
+		if (Binding.bSupportRead)
+		{
+			Declarations.Add(FString::Printf(TEXT("%s Read%s(%s);"), 
+				*GetShaderValueTypeFriendlyName(Binding.DataType), *Binding.Name.ToString(), *FString::Join(Indexes, TEXT(", "))));
+		}
+
+		return FString::Join(Declarations, TEXT("\n"));
 	}
 }
 

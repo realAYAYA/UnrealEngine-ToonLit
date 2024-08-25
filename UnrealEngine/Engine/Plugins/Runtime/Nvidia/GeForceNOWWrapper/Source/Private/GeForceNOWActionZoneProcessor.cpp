@@ -117,7 +117,7 @@ bool GeForceNOWActionZoneProcessor::Initialize()
 {
 	if (FSlateWidgetTracker::Get().IsEnabled())
 	{
-		if (GeForceNOWWrapper::Get().IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
+		if (GeForceNOWWrapper::IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
 		{
 			FSlateWidgetTracker::Get().OnTrackedWidgetsChanged(GeForceNowTrackedWidgetTags::EditableTextTag).AddSP(this, &GeForceNOWActionZoneProcessor::HandleTrackedWidgetChanges);
 
@@ -139,7 +139,7 @@ void GeForceNOWActionZoneProcessor::Terminate()
 {
 	if (FSlateWidgetTracker::Get().IsEnabled())
 	{
-		if (GeForceNOWWrapper::Get().IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
+		if (GeForceNOWWrapper::IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
 		{
 			FSlateWidgetTracker::Get().OnTrackedWidgetsChanged(GeForceNowTrackedWidgetTags::EditableTextTag).RemoveAll(this);
 			StopProcess();
@@ -168,7 +168,7 @@ void GeForceNOWActionZoneProcessor::HandleTrackedWidgetChanges(const SWidget* Wi
 
 void GeForceNOWActionZoneProcessor::HandleEditableTextWidgetRegistered(const SWidget* Widget)
 {
-	if (GeForceNOWWrapper::Get().IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
+	if (GeForceNOWWrapper::IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
 	{
 		if (GFNWidgetActionZones.Num() == 0)
 		{
@@ -180,7 +180,7 @@ void GeForceNOWActionZoneProcessor::HandleEditableTextWidgetRegistered(const SWi
 
 void GeForceNOWActionZoneProcessor::HandleEditableTextWidgetUnregistered(const SWidget* Widget)
 {
-	if (GeForceNOWWrapper::Get().IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
+	if (GeForceNOWWrapper::IsRunningInGFN() || bForceProcessGFNWidgetActionZones)
 	{
 		if (FWidgetGFNActionZone* GFNWidgetActionZone = GFNWidgetActionZones.FindByKey(Widget))
 		{

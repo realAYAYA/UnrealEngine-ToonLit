@@ -1,0 +1,219 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#pragma once
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/Random.ush"
+
+#include "/Plugin/FX/Niagara/Private/NiagaraQuaternionUtils.ush"
+
+////////////////////////////////////////////////////////////////////////////////////
+
+#define INVALID_COMPONENT		-1
+#define UE_SMALL_NUMBER			(1.e-8f)
+#define UE_KINDA_SMALL_NUMBER	(1.e-4f)
+#define UE_PI 					(3.1415926535897932f)
+#define UE_INV_PI				(0.31830988618f)
+#define UE_HALF_PI				(1.57079632679f)
+#define UE_TWO_PI				(6.28318530717f)
+#define UE_PI_SQUARED			(9.86960440108f)
+#define UE_DEG_TO_RAD			(UE_PI / 180.0f)
+
+bool IsValidComponent(int ComponentOffset)
+{
+	return ComponentOffset != INVALID_COMPONENT;
+}
+
+uint				Common_OutputBufferStride;
+RWBuffer<float>		Common_FloatOutputBuffer;
+RWBuffer<int>		Common_IntOutputBuffer;
+Buffer<float>		Common_StaticFloatBuffer;
+Buffer<uint>		Common_ParameterBuffer;
+
+////////////////////////////////////////////////////////////////////////////////////
+
+float2 SinCos(float v)
+{
+	float2 sc;
+	sincos(v, sc.x, sc.y);
+	return sc;
+}
+
+float2 SafeNormalize(float2 v, float2 Fallback)
+{
+	const float l2 = length2(v);
+	return l2 < UE_KINDA_SMALL_NUMBER ? Fallback : v * rsqrt(l2);
+}
+
+float2 SafeNormalize(float2 v)
+{
+	return SafeNormalize(v, float2(1.0f, 0.0f));
+}
+
+float3 SafeNormalize(float3 v, float3 Fallback)
+{
+	const float l2 = length2(v);
+	return l2 < UE_KINDA_SMALL_NUMBER ? Fallback : v * rsqrt(l2);
+}
+
+float3 SafeNormalize(float3 v)
+{
+	return SafeNormalize(v, float3(1.0f, 0.0f, 0.0f));
+}
+
+////////////////////////////////////////////////////////////////////////////////////
+
+struct FStatelessParticle
+{
+	bool bAlive;					// If the particle should remain alive or not (only evaluated as specific points)
+	uint UniqueIndex;				// Unique particle index, sequential based on previous spawn info accumulation
+	uint4 RandomSeed;				// Random seed for this particle
+	float Lifetime;					// Overall lifetime for the particle
+	float Age;						// Current age for the particle
+	float NormalizedAge;			// Current normalized age for the particle
+	float PreviousAge;				// Previous age for the particle
+	float PreviousNormalizedAge;	// Previous normalized age for the particle
+
+	float DeltaTime;				// Simulation DT
+	float InvDeltaTime;				// Simulation Inverse DT
+	
+	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// TBD this might produce sub optimal code, needs investigate and is temporary
+	#define PARTICLE_ATTRIBUTE(TYPE, NAME) TYPE NAME##;
+		PARTICLE_ATTRIBUTES_OUTPUT
+		PARTICLE_ATTRIBUTES_TRANSIENT
+	#undef PARTICLE_ATTRIBUTE
+	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+};
+	
+uint4 RandomUInt4(inout FStatelessParticle Particle)
+{
+	++Particle.RandomSeed.x;
+	Particle.RandomSeed.w = Particle.RandomSeed.x ^ Particle.RandomSeed.y;
+	return Rand4DPCG32(Particle.RandomSeed);
+}
+uint   RandomUInt(inout FStatelessParticle Particle) { return RandomUInt4(Particle).x; }
+uint2  RandomUInt2(inout FStatelessParticle Particle) { return RandomUInt4(Particle).xy; }
+uint3  RandomUInt3(inout FStatelessParticle Particle) { return RandomUInt4(Particle).xyz; }
+
+float4 RandomFloat4(inout FStatelessParticle Particle)
+{
+	uint4 v = RandomUInt4(Particle);
+	return float4((v >> 8) & 0x00ffffff) / 16777216.0; // 0x01000000 == 16777216
+}
+float  RandomFloat(inout FStatelessParticle Particle)  { return RandomFloat4(Particle).x; }
+float2 RandomFloat2(inout FStatelessParticle Particle) { return RandomFloat4(Particle).xy; }
+float3 RandomFloat3(inout FStatelessParticle Particle) { return RandomFloat4(Particle).xyz; }
+	
+float  RandomRangeFloat(inout FStatelessParticle Particle, float  Min, float  Max) { return (RandomFloat(Particle)  * (Max - Min)) + Min; }
+float2 RandomRangeFloat(inout FStatelessParticle Particle, float2 Min, float2 Max) { return (RandomFloat2(Particle) * (Max - Min)) + Min; }
+float3 RandomRangeFloat(inout FStatelessParticle Particle, float3 Min, float3 Max) { return (RandomFloat3(Particle) * (Max - Min)) + Min; }
+float4 RandomRangeFloat(inout FStatelessParticle Particle, float4 Min, float4 Max) { return (RandomFloat4(Particle) * (Max - Min)) + Min; }
+
+float  RandomScaleBiasFloat(inout FStatelessParticle Particle, float  Scale, float  Bias) { return (RandomFloat(Particle)  * Scale) + Bias; }
+float2 RandomScaleBiasFloat(inout FStatelessParticle Particle, float2 Scale, float2 Bias) { return (RandomFloat2(Particle) * Scale) + Bias; }
+float3 RandomScaleBiasFloat(inout FStatelessParticle Particle, float3 Scale, float3 Bias) { return (RandomFloat3(Particle) * Scale) + Bias; }
+float4 RandomScaleBiasFloat(inout FStatelessParticle Particle, float4 Scale, float4 Bias) { return (RandomFloat4(Particle) * Scale) + Bias; }
+
+float  RandomScaleBiasFloat(inout FStatelessParticle Particle, float  Scale, float  Bias, bool bUniform) { return (RandomFloat(Particle)  * Scale) + Bias; }
+float2 RandomScaleBiasFloat(inout FStatelessParticle Particle, float2 Scale, float2 Bias, bool bUniform) { float2 Random = (RandomFloat2(Particle) * Scale) + Bias; return bUniform ? Random.xx : Random; }
+float3 RandomScaleBiasFloat(inout FStatelessParticle Particle, float3 Scale, float3 Bias, bool bUniform) { float3 Random = (RandomFloat3(Particle) * Scale) + Bias; return bUniform ? Random.xxx : Random; }
+float4 RandomScaleBiasFloat(inout FStatelessParticle Particle, float4 Scale, float4 Bias, bool bUniform) { float4 Random = (RandomFloat4(Particle) * Scale) + Bias; return bUniform ? Random.xxxx : Random; }
+
+float2 RandomUnitFloat2(inout FStatelessParticle Particle) { return SafeNormalize(RandomFloat2(Particle) - 0.5f); }
+float3 RandomUnitFloat3(inout FStatelessParticle Particle) { return SafeNormalize(RandomFloat3(Particle) - 0.5f); }
+
+float  GetStaticFloat (int BaseOffset, int Element)	{ return Common_StaticFloatBuffer[BaseOffset + Element]; }
+float2 GetStaticFloat2(int BaseOffset, int Element)	{ return float2(Common_StaticFloatBuffer[BaseOffset + Element*2], Common_StaticFloatBuffer[BaseOffset + 1 + Element*2]); }
+float3 GetStaticFloat3(int BaseOffset, int Element)	{ return float3(Common_StaticFloatBuffer[BaseOffset + Element*3], Common_StaticFloatBuffer[BaseOffset + 1 + Element*3], Common_StaticFloatBuffer[BaseOffset + 2 + Element*3]); }
+float4 GetStaticFloat4(int BaseOffset, int Element)	{ return float4(Common_StaticFloatBuffer[BaseOffset + Element*4], Common_StaticFloatBuffer[BaseOffset + 1 + Element*4], Common_StaticFloatBuffer[BaseOffset + 2 + Element*4], Common_StaticFloatBuffer[BaseOffset + 3 + Element*4]); }
+
+uint   GetParameterBufferUint  (int BaseOffset, int Element) { return Common_ParameterBuffer[BaseOffset + Element]; }
+int    GetParameterBufferInt   (int BaseOffset, int Element) { return asint(Common_ParameterBuffer[BaseOffset + Element]); }
+float  GetParameterBufferFloat (int BaseOffset, int Element) { return asfloat(Common_ParameterBuffer[BaseOffset + Element]); }
+float2 GetParameterBufferFloat2(int BaseOffset, int Element) { return float2(asfloat(Common_ParameterBuffer[BaseOffset + Element*2]), asfloat(Common_ParameterBuffer[BaseOffset + 1 + Element*2])); }
+float3 GetParameterBufferFloat3(int BaseOffset, int Element) { return float3(asfloat(Common_ParameterBuffer[BaseOffset + Element*3]), asfloat(Common_ParameterBuffer[BaseOffset + 1 + Element*3]), asfloat(Common_ParameterBuffer[BaseOffset + 2 + Element*3])); }
+float4 GetParameterBufferFloat4(int BaseOffset, int Element) { return float4(asfloat(Common_ParameterBuffer[BaseOffset + Element*4]), asfloat(Common_ParameterBuffer[BaseOffset + 1 + Element*4]), asfloat(Common_ParameterBuffer[BaseOffset + 2 + Element*4]), asfloat(Common_ParameterBuffer[BaseOffset + 3 + Element*4])); }
+
+uint   GetParameterBufferUint  (int BaseOffset, int Element, uint DefaultValue)   { return BaseOffset >= 0 ? Common_ParameterBuffer[BaseOffset + Element] : DefaultValue; }
+int    GetParameterBufferInt   (int BaseOffset, int Element, int DefaultValue)    { return BaseOffset >= 0 ? asint(Common_ParameterBuffer[BaseOffset + Element]) : DefaultValue; }
+float  GetParameterBufferFloat (int BaseOffset, int Element, float  DefaultValue) { return BaseOffset >= 0 ? asfloat(Common_ParameterBuffer[BaseOffset + Element]) : DefaultValue; }
+float2 GetParameterBufferFloat2(int BaseOffset, int Element, float2 DefaultValue) { return BaseOffset >= 0 ? float2(asfloat(Common_ParameterBuffer[BaseOffset + Element*2]), asfloat(Common_ParameterBuffer[BaseOffset + 1 + Element*2])) : DefaultValue; }
+float3 GetParameterBufferFloat3(int BaseOffset, int Element, float3 DefaultValue) { return BaseOffset >= 0 ? float3(asfloat(Common_ParameterBuffer[BaseOffset + Element*3]), asfloat(Common_ParameterBuffer[BaseOffset + 1 + Element*3]), asfloat(Common_ParameterBuffer[BaseOffset + 2 + Element*3])) : DefaultValue; }
+float4 GetParameterBufferFloat4(int BaseOffset, int Element, float4 DefaultValue) { return BaseOffset >= 0 ? float4(asfloat(Common_ParameterBuffer[BaseOffset + Element*4]), asfloat(Common_ParameterBuffer[BaseOffset + 1 + Element*4]), asfloat(Common_ParameterBuffer[BaseOffset + 2 + Element*4]), asfloat(Common_ParameterBuffer[BaseOffset + 3 + Element*4])) : DefaultValue; }
+	
+float LerpStaticFloat (uint2 Parameters, float U)
+{
+	const float Offset = U * float(Parameters.y);
+	const float Value0 = GetStaticFloat(Parameters.x, floor(Offset));
+	const float Value1 = GetStaticFloat(Parameters.x, ceil(Offset));
+	return lerp(Value0, Value1, frac(Offset));
+}
+
+float2 LerpStaticFloat2(uint2 Parameters, float U)
+{
+	const float  Offset = U * float(Parameters.y);
+	const float2 Value0 = GetStaticFloat2(Parameters.x, floor(Offset));
+	const float2 Value1 = GetStaticFloat2(Parameters.x, ceil(Offset));
+	return lerp(Value0, Value1, frac(Offset));
+}
+
+float3 LerpStaticFloat3(uint2 Parameters, float U)
+{
+	const float  Offset = U * float(Parameters.y);
+	const float3 Value0 = GetStaticFloat3(Parameters.x, floor(Offset));
+	const float3 Value1 = GetStaticFloat3(Parameters.x, ceil(Offset));
+	return lerp(Value0, Value1, frac(Offset));
+}
+	
+uint GetComponentOffset(uint OutputIndex, int ComponentOffset)
+{
+	return ComponentOffset * Common_OutputBufferStride + OutputIndex;
+}
+
+void OutputComponentData(uint OutputIndex, int ComponentOffset, float Value)
+{
+	if (IsValidComponent(ComponentOffset))
+	{
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset)] = Value;
+	}
+}
+
+void OutputComponentData(uint OutputIndex, int ComponentOffset, float2 Value)
+{
+	if (IsValidComponent(ComponentOffset))
+	{
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 0)] = Value.x;
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 1)] = Value.y;
+	}
+}
+
+void OutputComponentData(uint OutputIndex, int ComponentOffset, float3 Value)
+{
+	if (IsValidComponent(ComponentOffset))
+	{
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 0)] = Value.x;
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 1)] = Value.y;
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 2)] = Value.z;
+	}
+}
+
+void OutputComponentData(uint OutputIndex, int ComponentOffset, float4 Value)
+{
+	if (IsValidComponent(ComponentOffset))
+	{
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 0)] = Value.x;
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 1)] = Value.y;
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 2)] = Value.z;
+		Common_FloatOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset + 3)] = Value.w;
+	}
+}
+
+void OutputComponentData(uint OutputIndex, int ComponentOffset, int Value)
+{
+	if (IsValidComponent(ComponentOffset))
+	{
+		Common_IntOutputBuffer[GetComponentOffset(OutputIndex, ComponentOffset)] = Value;
+	}
+}
+
+#include "/Plugin/FX/Niagara/Private/Stateless/NiagaraStatelessDistribution.ush"

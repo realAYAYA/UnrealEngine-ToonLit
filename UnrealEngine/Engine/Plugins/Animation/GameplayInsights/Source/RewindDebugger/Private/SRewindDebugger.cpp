@@ -4,6 +4,7 @@
 
 #include "ActorPickerMode.h"
 #include "Editor.h"
+#include "IRewindDebuggerTrackCreator.h"
 #include "Editor/EditorEngine.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -89,6 +90,27 @@ void SRewindDebugger::SetViewRange(TRange<double> NewRange)
 	ViewRange = NewRange;
 	OnViewRangeChanged.ExecuteIfBound(NewRange);
 }
+
+void SRewindDebugger::ToggleHideTrackType(const FName& TrackType)
+{
+	int32 Index = Settings.HiddenTrackTypes.Find(TrackType);
+
+	if (Index >=0)
+	{
+		Settings.HiddenTrackTypes.RemoveAtSwap(Index);
+	}
+	else
+	{
+		Settings.HiddenTrackTypes.Add(TrackType);
+	}
+	RefreshDebugComponents();
+}
+
+bool SRewindDebugger::ShouldHideTrackType(const FName& TrackType) const
+{
+	return Settings.HiddenTrackTypes.Contains(TrackType);
+}
+
 
 void SRewindDebugger::ToggleDisplayEmptyTracks()
 {
@@ -227,6 +249,7 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 	OnViewRangeChanged = InArgs._OnViewRangeChanged;
 	OnComponentSelectionChanged = InArgs._OnComponentSelectionChanged;
 	BuildComponentContextMenu = InArgs._BuildComponentContextMenu;
+	TrackTypesAttribute = InArgs._TrackTypes;
 	ScrubTimeAttribute = InArgs._ScrubTime;
 	DebugComponents = InArgs._DebugComponents;
 	TraceTime.Initialize(InArgs._TraceTime);
@@ -234,34 +257,26 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 	DebugTargetActor.Initialize(InArgs._DebugTargetActor);
 	IsPIESimulating = InArgs._IsPIESimulating;
 	CommandList = InCommandList;
-	
+
 	TrackFilterBox = SNew(SSearchBox).HintText(LOCTEXT("Filter Tracks","Filter Tracks")).OnTextChanged_Lambda([this](const FText&)
 	{
 		RefreshDebugComponents();
 	});
 	
-	FSlimHorizontalToolBarBuilder ToolBarBuilder(CommandList, FMultiBoxCustomization::None, nullptr, true);
-	
-	ToolBarBuilder.SetStyle(&FAppStyle::Get(), "PaletteToolBar");
-	ToolBarBuilder.BeginSection("Debugger");
-	{
-		ToolBarBuilder.AddToolBarButton(Commands.FirstFrame);
-		ToolBarBuilder.AddToolBarButton(Commands.PreviousFrame);
-		ToolBarBuilder.AddToolBarButton(Commands.ReversePlay);
-		ToolBarBuilder.AddToolBarButton(Commands.Pause, NAME_None, {}, FText::Format(LOCTEXT("PauseButtonTooltip", "{0} ({1})"), Commands.Pause->GetDescription(), Commands.PauseOrPlay->GetInputText()));
-		ToolBarBuilder.AddToolBarButton(Commands.Play, NAME_None, {}, FText::Format(LOCTEXT("PlayButtonTooltip", "{0} ({1}) or"), Commands.Play->GetDescription(), Commands.PauseOrPlay->GetInputText(), Commands.Play->GetInputText()));
-		ToolBarBuilder.AddToolBarButton(Commands.NextFrame);
-		ToolBarBuilder.AddToolBarButton(Commands.LastFrame);
-		ToolBarBuilder.AddToolBarButton(Commands.StartRecording);
-		ToolBarBuilder.AddToolBarButton(Commands.StopRecording);
-	}
-	ToolBarBuilder.EndSection();
-
-	TSharedPtr<SScrollBar> ScrollBar = SNew(SScrollBar); 
+	TSharedPtr<SScrollBar> ScrollBar = SNew(SScrollBar);
+	FToolMenuContext ToolMenuContext(CommandList);
 
 	ComponentTreeView =	SNew(SRewindDebuggerComponentTree)
 		.ExternalScrollBar(ScrollBar)
-		.OnExpansionChanged_Lambda([this]() { TimelinesView->RestoreExpansion(); })
+		.OnExpansionChanged_Lambda([this]()
+		{
+			if (!bInExpansionChanged)
+			{
+				bInExpansionChanged = true;
+				TimelinesView->RestoreExpansion();
+				bInExpansionChanged = false;
+			}
+		})
 		.OnScrolled_Lambda([this](double ScrollOffset){ TimelinesView->ScrollTo(ScrollOffset); })
 		.DebugComponents(InArgs._DebugComponents)
 		.OnMouseButtonDoubleClick(InArgs._OnComponentDoubleClicked)
@@ -280,7 +295,16 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 
 	 TimelinesView = SNew(SRewindDebuggerTimelines)
 		.ExternalScrollbar(ScrollBar)
-		.OnExpansionChanged_Lambda([this]() { ComponentTreeView->RestoreExpansion(); })
+		.OnExpansionChanged_Lambda(
+				[this]()
+				{
+					if (!bInExpansionChanged)
+					{
+						bInExpansionChanged = true;
+						ComponentTreeView->RestoreExpansion();
+						bInExpansionChanged = false;
+					}
+				})
 		.OnScrolled_Lambda([this](double ScrollOffset){ ComponentTreeView->ScrollTo(ScrollOffset); })
 		.DebugComponents(InArgs._DebugComponents)
 		.ViewRange_Lambda([this](){return ViewRange;})
@@ -311,7 +335,8 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 				}
 			});
 
-	UToolMenu* Menu = UToolMenus::Get()->FindMenu("RewindDebugger.MainMenu");
+	
+	TSharedRef<SWidget> ToolBar = UToolMenus::Get()->GenerateWidget("RewindDebugger.ToolBar", ToolMenuContext);
 
 	ChildSlot
 	[
@@ -319,7 +344,7 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 		 + SVerticalBox::Slot().AutoHeight()
 		[
 			SNew(SVerticalBox)
-			+SVerticalBox::Slot().AutoHeight()
+			+SVerticalBox::Slot().MaxHeight(48)
 			[
 				SNew(SHorizontalBox)
 				+SHorizontalBox::Slot().AutoWidth()
@@ -335,7 +360,7 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 				]
 				+SHorizontalBox::Slot().FillWidth(1.0)
 				[
-					ToolBarBuilder.MakeWidget()
+					ToolBar
 				]
 			]
 		]
@@ -405,12 +430,7 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 						SNew(SButton)
 							.ButtonStyle(FAppStyle::Get(), "SimpleButton")
 							.OnClicked(this, &SRewindDebugger::OnSelectActorClicked)
-							.ToolTipText(LOCTEXT("SelectActorTooltip", "Select Target Actor in Scene (Eject player control first)"))
-							.IsEnabled_Lambda([]()
-								{
-									return !FPlayWorldCommandCallbacks::IsInPIE();
-								}
-							)
+							.ToolTipText(LOCTEXT("SelectActorTooltip", "Select Target Actor in Scene"))
 						[
 							SNew(SImage)
 							.Image(FRewindDebuggerStyle::Get().GetBrush("RewindDebugger.SelectActor"))
@@ -477,17 +497,24 @@ void SRewindDebugger::Construct(const FArguments& InArgs, TSharedRef<FUICommandL
 	];
 }
 
-bool FilterTrack(TSharedPtr<RewindDebugger::FRewindDebuggerTrack>& Track, const FString& FilterString, bool bRemoveNoData, bool bParentFilterPassed = false)
+bool FilterTrack(TSharedPtr<RewindDebugger::FRewindDebuggerTrack>& Track, const FString& FilterString, bool bRemoveNoData, const TArray<FName>& FilteredTrackTypes, bool bParentFilterPassed = false)
 {
+	if (FilteredTrackTypes.Contains(Track->GetName()))
+	{
+		Track->SetIsVisible(false);
+		return false;
+	}
+	
 	const bool bStringFilterEmpty =  FilterString.IsEmpty();
 	const bool bStringFilterPassed = bParentFilterPassed || bStringFilterEmpty || Track->GetDisplayName().ToString().Contains(FilterString);
 
 	const bool bThisFilterPassed = (!bStringFilterEmpty && bStringFilterPassed);
 
+
 	bool bAnyChildVisible = false;
-	Track->IterateSubTracks([&bAnyChildVisible, bThisFilterPassed, FilterString, bRemoveNoData](TSharedPtr<RewindDebugger::FRewindDebuggerTrack> ChildTrack)
+	Track->IterateSubTracks([&bAnyChildVisible, bThisFilterPassed, FilterString, bRemoveNoData, FilteredTrackTypes](TSharedPtr<RewindDebugger::FRewindDebuggerTrack> ChildTrack)
 	{
-		const bool bChildIsVisible = FilterTrack(ChildTrack, FilterString, bRemoveNoData, bThisFilterPassed);
+		const bool bChildIsVisible = FilterTrack(ChildTrack, FilterString, bRemoveNoData, FilteredTrackTypes, bThisFilterPassed);
 		bAnyChildVisible |= bChildIsVisible;
 	});
 
@@ -503,7 +530,7 @@ void SRewindDebugger::RefreshDebugComponents()
 	{
 		for(TSharedPtr<RewindDebugger::FRewindDebuggerTrack>& DebugComponent : *DebugComponents)
 		{
-			FilterTrack(DebugComponent, TrackFilterBox->GetText().ToString(), !ShouldDisplayEmptyTracks());
+			FilterTrack(DebugComponent, TrackFilterBox->GetText().ToString(), !ShouldDisplayEmptyTracks(), Settings.HiddenTrackTypes);
 		}
 	}
 	
@@ -520,8 +547,27 @@ TSharedRef<SWidget> SRewindDebugger::MakeFilterMenu()
 {
 	FMenuBuilder Builder(true, nullptr);
 	Builder.AddWidget(TrackFilterBox.ToSharedRef(), FText(), true, false);
-	Builder.AddSeparator();
 	
+	Builder.BeginSection("TrackTypes", LOCTEXT("Track Types", "Track Types"));
+
+	const TArrayView<RewindDebugger::FRewindDebuggerTrackType> TrackTypes = TrackTypesAttribute.Get();
+
+	for(const RewindDebugger::FRewindDebuggerTrackType& TrackType : TrackTypes)
+	{
+		Builder.AddMenuEntry(
+			TrackType.DisplayName,
+			FText::Format(LOCTEXT("FilterTrackToolTip", "Show tracks of type {0}"), {TrackType.DisplayName}),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([this,TrackType](){ ToggleHideTrackType(TrackType.Name); }),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateLambda([this,TrackType]() { return !ShouldHideTrackType(TrackType.Name); })),
+			NAME_None,
+			EUserInterfaceActionType::ToggleButton
+		);	
+	}
+
+	Builder.AddSeparator();
+
 	Builder.AddMenuEntry(
 		LOCTEXT("DisplayEmptyTracks", "Show Empty Object Tracks"),
 		LOCTEXT("DisplayEmptyTracksToolTip", "Show Object/Component tracks which have no sub tracks with any debug data"),
@@ -539,7 +585,18 @@ TSharedRef<SWidget> SRewindDebugger::MakeFilterMenu()
 
 void SRewindDebugger::ComponentSelectionChanged(TSharedPtr<RewindDebugger::FRewindDebuggerTrack> SelectedItem, ESelectInfo::Type SelectInfo)
 {
+	if (SelectedComponent)
+	{
+		SelectedComponent->SetIsSelected(false);
+	}
+	
 	SelectedComponent = SelectedItem;
+	
+	if (SelectedComponent)
+	{
+		SelectedComponent->SetIsSelected(true);
+	}
+	
 
 	OnComponentSelectionChanged.ExecuteIfBound(SelectedItem);
 }
@@ -553,12 +610,25 @@ FReply SRewindDebugger::OnSelectActorClicked()
 {
 	FActorPickerModeModule& ActorPickerMode = FModuleManager::Get().GetModuleChecked<FActorPickerModeModule>("ActorPickerMode");
 	
-	// todo: force eject (from within BeginActorPickingMode?)
+	const bool bShouldForceEject = GEditor->PlayWorld && !GEditor->bIsSimulatingInEditor;
+	if (bShouldForceEject)
+	{
+		// Eject PIE
+		GEditor->RequestToggleBetweenPIEandSIE();
+	}
 
 	ActorPickerMode.BeginActorPickingMode(
 		FOnGetAllowedClasses(), 
 		FOnShouldFilterActor(),
-		FOnActorSelected::CreateRaw(this, &SRewindDebugger::SetDebugTargetActor));
+		FOnActorSelected::CreateLambda([this, bShouldForceEject](AActor* InActor)
+		{
+			SetDebugTargetActor(InActor);
+			if (bShouldForceEject && GEditor->bIsSimulatingInEditor)
+			{
+				// If we force ejected PIE, revert this after actor selection.
+				GEditor->RequestToggleBetweenPIEandSIE();
+			}
+		}));
 
 
 

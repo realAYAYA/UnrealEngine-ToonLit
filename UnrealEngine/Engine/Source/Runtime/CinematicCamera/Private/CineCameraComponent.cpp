@@ -34,7 +34,12 @@ UCineCameraComponent::UCineCameraComponent()
 	bTickInEditor = true;
 #endif
 	
+	// NOTE: in UE 5.3 and onward, classes deriving from this component must explicitly register for tick if
+	// overriding the tick function, since this class only ticks productively with the following defines on
+#if WITH_EDITORONLY_DATA || ENABLE_DRAW_DEBUG
 	PrimaryComponentTick.bCanEverTick = true;
+#endif
+
 	bAutoActivate = true;
 
 	bConstrainAspectRatio = true;

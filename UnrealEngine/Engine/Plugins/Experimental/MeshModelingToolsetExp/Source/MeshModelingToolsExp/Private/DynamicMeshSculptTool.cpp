@@ -37,6 +37,9 @@
 #include "UObject/ObjectMacros.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "TargetInterfaces/DynamicMeshCommitter.h"
+#include "TargetInterfaces/DynamicMeshProvider.h"
+#include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DynamicMeshSculptTool)
 
@@ -67,6 +70,16 @@ UMeshSurfacePointTool* UDynamicMeshSculptToolBuilder::CreateNewTool(const FToolB
 	return SculptTool;
 }
 
+const FToolTargetTypeRequirements& UDynamicMeshSculptToolBuilder::GetTargetRequirements() const
+{
+	static FToolTargetTypeRequirements TypeRequirements({
+		UMaterialProvider::StaticClass(),
+		UDynamicMeshCommitter::StaticClass(),
+		UDynamicMeshProvider::StaticClass(),
+		UPrimitiveComponentBackedTarget::StaticClass()
+	});
+	return TypeRequirements;
+}
 
 
 void UDynamicSculptToolActions::DiscardAttributes()
@@ -293,6 +306,8 @@ void UDynamicMeshSculptTool::Setup()
 
 void UDynamicMeshSculptTool::Shutdown(EToolShutdownType ShutdownType)
 {
+	LongTransactions.CloseAll(GetToolManager());
+
 	if (ShutdownType == EToolShutdownType::Accept && AreAllTargetsValid() == false)
 	{
 		UE_LOG(LogTemp, Error, TEXT("Tool Target has become Invalid (possibly it has been Force Deleted). Aborting Tool."));
@@ -688,7 +703,7 @@ bool UDynamicMeshSculptTool::ApplySmoothBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [this, Mesh, NewBrushPosLocal](int k)
 	{
@@ -726,7 +741,7 @@ bool UDynamicMeshSculptTool::ApplyMoveBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [this, Mesh, NewBrushPosLocal, MoveVec](int k)
 	{
@@ -765,7 +780,7 @@ bool UDynamicMeshSculptTool::ApplyOffsetBrush(const FRay& WorldRay, bool bUseVie
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [&](int k)
 	{
@@ -808,7 +823,7 @@ bool UDynamicMeshSculptTool::ApplySculptMaxBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [this, Mesh, NewBrushPosLocal, UseSpeed, MaxOffset](int k)
 	{
@@ -862,7 +877,7 @@ bool UDynamicMeshSculptTool::ApplyPinchBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [this, Mesh, NewBrushPosLocal, OffsetBrushPosLocal, bHaveMotion, MotionVec, UseSpeed](int k)
 	{
@@ -943,7 +958,7 @@ bool UDynamicMeshSculptTool::ApplyPlaneBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [&](int k)
 	{
@@ -988,7 +1003,7 @@ bool UDynamicMeshSculptTool::ApplyFixedPlaneBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [&](int k)
 	{
@@ -1034,7 +1049,7 @@ bool UDynamicMeshSculptTool::ApplyFlattenBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	ParallelFor(NumV, [&](int k)
 	{
@@ -1077,7 +1092,7 @@ bool UDynamicMeshSculptTool::ApplyInflateBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 	// calculate vertex normals
 	ParallelFor(VertexROI.Num(), [this, Mesh](int Index) {
@@ -1117,7 +1132,7 @@ bool UDynamicMeshSculptTool::ApplyResampleBrush(const FRay& WorldRay)
 
 	FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
 	int NumV = VertexROI.Num();
-	ROIPositionBuffer.SetNum(NumV, false);
+	ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 	ParallelFor(NumV, [&](int k)
 	{
 		ROIPositionBuffer[k] = Mesh->GetVertex(VertexROI[k]);
@@ -1439,6 +1454,18 @@ void UDynamicMeshSculptTool::OnEndDrag(const FRay& Ray)
 	{
 		ActiveRemesher = nullptr;
 	}
+}
+
+void UDynamicMeshSculptTool::OnCancelDrag()
+{
+	bInDrag = false;
+	bStampPending = false;
+	bRemeshPending = false;
+
+	CancelChange();
+
+	// destroy active remesher
+	ActiveRemesher = nullptr;
 }
 
 
@@ -2407,6 +2434,7 @@ void UDynamicMeshSculptTool::BeginChange(bool bIsVertexChange)
 {
 	check(ActiveVertexChange == nullptr);
 	check(ActiveMeshChange == nullptr);
+	LongTransactions.Open(LOCTEXT("MeshSculptChange", "Brush Stroke"), GetToolManager()); // Open brush stroke transaction to prevent undo during the operation
 	if (bIsVertexChange)
 	{
 		ActiveVertexChange = new FMeshVertexChangeBuilder();
@@ -2438,6 +2466,18 @@ void UDynamicMeshSculptTool::EndChange()
 		delete ActiveMeshChange;
 		ActiveMeshChange = nullptr;
 	}
+
+	LongTransactions.Close(GetToolManager());
+}
+
+void UDynamicMeshSculptTool::CancelChange()
+{
+	LongTransactions.Close(GetToolManager());
+	delete ActiveVertexChange;
+	ActiveVertexChange = nullptr;
+	
+	delete ActiveMeshChange;
+	ActiveMeshChange = nullptr;
 }
 
 void UDynamicMeshSculptTool::SaveActiveROI()

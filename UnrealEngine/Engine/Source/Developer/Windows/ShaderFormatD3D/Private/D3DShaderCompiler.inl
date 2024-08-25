@@ -32,7 +32,8 @@ template <typename ID3D1xShaderReflection, typename D3D1x_SHADER_DESC, typename 
 			ID3D1xShaderReflectionConstantBuffer* ConstantBuffer = Reflector->GetConstantBufferByName(BindDesc.Name);
 			D3D1x_SHADER_BUFFER_DESC CBDesc;
 			ConstantBuffer->GetDesc(&CBDesc);
-			bool bGlobalCB = (FCStringAnsi::Strcmp(CBDesc.Name, "$Globals") == 0);
+			const bool bGlobalCB = (FCStringAnsi::Strcmp(CBDesc.Name, "$Globals") == 0);
+			const bool bRootConstantsCB = (FCStringAnsi::Strcmp(CBDesc.Name, "UERootConstants") == 0);
 			const bool bIsRootCB = FCString::Strcmp(ANSI_TO_TCHAR(CBDesc.Name), FShaderParametersMetadata::kRootUniformBufferBindingName) == 0;
 
 			if (bGlobalCB)
@@ -80,6 +81,11 @@ template <typename ID3D1xShaderReflection, typename D3D1x_SHADER_DESC, typename 
 						}
 					}
 				}
+			}
+			else if (bRootConstantsCB)
+			{
+				// For the UERootConstants root constant CB, we want to fully skip adding it to the parameter map, or
+				// updating the used slots or num CBs (all those assume space0).
 			}
 			else if (bIsRootCB && Input.ShouldUseStableConstantBuffer())
 			{
@@ -132,6 +138,7 @@ template <typename ID3D1xShaderReflection, typename D3D1x_SHADER_DESC, typename 
 				// Track just the constant buffer itself.
 				const FString UniformBufferName(CBDesc.Name);
 
+				AddShaderValidationUBSize(CBIndex, CBDesc.Size, Output);
 				HandleReflectedUniformBuffer(UniformBufferName, CBIndex, Output);
 				
 				UsedUniformBufferSlots[CBIndex] = true;
@@ -190,6 +197,9 @@ template <typename ID3D1xShaderReflection, typename D3D1x_SHADER_DESC, typename 
 			}
 			else
 			{
+				const FShaderParameterParser::FParsedShaderParameter* ParsedParam = ShaderParameterParser.FindParameterInfosUnsafe(BindDesc.Name);
+				AddShaderValidationSRVType(BindDesc.BindPoint, ParsedParam ? ParsedParam->ParsedTypeDecl : EShaderCodeResourceBindingType::Invalid, Output);
+
 				HandleReflectedShaderResource(FString(BindDesc.Name), BindDesc.BindPoint, Output);
 				NumSRVs = FMath::Max(NumSRVs, BindDesc.BindPoint + BindCount);
 			}
@@ -233,6 +243,9 @@ template <typename ID3D1xShaderReflection, typename D3D1x_SHADER_DESC, typename 
 			}
 			else
 			{
+				const FShaderParameterParser::FParsedShaderParameter* ParsedParam = ShaderParameterParser.FindParameterInfosUnsafe(BindDesc.Name);
+				AddShaderValidationUAVType(BindDesc.BindPoint, ParsedParam ? ParsedParam->ParsedTypeDecl : EShaderCodeResourceBindingType::Invalid, Output);
+
 				HandleReflectedShaderUAV(FString(BindDesc.Name), BindDesc.BindPoint, Output);
 				NumUAVs = FMath::Max(NumUAVs, BindDesc.BindPoint + BindCount);
 			}
@@ -241,6 +254,9 @@ template <typename ID3D1xShaderReflection, typename D3D1x_SHADER_DESC, typename 
 		{
 			check(BindDesc.BindCount == 1);
 			FString BindDescName(BindDesc.Name);
+			const FShaderParameterParser::FParsedShaderParameter* ParsedParam = ShaderParameterParser.FindParameterInfosUnsafe(BindDesc.Name);
+			AddShaderValidationSRVType(BindDesc.BindPoint, ParsedParam ? ParsedParam->ParsedTypeDecl : EShaderCodeResourceBindingType::Invalid, Output);
+
 			HandleReflectedShaderResource(BindDescName, BindDesc.BindPoint, Output);
 
 			// https://learn.microsoft.com/en-us/windows/win32/api/d3d12shader/ns-d3d12shader-d3d12_shader_input_bind_desc
@@ -256,6 +272,10 @@ template <typename ID3D1xShaderReflection, typename D3D1x_SHADER_DESC, typename 
 		{
 			// Acceleration structure resources are treated as SRVs.
 			check(BindDesc.BindCount == 1);
+
+			const FShaderParameterParser::FParsedShaderParameter* ParsedParam = ShaderParameterParser.FindParameterInfosUnsafe(BindDesc.Name);
+			AddShaderValidationSRVType(BindDesc.BindPoint, ParsedParam ? ParsedParam->ParsedTypeDecl : EShaderCodeResourceBindingType::Invalid, Output);
+
 			HandleReflectedShaderResource(FString(BindDesc.Name), BindDesc.BindPoint, Output);
 			NumSRVs = FMath::Max(NumSRVs, BindDesc.BindPoint + 1);
 		}
@@ -365,6 +385,7 @@ inline void GenerateFinalOutput(TRefCountPtr<TBlob>& CompressedData,
 	}
 
 	Output.SerializeShaderCodeValidation();
+	Output.SerializeShaderDiagnosticData();
 
 	// Set the number of instructions.
 	Output.NumInstructions = NumInstructions;

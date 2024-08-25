@@ -31,6 +31,14 @@ FInstanceCullingManager::~FInstanceCullingManager()
 {
 }
 
+void FInstanceCullingManager::AllocateViews(int32 NumViews)
+{
+	if (bIsEnabled)
+	{
+		CullingViews.AddUninitialized(CullingViews.Num() + NumViews);
+	}
+}
+
 int32 FInstanceCullingManager::RegisterView(const FViewInfo& ViewInfo)
 {
 	if (!bIsEnabled)
@@ -44,8 +52,11 @@ int32 FInstanceCullingManager::RegisterView(const FViewInfo& ViewInfo)
 	Params.ViewRect = ViewInfo.ViewRect;
 	// TODO: faking this here (not needed for culling, until we start involving multi-view and HZB)
 	Params.RasterContextSize = ViewInfo.ViewRect.Size();
+	Params.ViewLODDistanceFactor = ViewInfo.LODDistanceFactor;
 	Params.HZBTestViewRect = FIntRect(0, 0, ViewInfo.PrevViewInfo.ViewRect.Width(), ViewInfo.PrevViewInfo.ViewRect.Height());	// needs to be in HZB space, which is 0,0-based for any view, even stereo/splitscreen ones
 	Params.MaxPixelsPerEdgeMultipler = 1.0f;
+	Params.InstanceOcclusionQueryMask = ViewInfo.PrevViewInfo.InstanceOcclusionQueryMask;
+
 	return RegisterView(Params);
 }
 
@@ -57,16 +68,21 @@ int32 FInstanceCullingManager::RegisterView(const Nanite::FPackedViewParams& Par
 	{
 		return 0;
 	}
-	CullingViews.Add(CreatePackedView(Params));
-	return CullingViews.Num() - 1;
+
+	const int32 ViewIndex = NumRegisteredViews.fetch_add(1, std::memory_order_relaxed);
+	check(ViewIndex <= CullingViews.Num());
+	CullingViews[ViewIndex] = CreatePackedView(Params);
+	return ViewIndex;
 }
 
 void FInstanceCullingManager::FlushRegisteredViews(FRDGBuilder& GraphBuilder)
 {
-	if (CullingIntermediate.NumViews != CullingViews.Num())
+	const int32 LocalNumRegisteredViews = NumRegisteredViews.load(std::memory_order_relaxed);
+
+	if (CullingIntermediate.NumViews != LocalNumRegisteredViews)
 	{
-		CullingIntermediate.CullingViews = CreateStructuredBuffer(GraphBuilder, TEXT("InstanceCulling.CullingViews"), CullingViews);
-		CullingIntermediate.NumViews = CullingViews.Num();
+		CullingIntermediate.CullingViews = CreateStructuredBuffer(GraphBuilder, TEXT("InstanceCulling.CullingViews"), MakeArrayView<const Nanite::FPackedView>(CullingViews.GetData(), LocalNumRegisteredViews));
+		CullingIntermediate.NumViews = LocalNumRegisteredViews;
 	}
 }
 
@@ -77,6 +93,7 @@ bool FInstanceCullingManager::AllowBatchedBuildRenderingCommands(const FGPUScene
 
 void FInstanceCullingManager::BeginDeferredCulling(FRDGBuilder& GraphBuilder, FGPUScene& GPUScene)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FInstanceCullingManager::BeginDeferredCulling);
 	FlushRegisteredViews(GraphBuilder);
 
 	// Cannot defer pass execution in immediate mode.
@@ -86,10 +103,10 @@ void FInstanceCullingManager::BeginDeferredCulling(FRDGBuilder& GraphBuilder, FG
 	}
 
 	// If there are no instances, there can be no work to perform later.
-	if (GPUScene.GetNumInstances() == 0 || CullingViews.Num() == 0)
+	if (GPUScene.GetNumInstances() == 0 || NumRegisteredViews.load(std::memory_order_relaxed) == 0)
 	{
 		return;
 	}
 
-	DeferredContext = FInstanceCullingContext::CreateDeferredContext(GraphBuilder, GPUScene, this);
+	DeferredContext = FInstanceCullingContext::CreateDeferredContext(GraphBuilder, GPUScene, *this);
 }

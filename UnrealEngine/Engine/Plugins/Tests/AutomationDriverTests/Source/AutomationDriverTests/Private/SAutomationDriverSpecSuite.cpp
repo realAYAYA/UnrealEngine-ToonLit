@@ -274,33 +274,32 @@ public:
 		return SNew(SBox)
 			[
 				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot()
-				[
-					ConstructPianoKey(KeyFlat)
-				]
-				+ SHorizontalBox::Slot()
-				[
-					ConstructPianoKey(KeySharp)
-				]
+					+ SHorizontalBox::Slot()
+					[
+						ConstructPianoContextMenuKey(KeyFlat)
+					]
+					+ SHorizontalBox::Slot()
+					[
+						ConstructPianoContextMenuKey(KeySharp)
+					]
 			];
+	}
+
+	TSharedRef<SWidget> ConstructPianoContextMenuKey(EPianoKey Key)
+	{
+		return ConstructPianoKeyImpl(SharedThis(this), &SAutomationDriverSpecSuiteImpl::KeyClicked, Key);
 	}
 
 	TSharedRef<SWidget> ConstructPianoKey(EPianoKey Key)
 	{
-		TSharedRef<SButton> Button = SNew(SButton)
-			.Text(FPianoKeyExtensions::ToText(Key))
-			.OnClicked(ViewModel.ToSharedRef(), &IAutomationDriverSpecSuiteViewModel::KeyClicked, Key)
-			.IsEnabled(ViewModel.ToSharedRef(), &IAutomationDriverSpecSuiteViewModel::IsKeyEnabled, Key)
-			.OnHovered(ViewModel.ToSharedRef(), &IAutomationDriverSpecSuiteViewModel::KeyHovered, Key)
-			.VAlign(VAlign_Bottom)
-			.HAlign(HAlign_Center)
-			.ContentPadding(FMargin(5, 0, 5, 10))
-			.Tag("Key")
-			.AddMetaData(FDriverMetaData::Id(*(FString(TEXT("Key")) + FPianoKeyExtensions::ToString(Key))));
+		return ConstructPianoKeyImpl(ViewModel.ToSharedRef(), &IAutomationDriverSpecSuiteViewModel::KeyClicked, Key);
+	}
 
-		PianoKeys.Add(Key, Button);
+	FReply KeyClicked(EPianoKey Key)
+	{
+		CloseContextMenu(Key);
 
-		return Button;
+		return ViewModel->KeyClicked(Key);
 	}
 
 	TSharedRef<SWidget> ConstructPianoKeyModifier(EPianoKey Key1, EPianoKey Key2)
@@ -340,6 +339,18 @@ public:
 		if (Anchor != nullptr)
 		{
 			(*Anchor)->SetIsOpen(true);
+		}
+
+		return FReply::Handled();
+	}
+
+	virtual FReply CloseContextMenu(EPianoKey KeySharp)
+	{
+		const TSharedPtr<SMenuAnchor>* Anchor = PianoKeyMenus.Find(KeySharp);
+
+		if (Anchor != nullptr)
+		{
+			(*Anchor)->SetIsOpen(false);
 		}
 
 		return FReply::Handled();
@@ -389,6 +400,27 @@ public:
 		DocumentTiles->ScrollToBottom();
 		DocumentScrollBox->ScrollToEnd();
 	}
+
+private:
+	template<typename UserClass>
+	TSharedRef<SWidget> ConstructPianoKeyImpl(TSharedRef<UserClass> InUserObjectPtr, FOnClicked::TMethodPtr<UserClass, EPianoKey> InKeyClickHandler, EPianoKey Key)
+	{
+		TSharedRef<SButton> Button = SNew(SButton)
+			.Text(FPianoKeyExtensions::ToText(Key))
+			.OnClicked(InUserObjectPtr, InKeyClickHandler, Key)
+			.IsEnabled(ViewModel.ToSharedRef(), &IAutomationDriverSpecSuiteViewModel::IsKeyEnabled, Key)
+			.OnHovered(ViewModel.ToSharedRef(), &IAutomationDriverSpecSuiteViewModel::KeyHovered, Key)
+			.VAlign(VAlign_Bottom)
+			.HAlign(HAlign_Center)
+			.ContentPadding(FMargin(5, 0, 5, 10))
+			.Tag("Key")
+			.AddMetaData(FDriverMetaData::Id(*(FString(TEXT("Key")) + FPianoKeyExtensions::ToString(Key))));
+
+		PianoKeys.Add(Key, Button);
+
+		return Button;
+	}
+
 
 private:
 

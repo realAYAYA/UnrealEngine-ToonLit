@@ -72,4 +72,7 @@ public:
 
 	/** Set the various parameters */
 	virtual void SetParameters(const FAnimationBudgetAllocatorParameters& InParameters) = 0;
+
+	/** Force component to tick this frame regardless of tick rate */
+	virtual void ForceNextTickThisFrame(USkeletalMeshComponentBudgeted* Component) = 0;
 };

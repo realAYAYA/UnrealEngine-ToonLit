@@ -45,7 +45,7 @@ namespace Metasound
 
 	namespace ArrayNodeVertexNames
 	{
-		static const TCHAR* InputInitialArrayName = TEXT("Array");
+		static const FLazyName InputInitialArrayName = TEXT("Array");
 #if WITH_EDITOR
 		static const FText InputInitialArrayTooltip = LOCTEXT("InitialArrayTooltip", "Initial Array");
 		static const FText InputInitialArrayDisplayName = LOCTEXT("InitialArrayDisplayName", "Init Array"); 
@@ -115,15 +115,15 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace ArrayNodeVertexNames;
 			using namespace MetasoundArrayNodesPrivate;
 
-			const FInputVertexInterface& Inputs = InParams.Node.GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			// Get the input array or construct an empty one. 
-			FArrayDataReadReference Array = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<ArrayType>(Inputs, METASOUND_GET_PARAM_NAME(InputArray), InParams.OperatorSettings);
+			FArrayDataReadReference Array = InputData.GetOrCreateDefaultDataReadReference<ArrayType>(METASOUND_GET_PARAM_NAME(InputArray), InParams.OperatorSettings);
 
 			return MakeUnique<TArrayNumOperator>(Array);
 		}
@@ -247,21 +247,21 @@ namespace Metasound
 #endif
 		};
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace ArrayNodeVertexNames;
 			using namespace MetasoundArrayNodesPrivate;
 
-			const FInputVertexInterface& Inputs = InParams.Node.GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			// Input Trigger
-			TDataReadReference<FTrigger> Trigger = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(Inputs, METASOUND_GET_PARAM_NAME(InputTriggerGet), InParams.OperatorSettings);
+			TDataReadReference<FTrigger> Trigger = InputData.GetOrCreateDefaultDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputTriggerGet), InParams.OperatorSettings);
 			
 			// Input Array
-			FArrayDataReadReference Array = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<ArrayType>(Inputs, METASOUND_GET_PARAM_NAME(InputArray), InParams.OperatorSettings);
+			FArrayDataReadReference Array = InputData.GetOrCreateDefaultDataReadReference<ArrayType>(METASOUND_GET_PARAM_NAME(InputArray), InParams.OperatorSettings);
 
 			// Input Index
-			TDataReadReference<int32> Index = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<int32>(Inputs, METASOUND_GET_PARAM_NAME(InputIndex), InParams.OperatorSettings);
+			TDataReadReference<int32> Index = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputIndex), InParams.OperatorSettings);
 #if WITH_METASOUND_DEBUG_ENVIRONMENT
 			FString GraphName;
 			if (InParams.Environment.Contains<FString>(Frontend::SourceInterface::Environment::GraphName))
@@ -451,21 +451,21 @@ namespace Metasound
 #endif // WITH_METASOUND_DEBUG_ENVIRONMENT
 		};
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace ArrayNodeVertexNames;
 			using namespace MetasoundArrayNodesPrivate;
 
-			const FInputVertexInterface& Inputs = InParams.Node.GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 			
-			TDataReadReference<FTrigger> Trigger = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(Inputs, METASOUND_GET_PARAM_NAME(InputTriggerSet), InParams.OperatorSettings);
+			TDataReadReference<FTrigger> Trigger = InputData.GetOrCreateDefaultDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputTriggerSet), InParams.OperatorSettings);
 
-			FArrayDataReadReference InitArray = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<ArrayType>(Inputs, InputInitialArrayName, InParams.OperatorSettings);
+			FArrayDataReadReference InitArray = InputData.GetOrCreateDefaultDataReadReference<ArrayType>(InputInitialArrayName, InParams.OperatorSettings);
 			FArrayDataWriteReference Array = TDataWriteReferenceFactory<ArrayType>::CreateExplicitArgs(InParams.OperatorSettings, *InitArray);
 
-			TDataReadReference<int32> Index = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<int32>(Inputs, METASOUND_GET_PARAM_NAME(InputIndex), InParams.OperatorSettings);
+			TDataReadReference<int32> Index = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputIndex), InParams.OperatorSettings);
 
-			TDataReadReference<ElementType> Value = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<ElementType>(Inputs, METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+			TDataReadReference<ElementType> Value = InputData.GetOrCreateDefaultDataReadReference<ElementType>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
 #if WITH_METASOUND_DEBUG_ENVIRONMENT
 			FString GraphName;
 			if (InParams.Environment.Contains<FString>(Frontend::SourceInterface::Environment::GraphName))
@@ -630,17 +630,17 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace ArrayNodeVertexNames;
 			using namespace MetasoundArrayNodesPrivate;
 
-			const FInputVertexInterface& Inputs = InParams.Node.GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 			
-			TDataReadReference<FTrigger> Trigger = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(Inputs, METASOUND_GET_PARAM_NAME(InputTriggerGet), InParams.OperatorSettings);
+			TDataReadReference<FTrigger> Trigger = InputData.GetOrCreateDefaultDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputTriggerGet), InParams.OperatorSettings);
 
-			FArrayDataReadReference LeftArray = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<ArrayType>(Inputs, METASOUND_GET_PARAM_NAME(InputLeftArray), InParams.OperatorSettings);
-			FArrayDataReadReference RightArray = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<ArrayType>(Inputs, METASOUND_GET_PARAM_NAME(InputRightArray), InParams.OperatorSettings);
+			FArrayDataReadReference LeftArray = InputData.GetOrCreateDefaultDataReadReference<ArrayType>(METASOUND_GET_PARAM_NAME(InputLeftArray), InParams.OperatorSettings);
+			FArrayDataReadReference RightArray = InputData.GetOrCreateDefaultDataReadReference<ArrayType>(METASOUND_GET_PARAM_NAME(InputRightArray), InParams.OperatorSettings);
 
 			return MakeUnique<TArrayConcatOperator>(Trigger, LeftArray, RightArray);
 		}
@@ -765,19 +765,19 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace ArrayNodeVertexNames;
 			using namespace MetasoundArrayNodesPrivate;
 
-			const FInputVertexInterface& Inputs = InParams.Node.GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 			
-			TDataReadReference<FTrigger> Trigger = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(Inputs, METASOUND_GET_PARAM_NAME(InputTriggerGet), InParams.OperatorSettings);
+			TDataReadReference<FTrigger> Trigger = InputData.GetOrCreateDefaultDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputTriggerGet), InParams.OperatorSettings);
 
-			FArrayDataReadReference InArray = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<ArrayType>(Inputs, METASOUND_GET_PARAM_NAME(InputArray), InParams.OperatorSettings);
+			FArrayDataReadReference InArray = InputData.GetOrCreateDefaultDataReadReference<ArrayType>(METASOUND_GET_PARAM_NAME(InputArray), InParams.OperatorSettings);
 
-			TDataReadReference<int32> StartIndex = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<int32>(Inputs, METASOUND_GET_PARAM_NAME(InputStartIndex), InParams.OperatorSettings);
-			TDataReadReference<int32> EndIndex = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<int32>(Inputs, METASOUND_GET_PARAM_NAME(InputEndIndex), InParams.OperatorSettings);
+			TDataReadReference<int32> StartIndex = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputStartIndex), InParams.OperatorSettings);
+			TDataReadReference<int32> EndIndex = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputEndIndex), InParams.OperatorSettings);
 
 			TDataWriteReference<ArrayType> OutputArray = TDataWriteReferenceFactory<ArrayType>::CreateExplicitArgs(InParams.OperatorSettings);
 

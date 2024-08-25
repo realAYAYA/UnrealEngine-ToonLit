@@ -9,6 +9,7 @@
 #include "Misc/ScopeExit.h"
 #include "Misc/StringBuilder.h"
 #include "Misc/Paths.h"
+#include "Misc/OutputDeviceRedirector.h"
 #include "Modules/ModuleManager.h"
 #include "String/Find.h"
 #include "String/LexFromString.h"
@@ -242,10 +243,10 @@ void FTestRunner::GlobalSetup()
 	{
 		// Set up default output devices to handle Log, Verbose, VeryVerbose.
 		FPlatformOutputDevices::SetupOutputDevices();
-
 		FLogSuppressionInterface::Get().ProcessConfigAndCommandLine();
 	}
 
+	FTestDelegates::GetGlobalPlatformSetup().ExecuteIfBound();
 	FTestDelegates::GetGlobalSetup().ExecuteIfBound();
 }
 
@@ -312,8 +313,17 @@ int RunTests(int32 ArgC, const ANSICHAR* ArgV[])
 	{
 		TestRunner.GlobalTeardown();
 		TestRunner.Terminate();
+		
 		FModuleManager::Get().UnloadModulesAtShutdown();
 		RequestEngineExit(TEXT("Exiting"));
+		
+		if (GLog)
+		{
+			GLog->TearDown();
+		}
+
+		FTextLocalizationManager::TearDown();
+		FInternationalization::TearDown();
 	};
 
 	int CatchReturn = TestRunner.RunCatchSession();

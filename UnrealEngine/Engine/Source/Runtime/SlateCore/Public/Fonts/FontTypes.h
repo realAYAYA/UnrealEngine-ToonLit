@@ -27,7 +27,7 @@ public:
 		, Scale( InScale )
 		, KeyHash( 0 )
 	{
-		KeyHash = HashCombine(KeyHash, GetTypeHash(FontInfo));
+		KeyHash = HashCombine(KeyHash, GetLegacyTypeHash(FontInfo));
 		KeyHash = HashCombine(KeyHash, GetTypeHash(OutlineSettings));
 		KeyHash = HashCombine(KeyHash, GetTypeHash(Scale));
 	}
@@ -49,7 +49,7 @@ public:
 
 	inline bool IsIdenticalToForCaching(const FSlateFontKey& Other) const
 	{
-		return FontInfo.IsIdentialToForCaching(Other.FontInfo)
+		return FontInfo.IsLegacyIdenticalTo(Other.FontInfo)
 			&& OutlineSettings.IsIdenticalToForCaching(Other.OutlineSettings)
 			&& Scale == Other.Scale;
 	}
@@ -107,10 +107,26 @@ struct FCharacterRenderData
 	int16 VerticalOffset = 0;
 	/** The horizontal distance from the origin to the leftmost border of the character */
 	int16 HorizontalOffset = 0;
-	/** True if the rendered character is 8-bit grayscale, or false if it's 8-bit per-channel BGRA color */
-	bool bIsGrayscale = true;
+	/** Type of glyph rasterization */
+	ESlateFontAtlasContentType ContentType = ESlateFontAtlasContentType::Alpha;
 	/** True if the rendered character supports outlines, false otherwise */
 	bool bSupportsOutline = false;
+};
+
+/** For a deferred atlas character insertion, this contains the subregion of the atlas previously reserved for a character
+ *  and the pixels to copy into it. The subregion corresponds to the initial reserved atlas slot extents after padding */
+struct FDeferredCharacterRenderData
+{
+	/** Destination subregion width */
+	int16 USize = 0;
+	/** Destination subregion height */
+	int16 VSize = 0;
+	/** Destination subregion x offset */
+	int16 StartU = 0;
+	/** Destination subregion y offset */
+	int16 StartV = 0;
+	/** Source pixels to copy in subregion defined below */
+	TArray<uint8> RawPixels;
 };
 
 /**
@@ -132,9 +148,9 @@ public:
 	virtual class FTextureResource* GetEngineTexture() = 0;
 
 	/**
-	 * Returns whether the texture resource is 8-bit grayscale or 8-bit per-channel BGRA color
+	 * Returns the type of content in the texture
 	 */
-	virtual bool IsGrayscale() const = 0;
+	virtual ESlateFontAtlasContentType GetContentType() const = 0;
 
 	/**
 	 * Releases rendering resources of this texture
@@ -148,11 +164,11 @@ public:
 class FSlateFontAtlas : public ISlateFontTexture, public FSlateTextureAtlas
 {
 public:
-	SLATECORE_API FSlateFontAtlas(uint32 InWidth, uint32 InHeight, const bool InIsGrayscale);
+	SLATECORE_API FSlateFontAtlas(uint32 InWidth, uint32 InHeight, ESlateFontAtlasContentType InContentType, ESlateTextureAtlasPaddingStyle InPaddingStyle);
 	SLATECORE_API virtual ~FSlateFontAtlas();
 
 	//~ ISlateFontTexture interface
-	SLATECORE_API virtual bool IsGrayscale() const override final;
+	SLATECORE_API virtual ESlateFontAtlasContentType GetContentType() const override final;
 	virtual FSlateShaderResource* GetAtlasTexture() const override { return GetSlateTexture(); }
 	virtual void ReleaseRenderingResources() { ReleaseResources(); }
 
@@ -167,12 +183,30 @@ public:
 	 * @param CharInfo	Information about the size of the character
 	 */
 	SLATECORE_API const struct FAtlasedTextureSlot* AddCharacter( const FCharacterRenderData& CharInfo );
+
+	/**
+	 * Reserve a slot for a character but dont't update the texture yet.
+	 *
+	 * @param InSizeX	Width of the character
+	 * @param InSizeY	Height of the character
+	 */
+	bool BeginDeferredAddCharacter( const int16 InSizeX, const int16 InSizeY, FDeferredCharacterRenderData& OutCharInfo);
+	
+	/**
+	 * Update a character in the texture for already reserved or added slot.
+	 *
+	 * @param CharInfo	Information about the location and size of the character
+	 */
+	void EndDeferredAddCharacter( const FDeferredCharacterRenderData& CharInfo );
+
+protected:
+	ESlateFontAtlasContentType ContentType;
 };
 
 class ISlateFontAtlasFactory
 {
 public:
-	virtual FIntPoint GetAtlasSize(const bool InIsGrayscale) const = 0;
-	virtual TSharedRef<FSlateFontAtlas> CreateFontAtlas(const bool InIsGrayscale) const = 0;
-	virtual TSharedPtr<ISlateFontTexture> CreateNonAtlasedTexture(const uint32 InWidth, const uint32 InHeight, const bool InIsGrayscale, const TArray<uint8>& InRawData) const = 0;
+	virtual FIntPoint GetAtlasSize(ESlateFontAtlasContentType InContentType) const = 0;
+	virtual TSharedRef<FSlateFontAtlas> CreateFontAtlas(ESlateFontAtlasContentType InContentType) const = 0;
+	virtual TSharedPtr<ISlateFontTexture> CreateNonAtlasedTexture(const uint32 InWidth, const uint32 InHeight, ESlateFontAtlasContentType InContentType, const TArray<uint8>& InRawData) const = 0;
 };

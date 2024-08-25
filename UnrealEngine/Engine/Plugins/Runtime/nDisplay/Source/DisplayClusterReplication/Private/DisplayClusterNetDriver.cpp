@@ -6,6 +6,7 @@
 
 #include "DisplayClusterNetDriver.h"
 #include "DisplayClusterNetDriverLog.h"
+#include "DisplayClusterGameEngine.h"
 
 #include "Engine/ActorChannel.h"
 #include "Engine/ChildConnection.h"
@@ -37,12 +38,19 @@
 
 #include "UObject/Package.h"
 
+#include "Math/NumericLimits.h"
+
 UDisplayClusterNetDriver::UDisplayClusterNetDriver(const FObjectInitializer& ObjectInitializer) :
 	Super(ObjectInitializer),
 	bClusterHasConnected(false),
-	bLastBunchWasAcked(false),
-	bConnectionViewersAreReady(false)
+	bLastBunchWasAcked(true),
+	bConnectionViewersAreReady(false),
+	ListenClusterId(0),
+	ListenClusterNodesNum(0)
 {
+	bSkipServerReplicateActors = true;
+	bTickingThrottleEnabled = false;
+
 	// Preallocate elements to prevent allocs at runtime
 	const int NumReservedElements = 32;
 	ReadyOutPackets.Reserve(NumReservedElements);
@@ -108,6 +116,9 @@ bool UDisplayClusterNetDriver::InitListen(FNetworkNotify* InNotify, FURL& Listen
 
 		if (ClusterNetworkDriverHelper->RegisterClusterEventsBinaryClient(ClusterId, NodeAddress, NodePort))
 		{
+			ListenClusterId = ClusterId;
+			ListenClusterNodesNum = FCString::Atoi(ClusterNodesNumString);
+
 			UE_LOG(LogDisplayClusterNetDriver, Verbose, TEXT("Registered primary node for cluster [%u] node [%s:%u]"), ClusterId, *NodeAddress, NodePort);
 		}
 	}
@@ -128,7 +139,12 @@ void UDisplayClusterNetDriver::TickDispatch(float DeltaTime)
 	// Register binary client when ALL nodes connected
 	if (!bClusterHasConnected)
 	{
-		UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Primary Node connecitons = [%u]"), PrimaryNodeConnections.Num());
+		UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Primary Node connections = [%u]"), PrimaryNodeConnections.Num());
+
+		if (World->GetNetMode() == NM_ListenServer && (ListenClusterNodesNum == NodeConnections.Num() + 1))
+		{
+			bClusterHasConnected = NotifyClusterAsReadyForSync(ListenClusterId);
+		}
 
 		for (UDisplayClusterNetConnection* PrimaryNodeConnectionIt : PrimaryNodeConnections)
 		{
@@ -152,29 +168,7 @@ void UDisplayClusterNetDriver::TickDispatch(float DeltaTime)
 				UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Registered primary node for cluster [%u] node [%s]"), PrimaryNodeConnectionIt->ClusterId, *PrimaryNodeConnectionIt->NodeName);
 			}
 
-			// Notify primary node that current node connection is ready
-			FDisplayClusterClusterEventBinary NetworkDriverSyncEvent;
-			GenerateClusterCommandsEvent(NetworkDriverSyncEvent, NodeSyncEvent);
-
-			// send command 
-			const bool bEventWasSent = ClusterNetworkDriverHelper->SendCommandToCluster(PrimaryNodeConnectionIt->ClusterId, NetworkDriverSyncEvent);
-
-			// If event was sent to primary cluster node
-			if (bEventWasSent)
-			{
-				bClusterHasConnected = true;
-				// Mark all node connections related to current ClusterId as ready
-				for (UDisplayClusterNetConnection* ClusterNodeConnectionIt : NodeConnections)
-				{
-					if (ClusterNodeConnectionIt->ClusterId == PrimaryNodeConnectionIt->ClusterId)
-					{
-						ClusterNodeConnectionIt->bSynchronousMode = true;
-						SyncConnections.Add(ClusterNodeConnectionIt);
-					}
-				}
-
-				UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Setting synchronous mode in cluster [%u]"), PrimaryNodeConnectionIt->ClusterId);
-			}
+			bClusterHasConnected = NotifyClusterAsReadyForSync(PrimaryNodeConnectionIt->ClusterId);
 		}
 	}
 }
@@ -220,7 +214,6 @@ void UDisplayClusterNetDriver::RemoveNodeConnection(UDisplayClusterNetConnection
 	// Reset packet queues
 	if (SyncConnections.IsEmpty())
 	{
-		LastAckedPacket.Reset();
 		OutPacketsQueues.Reset();
 		bClusterHasConnected = false;
 	}
@@ -254,6 +247,17 @@ void UDisplayClusterNetDriver::HandleEvent(FDisplayClusterClusterEventBinary con
 		// Client received command to start synchrosonus packets processing
 		ClusterServerConnection->bSynchronousMode = true;
 		ClusterServerConnection->ClientId = TextKeyUtil::HashString(ClusterServerConnection->Challenge);
+		
+		UDisplayClusterGameEngine* ClusterGameEngine = Cast<UDisplayClusterGameEngine>(GEngine);
+		
+		if (ClusterGameEngine != nullptr)
+		{
+			ClusterGameEngine->ResetForcedIdleMode();
+		}
+		else
+		{
+			UE_LOG(LogDisplayClusterNetDriver, Error, TEXT("Can't reset internal idle mode, GEngine is not UDisplayClusterGameEngine instance"));
+		}
 
 		UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Client node self-introducing: %u"), ClusterServerConnection->ClientId);
 	}
@@ -293,6 +297,28 @@ void UDisplayClusterNetDriver::HandleEvent(FDisplayClusterClusterEventBinary con
 
 void UDisplayClusterNetDriver::TickFlush(float DeltaSeconds)
 {
+	if (IsServer())
+	{
+		int32 ClusterNumNodes = -1;
+
+		for (UDisplayClusterNetConnection* SyncConnectionIt : SyncConnections)
+		{
+			ClusterNumNodes = SyncConnectionIt->ClusterNodesNum;
+		}
+
+		if (World->GetNetMode() == NM_ListenServer)
+		{
+			bSkipServerReplicateActors = (SyncConnections.Num() != ClusterNumNodes - 1);
+		}
+		else
+		{
+			bSkipServerReplicateActors = (SyncConnections.Num() != ClusterNumNodes);
+		}
+
+		UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("bSkipServerReplicateActors %u; ClusterNumNodes: %d, SyncConnections.Num(): %d"), bSkipServerReplicateActors,
+			ClusterNumNodes, SyncConnections.Num());
+	}
+
 	Super::TickFlush(DeltaSeconds);
 
 	// Check if we the server or if any synchronous connections exists for processing
@@ -310,6 +336,11 @@ void UDisplayClusterNetDriver::TickFlush(float DeltaSeconds)
 		{
 			const UDisplayClusterConfigurationData* ConfigData = ConfigMgr->GetConfig();
 
+			if (ConfigData == nullptr)
+			{
+				return;
+			}
+
 			if (SyncConnections.Num() < static_cast<int32>(ConfigData->GetNumberOfClusterNodes() - 1))
 			{
 				return;
@@ -317,36 +348,55 @@ void UDisplayClusterNetDriver::TickFlush(float DeltaSeconds)
 		}
 	}
 
-	bLastBunchWasAcked = false;
-	
-	int32 NumPacketsInQueue = 0;
+	// Check if next slice can be formed
+	bool bCanFormSlice = true;
 
-	// Fill queues of last send packets for each connection, update last acked packet for each connection
 	for (UDisplayClusterNetConnection* SyncConnectionIt : SyncConnections)
 	{
-		int32 ConnectionUniqueId = SyncConnectionIt->GetUniqueID();
-		int32 LastOutPacketId = SyncConnectionIt->LastOut.PacketId;
+		const int32 ConnectionUniqueId = SyncConnectionIt->GetUniqueID();
+		const int32 LastOutPacketId = SyncConnectionIt->LastOut.PacketId;
 
-		// Add last send packet of current Connection to queue
 		TDeque<int32>& ChannelPacketQueue = OutPacketsQueues.FindOrAdd(ConnectionUniqueId);
-		ChannelPacketQueue.PushLast(LastOutPacketId);
 
-		// Get size of queue. Size will be the same for each Connection
-		NumPacketsInQueue = ChannelPacketQueue.Num();
-
-		// Fill LastAckedPacket map, which contains last acked packet for each Connection
-		int32& LastAckedPacketIdRef = LastAckedPacket.FindOrAdd(ConnectionUniqueId, 0);
-		int32 ConnectionAckId = SyncConnectionIt->GetLastNotifiedPacket();
-
-		if (ConnectionAckId > LastAckedPacketIdRef)
+		if (!ChannelPacketQueue.IsEmpty())
 		{
-			LastAckedPacketIdRef = ConnectionAckId;
+			if (ChannelPacketQueue.Last() == LastOutPacketId)
+			{
+				bCanFormSlice = false;
+				break;
+			}
 		}
+	}
+
+	bLastBunchWasAcked = true;
+
+	for (UDisplayClusterNetConnection* SyncConnectionIt : SyncConnections)
+	{
+		const int32 LastOutPacketId = SyncConnectionIt->LastOut.PacketId;
 
 		// Driver waits until last sent bunch of any sync connection will be acked
-		bLastBunchWasAcked |= (LastOutPacketId - ConnectionAckId > 1);
+		bLastBunchWasAcked &= (LastOutPacketId - SyncConnectionIt->OutAckPacketId <= 1);
+	}
 
-		UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Client %u; Packet %i sent, %i acked"), SyncConnectionIt->ClientId, ConnectionAckId, LastAckedPacketIdRef);
+	int32 NumPacketsInQueue = 0;
+
+	if (bCanFormSlice)
+	{
+		// Fill queues of last send packets for each connection, update last acked packet for each connection
+		for (UDisplayClusterNetConnection* SyncConnectionIt : SyncConnections)
+		{
+			const int32 ConnectionUniqueId = SyncConnectionIt->GetUniqueID();
+			const int32 LastOutPacketId = SyncConnectionIt->LastOut.PacketId;
+
+			// Add last send packet of current Connection to queue
+			TDeque<int32>& ChannelPacketQueue = OutPacketsQueues.FindOrAdd(ConnectionUniqueId);
+			ChannelPacketQueue.PushLast(LastOutPacketId);
+
+			// Get size of queue. Size will be the same for each Connection
+			NumPacketsInQueue = ChannelPacketQueue.Num();
+
+			UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Client %u; Packet %i sent, %i acked"), ConnectionUniqueId, LastOutPacketId, SyncConnectionIt->OutAckPacketId);
+		}
 	}
 
 	// Find slice of packets which are ready for processing on clients
@@ -369,17 +419,13 @@ void UDisplayClusterNetDriver::TickFlush(float DeltaSeconds)
 			int32 CurrentConnectionId = SyncConnectionIt->GetUniqueID();
 			int32 CurrentPacketId = OutPacketsQueues[CurrentConnectionId][PacketIdx];
 
-			if ((CurrentPacketId > 0) && (LastAckedPacket[CurrentConnectionId] >= CurrentPacketId))
+			if ((CurrentPacketId > 0) && (CurrentPacketId <= SyncConnectionIt->OutAckPacketId))
 			{
 				ReadyOutPackets.Add(CurrentConnectionId, CurrentPacketId);
 			}
-
-			if (ReadyOutPackets.Num() == SyncConnections.Num())
-			{
-				bPacketsReadyForSync = true;
-				break;
-			}
 		}
+
+		bPacketsReadyForSync = (ReadyOutPackets.Num() == SyncConnections.Num());
 	}
 
 	// Slice of acked packets is found - form PacketParams and send cluster event to primary nodes
@@ -399,7 +445,7 @@ void UDisplayClusterNetDriver::TickFlush(float DeltaSeconds)
 			TDeque<int32>& ConnectionPacketQueue = OutPacketsQueues[UniqueID];
 			if (!ConnectionPacketQueue.IsEmpty())
 			{
-				for (int j = 0; j < PacketIdx; j++)
+				for (int32 ConnectionPacketIndex = 0; ConnectionPacketIndex <= PacketIdx; ConnectionPacketIndex++)
 				{
 					ConnectionPacketQueue.PopFirst();
 				}
@@ -422,7 +468,7 @@ void UDisplayClusterNetDriver::PreListUpdate(ConsiderListUpdateParams const& Upd
 {
 	bConnectionViewersAreReady = false;
 
-	if (bLastBunchWasAcked || NodeConnections.IsEmpty())
+	if (!bLastBunchWasAcked || NodeConnections.IsEmpty())
 	{
 		return;
 	}
@@ -483,6 +529,25 @@ void UDisplayClusterNetDriver::PreListUpdate(ConsiderListUpdateParams const& Upd
 		ConsiderList, bCPUSaturated, ClusterReplicationState.PriorityList, ClusterReplicationState.PriorityActors);
 
 	bConnectionViewersAreReady = true;
+
+	for (UDisplayClusterNetConnection* ClusterConnection : SyncConnections)
+	{
+		if (ClusterConnection->ViewTarget == nullptr)
+		{
+			bConnectionViewersAreReady = false;
+			break;
+		}
+
+		for (TObjectPtr<UChannel> Channel : ClusterConnection->Channels)
+		{
+			if (!IsValid(Channel))
+			{
+				continue;
+			}
+
+			bConnectionViewersAreReady &= !(Channel->bPausedUntilReliableACK && (Channel->NumOutRec > 0));
+		}
+	}
 }
 
 void UDisplayClusterNetDriver::PostListUpdate(ConsiderListUpdateParams const& UpdateParams, int& OutUpdated, const TArray<FNetworkObjectInfo*>& ConsiderList)
@@ -502,6 +567,11 @@ void UDisplayClusterNetDriver::PostListUpdate(ConsiderListUpdateParams const& Up
 
 		for (int j = 0; j < ClusterReplicationState.FinalSortedCount; j++)
 		{
+			if (ClusterReplicationState.PriorityList[j].ActorInfo == nullptr)
+			{
+				continue;
+			}
+
 			ClusterReplicationState.PriorityList[j].Channel = DisplayClusterConnection->FindActorChannelRef(ClusterReplicationState.PriorityList[j].ActorInfo->WeakActor);
 		}
 
@@ -517,10 +587,12 @@ void UDisplayClusterNetDriver::PostListUpdate(ConsiderListUpdateParams const& Up
 		if (LastProcessedActors < ClusterReplicationState.MaxLastProcessedActor && ClusterReplicationState.MaxLastProcessedActor > 0)
 		{
 			// We do use generated ConnectionViewers above, but than use stored ConnectionViewers from primary nodes?
-			const int32 ActorStartIndex = LastProcessedActors + 1;
-			const int32 ActorsToProcess = ClusterReplicationState.MaxLastProcessedActor - ActorStartIndex + 1;
+			const int32 ActorStartIndex = FMath::Clamp<int32>(LastProcessedActors, 0, ClusterReplicationState.FinalSortedCount - 1);
+			const int32 ActorsToProcess = FMath::Min(ClusterReplicationState.MaxLastProcessedActor - ActorStartIndex, ClusterReplicationState.FinalSortedCount - ActorStartIndex);
 
 			constexpr bool bForceUpdate = true;
+			OutUpdated = 0;
+
 			TInterval<int32> ActorsIndexRange(ActorStartIndex, ActorsToProcess);
 			ServerReplicateActors_ProcessPrioritizedActorsRange(DisplayClusterConnection, PivotNodeConnectionViewers, ClusterReplicationState.PriorityActors, ActorsIndexRange,
 				OutUpdated, bForceUpdate);
@@ -548,7 +620,7 @@ void UDisplayClusterNetDriver::ListUpdate(ConsiderListUpdateParams const& Update
 		TArray<FNetViewer>& ConnectionViewers = WorldSettings->ReplicationViewers;
 
 		FActorPriority* PriorityList = nullptr;
-		FActorPriority** PriorityActors = nullptr;
+		FActorPriority** PriorityActors = nullptr;	
 
 		// Get a sorted list of actors for this connection
 		const int32 FinalSortedCount = ServerReplicateActors_PrioritizeActors(Connection, ConnectionViewers, ConsiderList, bCPUSaturated, PriorityList, PriorityActors);
@@ -565,22 +637,57 @@ void UDisplayClusterNetDriver::ListUpdate(ConsiderListUpdateParams const& Update
 		// Update channels for each actor
 		for (int j = 0; j < ClusterReplicationState.FinalSortedCount; j++)
 		{
+			if (ClusterReplicationState.PriorityList[j].ActorInfo == nullptr)
+			{
+				continue;
+			}
+
 			ClusterReplicationState.PriorityList[j].Channel = Connection->FindActorChannelRef(ClusterReplicationState.PriorityList[j].ActorInfo->WeakActor);
 		}
 
 		// Use single priority list per cluster which was calculated for Primary node
 		// Process the sorted list of actors for this connection
 		TInterval<int32> ActorsIndexRange(0, ClusterReplicationState.FinalSortedCount);
-		const int32 LastProcessedActor = ServerReplicateActors_ProcessPrioritizedActorsRange(Connection, PivotNodeConnectionViewers, ClusterReplicationState.PriorityActors,
+		
+		OutUpdated = 0;
+		int32 LastProcessedActor = ServerReplicateActors_ProcessPrioritizedActorsRange(Connection, PivotNodeConnectionViewers, ClusterReplicationState.PriorityActors,
 			ActorsIndexRange, OutUpdated);
 
 		// Cache last processed actors for equalization on PostListUpdate step
 		// MaxLastProcessed will be used for equalization
-		ClusterReplicationState.LastProcessedActors.Add(Connection->GetUniqueID(), LastProcessedActor);
-		ClusterReplicationState.MaxLastProcessedActor = FMath::Max<int32>(ClusterReplicationState.MaxLastProcessedActor, LastProcessedActor);
+		ClusterReplicationState.LastProcessedActors.Add(Connection->GetUniqueID(), OutUpdated);
+		ClusterReplicationState.MaxLastProcessedActor = FMath::Max<int32>(ClusterReplicationState.MaxLastProcessedActor, OutUpdated);
 	}
 }
 #endif
+
+
+bool UDisplayClusterNetDriver::NotifyClusterAsReadyForSync(int32 ClusterId)
+{
+	// Notify primary node that current node connection is ready
+	FDisplayClusterClusterEventBinary NetworkDriverSyncEvent;
+	GenerateClusterCommandsEvent(NetworkDriverSyncEvent, NodeSyncEvent);
+
+	// send command 
+	const bool bEventWasSent = ClusterNetworkDriverHelper->SendCommandToCluster(ClusterId, NetworkDriverSyncEvent);
+
+	// If event was sent to primary cluster node
+	if (bEventWasSent)
+	{
+		// Mark all node connections related to current ClusterId as ready
+		for (UDisplayClusterNetConnection* ClusterNodeConnectionIt : NodeConnections)
+		{
+			ClusterNodeConnectionIt->bSynchronousMode = true;
+			SyncConnections.Add(ClusterNodeConnectionIt);
+		}
+		
+		UE_LOG(LogDisplayClusterNetDriver, VeryVerbose, TEXT("Setting synchronous mode in cluster [%u]"), ClusterId);
+
+		return true;
+	}
+
+	return false;
+}
 
 void UDisplayClusterNetDriver::GenerateClusterCommandsEvent(FDisplayClusterClusterEventBinary& NetworkDriverSyncEvent, 
 	int32 EventId)
@@ -598,7 +705,7 @@ void UDisplayClusterNetDriver::GenerateClusterCommandsEvent(FDisplayClusterClust
 	const int ValueSize = sizeof(int32);
 	const int RecordSize = KeySize + ValueSize;
 
-	ClusterEventData.SetNumUninitialized(Parameters.Num() * RecordSize, true);
+	ClusterEventData.SetNumUninitialized(Parameters.Num() * RecordSize, EAllowShrinking::Yes);
 
 	uint8* RawData = ClusterEventData.GetData();
 

@@ -3,8 +3,6 @@
 #pragma once
 
 #include "Components/ActorComponent.h"
-#include "CoreMinimal.h"
-#include "MediaPlayerOptions.h"
 #include "MediaPlayerProxyInterface.h"
 #include "MediaSource.h"
 #include "MediaTextureTracker.h"
@@ -37,6 +35,25 @@ enum class EMediaPlateEventState : uint8
 	Rewind,
 	MAX
 };
+
+/**
+ * This struct is used to expose Media Texture settings via Media Plate Component and is a mirror of some
+ * of the settings.
+ */
+USTRUCT()
+struct FMediaTextureResourceSettings
+{
+	GENERATED_USTRUCT_BODY()
+
+	/** Enable mips generation */
+	UPROPERTY(EditAnywhere, Category = "MediaTexture", meta = (DisplayName = "Enable RealTime Mips"))
+	bool bEnableGenMips = false;
+
+	/** Current number of mips to be generated as output */
+	UPROPERTY(EditAnywhere, Category = "MediaTexture", meta = (DisplayName = "Mips Quantity"))
+	uint8 CurrentNumMips = 1;
+};
+
 
 /**
  * This is a component for AMediaPlate that can play and show media in the world.
@@ -120,7 +137,7 @@ public:
 
 	/**
 	 * Call this to seek to the specified playback time.
-	 * 
+	 *
 	 * @param Time			Time to seek to.
 	 * @return				True on success, false otherwise.
 	 */
@@ -168,14 +185,15 @@ public:
 	float StartTime = 0.0f;
 
 	/** Holds the component to play sound. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = MediaPlate)
+	UPROPERTY(EditAnywhere, Category = "Advanced", meta = (DisplayName = "Audio Component"))
 	TObjectPtr<UMediaSoundComponent> SoundComponent;
 
 	/** Holds the component for the mesh. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = MediaPlate)
+	UPROPERTY(EditAnywhere, Category = "Advanced")
 	TObjectPtr<UStaticMeshComponent> StaticMeshComponent;
+
 	/** Holds the component for the mesh. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = MediaPlate)
+	UPROPERTY(EditAnywhere, Category = "Advanced|Other")
 	TArray<TObjectPtr<UStaticMeshComponent>> Letterboxes;
 
 	/** What media playlist to play. */
@@ -187,7 +205,7 @@ public:
 	int32 PlaylistIndex = 0;
 
 	/** Override the default cache settings. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "MediaPlate")
+	UPROPERTY(EditAnywhere, Category = "Cache", meta = (DisplayName = "Cache", ShowOnlyInnerProperties))
 	FMediaSourceCacheSettings CacheSettings;
 
 	/** Set the arc size in degrees used for visible mips and tiles calculations, specific to the sphere. */
@@ -319,6 +337,19 @@ private:
 	/** Desired rate of play that we want. */
 	float CurrentRate = 0.0f;
 
+	enum class EPlaybackState
+	{
+		Unset,
+		Paused,
+		Playing,
+		Resume
+	};
+	/** State transitions. */
+	EPlaybackState IntendedPlaybackState = EPlaybackState::Unset;
+	EPlaybackState PendingPlaybackState = EPlaybackState::Unset;
+	EPlaybackState ActualPlaybackState = EPlaybackState::Unset;
+
+
 	/** If true then only allow playback when the media plate is visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Control", meta = (AllowPrivateAccess = true))
 	bool bPlayOnlyWhenVisible = false;
@@ -328,11 +359,11 @@ private:
 	bool bLoop = true;
 
 	/** Visible mips and tiles calculation mode for the supported mesh types in MediaPlate. (Player restart on change.) */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "MediaPlate", meta = (AllowPrivateAccess = true))
+	UPROPERTY(EditAnywhere, Category = "EXR Tiles & Mips", meta = (DisplayName = "Visible Tiles & Mips Logic", AllowPrivateAccess = true))
 	EMediaTextureVisibleMipsTiles VisibleMipsTilesCalculations;
 
 	/** Media texture mip map bias shared between the (image sequence) loader and the media texture sampler. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "MediaPlate", meta = (AllowPrivateAccess = true, UIMin = "-16.0", UIMax = "15.99"))
+	UPROPERTY(EditAnywhere, Category = "EXR Tiles & Mips", meta = (DisplayName = "Mips Bias", AllowPrivateAccess = true, UIMin = "-16.0", UIMax = "15.99"))
 	float MipMapBias = 0.0f;
 
 	/** If true then set the aspect ratio automatically based on the media. */
@@ -340,14 +371,18 @@ private:
 	bool bIsAspectRatioAuto = true;
 
 	/** If true then enable the use of MipLevelToUpscale as defined below. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "MediaPlate", meta = (AllowPrivateAccess = true))
+	UPROPERTY(EditAnywhere, Category = "EXR Tiles & Mips", meta = (DisplayName = "Enable Mip Upscaling", AllowPrivateAccess = true))
 	bool bEnableMipMapUpscaling = false;
 
 	/* With exr playback, upscale into lower quality mips from this specified level. All levels including and above the specified value will be fully read. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "MediaPlate", meta = (EditCondition = "bEnableMipMapUpscaling", AllowPrivateAccess = true, UIMin = "0", UIMax = "16"))
+	UPROPERTY(EditAnywhere, Category = "EXR Tiles & Mips", meta = (DisplayName = "Upscale Mip Level", EditCondition = "bEnableMipMapUpscaling", EditConditionHides, AllowPrivateAccess = true, UIMin = "0", UIMax = "16"))
 	int32 MipLevelToUpscale = 16;
 
-	/** If > 0, then this is the aspect ratio of our screen and 
+	/** If true then Media Plate will attempt to load and upscale lower quality mips and display those at the poles (Sphere object only). */
+	UPROPERTY(EditAnywhere, Category = "EXR Tiles & Mips", meta = (DisplayName = "Adaptive Pole Mip Upscale", EditCondition = "VisibleMipsTilesCalculations == EMediaTextureVisibleMipsTiles::Sphere", EditConditionHides, AllowPrivateAccess = true))
+	bool bAdaptivePoleMipUpscaling = true;
+
+	/** If > 0, then this is the aspect ratio of our screen and
 	 * letterboxes will be added if the media is smaller than the screen. */
 	UPROPERTY()
 	float LetterboxAspectRatio = 0.0f;
@@ -373,6 +408,10 @@ private:
 	UPROPERTY(Instanced)
 	TArray<TObjectPtr<UMediaTexture>> MediaTextures;
 
+	/** Exposes Media Texture settings via Media Plate component. */
+	UPROPERTY(EditAnywhere, Category = "MediaTexture", meta = (ShowOnlyInnerProperties))
+	FMediaTextureResourceSettings MediaTextureSettings;
+
 	/** This component's media player */
 	UPROPERTY(Instanced)
 	TObjectPtr<UMediaPlayer> MediaPlayer;
@@ -382,7 +421,7 @@ private:
 	/** Our media clock sink. */
 	TSharedPtr<FMediaComponentClockSink, ESPMode::ThreadSafe> ClockSink;
 	/** Game time when we paused playback. */
-	float TimeWhenPlaybackPaused = 0.0f;
+	double TimeWhenPlaybackPaused = -1.0;
 	/** True if our media should be playing when visible. */
 	bool bWantsToPlayWhenVisible = false;
 	/** True if we should resume where we left off when we open the media. */
@@ -412,7 +451,7 @@ private:
 
 	/**
 	 * Plays a media source.
-	 * 
+	 *
 	 * @param	InMediaSource		Media source to play.
 	 * @param	bInPlayOnOpen		True to play, false to just open.
 	 * @return	True if we played anything.
@@ -481,6 +520,18 @@ private:
 	 */
 	UFUNCTION()
 	void OnMediaEnd();
+
+	/**
+	 * Called by the media player when the video resumes.
+	 */
+	UFUNCTION()
+	void OnMediaResumed();
+
+	/**
+	 * Called by the media player when the video pauses.
+	 */
+	UFUNCTION()
+	void OnMediaSuspended();
 
 	/**
 	 * Sets up the textures we have.

@@ -80,6 +80,8 @@ public:
 	void UpdateFileHash(const FAssetData& InAssetData, FAssetFileInfo& OutFileInfo);
 
 	TMap<FName, FAssetFileInfo> GetAllFileInfos();
+	
+	bool bEnableIntegrityChecks = false;
 
 private:
 	void LogLastError() const;

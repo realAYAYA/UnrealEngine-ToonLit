@@ -12,6 +12,7 @@
 #include "Interfaces/ITargetPlatform.h"
 #include "Interfaces/ITargetPlatformManagerModule.h"
 #include "Rendering/SkeletalMeshLODModel.h"
+#include "Rendering/RenderCommandPipes.h"
 #include "Serialization/MemoryReader.h"
 #include "SkeletalMeshLegacyCustomVersions.h"
 #include "UObject/Package.h"
@@ -34,13 +35,6 @@ static FAutoConsoleVariableRef CVarStripSkeletalMeshLodsBelowMinLod(
 );
 
 
-
-int32 GAllowSkinnedMorphDataStreaming = 0;
-static FAutoConsoleVariableRef CVarAllowSkinnedMorphDataStreaming(
-	TEXT("r.Skinned.AllowSkinnedMorphDataStreaming"),
-	GAllowSkinnedMorphDataStreaming,
-	TEXT("Call BeginInitResource when the morph resources are finish streaming (DoFinishUpdate)")
-);
 
 namespace
 {
@@ -84,6 +78,12 @@ namespace
 	};
 }
 
+static bool IsMeshDeformerAvailable(EShaderPlatform InPlatform)
+{
+	static IMeshDeformerProvider* MeshDeformerProvider = IMeshDeformerProvider::Get();
+	return MeshDeformerProvider && MeshDeformerProvider->IsSupported(InPlatform);
+}
+
 /** 
  * This function returns true if the duplicate vertices should be cooked. 
  * The data is used to deal with seams along split vertices when recomputing normals at runtime.
@@ -93,8 +93,7 @@ static bool RequiresDuplicateVerticesInCook(EShaderPlatform InPlatform, FSkelMes
 	// DuplicatedVertices are cooked if we have GPUSkinCache or MeshDeformer systems for this platform.
 	// We always cook when GPUSkinCache is available so that we can support runtime switch of r.SkinCache.RecomputeTangents.
 	// For MeshDeformer we only cook if the section was marked for bRecomputeTangent.
-	static IMeshDeformerProvider* MeshDeformerProvider = IMeshDeformerProvider::Get();
-	bool bMeshDeformersAvailable = MeshDeformerProvider && MeshDeformerProvider->IsSupported(InPlatform);
+	const bool bMeshDeformersAvailable = IsMeshDeformerAvailable(InPlatform);
 	return (RenderSection.bRecomputeTangent && bMeshDeformersAvailable) || IsGPUSkinCacheAvailable(InPlatform);
 }
 
@@ -120,8 +119,7 @@ static bool RequiresDuplicateVerticesInCook(const ITargetPlatform& InTargetPlatf
 static bool RequiresDuplicateVertices()
 {
 	// Never drop at runtime if the data was cooked for MeshDeformers.
-	static IMeshDeformerProvider* MeshDeformerProvider = IMeshDeformerProvider::Get();
-	if (MeshDeformerProvider && MeshDeformerProvider->IsSupported(GMaxRHIShaderPlatform))
+	if (IsMeshDeformerAvailable(GMaxRHIShaderPlatform))
 	{
 		return true;
 	}
@@ -130,6 +128,22 @@ static bool RequiresDuplicateVertices()
 	return GPUSkinCacheNeedsDuplicatedVertices();
 }
 
+static bool IsMeshDeformerSupportedByCookTargetPlatform(const ITargetPlatform& InTargetPlatform)
+{
+	TArray<FName> TargetedShaderFormats;
+	InTargetPlatform.GetAllTargetedShaderFormats(TargetedShaderFormats);
+	for (int32 FormatIndex = 0; FormatIndex < TargetedShaderFormats.Num(); ++FormatIndex)
+	{
+		const EShaderPlatform LegacyShaderPlatform = ShaderFormatToLegacyShaderPlatform(TargetedShaderFormats[FormatIndex]);
+		
+		if (IsMeshDeformerAvailable(LegacyShaderPlatform))
+		{
+			return true;
+		}
+		
+	}
+	return false;
+}
 
 // Serialization.
 FArchive& operator<<(FArchive& Ar, FSkelMeshRenderSection& S)
@@ -204,9 +218,15 @@ FArchive& operator<<(FArchive& Ar, FSkelMeshRenderSection& S)
 
 void FSkeletalMeshLODRenderData::InitMorphResources()
 {
-	if (GAllowSkinnedMorphDataStreaming && !MorphTargetVertexInfoBuffers.IsRHIIntialized() && MorphTargetVertexInfoBuffers.IsMorphCPUDataValid() && MorphTargetVertexInfoBuffers.NumTotalBatches > 0)
+	if (!MorphTargetVertexInfoBuffers.IsRHIInitialized() && MorphTargetVertexInfoBuffers.IsMorphCPUDataValid() && MorphTargetVertexInfoBuffers.NumTotalBatches > 0)
 	{
-		BeginInitResource(&MorphTargetVertexInfoBuffers);
+		// The morph target could have been loaded prior but gets streamed in again, so we have to release the resources here, otherwise
+		// FRenderResource::InitResource does nothing and leaves IsRHIInitialized() as false, which results in no morphs appearing. 
+		if (MorphTargetVertexInfoBuffers.IsInitialized())
+		{
+			BeginReleaseResource(&MorphTargetVertexInfoBuffers, &UE::RenderCommandPipe::SkeletalMesh);
+		}
+		BeginInitResource(&MorphTargetVertexInfoBuffers, &UE::RenderCommandPipe::SkeletalMesh);
 	}
 }
 
@@ -223,9 +243,9 @@ void FSkeletalMeshLODRenderData::InitResources(bool bNeedsVertexColors, int32 LO
 	MultiSizeIndexContainer.InitResources();
 
 	StaticVertexBuffers.PositionVertexBuffer.SetOwnerName(OwnerName);
-	BeginInitResource(&StaticVertexBuffers.PositionVertexBuffer);
+	BeginInitResource(&StaticVertexBuffers.PositionVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	StaticVertexBuffers.StaticMeshVertexBuffer.SetOwnerName(OwnerName);
-	BeginInitResource(&StaticVertexBuffers.StaticMeshVertexBuffer);
+	BeginInitResource(&StaticVertexBuffers.StaticMeshVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 
 	SkinWeightVertexBuffer.SetOwnerName(OwnerName);
 	SkinWeightVertexBuffer.BeginInitResources();
@@ -234,14 +254,14 @@ void FSkeletalMeshLODRenderData::InitResources(bool bNeedsVertexColors, int32 LO
 	{
 		// Only init the color buffer if the mesh has vertex colors
 		StaticVertexBuffers.ColorVertexBuffer.SetOwnerName(OwnerName);
-		BeginInitResource(&StaticVertexBuffers.ColorVertexBuffer);
+		BeginInitResource(&StaticVertexBuffers.ColorVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	}
 
 	if (ClothVertexBuffer.GetNumVertices() > 0)
 	{
 		// Only init the clothing buffer if the mesh has clothing data
 		ClothVertexBuffer.SetOwnerName(OwnerName);
-		BeginInitResource(&ClothVertexBuffer);
+		BeginInitResource(&ClothVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	}
 
 	// We can discard any the cooked DuplicatedVertices here based on runtime settings.
@@ -262,7 +282,7 @@ void FSkeletalMeshLODRenderData::InitResources(bool bNeedsVertexColors, int32 LO
 				// No need to discard CPU data in cooked builds as bNeedsCPUAccess is false (see FDuplicatedVerticesBuffer constructor), 
 				// so it'd be auto-discarded after the RHI has copied the resource data. Keep CPU data when in the editor for geometry operations.
 				RenderSection.DuplicatedVerticesBuffer.SetOwnerName(OwnerName);
-				BeginInitResource(&RenderSection.DuplicatedVerticesBuffer);
+				BeginInitResource(&RenderSection.DuplicatedVerticesBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 			}
 		}
 	}
@@ -275,13 +295,16 @@ void FSkeletalMeshLODRenderData::InitResources(bool bNeedsVertexColors, int32 LO
 		MorphTargetVertexInfoBuffers.InitMorphResources(GMaxRHIShaderPlatform, RenderSections, Owner->GetMorphTargets(), StaticVertexBuffers.StaticMeshVertexBuffer.GetNumVertices(), LODIndex, SkeletalMeshLODInfo->MorphTargetPositionErrorTolerance);
 	}
 	
-	if (!MorphTargetVertexInfoBuffers.IsRHIIntialized() && MorphTargetVertexInfoBuffers.IsMorphCPUDataValid() && MorphTargetVertexInfoBuffers.NumTotalBatches > 0)
+	if (!MorphTargetVertexInfoBuffers.IsRHIInitialized() && MorphTargetVertexInfoBuffers.IsMorphCPUDataValid() && MorphTargetVertexInfoBuffers.NumTotalBatches > 0)
 	{
 		MorphTargetVertexInfoBuffers.SetOwnerName(OwnerName);
-		BeginInitResource(&MorphTargetVertexInfoBuffers);
+		BeginInitResource(&MorphTargetVertexInfoBuffers, &UE::RenderCommandPipe::SkeletalMesh);
 	}
 
 	VertexAttributeBuffers.InitResources();
+	
+	HalfEdgeBuffer.SetOwnerName(OwnerName);
+	BeginInitResource(&HalfEdgeBuffer, &UE::RenderCommandPipe::SkeletalMesh);	
 
 #if RHI_RAYTRACING
 	if (IsRayTracingAllowed())
@@ -289,7 +312,7 @@ void FSkeletalMeshLODRenderData::InitResources(bool bNeedsVertexColors, int32 LO
 		if (SourceRayTracingGeometry.RawData.Num() > 0)
 		{
 			SourceRayTracingGeometry.SetOwnerName(OwnerName);
-			BeginInitResource(&SourceRayTracingGeometry);
+			BeginInitResource(&SourceRayTracingGeometry, &UE::RenderCommandPipe::SkeletalMesh);
 		}
 	}
 #endif
@@ -301,26 +324,29 @@ void FSkeletalMeshLODRenderData::ReleaseResources()
 
 	MultiSizeIndexContainer.ReleaseResources();
 
-	BeginReleaseResource(&StaticVertexBuffers.PositionVertexBuffer);
-	BeginReleaseResource(&StaticVertexBuffers.StaticMeshVertexBuffer);
+	BeginReleaseResource(&StaticVertexBuffers.PositionVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
+	BeginReleaseResource(&StaticVertexBuffers.StaticMeshVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	SkinWeightVertexBuffer.BeginReleaseResources();
-	BeginReleaseResource(&StaticVertexBuffers.ColorVertexBuffer);
-	BeginReleaseResource(&ClothVertexBuffer);
+	BeginReleaseResource(&StaticVertexBuffers.ColorVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
+	BeginReleaseResource(&ClothVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	for (FSkelMeshRenderSection& RenderSection : RenderSections)
 	{
-		BeginReleaseResource(&RenderSection.DuplicatedVerticesBuffer);
+		BeginReleaseResource(&RenderSection.DuplicatedVerticesBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	}
-	BeginReleaseResource(&MorphTargetVertexInfoBuffers);
+	BeginReleaseResource(&MorphTargetVertexInfoBuffers, &UE::RenderCommandPipe::SkeletalMesh);
 
 	DEC_DWORD_STAT_BY(STAT_SkeletalMeshVertexMemory, SkinWeightProfilesData.GetResourcesSize());
 	SkinWeightProfilesData.ReleaseResources();
 
 	VertexAttributeBuffers.ReleaseResources();
+	
+	BeginReleaseResource(&HalfEdgeBuffer, &UE::RenderCommandPipe::SkeletalMesh);
+	
 #if RHI_RAYTRACING
 	if (IsRayTracingAllowed())
 	{
-		BeginReleaseResource(&SourceRayTracingGeometry);
-		BeginReleaseResource(&StaticRayTracingGeometry);
+		BeginReleaseResource(&SourceRayTracingGeometry, &UE::RenderCommandPipe::SkeletalMesh);
+		BeginReleaseResource(&StaticRayTracingGeometry, &UE::RenderCommandPipe::SkeletalMesh);
 	}
 #endif
 }
@@ -359,14 +385,16 @@ void FSkeletalMeshLODRenderData::DecrementMemoryStats()
 void FSkeletalMeshLODRenderData::BuildFromLODModel(
 	const FSkeletalMeshLODModel* InLODModel,
 	TConstArrayView<FSkeletalMeshVertexAttributeInfo> InVertexAttributeInfos,
-	ESkeletalMeshVertexFlags InBuildFlags
+	const FBuildSettings& InBuildSettings
 	)
 {
-	const bool bUseFullPrecisionUVs = EnumHasAllFlags(InBuildFlags, ESkeletalMeshVertexFlags::UseFullPrecisionUVs);
-	const bool bUseHighPrecisionTangentBasis = EnumHasAllFlags(InBuildFlags, ESkeletalMeshVertexFlags::UseHighPrecisionTangentBasis);
-	const bool bHasVertexColors = EnumHasAllFlags(InBuildFlags, ESkeletalMeshVertexFlags::HasVertexColors);
-	const bool bUseBackwardsCompatibleF16TruncUVs = EnumHasAllFlags(InBuildFlags, ESkeletalMeshVertexFlags::UseBackwardsCompatibleF16TruncUVs);
-	const bool bUseHighPrecisionWeights = EnumHasAllFlags(InBuildFlags, ESkeletalMeshVertexFlags::UseHighPrecisionWeights);
+	const ESkeletalMeshVertexFlags& BuildFlags = InBuildSettings.BuildFlags;
+	
+	const bool bUseFullPrecisionUVs = EnumHasAllFlags(BuildFlags, ESkeletalMeshVertexFlags::UseFullPrecisionUVs);
+	const bool bUseHighPrecisionTangentBasis = EnumHasAllFlags(BuildFlags, ESkeletalMeshVertexFlags::UseHighPrecisionTangentBasis);
+	const bool bHasVertexColors = EnumHasAllFlags(BuildFlags, ESkeletalMeshVertexFlags::HasVertexColors);
+	const bool bUseBackwardsCompatibleF16TruncUVs = EnumHasAllFlags(BuildFlags, ESkeletalMeshVertexFlags::UseBackwardsCompatibleF16TruncUVs);
+	const bool bUseHighPrecisionWeights = EnumHasAllFlags(BuildFlags, ESkeletalMeshVertexFlags::UseHighPrecisionWeights);
 
 	// Copy required info from source sections
 	RenderSections.Empty();
@@ -501,6 +529,11 @@ void FSkeletalMeshLODRenderData::BuildFromLODModel(
 		}
 	}
 
+	if (InBuildSettings.bBuildHalfEdgeBuffers)
+	{
+		HalfEdgeBuffer.Init(*this);
+	}
+	
 	ActiveBoneIndices = InLODModel->ActiveBoneIndices;
 	RequiredBones = InLODModel->RequiredBones;
 }
@@ -526,6 +559,7 @@ void FSkeletalMeshLODRenderData::ReleaseCPUResources(bool bForStreaming)
 			StaticVertexBuffers.ColorVertexBuffer.CleanUp();
 			SkinWeightProfilesData.ReleaseCPUResources();
 			VertexAttributeBuffers.CleanUp();
+			HalfEdgeBuffer.CleanUp();
 		}
 	}
 }
@@ -549,6 +583,8 @@ void FSkeletalMeshLODRenderData::GetResourceSizeEx(FResourceSizeEx& CumulativeRe
 	CumulativeResourceSize.AddUnknownMemoryBytes(TEXT("ClothVertexBuffer"), ClothVertexBuffer.GetVertexDataSize());
 	CumulativeResourceSize.AddUnknownMemoryBytes(TEXT("SkinWeightProfilesData"), SkinWeightProfilesData.GetResourcesSize());
 	CumulativeResourceSize.AddUnknownMemoryBytes(TEXT("VertexAttributeData"), VertexAttributeBuffers.GetResourceSize());
+	CumulativeResourceSize.AddUnknownMemoryBytes(TEXT("HalfEdgeBuffer"), HalfEdgeBuffer.GetResourceSize());
+	
 }
 
 SIZE_T FSkeletalMeshLODRenderData::GetCPUAccessMemoryOverhead() const
@@ -702,7 +738,8 @@ void FSkeletalMeshLODRenderData::SerializeStreamedData(FArchive& Ar, USkinnedAss
 {
 	Ar.UsingCustomVersion(FUE5PrivateFrostyStreamObjectVersion::GUID);
 	Ar.UsingCustomVersion(FUE5ReleaseStreamObjectVersion::GUID);
-
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
+	
 	FStripDataFlags StripFlags(Ar, ClassDataStripFlags);
 
 	// TODO: A lot of data in a render section is needed during initialization but maybe some can still be streamed
@@ -792,7 +829,7 @@ void FSkeletalMeshLODRenderData::SerializeStreamedData(FArchive& Ar, USkinnedAss
 					TargetMorphTargetVertexInfoBuffers = &MorphTargetVertexInfoBuffers;
 					TargetMorphTargetVertexInfoBuffers->InitMorphResources(MorphTargetShaderPlatform, RenderSections, MorphTargets, StaticVertexBuffers.StaticMeshVertexBuffer.GetNumVertices(), LODIdx, SkeletalMeshLODInfo->MorphTargetPositionErrorTolerance);
 				}
-				else if (MorphTargetVertexInfoBuffers.IsMorphCPUDataValid() && !MorphTargetVertexInfoBuffers.IsRHIIntialized())
+				else if (MorphTargetVertexInfoBuffers.IsMorphCPUDataValid() && !MorphTargetVertexInfoBuffers.IsRHIInitialized())
 				{
 					TargetMorphTargetVertexInfoBuffers = &MorphTargetVertexInfoBuffers;
 					check(TargetMorphTargetVertexInfoBuffers->IsMorphCPUDataValid());
@@ -824,6 +861,24 @@ void FSkeletalMeshLODRenderData::SerializeStreamedData(FArchive& Ar, USkinnedAss
 	{
 		Ar << VertexAttributeBuffers;
 	}
+	
+	if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::SkeletalHalfEdgeData)
+	{
+		uint8 ClassStripFlag = 0;
+		const uint8 MeshDeformerStripFlag = 1;
+		if (Ar.IsCooking() && !IsMeshDeformerSupportedByCookTargetPlatform(*Ar.CookingTarget()))
+		{
+			ClassStripFlag |= MeshDeformerStripFlag;
+		}
+		
+		FStripDataFlags MeshDeformerStripFlags(Ar, ClassStripFlag);
+		
+		if (!MeshDeformerStripFlags.IsClassDataStripped(MeshDeformerStripFlag))
+		{
+			Ar << HalfEdgeBuffer;
+		}
+	}
+	
 }
 
 void FSkeletalMeshLODRenderData::SerializeAvailabilityInfo(FArchive& Ar, int32 LODIdx, bool bAdjacencyDataStripped, bool bNeedsCPUAccess)
@@ -902,7 +957,7 @@ void FSkeletalMeshLODRenderData::Serialize(FArchive& Ar, UObject* Owner, int32 I
 	const bool bForceKeepCPUResources = ShouldForceKeepCPUResources();
 	bool bNeedsCPUAccess = bForceKeepCPUResources;
 
-	if (!StripFlags.IsDataStrippedForServer())
+	if (!StripFlags.IsAudioVisualDataStripped())
 	{
 		// set cpu skinning flag on the vertex buffer so that the resource arrays know if they need to be CPU accessible
 		bNeedsCPUAccess = ShouldKeepCPUResources(OwnerMesh, Idx, bForceKeepCPUResources);
@@ -918,7 +973,7 @@ void FSkeletalMeshLODRenderData::Serialize(FArchive& Ar, UObject* Owner, int32 I
 
 	Ar << RequiredBones;
 
-	if (!StripFlags.IsDataStrippedForServer() && !bIsLODCookedOut)
+	if (!StripFlags.IsAudioVisualDataStripped() && !bIsLODCookedOut)
 	{
 		Ar << RenderSections;
 		Ar << ActiveBoneIndices;

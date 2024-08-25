@@ -895,7 +895,9 @@ public:
 	void PrepareDefaultStartTime();
 	FTimeValue GetDefaultStartTime() const;
 	void ClearDefaultStartTime();
-	FTimeRange GetPlayTimesFromURI() const;
+	FTimeValue GetDefaultEndTime() const;
+	void ClearDefaultEndTime();
+	FTimeRange GetPlayTimesFromURI(IManifest::EPlaybackRangeType InRangeType) const;
 	FTimeValue GetDesiredLiveLatency() const;
 
 	FTimeValue GetMPDValidityEndTime() const;
@@ -953,6 +955,7 @@ private:
 	mutable FTimeRange TotalTimeRange;
 	mutable FTimeRange SeekableTimeRange;
 	FTimeValue DefaultStartTime;
+	FTimeValue DefaultEndTime;
 	mutable bool bWarnedAboutTooSmallSuggestedPresentationDelay = false;
 
 	bool bDidInjectUTCTimingElements = false;

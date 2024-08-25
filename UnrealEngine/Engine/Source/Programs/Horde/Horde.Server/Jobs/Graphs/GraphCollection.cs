@@ -4,13 +4,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Artifacts;
 using Horde.Server.Jobs.Templates;
 using Horde.Server.Server;
 using HordeCommon;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.Options;
@@ -76,7 +77,7 @@ namespace Horde.Server.Jobs.Graphs
 			public Node(string name, NodeOutputRef[]? inputs, string[]? outputNames, NodeRef[] inputDependencies, NodeRef[] orderDependencies, Priority priority, bool allowRetry, bool runEarly, bool warnings, Dictionary<string, string>? credentials, Dictionary<string, string>? properties, IReadOnlyNodeAnnotations? annotations)
 			{
 				Name = name;
-				Inputs = (inputs != null && inputs.Length > 0) ? inputs: null;
+				Inputs = (inputs != null && inputs.Length > 0) ? inputs : null;
 				OutputNames = (outputNames != null && outputNames.Length > 0) ? outputNames : null;
 				InputDependencies = inputDependencies;
 				OrderDependencies = orderDependencies;
@@ -189,9 +190,43 @@ namespace Horde.Server.Jobs.Graphs
 			}
 		}
 
+		class GraphArtifact : IGraphArtifact
+		{
+			public ArtifactName Name { get; set; }
+			public ArtifactType Type { get; set; }
+			public string Description { get; set; }
+			public string BasePath { get; set; }
+			public List<string> Keys { get; set; }
+			public List<string> Metadata { get; set; }
+			public string OutputName { get; set; }
+
+			IReadOnlyList<string> IGraphArtifact.Keys => Keys;
+			IReadOnlyList<string> IGraphArtifact.Metadata => Metadata;
+
+			private GraphArtifact()
+			{
+				Description = String.Empty;
+				BasePath = String.Empty;
+				Keys = new List<string>();
+				Metadata = new List<string>();
+				OutputName = String.Empty;
+			}
+
+			public GraphArtifact(ArtifactName name, ArtifactType type, string description, string basePath, IReadOnlyList<string> keys, IReadOnlyList<string> metadata, string outputName)
+			{
+				Name = name;
+				Type = type;
+				Description = description;
+				BasePath = basePath;
+				Keys = keys.ToList();
+				Metadata = metadata.ToList();
+				OutputName = outputName;
+			}
+		}
+
 		class GraphDocument : IGraph
 		{
-			public static GraphDocument Empty { get; } = new GraphDocument(new List<NodeGroup>(), new List<Aggregate>(), new List<Label>());
+			public static GraphDocument Empty { get; } = new GraphDocument(new List<NodeGroup>(), new List<Aggregate>(), new List<Label>(), new List<GraphArtifact>());
 
 			[BsonRequired, BsonId]
 			public ContentHash Id { get; private set; } = ContentHash.Empty;
@@ -200,6 +235,7 @@ namespace Horde.Server.Jobs.Graphs
 			public List<NodeGroup> Groups { get; private set; } = new List<NodeGroup>();
 			public List<Aggregate> Aggregates { get; private set; } = new List<Aggregate>();
 			public List<Label> Labels { get; private set; } = new List<Label>();
+			public List<GraphArtifact> Artifacts { get; private set; } = new List<GraphArtifact>();
 
 			[BsonIgnore]
 			IReadOnlyDictionary<string, NodeRef>? _cachedNodeNameToRef;
@@ -210,21 +246,23 @@ namespace Horde.Server.Jobs.Graphs
 			IReadOnlyList<INodeGroup> IGraph.Groups => Groups;
 			IReadOnlyList<IAggregate> IGraph.Aggregates => Aggregates;
 			IReadOnlyList<ILabel> IGraph.Labels => Labels;
+			IReadOnlyList<IGraphArtifact> IGraph.Artifacts => Artifacts;
 
 			[BsonConstructor]
 			private GraphDocument()
 			{
 			}
 
-			public GraphDocument(List<NodeGroup> groups, List<Aggregate> aggregates, List<Label> labels)
+			public GraphDocument(List<NodeGroup> groups, List<Aggregate> aggregates, List<Label> labels, List<GraphArtifact> artifacts)
 			{
 				Groups = groups;
 				Aggregates = aggregates;
 				Labels = labels;
+				Artifacts = artifacts;
 				Id = ContentHash.SHA1(BsonExtensionMethods.ToBson(this));
 			}
 
-			public GraphDocument(GraphDocument baseGraph, List<NewGroup>? newGroupRequests, List<NewAggregate>? newAggregateRequests, List<NewLabel>? newLabelRequests)
+			public GraphDocument(GraphDocument baseGraph, List<NewGroup>? newGroupRequests, List<NewAggregate>? newAggregateRequests, List<NewLabel>? newLabelRequests, List<NewGraphArtifact>? newArtifactRequests)
 			{
 				Dictionary<string, NodeRef> nodeNameToRef = new Dictionary<string, NodeRef>(baseGraph.GetNodeNameToRef(), StringComparer.OrdinalIgnoreCase);
 				Dictionary<string, NodeOutputRef> nodeOutputNameToRef = new Dictionary<string, NodeOutputRef>(baseGraph.GetNodeOutputNameToRef(), StringComparer.OrdinalIgnoreCase);
@@ -295,10 +333,30 @@ namespace Horde.Server.Jobs.Graphs
 					}
 				}
 
+				// Update the list of artifacts
+				List<GraphArtifact> newArtifacts = new List<GraphArtifact>(baseGraph.Artifacts);
+				if (newArtifactRequests != null)
+				{
+					foreach (NewGraphArtifact newArtifactRequest in newArtifactRequests)
+					{
+						newArtifacts.Add(new GraphArtifact(newArtifactRequest.Name, newArtifactRequest.Type, newArtifactRequest.Description, newArtifactRequest.BasePath, newArtifactRequest.Keys, newArtifactRequest.Metadata, newArtifactRequest.OutputName));
+					}
+				}
+
+				HashSet<ArtifactName> uniqueArtifactNames = new HashSet<ArtifactName>();
+				foreach (GraphArtifact newArtifact in newArtifacts)
+				{
+					if (!uniqueArtifactNames.Add(newArtifact.Name))
+					{
+						throw new InvalidOperationException($"Artifact '{newArtifact.Name}' was registered multiple times in the same graph");
+					}
+				}
+
 				// Create the new arrays
 				Groups = newGroups;
 				Aggregates = newAggregates;
 				Labels = newLabels;
+				Artifacts = newArtifacts;
 
 				// Create the new graph, and save the generated node lookup into it
 				_cachedNodeNameToRef = nodeNameToRef;
@@ -341,7 +399,7 @@ namespace Horde.Server.Jobs.Graphs
 							{
 								for (int outputIdx = 0; outputIdx < node.OutputNames.Length; outputIdx++)
 								{
-									string outputName = $"{node.Name}/{node.OutputNames[outputIdx]}";
+									string outputName = node.OutputNames[outputIdx];
 									nodeOutputNameToRef[outputName] = new NodeOutputRef(new NodeRef(groupIdx, nodeIdx), outputIdx);
 								}
 							}
@@ -361,24 +419,22 @@ namespace Horde.Server.Jobs.Graphs
 		/// <summary>
 		/// Maximum number of graphs to keep in the cache
 		/// </summary>
-		const int MaxGraphs = 5000;
+		const int MaxGraphs = 2000;
 
 		/// <summary>
 		/// Cache for graphs
 		/// Use a non-shared cache to ensure enough space for graphs
 		/// </summary>
 		private readonly MemoryCache _memoryCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = MaxGraphs });
-		private readonly ILogger _logger;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public GraphCollection(MongoService mongoService, ILogger<GraphCollection> logger)
+		public GraphCollection(MongoService mongoService)
 		{
 			_graphs = mongoService.GetCollection<GraphDocument>("Graphs");
-			_logger = logger;
 		}
-		
+
 		/// <inheritdoc/>
 		public void Dispose()
 		{
@@ -389,14 +445,15 @@ namespace Horde.Server.Jobs.Graphs
 		/// Adds a new graph document
 		/// </summary>
 		/// <param name="graph">The graph to add</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		async Task AddAsync(GraphDocument graph)
+		async Task AddAsync(GraphDocument graph, CancellationToken cancellationToken)
 		{
-			if (!await _graphs.Find(x => x.Id == graph.Id).AnyAsync())
+			if (!await _graphs.Find(x => x.Id == graph.Id).AnyAsync(cancellationToken))
 			{
 				try
 				{
-					await _graphs.InsertOneAsync(graph);
+					await _graphs.InsertOneAsync(graph, null, cancellationToken);
 				}
 				catch (MongoWriteException ex)
 				{
@@ -409,26 +466,26 @@ namespace Horde.Server.Jobs.Graphs
 		}
 
 		/// <inheritdoc/>
-		public async Task<IGraph> AddAsync(ITemplate template, string? streamInitialAgentType)
+		public async Task<IGraph> AddAsync(ITemplate template, string? streamInitialAgentType, CancellationToken cancellationToken)
 		{
 			Node node = new Node(IJob.SetupNodeName, null, null, Array.Empty<NodeRef>(), Array.Empty<NodeRef>(), Priority.High, true, false, true, null, null, null);
 			NodeGroup group = new NodeGroup(template.InitialAgentType ?? streamInitialAgentType ?? "Win64", new List<Node> { node });
 
-			GraphDocument graph = new GraphDocument(new List<NodeGroup> { group }, new List<Aggregate>(), new List<Label>());
-			await AddAsync(graph);
+			GraphDocument graph = new GraphDocument(new List<NodeGroup> { group }, new List<Aggregate>(), new List<Label>(), new List<GraphArtifact>());
+			await AddAsync(graph, cancellationToken);
 			return graph;
 		}
 
 		/// <inheritdoc/>
-		public async Task<IGraph> AppendAsync(IGraph? baseGraph, List<NewGroup>? newGroupRequests, List<NewAggregate>? newAggregateRequests, List<NewLabel>? newLabelRequests)
+		public async Task<IGraph> AppendAsync(IGraph? baseGraph, List<NewGroup>? newGroupRequests, List<NewAggregate>? newAggregateRequests, List<NewLabel>? newLabelRequests, List<NewGraphArtifact>? newArtifactRequests, CancellationToken cancellationToken)
 		{
-			GraphDocument graph = new GraphDocument((GraphDocument?)baseGraph ?? GraphDocument.Empty, newGroupRequests, newAggregateRequests, newLabelRequests);
-			await AddAsync(graph);
+			GraphDocument graph = new GraphDocument((GraphDocument?)baseGraph ?? GraphDocument.Empty, newGroupRequests, newAggregateRequests, newLabelRequests, newArtifactRequests);
+			await AddAsync(graph, cancellationToken);
 			return graph;
 		}
 
 		/// <inheritdoc/>
-		public async Task<IGraph> GetAsync(ContentHash? hash)
+		public async Task<IGraph> GetAsync(ContentHash? hash, CancellationToken cancellationToken)
 		{
 			// Special case for an empty graph request
 			if (hash == null || hash == ContentHash.Empty || hash == GraphDocument.Empty.Id)
@@ -441,15 +498,15 @@ namespace Horde.Server.Jobs.Graphs
 				cacheEntry.SlidingExpiration = TimeSpan.FromHours(24);
 				cacheEntry.Size = 1;
 
-				GraphDocument document = await _graphs.Find<GraphDocument>(x => x.Id == hash).FirstAsync();
+				GraphDocument document = await _graphs.Find<GraphDocument>(x => x.Id == hash).FirstAsync(cancellationToken);
 				return document;
 			}
 
-			return await _memoryCache.GetOrCreateAsync(hash, CreateCacheEntry);
+			return (await _memoryCache.GetOrCreateAsync(hash, CreateCacheEntry))!;
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IGraph>> FindAllAsync(ContentHash[]? hashes, int? index, int? count)
+		public async Task<List<IGraph>> FindAllAsync(ContentHash[]? hashes, int? index, int? count, CancellationToken cancellationToken)
 		{
 			FilterDefinitionBuilder<GraphDocument> filterBuilder = Builders<GraphDocument>.Filter;
 
@@ -470,7 +527,7 @@ namespace Horde.Server.Jobs.Graphs
 				search = search.Limit(count.Value);
 			}
 
-			results = await search.ToListAsync();
+			results = await search.ToListAsync(cancellationToken);
 			return results.ConvertAll<IGraph>(x => x);
 		}
 	}

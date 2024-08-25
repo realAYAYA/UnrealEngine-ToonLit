@@ -433,6 +433,9 @@ private:
 	/** Whether we currently have any selected that can be deleted */
 	bool CanDeleteSelected() const;
 
+	/** Init SocketManager (does nothing if it already exists) */
+	void InitSocketManager();
+
 	/** Delete the currently selected sockets */
 	void DeleteSelectedSockets();
 
@@ -474,6 +477,8 @@ private:
 
 	//~ Begin FAssetEditorToolkit Interface.
 	virtual bool OnRequestClose(EAssetEditorCloseReason InCloseReason) override;
+	virtual void SetupReadOnlyMenuProfiles(FReadOnlyAssetEditorCustomization& OutReadOnlyCustomization) override;
+
 	//~ End FAssetEditorToolkit Interface.
 
 	//~ Begin FEditorUndoClient Interface

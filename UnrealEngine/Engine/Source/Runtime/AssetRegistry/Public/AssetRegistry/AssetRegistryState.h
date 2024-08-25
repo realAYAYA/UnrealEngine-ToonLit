@@ -76,6 +76,12 @@ struct FAssetRegistrySerializationOptions
 	/** Filter out searchable names from dependency data */
 	bool bFilterSearchableNames = false;
 
+	/**
+	 * Keep tags intended for the cooker's output DevelopmentAssetRegistry. this flag defaults to false and is set to
+	 * true only by the cooker.
+	 */
+	bool bKeepDevelopmentAssetRegistryTags = false;
+
 	/** The map of class pathname to tag set of tags that are allowed in cooked builds. This is either an allow list or deny list depending on bUseAssetRegistryTagsAllowListInsteadOfDenyList */
 	TMap<FTopLevelAssetPath, TSet<FName>> CookFilterlistTagsByClass;
 
@@ -264,6 +270,13 @@ public:
 	 */
 	ASSETREGISTRY_API bool EnumerateAllAssets(const TSet<FName>& PackageNamesToSkip, TFunctionRef<bool(const FAssetData&)> Callback, bool bARFiltering = false) const;
 	ASSETREGISTRY_API void EnumerateAllAssets(TFunctionRef<void(const FAssetData&)> Callback) const;
+
+	/**
+	 * Calls the callback with the LongPackageName of each path that has assets as direct children.
+	 * Callback will not be called for parent paths that have childpaths with direct children but do not
+	 * have direct children of their own.
+	 */
+	ASSETREGISTRY_API void EnumerateAllPaths(TFunctionRef<void(FName PathName)> Callback) const;
 
 	/**
 	 * Gets the LongPackageNames for all packages with the given PackageName.
@@ -462,7 +475,10 @@ public:
 	ASSETREGISTRY_API bool UpdateAssetDataPackageFlags(FName PackageName, uint32 PackageFlags);
 
 	/** Removes the asset data from the lookup maps */
-	ASSETREGISTRY_API void RemoveAssetData(FAssetData* AssetData, bool bRemoveDependencyData, bool& bOutRemovedAssetData, bool& bOutRemovedPackageData);
+	ASSETREGISTRY_API void RemoveAssetData(FAssetData* AssetData, bool bRemoveDependencyData,
+		bool& bOutRemovedAssetData, bool& bOutRemovedPackageData);
+	ASSETREGISTRY_API void RemoveAssetData(const FSoftObjectPath& SoftObjectPath, bool bRemoveDependencyData,
+		bool& bOutRemovedAssetData, bool& bOutRemovedPackageData);
 
 	/**
 	 * Clear all dependencies of the given category from the given AssetIdentifier (e.g. package).
@@ -575,27 +591,38 @@ private:
 	void Load(Archive&& Ar, const FAssetRegistryHeader& Header, const FAssetRegistryLoadOptions& Options);
 
 	/** Initialize the lookup maps */
-	ASSETREGISTRY_API void SetAssetDatas(TArrayView<FAssetData> AssetDatas, const FAssetRegistryLoadOptions& Options);
+	void SetAssetDatas(TArrayView<FAssetData> AssetDatas, const FAssetRegistryLoadOptions& Options);
 
 	/** Find the first non-redirector dependency node starting from InDependency. */
-	ASSETREGISTRY_API FDependsNode* ResolveRedirector(FDependsNode* InDependency, const FAssetDataMap& InAllowedAssets, TMap<FDependsNode*, FDependsNode*>& InCache);
+	FDependsNode* ResolveRedirector(FDependsNode* InDependency, const FAssetDataMap& InAllowedAssets, TMap<FDependsNode*, FDependsNode*>& InCache);
 
 	/** Finds an existing node for the given package and returns it, or returns null if one isn't found */
-	ASSETREGISTRY_API FDependsNode* FindDependsNode(const FAssetIdentifier& Identifier) const;
+	FDependsNode* FindDependsNode(const FAssetIdentifier& Identifier) const;
 
 	/** Creates a node in the CachedDependsNodes map or finds the existing node and returns it */
-	ASSETREGISTRY_API FDependsNode* CreateOrFindDependsNode(const FAssetIdentifier& Identifier);
+	FDependsNode* CreateOrFindDependsNode(const FAssetIdentifier& Identifier);
 
 	/** Removes the depends node and updates the dependencies to no longer contain it as as a referencer. */
-	ASSETREGISTRY_API bool RemoveDependsNode(const FAssetIdentifier& Identifier);
+	bool RemoveDependsNode(const FAssetIdentifier& Identifier);
 
 	/** Filter a set of tags and output a copy of the filtered set. */
-	static ASSETREGISTRY_API void FilterTags(const FAssetDataTagMapSharedView& InTagsAndValues, FAssetDataTagMap& OutTagsAndValues, const TSet<FName>* ClassSpecificFilterList, const FAssetRegistrySerializationOptions & Options);
+	static void FilterTags(const FAssetDataTagMapSharedView& InTagsAndValues, FAssetDataTagMap& OutTagsAndValues, const TSet<FName>* ClassSpecificFilterList, const FAssetRegistrySerializationOptions & Options);
 
-	ASSETREGISTRY_API void LoadDependencies(FArchive& Ar);
-	ASSETREGISTRY_API void LoadDependencies_BeforeFlags(FArchive& Ar, bool bSerializeDependencies, FAssetRegistryVersion::Type Version);
+	void LoadDependencies(FArchive& Ar);
+	void LoadDependencies_BeforeFlags(FArchive& Ar, bool bSerializeDependencies, FAssetRegistryVersion::Type Version);
 
-	ASSETREGISTRY_API void SetTagsOnExistingAsset(FAssetData* AssetData, FAssetDataTagMap&& NewTags);
+	void SetTagsOnExistingAsset(FAssetData* AssetData, FAssetDataTagMap&& NewTags);
+
+	void SetDependencyNodeSorting(bool bSortDependencies, bool bSortReferencers);
+
+	void RemoveAssetData(FAssetData* AssetData, const FCachedAssetKey& Key, bool bRemoveDependencyData,
+		bool& bOutRemovedAssetData, bool& bOutRemovedPackageData);
+
+	/**
+	 * Returns true if the given package should be filtered from the results because the package belongs to an unmounted content path.
+	 * This can only happen when loading a cooked asset registry (@see bCookedGlobalAssetRegistryState), as it may contain state for plugins that are not currently loaded.
+	 */
+	bool IsPackageUnmountedAndFiltered(const FName PackageName) const;
 
 	/** Set of asset data for assets saved to disk. Searched via path name types, implicitly converted to FCachedAssetKey. */
 	FAssetDataMap CachedAssets;
@@ -627,6 +654,9 @@ private:
 	int32 NumAssets = 0;
 	int32 NumDependsNodes = 0;
 	int32 NumPackageData = 0;
+
+	/** True if this asset registry state was loaded from a cooked asset registry */
+	bool bCookedGlobalAssetRegistryState = false;
 
 	friend class UAssetRegistryImpl;
 	friend class UE::AssetRegistry::FAssetRegistryImpl;

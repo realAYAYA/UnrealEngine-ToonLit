@@ -45,6 +45,13 @@ struct FEffectorSettings
 	UPROPERTY(EditAnywhere, Category="Effector")
 	float StrengthAlpha = 1.0f;
 
+	/** Range 0-inf (default is 0). Explicitly set the number of bones up the hierarchy to consider part of this effector's 'chain'.
+	* The "chain" of bones is used to apply Preferred Angles, Pull Chain Alpha and Chain "Sub Solves".
+	* If left at 0, the solver will attempt to determine the root of the chain by searching up the hierarchy until it finds a branch or another effector, whichever it finds first.
+	*/
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Full Body IK Effector", meta = (ClampMin = "0", UIMin = "0"))
+	int32 ChainDepth = 0;
+
 	/** Range 0-1 (default is 1.0). When enabled (greater than 0.0), the solver internally partitions the skeleton into 'chains' which extend from the effector to the nearest fork in the skeleton.
 	*These chains are pre-rotated and translated, as a whole, towards the effector targets.
 	*This can improve the results for sparse bone chains, and significantly improve convergence on dense bone chains.
@@ -74,13 +81,12 @@ struct FEffector
 
 	FBone* Bone;
 	TWeakPtr<FPinConstraint> Pin;
-	FRigidBody* ParentSubRoot = nullptr;
-	float DistanceToSubRootInInputPose;
-	float DistToRootAlongBones;
-	float DistToRootStraightLine;
+	FRigidBody* ChainRootBody = nullptr;
+	int32 ChainDepthInitializedWith = -1;
+	float DistToChainRootInInputPose;
 	
 	TArray<float> DistancesFromEffector;
-	float DistToSubRootAlongBones;
+	float DistToChainRootAlongBones;
 
 	FEffector(FBone* InBone);
 
@@ -89,8 +95,10 @@ struct FEffector
 		const FQuat& InRotationGoal,
 		const FEffectorSettings& InSettings);
 
+	void UpdateChainStates();
 	void UpdateFromInputs(const FBone& SolverRoot);
-	void ApplyPreferredAngles();
+	float CalculateDistanceToChainRoot() const;
+	void ApplyPreferredAngles() const;
 };
 	
 } // namespace
@@ -150,6 +158,10 @@ struct PBIK_API FPBIKSolverSettings
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = SolverSettings, meta = (ClampMin = "0", ClampMax = "1000", UIMin = "0.0", UIMax = "200.0"))
 	int32 Iterations = 20;
 
+	/** Iterations used for sub-chains defined by the Chain Depth of the effectors. These are solved BEFORE the main iteration pass. Default is 0. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = SolverSettings, meta = (ClampMin = "0", ClampMax = "1000", UIMin = "0.0", UIMax = "200.0"))
+	int32 SubIterations = 0;
+
 	/** A global mass multiplier; higher values will make the joints more stiff, but require more iterations. Typical range is 0.0 to 10.0. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = SolverSettings, meta = (ClampMin = "0", UIMin = "0.0", UIMax = "10.0"))
 	float MassMultiplier = 1.0f;
@@ -194,6 +206,12 @@ struct PBIK_API FPBIKSolver
 	GENERATED_BODY()
 
 public:
+
+	FPBIKSolver& operator=(const FPBIKSolver&)
+	{
+		bReadyToSimulate = false;
+		return *this;
+	}
 
 	PBIK::FDebugDraw* GetDebugDraw();
 
@@ -240,7 +258,7 @@ public:
 		const FQuat& InOrigRotation,
 		bool bIsSolverRoot);
 
-	int32 AddEffector(FName BoneName);
+	int32 AddEffector(const FName BoneName);
 	
 private:
 
@@ -249,6 +267,8 @@ private:
 	bool InitBodies();
 
 	bool InitConstraints();
+
+	void UpdateEffectorDepths();
 
 	void AddBodyForBone(PBIK::FBone* Bone);
 
@@ -276,11 +296,11 @@ private:
 		FVector& OutCurrentCentroid);
 	
 	PBIK::FBone* SolverRoot = nullptr;
-	TWeakPtr<PBIK::FPinConstraint> RootPin = nullptr;
 	TArray<PBIK::FBone> Bones;
 	TArray<PBIK::FRigidBody> Bodies;
 	TArray<TSharedPtr<PBIK::FConstraint>> Constraints;
 	TArray<PBIK::FEffector> Effectors;
+	bool bHasSubChains = false;
 	bool bReadyToSimulate = false;
 	
 	PBIK::FDebugDraw DebugDraw;

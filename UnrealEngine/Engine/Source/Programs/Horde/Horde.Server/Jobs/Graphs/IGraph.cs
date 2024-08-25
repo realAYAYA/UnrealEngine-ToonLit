@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using EpicGames.Core;
+using EpicGames.Horde.Artifacts;
 using HordeCommon;
 using MongoDB.Bson.Serialization.Attributes;
 
@@ -268,6 +269,47 @@ namespace Horde.Server.Jobs.Graphs
 	}
 
 	/// <summary>
+	/// Artifact produced by a graph
+	/// </summary>
+	public interface IGraphArtifact
+	{
+		/// <summary>
+		/// Name of the artifact
+		/// </summary>
+		public ArtifactName Name { get; }
+
+		/// <summary>
+		/// Type of the artifact
+		/// </summary>
+		public ArtifactType Type { get; }
+
+		/// <summary>
+		/// Description for the artifact
+		/// </summary>
+		public string Description { get; }
+
+		/// <summary>
+		/// Base path for files in the artifact
+		/// </summary>
+		public string BasePath { get; }
+
+		/// <summary>
+		/// Keys for finding the artifact
+		/// </summary>
+		public IReadOnlyList<string> Keys { get; }
+
+		/// <summary>
+		/// Metadata for the artifact
+		/// </summary>
+		public IReadOnlyList<string> Metadata { get; }
+
+		/// <summary>
+		/// Tag for the artifact files
+		/// </summary>
+		public string OutputName { get; }
+	}
+
+	/// <summary>
 	/// A unique dependency graph instance
 	/// </summary>
 	public interface IGraph
@@ -296,6 +338,11 @@ namespace Horde.Server.Jobs.Graphs
 		/// Status labels for this graph
 		/// </summary>
 		public IReadOnlyList<ILabel> Labels { get; }
+
+		/// <summary>
+		/// Artifacts for this graph
+		/// </summary>
+		public IReadOnlyList<IGraphArtifact> Artifacts { get; }
 	}
 
 	/// <summary>
@@ -348,7 +395,7 @@ namespace Horde.Server.Jobs.Graphs
 		/// <param name="nodeName">Name of the node</param>
 		/// <param name="node">Receives the node</param>
 		/// <returns>True if the node was found, false otherwise</returns>
-		public static bool TryFindNode(this IGraph graph, string nodeName, out INode? node)
+		public static bool TryFindNode(this IGraph graph, string nodeName, [NotNullWhen(true)] out INode? node)
 		{
 			NodeRef nodeRef;
 			if (TryFindNode(graph, nodeName, out nodeRef))
@@ -508,6 +555,16 @@ namespace Horde.Server.Jobs.Graphs
 				Annotations = new NodeAnnotations(annotations);
 			}
 		}
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="graph">Existing graph containing a node</param>
+		/// <param name="node">Node to copy</param>
+		public NewNode(IGraph graph, INode node)
+			: this(node.Name, node.Inputs.Select(x => graph.GetNode(x.NodeRef).Name).ToList(), node.OutputNames.ToList(), node.InputDependencies.Select(x => graph.GetNode(x).Name).ToList(), node.OrderDependencies.Select(x => graph.GetNode(x).Name).ToList(), node.Priority, node.AllowRetry, node.RunEarly, node.Warnings, node.Credentials?.ToDictionary(x => x.Key, x => x.Value), node.Properties?.ToDictionary(x => x.Key, x => x.Value), node.Annotations)
+		{
+		}
 	}
 
 	/// <summary>
@@ -534,6 +591,16 @@ namespace Horde.Server.Jobs.Graphs
 		{
 			AgentType = agentType;
 			Nodes = nodes;
+		}
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="graph">Graph containing the node group</param>
+		/// <param name="group">Node group to copy</param>
+		public NewGroup(IGraph graph, INodeGroup group)
+			: this(group.AgentType, group.Nodes.Select(x => new NewNode(graph, x)).ToList())
+		{
 		}
 	}
 
@@ -616,4 +683,9 @@ namespace Horde.Server.Jobs.Graphs
 			Nodes = nodes;
 		}
 	}
+
+	/// <summary>
+	/// Information about an artifact
+	/// </summary>
+	public record class NewGraphArtifact(ArtifactName Name, ArtifactType Type, string Description, string BasePath, List<string> Keys, List<string> Metadata, string OutputName);
 }

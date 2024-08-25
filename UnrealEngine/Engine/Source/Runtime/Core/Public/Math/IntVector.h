@@ -581,6 +581,12 @@ struct TIntVector2
 		IntType XY[2];
 	};
 
+	/** An int point with zeroed values. */
+	static const TIntVector2 ZeroValue;
+
+	/** An int point with INDEX_NONE values. */
+	static const TIntVector2 NoneValue;
+
 	TIntVector2() = default;
 
 	TIntVector2(IntType InX, IntType InY)
@@ -813,6 +819,12 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	bool SerializeFromMismatchedTag(FName StructTag, FArchive& Ar);
 };
+
+template <typename IntType>
+const TIntVector2<IntType> TIntVector2<IntType>::ZeroValue(0, 0);
+
+template <typename IntType>
+const TIntVector2<IntType> TIntVector2<IntType>::NoneValue(INDEX_NONE, INDEX_NONE);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 

@@ -177,11 +177,13 @@ private:
 	FString CoerceValueRaw(FHLSLMaterialTranslator& Translator, const FString& Token, const FDerivInfo& SrcInfo, EDerivativeType DstType);
 	FString CoerceValueDeriv(const FString& Token, const FDerivInfo& SrcInfo, EDerivativeType DstType);
 
+	bool IsConstFloatOfPow2Expression(FHLSLMaterialTranslator& Translator, int32 ExpressionCode);
+
 	void EnableGeneratedDepencencies();
 
 	// State to keep track of which derivative functions have been used and need to be generated.
 	bool bFunc1OpIsEnabled[(int32)EFunc1::Num][NumDerivativeTypes] = {};
-	bool bFunc2OpIsEnabled[(int32)EFunc2::Num][NumDerivativeTypes] = {};
+	bool bFunc2OpIsEnabled[(int32)EFunc2::Num][NumDerivativeTypes][NumDerivativeTypes] = {};
 
 	bool bConstructDerivEnabled[NumDerivativeTypes] = {};
 	bool bConstructConstantDerivEnabled[NumDerivativeTypes] = {};

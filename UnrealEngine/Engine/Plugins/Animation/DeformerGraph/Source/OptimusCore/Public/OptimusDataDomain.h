@@ -6,6 +6,8 @@
 
 #include "OptimusDataDomain.generated.h"
 
+struct FOptimusExecutionDomain;
+
 namespace Optimus::DomainName
 {
 	extern OPTIMUSCORE_API const FName Singleton;
@@ -63,6 +65,8 @@ struct OPTIMUSCORE_API FOptimusDataDomain
 		Type(EOptimusDataDomainType::Expression),
 		Expression(MoveTemp(InExpression))
 	{}
+
+	FOptimusDataDomain(const FOptimusExecutionDomain& InExecutionDomain);
 	
 	UPROPERTY(EditAnywhere, Category = DataDomain)
 	EOptimusDataDomainType Type = EOptimusDataDomainType::Dimensional;
@@ -74,21 +78,53 @@ struct OPTIMUSCORE_API FOptimusDataDomain
 	UPROPERTY(EditAnywhere, Category = DataDomain, meta=(ClampMin=1, UIMax=8, SupportDynamicSliderMaxValue="true", EditCondition="DomainType==EOptimusDataDomainType::Dimensional"))
 	int32 Multiplier = 1;
 
-	//  
 	UPROPERTY(EditAnywhere, Category = DataDomain, meta=(EditCondition="DomainType==EOptimusDataDomainType::Expression"))
 	FString Expression;
 
-	/** A convenience function to compute element counts from a data domain based on execution domain element counts.
-	 *  Current limitation is that it will only return values for zero- or one-dimensional domains, or expressions.
-	 *  If an expression is invalid, or the dimension counts are greater than one, and empty array is returned.
-	 *  \param InDomainCounts A map of execution domains and their element counts.   
-	 */
-	TOptional<int32> GetElementCount(TMap<FName, int32> InDomainCounts) const;
 	
 	/** Convenience function to check if this data domain is a singleton */
 	bool IsSingleton() const
 	{
 		return Type == EOptimusDataDomainType::Dimensional && DimensionNames.IsEmpty();
+	}
+
+	/** Convenience function to check if this data domain is Multi-dimensional*/
+	bool IsMultiDimensional() const
+	{
+		return Type == EOptimusDataDomainType::Dimensional && DimensionNames.Num() > 1;
+	}
+
+	int NumDimensions() const
+	{
+		if (Type == EOptimusDataDomainType::Dimensional)
+		{
+			return DimensionNames.Num();
+		}
+
+		if (Type == EOptimusDataDomainType::Expression)
+		{
+			return 1;
+		}
+
+		checkNoEntry();
+		return 0;
+	}
+	
+	/** Convenience function to check if this data domain is One-dimensional*/
+	bool IsOneDimensional() const
+	{
+		return (Type == EOptimusDataDomainType::Dimensional && DimensionNames.Num() == 1 ) ||
+			(Type == EOptimusDataDomainType::Expression);
+	}
+
+	bool IsFullyDefined() const
+	{
+		if (Type == EOptimusDataDomainType::Expression && Expression.IsEmpty())
+		{
+			return false;
+		}
+
+		return true;
 	}
 
 	/** Convert the data domain to a text serializable string */
@@ -101,6 +137,14 @@ struct OPTIMUSCORE_API FOptimusDataDomain
 	bool operator!=(const FOptimusDataDomain& InOtherDomain) const { return !operator==(InOtherDomain); }
 	void PostSerialize(const FArchive& Ar);
 	void BackCompFixupLevels();
+
+	TOptional<FString> AsExpression() const;
+
+	TSet<FName> GetUsedConstants() const;
+
+	FString GetDisplayName() const;
+
+	static bool AreCompatible(const FOptimusDataDomain& InOutput, const FOptimusDataDomain& InInput, FString* OutReason);
 	
 private:
 	UPROPERTY()

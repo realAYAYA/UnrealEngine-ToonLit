@@ -308,18 +308,6 @@ public:
 };
 
 UCLASS()
-class CONTENTBROWSER_API UContentBrowserFilterListContext : public UObject
-{
-	GENERATED_BODY()
-
-public:
-
-	TWeakPtr<SFilterList> FilterList;
-
-	EAssetTypeCategories::Type MenuExpansion;
-};
-
-UCLASS()
 class CONTENTBROWSER_API UContentBrowserAddNewContextMenuContext : public UObject
 {
 	GENERATED_BODY()

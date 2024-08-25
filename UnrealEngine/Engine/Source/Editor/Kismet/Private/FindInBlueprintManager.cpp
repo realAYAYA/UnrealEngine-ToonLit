@@ -6,6 +6,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 #include "Async/ParallelFor.h"
+#include "Async/TaskGraphInterfaces.h"
 #include "Misc/ScopeLock.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/MemoryReader.h"
@@ -38,6 +39,7 @@
 #include "WorkspaceMenuStructure.h"
 #include "WorkspaceMenuStructureModule.h"
 
+#include "BlueprintEditorSettings.h"
 #include "Blueprint/BlueprintExtension.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -88,6 +90,7 @@ const FText FFindInBlueprintSearchTags::FiB_Comment = LOCTEXT("Comment", "Commen
 const FText FFindInBlueprintSearchTags::FiB_Path = LOCTEXT("Path", "Path");
 const FText FFindInBlueprintSearchTags::FiB_ParentClass = LOCTEXT("ParentClass", "ParentClass");
 const FText FFindInBlueprintSearchTags::FiB_Interfaces = LOCTEXT("Interfaces", "Interfaces");
+const FText FFindInBlueprintSearchTags::FiB_FuncOriginClass = LOCTEXT("FuncOriginClass", "FuncOriginClass");
 
 const FText FFindInBlueprintSearchTags::FiB_Pins = LOCTEXT("Pins", "Pins");
 const FText FFindInBlueprintSearchTags::FiB_PinCategory = LOCTEXT("PinCategory", "PinCategory");
@@ -1088,8 +1091,10 @@ namespace BlueprintSearchMetaDataHelpers
 						InWriter->WriteArrayStart(FFindInBlueprintSearchTags::FiB_Pins);
 						for (const UEdGraphPin* Pin : Node->Pins)
 						{
-							// Hidden pins are not searchable
-							if (Pin->bHidden == false)
+							// Hidden pins are not searchable, except for 'self' pins which represent the target type.
+							// Indexing self pins, even if they are hidden, allows searching for BP function library
+							// function calls and nodes that automatically target self like parent function calls.
+							if (Pin->bHidden == false || Pin->PinName == UEdGraphSchema_K2::PN_Self)
 							{
 								InWriter->WriteObjectStart();
 								{
@@ -1412,11 +1417,12 @@ public:
 				CSV_CUSTOM_STAT(FindInBlueprint, IndexedAssetCountThisFrame, 1, ECsvCustomStatOp::Accumulate);
 
 				FSoftObjectPath AssetPath = AssetPathsToIndex[ArrayIdx];
-				FSearchData SearchData = FFindInBlueprintSearchManager::Get().GetSearchDataForAssetPath(AssetPath);
+				FFindInBlueprintSearchManager& FindManager = FFindInBlueprintSearchManager::Get();
+				FSearchData SearchData = FindManager.GetSearchDataForAssetPath(AssetPath);
 				if (SearchData.IsValid() && !SearchData.IsMarkedForDeletion() && !SearchData.IsIndexingCompleted())
 				{
 					// Generate the metadata tag value if it was not previously cached or loaded.
-					if (SearchData.Value.Len() == 0)
+					if (!SearchData.HasEncodedValue())
 					{
 						// This must be done on the main thread, so enqueue it and continue.
 						Controller->AddAssetPathToGatherQueue(AssetPath);
@@ -1426,12 +1432,8 @@ public:
 						if (bEnableFullIndexingPass)
 						{
 							// Unpack the metadata tag and rebuild the index for this asset.
-							const FString AssetPathAsString = AssetPath.ToString();
-							if (FiBSerializationHelpers::ValidateSearchDataVersionInfo(AssetPathAsString, SearchData.Value, SearchData.VersionInfo))
+							if (FindManager.ProcessEncodedValueForUnloadedBlueprint(SearchData))
 							{
-								SearchData.ImaginaryBlueprint = MakeShareable(new FImaginaryBlueprint(FPaths::GetBaseFilename(AssetPathAsString), AssetPathAsString, SearchData.ParentClass, SearchData.Interfaces, SearchData.Value, SearchData.VersionInfo));
-								SearchData.Value.Empty();
-
 								// Build the full index using a BFS traversal.
 								TArray<FImaginaryFiBDataSharedPtr> IndexNodes = { SearchData.ImaginaryBlueprint };
 								while (IndexNodes.Num() > 0)
@@ -1455,7 +1457,7 @@ public:
 							SearchData.StateFlags |= ESearchDataStateFlags::IsIndexed;
 
 							// Update this entry in the search database (thread-safe).
-							FFindInBlueprintSearchManager::Get().ApplySearchDataToDatabase(MoveTemp(SearchData));
+							FindManager.ApplySearchDataToDatabase(MoveTemp(SearchData));
 						}
 
 						// Signal that indexing has been completed for this asset path.
@@ -2165,17 +2167,14 @@ void FFindInBlueprintSearchManager::OnAssetAdded(const FAssetData& InAssetData)
 		return;
 	}
 
-	if (InAssetData.IsAssetLoaded())
+	if (UObject* AssetObject = InAssetData.FastGetAsset(false))
 	{
-		if (UObject* AssetObject = InAssetData.GetAsset())
+		if (ensureMsgf(AssetObject->IsA(AssetClass), TEXT("AssetClass (%s) matched handler, but does not match actual object type (%s) for asset: %s."), *AssetClass->GetName(), *AssetObject->GetClass()->GetName(), *AssetObject->GetPathName()))
 		{
-			if (ensureMsgf(AssetObject->IsA(AssetClass), TEXT("AssetClass (%s) matched handler, but does not match actual object type (%s) for asset: %s."), *AssetClass->GetName(), *AssetObject->GetClass()->GetName(), *AssetObject->GetPathName()))
+			UBlueprint* Blueprint = Handler->RetrieveBlueprint(AssetObject);
+			if (Blueprint)
 			{
-				UBlueprint* Blueprint = Handler->RetrieveBlueprint(AssetObject);
-				if (Blueprint)
-				{
-					AddOrUpdateBlueprintSearchMetadata(Blueprint);
-				}
+				AddOrUpdateBlueprintSearchMetadata(Blueprint);
 			}
 		}
 	}
@@ -2191,14 +2190,23 @@ void FFindInBlueprintSearchManager::AddUnloadedBlueprintSearchMetadata(const FAs
 	FAssetDataTagMapSharedView::FFindTagResult Result = InAssetData.TagsAndValues.FindTag(FBlueprintTags::FindInBlueprintsData);
 	if (Result.IsSet())
 	{
-		const FString& FiBVersionedSearchData = Result.GetValue();
-		if (FiBVersionedSearchData.Len() == 0)
+		if (bDisableImmediateAssetDiscovery)
 		{
-			UnindexedAssets.Add(InAssetData.GetSoftObjectPath());
+			// If the versioned key is set at all, we assume it is valid and will parse it later
+			ExtractUnloadedFiBData(InAssetData, nullptr, FBlueprintTags::FindInBlueprintsData, EFiBVersion::FIB_VER_NONE);
 		}
 		else
 		{
-			ExtractUnloadedFiBData(InAssetData, FiBVersionedSearchData, EFiBVersion::FIB_VER_NONE);
+			// Extract it now
+			FString FiBVersionedSearchData = Result.GetValue();
+			if (FiBVersionedSearchData.Len() == 0)
+			{
+				UnindexedAssets.Add(InAssetData.GetSoftObjectPath());
+			}
+			else
+			{
+				ExtractUnloadedFiBData(InAssetData, &FiBVersionedSearchData, NAME_None, EFiBVersion::FIB_VER_NONE);
+			}
 		}
 	}
 	else
@@ -2207,18 +2215,65 @@ void FFindInBlueprintSearchManager::AddUnloadedBlueprintSearchMetadata(const FAs
 		FAssetDataTagMapSharedView::FFindTagResult ResultLegacy = InAssetData.TagsAndValues.FindTag(FBlueprintTags::UnversionedFindInBlueprintsData);
 		if (ResultLegacy.IsSet())
 		{
-			ExtractUnloadedFiBData(InAssetData, ResultLegacy.GetValue(), EFiBVersion::FIB_VER_BASE);
+			if (bDisableImmediateAssetDiscovery)
+			{
+				ExtractUnloadedFiBData(InAssetData, nullptr, FBlueprintTags::UnversionedFindInBlueprintsData, EFiBVersion::FIB_VER_BASE);
+			}
+			else
+			{
+				FString FiBUnversionedSearchData = ResultLegacy.GetValue();
+				ExtractUnloadedFiBData(InAssetData, &FiBUnversionedSearchData, NAME_None, EFiBVersion::FIB_VER_BASE);
+			}
 		}
 		// The asset has no FiB data, keep track of it so we can inform the user
 		else
 		{
 			UnindexedAssets.Add(InAssetData.GetSoftObjectPath());
 		}
-
 	}
 }
 
-void FFindInBlueprintSearchManager::ExtractUnloadedFiBData(const FAssetData& InAssetData, const FString& InFiBData, EFiBVersion InFiBDataVersion)
+bool FFindInBlueprintSearchManager::ProcessEncodedValueForUnloadedBlueprint(FSearchData& SearchData)
+{
+	const FString AssetPath = SearchData.AssetPath.ToString();
+	FString TempEncodedString;
+	if (!SearchData.AssetKeyForValue.IsNone() && SearchData.Value.IsEmpty())
+	{
+		// Get the string from the asset registry now, use the on disk version to avoid inconsistencies
+		FAssetData AssetData;
+		AssetData = AssetRegistryModule->Get().GetAssetByObjectPath(SearchData.AssetPath, true);
+		if (ensure(AssetData.IsValid()))
+		{
+			FAssetDataTagMapSharedView::FFindTagResult Result = AssetData.TagsAndValues.FindTag(SearchData.AssetKeyForValue);
+			if (Result.IsSet())
+			{
+				// This makes a large string copy because the version in the asset data cannot be treated as an FString
+				TempEncodedString = Result.GetValue();	
+			}
+		}
+		if (TempEncodedString.Len() == 0)
+		{
+			// This asset was saved with an empty tag which is invalid
+			UE_LOG(LogFindInBlueprint, Warning, TEXT("%s AssetData loaded with %s has an invalid FiB tag!"), *AssetData.GetSoftObjectPath().ToString(), *AssetPath);
+
+			return false;
+		}
+	}
+
+	const FString& EncodedString = !TempEncodedString.IsEmpty() ? TempEncodedString : SearchData.Value;
+	if (FiBSerializationHelpers::ValidateSearchDataVersionInfo(AssetPath, EncodedString, SearchData.VersionInfo))
+	{
+		// Parse the data into json and then clear the memory
+		SearchData.ImaginaryBlueprint = MakeShareable(new FImaginaryBlueprint(FPaths::GetBaseFilename(AssetPath), AssetPath, SearchData.ParentClass, SearchData.Interfaces, EncodedString, SearchData.VersionInfo));
+		SearchData.ClearEncodedValue();
+
+		return true;
+	}
+
+	return false;
+}
+
+void FFindInBlueprintSearchManager::ExtractUnloadedFiBData(const FAssetData& InAssetData, FString* InFiBData, FName InKeyForFiBData, EFiBVersion InFiBDataVersion)
 {
 	CSV_SCOPED_TIMING_STAT(FindInBlueprint, ExtractUnloadedFiBData);
 	CSV_CUSTOM_STAT(FindInBlueprint, ExtractUnloadedCountThisFrame, 1, ECsvCustomStatOp::Accumulate);
@@ -2281,13 +2336,22 @@ void FFindInBlueprintSearchManager::ExtractUnloadedFiBData(const FAssetData& InA
 		}
 	}
 
-	NewSearchData.Value = InFiBData;
+	if (InFiBData)
+	{
+		NewSearchData.Value = MoveTemp(*InFiBData);
+	}
+	else
+	{
+		NewSearchData.Value.Empty();
+	}
+
+	NewSearchData.AssetKeyForValue = InKeyForFiBData;
 
 	// This will be set to 'None' if the data is versioned. Deserialization of the actual version from the tag value is deferred until later.
 	NewSearchData.VersionInfo.FiBDataVersion = InFiBDataVersion;
 
 	// In these modes, or if there is no tag data, no additional indexing work is deferred for unloaded assets.
-	if (!bDisableDeferredIndexing && !bDisableThreadedIndexing && NewSearchData.Value.Len() > 0)
+	if (!bDisableDeferredIndexing && !bDisableThreadedIndexing && NewSearchData.HasEncodedValue())
 	{
 		// Add it to the list of assets that require a full index rebuild from the metadata. This work will not block the main thread and is decoupled from the search thread.
 		PendingAssets.Add(NewSearchData.AssetPath);
@@ -2579,7 +2643,7 @@ void FFindInBlueprintSearchManager::AddOrUpdateBlueprintSearchMetadata(UBlueprin
 	if (SearchData.IsValid())
 	{
 		// Clear any previously-gathered data.
-		SearchData.Value.Empty();
+		SearchData.ClearEncodedValue();
 
 		// Update version info stored in database. This indicates which format to use when regenerating the tag value.
 		SearchData.VersionInfo = FSearchDataVersionInfo::Current;
@@ -2817,13 +2881,11 @@ bool FFindInBlueprintSearchManager::ContinueSearchQuery(const FStreamSearch* InS
 			SearchData = GetSearchDataForAssetPath(SearchData.AssetPath);
 
 			// If there is FiB data, parse it into an ImaginaryBlueprint
-			if (SearchData.IsValid() && SearchData.Value.Len() > 0)
+			if (SearchData.IsValid() && SearchData.HasEncodedValue())
 			{
-				const FString AssetPath = SearchData.AssetPath.ToString();
-				if (FiBSerializationHelpers::ValidateSearchDataVersionInfo(AssetPath, SearchData.Value, SearchData.VersionInfo))
+				if (ProcessEncodedValueForUnloadedBlueprint(SearchData))
 				{
-					SearchData.ImaginaryBlueprint = MakeShareable(new FImaginaryBlueprint(FPaths::GetBaseFilename(SearchData.AssetPath.ToString()), SearchData.AssetPath.ToString(), SearchData.ParentClass, SearchData.Interfaces, SearchData.Value, SearchData.VersionInfo));
-					SearchData.Value.Empty();
+					check(SearchData.ImaginaryBlueprint.IsValid());
 
 					// In the case of parallel global searches, two search threads may be looking at the same entry. Thus, we only allow one search thread to be actively parsing JSON nodes.
 					SearchData.ImaginaryBlueprint->EnableInterlockedParsing();
@@ -2915,9 +2977,21 @@ void FFindInBlueprintSearchManager::PauseFindInBlueprintSearch()
 
 	// It is UNSAFE to lock any other critical section here, threads need them to finish a cycle of searching. Next cycle they will pause
 
+	// We don't expect to be pausing a search off the main/game thread (i.e. GC).
+	check(IsInGameThread());
+	FTaskGraphInterface& TaskGraphInterface = FTaskGraphInterface::Get();
+
 	// Wait until all threads have come to a stop, it won't take long
 	while(ActiveSearchCounter.GetValue() > 0)
 	{
+		// Async tasks may have been registered to the game thread, so make sure
+		// we're processing those here (e.g. FSearchableValueInfo::GetDisplayText).
+		if (TaskGraphInterface.IsThreadProcessingTasks(ENamedThreads::GameThread))
+		{
+			TaskGraphInterface.ProcessThreadUntilIdle(ENamedThreads::GameThread);
+		}
+
+		// Yield some time to other threads.
 		FPlatformProcess::Sleep(0.1f);
 	}
 }
@@ -3236,28 +3310,26 @@ void FFindInBlueprintSearchManager::CacheAllAssets(TWeakPtr< SFindInBlueprints >
 			FText DialogTitle = LOCTEXT("ConfirmIndexAll_Title", "Indexing All");
 			FFormatNamedArguments Args;
 			Args.Add(TEXT("PackageCount"), UnindexedAssets.Num() + BlueprintsToUpdate.Num());
+			Args.Add(TEXT("UnindexedCount"), UnindexedAssets.Num());
+			Args.Add(TEXT("OutOfDateCount"), BlueprintsToUpdate.Num());
 
-			FText DialogDisplayText;
+			// Retrieve from blueprint editor settings whether user is allowed to checkout and resave
+			const bool bCanCheckoutResaveAll = GetDefault<UBlueprintEditorSettings>()->AllowIndexAllBlueprints == EFiBIndexAllPermission::CheckoutAndResave;
 
-			if (UnindexedAssets.Num() && BlueprintsToUpdate.Num())
+			// Present a prompt depending on whether checkout is allowed
+			EAppReturnType::Type ReturnValue;
+			if (bCanCheckoutResaveAll)
 			{
-				Args.Add(TEXT("PackageCount"), UnindexedAssets.Num() + BlueprintsToUpdate.Num());
-				Args.Add(TEXT("UnindexedCount"), UnindexedAssets.Num());
-				Args.Add(TEXT("OutOfDateCount"), BlueprintsToUpdate.Num());
-				DialogDisplayText = FText::Format(LOCTEXT("CacheAllConfirmationMessage_UnindexedAndOutOfDate", "This process can take a long time and the editor may become unresponsive; there are {PackageCount} ({UnindexedCount} Unindexed/{OutOfDateCount} Out-of-Date) Blueprints to load.\n\nWould you like to checkout, load, and save all Blueprints to make this indexing permanent? Otherwise, all Blueprints will still be loaded but you will be required to re-index the next time you start the editor!"), Args);
+				const FText DialogDisplayText = FText::Format(LOCTEXT("CacheAllConfirmationMessage_UnindexedAndOutOfDate_WithCheckout", "About to CHECKOUT and RESAVE {PackageCount} Blueprints ({UnindexedCount} unindexed/{OutOfDateCount} out-of-date)! The editor may become unresponsive while these assets are loaded for indexing. Save your work before initiating this: broken assets and memory usage can affect editor stability. \n\nLoaded assets must be resaved to make this indexing permanent, otherwise their updated searchability is for this editor session only. Select 'Yes' to checkout, load and resave all Blueprints with an outdated index. Select 'No' to load these Blueprints only without checking out and resaving them."), Args);
+				ReturnValue = FMessageDialog::Open(EAppMsgType::YesNoCancel, DialogDisplayText, DialogTitle);
 			}
-			else if (UnindexedAssets.Num() && BlueprintsToUpdate.Num() == 0)
+			else
 			{
-				DialogDisplayText = FText::Format(LOCTEXT("CacheAllConfirmationMessage_UnindexedOnly", "This process can take a long time and the editor may become unresponsive; there are {PackageCount} unindexed Blueprints to load.\n\nWould you like to checkout, load, and save all Blueprints to make this indexing permanent? Otherwise, all Blueprints will still be loaded but you will be required to re-index the next time you start the editor!"), Args);
-			}
-			else if (UnindexedAssets.Num() == 0 && BlueprintsToUpdate.Num())
-			{
-				DialogDisplayText = FText::Format(LOCTEXT("CacheAllConfirmationMessage_OutOfDateOnly", "This process can take a long time and the editor may become unresponsive; there are {PackageCount} out-of-date Blueprints to load.\n\nWould you like to checkout, load, and save all Blueprints to make this indexing permanent? Otherwise, all Blueprints will still be loaded but you will be required to re-index the next time you start the editor!"), Args);
+				const FText DialogDisplayText = FText::Format(LOCTEXT("CacheAllConfirmationMessage_UnindexedAndOutOfDate_LoadOnly", "About to load {PackageCount} Blueprints ({UnindexedCount} unindexed/{OutOfDateCount} out-of-date)! The editor may become unresponsive while these assets are loaded for indexing. Save your work before initiating this: broken assets and memory usage can affect editor stability. \n\nLoaded assets must be resaved to make this indexing permanent, otherwise their updated searchability is for this editor session only. Your editor settings disallow resaving all these assets from this window, see Blueprint Editor Settings: AllowIndexAllBlueprints."), Args);
+				ReturnValue = FMessageDialog::Open(EAppMsgType::OkCancel, DialogDisplayText, DialogTitle);
 			}
 
-			const EAppReturnType::Type ReturnValue = FMessageDialog::Open(EAppMsgType::YesNoCancel, DialogDisplayText, DialogTitle);
-
-			// If Yes is chosen, checkout and save all Blueprints, if No is chosen, only load all Blueprints
+			// If checkout is allowed and Yes is chosen, checkout and save all Blueprints. Otherwise only load all Blueprints. Cancel aborts everything.
 			if (ReturnValue != EAppReturnType::Cancel)
 			{
 				FailedToCachePaths.Empty();
@@ -3266,7 +3338,7 @@ void FFindInBlueprintSearchManager::CacheAllAssets(TWeakPtr< SFindInBlueprints >
 				TempUncachedAssets.Append(UnindexedAssets);
 				TempUncachedAssets.Append(BlueprintsToUpdate);
 
-				const bool bCheckOutAndSave = (ReturnValue == EAppReturnType::Yes);
+				const bool bCheckOutAndSave = bCanCheckoutResaveAll && (ReturnValue == EAppReturnType::Yes);
 				CacheParams.OpFlags = EFiBCacheOpFlags::ShowProgress | EFiBCacheOpFlags::AllowUserCancel | EFiBCacheOpFlags::AllowUserCloseProgress;
 				if (bCheckOutAndSave)
 				{
@@ -3290,6 +3362,60 @@ void FFindInBlueprintSearchManager::CacheAllAssets(TWeakPtr< SFindInBlueprints >
 			}
 		}
 	}
+}
+
+void FFindInBlueprintSearchManager::ExportOutdatedAssetList()
+{
+	// Construct path for output text file
+	const FString FileLocation = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
+	const FString FullPath = FString::Printf(TEXT("%s/FindInBlueprints_OutdatedAssetList.txt"), *FileLocation);
+
+	if (FArchive* Ar = IFileManager::Get().CreateFileWriter(*FullPath))
+	{
+		// Write out all asset paths of unindexed blueprints
+		const FString UnindexedHeader = TEXT("Unindexed assets:\n");
+		Ar->Serialize(TCHAR_TO_ANSI(*UnindexedHeader), UnindexedHeader.Len());
+
+		for (const FSoftObjectPath& SoftObjPath : UnindexedAssets)
+		{
+			const FString UnindexedEntry = FString::Printf(TEXT("%s\n"), *SoftObjPath.ToString());
+			Ar->Serialize(TCHAR_TO_ANSI(*UnindexedEntry), UnindexedEntry.Len());
+		}
+
+		// Write out all asset paths of blueprints with out-of-data metadata
+		const FString OutOfDateHeader = TEXT("\nOut-of-date assets:\n");
+		Ar->Serialize(TCHAR_TO_ANSI(*OutOfDateHeader), OutOfDateHeader.Len());
+		for (FSearchData SearchData : SearchArray)
+		{
+			if ((SearchData.Value.Len() != 0 || SearchData.ImaginaryBlueprint.IsValid()) && SearchData.VersionInfo.FiBDataVersion < EFiBVersion::FIB_VER_LATEST)
+			{
+				const FString OutdatedEntry = FString::Printf(TEXT("%s\n"), *SearchData.AssetPath.ToString());
+				Ar->Serialize(TCHAR_TO_ANSI(*OutdatedEntry), OutdatedEntry.Len());
+			}
+		}
+
+		Ar->Close();
+		delete Ar;
+
+		// Log success message
+		FFormatNamedArguments Args;
+		Args.Add(TEXT("OutputPath"), FText::FromString(FullPath));
+		const FText ExportConfirmationText = FText::Format(LOCTEXT("ExportListConfirmationMessage", "Saved list of blueprints with out-of-date metadata to {OutputPath}"), Args);
+
+		UE_LOG(LogFindInBlueprint, Log, TEXT("%s"), *ExportConfirmationText.ToString());
+		FMessageDialog::Open(EAppMsgType::Ok, ExportConfirmationText);
+	}
+	else
+	{
+		// Log failure message
+		FFormatNamedArguments Args;
+		Args.Add(TEXT("OutputPath"), FText::FromString(FullPath));
+		const FText ExportFailureText = LOCTEXT("ExportListFailureMessage", "Failed to write to {OutputPath}");
+
+		UE_LOG(LogFindInBlueprint, Log, TEXT("%s"), *ExportFailureText.ToString());
+		FMessageDialog::Open(EAppMsgType::Ok, ExportFailureText);
+	}
+
 }
 
 void FFindInBlueprintSearchManager::CancelCacheAll(SFindInBlueprints* InFindInBlueprintWidget)
@@ -3438,7 +3564,7 @@ bool FFindInBlueprintSearchManager::IsAsyncSearchQueryInProgress() const
 	return ActiveSearchQueries.Num() > 0;
 }
 
-TSharedPtr< FJsonObject > FFindInBlueprintSearchManager::ConvertJsonStringToObject(FSearchDataVersionInfo InVersionInfo, FString InJsonString, TMap<int32, FText>& OutFTextLookupTable)
+TSharedPtr< FJsonObject > FFindInBlueprintSearchManager::ConvertJsonStringToObject(FSearchDataVersionInfo InVersionInfo, const FString& InJsonString, TMap<int32, FText>& OutFTextLookupTable)
 {
 	/** The searchable data is more complicated than a Json string, the Json being the main searchable body that is parsed. Below is a diagram of the full data:
 	 *  | int32 "Version" | int32 "Size" | TMap "Lookup Table" | Json String |
@@ -3626,6 +3752,7 @@ void FFindInBlueprintSearchManager::EnableGlobalFindResults(bool bEnable)
 		// Register the spawners for all global Find Results tabs
 		const FSlateIcon GlobalFindResultsIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.FindInBlueprints.MenuIcon");
 		GlobalFindResultsMenuItem = WorkspaceMenu::GetMenuStructure().GetToolsCategory()->AddGroup(
+			"FindInBlueprints",
 			LOCTEXT("WorkspaceMenu_GlobalFindResultsCategory", "Find in Blueprints"),
 			LOCTEXT("GlobalFindResultsMenuTooltipText", "Find references to functions, events and variables in all Blueprints."),
 			GlobalFindResultsIcon,

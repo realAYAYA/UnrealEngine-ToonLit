@@ -74,6 +74,12 @@ public:
 	FName FieldName;
 
 	/**
+	 * The exposed field's identifier.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RemoteControlEntity")
+	FName PropertyId;
+
+	/**
 	 * Path information pointing to this field
 	 */
 	UPROPERTY()
@@ -191,6 +197,13 @@ public:
 	FProperty* GetProperty() const;
 
 	/**
+ 	 * Get the container address.
+ 	 * @return The container address of the value exposed by this field or nullptr if it couldn't be resolved.
+ 	 * @note This field's binding must be valid to get the container address.
+ 	 */
+	void* GetFieldContainerAddress() const;
+
+	/**
 	 * Get the property handle with ability set and get property value directly.
 	 * @return The property handle for exposed property.
 	 */
@@ -202,7 +215,13 @@ public:
 	void EnableEditCondition();
 	
 	/** Returns whether the property is editable in a packaged build. */
-	bool IsEditableInPackaged() const;
+	bool IsEditableInPackaged(FString* OutError = nullptr) const;
+
+	/** Returns whether the property is editable in the Editor. */
+	bool IsEditableInEditor(FString* OutError = nullptr) const;
+
+	/** Returns whether the property is editable, will check for editor or packaged automatically */
+	bool IsEditable(FString* OutError = nullptr) const;
 
 	bool Serialize(FArchive& Ar);
 	void PostSerialize(const FArchive& Ar);

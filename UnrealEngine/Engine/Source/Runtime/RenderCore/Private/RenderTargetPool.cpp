@@ -65,7 +65,7 @@ static uint32 ComputeSizeInKB(FPooledRenderTarget& Element)
 	return (Element.ComputeMemorySize() + 1023) / 1024;
 }
 
-TRefCountPtr<IPooledRenderTarget> FRenderTargetPool::FindFreeElement(FRHITextureCreateInfo Desc, const TCHAR* Name)
+TRefCountPtr<IPooledRenderTarget> FRenderTargetPool::FindFreeElement(FRHICommandListBase& RHICmdList, FRHITextureCreateInfo Desc, const TCHAR* Name)
 {
 	FPooledRenderTarget* Found = 0;
 	uint32 FoundIndex = -1;
@@ -81,6 +81,8 @@ TRefCountPtr<IPooledRenderTarget> FRenderTargetPool::FindFreeElement(FRHITexture
 	//Desc.Flags |= ETextureCreateFlags::ForceIntoNonStreamingMemoryTracking;
 
 	const uint32 DescHash = GetTypeHash(Desc);
+
+	UE::TScopeLock Lock(Mutex);
 
 	for (uint32 Index = 0, Num = (uint32)PooledRenderTargets.Num(); Index < Num; ++Index)
 	{
@@ -113,15 +115,13 @@ TRefCountPtr<IPooledRenderTarget> FRenderTargetPool::FindFreeElement(FRHITexture
 			<< FRenderTargetPool_CreateTexture.Name(Name);
 #endif
 
-		FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
-
 		const ERHIAccess AccessInitial = ERHIAccess::SRVMask;
 		FRHITextureCreateDesc CreateDesc(Desc, AccessInitial, Name);
 		const static FLazyName ClassName(TEXT("FPooledRenderTarget"));
 		CreateDesc.SetClassName(ClassName);
 
 		Found = new FPooledRenderTarget(
-			RHICreateTexture(CreateDesc),
+			RHICmdList.CreateTexture(CreateDesc),
 			Translate(CreateDesc),
 			this);
 
@@ -160,16 +160,14 @@ TRefCountPtr<IPooledRenderTarget> FRenderTargetPool::FindFreeElement(FRHITexture
 	Found->UnusedForNFrames = 0;
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	RHIBindDebugLabelName(Found->GetRHI(), Name);
+	RHICmdList.BindDebugLabelName(Found->GetRHI(), Name);
 #endif
 
 	return TRefCountPtr<IPooledRenderTarget>(MoveTemp(Found));
 }
 
-bool FRenderTargetPool::FindFreeElement(const FRHITextureCreateInfo& Desc, TRefCountPtr<IPooledRenderTarget>& Out, const TCHAR* Name)
+bool FRenderTargetPool::FindFreeElement(FRHICommandListBase& RHICmdList, const FRHITextureCreateInfo& Desc, TRefCountPtr<IPooledRenderTarget>& Out, const TCHAR* Name)
 {
-	check(IsInRenderingThread());
-
 	if (!Desc.IsValid())
 	{
 		// no need to do anything
@@ -179,10 +177,13 @@ bool FRenderTargetPool::FindFreeElement(const FRHITextureCreateInfo& Desc, TRefC
 	// Querying a render target that have no mip levels makes no sens.
 	check(Desc.NumMips > 0);
 
+	FPooledRenderTarget* Current = nullptr;
+	bool bFreeCurrent = false;
+
 	// if we can keep the current one, do that
 	if (Out)
 	{
-		FPooledRenderTarget* Current = (FPooledRenderTarget*)Out.GetReference();
+		Current = (FPooledRenderTarget*)Out.GetReference();
 
 		if (Translate(Out->GetDesc()) == Desc)
 		{
@@ -191,7 +192,7 @@ bool FRenderTargetPool::FindFreeElement(const FRHITextureCreateInfo& Desc, TRefC
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 			if (Current->GetRHI())
 			{
-				RHIBindDebugLabelName(Current->GetRHI(), Name);
+				RHICmdList.BindDebugLabelName(Current->GetRHI(), Name);
 			}
 #endif
 			check(!Out->IsFree());
@@ -201,20 +202,23 @@ bool FRenderTargetPool::FindFreeElement(const FRHITextureCreateInfo& Desc, TRefC
 		{
 			// release old reference, it might free a RT we can use
 			Out = 0;
-
-			if (Current->IsFree())
-			{
-				AllocationLevelInKB -= ComputeSizeInKB(*Current);
-				TRACE_COUNTER_SUBTRACT(RenderTargetPoolCount, 1);
-				TRACE_COUNTER_SET(RenderTargetPoolSize, (int64)AllocationLevelInKB * 1024);
-				int32 Index = FindIndex(Current);
-				check(Index >= 0);
-				FreeElementAtIndex(Index);
-			}
+			bFreeCurrent = Current->IsFree();
 		}
 	}
 
-	Out = FindFreeElement(Desc, Name);
+	UE::TScopeLock Lock(Mutex);
+
+	if (bFreeCurrent)
+	{
+		AllocationLevelInKB -= ComputeSizeInKB(*Current);
+		TRACE_COUNTER_SUBTRACT(RenderTargetPoolCount, 1);
+		TRACE_COUNTER_SET(RenderTargetPoolSize, (int64)AllocationLevelInKB * 1024);
+		int32 Index = FindIndex(Current);
+		check(Index >= 0);
+		FreeElementAtIndex(Index);
+	}
+
+	Out = FindFreeElement(RHICmdList, Desc, Name);
 	return false;
 }
 
@@ -227,6 +231,7 @@ void FRenderTargetPool::CreateUntrackedElement(const FPooledRenderTargetDesc& De
 
 void FRenderTargetPool::GetStats(uint32& OutWholeCount, uint32& OutWholePoolInKB, uint32& OutUsedInKB) const
 {
+	UE::TScopeLock Lock(Mutex);
 	OutWholeCount = (uint32)PooledRenderTargets.Num();
 	OutUsedInKB = 0;
 	OutWholePoolInKB = 0;
@@ -254,13 +259,14 @@ void FRenderTargetPool::GetStats(uint32& OutWholeCount, uint32& OutWholePoolInKB
 
 void FRenderTargetPool::TickPoolElements()
 {
+	UE::TScopeLock Lock(Mutex);
+
 	uint32 DeferredAllocationLevelInKB = 0;
 	for (FPooledRenderTarget* Element : DeferredDeleteArray)
 	{
 		DeferredAllocationLevelInKB += ComputeSizeInKB(*Element);
 	}
 
-	check(IsInRenderingThread());
 	DeferredDeleteArray.Reset();
 
 	uint32 MinimumPoolSizeInKB;
@@ -370,7 +376,7 @@ void FRenderTargetPool::TickPoolElements()
 
 int32 FRenderTargetPool::FindIndex(IPooledRenderTarget* In) const
 {
-	check(IsInRenderingThread());
+	UE::TScopeLock Lock(Mutex);
 
 	if (In)
 	{
@@ -398,7 +404,7 @@ void FRenderTargetPool::FreeElementAtIndex(int32 Index)
 
 void FRenderTargetPool::FreeUnusedResource(TRefCountPtr<IPooledRenderTarget>& In)
 {
-	check(IsInRenderingThread());
+	UE::TScopeLock Lock(Mutex);
 
 	int32 Index = FindIndex(In);
 
@@ -425,7 +431,7 @@ void FRenderTargetPool::FreeUnusedResource(TRefCountPtr<IPooledRenderTarget>& In
 
 void FRenderTargetPool::FreeUnusedResources()
 {
-	check(IsInRenderingThread());
+	UE::TScopeLock Lock(Mutex);
 
 	for (uint32 i = 0, Num = (uint32)PooledRenderTargets.Num(); i < Num; ++i)
 	{
@@ -447,6 +453,8 @@ void FRenderTargetPool::FreeUnusedResources()
 
 void FRenderTargetPool::DumpMemoryUsage(FOutputDevice& OutputDevice)
 {
+	UE::TScopeLock Lock(Mutex);
+
 	uint32 UnusedAllocationInKB = 0;
 
 	OutputDevice.Logf(TEXT("Pooled Render Targets:"));
@@ -510,7 +518,7 @@ void FRenderTargetPool::DumpMemoryUsage(FOutputDevice& OutputDevice)
 
 void FRenderTargetPool::ReleaseRHI()
 {
-	check(IsInRenderingThread());
+	UE::TScopeLock Lock(Mutex);
 	DeferredDeleteArray.Empty();
 	PooledRenderTargets.Empty();
 }
@@ -549,8 +557,6 @@ void FRenderTargetPool::CompactPool()
 
 bool FPooledRenderTarget::OnFrameStart()
 {
-	check(IsInRenderingThread());
-
 	// If there are any references to the pooled render target other than the pool itself, then it may not be freed.
 	if (!IsFree())
 	{

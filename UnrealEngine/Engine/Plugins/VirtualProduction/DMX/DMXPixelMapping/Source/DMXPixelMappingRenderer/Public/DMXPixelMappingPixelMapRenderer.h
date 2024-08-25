@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "PixelFormat.h"
 #include "UObject/Object.h"
 
 #include "DMXPixelMappingPixelMapRenderer.generated.h"
@@ -54,6 +55,10 @@ public:
 	UDMXPixelMappingPixelMapRenderer();
 
 	/** Sets the elements to render */
+	void SetElements(const TArray<TSharedRef<UE::DMXPixelMapping::Rendering::FPixelMapRenderElement>>& InElements, EPixelFormat InFormat);
+
+	/** DEPRECATED 5.4 - Sets the elements to render */
+	UE_DEPRECATED(5.4, "It is now required to specify a pixel format, see related overload.")
 	void SetElements(const TArray<TSharedRef<UE::DMXPixelMapping::Rendering::FPixelMapRenderElement>>& InElements);
 
 	/** Renders the current elements */

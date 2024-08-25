@@ -293,7 +293,7 @@ namespace ChaosTest
 				const FVec3 X2 = { 0.0, 0.0, 200.0 };
 				const FReal Radius = 100.0;
 				const FCapsule Capsule = FCapsule(X1, X2, Radius);
-				TSharedPtr<FCapsule> CapsuleShared = MakeShared<FCapsule>(X1, X2, Radius);
+				TRefCountPtr<FCapsule> CapsuleShared( new FCapsule(X1, X2, Radius));
 				FVec3 TriMeshScale = { 0.01, 0.01, 0.01 };
 				TImplicitObjectScaled<FCapsule> ScaledCapsule = TImplicitObjectScaled<FCapsule>(CapsuleShared, TriMeshScale);
 				{
@@ -386,7 +386,7 @@ namespace ChaosTest
 				const FVec3 X1 = { 0.0, 0.0, -20.0 };
 				const FVec3 X2 = { 0.0, 0.0, 20.0 };
 				const FReal Radius = 10.0;
-				TSharedPtr<FCapsule> CapsuleShared = MakeShared<FCapsule>(X1, X2, Radius);
+				TRefCountPtr<FCapsule> CapsuleShared( new FCapsule(X1, X2, Radius));
 				FVec3 TriMeshScale = { 10.0, 10.0, 10.0 };
 				FVec3 InvScale = 1.0 / TriMeshScale;
 				TImplicitObjectScaled<FCapsule> ScaledCapsule = TImplicitObjectScaled<FCapsule>(CapsuleShared, InvScale);
@@ -501,7 +501,7 @@ namespace ChaosTest
 				const FVec3 X1 = { 0.0, 0.0, -2.0 };
 				const FVec3 X2 = { 0.0, 0.0, 2.0 };
 				const FReal Radius = 1.0;
-				TSharedPtr<FCapsule> CapsuleShared = MakeShared<FCapsule>(X1, X2, Radius);
+				TRefCountPtr<FCapsule> CapsuleShared( new FCapsule(X1, X2, Radius));
 				FVec3 TriMeshScale = { 1.0, 1.0, 2.0 };
 				FVec3 InvScale = 1.0 / TriMeshScale;
 				TImplicitObjectScaled<FCapsule> ScaledCapsule = TImplicitObjectScaled<FCapsule>(CapsuleShared, InvScale);
@@ -624,7 +624,7 @@ namespace ChaosTest
 			{
 				const FVec3 X = { 0.0, 0.0, 0.0 };
 				const FReal Radius = 1.0;
-				TSharedPtr<Chaos::FSphere> SphereShared = MakeShared<Chaos::FSphere>(X, Radius);
+				Chaos::FSpherePtr SphereShared( new Chaos::FSphere(X, Radius));
 				FVec3 TriMeshScale = { 1.0, 1.0, 2.0 };
 				FVec3 InvScale = 1.0 / TriMeshScale;
 				TImplicitObjectScaled<Chaos::FSphere> ScaledSphere = TImplicitObjectScaled<Chaos::FSphere>(SphereShared, InvScale);
@@ -893,7 +893,7 @@ namespace ChaosTest
 
 			// Box Scaled
 			{
-				TSharedPtr<TBox<FReal, 3>> BigBoxSafe = MakeShared<TBox<FReal, 3>>(FVec3(-100.0, -100.0, -100.0), FVec3(100.0, 100.0, 100.0));
+				FBoxPtr BigBoxSafe( new TBox<FReal, 3>(FVec3(-100.0, -100.0, -100.0), FVec3(100.0, 100.0, 100.0)));
 				FVec3 TriMeshScale = { 0.01, 0.01, 0.02 };
 				TImplicitObjectScaled<TBox<FReal, 3>> ScaledBox = TImplicitObjectScaled<TBox<FReal, 3>>(BigBoxSafe, TriMeshScale);
 				{
@@ -970,7 +970,7 @@ namespace ChaosTest
 			}
 			// Box Scaled test non uniform transform with rotation
 			{
-				TSharedPtr<TBox<FReal, 3>> BigBoxSafe = MakeShared<TBox<FReal, 3>>(FVec3(-100.0, -100.0, -100.0), FVec3(100.0, 100.0, 100.0));
+				FBoxPtr BigBoxSafe( new TBox<FReal, 3>(FVec3(-100.0, -100.0, -100.0), FVec3(100.0, 100.0, 100.0)));
 				FVec3 TriMeshScale = { 0.01, 0.01, 0.05 };
 				TImplicitObjectScaled<TBox<FReal, 3>> ScaledBox = TImplicitObjectScaled<TBox<FReal, 3>>(BigBoxSafe, TriMeshScale);
 				{
@@ -1003,7 +1003,7 @@ namespace ChaosTest
 				}
 			}
 			{
-				TSharedPtr<TBox<FReal, 3>> BigBoxSafe = MakeShared<TBox<FReal, 3>>(FVec3(-1.0, -1.0, -1.0), FVec3(1.0, 1.0, 1.0));
+				FBoxPtr BigBoxSafe( new TBox<FReal, 3>(FVec3(-1.0, -1.0, -1.0), FVec3(1.0, 1.0, 1.0)));
 				FVec3 TriMeshScale = { 10.0, 10.0, 2.0 };
 				FVec3 InvScale = 1.0 / TriMeshScale;
 				TImplicitObjectScaled<TBox<FReal, 3>> ScaledBox = TImplicitObjectScaled<TBox<FReal, 3>>(BigBoxSafe, InvScale);
@@ -1065,9 +1065,71 @@ namespace ChaosTest
 					EXPECT_EQ(bResult, bResultMTD);
 				}
 			}
+
+			{
+				// Regression test: Box with centre not at the local origin
+								
+				// Rotated UnScaled box
+				const TBox<FReal, 3> BoxUnscaled = TBox<FReal, 3>({ -5.0f, -6.0f, 0.0f }, { 5.0f, 6.0f, 10.0f });
+				{
+					FRigidTransform3 QueryTM(FVec3(0, 0.0, 11.0), FQuat{ 1, 0, 0, 0 }); // Pi rotation around x axis
+					bool bResult = TriangleMesh->OverlapGeom(BoxUnscaled, QueryTM, 0.0, nullptr);
+					EXPECT_EQ(bResult, true);
+					bool bResultMTD = TriangleMesh->OverlapGeom(BoxUnscaled, QueryTM, 0.0, &MTDInfo);
+					EXPECT_EQ(bResult, bResultMTD);
+				}
+
+				// Rotated Scaled box
+				FBoxPtr BoxSafe(new TBox<FReal, 3>(FVec3(-10.0, -10.0, 0.0), FVec3(10.0, 10.0, 10.0)));
+				FVec3 TriMeshScale = { 5.0f, 6.0f, 10.0f };
+				FVec3 BoxScale = { 5.0f, 6.0f, 10.0f };
+				TImplicitObjectScaled<TBox<FReal, 3>> ScaledBox = TImplicitObjectScaled<TBox<FReal, 3>>(BoxSafe, BoxScale);
+				{
+					FRigidTransform3 QueryTM(FVec3(0, 0.0, 110.0), FQuat{1, 0, 0, 0}); // Pi rotation around x axis
+					bool bResult = TriangleMesh->OverlapGeom(ScaledBox, QueryTM, 0.0, nullptr, TriMeshScale);
+					EXPECT_EQ(bResult, true);
+					bool bResultMTD = TriangleMesh->OverlapGeom(ScaledBox, QueryTM, 0.0, &MTDInfo, TriMeshScale);
+					EXPECT_EQ(bResult, bResultMTD);					
+				}
+
+				// Mirrored and Rotated box, mirrored trimesh // regression test
+				{
+					FBoxPtr BoxSafe2(new TBox<FReal, 3>(FVec3(-100.0, -100.0, -100.0), FVec3(100.0, 100.0, 100.0)));
+					FVec3 TriMeshScale2 = { -10.0f, 10.0f, 10.0f };
+					FVec3 InvTriMeshScale2 = 1.0 / TriMeshScale2;
+					FVec3 BoxScale2 = { 1, 1, 1 };
+					BoxScale2 = BoxScale2 * InvTriMeshScale2; // Box needs to be in mesh space // TODO make sure other tests are correct
+					TImplicitObjectScaled<TBox<FReal, 3>> ScaledBox2 = TImplicitObjectScaled<TBox<FReal, 3>>(BoxSafe2, BoxScale2);
+
+					FRigidTransform3 QueryTM(FVec3(0, 0.0, 105.0) * InvTriMeshScale2, FQuat{ 1, 0, 0, 0 }); // Pi rotation around x axis
+					bool bResult = TriangleMesh->OverlapGeom(ScaledBox2, QueryTM, 0.0, nullptr, TriMeshScale2);
+					EXPECT_EQ(bResult, true);
+					bool bResultMTD = TriangleMesh->OverlapGeom(ScaledBox2, QueryTM, 0.0, &MTDInfo, TriMeshScale2);
+					EXPECT_EQ(bResult, bResultMTD);
+				}
+
+				// Unrotated unscaled box
+				{
+					FRigidTransform3 QueryTM(FVec3(0, 0.0, 11.0), FQuat::Identity);
+					bool bResult = TriangleMesh->OverlapGeom(BoxUnscaled, QueryTM, 0.0, nullptr);
+					EXPECT_EQ(bResult, false);
+					bool bResultMTD = TriangleMesh->OverlapGeom(BoxUnscaled, QueryTM, 0.0, &MTDInfo);
+					EXPECT_EQ(bResult, bResultMTD);
+				}
+
+				// Unrotated scaled box
+				{
+					FRigidTransform3 QueryTM(FVec3(0, 0.0, 110.0), FQuat::Identity);
+					bool bResult = TriangleMesh->OverlapGeom(ScaledBox, QueryTM, 0.0, nullptr, TriMeshScale);
+					EXPECT_EQ(bResult, false);
+					bool bResultMTD = TriangleMesh->OverlapGeom(ScaledBox, QueryTM, 0.0, &MTDInfo, TriMeshScale);
+					EXPECT_EQ(bResult, bResultMTD);
+				}
+			}
+
 			{
 				// Non uniform test with box not being a cube
-				TSharedPtr<TBox<FReal, 3>> BigBoxSafe = MakeShared<TBox<FReal, 3>>(FVec3(-1.0, -5.0, -1.0), FVec3(1.0, 5.0, 1.0));
+				FBoxPtr BigBoxSafe( new TBox<FReal, 3>(FVec3(-1.0, -5.0, -1.0), FVec3(1.0, 5.0, 1.0)));
 				FVec3 TriMeshScale = { 10.0, 10.0, 2.0 };
 				FVec3 InvScale = 1.0 / TriMeshScale;
 				TImplicitObjectScaled<TBox<FReal, 3>> ScaledBox = TImplicitObjectScaled<TBox<FReal, 3>>(BigBoxSafe, InvScale);
@@ -1078,6 +1140,10 @@ namespace ChaosTest
 					EXPECT_EQ(bResult, true);
 					bool bResultMTD = TriangleMesh->OverlapGeom(ScaledBox, QueryTM, 0.0, &MTDInfo, TriMeshScale);
 					EXPECT_EQ(bResult, bResultMTD);
+					FReal ErrorMargin = 0.01; // Good enough for engineering 
+					EXPECT_VECTOR_NEAR(MTDInfo.Normal, FVec3(0.1961f , 0.0f, 0.9806f), ErrorMargin);
+					EXPECT_VECTOR_NEAR(MTDInfo.Position, FVec3(49.2308f, 0.0f, 10.1538f), ErrorMargin);
+					EXPECT_NEAR(MTDInfo.Penetration, 1.1767, ErrorMargin);
 				}
 				{
 					// Inside mesh
@@ -1611,7 +1677,7 @@ namespace ChaosTest
 				}
 			}
 		}
-{
+		{
 			FTriangleMeshImplicitObject::ParticlesType TrimeshParticles(
 				{
 					{0.0, 0.0, 0.0},

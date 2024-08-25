@@ -30,7 +30,7 @@ namespace EpicGames.Serialization.Tests
 	public class CbPackageTests
 	{
 		[TestMethod]
-		public async Task RoundTrip()
+		public async Task RoundTripAsync()
 		{
 			TestObject root = new TestObject()
 			{
@@ -38,7 +38,7 @@ namespace EpicGames.Serialization.Tests
 			};
 			CbObject rootObject = CbSerializer.Serialize(root);
 			IoHash rootHash = IoHash.Compute(rootObject.GetView().Span);
-			
+
 			using CbPackageBuilder builder = new();
 			builder.AddAttachment(rootHash, CbPackageAttachmentFlags.IsObject, rootObject.GetView().ToArray());
 			byte[] bytes = await builder.ToByteArray();
@@ -56,7 +56,7 @@ namespace EpicGames.Serialization.Tests
 		}
 
 		[TestMethod]
-		public async Task RoundTripComplex()
+		public async Task RoundTripComplexAsync()
 		{
 			byte[] blob = Encoding.UTF8.GetBytes("This is blob contents");
 			IoHash blobHash = IoHash.Compute(blob);
@@ -112,7 +112,7 @@ namespace EpicGames.Serialization.Tests
 		}
 
 		[TestMethod]
-		public async Task ReadNoAttachments()
+		public async Task ReadNoAttachmentsAsync()
 		{
 			using CbPackageBuilder packageBuilder = new CbPackageBuilder();
 			SimpleObject simple = new SimpleObject();

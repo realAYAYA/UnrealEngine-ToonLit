@@ -4,13 +4,14 @@
 
 #include "CoreTypes.h"
 #include "Internationalization/TextLocalizationManager.h"
+#include "Templates/RefCounting.h"
 
 class FTextHistory;
 
 /** 
  * Interface to the internal data for an FText.
  */
-class ITextData
+class ITextData : public IRefCountedObject
 {
 public:
 	virtual ~ITextData() = default;

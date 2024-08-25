@@ -74,7 +74,7 @@ namespace Audio
 			// Remove this source id's send
 			if (Sends[i].SourceId == InSourceId)
 			{
-				Sends.RemoveAtSwap(i, 1, false);
+				Sends.RemoveAtSwap(i, 1, EAllowShrinking::No);
 
 				// There will only be one entry
 				break;

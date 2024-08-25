@@ -14,6 +14,8 @@ public:
 	virtual ~FControlFlowSubTaskBase() {}
 
 	const FString& GetTaskName() const { return DebugName; }
+	void SetOwningNode(TSharedRef<FControlFlowNode_Task> InNode) { OwningNode = InNode; }
+	TWeakPtr<FControlFlow> GetOwningFlowForTaskNode() const;
 
 protected:
 	friend class FControlFlow;
@@ -23,6 +25,9 @@ protected:
 
 	virtual void Execute();
 	virtual void Cancel();
+
+protected:
+	TWeakPtr<FControlFlowNode_Task> OwningNode;
 
 private:
 	mutable FSimpleDelegate TaskCompleteCallback;
@@ -36,7 +41,7 @@ private:
 class FControlFlowSimpleSubTask : public FControlFlowSubTaskBase
 {
 public:
-	FControlFlowSimpleSubTask(const FString& TaskName, TSharedRef<FControlFlow> FlowOwner);
+	FControlFlowSimpleSubTask(const FString& TaskName);
 
 protected:
 	friend class FControlFlow;
@@ -63,7 +68,7 @@ class FControlFlowTask_LoopDeprecated : public FControlFlowSimpleSubTask
 {
 public:
 
-	FControlFlowTask_LoopDeprecated(FControlFlowLoopComplete& TaskCompleteDelegate, const FString& TaskName, TSharedRef<FControlFlow> FlowOwner);
+	FControlFlowTask_LoopDeprecated(FControlFlowLoopComplete& TaskCompleteDelegate, const FString& TaskName);
 
 protected:
 
@@ -121,7 +126,7 @@ private:
 
 	TMap<int32, TSharedRef<FControlFlow>> Branches;
 
-	int32 SelectedBranch = INDEX_NONE;
+	TOptional<int32> SelectedBranch;
 };
 
 //////////////////////////////////////////////////////////////////////////////

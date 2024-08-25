@@ -29,7 +29,8 @@ class SSequencerKeyNavigationButtons
 {
 public:
 
-	SLATE_BEGIN_ARGS(SSequencerKeyNavigationButtons){}
+	SLATE_BEGIN_ARGS(SSequencerKeyNavigationButtons) : _Buttons(EKeyNavigationButtons::All) {}
+		SLATE_ARGUMENT(EKeyNavigationButtons, Buttons)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs, const TSharedPtr<FViewModel>& InModel, TSharedPtr<ISequencer> InSequencer)
@@ -40,6 +41,7 @@ public:
 		ChildSlot
 		[
 			SNew(SKeyNavigationButtons, InModel)
+			.Buttons(InArgs._Buttons)
 			.AddKeyToolTip(FText::Format(LOCTEXT("AddKeyButton", "Add a new key at the current time ({0})"), FSequencerCommands::Get().SetKey->GetInputText()))
 			.PreviousKeyToolTip(FText::Format(LOCTEXT("PreviousKeyButton", "Set the time to the previous key ({0})"), FSequencerCommands::Get().StepToPreviousKey->GetInputText()))
 			.NextKeyToolTip(FText::Format(LOCTEXT("NextKeyButton", "Set the time to the next key ({0})"), FSequencerCommands::Get().StepToNextKey->GetInputText()))

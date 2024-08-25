@@ -32,6 +32,8 @@ class LEVELEDITOR_API ULevelEditorMenuContext : public UObject
 {
 	GENERATED_BODY()
 public:
+	TWeakPtr<ILevelEditor> GetLevelEditor() const;
+
 	TWeakPtr<SLevelEditor> LevelEditor;
 };
 
@@ -84,7 +86,6 @@ class LEVELEDITOR_API ULevelViewportToolBarContext : public UObject
 	GENERATED_BODY()
 public:
 	TWeakPtr<SLevelViewportToolBar> LevelViewportToolBarWidget;
-	TWeakPtr<const SLevelViewportToolBar> LevelViewportToolBarWidgetConst;
 
 	FLevelEditorViewportClient* GetLevelViewportClient();
 };

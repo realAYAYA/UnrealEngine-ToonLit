@@ -38,7 +38,7 @@ public:
 
 	virtual FLinearColor GetWorldCentricTabColorScale() const override;
 
-	virtual bool IncludeAssetInRestoreOpenAssetsPrompt() const override { return false; }
+	virtual bool IncludeAssetInRestoreOpenAssetsPrompt(UObject* Asset) const override { return false; }
 
 	bool IsExposedAsColumn( const TWeakPtr< IPropertyTreeRow >& Row ) const;
 

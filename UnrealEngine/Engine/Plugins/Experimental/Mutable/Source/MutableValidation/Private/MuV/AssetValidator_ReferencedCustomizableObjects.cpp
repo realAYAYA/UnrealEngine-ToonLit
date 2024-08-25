@@ -23,24 +23,7 @@ UAssetValidator_ReferencedCustomizableObjects::UAssetValidator_ReferencedCustomi
 	bIsEnabled = true;
 }
 
-
-bool UAssetValidator_ReferencedCustomizableObjects::CanValidate_Implementation(const EDataValidationUsecase InUsecase) const
-{
-	// Use module settings to decide if it needs to run or not.
-    if (const UMutableValidationSettings* ValidationSettings = GetDefault<UMutableValidationSettings>())
-    {
-    	if (!ValidationSettings->bEnableIndirectValidation)
-    	{
-    		return false;
-    	}
-    }
-
-	// Do not run if saving or running a commandlet (we do not want CIS failing due to our warnings and errors)
-	return !(InUsecase == EDataValidationUsecase::Save || InUsecase == EDataValidationUsecase::Commandlet);
-}
-
-
-bool UAssetValidator_ReferencedCustomizableObjects::CanValidateAsset_Implementation(UObject* InAsset) const
+bool UAssetValidator_ReferencedCustomizableObjects::CanValidateAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
 	// Use module settings to decide if it needs to run or not.
 	if (const UMutableValidationSettings* ValidationSettings = GetDefault<UMutableValidationSettings>())
@@ -51,6 +34,12 @@ bool UAssetValidator_ReferencedCustomizableObjects::CanValidateAsset_Implementat
 		}
 	}
 
+	// Do not run if saving or running a commandlet (we do not want CIS failing due to our warnings and errors)
+	if (InContext.GetValidationUsecase() == EDataValidationUsecase::Save || InContext.GetValidationUsecase() == EDataValidationUsecase::Commandlet)
+	{
+		return false;
+	}
+
 	return (InAsset ?
 		InAsset->IsA(UMaterial::StaticClass()) ||
 		InAsset->IsA(UTexture::StaticClass()) ||
@@ -59,8 +48,7 @@ bool UAssetValidator_ReferencedCustomizableObjects::CanValidateAsset_Implementat
 }
 
 
-EDataValidationResult UAssetValidator_ReferencedCustomizableObjects::ValidateLoadedAsset_Implementation(UObject* InAsset,
-	TArray<FText>& ValidationErrors)
+EDataValidationResult UAssetValidator_ReferencedCustomizableObjects::ValidateLoadedAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext)
 {
 	check(InAsset);
 
@@ -74,7 +62,7 @@ EDataValidationResult UAssetValidator_ReferencedCustomizableObjects::ValidateLoa
 	const TSet<UCustomizableObject*> FoundCustomizableObjects = FindCustomizableObjects(FoundReferencers, AssetRegistry);
 
 	// Validate all Customizable Objects we have found
-	ValidateCustomizableObjects(InAsset,FoundCustomizableObjects,ValidationErrors);
+	ValidateCustomizableObjects(InAsset, FoundCustomizableObjects);
 	
 	// Compute InAsset validation status
 	if (GetValidationResult() != EDataValidationResult::Invalid)
@@ -152,7 +140,7 @@ TSet< UCustomizableObject*> UAssetValidator_ReferencedCustomizableObjects::FindC
 }
 
 
-void UAssetValidator_ReferencedCustomizableObjects::ValidateCustomizableObjects(UObject* InAsset, const TSet<UCustomizableObject*>& InCustomizableObjectsToValidate, TArray<FText>& InValidationErrors)
+void UAssetValidator_ReferencedCustomizableObjects::ValidateCustomizableObjects(UObject* InAsset, const TSet<UCustomizableObject*>& InCustomizableObjectsToValidate)
 {
 	for (UCustomizableObject* CustomizableObjectToValidate : InCustomizableObjectsToValidate)
 	{
@@ -173,12 +161,12 @@ void UAssetValidator_ReferencedCustomizableObjects::ValidateCustomizableObjects(
 			// Cache error logs
 			for (const FText& ErrorMessage : CoValidationErrors)
 			{
-				AssetFails(InAsset,ErrorMessage,InValidationErrors);
+				AssetFails(InAsset,ErrorMessage);
 			}
 			
 			// If we say it failed the asset will be marked as bad (containing bad data) and the validator will mark the overall result as failed
 			const FText ErrorMessage = FText::Format(LOCTEXT("RelatedToCustomizableObjectValidator", "The referenced ""\"{0}""\" Mutable Customizable Object is invalid."),  FText::FromString(CustomizableObjectToValidate->GetPathName()));
-			AssetFails(InAsset,ErrorMessage,InValidationErrors);
+			AssetFails(InAsset,ErrorMessage);
 		}
 	}
 }

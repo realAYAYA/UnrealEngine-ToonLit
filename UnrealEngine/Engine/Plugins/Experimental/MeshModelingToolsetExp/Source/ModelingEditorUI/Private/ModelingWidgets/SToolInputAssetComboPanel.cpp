@@ -119,8 +119,9 @@ void SToolInputAssetComboPanel::Construct(const FArguments& InArgs)
 	EThumbnailLabel::Type TileThumbnailLabel = InArgs._AssetThumbnailLabel;
 	bool bForceShowEngineContent = InArgs._bForceShowEngineContent;
 	bool bForceShowPluginContent = InArgs._bForceShowPluginContent;
+	EAssetViewType::Type AssetViewType = InArgs._AssetViewType;
 
-	ComboButton->SetOnGetMenuContent(FOnGetContent::CreateLambda([this, TileThumbnailLabel,bForceShowEngineContent, bForceShowPluginContent]()
+	ComboButton->SetOnGetMenuContent(FOnGetContent::CreateLambda([this, TileThumbnailLabel,bForceShowEngineContent, bForceShowPluginContent, AssetViewType]()
 	{
 		// Configure filter for asset picker
 		FAssetPickerConfig Config;
@@ -129,7 +130,7 @@ void SToolInputAssetComboPanel::Construct(const FArguments& InArgs)
 		Config.Filter.ClassPaths.Add( this->AssetClassType->GetClassPathName() );
 		Config.Filter.bRecursivePaths = true;
 		//Config.Filter.bIncludeOnlyOnDiskAssets = true;
-		Config.InitialAssetViewType = EAssetViewType::Tile;
+		Config.InitialAssetViewType = AssetViewType;
 		Config.bFocusSearchBoxWhenOpened = true;
 		Config.bAllowNullSelection = true;
 		Config.bAllowDragging = false;

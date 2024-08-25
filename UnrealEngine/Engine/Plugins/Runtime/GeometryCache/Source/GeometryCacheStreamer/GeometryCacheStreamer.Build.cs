@@ -16,6 +16,8 @@ namespace UnrealBuildTool.Rules
 					"Slate",
 				}
 			);
+
+			UnsafeTypeCastWarningLevel = WarningLevel.Error;
 		}
 	}
 }

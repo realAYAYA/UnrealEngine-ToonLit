@@ -146,7 +146,7 @@ bool SNiagaraGraphActionMenu::OnCompareCategoriesForEquality(const FString& Cate
 bool SNiagaraGraphActionMenu::OnCompareCategoriesForSorting(const FString& CategoryA,
 	const FString& CategoryB)
 {
-	return CategoryA.Compare(CategoryB) == -1;
+	return CategoryA.Compare(CategoryB) < 0;
 }
 
 bool SNiagaraGraphActionMenu::OnCompareItemsForEquality(const TSharedPtr<FNiagaraAction_NewNode>& ItemA, const TSharedPtr<FNiagaraAction_NewNode>& ItemB)

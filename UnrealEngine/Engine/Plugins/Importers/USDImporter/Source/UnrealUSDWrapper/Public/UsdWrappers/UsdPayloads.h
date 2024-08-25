@@ -10,17 +10,15 @@
 #include "UsdWrappers/SdfLayer.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/pxr.h"
+#include "pxr/pxr.h"
 #include "USDIncludesEnd.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 	class UsdPayloads;
 	class UsdPrim;
 PXR_NAMESPACE_CLOSE_SCOPE
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -64,29 +62,30 @@ namespace UE
 		// FUsdPrim.
 		// Use FUsdPrim::GetPayloads() to construct an instance.
 		explicit FUsdPayloads(const pxr::UsdPrim& InPrim);
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-		// Wrapped pxr::UsdPayloads functions, refer to the USD SDK documentation
+		  // Wrapped pxr::UsdPayloads functions, refer to the USD SDK documentation
 	public:
-		bool AddPayload(
-			const FSdfPayload& Payload,
-			EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
+		bool AddPayload(const FSdfPayload& Payload, EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
 
 		bool AddPayload(
 			const FString& Identifier,
 			const FSdfPath& PrimPath,
 			const FSdfLayerOffset& LayerOffset = {},
-			EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
+			EUsdListPosition Position = EUsdListPosition::BackOfPrependList
+		);
 
 		bool AddPayload(
 			const FString& Identifier,
 			const FSdfLayerOffset& LayerOffset = {},
-			EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
+			EUsdListPosition Position = EUsdListPosition::BackOfPrependList
+		);
 
 		bool AddInternalPayload(
 			const FSdfPath& PrimPath,
 			const FSdfLayerOffset& LayerOffset = {},
-			EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
+			EUsdListPosition Position = EUsdListPosition::BackOfPrependList
+		);
 
 		bool RemovePayload(const FSdfPayload& Payload);
 
@@ -101,4 +100,4 @@ namespace UE
 
 		friend class FUsdPrim;
 	};
-}
+}	 // namespace UE

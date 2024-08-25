@@ -3,6 +3,7 @@
 #include "AssetDefinition_Redirector.h"
 
 #include "AssetToolsModule.h"
+#include "AssetViewUtils.h"
 #include "ContentBrowserMenuContexts.h"
 #include "IAssetTools.h"
 #include "ToolMenus.h"
@@ -44,7 +45,7 @@ namespace MenuExtension_Redirector
 		}
 	}
 
-	static void ExecuteFixUp(const FToolMenuContext& MenuContext, bool bDeleteAssets)
+	static void ExecuteFixUp(const FToolMenuContext& MenuContext)
 	{
 		// This will fix references to selected redirectors, except in the following cases:
 		// Redirectors referenced by unloaded maps will not be fixed up, but any references to it that can be fixed up will
@@ -54,12 +55,33 @@ namespace MenuExtension_Redirector
 
 		if (const UContentBrowserAssetContextMenuContext* Context = UContentBrowserAssetContextMenuContext::FindContextWithAssets(MenuContext))
 		{
-			TArray<UObjectRedirector*> Redirectors = Context->LoadSelectedObjects<UObjectRedirector>();
+			FScopedSlowTask SlowTask(3, LOCTEXT("FixupRedirectorsSlowTask", "Fixing up redirectors"));
+			SlowTask.MakeDialog(true);
 
-			if (Redirectors.Num() > 0)
+			SlowTask.EnterProgressFrame(1, LOCTEXT("FixupRedirectors_LoadAssets", "Loading Assets..."));
+			TArray<UObject*> Objects;
+			AssetViewUtils::FLoadAssetsSettings Settings{
+				.bFollowRedirectors = false,
+				.bAllowCancel = true,
+			};
+			AssetViewUtils::ELoadAssetsResult Result = AssetViewUtils::LoadAssetsIfNeeded(Context->SelectedAssets, Objects, Settings);
+			if (Result != AssetViewUtils::ELoadAssetsResult::Cancelled && !SlowTask.ShouldCancel())
 			{
-				IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-				AssetTools.FixupReferencers(Redirectors, /*bCheckoutDialogPrompt=*/ true, bDeleteAssets ? ERedirectFixupMode::DeleteFixedUpRedirectors : ERedirectFixupMode::LeaveFixedUpRedirectors);
+				TArray<UObjectRedirector*> Redirectors;
+				for (UObject* Object : Objects)
+				{
+					if (UObjectRedirector* Redirector = Cast<UObjectRedirector>(Object))
+					{
+						Redirectors.Add(Redirector);
+					}
+				}
+
+				if (Redirectors.Num() > 0)
+				{
+					SlowTask.EnterProgressFrame(1, LOCTEXT("FixupRedirectors_FixupReferencers", "Fixing up referencers..."));
+					IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+					AssetTools.FixupReferencers(Redirectors, /*bCheckoutDialogPrompt=*/true, ERedirectFixupMode::PromptForDeletingRedirectors);
+				}
 			}
 		}
 	}
@@ -82,20 +104,12 @@ namespace MenuExtension_Redirector
 					InSection.AddMenuEntry("Redirector_FindTarget", Label, ToolTip, Icon, UIAction);
 				}
 				{
-					const TAttribute<FText> Label = LOCTEXT("Redirector_FixUp", "Fix Up");
-					const TAttribute<FText> ToolTip = LOCTEXT("Redirector_FixUpTooltip", "Finds referencers to selected redirectors and resaves them if possible, then deletes any redirectors that had all their referencers fixed.");
+					const TAttribute<FText> Label = LOCTEXT("Redirector_UpdateReferencers", "Update Redirector References");
+					const TAttribute<FText> ToolTip = LOCTEXT("Redirector_FixUpTooltip", "Finds references to selected redirectors and resaves the referencing assets if possible, so that they reference the target of the redirector directly instead.");
 					const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "ClassIcon.ObjectRedirector");
-					const FToolMenuExecuteAction UIAction = FToolMenuExecuteAction::CreateStatic(&ExecuteFixUp, true);
+					const FToolMenuExecuteAction UIAction = FToolMenuExecuteAction::CreateStatic(&ExecuteFixUp);
 
-					InSection.AddMenuEntry("Redirector_FixUp", Label, ToolTip, Icon, UIAction);
-				}
-				{
-					const TAttribute<FText> Label = LOCTEXT("Redirector_FixUp_KeepingRedirector", "Fix Up (Keep Redirector)");
-					const TAttribute<FText> ToolTip = LOCTEXT("Redirector_FixUp_KeepingRedirectorTooltip", "Finds referencers to selected redirectors and resaves them if possible.");
-					const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "ClassIcon.MyAsset");
-					const FToolMenuExecuteAction UIAction = FToolMenuExecuteAction::CreateStatic(&ExecuteFixUp, false);
-
-					InSection.AddMenuEntry("Redirector_FixUp_KeepingRedirector", Label, ToolTip, Icon, UIAction);
+					InSection.AddMenuEntry("Redirector_UpdateReferencers", Label, ToolTip, Icon, UIAction);
 				}
 			}));
 		}));

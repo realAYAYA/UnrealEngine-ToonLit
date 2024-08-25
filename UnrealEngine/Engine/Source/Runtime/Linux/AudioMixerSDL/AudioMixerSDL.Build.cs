@@ -20,13 +20,6 @@ public class AudioMixerSDL : ModuleRules
 			PrivateIncludePaths.Add("Runtime/Linux/AudioMixerSDL/Private/" + PlatformName);
 		}
 
-		{
-			// Bink Audio isn't yet built for other SDL platforms, however
-			// the module won't provide a lib and will define WITH_BINK_AUDIO
-			// to 0 for those platforms.
-			PrivateDependencyModuleNames.Add("BinkAudioDecoder");
-		}
-
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",

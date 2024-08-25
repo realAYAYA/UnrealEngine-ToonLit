@@ -8,6 +8,24 @@
 #include "PlatformHttp.h"
 #include "Stats/Stats.h"
 
+class FHttpTaskTimerHandleEventLoop : public IHttpTaskTimerHandle
+{
+public:
+	FHttpTaskTimerHandleEventLoop(UE::EventLoop::FTimerHandle InHandle)
+		: Handle(InHandle)
+	{
+	}
+
+	virtual void RemoveTaskFrom(FHttpThreadBase* HttpThreadBase) 
+	{ 
+		HttpThreadBase->RemoveTimerHandle(Handle);
+	}
+
+private:
+	UE::EventLoop::FTimerHandle Handle;
+};
+
+
 FEventLoopHttpThread::FEventLoopHttpThread()
 {
 	FPlatformHttp::AddDefaultUserAgentProjectComment(TEXT("http-eventloop"));
@@ -78,6 +96,7 @@ void FEventLoopHttpThread::UpdateConfigs()
 {
 	ResetTickTimer();
 	UpdateEventLoopConfigs();
+	FHttpThreadBase::UpdateConfigs();
 }
 
 void FEventLoopHttpThread::AddRequest(IHttpThreadedRequest* Request)
@@ -158,4 +177,21 @@ void FEventLoopHttpThread::ResetTickTimer()
 	},
 	FTimespan::FromSeconds(FHttpModule::Get().GetHttpEventLoopThreadTickIntervalInSeconds()),
 	true /* repeat */);
+}
+
+TSharedPtr<IHttpTaskTimerHandle> FEventLoopHttpThread::AddHttpThreadTask(TFunction<void()>&& Task, float InDelay)
+{
+	UE::EventLoop::IEventLoop& EventLoop = GetEventLoopChecked();
+	return MakeShared<FHttpTaskTimerHandleEventLoop>(EventLoop.SetTimer(Task, FTimespan::FromSeconds(InDelay)));
+}
+
+void FEventLoopHttpThread::RemoveTimerHandle(FTSTicker::FDelegateHandle DelegateHandle)
+{
+	checkNoEntry();
+}
+
+void FEventLoopHttpThread::RemoveTimerHandle(UE::EventLoop::FTimerHandle EventLoopTimerHandle)
+{
+	UE::EventLoop::IEventLoop& EventLoop = GetEventLoopChecked();
+	EventLoop.ClearTimer(EventLoopTimerHandle);
 }

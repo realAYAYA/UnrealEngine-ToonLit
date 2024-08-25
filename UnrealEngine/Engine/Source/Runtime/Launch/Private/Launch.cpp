@@ -81,10 +81,6 @@ void LaunchStaticShutdownAfterError()
 	TermGamePhys();
 }
 
-#if WITH_EDITOR
-extern UNREALED_API FSecondsCounterData BlueprintCompileAndLoadTimerData;
-#endif
-
 /**
  * Static guarded main function. Rolled into own function so we can have error handling for debug/ release builds depending
  * on whether a debugger is attached or not.
@@ -169,10 +165,6 @@ int32 GuardedMain( const TCHAR* CmdLine )
 
 	double EngineInitializationTime = FPlatformTime::Seconds() - GStartTime;
 	UE_LOG(LogLoad, Log, TEXT("(Engine Initialization) Total time: %.2f seconds"), EngineInitializationTime);
-
-#if WITH_EDITOR
-	UE_LOG(LogLoad, Log, TEXT("(Engine Initialization) Total Blueprint compile time: %.2f seconds"), BlueprintCompileAndLoadTimerData.GetTime());
-#endif
 
 	ACCUM_LOADTIME(TEXT("EngineInitialization"), EngineInitializationTime);
 

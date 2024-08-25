@@ -1,17 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
 using EpicGames.Horde.Storage.Nodes;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Horde.Commands.Vcs
 {
-	[Command("vcs", "checkout", "Checkout a particular branch/change")]
+	[Command("vcs", "checkout", "Checkout a particular branch/change", Advertise = false)]
 	class VcsCheckout : VcsBase
 	{
 		[CommandLine("-Branch")]
@@ -55,7 +51,7 @@ namespace Horde.Commands.Vcs
 
 			RefName branchName = (Branch != null) ? new RefName(Branch) : workspaceState.Branch;
 
-			IStorageClient store = await GetStorageClientAsync();
+			using IStorageClient store = CreateStorageClient();
 
 			CommitNode? tip = await GetCommitAsync(store, branchName, Change);
 			if (tip == null)
@@ -77,8 +73,8 @@ namespace Horde.Commands.Vcs
 
 			DirectoryState newState = new DirectoryState();
 
-			DirectoryNode directoryNode = await directoryRef.ExpandAsync();
-			foreach ((Utf8String name, DirectoryEntry? subDirEntry, DirectoryState? subDirState) in EnumerableExtensions.Zip(directoryNode.NameToDirectory, directoryState?.Directories))
+			DirectoryNode directoryNode = await directoryRef.Handle.ReadBlobAsync();
+			foreach ((string name, DirectoryEntry? subDirEntry, DirectoryState? subDirState) in EnumerableExtensions.Zip(directoryNode.NameToDirectory, directoryState?.Directories))
 			{
 				DirectoryReference subDirPath = DirectoryReference.Combine(dirPath, name.ToString());
 				if (subDirEntry == null)
@@ -94,7 +90,7 @@ namespace Horde.Commands.Vcs
 				}
 			}
 
-			foreach ((Utf8String name, FileEntry? fileEntry, FileState? fileState) in EnumerableExtensions.Zip(directoryNode.NameToFile, directoryState?.Files))
+			foreach ((string name, FileEntry? fileEntry, FileState? fileState) in EnumerableExtensions.Zip(directoryNode.NameToFile, directoryState?.Files))
 			{
 				FileReference filePath = FileReference.Combine(dirPath, name.ToString());
 				if (fileEntry == null)
@@ -104,7 +100,7 @@ namespace Horde.Commands.Vcs
 						FileReference.Delete(filePath);
 					}
 				}
-				else if (fileState == null || fileState.Hash != fileEntry.Hash)
+				else if (fileState == null || fileState.Hash != fileEntry.StreamHash)
 				{
 					newState.Files[name] = await CheckoutFileAsync(fileEntry, filePath.ToFileInfo(), logger);
 				}
@@ -120,11 +116,10 @@ namespace Horde.Commands.Vcs
 
 		static async Task<FileState> CheckoutFileAsync(FileEntry fileRef, FileInfo fileInfo, ILogger logger)
 		{
-			logger.LogInformation("Updating {File} to {Hash}", fileInfo, fileRef.Hash);
-			ChunkedDataNode fileNode = await fileRef.ExpandAsync();
-			await fileNode.CopyToFileAsync(fileInfo, CancellationToken.None);
+			logger.LogInformation("Updating {File} to {Hash}", fileInfo, fileRef.StreamHash);
+			await ChunkedDataNode.CopyToFileAsync(fileRef.Target.Handle, fileInfo, CancellationToken.None);
 			fileInfo.Refresh();
-			return new FileState(fileInfo, fileRef.Hash);
+			return new FileState(fileInfo, fileRef.StreamHash);
 		}
 	}
 }

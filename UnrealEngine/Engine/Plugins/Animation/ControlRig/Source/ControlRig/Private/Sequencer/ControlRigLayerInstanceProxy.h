@@ -108,7 +108,11 @@ public:
 // 	virtual FAnimNode_Base* GetCustomRootNode() 
 
 	friend struct FAnimNode_ControlRigInputPose;
+	friend class UControlRigLayerInstance;
 protected:
+	/** Sort Control Rig node*/
+	void SortControlRigNodes();
+
 	/** Find ControlRig node of the */
 	FAnimNode_ControlRig_ExternalSource* FindControlRigNode(int32 ControlRigID) const;
 

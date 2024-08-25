@@ -130,8 +130,10 @@ private:
 		{
 			return FCString::Atod(*InString);
 		}
-
-		return NumericType{};
+		else
+		{
+			return NumericType{};
+		}
 	}
 
 	// Get value for text box 0

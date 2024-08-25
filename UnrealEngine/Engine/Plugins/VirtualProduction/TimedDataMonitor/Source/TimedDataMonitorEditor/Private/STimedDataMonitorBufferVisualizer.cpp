@@ -238,7 +238,7 @@ void STimedDataMonitorBufferVisualizer::RebuiltListItemsSource()
 	// Remove from ListItemsSource all item that are not in the AllChannelIdentifiers list
 	for (int32 Index = ListItemsSource.Num() - 1; Index >= 0; --Index)
 	{
-		int32 NumberRemoved = AllChannelIdentifiers.RemoveSingleSwap(ListItemsSource[Index]->ChannelIdentifier, false);
+		int32 NumberRemoved = AllChannelIdentifiers.RemoveSingleSwap(ListItemsSource[Index]->ChannelIdentifier, EAllowShrinking::No);
 		if (NumberRemoved == 0)
 		{
 			bListModified = true;

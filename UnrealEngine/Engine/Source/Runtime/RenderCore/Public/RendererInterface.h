@@ -39,6 +39,8 @@ class FGPUScenePrimitiveCollector;
 class FViewInfo;
 template<typename ShaderType, typename PointerTableType> class TShaderRefBase;
 class FSceneUniformBuffer;
+class FBatchedPrimitiveParameters;
+class ISceneRenderer;
 
 namespace Nanite
 {
@@ -649,9 +651,8 @@ public:
 class IScenePrimitiveRenderingContext
 {
 public:
-	virtual ~IScenePrimitiveRenderingContext()
-	{
-	}
+	virtual ~IScenePrimitiveRenderingContext() {}
+	virtual ISceneRenderer* GetSceneRenderer() = 0;
 };
 
 struct FScenePrimitiveRenderingContextScopeHelper
@@ -716,6 +717,8 @@ public:
 
 	/** Create a Scene Uniform Buffer containing only the scene representation for a single primitive */
 	virtual FSceneUniformBuffer* CreateSinglePrimitiveSceneUniformBuffer(FRDGBuilder& GraphBuilder, const FViewInfo& SceneView, FMeshBatch& Mesh) = 0;
+	/** Create a Uniform Buffer containing representation for a single primitive. (For platforms that use "UniformView" path) */
+	virtual TRDGUniformBufferRef<FBatchedPrimitiveParameters> CreateSinglePrimitiveUniformView(FRDGBuilder& GraphBuilder, const FViewInfo& SceneView, FMeshBatch& Mesh) = 0;
 
 	/** Draws a tile mesh element with the specified view. */
 	virtual void DrawTileMesh(FCanvasRenderContext& RenderContext, struct FMeshPassProcessorRenderState& DrawRenderState, const FSceneView& View, FMeshBatch& Mesh, bool bIsHitTesting, const class FHitProxyId& HitProxyId, bool bUse128bitRT = false) = 0;
@@ -783,13 +786,18 @@ public:
 	/** Performs necessary per-frame cleanup. Only use when rendering through scene renderer (i.e. BeginRenderingViewFamily) is skipped */
 	virtual void PerFrameCleanupIfSkipRenderer() = 0;
 
-	virtual IAllocatedVirtualTexture* AllocateVirtualTexture(const FAllocatedVTDescription& Desc) = 0;
+	virtual IAllocatedVirtualTexture* AllocateVirtualTexture(FRHICommandListBase& RHICmdList, const FAllocatedVTDescription& Desc) = 0;
+	RENDERCORE_API IAllocatedVirtualTexture* AllocateVirtualTexture(const FAllocatedVTDescription& Desc);
+
 	virtual void DestroyVirtualTexture(IAllocatedVirtualTexture* AllocatedVT) = 0;
 
-	virtual IAdaptiveVirtualTexture* AllocateAdaptiveVirtualTexture(const FAdaptiveVTDescription& AdaptiveVTDesc, const FAllocatedVTDescription& AllocatedVTDesc) = 0;
+	virtual IAdaptiveVirtualTexture* AllocateAdaptiveVirtualTexture(FRHICommandListBase& RHICmdList, const FAdaptiveVTDescription& AdaptiveVTDesc, const FAllocatedVTDescription& AllocatedVTDesc) = 0;
+	RENDERCORE_API IAdaptiveVirtualTexture* AllocateAdaptiveVirtualTexture(const FAdaptiveVTDescription& AdaptiveVTDesc, const FAllocatedVTDescription& AllocatedVTDesc);
 	virtual void DestroyAdaptiveVirtualTexture(IAdaptiveVirtualTexture* AdaptiveVT) = 0;
 
-	virtual FVirtualTextureProducerHandle RegisterVirtualTextureProducer(const FVTProducerDescription& Desc, IVirtualTexture* Producer) = 0;
+	virtual FVirtualTextureProducerHandle RegisterVirtualTextureProducer(FRHICommandListBase& RHICmdList, const FVTProducerDescription& Desc, IVirtualTexture* Producer) = 0;
+	RENDERCORE_API FVirtualTextureProducerHandle RegisterVirtualTextureProducer(const FVTProducerDescription& Desc, IVirtualTexture* Producer);
+
 	virtual void ReleaseVirtualTextureProducer(const FVirtualTextureProducerHandle& Handle) = 0;
 	virtual void AddVirtualTextureProducerDestroyedCallback(const FVirtualTextureProducerHandle& Handle, FVTProducerDestroyedFunction* Function, void* Baton) = 0;
 	virtual uint32 RemoveAllVirtualTextureProducerDestroyedCallbacks(const void* Baton) = 0;
@@ -797,9 +805,24 @@ public:
 
 	virtual void RequestVirtualTextureTiles(const FVector2D& InScreenSpaceSize, int32 InMipLevel) = 0;
 	virtual void RequestVirtualTextureTiles(const FMaterialRenderProxy* InMaterialRenderProxy, const FVector2D& InScreenSpaceSize, ERHIFeatureLevel::Type InFeatureLevel) = 0;
+
+	/**
+	 * Helper function to request loading of tiles for a virtual texture that will be displayed in the UI. 
+	 * It will request only the tiles that will be visible after clipping to the provided viewport.
+	 * @param AllocatedVT			The virtual texture.
+	 * @param InScreenSpaceSize		Size on screen at which the texture is to be displayed.
+	 * @param InViewportPosition	Position in the viewport where the texture will be displayed.
+	 * @param InViewportSize		Size of the viewport.
+	 * @param InUV0					UV coordinate to use for the top left corner of the texture.
+	 * @param InUV1					UV coordinate to use for the bottom right corner of the texture.
+	 * @param InMipLevel [optional] Specific mip level to fetch tiles for.
+	 */
+	virtual void RequestVirtualTextureTiles(IAllocatedVirtualTexture* AllocatedVT, const FVector2D& InScreenSpaceSize, const FVector2D& InViewportPosition, const FVector2D& InViewportSize, const FVector2D& InUV0, const FVector2D& InUV1, int32 InMipLevel) = 0;
+
+	UE_DEPRECATED(5.4, "Use RequestVirtualTextureTiles() overloads that takes similar parameters. Make sure not to negate the InViewportPosition.")
 	virtual void RequestVirtualTextureTilesForRegion(IAllocatedVirtualTexture* AllocatedVT, const FVector2D& InScreenSpaceSize, const FVector2D& InViewportPosition, const FVector2D& InViewportSize, const FVector2D& InUV0, const FVector2D& InUV1, int32 InMipLevel) = 0;
 
-	/** Ensure that any tiles requested by 'RequestVirtualTextureTilesForRegion' are loaded, must be called from render thread */
+	/** Ensure that any tiles requested by 'RequestVirtualTextureTiles' are loaded, must be called from render thread */
 	virtual void LoadPendingVirtualTextureTiles(FRHICommandListImmediate& RHICmdList, ERHIFeatureLevel::Type FeatureLevel) = 0;
 
 	/** Allocate a buffer and record all virtual texture page requests until the next call to either SetVirtualTextureRequestRecordBuffer or GetVirtualTextureRequestRecordBuffer. */
@@ -822,6 +845,7 @@ public:
 	/**	Start prefetching streaming data for Nanite resource that will soon be used for rendering. TODO: Implement callback mechanism */
 	virtual void PrefetchNaniteResource(const Nanite::FResources* Resource, uint32 NumFramesUntilRender) = 0;
 
+	UE_DEPRECATED(5.4, "IPersistentViewUniformBufferExtension will be removed in a future version.")
 	virtual void RegisterPersistentViewUniformBufferExtension(IPersistentViewUniformBufferExtension* Extension) = 0;
 
 	/**
@@ -829,6 +853,7 @@ public:
 	 * The intended use is for stand-alone rendering that involves Scene proxies (that then may need the machinery to render GPU-Scene aware primitives.
 	 */
 	virtual IScenePrimitiveRenderingContext* BeginScenePrimitiveRendering(FRDGBuilder& GraphBuilder, FSceneViewFamily* ViewFamily) = 0;
+	virtual IScenePrimitiveRenderingContext* BeginScenePrimitiveRendering(FRDGBuilder& GraphBuilder, FSceneInterface& Scene) = 0;
 
 	/** Mark all the current scenes as needing to restart path tracer accumulation */
 	virtual void InvalidatePathTracedOutput() = 0;

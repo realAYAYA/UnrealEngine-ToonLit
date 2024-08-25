@@ -429,7 +429,7 @@ class UPolys : public UObject
 
 	//~ Begin UObject Interface
 #if WITH_EDITOR
-	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = false) override;	
+	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = true) override;	
 #endif
 	ENGINE_API virtual void Serialize( FArchive& Ar ) override;
 	virtual bool IsAsset() const override { return false; }

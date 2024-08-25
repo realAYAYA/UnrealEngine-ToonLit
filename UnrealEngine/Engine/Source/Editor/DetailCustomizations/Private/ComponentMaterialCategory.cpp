@@ -35,6 +35,7 @@
 #include "UObject/UObjectHash.h"
 #include "UObject/UnrealType.h"
 #include "UnrealEdGlobals.h"
+#include "PropertyCustomizationHelpers.h"
 
 class AActor;
 class UWorld;
@@ -81,10 +82,12 @@ public:
 				// Primitive components and some actor components have materials
 				UPrimitiveComponent* PrimitiveComp = Cast<UPrimitiveComponent>( CurComponent );
 				UDecalComponent* DecalComponent = (PrimitiveComp ? NULL : Cast<UDecalComponent>( CurComponent ));
+				TArray<FName> MaterialSlotNames;
 
 				if( PrimitiveComp )
 				{
 					NumMaterials = PrimitiveComp->GetNumMaterials();
+					MaterialSlotNames = PrimitiveComp->GetMaterialSlotNames();
 				}
 				else if( DecalComponent )
 				{
@@ -100,10 +103,19 @@ public:
 					if( PrimitiveComp )
 					{
 						Material = PrimitiveComp->GetEditorMaterial(CurMaterialIndex);
+						if (MaterialSlotNames.IsValidIndex(CurMaterialIndex))
+						{
+							CurMaterialSlotName = MaterialSlotNames[CurMaterialIndex];
+						}
+						else
+						{
+							CurMaterialSlotName = FName();
+						}
 					}
 					else if( DecalComponent )
 					{
 						Material = DecalComponent->GetMaterial(CurMaterialIndex);
+						CurMaterialSlotName = FName();
 					}
 
 					CurMaterial = Material;
@@ -117,6 +129,7 @@ public:
 				}
 				// Out of materials on this component, reset for the next component
 				CurMaterialIndex = 0;
+				CurMaterialSlotName = FName();
 			}
 			// Advance to the next compoment
 			++CurComponentIndex;
@@ -129,6 +142,7 @@ public:
 		CurComponent = NULL;
 		CurMaterial = NULL;
 		CurMaterialIndex = INDEX_NONE;
+		CurMaterialSlotName = FName();
 	}
 
 	/**
@@ -150,6 +164,11 @@ public:
 	int32 GetMaterialIndex() const { return CurMaterialIndex; }
 
 	/**
+	 * @return The material slot name of the material in the current component, if applicable.
+	 */
+	FName GetMaterialSlotName() const { return CurMaterialSlotName; }
+
+	/**
 	 * @return The current component using the current material
 	 */
 	UActorComponent* GetComponent() const { return CurComponent; }
@@ -165,6 +184,8 @@ private:
 	int32 CurComponentIndex;
 	/** The index of the material we are stopped on */
 	int32 CurMaterialIndex;
+	/** The slot name of the material we are stopped on, if applicable */
+	FName CurMaterialSlotName;
 	/** Whether or not we've reached the end of the components */
 	uint32 bReachedEnd:1;
 };
@@ -186,6 +207,7 @@ void FComponentMaterialCategory::Create( IDetailLayoutBuilder& DetailBuilder )
 	MaterialListDelegates.OnCanCopyMaterialItem.BindSP( this, &FComponentMaterialCategory::OnCanCopyMaterialItem );
 	MaterialListDelegates.OnCopyMaterialItem.BindSP( this, &FComponentMaterialCategory::OnCopyMaterialItem );
 	MaterialListDelegates.OnPasteMaterialItem.BindSP(this, &FComponentMaterialCategory::OnPasteMaterialItem);
+	MaterialListDelegates.OnGenerateCustomMaterialWidgets.BindSP(this, &FComponentMaterialCategory::OnGenerateWidgetsForMaterial);
 	
 	//Pass an empty material list owner (owner can be use by the asset picker filter. In this case we do not need it)
 	TArray<FAssetData> MaterialListOwner;
@@ -557,6 +579,33 @@ void FComponentMaterialCategory::OnPasteMaterialItem(int32 CurrentSlot)
 			}
 		}
 	}
+}
+
+TSharedRef<SWidget> FComponentMaterialCategory::OnGenerateWidgetsForMaterial(UMaterialInterface* Material, int32 SlotIndex)
+{
+	return
+		SNew(SMaterialSlotWidget, SlotIndex, true)
+		.MaterialName(this, &FComponentMaterialCategory::GetMaterialNameText, SlotIndex)
+		.IsMaterialSlotNameReadOnly(true)
+		.DeleteMaterialSlotVisibility(EVisibility::Collapsed);
+}
+
+FText FComponentMaterialCategory::GetMaterialNameText(int32 MaterialIndex) const
+{
+	// For now we don't support multi-select
+	if (SelectedComponents.Num() != 1)
+	{
+		return FText::FromName(NAME_None);
+	}
+	for (FMaterialIterator It(SelectedComponents); It; ++It)
+	{
+		if (It.GetMaterialIndex() == MaterialIndex)
+		{
+			return FText::FromName(It.GetMaterialSlotName());
+		}
+	}
+
+	return FText::FromName(NAME_None);
 }
 
 #undef LOCTEXT_NAMESPACE

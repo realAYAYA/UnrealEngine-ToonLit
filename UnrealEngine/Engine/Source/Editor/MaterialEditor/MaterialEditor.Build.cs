@@ -44,6 +44,7 @@ public class MaterialEditor : ModuleRules
                 "AssetRegistry",
 				"ToolMenus",
 				"MainFrame",
+				"Landscape"
 			}
 		);
 

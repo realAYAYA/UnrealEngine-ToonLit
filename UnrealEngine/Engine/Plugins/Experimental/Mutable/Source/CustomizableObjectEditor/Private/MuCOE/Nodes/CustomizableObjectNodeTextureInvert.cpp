@@ -30,6 +30,11 @@ void UCustomizableObjectNodeTextureInvert::BackwardsCompatibleFixup()
 
 	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
 
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::PinsNamesImageToTexture)
+	{
+		BaseImagePinReference = FEdGraphPinReference(FindPin(TEXT("Base Image")));
+	}
+	
 	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::FixPinsNamesImageToTexture2)
 	{
 		bool Replaced = false;
@@ -75,27 +80,6 @@ FLinearColor UCustomizableObjectNodeTextureInvert::GetNodeTitleColor() const
 FText UCustomizableObjectNodeTextureInvert::GetTooltipText() const
 {
 	return LOCTEXT("Texture_Invert_Tooltip", "Inverts the colors of a base texture.");
-}
-
-
-void UCustomizableObjectNodeTextureInvert::Serialize(FArchive& Ar)
-{
-	Super::Serialize(Ar);
-
-	Ar.UsingCustomVersion(FCustomizableObjectCustomVersion::GUID);
-
-	if (Ar.CustomVer(FCustomizableObjectCustomVersion::GUID) < FCustomizableObjectCustomVersion::PinsNamesImageToTexture)
-	{
-		BaseImagePinReference = FEdGraphPinReference(FindPin(TEXT("Base Image")));
-	}
-
-	if (Ar.CustomVer(FCustomizableObjectCustomVersion::GUID) < FCustomizableObjectCustomVersion::FixPinsNamesImageToTexture2)
-	{
-		if (UEdGraphPin* TexturePin = FindPin(TEXT("Base Image"))) {
-			TexturePin->PinName = TEXT("Base Texture");
-			UCustomizableObjectNode::ReconstructNode();
-		}
-	}
 }
 
 

@@ -28,6 +28,8 @@
 #include "WorldPartition/DataLayer/IDataLayerEditorModule.h"
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
 #include "WorldPartition/DataLayer/DeprecatedDataLayerInstance.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "ActorFolder.h"
 #include "WorldPersistentFolders.h"
@@ -102,7 +104,7 @@ bool AActor::CanEditChange(const FProperty* PropertyThatWillChange) const
 				return false;
 			}
 
-			if (!OwningWorldPartition->IsStreamingEnabled())
+			if (GetAttachParentActor())
 			{
 				if (bIsSpatiallyLoadedProperty || bIsRuntimeGridProperty)
 				{
@@ -117,7 +119,7 @@ bool AActor::CanEditChange(const FProperty* PropertyThatWillChange) const
 		return false;
 	}
 
-	if (bIsDataLayersProperty && (!SupportsDataLayerType(UDataLayerInstance::StaticClass()) || !IsUserManaged()))
+	if (bIsDataLayersProperty && (!SupportsDataLayerType(UDataLayerInstanceWithAsset::StaticClass()) || !IsUserManaged() || GetAttachParentActor()))
 	{
 		return false;
 	}
@@ -254,8 +256,8 @@ void AActor::PostEditMove(bool bFinished)
 
 			FNavigationLockContext NavLock(GetWorld(), ENavigationLockReason::AllowUnregister);
 			RerunConstructionScripts();
-			// Construction scripts can have all manner of side effects, including creation of proxies..
-			// remove any static mesh components that have had their proxies created by RerunConstructionScripts:
+			// Construction scripts can have all manner of side effects, including creation of render proxies, unregistering / destruction of components
+			// Remove any static mesh components that are no longer valid for proxy registration after RerunConstructionScripts
 			ReregisterContext.SanitizeMeshComponents();
 		}
 	}
@@ -774,6 +776,8 @@ void AActor::PostEditUndo()
 	UWorld* World = GetWorld();
 	if (World && World->Scene && !FActorEditorUtils::IsABrush(this))
 	{
+		UE::RenderCommandPipe::FSyncScope SyncScope;
+
 		ENQUEUE_RENDER_COMMAND(UpdateAllPrimitiveSceneInfosCmd)([Scene = World->Scene](FRHICommandListImmediate& RHICmdList) {
 			Scene->UpdateAllPrimitiveSceneInfos(RHICmdList);
 		});
@@ -1064,8 +1068,10 @@ bool AActor::IsMainWorldOnly() const
 	}
 }
 
-void AActor::SetPackageExternal(bool bExternal, bool bShouldDirty)
+void AActor::SetPackageExternal(bool bExternal, bool bShouldDirty, UPackage* ActorExternalPackage)
 {
+	check(bExternal || !ActorExternalPackage);
+
 	// @todo_ow: Call FExternalPackageHelper::SetPackagingMode and keep calling the actor specific code here (components). 
 	//           The only missing part is GetExternalObjectsPath defaulting to a different folder than the one used by external actors.
 	if (bExternal == IsPackageExternal())
@@ -1079,10 +1085,10 @@ void AActor::SetPackageExternal(bool bExternal, bool bShouldDirty)
 	UPackage* LevelPackage = GetLevel()->GetPackage(); 
 	if (bExternal)
 	{
-		UPackage* NewActorPackage = ULevel::CreateActorPackage(LevelPackage, GetLevel()->GetActorPackagingScheme(), GetPathName());
+		UPackage* NewActorPackage = ActorExternalPackage ? ActorExternalPackage : ULevel::CreateActorPackage(LevelPackage, GetLevel()->GetActorPackagingScheme(), GetPathName(), this);
 		SetExternalPackage(NewActorPackage);
 	}
-	else 
+	else
 	{
 		UPackage* ActorPackage = GetExternalPackage();
 		// Detach the linker exports so it doesn't resolve to this actor anymore
@@ -1448,7 +1454,7 @@ void AActor::SetFolderGuidInternal(const FGuid& InFolderGuid, bool bInBroadcastC
 void AActor::SetFolderPathInternal(const FName& InNewFolderPath, bool bInBroadcastChange)
 {
 	FName OldPath = FolderPath;
-	if (InNewFolderPath.IsEqual(OldPath, ENameCase::CaseSensitive))
+	if (InNewFolderPath.IsEqual(OldPath, ENameCase::CaseSensitive) && !FolderGuid.IsValid())
 	{
 		return;
 	}
@@ -1588,29 +1594,11 @@ bool AActor::GetSoftReferencedContentObjects(TArray<FSoftObjectPath>& SoftObject
 
 EDataValidationResult AActor::IsDataValid(FDataValidationContext& Context) const
 {
-	// Do not run asset validation on external actors, validation will be caught through map check
-	if (IsPackageExternal())
-	{
-		return EDataValidationResult::NotValidated;
-	}
-
 	bool bSuccess = CheckDefaultSubobjects();
 	if (!bSuccess)
 	{
 		FText ErrorMsg = FText::Format(LOCTEXT("IsDataValid_Failed_CheckDefaultSubobjectsInternal", "{0} failed CheckDefaultSubobjectsInternal()"), FText::FromString(GetName()));
 		Context.AddError(ErrorMsg);
-	}
-
-	int32 OldNumMapWarningsAndErrors = FMessageLog("MapCheck").NumMessages(EMessageSeverity::Warning);
-	const_cast<AActor*>(this)->CheckForErrors();
-	int32 NewNumMapWarningsAndErrors = FMessageLog("MapCheck").NumMessages(EMessageSeverity::Warning);
-	if (NewNumMapWarningsAndErrors != OldNumMapWarningsAndErrors)
-	{
-		FFormatNamedArguments Arguments;
-		Arguments.Add(TEXT("ActorName"), FText::FromString(GetName()));
-		FText ErrorMsg = FText::Format(LOCTEXT("IsDataValid_Failed_CheckForErrors", "{ActorName} is not valid. See the MapCheck log messages for details."), Arguments);
-		Context.AddError(ErrorMsg);
-		bSuccess = false;
 	}
 
 	EDataValidationResult Result = bSuccess ? EDataValidationResult::Valid : EDataValidationResult::Invalid;
@@ -1667,9 +1655,14 @@ TArray<const UDataLayerAsset*> AActor::ResolveDataLayerAssets(const TArray<TSoft
 	return ResolvedAssets;
 }
 
-TArray<const UDataLayerAsset*> AActor::GetDataLayerAssets() const
+TArray<const UDataLayerAsset*> AActor::GetDataLayerAssets(bool bIncludeExternalDataLayerAsset) const
 {
-	return ResolveDataLayerAssets(DataLayerAssets);
+	TArray<const UDataLayerAsset*> ResolveDataLayerAsset = ResolveDataLayerAssets(DataLayerAssets);
+	if (bIncludeExternalDataLayerAsset && ExternalDataLayerAsset)
+	{
+		ResolveDataLayerAsset.Add(ExternalDataLayerAsset);
+	}
+	return ResolveDataLayerAsset;
 }
 
 TArray<FName> AActor::GetDataLayerInstanceNames() const
@@ -1682,6 +1675,12 @@ TArray<FName> AActor::GetDataLayerInstanceNames() const
 		DataLayerInstanceNames.Add(DataLayerInstance->GetDataLayerFName());
 	}
 	return DataLayerInstanceNames;
+}
+
+bool AActor::HasExternalContent() const
+{
+	check(!ExternalDataLayerAsset || ExternalDataLayerAsset->GetUID().IsValid());
+	return ExternalDataLayerAsset ? true : GetContentBundleGuid().IsValid();
 }
 
 TArray<const UDataLayerInstance*> AActor::GetDataLayerInstancesForLevel() const
@@ -1700,14 +1699,15 @@ void AActor::FixupDataLayers(bool bRevertChangesOnLockedDataLayer /*= false*/)
 		return;
 	}
 
-	if (!SupportsDataLayerType(UDeprecatedDataLayerInstance::StaticClass()))
+	if (!SupportsDataLayerType(UDataLayerInstance::StaticClass()))
 	{
 		DataLayers.Empty();
+		DataLayerAssets.Empty();
 	}
 
-	if (!SupportsDataLayerType(UDataLayerInstanceWithAsset::StaticClass()))
+	if (ExternalDataLayerAsset && !SupportsDataLayerType(UExternalDataLayerInstance::StaticClass()))
 	{
-		DataLayerAssets.Empty();
+		ExternalDataLayerAsset = nullptr;
 	}
 
 	if (DataLayers.IsEmpty() && DataLayerAssets.IsEmpty())
@@ -1745,7 +1745,7 @@ void AActor::FixupDataLayers(bool bRevertChangesOnLockedDataLayer /*= false*/)
 	if (bRevertChangesOnLockedDataLayer)
 	{
 		TArray<const UDataLayerAsset*> ResolvedPreEditChangeAssets = ResolveDataLayerAssets(PreEditChangeDataLayers);
-		// Since it's not possible to prevent changes of particular elements of an array, rollback change on locked DataLayers.
+		// Since it's not possible to prevent changes of particular elements of an array, rollback change on read-only DataLayers.
 		TSet<const UDataLayerAsset*> PreEdit(ResolvedPreEditChangeAssets);
 		TSet<const UDataLayerAsset*> PostEdit(ResolvedAssets);
 
@@ -1755,7 +1755,7 @@ void AActor::FixupDataLayers(bool bRevertChangesOnLockedDataLayer /*= false*/)
 			for (const UDataLayerAsset* DataLayerAsset : Diff)
 			{
 				const UDataLayerInstance* DataLayerInstance = DataLayerManager->GetDataLayerInstance(DataLayerAsset);
-				if (DataLayerInstance && DataLayerInstance->IsLocked())
+				if (DataLayerInstance && DataLayerInstance->IsReadOnly())
 				{
 					return true;
 				}
@@ -1822,38 +1822,147 @@ bool AActor::IsPropertyChangedAffectingDataLayers(FPropertyChangedEvent& Propert
 	return false;
 }
 
+static bool HasComponentForceActorNoDataLayers(const AActor* InActor)
+{
+	bool bHasComponentForceActorNoDataLayers = false;
+	InActor->ForEachComponent(false, [&bHasComponentForceActorNoDataLayers](const UActorComponent* Component)
+	{
+		bHasComponentForceActorNoDataLayers |= Component->ForceActorNoDataLayers();
+	});
+	return bHasComponentForceActorNoDataLayers;
+}
+
 bool AActor::SupportsDataLayerType(TSubclassOf<UDataLayerInstance> InDataLayerType) const
 {
 	ULevel* Level = GetLevel();
 	const bool bIsLevelNotPartitioned = Level ? !Level->bIsPartitioned : false;
+	const bool bHasComponentForceActorNoDataLayers = HasComponentForceActorNoDataLayers(this);
+	const bool bActorTypeSupportsDataLayerType = InDataLayerType->IsChildOf<UExternalDataLayerInstance>() ? ActorTypeSupportsExternalDataLayer() : ActorTypeSupportsDataLayer();
+	
 	return (!bIsLevelNotPartitioned &&
-		IsDataLayerTypeSupported(InDataLayerType) &&
+		!bHasComponentForceActorNoDataLayers &&
+		bActorTypeSupportsDataLayerType &&
 		!FActorEditorUtils::IsABuilderBrush(this) &&
 		!GetClass()->GetDefaultObject<AActor>()->bHiddenEd);
 }
 
-bool AActor::CanAddDataLayer(const UDataLayerInstance* InDataLayerInstance) const
+bool AActor::CanAddDataLayer(const UDataLayerInstance* InDataLayerInstance, FText* OutReason) const
 {
-	if (InDataLayerInstance && SupportsDataLayerType(InDataLayerInstance->GetClass()))
+	auto PassesAssetReferenceFiltering = [](const UObject * InReferencingObject, const UDataLayerAsset * InDataLayerAsset, FText* OutReason)
 	{
-		if (const UDataLayerAsset* DataLayerAsset = InDataLayerInstance->GetAsset())
+		FAssetReferenceFilterContext AssetReferenceFilterContext;
+		AssetReferenceFilterContext.ReferencingAssets.Add(FAssetData(InReferencingObject));
+		TSharedPtr<IAssetReferenceFilter> AssetReferenceFilter = GEditor->MakeAssetReferenceFilter(AssetReferenceFilterContext);
+		return AssetReferenceFilter.IsValid() ? AssetReferenceFilter->PassesFilter(FAssetData(InDataLayerAsset), OutReason) : true;
+	};
+
+	if (!InDataLayerInstance)
+	{
+		if (OutReason)
 		{
-			return !DataLayerAssets.Contains(DataLayerAsset);
+			*OutReason = LOCTEXT("CantAddDataLayerInvalidDataLayerInstance", "Invalid data layer instance.");
 		}
-		else if (const UDeprecatedDataLayerInstance* DataLayerInstance = Cast<UDeprecatedDataLayerInstance>(InDataLayerInstance))
+		return false;
+	}
+
+	if (!SupportsDataLayerType(InDataLayerInstance->GetClass()))
+	{
+		if (OutReason)
 		{
-			return !DataLayers.Contains(DataLayerInstance->GetActorDataLayer());
+			*OutReason = LOCTEXT("CantAddDataLayerActorDoesntSupportDataLayerType", "Actor doesn't support this data layer type.");
+		}
+		return false;
+	}
+
+	if (const UDataLayerAsset* DataLayerAsset = InDataLayerInstance->GetAsset())
+	{
+		if (!PassesAssetReferenceFiltering(this, DataLayerAsset, OutReason))
+		{
+			return false;
+		}
+
+		if (const UExternalDataLayerAsset* InExternalDataLayerAsset = Cast<UExternalDataLayerAsset>(DataLayerAsset))
+		{
+			if (ContentBundleGuid.IsValid())
+			{
+				if (OutReason)
+				{
+					*OutReason = LOCTEXT("CantAddDataLayerActorAlreadyAssignedToContentBundle", "Actor is already assigned to a content bundle.");
+				}
+				return false;
+			}
+			else if (ExternalDataLayerAsset)
+			{
+				if (OutReason)
+				{
+					if (ExternalDataLayerAsset == DataLayerAsset)
+					{
+						*OutReason = LOCTEXT("CantAddDataLayerActorAlreadyAssignedToExternalDataLayer", "Actor is already assigned to this external data layer.");
+					}
+					else
+					{
+						*OutReason = LOCTEXT("CantAddDataLayerActorAlreadyAssignedToAnotherExternalDataLayer", "Actor is already assigned to another external data layer.");
+					}
+				}
+				return false;
+			}
+		}
+		else
+		{
+			if (DataLayerAssets.Contains(DataLayerAsset))
+			{
+				if (OutReason)
+				{
+					*OutReason = LOCTEXT("CantAddDataLayerActorAlreadyAssignedToDataLayer", "Actor is already assigned to this data layer.");
+				}
+				return false;
+			}
+		}
+	}
+	else
+	{
+		if (const UDeprecatedDataLayerInstance* DataLayerInstance = Cast<UDeprecatedDataLayerInstance>(InDataLayerInstance))
+		{
+			if (DataLayers.Contains(DataLayerInstance->GetActorDataLayer()))
+			{
+				if (OutReason)
+				{
+					*OutReason = LOCTEXT("CantAddDataLayerActorAlreadyAssignedToDataLayer", "Actor is already assigned to this data layer.");
+				}
+				return false;
+			}
+			return true;
+		}
+		else
+		{
+			if (OutReason)
+			{
+				*OutReason = LOCTEXT("CantAddDataLayerInvalidDataLayerAsset", "Invalid data layer asset.");
+			}
+			return false;
 		}
 	}
 
-	return false;
+	return true;
 }
 
 bool FAssignActorDataLayer::AddDataLayerAsset(AActor* InActor, const UDataLayerAsset* InDataLayerAsset)
 {
 	check(InDataLayerAsset != nullptr);
 
-	if (!InActor->DataLayerAssets.Contains(InDataLayerAsset))
+	if (const UExternalDataLayerAsset* ExternalDataLayerAsset = Cast<UExternalDataLayerAsset>(InDataLayerAsset))
+	{
+		if (!InActor->ExternalDataLayerAsset)
+		{
+			InActor->Modify();
+			InActor->ExternalDataLayerAsset = ExternalDataLayerAsset;
+			return true;
+		}
+
+		UE_CLOG(InActor->ExternalDataLayerAsset != ExternalDataLayerAsset, LogActor, Warning, TEXT("Trying to assign external data layer %s on actor %s while %s is already assigned."), 
+			*ExternalDataLayerAsset->GetPathName(), *InActor->GetActorNameOrLabel(), *InActor->ExternalDataLayerAsset->GetPathName());
+	}
+	else if (!InActor->DataLayerAssets.Contains(InDataLayerAsset))
 	{
 		InActor->Modify();
 		InActor->DataLayerAssets.Add(InDataLayerAsset);
@@ -1867,7 +1976,13 @@ bool FAssignActorDataLayer::RemoveDataLayerAsset(AActor* InActor, const UDataLay
 {
 	check(InDataLayerAsset != nullptr);
 	
-	if (InActor->DataLayerAssets.Contains(InDataLayerAsset))
+	if (InActor->ExternalDataLayerAsset == InDataLayerAsset)
+	{
+		InActor->Modify();
+		InActor->ExternalDataLayerAsset = nullptr;
+		return true;
+	}
+	else if (InActor->DataLayerAssets.Contains(InDataLayerAsset))
 	{
 		InActor->Modify();
 		InActor->DataLayerAssets.Remove(InDataLayerAsset);
@@ -1880,11 +1995,6 @@ bool FAssignActorDataLayer::RemoveDataLayerAsset(AActor* InActor, const UDataLay
 //~ Begin Deprecated
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-
-bool AActor::SupportsDataLayer() const
-{
-	return SupportsDataLayerType(UDataLayerInstance::StaticClass());
-}
 
 bool AActor::AddDataLayer(const FActorDataLayer& ActorDataLayer)
 {

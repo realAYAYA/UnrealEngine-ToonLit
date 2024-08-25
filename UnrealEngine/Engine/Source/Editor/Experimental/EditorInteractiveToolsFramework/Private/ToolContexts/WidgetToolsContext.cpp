@@ -23,7 +23,7 @@ struct FPointerEvent;
 
 bool UWidgetToolsContext::OnKeyChar(const FGeometry& MyGeometry, const FCharacterEvent& InCharacterEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -39,7 +39,7 @@ bool UWidgetToolsContext::OnKeyChar(const FGeometry& MyGeometry, const FCharacte
 
 bool UWidgetToolsContext::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -55,7 +55,7 @@ bool UWidgetToolsContext::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent
 
 bool UWidgetToolsContext::OnKeyUp(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -71,7 +71,7 @@ bool UWidgetToolsContext::OnKeyUp(const FGeometry& MyGeometry, const FKeyEvent& 
 
 bool UWidgetToolsContext::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -87,7 +87,7 @@ bool UWidgetToolsContext::OnMouseButtonDown(const FGeometry& MyGeometry, const F
 
 bool UWidgetToolsContext::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -103,7 +103,7 @@ bool UWidgetToolsContext::OnMouseButtonUp(const FGeometry& MyGeometry, const FPo
 
 bool UWidgetToolsContext::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -119,7 +119,7 @@ bool UWidgetToolsContext::OnMouseMove(const FGeometry& MyGeometry, const FPointe
 
 bool UWidgetToolsContext::OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -135,7 +135,7 @@ bool UWidgetToolsContext::OnMouseWheel(const FGeometry& MyGeometry, const FPoint
 
 bool UWidgetToolsContext::OnMouseButtonDoubleClick(const FGeometry& InMyGeometry, const FPointerEvent& InMouseEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -151,7 +151,7 @@ bool UWidgetToolsContext::OnMouseButtonDoubleClick(const FGeometry& InMyGeometry
 
 bool UWidgetToolsContext::OnDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -167,7 +167,7 @@ bool UWidgetToolsContext::OnDragDetected(const FGeometry& MyGeometry, const FPoi
 
 void UWidgetToolsContext::OnMouseCaptureLost(const FCaptureLostEvent& CaptureLostEvent)
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{
@@ -181,7 +181,7 @@ void UWidgetToolsContext::OnMouseCaptureLost(const FCaptureLostEvent& CaptureLos
 
 int32 UWidgetToolsContext::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
 {
-	for (TObjectPtr<UEdModeInteractiveToolsContext> EdModeContext : EdModeToolsContexts)
+	for (const TObjectPtr<UEdModeInteractiveToolsContext>& EdModeContext : EdModeToolsContexts)
 	{
 		if (EdModeContext && EdModeContext->ToolManager)
 		{

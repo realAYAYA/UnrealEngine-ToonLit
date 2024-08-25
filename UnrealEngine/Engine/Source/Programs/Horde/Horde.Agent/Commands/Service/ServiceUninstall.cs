@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using Horde.Agent.Utility;
 using Microsoft.Extensions.Logging;
@@ -9,9 +7,9 @@ using Microsoft.Extensions.Logging;
 namespace Horde.Agent.Commands.Service
 {
 	/// <summary>
-	/// Uninstalls the service
+	/// Uninstalls the Windows service
 	/// </summary>
-	[Command("service", "uninstall", "Uninstalls the service")]
+	[Command("service", "uninstall", "Uninstalls the Windows service")]
 	class UninstallCommand : Command
 	{
 		/// <summary>
@@ -20,7 +18,7 @@ namespace Horde.Agent.Commands.Service
 		public const string ServiceName = InstallCommand.ServiceName;
 
 		/// <summary>
-		/// Runs the service indefinitely
+		/// Uninstalls the service
 		/// </summary>
 		/// <param name="logger">Logger to use</param>
 		/// <returns>Exit code</returns>

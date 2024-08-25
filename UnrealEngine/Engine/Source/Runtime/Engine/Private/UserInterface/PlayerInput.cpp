@@ -45,6 +45,11 @@ namespace UE
 		static FAutoConsoleVariableRef CVarShouldOnlyTriggerLastActionInChord(TEXT("Input.AxisEventsCanBeConsumed"),
 			AxisEventsCanBeConsumed,
 			TEXT("If true and all FKey's for a given Axis Event are consumed, then the axis delegate will not fire."));
+
+		static bool bAutoReconcilePressedEventsOnFirstRepeat = true;
+		static FAutoConsoleVariableRef CVarAutoReconcilePressedEventsOnFirstRepeat(TEXT("Input.AutoReconcilePressedEventsOnFirstRepeat"),
+			bAutoReconcilePressedEventsOnFirstRepeat,
+			TEXT("If true, then we will automatically mark a IE_Pressed event if we receive an IE_Repeat event but have not received a pressed event first.\nNote: This option will be removed in a future update."));
 	}
 }
 
@@ -327,10 +332,31 @@ bool UPlayerInput::InputKey(const FInputKeyParams& Params)
 	// Non-analog key
 	else
 	{
+		FKeyState* ExistingKeyState = KeyStateMap.Find(Params.Key);
+		
 		// first event associated with this key, add it to the map
-		FKeyState& KeyState = KeyStateMap.FindOrAdd(Params.Key);
+		FKeyState& KeyState = !ExistingKeyState ? KeyStateMap.Add(Params.Key) : *ExistingKeyState;
+
 		UWorld* World = GetWorld();
 		check(World);
+
+		const bool bIsFirstEventForKey = (ExistingKeyState == nullptr);
+
+		// If this is the first key press for us and it is a repeat, then we have missed the initial IE_Pressed event.
+		// This can happen if you are holding down a key between level transitions and the player controller gets recreated,
+		// which means that we will be using a new UPlayerInput object and the KeyState map is emptied.
+		if (UE::Input::bAutoReconcilePressedEventsOnFirstRepeat && bIsFirstEventForKey && Params.Event == IE_Repeat && KeyState.EventAccumulator[IE_Pressed].IsEmpty())
+		{
+			// Mark as having received the IE_Pressed event already, so that we can correctly evaluate the 
+			// state of the IE_Repeat event. It is impossible to get a IE_Repeat with an initial IE_Pressed somewhere
+			//
+			// Without this, the key will incorrectly evaluate as being released/pressed
+			// every frame, even if you are just holding it
+			KeyState.RawValueAccumulator.X = Params.Delta.X;
+			KeyState.EventAccumulator[IE_Pressed].Add(++EventCount);
+			KeyState.LastUpDownTransitionTime = World->GetRealTimeSeconds();
+			KeyState.SampleCountAccumulator++;
+		}
 
 		switch(Params.Event)
 		{
@@ -381,8 +407,6 @@ bool UPlayerInput::InputKey(const FInputKeyParams& Params)
 
 		return true;
 	}
-	
-	return false;
 }
 
 bool UPlayerInput::InputAxis(FKey Key, float Delta, float DeltaTime, int32 NumSamples, bool bGamepad)
@@ -613,7 +637,7 @@ void UPlayerInput::InvertAxis(const FName AxisName)
 			{
 				if (InvertedAxis[InvertIndex] == AxisName)
 				{
-					InvertedAxis.RemoveAtSwap(InvertIndex, 1, false);
+					InvertedAxis.RemoveAtSwap(InvertIndex, 1, EAllowShrinking::No);
 				}
 			}
 		}
@@ -626,7 +650,7 @@ void UPlayerInput::InvertAxis(const FName AxisName)
 			if (InvertedAxis[InvertIndex] == AxisName)
 			{
 				bFound = true;
-				InvertedAxis.RemoveAtSwap(InvertIndex, 1, false);
+				InvertedAxis.RemoveAtSwap(InvertIndex, 1, EAllowShrinking::No);
 			}
 		}
 		if (!bFound)
@@ -690,7 +714,7 @@ void UPlayerInput::RemoveActionMapping(const FInputActionKeyMapping& KeyMapping)
 	{
 		if (ActionMappings[ActionIndex] == KeyMapping)
 		{
-			ActionMappings.RemoveAtSwap(ActionIndex, 1, false);
+			ActionMappings.RemoveAtSwap(ActionIndex, 1, EAllowShrinking::No);
 			ActionKeyMap.Reset();
 			bKeyMapsBuilt = false;
 			// we don't break because the mapping may have been in the array twice
@@ -713,7 +737,7 @@ void UPlayerInput::RemoveAxisMapping(const FInputAxisKeyMapping& InKeyMapping)
 		if (KeyMapping.AxisName == InKeyMapping.AxisName
 			&& KeyMapping.Key == InKeyMapping.Key)
 		{
-			AxisMappings.RemoveAtSwap(AxisIndex, 1, false);
+			AxisMappings.RemoveAtSwap(AxisIndex, 1, EAllowShrinking::No);
 			AxisKeyMap.Reset();
 			bKeyMapsBuilt = false;
 			// we don't break because the mapping may have been in the array twice
@@ -874,7 +898,7 @@ void UPlayerInput::GetChordsForKeyMapping(const FInputActionKeyMapping& KeyMappi
 			if (ChordRelationship == FInputChord::ERelationshipType::Masks)
 			{
 				// If we mask the found one, then remove it from the list
-				FoundChords.RemoveAtSwap(ChordIndex, 1, false);
+				FoundChords.RemoveAtSwap(ChordIndex, 1, EAllowShrinking::No);
 			}
 			else if (ChordRelationship == FInputChord::ERelationshipType::Masked)
 			{
@@ -993,7 +1017,7 @@ void UPlayerInput::GetChordForKey(const FInputKeyBinding& KeyBinding, const bool
 					if (ChordRelationship == FInputChord::ERelationshipType::Masks)
 					{
 						// If we mask the found one, then remove it from the list
-						FoundChords.RemoveAtSwap(ChordIndex, 1, false);
+						FoundChords.RemoveAtSwap(ChordIndex, 1, EAllowShrinking::No);
 					}
 					else if (ChordRelationship == FInputChord::ERelationshipType::Masked)
 					{
@@ -2300,7 +2324,7 @@ void UPlayerInput::SetBind(FName BindName, const FString& Command)
 		FString CommandMod = Command;
 		if ( CommandMod.Left(1) == TEXT("\"") && CommandMod.Right(1) == ("\"") )
 		{
-			CommandMod.MidInline(1, CommandMod.Len() - 2, false);
+			CommandMod.MidInline(1, CommandMod.Len() - 2, EAllowShrinking::No);
 		}
 
 		for(int32 BindIndex = DebugExecBindings.Num()-1;BindIndex >= 0;BindIndex--)

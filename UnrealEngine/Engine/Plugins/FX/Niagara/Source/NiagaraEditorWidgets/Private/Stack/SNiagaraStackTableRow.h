@@ -58,7 +58,7 @@ public:
 	FMargin GetContentPadding() const;
 
 	void SetContentPadding(FMargin InContentPadding);
-
+	
 	void SetNameAndValueContent(TSharedRef<SWidget> InNameWidget, TSharedPtr<SWidget> InValueWidget);
 
 	void AddFillRowContextMenuHandler(FOnFillRowContextMenu FillRowContextMenuHandler);
@@ -72,11 +72,19 @@ private:
 
 	void ExpandChildren();
 
+	void AddStackNote() const;
+	void DeleteStackNote() const;
+	void ToggleStackNoteInlineDisplay() const;
+	void CopyStackNote() const;
+	void PasteStackNote() const;
+
 	EVisibility GetRowVisibility() const;
 
 	EVisibility GetExecutionCategoryIconVisibility() const;
 
 	EVisibility GetExpanderVisibility() const;
+
+	EVisibility GetInlineNoteVisibility() const;
 
 	FReply ExpandButtonClicked();
 

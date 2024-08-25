@@ -3,6 +3,12 @@
 #include "LevelEditorMenuContext.h"
 
 #include "Elements/Framework/TypedElementRegistry.h"
+#include "SLevelEditor.h"
+
+TWeakPtr<ILevelEditor> ULevelEditorMenuContext::GetLevelEditor() const
+{
+	return LevelEditor;
+}
 
 FScriptTypedElementHandle ULevelEditorContextMenuContext::GetScriptHitProxyElement()
 {

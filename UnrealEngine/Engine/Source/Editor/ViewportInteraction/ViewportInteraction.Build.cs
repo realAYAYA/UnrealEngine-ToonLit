@@ -18,7 +18,8 @@ namespace UnrealBuildTool.Rules
                     "UnrealEd",
                     "Slate",
                     "SlateCore",
-                    "RHI"
+					"RenderCore",
+					"RHI"
                 }
             );
 

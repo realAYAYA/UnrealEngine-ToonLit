@@ -14,9 +14,6 @@
 #include "Misc/Guid.h"
 #include "Templates/SubclassOf.h"
 #include "Interfaces/Interface_AssetUserData.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/SkeletalMesh.h"
-#endif
 #include "AnimInterpFilter.h"
 #include "AnimEnums.h"
 #include "Interfaces/Interface_PreviewMeshProvider.h"
@@ -962,15 +959,15 @@ struct FAnimationGroupReference
 {
 	GENERATED_USTRUCT_BODY()
 	
-	// How an asset will synchronize with other assets
+	// How this animation will synchronize with other animations. 
 	UPROPERTY(EditAnywhere, Category=Settings)
 	EAnimSyncMethod Method;
 
-	// The name of the group
+	// The group name that we synchronize with (NAME_None if it is not part of any group). 
 	UPROPERTY(EditAnywhere, Category=Settings, meta = (EditCondition = "Method == EAnimSyncMethod::SyncGroup"))
 	FName GroupName;
 
-	// The type of membership in the group (potential leader, always follower, etc...)
+	// The role this animation can assume within the group (ignored if GroupName is not set)
 	UPROPERTY(EditAnywhere, Category=Settings, meta = (EditCondition = "Method == EAnimSyncMethod::SyncGroup"))
 	TEnumAsByte<EAnimGroupRole::Type> GroupRole;
 
@@ -1080,6 +1077,7 @@ public:
 	const TArray<UAnimMetaData*>& GetMetaData() const { return MetaData; }
 	
 	/** Returns the first metadata of the specified class */
+	UFUNCTION(BlueprintCallable, Category = "Animation")
 	ENGINE_API UAnimMetaData* FindMetaDataByClass(const TSubclassOf<UAnimMetaData> MetaDataClass) const;
 
 	/** Templatized version of FindMetaDataByClass that handles casting for you */
@@ -1158,6 +1156,8 @@ public:
 	//~ Begin UObject Interface.
 #if WITH_EDITOR
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	ENGINE_API virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 #endif // WITH_EDITOR

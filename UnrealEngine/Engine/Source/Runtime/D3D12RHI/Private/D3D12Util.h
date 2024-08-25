@@ -101,7 +101,8 @@ struct FD3D12QuantizedBoundShaderState
 	uint8 bUseDiagnosticBuffer : 1;
 	uint8 bUseDirectlyIndexedResourceHeap : 1;
 	uint8 bUseDirectlyIndexedSamplerHeap : 1;
-	uint8 Padding : 3;
+	uint8 bUseRootConstants : 1;
+	uint8 Padding : 2;
 
 	inline bool operator==(const FD3D12QuantizedBoundShaderState& RHS) const
 	{

@@ -19,7 +19,7 @@ FLinearColor URigVMFunctionReferenceNode::GetNodeColor() const
 
 FText URigVMFunctionReferenceNode::GetToolTipText() const
 {
-	return ReferencedFunctionHeader.Tooltip;
+	return ReferencedFunctionHeader.GetTooltip();
 }
 
 FString URigVMFunctionReferenceNode::GetNodeCategory() const
@@ -139,7 +139,7 @@ uint32 URigVMFunctionReferenceNode::GetStructureHash() const
 	Hash = HashCombine(Hash, GetTypeHash(ReferencedFunctionHeader.NodeTitle));
 	Hash = HashCombine(Hash, GetTypeHash(ReferencedFunctionHeader.LibraryPointer.LibraryNode.ToString()));
 	Hash = HashCombine(Hash, GetTypeHash(ReferencedFunctionHeader.Keywords));
-	Hash = HashCombine(Hash, GetTypeHash(ReferencedFunctionHeader.Tooltip.ToString()));
+	Hash = HashCombine(Hash, GetTypeHash(ReferencedFunctionHeader.Description));
 	Hash = HashCombine(Hash, GetTypeHash(ReferencedFunctionHeader.NodeColor));
 
 	for(const FRigVMGraphFunctionArgument& Argument : ReferencedFunctionHeader.Arguments)
@@ -164,6 +164,14 @@ uint32 URigVMFunctionReferenceNode::GetStructureHash() const
 	}
 
 	return Hash;
+}
+
+void URigVMFunctionReferenceNode::UpdateFunctionHeaderFromHost()
+{
+	if (const FRigVMGraphFunctionData* Data = GetReferencedFunctionData())
+	{
+		ReferencedFunctionHeader = Data->Header;
+	}
 }
 
 const FRigVMGraphFunctionData* URigVMFunctionReferenceNode::GetReferencedFunctionData(bool bLoadIfNecessary) const
@@ -220,4 +228,17 @@ URigVMLibraryNode* URigVMFunctionReferenceNode::LoadReferencedNode() const
 	}
 	return Cast<URigVMLibraryNode>(LibraryNode);
 	
+}
+
+TArray<int32> URigVMFunctionReferenceNode::GetInstructionsForVMImpl(const FRigVMExtendedExecuteContext& Context, URigVM* InVM, const FRigVMASTProxy& InProxy) const
+{
+	TArray<int32> Instructions = URigVMNode::GetInstructionsForVMImpl(Context, InVM, InProxy);
+
+	// if the base cannot find any matching instructions, fall back to the library node's implementation
+	if(Instructions.IsEmpty())
+	{
+		Instructions = Super::GetInstructionsForVMImpl(Context, InVM, InProxy);
+	}
+	
+	return Instructions;
 }

@@ -37,23 +37,16 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
-
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        int GetInputCount() const override;
-        Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// NodeObject Interface
 		//-----------------------------------------------------------------------------------------
-        const char* GetName() const override;
-        void SetName( const char* strName ) override;
-        const char* GetUid() const override;
-        void SetUid( const char* strUid ) override;
+        virtual const FString& GetName() const override;
+		virtual void SetName( const FString&) override;
+		virtual const FString& GetUid() const override;
+		virtual void SetUid( const FString&) override;
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -96,6 +89,12 @@ namespace mu
 
 		//! Set a child object node
 		void SetChild( int index, NodeObjectPtr );
+
+		//! Set default value for CS_ONE_OR_NONE or CS_ALWAYS_ONE groups
+		//! the value is the index of the child option in the group
+		//! -1 is the value for the None option.
+		//! 0 is the first child whether or not the NONE option is present.
+		void SetDefaultValue(int32 Value);
 
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern

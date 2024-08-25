@@ -60,7 +60,7 @@ void MovieSceneSegmentCompiler::FilterOutUnderlappingSections(FSegmentBlendData&
 		const FMovieSceneSectionData& SectionData = BlendData[RemoveAtIndex];
 		if (SectionData.Section->GetOverlapPriority() != HighestOverlap && !AlwaysEvaluateSection(SectionData))
 		{
-			BlendData.RemoveAt(RemoveAtIndex, 1, false);
+			BlendData.RemoveAt(RemoveAtIndex, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -87,7 +87,7 @@ void MovieSceneSegmentCompiler::ChooseLowestRowIndex(FSegmentBlendData& BlendDat
 		const FMovieSceneSectionData& SectionData = BlendData[RemoveAtIndex];
 		if (SectionData.Section->GetRowIndex() > LowestRowIndex && !AlwaysEvaluateSection(SectionData))
 		{
-			BlendData.RemoveAt(RemoveAtIndex, 1, false);
+			BlendData.RemoveAt(RemoveAtIndex, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -98,6 +98,6 @@ void MovieSceneSegmentCompiler::BlendSegmentLegacySectionOrder(FSegmentBlendData
 	if (BlendData.Num() > 1)
 	{
 		Algo::SortBy(BlendData, &FMovieSceneSectionData::TemplateIndex);
-		BlendData.RemoveAt(1, BlendData.Num() - 1, false);
+		BlendData.RemoveAt(1, BlendData.Num() - 1, EAllowShrinking::No);
 	}
 }

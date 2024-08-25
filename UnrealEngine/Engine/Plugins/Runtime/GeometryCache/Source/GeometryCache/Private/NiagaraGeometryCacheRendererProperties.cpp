@@ -78,6 +78,29 @@ void UNiagaraGeometryCacheRendererProperties::PostLoad()
 {
 	Super::PostLoad();
 	PostLoadBindings(ENiagaraRendererSourceDataMode::Particles);
+	MaterialParameters.ConditionalPostLoad();
+	for (const FNiagaraGeometryCacheReference& GeoCache : GeometryCaches)
+	{
+		for (UMaterialInterface* Material : GeoCache.OverrideMaterials)
+		{
+			if (Material)
+			{
+				Material->ConditionalPostLoad();
+			}
+		}
+		for (const FNiagaraGeometryCacheMICOverride& MICOverride : GeoCache.MICOverrideMaterials)
+		{
+			if (MICOverride.OriginalMaterial)
+			{
+				MICOverride.OriginalMaterial->ConditionalPostLoad();
+			}
+
+			if (MICOverride.ReplacementMaterial)
+			{
+				MICOverride.ReplacementMaterial->ConditionalPostLoad();
+			}
+		}
+	}
 }
 
 template<typename T>

@@ -103,7 +103,7 @@ namespace Chaos::Softs
 
 		virtual TVec4<TVector<T, 3>> GetDeterminantDelta(const ParticleType& Particles, const T Dt, const int32 ElementIndex, const T Tol = (T)1e-3) const override
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosBlendedXPBDCorotatedApplyDet"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosBlendedXPBDCorotatedApplyDet);
 
 			const PMatrix<T, 3, 3> Fe = Base::F(ElementIndex, Particles);
 			PMatrix<T, 3, 3> DmInvT = Base::ElementDmInv(ElementIndex).GetTransposed();
@@ -165,7 +165,7 @@ namespace Chaos::Softs
 
 		virtual TVec4<TVector<T, 3>> GetPolarDelta(const ParticleType& Particles, const T Dt, const int32 ElementIndex, const T Tol = (T)1e-3) const override
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosBlendedXPBDCorotatedApplyPolar"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosBlendedXPBDCorotatedApplyPolar);
 			SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotatedPolar);
 			const PMatrix<T, 3, 3> Fe = Base::F(ElementIndex, Particles);
 

@@ -211,7 +211,6 @@
 #include "Stats/StatsMisc.h"
 #include "Templates/AlignmentTemplates.h"
 #include "Templates/AndOrNot.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Decay.h"
 #include "Templates/EnableIf.h"
 #include "Templates/Function.h"

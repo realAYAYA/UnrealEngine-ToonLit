@@ -1,6 +1,9 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
+using EpicGames.UHT.Utils;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using EpicGames.Core;
 
 namespace UnrealBuildTool
 {
@@ -35,6 +38,24 @@ namespace UnrealBuildTool
 			if (ClangVersion >= new VersionNumber(14))
 			{
 				Arguments.Add("-Wno-bitwise-instead-of-logical");       // https://clang.llvm.org/docs/DiagnosticsReference.html#wbitwise-instead-of-logical			// new warning for clang 14
+			}
+			if (ClangVersion >= new VersionNumber(16))
+			{
+				Arguments.Add("-Wno-deprecated-copy");                  // https://clang.llvm.org/docs/DiagnosticsReference.html#wdeprecated-copy						// new warning for clang 16
+				Arguments.Add("-Wno-deprecated-copy-with-user-provided-copy");
+			}
+			if (ClangVersion >= new VersionNumber(17))
+			{
+				bool bIsAndroidClang17 = ClangVersion == new VersionNumber(17, 0, 2) && CompileEnvironment.Platform == UnrealTargetPlatform.Android;
+				if (CompileEnvironment.CppStandard < CppStandardVersion.Latest && !bIsAndroidClang17) // Android clang 17.0.2 in NDK r26b is missing this warning
+				{
+					Arguments.Add("-Wno-invalid-unevaluated-string");   // https://clang.llvm.org/docs/DiagnosticsReference.html#winvalid-unevaluated-string			// new warning for clang 17
+				}
+			}
+			if (ClangVersion >= new VersionNumber(18))
+			{
+				Arguments.Add("-Wno-deprecated-this-capture");          // https://clang.llvm.org/docs/DiagnosticsReference.html#wdeprecated-this-capture
+				Arguments.Add("-Wno-enum-constexpr-conversion");        // https://clang.llvm.org/docs/DiagnosticsReference.html#wenum-constexpr-conversion
 			}
 
 			Arguments.Add("-Wno-gnu-string-literal-operator-template"); // https://clang.llvm.org/docs/DiagnosticsReference.html#wgnu-string-literal-operator-template	// We use this feature to allow static FNames.
@@ -94,10 +115,18 @@ namespace UnrealBuildTool
 				}
 			}
 
-			// https://clang.llvm.org/docs/DiagnosticsReference.html#wshadow
-			if (CompileEnvironment.ShadowVariableWarningLevel != WarningLevel.Off)
+			// Clang 17 suffers from https://github.com/llvm/llvm-project/issues/71976 and should not be used as a preferred version until resolved
+			if (ClangVersion >= new VersionNumber(17))
 			{
-				Arguments.Add("-Wshadow" + ((CompileEnvironment.ShadowVariableWarningLevel == WarningLevel.Error) ? "" : " -Wno-error=shadow"));
+				Arguments.Add("-Wno-shadow");
+			}
+			else
+			{
+				// https://clang.llvm.org/docs/DiagnosticsReference.html#wshadow
+				if (CompileEnvironment.ShadowVariableWarningLevel != WarningLevel.Off)
+				{
+					Arguments.Add("-Wshadow" + ((CompileEnvironment.ShadowVariableWarningLevel == WarningLevel.Error) ? "" : " -Wno-error=shadow"));
+				}
 			}
 
 			// https://clang.llvm.org/docs/DiagnosticsReference.html#wundef
@@ -183,6 +212,9 @@ namespace UnrealBuildTool
 			Arguments.Add("-Wno-constant-logical-operand"); // Triggered by || of two template-derived values inside a static_assert
 			Arguments.Add("-Wno-unused-value");
 			Arguments.Add("-Wno-bitfield-enum-conversion");
+			Arguments.Add("-Wno-deprecated-copy-with-user-provided-copy");
+			Arguments.Add("-Wno-null-pointer-subtraction");
+			Arguments.Add("-Wno-dangling");
 		}
 
 		// Additional disabled warnings for Intel. Everything below should be checked if it is necessary
@@ -195,6 +227,16 @@ namespace UnrealBuildTool
 			Arguments.Add("-Wno-implicit-float-size-conversion");
 			Arguments.Add("-Wno-null-pointer-subtraction");
 			Arguments.Add("-Wno-single-bit-bitfield-constant-conversion");
+			Arguments.Add("-Wno-invalid-unevaluated-string");
+			Arguments.Add("-Wno-unused-command-line-argument");
+			Arguments.Add("-Wno-dangling");
+			Arguments.Add("-Wno-comment");
+			Arguments.Add("-Wno-range-loop-construct");
+			Arguments.Add("-Wno-pragma-once-outside-header");
+			Arguments.Add("-Wno-extra-qualification");
+			Arguments.Add("-Wno-logical-not-parentheses");
+			Arguments.Add("-Wno-c++20-extensions");
+			Arguments.Add("-Wno-deprecated-declarations");
 		}
 	}
 }

@@ -4,7 +4,7 @@
 #include "PostProcess/PostProcessCombineLUTs.h"
 #include "CanvasTypes.h"
 #include "DataDrivenShaderPlatformInfo.h"
-#include "RenderTargetTemp.h"
+#include "SceneRendering.h"
 #include "UnrealEngine.h"
 
 class FTestImagePS : public FGlobalShader

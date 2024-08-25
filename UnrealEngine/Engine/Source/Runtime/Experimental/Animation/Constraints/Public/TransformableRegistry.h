@@ -20,7 +20,7 @@ class FTransformableRegistry
 public:
 
 	/** Defines the function that will allocate a new transformable handle to wrap the object. */
-	using CreateHandleFuncT = TFunction<UTransformableHandle*(UObject*, UObject*, const FName&)>;
+	using CreateHandleFuncT = TFunction<UTransformableHandle*(UObject*, const FName&)>;
 	/** Defines the function that return a hash value from the object and the attachment name. */
 	using GetHashFuncT = TFunction<uint32(const UObject*, const FName&)>;
 	

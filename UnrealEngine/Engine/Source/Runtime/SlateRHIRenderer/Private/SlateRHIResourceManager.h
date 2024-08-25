@@ -6,6 +6,7 @@
 #include "Stats/Stats.h"
 #include "Textures/TextureAtlas.h"
 #include "UObject/GCObject.h"
+#include "UObject/ObjectKey.h"
 #include "Containers/Queue.h"
 #include "Rendering/ShaderResourceManager.h"
 #include "Rendering/RenderingCommon.h"
@@ -30,7 +31,7 @@ class FSlateVectorGraphicsCache;
  */
 struct FMaterialKey
 {
-	TWeakObjectPtr<const UMaterialInterface> Material;
+	FObjectKey Material;
 	const FVector2f ImageSize;
 	int32 MaskKey;
 

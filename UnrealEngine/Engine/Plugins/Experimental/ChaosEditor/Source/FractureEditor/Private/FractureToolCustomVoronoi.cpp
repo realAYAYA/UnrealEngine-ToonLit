@@ -394,7 +394,7 @@ void UFractureToolCustomVoronoi::GenerateLivePattern(const TArray<FFractureToolC
 			while (TargetNumSites < Sites.Num())
 			{
 				int32 ToRemoveIdx = RandStream.RandHelper(Sites.Num());
-				Sites.RemoveAtSwap(ToRemoveIdx, 1, false);
+				Sites.RemoveAtSwap(ToRemoveIdx, 1, EAllowShrinking::No);
 			}
 		}
 	}

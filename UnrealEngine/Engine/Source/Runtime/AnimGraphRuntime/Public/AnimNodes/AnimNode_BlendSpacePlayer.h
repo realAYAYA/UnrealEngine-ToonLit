@@ -131,15 +131,19 @@ struct FAnimNode_BlendSpacePlayer : public FAnimNode_BlendSpacePlayerBase
 private:
 
 #if WITH_EDITORONLY_DATA
-	// The group name (NAME_None if it is not part of any group)
+	// The group name that we synchronize with (NAME_None if it is not part of any group). Note that
+	// this is the name of the group used to sync the output of this node - it will not force
+	// syncing of animations contained by it.
 	UPROPERTY(EditAnywhere, Category = Sync, meta = (FoldProperty))
 	FName GroupName = NAME_None;
 
-	// The role this player can assume within the group (ignored if GroupIndex is INDEX_NONE)
+	// The role this node can assume within the group (ignored if GroupName is not set). Note
+	// that this is the role of the output of this node, not of animations contained by it.
 	UPROPERTY(EditAnywhere, Category = Sync, meta = (FoldProperty))
 	TEnumAsByte<EAnimGroupRole::Type> GroupRole = EAnimGroupRole::CanBeLeader;
 
-	// How synchronization is determined
+	// How this node will synchronize with other animations. Note that this determines how the output
+	// of this node is used for synchronization, not of animations contained by it.
 	UPROPERTY(EditAnywhere, Category = Sync, meta = (FoldProperty))
 	EAnimSyncMethod Method = EAnimSyncMethod::DoNotSync;
 
@@ -212,15 +216,20 @@ struct FAnimNode_BlendSpacePlayer_Standalone : public FAnimNode_BlendSpacePlayer
 
 private:
 
-	// The group name (NAME_None if it is not part of any group)
+	// The group name that we synchronize with (NAME_None if it is not part of any group). Note that
+	// this is the name of the group used to sync the output of this node - it will not force
+	// syncing of animations contained by it. Animations inside this Blend Space have their own
+	// options for syncing.
 	UPROPERTY(EditAnywhere, Category = Sync)
 	FName GroupName = NAME_None;
 
-	// The role this player can assume within the group (ignored if GroupIndex is INDEX_NONE)
+	// The role this Blend Space can assume within the group (ignored if GroupName is not set). Note
+	// that this is the role of the output of this node, not of animations contained by it.
 	UPROPERTY(EditAnywhere, Category = Sync)
 	TEnumAsByte<EAnimGroupRole::Type> GroupRole = EAnimGroupRole::CanBeLeader;
 
-	// How synchronization is determined
+	// How this asset will synchronize with other assets. Note that this determines how the output
+	// of this node is used for synchronization, not of animations contained by it.
 	UPROPERTY(EditAnywhere, Category = Sync)
 	EAnimSyncMethod Method = EAnimSyncMethod::DoNotSync;
 

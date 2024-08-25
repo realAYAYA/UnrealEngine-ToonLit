@@ -73,9 +73,9 @@ class FNullInstallBundleManager : public IInstallBundleManager
 	{
 	}
 
-	virtual TValueOrError<FInstallBundleRequestInfo, EInstallBundleResult> RequestReleaseContent(TArrayView<const FName> ReleaseNames, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) override
+	virtual TValueOrError<FInstallBundleReleaseRequestInfo, EInstallBundleResult> RequestReleaseContent(TArrayView<const FName> ReleaseNames, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) override
 	{
-		return MakeValue(FInstallBundleRequestInfo());
+		return MakeValue(FInstallBundleReleaseRequestInfo());
 	}
 
 	virtual EInstallBundleResult FlushCache(FInstallBundleSourceOrCache SourceOrCache, FInstallBundleManagerFlushCacheCompleteDelegate Callback, ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) override
@@ -134,6 +134,9 @@ class FNullInstallBundleManager : public IInstallBundleManager
 	{
 
 	}
+
+	virtual void SetCacheSize(FName CacheName, uint64 CacheSize) override
+	{}
 
 	virtual bool SupportsEarlyStartupPatching() const override
 	{

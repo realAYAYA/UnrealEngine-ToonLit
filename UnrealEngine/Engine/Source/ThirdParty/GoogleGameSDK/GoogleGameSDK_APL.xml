@@ -6,6 +6,26 @@
 		<log text="GoogleGameSDK Android init"/>
 		<setBoolFromProperty result="bIncludeMemAdvisor" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="bEnableGameSDKMemAdvisor" default="false"/>
 	</init>
+
+	<!-- optional additions to the GameActivity class in GameActivity.java -->
+	<gameActivityClassAdditions>
+		<if condition="bIncludeMemAdvisor">
+			<true>
+				<insert>
+					public native long nativeGetMemAdvisorAvailableBytes();
+				</insert>
+			</true>
+		</if>
+	</gameActivityClassAdditions>
+	<gameActivityMemStatAdditions>
+		<if condition="bIncludeMemAdvisor">
+			<true>
+				<insert>
+					memLog += ("memstat: [MemAdvisor] Available: "+nativeGetMemAdvisorAvailableBytes()/1024+" kB" );
+				</insert>
+			</true>
+		</if>
+	</gameActivityMemStatAdditions>
 	
 	<resourceCopies>
 		<if condition="bIncludeMemAdvisor">

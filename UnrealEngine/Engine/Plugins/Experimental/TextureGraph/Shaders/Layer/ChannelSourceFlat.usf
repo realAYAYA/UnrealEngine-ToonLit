@@ -1,0 +1,9 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "/Engine/Public/Platform.ush"
+
+float4 Color;
+
+float4 FSH_FlatColorTexture(in float2 uvSource : TEXCOORD0) : SV_Target0
+{
+	return Color;
+}

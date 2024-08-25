@@ -964,6 +964,16 @@ void GTAOSpatialFilterPS(
 // --------------------------------------------------------------------------------------------------------------------
 // SSAO
 
+float3 PackSceneDepth(float InSceneDepth)
+{
+	return UnpackRGBA8(PackR24F(InSceneDepth)).rgb;
+}
+
+float UnpackSceneDepth(float3 InPackedSceneDepth)
+{
+	return UnpackR24F(PackRGBA8(float4(InPackedSceneDepth, 0)));
+}
+
 #if SSAO
 
 void MainPSandCS(in float4 UVAndScreenPos, float4 SvPosition, out float4 OutColor)
@@ -988,8 +998,10 @@ void MainPSandCS(in float4 UVAndScreenPos, float4 SvPosition, out float4 OutColo
 	float3 FovFix = float3(InvTanHalfFov, Ratio * InvTanHalfFov, 1);
 	float3 InvFovFix = 1.0f / FovFix;
 
+	float4 ModifiedSvPosition = float4(SvPosition.xy * SSAO_SvPositionScaleBias.xx + SSAO_SvPositionScaleBias.yy, SvPosition.zw);
+
 	float SceneDepth = GetDepthFromAOInput(UV);
-	float3 WorldNormal = GetWorldSpaceNormalFromAOInput(UV, SvPosition);
+	float3 WorldNormal = GetWorldSpaceNormalFromAOInput(UV, ModifiedSvPosition);
 
 	// can be NaN if WorldNormal=0,0,0 which happens when !USE_NORMALS
 	float3 ViewSpaceNormal = normalize(mul(WorldNormal, (float3x3)View.TranslatedWorldToView));
@@ -1208,6 +1220,10 @@ void MainPSandCS(in float4 UVAndScreenPos, float4 SvPosition, out float4 OutColo
 //		OutColor = (WeightA - 0.333f) / 0.666f;
 	}
 #endif
+
+#if OUTPUT_DEPTH
+	OutColor.gba = PackSceneDepth(SceneDepth);
+#endif
 }
 
 void MainPS(in noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0)
@@ -1217,3 +1233,104 @@ void MainPS(in noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPositio
 
 #endif // SSAO
 
+
+#ifdef UPSAMPLE_PASS
+
+Texture2D AOTexture;
+SamplerState AOSampler;
+
+float UpsampleSSAO(float2 BufferUV)
+{
+#if UPSAMPLE_QUALITY == 0
+	// Bilinear sample.
+	return Texture2DSampleLevel(AOTexture, AOSampler, BufferUV, 0).x;
+
+#elif UPSAMPLE_QUALITY == 1
+	// 4 sample bilinear with depth weighting.
+	float2 LowResBufferSize = floor(View.BufferSizeAndInvSize.xy / 2);
+	float2 LowResTexelSize = 1.0f / LowResBufferSize;
+
+	float2 Corner00UV = floor(BufferUV * LowResBufferSize - 0.5f) / LowResBufferSize + 0.5f * LowResTexelSize;
+	float2 BilinearWeights = (BufferUV - Corner00UV) * LowResBufferSize;
+
+	float4 AOValues00 = Texture2DSampleLevel(AOTexture, AOSampler, Corner00UV, 0);
+	float4 AOValues10 = Texture2DSampleLevel(AOTexture, AOSampler, Corner00UV + float2(LowResTexelSize.x, 0), 0);
+	float4 AOValues01 = Texture2DSampleLevel(AOTexture, AOSampler, Corner00UV + float2(0, LowResTexelSize.y), 0);
+	float4 AOValues11 = Texture2DSampleLevel(AOTexture, AOSampler, Corner00UV + LowResTexelSize, 0);
+
+	float4 CornerWeights = float4(
+		(1 - BilinearWeights.y) * (1 - BilinearWeights.x),
+		(1 - BilinearWeights.y) * BilinearWeights.x,
+		BilinearWeights.y * (1 - BilinearWeights.x),
+		BilinearWeights.y * BilinearWeights.x);
+
+	float SceneDepth00 = UnpackSceneDepth(AOValues00.gba);
+	float SceneDepth10 = UnpackSceneDepth(AOValues10.gba);
+	float SceneDepth01 = UnpackSceneDepth(AOValues01.gba);
+	float SceneDepth11 = UnpackSceneDepth(AOValues11.gba);
+
+	float MaxDepth = max(max(max(SceneDepth00, SceneDepth10), SceneDepth01), SceneDepth11);
+	float MinDepth = min(min(min(SceneDepth00, SceneDepth10), SceneDepth01), SceneDepth11);
+
+	if (MaxDepth / MinDepth > 1.02f)
+	{
+		float Epsilon = 0.0001f;
+		float SceneDepth = GetDepthFromAOInput(BufferUV);
+		float4 CornerDepths = abs(float4(SceneDepth00, SceneDepth10, SceneDepth01, SceneDepth11));
+		float4 DepthWeights = 1.0f / (abs(CornerDepths - SceneDepth.xxxx) + Epsilon);
+		CornerWeights *= DepthWeights;
+	}
+
+	float InterpolatedResult =
+		(CornerWeights.x * AOValues00.r
+			+ CornerWeights.y * AOValues10.r
+			+ CornerWeights.z * AOValues01.r
+			+ CornerWeights.w * AOValues11.r)
+		/ dot(CornerWeights, 1);
+
+	return InterpolatedResult;
+
+#elif UPSAMPLE_QUALITY == 2
+	// 9 sample with depth weighting.
+	float2 LowResBufferSize = floor(View.BufferSizeAndInvSize.xy * 0.5);
+	float2 LowResTexelSize = 1.0f / LowResBufferSize;
+
+	float4 AOValues[9];
+	AOValues[0] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(-1, -1) * LowResTexelSize, 0);
+	AOValues[1] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(0, -1) * LowResTexelSize, 0);
+	AOValues[2] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(1, -1) * LowResTexelSize, 0);
+	AOValues[3] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(-1, 0) * LowResTexelSize, 0);
+	AOValues[4] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(0, 0) * LowResTexelSize, 0);
+	AOValues[5] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(1, 0) * LowResTexelSize, 0);
+	AOValues[6] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(-1, 1) * LowResTexelSize, 0);
+	AOValues[7] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(0, 1) * LowResTexelSize, 0);
+	AOValues[8] = Texture2DSampleLevel(AOTexture, AOSampler, BufferUV + float2(1, 1) * LowResTexelSize, 0);
+
+	float SceneDepth = GetDepthFromAOInput(BufferUV);
+	float Epsilon = 0.0001f;
+
+	float TotalSum = 0;
+	float TotalWeight = 0;
+	UNROLL for (int i = 0; i < 9; ++i)
+	{
+		float SampleValue = AOValues[i].r;
+		float SampleDepth = UnpackSceneDepth(AOValues[i].gba);
+
+		float Weight = 1.0f / (abs(SceneDepth - SampleDepth) + Epsilon);
+		TotalWeight += Weight;
+		TotalSum += SampleValue * Weight;
+	}
+
+	return TotalSum / TotalWeight;
+#endif
+}
+
+void AmbientOcclusionUpsamplePS(
+	in float4 SvPosition : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	float2 BufferUV = SvPositionToBufferUV(SvPosition);
+	OutColor = UpsampleSSAO(BufferUV).xxxx;
+}
+
+#endif // UPSAMPLE_PASS

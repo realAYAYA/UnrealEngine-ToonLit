@@ -13,6 +13,7 @@
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"EnabledByDefault": false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"SupportedTargetPlatforms" : [
 		"IOS", "Win64", "Mac","Linux", "Android"
 	],
@@ -22,6 +23,7 @@
 			"Name": "AppleARKitFaceSupport",
 			"Type": "Runtime",
 			"LoadingPhase": "PostConfigInit",
+			"ProgramAllowList": ["LiveLinkHub"],
 			"PlatformAllowList" : [ "Mac", "IOS", "Win64" ,"Linux", "Android"]
 		}
 	],

@@ -43,9 +43,9 @@ UAISense_Hearing::FDigestedHearingProperties::FDigestedHearingProperties(const U
 }
 
 UAISense_Hearing::FDigestedHearingProperties::FDigestedHearingProperties()
-	: HearingRangeSq(-1.f), AffiliationFlags(-1)
+	: HearingRangeSq(-1.f)
 {
-
+	AffiliationFlags = FAISenseAffiliationFilter::DetectAllFlags();
 }
 
 //----------------------------------------------------------------------//
@@ -115,15 +115,15 @@ void UAISense_Hearing::OnListenerUpdateImpl(const FPerceptionListener& UpdatedLi
 	}
 }
 
-void UAISense_Hearing::OnListenerRemovedImpl(const FPerceptionListener& UpdatedListener)
+void UAISense_Hearing::OnListenerRemovedImpl(const FPerceptionListener& RemovedListener)
 {
-	DigestedProperties.FindAndRemoveChecked(UpdatedListener.GetListenerID());
+	DigestedProperties.FindAndRemoveChecked(RemovedListener.GetListenerID());
 }
 
 float UAISense_Hearing::Update()
 {
 	AIPerception::FListenerMap& ListenersMap = *GetListeners();
-	UAIPerceptionSystem* PerseptionSys = GetPerceptionSystem();
+	UAIPerceptionSystem* PerceptionSys = GetPerceptionSystem();
 	const float SpeedOfSoundSqScalar = SpeedOfSoundSq > 0.f ? 1.f / SpeedOfSoundSq : 0.f;
 
 	for (AIPerception::FListenerMap::TIterator ListenerIt(ListenersMap); ListenerIt; ++ListenerIt)
@@ -161,7 +161,7 @@ float UAISense_Hearing::Update()
 			// calculate delay and fake it with Age, Delay should be pretty small so a static_cast is safe enough here.
 			const float Delay = FloatCastChecked<float>(FMath::Sqrt(DistToSoundSquared * SpeedOfSoundSqScalar), UE::LWC::DefaultFloatPrecision);
 			// pass over to listener to process 			
-			PerseptionSys->RegisterDelayedStimulus(Listener.GetListenerID(), Delay, Event.Instigator
+			PerceptionSys->RegisterDelayedStimulus(Listener.GetListenerID(), Delay, Event.Instigator
 				, FAIStimulus(*this, ClampedLoudness, Event.NoiseLocation, Listener.CachedLocation, FAIStimulus::SensingSucceeded, Event.Tag) );
 		}
 	}

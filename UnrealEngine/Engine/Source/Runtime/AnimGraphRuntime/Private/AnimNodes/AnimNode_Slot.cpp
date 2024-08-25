@@ -91,6 +91,7 @@ void FAnimNode_Slot::Evaluate_AnyThread(FPoseContext & Output)
 	if (WeightData.SlotNodeWeight <= ZERO_ANIMWEIGHT_THRESH)
 	{
 		Source.Evaluate(Output);
+		PostEvaluateSourcePose(Output);
 	}
 	else
 	{
@@ -100,6 +101,7 @@ void FAnimNode_Slot::Evaluate_AnyThread(FPoseContext & Output)
 			Source.Evaluate(SourceContext);
 		}
 
+		PostEvaluateSourcePose(SourceContext);
 		const FAnimationPoseData SourcePoseData(SourceContext);
 		FAnimationPoseData OutputPoseData(Output);
 		Output.AnimInstanceProxy->SlotEvaluatePose(SlotName, SourcePoseData, WeightData.SourceWeight, OutputPoseData, WeightData.SlotNodeWeight, WeightData.TotalNodeWeight);

@@ -23,5 +23,8 @@ public:
 		return Categories;
 	}
 	virtual EAssetCommandResult OpenAssets(const FAssetOpenArgs& OpenArgs) const override;
+	
+	const FSlateBrush* GetIconBrush(const FAssetData& InAssetData, const FName InClassName) const override;
+	const FSlateBrush* GetThumbnailBrush(const FAssetData& InAssetData, const FName InClassName) const override;
 	// UAssetDefinition End
 };

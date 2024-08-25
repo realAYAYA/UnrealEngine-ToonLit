@@ -65,6 +65,8 @@ public:
 
 	/*~ ISignedObjectEventHandler */
 	void OnPostUndo() override;
+	void OnModifiedIndirectly(UMovieSceneSignedObject*) override;
+	void OnModifiedDirectly(UMovieSceneSignedObject*) override;
 
 	/*~ ISortableExtension */
 	void SortChildren() override;

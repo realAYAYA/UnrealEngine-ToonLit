@@ -48,7 +48,7 @@ private:
 	UPROPERTY()
 	FTransform Transform;
 
-	TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe> ChaosConvex;
+	Chaos::FConvexPtr ChaosConvex;
 
 public:
 
@@ -112,7 +112,10 @@ public:
 	* @param InChaosConvex	Chaos convex mesh to set 
 	* @param ConvexDataUpdateMethod	method to use to update internal convex data
 	*/
-	ENGINE_API void SetChaosConvexMesh(TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe>&& InChaosConvex, EConvexDataUpdateMethod ConvexDataUpdateMethod = EConvexDataUpdateMethod::AlwaysUpdateConvexData);
+	UE_DEPRECATED(5.4, "Use SetConvexMeshObject instead")
+	ENGINE_API void SetChaosConvexMesh(TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe>&& InChaosConvex, EConvexDataUpdateMethod ConvexDataUpdateMethod = EConvexDataUpdateMethod::AlwaysUpdateConvexData){check(false);}
+
+	ENGINE_API void SetConvexMeshObject(Chaos::FConvexPtr&& InChaosConvex, EConvexDataUpdateMethod ConvexDataUpdateMethod = EConvexDataUpdateMethod::AlwaysUpdateConvexData);
 
 	ENGINE_API void ResetChaosConvexMesh();
 

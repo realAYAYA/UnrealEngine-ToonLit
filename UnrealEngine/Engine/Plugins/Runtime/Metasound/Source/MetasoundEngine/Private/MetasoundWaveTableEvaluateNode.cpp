@@ -77,22 +77,21 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace WaveTable;
 
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FWaveTableReadRef InWaveTableReadRef = InputCollection.GetDataReadReferenceOrConstruct<FWaveTable>("WaveTable");
-			FFloatReadRef InInputReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, "Input", InParams.OperatorSettings);
-			FEnumWaveTableInterpModeReadRef InInterpReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumWaveTableInterpolationMode>(InputInterface, "Interpolation", InParams.OperatorSettings);
+			FWaveTableReadRef InWaveTableReadRef = InputData.GetOrConstructDataReadReference<FWaveTable>("WaveTable");
+			FFloatReadRef InInputReadRef = InputData.GetOrCreateDefaultDataReadReference<float>("Input", InParams.OperatorSettings);
+			FEnumWaveTableInterpModeReadRef InInterpReadRef = InputData.GetOrCreateDefaultDataReadReference<FEnumWaveTableInterpolationMode>("Interpolation", InParams.OperatorSettings);
 
 			return MakeUnique<FMetasoundWaveTableEvaluateNodeOperator>(InParams, InWaveTableReadRef, InInputReadRef, InInterpReadRef);
 		}
 
 		FMetasoundWaveTableEvaluateNodeOperator(
-			const FCreateOperatorParams& InParams,
+			const FBuildOperatorParams& InParams,
 			const FWaveTableReadRef& InWaveTableReadRef,
 			const FFloatReadRef& InInputReadRef,
 			const FEnumWaveTableInterpModeReadRef& InInterpModeReadRef)
@@ -105,15 +104,6 @@ namespace Metasound
 		}
 
 		virtual ~FMetasoundWaveTableEvaluateNodeOperator() = default;
-
-		virtual void Bind(FVertexInterfaceData& InVertexData) const override
-		{
-			using namespace WaveTableEvaluateNode;
-			
-			FInputVertexInterfaceData& Inputs = InVertexData.GetInputs();
-
-			FOutputVertexInterfaceData& Outputs = InVertexData.GetOutputs();
-		}
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override
 		{

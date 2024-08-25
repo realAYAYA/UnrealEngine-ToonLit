@@ -6,6 +6,7 @@ public class GeometryFlowMeshProcessingEditor : ModuleRules
 {
 	public GeometryFlowMeshProcessingEditor(ReadOnlyTargetRules Target) : base(Target)
 	{
+		ShortName = "GeoFlowMeshProcEditor";
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
 		PublicIncludePaths.AddRange(

@@ -15,6 +15,8 @@
 #include "MuCOE/SCustomizableObjectEditorTextureAnalyzer.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "PropertyCustomizationHelpers.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -719,7 +721,7 @@ void SCustomizableObjecEditorPerformanceReport::WorstTimeFound(float CurrentInst
 		WorstCase->SetInstance(Instance);
 		if (WorstCase->WorstCaseInstance)
 		{
-			WorstCase->WorstCaseInstance->SetState(LongesTimeStateIndex);
+			WorstCase->WorstCaseInstance->GetPrivate()->SetState(LongesTimeStateIndex);
 		}
 		WorstCase->LongestUpdateTimeStateIndex = LongesTimeStateIndex;
 		WorstCase->LongestUpdateTimeParameterIndexInCO = LongesTimeParameterIndexInCO;
@@ -964,7 +966,7 @@ void SCustomizableObjecEditorPerformanceReport::UpdateSelectedInstanceData()
 	if (CurrentReportInstance && CurrentReportInstance->IsValidLowLevelFast())
 	{
 		// If we have at least one skeletal mesh in the instance, we know it's generated (at least once)
-		if (CurrentReportInstance->SkeletalMeshes.Num() > 0 && CurrentReportInstance->SkeletalMeshes[0])
+		if (CurrentReportInstance->HasAnySkeletalMesh())
 		{
 			PerformanceReportTextureAnalyzer->RefreshTextureAnalyzerTable(CurrentReportInstance);
 		}
@@ -1343,7 +1345,7 @@ TSharedRef<SWidget> SPerformanceReportWorstCaseRow::GenerateWidgetForColumn(cons
 		{
 			if (const UCustomizableObject* CustomizableObject = ReportInstance->WorstCaseInstance->GetCustomizableObject();
 				CustomizableObject &&
-				!CustomizableObject->IsLocked())
+				!CustomizableObject->GetPrivate()->IsLocked())
 			{
 				const bool bIsDetailParam = ReportInstance->WorstCaseType == UWorstCasePerformanceReportInstance::EPerformanceReportWorstCaseType::SLOWEST_UPDATE_PARAM_IN_RELEVANT_STATE;
 				const FText TextState = ReportInstance->WorstCaseType == UWorstCasePerformanceReportInstance::EPerformanceReportWorstCaseType::SLOWEST_UPDATE_ENTER_STATE ?

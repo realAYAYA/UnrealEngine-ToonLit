@@ -2,8 +2,13 @@
 
 using System;
 using System.Collections.Generic;
-using Horde.Server.Jobs;
-using Horde.Server.Streams;
+using System.Linq;
+using EpicGames.Core;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Bisect;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using MongoDB.Bson;
 
 namespace Horde.Server.Users
@@ -118,7 +123,6 @@ namespace Horde.Server.Users
 		public IReadOnlyList<string> Arguments { get; set; } = new List<string>();
 	}
 
-
 	/// <summary>
 	/// User settings document
 	/// </summary>
@@ -135,6 +139,11 @@ namespace Horde.Server.Users
 		public bool EnableExperimentalFeatures { get; }
 
 		/// <summary>
+		/// Whether to always tag CL descriptions for preflights
+		/// </summary>
+		public bool AlwaysTagPreflightCL { get; }
+
+		/// <summary>
 		/// Opaque settings dictionary for the dashboard
 		/// </summary>
 		public BsonValue DashboardSettings { get; }
@@ -145,9 +154,71 @@ namespace Horde.Server.Users
 		public IReadOnlyList<JobId> PinnedJobIds { get; }
 
 		/// <summary>
+		/// List of pinned bisection tasks
+		/// </summary>
+		public IReadOnlyList<BisectTaskId> PinnedBisectTaskIds { get; }
+
+		/// <summary>
 		/// List of job template preferences
 		/// </summary>
 		public IReadOnlyList<IUserJobTemplateSettings>? JobTemplateSettings { get; }
+	}
 
+	/// <summary>
+	/// Extension methods
+	/// </summary>
+	public static class UserExtensions
+	{
+		/// <summary>
+		/// Creates an API response object
+		/// </summary>
+		public static GetUserResponse ToApiResponse(this IUser user, IAvatar? avatar, IUserClaims? claims, IUserSettings? settings)
+		{
+			GetUserResponse response = new GetUserResponse(user.Id, user.Name);
+			response.Email = user.Email;
+
+			response.Image24 = avatar?.Image24;
+			response.Image32 = avatar?.Image32;
+			response.Image48 = avatar?.Image48;
+			response.Image72 = avatar?.Image72;
+
+			response.Claims = claims?.Claims.Select(x => new GetUserClaimResponse(x.Type, x.Value)).ToList();
+
+			if (settings != null)
+			{
+				response.EnableExperimentalFeatures = settings.EnableExperimentalFeatures;
+				response.AlwaysTagPreflightCL = settings.AlwaysTagPreflightCL;
+
+				response.DashboardSettings = BsonTypeMapper.MapToDotNetValue(settings.DashboardSettings);
+				response.PinnedJobIds = settings.PinnedJobIds.ConvertAll(x => x.ToString());
+				response.PinnedBisectTaskIds = settings.PinnedBisectTaskIds.ConvertAll(x => x.ToString());
+
+				if (settings.JobTemplateSettings != null && settings.JobTemplateSettings.Count > 0)
+				{
+					response.JobTemplateSettings = new List<GetJobTemplateSettingsResponse>();
+					for (int i = 0; i < settings.JobTemplateSettings.Count; i++)
+					{
+						response.JobTemplateSettings.Add(settings.JobTemplateSettings[i].ToApiResponse());
+					}
+				}
+			}
+			return response;
+		}
+
+		/// <summary>
+		/// Creates an API thin user response
+		/// </summary>
+		public static GetThinUserInfoResponse ToThinApiResponse(this IUser user)
+		{
+			return new GetThinUserInfoResponse(user.Id, user.Name, user.Email, user.Login);
+		}
+
+		/// <summary>
+		/// Creates an API settings response
+		/// </summary>
+		public static GetJobTemplateSettingsResponse ToApiResponse(this IUserJobTemplateSettings settings)
+		{
+			return new GetJobTemplateSettingsResponse(settings.StreamId.ToString(), settings.TemplateId.ToString(), settings.TemplateHash.ToString(), settings.Arguments.ToList(), settings.UpdateTimeUtc);
+		}
 	}
 }

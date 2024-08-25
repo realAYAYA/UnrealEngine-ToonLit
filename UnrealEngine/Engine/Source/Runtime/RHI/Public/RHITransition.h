@@ -3,10 +3,10 @@
 #pragma once
 
 #include "Containers/ArrayView.h"
+#include "Misc/Optional.h"
 #include "RHIDefinitions.h"
 #include "RHIAccess.h"
 #include "RHIPipeline.h"
-
 #include "RHIValidationCommon.h"
 
 // The size in bytes of the storage required by the platform RHI for each resource transition.
@@ -77,6 +77,21 @@ struct FRHISubresourceRange
 	}
 };
 
+/**
+* Represents a change in physical memory allocation for a resource that was created with TexCreate/BUF_ReservedResource flag.
+* Physical memory is allocated in tiles/pages and mapped to the tail of the currently committed region of the resource.
+* This API may be used to grow or shrink reserved resources without moving the bulk of the data or re-creating SRVs/UAVs.
+* The contents of the newly committed region of the resource is undefined and must be overwritten by the application before use.
+* Reserved resources must be created with maximum expected size, which will not cost any memory until committed.
+* Commit size must be smaller or equal to the maximum resource size specified at creation.
+* Check GRHIGlobals.ReservedResources.Supported before using this API or TexCreate/BUF_ReservedResource flag.
+*/
+struct FRHICommitResourceInfo
+{
+	uint64 SizeInBytes = 0;
+	FRHICommitResourceInfo(uint64 InSizeInBytes) : SizeInBytes(InSizeInBytes) {}
+};
+
 struct FRHITransitionInfo : public FRHISubresourceRange
 {
 	union
@@ -101,6 +116,7 @@ struct FRHITransitionInfo : public FRHISubresourceRange
 	ERHIAccess AccessBefore = ERHIAccess::Unknown;
 	ERHIAccess AccessAfter = ERHIAccess::Unknown;
 	EResourceTransitionFlags Flags = EResourceTransitionFlags::None;
+	TOptional<FRHICommitResourceInfo> CommitInfo;
 
 	FRHITransitionInfo() = default;
 
@@ -134,6 +150,14 @@ struct FRHITransitionInfo : public FRHISubresourceRange
 		, AccessBefore(InPreviousState)
 		, AccessAfter(InNewState)
 		, Flags(InFlags)
+	{}
+
+	FRHITransitionInfo(class FRHIBuffer* InRHIBuffer, ERHIAccess InPreviousState, ERHIAccess InNewState, FRHICommitResourceInfo InCommitInfo)
+		: Buffer(InRHIBuffer)
+		, Type(EType::Buffer)
+		, AccessBefore(InPreviousState)
+		, AccessAfter(InNewState)
+		, CommitInfo(InCommitInfo)
 	{}
 
 	FRHITransitionInfo(class FRHIRayTracingAccelerationStructure* InBVH, ERHIAccess InPreviousState, ERHIAccess InNewState, EResourceTransitionFlags InFlags = EResourceTransitionFlags::None)

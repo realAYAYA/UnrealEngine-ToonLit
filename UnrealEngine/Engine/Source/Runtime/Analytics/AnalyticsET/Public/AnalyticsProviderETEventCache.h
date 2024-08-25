@@ -110,6 +110,8 @@ public:
 		FScopeLock ScopedLock;
 	};
 
+	static ANALYTICSET_API void OnStartupModule();
+
 private:
 	ANALYTICSET_API void QueueFlush();
 

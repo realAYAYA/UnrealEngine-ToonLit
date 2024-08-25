@@ -327,5 +327,10 @@ TArray<FTrajectoryKey> UMovieScene3DTransformTrack::GetTrajectoryData(FFrameNumb
 	return Result;
 }
 
+FSlateColor UMovieScene3DTransformTrack::GetLabelColor(const FMovieSceneLabelParams& LabelParams) const
+{
+	return LabelParams.bIsDimmed ? FSlateColor::UseSubduedForeground() : FSlateColor::UseForeground();
+}
+
 #endif	// WITH_EDITOR
 

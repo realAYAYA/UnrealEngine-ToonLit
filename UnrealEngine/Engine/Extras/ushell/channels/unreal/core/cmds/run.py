@@ -28,16 +28,19 @@ class _Attachable(object):
     attach = unrealcmd.Opt(False, "Attach a debugger to the launched process")
 
     def _get_debugger(self, name=None):
+        name = name or os.getenv("USHELL_DEBUGGER")
         name = name or ("vs" if os.name == "nt" else "lldb")
-        ue_context = self.get_unreal_context()
-        channel = self.get_channel()
-        debuggers = channel.get_extendable("debuggers")
+        dbg_py_path = Path(__file__).parent.parent / f"debuggers/{name}.py"
 
         try:
-            debugger_class = debuggers.get_extension_class(name)
-            return debugger_class.construct(ue_context)
-        except ValueError:
-            raise ValueError(f"Unknown debugger '{name}'. Valid list: [{','.join([x[0] for x in debuggers.read_extensions()])}]")
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("", dbg_py_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            debugger_class = getattr(module, "Debugger", None)
+            return debugger_class(self.get_unreal_context())
+        except Exception as e:
+            raise RuntimeError(f"Failed to load debugger '{dbg_py_path}' ({e})")
 
     def attach_to(self, pid, *, transport=None, host_ip=None):
         debugger = self._get_debugger()
@@ -398,6 +401,7 @@ class Game(_Runtime):
         yield from super().complete_platform(prefix)
         yield "editor"
 
+    @unrealcmd.Cmd.summarise
     def main(self):
         if self.args.platform == "editor":
             editor = Editor()
@@ -412,6 +416,7 @@ class Game(_Runtime):
 #-------------------------------------------------------------------------------
 class Client(_Runtime):
     """ Launches the game client. """
+    @unrealcmd.Cmd.summarise
     def main(self):
         return self._main_impl(unreal.TargetType.CLIENT)
 
@@ -419,6 +424,7 @@ class Client(_Runtime):
 class Server(_Runtime):
     """ Launches the server binary. """
     complete_platform = ("win64", "linux")
+    @unrealcmd.Cmd.summarise
     def main(self):
         self.args.runargs = (*self.args.runargs, "-log", "-unattended")
         return self._main_impl(unreal.TargetType.SERVER)

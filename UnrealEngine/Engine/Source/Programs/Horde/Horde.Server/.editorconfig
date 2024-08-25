@@ -1,0 +1,6 @@
+# EditorConfig is awesome: http://EditorConfig.org
+
+[*.cs]
+
+# MA0032: Use an overload with a CancellationToken
+dotnet_diagnostic.MA0032.severity = warning

@@ -34,9 +34,14 @@ set _cookie=%_cookie:~1%
 set _cookie=%temp%\ushell\cmd_boot_%_cookie%
 %_working%\python\current\flow_python.exe -Xutf8 -Esu "%~dp0..\core\system\boot.py" %_working% %_channels% -- "--bootarg=cmd,%_cookie%" %*
 
-:: was the python binary missing? "3" comes from cmd.exe - lets hope that it
-:: doesn't collide with something boot.py might return.
-if errorlevel 3 (
+:: If --help was given then we return the user to where they came from. The "127"
+:: comes from _flick
+if %errorlevel%==127 (
+    goto:eof
+)
+
+:: Was the Python binary missing? "9009" comes from cmd.exe
+if %errorlevel%==9009 (
     echo,
     echo,
     echo ERROR: Missing flow_python.exe from '%_working%\python\current'

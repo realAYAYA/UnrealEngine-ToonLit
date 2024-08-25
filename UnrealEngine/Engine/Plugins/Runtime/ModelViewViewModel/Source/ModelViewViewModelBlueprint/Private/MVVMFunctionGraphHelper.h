@@ -49,4 +49,7 @@ namespace UE::MVVM::FunctionGraphHelper
 	/** Generate the nodes needed to set a variable/function value. To use while while compiling the Blueprint. */
 	bool GenerateIntermediateSetter(FKismetCompilerContext& Context, UEdGraph* FunctionGraph, TArrayView<UE::MVVM::FMVVMConstFieldVariant> SetterPath);
 
+	/** @return true when the entry node in the graph matches the function signature. */
+	bool IsFunctionEntryMatchSignature(const UEdGraph* FunctionGraph, const UFunction* FunctionSignature);
+
 } //namespace

@@ -55,7 +55,7 @@ void FGeometryCollectionVertexFactory::ModifyCompilationEnvironment(const FVerte
 {
 	const FStaticFeatureLevel MaxSupportedFeatureLevel = GetMaxSupportedFeatureLevel(Parameters.Platform);
 	// TODO: support GPUScene on mobile
-	const bool bUseGPUScene = UseGPUScene(Parameters.Platform, MaxSupportedFeatureLevel) && (MaxSupportedFeatureLevel > ERHIFeatureLevel::ES3_1);
+	const bool bUseGPUScene = UseGPUScene(Parameters.Platform, MaxSupportedFeatureLevel);
 	const bool bSupportsPrimitiveIdStream = Parameters.VertexFactoryType->SupportsPrimitiveIdStream();
 
 	OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), bSupportsPrimitiveIdStream && bUseGPUScene);
@@ -75,7 +75,6 @@ void FGeometryCollectionVertexFactory::ValidateCompiledResult(const FVertexFacto
 {
 	if (Type->SupportsPrimitiveIdStream()
 		&& UseGPUScene(Platform, GetMaxSupportedFeatureLevel(Platform))
-		&& !IsMobilePlatform(Platform) // On mobile VS may use PrimtiveUB while GPUScene is enabled
 		&& ParameterMap.ContainsParameterAllocation(FPrimitiveUniformShaderParameters::FTypeInfo::GetStructMetadata()->GetShaderVariableName()))
 	{
 		OutErrors.AddUnique(*FString::Printf(TEXT("Shader attempted to bind the Primitive uniform buffer even though Vertex Factory %s computes a PrimitiveId per-instance.  This will break auto-instancing.  Shaders should use GetPrimitiveData(Parameters).Member instead of Primitive.Member."), Type->GetName()));
@@ -84,28 +83,37 @@ void FGeometryCollectionVertexFactory::ValidateCompiledResult(const FVertexFacto
 
 void FGeometryCollectionVertexFactory::GetPSOPrecacheVertexFetchElements(EVertexInputStreamType VertexInputStreamType, FVertexDeclarationElementList& Elements)
 {
-	Elements.Add(FVertexElement(0, 0, VET_Float3, 0, 0, false));
+	Elements.Add(FVertexElement(0, 0, VET_Float3, 0, sizeof(float)*3u, false));
 
-	switch (VertexInputStreamType)
+	if (VertexInputStreamType == EVertexInputStreamType::PositionAndNormalOnly)
 	{
-	case EVertexInputStreamType::Default:
-	{
-		Elements.Add(FVertexElement(1, 0, VET_UInt, 13, 0, true));
-		break;
+		// 2-axis TangentBasis components in a single buffer, hence *2u
+		Elements.Add(FVertexElement(1, 0, VET_PackedNormal, 2, sizeof(FPackedNormal)*2u, false));
 	}
-	case EVertexInputStreamType::PositionOnly:
+
+	if (UseGPUScene(GMaxRHIShaderPlatform, GMaxRHIFeatureLevel)
+		&& !PlatformGPUSceneUsesUniformBufferView(GMaxRHIShaderPlatform))
 	{
-		Elements.Add(FVertexElement(1, 0, VET_UInt, 1, 0, true));
-		break;
-	}
-	case EVertexInputStreamType::PositionAndNormalOnly:
-	{
-		Elements.Add(FVertexElement(1, 0, VET_PackedNormal, 2, 0, false));
-		Elements.Add(FVertexElement(2, 0, VET_UInt, 1, 0, true));
-		break;
-	}
-	default:
-		checkNoEntry();
+		switch (VertexInputStreamType)
+		{
+		case EVertexInputStreamType::Default:
+		{
+			Elements.Add(FVertexElement(1, 0, VET_UInt, 13, sizeof(uint32), true));
+			break;
+		}
+		case EVertexInputStreamType::PositionOnly:
+		{
+			Elements.Add(FVertexElement(1, 0, VET_UInt, 1, sizeof(uint32), true));
+			break;
+		}
+		case EVertexInputStreamType::PositionAndNormalOnly:
+		{
+			Elements.Add(FVertexElement(2, 0, VET_UInt, 1, sizeof(uint32), true));
+			break;
+		}
+		default:
+			checkNoEntry();
+		}
 	}
 }
 
@@ -136,7 +144,7 @@ void FGeometryCollectionVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 				StreamElements.Add(AccessStreamComponent(Data.TangentBasisComponents[1], 2, InputStreamType));
 			}
 
-			AddPrimitiveIdStreamElement(InputStreamType, StreamElements, 1, 0xff); // TODO: support instancing on mobile
+			AddPrimitiveIdStreamElement(InputStreamType, StreamElements, 1, 1);
 
 			InitDeclaration(StreamElements, InputStreamType);
 		};
@@ -151,7 +159,7 @@ void FGeometryCollectionVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 		Elements.Add(AccessStreamComponent(Data.PositionComponent, 0));
 	}
 
-	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, 0xff);  // TODO: support instancing on mobile
+	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, 13);
 
 	// Only the tangent and normal are used by the stream; the bitangent is derived in the shader.
 	uint8 TangentBasisAttributes[2] = { 1, 2 };

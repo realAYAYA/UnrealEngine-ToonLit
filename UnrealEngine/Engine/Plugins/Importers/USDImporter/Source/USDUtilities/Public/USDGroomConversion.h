@@ -11,8 +11,8 @@
 #include "USDIncludesEnd.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
-class UsdPrim;
-class UsdTimeCode;
+	class UsdPrim;
+	class UsdTimeCode;
 PXR_NAMESPACE_CLOSE_SCOPE
 
 class FHairDescription;
@@ -30,7 +30,13 @@ namespace UsdToUnreal
 	 * @param AnimInfo -  Optional GroomAnimationInfo to fill when parsing the hierarchy
 	 * @return true if the conversion was successful; false otherwise
 	 */
-	USDUTILITIES_API bool ConvertGroomHierarchy(const pxr::UsdPrim& Prim, const pxr::UsdTimeCode& TimeCode, const FTransform& ParentTransform, FHairDescription& HairDescription, FGroomAnimationInfo* AnimInfo = nullptr);
+	USDUTILITIES_API bool ConvertGroomHierarchy(
+		const pxr::UsdPrim& Prim,
+		const pxr::UsdTimeCode& TimeCode,
+		const FTransform& ParentTransform,
+		FHairDescription& HairDescription,
+		FGroomAnimationInfo* AnimInfo = nullptr
+	);
 }
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

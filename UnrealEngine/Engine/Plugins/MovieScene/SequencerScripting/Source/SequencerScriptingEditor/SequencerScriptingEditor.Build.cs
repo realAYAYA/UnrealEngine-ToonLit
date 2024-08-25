@@ -15,7 +15,6 @@ public class SequencerScriptingEditor : ModuleRules
 
 		PrivateIncludePaths.AddRange(
 			new string[] {
-                "SequencerScripting/Private",
                 "../../../../Source/Editor/UnrealEd/Private", // TODO: Fix this, for now it's needed for the fbx exporter
             }
         );
@@ -48,7 +47,9 @@ public class SequencerScriptingEditor : ModuleRules
 				"EditorFramework",
                 "UnrealEd",
                 "Sequencer",
-                "BlueprintGraph"
+                "BlueprintGraph",
+				"CurveEditor",
+				"SequencerCore"
             }
 		);
 

@@ -150,7 +150,9 @@ TSharedRef<SNotificationList> FSlateNotificationManager::CreateStackForArea(cons
 	NotificationWindow->SetContent(NotificationList);
 	NotificationList->ParentWindowPtr = NotificationWindow;
 
-	if (Window.IsValid())
+	// Prevent tying a notification to a window that is minimized because a minimized window isn't painted
+	// and therefore the notification wouldn't be either.
+	if (Window.IsValid() && Window->IsVisible() && !Window->IsWindowMinimized())
 	{
 		FSlateApplication::Get().AddWindowAsNativeChild(NotificationWindow, Window.ToSharedRef());
 	}

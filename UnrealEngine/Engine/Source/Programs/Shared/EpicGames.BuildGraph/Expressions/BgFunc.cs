@@ -1,8 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace EpicGames.BuildGraph.Expressions
 {
@@ -144,22 +142,22 @@ namespace EpicGames.BuildGraph.Expressions
 
 	class BgFuncCallExpr<T> : BgExpr where T : BgExpr
 	{
-		readonly BgFunc Function;
-		readonly BgExpr[] Arguments;
+		readonly BgFunc _function;
+		readonly BgExpr[] _arguments;
 
 		public BgFuncCallExpr(BgFunc function, params BgExpr[] arguments)
 			: base(BgExprFlags.None)
 		{
-			Function = function;
-			Arguments = arguments;
+			_function = function;
+			_arguments = arguments;
 		}
 
 		public override void Write(BgBytecodeWriter writer)
 		{
 			writer.WriteOpcode(BgOpcode.Call);
-			writer.WriteExprAsFragment(Function.Body);
-			writer.WriteUnsignedInteger((uint)Arguments.Length);
-			foreach (BgExpr argument in Arguments)
+			writer.WriteExprAsFragment(_function.Body);
+			writer.WriteUnsignedInteger((uint)_arguments.Length);
+			foreach (BgExpr argument in _arguments)
 			{
 				argument.Write(writer);
 			}

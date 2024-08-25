@@ -47,11 +47,6 @@ void UActorFactoryMediaPlate::PostSpawnActor(UObject* Asset, AActor* NewActor)
 	SetUpActor(Asset, NewActor);
 }
 
-void UActorFactoryMediaPlate::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	SetUpActor(Asset, CDO);
-}
-
 void UActorFactoryMediaPlate::SetUpActor(UObject* Asset, AActor* Actor)
 {
 	if (Actor != nullptr)

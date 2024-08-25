@@ -89,8 +89,10 @@ bool FTexture2DMipAllocator_AsyncCreate::FinalizeMips(const FTextureUpdateContex
 			FinalFormat,
 			ResourceState.NumRequestedLODs,
 			Context.Resource->GetCreationFlags(),
+			ERHIAccess::Unknown,
 			FinalMipData.GetData(),
 			FinalMipData.Num(),
+			*Context.Resource->GetTextureName().ToString(),
 			CompletionEvent);
 
 		if (CompletionEvent)

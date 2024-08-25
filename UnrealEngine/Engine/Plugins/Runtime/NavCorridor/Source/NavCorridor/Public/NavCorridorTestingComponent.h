@@ -4,6 +4,7 @@
 
 #include "Debug/DebugDrawComponent.h"
 #include "NavCorridor.h"
+#include "AI/Navigation/NavigationTypes.h" // FNavAgentProperties
 #include "NavCorridorTestingComponent.generated.h"
 
 class ANavigationData;

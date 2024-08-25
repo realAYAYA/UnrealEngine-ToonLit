@@ -146,14 +146,14 @@ bool FCompareBasepassShaders::RunTest(const FString& Parameters)
     for (int i = 0; i < NUM_CAMERAS; ++i)
     {
         FString CompareBasepassShadersTestName = FString::Printf(TEXT("CompareBasepassShaders_Game/%s/%d"), *FPaths::GetBaseFilename(MapName), i);
-		ScreenshotFileName[i] = AutomationCommon::GetScreenshotName(CompareBasepassShadersTestName);
+		ScreenshotFileName[i] = AutomationCommon::GetScreenshotPath(CompareBasepassShadersTestName);
         CompareBasepassShadersTestName = FString::Printf(TEXT("Incoming/CompareBasepassShaders_Game/%s/%d"), *FPaths::GetBaseFilename(MapName), i);
-		RealScreenshotFileName[i] = AutomationCommon::GetScreenshotName(CompareBasepassShadersTestName);
+		RealScreenshotFileName[i] = AutomationCommon::GetScreenshotPath(CompareBasepassShadersTestName);
         RealScreenshotFileName[i] = "../../../" + RealScreenshotFileName[i];
         CompareBasepassShadersTestName = FString::Printf(TEXT("CompareBasepassShaders_Game/%s_fp16/%d"), *FPaths::GetBaseFilename(MapName), i);
-		FP16ScreenshotFileName[i] = AutomationCommon::GetScreenshotName(CompareBasepassShadersTestName);
+		FP16ScreenshotFileName[i] = AutomationCommon::GetScreenshotPath(CompareBasepassShadersTestName);
         CompareBasepassShadersTestName = FString::Printf(TEXT("Incoming/CompareBasepassShaders_Game/%s_fp16/%d"), *FPaths::GetBaseFilename(MapName), i);
-		RealFP16ScreenshotFileName[i] = AutomationCommon::GetScreenshotName(CompareBasepassShadersTestName);
+		RealFP16ScreenshotFileName[i] = AutomationCommon::GetScreenshotPath(CompareBasepassShadersTestName);
         RealFP16ScreenshotFileName[i] = "../../../" + RealFP16ScreenshotFileName[i];
     }
 
@@ -186,7 +186,7 @@ bool FCompareBasepassShaders::RunTest(const FString& Parameters)
 
     AddCommand(new FDelayedFunctionLatentCommand([=] {
         FString str;
-        FString DefineStr = FString("#define ") + Parameters + " 1\r\n";
+        FString DefineStr = FString("#define ") + Parameters + " 1\n";
         for (int i = 0; i < ShaderNames.Num(); ++i) {
             FFileHelper::LoadFileToString((*FileStrings)[i], *ShaderNames[i]);
             str = DefineStr + (*FileStrings)[i];

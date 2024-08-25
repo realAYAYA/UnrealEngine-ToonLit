@@ -2,6 +2,8 @@
 
 #include "SwitchboardListenerHelper.h"
 
+
+#include "Common/TcpListener.h"
 #include "HAL/ExceptionHandling.h"
 #include "HAL/IConsoleManager.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"

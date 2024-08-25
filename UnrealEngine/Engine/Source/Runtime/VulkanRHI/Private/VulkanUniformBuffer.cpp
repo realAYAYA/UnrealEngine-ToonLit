@@ -9,6 +9,7 @@
 #include "VulkanLLM.h"
 #include "ShaderParameterStruct.h"
 #include "RHIUniformBufferDataShared.h"
+#include "VulkanDescriptorSets.h"
 
 static int32 GVulkanAllowUniformUpload = 1;
 static FAutoConsoleVariableRef CVarVulkanAllowUniformUpload(
@@ -100,10 +101,48 @@ static void UpdateUniformBufferHelper(FVulkanCommandListContext& Context, FVulka
 	}
 };
 
+bool FVulkanUniformBuffer::SetupUniformBufferView(const FRHIUniformBufferLayout* InLayout, const void* Contents)
+{
+	bUniformView = false;
+
+	if (InLayout->bUniformView)
+	{
+		FRHIShaderResourceView* UniformViewSRV = nullptr;
+		for (int32 Index = 0; Index < InLayout->Resources.Num() && !UniformViewSRV; ++Index)
+		{
+			EUniformBufferBaseType ResourceBaseType = InLayout->Resources[Index].MemberType;
+			if (ResourceBaseType == UBMT_SRV || 
+				ResourceBaseType == UBMT_RDG_BUFFER_SRV)
+			{
+				UniformViewSRV = (FRHIShaderResourceView*)GetShaderParameterResourceRHI(Contents, InLayout->Resources[Index].MemberOffset, ResourceBaseType);
+			}
+		}
+
+		check(UniformViewSRV)
+
+		FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
+		RHICmdList.EnqueueLambda([this, UniformViewSRV](FRHICommandList& CmdList)
+		{
+			FVulkanResourceMultiBuffer* Buffer = ResourceCast(UniformViewSRV->GetBuffer());
+			const FRHIViewDesc::FBufferSRV& SRVInfo = UniformViewSRV->GetDesc().Buffer.SRV;
+			Allocation.Reference(Buffer->GetCurrentAllocation());
+			check(Allocation.Size >= PLATFORM_MAX_UNIFORM_BUFFER_RANGE);
+			//Adjust Allocation.Size ???
+			Allocation.Offset += SRVInfo.OffsetInBytes;
+			bUniformView = true;
+		});
+		
+		return true;
+	}
+	
+	return false;
+}
+
 FVulkanUniformBuffer::FVulkanUniformBuffer(FVulkanDevice& InDevice, const FRHIUniformBufferLayout* InLayout, const void* Contents, EUniformBufferUsage InUsage, EUniformBufferValidation Validation)
 	: FRHIUniformBuffer(InLayout)
 	, Device(&InDevice)
 	, Usage(InUsage)
+	, bUniformView(false)
 {
 #if VULKAN_ENABLE_AGGRESSIVE_STATS
 	SCOPE_CYCLE_COUNTER(STAT_VulkanUniformBufferCreateTime);
@@ -113,9 +152,9 @@ FVulkanUniformBuffer::FVulkanUniformBuffer(FVulkanDevice& InDevice, const FRHIUn
 	//	- If we have at least one resource, we also expect ResourceOffset to have an offset
 	//	- Meaning, there is always a uniform buffer with a size specified larged than 0 bytes
 	check(InLayout->Resources.Num() > 0 || InLayout->ConstantBufferSize > 0);
+	const uint32 NumResources = InLayout->Resources.Num();
 
 	// Setup resource table
-	const uint32 NumResources = InLayout->Resources.Num();
 	if (NumResources > 0)
 	{
 		// Transfer the resource table to an internal resource-array
@@ -129,6 +168,11 @@ FVulkanUniformBuffer::FVulkanUniformBuffer(FVulkanDevice& InDevice, const FRHIUn
 				ResourceTable[Index] = GetShaderParameterResourceRHI(Contents, InLayout->Resources[Index].MemberOffset, InLayout->Resources[Index].MemberType);
 			}
 		}
+	}
+
+	if (SetupUniformBufferView(InLayout, Contents))
+	{
+		return;
 	}
 
 	if (InLayout->ConstantBufferSize > 0)
@@ -188,6 +232,11 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 FVulkanUniformBuffer::~FVulkanUniformBuffer()
 {
+	if (BindlessHandle.IsValid())
+	{
+		Device->GetBindlessDescriptorManager()->Unregister(BindlessHandle);
+	}
+
 	Device->GetMemoryManager().FreeUniformBuffer(Allocation);
 }
 
@@ -212,6 +261,26 @@ void FVulkanUniformBuffer::UpdateResourceTable(FRHIResource** Resources, int32 R
 	}
 }
 
+FRHIDescriptorHandle FVulkanUniformBuffer::GetBindlessHandle()
+{
+	// :todo-jn: temporary code to refresh as needed, only used by raytracing
+	const VkDeviceAddress CurrentAddress = GetDeviceAddress();
+	if (!BindlessHandle.IsValid() || (CachedDeviceAddress == 0) || (CurrentAddress != CachedDeviceAddress))
+	{
+		if (BindlessHandle.IsValid())
+		{
+			Device->GetBindlessDescriptorManager()->Unregister(BindlessHandle);
+		}
+
+		BindlessHandle = Device->GetBindlessDescriptorManager()->ReserveDescriptor(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+		Device->GetBindlessDescriptorManager()->UpdateBuffer(BindlessHandle, CurrentAddress, GetSize(), true);
+
+		CachedDeviceAddress = CurrentAddress;
+	}
+
+	return BindlessHandle;
+}
+
 VkDeviceAddress FVulkanUniformBuffer::GetDeviceAddress() const
 {
 	// :todo-jn: there will be more and more churn on this, cache the value
@@ -222,7 +291,6 @@ VkDeviceAddress FVulkanUniformBuffer::GetDeviceAddress() const
 	BufferAddress += GetOffset();
 	return BufferAddress;
 }
-
 
 FUniformBufferRHIRef FVulkanDynamicRHI::RHICreateUniformBuffer(const void* Contents, const FRHIUniformBufferLayout* Layout, EUniformBufferUsage Usage, EUniformBufferValidation Validation)
 {
@@ -349,11 +417,15 @@ FVulkanUniformBufferUploader::FVulkanUniformBufferUploader(FVulkanDevice* InDevi
 			CPUBuffer = new FVulkanRingBuffer(InDevice, PackedUniformsRingBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 		}
 	}
+
+	INC_MEMORY_STAT_BY(STAT_UniformBufferMemory, PackedUniformsRingBufferSize);
 }
 
 FVulkanUniformBufferUploader::~FVulkanUniformBufferUploader()
 {
 	delete CPUBuffer;
+
+	DEC_MEMORY_STAT_BY(STAT_UniformBufferMemory, PackedUniformsRingBufferSize);
 }
 
 

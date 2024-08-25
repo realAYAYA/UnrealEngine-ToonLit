@@ -99,8 +99,12 @@ public:
 
 	friend FArchive& operator<<(FArchive& Ar, FMultiSizeIndexContainer& Buffer);
 
-	FBufferRHIRef CreateRHIBuffer_RenderThread();
-	FBufferRHIRef CreateRHIBuffer_Async();
+	ENGINE_API FBufferRHIRef CreateRHIBuffer(FRHICommandListBase& RHICmdList);
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
+	ENGINE_API FBufferRHIRef CreateRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
+	ENGINE_API FBufferRHIRef CreateRHIBuffer_Async();
 
 	void InitRHIForStreaming(FRHIBuffer* IntermediateBuffer, FRHIResourceUpdateBatcher& Batcher);
 	void ReleaseRHIForStreaming(FRHIResourceUpdateBatcher& Batcher);

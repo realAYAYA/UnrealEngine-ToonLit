@@ -525,15 +525,16 @@ int32 FMediaSoundGenerator::OnGenerateAudio(float* OutAudio, int32 NumSamples)
 			uint32 JumpFrame = MAX_uint32;
 			FMediaTimeStamp OutTime = FMediaTimeStamp(FTimespan::Zero());
 			uint32 FramesWritten = Resampler.Generate(OutAudio, OutTime, FramesRequested, Rate, Time, *PinnedSampleQueue, JumpFrame);
-			if (FramesWritten == 0)
-			{
-				return NumSamples; // no samples available
-			}
 
 			// Fill in any gap left as we didn't have enough data
 			if (FramesWritten < FramesRequested)
 			{
 				memset(OutAudio + FramesWritten * Params.NumChannels, 0, (NumSamples - FramesWritten * Params.NumChannels) * sizeof(float));
+			}
+
+			if (FramesWritten == 0)
+			{
+				return NumSamples; // no samples available
 			}
 
 			// Update audio time
@@ -608,6 +609,7 @@ int32 FMediaSoundGenerator::OnGenerateAudio(float* OutAudio, int32 NumSamples)
 		Resampler.Flush();
 
 		LastPlaySampleTime = FTimespan::MinValue();
+		FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 	}
  	return NumSamples;
 

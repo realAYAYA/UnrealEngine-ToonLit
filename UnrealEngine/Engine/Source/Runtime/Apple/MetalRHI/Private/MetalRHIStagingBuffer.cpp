@@ -25,7 +25,7 @@ FMetalRHIStagingBuffer::~FMetalRHIStagingBuffer()
 	if (ShadowBuffer)
 	{
 		SafeReleaseMetalBuffer(ShadowBuffer);
-		ShadowBuffer = nil;
+		ShadowBuffer = nullptr;
 	}
 }
 
@@ -34,7 +34,7 @@ void *FMetalRHIStagingBuffer::Lock(uint32 Offset, uint32 NumBytes)
 	check(ShadowBuffer);
 	check(!bIsLocked);
 	bIsLocked = true;
-	uint8* BackingPtr = (uint8*)ShadowBuffer.GetContents();
+	uint8* BackingPtr = (uint8*)ShadowBuffer->Contents();
 	return BackingPtr + Offset;
 }
 

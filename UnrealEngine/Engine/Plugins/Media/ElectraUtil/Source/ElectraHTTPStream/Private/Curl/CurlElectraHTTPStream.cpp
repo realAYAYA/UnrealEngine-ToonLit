@@ -877,6 +877,9 @@ void FElectraHTTPStreamRequestLibCurl::Close()
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
 
+FName FElectraHTTPStreamLibCurl::OptionName_Proxy(TEXT("proxy"));
+
+
 FElectraHTTPStreamLibCurl::FElectraHTTPStreamLibCurl()
 {
 }
@@ -890,9 +893,9 @@ bool FElectraHTTPStreamLibCurl::Initialize(const Electra::FParamDict& InOptions)
 {
 	LLM_SCOPE(ELLMTag::MediaStreaming);
 
-	if (InOptions.HaveKey(TEXT("proxy")))
+	if (InOptions.HaveKey(OptionName_Proxy))
 	{
-		ProxyAddressAndPort = InOptions.GetValue(TEXT("proxy")).SafeGetFString();
+		ProxyAddressAndPort = InOptions.GetValue(OptionName_Proxy).SafeGetFString();
 	}
 
 	CURLSHcode scode = CURLSHE_OK; (void)scode;

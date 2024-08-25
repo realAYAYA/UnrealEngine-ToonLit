@@ -10,6 +10,7 @@ class UStaticMeshComponent;
 class USkeletalMesh;
 class USkeletalMeshComponent;
 class FSkeletalMeshLODRenderData;
+class ULandscapeComponent;
 struct FStaticMaterial;
 struct FSkeletalMaterial;
 struct FStaticMeshLODResources;
@@ -30,6 +31,7 @@ struct FGLTFMeshUtilities
 
 	static void ResolveMaterials(TArray<const UMaterialInterface*>& Materials, const UStaticMeshComponent* StaticMeshComponent, const UStaticMesh* StaticMesh);
 	static void ResolveMaterials(TArray<const UMaterialInterface*>& Materials, const USkeletalMeshComponent* SkeletalMeshComponent, const USkeletalMesh* SkeletalMesh);
+	static void ResolveMaterials(const UMaterialInterface*& LandscapeMaterial, const ULandscapeComponent* LandscapeComponent);
 
 	template <typename MaterialType>
 	static void ResolveMaterials(TArray<const UMaterialInterface*>& Materials, const TArray<MaterialType>& Defaults);

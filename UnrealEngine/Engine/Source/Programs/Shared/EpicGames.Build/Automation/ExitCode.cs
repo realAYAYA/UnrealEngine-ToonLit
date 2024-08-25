@@ -63,5 +63,6 @@ namespace UnrealBuildBase
 		Error_AndroidOBBError = 155,
 		Error_SDKInstallFailed = 200,
 		Error_DeviceUpdateFailed = 201,
+		Error_UBTFailure = 202
 	};
 }

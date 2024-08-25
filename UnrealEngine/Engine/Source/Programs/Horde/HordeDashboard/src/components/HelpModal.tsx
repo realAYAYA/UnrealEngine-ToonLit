@@ -2,10 +2,12 @@
 import { IconButton, Modal, PrimaryButton, Stack, Text, Label } from '@fluentui/react';
 import React from 'react';
 import dashboard from '../backend/Dashboard';
-import { hordeClasses } from '../styles/Styles';
+import { getHordeStyling } from '../styles/Styles';
 
 
 export const HelpModal: React.FC<{ show: boolean, onClose: () => void }> = ({ show, onClose }) => {
+
+   const { hordeClasses } = getHordeStyling();
 
    const close = () => {
       onClose();

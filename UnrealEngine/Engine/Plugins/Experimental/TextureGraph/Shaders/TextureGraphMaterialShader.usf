@@ -1,0 +1,95 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#undef SCENE_TEXTURES_DISABLED
+#define SCENE_TEXTURES_DISABLED 1
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Generated/Material.ush"
+
+float4 PSControl;
+
+#include "TileInfo.ush"
+
+void TextureGraphMaterialShaderVS(
+	in float4 InPosition : ATTRIBUTE0,
+	in float2 InTexCoord : ATTRIBUTE1,
+	out float2 OutUV : TEXCOORD0,
+	out float4 OutPosition : SV_POSITION
+	)
+{
+	OutPosition = InPosition;
+	OutUV = InTexCoord;
+}
+
+void TextureGraphMaterialShaderPS(
+	in float2 InUV : TEXCOORD0,
+	in float4 SvPosition : SV_Position, // after all interpolators
+	out float4 OutColor : SV_Target0
+	)
+{
+	// Transform the uv injected coming from [0,1] domain to target the region of the current tile beeing rendered
+	InUV = (InUV + float2(TileInfo_TileX, TileInfo_TileY)) / float2(TileInfo_TileCountX, TileInfo_TileCountY);
+
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters Parameters = MakeInitializedMaterialPixelParameters();
+	FPixelMaterialInputs PixelMaterialInputs;
+
+	float2 ViewportUV = InUV;
+
+#if NUM_MATERIAL_TEXCOORDS
+	for(int CoordinateIndex = 0;CoordinateIndex < NUM_MATERIAL_TEXCOORDS;CoordinateIndex++)
+	{
+		Parameters.TexCoords[0] = ViewportUV;
+	}
+#endif // NUM_MATERIAL_TEXCOORDS
+
+	SvPosition.z = LookupDeviceZ(ViewportUVToBufferUV(ViewportUV));
+	SvPosition.z = max(SvPosition.z, 1e-18);
+
+	// fill out other related material parameters
+	CalcMaterialParametersPost(Parameters, PixelMaterialInputs, SvPosition, true);
+
+	Parameters.VertexColor = 1;
+
+	// Extract the value we want to represent
+	half3 MatBaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+	half3 MatMetallic = GetMaterialMetallic(PixelMaterialInputs);
+	half3 MatSpecular = GetMaterialSpecular(PixelMaterialInputs);
+	half3 MatRoughness = GetMaterialRoughness(PixelMaterialInputs);
+	half3 MatAnisotropy = GetMaterialAnisotropy(PixelMaterialInputs);
+	half3 MatEmissive = GetMaterialEmissive(PixelMaterialInputs);
+	half3 MatOpacity = GetMaterialOpacity(PixelMaterialInputs);
+
+	half3 UV = half3(ViewportUV, 0);
+	half3 Tile = half3(float2(TileInfo_TileX, TileInfo_TileY) / float2(TileInfo_TileCountX, TileInfo_TileCountY), 0);
+
+	float Attribute = floor(clamp(PSControl.x, 0, PSControl.y));
+
+	half3 Color = (Attribute <= 0.0) * MatBaseColor;
+	Color += (Attribute == 1.0) * MatMetallic;
+	Color += (Attribute == 2.0) * MatSpecular;
+	Color += (Attribute == 3.0) * MatRoughness;
+	Color += (Attribute == 4.0) * MatAnisotropy;
+	Color += (Attribute == 5.0) * MatEmissive;
+	Color += (Attribute == 6.0) * MatOpacity;
+	
+#if MATERIALBLENDING_MASKED
+	half3 MatOpacityMask = GetMaterialOpacityMaskClipValue();
+	Color += (Attribute == 7.0) * MatOpacityMask;
+#endif // MATERIALBLENDING_TRANSLUCENT
+
+#if MATERIAL_TANGENTSPACENORMAL
+	half3 MatNormal = GetMaterialNormal(Parameters, PixelMaterialInputs) * 0.5 + 0.5;
+	half3 MatTangent = GetMaterialTangent(PixelMaterialInputs) * 0.5 + 0.5;
+	
+	Color += (Attribute == 8.0) * MatNormal;
+	Color += (Attribute >= 9.0) * MatTangent;
+#endif // MATERIAL_TANGENTSPACENORMAL
+
+	Color = lerp(Color, UV, PSControl.z);
+	Color = lerp(Color, Tile, PSControl.w);
+
+	OutColor = float4(Color, 1.0);
+}
+
+

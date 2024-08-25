@@ -6,9 +6,9 @@
 #include "Misc/AssertionMacros.h"
 #include "Misc/ReverseIterate.h"
 #include "HAL/UnrealMemory.h"
-#include "Templates/IsSigned.h"
 #include "Templates/UnrealTypeTraits.h"
 #include "Templates/UnrealTemplate.h"
+#include "Containers/AllowShrinking.h"
 #include "Containers/ContainerAllocationPolicies.h"
 #include "Containers/ContainerElementTypeCompatibility.h"
 #include "Serialization/Archive.h"
@@ -20,15 +20,11 @@
 #include "Algo/Impl/BinaryHeap.h"
 #include "Algo/StableSort.h"
 #include "Concepts/GetTypeHashable.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/IdentityFunctor.h"
 #include "Templates/Invoke.h"
 #include "Templates/Less.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Sorting.h"
 #include "Templates/AlignmentTemplates.h"
-#include "Templates/IsConstructible.h"
-#include "Templates/MakeUnsigned.h"
 #include "Traits/ElementType.h"
 
 #include <limits>
@@ -40,10 +36,11 @@
 	#define TARRAY_RANGED_FOR_CHECKS 1
 #endif
 
-template <typename T> struct TCanBulkSerialize { enum { Value = false }; };
-template<> struct TCanBulkSerialize<unsigned int> { enum { Value = true }; };
-template<> struct TCanBulkSerialize<unsigned short> { enum { Value = true }; };
-template<> struct TCanBulkSerialize<int> { enum { Value = true }; };
+template <typename T>
+struct TCanBulkSerialize
+{
+	enum { Value = std::is_arithmetic_v<T> };
+};
 
 // Forward declarations
 
@@ -333,28 +330,16 @@ namespace UE4Array_Private
 	// {
 	//     TArray<FThing> Arr; // this will cause errors without this workaround
 	// };
-	//
-	// This should be changed to use std::disjunction and std::is_constructible, and the usage
-	// changed to use ::value instead of ::Value, when std::disjunction (C++17) is available everywhere.
 	template <typename DestType, typename SourceType>
-	using TArrayElementsAreCompatible = TOrValue<std::is_same<DestType, std::decay_t<SourceType>>::value, TIsConstructible<DestType, SourceType>>;
+	constexpr bool TArrayElementsAreCompatible_V = std::disjunction_v<std::is_same<DestType, std::decay_t<SourceType>>, std::is_constructible<DestType, SourceType>>;
+
+	template <typename ElementType, typename AllocatorType>
+	static char (&ResolveIsTArrayPtr(const volatile TArray<ElementType, AllocatorType>*))[2];
+
+	static char(&ResolveIsTArrayPtr(...))[1];
 
 	template <typename T>
-	struct TIsTArrayOrDerivedFromTArray
-	{
-		template <typename ElementType, typename AllocatorType>
-		static char (&Resolve(const volatile TArray<ElementType, AllocatorType>*))[2];
-
-		static char(&Resolve(...))[1];
-
-		enum { Value = sizeof(Resolve((T*)nullptr)) == 2 };
-	};
-
-	template <typename ElementType, typename RangeType>
-	struct TTypeIsCompatibleWithRangeElementType
-	{
-		enum { Value = TArrayElementsAreCompatible<ElementType, TElementType_T<RangeType>>::Value };
-	};
+	constexpr bool TIsTArrayOrDerivedFromTArray_V = sizeof(ResolveIsTArrayPtr((T*)nullptr)) == 2;
 }
 
 namespace UE::Core::Private
@@ -386,19 +371,16 @@ public:
 	typedef InAllocatorType AllocatorType;
 
 private:
-	using USizeType = typename TMakeUnsigned<SizeType>::Type;
+	using USizeType = typename std::make_unsigned_t<SizeType>;
 
 public:
-	UE_DEPRECATED(5.0, "TArray::Allocator type is deprecated, please use TArray::AllocatorType instead.")
-	typedef InAllocatorType Allocator;
-
-	typedef typename TChooseClass<
+	using ElementAllocatorType = std::conditional_t<
 		AllocatorType::NeedsElementType,
 		typename AllocatorType::template ForElementType<ElementType>,
 		typename AllocatorType::ForAnyElementType
-	>::Result ElementAllocatorType;
+	>;
 
-	static_assert(TIsSigned<SizeType>::Value, "TArray only supports signed index types");
+	static_assert(std::is_signed_v<SizeType>, "TArray only supports signed index types");
 
 	/**
 	 * Constructor, initializes element number counters.
@@ -449,8 +431,8 @@ public:
 	 */
 	template <
 		typename OtherElementType,
-		typename OtherAllocator,
-		std::enable_if_t<UE4Array_Private::TArrayElementsAreCompatible<ElementType, const OtherElementType&>::Value>* = nullptr
+		typename OtherAllocator
+		UE_REQUIRES(UE4Array_Private::TArrayElementsAreCompatible_V<ElementType, const OtherElementType&>)
 	>
 	FORCEINLINE explicit TArray(const TArray<OtherElementType, OtherAllocator>& Other)
 	{
@@ -531,6 +513,17 @@ public:
 	TArray& operator=(const TArrayView<OtherElementType, OtherSizeType>& Other);
 
 private:
+
+	FORCEINLINE void SlackTrackerNumChanged()
+	{
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+		if constexpr (TAllocatorTraits<InAllocatorType>::SupportsSlackTracking)
+		{
+			AllocatorInstance.SlackTrackerLogNum(ArrayNum);
+		}
+#endif
+	}
+
 	/**
 	 * Moves or copies array. Depends on the array type traits.
 	 *
@@ -574,6 +567,9 @@ private:
 
 			FromArray.ArrayNum = 0;
 			FromArray.ArrayMax = FromArray.AllocatorInstance.GetInitialCapacity();
+
+			FromArray.SlackTrackerNumChanged();
+			ToArray.SlackTrackerNumChanged();
 		}
 		else
 		{
@@ -605,7 +601,7 @@ private:
 			USizeType NewMax        = (USizeType)LocalArrayNum + (USizeType)ExtraSlack;
 
 			// This should only happen when we've underflowed or overflowed SizeType
-			if ((SizeType)NewMax < LocalArrayNum)
+			if ((SizeType)NewMax < (SizeType)LocalArrayNum)
 			{
 				UE::Core::Private::OnInvalidArrayNum((unsigned long long)ExtraSlack);
 			}
@@ -638,8 +634,8 @@ public:
 	 */
 	template <
 		typename OtherElementType,
-		typename OtherAllocator,
-		std::enable_if_t<UE4Array_Private::TArrayElementsAreCompatible<ElementType, OtherElementType&&>::Value>* = nullptr
+		typename OtherAllocator
+		UE_REQUIRES(UE4Array_Private::TArrayElementsAreCompatible_V<ElementType, OtherElementType&&>)
 	>
 	FORCEINLINE explicit TArray(TArray<OtherElementType, OtherAllocator>&& Other)
 	{
@@ -654,8 +650,8 @@ public:
 	 *                   at the end of the array in the number of elements.
 	 */
 	template <
-		typename OtherElementType,
-		std::enable_if_t<UE4Array_Private::TArrayElementsAreCompatible<ElementType, OtherElementType&&>::Value>* = nullptr
+		typename OtherElementType
+		UE_REQUIRES(UE4Array_Private::TArrayElementsAreCompatible_V<ElementType, OtherElementType&&>)
 	>
 	TArray(TArray<OtherElementType, AllocatorType>&& Other, SizeType ExtraSlack)
 	{
@@ -680,15 +676,6 @@ public:
 	/** Destructor. */
 	~TArray()
 	{
-		#if UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT
-		#if defined(_MSC_VER) && !defined(__clang__)	// Relies on MSVC-specific lazy template instantiation to support arrays of incomplete types
-			// ensure that DebugGet gets instantiated.
-			// this is done to ensure DebugGet is available for the debugger watch window
-			//@todo it would be nice if we had a cleaner solution for DebugGet
-			volatile const ElementType* Dummy = &DebugGet(0);
-		#endif
-		#endif
-		
 		DestructItems(GetData(), ArrayNum);
 
 		// note ArrayNum, ArrayMax and data pointer are not invalidated
@@ -766,9 +753,26 @@ public:
 		CheckInvariants();
 
 		// Template property, branch will be optimized out
-		if (AllocatorType::RequireRangeCheck)
+		if constexpr (AllocatorType::RequireRangeCheck)
 		{
-			checkf((Index >= 0) & (Index < ArrayNum),TEXT("Array index out of bounds: %lld from an array of size %lld"),(long long)Index, (long long)ArrayNum); // & for one branch
+			checkf((Index >= 0) & (Index < ArrayNum),TEXT("Array index out of bounds: %lld into an array of size %lld"),(long long)Index, (long long)ArrayNum); // & for one branch
+		}
+	}
+
+	/**
+	 * Checks if a range of indices are in the array range.
+	 *
+	 * @param Index Index of the start of the range to check.
+	 * @param Count Number of elements in the range.
+	 */
+	FORCEINLINE void RangeCheck(SizeType Index, SizeType Count) const
+	{
+		CheckInvariants();
+
+		// Template property, branch will be optimized out
+		if constexpr (AllocatorType::RequireRangeCheck)
+		{
+			checkf((Count >= 0) & (Index >= 0) & (Index + Count <= ArrayNum), TEXT("Array range out of bounds: index %lld and length %lld into an array of size %lld"), (long long)Index, (long long)Count, (long long)ArrayNum); // & for one branch
 		}
 	}
 
@@ -843,16 +847,24 @@ public:
 	/**
 	 * Pops element from the array.
 	 *
-	 * @param bAllowShrinking If this call allows shrinking of the array during element remove.
+	 * @param AllowShrinking If this call allows shrinking of the array during element remove.
 	 * @returns Popped element.
 	 */
-	template<typename ET=InElementType>
-	FORCEINLINE typename TEnableIf<!TIsAbstract<ET>::Value, ElementType>::Type Pop(bool bAllowShrinking = true)
+	ElementType Pop(EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		RangeCheck(0);
 		ElementType Result = MoveTempIfPossible(GetData()[ArrayNum - 1]);
-		RemoveAt(ArrayNum - 1, 1, bAllowShrinking);
+		RemoveAtImpl(ArrayNum - 1);
+		if (AllowShrinking == EAllowShrinking::Yes)
+		{
+			ResizeShrink();
+		}
 		return Result;
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("Pop")
+	FORCEINLINE ElementType Pop(bool bAllowShrinking)
+	{
+		return Pop(bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -1341,6 +1353,11 @@ public:
 		{
 			ResizeGrow((SizeType)OldNum);
 		}
+		else
+		{
+			SlackTrackerNumChanged();
+		}
+
 		return OldNum;
 	}
 	FORCEINLINE SizeType AddUninitialized(SizeType Count)
@@ -1362,6 +1379,11 @@ public:
 		{
 			ResizeGrow((SizeType)OldNum);
 		}
+		else
+		{
+			SlackTrackerNumChanged();
+		}
+
 		return OldNum;
 	}
 
@@ -1378,6 +1400,10 @@ private:
 		if (NewNum > (USizeType)ArrayMax)
 		{
 			ResizeGrow((SizeType)OldNum);
+		}
+		else
+		{
+			SlackTrackerNumChanged();
 		}
 		ElementType* Data = GetData() + Index;
 		RelocateConstructItems<ElementType>(Data + 1, Data, OldNum - Index);
@@ -1404,6 +1430,10 @@ private:
 #endif
 		{
 			ResizeGrow((SizeType)OldNum);
+		}
+		else
+		{
+			SlackTrackerNumChanged();
 		}
 		ElementType* Data = GetData() + Index;
 		RelocateConstructItems<ElementType>(Data + Count, Data, OldNum - Index);
@@ -1563,6 +1593,8 @@ public:
 		RelocateConstructItems<ElementType>(GetData() + InIndex, Items.GetData(), NumNewElements);
 		Items.ArrayNum = 0;
 
+		Items.SlackTrackerNumChanged();
+
 		return InIndex;
 	}
 
@@ -1679,33 +1711,38 @@ public:
 	}
 
 private:
-	void RemoveAtImpl(SizeType Index, SizeType Count, bool bAllowShrinking)
+	void RemoveAtImpl(SizeType Index)
 	{
-		if (Count)
+		ElementType* Dest = GetData() + Index;
+
+		DestructItem(Dest);
+
+		// Skip relocation in the common case that there is nothing to move.
+		SizeType NumToMove = (ArrayNum - Index) - 1;
+		if (NumToMove)
 		{
-			CheckInvariants();
-			checkSlow((Count >= 0) & (Index >= 0) & (Index + Count <= ArrayNum));
-
-			DestructItems(GetData() + Index, Count);
-
-			// Skip memmove in the common case that there is nothing to move.
-			SizeType NumToMove = ArrayNum - Index - Count;
-			if (NumToMove)
-			{
-				FMemory::Memmove
-				(
-					(uint8*)AllocatorInstance.GetAllocation() + (Index)* sizeof(ElementType),
-					(uint8*)AllocatorInstance.GetAllocation() + (Index + Count) * sizeof(ElementType),
-					NumToMove * sizeof(ElementType)
-				);
-			}
-			ArrayNum -= Count;
-
-			if (bAllowShrinking)
-			{
-				ResizeShrink();
-			}
+			RelocateConstructItems<ElementType>(Dest, Dest + 1, NumToMove);
 		}
+		--ArrayNum;
+
+		SlackTrackerNumChanged();
+	}
+
+	void RemoveAtImpl(SizeType Index, SizeType Count)
+	{
+		ElementType* Dest = GetData() + Index;
+
+		DestructItems(Dest, Count);
+
+		// Skip relocation in the common case that there is nothing to move.
+		SizeType NumToMove = (ArrayNum - Index) - Count;
+		if (NumToMove)
+		{
+			RelocateConstructItems<ElementType>(Dest, Dest + Count, NumToMove);
+		}
+		ArrayNum -= Count;
+
+		SlackTrackerNumChanged();
 	}
 
 public:
@@ -1714,10 +1751,16 @@ public:
 	 * the array.
 	 *
 	 * @param Index Location in array of the element to remove.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink array if suitable after remove. Default is yes.
 	 */
-	FORCEINLINE void RemoveAt(SizeType Index)
+	void RemoveAt(SizeType Index, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		RemoveAtImpl(Index, 1, true);
+		RangeCheck(Index);
+		RemoveAtImpl(Index);
+		if (AllowShrinking == EAllowShrinking::Yes)
+		{
+			ResizeShrink();
+		}
 	}
 
 	/**
@@ -1726,44 +1769,69 @@ public:
 	 *
 	 * @param Index Location in array of the element to remove.
 	 * @param Count (Optional) Number of elements to remove. Default is 1.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink array if suitable after remove. Default is true.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink array if suitable after remove. Default is yes.
 	 */
-	template <typename CountType>
-	FORCEINLINE void RemoveAt(SizeType Index, CountType Count, bool bAllowShrinking = true)
+	template <
+		typename CountType
+		UE_REQUIRES(std::is_integral_v<CountType>)
+	>
+	FORCEINLINE void RemoveAt(SizeType Index, CountType Count, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		static_assert(!std::is_same_v<CountType, bool>, "TArray::RemoveAt: unexpected bool passed as the Count argument");
-		RemoveAtImpl(Index, (SizeType)Count, bAllowShrinking);
+		RangeCheck(Index, Count);
+		if (Count)
+		{
+			RemoveAtImpl(Index, (SizeType)Count);
+			if (AllowShrinking == EAllowShrinking::Yes)
+			{
+				ResizeShrink();
+			}
+		}
+	}
+	template <typename CountType>
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAt")
+	FORCEINLINE void RemoveAt(SizeType Index, CountType Count, bool bAllowShrinking)
+	{
+		RemoveAt(Index, Count, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 private:
-	void RemoveAtSwapImpl(SizeType Index, SizeType Count = 1, bool bAllowShrinking = true)
+	void RemoveAtSwapImpl(SizeType Index)
 	{
-		if (Count)
+		ElementType* Data = GetData();
+		ElementType* Dest = Data + Index;
+
+		DestructItem(Dest);
+
+		// Replace the elements in the hole created by the removal with elements from the end of the array, so the range of indices used by the array is contiguous.
+		const SizeType NumElementsAfterHole = (ArrayNum - Index) - 1;
+		const SizeType NumElementsToMoveIntoHole = FPlatformMath::Min(1, NumElementsAfterHole);
+		if (NumElementsToMoveIntoHole)
 		{
-			CheckInvariants();
-			checkSlow((Count >= 0) & (Index >= 0) & (Index + Count <= ArrayNum));
-
-			DestructItems(GetData() + Index, Count);
-
-			// Replace the elements in the hole created by the removal with elements from the end of the array, so the range of indices used by the array is contiguous.
-			const SizeType NumElementsInHole = Count;
-			const SizeType NumElementsAfterHole = ArrayNum - (Index + Count);
-			const SizeType NumElementsToMoveIntoHole = FPlatformMath::Min(NumElementsInHole, NumElementsAfterHole);
-			if (NumElementsToMoveIntoHole)
-			{
-				FMemory::Memcpy(
-					(uint8*)AllocatorInstance.GetAllocation() + (Index) * sizeof(ElementType),
-					(uint8*)AllocatorInstance.GetAllocation() + (ArrayNum - NumElementsToMoveIntoHole) * sizeof(ElementType),
-					NumElementsToMoveIntoHole * sizeof(ElementType)
-					);
-			}
-			ArrayNum -= Count;
-
-			if (bAllowShrinking)
-			{
-				ResizeShrink();
-			}
+			RelocateConstructItems<ElementType>(Dest, Data + (ArrayNum - NumElementsToMoveIntoHole), NumElementsToMoveIntoHole);
 		}
+		--ArrayNum;
+
+		SlackTrackerNumChanged();
+	}
+
+	void RemoveAtSwapImpl(SizeType Index, SizeType Count)
+	{
+		ElementType* Data = GetData();
+		ElementType* Dest = Data + Index;
+
+		DestructItems(Dest, Count);
+
+		// Replace the elements in the hole created by the removal with elements from the end of the array, so the range of indices used by the array is contiguous.
+		const SizeType NumElementsAfterHole = (ArrayNum - Index) - Count;
+		const SizeType NumElementsToMoveIntoHole = FPlatformMath::Min(Count, NumElementsAfterHole);
+		if (NumElementsToMoveIntoHole)
+		{
+			RelocateConstructItems<ElementType>(Dest, Data + (ArrayNum - NumElementsToMoveIntoHole), NumElementsToMoveIntoHole);
+		}
+		ArrayNum -= Count;
+
+		SlackTrackerNumChanged();
 	}
 
 public:
@@ -1775,10 +1843,17 @@ public:
 	 * O(ArrayNum)), but does not preserve the order.
 	 *
 	 * @param Index Location in array of the element to remove.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink array if
+	 *                        suitable after remove. Default is yes.
 	 */
-	FORCEINLINE void RemoveAtSwap(SizeType Index)
+	FORCEINLINE void RemoveAtSwap(SizeType Index, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		RemoveAtSwapImpl(Index, 1, true);
+		RangeCheck(Index);
+		RemoveAtSwapImpl(Index);
+		if (AllowShrinking == EAllowShrinking::Yes)
+		{
+			ResizeShrink();
+		}
 	}
 
 	/**
@@ -1790,14 +1865,31 @@ public:
 	 *
 	 * @param Index Location in array of the element to remove.
 	 * @param Count (Optional) Number of elements to remove. Default is 1.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink array if
-	 *                        suitable after remove. Default is true.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink array if
+	 *                        suitable after remove. Default is yes.
 	 */
-	template <typename CountType>
-	FORCEINLINE void RemoveAtSwap(SizeType Index, CountType Count, bool bAllowShrinking = true)
+	template <
+		typename CountType
+		UE_REQUIRES(std::is_integral_v<CountType>)
+	>
+	FORCEINLINE void RemoveAtSwap(SizeType Index, CountType Count, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		static_assert(!std::is_same_v<CountType, bool>, "TArray::RemoveAtSwap: unexpected bool passed as the Count argument");
-		RemoveAtSwapImpl(Index, Count, bAllowShrinking);
+		RangeCheck(Index, Count);
+		if (Count)
+		{
+		    RemoveAtSwapImpl(Index, Count);
+		    if (AllowShrinking == EAllowShrinking::Yes)
+		    {
+			    ResizeShrink();
+		    }
+		}
+	}
+	template <typename CountType>
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAtSwap")
+	FORCEINLINE void RemoveAtSwap(SizeType Index, CountType Count, bool bAllowShrinking)
+	{
+		RemoveAtSwap(Index, Count, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -1819,6 +1911,8 @@ public:
 		{
 			DestructItems(GetData(), ArrayNum);
 			ArrayNum = 0;
+
+			SlackTrackerNumChanged();
 		}
 		else
 		{
@@ -1844,6 +1938,8 @@ public:
 		checkSlow(Slack >= 0);
 		ArrayNum = 0;
 
+		SlackTrackerNumChanged();
+
 		if (ArrayMax != Slack)
 		{
 			ResizeTo(Slack);
@@ -1854,9 +1950,9 @@ public:
 	 * Resizes array to given number of elements.
 	 *
 	 * @param NewNum New size of the array.
-	 * @param bAllowShrinking Tell if this function can shrink the memory in-use if suitable.
+	 * @param AllowShrinking Tell if this function can shrink the memory in-use if suitable.
 	 */
-	void SetNum(SizeType NewNum, bool bAllowShrinking = true)
+	void SetNum(SizeType NewNum, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		if (NewNum > Num())
 		{
@@ -1871,8 +1967,13 @@ public:
 		}
 		else if (NewNum < Num())
 		{
-			RemoveAt(NewNum, Num() - NewNum, bAllowShrinking);
+			RemoveAt(NewNum, Num() - NewNum, AllowShrinking);
 		}
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("SetNum")
+	FORCEINLINE void SetNum(SizeType NewNum, bool bAllowShrinking)
+	{
+		SetNum(NewNum, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -1880,9 +1981,9 @@ public:
 	 * New elements will be zeroed.
 	 *
 	 * @param NewNum New size of the array.
-	 * @param bAllowShrinking Tell if this function can shrink the memory in-use if suitable.
+	 * @param AllowShrinking Tell if this function can shrink the memory in-use if suitable.
 	 */
-	void SetNumZeroed(SizeType NewNum, bool bAllowShrinking = true)
+	void SetNumZeroed(SizeType NewNum, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		if (NewNum > Num())
 		{
@@ -1895,16 +1996,22 @@ public:
 		}
 		else if (NewNum < Num())
 		{
-			RemoveAt(NewNum, Num() - NewNum, bAllowShrinking);
+			RemoveAt(NewNum, Num() - NewNum, AllowShrinking);
 		}
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("SetNumZeroed")
+	FORCEINLINE void SetNumZeroed(SizeType NewNum, bool bAllowShrinking)
+	{
+		SetNumZeroed(NewNum, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
 	 * Resizes array to given number of elements. New elements will be uninitialized.
 	 *
 	 * @param NewNum New size of the array.
+	 * @param AllowShrinking Tell if this function can shrink the memory in-use if suitable.
 	 */
-	void SetNumUninitialized(SizeType NewNum, bool bAllowShrinking = true)
+	void SetNumUninitialized(SizeType NewNum, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		if (NewNum > Num())
 		{
@@ -1917,8 +2024,13 @@ public:
 		}
 		else if (NewNum < Num())
 		{
-			RemoveAt(NewNum, Num() - NewNum, bAllowShrinking);
+			RemoveAt(NewNum, Num() - NewNum, AllowShrinking);
 		}
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("SetNumUninitialized")
+	FORCEINLINE void SetNumUninitialized(SizeType NewNum, bool bAllowShrinking)
+	{
+		SetNumUninitialized(NewNum, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -1929,6 +2041,8 @@ public:
 	{
 		checkSlow(NewNum <= Num() && NewNum >= 0);
 		ArrayNum = NewNum;
+
+		SlackTrackerNumChanged();
 	}
 
 	/**
@@ -1953,10 +2067,8 @@ public:
 		}
 
 		// Allocate memory for the new elements.
-		Reserve(ArrayNum + SourceCount);
-		ConstructItems<ElementType>(GetData() + ArrayNum, Source.GetData(), SourceCount);
-
-		ArrayNum += SourceCount;
+		SizeType Pos = AddUninitialized(SourceCount);
+		ConstructItems<ElementType>(GetData() + Pos, Source.GetData(), SourceCount);
 	}
 
 	/**
@@ -1979,11 +2091,11 @@ public:
 		}
 
 		// Allocate memory for the new elements.
-		Reserve(ArrayNum + SourceCount);
-		RelocateConstructItems<ElementType>(GetData() + ArrayNum, Source.GetData(), SourceCount);
+		SizeType Pos = AddUninitialized(SourceCount);
+		RelocateConstructItems<ElementType>(GetData() + Pos, Source.GetData(), SourceCount);
 		Source.ArrayNum = 0;
 
-		ArrayNum += SourceCount;
+		Source.SlackTrackerNumChanged();
 	}
 
 	/**
@@ -1993,16 +2105,12 @@ public:
 	 * @see Add, Insert
 	 */
 	template <
-		typename RangeType,
-		typename RangeValueType = std::remove_reference_t<RangeType>,
-		typename RangeElementType = TElementType_T<RangeValueType>,
-		std::enable_if_t<
-			TAnd<
-				TIsContiguousContainer<RangeValueType>,
-				TNot<UE4Array_Private::TIsTArrayOrDerivedFromTArray<RangeValueType>>,
-				UE4Array_Private::TTypeIsCompatibleWithRangeElementType<ElementType, RangeType>
-			>::Value
-		>* = nullptr
+		typename RangeType
+		UE_REQUIRES(
+			TIsContiguousContainer<RangeType>::Value &&
+			!UE4Array_Private::TIsTArrayOrDerivedFromTArray_V<std::remove_reference_t<RangeType>> &&
+			UE4Array_Private::TArrayElementsAreCompatible_V<ElementType, TElementType_T<RangeType>>
+		)
 	>
 	void Append(RangeType&& Source)
 	{
@@ -2018,10 +2126,8 @@ public:
 		SizeType SourceCount = (SizeType)InCount;
 
 		// Allocate memory for the new elements.
-		Reserve(ArrayNum + SourceCount);
-		ConstructItems<ElementType>(GetData() + ArrayNum, UE4Array_Private::GetDataHelper(Source), SourceCount);
-
-		ArrayNum += SourceCount;
+		SizeType Pos = AddUninitialized(SourceCount);
+		ConstructItems<ElementType>(GetData() + Pos, UE4Array_Private::GetDataHelper(Source), SourceCount);
 	}
 
 	/**
@@ -2310,9 +2416,9 @@ public:
 #if !UE_DEPRECATE_MUTABLE_TOBJECTPTR
 	/** Mutable implicit conversion operator to container of compatible element type. */
 	template <
-		typename AliasElementType = ElementType,
-		std::enable_if_t<TIsContainerElementTypeReinterpretable<AliasElementType>::Value>* = nullptr
-		>
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeReinterpretable_V<AliasElementType>)
+	>
 	operator TArray<typename TContainerElementTypeCompatibility<AliasElementType>::ReinterpretType, AllocatorType>& ()
 	{
 		using ElementCompat = TContainerElementTypeCompatibility<ElementType>;
@@ -2323,9 +2429,9 @@ public:
   
 	/** Immutable implicit conversion operator to constant container of compatible element type. */
 	template <
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeReinterpretable<AliasElementType>::Value>* = nullptr
-		>
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeReinterpretable_V<AliasElementType>)
+	>
 	operator const TArray<typename TContainerElementTypeCompatibility<AliasElementType>::ReinterpretType, AllocatorType>& () const
 	{
 		using ElementCompat = TContainerElementTypeCompatibility<ElementType>;
@@ -2340,8 +2446,8 @@ public:
 	 * @param Other Array to assign and move from.
 	 */
 	template <
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	TArray& operator=(TArray<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, AllocatorType>&& Other)
 	{
@@ -2360,8 +2466,8 @@ public:
 	 */
 	template <
 		typename OtherAllocator,
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	TArray& operator=(const TArray<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, OtherAllocator>& Other)
 	{
@@ -2381,8 +2487,8 @@ public:
 	 */
 	template <
 		typename OtherAllocator,
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	SizeType Insert(const TArray<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, OtherAllocator>& Items, const SizeType InIndex)
 	{
@@ -2406,8 +2512,8 @@ public:
 	 */
 	template <
 		typename OtherAllocator,
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	SizeType Insert(TArray<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, OtherAllocator>&& Items, const SizeType InIndex)
 	{
@@ -2419,6 +2525,8 @@ public:
 		InsertUninitializedImpl(InIndex, NumNewElements);
 		RelocateConstructItems<ElementType>(GetData() + InIndex, Items.GetData(), NumNewElements);
 		Items.ArrayNum = 0;
+
+		Items.SlackTrackerNumChanged();
 
 		return InIndex;
 	}
@@ -2432,8 +2540,8 @@ public:
 	 * @see Add, Insert
 	 */
 	template <
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	void Append(const typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType* Ptr, SizeType Count)
 	{
@@ -2547,11 +2655,12 @@ public:
 
 		// Destruct items that match the specified Item.
 		DestructItems(RemovePtr, 1);
-		const SizeType NextIndex = Index + 1;
 		RelocateConstructItems<ElementType>(RemovePtr, RemovePtr + 1, ArrayNum - (Index + 1));
 
 		// Update the array count
 		--ArrayNum;
+
+		SlackTrackerNumChanged();
 
 		// Removed one item
 		return 1;
@@ -2590,36 +2699,41 @@ public:
 			return 0; // nothing to do, loop assumes one item so need to deal with this edge case here
 		}
 
+		ElementType* Data = GetData();
+
 		SizeType WriteIndex = 0;
 		SizeType ReadIndex = 0;
-		bool NotMatch = !::Invoke(Predicate, GetData()[ReadIndex]); // use a ! to guarantee it can't be anything other than zero or one
+		bool bNotMatch = !::Invoke(Predicate, Data[ReadIndex]); // use a ! to guarantee it can't be anything other than zero or one
 		do
 		{
 			SizeType RunStartIndex = ReadIndex++;
-			while (ReadIndex < OriginalNum && NotMatch == !::Invoke(Predicate, GetData()[ReadIndex]))
+			while (ReadIndex < OriginalNum && bNotMatch == !::Invoke(Predicate, Data[ReadIndex]))
 			{
 				ReadIndex++;
 			}
 			SizeType RunLength = ReadIndex - RunStartIndex;
 			checkSlow(RunLength > 0);
-			if (NotMatch)
+			if (bNotMatch)
 			{
 				// this was a non-matching run, we need to move it
 				if (WriteIndex != RunStartIndex)
 				{
-					FMemory::Memmove(&GetData()[WriteIndex], &GetData()[RunStartIndex], sizeof(ElementType)* RunLength);
+					RelocateConstructItems<ElementType>(Data + WriteIndex, Data + RunStartIndex, RunLength);
 				}
 				WriteIndex += RunLength;
 			}
 			else
 			{
 				// this was a matching run, delete it
-				DestructItems(GetData() + RunStartIndex, RunLength);
+				DestructItems(Data + RunStartIndex, RunLength);
 			}
-			NotMatch = !NotMatch;
+			bNotMatch = !bNotMatch;
 		} while (ReadIndex < OriginalNum);
 
 		ArrayNum = WriteIndex;
+
+		SlackTrackerNumChanged();
+
 		return OriginalNum - ArrayNum;
 	}
 
@@ -2627,11 +2741,11 @@ public:
 	 * Remove all instances that match the predicate
 	 *
 	 * @param Predicate Predicate class instance
-	 * @param bAllowShrinking Tell if this function can shrink the memory in-use if suitable.
+	 * @param AllowShrinking Tell if this function can shrink the memory in-use if suitable.
 	 * @see Remove, RemoveSingle, RemoveSingleSwap, RemoveSwap
 	 */
 	template <class PREDICATE_CLASS>
-	SizeType RemoveAllSwap(const PREDICATE_CLASS& Predicate, bool bAllowShrinking = true)
+	SizeType RemoveAllSwap(const PREDICATE_CLASS& Predicate, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		bool bRemoved = false;
 		const SizeType OriginalNum = ArrayNum;
@@ -2640,7 +2754,7 @@ public:
 			if (::Invoke(Predicate, (*this)[ItemIndex]))
 			{
 				bRemoved = true;
-				RemoveAtSwap(ItemIndex, 1, false);
+				RemoveAtSwap(ItemIndex, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -2648,12 +2762,18 @@ public:
 			}
 		}
 
-		if (bRemoved && bAllowShrinking)
+		if (bRemoved && AllowShrinking == EAllowShrinking::Yes)
 		{
 			ResizeShrink();
 		}
 
 		return OriginalNum - ArrayNum;
+	}
+	template <class PREDICATE_CLASS>
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAllSwap")
+	FORCEINLINE SizeType RemoveAllSwap(const PREDICATE_CLASS& Predicate, bool bAllowShrinking)
+	{
+		return RemoveAllSwap(Predicate, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -2661,12 +2781,12 @@ public:
 	 * O(Count) instead of O(ArrayNum), but does not preserve the order
 	 *
 	 * @param Item The item to remove
-	 * @param bAllowShrinking Tell if this function can shrink the memory in-use if suitable.
+	 * @param AllowShrinking Tell if this function can shrink the memory in-use if suitable.
 	 *
 	 * @returns The number of items removed. For RemoveSingleItem, this is always either 0 or 1.
 	 * @see Add, Insert, Remove, RemoveAll, RemoveAllSwap, RemoveSwap
 	 */
-	SizeType RemoveSingleSwap(const ElementType& Item, bool bAllowShrinking = true)
+	SizeType RemoveSingleSwap(const ElementType& Item, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		SizeType Index = Find(Item);
 		if (Index == INDEX_NONE)
@@ -2674,23 +2794,31 @@ public:
 			return 0;
 		}
 
-		RemoveAtSwap(Index, 1, bAllowShrinking);
+		RemoveAtSwap(Index, 1, AllowShrinking);
 
 		// Removed one item
 		return 1;
 	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveSingleSwap")
+	FORCEINLINE SizeType RemoveSingleSwap(const ElementType& Item, bool bAllowShrinking)
+	{
+		return RemoveSingleSwap(Item, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
+	}
 
 	/**
-	 * Removes item from the array.
+	 * Removes all instances of a given item from the array.
 	 *
 	 * This version is much more efficient, because it uses RemoveAtSwap
 	 * internally which is O(Count) instead of RemoveAt which is O(ArrayNum),
 	 * but does not preserve the order.
 	 *
+	 * @param Item The item to remove
+	 * @param AllowShrinking Tell if this function can shrink the memory in-use if suitable.
+	 *
 	 * @returns Number of elements removed.
 	 * @see Add, Insert, Remove, RemoveAll, RemoveAllSwap
 	 */
-	SizeType RemoveSwap(const ElementType& Item, bool bAllowShrinking = true)
+	SizeType RemoveSwap(const ElementType& Item, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		CheckAddress(&Item);
 
@@ -2701,16 +2829,21 @@ public:
 			if ((*this)[Index] == Item)
 			{
 				bRemoved = true;
-				RemoveAtSwap(Index--, 1, false);
+				RemoveAtSwap(Index--, 1, EAllowShrinking::No);
 			}
 		}
 
-		if (bRemoved && bAllowShrinking)
+		if (bRemoved && AllowShrinking == EAllowShrinking::Yes)
 		{
 			ResizeShrink();
 		}
 
 		return OriginalNum - ArrayNum;
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveSwap")
+	FORCEINLINE SizeType RemoveSwap(const ElementType& Item, bool bAllowShrinking)
+	{
+		return RemoveSwap(Item, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -2934,6 +3067,7 @@ private:
 		{
 			AllocatorInstance.ResizeAllocation(CurrentArrayNum, NewArrayMax, sizeof(ElementType));
 		}
+		SlackTrackerNumChanged();
 	}
 
 	SizeType AllocatorCalculateSlackShrink(SizeType CurrentArrayNum, SizeType NewArrayMax)
@@ -3041,13 +3175,15 @@ private:
 		ArrayNum = NewNum;
 		if (OtherNum || PrevMax)
 		{
-		ResizeForCopy(NewNum, PrevMax);
-		ConstructItems<ElementType>(GetData(), OtherData, OtherNum);
+			ResizeForCopy(NewNum, PrevMax);
+			ConstructItems<ElementType>(GetData(), OtherData, OtherNum);
 		}
 		else
 		{
-		ArrayMax = AllocatorInstance.GetInitialCapacity();
+			ArrayMax = AllocatorInstance.GetInitialCapacity();
 		}
+
+		SlackTrackerNumChanged();
 	}
 
 	/**
@@ -3083,6 +3219,8 @@ private:
 		{
 			ArrayMax = AllocatorInstance.GetInitialCapacity();
 		}
+
+		SlackTrackerNumChanged();
 	}
 
 protected:
@@ -3256,19 +3394,26 @@ public:
 	 *
 	 * @param OutItem The removed item.
 	 * @param Predicate Predicate class instance.
+	 * @param AllowShrinking Tell if this function can shrink the memory in-use if suitable.
 	 *
 	 * @note: If your array contains raw pointers, they will be automatically dereferenced during heapification.
 	 *        Therefore, your predicate will be passed references rather than pointers.
 	 *        The auto-dereferencing behavior does not occur with smart pointers.
 	 */
 	template <class PREDICATE_CLASS>
-	void HeapPop(ElementType& OutItem, const PREDICATE_CLASS& Predicate, bool bAllowShrinking = true)
+	void HeapPop(ElementType& OutItem, const PREDICATE_CLASS& Predicate, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		OutItem = MoveTemp((*this)[0]);
-		RemoveAtSwap(0, 1, bAllowShrinking);
+		RemoveAtSwap(0, 1, AllowShrinking);
 
 		TDereferenceWrapper< ElementType, PREDICATE_CLASS> PredicateWrapper(Predicate);
 		AlgoImpl::HeapSiftDown(GetData(), (SizeType)0, Num(), FIdentityFunctor(), PredicateWrapper);
+	}
+	template <class PREDICATE_CLASS>
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("HeapPop")
+	FORCEINLINE void HeapPop(ElementType& OutItem, const PREDICATE_CLASS& Predicate, bool bAllowShrinking)
+	{
+		HeapPop(OutItem, Predicate, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/** 
@@ -3276,15 +3421,20 @@ public:
 	 * the template type.
 	 *
 	 * @param OutItem The removed item.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink the array allocation if suitable after the pop. Default is true.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink the array allocation if suitable after the pop. Default is yes.
 	 *
 	 * @note: If your array contains raw pointers, they will be automatically dereferenced during heapification.
 	 *        Therefore, your array will be heapified by the values being pointed to, rather than the pointers' values.
 	 *        The auto-dereferencing behavior does not occur with smart pointers.
 	 */
-	void HeapPop(ElementType& OutItem, bool bAllowShrinking = true)
+	void HeapPop(ElementType& OutItem, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		HeapPop(OutItem, TLess<ElementType>(), bAllowShrinking);
+		HeapPop(OutItem, TLess<ElementType>(), AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("HeapPop")
+	FORCEINLINE void HeapPop(ElementType& OutItem, bool bAllowShrinking)
+	{
+		HeapPop(OutItem, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -3302,33 +3452,44 @@ public:
 	 * Removes the top element from the heap.
 	 *
 	 * @param Predicate Predicate class instance.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink the array allocation if suitable after the discard. Default is true.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink the array allocation if suitable after the discard. Default is yes.
 	 *
 	 * @note: If your array contains raw pointers, they will be automatically dereferenced during heapification.
 	 *        Therefore, your predicate will be passed references rather than pointers.
 	 *        The auto-dereferencing behavior does not occur with smart pointers.
 	 */
 	template <class PREDICATE_CLASS>
-	void HeapPopDiscard(const PREDICATE_CLASS& Predicate, bool bAllowShrinking = true)
+	void HeapPopDiscard(const PREDICATE_CLASS& Predicate, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		RemoveAtSwap(0, 1, bAllowShrinking);
+		RemoveAtSwap(0, 1, AllowShrinking);
 		TDereferenceWrapper< ElementType, PREDICATE_CLASS> PredicateWrapper(Predicate);
 		AlgoImpl::HeapSiftDown(GetData(), (SizeType)0, Num(), FIdentityFunctor(), PredicateWrapper);
+	}
+	template <class PREDICATE_CLASS>
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("HeapPopDiscard")
+	FORCEINLINE void HeapPopDiscard(const PREDICATE_CLASS& Predicate, bool bAllowShrinking)
+	{
+		HeapPopDiscard(Predicate, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/** 
 	 * Removes the top element from the heap. Assumes < operator is defined for the template type.
 	 *
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink the array
-	 *		allocation if suitable after the discard. Default is true.
+	 * @param AllowShrinking (Optional) Tells if this call can shrink the array
+	 *		allocation if suitable after the discard. Default is yes.
 	 *
 	 * @note: If your array contains raw pointers, they will be automatically dereferenced during heapification.
 	 *        Therefore, your array will be heapified by the values being pointed to, rather than the pointers' values.
 	 *        The auto-dereferencing behavior does not occur with smart pointers.
 	 */
-	void HeapPopDiscard(bool bAllowShrinking = true)
+	void HeapPopDiscard(EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		HeapPopDiscard(TLess<ElementType>(), bAllowShrinking);
+		HeapPopDiscard(TLess<ElementType>(), AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("HeapPopDiscard")
+	FORCEINLINE void HeapPopDiscard(bool bAllowShrinking)
+	{
+		HeapPopDiscard(TLess<ElementType>(), bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/** 
@@ -3358,37 +3519,48 @@ public:
 	 *
 	 * @param Index Position at which to remove item.
 	 * @param Predicate Predicate class instance.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink the array allocation
-	 *		if suitable after the remove (default = true).
+	 * @param AllowShrinking (Optional) Tells if this call can shrink the array allocation
+	 *		if suitable after the remove (default = yes).
 	 *
 	 * @note: If your array contains raw pointers, they will be automatically dereferenced during heapification.
 	 *        Therefore, your predicate will be passed references rather than pointers.
 	 *        The auto-dereferencing behavior does not occur with smart pointers.
 	 */
 	template <class PREDICATE_CLASS>
-	void HeapRemoveAt(SizeType Index, const PREDICATE_CLASS& Predicate, bool bAllowShrinking = true)
+	void HeapRemoveAt(SizeType Index, const PREDICATE_CLASS& Predicate, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		RemoveAtSwap(Index, 1, bAllowShrinking);
+		RemoveAtSwap(Index, 1, AllowShrinking);
 
 		TDereferenceWrapper< ElementType, PREDICATE_CLASS> PredicateWrapper(Predicate);
 		AlgoImpl::HeapSiftDown(GetData(), Index, Num(), FIdentityFunctor(), PredicateWrapper);
 		AlgoImpl::HeapSiftUp(GetData(), (SizeType)0, FPlatformMath::Min(Index, Num() - 1), FIdentityFunctor(), PredicateWrapper);
+	}
+	template <class PREDICATE_CLASS>
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("HeapRemoveAt")
+	void HeapRemoveAt(SizeType Index, const PREDICATE_CLASS& Predicate, bool bAllowShrinking)
+	{
+		HeapRemoveAt(Index, Predicate, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
 	 * Removes an element from the heap. Assumes < operator is defined for the template type.
 	 *
 	 * @param Index Position at which to remove item.
-	 * @param bAllowShrinking (Optional) Tells if this call can shrink the array allocation
-	 *		if suitable after the remove (default = true).
+	 * @param AllowShrinking (Optional) Tells if this call can shrink the array allocation
+	 *		if suitable after the remove (default = yes).
 	 *
 	 * @note: If your array contains raw pointers, they will be automatically dereferenced during heapification.
 	 *        Therefore, your array will be heapified by the values being pointed to, rather than the pointers' values.
 	 *        The auto-dereferencing behavior does not occur with smart pointers.
 	 */
-	void HeapRemoveAt(SizeType Index, bool bAllowShrinking = true)
+	void HeapRemoveAt(SizeType Index, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		HeapRemoveAt(Index, TLess< ElementType >(), bAllowShrinking);
+		HeapRemoveAt(Index, TLess< ElementType >(), AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("HeapRemoveAt")
+	FORCEINLINE void HeapRemoveAt(SizeType Index, bool bAllowShrinking)
+	{
+		HeapRemoveAt(Index, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/**
@@ -3559,19 +3731,27 @@ struct TArrayPrivateFriend
 				A.ResizeForCopy(A.ArrayNum, A.ArrayMax);
 			}
 
-			if(TIsUECoreVariant<ElementType, double>::Value && Ar.IsLoading() && Ar.UEVer() < EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES)
+			if constexpr (TIsUECoreVariant<ElementType, double>::Value)
 			{
-				// Per item serialization is required for core variant types loaded from pre LWC archives, to enable conversion from float to double.
-				A.Empty(SerializeNum);
-				for (SizeType i=0; i<SerializeNum; i++)
+				if (Ar.IsLoading() && Ar.UEVer() < EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES)
 				{
-					Ar << A.AddDefaulted_GetRef();
+					// Per item serialization is required for core variant types loaded from pre LWC archives, to enable conversion from float to double.
+					A.Empty(SerializeNum);
+					for (SizeType i = 0; i < SerializeNum; i++)
+					{
+						Ar << A.AddDefaulted_GetRef();
+					}
+				}
+				else
+				{
+					Ar.Serialize(A.GetData(), A.Num() * sizeof(ElementType));
 				}
 			}
 			else
 			{
 				Ar.Serialize(A.GetData(), A.Num() * sizeof(ElementType));
 			}
+
 		}
 		else if (Ar.IsLoading())
 		{
@@ -3592,6 +3772,8 @@ struct TArrayPrivateFriend
 				Ar << A[i];
 			}
 		}
+
+		A.SlackTrackerNumChanged();
 
 		return Ar;
 	}
@@ -3615,3 +3797,10 @@ uint32 GetTypeHash(const TArray<InElementType, InAllocatorType>& A)
 	}
 	return Hash;
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/IsSigned.h"
+#include "Templates/AndOrNot.h"
+#include "Templates/IsConstructible.h"
+#include "Templates/MakeUnsigned.h"
+#endif

@@ -8,10 +8,11 @@
 
 #define LOCTEXT_NAMESPACE "SmartObjectViewport"
 
-void SSmartObjectViewport::Construct(const FArguments& InArgs, const TSharedRef<FSmartObjectAssetToolkit>& InAssetEditorToolkit,FAdvancedPreviewScene* InPreviewScene)
+void SSmartObjectViewport::Construct(const FArguments& InArgs)
 {
-	PreviewScene = InPreviewScene;
-	AssetEditorToolkitPtr = InAssetEditorToolkit;
+	ViewportClient = InArgs._EditorViewportClient;
+	PreviewScene = InArgs._PreviewScene;
+	AssetEditorToolkitPtr = InArgs._AssetEditorToolkit;
 
 	SEditorViewport::Construct(
 		SEditorViewport::FArguments()
@@ -26,7 +27,6 @@ void SSmartObjectViewport::BindCommands()
 
 TSharedRef<FEditorViewportClient> SSmartObjectViewport::MakeEditorViewportClient()
 {
-	ViewportClient = StaticCastSharedPtr<FSmartObjectAssetEditorViewportClient>(AssetEditorToolkitPtr.Pin()->CreateEditorViewportClient());
 	return ViewportClient.ToSharedRef();
 }
 

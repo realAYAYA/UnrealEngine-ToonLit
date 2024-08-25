@@ -1,8 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AITypes.h"
+#include "GameFramework/Actor.h"
 #include "UObject/Package.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "NavFilters/NavigationQueryFilter.h"
 
 //----------------------------------------------------------------------//
 // FAIResourceLock
@@ -204,6 +206,11 @@ void FAIMoveRequest::SetGoalLocation(const FVector& InGoalLocation)
 		GoalLocation = InGoalLocation;
 		bInitialized = true;
 	}
+}
+
+FVector FAIMoveRequest::GetDestination() const
+{
+	return bMoveToActor ? (GoalActor.IsValid() ? GoalActor->GetActorLocation() : FAISystem::InvalidLocation) : GoalLocation;
 }
 
 bool FAIMoveRequest::UpdateGoalLocation(const FVector& NewLocation) const

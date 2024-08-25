@@ -143,18 +143,20 @@ struct MASSENTITY_API FMassSubsystemAccess
 		{
 			return UWorld::GetSubsystem<T>(World);
 		}
-		if constexpr (TIsDerivedFrom<T, UGameInstanceSubsystem>::IsDerived)
+		else if constexpr (TIsDerivedFrom<T, UGameInstanceSubsystem>::IsDerived)
 		{
 			return UGameInstance::GetSubsystem<T>(World->GetGameInstance());
 		}
-		if constexpr (TIsDerivedFrom<T, ULocalPlayerSubsystem>::IsDerived)
+		else if constexpr (TIsDerivedFrom<T, ULocalPlayerSubsystem>::IsDerived)
 		{
 			// note that this default implementation will work only for the first player in a local-coop game
 			// to customize this behavior specialize the FetchSubsystemInstance template function for the type you need. 
 			return ULocalPlayer::GetSubsystem<T>(World->GetFirstLocalPlayerFromController());
 		}
-
-		checkf(false, TEXT("FMassSubsystemAccess::FetchSubsystemInstance: Unhandled world-related USubsystem class %s"), *T::StaticClass()->GetName());
+		else
+		{
+			checkf(false, TEXT("FMassSubsystemAccess::FetchSubsystemInstance: Unhandled world-related USubsystem class %s"), *T::StaticClass()->GetName());
+		}
 	}
 	
 	template<typename T, typename = typename TEnableIf<TIsDerivedFrom<T, USubsystem>::IsDerived>::Type>
@@ -165,13 +167,15 @@ struct MASSENTITY_API FMassSubsystemAccess
 			return GEngine->GetEngineSubsystem<T>();
 		}
 #if WITH_EDITOR
-		if constexpr (TIsDerivedFrom<T, UEditorSubsystem>::IsDerived)
+		else if constexpr (TIsDerivedFrom<T, UEditorSubsystem>::IsDerived)
 		{
 			return GEditor->GetEditorSubsystem<T>();
 		}
 #endif // WITH_EDITOR
-		
-		checkf(false, TEXT("FMassSubsystemAccess::FetchSubsystemInstance: Unhandled world-less USubsystem class %s"), *T::StaticClass()->GetName()); 
+		else
+		{
+			checkf(false, TEXT("FMassSubsystemAccess::FetchSubsystemInstance: Unhandled world-less USubsystem class %s"), *T::StaticClass()->GetName());
+		}
 	}
 
 	static USubsystem* FetchSubsystemInstance(UWorld* World, TSubclassOf<USubsystem> SubsystemClass);
@@ -180,8 +184,6 @@ protected:
 	template<typename T>
 	T* GetSubsystemInternal(const uint32 SystemIndex)
 	{
-		QUICK_SCOPE_CYCLE_COUNTER(Mass_GetSubsystemInternal)
-
 		if (UNLIKELY(Subsystems.IsValidIndex(SystemIndex) == false))
 		{
 			Subsystems.AddZeroed(Subsystems.Num() - SystemIndex + 1);

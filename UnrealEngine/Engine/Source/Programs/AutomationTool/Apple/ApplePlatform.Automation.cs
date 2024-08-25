@@ -95,9 +95,23 @@ public abstract class ApplePlatform : Platform
 		// staging will put binaries into Staged/<game>/Binaries/<platform> and they aren't needed, and when we pull this into a .app, it 
 		// messes with the resulting .app. So, we remove the game binary now (leaving in helper .app's and raw .dylibs, etc)
 		// they come from BuildProducts, and we could maybe remove from that list, but it could cause issues with Horde/buildmachines
-		FileReference BinaryPath = FileReference.Combine(SC.StageDirectory, Params.IsCodeBasedProject ? SC.ShortProjectName : "Engine", "Binaries", SC.PlatformDir, SC.StageExecutables[0]);
-		DirectoryReference AppPath = new DirectoryReference(BinaryPath.FullName + ".app");
+		// program binaries usually live under the Engine directory, and there isn't a great way to know if this is a project program or not
+		// a more programmatic solution is being investigated
+		string RootDirName = "Engine";
+		if (Params.IsCodeBasedProject && SC.StageTargets[0].Receipt.TargetType != TargetType.Program)
+		{
+			RootDirName = SC.ShortProjectName;
+		}
+		FileReference BinaryPath = FileReference.Combine(SC.StageDirectory, RootDirName, "Binaries", SC.PlatformDir, SC.StageExecutables[0]);
 		InternalUtils.SafeDeleteFile(BinaryPath.FullName, true);
+		// this may leave the binaries directory empty, but the Mac needs the Binaries/Mac dir to exist (see FMacPlatformProcess::BaseDir())
+		// so plop a file down in it's place
+		if (SC.StageTargetPlatform.PlatformType == UnrealTargetPlatform.Mac)
+		{
+			File.WriteAllText(Path.Combine(BinaryPath.Directory.FullName, ".binariesdir"), "");
+		}
+
+		DirectoryReference AppPath = new DirectoryReference(BinaryPath.FullName + ".app");
 		InternalUtils.SafeDeleteDirectory(AppPath.FullName, true);
 
 		if (AppleExports.UseModernXcode(Params.RawProjectPath))
@@ -138,13 +152,21 @@ public abstract class ApplePlatform : Platform
 		DateDirs.SortBy(x => Directory.GetCreationTime(x.FullName));
 		DateDirs.Reverse();
 
+		string ArchiveName = Target.Receipt.TargetName;
+		if (!SC.IsCodeBasedProject)
+		{
+			if (SC.RawProjectPath != null)
+			{
+				ArchiveName = MakeContentOnlyTargetName(Target.Receipt, SC.ShortProjectName);
+			}
+		}
 
 		// go through each folder, starting at most recent, looking for an archive for the target
 		foreach (DirectoryReference DateDir in DateDirs)
 		{
 			// find the most recent archive for this target (based on name of target, this ignores Development vs Shipping, but 
 			// since Distribution is meant only for Shipping it's ok
-			string Wildcard = AppleExports.MakeBinaryFileName(SC.ShortProjectName, Target.Receipt.Platform, UnrealTargetConfiguration.Development,
+			string Wildcard = AppleExports.MakeBinaryFileName(ArchiveName, Target.Receipt.Platform, UnrealTargetConfiguration.Development,
 				Target.Receipt.Architectures, UnrealTargetConfiguration.Development, null) + " *.xcarchive";
 
 			Logger.LogInformation("Looking in Xcode archive dir {0} for {1}", DateDir, Wildcard);

@@ -126,6 +126,12 @@ public:
 	UE_DEPRECATED(5.1, "FNames containing full asset paths are deprecated, use FSoftObjectPath instead")
 	void RemoveAliases(const FName ObjectPath);
 
+	/** When called, removes all aliases and triggers delegate for various systems to re-add aliases */
+	void RebuildAliases();
+
+	/** Broadcast after RebuildAliases() called to allow systems to re-add aliases */
+	FSimpleMulticastDelegate& OnRebuildAliases() { return RebuildAliasesDelegate; }
+
 	/** Get all aliases from metadata for the given asset, then calls AddAlias or RemoveAlias for every alias that doesn't match the stored data. */
 	void ReconcileAliasesFromMetaData(const FAssetData& Asset);
 	/** Calls AddAlias or RemoveAlias for every alias that doesn't match the stored data for the given asset. */
@@ -206,6 +212,9 @@ private:
 	TSet<FSoftObjectPath> AlreadyAddedOriginalAssets;
 
 	UContentBrowserAssetDataSource::FAssetDataSourceFilterCache FilterCache;
+
+	/** Delegate broadcast after all aliases removed to give chance for systems to re-add aliases */
+	FSimpleMulticastDelegate RebuildAliasesDelegate;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

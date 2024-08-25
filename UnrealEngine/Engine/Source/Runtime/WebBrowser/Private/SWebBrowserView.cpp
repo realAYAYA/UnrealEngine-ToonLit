@@ -267,6 +267,27 @@ void SWebBrowserView::HandleWindowDeactivated()
 	}
 }
 
+FReply SWebBrowserView::OnFocusReceived(const FGeometry& MyGeometry, const FFocusEvent& InFocusEvent)
+{
+	FReply Reply = FReply::Handled();
+	if (InFocusEvent.GetCause() != EFocusCause::Cleared)
+	{
+		if (BrowserWidget.IsValid())
+		{
+			Reply.SetUserFocus(BrowserWidget.ToSharedRef(), InFocusEvent.GetCause());
+		}
+		else
+		{
+			Reply.SetUserFocus(this->AsShared());
+		}
+		if (BrowserWindow.IsValid())
+		{
+			BrowserWindow->OnFocus(true, false);
+		}
+	}
+	return Reply;
+}
+
 void SWebBrowserView::HandleWindowActivated()
 {
 	if (BrowserViewport.IsValid())

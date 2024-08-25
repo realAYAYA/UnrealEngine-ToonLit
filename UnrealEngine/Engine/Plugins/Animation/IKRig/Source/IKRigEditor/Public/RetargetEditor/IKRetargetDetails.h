@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -41,7 +41,7 @@ public:
 	UPROPERTY()
 	FTransform ReferenceTransform;
 	
-	TSharedPtr<FIKRetargetEditorController> EditorController;
+	TWeakPtr<FIKRetargetEditorController> EditorController;
 
 #if WITH_EDITOR
 
@@ -73,7 +73,7 @@ public:
 		FVector::FReal Value,
 		ETextCommit::Type CommitType,
 		EIKRetargetTransformType TransformType,
-		TArrayView<UIKRetargetBoneDetails*> Bones,
+		TArrayView<TObjectPtr<UIKRetargetBoneDetails>> Bones,
 		bool bIsCommit);
 
 	template<typename DataType>
@@ -140,7 +140,7 @@ struct FIKRetargetTransformUIData
 	TArray<TSharedRef<IPropertyHandle>> Properties;
 };
 
-class FIKRetargetBoneDetailCustomization : public IDetailCustomization
+class FIKRetargetBoneDetailCustomization : public IDetailCustomization, FGCObject
 {
 public:
 
@@ -152,6 +152,11 @@ public:
 	/** IDetailCustomization interface */
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
 
+	// FGCObject interface
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override;
+	// End FGCObject interface
+
 private:
 
 	void GetTransformUIData(
@@ -159,7 +164,7 @@ private:
 		const IDetailLayoutBuilder& DetailBuilder,
 		FIKRetargetTransformUIData& OutData) const;
 
-	TArray<UIKRetargetBoneDetails*> Bones;
+	TArray<TObjectPtr<UIKRetargetBoneDetails>> Bones;
 };
 
 /** ------------------------------------- BEGIN CHAIN DETAILS CUSTOMIZATION -------------*/
@@ -181,6 +186,7 @@ private:
 
 	void AddSettingsSection(
 		const IDetailLayoutBuilder& DetailBuilder,
+		const FIKRetargetEditorController* Controller,
 		IDetailCategoryBuilder& SettingsCategory,
 		const FString& StructPropertyName,
 		const FName& GroupName,
@@ -191,7 +197,6 @@ private:
 		const FText& DisabledMessage) const;
 	
 	TArray<TWeakObjectPtr<URetargetChainSettings>> ChainSettingsObjects;
-	TSharedPtr<FIKRetargetEditorController> Controller;
 	TArray<TSharedPtr<FString>> SourceChainOptions;
 };
 
@@ -212,7 +217,7 @@ public:
 private:
 
 	TWeakObjectPtr<URetargetRootSettings> RootSettingsObject;
-	TSharedPtr<FIKRetargetEditorController> Controller;
+	TWeakPtr<FIKRetargetEditorController> Controller;
 };
 
 /** ------------------------------------- BEGIN GLOBAL DETAILS CUSTOMIZATION -------------*/
@@ -232,7 +237,31 @@ public:
 private:
 
 	TWeakObjectPtr<UIKRetargetGlobalSettings> GlobalSettingsObject;
-	TSharedPtr<FIKRetargetEditorController> Controller;
+	TWeakPtr<FIKRetargetEditorController> Controller;
 
 	TArray<TSharedPtr<FString>> TargetChainOptions;
+};
+
+/** ------------------------------------- BEGIN POST DETAILS CUSTOMIZATION -------------*/
+
+class FRetargetOpStackCustomization : public IDetailCustomization
+{
+public:
+
+	static TSharedRef<IDetailCustomization> MakeInstance()
+	{
+		return MakeShareable(new FRetargetOpStackCustomization);
+	}
+
+	/** IDetailCustomization interface */
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+
+private:
+
+	TSharedRef<SWidget> CreateAddNewMenuWidget();
+
+	void AddNewRetargetOp(UClass* Class);
+	
+	TWeakObjectPtr<URetargetOpStack> RetargetOpStackObject;
+	TWeakPtr<FIKRetargetEditorController> Controller;
 };

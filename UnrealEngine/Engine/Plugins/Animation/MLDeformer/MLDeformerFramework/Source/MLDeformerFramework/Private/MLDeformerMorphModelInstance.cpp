@@ -23,6 +23,13 @@ bool UMLDeformerMorphModelInstance::IsValidForDataProvider() const
 	return true;
 }
 
+void UMLDeformerMorphModelInstance::PostTick(bool bExecuteCalled)
+{
+	#if WITH_EDITOR
+		CopyDataFromCurrentDebugActor();
+	#endif
+}
+
 int32 UMLDeformerMorphModelInstance::GetExternalMorphSetID() const
 { 
 	return ExternalMorphSetID;
@@ -31,13 +38,16 @@ int32 UMLDeformerMorphModelInstance::GetExternalMorphSetID() const
 void UMLDeformerMorphModelInstance::BeginDestroy()
 {
 	// Try to unregister the morph target and morph target set.
-	if (SkeletalMeshComponent)
+	if (IsValid(SkeletalMeshComponent))
 	{
 		const UMLDeformerMorphModel* MorphModel = Cast<UMLDeformerMorphModel>(Model);
 		if (MorphModel)
 		{
-			const int32 LOD = 0;
-			SkeletalMeshComponent->RemoveExternalMorphSet(LOD, ExternalMorphSetID);
+			const int32 NumLODs = SkeletalMeshComponent->GetNumLODs();
+			for (int32 LOD = 0; LOD < NumLODs; ++LOD)
+			{
+				SkeletalMeshComponent->RemoveExternalMorphSet(LOD, ExternalMorphSetID);
+			}
 			SkeletalMeshComponent->RefreshExternalMorphTargetWeights();
 		}
 	}
@@ -63,75 +73,45 @@ void UMLDeformerMorphModelInstance::PostMLDeformerComponentInit()
 		// Get the morph model and its morph target set.
 		UMLDeformerMorphModel* MorphModel = Cast<UMLDeformerMorphModel>(Model);
 		check(MorphModel);
-		TSharedPtr<FExternalMorphSet> MorphTargetSet = MorphModel->GetMorphTargetSet();
 
-		// Register the morph set. This overwrites the existing one for this model, if it already exists.
-		// Only add to LOD 0 for now.
-		const int32 LOD = 0;
-		SkelMeshComponent->AddExternalMorphSet(LOD, ExternalMorphSetID, MorphTargetSet);
+		check(IsInGameThread());	// We don't want to call this multithreaded, as the AddExternalMorphSets etc isn't thread safe.
 
-		// Update the weight information in the Skeletal Mesh.
-		SkelMeshComponent->RefreshExternalMorphTargetWeights();
-
-		// When we're in editor mode, keep the CPU data around, so we can re-initialize when needed.
-#if WITH_EDITOR
-		MorphTargetSet->MorphBuffers.SetEmptyMorphCPUDataOnInitRHI(false);
-#else
-		MorphTargetSet->MorphBuffers.SetEmptyMorphCPUDataOnInitRHI(true);
-#endif
-
-		// Release the render resources, but only in an editor build.
-		// The non-editor build shouldn't do this, as then it can't initialize again. The non-editor build assumes
-		// that the data doesn't change and we don't need to re-init.
-		// In the editor build we have to re-initialize the render resources as the morph targets can change after (re)training, so
-		// that is why we release them here, and intialize them again after.
-		FMorphTargetVertexInfoBuffers& MorphBuffers = MorphTargetSet->MorphBuffers;
-#if WITH_EDITOR
-		BeginReleaseResource(&MorphBuffers);
-#endif
-
-		// Reinitialize the GPU compressed buffers.
-		if (MorphBuffers.IsMorphCPUDataValid() && MorphBuffers.GetNumMorphs() > 0)
+		const int32 NumLODs = MorphModel->GetNumLODs();
+		for (int32 LOD = 0; LOD < NumLODs; ++LOD)
 		{
-			// In a non-editor build this will clear the CPU data.
-			// That also means it can't re-init the resources later on again.
-			BeginInitResource(&MorphBuffers);
+			TSharedPtr<FExternalMorphSet> MorphTargetSet = MorphModel->GetMorphTargetSet(LOD);
+
+			// Register the morph set. This overwrites the existing one for this model, if it already exists.
+			SkelMeshComponent->AddExternalMorphSet(LOD, ExternalMorphSetID, MorphTargetSet);
+
+			// Update the weight information in the Skeletal Mesh.
+			SkelMeshComponent->RefreshExternalMorphTargetWeights();
+
+			// When we're in editor mode, keep the CPU data around, so we can re-initialize when needed.
+			#if WITH_EDITOR
+				MorphTargetSet->MorphBuffers.SetEmptyMorphCPUDataOnInitRHI(false);
+			#else
+				MorphTargetSet->MorphBuffers.SetEmptyMorphCPUDataOnInitRHI(true);
+			#endif
+
+			// Only release render resources in the editor build. Editor builds must re-initialize the render resources
+			// as the morph targets can change after training. Non-editor builds assume the data does not change, and there
+			// is no need to re-init.
+			FMorphTargetVertexInfoBuffers& MorphBuffers = MorphTargetSet->MorphBuffers;
+			#if WITH_EDITOR
+				BeginReleaseResource(&MorphBuffers);
+			#endif
+
+			// Reinitialize the GPU compressed buffers.
+			if (MorphBuffers.IsMorphCPUDataValid() && MorphBuffers.GetNumMorphs() > 0)
+			{
+				// In a non-editor build this will clear the CPU data.
+				// That also means it can't re-init the resources later on again.
+				BeginInitResource(&MorphBuffers);
+			}
 		}
 
 		SetHasPostInitialized(true);
-	}
-}
-
-void UMLDeformerMorphModelInstance::Tick(float DeltaTime, float ModelWeight)
-{
-	// Detect changes in quality level.
-	const int32 CurrentQualityLevel = GetMLDeformerComponent()->GetQualityLevel();
-	if (CurrentQualityLevel != LastQualityLevel)
-	{
-		LastQualityLevel = CurrentQualityLevel;
-		MorphLerpAlpha = 0.0f;
-
-		const int LOD = 0;	// For now we only support LOD 0, as we can't setup an ML Deformer per LOD yet.
-		FExternalMorphSetWeights* WeightData = FindWeightData(LOD);
-		if (WeightData)
-		{
-			StartMorphWeights = WeightData->Weights;
-		}
-	}
-
-	if (StartMorphWeights.IsEmpty())
-	{
-		const UMLDeformerMorphModel* MorphModel = Cast<UMLDeformerMorphModel>(Model);
-		StartMorphWeights.SetNumZeroed(MorphModel->GetNumMorphTargets());
-	}
-
-	Super::Tick(DeltaTime, ModelWeight);
-
-	// Update the morph lerp towards the target.
-	MorphLerpAlpha += DeltaTime * 10.0f;
-	if (MorphLerpAlpha > 1.0f)
-	{
-		MorphLerpAlpha = 1.0f;
 	}
 }
 
@@ -151,7 +131,7 @@ FExternalMorphSetWeights* UMLDeformerMorphModelInstance::FindWeightData(int32 LO
 
 void UMLDeformerMorphModelInstance::HandleZeroModelWeight()
 {
-	const int LOD = 0;	// For now we only support LOD 0, as we can't setup an ML Deformer per LOD yet.
+	const int32 LOD = SkeletalMeshComponent->GetPredictedLODLevel();
 	FExternalMorphSetWeights* WeightData = FindWeightData(LOD);
 	if (WeightData)
 	{

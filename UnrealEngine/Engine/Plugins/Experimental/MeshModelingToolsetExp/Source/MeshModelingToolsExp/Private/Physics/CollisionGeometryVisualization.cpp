@@ -1,8 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Physics/CollisionGeometryVisualization.h"
-#include "Physics/PhysicsDataCollection.h"
+
+#include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Physics/CollisionPropertySets.h"
+#include "Physics/ComponentCollisionUtil.h"
+#include "Physics/PhysicsDataCollection.h"
 #include "Generators/LineSegmentGenerators.h"
 #include "Drawing/PreviewGeometryActor.h"
 
@@ -10,6 +13,71 @@ using namespace UE::Geometry;
 
 namespace
 {
+
+void InitializePreviewGeometrySolid(
+	const FPhysicsDataCollection& PhysicsData,
+	UPreviewGeometry* PreviewGeom,
+	UMaterialInterface* SolidMaterial,
+	TFunctionRef<FColor(int32 GeoSetIndex)> GeoSetIndexToColorFunc,
+	bool bVisible,
+	int32 SphereStepsResolution,
+	int32 FirstGeoSetIndex)
+{
+	check(PreviewGeom);
+	check(SolidMaterial);
+
+	int32 CircleSteps = FMath::Max(4, SphereStepsResolution);
+	int32 GeoSetIndex = FirstGeoSetIndex;
+
+	const FKAggregateGeom& AggGeom = PhysicsData.AggGeom;
+	FSimpleCollisionTriangulationSettings TriangulationSettings;
+	TriangulationSettings.InitFromSphereResolution(CircleSteps);
+	TriangulationSettings.bApproximateLevelSetWithCubes = false;
+
+	UE::Geometry::ConvertSimpleCollisionToDynamicMeshes(
+		AggGeom, PhysicsData.ExternalScale3D,
+		[&](int32 ShapeIndex, const FKShapeElem& ShapeElem, FDynamicMesh3& Mesh)
+		{
+			FColor Color = GeoSetIndexToColorFunc(ShapeIndex);
+			if (UTriangleSetComponent* TriangleSetComponent = PreviewGeom->CreateOrUpdateTriangleSet(FString::Printf(TEXT("Shape %d"), ShapeIndex), 1, [&](int32 Index, TArray<FRenderableTriangle>& TrisOut)
+				{
+					Mesh.TriangleCount();
+					check(Mesh.HasAttributes());
+					const UE::Geometry::FDynamicMeshNormalOverlay* PrimaryNormals = Mesh.Attributes()->PrimaryNormals();
+					const UE::Geometry::FDynamicMeshUVOverlay* PrimaryUV = Mesh.Attributes()->PrimaryUV();
+
+					TrisOut.Reserve(Mesh.TriangleCount());
+					for (int32 TID : Mesh.TriangleIndicesItr())
+					{
+						FIndex3i MeshTri = Mesh.GetTriangle(TID);
+						FRenderableTriangle& RenderTri = TrisOut.Emplace_GetRef();
+						RenderTri.Material = SolidMaterial;
+						FRenderableTriangleVertex* TriVerts[3]{ &RenderTri.Vertex0, &RenderTri.Vertex1, &RenderTri.Vertex2 };
+						for (int32 SubIdx = 0; SubIdx < 3; ++SubIdx)
+						{
+							int32 VID = MeshTri[SubIdx];
+							Mesh.GetVertex(VID);
+							FVector3f Normal;
+							PrimaryNormals->GetTriElement(TID, SubIdx, Normal);
+							FVector2f UV(0, 0);
+							if (PrimaryUV && PrimaryUV->IsSetTriangle(TID))
+							{
+								PrimaryUV->GetTriElement(TID, SubIdx, UV);
+							}
+							TriVerts[SubIdx]->Position = Mesh.GetVertex(VID);
+							TriVerts[SubIdx]->Color = Color;
+							TriVerts[SubIdx]->Normal = (FVector)Normal;
+							TriVerts[SubIdx]->UV = (FVector2D)UV;
+						}
+					}
+				}, Mesh.TriangleCount()))
+			{
+				TriangleSetComponent->SetVisibility(bVisible);
+			}
+		},
+		TriangulationSettings
+	);
+}
 
 void InitializePreviewGeometryLines(
 	const FPhysicsDataCollection& PhysicsData,
@@ -33,7 +101,7 @@ void InitializePreviewGeometryLines(
 	// spheres are draw as 3 orthogonal circles
 	for (int32 Index = 0; Index < AggGeom.SphereElems.Num(); Index++)
 	{
-		PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Spheres %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
+		if (ULineSetComponent* LineSetComponent = PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Spheres %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
 		{
 			FColor Color = LineSetIndexToColorFunc(LineSetIndex++);
 
@@ -48,14 +116,18 @@ void InitializePreviewGeometryLines(
 				[&](const FVector3f& A, const FVector3f& B) { LinesOut.Add(FRenderableLine((FVector)A, (FVector)B, Color, LineThickness, DepthBias)); });
 			UE::Geometry::GenerateCircleSegments<float>(CircleSteps, Radius, FVector3f::Zero(), FVector3f::UnitY(), FVector3f::UnitZ(), ElemTransformf,
 				[&](const FVector3f& A, const FVector3f& B) { LinesOut.Add(FRenderableLine((FVector)A, (FVector)B, Color, LineThickness, DepthBias)); });
-		});
+		}))
+		{
+			LineSetComponent->SetVisibility(bVisible);
+			LineSetComponent->SetLineMaterial(LineMaterial);
+		}
 	}
 
 
 	// boxes are drawn as boxes
 	for (int32 Index = 0; Index < AggGeom.BoxElems.Num(); Index++)
 	{
-		PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Boxes %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
+		if (ULineSetComponent* LineSetComponent = PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Boxes %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
 		{
 			FColor Color = LineSetIndexToColorFunc(LineSetIndex++);
 
@@ -69,14 +141,18 @@ void InitializePreviewGeometryLines(
 				PhysicsData.ExternalScale3D.Z * Box.Z * 0.5f);
 			UE::Geometry::GenerateBoxSegments<float>(HalfDimensions, FVector3f::Zero(), FVector3f::UnitX(), FVector3f::UnitY(), FVector3f::UnitZ(), ElemTransformf,
 				[&](const FVector3f& A, const FVector3f& B) { LinesOut.Add(FRenderableLine((FVector)A, (FVector)B, Color, LineThickness, DepthBias)); });
-		});
+		}))
+		{
+			LineSetComponent->SetVisibility(bVisible);
+			LineSetComponent->SetLineMaterial(LineMaterial);
+		}
 	}
 
 
 	// capsules are draw as two hemispheres (with 3 intersecting arcs/circles) and connecting lines
 	for (int32 Index = 0; Index < AggGeom.SphylElems.Num(); Index++)
 	{
-		PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Capsules %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
+		if (ULineSetComponent* LineSetComponent = PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Capsules %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
 		{
 			FColor Color = LineSetIndexToColorFunc(LineSetIndex++);
 
@@ -118,20 +194,24 @@ void InitializePreviewGeometryLines(
 					ElemTransform.TransformPosition((FVector)Top + DY),
 					ElemTransform.TransformPosition((FVector)Bottom + DY), Color, LineThickness, DepthBias));
 			}
-		});
+		}))
+		{
+			LineSetComponent->SetVisibility(bVisible);
+			LineSetComponent->SetLineMaterial(LineMaterial);
+		}
 	}
 
 	// convexes are drawn as mesh edges
 	for (int32 Index = 0; Index < AggGeom.ConvexElems.Num(); Index++)
 	{
-		PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Convex %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
+		if (ULineSetComponent* LineSetComponent = PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Convex %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
 		{
 			FColor Color = LineSetIndexToColorFunc(LineSetIndex++);
 
 			const FKConvexElem& Convex = AggGeom.ConvexElems[Index];
 			FTransform ElemTransform = Convex.GetTransform();
 			ElemTransform.ScaleTranslation(PhysicsData.ExternalScale3D);
-			ElemTransform.SetScale3D(PhysicsData.ExternalScale3D);
+			ElemTransform.MultiplyScale3D(PhysicsData.ExternalScale3D);
 			int32 NumTriangles = Convex.IndexData.Num() / 3;
 			for (int32 k = 0; k < NumTriangles; ++k)
 			{
@@ -142,13 +222,17 @@ void InitializePreviewGeometryLines(
 				LinesOut.Add(FRenderableLine(B, C, Color, LineThickness, DepthBias));
 				LinesOut.Add(FRenderableLine(C, A, Color, LineThickness, DepthBias));
 			}
-		});
+		}))
+		{
+			LineSetComponent->SetVisibility(bVisible);
+			LineSetComponent->SetLineMaterial(LineMaterial);
+		}
 	}
 
 	// for Level Sets draw the grid cells where phi < 0
 	for (int32 Index = 0; Index < AggGeom.LevelSetElems.Num(); Index++)
 	{
-		PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Level Set %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
+		if (ULineSetComponent* LineSetComponent = PreviewGeom->CreateOrUpdateLineSet(FString::Printf(TEXT("Level Set %d"), Index), 1, [&](int32 UnusedIndex, TArray<FRenderableLine>& LinesOut)
 		{
 			FColor Color = LineSetIndexToColorFunc(LineSetIndex++);
 			const FKLevelSetElem& LevelSet = AggGeom.LevelSetElems[Index];
@@ -178,33 +262,43 @@ void InitializePreviewGeometryLines(
 				GenerateBoxSegmentsFromFBox(CellBox);
 			}
 
-		});
+		}))
+		{
+			LineSetComponent->SetVisibility(bVisible);
+			LineSetComponent->SetLineMaterial(LineMaterial);
+		}
 	}
 
 	// Unclear whether we actually use these in the Engine, for UBodySetup? Does not appear to be supported by UxX import system,
 	// and online documentation suggests they may only be supported for cloth?
 	ensure(AggGeom.TaperedCapsuleElems.Num() == 0);
-
-	PreviewGeom->SetAllLineSetsMaterial(LineMaterial);
-	PreviewGeom->SetAllVisible(bVisible);
 }
 
-void UpdatePreviewGeometryLines(
+void UpdatePreviewGeometryForCollision(
 	UPreviewGeometry* PartialPreviewGeom,
 	UCollisionGeometryVisualizationProperties* Settings,
-	int32 FirstLineSetIndex = 0)
+	int32 FirstColorIndex)
 {
 	check(PartialPreviewGeom);
 	check(Settings);
 
-	int32 LineSetIndex = FirstLineSetIndex;
+	int32 LineColorIndex = FirstColorIndex;
 	PartialPreviewGeom->UpdateAllLineSets([&](ULineSetComponent* LineSet)
 	{
-		FColor LineColor = Settings->GetLineSetColor(LineSetIndex++);
+		FColor LineColor = Settings->GetLineSetColor(LineColorIndex++);
 		LineSet->SetAllLinesColor(LineColor);
 		LineSet->SetAllLinesThickness(Settings->LineThickness);
 		LineSet->SetLineMaterial(Settings->GetLineMaterial());
 		LineSet->SetVisibility(Settings->bShowCollision);
+	});
+
+	int32 TriColorIndex = FirstColorIndex;
+	PartialPreviewGeom->UpdateAllTriangleSets([&](UTriangleSetComponent* TriangleSet)
+	{
+		FColor TriangleColor = Settings->GetTriangleSetColor(TriColorIndex++);
+		TriangleSet->SetAllTrianglesColor(TriangleColor);
+		TriangleSet->SetAllTrianglesMaterial(Settings->GetSolidMaterial());
+		TriangleSet->SetVisibility(Settings->bEnableShowSolid && Settings->bShowCollision && Settings->bShowSolid);
 	});
 }
 
@@ -220,11 +314,17 @@ void UE::PhysicsTools::InitializeCollisionGeometryVisualization(
 	UCollisionGeometryVisualizationProperties* Settings,
 	const FPhysicsDataCollection& PhysicsData,
 	float DepthBias,
-	int32 CircleStepResolution)
+	int32 CircleStepResolution,
+	bool bClearExistingLinesAndTriangles)
 {
 	check(PreviewGeom);
 	check(Settings);
 
+	if (bClearExistingLinesAndTriangles)
+	{
+		PreviewGeom->RemoveAllLineSets();
+		PreviewGeom->RemoveAllTriangleSets();
+	}
 	InitializePreviewGeometryLines(
 		PhysicsData,
 		PreviewGeom,
@@ -233,6 +333,11 @@ void UE::PhysicsTools::InitializeCollisionGeometryVisualization(
 		Settings->LineThickness,
 		Settings->bShowCollision,
 		DepthBias,
+		CircleStepResolution,
+		0);
+	InitializePreviewGeometrySolid(
+		PhysicsData, PreviewGeom, Settings->GetSolidMaterial(), [&Settings](int SolidSetIndex) { return Settings->GetTriangleSetColor(SolidSetIndex); },
+		Settings->bEnableShowSolid && Settings->bShowCollision && Settings->bShowSolid,
 		CircleStepResolution,
 		0);
 
@@ -248,7 +353,7 @@ void UE::PhysicsTools::UpdateCollisionGeometryVisualization(
 
 	if (Settings->bVisualizationDirty)
 	{
-		UpdatePreviewGeometryLines(PreviewGeom, Settings);
+		UpdatePreviewGeometryForCollision(PreviewGeom, Settings, 0);
 		Settings->bVisualizationDirty = false;
 	}
 }
@@ -262,7 +367,7 @@ void UE::PhysicsTools::PartiallyInitializeCollisionGeometryVisualization(
 	UPreviewGeometry* PreviewGeom,
 	UCollisionGeometryVisualizationProperties* Settings,
 	const FPhysicsDataCollection& PhysicsData,
-	int32 FirstLineSetIndex,
+	int32 ColorIndex,
 	float DepthBias,
 	int32 CircleStepResolution)
 {
@@ -278,17 +383,24 @@ void UE::PhysicsTools::PartiallyInitializeCollisionGeometryVisualization(
 		Settings->bShowCollision,
 		DepthBias,
 		CircleStepResolution,
-		FirstLineSetIndex);
+		ColorIndex);
+
+	InitializePreviewGeometrySolid(
+		PhysicsData, PreviewGeom, Settings->GetSolidMaterial(), [&Settings](int SolidSetIndex) { return Settings->GetTriangleSetColor(SolidSetIndex); },
+		Settings->bEnableShowSolid && Settings->bShowCollision && Settings->bShowSolid,
+		CircleStepResolution,
+		ColorIndex);
 }
 
 void UE::PhysicsTools::PartiallyUpdateCollisionGeometryVisualization(
 	UPreviewGeometry* PartialPreviewGeom,
 	UCollisionGeometryVisualizationProperties* Settings,
-	int32 FirstLineSetIndex)
+	int32 ColorIndex)
 {
 	check(PartialPreviewGeom);
 	check(Settings);
 
-	UpdatePreviewGeometryLines(PartialPreviewGeom, Settings, FirstLineSetIndex);
+	// Note: Solid geometry uses the same coloring as line sets
+	UpdatePreviewGeometryForCollision(PartialPreviewGeom, Settings, ColorIndex);
 }
 

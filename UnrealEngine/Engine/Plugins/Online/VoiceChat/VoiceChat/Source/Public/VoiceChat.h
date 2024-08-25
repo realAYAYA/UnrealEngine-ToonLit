@@ -466,7 +466,16 @@ public:
 	 * @param ListenerForwardDirection
 	 * @param ListenerUpDirection
 	 */
-	virtual void Set3DPosition(const FString& ChannelName, const FVector& SpeakerPosition, const FVector& ListenerPosition, const FVector& ListenerForwardDirection, const FVector& ListenerUpDirection) = 0;
+	UE_DEPRECATED(5.4, "Please replace with new Set3DPosition override") // TODO also remove the default impl of Set3DPosition below when removing this.
+	virtual void Set3DPosition(const FString& ChannelName, const FVector& SpeakerPosition, const FVector& ListenerPosition, const FVector& ListenerForwardDirection, const FVector& ListenerUpDirection) {};
+
+	/**
+	 * Set the 3d position of the player
+	 *
+	 * @param ChannelName
+	 * @param Position
+	 */
+	virtual void Set3DPosition(const FString& ChannelName, const FVector& Position) {};
 
 	/**
 	 * Get an array of channels the user is in

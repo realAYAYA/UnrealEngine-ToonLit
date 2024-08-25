@@ -13,32 +13,48 @@
 #include "MetasoundOperatorSettings.h"
 #include "MetasoundParameterTransmitter.h"
 #include "MetasoundRouter.h"
+#include "MetasoundVertex.h"
 #include "Sound/SoundWaveProcedural.h"
 #include "UObject/MetaData.h"
+
+#include <atomic>
 
 #include "MetasoundSource.generated.h"
 
 
 // Forward Declarations
-namespace Metasound
-{
-	struct FMetaSoundEngineAssetHelper;
-	class FMetasoundGenerator;
-	namespace SourcePrivate
-	{
-		class FParameterRouter;
-	}
-
-	namespace DynamicGraph
-	{
-		class FDynamicOperatorTransactor;
-	}
-} // namespace Metasound
+class UMetaSoundSettings;
+struct FMetaSoundQualitySettings;
 
 namespace Audio
 {
 	using DeviceID = uint32;
-}
+} // namespace Audio
+
+namespace Metasound
+{
+	struct FMetaSoundEngineAssetHelper;
+	struct FMetasoundGeneratorInitParams;
+
+	class FMetasoundGenerator;
+
+	namespace Frontend
+	{
+		class IDataTypeRegistry;
+	} // namespace Frontend
+
+	namespace SourcePrivate
+	{
+		class FParameterRouter;
+		using FCookedQualitySettings = FMetaSoundQualitySettings;
+	} // namespace SourcePrivate
+
+	namespace DynamicGraph
+	{
+		class FDynamicOperatorTransactor;
+	} // namespace DynamicGraph
+} // namespace Metasound
+
 
 DECLARE_TS_MULTICAST_DELEGATE_TwoParams(FOnGeneratorInstanceCreated, uint64, TSharedPtr<Metasound::FMetasoundGenerator>);
 DECLARE_TS_MULTICAST_DELEGATE_TwoParams(FOnGeneratorInstanceDestroyed, uint64, TSharedPtr<Metasound::FMetasoundGenerator>);
@@ -46,13 +62,34 @@ DECLARE_TS_MULTICAST_DELEGATE_TwoParams(FOnGeneratorInstanceDestroyed, uint64, T
 /**
  * This Metasound type can be played as an audio source.
  */
-UCLASS(hidecategories = object, BlueprintType)
+UCLASS(hidecategories = object, BlueprintType, config = Metasound, defaultconfig)
 class METASOUNDENGINE_API UMetaSoundSource : public USoundWaveProcedural, public FMetasoundAssetBase, public IMetaSoundDocumentInterface
 {
 	GENERATED_BODY()
 
 	friend struct Metasound::FMetaSoundEngineAssetHelper;
 	friend class UMetaSoundSourceBuilder;
+
+	// FRuntimeInput represents an input to a MetaSound which can be manipulated.
+	struct FRuntimeInput
+	{
+		// Name of input vertex
+		FName Name;
+		// Data type name of input vertex.
+		FName TypeName;
+		// Access type of input vertex.
+		EMetasoundFrontendVertexAccessType AccessType;
+		// Default parameter of input vertex.
+		FAudioParameter DefaultParameter;
+		// True if the data type is transmittable. False otherwise.
+		bool bIsTransmittable;
+	};
+
+	struct FRuntimeInputData
+	{
+		std::atomic<bool> bIsValid = false;
+		Metasound::TSortedVertexNameMap<FRuntimeInput> InputMap;
+	};
 
 protected:
 	UPROPERTY(EditAnywhere, Category = CustomView)
@@ -79,6 +116,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Metasound)
 	EMetaSoundOutputAudioFormat OutputFormat;
 
+#if WITH_EDITORONLY_DATA
+
+	// The Quality this Metasound will use. These are defined in the MetaSounds project settings.
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, meta = (GetOptions="MetasoundEngine.MetaSoundQualityHelper.GetQualityList"), Category = "Metasound")
+	FName QualitySetting;
+
+	// This a editor only look up for the Quality Setting above. Preventing orphaning of the original name.
+	UPROPERTY()
+	FGuid QualitySettingGuid;
+
+	// Override the BlockRate for this Sound (overrides Quality). NOTE: A Zero value will have no effect and use either the Quality setting (if set), or the defaults.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, AdvancedDisplay, Category = Metasound, meta = (UIMin = 0, UIMax = 1000.0, DisplayAfter="OutputFormat", DisplayName = "Override Block Rate (in Hz)"))
+	FPerPlatformFloat BlockRateOverride = 0.f;
+
+	// Override the SampleRate for this Sound (overrides Quality). NOTE: A Zero value will have no effect and use either the Quality setting (if set), or the Device Rate
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, AdvancedDisplay, Category = Metasound, meta = (UIMin = 0, UIMax = 96000, DisplayName = "Override Sample Rate (in Hz)"))
+	FPerPlatformInt SampleRateOverride = 0;
+	
+#endif //WITH_EDITOR_DATA
+	
 	UPROPERTY(AssetRegistrySearchable)
 	FGuid AssetClassID;
 
@@ -150,8 +207,11 @@ public:
 
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& InEvent) override;
 
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+
 private:
 	void PostEditChangeOutputFormat();
+	void PostEditChangeQualitySettings();
 public:
 
 #endif // WITH_EDITOR
@@ -169,11 +229,11 @@ public:
 	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
 
-	// Returns Asset Metadata associated with this MetaSoundSource
-	virtual Metasound::Frontend::FNodeClassInfo GetAssetClassInfo() const override;
-
+	void PostLoadQualitySettings();
 
 	virtual bool ConformObjectDataToInterfaces() override;
+
+	virtual FTopLevelAssetPath GetAssetPathChecked() const override;
 
 	UObject* GetOwningAsset() override
 	{
@@ -187,9 +247,9 @@ public:
 	virtual void InitParameters(TArray<FAudioParameter>& ParametersToInit, FName InFeatureName) override;
 
 	virtual void InitResources() override;
+	virtual void RegisterGraphWithFrontend(Metasound::Frontend::FMetaSoundAssetRegistrationOptions InRegistrationOptions = Metasound::Frontend::FMetaSoundAssetRegistrationOptions()) override;
 
 	virtual bool IsPlayable() const override;
-	virtual bool SupportsSubtitles() const override;
 	virtual float GetDuration() const override;
 	virtual bool ImplementsParameterInterface(Audio::FParameterInterfacePtr InInterface) const override;
 	virtual ISoundGeneratorPtr CreateSoundGenerator(const FSoundGeneratorInitParams& InParams, TArray<FAudioParameter>&& InDefaultParameters) override;
@@ -201,28 +261,19 @@ public:
 	virtual bool EnableSubmixSendsOnPreview() const override { return true; }
 
 	TWeakPtr<Metasound::FMetasoundGenerator> GetGeneratorForAudioComponent(uint64 ComponentId) const;
+	bool IsDynamic() const;
+
 	FOnGeneratorInstanceCreated OnGeneratorInstanceCreated;
 	FOnGeneratorInstanceDestroyed OnGeneratorInstanceDestroyed;
+	Metasound::FOperatorSettings GetOperatorSettings(Metasound::FSampleRate InDeviceSampleRate) const;
+
+	virtual const FMetasoundFrontendDocument& GetConstDocument() const override;
 
 protected:
-	Metasound::Frontend::FDocumentAccessPtr GetDocumentAccessPtr() override
-	{
-		using namespace Metasound::Frontend;
-		// Return document using FAccessPoint to inform the TAccessPtr when the 
-		// object is no longer valid.
-		return MakeAccessPtr<FDocumentAccessPtr>(RootMetasoundDocument.AccessPoint, RootMetasoundDocument);
-	}
-
-	Metasound::Frontend::FConstDocumentAccessPtr GetDocumentConstAccessPtr() const override
-	{
-		using namespace Metasound::Frontend;
-		// Return document using FAccessPoint to inform the TAccessPtr when the 
-		// object is no longer valid.
-		return MakeAccessPtr<FConstDocumentAccessPtr>(RootMetasoundDocument.AccessPoint, RootMetasoundDocument);
-	}
+	Metasound::Frontend::FDocumentAccessPtr GetDocumentAccessPtr() override;
+	Metasound::Frontend::FConstDocumentAccessPtr GetDocumentConstAccessPtr() const override;
 
 	virtual const UClass& GetBaseMetaSoundUClass() const final override;
-	virtual const FMetasoundFrontendDocument& GetDocument() const override;
 
 	/** Gets all the default parameters for this Asset.  */
 	virtual bool GetAllDefaultParameters(TArray<FAudioParameter>& OutParameters) const override;
@@ -237,21 +288,37 @@ private:
 		return RootMetasoundDocument;
 	}
 
+	virtual bool IsBuilderActive() const override;
+	virtual void OnBeginActiveBuilder() override;
+	virtual void OnFinishActiveBuilder() override;
 
-	bool IsParameterValid(const FAudioParameter& InParameter, const FMetasoundFrontendVertex* InVertex) const;
+	void InitParametersInternal(const Metasound::TSortedVertexNameMap<FRuntimeInput>& InputMap, TArray<FAudioParameter>& ParametersToInit, FName InFeatureName) const;
+	bool IsParameterValidInternal(const FAudioParameter& InParameter, const FName& InTypeName, Metasound::Frontend::IDataTypeRegistry& InDataTypeRegistry) const;
 
 	static Metasound::SourcePrivate::FParameterRouter& GetParameterRouter();
 
-	Metasound::FOperatorSettings GetOperatorSettings(Metasound::FSampleRate InSampleRate) const;
-	Metasound::FMetasoundEnvironment CreateEnvironment() const;
+public:
 	Metasound::FMetasoundEnvironment CreateEnvironment(const FSoundGeneratorInitParams& InParams) const;
-	Metasound::FMetasoundEnvironment CreateEnvironment(const Audio::FParameterTransmitterInitParams& InParams) const;
 	const TArray<Metasound::FVertexName>& GetOutputAudioChannelOrder() const;
+
+private:
+	TSharedPtr<const Metasound::IGraph> TryGetMetaSoundPresetBaseGraph() const;
+	void MergePresetOverridesAndSuppliedDefaults(const TArray<FAudioParameter>& InSuppliedDefaults, TArray<FAudioParameter>& OutMerged);
+	
+	Metasound::FMetasoundEnvironment CreateEnvironment() const;
+	Metasound::FMetasoundEnvironment CreateEnvironment(const Audio::FParameterTransmitterInitParams& InParams) const;
 
 	mutable FCriticalSection GeneratorMapCriticalSection;
 	TSortedMap<uint64, TWeakPtr<Metasound::FMetasoundGenerator>> Generators;
 	void TrackGenerator(uint64 Id, TSharedPtr<Metasound::FMetasoundGenerator> Generator);
 	void ForgetGenerator(ISoundGeneratorPtr Generator);
+
+	static FRuntimeInput CreateRuntimeInput(const Metasound::Frontend::IDataTypeRegistry& Registry, const FMetasoundFrontendClassInput& Input, bool bCreateUObjectProxies);
+	Metasound::TSortedVertexNameMap<FRuntimeInput> CreateRuntimeInputMap(bool bCreateUObjectProxies) const;
+	void CacheRuntimeInputData();
+	void InvalidateCachedRuntimeInputData();
+
+	FRuntimeInputData RuntimeInputData;
 
 	/** Enable/disable dynamic generator.
 	 *
@@ -261,7 +328,7 @@ private:
 	 * Note: Disabling the dynamic generator will sever the communication between any active generators
 	 * even if the dynamic generator is re-enabled during the lifetime of the active generators
 	 */
-	TSharedPtr<Metasound::DynamicGraph::FDynamicOperatorTransactor> SetDynamicGeneratorEnabled(bool bInIsEnabled);
+	TSharedPtr<Metasound::DynamicGraph::FDynamicOperatorTransactor> SetDynamicGeneratorEnabled(const FTopLevelAssetPath& InAssetPath, bool bInIsEnabled);
 
 	/** Get dynamic transactor
 	 *
@@ -271,4 +338,20 @@ private:
 	TSharedPtr<Metasound::DynamicGraph::FDynamicOperatorTransactor> GetDynamicGeneratorTransactor() const;
 
 	TSharedPtr<Metasound::DynamicGraph::FDynamicOperatorTransactor> DynamicTransactor;
+
+	// Cache the AudioDevice Samplerate. (so that if we have to regenerate operator settings without the device rate we can use this).
+	mutable Metasound::FSampleRate CachedAudioDeviceSampleRate = 0;
+	
+	bool bIsBuilderActive = false;
+
+	// Preset graph inflation is a performance optimization intended for use with the MetaSoundOperatorPool. If multiple presets 
+	// utilize the same base MetaSound, they may be able to share their operators in the operator pool. This makes for a more
+	// efficient use of the operator pool.
+	bool bIsPresetGraphInflationSupported = false;
+
+	// Quality settings. 
+	bool GetQualitySettings(const FName InPlatformName, Metasound::SourcePrivate::FCookedQualitySettings& OutQualitySettings) const;
+	void ResolveQualitySettings(const UMetaSoundSettings* Settings);	
+	void SerializeCookedQualitySettings(const FName PlatformName, FArchive& Ar);
+	TPimplPtr<Metasound::SourcePrivate::FCookedQualitySettings> CookedQualitySettings;
 };

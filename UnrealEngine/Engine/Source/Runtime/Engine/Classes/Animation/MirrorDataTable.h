@@ -37,6 +37,7 @@ namespace EMirrorFindReplaceMethod
     };
 }
 
+
 /**  Base Mirror Table containing all data required by the animation mirroring system. */
 USTRUCT()
 struct FMirrorTableRow : public FTableRowBase
@@ -63,6 +64,7 @@ struct FMirrorTableRow : public FTableRowBase
 	ENGINE_API bool operator!=(FMirrorTableRow const& Other) const;
 	ENGINE_API bool operator<(FMirrorTableRow const& Other) const;
 };
+
 
 /** Find and Replace expressions used to generate mirror tables*/
 USTRUCT()
@@ -205,6 +207,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = Mirroring)
 	TEnumAsByte<EAxis::Type> MirrorAxis;
 
+	UPROPERTY(EditAnywhere, Category = Mirroring)
+	bool  bMirrorRootMotion = true;
+	
 	UPROPERTY(EditAnywhere, AssetRegistrySearchable, Category = Skeleton)
 	TObjectPtr<USkeleton> Skeleton; 
 

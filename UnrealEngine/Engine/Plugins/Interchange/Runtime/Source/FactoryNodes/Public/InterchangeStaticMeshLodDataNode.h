@@ -25,7 +25,7 @@ namespace UE
 } // namespace UE
 
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGEFACTORYNODES_API UInterchangeStaticMeshLodDataNode : public UInterchangeFactoryBaseNode
 {
 	GENERATED_BODY()
@@ -34,16 +34,17 @@ public:
 	UInterchangeStaticMeshLodDataNode();
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override;
 
+#if WITH_EDITOR
 	virtual FString GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
-
 	virtual FString GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
+#endif //WITH_EDITOR
 
 public:
-	/* Mesh Uids: It can be either a scene or a mesh node uid. If its a scene it mean we want the mesh factory to bake the geo payload with the global transform of the scene node. */
+	/* Mesh UIDs can be either a scene node or a mesh node UID. If it is a scene node, the mesh factory bakes the geometry payload with the global transform of the scene node. */
 
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMeshLodData")
 	int32 GetMeshUidsCount() const;

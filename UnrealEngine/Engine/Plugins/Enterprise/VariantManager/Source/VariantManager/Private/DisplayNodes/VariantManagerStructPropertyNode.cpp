@@ -44,13 +44,14 @@ TSharedRef<SWidget> GetLabel(const FNumericProperty* InProp)
 }
 
 template<typename NumericType>
-void ExtractNumericMetadata(FProperty* Property, TOptional<NumericType>& MinValue, TOptional<NumericType>& MaxValue, TOptional<NumericType>& SliderMinValue, TOptional<NumericType>& SliderMaxValue, NumericType& SliderExponent, NumericType& Delta, int32 &ShiftMouseMovePixelPerDelta, bool& SupportDynamicSliderMaxValue, bool& SupportDynamicSliderMinValue)
+void ExtractNumericMetadata(FProperty* Property, TOptional<NumericType>& MinValue, TOptional<NumericType>& MaxValue, TOptional<NumericType>& SliderMinValue, TOptional<NumericType>& SliderMaxValue, NumericType& SliderExponent, NumericType& Delta, float& ShiftMultiplier, float& CtrlMultiplier, bool& SupportDynamicSliderMaxValue, bool& SupportDynamicSliderMinValue)
 {
 	const FString& MetaUIMinString = Property->GetMetaData(TEXT("UIMin"));
 	const FString& MetaUIMaxString = Property->GetMetaData(TEXT("UIMax"));
 	const FString& SliderExponentString = Property->GetMetaData(TEXT("SliderExponent"));
 	const FString& DeltaString = Property->GetMetaData(TEXT("Delta"));
-	const FString& ShiftMouseMovePixelPerDeltaString = Property->GetMetaData(TEXT("ShiftMouseMovePixelPerDelta"));
+	const FString& ShiftMultiplierString = Property->GetMetaData(TEXT("ShiftMultiplier"));
+	const FString& CtrlMultiplierString = Property->GetMetaData(TEXT("CtrlMultiplier"));
 	const FString& SupportDynamicSliderMaxValueString = Property->GetMetaData(TEXT("SupportDynamicSliderMaxValue"));
 	const FString& SupportDynamicSliderMinValueString = Property->GetMetaData(TEXT("SupportDynamicSliderMinValue"));
 	const FString& ClampMinString = Property->GetMetaData(TEXT("ClampMin"));
@@ -92,16 +93,16 @@ void ExtractNumericMetadata(FProperty* Property, TOptional<NumericType>& MinValu
 		TTypeFromString<NumericType>::FromString(Delta, *DeltaString);
 	}
 
-	ShiftMouseMovePixelPerDelta = 1;
-	if (ShiftMouseMovePixelPerDeltaString.Len())
+	ShiftMultiplier = 10.f;
+	if (ShiftMultiplierString.Len())
 	{
-		TTypeFromString<int32>::FromString(ShiftMouseMovePixelPerDelta, *ShiftMouseMovePixelPerDeltaString);
-		//The value should be greater or equal to 1
-		// 1 is neutral since it is a multiplier of the mouse drag pixel
-		if (ShiftMouseMovePixelPerDelta < 1)
-		{
-			ShiftMouseMovePixelPerDelta = 1;
-		}
+		TTypeFromString<float>::FromString(ShiftMultiplier, *ShiftMultiplierString);
+	}
+
+	CtrlMultiplier = 0.1f;
+	if (CtrlMultiplierString.Len())
+	{
+		TTypeFromString<float>::FromString(CtrlMultiplier, *CtrlMultiplierString);
 	}
 
 	const NumericType ActualUIMin = FMath::Max(UIMin, ClampMin);
@@ -123,11 +124,12 @@ TSharedRef<SWidget> FVariantManagerStructPropertyNode::GenerateFloatEntryBox(FNu
 {
 	TOptional<F> MinValue, MaxValue, SliderMinValue, SliderMaxValue;
 	F SliderExponent, Delta;
-	int32 ShiftMouseMovePixelPerDelta = 1;
+	float ShiftMultiplier = 10.f;
+	float CtrlMultiplier = 0.1;
 	bool SupportDynamicSliderMaxValue = false;
 	bool SupportDynamicSliderMinValue = false;
 
-	ExtractNumericMetadata(Prop, MinValue, MaxValue, SliderMinValue, SliderMaxValue, SliderExponent, Delta, ShiftMouseMovePixelPerDelta, SupportDynamicSliderMaxValue, SupportDynamicSliderMinValue);
+	ExtractNumericMetadata(Prop, MinValue, MaxValue, SliderMinValue, SliderMaxValue, SliderExponent, Delta, ShiftMultiplier, CtrlMultiplier, SupportDynamicSliderMaxValue, SupportDynamicSliderMinValue);
 
 	return SNew(SNumericEntryBox<double>)
 	.AllowSpin(true)
@@ -138,7 +140,8 @@ TSharedRef<SWidget> FVariantManagerStructPropertyNode::GenerateFloatEntryBox(FNu
 	.OnValueCommitted(this, &FVariantManagerStructPropertyNode::OnFloatPropCommitted, Prop, RecordedElementSize, Offset)
 	.Value(this, &FVariantManagerStructPropertyNode::GetFloatValueFromCache, Prop)
 	.UndeterminedString(LOCTEXT("MultipleValuesLabel", "Multiple Values"))
-	.ShiftMouseMovePixelPerDelta(ShiftMouseMovePixelPerDelta)
+	.ShiftMultiplier(ShiftMultiplier)
+	.CtrlMultiplier(CtrlMultiplier)
 	.SupportDynamicSliderMaxValue(SupportDynamicSliderMaxValue)
 	.SupportDynamicSliderMinValue(SupportDynamicSliderMinValue)
 	.MinValue(GET_OR_EMPTY(MinValue, double))
@@ -160,11 +163,12 @@ TSharedRef<SWidget> FVariantManagerStructPropertyNode::GenerateSignedEntryBox(FN
 {
 	TOptional<S> MinValue, MaxValue, SliderMinValue, SliderMaxValue;
 	S SliderExponent, Delta;
-	int32 ShiftMouseMovePixelPerDelta = 1;
+	float ShiftMultiplier = 10.f;
+	float CtrlMultiplier = 0.1;
 	bool SupportDynamicSliderMaxValue = false;
 	bool SupportDynamicSliderMinValue = false;
 
-	ExtractNumericMetadata(Prop, MinValue, MaxValue, SliderMinValue, SliderMaxValue, SliderExponent, Delta, ShiftMouseMovePixelPerDelta, SupportDynamicSliderMaxValue, SupportDynamicSliderMinValue);
+	ExtractNumericMetadata(Prop, MinValue, MaxValue, SliderMinValue, SliderMaxValue, SliderExponent, Delta, ShiftMultiplier, CtrlMultiplier, SupportDynamicSliderMaxValue, SupportDynamicSliderMinValue);
 
 	return SNew(SNumericEntryBox<int64>)
 	.AllowSpin(true)
@@ -175,7 +179,8 @@ TSharedRef<SWidget> FVariantManagerStructPropertyNode::GenerateSignedEntryBox(FN
 	.OnValueCommitted(this, &FVariantManagerStructPropertyNode::OnSignedPropCommitted, Prop, Offset)
 	.Value(this, &FVariantManagerStructPropertyNode::GetSignedValueFromCache, Prop)
 	.UndeterminedString(LOCTEXT("MultipleValuesLabel", "Multiple Values"))
-	.ShiftMouseMovePixelPerDelta(ShiftMouseMovePixelPerDelta)
+	.ShiftMultiplier(ShiftMultiplier)
+	.CtrlMultiplier(CtrlMultiplier)
 	.SupportDynamicSliderMaxValue(SupportDynamicSliderMaxValue)
 	.SupportDynamicSliderMinValue(SupportDynamicSliderMinValue)
 	.MinValue(GET_OR_EMPTY(MinValue, int64))
@@ -197,11 +202,12 @@ TSharedRef<SWidget> FVariantManagerStructPropertyNode::GenerateUnsignedEntryBox(
 {
 	TOptional<U> MinValue, MaxValue, SliderMinValue, SliderMaxValue;
 	U SliderExponent, Delta;
-	int32 ShiftMouseMovePixelPerDelta = 1;
+	float ShiftMultiplier = 10.f;
+	float CtrlMultiplier = 0.1;
 	bool SupportDynamicSliderMaxValue = false;
 	bool SupportDynamicSliderMinValue = false;
 
-	ExtractNumericMetadata(Prop, MinValue, MaxValue, SliderMinValue, SliderMaxValue, SliderExponent, Delta, ShiftMouseMovePixelPerDelta, SupportDynamicSliderMaxValue, SupportDynamicSliderMinValue);
+	ExtractNumericMetadata(Prop, MinValue, MaxValue, SliderMinValue, SliderMaxValue, SliderExponent, Delta, ShiftMultiplier, CtrlMultiplier, SupportDynamicSliderMaxValue, SupportDynamicSliderMinValue);
 
 	return SNew(SNumericEntryBox<uint64>)
 	.AllowSpin(true)
@@ -212,7 +218,8 @@ TSharedRef<SWidget> FVariantManagerStructPropertyNode::GenerateUnsignedEntryBox(
 	.OnValueCommitted(this, &FVariantManagerStructPropertyNode::OnUnsignedPropCommitted, Prop, Offset)
 	.Value(this, &FVariantManagerStructPropertyNode::GetUnsignedValueFromCache, Prop)
 	.UndeterminedString(LOCTEXT("MultipleValuesLabel", "Multiple Values"))
-	.ShiftMouseMovePixelPerDelta(ShiftMouseMovePixelPerDelta)
+	.ShiftMultiplier(ShiftMultiplier)
+	.CtrlMultiplier(CtrlMultiplier)
 	.SupportDynamicSliderMaxValue(SupportDynamicSliderMaxValue)
 	.SupportDynamicSliderMinValue(SupportDynamicSliderMinValue)
 	.MinValue(GET_OR_EMPTY(MinValue, uint64))

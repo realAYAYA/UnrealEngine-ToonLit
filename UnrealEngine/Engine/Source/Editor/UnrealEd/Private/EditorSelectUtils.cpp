@@ -9,6 +9,7 @@
 #include "Components/SceneComponent.h"
 #include "GameFramework/Actor.h"
 #include "Components/PrimitiveComponent.h"
+#include "Editor/EditorPerProjectUserSettings.h"
 #include "Editor/UnrealEdEngine.h"
 #include "Editor/GroupActor.h"
 #include "Components/ChildActorComponent.h"
@@ -34,6 +35,10 @@
 #include "Elements/Framework/EngineElementsLibrary.h"
 #include "Elements/Interfaces/TypedElementWorldInterface.h"
 #include "Elements/Interfaces/TypedElementObjectInterface.h"
+
+#if PLATFORM_MAC
+#include "HAL/PlatformApplicationMisc.h"
+#endif // PLATFORM_MAC
 
 #define LOCTEXT_NAMESPACE "EditorSelectUtils"
 
@@ -67,13 +72,15 @@ void UUnrealEdEngine::NoteActorMovement()
 		GLevelEditorModeTools().Snapping=0;
 		
 		AActor* SelectedActor = NULL;
-		for ( FSelectionIterator It( GetSelectedActorIterator() ) ; It ; ++It )
 		{
-			AActor* Actor = static_cast<AActor*>( *It );
-			checkSlow( Actor->IsA(AActor::StaticClass()) );
+			FSelectionIterator It(GetSelectedActorIterator());
+			if (It)
+			{
+				AActor* Actor = static_cast<AActor*>( *It );
+				checkSlow( Actor->IsA(AActor::StaticClass()) );
 
-			SelectedActor = Actor;
-			break;
+				SelectedActor = Actor;
+			}
 		}
 
 		if( SelectedActor == NULL )
@@ -84,13 +91,15 @@ void UUnrealEdEngine::NoteActorMovement()
 		}
 
 		// Look for an actor that requires snapping.
-		for ( FSelectionIterator It( GetSelectedActorIterator() ) ; It ; ++It )
 		{
-			AActor* Actor = static_cast<AActor*>( *It );
-			checkSlow( Actor->IsA(AActor::StaticClass()) );
+			FSelectionIterator It(GetSelectedActorIterator());
+			if (It)
+			{
+				AActor* Actor = static_cast<AActor*>( *It );
+				checkSlow( Actor->IsA(AActor::StaticClass()) );
 
-			GLevelEditorModeTools().Snapping = 1;
-			break;
+				GLevelEditorModeTools().Snapping = 1;
+			}
 		}
 
 		TSet<AGroupActor*> GroupActors;
@@ -293,6 +302,95 @@ void UUnrealEdEngine::OnEditorElementSelectionPtrChanged(USelection* Selection, 
 
 void UUnrealEdEngine::OnEditorElementSelectionChanged(const UTypedElementSelectionSet* SelectionSet)
 {
+	VisualizersForSelection.Empty();
+
+	auto GetVisualizersForSelection = [this](AActor* Actor, const UActorComponent* SelectedComponent)
+	{
+		// Iterate over components of that actor (and recurse through child components)
+		TInlineComponentArray<UActorComponent*> Components;
+		Actor->GetComponents(Components, true);
+
+		for (int32 CompIdx = 0; CompIdx < Components.Num(); CompIdx++)
+		{
+			TWeakObjectPtr<UActorComponent> Comp(Components[CompIdx]);
+			if (Comp.IsValid() && Comp->IsRegistered())
+			{
+				// Try and find a visualizer
+				TSharedPtr<FComponentVisualizer> Visualizer = FindComponentVisualizer(Comp->GetClass());
+				if (Visualizer.IsValid())
+				{
+					FCachedComponentVisualizer CachedComponentVisualizer(Comp.Get(), Visualizer);
+					FComponentVisualizerForSelection Temp{ CachedComponentVisualizer };
+
+					FComponentVisualizerForSelection& ComponentVisualizerForSelection = VisualizersForSelection.Add_GetRef(MoveTemp(Temp));
+
+					ComponentVisualizerForSelection.IsEnabledDelegate.Emplace([bIsSelectedComponent = (Comp == SelectedComponent), WeakViz = TWeakPtr<FComponentVisualizer>(Visualizer), Comp]()
+					{
+						if (bIsSelectedComponent || (GetDefault<UEditorPerProjectUserSettings>()->bShowSelectionSubcomponents == true))
+						{
+							return true;
+						}
+
+						bool bShouldShowWithSelection = true;
+						if (TSharedPtr<FComponentVisualizer> PinnedViz = WeakViz.Pin())
+						{
+							bShouldShowWithSelection = PinnedViz->ShouldShowForSelectedSubcomponents(Comp.Get());
+						}
+						return bShouldShowWithSelection;
+					});
+				}
+			}
+		}
+	};
+
+	UTypedElementSelectionSet* LevelEditorSelectionSet = GetSelectedActors()->GetElementSelectionSet();
+	TSet<AActor*> ActorsProcessed;
+	LevelEditorSelectionSet->ForEachSelectedObject<UActorComponent>([&ActorsProcessed, &GetVisualizersForSelection](UActorComponent* InActorComponent)
+		{
+			if (AActor* Actor = InActorComponent->GetOwner())
+			{
+				if (!ActorsProcessed.Contains(Actor))
+				{
+					GetVisualizersForSelection(Actor, InActorComponent);
+					ActorsProcessed.Emplace(Actor);
+				}
+			}
+			return true;
+		});
+
+	if (ActorsProcessed.Num() == 0)
+	{
+		LevelEditorSelectionSet->ForEachSelectedObject<AActor>([&GetVisualizersForSelection](AActor* InActor)
+			{
+				GetVisualizersForSelection(InActor, InActor->GetRootComponent());
+				return true;
+			});
+	}
+
+	// Restore the active component visualizer, since an undo/redo may have changed the selection
+	bool bDidSetVizThisTick = false;
+	if (VisualizersForSelection.Num() > 0)
+	{
+		for (FComponentVisualizerForSelection& VisualizerForSelection : VisualizersForSelection)
+		{
+			if (!ComponentVisManager.IsActive() && VisualizerForSelection.ComponentVisualizer.Visualizer->GetEditedComponent() != nullptr)
+			{
+				ComponentVisManager.SetActiveComponentVis(GCurrentLevelEditingViewportClient, VisualizerForSelection.ComponentVisualizer.Visualizer);
+				bDidSetVizThisTick = true;
+				break;
+			}
+		}
+	}
+
+	if (ComponentVisManager.IsActive() && (VisualizersForSelection.Num() == 0 || !bDidSetVizThisTick))
+	{
+		ComponentVisManager.ClearActiveComponentVis();
+	}
+
+#if PLATFORM_MAC
+	FPlatformApplicationMisc::bChachedMacMenuStateNeedsUpdate = true;
+#endif
+
 	NoteSelectionChange();
 }
 
@@ -393,9 +491,6 @@ void UUnrealEdEngine::NoteSelectionChange(bool bNotify)
 {
 	// The selection changed, so make sure the pivot (widget) is located in the right place
 	UpdatePivotLocationForSelection( true );
-
-	// Clear active editing visualizer on selection change
-	ComponentVisManager.ClearActiveComponentVis();
 
 	const bool bComponentSelectionChanged = GetSelectedComponentCount() > 0;
 	if (bNotify)
@@ -509,7 +604,8 @@ void UUnrealEdEngine::SelectActor(AActor* Actor, bool bInSelected, bool bNotify,
 		const FTypedElementSelectionOptions SelectionOptions = FTypedElementSelectionOptions()
 			.SetAllowHidden(bSelectEvenIfHidden)
 			.SetWarnIfLocked(true)
-			.SetAllowLegacyNotifications(false);
+			.SetAllowLegacyNotifications(false)
+			.SetAllowSubRootSelection(false);
 
 		const bool bSelectionChanged = bInSelected
 			? SelectionSet->SelectElement(UEngineElementsLibrary::AcquireEditorActorElementHandle(Actor), SelectionOptions)

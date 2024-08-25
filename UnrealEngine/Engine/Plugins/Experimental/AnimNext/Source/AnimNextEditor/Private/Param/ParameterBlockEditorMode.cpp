@@ -2,15 +2,17 @@
 
 #include "ParameterBlockEditorMode.h"
 #include "AnimNextParameterBlockEditor.h"
+#include "AnimNextRigVMAssetEntry.h"
+#include "IAnimNextRigVMGraphInterface.h"
 #include "PropertyEditorModule.h"
-#include "Widgets/Docking/SDockTab.h"
+#include "Common/SRigVMAssetView.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphSchema.h"
-#include "Widgets/Layout/SSpacer.h"
 #include "Modules/ModuleManager.h"
-#include "SParameterBlockView.h"
 #include "Param/AnimNextParameterBlock_EditorData.h"
 #include "RigVMModel/RigVMGraph.h"
+#include "Widgets/Docking/SDockTab.h"
+#include "Widgets/Layout/SSpacer.h"
 
 #define LOCTEXT_NAMESPACE "ParameterBlockEditorMode"
 
@@ -226,9 +228,10 @@ public:
 private:
 	virtual TSharedRef<SWidget> CreateTabBody(const FWorkflowTabSpawnInfo& Info) const override
 	{
-		return SNew(SParameterBlockView, StaticCastSharedPtr<FParameterBlockEditor>(HostingApp.Pin())->EditorData)
+		return SNew(SRigVMAssetView, StaticCastSharedPtr<FParameterBlockEditor>(HostingApp.Pin())->EditorData)
 			.OnSelectionChanged(this, &FParameterBlockTabSummoner::HandleSelectionChanged)
-			.OnOpenGraph(this, &FParameterBlockTabSummoner::HandleOpenGraph);
+			.OnOpenGraph(this, &FParameterBlockTabSummoner::HandleOpenGraph)
+			.OnDeleteEntries(this, &FParameterBlockTabSummoner::HandleDeleteEntries);
 	}
 	
 	virtual FText GetTabToolTipText(const FWorkflowTabSpawnInfo& Info) const override
@@ -251,14 +254,29 @@ private:
 			ParameterBlockEditor->OpenDocument(EditorObject, FDocumentTracker::EOpenDocumentCause::OpenNewDocument);
 		}
 	}
+
+	void HandleDeleteEntries(const TArray<UAnimNextRigVMAssetEntry*>& InEntries) const
+	{
+		TSharedPtr<FParameterBlockEditor> ParameterBlockEditor = StaticCastSharedPtr<FParameterBlockEditor>(HostingApp.Pin());
+		UAnimNextParameterBlock_EditorData* EditorData = StaticCastSharedPtr<FParameterBlockEditor>(HostingApp.Pin())->EditorData;
+
+		for(UAnimNextRigVMAssetEntry* Entry : InEntries)
+		{
+			if(IAnimNextRigVMGraphInterface* GraphInterface = Cast<IAnimNextRigVMGraphInterface>(Entry))
+			{
+				if(URigVMEdGraph* EdGraph = GraphInterface->GetEdGraph())
+				{
+					ParameterBlockEditor->CloseDocumentTab(EdGraph);
+				}
+			}
+		}
+	}
 };
 
-FParameterBlockEditorMode::FParameterBlockEditorMode(TSharedRef<FWorkflowCentricApplication> InHostingApp)
+FParameterBlockEditorMode::FParameterBlockEditorMode(TSharedRef<FParameterBlockEditor> InHostingApp)
 	: FApplicationMode(ParameterBlockModes::ParameterBlockEditor)
-	, HostingAppPtr(InHostingApp)
+	, ParameterBlockEditorPtr(InHostingApp)
 {
-	HostingAppPtr = InHostingApp;
-
 	TSharedRef<FParameterBlockEditor> ParametersEditor = StaticCastSharedRef<FParameterBlockEditor>(InHostingApp);
 	
 	TabFactories.RegisterFactory(MakeShared<FParameterBlockDetailsTabSummoner>(ParametersEditor, FOnDetailsViewCreated::CreateSP(&ParametersEditor.Get(), &FParameterBlockEditor::HandleDetailsViewCreated)));
@@ -303,7 +321,7 @@ FParameterBlockEditorMode::FParameterBlockEditorMode(TSharedRef<FWorkflowCentric
 
 void FParameterBlockEditorMode::RegisterTabFactories(TSharedPtr<FTabManager> InTabManager)
 {
-	TSharedPtr<FWorkflowCentricApplication> HostingApp = HostingAppPtr.Pin();
+	TSharedPtr<FParameterBlockEditor> HostingApp = ParameterBlockEditorPtr.Pin();
 	HostingApp->PushTabFactories(TabFactories);
 
 	FApplicationMode::RegisterTabFactories(InTabManager);
@@ -313,7 +331,7 @@ void FParameterBlockEditorMode::AddTabFactory(FCreateWorkflowTabFactory FactoryC
 {
 	if (FactoryCreator.IsBound())
 	{
-		TabFactories.RegisterFactory(FactoryCreator.Execute(HostingAppPtr.Pin()));
+		TabFactories.RegisterFactory(FactoryCreator.Execute(ParameterBlockEditorPtr.Pin()));
 	}
 }
 
@@ -321,6 +339,25 @@ void FParameterBlockEditorMode::RemoveTabFactory(FName TabFactoryID)
 {
 	TabFactories.UnregisterFactory(TabFactoryID);
 }
+
+void FParameterBlockEditorMode::PreDeactivateMode()
+{
+	FApplicationMode::PreDeactivateMode();
+
+	TSharedPtr<FParameterBlockEditor> ParameterBlockEditor = ParameterBlockEditorPtr.Pin();
+
+	ParameterBlockEditor->SaveEditedObjectState();
+}
+
+void FParameterBlockEditorMode::PostActivateMode()
+{
+	// Reopen any documents that were open when the blueprint was last saved
+	TSharedPtr<FParameterBlockEditor> ParameterBlockEditor = ParameterBlockEditorPtr.Pin();
+	ParameterBlockEditor->RestoreEditedObjectState();
+
+	FApplicationMode::PostActivateMode();
+}
+
 
 }
 

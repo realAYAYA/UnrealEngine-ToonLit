@@ -19,6 +19,11 @@ TRange<FFrameNumber> ITimeSliderController::GetPlayRange() const
 	return TRange<FFrameNumber>();
 }
 
+TRange<FFrameNumber> ITimeSliderController::GetTimeBounds() const
+{
+	return TRange<FFrameNumber>();
+}
+
 TRange<FFrameNumber> ITimeSliderController::GetSelectionRange() const
 {
 	return TRange<FFrameNumber>();

@@ -2,6 +2,7 @@
 
 #include "JsonBlueprintFunctionLibrary.h"
 
+#include "Blueprint/BlueprintExceptionInfo.h"
 #include "JsonObjectConverter.h"
 #include "JsonObjectWrapper.h"
 #include "Misc/FileHelper.h"
@@ -10,7 +11,6 @@
 #define LOCTEXT_NAMESPACE "JsonBlueprintFunctionLibrary"
 
 bool UJsonBlueprintFunctionLibrary::FromString(
-	UObject* WorldContextObject,
 	const FString& JsonString,
 	FJsonObjectWrapper& OutJsonObject)
 {
@@ -18,7 +18,6 @@ bool UJsonBlueprintFunctionLibrary::FromString(
 }
 
 bool UJsonBlueprintFunctionLibrary::FromFile(
-	UObject* WorldContextObject,	
 	const FFilePath& File,
 	FJsonObjectWrapper& OutJsonObject)
 {
@@ -35,7 +34,7 @@ bool UJsonBlueprintFunctionLibrary::FromFile(
 		return false;
 	}
 	
-	return FromString(WorldContextObject, JsonString, OutJsonObject);
+	return FromString(JsonString, OutJsonObject);
 }
 
 bool UJsonBlueprintFunctionLibrary::ToString(const FJsonObjectWrapper& JsonObject, FString& OutJsonString)

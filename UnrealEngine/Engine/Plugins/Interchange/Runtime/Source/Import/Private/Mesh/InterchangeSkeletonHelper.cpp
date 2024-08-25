@@ -5,6 +5,7 @@
 #include "Animation/Skeleton.h"
 #include "InterchangeCommonPipelineDataFactoryNode.h"
 #include "InterchangeImportLog.h"
+#include "InterchangeResultsContainer.h"
 #include "InterchangeSceneNode.h"
 #include "ReferenceSkeleton.h"
 #include "Rendering/SkeletalMeshLODImporterData.h"
@@ -15,7 +16,14 @@
 namespace UE::Interchange::Private
 {
 
-	bool FSkeletonHelper::ProcessImportMeshSkeleton(const USkeleton* SkeletonAsset, FReferenceSkeleton& RefSkeleton, int32& SkeletalDepth, const UInterchangeBaseNodeContainer* NodeContainer, const FString& RootJointNodeId, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary, const bool bUseTimeZeroAsBindPose, bool& bOutDiffPose)
+	bool FSkeletonHelper::ProcessImportMeshSkeleton(TObjectPtr<UInterchangeResultsContainer> Results
+		, const USkeleton* SkeletonAsset
+		, FReferenceSkeleton& RefSkeleton
+		, const UInterchangeBaseNodeContainer* NodeContainer
+		, const FString& RootJointNodeId
+		, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary
+		, const bool bUseTimeZeroAsBindPose
+		, bool& bOutDiffPose)
 	{
 		RefBonesBinary.Empty();
 		// Setup skeletal hierarchy + names structure.
@@ -23,11 +31,27 @@ namespace UE::Interchange::Private
 
 		FReferenceSkeletonModifier RefSkelModifier(RefSkeleton, SkeletonAsset);
 		TArray <FJointInfo> JointInfos;
-		RecursiveAddBones(NodeContainer, RootJointNodeId, JointInfos, INDEX_NONE, RefBonesBinary, bUseTimeZeroAsBindPose, bOutDiffPose);
+		TArray<FString> BoneNotBindNames;
+		RecursiveAddBones(NodeContainer, RootJointNodeId, JointInfos, INDEX_NONE, RefBonesBinary, bUseTimeZeroAsBindPose, bOutDiffPose, BoneNotBindNames);
 		if (bOutDiffPose)
 		{
 			//bOutDiffPose can only be true if the user ask to bind with time zero transform.
 			ensure(bUseTimeZeroAsBindPose);
+		}
+		//Do not output this warning in automation testing
+		if (!GIsAutomationTesting && BoneNotBindNames.Num() > 0 && !bUseTimeZeroAsBindPose)
+		{
+			FString BonesWithoutBindPoses;
+			for (const FString& BoneName : BoneNotBindNames)
+			{
+				BonesWithoutBindPoses += BoneName;
+				BonesWithoutBindPoses += TEXT("  \n");
+			}
+
+			FText MissingBindPoseMessage = FText::Format(NSLOCTEXT("FSkeletonHelper", "ProcessImportMeshSkeleton__BonesAreMissingFromBindPose", "The following bones are missing from the bind pose:\n{0}\nThis can happen for bones that are not vert weighted. If they are not in the correct orientation after importing,\nplease set the \"Use T0 as ref pose\" option or add them to the bind pose and reimport the skeletal mesh.")
+				, FText::FromString(BonesWithoutBindPoses));
+			UInterchangeResultWarning_Generic* Message = Results->Add<UInterchangeResultWarning_Generic>();
+			Message->Text = MissingBindPoseMessage;
 		}
 		// Digest bones to the serializable format.
 		for (int32 b = 0; b < JointInfos.Num(); b++)
@@ -39,40 +63,23 @@ namespace UE::Interchange::Private
 			const FTransform BoneTransform(BinaryBone.LocalTransform);
 			if (RefSkeleton.FindRawBoneIndex(BoneInfo.Name) != INDEX_NONE)
 			{
-				UE_LOG(LogInterchangeImport, Error, TEXT("Invalid Skeleton because of non-unique bone names [%s]"), *BoneInfo.Name.ToString());
+				UInterchangeResultError_Generic* Message = Results->Add<UInterchangeResultError_Generic>();
+				Message->Text = FText::Format(NSLOCTEXT("FSkeletonHelper", "ProcessImportMeshSkeleton_InvalidSkeletonUniqueNames", "Invalid Skeleton because of non - unique bone names [{0}].")
+					, FText::FromName(BoneInfo.Name));
 				return false;
 			}
 			RefSkelModifier.Add(BoneInfo, BoneTransform);
 		}
-
-		// Add hierarchy index to each bone and detect max depth.
-		SkeletalDepth = 0;
-
-		TArray<int32> SkeletalDepths;
-		SkeletalDepths.Empty(JointInfos.Num());
-		SkeletalDepths.AddZeroed(JointInfos.Num());
-		for (int32 BoneIndex = 0; BoneIndex < RefSkeleton.GetRawBoneNum(); ++BoneIndex)
-		{
-			int32 Parent = RefSkeleton.GetRawParentIndex(BoneIndex);
-			int32 Depth = 1.0f;
-
-			SkeletalDepths[BoneIndex] = 1.0f;
-			if (Parent != INDEX_NONE)
-			{
-				Depth += SkeletalDepths[Parent];
-			}
-			if (SkeletalDepth < Depth)
-			{
-				SkeletalDepth = Depth;
-			}
-			SkeletalDepths[BoneIndex] = Depth;
-		}
-
 		return true;
 	}
 
 	bool FSkeletonHelper::IsCompatibleSkeleton(const USkeleton* Skeleton, const FString RootJoinUid, const UInterchangeBaseNodeContainer* BaseNodeContainer, bool bConvertStaticToSkeletalActive)
 	{
+		if (!Skeleton)
+		{
+			return false;
+		}
+
 		// at least % of bone should match 
 		int32 NumOfBoneMatches = 0;
 		//Make sure the specified Skeleton fit this skeletal mesh
@@ -167,7 +174,14 @@ namespace UE::Interchange::Private
 		}
 	}
 
-	void FSkeletonHelper::RecursiveAddBones(const UInterchangeBaseNodeContainer* NodeContainer, const FString& JointNodeId, TArray <FJointInfo>& JointInfos, int32 ParentIndex, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary, const bool bUseTimeZeroAsBindPose, bool& bOutDiffPose)
+	void FSkeletonHelper::RecursiveAddBones(const UInterchangeBaseNodeContainer* NodeContainer
+		, const FString& JointNodeId
+		, TArray <FJointInfo>& JointInfos
+		, int32 ParentIndex
+		, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary
+		, const bool bUseTimeZeroAsBindPose
+		, bool& bOutDiffPose
+		, TArray<FString>& OutBoneNotBindNames)
 	{
 		const UInterchangeSceneNode* JointNode = Cast<UInterchangeSceneNode>(NodeContainer->GetNode(JointNodeId));
 		if (!JointNode)
@@ -222,9 +236,10 @@ namespace UE::Interchange::Private
 			}
 			Info.LocalTransform = TimeZeroLocalTransform;
 		}
-		else if (bHasBindPoseTransform)
+		else if (!GIsAutomationTesting && !bHasBindPoseTransform && !bUseTimeZeroAsBindPose && JointNode->IsSpecializedTypeContains(FSceneNodeStaticData::GetJointSpecializeTypeString()))
 		{
-			Info.LocalTransform = BindPoseLocalTransform;
+			//StaticMeshes converted to Skeletals are not expected to have BindPoses
+			OutBoneNotBindNames.Add(Info.Name);
 		}
 
 		Info.ParentIndex = ParentIndex;
@@ -243,7 +258,7 @@ namespace UE::Interchange::Private
 		Bone.NumChildren = ChildrenIds.Num();
 		for (int32 ChildIndex = 0; ChildIndex < ChildrenIds.Num(); ++ChildIndex)
 		{
-			RecursiveAddBones(NodeContainer, ChildrenIds[ChildIndex], JointInfos, JointInfoIndex, RefBonesBinary, bUseTimeZeroAsBindPose, bOutDiffPose);
+			RecursiveAddBones(NodeContainer, ChildrenIds[ChildIndex], JointInfos, JointInfoIndex, RefBonesBinary, bUseTimeZeroAsBindPose, bOutDiffPose, OutBoneNotBindNames);
 		}
 	}
 
@@ -323,7 +338,12 @@ namespace UE::Interchange::Private
 	void FSkeletonHelper::RecursiveBuildSkeletalSkeleton(const FString JoinToAddUid, const int32 ParentIndex, const UInterchangeBaseNodeContainer* BaseNodeContainer, TArray<FMeshBoneInfo>& SkeletalLodRawInfos, bool bConvertStaticToSkeletalActive)
 	{
 		const UInterchangeSceneNode* SceneNode = Cast<UInterchangeSceneNode>(BaseNodeContainer->GetNode(JoinToAddUid));
-		if (!bConvertStaticToSkeletalActive && (!SceneNode || !SceneNode->IsSpecializedTypeContains(FSceneNodeStaticData::GetJointSpecializeTypeString())))
+		if (!SceneNode)
+		{
+			return;
+		}
+
+		if (!bConvertStaticToSkeletalActive && !SceneNode->IsSpecializedTypeContains(FSceneNodeStaticData::GetJointSpecializeTypeString()))
 		{
 			return;
 		}

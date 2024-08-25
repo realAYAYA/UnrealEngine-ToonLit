@@ -24,6 +24,9 @@ FDMXPixelMappingLayoutToken::FDMXPixelMappingLayoutToken(TWeakObjectPtr<UDMXPixe
 	SizeX = OutputComponent->GetSize().X;
 	SizeY = OutputComponent->GetSize().Y;
 
+	// Layout tokens are created with an unrotated parent. Hence the relative rotation is the current rotation.
+	RelativeRotation = OutputComponent->GetRotation();
+
 	InitializeFixtureID();
 }
 

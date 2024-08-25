@@ -44,6 +44,7 @@ class IToolTip;
 class SGraphPanel;
 class SGraphPin;
 class SInlineEditableTextBlock;
+class SLevelOfDetailBranchNode;
 class SToolTip;
 class SVerticalBox;
 class SWidget;
@@ -318,6 +319,9 @@ protected:
 	// Override this to add widgets below the pins but above advanced view arrow
 	virtual void CreateBelowPinControls(TSharedPtr<SVerticalBox> MainBox) {}
 
+	/** Determines how the node title overflow is handled */
+	virtual TOptional<ETextOverflowPolicy> GetNameOverflowPolicy() const { return {}; }
+
 	/* Helper function to check if node can be renamed */
 	virtual bool IsNameReadOnly () const;
 
@@ -364,19 +368,19 @@ protected:
 	///// ADVANCED VIEW FUNCTIONS /////
 
 	/** Create button to show/hide advanced pins */
-	void CreateAdvancedViewArrow(TSharedPtr<SVerticalBox> MainBox);
+	virtual void CreateAdvancedViewArrow(TSharedPtr<SVerticalBox> MainBox);
 
 	/** Returns visibility of AdvancedViewButton */
-	EVisibility AdvancedViewArrowVisibility() const;
+	virtual EVisibility AdvancedViewArrowVisibility() const;
 
 	/** Show/hide advanced view */
 	virtual void OnAdvancedViewChanged( const ECheckBoxState NewCheckedState );
 
 	/** hidden == unchecked, shown == checked */
-	ECheckBoxState IsAdvancedViewChecked() const;
+	virtual ECheckBoxState IsAdvancedViewChecked() const;
 
 	/** Up when shown, down when hidden */
-	const FSlateBrush* GetAdvancedViewArrow() const;
+	virtual const FSlateBrush* GetAdvancedViewArrow() const;
 
 	/** Checks if the node is the only node selected */
 	bool IsSelectedExclusively() const;
@@ -440,6 +444,10 @@ protected:
 	FCurveHandle ZoomCurve;
 	FCurveHandle FadeCurve;
 
+	/* The margin used by the border containing the title. Can be changed by child classes if necessary.
+	*  The extra padding on the right is for making the color spill stretch well past the node title */
+	FMargin TitleBorderMargin = FMargin(10.f, 5.f, 30.f, 3.f);
+
 	/** Is this node editable */
 	TAttribute<bool> IsEditable;
 
@@ -474,4 +482,7 @@ protected:
 
 	/** Cached pointer to graph editor settings */
 	const class UGraphEditorSettings* Settings;
+
+private:
+	TSharedPtr<SLevelOfDetailBranchNode> TitleLODBranchNode;
 };

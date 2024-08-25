@@ -8,7 +8,6 @@
 #include "ZenSerialization.h"
 
 #if PLATFORM_MICROSOFT
-#	include "Microsoft/WindowsHWrapper.h"
 #	include "Microsoft/AllowMicrosoftPlatformTypes.h"
 #endif
 
@@ -29,6 +28,7 @@
 #include "Containers/StringFwd.h"
 #include "HAL/LowLevelMemTracker.h"
 #include "Memory/CompositeBuffer.h"
+#include "Misc/App.h"
 #include "Serialization/CompactBinary.h"
 #include "Serialization/CompactBinaryPackage.h"
 #include "Serialization/CompactBinaryValidation.h"
@@ -95,6 +95,7 @@ namespace UE::Zen {
 		curl_easy_setopt(Curl, CURLOPT_NOSIGNAL, 1L);
 		curl_easy_setopt(Curl, CURLOPT_DNS_CACHE_TIMEOUT, -1L); // Don't re-resolve names mid-session
 		curl_easy_setopt(Curl, CURLOPT_BUFFERSIZE, 256 * 1024L);
+		curl_easy_setopt(Curl, CURLOPT_NOPROXY, "*");
 		//curl_easy_setopt(Curl, CURLOPT_UPLOAD_BUFFERSIZE, 256 * 1024L);
 		// Response functions
 		curl_easy_setopt(Curl, CURLOPT_HEADERDATA, this);
@@ -227,7 +228,7 @@ namespace UE::Zen {
 		if (AcceptType != EContentType::UnknownContentType)
 		{
 			AddHeader(TEXTVIEW("Accept"), GetMimeType(EContentType::CbPackage));
-	}
+		}
 
 		ContentLength = Payload.GetSize();
 
@@ -283,8 +284,7 @@ namespace UE::Zen {
 	}
 
 	static const char* GetSessionIdHeader() {
-		static FCbObjectId SessionId = FCbObjectId::NewObjectId();
-
+		static FCbObjectId SessionId = FApp::GetSessionObjectId();
 		static const char* HeaderString = [&] {
 			static TAnsiStringBuilder<64> SessionIdHeader;
 			SessionIdHeader << "UE-Session: " << SessionId;
@@ -383,7 +383,7 @@ namespace UE::Zen {
 			const ANSICHAR* ValueStart = Found + HeaderLen + 2; //colon and space
 			const size_t ValueSize = Linebreak - ValueStart;
 			FUTF8ToTCHAR TCHARData(ValueStart, ValueSize);
-			OutValue = FString(TCHARData.Length(), TCHARData.Get());
+			OutValue = FString::ConstructFromPtrSize(TCHARData.Get(), TCHARData.Length());
 			return true;
 		}
 		return false;
@@ -473,7 +473,7 @@ namespace UE::Zen {
 	{
 		// Content is NOT null-terminated; we need to specify lengths here
 		FUTF8ToTCHAR TCHARData(reinterpret_cast<const ANSICHAR*>(Buffer.GetData()), IntCastChecked<int32>(Buffer.Num()));
-		return FString(TCHARData.Length(), TCHARData.Get());
+		return FString::ConstructFromPtrSize(TCHARData.Get(), TCHARData.Length());
 	}
 
 	FCbObjectView FZenHttpRequest::GetResponseAsObject() const
@@ -498,7 +498,7 @@ namespace UE::Zen {
 					int CalculatedSize = FoundNulPtr != nullptr ? FoundNulPtr - DebugInfo : DebugInfoSize;
 
 					auto ConvertedString = StringCast<TCHAR>(static_cast<const ANSICHAR*>(DebugInfo), CalculatedSize);
-					FString DebugText(ConvertedString.Length(), ConvertedString.Get());
+					FString DebugText = FString::ConstructFromPtrSize(ConvertedString.Get(), ConvertedString.Length());
 					DebugText.ReplaceInline(TEXT("\n"), TEXT(""), ESearchCase::CaseSensitive);
 					DebugText.ReplaceInline(TEXT("\r"), TEXT(""), ESearchCase::CaseSensitive);
 					UE_LOG(LogZenHttp, VeryVerbose, TEXT("CURL %p: '%s'"), Request, *DebugText);
@@ -548,9 +548,7 @@ namespace UE::Zen {
 		Memcpy(Ptr, ReadDataView, Offset, ReadSize);
 		Request->BytesSent += ReadSize;
 		return ReadSize;
-
-		return 0;
-	}
+		}
 
 	size_t FZenHttpRequest::FStatics::StaticWriteHeaderFn(void* Ptr, size_t SizeInBlocks, size_t BlockSizeInBytes, void* UserData)
 	{

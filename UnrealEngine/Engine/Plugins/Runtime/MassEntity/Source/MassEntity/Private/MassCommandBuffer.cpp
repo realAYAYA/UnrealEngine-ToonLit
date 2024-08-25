@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MassCommandBuffer.h"
+#include "Containers/AnsiString.h"
 #include "MassObserverManager.h"
 #include "MassEntityUtils.h"
 #include "HAL/IConsoleManager.h"
@@ -10,6 +11,7 @@
 
 CSV_DEFINE_CATEGORY(MassEntities, true);
 CSV_DEFINE_CATEGORY(MassEntitiesCounters, true);
+DECLARE_CYCLE_STAT(TEXT("Mass Flush Commands"), STAT_Mass_FlushCommands, STATGROUP_Mass);
 
 namespace UE::Mass::Command {
 
@@ -21,13 +23,10 @@ FAutoConsoleVariableRef CVarEnableDetailedCommandStats(TEXT("massentities.Enable
 
 /** CSV stat names */
 static FString DefaultBatchedName = TEXT("BatchedCommand");
-static TArray<FName> CommandBatchedFNames;
+static TMap<FName, TPair<FString, FAnsiString>> CommandBatchedFNames;
 
 /** CSV custom stat names (ANSI) */
-static const int32 MaxNameLength = 64;
-typedef ANSICHAR ANSIName[MaxNameLength];
-static ANSIName DefaultANSIBatchedName = "BatchedCommand";
-static TArray<ANSIName> CommandANSIBatchedNames;
+static FAnsiString DefaultANSIBatchedName = "BatchedCommand";
 
 /**
  * Provides valid names for CSV profiling.
@@ -35,31 +34,24 @@ static TArray<ANSIName> CommandANSIBatchedNames;
  * @param OutName is the name to use for csv custom stats
  * @param OutANSIName is the name to use for csv stats
  */
-void GetCommandStatNames(FMassBatchedCommand& Command, FString& OutName, ANSIName*& OutANSIName)
+void GetCommandStatNames(FMassBatchedCommand& Command, FString*& OutName, FAnsiString*& OutANSIName)
 {
 	OutANSIName = &DefaultANSIBatchedName;
-	OutName = DefaultANSIBatchedName;
+	OutName     = &DefaultBatchedName;
 	if (!bEnableDetailedStats)
 	{
 		return;
 	}
 
 	const FName CommandFName = Command.GetFName();
-	OutName = CommandFName.ToString();
 
-	const int32 Index = CommandBatchedFNames.Find(CommandFName);
-	if (Index == INDEX_NONE)
+	TPair<FString, FAnsiString>& Names = CommandBatchedFNames.FindOrAdd(CommandFName);
+	OutName     = &Names.Get<FString>();
+	OutANSIName = &Names.Get<FAnsiString>();
+	if (OutName->IsEmpty())
 	{
-		CommandBatchedFNames.Emplace(CommandFName);
-		OutANSIName = &CommandANSIBatchedNames.AddZeroed_GetRef();
-		// Use prefix for easier parsing in reports
-		//const FString CounterName = FString::Printf(TEXT("Num%s"), *OutName);
-		//FMemory::Memcpy(OutANSIName, StringCast<ANSICHAR>(*CounterName).Get(), FMath::Min(CounterName.Len(), MaxNameLength - 1) * sizeof(ANSICHAR));
-		FMemory::Memcpy(OutANSIName, StringCast<ANSICHAR>(*OutName).Get(), FMath::Min(OutName.Len(), MaxNameLength - 1) * sizeof(ANSICHAR));
-	}
-	else
-	{
-		OutANSIName = &CommandANSIBatchedNames[Index];
+		*OutName     = CommandFName.ToString();
+		*OutANSIName = **OutName;
 	}
 }
 
@@ -97,6 +89,7 @@ void FMassCommandBuffer::Flush(FMassEntityManager& EntityManager)
 	{
 		UE_MT_SCOPED_WRITE_ACCESS(PendingBatchCommandsDetector);
 		LLM_SCOPE_BYNAME(TEXT("Mass/FlushCommands"));
+		SCOPE_CYCLE_COUNTER(STAT_Mass_FlushCommands);
 
 		// array used to group commands depending on their operations. Based on EMassCommandOperationType
 		constexpr int32 CommandTypeOrder[] =
@@ -140,13 +133,13 @@ void FMassCommandBuffer::Flush(FMassEntityManager& EntityManager)
 			using namespace UE::Mass::Command;
 
 			// Extract name (default or detailed)
-			ANSIName* ANSIName = &DefaultANSIBatchedName;
-			FString Name = DefaultBatchedName;
+			FAnsiString* ANSIName = nullptr;
+			FString*     Name     = nullptr;
 			GetCommandStatNames(*Command, Name, ANSIName);
 
 			// Push stats
-			FScopedCsvStat ScopedCsvStat(*ANSIName, CSV_CATEGORY_INDEX(MassEntities));
-			FCsvProfiler::RecordCustomStat(*Name, CSV_CATEGORY_INDEX(MassEntitiesCounters), Command->GetNumOperationsStat(), ECsvCustomStatOp::Accumulate);
+			FScopedCsvStat ScopedCsvStat(**ANSIName, CSV_CATEGORY_INDEX(MassEntities));
+			FCsvProfiler::RecordCustomStat(**Name, CSV_CATEGORY_INDEX(MassEntitiesCounters), Command->GetNumOperationsStat(), ECsvCustomStatOp::Accumulate);
 #endif // CSV_PROFILER
 
 			Command->Execute(EntityManager);

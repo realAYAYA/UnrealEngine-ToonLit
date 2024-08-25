@@ -22,7 +22,8 @@ void UNiagaraDataInterfacePlatformSet::PostInitProperties()
 
 static FName IsActiveName(TEXT("IsActive"));
 
-void UNiagaraDataInterfacePlatformSet::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfacePlatformSet::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature Sig;
@@ -36,6 +37,7 @@ void UNiagaraDataInterfacePlatformSet::GetFunctions(TArray<FNiagaraFunctionSigna
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfacePlatformSet, IsActive);
 void UNiagaraDataInterfacePlatformSet::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)

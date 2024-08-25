@@ -73,6 +73,10 @@
 # error "SYMS: syms_strlen was not #define'd. It should be #define'd to the name of a strlen implementation."
 #endif
 
+#if !defined(syms_memisnull)
+# error "SYMS: syms_memisnull was not #define'd. It should be #define'd to the name of a memisnull implementation."
+#endif
+
 
 // NOTE(allen): assert
 

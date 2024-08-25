@@ -36,7 +36,7 @@ TRange<FFrameNumber> FMovieSceneFrameRange::FromFloatRange(const TRange<float>& 
 bool FMovieSceneFrameRange::SerializeFromMismatchedTag(FPropertyTag const& Tag, FStructuredArchive::FSlot Slot)
 {
 	static const FName NAME_FloatRange("FloatRange");
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == NAME_FloatRange)
+	if (Tag.GetType().IsStruct(NAME_FloatRange))
 	{
 		UScriptStruct* FloatStruct = TBaseStructure<FFloatRange>::Get();
 

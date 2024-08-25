@@ -45,6 +45,14 @@ class UMaterialExpressionMaterialXTextureSampleParameterBlur: public UMaterialEx
 #if WITH_EDITOR
 	virtual int32 Compile(class FMaterialCompiler* Compiler, int32 OutputIndex) override;
 	virtual void GetCaption(TArray<FString>& OutCaptions) const override;
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
 #endif
 	//~ End UMaterialExpressionMaterialX Interface
+
+private:
+
+#if WITH_EDITOR
+	const float* GetKernel(int32& FilterWidth) const;
+	const UE::HLSLTree::FExpression* GenerateHLSLExpressionBase(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, const UE::HLSLTree::FExpression* TexCoordExpression) const;
+#endif
 };

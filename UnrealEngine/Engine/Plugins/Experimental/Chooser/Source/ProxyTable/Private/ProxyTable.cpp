@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "ProxyTable.h"
+
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Logging/LogMacros.h"
+#include "Misc/StringBuilder.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogProxyTable,Log,All);
 
@@ -23,7 +25,7 @@ const FGuid FProxyEntry::GetGuid() const
 		FGuid Guid;
 		if (Key != NAME_None)
 		{
-			Guid.A = GetTypeHash(Key);
+			Guid.A = GetTypeHash(WriteToString<128>(Key).ToView()); // Make sure this matches UProxyTableFunctionLibrary::EvaluateProxyTable
 		}
 		return Guid;
 	}
@@ -91,7 +93,7 @@ static void BuildRuntimeDataRecursive(UProxyTable* RootTable, UProxyTable* Table
 		}
 	}
 
-	for (const TObjectPtr<UProxyTable> ParentTable : Table->InheritEntriesFrom)
+	for (const TObjectPtr<UProxyTable>& ParentTable : Table->InheritEntriesFrom)
 	{
 		if (!OutDependencies.Contains(ParentTable))
 		{
@@ -128,7 +130,7 @@ void UProxyTable::BuildRuntimeData()
 	for(const FProxyEntry& Entry : RuntimeEntries) 
 	{
 		Keys.Add(Entry.GetGuid());
-   		RuntimeValues.Add({Entry.ValueStruct, Entry.OutputStructData});
+   		RuntimeValues.Add({Entry.Proxy, Entry.ValueStruct, Entry.OutputStructData});
 	}
 	
 	// register callbacks on updated dependencies
@@ -147,13 +149,6 @@ void UProxyTable::BuildRuntimeData()
 	}
 }
 
-
-void UProxyTable::PostLoad()
-{
-	Super::PostLoad();
-	BuildRuntimeData();
-}
-
 void UProxyTable::PostTransacted(const FTransactionObjectEvent& TransactionEvent)
 {
 	UObject::PostTransacted(TransactionEvent);
@@ -162,6 +157,53 @@ void UProxyTable::PostTransacted(const FTransactionObjectEvent& TransactionEvent
 }
 
 #endif
+
+void UProxyTable::PostLoad()
+{
+	Super::PostLoad();
+#if WITH_EDITORONLY_DATA
+	BuildRuntimeData();
+#endif
+
+	// compilation for property accesses
+	for(FRuntimeProxyValue& Entry : RuntimeValues) 
+	{
+		if (FObjectChooserBase* Result = Entry.Value.GetMutablePtr<FObjectChooserBase>())
+		{
+			// need to compile results in case one is a LookupProxy
+			Result->Compile(Entry.ProxyAsset, false);
+		}
+
+		/// compile any struct output property references
+		for(FProxyStructOutput& StructOutput : Entry.OutputStructData)
+		{
+			StructOutput.Binding.Compile(Entry.ProxyAsset);
+		}
+	}
+}
+
+
+void UProxyTable::BeginDestroy()
+{
+	RuntimeValues.Empty();
+#if WITH_EDITORONLY_DATA
+	Entries.Empty();
+#endif
+	Super::BeginDestroy();
+}
+
+static void OutputStructData(const FRuntimeProxyValue& EntryValueData, FChooserEvaluationContext& Context)
+{
+	for (const FProxyStructOutput& StructOutput : EntryValueData.OutputStructData)
+	{
+		// copy each struct output value
+		void* TargetData;
+		if (StructOutput.Binding.GetValuePtr(Context, TargetData))
+		{
+			StructOutput.Value.GetScriptStruct()->CopyScriptStruct(TargetData, StructOutput.Value.GetMemory());
+		}
+	}
+}
 
 UObject* UProxyTable::FindProxyObject(const FGuid& Key, FChooserEvaluationContext& Context) const
 {
@@ -173,44 +215,30 @@ UObject* UProxyTable::FindProxyObject(const FGuid& Key, FChooserEvaluationContex
 
 		UObject* Result = EntryValue.ChooseObject(Context);
 
-		for (const FProxyStructOutput& StructOutput : EntryValueData.OutputStructData)
-		{
-			const void* Container = nullptr;
-			const UStruct* StructType;
-
-			// copy each struct output value
-
-			if (StructOutput.Binding.PropertyBindingChain.IsEmpty())
-			{
-				if(Context.Params.IsValidIndex((StructOutput.Binding.ContextIndex)))
-				{
-					// directly bound to context struct
-					if (Context.Params[StructOutput.Binding.ContextIndex].GetScriptStruct() == StructOutput.Value.GetScriptStruct())
-					{
-						void* TargetData = Context.Params[StructOutput.Binding.ContextIndex].GetMutableMemory();
-						StructOutput.Value.GetScriptStruct()->CopyScriptStruct(TargetData, StructOutput.Value.GetMemory());
-					}
-				}
-			}
-			else if (UE::Chooser::ResolvePropertyChain(Context, StructOutput.Binding, Container, StructType))
-			{
-				if (FStructProperty* Property = FindFProperty<FStructProperty>(StructType, StructOutput.Binding.PropertyBindingChain.Last()))
-				{
-					// const cast is here just because ResolvePropertyChain expects a const void*&
-					void* TargetData = Property->ContainerPtrToValuePtr<void>(const_cast<void*>(Container));
-					
-					if (Property->Struct == StructOutput.Value.GetScriptStruct())
-					{
-						Property->Struct->CopyScriptStruct(TargetData, StructOutput.Value.GetMemory());
-					}
-				}
-			}
-		}
+		OutputStructData(EntryValueData, Context);
 
 		return Result;
 	}
 	
 	return nullptr;
+}
+
+FObjectChooserBase::EIteratorStatus UProxyTable::FindProxyObjectMulti(const FGuid& Key, FChooserEvaluationContext &Context, FObjectChooserBase::FObjectChooserIteratorCallback Callback) const
+{
+		const int FoundIndex = Algo::BinarySearch(Keys, Key);
+    	if (FoundIndex != INDEX_NONE)
+    	{
+    		const FRuntimeProxyValue& EntryValueData = RuntimeValues[FoundIndex];
+    		const FObjectChooserBase &EntryValue = EntryValueData.Value.Get<const FObjectChooserBase>();
+    
+    		FObjectChooserBase::EIteratorStatus Result = EntryValue.ChooseMulti(Context, Callback);
+    
+			OutputStructData(EntryValueData, Context);
+    
+    		return Result;
+    	}
+    	
+    	return FObjectChooserBase::EIteratorStatus::Continue;
 }
 
 UProxyTable::UProxyTable(const FObjectInitializer& Initializer)

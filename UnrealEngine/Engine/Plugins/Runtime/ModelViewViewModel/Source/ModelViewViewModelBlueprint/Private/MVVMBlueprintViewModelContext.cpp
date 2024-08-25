@@ -19,6 +19,7 @@ FMVVMBlueprintViewModelContext::FMVVMBlueprintViewModelContext(const UClass* InC
 			ViewModelContextId = FGuid::NewGuid();
 			NotifyFieldValueClass = const_cast<UClass*>(InClass);
 			ViewModelName = InViewModelName;
+			bExposeInstanceInEditor = GetDefault<UMVVMDeveloperProjectSettings>()->bExposeViewModelInstanceInEditor;
 		}
 	}
 }
@@ -37,7 +38,7 @@ namespace Private
 static const FName NAME_MVVMAllowedContextCreationType = TEXT("MVVMAllowedContextCreationType");
 static const FName NAME_MVVMDisallowedContextCreationType = TEXT("MVVMDisallowedContextCreationType");
 
-// Find the Allowed and Disallowed from first calss in the hierarchy that defines it.
+// Find the Allowed and Disallowed from first class in the hierarchy that defines it.
 void GenerateAllowedList(const UClass* Class, TArray<FString>& AllowedStrings, TArray<FString>& DisallowedStrings)
 {
 	if (AllowedStrings.Num() == 0 && Class->HasMetaData(NAME_MVVMAllowedContextCreationType))

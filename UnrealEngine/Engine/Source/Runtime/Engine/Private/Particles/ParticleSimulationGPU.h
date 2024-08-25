@@ -20,8 +20,3 @@ extern int32 GParticleSimulationTextureSizeY;
 extern const int32 GParticleSimulationTileSize;
 extern const int32 GParticlesPerTile;
 
-/** How many tiles are in the simulation textures. */
-extern int32 GParticleSimulationTileCountX;
-extern int32 GParticleSimulationTileCountY;
-extern int32 GParticleSimulationTileCount;
-

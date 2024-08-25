@@ -62,6 +62,8 @@ ISourceControlState::FResolveInfo FSubversionSourceControlState::GetResolveInfo(
 	return PendingResolveInfo;
 }
 
+#if SOURCE_CONTROL_WITH_SLATE
+
 FSlateIcon FSubversionSourceControlState::GetIcon() const
 {
 	if (LockState == ELockState::Locked)
@@ -96,6 +98,8 @@ FSlateIcon FSubversionSourceControlState::GetIcon() const
 
 	return FSlateIcon();
 }
+
+#endif //SOURCE_CONTROL_WITH_SLATE
 
 FText FSubversionSourceControlState::GetDisplayName() const
 {

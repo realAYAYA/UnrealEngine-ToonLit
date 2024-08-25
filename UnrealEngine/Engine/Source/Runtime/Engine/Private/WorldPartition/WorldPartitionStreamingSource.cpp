@@ -20,25 +20,96 @@ FAutoConsoleVariableRef FWorldPartitionStreamingSource::CVarRotationQuantization
 	TEXT("Angle (in degrees) used to quantize the streaming sources rotation to determine if a world partition streaming update is necessary."),
 	ECVF_Default);
 
+FString FStreamingSourceShape::ToString() const
+{
+	FStringBuilderBase StringBuilder;
+	if (bIsSector)
+	{
+		StringBuilder += TEXT("IsSector ");
+	}
+	if (bUseGridLoadingRange)
+	{
+		StringBuilder += TEXT("UsesGridLoadingRange ");
+		if (!FMath::IsNearlyEqual(LoadingRangeScale, 1.f))
+		{
+			StringBuilder.Appendf(TEXT("Scale: 3.2f"), LoadingRangeScale);
+		}
+	}
+	else
+	{
+		StringBuilder.Appendf(TEXT("Radius: %d"), (int32)Radius);
+	}
+	return StringBuilder.ToString();
+}
+
+FString FWorldPartitionStreamingSource::ToString() const
+{
+	FStringBuilderBase StringBuilder;
+	StringBuilder.Appendf(
+		TEXT("Priority: %d | %s | %s | %s | Pos: X=%lld,Y=%lld,Z=%lld | Rot: %s | Vel: %3.2f m/s (%d mph)"),
+		Priority,
+		bRemote ? TEXT("Remote") : TEXT("Local"),
+		GetStreamingSourceTargetStateName(TargetState),
+		bBlockOnSlowLoading ? TEXT("Blocking") : TEXT("NonBlocking"),
+		(int64)Location.X, (int64)Location.Y, (int64)Location.Z,
+		*Rotation.ToCompactString(),
+		Velocity.Size() * 0.01,
+		(int32)(Velocity.Size() * 0.0223694f)
+	);
+
+	if (Shapes.Num())
+	{
+		StringBuilder += TEXT(" | ");
+		int32 ShapeIndex = 0;
+		for (const FStreamingSourceShape& Shape : Shapes)
+		{
+			StringBuilder.Appendf(TEXT("Shape[%d]: %s "), ShapeIndex++, *Shape.ToString());
+		}
+		StringBuilder.RemoveSuffix(1);
+	}
+
+	if (ExtraRadius > 0.f)
+	{
+		StringBuilder.Appendf(TEXT(" | Extra Radius: %d "), (int32)ExtraRadius);
+	}
+
+	if (ExtraAngle > 0.f)
+	{
+		StringBuilder.Appendf(TEXT(" | Extra Angle: %d "), (int32)ExtraAngle);
+	}
+
+	if (TargetGrids.Num())
+	{
+		StringBuilder.Appendf(TEXT(" | %s TargetGrids: "), (TargetBehavior == EStreamingSourceTargetBehavior::Include) ? TEXT("Included") : TEXT("Excluded"));
+		for (const FName& TargetGrid : TargetGrids)
+		{
+			StringBuilder.Appendf(TEXT("%s, "), *TargetGrid.ToString());
+		}
+		StringBuilder.RemoveSuffix(2);
+	}
+
+	return StringBuilder.ToString();
+}
+
 void FWorldPartitionStreamingSource::UpdateHash()
 {
 	// Update old values when they are changing enough, to avoid the case where we are on the edge of a quantization unit.
 	if (!UWorldPartitionStreamingPolicy::IsUpdateStreamingOptimEnabled() || 
-		(FVector::Dist(Location, OldLocation) > FWorldPartitionStreamingSource::LocationQuantization))
+		(FVector::Dist(Location, OldLocation) > LocationQuantization))
 	{
 		OldLocation = Location;
 	}
 	
 	if (!UWorldPartitionStreamingPolicy::IsUpdateStreamingOptimEnabled() ||
-		(FMath::Abs(Rotation.Pitch - OldRotation.Pitch) > FWorldPartitionStreamingSource::RotationQuantization) ||
-		(FMath::Abs(Rotation.Yaw - OldRotation.Yaw) > FWorldPartitionStreamingSource::RotationQuantization) ||
-		(FMath::Abs(Rotation.Roll - OldRotation.Roll) > FWorldPartitionStreamingSource::RotationQuantization))
+		(FMath::Abs(Rotation.Pitch - OldRotation.Pitch) > RotationQuantization) ||
+		(FMath::Abs(Rotation.Yaw - OldRotation.Yaw) > RotationQuantization) ||
+		(FMath::Abs(Rotation.Roll - OldRotation.Roll) > RotationQuantization))
 	{
 		OldRotation = Rotation;
 	}
 
 	FHashBuilder HashBuilder;
-	HashBuilder	<< Name << TargetState << bBlockOnSlowLoading << bReplay << bRemote << Priority << TargetBehavior << TargetGrids << TargetHLODLayers << Shapes;
+	HashBuilder	<< Name << TargetState << bBlockOnSlowLoading << bReplay << bRemote << Priority << TargetBehavior << TargetGrids << Shapes << ExtraRadius  << ExtraAngle;
 
 	if (LocationQuantization)
 	{

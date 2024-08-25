@@ -4,6 +4,7 @@
 
 #include "MuR/Ptr.h"
 #include "MuR/RefCounted.h"
+#include "MuR/Serialisation.h"
 
 
 namespace mu
@@ -14,30 +15,20 @@ namespace mu
 	typedef Ptr<const Table> TablePtrConst;
 
 	class Mesh;
-	typedef Ptr<Mesh> MeshPtr;
-	typedef Ptr<const Mesh> MeshPtrConst;
-
 	class Image;
-	typedef Ptr<Image> ImagePtr;
-	typedef Ptr<const Image> ImagePtrConst;
-
 	class InputArchive;
 	class OutputArchive;
 
-	//! Types of the values for the table cells.
-	//! \ingroup runtime
-	typedef enum
+	/** Types of the values for the table cells. */
+	enum class ETableColumnType : uint32
 	{
-		TCT_NONE,
-		TCT_SCALAR,
-		TCT_COLOUR,
-		TCT_IMAGE,
-		TCT_MESH,
-		TCT_STRING,
-		TCT_COUNT,
-
-		_TCT_FORCE32BITS = 0xFFFFFFFF
-	} TABLE_COLUMN_TYPE;
+		None,
+		Scalar,
+		Color,
+		Image,
+		Mesh,
+		String
+	};
 
 
 	//! A table that contains many rows and defines attributes like meshes, images,
@@ -54,34 +45,31 @@ namespace mu
 		Table();
 
 		static void Serialise( const Table* p, OutputArchive& arch );
-		static TablePtr StaticUnserialise( InputArchive& arch );
+		static Ptr<Table> StaticUnserialise( InputArchive& arch );
 
 		//-----------------------------------------------------------------------------------------
 		// Own interface
 		//-----------------------------------------------------------------------------------------
 
 		//!
-		void SetName( const char* strName );
-		const char* GetName() const;
+		void SetName(const FString&);
+		const FString& GetName() const;
 
 		//!
-		int AddColumn( const char* strName, TABLE_COLUMN_TYPE type );
+		int32 AddColumn(const FString&, ETableColumnType );
 
 		//! Return the column index with the given name. -1 if not found.
-		int FindColumn( const char* strName ) const;
+		int32 FindColumn(const FString&) const;
 
 		//!
         void AddRow( uint32 id );
 
-		//! Adds a "NONE" option
-		void SetNoneOption(bool bAddOption);
-
 		//!
-        void SetCell( int column, uint32 rowId, float value );
-        void SetCell( int column, uint32 rowId, float r, float g, float b, float a);
-        void SetCell( int column, uint32 rowId, Image* pImage );
-        void SetCell( int column, uint32 rowId, Mesh* pMesh );
-        void SetCell( int column, uint32 rowId, const char* strValue );
+        void SetCell( int32 Column, uint32 RowId, float Value, const void* ErrorContext = nullptr);
+        void SetCell( int32 Column, uint32 RowId, const FVector4f& Value, const void* ErrorContext = nullptr);
+		void SetCell( int32 Column, uint32 RowId, ResourceProxy<Image>* Value, const void* ErrorContext = nullptr);
+		void SetCell( int32 Column, uint32 RowId, Mesh* Value, const void* ErrorContext = nullptr);
+        void SetCell( int32 Column, uint32 RowId, const FString& Value, const void* ErrorContext = nullptr);
 
 
 		//-----------------------------------------------------------------------------------------

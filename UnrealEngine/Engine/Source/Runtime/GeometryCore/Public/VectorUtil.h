@@ -317,6 +317,19 @@ namespace VectorUtil
 	}
 
 	/**
+	 * tan(theta/2) = +/- sqrt( (1-cos(theta)) / (1+cos(theta)) )
+	 * @return positive value of tan(theta/2) where theta is angle between normalized vectors A and B
+	 */
+	template <typename RealType>
+	RealType VectorTanHalfAngle(const TVector2<RealType>& A, const TVector2<RealType>& B)
+	{
+		RealType cosAngle = A.Dot(B);
+		RealType sqr = ((RealType)1 - cosAngle) / ((RealType)1 + cosAngle);
+		sqr = Clamp(sqr, (RealType)0, TMathUtil<RealType>::MaxReal);
+		return TMathUtil<RealType>::Sqrt(sqr);
+	}
+
+	/**
 	 * Fast cotangent of angle between two vectors (*do not have to be normalized unit vectors*).
 	 * cot = cos/sin, both of which can be computed from vector identities
 	 * @return cotangent of angle between V1 and V2, or zero if result would be unstable (eg infinity)

@@ -31,6 +31,11 @@ EBlackboardCompare::Type UBlackboardKeyType_Name::CompareValues(const UBlackboar
 	return (MyValue == OtherValue) ? EBlackboardCompare::Equal : EBlackboardCompare::NotEqual;
 }
 
+void UBlackboardKeyType_Name::InitializeMemory(UBlackboardComponent& OwnerComp, uint8* MemoryBlock)
+{
+	SetValue(this, MemoryBlock, DefaultValue);
+}
+
 FString UBlackboardKeyType_Name::DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const
 {
 	return GetValue(this, RawData).ToString();

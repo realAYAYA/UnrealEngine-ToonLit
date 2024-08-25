@@ -6,13 +6,16 @@ using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text.Json.Serialization;
 using EpicGames.Core;
-using Horde.Server.Acls;
-using Horde.Server.Jobs.Bisect;
+using EpicGames.Horde.Artifacts;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Bisect;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using Horde.Server.Jobs.Graphs;
 using Horde.Server.Streams;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
 using HordeCommon;
+using HordeCommon.Rpc.Tasks;
 
 namespace Horde.Server.Jobs
 {
@@ -46,7 +49,7 @@ namespace Horde.Server.Jobs
 		/// The stream that this job belongs to
 		/// </summary>
 		[Required]
-		public string StreamId { get; set; }
+		public StreamId StreamId { get; set; }
 
 		/// <summary>
 		/// The template for this job
@@ -73,7 +76,7 @@ namespace Horde.Server.Jobs
 			get => (ChangeQueries != null && ChangeQueries.Count > 0) ? ChangeQueries[0] : null;
 			set => ChangeQueries = (value == null) ? null : new List<ChangeQueryConfig> { value };
 		}
-			
+
 		/// <summary>
 		/// List of change queries to evaluate
 		/// </summary>
@@ -83,6 +86,11 @@ namespace Horde.Server.Jobs
 		/// The preflight changelist number
 		/// </summary>
 		public int? PreflightChange { get; set; }
+
+		/// <summary>
+		/// Job options
+		/// </summary>
+		public JobOptions? JobOptions { get; set; }
 
 		/// <summary>
 		/// Priority for the job
@@ -107,7 +115,7 @@ namespace Horde.Server.Jobs
 		/// <summary>
 		/// Private constructor for serialization
 		/// </summary>
-		public CreateJobRequest(string streamId, TemplateId templateId)
+		public CreateJobRequest(StreamId streamId, TemplateId templateId)
 		{
 			StreamId = streamId;
 			TemplateId = templateId;
@@ -183,7 +191,12 @@ namespace Horde.Server.Jobs
 		/// <summary>
 		/// The artifact id
 		/// </summary>
-		public string ArtifactId { get; set; }
+		public string? ArtifactId { get; set; }
+
+		/// <summary>
+		/// Content for the report
+		/// </summary>
+		public string? Content { get; set; }
 
 		/// <summary>
 		/// Constructor
@@ -193,7 +206,8 @@ namespace Horde.Server.Jobs
 		{
 			Name = report.Name;
 			Placement = report.Placement;
-			ArtifactId = report.ArtifactId.ToString();
+			ArtifactId = report.ArtifactId?.ToString();
+			Content = report.Content;
 		}
 	}
 
@@ -330,12 +344,17 @@ namespace Horde.Server.Jobs
 		/// <summary>
 		/// The default label, containing the state of all steps that are otherwise not matched.
 		/// </summary>
-		public GetDefaultLabelStateResponse? DefaultLabel { get; set; } 
+		public GetDefaultLabelStateResponse? DefaultLabel { get; set; }
 
 		/// <summary>
 		/// List of reports
 		/// </summary>
 		public List<GetReportResponse>? Reports { get; set; }
+
+		/// <summary>
+		/// Artifacts produced by this job
+		/// </summary>
+		public List<GetJobArtifactResponse>? Artifacts { get; set; }
 
 		/// <summary>
 		/// Parameters for the job
@@ -391,21 +410,40 @@ namespace Horde.Server.Jobs
 			Reports = job.Reports?.ConvertAll(x => new GetReportResponse(x));
 			Arguments = job.Arguments.ToList();
 			UpdateTime = new DateTimeOffset(job.UpdateTimeUtc);
-			UseArtifactsV2 = job.JobOptions?.UseNewTempStorage ?? false;
+			UseArtifactsV2 = job.JobOptions?.UseNewTempStorage ?? true;
 			UpdateIssues = job.UpdateIssues;
 		}
 	}
 
 	/// <summary>
+	/// Response describing an artifact produced during a job
+	/// </summary>
+	/// <param name="Id">Identifier for this artifact, if it has been produced</param>
+	/// <param name="Name">Name of the artifact</param>
+	/// <param name="Type">Artifact type</param>
+	/// <param name="Description">Description to display for the artifact on the dashboard</param>
+	/// <param name="Keys">Keys for the artifact</param>
+	/// <param name="StepId">Step producing the artifact</param>
+	public record class GetJobArtifactResponse
+	(
+		ArtifactId? Id,
+		ArtifactName Name,
+		ArtifactType Type,
+		string? Description,
+		List<string> Keys,
+		JobStepId StepId
+	);
+
+	/// <summary>
 	/// The timing info for a job
 	/// </summary>
 	public class GetJobTimingResponse
-	{		
+	{
 		/// <summary>
 		/// The job response
 		/// </summary>
 		public GetJobResponse? JobResponse { get; set; }
-		
+
 		/// <summary>
 		/// Timing info for each step
 		/// </summary>
@@ -423,13 +461,13 @@ namespace Horde.Server.Jobs
 		/// <param name="steps">Timing info for each steps</param>
 		/// <param name="labels">Timing info for each label</param>
 		public GetJobTimingResponse(GetJobResponse? jobResponse, Dictionary<string, GetStepTimingInfoResponse> steps, List<GetLabelTimingInfoResponse> labels)
-		{			
+		{
 			JobResponse = jobResponse;
 			Steps = steps;
 			Labels = labels;
 		}
 	}
-	
+
 	/// <summary>
 	/// The timing info for 
 	/// </summary>
@@ -464,7 +502,7 @@ namespace Horde.Server.Jobs
 		/// Outcome from the jobstep
 		/// </summary>
 		public JobStepOutcome Outcome { get; set; } = JobStepOutcome.Unspecified;
-		
+
 		/// <summary>
 		/// If the step has been requested to abort
 		/// </summary>
@@ -536,12 +574,12 @@ namespace Horde.Server.Jobs
 		/// Error describing additional context for why a step failed to complete
 		/// </summary>
 		public JobStepError Error { get; set; }
-		
+
 		/// <summary>
 		/// If the step has been requested to abort
 		/// </summary>
 		public bool AbortRequested { get; set; }
-		
+
 		/// <summary>
 		/// Name of the user that requested the abort of this step [DEPRECATED]
 		/// </summary>
@@ -660,6 +698,7 @@ namespace Horde.Server.Jobs
 		Complete = 5
 	}
 
+#pragma warning disable CA1027
 	/// <summary>
 	/// Error code for a batch not being executed
 	/// </summary>
@@ -725,7 +764,24 @@ namespace Horde.Server.Jobs
 		/// The change that the job is running against is invalid
 		/// </summary>
 		UnknownShelf = 11,
+
+		/// <summary>
+		/// Step was no longer needed during a job update
+		/// </summary>
+		NoLongerNeeded = 12,
+
+		/// <summary>
+		/// Syncing the branch failed
+		/// </summary>
+		SyncingFailed = 13,
+
+		/// <summary>
+		/// Legacy alias for <see cref="SyncingFailed"/>
+		/// </summary>
+		[Obsolete("Use SyncingFailed instead")]
+		AgentSetupFailed = SyncingFailed,
 	}
+#pragma warning restore CA1027
 
 	/// <summary>
 	/// Request to update a jobstep batch

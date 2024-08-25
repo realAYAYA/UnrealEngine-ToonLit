@@ -67,7 +67,10 @@ namespace Private
 
 		enum class EVersion : int32
 		{
-			Current = 4
+			AddingPipelineCacheVersion = 5,
+			AddingDepthBounds = 6,
+
+			Current = AddingDepthBounds
 		};
 
 		/** Magic to reject other files */
@@ -483,6 +486,8 @@ bool UE::PipelineCacheUtilities::SaveStablePipelineCacheFile(const FString& Outp
 		UE::PipelineCacheUtilities::Private::FIndexedSHAHashAndFNameProxyArchive MemWriter(PlainMemWriter);
 
 		MemWriter.SetGameNetVer(FPipelineCacheFileFormatCurrentVersion);
+		uint32 CacheVersion = FPipelineCacheFileFormatCurrentVersion;
+		MemWriter << CacheVersion;
 
 		// serialize the stable shader index table in exact order, but without Output hashes
 		// (for now serialize PipelineHash inline, in hopes it will be later changed to a more stable identifier)
@@ -598,9 +603,9 @@ bool UE::PipelineCacheUtilities::LoadStablePipelineCacheFile(const FString& File
 	}
 
 	// start restrictive, as the format isn't really forward compatible, nor needs to be
-	if (Header.Version != SupportedHeader.Version)
+	if (Header.Version > SupportedHeader.Version)
 	{
-		UE_LOG(LogPipelineCacheUtilities, Warning, TEXT("Rejecting %s, old version (%d vs expected %d)."), *Filename, int(Header.Version), int(SupportedHeader.Version));
+		UE_LOG(LogPipelineCacheUtilities, Warning, TEXT("Rejecting %s, version is too new (%d vs expected %d)."), *Filename, int(Header.Version), int(SupportedHeader.Version));
 		return false;
 	}
 
@@ -644,7 +649,17 @@ bool UE::PipelineCacheUtilities::LoadStablePipelineCacheFile(const FString& File
 	FMemoryReader PlainMemReader(UncompressedMemory);
 	UE::PipelineCacheUtilities::Private::FIndexedSHAHashAndFNameProxyArchive MemReader(PlainMemReader);
 
-	MemReader.SetGameNetVer(FPipelineCacheFileFormatCurrentVersion);
+	uint32 CacheVersion = FPipelineCacheFileFormatCurrentVersion;
+	if (Header.Version >= UE::PipelineCacheUtilities::Private::FStablePipelineCacheSerializedHeader::EVersion::AddingPipelineCacheVersion)
+	{
+		MemReader << CacheVersion;
+	}
+	else
+	{
+		CacheVersion = 26; //EPipelineCacheFileFormatVersions::BeforeStableCacheVersioning
+	}
+
+	MemReader.SetGameNetVer(CacheVersion);
 
 	// read the stable keys as saved
 	TArray<FStableShaderKeyAndValue> SavedStableKeys;

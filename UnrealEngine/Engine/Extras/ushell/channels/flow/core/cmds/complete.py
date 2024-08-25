@@ -7,7 +7,7 @@ import importlib.util as imputil
 
 #-------------------------------------------------------------------------------
 def _set_title_inner(t, s):
-    print("\x1b]2;", t, " - ushell", s, sep=None, file=sys.stdout)
+    print("\x1b]2;", t, " - ushell", s, sep="", file=sys.stdout)
 
 if os.name == "nt":
     def _set_title(t):

@@ -8,6 +8,7 @@
 #include "StateTreeTaskBase.h"
 #include "Algo/LevenshteinDistance.h"
 #include "StateTreeEditorModule.h"
+#include "StateTreePropertyHelpers.h"
 
 #if WITH_EDITOR
 #include "Engine/UserDefinedStruct.h"
@@ -15,6 +16,16 @@
 #endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(StateTreeEditorData)
+
+UStateTreeEditorData::UStateTreeEditorData()
+{
+	FStateTreeEditorColor DefaultColor;
+	DefaultColor.ColorRef = FStateTreeEditorColorRef();
+	DefaultColor.Color = FLinearColor(FColor(31, 151, 167));
+	DefaultColor.DisplayName = TEXT("Default Color");
+
+	Colors.Add(MoveTemp(DefaultColor));
+}
 
 void UStateTreeEditorData::PostInitProperties()
 {
@@ -25,6 +36,7 @@ void UStateTreeEditorData::PostInitProperties()
 #if WITH_EDITOR
 	OnObjectsReinstancedHandle = FCoreUObjectDelegates::OnObjectsReinstanced.AddUObject(this, &UStateTreeEditorData::OnObjectsReinstanced);
 	OnUserDefinedStructReinstancedHandle = UE::StructUtils::Delegates::OnUserDefinedStructReinstanced.AddUObject(this, &UStateTreeEditorData::OnUserDefinedStructReinstanced);
+	OnParametersChangedHandle = UE::StateTree::Delegates::OnParametersChanged.AddUObject(this, &UStateTreeEditorData::OnParametersChanged);
 #endif
 }
 
@@ -41,6 +53,11 @@ void UStateTreeEditorData::BeginDestroy()
 	{
 		UE::StructUtils::Delegates::OnUserDefinedStructReinstanced.Remove(OnUserDefinedStructReinstancedHandle);
 		OnUserDefinedStructReinstancedHandle.Reset();
+	}
+	if (OnParametersChangedHandle.IsValid())
+	{
+		UE::StateTree::Delegates::OnParametersChanged.Remove(OnParametersChangedHandle);
+		OnParametersChangedHandle.Reset();
 	}
 	
 	Super::BeginDestroy();
@@ -111,12 +128,36 @@ void UStateTreeEditorData::OnUserDefinedStructReinstanced(const UUserDefinedStru
 	}
 }
 
+void UStateTreeEditorData::OnParametersChanged(const UStateTree& StateTree)
+{
+	if (const UStateTree* OwnerStateTree = GetTypedOuter<UStateTree>())
+	{
+		if (OwnerStateTree == &StateTree)
+		{
+			UpdateBindingsInstanceStructs();
+		}
+	}
+}
+
 
 void UStateTreeEditorData::PostLoad()
 {
 	Super::PostLoad();
+
+	// Ensure the schema and states have had their PostLoad() fixed applied as we may need them in the later calls (or StateTree compile which might be calling this).
+	if (Schema)
+	{
+		Schema->ConditionalPostLoad();
+	}
+	VisitHierarchy([](UStateTreeState& State, UStateTreeState* ParentState) mutable 
+	{
+		State.ConditionalPostLoad();
+		return EStateTreeVisitor::Continue;
+	});
+
 	ReparentStates();
 	FixObjectNodes();
+	FixDuplicateIDs();
 	UpdateBindingsInstanceStructs();
 }
 
@@ -187,10 +228,21 @@ void UStateTreeEditorData::PostEditChangeChainProperty(FPropertyChangedChainEven
 			{
 				TMap<FGuid, const FStateTreeDataView> AllStructValues;
 				GetAllStructValues(AllStructValues);
+				Modify();
 				EditorBindings.RemoveUnusedBindings(AllStructValues);
 			}
 		}
+
+		// Notify that the global data changed (will need to update binding widgets, etc)
+		if (MemberName == GET_MEMBER_NAME_CHECKED(UStateTreeEditorData, Evaluators)
+			|| MemberName == GET_MEMBER_NAME_CHECKED(UStateTreeEditorData, GlobalTasks))
+		{
+			UE::StateTree::Delegates::OnGlobalDataChanged.Broadcast(*StateTree);
+		}
+
 	}
+
+	UE::StateTree::PropertyHelpers::DispatchPostEditToNodes(*this, PropertyChangedEvent);
 }
 #endif // WITH_EDITOR
 
@@ -292,7 +344,7 @@ FStateTreeBindableStructDesc UStateTreeEditorData::FindContextData(const UStruct
 	{
 		if (Desc.Struct->IsChildOf(ObjectType))
 		{
-			Candidates.Emplace(Desc.Name, Desc.Struct, EStateTreeBindableStructSource::Context, Desc.ID);
+			Candidates.Emplace(Desc.Name, Desc.Struct, FStateTreeDataHandle(), EStateTreeBindableStructSource::Context, Desc.ID);
 		}
 	}
 
@@ -529,6 +581,143 @@ void UStateTreeEditorData::FixObjectNodes()
 	}
 }
 
+void UStateTreeEditorData::FixDuplicateIDs()
+{
+	// Around version 5.1-5.3 we had issue that copy/paste or some duplication methods could create nodes with duplicate IDs.
+	// This code tries to fix that, it looks for duplicates, makes them unique, and duplicates the bindings when ID changes.
+	TSet<FGuid> FoundNodeIDs;
+
+	// Evaluators
+	for (int32 Index = 0; Index < Evaluators.Num(); Index++)
+	{
+		FStateTreeEditorNode& Node = Evaluators[Index];
+		if (const FStateTreeEvaluatorBase* Evaluator = Node.Node.GetPtr<FStateTreeEvaluatorBase>())
+		{
+			const FGuid OldID = Node.ID; 
+			if (FoundNodeIDs.Contains(Node.ID))
+			{
+				Node.ID = UE::StateTree::PropertyHelpers::MakeDeterministicID(*this, TEXT("Evaluators"), Index);
+				
+				UE_LOG(LogStateTreeEditor, Log, TEXT("%s: Found Evaluator '%s' with duplicate ID, changing ID:%s to ID:%s."),
+					*GetFullName(), *Node.GetName().ToString(), *OldID.ToString(), *Node.ID.ToString());
+				EditorBindings.CopyBindings(OldID, Node.ID);
+			}
+			FoundNodeIDs.Add(Node.ID);
+		}
+	}
+	
+	// Global Tasks
+	for (int32 Index = 0; Index < GlobalTasks.Num(); Index++)
+	{
+		FStateTreeEditorNode& Node = GlobalTasks[Index];
+		if (const FStateTreeTaskBase* Task = Node.Node.GetPtr<FStateTreeTaskBase>())
+		{
+			const FGuid OldID = Node.ID; 
+			if (FoundNodeIDs.Contains(Node.ID))
+			{
+				Node.ID = UE::StateTree::PropertyHelpers::MakeDeterministicID(*this, TEXT("GlobalTasks"), Index);
+				
+				UE_LOG(LogStateTreeEditor, Log, TEXT("%s: Found GlobalTask '%s' with duplicate ID, changing ID:%s to ID:%s."),
+					*GetFullName(), *Node.GetName().ToString(), *OldID.ToString(), *Node.ID.ToString());
+				EditorBindings.CopyBindings(OldID, Node.ID);
+			}
+			FoundNodeIDs.Add(Node.ID);
+		}
+	}
+	
+	VisitHierarchy([&FoundNodeIDs, &EditorBindings = EditorBindings, &Self = *this](UStateTreeState& State, UStateTreeState* ParentState)
+	{
+		// Enter conditions
+		for (int32 Index = 0; Index < State.EnterConditions.Num(); Index++)
+		{
+			FStateTreeEditorNode& Node = State.EnterConditions[Index];
+			if (const FStateTreeConditionBase* Cond = Node.Node.GetPtr<FStateTreeConditionBase>())
+			{
+				const FGuid OldID = Node.ID;
+				
+				bool bIsAlreadyInSet = false;
+				FoundNodeIDs.Add(Node.ID, &bIsAlreadyInSet);
+				if (bIsAlreadyInSet)
+				{
+					Node.ID = UE::StateTree::PropertyHelpers::MakeDeterministicID(State, TEXT("EnterConditions"), Index);
+					
+					UE_LOG(LogStateTreeEditor, Log, TEXT("%s: Found Enter Condition '%s' with duplicate ID on state '%s', changing ID:%s to ID:%s."),
+						*Self.GetFullName(), *Node.GetName().ToString(), *GetNameSafe(&State), *OldID.ToString(), *Node.ID.ToString());
+					EditorBindings.CopyBindings(OldID, Node.ID);
+				}
+			}
+		}
+
+		// Tasks
+		for (int32 Index = 0; Index < State.Tasks.Num(); Index++)
+		{
+			FStateTreeEditorNode& Node = State.Tasks[Index];
+			if (const FStateTreeTaskBase* Task = Node.Node.GetPtr<FStateTreeTaskBase>())
+			{
+				const FGuid OldID = Node.ID;
+				
+				bool bIsAlreadyInSet = false;
+				FoundNodeIDs.Add(Node.ID, &bIsAlreadyInSet);
+				if (bIsAlreadyInSet)
+				{
+					Node.ID = UE::StateTree::PropertyHelpers::MakeDeterministicID(State, TEXT("Tasks"), Index);
+
+					UE_LOG(LogStateTreeEditor, Log, TEXT("%s: Found Task '%s' with duplicate ID on state '%s', changing ID:%s to ID:%s."),
+						*Self.GetFullName(), *Node.GetName().ToString(), *GetNameSafe(&State), *OldID.ToString(), *Node.ID.ToString());
+					EditorBindings.CopyBindings(OldID, Node.ID);
+				}
+			}
+		}
+
+		if (FStateTreeTaskBase* Task = State.SingleTask.Node.GetMutablePtr<FStateTreeTaskBase>())
+		{
+			const FGuid OldID = State.SingleTask.ID;
+
+			bool bIsAlreadyInSet = false;
+			FoundNodeIDs.Add(State.SingleTask.ID, &bIsAlreadyInSet);
+			if (bIsAlreadyInSet)
+			{
+				State.SingleTask.ID = UE::StateTree::PropertyHelpers::MakeDeterministicID(State, TEXT("SingleTask"), 0);
+
+				UE_LOG(LogStateTreeEditor, Log, TEXT("%s: Found enter condition '%s' with duplicate ID on state '%s', changing ID:%s to ID:%s."),
+					*Self.GetFullName(), *State.SingleTask.GetName().ToString(), *GetNameSafe(&State), *OldID.ToString(), *State.SingleTask.ID.ToString());
+				EditorBindings.CopyBindings(OldID, State.SingleTask.ID);
+			}
+		}
+
+		// Transitions
+		for (int32 TransitionIndex = 0; TransitionIndex < State.Transitions.Num(); TransitionIndex++)
+		{
+			FStateTreeTransition& Transition = State.Transitions[TransitionIndex];
+			for (int32 Index = 0; Index < Transition.Conditions.Num(); Index++)
+			{
+				FStateTreeEditorNode& Node = Transition.Conditions[Index];
+				if (const FStateTreeConditionBase* Cond = Node.Node.GetPtr<FStateTreeConditionBase>())
+				{
+					const FGuid OldID = Node.ID; 
+					bool bIsAlreadyInSet = false;
+					FoundNodeIDs.Add(Node.ID, &bIsAlreadyInSet);
+					if (bIsAlreadyInSet)
+					{
+						Node.ID = UE::StateTree::PropertyHelpers::MakeDeterministicID(State, TEXT("TransitionConditions"), ((uint64)TransitionIndex << 32) | (uint64)Index);
+
+						UE_LOG(LogStateTreeEditor, Log, TEXT("%s: Found transition condition '%s' with duplicate ID on state '%s', changing ID:%s to ID:%s."),
+							*Self.GetFullName(), *Node.GetName().ToString(), *GetNameSafe(&State), *OldID.ToString(), *Node.ID.ToString());
+						EditorBindings.CopyBindings(OldID, Node.ID);
+					}
+				}
+			}
+		}
+		
+		return EStateTreeVisitor::Continue;
+	});
+
+	// It is possible that the user has changed the node type so some of the bindings might not make sense anymore, clean them up.
+	TMap<FGuid, const FStateTreeDataView> AllValues;
+	GetAllStructValues(AllValues);
+	EditorBindings.RemoveUnusedBindings(AllValues);
+}
+
 void UStateTreeEditorData::UpdateBindingsInstanceStructs()
 {
 	TMap<FGuid, const FStateTreeDataView> AllValues;
@@ -613,7 +802,8 @@ EStateTreeVisitor UStateTreeEditorData::VisitStateNodes(const UStateTreeState& S
 	if (bContinue)
 	{
 		// Bindable state parameters
-		if (State.Type == EStateTreeStateType::Linked && State.Parameters.Parameters.IsValid())
+		if (State.Type != EStateTreeStateType::Subtree
+			&& State.Parameters.Parameters.IsValid())
 		{
 			if (InFunc(&State, State.Parameters.ID, State.Name, EStateTreeNodeType::StateParameters, nullptr, State.Parameters.Parameters.GetPropertyBagStruct()) == EStateTreeVisitor::Break)
 			{
@@ -632,10 +822,8 @@ EStateTreeVisitor UStateTreeEditorData::VisitStateNodes(const UStateTreeState& S
 
 	if (bContinue)
 	{
-		// Bindable state parameters for subtree or linked tree.
-		if ((State.Type == EStateTreeStateType::Subtree
-				|| State.Type == EStateTreeStateType::Linked)
-			&& State.Parameters.Parameters.IsValid())
+		// Bindable state parameters
+		if (State.Parameters.Parameters.IsValid())
 		{
 			FStateTreeBindableStructDesc Desc;
 			Desc.Struct = State.Parameters.Parameters.GetPropertyBagStruct();

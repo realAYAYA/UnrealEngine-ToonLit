@@ -63,7 +63,6 @@ void FDownloadServiceSpec::Define()
 		MockDownloadServiceStat.Reset(new FMockDownloadServiceStat());
 		MockInstallerAnalytics.Reset(new FMockInstallerAnalytics());
 		DownloadService.Reset(FDownloadServiceFactory::Create(
-			Ticker,
 			FakeHttpModule.Get(),
 			MockFileSystem.Get(),
 			MockDownloadServiceStat.Get(),

@@ -9,6 +9,9 @@
 
 namespace UE::RivermaxCore
 {
+	constexpr TCHAR DefaultStreamAddress[] = TEXT("228.1.1.1");
+
+
 	enum class ERivermaxAlignmentMode
 	{
 		/** Aligns scheduling with ST2059 frame boundary formula */
@@ -78,7 +81,7 @@ namespace UE::RivermaxCore
 		FString InterfaceAddress;
 
 		/** IP of the stream. Defaults to multicast group IP. */
-		FString StreamAddress = TEXT("224.1.1.1");
+		FString StreamAddress = DefaultStreamAddress;
 
 		/** Port to be used by stream */
 		uint32 Port = 50000;
@@ -111,7 +114,7 @@ namespace UE::RivermaxCore
 		FString InterfaceAddress;
 
 		/** IP of the stream. Defaults to multicast group IP. */
-		FString StreamAddress = TEXT("224.1.1.1");
+		FString StreamAddress = DefaultStreamAddress;
 
 		/** Port to be used by stream */
 		uint32 Port = 50000;

@@ -218,6 +218,9 @@ class UPackageMap : public UObject
 	const TSet< FNetworkGUID > &	GetTrackedUnmappedGuids() const { return TrackedUnmappedNetGuids; }
 	const TSet< FNetworkGUID > &	GetTrackedDynamicMappedGuids() const { return TrackedMappedDynamicNetGuids; }
 
+	virtual void AddUnmappedNetGUIDReference(FNetworkGUID UnmappedGUID) {}
+	virtual void RemoveUnmappedNetGUIDReference(FNetworkGUID UnmappedGUID) {}
+
 	// For sync load debugging with LogNetSyncLoads
 	virtual void			ResetTrackedSyncLoadedGuids() {}
 	virtual void			ReportSyncLoadsForProperty(const FProperty* Property, const UObject* Object) {}

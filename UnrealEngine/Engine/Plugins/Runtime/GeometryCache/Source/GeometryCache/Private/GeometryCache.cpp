@@ -5,6 +5,7 @@
 #include "Engine/AssetUserData.h"
 #include "GeometryCacheMeshData.h"
 #include "GeometryCacheTrack.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/FrameworkObjectVersion.h"
 #include "UObject/AnimPhysObjectVersion.h"
 #include "Interfaces/ITargetPlatform.h"
@@ -95,18 +96,25 @@ FString UGeometryCache::GetDesc()
 
 void UGeometryCache::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UGeometryCache::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	// Information on number total of (per type) tracks
 	const int32 NumTracks = Tracks.Num();	
-	OutTags.Add(FAssetRegistryTag("Total Tracks", FString::FromInt(NumTracks), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("Total Tracks", FString::FromInt(NumTracks), FAssetRegistryTag::TT_Numerical));
 
 #if WITH_EDITORONLY_DATA
 	if (AssetImportData)
 	{
-		OutTags.Add(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
 	}
 #endif
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UGeometryCache::GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize)

@@ -46,7 +46,6 @@ public:
 	NIAGARA_API virtual bool PerInstanceTickPostSimulate(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance, float DeltaSeconds) override;
 	virtual int32 PerInstanceDataSize() const override { return sizeof(CQDIPerInstanceData); }
 	
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	NIAGARA_API virtual void GetAssetTagsForContext(const UObject* InAsset, FGuid AssetVersion, const TArray<const UNiagaraDataInterface*>& InProperties, TMap<FName, uint32>& NumericKeys, TMap<FName, FString>& StringKeys) const override;
 
@@ -55,7 +54,7 @@ public:
 	NIAGARA_API void PerformQueryAsyncCPU(FVectorVMExternalFunctionContext& Context);
 
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return true; }
-	virtual bool RequiresDistanceFieldData() const override { return true; }
+	virtual bool RequiresGlobalDistanceField() const override { return true; }
 	virtual bool RequiresDepthBuffer() const override { return true; }
 
 #if WITH_EDITORONLY_DATA
@@ -75,6 +74,11 @@ public:
 	virtual bool HasPreSimulateTick() const override{ return true; }
 	virtual bool HasPostSimulateTick() const override { return true; }
 	virtual bool PostSimulateCanOverlapFrames() const { return false; }
+
+protected:
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 
 private:
 	static NIAGARA_API FCriticalSection CriticalSection;

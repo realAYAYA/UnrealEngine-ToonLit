@@ -41,9 +41,9 @@ void FBone::UpdateFromInputs()
 		return;
 	}
 
-	LocalPositionOrig = Parent->Rotation.Inverse() * (Position - Parent->Position);
-	LocalRotationOrig = Parent->Rotation.Inverse() * Rotation;
-	Length = LocalPositionOrig.Size();
+	LocalPositionFromInput = Parent->Rotation.Inverse() * (Position - Parent->Position);
+	LocalRotationFromInput = Parent->Rotation.Inverse() * Rotation;
+	Length = LocalPositionFromInput.Size();
 }
 
 FRigidBody::FRigidBody(FBone* InBone)
@@ -119,21 +119,16 @@ FRigidBody* FRigidBody::GetParentBody() const
 	return nullptr;
 }
 
-float FRigidBody::GetInverseMass()
+bool FRigidBody::IsAllowedToRotate() const
 {
-	if (Pin && Pin->bEnabled)
-	{
-		return 1.0f - Pin->Alpha;
-	}
-
-	return InvMass;
+	return !bIsLockedBySubSolve && InvMass > SMALL_NUMBER;
 }
 
 void FRigidBody::ApplyPushToRotateBody(const FVector& Push, const FVector& Offset)
 {
-	if (Pin && Pin->bEnabled && Pin->bPinRotation)
+	if (!IsAllowedToRotate())
 	{
-		return; // rotation of this body is pinned
+		return; // rotation of this body is disabled
 	}
 	
 	// equation 8 in "Detailed Rigid Body Simulation with XPBD"
@@ -142,16 +137,16 @@ void FRigidBody::ApplyPushToRotateBody(const FVector& Push, const FVector& Offse
 	ApplyRotationDelta(DeltaQ);
 }
 
-void FRigidBody::ApplyPushToPosition(const FVector& Push)
+void FRigidBody::ApplyPositionDelta(const FVector& DeltaP)
 {
-	Position += Push * (1.0f - J.PositionStiffness) * SolverSettings->OverRelaxation;
+	Position += DeltaP * (1.0f - J.PositionStiffness) * SolverSettings->OverRelaxation;
 }
 
 void FRigidBody::ApplyRotationDelta(const FQuat& DeltaQ)
 {
-	if (Pin && Pin->bEnabled && Pin->bPinRotation)
+	if (!IsAllowedToRotate())
 	{
-		return; // rotation of this body is pinned
+		return; // rotation of this body is disabled
 	}
 
 	// limit rotation each iteration

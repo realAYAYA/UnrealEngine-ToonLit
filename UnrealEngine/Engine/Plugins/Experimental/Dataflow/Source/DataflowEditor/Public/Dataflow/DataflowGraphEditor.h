@@ -31,7 +31,7 @@ namespace Dataflow {
  * 
  * see(SDataprepGraphEditor for reference)
  */
-class DATAFLOWEDITOR_API SDataflowGraphEditor : public SGraphEditor
+class DATAFLOWEDITOR_API SDataflowGraphEditor : public SGraphEditor, public FGCObject
 {
 public:
 
@@ -120,7 +120,20 @@ public:
 	/** */
 	void ZoomToFitGraph();
 
+	/** */
+	void CopySelectedNodes();
+
+	/** */
+	void CutSelectedNodes();
+
+	/** */
+	void PasteSelectedNodes();
+
 	SGraphEditor* GetGraphEditor() { return (SGraphEditor*)this; }
+
+	/** FGCObject interface */
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override { return TEXT("SDataflowGraphEditor"); }
 
 private:
 	/** Add an additional option pin to all selected Dataflow nodes for those that overrides the AddPin function. */
@@ -132,6 +145,8 @@ private:
 	void OnRemoveOptionPin();
 	/** Return whether all currently selected Dataflow nodes can execute the RemovePin function. */
 	bool CanRemoveOptionPin() const;
+
+	bool GetPinVisibility(SGraphEditor::EPinVisibility InVisibility) const;
 
 	FDataflowEditorCommands::FOnDragDropEventCallback OnDragDropEventCallback;
 	FDataflowEditorCommands::FGraphEvaluationCallback EvaluateGraphCallback;

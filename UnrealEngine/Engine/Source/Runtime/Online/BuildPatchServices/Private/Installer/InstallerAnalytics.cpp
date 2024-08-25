@@ -34,6 +34,21 @@ namespace BuildPatchServices
 	{
 	}
 
+	class FNullInstallerAnalytics
+		: public IInstallerAnalytics
+	{
+	public:
+		// IInstallerAnalytics interface begin.
+		virtual void RecordChunkDownloadError(const FString& ChunkUrl, int32 ResponseCode, const FString& ErrorString) override {}
+		virtual void RecordChunkDownloadAborted(const FString& ChunkUrl, double ChunkTime, double ChunkMean, double ChunkStd, double BreakingPoint) override {}
+		virtual void RecordChunkCacheError(const FGuid& ChunkGuid, const FString& Filename, int32 LastError, const FString& SystemName, const FString& ErrorString) override {}
+		virtual void RecordConstructionError(const FString& Filename, int32 LastError, const FString& ErrorString) override {}
+		virtual void RecordPrereqInstallationError(const FString& AppName, const FString& AppVersion, const FString& Filename, const FString& CommandLine, int32 ErrorCode, const FString& ErrorString) override {}
+		virtual void TrackRequest(const FHttpRequestPtr& Request) override {}
+		virtual void Flush() override {}
+		// IInstallerAnalytics interface end.
+	};
+
 	class FInstallerAnalytics
 		: public IInstallerAnalytics
 	{
@@ -73,6 +88,7 @@ namespace BuildPatchServices
 		, AnalyticsEventQueueCS()
 		, AnalyticsEventQueue()
 	{
+		check(Analytics);
 		TickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FInstallerAnalytics::Tick));
 	}
 
@@ -145,25 +161,23 @@ namespace BuildPatchServices
 
 	void FInstallerAnalytics::TrackRequest(const FHttpRequestPtr& Request)
 	{
-		static const FName EndpointName = TEXT("CDN.Chunk");
+		//static const FName EndpointName = TEXT("CDN.Chunk");
 	}
 
 	void FInstallerAnalytics::Flush()
 	{
 		check(IsInGameThread());
+		check(Analytics);
 
         QUICK_SCOPE_CYCLE_COUNTER(STAT_FInstallerAnalytics_Tick);
 
-		if (Analytics != nullptr)
+		// Process the Analytics Event queue
+		FScopeLock ScopeLock(&AnalyticsEventQueueCS);
+		for (FAnalyticsEventInfo& AnalyticsEvent : AnalyticsEventQueue)
 		{
-			// Process the Analytics Event queue
-			FScopeLock ScopeLock(&AnalyticsEventQueueCS);
-			for (FAnalyticsEventInfo& AnalyticsEvent : AnalyticsEventQueue)
-			{
-				Analytics->RecordEvent(AnalyticsEvent.EventName, AnalyticsEvent.Attributes);
-			}
-			AnalyticsEventQueue.Reset();
+			Analytics->RecordEvent(AnalyticsEvent.EventName, AnalyticsEvent.Attributes);
 		}
+		AnalyticsEventQueue.Reset();
 	}
 
 	void FInstallerAnalytics::QueueAnalyticsEvent(FString EventName, TArray<FAnalyticsEventAttribute> Attributes)
@@ -180,6 +194,11 @@ namespace BuildPatchServices
 
 	IInstallerAnalytics* FInstallerAnalyticsFactory::Create(IAnalyticsProvider* AnalyticsProvider)
 	{
-		return new FInstallerAnalytics(AnalyticsProvider);
+		if (AnalyticsProvider)
+		{
+			return new FInstallerAnalytics(AnalyticsProvider);
+		}
+
+		return new FNullInstallerAnalytics();
 	}
 }

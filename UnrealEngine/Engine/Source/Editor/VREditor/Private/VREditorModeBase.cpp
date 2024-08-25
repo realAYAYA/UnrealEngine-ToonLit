@@ -165,7 +165,7 @@ void UVREditorModeBase::StartViewport(TSharedPtr<SLevelViewport> Viewport)
 	if (bActuallyUsingVR)
 	{
 		SavedEditorState.TrackingOrigin = GEngine->XRSystem->GetTrackingOrigin();
-		GEngine->XRSystem->SetTrackingOrigin(EHMDTrackingOrigin::Floor);
+		GEngine->XRSystem->SetTrackingOrigin(EHMDTrackingOrigin::LocalFloor);
 	}
 
 	// Make the new viewport the active level editing viewport right away

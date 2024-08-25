@@ -24,6 +24,7 @@ public:
 	virtual TSharedPtr<SGraphNode> CreateVisualWidget() override;
 	void NotifyPinConnectionListChanged(UEdGraphPin* Pin);
 	virtual void PinConnectionListChanged(UEdGraphPin* Pin) override;
+	virtual UCustomizableObjectNodeRemapPins* CreateRemapPinsDefault() const override;
 
 	// UCustomizableObjectNode interface
 	virtual void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;

@@ -190,11 +190,11 @@ bool TryCollectKeyAndDependencies(UPackage* Package, const ITargetPlatform* Targ
 			FPackageName::IsMemoryPackage(StringBuffer) ||
 			FPackageName::IsScriptPackage(StringBuffer);
 	};
-	SortedBuild.RemoveAllSwap(IsTransientPackageName, false /* bAllowShrinking */);
+	SortedBuild.RemoveAllSwap(IsTransientPackageName, EAllowShrinking::No);
 	SortedBuild.Sort(FNameLexicalLess());
 	TArray<FName> SortedRuntimeOnly;
 	SortedRuntimeOnly = RuntimeOnlyDependencies.Array();
-	SortedRuntimeOnly.RemoveAllSwap(IsTransientPackageName, false /* bAllowShrinking */);
+	SortedRuntimeOnly.RemoveAllSwap(IsTransientPackageName, EAllowShrinking::No);
 	SortedRuntimeOnly.Sort(FNameLexicalLess());
 
 	if (!TryCreateKey(PackageName, SortedBuild, OutHash, OutErrorMessage))
@@ -398,6 +398,11 @@ bool IsIterativeEnabled(FName PackageName, bool bAllowAllClasses)
 
 	if (!bAllowAllClasses)
 	{
+		auto LogInvalidDueTo = [](FName PackageName, FName ClassPath)
+			{
+				UE_LOG(LogEditorDomain, Verbose, TEXT("NonIterative Package %s due to %s"), *PackageName.ToString(), *ClassPath.ToString());
+			};
+
 		UE::EditorDomain::FClassDigestMap& ClassDigests = UE::EditorDomain::GetClassDigests();
 		FReadScopeLock ClassDigestsScopeLock(ClassDigests.Lock);
 		for (FName ClassName : PackageData.ImportedClasses)
@@ -410,12 +415,26 @@ bool IsIterativeEnabled(FName PackageName, bool bAllowAllClasses)
 			}
 			if (!ExistingData)
 			{
-				// All allowlisted classes are added to ClassDigests at startup, so if the class is not in ClassDigests,
-				// it is not allowlisted
+				// !ExistingData -> !allowed, because caller has already called CalculatePackageDigest, so all
+				// existing classes in the package have been added to ClassDigests.
+				LogInvalidDueTo(PackageName, ClassName);
 				return false;
+			}
+			if (!ExistingData->bNative)
+			{
+				// TODO: We need to add a way to mark non-native classes (there can be many of them) as allowed or denied.
+				// Currently we are allowing them all, so long as their closest native is allowed. But this is not completely
+				// safe to do, because non-native classes can add constructionevents that e.g. use the Random function.
+				ExistingData = ClassDigests.Map.Find(ExistingData->ClosestNative);
+				if (!ExistingData)
+				{
+					LogInvalidDueTo(PackageName, ClassName);
+					return false;
+				}
 			}
 			if (!ExistingData->bTargetIterativeEnabled)
 			{
+				LogInvalidDueTo(PackageName, ClassName);
 				return false;
 			}
 		}
@@ -427,9 +446,9 @@ TArray<const UTF8CHAR*> FEditorDomainOplog::ReservedOplogKeys;
 
 FEditorDomainOplog::FEditorDomainOplog()
 #if UE_WITH_ZEN
-: HttpClient(TEXT("localhost"), UE::Zen::FZenServiceInstance::GetAutoLaunchedPort() > 0 ? UE::Zen::FZenServiceInstance::GetAutoLaunchedPort() : 1337)
+: HttpClient(TEXT("localhost"), UE::Zen::FZenServiceInstance::GetAutoLaunchedPort() > 0 ? UE::Zen::FZenServiceInstance::GetAutoLaunchedPort() : 8558)
 #else
-: HttpClient(TEXT("localhost"), 1337)
+: HttpClient(TEXT("localhost"), 8558)
 #endif
 {
 	StaticInit();
@@ -669,20 +688,17 @@ void CommitEditorDomainCookAttachments(FName PackageName, TArrayView<IPackageWri
 	GEditorDomainOplog->CommitPackage(PackageName, Attachments);
 }
 
-void UtilsInitialize(bool bEditorDomainEnabled)
+void CookInitialize()
 {
-	if (bEditorDomainEnabled)
+	bool bCookAttachmentsEnabled = true;
+	GConfig->GetBool(TEXT("EditorDomain"), TEXT("CookAttachmentsEnabled"), bCookAttachmentsEnabled, GEditorIni);
+	if (bCookAttachmentsEnabled)
 	{
-		bool bCookAttachmentsEnabled = true;
-		GConfig->GetBool(TEXT("EditorDomain"), TEXT("CookAttachmentsEnabled"), bCookAttachmentsEnabled, GEditorIni);
-		if (bCookAttachmentsEnabled)
+		GEditorDomainOplog = MakeUnique<FEditorDomainOplog>();
+		if (!GEditorDomainOplog->IsValid())
 		{
-			GEditorDomainOplog = MakeUnique<FEditorDomainOplog>();
-			if (!GEditorDomainOplog->IsValid())
-			{
-				UE_LOG(LogEditorDomain, Display, TEXT("Failed to connect to ZenServer; EditorDomain oplog is unavailable."));
-				GEditorDomainOplog.Reset();
-			}
+			UE_LOG(LogEditorDomain, Display, TEXT("Failed to connect to ZenServer; EditorDomain oplog is unavailable."));
+			GEditorDomainOplog.Reset();
 		}
 	}
 }

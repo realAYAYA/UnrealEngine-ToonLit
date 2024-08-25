@@ -4,13 +4,22 @@
 
 #include "CoreMinimal.h"
 #include "Components/SceneComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Components/IDisplayClusterComponent.h"
+#include "Render/DisplayDevice/Containers/DisplayClusterDisplayDevice_Enums.h"
 
 #include "DisplayClusterCameraComponent.generated.h"
 
+class UMaterial;
+class UMaterialInstanceDynamic;
+class UMeshComponent;
 class UBillboardComponent;
 class UTexture2D;
-
+class IDisplayClusterViewportManager;
+class IDisplayClusterWarpPolicy;
+class IDisplayClusterViewportConfiguration;
+class IDisplayClusterViewportPreview;
+struct FMinimalViewInfo;
 
 UENUM()
 enum class EDisplayClusterEyeStereoOffset : uint8
@@ -24,7 +33,7 @@ enum class EDisplayClusterEyeStereoOffset : uint8
 /**
  * 3D point in space used to render nDisplay viewports from
  */
-UCLASS(ClassGroup = (DisplayCluster), meta = (BlueprintSpawnableComponent, DisplayName = "NDisplay View Origin"))
+UCLASS(ClassGroup = (DisplayCluster), HideCategories = (Navigation, AssetUserData, LOD, Physics, Cooking, Activation, Tags, Gizmo, Collision, ComponentReplication, Events, Sockets, ComponentTick), meta = (BlueprintSpawnableComponent, DisplayName = "NDisplay View Origin"))
 class DISPLAYCLUSTER_API UDisplayClusterCameraComponent
 	: public USceneComponent
 	, public IDisplayClusterComponent
@@ -33,6 +42,66 @@ class DISPLAYCLUSTER_API UDisplayClusterCameraComponent
 
 public:
 	UDisplayClusterCameraComponent(const FObjectInitializer& ObjectInitializer);
+
+	/** Return ViewPoint for this component
+	 * If the component logic supports postprocess, it will also be in the ViewInfo structure.
+	 *
+	 * @param InOutViewInfo - ViewInfo data
+	 * @param OutCustomNearClippingPlane - Custom NCP, or a value less than zero if not defined.
+	 */
+	UE_DEPRECATED(5.4, "This function has been deprecated. Please use 'GetDesiredView()'.")
+	virtual void GetDesiredView(FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane = nullptr)
+	{ }
+
+	/** Return ViewPoint for this component
+	 * If the component logic supports postprocess, it will also be in the ViewInfo structure.
+	 *
+	 * @param InOutViewInfo - ViewInfo data
+	 * @param OutCustomNearClippingPlane - Custom NCP, or a value less than zero if not defined.
+	 */
+	virtual void GetDesiredView(IDisplayClusterViewportConfiguration& InViewportConfiguration, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane = nullptr);
+
+	/**
+	 * All cluster viewports that reference this component will be created in the background on the current cluster node if the function returns true.
+	 */
+	virtual bool ShouldUseEntireClusterViewports(IDisplayClusterViewportManager* InViewportManager) const
+	{
+		return false;
+	}
+
+	/**
+	 * Get the warp policy instance used by this compoenent.
+	 * From the DC ViewportManager, these policies will be assigned to the viewports that use this viewpoint component.
+	 */
+	virtual IDisplayClusterWarpPolicy* GetWarpPolicy(IDisplayClusterViewportManager* InViewportManager)
+	{
+		return nullptr;
+	}
+
+	/** Override DisplayDevice material by type for 
+	* The UDisplayClusterInFrustumFitCameraComponent uses its own material to display additional deformed preview meshes in front of the camera.
+	*
+	* @param InMeshType     - mesh type
+	* @param InMaterialType - the type of material being requested
+	* 
+	* @return nullptr if DisplayDevice material is used.
+	*/
+	virtual TObjectPtr<UMaterial> GetDisplayDeviceMaterial(const EDisplayClusterDisplayDeviceMeshType InMeshType, const EDisplayClusterDisplayDeviceMaterialType InMaterialType) const
+	{
+		return nullptr;
+	}
+
+	/** Perform any operations on the mesh and material instance, such as setting parameter values.
+	*
+	* @param InViewport             - current viewport
+	* @param InMeshType             - mesh type
+	* @param InMaterialType         - type of material being requested
+	* @param InMeshComponent        - mesh component to be updated
+	* @param InMeshMaterialInstance - material instance that used on this mesh
+	*/
+	virtual void OnUpdateDisplayDeviceMeshAndMaterialInstance(IDisplayClusterViewportPreview& InViewportPreview, const EDisplayClusterDisplayDeviceMeshType InMeshType, const EDisplayClusterDisplayDeviceMaterialType InMaterialType, UMeshComponent* InMeshComponent, UMaterialInstanceDynamic* InMeshMaterialInstance) const
+	{ }
+
 
 public:
 	/**

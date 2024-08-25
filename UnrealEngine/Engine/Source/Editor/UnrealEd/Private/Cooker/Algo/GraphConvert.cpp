@@ -42,7 +42,7 @@ void ConstructTransposeGraph(TConstArrayView<TConstArrayView<FVertex>> Graph, TA
 		// Normalize Step 2: Sort edges
 		Algo::Sort(Edges);
 		// Normalize Step 3: Remove duplicates
-		Edges.SetNum(Algo::Unique(Edges), false /* bAllowShrinking */);
+		Edges.SetNum(Algo::Unique(Edges), EAllowShrinking::No);
 		NumTotalEdges += Edges.Num();
 	}
 
@@ -205,9 +205,9 @@ bool TryConstructCondensationGraph(TConstArrayView<TConstArrayView<FVertex>> Gra
 			}
 
 			// Copy reversed DFSOutFirstToLast into OutVertexToInVertices, and inverted into InVertexToOutVertex
-			OutVertexToInVertices.SetNum(NumVertices, false /* bAllowShrinking */);
-			OutVertsBuffer.SetNum(NumVertices, false /* bAllowShrinking */);
-			InVertexToOutVertex.SetNum(NumVertices, false /* bAllowShrinking */);
+			OutVertexToInVertices.SetNum(NumVertices, EAllowShrinking::No);
+			OutVertsBuffer.SetNum(NumVertices, EAllowShrinking::No);
+			InVertexToOutVertex.SetNum(NumVertices, EAllowShrinking::No);
 			for (FVertex OutVertex = 0; OutVertex < NumVertices; ++OutVertex)
 			{
 				FVertex InVertex = DFSOutFirstToLast[NumVertices - 1 - OutVertex];
@@ -476,7 +476,7 @@ bool FCondensationGraphTest::RunTest(const FString& Parameters)
 
 		// Verify InVertexToOutVertex and OutVertexToInVertices match, cover all vertices, and do not put the same
 		// invertex into two outvertices
-		ActualInVertexToOutVertex.SetNumUninitialized(NumVertices, false /* bAllowShrinking */);
+		ActualInVertexToOutVertex.SetNumUninitialized(NumVertices, EAllowShrinking::No);
 		Assigned.SetRange(0, NumVertices, false);
 		int32 ComponentIndex = 0;
 		for (TConstArrayView<FVertex> ActualComponentVertices : OutVertexToInVertices)
@@ -512,7 +512,7 @@ bool FCondensationGraphTest::RunTest(const FString& Parameters)
 
 		// Finish the construction of ExpectedOutVertexToInVertices; it has the contract that any unmentioned vertex is in a
 		// component by itself. Also construct its inverse - ExpectedInVertexToOutVertex.
-		ExpectedInVertexToOutVertex.SetNumUninitialized(NumVertices, false /* bAllowShrinking */);
+		ExpectedInVertexToOutVertex.SetNumUninitialized(NumVertices, EAllowShrinking::No);
 		Assigned.SetRange(0, NumVertices, false);
 		ComponentIndex = 0;
 		for (TArray<FVertex>& ExpectedComponentVertices : ExpectedOutVertexToInVertices)
@@ -627,7 +627,7 @@ bool FCondensationGraphTest::RunTest(const FString& Parameters)
 				int32 NextIndex = 0;
 				while (NextIndex < Reachable.Num())
 				{
-					FVertex Vertex = Reachable.Pop(false /* bAllowShrinking */);
+					FVertex Vertex = Reachable.Pop(EAllowShrinking::No);
 					for (FVertex EdgeVertex : CondensationGraph[Vertex])
 					{
 						if (!Assigned[EdgeVertex])
@@ -637,7 +637,7 @@ bool FCondensationGraphTest::RunTest(const FString& Parameters)
 						}
 					}
 				}
-				for (FVertex ReachableVertex : Reachable)
+				for (FVertex ReachableVertex : Reachable) //-V1078
 				{
 					if (ReachableVertex < Root)
 					{

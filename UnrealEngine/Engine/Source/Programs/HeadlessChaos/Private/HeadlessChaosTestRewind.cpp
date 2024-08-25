@@ -78,7 +78,7 @@ namespace ChaosTest {
 		{
 			TestEmpty([&Lambda, RewindHistorySize](auto* Solver, FReal SimDt, int32 Optimization)
 			{
-				auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+				auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 				// Make particles
 					auto Proxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
@@ -87,7 +87,7 @@ namespace ChaosTest {
 					Particle.SetGeometry(Sphere);
 					Solver->RegisterObject(Proxy);
 
-					Lambda(Solver, SimDt, Optimization, Proxy, Sphere.Get());
+					Lambda(Solver, SimDt, Optimization, Proxy, Sphere.GetReference());
 
 			}, RewindHistorySize);
 		}
@@ -97,9 +97,9 @@ namespace ChaosTest {
 	{
 		TRewindHelper::TestEmpty([](auto* Solver, FReal SimDt, int32 Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(0), FVec3(1)));
-			auto Box2 = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(2), FVec3(3)));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(0), FVec3(1)));
+			auto Box2 = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(2), FVec3(3)));
 
 			// Make particles
 				auto Proxy = FSingleParticlePhysicsProxy::Create(Chaos::FKinematicGeometryParticle::CreateParticle());
@@ -137,7 +137,7 @@ namespace ChaosTest {
 				EXPECT_EQ(Particle.X()[2], 100 - LastGameStep);
 
 			//ended up with box geometry
-				EXPECT_EQ(Box.Get(), Particle.Geometry().Get());
+				EXPECT_EQ(Box.GetReference(), Particle.GetGeometry());
 
 			const FRewindData* RewindData = Solver->GetRewindData();
 
@@ -150,22 +150,22 @@ namespace ChaosTest {
 				const FReal LastInputTime = SimDt <= 1 ? TimeStart : TimeEnd - 1;	//latest gt time associated with this interval
 
 				const auto ParticleState = RewindData->GetPastStateAtFrame(*Proxy->GetHandle_LowLevel(), SimStep);
-				EXPECT_EQ(ParticleState.X()[2], 100 - FMath::FloorToInt(LastInputTime));	//We teleported on GT so no interpolation
+				EXPECT_EQ(ParticleState.GetX()[2], 100 - FMath::FloorToInt(LastInputTime));	//We teleported on GT so no interpolation
 
 				if (LastInputTime < 3)
 				{
 					//was sphere
-					EXPECT_EQ(ParticleState.Geometry().Get(), Sphere.Get());
+					EXPECT_EQ(ParticleState.GetGeometry(), Sphere.GetReference());
 				}
 				else if (LastInputTime < 5 || LastInputTime >= 7)
 				{
 					//then became box
-					EXPECT_EQ(ParticleState.Geometry().Get(), Box.Get());
+					EXPECT_EQ(ParticleState.GetGeometry(), Box.GetReference());
 				}
 				else
 				{
 					//second box
-					EXPECT_EQ(ParticleState.Geometry().Get(), Box2.Get());
+					EXPECT_EQ(ParticleState.GetGeometry(), Box2.GetReference());
 				}
 			}
 
@@ -316,10 +316,10 @@ namespace ChaosTest {
 				Particle.SetX(FVec3(0, 0, 100));
 				Particle.SetV(FVec3(0, 0, -10));
 
-				auto SphereGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+				auto SphereGeom = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 				FSingleParticlePhysicsProxy* SecondSphere = nullptr;
 
-				auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, 0), FVec3(100, 100, 30)));
+				auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, 0), FVec3(100, 100, 30)));
 				FSingleParticlePhysicsProxy* Floor = nullptr;
 
 				for (int Step = 0; Step <= LastGameStep; ++Step)
@@ -382,7 +382,7 @@ namespace ChaosTest {
 				Particle.SetX(FVec3(0, 0, 100));
 				Particle.SetV(FVec3(0, 0, -10));
 
-				auto SphereGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+				auto SphereGeom = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 				FSingleParticlePhysicsProxy* SecondSphere = nullptr;
 
 				// Make particles
@@ -466,7 +466,7 @@ namespace ChaosTest {
 
 						for (int32 Step = 0; Step < PhysicsStep; ++Step)
 						{
-							const FReal OldV = RewindData->GetPastStateAtFrame(*Proxy->GetHandle_LowLevel(), Step).V()[2];
+							const FReal OldV = RewindData->GetPastStateAtFrame(*Proxy->GetHandle_LowLevel(), Step).GetV()[2];
 							const FReal Time = Step * SimDt;
 							if (Time == 2)	//velocity was reset by gt
 							{
@@ -563,7 +563,7 @@ namespace ChaosTest {
 
 				const int32 LastGameStep = 32;
 
-				auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal,3>(FVec3(-100, -100, -1), FVec3(100, 100, 0)));
+				auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal,3>(FVec3(-100, -100, -1), FVec3(100, 100, 0)));
 
 				auto& Particle = Proxy->GetGameThreadAPI();
 				Particle.SetGravityEnabled(false);
@@ -642,7 +642,7 @@ namespace ChaosTest {
 
 				const int32 LastGameStep = 32;
 				
-				auto SphereGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+				auto SphereGeom = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 				auto& Particle = Proxy->GetGameThreadAPI();
 				Particle.SetGravityEnabled(false);
@@ -748,7 +748,7 @@ namespace ChaosTest {
 
 				const int32 LastGameStep = 64;
 
-				auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -1), FVec3(100, 100, 0)));
+				auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -1), FVec3(100, 100, 0)));
 
 				auto& Particle = Proxy->GetGameThreadAPI();
 				Particle.SetGravityEnabled(false);
@@ -775,7 +775,7 @@ namespace ChaosTest {
 					TickSolverHelper(Solver);
 
 					Time += GTDt;
-					const FReal InterpolatedTime = Time - SimDt * Chaos::AsyncInterpolationMultiplier;
+					const FReal InterpolatedTime = Time - SimDt * Solver->GetAsyncInterpolationMultiplier();
 
 
 					if (InterpolatedTime <= InterpStartTime)
@@ -1013,9 +1013,9 @@ namespace ChaosTest {
 					int32 ResimEndFrame = 10;
 				};
 
-				auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+				auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 				auto Proxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
-				Proxy->GetGameThreadAPI().SetGeometry(MoveTemp(Sphere));
+				Proxy->GetGameThreadAPI().SetGeometry(Sphere);
 				Solver->RegisterObject(Proxy);
 
 				const int32 LastGameStep = 32;
@@ -1098,9 +1098,9 @@ namespace ChaosTest {
 
 				};
 
-				auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+				auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 				auto Proxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
-				Proxy->GetGameThreadAPI().SetGeometry(MoveTemp(Sphere));
+				Proxy->GetGameThreadAPI().SetGeometry(Sphere);
 				Solver->RegisterObject(Proxy);
 
 
@@ -1618,8 +1618,8 @@ namespace ChaosTest {
 		TRewindHelper::TestDynamicSphere([](auto* Solver, FReal SimDt, int32 Optimization, auto Proxy, auto Sphere)
 		{
 				auto& Particle = Proxy->GetGameThreadAPI();
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(0), FVec3(1)));
-			auto Box2 = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(2), FVec3(3)));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(0), FVec3(1)));
+			auto Box2 = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(2), FVec3(3)));
 
 			const int32 LastGameStep = 20;
 
@@ -1657,23 +1657,23 @@ namespace ChaosTest {
 					if (SimTime < 3)
 					{
 						//was sphere
-						EXPECT_EQ(ParticleState.Geometry().Get(), Sphere);
+						EXPECT_EQ(ParticleState.GetGeometry(), Sphere);
 					}
 					else if (SimTime < 5 || SimTime >= 7)
 					{
 						//then became box
-						EXPECT_EQ(ParticleState.Geometry().Get(), Box.Get());
+						EXPECT_EQ(ParticleState.GetGeometry(), Box.GetReference());
 					}
 					else
 					{
 						//second box
-						EXPECT_EQ(ParticleState.Geometry().Get(), Box2.Get());
+						EXPECT_EQ(ParticleState.GetGeometry(), Box2.GetReference());
 					}
 				}
 				else
 				{
 					//changes happen within interval so stays box entire time
-					EXPECT_EQ(ParticleState.Geometry().Get(), Box.Get());
+					EXPECT_EQ(ParticleState.GetGeometry(), Box.GetReference());
 				}
 			}
 		});
@@ -1720,8 +1720,8 @@ namespace ChaosTest {
 					ExpectedXZ = 10;
 				}
 
-				EXPECT_NEAR(ParticleState.X()[2], ExpectedXZ, 1e-4);
-				EXPECT_NEAR(ParticleState.V()[2], ExpectedVZ, 1e-4);
+				EXPECT_NEAR(ParticleState.GetX()[2], ExpectedXZ, 1e-4);
+				EXPECT_NEAR(ParticleState.GetV()[2], ExpectedVZ, 1e-4);
 
 				ExpectedVZ -= SimDt;
 				ExpectedXZ += ExpectedVZ * SimDt;
@@ -2111,7 +2111,7 @@ namespace ChaosTest {
 				FReal LastCorrectionStep = 0;
 
 				Solver->SetRewindCallback(MoveTemp(UniqueRewindCallback));
-
+				Solver->SetAsyncInterpolationMultiplier(4.0f);
 				{
 					auto& Particle = Proxy->GetGameThreadAPI();
 					Solver->GetEvolution()->GetGravityForces().SetAcceleration(FVec3(0, 0, -1), 0);
@@ -2124,7 +2124,7 @@ namespace ChaosTest {
 						TickSolverHelper(Solver);
 
 						Time += GTDt;
-						const FReal InterpolatedTime = Time - SimDt * Chaos::AsyncInterpolationMultiplier;
+						const FReal InterpolatedTime = Time - SimDt * Solver->GetAsyncInterpolationMultiplier();
 						if (InterpolatedTime < 0)
 						{
 							//not enough time to interpolate so just take initial value
@@ -2138,13 +2138,14 @@ namespace ChaosTest {
 					}
 
 					//resim happened
+					Solver->SetAsyncInterpolationMultiplier(2.0f);
 					for (int Step = LastGameStep; Step < 2*LastGameStep; ++Step)
 					{
 						const FReal PrevZ = Particle.X()[2];
 						TickSolverHelper(Solver);
 
 						Time += GTDt;
-						const FReal InterpolatedTime = Time - SimDt * Chaos::AsyncInterpolationMultiplier;
+						const FReal InterpolatedTime = Time - SimDt * Solver->GetAsyncInterpolationMultiplier();
 
 						if(InterpolatedTime > 20)	//resim happened
 						{
@@ -2313,7 +2314,7 @@ namespace ChaosTest {
 					//we'll see the teleport automatically because ResimAsFollower
 					//but it's done by solver so before tick teleport is not known
 					EXPECT_NEAR(Particle.X()[2], ExpectedXZ, 1e-4);
-					EXPECT_NEAR(Particle.V()[2], ExpectedVZ, 1e-4);
+					EXPECT_NEAR(Particle.GetV()[2], ExpectedVZ, 1e-4);
 #endif
 				}
 
@@ -2324,7 +2325,7 @@ namespace ChaosTest {
 
 #if REWIND_DESYNC
 				EXPECT_NEAR(Particle.X()[2], ExpectedXZ, 1e-4);
-				EXPECT_NEAR(Particle.V()[2], ExpectedVZ, 1e-4);
+				EXPECT_NEAR(Particle.GetV()[2], ExpectedVZ, 1e-4);
 #endif
 			}
 
@@ -2340,7 +2341,7 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -2405,7 +2406,7 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -2559,7 +2560,7 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -2656,7 +2657,7 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -2750,8 +2751,8 @@ namespace ChaosTest {
 			//We want to detect when sim results change
 			//Detecting output of position and velocity is expensive and hard to track
 			//Instead we need to rely on fast forward mechanism, this is still in progress
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -2849,7 +2850,7 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -2942,8 +2943,8 @@ namespace ChaosTest {
 #if REWIND_DESYNC
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3033,8 +3034,8 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3127,8 +3128,8 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3218,7 +3219,7 @@ namespace ChaosTest {
 #if REWIND_DESYNC
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3298,7 +3299,7 @@ namespace ChaosTest {
 #if REWIND_DESYNC
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3388,7 +3389,7 @@ namespace ChaosTest {
 #if REWIND_DESYNC
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3478,8 +3479,8 @@ namespace ChaosTest {
 	{
 		for (int Optimization = 0; Optimization < 2; ++Optimization)
 		{
-			auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-			auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
+			auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
 
 			FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3587,8 +3588,8 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DISABLED_RewindTest_SoftDesyncFromSameIsland)
 	{
-		auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
+		auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -100), FVec3(100, 100, 0)));
 
 		FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3700,8 +3701,8 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DISABLED_RewindTest_SoftDesyncFromSameIslandThenBackToInSync)
 	{
-		auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100, -100, -10), FVec3(100, 100, 0)));
+		auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100, -100, -10), FVec3(100, 100, 0)));
 
 		FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -3832,7 +3833,7 @@ namespace ChaosTest {
 			for (int Step = 0; Step <= LastStep; ++Step)
 			{
 				UnitTest.Advance();
-				Xs.Add(Collection->DynamicCollection->Transform[0].GetTranslation()[2]);
+				Xs.Add(Collection->DynamicCollection->GetTransform(0).GetTranslation()[2]);
 			}
 
 			const int32 RewindStep = 3;
@@ -3870,8 +3871,8 @@ namespace ChaosTest {
 
 			for (const auto& Dynamic : NonDisabledDyanmic)
 			{
-				Frame.X.Add(Dynamic.X());
-				Frame.R.Add(Dynamic.R());
+				Frame.X.Add(Dynamic.GetX());
+				Frame.R.Add(Dynamic.GetR());
 			}
 			History.Add(MoveTemp(Frame));
 		}
@@ -3969,7 +3970,7 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DeterministicSim_SimpleFallingBox)
 	{
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
 
 		const auto InitLambda = [&Box](auto& Solver, auto)
 		{
@@ -4001,7 +4002,7 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DeterministicSim_ThresholdTest)
 	{
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
 
 		FVec3 StartPos(0);
 		FRotation3 StartRotation = FRotation3::FromIdentity();
@@ -4054,7 +4055,7 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DeterministicSim_DoubleTick)
 	{
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
 
 		const auto InitLambda = [&Box](auto& Solver, auto)
 		{
@@ -4088,7 +4089,7 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DeterministicSim_DoubleTickGravity)
 	{
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-10, -10, -10), FVec3(10, 10, 10)));
 		const FReal Gravity = -980;
 
 		const auto InitLambda = [&Box, Gravity](auto& Solver, auto)
@@ -4143,7 +4144,7 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DeterministicSim_DoubleTickCollide)
 	{
-		auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 50));
+		auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 50));
 
 		const auto InitLambda = [&Sphere](auto& Solver, auto)
 		{
@@ -4189,8 +4190,8 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, DeterministicSim_DoubleTickStackCollide)
 	{
-		auto SmallBox = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-50, -50, -50), FVec3(50, 50, 50)));
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-1000, -1000, -1000), FVec3(1000, 1000, 0)));
+		auto SmallBox = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-50, -50, -50), FVec3(50, 50, 50)));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-1000, -1000, -1000), FVec3(1000, 1000, 0)));
 
 		const auto InitLambda = [&SmallBox, &Box](auto& Solver, auto)
 		{
@@ -4254,8 +4255,8 @@ namespace ChaosTest {
 	
 	GTEST_TEST(AllTraits, DeterministicSim_DifferentCreationOrder)
 	{
-		auto SmallBox = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-50, -50, -50), FVec3(50, 50, 50)));
-		auto Box = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-1000, -1000, -1000), FVec3(1000, 1000, 0)));
+		auto SmallBox = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-50, -50, -50), FVec3(50, 50, 50)));
+		auto Box = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-1000, -1000, -1000), FVec3(1000, 1000, 0)));
 
 		const int32 NumParticles = 50;
 		const auto InitLambda = [&SmallBox, &Box, NumParticles](auto& Solver, const TArray<int32>* Mapping)
@@ -4327,6 +4328,7 @@ namespace ChaosTest {
 
 	GTEST_TEST(AllTraits, RewindTest_InterpolatedTwoChannels)
 	{
+		Chaos::AsyncInterpolationMultiplier = 3.0f;
 		int32 PrevNumActiveChannels = Chaos::DefaultNumActiveChannels;
 		Chaos::DefaultNumActiveChannels = 2;
 		//Have two moving particles, one in each channel to see that there's a delay in time on second channel
@@ -4340,7 +4342,7 @@ namespace ChaosTest {
 			auto Proxy2 = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 			auto& Particle2 = Proxy2->GetGameThreadAPI();
 
-			auto Sphere2 = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+			auto Sphere2 = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 			Particle2.SetGeometry(Sphere2);
 			Particle2.SetV(FVec3(0, 0, 1));
 			Particle2.SetGravityEnabled(false);
@@ -4354,7 +4356,7 @@ namespace ChaosTest {
 				TickSolverHelper(Solver);
 
 				Time += GtDt;
-				const FReal InterpolatedTime0 = Time - SimDt * Chaos::AsyncInterpolationMultiplier;
+				const FReal InterpolatedTime0 = Time - SimDt * Solver->GetAsyncInterpolationMultiplier();
 				const FReal InterpolatedTime1 = InterpolatedTime0 - Chaos::SecondChannelDelay;
 
 				if (InterpolatedTime0 < 0)

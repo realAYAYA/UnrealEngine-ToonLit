@@ -30,7 +30,7 @@ public:
 	// Mean Squared Error
 	FORCEINLINE float ReadMSE()
 	{
-		FVector2f MSE(SumSquaredX / Num, SumSquaredY / Num);
+		FVector2f MSE(static_cast<float>(SumSquaredX / static_cast<double>(Num)), static_cast<float>(SumSquaredY / static_cast<double>(Num)));
 		return (MSE.X + MSE.Y) / 2.0f;
 	}
 
@@ -60,7 +60,7 @@ public:
 	// Mean Squared Error
 	FORCEINLINE float ReadMSE()
 	{
-		FVector3f MSE(SumSquaredX / Num, SumSquaredY / Num, SumSquaredZ / Num);
+		FVector3f MSE(static_cast<float>(SumSquaredX / static_cast<double>(Num)), static_cast<float>(SumSquaredY / static_cast<double>(Num)), static_cast<float>(SumSquaredZ / static_cast<double>(Num)));
 		return (MSE.X + MSE.Y + MSE.Z) / 3.0f;
 	}
 
@@ -174,7 +174,7 @@ struct FStreamEncodingStatistics
 
 	FStreamEncodingStatistics(uint32 SetCodedNumBytes, uint32 SetRawNumBytes, float SetQuality) : CodedNumBytes(SetCodedNumBytes), RawNumBytes(SetRawNumBytes), Quality(SetQuality)
 	{
-		CompressionRatio = (float)RawNumBytes / CodedNumBytes;
+		CompressionRatio = static_cast<float>(RawNumBytes) / static_cast<float>(CodedNumBytes);
 	}
 };
 

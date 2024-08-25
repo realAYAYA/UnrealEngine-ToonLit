@@ -10,8 +10,8 @@
 
 #include "IOSAudioDevice.h"
 #include "AudioEffect.h"
-#include "ADPCMAudioInfo.h"
 #include "AudioPluginUtilities.h"
+#include "AudioDecompress.h"
 
 DEFINE_LOG_CATEGORY(LogIOSAudio);
 

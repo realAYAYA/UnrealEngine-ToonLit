@@ -58,7 +58,7 @@ private:
 	void OnNewDeviceCreated(Audio::FDeviceId InID);
 	void OnDeviceDestroyed(Audio::FDeviceId InID);
 
-	TMap<Audio::FDeviceId, TUniquePtr<FNiagaraSubmixListener>> SubmixListeners;
+	TMap<Audio::FDeviceId, TSharedPtr<FNiagaraSubmixListener>> SubmixListeners;
 
 	// This mixer is patched into by all instances of FNiagaraSubmixListener in the SubmixListeners map, and is consumed by DownsampleAudioToBuffer().
 	Audio::FPatchMixer PatchMixer;
@@ -117,15 +117,12 @@ public:
 	NIAGARA_API void SampleAudio(FVectorVMExternalFunctionContext& Context);
 	NIAGARA_API void GetNumChannels(FVectorVMExternalFunctionContext& Context);
 
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override
 	{
 		return true;
 	}
-
-	virtual bool RequiresDistanceFieldData() const override { return false; }
 
 #if WITH_EDITORONLY_DATA
 	NIAGARA_API virtual bool AppendCompileHash(FNiagaraCompileHashVisitor* InVisitor) const override;
@@ -147,6 +144,10 @@ public:
 	
 
 protected:
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
+
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 };
 

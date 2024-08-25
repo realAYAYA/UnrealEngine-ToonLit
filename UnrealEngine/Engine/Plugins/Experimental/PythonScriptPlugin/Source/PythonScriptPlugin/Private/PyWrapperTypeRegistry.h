@@ -423,7 +423,7 @@ public:
 	void RegisterWrappedClassType(const FName ClassName, PyTypeObject* PyType, const bool InDetectNameConflicts = true);
 
 	/** Unregister the wrapped type associated with the given class name */
-	void UnregisterWrappedClassType(const FName ClassName, PyTypeObject* PyType);
+	void UnregisterWrappedClassType(const FName ClassName, PyTypeObject* PyType, const bool InUnregisterName = true);
 
 	/** True if we have wrapped type for the exact given class */
 	bool HasWrappedClassType(const UClass* InClass) const;
@@ -438,7 +438,7 @@ public:
 	void RegisterWrappedStructType(const FName StructName, PyTypeObject* PyType, const bool InDetectNameConflicts = true);
 
 	/** Unregister the wrapped type associated with the given struct name */
-	void UnregisterWrappedStructType(const FName StructName, PyTypeObject* PyType);
+	void UnregisterWrappedStructType(const FName StructName, PyTypeObject* PyType, const bool InUnregisterName = true);
 
 	/** True if we have wrapped type for the exact given struct */
 	bool HasWrappedStructType(const UScriptStruct* InStruct) const;
@@ -453,7 +453,7 @@ public:
 	void RegisterWrappedEnumType(const FName EnumName, PyTypeObject* PyType, const bool InDetectNameConflicts = true);
 
 	/** Unregister the wrapped type associated with the given enum name */
-	void UnregisterWrappedEnumType(const FName EnumName, PyTypeObject* PyType);
+	void UnregisterWrappedEnumType(const FName EnumName, PyTypeObject* PyType, const bool InUnregisterName = true);
 
 	/** True if we have wrapped type for the exact given enum */
 	bool HasWrappedEnumType(const UEnum* InEnum) const;
@@ -468,7 +468,7 @@ public:
 	void RegisterWrappedDelegateType(const FName DelegateName, PyTypeObject* PyType, const bool InDetectNameConflicts = true);
 
 	/** Unregister the wrapped type associated with the given delegate name */
-	void UnregisterWrappedDelegateType(const FName DelegateName, PyTypeObject* PyType);
+	void UnregisterWrappedDelegateType(const FName DelegateName, PyTypeObject* PyType, const bool InUnregisterName = true);
 
 	/** True if we have wrapped type for the exact given delegate signature */
 	bool HasWrappedDelegateType(const UFunction* InDelegateSignature) const;

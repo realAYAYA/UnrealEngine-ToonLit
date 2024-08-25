@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Elements/Interfaces/TypedElementDataStorageInterface.h"
+#include "Templates/Function.h"
 #include "UObject/Interface.h"
 #include "UObject/ObjectKey.h"
 #include "UObject/ObjectMacros.h"
@@ -12,7 +13,7 @@
 
 #include "TypedElementDataStorageCompatibilityInterface.generated.h"
 
-class AActor;
+struct FTypedElementDatabaseCompatibilityObjectTypeInfo;
 
 UINTERFACE(MinimalAPI)
 class UTypedElementDataStorageCompatibilityInterface : public UInterface
@@ -29,6 +30,9 @@ class ITypedElementDataStorageCompatibilityInterface
 	GENERATED_BODY()
 
 public:
+	using ObjectRegistrationFilter = TFunction<bool(const ITypedElementDataStorageCompatibilityInterface&, const UObject*)>;
+	using ObjectToRowDealiaser = TFunction<TypedElementRowHandle(const ITypedElementDataStorageCompatibilityInterface&, const UObject*)>;
+	
 	/**
 	 * @section Type-agnostic functions
 	 * These allow compatibility with any type. These do eventually fall back to the explicit versions.
@@ -42,17 +46,39 @@ public:
 	 * with a row and to setup the initial row data.
 	 */
 	template<typename ObjectType>
-	TypedElementRowHandle AddCompatibleObject(ObjectType Object);
-	template<typename ObjectType>
-	TypedElementRowHandle AddCompatibleObject(ObjectType Object, TypedElementTableHandle Table);
-
+	TypedElementRowHandle AddCompatibleObject(ObjectType&& Object);
+	
 	/** Removes a previously registered object from the data storage. */
 	template<typename ObjectType>
-	void RemoveCompatibleObject(ObjectType Object);
+	void RemoveCompatibleObject(ObjectType&& Object);
 
 	template<typename ObjectType>
-	TypedElementRowHandle FindRowWithCompatibleObject(const ObjectType Object) const;
+	TypedElementRowHandle FindRowWithCompatibleObject(ObjectType&& Object) const;
 
+	/**
+	 * @section Callback registration
+	 * Functions to register callbacks with the compatibility layer to help refine its operations.
+	 */
+	 
+	/**
+	 * Objects like actors are registered through the compatibility layer in bulk. This can lead to objects being added that cause
+	 * conflicts with other data in the data storage. This callback offers the opportunity to inspect the objects that are being
+	 * added and if they include an object that shouldn't be store it can filter them out.
+	 */
+	virtual void RegisterRegistrationFilter(ObjectRegistrationFilter Filter) = 0;
+	/**
+	 * Notifications and request can be made to the compatibility layer for objects that are stored but don't directly map to a row.
+	 * An example is a UObject represented by a column. If the UObject gets updated there's no direct mapping to the row the column is
+	 * stored in but the row still needs to be updated. For cases like this it's possible to store information to find the row that's
+	 * being aliased.
+	 */
+	virtual void RegisterDealiaserCallback(ObjectToRowDealiaser Dealiaser) = 0;
+	/**
+	 * Allows a specific type to be associated with a table. Whenever a compatible object is added, the type information of that object
+	 * will be used to find the closest match in the registered types and use the associated table. E.g. actors derive from uobjects so
+	 * if the type information of an actor is registered the actor table will be used instead of the uobject table.
+	 */
+	virtual void RegisterTypeTableAssociation(TObjectPtr<UStruct> TypeInfo, TypedElementDataStorage::TableHandle Table) = 0;
 
 	/**
 	 * @section Explicit functions
@@ -61,30 +87,17 @@ public:
 
 	/** Adds a UObject to the data storage. */
 	virtual TypedElementRowHandle AddCompatibleObjectExplicit(UObject* Object) = 0;
-	virtual TypedElementRowHandle AddCompatibleObjectExplicit(UObject* Object, TypedElementTableHandle Table) = 0;
-	/** Adds an actor to the data storage. */
-	virtual TypedElementRowHandle AddCompatibleObjectExplicit(AActor* Actor) = 0;
-	virtual TypedElementRowHandle AddCompatibleObjectExplicit(AActor* Actor, TypedElementTableHandle Table) = 0;
 	/** Adds an FStruct to the data storage. */
 	virtual TypedElementRowHandle AddCompatibleObjectExplicit(void* Object, TWeakObjectPtr<const UScriptStruct> TypeInfo) = 0;
-	virtual TypedElementRowHandle AddCompatibleObjectExplicit(void* Object, TWeakObjectPtr<const UScriptStruct> TypeInfo, TypedElementTableHandle Table) = 0;
-
+	
 	/** Removes a UObject from the data storage. */
 	virtual void RemoveCompatibleObjectExplicit(UObject* Object) = 0;
-	/** Removes an actor from the data storage. */
-	virtual void RemoveCompatibleObjectExplicit(AActor* Actor) = 0;
 	/** Removes an FStruct from the data storage. */
 	virtual void RemoveCompatibleObjectExplicit(void* Object) = 0;
 
 	/** Finds a previously stored UObject. If not found an invalid row handle will be returned. */
 	virtual TypedElementRowHandle FindRowWithCompatibleObjectExplicit(const UObject* Object) const = 0;
-	/** 
-	 * Finds a previously stored actor based on the object key. If not found an invalid row handle will be returned.
-	 * While FindRowWithCompatibleObject(const TObjectKey<const UObject> Object) can also be used, this call will be slightly
-	 * faster if it's already known that the target is an actor.
-	 */
-	virtual TypedElementRowHandle FindRowWithCompatibleObjectExplicit(const AActor* Actor) const = 0;
-	/** Finds a previously stored FStructe . If not found an invalid row handle will be returned. */
+	/** Finds a previously stored FStruct. If not found an invalid row handle will be returned. */
 	virtual TypedElementRowHandle FindRowWithCompatibleObjectExplicit(const void* Object) const = 0;
 };
 
@@ -98,12 +111,12 @@ template<typename Type> Type* GetRawPointer(Type* Object)						{ return Object; 
 template<typename Type> Type* GetRawPointer(Type& Object)						{ return &Object; }
 
 template<typename ObjectType>
-TypedElementRowHandle ITypedElementDataStorageCompatibilityInterface::AddCompatibleObject(ObjectType Object)
+TypedElementRowHandle ITypedElementDataStorageCompatibilityInterface::AddCompatibleObject(ObjectType&& Object)
 {
-	auto RawPointer = GetRawPointer(Object);
+	auto RawPointer = GetRawPointer(Forward<ObjectType>(Object));
 	using BaseType = std::remove_cv_t<std::remove_pointer_t<decltype(RawPointer)>>;
 
-	if constexpr (std::is_same_v<BaseType, AActor> || std::is_same_v<BaseType, UObject>)
+	if constexpr (std::is_base_of_v<UObject, BaseType>)
 	{
 		return AddCompatibleObjectExplicit(RawPointer);
 	}
@@ -114,31 +127,15 @@ TypedElementRowHandle ITypedElementDataStorageCompatibilityInterface::AddCompati
 }
 
 template<typename ObjectType>
-TypedElementRowHandle ITypedElementDataStorageCompatibilityInterface::AddCompatibleObject(ObjectType Object, TypedElementTableHandle Table)
+void ITypedElementDataStorageCompatibilityInterface::RemoveCompatibleObject(ObjectType&& Object)
 {
-	auto RawPointer = GetRawPointer(Object);
-	using BaseType = std::remove_cv_t<std::remove_pointer_t<decltype(RawPointer)>>;
-
-	if constexpr (std::is_same_v<BaseType, AActor> || std::is_same_v<BaseType, UObject>)
-	{
-		return AddCompatibleObjectExplicit(RawPointer, Table);
-	}
-	else
-	{
-		return AddCompatibleObjectExplicit(RawPointer, BaseType::StaticStruct(), Table);
-	}
+	RemoveCompatibleObjectExplicit(GetRawPointer(Forward<ObjectType>(Object)));
 }
 
 template<typename ObjectType>
-void ITypedElementDataStorageCompatibilityInterface::RemoveCompatibleObject(ObjectType Object)
+TypedElementRowHandle ITypedElementDataStorageCompatibilityInterface::FindRowWithCompatibleObject(ObjectType&& Object) const
 {
-	RemoveCompatibleObjectExplicit(GetRawPointer(Object));
-}
-
-template<typename ObjectType>
-TypedElementRowHandle ITypedElementDataStorageCompatibilityInterface::FindRowWithCompatibleObject(const ObjectType Object) const
-{
-	return FindRowWithCompatibleObjectExplicit(GetRawPointer(Object));
+	return FindRowWithCompatibleObjectExplicit(GetRawPointer(Forward<ObjectType>(Object)));
 }
 
 template<typename Subsystem>

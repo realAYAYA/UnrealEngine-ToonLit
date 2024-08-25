@@ -102,6 +102,7 @@ void UNiagaraDecalRendererProperties::PostLoad()
 	ChangeToPositionBinding(PositionBinding);
 #endif
 	PostLoadBindings(ENiagaraRendererSourceDataMode::Particles);
+	MaterialParameters.ConditionalPostLoad();
 }
 
 void UNiagaraDecalRendererProperties::PostInitProperties()

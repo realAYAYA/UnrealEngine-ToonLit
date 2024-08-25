@@ -3,33 +3,33 @@
 #include "Common.ush"
 
 // Mention that we are going to use a single slab
-#define STRATA_CLAMPED_BSDF_COUNT 1
-#define STRATA_INLINE_SHADING 1
-#include "Strata/Strata.ush"
+#define SUBSTRATE_CLAMPED_CLOSURE_COUNT 1
+#define SUBSTRATE_INLINE_SHADING 1
+#include "Substrate/Substrate.ush"
 
-#define MATERIAL_STRATA_OPAQUE_PRECOMPUTED_LIGHTING 0
-#include "Strata/StrataExport.ush"
+#define MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING 0
+#include "Substrate/SubstrateExport.ush"
 
 #include "DeferredShadingCommon.ush"
 #include "VelocityCommon.ush"
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 #include "SceneTexturesCommon.ush"
 RWTexture2DArray<uint> MaterialTextureArrayUAV;
 uint MaxBytesPerPixel;
 uint bRoughDiffuse;
 
-// Default functions for PackStrataOut to function properly
-void FStrataPixelHeader::PreUpdateAllBSDFWithBottomUpOperatorVisit(FStrataAddressing NullStrataAddressing, float3 V) {}
-void FStrataPixelHeader::UpdateAllBSDFsOperatorCoverageTransmittance(FStrataIntegrationSettings Settings, FStrataAddressing NullStrataAddressing, float3 V) {}
-void FStrataPixelHeader::UpdateAllOperatorsCoverageTransmittance() {}
-void FStrataPixelHeader::UpdateAllBSDFWithBottomUpOperatorVisit() {}
-void FStrataPixelHeader::PreUpdateAllBSDFWithBottomUpOperatorVisit_FullySimplified(FStrataAddressing NullStrataAddressing, float3 V) {}
-void FStrataPixelHeader::UpdateAllBSDFsOperatorCoverageTransmittance_FullySimplified(FStrataIntegrationSettings Settings, FStrataAddressing NullStrataAddressing, float3 V) {}
-void FStrataPixelHeader::UpdateAllOperatorsCoverageTransmittance_FullySimplified() {}
-void FStrataPixelHeader::UpdateAllBSDFWithBottomUpOperatorVisit_FullySimplified() {}
+// Default functions for PackSubstrateOut to function properly
+void FSubstratePixelHeader::PreUpdateAllBSDFWithBottomUpOperatorVisit(float3 V) {}
+void FSubstratePixelHeader::UpdateAllBSDFsOperatorCoverageTransmittance(FSubstrateIntegrationSettings Settings, float3 V) {}
+void FSubstratePixelHeader::UpdateAllOperatorsCoverageTransmittance() {}
+void FSubstratePixelHeader::UpdateAllBSDFWithBottomUpOperatorVisit() {}
+void FSubstratePixelHeader::PreUpdateAllBSDFWithBottomUpOperatorVisit_FullySimplified(float3 V) {}
+void FSubstratePixelHeader::UpdateAllBSDFsOperatorCoverageTransmittance_FullySimplified(FSubstrateIntegrationSettings Settings, float3 V) {}
+void FSubstratePixelHeader::UpdateAllOperatorsCoverageTransmittance_FullySimplified() {}
+void FSubstratePixelHeader::UpdateAllBSDFWithBottomUpOperatorVisit_FullySimplified() {}
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 int DebugProbesMode;
 
@@ -42,8 +42,8 @@ int DebugProbesMode;
 #define RENDER_BASEPASS		1
 #define RENDER_VELOCITYPASS	2
 
-// Base pass with strata cannot write to depth because it is going to execute in shader depth testing
-#define DEPTH_OUTPUT_ENABLED (PERMUTATION_PASS == RENDER_VELOCITYPASS || PERMUTATION_PASS == RENDER_DEPTHPREPASS || (PERMUTATION_PASS == RENDER_BASEPASS && STRATA_ENABLED == 0))
+// Base pass with Substrate cannot write to depth because it is going to execute in shader depth testing
+#define DEPTH_OUTPUT_ENABLED (PERMUTATION_PASS == RENDER_VELOCITYPASS || PERMUTATION_PASS == RENDER_DEPTHPREPASS || (PERMUTATION_PASS == RENDER_BASEPASS && SUBSTRATE_ENABLED == 0))
 
 
 void DebugSphereIntersection(
@@ -83,12 +83,12 @@ void WriteOutMaterial(
 	in float  Roughness,
 	in float  IndirectIrradianceAndAO,
 	in float3 Normal
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	, inout float4 OutGBufferA
-	, inout uint StrataMat0
-	, inout uint StrataMat1
-	, inout uint StrataMat2
-	, inout STRATA_TOP_LAYER_TYPE StrataTopLayerData
+	, inout uint SubstrateMat0
+	, inout uint SubstrateMat1
+	, inout uint SubstrateMat2
+	, inout SUBSTRATE_TOP_LAYER_TYPE SubstrateTopLayerData
 	, inout uint OutGBufferE
 #else
 	, inout float4 OutGBufferA
@@ -100,26 +100,26 @@ void WriteOutMaterial(
 
 )
 {
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
-#if STRATA_BASE_PASS_MRT_OUTPUT_COUNT!=3
+#if SUBSTRATE_BASE_PASS_MRT_OUTPUT_COUNT!=3
 #error Please update debug probe MRT code.
 #endif
 
-	FStrataPixelHeader StrataPixelHeader = InitialiseStrataPixelHeader();
-	StrataPixelHeader.StrataTree = GetInitialisedStrataTree();
-	StrataPixelHeader.IrradianceAO = InitIrradianceAndOcclusion();
-	StrataPixelHeader.IrradianceAO.MaterialAO = 1.0f - IndirectIrradianceAndAO;
-	StrataPixelHeader.SetCastContactShadow(0);
+	FSubstratePixelHeader SubstratePixelHeader = InitialiseSubstratePixelHeader();
+	SubstratePixelHeader.SubstrateTree = GetInitialisedSubstrateTree();
+	SubstratePixelHeader.IrradianceAO = InitIrradianceAndOcclusion();
+	SubstratePixelHeader.IrradianceAO.MaterialAO = 1.0f - IndirectIrradianceAndAO;
+	SubstratePixelHeader.SetCastContactShadow(0);
 
 	uint SharedLocalBasisIndex = 0;
 	const float3 NormalizedNormal = normalize(Normal);
-	StrataPixelHeader.SharedLocalBases.Normals[SharedLocalBasisIndex] = NormalizedNormal;
-	StrataPixelHeader.SharedLocalBases.Count = 1;
+	SubstratePixelHeader.SharedLocalBases.Normals[SharedLocalBasisIndex] = NormalizedNormal;
+	SubstratePixelHeader.SharedLocalBases.Count = 1;
 
-	FStrataPixelFootprint PixelFootprint = (FStrataPixelFootprint)0;
-	FStrataData StrataSlabData = GetStrataSlabBSDF(
-		/**FStrataPixelFootprint PixelFootprint */PixelFootprint,
+	FSubstratePixelFootprint PixelFootprint = (FSubstratePixelFootprint)0;
+	FSubstrateData SubstrateSlabData = GetSubstrateSlabBSDF(
+		/**FSubstratePixelFootprint PixelFootprint */PixelFootprint,
 		/*float3 DiffuseAlbedo					*/ComputeDiffuseAlbedo(BaseColor, Metallic),
 		/*float3 F0								*/ComputeF0(Specular, BaseColor, Metallic),
 		/*float3 F90							*/1.0f,
@@ -144,42 +144,42 @@ void WriteOutMaterial(
 		/*bool bIsThinSurface					*/false,
 		/*bool bIsAtTheBottomOfTopology			*/false,
 		/*uint SharedLocalBasisIndex			*/SharedLocalBasisIndex,
-		/*inout uint SharedLocalBasisTypes		*/StrataPixelHeader.SharedLocalBases.Types);
+		/*inout uint SharedLocalBasisTypes		*/SubstratePixelHeader.SharedLocalBases.Types);
 
-	FStrataData StrataData = StrataPixelHeader.StrataTree.PromoteParameterBlendedBSDFToOperator(StrataSlabData, /*int OperatorIndex*/0, /*int BSDFIndex*/0, /*int LayerDepth*/0, /*int bIsBottom*/1);
-	StrataPixelHeader.StrataTree.BSDFs[0].LuminanceWeightV = 1.0f;
-	StrataPixelHeader.StrataTree.BSDFs[0].TransmittanceAboveAlongN = 1.0f;
-	StrataPixelHeader.StrataTree.BSDFs[0].TopLayerDataWeight = 1.0f;
+	FSubstrateData SubstrateData = SubstratePixelHeader.SubstrateTree.PromoteParameterBlendedBSDFToOperator(SubstrateSlabData, /*int OperatorIndex*/0, /*int BSDFIndex*/0, /*int LayerDepth*/0, /*int bIsBottom*/1);
+	SubstratePixelHeader.SubstrateTree.BSDFs[0].LuminanceWeightV = 1.0f;
+	SubstratePixelHeader.SubstrateTree.BSDFs[0].TransmittanceAboveAlongN = 1.0f;
+	SubstratePixelHeader.SubstrateTree.BSDFs[0].TopLayerDataWeight = 1.0f;
 
-	FStrataSubsurfaceData SSSData = (FStrataSubsurfaceData)0;
-	FStrataTopLayerData TopLayerData = (FStrataTopLayerData)0;
-	FStrataOpaqueRoughRefractionData OpaqueRoughRefractionData = (FStrataOpaqueRoughRefractionData)0;
+	FSubstrateSubsurfaceData SSSData = (FSubstrateSubsurfaceData)0;
+	FSubstrateTopLayerData TopLayerData = (FSubstrateTopLayerData)0;
+	FSubstrateOpaqueRoughRefractionData OpaqueRoughRefractionData = (FSubstrateOpaqueRoughRefractionData)0;
 
 	float3 EmissiveLuminance = 0.0f;
-	bool bStrataSubsurfaceEnable = false;
+	bool bSubstrateSubsurfaceEnable = false;
 	const float Dither = 0.0f;
-	const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, bRoughDiffuse, 0/*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
+	const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, bRoughDiffuse, 0/*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
 
-	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelCoord, uint2(ResolvedView.BufferSizeAndInvSize.xy), MaxBytesPerPixel);
-	FRWStrataMaterialContainer RWStrataMaterialContainer = InitialiseRWStrataMaterialContainer(MaterialTextureArrayUAV);
-	PackStrataOut(
-		RWStrataMaterialContainer,
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelCoord, uint2(ResolvedView.BufferSizeAndInvSize.xy), MaxBytesPerPixel);
+	FRWSubstrateMaterialContainer RWSubstrateMaterialContainer = InitialiseRWSubstrateMaterialContainer(MaterialTextureArrayUAV);
+	PackSubstrateOut(
+		RWSubstrateMaterialContainer,
 		MaterialTextureArrayUAV,
 		Dither,
 		Settings,
-		StrataAddressing,
-		StrataPixelHeader, StrataData, -RayDir, NormalizedNormal, bStrataSubsurfaceEnable, EmissiveLuminance,
+		SubstrateAddressing,
+		SubstratePixelHeader, SubstrateData, -RayDir, NormalizedNormal, bSubstrateSubsurfaceEnable, EmissiveLuminance,
 		SSSData, TopLayerData, OpaqueRoughRefractionData);
 
 	// Write out MRTs. Note: this only works for deferred with basepassvelocity off
 	OutGBufferA			= 0;
-	StrataMat0			= RWStrataMaterialContainer.MaterialRenderTargets[0];
-	StrataMat1			= RWStrataMaterialContainer.MaterialRenderTargets[1];
-	StrataMat2			= RWStrataMaterialContainer.MaterialRenderTargets[2];
-	StrataTopLayerData	= StrataPackTopLayerData(TopLayerData);
+	SubstrateMat0			= RWSubstrateMaterialContainer.MaterialRenderTargets[0];
+	SubstrateMat1			= RWSubstrateMaterialContainer.MaterialRenderTargets[1];
+	SubstrateMat2			= RWSubstrateMaterialContainer.MaterialRenderTargets[2];
+	SubstrateTopLayerData	= SubstratePackTopLayerData(TopLayerData);
 	OutGBufferE			= 0;
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 	// We write all outputs, the rasterizer will discard what is not bound. That is fine since we do not care that much about performance for this debug view.
 
@@ -197,7 +197,7 @@ void WriteOutMaterial(
 	OutGBufferD = float4(0.0f, 0.0f, 0.0f, 0.0f);	// custom data
 	OutGBufferE = float4(1.0f, 1.0f, 1.0f, 1.0f);	// Pre computed shadow factor
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 }
 #endif // PERMUTATION_PASS == RENDER_BASEPASS
 
@@ -207,12 +207,12 @@ void MainPS(
 	  in  float4 SvPosition		: SV_Position
 	, out float4 OutColor		: SV_Target0
 #if PERMUTATION_PASS == RENDER_BASEPASS
-	#if STRATA_ENABLED
+	#if SUBSTRATE_ENABLED
 	, out float4 OutGBufferA						: SV_Target2
-	, out uint StrataMat0							: SV_Target3
-	, out uint StrataMat1							: SV_Target4
-	, out uint StrataMat2							: SV_Target5
-	, out STRATA_TOP_LAYER_TYPE StrataTopLayerData	: SV_Target6
+	, out uint SubstrateMat0							: SV_Target3
+	, out uint SubstrateMat1							: SV_Target4
+	, out uint SubstrateMat2							: SV_Target5
+	, out SUBSTRATE_TOP_LAYER_TYPE SubstrateTopLayerData	: SV_Target6
 	, out uint OutGBufferE							: SV_Target7
 	#else
 	, out float4 OutGBufferA	: SV_Target1
@@ -229,12 +229,12 @@ void MainPS(
 {
 	OutColor = 0.f;
 #if PERMUTATION_PASS == RENDER_BASEPASS
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	OutGBufferA = 0;
-	StrataMat0 = 0;
-	StrataMat1 = 0;
-	StrataMat2 = 0;
-	StrataTopLayerData = 0;
+	SubstrateMat0 = 0;
+	SubstrateMat1 = 0;
+	SubstrateMat2 = 0;
+	SubstrateTopLayerData = 0;
 	OutGBufferE = 0;
 #else
 	OutGBufferA = 0;
@@ -253,7 +253,7 @@ void MainPS(
 	float4 TranslatedWorldPos = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, Depth), Depth, 1), View.ScreenToTranslatedWorld);
 
 	const float3 RayDir = normalize(TranslatedWorldPos.xyz - View.TranslatedWorldCameraOrigin);
-	const float3 RayOrig = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
+	const float3 RayOrig = DFHackToFloat(ResolvedView.WorldCameraOrigin);
 
 #if PERMUTATION_ILLUMINANCEMETER /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -273,8 +273,8 @@ void MainPS(
 
 		float3 WorldPosition = RayOrig;
 		float3 Velocity = 0.0f;
-		float4 ScreenPos = mul(float4(WorldPosition.xyz + LWCHackToFloat(ResolvedView.PreViewTranslation), 1), ResolvedView.TranslatedWorldToClip);
-		float4 PrevScreenPos = mul(float4(WorldPosition.xyz + LWCHackToFloat(ResolvedView.PrevPreViewTranslation), 1), ResolvedView.PrevTranslatedWorldToClip);
+		float4 ScreenPos = mul(float4(WorldPosition.xyz + DFHackToFloat(ResolvedView.PreViewTranslation), 1), ResolvedView.TranslatedWorldToClip);
+		float4 PrevScreenPos = mul(float4(WorldPosition.xyz + DFHackToFloat(ResolvedView.PrevPreViewTranslation), 1), ResolvedView.PrevTranslatedWorldToClip);
 		Velocity = Calculate3DVelocity(ScreenPos, PrevScreenPos);
 		OutColor = EncodeVelocityToTexture(Velocity);
 
@@ -290,14 +290,14 @@ void MainPS(
 		const float  Roughness = 1.0f;
 		const float  IndirectIrradianceAndAO = 0.0f;
 
-	#if STRATA_ENABLED
+	#if SUBSTRATE_ENABLED
 		// EarlyDepthStencil does not work because we render a simple quad on screen with custom OutDepth.
-		// We cannot rely on late depth test because pixel shader would have already operated the write to strata buffer.
+		// We cannot rely on late depth test because pixel shader would have already operated the write to Substrate buffer.
 		// So we must execute a manual depth test in shader (fine because basepass does not write depth)
 		float2 UvBuffer = SvPosition.xy * View.BufferSizeAndInvSize.zw;	// Uv for depth buffer read (size can be larger than viewport)
 		const float DepthBufferDeviceZ = LookupDeviceZ(UvBuffer);
 		if (DepthBufferDeviceZ < (DeviceZ + 0.000001))
-	#endif // STRATA_ENABLED
+	#endif // SUBSTRATE_ENABLED
 		{
 			WriteOutMaterial(
 				PixelCoord,
@@ -310,12 +310,12 @@ void MainPS(
 				Roughness,
 				IndirectIrradianceAndAO,
 				WorldNormal,
-			#if STRATA_ENABLED
+			#if SUBSTRATE_ENABLED
 				OutGBufferA,
-				StrataMat0,
-				StrataMat1,
-				StrataMat2,
-				StrataTopLayerData,
+				SubstrateMat0,
+				SubstrateMat1,
+				SubstrateMat2,
+				SubstrateTopLayerData,
 				OutGBufferE
 			#else
 				OutGBufferA,
@@ -333,7 +333,6 @@ void MainPS(
 	else
 	{
 		discard;
-		return;
 	}
 
 
@@ -353,7 +352,7 @@ void MainPS(
 	if (DebugProbesMode == 1 || DebugProbesMode == 3)
 	{
 		{
-			float3 SphereCenter = LWCHackToFloat(ResolvedView.WorldCameraOrigin) + (ResolvedView.ViewForward * 1.0f + ResolvedView.ViewRight * 0.5f + ResolvedView.ViewUp * -0.2f) * METER_TO_CENTIMETER;
+			float3 SphereCenter = DFHackToFloat(ResolvedView.WorldCameraOrigin) + (ResolvedView.ViewForward * 1.0f + ResolvedView.ViewRight * 0.5f + ResolvedView.ViewUp * -0.2f) * METER_TO_CENTIMETER;
 			float  SphereRadius = 0.2f * METER_TO_CENTIMETER;
 
 			DebugSphereIntersection(
@@ -361,7 +360,7 @@ void MainPS(
 				ProbeMode, RayT, WorldPosition, WorldNormal, bProbeAttachedToCamera);
 		}
 		{
-			float3 SphereCenter = LWCHackToFloat(ResolvedView.WorldCameraOrigin) + (ResolvedView.ViewForward * 1.0f + ResolvedView.ViewRight * -0.5f + ResolvedView.ViewUp * -0.2f) * METER_TO_CENTIMETER;
+			float3 SphereCenter = DFHackToFloat(ResolvedView.WorldCameraOrigin) + (ResolvedView.ViewForward * 1.0f + ResolvedView.ViewRight * -0.5f + ResolvedView.ViewUp * -0.2f) * METER_TO_CENTIMETER;
 			float  SphereRadius = 0.2f * METER_TO_CENTIMETER;
 
 			DebugSphereIntersection(
@@ -379,7 +378,7 @@ void MainPS(
 #if 1
 		// Using Amanatides 3D-DDA to march virtual voxels around the camera and only evaluate intersection for sphere inside each voxel.
 		const float3 VoxelSizeCm = float3(5.0f, 5.0f, 5.0f) * METER_TO_CENTIMETER;
-		const float3 SnappedOrigin = (floor(LWCHackToFloat(ResolvedView.WorldCameraOrigin) / VoxelSizeCm) + 0.5) * VoxelSizeCm
+		const float3 SnappedOrigin = (floor(DFHackToFloat(ResolvedView.WorldCameraOrigin) / VoxelSizeCm) + 0.5) * VoxelSizeCm
 								   + float3(0.0f, 0.0f, 1.4 * SphereRadius);	// Small offset to have probes above the ground level 0
 
 		const float3 BoxMin = SnappedOrigin - VoxelSizeCm * 4.0f;
@@ -441,7 +440,7 @@ void MainPS(
 #else
 		// Simple but slow volume around the camera
 		const float3 Steps = float3(5.0f, 5.0f, 2.5f);
-		const float3 SnappedOrigin = floor(LWCHackToFloat(ResolvedView.WorldCameraOrigin) / (Steps * METER_TO_CENTIMETER) + 0.5) * Steps * METER_TO_CENTIMETER
+		const float3 SnappedOrigin = floor(DFHackToFloat(ResolvedView.WorldCameraOrigin) / (Steps * METER_TO_CENTIMETER) + 0.5) * Steps * METER_TO_CENTIMETER
 								   + float3(0.0f, 0.0f, 1.4 * SphereRadius);	// Small offset to have probes above the ground level 0
 		LOOP
 		for (float x = -15.0f * METER_TO_CENTIMETER; x <= 15.0f * METER_TO_CENTIMETER; x += Steps.x * METER_TO_CENTIMETER)
@@ -464,7 +463,7 @@ void MainPS(
 	}
 
 
-	float4 ClipPos = mul(float4(WorldPosition, 1.0f), LWCHackToFloat(ResolvedView.WorldToClip));
+	float4 ClipPos = mul(float4(WorldPosition, 1.0f), DFHackToFloat(ResolvedView.WorldToClip));
 	ClipPos /= ClipPos.w;
 	const float DeviceZ = ClipPos.z;
 #if DEPTH_OUTPUT_ENABLED
@@ -474,7 +473,6 @@ void MainPS(
 	if (RayT <= 0.0f)
 	{
 		discard;
-		return;
 	}
 
 
@@ -484,8 +482,8 @@ void MainPS(
 
 	if (!bProbeAttachedToCamera)
 	{
-		float4 ScreenPos	= mul(float4(WorldPosition.xyz + LWCHackToFloat(ResolvedView.PreViewTranslation), 1),	ResolvedView.TranslatedWorldToClip);
-		float4 PrevScreenPos= mul(float4(WorldPosition.xyz + LWCHackToFloat(ResolvedView.PrevPreViewTranslation), 1),ResolvedView.PrevTranslatedWorldToClip);
+		float4 ScreenPos	= mul(float4(WorldPosition.xyz + DFHackToFloat(ResolvedView.PreViewTranslation), 1),	ResolvedView.TranslatedWorldToClip);
+		float4 PrevScreenPos= mul(float4(WorldPosition.xyz + DFHackToFloat(ResolvedView.PrevPreViewTranslation), 1),ResolvedView.PrevTranslatedWorldToClip);
 		Velocity = Calculate3DVelocity(ScreenPos, PrevScreenPos);
 	}
 
@@ -502,14 +500,14 @@ void MainPS(
 	const float  Roughness = 0.01f;
 	const float  IndirectIrradianceAndAO = 0.0f;
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	// EarlyDepthStencil does not work because we render a simple quad on screen with custom OutDepth.
-	// We cannot rely on late depth test because pixel shader would have already operated the write to strata buffer.
+	// We cannot rely on late depth test because pixel shader would have already operated the write to Substrate buffer.
 	// So we must execute a manual depth test in shader (fine because basepass does not write depth)
 	float2 UvBuffer = SvPosition.xy * View.BufferSizeAndInvSize.zw;	// Uv for depth buffer read (size can be larger than viewport)
 	const float DepthBufferDeviceZ = LookupDeviceZ(UvBuffer);
 	if (DepthBufferDeviceZ < (DeviceZ + 0.000001))
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 	{
 		WriteOutMaterial(
 			PixelCoord,
@@ -522,12 +520,12 @@ void MainPS(
 			Roughness,
 			IndirectIrradianceAndAO,
 			WorldNormal,
-		#if STRATA_ENABLED
+		#if SUBSTRATE_ENABLED
 			OutGBufferA,
-			StrataMat0,
-			StrataMat1,
-			StrataMat2,
-			StrataTopLayerData,
+			SubstrateMat0,
+			SubstrateMat1,
+			SubstrateMat2,
+			SubstrateTopLayerData,
 			OutGBufferE
 		#else
 			OutGBufferA,
@@ -538,7 +536,7 @@ void MainPS(
 		#endif
 		);
 	}
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	else
 	{
 		discard;

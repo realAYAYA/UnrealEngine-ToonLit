@@ -14,8 +14,6 @@ struct FSlateAtlasData;
 class FSlateAtlasedTextureResource : public FSlateBaseUTextureResource
 {
 public:
-	static TSharedPtr<FSlateAtlasedTextureResource> NullResource;
-
 	/** Initializes a new atlased UTexture resource, the incoming texture should be the entire atlas. */
 	FSlateAtlasedTextureResource(UTexture* InTexture);
 	

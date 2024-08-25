@@ -53,8 +53,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -100,14 +100,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		
-
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-		int GetInputCount() const override;
-		Node* GetInputNode( int i ) const override;
-		void SetInputNode( int i, NodePtr pNode ) override;
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -140,7 +134,7 @@ namespace mu
         void SetBlock( int index, int minx, int miny, int sizex, int sizey );
 
 		//! Set reduction block options like priority or if the block has to be reduced symmetrically.
-		void SetBlockOptions(int index, int priority, bool bUseSymmetry);
+		void SetBlockOptions(int index, int priority, bool bReduceBothAxes, bool bReduceByTwo);
 
 		//! Set the texture layout packing strategy 
 		void SetLayoutPackingStrategy(EPackStrategy strategy);

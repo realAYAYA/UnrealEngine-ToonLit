@@ -100,7 +100,7 @@ struct FNewParticle
 	/** Random selection of orbit attributes. */
 	float RandomOrbit;
 	/** The offset at which to inject the new particle. */
-	FVector2f Offset;
+	FVector3f Offset;
 };
 
 
@@ -131,6 +131,8 @@ public:
 	FRHITexture2D* AttributesTextureRHI;
 	/** LWC tile offset, will be 0,0,0 for localspace emitters. */
 	FVector3f LWCTile;
+	/** Tile page offset factors associated with the GPU particle simulation resources. */
+	FVector3f TilePageScale;
 
 	FGPUSpriteVertexFactory()
 		: FParticleVertexFactoryBase(PVFT_MAX, ERHIFeatureLevel::Num)
@@ -139,6 +141,7 @@ public:
 		, VelocityTextureRHI(nullptr)
 		, AttributesTextureRHI(nullptr)
 		, LWCTile(FVector3f::ZeroVector)
+		, TilePageScale(FVector3f::OneVector)
 	{}
 
 	/**
@@ -261,7 +264,7 @@ public:
 	 * @param OutInfo The bindings for this GPU sort task, if success. 
 	 * @returns true if the work was registered, or false it GPU sorting is not available or impossible.
 	 */
-	bool AddSortedGPUSimulation(FParticleSimulationGPU* Simulation, const FVector& ViewOrigin, bool bIsTranslucent, FGPUSortManager::FAllocationInfo& OutInfo);
+	bool AddSortedGPUSimulation(FRHICommandListBase& RHICmdList, FParticleSimulationGPU* Simulation, const FVector& ViewOrigin, bool bIsTranslucent, FGPUSortManager::FAllocationInfo& OutInfo);
 
 	void PrepareGPUSimulation(FRHICommandListImmediate& RHICmdList);
 	void FinalizeGPUSimulation(FRHICommandListImmediate& RHICmdList);
@@ -320,7 +323,7 @@ private:
 	/**
 	 * Prepares GPU particles for simulation and rendering in the next frame.
 	 */
-	void AdvanceGPUParticleFrame(bool bAllowGPUParticleUpdate);
+	void AdvanceGPUParticleFrame(FRHICommandListImmediate& RHICmdList, bool bAllowGPUParticleUpdate);
 
 	bool UsesGlobalDistanceFieldInternal() const;
 	bool UsesDepthBufferInternal() const;
@@ -384,6 +387,9 @@ private:
 
 	/** Previous frame new particles for multi-gpu simulation*/
 	TArray<FNewParticle> LastFrameNewParticles;
+
+	UE::FMutex AddSortedGPUSimulationMutex;
+
 #if WITH_EDITOR
 	/** true if the system has been suspended. */
 	bool bSuspended;

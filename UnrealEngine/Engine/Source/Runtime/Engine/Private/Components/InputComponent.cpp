@@ -48,7 +48,7 @@ void UInputComponent::ConditionalBuildKeyMap(UPlayerInput* PlayerInput)
 		}
 		else if (CachedInfoToPopulate->PlayerInput == nullptr)
 		{
-			CachedKeyToActionInfo.RemoveAtSwap(Index, 1, false);
+			CachedKeyToActionInfo.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 		}
 
 		CachedInfoToPopulate = nullptr;
@@ -100,7 +100,7 @@ void UInputComponent::OnInputOwnerEndPlayed(AActor* InOwner, EEndPlayReason::Typ
 		const UPlayerInput* CachedInput = CachedInfo.PlayerInput.Get();
 		if (CachedInput && CachedInput->GetTypedOuter<AActor>() == InOwner)
 		{
-			CachedKeyToActionInfo.RemoveAtSwap(Index, 1, false);
+			CachedKeyToActionInfo.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -113,7 +113,7 @@ void UInputComponent::ClearBindingsForObject(UObject* InOwner)
 		const UPlayerInput* CachedInput = CachedInfo.PlayerInput.Get();
 		if (CachedInput && CachedInput->GetTypedOuter<UObject>() == InOwner)
 		{
-			CachedKeyToActionInfo.RemoveAtSwap(Index, 1, false);
+			CachedKeyToActionInfo.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -342,7 +342,7 @@ void UInputComponent::RemoveActionBinding(const FInputActionBinding &BindingToRe
 		}
 	}
 
-	ActionBindings.RemoveAt(BindingIndex, 1, false);
+	ActionBindings.RemoveAt(BindingIndex, 1, EAllowShrinking::No);
 	for (FCachedKeyToActionInfo& CachedInfo : CachedKeyToActionInfo)
 	{
 		CachedInfo.KeyMapBuiltForIndex = 0;
@@ -389,7 +389,7 @@ void UInputComponent::RemoveAxisBinding(FName AxisName)
 		const FInputAxisBinding& Binding = AxisBindings[AxisIdx];
 		if (Binding.AxisName == AxisName)
 		{
-			AxisBindings.RemoveAt(AxisIdx, 1, false);
+			AxisBindings.RemoveAt(AxisIdx, 1, EAllowShrinking::No);
 		}
 	}
 }

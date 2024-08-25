@@ -75,7 +75,7 @@ public class RemoteFileManagerService extends Service {
 			String cmd = intent.getStringExtra("cmd");
 			String token = intent.getStringExtra("token");
 			int port = intent.getIntExtra("port", SERVER_PORT);
-			if (cmd != null && cmd.equals("start") && GameActivity.AndroidFileServer_Verify(token)) {
+			if (cmd != null && cmd.equals("start") && GameApplication.AndroidFileServer_Verify(token)) {
 				String packageName = getPackageName();
 				PackageManager pm = getPackageManager();
 

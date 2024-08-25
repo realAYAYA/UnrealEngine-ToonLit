@@ -7,12 +7,15 @@
 #include "GraphEditor.h"
 #include "HistoryManager.h"
 
+#include "Framework/Docking/TabManager.h"
+
 //////////////////////////////////////////////////////////////////////////
 // SPluginReferenceViewer
 
 class IPlugin;
 class FUICommandInfo;
 class FUICommandList;
+class SDockTab;
 class UEdGraphNode;
 class UEdGraph_PluginReferenceViewer;
 
@@ -21,6 +24,8 @@ class SPluginReferenceViewer : public SCompoundWidget
 public:
 	SLATE_BEGIN_ARGS(SPluginReferenceViewer)
 	{}
+
+	SLATE_ARGUMENT(TSharedPtr<SDockTab>, ParentTab)
 
 	SLATE_END_ARGS()
 
@@ -41,6 +46,7 @@ public:
 private:
 	void OnOpenPluginProperties();
 	bool HasAtLeastOneRealNodeSelected();
+
 	void OpenPluginProperties(const FString& PluginName);
 
 	TSharedRef<SWidget> MakeToolBar();
@@ -82,6 +88,9 @@ private:
 	/** Gets the tool tip text for the history forward button */
 	FText GetHistoryForwardTooltip() const;
 
+	/** Gets text for advanced info plugin stats. Formatted output of plugin content size, reference counts, etc. */
+	FText GetPluginStatsText() const;
+
 	FText GetAddressBarText() const;
 	void OnAddressBarTextCommitted(const FText& NewText, ETextCommit::Type CommitInfo);
 	void OnAddressBarTextChanged(const FText& NewText);
@@ -103,6 +112,10 @@ private:
 		bool bShowOptionalPlugins = true;
 	};
 
+	void OnTabSpawned(const FName& TabIdentifier, const TSharedRef<SDockTab>& SpawnedTab);
+	TSharedRef<SDockTab> SpawnTab_ReferenceGraph(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnTab_PluginStats(const FSpawnTabArgs& Args) const;
+
 private:
 	/** The manager that keeps track of history data for this browser */
 	FPluginReferenceViewerHistoryManager HistoryManager;
@@ -118,8 +131,14 @@ private:
 	/** The temporary copy of the path text when it is actively being edited. */
 	FText TemporaryPathBeingEdited;
 
+	TSharedPtr<FTabManager> TabManager;
+	TMap<FName, TWeakPtr<SDockTab>> SpawnedTabs;
+
 	TSharedPtr<FUICommandInfo> ShowEnginePlugins;
 
 	/** Used to delay graph rebuilding during spinbox slider interaction */
 	bool bNeedsGraphRebuild;
+
+	/** Enables loading of plugin stats, such as reference counts, plugin content size, and dependant content size. */
+	bool bShowAdvancedInfo;
 };

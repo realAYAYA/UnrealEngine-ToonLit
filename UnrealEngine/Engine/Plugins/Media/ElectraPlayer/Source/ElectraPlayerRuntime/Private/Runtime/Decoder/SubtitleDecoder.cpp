@@ -8,6 +8,19 @@
 namespace Electra
 {
 
+namespace SubtitleOptionKeys
+{
+	static const FName SendEmptySubtitleDuringGaps(TEXT("sendEmptySubtitleDuringGaps"));
+	static const FName SideloadedID(TEXT("SideloadedID"));
+	static const FName PTO(TEXT("PTO"));
+	static const FName Width(TEXT("width"));
+	static const FName Height(TEXT("height"));
+	static const FName OffsetX(TEXT("offset_x"));
+	static const FName OffsetY(TEXT("offset_y"));
+	static const FName Timescale(TEXT("timescale"));
+}
+
+
 class FSubtitleDecoderPlugins
 {
 public:
@@ -227,11 +240,11 @@ void FSubtitleDecoder::Open(const FParamDict& Options)
 	{
 		PluginDecoderOptions = Options;
 		FParamDict Addtl(Options);
-		Addtl.Set(TEXT("width"), FVariantValue((int64) CodecInfo.GetResolution().Width));
-		Addtl.Set(TEXT("height"), FVariantValue((int64) CodecInfo.GetResolution().Height));
-		Addtl.Set(TEXT("offset_x"), FVariantValue((int64) CodecInfo.GetTranslation().GetX()));
-		Addtl.Set(TEXT("offset_y"), FVariantValue((int64) CodecInfo.GetTranslation().GetY()));
-		Addtl.Set(TEXT("timescale"), FVariantValue((int64) CodecInfo.GetFrameRate().GetDenominator()));
+		Addtl.Set(SubtitleOptionKeys::Width, FVariantValue((int64) CodecInfo.GetResolution().Width));
+		Addtl.Set(SubtitleOptionKeys::Height, FVariantValue((int64) CodecInfo.GetResolution().Height));
+		Addtl.Set(SubtitleOptionKeys::OffsetX, FVariantValue((int64) CodecInfo.GetTranslation().GetX()));
+		Addtl.Set(SubtitleOptionKeys::OffsetY, FVariantValue((int64) CodecInfo.GetTranslation().GetY()));
+		Addtl.Set(SubtitleOptionKeys::Timescale, FVariantValue((int64) CodecInfo.GetFrameRate().GetDenominator()));
 		if (PluginDecoder->InitializeStreamWithCSD(RawCSD, Addtl))
 		{
 			DeliveryOffset = PluginDecoder->GetStreamedDeliveryTimeOffset();
@@ -352,9 +365,9 @@ void FSubtitleDecoder::AUdataPushAU(FAccessUnit* AccessUnit)
 			// whether or not it has already parsed this data before (when seeking for instance).
 			if (AccessUnit->bIsSideloaded && AccessUnit->BufferSourceInfo.IsValid())
 			{
-				Addtl.Set(FString(TEXT("SideloadedID")), FVariantValue(AccessUnit->BufferSourceInfo->PeriodAdaptationSetID));
+				Addtl.Set(SubtitleOptionKeys::SideloadedID, FVariantValue(AccessUnit->BufferSourceInfo->PeriodAdaptationSetID));
 			}
-			Addtl.Set(FString(TEXT("PTO")), FVariantValue(AccessUnit->PTO));
+			Addtl.Set(SubtitleOptionKeys::PTO, FVariantValue(AccessUnit->PTO));
 			PluginDecoder->AddStreamedSubtitleData(TArray<uint8>((const uint8*)AccessUnit->AUData, (int32)AccessUnit->AUSize), AccessUnit->PTS, AccessUnit->Duration, Addtl);
 		}
 	}

@@ -27,7 +27,8 @@
 			"PlatformAllowList": [
 				"Win64",
 				"Linux",
-				"Android"
+				"Android",
+				"Mac"
 			]
 		},
 		{
@@ -37,7 +38,8 @@
 			"PlatformAllowList": [
 				"Win64",
 				"Linux",
-				"Android"
+				"Android",
+				"Mac"
 			]
 		},
 		{
@@ -47,7 +49,8 @@
 			"PlatformAllowList": [
 				"Win64",
 				"Linux",
-				"Android"
+				"Android",
+				"Mac"
 			]
 		},
 		{
@@ -56,7 +59,8 @@
 			"LoadingPhase": "Default",
 			"PlatformAllowList": [
 				"Win64",
-				"Linux"
+				"Linux",
+				"Mac"
 			]
 		}
 	],

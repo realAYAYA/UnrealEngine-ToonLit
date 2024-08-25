@@ -44,9 +44,9 @@ void SRigVMGraphPinNameList::Construct(const FArguments& InArgs, UEdGraphPin* In
 
 TSharedRef<SWidget>	SRigVMGraphPinNameList::GetDefaultValueWidget()
 {
-	TSharedPtr<FString> InitialSelected;
-	const TArray<TSharedPtr<FString>>* List = GetNameList();
-	for (TSharedPtr<FString> Item : (*List))
+	TSharedPtr<FRigVMStringWithTag> InitialSelected;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>* List = GetNameList();
+	for (const TSharedPtr<FRigVMStringWithTag>& Item : (*List))
 	{
 		if (Item->Equals(GetNameListText().ToString()))
 		{
@@ -121,9 +121,9 @@ TSharedRef<SWidget>	SRigVMGraphPinNameList::GetDefaultValueWidget()
 		];
 }
 
-const TArray<TSharedPtr<FString>>* SRigVMGraphPinNameList::GetNameList(bool bForContent) const
+const TArray<TSharedPtr<FRigVMStringWithTag>>* SRigVMGraphPinNameList::GetNameList(bool bForContent) const
 {
-	const TArray<TSharedPtr<FString>>* Result = nullptr;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>* Result = nullptr;
 	
 	// if we are looking for the validation name list, try to get it from the
 	// dedicated delegate first - but fall back on the content list nevertheless
@@ -154,7 +154,15 @@ const TArray<TSharedPtr<FString>>* SRigVMGraphPinNameList::GetNameList(bool bFor
 
 FText SRigVMGraphPinNameList::GetNameListText() const
 {
-	return FText::FromString( GraphPinObj->GetDefaultAsString() );
+	const FString DefaultString = GraphPinObj->GetDefaultAsString();
+	for (const TSharedPtr<FRigVMStringWithTag>& Item : (*CurrentList))
+	{
+		if (Item->Equals(DefaultString))
+		{
+			return FText::FromString(Item->GetStringWithTag());
+		}
+	}
+	return FText::FromString( DefaultString );
 }
 
 void SRigVMGraphPinNameList::SetNameListText(const FText& NewTypeInValue, ETextCommit::Type /*CommitInfo*/)
@@ -183,7 +191,7 @@ FSlateColor SRigVMGraphPinNameList::GetNameColor() const
 {
 	if(bMarkupInvalidItems)
 	{
-		FString CurrentItem = GetNameListText().ToString();
+		const FString DefaultString = GraphPinObj->GetDefaultAsString();
 
 		if(!EnableNameListCache)
 		{
@@ -191,16 +199,16 @@ FSlateColor SRigVMGraphPinNameList::GetNameColor() const
 		}
 
 		bool bFound = false;
-		for (TSharedPtr<FString> Item : (*ValidationList))
+		for (const TSharedPtr<FRigVMStringWithTag>& Item : (*ValidationList))
 		{
-			if (Item->Equals(CurrentItem))
+			if (Item->Equals(DefaultString))
 			{
 				bFound = true;
 				break;
 			}
 		}
 
-		if(!bFound || CurrentItem.IsEmpty() || CurrentItem == FName(NAME_None).ToString())
+		if(!bFound || DefaultString.IsEmpty() || DefaultString == FName(NAME_None).ToString())
 		{
 			return FSlateColor(FLinearColor::Red);
 		}
@@ -208,19 +216,20 @@ FSlateColor SRigVMGraphPinNameList::GetNameColor() const
 	return FSlateColor::UseForeground();
 }
 
-TSharedRef<SWidget> SRigVMGraphPinNameList::MakeNameListItemWidget(TSharedPtr<FString> InItem)
+TSharedRef<SWidget> SRigVMGraphPinNameList::MakeNameListItemWidget(TSharedPtr<FRigVMStringWithTag> InItem)
 {
-	return 	SNew(STextBlock).Text(FText::FromString(*InItem)).Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")));
+	//TODO: make this prettier
+	return 	SNew(STextBlock).Text(FText::FromString(InItem->GetStringWithTag())).Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")));
 }
 
-void SRigVMGraphPinNameList::OnNameListChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+void SRigVMGraphPinNameList::OnNameListChanged(TSharedPtr<FRigVMStringWithTag> NewSelection, ESelectInfo::Type SelectInfo)
 {
 	if (SelectInfo != ESelectInfo::Direct)
 	{
 		FString NewValue = FName(NAME_None).ToString();
 		if (NewSelection.IsValid())
 		{
-			NewValue = *NewSelection.Get();
+			NewValue = NewSelection->GetString();
 		}
 		SetNameListText(FText::FromString(NewValue), ETextCommit::OnEnter);
 	}
@@ -230,8 +239,8 @@ void SRigVMGraphPinNameList::OnNameListComboBox()
 {
 	UpdateNameLists();
 
-	TSharedPtr<FString> CurrentlySelected;
-	for (TSharedPtr<FString> Item : (*CurrentList))
+	TSharedPtr<FRigVMStringWithTag> CurrentlySelected;
+	for (const TSharedPtr<FRigVMStringWithTag>& Item : (*CurrentList))
 	{
 		if (Item->Equals(GetNameListText().ToString()))
 		{
@@ -264,12 +273,12 @@ FReply SRigVMGraphPinNameList::HandleGetSelectedClicked()
 	{
 		if (OnGetNameFromSelection.IsBound() && OnGetSelectedClicked.IsBound())
 		{
-			const TArray<TSharedPtr<FString>> Result = OnGetNameFromSelection.Execute();
+			const TArray<TSharedPtr<FRigVMStringWithTag>> Result = OnGetNameFromSelection.Execute();
 			if (Result.Num() > 0)
 			{
 				if (Result[0].IsValid() && Result[0] != nullptr)
 				{
-					const FString DefaultValue = *Result[0].Get();
+					const FString DefaultValue = Result[0]->GetString();
 					FReply Reply = OnGetSelectedClicked.Execute(Graph, ModelPin, DefaultValue);
 					if(Reply.IsEventHandled())
 					{
@@ -289,10 +298,10 @@ FReply SRigVMGraphPinNameList::HandleBrowseClicked()
 	{
 		if(OnBrowseClicked.IsBound())
 		{
-			TSharedPtr<FString> Selected = NameListComboBox->GetSelectedItem();
+			TSharedPtr<FRigVMStringWithTag> Selected = NameListComboBox->GetSelectedItem();
 			if (Selected.IsValid() && ModelPin)
 			{
-				return OnBrowseClicked.Execute(Graph, ModelPin, *Selected.Get());
+				return OnBrowseClicked.Execute(Graph, ModelPin, Selected->GetString());
 			}
 		}
 	}

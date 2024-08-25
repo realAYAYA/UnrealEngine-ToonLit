@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "LevelSequence.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/EnterpriseObjectVersion.h"
 #include "UObject/Package.h"
 
@@ -40,12 +41,20 @@ UDatasmithScene::~UDatasmithScene()
 
 void UDatasmithScene::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UDatasmithScene::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 #if WITH_EDITORONLY_DATA
 	if (AssetImportData)
 	{
-		OutTags.Add(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
 
-		AssetImportData->DatasmithImportInfo.GetAssetRegistryTags(OutTags);
+		AssetImportData->DatasmithImportInfo.GetAssetRegistryTags(Context);
 	}
 #endif
 }

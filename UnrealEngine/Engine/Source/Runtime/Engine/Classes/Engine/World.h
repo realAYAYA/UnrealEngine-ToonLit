@@ -38,6 +38,7 @@
 #include "Subsystems/SubsystemCollection.h"
 #include "CollisionProfile.h"
 #include "RHIFeatureLevel.h"
+#include "Engine/WorldInitializationValues.h"
 
 #include "World.generated.h"
 
@@ -190,23 +191,6 @@ public:
 	static FOnWorldUnregisteredWithAudioDevice OnWorldUnregisteredWithAudioDevice;
 };
 
-#if UE_WITH_IRIS
-/**
-* Struct that temporarily holds the Iris replication system and bridge.
-*/
-struct FIrisSystemHolder
-{
-	bool IsHolding() const { return ReplicationSystem != nullptr; }
-
-	void Clear()
-	{
-		ReplicationSystem = nullptr;
-	}
-
-	class UReplicationSystem* ReplicationSystem = nullptr;
-};
-#endif // UE_WITH_IRIS
-
 /** class that encapsulates seamless world traveling */
 class FSeamlessTravelHandler
 {
@@ -354,7 +338,7 @@ struct ENGINE_API FLevelViewportInfo
 		{
 			I.CamUpdated = true;
 
-			if ( I.CamOrthoZoom == 0.f )
+			if ( I.CamOrthoZoom < MIN_ORTHOZOOM || I.CamOrthoZoom > MAX_ORTHOZOOM )
 			{
 				I.CamOrthoZoom = DEFAULT_ORTHOZOOM;
 			}
@@ -784,7 +768,7 @@ private:
 };
 
 USTRUCT()
-struct FStreamingLevelsToConsider
+struct ENGINE_API FStreamingLevelsToConsider
 {
 	GENERATED_BODY()
 
@@ -863,79 +847,6 @@ struct FWorldPartitionEvents
 private:
 	static void BroadcastWorldPartitionInitialized(UWorld* InWorld, UWorldPartition* InWorldPartition);
 	static void BroadcastWorldPartitionUninitialized(UWorld* InWorld, UWorldPartition* InWorldPartition);
-};
-
-/** Struct containing a collection of optional parameters for initialization of a World. */
-struct FWorldInitializationValues
-{
-	FWorldInitializationValues()
-		: bInitializeScenes(true)
-		, bAllowAudioPlayback(true)
-		, bRequiresHitProxies(true)
-		, bCreatePhysicsScene(true)
-		, bCreateNavigation(true)
-		, bCreateAISystem(true)
-		, bShouldSimulatePhysics(true)
-		, bEnableTraceCollision(false)
-		, bForceUseMovementComponentInNonGameWorld(false)
-		, bTransactional(true)
-		, bCreateFXSystem(true)
-		, bCreateWorldPartition(false)
-	{
-	}
-
-	/** Should the scenes (physics, rendering) be created. */
-	uint32 bInitializeScenes:1;
-
-	/** Are sounds allowed to be generated from this world. */
-	uint32 bAllowAudioPlayback:1;
-
-	/** Should the render scene create hit proxies. */
-	uint32 bRequiresHitProxies:1;
-
-	/** Should the physics scene be created. bInitializeScenes must be true for this to be considered. */
-	uint32 bCreatePhysicsScene:1;
-
-	/** Should the navigation system be created for this world. */
-	uint32 bCreateNavigation:1;
-
-	/** Should the AI system be created for this world. */
-	uint32 bCreateAISystem:1;
-
-	/** Should physics be simulated in this world. */
-	uint32 bShouldSimulatePhysics:1;
-
-	/** Are collision trace calls valid within this world. */
-	uint32 bEnableTraceCollision:1;
-
-	/** Special flag to enable movement component in non game worlds (see UMovementComponent::OnRegister) */
-	uint32 bForceUseMovementComponentInNonGameWorld:1;
-
-	/** Should actions performed to objects in this world be saved to the transaction buffer. */
-	uint32 bTransactional:1;
-
-	/** Should the FX system be created for this world. */
-	uint32 bCreateFXSystem:1;
-
-	/** Should the world be partitioned */
-	uint32 bCreateWorldPartition:1;
-
-	/** The default game mode for this world (if any) */
-	TSubclassOf<class AGameModeBase> DefaultGameMode;
-
-	FWorldInitializationValues& InitializeScenes(const bool bInitialize) { bInitializeScenes = bInitialize; return *this; }
-	FWorldInitializationValues& AllowAudioPlayback(const bool bAllow) { bAllowAudioPlayback = bAllow; return *this; }
-	FWorldInitializationValues& RequiresHitProxies(const bool bRequires) { bRequiresHitProxies = bRequires; return *this; }
-	FWorldInitializationValues& CreatePhysicsScene(const bool bCreate) { bCreatePhysicsScene = bCreate; return *this; }
-	FWorldInitializationValues& CreateNavigation(const bool bCreate) { bCreateNavigation = bCreate; return *this; }
-	FWorldInitializationValues& CreateAISystem(const bool bCreate) { bCreateAISystem = bCreate; return *this; }
-	FWorldInitializationValues& ShouldSimulatePhysics(const bool bInShouldSimulatePhysics) { bShouldSimulatePhysics = bInShouldSimulatePhysics; return *this; }
-	FWorldInitializationValues& EnableTraceCollision(const bool bInEnableTraceCollision) { bEnableTraceCollision = bInEnableTraceCollision; return *this; }
-	FWorldInitializationValues& ForceUseMovementComponentInNonGameWorld(const bool bInForceUseMovementComponentInNonGameWorld) { bForceUseMovementComponentInNonGameWorld = bInForceUseMovementComponentInNonGameWorld; return *this; }
-	FWorldInitializationValues& SetTransactional(const bool bInTransactional) { bTransactional = bInTransactional; return *this; }
-	FWorldInitializationValues& CreateFXSystem(const bool bCreate) { bCreateFXSystem = bCreate; return *this; }
-	FWorldInitializationValues& CreateWorldPartition(const bool bCreate) { bCreateWorldPartition = bCreate; return *this; }
-	FWorldInitializationValues& SetDefaultGameMode(TSubclassOf<class AGameModeBase> GameMode) { DefaultGameMode = GameMode; return *this; }
 };
 
 /** 
@@ -1100,10 +1011,6 @@ public:
 
 	/** Returns BlockTillLevelStreamingCompletedEpoch. */
 	int32 GetBlockTillLevelStreamingCompletedEpoch() const { return BlockTillLevelStreamingCompletedEpoch; }
-#if UE_WITH_IRIS
-	/** Store the Iris managers from the GameNetDriver to they can be restored into a different NetDriver later */
-	void StoreIrisAndClearReferences();
-#endif // UE_WITH_IRIS
 
 	/** Prefix we used to rename streaming levels, non empty in PIE and standalone preview */
 	UPROPERTY()
@@ -1203,7 +1110,7 @@ public:
 
 	/** Whether world object has been initialized via Init and has not yet had CleanupWorld called								*/
 	uint8 bIsWorldInitialized:1;
-
+	
 	/** Is level streaming currently frozen?																					*/
 	uint8 bIsLevelStreamingFrozen:1;
 
@@ -1251,7 +1158,18 @@ public:
 	uint8 bActorsInitialized:1;
 
 	/** Whether BeginPlay has been called on actors */
+	UE_DEPRECATED(5.4, "Public access to bBegunPlay is deprecated. Please update your code to use the public accessors GetBegunPlay() & SetBegunPlay().")
 	uint8 bBegunPlay:1;
+
+	/** Set whether BeginPlay has been called on actors */
+	void SetBegunPlay(bool bHasBegunPlay);
+
+	/** Get whether BeginPlay has been called on actors */
+	bool GetBegunPlay() const;
+
+	DECLARE_EVENT_OneParam(UWorld, FOnBeginPlay, bool);
+	/** Return the event that is broadcast when bBegunPlay is changed */
+	FOnBeginPlay& GetOnBeginPlayEvent() { return OnBeginPlay; }
 
 	/** Whether the match has been started */
 	uint8 bMatchStarted:1;
@@ -1323,6 +1241,9 @@ private:
 	/** Whether InitWorld was ever called on this world since its creation. Not cleared to false during CleanupWorld			*/
 	uint8 bHasEverBeenInitialized: 1;
 
+	/** Indicates that the world is in the process of being cleaned up */
+	bool bIsBeingCleanedUp;
+	
 	/** Whether the world is currently in a BlockTillLevelStreamingCompleted() call */
 	uint32 IsInBlockTillLevelStreamingCompleted;
 
@@ -1362,8 +1283,8 @@ private:
 
 	/** Creates the dynamic source and static level collections if they don't already exist. */
 	void ConditionallyCreateDefaultLevelCollections();
-
-
+	
+	FOnBeginPlay OnBeginPlay;
 public:
 
 	/** Handle to the active audio device for this world. */
@@ -1456,7 +1377,9 @@ public:
 #if WITH_EDITOR
 
 	/** Change the feature level that this world is current rendering with */
-	void ChangeFeatureLevel(ERHIFeatureLevel::Type InFeatureLevel, bool bShowSlowProgressDialog = true);
+	void ChangeFeatureLevel(ERHIFeatureLevel::Type InFeatureLevel, bool bShowSlowProgressDialog = true, bool bForceUpdate = false);
+
+	void ShaderPlatformChanged();
 
 	void RecreateScene(ERHIFeatureLevel::Type InFeatureLevel, bool bBroadcastChange = true);
 
@@ -1509,10 +1432,6 @@ public:
 	/** Physics Field component. */
 	UPROPERTY(Transient)
 	TObjectPtr<class UPhysicsFieldComponent> PhysicsField;
-
-	/** Tracks the last assigned unique id for light weight instances in this world. */
-	UPROPERTY()
-	uint32 LWILastAssignedUID;
 
 private:
 
@@ -2887,7 +2806,10 @@ public:
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 #if WITH_EDITOR
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 	virtual bool Rename(const TCHAR* NewName = NULL, UObject* NewOuter = NULL, ERenameFlags Flags = REN_None) override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	virtual void PostLoadAssetRegistryTags(const FAssetData& InAssetData, TArray<FAssetRegistryTag>& OutTagsAndValuesToUpdate) const;
 	virtual bool IsNameStableForNetworking() const override;
@@ -3086,6 +3008,9 @@ public:
 	 * Destroy this World instance. If destroying the world to load a different world, supply it here to prevent GC of the new world or it's sublevels.
 	 */
 	void DestroyWorld( bool bInformEngineOfWorld, UWorld* NewWorld = nullptr );
+
+	/** Returns true if the world is in the process of being cleaned up. */
+	bool IsBeingCleanedUp() const { return bIsBeingCleanedUp; }
 
 	/** 
 	 * Marks this world and all objects within as pending kill
@@ -3557,6 +3482,13 @@ public:
 		return Cast<T>(GameState);
 	}
 
+	/** Returns the current GameState instance cast to the template type, asserting that it is of the correct type. */
+	template<class T>
+	T* GetGameStateChecked() const
+	{
+		return CastChecked<T>(GameState);
+	}
+
 	/** Returns the current GameState instance. */
 	AGameStateBase* GetGameState() const { return GameState; }
 
@@ -3676,11 +3608,6 @@ public:
 	bool IsNetMode(ENetMode Mode) const;
 
 private:
-
-#if UE_WITH_IRIS
-	/** Holds the Iris systems during the NetDriver transition that occurs when Forking */
-	FIrisSystemHolder IrisSystemHolder;
-#endif // UE_WITH_IRIS
 
 	/** Private version without inlining that does *not* check Dedicated server build flags (which should already have been done). */
 	ENetMode InternalGetNetMode() const;
@@ -4082,8 +4009,8 @@ public:
 	/** Given a package, locate the UWorld contained within if one exists */
 	static UWorld* FindWorldInPackage(UPackage* Package);
 
-	/** Given a package, return if package contains UWorld or External Actor */
-	static bool IsWorldOrExternalActorPackage(UPackage* Package);
+	/** Given a package, return if package contains a UWorld or an external world object */
+	static bool IsWorldOrWorldExternalPackage(UPackage* Package);
 
 	/** If the specified package contains a redirector to a UWorld, that UWorld is returned. Otherwise, nullptr is returned. */
 	static UWorld* FollowWorldRedirectorInPackage(UPackage* Package, UObjectRedirector** OptionalOutRedirector = nullptr);
@@ -4131,6 +4058,7 @@ public:
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnLevelChanged, ULevel*, UWorld*);
 
 	// delegate for generating world asset registry tags so project/game scope can add additional tags for filtering levels in their UI, etc
+	DECLARE_MULTICAST_DELEGATE_TwoParams(FWorldGetAssetTagsWithContext, const UWorld*, FAssetRegistryTagsContext);
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FWorldGetAssetTags, const UWorld*, TArray<UObject::FAssetRegistryTag>&);
 
 	DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnWorldTickStart, UWorld*, ELevelTick, float);
@@ -4175,6 +4103,14 @@ public:
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnWorldPIEReady, UGameInstance*);
 	static FOnWorldPIEStarted OnPIEReady;
 
+	// PIE map is created
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnWorldPIEMapCreated, UGameInstance*);
+	static FOnWorldPIEMapCreated OnPIEMapCreated;
+
+	// PIE map is created
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnWorldPIEMapReady, UGameInstance*);
+	static FOnWorldPIEMapReady OnPIEMapReady;
+
 	// PIE has ended
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnWorldPIEEnded, UGameInstance*);
 	static FOnWorldPIEEnded OnPIEEnded;
@@ -4218,6 +4154,8 @@ public:
 	static FLevelTransformEvent		PostApplyLevelTransform;
 
 	// called by UWorld::GetAssetRegistryTags()
+	static FWorldGetAssetTagsWithContext GetAssetTagsWithContext;
+	UE_DEPRECATED(5.4, "Subscribe to GetAssetTagsWithContext instead")
 	static FWorldGetAssetTags GetAssetTags;
 
 #if WITH_EDITOR

@@ -18,8 +18,6 @@
 
 #include "ChaosLog.h"
 
-//PRAGMA_DISABLE_OPTIMIZATION
-
 namespace Chaos
 {
 	namespace CVars
@@ -51,6 +49,18 @@ namespace Chaos
 		// @todo(chaos): to be tuned
 		FRealSingle Chaos_PBDCollisionSolver_JacobiRotationTolerance = 1.e-8f;
 		FAutoConsoleVariableRef CVarChaosPBDCollisionSolverJacobiRotationTolerance(TEXT("p.Chaos.PBDCollisionSolver.JacobiRotationTolerance"), Chaos_PBDCollisionSolver_JacobiRotationTolerance, TEXT(""));
+
+		// Whether to enable the new initial overlap depentration system
+		bool bChaos_Collision_EnableInitialDepenetration = true;
+		FAutoConsoleVariableRef CVarChaosCollisionEnableInitialDepentration(TEXT("p.Chaos.PBDCollisionSolver.EnableInitialDepenetration"), bChaos_Collision_EnableInitialDepenetration, TEXT(""));
+
+		// The maximum number of constraints we will attempt to solve (-1 for unlimited)
+		int32 Chaos_Collision_MaxSolverManifoldPoints = -1;
+		FAutoConsoleVariableRef CVarChaosCollisionMaxSolverManifoldPoints(TEXT("p.Chaos.PBDCollisionSolver.MaxManifoldPoints"), Chaos_Collision_MaxSolverManifoldPoints, TEXT(""));
+
+		// Whether to enable the experimental soft collisions
+		bool bChaos_Collision_EnableSoftCollisions = true;
+		FAutoConsoleVariableRef CVarChaosCollisionEnableSoftCollisions(TEXT("p.Chaos.PBDCollisionSolver.EnableSoftCollisions"), bChaos_Collision_EnableSoftCollisions, TEXT(""));
 	}
 
 
@@ -63,13 +73,15 @@ namespace Chaos
 	void UpdateCollisionSolverContactPointFromConstraint(
 		Private::FPBDCollisionSolver& Solver, 
 		const int32 SolverPointIndex, 
-		const FPBDCollisionConstraint* Constraint, 
+		FPBDCollisionConstraint* Constraint, 
 		const int32 ConstraintPointIndex, 
 		const FRealSingle Dt, 
+		const FRealSingle MaxDepenetrationVelocity,
+		const FRealSingle MaxPushOut,
 		const FConstraintSolverBody& Body0,
 		const FConstraintSolverBody& Body1)
 	{
-		const FManifoldPoint& ManifoldPoint = Constraint->GetManifoldPoint(ConstraintPointIndex);
+		FManifoldPoint& ManifoldPoint = Constraint->GetManifoldPoint(ConstraintPointIndex);
 
 		const FRealSingle Restitution = FRealSingle(Constraint->GetRestitution());
 		const FRealSingle RestitutionVelocityThreshold = FRealSingle(Constraint->GetRestitutionThreshold()) * Dt;
@@ -97,14 +109,17 @@ namespace Chaos
 		}
 		const FVec3f WorldContactTangentV = FVec3f::CrossProduct(WorldContactNormal, WorldContactTangentU);
 
-		// Calculate contact velocity if we will need it below (restitution and/or frist-contact friction)
-		const bool bNeedContactVelocity = (!ManifoldPoint.Flags.bHasStaticFrictionAnchor) || (Restitution > FRealSingle(0));
+
+		// Calculate contact velocity if we will need it below (restitution and/or first-contact for friction or initial depenetration)
+		const bool bNeedContactVelocity = (!ManifoldPoint.Flags.bHasStaticFrictionAnchor) || (Restitution > FRealSingle(0)) || ManifoldPoint.Flags.bInitialContact;
 		FVec3f ContactVel = FVec3(0);
+		FRealSingle ContactVelocityNormal = FRealSingle(0);
 		if (bNeedContactVelocity)
 		{
 			const FVec3f ContactVel0 = Body0.V() + FVec3f::CrossProduct(Body0.W(), WorldRelativeContact0);
 			const FVec3f ContactVel1 = Body1.V() + FVec3f::CrossProduct(Body1.W(), WorldRelativeContact1);
 			ContactVel = ContactVel0 - ContactVel1;
+			ContactVelocityNormal = FVec3f::DotProduct(ContactVel, WorldContactNormal);
 		}
 
 		// If we have contact data from a previous tick, use it to calculate the lateral position delta we need
@@ -120,14 +135,12 @@ namespace Chaos
 		}
 		else
 		{
-			// @todo(chaos): consider adding a multiplier to the initial contact friction
 			WorldFrictionDelta = ContactVel * Dt;
 		}
 
 		// The contact point error we are trying to correct in this solver
-		const FRealSingle TargetPhi = ManifoldPoint.TargetPhi;
 		const FVec3f WorldContactDelta = FVec3f(WorldContact0 - WorldContact1);
-		const FRealSingle WorldContactDeltaNormal = FVec3f::DotProduct(WorldContactDelta, WorldContactNormal) - TargetPhi;
+		FRealSingle WorldContactDeltaNormal = FVec3f::DotProduct(WorldContactDelta, WorldContactNormal);
 		const FRealSingle WorldContactDeltaTangentU = FVec3f::DotProduct(WorldContactDelta + WorldFrictionDelta, WorldContactTangentU);
 		const FRealSingle WorldContactDeltaTangentV = FVec3f::DotProduct(WorldContactDelta + WorldFrictionDelta, WorldContactTangentV);
 
@@ -135,12 +148,69 @@ namespace Chaos
 		FRealSingle WorldContactTargetVelocityNormal = FRealSingle(0);
 		if (Restitution > FRealSingle(0))
 		{
-			const FRealSingle ContactVelocityNormal = FVec3f::DotProduct(ContactVel, WorldContactNormal);
 			if (ContactVelocityNormal < -RestitutionVelocityThreshold)
 			{
 				WorldContactTargetVelocityNormal = -Restitution * ContactVelocityNormal;
 			}
 		}
+
+		// Overlap remaining from the previous frame, estimated from current contact phi and velocity
+		FRealSingle WorldContactResidualPhi = FMath::Min(WorldContactDeltaNormal, FRealSingle(0)) - FMath::Min(ContactVelocityNormal * Dt, FRealSingle(0));
+
+		// Initial Phi for initial-overlap depenetration.
+		// If we have an initial contact, calculate the initial overlap. This will get saved in SetSolverResults
+		FRealSingle WorldContactInitialPhi = 0;
+		if ((MaxDepenetrationVelocity >= 0) && CVars::bChaos_Collision_EnableInitialDepenetration)
+		{
+			if (ManifoldPoint.Flags.bInitialContact)
+			{
+				// This is a new manifold point, capture current Phi as the initial Phi
+				WorldContactInitialPhi = WorldContactResidualPhi;
+
+				// If this is a new manifold point on a pre-existing manifold, we limit the initial depth.
+				// This is so that as we are depenetrating and new points are added to the manifold, we don't suddenly pop out, which would
+				// happen if we set InitialPhi=0. But also want to ensure that if we are nearly done handling initial overlap, we don't treat
+				// new deeper manifold points as full initial overlaps.
+				// NOTE: here we are checking IsInitialContact on the constraint, which is only set when we first make contact, as opposed 
+				// to the bInitialContact on the manifold point which is true for any new manifold point, regardless of the constraint age.
+				if (!Constraint->IsInitialContact())
+				{
+					WorldContactInitialPhi = FMath::Max(WorldContactInitialPhi, Constraint->GetMinInitialPhi());
+				}
+
+			}
+			else if (ManifoldPoint.InitialPhi < 0)
+			{
+				// This is a pre-existing manifold point with some initial penetration to resolve.
+				// If we are currently penetrating less than the inital overlap, reduce the initial overlap
+				// Also resolve initial overlap over time by reducing allowed penetration by MaxDepenetrationVelocity
+				WorldContactInitialPhi = FMath::Max(ManifoldPoint.InitialPhi + MaxDepenetrationVelocity * Dt, WorldContactDeltaNormal);
+			}
+
+			// InitialPhi is only for tracking penetration - cannot be positive
+			WorldContactInitialPhi = FMath::Min(WorldContactInitialPhi, FRealSingle(0));
+
+			// Apply initial penetration allowance to depth correction
+			WorldContactDeltaNormal -= WorldContactInitialPhi;
+
+			// @todo(chaos): InitialPhi should probably be updated prior to Gather, but this is where we calculate
+			// the depth and contact velocity so it's convenient for now. Not great that we have to write back to
+			// the constraint here though...
+			ManifoldPoint.InitialPhi = WorldContactInitialPhi;
+		}
+
+		// Limit the depenetration for this tick if desired
+		if (MaxPushOut > 0)
+		{
+			if (WorldContactDeltaNormal < -MaxPushOut)
+			{
+				WorldContactDeltaNormal = -MaxPushOut;
+			}
+		}
+
+		// Adjust depth to account for target penetration from user
+		const FRealSingle TargetPhi = ManifoldPoint.TargetPhi;
+		WorldContactDeltaNormal -= TargetPhi;
 
 		Solver.InitManifoldPoint(
 			SolverPointIndex,
@@ -158,13 +228,23 @@ namespace Chaos
 
 	void UpdateCollisionSolverManifoldFromConstraint(
 		Private::FPBDCollisionSolver& Solver, 
-		const FPBDCollisionConstraint* Constraint, 
+		FPBDCollisionConstraint* Constraint, 
 		const FSolverReal Dt, 
-		const int32 ConstraintPointBeginIndex, 
-		const int32 ConstraintPointEndIndex)
+		const int32 ConstraintPointBeginIndex,
+		const int32 ConstraintPointEndIndex,
+		const FPBDCollisionSolverSettings& SolverSettings)
 	{
 		const FConstraintSolverBody& Body0 = Solver.SolverBody0();
 		const FConstraintSolverBody& Body1 = Solver.SolverBody1();
+
+		// MaxDepenetrationVelocity controls the rate at which initial-overlaps are resolved
+		// If the constraint has a non-negative MaxDepenetrationVelocity we use it, otherwise use the solver setting.
+		// If resultant MaxDepenetrationVelocity is negative, it means depenetrate immediately
+		const FSolverReal MaxDepenetrationVelocity = (Constraint->GetInitialOverlapDepentrationVelocity() >= 0) ? Constraint->GetInitialOverlapDepentrationVelocity() : SolverSettings.DepenetrationVelocity;
+
+		// The maximum correction we can apply in one frame
+		// @todo(chaos): consider removing this functionality?
+		const FSolverReal MaxPushOut = (SolverSettings.MaxPushOutVelocity > 0) ? (FSolverReal(SolverSettings.MaxPushOutVelocity) * Dt) : FSolverReal(0);
 
 		// Only calculate state for newly added contacts. Normally this is all of them, but maybe not if incremental collision is used by RBAN.
 		// Also we only add active points to the solver's manifold points list
@@ -173,10 +253,12 @@ namespace Chaos
 			if (!Constraint->GetManifoldPoint(ConstraintManifoldPointIndex).Flags.bDisabled)
 			{
 				const int32 SolverManifoldPointIndex = Solver.AddManifoldPoint();
-
-				// Transform the constraint contact data into world space for use by the solver
-				// We build this data directly into the solver's world-space contact data which looks a bit odd with "Init" called after but there you go
-				UpdateCollisionSolverContactPointFromConstraint(Solver, SolverManifoldPointIndex, Constraint, ConstraintManifoldPointIndex, Dt, Body0, Body1);
+				if (SolverManifoldPointIndex != INDEX_NONE)
+				{
+					// Transform the constraint contact data into world space for use by the solver
+					// We build this data directly into the solver's world-space contact data which looks a bit odd with "Init" called after but there you go
+					UpdateCollisionSolverContactPointFromConstraint(Solver, SolverManifoldPointIndex, Constraint, ConstraintManifoldPointIndex, Dt, MaxDepenetrationVelocity, MaxPushOut, Body0, Body1);
+				}
 			}
 		}
 
@@ -185,7 +267,7 @@ namespace Chaos
 
 	void UpdateCollisionSolverFromConstraint(
 		Private::FPBDCollisionSolver& Solver, 
-		const FPBDCollisionConstraint* Constraint, 
+		FPBDCollisionConstraint* Constraint, 
 		const FSolverReal Dt, 
 		const FPBDCollisionSolverSettings& SolverSettings, 
 		bool& bOutPerIterationCollision)
@@ -197,30 +279,37 @@ namespace Chaos
 		FSolverReal PositionStaticFriction = FSolverReal(0);
 		FSolverReal PositionDynamicFriction = FSolverReal(0);
 		FSolverReal VelocityDynamicFriction = FSolverReal(0);
+		FSolverReal MinFrictionPushOut = FSolverReal(Constraint->GetMinFrictionPushOut());
 		if (SolverSettings.NumPositionFrictionIterations > 0)
 		{
 			PositionStaticFriction = StaticFriction;
-			if (!Constraint->HasQuadraticShape())
+
+			// We have an option to apply dynamic friction in the velocity solver phase for spheres and capsules. 
+			// @todo(chaos): UE5.4: Remove quadratic special case when PBD static friction is enabled
+			const bool bUsePBDDynamicFriction = !Constraint->HasQuadraticShape() || (SolverSettings.NumVelocityFrictionIterations == 0);
+			if (bUsePBDDynamicFriction)
 			{
 				PositionDynamicFriction = DynamicFriction;
 			}
 			else
 			{
-				// Quadratic shapes don't use PBD dynamic friction - it has issues at slow speeds where the WxR is
-				// less than the position tolerance for friction point matching
-				// @todo(chaos): fix PBD dynamic friction on quadratic shapes
 				VelocityDynamicFriction = DynamicFriction;
 			}
 		}
-		else
+		else if (SolverSettings.NumVelocityFrictionIterations > 0)
 		{
+			// We have an option to run without static friction and velocity-based dynamic friction (for RBAN)
 			VelocityDynamicFriction = DynamicFriction;
 		}
 
-		Solver.SetFriction(PositionStaticFriction, PositionDynamicFriction, VelocityDynamicFriction);
+		Solver.SetFriction(PositionStaticFriction, PositionDynamicFriction, VelocityDynamicFriction, MinFrictionPushOut);
+
 
 		const FReal SolverStiffness = Constraint->GetStiffness();
+
 		Solver.SetStiffness(FSolverReal(SolverStiffness));
+
+		Solver.SetHardContact();
 
 		Solver.SolverBody0().SetInvMScale(Constraint->GetInvMassScale0());
 		Solver.SolverBody0().SetInvIScale(Constraint->GetInvInertiaScale0());
@@ -231,7 +320,19 @@ namespace Chaos
 
 		bOutPerIterationCollision = (!Constraint->GetUseManifold() || Constraint->GetUseIncrementalCollisionDetection());
 
-		UpdateCollisionSolverManifoldFromConstraint(Solver, Constraint, Dt, 0, Constraint->NumManifoldPoints());
+		UpdateCollisionSolverManifoldFromConstraint(Solver, Constraint, Dt, 0, Constraint->NumManifoldPoints(), SolverSettings);
+
+		// Convert to a soft collision if the constraint has a nonzero soft separation
+		// NOTE: must come after UpdateCollisionSolverManifoldFromConstraint because we scale the spring forces by the number of manifold points.
+		if (Constraint->IsSoftContact() && CVars::bChaos_Collision_EnableSoftCollisions)
+		{
+			// NOTE: convert stiffness and damping into XPBD terms
+			if (Solver.NumManifoldPoints() > 0)
+			{
+				const FSolverReal SoftScale = FSolverReal(1) / FSolverReal(Solver.NumManifoldPoints());
+				Solver.SetSoftContact(Constraint->GetSoftSeparation());
+			}
+		}
 	}
 
 	FORCEINLINE_DEBUGGABLE void UpdateCollisionConstraintFromSolver(FPBDCollisionConstraint* Constraint, const Private::FPBDCollisionSolver& Solver, const FSolverReal Dt)
@@ -249,21 +350,24 @@ namespace Chaos
 
 			if (!Constraint->GetManifoldPoint(ManifoldPointIndex).Flags.bDisabled)
 			{
-				const Private::FPBDCollisionSolverManifoldPoint& SolverManifoldPoint = Solver.GetManifoldPoint(SolverManifoldPointIndex);
+				if (SolverManifoldPointIndex < Solver.NumManifoldPoints())
+				{
+					const Private::FPBDCollisionSolverManifoldPoint& SolverManifoldPoint = Solver.GetManifoldPoint(SolverManifoldPointIndex);
 
-				NetPushOut =
-					SolverManifoldPoint.NetPushOutNormal * SolverManifoldPoint.ContactNormal +
-					SolverManifoldPoint.NetPushOutTangentU * SolverManifoldPoint.ContactTangentU +
-					SolverManifoldPoint.NetPushOutTangentV * SolverManifoldPoint.ContactTangentV;
+					NetPushOut =
+						SolverManifoldPoint.NetPushOutNormal * SolverManifoldPoint.ContactNormal +
+						SolverManifoldPoint.NetPushOutTangentU * SolverManifoldPoint.ContactTangentU +
+						SolverManifoldPoint.NetPushOutTangentV * SolverManifoldPoint.ContactTangentV;
 
-				NetImpulse =
-					SolverManifoldPoint.NetImpulseNormal * SolverManifoldPoint.ContactNormal +
-					SolverManifoldPoint.NetImpulseTangentU * SolverManifoldPoint.ContactTangentU +
-					SolverManifoldPoint.NetImpulseTangentV * SolverManifoldPoint.ContactTangentV;
+					NetImpulse =
+						SolverManifoldPoint.NetImpulseNormal * SolverManifoldPoint.ContactNormal +
+						SolverManifoldPoint.NetImpulseTangentU * SolverManifoldPoint.ContactTangentU +
+						SolverManifoldPoint.NetImpulseTangentV * SolverManifoldPoint.ContactTangentV;
 
-				StaticFrictionRatio = SolverManifoldPoint.StaticFrictionRatio;
+					StaticFrictionRatio = SolverManifoldPoint.StaticFrictionRatio;
 
-				++SolverManifoldPointIndex;
+					++SolverManifoldPointIndex;
+				}
 			}
 
 			// NOTE: We call this even for points we did not run the solver for (but with zero results)
@@ -273,8 +377,6 @@ namespace Chaos
 				StaticFrictionRatio,
 				Dt);
 		}
-
-		Constraint->EndTick();
 	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////////////
@@ -289,7 +391,10 @@ namespace Chaos
 		, CollisionConstraints()
 		, AppliedShockPropagation(1)
 		, Scratch()
-		, CollisionSolvers()
+		, CollisionSolvers(nullptr)
+		, CollisionSolverManifoldPoints(nullptr)
+		, NumCollisionSolverManifoldPoints(0)
+		, MaxCollisionSolverManifoldPoints(0)
 		, bCollisionConstraintPerIterationCollisionDetection()
 		, bPerIterationCollisionDetection(false)
 	{
@@ -303,30 +408,100 @@ namespace Chaos
 	{
 		AppliedShockPropagation = FSolverReal(1);
 
-		// A over-allocation policy to avoid reallocation every frame in the common case where a pile of objects is dropped
-		// and the number of contacts increases every tick.
-		int CollisionBufferNum = MaxCollisions;
-		if (CollisionBufferNum > CollisionConstraints.Max())
-		{
-			CollisionBufferNum = (5 * MaxCollisions) / 4; // +25%
-		}
-
+		const int CollisionBufferNum = CalculateCollisionBufferNum(MaxCollisions, CollisionConstraints.Num());
 		CollisionConstraints.Reset(CollisionBufferNum);
 		bCollisionConstraintPerIterationCollisionDetection.Reset(CollisionBufferNum);
 
 		// Just set the array size for these right away - all data will be initialized later
-		bCollisionConstraintPerIterationCollisionDetection.SetNumUninitialized(MaxCollisions, false);
+		bCollisionConstraintPerIterationCollisionDetection.SetNumUninitialized(MaxCollisions, EAllowShrinking::No);
 
-		// Prepare the scratch buffer
-		const size_t AlignedSolverSize = Align(sizeof(Private::FPBDCollisionSolver), alignof(Private::FPBDCollisionSolver));
-		const size_t AlignedPointSize = Align(sizeof(Private::FPBDCollisionSolverManifoldPoint), alignof(Private::FPBDCollisionSolverManifoldPoint));
-		const size_t ScratchSize = CollisionBufferNum * (AlignedSolverSize + Private::FPBDCollisionSolver::MaxPointsPerConstraint * AlignedPointSize);
-		Scratch.Reset(ScratchSize);
-
-		// Allocate scratch space for the collision solvers and manifold points
-		CollisionSolvers = Scratch.AllocArray<Private::FPBDCollisionSolver>(MaxCollisions);
-		CollisionSolverManifoldPoints = Scratch.AllocArray<Private::FPBDCollisionSolverManifoldPoint>(MaxCollisions);
+		// Reset the solver buffers. We could manifold points as constraints are added,
+		// and re-allocate and assign the scratch buffers after
 		NumCollisionSolverManifoldPoints = 0;
+		MaxCollisionSolverManifoldPoints = 0;
+		CollisionSolvers = nullptr;
+		CollisionSolverManifoldPoints = nullptr;
+	}
+
+	int32 FPBDCollisionContainerSolver::CalculateCollisionBufferNum(const int32 InTightFittingNum, const int32 InCurrentBufferNum) const
+	{
+		// A buffer over-allocation policy to avoid reallocation every frame in the common case where a pile of objects is dropped
+		// and the number of contacts increases every tick. Used for collision solvers and manifold points
+		int CollisionBufferNum = InTightFittingNum;
+		if (CollisionBufferNum > InCurrentBufferNum)
+		{
+			CollisionBufferNum = (5 * InTightFittingNum) / 4; // +25%
+		}
+		return CollisionBufferNum;
+	}
+
+	int32 FPBDCollisionContainerSolver::CalculateConstraintMaxManifoldPoints(const FPBDCollisionConstraint* Constraint) const
+	{
+		// NOTE: we don't know how many points we will create if collision detection is deferred or incrememntal, so we just assume 4
+		// @todo(chaos): see if we can do better here
+		const bool bDeferredCollisionDetection = ConstraintContainer.GetDetectorSettings().bDeferNarrowPhase;
+		const int32 ManifoldPointMax = (bDeferredCollisionDetection || Constraint->GetUseIncrementalManifold()) ? 4 : Constraint->NumManifoldPoints();
+		return ManifoldPointMax;
+	}
+
+	void FPBDCollisionContainerSolver::PrepareSolverBuffer()
+	{
+		NumCollisionSolverManifoldPoints = 0;
+		MaxCollisionSolverManifoldPoints = 0;
+		NumCollisionSolvers = 0;
+		CollisionSolvers = nullptr;
+		CollisionSolverManifoldPoints = nullptr;
+
+		// We have one solver per constraint, unless we have too manu constraints...
+		NumCollisionSolvers = CollisionConstraints.Num();
+
+		// Count the manifold points
+		// @todo(chaos): can we avoid this?
+		const int32 ManifoldPointLimit = CVars::Chaos_Collision_MaxSolverManifoldPoints;
+		for (int32 ConstraintIndex = 0; ConstraintIndex < CollisionConstraints.Num(); ++ConstraintIndex)
+		{
+			const int32 MaxManifoldPoints = CalculateConstraintMaxManifoldPoints(GetConstraint(ConstraintIndex));
+			
+			// Drop some of the constraints if we exceed some tunable maximum. This is purely to prevent massive 
+			// slowdowns or excessive scratch allocations when too many collisions are generated.
+			if ((ManifoldPointLimit >= 0) && (MaxCollisionSolverManifoldPoints + MaxManifoldPoints > ManifoldPointLimit))
+			{
+				// At this point something is assumed to have gone wrong, so this is an error condition.
+				UE_LOG(LogChaos, Error, TEXT("FPBDCollisionContainerSolver: exceeded solver manifold point limit %d at constraint %d of %d. This and remaining constraints will not be solved"), ManifoldPointLimit, ConstraintIndex, CollisionConstraints.Num());
+				NumCollisionSolvers = ConstraintIndex;
+				break;
+			}
+
+			MaxCollisionSolverManifoldPoints += MaxManifoldPoints;
+		}
+
+		// If we have no manifold points, there's no point creating any solvers
+		if (MaxCollisionSolverManifoldPoints == 0)
+		{
+			NumCollisionSolvers = 0;
+		}
+
+		// Set up the solver buffers
+		if (NumCollisionSolvers > 0)
+		{
+			// Resize the scratch buffer (up to 25% slack)
+			constexpr size_t AlignedSolverSize = Align(sizeof(Private::FPBDCollisionSolver), alignof(Private::FPBDCollisionSolver));
+			constexpr size_t AlignedPointSize = Align(sizeof(Private::FPBDCollisionSolverManifoldPoint), alignof(Private::FPBDCollisionSolverManifoldPoint));
+			const size_t ScratchSize = NumCollisionSolvers * AlignedSolverSize + MaxCollisionSolverManifoldPoints * AlignedPointSize;
+			const size_t ScratchBufferSize = CalculateCollisionBufferNum(ScratchSize, Scratch.BufferSize());
+			Scratch.Reset(ScratchBufferSize);
+			
+			if (Scratch.BufferSize() == 0)
+			{
+				UE_LOG(LogChaos, Error, TEXT("FPBDCollisionContainerSolver: failed to allocate scratch buffer of size %lld bytes. NumCollisions=%d, NumManifoldPoints=%d. Collisions will be lost."), ScratchBufferSize, NumCollisionSolvers, MaxCollisionSolverManifoldPoints);
+				NumCollisionSolvers = 0;
+				return;
+			}
+
+			// Allocate scratch space for the collision solvers and manifold points
+			CollisionSolvers = Scratch.AllocArray<Private::FPBDCollisionSolver>(NumCollisionSolvers);
+			CollisionSolverManifoldPoints = Scratch.AllocArray<Private::FPBDCollisionSolverManifoldPoint>(MaxCollisionSolverManifoldPoints);
+		}
 	}
 
 	void FPBDCollisionContainerSolver::AddConstraints()
@@ -346,7 +521,7 @@ namespace Chaos
 	{
 		for (Private::FPBDIslandConstraint* IslandConstraint : IslandConstraints)
 		{
-			// We will only ever be given constraints from our container (asserts in non-shipping)
+			// We will only ever be given constraints from our container (NOTE: AsUnsafe asserts in dev)
 			FPBDCollisionConstraint& Constraint = IslandConstraint->GetConstraint()->AsUnsafe<FPBDCollisionConstraintHandle>()->GetContact();
 
 			AddConstraint(Constraint);
@@ -355,33 +530,22 @@ namespace Chaos
 
 	void FPBDCollisionContainerSolver::AddConstraint(FPBDCollisionConstraint& Constraint)
 	{
-		// NOTE: No need to add to CollisionSolvers or bCollisionConstraintPerIterationCollisionDetection
-		const int32 Index = CollisionConstraints.Add(&Constraint);
-
-		// Allocate the manifold points for this constraints solver
-		// NOTE: we don't know how many points we will create if collision detection is deferred or incrememntal, so just allocate space for the max allowed
-		// @todo(chaos): see if we can do better - we don't want to pay for this logic when it is only used rarely
-		const bool bDeferredCollisionDetection = ConstraintContainer.GetDetectorSettings().bDeferNarrowPhase;
-		const int32 ManifoldPointMax = (bDeferredCollisionDetection || Constraint.GetUseIncrementalManifold()) ? Private::FPBDCollisionSolver::MaxPointsPerConstraint : Constraint.NumManifoldPoints();
-
-		if (ManifoldPointMax > 0)
-		{
-			GetSolver(Index).SetManifoldPointsBuffer(&CollisionSolverManifoldPoints[NumCollisionSolverManifoldPoints], ManifoldPointMax);
-			NumCollisionSolverManifoldPoints += ManifoldPointMax;
-		}
-		else
-		{
-			GetSolver(Index).Reset();
-		}
+		// NOTE: No need to add to CollisionSolvers or bCollisionConstraintPerIterationCollisionDetection - handled later
+		CollisionConstraints.Add(&Constraint);
 	}
-
 
 	void FPBDCollisionContainerSolver::AddBodies(FSolverBodyContainer& SolverBodyContainer)
 	{
-		for (int32 SolverIndex = 0, SolverEndIndex = NumSolvers(); SolverIndex < SolverEndIndex; ++SolverIndex)
+		// All constarints are now added. We can allocate the solver buffers.
+		PrepareSolverBuffer();
+
+		// Make sure have a valid manifold point buffer if we have constraints
+		check((CollisionSolverManifoldPoints != nullptr) || (NumSolvers() == 0));
+
+		for (int32 ConstraintIndex = 0, ConstraintEndIndex = NumSolvers(); ConstraintIndex < ConstraintEndIndex; ++ConstraintIndex)
 		{
-			Private::FPBDCollisionSolver& CollisionSolver = GetSolver(SolverIndex);
-			FPBDCollisionConstraint* Constraint = GetConstraint(SolverIndex);
+			Private::FPBDCollisionSolver& CollisionSolver = GetSolver(ConstraintIndex);
+			FPBDCollisionConstraint* Constraint = GetConstraint(ConstraintIndex);
 			check(Constraint != nullptr);
 
 			// Find the solver bodies for the particles we constrain. This will add them to the container
@@ -391,7 +555,13 @@ namespace Chaos
 			check(Body0 != nullptr);
 			check(Body1 != nullptr);
 
+			// Set up the solver manifold point buffer pointer
+			const int32 ConstraintManifoldPointMax = CalculateConstraintMaxManifoldPoints(GetConstraint(ConstraintIndex));
+
+			CollisionSolver.Reset(&CollisionSolverManifoldPoints[NumCollisionSolverManifoldPoints], ConstraintManifoldPointMax);
 			CollisionSolver.SetSolverBodies(*Body0, *Body1);
+
+			NumCollisionSolverManifoldPoints += ConstraintManifoldPointMax;
 		}
 	}
 
@@ -409,12 +579,16 @@ namespace Chaos
 		}
 	}
 
-	void FPBDCollisionContainerSolver::GatherInput(const FReal InDt, const int32 BeginIndex, const int32 EndIndex)
+	void FPBDCollisionContainerSolver::GatherInput(const FReal InDt, const int32 ConstraintBeginIndex, const int32 ConstraintEndIndex)
 	{
 		// NOTE: may be called in parallel. Should not change the container or any elements outside of [BeginIndex, EndIndex)
 
-		check(BeginIndex >= 0);
-		check(EndIndex <= NumSolvers());
+		check(ConstraintBeginIndex >= 0);
+		check(ConstraintEndIndex <= CollisionConstraints.Num());
+
+		// Handle the case where we dropped some constraints because there were too  many
+		const int32 BeginIndex = FMath::Min(ConstraintBeginIndex, NumCollisionSolvers);
+		const int32 EndIndex = FMath::Min(ConstraintEndIndex, NumCollisionSolvers);
 
 		const FSolverReal Dt = FSolverReal(InDt);
 
@@ -451,12 +625,16 @@ namespace Chaos
 		ScatterOutput(Dt, 0, NumSolvers());
 	}
 
-	void FPBDCollisionContainerSolver::ScatterOutput(const FReal InDt, const int32 BeginIndex, const int32 EndIndex)
+	void FPBDCollisionContainerSolver::ScatterOutput(const FReal InDt, const int32 ConstraintBeginIndex, const int32 ConstraintEndIndex)
 	{
 		// NOTE: may be called in parallel. Should not change the container or any elements outside of [BeginIndex, EndIndex)
 
-		check(BeginIndex >= 0);
-		check(EndIndex <= NumSolvers());
+		check(ConstraintBeginIndex >= 0);
+		check(ConstraintEndIndex <= CollisionConstraints.Num());
+
+		// Handle the case where we dropped some constraints because there were too  many
+		const int32 BeginIndex = FMath::Min(ConstraintBeginIndex, NumCollisionSolvers);
+		const int32 EndIndex = FMath::Min(ConstraintEndIndex, NumCollisionSolvers);
 
 		const FSolverReal Dt = FSolverReal(InDt);
 
@@ -469,7 +647,7 @@ namespace Chaos
 
 			// Reset the collision solver here as the pointers will be invalid on the next tick
 			// @todo(chaos): Pointers are always reinitalized before use next tick so this isn't strictly necessary
-			CollisionSolver.Reset();
+			CollisionSolver.Reset(nullptr, 0);
 		}
 	}
 
@@ -558,7 +736,7 @@ namespace Chaos
 		// Adjust max pushout to attempt to make it iteration count independent
 		const FSolverReal Dt = FSolverReal(InDt);
 		const bool bApplyStaticFriction = (It >= (NumIts - SolverSettings.NumPositionFrictionIterations));
-		const FSolverReal MaxPushOut = (SolverSettings.MaxPushOutVelocity > 0) ? (FSolverReal(SolverSettings.MaxPushOutVelocity) * Dt) / FSolverReal(NumIts) : FSolverReal(0);
+		const FSolverReal MaxPushOut = FSolverReal(0);	// Now handled in UpdateCollisionSolverContactPointFromConstraint
 
 		// Apply the position correction
 		if (bApplyStaticFriction)
@@ -643,7 +821,11 @@ namespace Chaos
 				Collisions::UpdateConstraint(*Constraint, CorrectedShapeWorldTransform0, CorrectedShapeWorldTransform1, Dt);
 
 				// Update the manifold based on the new or updated contacts
-				UpdateCollisionSolverManifoldFromConstraint(CollisionSolver, Constraint, Dt, BeginPointIndex, Constraint->NumManifoldPoints());
+				UpdateCollisionSolverManifoldFromConstraint(
+					CollisionSolver, Constraint, 
+					Dt,
+					BeginPointIndex, Constraint->NumManifoldPoints(),
+					ConstraintContainer.GetSolverSettings());
 
 				Constraint->SetSolverBodies(nullptr, nullptr);
 			}

@@ -5,15 +5,21 @@
 #include "MVVM/ViewModels/SequenceModel.h"
 #include "MVVM/ViewModels/TrackModel.h"
 #include "MVVM/ViewModels/LayerBarModel.h"
+#include "MVVM/ViewModels/BindingLifetimeTrackModel.h"
 #include "MVVM/ViewModels/ViewModelIterators.h"
 #include "MVVM/TrackModelStorageExtension.h"
 #include "MVVM/ObjectBindingModelStorageExtension.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
 #include "MVVM/ViewModels/OutlinerViewModelDragDropOp.h"
+#include "MVVM/ViewModels/OutlinerColumns/OutlinerColumnTypes.h"
 #include "MVVM/Views/SOutlinerObjectBindingView.h"
+#include "MVVM/Views/STrackLane.h"
 #include "MVVM/Selection/Selection.h"
 #include "MVVM/Extensions/IRecyclableExtension.h"
+#include "MVVM/Extensions/IBindingLifetimeExtension.h"
+#include "ISequencerObjectSchema.h"
 #include "Algo/Sort.h"
+#include "AnimatedRange.h"
 #include "ClassViewerModule.h"
 #include "Containers/ArrayBuilder.h"
 #include "Engine/LevelStreaming.h"
@@ -28,6 +34,7 @@
 #include "MovieScene.h"
 #include "MovieSceneBinding.h"
 #include "MovieSceneDynamicBindingCustomization.h"
+#include "UniversalObjectLocator.h"
 #include "MovieSceneFolder.h"
 #include "ObjectBindingTagCache.h"
 #include "ObjectEditorUtils.h"
@@ -39,15 +46,14 @@
 #include "SequencerCommands.h"
 #include "SequencerNodeTree.h"
 #include "SequencerSettings.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "Styling/AppStyle.h"
 #include "Styling/SlateIconFinder.h"
+#include "Widgets/SSequencerBindingLifetimeOverlay.h"
 
 #define LOCTEXT_NAMESPACE "ObjectBindingModel"
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
 namespace
@@ -122,15 +128,23 @@ void GetKeyablePropertyPaths(UClass* Class, void* ValuePtr, UStruct* PropertySou
 FObjectBindingModel::FObjectBindingModel(FSequenceModel* InOwnerModel, const FMovieSceneBinding& InBinding)
 	: ObjectBindingID(InBinding.GetObjectGuid())
 	, TrackAreaList(EViewModelListType::TrackArea)
+	, TopLevelChildTrackAreaList(GetTopLevelChildTrackAreaGroupType())
 	, OwnerModel(InOwnerModel)
 {
 	RegisterChildList(&TrackAreaList);
+	RegisterChildList(&TopLevelChildTrackAreaList);
 
 	SetIdentifier(*ObjectBindingID.ToString());
 }
 
 FObjectBindingModel::~FObjectBindingModel()
 {
+}
+
+EViewModelListType FObjectBindingModel::GetTopLevelChildTrackAreaGroupType()
+{
+	static EViewModelListType TopLevelChildTrackAreaGroup = RegisterCustomModelListType();
+	return TopLevelChildTrackAreaGroup;
 }
 
 void FObjectBindingModel::OnConstruct()
@@ -145,7 +159,7 @@ void FObjectBindingModel::OnConstruct()
 			LayerBar = MakeShared<FLayerBarModel>(AsShared());
 			LayerBar->SetLinkedOutlinerItem(SharedThis(this));
 
-			GetChildrenForList(&TrackAreaList).AddChild(LayerBar);
+			GetChildrenForList(&TopLevelChildTrackAreaList).AddChild(LayerBar);
 		}
 	}
 
@@ -192,7 +206,7 @@ bool FObjectBindingModel::SupportsRebinding() const
 FTrackAreaParameters FObjectBindingModel::GetTrackAreaParameters() const
 {
 	FTrackAreaParameters Params;
-	Params.LaneType = ETrackAreaLaneType::Inline;
+	Params.LaneType = ETrackAreaLaneType::Nested;
 	return Params;
 }
 
@@ -201,13 +215,28 @@ FViewModelVariantIterator FObjectBindingModel::GetTrackAreaModelList() const
 	return &TrackAreaList;
 }
 
+FViewModelVariantIterator FObjectBindingModel::GetTopLevelChildTrackAreaModels() const
+{
+	return &TopLevelChildTrackAreaList;
+}
+
 void FObjectBindingModel::AddTrack(UMovieSceneTrack* Track)
 {
 	FTrackModelStorageExtension* TrackStorage = OwnerModel->CastDynamic<FTrackModelStorageExtension>();
 
-	TSharedPtr<FTrackModel> TrackModel = TrackStorage->CreateModelForTrack(Track, AsShared());
+	TViewModelPtr<FTrackModel> TrackModel = TrackStorage->CreateModelForTrack(Track, AsShared());
 
 	GetChildrenForList(&OutlinerChildList).AddChild(TrackModel);
+
+	if (TrackModel->IsA<IBindingLifetimeExtension>())
+	{
+		if (!BindingLifetimeOverlayModel)
+		{
+			BindingLifetimeOverlayModel = MakeShared<FBindingLifetimeOverlayModel>(AsShared(), GetEditor(), TrackModel.ImplicitCast());
+			BindingLifetimeOverlayModel->SetLinkedOutlinerItem(SharedThis(this));
+			GetChildrenForList(&TrackAreaList).AddChild(BindingLifetimeOverlayModel);
+		}
+	}
 }
 
 void FObjectBindingModel::RemoveTrack(UMovieSceneTrack* Track)
@@ -218,6 +247,14 @@ void FObjectBindingModel::RemoveTrack(UMovieSceneTrack* Track)
 	if (TrackModel)
 	{
 		TrackModel->RemoveFromParent();
+		if (TrackModel->IsA<IBindingLifetimeExtension>())
+		{
+			if (BindingLifetimeOverlayModel)
+			{
+				BindingLifetimeOverlayModel->RemoveFromParent();
+				BindingLifetimeOverlayModel.Reset();
+			}
+		}
 	}
 }
 
@@ -228,7 +265,9 @@ FGuid FObjectBindingModel::GetObjectGuid() const
 
 FOutlinerSizing FObjectBindingModel::GetOutlinerSizing() const
 {
-	return FOutlinerSizing(20.f, 4.f);
+	const float CompactHeight = 28.f;
+	FViewDensityInfo Density = GetEditor()->GetViewDensity();
+	return FOutlinerSizing(Density.UniformHeight.Get(CompactHeight));
 }
 
 void FObjectBindingModel::GetIdentifierForGrouping(TStringBuilder<128>& OutString) const
@@ -236,19 +275,75 @@ void FObjectBindingModel::GetIdentifierForGrouping(TStringBuilder<128>& OutStrin
 	FOutlinerItemModel::GetIdentifier().ToString(OutString);
 }
 
-TSharedRef<SWidget> FObjectBindingModel::CreateOutlinerView(const FCreateOutlinerViewParams& InParams)
+TSharedPtr<SWidget> FObjectBindingModel::CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName)
 {
 	TSharedPtr<FSequencerEditorViewModel> EditorViewModel = GetEditor();
-	TSharedPtr<FSequencer> Sequencer = EditorViewModel->GetSequencerImpl();
+	TSharedPtr<FSequencer>                Sequencer       = EditorViewModel->GetSequencerImpl();
 
-	const FMovieSceneSequenceID SequenceID = OwnerModel->GetSequenceID();
-	const MovieScene::FFixedObjectBindingID FixedObjectBindingID(ObjectBindingID, SequenceID);
+	if (InColumnName == FCommonOutlinerNames::Label)
+	{
+		const FMovieSceneSequenceID SequenceID = OwnerModel->GetSequenceID();
+		const MovieScene::FFixedObjectBindingID FixedObjectBindingID(ObjectBindingID, SequenceID);
 
-	return SNew(SOutlinerObjectBindingView, SharedThis(this), EditorViewModel, InParams.TreeViewRow)
-		.AdditionalLabelContent()
-		[
-			SNew(SObjectBindingTags, FixedObjectBindingID, Sequencer->GetObjectBindingTagCache())
-		];
+		return SNew(SOutlinerItemViewBase, SharedThis(this), EditorViewModel, InParams.TreeViewRow)
+			.AdditionalLabelContent()
+			[
+				SNew(SObjectBindingTags, FixedObjectBindingID, Sequencer->GetObjectBindingTagCache())
+			];
+	}
+
+	if (InColumnName == FCommonOutlinerNames::Add)
+	{
+		return UE::Sequencer::MakeAddButton(
+			LOCTEXT("TrackText", "Track"),
+			FOnGetContent::CreateSP(this, &FObjectBindingModel::GetAddTrackMenuContent),
+			SharedThis(this));
+	}
+
+
+	// Ask track editors to populate the column.
+	// @todo: this is potentially very slow and will not scale as the number of track editors increases.
+	const bool bIsEditColumn = InColumnName == FCommonOutlinerNames::Edit;
+	TSharedPtr<SHorizontalBox> Box;
+
+	auto GetEditBox = [&Box]
+	{
+		if (!Box)
+		{
+			Box = SNew(SHorizontalBox);
+
+			auto CollapsedIfAllSlotsCollapsed = [Box]() -> EVisibility
+			{
+				for (int32 Index = 0; Index < Box->NumSlots(); ++Index)
+				{
+					EVisibility SlotVisibility = Box->GetSlot(Index).GetWidget()->GetVisibility();
+					if (SlotVisibility != EVisibility::Collapsed)
+					{
+						return EVisibility::SelfHitTestInvisible;
+					}
+				}
+				return EVisibility::Collapsed;
+			};
+
+			// Make the edit box collapsed if all of its slots are collapsed (or it has none)
+			Box->SetVisibility(MakeAttributeLambda(CollapsedIfAllSlotsCollapsed));
+		}
+		return Box.ToSharedRef();
+	};
+
+	for (const TSharedPtr<ISequencerTrackEditor>& TrackEditor : Sequencer->GetTrackEditors())
+	{
+		TrackEditor->BuildObjectBindingColumnWidgets(GetEditBox, SharedThis(this), InParams, InColumnName);
+
+		if (bIsEditColumn)
+		{
+			// Backwards compat
+			GetEditBox();
+			TrackEditor->BuildObjectBindingEditButtons(Box, ObjectBindingID, FindObjectClass());
+		}
+	}
+
+	return Box && Box->NumSlots() != 0 ? Box : nullptr;
 }
 
 bool FObjectBindingModel::GetDefaultExpansionState() const
@@ -349,18 +444,23 @@ FSlateColor FObjectBindingModel::GetLabelColor() const
 		}
 	}
 
-	// Spawnables don't have valid object bindings when their track hasn't spawned them yet,
+	// Find the last objecting binding ancestor and ask it for the invalid color to use.
+	// e.g. Spawnables don't have valid object bindings when their track hasn't spawned them yet,
 	// so we override the default behavior of red with a gray so that users don't think there is something wrong.
-	constexpr bool bIncludeThis = true;
-	for (TSharedPtr<FObjectBindingModel> Parent : GetAncestorsOfType<FObjectBindingModel>(bIncludeThis))
-	{
-		if (Parent->GetType() == EObjectBindingType::Spawnable)
+	TFunction<FSlateColor(const FObjectBindingModel&)> GetObjectBindingAncestorInvalidLabelColor = [&](const FObjectBindingModel& InObjectBindingModel) -> FSlateColor {
+		if (!Sequencer->State.GetBindingActivation(InObjectBindingModel.GetObjectGuid(), OwnerModel->GetSequenceID()))
 		{
 			return FSlateColor::UseSubduedForeground();
 		}
-	}
+		
+		if (TSharedPtr<FObjectBindingModel> ParentBindingModel = InObjectBindingModel.FindAncestorOfType<FObjectBindingModel>())
+		{
+			return GetObjectBindingAncestorInvalidLabelColor(*ParentBindingModel.Get());
+		}
+		return InObjectBindingModel.GetInvalidBindingLabelColor();
+	};
 
-	return FLinearColor::Red;
+	return GetObjectBindingAncestorInvalidLabelColor(*this);
 }
 
 FText FObjectBindingModel::GetTooltipForSingleObjectBinding() const
@@ -475,9 +575,9 @@ TSharedRef<SWidget> FObjectBindingModel::GetAddTrackMenuContent()
 
 	// Only include other selected object bindings if this binding is selected. Otherwise, this will lead to 
 	// confusion with multiple tracks being added to possibly unrelated objects
-	if (Sequencer->GetViewModel()->GetSelection()->Outliner.IsSelected(SharedThis(this)))
+	if (OwnerModel->GetEditor()->GetSelection()->Outliner.IsSelected(SharedThis(this)))
 	{
-		for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : Sequencer->GetViewModel()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
+		for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : OwnerModel->GetEditor()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
 		{
 			const FGuid Guid = ObjectBindingNode->GetObjectGuid();
 			for (auto RuntimeObject : Sequencer->FindBoundObjects(Guid, OwnerModel->GetSequenceID()))
@@ -493,9 +593,28 @@ TSharedRef<SWidget> FObjectBindingModel::GetAddTrackMenuContent()
 	}
 
 	ISequencerModule& SequencerModule = FModuleManager::GetModuleChecked<ISequencerModule>( "Sequencer" );
-	TSharedRef<FUICommandList> CommandList(new FUICommandList);
+	TSharedRef<FUICommandList> CommandList = MakeShared<FUICommandList>();
 
 	TSharedRef<FExtender> Extender = SequencerModule.GetAddTrackMenuExtensibilityManager()->GetAllExtenders(CommandList, TArrayBuilder<UObject*>().Add(BoundObject)).ToSharedRef();
+
+	TArray<TSharedPtr<FExtender>> AllExtenders;
+	AllExtenders.Add(Extender);
+
+	TArrayView<UObject* const>                   ContextObjects = BoundObject ? MakeArrayView(&BoundObject, 1) : TArrayView<UObject* const>();
+	TMap<const IObjectSchema*, TArray<UObject*>> Map            = IObjectSchema::ComputeRelevancy(ContextObjects);
+
+	for (const TPair<const IObjectSchema*, TArray<UObject*>>& Pair : Map)
+	{
+		TSharedPtr<FExtender> NewExtension = Pair.Key->ExtendObjectBindingMenu(CommandList, Sequencer, Pair.Value);
+		if (NewExtension)
+		{
+			AllExtenders.Add(NewExtension);
+		}
+	}
+	if (AllExtenders.Num())
+	{
+		Extender = FExtender::Combine(AllExtenders);
+	}
 
 	const UClass* ObjectClass = UClass::FindCommonBase(ObjectClasses);
 
@@ -788,14 +907,19 @@ void FObjectBindingModel::HandlePropertyMenuItemExecute(FPropertyPath PropertyPa
 		}
 	}
 
-	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : Sequencer->GetViewModel()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
+	// Only include other selected object bindings if this binding is selected. Otherwise, this will lead to 
+	// confusion with multiple tracks being added to possibly unrelated objects
+	if (OwnerModel->GetEditor()->GetSelection()->Outliner.IsSelected(SharedThis(this)))
 	{
-		FGuid Guid = ObjectBindingNode->GetObjectGuid();
-		for (auto RuntimeObject : Sequencer->FindBoundObjects(Guid, OwnerModel->GetSequenceID()))
+		for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : OwnerModel->GetEditor()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
 		{
-			if (Sequencer->CanKeyProperty(FCanKeyPropertyParams(RuntimeObject->GetClass(), PropertyPath)))
+			FGuid Guid = ObjectBindingNode->GetObjectGuid();
+			for (auto RuntimeObject : Sequencer->FindBoundObjects(Guid, OwnerModel->GetSequenceID()))
 			{
-				KeyableBoundObjects.AddUnique(RuntimeObject.Get());
+				if (Sequencer->CanKeyProperty(FCanKeyPropertyParams(RuntimeObject->GetClass(), PropertyPath)))
+				{
+					KeyableBoundObjects.AddUnique(RuntimeObject.Get());
+				}
 			}
 		}
 	}
@@ -901,7 +1025,7 @@ void FObjectBindingModel::BuildOrganizeContextMenu(FMenuBuilder& MenuBuilder)
 
 	FOutlinerItemModel::BuildOrganizeContextMenu(MenuBuilder);
 }
-	
+
 void FObjectBindingModel::AddDynamicBindingMenu(FMenuBuilder& MenuBuilder, FMovieSceneDynamicBinding& DynamicBinding)
 {
 	FDetailsViewArgs DetailsViewArgs;
@@ -989,7 +1113,7 @@ void FObjectBindingModel::AddTagMenu(FMenuBuilder& MenuBuilder)
 
 		// Gather all the tags on all currently selected object binding IDs
 		FMovieSceneSequenceID SequenceID = OwnerModel->GetSequenceID();
-		for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : Sequencer->GetViewModel()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
+		for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : OwnerModel->GetEditor()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
 		{
 			const FGuid& ObjectID = ObjectBindingNode->GetObjectGuid();
 
@@ -1040,7 +1164,7 @@ ECheckBoxState FObjectBindingModel::GetTagCheckState(FName TagName)
 	TSharedPtr<FSequencer> Sequencer = OwnerModel->GetSequencerImpl();
 	FMovieSceneSequenceID SequenceID = OwnerModel->GetSequenceID();
 
-	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : Sequencer->GetViewModel()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
+	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : OwnerModel->GetEditor()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
 	{
 		const FGuid& ObjectID = ObjectBindingNode->GetObjectGuid();
 
@@ -1067,7 +1191,7 @@ void FObjectBindingModel::ToggleTag(FName TagName)
 	TSharedPtr<FSequencer> Sequencer = OwnerModel->GetSequencerImpl();
 	FMovieSceneSequenceID SequenceID = OwnerModel->GetSequenceID();
 
-	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : Sequencer->GetViewModel()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
+	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : OwnerModel->GetEditor()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
 	{
 		const FGuid& ObjectID = ObjectBindingNode->GetObjectGuid();
 
@@ -1091,7 +1215,7 @@ void FObjectBindingModel::HandleDeleteTag(FName TagName)
 	MovieScene->Modify();
 
 	FMovieSceneSequenceID SequenceID = OwnerModel->GetSequenceID();
-	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : Sequencer->GetViewModel()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
+	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : OwnerModel->GetEditor()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
 	{
 		const FGuid& ObjectID = ObjectBindingNode->GetObjectGuid();
 		MovieScene->UntagBinding(TagName, UE::MovieScene::FFixedObjectBindingID(ObjectID, SequenceID));
@@ -1107,7 +1231,7 @@ void FObjectBindingModel::HandleAddTag(FName TagName)
 	MovieScene->Modify();
 
 	FMovieSceneSequenceID SequenceID = OwnerModel->GetSequenceID();
-	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : Sequencer->GetViewModel()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
+	for (TViewModelPtr<FObjectBindingModel> ObjectBindingNode : OwnerModel->GetEditor()->GetSelection()->Outliner.Filter<FObjectBindingModel>())
 	{
 		const FGuid& ObjectID = ObjectBindingNode->GetObjectGuid();
 		MovieScene->TagBinding(TagName, UE::MovieScene::FFixedObjectBindingID(ObjectID, SequenceID));
@@ -1126,10 +1250,7 @@ FSortingKey FObjectBindingModel::GetSortingKey() const
 	if (OwnerModel)
 	{
 		UMovieScene* MovieScene = OwnerModel->GetMovieScene();
-		const FMovieSceneBinding* MovieSceneBinding = MovieScene->GetBindings().FindByPredicate([&](FMovieSceneBinding& Binding)
-		{
-			return Binding.GetObjectGuid() == ObjectBindingID;
-		});
+		const FMovieSceneBinding* MovieSceneBinding = MovieScene->FindBinding(ObjectBindingID);
 
 		if (MovieSceneBinding)
 		{
@@ -1173,34 +1294,44 @@ bool FObjectBindingModel::CanDelete(FText* OutErrorMessage) const
 
 void FObjectBindingModel::Delete()
 {
-	TSharedPtr<ISequencer> Sequencer = OwnerModel->GetSequencer();
-	UMovieScene* MovieScene = Sequencer->GetRootMovieSceneSequence()->GetMovieScene();
-
-	MovieScene->Modify();
-
-	// Untag this binding
-	UE::MovieScene::FFixedObjectBindingID BindingID(ObjectBindingID, OwnerModel->GetSequenceID());
-	for (auto It = OwnerModel->GetSequencerImpl()->GetObjectBindingTagCache()->IterateTags(BindingID); It; ++It)
+	if (OwnerModel)
 	{
-		MovieScene->UntagBinding(It.Value(), BindingID);
-	}
+		TSharedPtr<ISequencer> Sequencer = OwnerModel->GetSequencer();
+		UMovieScene* MovieScene = Sequencer->GetRootMovieSceneSequence()->GetMovieScene();
 
-	// Delete any child object bindings - this will remove their tracks implicitly
-	// so no need to delete those manually
-	for (const TViewModelPtr<FObjectBindingModel>& ChildObject : GetChildrenOfType<FObjectBindingModel>(EViewModelListType::Outliner).ToArray())
-	{
-		ChildObject->Delete();
-	}
+		MovieScene->Modify();
 
-	// Remove from a parent folder if necessary.
-	if (TViewModelPtr<FFolderModel> ParentFolder = CastParent<FFolderModel>())
-	{
-		ParentFolder->GetFolder()->RemoveChildObjectBinding(ObjectBindingID);
+		// Untag this binding
+		UE::MovieScene::FFixedObjectBindingID BindingID(ObjectBindingID, OwnerModel->GetSequenceID());
+		for (auto It = OwnerModel->GetSequencerImpl()->GetObjectBindingTagCache()->IterateTags(BindingID); It; ++It)
+		{
+			MovieScene->UntagBinding(It.Value(), BindingID);
+		}
+
+		// Delete any child object bindings - this will remove their tracks implicitly
+		// so no need to delete those manually
+		for (const TViewModelPtr<FObjectBindingModel>& ChildObject : GetChildrenOfType<FObjectBindingModel>(EViewModelListType::Outliner).ToArray())
+		{
+			ChildObject->Delete();
+		}
+
+		// Remove from a parent folder if necessary.
+		if (TViewModelPtr<FFolderModel> ParentFolder = CastParent<FFolderModel>())
+		{
+			ParentFolder->GetFolder()->RemoveChildObjectBinding(ObjectBindingID);
+		}
+
+		// Delete any loaded object that may be bound to this object binding
+		if (FMovieSceneObjectCache* Cache = Sequencer->State.FindObjectCache(OwnerModel->GetSequenceID()))
+		{
+			Cache->UnloadBinding(ObjectBindingID, Sequencer->GetSharedPlaybackState());
+		}
+
+		BindingLifetimeOverlayModel.Reset();
 	}
 }
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 
 #undef LOCTEXT_NAMESPACE
 

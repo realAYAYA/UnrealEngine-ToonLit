@@ -22,8 +22,8 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_TEXTURE(Texture2D, DistortionMap)
 		SHADER_PARAMETER_SAMPLER(SamplerState, DistortionMapSampler)
-		SHADER_PARAMETER_SRV(StructuredBuffer<FVector2D>, InputPoints)
-		SHADER_PARAMETER_UAV(RWStructuredBuffer<FVector2D>, UndistortedPoints)
+		SHADER_PARAMETER_SRV(StructuredBuffer<FVector2f>, InputPoints)
+		SHADER_PARAMETER_UAV(RWStructuredBuffer<FVector2f>, UndistortedPoints)
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
@@ -40,6 +40,27 @@ IMPLEMENT_GLOBAL_SHADER(FUndistortImagePointsCS, "/Plugin/CameraCalibrationCore/
 namespace DistortionRenderingUtils
 {
 	void UndistortImagePoints(UTextureRenderTarget2D* DistortionMap, TArray<FVector2D> ImagePoints, TArray<FVector2D>& OutUndistortedPoints)
+	{
+		// Convert the input points from doubles to floats
+		TArray<FVector2f> ImagePointsFloat;
+		ImagePointsFloat.Reserve(ImagePoints.Num());
+		for (FVector2D Point : ImagePoints)
+		{
+			ImagePointsFloat.Add(FVector2f(Point.X, Point.Y));
+		}
+
+		TArray<FVector2f> UndistortedPointsFloat;
+		UndistortImagePoints(DistortionMap, ImagePointsFloat, UndistortedPointsFloat);
+
+		// Convert the output points from floats to doubles
+		OutUndistortedPoints.Reserve(UndistortedPointsFloat.Num());
+		for (FVector2f Point : UndistortedPointsFloat)
+		{
+			OutUndistortedPoints.Add(FVector2D(Point.X, Point.Y));
+		}
+	}
+
+	void UndistortImagePoints(UTextureRenderTarget2D* DistortionMap, TArray<FVector2f> ImagePoints, TArray<FVector2f>& OutUndistortedPoints)
 	{
 		if ((DistortionMap == nullptr) || (ImagePoints.Num() < 1))
 		{
@@ -61,7 +82,7 @@ namespace DistortionRenderingUtils
 				InputPointsResourceArray.Reserve(NumPoints);
 				for (int32 Index = 0; Index < NumPoints; Index++)
 				{
-					InputPointsResourceArray.Add(FVector2f(Points[Index]));	// LWC_TODO: Precision loss
+					InputPointsResourceArray.Add(Points[Index]);
 				}
 
 				TResourceArray<FVector2f> EmptyBuffer;
@@ -100,7 +121,7 @@ namespace DistortionRenderingUtils
 				{
 					for (int32 Index = 0; Index < NumPoints; ++Index)
 					{
-						OutUndistortedPoints[Index] = FVector2D(UndistortedPointData[Index]);
+						OutUndistortedPoints[Index] = UndistortedPointData[Index];
 					}
 				}
 

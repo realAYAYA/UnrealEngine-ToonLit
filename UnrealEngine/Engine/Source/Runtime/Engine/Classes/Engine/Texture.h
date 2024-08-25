@@ -21,20 +21,11 @@
 #endif
 #include "Engine/StreamableRenderAsset.h"
 #include "PerPlatformProperties.h"
-#include "Misc/FieldAccessor.h"
 #include "ImageCore.h"
 #if WITH_EDITORONLY_DATA
 #include "Misc/TVariant.h"
 #include "ObjectCacheEventSink.h"
 #include "DerivedDataCacheKeyProxy.h"
-#endif
-
-#ifndef WITH_TEXTURE_RESOURCE_DEPRECATIONS
-#define WITH_TEXTURE_RESOURCE_DEPRECATIONS 1
-#endif
-
-#ifndef WITH_TEXTURE_PLATFORMDATA_DEPRECATIONS
-#define WITH_TEXTURE_PLATFORMDATA_DEPRECATIONS 1
 #endif
 
 #if WITH_EDITOR
@@ -54,6 +45,20 @@ struct FPropertyChangedEvent;
 #if WITH_EDITORONLY_DATA
 namespace UE::DerivedData { struct FValueId; }
 #endif
+
+USTRUCT()
+struct FTextureSourceLayerColorInfo
+{
+	GENERATED_USTRUCT_BODY();
+
+	/** Per channel min value of the colors for all blocks in mip0 in linear space */
+	UPROPERTY(VisibleAnywhere, Category = TextureSource)
+	FLinearColor ColorMin = FLinearColor(EForceInit::ForceInitToZero);
+
+	/** Per channel max value of the colors for all blocks in mip0 in linear space */
+	UPROPERTY(VisibleAnywhere, Category = TextureSource)
+	FLinearColor ColorMax = FLinearColor(EForceInit::ForceInitToZero);
+};
 
 USTRUCT()
 struct FTextureSourceBlock
@@ -162,6 +167,14 @@ struct FTextureSource
 	* Init and copy in texture bits from Image
 	* 
 	* @param Image -  Image to initialize with
+	*
+	* FImageView has gamma information too that is lost
+	* TextureSource does not store gamma information (it's in the owning Texture)
+	* this function does NOT set Texture->SRGB , you must do so!
+	*
+	* Init() does UseHashAsGuid
+	* Init() must be done inside PreEdit/PostEdit on the owning Texture
+	*
 	*/
 	ENGINE_API void Init(const FImageView & Image);
 
@@ -256,7 +269,8 @@ struct FTextureSource
 	/** PNG Compresses the source art if possible or tells the bulk data to zlib compress when it saves out to disk. */
 	ENGINE_API void Compress();
 
-	/** Force the GUID to change even if mip data has not been modified. */
+	/** Force the GUID to change even if mip data has not been modified.
+	This should be avoided; typically let the data hash be used as guid to uniquely identify the data. */
 	ENGINE_API void ForceGenerateGuid();
 
 	/** Use FMipLock to encapsulate a locked mip */
@@ -264,7 +278,8 @@ struct FTextureSource
 	/** Lock a mip for reading. */
 	ENGINE_API const uint8* LockMipReadOnly(int32 BlockIndex, int32 LayerIndex, int32 MipIndex);
 
-	/** Lock a mip for editing. */
+	/** Lock a mip for editing.
+	Note that Lock/Unlock for edit automatically does UseHashAsGuid. */
 	ENGINE_API uint8* LockMip(int32 BlockIndex, int32 LayerIndex, int32 MipIndex);
 
 	/** Unlock a mip. */
@@ -298,7 +313,12 @@ struct FTextureSource
 	ENGINE_API int64 GetBytesPerPixel(int32 LayerIndex = 0) const;
 
 	/** Return true if the source XY size is power-of-2.  Does not check Z size for volumes.  */
-	ENGINE_API bool IsPowerOfTwo(int32 BlockIndex = 0) const;
+	UE_DEPRECATED(5.5,"Prefer AreAllBlocksPowerOfTwo, or IsBlockPowerOfTwo if you really only want one block")
+	ENGINE_API bool IsPowerOfTwo(int32 BlockIndex = 0) const { return IsBlockPowerOfTwo(BlockIndex); }
+	
+	/** Return true if the source XY size is power-of-2.  Does not check Z size for volumes.  */
+	ENGINE_API bool IsBlockPowerOfTwo(int32 BlockIndex) const;
+	ENGINE_API bool AreAllBlocksPowerOfTwo() const;
 
 	/** Returns true if source art is available. */
 	ENGINE_API bool IsValid() const;
@@ -337,6 +357,8 @@ struct FTextureSource
 
 	/** Trivial accessors. These will only give values for Block0 so may not be correct for UDIM/multi-block textures, use GetBlock() for this case. */
 	FGuid GetPersistentId() const { return BulkData.GetIdentifier(); }
+	/** GetId() returns a hash of the Id member (data hash) and also the attributes of the Source.
+	( GetId does not just return Id ) **/
 	ENGINE_API FGuid GetId() const;
 	FORCEINLINE int64 GetSizeX() const { return SizeX; }
 	FORCEINLINE int64 GetSizeY() const { return SizeY; }
@@ -414,8 +436,11 @@ struct FTextureSource
 		/** Returns a FSharedBuffer that contains the current texture data but cannot be directly modified */
 		const FSharedBuffer& GetDataReadOnly() const { return ReadOnlyReference; }
 
+		UE_DEPRECATED(5.4, "Use GetDataReadWriteView instead")
+		uint8* GetDataReadWrite() { return (uint8*)GetDataReadWriteView().GetData(); }
+
 		/** Returns a pointer that contains the current texture data and can be written to */
-		uint8* GetDataReadWrite();
+		FMutableMemoryView GetDataReadWriteView();
 
 		/** Returns the internal FSharedBuffer and relinquish ownership, used to transfer the data to virtualized bulkdata */
 		FSharedBuffer Release();
@@ -467,6 +492,9 @@ struct FTextureSource
 		 * destroyed.
 		 */
 		ENGINE_API FSharedBuffer GetMipData(int32 BlockIndex, int32 LayerIndex, int32 MipIndex) const;
+		ENGINE_API FSharedBuffer GetMipDataWithInfo(int32 InBlockIndex, int32 InLayerIndex, int32 InMipIndex, FImageInfo& OutMipImageInfo) const;
+
+		ENGINE_API bool IsValid() const { return !MipData.IsNull(); }
 
 	private:
 		// We only want to allow FTextureSource to create FMipData objects
@@ -479,12 +507,14 @@ struct FTextureSource
 	};
 	
 	/**
-	* FMipLock to encapsulate a locked mip
-	*  acquires the lock in construct and unlocks in destruct
+	* FMipLock to encapsulate a locked mip - acquires the lock in construct and unlocks in destruct.
+	* 
+	* Be very careful! Locking as ReadOnly will still get you a mutable ImageView! Altering a read only mip
+	* has consequences!
 	*/
 	struct FMipLock
 	{
-		// constructor locks the mip (can fail, pointer will be null)
+		// constructor locks the mip (can fail, check IsValid())
 		ENGINE_API FMipLock(ELockState InLockState,FTextureSource * InTextureSource,int32 InBlockIndex, int32 InLayerIndex, int32 InMipIndex);
 		ENGINE_API FMipLock(ELockState InLockState,FTextureSource * InTextureSource,int32 InMipIndex);
 		
@@ -542,15 +572,21 @@ private:
 	friend class UTextureCubeArray;
 
 #if WITH_EDITOR
-	/** Protects simultaneous access to BulkData */
-	TDontCopy<FRWLock> BulkDataLock;
+	/** BulkDataLock protects simultaneous access to BulkData ;
+	BulkDataLock protects the BulkData, also LockState, NumLockedMips, LockedMipData.
+	(eg. it protects the functions LockMip, GetMipData, Compress, Decompress, etc.)
+	It does NOT protect scalar fields (eg. "SizeX").
+	It is intended to allow multiple read-like threads to read from the same TextureSource.
+	If you need to modify a TextureSource you must first manually flush all other threads that could be using it.
+	eg. using BlockOnAnyAsyncBuild. */
+	TDontCopy<FCriticalSection> BulkDataLock;
 	/** Owner for associating BulkData with a package */
 	UTexture* Owner;
 	/** TextureClass == Owner->GetTextureClass(); a copy is kept here for torn-off **/
 	ETextureClass TornOffTextureClass;
 	/** if Owner != null, check Owner->GetGammaSpace , if it is null, use TornOffGammaSpace
-	* do not check this directly, use GetGammaSpace **/
-	EGammaSpace TornOffGammaSpace;
+	* do not check this directly, use GetGammaSpace. **/
+	TArray<EGammaSpace, TInlineAllocator<1>> TornOffGammaSpace;
 #endif
 	/** The bulk source data. */
 	UE::Serialization::FEditorBulkData BulkData;
@@ -567,8 +603,12 @@ private:
 	/** Pointer to locked mip data, if any. */
 	FMipAllocation LockedMipData;
 
-	// Internal implementation for locking the mip data, called by LockMipReadOnly or LockMip */
-	uint8* LockMipInternal(int32 BlockIndex, int32 LayerIndex, int32 MipIndex, ELockState RequestedLockState);
+	// Internal implementation for locking the mip data, called by LockMipReadOnly or LockMip.
+	FMutableMemoryView LockMipInternal(int32 BlockIndex, int32 LayerIndex, int32 MipIndex, ELockState RequestedLockState);
+	
+	// As per UpdateChannelLinearMinMax(), except acts on incoming new data rather than locking existing mips.
+	// This only works on uncompressed incoming data - otherwise the channel bounds will get updated on save.
+	void UpdateChannelMinMaxFromIncomingTextureData(FMemoryView InNewTextureData);
 	
 	/** Returns the source data fully decompressed */
 	// ImageWrapperModule is not used
@@ -605,7 +645,15 @@ private:
 	bool EnsureBlocksAreSorted();
 
 public:
-	/** Uses a hash as the GUID, useful to prevent creating new GUIDs on load for legacy assets. */
+	// Runs FImageCore::ComputeChannelLinearMinMax on all blocks and layers (but only mip0), returns false
+	// if the source was unable to be locked and leaves the channel minmax as unknown. Compute just gets
+	// the values and leaves the source untouched.
+	ENGINE_API bool UpdateChannelLinearMinMax();
+	ENGINE_API bool ComputeChannelLinearMinMax(int32 InLayerIndex, FLinearColor& OutMinColor, FLinearColor& OutMaxColor) const;
+	ENGINE_API const TArray<FTextureSourceLayerColorInfo>& GetLayerColorInfo() const { return LayerColorInfo; }
+
+	/** Uses a hash as the GUID, useful to prevent creating new GUIDs on load for legacy assets.
+	This is automatically done by Init() and Mip Lock/Unlock.  New textures should always have the data hash as Id. */
 	ENGINE_API void UseHashAsGuid();
 
 	void ReleaseSourceMemory(); // release the memory from the mips (does almost the same as remove source data except doesn't rebuild the guid)
@@ -616,7 +664,9 @@ private:
 #endif
 
 #if WITH_EDITORONLY_DATA
-	/** GUID used to track changes to the source data. */
+	/** GUID used to track changes to the source data.
+	Typically with UseHashAsGuid , this "Id" is the hash of the BulkData.
+	Note that GetId() is not == Id. */
 	UPROPERTY(VisibleAnywhere, Category=TextureSource)
 	FGuid Id;
 
@@ -668,6 +718,10 @@ private:
 	/** Uses hash instead of guid to identify content to improve DDC cache hit. */
 	UPROPERTY(VisibleAnywhere, Category=TextureSource)
 	bool bGuidIsHash;
+
+	/** Per layer color info. If this is empty we don't have the data, otherwise count is == NumLayers. */
+	UPROPERTY(VisibleAnywhere, Category=TextureSource)
+	TArray<FTextureSourceLayerColorInfo> LayerColorInfo;
 
 	/** Format in which the source data is stored. */
 	UPROPERTY(VisibleAnywhere, Category=TextureSource)
@@ -750,7 +804,10 @@ struct FTexturePlatformData
 	FOptTexturePlatformData OptData;
 	/** Mip data or VT data. one or the other. */
 	TIndirectArray<struct FTexture2DMipMap> Mips;
-	struct FVirtualTextureBuiltData* VTData;
+	struct FVirtualTextureBuiltData* VTData=nullptr;
+
+	/** This is only valid if the texture availability is CPU only, see GetHasCpuCopy() */
+	TRefCountPtr<const struct FSharedImage> CPUCopy;
 
 #if WITH_EDITORONLY_DATA
 
@@ -763,8 +820,6 @@ struct FTexturePlatformData
 	// We only have this data if the textures were rebuilt after adding it (I didn't invalidate the ddc for this),
 	// hence bSourceMipsAlphaDetectedValid. The Hashes are zero if the data isn't present. 
 	uint64 PreEncodeMipsHash=0; // XxHash64
-	bool bSourceMipsAlphaDetectedValid=false;
-	bool bSourceMipsAlphaDetected=false;
 
 	/** The key associated with this derived data. */
 	TVariant<FString, UE::DerivedData::FCacheKeyProxy> DerivedDataKey;
@@ -855,7 +910,8 @@ struct FTexturePlatformData
 private:
 	static constexpr uint32 BitMask_CubeMap    = 1u << 31u;
 	static constexpr uint32 BitMask_HasOptData = 1u << 30u;
-	static constexpr uint32 BitMask_NumSlices  = BitMask_HasOptData - 1u;
+	static constexpr uint32 BitMask_HasCpuCopy = 1u << 29u;
+	static constexpr uint32 BitMask_NumSlices  = BitMask_HasCpuCopy - 1u;
 
 public:
 	/** Return whether TryLoadMips() would stall because async loaded mips are not yet available. */
@@ -891,9 +947,9 @@ public:
 	 */
 	void SerializeCooked(FArchive& Ar, class UTexture* Owner, bool bStreamable, const bool bSerializeMipData);
 	
-	inline void SetPackedData(int32 InNumSlices, bool bInHasOptData, bool bInCubeMap)
+	inline void SetPackedData(int32 InNumSlices, bool bInHasOptData, bool bInCubeMap, bool bInHasCpuCopy)
 	{
-		PackedData = (InNumSlices & BitMask_NumSlices) | (bInCubeMap ? BitMask_CubeMap : 0) | (bInHasOptData ? BitMask_HasOptData : 0);
+		PackedData = (InNumSlices & BitMask_NumSlices) | (bInCubeMap ? BitMask_CubeMap : 0) | (bInHasOptData ? BitMask_HasOptData : 0) | (bInHasCpuCopy ? BitMask_HasCpuCopy : 0);
 	}
 
 	inline bool GetHasOptData() const
@@ -908,6 +964,16 @@ public:
 		PackedData = (bHasOptData ? BitMask_HasOptData : 0) | (PackedData & (~BitMask_HasOptData));
 
 		OptData = Data;
+	}
+
+	inline bool GetHasCpuCopy() const
+	{
+		return (PackedData & BitMask_HasCpuCopy) == BitMask_HasCpuCopy;
+	}
+
+	inline void SetHasCpuCopy(bool bInHasCpuCopy)
+	{
+		PackedData = (bInHasCpuCopy ? BitMask_HasCpuCopy : 0) | (PackedData & (~BitMask_HasCpuCopy));
 	}
 
 	inline bool IsCubemap() const
@@ -941,6 +1007,9 @@ public:
 	}
 
 #if WITH_EDITOR
+	// Clears the data such that a new Cache() call can load new data in to the structure.
+	void Reset();
+
 	bool IsAsyncWorkComplete() const;
 
 	// Compresses the texture using the given compressor and adds the result to the DDC.
@@ -1211,12 +1280,24 @@ public:
 	uint32 bFlipGreenChannel:1;
 
 	/** How to pad the texture to a power of 2 size (if necessary) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Texture)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Texture, meta = (DisplayName = "Padding and Resizing"))
 	TEnumAsByte<enum ETexturePowerOfTwoSetting::Type> PowerOfTwoMode;
 
-	/** The color used to pad the texture out if it is resized due to PowerOfTwoMode */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Texture)
+	/** The color used to pad the texture out if it is padded due to PowerOfTwoMode */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Texture, meta = (EditCondition = "(PowerOfTwoMode == ETexturePowerOfTwoSetting::PadToPowerOfTwo || PowerOfTwoMode == ETexturePowerOfTwoSetting::PadToSquarePowerOfTwo) && !bPadWithBorderColor", EditConditionHides))
 	FColor PaddingColor;
+
+	/** If set to true, texture padding will be performed using colors of the border pixels. This can be used to improve quality of the generated mipmaps for padded textures. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Texture, meta = (EditCondition = "PowerOfTwoMode == ETexturePowerOfTwoSetting::PadToPowerOfTwo || PowerOfTwoMode == ETexturePowerOfTwoSetting::PadToSquarePowerOfTwo", EditConditionHides))
+	bool bPadWithBorderColor;
+
+	/** Width of the resized texture when using "Resize To Specific Resolution" padding and resizing option. If set to zero, original width will be used. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Texture, meta = (EditCondition = "PowerOfTwoMode == ETexturePowerOfTwoSetting::ResizeToSpecificResolution", EditConditionHides))
+	int32 ResizeDuringBuildX;
+
+	/** Width of the resized texture when using "Resize To Specific Resolution" padding and resizing option. If set to zero, original height will be used. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Texture, meta = (EditCondition = "PowerOfTwoMode == ETexturePowerOfTwoSetting::ResizeToSpecificResolution", EditConditionHides))
+	int32 ResizeDuringBuildY;
 
 	/** Whether to chroma key the image, replacing any pixels that match ChromaKeyColor with transparent black */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Adjustments)
@@ -1240,7 +1321,7 @@ public:
 	 * Make sure the normal map has at least as many mips as this texture.
 	 */
 	UE_DEPRECATED(5.3, "Use GetCompositeTexture() and SetCompositeTexture() instead.")
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Compositing, meta = (AllowPrivateAccess), Setter = SetCompositeTexture, Getter = GetCompositeTexture)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Compositing, meta = (AllowPrivateAccess, RequiredAssetDataTags = "IsSourceValid=True"), Setter = SetCompositeTexture, Getter = GetCompositeTexture)
 	TObjectPtr<class UTexture> CompositeTexture;
 
 private:
@@ -1331,22 +1412,38 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Compression, AdvancedDisplay)
 	TEnumAsByte<enum TextureCookPlatformTilingSettings> CookPlatformTilingSettings;
 
+	/** If set to true, then Oodle encoder preserves 0 and 255 (0.0 and 1.0) values exactly in alpha channel for BC3/BC7 and in all channels for BC4/BC5. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Compression, meta = (DisplayName = "Preserve Extremes When Compressing With Oodle"), AdvancedDisplay)
+	bool bOodlePreserveExtremes = false;
+
 	/** Texture group this texture belongs to */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=LevelOfDetail, meta=(DisplayName="Texture Group"), AssetRegistrySearchable)
 	TEnumAsByte<enum TextureGroup> LODGroup;
 
+	/** This function is used to control access to the Downscale and DownscaleOptions properties from the Texture Editor UI
+	 * in order to make it more clear to the user whether these properties will or will not be used when building the texture.
+	 */
+	UFUNCTION()
+	virtual bool AreDownscalePropertiesEditable() const { return false; }
+
 	/** Downscale source texture, applied only to 2d textures without mips 
-	 * 0.0 - use scale value from texture group
+	 * < 1.0 - use scale value from texture group
 	 * 1.0 - do not scale texture
 	 * > 1.0 - scale texure
 	 */
-	UPROPERTY(EditAnywhere, Category=LevelOfDetail, AdvancedDisplay, meta=(ClampMin="0.0", ClampMax="8.0"))
+	UPROPERTY(EditAnywhere, Category=LevelOfDetail, AdvancedDisplay, meta=(ClampMin="0.0", ClampMax="8.0", EditCondition=AreDownscalePropertiesEditable))
 	FPerPlatformFloat Downscale;
 
 	/** Texture downscaling options */
-	UPROPERTY(EditAnywhere, Category=LevelOfDetail, AdvancedDisplay)
+	UPROPERTY(EditAnywhere, Category=LevelOfDetail, AdvancedDisplay, meta=(EditCondition=AreDownscalePropertiesEditable))
 	ETextureDownscaleOptions DownscaleOptions;
 
+	/** 
+	* Whether the texture will be encoded to a gpu format and uploaded to the graphics card, or kept on the CPU for access by gamecode / blueprint. 
+	* For CPU availability, the texture will still upload a tiny black texture as a placeholder. Only applies to 2d textures.
+	*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Texture, meta=(DisplayName="Availability"), AssetRegistrySearchable)
+	ETextureAvailability Availability;
 	
 	/** Whether Texture and its source are in SRGB Gamma color space.  Can only be used with 8-bit and compressed formats.  This should be unchecked if using alpha channels individually as masks. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Texture, meta=(DisplayName="sRGB"), AssetRegistrySearchable)
@@ -1453,11 +1550,6 @@ private:
 	class FTextureResource* PrivateResourceRenderThread;
 
 public:
-#if WITH_TEXTURE_RESOURCE_DEPRECATIONS
-	UE_DEPRECATED(5.0, "Use GetResource() / SetResource() accessors instead.")
-	TFieldPtrAccessor<FTextureResource> Resource;
-#endif
-
 	ENGINE_API UTexture(FVTableHelper& Helper);
 	ENGINE_API virtual ~UTexture();
 	
@@ -1557,6 +1649,7 @@ public:
 	 *   accounting for LODBias and other constraints
 	 */
 	ENGINE_API void GetBuiltTextureSize( const ITargetPlatform* TargetPlatform , int32 & OutSizeX, int32 & OutSizeY ) const;
+	ENGINE_API void GetBuiltTextureSize( const class ITargetPlatformSettings* TargetPlatformSettings, const class ITargetPlatformControls* TargetPlatformControls, int32 & OutSizeX, int32 & OutSizeY ) const;
 
 	/**
 	 * Serializes cooked platform data.
@@ -1672,6 +1765,13 @@ public:
 	*/
 	ENGINE_API virtual void UpdateOodleTextureSdkVersionToLatest(bool bDoPrePostEditChangeIfChanging = false);
 	
+	/** Set new default settings that are desired for textures.
+	These cannot be set in the constructor automatically to avoid changing old content.
+	When new textures are made, or the texture content changes, call this to update settings.
+	ApplyDefaultsForNewlyImportedTextures calls this, you don't need to call both.
+	*/
+	ENGINE_API virtual void SetModernSettingsForNewOrChangedTexture();
+
 	/** Get TextureFormatName with platform remaps and conditional prefix
 	 *   this is the entry point API for getting the final texture format name
 	 *  OutFormats will be resized to the number of sub-flavors of the platform (typically just 1)
@@ -1725,6 +1825,10 @@ public:
 	virtual bool IsCompiling() const override { return IsDefaultTexture(); }
 	//~ End AsyncCompilation Interface
 
+	// if texture is currently in async build action or queue, block until it is done
+	//	note: Modify() and PreEditChange() do this.  You should usually be using PreEdit/PostEdit and not calling this directly.
+	ENGINE_API virtual void BlockOnAnyAsyncBuild();
+
 	//~ Begin UObject Interface.
 	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = true) override;
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -1744,6 +1848,8 @@ public:
 	ENGINE_API virtual void PostCDOContruct() override;
 #if WITH_EDITORONLY_DATA
 	ENGINE_API static void AppendToClassSchema(FAppendToClassSchemaContext& Context);
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 #endif
 	ENGINE_API virtual bool IsPostLoadThreadSafe() const override;
@@ -1900,10 +2006,16 @@ public:
 	ENGINE_API static int32 GetMaximumDimensionOfNonVT();
 
 	/*
-	 * Downsize the 2D Image with the build setting of the texture.
-	 * Try to get as close as it can to the target resolution but it will stay above it if it can reach it
+	 * Downsize the 2D Image with the build settings for the texture until all dimensions are <= TargetSize.
+	 * This downsizes using the mip generation system and so will only cut sizes in half. Return false
+	 * if a parameter is invalid. Returns true if the output is <= TargetSize, whether or not downsizing occurred.
 	 */
-	ENGINE_API bool DownsizeImageUsingTextureSettings(const ITargetPlatform* TargetPlatform, FImage& InOutImage, int32 TargetSize, int32 LayerIndex);
+	ENGINE_API bool DownsizeImageUsingTextureSettings(const ITargetPlatform* TargetPlatform, FImage& InOutImage, int32 TargetSize, int32 LayerIndex, bool & OutMadeChanges) const;
+
+	/*
+	*/
+	ENGINE_API void GetTargetPlatformBuildSettings(const ITargetPlatform* TargetPlatform, TArray<TArray<FTextureBuildSettings>>& OutSettingsPerFormatPerLayer) const;
+
 #endif
 
 protected:

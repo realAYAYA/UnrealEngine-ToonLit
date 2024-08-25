@@ -29,7 +29,9 @@ void FMovieSceneSectionDetailsCustomization::CustomizeDetails(IDetailLayoutBuild
 	TArray<TWeakObjectPtr<UObject>> Objects;
 	DetailBuilder.GetObjectsBeingCustomized(Objects);
 
-	bool bSectionsAreInfinite = true;
+	bool bSectionCanHaveOpenLowerBound = true;
+	bool bSectionCanHaveOpenUpperBound = true;
+
 	for (TWeakObjectPtr<UObject> Object : Objects)
 	{
 		if (Object.IsValid() && Object->IsA(UMovieSceneSection::StaticClass()))
@@ -37,8 +39,20 @@ void FMovieSceneSectionDetailsCustomization::CustomizeDetails(IDetailLayoutBuild
 			UMovieSceneSection* MovieSceneSection = (UMovieSceneSection*)Object.Get();
 			if (!MovieSceneSection->GetSupportsInfiniteRange())
 			{
-				bSectionsAreInfinite = false;
+				bSectionCanHaveOpenLowerBound = false;
+				bSectionCanHaveOpenUpperBound = false;
 				break;
+			}
+			else 
+			{
+				if (!MovieSceneSection->CanHaveOpenLowerBound())
+				{
+					bSectionCanHaveOpenLowerBound = false;
+				}
+				if (!MovieSceneSection->CanHaveOpenUpperBound())
+				{
+					bSectionCanHaveOpenUpperBound = false;
+				}
 			}
 		}
 	}
@@ -77,8 +91,8 @@ void FMovieSceneSectionDetailsCustomization::CustomizeDetails(IDetailLayoutBuild
 		.Padding(1)
 		[
 			SNew(SButton)
-			.Visibility_Lambda([bSectionsAreInfinite]() -> EVisibility {
-				return bSectionsAreInfinite ? EVisibility::Visible : EVisibility::Collapsed;
+			.Visibility_Lambda([bSectionCanHaveOpenLowerBound]() -> EVisibility {
+				return bSectionCanHaveOpenLowerBound ? EVisibility::Visible : EVisibility::Collapsed;
 			})
 			.OnClicked(this, &FMovieSceneSectionDetailsCustomization::ToggleRangeStartBounded)
 			.ContentPadding(0)
@@ -123,8 +137,8 @@ void FMovieSceneSectionDetailsCustomization::CustomizeDetails(IDetailLayoutBuild
 		.Padding(1)
 		[
 			SNew(SButton)
-			.Visibility_Lambda([bSectionsAreInfinite]() -> EVisibility {
-				return bSectionsAreInfinite ? EVisibility::Visible : EVisibility::Collapsed;
+			.Visibility_Lambda([bSectionCanHaveOpenUpperBound]() -> EVisibility {
+				return bSectionCanHaveOpenUpperBound ? EVisibility::Visible : EVisibility::Collapsed;
 			})
 			.OnClicked(this, &FMovieSceneSectionDetailsCustomization::ToggleRangeEndBounded)
 			.ContentPadding(0)

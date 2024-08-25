@@ -72,13 +72,13 @@ TSharedRef< SWidget > SPropertyEditorTableRow::ConstructNameColumnWidget()
 		SNew(SHorizontalBox)
 		+SHorizontalBox::Slot()
 		.AutoWidth()
-		.Padding( FMargin( 0, 1, 0, 1 ) )
+		.Padding( FMargin( 0.0f, 1.0f, 0.0f, 1.0f ) )
 		.VAlign(VAlign_Center)
 		[
 			SNew(SExpanderArrow, SharedThis( this ) )
 		]
 		+SHorizontalBox::Slot()
-		.Padding( FMargin( 0, 1, 0, 1 ) )
+		.Padding( FMargin( 0.0f, 1.0f, 0.0f, 1.0f ) )
 		.AutoWidth()
 		.VAlign(VAlign_Center)
 		[
@@ -110,7 +110,7 @@ TSharedRef< SWidget > SPropertyEditorTableRow::ConstructValueColumnWidget()
 		.FillWidth(1) // Fill the entire width if possible
 		.VAlign(VAlign_Center)
 		.HAlign(HAlign_Left)
-		.Padding(20, 0, 0, 0)
+		.Padding(20.0f, 0.0f, 0.0f, 0.0f)
 		[
 			SNew(SBox)
 			.MinDesiredWidth( MinWidth )
@@ -130,7 +130,7 @@ TSharedRef< SWidget > SPropertyEditorTableRow::ConstructValueColumnWidget()
 			.ButtonStyle( FAppStyle::Get(), "NoBorder" )
 			.Visibility( this, &SPropertyEditorTableRow::OnGetFavoritesVisibility )
 			.OnClicked( this, &SPropertyEditorTableRow::OnToggleFavoriteClicked )
-			.ContentPadding(0)
+			.ContentPadding(0.0f)
 			[
 				SNew( SImage )
 				.Image( this, &SPropertyEditorTableRow::OnGetFavoriteImage )
@@ -153,7 +153,7 @@ TSharedRef< SWidget > SPropertyEditorTableRow::ConstructValueColumnWidget()
 	}
 
 	return SNew(SBorder)
-		.Padding( FMargin( 0, 1, 0, 1 ) )
+		.Padding( FMargin( 0.0f, 1.0f, 0.0f, 1.0f ) )
 		.BorderImage_Static( &PropertyEditorConstants::GetOverlayBrush, PropertyEditor.ToSharedRef() )
 		.VAlign(VAlign_Fill)
 		[

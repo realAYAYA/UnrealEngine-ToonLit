@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
+
 namespace UnrealBuildTool.Rules
 {
 	public class HAPDecoderElectra : ModuleRules
@@ -21,6 +23,19 @@ namespace UnrealBuildTool.Rules
                     "HAPLib",
                     "SnappyLib",
                     });
+
+				if (Target.Platform == UnrealTargetPlatform.Win64)
+				{
+					PublicDependencyModuleNames.Add("DirectX");
+					AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
+
+					if (Target.WindowsPlatform.Architecture != UnrealArch.Arm64)
+					{
+						PublicAdditionalLibraries.AddRange(new string[] {
+							Path.Combine(Target.WindowsPlatform.DirectXLibDir, "dxerr.lib"),
+						});
+					}
+				}
 			}
 		}
 	}

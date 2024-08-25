@@ -16,7 +16,7 @@ class UInterchangeAnimationTrackSetNode;
 class UInterchangeMeshNode;
 class UInterchangeSkeletalAnimationTrackNode;
 
-/** Animation length type when importing */
+/** Animation length type when importing. */
 UENUM(BlueprintType)
 enum class EInterchangeAnimationRange : uint8
 {
@@ -37,6 +37,10 @@ class INTERCHANGEPIPELINES_API UInterchangeGenericAnimationPipeline : public UIn
 
 public:
 
+#if WITH_EDITOR
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+#endif
+
 	//Common SkeletalMeshes And Animations Properties Settings Pointer
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UInterchangeGenericCommonSkeletalMeshesAndAnimationsProperties> CommonSkeletalMeshesAndAnimationsProperties;
@@ -46,71 +50,71 @@ public:
 	TWeakObjectPtr<UInterchangeGenericCommonMeshesProperties> CommonMeshesProperties;
 
 	//////	ANIMATION_CATEGORY Properties //////
-	/** If enable, import all animation assets find in the sources. */
+	/** If enabled, import all animation assets found in the source. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations")
 	bool bImportAnimations = true;
 
 	/** Import bone transform tracks. If false, this will discard any bone transform tracks.*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportAnimations"))
 	bool bImportBoneTracks = true;
 
-	/** Which animation range to import. The one defined at Exported, at Animated time or define a range manually */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportBoneTracks", DisplayName = "Animation Length"))
+	/** Determines which animation range to import: the range defined at export, the range of frames with animation, or a manually defined range. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportAnimations && bImportBoneTracks", DisplayName = "Animation Length"))
 	EInterchangeAnimationRange AnimationRange = EInterchangeAnimationRange::Timeline;
 
-	/** Frame range used when Set Range is used in Animation Length */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportBoneTracks", UIMin = 0, ClampMin = 0))
+	/** The frame range used when the Animation Length setting is set to Set Range. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (UIMin = 0, ClampMin = 0))
 	FInt32Interval FrameImportRange = FInt32Interval(0, 0);
 
-	/** Enable this option to use default sample rate for the imported animation at 30 frames per second */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportBoneTracks", ToolTip = "If enabled, samples all animation curves to 30 FPS"))
+	/** If enabled, samples all imported animation data at the default rate of 30 FPS. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportAnimations && bImportBoneTracks", ToolTip = "If enabled, samples all animation curves to 30 FPS"))
 	bool bUse30HzToBakeBoneAnimation = false;
 
 	/** Use this option to specify a sample rate for the imported animation, a value of 0 use the best matching sample rate. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportBoneTracks && !bUse30HzToBakeBoneAnimation", ToolTip = "Sample fbx animation data at the specified sample rate, 0 find automaticaly the best sample rate", ClampMin = 0, UIMin = 0, ClampMax = 48000, UIMax = 60))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportAnimations && bImportBoneTracks && !bUse30HzToBakeBoneAnimation", ToolTip = "Sample fbx animation data at the specified sample rate, 0 find automaticaly the best sample rate", ClampMin = 0, UIMin = 0, ClampMax = 48000, UIMax = 60))
 	int32 CustomBoneAnimationSampleRate = 0;
 
-	/** If enabled, snaps the animation to the closest frame boundary using the import sampling rate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations")
+	/** If enabled, snaps the animation to the closest frame boundary using the import sampling rate. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportAnimations && bImportBoneTracks"))
 	bool bSnapToClosestFrameBoundary = false;
 
-	/** If true, import node attributes as either Animation Curves or Animation Attributes */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (DisplayName = "Import Attributes as Curves or Animation Attributes"))
+	/** If enabled, import node attributes as either Animation Curves or Animation Attributes. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations", DisplayName = "Import Attributes as Curves or Animation Attributes"))
 	bool bImportCustomAttribute = true;
 
-	/** Whether to automatically add curve metadata to an animation's skeleton. If this is disabled, curve metadata will be added to skeletal meshes for morph targets, but no metadata entry will be created for general curves. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportCustomAttribute"))
+	/** Determines whether to automatically add curve metadata to an animation's skeleton. If this setting is disabled, curve metadata will be added to skeletal meshes for morph targets, but no metadata entry will be created for general curves. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute"))
 	bool bAddCurveMetadataToSkeleton = true;
 
-	/** Set Material Curve Type for all custom attributes that exists */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportCustomAttribute", DisplayName = "Set Material Curve Type"))
+	/** Set the material curve type for all custom attributes. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute", DisplayName = "Set Material Curve Type"))
 	bool bSetMaterialDriveParameterOnCustomAttribute = false;
 
-	/** Set Material Curve Type for the custom attribute with the following suffixes. This doesn't matter if Set Material Curve Type is true  */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportCustomAttribute", DisplayName = "Material Curve Suffixes"))
+	/** Set the Material Curve Type for custom attributes that have the specified suffixes. This setting is not used if the Set Material Curve Type setting is enabled.  */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute && bSetMaterialDriveParameterOnCustomAttribute", DisplayName = "Material Curve Suffixes"))
 	TArray<FString> MaterialCurveSuffixes = {TEXT("_mat")};
 
-	/** When importing custom attribute as curve, remove redundant keys */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportCustomAttribute", DisplayName = "Remove Redundant Keys"))
+	/** When importing custom attributes as curves, remove redundant keys. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute", DisplayName = "Remove Redundant Keys"))
 	bool bRemoveCurveRedundantKeys = false;
 
-	/** When importing custom attribute or morphtarget as curve, do not import if it doesn't have any value other than zero. This is to avoid adding extra curves to evaluate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (EditCondition = "bImportCustomAttribute", DisplayName = "Do not import curves with only 0 values"))
+	/** When importing a custom attribute or morph target as a curve, only import if it has a value other than zero. This avoids adding extra curves to evaluate. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute", DisplayName = "Do not import curves with only 0 values"))
 	bool bDoNotImportCurveWithZero = false;
 
-	/** If true, all previous node attributes imported as Animation Attributes will be deleted when doing a re-import. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (DisplayName = "Delete existing Animation Attributes"))
+	/** If enabled, all previous node attributes imported as Animation Attributes will be deleted when doing a reimport. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute", DisplayName = "Delete existing Animation Attributes"))
 	bool bDeleteExistingNonCurveCustomAttributes = false;
 
-	/** If true, all previous node attributes imported as Animation Curves will be deleted when doing a re-import. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (DisplayName = "Delete existing Animation Curves"))
+	/** If enabled, all previous node attributes imported as Animation Curves will be deleted when doing a reimport. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute", DisplayName = "Delete existing Animation Curves"))
 	bool bDeleteExistingCustomAttributeCurves = false;
 
-	/** If true, all previous morph target curves will be deleted when doing a re-import */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations")
+	/** If enabled, all previous morph target curves will be deleted when doing a reimport. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animations", meta = (SubCategory = "Curves", EditCondition = "bImportAnimations && bImportCustomAttribute", DisplayName = "Delete existing Morph Target Curves"))
 	bool bDeleteExistingMorphTargetCurves = false;
 
-	/** Name of source animation that was imported, used to reimport correct animation from the translated source */
+	/** Name of the source animation that was imported. This is used to reimport correct animation from the translated source. */
 	UPROPERTY()
 	FString SourceAnimationName;
 
@@ -118,7 +122,7 @@ public:
 	
 protected:
 
-	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas) override;
+	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas, const FString& ContentBasePath) override;
 
 	virtual bool CanExecuteOnAnyThread(EInterchangePipelineTask PipelineTask) override
 	{
@@ -127,7 +131,7 @@ protected:
 
 private:
 
-	void CreateAnimationTrackSetFactoryNode(UInterchangeAnimationTrackSetNode& Node);
+	void CreateLevelSequenceFactoryNode(UInterchangeAnimationTrackSetNode& Node);
 
 	void CreateAnimSequenceFactoryNode(UInterchangeSkeletalAnimationTrackNode& Node);
 

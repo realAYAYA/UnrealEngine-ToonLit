@@ -349,12 +349,3 @@ void UCurveLinearColor::Serialize(FArchive& Ar)
 	Ar.UsingCustomVersion(FReleaseObjectVersion::GUID);
 	Super::Serialize(Ar);
 }
-
-void UCurveLinearColor::WritePixel(uint8* Pixel, const FLinearColor& Color)
-{
-	Pixel[0] = FMath::RoundToInt(Color.B * 255.f);
-	Pixel[1] = FMath::RoundToInt(Color.G * 255.f);
-	Pixel[2] = FMath::RoundToInt(Color.R * 255.f);
-	Pixel[3] = FMath::RoundToInt(Color.A * 255.f);
-}
-

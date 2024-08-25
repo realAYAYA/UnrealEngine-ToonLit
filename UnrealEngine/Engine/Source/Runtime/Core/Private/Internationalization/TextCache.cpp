@@ -21,14 +21,18 @@ void FTextCache::TearDown()
 
 FText FTextCache::FindOrCache(const TCHAR* InTextLiteral, const TCHAR* InNamespace, const TCHAR* InKey)
 {
+	return FindOrCache(InTextLiteral, FTextId(InNamespace, InKey));
+}
+
+FText FTextCache::FindOrCache(const TCHAR* InTextLiteral, const FTextId& InTextId)
+{
 	LLM_SCOPE(ELLMTag::Localization);
-	const FTextId TextId(InNamespace, InKey);
 
 	// First try and find a cached instance
 	{
 		FScopeLock Lock(&CachedTextCS);
 	
-		const FText* FoundText = CachedText.Find(TextId);
+		const FText* FoundText = CachedText.Find(InTextId);
 		if (FoundText)
 		{
 			const FString* FoundTextLiteral = FTextInspector::GetSourceString(*FoundText);
@@ -40,14 +44,37 @@ FText FTextCache::FindOrCache(const TCHAR* InTextLiteral, const TCHAR* InNamespa
 	}
 
 	// Not currently cached, make a new instance...
-	FText NewText = FText(InTextLiteral, TextId.GetNamespace(), TextId.GetKey(), ETextFlag::Immutable);
+	FText NewText = FText(InTextLiteral, InTextId.GetNamespace(), InTextId.GetKey(), ETextFlag::Immutable);
 
 	// ... and add it to the cache
 	{
 		FScopeLock Lock(&CachedTextCS);
 
-		CachedText.Emplace(TextId, NewText);
+		CachedText.Emplace(InTextId, NewText);
 	}
 
 	return NewText;
+}
+
+void FTextCache::RemoveCache(const FTextId& InTextId)
+{
+	return RemoveCache(MakeArrayView(&InTextId, 1));
+}
+
+void FTextCache::RemoveCache(TArrayView<const FTextId> InTextIds)
+{
+	FScopeLock Lock(&CachedTextCS);
+	for (const FTextId& TextId : InTextIds)
+	{
+		CachedText.Remove(TextId);
+	}
+}
+
+void FTextCache::RemoveCache(const TSet<FTextId>& InTextIds)
+{
+	FScopeLock Lock(&CachedTextCS);
+	for (const FTextId& TextId : InTextIds)
+	{
+		CachedText.Remove(TextId);
+	}
 }

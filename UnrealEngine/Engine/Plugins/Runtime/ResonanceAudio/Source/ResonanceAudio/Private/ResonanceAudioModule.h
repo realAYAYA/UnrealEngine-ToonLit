@@ -41,6 +41,8 @@ namespace ResonanceAudio
 			return 2;
 		}
 
+		virtual bool ReturnsToSubmixGraph() const override { return true; }
+
 	};
 
 	/******************************************************/
@@ -63,6 +65,7 @@ namespace ResonanceAudio
 
 		virtual TAudioReverbPtr CreateNewReverbPlugin(FAudioDevice* OwningDevice) override;
 		virtual bool IsExternalSend() override { return true; }
+		virtual bool ReturnsToSubmixGraph() const override { return true; }
 	};
 
 	/*********************************************************/

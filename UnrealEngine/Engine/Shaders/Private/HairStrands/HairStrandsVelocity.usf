@@ -59,7 +59,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint2 InGroupId : SV_G
 		return;
 	}
 	const uint2 GroupId = TileDataBuffer[TileIndex1D];
-	const uint2 PixelCoord = GroupId * TileSize + InGroupThreadId;
+	const uint2 PixelCoord = uint2(View.ViewRectMin.xy) + GroupId * TileSize + InGroupThreadId;
 
 	const FNodeDesc NodeDesc = DecodeNodeDesc(NodeIndex.Load(uint3(PixelCoord, 0)));
 	bool bNeedFastResolve = false;

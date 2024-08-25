@@ -13,6 +13,48 @@
 #include "CrashReportAnalyticsSessionSummary.h"
 #endif
 
+#include "Windows/AllowWindowsPlatformTypes.h"
+	#include <ShlObj.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+
+void CopyDiagnosticFilesToClipboard(TConstArrayView<FString> Files)
+{
+	if( OpenClipboard(GetActiveWindow()) )
+	{
+		verify(EmptyClipboard());
+		HGLOBAL GlobalMem;
+		SIZE_T RequiredSize = sizeof(DROPFILES) + sizeof(TCHAR);
+		for (const FString& File : Files)
+		{
+			RequiredSize += (File.Len() * sizeof(TCHAR)) + sizeof(TCHAR);
+		}
+		GlobalMem = GlobalAlloc( GMEM_MOVEABLE, RequiredSize );
+		check(GlobalMem);
+		uint8* Data = (uint8*) GlobalLock( GlobalMem );
+		DROPFILES* Drop = (DROPFILES*)Data;
+		Drop->pFiles = sizeof(DROPFILES);
+		Drop->fWide = 1;
+		TCHAR* Dest = (TCHAR*)(Data + sizeof(DROPFILES));
+		TCHAR* End = (TCHAR*)(Data + RequiredSize);
+		for (const FString& File : Files)
+		{
+			FCString::Strncpy(Dest, *File, End - Dest);	
+			Dest += (File.Len() + 1);
+		}
+		GlobalUnlock( GlobalMem );
+		if( SetClipboardData( CF_HDROP, GlobalMem ) == NULL )
+		{
+			UE_LOG(LogWindows, Fatal,TEXT("SetClipboardData failed with error code %i"), (uint32)GetLastError() );
+		}
+
+		verify(CloseClipboard());
+	}
+	else
+	{
+		UE_LOG(LogWindows, Warning, TEXT("OpenClipboard failed with error code %i"), (uint32)GetLastError());
+	}
+}
+
 #if CRASH_REPORT_WITH_MTBF && !PLATFORM_SEH_EXCEPTIONS_DISABLED
 
 static ANSICHAR CrashStackTrace[8*1024] = {0};

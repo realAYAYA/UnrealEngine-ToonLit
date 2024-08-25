@@ -10,51 +10,56 @@
 
 namespace Metasound
 {
-	// Helper template to determine whether a static class function is declared
-	// for a given template class.
-	template <typename U>
-	class TIsFactoryMethodDeclared
+	namespace MetasoundFacadePrivate
 	{
-		private:
-			template<typename T, T> 
-			struct Helper;
+		// Helper template to determine whether a static class function is declared
+		// for a given template class.
+		template <typename U>
+		class TIsFactoryMethodDeclared
+		{
+			private:
+				template<typename T, T> 
+				struct Helper;
 
-			// Check for "static TUniquePtr<IOperator> U::CreateOperator(const FCreateOperatorParams& Inparams, FBuildErrorArray& OutErrors)"
-			template<typename T>
-			static uint8 Check(Helper<TUniquePtr<IOperator>(*)(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors), &T::CreateOperator>*);
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS // Temporary for deprecation of FCreateOperatorParams
+				// Check for "static TUniquePtr<IOperator> U::CreateOperator(const FCreateOperatorParams& Inparams, FBuildErrorArray& OutErrors)"
+				template<typename T>
+				static uint8 Check(Helper<TUniquePtr<IOperator>(*)(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors), &T::CreateOperator>*);
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-			// Check for "static TUniquePtr<IOperator> U::CreateOperator(const FBuildOperatorParams& Inparams, FBuildErrorArray& OutErrors)"
-			template<typename T>
-			static uint8 Check(Helper<TUniquePtr<IOperator>(*)(const FBuildOperatorParams& InParams, FBuildResults& OutResults), &T::CreateOperator>*);
+				// Check for "static TUniquePtr<IOperator> U::CreateOperator(const FBuildOperatorParams& Inparams, FBuildErrorArray& OutErrors)"
+				template<typename T>
+				static uint8 Check(Helper<TUniquePtr<IOperator>(*)(const FBuildOperatorParams& InParams, FBuildResults& OutResults), &T::CreateOperator>*);
 
-			template<typename T> static uint16 Check(...);
+				template<typename T> static uint16 Check(...);
 
-		public:
+			public:
 
-			// If the function exists, then "Value" is true. Otherwise "Value" is false.
-			static constexpr bool Value = sizeof(Check<U>(0)) == sizeof(uint8_t);
-	};
+				// If the function exists, then "Value" is true. Otherwise "Value" is false.
+				static constexpr bool Value = sizeof(Check<U>(0)) == sizeof(uint8_t);
+		};
 
-	// Helper template to determine whether a static class function is declared
-	// for a given template class.
-	template <typename U>
-	class TIsNodeInfoDeclared
-	{
-		private:
-			template<typename T, T> 
-			struct Helper;
+		// Helper template to determine whether a static class function is declared
+		// for a given template class.
+		template <typename U>
+		class TIsNodeInfoDeclared
+		{
+			private:
+				template<typename T, T> 
+				struct Helper;
 
-			// Check for "static const FNodeClassMetadata& U::GetNodeInfo()"
-			template<typename T>
-			static uint8 Check(Helper<const FNodeClassMetadata&(*)(), &T::GetNodeInfo>*);
+				// Check for "static const FNodeClassMetadata& U::GetNodeInfo()"
+				template<typename T>
+				static uint8 Check(Helper<const FNodeClassMetadata&(*)(), &T::GetNodeInfo>*);
 
-			template<typename T> static uint16 Check(...);
+				template<typename T> static uint16 Check(...);
 
-		public:
+			public:
 
-			// If the function exists, then "Value" is true. Otherwise "Value" is false.
-			static constexpr bool Value = sizeof(Check<U>(0)) == sizeof(uint8_t);
-	};
+				// If the function exists, then "Value" is true. Otherwise "Value" is false.
+				static constexpr bool Value = sizeof(Check<U>(0)) == sizeof(uint8_t);
+		};
+	}
 
 	/** TFacadeOperatorClass encapsulates an operator type and checks that the
 	 * required static functions exist to build the facade operator class.  It 
@@ -67,20 +72,11 @@ namespace Metasound
 		static_assert(std::is_base_of<IOperator, OperatorType>::value, "To use the FNodeFacade constructor, the OperatorType must be derived from IOperator");
 
 		// Require static TUniquePtr<IOperator> OperatorType::CreateOperator(const FCreateOperatorParams&, TArray<TUniquePtr<IOperatorBuildError>>&) exists.
-		static_assert(TIsFactoryMethodDeclared<OperatorType>::Value, "To use the FNodeFacade constructor, the OperatorType must have the static function \"static TUniquePtr<IOperator> OperatorType::CreateOperator(const FCreateOperatorParams&, TArray<TUniquePtr<IOperatorBuildError>>&)\"");
+		static_assert(MetasoundFacadePrivate::TIsFactoryMethodDeclared<OperatorType>::Value, "To use the FNodeFacade constructor, the OperatorType must have the static function \"static TUniquePtr<IOperator> OperatorType::CreateOperator(const FCreateOperatorParams&, TArray<TUniquePtr<IOperatorBuildError>>&)\"");
+
 
 		// Require static const FNodeClassMetadata& OperatorType::GetNodeInfo() exists.
-		static_assert(TIsNodeInfoDeclared<OperatorType>::Value, "To use the FNodeFacade constructor, the OperatorType must have the static function \"static const FNodeClassMetadata& OperatorType::GetNodeInfo()\"");
-
-		static const FNodeClassMetadata& GetNodeInfo() 
-		{ 
-			return OperatorType::GetNodeInfo(); 
-		}
-
-		static TUniquePtr<TUniquePtr<IOperator>> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors) 
-		{
-			return OperatorType::CreateOperator(InParams, OutErrors);
-		}
+		static_assert(MetasoundFacadePrivate::TIsNodeInfoDeclared<OperatorType>::Value, "To use the FNodeFacade constructor, the OperatorType must have the static function \"static const FNodeClassMetadata& OperatorType::GetNodeInfo()\"");
 
 		typedef OperatorType Type;
 	};
@@ -99,7 +95,10 @@ namespace Metasound
 			class METASOUNDGRAPHCORE_API FFactory : public IOperatorFactory
 			{
 				using FCreateOperatorFunction = TFunction<TUniquePtr<IOperator>(const FBuildOperatorParams& InParams, FBuildResults& OutResults)>;
+
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS // Temporary for deprecation of FCreateOperatorParams
 				using FOriginalCreateOperatorFunction = TFunction<TUniquePtr<IOperator>(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)>;
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 				public:
 					FFactory(FCreateOperatorFunction InCreateFunc);

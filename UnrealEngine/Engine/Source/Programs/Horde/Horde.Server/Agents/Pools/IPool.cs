@@ -1,13 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 using EpicGames.Horde.Common;
-using EpicGames.Horde.Compute;
 using Horde.Server.Agents.Fleet;
-using Horde.Server.Utilities;
 
 namespace Horde.Server.Agents.Pools
 {
@@ -20,7 +19,7 @@ namespace Horde.Server.Agents.Pools
 		/// Strategy implementation to use
 		/// </summary>
 		public PoolSizeStrategy Type { get; set; }
-		
+
 		/// <summary>
 		/// Condition if this strategy should be enabled (right now, using date/time as a distinguishing factor)
 		/// </summary>
@@ -30,7 +29,7 @@ namespace Horde.Server.Agents.Pools
 		/// Configuration for the strategy, serialized as JSON
 		/// </summary>
 		public string Config { get; set; } = "";
-		
+
 		/// <summary>
 		/// Integer to add after pool size has been calculated. Can also be negative.
 		/// </summary>
@@ -42,7 +41,7 @@ namespace Horde.Server.Agents.Pools
 		public PoolSizeStrategyInfo()
 		{
 		}
-		
+
 		/// <summary>
 		/// Constructor
 		/// </summary>
@@ -53,14 +52,14 @@ namespace Horde.Server.Agents.Pools
 			// Try deserializing to ensure the config is valid JSON
 			// Config can be null due to JSON serializer calling the constructor
 			JsonSerializer.Deserialize<dynamic>(config);
-			
+
 			Type = type;
 			Condition = condition;
 			Config = config;
 			ExtraAgentCount = extraAgentCount;
 		}
 	}
-	
+
 	/// <summary>
 	/// Metadata for configuring and picking a fleet manager
 	/// </summary>
@@ -70,7 +69,7 @@ namespace Horde.Server.Agents.Pools
 		/// Fleet manager type implementation to use
 		/// </summary>
 		public FleetManagerType Type { get; set; }
-		
+
 		/// <summary>
 		/// Condition if this strategy should be enabled (right now, using date/time as a distinguishing factor)
 		/// </summary>
@@ -79,7 +78,7 @@ namespace Horde.Server.Agents.Pools
 		/// <summary>
 		/// Configuration for the strategy, serialized as JSON
 		/// </summary>
-		public string Config { get; set; } = "{}";
+		public string? Config { get; set; }
 
 		/// <summary>
 		/// Empty constructor for BSON/JSON serialization
@@ -87,7 +86,7 @@ namespace Horde.Server.Agents.Pools
 		public FleetManagerInfo()
 		{
 		}
-		
+
 		/// <summary>
 		/// Constructor
 		/// </summary>
@@ -96,7 +95,7 @@ namespace Horde.Server.Agents.Pools
 		{
 			config = String.IsNullOrWhiteSpace(config) ? "{}" : config;
 			JsonSerializer.Deserialize<dynamic>(config);
-			
+
 			Type = type;
 			Condition = condition;
 			Config = config;
@@ -109,66 +108,45 @@ namespace Horde.Server.Agents.Pools
 	public interface IPool : IPoolConfig
 	{
 		/// <summary>
-		/// List of workspaces currently assigned to this pool
+		/// Last time the pool was (auto) scaled up
 		/// </summary>
-		public IReadOnlyList<AgentWorkspace> Workspaces { get; }
+		public DateTime? LastScaleUpTime { get; }
 
 		/// <summary>
-		/// AutoSDK view for this pool
+		/// Last time the pool was (auto) scaled down
 		/// </summary>
-		public AutoSdkConfig? AutoSdkConfig { get; }
+		public DateTime? LastScaleDownTime { get; }
 
 		/// <summary>
-		/// Revision string for the config file describing this pool, or null if added manually.
+		/// Last known agent count
 		/// </summary>
-		public string? Revision { get; }
+		public int? LastAgentCount { get; }
 
 		/// <summary>
-		/// Update index for this document
+		/// Last known desired agent count
 		/// </summary>
-		public int UpdateIndex { get; }
+		public int? LastDesiredAgentCount { get; }
+
+		/// <summary>
+		/// Last result from scaling the pool
+		/// </summary>
+		public ScaleResult? LastScaleResult { get; }
+
+		/// <summary>
+		/// Updates a pool
+		/// </summary>
+		/// <param name="options">Options for the update</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		Task<IPool?> TryUpdateAsync(UpdatePoolOptions options, CancellationToken cancellationToken = default);
 	}
 
 	/// <summary>
-	/// Extension methods for IPool
+	/// Settings for updating a pool state
 	/// </summary>
-	public static class PoolExtensions
-	{
-		/// <summary>
-		/// Evaluates a condition against a pool
-		/// </summary>
-		/// <param name="pool">The pool to evaluate</param>
-		/// <param name="condition">The condition to evaluate</param>
-		/// <returns>True if the pool satisfies the condition</returns>
-		public static bool SatisfiesCondition(this IPool pool, Condition condition)
-		{
-			return condition.Evaluate(propKey =>
-			{
-				if (pool.Properties.TryGetValue(propKey, out string? propValue))
-				{
-					return new[] { propValue };
-				}
-
-				return Array.Empty<string>();
-			});
-		}
-
-		/// <summary>
-		/// Determine whether a pool offers agents that are compatible with the given requirements.
-		/// Since a pool does not have beforehand knowledge of what type of agents will be created, their expected
-		/// properties must be specified on the IPool. 
-		/// </summary>
-		/// <param name="pool">The pool to verify</param>
-		/// <param name="requirements">Requirements</param>
-		/// <returns>True if the pool satisfies the requirements</returns>
-		public static bool MeetsRequirements(this IPool pool, Requirements requirements)
-		{
-			if (requirements.Condition != null && !pool.SatisfiesCondition(requirements.Condition))
-			{
-				return false;
-			}
-
-			return true;
-		}
-	}
+	/// <param name="LastScaleUpTime"> New time for last (auto) scale up</param>
+	/// <param name="LastScaleDownTime"> New time for last (auto) scale down</param>
+	/// <param name="LastScaleResult"> Result from last scaling in/out attempt</param>
+	/// <param name="LastAgentCount"> Last calculated agent count</param>
+	/// <param name="LastDesiredAgentCount"> Last calculated desired agent count</param>
+	public record UpdatePoolOptions(DateTime? LastScaleUpTime = null, DateTime? LastScaleDownTime = null, ScaleResult? LastScaleResult = null, int? LastAgentCount = null, int? LastDesiredAgentCount = null);
 }

@@ -58,13 +58,7 @@ class UActorFactory : public UObject, public IAssetFactoryInterface
 	FVector SpawnPositionOffset;
 
 	/** Called to actual create an actor with the supplied transform (scale is ignored), using the properties in the ActorFactory */
-	UE_DEPRECATED(5.0, "This function has been deprecated in favor of the other version that takes a FActorSpawnParameters in parameter")
-	UNREALED_API AActor* CreateActor(UObject* Asset, ULevel* InLevel, const FTransform& Transform, EObjectFlags InObjectFlags, const FName InName = NAME_None);
 	UNREALED_API AActor* CreateActor(UObject* InAsset, ULevel* InLevel, const FTransform& InTransform, const FActorSpawnParameters& InSpawnParams = FActorSpawnParameters());
-
-	/** Called to create a blueprint class that can be used to spawn an actor from this factory */
-	UE_DEPRECATED(5.0, "This function is no longer used. See FKismetEditorUtilities::CreateBlueprint.")
-	UNREALED_API UBlueprint* CreateBlueprint( UObject* Instance, UObject* Outer, const FName Name, const FName CallingContext = NAME_None );
 
 	UNREALED_API virtual bool CanCreateActorFrom( const FAssetData& AssetData, FText& OutErrorMsg );
 
@@ -107,18 +101,10 @@ protected:
 
 	UNREALED_API virtual bool PreSpawnActor( UObject* Asset, FTransform& InOutLocation);
 
-	UE_DEPRECATED(5.0, "This function has been deprecated in favor of the other version that takes a FActorSpawnParameters in parameter")
-	UNREALED_API virtual AActor* SpawnActor(UObject* Asset, ULevel* InLevel, const FTransform& Transform, EObjectFlags ObjectFlags, const FName Name ) final;
 	UNREALED_API virtual AActor* SpawnActor(UObject* InAsset, ULevel* InLevel, const FTransform& InTransform, const FActorSpawnParameters& InSpawnParams);
 
-	/** Subclasses may implement this to modify the actor after it has been spawned 
-	    IMPORTANT: If you override this, you should usually also override PostCreateBlueprint()! */
+	/** Subclasses may implement this to modify the actor after it has been spawned */
 	UNREALED_API virtual void PostSpawnActor( UObject* Asset, AActor* NewActor );
-
-	/** Override this in derived factory classes if needed.  This is called after a blueprint is created by this factory to
-	    update the blueprint's CDO properties with state from the asset for this factory.
-		IMPORTANT: If you override this, you should usually also override PostSpawnActor()! */
-	UNREALED_API virtual void PostCreateBlueprint( UObject* Asset, AActor* CDO );
 
 	/**
 	 * Get the default label that should be used for the actor spawned by the given asset (does not include any numeric suffix).

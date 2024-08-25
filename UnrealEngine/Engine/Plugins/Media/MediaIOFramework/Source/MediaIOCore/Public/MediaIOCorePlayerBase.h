@@ -12,7 +12,9 @@
 #include "ITimedDataInput.h"
 
 #include "MediaIOCoreDefinitions.h"
+#include "MediaIOCoreSamples.h"
 #include "MediaIOCoreSampleContainer.h"
+
 
 #include "HAL/CriticalSection.h"
 #include "Misc/CoreMisc.h"
@@ -325,6 +327,8 @@ private:
 	void PreGPUTransferJITR(const TSharedPtr<FMediaIOCoreTextureSampleBase>& InSample, const TSharedPtr<FMediaIOCoreTextureSampleBase>& InJITRProxySample);
 	void ExecuteGPUTransfer(const TSharedPtr<FMediaIOCoreTextureSampleBase>& InSample);
 
+	/** Get the right samples buffer for pushing samples depending on if we're in JITR mode or not. */
+	FMediaIOCoreSamples& GetSamples_Internal();
 
 	/** GPU Texture transfer object */
 	UE::GPUTextureTransfer::TextureTransferPtr GPUTextureTransfer;
@@ -351,15 +355,14 @@ private:
 
 private:
 
-	/** Special JITR sample container, holding a single sample used to trigger media framework rendering */
+	/** Special JITR sample container, overrides FetchVideo to return a ProxySample that will be populated by JustInTimeSampleRender_RenderThread. */
 	class FJITRMediaTextureSamples
-		: public IMediaSamples
+		: public FMediaIOCoreSamples
 	{
 	public:
 		FJITRMediaTextureSamples() = default;
 		FJITRMediaTextureSamples(const FJITRMediaTextureSamples&) = delete;
 		FJITRMediaTextureSamples& operator=(const FJITRMediaTextureSamples&) = delete;
-
 	public:
 		//~ Begin IMediaSamples interface
 		virtual bool FetchVideo(TRange<FTimespan> TimeRange, TSharedPtr<IMediaTextureSample>& OutSample) override;

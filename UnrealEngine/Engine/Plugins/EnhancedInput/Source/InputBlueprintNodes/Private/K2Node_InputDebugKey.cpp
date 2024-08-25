@@ -263,7 +263,7 @@ void UK2Node_InputDebugKey::ExpandNode(FKismetCompilerContext& CompilerContext, 
 	auto CreateDebugKeyEvent = [this, &CompilerContext, &SourceGraph](UEdGraphPin* Pin, EInputEvent EventType)
 	{
 		// Create the input touch event
-		UK2Node_InputDebugKeyEvent* InputDebugKeyEvent = CompilerContext.SpawnIntermediateEventNode<UK2Node_InputDebugKeyEvent>(this, Pin, SourceGraph);
+		UK2Node_InputDebugKeyEvent* InputDebugKeyEvent = CompilerContext.SpawnIntermediateNode<UK2Node_InputDebugKeyEvent>(this, SourceGraph);
 		const FName ModifierName = GetModifierName();
 		if (ModifierName != NAME_None)
 		{

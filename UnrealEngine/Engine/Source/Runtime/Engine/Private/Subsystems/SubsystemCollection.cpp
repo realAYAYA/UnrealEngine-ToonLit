@@ -80,7 +80,7 @@ const TArray<USubsystem*>& FSubsystemCollectionBase::GetSubsystemArrayInternal(U
 	{
 		TArray<USubsystem*>& NewList = SubsystemArrayMap.Add(SubsystemClass);
 
-		UpdateSubsystemArrayInternal(SubsystemClass, NewList);
+		PopulateSubsystemArrayInternal(SubsystemClass, NewList);
 
 		return NewList;
 	}
@@ -89,8 +89,9 @@ const TArray<USubsystem*>& FSubsystemCollectionBase::GetSubsystemArrayInternal(U
 	return List;
 }
 
-void FSubsystemCollectionBase::UpdateSubsystemArrayInternal(UClass* SubsystemClass, TArray<USubsystem*>& SubsystemArray) const
+void FSubsystemCollectionBase::PopulateSubsystemArrayInternal(UClass* SubsystemClass, TArray<USubsystem*>& SubsystemArray) const
 {
+	check(SubsystemArray.Num() == 0);
 	for (auto Iter = SubsystemMap.CreateConstIterator(); Iter; ++Iter)
 	{
 		UClass* KeyClass = Iter.Key();
@@ -122,6 +123,8 @@ void FSubsystemCollectionBase::Initialize(UObject* NewOuter)
 		{
 			FSubsystemModuleWatcher::InitializeModuleWatcher();
 		}
+
+		UE_LOG(LogSubsystemCollection, Verbose, TEXT("Initializing subsystem collection for %s with type %s"), *GetNameSafe(NewOuter), *GetNameSafe(BaseType));
 		
 		TGuardValue<bool> PopulatingGuard(bPopulating, true);
 
@@ -147,13 +150,6 @@ void FSubsystemCollectionBase::Initialize(UObject* NewOuter)
 			{
 				AddAndInitializeSubsystem(SubsystemClass);
 			}
-		}
-
-		// Update Internal Arrays without emptying it so that existing refs remain valid
-		for (auto& Pair : SubsystemArrayMap)
-		{
-			Pair.Value.Empty();
-			UpdateSubsystemArrayInternal(Pair.Key, Pair.Value);
 		}
 
 		// Statically track collections
@@ -211,17 +207,20 @@ void FSubsystemCollectionBase::Deinitialize()
 
 USubsystem* FSubsystemCollectionBase::InitializeDependency(TSubclassOf<USubsystem> SubsystemClass)
 {
-	UE_LOG(LogSubsystemCollection, VeryVerbose, TEXT("Attempting to initialize subsystem dependency (%s)"), *SubsystemClass->GetName());
-
 	USubsystem* Subsystem = nullptr;
-	if (ensureMsgf(SubsystemClass, TEXT("Attempting to add invalid subsystem as dependancy."))
-		&& ensureMsgf(bPopulating, TEXT("InitializeDependancy() should only be called from System USubsystem::Initialization() implementations."))
-		&& ensureMsgf(SubsystemClass->IsChildOf(BaseType), TEXT("ClassType (%s) must be a subclass of BaseType(%s)."), *SubsystemClass->GetName(), *BaseType->GetName()))
+	if (ensureMsgf(SubsystemClass, TEXT("Attempting to add invalid subsystem as dependancy.")))
 	{
-		Subsystem = AddAndInitializeSubsystem(SubsystemClass);
+		UE_LOG(LogSubsystemCollection, VeryVerbose, TEXT("Attempting to initialize subsystem dependency (%s)"), *SubsystemClass->GetName());
+
+		if (ensureMsgf(bPopulating, TEXT("InitializeDependancy() should only be called from System USubsystem::Initialization() implementations."))
+			&& ensureMsgf(SubsystemClass->IsChildOf(BaseType), TEXT("ClassType (%s) must be a subclass of BaseType(%s)."), *SubsystemClass->GetName(), *BaseType->GetName()))
+		{
+			Subsystem = AddAndInitializeSubsystem(SubsystemClass);
+		}
+
+		UE_CLOG(!Subsystem, LogSubsystemCollection, Log, TEXT("Failed to initialize subsystem dependency (%s)"), *SubsystemClass->GetName());
 	}
 
-	UE_CLOG(!Subsystem, LogSubsystemCollection, Log, TEXT("Failed to initialize subsystem dependency (%s)"), *SubsystemClass->GetName());
 	return Subsystem;
 }
 
@@ -242,7 +241,7 @@ USubsystem* FSubsystemCollectionBase::AddAndInitializeSubsystem(UClass* Subsyste
 			// Catch any attempt to add a subsystem of the wrong type
 			checkf(SubsystemClass->IsChildOf(BaseType), TEXT("ClassType (%s) must be a subclass of BaseType(%s)."), *SubsystemClass->GetName(), *BaseType->GetName());
 
-			// Do not create instances of classes aren't authoritative
+			// Do not create instances of classes that aren't authoritative.
 			if (SubsystemClass->GetAuthoritativeClass() != SubsystemClass)
 			{	
 				return nullptr;
@@ -257,6 +256,16 @@ USubsystem* FSubsystemCollectionBase::AddAndInitializeSubsystem(UClass* Subsyste
 				SubsystemMap.Add(SubsystemClass,Subsystem);
 				Subsystem->InternalOwningSubsystem = this;
 				Subsystem->Initialize(*this);
+				
+				// Add this new subsystem to any existing maps of base classes to lists of subsystems
+				for (TPair<UClass*, TArray<USubsystem*>>& Pair : SubsystemArrayMap)
+				{
+					if (SubsystemClass->IsChildOf(Pair.Key))
+					{
+						Pair.Value.Add(Subsystem);
+					}
+				}
+
 				return Subsystem;
 			}
 
@@ -315,7 +324,10 @@ void FSubsystemCollectionBase::AddAllInstances(UClass* SubsystemClass)
 
 void FSubsystemCollectionBase::RemoveAllInstances(UClass* SubsystemClass)
 {
-	ForEachObjectOfClass(SubsystemClass, [](UObject* SubsystemObj)
+	TArray<UObject*> SubsystemsToRemove;
+	GetObjectsOfClass(SubsystemClass, SubsystemsToRemove);
+
+	for(UObject* SubsystemObj : SubsystemsToRemove)
 	{
 		USubsystem* Subsystem = CastChecked<USubsystem>(SubsystemObj);
 
@@ -323,7 +335,7 @@ void FSubsystemCollectionBase::RemoveAllInstances(UClass* SubsystemClass)
 		{
 			Subsystem->InternalOwningSubsystem->RemoveAndDeinitializeSubsystem(Subsystem);
 		}
-	});
+	}
 }
 
 

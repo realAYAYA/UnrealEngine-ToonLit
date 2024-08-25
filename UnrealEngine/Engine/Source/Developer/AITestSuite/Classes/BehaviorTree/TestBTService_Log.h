@@ -30,6 +30,12 @@ class UTestBTService_Log : public UBTService
 	int32 LogTick;
 
 	UPROPERTY()
+	int32 TicksDelaySetKeyNameTick;
+
+	UPROPERTY()
+	int32 NumTicks;
+
+	UPROPERTY()
 	bool bToggleValue;
 
 	virtual void OnBecomeRelevant(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;

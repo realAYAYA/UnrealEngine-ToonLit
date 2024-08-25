@@ -4,7 +4,7 @@
 
 #include "MuT/NodePrivate.h"
 #include "MuT/NodeScalarTable.h"
-#include "MuT/Table.h"
+#include "MuT/TablePrivate.h"
 #include "MuT/AST.h"
 
 
@@ -16,37 +16,71 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		string m_parameterName;
-		TablePtr m_pTable;
-		string m_columnName;
+		FString ParameterName;
+		TablePtr Table;
+		FString ColumnName;
+		bool bNoneOption = false;
+		FString DefaultRowName;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 0;
+            uint32 ver = 3;
 			arch << ver;
 
-			arch << m_parameterName;
-			arch << m_pTable;
-			arch << m_columnName;
+			arch << ParameterName;
+			arch << Table;
+			arch << ColumnName;
+			arch << bNoneOption;
+			arch << DefaultRowName;
 		}
 
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
-            check(ver==0);
+            check(ver <= 3);
 
-			arch >> m_parameterName;
-			arch >> m_pTable;
-			arch >> m_columnName;
+			if (ver==0)
+			{
+				std::string Temp;
+				arch >> Temp;
+				ParameterName = Temp.c_str();
+			}
+			else
+			{
+				arch >> ParameterName;
+			}
+
+			arch >> Table;
+
+			if (ver == 0)
+			{
+				std::string Temp;
+				arch >> Temp;
+				ColumnName = Temp.c_str();
+			}
+			else
+			{
+				arch >> ColumnName;
+			}
+
+			if(ver >= 2)
+			{
+				arch >> bNoneOption;
+			}
+			else
+			{
+				bNoneOption = Table->GetPrivate()->bNoneOption_DEPRECATED;
+			}
+
+			if (ver >= 3)
+			{
+				arch >> DefaultRowName;
+			}
 		}
 
 	};

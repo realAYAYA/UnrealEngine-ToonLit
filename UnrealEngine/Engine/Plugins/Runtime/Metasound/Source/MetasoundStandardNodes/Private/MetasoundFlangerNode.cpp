@@ -77,23 +77,22 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace FlangerVertexNames;
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
-
-			FAudioBufferReadRef AudioInput = InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
-			FFloatReadRef ModulationRate = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputModulationRate), InParams.OperatorSettings);
-			FFloatReadRef ModulationDepth = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputModulationDepth), InParams.OperatorSettings);
-			FFloatReadRef CenterDelay = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputCenterDelay), InParams.OperatorSettings);
-			FFloatReadRef MixLevel = InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputMixLevel), InParams.OperatorSettings);
+			FAudioBufferReadRef AudioInput = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
+			FFloatReadRef ModulationRate = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputModulationRate), InParams.OperatorSettings);
+			FFloatReadRef ModulationDepth = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputModulationDepth), InParams.OperatorSettings);
+			FFloatReadRef CenterDelay = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputCenterDelay), InParams.OperatorSettings);
+			FFloatReadRef MixLevel = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputMixLevel), InParams.OperatorSettings);
 
 			return MakeUnique<FFlangerOperator>(InParams, AudioInput, ModulationRate, ModulationDepth, CenterDelay, MixLevel);
 		}
 
-		FFlangerOperator(const FCreateOperatorParams& InParams,
+		FFlangerOperator(const FBuildOperatorParams& InParams,
 			const FAudioBufferReadRef& InAudioInput,
 			const FFloatReadRef& InputModulationRate,
 			const FFloatReadRef& InputModulationDepth,

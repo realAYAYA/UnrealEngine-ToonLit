@@ -1,11 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { getTheme } from "@fluentui/react";
 import { action, makeObservable, observable } from 'mobx';
 import backend from '.';
-import { DashboardPreference, GetDashboardConfigResponse, GetJobTemplateSettingsResponse, GetUserResponse, UserClaim } from './Api';
-
-const theme = getTheme();
+import { AuthMethod, DashboardPreference, GetDashboardAgentCategoryResponse, GetDashboardConfigResponse, GetDashboardPoolCategoryResponse, GetJobTemplateSettingsResponse, GetTelemetryViewResponse, GetUserResponse, UserClaim } from './Api';
+import { getSiteConfig } from './Config';
 
 export enum StatusColor {
     Success,
@@ -69,6 +67,36 @@ export class Dashboard {
         this.setUpdated();
     }
 
+    bisectPinned(id: string | undefined) {
+        return !!this.pinnedBisectTaskIds.find(j => j === id);
+    }
+
+    pinBisect(id: string) {
+
+        if (this.data.pinnedBisectTaskIds!.find(j => j === id)) {
+            return;
+        }
+
+        this.data.pinnedBisectTaskIds!.push(id);
+
+        backend.updateUser({ addPinnedBisectTaskIds: [id] });
+
+        this.setUpdated();
+    }
+
+    unpinBisect(id: string) {
+
+        if (!this.data.pinnedBisectTaskIds!.find(j => j === id)) {
+            return;
+        }
+
+        this.data.pinnedBisectTaskIds = this.data.pinnedBisectTaskIds!.filter(j => j !== id);
+
+        backend.updateUser({ removePinnedBisectTaskIds: [id] });
+
+        this.setUpdated();
+    }
+
     clearPinnedJobs() {
 
         if (!this.data.pinnedJobIds?.length) {
@@ -98,11 +126,19 @@ export class Dashboard {
 
     get email(): string {
 
+        if (this.data?.email) {
+            return this.data?.email;
+        }
+
         const email = this.claims.find(c => c.type.endsWith("/emailaddress"));
 
         return email ? email.value : "???";
     }
 
+    get authMethod(): AuthMethod | undefined {
+        return this.config?.authMethod;
+    }
+ 
     get p4user(): string {
         const claims = this.claims;
         const user = claims.filter(c => c.type.endsWith("/perforce-user"));
@@ -126,7 +162,7 @@ export class Dashboard {
     get development(): boolean {
 
         try {
-            return window?.location?.hostname?.indexOf("devtools-dev") !== -1;
+            return getSiteConfig().environment === "dev";
         } catch (reason) {
             console.error(reason);
         }
@@ -158,6 +194,18 @@ export class Dashboard {
         return this.config?.helpSlackChannel;
     }
 
+    get agentCategories(): GetDashboardAgentCategoryResponse[] {
+        return this.config?.agentCategories ?? [];
+    }
+
+    get poolCategories(): GetDashboardPoolCategoryResponse[] {
+        return this.config?.poolCategories ?? [];        
+    }
+
+    get deviceProblemCooldownMinutes(): number {
+        return this.config?.deviceProblemCooldownMinutes ?? 30;
+    }
+
     get swarmUrl(): string | undefined {
         return this.config?.perforceSwarmUrl;
     }
@@ -178,10 +226,16 @@ export class Dashboard {
         return this.data.pinnedJobIds ?? [];
     }
 
+    get pinnedBisectTaskIds(): string[] {
+
+        return this.data.pinnedBisectTaskIds ?? [];
+    }
+
+
     getLastJobTemplateSettings(streamId: string, templateIds: string[]): GetJobTemplateSettingsResponse | undefined {
 
         try {
-            
+
             const streamTemplates = this.data?.jobTemplateSettings?.filter(t => t.streamId === streamId && templateIds.indexOf(t.templateId) !== -1)
 
             if (!streamTemplates?.length) {
@@ -219,7 +273,21 @@ export class Dashboard {
             this.setUpdated();
 
         });
+    }
 
+    get alwaysTagPreflightCL(): boolean {
+
+        return this.data.alwaysTagPreflightCL!;
+    }
+
+    set alwaysTagPreflightCL(value: boolean) {
+
+        backend.updateUser({ alwaysTagPreflightCL: value }).then(() => {
+
+            this.data.alwaysTagPreflightCL = value;
+            this.setUpdated();
+
+        });
     }
 
     get roles(): UserClaim[] {
@@ -237,19 +305,45 @@ export class Dashboard {
         return this.preferences.get(DashboardPreference.DisplayUTC) === 'true';
 
     }
+    
+    static get userPrefersDarkTheme(): boolean {
+        
+        try {
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                return true;
+            }    
+        } catch (reason) {
+            if (!Dashboard.hasLoggedDarkThemePref) {
+                Dashboard.hasLoggedDarkThemePref = true;
+                console.error(reason);
+            }            
+        }
+
+        return false;
+    }
+
+    private static hasLoggedDarkThemePref = false;
 
     get darktheme(): boolean {
 
-        if (!this.available) {
-            // avoid intial flash when loading into site before backend is initialized
-            return localStorage?.getItem("horde_darktheme") !== "false";
+        if (!this.available) {            
+
+            let local = localStorage.getItem("horde_darktheme");
+            if (local === "true") {
+                return true;
+            } 
+            if (local === "false") {
+                return false;
+            } 
+    
+            return Dashboard.userPrefersDarkTheme;
         }
 
         const pref = this.preferences.get(DashboardPreference.Darktheme);
 
         if (pref !== "true" && pref !== "false") {
             console.error("No theme preference set, should be defaulted in getCurrentUser");
-            return localStorage?.getItem("horde_darktheme") !== "false";
+            return Dashboard.userPrefersDarkTheme;;
         }
 
         return this.preferences.get(DashboardPreference.Darktheme) !== 'false';
@@ -257,14 +351,7 @@ export class Dashboard {
     }
 
     setDarkTheme(value: boolean | undefined) {
-
         this.setPreference(DashboardPreference.Darktheme, value ? "true" : "false");
-
-        if (value) {
-            localStorage?.setItem("horde_darktheme", "true");
-        } else {
-            localStorage?.setItem("horde_darktheme", "false");
-        }
     }
 
     setDisplayUTC(value: boolean | undefined) {
@@ -375,10 +462,10 @@ export class Dashboard {
         const dark = this.darktheme;
 
         const colors = new Map<StatusColor, string>([
-            [StatusColor.Success, dark ? "#3b7b0a" : "#52C705"],
-            [StatusColor.Warnings, dark ? "#9a7b18" : "#EDC74A"],
-            [StatusColor.Failure, dark ? "#882f19" : "#DE4522"],
-            [StatusColor.Running, dark ? "#146579" : theme.palette.blueLight],
+            [StatusColor.Success, dark ? "#48940f" : "#52C705"],
+            [StatusColor.Warnings, dark ? "#d6b445" : "#EDC74A"],
+            [StatusColor.Failure, dark ? "#c44525" : "#DE4522"],
+            [StatusColor.Running, dark ? "#35a8c4" : "#00BCF2"],
             [StatusColor.Waiting, dark ? "#474542" : "#A19F9D"],
             [StatusColor.Ready, dark ? "#474542" : "#A19F9D"],
             [StatusColor.Skipped, dark ? "#63625c" : "#C3C2C1"],
@@ -459,7 +546,7 @@ export class Dashboard {
                     this.config = await backend.getDashboardConfig();
                 } catch (reason) {
                     console.error("Error getting dashboard config, defaults used: " + reason);
-                    this.config = {};
+                    this.config = { agentCategories: [], poolCategories: [],telemetryViews: []};
                 }
             }
 
@@ -528,6 +615,14 @@ export class Dashboard {
             this.preferences.set(pref, value);
         }
 
+        if (pref === DashboardPreference.Darktheme) {
+            if (value === "true") {
+                localStorage.setItem("horde_darktheme", "true");
+            } else if (value === "true") {
+                localStorage.setItem("horde_darktheme", "false");
+            }
+        }
+
         this.postPreferences(pref === DashboardPreference.Darktheme);
 
     }
@@ -535,6 +630,10 @@ export class Dashboard {
     setServerSettingsChanged(value: boolean | undefined) {
         this.serverSettingsChanged = value ?? false;
         this.setUpdated();
+    }
+
+    subscribe() {
+        if (this.updated) { }
     }
 
     @observable
@@ -551,6 +650,13 @@ export class Dashboard {
 
     get user(): GetUserResponse {
         return this.data;
+    }
+
+    get telemetryViews(): GetTelemetryViewResponse[] {
+        if (!this.config?.telemetryViews) {
+            return [];
+        }
+        return this.config?.telemetryViews;
     }
 
     private async postPreferences(reload?: boolean): Promise<boolean> {
@@ -587,7 +693,7 @@ export class Dashboard {
 
     serverSettingsChanged: boolean = false;
 
-    private data: GetUserResponse = { id: "", name: "", enableExperimentalFeatures: false, claims: [], pinnedJobIds: [], dashboardSettings: { preferences: new Map() } };
+    private data: GetUserResponse = { id: "", name: "", enableExperimentalFeatures: false, alwaysTagPreflightCL: false, claims: [], pinnedJobIds: [], dashboardSettings: { preferences: new Map() } };
 
     private updateTimeoutId: any = undefined;
 

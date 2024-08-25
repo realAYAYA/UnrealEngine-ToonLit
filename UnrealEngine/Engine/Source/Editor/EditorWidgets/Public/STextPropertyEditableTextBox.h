@@ -14,7 +14,7 @@
 #include "HAL/PlatformCrt.h"
 #include "Input/Reply.h"
 #include "Internationalization/Text.h"
-#include "Internationalization/TextNamespaceFwd.h"
+#include "Internationalization/TextPackageNamespaceUtil.h"
 #include "Layout/Visibility.h"
 #include "Misc/Attribute.h"
 #include "Misc/Optional.h"
@@ -53,9 +53,9 @@ class IEditableTextProperty
 public:
 	enum class ETextPropertyEditAction : uint8
 	{
-		EditedNamespace,
-		EditedKey,
-		EditedSource,
+		EditedNamespace = (uint8)TextNamespaceUtil::ETextEditAction::Namespace,
+		EditedKey = (uint8)TextNamespaceUtil::ETextEditAction::Key,
+		EditedSource = (uint8)TextNamespaceUtil::ETextEditAction::SourceString,
 	};
 
 	virtual ~IEditableTextProperty() = default;

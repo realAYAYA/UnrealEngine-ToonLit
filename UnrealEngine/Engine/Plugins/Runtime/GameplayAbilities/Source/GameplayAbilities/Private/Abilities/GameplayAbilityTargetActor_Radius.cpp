@@ -4,6 +4,9 @@
 #include "GameFramework/Pawn.h"
 #include "WorldCollision.h"
 #include "Abilities/GameplayAbility.h"
+#include "AbilitySystemLog.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GameplayAbilityTargetActor_Radius)
@@ -71,6 +74,18 @@ TArray<TWeakObjectPtr<AActor> >	AGameplayAbilityTargetActor_Radius::PerformOverl
 		{
 			HitActors.Add(PawnActor);
 		}
+	}
+
+	if (bDebug)
+	{
+		const FColor& DebugColor = HitActors.Num() == 0 ? FColor::Red : FColor::Green;
+		UE_VLOG_SPHERE(SourceActor, LogAbilitySystem, Log, Origin, Radius, DebugColor, TEXT("TargetActor Radius"));
+
+#if UE_ENABLE_DEBUG_DRAWING
+		constexpr bool bPersistent = false;
+		constexpr float LifeTime = 2.0f;
+		DrawDebugSphere(GetWorld(), Origin, Radius, 16, DebugColor, bPersistent, LifeTime);
+#endif // UE_ENABLE_DEBUG_DRAWING
 	}
 
 	return HitActors;

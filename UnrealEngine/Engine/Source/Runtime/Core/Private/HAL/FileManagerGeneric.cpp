@@ -427,12 +427,19 @@ namespace FileManagerGenericImpl
 			, bStoreFullPath(bInStoreFullPath)
 		{
 		}
+
+		virtual bool ShouldVisitLeafPathname(FStringView LeafFilename) override
+		{
+			return FString(LeafFilename).MatchesWildcard(WildCard);
+		}
+
 		virtual bool Visit(const TCHAR* FilenameOrDirectory, bool bIsDirectory)
 		{
 			if ((bIsDirectory && bDirectories) || (!bIsDirectory && bFiles))
 			{
 				FString Filename = FPaths::GetCleanFilename(FilenameOrDirectory);
-				if (Filename.MatchesWildcard(WildCard))
+				if (ensureMsgf(ShouldVisitLeafPathname(Filename),
+					TEXT("PlatformFile.IterateDirectory needs to call ShouldVisitLeafFilename before calling Visit.")))
 				{
 					FString FullPath = bStoreFullPath ? FString(FilenameOrDirectory) : MoveTemp(Filename);
 					FWriteScopeLock ScopeLock(ResultLock);
@@ -609,7 +616,7 @@ FString FFileManagerGeneric::DefaultConvertToRelativePath( const TCHAR* Filename
 			//move up a directory and on an extra .. TEXT("/")
 			// the +1 from "InStr" moves to include the "\" at the end of the directory name
 			NumberOfDirectoriesToGoUp++;
-			RootDirectory.LeftInline( PositionOfNextSlash + 1, false );
+			RootDirectory.LeftInline( PositionOfNextSlash + 1, EAllowShrinking::No);
 		}
 		else
 		{
@@ -789,12 +796,12 @@ bool FArchiveFileReaderGeneric::InternalPrecache( int64 PrecacheOffset, int64 Pr
 			{
 				// We don't need to reallocate the buffer, so we can just move the RemainingBufferCount bytes from the end of the buffer to the beginning.
 				FMemory::Memmove(BufferArray.GetData(), BufferArray.GetData() + Pos - BufferBase, RemainingBufferCount);
-				BufferArray.SetNumUninitialized(BufferCount, false /* AllowShrink */);
+				BufferArray.SetNumUninitialized(BufferCount, EAllowShrinking::No);
 			}
 			else
 			{
 				TArray64<uint8> OldArray(MoveTemp(BufferArray));
-				BufferArray.SetNumUninitialized(BufferCount, false /* AllowShrink */);
+				BufferArray.SetNumUninitialized(BufferCount, EAllowShrinking::No);
 				FMemory::Memcpy(BufferArray.GetData(), OldArray.GetData() + Pos - BufferBase, RemainingBufferCount);
 			}
 
@@ -811,7 +818,7 @@ bool FArchiveFileReaderGeneric::InternalPrecache( int64 PrecacheOffset, int64 Pr
 	{
 		// If we do not have an existing buffer, or Pos is outside it, the low-level read position is equal to Pos.
 		// Read the next BufferCount bytes out of the low-level handle.
-		BufferArray.SetNumUninitialized(BufferCount, false /* AllowShrink */);
+		BufferArray.SetNumUninitialized(BufferCount, EAllowShrinking::No);
 	}
 	BufferBase = Pos;
 

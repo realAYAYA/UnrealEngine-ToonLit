@@ -9,6 +9,7 @@
 #include "Sound/SoundWaveProcedural.h"
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
+#include "DSP/FloatArrayMath.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AudioImpulseResponseAsset)
 
@@ -104,10 +105,7 @@ UObject* UAudioImpulseResponseFactory::FactoryCreateNew(UClass* Class, UObject* 
 			const int16* InputBuffer = (int16*)ImportedSoundWaveData.GetData();
 			float* OutputBuffer = NewAsset->ImpulseResponse.GetData();
 
-			for (int32 i = 0; i < NumSamples; ++i)
-			{
-				OutputBuffer[i] = static_cast<float>(InputBuffer[i]) / 32768.0f;
-			}
+			Audio::ArrayPcm16ToFloat(MakeArrayView(InputBuffer, NumSamples), MakeArrayView(OutputBuffer, NumSamples));
 		}
 
 #if WITH_EDITORONLY_DATA

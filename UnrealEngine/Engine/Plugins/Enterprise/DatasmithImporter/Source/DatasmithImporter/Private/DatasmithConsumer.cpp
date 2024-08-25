@@ -383,8 +383,6 @@ bool UDatasmithConsumer::Initialize()
 			FPropertyChangedEvent PropertyUpdateStruct( Property );
 			PostEditChangeProperty( PropertyUpdateStruct );
 
-			MarkPackageDirty();
-
 			DatasmithSceneObjectPath = FSoftObjectPath(DatasmithSceneWeakPtr.Get()).GetAssetPathString();
 		}
 	}
@@ -1663,12 +1661,6 @@ namespace DatasmithConsumerUtils
 				{
 					TSharedRef< IDatasmithBaseMaterialElement > MaterialElement = FDatasmithSceneFactory::CreateMaterial( *AssetTag );
 					MaterialElement->SetLabel( *MaterialInstance->GetName() );
-
-					if (UMaterial* SourceMaterial = Cast< UMaterial >(MaterialInstance))
-					{
-						MaterialElement = StaticCastSharedRef< IDatasmithBaseMaterialElement >( FDatasmithSceneFactory::CreateUEPbrMaterial( *AssetTag ) );
-						MaterialElement->SetLabel( *MaterialInstance->GetName() );
-					}
 
 					if ( UMaterialInterface* MaterialParent = MaterialInstance->Parent )
 					{

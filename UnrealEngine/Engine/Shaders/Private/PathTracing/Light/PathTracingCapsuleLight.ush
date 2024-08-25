@@ -70,7 +70,7 @@ FLightHit CapsuleLight_TraceLight(FRayDesc Ray, int LightId)
 	{
 		float CapsArea = LightRadius2;
 		float BodyArea = 0.5 * LightRadius * SourceLength;
-		float3 LightPower = GetColor(LightId) * ComputeIESAttenuation(LightId, Ray.Origin);
+		float3 LightPower = GetColor(LightId);
 		float3 LightRadiance = LightPower / (PI * (CapsArea + BodyArea));
 		float t = CapsuleIntersect(Ray.Direction, TranslatedLightPosition - Ray.Origin, GetdPdv(LightId), LightRadius2, SourceLength);
 		if (t > Ray.TMin && t < Ray.TMax)
@@ -84,7 +84,7 @@ FLightHit CapsuleLight_TraceLight(FRayDesc Ray, int LightId)
 	{
 		float CapsArea = LightRadius2;
 		float BodyArea = 0.5 * LightRadius * SourceLength;
-		float3 LightPower = GetColor(LightId) * ComputeIESAttenuation(LightId, Ray.Origin);
+		float3 LightPower = GetColor(LightId);
 		float3 LightRadiance = LightPower / (PI * (CapsArea + BodyArea));
 		{
 			// exact
@@ -103,11 +103,10 @@ FLightHit CapsuleLight_TraceLight(FRayDesc Ray, int LightId)
 	{
 		float CapsArea = LightRadius2;
 		float BodyArea = 0.5 * LightRadius * SourceLength;
-		float3 LightPower = GetColor(LightId) * ComputeIESAttenuation(LightId, Ray.Origin);
+		float3 LightPower = GetColor(LightId);
 		float3 LightRadiance = LightPower / (PI * (CapsArea + BodyArea));
 		float3 LightDirection = TranslatedLightPosition - Ray.Origin;
 		float LightDistanceSquared = dot(LightDirection, LightDirection);
-		LightRadiance *= ComputeAttenuationFalloff(LightDistanceSquared, LightId);
 #if CAPSULE_SOLIDANGLE_SAMPLING
 		float Pdf = 1.0 / GetCapsuleBoundsSolidAngle(CapsuleGetSphericalBounds(LightDirection, Axis, LightRadius, SourceLength));
 #else

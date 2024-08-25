@@ -171,9 +171,9 @@ void UActorSequence::UnbindPossessableObjects(const FGuid& ObjectId)
 	ObjectReferences.RemoveBinding(ObjectId);
 }
 
-UObject* UActorSequence::CreateDirectorInstance(IMovieScenePlayer& Player, FMovieSceneSequenceID SequenceID)
+UObject* UActorSequence::CreateDirectorInstance(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID SequenceID)
 {
-	AActor* Actor = CastChecked<AActor>(Player.GetPlaybackContext(), ECastCheckedType::NullAllowed);
+	AActor* Actor = CastChecked<AActor>(SharedPlaybackState->GetPlaybackContext(), ECastCheckedType::NullAllowed);
 	if (!Actor)
 	{
 		return nullptr;

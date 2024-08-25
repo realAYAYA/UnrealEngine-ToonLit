@@ -77,6 +77,10 @@ void UInterpToMovementComponent::TickComponent(float DeltaTime, enum ELevelTick 
 	UpdateControlPoints(false);
 
 	float RemainingTime = DeltaTime;
+	if (SpeedMultiplier > 0.f)
+	{
+		RemainingTime *= SpeedMultiplier;
+	}
 	int32 NumBounces = 0;
 	int32 Iterations = 0;
 	FHitResult Hit(1.f);
@@ -94,7 +98,7 @@ void UInterpToMovementComponent::TickComponent(float DeltaTime, enum ELevelTick 
 		RemainingTime -= TimeTick;
 
 		// Calculate the current alpha with this tick iteration
-		const float TargetTime = FMath::Clamp(CurrentTime + ((TimeTick*TimeMultiplier)*CurrentDirection), 0.0f, 1.0f);		
+		const float TargetTime = FMath::Clamp(CurrentTime + ((TimeTick*TimeMultiplier)*CurrentDirection), 0.0f, 1.0f);
 		FVector MoveDelta = ComputeMoveDelta(TargetTime);
 		
 		// Update velocity

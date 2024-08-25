@@ -158,7 +158,7 @@ public:
 
 	void FlushWidget();
 
-	UE_NODISCARD TArray<TSharedPtr<ISceneOutlinerTreeItem>> GetSelectedTreeViewItems() const;
+	[[nodiscard]] TArray<TSharedPtr<ISceneOutlinerTreeItem>> GetSelectedTreeViewItems() const;
 	int32 GetSelectedTreeViewItemCount() const;
 
 	TSet<TSharedPtr<ISceneOutlinerTreeItem>> GetSoloRows() const;
@@ -174,8 +174,8 @@ public:
 	void EvaluateAndSetEditorVisibilityPerRow();
 	
 	/** Represents the collections the user has selected in the UI. If empty, "All" is considered as selected. */
-	UE_NODISCARD const TSet<FName>& GetSelectedCollections() const;
-	UE_NODISCARD bool IsCollectionSelected(const FName& CollectionName);
+	[[nodiscard]] const TSet<FName>& GetSelectedCollections() const;
+	[[nodiscard]] bool IsCollectionSelected(const FName& CollectionName) const;
 	void SetSelectedCollections(const TSet<FName> InSelectedCollections);
 	void SetCollectionSelected(const FName& CollectionName, const bool bNewSelected);
 

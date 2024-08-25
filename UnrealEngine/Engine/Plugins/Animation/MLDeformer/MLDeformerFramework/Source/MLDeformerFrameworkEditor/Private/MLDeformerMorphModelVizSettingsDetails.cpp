@@ -51,9 +51,9 @@ namespace UE::MLDeformer
 		if (MLDeformerComponent)
 		{
 			const UMLDeformerMorphModelInstance* MorphInstance = Cast<UMLDeformerMorphModelInstance>(MLDeformerComponent->GetModelInstance());
-			if (MorphInstance)
+			if (MorphInstance && MorphInstance->GetFinalSkeletalMeshComponent())
 			{
-				const int32 LOD = 0;
+				const int32 LOD = MorphInstance->GetFinalSkeletalMeshComponent()->GetPredictedLODLevel();
 				FExternalMorphSetWeights* WeightData = MorphInstance->FindWeightData(LOD);
 				if (WeightData)
 				{
@@ -91,42 +91,27 @@ namespace UE::MLDeformer
 				(
 					[MorphEditorModel]()
 					{
+						int32 LOD = 0;
+						const UMLDeformerComponent* MLDeformerComponent = MorphEditorModel->FindMLDeformerComponent(ActorID_Test_MLDeformed);
+						if (MLDeformerComponent)
+						{
+							const UMLDeformerMorphModelInstance* MorphInstance = Cast<UMLDeformerMorphModelInstance>(MLDeformerComponent->GetModelInstance());
+							if (MorphInstance)
+							{
+								LOD = MorphInstance->GetFinalSkeletalMeshComponent() ? MorphInstance->GetFinalSkeletalMeshComponent()->GetPredictedLODLevel() : 0;
+							}
+						}
+
 						const UMLDeformerMorphModel* MorphModelPtr = Cast<UMLDeformerMorphModel>(MorphEditorModel->GetModel());					
 						const int32 NumActiveMorphs = GetNumActiveMorphs(MorphEditorModel);
-						const int32 NumMorphs = MorphModelPtr->GetNumMorphTargets();
+						const int32 NumMorphs = MorphModelPtr->GetNumMorphTargets(LOD);
 						const float Percentage = (NumMorphs > 0) ? (NumActiveMorphs / static_cast<float>(NumMorphs)) * 100.0f : 100.0f;
 
 						FNumberFormattingOptions TwoDigitsFormat;
 						TwoDigitsFormat.SetMaximumFractionalDigits(0);
-						return FText::Format(LOCTEXT("ActiveMorphsFormat", "{0} / {1} ({2} %)"), NumActiveMorphs, NumMorphs, FText::AsNumber(Percentage, &TwoDigitsFormat));
+						return FText::Format(LOCTEXT("ActiveMorphsFormat", "{0} / {1} ({2} %) - LOD {3}"), NumActiveMorphs, NumMorphs, FText::AsNumber(Percentage, &TwoDigitsFormat), LOD);
 					}
 				)
-			];
-	}
-
-	void FMLDeformerMorphModelVizSettingsDetails::AddStatistics()
-	{
-		FMLDeformerGeomCacheVizSettingsDetails::AddStatistics();
-
-		StatsGPUMemUsageGroup->AddWidgetRow()
-			.NameContent()
-			[			
-				SNew(STextBlock)
-				.Text(LOCTEXT("MorphTargetsLabel", "Morph Targets"))
-				.Font(IDetailLayoutBuilder::GetDetailFont())
-			]
-			.ValueContent()
-			[
-				SNew(STextBlock)
-				.Text_Lambda
-				(
-					[this]()
-					{
-						const float CompressedMb = MorphModel->GetCompressedMorphDataSizeInBytes() / static_cast<float>(1024 * 1024);
-						return FText::Format(LOCTEXT("MorphTargetsValue", "{0} mb"), FText::AsNumber(CompressedMb, &MemUsageMetricFormat));
-					}
-				)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
 			];
 	}
 }	//namespace UE::MLDeformer

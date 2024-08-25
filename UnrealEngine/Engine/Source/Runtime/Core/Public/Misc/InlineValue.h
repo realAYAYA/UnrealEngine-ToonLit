@@ -17,7 +17,7 @@
  *
  * Can be viewed as a TUniquePtr with a small allocation optimization.
  */
-template<typename BaseType, uint8 DesiredMaxInlineSize=64, uint8 DefaultAlignment=8>
+template<typename BaseType, uint16 DesiredMaxInlineSize=64, uint8 DefaultAlignment=8>
 class TInlineValue
 {
 public:

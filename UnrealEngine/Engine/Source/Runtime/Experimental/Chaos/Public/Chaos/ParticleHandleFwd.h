@@ -120,6 +120,9 @@ namespace Chaos
 	using TThreadParticle = std::conditional_t<Id == EThreadContext::External, FGeometryParticle, FGeometryParticleHandle>;
 
 	template<EThreadContext Id>
+	using TThreadKinematicParticle = std::conditional_t<Id == EThreadContext::External, FKinematicGeometryParticle, FKinematicGeometryParticleHandle>;
+
+	template<EThreadContext Id>
 	using TThreadRigidParticle = std::conditional_t<Id == EThreadContext::External, FPBDRigidParticle, FPBDRigidParticleHandle>;
 }
 

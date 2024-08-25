@@ -50,6 +50,13 @@
 			"Name": "ChaosCaching",
 			"Enabled": true
 		},
+        {
+            "Name": "ChaosCachingUSD",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Win64"
+			]
+        },
 		{
 			"Name": "GeometryProcessing",
 			"Enabled": true
@@ -60,6 +67,17 @@
 		}, 
 		{
 			"Name": "DeformerGraph",
+			"Enabled": true
+		},
+        {
+            "Name": "USDImporter",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Win64"
+			]
+        },
+		{
+			"Name": "TetMeshing",
 			"Enabled": true
 		}
 	]

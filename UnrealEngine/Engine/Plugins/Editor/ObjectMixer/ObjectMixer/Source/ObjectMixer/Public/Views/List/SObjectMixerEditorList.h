@@ -93,7 +93,7 @@ public:
 	void SetTreeViewMode(EObjectMixerTreeViewMode InViewMode);
 
 	const TSet<FName>& GetSelectedCollections();
-	UE_NODISCARD bool IsCollectionSelected(const FName& CollectionName);
+	[[nodiscard]] bool IsCollectionSelected(const FName& CollectionName);
 	
 	void RebuildCollectionSelector();
 
@@ -129,7 +129,7 @@ public:
 
 	void AddToPendingPropertyPropagations(const FObjectMixerEditorListRowData::FPropertyPropagationInfo& InPropagationInfo);
 
-	UE_NODISCARD TArray<TSharedPtr<ISceneOutlinerTreeItem>> GetSelectedTreeViewItems() const;
+	[[nodiscard]] TArray<TSharedPtr<ISceneOutlinerTreeItem>> GetSelectedTreeViewItems() const;
 	int32 GetSelectedTreeViewItemCount() const;
 
 	void SetTreeViewItemSelected(TSharedRef<ISceneOutlinerTreeItem> Item, const bool bNewSelected);

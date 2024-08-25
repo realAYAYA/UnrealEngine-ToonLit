@@ -10,6 +10,7 @@
 #include "DynamicMesh/MeshTangents.h"
 #include "ParameterizationOps/CalculateTangentsOp.h"
 #include "BaseTools/SingleSelectionMeshEditingTool.h"
+#include "Selections/GeometrySelection.h"
 #include "MeshTangentsTool.generated.h"
 
 
@@ -18,6 +19,8 @@ struct FMeshDescription;
 class UDynamicMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
+class UPreviewGeometry;
+class UGeometrySelectionVisualizationProperties;
 
 
 /**
@@ -30,6 +33,7 @@ class MESHMODELINGTOOLSEDITORONLYEXP_API UMeshTangentsToolBuilder : public USing
 
 public:
 	virtual USingleSelectionMeshEditingTool* CreateNewTool(const FToolBuilderState& SceneState) const override;
+	virtual void InitializeNewTool(USingleSelectionMeshEditingTool* Tool, const FToolBuilderState& SceneState) const;
 	virtual bool CanBuildTool(const FToolBuilderState& SceneState) const override;
 
 protected:
@@ -90,7 +94,7 @@ public:
  * Simple Mesh Simplifying Tool
  */
 UCLASS()
-class MESHMODELINGTOOLSEDITORONLYEXP_API UMeshTangentsTool : public USingleSelectionMeshEditingTool, public UE::Geometry::IGenericDataOperatorFactory<UE::Geometry::FMeshTangentsd>
+class MESHMODELINGTOOLSEDITORONLYEXP_API UMeshTangentsTool : public USingleSelectionMeshEditingTool, public UE::Geometry::IGenericDataOperatorFactory<UE::Geometry::FMeshTangentsd>, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 public:
@@ -105,6 +109,15 @@ public:
 	virtual bool HasCancel() const override { return true; }
 	virtual bool HasAccept() const override { return true; }
 	virtual bool CanAccept() const override;
+
+	// input selection support
+	void SetGeometrySelection(UE::Geometry::FGeometrySelection&& SelectionIn);
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 	// IGenericDataOperatorFactory API
 	virtual TUniquePtr<UE::Geometry::TGenericDataOperator<UE::Geometry::FMeshTangentsd>> MakeNewOperator() override;
@@ -133,9 +146,10 @@ protected:
 	bool bVisibilityChanged = false;
 
 	void OnTangentsUpdated(const TUniquePtr<UE::Geometry::FMeshTangentsd>& NewResult);
+	void CopyToOverlays(const UE::Geometry::FMeshTangentsd& Tangents, FDynamicMesh3& Mesh);
 	void UpdateVisualization(bool bThicknessChanged, bool bLengthChanged);
 	TSet<int32> ComputeDegenerateTris() const;
-	void ComputeMikkTDeviations(const TSet<int32>* DegenerateTris);
+	void ComputeMikkTDeviations(const TSet<int32>& DegenerateTris);
 
 	struct FMikktDeviation
 	{
@@ -147,6 +161,29 @@ protected:
 		FVector3f OtherTangent, OtherBitangent;
 	};
 	TArray<FMikktDeviation> Deviations;
+
+	//
+	// Selection
+	//
+
+	UPROPERTY()
+	TObjectPtr<UGeometrySelectionVisualizationProperties> GeometrySelectionVizProperties = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<UPreviewGeometry> GeometrySelectionViz = nullptr;
+
+	// The geometry selection that the user started the tool with.
+	// If the selection is empty we operate on the whole mesh, otherwise only edit the overlay elements implied by the selection.
+	UE::Geometry::FGeometrySelection InputGeometrySelection;
+
+	// If the user starts the tool with an edge selection we convert it to a vertex selection with triangle topology
+	// and store it here, we do this since we expect users to want vertex and edge selections to behave similarly.
+	UE::Geometry::FGeometrySelection TriangleVertexGeometrySelection;
+
+	// These are indices into InputMesh.
+	// If both are non-empty we edit the corresponding elements in the overlay, otherwise operate on the whole overlay
+	TSet<int> EditTriangles;
+	TSet<int> EditVertices;
 
 private:
 	bool bHasDisplayedNoAttributeError = false;

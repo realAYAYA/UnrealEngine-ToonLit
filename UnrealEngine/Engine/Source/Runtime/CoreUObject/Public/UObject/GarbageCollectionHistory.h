@@ -13,27 +13,12 @@
 #include "UObject/GCObjectInfo.h"
 #include "UObject/GarbageCollection.h"
 #include "UObject/NameTypes.h"
+#include "UObject/ReferenceToken.h"
 
 class FGCObjectInfo;
 class UObject;
 
 #if ENABLE_GC_HISTORY
-
-/**
- * Structure that holds information about a direct reference from an object
- **/
-struct FGCDirectReferenceInfo
-{
-	FGCDirectReferenceInfo() = default;
-	explicit FGCDirectReferenceInfo(FName InReferencerName, FGCObjectInfo* Obj)
-		: ReferencerName(InReferencerName)
-		, ReferencedObjectInfo(Obj)
-	{}
-	/** Property or FGCObject name referencing this object */
-	FName ReferencerName;
-	/** Info struct of the object being referenced */
-	FGCObjectInfo* ReferencedObjectInfo = nullptr;
-};
 
 /**
  * Structure that holds all direct references traversed in a GC run as well as FGCObjectInfo structs created for all participating objects
@@ -42,8 +27,12 @@ struct FGCSnapshot
 {
 	/** FGCObjectInfo structs generated for each of the objects encountered during GC */
 	TMap<const UObject*, FGCObjectInfo*> ObjectToInfoMap;
-	/** Lis of direct references for all objects */
-	TMap<FGCObjectInfo*, TArray<FGCDirectReferenceInfo>*> DirectReferences;
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+	/** FGCVerseCellInfo structs generated for each of the cells encountered during GC */
+	TMap<const Verse::VCell*, FGCVerseCellInfo*> VerseCellToInfoMap;
+#endif
+	/** List of direct references for all objects */
+	TMap<FReferenceToken, TArray<FGCDirectReference>*> DirectReferences;
 
 	/** Returns the number of bytes allocated by a single snapshot */
 	int64 GetAllocatedSize() const;
@@ -58,11 +47,14 @@ class FGCHistory
 	TArray<FGCSnapshot> Snapshots;
 	/** Index of the last recorded snapshot in the Snapshots array */
 	int32 MostRecentSnapshotIndex = -1;
+	/** Object representing GC barrier */
+	UObject* GCBarrier = nullptr;
 
 	COREUOBJECT_API ~FGCHistory();
 
 	COREUOBJECT_API void Cleanup(FGCSnapshot& InShapshot);	
-	COREUOBJECT_API void MergeArrayStructHistory(TMap<const UObject*, TArray<FGCDirectReference>*>& History, FGCSnapshot& Snapshot);
+	COREUOBJECT_API void MergeArrayStructHistory(TMap<FReferenceToken, TArray<FGCDirectReference>*>& History, FGCSnapshot& Snapshot);
+	FReferenceToken GetInfoReferenceToken(FReferenceToken InToken, FGCSnapshot& Snapshot);
 
 public:
 
@@ -108,6 +100,12 @@ public:
 
 	/** Returns the number of bytes allocated by GC history */
 	COREUOBJECT_API int64 GetAllocatedSize() const;
+
+	/** Returns an object representing GC Barrier */
+	FORCEINLINE UObject* GetBarrierObject() const
+	{
+		return GCBarrier;
+	}
 };
 
 #endif // ENABLE_GC_HISTORY

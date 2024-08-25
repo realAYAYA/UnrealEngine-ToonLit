@@ -24,11 +24,6 @@ syms_file_accel_from_data(SYMS_Arena *arena, SYMS_String8 data){
     result = (SYMS_FileAccel*)syms_mach_file_accel_from_data(arena, data);
   }
   
-  // harder to recognize
-  if (result->format == SYMS_FileFormat_Null){
-    result = (SYMS_FileAccel*)syms_coff_file_accel_from_data(arena, data);
-  }
-  
   SYMS_ASSERT_PARANOID(syms_parser_api_invariants());
   return(result);
 }
@@ -48,8 +43,6 @@ syms_file_is_bin(SYMS_FileAccel *file){
   switch (file->format){
     case SYMS_FileFormat_PE:
     case SYMS_FileFormat_ELF:
-    case SYMS_FileFormat_COFF16:
-    case SYMS_FileFormat_COFF32:
     {
       result = syms_true;
     }break;
@@ -71,12 +64,6 @@ syms_bin_accel_from_file(SYMS_Arena *arena, SYMS_String8 data, SYMS_FileAccel *f
     case SYMS_FileFormat_PE:
     {
       result = (SYMS_BinAccel*)syms_pe_bin_accel_from_file(arena, data, &file->pe_accel);
-    }break;
-    
-    case SYMS_FileFormat_COFF16:
-    case SYMS_FileFormat_COFF32:
-    {
-      result = (SYMS_BinAccel*)syms_coff_bin_accel_from_file(arena, data, &file->coff_accel);
     }break;
     
     case SYMS_FileFormat_ELF:
@@ -103,12 +90,6 @@ syms_arch_from_bin(SYMS_BinAccel *bin){
     case SYMS_FileFormat_PE:
     {
       result = syms_pe_arch_from_bin(&bin->pe_accel);
-    }break;
-    
-    case SYMS_FileFormat_COFF16:
-    case SYMS_FileFormat_COFF32:
-    {
-      result = syms_coff_arch_from_bin(&bin->coff_accel);
     }break;
     
     case SYMS_FileFormat_ELF:
@@ -158,12 +139,6 @@ syms_sec_info_array_from_bin(SYMS_Arena *arena, SYMS_String8 data, SYMS_BinAccel
       result = syms_pe_sec_info_array_from_bin(arena, data, &bin->pe_accel);
     }break;
     
-    case SYMS_FileFormat_COFF16:
-    case SYMS_FileFormat_COFF32:
-    {
-      result = syms_coff_sec_info_array_from_bin(arena, data, &bin->coff_accel);
-    }break;
-    
     case SYMS_FileFormat_ELF:
     {
       result = syms_elf_sec_info_array_from_bin(arena, data, &bin->elf_accel);
@@ -194,6 +169,32 @@ syms_default_vbase_from_bin(SYMS_BinAccel *bin){
     case SYMS_FileFormat_ELF:
     {
       result = syms_elf_default_vbase_from_bin(&bin->elf_accel);
+    }break;
+    
+    case SYMS_FileFormat_MACH:
+    {
+      // TODO(allen): ?
+    }break;
+  }
+  SYMS_ASSERT_PARANOID(syms_parser_api_invariants());
+  SYMS_ProfEnd();
+  return(result);
+}
+
+// entry point
+SYMS_API SYMS_U64
+syms_entry_point_voff_from_bin(SYMS_BinAccel *bin){
+  SYMS_ProfBegin("syms_entry_point_voff_from_bin");
+  SYMS_U64 result = 0;
+  switch (bin->format){
+    case SYMS_FileFormat_PE:
+    {
+      result = syms_pe_entry_point_voff_from_bin(&bin->pe_accel);
+    }break;
+    
+    case SYMS_FileFormat_ELF:
+    {
+      result = syms_elf_entry_point_voff_from_bin(&bin->elf_accel);
     }break;
     
     case SYMS_FileFormat_MACH:
@@ -366,9 +367,8 @@ syms_bin_is_dbg(SYMS_BinAccel *bin){
   return(result);
 }
 
-SYMS_API SYMS_DbgAccel *
-syms_dbg_accel_from_bin(SYMS_Arena *arena, SYMS_String8 data, SYMS_BinAccel *bin)
-{
+SYMS_API SYMS_DbgAccel*
+syms_dbg_accel_from_bin(SYMS_Arena *arena, SYMS_String8 data, SYMS_BinAccel *bin){
   SYMS_ProfBegin("syms_dbg_accel_from_bin");
   SYMS_DbgAccel *result = (SYMS_DbgAccel*)&syms_format_nil;
   switch(bin->format){
@@ -416,7 +416,7 @@ syms_ext_file_list_from_dbg(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel 
   switch (dbg->format){
     case SYMS_FileFormat_PDB:
     {
-      // NOTE(allen): PDB has no external files, do nothing.
+      // PDB has no external files, do nothing.
     }break;
     
     case SYMS_FileFormat_DWARF:
@@ -636,20 +636,23 @@ syms_uid_collated_public_symbols_from_set(SYMS_UnitSetAccel *unit_set){
 
 // symbol parsing
 SYMS_API SYMS_UnitAccel*
-syms_unit_accel_from_uid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitSetAccel *unit_set,
-                         SYMS_UnitID uid){
+syms_unit_accel_from_uid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *dbg,
+                         SYMS_UnitSetAccel *unit_set, SYMS_UnitID uid){
   SYMS_ProfBegin("syms_unit_accel_from_uid");
   SYMS_UnitAccel *result = (SYMS_UnitAccel*)&syms_format_nil;
   if (unit_set->format == dbg->format){
     switch (unit_set->format){
       case SYMS_FileFormat_PDB:
       {
-        result = (SYMS_UnitAccel*)syms_pdb_unit_accel_from_id(arena, data, &dbg->pdb_accel, &unit_set->pdb_accel, uid);
+        result =
+        (SYMS_UnitAccel*)syms_pdb_unit_accel_from_uid(arena, data, &dbg->pdb_accel, &unit_set->pdb_accel,
+                                                      uid);
       }break;
       
       case SYMS_FileFormat_DWARF:
       {
-        result = (SYMS_UnitAccel*)syms_dw_unit_accel_from_uid(arena, data, &dbg->dw_accel, &unit_set->dw_accel, uid);
+        result = (SYMS_UnitAccel*)syms_dw_unit_accel_from_uid(arena, data, &dbg->dw_accel, 
+                                                              &unit_set->dw_accel, uid);
       }break;
     }
   }
@@ -665,7 +668,7 @@ syms_uid_from_unit(SYMS_UnitAccel *unit){
   switch (unit->format){
     case SYMS_FileFormat_PDB:
     {
-      result = syms_pdb_uid_from_accel(&unit->pdb_accel);
+      result = syms_cv_uid_from_accel(&unit->cv_accel);
     }break;
     
     case SYMS_FileFormat_DWARF:
@@ -685,7 +688,7 @@ syms_proc_sid_array_from_unit(SYMS_Arena *arena, SYMS_UnitAccel *unit){
   switch (unit->format){
     case SYMS_FileFormat_PDB:
     {
-      result = syms_pdb_proc_sid_array_from_unit(arena, &unit->pdb_accel);
+      result = syms_cv_proc_sid_array_from_unit(arena, &unit->cv_accel);
     }break;
     
     case SYMS_FileFormat_DWARF:
@@ -705,7 +708,7 @@ syms_var_sid_array_from_unit(SYMS_Arena *arena, SYMS_UnitAccel *unit){
   switch (unit->format){
     case SYMS_FileFormat_PDB:
     {
-      result = syms_pdb_var_sid_array_from_unit(arena, &unit->pdb_accel);
+      result = syms_cv_var_sid_array_from_unit(arena, &unit->cv_accel);
     }break;
     
     case SYMS_FileFormat_DWARF:
@@ -725,7 +728,7 @@ syms_type_sid_array_from_unit(SYMS_Arena *arena, SYMS_UnitAccel *unit){
   switch (unit->format){
     case SYMS_FileFormat_PDB:
     {
-      result = syms_pdb_type_sid_array_from_unit(arena, &unit->pdb_accel);
+      result = syms_cv_type_sid_array_from_unit(arena, &unit->cv_accel);
     }break;
     
     case SYMS_FileFormat_DWARF:
@@ -746,7 +749,7 @@ syms_symbol_kind_from_sid(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAccel 
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_symbol_kind_from_sid(data, &dbg->pdb_accel, &unit->pdb_accel, sid);
+        result = syms_pdb_symbol_kind_from_sid(data, &dbg->pdb_accel, &unit->cv_accel, sid);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -769,7 +772,7 @@ syms_symbol_name_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *d
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_symbol_name_from_sid(arena, data, &dbg->pdb_accel, &unit->pdb_accel, sid);
+        result = syms_cv_symbol_name_from_sid(arena, &unit->cv_accel, sid);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -791,7 +794,7 @@ syms_type_info_from_sid(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAccel *u
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_type_info_from_id(data, &dbg->pdb_accel, &unit->pdb_accel, id);
+        result = syms_pdb_type_info_from_sid(data, &dbg->pdb_accel, &unit->cv_accel, id);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -813,7 +816,7 @@ syms_const_info_from_sid(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAccel *
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_const_info_from_id(data, &dbg->pdb_accel, &unit->pdb_accel, id);
+        result = syms_pdb_const_info_from_id(data, &dbg->pdb_accel, &unit->cv_accel, id);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -837,7 +840,7 @@ syms_type_from_var_sid(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAccel *un
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_type_from_var_id(data, &dbg->pdb_accel, &unit->pdb_accel, id);
+        result = syms_pdb_type_from_var_id(data, &dbg->pdb_accel, &unit->cv_accel, id);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -859,7 +862,7 @@ syms_voff_from_var_sid(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAccel *un
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_voff_from_var_sid(data, &dbg->pdb_accel, &unit->pdb_accel, id);
+        result = syms_pdb_voff_from_var_sid(data, &dbg->pdb_accel, &unit->cv_accel, id);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -882,7 +885,7 @@ syms_location_from_var_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_location_from_var_sid(arena, data, &dbg->pdb_accel, &unit->pdb_accel, sid);
+        result = syms_pdb_location_from_var_sid(arena, data, &dbg->pdb_accel, &unit->cv_accel, sid);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -906,7 +909,7 @@ syms_location_ranges_from_var_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_Dbg
       case SYMS_FileFormat_PDB:
       {
         result = syms_pdb_location_ranges_from_var_sid(arena, data, &dbg->pdb_accel,
-                                                       &unit->pdb_accel, sid);
+                                                       &unit->cv_accel, sid);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -929,7 +932,7 @@ syms_location_from_id(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *dbg,
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_location_from_id(arena, data, &dbg->pdb_accel, &unit->pdb_accel, loc_id);
+        result = syms_pdb_location_from_id(arena, data, &dbg->pdb_accel, &unit->cv_accel, loc_id);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -955,7 +958,7 @@ syms_mems_accel_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *db
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = (SYMS_MemsAccel*)syms_pdb_mems_accel_from_sid(arena, data, &dbg->pdb_accel, &unit->pdb_accel, id);
+        result = (SYMS_MemsAccel*)syms_pdb_mems_accel_from_sid(arena, data, &dbg->pdb_accel, &unit->cv_accel, id);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -976,7 +979,7 @@ syms_mem_count_from_mems(SYMS_MemsAccel *mems){
   switch (mems->format){
     case SYMS_FileFormat_PDB:
     {
-      result = syms_pdb_mem_count_from_mems(&mems->pdb_accel);
+      result = syms_pdb_mem_count_from_mems(&mems->cv_accel);
     }break;
     
     case SYMS_FileFormat_DWARF:
@@ -998,7 +1001,7 @@ syms_mem_info_from_number(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *d
     switch (mems->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_mem_info_from_number(arena, data, &dbg->pdb_accel, &unit->pdb_accel, &mems->pdb_accel, n);
+        result = syms_pdb_mem_info_from_number(arena, data, &dbg->pdb_accel, &unit->cv_accel, &mems->cv_accel, n);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1021,7 +1024,7 @@ syms_type_from_mem_number(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAccel 
     switch (mems->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_type_from_mem_number(data, &dbg->pdb_accel, &unit->pdb_accel, &mems->pdb_accel, n);
+        result = syms_pdb_type_from_mem_number(data, &dbg->pdb_accel, &unit->cv_accel, &mems->cv_accel, n);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1044,8 +1047,8 @@ syms_sig_info_from_mem_number(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAcce
     switch (mems->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_sig_info_from_mem_number(arena, data, &dbg->pdb_accel, &unit->pdb_accel,
-                                                   &mems->pdb_accel, n);
+        result = syms_pdb_sig_info_from_mem_number(arena, data, &dbg->pdb_accel, &unit->cv_accel,
+                                                   &mems->cv_accel, n);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1104,21 +1107,43 @@ syms_containing_type_from_sid(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAc
   return(result);
 }
 
-SYMS_API SYMS_EnumInfoArray
-syms_enum_info_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *dbg,
-                              SYMS_UnitAccel *unit, SYMS_SymbolID sid){
-  SYMS_ProfBegin("syms_enum_info_array_from_sid");
-  SYMS_EnumInfoArray result = {0};
-  if (dbg->format == unit->format){
-    switch (unit->format){
+SYMS_API SYMS_String8
+syms_linkage_name_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAccel *unit, SYMS_SymbolID sid){
+  SYMS_ProfBegin("syms_linkage_name_from_sid");
+  SYMS_String8 result = {0};
+  if(dbg->format == unit->format){
+    switch(unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_enum_info_array_from_sid(arena, data, &dbg->pdb_accel, &unit->pdb_accel, sid);
+        // NOTE(rjf): not available in PDB
       }break;
       
       case SYMS_FileFormat_DWARF:
       {
-        result = syms_dw_enum_info_array_from_sid(arena, data, &dbg->dw_accel, &unit->dw_accel, sid);
+        result = syms_dw_linkage_name_from_sid(arena, data, &dbg->dw_accel, &unit->dw_accel, sid);
+      }break;
+    }
+  }
+  SYMS_ASSERT_PARANOID(syms_parser_api_invariants());
+  SYMS_ProfEnd();
+  return result;
+}
+
+SYMS_API SYMS_EnumMemberArray
+syms_enum_member_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *dbg,
+                                SYMS_UnitAccel *unit, SYMS_SymbolID sid){
+  SYMS_ProfBegin("syms_enum_member_array_from_sid");
+  SYMS_EnumMemberArray result = {0};
+  if (dbg->format == unit->format){
+    switch (unit->format){
+      case SYMS_FileFormat_PDB:
+      {
+        result = syms_pdb_enum_member_array_from_sid(arena, data, &dbg->pdb_accel, &unit->cv_accel, sid);
+      }break;
+      
+      case SYMS_FileFormat_DWARF:
+      {
+        result = syms_dw_enum_member_array_from_sid(arena, data, &dbg->dw_accel, &unit->dw_accel, sid);
       }break;
     }
   }
@@ -1137,7 +1162,7 @@ syms_sig_handle_from_proc_sid(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_UnitAc
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_proc_sig_handle_from_id(data, &dbg->pdb_accel, &unit->pdb_accel, sid);
+        result = syms_pdb_proc_sig_handle_from_id(data, &dbg->pdb_accel, &unit->cv_accel, sid);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1160,7 +1185,7 @@ syms_sig_info_from_handle(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *d
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_sig_info_from_handle(arena, data, &dbg->pdb_accel, &unit->pdb_accel, handle);
+        result = syms_pdb_sig_info_from_handle(arena, data, &dbg->pdb_accel, &unit->cv_accel, handle);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1183,7 +1208,7 @@ syms_scope_vranges_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel 
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_scope_vranges_from_sid(arena, data, &dbg->pdb_accel, &unit->pdb_accel, id);
+        result = syms_pdb_scope_vranges_from_sid(arena, data, &dbg->pdb_accel, &unit->cv_accel, id);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1206,7 +1231,7 @@ syms_scope_children_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_scope_children_from_sid(arena, data, &dbg->pdb_accel, &unit->pdb_accel, sid);
+        result = syms_pdb_scope_children_from_sid(arena, data, &dbg->pdb_accel, &unit->cv_accel, sid);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1276,7 +1301,7 @@ syms_sig_info_from_type_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel 
     switch (unit->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_sig_info_from_id(arena, data, &dbg->pdb_accel, &unit->pdb_accel, sid);
+        result = syms_pdb_sig_info_from_id(arena, data, &dbg->pdb_accel, &unit->cv_accel, sid);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1429,7 +1454,7 @@ syms_usid_list_from_string(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAccel *
       case SYMS_FileFormat_PDB:
       {
         result = syms_pdb_usid_list_from_string(arena, data, &dbg->pdb_accel,
-                                                &map_and_unit->unit->pdb_accel,
+                                                &map_and_unit->unit->cv_accel,
                                                 &map_and_unit->map->pdb_accel,
                                                 string);
       }break;
@@ -1511,7 +1536,7 @@ syms_voff_from_link_name(SYMS_String8 data, SYMS_DbgAccel *dbg, SYMS_LinkMapAcce
       case SYMS_FileFormat_PDB:
       {
         result = syms_pdb_voff_from_link_name(data, (SYMS_PdbDbgAccel*)dbg, (SYMS_PdbLinkMapAccel*)map,
-                                              (SYMS_PdbUnitAccel*)link_unit, name);
+                                              (SYMS_CvUnitAccel*)link_unit, name);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1532,7 +1557,7 @@ syms_link_name_array_from_unit(SYMS_Arena *arena, SYMS_String8 data, SYMS_DbgAcc
     switch (dbg->format){
       case SYMS_FileFormat_PDB:
       {
-        result = syms_pdb_link_name_array_from_unit(arena, data, (SYMS_PdbDbgAccel*)dbg, (SYMS_PdbUnitAccel*)unit);
+        result = syms_pdb_link_name_array_from_unit(arena, data, (SYMS_PdbDbgAccel*)dbg, (SYMS_CvUnitAccel*)unit);
       }break;
       
       case SYMS_FileFormat_DWARF:
@@ -1566,7 +1591,7 @@ syms_tls_var_sid_array_from_unit(SYMS_Arena *arena, SYMS_UnitAccel *unit){
   switch (unit->format){
     case SYMS_FileFormat_PDB:
     {
-      result = syms_pdb_tls_var_sid_array_from_unit(arena, &unit->pdb_accel);
+      result = syms_pdb_tls_var_sid_array_from_unit(arena, &unit->cv_accel);
     }break;
     
     case SYMS_FileFormat_DWARF:
@@ -1578,6 +1603,5 @@ syms_tls_var_sid_array_from_unit(SYMS_Arena *arena, SYMS_UnitAccel *unit){
   SYMS_ProfEnd();
   return(result);
 }
-
 
 #endif //SYMS_PARSER_C

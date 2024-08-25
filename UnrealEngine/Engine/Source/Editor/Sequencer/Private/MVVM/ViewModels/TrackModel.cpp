@@ -2,6 +2,7 @@
 
 #include "MVVM/ViewModels/TrackModel.h"
 
+#include "MVVM/SharedViewModelData.h"
 #include "MVVM/Extensions/IObjectBindingExtension.h"
 #include "MVVM/Extensions/IRecyclableExtension.h"
 #include "MVVM/Extensions/ITrackExtension.h"
@@ -40,16 +41,8 @@
 
 #define LOCTEXT_NAMESPACE "TrackModel"
 
-namespace UE
+namespace UE::Sequencer
 {
-namespace Sequencer
-{
-
-namespace LayoutConstants
-{
-	extern const float CommonPadding;
-	const float CommonPadding = 4.f;
-}
 
 FTrackModel::FTrackModel(UMovieSceneTrack* Track)
 	: SectionList(EViewModelListType::TrackArea)
@@ -336,13 +329,15 @@ void FTrackModel::ForceUpdate()
 
 FOutlinerSizing FTrackModel::GetOutlinerSizing() const
 {
-	float Height = SequencerLayoutConstants::SectionAreaDefaultHeight;
+	FViewDensityInfo Density = GetEditor()->GetViewDensity();
+
+	float Height = Density.UniformHeight.Get(SequencerLayoutConstants::SectionAreaDefaultHeight);
 	for (TSharedPtr<FSectionModel> Section : SectionList.Iterate<FSectionModel>())
 	{
-		Height = Section->GetSectionInterface()->GetSectionHeight();
+		Height = Section->GetSectionInterface()->GetSectionHeight(Density);
 		break;
 	}
-	return FOutlinerSizing(Height + 2 * LayoutConstants::CommonPadding);
+	return FOutlinerSizing(Height);
 }
 
 void FTrackModel::GetIdentifierForGrouping(TStringBuilder<128>& OutString) const
@@ -530,40 +525,34 @@ FSlateColor FTrackModel::GetLabelColor() const
 		return FSlateColor::UseForeground();
 	}
 
-	// Display track node is red if the property track is not bound to valid property
-	if (UMovieScenePropertyTrack* PropertyTrack = Cast<UMovieScenePropertyTrack>(Track))
+	FMovieSceneLabelParams LabelParams;
+	LabelParams.bIsDimmed = IsDimmed();
+	if (TViewModelPtr<FSequenceModel> SequenceModel = FindAncestorOfType<FSequenceModel>())
 	{
-		const bool bIsDimmed = IsDimmed();
-
-		// 3D transform tracks don't map to property bindings as below
-		if (Track->IsA<UMovieScene3DTransformTrack>() || Track->IsA<UMovieScenePrimitiveMaterialTrack>())
+		if (TSharedPtr<FSequencerEditorViewModel> SequencerModel = SequenceModel->GetEditor())
 		{
-			return FOutlinerItemModel::GetLabelColor();
-		}
-
-		// If there is no object binding extension, don't tint it
-		TSharedPtr<IObjectBindingExtension> ParentBinding = FindAncestorOfType<IObjectBindingExtension>();
-		if (!ParentBinding)
-		{
-			return FOutlinerItemModel::GetLabelColor();
-		}
-
-		// Return a normal colour if we have at least one bound object for which the property binding resolves
-		// correctly. Otherwise, return a red colour indicating a binding issue.
-		TArray<UObject*> BoundObjects;
-		FindBoundObjects(BoundObjects);
-		for (UObject* BoundObject : BoundObjects)
-		{
-			FTrackInstancePropertyBindings PropertyBinding(PropertyTrack->GetPropertyName(), PropertyTrack->GetPropertyPath().ToString());
-			if (PropertyBinding.GetProperty(*BoundObject))
+			LabelParams.SequenceID = SequenceModel->GetSequenceID();
+			LabelParams.Player = SequencerModel->GetSequencer().Get();
+			if (LabelParams.Player)
 			{
-				return bIsDimmed ? FSlateColor::UseSubduedForeground() : FSlateColor::UseForeground();
+				if (TViewModelPtr<FObjectBindingModel> ObjectBindingModel = FindAncestorOfType<FObjectBindingModel>())
+				{
+					LabelParams.BindingID = ObjectBindingModel->GetObjectGuid();
+
+					// If the object binding model has an invalid binding, we want to use its label color, as it may be red or gray depending on situation
+					// and we want the children of that to have the same color.
+					// Otherwise, we can use the track's label color below
+					TArrayView<TWeakObjectPtr<> > BoundObjects = LabelParams.Player->FindBoundObjects(LabelParams.BindingID, LabelParams.SequenceID);
+					if (BoundObjects.Num() == 0)
+					{
+						return ObjectBindingModel->GetLabelColor();
+					}
+				}
 			}
 		}
-		return bIsDimmed ? FSlateColor(FLinearColor::Red.Desaturate(0.6f)) : FLinearColor::Red;
 	}
 
-	return FOutlinerItemModel::GetLabelColor();
+	return Track->GetLabelColor(LabelParams);
 }
 
 FText FTrackModel::GetLabelToolTipText() const
@@ -574,41 +563,31 @@ FText FTrackModel::GetLabelToolTipText() const
 		return FText();
 	}
 
-	if (UMovieScenePropertyTrack* PropertyTrack = Cast<UMovieScenePropertyTrack>(Track))
+	FMovieSceneLabelParams LabelParams;
+	LabelParams.bIsDimmed = IsDimmed();
+	if (TViewModelPtr<FSequenceModel> SequenceModel = FindAncestorOfType<FSequenceModel>())
 	{
-		TArray<UObject*> BoundObjects;
-		FindBoundObjects(BoundObjects);
-		for (UObject* BoundObject : BoundObjects)
+		if (TSharedPtr<FSequencerEditorViewModel> SequencerModel = SequenceModel->GetEditor())
 		{
-			FTrackInstancePropertyBindings PropertyBinding(PropertyTrack->GetPropertyName(), PropertyTrack->GetPropertyPath().ToString());
-			if (FProperty* BoundProperty = PropertyBinding.GetProperty(*BoundObject))
+			LabelParams.SequenceID = SequenceModel->GetSequenceID();
+			LabelParams.Player = SequencerModel->GetSequencer().Get();
+			if (LabelParams.Player)
 			{
-				FString PropertyName = BoundProperty->GetMetaData(TEXT("DisplayName"));
-				if (PropertyName.IsEmpty())
+				if (TViewModelPtr<FObjectBindingModel> ObjectBindingModel = FindAncestorOfType<FObjectBindingModel>())
 				{
-					PropertyName = BoundProperty->GetName();
+					LabelParams.BindingID = ObjectBindingModel->GetObjectGuid();
 				}
-
-				FString CategoryName = BoundProperty->GetMetaData(TEXT("Category")).Replace(TEXT("|"), TEXT(" \u00BB "));
-				if (!CategoryName.IsEmpty())
-				{
-					CategoryName.Append(TEXT(" \u00BB "));
-				}
-
-				return FText::FromString(FString::Printf(TEXT("%s%s\n(Path: %s)"), *CategoryName, *PropertyName, *PropertyBinding.GetPropertyPath()));
+				return Track->GetDisplayNameToolTipText(LabelParams);
 			}
 		}
 	}
-	
-	return Track->GetDisplayNameToolTipText();
+	return FText();
 }
 
-TSharedRef<SWidget> FTrackModel::CreateOutlinerView(const FCreateOutlinerViewParams& InParams)
+TSharedPtr<SWidget> FTrackModel::CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName)
 {
-	return SNew(SOutlinerTrackView, 
-			TWeakViewModelPtr<IOutlinerExtension>(SharedThis(this)),
-			InParams.Editor->CastThisSharedChecked<FSequencerEditorViewModel>(), 
-			InParams.TreeViewRow);
+	FBuildColumnWidgetParams Params(SharedThis(this), InParams);
+	return TrackEditor->BuildOutlinerColumnWidget(Params, InColumnName);
 }
 
 bool FTrackModel::IsResizable() const
@@ -621,17 +600,45 @@ void FTrackModel::Resize(float NewSize)
 {
 	UMovieSceneTrack* Track = GetTrack();
 
-	float PaddingAmount = 2 * LayoutConstants::CommonPadding;
-	if (Track)
-	{
-		PaddingAmount *= (Track->GetMaxRowIndex() + 1);
-	}
-	
-	NewSize -= PaddingAmount;
-
 	if (Track && TrackEditor->IsResizable(Track))
 	{
 		TrackEditor->Resize(NewSize, Track);
+	}
+}
+
+ELockableLockState FTrackModel::GetLockState() const
+{
+	int32 NumSections = 0;
+	int32 NumLockedSections = 0;
+
+	for (const TViewModelPtr<FSectionModel>& Section : SectionList.Iterate<FSectionModel>())
+	{
+		++NumSections;
+
+		UMovieSceneSection* SectionObject = Section->GetSection();
+		if (SectionObject && SectionObject->IsLocked())
+		{
+			++NumLockedSections;
+		}
+	}
+
+	if (NumSections == 0 || NumLockedSections == 0)
+	{
+		return ELockableLockState::None;
+	}
+	return NumLockedSections == NumSections ? ELockableLockState::Locked : ELockableLockState::PartiallyLocked;
+}
+
+void FTrackModel::SetIsLocked(bool bInIsLocked)
+{
+	for (const TViewModelPtr<FSectionModel>& Section : SectionList.Iterate<FSectionModel>())
+	{
+		UMovieSceneSection* SectionObject = Section->GetSection();
+		if (SectionObject)
+		{
+			SectionObject->Modify();
+			SectionObject->SetIsLocked(bInIsLocked);
+		}
 	}
 }
 
@@ -806,8 +813,7 @@ bool FTrackModel::FindBoundObjects(TArray<UObject*>& OutBoundObjects) const
 	return true;
 }
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 
 #undef LOCTEXT_NAMESPACE
 

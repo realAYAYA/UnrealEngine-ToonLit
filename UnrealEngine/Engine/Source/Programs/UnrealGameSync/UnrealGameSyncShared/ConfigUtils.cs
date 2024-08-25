@@ -1,19 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.OIDC;
-using EpicGames.Perforce;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Perforce;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -196,52 +193,6 @@ namespace UnrealGameSync
 			return contents;
 		}
 
-		public static async Task<OidcTokenClient?> CreateOidcTokenClientAsync(OidcTokenManager oidcTokenManager, ConfigFile projectConfigFile, string projectIdentifier, IPerforceConnection perforce, string clientRoot, string? clientProjectFile, List<KeyValuePair<FileReference, DateTime>> localFiles, DirectoryReference cacheFolder, ILogger logger, CancellationToken cancellationToken)
-		{
-			OidcTokenClient? oidcTokenClient = null;
-
-			string? oidcProvider;
-			if (TryGetProjectSetting(projectConfigFile, projectIdentifier, "OidcProvider", out oidcProvider))
-			{
-				List<string> configFiles = new List<string>();
-				configFiles.AddRange(ProviderConfigurationFactory.ConfigPaths.Select(x => $"{clientRoot.TrimEnd('/')}/Engine/{x}"));
-
-				if (clientProjectFile != null && clientProjectFile.EndsWith(".uproject", StringComparison.OrdinalIgnoreCase))
-				{
-					string clientProjectPath = clientProjectFile.Substring(0, clientProjectFile.LastIndexOf('/'));
-					configFiles.AddRange(ProviderConfigurationFactory.ConfigPaths.Select(x => $"{clientProjectPath.TrimEnd('/')}/{x}"));
-				}
-
-				List<string[]> latestOidcConfigFiles = await ConfigUtils.ReadConfigFiles(perforce, configFiles, localFiles, cacheFolder, logger, cancellationToken);
-
-				ConfigurationBuilder configBuilder = new ConfigurationBuilder();
-				foreach (string[] configFile in latestOidcConfigFiles)
-				{
-#pragma warning disable CA2000
-					MemoryStream configStream = new MemoryStream(Encoding.UTF8.GetBytes(String.Join("\n", configFile)));
-					configBuilder.AddJsonStream(configStream);
-#pragma warning restore CA2000
-				}
-
-				IConfigurationRoot config = configBuilder.Build();
-				OidcTokenOptions oidcOptions = OidcTokenOptions.Bind(config);
-
-				if (oidcOptions.Providers.TryGetValue(oidcProvider, out ProviderInfo? providerInfo))
-				{
-					oidcTokenClient = oidcTokenManager.FindOrAddClient(oidcProvider, providerInfo);
-
-					// Trigger an update of the access token if necessary, just to make sure we have the most current state
-					try
-					{
-						await oidcTokenClient.GetAccessTokenAsync(cancellationToken);
-					}
-					catch { }
-				}
-			}
-
-			return oidcTokenClient;
-		}
-
 		public static FileReference GetEditorTargetFile(ProjectInfo projectInfo, ConfigFile projectConfig)
 		{
 			if (projectInfo.ProjectPath.EndsWith(".uproject", StringComparison.OrdinalIgnoreCase))
@@ -398,11 +349,11 @@ namespace UnrealGameSync
 			bool useCrashReportClientEditor = latestProjectConfigFile.GetValue("Options.UseCrashReportClientEditor", false);
 
 			string hostPlatform;
-			if(RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
 			{
 				hostPlatform = "Mac";
 			}
-			else if(RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+			else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
 			{
 				hostPlatform = "Linux";
 			}

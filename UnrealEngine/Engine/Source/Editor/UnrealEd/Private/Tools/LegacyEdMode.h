@@ -7,6 +7,7 @@
 #include "Engine/EngineBaseTypes.h"
 #include "Templates/SharedPointer.h"
 #include "Tools/LegacyEdModeInterfaces.h"
+#include "GizmoEdModeInterface.h"
 
 #include "LegacyEdMode.generated.h"
 
@@ -19,7 +20,7 @@ class FViewport;
 class UPrimitiveComponent;
 
 UCLASS(MinimalAPI)
-class ULegacyEdModeWrapper final : public UEdMode, public ILegacyEdModeWidgetInterface, public ILegacyEdModeToolInterface, public ILegacyEdModeSelectInterface, public ILegacyEdModeDrawHelperInterface, public ILegacyEdModeViewportInterface
+class ULegacyEdModeWrapper final : public UEdMode, public ILegacyEdModeWidgetInterface, public ILegacyEdModeToolInterface, public ILegacyEdModeSelectInterface, public ILegacyEdModeDrawHelperInterface, public ILegacyEdModeViewportInterface, public IGizmoEdModeInterface
 {
 	GENERATED_BODY()
 
@@ -120,6 +121,11 @@ public:
 	// Start FCommonDrawHelper overrides
 	UNREALED_API virtual void Draw(const FSceneView* View, FPrimitiveDrawInterface* PDI) override;
 	// End FCommonDrawHelper overrides
+
+	// Start IGizmoEdModeInterface overrides
+	UNREALED_API virtual bool BeginTransform(const FGizmoState& InState) override;
+	UNREALED_API virtual bool EndTransform(const FGizmoState& InState) override;
+	// End IGizmoEdModeInterface overrides
 
 private:
 	TSharedPtr<FEdMode> LegacyEditorMode;

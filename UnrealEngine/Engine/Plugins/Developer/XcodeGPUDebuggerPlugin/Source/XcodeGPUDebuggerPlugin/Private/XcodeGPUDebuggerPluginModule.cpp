@@ -23,8 +23,7 @@
 extern UNREALED_API UEditorEngine* GEditor;
 #endif // WITH_EDITOR
 
-#include <Metal/MTLDevice.h>
-#include <Metal/MTLCaptureManager.h>
+#include "MetalInclude.h"
 
 DEFINE_LOG_CATEGORY(XcodeGPUDebuggerPlugin);
 
@@ -62,30 +61,30 @@ public:
 		UE4_GEmitDrawEvents_BeforeCapture = GetEmitDrawEvents();
 		SetEmitDrawEvents(true);
 
-		id<MTLDevice> MetalDevice = (id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
+		MTL::Device* MetalDevice = (MTL::Device*)GDynamicRHI->RHIGetNativeDevice();
+		MTL::CaptureManager* CaptureManager = MTL::CaptureManager::sharedCaptureManager();
 
-		MTLCaptureManager* CaptureManager = [MTLCaptureManager sharedCaptureManager];
-
-		MTLCaptureDescriptor* CaptureDescriptor = [[MTLCaptureDescriptor alloc] init];
-		CaptureDescriptor.captureObject         = MetalDevice;
+		MTL::CaptureDescriptor* CaptureDescriptor = MTL::CaptureDescriptor::alloc()->init();
+        
+		CaptureDescriptor->setCaptureObject((__bridge id<MTLDevice>)MetalDevice);
 
 #if PLATFORM_IOS || PLATFORM_TVOS
 		// On iOS/tvOS, assume that Xcode is attached.
-		CaptureDescriptor.destination =  MTLCaptureDestinationDeveloperTools;
+		CaptureDescriptor->setDestination(MTL::CaptureDestinationDeveloperTools);
 #else
 		FString SaveURL = FXcodeGPUDebuggerFrameCapturer::MakeXcodeGPUDebuggerCaptureFilePath(CaptureFileName);
 		FTCHARToUTF8 TCUrlStr(*SaveURL);
-		NSString* NSUrlStr = [NSString stringWithUTF8String:TCUrlStr.Get()];
-		NSURL* Url = [NSURL fileURLWithPath:NSUrlStr];
+		NS::String* NSUrlStr = (NS::String*)SaveURL.GetCFString();
+		NS::URL* Url = NS::URL::alloc()->initFileURLWithPath(NSUrlStr);
 
-		CaptureDescriptor.destination 			= MTLCaptureDestinationGPUTraceDocument;
-		CaptureDescriptor.outputURL 			= Url;
+		CaptureDescriptor->setDestination(MTL::CaptureDestinationGPUTraceDocument);
+		CaptureDescriptor->setOutputURL(Url);
 #endif
 
-		NSError* Error;
-		if (![CaptureManager startCaptureWithDescriptor:CaptureDescriptor error:&Error])
+		NS::Error* Error = nullptr;
+		if (!CaptureManager->startCapture(CaptureDescriptor,&Error))
 		{
-			FString ErrorString([Error localizedDescription]);
+			FString ErrorString((CFStringRef)Error->localizedDescription());
 			UE_LOG(XcodeGPUDebuggerPlugin, Warning, TEXT("Failed to start capture (%s)"), *ErrorString);
 		}
 	}
@@ -94,8 +93,8 @@ public:
 	{
 		FRHICommandListExecutor::GetImmediateCommandList().SubmitCommandsAndFlushGPU();
 
-		MTLCaptureManager* CaptureManager = [MTLCaptureManager sharedCaptureManager];
-		[CaptureManager stopCapture];
+		MTL::CaptureManager* CaptureManager = MTL::CaptureManager::sharedCaptureManager();
+		CaptureManager->stopCapture();
 
 		SetEmitDrawEvents(UE4_GEmitDrawEvents_BeforeCapture);
 	}
@@ -109,8 +108,17 @@ public:
 		{
 			TGraphTask<FXcodeGPUDebuggerAsyncGraphTask>::CreateTask().ConstructAndDispatchWhenReady(ENamedThreads::GameThread, [DestPath]()
 			{
-				NSString* GPUTracePath = [NSString stringWithFString:DestPath];
-				[[NSWorkspace sharedWorkspace] openFile:GPUTracePath withApplication:@"Xcode"];
+				FString XcodePath = FPlatformMisc::GetXcodePath();
+				XcodePath.RemoveFromEnd(TEXT("/Contents/Developer"));
+
+				NSURL* GPUTracePath = [NSURL fileURLWithPath:[NSString stringWithFString:DestPath]];
+
+				[[NSWorkspace sharedWorkspace]
+					openURLs:[NSArray arrayWithObject: GPUTracePath]
+					withApplicationAtURL:[NSURL URLWithString:XcodePath.GetNSString()]
+					configuration: [NSWorkspaceOpenConfiguration configuration]
+					completionHandler:nil
+				];
 			});
 		}
 #endif
@@ -213,11 +221,7 @@ void FXcodeGPUDebuggerPluginModule::BeginFrameCapture(const FString& InCaptureFi
 
 void FXcodeGPUDebuggerPluginModule::InjectDebugExecKeybind()
 {
-	FConfigSection* Section = GConfig->GetSectionPrivate(TEXT("/Script/Engine.PlayerInput"), false, false, GInputIni);
-	if (Section != nullptr)
-	{
-		Section->HandleAddCommand(TEXT("DebugExecBindings"), TEXT("(Key=E,Command=\"Xcode.CaptureFrame\", Shift=true)"), false);
-	}
+	GConfig->AddUniqueToSection(TEXT("/Script/Engine.PlayerInput"), TEXT("DebugExecBindings"), TEXT("(Key=E,Command=\"Xcode.CaptureFrame\", Shift=true)"), GInputIni);
 }
 
 void FXcodeGPUDebuggerPluginModule::EndFrameCapture(void* HWnd, uint32 Flags, const FString& DestFileName)
@@ -307,8 +311,17 @@ void FXcodeGPUDebuggerPluginModule::StartXcode(FString LaunchPath)
 		return;
 	}
 
-	NSString* GPUTracePath = [NSString stringWithFString:LaunchPath];
-	[[NSWorkspace sharedWorkspace] openFile:GPUTracePath withApplication:@"Xcode"];
+	FString XcodePath = FPlatformMisc::GetXcodePath();
+	XcodePath.RemoveFromEnd(TEXT("/Contents/Developer"));
+
+	NSURL* GPUTracePath = [NSURL fileURLWithPath:[NSString stringWithFString:LaunchPath]];
+
+	[[NSWorkspace sharedWorkspace]
+		openURLs:[NSArray arrayWithObject: GPUTracePath]
+		withApplicationAtURL:[NSURL URLWithString:XcodePath.GetNSString()]
+		configuration: [NSWorkspaceOpenConfiguration configuration]
+		completionHandler:nil
+	];
 }
 
 void FXcodeGPUDebuggerPluginModule::ShutdownModule()
@@ -336,33 +349,32 @@ void FXcodeGPUDebuggerPluginModule::BeginCapture(FRHICommandListImmediate* InRHI
 		CaptureFileName = FDateTime::Now().ToString();
 	}
 	
-    id<MTLDevice> MetalDevice = (id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
+    MTL::Device* MetalDevice = (MTL::Device*)GDynamicRHI->RHIGetNativeDevice();
 
 	InRHICommandList->SubmitCommandsAndFlushGPU();
 	InRHICommandList->EnqueueLambda([FileName = CaptureFileName, MetalDevice](FRHICommandListImmediate& RHICommandList)
 	{
-		MTLCaptureManager* CaptureManager = [MTLCaptureManager sharedCaptureManager];
+		MTL::CaptureManager* CaptureManager = MTL::CaptureManager::sharedCaptureManager();
 
-		MTLCaptureDescriptor* CaptureDescriptor = [[MTLCaptureDescriptor alloc] init];
-		CaptureDescriptor.captureObject         = MetalDevice;
+		MTL::CaptureDescriptor* CaptureDescriptor = MTL::CaptureDescriptor::alloc()->init();
+		CaptureDescriptor->setCaptureObject((__bridge id<MTLDevice>)MetalDevice);
 
 #if PLATFORM_IOS || PLATFORM_TVOS
 		// On iOS/tvOS, assume that Xcode is attached.
-		CaptureDescriptor.destination =  MTLCaptureDestinationDeveloperTools;
+		CaptureDescriptor->setDestination(MTL::CaptureDestinationDeveloperTools);
 #else
 		FString SaveURL = FXcodeGPUDebuggerFrameCapturer::MakeXcodeGPUDebuggerCaptureFilePath(FileName);
-		FTCHARToUTF8 TCUrlStr(*SaveURL);
-		NSString* NSUrlStr = [NSString stringWithUTF8String:TCUrlStr.Get()];
-		NSURL* Url = [NSURL fileURLWithPath:NSUrlStr];
+		NS::String* NSUrlStr = (NS::String*)SaveURL.GetCFString();
+		NS::URL* Url = NS::URL::fileURLWithPath(NSUrlStr);
 
-		CaptureDescriptor.destination =  MTLCaptureDestinationGPUTraceDocument;
-		CaptureDescriptor.outputURL = Url;
+		CaptureDescriptor->setDestination(MTL::CaptureDestinationGPUTraceDocument);
+		CaptureDescriptor->setOutputURL(Url);
 #endif
 
-		NSError* Error;
-		if (![CaptureManager startCaptureWithDescriptor:CaptureDescriptor error:&Error])
+		NS::Error* Error;
+		if (!CaptureManager->startCapture(CaptureDescriptor, &Error))
 		{
-			FString ErrorString([Error localizedDescription]);
+			FString ErrorString((CFStringRef)Error->localizedDescription());
 			UE_LOG(XcodeGPUDebuggerPlugin, Warning, TEXT("Failed to start capture (%s)"), *ErrorString);
 		}
 	});
@@ -373,8 +385,8 @@ void FXcodeGPUDebuggerPluginModule::EndCapture(FRHICommandListImmediate* InRHICo
 	InRHICommandList->SubmitCommandsAndFlushGPU();
     InRHICommandList->EnqueueLambda([this](FRHICommandListImmediate& RHICommandList)
 	{
-		MTLCaptureManager* CaptureManager = [MTLCaptureManager sharedCaptureManager];
-		[CaptureManager stopCapture];
+		MTL::CaptureManager* CaptureManager = MTL::CaptureManager::sharedCaptureManager();
+		CaptureManager->stopCapture();
 
 		FXcodeGPUDebuggerFrameCapturer::SaveAndLaunch(this, CaptureFlags, CaptureFileName);
 	});

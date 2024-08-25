@@ -852,10 +852,10 @@ bool UUnrealEdEngine::Exec( UWorld* InWorld, const TCHAR* Stream, FOutputDevice&
 						{
 							const FVector OldLocation = Brush->GetActorLocation();
 							const FVector NewLocation = OldLocation * ScaleVec;
-							Brush->Modify();
+							Brush->Modify(false);
 							Brush->SetActorLocation( NewLocation );
 							
-							Brush->Brush->Modify();
+							Brush->Brush->Modify(false);
 							for( int32 poly = 0 ; poly < Brush->Brush->Polys->Element.Num() ; poly++ )
 							{
 								FPoly* Poly = &(Brush->Brush->Polys->Element[poly]);
@@ -1244,7 +1244,7 @@ bool UUnrealEdEngine::Exec( UWorld* InWorld, const TCHAR* Stream, FOutputDevice&
 						//Strip off the * from the end if it exists
 						if( CurrentWindowName.EndsWith(TEXT("*"), ESearchCase::CaseSensitive) )
 						{
-							CurrentWindowName.LeftChopInline(1, false);
+							CurrentWindowName.LeftChopInline(1, EAllowShrinking::No);
 						}
 
 						if( CurrentWindowName == WindowNameStr )
@@ -1504,6 +1504,9 @@ bool UUnrealEdEngine::Exec_Edit( UWorld* InWorld, const TCHAR* Str, FOutputDevic
 				{
 					if (UTypedElementCommonActions* CommonActions = LevelEditor->GetCommonActions())
 					{
+						// End drags to avoid deleting something out from under one.
+						FSlateApplication::Get().CancelDragDrop();
+
 						const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "Cut", "Cut"));
 
 						UTypedElementSelectionSet* SelectionSet = LevelEditor->GetMutableElementSelectionSet();
@@ -2001,7 +2004,7 @@ bool UUnrealEdEngine::Exec_Actor( UWorld* InWorld, const TCHAR* Str, FOutputDevi
 	else if( FParse::Command(&Str,TEXT("CREATE_BV_BOUNDINGBOX")) )
 	{
 		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "CreateBoundingBoxBlockingVolume", "Create Bounding Box Blocking Volume") );
-		InWorld->GetDefaultBrush()->Modify();
+		InWorld->GetDefaultBrush()->Modify(false);
 
 		bool bSnapToGrid=0;
 		FParse::Bool( Str, TEXT("SNAPTOGRID="), bSnapToGrid );
@@ -2032,7 +2035,7 @@ bool UUnrealEdEngine::Exec_Actor( UWorld* InWorld, const TCHAR* Str, FOutputDevi
 	else if( FParse::Command(&Str,TEXT("CREATE_BV_CONVEXVOLUME")) )
 	{
 		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "CreateConvexBlockingVolume", "Create Convex Blocking Volume") );
-		InWorld->GetDefaultBrush()->Modify();
+		InWorld->GetDefaultBrush()->Modify(false);
 
 		bool bSnapToGrid=0;
 		FParse::Bool( Str, TEXT("SNAPTOGRID="), bSnapToGrid );
@@ -2577,6 +2580,9 @@ bool UUnrealEdEngine::Exec_Actor( UWorld* InWorld, const TCHAR* Str, FOutputDevi
 				{
 					UTypedElementSelectionSet* SelectionSet = LevelEditor->GetMutableElementSelectionSet();
 				
+					// End drags to avoid deleting something out from under one.
+					FSlateApplication::Get().CancelDragDrop();
+
 					const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "DeleteElements", "Delete Elements"));
 					if (SelectionSet->GetNumSelectedElements() == 0)
 					{

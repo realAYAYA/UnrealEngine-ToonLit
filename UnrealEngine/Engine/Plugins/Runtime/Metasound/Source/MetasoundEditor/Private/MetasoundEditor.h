@@ -36,6 +36,13 @@
 
 
 // Forward Declarations
+namespace AudioWidgets
+{
+	class FAudioOscilloscope;
+	class FAudioVectorscope;
+	class FAudioSpectrumAnalyzer;
+}
+
 class FTabManager;
 class SDockableTab;
 class SGraphEditor;
@@ -43,6 +50,10 @@ class SMetasoundPalette;
 class FSlateRect;
 class IDetailsView;
 class IToolkitHost;
+namespace Metasound::Editor
+{
+	class SFindInMetasound;
+}
 class SVerticalBox;
 class UAudioComponent;
 class UEdGraphNode;
@@ -191,8 +202,6 @@ namespace Metasound
 			/** Creates analyzers */
 			void CreateAnalyzers();
 
-			void BuildTransport(FToolBarBuilder& InToolBarBuilder);
-
 			/** Destroys analyzers */
 			void DestroyAnalyzers();
 
@@ -328,6 +337,9 @@ namespace Metasound
 
 			void RefreshEditorContext();
 
+			/** Show and focus the Find in MetaSound tab. */
+			void ShowFindInMetaSound();
+
 		private:
 			void RemoveInvalidSelection();
 
@@ -340,7 +352,7 @@ namespace Metasound
 			void CreateInternalWidgets();
 
 			/** Builds the toolbar widget for the Metasound editor */
-			void ExtendToolbar();
+			void ExtendToolbarInternal();
 
 			/** Binds new graph commands to delegates */
 			void BindGraphCommands();
@@ -419,6 +431,18 @@ namespace Metasound
 
 			/** Meter used in the analyzer tab for auditioning preview output. */
 			TSharedPtr<AudioWidgets::FAudioMeter> OutputMeter;
+
+			/** Oscilloscope used in the analyzer tab for visualizing preview output. */
+			TSharedPtr<AudioWidgets::FAudioOscilloscope> OutputOscilloscope;
+
+			/** Vectorscope used in the analyzer tab for visualizing preview output. */
+			TSharedPtr<AudioWidgets::FAudioVectorscope> OutputVectorscope;
+
+			/** Spectrum analyzer used in the analyzer tab for auditioning preview output. */
+			TSharedPtr<AudioWidgets::FAudioSpectrumAnalyzer> OutputSpectrumAnalyzer;
+
+			/** Find in MetaSound widget. */
+			TSharedPtr<SFindInMetasound> FindWidget;
 
 			/** Palette of Node types */
 			TSharedPtr<SMetasoundPalette> Palette;

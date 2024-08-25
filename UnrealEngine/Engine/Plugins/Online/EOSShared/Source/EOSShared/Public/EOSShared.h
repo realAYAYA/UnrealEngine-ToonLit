@@ -37,11 +37,10 @@
 #endif
 #include "eos_base.h"
 #include "eos_common.h"
+#include "eos_types.h"
 #include "eos_version.h"
 
-#if defined(DISABLE_EOSVOICECHAT_ENGINE)
-#define WITH_EOS_RTC 0
-#else
+#ifndef WITH_EOS_RTC
 #define WITH_EOS_RTC WITH_EOS_SDK && (EOS_MAJOR_VERSION >= 1 && EOS_MINOR_VERSION >= 13)
 #endif
 
@@ -54,7 +53,15 @@ EOS_ENUM_FORWARD_DECL(EOS_EFriendsStatus);
 EOS_ENUM_FORWARD_DECL(EOS_ELoginCredentialType);
 EOS_ENUM_FORWARD_DECL(EOS_ENetworkStatus);
 EOS_ENUM_FORWARD_DECL(EOS_Presence_EStatus);
+EOS_ENUM_FORWARD_DECL(EOS_UI_EInputStateButtonFlags);
 #undef EOS_ENUM_FORWARD_DECL
+
+#define EOS_STRUCT_FORWARD_DECL(name) extern "C" typedef struct _tag ## name name;
+EOS_STRUCT_FORWARD_DECL(EOS_UserInfo_BestDisplayName);
+EOS_STRUCT_FORWARD_DECL(EOS_RTC_Option);
+#undef EOS_STRUCT_FORWARD_DECL
+
+extern "C" typedef uint32_t EOS_OnlinePlatformType;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogEOSSDK, Log, All);
 
@@ -80,8 +87,17 @@ EOSSHARED_API const TCHAR* LexToString(const EOS_ELoginStatus LoginStatus);
 EOSSHARED_API const TCHAR* LexToString(const EOS_ENetworkStatus NetworkStatus);
 EOSSHARED_API const TCHAR* LexToString(const EOS_Presence_EStatus PresenceStatus);
 
-EOSSHARED_API bool LexFromString(EOS_EAuthScopeFlags& OutEnum, const FStringView InString);
-EOSSHARED_API bool LexFromString(EOS_EExternalCredentialType& OutEnum, const TCHAR* InString);
+EOSSHARED_API bool LexFromString(EOS_EAuthScopeFlags& OutEnum, const FStringView& InString);
+EOSSHARED_API bool LexFromString(EOS_EIntegratedPlatformManagementFlags& OutEnum, const TCHAR* InString);
 EOSSHARED_API bool LexFromString(EOS_ELoginCredentialType& OutEnum, const TCHAR* InString);
+EOSSHARED_API bool LexFromString(EOS_ERTCBackgroundMode& OutEnum, const TCHAR* InString);
+EOSSHARED_API bool LexFromString(EOS_UI_EInputStateButtonFlags& OutEnum, const TCHAR* InString);
+
+EOSSHARED_API EOS_OnlinePlatformType EOSOnlinePlatformTypeFromString(const FStringView& InString);
+
+/** Extracts the display name FString from a EOS_UserInfo_BestDisplayName using the following logic: Nickname > DisplayNameSanitized > DisplayName */
+EOSSHARED_API FString GetBestDisplayNameStr(const EOS_UserInfo_BestDisplayName& BestDisplayName);
+
+EOSSHARED_API FString LexToString(const EOS_RTC_Option& Option);
 
 #endif // WITH_EOS_SDK

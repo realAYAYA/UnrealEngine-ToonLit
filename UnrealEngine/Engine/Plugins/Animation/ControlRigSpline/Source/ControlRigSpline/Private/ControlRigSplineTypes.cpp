@@ -453,7 +453,7 @@ void FControlRigSpline::SetControlTransforms(const TArrayView<const FTransform>&
 	{
 		// Cache sample positions of the spline
 		const int32 NumSamples = (ControlPointsCount-1) * SamplesPerSegment;
-		SplineData->SamplesArray.SetNumUninitialized(NumSamples, false);
+		SplineData->SamplesArray.SetNumUninitialized(NumSamples, EAllowShrinking::No);
 
 		// Compute sample positions
 		float U = 0.f;
@@ -547,7 +547,7 @@ void FControlRigSpline::SetControlTransforms(const TArrayView<const FTransform>&
 		// Cache accumulated length at sample array
 		if (SplineData->SamplesArray.Num() > 0)
 		{
-			SplineData->AccumulatedLenth.SetNumUninitialized(SplineData->SamplesArray.Num(), false);
+			SplineData->AccumulatedLenth.SetNumUninitialized(SplineData->SamplesArray.Num(), EAllowShrinking::No);
 			SplineData->AccumulatedLenth[0] = 0.f;
 			if (bSplineModeChanged || bClosedChanged || bSamplesCountChanged || bNumControlPointsChanged)
 			{

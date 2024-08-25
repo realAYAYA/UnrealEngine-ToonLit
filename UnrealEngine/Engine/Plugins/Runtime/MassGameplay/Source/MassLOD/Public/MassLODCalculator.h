@@ -5,7 +5,7 @@
 #include "MassLODLogic.h"
 #include "MassLODUtils.h"
 #include "DrawDebugHelpers.h"
-
+#include "VisualLogger/VisualLogger.h"
 /**
  * Helper struct to calculate LOD for each agent and maximize count per LOD
  *   Requires TViewerInfoFragment fragment collected by the TMassLODCollector.
@@ -14,13 +14,15 @@
 template <typename FLODLogic = FLODDefaultLogic >
 struct TMassLODCalculator : public FMassLODBaseLogic
 {
-public:
+	TMassLODCalculator()
+		: FMassLODBaseLogic(/*bShouldBuildFrustumData=*/FLODLogic::bDoVisibilityLogic)
+	{}
 
 	/**
 	 * Initializes the LOD calculator, needed to be called once at initialization time
 	 * @Param InBaseLODDistance distances used to calculate LOD
 	 * @Param InBufferHysteresisOnFOVRatio distance hysteresis used to calculate LOD
-	 * @Param InLODMaxCount the maximum count for each LOD
+	 * @Param InLODMaxCount the maximum count for each LOD - Supports nullptr being passed in now and will put INT_MAX everywhere by default
 	 * @Param InLODMaxCountPerViewer the maximum count for each LOD per viewer (Only when FLODLogic::bMaximizeCountPerViewer is enabled)
 	 * @Param InVisibleDistanceToFrustum is the distance from the frustum to start considering this entity is visible (Only when FLODLogic::bDoVisibilityLogic is enabled)
 	 * @Param InVisibleDistanceToFrustumHysteresis once visible, what extra distance the entity need to be before considered not visible anymore (Only when FLODLogic::bDoVisibilityLogic is enabled)
@@ -152,6 +154,7 @@ public:
 	template <typename TLODFragment>
 	void ForceOffLOD(FMassExecutionContext& Context, TArrayView<TLODFragment> LODList);
 
+#if WITH_MASSGAMEPLAY_DEBUG
 	/**
 	 * Debug draw the current state of each agent as a color coded square
 	 * @Param Context of the chunk execution
@@ -161,6 +164,39 @@ public:
 	 */
 	template <typename TLODFragment, typename TTransformFragment>
 	void DebugDisplayLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UWorld* World);
+
+	/**
+	 * Debug draw the current state of each agent as a color coded square, within MaxLODSignificance range
+	 * @Param Context of the chunk execution
+	 * @Param LODList is the fragment where calculation are stored
+	 * @Param LocationList is the fragment transforms of the entities
+	 * @Param World where the debug display should be drawn
+	 * @Param MaxLODSignificance is the max allowed value of LODList[i].LODSignificance for an agent's state to debug draw
+	 */
+	template <typename TLODFragment, typename TTransformFragment>
+	void DebugDisplaySignificantLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UWorld* World, float MaxLODSignificance);
+
+	/**
+	 * Add Visual Log entries for the current state of each agent as a color coded location
+	 * @Param Context of the chunk execution
+	 * @Param LODList is the fragment where calculation are stored
+	 * @Param LocationList is the fragment transforms of the entities
+	 * @Param World where the debug display should be drawn
+	 */
+	template <typename TLODFragment, typename TTransformFragment>
+	void VisLogLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UObject* LogOwner);
+
+	/**
+	 * Add Visual Log entries for the current state of each agent as a color coded location, within MaxLODSignificance range
+	 * @Param Context of the chunk execution
+	 * @Param LODList is the fragment where calculation are stored
+	 * @Param LocationList is the fragment transforms of the entities
+	 * @Param World where the debug display should be drawn
+	 * @Param MaxLODSignificance is the max allowed value of LODList[i].LODSignificance for an agent's state to vislog
+	 */
+	template <typename TLODFragment, typename TTransformFragment>
+	void VisLogSignificantLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UObject* LogOwner, float MaxLODSignificance);
+#endif // WITH_MASSGAMEPLAY_DEBUG
 
 	/**
 	 * Return the maximum distance at which the LOD will be turn off
@@ -272,7 +308,9 @@ void TMassLODCalculator<FLODLogic>::Initialize(const float InBaseLODDistance[EMa
 	for (int x = 0; x < EMassLOD::Max; x++)
 	{
 		BaseLODDistance[x] = InBaseLODDistance[x];
-		LODMaxCount[x] = InLODMaxCount[x];
+		
+		// @todo Treat InLODMaxCount as a possible nullptr by default for this Initialize function, would need to come as an option from FLODLogic as well
+		LODMaxCount[x] = (InLODMaxCount != nullptr) ? InLODMaxCount[x] : INT_MAX;
 		if (FLODLogic::bDoVisibilityLogic && InVisibleLODDistance)
 		{
 			VisibleLODDistance[x] = InVisibleLODDistance[x];
@@ -669,7 +707,7 @@ void TMassLODCalculator<FLODLogic>::AdjustLODFromCount(FMassExecutionContext& Co
 
 				LODPerViewer = ComputeLODFromSettings<bCalculateVisibilityPerViewer>(LODPerViewer, DistanceToViewerSq, bIsVisibleByViewer, nullptr, RuntimeDataPerViewer[ViewerIdx]);
 
-				if (HighestViewerLOD < LODPerViewer)
+				if (LODPerViewer < HighestViewerLOD)
 				{
 					HighestViewerLOD = LODPerViewer;
 				}
@@ -682,8 +720,8 @@ void TMassLODCalculator<FLODLogic>::AdjustLODFromCount(FMassExecutionContext& Co
 		const bool bIsVisibleByAViewer = GetPrevVisibility<bCalculateVisibility>(EntityLOD, EMassVisibility::Max) == EMassVisibility::CanBeSeen;
 		EMassLOD::Type NewLOD = ComputeLODFromSettings<bCalculateVisibility>(EntityLOD.PrevLOD, EntityViewersInfo.ClosestViewerDistanceSq, bIsVisibleByAViewer, nullptr, RuntimeData);
 
-		// Maybe the highest of all the viewers is now lower than the global entity LOD, make sure to update the it accordingly
-		if (bMaximizeCountPerViewer && NewLOD < HighestViewerLOD)
+		// Maybe the highest of all the viewers is now lower than the global entity LOD, make sure to update it accordingly
+		if (bMaximizeCountPerViewer && NewLOD > HighestViewerLOD)
 		{
 			NewLOD = HighestViewerLOD;
 		}
@@ -753,6 +791,7 @@ void TMassLODCalculator<FLODLogic>::ForceOffLOD(FMassExecutionContext& Context, 
 	}
 }
 
+#if WITH_MASSGAMEPLAY_DEBUG
 template <typename FLODLogic>
 template <typename TLODFragment, typename TTransformFragment>
 void TMassLODCalculator<FLODLogic>::DebugDisplayLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UWorld* World)
@@ -766,6 +805,59 @@ void TMassLODCalculator<FLODLogic>::DebugDisplayLOD(FMassExecutionContext& Conte
 		DrawDebugSolidBox(World, EntityLocation.GetTransform().GetLocation() + FVector(0.0f, 0.0f, 120.0f), FVector(25.0f), UE::MassLOD::LODColors[LODIdx]);
 	}
 }
+
+template <typename FLODLogic>
+template <typename TLODFragment, typename TTransformFragment>
+void TMassLODCalculator<FLODLogic>::DebugDisplaySignificantLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UWorld* World, const float MaxLODSignificance)
+{
+	const int32 NumEntities = Context.GetNumEntities();
+	for (int EntityIdx = 0; EntityIdx < NumEntities; EntityIdx++)
+	{
+		const TLODFragment& EntityLOD = LODList[EntityIdx];
+		if (EntityLOD.LODSignificance <= MaxLODSignificance)
+		{
+			const TTransformFragment& EntityLocation = LocationList[EntityIdx];
+			int32 LODIdx = (int32)EntityLOD.LOD;
+			DrawDebugSolidBox(World, EntityLocation.GetTransform().GetLocation() + FVector(0.0f, 0.0f, 120.0f), FVector(25.0f), UE::MassLOD::LODColors[LODIdx]);
+		}
+	}
+}
+
+template <typename FLODLogic>
+template <typename TLODFragment, typename TTransformFragment>
+void TMassLODCalculator<FLODLogic>::VisLogLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UObject* LogOwner)
+{
+#if ENABLE_VISUAL_LOG
+	const int32 NumEntities = Context.GetNumEntities();
+	for (int EntityIdx = 0; EntityIdx < NumEntities; EntityIdx++)
+	{
+		const TTransformFragment& EntityLocation = LocationList[EntityIdx];
+		const TLODFragment& EntityLOD = LODList[EntityIdx];
+		int32 LODIdx = (int32)EntityLOD.LOD;
+		UE_VLOG_LOCATION(LogOwner, LogMassLOD, Verbose, EntityLocation.GetTransform().GetLocation(), 20.0f, UE::MassLOD::LODColors[LODIdx], TEXT("%s %d"), *Context.GetEntity(EntityIdx).DebugGetDescription(), LODIdx);
+	}
+#endif
+}
+
+template <typename FLODLogic>
+template <typename TLODFragment, typename TTransformFragment>
+void TMassLODCalculator<FLODLogic>::VisLogSignificantLOD(FMassExecutionContext& Context, TConstArrayView<TLODFragment> LODList, TConstArrayView<TTransformFragment> LocationList, UObject* LogOwner, const float MaxLODSignificance)
+{
+#if ENABLE_VISUAL_LOG
+	const int32 NumEntities = Context.GetNumEntities();
+	for (int EntityIdx = 0; EntityIdx < NumEntities; EntityIdx++)
+	{
+		const TLODFragment& EntityLOD = LODList[EntityIdx];
+		if (EntityLOD.LODSignificance <= MaxLODSignificance)
+		{
+			const TTransformFragment& EntityLocation = LocationList[EntityIdx];
+			int32 LODIdx = (int32)EntityLOD.LOD;
+			UE_VLOG_LOCATION(LogOwner, LogMassLOD, Verbose, EntityLocation.GetTransform().GetLocation(), 20.0f, UE::MassLOD::LODColors[LODIdx], TEXT("%s %d"), *Context.GetEntity(EntityIdx).DebugGetDescription(), LODIdx);
+		}
+	}
+#endif
+}
+#endif // WITH_MASSGAMEPLAY_DEBUG
 
 template <typename FLODLogic>
 template<bool bCalculateVisibility>

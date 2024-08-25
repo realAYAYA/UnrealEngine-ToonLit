@@ -4,16 +4,49 @@
 #include "AudioDecompress.h"
 #include "AudioDevice.h"
 #include "Engine/Engine.h"
+#include "Hash/xxhash.h"
 #include "Interfaces/IAudioFormat.h"
-#include "ADPCMAudioInfo.h"
+#include "AudioStreamingCache.h"
 #include "Misc/CoreStats.h"
 #include "Misc/ScopeRWLock.h"
 #include "Stats/StatsTrace.h"
 #include "Sound/StreamedAudioChunkSeekTable.h"
 
+namespace AudioDecompressPrivate
+{
+#ifndef WITH_AUDIO_DECODER_DIAGNOSTICS
+	// Optionally enable this manually with a flag. They use strings, so shouldn't be enabled by default.
+	#define WITH_AUDIO_DECODER_DIAGNOSTICS (0)
+#endif //WITH_AUDIO_DECODER_DIAGNOSTICS
+
+#if WITH_AUDIO_DECODER_DIAGNOSTICS
+	
+	static FString ForceDecoderErrorOnWaveCVar;
+	FAutoConsoleVariableRef CVarForceDecoderErrorOnWave(
+		TEXT("au.debug.force_decoder_error_on_wave"),
+		ForceDecoderErrorOnWaveCVar,
+		TEXT("Force Decoder Error On Any decoding wave matching this string."),
+		ECVF_Default);
+
+	static FString ForceDecoderNegativeSamplesOnWaveCVar;
+	FAutoConsoleVariableRef CVarForceDecoderNegativeSamplesOnWave(
+		TEXT("au.debug.force_decoder_negative_samples_on_wave"),
+		ForceDecoderNegativeSamplesOnWaveCVar,
+		TEXT("Force Negative Samples on Decode call to simulate error" ),
+		ECVF_Default);
+
+	// Macro to string match against the debugging wave of choice.
+	#define DECODER_MATCHES_WAVE(STR)\
+		(!STR.IsEmpty() && StreamingSoundWave.IsValid() && StreamingSoundWave->GetFName().ToString().Contains(STR))
+	
+#else  //WITH_AUDIO_DECODER_DIAGNOSTICS
+	#define DECODER_MATCHES_WAVE(STR) (false)
+#endif //WITH_AUDIO_DECODER_DIAGNOSTICS
+}
+
 IStreamedCompressedInfo::IStreamedCompressedInfo()
 	: bIsStreaming(false)
-	,SrcBufferData(nullptr)
+	, SrcBufferData(nullptr)
 	, SrcBufferDataSize(0)
 	, SrcBufferOffset(0)
 	, AudioDataOffset(0)
@@ -27,11 +60,11 @@ IStreamedCompressedInfo::IStreamedCompressedInfo()
 	, LastPCMOffset(0)
 	, bStoringEndOfFile(false)
 	, CurrentChunkIndex(0)
-	, bPrintChunkFailMessage(true)
 	, SrcBufferPadding(0)
 	, StreamSeekBlockIndex(INDEX_NONE)
 	, StreamSeekBlockOffset(0)
 {
+	StartTimeInCycles = FPlatformTime::Cycles64();
 }
 
 uint32 IStreamedCompressedInfo::Read(void *OutBuffer, uint32 DataSize)
@@ -61,7 +94,7 @@ bool IStreamedCompressedInfo::ReadCompressedInfo(const uint8* InSrcBufferData, u
 	check(SrcBufferData != nullptr);
 
 	// Sample Stride is 
-	SampleStride = NumChannels * sizeof(int16);
+	SampleStride = NumChannels * MONO_PCM_SAMPLE_SIZE;
 
 	MaxFrameSizeSamples = GetMaxFrameSizeSamples();
 		
@@ -150,6 +183,25 @@ void IStreamedCompressedInfo::SeekToTime(const float InSeekTimeSeconds)
 	}
 }
 
+void IStreamedCompressedInfo::SeekToFrame(const uint32 InSeekTimeFrames)
+{
+	if (StreamingSoundWave.IsValid())
+	{
+		const FSoundWavePtr WaveData = StreamingSoundWave->GetSoundWaveData();
+		if (WaveData.IsValid())
+		{
+			// If we have a chunk setup to contain a seek-table it will return a value other than INDEX_NONE here.
+			const int32 ChunkIndexToSeekTo = WaveData->FindChunkIndexForSeeking(IntCastChecked<uint32>(InSeekTimeFrames));
+			if (ChunkIndexToSeekTo >= 0)
+			{
+				StreamSeekBlockIndex = ChunkIndexToSeekTo;
+				StreamSeekBlockOffset = 0;								// We don't know this until the seek-table is loaded, so we leave it 0 for now.
+				StreamSeekToAudioFrames = InSeekTimeFrames;			// Store the time in samples so when we load the chunks table loads we can find the offset.
+			}
+		}
+	}
+}
+
 void IStreamedCompressedInfo::ExpandFile(uint8* DstBuffer, struct FSoundQualityInfo* QualityInfo)
 {
 	check(DstBuffer);
@@ -162,15 +214,15 @@ void IStreamedCompressedInfo::ExpandFile(uint8* DstBuffer, struct FSoundQualityI
 
 	while (RawPCMOffset < QualityInfo->SampleDataSize)
 	{
-		int32 DecodedSamples = DecompressToPCMBuffer( /*Unused*/ 0);
+		const int32 DecodedFrames = DecompressToPCMBuffer( /*Unused*/ 0);
 
-		if (DecodedSamples < 0)
+		if (DecodedFrames < 0)
 		{
 			RawPCMOffset += ZeroBuffer(DstBuffer + RawPCMOffset, QualityInfo->SampleDataSize - RawPCMOffset);
 		}
 		else
 		{
-			LastPCMByteSize = IncrementCurrentSampleCount(DecodedSamples) * SampleStride;
+			LastPCMByteSize = IncrementCurrentSampleCount(DecodedFrames * NumChannels) * MONO_PCM_SAMPLE_SIZE;
 			RawPCMOffset += WriteFromDecodedPCM(DstBuffer + RawPCMOffset, QualityInfo->SampleDataSize - RawPCMOffset);
 		}
 	}
@@ -184,7 +236,7 @@ bool IStreamedCompressedInfo::StreamCompressedInfoInternal(const FSoundWaveProxy
 		return false;
 	}
 
-	// Get the first chunk of audio data (should always be loaded)
+	// Get the zeroth chunk of data (should always be loaded)
 	CurrentChunkIndex = 0;
 	uint32 ChunkSize = 0;
 	const uint8* FirstChunk = GetLoadedChunk(StreamingSoundWave, CurrentChunkIndex, ChunkSize);
@@ -223,37 +275,49 @@ bool IStreamedCompressedInfo::StreamCompressedInfoInternal(const FSoundWaveProxy
 	return false;
 }
 
+bool ICompressedAudioInfo::HasError() const
+{
+	return bHasError || DECODER_MATCHES_WAVE(AudioDecompressPrivate::ForceDecoderErrorOnWaveCVar);
+}
+
 bool IStreamedCompressedInfo::StreamCompressedData(uint8* Destination, bool bLooping, uint32 BufferSize, int32& OutNumBytesStreamed)
 {
 	check(Destination);
 	SCOPED_NAMED_EVENT(IStreamedCompressedInfo_StreamCompressedData, FColor::Blue);
 
 	SCOPE_CYCLE_COUNTER(STAT_AudioStreamedDecompressTime);
-
-	UE_LOG(LogAudio, Log, TEXT("Streaming compressed data from SoundWave'%s' - Chunk=%d\tNumChunks=%d\tOffset=%d\tChunkSize=%d\tLooping=%s\tLastPCMOffset=%d\tContainsEOF=%s" ), 
+	
+	UE_LOG(LogAudio, VeryVerbose, TEXT("Streaming compressed data from SoundWave'%s' - Chunk=%d\tCurrentSampleCount=%d\tTrueSampleCount=%d\tNumChunks=%d\tOffset=%d\tChunkSize=%d\tLooping=%s\tLastPCMOffset=%d\tContainsEOF=%s" ), 
 		*StreamingSoundWave->GetFName().ToString(), 	
 		CurrentChunkIndex, 
+		CurrentSampleCount, 
+		TrueSampleCount, 
 		StreamingSoundWave->GetNumChunks(),
 		SrcBufferOffset, 
 		SrcBufferDataSize,
 		bLooping ? TEXT("YES") : TEXT("NO"),
-		LastPCMOffset,		
+		LastPCMOffset,	
 		bStoringEndOfFile ? TEXT("YES") : TEXT("NO")
 	);
-
-	// Write out any PCM data that was decoded during the last request
-	uint32 RawPCMOffset = WriteFromDecodedPCM(Destination, BufferSize);
 
 	// If we have a pending next chunk from seeking, move to it now.
 	if (StreamSeekBlockIndex != INDEX_NONE)
 	{
 		uint32 ChunkSize = 0;
 		const uint8* NewlySeekedChunk = GetLoadedChunk(StreamingSoundWave, StreamSeekBlockIndex, ChunkSize);
-		UE_LOG(LogAudio, Log, TEXT("Seek block request: %d / %d (%s)"), StreamSeekBlockIndex.load(), StreamSeekBlockOffset, SrcBufferData == nullptr ? TEXT("present") : TEXT("missing"));
+		UE_LOG(LogAudio, Log, TEXT("Seek request for (%s): (%s) Chunk=%d (%s), Offset=%d, OffsetInAudioFrames=%u"),
+			*StreamingSoundWave->GetFName().ToString(),
+			StreamSeekToAudioFrames != INDEX_NONE ? TEXT("Using streaming seek-tables") : TEXT("Using chunk/offset pair"),
+			StreamSeekBlockIndex.load(),
+			NewlySeekedChunk != nullptr ? TEXT("cache hit") : TEXT("cache miss"),
+			StreamSeekBlockOffset,
+			StreamSeekToAudioFrames
+		);
+		
 		if (NewlySeekedChunk == nullptr)
 		{
 			// After a seek we're likely to need to wait a bit for the chunk to get in to memory.
-			ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
+			ZeroBuffer(Destination, BufferSize);
 			return false;
 		}	
 
@@ -289,7 +353,13 @@ bool IStreamedCompressedInfo::StreamCompressedData(uint8* Destination, bool bLoo
 
 							// Set our offset from the table.
 							SrcBufferOffset = Offset + TableOffset;
-							SrcBufferOffset += CurrentChunkIndex == 0 ? AudioDataOffset : 0;							
+							SrcBufferOffset += CurrentChunkIndex == 0 ? AudioDataOffset : 0;
+
+							// Convert frames to samples and update "current sample count"
+							CurrentSampleCount = StreamSeekToAudioFrames * NumChannels;
+							LastPCMByteSize = 0;
+							LastPCMOffset = 0;
+							bStoringEndOfFile = false;
 						}
 						else // Seek failed (off the end of the chunk).
 						{
@@ -306,7 +376,7 @@ bool IStreamedCompressedInfo::StreamCompressedData(uint8* Destination, bool bLoo
 		StreamSeekToAudioFrames = INDEX_NONE;
 		StreamSeekBlockOffset = INDEX_NONE;
 	}
-
+	
 	// If next chunk wasn't loaded when last one finished reading, try to get it again now
 	if (SrcBufferData == NULL)
 	{
@@ -314,7 +384,6 @@ bool IStreamedCompressedInfo::StreamCompressedData(uint8* Destination, bool bLoo
 		SrcBufferData = GetLoadedChunk(StreamingSoundWave, CurrentChunkIndex, ChunkSize);
 		if (SrcBufferData)
 		{
-			bPrintChunkFailMessage = true;
 			SrcBufferDataSize = ChunkSize;
 			SrcBufferOffset = CurrentChunkIndex == 0 ? AudioDataOffset : 0;
 
@@ -327,45 +396,104 @@ bool IStreamedCompressedInfo::StreamCompressedData(uint8* Destination, bool bLoo
 		}
 		else
 		{
-			// Still not loaded, zero remainder of current buffer
-			if (bPrintChunkFailMessage)
+			// Still not loaded, zero remainder of current buffer.
+			// For Chunk 1
+			//  For Load on Demand, this is expected, because it will likely wait for the first chunk to load.
+			//  For Prime on Load, it could happen if the load is still pending for the First Chunk.
+			//  For Retain on Load, it could also happen if the retained data has been purged for the cache. (or we're in the editor)
+			// For All other Chunks other than > 1
+			//  An underrun (starvation) has occured. Warn the user.
+			const ESoundWaveLoadingBehavior Behavior = StreamingSoundWave->GetLoadingBehavior();
+			const float TimeSoFar = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - StartTimeInCycles);
+			if (CurrentChunkIndex == 1)
 			{
-				UE_LOG(LogAudio, Verbose, TEXT("Chunk %d not loaded from streaming manager for SoundWave '%s'. Likely due to stall on game thread."), CurrentChunkIndex, *StreamingSoundWave->GetFName().ToString());
-				bPrintChunkFailMessage = false;
+				switch(Behavior)
+				{
+				case ESoundWaveLoadingBehavior::RetainOnLoad:
+				{	// We don't inline in the editor, so don't warn.
+					const bool bIsEditor = GEngine ? GEngine->IsEditor() : false;
+					UE_CLOG(!bIsEditor, LogAudioStreamCaching, Verbose, TEXT("First Audio Chunk (%s) not loaded and we are 'RetainOnLoad'. Likely because the stream cache has purged it. FailCount=%d"),
+						*StreamingSoundWave->GetFName().ToString(), ++PrintChunkFailMessageCount);
+					break;
+				}
+				case ESoundWaveLoadingBehavior::PrimeOnLoad:
+				{
+					UE_LOG(LogAudioStreamCaching, Verbose, TEXT("First Audio Chunk (%s) not loaded and we are 'PrimeOnLoad'. Likely because the stream cache is still loading it. Attempt=%d"),
+						*StreamingSoundWave->GetFName().ToString(), ++PrintChunkFailMessageCount);
+					break;
+				}
+				case ESoundWaveLoadingBehavior::LoadOnDemand:
+				{
+					UE_LOG(LogAudioStreamCaching, VeryVerbose, TEXT("First Audio Chunk (%s) not loaded and we are 'LoadOnDemand'. This is expected while we load the first chunk. Attempt=%d"),
+						*StreamingSoundWave->GetFName().ToString(), ++PrintChunkFailMessageCount);
+					break;
+				}
+				default:
+					break;
+				}
 			}
-			ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
-			OutNumBytesStreamed = BufferSize - RawPCMOffset;
+			else // If we're mid play back, and we hit this point. We've underrun, log a warning.
+			{
+				UE_LOG(LogAudioStreamCaching, Warning, TEXT("Chunk %d not yet loaded for playing SoundWave '%s'. Attempt=%d, LoadBehavior=%s, Latency=%2.2f secs, LikelyReason: Not loaded fast enough, IO Saturation." ),
+					CurrentChunkIndex, *StreamingSoundWave->GetFName().ToString(), ++PrintChunkFailMessageCount, EnumToString(Behavior), TimeSoFar);
+			}
+			
+			ZeroBuffer(Destination, BufferSize);
 			return false;
 		}
 	}
 
 	bool bLooped = false;
+	
+	// Write out any PCM data that was decoded during the last request
+	uint32 RawPCMOffset = WriteFromDecodedPCM(Destination, BufferSize);
+	// immediately update the OutNumBytesStreamed to reflect what we just wrote
+	OutNumBytesStreamed = RawPCMOffset;
 
-	if (bStoringEndOfFile && LastPCMByteSize > 0)
+	// if we were storing the end of the file and just now read to the end (LastPCMByteSize == 0), that means we looped
+	if (bStoringEndOfFile && LastPCMByteSize == 0)
 	{
-		// delayed returning looped because we hadn't read the entire buffer
 		bLooped = true;
 		bStoringEndOfFile = false;
 	}
-
+	
 	while (RawPCMOffset < BufferSize)
 	{
-		// Decompress the next compression frame of audio (many samples) into the PCM buffer
-		int32 DecodedSamples = DecompressToPCMBuffer(/*Unused*/ 0);
-
-
-		if (DecodedSamples < 0)
+		if (HasError())
 		{
+			// If we've encountered an error, just always write zeroes and don't log anything because we already have
+			// and we don't want to spam every tick.
 			LastPCMByteSize = 0;
 			ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
-			OutNumBytesStreamed = BufferSize - RawPCMOffset;
+
+			// We return true here to tell callers that we've completed decoding and should
+			// be looped or otherwise terminated.
+			return true;
+		}
+
+		// Decompress the next compression frame of audio (many samples) into the PCM buffer
+		const int32 DecodedFrames = DecompressToPCMBuffer(/*Unused*/ 0);
+
+		if (DecodedFrames < 0)
+		{
+			FXxHash64 Hash = FXxHash64::HashBuffer(SrcBufferData, SrcBufferDataSize);
+			UE_LOG(LogAudioStreamCaching, Warning, TEXT("Decoder error! Zero padding and terminating... Chunk=%d, Wave=%s DecodedFrames=%d SrcBufferOffset=%d SrcBufferDataSize=%d ChunkXxHash64=0x%llx"),
+				CurrentChunkIndex, *StreamingSoundWave->GetFName().ToString(), DecodedFrames, SrcBufferOffset, SrcBufferDataSize, Hash.Hash);
+
+			// Flag that the decoder has an unrecoverable error, so we don't try again.
+			bHasError = true;
+
+			LastPCMByteSize = 0;
+			ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
 			return false;
 		}
 		else
 		{
-			LastPCMByteSize = IncrementCurrentSampleCount(DecodedSamples) * SampleStride;
+			LastPCMByteSize = IncrementCurrentSampleCount(DecodedFrames * NumChannels) * MONO_PCM_SAMPLE_SIZE;
 
+			// update OutNumBytesStreamed as we write out data
 			RawPCMOffset += WriteFromDecodedPCM(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
+			OutNumBytesStreamed = RawPCMOffset;
 
 			const int32 PreviousChunkIndex = CurrentChunkIndex;
 
@@ -396,8 +524,9 @@ bool IStreamedCompressedInfo::StreamCompressedData(uint8* Destination, bool bLoo
 					}
 					else
 					{
-						RawPCMOffset += ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
-						OutNumBytesStreamed = BufferSize - RawPCMOffset;
+						// this is zero padding, so don't include it in the OutNumBytesStreamed count
+						ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
+						break;
 					}
 				}
 				else
@@ -415,18 +544,23 @@ bool IStreamedCompressedInfo::StreamCompressedData(uint8* Destination, bool bLoo
 						ensureMsgf(FStreamedAudioChunkSeekTable::Parse(SrcBufferData, SrcBufferDataSize, SrcBufferOffset, GetCurrentSeekTable()), 
 							TEXT("Failed to parse seektable in '%s' chunk=%d"), *StreamingSoundWave->GetFName().ToString(), CurrentChunkIndex);
 					}
-					UE_CLOG(PreviousChunkIndex != CurrentChunkIndex, LogAudio, Log, TEXT("Changed current chunk '%s' from %d to %d, Offset %d"), *StreamingSoundWave->GetFName().ToString(), PreviousChunkIndex, CurrentChunkIndex, SrcBufferOffset);
+					UE_CLOG(PreviousChunkIndex != CurrentChunkIndex, LogAudio, Log, TEXT("Changed current chunk '%s' from %d to %d, Offset %d"),
+						*StreamingSoundWave->GetFName().ToString(), PreviousChunkIndex, CurrentChunkIndex, SrcBufferOffset);
 				}
 				else
 				{
+					UE_LOG(LogAudioStreamCaching, Warning, TEXT("Chunk %d not yet loaded for playing SoundWave '%s'. LikelyReason: Not loaded fast enough, IO Saturation."),
+						CurrentChunkIndex, *StreamingSoundWave->GetFName().ToString());
+
 					SrcBufferDataSize = 0;
-					RawPCMOffset += ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
+					// this is zero padding, so don't include it in the OutNumBytesStreamed count
+					ZeroBuffer(Destination + RawPCMOffset, BufferSize - RawPCMOffset);
+					break;
 				}
 			}
 		}
 	}
 
-	OutNumBytesStreamed = BufferSize;
 	return bLooped;
 }
 
@@ -463,12 +597,18 @@ int32 IStreamedCompressedInfo::DecompressToPCMBuffer(uint16 /*Unused*/ )
 	LastPCMOffset = 0;
 	
 	const FDecodeResult DecodeResult = Decode(SrcPtr, FrameSize, LastDecodedPCM.GetData(), LastDecodedPCM.Num());
-	if (DecodeResult.NumCompressedBytesConsumed != INDEX_NONE )
+	
+	if (DecodeResult.NumCompressedBytesConsumed == INDEX_NONE || DECODER_MATCHES_WAVE(AudioDecompressPrivate::ForceDecoderNegativeSamplesOnWaveCVar))
 	{
-		SrcBufferOffset -= FrameSize;
-		SrcBufferOffset += DecodeResult.NumCompressedBytesConsumed;
+		UE_LOG(LogAudio, Warning, TEXT("Decoder error: Decode call returned INDEX_NONE which indicates an error. : Wave='%s', FrameSize=%d, SrcBufferOffset=%u, SrcBufferDataSize=%u"), 
+			*GetStreamingSoundWave()->GetSoundWaveData()->GetFName().ToString(), FrameSize, SrcBufferOffset, SrcBufferDataSize);
+
+		// Error.
+		return -1;
 	}
 
+	SrcBufferOffset -= FrameSize;
+	SrcBufferOffset += DecodeResult.NumCompressedBytesConsumed;
 	return DecodeResult.NumAudioFramesProduced;
 }
 
@@ -561,259 +701,6 @@ const FStreamedAudioChunkSeekTable& IStreamedCompressedInfo::GetCurrentSeekTable
 	return const_cast<IStreamedCompressedInfo*>(this)->GetCurrentSeekTable();
 }
 
-//////////////////////////////////////////////////////////////////////////
-// Copied from IOS - probably want to split and share
-//////////////////////////////////////////////////////////////////////////
-#define NUM_ADAPTATION_TABLE 16
-#define NUM_ADAPTATION_COEFF 7
-#define SOUND_SOURCE_FREE 0
-#define SOUND_SOURCE_LOCKED 1
-
-namespace
-{
-	template <typename T, uint32 B>
-	inline T SignExtend(const T ValueToExtend)
-	{
-		struct { T ExtendedValue : B; } SignExtender;
-		return SignExtender.ExtendedValue = ValueToExtend;
-	}
-
-	template <typename T>
-	inline T ReadFromByteStream(const uint8* ByteStream, int32& ReadIndex, bool bLittleEndian = true)
-	{
-		T ValueRaw = 0;
-
-		if (bLittleEndian)
-		{
-#if PLATFORM_LITTLE_ENDIAN
-			for (int32 ByteIndex = 0; ByteIndex < sizeof(T); ++ByteIndex)
-#else
-			for (int32 ByteIndex = sizeof(T) - 1; ByteIndex >= 0; --ByteIndex)
-#endif // PLATFORM_LITTLE_ENDIAN
-			{
-				ValueRaw |= ByteStream[ReadIndex++] << 8 * ByteIndex;
-			}
-		}
-		else
-		{
-#if PLATFORM_LITTLE_ENDIAN
-			for (int32 ByteIndex = sizeof(T) - 1; ByteIndex >= 0; --ByteIndex)
-#else
-			for (int32 ByteIndex = 0; ByteIndex < sizeof(T); ++ByteIndex)
-#endif // PLATFORM_LITTLE_ENDIAN
-			{
-				ValueRaw |= ByteStream[ReadIndex++] << 8 * ByteIndex;
-			}
-		}
-
-		return ValueRaw;
-	}
-
-	template <typename T>
-	inline void WriteToByteStream(T Value, uint8* ByteStream, int32& WriteIndex, bool bLittleEndian = true)
-	{
-		if (bLittleEndian)
-		{
-#if PLATFORM_LITTLE_ENDIAN
-			for (int32 ByteIndex = 0; ByteIndex < sizeof(T); ++ByteIndex)
-#else
-			for (int32 ByteIndex = sizeof(T) - 1; ByteIndex >= 0; --ByteIndex)
-#endif // PLATFORM_LITTLE_ENDIAN
-			{
-				ByteStream[WriteIndex++] = (Value >> (8 * ByteIndex)) & 0xFF;
-			}
-		}
-		else
-		{
-#if PLATFORM_LITTLE_ENDIAN
-			for (int32 ByteIndex = sizeof(T) - 1; ByteIndex >= 0; --ByteIndex)
-#else
-			for (int32 ByteIndex = 0; ByteIndex < sizeof(T); ++ByteIndex)
-#endif // PLATFORM_LITTLE_ENDIAN
-			{
-				ByteStream[WriteIndex++] = (Value >> (8 * ByteIndex)) & 0xFF;
-			}
-		}
-	}
-
-	template <typename T>
-	inline T ReadFromArray(const T* ElementArray, int32& ReadIndex, int32 NumElements, int32 IndexStride = 1)
-	{
-		T OutputValue = 0;
-
-		if (ReadIndex >= 0 && ReadIndex < NumElements)
-		{
-			OutputValue = ElementArray[ReadIndex];
-			ReadIndex += IndexStride;
-		}
-
-		return OutputValue;
-	}
-
-	inline bool LockSourceChannel(int32* ChannelLock)
-	{
-		check(ChannelLock != NULL);
-		return FPlatformAtomics::InterlockedCompareExchange(ChannelLock, SOUND_SOURCE_LOCKED, SOUND_SOURCE_FREE) == SOUND_SOURCE_FREE;
-	}
-
-	inline void UnlockSourceChannel(int32* ChannelLock)
-	{
-		check(ChannelLock != NULL);
-		int32 Result = FPlatformAtomics::InterlockedCompareExchange(ChannelLock, SOUND_SOURCE_FREE, SOUND_SOURCE_LOCKED);
-
-		check(Result == SOUND_SOURCE_LOCKED);
-	}
-
-} // end namespace
-
-namespace ADPCM
-{
-	template <typename T>
-	static void GetAdaptationTable(T(&OutAdaptationTable)[NUM_ADAPTATION_TABLE])
-	{
-		// Magic values as specified by standard
-		static T AdaptationTable[] =
-		{
-			230, 230, 230, 230, 307, 409, 512, 614,
-			768, 614, 512, 409, 307, 230, 230, 230
-		};
-
-		FMemory::Memcpy(&OutAdaptationTable, AdaptationTable, sizeof(AdaptationTable));
-	}
-
-	struct FAdaptationContext
-	{
-	public:
-		// Adaptation constants
-		int32 AdaptationTable[NUM_ADAPTATION_TABLE];
-		int32 AdaptationCoefficient1[NUM_ADAPTATION_COEFF];
-		int32 AdaptationCoefficient2[NUM_ADAPTATION_COEFF];
-
-		int32 AdaptationDelta;
-		int32 Coefficient1;
-		int32 Coefficient2;
-		int32 Sample1;
-		int32 Sample2;
-
-		FAdaptationContext() :
-			AdaptationDelta(0),
-			Coefficient1(0),
-			Coefficient2(0),
-			Sample1(0),
-			Sample2(0)
-		{
-			GetAdaptationTable(AdaptationTable);
-			GetAdaptationCoefficients(AdaptationCoefficient1, AdaptationCoefficient2);
-		}
-	};
-
-	FORCEINLINE int16 DecodeNibble(FAdaptationContext& Context, uint8 EncodedNibble)
-	{
-		int32 PredictedSample = (Context.Sample1 * Context.Coefficient1 + Context.Sample2 * Context.Coefficient2) / 256;
-		PredictedSample += SignExtend<int8, 4>(EncodedNibble) * Context.AdaptationDelta;
-		PredictedSample = FMath::Clamp(PredictedSample, -32768, 32767);
-
-		// Shuffle samples for the next iteration
-		Context.Sample2 = Context.Sample1;
-		Context.Sample1 = static_cast<int16>(PredictedSample);
-		Context.AdaptationDelta = (Context.AdaptationDelta * Context.AdaptationTable[EncodedNibble]) / 256;
-		Context.AdaptationDelta = FMath::Max(Context.AdaptationDelta, 16);
-
-		return Context.Sample1;
-	}
-
-	void DecodeBlock(const uint8* EncodedADPCMBlock, int32 BlockSize, int16* DecodedPCMData)
-	{
-		FAdaptationContext Context;
-		int32 ReadIndex = 0;
-		int32 WriteIndex = 0;
-
-		uint8 CoefficientIndex = ReadFromByteStream<uint8>(EncodedADPCMBlock, ReadIndex);
-		Context.AdaptationDelta = ReadFromByteStream<int16>(EncodedADPCMBlock, ReadIndex);
-		Context.Sample1 = ReadFromByteStream<int16>(EncodedADPCMBlock, ReadIndex);
-		Context.Sample2 = ReadFromByteStream<int16>(EncodedADPCMBlock, ReadIndex);
-		Context.Coefficient1 = Context.AdaptationCoefficient1[CoefficientIndex];
-		Context.Coefficient2 = Context.AdaptationCoefficient2[CoefficientIndex];
-
-		// The first two samples are sent directly to the output in reverse order, as per the standard
-		DecodedPCMData[WriteIndex++] = Context.Sample2;
-		DecodedPCMData[WriteIndex++] = Context.Sample1;
-
-		uint8 EncodedNibblePair = 0;
-		uint8 EncodedNibble = 0;
-		while (ReadIndex < BlockSize)
-		{
-			// Read from the byte stream and advance the read head.
-			EncodedNibblePair = ReadFromByteStream<uint8>(EncodedADPCMBlock, ReadIndex);
-
-			EncodedNibble = (EncodedNibblePair >> 4) & 0x0F;
-			DecodedPCMData[WriteIndex++] = DecodeNibble(Context, EncodedNibble);
-
-			EncodedNibble = EncodedNibblePair & 0x0F;
-			DecodedPCMData[WriteIndex++] = DecodeNibble(Context, EncodedNibble);
-		}
-	}
-
-	// Decode two PCM streams and interleave as stereo data
-	void DecodeBlockStereo(const uint8* EncodedADPCMBlockLeft, const uint8* EncodedADPCMBlockRight, int32 BlockSize, int16* DecodedPCMData)
-	{
-		FAdaptationContext ContextLeft;
-		FAdaptationContext ContextRight;
-		int32 ReadIndexLeft = 0;
-		int32 ReadIndexRight = 0;
-		int32 WriteIndex = 0;
-
-		uint8 CoefficientIndexLeft = ReadFromByteStream<uint8>(EncodedADPCMBlockLeft, ReadIndexLeft);
-		ContextLeft.AdaptationDelta = ReadFromByteStream<int16>(EncodedADPCMBlockLeft, ReadIndexLeft);
-		ContextLeft.Sample1 = ReadFromByteStream<int16>(EncodedADPCMBlockLeft, ReadIndexLeft);
-		ContextLeft.Sample2 = ReadFromByteStream<int16>(EncodedADPCMBlockLeft, ReadIndexLeft);
-		ContextLeft.Coefficient1 = ContextLeft.AdaptationCoefficient1[CoefficientIndexLeft];
-		ContextLeft.Coefficient2 = ContextLeft.AdaptationCoefficient2[CoefficientIndexLeft];
-
-		uint8 CoefficientIndexRight = ReadFromByteStream<uint8>(EncodedADPCMBlockRight, ReadIndexRight);
-		ContextRight.AdaptationDelta = ReadFromByteStream<int16>(EncodedADPCMBlockRight, ReadIndexRight);
-		ContextRight.Sample1 = ReadFromByteStream<int16>(EncodedADPCMBlockRight, ReadIndexRight);
-		ContextRight.Sample2 = ReadFromByteStream<int16>(EncodedADPCMBlockRight, ReadIndexRight);
-		ContextRight.Coefficient1 = ContextRight.AdaptationCoefficient1[CoefficientIndexRight];
-		ContextRight.Coefficient2 = ContextRight.AdaptationCoefficient2[CoefficientIndexRight];
-
-		// The first two samples from each stream are sent directly to the output in reverse order, as per the standard
-		DecodedPCMData[WriteIndex++] = ContextLeft.Sample2;
-		DecodedPCMData[WriteIndex++] = ContextRight.Sample2;
-		DecodedPCMData[WriteIndex++] = ContextLeft.Sample1;
-		DecodedPCMData[WriteIndex++] = ContextRight.Sample1;
-
-		uint8 EncodedNibblePairLeft = 0;
-		uint8 EncodedNibbleLeft = 0;
-		uint8 EncodedNibblePairRight = 0;
-		uint8 EncodedNibbleRight = 0;
-
-		while (ReadIndexLeft < BlockSize)
-		{
-			// Read from the byte stream and advance the read head.
-			EncodedNibblePairLeft = ReadFromByteStream<uint8>(EncodedADPCMBlockLeft, ReadIndexLeft);
-			EncodedNibblePairRight = ReadFromByteStream<uint8>(EncodedADPCMBlockRight, ReadIndexRight);
-
-			EncodedNibbleLeft = (EncodedNibblePairLeft >> 4) & 0x0F;
-			DecodedPCMData[WriteIndex++] = DecodeNibble(ContextLeft, EncodedNibbleLeft);
-
-			EncodedNibbleRight = (EncodedNibblePairRight >> 4) & 0x0F;
-			DecodedPCMData[WriteIndex++] = DecodeNibble(ContextRight, EncodedNibbleRight);
-
-			EncodedNibbleLeft = EncodedNibblePairLeft & 0x0F;
-			DecodedPCMData[WriteIndex++] = DecodeNibble(ContextLeft, EncodedNibbleLeft);
-
-			EncodedNibbleRight = EncodedNibblePairRight & 0x0F;
-			DecodedPCMData[WriteIndex++] = DecodeNibble(ContextRight, EncodedNibbleRight);
-		}
-
-	}
-} // end namespace ADPCM
-
-//////////////////////////////////////////////////////////////////////////
-// End of copied section
-//////////////////////////////////////////////////////////////////////////
-
 /**
  * Worker for decompression on a separate thread
  */
@@ -866,7 +753,7 @@ void FAsyncAudioDecompressWorker::DoWork()
 			{
 				LLM_SCOPE(ELLMTag::AudioRealtimePrecache);
 #if PLATFORM_NUM_AUDIODECOMPRESSION_PRECACHE_BUFFERS > 0
-				const uint32 PCMBufferSize = NumPrecacheFrames * sizeof(int16) * Wave->NumChannels * PLATFORM_NUM_AUDIODECOMPRESSION_PRECACHE_BUFFERS;
+				const uint32 PCMBufferSize = NumPrecacheFrames * MONO_PCM_SAMPLE_SIZE * Wave->NumChannels * PLATFORM_NUM_AUDIODECOMPRESSION_PRECACHE_BUFFERS;
 				Wave->NumPrecacheFrames = NumPrecacheFrames;
 				if (Wave->CachedRealtimeFirstBuffer == nullptr)
 				{

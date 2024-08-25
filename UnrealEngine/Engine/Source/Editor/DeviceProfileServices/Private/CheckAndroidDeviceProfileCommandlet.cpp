@@ -149,6 +149,7 @@ int32 UCheckAndroidDeviceProfileCommandlet::Main(const FString& RawCommandLine)
 					DeviceParameters.Add(FName(TEXT("SRC_Chipset")), AndroidProperties.Chipset);
 					DeviceParameters.Add(FName(TEXT("SRC_TotalPhysicalGB")), AndroidProperties.TotalPhysicalGB);
 					DeviceParameters.Add(FName(TEXT("SRC_HMDSystemName")), TEXT(""));
+					DeviceParameters.Add(FName(TEXT("SRC_SM5Available")), AndroidProperties.SM5Available ? "true" : "false");
 				}
 			}
 			else
@@ -172,6 +173,7 @@ int32 UCheckAndroidDeviceProfileCommandlet::Main(const FString& RawCommandLine)
 				DeviceParameters.Add(FName(TEXT("SRC_Chipset")), Params.FindRef(TEXT("Chipset")));
 				DeviceParameters.Add(FName(TEXT("SRC_TotalPhysicalGB")), Params.FindRef(TEXT("TotalPhysicalGB")));
 				DeviceParameters.Add(FName(TEXT("SRC_HMDSystemName")), TEXT(""));
+				DeviceParameters.Add(FName(TEXT("SRC_SM5Available")), Params.FindRef(TEXT("SM5Available")));
 			}
 			AndroidDeviceProfileSelector->SetSelectorProperties(DeviceParameters);
 			FString ProfileName = ForcedDeviceProfileName.IsEmpty() ? AndroidDeviceProfileSelector->GetDeviceProfileName() : ForcedDeviceProfileName;

@@ -2,7 +2,6 @@
 
 #include "STextPropertyEditableTextBox.h"
 #include "AssetRegistry/AssetData.h"
-#include "Internationalization/TextNamespaceUtil.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Text/STextBlock.h"
@@ -21,7 +20,6 @@
 #include "Misc/PackageName.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Internationalization/StringTable.h"
-#include "Internationalization/TextPackageNamespaceUtil.h"
 #include "Internationalization/StringTableCore.h"
 #include "Internationalization/StringTableRegistry.h"
 #include "Serialization/TextReferenceCollector.h"
@@ -43,46 +41,7 @@ void IEditableTextProperty::StaticStableTextId(UObject* InObject, const ETextPro
 
 void IEditableTextProperty::StaticStableTextId(UPackage* InPackage, const ETextPropertyEditAction InEditAction, const FString& InTextSource, const FString& InProposedNamespace, const FString& InProposedKey, FString& OutStableNamespace, FString& OutStableKey)
 {
-	bool bPersistKey = false;
-
-	const FString PackageNamespace = TextNamespaceUtil::EnsurePackageNamespace(InPackage);
-	if (!PackageNamespace.IsEmpty())
-	{
-		// Make sure the proposed namespace is using the correct namespace for this package
-		OutStableNamespace = TextNamespaceUtil::BuildFullNamespace(InProposedNamespace, PackageNamespace, /*bAlwaysApplyPackageNamespace*/true);
-
-		if (InProposedNamespace.Equals(OutStableNamespace, ESearchCase::CaseSensitive) || InEditAction == ETextPropertyEditAction::EditedNamespace)
-		{
-			// If the proposal was already using the correct namespace (or we just set the namespace), attempt to persist the proposed key too
-			if (!InProposedKey.IsEmpty())
-			{
-				// If we changed the source text, then we can persist the key if this text is the *only* reference using that ID
-				// If we changed the identifier, then we can persist the key only if doing so won't cause an identify conflict
-				const FTextReferenceCollector::EComparisonMode ReferenceComparisonMode = InEditAction == ETextPropertyEditAction::EditedSource ? FTextReferenceCollector::EComparisonMode::MatchId : FTextReferenceCollector::EComparisonMode::MismatchSource;
-				const int32 RequiredReferenceCount = InEditAction == ETextPropertyEditAction::EditedSource ? 1 : 0;
-
-				int32 ReferenceCount = 0;
-				FTextReferenceCollector(InPackage, ReferenceComparisonMode, OutStableNamespace, InProposedKey, InTextSource, ReferenceCount);
-
-				if (ReferenceCount == RequiredReferenceCount)
-				{
-					bPersistKey = true;
-					OutStableKey = InProposedKey;
-				}
-			}
-		}
-		else if (InEditAction != ETextPropertyEditAction::EditedNamespace)
-		{
-			// If our proposed namespace wasn't correct for our package, and we didn't just set it (which doesn't include the package namespace)
-			// then we should clear out any user specified part of it
-			OutStableNamespace = TextNamespaceUtil::BuildFullNamespace(FString(), PackageNamespace, /*bAlwaysApplyPackageNamespace*/true);
-		}
-	}
-
-	if (!bPersistKey)
-	{
-		OutStableKey = FGuid::NewGuid().ToString();
-	}
+	TextNamespaceUtil::GetTextIdForEdit(InPackage, (TextNamespaceUtil::ETextEditAction)InEditAction, InTextSource, InProposedNamespace, InProposedKey, OutStableNamespace, OutStableKey);
 }
 
 #endif // USE_STABLE_LOCALIZATION_KEYS
@@ -920,11 +879,15 @@ void STextPropertyEditableTextBox::Construct(const FArguments& InArgs, const TSh
 
 bool STextPropertyEditableTextBox::IsTextLocalizable() const
 {
+	// All text need !IsCultureInvariant()
 	const int32 NumTexts = EditableTextProperty->GetNumTexts();
-	if (NumTexts == 1)
+	for (int32 Index = 0; Index < NumTexts; ++Index)
 	{
-		const FText PropertyValue = EditableTextProperty->GetText(0);
-		return !PropertyValue.IsCultureInvariant();
+		const FText PropertyValue = EditableTextProperty->GetText(Index);
+		if (PropertyValue.IsCultureInvariant())
+		{
+			return false;
+		}
 	}
 	return true;
 }
@@ -974,9 +937,9 @@ bool STextPropertyEditableTextBox::IsSourceTextReadOnly() const
 
 	// We can't edit the source string of string table references
 	const int32 NumTexts = EditableTextProperty->GetNumTexts();
-	if (NumTexts == 1)
+	for (int32 TextIndex = 0; TextIndex < NumTexts; ++TextIndex)
 	{
-		const FText TextValue = EditableTextProperty->GetText(0);
+		const FText TextValue = EditableTextProperty->GetText(TextIndex);
 		if (TextValue.IsFromStringTable())
 		{
 			return true;
@@ -995,9 +958,9 @@ bool STextPropertyEditableTextBox::IsIdentityReadOnly() const
 
 	// We can't edit the identity of texts that don't gather for localization
 	const int32 NumTexts = EditableTextProperty->GetNumTexts();
-	if (NumTexts == 1)
+	for (int32 TextIndex = 0; TextIndex < NumTexts; ++TextIndex)
 	{
-		const FText TextValue = EditableTextProperty->GetText(0);
+		const FText TextValue = EditableTextProperty->GetText(TextIndex);
 		if (!TextValue.ShouldGatherForLocalization())
 		{
 			return true;
@@ -1463,16 +1426,23 @@ FText STextPropertyEditableTextBox::GetPackageValue() const
 
 ECheckBoxState STextPropertyEditableTextBox::GetLocalizableCheckState() const
 {
+	TOptional<ECheckBoxState> Result;
+
 	const int32 NumTexts = EditableTextProperty->GetNumTexts();
-	if (NumTexts == 1)
+	for (int32 Index = 0; Index < NumTexts; ++Index)
 	{
-		const FText PropertyValue = EditableTextProperty->GetText(0);
+		const FText PropertyValue = EditableTextProperty->GetText(Index);
 
 		const bool bIsLocalized = !PropertyValue.IsCultureInvariant();
-		return bIsLocalized ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+		ECheckBoxState NewState = bIsLocalized ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+		if (NewState != Result.Get(NewState))
+		{
+			return ECheckBoxState::Undetermined;
+		}
+		Result = NewState;
 	}
 
-	return ECheckBoxState::Unchecked;
+	return Result.Get(ECheckBoxState::Unchecked);
 }
 
 void STextPropertyEditableTextBox::HandleLocalizableCheckStateChanged(ECheckBoxState InCheckboxState)

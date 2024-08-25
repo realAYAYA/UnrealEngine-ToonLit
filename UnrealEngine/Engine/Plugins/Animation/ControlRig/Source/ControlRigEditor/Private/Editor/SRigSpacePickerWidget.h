@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "ControlRig.h"
 #include "Rigs/RigHierarchy.h"
 #include "Editor/SRigHierarchy.h"
 #include "Widgets/Layout/SBox.h"

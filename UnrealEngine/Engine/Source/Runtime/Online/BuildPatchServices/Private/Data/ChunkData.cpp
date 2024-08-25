@@ -4,6 +4,7 @@
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
 #include "Misc/CommandLine.h"
+#include "Misc/Compression.h"
 #include "Common/FileSystem.h"
 #include "BuildPatchHash.h"
 #include "BuildPatchManifest.h"

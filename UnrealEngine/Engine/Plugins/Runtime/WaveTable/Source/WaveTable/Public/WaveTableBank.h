@@ -94,9 +94,8 @@ public:
 	IMPL_AUDIOPROXY_CLASS(FWaveTableBankAssetProxy);
 
 	FWaveTableBankAssetProxy() = default;
-	FWaveTableBankAssetProxy(const FWaveTableBankAssetProxy& InAssetProxy);
-	FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, const TArray<FWaveTableBankEntry>& InBankEntries);
-	FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, TArray<FWaveTableBankEntry>&& InBankEntries);
+	FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, const TArray<FWaveTableBankEntry>& InBankEntries, bool bInBipolar = false);
+	FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, TArray<FWaveTableBankEntry>&& InBankEntries, bool bInBipolar = false);
 
 	UE_DEPRECATED(5.3, "Proxy generation & respective data translation is now entirely handled by UWaveTableBank calling the constructor variants above.")
 	FWaveTableBankAssetProxy(const UWaveTableBank& InWaveTableBank);
@@ -118,12 +117,18 @@ public:
 		return WaveTableData;
 	}
 
+	virtual bool IsBipolar() const
+	{
+		return bBipolar;
+	}
+
 	uint32 GetObjectId() const
 	{
 		return ObjectId;
 	}
 
 protected:
+	bool bBipolar = false;
 	uint32 ObjectId = INDEX_NONE;
 	int32 SampleRate = 48000;
 	EWaveTableSamplingMode SampleMode = EWaveTableSamplingMode::FixedResolution;

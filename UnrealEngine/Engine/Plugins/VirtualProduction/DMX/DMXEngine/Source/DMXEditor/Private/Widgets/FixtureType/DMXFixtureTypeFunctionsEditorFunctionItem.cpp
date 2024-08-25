@@ -189,6 +189,19 @@ void FDMXFixtureTypeFunctionsEditorFunctionItem::SetFunctionName(const FText& De
 	}
 }
 
+void FDMXFixtureTypeFunctionsEditorFunctionItem::DeleteFunction()
+{
+	if (ensureMsgf(FixtureType.IsValid() && FixtureType->Modes.IsValidIndex(ModeIndex) && FixtureType->Modes[ModeIndex].Functions.IsValidIndex(FunctionIndex), TEXT("Invalid Fixture Type, Mode or Function in FDMXFixtureTypeFunctionsEditorFunctionItem.")))
+	{
+		const FScopedTransaction DeleteFunctionTransaction(LOCTEXT("DeleteFunctionTransaction", "Delete Fixture Function"));
+		FixtureType->PreEditChange(FDMXFixtureFunction::StaticStruct()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(FDMXFixtureMode, Functions)));
+
+		FixtureType->Modes[ModeIndex].Functions.RemoveAt(FunctionIndex);
+
+		FixtureType->PostEditChange();
+	}
+}
+
 TSharedPtr<FDMXFixtureTypeSharedData> FDMXFixtureTypeFunctionsEditorFunctionItem::GetFixtureTypeSharedData() const
 {
 	if (TSharedPtr<FDMXEditor> DMXEditor = WeakDMXEditor.Pin())

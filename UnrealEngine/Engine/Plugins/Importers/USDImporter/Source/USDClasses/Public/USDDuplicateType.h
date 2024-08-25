@@ -7,7 +7,7 @@
 /**
  * Describes the different types of "prim duplication" operations we support with UsdUtils::DuplicatePrims
  */
-UENUM( BlueprintType )
+UENUM(BlueprintType)
 enum class EUsdDuplicateType : uint8
 {
 	/** Generate a flattened duplicate of the composed prim onto the current edit target */

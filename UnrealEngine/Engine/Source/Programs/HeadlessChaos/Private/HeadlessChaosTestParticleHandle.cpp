@@ -273,26 +273,26 @@ namespace ChaosTest {
 	template <typename TGeometry, typename TKinematicGeometry, typename TPBDRigid>
 	void ParticleHandleTestHelper(TGeometry* Geometry, TKinematicGeometry* KinematicGeometry, TPBDRigid* PBDRigid)
 	{
-		EXPECT_EQ(Geometry->X()[0], 0);	//default constructor
-		EXPECT_EQ(Geometry->X()[1], 0);
-		EXPECT_EQ(Geometry->X()[2], 0);
+		EXPECT_EQ(Geometry->GetX()[0], 0);	//default constructor
+		EXPECT_EQ(Geometry->GetX()[1], 0);
+		EXPECT_EQ(Geometry->GetX()[2], 0);
 
-		EXPECT_EQ(KinematicGeometry->V()[0], 0);	//default constructor
-		EXPECT_EQ(KinematicGeometry->V()[1], 0);
-		EXPECT_EQ(KinematicGeometry->V()[2], 0);
+		EXPECT_EQ(KinematicGeometry->GetV()[0], 0);	//default constructor
+		EXPECT_EQ(KinematicGeometry->GetV()[1], 0);
+		EXPECT_EQ(KinematicGeometry->GetV()[2], 0);
 
-		EXPECT_EQ(PBDRigid->X()[0], 0);	//default constructor of base
-		EXPECT_EQ(PBDRigid->X()[1], 0);
-		EXPECT_EQ(PBDRigid->X()[2], 0);
-		EXPECT_EQ(PBDRigid->V()[0], 0);
-		EXPECT_EQ(PBDRigid->V()[1], 0);
-		EXPECT_EQ(PBDRigid->V()[2], 0);
+		EXPECT_EQ(PBDRigid->GetX()[0], 0);	//default constructor of base
+		EXPECT_EQ(PBDRigid->GetX()[1], 0);
+		EXPECT_EQ(PBDRigid->GetX()[2], 0);
+		EXPECT_EQ(PBDRigid->GetV()[0], 0);
+		EXPECT_EQ(PBDRigid->GetV()[1], 0);
+		EXPECT_EQ(PBDRigid->GetV()[2], 0);
 		EXPECT_EQ(PBDRigid->M(), 1);
 
 		PBDRigid->SetX(FVec3(1, 2, 3));
-		EXPECT_EQ(PBDRigid->X()[0], 1);
+		EXPECT_EQ(PBDRigid->GetX()[0], 1);
 		KinematicGeometry->SetV(FVec3(3, 3, 3));
-		EXPECT_EQ(KinematicGeometry->V()[0], 3);
+		EXPECT_EQ(KinematicGeometry->GetV()[0], 3);
 
 		EXPECT_EQ(Geometry->ObjectState(), EObjectStateType::Static);
 		EXPECT_EQ(KinematicGeometry->ObjectState(), EObjectStateType::Kinematic);
@@ -301,7 +301,7 @@ namespace ChaosTest {
 
 		TGeometry* DynamicAsStatic = PBDRigid;
 		EXPECT_EQ(DynamicAsStatic->ObjectState(), EObjectStateType::Dynamic);
-		EXPECT_EQ(DynamicAsStatic->X()[0], 1);
+		EXPECT_EQ(DynamicAsStatic->GetX()[0], 1);
 
 		//more polymorphism
 		ParticleHandleTestHelperObjectState(PBDRigid);
@@ -333,7 +333,7 @@ namespace ChaosTest {
 				//fake step and write to physics side
 				for (auto& Particle : SOAs.GetAllParticlesView())
 				{
-					Particle.X() = FVec3(Count);
+					Particle.SetX(FVec3(Count));
 					Count += 1;
 				}
 			}
@@ -342,7 +342,7 @@ namespace ChaosTest {
 			{
 				for (const auto& Particle : SOAs.GetAllParticlesView())
 				{
-					Particle.GTGeometryParticle()->SetX(Particle.X());
+					Particle.GTGeometryParticle()->SetX(Particle.GetX());
 				}
 			}
 
@@ -373,7 +373,7 @@ namespace ChaosTest {
 
 			for (auto& Particle : SOAs.GetAllParticlesView())
 			{
-				EXPECT_TRUE(Particle.X()[0] != 1);
+				EXPECT_TRUE(Particle.GetX()[0] != 1);
 			}
 		}
 	}
@@ -388,7 +388,7 @@ namespace ChaosTest {
 			FGeometryParticleHandle* ThirdParticle = nullptr;
 			for (auto& Particle : SOAs.GetAllParticlesView())
 			{
-				Particle.X() = FVec3(Count);
+				Particle.SetX(FVec3(Count));
 				if (Count == 2)
 				{
 					ThirdParticle = Particle.Handle();
@@ -396,7 +396,7 @@ namespace ChaosTest {
 
 				Count += 1;
 			}
-			EXPECT_EQ(ThirdParticle->X()[0], 2);
+			EXPECT_EQ(ThirdParticle->GetX()[0], 2);
 
 			SOAs.DestroyParticle(ThirdParticle);
 			//default behavior is swap dynamics at end
@@ -405,11 +405,11 @@ namespace ChaosTest {
 			{
 				if (Count == 2)
 				{
-					EXPECT_EQ(Particle.X()[0], 9);
+					EXPECT_EQ(Particle.GetX()[0], 9);
 				}
 				else
 				{
-					EXPECT_EQ(Particle.X()[0], Count);
+					EXPECT_EQ(Particle.GetX()[0], Count);
 				}
 
 				Count += 1;
@@ -425,7 +425,7 @@ namespace ChaosTest {
 			FGeometryParticleHandle* ThirdParticle = nullptr;
 			for (auto& Particle : SOAs.GetAllParticlesView())
 			{
-				Particle.X() = FVec3(Count);
+				Particle.SetX(FVec3(Count));
 				if (Count == 2)
 				{
 					ThirdParticle = Particle.Handle();
@@ -433,7 +433,7 @@ namespace ChaosTest {
 
 				Count += 1;
 			}
-			EXPECT_EQ(ThirdParticle->X()[0], 2);
+			EXPECT_EQ(ThirdParticle->GetX()[0], 2);
 
 			/*
 			//For now we're just disabling removing clustered all together
@@ -506,7 +506,7 @@ namespace ChaosTest {
 				for (auto Itr = MakeParticleIterator(SOAViews); Itr; ++Itr)
 				{
 					//set X back to 0 for all particles
-					Itr->X() = FVec3(0);
+					Itr->SetX(FVec3(0));
 					EXPECT_EQ(Itr->Handle(), GeomHandles[Count]);
 					//implicit const
 					TConstParticleIterator<FGeometryParticles>& ConstItr = Itr;
@@ -517,7 +517,7 @@ namespace ChaosTest {
 				for (auto Itr = MakeConstParticleIterator(SOAViews); Itr; ++Itr)
 				{
 					//check Xs are back to 0
-					EXPECT_EQ(Itr->X()[0], 0);
+					EXPECT_EQ(Itr->GetX()[0], 0);
 				}
 
 				Count = 0;
@@ -542,9 +542,9 @@ namespace ChaosTest {
 				for (auto Itr = MakeParticleIterator(MoveTemp(SOAViews)); Itr; ++Itr)
 				{
 					//set P to 1,1,1
-					Itr->P() = FVec3(1);
+					Itr->SetP(FVec3(1));
 					EXPECT_EQ(Itr->Handle(), PBDRigidHandles[Count++]);
-					EXPECT_EQ(Itr->Handle()->P()[0], Itr->P()[0]);	//handle type is deduced from iterator type
+					EXPECT_EQ(Itr->Handle()->GetP()[0], Itr->GetP()[0]);	//handle type is deduced from iterator type
 				}
 				EXPECT_EQ(Count, 1);
 			}
@@ -556,8 +556,8 @@ namespace ChaosTest {
 				auto PartialDynamics = SOAsWithHandles.CreateDynamicParticles(10);
 
 				TArray<FPBDRigidParticleHandle*> ActiveParticles = { PartialDynamics[3], PartialDynamics[5] };
-				PartialDynamics[3]->X() = FVec3(3);
-				PartialDynamics[5]->X() = FVec3(5);
+				PartialDynamics[3]->SetX(FVec3(3));
+				PartialDynamics[5]->SetX(FVec3(5));
 				
 				TArray<TSOAView<FPBDRigidParticles>> SOAViews = { PBDRigidParticles.Get(), &ActiveParticles, PBDRigidParticles.Get() };
 				int32 Count = 0;
@@ -565,12 +565,12 @@ namespace ChaosTest {
 				{
 					if (Count == 1)
 					{
-						EXPECT_EQ(Itr->X()[0], 3);
+						EXPECT_EQ(Itr->GetX()[0], 3);
 					}
 
 					if (Count == 2)
 					{
-						EXPECT_EQ(Itr->X()[0], 5);
+						EXPECT_EQ(Itr->GetX()[0], 5);
 					}
 					++Count;
 				}
@@ -600,7 +600,7 @@ namespace ChaosTest {
 			FReal Count = 0;
 			for (auto& Kinematic : KinematicParticles)
 			{
-				Kinematic->X() = FVec3(Count);
+				Kinematic->SetX(FVec3(Count));
 				SOAs.DisableParticle(Kinematic);
 				Count += 1;
 			}
@@ -608,9 +608,9 @@ namespace ChaosTest {
 			EXPECT_EQ(SOAs.GetNonDisabledView().Num(), 6);
 
 			//values are still set
-			EXPECT_EQ(KinematicParticles[0]->X()[0], 0);
-			EXPECT_EQ(KinematicParticles[1]->X()[0], 1);
-			EXPECT_EQ(KinematicParticles[2]->X()[0], 2);
+			EXPECT_EQ(KinematicParticles[0]->GetX()[0], 0);
+			EXPECT_EQ(KinematicParticles[1]->GetX()[0], 1);
+			EXPECT_EQ(KinematicParticles[2]->GetX()[0], 2);
 
 			//move to enabled
 			for (auto& Kinematic : KinematicParticles)

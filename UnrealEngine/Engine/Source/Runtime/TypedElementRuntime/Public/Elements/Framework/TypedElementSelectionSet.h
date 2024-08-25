@@ -43,6 +43,10 @@ public:
 
 	FTypedElementSelectionNormalizationOptions& SetFollowAttachment(const bool InFollowAttachment) { bFollowAttachment = InFollowAttachment; return *this; }
 	bool FollowAttachment() const { return bFollowAttachment; }
+
+	// Set the selection set name that will be passed into the selection column in TEDS (if it is enabled)
+	FTypedElementSelectionNormalizationOptions& SetNameForTEDSIntegration(const FName& InTEDSIntegrationSelectionSetName) { TEDSIntegrationSelectionSetName = InTEDSIntegrationSelectionSetName; return *this; }
+	FName GetNameForTEDSIntegration() const { return TEDSIntegrationSelectionSetName; }
 	
 private:
 	UPROPERTY(BlueprintReadWrite, Category="TypedElementInterfaces|Selection|NormalizationOptions", meta=(AllowPrivateAccess=true))
@@ -50,6 +54,8 @@ private:
 
 	UPROPERTY(BlueprintReadWrite, Category="TypedElementInterfaces|Selection|NormalizationOptions", meta=(AllowPrivateAccess=true))
 	bool bFollowAttachment = false;
+
+	FName TEDSIntegrationSelectionSetName = FName();
 };
 
 /**
@@ -249,6 +255,11 @@ public:
 	 * Test to see whether selection modifiers (Ctrl or Shift) are allowed while selecting this element.
 	 */
 	TYPEDELEMENTRUNTIME_API bool AllowSelectionModifiers(const FTypedElementHandle& InElementHandle) const;
+
+	/**
+	 * Sets the name to use for teds integration so that it can be reapplied on undo/redo
+	 */
+	TYPEDELEMENTRUNTIME_API void SetNameForTedsIntegration(const FName InNameForIntegration);
 
 	/**
 	 * Given an element, return the element that should actually perform a selection operation.
@@ -691,4 +702,6 @@ private:
 	 * and is then replaced with the state loaded from Serialize to be applied in PostEditUndo.
 	 */
 	TUniquePtr<FTypedElementSelectionSetState> PendingUndoRedoState;
+
+	FName ListNameForTedsIntegration;
 };

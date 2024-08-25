@@ -35,6 +35,7 @@ void SGameplayTagGraphPin::OnTagChanged(const FGameplayTag NewTag)
 	if (!CurrentDefaultValue.Equals(TagString))
 	{
 		const FScopedTransaction Transaction(LOCTEXT("ChangeDefaultValue", "Change Pin Default Value"));
+		GraphPinObj->Modify();
 		GraphPinObj->GetSchema()->TrySetDefaultValue(*GraphPinObj, TagString);
 	}
 }

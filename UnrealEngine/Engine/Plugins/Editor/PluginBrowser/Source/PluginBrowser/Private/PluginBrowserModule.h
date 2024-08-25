@@ -101,6 +101,9 @@ private:
 	/** Updates the user's config file with the list of installed plugins that they've seen. */
 	void UpdatePreviousInstalledPlugins();
 
+	/** Register menu extensions for the content browser */
+	void AddContentBrowserMenuExtensions();
+
 	/** List of added plugin templates */
 	TArray<TSharedRef<FPluginTemplateDescription>> AddedPluginTemplates;
 

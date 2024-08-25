@@ -147,7 +147,7 @@ public:
 	template<typename T>
 	struct TIterator
 	{
-		using StructViewType = typename TChooseClass<TIsConst<T>::Value, FConstStructView, FStructView>::Result;
+		using StructViewType = std::conditional_t<TIsConst<T>::Value, FConstStructView, FStructView>;
 
 		/** @return struct view (or const structview) to the item. */
 		StructViewType operator*()

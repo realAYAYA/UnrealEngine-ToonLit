@@ -66,8 +66,13 @@ struct FVisBufferPixel
 
 	void WriteOverdraw()
 	{
-	#if VISUALIZE && !VIRTUAL_TEXTURE_TARGET
+	#if VISUALIZE
+		#if VIRTUAL_TEXTURE_TARGET
+		// For VSM output we store this in an extra array item of the page pool
+		InterlockedAdd(OutDepthBufferArray[uint3(PhysicalPosition.xy, 2)], VisualizeValues.y);
+		#else
 		InterlockedAdd(OutDbgBuffer32[Position], VisualizeValues.y);
+		#endif
 	#endif
 	}
 

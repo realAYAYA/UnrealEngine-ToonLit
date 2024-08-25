@@ -113,7 +113,7 @@ public:
 		return TListTypeTraits<ItemType>::MakeNullPtr();
 	}
 
-	const ItemType* ItemFromEntryWidget(const UUserWidget& EntryWidget) const
+	const TObjectPtrWrapTypeOf<ItemType>* ItemFromEntryWidget(const UUserWidget& EntryWidget) const
 	{
 		SListView<ItemType>* MyListView = GetMyListView();
 		if (ensure(EntryWidget.Implements<UUserListEntry>()) && MyListView)
@@ -278,6 +278,7 @@ protected:
 		TAttribute<float> EntryWidth;
 		bool bWrapDirectionalNavigation = false;
 		const FScrollBarStyle* ScrollBarStyle = &FUMGCoreStyle::Get().GetWidgetStyle<FScrollBarStyle>("ScrollBar");
+		EVisibility ScrollbarDisabledVisibility = EVisibility::Collapsed;
 	};
 
 	template <template<typename> class TileViewT = STileView, typename UListViewBaseT>
@@ -299,6 +300,7 @@ protected:
 			.ItemAlignment(Args.TileAlignment)
 			.Orientation(Args.Orientation)
 			.ScrollBarStyle(Args.ScrollBarStyle)
+			.ScrollbarDisabledVisibility(Args.ScrollbarDisabledVisibility)
 			.OnGenerateTile_UObject(Implementer, &UListViewBaseT::HandleGenerateRow)
 			.OnTileReleased_UObject(Implementer, &UListViewBaseT::HandleRowReleased)
 			.OnSelectionChanged_UObject(Implementer, &UListViewBaseT::HandleSelectionChanged)
@@ -512,6 +514,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = ListViewBase)
 	UMG_API float GetScrollOffset() const;
 
+	/** Get the corresponding list object for this userwidget entry. Override this to call ITypedUMGListView::ItemFromEntryWidget in concrete widgets. */
+	UMG_API virtual UObject* GetListObjectFromEntry(UUserWidget& EntryWidget) { return nullptr; }
+
 	/**
 	 * Full regeneration of all entries in the list. Note that the entry UWidget instances will not be destroyed, but they will be released and re-generated.
 	 * In other words, entry widgets will not receive Destruct/Construct events. They will receive OnEntryReleased and IUserObjectListEntry implementations will receive OnListItemObjectSet.
@@ -536,6 +541,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = ListViewBase)
 	UMG_API void SetScrollbarVisibility(ESlateVisibility InVisibility);
+
+	/** Enable/Disable the ability of the list to scroll. This should be use as a temporary disable. */
+	UFUNCTION(BlueprintCallable, Category = ListViewBase)
+	UMG_API void SetIsPointerScrollingEnabled(bool bInIsPointerScrollingEnabled);
 
 	/**
 	 * Sets the list to refresh on the next tick.
@@ -668,6 +677,10 @@ protected:
 	/** True to enable lerped animation when scrolling through the list */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Scrolling)
 	bool bEnableScrollAnimation = false;
+	
+	/** True to enable lerped animation when scrolling through the list with touch*/
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Scrolling)
+	bool bInEnableTouchAnimatedScrolling = false;
 
 	/**  Disable to stop scrollbars from activating inertial overscrolling */
 	UPROPERTY(EditAnywhere, Category = Scrolling)
@@ -676,6 +689,14 @@ protected:
 	/** True to allow right click drag scrolling. */
 	UPROPERTY(EditAnywhere, Category = Scrolling)
 	bool bEnableRightClickScrolling = true;
+
+	/** True to allow scrolling using touch input. */
+	UPROPERTY(EditAnywhere, Category = Scrolling)
+	bool bEnableTouchScrolling = true;
+
+	/** Enable/Disable scrolling using Touch or Mouse. */
+	UPROPERTY(EditDefaultsOnly, Category = Scrolling)
+	bool bIsPointerScrollingEnabled = true;
 
 	UPROPERTY(EditAnywhere, Category = Scrolling)
 	bool bEnableFixedLineOffset = false;

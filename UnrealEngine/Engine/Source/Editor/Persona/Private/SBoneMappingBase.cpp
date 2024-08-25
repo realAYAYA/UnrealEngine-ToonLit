@@ -10,12 +10,9 @@
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "AssetNotifications.h"
-#include "Animation/Rig.h"
 #include "BoneSelectionWidget.h"
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Text/SInlineEditableTextBlock.h"
-#include "SRigPicker.h"
-#include "BoneMappingHelper.h"
 #include "SSkeletonWidget.h"
 #include "IEditableSkeleton.h"
 

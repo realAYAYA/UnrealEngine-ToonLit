@@ -68,7 +68,7 @@ void FAnimNode_RandomPlayer::Initialize_AnyThread(const FAnimationInitializeCont
 
 		if (Entry->MaxPlayRate < Entry->MinPlayRate)
 		{
-			Swap(Entry->MaxLoopCount, Entry->MinLoopCount);
+			Swap(Entry->MaxPlayRate, Entry->MinPlayRate);
 		}
 
 		Entry->BlendIn.Reset();
@@ -400,7 +400,7 @@ int32 FAnimNode_RandomPlayer::GetNextValidEntryIndex()
 	if (bShuffleMode)
 	{
 		// Get the top value, don't allow realloc
-		int32 Index = ShuffleList.Pop(false);
+		int32 Index = ShuffleList.Pop(EAllowShrinking::No);
 
 		// If we cleared the shuffles, rebuild for the next round, indicating
 		// the current value so that we don't pop that one off again next time.

@@ -8,7 +8,7 @@
 #include "UObject/ScriptInterface.h"
 #include "WorldPartition/HLOD/DestructibleHLODComponent.h"
 #include "WorldPartition/HLOD/HLODActor.h"
-#include "WorldPartition/HLOD/HLODSubsystem.h"
+#include "WorldPartition/HLOD/HLODRuntimeSubsystem.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(HLODDestruction)
 
@@ -33,7 +33,7 @@ namespace
 
 		if (RuntimeCell)
 		{
-			for (AWorldPartitionHLOD* HLODActor : InActor->GetWorld()->GetSubsystem<UHLODSubsystem>()->GetHLODActorsForCell(RuntimeCell))
+			for (AWorldPartitionHLOD* HLODActor : InActor->GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>()->GetHLODActorsForCell(RuntimeCell))
 			{
 				for (UActorComponent* ActorComponent : HLODActor->GetComponents())
 				{
@@ -75,12 +75,15 @@ void UWorldPartitionDestructibleInHLODSupportLibrary::DestroyInHLOD(const TScrip
 {
 	AActor* SourceActor = CastChecked<AActor>(DestructibleInHLOD.GetObject());
 
-	if (SourceActor->HasAuthority())
+	if (UWorld* World = SourceActor->GetWorld())
 	{
-		FWorldPartitionHLODDestructionTag Tag = GetDestructionTagForActor(SourceActor);
-		if (Tag.IsValid())
+		if (World->IsGameWorld() && SourceActor->HasAuthority())
 		{
-			Tag.HLODDestructionComponent->DestroyActor(Tag.ActorIndex);
+			FWorldPartitionHLODDestructionTag Tag = GetDestructionTagForActor(SourceActor);
+			if (Tag.IsValid())
+			{
+				Tag.HLODDestructionComponent->DestroyActor(Tag.ActorIndex);
+			}
 		}
 	}
 }
@@ -89,12 +92,15 @@ void UWorldPartitionDestructibleInHLODSupportLibrary::DamageInHLOD(const TScript
 {
 	AActor* SourceActor = CastChecked<AActor>(DestructibleInHLOD.GetObject());
 
-	if (SourceActor->HasAuthority())
+	if (UWorld* World = SourceActor->GetWorld())
 	{
-		FWorldPartitionHLODDestructionTag Tag = GetDestructionTagForActor(SourceActor);
-		if (Tag.IsValid())
+		if (World->IsGameWorld() && SourceActor->HasAuthority())
 		{
-			Tag.HLODDestructionComponent->DamageActor(Tag.ActorIndex, DamagePercent);
+			FWorldPartitionHLODDestructionTag Tag = GetDestructionTagForActor(SourceActor);
+			if (Tag.IsValid())
+			{
+				Tag.HLODDestructionComponent->DamageActor(Tag.ActorIndex, DamagePercent);
+			}
 		}
 	}
 }

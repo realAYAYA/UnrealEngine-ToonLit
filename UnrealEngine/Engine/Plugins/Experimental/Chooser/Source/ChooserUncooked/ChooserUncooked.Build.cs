@@ -19,7 +19,11 @@ namespace UnrealBuildTool.Rules
 					"GameplayTags",
 					"StructUtils",
 					"BlueprintGraph",
-					"KismetCompiler"
+					"KismetCompiler",
+					"AnimGraph",
+					"AnimGraphRuntime",
+					"BlendStackEditor",
+					"BlendStack"
 					// ... add private dependencies that you statically link with here ...
 				}
 			);

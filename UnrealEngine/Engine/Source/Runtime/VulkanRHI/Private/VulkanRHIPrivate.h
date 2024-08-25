@@ -753,28 +753,15 @@ namespace VulkanRHI
 	}
 
 #if VULKAN_ENABLE_DRAW_MARKERS
-	inline void SetDebugMarkerName(PFN_vkDebugMarkerSetObjectNameEXT DebugMarkerSetObjectName, VkDevice VulkanDevice, VkImage Image, const char* ObjectName)
-	{
-		VkDebugMarkerObjectNameInfoEXT Info;
-		ZeroVulkanStruct(Info, VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT);
-		Info.objectType = VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT;
-		Info.object = (uint64)Image;
-		Info.pObjectName = ObjectName;
-		DebugMarkerSetObjectName(VulkanDevice, &Info);
-};
-
-#if 0//VULKAN_SUPPORTS_DEBUG_UTILS
 	inline void SetDebugName(PFN_vkSetDebugUtilsObjectNameEXT SetDebugName, VkDevice Device, VkImage Image, const char* Name)
 	{
-		FTCHARToUTF8 Converter(Name);
 		VkDebugUtilsObjectNameInfoEXT Info;
 		ZeroVulkanStruct(Info, VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT);
 		Info.objectType = VK_OBJECT_TYPE_IMAGE;
 		Info.objectHandle = (uint64)Image;
-		Info.pObjectName = Converter.Get();
+		Info.pObjectName = Name;
 		SetDebugName(Device, &Info);
 }
-#endif
 #endif
 
 	// Merge a depth and a stencil layout for drivers that don't support VK_KHR_separate_depth_stencil_layouts

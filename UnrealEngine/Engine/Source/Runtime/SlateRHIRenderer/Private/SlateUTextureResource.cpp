@@ -1,9 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SlateUTextureResource.h"
+#include "SlateRHIRendererSettings.h"
 
 FSlateBaseUTextureResource::FSlateBaseUTextureResource(UTexture* InTexture)
 	: TextureObject(InTexture)
+	, CachedSlatePostBuffers(ESlatePostRT::None)
 {
 #if SLATE_CHECK_UOBJECT_RENDER_RESOURCES
 	ObjectWeakPtr = InTexture;
@@ -28,6 +30,11 @@ uint32 FSlateBaseUTextureResource::GetHeight() const
 ESlateShaderResource::Type FSlateBaseUTextureResource::GetType() const
 {
 	return ESlateShaderResource::TextureObject;
+}
+
+ESlatePostRT FSlateBaseUTextureResource::GetUsedSlatePostBuffers() const
+{
+	return CachedSlatePostBuffers;
 }
 
 #if SLATE_CHECK_UOBJECT_RENDER_RESOURCES
@@ -75,8 +82,23 @@ FSlateUTextureResource::FSlateUTextureResource(UTexture* InTexture)
 {
 	if(TextureObject)
 	{
-		Proxy->ActualSize = FIntPoint(InTexture->GetSurfaceWidth(), InTexture->GetSurfaceHeight());
+
+		Proxy->ActualSize = InTexture 
+			? FIntPoint(InTexture->GetSurfaceWidth(), InTexture->GetSurfaceHeight())
+			: FIntPoint(1, 1);
 		Proxy->Resource = this;
+
+		CachedSlatePostBuffers = ESlatePostRT::None;
+		for (const TPair<ESlatePostRT, FSlatePostSettings>& SlatePostSetting : USlateRHIRendererSettings::Get()->GetSlatePostSettings())
+		{
+			const ESlatePostRT SlatePostBitflag = SlatePostSetting.Key;
+			const FSlatePostSettings& SlatePostSettingValue = SlatePostSetting.Value;
+
+			if (SlatePostSettingValue.bEnabled && InTexture && InTexture->GetPathName() == SlatePostSettingValue.GetPathToSlatePostRT())
+			{
+				CachedSlatePostBuffers |= SlatePostBitflag;
+			}
+		}
 	}
 }
 
@@ -97,18 +119,40 @@ void FSlateUTextureResource::UpdateTexture(UTexture* InTexture)
 	UpdateDebugName();
 #endif
 
-	if (!Proxy)
+	if (!Proxy && TextureObject)
 	{
 		Proxy = new FSlateShaderResourceProxy;
 	}
 
-	FTexture* TextureResource = InTexture->GetResource();
+	if (Proxy && TextureObject)
+	{
+		CachedSlatePostBuffers = ESlatePostRT::None;
+		for (const TPair<ESlatePostRT, FSlatePostSettings>& SlatePostSetting : USlateRHIRendererSettings::Get()->GetSlatePostSettings())
+		{
+			const ESlatePostRT SlatePostBitflag = SlatePostSetting.Key;
+			const FSlatePostSettings& SlatePostSettingValue = SlatePostSetting.Value;
 
-	Proxy->Resource = this;
-	// If the RHI data has changed, it's possible the underlying size of the texture has changed,
-	// if that's true we need to update the actual size recorded on the proxy as well, otherwise 
-	// the texture will continue to render using the wrong size.
-	Proxy->ActualSize = FIntPoint(TextureResource->GetSizeX(), TextureResource->GetSizeY());
+			if (SlatePostSettingValue.bEnabled && InTexture && InTexture->GetPathName() == SlatePostSettingValue.GetPathToSlatePostRT())
+			{
+				CachedSlatePostBuffers |= SlatePostBitflag;
+			}
+		}
+
+		FTexture* TextureResource = TextureObject->GetResource();
+
+		Proxy->Resource = this;
+		// If the RHI data has changed, it's possible the underlying size of the texture has changed,
+		// if that's true we need to update the actual size recorded on the proxy as well, otherwise 
+		// the texture will continue to render using the wrong size.
+		if (TextureResource)
+		{
+			Proxy->ActualSize = FIntPoint(TextureResource->GetSizeX(), TextureResource->GetSizeY());
+		}
+		else
+		{
+			Proxy->ActualSize = FIntPoint(0, 0);
+		}
+	}
 }
 
 void FSlateUTextureResource::ResetTexture()
@@ -119,6 +163,8 @@ void FSlateUTextureResource::ResetTexture()
 	ObjectWeakPtr = nullptr;
 	UpdateDebugName();
 #endif
+
+	CachedSlatePostBuffers = ESlatePostRT::None;
 
 	if (Proxy)
 	{

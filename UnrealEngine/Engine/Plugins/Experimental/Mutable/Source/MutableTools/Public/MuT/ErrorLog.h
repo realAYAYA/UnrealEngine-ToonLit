@@ -100,5 +100,6 @@ namespace mu
 		Private* m_pD;
 
 	};
-
+	
+	MUTABLETOOLS_API extern const TCHAR* s_opNames[];
 }

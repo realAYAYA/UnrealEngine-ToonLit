@@ -173,14 +173,14 @@ FRigElementKeyCollection FRigElementKeyCollection::MakeFromName(
 		return InHierarchy->GetKeysByPredicate([WildcardString, InElementTypes](const FRigBaseElement& InElement) -> bool
 		{
 			return InElement.IsTypeOf(static_cast<ERigElementType>(InElementTypes)) &&
-				   WildcardString.IsMatch(InElement.GetNameString());
+				   WildcardString.IsMatch(InElement.GetName());
 		}, bTraverse);
 	}
 	
 	return InHierarchy->GetKeysByPredicate([PartialNameString, InElementTypes](const FRigBaseElement& InElement) -> bool
 	{
 		return InElement.IsTypeOf(static_cast<ERigElementType>(InElementTypes)) &&
-			   InElement.GetNameString().Contains(PartialNameString);
+			   InElement.GetName().Contains(PartialNameString);
 	}, bTraverse);
 }
 
@@ -362,3 +362,79 @@ FArchive& operator<<(FArchive& Ar, FRigControlValue& Value)
 	return Ar;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// FRigElementResolveResult
+////////////////////////////////////////////////////////////////////////////////
+
+bool FRigElementResolveResult::IsValid() const
+{
+	return State == ERigElementResolveState::PossibleTarget ||
+		State == ERigElementResolveState::DefaultTarget;
+}
+
+void FRigElementResolveResult::SetInvalidTarget(const FText& InMessage)
+{
+	State = ERigElementResolveState::InvalidTarget;
+	Message = InMessage;
+}
+
+void FRigElementResolveResult::SetPossibleTarget(const FText& InMessage)
+{
+	State = ERigElementResolveState::PossibleTarget;
+	Message = InMessage;
+}
+
+void FRigElementResolveResult::SetDefaultTarget(const FText& InMessage)
+{
+	State = ERigElementResolveState::DefaultTarget;
+	Message = InMessage;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// FModularRigResolveResult
+////////////////////////////////////////////////////////////////////////////////
+
+bool FModularRigResolveResult::IsValid() const
+{
+	return State == EModularRigResolveState::Success && !Matches.IsEmpty();
+}
+
+bool FModularRigResolveResult::ContainsMatch(const FRigElementKey& InKey, FString* OutErrorMessage) const
+{
+	if(Matches.ContainsByPredicate([InKey](const FRigElementResolveResult& InMatch) -> bool
+	{
+		return InMatch.GetKey() == InKey;
+	}))
+	{
+		return true;
+	}
+
+	if(OutErrorMessage)
+	{
+		if(const FRigElementResolveResult* Mismatch = Excluded.FindByPredicate([InKey](const FRigElementResolveResult& InMatch) -> bool
+		{
+			return InMatch.GetKey() == InKey;
+		}))
+		{
+			*OutErrorMessage = Mismatch->GetMessage().ToString();
+		}
+	}
+	
+	return false;
+}
+
+const FRigElementResolveResult* FModularRigResolveResult::FindMatch(const FRigElementKey& InKey) const
+{
+	return Matches.FindByPredicate([InKey](const FRigElementResolveResult& InMatch) -> bool
+	{
+		return InMatch.GetKey() == InKey;
+	});
+}
+
+const FRigElementResolveResult* FModularRigResolveResult::GetDefaultMatch() const
+{
+	return Matches.FindByPredicate([](const FRigElementResolveResult& Match)
+	{
+		return Match.GetState() == ERigElementResolveState::DefaultTarget;
+	});
+}

@@ -177,7 +177,7 @@ void FRHIGPUTextureReadback::EnqueueCopy(FRHICommandList& RHICmdList, FRHITextur
 						break;
 				}
 
-				DestinationStagingTextures[GPUIndex] = RHICreateTexture(Desc);
+				DestinationStagingTextures[GPUIndex] = RHICmdList.CreateTexture(Desc);
 			}
 			else
 			{

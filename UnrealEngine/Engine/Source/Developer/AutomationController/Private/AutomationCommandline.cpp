@@ -186,7 +186,7 @@ public:
 
 				if (!FoundGroup)
 				{
-					UE_LOG(LogAutomationCommandLine, Warning, TEXT("No matching group named %s"), *GroupName);
+					UE_LOG(LogAutomationCommandLine, Error, TEXT("No matching group named %s"), *GroupName);
 				}
 			}			
 			else
@@ -209,13 +209,16 @@ public:
 			}
 		}
 
-		FilterAny->SetFilters(FiltersList);
-		InFilters->Add(MakeShareable(FilterAny));
+		if (!FiltersList.IsEmpty())
+		{
+			FilterAny->SetFilters(FiltersList);
+			InFilters->Add(MakeShareable(FilterAny));
 
-		// SetFilter applies all filters from the AutomationFilters array
-		AutomationController->SetFilter(InFilters);
-		// Fill OutFilteredTestNames array with filtered test names
-		AutomationController->GetFilteredTestNames(OutFilteredTestNames);
+			// SetFilter applies all filters from the AutomationFilters array
+			AutomationController->SetFilter(InFilters);
+			// Fill OutFilteredTestNames array with filtered test names
+			AutomationController->GetFilteredTestNames(OutFilteredTestNames);
+		}
 	}
 
 	void FindWorkers(float DeltaTime)
@@ -512,12 +515,17 @@ protected:
 	virtual bool Exec_Dev(UWorld*, const TCHAR* Cmd, FOutputDevice& Ar) override
 	{
 		bool bHandled = false;
-		// Track whether we have a flag we care about passing through.
-		FString FlagToUse = "";
-
 		// figure out if we are handling this request
 		if (FParse::Command(&Cmd, TEXT("Automation")))
 		{
+			// Early exit in case of a CVar input. ie: Automation.SkipStackWalk 1
+			if (FString(Cmd).StartsWith(TEXT(".")))
+			{
+				return false;
+			}
+
+			// Track whether we have a flag we care about passing through.
+			FString FlagToUse = "";
 
 			TArray<FString> CommandList;
 			FString(Cmd).ParseIntoArray(CommandList, TEXT(";"), true);
@@ -691,9 +699,17 @@ protected:
 						CVar->Set(false);
 					}					
 				}
-				else
+				else if (FParse::Command(&TempCmd, TEXT("EnableStereoTests")))
 				{
-					Ar.Logf(TEXT("Incorrect automation command syntax! Supported commands are: "));
+					if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("Automation.EnableStereoTestVariants")))
+					{
+						Ar.Logf(TEXT("Automation: Enabling Stereo Test Variants"));
+						CVar->Set(true);
+					}
+				}
+				else if (FParse::Command(&TempCmd, TEXT("Help")))
+				{
+					Ar.Logf(TEXT("Supported commands are: "));
 					Ar.Logf(TEXT("\tAutomation StartRemoteSession <sessionid>"));
 					Ar.Logf(TEXT("\tAutomation List"));
 					Ar.Logf(TEXT("\tAutomation RunTests <test string>"));
@@ -705,6 +721,13 @@ protected:
 					Ar.Logf(TEXT("\tAutomation Now"));
 					Ar.Logf(TEXT("\tAutomation Quit"));
 					Ar.Logf(TEXT("\tAutomation SoftQuit"));
+					Ar.Logf(TEXT("\tAutomation IgnoreLogEvents"));
+					Ar.Logf(TEXT("\tAutomation EnableStereoTests"));
+					bHandled = false;
+				}
+				else
+				{
+					Ar.Logf(TEXT("Unknown Automation command '%s'! Use Help command for a detailed list."), TempCmd);
 					bHandled = false;
 				}
 			}

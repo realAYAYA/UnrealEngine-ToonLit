@@ -7,6 +7,7 @@
 #include "UObject/GCObject.h"
 #include "Framework/Docking/TabManager.h"
 #include "Toolkits/IToolkit.h"
+#include "AssetDefinition.h"
 
 #include "Framework/Commands/UICommandList.h"
 #include "Framework/MultiBox/MultiBoxExtender.h"
@@ -87,6 +88,22 @@ public:
 };
 
 /**
+ * Allows an asset editor to specify which custom menus/toolbar items are visible in read-only mode, with
+ * the default behavior being that all entries specific to an asset editor are hidden
+ */
+struct FReadOnlyAssetEditorCustomization
+{
+	// Permission list for the main menu
+	FNamePermissionList MainMenuPermissionList;
+
+	// Permission list for the toolbar
+	FNamePermissionList ToolbarPermissionList;
+
+	// Permission list for the various submenus on the main menu (e.g File, Help..)
+	TMap<FName, FNamePermissionList> MainMenuSubmenuPermissionLists;
+};
+
+/**
  * Base class for toolkits that are used for asset editing (abstract)
  */
 class FAssetEditorToolkit
@@ -114,9 +131,10 @@ public:
 	 * @param	ObjectToEdit			The object to edit
 	 * @param	bInIsToolbarFocusable	Whether the buttons on the default toolbar can receive keyboard focus
 	 * @param	bUseSmallToolbarIcons	Whether the buttons on the default toolbar use the small icons
+	 * @param	InOpenMethod			Override whether the Asset Editor is being opened in read only or edit mode (otherwise automatically set by the asset editor subsytem for any asset editors opened through it)
 	 */
-	UNREALED_API void InitAssetEditor(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, const TArray<UObject*>& ObjectsToEdit, const bool bInIsToolbarFocusable = false, const bool bInUseSmallToolbarIcons = false);
-	UNREALED_API void InitAssetEditor(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, UObject* ObjectToEdit, const bool bInIsToolbarFocusable = false, const bool bInUseSmallToolbarIcons = false);
+	UNREALED_API void InitAssetEditor(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, const TArray<UObject*>& ObjectsToEdit, const bool bInIsToolbarFocusable = false, const bool bInUseSmallToolbarIcons = false, const TOptional<EAssetOpenMethod>& InOpenMethod = TOptional<EAssetOpenMethod>());
+	UNREALED_API void InitAssetEditor(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, UObject* ObjectToEdit, const bool bInIsToolbarFocusable = false, const bool bInUseSmallToolbarIcons = false, const TOptional<EAssetOpenMethod>& InOpenMethod = TOptional<EAssetOpenMethod>());
 
 	FAssetEditorToolkit(const FAssetEditorToolkit&) = delete;
 	FAssetEditorToolkit& operator=(const FAssetEditorToolkit&) = delete;
@@ -149,6 +167,7 @@ public:
 	UNREALED_API virtual TSharedPtr<FTabManager> GetAssociatedTabManager() override;
 	UNREALED_API virtual double GetLastActivationTime() override;
 	UNREALED_API virtual void RemoveEditingAsset(UObject* Asset) override;
+	UNREALED_API virtual EAssetOpenMethod GetOpenMethod() const override { return OpenMethod; }
 
 	/**
 	 * Fills in the supplied menu with commands for working with this asset file
@@ -283,6 +302,11 @@ public:
 
 	virtual void AddGraphEditorPinActionsToContextMenu(FToolMenuSection& InSection) const {};
 
+	/** React to a Drag&Drop events from the viewport */
+	virtual void OnViewportDragEnter(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) {}
+	virtual void OnViewportDragLeave(const FDragDropEvent& DragDropEvent) {}
+	virtual FReply OnViewportDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) { return FReply::Unhandled(); }
+
 protected:
 	friend class UAssetEditorToolkitMenuContext;
 
@@ -305,6 +329,9 @@ protected:
 	/** Generate the toolbar for common asset actions like Save*/
 	UNREALED_API UToolMenu* GenerateCommonActionsToolbar(FToolMenuContext& MenuContext);
 
+	/** Generate the toolbar for read only mode specific content */
+	UToolMenu* GenerateReadOnlyToolbar(FToolMenuContext& MenuContext);
+
 	/** Get the collection of edited objects that can be saved. */
 	UNREALED_API virtual void GetSaveableObjects(TArray<UObject*>& OutObjects) const;
 
@@ -317,11 +344,17 @@ protected:
 	/** Called to test if "Save" should be enabled for this asset */
 	virtual bool CanSaveAsset() const { return true; }
 
+	/** Internal function to check if the asset can be saved that calls CanSaveAsset */
+	bool CanSaveAsset_Internal() const;
+
 	/** Called when "Save" is clicked for this asset */
 	UNREALED_API virtual void SaveAsset_Execute();
 
 	/** Called to test if "Save As" should be enabled for this asset */
 	virtual bool CanSaveAssetAs() const { return true; }
+
+	/** Internal function to check if the asset can be saved that calls CanSaveAssetAs */
+	bool CanSaveAssetAs_Internal() const;
 
 	/** Called when "Save As" is clicked for this asset */
 	UNREALED_API virtual void SaveAssetAs_Execute();
@@ -349,8 +382,10 @@ protected:
 
 	/** Called to check to see if there's an asset capable of being reimported */
 	UNREALED_API virtual bool CanReimport() const;
+	/** Internal function to check if the asset can be reimported that calls CanReimport*/
+	bool CanReimport_Internal() const;
 	UNREALED_API virtual bool CanReimport(UObject* EditingObject) const;
-
+	
 	/** Called when "Reimport" is clicked for this asset */
 	UNREALED_API virtual void Reimport_Execute();
 	UNREALED_API virtual void Reimport_Execute(UObject* EditingObject);
@@ -389,6 +424,12 @@ protected:
 
 	UNREALED_API virtual void CreateEditorModeManager() override;
 
+	/** Specify the permission lists to use in read only mode */
+	UNREALED_API virtual void SetupReadOnlyMenuProfiles(FReadOnlyAssetEditorCustomization& OutReadOnlyCustomization) { }
+
+	/** Get the name of the profile registered with UToolMenus for read only menu customizations */
+	UNREALED_API virtual FName GetReadOnlyMenuProfileName() { return ReadOnlyMenuProfileName; }
+
 private:
 	// Callback for persisting the Asset Editor's layout.
 	void HandleTabManagerPersistLayout( const TSharedRef<FTabManager::FLayout>& LayoutToSave )
@@ -398,6 +439,9 @@ private:
 			FLayoutSaveRestore::SaveToConfig(GEditorLayoutIni, LayoutToSave);
 		}
 	}
+
+	/** Initialize the base level customizations for read only mode and register the profile */
+	void InitializeReadOnlyMenuProfiles();
 
 private:
 	/**
@@ -454,6 +498,9 @@ private:
 	static UNREALED_API TSharedPtr<FExtensibilityManager> SharedMenuExtensibilityManager;
 	static UNREALED_API TSharedPtr<FExtensibilityManager> SharedToolBarExtensibilityManager;
 
+	/** The name of the profile registered with UToolMenus for read only menu customizations */
+	static UNREALED_API const FName ReadOnlyMenuProfileName;
+
 	/** The object we're currently editing */
 	// @todo toolkit minor: Currently we don't need to serialize this object reference because the AssetEditorSubsystem is kept in sync (and will always serialize it.)
 	TArray<TObjectPtr<UObject>> EditingObjects;
@@ -475,4 +522,10 @@ private:
 
 	/** Whether the buttons on the default toolbar use small icons */
 	bool bIsToolbarUsingSmallIcons;
+
+	/** Whether the asset editor was opened in edit mode or read only mode */
+	EAssetOpenMethod OpenMethod;
+
+	/** Determines menu/toolbar customization in read only mode */
+	FReadOnlyAssetEditorCustomization ReadOnlyCustomization;
 };

@@ -190,6 +190,7 @@ protected:
 
 	friend class UAnimSequence;
 	friend struct UE::Anim::Attributes;
+	friend struct FAnimNextAnimSequenceKeyframeTask;
 };
 
 template<>

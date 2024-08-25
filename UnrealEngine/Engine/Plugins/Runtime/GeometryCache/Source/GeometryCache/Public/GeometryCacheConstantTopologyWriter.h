@@ -8,6 +8,7 @@
 
 struct FGeometryCacheMeshBatchInfo;
 struct FPackedNormal;
+class FSkeletalMeshLODModel;
 class UGeometryCache;
 class UGeometryCacheTrack;
 class UMaterialInterface; 
@@ -61,7 +62,7 @@ namespace UE::GeometryCacheHelpers
 
 		struct GEOMETRYCACHE_API FTrackWriter
 		{
-			FTrackWriter(FGeometryCacheConstantTopologyWriter& InOwner);
+			FTrackWriter(FGeometryCacheConstantTopologyWriter& InOwner, FName TrackName = FName());
 			~FTrackWriter() = default;
 
 			FTrackWriter(const FTrackWriter&) = delete;
@@ -98,10 +99,10 @@ namespace UE::GeometryCacheHelpers
 			FGeometryCacheConstantTopologyWriter* Owner = nullptr;
 		};
 
-		FTrackWriter& AddTrackWriter();
+		FTrackWriter& AddTrackWriter(FName TrackName = FName());
 		FTrackWriter& GetTrackWriter(int32 Index);
 		int32 GetNumTracks() const;
-		void AddMaterials(TArrayView<TObjectPtr<UMaterialInterface>> Materials);
+		void AddMaterials(const TArray<TObjectPtr<UMaterialInterface>>& Materials);
 		int32 GetNumMaterials() const;
 
 	private:
@@ -121,5 +122,12 @@ namespace UE::GeometryCacheHelpers
 	 * 	}
 	 */
 	GEOMETRYCACHE_API int32 AddTrackWriterFromSkinnedAsset(FGeometryCacheConstantTopologyWriter& Writer, const USkinnedAsset& Asset);
+
+	/**
+	 * @brief This will create multiple track writers and fill in the track writer's data (indices, UVs, materials .etc) from the template geometry cache. 
+	 * The number of track writers created equals to the number of tracks in the template geometry cache. 
+	 * @return The number of track writers created.
+	 */
+	GEOMETRYCACHE_API int32 AddTrackWritersFromTemplateCache(FGeometryCacheConstantTopologyWriter& Writer, const UGeometryCache& TemplateCache);
 #endif // WITH_EDITOR
 };

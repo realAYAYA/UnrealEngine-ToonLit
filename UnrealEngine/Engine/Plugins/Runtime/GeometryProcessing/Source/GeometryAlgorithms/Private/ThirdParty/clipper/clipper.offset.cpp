@@ -471,7 +471,10 @@ void ClipperOffset::DoGroupOffset(Group& group, double delta)
 			if (group.join_type_ == JoinType::Round)
 			{
 				double radius = abs_group_delta_;
-				group.path_ = Ellipse(path[0], radius, radius);
+				// @UE BEGIN
+				// Use steps_per_rad_ (will be set above since group.join_type_ == JoinType::Round) to determine the number of steps to use for 2pi radians
+				group.path_ = Ellipse(path[0], radius, radius, FMath::Max(3, static_cast<int>(steps_per_rad_ * 2 * PI)));
+				// @UE END
 			}
 			else
 			{

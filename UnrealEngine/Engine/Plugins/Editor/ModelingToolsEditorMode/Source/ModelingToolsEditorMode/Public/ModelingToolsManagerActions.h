@@ -79,6 +79,7 @@ public:
 	TSharedPtr<FUICommandInfo> BeginConvertMeshesTool;
 	TSharedPtr<FUICommandInfo> BeginSplitMeshesTool;
 	TSharedPtr<FUICommandInfo> BeginPatternTool;
+	TSharedPtr<FUICommandInfo> BeginHarvestInstancesTool;
 
 
 	TSharedPtr<FUICommandInfo> BeginRemeshSculptMeshTool;
@@ -149,6 +150,7 @@ public:
 	TSharedPtr<FUICommandInfo> BeginPolyModelTool_Outset;
 	TSharedPtr<FUICommandInfo> BeginPolyModelTool_CutFaces;
 	TSharedPtr<FUICommandInfo> BeginPolyModelTool_InsertEdgeLoop;
+	TSharedPtr<FUICommandInfo> BeginPolyModelTool_ExtrudeEdges;
 	TSharedPtr<FUICommandInfo> BeginPolyModelTool_PushPull;
 	TSharedPtr<FUICommandInfo> BeginPolyModelTool_Bevel;
 	

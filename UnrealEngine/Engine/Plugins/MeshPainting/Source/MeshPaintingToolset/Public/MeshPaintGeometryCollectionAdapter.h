@@ -55,6 +55,9 @@ protected:
 
 	bool bSavedShowBoneColors = false;
 
+	// Texture override state
+	UE::MeshPaintingToolset::FDefaultTextureOverride TextureOverridesState;
+
 	/// Get the underlying UGeometryCollection from the component, as a non-const object
 	/// Caller must have already validated that the component weak pointer is still valid (as this is called per-vertex)
 	UGeometryCollection* GetGeometryCollectionObject() const;

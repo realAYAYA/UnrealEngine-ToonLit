@@ -2,71 +2,137 @@
 
 #include "Decorators/BlendTwoWay.h"
 
+#include "Animation/AnimTypes.h"
 #include "DecoratorBase/ExecutionContext.h"
+#include "EvaluationVM/Tasks/BlendKeyframes.h"
 
 namespace UE::AnimNext
 {
-	DEFINE_ANIM_DECORATOR_BEGIN(FBlendTwoWayDecorator)
-		DEFINE_ANIM_DECORATOR_IMPLEMENTS_INTERFACE(IEvaluate)
-		DEFINE_ANIM_DECORATOR_IMPLEMENTS_INTERFACE(IUpdate)
-	DEFINE_ANIM_DECORATOR_END(FBlendTwoWayDecorator)
+	AUTO_REGISTER_ANIM_DECORATOR(FBlendTwoWayDecorator)
 
-	void FBlendTwoWayDecorator::PostEvaluate(FExecutionContext& Context, const TDecoratorBinding<IEvaluate>& Binding) const
+	// Decorator implementation boilerplate
+	#define DECORATOR_INTERFACE_ENUMERATOR(GeneratorMacro) \
+		GeneratorMacro(IContinuousBlend) \
+		GeneratorMacro(IEvaluate) \
+		GeneratorMacro(IHierarchy) \
+		GeneratorMacro(IUpdate) \
+
+	GENERATE_ANIM_DECORATOR_IMPLEMENTATION(FBlendTwoWayDecorator, DECORATOR_INTERFACE_ENUMERATOR)
+	#undef DECORATOR_INTERFACE_ENUMERATOR
+
+	void FBlendTwoWayDecorator::PostEvaluate(FEvaluateTraversalContext& Context, const TDecoratorBinding<IEvaluate>& Binding) const
 	{
-		// TODO:
-		// Now that our children have finished evaluating, we can pop their two poses and blend it
-		// Children execute in depth first order, as such the poses need to be popped in reverse order
-		// FPose&& pose1 = Context.PopPose();
-		// FPose&& pose0 = Context.PopPose();
-		// FPose resultPose = BlendTwoWay(pose0, pose1, blendWeight);
-		// Context.PushPose(resultPose);
-		// If we have full weight on a child, there is no work to do and we can early exit instead
+		const FInstanceData* InstanceData = Binding.GetInstanceData<FInstanceData>();
+
+		if (InstanceData->ChildA.IsValid() && InstanceData->ChildB.IsValid())
+		{
+			// We have two children, interpolate them
+
+			TDecoratorBinding<IContinuousBlend> ContinuousBlendDecorator;
+			Context.GetInterface(Binding, ContinuousBlendDecorator);
+
+			const float BlendWeight = ContinuousBlendDecorator.GetBlendWeight(Context, 1);
+			Context.AppendTask(FAnimNextBlendTwoKeyframesTask::Make(BlendWeight));
+		}
+		else
+		{
+			// We have only one child that is active, do nothing
+		}
 	}
 
-	void FBlendTwoWayDecorator::PreUpdate(FExecutionContext& Context, const TDecoratorBinding<IUpdate>& Binding) const
+	void FBlendTwoWayDecorator::PreUpdate(FUpdateTraversalContext& Context, const TDecoratorBinding<IUpdate>& Binding, const FDecoratorUpdateState& DecoratorState) const
 	{
 		const FSharedData* SharedData = Binding.GetSharedData<FSharedData>();
 		FInstanceData* InstanceData = Binding.GetInstanceData<FInstanceData>();
 
-		// TODO: hook up blend weight to a pin, it could change every frame
+		TDecoratorBinding<IContinuousBlend> ContinuousBlendDecorator;
+		Context.GetInterface(Binding, ContinuousBlendDecorator);
 
-		if (SharedData->BlendWeight < 1.0)
+		const float BlendWeightB = ContinuousBlendDecorator.GetBlendWeight(Context, 1);
+		if (!FAnimWeight::IsFullWeight(BlendWeightB))
 		{
-			if (!InstanceData->Children[0].IsValid())
+			if (!InstanceData->ChildA.IsValid())
 			{
 				// We need to blend a child that isn't instanced yet, allocate it
-				InstanceData->Children[0] = Context.AllocateNodeInstance(Binding, SharedData->Children[0]);
+				InstanceData->ChildA = Context.AllocateNodeInstance(Binding, SharedData->ChildA);
 			}
 
-			if (SharedData->BlendWeight == 0.0)
+			if (!FAnimWeight::IsRelevant(BlendWeightB))
 			{
 				// We no longer need this child, release it
-				InstanceData->Children[1].Reset();
+				InstanceData->ChildB.Reset();
 			}
 		}
 
-		if (SharedData->BlendWeight > 0.0)
+		if (FAnimWeight::IsRelevant(BlendWeightB))
 		{
-			if (!InstanceData->Children[1].IsValid())
+			if (!InstanceData->ChildB.IsValid())
 			{
 				// We need to blend a child that isn't instanced yet, allocate it
-				InstanceData->Children[1] = Context.AllocateNodeInstance(Binding, SharedData->Children[1]);
+				InstanceData->ChildB = Context.AllocateNodeInstance(Binding, SharedData->ChildB);
 			}
 
-			if (SharedData->BlendWeight == 1.0)
+			if (FAnimWeight::IsFullWeight(BlendWeightB))
 			{
 				// We no longer need this child, release it
-				InstanceData->Children[0].Reset();
+				InstanceData->ChildA.Reset();
 			}
 		}
 	}
 
-	void FBlendTwoWayDecorator::GetChildren(FExecutionContext& Context, const TDecoratorBinding<IHierarchy>& Binding, FChildrenArray& Children) const
+	void FBlendTwoWayDecorator::QueueChildrenForTraversal(FUpdateTraversalContext& Context, const TDecoratorBinding<IUpdate>& Binding, const FDecoratorUpdateState& DecoratorState, FUpdateTraversalQueue& TraversalQueue) const
 	{
 		const FInstanceData* InstanceData = Binding.GetInstanceData<FInstanceData>();
 
-		// Add the two child handles, even if they are empty
-		Children.Add(InstanceData->Children[0]);
-		Children.Add(InstanceData->Children[1]);
+		TDecoratorBinding<IContinuousBlend> ContinuousBlendDecorator;
+		Context.GetInterface(Binding, ContinuousBlendDecorator);
+
+		const float BlendWeightB = ContinuousBlendDecorator.GetBlendWeight(Context, 1);
+		if (InstanceData->ChildA.IsValid())
+		{
+			const float BlendWeightA = 1.0f - BlendWeightB;
+			TraversalQueue.Push(InstanceData->ChildA, DecoratorState.WithWeight(BlendWeightA));
+		}
+
+		if (InstanceData->ChildB.IsValid())
+		{
+			TraversalQueue.Push(InstanceData->ChildB, DecoratorState.WithWeight(BlendWeightB));
+		}
+	}
+
+	uint32 FBlendTwoWayDecorator::GetNumChildren(const FExecutionContext& Context, const TDecoratorBinding<IHierarchy>& Binding) const
+	{
+		return 2;
+	}
+
+	void FBlendTwoWayDecorator::GetChildren(const FExecutionContext& Context, const TDecoratorBinding<IHierarchy>& Binding, FChildrenArray& Children) const
+	{
+		const FInstanceData* InstanceData = Binding.GetInstanceData<FInstanceData>();
+
+		// Add the two children, even if the handles are empty
+		Children.Add(InstanceData->ChildA);
+		Children.Add(InstanceData->ChildB);
+	}
+
+	float FBlendTwoWayDecorator::GetBlendWeight(const FExecutionContext& Context, const TDecoratorBinding<IContinuousBlend>& Binding, int32 ChildIndex) const
+	{
+		const FSharedData* SharedData = Binding.GetSharedData<FSharedData>();
+
+		const float BlendWeight = SharedData->GetBlendWeight(Context, Binding);
+		const float ClampedWeight = FMath::Clamp(BlendWeight, 0.0f, 1.0f);
+
+		if (ChildIndex == 0)
+		{
+			return 1.0f - ClampedWeight;
+		}
+		else if (ChildIndex == 1)
+		{
+			return ClampedWeight;
+		}
+		else
+		{
+			// Invalid child index
+			return -1.0f;
+		}
 	}
 }

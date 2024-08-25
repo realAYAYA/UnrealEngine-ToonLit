@@ -10,7 +10,6 @@ struct FQueuePassState
 	uint	ClusterWriteOffset;		// Offset in individual clusters
 	uint	NodeReadOffset;
 	uint	NodeWriteOffset;
-	uint	NodePrevWriteOffset;	// Helper used by non-persistent culling
 	int		NodeCount;				// Can temporarily be conservatively higher
 };
 

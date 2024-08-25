@@ -139,7 +139,7 @@ void UGeometryCacheComponent::TickComponent(float DeltaTime, enum ELevelTick Tic
 			ENQUEUE_RENDER_COMMAND(FGeometryCacheUpdateAnimation)(
 				[InSceneProxy, AnimationTime, bInLooping, bIsPlayingBackwards, InPlaybackSpeed, ActualPlaybackSpeed, InMotionVectorScale](FRHICommandList& RHICmdList)
 				{
-					InSceneProxy->UpdateAnimation(AnimationTime, bInLooping, bIsPlayingBackwards, InPlaybackSpeed, InMotionVectorScale);
+					InSceneProxy->UpdateAnimation(RHICmdList, AnimationTime, bInLooping, bIsPlayingBackwards, InPlaybackSpeed, InMotionVectorScale);
 				});
 		}
 	}
@@ -196,7 +196,7 @@ void UGeometryCacheComponent::TickAtThisTime(const float Time, bool bInIsRunning
 			ENQUEUE_RENDER_COMMAND(FGeometryCacheUpdateAnimation)(
 				[InSceneProxy, AnimationTime, bInIsLooping, bInBackwards, InPlaybackSpeed, InMotionVectorScale](FRHICommandList& RHICmdList)
 				{
-					InSceneProxy->UpdateAnimation(AnimationTime, bInIsLooping, bInBackwards, InPlaybackSpeed, InMotionVectorScale);
+					InSceneProxy->UpdateAnimation(RHICmdList, AnimationTime, bInIsLooping, bInBackwards, InPlaybackSpeed, InMotionVectorScale);
 				});
 		}
 	}
@@ -281,7 +281,7 @@ void UGeometryCacheComponent::CreateTrackSection(int32 TrackIndex)
 	// Ensure sections array is long enough
 	if (TrackSections.Num() <= TrackIndex)
 	{
-		TrackSections.SetNum(TrackIndex + 1, false);
+		TrackSections.SetNum(TrackIndex + 1, EAllowShrinking::No);
 	}
 
 	UpdateTrackSection(TrackIndex, GetAnimationTime());
@@ -533,7 +533,7 @@ float UGeometryCacheComponent::GetTimeAtFrame(const int32 Frame) const
 	const float FrameTime = GetNumberOfFrames() > 1 ? Duration / (float)(GetNumberOfFrames() - 1) : 0.0f;
 	const int32 StartFrame = GeometryCache != nullptr ? GeometryCache->GetStartFrame() : 0;
 
-	return FMath::Clamp(FrameTime * (Frame - StartFrame), 0.0f, Duration);
+	return FMath::Clamp(FrameTime * static_cast<float>(Frame - StartFrame), 0.0f, Duration);
 }
 
 int32 UGeometryCacheComponent::GetNumberOfFrames() const

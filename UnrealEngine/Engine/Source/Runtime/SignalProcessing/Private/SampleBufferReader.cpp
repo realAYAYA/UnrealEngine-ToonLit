@@ -210,13 +210,10 @@ namespace Audio
 	bool FSampleBufferReader::Generate(float* OutAudioBuffer, const int32 NumFrames, const int32 OutChannels, const bool bInWrap)
 	{
 		// Don't have a buffer yet, so fill in zeros, say we're not done
+		const int32 NumSamples = NumFrames * OutChannels;
 		if (!HasBuffer() || bIsFinished)
 		{
-			int32 NumSamples = NumFrames * OutChannels;
-			for (int32 i = 0; i < NumSamples; ++i)
-			{
-				OutAudioBuffer[i] = 0.0f;
-			}
+			FMemory::Memzero(OutAudioBuffer, NumSamples * sizeof(float));
 			return false;
 		}	
 
@@ -346,6 +343,11 @@ namespace Audio
 			}
 		}
 #endif
+		if (OutSampleIndex < NumSamples)
+		{
+			FMemory::Memzero(&OutAudioBuffer[OutSampleIndex], (NumSamples - OutSampleIndex) * sizeof(float));
+		}
+
 		return bIsFinished;
 	}
 

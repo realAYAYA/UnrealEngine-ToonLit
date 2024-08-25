@@ -11,12 +11,11 @@
 class UMovieSceneSection;
 class UMovieSceneTrack;
 class ISequencerTrackEditor;
-struct FViewModelChildren;
 
-namespace UE
+namespace UE::Sequencer
 {
-namespace Sequencer
-{
+
+struct FViewModelChildren;
 
 class SEQUENCER_API ITrackExtension
 {
@@ -47,6 +46,5 @@ public:
 	virtual TSharedPtr<ISequencerTrackEditor> GetTrackEditor() const = 0;
 };
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 

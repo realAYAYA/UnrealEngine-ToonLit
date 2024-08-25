@@ -18,10 +18,7 @@
 
 DECLARE_DELEGATE_OneParam(FOnThreadStuck, uint32);
 DECLARE_DELEGATE_OneParam(FOnThreadUnstuck, uint32);
-
-#if !UE_BUILD_SHIPPING
 DECLARE_DELEGATE_OneParam(FOnHangDelegate, uint32);
-#endif
 
 /**
  * Our own local clock.
@@ -146,9 +143,7 @@ class FThreadHeartBeat : public FRunnable
 
 	FOnThreadStuck OnStuck;
 	FOnThreadUnstuck OnUnstuck;
-#if !UE_BUILD_SHIPPING
 	FOnHangDelegate OnHangDelegate;
-#endif
 
 	CORE_API FThreadHeartBeat();
 	CORE_API virtual ~FThreadHeartBeat();
@@ -246,11 +241,8 @@ public:
 	/*
 	* Get delegate for callback on hang.
 	* Delegate implementation will be called from the hang detector thread and not from the hung thread
-	* Disabled in shipping build
 	*/
-#if !UE_BUILD_SHIPPING
 	FOnHangDelegate& GetOnHangDelegate() { return OnHangDelegate; }
-#endif
 
 	/*
 	*  Get hang duration threshold.
@@ -348,6 +340,7 @@ class FGameThreadHitchHeartBeatThreaded : public FRunnable
 	double FirstStartTime;
 	double FrameStartTime;
 	int32 SuspendedCount;
+	bool bStartSuspended = false;
 
 #if WALK_STACK_ON_HITCH_DETECTED
 #if LOOKUP_SYMBOLS_IN_HITCH_STACK_WALK
@@ -396,6 +389,11 @@ public:
 	* Resume heartbeat hitch detection. Call only after first calling SuspendHeartBeat.
 	*/
 	CORE_API void ResumeHeartBeat();
+	
+	/**
+	* Check if started suspended.
+	*/
+	CORE_API bool IsStartedSuspended();
 
 	// No-op, used in FUnixSignalGameHitchHeartBeat
 	void Restart() {}

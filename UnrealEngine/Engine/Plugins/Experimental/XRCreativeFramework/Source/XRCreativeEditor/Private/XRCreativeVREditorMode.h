@@ -70,8 +70,6 @@ protected:
 	void InvalidSettingNotification(const FText& ErrorDetails);
 
 protected:
-	UPROPERTY(EditDefaultsOnly, Category="XR Creative", meta=(AllowedClasses="/Script/EnhancedInput.PlayerMappableInputConfig"))
-	FSoftObjectPath MappableInputConfig;
 
 	UPROPERTY(EditDefaultsOnly, Category="XR Creative")
 	TSoftObjectPtr<UXRCreativeToolset> ToolsetClass;

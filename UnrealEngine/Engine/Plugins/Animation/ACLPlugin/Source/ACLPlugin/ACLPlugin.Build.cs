@@ -13,11 +13,12 @@ namespace UnrealBuildTool.Rules
 
             string ACLSDKDir = Path.GetFullPath(Path.Combine(ModuleDirectory, "../ThirdParty"));
 
-			// Remove when this plugin can compile with cpp20
+			// Replace with PCHUsageMode.UseExplicitOrSharedPCHs when this plugin can compile with cpp20
 			PCHUsage = PCHUsageMode.NoPCHs;
 
-			PublicIncludePaths.Add(Path.Combine(ACLSDKDir, "acl/includes"));
-			PublicIncludePaths.Add(Path.Combine(ACLSDKDir, "acl/external/rtm/includes"));
+			PublicSystemIncludePaths.Add(Path.Combine(ACLSDKDir, "acl/includes"));
+			PublicSystemIncludePaths.Add(Path.Combine(ACLSDKDir, "acl/external/rtm/includes"));
+			PublicSystemIncludePaths.Add(Path.Combine(ACLSDKDir, "acl/external/sjson-cpp/includes"));
 
 			PublicDependencyModuleNames.Add("Core");
 			PublicDependencyModuleNames.Add("CoreUObject");
@@ -27,8 +28,6 @@ namespace UnrealBuildTool.Rules
 			{
 				PrivateDependencyModuleNames.Add("DesktopPlatform");
 				PrivateDependencyModuleNames.Add("UnrealEd");
-
-				PublicIncludePaths.Add(Path.Combine(ACLSDKDir, "acl/external/sjson-cpp/includes"));
 			}
 
 			if (Target.Platform == UnrealTargetPlatform.Linux)

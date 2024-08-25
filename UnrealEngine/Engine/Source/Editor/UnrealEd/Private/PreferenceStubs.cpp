@@ -43,6 +43,7 @@ UPhysicsAssetEditorOptions::UPhysicsAssetEditorOptions(const FObjectInitializer&
 	InterpolationSpeed = 50.f;
 
 	bShowConstraintsAsPoints = false;
+	bDrawViolatedLimits = false;
 	bSimulationFloorCollisionEnabled = true;
 	ConstraintDrawSize = 1.0f;
 
@@ -75,7 +76,18 @@ UMaterialStatsOptions::UMaterialStatsOptions(const FObjectInitializer& ObjectIni
 		bPlatformUsed[CurrentlyUsedSP] = 1;
 	}
 
+	// enable a mobile platform by default so we can check if shaders are compiling for mobile
+#if PLATFORM_WINDOWS
+	bPlatformUsed[SP_PCD3D_ES3_1] = 1;
+#elif PLATFORM_MAC
+	bPlatformUsed[SP_METAL] = 1;
+#elif PLATFORM_LINUX
+	bPlatformUsed[SP_VULKAN_PCES3_1] = 1;
+#endif
+
 	bMaterialQualityUsed[EMaterialQualityLevel::High] = 1;
+
+	MaterialStatsDerivedMIOption = EMaterialStatsDerivedMIOption::Ignore;
 }
 
 UAnimationBlueprintEditorOptions::UAnimationBlueprintEditorOptions(const FObjectInitializer& ObjectInitializer)
@@ -139,8 +151,6 @@ UPersonaOptions::UPersonaOptions(const FObjectInitializer& ObjectInitializer)
 
 	NumFolderFiltersInAssetBrowser = 2;
 
-	bUseAudioAttenuation = true;
-
 	CurveEditorSnapInterval = 0.01f;
 
 	// Default to millisecond resolution
@@ -192,12 +202,6 @@ void UPersonaOptions::SetAutoAlignFloorToMesh(bool bInAutoAlignFloorToMesh)
 void UPersonaOptions::SetMuteAudio( bool bInMuteAudio )
 {
 	bMuteAudio = bInMuteAudio;
-	SaveConfig();
-}
-
-void UPersonaOptions::SetUseAudioAttenuation( bool bInUseAudioAttenuation )
-{
-	bUseAudioAttenuation = bInUseAudioAttenuation;
 	SaveConfig();
 }
 

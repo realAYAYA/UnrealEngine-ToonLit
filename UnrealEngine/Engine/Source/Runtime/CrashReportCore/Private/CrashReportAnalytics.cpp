@@ -12,11 +12,21 @@ bool FCrashReportAnalytics::bIsInitialized;
 TSharedPtr<IAnalyticsProviderET> FCrashReportAnalytics::Analytics;
 
 /**
- * Default config func that essentially tells the crash reporter to disable analytics.
+ * Default config func that essentially tells the crash reporter to disable analytics, unless
+ * environment variables are set.
  */
 FAnalyticsET::Config DefaultAnalyticsConfigFunc()
 {
-	return FAnalyticsET::Config();
+	FAnalyticsET::Config Config = FAnalyticsET::Config();
+	// Check environment for settings. Both url and key needs to be set.
+	FString Url = FPlatformMisc::GetEnvironmentVariable(TEXT("UE_CRC_TELEMETRY_URL"));
+	FString Key = FPlatformMisc::GetEnvironmentVariable(TEXT("UE_CRC_TELEMETRY_KEY"));
+	if (!Url.IsEmpty() && !Key.IsEmpty())
+	{
+		Config.APIServerET = Url;
+		Config.APIKeyET = Key;
+	}
+	return Config;
 }
 
 /**
@@ -44,22 +54,12 @@ void FCrashReportAnalytics::Initialize(const FString& EpicAccountId)
 	checkf(!bIsInitialized, TEXT("FCrashReportAnalytics::Initialize called more than once."));
 
 	// Allow build machines to force CRC to enable internal telemetry.
-	#if defined(CRC_TELEMETRY_URL) && defined(CRC_TELEMETRY_KEY_DEV) && defined(CRC_TELEMETRY_KEY_RELEASE)
-
-		// We always use the "Release" analytics account unless we're running in analytics test mode (usually with
-		// a command-line parameter), or we're an internal Epic build
-		bool bUseReleaseAccount =
-			(GetAnalyticsBuildType() == EAnalyticsBuildType::Development || GetAnalyticsBuildType() == EAnalyticsBuildType::Release) &&
-			!FEngineBuildSettings::IsInternalBuild();	// Internal Epic build
-
+	#if defined(CRC_TELEMETRY_URL) && defined(CRC_TELEMETRY_KEY) 
 		FAnalyticsET::Config Config;
 		Config.APIServerET = TEXT(CRC_TELEMETRY_URL);
-		Config.APIKeyET = bUseReleaseAccount ? TEXT(CRC_TELEMETRY_KEY_RELEASE) : TEXT(CRC_TELEMETRY_KEY_DEV);
-
+		Config.APIKeyET = TEXT(CRC_TELEMETRY_KEY);
 	#else
-
 		FAnalyticsET::Config Config = GetCrashReportAnalyticsConfigFunc()();
-
 	#endif
 
 	if (!Config.APIServerET.IsEmpty())

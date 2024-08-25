@@ -1,8 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NiagaraCompiler.h"
+
+#include "DataDrivenShaderPlatformInfo.h"
 #include "EdGraphSchema_Niagara.h"
 #include "EdGraphUtilities.h"
+#include "Interfaces/IShaderFormat.h"
 #include "INiagaraEditorTypeUtilities.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PathViews.h"
@@ -30,7 +33,7 @@
 #include "Serialization/MemoryReader.h"
 #include "ShaderCompiler.h"
 #include "ShaderCore.h"
-#include "ShaderFormatVectorVM.h"
+#include "VectorVMTestCompile.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraCompiler"
 
@@ -250,7 +253,7 @@ void FNiagaraCompileRequestDuplicateData::DuplicateReferencedGraphsRecursive(UNi
 					{
 						EmitterNode->SyncEnabledState(); // Just to be safe, sync here while we likely still have the handle source.
 						EmitterNode->SetOwnerSystem(nullptr);
-						EmitterNode->SetCachedVariablesForCompilation(*Ptr->EmitterUniqueName, Ptr->NodeGraphDeepCopy.Get(), Ptr->SourceDeepCopy.Get());
+						EmitterNode->SetCachedVariablesForCompilation(*Ptr->EmitterUniqueName, Ptr->EmitterID, Ptr->NodeGraphDeepCopy.Get(), Ptr->SourceDeepCopy.Get());
 					}
 				}
 			}
@@ -656,8 +659,6 @@ void FNiagaraCompileRequestData::FinishPrecompile(const TArray<FNiagaraVariable>
 				Builder.BuildParameterMaps(FoundOutputNode, true);
 				Builder.EndUsage();
 
-				ensure(Builder.Histories.Num() <= 1);
-
 				int HistoryIdx = 0;
 				for (FNiagaraParameterMapHistory& History : Builder.Histories)
 				{
@@ -896,8 +897,6 @@ void FNiagaraCompileRequestDuplicateData::FinishPrecompileDuplicate(const TArray
 			Builder.BuildParameterMaps(FoundOutputNode, true);
 			Builder.EndUsage();
 
-			ensure(Builder.Histories.Num() <= 1);
-
 			for (FNiagaraParameterMapHistory& History : Builder.Histories)
 			{
 				History.OriginatingScriptUsage = FoundOutputNode->GetUsage();
@@ -1027,12 +1026,13 @@ TSharedPtr<FNiagaraCompileRequestDataBase, ESPMode::ThreadSafe> FNiagaraEditorMo
 		{
 			const FNiagaraEmitterHandle& Handle = System->GetEmitterHandle(i);
 			TSharedPtr<FNiagaraCompileRequestData, ESPMode::ThreadSafe> EmitterPtr = MakeShared<FNiagaraCompileRequestData, ESPMode::ThreadSafe>();
-			EmitterPtr->EmitterUniqueName = Handle.GetInstance().Emitter->GetUniqueEmitterName();
+			EmitterPtr->EmitterUniqueName = Handle.GetUniqueInstanceName();
+			EmitterPtr->EmitterID = FNiagaraEmitterID(i);
 			EmitterPtr->SourceName = BasePtr->SourceName;
-			EmitterPtr->Source = Cast<UNiagaraScriptSource>(Handle.GetEmitterData()->GraphSource);
+			//-TODO:Stateless: We need to handle the stateless path here
+			EmitterPtr->Source = Handle.GetEmitterData() ? Cast<UNiagaraScriptSource>(Handle.GetEmitterData()->GraphSource) : nullptr;
 			EmitterPtr->bUseRapidIterationParams = BasePtr->bUseRapidIterationParams;
 			EmitterPtr->bDisableDebugSwitches = BasePtr->bDisableDebugSwitches;
-			//EmitterPtr->bSimulationStagesEnabled = Handle.GetInstance()->bSimulationStagesEnabled;
 			EmitterPtr->SharedCompileDataInterfaceData = BasePtr->SharedCompileDataInterfaceData;
 			BasePtr->EmitterData.Add(EmitterPtr);
 			EmitterNames.Add(Handle.GetUniqueInstanceName());
@@ -1064,7 +1064,7 @@ TSharedPtr<FNiagaraCompileRequestDataBase, ESPMode::ThreadSafe> FNiagaraEditorMo
 		{
 			const FNiagaraEmitterHandle& Handle = System->GetEmitterHandle(i);
 			FCompileConstantResolver ConstantResolver(Handle.GetInstance(), ENiagaraScriptUsage::EmitterSpawnScript);
-			if (Handle.GetIsEnabled()) // Don't pull in the emitter if it isn't going to be used.
+			if (Handle.GetIsEnabled() && Handle.GetEmitterData()) // Don't pull in the emitter if it isn't going to be used.
 			{
 				TSharedPtr<FNiagaraGraphCachedDataBase, ESPMode::ThreadSafe> CachedTraversalEmitterData = Handle.GetInstance().Emitter->GetCachedTraversalData(Handle.GetInstance().Version);
 				TArray<FNiagaraVariable> StaticVariablesFromEmitter = StaticVariablesFromSystem;
@@ -1197,7 +1197,7 @@ TSharedPtr<FNiagaraCompileRequestDataBase, ESPMode::ThreadSafe> FNiagaraEditorMo
 			{
 				const FNiagaraEmitterHandle& Handle = System->GetEmitterHandle(i);
 				FCompileConstantResolver ConstantResolver(Handle.GetInstance(), ENiagaraScriptUsage::EmitterSpawnScript);
-				if (Handle.GetIsEnabled()) // Don't pull in the emitter if it isn't going to be used.
+				if (Handle.GetIsEnabled() && Handle.GetEmitterData()) // Don't pull in the emitter if it isn't going to be used.
 				{
 					TArray<UNiagaraScript*> EmitterScripts;
 					Handle.GetEmitterData()->GetScripts(EmitterScripts, false);
@@ -1352,13 +1352,14 @@ TSharedPtr<FNiagaraCompileRequestDuplicateDataBase, ESPMode::ThreadSafe> FNiagar
 		{
 			const FNiagaraEmitterHandle& Handle = OwningSystem->GetEmitterHandle(i);
 			TSharedPtr<FNiagaraCompileRequestDuplicateData, ESPMode::ThreadSafe> EmitterPtr = MakeShared<FNiagaraCompileRequestDuplicateData, ESPMode::ThreadSafe>();
-			EmitterPtr->EmitterUniqueName = Handle.GetInstance().Emitter->GetUniqueEmitterName();
+			EmitterPtr->EmitterUniqueName = Handle.GetUniqueInstanceName();
+			EmitterPtr->EmitterID = FNiagaraEmitterID(i);
 			EmitterPtr->ValidUsages = BasePtr->ValidUsages;
 			EmitterPtr->SharedSourceGraphToDuplicatedGraphsMap = BasePtr->SharedSourceGraphToDuplicatedGraphsMap;
 			EmitterPtr->SharedNameToDuplicatedDataInterfaceMap = BasePtr->SharedNameToDuplicatedDataInterfaceMap;
 			EmitterPtr->SharedDataInterfaceClassToDuplicatedCDOMap = BasePtr->SharedDataInterfaceClassToDuplicatedCDOMap;
 			//EmitterPtr->bSimulationStagesEnabled = Handle.GetInstance()->bSimulationStagesEnabled;
-			if (Handle.GetIsEnabled() && (OwningEmitter == nullptr || OwningEmitter == Handle.GetInstance().Emitter)) // Don't need to copy the graph if we aren't going to use it.
+			if (Handle.GetIsEnabled() && Handle.GetInstance().Emitter && (OwningEmitter == nullptr || OwningEmitter == Handle.GetInstance().Emitter)) // Don't need to copy the graph if we aren't going to use it.
 			{
 				EmitterPtr->DeepCopyGraphs(Handle.GetInstance());
 			}
@@ -1390,11 +1391,10 @@ TSharedPtr<FNiagaraCompileRequestDuplicateDataBase, ESPMode::ThreadSafe> FNiagar
 		{
 			const FNiagaraEmitterHandle& Handle = OwningSystem->GetEmitterHandle(i);
 
-
 			TArray<FNiagaraVariable> EncounterableEmitterVariables;
 			OwningSystemRequestData->GetDependentRequest(i)->GatherPreCompiledVariables(FString(), EncounterableEmitterVariables);
 
-			if (Handle.GetIsEnabled() && (OwningEmitter == nullptr || OwningEmitter == Handle.GetInstance().Emitter))
+			if (Handle.GetIsEnabled() && Handle.GetInstance().Emitter && (OwningEmitter == nullptr || OwningEmitter == Handle.GetInstance().Emitter))
 			{
 				TSharedPtr<FNiagaraGraphCachedDataBase, ESPMode::ThreadSafe> CachedTraversalEmitterData = Handle.GetInstance().Emitter->GetCachedTraversalData(Handle.GetInstance().Version);
 				TArray<FNiagaraVariable> StaticVariablesFromEmitter = StaticVariablesFromSystem;
@@ -1704,10 +1704,9 @@ void FNiagaraEditorModule::TestCompileScriptFromConsole(const TArray<FString>& A
 			Input.Environment.SetDefine(TEXT("AMPLIFICATIONSHADER"), 0);
 			Input.Environment.IncludeVirtualPathToContentsMap.Add(TEXT("/Engine/Generated/NiagaraEmitterInstance.ush"), TranslatedHLSL);
 
-			FShaderCompilerOutput Output;
 			FVectorVMCompilationOutput CompilationOutput;
 			double StartTime = FPlatformTime::Seconds();
-			bool bSucceeded = CompileShader_VectorVM(Input, Output, FString(FPlatformProcess::ShaderDir()), 0, CompilationOutput, GNiagaraSkipVectorVMBackendOptimizations != 0);
+			bool bSucceeded = TestCompileVectorVMShader(Input, FString(FPlatformProcess::ShaderDir()), CompilationOutput, GNiagaraSkipVectorVMBackendOptimizations != 0);
 			float DeltaTime = (float)(FPlatformTime::Seconds() - StartTime);
 
 			if (bSucceeded)
@@ -1810,6 +1809,11 @@ int32 FHlslNiagaraCompiler::CompileScript(const FStringView GroupName, const FNi
 	Input.DebugExtension.Empty();
 	Input.DumpDebugInfoPath.Empty();
 
+	FName VVMFormatName = FName(TEXT("VVM_1_0"));
+	//TODO: This is normally invoked by GlobalBeginCompileShader, which is not called in this path. Should it be?
+	const IShaderFormat* VVMShaderFormat = GetTargetPlatformManagerRef().FindShaderFormat(VVMFormatName);
+	VVMShaderFormat->ModifyShaderCompilerInput(Input);
+
 	if (GShaderCompilingManager->GetDumpShaderDebugInfo() == FShaderCompilingManager::EDumpShaderDebugInfo::Always)
 	{
 		Input.DumpDebugInfoPath = GShaderCompilingManager->CreateShaderDebugInfoPath(Input);
@@ -1880,7 +1884,7 @@ int32 FHlslNiagaraCompiler::CompileScript(const FStringView GroupName, const FNi
 			{
 				TArray<FShaderCommonCompileJobPtr> NewJobs;
 				CompilationJob->ShaderCompileJob = Job;
-				Input.ShaderFormat = FName(TEXT("VVM_1_0"));
+				Input.ShaderFormat = VVMFormatName;
 				if (GNiagaraSkipVectorVMBackendOptimizations != 0)
 				{
 					Input.Environment.CompilerFlags.Add(CFLAG_SkipOptimizations);
@@ -1908,6 +1912,152 @@ int32 FHlslNiagaraCompiler::CompileScript(const FStringView GroupName, const FNi
 	}
 	CompilationJob->CompileResults = CompileResults;
 
+	return JobID;
+}
+
+uint32 FHlslNiagaraCompiler::CompileScriptVM(const FStringView GroupName, const FNiagaraCompileOptions& InOptions, const FNiagaraTranslateResults& InTranslateResults, const FNiagaraTranslatorOutput& TranslatorOutput, const FString& TranslatedHLSL, FNiagaraShaderType* NiagaraShaderType)
+{
+	check(!InOptions.IsGpuScript() || !UNiagaraScript::IsParticleScript(InOptions.TargetUsage));
+
+	CompileResults.Data = MakeShared<FNiagaraVMExecutableData>();
+
+	CompileResults.bVMSucceeded = (TranslatorOutput.Errors.Len() == 0) && (TranslatedHLSL.Len() > 0) && !InTranslateResults.NumErrors;
+	CompileResults.AppendCompileEvents(MakeArrayView(InTranslateResults.CompileEvents));
+	CompileResults.Data->LastCompileEvents.Append(InTranslateResults.CompileEvents);
+	CompileResults.Data->ExternalDependencies = InTranslateResults.CompileDependencies;
+	CompileResults.Data->CompileTags = InTranslateResults.CompileTags;
+	CompileResults.Data->CompileTagsEditorOnly = InTranslateResults.CompileTagsEditorOnly;
+	CompileResults.Data->LastHlslTranslation = TranslatedHLSL;
+	CompileResults.DumpDebugInfoPath.Reset();
+
+	CompilationJob = MakeUnique<FNiagaraCompilerJob>();
+	CompilationJob->TranslatorOutput = TranslatorOutput;
+	CompilationJob->TranslatorOutput.ScriptData.LastHlslTranslation = TranslatedHLSL;
+	CompilationJob->TranslatorOutput.ScriptData.ExternalDependencies = InTranslateResults.CompileDependencies;
+	CompilationJob->TranslatorOutput.ScriptData.CompileTags = InTranslateResults.CompileTags;
+	CompilationJob->TranslatorOutput.ScriptData.CompileTagsEditorOnly = InTranslateResults.CompileTagsEditorOnly;
+	CompilationJob->StartTime = FPlatformTime::Seconds();
+	CompilationJob->CompileResults = CompileResults;
+
+	if (CompileResults.bVMSucceeded && NiagaraShaderType)
+	{
+		const uint32 JobID = FShaderCommonCompileJob::GetNextJobId();
+		TRefCountPtr<FShaderCompileJob> Job = GShaderCompilingManager->PrepareShaderCompileJob(JobID, FShaderCompileJobKey(NiagaraShaderType), EShaderCompileJobPriority::Normal);
+		if (Job)
+		{
+			Job->Input.Target = FShaderTarget(SF_Compute, SP_PCD3D_SM5);
+			Job->Input.VirtualSourceFilePath = TEXT("/Plugin/FX/Niagara/Private/NiagaraEmitterInstanceShader.usf");
+			Job->Input.EntryPointName = TEXT("SimulateMain");
+			Job->Input.Environment.SetDefine(TEXT("VM_SIMULATION"), 1);
+			Job->Input.Environment.SetDefine(TEXT("COMPUTESHADER"), 1);
+			Job->Input.Environment.SetDefine(TEXT("PIXELSHADER"), 0);
+			Job->Input.Environment.SetDefine(TEXT("DOMAINSHADER"), 0);
+			Job->Input.Environment.SetDefine(TEXT("HULLSHADER"), 0);
+			Job->Input.Environment.SetDefine(TEXT("VERTEXSHADER"), 0);
+			Job->Input.Environment.SetDefine(TEXT("GEOMETRYSHADER"), 0);
+			Job->Input.Environment.SetDefine(TEXT("MESHSHADER"), 0);
+			Job->Input.Environment.SetDefine(TEXT("AMPLIFICATIONSHADER"), 0);
+			Job->Input.Environment.IncludeVirtualPathToContentsMap.Add(TEXT("/Engine/Generated/NiagaraEmitterInstance.ush"), TranslatedHLSL);
+			Job->Input.DebugInfoFlags = GShaderCompilingManager->GetDumpShaderDebugInfoFlags();
+			Job->Input.DumpDebugInfoRootPath = GShaderCompilingManager->GetAbsoluteShaderDebugInfoDirectory() / TEXT("VM");
+			Job->Input.DumpDebugInfoPath = CompileResults.DumpDebugInfoPath;
+			Job->Input.DebugGroupName = GroupName;
+			Job->Input.DebugExtension.Empty();
+			Job->Input.ShaderFormat = FName(TEXT("VVM_1_0"));
+
+			//TODO: This is normally invoked by GlobalBeginCompileShader, which is not called in this path. Should it be?
+			if (const IShaderFormat* VVMShaderFormat = GetTargetPlatformManagerRef().FindShaderFormat(Job->Input.ShaderFormat))
+			{
+				VVMShaderFormat->ModifyShaderCompilerInput(Job->Input);
+			}
+
+			if (GNiagaraSkipVectorVMBackendOptimizations != 0)
+			{
+				Job->Input.Environment.CompilerFlags.Add(CFLAG_SkipOptimizations);
+			}
+
+			if (GShaderCompilingManager->GetDumpShaderDebugInfo() == FShaderCompilingManager::EDumpShaderDebugInfo::Always)
+			{
+				Job->Input.DumpDebugInfoPath = GShaderCompilingManager->CreateShaderDebugInfoPath(Job->Input);
+				CompileResults.DumpDebugInfoPath = Job->Input.DumpDebugInfoPath;
+			}
+
+			CompilationJob->ShaderCompileJob = Job;
+
+			TArray<FShaderCommonCompileJobPtr> NewJobs;
+			NewJobs.Emplace(Job);
+
+			GShaderCompilingManager->SubmitJobs(NewJobs, FString(), FString());
+
+			return JobID;
+		}
+	}
+
+	return INDEX_NONE;
+}
+
+int32 FHlslNiagaraCompiler::CreateShaderIntermediateData(const FStringView GroupName, const FNiagaraCompileOptions& InOptions, const FNiagaraTranslateResults& InTranslateResults, const FNiagaraTranslatorOutput& TranslatorOutput, const FString& TranslatedHLSL)
+{
+	check(InOptions.IsGpuScript() && UNiagaraScript::IsParticleScript(InOptions.TargetUsage));
+
+	CompileResults.Data = MakeShared<FNiagaraVMExecutableData>();
+
+	//TODO: This should probably be done via the same route that other shaders take through the shader compiler etc.
+	//But that adds the complexity of a new shader type, new shader class and a new shader map to contain them etc.
+	//Can do things simply for now.
+
+	CompileResults.Data->LastHlslTranslation = TEXT("");
+
+	FShaderCompilerInput Input;
+	Input.Target = FShaderTarget(SF_Compute, SP_PCD3D_SM5);
+	Input.VirtualSourceFilePath = TEXT("/Plugin/FX/Niagara/Private/NiagaraEmitterInstanceShader.usf");
+	Input.EntryPointName = TEXT("SimulateMain");
+	Input.Environment.SetDefine(TEXT("VM_SIMULATION"), 1);
+	Input.Environment.SetDefine(TEXT("COMPUTESHADER"), 1);
+	Input.Environment.SetDefine(TEXT("PIXELSHADER"), 0);
+	Input.Environment.SetDefine(TEXT("DOMAINSHADER"), 0);
+	Input.Environment.SetDefine(TEXT("HULLSHADER"), 0);
+	Input.Environment.SetDefine(TEXT("VERTEXSHADER"), 0);
+	Input.Environment.SetDefine(TEXT("GEOMETRYSHADER"), 0);
+	Input.Environment.SetDefine(TEXT("MESHSHADER"), 0);
+	Input.Environment.SetDefine(TEXT("AMPLIFICATIONSHADER"), 0);
+	Input.Environment.IncludeVirtualPathToContentsMap.Add(TEXT("/Engine/Generated/NiagaraEmitterInstance.ush"), TranslatedHLSL);
+	Input.DebugInfoFlags = GShaderCompilingManager->GetDumpShaderDebugInfoFlags();
+	Input.DumpDebugInfoRootPath = GShaderCompilingManager->GetAbsoluteShaderDebugInfoDirectory() / TEXT("VM");
+	Input.DebugGroupName = GroupName;
+	Input.DebugExtension.Empty();
+	Input.DumpDebugInfoPath.Empty();
+
+	CompileResults.DumpDebugInfoPath = Input.DumpDebugInfoPath;
+
+	uint32 JobID = FShaderCommonCompileJob::GetNextJobId();
+	CompilationJob = MakeUnique<FNiagaraCompilerJob>();
+	CompilationJob->TranslatorOutput = TranslatorOutput;
+
+	CompileResults.bVMSucceeded = (CompilationJob->TranslatorOutput.Errors.Len() == 0) && (TranslatedHLSL.Len() > 0) && !InTranslateResults.NumErrors;
+
+	// only issue jobs for VM compilation if we're going to be using the resulting byte code.  This excludes particle scripts when we're using
+	// a GPU simulation
+	CompileResults.bComputeSucceeded = false;
+	if (CompileResults.bVMSucceeded)
+	{
+		//Clear out current contents of compile results.
+		*(CompileResults.Data) = CompilationJob->TranslatorOutput.ScriptData;
+		CompileResults.Data->ByteCode.Reset();
+		CompileResults.bComputeSucceeded = true;
+	}
+
+	CompileResults.AppendCompileEvents(MakeArrayView(InTranslateResults.CompileEvents));
+	CompileResults.Data->LastCompileEvents.Append(InTranslateResults.CompileEvents);
+	CompileResults.Data->ExternalDependencies = InTranslateResults.CompileDependencies;
+	CompileResults.Data->CompileTags = InTranslateResults.CompileTags;
+	CompileResults.Data->CompileTagsEditorOnly = InTranslateResults.CompileTagsEditorOnly;
+
+	// Early out if compiling a GPU particle script as we do not need to submit a CPU compile request.
+	// This must be done after we add in the translator errors etc so tha they are passed to the compile job correctly.
+	CompileResults.Data->LastHlslTranslationGPU = TranslatedHLSL;
+	DumpDebugInfo(CompileResults, Input, true);
+	CompilationJob->CompileResults = CompileResults;
 	return JobID;
 }
 
@@ -2081,6 +2231,11 @@ TOptional<FNiagaraCompileResults> FHlslNiagaraCompiler::GetCompileResult(int32 J
 		Ar.SetLimitSize(ShaderCode.GetActualShaderCodeSize());
 		Ar << CompilationOutput;
 
+		if (!CompilationOutput.Errors.IsEmpty())
+		{
+			Warning(FText::Format(LOCTEXT("VectorVMCompileWarningMessageFormat", "The Vector VM compile generated warnings:\n{0}"), FText::FromString(CompilationOutput.Errors)));
+		}
+
 		Results.bVMSucceeded = true;
 	}
 	else if (CompilationJob->ShaderCompileJob->Output.Errors.Num() > 0)
@@ -2122,6 +2277,7 @@ TOptional<FNiagaraCompileResults> FHlslNiagaraCompiler::GetCompileResult(int32 J
 		}
 
 		Results.Data->InternalParameters.Empty();
+		bool bAllFloatsFinite = true;
 		for (int32 i = 0; i < CompilationOutput.InternalConstantOffsets.Num(); ++i)
 		{
 			const FName ConstantName(TEXT("InternalConstant"), i);
@@ -2133,6 +2289,7 @@ TOptional<FNiagaraCompileResults> FHlslNiagaraCompiler::GetCompileResult(int32 J
 			{
 				float Val = *(float*)(CompilationOutput.InternalConstantData.GetData() + Offset);
 				Results.Data->InternalParameters.SetOrAdd(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), ConstantName))->SetValue(Val);
+				bAllFloatsFinite &= FMath::IsFinite(Val);
 			}
 			break;
 			case EVectorVMBaseTypes::Int:
@@ -2148,6 +2305,11 @@ TOptional<FNiagaraCompileResults> FHlslNiagaraCompiler::GetCompileResult(int32 J
 			}
 			break;
 			}
+		}
+
+		if (!bAllFloatsFinite)
+		{
+			Warning(LOCTEXT("FloatConstantsNanOrInf", "Float constant table contains NaN or Inf, this may result in invalid simulation results."));
 		}
 
 		Results.CompilerWallTime = (float)(FPlatformTime::Seconds() - CompilationJob->StartTime);
@@ -2243,6 +2405,141 @@ void FHlslNiagaraCompiler::Warning(FText WarningText)
 	CompileResults.Data->LastCompileEvents.Add(FNiagaraCompileEvent(FNiagaraCompileEventSeverity::Warning, WarnString));
 	CompileResults.CompileEvents.Add(FNiagaraCompileEvent(FNiagaraCompileEventSeverity::Warning, WarnString));
 	CompileResults.NumWarnings++;
+}
+
+FNiagaraShaderMapCompiler::FNiagaraShaderMapCompiler(
+	const FNiagaraShaderType* InShaderType,
+	TSharedPtr<FNiagaraShaderScriptParametersMetadata> InShaderParameters)
+	: ShaderType(InShaderType)
+	, ShaderParameters(InShaderParameters)
+{
+}
+
+void FNiagaraShaderMapCompiler::AddShaderPlatform(const FNiagaraShaderMapId& ShaderMapId, EShaderPlatform ShaderPlatform)
+{
+	FActiveCompilation& ActiveCompilation = ActiveCompilations.AddDefaulted_GetRef();
+	ActiveCompilation.ShaderMapId = ShaderMapId;
+	ActiveCompilation.ShaderPlatform = ShaderPlatform;
+	ActiveCompilation.ShaderMap = new FNiagaraShaderMap(FNiagaraShaderMap::WorkerThread);
+}
+
+void FNiagaraShaderMapCompiler::CompileScript(
+	const FNiagaraVMExecutableDataId& ScriptCompileId,
+	const FStringView SourceName,
+	const FStringView DebugGroupName,
+	const FNiagaraCompileOptions& CompileOptions,
+	const FNiagaraTranslateResults& TranslateResults,
+	const FNiagaraTranslatorOutput& TranslatorOutput,
+	const FString& TranslatedHLSL)
+{
+	TArray<TRefCountPtr<FShaderCommonCompileJob>> CompileJobs;
+
+	for (FActiveCompilation& ActiveCompilation : ActiveCompilations)
+	{
+		TRefCountPtr<FSharedShaderCompilerEnvironment> CompilationEnvironment = new FSharedShaderCompilerEnvironment();
+		CompilationEnvironment->SetDefine(TEXT("GPU_SIMULATION_SHADER"), TEXT("1"));
+		CompilationEnvironment->SetDefine(TEXT("NIAGARA_COMPRESSED_ATTRIBUTES_ENABLED"),
+			ScriptCompileId.AdditionalDefines.Contains(TEXT("CompressAttributes")) ? 1 : 0);
+
+		// Fast math breaks The ExecGrid layout script because floor(x/y) returns a bad value if x == y. Yay.
+		if (IsMetalPlatform(ActiveCompilation.ShaderPlatform))
+		{
+			CompilationEnvironment->CompilerFlags.Add(CFLAG_NoFastMath);
+		}
+
+		ActiveCompilation.ShaderMap->CreateCompileJobs(
+			ShaderType,
+			DebugGroupName,
+			ActiveCompilation.ShaderMapId,
+			TranslatedHLSL,
+			CompilationEnvironment,
+			TranslatorOutput.ScriptData.SimulationStageMetaData,
+			TranslatorOutput.ScriptData.SimulationStageMetaData.Num(),
+			ActiveCompilation.ShaderPlatform,
+			ShaderParameters,
+			ActiveCompilation.ShaderCompileJobs
+		);
+
+		CompileJobs.Append(ActiveCompilation.ShaderCompileJobs);
+	}
+
+	// we also need to populate the ExeData for the script based on the translator results.  This handles all the meta data of the script.
+	ScriptExeData = MakeShared<FNiagaraVMExecutableData>(TranslatorOutput.ScriptData);
+	ScriptExeData->LastCompileEvents.Append(TranslateResults.CompileEvents);
+	ScriptExeData->ExternalDependencies = TranslateResults.CompileDependencies;
+	ScriptExeData->CompileTags = TranslateResults.CompileTags;
+	ScriptExeData->CompileTagsEditorOnly = TranslateResults.CompileTagsEditorOnly;
+	ScriptExeData->LastHlslTranslationGPU = TranslatedHLSL;
+
+	GShaderCompilingManager->SubmitJobs(CompileJobs, FString(SourceName));
+}
+
+bool FNiagaraShaderMapCompiler::ProcessCompileResults(bool bWait)
+{
+	check(!bWait); // not currently implemented
+	check(IsInGameThread());
+
+	for (TArray<FActiveCompilation>::TIterator CompileIt = ActiveCompilations.CreateIterator(); CompileIt; ++CompileIt)
+	{
+		// make sure that all of the shader compile jobs have been released and finalized
+		const bool bReadyToProcess = !CompileIt->ShaderCompileJobs.ContainsByPredicate([](const FShaderCommonCompileJobPtr& CompileJob) -> bool
+		{
+			return !CompileJob->bReleased || !CompileJob->bFinalized;
+		});
+
+		if (!bReadyToProcess)
+		{
+			// todo - it might be worth keeping track of jobs that aren't getting handled because of the above
+			// condition.  Either it's taking a long time and so it could be worth reporting, or because the
+			// job is lost and we'll never complete.
+			continue;
+		}
+
+		FActiveCompilation& CurrentCompilation = *CompileIt;
+		FCompletedCompilation& CompletedCompilation = CompletedCompilations.AddDefaulted_GetRef();
+
+		// for now we'll process all shaders at once (need to measure the cost here)
+		for (const FShaderCommonCompileJobPtr& ShaderCompileJob : CurrentCompilation.ShaderCompileJobs)
+		{
+			if (ShaderCompileJob.IsValid() && ShaderCompileJob->bSucceeded)
+			{
+				CurrentCompilation.ShaderMap->ProcessAndFinalizeShaderCompileJob(ShaderCompileJob);
+			}
+			else
+			{
+				CurrentCompilation.ShaderMap->SetCompiledSuccessfully(false);
+			}
+
+			// pass on error/warning info
+			if (const FShaderCompileJob* SingleShaderJob = ShaderCompileJob->GetSingleShaderJob())
+			{
+				CompletedCompilation.CompilationErrors.Append(SingleShaderJob->Output.Errors);
+			}
+		}
+
+		// now that we've added all the results into the shader map we can move it over to CompletedCompilations
+		CompletedCompilation.ShaderMap = CurrentCompilation.ShaderMap;
+
+		// and remove it from the ActiveCompilations
+		CompileIt.RemoveCurrentSwap();
+	}
+
+	return ActiveCompilations.IsEmpty();
+}
+
+bool FNiagaraShaderMapCompiler::GetShaderMap(const FNiagaraShaderMapId& ShaderMapId, FNiagaraShaderMapRef& OutShaderMap, TArray<FShaderCompilerError>& OutCompilationErrors) const
+{
+	for (const FCompletedCompilation& CompletedCompilation : CompletedCompilations)
+	{
+		if (CompletedCompilation.ShaderMap->GetShaderMapId() == ShaderMapId)
+		{
+			OutShaderMap = CompletedCompilation.ShaderMap;
+			OutCompilationErrors = CompletedCompilation.CompilationErrors;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 //////////////////////////////////////////////////////////////////////////

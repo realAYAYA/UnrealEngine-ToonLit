@@ -293,6 +293,7 @@ export namespace UnrealEngine {
         }
 
         case UnrealApi.PresetEvent.FieldsRemoved:
+        case UnrealApi.PresetEvent.FieldsRenamed:
         case UnrealApi.PresetEvent.EntitiesModified: {
           await refreshPreset(message.PresetId, message.PresetName);
           break;

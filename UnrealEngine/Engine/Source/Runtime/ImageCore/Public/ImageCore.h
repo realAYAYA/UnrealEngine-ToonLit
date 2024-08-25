@@ -64,6 +64,7 @@ namespace ERawImageFormat
 		G16,     // note G8/G16 = gray = replicate to 3 channels, R16F = just in red channel
 		R16F,
 		R32F,
+		MAX, // used for validation checks < MAX = valid type.
 		Invalid = 0xFF
 	};
 	
@@ -73,6 +74,8 @@ namespace ERawImageFormat
 	IMAGECORE_API int64 GetBytesPerPixel(Type Format);
 	
 	IMAGECORE_API const TCHAR * GetName(Type Format);
+	IMAGECORE_API const FUtf8StringView GetNameView(Type Format);
+	IMAGECORE_API bool GetFormatFromString(FUtf8StringView InString, Type& OutFormat);
 	
 	IMAGECORE_API bool IsHDR(Type Format);
 	
@@ -237,6 +240,9 @@ struct FImageInfo
 		return Offset;
 	}
 
+	IMAGECORE_API void ImageInfoToCompactBinary(class FCbObject& OutObject) const;
+	// Overwrites the current info with the object's info/
+	IMAGECORE_API bool ImageInfoFromCompactBinary(const FCbObject& InObject);
 };
 
 /***
@@ -490,7 +496,12 @@ public:
 
 	/**
 	 * Copies and resizes the image to a destination image with the specified size and format.
-	 * Resize is done using bilinear filtering
+	 * Resize is done using bilinear filtering; gamma correct (light linear) by converting through RGBA32F.
+	 *
+	 * DEPRECATED! Use ResizeImage() instead.
+	 * This function should only be used where legacy behavior must be maintained.
+	 *
+	 * ResizeTo has a bug a slight translation of the image.
 	 *
 	 * @param DestImage - The destination image.
 	 * @param DestSizeX - Width of the resized image
@@ -689,6 +700,16 @@ public:
 	}
 };
 
+typedef TRefCountPtr<struct FSharedImage> FSharedImageRef;
+typedef TRefCountPtr<const struct FSharedImage> FSharedImageConstRef;
+struct FSharedImage : public FImage, public FThreadSafeRefCountedObject
+{
+	FSharedImage() = default;
+	virtual ~FSharedImage() = default;
+};
+
+
+
 /* Functions
  *****************************************************************************/
 
@@ -765,7 +786,12 @@ IMAGECORE_API void SetAlphaOpaque(const FImageView & InImage);
 
 /**
 	* Copies and resizes the image to a destination image with the specified size and format.
-	* Resize is done using bilinear filtering
+	* Resize is done using bilinear filtering; gamma correct (light linear) by converting through RGBA32F.
+	*
+	* DEPRECATED! Use ResizeImage() instead.
+	* This function should only be used where legacy behavior must be maintained.
+	*
+	* ResizeTo has a bug a slight translation of the image.
 	*
 	* @param DestImage - The destination image.
 	* @param DestSizeX - Width of the resized image
@@ -786,6 +812,29 @@ IMAGECORE_API void ResizeTo(const FImageView & SourceImage,FImage& DestImage, in
 IMAGECORE_API void ComputeChannelLinearMinMax(const FImageView & InImage, FLinearColor & OutMin, FLinearColor & OutMax);
 
 /**
+* If the image has any values outside the [0,1] range, rescale that edge of the domain so that it is in [0,1]
+* does not affect images that were previously in [0,1]
+*
+* also does not change the side of the domain that is not out of bounds
+* eg. values in [0.25,200.0] will be rescaled to [0.25,1.0]
+*
+* returns bool if any change was made
+*
+* If the input format is U8 or U16, no change will ever be made and this will return false.
+*
+* This can be useful if you want to save an HDR/float image to a U8 image format for visualization.
+* This is equivalent to what's called the "UNorm" transformation by the RenderTarget ReadPixels functions.
+*/
+IMAGECORE_API bool ScaleChannelsSoMinMaxIsInZeroToOne(const FImageView & ImageToModify);
+
+/** ComputeImageLinearAverage
+ * compute the average linear color of the image
+ *	image can be any pixel format
+ *	parallel processing is used, but the result is not machine-dependent
+ */
+IMAGECORE_API FLinearColor ComputeImageLinearAverage(const FImageView & Image);
+
+/**
  * Apply a color space transformation from the source chromaticities to the engine's working color space.
  *
  * @param InLinearImage - The image to convert, which must be linear.
@@ -797,5 +846,105 @@ IMAGECORE_API void ComputeChannelLinearMinMax(const FImageView & InImage, FLinea
  * @param EqualityTolerance - The tolerance for the source and working color space chromaticities to be considered equal, bypassing the transform.
  */
 IMAGECORE_API void TransformToWorkingColorSpace(const FImageView& InLinearImage, const FVector2d& SourceRedChromaticity, const FVector2d& SourceGreenChromaticity, const FVector2d& SourceBlueChromaticity, const FVector2d& SourceWhiteChromaticity, UE::Color::EChromaticAdaptationMethod Method, double EqualityTolerance = 1.e-7);
+
+
+	/*
+	* filter choice for ResizeImage
+	*/
+	enum class EResizeImageFilter : uint32
+	{
+		Default = 0, // uses a good default filter; = AdaptiveSharp
+		PointSample,
+		Box,
+		Triangle, 
+		Bilinear = Triangle, // synonym
+		CubicGaussian, // smooth Mitchell B=1,C=0, B-spline, Gaussian-like
+		CubicSharp, // sharp interpolating cubic, Catmull-ROM (has negative lobes)
+		CubicMitchell, // compromise between sharp and smooth cubic, Mitchell-Netrevalli filter with B=1/3, C=1/3 (has negative lobes)
+		AdaptiveSharp,  // sharper adaptive filter; uses CubicSharp for upsample and CubicMitchell for downsample, nop for same size
+		AdaptiveSmooth,  // smoother adaptive filter; uses CubicMitchell for upsample and CubicGaussian for downsample, nop for same size
+
+		WithoutFlagsMask = 63,
+		Flag_WrapX = 64,  // default edge mode is clamp; set these to wrap instead
+		Flag_WrapY = 128
+	};
+	ENUM_CLASS_FLAGS(EResizeImageFilter);
+
+	/* ResizeImage :
+	*	DestImage should be already allocated; DestImage will be filled in specified format
+	* filter is always computed in floating point, gamma correct linear light, but no intermediate conversion is done
+	* note: some filters (the three "Cubic" options) will change the image even if Source.Size == Dest.Size
+	*	this function can be used to apply filters on same-size image with the Cubic set
+	* the "Adaptive" (and Default) filters automatically change depending on if the resize is an upsample or downsample, and are nops for same size
+	*
+	* @param SourceImage - Source Image to resize from
+	* @param DestImage - Dest Image to resize to; specifies output size and format.  Note the FImageView itself is const but the Dest pixels are written.  Dest should be already allocated.  Source == Dest in-place resizing not allowed.
+	* @param Filter - EResizeImageFilter filter choice, or Default if none
+	*/
+	IMAGECORE_API void ResizeImage(const FImageView & SourceImage,const FImageView & DestImage, EResizeImageFilter Filter = EResizeImageFilter::Default); 
+
+	/* ResizeImage variant.  See main ResizeImage function for notes.
+	*
+	* Allocate DestImage (if needed) to specified size and Resize from SourceImage into it
+	*	do not use this with Source == Dest (call ResizeImageInPlace)
+	*
+	* @param SourceImage - Source Image to resize from
+	* @param DestImage - Dest to allocated and write to.  Will not be allocated if it is already the right size.  DestImage size/format is replaced.
+	* @param DestSizeX - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestSizeY - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestFormat - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestGammaSpace - Specifies output of resize.  DestImage will be changed to this.
+	* @param Filter - EResizeImageFilter filter choice, or Default if none
+	*/
+	IMAGECORE_API void ResizeImageAllocDest(const FImageView & SourceImage,FImage & DestImage,int32 DestSizeX, int32 DestSizeY, ERawImageFormat::Type DestFormat, EGammaSpace DestGammaSpace, EResizeImageFilter Filter = EResizeImageFilter::Default); 
+	
+	/* ResizeImage variant.  See main ResizeImage function for notes.
+	*
+	* Allocate DestImage (if needed) to specified size and Resize from SourceImage into it
+	*	do not use this with Source == Dest (call ResizeImageInPlace)
+	*
+	*	DestImage will have same format as Source
+	*
+	* @param SourceImage - Source Image to resize from
+	* @param DestImage - Dest to allocated and write to.  Will not be allocated if it is already the right size.  DestImage size/format is replaced.
+	* @param DestSizeX - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestSizeY - Specifies output of resize.  DestImage will be changed to this.
+	* @param Filter - EResizeImageFilter filter choice, or Default if none
+	*/
+	IMAGECORE_API void ResizeImageAllocDest(const FImageView & SourceImage,FImage & DestImage,int32 DestSizeX, int32 DestSizeY, EResizeImageFilter Filter = EResizeImageFilter::Default); 
+
+	/* ResizeImage variant.  See main ResizeImage function for notes.
+	*
+	* Resize from Image and write the result into Image.
+	* Image may be reallocated to fit the destination size/format requested.
+	*
+	* Other ResizeImage functions do not work in-place.
+	*
+	* @param Image - Source Image to resize from, will be changed to hold the destination image and reallocated if needed.
+	* @param DestSizeX - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestSizeY - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestFormat - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestGammaSpace - Specifies output of resize.  DestImage will be changed to this.
+	* @param Filter - EResizeImageFilter filter choice, or Default if none
+	*/
+	IMAGECORE_API void ResizeImageInPlace(FImage & Image,int32 DestSizeX, int32 DestSizeY, ERawImageFormat::Type DestFormat, EGammaSpace DestGammaSpace, EResizeImageFilter Filter = EResizeImageFilter::Default);
+	
+	/* ResizeImage variant.  See main ResizeImage function for notes.
+	*
+	* Resize from Image and write the result into Image.
+	* Image may be reallocated to fit the destination size/format requested.
+	*
+	* Other ResizeImage functions do not work in-place.
+	*
+	* Format of image will not be changed.
+	*
+	* @param Image - Source Image to resize from, will be changed to hold the destination image and reallocated if needed.
+	* @param DestSizeX - Specifies output of resize.  DestImage will be changed to this.
+	* @param DestSizeY - Specifies output of resize.  DestImage will be changed to this.
+	* @param Filter - EResizeImageFilter filter choice, or Default if none
+	*/
+	IMAGECORE_API void ResizeImageInPlace(FImage & Image,int32 DestSizeX, int32 DestSizeY, EResizeImageFilter Filter = EResizeImageFilter::Default);
+ 
+	//----------------------
 
 };

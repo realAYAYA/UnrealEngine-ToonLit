@@ -39,7 +39,7 @@ void UGameplayBehaviorSubsystem::OnBehaviorFinished(UGameplayBehavior& Behavior,
 		if (BehaviorIndex != INDEX_NONE)
 		{
 			Behavior.GetOnBehaviorFinishedDelegate().RemoveAll(this);
-			AgentData->Behaviors.RemoveAtSwap(BehaviorIndex, 1, /*bAllowShrinking=*/false);
+			AgentData->Behaviors.RemoveAtSwap(BehaviorIndex, 1, EAllowShrinking::No);
 		}
 	}
 }

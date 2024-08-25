@@ -2,157 +2,31 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Net.Http.Headers;
-using System.Reflection;
 using System.Security.Claims;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Amazon.EC2.Model;
 using EpicGames.Core;
+using EpicGames.Horde.Acls;
 using EpicGames.Horde.Storage;
 using EpicGames.Horde.Storage.Nodes;
-using EpicGames.Redis;
-using Horde.Server.Acls;
+using EpicGames.Serialization;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Primitives;
 
 namespace Horde.Server.Storage
 {
-	/// <summary>
-	/// Response from uploading a bundle
-	/// </summary>
-	public class WriteBlobResponse
-	{
-		/// <summary>
-		/// Locator for the uploaded bundle
-		/// </summary>
-		public BlobLocator Blob { get; set; }
-
-		/// <summary>
-		/// URL to upload the blob to.
-		/// </summary>
-		public Uri? UploadUrl { get; set; }
-
-		/// <summary>
-		/// Flag for whether the client could use a redirect instead (ie. not post content to the server, and get an upload url back).
-		/// </summary>
-		public bool? SupportsRedirects { get; set; }
-	}
-
-	/// <summary>
-	/// Response object for finding a node
-	/// </summary>
-	public class FindNodeResponse
-	{
-		/// <summary>
-		/// Hash of the target node
-		/// </summary>
-		public IoHash Hash { get; set; }
-
-		/// <summary>
-		/// Locator for the target blob
-		/// </summary>
-		public BlobLocator Blob { get; set; }
-
-		/// <summary>
-		/// Export index for the ref
-		/// </summary>
-		public int ExportIdx { get; set; }
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		public FindNodeResponse(BlobHandle target)
-		{
-			Hash = target.Hash;
-			Blob = target.GetLocator().Blob;
-			ExportIdx = target.GetLocator().ExportIdx;
-		}
-	}
-	/// <summary>
-	/// Response object for searching for nodes with a given alias
-	/// </summary>
-	public class FindNodesResponse
-	{
-		/// <summary>
-		/// Hash of the target node
-		/// </summary>
-		public List<FindNodeResponse> Nodes { get; set; } = new List<FindNodeResponse>();
-	}
-
-	/// <summary>
-	/// Request object for writing a ref
-	/// </summary>
-	public class WriteRefRequest
-	{
-		/// <summary>
-		/// Hash of the target node
-		/// </summary>
-		public IoHash Hash { get; set; }
-
-		/// <summary>
-		/// Locator for the target blob
-		/// </summary>
-		public BlobLocator Blob { get; set; }
-
-		/// <summary>
-		/// Export index for the ref
-		/// </summary>
-		public int ExportIdx { get; set; }
-
-		/// <summary>
-		/// Options for the ref
-		/// </summary>
-		public RefOptions? Options { get; set; }
-	}
-
-	/// <summary>
-	/// Response object for reading a ref
-	/// </summary>
-	public class ReadRefResponse
-	{
-		/// <summary>
-		/// Hash of the target node
-		/// </summary>
-		public IoHash Hash { get; set; }
-
-		/// <summary>
-		/// Locator for the target blob
-		/// </summary>
-		public BlobLocator Blob { get; set; }
-
-		/// <summary>
-		/// Export index for the ref
-		/// </summary>
-		public int ExportIdx { get; set; }
-
-		/// <summary>
-		/// Link to information about the target node
-		/// </summary>
-		public string Link { get; set; }
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		public ReadRefResponse(BlobHandle target, string link)
-		{
-			Hash = target.Hash;
-			Blob = target.GetLocator().Blob;
-			ExportIdx = target.GetLocator().ExportIdx;
-			Link = link;
-		}
-	}
+	using DdcRefNode = Horde.Server.Ddc.DdcRefNode;
 
 	/// <summary>
 	/// Controller for the /api/v1/storage endpoint
@@ -163,19 +37,20 @@ namespace Horde.Server.Storage
 	public class StorageController : HordeControllerBase
 	{
 		readonly StorageService _storageService;
-		readonly IMemoryCache _memoryCache;
 		readonly IOptionsSnapshot<GlobalConfig> _globalConfig;
-		readonly ILogger _logger;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public StorageController(StorageService storageService, IMemoryCache memoryCache, IOptionsSnapshot<GlobalConfig> globalConfig, ILogger<StorageController> logger)
+		public StorageController(StorageService storageService, IOptionsSnapshot<GlobalConfig> globalConfig)
 		{
 			_storageService = storageService;
-			_memoryCache = memoryCache;
 			_globalConfig = globalConfig;
-			_logger = logger;
+		}
+
+		bool Authorize(NamespaceId namespaceId, AclAction action)
+		{
+			return _globalConfig.Value.Storage.TryGetNamespace(namespaceId, out NamespaceConfig? namespaceConfig) && namespaceConfig.Authorize(action, User);
 		}
 
 		/// <summary>
@@ -189,53 +64,44 @@ namespace Horde.Server.Storage
 		[Route("/api/v1/storage/{namespaceId}/blobs")]
 		public async Task<ActionResult<WriteBlobResponse>> WriteBlobAsync(NamespaceId namespaceId, IFormFile? file, [FromForm] string? prefix = default, CancellationToken cancellationToken = default)
 		{
-			NamespaceConfig? namespaceConfig;
-			if (!_globalConfig.Value.Storage.TryGetNamespace(namespaceId, out namespaceConfig))
+			IStorageBackend? storageBackend = _storageService.TryCreateBackend(namespaceId);
+			if (storageBackend == null)
 			{
 				return NotFound(namespaceId);
 			}
-			if (!namespaceConfig.Authorize(StorageAclAction.WriteBlobs, User) && !HasPathClaim(User, HordeClaimTypes.WriteNamespace, namespaceId, prefix ?? String.Empty))
+			if (!Authorize(namespaceId, StorageAclAction.WriteBlobs) && !HasPathClaim(User, HordeClaimTypes.WriteNamespace, namespaceId, prefix ?? String.Empty))
 			{
 				return Forbid(StorageAclAction.WriteBlobs, namespaceId);
 			}
 
-			IStorageClientImpl storageClient = await _storageService.GetClientAsync(namespaceId, cancellationToken);
-			return await WriteBlobAsync(storageClient, file, prefix, cancellationToken);
+			return await WriteBlobAsync(storageBackend, file, prefix, cancellationToken);
 		}
 
 		/// <summary>
 		/// Writes a blob to storage. Exposed as a public utility method to allow other routes with their own authentication methods to wrap their own authentication/redirection.
 		/// </summary>
-		/// <param name="storageClient">The client to write to service</param>
+		/// <param name="storageBackend">The backend to write to</param>
 		/// <param name="file">File to be written</param>
 		/// <param name="prefix">Prefix for uploaded blobs</param>
 		/// <param name="cancellationToken">Cancellation token</param>
 		/// <returns>Information about the written blob, or redirect information</returns>
-		public static async Task<ActionResult<WriteBlobResponse>> WriteBlobAsync(IStorageClient storageClient, IFormFile? file, [FromForm] string? prefix = default, CancellationToken cancellationToken = default)
+		public static async Task<ActionResult<WriteBlobResponse>> WriteBlobAsync(IStorageBackend storageBackend, IFormFile? file, [FromForm] string? prefix = default, CancellationToken cancellationToken = default)
 		{
-			IStorageClientImpl? storageClientImpl = storageClient as IStorageClientImpl;
 			if (file == null)
 			{
-				if (storageClientImpl == null)
-				{
-					return new WriteBlobResponse { SupportsRedirects = false };
-				}
-
-				(BlobLocator Locator, Uri UploadUrl)? result = await storageClientImpl.GetWriteRedirectAsync(prefix ?? String.Empty, cancellationToken);
+				(BlobLocator Path, Uri UploadUrl)? result = await storageBackend.TryGetBlobWriteRedirectAsync(prefix ?? String.Empty, cancellationToken);
 				if (result == null)
 				{
 					return new WriteBlobResponse { SupportsRedirects = false };
 				}
 
-				return new WriteBlobResponse { Blob = result.Value.Locator, UploadUrl = result.Value.UploadUrl };
+				return new WriteBlobResponse { Blob = result.Value.Path.ToString(), UploadUrl = result.Value.UploadUrl };
 			}
 			else
 			{
-				using (Stream stream = file.OpenReadStream())
-				{
-					BlobLocator locator = await storageClient.WriteBlobAsync(stream, prefix: (prefix == null) ? Utf8String.Empty : new Utf8String(prefix), cancellationToken: cancellationToken);
-					return new WriteBlobResponse { Blob = locator, SupportsRedirects = storageClientImpl?.SupportsRedirects };
-				}
+				using Stream stream = file.OpenReadStream();
+				BlobLocator locator = await storageBackend.WriteBlobAsync(stream, prefix, cancellationToken);
+				return new WriteBlobResponse { Blob = locator.ToString(), SupportsRedirects = storageBackend.SupportsRedirects };
 			}
 		}
 
@@ -244,64 +110,78 @@ namespace Horde.Server.Storage
 		/// </summary>
 		/// <param name="namespaceId">Namespace to fetch from</param>
 		/// <param name="locator">Bundle to retrieve</param>
-		/// <param name="offset">Offset of the data.</param>
-		/// <param name="length">Length of the data to return.</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		[HttpGet]
 		[Route("/api/v1/storage/{namespaceId}/blobs/{*locator}")]
-		public async Task<ActionResult> ReadBlobAsync(NamespaceId namespaceId, BlobLocator locator, [FromQuery] int? offset = null, [FromQuery] int? length = null, CancellationToken cancellationToken = default)
+		public async Task<ActionResult> ReadBlobAsync(NamespaceId namespaceId, BlobLocator locator, CancellationToken cancellationToken = default)
 		{
-			NamespaceConfig? namespaceConfig;
-			if (!_globalConfig.Value.Storage.TryGetNamespace(namespaceId, out namespaceConfig))
+			IStorageBackend? backend = _storageService.TryCreateBackend(namespaceId);
+			if (backend == null)
 			{
 				return NotFound(namespaceId);
 			}
-			if (!namespaceConfig.Authorize(StorageAclAction.ReadBlobs, User) && !HasPathClaim(User, HordeClaimTypes.ReadNamespace, namespaceId, locator.Inner.ToString()))
+			if (!Authorize(namespaceId, StorageAclAction.ReadBlobs) && !HasPathClaim(User, HordeClaimTypes.ReadNamespace, namespaceId, locator.Path.ToString()))
 			{
 				return Forbid(StorageAclAction.ReadBlobs, namespaceId);
 			}
 
-			return await ReadBlobInternalAsync(_storageService, namespaceId, locator, offset, length, cancellationToken);
+			return await ReadBlobInternalAsync(backend, locator, Request.Headers, cancellationToken);
 		}
 
 		/// <summary>
 		/// Reads a blob from storage, without performing namespace access checks.
 		/// </summary>
-		internal static async Task<ActionResult> ReadBlobInternalAsync(StorageService storageService, NamespaceId namespaceId, BlobLocator locator, int? offset, int? length, CancellationToken cancellationToken)
+		internal static async Task<ActionResult> ReadBlobInternalAsync(IStorageBackend storageBackend, BlobLocator locator, IHeaderDictionary headers, CancellationToken cancellationToken)
 		{
-			IStorageClientImpl client = await storageService.GetClientAsync(namespaceId, cancellationToken);
-			return await ReadBlobInternalAsync(client, locator, offset, length, cancellationToken);
-		}
-
-		/// <summary>
-		/// Reads a blob from storage, without performing namespace access checks.
-		/// </summary>
-		internal static async Task<ActionResult> ReadBlobInternalAsync(IStorageClient storageClient, BlobLocator locator, int? offset, int? length, CancellationToken cancellationToken)
-		{
-			if (storageClient is IStorageClientImpl storageClientImpl)
+			Uri? redirectUrl = await storageBackend.TryGetBlobReadRedirectAsync(locator, cancellationToken);
+			if (redirectUrl != null)
 			{
-				Uri? redirectUrl = await storageClientImpl.GetReadRedirectAsync(locator, cancellationToken);
-				if (redirectUrl != null)
+				return new RedirectResult(redirectUrl.ToString());
+			}
+
+			// Parse the range header
+			int offset = 0;
+			int? length = null;
+
+			if (headers.Range.Count > 0)
+			{
+				if (headers.Range.Count > 1)
 				{
-					return new RedirectResult(redirectUrl.ToString());
+					return new BadRequestObjectResult(LogEvent.Create(LogLevel.Error, "Unsupported range header; only one range is allowed"));
+				}
+
+				string? value = headers.Range[0];
+				if (value == null)
+				{
+					return new BadRequestObjectResult(LogEvent.Create(LogLevel.Error, "Unsupported range header; only one range is allowed"));
+				}
+
+				Match match = Regex.Match(value, @"^\s*bytes\s*=\s*(\d*)-(\d*)$");
+				if (!match.Success)
+				{
+					return new BadRequestObjectResult(LogEvent.Create(LogLevel.Error, "Unsupported range header syntax; cannot parse {Value}", value));
+				}
+
+				if (match.Groups[1].Length > 0 && !Int32.TryParse(match.Groups[1].Value, out offset))
+				{
+					return new BadRequestObjectResult(LogEvent.Create(LogLevel.Error, "Unable to parse start for range: {Value}", value));
+				}
+				if (match.Groups[2].Length > 0)
+				{
+					int end;
+					if (Int32.TryParse(match.Groups[2].Value, out end) && end > offset)
+					{
+						length = (end + 1) - offset;
+					}
+					else
+					{
+						return new BadRequestObjectResult(LogEvent.Create(LogLevel.Error, "Unable to parse end for range: {Value}", value));
+					}
 				}
 			}
 
 #pragma warning disable CA2000 // Dispose objects before losing scope
-			// TODO: would be better to use the range header here, but seems to require a lot of plumbing to convert unseekable AWS streams into a format that works with range processing.
-			Stream stream;
-			if (offset == null && length == null)
-			{
-				stream = await storageClient.ReadBlobAsync(locator, cancellationToken);
-			}
-			else if (offset != null && length != null)
-			{
-				stream = await storageClient.ReadBlobRangeAsync(locator, offset.Value, length.Value, cancellationToken);
-			}
-			else
-			{
-				return new BadRequestObjectResult("Offset and length must both be specified as query parameters for ranged reads");
-			}
+			Stream stream = await storageBackend.OpenBlobAsync(locator, offset, length, cancellationToken);
 			return new FileStreamResult(stream, "application/octet-stream");
 #pragma warning restore CA2000 // Dispose objects before losing scope
 		}
@@ -311,28 +191,26 @@ namespace Horde.Server.Storage
 		/// </summary>
 		/// <param name="namespaceId">Namespace to fetch from</param>
 		/// <param name="alias">Alias of the node to find</param>
+		/// <param name="maxResults">Maximum number of results to return</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		[HttpGet]
 		[Route("/api/v1/storage/{namespaceId}/nodes")]
-		public async Task<ActionResult<FindNodesResponse>> FindNodesAsync(NamespaceId namespaceId, string alias, CancellationToken cancellationToken = default)
+		public async Task<ActionResult<FindNodesResponse>> FindNodesAsync(NamespaceId namespaceId, [FromQuery] string alias, [FromQuery] int? maxResults = null, CancellationToken cancellationToken = default)
 		{
-			NamespaceConfig? namespaceConfig;
-			if (!_globalConfig.Value.Storage.TryGetNamespace(namespaceId, out namespaceConfig))
+			IStorageBackend? backend = _storageService.TryCreateBackend(namespaceId);
+			if (backend == null)
 			{
 				return NotFound(namespaceId);
 			}
-			if (!namespaceConfig.Authorize(StorageAclAction.ReadBlobs, User))
+			if (!Authorize(namespaceId, StorageAclAction.ReadBlobs))
 			{
 				return Forbid(StorageAclAction.ReadBlobs, namespaceId);
 			}
 
-			IStorageClientImpl client = await _storageService.GetClientAsync(namespaceId, cancellationToken);
+			BlobAliasLocator[] aliases = await backend.FindAliasesAsync(alias, maxResults, cancellationToken);
 
 			FindNodesResponse response = new FindNodesResponse();
-			await foreach (BlobHandle handle in client.FindNodesAsync(alias, cancellationToken))
-			{
-				response.Nodes.Add(new FindNodeResponse(handle));
-			}
+			response.Nodes.AddRange(aliases.Select(x => new FindNodeResponse(x.Target, x.Rank, x.Data.ToArray())));
 
 			if (response.Nodes.Count == 0)
 			{
@@ -353,25 +231,29 @@ namespace Horde.Server.Storage
 		[Route("/api/v1/storage/{namespaceId}/refs/{*refName}")]
 		public async Task<ActionResult> WriteRefAsync(NamespaceId namespaceId, RefName refName, [FromBody] WriteRefRequest request, CancellationToken cancellationToken)
 		{
-			NamespaceConfig? namespaceConfig;
-			if (!_globalConfig.Value.Storage.TryGetNamespace(namespaceId, out namespaceConfig))
+			IStorageBackend? backend = _storageService.TryCreateBackend(namespaceId);
+			if (backend == null)
 			{
 				return NotFound(namespaceId);
 			}
-			if (!namespaceConfig.Authorize(StorageAclAction.WriteRefs, User) && !HasPathClaim(User, HordeClaimTypes.WriteNamespace, namespaceId, refName.ToString()))
+			if (!Authorize(namespaceId, StorageAclAction.WriteRefs) && !HasPathClaim(User, HordeClaimTypes.WriteNamespace, namespaceId, refName.ToString()))
 			{
 				return Forbid(StorageAclAction.WriteRefs, namespaceId);
 			}
 
-			IStorageClientImpl client = await _storageService.GetClientAsync(namespaceId, cancellationToken);
-			NodeLocator target = new NodeLocator(request.Hash, request.Blob, request.ExportIdx);
-			await client.WriteRefTargetAsync(refName, target, request.Options, cancellationToken);
+#pragma warning disable CS0618 // Type or member is obsolete
+			if (request.Blob != null && request.ExportIdx != null)
+			{
+				request.Target = new BlobLocator($"{request.Blob.Value}#{request.ExportIdx.Value}");
+			}
+#pragma warning restore CS0618 // Type or member is obsolete
 
+			await backend.WriteRefAsync(refName, new BlobRefValue(request.Hash, request.Target), request.Options, cancellationToken);
 			return Ok();
 		}
 
 		/// <summary>
-		/// Uploads data to the storage service. 
+		/// Retrieves a ref from the storage service. 
 		/// </summary>
 		/// <param name="namespaceId"></param>
 		/// <param name="refName"></param>
@@ -396,28 +278,26 @@ namespace Horde.Server.Storage
 		/// <summary>
 		/// Reads a ref from storage, without performing namespace access checks.
 		/// </summary>
-		internal static async Task<ActionResult<ReadRefResponse>> ReadRefInternalAsync(StorageService storageService, NamespaceId namespaceId, RefName refName, IHeaderDictionary headers, CancellationToken cancellationToken)
+		internal static async Task<ActionResult<ReadRefResponse>> ReadRefInternalAsync(IStorageClientFactory storageService, NamespaceId namespaceId, RefName refName, IHeaderDictionary headers, CancellationToken cancellationToken)
 		{
-			IStorageClient client = await storageService.GetClientAsync(namespaceId, cancellationToken);
+			using IStorageClient client = storageService.CreateClient(namespaceId);
 
 			RefCacheTime cacheTime = new RefCacheTime();
-			foreach (string entry in headers.CacheControl)
+			foreach (string? entry in headers.CacheControl)
 			{
-				if (CacheControlHeaderValue.TryParse(entry, out CacheControlHeaderValue? value) && value?.MaxAge != null)
+				if (entry != null && CacheControlHeaderValue.TryParse(entry, out CacheControlHeaderValue? value) && value?.MaxAge != null)
 				{
 					cacheTime = new RefCacheTime(value.MaxAge.Value);
 				}
 			}
 
-			BlobHandle? target = await client.TryReadRefTargetAsync(refName, cacheTime, cancellationToken: cancellationToken);
+			IBlobRef? target = await client.TryReadRefAsync(refName, cacheTime, cancellationToken: cancellationToken);
 			if (target == null)
 			{
 				return new NotFoundResult();
 			}
 
-			NodeLocator locator = target.GetLocator();
-			string link = $"/api/v1/storage/{namespaceId}/nodes/{locator.Blob}?export={locator.ExportIdx}";
-			return new ReadRefResponse(target, link);
+			return new ReadRefResponse { Hash = target.Hash, Target = target.GetLocator(), Link = GetNodeLink(namespaceId, target) };
 		}
 
 		/// <summary>
@@ -456,102 +336,48 @@ namespace Horde.Server.Storage
 
 		static bool HasPathPrefix(string name, ReadOnlySpan<char> prefix)
 		{
-			return name.Length > prefix.Length && name[prefix.Length] == '/' && name.AsSpan(0, prefix.Length).SequenceEqual(prefix);
+			if (name.Length > prefix.Length)
+			{
+				return name[prefix.Length] == '/' && name.AsSpan(0, prefix.Length).SequenceEqual(prefix);
+			}
+			else if (name.Length == prefix.Length)
+			{
+				return name.AsSpan().SequenceEqual(prefix);
+			}
+			else
+			{
+				return false;
+			}
 		}
 
-		/// <summary>
-		/// Gets information about a particular bundle in storage
-		/// </summary>
-		/// <param name="namespaceId">Namespace containing the blob</param>
-		/// <param name="locator">Blob locator</param>
-		/// <param name="includeImports">Whether to include imports for the bundle</param>
-		/// <param name="includeExports">Whether to include exports for the bundle</param>
-		/// <param name="includePackets">Whether to include packets for the bundle</param>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <returns></returns>
-		[HttpGet]
-		[Route("/api/v1/storage/{namespaceId}/bundles/{*locator}")]
-		public async Task<ActionResult<object>> GetBundleAsync(NamespaceId namespaceId, BlobLocator locator, [FromQuery(Name = "imports")] bool includeImports = false, [FromQuery(Name = "exports")] bool includeExports = true, [FromQuery(Name = "packets")] bool includePackets = false, CancellationToken cancellationToken = default)
+		static readonly IReadOnlyDictionary<Guid, Type> s_blobGuidToType = GetBlobGuidTypeMap();
+
+		static Dictionary<Guid, Type> GetBlobGuidTypeMap()
 		{
-			NamespaceConfig? namespaceConfig;
-			if (!_globalConfig.Value.Storage.TryGetNamespace(namespaceId, out namespaceConfig))
-			{
-				return NotFound(namespaceId);
-			}
-			if (!namespaceConfig.Authorize(StorageAclAction.ReadBlobs, User))
-			{
-				return Forbid(StorageAclAction.ReadBlobs, namespaceId);
-			}
-
-			IStorageClient storageClient = await _storageService.GetClientAsync(namespaceId, cancellationToken);
-			BundleReader reader = new BundleReader(storageClient, _memoryCache, _logger);
-
-			BundleHeader header = await reader.ReadBundleHeaderAsync(locator, cancellationToken);
-
-			string linkBase = $"/api/v1/storage/{namespaceId}";
-
-			List<object>? responseImports = null;
-			if (includeImports)
-			{
-				responseImports = new List<object>();
-				foreach (BlobLocator import in header.Imports)
-				{
-					responseImports.Add($"{linkBase}/bundles/{import}");
-				}
-			}
-
-			List<object>? responseExports = null;
-			if (includeExports)
-			{
-				responseExports = new List<object>();
-				for (int exportIdx = 0; exportIdx < header.Exports.Count; exportIdx++)
-				{
-					BundleExport export = header.Exports[exportIdx];
-
-					string details = $"{linkBase}/nodes/{locator}?export={exportIdx}";
-					BlobType type = header.Types[export.TypeIdx];
-					string typeName = GetNodeType(type.Guid)?.Name ?? type.Guid.ToString();
-
-					responseExports.Add(new { export.Hash, export.Length, details, type = typeName });
-				}
-			}
-
-			List<object>? responsePackets = null;
-			if (includePackets)
-			{
-				responsePackets = new List<object>();
-				for (int packetIdx = 0, exportIdx = 0; packetIdx < header.Packets.Count; packetIdx++)
-				{
-					BundlePacket packet = header.Packets[packetIdx];
-
-					List<string> packetExports = new List<string>();
-
-					int length = 0;
-					for (; exportIdx < header.Exports.Count && length + header.Exports[exportIdx].Length <= packet.DecodedLength; exportIdx++)
-					{
-						BundleExport export = header.Exports[exportIdx];
-						packetExports.Add($"{linkBase}/{locator}?export={exportIdx}");
-						length += export.Length;
-					}
-
-					responsePackets.Add(new { packetIdx, packet.EncodedLength, packet.DecodedLength, exports = packetExports });
-				}
-			}
-
-			return new { imports = responseImports, exports = responseExports, packets = responsePackets };
+			Dictionary<Guid, Type> guidTypeMap = new Dictionary<Guid, Type>();
+			guidTypeMap.Add(CbNode.BlobTypeGuid, typeof(CbNode));
+			guidTypeMap.Add(LeafChunkedDataNode.BlobTypeGuid, typeof(LeafChunkedDataNode));
+			guidTypeMap.Add(InteriorChunkedDataNode.BlobTypeGuid, typeof(InteriorChunkedDataNode));
+			guidTypeMap.Add(CommitNode.BlobTypeGuid, typeof(CommitNode));
+			guidTypeMap.Add(DdcRefNode.BlobTypeGuid, typeof(DdcRefNode));
+			guidTypeMap.Add(DirectoryNode.BlobTypeGuid, typeof(DirectoryNode));
+			guidTypeMap.Add(RedirectNode.BlobTypeGuid, typeof(RedirectNode));
+			return guidTypeMap;
 		}
 
 		/// <summary>
 		/// Gets information about a particular bundle in storage
 		/// </summary>
 		/// <param name="namespaceId">Namespace containing the blob</param>
-		/// <param name="locator">Blob locator</param>
-		/// <param name="exportIdx">Index of the export</param>
+		/// <param name="locator">Blob identifier</param>
+		/// <param name="pkt">Packet string</param>
+		/// <param name="exp">Export index</param>
+		/// <param name="data">Whether to download the blob data</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
 		[HttpGet]
 		[Route("/api/v1/storage/{namespaceId}/nodes/{*locator}")]
-		public async Task<ActionResult<object>> GetNodeAsync(NamespaceId namespaceId, BlobLocator locator, [FromQuery(Name = "export")] int exportIdx, CancellationToken cancellationToken = default)
+		public async Task<ActionResult<object>> GetNodeAsync(NamespaceId namespaceId, BlobLocator locator, [FromQuery] string? pkt = null, [FromQuery] string? exp = null, [FromQuery] bool data = false, CancellationToken cancellationToken = default)
 		{
 			NamespaceConfig? namespaceConfig;
 			if (!_globalConfig.Value.Storage.TryGetNamespace(namespaceId, out namespaceConfig))
@@ -563,54 +389,147 @@ namespace Horde.Server.Storage
 				return Forbid(StorageAclAction.ReadBlobs, namespaceId);
 			}
 
-			IStorageClient storageClient = await _storageService.GetClientAsync(namespaceId, cancellationToken);
-			BundleReader reader = new BundleReader(storageClient, _memoryCache, _logger);
+			List<string> fragments = new List<string>();
+			if (pkt != null)
+			{
+				fragments.Add($"pkt={pkt}");
+			}
+			if (exp != null)
+			{
+				fragments.Add($"exp={exp}");
+			}
+			if (fragments.Count > 0)
+			{
+				locator = new BlobLocator(locator, String.Join("&", fragments));
+			}
 
-			BundleHeader header = await reader.ReadBundleHeaderAsync(locator, cancellationToken);
-			BundleExport export = header.Exports[exportIdx];
-
-			string linkBase = $"/api/v1/storage/{namespaceId}";
+			using IStorageClient storageClient = _storageService.CreateClient(namespaceId);
 
 			object content;
 
-			BlobData nodeData = await reader.ReadNodeDataAsync(new NodeLocator(export.Hash, locator, exportIdx), cancellationToken);
-
-			Node node = Node.Deserialize(nodeData);
-			switch (node)
+			using BlobData blobData = await storageClient.CreateBlobHandle(locator).ReadBlobDataAsync(cancellationToken);
+			if (data)
 			{
-				case DirectoryNode directoryNode:
-					{
-						List<object> directories = new List<object>();
-						foreach ((Utf8String name, DirectoryEntry entry) in directoryNode.NameToDirectory)
-						{
-							directories.Add(new { name = name.ToString(), length = entry.Length, hash = entry.Handle.Hash, link = GetNodeLink(linkBase, entry.Handle) });
-						}
-
-						List<object> files = new List<object>();
-						foreach ((Utf8String name, FileEntry entry) in directoryNode.NameToFile)
-						{
-							files.Add(new { name = name.ToString(), length = entry.Length, flags = entry.Flags, hash = entry.Hash, link = GetNodeLink(linkBase, entry.Handle) });
-						}
-
-						content = new { directoryNode.Length, directories, files };
-					}
-					break;
-				default:
-					content = new { references = nodeData.Refs.Select(x => GetNodeLink(linkBase, x)) };
-					break;
+				ReadOnlyMemoryStream stream = new ReadOnlyMemoryStream(blobData.Data.ToArray());
+				return new FileStreamResult(stream, "application/octet-stream");
 			}
 
-			return new { bundle = $"{linkBase}/bundles/{locator}", export.Hash, export.Length, guid = header.Types[export.TypeIdx].Guid, type = node.GetType().Name, content = content };
+			if (blobData.Type.Guid == DirectoryNode.BlobTypeGuid)
+			{
+				DirectoryNode directoryNode = BlobSerializer.Deserialize<DirectoryNode>(blobData);
+
+				List<object> directories = new List<object>();
+				foreach ((string name, DirectoryEntry entry) in directoryNode.NameToDirectory)
+				{
+					directories.Add(new { name = name.ToString(), length = entry.Length, target = GetNodeHandleLink(namespaceId, entry.Handle) });
+				}
+
+				List<object> files = new List<object>();
+				foreach ((string name, FileEntry entry) in directoryNode.NameToFile)
+				{
+					files.Add(new { name = name.ToString(), length = entry.Length, flags = entry.Flags, hash = entry.StreamHash, target = GetNodeHandleLink(namespaceId, entry.Target.Handle) });
+				}
+
+				content = new { directoryNode.Length, directories, files };
+			}
+			else if (blobData.Type.Guid == InteriorChunkedDataNode.BlobTypeGuid)
+			{
+				InteriorChunkedDataNode interiorNode = BlobSerializer.Deserialize<InteriorChunkedDataNode>(blobData);
+
+				List<object> children = new List<object>();
+				foreach (ChunkedDataNodeRef nodeRef in interiorNode.Children)
+				{
+					children.Add(new { nodeRef.Type, nodeRef.Length, hash = nodeRef.Handle.Hash, link = GetNodeLink(namespaceId, nodeRef.Handle) });
+				}
+
+				content = new { children };
+			}
+			else if (blobData.Type.Guid == CommitNode.BlobTypeGuid)
+			{
+				CommitNode commitNode = BlobSerializer.Deserialize<CommitNode>(blobData);
+
+				Dictionary<Guid, object>? metadata = null;
+				if (commitNode.Metadata.Count > 0)
+				{
+					metadata = new Dictionary<Guid, object>();
+					foreach ((Guid blobGuid, IBlobRef handle) in commitNode.Metadata)
+					{
+						metadata.Add(blobGuid, GetNodeHandleLink(namespaceId, handle));
+					}
+				}
+
+				content = new { commitNode.Number, parent = GetNodeHandleLink(namespaceId, commitNode.Parent), commitNode.Author, commitNode.AuthorId, commitNode.Committer, commitNode.CommitterId, commitNode.Message, commitNode.Time, contents = GetNodeObject(namespaceId, commitNode.Contents), metadata };
+			}
+			else if (blobData.Type.Guid == CbNode.BlobTypeGuid)
+			{
+				CbNode cbNode = BlobSerializer.Deserialize<CbNode>(blobData);
+				content = GetCbNodeObject(namespaceId, cbNode.Object.AsField(), cbNode.Imports.GetEnumerator()) ?? new object();
+			}
+			else
+			{
+				IEnumerable<string>? references = null;
+				if (blobData.Imports.Count > 0)
+				{
+					references = blobData.Imports.Select(x => GetNodeLink(namespaceId, x));
+				}
+				content = new { length = blobData.Data.Length, references };
+			}
+
+			string? typeName = null;
+			if (s_blobGuidToType.TryGetValue(blobData.Type.Guid, out Type? type))
+			{
+				typeName = type.Name;
+			}
+
+			return new { type = typeName, guid = blobData.Type.Guid, data = $"{GetNodeLink(namespaceId, locator)}&data=true", content = content };
 		}
 
-		static string GetNodeLink(string linkBase, BlobHandle handle) => GetNodeLink(linkBase, handle.GetLocator());
-		
-		static string GetNodeLink(string linkBase, NodeLocator locator) => $"{linkBase}/nodes/{locator.Blob}?export={locator.ExportIdx}";
-
-		static Type? GetNodeType(Guid typeGuid)
+		static object? GetCbNodeObject(NamespaceId namespaceId, CbField field, IEnumerator<IBlobHandle> imports)
 		{
-			Node.TryGetConcreteType(typeGuid, out Type? type);
-			return type;
+			if (field.IsAttachment())
+			{
+				object? link = GetNodeLink(namespaceId, imports.Current);
+				imports.MoveNext();
+				return link;
+			}
+			else if (field.IsObject())
+			{
+				Dictionary<string, object?> fields = new Dictionary<string, object?>();
+
+				CbObject obj = field.AsObject();
+				foreach (CbField member in obj)
+				{
+					fields[member.Name.ToString()] = GetCbNodeObject(namespaceId, member, imports);
+				}
+
+				return fields;
+			}
+			else if (field.IsArray())
+			{
+				List<object?> elements = new List<object?>();
+
+				CbArray arr = field.AsArray();
+				foreach (CbField member in arr)
+				{
+					elements.Add(GetCbNodeObject(namespaceId, member, imports));
+				}
+
+				return elements;
+			}
+			else
+			{
+				return field.Value;
+			}
 		}
+
+		[return: NotNullIfNotNull("nodeRef")]
+		static object? GetNodeObject(NamespaceId namespaceId, DirectoryNodeRef? nodeRef) => (nodeRef == null) ? null : new { nodeRef.Length, nodeRef.Handle.Hash, link = GetNodeLink(namespaceId, nodeRef.Handle.GetLocator()) };
+
+		[return: NotNullIfNotNull("handle")]
+		static object? GetNodeHandleLink(NamespaceId namespaceId, IBlobRef? handle) => (handle == null) ? null : new { handle.Hash, link = GetNodeLink(namespaceId, handle.GetLocator()) };
+
+		static string GetNodeLink(NamespaceId namespaceId, IBlobHandle handle) => GetNodeLink(namespaceId, handle.GetLocator());
+
+		static string GetNodeLink(NamespaceId namespaceId, BlobLocator locator) => $"/api/v1/storage/{namespaceId}/nodes/{locator.BaseLocator}?{locator.Fragment}";
 	}
 }

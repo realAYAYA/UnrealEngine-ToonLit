@@ -7,7 +7,7 @@
 // BEGIN EPIC MOD
 #include "LC_Assert.h"
 #include "LC_Platform.h"
-#include LC_PLATFORM_INCLUDE(LC_Foundation)
+#include "LC_Foundation_Windows.h"
 #include "LC_Logging.h"
 #include "Windows/WindowsHWrapper.h"
 // END EPIC MOD

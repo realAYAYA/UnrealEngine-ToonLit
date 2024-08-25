@@ -6,7 +6,7 @@ import flow.cmd
 from pathlib import Path
 
 #-------------------------------------------------------------------------------
-class Cmd(object):
+class _Shell(object):
     def _add_clink_lua(self):
         channel = self.get_channel()
         system = channel.get_system()
@@ -30,38 +30,9 @@ class Cmd(object):
         cmd = cmd.replace("\\", "/")
         lua.write(f"local py_server_cmd = '{cmd}'")
 
-        lua.write(_clink_lua)
+        clink_lua = _get_clink_lua()
+        lua.write(clink_lua)
         lua.close()
-
-    def run(self, env):
-        # Give the user a convenient way to add customisations in to the session
-        self.print_info("Customisation")
-        home_dir = Path(self.get_home_dir())
-        tags = (
-            flow.cmd.text.grey("none"),
-            flow.cmd.text.white("okay"),
-        )
-
-        # These are really a no-op. It is here to hint to the user how they can
-        # add their own channels
-        candidate = home_dir / "channels"
-        found = candidate.is_dir()
-        print(tags[int(found)], candidate / "*")
-
-        # Indicate to the user that there's a way to hook the boot process too
-        candidate = home_dir / "hooks/boot.bat"
-        found = candidate.is_file()
-        print(tags[int(found)], candidate)
-
-        # This is run just before the prompt is shown
-        candidate = home_dir / "hooks/startup.bat"
-        found = candidate.is_file()
-        print(tags[int(found)], candidate)
-        if found:
-            self._user_script = candidate
-
-        print()
-        super().run(env)
 
     def register_shells(self, registrar):
         registrar.add("cmd", lambda x: self)
@@ -106,7 +77,44 @@ class Cmd(object):
 
 
 #-------------------------------------------------------------------------------
-_clink_lua = r"""
+class Cmd(_Shell):
+    def run(self, env):
+        if os.name != "nt":
+            return super().run(env)
+
+        # Give the user a convenient way to add customisations in to the session
+        self.print_info("Customisation")
+        home_dir = Path(self.get_home_dir())
+        tags = (
+            flow.cmd.text.grey("none"),
+            flow.cmd.text.white("okay"),
+        )
+
+        # These are really a no-op. It is here to hint to the user how they can
+        # add their own channels
+        candidate = home_dir / "channels"
+        found = candidate.is_dir()
+        print(tags[int(found)], candidate / "*")
+
+        # Indicate to the user that there's a way to hook the boot process too
+        candidate = home_dir / "hooks/boot.bat"
+        found = candidate.is_file()
+        print(tags[int(found)], candidate)
+
+        # This is run just before the prompt is shown
+        candidate = home_dir / "hooks/startup.bat"
+        found = candidate.is_file()
+        print(tags[int(found)], candidate)
+        if found:
+            self._user_script = candidate
+
+        print()
+        return super().run(env)
+
+
+#-------------------------------------------------------------------------------
+def _get_clink_lua():
+    return r"""
 local py_server = io.popen2(py_server_cmd)
 
 for _, tree_root in ipairs(commands) do

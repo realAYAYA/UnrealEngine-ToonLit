@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Behaviour/RCBehaviour.h"
 
@@ -8,6 +8,7 @@
 #include "Behaviour/RCBehaviourNode.h"
 #include "Controller/RCController.h"
 #include "Engine/Blueprint.h"
+#include "PropertyBag.h"
 #include "RemoteControlField.h"
 #include "RemoteControlPreset.h"
 
@@ -18,16 +19,33 @@ URCBehaviour::URCBehaviour()
 
 void URCBehaviour::Execute()
 {
-	const URCBehaviourNode* BehaviourNode = GetBehaviourNode();
+	ExecuteInternal(ActionContainer->GetActions());
+}
 
-	// Execute before the logic
-	BehaviourNode->PreExecute(this);
-
-	if (BehaviourNode->Execute(this))
+void URCBehaviour::ExecuteSingleAction(URCAction* InAction)
+{
+	if (InAction)
 	{
-		ActionContainer->ExecuteActions();
-		BehaviourNode->OnPassed(this);
+		ExecuteInternal({ InAction });
 	}
+}
+
+URCAction* URCBehaviour::AddAction()
+{
+#if WITH_EDITOR
+	ActionContainer->Modify();
+#endif // WITH_EDITOR
+
+	return ActionContainer->AddAction();
+}
+
+URCAction* URCBehaviour::AddAction(FName InFieldId)
+{
+#if WITH_EDITOR
+	ActionContainer->Modify();
+#endif // WITH_EDITOR
+
+	return ActionContainer->AddAction(InFieldId);
 }
 
 URCAction* URCBehaviour::AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField)
@@ -62,6 +80,18 @@ bool URCBehaviour::CanHaveActionForField(const TSharedPtr<FRemoteControlField> I
 	if (ActionContainer->FindActionByFieldId(InRemoteControlField->GetId()))
 	{
 		return false; // already exists!
+	}
+
+	if (InRemoteControlField->FieldType == EExposedFieldType::Property)
+	{
+		if (const TSharedPtr<FRemoteControlProperty>& RCProperty = StaticCastSharedPtr<FRemoteControlProperty>(InRemoteControlField))
+		{
+			if (const FProperty* Property = RCProperty->GetProperty())
+			{
+				const FPropertyBagPropertyDesc PropertyBagDesc = FPropertyBagPropertyDesc(Property->GetFName(), Property);
+				return RCProperty->IsEditable() && PropertyBagDesc.ValueType != EPropertyBagPropertyType::None;
+			}
+		}
 	}
 
 	return true;
@@ -116,6 +146,24 @@ URCBehaviourNode* URCBehaviour::GetBehaviourNode()
 	return CachedBehaviourNode;
 }
 
+void URCBehaviour::ExecuteInternal(const TSet<TObjectPtr<URCAction>>& InActionsToExecute)
+{
+	const URCBehaviourNode* BehaviourNode = GetBehaviourNode();
+
+	// Execute before the logic
+	BehaviourNode->PreExecute(this);
+
+	if (BehaviourNode->Execute(this))
+	{
+		for (const TObjectPtr<URCAction>& Action : InActionsToExecute)
+		{
+			Action->Execute();
+		}
+		BehaviourNode->OnPassed(this);
+	}
+	
+}
+
 #if WITH_EDITOR
 const FText& URCBehaviour::GetDisplayName()
 {
@@ -136,5 +184,15 @@ const FText& URCBehaviour::GetBehaviorDescription()
 
 	return GetDefault<URCBehaviourNode>(BehaviourNodeClass)->BehaviorDescription;
 }
-
 #endif
+
+void URCBehaviour::UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap)
+{
+	if (ActionContainer)
+	{
+		ActionContainer->ForEachAction([&InEntityIdMap](URCAction* InAction)
+		{
+			InAction->UpdateEntityIds(InEntityIdMap);
+		}, /*bInRecursive*/ true);
+	}
+}

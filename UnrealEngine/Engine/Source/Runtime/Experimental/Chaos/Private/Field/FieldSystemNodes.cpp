@@ -1103,7 +1103,7 @@ void FSumScalar::Evaluate(FFieldContext& ContextIn, TFieldArrayView<float>& Resu
 	if (LeftField != nullptr && RightField != nullptr)
 	{ 
 		const uint32 BufferOffset = ContextIn.ScalarResults.Num();
-		ContextIn.ScalarResults.SetNum(BufferOffset + 2* NumResults, false);
+		ContextIn.ScalarResults.SetNum(BufferOffset + 2* NumResults, EAllowShrinking::No);
 
 		TFieldArrayView<float> Buffers[2] = {
 			TFieldArrayView<float>(ContextIn.ScalarResults,BufferOffset,NumResults),
@@ -1160,7 +1160,7 @@ void FSumScalar::Evaluate(FFieldContext& ContextIn, TFieldArrayView<float>& Resu
 			}
 			break;
 		}
-		ContextIn.ScalarResults.SetNum(BufferOffset, false);
+		ContextIn.ScalarResults.SetNum(BufferOffset, EAllowShrinking::No);
 	}
 	else if (LeftField != nullptr && ensureMsgf(ScalarLeft->Type() == FFieldNode<float>::StaticType(),
 		TEXT("Field system SumScalar expects float input arrays.")))
@@ -1326,7 +1326,7 @@ void FSumVector::Evaluate(FFieldContext& ContextIn, TFieldArrayView<FVector>& Re
 	if (RightVectorField != nullptr && LeftVectorField != nullptr)
 	{
 		const uint32 BufferOffset = ContextIn.VectorResults.Num();
-		ContextIn.VectorResults.SetNum(BufferOffset + 2 * NumResults, false);
+		ContextIn.VectorResults.SetNum(BufferOffset + 2 * NumResults, EAllowShrinking::No);
 
 		TFieldArrayView<FVector> Buffers[2] = {
 			TFieldArrayView<FVector>(ContextIn.VectorResults, BufferOffset, NumResults),
@@ -1375,7 +1375,7 @@ void FSumVector::Evaluate(FFieldContext& ContextIn, TFieldArrayView<FVector>& Re
 			}
 			break;
 		}
-		ContextIn.VectorResults.SetNum(BufferOffset, false);
+		ContextIn.VectorResults.SetNum(BufferOffset, EAllowShrinking::No);
 	}
 	else if (LeftVectorField != nullptr)
 	{
@@ -1389,7 +1389,7 @@ void FSumVector::Evaluate(FFieldContext& ContextIn, TFieldArrayView<FVector>& Re
 	if (ScalarField != nullptr)
 	{
 		const uint32 BufferOffset = ContextIn.ScalarResults.Num();
-		ContextIn.ScalarResults.SetNum(BufferOffset + NumResults, false);
+		ContextIn.ScalarResults.SetNum(BufferOffset + NumResults, EAllowShrinking::No);
 
 		TFieldArrayView<float> Buffer(ContextIn.ScalarResults, BufferOffset, NumResults);
 
@@ -1402,7 +1402,7 @@ void FSumVector::Evaluate(FFieldContext& ContextIn, TFieldArrayView<FVector>& Re
 				Results[Index.Result] *= Buffer[Index.Result];
 			}
 		}
-		ContextIn.ScalarResults.SetNum(BufferOffset, false);
+		ContextIn.ScalarResults.SetNum(BufferOffset, EAllowShrinking::No);
 	}
 
 	if (MagnitudeVal != 1.0)
@@ -1580,7 +1580,7 @@ void FConversionField<InT,OutT>::Evaluate(FFieldContext& Context, TFieldArrayVie
 	TArray<InT>& ResultsArray = GetResultArray<InT>(Context);
 
 	const int32 BufferOffset = ResultsArray.Num();
-	ResultsArray.SetNum(BufferOffset + NumResults, false);
+	ResultsArray.SetNum(BufferOffset + NumResults, EAllowShrinking::No);
 	FMemory::Memzero(&ResultsArray[BufferOffset], sizeof(InT) * NumResults);
 
 	TFieldArrayView<InT> BufferView(ResultsArray, BufferOffset, NumResults);
@@ -1591,7 +1591,7 @@ void FConversionField<InT,OutT>::Evaluate(FFieldContext& Context, TFieldArrayVie
 		const FFieldContextIndex& Index = Context.SampleIndices[SampleIndex];
 		Results[Index.Result] = (OutT)BufferView[Index.Result];
 	}
-	ResultsArray.SetNum(BufferOffset, false);
+	ResultsArray.SetNum(BufferOffset, EAllowShrinking::No);
 }
 
 template<class InT, class OutT>
@@ -1681,14 +1681,14 @@ void FCullingField<T>::Evaluate(FFieldContext& Context, TFieldArrayView<T>& Resu
 			TEXT("Field Node CullingFields Culling input expects a float input array.")))
 		{
 			const uint32 BufferOffset = Context.ScalarResults.Num();
-			Context.ScalarResults.SetNum(BufferOffset + NumResults, false);
+			Context.ScalarResults.SetNum(BufferOffset + NumResults, EAllowShrinking::No);
 			TFieldArrayView<float> CullingBuffer(Context.ScalarResults, BufferOffset, NumResults);
 
 			FMemory::Memzero(&Context.ScalarResults[BufferOffset], sizeof(float) * NumResults);
 			CullingField->Evaluate(Context, CullingBuffer);
 
 			const uint32 IndexOffset = Context.IndexResults.Num();
-			Context.IndexResults.SetNum(IndexOffset + NumResults, false);
+			Context.IndexResults.SetNum(IndexOffset + NumResults, EAllowShrinking::No);
 			TFieldArrayView<FFieldContextIndex> IndexBuffer(Context.IndexResults, IndexOffset, NumResults);
 
 			int NewEvaluationSize = 0;
@@ -1712,10 +1712,10 @@ void FCullingField<T>::Evaluate(FFieldContext& Context, TFieldArrayView<T>& Resu
 					}
 				}
 			}
-			Context.ScalarResults.SetNum(BufferOffset, false);
+			Context.ScalarResults.SetNum(BufferOffset, EAllowShrinking::No);
 			if (NewEvaluationSize)
 			{
-				Context.IndexResults.SetNum(IndexOffset + NewEvaluationSize, false);
+				Context.IndexResults.SetNum(IndexOffset + NewEvaluationSize, EAllowShrinking::No);
 
 				FFieldSystemMetaDataCulling* CullingData = static_cast<FFieldSystemMetaDataCulling*>(Context.MetaData[FFieldSystemMetaData::EMetaType::ECommandData_Culling]);
 
@@ -1723,7 +1723,7 @@ void FCullingField<T>::Evaluate(FFieldContext& Context, TFieldArrayView<T>& Resu
 				{
 					CullingData->bCullingActive = true;
 
-					CullingData->CullingIndices.SetNum(NewEvaluationSize, false);
+					CullingData->CullingIndices.SetNum(NewEvaluationSize, EAllowShrinking::No);
 					FMemory::Memcpy(&CullingData->CullingIndices[0], &Context.IndexResults[IndexOffset], NewEvaluationSize * sizeof(FFieldContextIndex));
 
 					if (InputField)
@@ -1735,7 +1735,7 @@ void FCullingField<T>::Evaluate(FFieldContext& Context, TFieldArrayView<T>& Resu
 					}
 				}
 			}
-			Context.IndexResults.SetNum(IndexOffset, false);
+			Context.IndexResults.SetNum(IndexOffset, EAllowShrinking::No);
 		}
 	}
 	else if( InputField!=nullptr)

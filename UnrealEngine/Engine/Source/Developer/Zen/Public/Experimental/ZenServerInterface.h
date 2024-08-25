@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Async/Future.h"
+#include "Async/Mutex.h"
 #include "Containers/StringFwd.h"
 #include "Containers/StringView.h"
 #include "Containers/UnrealString.h"
@@ -32,15 +33,16 @@ namespace UE::Zen
 struct FServiceConnectSettings
 {
 	FString HostName;
-	uint16 Port = 1337;
+	uint16 Port = 8558;
 };
 
 struct FServiceAutoLaunchSettings
 {
 	FString DataPath;
 	FString ExtraArgs;
-	uint16 DesiredPort = 1337;
+	uint16 DesiredPort = 8558;
 	bool bShowConsole = false;
+	bool bIsDefaultDataPath = false;
 	bool bLimitProcessLifetime = false;
 	bool bSendUnattendedBugReports = false;
 	bool bIsDefaultSharedRunContext = true;
@@ -53,9 +55,9 @@ struct FServiceSettings
 	inline bool IsAutoLaunch() const { return SettingsVariant.IsType<FServiceAutoLaunchSettings>(); }
 	inline bool IsConnectExisting() const { return SettingsVariant.IsType<FServiceConnectSettings>(); }
 
-	UE_API void ReadFromConfig();
-	UE_API void ReadFromCompactBinary(FCbFieldView Field);
-	UE_API void ReadFromURL(FStringView InstanceURL);
+	UE_API bool ReadFromConfig();
+	UE_API bool ReadFromCompactBinary(FCbFieldView Field);
+	UE_API bool ReadFromURL(FStringView InstanceURL);
 
 	UE_API void WriteToCompactBinary(FCbWriter& Writer) const;
 
@@ -114,7 +116,7 @@ private:
 
 UE_API bool IsLocalServiceRunning(const TCHAR* DataPath, uint16* OutPort = nullptr);
 UE_API FProcHandle StartLocalService(const FZenLocalServiceRunContext& Context, const TCHAR* TransientArgs = nullptr);
-UE_API bool StopLocalService(const TCHAR* DataPath, double MaximumWaitDurationSeconds = 5.0);
+UE_API bool StopLocalService(const TCHAR* DataPath, double MaximumWaitDurationSeconds = 25.0);
 
 UE_API FString GetLocalServiceInstallPath();
 UE_API FString GetLocalServiceInstallVersion(bool bDetailed = true);
@@ -177,6 +179,7 @@ public:
 	UE_API FZenServiceInstance(FServiceSettings&& InSettings);
 	UE_API ~FZenServiceInstance();
 
+	UE_API const FString GetPath() const;
 	inline const TCHAR* GetURL() const { return *URL; }
 	inline const TCHAR* GetHostName() const { return *HostName; }
 	inline uint16 GetPort() const { return Port; }
@@ -187,11 +190,14 @@ public:
 
 	UE_API bool TryRecovery();
 
-	UE_API bool GetStats(FZenStats& Stats);
+	UE_API bool GetCacheStats(FZenCacheStats& Stats);
+	UE_API bool GetProjectStats(FZenProjectStats& Stats);
 	UE_API bool GatherAnalytics(TArray<FAnalyticsEventAttribute>& Attributes);
 
 	UE_API bool GetGCStatus(FGCStatus& Status);
 	UE_API bool RequestGC(const bool* OverrideCollectSmallObjects = nullptr, const uint32* OverrideMaxCacheDuration = nullptr);
+
+	UE_API bool AddSponsorProcessIDs(TArrayView<uint32> SponsorProcessIDs);
 
 	static UE_API uint16 GetAutoLaunchedPort();
 
@@ -206,16 +212,24 @@ private:
 	mutable TOptional<FGCStatus> LastGCStatus;
 	mutable uint64 LastGCStatusTime = 0;
 
-	mutable TPimplPtr<class FZenHttpRequest> StatsHttpRequest;
-	mutable TFuture<FZenStats> StatsRequest;
-	mutable FZenStats LastStats;
-	mutable uint64 LastStatsTime = 0;
+	mutable TPimplPtr<class FZenHttpRequest> CacheStatsHttpRequest;
+	mutable TFuture<FZenCacheStats> CacheStatsRequest;
+	mutable uint64 LastCacheStatsTime = 0;
+	mutable FMutex LastCacheStatsMutex;
+	mutable FZenCacheStats LastCacheStats;
+
+	mutable TPimplPtr<class FZenHttpRequest> ProjectStatsHttpRequest;
+	mutable TFuture<FZenProjectStats> ProjectStatsRequest;
+	mutable uint64 LastProjectStatsTime = 0;
+	mutable FMutex LastProjectStatsMutex;
+	mutable FZenProjectStats LastProjectStats;
 
 	FServiceSettings Settings;
 	FString URL;
 	FString HostName;
 	uint16 Port;
 	static uint16 AutoLaunchedPort;
+	static uint32 AutoLaunchedPid;
 	bool bHasLaunchedLocal = false;
 	bool bIsRunningLocally = true;
 };

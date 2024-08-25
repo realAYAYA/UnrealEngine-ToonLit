@@ -265,15 +265,19 @@ void FAnalyticsProviderAdjust::RecordEvent(const FString& EventName, const TArra
 	FString* EventTokenRef = EventMap.Find(EventName);
 	if (EventTokenRef != nullptr)
 	{
+		TArray<FAnalyticsEventAttribute> EventAttributes;
+		EventAttributes.Append(Attributes);
+		EventAttributes.Append(DefaultEventAttributes);
+
 		FString EventToken = *EventTokenRef;
 		NSString* IOSEventToken = [NSString stringWithFString : EventToken];
 		
 		ADJEvent *event = [ADJEvent eventWithEventToken:IOSEventToken];
-		const int32 AttrCount = Attributes.Num();
+		const int32 AttrCount = EventAttributes.Num();
 		if (AttrCount > 0)
 		{
 			// add event attributes
-			for (auto Attr : Attributes)
+			for (auto Attr : EventAttributes)
 			{
 				NSString* IOSKey = [NSString stringWithFString : Attr.GetName()];
 				NSString* IOSValue = [NSString stringWithFString : Attr.GetValue()];
@@ -429,4 +433,25 @@ void FAnalyticsProviderAdjust::RecordProgress(const FString& ProgressType, const
 #else
 	UE_LOG(LogAnalytics, Warning, TEXT("WITH_ADJUST=0. Are you missing the SDK?"));
 #endif
+}
+
+
+void FAnalyticsProviderAdjust::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
+{
+	DefaultEventAttributes = Attributes;
+}
+
+TArray<FAnalyticsEventAttribute> FAnalyticsProviderAdjust::GetDefaultEventAttributesSafe() const
+{
+	return DefaultEventAttributes;
+}
+
+int32 FAnalyticsProviderAdjust::GetDefaultEventAttributeCount() const
+{
+	return DefaultEventAttributes.Num();
+}
+
+FAnalyticsEventAttribute FAnalyticsProviderAdjust::GetDefaultEventAttribute(int AttributeIndex) const
+{
+	return DefaultEventAttributes[AttributeIndex];
 }

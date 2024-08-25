@@ -46,6 +46,7 @@ namespace EMassLOD
 }
 
 
+UENUM()
 enum class EMassVisibility : uint8
 {
 	CanBeSeen, // Not too far and within camera frustum

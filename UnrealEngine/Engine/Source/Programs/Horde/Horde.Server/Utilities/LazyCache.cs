@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
+#pragma warning disable VSTHRD110 // Observe the awaitable result of this method call by awaiting it, assigning to a variable, or passing it to another method
+
 namespace Horde.Server.Utilities
 {
 	/// <summary>
@@ -74,7 +76,7 @@ namespace Horde.Server.Utilities
 			Item item = _dictionary.GetOrAdd(key, key => new Item());
 
 			// Create the task to get the current value
-			Task<TValue> currentTask = InterlockedCreateTask(ref item._currentTask, () => _getValueAsync(key));
+			Task<TValue> currentTask = InterlockedCreateTaskAsync(ref item._currentTask, () => _getValueAsync(key));
 
 			// If an update has completed, swap it out
 			Task<TValue>? updateTask = item._updateTask;
@@ -89,11 +91,11 @@ namespace Horde.Server.Utilities
 			TimeSpan age = item._timer.Elapsed;
 			if (maxAge != null && age > maxAge.Value)
 			{
-				return InterlockedCreateTask(ref item._updateTask, () => _getValueAsync(key));
+				return InterlockedCreateTaskAsync(ref item._updateTask, () => _getValueAsync(key));
 			}
 			if (age > _options.RefreshTime)
 			{
-				InterlockedCreateTask(ref item._updateTask, () => _getValueAsync(key));
+				InterlockedCreateTaskAsync(ref item._updateTask, () => _getValueAsync(key));
 			}
 
 			return currentTask;
@@ -105,7 +107,7 @@ namespace Horde.Server.Utilities
 		/// <param name="value"></param>
 		/// <param name="createTask"></param>
 		/// <returns></returns>
-		static Task<TValue> InterlockedCreateTask(ref Task<TValue>? value, Func<Task<TValue>> createTask)
+		static Task<TValue> InterlockedCreateTaskAsync(ref Task<TValue>? value, Func<Task<TValue>> createTask)
 		{
 			Task<TValue>? currentTask = value;
 			while (currentTask == null)

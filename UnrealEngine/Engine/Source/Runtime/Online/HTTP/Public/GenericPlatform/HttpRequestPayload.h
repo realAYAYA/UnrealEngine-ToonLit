@@ -40,20 +40,32 @@ public:
 	 * @return Returns the number of bytes copied into OutputBuffer
 	 */
 	virtual size_t FillOutputBuffer(TArrayView<uint8> OutputBuffer, size_t SizeAlreadySent) = 0;
+
+	/** Open the upload payload before start */
+	virtual bool Open() = 0;
+
+	/** Close the upload payload when the http request don't need to use it anymore */
+	virtual void Close() = 0;
 };
 
 class FRequestPayloadInFileStream : public FRequestPayload
 {
 public:
-	FRequestPayloadInFileStream(TSharedRef<FArchive, ESPMode::ThreadSafe> InFile);
+	FRequestPayloadInFileStream(const FString& InFilename);
+	FRequestPayloadInFileStream(TSharedRef<FArchive> InFile, bool bInCloseWhenComplete = false);
 	virtual ~FRequestPayloadInFileStream();
 	virtual uint64 GetContentLength() const override;
 	virtual const TArray<uint8>& GetContent() const override;
 	virtual bool IsURLEncoded() const override;
 	virtual size_t FillOutputBuffer(void* OutputBuffer, size_t MaxOutputBufferSize, size_t SizeAlreadySent) override;
 	virtual size_t FillOutputBuffer(TArrayView<uint8> OutputBuffer, size_t SizeAlreadySent) override;
+	virtual bool Open() override;
+	virtual void Close() override;
+
 private:
-	TSharedRef<FArchive, ESPMode::ThreadSafe> File;
+	FString Filename;
+	TSharedPtr<FArchive> File;
+	bool bCloseWhenComplete = false;
 };
 
 class FRequestPayloadInMemory : public FRequestPayload
@@ -67,6 +79,8 @@ public:
 	virtual bool IsURLEncoded() const override;
 	virtual size_t FillOutputBuffer(void* OutputBuffer, size_t MaxOutputBufferSize, size_t SizeAlreadySent) override;
 	virtual size_t FillOutputBuffer(TArrayView<uint8> OutputBuffer, size_t SizeAlreadySent) override;
+	virtual bool Open() override;
+	virtual void Close() override;
 private:
 	TArray<uint8> Buffer;
 };

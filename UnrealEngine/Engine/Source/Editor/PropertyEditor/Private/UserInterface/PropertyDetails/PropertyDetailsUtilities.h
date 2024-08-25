@@ -21,6 +21,7 @@ public:
 	virtual bool IsPropertyEditingEnabled() const override;
 	virtual void ForceRefresh() override;
 	virtual void RequestRefresh() override;
+	virtual void RequestForceRefresh() override;
 	virtual TSharedPtr<class FAssetThumbnailPool> GetThumbnailPool() const override;
 	virtual void NotifyFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual bool DontUpdateValueWhileEditing() const override;

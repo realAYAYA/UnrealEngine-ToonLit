@@ -16,7 +16,10 @@
 	struct INTCExtensionContext;
 	struct INTCExtensionInfo;
 
-	void DestroyIntelExtensionsContext(INTCExtensionContext* IntelExtensionContext);
 	INTCExtensionContext* CreateIntelExtensionsContext(ID3D12Device* Device, INTCExtensionInfo& INTCExtensionInfo);
+	void DestroyIntelExtensionsContext(INTCExtensionContext* IntelExtensionContext);
+
 	bool EnableIntelAtomic64Support(INTCExtensionContext* IntelExtensionContext, INTCExtensionInfo& INTCExtensionInfo);
+	void EnableIntelAppDiscovery(uint32 DeviceId);
+
 #endif //INTEL_EXTENSIONS

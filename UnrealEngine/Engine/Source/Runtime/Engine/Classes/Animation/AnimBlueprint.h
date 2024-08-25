@@ -16,6 +16,8 @@ class USkeleton;
 class UPoseWatch;
 class UPoseWatchFolder;
 struct FAnimBlueprintDebugData;
+class UAnimGraphNodeBinding;
+class UClass;
 
 USTRUCT()
 struct FAnimGroupInfo
@@ -188,7 +190,9 @@ class UAnimBlueprint : public UBlueprint, public IInterface_PreviewMeshProvider
 	ENGINE_API virtual bool SupportsInputEvents() const override;
 	ENGINE_API virtual bool AllowFunctionOverride(const UFunction* const InFunction) const override;
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-	
+	ENGINE_API virtual void GetTypeActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const override;
+	ENGINE_API virtual void GetInstanceActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const override;
+
 protected:
 	// Broadcast when an override is changed, allowing derived blueprints to be updated
 	FOnOverrideChangedMulticaster OnOverrideChanged;
@@ -237,6 +241,9 @@ public:
 	// @param	bInIsInterface		Whether the anim blueprint to check is an interface
 	ENGINE_API bool IsCompatibleByAssetString(const FString& InSkeletonAsset, bool bInIsTemplate, bool bInIsInterface) const;
 	
+	// Get the default binding type that any new nodes will use when created
+	ENGINE_API UClass* GetDefaultBindingClass() const { return DefaultBindingClass; }
+
 public:
 	// Array of overrides to asset containing nodes in the parent that have been overridden
 	UPROPERTY()
@@ -263,6 +270,10 @@ private:
 	 */
 	UPROPERTY(duplicatetransient, AssetRegistrySearchable)
 	TSoftObjectPtr<class UAnimBlueprint> PreviewAnimationBlueprint;
+
+	/** The default binding type that any new nodes will use when created */
+	UPROPERTY(EditAnywhere, Category=Bindings, meta=(AllowedClasses="/Script/AnimGraph.AnimGraphNodeBinding", ShowDisplayNames=true, NoClear))
+	TObjectPtr<UClass> DefaultBindingClass;
 
 	/** The method by which a preview animation blueprint is applied, either as an overlay layer, or as a linked instance */
 	UPROPERTY()

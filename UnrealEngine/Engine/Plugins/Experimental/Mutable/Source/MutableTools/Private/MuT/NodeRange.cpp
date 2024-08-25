@@ -9,8 +9,6 @@
 #include "MuT/Node.h"
 #include "MuT/NodeRangeFromScalar.h"
 
-#include <stdint.h>
-
 
 namespace mu
 {
@@ -18,7 +16,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    static NODE_TYPE s_nodeRangeType = 	NODE_TYPE( "NodeRange", Node::GetStaticType() );
+    static FNodeType s_nodeRangeType = 	FNodeType( "NodeRange", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -28,11 +26,12 @@ namespace mu
 		arch << ver;
 
 #define SERIALISE_CHILDREN( C, ID ) \
-        ( const C* pTyped##ID = dynamic_cast<const C*>(p) )			\
-        {                                                           \
-            arch << (uint32_t)ID;                                   \
-            C::Serialise( pTyped##ID, arch );						\
-        }                                                           \
+		( p->GetType()==C::GetStaticType() )					\
+		{ 														\
+			const C* pTyped = static_cast<const C*>(p);			\
+            arch << (uint32_t)ID;								\
+			C::Serialise( pTyped, arch );						\
+		}														\
 
         if SERIALISE_CHILDREN( NodeRangeFromScalar          , 0  )
         else check(false);
@@ -43,11 +42,11 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     NodeRangePtr NodeRange::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (id)
@@ -61,14 +60,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-    const NODE_TYPE* NodeRange::GetType() const
+    const FNodeType* NodeRange::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    const NODE_TYPE* NodeRange::GetStaticType()
+    const FNodeType* NodeRange::GetStaticType()
 	{
         return &s_nodeRangeType;
 	}

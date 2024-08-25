@@ -17,6 +17,7 @@ import android.os.RemoteException;
 import android.os.StrictMode;
 import android.os.Trace;
 import android.util.Log;
+import android.os.ParcelFileDescriptor;
 
 import com.epicgames.unreal.GameActivity;
 import com.epicgames.unreal.Logger;
@@ -53,7 +54,7 @@ public class PSOProgramServiceAccessor
 			Trace.endSection();
 		}
 	}
-	
+
 	static final Class<?>[] ServiceClassTypes = new Class<?>[] {
 		OGLProgramService.class
 		,OGLProgramService1.class
@@ -75,12 +76,13 @@ public class PSOProgramServiceAccessor
 		,VulkanProgramService6.class
 		,VulkanProgramService7.class
 	};
-	
+
 	private static final String TAG = "PSOProgramServiceAccessor";
 	private static PSOProgramServiceAccessor _PSOProgramServiceAccessor = null;
 
 	OGLServiceInstance[] ServiceInstances;
-	private GameActivity mContext;
+	private GameActivity mActivity;
+	private Context mContext;
 
 	static class JobResponse
 	{
@@ -101,11 +103,11 @@ public class PSOProgramServiceAccessor
 		{
 			super(inLooper);
 		}
-		
+
 		@Override
 		public void handleMessage(Message msg)
 		{
-			switch (msg.what) 
+			switch (msg.what)
 			{
 				case PSOProgramService.MSG_LINKPROGRAM_RESPONSE:
 				{
@@ -122,12 +124,12 @@ public class PSOProgramServiceAccessor
 						{
 							_PSOProgramServiceAccessor.ServiceInstances[ServiceID].PendingJobs.decrementAndGet();
 						}
-					} 
+					}
 					finally
 					{
 						ProgramServiceAccessorlock.readLock().unlock();
 					}
-					
+
 					{
 						beginTrace("PSOProgramService.MSG_LINKPROGRAM_RESPONSE " + JobID);
 						//Log.verbose("CompletedLinkBroadcastReceiver for job " + JobID + " program length " + (CompiledResult == null ? 0 : CompiledResult.length) + " context size " + (JobContext == null? 0 : JobContext.length));
@@ -156,15 +158,18 @@ public class PSOProgramServiceAccessor
 	}
 
 	static HandlerThread PSOProgramAccessorHandlerThread;
-	
+
 	static Messenger mReplyToMe;
-	
+
 	final AtomicInteger LastServiceIdx = new AtomicInteger(0);
 
 	private static final ReadWriteLock ProgramServiceAccessorlock = new ReentrantReadWriteLock();
-	
+
 	private static boolean IsNullOrEmpty(String string) { return string == null || string.isEmpty(); }
-	
+
+	private boolean bServicePriHigh = false;
+	public void SetServicePriority(boolean bHigh) { bServicePriHigh = bHigh; }
+
 	public PSOProgramServiceAccessor()
 	{
 		//StrictMode.enableDefaults();
@@ -173,18 +178,19 @@ public class PSOProgramServiceAccessor
 		//	.penaltyLog()
 		//	.build());
 	}
-	
+
 	private static final Logger Log = GameActivity.Log;
-	public void Init(GameActivity InContext)
+	public void Init(GameActivity InActivity)
 	{
-		mContext = InContext;
+		mActivity = InActivity;
+		mContext = mActivity.getApplicationContext();
 		ClearServiceLogDirs();
 		_PSOProgramServiceAccessor = this;
 	}
-	
+
 	private void ClearServiceLogDirs()
 	{
-		String OGLLogDir = mContext.getFilesDir()+PSOProgramService.LogDir;
+		String OGLLogDir = mActivity.getFilesDir()+PSOProgramService.LogDir;
 		File deleteDir = new File(OGLLogDir);
 		boolean bDeleteDirExists = deleteDir.exists();
 		if( bDeleteDirExists )
@@ -200,8 +206,8 @@ public class PSOProgramServiceAccessor
 			deleteDir.delete();
 		}
 	}
-	
-	public static boolean AndroidThunkJava_StartRemoteProgramLink(int numServices, boolean bUseVulkan)
+
+	public static boolean AndroidThunkJava_StartRemoteProgramLink(int numServices, boolean bUseRobustEGLContext, boolean bUseVulkan)
 	{
 		boolean bSuccess = false;
 		if( _PSOProgramServiceAccessor != null)
@@ -219,7 +225,7 @@ public class PSOProgramServiceAccessor
 				}
 				else
 				{
-					bSuccess = _PSOProgramServiceAccessor.StartAndWaitForServices(numServices);
+					bSuccess = _PSOProgramServiceAccessor.StartAndWaitForServices(numServices, bUseRobustEGLContext);
 				}
 			}
 			catch (Exception e)
@@ -231,14 +237,14 @@ public class PSOProgramServiceAccessor
 				ProgramServiceAccessorlock.writeLock().unlock();
 			}
 		}
-			
+
 		if(!bSuccess)
 		{
 			AndroidThunkJava_StopRemoteProgramLink();
 		}
 		return bSuccess;
 	}
-	
+
 	public static void AndroidThunkJava_StopRemoteProgramLink()
 	{
 		if( _PSOProgramServiceAccessor != null)
@@ -261,17 +267,17 @@ public class PSOProgramServiceAccessor
 		}
 	}
 
-	boolean StartAndWaitForServices(int numServices)
+	boolean StartAndWaitForServices(int numServices, boolean bUseRobustEGLContext)
 	{
 		numServices = Math.max(1, Math.min(numServices, ServiceClassTypes.length));
 
 		ServiceInstances = new OGLServiceInstance[numServices];
 		for(int i = 0; i< numServices ;i++)
 		{
-			ServiceInstances[i] = new OGLServiceInstance(ServiceClassTypes[i]);
+			ServiceInstances[i] = new OGLServiceInstance(ServiceClassTypes[i], bUseRobustEGLContext);
 		}
-		
-		boolean bSuccess = true; 
+
+		boolean bSuccess = true;
 		for (OGLServiceInstance ServiceInstance : ServiceInstances )
 		{
 			bSuccess = bSuccess && ServiceInstance.doBindAndWait();
@@ -286,10 +292,10 @@ public class PSOProgramServiceAccessor
 		ServiceInstances = new OGLServiceInstance[numServices];
 		for(int i = 0; i< numServices ;i++)
 		{
-			ServiceInstances[i] = new OGLServiceInstance(VulkanServiceClassTypes[i]);
+			ServiceInstances[i] = new OGLServiceInstance(VulkanServiceClassTypes[i], false);
 		}
-		
-		boolean bSuccess = true; 
+
+		boolean bSuccess = true;
 		for (OGLServiceInstance ServiceInstance : ServiceInstances )
 		{
 			bSuccess = bSuccess && ServiceInstance.doBindAndWait();
@@ -309,7 +315,7 @@ public class PSOProgramServiceAccessor
 			}
 			ServiceInstances = null;
 		}
-	}	
+	}
 
 	private static final AtomicInteger JobID = new AtomicInteger(5);
 
@@ -319,6 +325,7 @@ public class PSOProgramServiceAccessor
 		boolean bCompileSuccess;
 		String ErrorMessage;
 		byte[] CompiledProgram;
+		int SHMOutputHandle;
 	}
 
 	static final private Object ProgramLinkLock = new Object();
@@ -353,7 +360,7 @@ public class PSOProgramServiceAccessor
 				Log.error( "AndroidThunkJava_OGLRemoteProgramLink not enabled.");
 				return null;
 			}
-			
+
 			int ThisJobID = JobID.incrementAndGet();
 			beginTrace("AndroidThunkJava_OGLRemoteProgramLink " + ThisJobID);
 			Message msg = Message.obtain(null, PSOProgramService.MSG_LINKPROGRAM, 0, 0);
@@ -373,7 +380,7 @@ public class PSOProgramServiceAccessor
 				}
 				params.putString(PSOProgramService.VS_Key, VertexShader);
 				params.putString(PSOProgramService.PS_Key, PixelShader);
-			} 
+			}
 			else
 			{
 				//Log.verbose("Compute compile job");
@@ -428,7 +435,7 @@ public class PSOProgramServiceAccessor
 					{
 						// we must loop as waits can randomly wake.
 						pendingResponse.SyncObj.wait(1000);
-						
+
 						if ((System.nanoTime() - tStartTime) >= (tTimeoutInMS * 1000000))
 						{
 							Log.error("OGLRemoteProgramLink TIMED OUT WAITING " + ThisJobID + " for " + (System.nanoTime() - tStartTime) / 1000000 + "ms. pending tasks "+thisInstance.PendingJobs.get());
@@ -458,29 +465,29 @@ public class PSOProgramServiceAccessor
 					SyncObs.remove(ThisJobID);
 					return null;
 				}
-					
+
 			}
 
 			SyncObs.remove(ThisJobID);
-			
+
 			byte[] EngineJobContext = pendingResponse.data.getByteArray(PSOProgramService.JobContext_Key);
 			byte[] CompiledBinary = pendingResponse.data.getByteArray(PSOProgramService.CompiledProgram_Key);
 			int JobID = pendingResponse.data.getInt(PSOProgramService.JobID_Key);
 
 			//Log.verbose("OGLRemoteProgramLink handoff ("+JobID+"), ("+(EngineJobContext == null ? 0 : EngineJobContext.length)+", "+(CompiledBinary==null?0:CompiledBinary.length)+")");
-			
+
 			JNIProgramLinkResponse jniResponse = new JNIProgramLinkResponse();
 			String fail = pendingResponse.data.getString(PSOProgramService.JobFail);
 			jniResponse.bCompileSuccess = fail == null || fail.isEmpty();
 			jniResponse.ErrorMessage = fail;
 			jniResponse.CompiledProgram = CompiledBinary;
-			
+
 			return jniResponse;
-		} 
+		}
 		catch (Exception e)
 		{
 			Log.error( "OGLRemoteProgramLink FAIL " + e);
-		} 
+		}
 		finally
 		{
 			ProgramServiceAccessorlock.readLock().unlock();
@@ -490,23 +497,39 @@ public class PSOProgramServiceAccessor
 		return null;
 	}
 
-	public static JNIProgramLinkResponse AndroidThunkJava_VKPSOGFXCompile(byte[] ContextData, byte[] VertexShader, byte[] PixelShader, byte[] PSOData)
+	public static JNIProgramLinkResponse AndroidThunkJava_VKPSOGFXCompile(byte[] ContextData, byte[] VertexShader, byte[] PixelShader, byte[] PSOData, byte[] PSOCacheData, boolean bAllowTimeOuts)
 	{
 		if(GameActivity.IsActivityPaused())
 		{
 			// one at a time when backgrounded.
 			synchronized (ProgramLinkLock)
 			{
-				return VKPSOGFXCompile_internal(ContextData, VertexShader, PixelShader, PSOData);
+				return VKPSOGFXCompile_internal(ContextData, VertexShader, PixelShader, PSOData, PSOCacheData, bAllowTimeOuts);
 			}
 		}
 		else
 		{
-			return VKPSOGFXCompile_internal(ContextData, VertexShader, PixelShader, PSOData);
+			return VKPSOGFXCompile_internal(ContextData, VertexShader, PixelShader, PSOData, PSOCacheData, bAllowTimeOuts);
 		}
 	}
 
-	private static JNIProgramLinkResponse VKPSOGFXCompile_internal(byte[] ContextData, byte[] VertexShader, byte[] PixelShader, byte[] PSOData)
+	public static JNIProgramLinkResponse AndroidThunkJava_VKPSOGFXCompileShm(byte[] ContextData, int SharedMemFD, long VertexShaderSize, long PixelShaderSize, long PSODataSize, long PSOCacheDataSize, boolean bAllowTimeOuts)
+	{
+		if(GameActivity.IsActivityPaused())
+		{
+			// one at a time when backgrounded.
+			synchronized (ProgramLinkLock)
+			{
+				return VKPSOGFXCompileShm_internal(ContextData, SharedMemFD, VertexShaderSize, PixelShaderSize, PSODataSize, PSOCacheDataSize, bAllowTimeOuts);
+			}
+		}
+		else
+		{
+			return VKPSOGFXCompileShm_internal(ContextData, SharedMemFD, VertexShaderSize, PixelShaderSize, PSODataSize, PSOCacheDataSize, bAllowTimeOuts);
+		}
+	}
+
+	private static JNIProgramLinkResponse VKPSOGFXCompile_internal(byte[] ContextData, byte[] VertexShader, byte[] PixelShader, byte[] PSOData, byte[] PSOCacheData, boolean bAllowTimeOuts)
 	{
 		try
 		{
@@ -521,12 +544,12 @@ public class PSOProgramServiceAccessor
 				Log.error( "AndroidThunkJava_VKPSOGFXCompile not enabled.");
 				return null;
 			}
-			
+
 			int ThisJobID = JobID.incrementAndGet();
 			beginTrace("AndroidThunkJava_OGLRemoteProgramLink " + ThisJobID);
 			Message msg = Message.obtain(null, PSOProgramService.MSG_LINKPROGRAM, 0, 0);
 			Bundle params = new Bundle();
-			
+
 			//Log.verbose("GFX compile job");
 			if (VertexShader.length == 0)
 			{
@@ -541,6 +564,8 @@ public class PSOProgramServiceAccessor
 			params.putByteArray(PSOProgramService.VS_Key, VertexShader);
 			params.putByteArray(PSOProgramService.PS_Key, PixelShader);
 			params.putByteArray(PSOProgramService.PSOData_Key, PSOData);
+			params.putByteArray(PSOProgramService.PSOCacheData_Key, PSOCacheData);
+
 
 			params.putByteArray(PSOProgramService.JobContext_Key, ContextData);
 
@@ -582,25 +607,25 @@ public class PSOProgramServiceAccessor
 				{
 					int pendingJobs = thisInstance.PendingJobs.incrementAndGet();
 
-					long tStartTime = System.nanoTime();
-					// wait for 10s before giving up on the compile job.
-					long tTimeoutInMS = 10000;
+					long tStartTimeMS = System.currentTimeMillis();
+					// if we're allowed to time out, wait for 10s before giving up on the compile job.
+					long tTimeoutInMS = bAllowTimeOuts ? 10000 : Long.MAX_VALUE;
 
 					while (pendingResponse.ResponseState != JobResponse.ResponseStateEnum.Responded)
 					{
 						// we must loop as waits can randomly wake.
 						pendingResponse.SyncObj.wait(1000);
-						
-						if ((System.nanoTime() - tStartTime) >= (tTimeoutInMS * 1000000))
+
+						if ((System.currentTimeMillis() - tStartTimeMS) >= tTimeoutInMS)
 						{
-							Log.error("OGLRemoteProgramLink TIMED OUT WAITING " + ThisJobID + " for " + (System.nanoTime() - tStartTime) / 1000000 + "ms. pending tasks "+thisInstance.PendingJobs.get());
+							Log.error("OGLRemoteProgramLink TIMED OUT WAITING " + ThisJobID + " for " + (System.currentTimeMillis() - tStartTimeMS) + "ms. pending tasks "+thisInstance.PendingJobs.get());
 							//timeout
 							SyncObs.remove(ThisJobID);
 							thisInstance.ReadBackServiceLog();
 							return null;
 						}
 					}
-					long totalWaitTimeMS = (System.nanoTime() - tStartTime) / 1000000;
+					long totalWaitTimeMS = (System.currentTimeMillis() - tStartTimeMS);
 					if(totalWaitTimeMS > 2500)
 					{
 						Log.verbose("OGLRemoteProgramLink responded " + ThisJobID + " total wait time "+totalWaitTimeMS+" ms. pending tasks "+thisInstance.PendingJobs.get());
@@ -620,31 +645,208 @@ public class PSOProgramServiceAccessor
 					SyncObs.remove(ThisJobID);
 					return null;
 				}
-					
+
 			}
 
 			SyncObs.remove(ThisJobID);
-			
+
 			byte[] EngineJobContext = pendingResponse.data.getByteArray(PSOProgramService.JobContext_Key);
 			byte[] CompiledBinary = pendingResponse.data.getByteArray(PSOProgramService.CompiledProgram_Key);
 			int JobID = pendingResponse.data.getInt(PSOProgramService.JobID_Key);
 
 			//Log.verbose("OGLRemoteProgramLink handoff ("+JobID+"), ("+(EngineJobContext == null ? 0 : EngineJobContext.length)+", "+(CompiledBinary==null?0:CompiledBinary.length)+")");
-			
+
 			JNIProgramLinkResponse jniResponse = new JNIProgramLinkResponse();
 			String fail = pendingResponse.data.getString(PSOProgramService.JobFail);
 			jniResponse.bCompileSuccess = fail == null || fail.isEmpty();
 			jniResponse.ErrorMessage = fail;
 			jniResponse.CompiledProgram = CompiledBinary;
-			
+
 			return jniResponse;
-		} 
+		}
 		catch (Exception e)
 		{
 			Log.error( "OGLRemoteProgramLink FAIL " + e);
-		} 
+		}
 		finally
 		{
+			ProgramServiceAccessorlock.readLock().unlock();
+			endTrace();
+		}
+
+		return null;
+	}
+
+	private static JNIProgramLinkResponse VKPSOGFXCompileShm_internal(byte[] ContextData, int SharedMemFD, long VertexShaderSize, long PixelShaderSize, long PSODataSize, long PSOCacheDataSize, boolean bAllowTimeOuts)
+	{
+		ParcelFileDescriptor parcelFD = null;
+		try
+		{
+			ProgramServiceAccessorlock.readLock().lock();
+			if (_PSOProgramServiceAccessor == null)
+			{
+				Log.error("AndroidThunkJava_VKPSOGFXCompileShm Called too early ");
+				return null;
+			}
+			if (_PSOProgramServiceAccessor.ServiceInstances.length == 0)
+			{
+				Log.error( "AndroidThunkJava_VKPSOGFXCompileShm not enabled.");
+				return null;
+			}
+
+			int ThisJobID = JobID.incrementAndGet();
+			beginTrace("AndroidThunkJava_VKPSOGFXCompileShm " + ThisJobID);
+			Message msg = Message.obtain(null, PSOProgramService.MSG_LINKPROGRAM_SHMEM, 0, 0);
+			Bundle params = new Bundle();
+
+			//Log.verbose("GFX compile job");
+			if (VertexShaderSize == 0)
+			{
+				Log.error("Failed to send compile job VS is null ");
+				return null;
+			}
+			if (PixelShaderSize == 0)
+			{
+				Log.error("Failed to send compile job PS is null ");
+				return null;
+			}
+
+			// Duplicate the incoming file descriptor
+			parcelFD = ParcelFileDescriptor.fromFd(SharedMemFD);
+			params.putParcelable(PSOProgramService.SHMem_Key, parcelFD );
+
+			params.putLong(PSOProgramService.VS_Key, VertexShaderSize);
+			params.putLong(PSOProgramService.PS_Key, PixelShaderSize);
+			params.putLong(PSOProgramService.PSOData_Key, PSODataSize);
+			params.putLong(PSOProgramService.PSOCacheData_Key, PSOCacheDataSize);
+
+			params.putByteArray(PSOProgramService.JobContext_Key, ContextData);
+
+			params.putInt(PSOProgramService.JobID_Key, ThisJobID);
+			msg.replyTo = mReplyToMe;
+
+			JobResponse pendingResponse = new JobResponse();
+			synchronized (pendingResponse.SyncObj)
+			{
+				SyncObs.put(ThisJobID, pendingResponse);
+
+				msg.setData(params);
+				boolean bValidService = false;
+				OGLServiceInstance thisInstance = null;
+				// loop through the services to find a valid (bound) service, skip and attempt to rebind any unbound services.
+				for(int i = 0; i<_PSOProgramServiceAccessor.ServiceInstances.length; i++)
+				{
+					int ServiceIdx = _PSOProgramServiceAccessor.LastServiceIdx.incrementAndGet() % _PSOProgramServiceAccessor.ServiceInstances.length;
+					OGLServiceInstance testInstance = _PSOProgramServiceAccessor.ServiceInstances[ServiceIdx];
+					if(testInstance.IsServiceBound())
+					{
+						// found a valid service.
+						thisInstance = testInstance;
+						params.putInt(PSOProgramService.ServiceID_Key, ServiceIdx);
+						break;
+					}
+					else
+					{
+						// found an unbound service, attempt to rebind and continue;
+						Log.warn("OGLRemoteProgramLink "+testInstance.Name()+" (" + ThisJobID + ") was unbound, rebinding and trying next service");
+						testInstance.doBindService();
+						testInstance.ReadBackServiceLog();
+					}
+				}
+
+				//Log.verbose("OGLRemoteProgramLink dispatching to "+thisInstance.Name()+" (" + ThisJobID + ")");
+				pendingResponse.ResponseState = JobResponse.ResponseStateEnum.Pending;
+				if( thisInstance != null && thisInstance.SendMessage(msg) )
+				{
+					int pendingJobs = thisInstance.PendingJobs.incrementAndGet();
+
+					long tStartTimeMS = System.currentTimeMillis();
+					// if we're allowed to time out, wait for 10s before giving up on the compile job.
+					long tTimeoutInMS = bAllowTimeOuts ? 10000 : Long.MAX_VALUE;
+
+					while (pendingResponse.ResponseState != JobResponse.ResponseStateEnum.Responded)
+					{
+						// we must loop as waits can randomly wake.
+						pendingResponse.SyncObj.wait(1000);
+
+						boolean bTimedOut = (System.currentTimeMillis() - tStartTimeMS) >= tTimeoutInMS;
+						boolean bLostBinding = thisInstance.IsServiceBound() == false; // service crashed?
+						if (bTimedOut || bLostBinding)
+						{
+							if( bTimedOut )
+							{
+								Log.error("OGLRemoteProgramLink TIMED OUT WAITING " + ThisJobID + " for " + (System.currentTimeMillis() - tStartTimeMS) + "ms. pending tasks "+thisInstance.PendingJobs.get());
+							}
+							if( bLostBinding )
+							{
+								Log.error("OGLRemoteProgramLink JOB FAILED - lost binding during " + ThisJobID + ". pending tasks "+thisInstance.PendingJobs.get());
+							}
+
+							SyncObs.remove(ThisJobID);
+							thisInstance.ReadBackServiceLog();
+							return null;
+						}
+					}
+					long totalWaitTimeMS = (System.currentTimeMillis() - tStartTimeMS);
+					if(totalWaitTimeMS > 2500)
+					{
+						Log.verbose("OGLRemoteProgramLink responded " + ThisJobID + " total wait time "+totalWaitTimeMS+" ms. pending tasks "+thisInstance.PendingJobs.get());
+					}
+				}
+				else if( thisInstance != null)
+				{
+					// process communications failed somehow.
+					SyncObs.remove(ThisJobID);
+					thisInstance.ReadBackServiceLog();
+					return null;
+				}
+				else
+				{
+					// failed to find a single bound service?
+					Log.error("OGLRemoteProgramLink " + ThisJobID + " no valid bound services.");
+					SyncObs.remove(ThisJobID);
+					return null;
+				}
+
+			}
+			SyncObs.remove(ThisJobID);
+
+			byte[] EngineJobContext = pendingResponse.data.getByteArray(PSOProgramService.JobContext_Key);
+			
+			ParcelFileDescriptor SharedBinaryResponseFD = pendingResponse.data.getParcelable(PSOProgramService.SHMem_Key);
+			
+			// Detach from the FD, the native code will close it.
+			int CompiledBinarySharedFD = SharedBinaryResponseFD.detachFd();
+
+			int JobID = pendingResponse.data.getInt(PSOProgramService.JobID_Key);
+
+			//Log.verbose("OGLRemoteProgramLink handoff ("+JobID+"), ("+(EngineJobContext == null ? 0 : EngineJobContext.length)+")");
+
+			JNIProgramLinkResponse jniResponse = new JNIProgramLinkResponse();
+			String fail = pendingResponse.data.getString(PSOProgramService.JobFail);
+			jniResponse.bCompileSuccess = fail == null || fail.isEmpty();
+			jniResponse.ErrorMessage = fail;
+			jniResponse.SHMOutputHandle = CompiledBinarySharedFD;
+
+			return jniResponse;
+		}
+		catch (Exception e)
+		{
+			Log.error( "AndroidThunkJava_VKPSOGFXCompileShm FAIL ("+JobID+")" + e);
+		}
+		finally
+		{
+			if(parcelFD != null) 
+			{
+				try
+				{
+					parcelFD.close();
+				}
+				catch (IOException e)
+				{
+					Log.error( "AndroidThunkJava_VKPSOGFXCompileShm FAIL ("+JobID+")" + e);
+				}
+			}
 			ProgramServiceAccessorlock.readLock().unlock();
 			endTrace();
 		}
@@ -655,27 +857,29 @@ public class PSOProgramServiceAccessor
 	class OGLServiceInstance
 	{
 		private final Class ServiceClass;
+		private final boolean bRobustContext;
 		boolean mShouldUnbind = false;
-		private final AtomicInteger mBound = new AtomicInteger(-1); 
+		private final AtomicInteger mBound = new AtomicInteger(-1);
 		Messenger mService = null;
 		private final AtomicInteger PendingJobs = new AtomicInteger(0);
-		
+
 		public String Name()
 		{
 			return ServiceClass.getSimpleName();
 		}
-		
-		public OGLServiceInstance(Class ServiceClassIN)
+
+		public OGLServiceInstance(Class ServiceClassIN, boolean bRobustContextIN)
 		{
 			ServiceClass = ServiceClassIN;
+			bRobustContext = bRobustContextIN;
 		}
 
-		private final Map<String, Long> LastLogSequencePerUID = new HashMap<>();  
-		
+		private final Map<String, Long> LastLogSequencePerUID = new HashMap<>();
+
 		// Opens the log file(s) for the service, scans each entry and prints any new entries.  
 		synchronized void ReadBackServiceLog()
 		{
-			String OGLLogDirPath = mContext.getFilesDir()+PSOProgramService.LogDir;
+			String OGLLogDirPath = mActivity.getFilesDir()+PSOProgramService.LogDir;
 			File OGLLogDir = new File(OGLLogDirPath);
 			File[] LogFiles = OGLLogDir.listFiles();
 			if( LogFiles == null)
@@ -687,9 +891,9 @@ public class PSOProgramServiceAccessor
 			{
 				if( LogFile.getName().contains(Name()+"_") && LogFile.getName().endsWith(".txt"))
 				{
-					try(BufferedReader reader = new BufferedReader(new FileReader(LogFile))) 
+					try(BufferedReader reader = new BufferedReader(new FileReader(LogFile)))
 					{
-						for(String line; (line = reader.readLine()) != null; ) 
+						for(String line; (line = reader.readLine()) != null; )
 						{
 							String[] lineid= line.split(",");
 							if(lineid.length >= 2)
@@ -699,7 +903,7 @@ public class PSOProgramServiceAccessor
 
 								Long value = LastLogSequencePerUID.get(logGuid);
 								long localLastLogSequence = -1;
-								if (value == null) 
+								if (value == null)
 								{
 									LastLogSequencePerUID.put(logGuid, (long) -1);
 								}
@@ -724,7 +928,7 @@ public class PSOProgramServiceAccessor
 				}
 			}
 		}
-		
+
 		/**
 		 * Defines callbacks for service binding, passed to bindService()
 		 */
@@ -744,7 +948,7 @@ public class PSOProgramServiceAccessor
 				}
 				mShouldUnbind = false;
 			}
-		
+
 			@Override
 			public void onServiceConnected(ComponentName className,
 										   IBinder service)
@@ -777,9 +981,17 @@ public class PSOProgramServiceAccessor
 			{
 				Intent intent = new Intent(mContext, ServiceClass);
 
-				mShouldUnbind = mContext.bindService(intent, mConnection, Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT);
+				int BindServiceFlags = Context.BIND_AUTO_CREATE;
+				if(	bServicePriHigh )
+				{
+					BindServiceFlags = BindServiceFlags | Context.BIND_IMPORTANT;
+				}
+				 
+				intent.putExtra(PSOProgramService.RobustContextKey,bRobustContext);
 
-				Log.verbose("doBindService " + Name() + " needs unbind " + mShouldUnbind + " bound: " + mBound);
+				mShouldUnbind = mContext.bindService(intent, mConnection, BindServiceFlags);
+
+				Log.verbose("doBindService " + Name() + " needs unbind " + mShouldUnbind + " bound: " + mBound+ "robust: "+bRobustContext);
 			}
 			return mShouldUnbind;
 		}
@@ -791,7 +1003,7 @@ public class PSOProgramServiceAccessor
 				boolean bSuccess = doBindService();
 				long tBefore = System.nanoTime();
 				long tTimeoutInMS = 10000;
-				
+
 				if(bSuccess)
 				{
 					try
@@ -817,7 +1029,7 @@ public class PSOProgramServiceAccessor
 				return bSuccess;
 			}
 		}
-		
+
 		void doUnbindService()
 		{
 			Log.verbose("doUnbindService"+Name());
@@ -829,12 +1041,12 @@ public class PSOProgramServiceAccessor
 				mBound.set(-1);
 			}
 		}
-		
+
 		boolean IsServiceBound()
 		{
-			return mBound.get() == 1;			
+			return mBound.get() == 1;
 		}
-		
+
 		boolean SendMessage(Message msg) throws RemoteException
 		{
 			if( mBound.get() == 1)

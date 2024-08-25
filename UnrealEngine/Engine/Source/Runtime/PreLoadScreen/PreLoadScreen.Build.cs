@@ -39,5 +39,8 @@ public class PreLoadScreen : ModuleRules
 				}
 			);
 		}
+
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 	}
 }

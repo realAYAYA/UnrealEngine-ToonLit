@@ -98,10 +98,12 @@ bool FConcertClientLockManager::CanSavePackage(UPackage* InPackage, const FStrin
 			return false;
 		}
 	}
+#if WITH_EDITOR
 	if (OkToSaveBackupDelegate.IsBound())
 	{
 		return OkToSaveBackupDelegate.Execute(InPackage, InFilename, ErrorLog);
 	}
+#endif
 	return true;
 }
 

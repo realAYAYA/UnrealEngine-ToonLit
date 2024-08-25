@@ -11,6 +11,7 @@
 #include "Chaos/Serializable.h"
 #include "Chaos/PBDSuspensionConstraints.h"
 #include "Chaos/Framework/MultiBufferResource.h"
+#include "Chaos/PhysicsObjectInternal.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 #include "PhysicsSolver.h"
 
@@ -46,17 +47,19 @@ void FSuspensionConstraintPhysicsProxy::InitializeOnPhysicsThread(FPBDRigidsSolv
 	if (Handles.Size())
 	{
 		auto& SuspensionConstraints = InSolver->GetSuspensionConstraints();
-		if (const FParticleProxyProperty* ProxyProperty = RemoteData.FindSuspensionParticleProxy(Manager, DataIdx))
+		if (const FPhysicsObjectProperty* Body = RemoteData.FindSuspensionPhysicsObject(Manager, DataIdx))
 		{
-			if (FGeometryParticleHandle* Handle0 = GetParticleHandleFromProxy(ProxyProperty->ParticleProxy))
+			FGeometryParticleHandle* Handle = Body->PhysicsBody->GetRootParticle<Chaos::EThreadContext::Internal>();
+
+			if (Handle)
 			{
 				const FPBDSuspensionSettings* SuspensionSettings = RemoteData.FindSuspensionSettings(Manager, DataIdx);
 				const FSuspensionLocation* SuspensionLocation = RemoteData.FindSuspensionLocation(Manager, DataIdx);
 
 				if (SuspensionSettings && SuspensionLocation)
 				{
-					Constraint_PT = SuspensionConstraints.AddConstraint(Handle0, SuspensionLocation->Location, *SuspensionSettings);
-					Handle0->AddConstraintHandle(Constraint_PT);
+					Constraint_PT = SuspensionConstraints.AddConstraint(Handle, SuspensionLocation->Location, *SuspensionSettings);
+					Handle->AddConstraintHandle(Constraint_PT);
 				}
 			}
 		}

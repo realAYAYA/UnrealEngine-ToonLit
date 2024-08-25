@@ -3,6 +3,7 @@
 
 	<!-- Horde Options -->	
 	<EnvVar Name="UE_HORDE_JOBID"/>
+	<EnvVar Name="UE_HORDE_STEPID"/>
 	<Option Name="Horde" Restrict="true|false" DefaultValue="false" Description="Whether the build is running under Horde"/>
 	<Option Name="PreflightChange" DefaultValue="" Description="Preflight CL number if preflight, empty otherwise"/>
 	<Option Name="SetPreflightFlag" DefaultValue="true" Description="Whether to set the IsPreflight flag to true for preflights. Use with caution: this will cause things like build versions to be set to their non-preflight form."/>
@@ -15,6 +16,7 @@
 	<Option Name="RunCategory" DefaultValue="Test" Description="Category string for Run Label"/>
 	<Option Name="BaselineCategory" DefaultValue="Test" Description="Category string for Baseline Label"/>
 	<Option Name="SingleAgentCompile" Restrict="true|false" DefaultValue="false" Description="Run all compile steps on same agent"/>
+	<Option Name="AdditionalEditorCompileArgs" DefaultValue="" Description="Additional Compile Arguments for the Editor"/>
 
 	<!-- Projects setup-->
 	<Option Name="Projects" DefaultValue="false" Restrict=".+" Description="The projects to test"/>
@@ -41,10 +43,14 @@
 	<Property Name="EditorCompileArgs" Value="-BuildPlugin=$(ExtraPluginsPlusDelims)" If="'$(ExtraPluginsPlusDelims)' != ''"/>
 	<Property Name="EditorCompileArgs" Value="$(EditorCompileArgs) -nodebuginfo" If="$(NoDebugInfo)"/>
 	<Property Name="EditorCompileArgs" Value="$(EditorCompileArgs) -EnableTSAN -Monolithic" If="$(WithTSAN)"/>
+	<Property Name="EditorCompileArgs" Value="$(EditorCompileArgs) $(AdditionalEditorCompileArgs)" If="'$(AdditionalEditorCompileArgs)' != ''"/>
+
+	<!-- Get shared properties -->
+	<Include Script="Graph/Tasks/Inc/SharedProperties.xml" />
 
 	<!-- Automation uses its own network output directory -->
-	<Property Name="AutomationNetworkRootDir" Value="\\epicgames.net\root\Builds\Automation\Reports\EditorPerf"/>
-	<Property Name="AutomationNetworkRootDir" Value="/Volumes/Builds/Automation/Reports/EditorPerf" If="'$(HostPlatform)' != 'Win64'"/>
+	<Property Name="AutomationNetworkRootDir" Value="$(NetworkReportRoot)\EditorPerf"/>
+	<Property Name="AutomationNetworkRootDir" Value="$(NetworkReportRoot)/EditorPerf" If="'$(HostPlatform)' != 'Win64'"/>
 	<Property Name="AutomationLocalOutputDir" Value="$(RootDir)/LocalBuilds/Reports"/>
 
 	<!-- Outputs for this run keeping slashes flipped the right way because it shows up on the webapp this way -->
@@ -93,7 +99,10 @@
 
 		<Property Name="$(Project)MapArgs" Value="-ini:Engine:[/Script/Engine.AutomationTestSettings]:MapsToPIETest=\&quot;$(MapAsset)\&quot;" If="'$(MapAsset)' != ''" />
 	</ForEach>
-	
+
+	<!-- Option to retain per-branch asset registry between runs so that incremental is representative of user experience -->
+	<Property Name="AssetRegistryCache_Folder" Value="$(RootDir)/../../../EditorPerfAssetRegistryCache/$(EscapedBranch)/"/>
+
 	<!-- Options for extra runtime args -->
 	<Option Name="AdditionalRuntimeArgs" DefaultValue="" Description="Additional Arguments to pass to RunTest"/>
 
@@ -137,17 +146,18 @@
 	<Property Name="LazyLoadZenTestArgs" Value="$(LazyLoadTestArgs) -zenloader" />
 
 	<!-- Gauntlet arguments for all runs -->
-	<Property Name="GauntletArgs" Value="-build=editor -UseEditor -verbose -tempdir=&quot;$(RootDir)/Tests&quot;"/>
+	<Property Name="GauntletArgs" Value="-build=editor -verbose -tempdir=&quot;$(RootDir)/Tests&quot;"/>
 	<Property Name="GauntletArgs" Value="$(GauntletArgs) -branch=$(Branch) -ECBranch=&quot;$(Branch)&quot; -ECChangelist=&quot;$(Change)&quot;"/>
 	<Property Name="GauntletArgs" Value="$(GauntletArgs) -maxduration=28800"/>
 
 	<!-- Gauntlet arguments for profile runs -->
-	<Property Name="ProfileArgs" Value="-test=EditorTests -testfilter=Project.Iteration.PIE -tracefiletrunc"/>
+	<Property Name="ProfileArgs" Value="-test=EditorTests -tracefiletrunc"/>
 	<Property Name="ProfileArgs" Value="$(ProfileArgs) -EnablePlugins=$(ExtraPluginsCommaDelims)" If="'$(ExtraPluginsCommaDelims)' != ''"/>
 	<Property Name="ProfileArgs" Value="$(ProfileArgs) -SuppressLogWarnings -SuppressLogErrors"/>
 	<Property Name="ProfileArgs" Value="$(ProfileArgs) -GameInstanceLostTimerSeconds=3600"/>
 	<Property Name="ProfileArgs" Value="$(ProfileArgs) -NoLoadLevelAtStartup -Benchmarking -NODDCCLEANUP"/>
 	<Property Name="ProfileArgs" Value="$(ProfileArgs) -NoShaderDistrib -VerboseShaderLogging"/>
+	<Property Name="ProfileArgs" Value="$(ProfileArgs) -ResumeOnCriticalFailure"/>
 
 	<!-- options for summarize runs -->
 	<Option Name="RunTraceSummary" DefaultValue="false" Description="Summarize the insights trace after the run"/>
@@ -161,10 +171,14 @@
 	<Option Name="TelemetryConfig" DefaultValue="" Description="The configuration to use when publishing telemetry data to a database"/>
 	<Property Name="TelemetryConfig" Value="UETelemetryStaging" If="$(IsBuildMachine) And $(IsPreflight) And '$(TelemetryConfig)' == '' And $(RunTraceSummary)"/>
 	<Property Name="TelemetryConfig" Value="UETelemetry" If="$(IsBuildMachine) And '$(TelemetryConfig)' == '' And $(RunTraceSummary)"/>
+	<Option Name="ExtraTelemetryArgs" DefaultValue="" Description="Extra arguments passed to the publish telemetry command"/>
+	<Property Name="ExtraTelemetryArgs" Value="$(ExtraTelemetryArgs) -JobLink=&quot;$(HordeDashboardURL)/job/$(UE_HORDE_JOBID)?step=$(UE_HORDE_STEPID)&quot;" If="'$(HordeDashboardURL)' != ''"/>
 
 	<!-- The main test running macro logic that is expanded with platform and dependency node names -->
 	<Macro Name="RunTest" Arguments="TestNameSuffix;Platform;ProjectName;ProjectTarget;NodeName;Phase;Iteration;Args;EditorArgs">
 		<Property Name="TestName" Value="EditorPerf$(Phase)$(TestNameSuffix)"/>
+		<Property Name="TestFilter" Value="Project.Iteration.PIE"/>
+		<Property Name="TestFilterArgs" Value="-runtest=$(TestFilter)"/>
 		<Property Name="IterationSuffix" Value=""/>
 		<Property Name="IterationSuffix" Value="$(Iteration)" If="'$(Iteration)' != '1'"/>
 
@@ -179,13 +193,15 @@
 		<Property Name="ReportParams" Value="-WriteTestResultsForHorde -HordeTestDataKey=&quot;$(NodeName)$(PreflightSuffix)&quot;"/>
 		<Property Name="ArtifactName" Value="$(Phase)$(IterationSuffix)$(TestNameSuffix)"/>
 		<Property Name="AllGauntletArgs" Value="-Project=$(ProjectTarget) -Platform=$(Platform) $(GauntletArgs) $(ReportParams) $(LogOutputParams) -artifactname=&quot;$(ArtifactName)&quot;"/>
-		<Property Name="RunArgs" Value="$(Args) -editorargs=&quot;$(EditorArgs)&quot;"/>
+		<Property Name="AssetRegistryCacheRootFolderArg" Value="-AssetRegistryCacheRootFolder=&quot;$(AssetRegistryCache_Folder)&quot;"/>
+		<Property Name="CombinedEditorArgs" Value="$(EditorArgs) $(AssetRegistryCacheRootFolderArg)"/>
+		<Property Name="RunArgs" Value="$(Args) -editorargs=&quot;$(CombinedEditorArgs)&quot;"/>
 
 		<!-- Do DDC cleanup outside the editor process, handles Cold cleanup without changing stats -->
 		<!-- <Commandlet Project="$(ProjectTarget)" Name="DDCCleanup" Arguments="$(Args) $(CommandletArgs)"/> -->
 
 		<!-- Run the Gauntlet EditorPerf Tests -->
-		<Command Name="RunUnreal" Arguments="$(AllGauntletArgs) $(ProfileArgs) $(RunArgs) -sessionlabel=&quot;$(TestName)&quot; -tracefile=&quot;$(TraceFilePath)&quot;"/>
+		<Command Name="RunUnreal" Arguments="$(AllGauntletArgs) $(ProfileArgs) $(TestFilterArgs) $(RunArgs) -sessionlabel=&quot;$(TestName)&quot; -tracefile=&quot;$(TraceFilePath)&quot;"/>
 
 		<!-- Translate the utrace file into csv data -->
 		<Do If="$(RunTraceSummary)">
@@ -194,8 +210,23 @@
 		
 		<Do If="'$(TelemetryConfig)' != ''">
 			<!-- Publish telemetry to the db -->
-			<Command Name="PublishUnrealAutomationTelemetry" Arguments="-CSVFile=&quot;$(TelemetryFilePath)&quot; -project=$(Project) -changelist=$(Change) -branch=$(Branch) -TelemetryConfig=$(TelemetryConfig)"/>
+			<Command Name="PublishUnrealAutomationTelemetry" Arguments="-CSVFile=&quot;$(TelemetryFilePath)&quot; -project=$(Project) -changelist=$(Change) -branch=$(Branch) -TelemetryConfig=$(TelemetryConfig) $(ExtraTelemetryArgs)"/>
 		</Do>		
+	</Macro>
+	
+	<!-- The main editor workflows test running macro logic that is expanded with platform and dependency node names -->
+	<Macro Name="RunEditorWorkflowsTest" Arguments="Platform;ProjectName;NodeName">
+		<Property Name="TestName" Value="Editor.Workflows"/>
+		<Property Name="TestFilterArgs" Value="-runtest=$(TestName)"/>
+
+		<Property Name="TestOutputDir" Value="$(AutomationOutputDir)/$(ProjectName)$(Platform)EditorWorkflows"/>
+		<Property Name="TraceFilePath" Value="$(TraceDir)/$(TestName)/$(ProjectName)$(Platform)EditorWorkflows.utrace" />
+
+		<Property Name="LogOutputParams" Value="-logdir=&quot;$(TestOutputDir)&quot;"/>
+		<Property Name="ReportParams" Value="-WriteTestResultsForHorde -HordeTestDataKey=&quot;$(NodeName)$(PreflightSuffix)&quot;"/>
+		<Property Name="AllGauntletArgs" Value="-Project=$(ProjectName) -Platform=$(Platform) $(GauntletArgs) $(ReportParams) $(LogOutputParams)"/>
+
+		<Command Name="RunUnreal" Arguments="$(AllGauntletArgs) $(ProfileArgs) $(TestFilterArgs) -sessionlabel=&quot;$(TestName)&quot; -tracefile=&quot;$(TraceFilePath)&quot;" />
 	</Macro>
 	
 	<Macro Name="UploadTestTraces" Arguments="Platform;ProjectName">		
@@ -204,8 +235,23 @@
 		<Copy From="$(TraceDir)/$(ProjectName)$(Platform)EditorPerf*.*" To="$(TestOutputDir)"/>
 	</Macro>
 
-	<!-- This will be set to the names of all nodes we want to execute based on specified platforms/options -->
+	<Macro Name="UploadEditorWorkflowsPerformanceDataAndTraces" Arguments="Platform;ProjectName">
+		<Property Name="TestOutputDir" Value="$(AutomationOutputDir)/$(ProjectName)$(Platform)EditorWorkflows"/>
+		<Property Name="TraceFilePath" Value="$(TraceDir)/Editor.Workflows/$(ProjectName)$(Platform)EditorWorkflows.utrace" />
+
+		<!-- Translate the utrace file into csv data -->
+		<Commandlet Project="$(ProjectName)" Name="SummarizeTraceEditorWorkflows" Arguments="-inputfile=&quot;$(TraceFilePath)&quot; -testname=&quot;Editor.Workflows&quot; $(CommandletArgs)" />
+
+		<!-- Copy the utrace file and the generated csv performance data to the output directory -->
+		<Copy From="$(TraceDir)/Editor.Workflows/*" To="$(TestOutputDir)/Editor.Workflows" Overwrite="true"/>
+
+		<!-- Copy "index.json" that captures the functional results to the output directory -->
+		<Copy From="$(RootDir)/Tests/TestReport/index.json" To="$(TestOutputDir)/Editor.Workflows/index.json" Overwrite="true"/>
+	</Macro>
+
+	<!-- These will be set to the names of all nodes we want to execute based on specified platforms/options -->
 	<Property Name="RunGraphNodes" Value=""/>
+	<Property Name="RunEditorWorkflowsGraphNodes" Value=""/>
 
 	<!-- Mimic of the Runner that retrieves the stashed telemetry file and copies it to the depot location -->
 	<Macro Name="BaselineResult" Arguments="Platform;Project;Phase">
@@ -341,6 +387,58 @@
 		</ForEach> <!-- Projects -->
 
 	</ForEach> <!-- Platforms -->
+
+	<!-- Generate graph nodes for each platform to run -->
+	<ForEach Name="Platform" Values="$(Platforms)">
+
+		<Property Name="ProjectName" Value="EngineTest" />
+		<!-- Define output name for the EditorWorkflows test -->
+		<Property Name="EditorWorkflowsOutputName" Value="$(ProjectName)$(Platform)EditorWorkflows"/>
+		<Property Name="CompileNodeName" Value="Compile $(ProjectName) $(Platform) EditorWorkflows"/>
+		<Property Name="AgentModifier" Value=""/>
+		<Property Name="AgentModifier" Value=" $(ProjectName)" If="!$(SingleAgentCompile)"/>
+
+		<!-- Compile Agent configuration -->
+		<Agent Name="Compile Editor Agent $(Platform)$(AgentModifier)" Type="$($(Platform)CompileAgentType)">
+			<Node Name="$(CompileNodeName)">
+				<SetVersion Change="$(Change)" Branch="$(EscapedBranch)" If="$(IsBuildMachine)"/>
+				<Compile Target="ShaderCompileWorker" Platform="$(Platform)" Configuration="Development"/>
+				<Compile Target="CrashReportClientEditor" Platform="$(Platform)" Project="$(ProjectName)" Configuration="Shipping"/>
+				<Compile Target="$(ProjectName)Editor" Platform="$(Platform)" Project="$(ProjectName)" Configuration="Development" Arguments="$(EditorCompileArgs)"/>
+			</Node>
+		</Agent>
+		<Label Category="$(CompileCategory)" Name="$(ProjectName) Editor Compile" Requires="$(CompileNodeName)"/>
+
+		<!-- Set up properties for run and upload nodes -->
+		<Property Name="RunEditorWorkflowsNodeRequires" Value="$(CompileNodeName)"/>
+		<Property Name="UploadEditorWorkflowsNodeList" Value=""/>
+		<Property Name="RunEditorWorkflowsNodeList" Value=""/>
+
+		<!-- Configure EditorWorkflows Agent -->
+		<Agent Name="EditorWorkflows Agent $(Platform) $(ProjectName)" Type="EditorPerf$(Platform)">
+			<Property Name="RunEditorWorkflowsNodeName" Value="Run $(EditorWorkflowsOutputName)" />
+			<Node Name="$(RunEditorWorkflowsNodeName)" Requires="$(RunEditorWorkflowsNodeRequires);$(RunEditorWorkflowsNodeList)">
+				<Expand Name="RunEditorWorkflowsTest" Platform="$(Platform)" ProjectName="$(ProjectName)" NodeName="$(RunEditorWorkflowsNodeName)"/>
+			</Node>
+
+			<Property Name="RunEditorWorkflowsNodeList" Value="$(RunEditorWorkflowsNodeList);$(RunEditorWorkflowsNodeName)" />
+			<Property Name="RunNodeUploadTraces" Value="Upload $(EditorWorkflowsOutputName) Traces"/>
+
+			<!-- Set up Node for uploading traces -->
+			<Node Name="$(RunNodeUploadTraces)">
+				<Expand Name="UploadEditorWorkflowsPerformanceDataAndTraces" Platform="$(Platform)" ProjectName="$(ProjectName)"/>
+			</Node>
+
+			<!-- Update UploadEditorWorkflowsNodeList -->
+			<Property Name="UploadEditorWorkflowsNodeList" Value="$(UploadEditorWorkflowsNodeList);$(RunNodeUploadTraces)"/>
+		</Agent>
+		<Label Category="$(RunCategory)" Name="$(ProjectName) Editor Run" Requires="$(RunEditorWorkflowsNodeRequires);$(RunEditorWorkflowsNodeList);$(UploadEditorWorkflowsNodeList)" UgsBadge="$(ProjectName) Editor Run"/>
+		<Property Name="RunEditorWorkflowsGraphNodes" Value="$(RunEditorWorkflowsGraphNodes);$(RunEditorWorkflowsNodeList);$(UploadEditorWorkflowsNodeList)"/>
+	</ForEach>
+	<!-- End ForEach Platforms -->
+
+	<!-- These Nodes run the Editor Workflows test and gather profile data -->
+	<Aggregate Name="Run EditorWorkflows Tests" Requires="$(RunEditorWorkflowsGraphNodes)"/>
 
 	<!-- These Nodes run the Editor and gather profile data -->
 	<Aggregate Name="Run EditorPerf Tests" Requires="$(RunGraphNodes)"/>

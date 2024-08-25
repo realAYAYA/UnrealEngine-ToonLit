@@ -29,6 +29,8 @@ class BEHAVIORTREEEDITOR_API UBehaviorTreeGraphNode_Composite : public UBehavior
 	/** check if node can accept breakpoints */
 	virtual bool CanPlaceBreakpoints() const override { return true; }
 
+	virtual FLinearColor GetBackgroundColor(bool bIsActiveForDebugger) const override;
+
 protected:
 
 	virtual void PostPasteNode() override;

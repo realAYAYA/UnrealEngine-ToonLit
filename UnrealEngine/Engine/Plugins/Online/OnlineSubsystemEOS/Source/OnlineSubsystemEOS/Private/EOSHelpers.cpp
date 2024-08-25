@@ -18,7 +18,7 @@ void FEOSHelpers::PlatformTriggerLoginUI(FOnlineSubsystemEOS* EOSSubsystem, cons
 {
 	check(EOSSubsystem);
 
-	UE_LOG_ONLINE_EXTERNALUI(Warning, TEXT("[FUserManagerEOS::ShowLoginUI] This method is not implemented."));
+	UE_LOG_ONLINE_EXTERNALUI(Warning, TEXT("[%hs] This method is not implemented."), __FUNCTION__);
 
 	const FUniqueNetIdPtr PlayerId = EOSSubsystem->UserManager->GetUniquePlayerId(ControllerIndex);
 
@@ -36,6 +36,10 @@ IEOSPlatformHandlePtr FEOSHelpers::CreatePlatform(EOS_Platform_Options& Platform
 		return SDKManager->CreatePlatform(PlatformOptions);
 	}
 	return nullptr;
+}
+
+void FEOSHelpers::AddExternalAccountMapping(IEOSPlatformHandlePtr PlatformHandlePtr, const EOS_EpicAccountId& EpicAccountId, int32 LocalUserNum)
+{
 }
 
 void FEOSHelpers::ShowAccountPortalUI(FOnlineSubsystemEOS* InEOSSubsystem, const int ControllerIndex, const FOnLoginUIClosedDelegate& Delegate)

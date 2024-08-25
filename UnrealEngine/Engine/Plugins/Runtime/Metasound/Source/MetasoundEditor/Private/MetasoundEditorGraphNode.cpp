@@ -7,6 +7,7 @@
 #include "Engine/Font.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "GraphEditorActions.h"
+#include "HAL/IConsoleManager.h"
 #include "Logging/TokenizedMessage.h"
 #include "Metasound.h"
 #include "MetasoundAssetManager.h"
@@ -35,19 +36,24 @@
 
 #define LOCTEXT_NAMESPACE "MetaSoundEditor"
 
-namespace Metasound
+namespace Metasound::Editor
 {
-	namespace Editor
+	namespace GraphNodePrivate
 	{
-		namespace GraphNodePrivate
-		{
-			static const FString MissingConcreteOutputConnectionFormat = TEXT(
-				"Reroute connection for pin '{0}' does not provide a concrete output. "
-				"Resulting literal value is undefined and may result in unintended results."
-			);
-		}
-	} 
-}
+		static const FString MissingConcreteOutputConnectionFormat = TEXT(
+			"Reroute connection for pin '{0}' does not provide a concrete output. "
+			"Resulting literal value is undefined and may result in unintended results."
+		);
+
+		int32 ShowNodeDebugData = 0;
+		FAutoConsoleVariableRef CVarShowNodeDebugData(
+			TEXT("au.MetaSound.Editor.Debug.ShowNodeDebugData"),
+			ShowNodeDebugData,
+			TEXT("If enabled, shows debug data such as node IDs, vertex IDs, vertex names, and class names when hovering over node titles and pins in the MetaSound asset editor.\n")
+			TEXT("0: Disabled (default), !0: Enabled"),
+			ECVF_Default);
+	} // GraphNodePrivate
+} // Metasound::Editor
 
 UMetasoundEditorGraphNode::UMetasoundEditorGraphNode(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -347,11 +353,32 @@ void UMetasoundEditorGraphNode::GetPinHoverText(const UEdGraphPin& Pin, FString&
 		{
 			OutHoverText = InputHandle->GetTooltip().ToString();
 		}
+
+		if (GraphNodePrivate::ShowNodeDebugData)
+		{
+			OutHoverText = FString::Format(TEXT("{0}\nVertex Name: {1}\nDataType: {2}\nID: {3}"),
+			{
+				OutHoverText,
+				InputHandle->GetName().ToString(),
+				InputHandle->GetDataType().ToString(),
+				InputHandle->GetID().ToString(),
+			});
+		}
 	}
 	else // Pin.Direction == EGPD_Output
 	{
 		FConstOutputHandle OutputHandle = FGraphBuilder::FindReroutedConstOutputHandleFromPin(&Pin);
 		OutHoverText = OutputHandle->GetTooltip().ToString();
+		if (GraphNodePrivate::ShowNodeDebugData)
+		{
+			OutHoverText = FString::Format(TEXT("{0}\nVertex Name: {1}\nDataType: {2}\nID: {3}"),
+			{
+				OutHoverText,
+				OutputHandle->GetName().ToString(),
+				OutputHandle->GetDataType().ToString(),
+				OutputHandle->GetID().ToString(),
+			});
+		}
 	}
 }
 
@@ -556,7 +583,20 @@ void UMetasoundEditorGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGrap
 
 FText UMetasoundEditorGraphNode::GetTooltipText() const
 {
-	return GetConstNodeHandle()->GetDescription();
+	using namespace Metasound::Editor;
+	using namespace Metasound::Frontend;
+
+	FConstNodeHandle Node = GetConstNodeHandle();
+	FText Description = Node->GetDescription();
+	if (GraphNodePrivate::ShowNodeDebugData)
+	{
+		Description = FText::Format(LOCTEXT("Metasound_DebugNodeTooltipText", "{0}\nClass Name: {1}\nNode ID: {2}"),
+			Description,
+			FText::FromString(Node->GetClassMetadata().GetClassName().ToString()),
+			FText::FromString(Node->GetID().ToString())
+		);
+	}
+	return Description;
 }
 
 FText UMetasoundEditorGraphNode::GetDisplayName() const
@@ -813,7 +853,7 @@ void UMetasoundEditorGraphExternalNode::Validate(Metasound::Editor::FGraphNodeVa
 	const FMetasoundFrontendClassMetadata& Metadata = NodeHandle->GetClassMetadata();
 
 	// 1. Validate referenced graph recursively if defined as asset node class
-	const FNodeRegistryKey RegistryKey = NodeRegistryKey::CreateKey(Metadata);
+	const FNodeRegistryKey RegistryKey = FNodeRegistryKey(Metadata);
 	if (IMetaSoundAssetManager* AssetManager = IMetaSoundAssetManager::Get())
 	{
 		if (const FSoftObjectPath* Path = AssetManager->FindObjectPathFromKey(RegistryKey))
@@ -852,7 +892,7 @@ void UMetasoundEditorGraphExternalNode::Validate(Metasound::Editor::FGraphNodeVa
 	// 2. Validate template nodes
 	if (Metadata.GetType() == EMetasoundFrontendClassType::Template)
 	{
-		const FNodeRegistryKey Key = NodeRegistryKey::CreateKey(Metadata);
+		const FNodeRegistryKey Key = FNodeRegistryKey(Metadata);
 		if (const INodeTemplate* Template = INodeTemplateRegistry::Get().FindTemplate(Key))
 		{
 			const bool bIsValidInterface = Template->IsValidNodeInterface(NodeHandle->GetNodeInterface());
@@ -863,9 +903,10 @@ void UMetasoundEditorGraphExternalNode::Validate(Metasound::Editor::FGraphNodeVa
 			else
 			{
 #if WITH_EDITOR
-				if (!Template->HasRequiredConnections(NodeHandle))
+				FString Message;
+				if (!Template->HasRequiredConnections(NodeHandle, &Message))
 				{
-					OutResult.SetMessage(EMessageSeverity::Warning, TEXT("Reroute node(s) missing non-reroute input connection(s)."));
+					OutResult.SetMessage(EMessageSeverity::Warning, Message);
 				}
 #endif // WITH_EDITOR
 			}

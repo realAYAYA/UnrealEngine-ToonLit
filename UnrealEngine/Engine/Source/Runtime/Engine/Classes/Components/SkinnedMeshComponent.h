@@ -80,6 +80,12 @@ enum class EVisibilityBasedAnimTickOption : uint8
 	AlwaysTickPose,
 	/**
 		When rendered Tick Pose and Refresh Bone Transforms,
+		otherwise, just update montages alongside BoneTransforms.
+		(AnimBP graph will not be updated).
+	*/
+	OnlyTickMontagesAndRefreshBonesWhenPlayingMontages,
+	/**
+		When rendered Tick Pose and Refresh Bone Transforms,
 		otherwise, just update montages and skip everything else.
 		(AnimBP graph will not be updated).
 	*/
@@ -181,6 +187,34 @@ struct FVertexOffsetUsage
 	int32 Usage = 0;
 };
 
+/** Specifies which mesh deformer should be used on each LOD of a mesh */
+struct FMeshDeformerSet
+{
+	/** Each deformer in this array should be used on at least one LOD */
+	TArray<TObjectPtr<UMeshDeformer>, TInlineAllocator<2>> Deformers;
+
+	/**
+	 * Indexed by mesh LOD. Each element is either a valid index into the Deformers array, or
+	 * INDEX_NONE to signify that no deformer should be used for this LOD.
+	 * MAX_MESH_LOD_COUNT here cannot be a hard limit as editor allows more LODs to be created
+	 * however there may be other systems assuming MAX_MESH_LOD_COUNT is respected so generally it is not a good idea
+	 * to exceed it
+	 */
+	TArray<int8, TInlineAllocator<MAX_MESH_LOD_COUNT>> DeformerIndexForLOD;
+};
+
+/** Same as FMeshDeformerSet, except for mesh deformer instances */
+USTRUCT()
+struct FMeshDeformerInstanceSet
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<TObjectPtr<UMeshDeformerInstance>> DeformerInstances;
+
+	TArray<int8> InstanceIndexForLOD;
+};
+
 /** The map of external morph sets registered on the skinned mesh component. */
 using FExternalMorphSets = TMap<int32, TSharedPtr<FExternalMorphSet>>;
 
@@ -250,19 +284,38 @@ protected:
 	ENGINE_API void SetMeshDeformer(bool bInSetMeshDeformer, UMeshDeformer* InMeshDeformer);
 
 	/** Get the currently active MeshDeformer. This may come from the SkeletalMesh default or the Component override. */
-	ENGINE_API UMeshDeformer* GetActiveMeshDeformer() const;
+	ENGINE_API FMeshDeformerSet GetActiveMeshDeformers() const;
 
 	/** Object containing instance settings for the bound MeshDeformer. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Instanced, Category = "Deformer", meta = (DisplayName = "Deformer Settings", EditCondition = "MeshDeformerInstanceSettings!=nullptr", ShowOnlyInnerProperties))
 	TObjectPtr<UMeshDeformerInstanceSettings> MeshDeformerInstanceSettings;
 
+#if WITH_EDITORONLY_DATA
+	UE_DEPRECATED(5.4, "Replaced by MeshDeformerInstances. Call GetMeshDeformerInstance() to get the same behavior as reading MeshDeformerInstance.")
+	UPROPERTY(Transient, BlueprintReadOnly, BlueprintGetter = GetMeshDeformerInstance, Category = "Deformer", meta = (DeprecatedProperty, DeprecationMessage = "Use the GetMeshDeformerInstance function instead"))
+	TObjectPtr<UMeshDeformerInstance> MeshDeformerInstance_DEPRECATED;
+#endif // WITH_EDITORONLY_DATA
+
 	/** Object containing state for the bound MeshDeformer. */
-	UPROPERTY(Transient, BlueprintReadOnly, BlueprintGetter = GetMeshDeformerInstance, Category = "Deformer")
-	TObjectPtr<UMeshDeformerInstance> MeshDeformerInstance;
+	UPROPERTY(Transient)
+	FMeshDeformerInstanceSet MeshDeformerInstances;
+
+private:
+	/** Initializes the MeshDeformerInstances property */
+	void CreateMeshDeformerInstances(const FMeshDeformerSet& DeformerSet);
 
 public:
-	UFUNCTION(BlueprintGetter)
-	UMeshDeformerInstance* GetMeshDeformerInstance() const { return MeshDeformerInstance; }
+	UFUNCTION(BlueprintPure, Category = "Components|SkinnedMesh")
+	UMeshDeformerInstance* GetMeshDeformerInstance() const;
+
+	/** 
+	 * Gets the MeshDeformer for the given LOD.
+	 * 
+	 * Returns null if the LOD doesn't use a deformer or if the index is out of range.
+	 * 
+	 * This function takes GetMeshDeformerMaxLOD() into account, so there's no need to call both.
+	 */
+	UMeshDeformerInstance* GetMeshDeformerInstanceForLOD(int32 LODIndex) const;
 
 	/** Max LOD at which to update or apply the MeshDeformer. */
 	ENGINE_API int32 GetMeshDeformerMaxLOD() const;
@@ -284,6 +337,18 @@ public:
 		return (LeaderPoseComponentPtr ? LeaderPoseComponentPtr->CurrentBoneTransformRevisionNumber : CurrentBoneTransformRevisionNumber);
 	}
 
+	uint32 GetPreviousBoneTransformRevisionNumber() const
+	{
+		const USkinnedMeshComponent* LeaderPoseComponentPtr = LeaderPoseComponent.Get();
+		return (LeaderPoseComponentPtr ? LeaderPoseComponentPtr->PreviousBoneTransformRevisionNumber : PreviousBoneTransformRevisionNumber);
+	}
+
+	uint32 GetCurrentBoneTransformFrame() const
+	{
+		const USkinnedMeshComponent* LeaderPoseComponentPtr = LeaderPoseComponent.Get();
+		return (LeaderPoseComponentPtr ? LeaderPoseComponentPtr->CurrentBoneTransformFrame : CurrentBoneTransformFrame);
+	}
+
 	/* this update renderer with new revision number twice so to clear bone velocity for motion blur or temporal AA */
 	ENGINE_API void ClearMotionVector();
 	
@@ -291,7 +356,8 @@ public:
 	ENGINE_API void ForceMotionVector();
 
 private:
-	ENGINE_API EPreviousBoneTransformUpdateMode UpdateBoneTransformRevisionNumber();
+	ENGINE_API void UpdateBoneTransformRevisionNumber();
+	ENGINE_API EPreviousBoneTransformUpdateMode GetPreviousBoneTransformUpdateMode();
 
 	enum class EBoneTransformUpdateMethod
 	{
@@ -323,8 +389,14 @@ protected:
 	/** The index for the ComponentSpaceTransforms buffer we can currently read from */
 	int32 CurrentReadComponentTransforms;
 
+	/** Cache previous bone transform revision number to help compute CurrentBoneTransformRevisionNumber */
+	uint32 PreviousBoneTransformRevisionNumber;
+
 	/** current bone transform revision number */
 	uint32 CurrentBoneTransformRevisionNumber;
+
+	/** Stores GFrameCounter when CurrentBoneTransformRevisionNumber was updated, to make sure it's updated once per frame */
+	uint32 CurrentBoneTransformFrame;
 
 	/** Incremented every time the leader bone map changes. Used to keep in sync with any duplicate data needed by other threads */
 	int32 LeaderBoneMapCacheCount;
@@ -429,6 +501,7 @@ public:
 
 	/** Get the external morph sets for a given LOD. */
 	const FExternalMorphSets& GetExternalMorphSets(int32 LOD) const { return ExternalMorphSets[LOD]; }
+	FExternalMorphSets& GetExternalMorphSets(int32 LOD) { return ExternalMorphSets[LOD]; }
 
 	/** Get the array of external morph target sets. It is an array, one entry for each LOD. */
 	const TArray<FExternalMorphSets>& GetExternalMorphSetsArray() const { return ExternalMorphSets; }
@@ -508,6 +581,26 @@ public:
 	UE_DEPRECATED(4.24, "Direct access to ForcedLodModel is deprecated. Please use its getter and setter instead.")
 	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category=LOD)
 	int32 ForcedLodModel;
+
+private:
+	/**
+	 * Forces the specified LOD to stream in when LOD streaming is enabled.
+	 * 
+	 * If 0, streaming behavior is based on screen size, regardless of ForcedLodModel.
+	 * 
+	 * If > 0, (ForceStreamedLodModel - 1) will be streamed in.
+	 * 
+	 * This value will be copied from ForcedLodModel on initialization and will be set along with
+	 * ForcedLodModel by the SetForcedLOD function. It will only differ from ForcedLodModel if the
+	 * ILODSyncInterface functions are called, as these allow ForcedLodModel and
+	 * ForceStreamedLodModel to be set individually.
+	 * 
+	 * When ForcedLodModel and ForceStreamedLodModel are different, ForcedLodModel determines which
+	 * LOD to use for rendering and ForceStreamedLodModel determines which LOD to request for
+	 * streaming.
+	 */
+	int32 ForceStreamedLodModel;
+public:
 
 	/**
 	 * This is the min LOD that this component will use.  (e.g. if set to 2 then only 2+ LOD Models will be used.) This is useful to set on
@@ -797,6 +890,9 @@ public:
 	/** Passed into MeshObjectFactory */
 	void* MeshObjectFactoryUserData;
 
+	/** Previous copy of MeshObject set during recreate of the render state */
+	class FSkeletalMeshObject* PreviousMeshObject;
+
 	/** Gets the skeletal mesh resource used for rendering the component. */
 	ENGINE_API FSkeletalMeshRenderData* GetSkeletalMeshRenderData() const;
 
@@ -821,8 +917,17 @@ public:
 	 *
 	 * @param	InNewMinLOD	Set new MinLodModel that make sure the LOD does not go below of this value. Range from [0, Max Number of LOD - 1]. This will affect in the next tick update. 
 	 */
-	UFUNCTION(BlueprintCallable, Category="Components|SkinnedMesh")
+	UE_DEPRECATED(5.5, "Use USkinnedMeshComponent::OverrideMinLOD() instead.")
+	UFUNCTION(BlueprintCallable, Category="Components|SkinnedMesh", meta = (DeprecatedFunction, DeprecationMessage = "Use USkinnedMeshComponent::OverrideMinLOD() instead."))
 	ENGINE_API void SetMinLOD(int32 InNewMinLOD);
+
+	/**
+	 * Override the Min LOD of the mesh component
+	 *
+	 * @param	InNewMinLOD	Override new MinLodModel that make sure the LOD does not go below of this value. Range from [0, Max Number of LOD - 1]. This will affect in the next tick update.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Components|SkinnedMesh")
+	ENGINE_API void OverrideMinLOD(int32 InNewMinLOD);
 
 	/**
 	 * Set ForcedLodModel of the mesh component
@@ -994,7 +1099,7 @@ public:
 
 	ENGINE_API bool IsSkinCacheAllowed(int32 LodIdx) const;
 
-	bool HasMeshDeformer() const { return GetActiveMeshDeformer() != nullptr; }
+	bool HasMeshDeformer() const { return GetActiveMeshDeformers().Deformers.Num() > 0; }
 
 	bool GetForceUpdateDynamicDataImmediately() const { return bForceUpdateDynamicDataImmediately; }
 	void SetForceUpdateDynamicDataImmediately(bool bForceUpdateImmediately) { bForceUpdateDynamicDataImmediately = bForceUpdateImmediately; }
@@ -1059,6 +1164,7 @@ public:
 	//~ Begin UMeshComponent Interface
 	ENGINE_API virtual void RegisterLODStreamingCallback(FLODStreamingCallback&& Callback, int32 LODIdx, float TimeoutSecs, bool bOnStreamIn) override;
 	ENGINE_API virtual void RegisterLODStreamingCallback(FLODStreamingCallback&& CallbackStreamingStart, FLODStreamingCallback&& CallbackStreamingDone, float TimeoutStartSecs, float TimeoutDoneSecs) override;
+	ENGINE_API virtual bool PrestreamMeshLODs(float Seconds) override;
 	//~ End UMeshComponent Interface
 
 	/** Get the pre-skinning local space bounds for this component. */
@@ -1078,7 +1184,7 @@ public:
 	ENGINE_API void SetForceWireframe(bool InForceWireframe);
 
 	/** Precache all PSOs which can be used by the component */
-	ENGINE_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FComponentPSOPrecacheParamsList& OutParams) override;
+	ENGINE_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 	
 #if WITH_EDITOR
 	/** Return value of SectionIndexPreview  */
@@ -1167,7 +1273,7 @@ public:
 	ENGINE_API void CacheRefToLocalMatrices(TArray<FMatrix44f>& OutRefToLocal) const;
 
 	/** Return the skinning matrices used for rendering. */
-	ENGINE_API void GetCurrentRefToLocalMatrices(TArray<FMatrix44f>& OutRefToLocals, int32 InLodIdx) const;
+	ENGINE_API void GetCurrentRefToLocalMatrices(TArray<FMatrix44f>& OutRefToLocals, int32 InLodIdx, const TArray<FBoneIndexType>* ExtraRequiredBoneIndices = nullptr) const;
 
 	FORCEINLINE	const USkinnedMeshComponent* GetBaseComponent()const
 	{
@@ -1233,7 +1339,7 @@ public:
 
 	/** Check whether or not a Skin Weight Profile is currently set */
 	UFUNCTION(BlueprintCallable, Category = "Components|SkinnedMesh")
-	bool IsUsingSkinWeightProfile() const { return bSkinWeightProfileSet == 1;  }
+	ENGINE_API bool IsUsingSkinWeightProfile() const;
 
 	UE_DEPRECATED(4.26, "GetVertexOffsetUsage() has been deprecated. Support will be dropped in the future.")
 	UFUNCTION(BlueprintCallable, Category = "Components|SkinnedMesh")
@@ -1828,9 +1934,12 @@ private:
 
 	// BEGIN ILODSyncComponent
 	ENGINE_API virtual int32 GetDesiredSyncLOD() const override;
-	ENGINE_API virtual void SetSyncLOD(int32 LODIndex) override;
+	ENGINE_API virtual int32 GetBestAvailableLOD() const override;
+	ENGINE_API virtual void SetForceStreamedLOD(int32 LODIndex) override;
+	ENGINE_API virtual void SetForceRenderedLOD(int32 LODIndex) override;
 	ENGINE_API virtual int32 GetNumSyncLODs() const override;
-	ENGINE_API virtual int32 GetCurrentSyncLOD() const override;
+	ENGINE_API virtual int32 GetForceStreamedLOD() const override;
+	ENGINE_API virtual int32 GetForceRenderedLOD() const override;
 	// END ILODSyncComponent
 
 	// Animation update rate control.
@@ -1879,6 +1988,14 @@ public:
 	 * This assumes both arrays are sorted and contain unique bone indices.
 	 */
 	static ENGINE_API void MergeInBoneIndexArrays(TArray<FBoneIndexType>& BaseArray, const TArray<FBoneIndexType>& InsertArray);
+
+	/**
+	 * Override this function to add any additional required bones from followers to functions such as USkeletalMeshComponent::ComputeRequiredBones().
+	 * The additional bones will need to be passed using the Leader's bone index mapping, sorted in hierarchical order, and merged into the InOutRequiredBones array.
+	 * @param LODIndex - the LOD to get the required bones for.
+	 * @param InOutRequiredBones - the array in which to merge the additional required bones.
+	 */
+	virtual void GetAdditionalRequiredBonesForLeader(int32 LODIndex, TArray<FBoneIndexType>& InOutRequiredBones) const {}
 };
 
 class FRenderStateRecreator

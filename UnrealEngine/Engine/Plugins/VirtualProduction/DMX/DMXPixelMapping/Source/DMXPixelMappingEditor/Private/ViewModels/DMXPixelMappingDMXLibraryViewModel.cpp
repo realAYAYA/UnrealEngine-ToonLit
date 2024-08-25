@@ -2,6 +2,7 @@
 
 #include "DMXPixelMappingDMXLibraryViewModel.h"
 
+#include "Algo/MaxElement.h"
 #include "Algo/Transform.h"
 #include "Components/DMXPixelMappingBaseComponent.h"
 #include "Components/DMXPixelMappingFixtureGroupComponent.h"
@@ -10,12 +11,16 @@
 #include "Components/DMXPixelMappingRendererComponent.h"
 #include "Components/DMXPixelMappingRootComponent.h"
 #include "DMXPixelMapping.h"
+#include "DMXPixelMappingEditorLog.h"
 #include "Editor.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXLibrary.h"
+#include "ScopedTransaction.h"
 #include "Templates/DMXPixelMappingComponentTemplate.h"
 #include "Toolkits/DMXPixelMappingToolkit.h"
 
+
+#define LOCTEXT_NAMESPACE "DMXPixelMappingDMXLibraryViewModel"
 
 void UDMXPixelMappingDMXLibraryViewModel::CreateAndSetNewFixtureGroup(TWeakPtr<FDMXPixelMappingToolkit> InWeakToolkit)
 {
@@ -32,6 +37,10 @@ void UDMXPixelMappingDMXLibraryViewModel::CreateAndSetNewFixtureGroup(TWeakPtr<F
 	{
 		return;
 	}
+
+	const FScopedTransaction AddNewFixtureGroupTransaction(LOCTEXT("AddNewFixtureGroupTransaction", "Add Fixture Group to Pixel Mapping"));
+	RootComponent->Modify();
+
 	const TArray<UDMXPixelMappingFixtureGroupComponent*> OtherFixtureGroupComponents = GetFixtureGroupComponentsOfSameLibrary();
 
 	const TSharedRef<FDMXPixelMappingComponentTemplate> Template = MakeShared<FDMXPixelMappingComponentTemplate>(UDMXPixelMappingFixtureGroupComponent::StaticClass());
@@ -48,26 +57,24 @@ void UDMXPixelMappingDMXLibraryViewModel::CreateAndSetNewFixtureGroup(TWeakPtr<F
 	if (OtherFixtureGroupComponents.IsEmpty())
 	{
 		// If there's no group, add one that scales the texture of the active renderer component
-		if (Toolkit->CanSizeSelectedComponentToTexture())
+		if (Toolkit->CanPerformCommandsOnGroup())
 		{
-			constexpr bool bTransacted = true;
-			Toolkit->SizeSelectedComponentToTexture(bTransacted);
+			constexpr bool bTransacted = false;
+			Toolkit->SizeGroupToTexture(bTransacted);
 		}
 	}
 	else
 	{
 		// If there's already a group, offset over the top left of the existing group
-		FVector2D NewPosition(0.f, 0.f);
-		FVector2D NewSize = NewFixtureGroupComponent->GetSize();
-		for (UDMXPixelMappingFixtureGroupComponent* Other : OtherFixtureGroupComponents)
-		{
-			if (Other->GetPosition().Y > NewPosition.Y)
+		const UDMXPixelMappingFixtureGroupComponent* const* MostOffsetOtherPtr = Algo::MaxElementBy(OtherFixtureGroupComponents,
+			[](const UDMXPixelMappingFixtureGroupComponent* Other)
 			{
-				NewPosition = Other->GetPosition();
-				NewSize = Other->GetSize();
-			}
-		}
-		NewPosition += FVector2D(FMath::Max(1.f, NewSize.X / 16), FMath::Max(1.f, NewSize.Y / 16));
+				return Other->GetPosition().Length();
+			});
+		checkf(MostOffsetOtherPtr, TEXT("No result from array that was tested to not be empty."));
+
+		FVector2D NewSize = ActiveRendererComponent->GetSize();
+		FVector2D NewPosition = (*MostOffsetOtherPtr)->GetPosition() + FVector2D(FMath::Max(1.f, NewSize.X / 16), FMath::Max(1.f, NewSize.Y / 16));
 
 		NewFixtureGroupComponent->SetPosition(NewPosition);
 		NewFixtureGroupComponent->SetSize(NewSize);
@@ -115,7 +122,22 @@ void UDMXPixelMappingDMXLibraryViewModel::UpdateFixtureGroupFromSelection(TWeakP
 	}
 }
 
-void UDMXPixelMappingDMXLibraryViewModel::AddFixturePatchesEnsured(const TArray<TSharedPtr<FDMXEntityFixturePatchRef>>& FixturePatches)
+void UDMXPixelMappingDMXLibraryViewModel::SetNewComponentsUsePatchColor(bool bUsePatchColor)
+{
+	UDMXPixelMapping* PixelMapping = WeakToolkit.IsValid() ? WeakToolkit.Pin()->GetDMXPixelMapping() : nullptr;
+	if (PixelMapping)
+	{
+		PixelMapping->bNewComponentsUsePatchColor = bUsePatchColor;
+	}
+}
+
+bool UDMXPixelMappingDMXLibraryViewModel::ShouldNewComponentsUsePatchColor() const
+{
+	const UDMXPixelMapping* PixelMapping = WeakToolkit.IsValid() ? WeakToolkit.Pin()->GetDMXPixelMapping() : nullptr;
+	return PixelMapping ? PixelMapping->bNewComponentsUsePatchColor : false;
+}
+
+void UDMXPixelMappingDMXLibraryViewModel::AddFixturePatchesEnsured(const TArray<UDMXEntityFixturePatch*>& FixturePatches)
 {
 	const TSharedPtr<FDMXPixelMappingToolkit> Toolkit = WeakToolkit.Pin();
 	if (FixturePatches.IsEmpty() || !Toolkit.IsValid())
@@ -124,7 +146,7 @@ void UDMXPixelMappingDMXLibraryViewModel::AddFixturePatchesEnsured(const TArray<
 	}
 
 	// Ensure first patch is of the same library as the fixture group usees
-	UDMXLibrary* CommonDMXLibrary = FixturePatches[0]->DMXLibrary;
+	UDMXLibrary* CommonDMXLibrary = FixturePatches[0] ? FixturePatches[0]->GetParentLibrary() : nullptr;
 	if (!ensureMsgf(WeakFixtureGroupComponent.IsValid() && CommonDMXLibrary && CommonDMXLibrary == WeakFixtureGroupComponent->DMXLibrary, TEXT("Cannot add Fixture Patches to a Fixture Group that doesn't use the Library of the patches")))
 	{
 		return;
@@ -132,12 +154,17 @@ void UDMXPixelMappingDMXLibraryViewModel::AddFixturePatchesEnsured(const TArray<
 	UDMXPixelMappingFixtureGroupComponent* FixtureGroupComponent = WeakFixtureGroupComponent.Get();
 
 	// Ensure all patches are of same library
-	bool bAllPatchesAreOfSameLibrary = Algo::FindByPredicate(FixturePatches, [CommonDMXLibrary](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
+	const UDMXEntityFixturePatch* const * FixturePatchOfDifferentLibraryPtr = Algo::FindByPredicate(FixturePatches, [CommonDMXLibrary](const UDMXEntityFixturePatch* FixturePatch)
 		{
-			return !FixturePatchRef.IsValid() && FixturePatchRef->DMXLibrary == CommonDMXLibrary;
-		}) == nullptr;
-	if (!ensureMsgf(bAllPatchesAreOfSameLibrary, TEXT("Cannot add Fixture Patches to Pixel Mapping. Patches don't share a common library")))
+			return FixturePatch && FixturePatch->GetParentLibrary() != CommonDMXLibrary;
+		});
+	if (!ensureMsgf(!FixturePatchOfDifferentLibraryPtr, TEXT("Cannot add Fixture Patches to Pixel Mapping. Patches don't share a common library")))
 	{
+		const FString PreviousDMXLibraryName = CommonDMXLibrary->GetName();
+		const FString FixturePatchOfOtherLibraryName = (*FixturePatchOfDifferentLibraryPtr) ? (*FixturePatchOfDifferentLibraryPtr)->GetName() : TEXT("Invalid Fixture Patch");
+		const FString OtherLibraryName = (*FixturePatchOfDifferentLibraryPtr) && (*FixturePatchOfDifferentLibraryPtr)->GetParentLibrary() ? (*FixturePatchOfDifferentLibraryPtr)->GetParentLibrary()->GetName() : TEXT("Invalid DMX Library");
+
+		UE_LOG(LogDMXPixelMappingEditor, Warning, TEXT("Expected DMX Library '%s', but Fixture Patch '%s' uses DMX Library '%s'"), *PreviousDMXLibraryName, *FixturePatchOfOtherLibraryName, *OtherLibraryName);
 		return;
 	}
 
@@ -148,26 +175,26 @@ void UDMXPixelMappingDMXLibraryViewModel::AddFixturePatchesEnsured(const TArray<
 	}
 
 	TArray<TSharedPtr<FDMXPixelMappingComponentTemplate>> Templates;
-	for (const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef : FixturePatches)
+	for (UDMXEntityFixturePatch* FixturePatch : FixturePatches)
 	{
-		if (!FixturePatchRef.IsValid())
+		if (!FixturePatch)
 		{
 			continue;
 		}
 
-		UDMXEntityFixturePatch* FixturePatch = FixturePatchRef->GetFixturePatch();
-		UDMXEntityFixtureType* FixtureType = FixturePatch ? FixturePatch->GetFixtureType() : nullptr;
-		const FDMXFixtureMode* ActiveModePtr = FixturePatch ? FixturePatch->GetActiveMode() : nullptr;
-		if (FixturePatch && FixtureType && ActiveModePtr)
+		UDMXEntityFixtureType* FixtureType = FixturePatch->GetFixtureType();
+		const FDMXFixtureMode* ActiveModePtr = FixturePatch->GetActiveMode();
+		if (FixtureType && ActiveModePtr)
 		{
+			const FDMXEntityFixturePatchRef FixturePatchRef(FixturePatch);
 			if (ActiveModePtr->bFixtureMatrixEnabled)
 			{
-				const TSharedRef<FDMXPixelMappingComponentTemplate> FixturePatchMatrixTemplate = MakeShared<FDMXPixelMappingComponentTemplate>(UDMXPixelMappingMatrixComponent::StaticClass(), *FixturePatchRef);
+				const TSharedRef<FDMXPixelMappingComponentTemplate> FixturePatchMatrixTemplate = MakeShared<FDMXPixelMappingComponentTemplate>(UDMXPixelMappingMatrixComponent::StaticClass(), FixturePatchRef);
 				Templates.Add(FixturePatchMatrixTemplate);
 			}
 			else
 			{
-				const TSharedRef<FDMXPixelMappingComponentTemplate> FixturePatchItemTemplate = MakeShared<FDMXPixelMappingComponentTemplate>(UDMXPixelMappingFixtureGroupItemComponent::StaticClass(), *FixturePatchRef);
+				const TSharedRef<FDMXPixelMappingComponentTemplate> FixturePatchItemTemplate = MakeShared<FDMXPixelMappingComponentTemplate>(UDMXPixelMappingFixtureGroupItemComponent::StaticClass(), FixturePatchRef);
 				Templates.Add(FixturePatchItemTemplate);
 			}
 		}
@@ -285,6 +312,9 @@ void UDMXPixelMappingDMXLibraryViewModel::LayoutEvenOverParent(const TArray<UDMX
 		return;
 	}
 
+	const double RestoreRotation = FixtureGroupComponent->GetRotation();
+	FixtureGroupComponent->SetRotation(0.0);
+
 	const int32 Columns = FMath::RoundFromZero(FMath::Sqrt((float)Components.Num()));
 	const int32 Rows = FMath::RoundFromZero((float)Components.Num() / Columns);
 	const FVector2D Size = FVector2D(FixtureGroupComponent->GetSize().X / Columns, FixtureGroupComponent->GetSize().Y / Rows);
@@ -307,14 +337,22 @@ void UDMXPixelMappingDMXLibraryViewModel::LayoutEvenOverParent(const TArray<UDMX
 			OutputComponent->SetSize(Size);
 		}
 	}
+
+	FixtureGroupComponent->SetRotation(RestoreRotation);
 }
 
 void UDMXPixelMappingDMXLibraryViewModel::LayoutAfterLastPatch(const TArray<UDMXPixelMappingBaseComponent*> Components)
 {
-	if (Components.IsEmpty())
+	if (Components.IsEmpty() || !DMXLibrary)
 	{
 		return;
 	}
+	const TArray<UDMXEntityFixturePatch*> Patches = DMXLibrary->GetEntitiesTypeCast<UDMXEntityFixturePatch>();
+	if (Patches.IsEmpty())
+	{
+		return;
+	}
+
 	UDMXPixelMappingOutputComponent* FirstComponentToLayout = Cast<UDMXPixelMappingOutputComponent>(Components[0]);
 
 	UDMXPixelMappingFixtureGroupComponent* FixtureGroupComponent = WeakFixtureGroupComponent.Get();
@@ -322,6 +360,9 @@ void UDMXPixelMappingDMXLibraryViewModel::LayoutAfterLastPatch(const TArray<UDMX
 	{
 		return;
 	}
+
+	const double RestoreRotation = FixtureGroupComponent->GetRotation();
+	FixtureGroupComponent->SetRotation(0.0);
 
 	// Find other components
 	TArray<UDMXPixelMappingBaseComponent*> OtherComponentsInGroup;
@@ -339,8 +380,8 @@ void UDMXPixelMappingDMXLibraryViewModel::LayoutAfterLastPatch(const TArray<UDMX
 	{
 		if (UDMXPixelMappingOutputComponent* OtherOutputComponent = Cast<UDMXPixelMappingOutputComponent>(OtherComponent))
 		{
-			NextPosition.X = FMath::Max(NextPosition.X, OtherOutputComponent->GetPosition().X + OtherOutputComponent->GetSize().X + 1);
-			if (NextPosition.X + FirstComponentToLayout->GetSize().X > FixtureGroupComponent->GetPosition().X + FixtureGroupComponent->GetSize().X - 1)
+			NextPosition.X = FMath::Max(NextPosition.X, OtherOutputComponent->GetPosition().X + OtherOutputComponent->GetSize().X);
+			if (NextPosition.X + FirstComponentToLayout->GetSize().X > FixtureGroupComponent->GetPosition().X + FixtureGroupComponent->GetSize().X)
 			{
 				NextPosition.X = FixtureGroupComponent->GetPosition().X;
 				NextPosition.Y += FirstComponentToLayout->GetSize().Y;
@@ -354,11 +395,10 @@ void UDMXPixelMappingDMXLibraryViewModel::LayoutAfterLastPatch(const TArray<UDMX
 	{
 		if (UDMXPixelMappingOutputComponent* OutputComponent = Cast<UDMXPixelMappingOutputComponent>(Component))
 		{
-			if (FixtureGroupComponent->IsOverPosition(NextPosition) &&
-				FixtureGroupComponent->IsOverPosition(NextPosition + OutputComponent->GetSize()))
-			{
-				OutputComponent->SetPosition(NextPosition);
+			OutputComponent->SetPosition(NextPosition);
 
+			if (OutputComponent->IsOverParent())
+			{
 				RowHeight = FMath::Max(OutputComponent->GetSize().Y, RowHeight);
 				NextPosition = FVector2D(NextPosition.X + OutputComponent->GetSize().X, NextPosition.Y);
 			}
@@ -366,18 +406,18 @@ void UDMXPixelMappingDMXLibraryViewModel::LayoutAfterLastPatch(const TArray<UDMX
 			{
 				// Try on a new row
 				FVector2D NewRowPosition = FVector2D(FixtureGroupComponent->GetPosition().X, NextPosition.Y + RowHeight);
-
 				const FVector2D NextPositionOnNewRow = FVector2D(NewRowPosition.X + OutputComponent->GetSize().X, NewRowPosition.Y);
-				if (FixtureGroupComponent->IsOverPosition(NextPositionOnNewRow) &&
-					FixtureGroupComponent->IsOverPosition(NextPositionOnNewRow + OutputComponent->GetSize()))
-				{
-					OutputComponent->SetPosition(NewRowPosition);
 
+				OutputComponent->SetPosition(NextPositionOnNewRow);
+
+				if (OutputComponent->IsOverParent())
+				{
 					NextPosition = FVector2D(NewRowPosition.X + OutputComponent->GetSize().X, NewRowPosition.Y);
 					RowHeight = OutputComponent->GetSize().Y;
 				}
 				else
 				{
+					// Append as the component cannot be fit into the group
 					OutputComponent->SetPosition(NextPosition);
 
 					NextPosition = FVector2D(NextPosition.X + OutputComponent->GetSize().X, NextPosition.Y);
@@ -385,6 +425,8 @@ void UDMXPixelMappingDMXLibraryViewModel::LayoutAfterLastPatch(const TArray<UDMX
 			}
 		}
 	}
+
+	FixtureGroupComponent->SetRotation(RestoreRotation);
 }
 
 void UDMXPixelMappingDMXLibraryViewModel::SelectFixtureGroupComponent(UDMXPixelMappingFixtureGroupComponent* FixtureGroupComponent)
@@ -422,3 +464,5 @@ TArray<UDMXPixelMappingFixtureGroupComponent*> UDMXPixelMappingDMXLibraryViewMod
 
 	return FixtureGroupComponents;
 }
+
+#undef LOCTEXT_NAMESPACE

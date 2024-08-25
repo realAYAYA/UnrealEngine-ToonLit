@@ -51,6 +51,39 @@ namespace ELocalizationTargetDescriptorLoadingPolicy
 	PROJECTS_API const TCHAR* ToString(const ELocalizationTargetDescriptorLoadingPolicy::Type Value);
 };
 
+/** How the localization target's localization config files are generated during the localization gather pipeline.*/
+namespace ELocalizationConfigGenerationPolicy
+{
+	enum Type
+	{
+		/** This localization target does not have localization config files associated with it and no localization content files will be generated for it during the localizaiton pipeline.*/
+		Never,
+		/** The user has provided localization config files for this localization target and they will be used to generate the localization content files for the localization target.*/
+		User,
+		/** Temporary localization config files will be generated for the localization target during the localization pipeline to generate the localization content files. After the localization pipeline is complete, the temporary files will be deleted.*/
+		Auto,
+		/** NOTE: If you add a new value, make sure to update the ToString() method below!. */
+		Max,
+	};
+
+	/**
+	 * Converts a string to a ELocalizationConfigGenerationPolicy::Type value
+	 *
+	 * @param	The string to convert to a value
+	 * @return	The corresponding value, or 'Max' if the string is not valid.
+	 */
+	PROJECTS_API ELocalizationConfigGenerationPolicy::Type FromString(const TCHAR* Text);
+
+	/**
+	 * Returns the name of a ELocalizationConfigGenerationPolicy::Type
+	 *
+	 * @param	The value to convert to a string
+	 * @return	The string representation of this enum value
+	 */
+	PROJECTS_API const TCHAR* ToString(const ELocalizationConfigGenerationPolicy::Type Value);
+};
+
+
 /**
  * Description of a localization target.
  */
@@ -62,8 +95,11 @@ struct FLocalizationTargetDescriptor
 	/** When should the localization data associated with a target should be loaded? */
 	ELocalizationTargetDescriptorLoadingPolicy::Type LoadingPolicy;
 
+	/** How the localizationc config files associated with the localization target are generated */
+	ELocalizationConfigGenerationPolicy::Type ConfigGenerationPolicy;
+
 	/** Normal constructor */
-	PROJECTS_API FLocalizationTargetDescriptor(FString InName = FString(), ELocalizationTargetDescriptorLoadingPolicy::Type InLoadingPolicy = ELocalizationTargetDescriptorLoadingPolicy::Never);
+	PROJECTS_API FLocalizationTargetDescriptor(FString InName = FString(), ELocalizationTargetDescriptorLoadingPolicy::Type InLoadingPolicy = ELocalizationTargetDescriptorLoadingPolicy::Never, ELocalizationConfigGenerationPolicy::Type InGenerationPolicy = ELocalizationConfigGenerationPolicy::Never);
 
 	/** Reads a descriptor from the given JSON object */
 	PROJECTS_API bool Read(const FJsonObject& InObject, FText* OutFailReason = nullptr);

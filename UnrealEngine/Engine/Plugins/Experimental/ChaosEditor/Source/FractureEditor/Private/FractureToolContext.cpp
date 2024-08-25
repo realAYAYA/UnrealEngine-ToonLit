@@ -5,6 +5,8 @@
 #include "GeometryCollection/GeometryCollectionClusteringUtility.h"
 #include "GeometryCollection/GeometryCollectionUtility.h"
 
+#include "GeometryCollection/Facades/CollectionTransformSelectionFacade.h"
+
 #include "Algo/RemoveIf.h"
 
 
@@ -135,7 +137,7 @@ void FFractureToolContext::RemoveChildrenOfSelectedNodesFromSelection()
 			}
 		}
 		return false;
-	}), false);
+	}), EAllowShrinking::No);
 }
 
 void FFractureToolContext::ConvertEmbeddedSelectionToParents()
@@ -156,7 +158,7 @@ void FFractureToolContext::ConvertEmbeddedSelectionToParents()
 			}
 			else // embedded should always have a parent, but if it somehow does not, just remove from selection
 			{
-				SelectedBones.RemoveAtSwap(SelBoneIdx, 1, false);
+				SelectedBones.RemoveAtSwap(SelBoneIdx, 1, EAllowShrinking::No);
 				--SelBoneIdx; // reconsider swapped-in-element at this idx next iter
 			}
 		}
@@ -300,6 +302,12 @@ void FFractureToolContext::ConvertSelectionToClusterNodes()
 	SelectedBones.Append(AddedClusterSelections);
 	
 	Sanitize();
+}
+
+void FFractureToolContext::FilterSelectionBySimulationType(FGeometryCollection::ESimulationTypes KeepSimulationType)
+{
+	GeometryCollection::Facades::FCollectionTransformSelectionFacade SelectionFacade(*GeometryCollection);
+	SelectionFacade.FilterSelectionBySimulationType(SelectedBones, KeepSimulationType);
 }
 
 

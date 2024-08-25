@@ -1,17 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CoreMinimal.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/Class.h"
-#include "UObject/PropertyPortFlags.h"
 #include "UObject/UnrealType.h"
+
+#include "Algo/Find.h"
+#include "Hash/Blake3.h"
 #include "UObject/UnrealTypePrivate.h"
 #include "UObject/UObjectThreadContext.h"
-#include "Serialization/ArchiveUObjectFromStructuredArchive.h"
-#include "Algo/Find.h"
-#include "UObject/LinkerLoad.h"
-#include "Misc/EngineNetworkCustomVersion.h"
-#include "Hash/Blake3.h"
 
 /*-----------------------------------------------------------------------------
 	FByteProperty.
@@ -215,43 +209,53 @@ struct TConvertIntToEnumProperty
 
 EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot, uint8* Data, UStruct* DefaultsStruct, const uint8* Defaults)
 {
-	if (Tag.Type == NAME_ByteProperty  && ((Tag.EnumName == NAME_None) != (Enum == nullptr)))
+	const EName* TagType= Tag.Type.ToEName();
+	if (UNLIKELY(Tag.Type.GetNumber() || !TagType))
 	{
-		// a byte property gained or lost an enum
-		// attempt to convert it
-		uint8 PreviousValue = 0;
-		if (Tag.EnumName == NAME_None)
+		return EConvertFromTypeResult::UseSerializeItem;
+	}
+
+	switch (*TagType)
+	{
+	default:
+		return EConvertFromTypeResult::UseSerializeItem;
+	case NAME_ByteProperty:
+	{
+		if ((Tag.GetType().GetParameterCount() == 0) != (Enum == nullptr))
 		{
-			// If we're a nested property the EnumName tag got lost. Fail to read in this case
-			FProperty* const PropertyOwner = GetOwner<FProperty>();
-			if (PropertyOwner)
+			// A byte property gained or lost an enum.
+			uint8 PreviousValue = 0;
+			if (Enum)
 			{
-				return EConvertFromTypeResult::UseSerializeItem;
+				// A nested property would lose its enum name on previous versions. Handle this case for backward compatibility reasons.
+				if (GetOwner<FProperty>() && Slot.GetArchiveState().UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
+				{
+					return EConvertFromTypeResult::UseSerializeItem;
+				}
+
+				// Read the byte and assume its value corresponds to a valid enumerator.
+				Slot << PreviousValue;
+			}
+			else
+			{
+				// Attempt to find the enum from the tag and find the byte value from the enum.
+				PreviousValue = (uint8)ReadEnumAsInt64(Slot, DefaultsStruct, Tag);
 			}
 
-			// simply pretend the property still doesn't have an enum and serialize the single byte
-			Slot << PreviousValue;
+			SetPropertyValue_InContainer(Data, PreviousValue, Tag.ArrayIndex);
+			return EConvertFromTypeResult::Converted;
 		}
-		else
-		{
-			// attempt to find the old enum and get the byte value from the serialized enum name
-			PreviousValue = (uint8)ReadEnumAsInt64(Slot, DefaultsStruct, Tag);
-		}
-
-		// now copy the value into the object's address space
-		SetPropertyValue_InContainer(Data, PreviousValue, Tag.ArrayIndex);
+		return EConvertFromTypeResult::UseSerializeItem;
 	}
-	else if (Tag.Type == NAME_EnumProperty && (Enum == nullptr || Tag.EnumName == Enum->GetFName() || Tag.EnumName.ToString() == Enum->GetPathName()))
+	case NAME_EnumProperty:
 	{
-		// an enum property became a byte
-		// attempt to find the old enum and get the byte value from the serialized enum name
+		// Attempt to find the enum from the tag and find the byte value from the enum.
 		uint8 PreviousValue = (uint8)ReadEnumAsInt64(Slot, DefaultsStruct, Tag);
 
-		// now copy the value into the object's address space
 		SetPropertyValue_InContainer(Data, PreviousValue, Tag.ArrayIndex);
+		return EConvertFromTypeResult::Converted;
 	}
-	else if (Tag.Type == NAME_Int8Property)
-	{
+	case NAME_Int8Property:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<int8>::Convert(Slot, this, Enum, Data, Tag);
@@ -260,9 +264,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			ConvertFromArithmeticValue<int8>(Slot, Data, Tag);
 		}
-	}
-	else if (Tag.Type == NAME_Int16Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_Int16Property:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<int16>::Convert(Slot, this, Enum, Data, Tag);
@@ -271,9 +274,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			ConvertFromArithmeticValue<int16>(Slot, Data, Tag);
 		}
-	}
-	else if (Tag.Type == NAME_IntProperty)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_IntProperty:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<int32>::Convert(Slot, this, Enum, Data, Tag);
@@ -282,9 +284,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			ConvertFromArithmeticValue<int32>(Slot, Data, Tag);
 		}
-	}
-	else if (Tag.Type == NAME_Int64Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_Int64Property:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<int64>::Convert(Slot, this, Enum, Data, Tag);
@@ -293,9 +294,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			ConvertFromArithmeticValue<int64>(Slot, Data, Tag);
 		}
-	}
-	else if (Tag.Type == NAME_UInt16Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_UInt16Property:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<uint16>::Convert(Slot, this, Enum, Data, Tag);
@@ -304,9 +304,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			ConvertFromArithmeticValue<uint16>(Slot, Data, Tag);
 		}
-	}
-	else if (Tag.Type == NAME_UInt32Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_UInt32Property:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<uint32>::Convert(Slot, this, Enum, Data, Tag);
@@ -315,9 +314,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			ConvertFromArithmeticValue<uint32>(Slot, Data, Tag);
 		}
-	}
-	else if (Tag.Type == NAME_UInt64Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_UInt64Property:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<uint64>::Convert(Slot, this, Enum, Data, Tag);
@@ -326,9 +324,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			ConvertFromArithmeticValue<uint64>(Slot, Data, Tag);
 		}
-	}
-	else if (Tag.Type == NAME_BoolProperty)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_BoolProperty:
 		if (Enum)
 		{
 			TConvertIntToEnumProperty<uint64>::ConvertValue(Tag.BoolVal, this, Enum, Data, Tag);
@@ -337,13 +334,8 @@ EConvertFromTypeResult FByteProperty::ConvertFromType(const FPropertyTag& Tag, F
 		{
 			SetPropertyValue_InContainer(Data, Tag.BoolVal, Tag.ArrayIndex);
 		}
+		return EConvertFromTypeResult::Converted;
 	}
-	else
-	{
-		return EConvertFromTypeResult::UseSerializeItem;
-	}
-
-	return EConvertFromTypeResult::Converted;
 }
 
 #if WITH_EDITORONLY_DATA
@@ -441,20 +433,25 @@ const TCHAR* FByteProperty::ImportText_Internal( const TCHAR* InBuffer, void* Co
 			// return null so that the caller of ImportText can generate a more meaningful
 			// warning/error
 			UObject* SerializedObject = nullptr;
-			if (FLinkerLoad* Linker = GetLinker())
+			if (FUObjectSerializeContext* LoadContext = FUObjectThreadContext::Get().GetSerializeContext())
 			{
-				if (FUObjectSerializeContext* LoadContext = Linker->GetSerializeContext())
-				{
-					SerializedObject = LoadContext->SerializedObject;
-				}
+				SerializedObject = LoadContext->SerializedObject;
 			}
-			ErrorText->Logf(ELogVerbosity::Warning, TEXT("In asset '%s', there is an enum property of type '%s' with an invalid value of '%s'"), *GetPathNameSafe(SerializedObject ? SerializedObject : FUObjectThreadContext::Get().ConstructedObject), *Enum->GetName(), *Temp);
+			const bool bIsNativeOrLoaded = (!Enum->HasAnyFlags(RF_WasLoaded) || Enum->HasAnyFlags(RF_LoadCompleted));
+			ErrorText->Logf(ELogVerbosity::Warning, TEXT("FBP: In asset '%s', there is an enum property of type '%s' with an invalid value of '%s' - %s"), 
+				*GetPathNameSafe(SerializedObject ? SerializedObject : FUObjectThreadContext::Get().ConstructedObject), 
+				*Enum->GetName(), 
+				*Temp,
+				bIsNativeOrLoaded ? TEXT("loaded") : TEXT("not loaded"));
 			return nullptr;
 		}
 	}
 	
 	// Interpret "True" and "False" as 1 and 0. This is mostly for importing a property that was exported as a bool and is imported as a non-enum byte.
-	if (!Enum)
+	// Also allow for ConsoleVariable-backed enums to attempt to convert True/False to 1/0 in case a bool cvar has been converted to an enum. 
+	// Enum properties backed by an integer CVar are stored as number values, so this code will only do anything when reading an old .ini file with True/False values
+	// We log a warning so users can fix up their .ini files to use integer values that map to the enum
+	if (!Enum || (PortFlags & PPF_ConsoleVariable))
 	{
 		FString Temp;
 		if (const TCHAR* Buffer = FPropertyHelpers::ReadToken(InBuffer, Temp))
@@ -472,6 +469,12 @@ const TCHAR* FByteProperty::ImportText_Internal( const TCHAR* InBuffer, void* Co
 				{
 					SetIntPropertyValue(PointerToValuePtr(ContainerOrPropertyPtr, PropertyPointerType), TrueValue);
 				}
+
+				if (Enum)
+				{
+					UE_LOG(LogClass, Warning, TEXT("ConsoleVariable-Backed Enum Property of type '%s' was set from a string. Please update the cvar in your ini files."), *Enum->GetPathName(), *Enum->GetName());
+				}
+
 				return Buffer;
 			}
 			else if (Temp == TEXT("False") || Temp == *(CoreTexts.False.ToString()))
@@ -485,6 +488,12 @@ const TCHAR* FByteProperty::ImportText_Internal( const TCHAR* InBuffer, void* Co
 				{
 					SetIntPropertyValue(PointerToValuePtr(ContainerOrPropertyPtr, PropertyPointerType), FalseValue);
 				}
+
+				if (Enum)
+				{
+					UE_LOG(LogClass, Warning, TEXT("ConsoleVariable-Backed Enum Property of type '%s' was set from a string. Please update the cvar in your ini files."), *Enum->GetPathName(), *Enum->GetName());
+				}
+
 				return Buffer;
 			}
 		}
@@ -504,4 +513,53 @@ uint64 FByteProperty::GetMaxNetSerializeBits() const
 	const uint64 DesiredBits = Enum ? FMath::CeilLogTwo64(Enum->GetMaxEnumValue() + 1) : MaxBits;
 
 	return FMath::Min(DesiredBits, MaxBits);
+}
+
+bool FByteProperty::LoadTypeName(UE::FPropertyTypeName Type, const FPropertyTag* Tag)
+{
+	if (!Super::LoadTypeName(Type, Tag))
+	{
+		return false;
+	}
+
+	const FName EnumName = Type.GetParameterName(0);
+	if (EnumName.IsNone())
+	{
+		return true;
+	}
+
+	if (UEnum* LocalEnum = FindFirstObject<UEnum>(*WriteToString<256>(EnumName), EFindFirstObjectOptions::NativeFirst))
+	{
+		Enum = LocalEnum;
+		return true;
+	}
+
+	return false;
+}
+
+void FByteProperty::SaveTypeName(UE::FPropertyTypeNameBuilder& Type) const
+{
+	Super::SaveTypeName(Type);
+
+	if (const UEnum* LocalEnum = Enum)
+	{
+		Type.BeginParameters();
+		Type.AddPath(LocalEnum);
+		Type.EndParameters();
+	}
+}
+
+bool FByteProperty::CanSerializeFromTypeName(UE::FPropertyTypeName Type) const
+{
+	if (!Super::CanSerializeFromTypeName(Type))
+	{
+		return false;
+	}
+
+	const FName EnumName = Type.GetParameterName(0);
+	if (const UEnum* LocalEnum = Enum)
+	{
+		return EnumName == LocalEnum->GetFName();
+	}
+	return EnumName.IsNone();
 }

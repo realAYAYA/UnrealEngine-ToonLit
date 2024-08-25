@@ -89,7 +89,7 @@ void UNiagaraParameterDefinitions::RemoveParameter(const FNiagaraVariable& Varia
 		const FGuid RemovedScriptVarGuid = ScriptVariables[Idx]->Metadata.GetVariableGuid();
 		// Make sure to remove any links to binding name subscriptions to external parameter libraries.
 		UnsubscribeBindingNameFromExternalParameterDefinitions(RemovedScriptVarGuid);
-		ScriptVariables.RemoveAtSwap(Idx, 1, false);
+		ScriptVariables.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 		NotifyParameterDefinitionsChanged();
 	}
 }

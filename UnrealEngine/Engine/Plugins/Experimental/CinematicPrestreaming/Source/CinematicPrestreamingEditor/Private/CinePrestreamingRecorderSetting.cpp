@@ -247,7 +247,7 @@ void UCinePrestreamingRecorderSetting::CreateAssetsFromData()
 
 			// We only use the leafmost moviescene as that's the one that actually gets modified.
 			OutputSegment->MovieScene = Node->MovieScene.Get();
-			OutputSegment->Range = ShotInfo.TotalOutputRangeRoot * ShotInfo.OuterToInnerTransform;
+			OutputSegment->Range =  ShotInfo.OuterToInnerTransform.TransformRangeUnwarped(ShotInfo.TotalOutputRangeRoot);
 		}
 
 		// Convert our samples and append them to the existing array

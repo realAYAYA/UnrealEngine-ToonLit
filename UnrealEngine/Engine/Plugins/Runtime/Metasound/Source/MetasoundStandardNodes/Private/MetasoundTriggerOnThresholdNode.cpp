@@ -104,15 +104,13 @@ namespace Metasound
 		}
 
 		// In CreateOperator, the only thing that varies between Audio and non-audio input is whether there is a default value for the Input. 
-		static TDataReadReference<ValueType> CreateInput(const FCreateOperatorParams& InParams)
+		static TDataReadReference<ValueType> CreateInput(const FBuildOperatorParams& InParams)
 		{
 			using namespace TriggerOnThresholdVertexNames;
-
-			const FDataReferenceCollection& InputCol = InParams.InputDataReferences;
 			const FOperatorSettings& Settings = InParams.OperatorSettings;
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			return InputCol.GetDataReadReferenceOrConstructWithVertexDefault<ValueType>(InputInterface, METASOUND_GET_PARAM_NAME(InPin), Settings);
+			return InputData.GetOrCreateDefaultDataReadReference<ValueType>(METASOUND_GET_PARAM_NAME(InPin), Settings);
 		}
 
 	};
@@ -191,14 +189,14 @@ namespace Metasound
 			return Interface;
 		}
 
-		static FAudioBufferReadRef CreateInput(const FCreateOperatorParams& InParams)
+		static FAudioBufferReadRef CreateInput(const FBuildOperatorParams& InParams)
 		{
 			using namespace TriggerOnThresholdVertexNames;
 
-			const FDataReferenceCollection& InputCol = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 			const FOperatorSettings& Settings = InParams.OperatorSettings;
 
-			return InputCol.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InPin), Settings);
+			return InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InPin), Settings);
 		}
 	};
 
@@ -300,17 +298,16 @@ namespace Metasound
 			return Info;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace TriggerOnThresholdVertexNames;
 
-			const FDataReferenceCollection& InputCol = InParams.InputDataReferences;
 			const FOperatorSettings& Settings = InParams.OperatorSettings;
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FBufferTriggerTypeReadRef Type = InputCol.GetDataReadReferenceOrConstructWithVertexDefault<FEnumBufferTriggerType>(InputInterface, METASOUND_GET_PARAM_NAME(InTriggerType), Settings);
+			FBufferTriggerTypeReadRef Type = InputData.GetOrCreateDefaultDataReadReference<FEnumBufferTriggerType>(METASOUND_GET_PARAM_NAME(InTriggerType), Settings);
 			TDataReadReference<ValueType> Input = TTriggerOnThresholdHelper<ValueType>::CreateInput(InParams);
-			TDataReadReference<ThresholdType> Threshold = InputCol.GetDataReadReferenceOrConstructWithVertexDefault<ThresholdType>(InputInterface, METASOUND_GET_PARAM_NAME(InThresholdPin), Settings);
+			TDataReadReference<ThresholdType> Threshold = InputData.GetOrCreateDefaultDataReadReference<ThresholdType>(METASOUND_GET_PARAM_NAME(InThresholdPin), Settings);
 
 			return MakeUnique<TTriggerOnThresholdOperator<ValueType, ThresholdType>>(InParams.OperatorSettings, Input, Threshold, Type);
 		}		

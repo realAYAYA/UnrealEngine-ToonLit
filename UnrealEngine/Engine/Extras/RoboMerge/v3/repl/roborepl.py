@@ -34,7 +34,7 @@ context = dict(
 
 def get_bot(name):
 	try:
-		return context['_bots'][bot.lower()]
+		return context['_bots'][name.lower()]
 	except KeyError:
 		raise f"Unknown bot '{name}'"
 

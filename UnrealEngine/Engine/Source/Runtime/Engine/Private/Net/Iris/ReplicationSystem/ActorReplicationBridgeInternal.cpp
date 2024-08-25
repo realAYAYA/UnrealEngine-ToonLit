@@ -198,6 +198,14 @@ void WriteSubObjectCreationHeader(FNetSerializationContext& Context, const FSubO
 		else
 		{
 			WriteFullNetObjectReference(Context, Header.ObjectClassReference);
+
+			if (!Writer->WriteBool(Header.bOuterIsTransientLevel))
+			{
+				if (!Writer->WriteBool(Header.bOuterIsRootObject))
+				{
+					WriteFullNetObjectReference(Context, Header.OuterReference);
+				}
+			}
 		}
 	}
 	else
@@ -211,6 +219,9 @@ void ReadSubObjectCreationHeader(FNetSerializationContext& Context, FSubObjectCr
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
 	Header.bIsActor = false;
+	Header.bOuterIsTransientLevel = false;
+	Header.bOuterIsRootObject = false;
+
 	Header.bIsDynamic = Reader->ReadBool();
 	if (Header.bIsDynamic)
 	{
@@ -222,6 +233,16 @@ void ReadSubObjectCreationHeader(FNetSerializationContext& Context, FSubObjectCr
 		else
 		{
 			ReadFullNetObjectReference(Context, Header.ObjectClassReference);
+
+			Header.bOuterIsTransientLevel = Reader->ReadBool();
+			if (!Header.bOuterIsTransientLevel)
+			{
+				Header.bOuterIsRootObject = Reader->ReadBool();
+				if (!Header.bOuterIsRootObject)
+				{
+					ReadFullNetObjectReference(Context, Header.OuterReference);
+				}
+			}
 		}
 	}
 	else

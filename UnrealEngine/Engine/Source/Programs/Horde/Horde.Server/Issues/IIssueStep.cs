@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using Horde.Server.Jobs;
+using EpicGames.Horde.Issues;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
 using Horde.Server.Jobs.Graphs;
-using Horde.Server.Logs;
-using Horde.Server.Utilities;
 using MongoDB.Bson;
 
 namespace Horde.Server.Issues
@@ -42,12 +42,12 @@ namespace Horde.Server.Issues
 		/// <summary>
 		/// Unique id of the batch within the job
 		/// </summary>
-		public SubResourceId BatchId { get; }
+		public JobStepBatchId BatchId { get; }
 
 		/// <summary>
 		/// Unique id of the step within the job
 		/// </summary>
-		public SubResourceId StepId { get; }
+		public JobStepId StepId { get; }
 
 		/// <summary>
 		/// Time that the step started

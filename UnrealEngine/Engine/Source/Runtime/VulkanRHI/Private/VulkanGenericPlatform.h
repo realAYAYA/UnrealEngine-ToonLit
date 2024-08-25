@@ -29,6 +29,7 @@ public:
 	static void FreeVulkanLibrary() {}
 
 	static void InitDevice(FVulkanDevice* InDevice) {}
+	static void PostInitGPU(const FVulkanDevice& InDevice) {}
 
 	// Called after querying all the available extensions and layers
 	static void NotifyFoundInstanceLayersAndExtensions(const TArray<const ANSICHAR*>& Layers, const TArray<const ANSICHAR*>& Extensions) {}
@@ -56,15 +57,17 @@ public:
 
 	static bool SupportsTimestampRenderQueries() { return true; }
 
+	static bool HasCustomFrameTiming() { return false; }
+
 	static bool RequiresMobileRenderer() { return false; }
+
+	static ERHIFeatureLevel::Type GetFeatureLevel(ERHIFeatureLevel::Type RequestedFeatureLevel);
 
 	// bInit=1 called at RHI init time, bInit=0 at RHI deinit time
 	static void OverridePlatformHandlers(bool bInit) {}
 
 	// Some platforms have issues with the access flags for the Present layout
 	static bool RequiresPresentLayoutFix() { return false; }
-
-	static bool ForceEnableDebugMarkers() { return false; }
 
 	static bool SupportsDeviceLocalHostVisibleWithNoPenalty(EGpuVendorId VendorId) { return false; }
 
@@ -120,16 +123,18 @@ public:
 	static TArray<FString> GetPSOCacheFilenames();
 
 	// Gives platform a chance to handle precompile of PSOs, returns nullptr if unsupported
-	static VkPipelineCache PrecompilePSO(FVulkanDevice* Device, VkGraphicsPipelineCreateInfo* PipelineInfo, FGfxPipelineDesc* GfxEntry, const FVulkanRenderTargetLayout* RTLayout, TArrayView<uint32_t> VS, TArrayView<uint32_t> PS, size_t& AfterSize) { return VK_NULL_HANDLE; }
+	static VkPipelineCache PrecompilePSO(FVulkanDevice* Device, const uint8* OptionalPSOCacheData,VkGraphicsPipelineCreateInfo* PipelineInfo, FGfxPipelineDesc* GfxEntry, const FVulkanRenderTargetLayout* RTLayout, TArrayView<uint32_t> VS, TArrayView<uint32_t> PS, size_t& AfterSize) { return VK_NULL_HANDLE; }
 
 	// Return VK_FALSE if platform wants to suppress the given debug report from the validation layers, VK_TRUE to print it.
 	static VkBool32 DebugReportFunction(VkDebugReportFlagsEXT MsgFlags, VkDebugReportObjectTypeEXT ObjType, uint64_t SrcObject, size_t Location, int32 MsgCode, const ANSICHAR* LayerPrefix, const ANSICHAR* Msg, void* UserData) { return VK_TRUE; }
 
 	// Setup platform to use a workaround to reduce textures memory requirements
-	static void SetupImageMemoryRequirementWorkaround(const FVulkanDevice& InDevice) {};
 	static void SetImageMemoryRequirementWorkaround(VkImageCreateInfo& ImageCreateInfo) {};
 
 	// Returns the profile name to look up for a given feature level on a platform
 	static bool SupportsProfileChecks();
 	static FString GetVulkanProfileNameForFeatureLevel(ERHIFeatureLevel::Type FeatureLevel, bool bRaytracing);
+
+	// Returns the shader stages for which we need support for subgroup ops.
+	static VkShaderStageFlags RequiredWaveOpsShaderStageFlags(VkShaderStageFlags VulkanDeviceShaderStageFlags) { return VulkanDeviceShaderStageFlags; }
 };

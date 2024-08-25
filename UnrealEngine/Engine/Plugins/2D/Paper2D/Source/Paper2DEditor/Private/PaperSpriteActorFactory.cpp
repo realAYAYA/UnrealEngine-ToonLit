@@ -41,25 +41,6 @@ void UPaperSpriteActorFactory::PostSpawnActor(UObject* Asset, AActor* NewActor)
 	}
 }
 
-void UPaperSpriteActorFactory::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (UPaperSprite* Sprite = Cast<UPaperSprite>(Asset))
-	{
-		if (APaperSpriteActor* TypedActor = Cast<APaperSpriteActor>(CDO))
-		{
-			UPaperSpriteComponent* RenderComponent = TypedActor->GetRenderComponent();
-			check(RenderComponent);
-
-			RenderComponent->SetSprite(Sprite);
-
-			if (Sprite->BodySetup != nullptr)
-			{
-				RenderComponent->BodyInstance.CopyBodyInstancePropertiesFrom(&(Sprite->BodySetup->DefaultInstance));
-			}
-		}
-	}
-}
-
 bool UPaperSpriteActorFactory::CanCreateActorFrom(const FAssetData& AssetData, FText& OutErrorMsg)
 {
 	if (AssetData.IsValid() && AssetData.IsInstanceOf(UPaperSprite::StaticClass()))

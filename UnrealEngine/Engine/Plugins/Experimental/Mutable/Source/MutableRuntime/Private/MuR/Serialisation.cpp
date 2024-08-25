@@ -10,8 +10,6 @@
 #include "MuR/Image.h"
 #include "MuR/SerialisationPrivate.h"
 
-#include <limits>
-
 
 namespace mu
 {
@@ -28,35 +26,74 @@ namespace mu
     MUTABLE_IMPLEMENT_POD_SERIALISABLE( uint32 ); 
     MUTABLE_IMPLEMENT_POD_SERIALISABLE( uint64 )
 	
-                                                                                      
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(vec2f);                                        
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(vec3f);                                        
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(mat3f);                                        
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(mat4f);                                        
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(vec2<int>);                                    
-	
 	// Unreal POD Serializables                                                       
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(FUintVector2);                                 
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(UE::Math::TIntVector2<uint16>);                
-	MUTABLE_IMPLEMENT_POD_SERIALISABLE(UE::Math::TIntVector2<int16>); 
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(FGuid);
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(FUintVector2);
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(FIntVector2);
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(UE::Math::TIntVector2<uint16>);
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(UE::Math::TIntVector2<int16>);
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(FVector2f);
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(FVector4f);
+	MUTABLE_IMPLEMENT_POD_SERIALISABLE(FMatrix44f);
 
-	template <>
-    void operator<<<FString>(OutputArchive& arch, const FString& t)
+	
+    void operator<<(OutputArchive& arch, const FString& t)
     {
 	    const TArray<TCHAR>& Data = t.GetCharArray();
     	arch << Data;
     }
 
 
-    template <>
-    void operator>><FString>(InputArchive& arch, FString& t)
+    void operator>>(InputArchive& arch, FString& t)
     {
-	    TArray<TCHAR> Data;
+		TArray<TCHAR> Data;
     	arch >> Data;
-    	
-    	t = FString(Data);
+
+    	t = FString(Data.GetData()); // Construct from raw pointer to avoid double zero terminating character
     }
 
+
+    void operator<<(OutputArchive& arch, const FName& v)
+    {
+	    arch << v.ToString();
+    }
+
+
+    void operator>>(InputArchive& arch, FName& v)
+    {
+	    FString Temp;
+	    arch >> Temp;
+	    v = FName(Temp);
+    }
+	
+
+	void operator>> ( InputArchive& arch, std::string& v )
+    {
+    	uint32 size;
+    	arch >> size;
+    	v.resize( size );
+    	if (size)
+    	{
+    		arch.GetPrivate()->m_pStream->Read( &v[0], (unsigned)size*sizeof(char) );
+    	}
+    }
+
+	
+	void operator<<(OutputArchive& Arch, const bool& T)
+    {
+    	uint8 S = T ? 1 : 0;
+    	Arch.GetPrivate()->m_pStream->Write(&S, sizeof(uint8));
+    }
+
+
+	void operator>>(InputArchive& Arch, bool& T)
+    {
+    	uint8 S;
+    	Arch.GetPrivate()->m_pStream->Read(&S, sizeof(uint8));
+    	T = S != 0;
+    }
+
+	
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
@@ -84,11 +121,8 @@ namespace mu
         {
             check( m_pD->m_pos + size <= m_pD->m_size );
 
-            // This could happen in 32-bit platforms
-            check( size<std::numeric_limits<size_t>::max() );
-
-            const uint8_t* pSource = ((const uint8_t*)(m_pD->m_pBuffer))+m_pD->m_pos;
-            FMemory::Memcpy( pData, pSource, (size_t)size );
+            const uint8* pSource = ((const uint8*)(m_pD->m_pBuffer))+m_pD->m_pos;
+            FMemory::Memcpy( pData, pSource, (SIZE_T)size );
             m_pD->m_pos += size;
         }
     }
@@ -102,9 +136,7 @@ namespace mu
         m_pD = new Private();
         if (reserve)
         {
-            // This could happen in 32-bit platforms
-            check( reserve<std::numeric_limits<size_t>::max() );
-            m_pD->m_buffer.Reserve( reserve );
+             m_pD->m_buffer.Reserve( reserve );
         }
     }
 
@@ -123,11 +155,8 @@ namespace mu
     {
         if (size)
         {
-            // This could happen in 32-bit platforms
-            check( size<std::numeric_limits<size_t>::max() );
-
             uint64 pos = m_pD->m_buffer.Num();
-            m_pD->m_buffer.SetNum( pos + size, false );
+            m_pD->m_buffer.SetNum( pos + size, EAllowShrinking::No );
 			FMemory::Memcpy( &m_pD->m_buffer[pos], pData, size );
         }
     }
@@ -239,7 +268,7 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
-    class InputArchiveWithProxies::Private : public Base
+    class InputArchiveWithProxies::Private
     {
     public:
         TArray< Ptr<ResourceProxy<Image>> > m_proxyHistory;
@@ -289,7 +318,7 @@ namespace mu
             }
             else
             {
-                if ( (std::size_t)id < m_pD->m_proxyHistory.Num() )
+                if ( id < m_pD->m_proxyHistory.Num() )
                 {
                     p = m_pD->m_proxyHistory[id];
 

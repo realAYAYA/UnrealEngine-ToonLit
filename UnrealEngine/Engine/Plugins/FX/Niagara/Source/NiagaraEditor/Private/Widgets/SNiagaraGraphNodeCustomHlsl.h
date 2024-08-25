@@ -33,6 +33,7 @@ protected:
 	TSharedPtr<SMenuAnchor> MenuAnchor;
 
 private:
+	FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent);
 	FReply OnShaderTextKeyChar(const FGeometry& MyGeometry, const FCharacterEvent& InCharacterEvent);
 	FString GetIdentifierUnderCursor() const;
 

@@ -98,6 +98,19 @@ bool UDataRegistrySource::IsTransientSource() const
 	return HasAnyFlags(RF_Transient);
 }
 
+bool UDataRegistrySource::ResetTransientSource()
+{
+	if (ensure(IsTransientSource() && !IsInitialized()))
+	{
+		// Mark that this is no longer part of a parent source, the calling function must remove it from any parent-child arrays
+		ParentSource = nullptr;
+		RemoveFromRoot();
+		return true;
+	}
+
+	return false;
+}
+
 UDataRegistrySource* UDataRegistrySource::GetOriginalSource()
 {
 	return ParentSource ? ToRawPtr(ParentSource) : this;
@@ -108,9 +121,9 @@ bool UDataRegistrySource::IsSpecificAssetRegistered(const FSoftObjectPath& Asset
 	return false;
 }
 
-bool UDataRegistrySource::RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority)
+EDataRegistryRegisterAssetResult UDataRegistrySource::RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority)
 {
-	return false;
+	return EDataRegistryRegisterAssetResult::NotRegistered;
 }
 
 bool UDataRegistrySource::UnregisterSpecificAsset(const FSoftObjectPath& AssetPath)
@@ -141,6 +154,12 @@ UDataRegistrySource* UDataRegistrySource::CreateTransientSource(TSubclassOf<UDat
 
 	UDataRegistrySource* ChildSource = NewObject<UDataRegistrySource>(GetRegistry(), *SourceClass, NAME_None, RF_Transient);
 	ChildSource->ParentSource = this;
+	
+	if (GUObjectArray.IsDisregardForGC(this))
+	{
+		ChildSource->AddToRoot();
+	}
+
 	return ChildSource;
 }
 
@@ -237,34 +256,32 @@ void UMetaDataRegistrySource::RefreshRuntimeSources()
 {
 	if (!IsInitialized())
 	{
-		return;
+		// This will clear out all active runtime children
+		RuntimeNames.Reset();
 	}
-
-	TArray<FName> OldRuntimeNames = RuntimeNames;
-	DetermineRuntimeNames(RuntimeNames);
-
-	for (FName SourceName : RuntimeNames)
+	else
 	{
-		TObjectPtr<UDataRegistrySource>* FoundSource = RuntimeChildren.Find(SourceName);
-		if (FoundSource && *FoundSource)
-		{
-			SetDataForChild(SourceName, *FoundSource);
-		}
-		else
-		{
-			UDataRegistrySource* NewSource = CreateTransientSource(GetChildSourceClass());
-			SetDataForChild(SourceName, NewSource);
-			RuntimeChildren.Add(SourceName, NewSource);
-			if (GUObjectArray.IsDisregardForGC(this))
-			{
-				NewSource->AddToRoot();
-			}
+		DetermineRuntimeNames(RuntimeNames);
 
-			NewSource->Initialize();
+		for (FName SourceName : RuntimeNames)
+		{
+			TObjectPtr<UDataRegistrySource>* FoundSource = RuntimeChildren.Find(SourceName);
+			if (FoundSource && *FoundSource)
+			{
+				SetDataForChild(SourceName, *FoundSource);
+				ensureMsgf((*FoundSource)->IsInitialized(), TEXT("Runtime source %s was not initialized after refresh!"), *FoundSource->GetPathName());
+			}
+			else
+			{
+				UDataRegistrySource* NewSource = CreateTransientSource(GetChildSourceClass());
+				SetDataForChild(SourceName, NewSource);
+				RuntimeChildren.Add(SourceName, NewSource);
+				NewSource->Initialize();
+			}
 		}
 	}
 
-	// Clear out old undesired children, this will get deinitialized later
+	// Clear out old undesired children and deinitialize them
 	for (auto MapIt = RuntimeChildren.CreateIterator(); MapIt; ++MapIt)
 	{
 		if (!RuntimeNames.Contains(MapIt.Key()))
@@ -272,10 +289,7 @@ void UMetaDataRegistrySource::RefreshRuntimeSources()
 			if (MapIt.Value())
 			{
 				MapIt.Value()->Deinitialize();
-				if (GUObjectArray.IsDisregardForGC(this))
-				{
-					MapIt.Value()->RemoveFromRoot();
-				}
+				MapIt.Value()->ResetTransientSource();
 			}
 			MapIt.RemoveCurrent();
 		}
@@ -311,7 +325,7 @@ bool UMetaDataRegistrySource::IsSpecificAssetRegistered(const FSoftObjectPath& A
 	return false;
 }
 
-bool UMetaDataRegistrySource::RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority)
+EDataRegistryRegisterAssetResult UMetaDataRegistrySource::RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority)
 {
 	bool bMadeChange = false;
 	
@@ -323,7 +337,7 @@ bool UMetaDataRegistrySource::RegisterSpecificAsset(const FAssetData& AssetData,
 			if (Existing.Value == AssetPriority)
 			{
 				// Nothing to do
-				return false;
+				return EDataRegistryRegisterAssetResult::AssetAlreadyRegistered;
 			}
 			bMadeChange = true;
 			Existing.Value = AssetPriority;
@@ -345,7 +359,7 @@ bool UMetaDataRegistrySource::RegisterSpecificAsset(const FAssetData& AssetData,
 		SortRegisteredAssets();
 	}
 
-	return bMadeChange;
+	return bMadeChange ? EDataRegistryRegisterAssetResult::RegisteredSuccesfully : EDataRegistryRegisterAssetResult::NotRegistered;
 }
 
 bool UMetaDataRegistrySource::UnregisterSpecificAsset(const FSoftObjectPath& AssetPath)

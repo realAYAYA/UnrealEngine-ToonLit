@@ -40,6 +40,6 @@ private:
 	*/
 	TUniquePtr<class FFliteAdapter> FliteAdapter;
 	/** Handles routing synthesized speech audio data directly to the hardware */
-	TUniquePtr<FFliteTextToSpeechSubmixListener> TTSSubmixListener;
+	TSharedPtr<FFliteTextToSpeechSubmixListener, ESPMode::ThreadSafe> TTSSubmixListener;
 };
 #endif

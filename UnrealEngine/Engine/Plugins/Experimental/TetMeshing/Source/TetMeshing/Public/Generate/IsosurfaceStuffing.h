@@ -185,8 +185,11 @@ protected:
 			PIso = (APos + BPos) * 0.5;
 			return PIso;
 		}
-		check(false); // Unimplemented root-finding method
-		return TVec3(0, 0, 0);
+		else
+		{
+			check(false); // Unimplemented root-finding method
+			return TVec3(0, 0, 0);
+		}
 	}
 
 	/// Edge and Point ID Packing Scheme:

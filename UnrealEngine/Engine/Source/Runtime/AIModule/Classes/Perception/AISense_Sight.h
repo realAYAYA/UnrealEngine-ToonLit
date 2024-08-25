@@ -319,6 +319,8 @@ protected:
 
 	AIMODULE_API void RemoveAllQueriesByListener(const FPerceptionListener& Listener, const TFunction<void(const FAISightQuery&)>& OnRemoveFunc = nullptr);
 	AIMODULE_API void RemoveAllQueriesToTarget(const FAISightTarget::FTargetId& TargetId, const TFunction<void(const FAISightQuery&)>& OnRemoveFunc = nullptr);
+	/** RemoveAllQueriesToTarget version that need to already have a write access on QueriesListAccessDetector*/
+	void RemoveAllQueriesToTarget_Internal(const FAISightTarget::FTargetId& TargetId, const TFunction<void(const FAISightQuery&)>& OnRemoveFunc = nullptr);
 
 	/** returns information whether new LoS queries have been added */
 	AIMODULE_API bool RegisterTarget(AActor& TargetActor, const TFunction<void(FAISightQuery&)>& OnAddedFunc = nullptr);

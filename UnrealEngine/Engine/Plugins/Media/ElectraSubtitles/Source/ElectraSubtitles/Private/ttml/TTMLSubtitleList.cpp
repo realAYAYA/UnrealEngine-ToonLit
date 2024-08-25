@@ -9,6 +9,10 @@
 namespace ElectraTTMLParser
 {
 
+namespace OptionKeys
+{
+	static const FName SendEmptySubtitleDuringGaps(TEXT("sendEmptySubtitleDuringGaps"));
+}
 
 
 class FTTMLSubtitleList : public TSharedFromThis<FTTMLSubtitleList, ESPMode::ThreadSafe>, public ITTMLSubtitleList
@@ -83,7 +87,7 @@ bool FTTMLSubtitleList::CreateFrom(TSharedPtr<ITTMLXMLElement, ESPMode::ThreadSa
 		return false;
 	}
 
-	bSendEmptySubtitleDuringGaps = InOptions.GetValue(TEXT("sendEmptySubtitleDuringGaps")).SafeGetBool();
+	bSendEmptySubtitleDuringGaps = InOptions.GetValue(OptionKeys::SendEmptySubtitleDuringGaps).SafeGetBool();
 
 	// Set the root temporal extent of the document.
 	TTMLTT->SetBegin(InDocumentStartTime);
@@ -331,7 +335,6 @@ bool FTTMLSubtitleList::UpdateActiveRange(const Electra::FTimeRange& InRange)
 			return false;
 		}
 	}
-	return false;
 }
 
 void FTTMLSubtitleList::GetActiveSubtitles(TArray<FActiveSubtitle>& OutSubtitles) const

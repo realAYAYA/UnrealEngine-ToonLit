@@ -18,6 +18,17 @@ namespace Chaos
 	class FChaosArchive;
 }
 
+struct FAttributeAndGroupId
+{
+	FName AttributeName;
+	FName GroupName;
+
+	bool operator==(const FAttributeAndGroupId& Other) const
+	{
+		return ((AttributeName == Other.AttributeName) && (GroupName == Other.GroupName));
+	}
+};
+
 /**
 * ManagedArrayCollection
 *
@@ -127,26 +138,27 @@ public:
 	{
 		if (!HasAttribute(Name, Group))
 		{
-			if (!HasGroup(Group))
-			{
-				AddGroup(Group);
-			}
-
-			FValueType Value(ManagedArrayType<T>(), *(new TManagedArray<T>()));
-			Value.Value->Resize(NumElements(Group));
-			Value.Saved = Parameters.Saved;
-			if (ensure(Parameters.bAllowCircularDependency || !IsConnected(Parameters.GroupIndexDependency, Group)))
-			{
-				Value.GroupIndexDependency = Parameters.GroupIndexDependency;
-			}
-			else
-			{
-				Value.GroupIndexDependency = "";
-			}
-			Map.Add(FManagedArrayCollection::MakeMapKey(Name, Group), MoveTemp(Value));
+			AddNewAttributeImpl<T>(Name, Group, Parameters);
 		}
 		return ModifyAttribute<T>(Name, Group);
 	}
+
+	/**
+	* Add an attribute of Type(T) to the group or find the existing attribute with the same name and type.
+	* @param Name - The name of the attribute
+	* @param Group - The group that manages the attribute
+	* @return pointer to the added/found managed array. If there is a type mismatch with an existing attribute, returns nullptr.
+	*/
+	template<typename T>
+	TManagedArray<T>* FindOrAddAttributeTyped(FName Name, FName Group, FConstructionParameters Parameters = FConstructionParameters())
+	{
+		if (!HasAttribute(Name, Group))
+		{
+			AddNewAttributeImpl<T>(Name, Group, Parameters);
+		}
+		return ModifyAttributeTyped<T>(Name, Group);
+	}
+
 
 	/**
 	* Duplicate the ManagedArrayCollection as the specified templated type
@@ -279,6 +291,7 @@ public:
 		const FKeyType Key = FManagedArrayCollection::MakeMapKey(Name, Group);
 		if (FValueType* FoundValue = Map.Find(Key))
 		{
+			checkSlow(Map[Key].ArrayType == ManagedArrayType<T>());
 			return static_cast<TManagedArray<T>*>(FoundValue->Value);
 		}
 		return nullptr;
@@ -345,6 +358,28 @@ public:
 		ManagedArray->MarkDirty();
 		return *(static_cast<TManagedArray<T>*>(ManagedArray));
 	}
+
+	/**
+	* Returns attribute access of Type(T) from the group for modification if and only if the types of T and the array match
+	* this will mark the collection dirty
+	* @param Name - The name of the attribute
+	* @param Group - The group that manages the attribute
+	* @return ManagedArray<T> *
+	*/
+	template<typename T>
+	TManagedArray<T>* ModifyAttributeTyped(FName Name, FName Group)
+	{
+		const FKeyType Key = FManagedArrayCollection::MakeMapKey(Name, Group);
+		if (FValueType* FoundValue = Map.Find(Key))
+		{
+			if (FoundValue->ArrayType == ManagedArrayType<T>())
+			{
+				FoundValue->Value->MarkDirty();
+				return static_cast<TManagedArray<T>*>(FoundValue->Value);
+			}
+		}
+		return nullptr;
+	}
 	
 	/**
 	* Returns attribute access of Type(T) from the group
@@ -392,7 +427,7 @@ public:
 
 
 	/**
-	* Remove the attribute from the collection.
+	* Remove the attribute from the collection, and clear the memory.
 	* @param Name - The name of the attribute
 	* @param Group - The group that manages the attribute
 	*/
@@ -457,6 +492,13 @@ public:
 	CHAOS_API void SetDependency(FName Name, FName Group, FName DependencyGroup, bool bAllowCircularDependency = false);
 
 	/**
+	* Return the group index dependency for the specified attribute.
+	* @param Name - The name of the attribute
+	* @param Group - The group that manages the attribute
+	*/
+	CHAOS_API FName GetDependency(FName Name, FName Group) const;
+
+	/**
 	*
 	*/
 	CHAOS_API void RemoveDependencyFor(FName Group);
@@ -482,6 +524,17 @@ public:
 	* @param SkipList - Group/Attrs to skip. Keys are group names, values are attributes in those groups.
 	*/
 	CHAOS_API void CopyMatchingAttributesFrom(const FManagedArrayCollection& InCollection, const TMap<FName, TSet<FName>>* SkipList=nullptr);
+
+	/**
+	* Copy attributes that match the input collection. This is a utility to easily sync collections
+	* This version is recommend to be used as it is more performant overall
+	*	- it only resize the necessary groups
+	*	- it takes a array view for the skip list
+	*	- it has a more contained logic that reduces the number of lookups for attributes in the maps
+	* @param InCollection - All groups from this collection found in the input will be sized accordingly
+	* @param SkipList - Group/Attrs to skip. Keys are group names, values are attributes in those groups.
+	*/
+	CHAOS_API void CopyMatchingAttributesFrom(const FManagedArrayCollection& FromCollection, const TArrayView<const FAttributeAndGroupId> SkipList);
 
 	/**
 	* Number of elements in a group
@@ -559,6 +612,29 @@ public:
 
 private:
 
+	template<typename T>
+	void AddNewAttributeImpl(FName Name, FName Group, const FConstructionParameters& Parameters)
+	{
+		checkSlow(!HasAttribute(Name, Group));
+		if (!HasGroup(Group))
+		{
+			AddGroup(Group);
+		}
+
+		FValueType Value(ManagedArrayType<T>(), *(new TManagedArray<T>()));
+		Value.Value->Resize(NumElements(Group));
+		Value.Saved = Parameters.Saved;
+		if (ensure(Parameters.bAllowCircularDependency || !IsConnected(Parameters.GroupIndexDependency, Group)))
+		{
+			Value.GroupIndexDependency = Parameters.GroupIndexDependency;
+		}
+		else
+		{
+			Value.GroupIndexDependency = "";
+		}
+		Map.Add(FManagedArrayCollection::MakeMapKey(Name, Group), MoveTemp(Value));
+	}
+
 	/****
 	*  Mapping Key/Value
 	*
@@ -578,10 +654,10 @@ private:
 		int32 Size;
 	};
 
-	static FKeyType MakeMapKey(FName Name, FName Group)
+	static inline FKeyType MakeMapKey(FName Name, FName Group) // inline for linking issues
 	{
 		return FKeyType(Name, Group);
-	};
+	}
 
 	friend struct FManagedArrayCollectionValueTypeWrapper;
 	struct FValueType
@@ -643,24 +719,8 @@ private:
 			}
 		}
 
-
-		FValueType& operator=(const FValueType& Other) 
-		{
-			this->ArrayType = Other.ArrayType;
-			this->GroupIndexDependency = Other.GroupIndexDependency;
-			this->Saved = Other.Saved;
-			this->bExternalValue = false;
-			this->Value = nullptr;
-			if (Other.Value)
-			{
-				this->Value = NewManagedTypedArray(this->ArrayType);
-				this->Value->Resize(Other.Value->Num());
-				this->Value->Init(*Other.Value);
-			}
-			return *this;
-		}
-
-
+		FValueType& operator=(const FValueType& Other) = delete;
+		FValueType& operator=(FValueType&& Other) = delete;
 	};
 
 

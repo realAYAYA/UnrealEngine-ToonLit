@@ -50,17 +50,19 @@ FWmfMediaSession::FWmfMediaSession()
 	, CurrentDuration(FTimespan::Zero())
 	, MediaSessionCloseEvent(nullptr)
 	, LastTime(FTimespan::Zero())
-	, PendingChanges(false)
 	, RefCount(0)
 	, bIsRequestedTimeLoop(false)
+	, bIsRequestedTimeSeek(false)
+	, LastSetRate(-1.0f)
 	, SessionRate(0.0f)
 	, SessionState(EMediaState::Closed)
 	, ShouldLoop(false)
 	, Status(EMediaStatus::None)
 	, bShuttingDown(false)
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	, bIsWaitingForEnd(false)
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
+	, UserIssuedSeeks(0)
+	, bSeekActive(false)
+	, NumSeeksInWorkQueue(0)
 {
 	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Created"), this);
 	MediaSessionCloseEvent = FPlatformProcess::GetSynchEventFromPool();
@@ -85,28 +87,6 @@ FWmfMediaSession::~FWmfMediaSession()
 
 void FWmfMediaSession::GetEvents(TArray<EMediaEvent>& OutEvents)
 {
-#if WMFMEDIA_PLAYER_VERSION == 1
-#if WMFMEDIASESSION_USE_WINDOWS7FASTFORWARDENDHACK
-	if (CurrentDuration > FTimespan::Zero())
-	{
-		FTimespan Time = GetTime();
-
-		if ((Time < FTimespan::Zero()) || (Time > CurrentDuration))
-		{
-			if (!ShouldLoop)
-			{
-				const HRESULT Result = MediaSession->Stop();
-
-				UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Forced media session to stop at end: %s"), this, *WmfMedia::ResultToString(Result));
-			}
-
-			HandleSessionEnded();
-		}
-	}
-#endif
-#endif // WMFMEDIA_PLAYER_VERSION == 1
-
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	// Are we waiting for the end?
 	if (bIsWaitingForEnd)
 	{
@@ -133,8 +113,8 @@ void FWmfMediaSession::GetEvents(TArray<EMediaEvent>& OutEvents)
 			DeferredEvents.Enqueue(EMediaEvent::PlaybackEndReached);
 		}
 	}
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
+	// Hand out the events...
 	EMediaEvent Event;
 
 	while (DeferredEvents.Dequeue(Event))
@@ -143,14 +123,12 @@ void FWmfMediaSession::GetEvents(TArray<EMediaEvent>& OutEvents)
 	}
 }
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
 
 void FWmfMediaSession::SetTracks(TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> InTracks)
 {
 	Tracks = InTracks;
 }
 
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
 bool FWmfMediaSession::Initialize(bool LowLatency)
 {
@@ -213,60 +191,140 @@ bool FWmfMediaSession::Initialize(bool LowLatency)
 }
 
 
+void FWmfMediaSession::EnqueueWorkItem(FWorkItem&& WorkItem)
+{
+	FScopeLock Lock(&CriticalSection);
+
+	// Anything in flight?
+	if (CurrentWorkItem.IsValid())
+	{
+		// Just enqueue the item, we'll see an async notification and then can pump the queue...
+		WorkItemQueue.Push(MoveTemp(WorkItem));
+	}
+	else
+	{
+		// Nothing in flight, so we need to execute in place & react to return codes appropriately...
+		switch (WorkItem.WorkLoad(nullptr, MEUnknown, S_OK, WorkItem.State.Get()))
+		{
+			case EWorkItemResult::Done:			break;
+			case EWorkItemResult::RetryLater:	CurrentWorkItem = WorkItem; break;
+		}
+	}
+}
+
+
+void FWmfMediaSession::JamWorkItem(FWorkItem&& WorkItem)
+{
+	FScopeLock Lock(&CriticalSection);
+
+	// Anything in flight?
+	if (CurrentWorkItem.IsValid())
+	{
+		// Just enqueue the item, we'll see an async notification and then can pump the queue...
+		WorkItemQueue.Insert(MoveTemp(WorkItem), 0);
+	}
+	else
+	{
+		// Nothing in flight, so we need to execute in place & react to return codes appropriately...
+		switch (WorkItem.WorkLoad(nullptr, MEUnknown, S_OK, WorkItem.State.Get()))
+		{
+			case EWorkItemResult::Done:			break;
+			case EWorkItemResult::RetryLater:	CurrentWorkItem = WorkItem; break;
+		}
+	}
+}
+
+
+void FWmfMediaSession::ExecuteNextWorkItems(TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus)
+{
+	FScopeLock Lock(&CriticalSection);
+
+	do
+	{
+		if (!CurrentWorkItem.IsValid())
+		{
+			if (WorkItemQueue.IsEmpty())
+			{
+				break;
+			}
+
+			CurrentWorkItem = WorkItemQueue[0];
+			WorkItemQueue.RemoveAt(0);
+		}
+
+		switch (CurrentWorkItem.WorkLoad(MediaEvent, EventType, EventStatus, CurrentWorkItem.State.Get()))
+		{
+			case EWorkItemResult::Done:			CurrentWorkItem.Reset(); break;	// No new async job, try next workload
+			case EWorkItemResult::RetryLater:	break;							// Workload should be retried later, done for now (implies that some async event or job is ensured to arrive to continue)
+		}
+	}
+	while (!CurrentWorkItem.IsValid());
+}
+
+
+void FWmfMediaSession::ResetWorkItemQueue()
+{
+	WorkItemQueue.Empty();
+	CurrentWorkItem.Reset();
+	NumSeeksInWorkQueue = 0;
+}
+
+
 bool FWmfMediaSession::SetTopology(const TComPtr<IMFTopology>& InTopology, FTimespan InDuration)
 {
-	if (MediaSession == NULL)
+	if (MediaSession == nullptr)
 	{
 		return false;
 	}
 
-	UE_LOG(LogWmfMedia, Verbose, TEXT("Session: %p: Setting new partial topology %p (duration = %s)"), this, InTopology.Get(), *InDuration.ToString());
-
-	FScopeLock Lock(&CriticalSection);
-
-	if (SessionState == EMediaState::Preparing)
-	{
-		// media source resolved
-		if (InTopology != NULL)
+	EnqueueWorkItem(FWorkItem([this, InTopology, InDuration](TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus, FBaseWorkItemState* BaseState) -> EWorkItemResult
 		{
-			// at least one track selected
-			HRESULT Result = MediaSession->SetTopology(MFSESSION_SETTOPOLOGY_IMMEDIATE, InTopology);
+			UE_LOG(LogWmfMedia, Verbose, TEXT("Session: %p: Setting new partial topology %p (duration = %s)"), this, InTopology.Get(), *InDuration.ToString());
 
-			if (FAILED(Result))
+			EWorkItemResult Res = EWorkItemResult::Done;
+
+			if (SessionState == EMediaState::Preparing)
 			{
-				UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to set partial topology %p: %s"), this, InTopology.Get(), *WmfMedia::ResultToString(Result));
-				
-				SessionState = EMediaState::Error;
-				DeferredEvents.Enqueue(EMediaEvent::MediaOpenFailed);
+				// media source resolved
+				if (InTopology != nullptr)
+				{
+					// at least one track selected
+					HRESULT Result = MediaSession->SetTopology(MFSESSION_SETTOPOLOGY_IMMEDIATE, InTopology);
+
+					if (FAILED(Result))
+					{
+						UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to set partial topology %p: %s"), this, InTopology.Get(), *WmfMedia::ResultToString(Result));
+
+						SessionState = EMediaState::Error;
+						DeferredEvents.Enqueue(EMediaEvent::MediaOpenFailed);
+					}
+					else
+					{
+						// do nothing (Preparing state will exit in MESessionTopologyStatus event)
+						Res = EWorkItemResult::Done;
+					}
+				}
+				else
+				{
+					// no tracks selected
+					UpdateCharacteristics();
+					SessionState = EMediaState::Stopped;
+					DeferredEvents.Enqueue(EMediaEvent::MediaOpened);
+				}
 			}
 			else
 			{
-				// do nothing (Preparing state will exit in MESessionTopologyStatus event)
+				// topology changed during playback, i.e. track switching
+				Res = CommitTopology(InTopology, static_cast<FTopologyWorkItemState*>(BaseState), EventType);
 			}
-		}
-		else
-		{
-			// no tracks selected
-			UpdateCharacteristics();
-			SessionState = EMediaState::Stopped;
-			DeferredEvents.Enqueue(EMediaEvent::MediaOpened);
-		}
-	}
-	else
-	{
-		// topology changed during playback, i.e. track switching
-		if (PendingChanges)
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Requesting topology change after pending command"), this);
-			RequestedTopology = InTopology;
-		}
-		else
-		{
-			CommitTopology(InTopology);
-		}
-	}
 
-	CurrentDuration = InDuration;
+			if (Res != EWorkItemResult::RetryLater)
+			{
+				CurrentDuration = InDuration;
+			}
+
+			return Res;
+		}, MakeShared<FTopologyWorkItemState>()));
 
 	return true;
 }
@@ -284,7 +342,7 @@ void FWmfMediaSession::Shutdown()
 	{
 		// Scope needed since MediaSession->Close() cannot be locked, see below.
 		FScopeLock Lock(&CriticalSection);
-		DiscardPendingChanges();
+		ResetWorkItemQueue();
 		bShuttingDown = true;
 	}
 
@@ -321,13 +379,17 @@ void FWmfMediaSession::Shutdown()
 	CanScrub = false;
 	Capabilities = 0;
 	CurrentDuration = FTimespan::Zero();
+	LastSetRate = -1.0f;
 	SessionRate = 0.0f;
+	UnpausedSessionRate = 0.0f;
 	SessionState = EMediaState::Closed;
 	LastTime = FTimespan::Zero();
 	RequestedRate.Reset();
 	Status = EMediaStatus::None;
 	ThinnedRates.Empty();
 	UnthinnedRates.Empty();
+
+	bSeekActive = false;
 
 	bShuttingDown = false;
 }
@@ -344,13 +406,6 @@ bool FWmfMediaSession::CanControl(EMediaControl Control) const
 	}
 
 	FScopeLock Lock(&CriticalSection);
-
-#if WMFMEDIA_PLAYER_VERSION >= 2
-	if (Control == EMediaControl::BlockOnFetch)
-	{
-		return true;
-	}
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
 	if (Control == EMediaControl::Pause)
 	{
@@ -378,30 +433,31 @@ bool FWmfMediaSession::CanControl(EMediaControl Control) const
 
 FTimespan FWmfMediaSession::GetDuration() const
 {
+	FScopeLock Lock(&CriticalSection);
 	return CurrentDuration;
 }
 
 
 float FWmfMediaSession::GetRate() const
 {
+	FScopeLock Lock(&CriticalSection);
 	return (SessionState == EMediaState::Playing) ? SessionRate : 0.0f;
 }
 
 
 EMediaState FWmfMediaSession::GetState() const
 {
+	FScopeLock Lock(&CriticalSection);
 	if ((SessionState == EMediaState::Playing) && (SessionRate == 0.0f))
 	{
 		return EMediaState::Paused;
 	}
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	// If we are waiting for the end then pretend that we are still playing.
 	if (bIsWaitingForEnd)
 	{
 		return EMediaState::Playing;
 	}
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
 	return SessionState;
 }
@@ -409,6 +465,7 @@ EMediaState FWmfMediaSession::GetState() const
 
 EMediaStatus FWmfMediaSession::GetStatus() const
 {
+	FScopeLock Lock(&CriticalSection);
 	return Status;
 }
 
@@ -416,13 +473,16 @@ EMediaStatus FWmfMediaSession::GetStatus() const
 TRangeSet<float> FWmfMediaSession::GetSupportedRates(EMediaRateThinning Thinning) const
 {
 	FScopeLock Lock(&CriticalSection);
-
 	return (Thinning == EMediaRateThinning::Thinned) ? ThinnedRates : UnthinnedRates;
 }
 
 
 FTimespan FWmfMediaSession::GetTime() const
 {
+	/*
+	* Note: for a V2 player this method has not a lot of meaning anymore - The PlayerFacade will generate timing information
+	*/
+
 	FScopeLock Lock(&CriticalSection);
 
 	if (bShuttingDown)
@@ -457,13 +517,14 @@ FTimespan FWmfMediaSession::GetTime() const
 
 bool FWmfMediaSession::IsLooping() const
 {
+	FScopeLock Lock(&CriticalSection);
 	return ShouldLoop;
 }
 
 
 bool FWmfMediaSession::Seek(const FTimespan& Time)
 {
-	if (MediaSession == NULL)
+	if (MediaSession == nullptr)
 	{
 		return false;
 	}
@@ -477,6 +538,12 @@ bool FWmfMediaSession::Seek(const FTimespan& Time)
 		return false;
 	}
 
+	if ((Time < FTimespan::Zero()) || (Time > CurrentDuration))
+	{
+		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Invalid seek time %s (media duration is %s)"), this, *Time.ToString(), *CurrentDuration.ToString());
+		return false;
+	}
+
 	FScopeLock Lock(&CriticalSection);
 
 	if ((SessionState == EMediaState::Closed) || (SessionState == EMediaState::Error))
@@ -485,29 +552,46 @@ bool FWmfMediaSession::Seek(const FTimespan& Time)
 		return false;
 	}
 
-	if ((Time < FTimespan::Zero()) || (Time > CurrentDuration))
-	{
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Invalid seek time %s (media duration is %s)"), this, *Time.ToString(), *CurrentDuration.ToString());
-		return false;
-	}
+	++NumSeeksInWorkQueue;
+	EnqueueWorkItem(FWorkItem([this, Time](TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus, FBaseWorkItemState* BaseState) -> EWorkItemResult
+		{
+			auto State = static_cast<FTimeWorkItemState*>(BaseState);
 
-	// wait for pending changes to complete
-	if (PendingChanges)
-	{
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Requesting seek after pending command"), this);
-		RequestedTime = Time;
-		bIsRequestedTimeLoop = false;
-		return true;
-	}
+			/*
+			* We do not redo or cancel this due to a MESessionEnded being received, as triggering a "start" during this phase will
+			* indeed start the session and interrupt the end of session events (including keeping requests alive etc.)
+			*/
 
-	return CommitTime(Time, true);
+			if (State->State == FTimeWorkItemState::EState::Begin)
+			{
+				++UserIssuedSeeks;
+			}
+			else if (State->State == FTimeWorkItemState::EState::WaitDone)
+			{
+				return (EventType == MESessionStarted) ? EWorkItemResult::Done : EWorkItemResult::RetryLater;
+			}
+
+			check(NumSeeksInWorkQueue > 0);
+			if (--NumSeeksInWorkQueue == 0)
+			{
+				if (CommitTime(Time, true))
+				{
+					State->State = FTimeWorkItemState::EState::WaitDone;
+					return EWorkItemResult::RetryLater;
+				}
+			}
+
+			return EWorkItemResult::Done;
+		}, MakeShared<FTimeWorkItemState, ESPMode::ThreadSafe>()));
+
+	return true;
 }
 
 
 bool FWmfMediaSession::SetLooping(bool Looping)
 {
+	FScopeLock Lock(&CriticalSection);
 	ShouldLoop = Looping;
-
 	return true;
 }
 
@@ -519,22 +603,7 @@ bool FWmfMediaSession::SetRate(float Rate)
 		return false;
 	}
 
-	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Setting rate to %f"), this, Rate);
-
 	FScopeLock Lock(&CriticalSection);
-
-#if 0
-	if (Rate == SessionRate)
-	{
-		// Note: play rates and play states are handled separately in WMF. The session's initial play
-		// rate after opening a media source is 1.0, even though the session is in the Stopped state.
-
-		if ((Rate != 1.0f) || (SessionState == EMediaState::Playing))
-		{
-			return true; // rate already set
-		}
-	}
-#endif
 
 	// validate rate
 	if (!ThinnedRates.Contains(Rate) && !UnthinnedRates.Contains(Rate))
@@ -543,16 +612,21 @@ bool FWmfMediaSession::SetRate(float Rate)
 		return false;
 	}
 
-	// wait for pending changes to complete
-	if (PendingChanges)
+	if (LastSetRate == Rate)
 	{
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Requesting rate change after pending command"), this);
-		RequestedRate = Rate;
-
 		return true;
 	}
 
-	return CommitRate(Rate);
+	LastSetRate = Rate;
+
+	EnqueueWorkItem(FWorkItem([this, Rate](TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus, FBaseWorkItemState* BaseState) -> EWorkItemResult
+		{
+			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Setting rate to %f"), this, Rate);
+
+			return CommitRate(Rate, static_cast<FRateWorkItemState*>(BaseState), EventType);
+		}, MakeShared<FRateWorkItemState>()));
+
+	return true;
 }
 
 
@@ -575,7 +649,7 @@ STDMETHODIMP FWmfMediaSession::Invoke(IMFAsyncResult* AsyncResult)
 {
 	FScopeLock Lock(&CriticalSection);
 
-	if (MediaSession == NULL)
+	if (MediaSession == nullptr)
 	{
 		return S_OK;
 	}
@@ -642,44 +716,58 @@ STDMETHODIMP FWmfMediaSession::Invoke(IMFAsyncResult* AsyncResult)
 
 	case MESessionCapabilitiesChanged:
 		Capabilities = ::MFGetAttributeUINT32(Event, MF_EVENT_SESSIONCAPS, Capabilities);
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionClosed:
 		MediaSessionCloseEvent->Trigger();
 		Capabilities = 0;
 		LastTime = FTimespan::Zero();
+		ResetWorkItemQueue();
+		break;
+
+	case MEEndOfPresentation:
+		HandlePresentationEnded();
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionEnded:
 		HandleSessionEnded();
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionPaused:
 		HandleSessionPaused(EventStatus);
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionRateChanged:
 		HandleSessionRateChanged(EventStatus, *Event);
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionScrubSampleComplete:
-		HandleSessionScrubSampleComplete();
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionStarted:
 		HandleSessionStarted(EventStatus);
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionStopped:
 		HandleSessionStopped(EventStatus);
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionTopologySet:
 		HandleSessionTopologySet(EventStatus, *Event);
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	case MESessionTopologyStatus:
 		HandleSessionTopologyStatus(EventStatus, *Event);
+		ExecuteNextWorkItems(Event, EventType, EventStatus);
 		break;
 
 	default:
@@ -700,30 +788,25 @@ STDMETHODIMP FWmfMediaSession::Invoke(IMFAsyncResult* AsyncResult)
 		}
 	}
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	// Tell the tracks about our state.
 	TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> TracksPinned = Tracks.Pin();
 	if (TracksPinned.IsValid())
 	{
 		TracksPinned->SetSessionState(GetState());
 	}
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
-	UE_LOG(LogWmfMedia, VeryVerbose, TEXT("Session %p: CurrentState: %s, CurrentRate: %f, CurrentTime: %s, SessionState: %s, SessionRate: %f, PendingChanges: %s"),
+	UE_LOG(LogWmfMedia, VeryVerbose, TEXT("Session %p: CurrentState: %s, CurrentRate: %f, CurrentTime: %s, SessionState: %s, SessionRate: %f"),
 		this,
 		WmfMediaSession::StateToString(GetState()),
 		GetRate(),
 		*GetTime().ToString(),
 		WmfMediaSession::StateToString(SessionState),
-		SessionRate,
-		PendingChanges ? TEXT("true") : TEXT("false")
+		SessionRate
 	);
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	UE_LOG(LogWmfMedia, VeryVerbose, TEXT("Session %p: WaitingForEnd:%d"),
 		this,
 		bIsWaitingForEnd);
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 	
 	return S_OK;
 }
@@ -766,217 +849,424 @@ STDMETHODIMP_(ULONG) FWmfMediaSession::Release()
 /* FWmfMediaSession implementation
  *****************************************************************************/
 
-bool FWmfMediaSession::CommitRate(float Rate)
+FWmfMediaSession::EWorkItemResult FWmfMediaSession::CommitRate(float Rate, FRateWorkItemState* State, MediaEventType EventType)
 {
-	check(MediaSession != NULL);
-	check(!PendingChanges);
+	check(MediaSession != nullptr);
 
-	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Committing rate %f"), this, Rate);
+	UE_LOG(LogWmfMedia, VeryVerbose, TEXT("Session %p: Committing rate %f [S=%d]"), this, Rate, int(State->State));
 
-	// Note: if rate control is not available, the session only supports pause and play
-
-	if (RateControl == NULL)
+	// Did session end and we do not just start up?
+	if (EventType == MESessionEnded && State->State != FRateWorkItemState::EState::Begin)
 	{
-		if (Rate == 0.0f)
-		{
-			if (SessionState == EMediaState::Playing)
-			{
-				const HRESULT Result = MediaSession->Pause();
+		// Make us start over again... what we did so far has been lost in the deep belly of WMF's machinery...
+		State->State = FRateWorkItemState::EState::Begin;
+	}
 
-				if (FAILED(Result))
+	if (RateControl == nullptr)
+	{
+		/*
+		* No rate control
+		* 
+		* Session is only able to support pause & play
+		* (no reverse, scrubbing or speed changes)
+		*/
+
+		if (State->State == FRateWorkItemState::EState::Begin)
+		{
+			if (Rate == 0.0f)
+			{
+				if (SessionState == EMediaState::Playing)
 				{
-					UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to pause session: %s"), this, *WmfMedia::ResultToString(Result));
-					return false;
+					const HRESULT Result = MediaSession->Pause();
+
+					if (FAILED(Result))
+					{
+						UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to pause session: %s"), this, *WmfMedia::ResultToString(Result));
+						return EWorkItemResult::Done;
+					}
+
+					State->State = FRateWorkItemState::EState::WaitForPause;
+					return EWorkItemResult::RetryLater;
 				}
+			}
+			else
+			{
+				if (SessionState != EMediaState::Playing)
+				{
+					PROPVARIANT StartPosition;
+					PropVariantInit(&StartPosition);
+
+					const HRESULT Result = MediaSession->Start(NULL, &StartPosition);
+
+					if (FAILED(Result))
+					{
+						UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to start session: %s"), this, *WmfMedia::ResultToString(Result));
+						return EWorkItemResult::Done;
+					}
+
+					State->State = FRateWorkItemState::EState::WaitForStart;
+					return EWorkItemResult::RetryLater;
+				}
+			}
+		}
+		else if (State->State == FRateWorkItemState::EState::WaitForPause)
+		{
+			if (EventType != MESessionPaused)
+			{
+				return EWorkItemResult::RetryLater;
 			}
 		}
 		else
 		{
-			if (SessionState != EMediaState::Playing)
+			check(State->State == FRateWorkItemState::EState::WaitForStart);
+
+			if (EventType != MESessionStarted)
 			{
-				PROPVARIANT StartPosition;
-				PropVariantInit(&StartPosition);
+				return EWorkItemResult::RetryLater;
+			}
+		}
 
-				const HRESULT Result = MediaSession->Start(NULL, &StartPosition);
+		return EWorkItemResult::Done;
+	}
 
+	// ---------------------------------------------------------------------------------------------------------------
+	/**
+	 * Rate control is present
+	 * 
+	 * Session can plat at variable speeds, reverse (possibly) and scrub (possibly)
+	 */
+
+	if (State->State == FRateWorkItemState::EState::Begin)
+	{
+		State->State = FRateWorkItemState::EState::Ready;
+		State->LastTime = WmfMediaSession::RequestedTimeCurrent;
+
+		if (Rate != 0.0f && ((UnpausedSessionRate * Rate) < 0.0f))
+		{
+			/**
+			 * Reversal of playback direction
+			 * 
+			 * System needs to be stopped and we ensure no pending requests as WMF tends to get confused if they come in while we do this
+			 */
+
+			// Stopped already?
+			if (SessionState != EMediaState::Stopped)
+			{
+				// No...
+				
+				// If we reverse, we might loose issued sample requests (without us knowing) - wait until all current ones are done
+				TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> TracksPinned = Tracks.Pin();
+				if (TracksPinned.IsValid())
+				{
+					// Schedule the lambda to be executed once all requests are done if any are pending...
+					if (TracksPinned->ExecuteOnceMediaStreamSinkHasNoPendingRequests([this]()
+						{
+							// If we have pending sample requests, this will be executed by the sink once it detects all of them being done.
+							// All we do is to pump our workitem queue once more to ensure that - no matter what internal async wakeups we get we at least get this one to continue!
+							FScopeLock Lock(&CriticalSection);
+							ExecuteNextWorkItems(nullptr, MEUnknown, S_OK);
+						}))
+					{
+						// We had pending requests. Reset to original state and a later retry
+						State->State = FRateWorkItemState::EState::Begin;
+						return EWorkItemResult::RetryLater;
+					}
+				}
+
+				// Gather current clock, so we can restart at the same spot after the stop/reverse step
+				LONGLONG ClockTime;
+				MFTIME SystemTime;
+				if (PresentationClock->GetCorrelatedTime(0, &ClockTime, &SystemTime) == S_OK)
+				{
+					State->LastTime = FTimespan(ClockTime);
+				}
+
+				// Stop the media session
+				const HRESULT Result = MediaSession->Stop();
 				if (FAILED(Result))
 				{
-					UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to start session: %s"), this, *WmfMedia::ResultToString(Result));
-					return false;
+					UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to stop for rate change: %s"), this, *WmfMedia::ResultToString(Result));
+					return EWorkItemResult::Done;
 				}
-			}
-		}
 
-		PendingChanges = true;
-
-		return true;
-	}
-
-	// Note: if rate control is available, things get considerably more complicated
-	// as many rate transitions are only allowed from certain session states
-
-	if (((Rate >= 0.0f) && (SessionRate < 0.0f)) || ((Rate < 0.0f) && (SessionRate >= 0.0f)))
-	{
-		// transitions between negative and zero/positive rates require Stopped state
-		if (SessionState != EMediaState::Stopped)
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Stopping session for rate change"), this);
-
-			LastTime = GetTime();
-
-			// stop the media session
-			const HRESULT Result = MediaSession->Stop();
-
-			if (FAILED(Result))
-			{
-				UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to stop for rate change: %s"), this, *WmfMedia::ResultToString(Result));
-				return false;
+				// Next wait for this to finish and then set & restart...
+				State->State = FRateWorkItemState::EState::WaitForStopThenSetAndRestart;
+				return EWorkItemResult::RetryLater;
 			}
 
-			// defer rate change
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Deferring rate change until after pending stop"), this);
-
-			if (!RequestedTime.IsSet())
-			{			
-				RequestedTime = LastTime;
-				bIsRequestedTimeLoop = false;
-			}
-
-			RequestedRate = Rate;
-			PendingChanges = true;
-
-			return true;
-		}
-	}
-	
-	if (((Rate == 0.0f) && (SessionRate != 0.0f)) || ((Rate != 0.0f) && (SessionRate == 0.0f)))
-	{
-		// transitions between positive and zero rates require Paused or Stopped state
-		if ((SessionState != EMediaState::Paused) && (SessionState != EMediaState::Stopped))
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Pausing session for rate change from %f to %f"), this, SessionRate, Rate);
-
-			// pause the media session
-			const HRESULT Result = MediaSession->Pause();
-
-			if (FAILED(Result))
-			{
-				UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to pause for rate change: %s"), this, *WmfMedia::ResultToString(Result));
-				return false;
-			}
-
-			// defer rate change
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Deferring rate change until after pending pause"), this);
-
-			RequestedRate = Rate;
-			PendingChanges = true;
-
-			return true;
-		}
-	}
-
-	// Note: The rate control could be updated right after requesting the Pause or Stopped
-	// states above, but we wait for these transitions to complete, so that multiple calls
-	// to SetRate do not interfere with each other.
-
-	if (Rate != SessionRate)
-	{
-		// determine thinning mode
-		EMediaRateThinning Thinning;
-
-		if (UnthinnedRates.Contains(Rate))
-		{
-			Thinning = EMediaRateThinning::Unthinned;
-		}
-		else if (ThinnedRates.Contains(Rate))
-		{
-			Thinning = EMediaRateThinning::Thinned;
+			// We are stopped. Just continue to the rate set...
 		}
 		else
 		{
-			return false;
+			if (Rate != 0.0f)
+			{
+				if (SessionState != EMediaState::Playing)
+				{
+
+					// Going out of "paused" state, but we want to actually we have been "scrubbing", which WMF interprets as a PLAYING state!
+					// So we need to pause first, to then restart normal playback (or else the rate change fails)
+					// [this also triggers on initial startup, but it seems harmless to pause for no reason]
+
+					if (SessionState != EMediaState::Stopped)
+					{
+						/**
+						 * Leave paused state
+						 */
+
+						if (CanScrub)
+						{
+							/*
+							* As we can scrub, we actually are leaving "scrub state", not a real pause, but a playback state as far as WMF is concerned!
+							*/
+
+							// Was the last non-scrubbing playback reverse?
+							if (UnpausedSessionRate >= 0.0f)
+							{
+								// No. We need to pause to be able to set a new non-zero rate...
+								const HRESULT Result = MediaSession->Pause();
+								if (FAILED(Result))
+								{
+									UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to pause for rate change: %s"), this, *WmfMedia::ResultToString(Result));
+									return EWorkItemResult::Done;
+								}
+
+								// Wait for pause to be done, then set and restart...
+								State->State = FRateWorkItemState::EState::WaitForPauseThenSetAndRestart;
+							}
+							else
+							{
+								// Yes. We need to actually stop session as we are going to go back into a reverse playback situation from scrubbing
+
+								// Get the time so we can restart at the correct spot
+								LONGLONG ClockTime;
+								MFTIME SystemTime;
+								if (PresentationClock->GetCorrelatedTime(0, &ClockTime, &SystemTime) == S_OK)
+								{
+									State->LastTime = FTimespan(ClockTime);
+								}
+								
+								// Stop the session
+								const HRESULT Result = MediaSession->Stop();
+								if (FAILED(Result))
+								{
+									UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to stop for rate change: %s"), this, *WmfMedia::ResultToString(Result));
+									return EWorkItemResult::Done;
+								}
+
+								// Wait for pause to be done, then set and restart...
+								State->State = FRateWorkItemState::EState::WaitForStopThenSetAndRestart;
+							}
+						}
+						else
+						{
+							/**
+							 * No scrubbing. We paused "for real". No just start things up again...
+							 */
+							PROPVARIANT StartPosition;
+							PropVariantInit(&StartPosition);
+
+							const HRESULT Result = MediaSession->Start(NULL, &StartPosition);
+
+							if (FAILED(Result))
+							{
+								UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to start session: %s"), this, *WmfMedia::ResultToString(Result));
+								return EWorkItemResult::Done;
+							}
+
+							State->State = FRateWorkItemState::EState::WaitForStart;
+						}
+
+						return EWorkItemResult::RetryLater;
+					}
+
+					// We are stopped. We can set a new rate and restart without any other work before that...
+					State->State = FRateWorkItemState::EState::ReadyNeedsRestart;
+				}
+			}
+			else
+			{
+				if (SessionState == EMediaState::Playing)
+				{
+					/**
+					 * Entering pause state
+					 */
+
+					if (CanScrub)
+					{
+						/*
+						* We can scrub. Hence we rather enter 'scrub mode' than a real 'pause' state
+						*/
+
+						// Wait for any pending requests as WMF tends to loose track of these during the transition...
+						TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> TracksPinned = Tracks.Pin();
+						if (TracksPinned.IsValid())
+						{
+							// Schedule the lambda to be run once we have no outstanding requests anymore if we ever had any
+							if (TracksPinned->ExecuteOnceMediaStreamSinkHasNoPendingRequests([this]()
+								{
+									// If we have pending sample requests, this will be executed by the sink once it detects all of them being done.
+									// All we do is to pump our workitem queue once more to ensure that - no matter what internal async wakeups we get we at least get this one to continue!
+									FScopeLock Lock(&CriticalSection);
+									ExecuteNextWorkItems(nullptr, MEUnknown, S_OK);
+								}))
+							{
+								// We had outstanding requests, so we reset state and retry later
+								State->State = FRateWorkItemState::EState::Begin;
+								return EWorkItemResult::RetryLater;
+							}
+						}
+					}
+
+					// Last unpaused rate was forward OR we cannot scrub...
+					if (UnpausedSessionRate >= 0.0f || !CanScrub)
+					{
+						// Pause the session
+						const HRESULT Result = MediaSession->Pause();
+						if (FAILED(Result))
+						{
+							UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to pause for rate change: %s"), this, *WmfMedia::ResultToString(Result));
+							return EWorkItemResult::Done;
+						}
+
+						// Continue to start up into scrub mode (start with rate == 0) or simply leave things plaused...
+						State->State = CanScrub ? FRateWorkItemState::EState::WaitForPauseThenSetAndRestart : FRateWorkItemState::EState::WaitForPause;
+					}
+					else
+					{
+						// We had been in reverse. We need to stop the session to be able to go into 'srub mode'...
+
+						// Get the current playback time so we can restart at the correct spot
+						LONGLONG ClockTime;
+						MFTIME SystemTime;
+						if (PresentationClock->GetCorrelatedTime(0, &ClockTime, &SystemTime) == S_OK)
+						{
+							State->LastTime = FTimespan(ClockTime);
+						}
+ 
+						// Stop the session
+						const HRESULT Result = MediaSession->Stop();
+						if (FAILED(Result))
+						{
+							UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to stop for rate change: %s"), this, *WmfMedia::ResultToString(Result));
+							return EWorkItemResult::Done;
+						}
+
+						// Wait for the stop and then continue with a restart into 'scrub mode'
+						State->State = FRateWorkItemState::EState::WaitForStopThenSetAndRestart;
+					}
+
+					return EWorkItemResult::RetryLater;
+				}
+
+				// Just set the rate now. No restart...
+			}
+		}
+	}
+	else if (State->State == FRateWorkItemState::EState::WaitForStopThenSetAndRestart)
+	{
+		// Wait for stop and then set and restart...
+		if (EventType != MESessionStopped)
+		{
+			return EWorkItemResult::RetryLater;
+		}
+		State->State = FRateWorkItemState::EState::ReadyNeedsRestart;
+	}
+	else if (State->State == FRateWorkItemState::EState::WaitForPauseThenSetAndRestart)
+	{
+		// Wait for pause and then set and restart...
+		if (EventType != MESessionPaused)
+		{
+			return EWorkItemResult::RetryLater;
+		}
+		State->State = FRateWorkItemState::EState::ReadyNeedsRestart;
+	}
+	else if (State->State == FRateWorkItemState::EState::WaitForPause)
+	{
+		// Check if pause is all done!
+		return (EventType == MESessionPaused) ? EWorkItemResult::Done : EWorkItemResult::RetryLater;
+	}
+	else if (State->State == FRateWorkItemState::EState::WaitForSetAndRestart)
+	{
+		// Wait for rate set and then restart...
+		if (EventType != MESessionRateChanged)
+		{
+			return EWorkItemResult::RetryLater;
 		}
 
-		const TCHAR* ThinnedString = (Thinning == EMediaRateThinning::Thinned) ? TEXT("thinned") : TEXT("unthinned");
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Changing rate from %f to %f [%s]"), this, SessionRate, Rate, ThinnedString);
+		// Restart the session at the given time (if none is specified, we assume the 'current time' is valid with the session)
+		PROPVARIANT StartPosition;
+		PropVariantInit(&StartPosition);
+		if (State->LastTime != WmfMediaSession::RequestedTimeCurrent)
+		{
+			StartPosition.vt = VT_I8;
+			StartPosition.hVal.QuadPart = State->LastTime.GetTicks();
+		}
 
-		// set the new rate
+		const HRESULT Result = MediaSession->Start(NULL, &StartPosition);
+		if (FAILED(Result))
+		{
+			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to start session: %s"), this, *WmfMedia::ResultToString(Result));
+			return EWorkItemResult::Done;
+		}
+
+		// Now wait for the restart to be done...
+		State->State = FRateWorkItemState::EState::WaitForRestart;
+		return EWorkItemResult::RetryLater;
+	}
+	else if (State->State == FRateWorkItemState::EState::WaitForSet)
+	{
+		// Wait for rate being set (no restart)
+		if (EventType != MESessionRateChanged)
+		{
+			return EWorkItemResult::RetryLater;
+		}
+		return EWorkItemResult::Done;
+	}
+	else if (State->State == FRateWorkItemState::EState::WaitForRestart)
+	{
+		// Check if restart is all done!
+		return (EventType == MESessionStarted) ? EWorkItemResult::Done : EWorkItemResult::RetryLater;
+	}
+
+	// determine thinning mode
+	EMediaRateThinning Thinning;
+	if (UnthinnedRates.Contains(Rate))
+	{
+		Thinning = EMediaRateThinning::Unthinned;
+	}
+	else if (ThinnedRates.Contains(Rate))
+	{
+		Thinning = EMediaRateThinning::Thinned;
+	}
+	else
+	{
+		return EWorkItemResult::Done;
+	}
+
+	// ...and set the rate
+	{
 		const HRESULT Result = RateControl->SetRate((Thinning == EMediaRateThinning::Thinned) ? TRUE : FALSE, Rate);
-
 		if (FAILED(Result))
 		{
 			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to change rate: %s"), this, *WmfMedia::ResultToString(Result));
-			return false;
-		}
-
-		if (PendingChanges)
-		{
-			return true; // wait for required state transitions to complete
-		}
-
-		PendingChanges = true;
-	}
-
-	// Note: no further changes needed if session was playing and direction didn't change
-
-	if (((Rate * SessionRate) > 0.0f) && (SessionState == EMediaState::Playing))
-	{
-		return true;
-	}
-
-	// Note: for non-zero rates, the session must be restarted. If the rate control wasn't
-	// updated above, this can be done immediately, otherwise it has to be deferred until
-	// after the rate control finished setting the new rate.
-
-	if ((Rate != 0.0f) && ((SessionState != EMediaState::Playing) || PendingChanges))
-	{
-		// determine restart time
-		FTimespan RestartTime;
-
-		if (RequestedTime.IsSet())
-		{
-			RestartTime = RequestedTime.GetValue();
-		}
-		else
-		{
-			RestartTime = GetTime();
-		}
-
-		if ((RestartTime == FTimespan::Zero()) && (Rate < 0.0f))
-		{
-			RestartTime = CurrentDuration; // loop to end
-		}
-		else if ((RestartTime == CurrentDuration) && (Rate > 0.0f))
-		{
-			RestartTime = FTimespan::Zero(); // loop to beginning
-		}
-
-		// restart session
-		if (PendingChanges)
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Requesting start after pending rate change"), this);
-			RequestedTime = RestartTime;
-			bIsRequestedTimeLoop = false;
-		}
-		else
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Starting session for rate change"), this);
-			CommitTime(RestartTime, false);
+			return EWorkItemResult::Done;
 		}
 	}
 
-	return true;
+	// Now we wait for the rate to be set and possibly trigger a restart...
+	State->State = (State->State == FRateWorkItemState::EState::ReadyNeedsRestart) ? FRateWorkItemState::EState::WaitForSetAndRestart : FRateWorkItemState::EState::WaitForSet;
+
+	return EWorkItemResult::RetryLater;
 }
 
 
 bool FWmfMediaSession::CommitTime(FTimespan Time, bool bIsSeek)
 {
 	check(MediaSession != NULL);
-	check(PendingChanges == false);
 
 	FTimespan OriginalTime = Time;
 	const FString TimeString = (Time == WmfMediaSession::RequestedTimeCurrent) ? TEXT("<current>") : *Time.ToString();
-	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Committing time %s"), this, *TimeString);
+	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Committing time %s (Seek=%d)"), this, *TimeString, bIsSeek);
 
 	// start session at requested time
 	PROPVARIANT StartPosition;
@@ -984,19 +1274,6 @@ bool FWmfMediaSession::CommitTime(FTimespan Time, bool bIsSeek)
 	if (!bCanSeek)
 	{
 		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Starting from <current>, because media can't seek"), this);
-		Time = WmfMediaSession::RequestedTimeCurrent;
-	}
-#if WMFMEDIA_PLAYER_VERSION == 1
-	else if (Time == GetTime())
-#else // WMFMEDIA_PLAYER_VERSION == 1
-	// Only do this whan the rate is non zero, otherwise we will not ask for the correct time.
-	else if ((Time == GetTime()) && (SessionRate != 0.0f))
-#endif // WMFMEDIA_PLAYER_VERSION == 1
-	{
-		// Fix for audio desync and video fast-forwarding behavior
-		// There long delay (500ms+) until samples start arriving unless we specifically use RequestedTimeCurrent
-		// After delay occurs samples begin arriving at accelerated speed until caught up to playback time leading to visual and audio problems
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Starting from <current>, because media already queued up to correct time"), this);
 		Time = WmfMediaSession::RequestedTimeCurrent;
 	}
 
@@ -1018,162 +1295,125 @@ bool FWmfMediaSession::CommitTime(FTimespan Time, bool bIsSeek)
 		return false;
 	}
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	// If this is not a loop, then tell the tracks about the seek.
-	if ((bIsRequestedTimeLoop == false) && (bCanSeek) && bIsSeek)
+	if (bCanSeek && bIsSeek)
 	{
 		TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> TracksPinned = Tracks.Pin();
 		if (TracksPinned.IsValid())
 		{
-			TracksPinned->SeekStarted(OriginalTime);
+			TracksPinned->SeekStarted(OriginalTime, UserIssuedSeeks, UnpausedSessionRate);
+			UserIssuedSeeks = 0;
 		}
+		bSeekActive = true;
 	}
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
-
-	PendingChanges = true;
 
 	return true;
 }
 
 
-bool FWmfMediaSession::CommitTopology(IMFTopology* Topology)
+FWmfMediaSession::EWorkItemResult FWmfMediaSession::CommitTopology(IMFTopology* Topology, FTopologyWorkItemState* State, MediaEventType EventType)
 {
 	check(MediaSession != NULL);
-	check(PendingChanges == false);
 
-	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Committing topology %p"), this, Topology);
+	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Committing topology %p [S=%d]"), this, Topology, int(State->State));
 
-	if (SessionState != EMediaState::Stopped)
+	// Did session end and we do not just start up?
+	if (EventType == MESessionEnded && State->State != FTopologyWorkItemState::EState::Begin)
 	{
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Stopping session for topology change"), this);
-
-		LastTime = GetTime();
-
-		// topology change requires transition to Stopped; playback is resumed afterwards
-		HRESULT Result = MediaSession->Stop();
-
-		if (FAILED(Result))
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to stop for topology change: %s"), this, *WmfMedia::ResultToString(Result));
-			return false;
-		}
-
-		// request deferred playback restart
-		if (!RequestedTime.IsSet())
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Requesting restart after pending stop"), this);
-
-			RequestedTime = LastTime;
-			bIsRequestedTimeLoop = false;
-
-			// Zero LastTime so it matches what WMF is actually doing (rewinding to the beginning)
-			// The PresentationClock has now stopped and FWmfMediaSession::GetTime() will just return LastTime
-			LastTime = FTimespan::Zero();
-		}
-
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Requesting topology change after pending stop"), this);
-
-		RequestedTopology = Topology;
-		PendingChanges = true;
-
-		return true;
+		// Make us start over again... what we did so far has been lost in the deep belly of WMF's machinery...
+		State->State = FTopologyWorkItemState::EState::Begin;
 	}
 
-	// set new topology
-	HRESULT Result = MediaSession->ClearTopologies();
+	if (State->State == FTopologyWorkItemState::EState::Begin)
+	{
+		// Starting up for the first time. Check if we are stopped already?
+		if (SessionState != EMediaState::Stopped)
+		{
+			// No. Stop session and retry...
+			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Stopping session for topology change"), this);
 
+			// topology change requires transition to Stopped; playback is resumed afterwards
+			HRESULT Result = MediaSession->Stop();
+			if (FAILED(Result))
+			{
+				UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to stop for topology change: %s"), this, *WmfMedia::ResultToString(Result));
+				return EWorkItemResult::Done;
+			}
+
+			State->State = FTopologyWorkItemState::EState::ReadyNeedsRestart;
+
+			// Come back later once the session has stopped...
+			return EWorkItemResult::RetryLater;
+		}
+		else
+		{
+			// Proceed to actual setup...
+			State->State = FTopologyWorkItemState::EState::Ready;
+		}
+	}
+	else if (State->State == FTopologyWorkItemState::EState::Ready)
+	{
+		return (EventType != MESessionTopologySet) ? EWorkItemResult::RetryLater : EWorkItemResult::Done;
+	}
+	else if (State->State == FTopologyWorkItemState::EState::ReadyNeedsRestart)
+	{
+		if (EventType != MESessionTopologySet)
+		{
+			return EWorkItemResult::RetryLater;
+		}
+
+		// Topology is set, we need to restart the session...
+		PROPVARIANT StartPosition;
+		PropVariantInit(&StartPosition);
+		HRESULT Result = MediaSession->Start(NULL, &StartPosition);
+		if (FAILED(Result))
+		{
+			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to start after topology change: %s"), this, *WmfMedia::ResultToString(Result));
+			return EWorkItemResult::Done;
+		}
+
+		State->State = FTopologyWorkItemState::EState::WaitRestart;
+		return EWorkItemResult::RetryLater;
+	}
+	else if (State->State == FTopologyWorkItemState::EState::WaitRestart)
+	{
+		return (EventType != MESessionStarted) ? EWorkItemResult::RetryLater : EWorkItemResult::Done;
+	}
+
+	// Actual setup...
+
+	// Clear any topology enqueued to be set prior to the one we are about to set
+	// (this is async, but we omit a specific state change and wait as we execute the next async command unconditonally right afterwards - and we wait for that one)
+	HRESULT Result = MediaSession->ClearTopologies();
 	if (FAILED(Result))
 	{
 		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to clear queued topologies: %s"), this, *WmfMedia::ResultToString(Result));
-		return false;
+		return EWorkItemResult::Done;
 	}
 
-	if (Topology != NULL)
+	// Set or clear topology...
+	if (Topology != nullptr)
 	{
 		Result = MediaSession->SetTopology(MFSESSION_SETTOPOLOGY_IMMEDIATE, Topology);
-
 		if (FAILED(Result))
 		{
 			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to set topology %p: %s"), Topology, this, *WmfMedia::ResultToString(Result));
-			return false;
+			return EWorkItemResult::Done;
 		}
-
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Committed topology %p"), this, Topology);
-
-		PendingChanges = true;
-	}
-
-	return true;
-}
-
-
-void FWmfMediaSession::DiscardPendingChanges()
-{
-	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Discarding pending changes"), this);
-
-	RequestedRate.Reset();
-	RequestedTime.Reset();
-	bIsRequestedTimeLoop = false;
-	RequestedTopology.Reset();
-
-	PendingChanges = false;
-}
-
-
-void FWmfMediaSession::DoPendingChanges()
-{
-	if (PendingChanges)
-	{
-		const FString RequestedRateString = !RequestedRate.IsSet() ? TEXT("<none>") : FString::Printf(TEXT("%f"), RequestedRate.GetValue());
-		const FString RequestedTimeString = !RequestedTime.IsSet() ? TEXT("<none>") : (RequestedTime.GetValue() == WmfMediaSession::RequestedTimeCurrent) ? TEXT("<current>") : *RequestedTime.GetValue().ToString();
-		const FString RequestedTopologyString = !RequestedTopology ? TEXT("<none>") : FString::Printf(TEXT("%p"), RequestedTopology.Get());
-
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Doing pending changes: RequestedRate: %s, RequestedTime: %s, RequestedTopology: %s"), this, *RequestedRateString, *RequestedTimeString, *RequestedTopologyString);
 	}
 	else
 	{
-		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Doing pending changes: none"), this);
-	}
-
-	PendingChanges = false;
-
-	// commit pending topology changes
-	if (RequestedTopology != NULL)
-	{
-		TComPtr<IMFTopology> Topology = RequestedTopology;
-		RequestedTopology.Reset();
-
-		CommitTopology(Topology);
-
-		if (PendingChanges)
+		Result = MediaSession->SetTopology(MFSESSION_SETTOPOLOGY_CLEAR_CURRENT, Topology);
+		if (FAILED(Result))
 		{
-			return;
+			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to set topology %p: %s"), Topology, this, *WmfMedia::ResultToString(Result));
+			return EWorkItemResult::Done;
 		}
 	}
 
-	// commit pending rate changes
-	if (RequestedRate.IsSet())
-	{
-		const float Rate = RequestedRate.GetValue();
-		RequestedRate.Reset();
+	UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Committed topology %p"), this, Topology);
 
-		CommitRate(Rate);
-
-		if (PendingChanges)
-		{
-			return;
-		}
-	}
-
-	// commit pending seeks/restarts
-	if (RequestedTime.IsSet())
-	{
-		const FTimespan Time = RequestedTime.GetValue();
-		RequestedTime.Reset();
-
-		CommitTime(Time, false);
-		bIsRequestedTimeLoop = false;
-	}
+	return EWorkItemResult::RetryLater;
 }
 
 
@@ -1228,11 +1468,14 @@ void FWmfMediaSession::UpdateCharacteristics()
 	{
 		UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Rate control ready"), this);
 
-		if (FAILED(RateControl->GetRate(FALSE, &SessionRate)))
+		float NewRate;
+		if (FAILED(RateControl->GetRate(FALSE, &NewRate)))
 		{
 			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Failed to initialize current rate"), this);
-			SessionRate = 1.0f; // the session's initial play rate is usually 1.0
+			NewRate = 1.0f; // the session's initial play rate is usually 1.0
 		}
+
+		SetSessionRate(NewRate);
 	}
 
 	Result = ::MFGetService(MediaSession, MF_RATE_CONTROL_SERVICE, IID_PPV_ARGS(&RateSupport));
@@ -1249,8 +1492,6 @@ void FWmfMediaSession::UpdateCharacteristics()
 	// cache rate control properties
 	if (RateSupport.IsValid())
 	{
-		CanScrub = SUCCEEDED(RateSupport->IsRateSupported(TRUE, 0.0f, NULL));
-
 		float MaxRate = 0.0f;
 		float MinRate = 0.0f;
 
@@ -1278,6 +1519,12 @@ void FWmfMediaSession::UpdateCharacteristics()
 			UnthinnedRates.Add(TRange<float>::Inclusive(MaxRate, MinRate));
 		}
 
+		// Check for scrubbing (playback at 0.0 speed)
+		/*
+		* We do NOT use IsRateSupported() as it seemns to produce incorrect results quite often (claiming incorrect support for 0.0, but advising 1.0 as best alternate rate)
+		*/
+		CanScrub = ThinnedRates.Contains(0.0f);
+
 		// When native out is enabled, the slowest rate will be greater than 0.0f
 		bool SupportsUnthinnedPause = SUCCEEDED(RateSupport->IsRateSupported(FALSE, 0.0f, NULL));
 		if (SupportsUnthinnedPause && !ThinnedRates.Contains(0.0f) && !UnthinnedRates.Contains(0.0f))
@@ -1288,6 +1535,39 @@ void FWmfMediaSession::UpdateCharacteristics()
 }
 
 
+void FWmfMediaSession::SetSessionRate(float Rate)
+{
+	if (SessionRate != Rate)
+	{
+		SessionRate = Rate;
+		if (Rate != 0.0f)
+		{
+			UnpausedSessionRate = Rate;
+		}
+	}
+}
+
+
+void::FWmfMediaSession::Flush()
+{
+	FScopeLock Lock(&CriticalSection);
+	UserIssuedSeeks = 0;
+}
+
+
+void FWmfMediaSession::RequestMoreVideoData()
+{
+	EnqueueWorkItem(FWorkItem([this](TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus, FBaseWorkItemState* BaseState) -> EWorkItemResult
+		{
+			TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> TracksPinned = Tracks.Pin();
+			if (TracksPinned.IsValid())
+			{
+				TracksPinned->RequestMoreVideoDataFromStreamSink();
+			}
+			return EWorkItemResult::Done;
+		}));
+}
+
 /* FWmfMediaSession callbacks
 *****************************************************************************/
 
@@ -1296,53 +1576,81 @@ void FWmfMediaSession::HandleError(HRESULT EventStatus)
 	UE_LOG(LogWmfMedia, Error, TEXT("An error occurred in the media session: %s"), *WmfMedia::ResultToString(EventStatus));
 
 	SessionState = EMediaState::Error;
-	DiscardPendingChanges();
 	MediaSession->Close();
+
+	ResetWorkItemQueue();
+}
+
+
+void FWmfMediaSession::HandlePresentationEnded()
+{
+	SessionState = EMediaState::Stopped;
 }
 
 
 void FWmfMediaSession::HandleSessionEnded()
 {
 	UE_LOG(LogWmfMedia, VeryVerbose, TEXT("FWmfMediaSession::HandleSessionEnded ShouldLoop:%d"), ShouldLoop);
-#if WMFMEDIA_PLAYER_VERSION >= 2
-	if (ShouldLoop)
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
-	{
-		DeferredEvents.Enqueue(EMediaEvent::PlaybackEndReached);
-	}
 
 	SessionState = EMediaState::Stopped;
 
-	if (ShouldLoop)
+	TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> TracksPinned = Tracks.Pin();
+	if (TracksPinned.IsValid())
 	{
-		// loop back to beginning/end
-		RequestedTime = (SessionRate < 0.0f) ? CurrentDuration : FTimespan::Zero();
-		bIsRequestedTimeLoop = true;
-		DoPendingChanges();
+		TracksPinned->SessionEnded();
 	}
-	else
+
+	// We only loop if we don't have a seek in progress right now
+	if (!bSeekActive)
 	{
-		LastTime = FTimespan::Zero();
-		RequestedRate.Reset();
-#if WMFMEDIA_PLAYER_VERSION >= 2
-		bIsWaitingForEnd = true;
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
+		if (!ShouldLoop)
+		{
+			DeferredEvents.Enqueue(EMediaEvent::PlaybackEndReached);
+		}
+
+		if (ShouldLoop)
+		{
+			// loop back to beginning/end
+			JamWorkItem(FWorkItem([this](TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus, FBaseWorkItemState* BaseState) -> EWorkItemResult
+				{
+					auto State = static_cast<FTimeWorkItemState*>(BaseState);
+
+					if (State->State == FTimeWorkItemState::EState::WaitDone)
+					{
+						return (EventType == MESessionStarted) ? EWorkItemResult::Done : EWorkItemResult::RetryLater;
+					}
+
+					if (CommitTime((UnpausedSessionRate < 0.0f) ? CurrentDuration : FTimespan::Zero(), false))
+					{
+						TSharedPtr<FWmfMediaTracks, ESPMode::ThreadSafe> TracksPinned = Tracks.Pin();
+						if (TracksPinned.IsValid())
+						{
+							TracksPinned->LoopStarted(UnpausedSessionRate);
+						}
+
+						State->State = FTimeWorkItemState::EState::WaitDone;
+						return EWorkItemResult::RetryLater;
+					}
+
+					return EWorkItemResult::Done;
+				}, MakeShared<FTimeWorkItemState, ESPMode::ThreadSafe>()));
+		}
+		else
+		{
+			LastTime = FTimespan::Zero();
+			bIsWaitingForEnd = true;
+			ResetWorkItemQueue();
+		}
 	}
 }
 
 
 void FWmfMediaSession::HandleSessionPaused(HRESULT EventStatus)
 {
-	if (SUCCEEDED(EventStatus))
+	if (RateControl == nullptr || !CanScrub)
 	{
-		SessionState = EMediaState::Paused;
 		DeferredEvents.Enqueue(EMediaEvent::PlaybackSuspended);
-
-		DoPendingChanges();
-	}
-	else
-	{
-		DiscardPendingChanges();
+		SessionState = EMediaState::Paused;
 	}
 }
 
@@ -1359,23 +1667,20 @@ void FWmfMediaSession::HandleSessionRateChanged(HRESULT EventStatus, IMFMediaEve
 
 		if (SUCCEEDED(Result) && (Value.vt == VT_R4))
 		{
-			SessionRate = Value.fltVal;
+			SetSessionRate(Value.fltVal);
 		}
 	}
 	else if (RateControl != NULL)
 	{
+
 		BOOL Thin = FALSE;
-		RateControl->GetRate(&Thin, &SessionRate);
+		float Rate = 0.0f; // quiet down SA validation
+		if (RateControl->GetRate(&Thin, &Rate) != S_OK)
+		{
+			Rate = 1.0f;
+		}
+		SetSessionRate(Rate);
 	}
-
-	DoPendingChanges();
-}
-
-
-void FWmfMediaSession::HandleSessionScrubSampleComplete()
-{
-//	DeferredEvents.Enqueue(EMediaEvent::SeekCompleted);
-//	DoPendingChanges();
 }
 
 
@@ -1383,56 +1688,41 @@ void FWmfMediaSession::HandleSessionStarted(HRESULT EventStatus)
 {
 	if (SUCCEEDED(EventStatus))
 	{
-#if WMFMEDIA_PLAYER_VERSION >= 2
 		bIsWaitingForEnd = false;
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
-		if ((SessionState == EMediaState::Paused) && (SessionRate == 0.0f))
+		if (RateControl == NULL)
 		{
-			SessionState = EMediaState::Playing;
-
-			// Note: pending changes will be processed in MESessionScrubSampleComplete
-
-			DeferredEvents.Enqueue(EMediaEvent::SeekCompleted);
-			DoPendingChanges();
+			SetSessionRate(1.0f);
 		}
 		else
 		{
-			if (RateControl == NULL)
+			float Rate = 0.0f; // quiet down SA validation
+			if (RateControl->GetRate(NULL, &Rate) != S_OK)
 			{
-				SessionRate = 1.0f;
+				Rate = 1.0f;
 			}
-			else
-			{
-				BOOL Thin = FALSE;
-				RateControl->GetRate(&Thin, &SessionRate);
-			}
-
-			if (SessionState == EMediaState::Playing)
-			{
-				DeferredEvents.Enqueue(EMediaEvent::SeekCompleted);
-			}
-			else
-			{
-				SessionState = EMediaState::Playing;
-
-				if (SessionRate == 0.0f)
-				{
-					RequestedRate = 0.0f;
-					PendingChanges = true;
-				}
-				else
-				{
-					DeferredEvents.Enqueue(EMediaEvent::PlaybackResumed);
-				}
-			}
-			
-			DoPendingChanges();
+			SetSessionRate(Rate);
 		}
-	}
-	else
-	{
-		DiscardPendingChanges();
+
+		if (SessionRate != 0.0f)
+		{
+			SessionState = EMediaState::Playing;
+			DeferredEvents.Enqueue(EMediaEvent::PlaybackResumed);
+		}
+		else
+		{
+			// We are pausing (or "scrubbing" in WMF terms - hence this is a playback mode, not real "pause")
+			SessionState = EMediaState::Paused;
+			DeferredEvents.Enqueue(EMediaEvent::PlaybackSuspended);
+		}
+
+		UE_LOG(LogWmfMedia, VeryVerbose, TEXT("Session - Started: R=%f SState=%d"), SessionRate, int(SessionState));
+
+		if (bSeekActive && (SessionState == EMediaState::Playing || SessionState == EMediaState::Paused))
+		{
+			DeferredEvents.Enqueue(EMediaEvent::SeekCompleted);
+		}
+		bSeekActive = false;
 	}
 }
 
@@ -1443,11 +1733,6 @@ void FWmfMediaSession::HandleSessionStopped(HRESULT EventStatus)
 	{
 		SessionState = EMediaState::Stopped;
 		DeferredEvents.Enqueue(EMediaEvent::PlaybackSuspended);
-		DoPendingChanges();
-	}
-	else
-	{
-		DiscardPendingChanges();
 	}
 }
 
@@ -1461,15 +1746,6 @@ void FWmfMediaSession::HandleSessionTopologySet(HRESULT EventStatus, IMFMediaEve
 		if (SUCCEEDED(Result))
 		{
 			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Topology %p set as current"), this, CurrentTopology.Get());
-
-			if (SessionState != EMediaState::Preparing)
-			{
-				// Note: track and format changes won't send an MF_TOPOSTATUS_READY event
-				// until playback is restarted, so we do pending changes here instead.
-
-				DoPendingChanges();
-			}
-
 			return;
 		}
 
@@ -1484,8 +1760,6 @@ void FWmfMediaSession::HandleSessionTopologySet(HRESULT EventStatus, IMFMediaEve
 		SessionState = EMediaState::Error;
 		DeferredEvents.Enqueue(EMediaEvent::MediaOpenFailed);
 	}
-
-	DiscardPendingChanges();
 }
 
 
@@ -1527,8 +1801,7 @@ void FWmfMediaSession::HandleSessionTopologyStatus(HRESULT EventStatus, IMFMedia
 
 	if (SessionState == EMediaState::Error)
 	{
-		DiscardPendingChanges();
-
+		ResetWorkItemQueue();
 		return;
 	}
 
@@ -1543,8 +1816,7 @@ void FWmfMediaSession::HandleSessionTopologyStatus(HRESULT EventStatus, IMFMedia
 			DeferredEvents.Enqueue(EMediaEvent::MediaOpenFailed);
 		}
 
-		DiscardPendingChanges();
-
+		ResetWorkItemQueue();
 		return;
 	}
 
@@ -1587,18 +1859,26 @@ void FWmfMediaSession::HandleSessionTopologyStatus(HRESULT EventStatus, IMFMedia
 	{
 		// Note: when paused, the new topology won't apply until the next session start,
 		// so we request a scrub to the current time in order to update the video frame.
+		JamWorkItem(FWorkItem([this](TComPtr<IMFMediaEvent> MediaEvent, MediaEventType EventType, HRESULT EventStatus, FBaseWorkItemState* BaseState) -> EWorkItemResult
+			{
+				auto State = static_cast<FTimeWorkItemState*>(BaseState);
 
-		if (!RequestedTime.IsSet())
-		{
-			UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: Requesting scrub after topology change"), this);
+				UE_LOG(LogWmfMedia, Verbose, TEXT("Session %p: 'Re-Scrubbing' after topology change [SState=%d X=%d E=%d]"), this, int(State->State), EventType == MESessionStarted, int(EventType));
 
-			RequestedTime = WmfMediaSession::RequestedTimeCurrent;
-			bIsRequestedTimeLoop = false;
-			PendingChanges = true;
-		}
+				if (State->State == FTimeWorkItemState::EState::WaitDone)
+				{
+					return (EventType == MESessionStarted) ? EWorkItemResult::Done : EWorkItemResult::RetryLater;
+				}
+
+				if (CommitTime(WmfMediaSession::RequestedTimeCurrent, false))
+				{
+					State->State = FTimeWorkItemState::EState::WaitDone;
+					return EWorkItemResult::RetryLater;
+				}
+
+				return EWorkItemResult::Done;
+			}, MakeShared<FTimeWorkItemState, ESPMode::ThreadSafe>()));
 	}
-
-	DoPendingChanges();
 }
 
 

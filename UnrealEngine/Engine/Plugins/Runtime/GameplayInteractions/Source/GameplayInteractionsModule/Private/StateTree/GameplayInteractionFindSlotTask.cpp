@@ -44,10 +44,10 @@ bool FGameplayInteractionFindSlotTask::UpdateResult(const FStateTreeExecutionCon
 		
 		const FSmartObjectSlotView SlotView = SmartObjectSubsystem.GetSlotView(InstanceData.ReferenceSlot);
 		const FSmartObjectSlotDefinition& SlotDefinition = SlotView.GetDefinition();
-		
-		for (const FInstancedStruct& Data : SlotDefinition.Data)
+
+		for (const FSmartObjectDefinitionDataProxy& DataProxy : SlotDefinition.DefinitionData)
 		{
-			if (const FSmartObjectSlotLinkAnnotation* Link = Data.GetPtr<FSmartObjectSlotLinkAnnotation>())
+			if (const FSmartObjectSlotLinkAnnotation* Link = DataProxy.Data.GetPtr<FSmartObjectSlotLinkAnnotation>())
 			{
 				if (Link->Tag.MatchesTag(FindByTag))
 				{

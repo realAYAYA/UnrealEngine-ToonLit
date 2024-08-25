@@ -25,149 +25,129 @@ namespace mu
 	/** */
     struct INSTANCE_SURFACE
 	{
-		string m_name;
+		FName Name;
         uint32 InternalId=0;
         uint32 ExternalId =0;
         uint32 SharedId =0;
 
 		struct IMAGE
 		{
-            IMAGE(FResourceID p, const char* strName )
+            IMAGE(FResourceID InId, FName InName)
 			{
-                m_imageId = p;
-				if (strName)
-				{
-					m_name = strName;
-				}
+				Id = InId;
+				Name = InName;
 			}
 
-			FResourceID m_imageId;
-			string m_name;
+			FResourceID Id;
+			FName Name;
 		};
 
-		TArray<IMAGE, TInlineAllocator<4>> m_images;
+		TArray<IMAGE, TInlineAllocator<4>> Images;
 
 		struct VECTOR
 		{
-			VECTOR( const FVector4f& v, const char* strName )
+			VECTOR( const FVector4f& v, FName InName)
 			{
-				m_vec = v;
-				if (strName)
-				{
-					m_name = strName;
-				}
+				Value = v;
+				Name = InName;
 			}
 
-			FVector4f m_vec;
-			string m_name;
+			FVector4f Value;
+			FName Name;
 		};
 
-		TArray<VECTOR> m_vectors;
+		TArray<VECTOR> Vectors;
 
         struct SCALAR
         {
-            SCALAR( float v, const char* strName )
+            SCALAR( float v, FName InName )
             {
-                m_scalar = v;
-                if ( strName )
-                {
-                    m_name = strName;
-                }
+                Value = v;
+                Name = InName;
             }
 
-            float m_scalar;
-            string m_name;
-        };
+            float Value;
+			FName Name;
+		};
 
-		TArray<SCALAR> m_scalars;
+		TArray<SCALAR> Scalars;
 
         struct STRING
         {
-            STRING( const char* strValue, const char* strName )
+            STRING(const FString& InValue, FName InName)
             {
-                m_string = strValue ? strValue : "";
-                if ( strName )
-                {
-                    m_name = strName;
-                }
-            }
+				Value = InValue;
+				Name = InName;
+			}
 
-            string m_string;
-            string m_name;
-        };
+			FString Value;
+			FName Name;
+		};
 
-		TArray<STRING> m_strings;
+		TArray<STRING> Strings;
     };
 
 
     struct INSTANCE_COMPONENT
     {
-        string m_name;
+        FName Name;
 
-    	uint16 m_id;
+    	uint16 Id;
 
 		struct MESH
 		{
-            MESH(FResourceID p, const char* strName)
+            MESH(FResourceID InId, FName InName)
 			{
-                m_meshId = p;
-				if (strName)
-				{
-					m_name = strName;
-				}
+				Id = InId;
+				Name = InName;
 			}
 
-			FResourceID m_meshId;
-			string m_name;
+			FResourceID Id;
+			FName Name;
 		};
-		TArray<MESH, TInlineAllocator<2>> m_meshes;
+		TArray<MESH, TInlineAllocator<2>> Meshes;
 
 		// The order must match the meshes surfaces
-		TArray<INSTANCE_SURFACE, TInlineAllocator<4>> m_surfaces;
+		TArray<INSTANCE_SURFACE, TInlineAllocator<4>> Surfaces;
 	};
 
 
     struct INSTANCE_LOD
     {
-		TArray<INSTANCE_COMPONENT, TInlineAllocator<4>> m_components;
+		TArray<INSTANCE_COMPONENT, TInlineAllocator<4>> Components;
     };
 
 	struct NamedExtensionData
 	{
-		ExtensionDataPtrConst Data;
-		string Name;
+		Ptr<const ExtensionData> Data;
+		FName Name;
 	};
 
-	class Instance::Private : public Base
+	class Instance::Private
 	{
 	public:
 
         //!
-        Instance::ID m_id;
+        Instance::ID Id = 0;
 
 		//!
-		TArray<INSTANCE_LOD,TInlineAllocator<4>> m_lods;
+		TArray<INSTANCE_LOD,TInlineAllocator<4>> Lods;
 
 		// Every entry must have a valid ExtensionData and name
-		TArray<NamedExtensionData> m_extensionData;
+		TArray<NamedExtensionData> ExtensionData;
 
-        Private()
-        {
-            m_id = 0;
-        }
-
-        int AddLOD();
-        int AddComponent( int lod );
-        void SetComponentName( int32 lod, int32 comp, const char* strName );
-        int AddMesh(int32 lod, int32 comp, FResourceID, const char* strName);
-		int AddSurface( int lod, int comp );
-        void SetSurfaceName( int32 lod, int32 comp, int32 surf, const char* strName );
-        int AddImage( int32 lod, int32 comp, int32 surf, FResourceID, const char* strName );
-        int32 AddVector( int32 lod, int32 comp, int32 surf, const FVector4f&, const char* strName );
-        int32 AddScalar( int32 lod, int32 comp, int32 surf, float, const char* strName );
-        int32 AddString( int32 lod, int32 comp, int32 surf, const char* strValue, const char* strName );
+		int32 AddLOD();
+		int32 AddComponent(int32 lod );
+        void SetComponentName( int32 lod, int32 comp, FName Name );
+		int32 AddMesh(int32 lod, int32 comp, FResourceID, FName Name);
+		int32 AddSurface(int32 lod, int32 comp );
+        void SetSurfaceName( int32 lod, int32 comp, int32 surf, FName Name);
+		int32 AddImage( int32 lod, int32 comp, int32 surf, FResourceID, FName Name);
+        int32 AddVector( int32 lod, int32 comp, int32 surf, const FVector4f&, FName Name);
+        int32 AddScalar( int32 lod, int32 comp, int32 surf, float, FName Name);
+        int32 AddString( int32 lod, int32 comp, int32 surf, const FString& Value, FName Name);
 		
-		// Data and Name must be non-null
-		void AddExtensionData(ExtensionDataPtrConst Data, const char* Name);
+		// Data must be non-null
+		void AddExtensionData(const Ptr<const class ExtensionData>& Data, FName Name);
     };
 }

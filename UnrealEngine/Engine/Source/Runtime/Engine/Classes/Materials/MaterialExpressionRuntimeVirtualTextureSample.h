@@ -98,6 +98,10 @@ class UMaterialExpressionRuntimeVirtualTextureSample : public UMaterialExpressio
 	UPROPERTY(EditAnywhere, Category = VirtualTexture)
 	bool bEnableFeedback = true;
 
+	/** Defines the reference space for the WorldPosition input. */
+	UPROPERTY(EditAnywhere, Category = TextureSample)
+	EPositionOrigin WorldPositionOriginType = EPositionOrigin::Absolute;
+
 	/** Defines how the mip level is calculated for the virtual texture lookup. */
 	UPROPERTY(EditAnywhere, Category = TextureSample)
 	TEnumAsByte<enum ERuntimeVirtualTextureMipValueMode> MipValueMode = RVTMVM_None;
@@ -119,11 +123,14 @@ protected:
 
 #if WITH_EDITOR
 	ENGINE_API virtual void PostLoad() override;
+	ENGINE_API virtual FName GetInputName(int32 InputIndex) const override;
 	ENGINE_API virtual int32 Compile(class FMaterialCompiler* Compiler, int32 OutputIndex) override;
 	ENGINE_API virtual void GetCaption(TArray<FString>& OutCaptions) const override;
 	ENGINE_API virtual bool CanEditChange(const FProperty* InProperty) const override;
 public:
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
 #endif
 	//~ End UMaterialExpression Interface
 };

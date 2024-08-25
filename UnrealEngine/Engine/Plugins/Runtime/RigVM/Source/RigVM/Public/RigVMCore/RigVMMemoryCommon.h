@@ -9,6 +9,8 @@
 #include "RigVMTraits.h"
 #include "Templates/TypeHash.h"
 #include "UObject/ObjectMacros.h"
+#include "Misc/OutputDevice.h"
+#include "GenericPlatform/GenericPlatformMemory.h"
 
 #include "RigVMMemoryCommon.generated.h"
 
@@ -42,6 +44,36 @@ enum class ERigVMMemoryType: uint8
 	External = 2, // Unowned external memory
 	Debug = 3, // Owned memory used for debug watches
 	Invalid
+};
+
+namespace RigVM
+{
+	template<typename T = uint8>
+	void ZeroPaddedMemory(void* InFirstMember, const void* InSecondMember)
+	{
+		char* FirstMember = static_cast<char*>(InFirstMember);
+		const char* SecondMember = static_cast<const char*>(InSecondMember);
+		FirstMember += sizeof(T);
+		if(FirstMember < InSecondMember)
+		{
+			FPlatformMemory::Memzero(FirstMember, SecondMember - FirstMember);
+		}
+	}
+}
+
+// A runtime cache for determining if a set of instruction has to
+// run for this execution of the VM
+USTRUCT(BlueprintType)
+struct RIGVM_API FRigVMInstructionSetExecuteState
+{
+	GENERATED_BODY()
+
+	FRigVMInstructionSetExecuteState()
+	{
+	}
+
+	UPROPERTY(transient)
+	TMap<uint32, uint32> SliceHashToNumInstruction;
 };
 
 /**
@@ -121,12 +153,15 @@ public:
   	}
 	
 	void Serialize(FArchive& Ar);
-	void Save(FArchive& Ar) const;
-	void Load(FArchive& Ar);
 	friend FArchive& operator<<(FArchive& Ar, FRigVMOperand& P)
 	{
 		P.Serialize(Ar);
 		return Ar;
+	}
+
+	static void ZeroPaddedMemoryIfNeeded(FRigVMOperand* InOperand)
+	{
+		RigVM::ZeroPaddedMemory(&InOperand->MemoryType, &InOperand->RegisterIndex);
 	}
 
 private:
@@ -148,3 +183,24 @@ private:
 };
 
 typedef TArrayView<const FRigVMOperand> FRigVMOperandArray;
+
+
+/**
+ * Helper class to catch default value import errors on properties
+ */
+class RIGVM_API FRigVMMemoryStorageImportErrorContext : public FOutputDevice
+{
+public:
+
+	bool bLogErrors;
+	int32 NumErrors;
+
+	explicit FRigVMMemoryStorageImportErrorContext(bool InLogErrors = true)
+		: FOutputDevice()
+		, bLogErrors(InLogErrors)
+		, NumErrors(0)
+	{
+	}
+
+	void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category) override;
+};

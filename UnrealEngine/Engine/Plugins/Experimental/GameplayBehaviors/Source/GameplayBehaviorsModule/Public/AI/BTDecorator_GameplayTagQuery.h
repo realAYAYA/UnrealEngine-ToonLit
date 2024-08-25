@@ -28,6 +28,7 @@ class GAMEPLAYBEHAVIORSMODULE_API UBTDecorator_GameplayTagQuery : public UBTDeco
 
 	virtual FString GetStaticDescription() const override;
 
+	virtual void InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const override;
 	virtual void CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const override;
 
 protected:

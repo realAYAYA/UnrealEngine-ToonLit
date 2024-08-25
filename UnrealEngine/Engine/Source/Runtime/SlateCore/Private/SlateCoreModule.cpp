@@ -12,7 +12,6 @@
 #include "SlateGlobals.h"
 #include "Types/SlateStructs.h"
 
-
 DEFINE_LOG_CATEGORY(LogSlate);
 DEFINE_LOG_CATEGORY(LogSlateStyles);
 

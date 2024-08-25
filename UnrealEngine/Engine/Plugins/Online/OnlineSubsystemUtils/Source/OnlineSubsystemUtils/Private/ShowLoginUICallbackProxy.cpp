@@ -87,7 +87,7 @@ void UShowLoginUICallbackProxy::OnShowLoginUICompleted(FUniqueNetIdPtr UniqueId,
 		}
 	}
 
-	if (UniqueId.IsValid())
+	if (UniqueId.IsValid() && UniqueId->IsValid())
 	{
 		OnSuccess.Broadcast(MyPlayerController);
 	}

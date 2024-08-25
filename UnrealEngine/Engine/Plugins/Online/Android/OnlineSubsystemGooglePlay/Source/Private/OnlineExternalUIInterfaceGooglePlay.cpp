@@ -5,11 +5,6 @@
 #include "UObject/Class.h"
 #include "OnlineSubsystemGooglePlay.h"
 
-THIRD_PARTY_INCLUDES_START
-#include "gpg/achievement_manager.h"
-#include "gpg/leaderboard_manager.h"
-THIRD_PARTY_INCLUDES_END
-
 FOnlineExternalUIGooglePlay::FOnlineExternalUIGooglePlay(FOnlineSubsystemGooglePlay* InSubsystem)
 	: Subsystem(InSubsystem)
 {
@@ -18,7 +13,26 @@ FOnlineExternalUIGooglePlay::FOnlineExternalUIGooglePlay(FOnlineSubsystemGoogleP
 
 bool FOnlineExternalUIGooglePlay::ShowLoginUI(const int ControllerIndex, bool bShowOnlineOnly, bool bShowSkipButton, const FOnLoginUIClosedDelegate& Delegate)
 {
-	Subsystem->StartShowLoginUITask(ControllerIndex, Delegate);	
+	IOnlineIdentityPtr OnlineIdentity = Subsystem->GetIdentityInterface();
+
+	if (FUniqueNetIdPtr UniqueNetId = OnlineIdentity->GetUniquePlayerId(ControllerIndex); UniqueNetId->IsValid())
+	{
+		Delegate.ExecuteIfBound(UniqueNetId, ControllerIndex, FOnlineError::Success());
+		return true;
+	}
+
+	TSharedPtr<FDelegateHandle> DelegateHandle = MakeShared<FDelegateHandle>();
+	*DelegateHandle = OnlineIdentity->AddOnLoginCompleteDelegate_Handle(ControllerIndex, FOnLoginCompleteDelegate::CreateLambda([this, DelegateHandle, Delegate](int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& UserId, const FString& ErrorString)
+		{
+			FOnlineError Error(bWasSuccessful);
+			Error.SetFromErrorCode(ErrorString);
+
+			Delegate.ExecuteIfBound(UserId.IsValid()? UserId.AsShared() : FUniqueNetIdPtr(), LocalUserNum, Error);
+
+			IOnlineIdentityPtr OnlineIdentity = Subsystem->GetIdentityInterface();
+			OnlineIdentity->ClearOnLoginCompleteDelegate_Handle(LocalUserNum, *DelegateHandle);
+		}));
+	OnlineIdentity->Login(ControllerIndex, FOnlineAccountCredentials());
 	return true;
 }
 
@@ -34,46 +48,23 @@ bool FOnlineExternalUIGooglePlay::ShowInviteUI(int32 LocalUserNum, FName Session
 
 bool FOnlineExternalUIGooglePlay::ShowAchievementsUI(int32 LocalUserNum) 
 {
-	if (Subsystem->GetGameServices() == nullptr)
-	{
-		return false;
-	}
-
-	if (!Subsystem->GetGameServices()->IsAuthorized())
-	{
-		return false;
-	}
-
-	Subsystem->GetGameServices()->Achievements().ShowAllUI(nullptr);
+	Subsystem->GetGooglePlayGamesWrapper().ShowAchievementsUI();
 	return true;
 }
 
 bool FOnlineExternalUIGooglePlay::ShowLeaderboardUI(const FString& LeaderboardName)
 {
-	if (Subsystem->GetGameServices() == nullptr)
-	{
-		return false;
-	}
+	auto Settings = GetDefault<UAndroidRuntimeSettings>();
 
-	if (!Subsystem->GetGameServices()->IsAuthorized())
-	{
-		return false;
-	}
-
-	auto DefaultSettings = GetDefault<UAndroidRuntimeSettings>();
-
-	for(const auto& Mapping : DefaultSettings->LeaderboardMap)
+	for(const auto& Mapping : Settings->LeaderboardMap)
 	{
 		if(Mapping.Name == LeaderboardName)
 		{
-			auto ConvertedId = FOnlineSubsystemGooglePlay::ConvertFStringToStdString(Mapping.LeaderboardID);
-			Subsystem->GetGameServices()->Leaderboards().ShowUI(ConvertedId, nullptr);
-
+			Subsystem->GetGooglePlayGamesWrapper().ShowLeaderboardUI(Mapping.LeaderboardID);
 			return true;
 		}
 	}
-	
-	return false;
+	return true;
 }
 
 bool FOnlineExternalUIGooglePlay::ShowWebURL(const FString& Url, const FShowWebUrlParams& ShowParams, const FOnShowWebUrlClosedDelegate& Delegate)

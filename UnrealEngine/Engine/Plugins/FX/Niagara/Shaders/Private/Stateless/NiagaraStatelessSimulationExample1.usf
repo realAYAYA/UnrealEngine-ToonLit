@@ -1,0 +1,40 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define PARTICLE_ATTRIBUTES_OUTPUT \
+	PARTICLE_ATTRIBUTE(int,		UniqueID) \
+	PARTICLE_ATTRIBUTE(float3,	Position) \
+	PARTICLE_ATTRIBUTE(float4,	Color) \
+	PARTICLE_ATTRIBUTE(float,	RibbonWidth) \
+	PARTICLE_ATTRIBUTE(float3,	Scale) \
+	PARTICLE_ATTRIBUTE(float2,	SpriteSize) \
+	PARTICLE_ATTRIBUTE(float,	SpriteRotation) \
+	PARTICLE_ATTRIBUTE(float3,	Velocity) \
+	PARTICLE_ATTRIBUTE(float3,	PreviousPosition) \
+	PARTICLE_ATTRIBUTE(float,	PreviousRibbonWidth) \
+	PARTICLE_ATTRIBUTE(float3,	PreviousScale) \
+	PARTICLE_ATTRIBUTE(float2,	PreviousSpriteSize) \
+	PARTICLE_ATTRIBUTE(float,	PreviousSpriteRotation) \
+	PARTICLE_ATTRIBUTE(float3,	PreviousVelocity) \
+
+#define PARTICLE_ATTRIBUTES_TRANSIENT \
+	PARTICLE_ATTRIBUTE(float,	CameraOffset) \
+	PARTICLE_ATTRIBUTE(float4,	DynamicMaterialParameter0) \
+	PARTICLE_ATTRIBUTE(int,		MeshIndex) \
+	PARTICLE_ATTRIBUTE(float4,	MeshOrientation) \
+	PARTICLE_ATTRIBUTE(float3,	SpriteFacing) \
+	PARTICLE_ATTRIBUTE(float3,	SpriteAlignment) \
+	PARTICLE_ATTRIBUTE(float,	SubImageIndex) \
+	PARTICLE_ATTRIBUTE(float,	PreviousCameraOffset) \
+	PARTICLE_ATTRIBUTE(float4,	PreviousMeshOrientation) \
+	PARTICLE_ATTRIBUTE(float3,	PreviousSpriteFacing) \
+	PARTICLE_ATTRIBUTE(float3,	PreviousSpriteAlignment) \
+
+#define PARTICLE_MODULES \
+	PARTICLE_MODULE(InitializeParticle) \
+	PARTICLE_MODULE(ShapeLocation) \
+	PARTICLE_MODULE(ScaleColor) \
+	PARTICLE_MODULE(ScaleSpriteSize) \
+	PARTICLE_MODULE(RotateAroundPoint) \
+	PARTICLE_MODULE(CalculateAccurateVelocity) \
+
+#include "NiagaraStatelessSimulationTemplate.ush"

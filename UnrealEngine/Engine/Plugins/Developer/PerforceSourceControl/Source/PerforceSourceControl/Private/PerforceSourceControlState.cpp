@@ -3,8 +3,11 @@
 #include "PerforceSourceControlState.h"
 #include "PerforceSourceControlRevision.h"
 #include "Misc/EngineVersion.h"
-#include "Styling/AppStyle.h"
+
+#if SOURCE_CONTROL_WITH_SLATE
+#include "Textures/SlateIcon.h"
 #include "RevisionControlStyle/RevisionControlStyle.h"
+#endif //SOURCE_CONTROL_WITH_SLATE
 
 #define LOCTEXT_NAMESPACE "PerforceSourceControl.State"
 
@@ -98,6 +101,7 @@ ISourceControlState::FResolveInfo FPerforceSourceControlState::GetResolveInfo() 
 	return PendingResolveInfo;
 }
 
+#if SOURCE_CONTROL_WITH_SLATE
 FSlateIcon FPerforceSourceControlState::GetIcon() const
 {
 	if (IsConflicted())
@@ -120,7 +124,6 @@ FSlateIcon FPerforceSourceControlState::GetIcon() const
 			return FSlateIcon(FRevisionControlStyleManager::GetStyleSetName(), "RevisionControl.ModifiedOtherBranch", NAME_None, "RevisionControl.ModifiedBadge");
 		}
 	}
-
 
 	switch (State)
 	{
@@ -145,7 +148,7 @@ FSlateIcon FPerforceSourceControlState::GetIcon() const
 		return FSlateIcon(FRevisionControlStyleManager::GetStyleSetName(), "RevisionControl.Branched");
 	}
 }
-
+#endif //SOURCE_CONTROL_WITH_SLATE
 
 FText FPerforceSourceControlState::GetDisplayName() const
 {

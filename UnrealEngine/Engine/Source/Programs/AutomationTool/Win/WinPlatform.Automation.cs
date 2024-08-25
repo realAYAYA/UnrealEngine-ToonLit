@@ -36,7 +36,7 @@ public class Win64Platform : Platform
 
 		if (HostPlatform.Current.HostEditorPlatform == UnrealTargetPlatform.Win64)
 		{
-			DeviceInfo LocalMachine = new DeviceInfo(UnrealTargetPlatform.Win64, Environment.MachineName, Environment.MachineName,
+			DeviceInfo LocalMachine = new DeviceInfo(UnrealTargetPlatform.Win64, Unreal.MachineName, Unreal.MachineName,
 				Environment.OSVersion.Version.ToString(), "Computer", true, true);
 
 			Devices.Add(LocalMachine);
@@ -45,6 +45,33 @@ public class Win64Platform : Platform
 		}
 
 		return Devices.ToArray();
+	}
+
+	public override void PlatformSetupParams(ref ProjectParams Params)
+	{
+		base.PlatformSetupParams(ref Params);
+
+		// use a custom deployment handler if one is requested
+		Params.PreModifyDeploymentContextCallback = new Action<ProjectParams, DeploymentContext>((ProjectParams Params, DeploymentContext SC) =>
+		{
+			if (SC.CustomDeployment == null)
+			{			
+				string CustomDeploymentName = null;
+
+				ConfigHierarchy EngineIni = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, Params.RawProjectPath.Directory, PlatformType, SC.CustomConfig);
+				EngineIni.GetString("/Script/WindowsTargetPlatform.WindowsTargetSettings", "CustomDeployment", out CustomDeploymentName);
+
+				if (string.IsNullOrEmpty(CustomDeploymentName))
+				{
+					CustomDeploymentName = Params.CustomDeploymentHandler;
+				}
+
+				if (!string.IsNullOrEmpty(CustomDeploymentName))
+				{
+					SC.CustomDeployment = CustomDeploymentHandler.Create(CustomDeploymentName, this);
+				}
+			}			
+		});
 	}
 
 	public override void Deploy(ProjectParams Params, DeploymentContext SC)
@@ -200,7 +227,6 @@ public class Win64Platform : Platform
 			CommandUtils.CopyFile(InputFile.FullName, IntermediateFile.FullName);
 			CommandUtils.SetFileAttributes(IntermediateFile.FullName, ReadOnly: false);
 	
-			// currently the icon updating doesn't run under mono
 			if (UnrealBuildTool.BuildHostPlatform.Current.Platform == UnrealTargetPlatform.Win64)
 			{
 				Logger.LogInformation("Patching bootstrap executable; {Arg0}", IntermediateFile.FullName);
@@ -390,6 +416,30 @@ public class Win64Platform : Platform
 	[SupportedOSPlatform("windows")]
     private static FileReference GetSymStoreExe()
     {
+		// Trying first to look for auto sdk latest WindowsKits debugger tools
+		DirectoryReference HostAutoSdkDir = null;
+		if (UEBuildPlatformSDK.TryGetHostPlatformAutoSDKDir(out HostAutoSdkDir))
+		{
+			DirectoryReference WindowsKitsDebuggersDirAutoSdk = DirectoryReference.Combine(HostAutoSdkDir, "Win64", "Windows Kits", "Debuggers");
+
+			if (DirectoryReference.Exists(WindowsKitsDebuggersDirAutoSdk))
+			{
+				// Defaulting to the x86 because of a known issue with the latest x64 version
+				// x64 version gets the errorcode STATUS_ENTRYPOINT_NOT_FOUND on some configurations
+				FileReference SymStoreExe32 = FileReference.Combine(WindowsKitsDebuggersDirAutoSdk, "x86", "SymStore.exe");
+				if (FileReference.Exists(SymStoreExe32))
+				{
+					return SymStoreExe32;
+				}
+
+				FileReference SymStoreExe64 = FileReference.Combine(WindowsKitsDebuggersDirAutoSdk, "x64", "SymStore.exe");
+				if (FileReference.Exists(SymStoreExe64))
+				{
+					return SymStoreExe64;
+				}
+			}
+		}
+
 		List<KeyValuePair<string, DirectoryReference>> WindowsSdkDirs = WindowsExports.GetWindowsSdkDirs();
 		foreach (DirectoryReference WindowsSdkDir in WindowsSdkDirs.Select(x => x.Value))
 		{
@@ -411,6 +461,32 @@ public class Win64Platform : Platform
 	[SupportedOSPlatform("windows")]
 	public static bool TryGetPdbCopyLocation(out FileReference OutLocation)
 	{
+		// Trying first to look for auto sdk latest WindowsKits debugger tools
+		DirectoryReference HostAutoSdkDir = null;
+		if (UEBuildPlatformSDK.TryGetHostPlatformAutoSDKDir(out HostAutoSdkDir))
+		{
+			DirectoryReference WindowsKitsDebuggersDirAutoSdk = DirectoryReference.Combine(HostAutoSdkDir, "Win64", "Windows Kits", "Debuggers");
+
+			if (DirectoryReference.Exists(WindowsKitsDebuggersDirAutoSdk))
+			{
+				// Defaulting to the x86 because of a known issue with the latest x64 version
+				// x64 version gets the errorcode STATUS_ENTRYPOINT_NOT_FOUND on some configurations
+				FileReference PdbCopyExe32 = FileReference.Combine(WindowsKitsDebuggersDirAutoSdk, "x86", "PdbCopy.exe");
+				if (FileReference.Exists(PdbCopyExe32))
+				{
+					OutLocation = PdbCopyExe32;
+					return true;
+				}
+
+				FileReference PdbCopyExe64 = FileReference.Combine(WindowsKitsDebuggersDirAutoSdk, "x64", "PdbCopy.exe");
+				if (FileReference.Exists(PdbCopyExe64))
+				{
+					OutLocation = PdbCopyExe64;
+					return true;
+				}
+			}
+		}
+
 		// Try to find an installation of the Windows 10 SDK
 		List<KeyValuePair<string, DirectoryReference>> WindowsSdkDirs = WindowsExports.GetWindowsSdkDirs();
 		foreach (DirectoryReference WindowsSdkDir in WindowsSdkDirs.Select(x => x.Value))
@@ -671,6 +747,33 @@ public class Win64Platform : Platform
 	}
 
 	/// <summary>
+	/// Build a database of source code files in the current Perforce workspace.
+	/// By relying on the standard layout for UE projects i.e. the fact that source code is in Source directories,
+	/// we may very significantly reduce the about of data sent to us from the server.
+	/// </summary>
+	/// <param name="Pattern">Perforce pattern path to query e.g. //UE/Branch/.../Source/...</param>
+	/// <returns></returns>
+	protected static Dictionary<string, P4HaveRecord> BuildSourceDatabase(string Pattern)
+	{
+		List<P4HaveRecord> Files = null;
+
+		P4Connection DefaultConnection = new P4Connection(User: null, Client: null, ServerAndPort: null);
+
+		try
+		{
+			Files = DefaultConnection.HaveFiles(Pattern);
+		}
+		catch (P4Exception e)
+		{
+			Logger.LogError("Failed to fetch source code information from Perforce for '{Pattern}' ({Message}).", Pattern, e.Message);
+
+			return null;
+		}
+
+		return Files.ToDictionary(file => file.ClientFile, file => file, StringComparer.InvariantCultureIgnoreCase);
+	}
+
+	/// <summary>
 	/// 
 	/// </summary>
 	/// <param name="PdbFiles"></param>
@@ -682,6 +785,15 @@ public class Win64Platform : Platform
 	{
 		Logger.LogInformation("Adding source control information to PDB files...");
 
+		string DepotFilter = ".../Source/...";
+
+		Dictionary<string, P4HaveRecord> SourceDatabase = BuildSourceDatabase(DepotFilter);
+
+		if (SourceDatabase == null)
+		{
+			throw new AutomationException($"Failed to query the source code information for '{DepotFilter}'.");
+		}
+
 		// Get the PDBSTR.EXE path, using the latest SDK version we can find.
 		FileReference PdbStrExe = GetPdbStrExe();
 
@@ -692,21 +804,36 @@ public class Win64Platform : Platform
 		// Generate the SRCSRV.INI file
 		using (StreamWriter Writer = new StreamWriter(SrcSrvIni.FullName))
 		{
+			int MissingFilesCount = 0;
+
 			Writer.WriteLine("SRCSRV: ini------------------------------------------------");
 			Writer.WriteLine("VERSION=1");
 			Writer.WriteLine("VERCTRL=Perforce");
 			Writer.WriteLine("SRCSRV: variables------------------------------------------");
 			Writer.WriteLine("SRCSRVTRG=%sdtrg%");
 			Writer.WriteLine("SRCSRVCMD=%sdcmd%");
-			Writer.WriteLine("SDCMD=p4.exe print -o %srcsrvtrg% \"{0}/%var2%@{1}\"", Branch.TrimEnd('/'), Change);
-			Writer.WriteLine("SDTRG=%targ%\\{0}\\{1}\\%fnbksl%(%var2%)", Branch.Replace('/', '+'), Change);
+			Writer.WriteLine("SDCMD=p4.exe print -o %srcsrvtrg% \"//%var2%#%var3%\"");
+			Writer.WriteLine("SDTRG=%targ%\\%fnbksl%(%var2%)#%var3%");
 			Writer.WriteLine("SRCSRV: source files ---------------------------------------");
 			foreach (FileReference SourceFile in SourceFiles)
 			{
-				string RelativeSourceFile = SourceFile.MakeRelativeTo(Unreal.RootDirectory);
-				Writer.WriteLine("{0}*{1}", SourceFile.FullName, RelativeSourceFile.Replace('\\', '/'));
+				P4HaveRecord SourceInfo;
+
+				if (SourceDatabase.TryGetValue(SourceFile.FullName, out SourceInfo))
+				{
+					Writer.WriteLine("{0}*{1}*{2}", SourceFile.FullName, SourceInfo.DepotFile.Replace("//", ""), SourceInfo.Revision);
+				}
+				else
+				{
+					++MissingFilesCount;
+				}
 			}
 			Writer.WriteLine("SRCSRV: end------------------------------------------------");
+
+			if (MissingFilesCount > 0)
+			{
+				Logger.LogInformation("Skipped {MissingFilesCount} files (out of {SourceFileCount}) for which source control files couldn't be located.", MissingFilesCount, SourceFiles.Count());
+			}
 		}
 
 		// Execute PDBSTR on the PDB files in parallel.
@@ -725,21 +852,6 @@ public class Win64Platform : Platform
 	{
 		FileInfo PdbInfo = new FileInfo(PdbFile.FullName);
 		FileInfo IniInfo = new FileInfo(SrcSrvIni.FullName);
-
-		const long Size4GB = 4L * 1024 * 1024 * 1024;
-
-		// PdbStr.exe tool can't handle pdb's larger than 4GB (linked with /PDBPAGESIZE:8192 switch).
-		// It's a known limitation and it may happen for large game projects, especially in development configurations.
-		// We choose to emit a warning for this known issue rather than failing the whole build with an exception, if we run into this case.
-		if (PdbInfo.Length + IniInfo.Length >= Size4GB)
-		{
-			lock (State)
-			{
-				Logger.LogInformation("Skipping indexing of {Arg0} because it would make the file larger than 4GB (not supported by pdbstr.exe tool).", PdbFile.GetFileName());
-			}
-
-			return;
-		}
 
 		using (Process Process = new Process())
 		{
@@ -785,6 +897,31 @@ public class Win64Platform : Platform
 	static FileReference GetPdbStrExe()
 	{
 		List<KeyValuePair<string, DirectoryReference>> WindowsSdkDirs = WindowsExports.GetWindowsSdkDirs();
+
+		// Trying first to look for auto sdk latest WindowsKits debugger tools
+		DirectoryReference HostAutoSdkDir = null;
+		if (UEBuildPlatformSDK.TryGetHostPlatformAutoSDKDir(out HostAutoSdkDir))
+		{
+			DirectoryReference WindowsKitsDebuggersDirAutoSdk = DirectoryReference.Combine(HostAutoSdkDir, "Win64", "Windows Kits", "Debuggers");
+
+			if (DirectoryReference.Exists(WindowsKitsDebuggersDirAutoSdk))
+			{
+				// Defaulting to the x86 because of a known issue with the latest x64 version
+				// x64 version gets the errorcode STATUS_ENTRYPOINT_NOT_FOUND on some configurations
+				FileReference CheckPdbStrExe32 = FileReference.Combine(WindowsKitsDebuggersDirAutoSdk, "x86", "SrcSrv", "PdbStr.exe");
+				if (FileReference.Exists(CheckPdbStrExe32))
+				{
+					return CheckPdbStrExe32;
+				}
+
+				FileReference CheckPdbStrExe64 = FileReference.Combine(WindowsKitsDebuggersDirAutoSdk, "x64", "SrcSrv", "PdbStr.exe");
+				if (FileReference.Exists(CheckPdbStrExe64))
+				{
+					return CheckPdbStrExe64;
+				}
+			}
+		}
+
 		foreach (DirectoryReference WindowsSdkDir in WindowsSdkDirs.Select(x => x.Value))
 		{
 			FileReference CheckPdbStrExe64 = FileReference.Combine(WindowsSdkDir, "Debuggers", "x64", "SrcSrv", "PdbStr.exe");

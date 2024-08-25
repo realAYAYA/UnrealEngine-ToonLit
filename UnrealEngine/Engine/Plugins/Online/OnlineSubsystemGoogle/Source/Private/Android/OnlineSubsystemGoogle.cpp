@@ -10,6 +10,9 @@
 FOnlineSubsystemGoogle::FOnlineSubsystemGoogle(FName InInstanceName)
 	: FOnlineSubsystemGoogleCommon(InInstanceName)
 {
+	bPlatformRequiresClientId = false;
+	bPlatformAllowsClientIdOverride = false;	
+	bPlatformRequiresServerClientId = FOnlineIdentityGoogle::ShouldRequestIdToken() || FOnlineIdentityGoogle::ShouldRequestOfflineAccess();
 }
 
 FOnlineSubsystemGoogle::~FOnlineSubsystemGoogle()
@@ -36,5 +39,11 @@ bool FOnlineSubsystemGoogle::Init()
 bool FOnlineSubsystemGoogle::Shutdown()
 {
 	UE_LOG_ONLINE(VeryVerbose, TEXT("FOnlineSubsystemGoogle::Shutdown()"));
+
+	if (auto Identity = StaticCastSharedPtr<FOnlineIdentityGoogle>(GoogleIdentity))
+	{
+		Identity->Shutdown();
+	}
+
 	return FOnlineSubsystemGoogleCommon::Shutdown();
 }

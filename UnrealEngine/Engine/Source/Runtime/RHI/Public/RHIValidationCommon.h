@@ -25,6 +25,7 @@ class FRHIShaderResourceView;
 class FRHIUniformBuffer;
 class FRHIViewableResource;
 class FRHIUnorderedAccessView;
+class FRHITexture;
 
 class FValidationComputeContext;
 class FValidationContext;
@@ -772,7 +773,7 @@ namespace RHIValidation
 
 		inline void Reset()
 		{
-			Operations.SetNum(0, false);
+			Operations.SetNum(0, EAllowShrinking::No);
 			OperationPos = 0;
 		}
 
@@ -834,7 +835,7 @@ namespace RHIValidation
 
 			inline void Reset()
 			{
-				UAVs.SetNum(0, false);
+				UAVs.SetNum(0, EAllowShrinking::No);
 			}
 
 			void DrawOrDispatch(FTracker* BarrierTracker, const FState& RequiredState);
@@ -979,7 +980,14 @@ namespace RHIValidation
 	extern RHI_API void* CaptureBacktrace();
 
 	/** Validates that the SRV is conform to what the shader expects */
-	extern RHI_API void ValidateShaderResourceView(const FRHIShader* RHIShaderBase, uint32 BindIndex, FRHIShaderResourceView* SRV);
+	extern RHI_API void ValidateShaderResourceView(const FRHIShader* RHIShaderBase, uint32 BindIndex, const FRHIShaderResourceView* SRV);
+	extern RHI_API void ValidateShaderResourceView(const FRHIShader* RHIShaderBase, uint32 BindIndex, const FRHITexture* Texture);
+
+	/** Validates that the UAV conforms to what the shader expects */
+	extern RHI_API void ValidateUnorderedAccessView(const FRHIShader* RHIShaderBase, uint32 BindIndex, const FRHIUnorderedAccessView* SRV);
+
+	/** Validates that the UB conforms to what the shader expects */
+	extern RHI_API void ValidateUniformBuffer(const FRHIShader* RHIShaderBase, uint32 BindIndex, FRHIUniformBuffer* SRV);
 
 }
 

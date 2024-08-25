@@ -68,9 +68,15 @@ public:
 	FString OutputExistingName;
 };
 
-
-
-
+UCLASS()
+class MODELINGCOMPONENTS_API UBaseCreateFromSelectedCollisionProperties : public UInteractiveToolPropertySet
+{
+	GENERATED_BODY()
+public:
+	/** Whether to transfer collision settings and any simple collision shapes from the source object(s) to the new object. */
+	UPROPERTY(EditAnywhere, Category = OutputObject)
+	bool bTransferCollision = true;
+};
 
 /**
  * Properties of UI to adjust input meshes
@@ -150,6 +156,17 @@ protected:
 	/** Return the materials to be used on the output mesh on tool accept; defaults to the materials set on the preview */
 	virtual TArray<UMaterialInterface*> GetOutputMaterials() const;
 
+	// Override this to control whether the Transfer Collision setting is available
+	virtual bool SupportsCollisionTransfer() const
+	{
+		return true;
+	}
+
+	// Override this to control which inputs should transfer collision to the output (if collision transfer is enabled)
+	virtual bool KeepCollisionFrom(int32 TargetIndex) const
+	{
+		return true;
+	}
 
 
 	/**
@@ -190,6 +207,9 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UBaseCreateFromSelectedHandleSourceProperties> HandleSourcesProperties;
+
+	UPROPERTY()
+	TObjectPtr<UBaseCreateFromSelectedCollisionProperties> CollisionProperties;
 
 	UPROPERTY()
 	TObjectPtr<UMeshOpPreviewWithBackgroundCompute> Preview;

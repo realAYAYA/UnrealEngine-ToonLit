@@ -1108,7 +1108,7 @@ void FPropertyReplicationStateDescriptorBuilder::BuildMemberTagDescriptors(FRepl
 	}
 
 	// Fill in descriptor
-	ensureAlwaysMsgf(Context.MemberTagCache.TagCount < MAX_uint16 - 1U, TEXT("Tag count cannot exceed %u. Building descriptor %s."), MAX_uint16 - 1U, ToCStr(Descriptor->DebugName));
+	ensureMsgf(Context.MemberTagCache.TagCount < MAX_uint16 - 1U, TEXT("Tag count cannot exceed %u. Building descriptor %s."), MAX_uint16 - 1U, ToCStr(Descriptor->DebugName));
 	Descriptor->MemberTagDescriptors = MemberTagDescriptors;
 	Descriptor->TagCount = static_cast<uint16>(Context.MemberTagCache.TagCount);
 }
@@ -1174,7 +1174,7 @@ void FPropertyReplicationStateDescriptorBuilder::BuildMemberReferenceDescriptors
 	}
 
 	// Fill in descriptor
-	ensureAlwaysMsgf(Context.ReferenceCache.ReferenceCount < std::numeric_limits<uint16>::max(), TEXT("Object reference count cannot exceed %u. Building descriptor %s."), std::numeric_limits<uint16>::max(), ToCStr(Descriptor->DebugName));
+	ensureMsgf(Context.ReferenceCache.ReferenceCount < std::numeric_limits<uint16>::max(), TEXT("Object reference count cannot exceed %u. Building descriptor %s."), std::numeric_limits<uint16>::max(), ToCStr(Descriptor->DebugName));
 	Descriptor->MemberReferenceDescriptors = MemberReferenceDescriptors;
 	Descriptor->ObjectReferenceCount = static_cast<uint16>(Context.ReferenceCache.ReferenceCount);
 }
@@ -1193,7 +1193,7 @@ void FPropertyReplicationStateDescriptorBuilder::BuildMemberFunctionDescriptors(
 		UE_LOG_DESCRIPTORBUILDER(Verbose, TEXT("FPropertyReplicationStateDescriptorBuilder::BuildMemberFunctionDescriptors AddingFunction %s"), ToCStr(MemberFunction.Function->GetName()));		
 	}
 
-	ensureAlwaysMsgf(Context.MemberFunctionCache.Num() <= std::numeric_limits<uint16>::max(), TEXT("Function count cannot exceed %u. Building descriptor %s."), std::numeric_limits<uint16>::max(), ToCStr(Descriptor->DebugName));
+	ensureMsgf(Context.MemberFunctionCache.Num() <= std::numeric_limits<uint16>::max(), TEXT("Function count cannot exceed %u. Building descriptor %s."), std::numeric_limits<uint16>::max(), ToCStr(Descriptor->DebugName));
 	Descriptor->FunctionCount = static_cast<uint16>(Context.MemberFunctionCache.Num());
 	Descriptor->MemberFunctionDescriptors = MemberFunctionDescriptors;
 }
@@ -1812,7 +1812,6 @@ FPropertyReplicationStateDescriptorBuilder::Build(const FString& StateName, FRep
 				// Store the default state checksum for later use when verifying protocol
 				Descriptor->DescriptorIdentifier.DefaultStateHash = DefaultStateHash;
 			}
-		
 		}
 
 		return TRefCountPtr<const FReplicationStateDescriptor>(Descriptor);
@@ -1867,6 +1866,7 @@ EMemberPropertyTraits FPropertyReplicationStateDescriptorBuilder::GetConnectionF
 		{COND_ReplayOnly, EMemberPropertyTraits::HasLifetimeConditionals},
 		{COND_SimulatedOnlyNoReplay, EMemberPropertyTraits::HasLifetimeConditionals},
 		{COND_SimulatedOrPhysicsNoReplay, EMemberPropertyTraits::HasLifetimeConditionals},
+		{COND_SkipReplay, EMemberPropertyTraits::HasLifetimeConditionals},
 		{COND_Dynamic, EMemberPropertyTraits::HasLifetimeConditionals},
 	};
 
@@ -2146,7 +2146,7 @@ void FPropertyReplicationStateDescriptorBuilder::GetPropertyPathName(const FProp
 	uint32 PropertyChainIndex = MaxHierarchyDepth;
 	for (FFieldVariant Object = Property; Object.IsValid(); Object = Object.GetOwnerVariant())
 	{
-		if (!ensureAlwaysMsgf(PropertyChainIndex > 0, TEXT("Property hieararchy depth exceeds %u"), MaxHierarchyDepth))
+		if (!ensureMsgf(PropertyChainIndex > 0, TEXT("Property hieararchy depth exceeds %u"), MaxHierarchyDepth))
 		{
 			break;
 		}
@@ -2269,12 +2269,15 @@ EMemberPropertyTraits FPropertyReplicationStateDescriptorBuilder::GetFastArrayPr
 			else if (Struct->IsChildOf(FFastArraySerializerItem::StaticStruct()))
 			{
 				// Invalidate FastArrayItem if it has a custom NetSerializer which we currently do not support, the workaround is to wrap the struct with the custom netserializer in a struct
-				if (ensureAlwaysMsgf(!IsStructWithCustomSerializer(Struct), 
-					TEXT("FPropertyReplicationStateDescriptorBuilder Iris does not support custom NetSerializers for FastArrayItems %s, if required use a property in the struct wrapping the custom NetSerializer"), *Struct->GetName())
-				)
+				if (IsStructWithCustomSerializer(Struct))
 				{
-					return EMemberPropertyTraits::IsFastArrayItem;
+					UE_LOG(LogIris, Error, TEXT("FPropertyReplicationStateDescriptorBuilder found unsupported custom NetSerializers for FastArrayItems %s"), *Struct->GetName());
+					ensureMsgf(false, TEXT("FPropertyReplicationStateDescriptorBuilder Iris does not support custom NetSerializers for FastArrayItems %s, if required use a property in the struct wrapping the custom NetSerializer"), *Struct->GetName());
+
+					return EMemberPropertyTraits::None;
 				}
+
+				return EMemberPropertyTraits::IsFastArrayItem;
 			}
 		}
 	}
@@ -2407,7 +2410,7 @@ TRefCountPtr<const FReplicationStateDescriptor> FReplicationStateDescriptorBuild
 	}
 	else
 	{
-		const bool bIsAllowedToWarn = ShouldUseIrisReplication() || FApp::IsGame() || IsRunningDedicatedServer() || IsRunningClientOnly();
+		const bool bIsAllowedToWarn = (ShouldUseIrisReplication() || FApp::IsGame() || IsRunningDedicatedServer() || IsRunningClientOnly()) && !IsRunningCommandlet();
 
 		if (bIsStructWithCustomSerialization)
 		{
@@ -2481,7 +2484,7 @@ TRefCountPtr<const FReplicationStateDescriptor> FReplicationStateDescriptorBuild
 	BuildParameters.bIsInitState = false;
 	BuildParameters.bAllMembersAreReplicated = bAllMembersAreReplicated;
 
-	auto Descriptor = Builder.Build(InStruct->GetName(), Parameters.DescriptorRegistry, BuildParameters);
+	TRefCountPtr<const FReplicationStateDescriptor> Descriptor = Builder.Build(InStruct->GetName(), Parameters.DescriptorRegistry, BuildParameters);
 
 	if (Parameters.DescriptorRegistry && Descriptor.IsValid())
 	{
@@ -2581,7 +2584,7 @@ SIZE_T FReplicationStateDescriptorBuilder::CreateDescriptorsForClass(FResult& Cr
 	// Check registry first to see if we already have created descriptors for this class
 	if (Parameters.DescriptorRegistry)
 	{
-		if (auto Result = Parameters.DescriptorRegistry->Find(ObjectClassOrArchetypeUsedAsKey, InObjectClass))
+		if (const FReplicationStateDescriptorRegistry::FDescriptors* Result = Parameters.DescriptorRegistry->Find(ObjectClassOrArchetypeUsedAsKey, InObjectClass))
 		{
 			CreatedDescriptors.Insert(*Result, 0);
 			return CreatedDescriptors.Num();
@@ -2669,7 +2672,8 @@ SIZE_T FReplicationStateDescriptorBuilder::CreateDescriptorsForClass(FResult& Cr
 				else if (EnumHasAnyFlags(MemberProperty.Traits, EMemberPropertyTraits::IsFastArray))
 				{
 					// FastArrayProperties should use a custom replication fragment
-					ensureAlwaysMsgf(false, TEXT("FReplicationStateDescriptorBuilder::CreateDescriptorsForClass FFastArray property %s not registered! Usually this means a call to SetupIrisSupport is needed in the module's Build.cs file."), *Property->GetFullName());
+					UE_LOG(LogIris, Error, TEXT("FReplicationStateDescriptorBuilder::CreateDescriptorsForClass FFastArray property %s not registered and won't be replicated."), *Property->GetFullName());
+					ensureMsgf(false, TEXT("FReplicationStateDescriptorBuilder::CreateDescriptorsForClass FFastArray property %s not registered! Usually this means a call to SetupIrisSupport is needed in the module's Build.cs file."), *Property->GetFullName());
 					continue;
 				}
 
@@ -2723,10 +2727,10 @@ SIZE_T FReplicationStateDescriptorBuilder::CreateDescriptorsForClass(FResult& Cr
 				FPropertyReplicationStateDescriptorBuilder::GetSerializerTraits(NetCullDistanceSqrMemberProperty, NetCullDistanceSquaredProperty, NetCullDistanceSqrMemberProperty.SerializerInfo);
 
 				// These needs to be set/fixed after the Traits calls.
-				NetCullDistanceSqrMemberProperty.Traits |= EMemberPropertyTraits::InitOnly;
-				NetCullDistanceSqrMemberProperty.ReplicationCondition = COND_InitialOnly;
+				NetCullDistanceSqrMemberProperty.Traits |= EMemberPropertyTraits::HasLifetimeConditionals | EMemberPropertyTraits::HasPushBasedDirtiness;
+				NetCullDistanceSqrMemberProperty.ReplicationCondition = COND_Never;
 
-				Builders[InitPropertyReplicationStateBuilderIndex].AddMemberProperty(NetCullDistanceSqrMemberProperty);
+				Builders[LifetimeConditionalsReplicationStateBuilderIndex].AddMemberProperty(NetCullDistanceSqrMemberProperty);
 			}
 		}
 	}
@@ -2743,7 +2747,7 @@ SIZE_T FReplicationStateDescriptorBuilder::CreateDescriptorsForClass(FResult& Cr
 		// NetFields only contain the class specific networked fields, excluding super class fields.
 		for (const UClass* CurrentClass = InObjectClass; CurrentClass != nullptr; CurrentClass = CurrentClass->GetSuperClass())
 		{
-			if (!ensureAlwaysMsgf(ClassIndex > 0, TEXT("Class hieararchy depth exceeds %u"), MaxClassHierarchyDepth))
+			if (!ensureMsgf(ClassIndex > 0, TEXT("Class hieararchy depth exceeds %u"), MaxClassHierarchyDepth))
 			{
 				break;
 			}

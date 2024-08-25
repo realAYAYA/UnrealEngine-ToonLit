@@ -6,6 +6,7 @@
 
 #include "Containers/UnrealString.h"
 #include "Misc/EnumClassFlags.h"
+#include "ShaderSource.h"
 
 namespace UE::ShaderMinifier
 {
@@ -45,7 +46,7 @@ struct FDiagnostics
 
 struct FMinifiedShader
 {
-	FString Code;
+	FShaderSource::FStringType Code;
 	FDiagnostics Diagnostics;
 
 	bool Success() const
@@ -54,8 +55,14 @@ struct FMinifiedShader
 	}
 };
 
-extern SHADERCOMPILERCOMMON_API FMinifiedShader Minify(const FStringView PreprocessedShader, const FStringView EntryPoint, EMinifyShaderFlags Flags = EMinifyShaderFlags::None);
-extern SHADERCOMPILERCOMMON_API FMinifiedShader Minify(const FStringView PreprocessedShader, TConstArrayView<FStringView> RequiredSymbols, EMinifyShaderFlags Flags = EMinifyShaderFlags::None);
+extern SHADERCOMPILERCOMMON_API FMinifiedShader Minify(const FShaderSource& PreprocessedShader, const FShaderSource::FViewType EntryPoint, EMinifyShaderFlags Flags = EMinifyShaderFlags::None);
+extern SHADERCOMPILERCOMMON_API FMinifiedShader Minify(const FShaderSource& PreprocessedShader, TConstArrayView<FShaderSource::FViewType> RequiredSymbols, EMinifyShaderFlags Flags = EMinifyShaderFlags::None);
+
+UE_DEPRECATED(5.4, "Use Minify overloads accepting FShaderSource")
+inline FMinifiedShader Minify(const FStringView PreprocessedShader, const FStringView EntryPoint, EMinifyShaderFlags Flags = EMinifyShaderFlags::None) { return FMinifiedShader(); }
+
+UE_DEPRECATED(5.4, "Use Minify overloads accepting FShaderSource")
+inline FMinifiedShader Minify(const FStringView PreprocessedShader, TConstArrayView<FStringView> RequiredSymbols, EMinifyShaderFlags Flags = EMinifyShaderFlags::None) { return FMinifiedShader(); }
 
 } // UE::ShaderMinifier
 

@@ -18,6 +18,7 @@
 #include "Stats/Stats.h"
 
 #include "Algo/AnyOf.h"
+#include "Algo/AllOf.h"
 #include "Algo/Find.h"
 
 namespace InstallBundleUtil
@@ -55,15 +56,29 @@ namespace InstallBundleUtil
 		return Prefix;
 	}
 
-	bool AllInstallBundlePredicate(const FConfigFile& InstallBundleConfig, const FString& Section) 
+	bool HasInstallBundleInConfig(const FString& BundleName)
+	{
+		const FConfigFile* InstallBundleConfig = GConfig->FindConfigFile(GInstallBundleIni);
+		if (InstallBundleConfig)
+		{
+			const FString SectionName = InstallBundleUtil::GetInstallBundleSectionPrefix() + BundleName;
+			return InstallBundleConfig->DoesSectionExist(*SectionName);
+		}
+		return false;
+	}
+
+	bool AllInstallBundlePredicate(const FConfigFile& InstallBundleConfig, const FString& Section)
 	{ 
 		return true; 
 	}
 
 	bool IsPlatformInstallBundlePredicate(const FConfigFile& InstallBundleConfig, const FString& Section)
 	{
+		FString PlatformChunkName;
+		InstallBundleConfig.GetString(*Section, TEXT("PlatformChunkName"), PlatformChunkName);
+
 		int32 ChunkID = 0;
-		if (InstallBundleConfig.GetInt(*Section, TEXT("PlatformChunkID"), ChunkID) && ChunkID < 0)
+		if (PlatformChunkName.IsEmpty() && InstallBundleConfig.GetInt(*Section, TEXT("PlatformChunkID"), ChunkID) && ChunkID < 0)
 		{
 			return false;
 		}
@@ -101,20 +116,20 @@ namespace InstallBundleUtil
 			BundleRegexList.Emplace(TPair<FString, TArray<FRegexPattern>>(BundleName, MoveTemp(SearchRegexPatterns)));
 		}
 
-		BundleRegexList.StableSort([](const TPair<FString, TArray<FRegexPattern>>& PairA, const TPair<FString, TArray<FRegexPattern>>& PairB) -> bool
+		BundleRegexList.StableSort([&InstallBundleConfig](const TPair<FString, TArray<FRegexPattern>>& PairA, const TPair<FString, TArray<FRegexPattern>>& PairB) -> bool
 		{
-			int BundleAOrder = INT_MAX;
-			int BundleBOrder = INT_MAX;
+			int32 BundleAOrder = INT_MAX;
+			int32 BundleBOrder = INT_MAX;
 
 			const FString SectionA = InstallBundleUtil::GetInstallBundleSectionPrefix() + PairA.Key;
 			const FString SectionB = InstallBundleUtil::GetInstallBundleSectionPrefix() + PairB.Key;
 
-			if (!GConfig->GetInt(*SectionA, TEXT("Order"), BundleAOrder, GInstallBundleIni))
+			if (!InstallBundleConfig.GetInt(*SectionA, TEXT("Order"), BundleAOrder))
 			{
 				UE_LOG(LogInstallBundleManager, Warning, TEXT("Bundle Section %s doesn't have an order"), *SectionA);
 			}
 
-			if (!GConfig->GetInt(*SectionB, TEXT("Order"), BundleBOrder, GInstallBundleIni))
+			if (!InstallBundleConfig.GetInt(*SectionB, TEXT("Order"), BundleBOrder))
 			{
 				UE_LOG(LogInstallBundleManager, Warning, TEXT("Bundle Section %s doesn't have an order"), *SectionB);
 			}
@@ -235,7 +250,7 @@ namespace InstallBundleUtil
 			if (Task->IsDone())
 			{
 				FinishedTasks.Add(MoveTemp(Task));
-				Tasks.RemoveAtSwap(i, 1, false);
+				Tasks.RemoveAtSwap(i, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -263,7 +278,7 @@ namespace InstallBundleUtil
 	void FContentRequestStatsMap::StatsBegin(FName BundleName)
 	{
 		FContentRequestStats& Stats = StatsMap.FindOrAdd(BundleName);
-		if (ensureAlwaysMsgf(Stats.bOpen, TEXT("StatsBegin - Stat closed for %s"), *BundleName.ToString()) == false)
+		if (false == ensureAlwaysMsgf(Stats.bOpen, TEXT("StatsBegin - Stat closed for %s"), *BundleName.ToString()))
 		{
 			Stats = FContentRequestStats();
 		}
@@ -275,8 +290,14 @@ namespace InstallBundleUtil
 	{
 		FContentRequestStats& Stats = StatsMap.FindOrAdd(BundleName);
 
-		if (ensureAlwaysMsgf(Stats.bOpen, TEXT("StatsEnd - Stat closed for %s"), *BundleName.ToString()))
+		ensureAlwaysMsgf(Stats.bOpen && Stats.StartTime > 0, TEXT("StatsEnd - Stat closed for %s"), *BundleName.ToString());
+		if (Stats.bOpen)
 		{
+			ensureAlwaysMsgf(
+				Algo::AllOf(Stats.StateStats, 
+					[](const TPair<FString, FContentRequestStateStats>& Pair) { return !Pair.Value.bOpen; }),
+				TEXT("StatsEnd - StateStat open for %s"), *BundleName.ToString());
+
 			Stats.EndTime = FPlatformTime::Seconds();
 			Stats.bOpen = false;
 		}
@@ -284,20 +305,29 @@ namespace InstallBundleUtil
 
 	void FContentRequestStatsMap::StatsReset(FName BundleName)
 	{
-		StatsMap.Remove(BundleName);
+		if (FContentRequestStats* Stats = StatsMap.Find(BundleName))
+		{
+			ensureAlwaysMsgf(!Stats->bOpen, TEXT("StatsReset - Stat open for %s"), *BundleName.ToString());
+			ensureAlwaysMsgf(
+				Algo::AllOf(Stats->StateStats,
+					[](const TPair<FString, FContentRequestStateStats>& Pair) { return !Pair.Value.bOpen; }),
+				TEXT("StatsReset - StateStat open for %s"), *BundleName.ToString());
+
+			StatsMap.Remove(BundleName);
+		}
 	}
 
 	void FContentRequestStatsMap::StatsBegin(FName BundleName, const TCHAR* State)
 	{
 		FContentRequestStats& Stats = StatsMap.FindOrAdd(BundleName);
-		if (ensureAlwaysMsgf(Stats.bOpen, TEXT("StatsBegin - Stat closed for %s - %s"), *BundleName.ToString(), State) == false)
+		if (false == ensureAlwaysMsgf(Stats.bOpen, TEXT("StatsBegin - Stat closed for %s - %s"), *BundleName.ToString(), State))
 		{
 			Stats = FContentRequestStats();
 			Stats.StartTime = FPlatformTime::Seconds();
 		}
 
 		FContentRequestStateStats& StateStats = Stats.StateStats.FindOrAdd(State);
-		if (ensureAlwaysMsgf(StateStats.bOpen, TEXT("StatsBegin - StateStat closed for %s - %s"), *BundleName.ToString(), State) == false)
+		if (false == ensureAlwaysMsgf(StateStats.bOpen, TEXT("StatsBegin - StateStat closed for %s - %s"), *BundleName.ToString(), State))
 		{
 			StateStats = FContentRequestStateStats();
 		}
@@ -308,14 +338,14 @@ namespace InstallBundleUtil
 	void FContentRequestStatsMap::StatsEnd(FName BundleName, const TCHAR* State, uint64 DataSize /*= 0*/)
 	{
 		FContentRequestStats& Stats = StatsMap.FindOrAdd(BundleName);
-		if (ensureAlwaysMsgf(Stats.bOpen, TEXT("StatsEnd - Stat closed for %s - %s"), *BundleName.ToString(), State) == false)
+		if (false == ensureAlwaysMsgf(Stats.bOpen && Stats.StartTime > 0, TEXT("StatsEnd - Stat closed for %s - %s"), *BundleName.ToString(), State))
 		{
 			Stats = FContentRequestStats();
 			Stats.StartTime = FPlatformTime::Seconds();
 		}
 
 		FContentRequestStateStats& StateStats = Stats.StateStats.FindOrAdd(State);
-		if(ensureAlwaysMsgf(StateStats.bOpen, TEXT("StatsEnd - StateStat closed for %s - %s"), *BundleName.ToString(), State))
+		if (ensureAlwaysMsgf(StateStats.bOpen && StateStats.StartTime > 0, TEXT("StatsEnd - StateStat closed for %s - %s"), *BundleName.ToString(), State))
 		{
 			StateStats.EndTime = FPlatformTime::Seconds();
 			StateStats.DataSize = DataSize;

@@ -6,12 +6,6 @@
 
 #pragma once
 
-#ifndef UE_USE_VERSE_PATHS
-	#define UE_USE_VERSE_PATHS 0
-#endif
-
-#if UE_USE_VERSE_PATHS
-
 #include "CoreTypes.h"
 
 class FArchive;
@@ -30,5 +24,3 @@ namespace UE::Core
 }
 
 uint32 GetTypeHash(const UE::Core::FVersePath& VersePath); // Must be outside namespace to not break Tuples
-
-#endif // #if UE_USE_VERSE_PATHS

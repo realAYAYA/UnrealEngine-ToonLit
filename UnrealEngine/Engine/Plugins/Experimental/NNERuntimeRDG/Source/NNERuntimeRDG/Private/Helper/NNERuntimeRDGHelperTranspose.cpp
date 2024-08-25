@@ -5,7 +5,7 @@
 
 namespace UE::NNERuntimeRDG::Internal::CPUHelper::Transpose
 {
-	bool TransposePreparedData(NNE::Internal::FTensor& Tensor, TConstArrayView<int32> Perms)
+	bool Apply(const NNE::Internal::FTensor& Tensor, TConstArrayView<int32> Perms, NNE::Internal::FTensor& OutputTensor)
 	{
 		if (!Tensor.HasPreparedData())
 		{
@@ -50,9 +50,15 @@ namespace UE::NNERuntimeRDG::Internal::CPUHelper::Transpose
 
 		} while (it.Advance());
 
-		Tensor.SetPreparedData<float>(TransposedData);
+		OutputTensor.SetPreparedData<float>(TransposedData);
 
 		return true;
+	}
+
+	bool TransposePreparedData(NNE::Internal::FTensor& Tensor, TConstArrayView<int32> Perms)
+	{
+		//Transpose in place
+		return Apply(Tensor, Perms, Tensor);
 	}
 	
 } // UE::NNERuntimeRDG::Private::CPUHelper::Transpose

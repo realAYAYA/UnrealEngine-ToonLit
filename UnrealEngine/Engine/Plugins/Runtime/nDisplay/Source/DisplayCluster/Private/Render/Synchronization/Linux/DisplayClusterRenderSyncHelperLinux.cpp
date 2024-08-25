@@ -36,3 +36,13 @@ bool FDisplayClusterRenderSyncHelper::FDCRSHelperVulkan::WaitForVBlank()
 {
 	return false;
 }
+
+bool FDisplayClusterRenderSyncHelper::FDCRSHelperVulkan::GetMaximumFrameLatency(uint32& OutMaximumFrameLatency)
+{
+	return false;
+}
+
+bool FDisplayClusterRenderSyncHelper::FDCRSHelperVulkan::SetMaximumFrameLatency(uint32 FrameLatency)
+{
+	return false;
+}

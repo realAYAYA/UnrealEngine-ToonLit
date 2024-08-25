@@ -29,6 +29,7 @@ class UWorld;
 UENUM()
 enum class ERevolveSplineSampleMode : uint8
 {
+	// Place points only at the spline control points
 	ControlPointsOnly,
 
 	// Place points along the spline such that the resulting polyline has no more than 

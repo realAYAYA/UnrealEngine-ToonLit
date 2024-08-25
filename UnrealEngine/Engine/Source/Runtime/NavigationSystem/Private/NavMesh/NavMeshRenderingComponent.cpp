@@ -41,8 +41,8 @@ static const FColor NavMeshRenderColor_PolyForbidden(FColorList::Black);
 
 static constexpr float DefaultEdges_LineThickness = 0.0f;
 static constexpr float TileResolution_LineThickness = 5.f;
-static constexpr float PolyEdges_LineThickness = 1.5f;
-static constexpr float NavMeshEdges_LineThickness = 3.5f;
+static constexpr float PolyEdges_LineThickness = 1.1f;
+static constexpr float NavMeshEdges_LineThickness = 4.f;
 static constexpr float LinkLines_LineThickness = 2.0f;
 static constexpr float ClusterLinkLines_LineThickness = 2.0f;
 
@@ -590,9 +590,9 @@ void FNavMeshSceneProxyData::GatherData(const ARecastNavMesh* NavMesh, int32 InN
 			DebugLabels.Add(FDebugText(FString::Printf(TEXT("Region part %s, Layer part %s"), *GetPartitioningString(NavMesh->RegionPartitioning), *GetPartitioningString(NavMesh->LayerPartitioning))));
 			DebugLabels.Add(FDebugText(TEXT(""))); // empty line
 
-			if (NavMesh->GetGenerator() && NavMesh->GetActiveTiles().Num() != 0)
+			if (NavMesh->GetGenerator() && !NavMesh->GetActiveTileSet().IsEmpty())
 			{
-				DebugLabels.Add(FDebugText(FString::Printf(TEXT("Active tiles: %i"), NavMesh->GetActiveTiles().Num())));	
+				DebugLabels.Add(FDebugText(FString::Printf(TEXT("Active tiles: %i"), NavMesh->GetActiveTileSet().Num())));	
 			}	
 			
 			// Navigation system
@@ -600,6 +600,7 @@ void FNavMeshSceneProxyData::GatherData(const ARecastNavMesh* NavMesh, int32 InN
 			{
 				DebugLabels.Add(FDebugText(FString::Printf(TEXT("NavData count: %i"), NavSys->NavDataSet.Num())));
 				DebugLabels.Add(FDebugText(FString::Printf(TEXT("MainNavData: %s"), NavSys->MainNavData ? *NavSys->MainNavData->GetName() : TEXT("none"))));
+				DebugLabels.Add(FDebugText(FString::Printf(TEXT("Custom NavLinks count: %i"), NavSys->GetNumCustomLinks())));
 
 #if WITH_NAVMESH_CLUSTER_LINKS
 				DebugLabels.Add(FDebugText(FString::Printf(TEXT("Using cluster links"))));
@@ -1078,13 +1079,21 @@ void FNavMeshSceneProxyData::GatherData(const ARecastNavMesh* NavMesh, int32 InN
 			{
 				TArray<FVector> CollidingVerts;
 				TArray<uint32> CollidingIndices;
+				int32 NumElements = 0;
 
 				FBox CurrentNodeBoundsBox;
-				NavOctree->FindElementsWithPredicate([bGatherOctree, bGatherPathCollidingGeometry, this, &CurrentNodeBoundsBox](FNavigationOctree::FNodeIndex /*ParentNodeIndex*/, FNavigationOctree::FNodeIndex /*NodeIndex*/, const FBoxCenterAndExtent& NodeBounds)
+				NavOctree->FindElementsWithPredicate([bGatherOctree, bGatherOctreeDetails, bGatherPathCollidingGeometry, this, &CurrentNodeBoundsBox, NavOctree, &NumElements](FNavigationOctree::FNodeIndex /*ParentNodeIndex*/, FNavigationOctree::FNodeIndex NodeIndex, const FBoxCenterAndExtent& NodeBounds)
 				{
 					if (bGatherOctree)
 					{
 						OctreeBounds.Add(NodeBounds);
+
+						if (bGatherOctreeDetails)
+						{
+							const int32 NumElementsInNode = NavOctree->GetElementsForNode(NodeIndex).Num();
+							NumElements += NumElementsInNode;
+							DebugLabels.Emplace(NodeBounds.Center, FString::Printf(TEXT("%d elements"), NumElementsInNode));
+						}
 					}
 
 					if (bGatherPathCollidingGeometry)
@@ -1122,7 +1131,12 @@ void FNavMeshSceneProxyData::GatherData(const ARecastNavMesh* NavMesh, int32 InN
 						}
 					}
 				});
-			
+
+				if (bGatherOctreeDetails)
+				{
+					DebugLabels.Emplace(FString::Printf(TEXT("Total: %d elements"), NumElements));
+				}
+
 				if (CollidingVerts.Num())
 				{
 					FDebugMeshData DebugMeshData;
@@ -1339,6 +1353,16 @@ void FNavMeshSceneProxyData::AddMeshForInternalData(const FRecastInternalDebugDa
 			}
 		}
 	}
+
+	if (InInternalData.LabelVertices.Num() > 0)
+	{
+		const TArray<FVector>& Vertices = InInternalData.LabelVertices;
+		const TArray<FString>& Labels = InInternalData.Labels;
+		for (int32 i = 0; i < Vertices.Num(); i++)
+		{
+			DebugLabels.Emplace(Vertices[i] + NavMeshDrawOffset, Labels[i]);
+		}
+	}
 }
 #endif //RECAST_INTERNAL_DEBUG_DATA
 
@@ -1472,7 +1496,7 @@ void FNavMeshSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>&
 					BatchElement = MeshBatchElements[Index];
 
 					FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Collector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-					DynamicPrimitiveUniformBuffer.Set(FMatrix::Identity, FMatrix::Identity, GetBounds(), GetLocalBounds(), false, false, AlwaysHasVelocity());
+					DynamicPrimitiveUniformBuffer.Set(Collector.GetRHICommandList(), FMatrix::Identity, FMatrix::Identity, GetBounds(), GetLocalBounds(), false, false, AlwaysHasVelocity());
 					BatchElement.PrimitiveUniformBufferResource = &DynamicPrimitiveUniformBuffer.UniformBuffer;
 
 					Mesh.bWireframe = false;

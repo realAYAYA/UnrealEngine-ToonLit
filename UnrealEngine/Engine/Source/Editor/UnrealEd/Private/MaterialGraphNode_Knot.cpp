@@ -7,6 +7,8 @@
 #include "MaterialEditorUtilities.h"
 #include "EdGraph/EdGraphPin.h"
 
+#include "SGraphNodeKnot.h"
+
 #define LOCTEXT_NAMESPACE "MaterialGraphNode_Knot"
 
 static const char* PC_Wildcard = "wildcard";
@@ -92,6 +94,11 @@ UEdGraphPin* UMaterialGraphNode_Knot::GetPassThroughPin(const UEdGraphPin* FromP
 	}
 
 	return nullptr;
+}
+
+TSharedPtr<SGraphNode> UMaterialGraphNode_Knot::CreateVisualWidget()
+{
+	return SNew(SGraphNodeKnot, this);
 }
 
 

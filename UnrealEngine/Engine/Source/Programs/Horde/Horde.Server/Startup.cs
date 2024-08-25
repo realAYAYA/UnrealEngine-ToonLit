@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Mime;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -21,40 +22,71 @@ using Amazon.Extensions.NETCore.Setup;
 using Amazon.SQS;
 using EpicGames.AspNet;
 using EpicGames.Core;
+using EpicGames.Horde;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Server;
 using EpicGames.Horde.Storage;
+using EpicGames.Horde.Storage.Bundles;
+using EpicGames.Horde.Storage.ObjectStores;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
+using EpicGames.Redis;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
+using Horde.Server.Accounts;
 using Horde.Server.Acls;
-using Horde.Server.Authentication;
 using Horde.Server.Agents;
+using Horde.Server.Agents.Enrollment;
 using Horde.Server.Agents.Fleet;
 using Horde.Server.Agents.Leases;
 using Horde.Server.Agents.Pools;
+using Horde.Server.Agents.Relay;
 using Horde.Server.Agents.Sessions;
-using Horde.Server.Agents.Software;
-using Horde.Server.Agents.Telemetry;
+using Horde.Server.Agents.Utilization;
+using Horde.Server.Artifacts;
+using Horde.Server.Auditing;
+using Horde.Server.Authentication;
+using Horde.Server.Aws;
+using Horde.Server.Compute;
 using Horde.Server.Configuration;
 using Horde.Server.Dashboard;
+using Horde.Server.Ddc;
 using Horde.Server.Devices;
 using Horde.Server.Issues;
 using Horde.Server.Issues.External;
 using Horde.Server.Jobs;
 using Horde.Server.Jobs.Artifacts;
+using Horde.Server.Jobs.Bisect;
 using Horde.Server.Jobs.Graphs;
 using Horde.Server.Jobs.Schedules;
 using Horde.Server.Jobs.Templates;
 using Horde.Server.Jobs.TestData;
 using Horde.Server.Jobs.Timing;
 using Horde.Server.Logs;
-using Horde.Server.Logs.Builder;
 using Horde.Server.Logs.Storage;
 using Horde.Server.Notifications;
+using Horde.Server.Notifications.Sinks;
+using Horde.Server.Perforce;
+using Horde.Server.Replicators;
 using Horde.Server.Secrets;
 using Horde.Server.Server;
+using Horde.Server.Server.Notices;
+using Horde.Server.ServiceAccounts;
 using Horde.Server.Storage;
-using Horde.Server.Storage.Backends;
+using Horde.Server.Storage.ObjectStores;
+using Horde.Server.Streams;
 using Horde.Server.Tasks;
+using Horde.Server.Telemetry;
+using Horde.Server.Telemetry.Metrics;
+using Horde.Server.Telemetry.Sinks;
 using Horde.Server.Tools;
+using Horde.Server.Ugs;
+using Horde.Server.Users;
 using Horde.Server.Utilities;
 using HordeCommon;
 using Microsoft.AspNetCore.Authentication;
@@ -69,43 +101,36 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.Bson.Serialization.Serializers;
-using Serilog;
-using Serilog.Events;
-using Status = Grpc.Core.Status;
-using Horde.Server.Users;
-using Horde.Server.Perforce;
-using Horde.Server.Projects;
-using Horde.Server.Streams;
-using Horde.Server.Telemetry;
-using Horde.Server.Ugs;
-using Horde.Server.Auditing;
-using Horde.Server.Server.Notices;
-using Horde.Server.Notifications.Sinks;
-using StatusCode = Grpc.Core.StatusCode;
-using Horde.Server.Artifacts;
-using Horde.Server.Compute;
-using OpenTelemetry.Trace;
 using Polly;
 using Polly.Extensions.Http;
-using Horde.Server.Jobs.Bisect;
-using Microsoft.AspNetCore.Diagnostics;
-using EpicGames.Horde;
-using EpicGames.Horde.Api;
+using Serilog;
+using Serilog.Events;
+using StackExchange.Redis;
+using Swashbuckle.AspNetCore.SwaggerGen;
+using Status = Grpc.Core.Status;
+using StatusCode = Grpc.Core.StatusCode;
 
 namespace Horde.Server
 {
+	using ContentHash = EpicGames.Core.ContentHash;
+	using ILogger = Microsoft.Extensions.Logging.ILogger;
+	using ReferenceResolver = Horde.Server.Ddc.ReferenceResolver;
+
 	class Startup
 	{
 		static Startup()
@@ -125,49 +150,49 @@ namespace Horde.Server
 
 			public override Task<TResponse> UnaryServerHandler<TRequest, TResponse>(TRequest request, ServerCallContext context, UnaryServerMethod<TRequest, TResponse> continuation)
 			{
-				return Guard(context, () => base.UnaryServerHandler(request, context, continuation));
+				return GuardAsync(context, () => base.UnaryServerHandler(request, context, continuation));
 			}
 
 			public override Task<TResponse> ClientStreamingServerHandler<TRequest, TResponse>(IAsyncStreamReader<TRequest> requestStream, ServerCallContext context, ClientStreamingServerMethod<TRequest, TResponse> continuation) where TRequest : class where TResponse : class
 			{
-				return Guard(context, () => base.ClientStreamingServerHandler(requestStream, context, continuation));
+				return GuardAsync(context, () => base.ClientStreamingServerHandler(requestStream, context, continuation));
 			}
 
 			public override Task ServerStreamingServerHandler<TRequest, TResponse>(TRequest request, IServerStreamWriter<TResponse> responseStream, ServerCallContext context, ServerStreamingServerMethod<TRequest, TResponse> continuation) where TRequest : class where TResponse : class
 			{
-				return Guard(context, () => base.ServerStreamingServerHandler(request, responseStream, context, continuation));
+				return GuardAsync(context, () => base.ServerStreamingServerHandler(request, responseStream, context, continuation));
 			}
 
 			public override Task DuplexStreamingServerHandler<TRequest, TResponse>(IAsyncStreamReader<TRequest> requestStream, IServerStreamWriter<TResponse> responseStream, ServerCallContext context, DuplexStreamingServerMethod<TRequest, TResponse> continuation) where TRequest : class where TResponse : class
 			{
-				return Guard(context, () => base.DuplexStreamingServerHandler(requestStream, responseStream, context, continuation));
+				return GuardAsync(context, () => base.DuplexStreamingServerHandler(requestStream, responseStream, context, continuation));
 			}
 
-			async Task<T> Guard<T>(ServerCallContext context, Func<Task<T>> callFunc) where T : class
+			async Task<T> GuardAsync<T>(ServerCallContext context, Func<Task<T>> callFunc) where T : class
 			{
 				T result = null!;
-				await Guard(context, async () => { result = await callFunc(); });
+				await GuardAsync(context, async () => { result = await callFunc(); });
 				return result;
 			}
 
-			async Task Guard(ServerCallContext context, Func<Task> callFunc)
+			async Task GuardAsync(ServerCallContext context, Func<Task> callFunc)
 			{
 				HttpContext httpContext = context.GetHttpContext();
 
 				AgentId? agentId = AclService.GetAgentId(httpContext.User);
 				if (agentId != null)
 				{
-					using IDisposable scope = _logger.BeginScope("Agent: {AgentId}, RemoteIP: {RemoteIP}, Method: {Method}", agentId.Value, httpContext.Connection.RemoteIpAddress, context.Method);
-					await GuardInner(context, callFunc);
+					using IDisposable? scope = _logger.BeginScope("Agent: {AgentId}, RemoteIP: {RemoteIP}, Method: {Method}", agentId.Value, httpContext.Connection.RemoteIpAddress, context.Method);
+					await GuardInnerAsync(context, callFunc);
 				}
 				else
 				{
-					using IDisposable scope = _logger.BeginScope("RemoteIP: {RemoteIP}, Method: {Method}", httpContext.Connection.RemoteIpAddress, context.Method);
-					await GuardInner(context, callFunc);
+					using IDisposable? scope = _logger.BeginScope("RemoteIP: {RemoteIP}, Method: {Method}", httpContext.Connection.RemoteIpAddress, context.Method);
+					await GuardInnerAsync(context, callFunc);
 				}
 			}
 
-			async Task GuardInner(ServerCallContext context, Func<Task> callFunc)
+			async Task GuardInnerAsync(ServerCallContext context, Func<Task> callFunc)
 			{
 				try
 				{
@@ -233,7 +258,7 @@ namespace Horde.Server
 				writer.WriteStringValue(objectId.ToString());
 			}
 		}
-		
+
 		class JsonDateTimeConverter : JsonConverter<DateTime>
 		{
 			public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -272,16 +297,34 @@ namespace Horde.Server
 			}
 		}
 
-		static IStorageBackend CreateStorageBackend(IServiceProvider sp, StorageBackendOptions options)
+		class ObsoleteLoggingFilter : IActionFilter
+		{
+			public void OnActionExecuted(ActionExecutedContext context)
+			{
+			}
+
+			public void OnActionExecuting(ActionExecutingContext context)
+			{
+				ControllerActionDescriptor? actionDescriptor = context.ActionDescriptor as ControllerActionDescriptor;
+				if (actionDescriptor?.MethodInfo.GetCustomAttribute<ObsoleteAttribute>() != null
+					|| actionDescriptor?.MethodInfo?.DeclaringType?.GetCustomAttribute<ObsoleteAttribute>() != null)
+				{
+					ILogger? logger = context.HttpContext.RequestServices.GetService<ILogger<ObsoleteLoggingFilter>>();
+					logger?.LogWarning("Using obsolete endpoint: {RequestPath} (Source: {RemoteIp})", context.HttpContext.Request.Path, context.HttpContext.Connection.RemoteIpAddress);
+				}
+			}
+		}
+
+		static IObjectStore CreateObjectStore(IServiceProvider sp, StorageBackendOptions options)
 		{
 			switch (options.Type ?? StorageBackendType.FileSystem)
 			{
 				case StorageBackendType.FileSystem:
-					return new FileSystemStorageBackend(options);
+					return sp.GetRequiredService<FileObjectStoreFactory>().CreateStore(DirectoryReference.Combine(ServerApp.DataDir, options.BaseDir ?? "Storage"));
 				case StorageBackendType.Aws:
-					return new AwsStorageBackend(sp.GetRequiredService<IConfiguration>(), options, sp.GetRequiredService<ILogger<AwsStorageBackend>>());
+					return sp.GetRequiredService<AwsObjectStoreFactory>().CreateStore(options);
 				case StorageBackendType.Memory:
-					return new MemoryStorageBackend();
+					return new MemoryObjectStore();
 				default:
 					throw new NotImplementedException();
 			}
@@ -294,7 +337,6 @@ namespace Horde.Server
 
 		public IConfiguration Configuration { get; }
 
-
 		/// <summary>
 		/// Bind config to concrete subclasses of BaseTelemetryConfig
 		/// </summary>
@@ -306,26 +348,32 @@ namespace Horde.Server
 			List<BaseTelemetryConfig> telemetryConfigs = new();
 			foreach (IConfigurationSection child in telemetrySection.GetChildren())
 			{
-				string typeStr = child.GetValue<string>("Type");
-				if (!Enum.TryParse(typeStr, true, out TelemetrySinkType sinkType))
+				string? typeStr = child.GetValue<string>("Type");
+				if (typeStr == null || !Enum.TryParse(typeStr, true, out TelemetrySinkType sinkType))
 				{
 					throw new ConfigurationException($"Unable to parse sink type '{typeStr}'");
 				}
-				
+
 				switch (sinkType)
 				{
 					case TelemetrySinkType.Epic:
-						EpicTelemetryConfig epic = new ();
+						EpicTelemetryConfig epic = new();
 						child.Bind(epic);
 						telemetryConfigs.Add(epic);
 						break;
-						
+
 					case TelemetrySinkType.ClickHouse:
-						ClickHouseTelemetryConfig clickHouse = new ();
+						ClickHouseTelemetryConfig clickHouse = new();
 						child.Bind(clickHouse);
 						telemetryConfigs.Add(clickHouse);
 						break;
-					
+
+					case TelemetrySinkType.Mongo:
+						MongoTelemetryConfig mongo = new();
+						child.Bind(mongo);
+						telemetryConfigs.Add(mongo);
+						break;
+
 					case TelemetrySinkType.None:
 					default:
 						break;
@@ -334,24 +382,54 @@ namespace Horde.Server
 
 			settings.Telemetry = telemetryConfigs;
 		}
-		
+
+		public static void BindServerSettings(IConfiguration configuration, ServerSettings settings)
+		{
+			IConfigurationSection hordeSection = configuration.GetSection("Horde");
+			hordeSection.Bind(settings);
+			BindTelemetrySettings(settings, hordeSection.GetSection("Telemetry"));
+			settings.Validate();
+		}
+
+		/// <summary>
+		/// Converter to/from Redis values
+		/// </summary>
+		sealed class AgentIdRedisConverter : IRedisConverter<AgentId>
+		{
+			/// <inheritdoc/>
+			public AgentId FromRedisValue(RedisValue value) => new AgentId((string)value!);
+
+			/// <inheritdoc/>
+			public RedisValue ToRedisValue(AgentId value) => value.ToString();
+		}
+
+		/// <summary>
+		/// Configure custom types for the public API documentation
+		/// </summary>
+		class SwaggerSchemaFilter : ISchemaFilter
+		{
+			public void Apply(OpenApiSchema schema, SchemaFilterContext context)
+			{
+				if (context.Type == typeof(AgentId))
+				{
+				}
+				if (context.Type == typeof(Utf8String) || context.Type.GetCustomAttribute<JsonSchemaStringAttribute>() != null)
+				{
+					schema.Type = "string";
+					schema.Properties.Clear();
+				}
+			}
+		}
+
 		// This method gets called *multiple times* by the runtime. Use this method to add services to the container.
 		public void ConfigureServices(IServiceCollection services)
 		{
-			void BindServerSettings(ServerSettings settings)
-			{
-				IConfigurationSection hordeSection = Configuration.GetSection("Horde");
-				hordeSection.Bind(settings);
-				BindTelemetrySettings(settings, hordeSection.GetSection("Telemetry"));
-			}
-			
 			// IOptionsMonitor pattern for live updating of configuration settings
-			services.Configure<ServerSettings>(BindServerSettings);
-			
+			services.Configure<ServerSettings>(x => BindServerSettings(Configuration, x));
+
 			// Bind the settings again for local variable access in this method
 			ServerSettings settings = new();
-			BindServerSettings(settings);
-			settings.Validate();
+			BindServerSettings(Configuration, settings);
 
 			OpenTelemetryHelper.Configure(services, settings.OpenTelemetry);
 
@@ -364,11 +442,17 @@ namespace Horde.Server
 				ThreadPool.SetMinThreads(min, min);
 			}
 
+			RedisSerializer.RegisterConverter<AgentId, AgentIdRedisConverter>();
+
 #pragma warning disable CA2000 // Dispose objects before losing scope
-			RedisService redisService = new RedisService(settings);
+			RedisService redisService;
+			using (Serilog.Extensions.Logging.SerilogLoggerFactory loggerFactory = new Serilog.Extensions.Logging.SerilogLoggerFactory(Serilog.Log.Logger))
+			{
+				redisService = new RedisService(Options.Create(settings), loggerFactory.CreateLogger<RedisService>());
+			}
 #pragma warning restore CA2000 // Dispose objects before losing scope
 			services.AddSingleton<RedisService>(sp => redisService);
-			services.AddDataProtection().PersistKeysToStackExchangeRedis(() => redisService.DatabaseSingleton, "aspnet-data-protection");
+			services.AddDataProtection().PersistKeysToStackExchangeRedis(() => redisService.GetDatabase(), "aspnet-data-protection");
 
 			if (settings.CorsEnabled)
 			{
@@ -393,6 +477,7 @@ namespace Horde.Server
 			services.AddHttpClient<JobRpcCommon>().AddPolicyHandler(GetDefaultHttpRetryPolicy());
 			services.AddScoped<JobRpcCommon>();
 
+			services.AddSingleton<IAccountCollection, AccountCollection>();
 			services.AddSingleton<IAgentCollection, AgentCollection>();
 			services.AddSingleton<IArtifactCollection, ArtifactCollection>();
 			services.AddSingleton<IArtifactCollectionV1, ArtifactCollectionV1>();
@@ -407,13 +492,14 @@ namespace Horde.Server
 			services.AddSingleton<INotificationTriggerCollection, NotificationTriggerCollection>();
 			services.AddSingleton<IPoolCollection, PoolCollection>();
 			services.AddSingleton<IBisectTaskCollection, BisectTaskCollection>();
-			services.AddSingleton<ISessionCollection, SessionCollection>();
+			services.AddSingleton<IReplicatorCollection, ReplicatorCollection>();
 			services.AddSingleton<IServiceAccountCollection, ServiceAccountCollection>();
+			services.AddSingleton<ISessionCollection, SessionCollection>();
 			services.AddSingleton<ISubscriptionCollection, SubscriptionCollection>();
 			services.AddSingleton<IStreamCollection, StreamCollection>();
 			services.AddSingleton<ITemplateCollection, TemplateCollection>();
 			services.AddSingleton<ITestDataCollection, TestDataCollection>();
-			services.AddSingleton<ITelemetryCollection, TelemetryCollection>();
+			services.AddSingleton<IUtilizationDataCollection, UtilizationDataCollection>();
 			services.AddSingleton<ITemplateCollection, TemplateCollection>();
 			services.AddSingleton<IUgsMetadataCollection, UgsMetadataCollection>();
 			services.AddSingleton<IUserCollection, UserCollectionV2>();
@@ -443,14 +529,18 @@ namespace Horde.Server
 			services.AddSingleton<AwsAutoScalingLifecycleService>();
 			services.AddSingleton<FleetService>();
 			services.AddSingleton<IFleetManagerFactory, FleetManagerFactory>();
-			
+
 			// Associate IFleetManager interface with the default implementation from config for convenience
 			// Though most fleet managers are created on a per-pool basis
 			services.AddSingleton<IFleetManager>(ctx => ctx.GetRequiredService<IFleetManagerFactory>().CreateFleetManager(FleetManagerType.Default));
 
-			// Run the tunnel service for all runmodes
+			// Run the tunnel service for all run modes
 			services.AddSingleton<TunnelService>();
 			services.AddHostedService<TunnelService>(sp => sp.GetRequiredService<TunnelService>());
+
+			// Runs the agent relay service for all run modes to notify long-polling requests
+			services.AddSingleton<AgentRelayService>();
+			services.AddHostedService(provider => provider.GetRequiredService<AgentRelayService>());
 
 			services.AddSingleton<AclService>();
 			services.AddSingleton<AgentService>();
@@ -466,6 +556,11 @@ namespace Horde.Server
 			services.AddSingleton<IssueService>();
 			services.AddSingleton<JobService>();
 			services.AddSingleton<LifetimeService>();
+			services.AddHostedService(provider => provider.GetRequiredService<LifetimeService>());
+			services.AddSingleton(typeof(IHealthMonitor<>), typeof(HealthMonitor<>));
+			services.AddSingleton<EnrollmentService>();
+			services.AddSingleton<ServerStatusService>();
+			services.AddHostedService(provider => provider.GetRequiredService<ServerStatusService>());
 			services.AddSingleton<ILogFileService, LogFileService>();
 			services.AddSingleton<LogTailService>();
 			services.AddHostedService(provider => provider.GetRequiredService<LogTailService>()); // NB: Runs even on workers, to receive tail notifications.
@@ -499,11 +594,15 @@ namespace Horde.Server
 				services.AddSingleton<IAvatarService, NullAvatarService>();
 			}
 
-			services.AddSingleton<DeviceService>();						
+			services.AddScoped<OAuthControllerFilter>();
+
+			services.AddSingleton<DeviceService>();
 			services.AddSingleton<NoticeService>();
 			services.AddSingleton<StorageService>();
-			services.AddSingleton<IStorageClientFactory>(sp => sp.GetRequiredService<StorageService>());
+			services.AddScoped(sp => sp.GetRequiredService<StorageService>().CreateStorageClientFactory(sp.GetRequiredService<IOptionsSnapshot<GlobalConfig>>().Value));
 			services.AddSingleton<TestDataService>();
+			services.AddSingleton<BundleCache>();
+			services.AddSingleton<StorageBackendCache>(CreateStorageBackendCache);
 
 			if (settings.JiraUrl != null)
 			{
@@ -514,13 +613,26 @@ namespace Horde.Server
 				services.AddSingleton<IExternalIssueService, DefaultExternalIssueService>();
 			}
 
+			// DDC
+			services.AddScoped<IRequestHelper, RequestHelper>();
+			services.AddScoped<IBlobService, BlobService>();
+			services.AddScoped<IRefService, RefService>();
+			services.AddScoped<IReferenceResolver, ReferenceResolver>();
+			services.AddScoped<IContentIdStore, ContentIdStore>();
+			services.AddSingleton<BufferedPayloadFactory>();
+			services.AddSingleton<NginxRedirectHelper>();
+			services.AddSingleton<FormatResolver>();
+			services.AddSingleton<CompressedBufferUtils>();
+
 			// Secret providers
 			services.AddSingleton<SecretService>();
 
 			// Storage providers
-			services.AddSingleton<IStorageBackendProvider, StorageBackendProvider>();
-			services.AddSingleton(sp => CreateStorageBackend(sp, settings.LogStorage).ForType<PersistentLogStorage>());
-			services.AddSingleton(sp => CreateStorageBackend(sp, settings.ArtifactStorage).ForType<ArtifactCollectionV1>());
+			services.AddSingleton<IObjectStoreFactory, ObjectStoreFactory>();
+			services.AddSingleton<AwsObjectStoreFactory>();
+			services.AddSingleton<FileObjectStoreFactory>();
+			services.AddSingleton(sp => CreateObjectStore(sp, settings.LogStorage).ForType<PersistentLogStorage>());
+			services.AddSingleton(sp => CreateObjectStore(sp, settings.ArtifactStorage).ForType<ArtifactCollectionV1>());
 
 			if (settings.WithAws)
 			{
@@ -530,11 +642,13 @@ namespace Horde.Server
 				{
 					awsOptions.Region = RegionEndpoint.USEast1;
 				}
-				
+
 				services.AddAWSService<IAmazonCloudWatch>();
 				services.AddAWSService<IAmazonAutoScaling>();
 				services.AddAWSService<IAmazonSQS>();
 				services.AddAWSService<IAmazonEC2>();
+
+				services.AddSingleton<AwsCloudWatchMetricExporter>();
 			}
 
 			ConfigureLogStorage(services);
@@ -544,20 +658,20 @@ namespace Horde.Server
 					switch (settings.AuthMethod)
 					{
 						case AuthMethod.Anonymous:
-							options.DefaultAuthenticateScheme = AnonymousAuthenticationHandler.AuthenticationScheme;
-							options.DefaultSignInScheme = AnonymousAuthenticationHandler.AuthenticationScheme;
-							options.DefaultChallengeScheme = AnonymousAuthenticationHandler.AuthenticationScheme;
+							options.DefaultAuthenticateScheme = AnonymousAuthHandler.AuthenticationScheme;
+							options.DefaultSignInScheme = AnonymousAuthHandler.AuthenticationScheme;
+							options.DefaultChallengeScheme = AnonymousAuthHandler.AuthenticationScheme;
 							break;
-						
+
 						case AuthMethod.Okta:
 							// If an authentication cookie is present, use it to get authentication information
 							options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
 							options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
 
 							// If authentication is required, and no cookie is present, use OIDC to sign in
-							options.DefaultChallengeScheme = OktaDefaults.AuthenticationScheme;
+							options.DefaultChallengeScheme = OktaAuthHandler.AuthenticationScheme;
 							break;
-						
+
 						case AuthMethod.OpenIdConnect:
 							// If an authentication cookie is present, use it to get authentication information
 							options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -566,7 +680,13 @@ namespace Horde.Server
 							// If authentication is required, and no cookie is present, use OIDC to sign in
 							options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
 							break;
-						
+
+						case AuthMethod.Horde:
+							options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+							options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+							options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+							break;
+
 						default:
 							throw new ArgumentException($"Invalid auth method {settings.AuthMethod}");
 					}
@@ -575,41 +695,51 @@ namespace Horde.Server
 			List<string> schemes = new List<string>();
 
 			authBuilder.AddCookie(options =>
-				 {
-					 options.Events.OnValidatePrincipal = context =>
-					 {
-						 if (context.Principal?.FindFirst(HordeClaimTypes.UserId) == null)
-						 {
-							 context.RejectPrincipal();
-						 }
-						 return Task.CompletedTask;
-					 };
+			{
+				if (settings.AuthMethod == AuthMethod.Horde)
+				{
+					options.Cookie.Name = CookieAuthenticationDefaults.AuthenticationScheme;
+					options.LoginPath = "/account/login/horde";
+					options.LogoutPath = "/";
+				}
 
-					 options.Events.OnRedirectToAccessDenied = context =>
-					 {
-						 context.Response.StatusCode = StatusCodes.Status403Forbidden;
-						 return context.Response.CompleteAsync();
-					 };
-				 });
+				options.Events.OnValidatePrincipal = context =>
+				{
+					if (!String.Equals(context.Principal?.FindFirst(HordeClaimTypes.Version)?.Value, HordeClaimTypes.CurrentVersion, StringComparison.Ordinal))
+					{
+						context.RejectPrincipal();
+					}
+					if (context.Principal?.FindFirst(HordeClaimTypes.UserId) == null)
+					{
+						context.RejectPrincipal();
+					}
+					return Task.CompletedTask;
+				};
+
+				options.Events.OnRedirectToAccessDenied = context =>
+				{
+					context.Response.StatusCode = StatusCodes.Status403Forbidden;
+					return context.Response.CompleteAsync();
+				};
+			});
 			schemes.Add(CookieAuthenticationDefaults.AuthenticationScheme);
 
-			authBuilder.AddServiceAccount(options => { });
+			authBuilder.AddServiceAccounts(options => { });
 			schemes.Add(ServiceAccountAuthHandler.AuthenticationScheme);
 
-			
 			switch (settings.AuthMethod)
 			{
 				case AuthMethod.Anonymous:
 					authBuilder.AddAnonymous(options => { });
-					schemes.Add(AnonymousAuthenticationHandler.AuthenticationScheme);
+					schemes.Add(AnonymousAuthHandler.AuthenticationScheme);
 					break;
-						
+
 				case AuthMethod.Okta:
-					authBuilder.AddOkta(settings, OktaDefaults.AuthenticationScheme, OpenIdConnectDefaults.DisplayName, options =>
+					authBuilder.AddOkta(settings, OktaAuthHandler.AuthenticationScheme, OpenIdConnectDefaults.DisplayName, options =>
 						{
 							options.Authority = settings.OidcAuthority;
 							options.ClientId = settings.OidcClientId;
-								options.Scope.Remove("groups");								
+							options.Scope.Remove("groups");
 
 							if (!String.IsNullOrEmpty(settings.OidcSigninRedirect))
 							{
@@ -623,9 +753,9 @@ namespace Horde.Server
 								};
 							}
 						});
-					schemes.Add(OktaDefaults.AuthenticationScheme);
+					schemes.Add(OktaAuthHandler.AuthenticationScheme);
 					break;
-						
+
 				case AuthMethod.OpenIdConnect:
 					authBuilder.AddHordeOpenId(settings, OpenIdConnectDefaults.AuthenticationScheme, OpenIdConnectDefaults.DisplayName, options =>
 						{
@@ -651,58 +781,87 @@ namespace Horde.Server
 						});
 					schemes.Add(OpenIdConnectDefaults.AuthenticationScheme);
 					break;
-						
+
+				case AuthMethod.Horde:
+					authBuilder.AddHordeOpenId(settings, OpenIdConnectDefaults.AuthenticationScheme, OpenIdConnectDefaults.DisplayName, options =>
+					{
+						options.Authority = new Uri(settings.ServerUrl, "api/v1/oauth2").ToString();
+						options.ClientId = "default";
+						if (settings.HttpsPort == 0)
+						{
+							options.RequireHttpsMetadata = false;
+						}
+						foreach (string scope in settings.OidcRequestedScopes)
+						{
+							options.Scope.Add(scope);
+						}
+					});
+					schemes.Add(OpenIdConnectDefaults.AuthenticationScheme);
+					break;
+
 				default:
 					throw new ArgumentException($"Invalid auth method {settings.AuthMethod}");
 			}
 
-			services.AddSingleton<TelemetryManager>();
-			services.AddSingleton<ITelemetrySink>(sp => sp.GetRequiredService<TelemetryManager>());
-			services.AddHostedService(sp => sp.GetRequiredService<TelemetryManager>());
-			services.AddHttpClient(EpicTelemetrySink.HttpClientName, client => { });
-			services.AddHttpClient(ClickHouseTelemetrySink.HttpClientName, client => { });
+			authBuilder.AddScheme<JwtBearerOptions, JwtAuthHandler>(JwtAuthHandler.AuthenticationScheme, options => { });
+			schemes.Add(JwtAuthHandler.AuthenticationScheme);
 
-			authBuilder.AddScheme<JwtBearerOptions, HordeServerJwtBearerHandler>(HordeServerJwtBearerHandler.AuthenticationScheme, options => { });
-			schemes.Add(HordeServerJwtBearerHandler.AuthenticationScheme);
-
-			if (settings.OidcAuthority != null && settings.OidcAudience != null)
+			if (!String.IsNullOrEmpty(settings.OidcAuthority) && !String.IsNullOrEmpty(settings.OidcAudience))
 			{
-				HordeJwtBearerHandler hordeJwtBearer = new(settings);  
-				hordeJwtBearer.AddHordeJwtBearerConfiguration(authBuilder);  
-				schemes.Add(HordeJwtBearerHandler.AuthenticationScheme);				
+				ExternalJwtAuthHandler hordeJwtBearer = new(settings);
+				hordeJwtBearer.AddHordeJwtBearerConfiguration(authBuilder);
+				schemes.Add(ExternalJwtAuthHandler.AuthenticationScheme);
 			}
 
 			services.AddAuthorization(options =>
 				{
 					options.DefaultPolicy = new AuthorizationPolicyBuilder(schemes.ToArray())
-						.RequireAuthenticatedUser()							
+						.RequireAuthenticatedUser()
 						.Build();
 				});
-			
+
+			services.AddSingleton<TelemetryManager>();
+			services.AddSingleton<ITelemetrySink>(sp => sp.GetRequiredService<TelemetryManager>());
+			services.AddHostedService(sp => sp.GetRequiredService<TelemetryManager>());
+			services.AddSingleton<MongoTelemetrySink>();
+			services.AddHostedService(sp => sp.GetRequiredService<MongoTelemetrySink>());
+			services.AddSingleton<MetricTelemetrySink>();
+
+			services.AddSingleton<MetricCollection>();
+			services.AddHostedService(sp => sp.GetRequiredService<MetricCollection>());
+			services.AddSingleton<IMetricCollection, MetricCollection>(sp => sp.GetRequiredService<MetricCollection>());
+
+			services.AddHttpClient(EpicTelemetrySink.HttpClientName, client => { });
+			services.AddHttpClient(ClickHouseTelemetrySink.HttpClientName, client => { });
+
 			// Hosted service that needs to run no matter the run mode of the process (server vs worker)
 			services.AddHostedService(provider => (DowntimeService)provider.GetRequiredService<IDowntimeService>());
 
 			// Always run agent service too; need to be able to listen to Redis for events on any server.
 			services.AddHostedService(provider => provider.GetRequiredService<AgentService>());
 
-			// We need to run the Mongo upgrade service too; some collections only get instantiated when referenced at the moment, and references may come solely from HTTP requests.
-			services.AddHostedService<MongoUpgradeService>();
+			// Notifications can be triggered from any instance, so always make sure we're ticking the background task.
+			services.AddHostedService(provider => (NotificationService)provider.GetRequiredService<INotificationService>());
 
 			if (settings.IsRunModeActive(RunMode.Worker) && !settings.DatabaseReadOnlyMode)
 			{
+				services.AddHostedService<AgentReportService>();
 				services.AddHostedService<BisectService>();
 				services.AddHostedService(provider => provider.GetRequiredService<FleetService>());
 				services.AddHostedService(provider => provider.GetRequiredService<ConsistencyService>());
 				services.AddHostedService(provider => provider.GetRequiredService<IssueService>());
 				services.AddHostedService<IssueReportService>();
-				services.AddHostedService(provider => (NotificationService)provider.GetRequiredService<INotificationService>());
 				services.AddHostedService<MetricService>();
 				services.AddHostedService(provider => provider.GetRequiredService<PerforceLoadBalancer>());
 				services.AddHostedService<PoolUpdateService>();
-				services.AddHostedService<TelemetryService>();
+				services.AddHostedService<UtilizationDataService>();
 				services.AddHostedService(provider => provider.GetRequiredService<DeviceService>());
+				services.AddHostedService<DeviceReportService>();
 				services.AddHostedService(provider => provider.GetRequiredService<TestDataService>());
-				
+				services.AddHostedService(provider => provider.GetRequiredService<ComputeService>());
+				services.AddHostedService(provider => provider.GetRequiredService<EnrollmentService>());
+				services.AddHostedService(provider => provider.GetRequiredService<StorageService>());
+
 				if (settings.Commits.ReplicateMetadata)
 				{
 					services.AddHostedService(provider => provider.GetRequiredService<PerforceServiceCache>());
@@ -713,11 +872,6 @@ namespace Horde.Server
 					services.AddHostedService(provider => provider.GetRequiredService<ReplicationService>());
 				}
 
-				if (settings.EnableLogService)
-				{
-					services.AddHostedService(provider => (LogFileService)provider.GetRequiredService<ILogFileService>());
-				}
-				
 				if (!settings.DisableSchedules)
 				{
 					services.AddHostedService(provider => provider.GetRequiredService<ScheduleService>());
@@ -727,19 +881,21 @@ namespace Horde.Server
 				{
 					services.AddHostedService(provider => provider.GetRequiredService<SlackNotificationSink>());
 				}
-				
+
 				if (settings.WithAws)
 				{
 					services.AddHostedService(provider => provider.GetRequiredService<AwsAutoScalingLifecycleService>());
+					services.AddHostedService(provider => provider.GetRequiredService<AwsCloudWatchMetricExporter>());
 				}
 			}
 
 			services.AddHostedService(provider => provider.GetRequiredService<IExternalIssueService>());
 
 			// Task sources. Order of registration is important here; it dictates the priority in which sources are served.
+			services.AddSingleton<JobTaskSource>();
+
 			if (!settings.DatabaseReadOnlyMode)
 			{
-				services.AddSingleton<JobTaskSource>();
 				services.AddHostedService<JobTaskSource>(provider => provider.GetRequiredService<JobTaskSource>());
 				services.AddSingleton<ConformTaskSource>();
 				services.AddHostedService<ConformTaskSource>(provider => provider.GetRequiredService<ConformTaskSource>());
@@ -768,17 +924,34 @@ namespace Horde.Server
 			});
 
 			services.AddMvc().AddJsonOptions(options => ConfigureJsonSerializer(options.JsonSerializerOptions));
+			services.AddControllersWithViews(options => options.Filters.Add(new ObsoleteLoggingFilter()))
+				.AddRazorRuntimeCompilation();
 
 			services.AddControllers(options =>
 			{
 				options.InputFormatters.Add(new CbInputFormatter());
 				options.OutputFormatters.Add(new CbOutputFormatter());
 				options.OutputFormatters.Insert(0, new CbPreferredOutputFormatter());
+				options.OutputFormatters.Add(new RawOutputFormatter(NullLogger.Instance));
+				options.FormatterMappings.SetMediaTypeMappingForFormat("raw", MediaTypeNames.Application.Octet);
 				options.FormatterMappings.SetMediaTypeMappingForFormat("uecb", CustomMediaTypeNames.UnrealCompactBinary);
+				options.FormatterMappings.SetMediaTypeMappingForFormat("uecbpkg", CustomMediaTypeNames.UnrealCompactBinaryPackage);
+			}).ConfigureApiBehaviorOptions(options =>
+			{
+				options.InvalidModelStateResponseFactory = context =>
+				{
+					BadRequestObjectResult result = new BadRequestObjectResult(context.ModelState);
+					// always return errors as json objects
+					// we could allow more types here, but we do not want raw for instance
+					result.ContentTypes.Add(MediaTypeNames.Application.Json);
+
+					return result;
+				};
 			});
 
 			services.AddSwaggerGen(config =>
 			{
+				config.SchemaGeneratorOptions.SchemaFilters.Add(new SwaggerSchemaFilter());
 				config.SwaggerDoc("v1", new OpenApiInfo { Title = "Horde Server API", Version = "v1" });
 				config.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, $"{Assembly.GetExecutingAssembly().GetName().Name}.xml"));
 			});
@@ -787,7 +960,7 @@ namespace Horde.Server
 			{
 				options.InvalidModelStateResponseFactory = context =>
 				{
-					foreach(KeyValuePair<string, ModelStateEntry> pair in context.ModelState)
+					foreach (KeyValuePair<string, ModelStateEntry> pair in context.ModelState)
 					{
 						ModelError? error = pair.Value.Errors.FirstOrDefault();
 						if (error != null)
@@ -804,8 +977,8 @@ namespace Horde.Server
 				};
 			});
 
-			DirectoryReference dashboardDir = DirectoryReference.Combine(Program.AppDir, "DashboardApp");
-			if (DirectoryReference.Exists(dashboardDir)) 
+			DirectoryReference dashboardDir = DirectoryReference.Combine(ServerApp.AppDir, "DashboardApp");
+			if (DirectoryReference.Exists(dashboardDir))
 			{
 				services.AddSpaStaticFiles(config => { config.RootPath = "DashboardApp"; });
 			}
@@ -814,6 +987,13 @@ namespace Horde.Server
 			ConfigureFormatters();
 
 			OnAddHealthChecks(services);
+		}
+
+		static StorageBackendCache CreateStorageBackendCache(IServiceProvider serviceProvider)
+		{
+			ServerSettings serverSettings = serviceProvider.GetRequiredService<IOptions<ServerSettings>>().Value;
+			DirectoryReference cacheDir = DirectoryReference.Combine(ServerApp.DataDir, String.IsNullOrEmpty(serverSettings.BundleCacheDir) ? "Cache" : serverSettings.BundleCacheDir);
+			return new StorageBackendCache(cacheDir, serverSettings.BundleCacheSize * 1024 * 1024, serviceProvider.GetRequiredService<ILogger<StorageBackendCache>>());
 		}
 
 		public static void ConfigureFormatters()
@@ -831,93 +1011,29 @@ namespace Horde.Server
 			options.Converters.Add(new JsonObjectIdConverter());
 			options.Converters.Add(new JsonKnownTypesConverterFactory());
 			options.Converters.Add(new ObjectIdJsonConverterFactory());
+			options.Converters.Add(new SubResourceIdJsonConverterFactory());
 			options.Converters.Add(new JsonDateTimeConverter());
 			options.Converters.Add(new JsonTimeSpanConverter());
 		}
 
 		private static void ConfigureLogStorage(IServiceCollection services)
 		{
-			services.AddSingleton<ILogBuilder>(provider =>
-			{
-				RedisService? redisService = provider.GetService<RedisService>();
-				if(redisService == null)
-				{
-					return new LocalLogBuilder();
-				}
-				else
-				{
-					return new RedisLogBuilder(
-						redisService.ConnectionPool,
-						provider.GetRequiredService<Tracer>(),
-						provider.GetRequiredService<ILogger<RedisLogBuilder>>());
-				}
-			});
-
 			services.AddSingleton<PersistentLogStorage>();
 
 			services.AddSingleton<ILogStorage>(provider =>
 			{
 				ILogStorage storage = provider.GetRequiredService<PersistentLogStorage>();
-
-//				IDatabase? RedisDb = Provider.GetService<IDatabase>();
-//				if (RedisDb != null)
-//				{
-//					Storage = new RedisLogStorage(RedisDb, Provider.GetService<ILogger<RedisLogStorage>>(), Storage);
-//				}
-
 				storage = new SequencedLogStorage(storage);
 				storage = new LocalLogStorage(50, storage);
 				return storage;
 			});
 		}
-		/*
-				private static void ConfigureLogFileWriteCache(IServiceCollection Services, ServerSettings Settings)
-				{
-					bool RedisConfigured = !String.IsNullOrEmpty(Settings.RedisConnectionConfig);
-					string CacheType = Settings.LogServiceWriteCacheType.ToLower(CultureInfo.CurrentCulture);
-
-					if (CacheType == "inmemory")
-					{
-						Services.AddSingleton<ILogFileWriteCache2>(Sp => new InMemoryLogFileWriteCache2());
-					}
-					else if (CacheType == "redis" && RedisConfigured)
-					{
-						Services.AddSingleton<ILogFileWriteCache2>(Sp => new RedisLogFileWriteCache2(Sp.GetService<ILogger<RedisLogFileWriteCache>>(), Sp.GetService<IDatabase>()));
-					}
-					else if (CacheType == "redis" && !RedisConfigured)
-					{
-						throw new Exception("Redis must be configured to use the Redis-backed log write cache");
-					}
-					else
-					{
-						throw new Exception("Unknown value set for LogServiceWriteCacheType in config: " + Settings.LogServiceWriteCacheType);
-					}
-				}
-		*/
 
 		private static IAsyncPolicy<HttpResponseMessage> GetDefaultHttpRetryPolicy()
 		{
 			return HttpPolicyExtensions
 				.HandleTransientHttpError()
 				.WaitAndRetryAsync(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10) });
-		}
-		
-		public sealed class HostIdBsonSerializer : SerializerBase<HostId>
-		{
-			/// <inheritdoc/>
-			public override HostId Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args) => new HostId(context.Reader.ReadString());
-
-			/// <inheritdoc/>
-			public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, HostId value) => context.Writer.WriteString(value.ToString());
-		}
-
-		public sealed class BlobIdBsonSerializer : SerializerBase<BlobId>
-		{
-			/// <inheritdoc/>
-			public override BlobId Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args) => new BlobId(context.Reader.ReadString());
-
-			/// <inheritdoc/>
-			public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, BlobId value) => context.Writer.WriteString(value.ToString());
 		}
 
 		public sealed class BlobLocatorBsonSerializer : SerializerBase<BlobLocator>
@@ -980,6 +1096,30 @@ namespace Horde.Server
 			}
 		}
 
+		public sealed class AgentIdBsonSerializer : SerializerBase<AgentId>
+		{
+			/// <inheritdoc/>
+			public override AgentId Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+			{
+				string argument;
+				if (context.Reader.CurrentBsonType == MongoDB.Bson.BsonType.ObjectId)
+				{
+					argument = context.Reader.ReadObjectId().ToString();
+				}
+				else
+				{
+					argument = context.Reader.ReadString();
+				}
+				return new AgentId(argument);
+			}
+
+			/// <inheritdoc/>
+			public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, AgentId value)
+			{
+				context.Writer.WriteString(value.ToString());
+			}
+		}
+
 		public sealed class AclActionBsonSerializer : SerializerBase<AclAction>
 		{
 			/// <inheritdoc/>
@@ -998,6 +1138,65 @@ namespace Horde.Server
 			public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, AclScopeName value) => context.Writer.WriteString(value.Text);
 		}
 
+		sealed class SubResourceIdBsonSerializer<TValue, TConverter> : SerializerBase<TValue> where TValue : struct where TConverter : SubResourceIdConverter<TValue>, new()
+		{
+			readonly TConverter _converter = new TConverter();
+
+			/// <inheritdoc/>
+			public override TValue Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args) => _converter.FromSubResourceId(new SubResourceId((ushort)context.Reader.ReadInt32()));
+
+			/// <inheritdoc/>
+			public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, TValue value) => context.Writer.WriteInt32(_converter.ToSubResourceId(value).Value);
+		}
+
+		/// <summary>
+		/// Serializer for subresource ids
+		/// </summary>
+		public class SubResourceIdSerializer : IBsonSerializer<SubResourceId>
+		{
+			/// <inheritdoc/>
+			public Type ValueType => typeof(SubResourceId);
+
+			/// <inheritdoc/>
+			public object Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+			{
+				return new SubResourceId((ushort)context.Reader.ReadInt32());
+			}
+
+			/// <inheritdoc/>
+			public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
+			{
+				SubResourceId id = (SubResourceId)value;
+				context.Writer.WriteInt32((int)id.Value);
+			}
+
+			/// <inheritdoc/>
+			public void Serialize(BsonSerializationContext context, BsonSerializationArgs args, SubResourceId id)
+			{
+				context.Writer.WriteInt32((int)id.Value);
+			}
+
+			/// <inheritdoc/>
+			SubResourceId IBsonSerializer<SubResourceId>.Deserialize(BsonDeserializationContext context, BsonDeserializationArgs vrgs)
+			{
+				return new SubResourceId((ushort)context.Reader.ReadInt32());
+			}
+		}
+
+		sealed class SubResourceIdBsonSerializationProvider : BsonSerializationProviderBase
+		{
+			/// <inheritdoc/>
+			public override IBsonSerializer? GetSerializer(Type type, IBsonSerializerRegistry serializerRegistry)
+			{
+				SubResourceIdConverterAttribute? attribute = type.GetCustomAttribute<SubResourceIdConverterAttribute>();
+				if (attribute == null)
+				{
+					return null;
+				}
+				return (IBsonSerializer?)Activator.CreateInstance(typeof(SubResourceIdBsonSerializer<,>).MakeGenericType(type, attribute.ConverterType));
+			}
+		}
+
 		static int s_haveConfiguredMongoDb = 0;
 
 		public static void ConfigureMongoDbClient()
@@ -1011,18 +1210,20 @@ namespace Horde.Server
 				ConventionRegistry.Register("Horde", conventionPack, type => true);
 
 				// Register the custom serializers
-				BsonSerializer.RegisterSerializer(new HostIdBsonSerializer());
-				BsonSerializer.RegisterSerializer(new BlobIdBsonSerializer());
 				BsonSerializer.RegisterSerializer(new BlobLocatorBsonSerializer());
 				BsonSerializer.RegisterSerializer(new RefNameBsonSerializer());
 				BsonSerializer.RegisterSerializer(new IoHashBsonSerializer());
 				BsonSerializer.RegisterSerializer(new NamespaceIdBsonSerializer());
+				BsonSerializer.RegisterSerializer(new AgentIdBsonSerializer());
 				BsonSerializer.RegisterSerializer(new AclActionBsonSerializer());
 				BsonSerializer.RegisterSerializer(new AclScopeNameBsonSerializer());
 				BsonSerializer.RegisterSerializer(new ConditionSerializer());
+				BsonSerializer.RegisterSerializer(new SubResourceIdSerializer());
 				BsonSerializer.RegisterSerializationProvider(new BsonSerializationProvider());
 				BsonSerializer.RegisterSerializationProvider(new StringIdBsonSerializationProvider());
+				BsonSerializer.RegisterSerializationProvider(new BinaryIdBsonSerializationProvider());
 				BsonSerializer.RegisterSerializationProvider(new ObjectIdBsonSerializationProvider());
+				BsonSerializer.RegisterSerializationProvider(new SubResourceIdBsonSerializationProvider());
 			}
 		}
 
@@ -1074,18 +1275,16 @@ namespace Horde.Server
 
 			if (!env.IsDevelopment())
 			{
-				app.UseMiddleware<RequestTrackerMiddleware>();	
+				app.UseMiddleware<RequestTrackerMiddleware>();
 			}
 
 			app.UseExceptionHandler("/api/v1/exception");
 
-			app.UseDefaultFiles();
-			app.UseStaticFiles();
-
-			DirectoryReference dashboardDir = DirectoryReference.Combine(Program.AppDir, "DashboardApp");
-
-			if (DirectoryReference.Exists(dashboardDir)) 
+			DirectoryReference dashboardDir = DirectoryReference.Combine(ServerApp.AppDir, "DashboardApp");
+			if (DirectoryReference.Exists(dashboardDir))
 			{
+				app.UseDefaultFiles();
+				app.UseStaticFiles();
 				app.UseWhen(IsSpaRequest, builder => builder.UseSpaStaticFiles());
 			}
 
@@ -1100,6 +1299,8 @@ namespace Horde.Server
 				endpoints.MapGrpcService<RpcService>();
 				endpoints.MapGrpcService<JobRpcService>();
 				endpoints.MapGrpcService<LogRpcService>();
+				endpoints.MapGrpcService<AgentRelayService>();
+				endpoints.MapGrpcService<EnrollmentRpc>();
 
 				endpoints.MapGrpcReflectionService();
 
@@ -1108,7 +1309,7 @@ namespace Horde.Server
 				endpoints.MapHealthChecks("/health/live");
 			});
 
-			if (DirectoryReference.Exists(dashboardDir)) 
+			if (DirectoryReference.Exists(dashboardDir))
 			{
 				app.MapWhen(IsSpaRequest, builder => builder.UseSpa(spa => spa.Options.SourcePath = "DashboardApp"));
 			}
@@ -1135,7 +1336,7 @@ namespace Horde.Server
 			}
 		}
 
-		static LogEventLevel GetRequestLoggingLevel(HttpContext context, double elapsedMs, Exception ex)
+		static LogEventLevel GetRequestLoggingLevel(HttpContext context, double elapsedMs, Exception? ex)
 		{
 			if (context.Request != null && context.Request.Path.HasValue)
 			{
@@ -1145,21 +1346,30 @@ namespace Horde.Server
 				{
 					return LogEventLevel.Verbose;
 				}
+
 				if (requestPath.Equals("/Horde.HordeRpc/UpdateSession", StringComparison.OrdinalIgnoreCase))
 				{
 					return LogEventLevel.Verbose;
 				}
+
 				if (requestPath.Equals("/Horde.HordeRpc/CreateEvents", StringComparison.OrdinalIgnoreCase))
 				{
 					return LogEventLevel.Verbose;
 				}
+
 				if (requestPath.Equals("/Horde.HordeRpc/WriteOutput", StringComparison.OrdinalIgnoreCase))
 				{
 					return LogEventLevel.Information;
 				}
+
 				if (requestPath.StartsWith("/Horde.HordeRpc", StringComparison.OrdinalIgnoreCase))
 				{
 					return LogEventLevel.Debug;
+				}
+
+				if (requestPath.Equals("/Horde.Relay.RelayRpc/GetPortMappings", StringComparison.OrdinalIgnoreCase))
+				{
+					return LogEventLevel.Verbose;
 				}
 
 				if (requestPath.StartsWith("/health", StringComparison.OrdinalIgnoreCase))
@@ -1178,6 +1388,11 @@ namespace Horde.Server
 				}
 
 				if (requestPath.StartsWith("/ugs/api", StringComparison.OrdinalIgnoreCase))
+				{
+					return LogEventLevel.Verbose;
+				}
+
+				if (IsSpaRequest(context))
 				{
 					return LogEventLevel.Verbose;
 				}
@@ -1201,20 +1416,20 @@ namespace Horde.Server
 			serviceCollection.AddSingleton<IHostApplicationLifetime, HostApplicationLifetime>();
 		}
 
-		public static IServiceProvider CreateServiceProvider(IConfiguration configuration)
+		public static ServiceCollection CreateServiceCollection(IConfiguration configuration)
 		{
-			IServiceCollection serviceCollection = new ServiceCollection();
+			ServiceCollection serviceCollection = new ServiceCollection();
 			AddServices(serviceCollection, configuration);
-			return serviceCollection.BuildServiceProvider();
+			return serviceCollection;
 		}
 
-		public static ServiceProvider CreateServiceProvider(IConfiguration configuration, ILoggerProvider loggerProvider)
+		public static ServiceCollection CreateServiceCollection(IConfiguration configuration, ILoggerProvider loggerProvider)
 		{
-			IServiceCollection services = new ServiceCollection();
+			ServiceCollection services = new ServiceCollection();
 			services.AddSingleton(configuration);
 			services.AddSingleton(loggerProvider);
 			AddServices(services, configuration);
-			return services.BuildServiceProvider();
+			return services;
 		}
 	}
 }

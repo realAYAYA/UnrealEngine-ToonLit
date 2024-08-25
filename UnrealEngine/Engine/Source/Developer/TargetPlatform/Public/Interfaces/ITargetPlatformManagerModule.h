@@ -9,6 +9,8 @@
 #include "Modules/ModuleInterface.h"
 
 class ITargetPlatform;
+class ITargetPlatformControls;
+class ITargetPlatformSettings;
 
 DECLARE_MULTICAST_DELEGATE(FOnTargetPlatformsInvalidated);
 
@@ -144,6 +146,8 @@ public:
 	 * @return Collection of platforms.
 	 */
 	virtual const TArray<ITargetPlatform*>& GetTargetPlatforms() = 0;
+	virtual const TArray<ITargetPlatformControls*>& GetTargetPlatformControls() = 0;
+	virtual const TArray<ITargetPlatformSettings*>& GetTargetPlatformSettings() = 0;
 
 	/**
 	 * Returns the list of all ITextureFormats that were located in DLLs.

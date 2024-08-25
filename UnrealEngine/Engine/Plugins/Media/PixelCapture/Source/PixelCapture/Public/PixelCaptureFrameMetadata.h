@@ -9,6 +9,9 @@ struct FPixelCaptureFrameMetadata
 	// Identifier for the capture pipeline/process this frame took
 	FString ProcessName = "Unknown";
 
+	// Identifier for the frame
+	uint64 Id = 0;
+
 	// Which layer this specific frame is associated with
 	int32 Layer = 0;
 

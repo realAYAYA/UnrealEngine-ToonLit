@@ -1,15 +1,20 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
 #pragma once
-#include "FileActivityTimingTrack.h"
+
+#include "Framework/Commands/Commands.h"
+#include "Insights/ITimingViewExtender.h"
 #include "Insights/ViewModels/TimingEventsTrack.h"
 #include "TraceServices/Model/Regions.h"
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
+class STimingView;
 
 namespace Insights
 {
 
 class FTimingRegionsTrack;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 class FTimingRegionsViewCommands : public TCommands<FTimingRegionsViewCommands>
 {
@@ -21,6 +26,8 @@ public:
 public:
 	TSharedPtr<FUICommandInfo> ShowHideRegionTrack;
 };
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 class FTimingRegionsSharedState : public Insights::ITimingViewExtender, public TSharedFromThis<FTimingRegionsSharedState>
 {
@@ -48,6 +55,8 @@ private:
 	bool bShowHideRegionsTrack = true;
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 class FTimingRegionsTrack : public FTimingEventsTrack
 {
 	INSIGHTS_DECLARE_RTTI(FTimingRegionsTrack, FTimingEventsTrack)
@@ -72,5 +81,7 @@ private:
 	TSharedPtr<Insights::FFilterConfigurator> FilterConfigurator;
 	FTimingRegionsSharedState& SharedState;
 };
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 } // namespace Insights

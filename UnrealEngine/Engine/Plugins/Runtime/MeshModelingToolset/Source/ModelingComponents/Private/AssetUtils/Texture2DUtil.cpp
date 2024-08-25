@@ -318,9 +318,11 @@ bool UE::AssetUtils::ConvertToSingleChannel(UTexture2D* TextureMap)
 bool UE::AssetUtils::ForceVirtualTexturePrefetch(FImageDimensions ScreenSpaceDimensions, bool bWaitForPrefetchToComplete)
 {
 	// Prefetch all virtual textures so that we have content available
-	if (UseVirtualTexturing(GMaxRHIFeatureLevel))
+	if (UseVirtualTexturing(GMaxRHIShaderPlatform))
 	{
 		const FVector2D ScreenSpaceSize(ScreenSpaceDimensions.GetWidth(), ScreenSpaceDimensions.GetHeight());
+
+		UE::RenderCommandPipe::FSyncScope SyncScope;
 
 		ENQUEUE_RENDER_COMMAND(AssetUtils_ForceVirtualTexturePrefetch)(
 			[ScreenSpaceSize](FRHICommandListImmediate& RHICmdList)

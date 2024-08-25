@@ -39,6 +39,8 @@ public:
 	virtual ESlateShaderResource::Type GetType() const override { return ESlateShaderResource::PostProcess; }
 
 	EPixelFormat GetPixelFormat() const { return PixelFormat; }
+	uint64 GetFrameUsed() { return FrameUsed; }
+
 private:
 	/** Resizes targets to the new size */
 	void ResizeTargets(const FIntPoint& NewSize, EPixelFormat RequestedPixelFormat);
@@ -48,5 +50,6 @@ private:
 	EPixelFormat PixelFormat;
 	FIntPoint RenderTargetSize;
 	int32 RenderTargetCount;
+	uint64 FrameUsed;
 };
 

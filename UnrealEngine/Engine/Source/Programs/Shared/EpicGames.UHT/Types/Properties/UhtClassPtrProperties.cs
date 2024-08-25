@@ -15,7 +15,7 @@ namespace EpicGames.UHT.Types
 	public class UhtClassPtrProperty : UhtClassProperty
 	{
 		/// <inheritdoc/>
-		public override string EngineClassName => "ClassPtrProperty";
+		public override string EngineClassName => "ClassProperty";
 
 		/// <inheritdoc/>
 		protected override string CppTypeText => "ObjectPtr";
@@ -36,7 +36,7 @@ namespace EpicGames.UHT.Types
 		public UhtClassPtrProperty(UhtPropertySettings propertySettings, UhtClass classObj, UhtClass metaClass, EPropertyFlags extraFlags = EPropertyFlags.None)
 			: base(propertySettings, classObj, metaClass)
 		{
-			PropertyFlags |= extraFlags | EPropertyFlags.UObjectWrapper;
+			PropertyFlags |= extraFlags | EPropertyFlags.TObjectPtr | EPropertyFlags.UObjectWrapper;
 		}
 
 		/// <inheritdoc/>
@@ -54,13 +54,13 @@ namespace EpicGames.UHT.Types
 		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
 		{
-			return AppendMemberDecl(builder, context, name, nameSuffix, tabs, "FClassPtrPropertyParams");
+			return AppendMemberDecl(builder, context, name, nameSuffix, tabs, "FClassPropertyParams");
 		}
 
 		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDef(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, string? offset, int tabs)
 		{
-			AppendMemberDefStart(builder, context, name, nameSuffix, offset, tabs, "FClassPtrPropertyParams",
+			AppendMemberDefStart(builder, context, name, nameSuffix, offset, tabs, "FClassPropertyParams",
 				"UECodeGen_Private::EPropertyGenFlags::Class | UECodeGen_Private::EPropertyGenFlags::ObjectPtr");
 			AppendMemberDefRef(builder, context, Class, false);
 			AppendMemberDefRef(builder, context, MetaClass, false);
@@ -77,7 +77,7 @@ namespace EpicGames.UHT.Types
 			// UFunctions with a smart pointer as return type will crash when called via blueprint, because they are not supported in VM.
 			if (!options.HasAnyFlags(UhtValidationOptions.IsKey) && PropertyCategory != UhtPropertyCategory.Member)
 			{
-				outerStruct.LogError("UFunctions cannot take a TObjectPtr as a parameter.");
+				outerStruct.LogError("UFunctions cannot take a TObjectPtr as a function parameter or return value.");
 			}
 		}
 	}

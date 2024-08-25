@@ -1,28 +1,29 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SNiagaraGeneratedCodeView.h"
-#include "Textures/SlateIcon.h"
 #include "Framework/Commands/UIAction.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
-#include "Widgets/Input/SSearchBox.h"
-#include "Widgets/Input/SButton.h"
-#include "ISequencer.h"
-#include "ViewModels/NiagaraSystemViewModel.h"
-#include "ViewModels/NiagaraEmitterHandleViewModel.h"
-#include "ViewModels/NiagaraSystemSelectionViewModel.h"
-#include "NiagaraEmitterHandle.h"
-#include "NiagaraEmitter.h"
-#include "NiagaraScript.h"
-#include "ViewModels/NiagaraSystemScriptViewModel.h"
-#include "Styling/AppStyle.h"
-#include "Widgets/Layout/SScrollBox.h"
-#include "UObject/Class.h"
-#include "NiagaraSystem.h"
-#include "NiagaraEditorStyle.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "ISequencer.h"
+#include "NiagaraEditorStyle.h"
 #include "NiagaraEditorUtilities.h"
-#include "Widgets/NiagaraHLSLSyntaxHighlighter.h"
+#include "NiagaraEmitter.h"
+#include "NiagaraEmitterHandle.h"
+#include "NiagaraScript.h"
+#include "NiagaraSettings.h"
+#include "NiagaraSystem.h"
+#include "Styling/AppStyle.h"
+#include "Textures/SlateIcon.h"
+#include "UObject/Class.h"
+#include "ViewModels/NiagaraEmitterHandleViewModel.h"
+#include "ViewModels/NiagaraSystemScriptViewModel.h"
+#include "ViewModels/NiagaraSystemSelectionViewModel.h"
+#include "ViewModels/NiagaraSystemViewModel.h"
 #include "Widgets/Docking/SDockTab.h"
+#include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SSearchBox.h"
+#include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/NiagaraHLSLSyntaxHighlighter.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraGeneratedCodeView"
 
@@ -167,7 +168,7 @@ void SNiagaraGeneratedCodeView::Construct(const FArguments& InArgs, TSharedRef<F
 				+ SVerticalBox::Slot()
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("NoDataText", "Failed to compile or has not been compiled."))
+					.Text(LOCTEXT("NoDataText", "Generated code not available.  Either data was pulled from DDC (do a Full Rebuild of the System) or the script failed to be generated."))
 					.Visibility_Lambda([&]() {
 						if (TabHasScriptData())
 							return EVisibility::Collapsed;
@@ -352,12 +353,20 @@ void SNiagaraGeneratedCodeView::SystemSelectionChanged()
 
 void SNiagaraGeneratedCodeView::UpdateUI()
 {
+	enum EScriptDisplayType
+	{
+		HLSL_SCRIPT_TYPE,
+		GPU_SCRIPT_TYPE,
+		ASSEMBLY_SCRIPT_TYPE,
+		EVVM_ASSEMBLY_SCRIPT_TYPE,
+	};
+
 	//Mark the UI as needing an update. We now do the very expensive slate updates from Tick() iside UIUpdate_Internal.
 	//This way we can avoid refreshing this UI constantly when this tab isn't even in view.
 	bUIUpdatePending = true;
 
 	TArray<UNiagaraScript*> Scripts;
-	TArray<uint32> ScriptDisplayTypes;
+	TArray<EScriptDisplayType> ScriptDisplayTypes;
 	UNiagaraSystem& System = SystemViewModel->GetSystem();
 	Scripts.Add(System.GetSystemSpawnScript());
 	Scripts.Add(System.GetSystemUpdateScript());
@@ -375,6 +384,8 @@ void SNiagaraGeneratedCodeView::UpdateUI()
 		}
 	}
 
+	const bool bIncludeEVVM = GetDefault<UNiagaraSettings>()->bExperimentalVMEnabled;
+
 	// Mark the scripts with the correct display type and copy references for the non-gpu scripts for the assembly view.
 	int32 OriginalScriptCount = Scripts.Num();
 	ScriptDisplayTypes.AddUninitialized(OriginalScriptCount);
@@ -383,14 +394,20 @@ void SNiagaraGeneratedCodeView::UpdateUI()
 		UNiagaraScript* Script = Scripts[i];
 		if (Script->GetUsage() == ENiagaraScriptUsage::ParticleGPUComputeScript)
 		{
-			ScriptDisplayTypes[i] = 1;
+			ScriptDisplayTypes[i] = GPU_SCRIPT_TYPE;
 		}
 		else
 		{
-			ScriptDisplayTypes[i] = 0;
+			ScriptDisplayTypes[i] = HLSL_SCRIPT_TYPE;
 
 			Scripts.Add(Script);
-			ScriptDisplayTypes.Add(2);
+			ScriptDisplayTypes.Add(ASSEMBLY_SCRIPT_TYPE);
+
+			if (bIncludeEVVM)
+			{
+				Scripts.Add(Script);
+				ScriptDisplayTypes.Add(EVVM_ASSEMBLY_SCRIPT_TYPE);
+			}
 		}
 	}
 		
@@ -405,88 +422,96 @@ void SNiagaraGeneratedCodeView::UpdateUI()
 
 	for (int32 i = 0; i < GeneratedCode.Num(); i++)
 	{
-		TArray<FString> OutputByLines;
 		GeneratedCode[i].Hlsl = FText::GetEmpty();
-		FString SumString;
 
-		bool bIsGPU = ScriptDisplayTypes[i] == 1;
-		bool bIsAssembly = ScriptDisplayTypes[i] == 2;
 		if (Scripts[i] != nullptr)
 		{
-			// GPU combined spawn / update script
-			if (bIsGPU)
+			const FNiagaraVMExecutableData& ExeData = Scripts[i]->GetVMExecutableData();
+
+			GeneratedCode[i].Usage = Scripts[i]->Usage;
+			GeneratedCode[i].UsageId = Scripts[i]->GetUsageId();
+
+			if (ExeData.IsValid())
 			{
-				GeneratedCode[i].Usage = Scripts[i]->Usage;
-				if (Scripts[i]->GetVMExecutableData().IsValid())
+				const FString* SourceText = nullptr;
+				bool bAddLineNumbers = false;
+
+				FText AssemblyIdText = FText::GetEmpty();
+
+				switch (ScriptDisplayTypes[i])
 				{
-					Scripts[i]->GetVMExecutableData().LastHlslTranslationGPU.ParseIntoArrayLines(OutputByLines, false);
+					// GPU combined spawn / update script
+					case GPU_SCRIPT_TYPE:
+						SourceText = &ExeData.LastHlslTranslationGPU;
+						bAddLineNumbers = true;
+						break;
+
+					case ASSEMBLY_SCRIPT_TYPE:
+						SourceText = &ExeData.LastAssemblyTranslation;
+						AssemblyIdText = LOCTEXT("IsAssembly", "Assembly");
+						break;
+
+					case EVVM_ASSEMBLY_SCRIPT_TYPE:
+						SourceText = &ExeData.LastExperimentalAssemblyScript;
+						AssemblyIdText = LOCTEXT("IsEVVMAssembly", "EVVM Assembly");
+						break;
+
+					default:
+						SourceText = &ExeData.LastHlslTranslation;
+						bAddLineNumbers = true;
+						break;
 				}
-			}
-			else if (bIsAssembly)
-			{
-				GeneratedCode[i].Usage = Scripts[i]->Usage;
-				GeneratedCode[i].UsageId = Scripts[i]->GetUsageId();
-				if (Scripts[i]->GetVMExecutableData().IsValid())
+
+				if (Scripts[i]->Usage == ENiagaraScriptUsage::ParticleEventScript)
 				{
-					Scripts[i]->GetVMExecutableData().LastAssemblyTranslation.ParseIntoArrayLines(OutputByLines, false);
+					FText EventName;
+					if (FNiagaraEditorUtilities::TryGetEventDisplayName(Scripts[i]->GetTypedOuter<UNiagaraEmitter>(), Scripts[i]->GetUsageId(), EventName) == false)
+					{
+						EventName = NSLOCTEXT("NiagaraNodeOutput", "UnknownEventName", "Unknown");
+					}
+					GeneratedCode[i].UsageName = FText::Format(LOCTEXT("UsageNameEvent", "{0}-{1}{2}"), ScriptEnum->GetDisplayNameTextByValue((int64)Scripts[i]->Usage), EventName, AssemblyIdText);
 				}
-			}
-			else
-			{
-				GeneratedCode[i].Usage = Scripts[i]->Usage;
-				GeneratedCode[i].UsageId = Scripts[i]->GetUsageId();
-				if (Scripts[i]->GetVMExecutableData().IsValid())
+				// GPU combined spawn / update script
+				else if (ScriptDisplayTypes[i] == GPU_SCRIPT_TYPE && i == GeneratedCode.Num() - 1 && Scripts[i]->IsParticleSpawnScript())
 				{
-					Scripts[i]->GetVMExecutableData().LastHlslTranslation.ParseIntoArrayLines(OutputByLines, false);
+					GeneratedCode[i].UsageName = LOCTEXT("UsageNameGPU", "GPU Spawn/Update");
+				}
+				else
+				{
+					GeneratedCode[i].UsageName = FText::Format(LOCTEXT("UsageName", "{0}{1}"), ScriptEnum->GetDisplayNameTextByValue((int64)Scripts[i]->Usage), AssemblyIdText);
+				}
+
+				if (SourceText && SourceText->Len() > 0)
+				{
+					if (bAddLineNumbers)
+					{
+						FString SumString;
+						TArray<FString> OutputByLines;
+
+						SourceText->ParseIntoArrayLines(OutputByLines, false);
+
+						SumString.Reserve(SourceText->Len() + OutputByLines.Num() * 10);
+						GeneratedCode[i].HlslByLines.Reset(OutputByLines.Num());
+
+						for (int32 k = 0; k < OutputByLines.Num(); k++)
+						{
+							GeneratedCode[i].HlslByLines.Add(FString::Printf(TEXT("/*%04d*/\t\t%s\r\n"), k, *OutputByLines[k]));
+							SumString.Append(GeneratedCode[i].HlslByLines[k]);
+						}
+						GeneratedCode[i].Hlsl = FText::FromString(SumString);
+					}
+					else
+					{
+						GeneratedCode[i].Hlsl = FText::FromString(*SourceText);
+						SourceText->ParseIntoArrayLines(GeneratedCode[i].HlslByLines, false);
+					}
 				}
 			}
 		}
 		else
 		{
 			GeneratedCode[i].Usage = ENiagaraScriptUsage::ParticleSpawnScript;
-		}
-
-		GeneratedCode[i].HlslByLines.SetNum(OutputByLines.Num());
-		if (bIsAssembly)
-		{
-			if (Scripts[i] != nullptr && Scripts[i]->GetVMExecutableData().IsValid())
-			{
-				GeneratedCode[i].Hlsl = FText::FromString(Scripts[i]->GetVMExecutableData().LastAssemblyTranslation);
-			}
-			GeneratedCode[i].HlslByLines = OutputByLines;
-		}
-		else
-		{
-			for (int32 k = 0; k < OutputByLines.Num(); k++)
-			{
-				GeneratedCode[i].HlslByLines[k] = FString::Printf(TEXT("/*%04d*/\t\t%s\r\n"), k, *OutputByLines[k]);
-				SumString.Append(GeneratedCode[i].HlslByLines[k]);
-			}
-			GeneratedCode[i].Hlsl = FText::FromString(SumString);
-		}
-		FText AssemblyIdText = LOCTEXT("IsAssembly", "Assembly");
-
-		if (Scripts[i] == nullptr)
-		{
 			GeneratedCode[i].UsageName = LOCTEXT("UsageNameInvalid", "Invalid");
-		}
-		else if (Scripts[i]->Usage == ENiagaraScriptUsage::ParticleEventScript)
-		{
-			FText EventName;
-			if (FNiagaraEditorUtilities::TryGetEventDisplayName(Scripts[i]->GetTypedOuter<UNiagaraEmitter>(), Scripts[i]->GetUsageId(), EventName) == false)
-			{
-				EventName = NSLOCTEXT("NiagaraNodeOutput", "UnknownEventName", "Unknown");
-			}
-			GeneratedCode[i].UsageName = FText::Format(LOCTEXT("UsageNameEvent", "{0}-{1}{2}"), ScriptEnum->GetDisplayNameTextByValue((int64)Scripts[i]->Usage), EventName, bIsAssembly ? AssemblyIdText : FText::GetEmpty());
-		}
-		// GPU combined spawn / update script
-		else if (bIsGPU && i == GeneratedCode.Num() - 1 && Scripts[i]->IsParticleSpawnScript())
-		{
-			GeneratedCode[i].UsageName = LOCTEXT("UsageNameGPU", "GPU Spawn/Update");
-		}
-		else
-		{
-			GeneratedCode[i].UsageName = FText::Format(LOCTEXT("UsageName", "{0}{1}"), ScriptEnum->GetDisplayNameTextByValue((int64)Scripts[i]->Usage), bIsAssembly ? AssemblyIdText : FText::GetEmpty());
 		}
 
 		//We now do the very expensive slate stuff inside Update UI_Internal

@@ -25,18 +25,6 @@ enum class EBlueprintCompileReinstancerFlags
 
 ENUM_CLASS_FLAGS(EBlueprintCompileReinstancerFlags)
 
-class FReinstanceFinalizer;
-
-struct FRecreateUberGraphFrameScope
-{
-private:
-	TArray<UObject*> Objects;
-	UClass* RecompiledClass;
-public:
-	UNREALED_API FRecreateUberGraphFrameScope(UClass* InClass, bool bRecreate);
-	UNREALED_API ~FRecreateUberGraphFrameScope();
-};
-
 struct FReplaceInstancesOfClassParameters
 {
 	UE_NONCOPYABLE(FReplaceInstancesOfClassParameters)
@@ -55,7 +43,10 @@ struct FReplaceInstancesOfClassParameters
 	UClass* NewClass = nullptr;
 
 	/** OriginalCDO, use if OldClass->ClassDefaultObject has been overwritten (non-batch only, legacy) */
-	UObject* OriginalCDO = nullptr; 
+	UObject* OriginalCDO = nullptr;
+
+	/* Mapping of all the replaced CDOs and archetypes*/
+	TMap<UClass*, TMap<UObject*, UObject*>>* OldToNewTemplates = nullptr;
 
 	/** Set of objects that should not have their references updated if they refer to instances that are replaced */
 	TSet<UObject*>* ObjectsThatShouldUseOldStuff = nullptr;
@@ -128,6 +119,15 @@ protected:
 	/** The original CDO object for the class being actively reinstanced */
 	TObjectPtr<UObject>	OriginalCDO;
 
+	/** The original Sparse Class Data object for the class being actively reinstanced */
+	void* OriginalSCD;
+
+	/** The original SDO Struct for the class being actively reinstanced */
+	TObjectPtr<UScriptStruct> OriginalSCDStruct;
+
+	/** A snapshot of the SCD, currently delta serialized from its archetype - taken before ownership of SCDs is taken */
+	TArray<uint8> SCDSnapshot;
+
 	/** Children of this blueprint, which will need to be recompiled and relinked temporarily to maintain the class layout */
 	TArray<UBlueprint*> Children;
 
@@ -173,8 +173,6 @@ public:
 
 	static UNREALED_API void OptionallyRefreshNodes(UBlueprint* BP);
 
-	UE_DEPRECATED(5.0, "This method performs no function and isn't invoked by the base class.  Remove all calls to the base class method.")
-	UNREALED_API virtual void EnlistDependentBlueprintToRecompile(UBlueprint* BP, bool bBytecodeOnly);
 	UNREALED_API virtual void BlueprintWasRecompiled(UBlueprint* BP, bool bBytecodeOnly);
 
 	static TSharedPtr<FBlueprintCompileReinstancer> Create(UClass* InClassToReinstance, EBlueprintCompileReinstancerFlags Flags = EBlueprintCompileReinstancerFlags::AutoInferSaveOnCompile)
@@ -195,6 +193,15 @@ public:
 
 	/** Updates references to properties and functions of the class that has in the bytecode of dependent blueprints */
 	UNREALED_API void UpdateBytecodeReferences( TSet<UBlueprint*>& OutDependentBlueprints, TMap<FFieldVariant, FFieldVariant>& OutFieldMapping);
+
+	/** Populates SCDSnapshot, for use via PropagateSparseClassDataToNewClass */
+	UNREALED_API void SaveSparseClassData(const UClass* ForClass);
+
+	/** Instructs the reinstancer to take ownership of the sparse class data - doing so will make it difficult to identify archetype data */ 
+	UNREALED_API void TakeOwnershipOfSparseClassData(UClass* ForClass);
+
+	/** Copies an owned sparse class data instance to a new class and frees any owned SCD */
+	UNREALED_API void PropagateSparseClassDataToNewClass(UClass* NewClass);
 
 	/** Consumes the set and map populated by calls to UpdateBytecodeReferences */
 	static UNREALED_API void FinishUpdateBytecodeReferences( const TSet<UBlueprint*>& DependentBPs, const TMap<FFieldVariant, FFieldVariant>& FieldMappings);
@@ -287,6 +294,7 @@ protected:
 	/** Determine whether reinstancing actors should preserve the root component of the new actor */
 	virtual bool ShouldPreserveRootComponentOfReinstancedActor() const { return true; }
 
+public:
 	/**
 	* Attempts to copy as many properties as possible from the old object to the new. 
 	* Use during BP compilation to copy properties from the old CDO to the new one.
@@ -295,10 +303,28 @@ protected:
 	* @param NewObject						The new Object to copy properties to
 	* @param bClearExternalReferences		If true then attempt to replace references to old classes and instances on this object with the corresponding new ones
 	* @param bForceDeltaSerialization		If true the delta serialization will be used when copying
+	* @param bOnlyHandleDirectSubObjects	If true will only copy/handle immediate subobjects
+	* @param OldToNewInstanceMap			If != null it will be used to replace any references found in this object
+	* @param OldToNewClassMap				if != null it will be used to replace any class references found in this object
 	*/
-	static UNREALED_API void CopyPropertiesForUnrelatedObjects(UObject* OldObject, UObject* NewObject, bool bClearExternalReferences, bool bForceDeltaSerialization = false);
+	static UNREALED_API void CopyPropertiesForUnrelatedObjects(UObject* OldObject, UObject* NewObject, bool bClearExternalReferences, bool bForceDeltaSerialization = false, bool bOnlyHandleDirectSubObjects = false, TMap<UObject*, UObject*>* OldToNewInstanceMap =nullptr, const TMap<UClass*,UClass*>* OldToNewClassMap =nullptr);
+
+	/**
+	 * This method will pre-create all non-default sub object needed for a re-instantiation, what is left is to CopyPropertiesForUnrelatedObjects on the created instances map to finish the re-instancing
+	 * If the re-instancing is done in a big batch and part to the sub object might already be re-instantiated, you will need to provide those via the OldToNewInstanceMap
+	 * 
+	 * @param OldToNewClassMap in case there are subobject that will need new class type
+	 * @param OldObject to pre-create its non-default sub objects
+	 * @param NewUObject where to store those pre-created sub objects
+	 * @param CreatedInstanceMap in/out of the result of all of the pre-created objects
+	 * @param OldToNewInstanceMap optional parameter of the possible re-instanced sub objects if any
+	 */
+	static UNREALED_API void PreCreateSubObjectsForReinstantiation(const TMap<UClass*, UClass*>& OldToNewClassMap, UObject* OldObject, UObject* NewUObject, TMap<UObject*, UObject*>& CreatedInstanceMap, const TMap<UObject*, UObject*>* OldToNewInstanceMap = nullptr);
 
 private:
+	/** Handles the sub object pre-creation recursively */
+	static UNREALED_API void PreCreateSubObjectsForReinstantiation_Inner(const TSet<UObject*>& OldInstancedSubObjects, const TMap<UClass*, UClass*>& OldToNewClassMap, UObject* OldObject, UObject* NewUObject, TMap<UObject*, UObject*>& CreatedInstanceMap, const TMap<UObject*, UObject*>* OldToNewInstanceMap);
+
 	/** Handles the work of ReplaceInstancesOfClass, handling both normal replacement of instances and batch */
 	static UNREALED_API void ReplaceInstancesOfClass_Inner(const TMap<UClass*, UClass*>& InOldToNewClassMap, const FReplaceInstancesOfClassParameters& Params);
 

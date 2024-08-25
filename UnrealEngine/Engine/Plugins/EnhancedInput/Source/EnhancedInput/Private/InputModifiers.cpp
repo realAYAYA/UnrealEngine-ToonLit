@@ -14,6 +14,46 @@
 #define LOCTEXT_NAMESPACE "EnhancedInputModifiers"
 
 /*
+* Normalized Smooth Delta
+*/
+
+FInputActionValue UInputModifierSmoothDelta::ModifyRaw_Implementation(const UEnhancedPlayerInput* PlayerInput, FInputActionValue CurrentValue, float DeltaTime)
+{
+	// You can't smooth a boolean value
+	if (ensureMsgf(CurrentValue.GetValueType() != EInputActionValueType::Boolean, TEXT("The 'Smooth Delta Modifier' doesn't support boolean values.")))
+	{
+		return CurrentValue;
+	}
+
+	FVector NewValue = CurrentValue.Get<FVector>();
+	FVector TargetDelta = (NewValue - OldValue).GetSafeNormal();
+	OldValue = NewValue;
+
+	switch (SmoothingMethod)
+	{
+		case ENormalizeInputSmoothingType::Lerp: Delta = FMath::LerpStable(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_To: Delta = FMath::VInterpTo(Delta, TargetDelta, DeltaTime, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Constant_To: Delta = FMath::VInterpConstantTo(Delta, TargetDelta, DeltaTime, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Circular_In: Delta = FMath::InterpCircularIn(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Circular_Out: Delta = FMath::InterpCircularOut(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Circular_In_Out: Delta = FMath::InterpCircularInOut(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Ease_In: Delta = FMath::InterpEaseIn(Delta, TargetDelta, Speed, EasingExponent); break;
+		case ENormalizeInputSmoothingType::Interp_Ease_Out: Delta = FMath::InterpEaseOut(Delta, TargetDelta, Speed, EasingExponent); break;
+		case ENormalizeInputSmoothingType::Interp_Ease_In_Out: Delta = FMath::InterpEaseInOut(Delta, TargetDelta, Speed, EasingExponent); break;
+		case ENormalizeInputSmoothingType::Interp_Expo_In: Delta = FMath::InterpExpoIn(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Expo_Out: Delta = FMath::InterpExpoOut(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Expo_In_Out: Delta = FMath::InterpExpoInOut(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Sin_In: Delta = FMath::InterpSinIn(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Sin_Out: Delta = FMath::InterpSinOut(Delta, TargetDelta, Speed); break;
+		case ENormalizeInputSmoothingType::Interp_Sin_In_Out: Delta = FMath::InterpSinInOut(Delta, TargetDelta, Speed); break;
+		default: Delta = TargetDelta;
+	}
+
+	return Delta;
+}
+
+
+/*
 * Scalar
 */
 

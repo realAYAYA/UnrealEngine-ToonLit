@@ -335,7 +335,7 @@ float3 TraceOrthoVoxelGrid(float3 Origin, float3 Direction, float TMin, float TM
 	float3 WorldBoundsMin = OrthoGridUniformBuffer.TopLevelGridWorldBoundsMin;
 	float3 WorldBoundsMax = OrthoGridUniformBuffer.TopLevelGridWorldBoundsMax;
 
-	float3 WorldRayOrigin = LWCHackToFloat(LWCSubtract(Origin, PrimaryView.PreViewTranslation));
+	float3 WorldRayOrigin = DFHackToFloat(DFFastSubtract(Origin, PrimaryView.PreViewTranslation));
 	float2 ClipHitT = IntersectAABB(WorldRayOrigin, Direction, TMin, TMax, WorldBoundsMin, WorldBoundsMax);
 	if (ClipHitT.x > ClipHitT.y)
 	{
@@ -480,7 +480,7 @@ float3 TraceFrustumVoxelGrid(float3 Origin, float3 Direction, inout float TMin, 
 {
 	float3 Transmittance = 1.0;
 
-	float3 WorldRayOrigin = LWCHackToFloat(LWCSubtract(Origin, PrimaryView.PreViewTranslation));
+	float3 WorldRayOrigin = DFHackToFloat(DFFastSubtract(Origin, PrimaryView.PreViewTranslation));
 	float3 ViewRayOrigin = mul(float4(WorldRayOrigin, 1), FrustumGridUniformBuffer.WorldToView).xyz;
 	float3 ViewRayDirection = mul(float4(WorldRayOrigin + Direction, 1), FrustumGridUniformBuffer.WorldToView).xyz;
 	ViewRayDirection -= ViewRayOrigin;

@@ -127,6 +127,11 @@ public:
 	MOVIESCENE_API const FMovieSceneSequenceInstanceData* GetInstanceData() const;
 
 	/**
+	 * Get the player
+	 */
+	MOVIESCENE_API IMovieScenePlayer& GetMovieScenePlayer() const { return Player; }
+
+	/**
 	 * Find the current sequence's instance data as the templated type, provided its type matches
 	 */
 	template<typename T> const T*   FindInstanceData() const

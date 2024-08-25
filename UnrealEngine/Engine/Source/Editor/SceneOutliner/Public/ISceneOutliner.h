@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "Misc/Attribute.h"
 #include "SceneOutlinerFwd.h"
+#include "SceneOutlinerPublicTypes.h"
+#include "Filters/FilterBase.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/SHeaderRow.h"
 
@@ -52,6 +54,12 @@ public:
 	 * @return The index of the filter.
 	 */
 	virtual int32 AddFilter(const TSharedRef<FSceneOutlinerFilter>& Filter) = 0;
+
+	/** 
+	 * Add a filter to the scene outliner's filter bar
+	 * @param Filter The filter to add
+	 */
+	virtual void AddFilterToFilterBar(const TSharedRef<FFilterBase<SceneOutliner::FilterBarType>>& InFilter) = 0;
 
 	/** 
 	 * Remove a filter from the scene outliner
@@ -157,6 +165,9 @@ public:
 	/** Returns true if any of the selected items can be unpinned */
 	virtual bool CanUnpinSelectedItems() const = 0;
 
+	/** Scrolls the outliner to the selected item(s). If more are selected, the chosen item is undeterministic. */
+	virtual void FrameSelectedItems() = 0;
+
 	/** Get the active SceneOutlinerMode */
 	const ISceneOutlinerMode* GetMode() const { return Mode; }
 
@@ -165,6 +176,9 @@ public:
 
 	/** Check if a filter with the given name exists and is active in the filter bar for this Outliner (if this Outliner has a filter bar). */
 	virtual bool IsFilterActive(const FString& FilterName) const = 0;
+
+	/** Retrieve an ISceneOutlinerTreeItem by its ID if it exists in the tree */
+	virtual FSceneOutlinerTreeItemPtr GetTreeItem(FSceneOutlinerTreeItemID, bool bIncludePending = false) = 0;
 protected:
 	ISceneOutlinerMode* Mode;
 };

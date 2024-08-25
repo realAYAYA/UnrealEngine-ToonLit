@@ -21,6 +21,24 @@
 namespace UE::MVVM::FunctionGraphHelper
 {
 
+namespace Private
+{
+
+UK2Node_FunctionEntry* FindFunctionEntry(const UEdGraph* Graph)
+{
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		UK2Node_FunctionEntry* FunctionEntry = Cast<UK2Node_FunctionEntry>(Node);
+		if (FunctionEntry)
+		{
+			return FunctionEntry;
+		}
+	}
+	return nullptr;
+}
+
+} //namespace
+
 UEdGraph* CreateFunctionGraph(UBlueprint* InBlueprint, FStringView InFunctionName, EFunctionFlags ExtraFunctionFlag, const FStringView Category, bool bIsEditable)
 {
 	FName UniqueFunctionName = FBlueprintEditorUtils::FindUniqueKismetName(InBlueprint, InFunctionName.GetData());
@@ -53,7 +71,7 @@ UEdGraph* CreateIntermediateFunctionGraph(FKismetCompilerContext& InContext, FSt
 	Schema->CreateDefaultNodesForGraph(*FunctionGraph);
 
 	// function entry node
-	UK2Node_FunctionEntry* FunctionEntry = CastChecked<UK2Node_FunctionEntry>(FunctionGraph->Nodes[0]);
+	UK2Node_FunctionEntry* FunctionEntry = Private::FindFunctionEntry(FunctionGraph);
 	check(FunctionEntry);
 	{
 		FunctionEntry->AddExtraFlags(ExtraFunctionFlag);
@@ -127,16 +145,7 @@ bool GenerateViewModelSetter(FKismetCompilerContext& InContext, UEdGraph* InFunc
 {
 	check(InFunctionGraph);
 
-	UK2Node_FunctionEntry* FunctionEntry = nullptr;
-	for (UEdGraphNode* Node : InFunctionGraph->Nodes)
-	{
-		FunctionEntry = Cast<UK2Node_FunctionEntry>(Node);
-		if (FunctionEntry)
-		{
-			break;
-		}
-	}
-
+	UK2Node_FunctionEntry* FunctionEntry = Private::FindFunctionEntry(InFunctionGraph);
 	if (FunctionEntry == nullptr)
 	{
 		return false;
@@ -210,16 +219,7 @@ bool GenerateViewModelFieldNotifySetter(FKismetCompilerContext& InContext, UEdGr
 {
 	check(InFunctionGraph);
 
-	UK2Node_FunctionEntry* FunctionEntry = nullptr;
-	for (UEdGraphNode* Node : InFunctionGraph->Nodes)
-	{
-		FunctionEntry = Cast<UK2Node_FunctionEntry>(Node);
-		if (FunctionEntry)
-		{
-			break;
-		}
-	}
-
+	UK2Node_FunctionEntry* FunctionEntry = Private::FindFunctionEntry(InFunctionGraph);
 	if (FunctionEntry == nullptr)
 	{
 		return false;
@@ -284,16 +284,7 @@ bool GenerateViewModelFielNotifyBroadcast(FKismetCompilerContext& InContext, UEd
 {
 	check(InFunctionGraph);
 
-	UK2Node_FunctionEntry* FunctionEntry = nullptr;
-	for (UEdGraphNode* Node : InFunctionGraph->Nodes)
-	{
-		FunctionEntry = Cast<UK2Node_FunctionEntry>(Node);
-		if (FunctionEntry)
-		{
-			break;
-		}
-	}
-
+	UK2Node_FunctionEntry* FunctionEntry = Private::FindFunctionEntry(InFunctionGraph);
 	if (FunctionEntry == nullptr)
 	{
 		return false;
@@ -395,16 +386,7 @@ bool GenerateSetter(UEdGraph* InFunctionGraph, TArrayView<UE::MVVM::FMVVMConstFi
 {
 	check(InFunctionGraph);
 
-	UK2Node_FunctionEntry* FunctionEntry = nullptr;
-	for (UEdGraphNode* Node : InFunctionGraph->Nodes)
-	{
-		FunctionEntry = Cast<UK2Node_FunctionEntry>(Node);
-		if (FunctionEntry)
-		{
-			break;
-		}
-	}
-
+	UK2Node_FunctionEntry* FunctionEntry = Private::FindFunctionEntry(InFunctionGraph);
 	if (FunctionEntry == nullptr)
 	{
 		return false;
@@ -539,6 +521,74 @@ bool GenerateIntermediateSetter(FKismetCompilerContext& InContext, UEdGraph* InF
 bool GenerateSetter(UBlueprint* InBlueprint, UEdGraph* InFunctionGraph, TArrayView<UE::MVVM::FMVVMConstFieldVariant> InSetterPath)
 {
 	return Private::GenerateSetter(InFunctionGraph, InSetterPath, InBlueprint, nullptr);
+}
+
+bool IsFunctionEntryMatchSignature(const UEdGraph* FunctionGraph, const UFunction* FunctionSignature)
+{
+	if (FunctionGraph == nullptr || FunctionSignature == nullptr)
+	{
+		return false;
+	}
+
+	const UK2Node_FunctionEntry* FunctionEntry = Private::FindFunctionEntry(FunctionGraph);
+	if (FunctionEntry == nullptr)
+	{
+		return false;
+	}
+
+	// Generate pins list
+	TArray<UEdGraphPin*> EntryPins = FunctionEntry->Pins;
+	for (int32 Index = EntryPins.Num()-1; Index >= 0; --Index)
+	{
+		const UEdGraphPin* CurPin = EntryPins[Index];
+		if (CurPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec
+			|| CurPin->PinType.PinSubCategory == UEdGraphSchema_K2::PSC_Self
+			|| CurPin->Direction == EGPD_Input
+			|| CurPin->ParentPin != nullptr)
+		{
+			EntryPins.RemoveAt(Index, 1);
+		}
+	}
+
+	const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
+
+	// Generate signature pins
+	TArray<FUserPinInfo> SignaturePins;
+	{
+		for (TFieldIterator<FProperty> It(FunctionSignature); It; ++It)
+		{
+			FUserPinInfo& PinInfo = SignaturePins.AddDefaulted_GetRef();
+			K2Schema->ConvertPropertyToPinType(*It, PinInfo.PinType);
+			PinInfo.PinName = It->GetFName();
+			PinInfo.DesiredPinDirection = EGPD_Output;
+		}
+	}
+
+	// Do we have the same number of arguments
+	if (SignaturePins.Num() != EntryPins.Num())
+	{
+		return false;
+	}
+
+	// Now check through the event's pins, and check for compatible pins, removing them if we find a match.
+	for (int32 Index = 0; Index < SignaturePins.Num(); ++Index)
+	{
+		const UEdGraphPin* CurrentEventPin = EntryPins[Index];
+		const FUserPinInfo& CurrentPinInfo = SignaturePins[Index];
+
+		bool bMatchFound = false;
+		if (CurrentEventPin->PinName != CurrentPinInfo.PinName)
+		{
+			return false;
+		}
+
+			// Check to make sure pins are of the same type
+		if (!K2Schema->ArePinTypesCompatible(CurrentEventPin->PinType, CurrentPinInfo.PinType))
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 } //namespace

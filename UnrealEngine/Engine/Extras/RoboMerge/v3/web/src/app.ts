@@ -19,12 +19,12 @@ function refreshAll() {
 }
 
 function pauseAutoRefresh() {
-	log('Pausing auto refresh of branch list')
+	//log('Pausing auto refresh of branch list')
 	pauseRefresh = true
 }
 
 function resumeAutoRefresh() {
-	log('Resuming auto refresh of branch list')
+	//log('Resuming auto refresh of branch list')
 	pauseRefresh = false
 }
 

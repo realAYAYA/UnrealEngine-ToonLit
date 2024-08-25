@@ -2,52 +2,48 @@
 
 #pragma once
 
+#include "CustomizableObjectInstanceEditor.h"
 #include "Widgets/SBoxPanel.h"
 
-#include "CustomizableObjectCustomSettings.generated.h"
+class UPointLightComponent;
+class SCustomizableObjectEditorViewportTabBody;
+class ICustomizableObjectInstanceEditor;
 
 namespace ESelectInfo { enum Type : int; }
 namespace ETextCommit { enum Type : int; }
 template <typename ItemType> class SListView;
 
 class SWidget;
+class SEditableTextBox;
+class SComboButton;
+class UCustomizableObject;
 struct FAssetData;
 struct FGeometry;
 struct FPointerEvent;
 
-UCLASS()
-class UCustomizableObjectEmptyClassForSettings : public UObject
-{
-	GENERATED_BODY()
-public:
-	TWeakPtr<class SCustomizableObjectEditorViewportTabBody> Viewport;
-	TObjectPtr<class UDebugSkelMeshComponent>* PreviewSkeletalMeshComp = nullptr;
-};
 
 class SCustomizableObjectCustomSettings : public SVerticalBox
 {
 public:
-	void Construct(const FArguments& InArgs, UCustomizableObjectEmptyClassForSettings* InObject);
+	SLATE_BEGIN_ARGS(SCustomizableObjectCustomSettings) {}
+	SLATE_ARGUMENT(UCustomSettings*, PreviewSettings)
+	SLATE_END_ARGS()
+	
+	void Construct(const FArguments& InArgs);
 
-private:
-	class FCustomizableObjectEditorViewportClient* ViewportClient;
-
-	// Lighting
-public:
 	void SetViewportLightsByAsset(const FAssetData& InAsset);
 
 private:
-
 	TSharedRef<SWidget> GetLightComboButtonContent();
 	void CloseLightComboButtonContent();
-	FReply OnSaveViewportLightsAsset();
-	FReply OnNewViewportLightsAsset();
+	FReply OnSaveViewportLightsAsset() const;
+	FReply OnNewViewportLightsAsset() const;
 
-	FReply OnPointLightAdded();
-	FReply OnSpotLightAdded();
-	FReply OnLightRemoved();
+	FReply OnPointLightAdded() const;
+	FReply OnSpotLightAdded() const;
+	FReply OnLightRemoved() const;
 	FReply OnLightUnselected();
-	TSharedRef<class ITableRow> OnGenerateWidgetForList(TSharedPtr<FString> Item, const TSharedRef<class STableViewBase>& OwnerTable);
+	TSharedRef<ITableRow> OnGenerateWidgetForList(TSharedPtr<FString> Item, const TSharedRef<STableViewBase>& OwnerTable);
 	void OnListSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo);
 
 	// LightProperties
@@ -73,18 +69,18 @@ private:
 	TOptional<float> GetLightOuterConeAngle() const;
 	void OnLightOuterConeAngleValueCommited(float Value, ETextCommit::Type CommitType);
 
-private:
+	TSharedPtr<ICustomizableObjectInstanceEditor> GetEditorChecked() const;
+	
 	TArray<TSharedPtr<FString>> LightNames;
-	TArray<class UPointLightComponent*> Lights;
 
 	static const FString LightPackagePath;
-	TSharedPtr<class SEditableTextBox> LightsAssetNameInputText;
+	TSharedPtr<SEditableTextBox> LightsAssetNameInputText;
 
-	TSharedPtr<class SComboButton> LightComboButton;
-	TSharedPtr<class STextBlock> LightAssetText;
+	TSharedPtr<SComboButton> LightComboButton;
 	TSharedPtr<SListView<TSharedPtr<FString>>> LightsListView;
-	class ULightComponent* SelectedLight;
-	TSharedPtr<class SExpandableArea> PointLightProperties;
-	TSharedPtr<class SExpandableArea> SpotLightProperties;
+	TSharedPtr<SExpandableArea> PointLightProperties;
+	TSharedPtr<SExpandableArea> SpotLightProperties;
 
+	TWeakPtr<ICustomizableObjectInstanceEditor> WeakEditor;
+	TWeakPtr<SCustomizableObjectEditorViewportTabBody> WeakViewport;
 };

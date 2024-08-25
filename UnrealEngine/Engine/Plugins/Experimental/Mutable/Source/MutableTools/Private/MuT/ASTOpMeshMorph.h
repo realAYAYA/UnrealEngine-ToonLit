@@ -15,7 +15,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//! From a source mesh, remove a list of fragments with a condition.
 	//---------------------------------------------------------------------------------------------
-	class ASTOpMeshMorph : public ASTOp
+	class ASTOpMeshMorph final : public ASTOp
 	{
 	public:
 

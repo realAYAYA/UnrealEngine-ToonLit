@@ -190,6 +190,12 @@ class UnrealProperty {
     return objectPath.substring(dotIndex + 1);
   }
 
+  /// The name of the last property in the chain if this is a nested property.
+  String get lastPropertyName {
+    final lastDotIndex = propertyName.lastIndexOf('.');
+    return (lastDotIndex == -1) ? propertyName : propertyName.substring(lastDotIndex + 1);
+  }
+
   /// Make a property with a suffix applied to the [propertyName].
   UnrealProperty makeSubproperty(String suffix, {String? typeNameOverride, String? friendlyObjectName}) {
     return UnrealProperty(

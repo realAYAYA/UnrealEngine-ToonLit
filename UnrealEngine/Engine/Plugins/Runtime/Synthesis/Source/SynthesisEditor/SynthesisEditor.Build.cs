@@ -34,6 +34,7 @@ namespace UnrealBuildTool.Rules
 					"DeveloperSettings",
 					"UMG",
 					"UMGEditor",
+					"SignalProcessing"
 				}
 			);
 

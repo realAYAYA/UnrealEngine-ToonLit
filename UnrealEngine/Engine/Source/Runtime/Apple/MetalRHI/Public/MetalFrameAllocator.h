@@ -15,25 +15,25 @@ public:
 
     struct AllocationEntry
     {
-        id <MTLBuffer> Backing;
+        MTLBufferPtr Backing;
         uint32 Offset;
     };
     
 private:
     // The device. This object will take a reference.
     // You must make sure your rendering is on this same device or things will explode horribly.
-    id <MTLDevice> Device;
+    MTL::Device* Device;
 #if METAL_FRAME_ALLOCATOR_VALIDATION
     // Every buffer that is currently allocated.
-    NSMutableArray<id <MTLBuffer>>* AllAllocatedBuffers;
+    TArray<MTLBufferPtr> AllAllocatedBuffers;
 #endif
     // Buffers that are available. These buffers are not currently being read from nor written to.
-    NSMutableArray<id <MTLBuffer>>* AvailableBuffers;
+    TArray<MTLBufferPtr> AvailableBuffers;
     // The current set of buffers in use for this frame.
     // Must ONLY be mutated on RHI thread if present.
-    NSMutableArray<id <MTLBuffer>>* BuffersInFlight;
+    TArray<MTLBufferPtr> BuffersInFlight;
     // The current buffer we are suballocating from and the current offset.
-    id <MTLBuffer> CurrentBuffer;
+    MTLBufferPtr CurrentBuffer;
     uint32 CurrentCursor;
     uint32 CurrentFrame;
     // Lock around AllAllocatedBuffers and AvailableBuffers since they are mutated from a completion handler.
@@ -53,7 +53,7 @@ public:
     // API
     
     // This object will hold a reference to TargetDevice for its lifetime.
-    FMetalFrameAllocator(id <MTLDevice> TargetDevice);
+    FMetalFrameAllocator(MTL::Device* TargetDevice);
     ~FMetalFrameAllocator();
     
     // Sets a target allocation limit.
@@ -78,11 +78,11 @@ public:
     // will be returned to the AvailableBuffers pool.
     // When this call returns CurrentBuffer and CurrentCursor will be reset to 0.
     // This is NOT thread-safe. It must be called from the RHI thread if present.
-    void MarkEndOfFrame(uint32 FrameNumberThatEnded, id <MTLCommandBuffer> LastCommandBufferInFrame);
+    void MarkEndOfFrame(uint32 FrameNumberThatEnded, FMetalCommandBuffer* LastCommandBufferInFrame);
     
 private:
     // This is NOT thread safe. You must lock around it.
-    id <MTLBuffer> FindOrAllocateBufferUnsafe(uint32 SizeInBytes);
-    void RecycleBuffers(NSArray <id <MTLBuffer>>* BuffersToRecycle);
+    MTLBufferPtr FindOrAllocateBufferUnsafe(uint32 SizeInBytes);
+    void RecycleBuffers(const TArray<MTLBufferPtr>* BuffersToRecycle);
 };
 

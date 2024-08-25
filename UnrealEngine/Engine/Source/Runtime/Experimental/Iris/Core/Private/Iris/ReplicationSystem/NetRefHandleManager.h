@@ -8,10 +8,12 @@
 #include "Containers/ArrayView.h"
 #include "Net/Core/NetBitArray.h"
 #include "Net/Core/NetHandle/NetHandle.h"
+#include "Iris/Core/NetChunkedArray.h"
 #include "Iris/ReplicationState/ReplicationStateDescriptor.h"
 #include "Iris/ReplicationSystem/NetRefHandle.h"
 #include "Iris/ReplicationSystem/NetDependencyData.h"
 #include "UObject/ObjectPtr.h"
+#include "Delegates/Delegate.h"
 
 class FReferenceCollector;
 namespace UE::Net
@@ -83,8 +85,10 @@ public:
 		const FReplicationProtocol* Protocol;
 		const FReplicationInstanceProtocol* InstanceProtocol;
 		uint8* ReceiveStateBuffer;
-		uint32 SubObjectRootIndex;
-		uint32 SubObjectParentIndex;
+		/** Subobjects only: Internal index of the RootObject of this subobject */
+		FInternalNetRefIndex SubObjectRootIndex;
+		/** Subobjects only: Internal index of the ParentObject of this subobject */
+		FInternalNetRefIndex SubObjectParentIndex;
 
 		union
 		{
@@ -99,6 +103,7 @@ public:
 				uint32 bAllowDestroyInstanceFromRemote : 1U;
 				uint32 bNeedsFullCopyAndQuantize : 1U;
 				uint32 bWantsFullPoll : 1U;
+				uint32 bPendingEndReplication : 1U;
 			};
 		};
 	
@@ -116,10 +121,16 @@ public:
 	typedef TMap<FNetHandle, FInternalNetRefIndex> FNetHandleMap;
 
 public:
-	FNetRefHandleManager(FReplicationProtocolManager& InReplicationProtocolManager, uint32 InReplicationSystemId, uint32 MaxActiveObjects);
+	FNetRefHandleManager(FReplicationProtocolManager& InReplicationProtocolManager, uint32 InReplicationSystemId, uint32 InMaxActiveObjectCount, uint32 InPreAllocatedObjectCount);
+
+	/** Callback triggered at the beginning of PreSendUpdate. Used to sync current frame data. */
+	void OnPreSendUpdate();
+
+	/** Callback triggered at the end of SendUpdate. Used to clear current frame data. */
+	void OnPostSendUpdate();
 
 	// Return true if this is a scopable index
-	bool IsScopableIndex(FInternalNetRefIndex InternalIndex) const { return ScopableInternalIndices.GetBit(InternalIndex); }
+	bool IsScopableIndex(FInternalNetRefIndex InternalIndex) const { return GlobalScopableInternalIndices.GetBit(InternalIndex); }
 
 	static FNetRefHandle MakeNetRefHandle(uint64 Id, uint32 ReplicationSystemId);
 	static FNetRefHandle MakeNetRefHandleFromId(uint64 Id);
@@ -158,14 +169,17 @@ public:
 
 	inline const FReplicatedObjectData& GetReplicatedObjectData(FInternalNetRefIndex InternalIndex) const;
 
-	inline const uint8* GetReplicatedObjectStateBufferNoCheck(FInternalNetRefIndex InternalObjectIndex) const { return ReplicatedObjectStateBuffers.GetData()[InternalObjectIndex]; }
-	inline uint8* GetReplicatedObjectStateBufferNoCheck(FInternalNetRefIndex InternalObjectIndex) { return ReplicatedObjectStateBuffers.GetData()[InternalObjectIndex]; }
-	inline const TArray<uint8*>& GetReplicatedObjectStateBuffers() const { return ReplicatedObjectStateBuffers; }
+	inline const uint8* GetReplicatedObjectStateBufferNoCheck(FInternalNetRefIndex InternalObjectIndex) const { return ReplicatedObjectStateBuffers[InternalObjectIndex]; }
+	inline uint8* GetReplicatedObjectStateBufferNoCheck(FInternalNetRefIndex InternalObjectIndex) { return ReplicatedObjectStateBuffers[InternalObjectIndex]; }
+	inline const TNetChunkedArray<uint8*>& GetReplicatedObjectStateBuffers() const { return ReplicatedObjectStateBuffers; }
 
 	/** Verify a handle against internal handle. A handle is valid if it matches internal storage. */
 	inline bool IsValidNetRefHandle(FNetRefHandle Handle) const;
 
-	/** Returns true if the handle is for a local replicated object. */
+	/** Returns true if the InternaIndex belongs to a replicated object owned by the local peer. */
+	inline bool IsLocal(FInternalNetRefIndex InternalIndex) const;
+
+	/** Returns true if the handle belongs to a replicated object owned by the local peer. */
 	inline bool IsLocalNetRefHandle(FNetRefHandle Handle) const;
 
 	/** Returns true if the handle is for a remote replicated object. */
@@ -183,13 +197,14 @@ public:
 	// Get internal index from NetHandle
 	inline FInternalNetRefIndex GetInternalIndexFromNetHandle(FNetHandle Handle) const;
 
-	/** Get bitarray for all currently scopable internal indices */
-	const FNetBitArray& GetScopableInternalIndices() const { return ScopableInternalIndices; }
-	const FNetBitArrayView GetScopableInternalIndicesView() const { return MakeNetBitArrayView(ScopableInternalIndices); }
+	/** All scopable internal indices of the ReplicationSystem. Always up to date but should mostly be accessed in operations executed outside PreSendUpdate. */
+	const FNetBitArrayView GetGlobalScopableInternalIndices() const { return MakeNetBitArrayView(GlobalScopableInternalIndices); }
 
-	// Get bitarray for all internal indices that was scopable last update
-	const FNetBitArray& GetPrevFrameScopableInternalIndices() const { return PrevFrameScopableInternalIndices; }
-	void SetPrevFrameScopableInternalIndicesToCurrent() { PrevFrameScopableInternalIndices = ScopableInternalIndices; }
+	/** All scopable internal indices of the current frame at the start of PreSendUpdate. Only accessible during that operation. */
+	const FNetBitArrayView GetCurrentFrameScopableInternalIndices() const { check(ScopeFrameData.bIsValid); return MakeNetBitArrayView(ScopeFrameData.CurrentFrameScopableInternalIndices); }
+
+	/** All scopable internal indices of the previous PreSendUpdate. Only accessible during that operation */
+	const FNetBitArrayView GetPrevFrameScopableInternalIndices() const { check(ScopeFrameData.bIsValid); return MakeNetBitArrayView(ScopeFrameData.PrevFrameScopableInternalIndices); }
 
 	/** List of objects that are always relevant or currently relevant to at least one connection. */
 	FNetBitArrayView GetRelevantObjectsInternalIndices() const { return MakeNetBitArrayView(RelevantObjectsInternalIndices); }
@@ -197,8 +212,8 @@ public:
 	/** List of objects that we polled this frame */
 	FNetBitArrayView GetPolledObjectsInternalIndices() const { return MakeNetBitArrayView(PolledObjectsInternalIndices); }
 
-	/** List of objects that need to copy their state data */
-	FNetBitArrayView GetDirtyObjectsToCopy() const { return MakeNetBitArrayView(DirtyObjectsToCopy); }
+	/** List of objects that have dirty state data that needs to be quantized */
+	FNetBitArrayView GetDirtyObjectsToQuantize() const { return MakeNetBitArrayView(DirtyObjectsToQuantize); }
 
 	// Get bitarray for all internal indices that currently are assigned
 	const FNetBitArray& GetAssignedInternalIndices() const { return AssignedInternalIndices; }
@@ -210,7 +225,10 @@ public:
 	bool AddSubObject(FNetRefHandle OwnerHandle, FNetRefHandle SubObjectHandle, FNetRefHandle RelativeOtherSubObjectHandle, EAddSubObjectFlags Flags = EAddSubObjectFlags::Default);
 	bool AddSubObject(FNetRefHandle OwnerHandle, FNetRefHandle SubObjectHandle, EAddSubObjectFlags Flags = EAddSubObjectFlags::Default);
 	void RemoveSubObject(FNetRefHandle SubObjectHandle);
-	FNetRefHandle GetSubObjectOwner(FNetRefHandle SubObjectHandle) const;
+	
+	FNetRefHandle GetRootObjectOfSubObject(FNetRefHandle SubObjectHandle) const;
+	FInternalNetRefIndex GetRootObjectInternalIndexOfSubObject(FInternalNetRefIndex SubObjectIndex) const;
+
 	bool SetSubObjectNetCondition(FInternalNetRefIndex SubObjectInternalIndex, FLifeTimeConditionStorage SubObjectCondition);
 
 	// DependentObjects
@@ -228,6 +246,7 @@ public:
 
 	uint32 GetMaxActiveObjectCount() const { return MaxActiveObjectCount; }
 	uint32 GetActiveObjectCount() const { return ActiveObjectCount; }
+	uint32 GetPreAllocatedObjectCount() const { return PreAllocatedObjectCount; }
 
 	// We do refcount objects tracked by each connection in order to know when it is safe to reuse an InternalIndex
 	void AddNetObjectRef(FInternalNetRefIndex InternalIndex) { ++ReplicatedObjectRefCount[InternalIndex]; }
@@ -249,12 +268,14 @@ public:
 	// Get child subobjects and condtionals array if one exists, if there are no child subobjects the method returns false
 	inline bool GetChildSubObjects(FInternalNetRefIndex OwnerIndex, FChildSubObjectsInfo& OutInfo) const;
 
+	/** Get the map that translates RefHandles into InternalIndexes */
 	const FRefHandleMap& GetReplicatedHandles() const { return RefHandleToInternalIndex; }
 
 	// Get the replicated object represented by a given internal index.
 	UObject* GetReplicatedObjectInstance(FInternalNetRefIndex ObjectIndex) const { return ReplicatedInstances[ObjectIndex]; }
 
-	const TArray<UObject*>& GetReplicatedInstances() const { return ReplicatedInstances; }
+	/** Get the array of all held object pointers */
+	const TNetChunkedArray<TObjectPtr<UObject>>& GetReplicatedInstances() const { return ReplicatedInstances; }
 
 	void AddReferencedObjects(FReferenceCollector& Collector);
 
@@ -263,8 +284,23 @@ public:
 
 	const FNetBitArray& GetDestroyedStartupObjectInternalIndices() const { return DestroyedStartupObjectInternalIndices; }
 
+	/** List of replicated objects that want to be dormant */
 	const FNetBitArray& GetWantToBeDormantInternalIndices() const { return WantToBeDormantInternalIndices; }
 	FNetBitArray& GetWantToBeDormantInternalIndices() { return WantToBeDormantInternalIndices; }
+
+	/** Return a string to identify the object linked to an index in logs */
+	FString PrintObjectFromIndex(FInternalNetRefIndex ObjectIndex) const;
+	FString PrintObjectFromNetRefHandle(FNetRefHandle ObjectHandle) const { return PrintObjectFromIndex(GetInternalIndex(ObjectHandle)); }
+
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLargestIndexIncrease, uint32 LargestIndex);
+
+	/** Return a delegate that will notify when the largest internal index has increased. */
+	FOnLargestIndexIncrease& GetLargestIndexIncreaseDelegate() { return OnLargestIndexIncreaseDelegate; };
+
+	/** Return the largest internal index that has been used. */
+	uint32 GetLargestInternalIndex() const { return LargestInternalIndex; };
+
+public:
 
 	// Iterate over all dependent objects and their dependent objects
 	template <typename T>
@@ -299,22 +335,53 @@ private:
 	void InternalRemoveDependentObject(FInternalNetRefIndex ParentInternalIndex, FInternalNetRefIndex DependentInternalIndex, ERemoveDependentObjectFlags Flags = ERemoveDependentObjectFlags::All);
 	void InternalRemoveDependentObject(FInternalNetRefIndex DependentInternalIndex);
 
+	// Ensure that all buffers that depend on the largest internal index are sized correctly.
+	void GrowBuffersToLargestIndex(uint32 InternalIndex);
+
 	// The current replicated object count
 	uint32 ActiveObjectCount;
 
 	// Max allowed replicated object count
 	uint32 MaxActiveObjectCount;
 
+	// The number of pre-allocated objects used by internal buffers.
+	uint32 PreAllocatedObjectCount;
+
+	// The largest internal index value that has been used.
+	uint32 LargestInternalIndex;
+
+	// A delegate that is triggered when the largest encountered internal index increases.
+	FOnLargestIndexIncrease OnLargestIndexIncreaseDelegate;
+
 	uint32 ReplicationSystemId;
 
 	FRefHandleMap RefHandleToInternalIndex;
 	FNetHandleMap NetHandleToInternalIndex;
 
-	// Bitset used in order to track assigned internal which are scopable
-	FNetBitArray ScopableInternalIndices;
+	struct FScopeFrameData
+	{
+		FScopeFrameData(uint32 InMaxActiveObjectCount)
+			: bIsValid(false)
+			, CurrentFrameScopableInternalIndices(InMaxActiveObjectCount)
+			, PrevFrameScopableInternalIndices(InMaxActiveObjectCount)
+			
+		{ }
 
-	// Which internal indices were used last net frame. This can be used to find out which ones are new and deleted this frame. 
-	FNetBitArray PrevFrameScopableInternalIndices;
+		// Controls if the frame data can be read or not
+		uint32 bIsValid : 1;
+
+		// Bitset used in order to track assigned internal which are scopable
+		FNetBitArray CurrentFrameScopableInternalIndices;
+
+		// Which internal indices were used last net frame. This can be used to find out which ones are new and deleted this frame. 
+		FNetBitArray PrevFrameScopableInternalIndices;
+	};
+
+	/** Bitset used in order to track assigned internal which are scopable */
+	FNetBitArray GlobalScopableInternalIndices;
+
+	/** Stores scope lists relevant to the current frame. Only valid during SendUpdate(). */
+	FScopeFrameData ScopeFrameData;
 
 	/** This contains the ScopableInternalIndices list minus filtered objects that are not relevant to any connection this frame. */
 	FNetBitArray RelevantObjectsInternalIndices;
@@ -322,8 +389,8 @@ private:
 	/** List of objects that we polled this frame */
 	FNetBitArray PolledObjectsInternalIndices;
 
-	/** List of the objects that are considered dirty and for whom we will copy their state data */
-	FNetBitArray DirtyObjectsToCopy;
+	/** List of the objects that are considered dirty and for whom we will quantize their state data */
+	FNetBitArray DirtyObjectsToQuantize;
 
 	// Bitset containing all internal indices that are assigned
 	FNetBitArray AssignedInternalIndices;
@@ -356,16 +423,16 @@ private:
 	TArray<FInternalNetRefIndex> PendingDestroyInternalIndices;
 
 	// Just an array containing data about our replicated objects
-	TArray<FReplicatedObjectData> ReplicatedObjectData;
+	TNetChunkedArray<FReplicatedObjectData> ReplicatedObjectData;
 
 	// Pointers to state buffers for all replicated objects
-	TArray<uint8*> ReplicatedObjectStateBuffers;
+	TNetChunkedArray<uint8*> ReplicatedObjectStateBuffers;
 
 	// Refcounts for all tracked objects
-	TArray<uint16> ReplicatedObjectRefCount;
+	TNetChunkedArray<uint16> ReplicatedObjectRefCount;
 
 	// Raw pointers to all bound instances
-	TArray<TObjectPtr<UObject>> ReplicatedInstances;
+	TNetChunkedArray<TObjectPtr<UObject>> ReplicatedInstances;
 
 	// Assign handles
 	uint64 NextStaticHandleIndex;
@@ -408,7 +475,7 @@ FNetRefHandle FNetRefHandleManager::GetCompleteNetRefHandle(FNetRefHandle Incomp
 	}
 	else
 	{
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 }
 
@@ -417,15 +484,14 @@ bool FNetRefHandleManager::IsValidNetRefHandle(FNetRefHandle Handle) const
 	return RefHandleToInternalIndex.Contains(Handle);
 }
 
+bool FNetRefHandleManager::IsLocal(FInternalNetRefIndex InternalIndex) const
+{
+	return (InternalIndex != InvalidInternalIndex) && (ReplicatedObjectStateBuffers[InternalIndex] != nullptr);
+}
+
 bool FNetRefHandleManager::IsLocalNetRefHandle(FNetRefHandle Handle) const
 {
-	if (const FInternalNetRefIndex InternalIndex = GetInternalIndex(Handle))
-	{
-		// For the time being only replicated objects owned by this peer has a state buffer
-		return ReplicatedObjectStateBuffers[InternalIndex] != nullptr;
-	}
-
-	return false;
+	return IsLocal(GetInternalIndex(Handle));
 }
 
 bool FNetRefHandleManager::IsRemoteNetRefHandle(FNetRefHandle Handle) const
@@ -447,7 +513,7 @@ uint32 FNetRefHandleManager::GetOriginalDestroyedStartupObjectIndex(FInternalNet
 
 inline bool FNetRefHandleManager::AddSubObject(FNetRefHandle OwnerHandle, FNetRefHandle SubObjectHandle, EAddSubObjectFlags Flags)
 {
-	return AddSubObject(OwnerHandle, SubObjectHandle, FNetRefHandle(), Flags);
+	return AddSubObject(OwnerHandle, SubObjectHandle, FNetRefHandle::GetInvalid(), Flags);
 }
 
 TArrayView<const FInternalNetRefIndex> FNetRefHandleManager::GetSubObjects(FInternalNetRefIndex OwnerIndex) const

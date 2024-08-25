@@ -98,6 +98,11 @@ public:
 		{
 			Value.bIsSet = true;
 		}
+		else
+		{
+			// Ensure that a user doesn't emplace an unset state into the optional
+			checkf(IsSet(), TEXT("TOptional::TOptional(EInPlace, ...) - optionals should not be unset by emplacement"));
+		}
 	}
 	
 	/** Construct an OptionalType with an invalid value. */
@@ -275,6 +280,11 @@ public:
 		{
 			Value.bIsSet = true;
 		}
+		else
+		{
+			// Ensure that a user doesn't emplace an unset state into the optional
+			checkf(IsSet(), TEXT("TOptional::Emplace(...) - optionals should not be unset by an emplacement"));
+		}
 
 		return *Result;
 	}
@@ -405,6 +415,12 @@ FArchive& operator<<(FArchive& Ar, TOptional<OptionalType>& Optional)
 {
 	Optional.Serialize(Ar);
 	return Ar;
+}
+
+template<typename OptionalType>
+inline auto GetTypeHash(const TOptional<OptionalType>& Optional) -> decltype(GetTypeHash(*Optional))
+{
+	return Optional.IsSet() ? GetTypeHash(*Optional) : 0;
 }
 
 /**

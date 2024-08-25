@@ -216,7 +216,7 @@ void FStaticMeshVertexBuffer::Serialize(FArchive& Ar, bool bNeedsCPUAccess)
 		AllocateData(bNeedsCPUAccess);
 	}
 
-	if (!StripFlags.IsDataStrippedForServer() || Ar.IsCountingMemory())
+	if (!StripFlags.IsAudioVisualDataStripped() || Ar.IsCountingMemory())
 	{
 		if (TangentsData != nullptr)
 		{
@@ -267,36 +267,36 @@ void FStaticMeshVertexBuffer::operator=(const FStaticMeshVertexBuffer &Other)
 	bUseHighPrecisionTangentBasis = Other.bUseHighPrecisionTangentBasis;
 }
 
-template <bool bRenderThread>
-FBufferRHIRef FStaticMeshVertexBuffer::CreateTangentsRHIBuffer_Internal()
+FBufferRHIRef FStaticMeshVertexBuffer::CreateTangentsRHIBuffer(FRHICommandListBase& RHICmdList)
 {
-	return CreateRHIBuffer<bRenderThread>(TangentsData, GetNumVertices(), BUF_Static | BUF_ShaderResource, TEXT("TangentsRHIBuffer"));
+	return CreateRHIBuffer(RHICmdList, TangentsData, GetNumVertices(), BUF_Static | BUF_ShaderResource, TEXT("TangentsRHIBuffer"));
 }
 
 FBufferRHIRef FStaticMeshVertexBuffer::CreateTangentsRHIBuffer_RenderThread()
 {
-	return CreateTangentsRHIBuffer_Internal<true>();
+	return CreateTangentsRHIBuffer(FRHICommandListImmediate::Get());
 }
 
 FBufferRHIRef FStaticMeshVertexBuffer::CreateTangentsRHIBuffer_Async()
 {
-	return CreateTangentsRHIBuffer_Internal<false>();
+	FRHIAsyncCommandList CommandList;
+	return CreateTangentsRHIBuffer(*CommandList);
 }
 
-template <bool bRenderThread>
-FBufferRHIRef FStaticMeshVertexBuffer::CreateTexCoordRHIBuffer_Internal()
+FBufferRHIRef FStaticMeshVertexBuffer::CreateTexCoordRHIBuffer(FRHICommandListBase& RHICmdList)
 {
-	return CreateRHIBuffer<bRenderThread>(TexcoordData, GetNumTexCoords(), BUF_Static | BUF_ShaderResource, TEXT("TexCoordRHIBuffer"));
+	return CreateRHIBuffer(RHICmdList, TexcoordData, GetNumTexCoords(), BUF_Static | BUF_ShaderResource, TEXT("TexCoordRHIBuffer"));
 }
 
 FBufferRHIRef FStaticMeshVertexBuffer::CreateTexCoordRHIBuffer_RenderThread()
 {
-	return CreateTexCoordRHIBuffer_Internal<true>();
+	return CreateTexCoordRHIBuffer(FRHICommandListImmediate::Get());
 }
 
 FBufferRHIRef FStaticMeshVertexBuffer::CreateTexCoordRHIBuffer_Async()
 {
-	return CreateTexCoordRHIBuffer_Internal<false>();
+	FRHIAsyncCommandList CommandList;
+	return CreateTexCoordRHIBuffer(*CommandList);
 }
 
 void FStaticMeshVertexBuffer::InitRHIForStreaming(
@@ -333,8 +333,8 @@ void FStaticMeshVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 
 	const bool bHadTangentsData = TangentsData != nullptr;
 	const bool bCreateTangentsSRV = bHadTangentsData && TangentsData->GetAllowCPUAccess();
-	TangentsVertexBuffer.VertexBufferRHI = CreateTangentsRHIBuffer_RenderThread();
-	if (TangentsVertexBuffer.VertexBufferRHI && (bCreateTangentsSRV || RHISupportsManualVertexFetch(GMaxRHIShaderPlatform) || FLocalVertexFactory::IsGPUSkinPassThroughSupported(GMaxRHIShaderPlatform)))
+	TangentsVertexBuffer.VertexBufferRHI = CreateTangentsRHIBuffer(RHICmdList);
+	if (TangentsVertexBuffer.VertexBufferRHI && (bCreateTangentsSRV || RHISupportsManualVertexFetch(GMaxRHIShaderPlatform) || IsGPUSkinPassThroughSupported(GMaxRHIShaderPlatform)))
 	{
 		uint32       Stride = GetUseHighPrecisionTangentBasis() ? 8 : 4;
 		EPixelFormat Format = GetUseHighPrecisionTangentBasis() ? PF_R16G16B16A16_SNORM : PF_R8G8B8A8_SNORM;
@@ -343,7 +343,7 @@ void FStaticMeshVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 
 	const bool bHadTexCoordData = TexcoordData != nullptr;
 	const bool bCreateTexCoordSRV = bHadTexCoordData && TexcoordData->GetAllowCPUAccess();
-	TexCoordVertexBuffer.VertexBufferRHI = CreateTexCoordRHIBuffer_RenderThread();
+	TexCoordVertexBuffer.VertexBufferRHI = CreateTexCoordRHIBuffer(RHICmdList);
 	if (TexCoordVertexBuffer.VertexBufferRHI && (bCreateTexCoordSRV || RHISupportsManualVertexFetch(GMaxRHIShaderPlatform)))
 	{
 		uint32       Stride = GetUseFullPrecisionUVs() ? 8 : 4;

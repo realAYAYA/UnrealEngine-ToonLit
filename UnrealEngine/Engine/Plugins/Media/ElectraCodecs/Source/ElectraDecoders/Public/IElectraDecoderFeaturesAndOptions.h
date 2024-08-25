@@ -35,6 +35,16 @@ namespace IElectraDecoderFeature
 	 */
 	const TCHAR* const IsAdaptive = TEXT("is_adaptive");
 
+	/*
+	 * FVariant(bool) : true - adaptive decoding supported, false - not supported
+	 *
+	 * Indicates if the decoder supports dropping output frames that we do not want to display.
+	 * Such frames still need to be decoded to update the internal decoder state but the output
+	 * is not needed and can already be discarded on the decoder level instead of being converted
+	 * and passed up the pipeline where it will then be discarded.
+	 */
+	const TCHAR* const SupportsDroppingOutput = TEXT("supports_drop_output");
+
 	/**
 	 * FVariant(int32)
 	 *    Value to add to the length of the decoding unit.

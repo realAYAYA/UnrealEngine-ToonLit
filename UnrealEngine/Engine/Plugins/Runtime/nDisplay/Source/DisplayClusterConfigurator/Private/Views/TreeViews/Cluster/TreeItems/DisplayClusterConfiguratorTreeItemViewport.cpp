@@ -7,6 +7,7 @@
 #include "DisplayClusterProjectionStrings.h"
 #include "DisplayClusterConfiguratorBlueprintEditor.h"
 #include "DisplayClusterConfiguratorPropertyUtils.h"
+#include "ClusterConfiguration/DisplayClusterConfiguratorClusterEditorUtils.h"
 #include "ClusterConfiguration/DisplayClusterConfiguratorClusterUtils.h"
 #include "Views/DragDrop/DisplayClusterConfiguratorValidatedDragDropOp.h"
 #include "Views/DragDrop/DisplayClusterConfiguratorViewportDragDropOp.h"
@@ -35,7 +36,7 @@ void FDisplayClusterConfiguratorTreeItemViewport::SetVisible(bool bIsVisible)
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(Viewport, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, bIsVisible));
 
 	PropertyView->GetPropertyHandle()->SetValue(bIsVisible);
@@ -48,7 +49,7 @@ void FDisplayClusterConfiguratorTreeItemViewport::SetUnlocked(bool bIsUnlocked)
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(Viewport, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, bIsUnlocked));
 	
 	PropertyView->GetPropertyHandle()->SetValue(bIsUnlocked);
@@ -86,7 +87,7 @@ void FDisplayClusterConfiguratorTreeItemViewport::OnSelection()
 void FDisplayClusterConfiguratorTreeItemViewport::DeleteItem() const
 {
 	UDisplayClusterConfigurationViewport* Viewport = GetObjectChecked<UDisplayClusterConfigurationViewport>();
-	FDisplayClusterConfiguratorClusterUtils::RemoveViewportFromClusterNode(Viewport);
+	UE::DisplayClusterConfiguratorClusterUtils::RemoveViewportFromClusterNode(Viewport);
 }
 
 FReply FDisplayClusterConfiguratorTreeItemViewport::HandleDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
@@ -108,7 +109,7 @@ FReply FDisplayClusterConfiguratorTreeItemViewport::HandleDragDetected(const FGe
 			SelectedObjects.Add(SelectedItem->GetObject());
 		}
 
-		TSharedPtr<FDragDropOperation> DragDropOp = FDisplayClusterConfiguratorClusterUtils::MakeDragDropOperation(SelectedObjects);
+		TSharedPtr<FDragDropOperation> DragDropOp = UE::DisplayClusterConfiguratorClusterEditorUtils::MakeDragDropOperation(SelectedObjects);
 
 		if (DragDropOp.IsValid())
 		{
@@ -198,7 +199,7 @@ void FDisplayClusterConfiguratorTreeItemViewport::OnDisplayNameCommitted(const F
 	FScopedTransaction Transaction(NSLOCTEXT("FDisplayClusterConfiguratorViewCluster", "RenameClusterNode", "Rename Cluster Node"));
 	FString NewName = NewText.ToString();
 
-	if (FDisplayClusterConfiguratorClusterUtils::RenameViewport(Viewport, NewName))
+	if (UE::DisplayClusterConfiguratorClusterUtils::RenameViewport(Viewport, NewName))
 	{
 		Name = *NewName;
 
@@ -226,7 +227,7 @@ void FDisplayClusterConfiguratorTreeItemViewport::ToggleClusterItemVisibility()
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(Viewport, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, bIsVisible));
 
 	PropertyView->GetPropertyHandle()->SetValue(!Viewport->bIsVisible);
@@ -247,7 +248,7 @@ void FDisplayClusterConfiguratorTreeItemViewport::ToggleClusterItemLock()
 	// Use SaveToTransactionBuffer to avoid marking the package as dirty
 	SaveToTransactionBuffer(Viewport, false);
 
-	const TSharedPtr<ISinglePropertyView> PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+	const TSharedPtr<ISinglePropertyView> PropertyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 		Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, bIsUnlocked));
 
 	PropertyView->GetPropertyHandle()->SetValue(!Viewport->bIsUnlocked);

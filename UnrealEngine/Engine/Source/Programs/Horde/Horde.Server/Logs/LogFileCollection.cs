@@ -5,13 +5,13 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Agents.Sessions;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
 using EpicGames.Horde.Storage;
-using Horde.Server.Agents.Leases;
-using Horde.Server.Agents.Sessions;
-using Horde.Server.Jobs;
 using Horde.Server.Server;
-using Horde.Server.Streams;
-using Horde.Server.Utilities;
+using Horde.Server.Storage;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
@@ -76,6 +76,8 @@ namespace Horde.Server.Logs
 			public List<LogChunkDocument> Chunks { get; set; } = new List<LogChunkDocument>();
 
 			public int LineCount { get; set; }
+
+			public NamespaceId NamespaceId { get; set; } = Namespace.Logs;
 			public RefName RefName { get; set; }
 
 			[BsonIgnoreIfDefault]
@@ -91,15 +93,16 @@ namespace Horde.Server.Logs
 			{
 			}
 
-			public LogFileDocument(JobId jobId, LeaseId? leaseId, SessionId? sessionId, LogType type, bool newStorageBackend, LogId? logId)
+			public LogFileDocument(JobId jobId, LeaseId? leaseId, SessionId? sessionId, LogType type, LogId? logId, NamespaceId namespaceId)
 			{
-				Id = logId ?? LogId.GenerateNewId();
+				Id = logId ?? LogIdUtils.GenerateNewId();
 				JobId = jobId;
 				LeaseId = leaseId;
 				SessionId = sessionId;
 				Type = type;
-				UseNewStorageBackend = newStorageBackend;
+				UseNewStorageBackend = true;
 				MaxLineIndex = 0;
+				NamespaceId = namespaceId;
 				RefName = new RefName(Id.ToString());
 			}
 
@@ -132,9 +135,9 @@ namespace Horde.Server.Logs
 		}
 
 		/// <inheritdoc/>
-		public async Task<ILogFile> CreateLogFileAsync(JobId jobId, LeaseId? leaseId, SessionId? sessionId, LogType type, bool newStorageBackend, LogId? logId, CancellationToken cancellationToken)
+		public async Task<ILogFile> CreateLogFileAsync(JobId jobId, LeaseId? leaseId, SessionId? sessionId, LogType type, LogId? logId, CancellationToken cancellationToken)
 		{
-			LogFileDocument newLogFile = new (jobId, leaseId, sessionId, type, newStorageBackend, logId);
+			LogFileDocument newLogFile = new LogFileDocument(jobId, leaseId, sessionId, type, logId, Namespace.Logs);
 			await _logFiles.InsertOneAsync(newLogFile, null, cancellationToken);
 			return newLogFile;
 		}
@@ -240,11 +243,11 @@ namespace Horde.Server.Logs
 		public async Task<List<ILogFile>> GetLogFilesAsync(int? index = null, int? count = null, CancellationToken cancellationToken = default)
 		{
 			IFindFluent<LogFileDocument, LogFileDocument> query = _logFiles.Find(FilterDefinition<LogFileDocument>.Empty);
-			if(index != null)
+			if (index != null)
 			{
 				query = query.Skip(index.Value);
 			}
-			if(count != null)
+			if (count != null)
 			{
 				query = query.Limit(count.Value);
 			}

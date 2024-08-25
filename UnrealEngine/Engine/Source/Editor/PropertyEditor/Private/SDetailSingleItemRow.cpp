@@ -2,10 +2,10 @@
 
 #include "SDetailSingleItemRow.h"
 
-#include "Algo/AnyOf.h"
 #include "Algo/Compare.h"
 #include "DetailGroup.h"
 #include "DetailPropertyRow.h"
+#include "DetailsNameWidgetOverrideCustomization.h"
 #include "DetailWidgetRow.h"
 #include "Editor.h"
 #include "IDetailDragDropHandler.h"
@@ -22,10 +22,14 @@
 #include "SDetailExpanderArrow.h"
 #include "SDetailRowIndent.h"
 #include "Styling/StyleColors.h"
+#include "UObject/Field.h"
 #include "UserInterface/PropertyEditor/PropertyEditorConstants.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
+#include "DetailsViewStyle.h"
+#include "SDetailsView.h"
+#include "ToolMenus.h"
 
 namespace DetailWidgetConstants
 {
@@ -247,14 +251,11 @@ TSharedPtr<FPropertyNode> SDetailSingleItemRow::GetPropertyNode() const
 TSharedPtr<IPropertyHandle> SDetailSingleItemRow::GetPropertyHandle() const
 {
 	TSharedPtr<IPropertyHandle> Handle;
-	const TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
-	if (PropertyNode.IsValid())
+	if (const TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode())
 	{
-		const TSharedPtr<FDetailTreeNode> OwnerTreeNodePtr = OwnerTreeNode.Pin();
-		if (OwnerTreeNodePtr.IsValid())
+		if (const TSharedPtr<FDetailTreeNode> OwnerTreeNodePtr = OwnerTreeNode.Pin())
 		{
-			IDetailsViewPrivate* DetailsView = OwnerTreeNodePtr->GetDetailsView();
-			if (DetailsView != nullptr)
+			if (IDetailsViewPrivate* DetailsView = OwnerTreeNodePtr->GetDetailsView())
 			{
 				Handle = PropertyEditorHelpers::GetPropertyHandle(PropertyNode.ToSharedRef(), DetailsView->GetNotifyHook(), DetailsView->GetPropertyUtilities());
 			}
@@ -325,6 +326,9 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 			TSharedPtr<FDetailGroup> Group = nullptr;
 			WidgetRow = Customization->GetWidgetRow();
 
+			// Populate the extension content in the WidgetRow if there's an extension handler.
+			PopulateExtensionWidget();
+
 			// Setup copy / paste actions
 			{
 				if (WidgetRow.IsCopyPasteBound())
@@ -383,9 +387,6 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 				}
 			}
 
-			// Populate the extension content in the WidgetRow if there's an extension handler.
-			PopulateExtensionWidget();
-
 			TSharedPtr<SWidget> NameWidget = WidgetRow.NameWidget.Widget;
 
 			TSharedPtr<SWidget> ValueWidget =
@@ -430,7 +431,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 			Widget = SNew(SBorder)
 				.BorderImage(FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle"))
 				.BorderBackgroundColor(this, &SDetailSingleItemRow::GetInnerBackgroundColor)
-				.Padding(0)
+				.Padding(0.0f)
 				[
 					Splitter
 				];
@@ -444,7 +445,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 			NameColumnBox->AddSlot()
 				.HAlign(HAlign_Left)
 				.VAlign(VAlign_Fill)
-				.Padding(0)
+				.Padding(0.0f)
 				.AutoWidth()
 				[
 					SNew(SDetailRowIndent, SharedThis(this))
@@ -458,7 +459,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 				NameColumnBox->AddSlot()
 					.HAlign(HAlign_Left)
 					.VAlign(VAlign_Center)
-					.Padding(-4, 0, -10, 0)
+					.Padding(-4.0f, 0.0f, -10.0f, 0.0f)
 					.AutoWidth()
 					[
 						ReorderHandle
@@ -478,7 +479,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 					NameColumnBox->AddSlot()
 						.HAlign(HAlign_Left)
 						.VAlign(VAlign_Center)
-						.Padding(-4, 0, -10, 0)
+						.Padding(-4.0f, 0.0f, -10.0f, 0.0f)
 						.AutoWidth()
 						[
 							ArrayHandle
@@ -490,17 +491,17 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 				if (PropertyNode->IsReorderable() || 
 					(CastField<FArrayProperty>(PropertyNode->GetProperty()) != nullptr && 
 					CastField<FObjectProperty>(CastField<FArrayProperty>(PropertyNode->GetProperty())->Inner) != nullptr)) // Is an object array
-				{
+						{
 					DragLeaveDelegate = FOnTableRowDragLeave::CreateSP(this, &SDetailSingleItemRow::OnArrayOrCustomDragLeave);
 					AcceptDropDelegate = FOnAcceptDrop::CreateSP(this, PropertyNode->IsReorderable() ? &SDetailSingleItemRow::OnArrayAcceptDrop : &SDetailSingleItemRow::OnArrayHeaderAcceptDrop);
 					CanAcceptDropDelegate = FOnCanAcceptDrop::CreateSP(this, &SDetailSingleItemRow::OnArrayCanAcceptDrop);
-				}
+						}
 			}
 
 			NameColumnBox->AddSlot()
 				.HAlign(HAlign_Left)
 				.VAlign(VAlign_Center)
-				.Padding(2,0,0,0)
+				.Padding(2.0f,0.0f,0.0f,0.0f)
 				.AutoWidth()
 				[
 					SNew(SDetailExpanderArrow, SharedThis(this))
@@ -509,7 +510,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 			NameColumnBox->AddSlot()
 				.VAlign(VAlign_Center)
 				.HAlign(HAlign_Left)
-				.Padding(2,0,0,0)
+				.Padding(2.0f,0.0f,0.0f,0.0f)
 				.AutoWidth()
 				[
 					SNew(SEditConditionWidget)
@@ -522,7 +523,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 				NameColumnBox->AddSlot()
 					.HAlign(WidgetRow.NameWidget.HorizontalAlignment)
 					.VAlign(WidgetRow.NameWidget.VerticalAlignment)
-					.Padding(2,0,0,0)
+					.Padding(2.0f,0.0f,0.0f,0.0f)
 					[
 						NameWidget.ToSharedRef()
 					];
@@ -533,7 +534,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 					.Value(ColumnSizeData.GetNameColumnWidth())
 					.OnSlotResized(ColumnSizeData.GetOnNameColumnResized())
 					[
-						NameColumnBox
+						GetNameWidget(NameColumnBox, GetPropertyNode())
 					];
 
 				// create Value column:
@@ -555,7 +556,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 						+ SHorizontalBox::Slot()
 						.HAlign(WidgetRow.ExtensionWidget.HorizontalAlignment)
 						.VAlign(WidgetRow.ExtensionWidget.VerticalAlignment)
-						.Padding(5,0,0,0)
+						.Padding(5.0f,0.0f,0.0f,0.0f)
 						.AutoWidth()
 						[
 							ExtensionWidget.ToSharedRef()
@@ -570,7 +571,7 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 				NameColumnBox->AddSlot()
 					.HAlign(WidgetRow.WholeRowWidget.HorizontalAlignment)
 					.VAlign(WidgetRow.WholeRowWidget.VerticalAlignment)
-					.Padding(2,0,0,0)
+					.Padding(2.0f,0.0f,0.0f,0.0f)
 					[
 						WidgetRow.WholeRowWidget.Widget
 					];
@@ -627,6 +628,26 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 				ToolbarBuilder.AddToolBarButton(Extension.UIAction, NAME_None, Extension.Label, Extension.ToolTip, Extension.Icon);
 			}
 
+			FProperty* Property = nullptr;
+			
+			if (GetPropertyNode().IsValid() &&
+				DetailsView &&
+				DetailsView->GetDisplayManager().IsValid())
+			{
+				TSharedPtr<FPropertyNode>  PropertyNode = GetPropertyNode(); 	
+				Property = PropertyNode->GetProperty();
+				DisplayManager = DetailsView->GetDisplayManager();
+				TSharedRef<FEditPropertyChain> EditPropertyChain = PropertyNode->BuildPropertyChain( Property ); 
+				PropertyUpdatedWidgetBuilder = DisplayManager->GetPropertyUpdatedWidget(
+					FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnResetToDefaultClicked), EditPropertyChain, Category->GetObjectName());
+
+				if (PropertyUpdatedWidgetBuilder.IsValid())
+				{
+					TAttribute<bool> IsHovered = TAttribute<bool>::CreateSP( this, &SDetailSingleItemRow::IsHovered);
+					PropertyUpdatedWidgetBuilder->Bind_IsRowHovered(IsHovered);
+				}
+			}
+
 			Splitter->AddSlot()
 				.Value(ColumnSizeData.GetRightColumnWidth())
 				.OnSlotResized(ColumnSizeData.GetOnRightColumnResized())
@@ -635,11 +656,13 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 				SNew(SBorder)
 				.BorderImage(FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle"))
 				.BorderBackgroundColor(this, &SDetailSingleItemRow::GetOuterBackgroundColor)
-				.HAlign(HAlign_Fill)
+				.HAlign(HAlign_Right)
 				.VAlign(VAlign_Center)
-				.Padding(0)
+				.Padding(0.0f)
 				[
-					ToolbarBuilder.MakeWidget()
+					PropertyUpdatedWidgetBuilder.IsValid() ?
+					         PropertyUpdatedWidgetBuilder->GenerateWidget().ToSharedRef()  :
+					         ToolbarBuilder.MakeWidget()
 				]
 			];
 		}
@@ -651,15 +674,15 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 		Widget = SNew(SSpacer);
 	}
 
-	TWeakPtr<STableViewBase> OwnerTableViewWeak = InOwnerTableView;
-	auto GetScrollbarWellBrush = [this, OwnerTableViewWeak]()
+	OwnerTableViewWeak = InOwnerTableView;
+	auto GetScrollbarWellBrush = [this]()
 	{
 		return SDetailTableRowBase::IsScrollBarVisible(OwnerTableViewWeak) ?
 			FAppStyle::Get().GetBrush("DetailsView.GridLine") : 
 			FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle");
 	};
 
-	auto GetScrollbarWellTint = [this, OwnerTableViewWeak]()
+	auto GetScrollbarWellTint = [this]()
 	{
 		return SDetailTableRowBase::IsScrollBarVisible(OwnerTableViewWeak) ?
 			FStyleColors::White : 
@@ -671,47 +694,50 @@ void SDetailSingleItemRow::Construct( const FArguments& InArgs, FDetailLayoutCus
 		return this->IsHighlighted() ? FMargin(1) : FMargin(0);
 	};
 
-	this->ChildSlot
-	[
-		SNew( SBorder )
-		.BorderImage(FAppStyle::Get().GetBrush("DetailsView.GridLine"))
-		.Padding(FMargin(0,0,0,1))
-		.Clipping(EWidgetClipping::ClipToBounds)
+	static const FDetailsViewStyleKey& PrimaryKey = SDetailsView::GetPrimaryDetailsViewStyleKey();
+
+	// If this is a stub category with no UProperty data, just show a null widget, we don't have anything useful to show here
+	if (Category.IsValid() && Category->IsEmpty())
+	{
+		this->ChildSlot
+		[ 
+			SNullWidget::NullWidget
+		];
+	}
+	else
+	{
+		this->ChildSlot
 		[
-			SNew(SBox)
-			.MinDesiredHeight(PropertyEditorConstants::PropertyRowHeight)
+			SNew( SBorder )
+			.BorderImage(FAppStyle::Get().GetBrush("DetailsView.GridLine"))
+			.Padding(FMargin(0.0f,0.0f,0.0f,1.0f))
+			.Clipping(EWidgetClipping::ClipToBounds)
 			[
-				SNew( SHorizontalBox )
-				+ SHorizontalBox::Slot()
-				.HAlign(HAlign_Fill)
-				.VAlign(VAlign_Fill)
+				SNew(SBox)
+				.MinDesiredHeight(PropertyEditorConstants::PropertyRowHeight)
 				[
-					SNew( SBorder )
-					.BorderImage(FAppStyle::Get().GetBrush("DetailsView.Highlight"))
-					.Padding_Lambda(GetHighlightBorderPadding)
+					SNew( SHorizontalBox )
+					+ SHorizontalBox::Slot()
+					.HAlign(HAlign_Fill)
+					.VAlign(VAlign_Fill)
 					[
 						SNew( SBorder )
-						.BorderImage(FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle"))
-						.BorderBackgroundColor(this, &SDetailSingleItemRow::GetOuterBackgroundColor)
-						.Padding(0)
+						.BorderImage(FAppStyle::Get().GetBrush("DetailsView.Highlight"))
+						.Padding_Lambda(GetHighlightBorderPadding)
 						[
-							Widget
+							SNew( SBorder )
+							.BorderImage(FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle"))
+							.BorderBackgroundColor(this, &SDetailSingleItemRow::GetOuterBackgroundColor)
+							.Padding(0.0f)
+							[
+								Widget
+							]
 						]
 					]
 				]
-				+ SHorizontalBox::Slot()
-				.HAlign(HAlign_Right)
-				.VAlign(VAlign_Fill)
-				.AutoWidth()
-				[
-					SNew( SBorder )
-					.BorderImage_Lambda(GetScrollbarWellBrush)
-					.BorderBackgroundColor_Lambda(GetScrollbarWellTint)
-					.Padding(FMargin(0, 0, SDetailTableRowBase::ScrollBarPadding, 0))
-				]
 			]
-		]
-	];
+		];
+	}
 
 	STableRow< TSharedPtr< FDetailTreeNode > >::ConstructInternal(
 		STableRow::FArguments()
@@ -735,7 +761,8 @@ FReply SDetailSingleItemRow::OnMouseButtonUp(const FGeometry& MyGeometry, const 
 			PulseAnimation.Play(SharedThis(this));
 			bIsHandled = true;
 		}
-		else if (PasteAction.CanExecute() && MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+		// Paste is disabled if property editing is disabled
+		else if (PasteAction.CanExecute() && MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && OwnerTreeNode.Pin()->GetDetailsView()->IsPropertyEditingEnabled())
 		{
 			PasteAction.Execute();
 			PulseAnimation.Play(SharedThis(this));
@@ -751,6 +778,29 @@ FReply SDetailSingleItemRow::OnMouseButtonUp(const FGeometry& MyGeometry, const 
 		if (bIsHandled)
 		{
 			return FReply::Handled();
+		}
+	}
+	else if (MouseEvent.GetModifierKeys().IsControlDown() && GEditor && GWorld)
+	{
+		const TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
+		const TSharedPtr<IPropertyHandle> PropertyHandle = GetPropertyHandle();		
+
+		if (PropertyNode.IsValid() && PropertyHandle.IsValid())
+		{
+			IDetailsViewPrivate* DetailsView = OwnerTreeNode.Pin()->GetDetailsView();
+			TSharedPtr<IPropertyHandle> Handle = PropertyEditorHelpers::GetPropertyHandle(PropertyNode.ToSharedRef(), DetailsView->GetNotifyHook(), DetailsView->GetPropertyUtilities());
+
+			FString Value;
+			if (Handle->GetValueAsFormattedString(Value, PPF_Copy) == FPropertyAccess::Success)
+			{
+				FProperty* Property = PropertyHandle->GetProperty();
+
+				TSharedRef<FEditPropertyChain> PropertyChain = PropertyNode->BuildPropertyChain(Property);
+				check(PropertyChain.IsUnique());
+
+				FProperty* TopProperty = PropertyChain->GetHead()->GetValue();
+				GEditor->SetPropertyColorationTarget(GWorld, Value, Property, TopProperty->GetOwnerClass(), &PropertyChain);
+			}
 		}
 	}
 
@@ -914,8 +964,7 @@ void SDetailSingleItemRow::OnPasteGroup()
 					*FString::Join(PropertiesNotPasted, TEXT("\n")));
 			}
 
-			IDetailsViewPrivate* DetailsView = OwnerTreeNode.Pin()->GetDetailsView();
-			DetailsView->ForceRefresh();
+			ForceRefresh();
 		}
 	}
 }
@@ -981,157 +1030,205 @@ bool SDetailSingleItemRow::CanPasteGroup()
 	return PreviousClipboardData.bIsApplicable = Algo::Compare(PreviousClipboardData.PropertyNames, PropertyNames);
 }
 
-bool SDetailSingleItemRow::OnContextMenuOpening(FMenuBuilder& MenuBuilder)
+void SDetailSingleItemRow::PopulateContextMenu(UToolMenu* ToolMenu)
 {
-	FUIAction CopyDisplayNameAction = FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnCopyPropertyDisplayName);
-	CopyDisplayNameAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailSingleItemRow::CanCopyPropertyDisplayName);
-	FUIAction CopyInternalNameAction = FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnCopyPropertyInternalName);
-	CopyInternalNameAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailSingleItemRow::CanCopyPropertyInternalName);
+	SDetailTableRowBase::PopulateContextMenu(ToolMenu);
 
-	// Show a separator line if there are items before this in the menu
-	if (MenuBuilder.GetMultiBox()->GetBlocks().Num() > 1)
+	IDetailsViewPrivate* OwningDetailsView = nullptr;
+	if (TSharedPtr<FDetailTreeNode> OwnerTreeNodePtr = OwnerTreeNode.Pin())
 	{
-		MenuBuilder.AddMenuSeparator();
+		OwningDetailsView = OwnerTreeNodePtr->GetDetailsView();
 	}
-
-	if (CopyAction.IsBound() && PasteAction.IsBound())
+	
+	FToolMenuSection& EditSection = ToolMenu->FindOrAddSection(TEXT("Edit"));
 	{
-		const bool bLongDisplayName = false;
-		const bool bIsGroup = Customization->IsValidCustomization() && Customization->DetailGroup.IsValid();
-
-		FMenuEntryParams CopyContentParams;
-		if (bIsGroup)
+		if (CopyAction.IsBound() && PasteAction.IsBound())
 		{
-			CopyContentParams.LabelOverride = NSLOCTEXT("PropertyView", "CopyGroupProperties", "Copy All Properties in Group");
-			CopyContentParams.ToolTipOverride = TAttribute<FText>::CreateLambda([this]()
+			constexpr bool bLongDisplayName = false;
+			const bool bIsGroup = Customization->IsValidCustomization() && Customization->DetailGroup.IsValid();
+
+			// Copy
 			{
-				return CanCopyGroup()
-					? NSLOCTEXT("PropertyView", "CopyGroupProperties_ToolTip", "Copy all properties in this group")
-					: NSLOCTEXT("PropertyView", "CantCopyGroupProperties_ToolTip", "None of the properties in this group can be copied");
-			});
-		}
-		else
-		{
-			CopyContentParams.LabelOverride = NSLOCTEXT("PropertyView", "CopyProperty", "Copy");
-			CopyContentParams.ToolTipOverride = NSLOCTEXT("PropertyView", "CopyProperty_ToolTip", "Copy this property value");
-		}
-		CopyContentParams.InputBindingOverride = FInputChord(EModifierKey::Shift, EKeys::RightMouseButton).GetInputText(bLongDisplayName);
-		CopyContentParams.IconOverride = FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy");
-		CopyContentParams.DirectActions = CopyAction;
-		MenuBuilder.AddMenuEntry(CopyContentParams);
+				TAttribute<FText> Label;
+				TAttribute<FText> ToolTip;
+				
+				if (bIsGroup)
+				{
+					Label = NSLOCTEXT("PropertyView", "CopyGroupProperties", "Copy All Properties in Group");
+					ToolTip = TAttribute<FText>::CreateLambda([this]()
+					{
+						return CanCopyGroup()
+							? NSLOCTEXT("PropertyView", "CopyGroupProperties_ToolTip", "Copy all properties in this group")
+							: NSLOCTEXT("PropertyView", "CantCopyGroupProperties_ToolTip", "None of the properties in this group can be copied");
+					});
+				}
+				else
+				{
+					Label = NSLOCTEXT("PropertyView", "CopyProperty", "Copy");
+					ToolTip = NSLOCTEXT("PropertyView", "CopyProperty_ToolTip", "Copy this property value");
+				}
 
-		FMenuEntryParams PasteContentParams;
-		if (bIsGroup)
-		{
-			PasteContentParams.LabelOverride = NSLOCTEXT("PropertyView", "PasteGroupProperties", "Paste All Properties in Group");
-			PasteContentParams.ToolTipOverride = TAttribute<FText>::CreateLambda([this]()
+				FToolMenuEntry& CopyMenuEntry = EditSection.AddMenuEntry(
+					TEXT("Copy"),
+					Label,
+					ToolTip,
+					FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy"),
+					CopyAction);
+
+				CopyMenuEntry.InputBindingLabel = FInputChord(EModifierKey::Shift, EKeys::RightMouseButton).GetInputText(bLongDisplayName);
+			}
+
+			// Paste
 			{
-				return CanPasteGroup()
-					? NSLOCTEXT("PropertyView", "PasteGroupProperties_ToolTip", "Paste the copied property values here")
-					// @note: this is specific to the constraint that the destination group has to match the source group (copied from) exactly 
-					: NSLOCTEXT("PropertyView", "CantPasteGroupProperties_ToolTip", "The properties in this group don't match the contents of the clipboard");
-			});
+				// Paste is only enabled if property editing is enabled
+				if (OwningDetailsView && OwningDetailsView->IsPropertyEditingEnabled() && WidgetRow.EditConditionValue.Get(true /*DefaultValue*/))
+				{
+					TAttribute<FText> Label;
+					TAttribute<FText> ToolTip;
+
+					if (bIsGroup)
+					{
+						Label = NSLOCTEXT("PropertyView", "PasteGroupProperties", "Paste All Properties in Group");
+						ToolTip = TAttribute<FText>::CreateLambda([this]()
+						{
+							return CanPasteGroup()
+								? NSLOCTEXT("PropertyView", "PasteGroupProperties_ToolTip", "Paste the copied property values here")
+								// @note: this is specific to the constraint that the destination group has to match the source group (copied from) exactly 
+								: NSLOCTEXT("PropertyView", "CantPasteGroupProperties_ToolTip", "The properties in this group don't match the contents of the clipboard");
+						});
+					}
+					else
+					{
+						Label = NSLOCTEXT("PropertyView", "PasteProperty", "Paste");
+						ToolTip = NSLOCTEXT("PropertyView", "PasteProperty_ToolTip", "Paste the copied value here");	
+					}
+																
+					FToolMenuEntry& PasteMenuEntry = EditSection.AddMenuEntry(
+						TEXT("Paste"),
+						Label,
+						ToolTip,
+						FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Paste"),
+						PasteAction);
+
+					PasteMenuEntry.InputBindingLabel = FInputChord(EModifierKey::Shift, EKeys::LeftMouseButton).GetInputText(bLongDisplayName);	
+				}
+			}
 		}
-		else
+
+		// Copy Display Name
 		{
-			PasteContentParams.LabelOverride = NSLOCTEXT("PropertyView", "PasteProperty", "Paste");
-			PasteContentParams.ToolTipOverride = NSLOCTEXT("PropertyView", "PasteProperty_ToolTip", "Paste the copied value here");	
+			FUIAction CopyDisplayNameAction = FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnCopyPropertyDisplayName);
+			CopyDisplayNameAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailSingleItemRow::CanCopyPropertyDisplayName);
+
+			EditSection.AddMenuEntry(
+				TEXT("CopyDisplayName"),
+				NSLOCTEXT("PropertyView", "CopyPropertyDisplayName", "Copy Display Name"),
+				NSLOCTEXT("PropertyView", "CopyPropertyDisplayName_ToolTip", "Copy the display name of this property to the system clipboard."),
+				FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy"),
+				CopyDisplayNameAction);
 		}
-		PasteContentParams.InputBindingOverride = FInputChord(EModifierKey::Shift, EKeys::LeftMouseButton).GetInputText(bLongDisplayName);
-		PasteContentParams.IconOverride = FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Paste");
-		PasteContentParams.DirectActions = PasteAction;
-		MenuBuilder.AddMenuEntry(PasteContentParams);
+
+		// Copy Internal Name
+		{
+			FUIAction CopyInternalNameAction = FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnCopyPropertyInternalName);
+			CopyInternalNameAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailSingleItemRow::CanCopyPropertyInternalName);
+
+			EditSection.AddMenuEntry(
+				TEXT("CopyInternalName"),
+				NSLOCTEXT("PropertyView", "CopyPropertyInternalName", "Copy Internal Name"),
+				NSLOCTEXT("PropertyView", "CopyPropertyInternalName_ToolTip", "Copy the internal name of this property to the system clipboard."),
+				FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy"),
+				CopyInternalNameAction);
+		}
+
+		// Favorite
+		{
+			if (OwnerTreeNode.Pin()->GetDetailsView()->IsFavoritingEnabled())
+			{
+				FUIAction FavoriteAction;
+				FavoriteAction.ExecuteAction = FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnFavoriteMenuToggle);
+				FavoriteAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailSingleItemRow::CanFavorite);
+
+				FText FavoriteText = NSLOCTEXT("PropertyView", "FavoriteProperty", "Add to Favorites");
+				FText FavoriteTooltipText = NSLOCTEXT("PropertyView", "FavoriteProperty_ToolTip", "Add this property to your favorites.");
+				FName FavoriteIcon = "DetailsView.PropertyIsFavorite";
+
+				if (IsFavorite())
+				{
+					FavoriteText = NSLOCTEXT("PropertyView", "RemoveFavoriteProperty", "Remove from Favorites");
+					FavoriteTooltipText = NSLOCTEXT("PropertyView", "RemoveFavoriteProperty_ToolTip", "Remove this property from your favorites.");
+					FavoriteIcon = "DetailsView.PropertyIsNotFavorite";
+				}
+
+				EditSection.AddMenuEntry(
+					TEXT("ToggleFavorite"),
+					FavoriteText,
+					FavoriteTooltipText,
+					FSlateIcon(FAppStyle::Get().GetStyleSetName(), FavoriteIcon),
+					FavoriteAction);
+			}
+		}
+
+		if (FPropertyEditorPermissionList::Get().ShouldShowMenuEntries())
+		{
+			// Hide separator line if it only contains the SearchWidget, making the next 2 elements the top of the list
+			if (EditSection.Blocks.Num() > 1)
+			{
+				EditSection.AddSeparator(NAME_None);
+			}
+                    
+			EditSection.AddMenuEntry(
+				TEXT("CopyRowName"),
+				NSLOCTEXT("PropertyView", "CopyRowName", "Copy internal row name"),
+				NSLOCTEXT("PropertyView", "CopyRowName_ToolTip", "Copy the row's parent struct and internal name to use in the property editor's allow/deny lists."),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateSP(this, &SDetailSingleItemRow::CopyRowNameText)));
+
+			EditSection.AddMenuEntry(
+				TEXT("AddAllowList"),
+				NSLOCTEXT("PropertyView", "AddAllowList", "Add to Allowed"),
+				NSLOCTEXT("PropertyView", "AddAllowList_ToolTip", "Add this row to the property editor's allowed properties list."),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnToggleAllowList),
+					FCanExecuteAction(),
+					FIsActionChecked::CreateSP(this, &SDetailSingleItemRow::IsAllowListChecked)),
+				EUserInterfaceActionType::Check,
+				NAME_None);
+
+			EditSection.AddMenuEntry(
+				TEXT("AddDenyList"),
+				NSLOCTEXT("PropertyView", "AddDenyList", "Add to Denied"),
+				NSLOCTEXT("PropertyView", "AddDenyList_ToolTip", "Add this row to the property editor's denied properties list."),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnToggleDenyList),
+					FCanExecuteAction(),
+					FIsActionChecked::CreateSP(this, &SDetailSingleItemRow::IsDenyListChecked)),
+				EUserInterfaceActionType::Check,
+				NAME_None);
+		}
+
+		if (WidgetRow.CustomMenuItems.Num() > 0)
+		{
+			// Hide separator line if it only contains the SearchWidget, making the next 2 elements the top of the list
+			if (EditSection.Blocks.Num() > 1)
+			{
+				EditSection.AddSeparator(NAME_None);
+			}
+
+			for (const FDetailWidgetRow::FCustomMenuData& CustomMenuData : WidgetRow.CustomMenuItems)
+			{
+				// Add the menu entry
+				EditSection.AddMenuEntry(
+					CustomMenuData.GetEntryName(),
+					CustomMenuData.Name,
+					CustomMenuData.Tooltip,
+					CustomMenuData.SlateIcon,
+					CustomMenuData.Action);
+			}
+		}
 	}
-
-	MenuBuilder.AddMenuEntry(
-		NSLOCTEXT("PropertyView", "CopyPropertyDisplayName", "Copy Display Name"),
-		NSLOCTEXT("PropertyView", "CopyPropertyDisplayName_ToolTip", "Copy the display name of this property to the system clipboard."),
-		FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy"),
-		CopyDisplayNameAction);
-
-	MenuBuilder.AddMenuEntry(
-		NSLOCTEXT("PropertyView", "CopyPropertyInternalName", "Copy Internal Name"),
-		NSLOCTEXT("PropertyView", "CopyPropertyInternalName_ToolTip", "Copy the internal name of this property to the system clipboard."),
-		FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy"),
-		CopyInternalNameAction);
-
-	if (OwnerTreeNode.Pin()->GetDetailsView()->IsFavoritingEnabled())
-	{
-		FUIAction FavoriteAction;
-		FavoriteAction.ExecuteAction = FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnFavoriteMenuToggle);
-		FavoriteAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailSingleItemRow::CanFavorite);
-
-		FText FavoriteText = NSLOCTEXT("PropertyView", "FavoriteProperty", "Add to Favorites");
-		FText FavoriteTooltipText = NSLOCTEXT("PropertyView", "FavoriteProperty_ToolTip", "Add this property to your favorites.");
-		FName FavoriteIcon = "DetailsView.PropertyIsFavorite";
-
-		if (IsFavorite())
-		{
-			FavoriteText = NSLOCTEXT("PropertyView", "RemoveFavoriteProperty", "Remove from Favorites");
-			FavoriteTooltipText = NSLOCTEXT("PropertyView", "RemoveFavoriteProperty_ToolTip", "Remove this property from your favorites.");
-			FavoriteIcon = "DetailsView.PropertyIsNotFavorite";
-		}
-
-		MenuBuilder.AddMenuEntry(
-			FavoriteText,
-			FavoriteTooltipText,
-			FSlateIcon(FAppStyle::Get().GetStyleSetName(), FavoriteIcon),
-			FavoriteAction);
-	}
-
-	if (FPropertyEditorPermissionList::Get().ShouldShowMenuEntries())
-	{
-		// Hide separator line if it only contains the SearchWidget, making the next 2 elements the top of the list
-		if (MenuBuilder.GetMultiBox()->GetBlocks().Num() > 1)
-		{
-			MenuBuilder.AddMenuSeparator();
-		}
-		
-		MenuBuilder.AddMenuEntry(
-        	NSLOCTEXT("PropertyView", "CopyRowName", "Copy internal row name"),
-        	NSLOCTEXT("PropertyView", "CopyRowName_ToolTip", "Copy the row's parent struct and internal name to use in the property editor's allow/deny lists."),
-        	FSlateIcon(),
-        	FUIAction(FExecuteAction::CreateSP(this, &SDetailSingleItemRow::CopyRowNameText)));
-
-		MenuBuilder.AddMenuEntry(
-			NSLOCTEXT("PropertyView", "AddAllowList", "Add to Allowed"),
-			NSLOCTEXT("PropertyView", "AddAllowList_ToolTip", "Add this row to the property editor's allowed properties list."),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnToggleAllowList), FCanExecuteAction(),
-					  FIsActionChecked::CreateSP(this, &SDetailSingleItemRow::IsAllowListChecked)),
-			NAME_None,
-			EUserInterfaceActionType::Check);
-
-		MenuBuilder.AddMenuEntry(
-			NSLOCTEXT("PropertyView", "AddDenyList", "Add to Denied"),
-			NSLOCTEXT("PropertyView", "AddDenyList_ToolTip", "Add this row to the property editor's denied properties list."),
-			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateSP(this, &SDetailSingleItemRow::OnToggleDenyList), FCanExecuteAction(),
-					  FIsActionChecked::CreateSP(this, &SDetailSingleItemRow::IsDenyListChecked)),
-			NAME_None,
-			EUserInterfaceActionType::Check);
-	}
-
-	if (WidgetRow.CustomMenuItems.Num() > 0)
-	{
-		// Hide separator line if it only contains the SearchWidget, making the next 2 elements the top of the list
-		if (MenuBuilder.GetMultiBox()->GetBlocks().Num() > 1)
-		{
-			MenuBuilder.AddMenuSeparator();
-		}
-
-		for (const FDetailWidgetRow::FCustomMenuData& CustomMenuData : WidgetRow.CustomMenuItems)
-		{
-			// Add the menu entry
-			MenuBuilder.AddMenuEntry(
-				CustomMenuData.Name,
-				CustomMenuData.Tooltip,
-				CustomMenuData.SlateIcon,
-				CustomMenuData.Action);
-		}
-	}
-
-	return true;
 }
 
 TArray<TSharedPtr<IPropertyHandle>> SDetailSingleItemRow::GetPropertyHandles(const bool& bRecursive) const
@@ -1167,82 +1264,134 @@ void SDetailSingleItemRow::OnCopyProperty()
 
 void SDetailSingleItemRow::OnCopyPropertyDisplayName()
 {
-	if (OwnerTreeNode.IsValid())
+	if (!OwnerTreeNode.IsValid())
 	{
-		TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
-		if (PropertyNode.IsValid())
-		{
-			FPropertyEditorClipboard::ClipboardCopy(*PropertyNode->GetDisplayName().ToString());
-		}
+		return;
+	}
+
+	TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
+	if (!PropertyNode.IsValid())
+	{
+		return;
+	}
+
+	if (PropertyNode->IsOptionalValueNode())
+	{
+		FPropertyEditorClipboard::ClipboardCopy(*PropertyNode->GetParentNode()->GetDisplayName().ToString());
+	}
+	else
+	{
+		FPropertyEditorClipboard::ClipboardCopy(*PropertyNode->GetDisplayName().ToString());
 	}
 }
 
 bool SDetailSingleItemRow::CanCopyPropertyDisplayName()
 {
-	if (OwnerTreeNode.IsValid())
+	if (!OwnerTreeNode.IsValid())
 	{
-		TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
-		if (PropertyNode.IsValid())
-		{
-			if (!PropertyNode->GetDisplayName().IsEmpty())
-			{
-				return true;
-			}
-				
-		}
+		return false;
 	}
-	return false;
+
+	TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
+	if (!PropertyNode.IsValid())
+	{
+		return false;
+	}
+
+	if (PropertyNode->IsOptionalValueNode() && PropertyNode->GetParentNode()->GetDisplayName().IsEmpty())
+	{
+		return false;
+	}
+	else if (PropertyNode->GetDisplayName().IsEmpty())
+	{
+		return false;
+	}
+
+	return true;
 }
 
 void SDetailSingleItemRow::OnCopyPropertyInternalName()
 {
-	if (OwnerTreeNode.IsValid())
+	if (!OwnerTreeNode.IsValid())
 	{
-		TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
-		if (PropertyNode.IsValid())
-		{
-			if (const FProperty* Property = PropertyNode->GetProperty())
-			{
-				if (const UStruct* OwnerStruct = Property->GetOwnerStruct())
-				{
-					FPropertyEditorClipboard::ClipboardCopy(*OwnerStruct->GetAuthoredNameForField(Property));
-				}
-			}
-		}
+		return;
+	}
+
+	TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
+	if (!PropertyNode.IsValid())
+	{
+		return;
+	}
+
+	const FProperty* Property = PropertyNode->IsOptionalValueNode() ? PropertyNode->GetParentNode()->GetProperty() : PropertyNode->GetProperty();
+	if (!Property)
+	{
+		return;
+	}
+
+	if (const UStruct* OwnerStruct = Property->GetOwnerStruct())
+	{
+		FPropertyEditorClipboard::ClipboardCopy(*OwnerStruct->GetAuthoredNameForField(Property));
 	}
 }
 
 bool SDetailSingleItemRow::CanCopyPropertyInternalName()
 {
-	if (OwnerTreeNode.IsValid())
+	if (!OwnerTreeNode.IsValid())
 	{
-		TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
-		if (PropertyNode.IsValid())
+		return false;
+	}
+
+	TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
+	if (!PropertyNode.IsValid())
+	{
+		return false;
+	}
+
+	const FProperty* Property = PropertyNode->IsOptionalValueNode() ? PropertyNode->GetParentNode()->GetProperty() : PropertyNode->GetProperty();
+	if (!Property)
+	{
+		return false;
+	}
+
+	if (const UStruct* OwnerStruct = Property->GetOwnerStruct())
+	{
+		if (OwnerStruct->GetAuthoredNameForField(Property).IsEmpty())
 		{
-			if (const FProperty* Property = PropertyNode->GetProperty())
-			{
-				if (const UStruct* OwnerStruct = Property->GetOwnerStruct())
-				{
-					if (!OwnerStruct->GetAuthoredNameForField(Property).IsEmpty())
-					{
-						return true;
-					}
-				}
-			}
+			return false;
 		}
 	}
-	return false;
+
+	return true;
 }
 
 bool SDetailSingleItemRow::CanPasteProperty() const
 {
 	FString ClipboardContent;
-	if (OwnerTreeNode.IsValid())
-	{
-		FPropertyEditorClipboard::ClipboardPaste(ClipboardContent);
-	}
+	FPropertyEditorClipboard::ClipboardPaste(ClipboardContent);
 
 	return CanPasteFromText(TEXT(""), ClipboardContent);
+}
+
+TSharedRef<SWidget> SDetailSingleItemRow::GetNameWidget(TSharedRef<SWidget> NameWidget, const TSharedPtr<FPropertyNode>& Node) const
+{
+	 if (Node.IsValid() && OwnerTreeNode.IsValid() )
+     {
+	 	const TSharedPtr<FDetailTreeNode> DetailTreeNodeSP = OwnerTreeNode.Pin();
+	 	
+	     if (DetailTreeNodeSP.IsValid() && DetailTreeNodeSP->GetDetailsView())
+	     {
+	     	const TSharedPtr<FDetailsNameWidgetOverrideCustomization> DetailsNameWidgetOverrideCustomization =
+				DetailTreeNodeSP->GetDetailsView()->GetDetailsNameWidgetOverrideCustomization();
+
+	     	if ( DetailsNameWidgetOverrideCustomization.IsValid() )
+	     	{
+	     		const TSharedRef< FPropertyPath > Path = FPropertyNode::CreatePropertyPath(Node.ToSharedRef());
+	     		return DetailsNameWidgetOverrideCustomization->CustomizeName(NameWidget, Path.Get());
+	     	}
+	     }
+     }
+	return NameWidget;
 }
 
 bool SDetailSingleItemRow::CanPasteFromText(const FString& InTag, const FString& InText) const
@@ -1251,23 +1400,57 @@ bool SDetailSingleItemRow::CanPasteFromText(const FString& InTag, const FString&
 	{
 		return false;
 	}
-	
-	// Prevent paste from working if the property's edit condition is not met.
-	TSharedPtr<FDetailPropertyRow> PropertyRow = Customization->PropertyRow;
-	if (!PropertyRow.IsValid() && Customization->DetailGroup.IsValid())
+
+	const TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
+
+	// Prevent paste if we cannot find the property node to paste into.
+	if (!PropertyNode.IsValid())
 	{
-		PropertyRow = Customization->DetailGroup->GetHeaderPropertyRow();
+		return false;
 	}
 
-	if (PropertyRow.IsValid())
+	const TSharedPtr<IPropertyHandle> PropertyHandle = GetPropertyHandle();
+
+	// We won't be able to paste without a property handle.
+	if (!PropertyHandle.IsValid())
 	{
-		if (const FPropertyEditor* PropertyEditor = PropertyRow->GetPropertyEditor().Get())
+		return false;
+	}
+
+	if (const bool bIsTagged = !InTag.IsEmpty();
+		bIsTagged)
+	{
+		const FString PropertyPath = UE::PropertyEditor::Private::GetPropertyPath(
+			[&]() { return GetPropertyHandle(); },
+			[&]() { return PropertyNode; });
+		
+		// Ensure that if tag is specified, that it matches the subscriber.
+		if (!InTag.Equals(PropertyPath))
 		{
-			return !PropertyEditor->IsEditConst();
+			return false;
 		}
 	}
 
-	return false;
+	// Prevent paste from working if the property's edit condition is not met.
+	// Allow paste if no property row can be found.
+	{
+		TSharedPtr<FDetailPropertyRow> PropertyRow = Customization->PropertyRow;
+		
+		if (!PropertyRow.IsValid() && Customization->DetailGroup.IsValid())
+		{
+			PropertyRow = Customization->DetailGroup->GetHeaderPropertyRow();
+		}
+
+		if (PropertyRow.IsValid())
+		{
+			if (const FPropertyEditor* PropertyEditor = PropertyRow->GetPropertyEditor().Get())
+			{
+				return !PropertyEditor->IsEditConst();
+			}
+		}
+	}
+
+	return true;
 }
 
 void SDetailSingleItemRow::OnPasteProperty()
@@ -1295,7 +1478,7 @@ void SDetailSingleItemRow::OnPasteProperty()
 		DetailsView->MarkNodeAnimating(PropertyNode, UE::PropertyEditor::Private::PulseAnimationLength);
 
 		// Need to refresh the details panel in case a property was pasted over another.
-		OwnerTreeNode.Pin()->GetDetailsView()->ForceRefresh();
+		ForceRefresh();
 	}
 }
 
@@ -1315,37 +1498,9 @@ void SDetailSingleItemRow::OnPasteFromText(const FString& InTag, const FString& 
 
 bool SDetailSingleItemRow::PasteFromText(const FString& InTag, const FString& InText)
 {
-	if (InText.IsEmpty() || !OwnerTreeNode.IsValid())
+	if (!CanPasteFromText(InTag, InText))
 	{
 		return false;
-	}
-	
-	TSharedPtr<FPropertyNode> PropertyNode = GetPropertyNode();
-	if (!PropertyNode.IsValid() && Customization->DetailGroup.IsValid())
-	{
-		PropertyNode = Customization->DetailGroup->GetHeaderPropertyNode();
-	}
-
-	// If still invalid, there's nothing to paste to
-	if (!PropertyNode.IsValid())
-	{
-		return false;
-	}
-	
-	const TSharedPtr<IPropertyHandle> PropertyHandle = GetPropertyHandle();
-
-	const bool bIsTagged = !InTag.IsEmpty();
-	if (bIsTagged)
-	{
-		const FString PropertyPath = UE::PropertyEditor::Private::GetPropertyPath(
-			[&]() { return GetPropertyHandle(); },
-			[&]() { return PropertyNode; });
-		
-		// ensure that if tag is specified, that it matches the subscriber
-		if (!InTag.Equals(PropertyPath))
-		{
-			return false;
-		}
 	}
 
 	// The logic below is largely taken from SDisplayClusterColorGradingColorWheel::CommitColor,
@@ -1355,6 +1510,8 @@ bool SDetailSingleItemRow::PasteFromText(const FString& InTag, const FString& In
 	
 	EPropertyValueSetFlags::Type PropertyValueSetFlags = EPropertyValueSetFlags::InstanceObjects;
 
+	const bool bIsTagged = !InTag.IsEmpty();
+
 	// If tagged, add the InteractiveChange flag so as not to run PECP
 	// @todo: would be better to indicate that this is a batched paste rather than checking for a tag
 	if (bIsTagged)
@@ -1362,7 +1519,13 @@ bool SDetailSingleItemRow::PasteFromText(const FString& InTag, const FString& In
 		PropertyValueSetFlags |= EPropertyValueSetFlags::InteractiveChange;
 		PropertyValueSetFlags |= EPropertyValueSetFlags::NotTransactable;
 	}
-	
+
+	const TSharedPtr<IPropertyHandle> PropertyHandle = GetPropertyHandle();
+	if (!PropertyHandle.IsValid())
+	{
+		return false;
+	}
+
 	if (PropertyHandle->SetValueFromFormattedString(InText, PropertyValueSetFlags) != FPropertyAccess::Success)
 	{
 		return false;
@@ -1606,7 +1769,7 @@ void SDetailSingleItemRow::OnFavoriteMenuToggle()
 	DetailsView->MoveScrollOffset(bNewValue ? ExpandSize : -ExpandSize);
 
 	// Refresh the tree
-	DetailsView->ForceRefresh();
+	ForceRefresh();
 }
 
 void SDetailSingleItemRow::CreateGlobalExtensionWidgets(TArray<FPropertyRowExtensionButton>& OutExtensions) const

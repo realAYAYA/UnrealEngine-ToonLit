@@ -255,7 +255,7 @@ namespace EpicGames.Core
 			}
 
 #pragma warning disable IDE0070 // Use 'System.HashCode'
-            public override int GetHashCode()
+			public override int GetHashCode()
 			{
 				int hashCode = 2083322454;
 				hashCode = hashCode * -1521134295 + EqualityComparer<JsonTracerSpanContext>.Default.GetHashCode(Context);

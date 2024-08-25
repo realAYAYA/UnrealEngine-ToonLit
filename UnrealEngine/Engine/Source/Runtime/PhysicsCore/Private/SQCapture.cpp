@@ -27,7 +27,7 @@ private:
 
 FSQCapture::FSQCapture(FPhysTestSerializer& InPhysSerializer)
 	: OutputFlags(EHitFlags::None)
-	, ChaosGeometry(nullptr)
+	, ChaosImplicitGeometry(nullptr)
 	, PhysSerializer(InPhysSerializer)
 	, bDiskDataIsChaos(false)
 	, bChaosDataReady(false)
@@ -35,9 +35,11 @@ FSQCapture::FSQCapture(FPhysTestSerializer& InPhysSerializer)
 {
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FSQCapture::~FSQCapture()
 {
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void SerializeQueryFilterData(FArchive& Ar, ChaosInterface::FQueryFilterData& QueryFilterData)
 {
@@ -174,8 +176,7 @@ void FSQCapture::Serialize(Chaos::FChaosArchive& Ar)
 
 		if (Version >= 2)
 		{
-			Ar << SerializableChaosGeometry;
-			ChaosGeometry = SerializableChaosGeometry.Get();
+			Ar << ChaosImplicitGeometry;
 		}
 	}
 
@@ -195,8 +196,7 @@ void FSQCapture::StartCaptureChaosSweep(const Chaos::FPBDRigidsEvolution& Evolut
 		bDiskDataIsChaos = true;
 		CaptureChaosFilterResults(Evolution, FilterData, Callback);
 		//copy data
-		SerializableChaosGeometry = InQueryGeom.Copy();
-		ChaosGeometry = SerializableChaosGeometry.Get();
+		ChaosImplicitGeometry = InQueryGeom.CopyGeometry();
 		StartTM = InStartTM;
 		Dir = InDir;
 		DeltaMag = InDeltaMag;
@@ -249,8 +249,7 @@ void FSQCapture::StartCaptureChaosOverlap(const Chaos::FPBDRigidsEvolution& Evol
 		bDiskDataIsChaos = true;
 		CaptureChaosFilterResults(Evolution, FilterData, Callback);
 		//copy data
-		SerializableChaosGeometry = InQueryGeom.Copy();
-		ChaosGeometry = SerializableChaosGeometry.Get();
+		ChaosImplicitGeometry = InQueryGeom.CopyGeometry();
 		StartTM = InStartTM;
 		QueryFilterData = QueryFilter;
 

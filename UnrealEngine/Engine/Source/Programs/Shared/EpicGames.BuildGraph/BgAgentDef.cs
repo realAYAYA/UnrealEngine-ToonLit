@@ -1,9 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Xml;
 
 namespace EpicGames.BuildGraph
 {

@@ -101,8 +101,8 @@ static void FieldComputeRemap(const TArray<FVector3f>& InSamplePositions,
 		}
 	}
 
-	OutNewSamplePositions.SetNum(NewIdx, true);
-	OutRemapArray.SetNum(NewIdx, true);
+	OutNewSamplePositions.SetNum(NewIdx, EAllowShrinking::Yes);
+	OutRemapArray.SetNum(NewIdx, EAllowShrinking::Yes);
 }
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -1895,10 +1895,10 @@ void FSumScalarFieldDataflowNode::Evaluate(Dataflow::FContext& Context, const FD
 					}
 				}
 
-				NewRemapArray.SetNum(NewSampleCount, true);
-				NewFloatArrayLeft.SetNum(NewSampleCount, true);
-				NewFloatArrayRight.SetNum(NewSampleCount, true);
-				NewFieldFloatOutput.SetNum(NewSampleCount, true);
+				NewRemapArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+				NewFloatArrayLeft.SetNum(NewSampleCount, EAllowShrinking::Yes);
+				NewFloatArrayRight.SetNum(NewSampleCount, EAllowShrinking::Yes);
+				NewFieldFloatOutput.SetNum(NewSampleCount, EAllowShrinking::Yes);
 
 				SumScalarEvaluate(NewFloatArrayLeft,
 					NewFloatArrayRight,
@@ -2135,10 +2135,10 @@ void FSumVectorFieldDataflowNode::Evaluate(Dataflow::FContext& Context, const FD
 						}
 					}
 
-					NewRemapArray.SetNum(NewSampleCount, true);
-					NewFloatArray.SetNum(NewSampleCount, true);
-					NewVectorArrayLeft.SetNum(NewSampleCount, true);
-					NewFieldVectorResult.SetNum(NewSampleCount, true);
+					NewRemapArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewFloatArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewVectorArrayLeft.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewFieldVectorResult.SetNum(NewSampleCount, EAllowShrinking::Yes);
 
 					SumVectorEvaluate(&NewFloatArray,
 						&NewVectorArrayLeft,
@@ -2222,10 +2222,10 @@ void FSumVectorFieldDataflowNode::Evaluate(Dataflow::FContext& Context, const FD
 						}
 					}
 
-					NewRemapArray.SetNum(NewSampleCount, true);
-					NewFloatArray.SetNum(NewSampleCount, true);
-					NewVectorArrayRight.SetNum(NewSampleCount, true);
-					NewFieldVectorResult.SetNum(NewSampleCount, true);
+					NewRemapArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewFloatArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewVectorArrayRight.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewFieldVectorResult.SetNum(NewSampleCount, EAllowShrinking::Yes);
 
 					SumVectorEvaluate(&NewFloatArray,
 						nullptr,
@@ -2308,10 +2308,10 @@ void FSumVectorFieldDataflowNode::Evaluate(Dataflow::FContext& Context, const FD
 						}
 					}
 
-					NewRemapArray.SetNum(NewSampleCount, true);
-					NewVectorArrayLeft.SetNum(NewSampleCount, true);
-					NewVectorArrayRight.SetNum(NewSampleCount, true);
-					NewFieldVectorResult.SetNum(NewSampleCount, true);
+					NewRemapArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewVectorArrayLeft.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewVectorArrayRight.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewFieldVectorResult.SetNum(NewSampleCount, EAllowShrinking::Yes);
 
 					SumVectorEvaluate(nullptr,
 						&NewVectorArrayLeft,
@@ -2400,11 +2400,11 @@ void FSumVectorFieldDataflowNode::Evaluate(Dataflow::FContext& Context, const FD
 						}
 					}
 
-					NewRemapArray.SetNum(NewSampleCount, true);
-					NewFloatArray.SetNum(NewSampleCount, true);
-					NewVectorArrayLeft.SetNum(NewSampleCount, true);
-					NewVectorArrayRight.SetNum(NewSampleCount, true);
-					NewFieldVectorResult.SetNum(NewSampleCount, true);
+					NewRemapArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewFloatArray.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewVectorArrayLeft.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewVectorArrayRight.SetNum(NewSampleCount, EAllowShrinking::Yes);
+					NewFieldVectorResult.SetNum(NewSampleCount, EAllowShrinking::Yes);
 
 					SumVectorEvaluate(&NewFloatArray,
 						&NewVectorArrayLeft,

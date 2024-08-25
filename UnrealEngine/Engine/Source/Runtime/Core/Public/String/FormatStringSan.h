@@ -15,11 +15,25 @@
 #define UE_CHECK_FORMAT_STRING_ERR(Err, Fmt, ...)												\
 	(::UE::Core::Private::FormatStringSan::TCheckFormatString<decltype(::UE::Core::Private::FormatStringSan::GetFmtArgTypes(__VA_ARGS__))>::Check(false, 0, Fmt).Status == Err)
 
+
+#if UE_VALIDATE_FORMAT_STRINGS
+	#define UE_VALIDATE_FORMAT_STRING UE_CHECK_FORMAT_STRING
+#else
+	#define UE_VALIDATE_FORMAT_STRING(Format, ...)
+#endif
+
+// Forward declaration
+template <typename T> class TEnumAsByte;
+
 /// implementation
 namespace UE::Core::Private
 {
 	namespace FormatStringSan
 	{
+		// Returns true when the type is a const char*, const TCHAR*, const char[] or const TCHAR[]
+		template<typename T>
+		inline constexpr bool bIsAConstString = !(std::is_convertible_v<std::decay_t<T>, char*> || std::is_convertible_v<std::decay_t<T>, TCHAR*>) && (std::is_convertible_v<std::decay_t<T>, const char*> || std::is_convertible_v<std::decay_t<T>, const TCHAR*>);
+
 		enum EFormatStringSanStatus
 		{
 			StatusOk,
@@ -44,7 +58,9 @@ namespace UE::Core::Private
 			StatusLLNeedsIntegerSpec,
 			StatusLLNeedsIntegerArg,
 			StatusI64BadSpec,
-			StatusI64NeedsIntegerArg
+			StatusI64NeedsIntegerArg,
+			StatusUTF8NeedsStringCastAndS,
+			StatusUTF8NeedsStringCast
 		};
 
 		template <int N>
@@ -102,6 +118,8 @@ namespace UE::Core::Private
 		FMT_STR_ERR(StatusI64BadSpec, "'%I' must appear as '%I64' with an integral suffix (eg. '%I64d', '%I64u', etc.)");
 		FMT_STR_ERR(StatusI64NeedsIntegerArg, "'%I64[ ]' expects integral arg (eg. `char`, `int`, `long`, etc.)");
 		FMT_STR_ERR(StatusDynamicLengthSpecNeedsIntegerArg, "dynamic field width specifier '*' expects integral arg (eg. `char`, `int`, `long`, etc.)");
+		FMT_STR_ERR(StatusUTF8NeedsStringCastAndS, "Pass UTF8 strings to WriteToString and use %s.");
+		FMT_STR_ERR(StatusUTF8NeedsStringCast, "'%s' expects `TCHAR*`; pass UTF8 strings to WriteToString first.");
 
 #undef FMT_STR_ERR
 
@@ -109,13 +127,21 @@ namespace UE::Core::Private
 		inline constexpr bool bIsPointerTo =
 			std::is_pointer_v<T> && std::is_same_v<std::remove_cv_t<std::remove_pointer_t<T>>, V>;
 		template <typename T>
-		inline constexpr bool bIsCharPtr = bIsPointerTo<T, char> || bIsPointerTo<T, UTF8CHAR>;
+		inline constexpr bool bIsCharPtr = bIsPointerTo<T, char>;
 		template <typename T>
 		inline constexpr bool bIsTCharPtr = bIsPointerTo<T, TCHAR>;
 		template <typename T>
 		inline constexpr bool bIsFloatOrDouble = std::is_same_v<float, T> || std::is_same_v<double, T>;
+
+		// Returns true only when the type is TEnumAsByte
 		template <typename T>
-		inline constexpr bool bIsIntegralEnum = std::is_enum_v<T>;
+		struct TIsEnumAsByte { static constexpr bool IsEnumAsByte = false; };
+		template <typename T>
+		struct TIsEnumAsByte<TEnumAsByte<T>> { static constexpr bool IsEnumAsByte = true; };
+		
+
+		template <typename T>
+		inline constexpr bool bIsIntegralEnum = std::is_enum_v<T> || TIsEnumAsByte<T>::IsEnumAsByte;
 
 		template <typename... Ts>
 		struct TFmtArgTypes {};
@@ -241,7 +267,11 @@ namespace UE::Core::Private
 				}
 				else if (P[0] == TEXT('h') && P[1] == TEXT('s'))
 				{
-					if constexpr (!bIsCharPtr<Arg>)
+					if constexpr (bIsPointerTo<Arg, UTF8CHAR>)
+					{
+						return {StatusUTF8NeedsStringCastAndS, CurArgPos};
+					}
+					else if constexpr (!bIsCharPtr<Arg>)
 					{
 						return {StatusHSNeedsCharPtrArg, CurArgPos};
 					}
@@ -256,7 +286,11 @@ namespace UE::Core::Private
 				case TEXT('%'):
 					return TCheckFormatString<TFmtArgTypes<Arg, Args...>>::Check(false, CurArgPos, P + 1);
 				case TEXT('s'):
-					if constexpr (!bIsTCharPtr<Arg>)
+					if constexpr (bIsPointerTo<Arg, UTF8CHAR>)
+					{
+						return {StatusUTF8NeedsStringCast, CurArgPos};
+					}
+					else if constexpr (!bIsTCharPtr<Arg>)
 					{
 						return {StatusSNeedsTCHARPtrArg, CurArgPos};
 					}
@@ -369,7 +403,7 @@ namespace UE::Core::Private
 				case TEXT('h'):
 					if (CharIsIntegerFormatSpecifier(P[1]))
 					{
-						if (!(bIsIntegralEnum<Arg> || std::is_integral_v<Arg>))
+						if constexpr (!(bIsIntegralEnum<Arg> || std::is_integral_v<Arg>))
 						{
 							return {StatusHNeedsIntegerArg, CurArgPos};
 						}

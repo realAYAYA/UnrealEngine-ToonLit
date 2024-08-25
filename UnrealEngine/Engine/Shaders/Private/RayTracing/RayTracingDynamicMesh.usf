@@ -4,7 +4,8 @@
 	RayTracingDynamicMesh.usf
 =============================================================================*/
 
-#define RAY_TRACING_DYNAMIC_MESH_SHADER_VERSION 0xFA5CE282  // Change to force shader compilation of this shader
+// Change to force shader compilation of this shader
+#pragma message("UESHADERMETADATA_VERSION 74B3439C-C6C2-47F8-B07C-05009AB185D1")
 
 #include "/Engine/Private/Common.ush"
 #include "/Engine/Generated/Material.ush"
@@ -74,7 +75,7 @@ void RayTracingDynamicGeometryConverterCS(uint3 DispatchThreadId : SV_DispatchTh
 		float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
 		FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
 
-		WorldPosition.xyz -= LWCHackToFloat(ResolvedView.PreViewTranslation);
+		WorldPosition.xyz -= DFHackToFloat(ResolvedView.PreViewTranslation);
 		if (bApplyWorldPositionOffset)
 		{
 			// We must guarantee that no NaNs are produced by WPO to avoid a possibility of producing invalid BLAS.
@@ -89,7 +90,7 @@ void RayTracingDynamicGeometryConverterCS(uint3 DispatchThreadId : SV_DispatchTh
 #elif RAY_TRACING_DYNAMIC_MESH_IN_LOCAL_SPACE
 		// Move the point back into local space because the RT instance will be placed there
 		// This the recommended default behavior so that the transform applied by the VertexFactory and the RT transform are always the same
-		WorldPosition.xyz = LWCMultiply(LWCPromote(WorldPosition), VertexFactoryGetWorldToLocal(VFIntermediates)).xyz;
+		WorldPosition.xyz = DFMultiplyDemote(DFPromote(WorldPosition), VertexFactoryGetWorldToLocal(VFIntermediates)).xyz;
 #elif RAY_TRACING_DYNAMIC_MESH_IN_WORLD_SPACE
 		// There are a few geometry types which natively generate positions in world space and therefore not need any extra processing here.
 		// This behavior must be explicitly opted-in to so as to make the code more self-documenting and avoid un-intended mismatched transforms.

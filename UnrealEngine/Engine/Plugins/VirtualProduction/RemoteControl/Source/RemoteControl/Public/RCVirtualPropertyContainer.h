@@ -123,6 +123,11 @@ public:
 	TSharedPtr<FStructOnScope> CreateStructOnScope();
 
 	/**
+	 * Rename the controller with the given InGuid with the InNewName passed as candidate and return the new name
+	 */
+	FName SetControllerDisplayName(FGuid InGuid, FName InNewName);
+
+	/**
 	 * Generates unique name for the property for specified property container
 	 */
 	static FName GenerateUniquePropertyName(const FName& InPropertyName, const EPropertyBagPropertyType InValueType, UObject* InValueTypeObject, const URCVirtualPropertyContainerBase* InContainer);
@@ -131,6 +136,23 @@ public:
 	* Generates unique name for the property for specified property container
 	*/
 	static FName GenerateUniquePropertyName(const FName& InPropertyName, const URCVirtualPropertyContainerBase* InContainer);
+
+	/**
+	 * Generates unique display name for the controllers
+	 */
+	static FName GenerateUniqueDisplayName(const FName& InPropertyName, const URCVirtualPropertyContainerBase* InContainer);
+
+	/**
+	 * @brief Called internally when entity Ids are renewed.
+	 * @param InEntityIdMap Map of old Id to new Id.
+	 */
+	virtual void UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap);
+
+	/** Cache this preset's controllers labels. */
+	void CacheControllersLabels();
+
+	/** Fix controllers labels for older presets. */
+	void FixAndCacheControllersLabels();
 
 #if WITH_EDITOR
 	/** Called after applying a transaction to the object. Used to broadcast Undo related container changes to UI. */
@@ -166,6 +188,11 @@ public:
 
 	/** Delegate that notifies changes to the virtual property container*/
 	FOnVirtualPropertyContainerModified OnVirtualPropertyContainerModifiedDelegate;
+
+private:
+	/** Map of Controller Name to GUID. */
+	UPROPERTY(Transient)
+	TMap<FName, FGuid> ControllerLabelToIdCache;
 };
 
 

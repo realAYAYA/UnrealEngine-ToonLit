@@ -2,7 +2,6 @@
 
 #include "ConcertSyncServer.h"
 
-#include "IConcertModule.h"
 #include "IConcertServer.h"
 #include "IConcertSession.h"
 #include "ConcertServerWorkspace.h"
@@ -11,6 +10,7 @@
 #include "ConcertSyncServerArchivedSession.h"
 #include "ConcertSyncSessionDatabase.h"
 #include "ConcertLogGlobal.h"
+#include "Replication/ConcertServerReplicationManager.h"
 
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
@@ -229,8 +229,15 @@ bool MigrateSessionData(const FConcertSyncSessionDatabase& InSourceDatabase, con
 FConcertSyncServer::FConcertSyncServer(const FString& InRole, const FConcertSessionFilter& InAutoArchiveSessionFilter)
 	: ConcertServer(IConcertServerModule::Get().CreateServer(InRole, InAutoArchiveSessionFilter, this))
 	, SessionFlags(EConcertSyncSessionFlags::None)
-{
-}
+	, LogReplicationStreamsConsoleCommand(
+		TEXT("Replication.LogStreams"),
+		TEXT("Logs the streams registered by all clients"),
+		FConsoleCommandDelegate::CreateRaw(this, &FConcertSyncServer::LogReplicationStreams))
+	, LogReplicationAuthorityConsoleCommand(
+		TEXT("Replication.LogAutority"),
+		TEXT("Logs the authority of the clients"),
+		FConsoleCommandDelegate::CreateRaw(this, &FConcertSyncServer::LogReplicationAuthority))
+{}
 
 FConcertSyncServer::~FConcertSyncServer()
 {
@@ -519,6 +526,17 @@ void FConcertSyncServer::DestroySequencerManager(const TSharedRef<FConcertSyncSe
 	LiveSessionSequencerManagers.Remove(InLiveSession->GetSession().GetId());
 }
 
+void FConcertSyncServer::CreateReplicationManager(TSharedRef<IConcertServerSession> InLiveSession)
+{
+	DestroyReplicationManager(InLiveSession);
+	LiveSessionReplicationManagers.Add(InLiveSession->GetId(), MakeShared<UE::ConcertSyncServer::Replication::FConcertServerReplicationManager>(MoveTemp(InLiveSession)));
+}
+
+void FConcertSyncServer::DestroyReplicationManager(const TSharedRef<IConcertServerSession>& InLiveSession)
+{
+	LiveSessionReplicationManagers.Remove(InLiveSession->GetId());
+}
+
 bool FConcertSyncServer::CreateLiveSession(const TSharedRef<IConcertServerSession>& InSession, const FInternalLiveSessionCreationParams& AdditionalParams)
 {
 	DestroyLiveSession(InSession);
@@ -531,6 +549,12 @@ bool FConcertSyncServer::CreateLiveSession(const TSharedRef<IConcertServerSessio
 		if (EnumHasAnyFlags(SessionFlags, EConcertSyncSessionFlags::EnableSequencer))
 		{
 			CreateSequencerManager(LiveSession.ToSharedRef());
+		}
+
+		// Create Replication Manager
+		if (EnumHasAnyFlags(LiveSession->GetSessionFlags(), EConcertSyncSessionFlags::EnableReplication))
+		{
+			CreateReplicationManager(InSession);
 		}
 
 		// We needn't call OnActivityProduced().Remove(...) because the subscription needs to stay for the lifetime of FConcertSyncServerLiveSession::SessionDatabase
@@ -572,6 +596,90 @@ bool FConcertSyncServer::CreateArchivedSession(const FString& InArchivedSessionR
 void FConcertSyncServer::DestroyArchivedSession(const FGuid& InArchivedSessionId)
 {
 	ArchivedSessions.Remove(InArchivedSessionId);
+}
+
+void FConcertSyncServer::LogReplicationStreams() const
+{
+	UE_LOG(LogConcert, Log, TEXT("Printing replication streams..."));
+	
+	TWideStringBuilder<2048> StringBuilder;
+	constexpr auto SessionIntent = TEXT("\n");
+	constexpr auto ClientIndent = TEXT("\n\t");
+	constexpr auto StreamIndent = TEXT("\n\t\t");
+	constexpr auto ObjectIndent = TEXT("\n\t\t\t");
+	constexpr auto PropertyIndent = TEXT("\n\t\t\t\t");
+	
+	for (const TPair<FGuid, TSharedRef<UE::ConcertSyncServer::Replication::FConcertServerReplicationManager>>& ReplicationManagerPair : LiveSessionReplicationManagers)
+	{
+		const TSharedPtr<FConcertSyncServerLiveSession>* LiveSession = LiveSessions.Find(ReplicationManagerPair.Key);
+		check(LiveSession);
+
+		StringBuilder << SessionIntent << TEXT("Session: ") << *LiveSession->Get()->GetSession().GetName() << TEXT(" (") << *ReplicationManagerPair.Key.ToString() << TEXT(")");
+		for (const FConcertSessionClientInfo& ClientInfo : LiveSession->Get()->GetSession().GetSessionClients())
+		{
+			const FGuid ClientId = ClientInfo.ClientEndpointId;
+			StringBuilder << ClientIndent << TEXT("Client: ") << *ClientInfo.ClientInfo.DisplayName << TEXT(" (") << ClientId.ToString() << TEXT(")");
+			ReplicationManagerPair.Value->ForEachStream(ClientId, [&StringBuilder, StreamIndent, ObjectIndent, PropertyIndent](const FConcertReplicationStream& Stream)
+			{
+				StringBuilder << StreamIndent << TEXT("Stream: ") << *Stream.BaseDescription.Identifier.ToString();
+				for (const TPair<FSoftObjectPath, FConcertReplicatedObjectInfo>& ReplicatedObject : Stream.BaseDescription.ReplicationMap.ReplicatedObjects)
+				{
+					StringBuilder << ObjectIndent << *ReplicatedObject.Key.ToString();
+					for (const FConcertPropertyChain& Property : ReplicatedObject.Value.PropertySelection.ReplicatedProperties)
+					{
+						StringBuilder << PropertyIndent << Property.ToString();
+					}
+				}
+				return EBreakBehavior::Continue;
+			});
+		}
+	}
+	
+	UE_LOG(LogConcert, Log, TEXT("%s"), StringBuilder.ToString());
+	// The logs before and after are to have some feedback in case nothing is printed (e.g. no live sessions).
+	UE_LOG(LogConcert, Log, TEXT("Done."));
+}
+
+void FConcertSyncServer::LogReplicationAuthority() const
+{
+	using namespace UE::ConcertSyncServer::Replication;
+	UE_LOG(LogConcert, Log, TEXT("Printing replication authority..."));
+	
+	TWideStringBuilder<2048> StringBuilder;
+	constexpr auto SessionIntent = TEXT("\n");
+	constexpr auto ClientIndent = TEXT("\n\t");
+	constexpr auto StreamIndent = TEXT("\n\t\t");
+	constexpr auto ObjectIndent = TEXT("\n\t\t\t");
+	
+	for (const TPair<FGuid, TSharedRef<FConcertServerReplicationManager>>& ReplicationManagerPair : LiveSessionReplicationManagers)
+	{
+		const TSharedPtr<FConcertSyncServerLiveSession>* LiveSession = LiveSessions.Find(ReplicationManagerPair.Key);
+		check(LiveSession);
+
+		StringBuilder << SessionIntent << TEXT("Session: ") << *LiveSession->Get()->GetSession().GetName() << TEXT(" (") << *ReplicationManagerPair.Key.ToString() << TEXT(")");
+		for (const FConcertSessionClientInfo& ClientInfo : LiveSession->Get()->GetSession().GetSessionClients())
+		{
+			const FGuid ClientId = ClientInfo.ClientEndpointId;
+			StringBuilder << ClientIndent << TEXT("Client: ") << *ClientInfo.ClientInfo.DisplayName << TEXT(" (") << ClientId.ToString() << TEXT(")");
+			
+			const TSharedRef<FConcertServerReplicationManager>& ReplicationManager = ReplicationManagerPair.Value;
+			ReplicationManager->ForEachStream(ClientId, [&StringBuilder, StreamIndent, ObjectIndent, ClientId, &ReplicationManager](const FConcertReplicationStream& Stream)
+			{
+				const FGuid StreamId = Stream.BaseDescription.Identifier;
+				StringBuilder << StreamIndent << TEXT("Stream: ") << *StreamId.ToString();
+				ReplicationManager->GetAuthorityManager().EnumerateAuthority(ClientId, StreamId, [&StringBuilder, ObjectIndent](const FSoftObjectPath& AuthoredObject)
+				{
+					StringBuilder << ObjectIndent << *AuthoredObject.ToString();
+					return EBreakBehavior::Continue;
+				});
+				return EBreakBehavior::Continue;
+			});
+		}
+	}
+	
+	UE_LOG(LogConcert, Log, TEXT("%s"), StringBuilder.ToString());
+	// The logs before and after are to have some feedback in case nothing is printed (e.g. no live sessions).
+	UE_LOG(LogConcert, Log, TEXT("Done."));
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -54,4 +54,5 @@ protected:
 
 	UPROPERTY()
 	bool bSetZComponent = false;
+	FRandomStream RandomStream;
 };

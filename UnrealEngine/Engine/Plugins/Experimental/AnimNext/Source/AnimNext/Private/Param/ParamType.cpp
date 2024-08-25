@@ -1,16 +1,99 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Param/ParamType.h"
+
+#include "Component/AnimNextMeshComponent.h"
+#include "Graph/AnimNext_LODPose.h"
 #include "Param/ParamTypeHandle.h"
 #include "Misc/StringBuilder.h"
 #include "UObject/Class.h"
 #include "Templates/SubclassOf.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimSequence.h"
+#include "RigVMCore/RigVMTemplate.h"
 
 FAnimNextParamType::FAnimNextParamType(EValueType InValueType, EContainerType InContainerType, const UObject* InValueTypeObject)
 	: ValueTypeObject(InValueTypeObject)
 	, ValueType(InValueType)
 	, ContainerType(InContainerType)
 {
+}
+
+FAnimNextParamType FAnimNextParamType::FromRigVMTemplateArgument(const FRigVMTemplateArgumentType& RigVMType)
+{
+	FAnimNextParamType Type;	
+	const FString CPPTypeString = RigVMType.CPPType.ToString();
+	
+	if (RigVMTypeUtils::IsArrayType(CPPTypeString))
+	{
+		Type.ContainerType = EPropertyBagContainerType::Array;
+	}
+
+	static const FName IntTypeName(TEXT("int")); // type used by some engine tests
+	static const FName Int64TypeName(TEXT("Int64"));
+	static const FName UInt64TypeName(TEXT("UInt64"));
+
+	const FName CPPType = *CPPTypeString;
+	
+	if (CPPType == RigVMTypeUtils::BoolTypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::Bool;
+	}
+	else if (CPPType == RigVMTypeUtils::Int32TypeName || CPPType == IntTypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::Int32;
+	}
+	else if (CPPType == RigVMTypeUtils::UInt32TypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::UInt32;
+	}
+	else if (CPPType == Int64TypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::Int64;
+	}
+	else if (CPPType == UInt64TypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::UInt64;
+	}
+	else if (CPPType == RigVMTypeUtils::FloatTypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::Float;
+	}
+	else if (CPPType == RigVMTypeUtils::DoubleTypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::Double;
+	}
+	else if (CPPType == RigVMTypeUtils::FNameTypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::Name;
+	}
+	else if (CPPType == RigVMTypeUtils::FStringTypeName)
+	{
+		Type.ValueType = EPropertyBagPropertyType::String;
+	}
+	else if (UScriptStruct* ScriptStruct = Cast<UScriptStruct>(RigVMType.CPPTypeObject))
+	{
+		Type.ValueType = EPropertyBagPropertyType::Struct;
+		Type.ValueTypeObject = ScriptStruct;
+	}
+	else if (UEnum* Enum = Cast<UEnum>(RigVMType.CPPTypeObject))
+	{
+		Type.ValueType = EPropertyBagPropertyType::Enum;
+		Type.ValueTypeObject = Enum;
+	}
+	else if (UObject* Object = Cast<UObject>(RigVMType.CPPTypeObject))
+	{
+		Type.ValueType = EPropertyBagPropertyType::Object;	
+		Type.ValueTypeObject = Object;
+	}
+	else
+	{
+		ensureMsgf(false, TEXT("Unsupported type : %s"), *CPPTypeString);
+		Type.ValueType = EPropertyBagPropertyType::None;
+	}
+
+	return Type;
 }
 
 bool FAnimNextParamType::IsValidObject() const
@@ -111,6 +194,14 @@ UE::AnimNext::FParamTypeHandle FAnimNextParamType::GetHandle() const
 				{
 					Handle.SetParameterType(FParamTypeHandle::EParamType::Transform);
 				}
+				else if(ScriptStruct == FAnimNextGraphLODPose::StaticStruct())
+				{
+					Handle.SetParameterType(FParamTypeHandle::EParamType::AnimNextGraphLODPose);
+				}
+				else if(ScriptStruct == FAnimNextGraphReferencePose::StaticStruct())
+				{
+					Handle.SetParameterType(FParamTypeHandle::EParamType::AnimNextGraphReferencePose);
+				}
 				else
 				{
 					Handle.SetParameterType(FParamTypeHandle::EParamType::Custom);
@@ -134,6 +225,30 @@ UE::AnimNext::FParamTypeHandle FAnimNextParamType::GetHandle() const
 			}
 			break;
 		case EValueType::Object:
+			if(const UClass* Class = Cast<UClass>(ValueTypeObject.Get()))
+			{
+				if (Class == UObject::StaticClass())
+				{
+					Handle.SetParameterType(FParamTypeHandle::EParamType::Object);
+					break;
+				}
+				else if (Class == UCharacterMovementComponent::StaticClass())
+				{
+					Handle.SetParameterType(FParamTypeHandle::EParamType::CharacterMovementComponent);
+					break;
+				}
+				else if (Class == UAnimNextMeshComponent::StaticClass())
+				{
+					Handle.SetParameterType(FParamTypeHandle::EParamType::AnimNextMeshComponent);
+					break;
+				}
+				else if (Class == UAnimSequence::StaticClass())
+				{
+					Handle.SetParameterType(FParamTypeHandle::EParamType::AnimSequence);
+					break;
+				}
+			}
+			// fall through
 		case EValueType::SoftObject:
 		case EValueType::Class:
 		case EValueType::SoftClass:
@@ -351,9 +466,9 @@ size_t FAnimNextParamType::GetValueTypeAlignment() const
 	return 0;
 }
 
-FString FAnimNextParamType::ToString() const
+void FAnimNextParamType::ToString(FStringBuilderBase& InStringBuilder) const
 {
-	auto GetTypeString = [this](TStringBuilder<128>& InStringBuilder)
+	auto GetTypeString = [this, &InStringBuilder]()
 	{
 		switch(ValueType)
 		{
@@ -463,24 +578,146 @@ FString FAnimNextParamType::ToString() const
 		}
 	};
 
-	TStringBuilder<128> StringBuilder;
-
 	switch(ContainerType)
 	{
 	case EContainerType::None:
-		GetTypeString(StringBuilder);
+		GetTypeString();
 		break;
 	case EContainerType::Array:
 		{
-			StringBuilder.Append(TEXT("TArray<"));
-			GetTypeString(StringBuilder);
-			StringBuilder.Append(TEXT(">"));
+			InStringBuilder.Append(TEXT("TArray<"));
+			GetTypeString();
+			InStringBuilder.Append(TEXT(">"));
 		}
 		break;
 	default:
-		StringBuilder.Append(TEXT("Error: Unknown container type"));
+		InStringBuilder.Append(TEXT("Error: Unknown container type"));
 		break;
 	}
+}
 
+FString FAnimNextParamType::ToString() const
+{
+	TStringBuilder<128> StringBuilder;
+	ToString(StringBuilder);
 	return StringBuilder.ToString();
+}
+
+FAnimNextParamType FAnimNextParamType::FromString(const FString& InString)
+{
+	auto GetInnerType = [](const FString& InTypeString, FAnimNextParamType& OutType)
+	{
+		static TMap<FString, FAnimNextParamType> BasicTypes =
+		{
+			{ TEXT("bool"),		GetType<bool>() },
+			{ TEXT("uint8"),		GetType<uint8>() },
+			{ TEXT("int32"),		GetType<int32>() },
+			{ TEXT("int64"),		GetType<int64>() },
+			{ TEXT("float"),		GetType<float>() },
+			{ TEXT("double"),		GetType<double>() },
+			{ TEXT("FName"),		GetType<FName>() },
+			{ TEXT("FString"),		GetType<FString>() },
+			{ TEXT("FText"),		GetType<FText>() },
+			{ TEXT("uint32"),		GetType<uint32>() },
+			{ TEXT("uint64"),		GetType<uint64>() },
+		};
+
+		if(const FAnimNextParamType* BasicType = BasicTypes.Find(InTypeString))
+		{
+			OutType = *BasicType;
+			return true;
+		}
+
+		// Check for object/struct/enum
+		EValueType ObjectValueType = EValueType::None;
+		FString ObjectInnerString;
+		if(InTypeString.StartsWith(TEXT("U"), ESearchCase::CaseSensitive))
+		{
+			ObjectInnerString = InTypeString.RightChop(1).TrimStartAndEnd();
+			ObjectValueType = EValueType::Object;
+		}
+		else if(InTypeString.StartsWith(TEXT("TObjectPtr<U"), ESearchCase::CaseSensitive))
+		{
+			ObjectInnerString = InTypeString.RightChop(12).LeftChop(1).TrimStartAndEnd();
+			ObjectValueType = EValueType::Object;
+		}
+		else if(InTypeString.StartsWith(TEXT("TSubClassOf<U"), ESearchCase::CaseSensitive))
+		{
+			ObjectInnerString = InTypeString.RightChop(13).LeftChop(1).TrimStartAndEnd();
+			ObjectValueType = EValueType::Class;
+		}
+		else if(InTypeString.StartsWith(TEXT("F"), ESearchCase::CaseSensitive))
+		{
+			ObjectInnerString = InTypeString.RightChop(1).TrimStartAndEnd();
+			ObjectValueType = EValueType::Struct;
+		}
+		else if(InTypeString.StartsWith(TEXT("E"), ESearchCase::CaseSensitive))
+		{
+			ObjectInnerString = InTypeString.RightChop(1).TrimStartAndEnd();
+			ObjectValueType = EValueType::Enum;
+		}
+		
+		if(UObject* ObjectType = FindFirstObject<UObject>(*ObjectInnerString, EFindFirstObjectOptions::NativeFirst))
+		{
+			OutType.ValueType = ObjectValueType;
+			OutType.ValueTypeObject = nullptr;
+
+			switch(ObjectValueType)
+			{
+			case EPropertyBagPropertyType::Enum:
+				OutType.ValueTypeObject = Cast<UEnum>(ObjectType);
+				break;
+			case EPropertyBagPropertyType::Struct:
+				OutType.ValueTypeObject = Cast<UScriptStruct>(ObjectType);
+				break;
+			case EPropertyBagPropertyType::Object:
+				OutType.ValueTypeObject = Cast<UClass>(ObjectType);
+				break;
+			case EPropertyBagPropertyType::Class:
+				OutType.ValueTypeObject = Cast<UClass>(ObjectType);
+				break;
+			default:
+				break;
+			}
+
+			return OutType.ValueTypeObject != nullptr;
+		}
+
+		return false;
+	};
+
+	{
+		FAnimNextParamType Type;
+		if(GetInnerType(InString, Type))
+		{
+			return Type;
+		}
+	}
+	
+	if(InString.StartsWith(TEXT("TArray<"), ESearchCase::CaseSensitive))
+	{
+		const FString InnerTypeString = InString.RightChop(7).LeftChop(1).TrimStartAndEnd();
+		FAnimNextParamType Type;
+		if(GetInnerType(InnerTypeString, Type))
+		{
+			Type.ContainerType = EContainerType::Array;
+			return Type;
+		}
+	}
+
+	return FAnimNextParamType();
+}
+
+bool FAnimNextParamType::IsObjectType() const
+{
+	switch (ValueType)
+	{
+	case EValueType::Object:
+	case EValueType::SoftObject:
+	case EValueType::Class:
+	case EValueType::SoftClass:
+		return true;
+	default:
+		return false;
+	}
 }

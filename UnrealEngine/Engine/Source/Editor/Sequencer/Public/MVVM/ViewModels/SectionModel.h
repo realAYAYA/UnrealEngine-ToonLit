@@ -32,7 +32,7 @@ struct FOverlappingSections;
 /**
  * Model for a sequencer section
  */
-class FSectionModel
+class SEQUENCER_API FSectionModel
 	: public FViewModel
 	, public FLinkedOutlinerExtension
 	, public ILayerBarExtension

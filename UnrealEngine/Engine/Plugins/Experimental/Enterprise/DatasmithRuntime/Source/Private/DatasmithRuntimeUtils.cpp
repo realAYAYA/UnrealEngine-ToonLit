@@ -547,7 +547,7 @@ namespace DatasmithRuntime
 			if(Polygon.Vertices.Num() < 3)
 			{
 				// If poly resulted in no verts, remove from array
-				Element.Pop(false);
+				Element.Pop(EAllowShrinking::No);
 			}
 			else
 			{

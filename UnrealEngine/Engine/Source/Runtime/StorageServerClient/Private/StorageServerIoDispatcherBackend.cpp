@@ -358,7 +358,7 @@ FIoRequestImpl* FStorageServerIoDispatcherBackend::FRequestQueue::Pop()
 		return nullptr;
 	}
 	FIoRequestImpl* Result;
-	Heap.HeapPop(Result, QueueSortFunc, false);
+	Heap.HeapPop(Result, QueueSortFunc, EAllowShrinking::No);
 	return Result;
 }
 

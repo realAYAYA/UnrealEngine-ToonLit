@@ -17,17 +17,17 @@ namespace UE::PixelStreaming
 
 	int FFrameBufferMultiFormatLayered::width() const
 	{
-		return FrameCapturer->GetWidth(GetNumLayers() - 1);
+		return FrameCapturer ? FrameCapturer->GetWidth(GetNumLayers() - 1) : -1;
 	}
 
 	int FFrameBufferMultiFormatLayered::height() const
 	{
-		return FrameCapturer->GetHeight(GetNumLayers() - 1);
+		return FrameCapturer ? FrameCapturer->GetHeight(GetNumLayers() - 1) : -1;
 	}
 
 	int FFrameBufferMultiFormatLayered::GetNumLayers() const
 	{
-		return FrameCapturer->GetNumLayers();
+		return FrameCapturer ? FrameCapturer->GetNumLayers() : -1;
 	}
 
 	rtc::scoped_refptr<FFrameBufferMultiFormat> FFrameBufferMultiFormatLayered::GetLayer(int LayerIndex) const
@@ -47,12 +47,12 @@ namespace UE::PixelStreaming
 
 	int FFrameBufferMultiFormat::width() const
 	{
-		return FrameCapturer->GetWidth(LayerIndex);
+		return FrameCapturer ? FrameCapturer->GetWidth(LayerIndex) : -1;
 	}
 
 	int FFrameBufferMultiFormat::height() const
 	{
-		return FrameCapturer->GetHeight(LayerIndex);
+		return FrameCapturer ? FrameCapturer->GetHeight(LayerIndex) : -1;
 	}
 
 	IPixelCaptureOutputFrame* FFrameBufferMultiFormat::RequestFormat(int32 Format) const
@@ -62,6 +62,12 @@ namespace UE::PixelStreaming
 		{
 			return CachedFrame->Get();
 		}
+
+		if(!FrameCapturer)
+		{
+			return nullptr;
+		}
+
 		TSharedPtr<IPixelCaptureOutputFrame> Frame = FrameCapturer->WaitForFormat(Format, LayerIndex);
 		CachedFormat.Add(Format, Frame);
 		return Frame.Get();

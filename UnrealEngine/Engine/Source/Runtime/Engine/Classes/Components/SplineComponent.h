@@ -283,6 +283,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = Editor)
 	bool bAllowDiscontinuousSpline;
 
+	/** Adjust tangents after snapping. */
+	UPROPERTY(EditAnywhere, Category = Editor)
+	bool bAdjustTangentsOnSnap;
+
 	/** Whether scale visualization should be displayed */
 	UPROPERTY(EditAnywhere, Category = Editor, meta=(InlineEditConditionToggle=true))
 	bool bShouldVisualizeScale;
@@ -789,11 +793,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = Spline)
 	ENGINE_API FTransform FindTransformClosestToWorldLocation(const FVector& WorldLocation, ESplineCoordinateSpace::Type CoordinateSpace, bool bUseScale = false) const;
 
-	/** Given a threshold, recursively sub-divides the spline section until the list of segments (polyline) matches the spline shape. */
+	/** Given a threshold, recursively sub-divides the spline section until the list of segments (polyline) matches the spline shape. Note: Prefer ConvertSplineToPolyline_InDistanceRange */
 	UFUNCTION(BlueprintCallable, Category = Spline)
 	ENGINE_API bool DivideSplineIntoPolylineRecursive(float StartDistanceAlongSpline, float EndDistanceAlongSpline, ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, TArray<FVector>& OutPoints) const;
 
-	/** Given a threshold, recursively sub-divides the spline section until the list of segments (polyline) matches the spline shape. */
+	/** Given a threshold, recursively sub-divides the spline section until the list of segments (polyline) matches the spline shape. Note: Prefer ConvertSplineToPolyline_InDistanceRange */
 	UFUNCTION(BlueprintCallable, Category = Spline)
 	ENGINE_API bool DivideSplineIntoPolylineRecursiveWithDistances(float StartDistanceAlongSpline, float EndDistanceAlongSpline, ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, TArray<FVector>& OutPoints, TArray<double>& OutDistancesAlongSpline) const;
 
@@ -805,6 +809,18 @@ public:
 	/** Given a threshold, returns a list of vertices along the spline that, treated as a list of segments (polyline), matches the spline shape. */
 	UFUNCTION(BlueprintCallable, Category = Spline)
 	ENGINE_API bool ConvertSplineToPolyLine(ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, TArray<FVector>& OutPoints) const;
+
+	/** Given a threshold, returns a list of vertices along the spline that, treated as a list of segments (polyline), matches the spline shape. Also fills a list of corresponding distances along the spline for each point. */
+	UFUNCTION(BlueprintPure = false, Category = Spline)
+	ENGINE_API bool ConvertSplineToPolyLineWithDistances(ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, TArray<FVector>& OutPoints, TArray<double>& OutDistancesAlongSpline) const;
+
+	/** Given a threshold and a start and end distance range, returns a list of vertices along the spline that, treated as a list of segments (polyline), matches the spline shape in that range. Also fills a list of corresponding distances along the spline for each point. */
+	UFUNCTION(BlueprintPure = false, Category = Spline)
+	ENGINE_API bool ConvertSplineToPolyline_InDistanceRange(ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, float StartDistAlongSpline, float EndDistAlongSpline, TArray<FVector>& OutPoints, TArray<double>& OutDistancesAlongSpline, bool bAllowWrappingIfClosed = true) const;
+
+	/** Given a threshold and start and end time range, returns a list of vertices along the spline that, treated as a list of segments (polyline), matches the spline shape in that range. Also fills a list of corresponding distances along the spline for each point. */
+	UFUNCTION(BlueprintPure = false, Category = Spline)
+	ENGINE_API bool ConvertSplineToPolyline_InTimeRange(ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, float StartTimeAlongSpline, float EndTimeAlongSpline, bool bUseConstantVelocity, TArray<FVector>& OutPoints, TArray<double>& OutDistancesAlongSpline, bool bAllowWrappingIfClosed = true) const;
 
 private:
 	/** The dummy value used for queries when there are no point in a spline */
@@ -822,6 +838,11 @@ private:
 
 	/** Returns the parametric value t which would result in a spline segment of the given length between S(0)...S(t) */
 	ENGINE_API float GetSegmentParamFromLength(const int32 Index, const float Length, const float SegmentLength) const;
+
+	// Internal helper function called by ConvertSplineSegmentToPolyLine -- assumes the input is within a half-segment, so testing the distance to midpoint will be an accurate guide to subdivision
+	bool DivideSplineIntoPolylineRecursiveWithDistancesHelper(float StartDistanceAlongSpline, float EndDistanceAlongSpline, ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, TArray<FVector>& OutPoints, TArray<double>& OutDistancesAlongSpline) const;
+	// Internal helper function called by ConvertSplineSegmentToPolyLine -- assumes the input is within a half-segment, so testing the distance to midpoint will be an accurate guide to subdivision
+	bool DivideSplineIntoPolylineRecursiveHelper(float StartDistanceAlongSpline, float EndDistanceAlongSpline, ESplineCoordinateSpace::Type CoordinateSpace, const float MaxSquareDistanceFromSpline, TArray<FVector>& OutPoints) const;
 
 	/** Returns a const reference to the specified position point, but gives back a dummy point if there are no points */
 	inline const FInterpCurvePointVector& GetPositionPointSafe(int32 PointIndex) const
@@ -870,6 +891,9 @@ private:
 			return DummyPointScale;
 		}
 	}
+
+	// FSplineComponentVisualizer will access some private members when attempting to call NotifyPropertiesModified
+	friend class FSplineComponentVisualizer;
 };
 
 /** Used to store spline data during RerunConstructionScripts */

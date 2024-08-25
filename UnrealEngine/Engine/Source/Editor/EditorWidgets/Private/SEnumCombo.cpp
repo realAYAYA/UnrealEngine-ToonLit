@@ -99,12 +99,14 @@ void SEnumComboBox::Construct(const FArguments& InArgs, const UEnum* InEnum)
 	}
 
 	SComboButton::Construct(SComboButton::FArguments()
+		.ComboButtonStyle(InArgs._ComboButtonStyle)
 		.ButtonStyle(InArgs._ButtonStyle)
 		.ContentPadding(InArgs._ContentPadding)
 		.OnGetMenuContent(this, &SEnumComboBox::OnGetMenuContent)
 		.ButtonContent()
 		[
 			SNew(STextBlock)
+			.TextStyle(InArgs._TextStyle)
 			.Font(Font)
 			.Text(this, &SEnumComboBox::GetCurrentValueText)
 			.ToolTipText(this, &SEnumComboBox::GetCurrentValueTooltip)

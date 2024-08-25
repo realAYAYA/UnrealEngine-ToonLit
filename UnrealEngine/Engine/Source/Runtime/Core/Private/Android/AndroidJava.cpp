@@ -5,6 +5,21 @@
 
 #if USE_ANDROID_JNI
 
+FJavaClassObject FJavaClassObject::GetGameActivity()
+{
+	JNIEnv* JEnv = AndroidJavaEnv::GetJavaEnv();
+	jclass MainClass = AndroidJavaEnv::FindJavaClassGlobalRef("com/epicgames/unreal/GameActivity");
+	jobject Object = JEnv->NewGlobalRef(AndroidJavaEnv::GetGameActivityThis());
+
+	return FJavaClassObject(MainClass, Object);
+}
+
+FJavaClassObject::FJavaClassObject(jclass ClassIN, jobject ObjectIN)
+{
+	Object = ObjectIN;
+	Class = ClassIN;
+}
+
 FJavaClassObject::FJavaClassObject(FName ClassName, const char* CtorSig, ...)
 {
 	JNIEnv*	JEnv = AndroidJavaEnv::GetJavaEnv();
@@ -133,6 +148,18 @@ FString FJavaClassObject::CallMethod<FString>(FJavaClassMethod Method, ...)
 	VerifyException();
 	auto Result = FJavaHelper::FStringFromLocalRef(JEnv, RetVal);
 	return Result;
+}
+
+template<>
+float FJavaClassObject::CallMethod<float>(FJavaClassMethod Method, ...)
+{
+	JNIEnv* JEnv = AndroidJavaEnv::GetJavaEnv();
+	va_list Params;
+	va_start(Params, Method);
+	float RetVal = JEnv->CallFloatMethodV(Object, Method.Method, Params);
+	va_end(Params);
+	VerifyException();
+	return RetVal;
 }
 
 FScopedJavaObject<jstring> FJavaClassObject::GetJString(const FString& String)

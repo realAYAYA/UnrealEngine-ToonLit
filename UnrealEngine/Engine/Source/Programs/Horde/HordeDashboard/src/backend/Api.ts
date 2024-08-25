@@ -56,6 +56,15 @@ export enum JobStepState {
 
 }
 
+export enum DeviceStatus {
+
+	// Device encountered an error
+	Error = "Error",
+
+	// Device is operating normally
+	Normal = "Normal"
+}
+
 // Outcome of a jobstep run
 export enum JobStepOutcome {
 
@@ -141,7 +150,13 @@ export enum JobStepBatchError {
 	ExecutionError = "ExecutionError",
 
 	/** The change that the job is running against is invalid. */
-	UnknownShelf = "UnknownShelf"
+	UnknownShelf = "UnknownShelf",
+
+	/** No longer needed */
+	NoLongerNeeded = "NoLongerNeeded",
+
+	/** Sync Failed */
+	SyncingFailed = "SyncingFailed"
 
 }
 
@@ -288,6 +303,9 @@ export type JobStreamQuery = {
 export type AgentQuery = {
 	modifiedAfter?: string;
 	poolId?: string;
+	includeDeleted?: boolean;
+	condition?: string;
+	filter?: string;
 }
 
 export type JobQuery = {
@@ -347,6 +365,11 @@ export type IssueQueryV2 = {
 	filter?: string;
 }
 
+export type LogEventQuery = {
+	index?: number;
+	count?: number;
+}
+
 
 export type UsersQuery = {
 	ids?: string[];
@@ -376,8 +399,44 @@ export enum IssueSeverity {
 	Error = "Error"
 }
 
+export type CategoryAgents = {
+	ids: string[];
+	lastPoll: Date;
+	polling?: boolean;
+}
+
+/** Describes a category for the agents page */
+export type GetDashboardAgentCategoryResponse = {
+
+	/** Title for the tab */
+	name: string;
+
+	/* Condition for agents to be included in this category */
+	condition?: string;
+}
+
+/** Describes a category for the pools page */
+export type GetDashboardPoolCategoryResponse = {
+
+	/** Title for the tab */
+	name: string;
+
+	/* Condition for pools to be included in this category */
+	condition?: string;
+}
+
+export enum AuthMethod {
+	Anonymous = "Anonymous",
+	Okta = "Okta",
+	OpenIdConnect = "OpenIdConnect",
+	Horde = "Horde"
+}
+
 /** Setting information required by dashboard */
 export type GetDashboardConfigResponse = {
+
+	// Authorization method in use
+	authMethod?: AuthMethod;
 
 	/** The name of the external issue service */
 	externalIssueServiceName?: string;
@@ -393,6 +452,18 @@ export type GetDashboardConfigResponse = {
 
 	/** Help slack channel that users can use for issues */
 	helpSlackChannel?: string;
+
+	/** Device problem cooldown in minutes */
+	deviceProblemCooldownMinutes?: number
+
+	/** Categories to display on the agents page */
+	agentCategories: GetDashboardAgentCategoryResponse[];
+
+	/** Categories to display on the pools page */
+	poolCategories: GetDashboardPoolCategoryResponse[];
+
+	/** Telemetry views */
+	telemetryViews: GetTelemetryViewResponse[];
 }
 
 /**Parameters to register a new agent */
@@ -447,6 +518,8 @@ export type UpdateAgentRequest = {
 
 	requestRestart?: boolean;
 
+	requestForceRestart?: boolean;
+
 	requestShutdown?: boolean;
 
 	/**Per-agent override for the desired client version */
@@ -459,6 +532,33 @@ export type UpdateAgentRequest = {
 	acl?: UpdateAclRequest;
 
 }
+
+// Agent Registration
+
+/// Updates an existing lease
+export type GetPendingAgentsResponse = {
+	agents: GetPendingAgentResponse[];
+}
+
+
+/// Information about an agent pending admission to the farm
+export type GetPendingAgentResponse = {
+	key: string;
+	hostName: string;
+	description: string;
+}
+
+/// Approve an agent for admission to the farm
+export type ApproveAgentsRequest = {
+	agents: ApproveAgentRequest[];
+}
+
+/// Approve an agent for admission to the farm
+export type ApproveAgentRequest = {
+	key: string;
+	agentId?: string;
+}
+
 
 export type AuditLogQuery = {
 	minTime?: string;
@@ -570,6 +670,9 @@ export type GetAgentLeaseResponse = {
 
 	/**Identifier for the lease */
 	id: string;
+
+	/** parent lease id */
+	parentId?: string;
 
 	/**Name of the lease */
 	name?: string;
@@ -691,6 +794,9 @@ export type GetAgentResponse = {
 	/**Pools for this agent */
 	pools?: string[];
 
+	/**Status for this agent */
+	status?: string;
+
 	/**Capabilities of this agent */
 	capabilities?: GetAgentCapabilitiesResponse;
 
@@ -728,7 +834,7 @@ export type GetAgentResponse = {
 	pendingShutdown: boolean;
 
 	/** agent workspaces */
-	workspaces: GetAgentWorkspaceResponse[];
+	workspaces?: GetAgentWorkspaceResponse[];
 
 }
 
@@ -784,6 +890,9 @@ export type GetPoolResponse = {
 	/// Condition for agents to be auto-added to the pool
 	condition?: Condition;
 
+	/// Color for the pool
+	colorValue: string;
+
 	/// Whether to enable autoscaling for this pool
 	enableAutoscaling: boolean;
 
@@ -819,6 +928,58 @@ export type GetPoolResponse = {
 
 }
 
+/// Response describing a pool
+export type GetPoolSummaryResponse = {
+	/// Identifier for the pool
+	id: string;
+	/// Name of the pool
+	name: string;
+	/// Color to render the pool label
+	colorValue: string;
+	/// Whether autoscaling is enabled for this pool
+	autoscaled: boolean;
+	/// Counts for agents in differrent states
+	stats?: GetPoolStatsResponse;
+	/// Truncated list of agents
+	agents?: GetPoolAgentSummaryResponse[];
+	/// Utilization samples for the pool, from zero to one, with one sample for each hour
+	utilization?: number[];
+}
+
+/// Numbers of agents matching various criteria
+export type GetPoolStatsResponse = {
+	/// Number of agents in the pool
+	numAgents: number;
+	/// Number of agents that are ready
+	numIdle: number;
+	/// Number of agents offline
+	numOffline: number;
+	/// Number of agents that are disabled
+	numDisabled: number;
+}
+
+/// Response describing an agent in a pool
+export type GetPoolAgentSummaryResponse = {
+	/// Identifier for the pool
+	agentId: string;
+	/// Whether the agent is idle
+	idle?: boolean;
+	/// Whether the agent is online
+	offline?: boolean;
+	/// Whether the agent is disabled
+	disabled?: boolean;
+}
+
+export type PoolQuery = {
+	/// Condition to select which pools to include
+	condition?: any;
+	/// Whether to include stats in the response
+	stats?: boolean;
+	/// Number of agents to include for each pool in the response
+	numAgents?: number;
+	///Number of utilization samples to include for each pool
+	numUtilizationSamples?: number;
+}
 
 /**Parameters for creating a new event */
 export type CreateEventRequest = {
@@ -1031,9 +1192,25 @@ export type GetReportResponse = {
 	name: string;
 
 	/** The artifact id */
-	artifactId: string;
+	// artifactId?: string;
+
+	/** The report markdown content */
+	content?: string;
+
 }
 
+export type GetJobArtifactResponse = {
+	/// Identifier for this artifact
+	id: string;
+	/// Name of the artifact
+	name: string;
+	/// Artifact type
+	type: string;
+	/// Description to display for the artifact on the dashboard
+	description?: string;
+	/// Step producing the artifact
+	stepId: string;
+}
 
 /**Information about a job */
 export type GetJobResponse = {
@@ -1070,6 +1247,9 @@ export type GetJobResponse = {
 
 	/** The user that started this job */
 	abortedByUserInfo?: GetThinUserInfoResponse;
+
+	/** Whether job was created by a bisect task */
+	startedByBisectTaskId?: string;
 
 	/** The roles to impersonate when executing this job */
 	roles: string[];
@@ -1115,6 +1295,8 @@ export type GetJobResponse = {
 
 	/** Whether to use the V2 artifacts endpoint */
 	useArtifactsV2?: boolean;
+
+	artifacts?: GetJobArtifactResponse[];
 
 	/**  Custom permissions for this object */
 	acl?: GetAclResponse;
@@ -1357,6 +1539,12 @@ export type GetLogFileResponse = {
 	/** Unique id of the job for this log file */
 	jobId: string;
 
+	/** Unique id of the lease for this log file */
+	leaseId?: string;
+
+	/** Unique id of the session for this log file */
+	sessionId?: string;
+
 	/** Type of events stored in this log */
 	type: LogType;
 
@@ -1425,7 +1613,7 @@ export type GetArtifactZipRequest = {
 
 // Artifacts V2
 
-export type ArtifactContextType = "step-trace" | "step-output" | "step-saved";
+export type ArtifactContextType = "step-trace" | "step-output" | "step-saved" | string;
 
 /// Request to create a zip file with artifact data
 export type CreateZipRequest = {
@@ -1438,11 +1626,10 @@ export type CreateZipRequest = {
 export type GetArtifactResponseV2 = {
 
 	id: string;
-
 	type: ArtifactContextType;
-
 	keys: string[]
-
+	name: string;
+	description?: string;
 }
 
 /** Result of an artifact search */
@@ -2000,6 +2187,9 @@ export type GetTemplateResponseBase = {
 
 	/// List of parameters for this template
 	parameters: ParameterData[];
+
+	/// Description for the template, supports markdown
+	description?: string;
 }
 
 /// Query selecting the base changelist to use
@@ -2251,6 +2441,16 @@ export type ListParameterItemData = ParameterData & {
 	/// </summary>
 	argumentIfDisabled?: string;
 
+	/// <summary>
+	/// Arguments to pass with this parameter, if enabled
+	/// </summary>
+	argumentsIfEnabled?: string[];
+
+	/// <summary>
+	/// Arguments to pass with this parameter, if disabled
+	/// </summary>
+	argumentsIfDisabled?: string[];
+
 	/**Whether this item is selected by default */
 	default: boolean;
 
@@ -2281,6 +2481,12 @@ export type BoolParameterData = ParameterData & {
 
 	/**Value if disabled */
 	argumentIfDisabled?: string;
+
+	/**Arguments if enabled */
+	argumentsIfEnabled?: string[];
+
+	/**Arguments if disabled */
+	argumentsIfDisabled?: string[];
 
 	/**Whether this argument is enabled by default */
 	default: boolean;
@@ -2466,6 +2672,15 @@ export enum TabType {
 	Jobs = "Jobs"
 
 }
+/** Style for rendering a tab */
+export enum TabStyle {
+
+	/// Regular job list	
+	Normal = "Normal",
+
+	/// Omit job names, show condensed view	
+	Compact = "Compact"
+}
 
 /**Information about a page to display in the dashboard for a stream */
 export type GetStreamTabResponse = {
@@ -2475,6 +2690,7 @@ export type GetStreamTabResponse = {
 
 	type: TabType;
 
+	style: TabStyle;
 };
 
 /**Describes a job page */
@@ -3080,6 +3296,136 @@ export type GetUtilizationTelemetryResponse = {
 	numAgents: number;
 }
 
+export type MetricsQuery = {
+	id: string[];
+	minTime?: string;
+	maxTime?: string;
+	group?: string;
+	results?: number;
+}
+
+/// Metrics matching a particular query
+export type GetTelemetryMetricsResponse = {
+
+	metricId: string;
+
+	groupBy: string;
+
+	/// Metrics matching the search terms	
+	metrics: GetTelemetryMetricResponse[];
+}
+
+/// Information about a particular metric
+export type GetTelemetryMetricResponse = {
+
+	/// Start time for the sample	
+	time: Date;
+
+	/// Name of the group	
+	group?: string;
+
+	/// Value for the metric	
+	value: number;
+
+	// Added locally in the dashboard
+	// GetTelemetryMetricsResponse id
+	id: string;
+
+	// added locally by dashboard
+	key: string;
+
+	// added locally by dashboard
+	keyElements: string[];
+
+	threshold?: number;
+
+	// calculated on dashboard, group name => value
+	groupValues?: Record<string, string>;
+}
+
+export type TelemetryDisplayType = "Time" | "Ratio" | "Value";
+export type TelemetryGraphType = "Line" | "Indicator";
+
+/// Metric attached to a telemetry chart	
+export type GetTelemetryChartMetricResponse = {
+
+	/// Associated metric id	
+	metricId: string;
+
+	/// The threshold for KPI values	
+	threshold?: number;
+
+	/// The metric alias for display purposes	
+	alias?: string;
+
+}
+
+/// Telemetry chart configuraton
+export type GetTelemetryChartResponse = {
+
+	/// The name of the chart, will be displayed on the dashboard	
+	name: string;
+
+	/// The unit to display	
+	display: TelemetryDisplayType;
+
+	/// The graph type 	
+	graph: TelemetryGraphType;
+
+	/// List of configured metrics	
+	metrics: GetTelemetryChartMetricResponse[];
+
+	/// The min unit value for clamping chart	
+	min?: number;
+
+	/// The max unit value for clamping chart	
+	max?: number;
+}
+
+/// A chart categody, will be displayed on the dashbord under an associated pivot
+export type GetTelemetryCategoryResponse = {
+
+	/// The name of the category
+	name: string;
+
+	/// The charts contained within the category
+	charts: GetTelemetryChartResponse[];
+}
+
+/// A telemetry view variable used for filtering the charting data
+export type GetTelemetryVariableResponse = {
+	/// The name of the variable for display purposes
+	name: string;
+
+	/// The associated data group attached to the variable 
+	group: string;
+
+	/// default values to select
+	defaults: string[];
+
+	/// Populated on dashboard
+	values: string[];
+}
+
+/// A telemetry view of related metrics, divided into categofies
+export type GetTelemetryViewResponse = {
+
+	/// Identifier for the view
+	id: string;
+
+	/// The name of the view
+	name: string;
+
+	/// The telemetry store id the view uses
+	telemetryStoreId: string;
+
+	///  The variables used to filter the view data
+	variables: GetTelemetryVariableResponse[];
+
+	/// The categories contained within the view
+	categories: GetTelemetryCategoryResponse[];
+}
+
 export type UserClaim = {
 
 	type: string;
@@ -3133,6 +3479,9 @@ export type GetDashboardFeaturesResponse = {
 	/** Whether to show functionality related to agents, pools, and utilization on the dashboard. */
 	showAgents?: boolean;
 
+	/** Whether to show the agent registration page. When using registration tokens from elsewhere this is not needed. */
+	showAgentRegistration?: boolean;
+
 	/** Show the Perforce server option on the server menu */
 	showPerforceServers?: boolean;
 
@@ -3141,6 +3490,9 @@ export type GetDashboardFeaturesResponse = {
 
 	/** Show automated tests on the server menu */
 	showTests?: boolean;
+
+	/** Whether to show accounts on the server menu*/
+	showAccounts?: boolean;
 }
 
 /// Job template settings for the current user
@@ -3193,6 +3545,9 @@ export type GetUserResponse = {
 	/** Whether to enable experimental features for this user */
 	enableExperimentalFeatures?: boolean;
 
+	/** Whether to always tag preflight changelists */
+	alwaysTagPreflightCL?: boolean;
+
 	/**  Settings for the dashboard */
 	dashboardSettings?: DashboardSettings;
 
@@ -3206,6 +3561,9 @@ export type GetUserResponse = {
 
 	/** List of pinned job ids */
 	pinnedJobIds?: string[];
+
+	/** List of pinned bisect task ids */
+	pinnedBisectTaskIds?: string[];
 
 }
 
@@ -3238,9 +3596,62 @@ export type UpdateUserRequest = {
 	/** Job ids to remove from the pinned list */
 	removePinnedJobIds?: string[];
 
+	/** Bisect ids to add to the pinned list */
+	addPinnedBisectTaskIds?: string[];
+
+	/** Bisect ids to remove from the pinned list */
+	removePinnedBisectTaskIds?: string[];
+
 	/** Whether to enable experimental features for this user */
 	enableExperimentalFeatures?: boolean;
 
+	/** Whether to always tag preflight changelists */
+	alwaysTagPreflightCL?: boolean;
+
+}
+
+// Server Status
+
+/// Status for a subsystem within Hord
+export type ServerStatusSubsystem = {
+	/// Category of this subsystem
+	category: string;
+
+	/// Name of the subsystem
+	name: string;
+
+	/// List of updates
+	updates: ServerStatusUpdate[];
+}
+
+/// Type of status result for a single updat
+export enum ServerStatusResult {
+	/// Indicates that the health check determined that the subsystem was unhealthy
+	Unhealthy = "Unhealthy",
+
+	/// Indicates that the health check determined that the component was in a subsystem state
+	Degraded = "Degraded",
+
+	/// Indicates that the health check determined that the subsystem was healthy
+	Healthy = "Healthy"
+}
+
+/// A single status updat
+export type ServerStatusUpdate = {
+	/// Result of status update
+	result: ServerStatusResult;
+
+	/// Optional message describing the result
+	message?: string;
+
+	/// Time this update was created
+	updatedAt: Date;
+}
+
+/// Response from server status controller
+export type ServerStatusResponse = {
+	/// List of subsystem statuses
+	statuses: ServerStatusSubsystem[];
 }
 
 export type GetPerforceServerStatusResponse = {
@@ -3251,6 +3662,31 @@ export type GetPerforceServerStatusResponse = {
 	status: string;
 	detail: string;
 }
+
+/** Request to validate server configuration with the given files replacing their checked-in counterparts. */
+export type PreflightConfigRequest = {
+
+	/**  Change to test	*/
+	shelvedChange: number;
+
+	/**  Perforce cluster to retrieve from */
+	cluster?: string;
+
+}
+
+/**  Response from validating config files */
+export type PreflightConfigResponse = {
+
+	/** Whether the files were validated successfully */
+	result: boolean;
+
+	/** Output message from validation */
+	message?: string;
+
+	/** Detailed response */
+	detail?: string;
+}
+
 
 /** Get object response which describes a device platform */
 export type GetDevicePlatformResponse = {
@@ -3339,6 +3775,8 @@ export type GetDeviceUtilizationResponse = {
 
 /** Get response object which describes a device */
 export type GetDeviceResponse = {
+	/** Make this type indexable by property name */
+	[key: string]: any;
 
 	/** The unique id of the device */
 	id: string;
@@ -4332,7 +4770,7 @@ export type DevicePoolTelemetryQuery = {
 };
 
 export type DeviceTelemetryQuery = {
-	deviceIds?: string[];
+	id?: string[];
 	poolId?: string;
 	platformId?: string;
 	minCreateTime?: string;
@@ -4621,9 +5059,278 @@ export type GetToolSummaryResponse = {
 	/** Name of tool */
 	name: string;
 
+	/** Category of the tool */
+	category?: string;
+
 	/** Description of tool */
 	description: string;
 
 	/** Version of tool */
 	version?: string;
+
+	showInDashboard: boolean;
 }
+
+/** Job Bisect */
+
+/// State of a bisect task
+export enum BisectTaskState {
+	/// Currently running	
+	Running = "Running",
+
+	/// Cancelled by a user	
+	Cancelled = "Cancelled",
+
+	/// Finished running. The first job/change identifies the first failure.	
+	Succeeded = "Succeeded",
+
+	/// Task failed due to not having a job before the first failure.	
+	MissingHistory = "MissingHistory",
+
+	/// Task failed due to the stream no longer existing.	
+	MissingStream = "MissingStream",
+
+	/// Task failed due to the first job no longer existing.	
+	MissingJob = "MissingJob",
+
+	/// Task failed due to template no longer existing.	
+	MissingTemplate = "MissingTemplate"
+}
+
+
+export type CommitTag = {
+	text: string;
+}
+
+/// Request to create a new bisect task
+export type CreateBisectTaskRequest = {
+
+	/// Job containing the node to check	
+	jobId: string;
+
+	/// Name of the node to query	
+	nodeName: string;
+
+	/// Commit tag to filter possible changes against	
+	commitTags?: CommitTag[];
+
+	/// Set of changes to ignore. Can be modified later through UpdateBisectTaskRequest
+	ignoreChanges?: number[];
+
+	/// Set of job ids to ignore. Can be modified later through UpdateBisectTaskRequest"
+	ignoreJobs?: string[];
+}
+
+/// Response from creating a bisect task
+export type CreateBisectTaskResponse = {
+
+	/// Identifier for the new bisect task	
+	bisectTaskId: string;
+}
+
+/// Information about a bisect task
+export type GetBisectTaskResponse = {
+
+	/// Identifier for this task
+	id: string;
+
+	/// Current task state
+	state: BisectTaskState;
+
+	/// User that initiated the search
+	owner: GetThinUserInfoResponse;
+
+	/// Stream being searched
+	streamId: string;
+
+	/// Template within the stream to execute
+	templateId: string;
+
+	/// Name of the step to search for
+	nodeName: string;
+
+	/// Outcome to search for
+	outcome: JobStepOutcome;
+
+	/// Starting job id for the bisect
+	initialJobId: string;
+
+	/// Starting job batch id for the bisect
+	initialBatchId: string;
+
+	/// Starting job step id for the bisect
+	initialStepId: string;
+
+	/// Starting change for the bisect
+	initialChange: number;
+
+	/// First known job id that is broken
+	currentJobId: string;
+
+	/// First known job batch id that is broken
+	currentBatchId: string;
+
+	/// First known job step id that is broken
+	currentStepId: string;
+
+	/// Changelist number of the first broken job id
+	currentChange: number;
+
+	/// Next step id of a running bisect
+	nextJobId?: string;
+
+	/// Next step id of a running bisect
+	nextJobChange?: number;
+
+	/// Lower job id bounds
+	minJobId?: string;
+
+	/// Lower step id bounds
+	minBatchId?: string;
+
+	/// Lower step id bounds
+	minStepId?: string;
+
+	/// Lower change id bounds
+	minChange?: number;
+
+	/// The steps that have been run on bisect
+	steps?: GetJobStepRefResponse[];
+
+}
+
+/// Updates the state of a bisect task
+export type UpdateBisectTaskRequest = {
+	/// Cancels the current task	
+	cancel?: boolean;
+
+	/// List of change numbers to include in the search. 	
+	includeChanges?: number[];
+
+	/// List of change numbers to exclude from the search.	
+	encludeChanges?: number[];
+
+	/// List of jobs to include in the search.	
+	includeJobs?: string[];
+
+	/// List of jobs to exclude from the search.	
+	excludeJobs?: string[];
+}
+
+// Accounts
+
+export type GetDashboardChallengeResponse = {
+	needsFirstTimeSetup?: boolean;
+	needsAuthorization: boolean;
+}
+
+export type DashboardLoginRequest = {
+	username: string;
+	password?: string;
+	returnUrl?: string;
+}
+
+/// Update request for the current user account
+export type UpdateCurrentAccountRequest = {
+	oldPassword?: string;
+	newPassword?: string;
+}
+
+/// Message describing a claim for an account	
+export type AccountClaimMessage = {
+	type: string;
+	value: string;
+}
+
+/// Creates a new user account
+export type CreateAccountRequest = {
+
+	/// Name of the user
+	name: string;
+
+	/// Perforce login identifier
+	login: string;
+
+	/// Claims for the user
+	claims: AccountClaimMessage[];
+
+	/// Description for the account
+	description?: string;
+
+	/// User's email address
+	email?: string;
+
+	/// Optional secret token for API access
+	secretToken?: string;
+
+	/// Password for the user
+	password?: string;
+
+	/// Whether the account is enabled
+	enabled?: boolean;
+}
+
+/// Response from the request to create a new user account	
+export type CreateAccountResponse = { id: string }
+
+/// Update request for a user account	
+export type UpdateAccountRequest = {
+	name?: string;
+	login?: string;
+	claims?: AccountClaimMessage[];
+	description?: string;
+	email?: string;
+	secretToken?: string;
+	password?: string;
+	enabled?: boolean;
+};
+
+/// Gets an existing user 
+export type GetAccountResponse = {
+	id: string;
+	name: string;
+	login: string;
+	claims: AccountClaimMessage[];
+	description?: string;
+	email?: string;
+	enabled?: boolean;
+}
+
+// Service Accounts
+
+/// Creates a new user account
+export type CreateServiceAccountRequest = {
+	description: string;
+	claims: AccountClaimMessage[],
+	enabled?: boolean;
+}
+
+/// Response from the request to create a new user account
+export type CreateServiceAccountResponse = {
+	id: string;
+	secretToken: string;
+}
+
+/// Update request for a user account
+export type UpdateServiceAccountRequest = {
+	description?: string;
+	claims?: AccountClaimMessage[];
+	resetToken?: boolean;
+	enabled?: boolean;
+}
+
+/// Response from updating a user account
+export type UpdateServiceAccountResponse = {
+	newSecretToken?: string
+}
+
+/// Creates a new user account
+export type GetServiceAccountResponse = {
+	id: string;
+	claims: AccountClaimMessage[];
+	description: string;
+	enabled: boolean;
+}
+
+
+

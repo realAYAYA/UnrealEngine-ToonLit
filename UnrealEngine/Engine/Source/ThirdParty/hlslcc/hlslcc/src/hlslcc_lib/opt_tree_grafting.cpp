@@ -390,7 +390,8 @@ static void tree_grafting_basic_block(ir_instruction *bb_first, ir_instruction *
 		}
 
 		if (lhs_var->mode == ir_var_out ||
-			lhs_var->mode == ir_var_inout)
+			lhs_var->mode == ir_var_inout ||
+			lhs_var->precise)
 		{
 			continue;
 		}

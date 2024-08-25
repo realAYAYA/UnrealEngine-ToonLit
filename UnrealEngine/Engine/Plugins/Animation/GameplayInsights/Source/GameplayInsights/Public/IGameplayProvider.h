@@ -135,4 +135,5 @@ public:
 	virtual uint64 FindPossessingController(uint64 Pawn, double Time) const = 0;
 	virtual TRange<double> GetObjectTraceLifetime(uint64 ObjectId) const = 0;
 	virtual TRange<double> GetObjectRecordingLifetime(uint64 ObjectId) const = 0;
+	virtual double GetRecordingDuration() const = 0;
 };

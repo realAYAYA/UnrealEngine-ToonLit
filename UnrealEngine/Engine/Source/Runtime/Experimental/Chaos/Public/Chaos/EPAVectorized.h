@@ -331,7 +331,7 @@ FORCEINLINE_DEBUGGABLE void VectorEPAComputeVisibilityBorder(TEPAWorkingArray<Ve
 
 	while (ToVisitStack.Num() && Iteration++ < MaxIteration)
 	{
-		const FEPAFloodEntry FloodEntry = ToVisitStack.Pop(false);
+		const FEPAFloodEntry FloodEntry = ToVisitStack.Pop(EAllowShrinking::No);
 		VectorTEPAEntry& Entry = Entries[FloodEntry.EntryIdx];
 		if (!Entry.bObsolete)
 		{
@@ -488,7 +488,7 @@ EEPAResult VectorEPA(TArray<VectorRegister4Float>& VertsABuffer, TArray<VectorRe
 			bQueueDirty = false;
 		}
 
-		int32 EntryIdx = Queue.Pop(false);
+		int32 EntryIdx = Queue.Pop(EAllowShrinking::No);
 		VectorTEPAEntry& Entry = Entries[EntryIdx];
 		//bool bBadFace = Entry.IsOriginProjectedInside(VertsABuffer.GetData(), VertsBBuffer.GetData());
 		{

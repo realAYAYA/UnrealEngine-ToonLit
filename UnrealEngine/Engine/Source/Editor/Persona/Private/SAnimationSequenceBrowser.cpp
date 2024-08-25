@@ -49,6 +49,7 @@
 #include "AnimationSequenceBrowserMenuContexts.h"
 #include "Viewports.h"
 #include "SceneInterface.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #define LOCTEXT_NAMESPACE "SequenceBrowser"
 
@@ -138,9 +139,13 @@ public:
 			.HeightOverride(300.0f)
 			.WidthOverride(200.0f)
 			[
-				SNew(SSkeletonAnimNotifies, EditableSkeleton.ToSharedRef())
+				SNew(SSkeletonAnimNotifies)
 				.IsPicker(true)
 				.ShowNotifies(true)
+				.ShowSyncMarkers(false)
+				.ShowCompatibleSkeletonAssets(true)
+				.ShowOtherAssets(true)
+				.EditableSkeleton(EditableSkeleton.Pin())
 				.OnItemSelected_Lambda([this](const FName& InNotifyName)
 				{
 					FSlateApplication::Get().DismissAllMenus();
@@ -202,8 +207,8 @@ public:
 	/** Notify string to use when filtering */
 	FString NotifyString;
 
-	/** Editable skeleton used to access available notifies */
-	TSharedPtr<IEditableSkeleton> EditableSkeleton;
+	/** Editable skeleton used to filter available notifies */
+	TWeakPtr<IEditableSkeleton> EditableSkeleton;
 };
 
 /** A filter that displays animations that use a skeleton sync marker */
@@ -266,10 +271,13 @@ public:
 			.HeightOverride(300.0f)
 			.WidthOverride(200.0f)
 			[
-				SNew(SSkeletonAnimNotifies, EditableSkeleton.ToSharedRef())
+				SNew(SSkeletonAnimNotifies)
 				.IsPicker(true)
 				.ShowNotifies(false)
 				.ShowSyncMarkers(true)
+				.ShowCompatibleSkeletonAssets(true)
+				.ShowOtherAssets(true)
+				.EditableSkeleton(EditableSkeleton.Pin())
 				.OnItemSelected_Lambda([this](const FName& InNotifyName)
 				{
 					FSlateApplication::Get().DismissAllMenus();
@@ -331,8 +339,8 @@ public:
 	/** Sync marker string to use when filtering */
 	FString SyncMarkerString;
 
-	/** Editable skeleton used to access available sync markers */
-	TSharedPtr<IEditableSkeleton> EditableSkeleton;
+	/** Editable skeleton used to filter available sync markers */
+	TWeakPtr<IEditableSkeleton> EditableSkeleton;
 };
 
 /** A filter that displays animations that use a curve */
@@ -713,16 +721,6 @@ TSharedPtr<SWidget> SAnimationSequenceBrowser::OnGetAssetContextMenu(const TArra
 					FCanExecuteAction()
 				)
 			);
-
-			Section.AddMenuEntry("SetCurrentPreviewMesh",
-				LOCTEXT("SetCurrentPreviewMesh", "Set Current Preview Mesh"),
-				LOCTEXT("SetCurrentPreviewMesh_ToolTip", "Set current preview mesh to be used when previewed by this asset. This only applies when you open Persona using this asset."),
-				FSlateIcon(),
-				FUIAction(
-					FExecuteAction::CreateSP(this, &SAnimationSequenceBrowser::OnSetCurrentPreviewMesh, SelectedAssets),
-					FCanExecuteAction()
-				)
-			);
 		}
 
 		if (SelectedAssets.Num() == 1 && SelectedAssets[0].IsInstanceOf(USoundWave::StaticClass()))
@@ -757,6 +755,20 @@ TSharedPtr<SWidget> SAnimationSequenceBrowser::OnGetAssetContextMenu(const TArra
 			}
 		}
 
+		{
+			FToolMenuSection& Section = InMenu->FindOrAddSection("SequenceOptions", LOCTEXT("AssetHeading", "Asset"));
+
+			Section.AddMenuEntry("SetCurrentPreviewMesh",
+				LOCTEXT("SetCurrentPreviewMesh", "Set Current Preview Mesh"),
+				LOCTEXT("SetCurrentPreviewMesh_ToolTip", "Set current preview mesh to be used when previewed by this asset. This only applies when you open Persona using this asset."),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateSP(this, &SAnimationSequenceBrowser::OnSetCurrentPreviewMesh, SelectedAssets),
+					FCanExecuteAction()
+				)
+			);
+		}
+		
 		{
 			FToolMenuSection& Section = InMenu->AddSection("SequenceGeneralOptions", LOCTEXT("AnimationSequenceGeneralOptions", "Options"));
 
@@ -903,7 +915,6 @@ void SAnimationSequenceBrowser::OnSetCurrentPreviewMesh(TArray<FAssetData> Selec
 		USkeletalMesh* PreviewMesh = PersonaToolkitPtr.Pin()->GetPreviewScene()->GetPreviewMeshComponent()->GetSkeletalMeshAsset();
 		if (PreviewMesh)
 		{
-			TArray<TWeakObjectPtr<UAnimSequence>> AnimSequences;
 			for(auto Iter = SelectedAssets.CreateIterator(); Iter; ++Iter)
 			{
 				UAnimationAsset * AnimAsset = Cast<UAnimationAsset>(Iter->GetAsset());
@@ -1041,11 +1052,12 @@ void SAnimationSequenceBrowser::Construct(const FArguments& InArgs, const TShare
 	Config.OnAssetToolTipClosing = FOnAssetToolTipClosing::CreateSP( this, &SAnimationSequenceBrowser::OnAssetToolTipClosing );
 
 	// hide all asset registry columns by default (we only really want the name and path)
-	TArray<UObject::FAssetRegistryTag> AssetRegistryTags;
-	UAnimSequence::StaticClass()->GetDefaultObject()->GetAssetRegistryTags(AssetRegistryTags);
-	for(UObject::FAssetRegistryTag& AssetRegistryTag : AssetRegistryTags)
+	UObject* AnimSequenceDefaultObject = UAnimSequence::StaticClass()->GetDefaultObject();
+	FAssetRegistryTagsContextData TagsContext(AnimSequenceDefaultObject, EAssetRegistryTagsCaller::Uncategorized);
+	AnimSequenceDefaultObject->GetAssetRegistryTags(TagsContext);
+	for (const TPair<FName,UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
 	{
-		Config.HiddenColumnNames.Add(AssetRegistryTag.Name.ToString());
+		Config.HiddenColumnNames.Add(TagPair.Key.ToString());
 	}
 
 	// Also hide the type column by default (but allow users to enable it, so don't use bShowTypeInColumnView)
@@ -1179,7 +1191,7 @@ void SAnimationSequenceBrowser::AddAssetToHistory(const FAssetData& AssetData)
 	else
 	{
 		// Clear out any history that is in front of the current location in the history list
-		AssetHistory.RemoveAt(CurrentAssetHistoryIndex + 1, AssetHistory.Num() - (CurrentAssetHistoryIndex + 1), true);
+		AssetHistory.RemoveAt(CurrentAssetHistoryIndex + 1, AssetHistory.Num() - (CurrentAssetHistoryIndex + 1), EAllowShrinking::Yes);
 	}
 
 	AssetHistory.Add(AssetData);
@@ -1380,14 +1392,17 @@ TSharedRef<SToolTip> SAnimationSequenceBrowser::CreateCustomAssetToolTip(FAssetD
 	TArray<UObject::FAssetRegistryTag> Tags;
 	UClass* AssetClass = FindObject<UClass>(AssetData.AssetClassPath);
 	check(AssetClass);
-	AssetClass->GetDefaultObject()->GetAssetRegistryTags(Tags);
+	UObject* DefaultObject = AssetClass->GetDefaultObject();
+	FAssetRegistryTagsContextData TagsContext(DefaultObject, EAssetRegistryTagsCaller::Uncategorized);
+	DefaultObject->GetAssetRegistryTags(TagsContext);
 
 	TArray<FName> TagsToShow;
-	for(UObject::FAssetRegistryTag& TagEntry : Tags)
+	FName NameSkeleton(TEXT("Skeleton"));
+	for (const TPair<FName, UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
 	{
-		if(TagEntry.Name != FName(TEXT("Skeleton")) && TagEntry.Type != UObject::FAssetRegistryTag::TT_Hidden)
+		if(TagPair.Key != NameSkeleton && TagPair.Value.Type != UObject::FAssetRegistryTag::TT_Hidden)
 		{
-			TagsToShow.Add(TagEntry.Name);
+			TagsToShow.Add(TagPair.Key);
 		}
 	}
 

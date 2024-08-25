@@ -254,7 +254,7 @@ bool FElectraDecoderResourceManagerLinux::SetupRenderBufferFromDecoderOutput(IMe
 	TMap<FString, FVariant> ExtraValues;
 	InDecoderOutput->GetExtraValues(ExtraValues);
 
-	TSharedPtr<FElectraPlayerVideoDecoderOutputLinux, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue("texture").GetSharedPointer<FElectraPlayerVideoDecoderOutputLinux>();
+	TSharedPtr<FElectraPlayerVideoDecoderOutputLinux, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue(RenderOptionKeys::Texture).GetSharedPointer<FElectraPlayerVideoDecoderOutputLinux>();
 	if (DecoderOutput.IsValid())
 	{
 		ILibavDecoderDecodedImage* DecodedImage = reinterpret_cast<ILibavDecoderDecodedImage*>(InDecoderOutput->GetPlatformOutputHandle(EElectraDecoderPlatformOutputHandleType::LibavDecoderDecodedImage));
@@ -263,29 +263,28 @@ bool FElectraDecoderResourceManagerLinux::SetupRenderBufferFromDecoderOutput(IMe
 		if (DecodedImage || ImageBuffers)
 		{
 			FElectraVideoDecoderOutputCropValues Crop = InDecoderOutput->GetCropValues();
-			InOutBufferPropertes->Set(TEXT("width"), FVariantValue((int64) InDecoderOutput->GetWidth()));
-			InOutBufferPropertes->Set(TEXT("height"), FVariantValue((int64) InDecoderOutput->GetHeight()));
-			InOutBufferPropertes->Set(TEXT("crop_left"), FVariantValue((int64) Crop.Left));
-			InOutBufferPropertes->Set(TEXT("crop_right"), FVariantValue((int64) Crop.Right));
-			InOutBufferPropertes->Set(TEXT("crop_top"), FVariantValue((int64) Crop.Top));
-			InOutBufferPropertes->Set(TEXT("crop_bottom"), FVariantValue((int64) Crop.Bottom));
-			InOutBufferPropertes->Set(TEXT("aspect_ratio"), FVariantValue((double) InDecoderOutput->GetAspectRatioW() / (double) InDecoderOutput->GetAspectRatioH()));
-			InOutBufferPropertes->Set(TEXT("aspect_w"), FVariantValue((int64) InDecoderOutput->GetAspectRatioW()));
-			InOutBufferPropertes->Set(TEXT("aspect_h"), FVariantValue((int64) InDecoderOutput->GetAspectRatioH()));
-			InOutBufferPropertes->Set(TEXT("fps_num"), FVariantValue((int64) InDecoderOutput->GetFrameRateNumerator()));
-			InOutBufferPropertes->Set(TEXT("fps_denom"), FVariantValue((int64) InDecoderOutput->GetFrameRateDenominator()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::Width, FVariantValue((int64)InDecoderOutput->GetWidth()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::Height, FVariantValue((int64)InDecoderOutput->GetHeight()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropLeft, FVariantValue((int64)Crop.Left));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropRight, FVariantValue((int64)Crop.Right));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropTop, FVariantValue((int64)Crop.Top));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropBottom, FVariantValue((int64)Crop.Bottom));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectRatio, FVariantValue((double)InDecoderOutput->GetAspectRatioW() / (double)InDecoderOutput->GetAspectRatioH()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectW, FVariantValue((int64)InDecoderOutput->GetAspectRatioW()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectH, FVariantValue((int64)InDecoderOutput->GetAspectRatioH()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSNumerator, FVariantValue((int64)InDecoderOutput->GetFrameRateNumerator()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSDenominator, FVariantValue((int64)InDecoderOutput->GetFrameRateDenominator()));
 
 			int32 num_bits = InDecoderOutput->GetNumberOfBits();
 		// We are currently converting output to 8 bit NV12 format!
 			num_bits = 8;
-
-			InOutBufferPropertes->Set(TEXT("bits_per"), FVariantValue((int64) num_bits));
-			InOutBufferPropertes->Set(TEXT("pixelfmt"), FVariantValue((int64)((num_bits <= 8) ? EPixelFormat::PF_NV12 : EPixelFormat::PF_P010)));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::BitsPerComponent, FVariantValue((int64) num_bits));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::PixelFormat, FVariantValue((int64)((num_bits <= 8) ? EPixelFormat::PF_NV12 : EPixelFormat::PF_P010)));
 
 			if (DecodedImage)
 			{
 #if WITH_LIBAV
-				InOutBufferPropertes->Set(TEXT("pitch"), FVariantValue((int64)InDecoderOutput->GetDecodedWidth() * ((num_bits <= 8) ? 1 : 2)));
+				InOutBufferPropertes->Set(IDecoderOutputOptionNames::Pitch, FVariantValue((int64)InDecoderOutput->GetDecodedWidth() * ((num_bits <= 8) ? 1 : 2)));
 
 				const ILibavDecoderVideoCommon::FOutputInfo& DecodedImageInfo = DecodedImage->GetOutputInfo();
 				FIntPoint BufferDim(DecodedImageInfo.Planes[0].Width, DecodedImageInfo.Planes[0].Height);
@@ -304,7 +303,7 @@ bool FElectraDecoderResourceManagerLinux::SetupRenderBufferFromDecoderOutput(IMe
 				if ((ImageBuffers->GetBufferFormatByIndex(0) == EElectraDecoderPlatformPixelFormat::NV12 || ImageBuffers->GetBufferFormatByIndex(0) == EElectraDecoderPlatformPixelFormat::P010)&&
 					ImageBuffers->GetBufferEncodingByIndex(0) == EElectraDecoderPlatformPixelEncoding::Native)
 				{
-					InOutBufferPropertes->Set(TEXT("pitch"), FVariantValue((int64)ImageBuffers->GetBufferPitchByIndex(0)));
+					InOutBufferPropertes->Set(IDecoderOutputOptionNames::Pitch, FVariantValue((int64)ImageBuffers->GetBufferPitchByIndex(0)));
 
 					FIntPoint BufferDim((int32) InDecoderOutput->GetWidth(), (int32) InDecoderOutput->GetHeight());
 					if (DecoderOutput->InitializeForBuffer(BufferDim, num_bits <= 8 ? EPixelFormat::PF_NV12 : EPixelFormat::PF_P010, num_bits, InOutBufferPropertes, false))

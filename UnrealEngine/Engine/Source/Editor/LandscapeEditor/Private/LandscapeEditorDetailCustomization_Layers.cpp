@@ -21,6 +21,7 @@
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "EditorModeManager.h"
 #include "EditorModes.h"
+#include "LandscapeEditorDetailCustomization_LayersBrushStack.h" // FLandscapeBrushDragDropOp
 #include "LandscapeEditorModule.h"
 #include "LandscapeEditorObject.h"
 #include "Landscape.h"
@@ -175,7 +176,7 @@ TSharedPtr<SWidget> FLandscapeEditorCustomNodeBuilder_Layers::GenerateRow(int32 
 {
 	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
 	TSharedPtr<SWidget> RowWidget = SNew(SLandscapeEditorSelectableBorder)
-		.Padding(0.0f)
+		.Padding(FMargin(8.f, 0.f))
 		.VAlign(VAlign_Center)
 		.OnContextMenuOpening(this, &FLandscapeEditorCustomNodeBuilder_Layers::OnLayerContextMenuOpening, InLayerIndex)
 		.OnSelected(this, &FLandscapeEditorCustomNodeBuilder_Layers::OnLayerSelectionChanged, InLayerIndex)
@@ -200,6 +201,7 @@ TSharedPtr<SWidget> FLandscapeEditorCustomNodeBuilder_Layers::GenerateRow(int32 
 
 			+SHorizontalBox::Slot()
 			.AutoWidth()
+			.Padding(4, 0)
 			.VAlign(VAlign_Center)
 			[
 				SNew(SButton)
@@ -212,7 +214,7 @@ TSharedPtr<SWidget> FLandscapeEditorCustomNodeBuilder_Layers::GenerateRow(int32 
 				.Content()
 				[
 					SNew(SImage)
-			.Image(this, &FLandscapeEditorCustomNodeBuilder_Layers::GetVisibilityBrushForLayer, InLayerIndex)
+					.Image(this, &FLandscapeEditorCustomNodeBuilder_Layers::GetVisibilityBrushForLayer, InLayerIndex)
 				]
 			]
 
@@ -224,6 +226,7 @@ TSharedPtr<SWidget> FLandscapeEditorCustomNodeBuilder_Layers::GenerateRow(int32 
 				SAssignNew(InlineTextBlocks[InLayerIndex], SInlineEditableTextBlock)
 				.IsEnabled(this, &FLandscapeEditorCustomNodeBuilder_Layers::IsLayerEditionEnabled, InLayerIndex)
 				.Text(this, &FLandscapeEditorCustomNodeBuilder_Layers::GetLayerDisplayName, InLayerIndex)
+				.ColorAndOpacity(TAttribute<FSlateColor>::Create(TAttribute<FSlateColor>::FGetter::CreateSP(this, &FLandscapeEditorCustomNodeBuilder_Layers::GetLayerTextColor, InLayerIndex)))
 				.ToolTipText(LOCTEXT("LandscapeLayers_tooltip", "Name of the Layer"))
 				.OnVerifyTextChanged(FOnVerifyTextChanged::CreateSP(this, &FLandscapeEditorCustomNodeBuilder_Layers::CanRenameLayerTo, InLayerIndex))
 				.OnEnterEditingMode(this, &FLandscapeEditorCustomNodeBuilder_Layers::OnBeginNameTextEdit)
@@ -248,6 +251,7 @@ TSharedPtr<SWidget> FLandscapeEditorCustomNodeBuilder_Layers::GenerateRow(int32 
 					.IsEnabled(this, &FLandscapeEditorCustomNodeBuilder_Layers::IsLayerEditionEnabled, InLayerIndex)
 					.Visibility(this, &FLandscapeEditorCustomNodeBuilder_Layers::GetLayerAlphaVisibility, InLayerIndex)
 					.Text(LOCTEXT("LandscapeLayerAlpha", "Alpha"))
+					.ColorAndOpacity(TAttribute<FSlateColor>::Create(TAttribute<FSlateColor>::FGetter::CreateSP(this, &FLandscapeEditorCustomNodeBuilder_Layers::GetLayerTextColor, InLayerIndex)))
 				]
 				+ SHorizontalBox::Slot()
 				.VAlign(VAlign_Center)
@@ -301,7 +305,7 @@ FText FLandscapeEditorCustomNodeBuilder_Layers::GetLayerDisplayName(int32 InLaye
 	return FText::FromString(TEXT("None"));
 }
 
-bool FLandscapeEditorCustomNodeBuilder_Layers::IsLayerSelected(int32 InLayerIndex)
+bool FLandscapeEditorCustomNodeBuilder_Layers::IsLayerSelected(int32 InLayerIndex) const
 {
 	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
 	if (LandscapeEdMode)
@@ -348,6 +352,10 @@ void FLandscapeEditorCustomNodeBuilder_Layers::SetLayerName(const FText& InText,
 	}
 }
 
+FSlateColor FLandscapeEditorCustomNodeBuilder_Layers::GetLayerTextColor(int32 InLayerIndex) const
+{
+	return IsLayerSelected(InLayerIndex) ? FStyleColors::ForegroundHover : FSlateColor::UseForeground();
+}
 
 void FLandscapeEditorCustomNodeBuilder_Layers::FillAddBrushMenu(FMenuBuilder& MenuBuilder, TArray<ALandscapeBlueprintBrushBase*> Brushes)
 {
@@ -559,7 +567,7 @@ void FLandscapeEditorCustomNodeBuilder_Layers::SetLandscapeSplinesReservedLayer(
 			EAppReturnType::Type Result = EAppReturnType::No;
 			if (NewReservedLayer)
 			{
-				Result = FMessageDialog::Open(EAppMsgType::YesNo, FText::Format(LOCTEXT("Landscape_SetReservedForSplines_Message", "Reserving layer {0} for landscape splines will clear it from its content and no edition will be allowed.  Continue?"), FText::FromName(NewReservedLayer->Name)));
+				Result = FMessageDialog::Open(EAppMsgType::YesNo, FText::Format(LOCTEXT("Landscape_SetReservedForSplines_Message", "Reserving layer {0} for landscape splines will clear it from its content and no editing will be allowed.  Continue?"), FText::FromName(NewReservedLayer->Name)));
 			}
 			else if (CurrenReservedLayer)
 			{
@@ -908,22 +916,61 @@ FReply FLandscapeEditorCustomNodeBuilder_Layers::HandleAcceptDrop(FDragDropEvent
 {
 	TSharedPtr<FLandscapeListElementDragDropOp> DragDropOperation = DragDropEvent.GetOperationAs<FLandscapeListElementDragDropOp>();
 
-	if (DragDropOperation.IsValid())
+	if (!DragDropOperation.IsValid())
 	{
-		FEdModeLandscape* LandscapeEdMode = GetEditorMode();
-		ALandscape* Landscape = LandscapeEdMode ? LandscapeEdMode->GetLandscape() : nullptr;
-		if (Landscape)
+		return FReply::Unhandled();
+	}
+
+	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
+	ALandscape* Landscape = LandscapeEdMode ? LandscapeEdMode->GetLandscape() : nullptr;
+	if (!Landscape)
+	{
+		return FReply::Unhandled();
+	}
+
+	// See if we're actually getting a drag from the blueprint brush list, rather than
+	// from the edit layer list
+	if (DragDropOperation->IsOfType<FLandscapeBrushDragDropOp>())
+	{
+		int32 StartingBrushIndex = DragDropOperation->SlotIndexBeingDragged;
+		int32 StartingLayerIndex = LandscapeEdMode->GetCurrentLayerIndex();
+		int32 DestinationLayerIndex = SlotIndexToLayerIndex(SlotIndex);
+
+		if (StartingLayerIndex == DestinationLayerIndex)
 		{
-			int32 StartingLayerIndex = SlotIndexToLayerIndex(DragDropOperation->SlotIndexBeingDragged);
-			int32 DestinationLayerIndex = SlotIndexToLayerIndex(SlotIndex);
-			const FScopedTransaction Transaction(LOCTEXT("Landscape_Layers_Reorder", "Reorder Layer"));
-			if (Landscape->ReorderLayer(StartingLayerIndex, DestinationLayerIndex))
-			{
-				LandscapeEdMode->SetCurrentLayer(DestinationLayerIndex);
-				LandscapeEdMode->RefreshDetailPanel();
-				return FReply::Handled();
-			}
+			// See comment further below about not returning Handled()
+			return FReply::Unhandled();
 		}
+
+		ALandscapeBlueprintBrushBase* Brush = Landscape->GetBrushForLayer(StartingLayerIndex, StartingBrushIndex);
+		if (!ensure(Brush))
+		{
+			return FReply::Unhandled();
+		}
+
+		const FScopedTransaction Transaction(LOCTEXT("Landscape_LayerBrushes_MoveLayers", "Move Brush to Layer"));
+		Landscape->RemoveBrushFromLayer(StartingLayerIndex, StartingBrushIndex);
+		Landscape->AddBrushToLayer(DestinationLayerIndex, Brush);
+
+		LandscapeEdMode->SetCurrentLayer(DestinationLayerIndex);
+		LandscapeEdMode->RefreshDetailPanel();
+
+		// HACK: We don't return FReply::Handled() here because otherwise, SDragAndDropVerticalBox::OnDrop
+		// will apply UI slot reordering after we return. Properly speaking, we should have a way to signal 
+		// that the operation was handled yet that it is not one that SDragAndDropVerticalBox should deal with.
+		// For now, however, just make sure to return Unhandled.
+		return FReply::Unhandled();
+	}
+
+	// This must be a drag from our own list.
+	int32 StartingLayerIndex = SlotIndexToLayerIndex(DragDropOperation->SlotIndexBeingDragged);
+	int32 DestinationLayerIndex = SlotIndexToLayerIndex(SlotIndex);
+	const FScopedTransaction Transaction(LOCTEXT("Landscape_Layers_Reorder", "Reorder Layer"));
+	if (Landscape->ReorderLayer(StartingLayerIndex, DestinationLayerIndex))
+	{
+		LandscapeEdMode->SetCurrentLayer(DestinationLayerIndex);
+		LandscapeEdMode->RefreshDetailPanel();
+		return FReply::Handled();
 	}
 
 	return FReply::Unhandled();

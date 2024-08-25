@@ -402,8 +402,10 @@ bool UContentBrowserClassDataSource::EnumerateItemsForObjects(const TArrayView<U
 			InternalPath.Reset();
 			if (NativeClassHierarchy->GetClassPath(InClass, InternalPath, NativeClassHierarchyGetClassPathCache))
 			{
+				FName ClassPath = FName(InternalPath);
+				TSharedPtr<const FNativeClassHierarchyNode> ClassNode = NativeClassHierarchy->FindNode(ClassPath, ENativeClassHierarchyNodeType::Class);
 				const FContentBrowserItemPath ContentBrowserItemPath(InternalPath, EContentBrowserPathType::Internal);
-				if (!InCallback(ContentBrowserClassData::CreateClassFileItem(this, ContentBrowserItemPath.GetVirtualPathName(), FName(InternalPath), InClass)))
+				if (!InCallback(ContentBrowserClassData::CreateClassFileItem(this, ContentBrowserItemPath.GetVirtualPathName(), ClassPath, InClass, ClassNode.IsValid() && ClassNode->LoadedFrom.IsSet())))
 				{
 					return false;
 				}
@@ -595,8 +597,9 @@ FContentBrowserItemData UContentBrowserClassDataSource::CreateClassFolderItem(co
 {
 	FName VirtualizedPath;
 	TryConvertInternalPathToVirtual(InFolderPath, VirtualizedPath);
-
-	return ContentBrowserClassData::CreateClassFolderItem(this, VirtualizedPath, InFolderPath);
+	
+	TSharedPtr<const FNativeClassHierarchyNode> FolderNode = NativeClassHierarchy->FindNode(InFolderPath, ENativeClassHierarchyNodeType::Folder);
+	return ContentBrowserClassData::CreateClassFolderItem(this, VirtualizedPath, InFolderPath, FolderNode.IsValid() && FolderNode->LoadedFrom.IsSet());
 }
 
 FContentBrowserItemData UContentBrowserClassDataSource::CreateClassFileItem(UClass* InClass, FNativeClassHierarchyGetClassPathCache& InCache)
@@ -614,7 +617,8 @@ FContentBrowserItemData UContentBrowserClassDataSource::CreateClassFileItem(UCla
 	FName VirtualizedPath;
 	TryConvertInternalPathToVirtual(ClassPath, VirtualizedPath);
 
-	return ContentBrowserClassData::CreateClassFileItem(this, VirtualizedPath, ClassPath, InClass);
+	TSharedPtr<const FNativeClassHierarchyNode> ClassNode = NativeClassHierarchy->FindNode(ClassPath, ENativeClassHierarchyNodeType::Class);
+	return ContentBrowserClassData::CreateClassFileItem(this, VirtualizedPath, ClassPath, InClass, ClassNode.IsValid() && ClassNode->LoadedFrom.IsSet());
 }
 
 TSharedPtr<const FContentBrowserClassFolderItemDataPayload> UContentBrowserClassDataSource::GetClassFolderItemPayload(const FContentBrowserItemData& InItem) const

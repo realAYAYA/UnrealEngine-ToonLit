@@ -22,6 +22,7 @@ void SGameplayTagQueryWidget::Construct(const FArguments& InArgs, const TArray<F
 
 	bReadOnly = InArgs._ReadOnly;
 	OnQueriesCommitted = InArgs._OnQueriesCommitted;
+	Filter = InArgs._Filter;
 
 	UGameplayTagsManager::Get().OnGetCategoriesMetaFromPropertyHandle.AddSP(this, &SGameplayTagQueryWidget::OnGetCategoriesMetaFromPropertyHandle);
 

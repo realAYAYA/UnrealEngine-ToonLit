@@ -37,7 +37,7 @@ FSSDSampleSceneInfos FetchCurrentSceneInfosFromGBuffer(float2 ScreenPosition, fl
 	
 	// Compute translated world position.
 	{
-		float2 ClipPosition = ScreenPosition * (View.ViewToClip[3][3] < 1.0f ? Infos.WorldDepth : 1.0f);
+		float2 ClipPosition = GetScreenPositionForProjectionType(ScreenPosition, Infos.WorldDepth);
 		Infos.TranslatedWorldPosition = mul(float4(ClipPosition, Infos.WorldDepth, 1), View.ScreenToTranslatedWorld).xyz;
 	}
 	

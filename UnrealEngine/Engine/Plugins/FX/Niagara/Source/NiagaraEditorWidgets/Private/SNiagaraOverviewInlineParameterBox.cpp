@@ -40,6 +40,8 @@ void SNiagaraOverviewInlineParameterBox::Construct(const FArguments& InArgs, UNi
 	];
 
 	ConstructChildren();
+	
+	ModuleItem->OnStructureChanged().AddSP(this, &SNiagaraOverviewInlineParameterBox::OnModuleItemStructureChanged);
 }
 
 SNiagaraOverviewInlineParameterBox::~SNiagaraOverviewInlineParameterBox()
@@ -74,7 +76,7 @@ FReply SNiagaraOverviewInlineParameterBox::NavigateToStack(TWeakObjectPtr<const 
 	
 	TArray<UNiagaraStackEntry::FStackSearchItem> SearchItems;
 	FunctionInput->GetSearchItems(SearchItems);
-	if(ensure(SearchItems.Num() > 0))
+	if(SearchItems.Num() > 0)
 	{
 		ModuleItem->GetSystemViewModel()->GetSelectionViewModel()->GetSelectionStackViewModel()->SetSearchTextExternal(SearchItems[0].Value);
 		return FReply::Handled();
@@ -418,6 +420,11 @@ TWeakObjectPtr<const UNiagaraStackFunctionInput> SNiagaraOverviewInlineParameter
 	}
 
 	return nullptr;
+}
+
+void SNiagaraOverviewInlineParameterBox::OnModuleItemStructureChanged(ENiagaraStructureChangedFlags)
+{
+	ConstructChildren();
 }
 
 #undef LOCTEXT_NAMESPACE

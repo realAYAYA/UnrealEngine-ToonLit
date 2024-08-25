@@ -74,7 +74,7 @@ namespace
 				}
 
 				TArray<TSubclassOf<ULevelSnapshotFilter>> FiltersInCategory = FilterModel->GetFiltersInCategory(CategoryName);;
-				for (const TSubclassOf<ULevelSnapshotFilter> FilterClass : FiltersInCategory)
+				for (const TSubclassOf<ULevelSnapshotFilter>& FilterClass : FiltersInCategory)
 				{
 					CreateMenuEntry(SubmenuBuilder, FilterClass, OnSelectFilter, IsFilterSelected);
 				}

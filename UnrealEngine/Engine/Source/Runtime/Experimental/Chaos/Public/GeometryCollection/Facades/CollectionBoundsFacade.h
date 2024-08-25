@@ -39,7 +39,7 @@ namespace GeometryCollection::Facades
 		CHAOS_API bool IsValid() const;		
 
 		/** UpdateBoundingBox */
-		CHAOS_API void UpdateBoundingBox(bool bSkipCheck = false);
+		CHAOS_API void UpdateBoundingBox();
 
 		/** BoundingBox access */
 		const TManagedArray< FBox >& GetBoundingBoxes() const { return BoundingBoxAttribute.Get(); }
@@ -55,6 +55,13 @@ namespace GeometryCollection::Facades
 
 		/** TransformToGeometryIndex Access */
 		const TManagedArray< int32 >& GetTransformToGeometryIndex() const { return TransformToGeometryIndexAttribute.Get(); }
+	protected:
+
+		/** Transform based bounds evaluation, where the vertices are nested within a transform */
+		void UpdateTransformBasedBoundingBox();
+
+		/** Vertex based bounds evaluation, where the vertices are NOT nested within a transform */
+		void UpdateVertexBasedBoundingBox();
 
 	private:
 		const FManagedArrayCollection& ConstCollection;
@@ -64,7 +71,8 @@ namespace GeometryCollection::Facades
 		TManagedArrayAccessor<FVector3f>	VertexAttribute;
 		TManagedArrayAccessor<int32>		BoneMapAttribute;
 		TManagedArrayAccessor<int32>		TransformToGeometryIndexAttribute;
-		TManagedArrayAccessor<int32>		ParentAttribute;
+		TManagedArrayAccessor<int32>		VertexStartAttribute;
+		TManagedArrayAccessor<int32>		VertexCountAttribute;
 	};
 
 }

@@ -118,11 +118,11 @@ FCompressionMemorySummary::~FCompressionMemorySummary()
 		FText Message;
 		if (!bPerformedCompression)
 		{
-			Message = FText::Format(NSLOCTEXT("Engine", "CompressionMemorySummaryNoChange", "Fetched compressed data for {NumberOfAnimations} Animation(s)\n\nRaw: {TotalRaw} - Compressed: {TotalAfterCompressed}\nSaving: {TotalAfterSaving} ({NewCompressionRatio})\n\nEnd Effector Translation Added By Compression:\n Average: {AverageError} Max:\n{WorstBoneError}\n\nMax Average Animation Error:\n{WorstAnimationError}"), Args);
+			Message = FText::Format(NSLOCTEXT("Engine", "CompressionMemorySummaryNoChange", "Fetched compressed data for {NumberOfAnimations} Animation(s)\n\nRaw: {TotalRaw} - Compressed: {TotalAfterCompressed}\nSaving: {TotalAfterSaving} ({NewCompressionRatio})\n\nEnd Effector Translation Added By Compression:\n Average: {AverageError} Max:\n{WorstBoneError}\n\nWorst Animation Error Seen:\n{WorstAnimationError}"), Args);
 		}
 		else
 		{
-			Message = FText::Format(NSLOCTEXT("Engine", "CompressionMemorySummary", "Compressed {NumberOfAnimations} Animation(s)\n\nPre Compression:\n\nRaw: {TotalRaw} - Compressed: {TotalBeforeCompressed}\nSaving: {TotalBeforeSaving} ({OldCompressionRatio})\n\nPost Compression:\n\nRaw: {TotalRaw} - Compressed: {TotalAfterCompressed}\nSaving: {TotalAfterSaving} ({NewCompressionRatio})\n\nTotal Compression Time: {TotalTimeSpentCompressingPretty} (Seconds: {TotalTimeSpentCompressingRawSeconds})\n\nEnd Effector Translation Added By Compression:\n Average: {AverageError} Max:\n{WorstBoneError}\n\nMax Average Animation Error:\n{WorstAnimationError}"), Args);
+			Message = FText::Format(NSLOCTEXT("Engine", "CompressionMemorySummary", "Compressed {NumberOfAnimations} Animation(s)\n\nPre Compression:\n\nRaw: {TotalRaw} - Compressed: {TotalBeforeCompressed}\nSaving: {TotalBeforeSaving} ({OldCompressionRatio})\n\nPost Compression:\n\nRaw: {TotalRaw} - Compressed: {TotalAfterCompressed}\nSaving: {TotalAfterSaving} ({NewCompressionRatio})\n\nTotal Compression Time: {TotalTimeSpentCompressingPretty} (Seconds: {TotalTimeSpentCompressingRawSeconds})\n\nEnd Effector Translation Added By Compression:\n Average: {AverageError} Max:\n{WorstBoneError}\n\nWorst Animation Error Seen:\n{WorstAnimationError}"), Args);
 		}
 
 		UE_LOG(LogAnimationCompression, Display, TEXT("Top 10 Worst Bone Errors:"));
@@ -180,7 +180,7 @@ void UAnimCompress::PackQuaternionToStream(
 {
 	if ( Format == ACF_None )
 	{
-		UnalignedWriteToStream( ByteStream, &Quat, sizeof(FQuat) );
+		UnalignedWriteToStream( ByteStream, &Quat, sizeof(Quat) );
 	}
 	else if ( Format == ACF_Float96NoW )
 	{
@@ -327,7 +327,7 @@ void UAnimCompress::BitwiseCompressAnimationTracks(
 			AnimData.CompressedScaleOffsets.AddUninitialized(NumTracks);
 		}
 
-		const int32 MaxSize = CompressibleAnimData.RawAnimationData.Num() * CompressibleAnimData.NumberOfKeys * sizeof(FVector3f) + sizeof(FQuat4f) + sizeof(FVector3f);
+		const int32 MaxSize = CompressibleAnimData.RawAnimationData.Num() * CompressibleAnimData.NumberOfKeys * (sizeof(FVector3f) + sizeof(FQuat4f) + sizeof(FVector3f));
 		AnimData.CompressedByteStream.Reset(MaxSize);
 
 		for (int32 TrackIndex = 0; TrackIndex < NumTracks; ++TrackIndex)

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "EditorSubsystem.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "GlobalStatusBarExtension.h"
 #include "StatusBarSubsystem.generated.h"
 
 class SStatusBar;
@@ -163,6 +164,23 @@ public:
 	 */
 	void ClearStatusBarMessages(FName StatusBarName);
 
+	/**
+	 * Registers a new global status bar extension.
+	 *
+	 * @param Extension The extension to register
+	 * @return A reference to the extension interface, which can be later used to unregister the extension
+	 */
+	IGlobalStatusBarExtension& RegisterGlobalStatusBarExtension(TUniquePtr<IGlobalStatusBarExtension>&& Extension);
+
+	/**
+	 * Unregisters an existing status bar extension.
+	 *
+	 * @param Extension Reference returned by RegisterGlobalStatusBarExtension containing the extension to unregister
+	 * @return An owned instance of the extension that was registered, or null if the extension was not found
+	 */
+	TUniquePtr<IGlobalStatusBarExtension> UnregisterGlobalStatusBarExtension(IGlobalStatusBarExtension* Extension);
+
+
 private:
 	/** IProgressNotificationHandler interface */
 	virtual void StartProgressNotification(FProgressNotificationHandle Handle, FText DisplayText, int32 TotalWorkToDo) override;
@@ -196,4 +214,5 @@ private:
 	TSharedPtr<SWidget> StatusBarContentBrowser;
 	TSharedPtr<SWidget> StatusBarOutputLog;
 	static int32 MessageHandleCounter;
+	TArray<TUniquePtr<IGlobalStatusBarExtension>> GlobalStatusBarExtensions;
 };

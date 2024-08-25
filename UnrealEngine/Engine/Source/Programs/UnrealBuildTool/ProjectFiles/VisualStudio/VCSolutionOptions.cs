@@ -365,7 +365,7 @@ namespace UnrealBuildTool
 		{
 			long OpenFoldersEnd = Reader.BaseStream.Position + Reader.ReadInt32();
 
-			if (Format >= VCProjectFileFormat.VisualStudio2019)
+			if (Format >= VCProjectFileFormat.VisualStudio2022)
 			{
 				int Header1 = Reader.ReadInt32();
 				/*int Header2 =*/
@@ -379,13 +379,7 @@ namespace UnrealBuildTool
 			}
 			else
 			{
-				int Header1 = Reader.ReadInt32();
-				int Header2 = Reader.ReadInt32();
-				int Header3 = Reader.ReadByte();
-				if (Header1 != 11 || Header2 != 1 || Header3 != 0)
-				{
-					throw new BuildException("Unexpected data in open projects section");
-				}
+				throw new BuildException("Unexpected VCProjectFileFormat {0}", Format);
 			}
 
 			int NumProjects = Reader.ReadInt16();
@@ -407,7 +401,7 @@ namespace UnrealBuildTool
 
 		void WriteOpenProjects(BinaryWriter Writer, VCProjectFileFormat Format)
 		{
-			if (Format >= VCProjectFileFormat.VisualStudio2019)
+			if (Format >= VCProjectFileFormat.VisualStudio2022)
 			{
 				Writer.Write(4 + (4 + 4 + 1) + 2 + OpenProjects.Sum(x => GetStringSize(x.Item1) + 2 + x.Item2.Sum(y => GetStringSize(y))));
 				Writer.Write(15);
@@ -416,10 +410,7 @@ namespace UnrealBuildTool
 			}
 			else
 			{
-				Writer.Write(4 + (4 + 2 + 1) + 2 + OpenProjects.Sum(x => GetStringSize(x.Item1) + 2 + x.Item2.Sum(y => GetStringSize(y))));
-				Writer.Write(11);
-				Writer.Write((short)1);
-				Writer.Write((byte)0);
+				throw new BuildException("Unexpected VCProjectFileFormat {0}", Format);
 			}
 			Writer.Write((short)OpenProjects.Count);
 			foreach (Tuple<string, string[]> OpenProject in OpenProjects)

@@ -1,22 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { ConstrainMode, DefaultButton, DetailsHeader, DetailsList, DetailsListLayoutMode, DetailsRow, Dialog, DialogFooter, DialogType, GroupedList, GroupHeader, IColumn, IContextualMenuItem, IContextualMenuProps, IDetailsHeaderProps, IDetailsHeaderStyles, IDetailsListProps, IGroup, ITooltipHostStyles, mergeStyleSets, Modal, Pivot, PivotItem, PrimaryButton, ScrollablePane, ScrollbarVisibility, Selection, SelectionMode, Spinner, SpinnerSize, Stack, Sticky, StickyPositionType, Text } from "@fluentui/react";
+import { Checkbox, ConstrainMode, DefaultButton, DetailsHeader, DetailsList, DetailsListLayoutMode, DetailsRow, Dialog, DialogFooter, DialogType, GroupedList, GroupHeader, ICheckbox, IColumn, IContextualMenuItem, IContextualMenuProps, IDetailsHeaderProps, IDetailsHeaderStyles, IDetailsListProps, IGroup, ITextField, ITooltipHostStyles, mergeStyleSets, Modal, Pivot, PivotItem, PrimaryButton, ScrollablePane, ScrollbarVisibility, Selection, SelectionMode, Spinner, SpinnerSize, Stack, Sticky, StickyPositionType, Text, TextField } from "@fluentui/react";
 import { action, makeObservable, observable } from "mobx";
 import { observer } from "mobx-react-lite";
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import backend from "../backend";
 import { agentStore } from "../backend/AgentStore";
-import { AgentData, GetAgentLeaseResponse, GetAgentSessionResponse, JobStepBatchError, LeaseData, SessionData, UpdateAgentRequest } from "../backend/Api";
+import { AgentData, GetAgentLeaseResponse, GetAgentSessionResponse, JobStepBatchError, JobStepOutcome, LeaseData, SessionData, UpdateAgentRequest } from "../backend/Api";
 import dashboard from "../backend/Dashboard";
 import { getShortNiceTime } from "../base/utilities/timeUtils";
-import { hordeClasses, modeColors } from "../styles/Styles";
-import { BatchStatusIcon, LeaseStatusIcon } from "./StatusIcon";
+import { getHordeStyling } from "../styles/Styles";
+import { getHordeTheme } from "../styles/theme";
+import { BatchStatusIcon, LeaseStatusIcon, StepStatusIcon } from "./StatusIcon";
 
 
 type InfoPanelItem = {
    key: string;
    name: string;
+   data?: string;
    selected: boolean;
 };
 
@@ -56,8 +58,8 @@ class HistoryModalState {
       // subscribe in any observers
       if (this.selectedAgentUpdated) { }
       return this._selectedAgent;
-   } 
-   
+   }
+
    private _selectedAgent: AgentData | undefined = undefined;
    @observable.shallow currentData: any = [];
    @observable.shallow infoItems: InfoPanelItem[] = [];
@@ -123,7 +125,7 @@ class HistoryModalState {
       this.agentItemCount = 0;
       this.devicesItemCount = 0;
       this.workspaceItemCount = 0;
-      const items = [
+      const items:InfoPanelItem[] = [
          {
             key: "overview",
             name: "Overview",
@@ -145,9 +147,23 @@ class HistoryModalState {
             }
          }
          if (this.selectedAgent.workspaces) {
+            const streamCount = new Map<string, number>();
             for (const workspaceIdx in this.selectedAgent.workspaces) {
                const workspace = this.selectedAgent.workspaces[workspaceIdx];
-               items.push({ key: `workspace${workspaceIdx}`, name: workspace.stream, selected: false });
+               let count = streamCount.get(workspace.stream) ?? 0;
+               if (!count) {
+                  count++;
+                  streamCount.set(workspace.stream, 1);
+               } else {
+                  count++;
+                  streamCount.set(workspace.stream, count);
+               }
+
+               const name: string = count > 1 ? `${workspace.stream} (${count})` : workspace.stream;
+
+               (workspace as any)._hackName = name;
+;
+               items.push({ key: `workspace${workspaceIdx}`, name: name, selected: false, data: name });
                this.workspaceItemCount++;
             }
          }
@@ -175,7 +191,8 @@ class HistoryModalState {
                if (this.selectedAgent.workspaces) {
                   for (const workspaceIdx in this.selectedAgent.workspaces) {
                      const workspace = this.selectedAgent.workspaces[workspaceIdx];
-                     if (workspace.stream === selectedItem.name) {
+
+                     if ((workspace as any)._hackName === selectedItem.data) {
                         subItems.push({ name: 'Identifier', value: workspace.identifier });
                         subItems.push({ name: 'Stream', value: workspace.stream });
                         subItems.push({ name: 'Incremental', value: workspace.bIncremental.toString() });
@@ -251,57 +268,6 @@ class HistoryModalState {
       });
    }
 
-   private _sortData(a: any, b: any) {
-      if (this.mode === "leases") {
-         let left = a as LeaseData, right = b as LeaseData;
-         if (this.sortedLeaseColumnDescending) {
-            left = b;
-            right = a;
-         }
-         switch (this.sortedLeaseColumn) {
-            case 'type':
-               return left.type.localeCompare(right.type);
-            case 'name':
-               if (left.name && right.name) {
-                  left.name.localeCompare(right.name);
-               }
-               break;
-            case 'executing':
-               return Number(left.executing) - Number(right.executing);
-            case 'startTime':
-               return (left.startTime as Date).getTime() - (right.startTime as Date).getTime();
-            case 'endTime':
-               if (left.finishTime && right.finishTime) {
-                  return (left.finishTime as Date).getTime() - (right.finishTime as Date).getTime();
-               }
-               break;
-            default:
-               return 0;
-         }
-      }
-      else if (this.mode === "sessions") {
-         let left = a as SessionData, right = b as SessionData;
-         if (this.sortedSessionColumnDescending) {
-            left = b;
-            right = a;
-         }
-         switch (this.sortedSessionColumn) {
-            case 'id':
-               return left.id.localeCompare(right.id);
-            case 'startTime':
-               return (left.startTime as Date).getTime() - (right.startTime as Date).getTime();
-            case 'endTime':
-               if (left.finishTime && right.finishTime) {
-                  return (left.finishTime as Date).getTime() - (right.finishTime as Date).getTime();
-               }
-               break;
-            default:
-               return 0;
-         }
-      }
-      return 0;
-   }
-
    @action
    appendData(newData: any[]) {
       // if there's any data, there might be more data next time, so add another callback.
@@ -317,7 +283,16 @@ class HistoryModalState {
       }
       // add all the new data
       Array.prototype.push.apply(combinedData, newData);
-      this.currentData = combinedData;
+
+      const dedupe = new Set<string>();
+
+      this.currentData = combinedData.filter(d => {
+         if (dedupe.has(d?.id)) {
+            return false;
+         }
+         dedupe.add(d?.id);
+         return true;
+      });
 
       this.modeCurrentIndex += newData.length;
       this.bUpdatedQueued = false;
@@ -330,7 +305,26 @@ const state = new HistoryModalState();
 export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (...args: any[]) => any; }> = observer(({ agentId, onDismiss }) => {
 
    const [selectedAgent, setSelectedAgent] = useState<string | undefined>(undefined);
-   const [actionState, setActionState] = useState<{ action?: string, confirmed?: boolean }>({});
+   const [actionState, setActionState] = useState<{ action?: string, confirmed?: boolean, comment?: string }>({});
+   const actionTextInputRef = React.useRef<ITextField>(null);
+   const forceRestartCheckboxRef = React.useRef<ICheckbox>(null);
+   const [agentError, setAgentError] = useState(false);
+
+   const { hordeClasses, modeColors } = getHordeStyling();
+   const theme = getHordeTheme();
+
+   if (agentError) {
+      return <Dialog hidden={false} onDismiss={onDismiss} dialogContentProps={{
+         type: DialogType.normal,
+         title: 'Missing Agent',
+         subText: `Unable to find agent ${agentId}`
+      }}
+         modalProps={{ styles: { main: { width: "640px !important", minWidth: "640px !important", maxWidth: "640px !important" } } }}>
+         <DialogFooter>
+            <PrimaryButton onClick={() => onDismiss()} text="Ok" />
+         </DialogFooter>
+      </Dialog>
+   }
 
    //  subscribe to updates
    if (state.selectedAgent) { }
@@ -344,9 +338,15 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
 
    if (selectedAgent !== agentId) {
 
-      agentStore.update(agentStore.pools?.length ? true : false).then(() => {
-         state.setSelectedAgent(agentStore.agents.find(agent => agent.id === agentId));
-      });
+      agentStore.updateAgent(agentId).then(agent => {
+
+         state.setSelectedAgent(agent);
+
+      }).catch(error => {
+         console.error(`Unable to find agent id: ${agentId} ${error}`);
+         setAgentError(true);
+         return;
+      })
 
       setSelectedAgent(agentId);
    }
@@ -371,10 +371,9 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
    type AgentAction = {
       name: string;
       confirmText: string;
-      update?: (request: UpdateAgentRequest) => void;
+      textInput?: boolean;
+      update?: (request: UpdateAgentRequest, comment?: string) => void;
    }
-
-
    const actions: AgentAction[] = [
       {
          name: 'Enable',
@@ -384,7 +383,8 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
       {
          name: 'Disable',
          confirmText: "Are you sure you would like to disable this agent?",
-         update: (request) => { request.enabled = false }
+         textInput: true,
+         update: (request, comment) => { request.enabled = false; request.comment = comment }
       },
       {
          name: 'Cancel Leases',
@@ -404,12 +404,13 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
       {
          name: 'Request Restart',
          confirmText: "Are you sure you would like to request an agent restart?",
-         update: (request) => { request.requestRestart = true }
+         update: (request) => { request.requestRestart = !forceRestartCheckboxRef.current?.checked; request.requestForceRestart = !!forceRestartCheckboxRef.current?.checked; }
       },
       {
-         name: 'Request Shutdown',
-         confirmText: "Are you sure you would like to request an agent shutdown?",
-         update: (request) => { request.requestShutdown = true }
+         name: 'Edit Comment',
+         confirmText: "Please enter new comment",
+         textInput: true,
+         update: (request, comment) => { request.comment = comment }
       }
    ];
 
@@ -451,9 +452,12 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
    if (currentAction && actionState.confirmed) {
       if (currentAction.update) {
          const request: UpdateAgentRequest = {};
-         currentAction.update(request);
+         currentAction.update(request, actionState.comment);
          backend.updateAgent(agentId, request).then(() => {
-            setActionState({});
+            agentStore.update(agentStore.pools?.length ? true : false).then(() => {
+               state.setSelectedAgent(agentStore.agents.find(agent => agent.id === agentId));
+               setActionState({});
+            });
          }).catch((reason) => {
             console.error(reason);
          });
@@ -492,25 +496,6 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
          })
       }
    })
-
-   /*
-   const DayPickerStrings: IDatePickerStrings = {
-        months: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
-
-        shortMonths: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-
-        days: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-
-        shortDays: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
-
-        goToToday: 'Go to today',
-        prevMonthAriaLabel: 'Go to previous month',
-        nextMonthAriaLabel: 'Go to next month',
-        prevYearAriaLabel: 'Go to previous year',
-        nextYearAriaLabel: 'Go to next year',
-        closeButtonAriaLabel: 'Close date picker'
-   };
-   */
 
    function onColumnClick(ev: React.MouseEvent<HTMLElement>, column: IColumn) {
       //historyModalState.setSorted(column.key);
@@ -645,15 +630,20 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
 
                if (lease.batch) {
 
+                  const step = lease.batch.steps.find(s => s.outcome === JobStepOutcome.Failure);
+
                   let name = lease.type;
 
-                  if (lease.batch && lease.batch.error !== JobStepBatchError.None) {
+                  if (lease.batch.error !== JobStepBatchError.None) {
                      name = lease.batch.error;
+                  } else if (step) {
+                     name = "StepError";
                   }
 
                   return <Stack styles={{ root: { height: '100%', } }} horizontal horizontalAlign={'start'} verticalAlign="center" tokens={{ childrenGap: 4 }}>
                      <Stack >
-                        <BatchStatusIcon batch={lease.batch} />
+                        {!step && <BatchStatusIcon batch={lease.batch} />}
+                        {!!step && <StepStatusIcon step={step} />}
                      </Stack>
                      <Stack >{name}</Stack>
                   </Stack>
@@ -669,10 +659,10 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
             case 'id':
                link = "";
                if (lease.details && 'LogId' in lease.details) {
-                  link = '/log/' + lease.details['LogId'] + '?leaseId=' + lease.id + '&agentId=' + state.selectedAgent?.id;
+                  link = '/log/' + lease.details['LogId'];
                }
                else if (lease.logId) {
-                  link = `/log/${lease.logId}?leaseId=${lease.id}&agentId=${state.selectedAgent?.id}`;
+                  link = `/log/${lease.logId}`;
                }
                if (link) {
                   return <Stack style={{ height: "100%" }} verticalAlign="center"><Link to={link}>{lease.id}</Link></Stack>
@@ -686,6 +676,7 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
                return <Stack styles={{ root: { height: '100%', } }} horizontal horizontalAlign={'center'}><Stack.Item align={"center"}>{getShortNiceTime(lease.finishTime, false, true, true)}</Stack.Item></Stack>
             case 'description':
                link = "";
+               let name = lease.name;
                if (lease.details) {
                   if ('jobId' in lease.details) {
                      link = `/job/${lease.details['jobId']}`;
@@ -697,11 +688,17 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
                else if (lease.jobId) {
                   link = `/job/${lease.jobId}`;
                }
+
+               if (!link && (lease.parentId && lease.details && lease.details["parentLogId"])) {
+                  link = `/log/${lease.details["parentLogId"]}`
+                  return <Stack styles={{ root: { height: '100%' } }} horizontal><Stack.Item align={"center"}><Text style={{ fontSize: "12px" }}>{name} (parent: </Text><Link style={{ fontSize: "12px" }} to={link}>{lease.parentId}</Link><Text style={{ fontSize: "12px" }}>)</Text></Stack.Item></Stack>;
+               }
+
                if (link !== "") {
-                  return <Stack styles={{ root: { height: '100%' } }} horizontal><Stack.Item align={"center"}><Link style={{ fontSize: 12 }} key={"leaseText_" + lease.id} to={link}>{lease.name}</Link></Stack.Item></Stack>;
+                  return <Stack styles={{ root: { height: '100%' } }} horizontal><Stack.Item align={"center"}><Link style={{ fontSize: 12 }} key={"leaseText_" + lease.id} to={link}>{name}</Link></Stack.Item></Stack>;
                }
                else {
-                  return <Stack styles={{ root: { height: '100%', } }} horizontal><Stack.Item align={"center"}><Text styles={{ root: { fontSize: 12 } }} key={"leaseText_" + lease.id}>{lease.name}</Text></Stack.Item></Stack>;
+                  return <Stack styles={{ root: { height: '100%', } }} horizontal><Stack.Item align={"center"}><Text styles={{ root: { fontSize: 12 } }} key={"leaseText_" + lease.id}>{name}</Text></Stack.Item></Stack>;
                }
             default:
                return <span>{lease[column!.fieldName as keyof LeaseData] as string}</span>;
@@ -735,24 +732,27 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
       return null;
    };
 
+   const c1 = theme.horde.darkTheme ? theme.horde.neutralBackground : "#f3f2f1";
+   const c2 = theme.horde.darkTheme ? theme.horde.contentBackground : "#ffffff";
+
    function onRenderBuilderInfoCell(nestingDepth?: number | undefined, item?: any, index?: number | undefined) {
       return (
          <Stack horizontal onClick={(ev) => { state.setInfoItemSelected(item); ev.preventDefault(); }} styles={{
             root: {
-               background: item!.selected ? "#f3f2f1" : "#ffffff",
+               background: item!.selected ? c1 : c2,
                paddingLeft: 48 + (10 * nestingDepth!),
                paddingTop: 8,
                paddingBottom: 8,
                selectors: {
                   ":hover": {
-                     background: "#f3f2f1",
+                     background: c1,
                      cursor: 'pointer'
                   }
                }
             }
          }}>
             <Stack>
-               <Link to="" onClick={(ev) => { state.setInfoItemSelected(item); ev.preventDefault(); }}><Text styles={{ root: { color: "#323130" } }}>{item!.name}</Text></Link>
+               <Link to="" onClick={(ev) => { state.setInfoItemSelected(item); ev.preventDefault(); }}><Text>{item!.name}</Text></Link>
             </Stack>
          </Stack>
       );
@@ -835,8 +835,10 @@ export const HistoryModal: React.FC<{ agentId: string | undefined, onDismiss: (.
                <Stack style={{ paddingBottom: 18, paddingLeft: 4 }}>
                   <Text>{currentAction.confirmText}</Text>
                </Stack>
+               {!!currentAction.textInput && <TextField componentRef={actionTextInputRef} label={currentAction.name === "Edit Comment" ? "New Comment" : "Disable Reason"} />}
+               {currentAction.name === "Request Restart" && <Checkbox componentRef={forceRestartCheckboxRef} label={"Force Restart"} />}
                <DialogFooter>
-                  <PrimaryButton disabled={actionState.confirmed} onClick={() => { setActionState({ ...actionState, confirmed: true }) }} text={currentAction.name} />
+                  <PrimaryButton disabled={actionState.confirmed} onClick={() => { setActionState({ ...actionState, confirmed: true, comment: actionTextInputRef.current?.value }) }} text={currentAction.name} />
                   <DefaultButton disabled={actionState.confirmed} onClick={() => { setActionState({}) }} text="Cancel" />
                </DialogFooter>
             </Dialog>

@@ -251,11 +251,21 @@ namespace GeometryCollection::Facades
 				}
 				else // embedded should always have a parent, but if it somehow does not, just remove from selection
 				{
-					InOutSelection.RemoveAtSwap(SelBoneIdx, 1, false);
+					InOutSelection.RemoveAtSwap(SelBoneIdx, 1, EAllowShrinking::No);
 					--SelBoneIdx; // reconsider swapped-in-element at this idx next iter
 				}
 			}
 		}
+	}
+
+	void FCollectionTransformSelectionFacade::FilterSelectionBySimulationType(TArray<int32>& InOutSelection, FGeometryCollection::ESimulationTypes KeepSimulationType) const
+	{
+		const TManagedArray<int32>& SimulationType = SimulationTypeAttribute.Get();
+
+		InOutSelection.SetNum(Algo::RemoveIf(InOutSelection, [&](int32 BoneIdx)
+			{
+				return SimulationType[BoneIdx] != KeepSimulationType;
+			}));
 	}
 
 	void FCollectionTransformSelectionFacade::ConvertSelectionToClusterNodes(TArray<int32>& InOutSelection, bool bLeaveRigidRoots) const
@@ -754,6 +764,21 @@ namespace GeometryCollection::Facades
 		}
 
 		return OutSelection;
+	}
+
+	TMap<int32, TArray<int32>> FCollectionTransformSelectionFacade::GetClusteredSelections(const TArray<int32>& InSelection) const
+	{
+		TMap<int32, TArray<int32>> SiblingGroups;
+
+		// Bin the selection indices by parent index
+		const TManagedArray<int32>& Parents = ParentAttribute.Get();
+		for (int32 Index : InSelection)
+		{
+			TArray<int32>& SiblingIndices = SiblingGroups.FindOrAdd(Parents[Index]);
+			SiblingIndices.Add(Index);
+		}
+
+		return SiblingGroups;
 	}
 
 	TArray<int32> FCollectionTransformSelectionFacade::SelectVerticesInBox(const FBox& InBox, const FTransform& InBoxTransform, bool bAllVerticesInBox) const

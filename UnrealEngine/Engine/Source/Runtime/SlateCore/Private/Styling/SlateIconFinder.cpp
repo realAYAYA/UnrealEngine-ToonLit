@@ -32,7 +32,7 @@ FSlateIcon FSlateIconFinder::FindCustomIconForClass(const UClass* InClass, const
 			}
 
 			CurrentClass = CurrentClass->GetSuperClass();
-			IconPath.RemoveAt(BastPathLength, IconPath.Len() - BastPathLength, false);
+			IconPath.RemoveAt(BastPathLength, IconPath.Len() - BastPathLength, EAllowShrinking::No);
 		}
 	}
 

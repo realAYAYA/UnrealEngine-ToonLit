@@ -4,9 +4,10 @@
 
 import { FontIcon, Stack } from '@fluentui/react';
 import React, { CSSProperties } from 'react';
-import { FindIssueResponse, GetAgentLeaseResponse, GetBatchResponse, GetIssueResponse, GetJobStepRefResponse, GetStepResponse, IssueSeverity, JobStepBatchError, JobStepOutcome, JobStepState, LabelOutcome, LabelState, LeaseOutcome, LeaseState } from '../backend/Api';
+import { DeviceStatus, FindIssueResponse, GetAgentLeaseResponse, GetBatchResponse, GetIssueResponse, GetJobStepRefResponse, GetStepResponse, IssueSeverity, JobStepBatchError, JobStepOutcome, JobStepState, LabelOutcome, LabelState, LeaseOutcome, LeaseState } from '../backend/Api';
 import dashboard, { StatusColor } from "../backend/Dashboard";
 import { JobLabel } from '../backend/JobDetails';
+import { getStepStatusColor } from '../styles/colors';
 
 const StatusIcon: React.FC<{ iconName: string, style?: CSSProperties }> = ({ iconName, style }) => {
 
@@ -120,8 +121,6 @@ export const IssueStatusIconV2: React.FC<{ issue: FindIssueResponse, style?: CSS
 
 const StepStateStatusIcon: React.FC<{ state: JobStepState, outcome: JobStepOutcome, style?: CSSProperties }> = ({ state, outcome, style }) => {
 
-   const colors = dashboard.getStatusColors();
-
    // defaults
    style = style ?? {};
    style.fontSize = style.fontSize ?? 13;
@@ -129,56 +128,7 @@ const StepStateStatusIcon: React.FC<{ state: JobStepState, outcome: JobStepOutco
    style.paddingRight = style.paddingRight ?? 8;
 
    const icon = "Square";
-   let color: string | undefined;
-
-   if (state === JobStepState.Running) {
-
-      color = colors.get(StatusColor.Running);
-      //icon = "FullCircle";
-
-      if (outcome === JobStepOutcome.Warnings) {
-         color = colors.get(StatusColor.Warnings);
-      }
-
-      if (outcome === JobStepOutcome.Failure) {
-         color = colors.get(StatusColor.Failure);
-      }
-   }
-
-   if (state === JobStepState.Waiting) {
-      color = colors.get(StatusColor.Waiting);
-   }
-
-   if (state === JobStepState.Ready) {
-      color = colors.get(StatusColor.Ready);
-
-   }
-
-   if (state === JobStepState.Skipped) {
-      color = colors.get(StatusColor.Skipped);
-
-   }
-
-   if (state === JobStepState.Aborted) {
-      color = colors.get(StatusColor.Aborted);
-
-   }
-
-   if (state === JobStepState.Completed) {
-
-      if (outcome === JobStepOutcome.Success) {        
-         color = colors.get(StatusColor.Success);
-      } else if (outcome === JobStepOutcome.Unspecified) {        
-         color = colors.get(StatusColor.Skipped);
-      } else if (outcome === JobStepOutcome.Warnings) {        
-         color = colors.get(StatusColor.Warnings);
-      }else {
-        
-         color = colors.get(StatusColor.Failure);
-      }
-   }
-
-   style.color = color;
+   style.color = getStepStatusColor(state, outcome);
 
    return <StatusIcon iconName={icon} style={style} />
 }
@@ -193,6 +143,26 @@ export const StepRefStatusIcon: React.FC<{ stepRef: GetJobStepRefResponse, style
 export const StepStatusIcon: React.FC<{ step: GetStepResponse, style?: CSSProperties }> = ({ step, style }) => {
 
    return <StepStateStatusIcon state={step.state} outcome={step.outcome} style={style} />;
+}
+
+export const DeviceStatusIcon: React.FC<{ status: DeviceStatus, style?: CSSProperties }> = ({status, style}) => {
+
+   const colors = dashboard.getStatusColors();
+
+   style = style ?? {};
+   style.fontSize = style.fontSize ?? 13;
+   style.paddingTop = style.paddingTop ?? 3;
+   style.paddingRight = style.paddingRight ?? 8;
+
+   const icon = 'Square';
+
+   if (status === DeviceStatus.Normal) {
+      style.color = colors.get(StatusColor.Success);
+   } else {
+      style.color = colors.get(StatusColor.Failure);
+   }
+
+   return <StatusIcon iconName={icon} style={style} />
 }
 
 export const LeaseStatusIcon: React.FC<{ lease: GetAgentLeaseResponse, style?: CSSProperties }> = ({ lease, style }) => {

@@ -19,6 +19,7 @@
 #include "Slate/SceneViewport.h"
 #include "Texture2DPreview.h"
 #include "VolumeTexturePreview.h"
+#include "TextureEncodingSettings.h"
 #include "TextureEditorSettings.h"
 #include "Widgets/STextureEditorViewport.h"
 #include "CanvasTypes.h"
@@ -35,6 +36,79 @@ static TAutoConsoleVariable<int32> CVarEnableVTFeedback(
 	ECVF_RenderThreadSafe
 );
 
+struct FTextureErrorLogger : public FOutputDevice
+{
+	UTexture* TextureToMonitor = nullptr;
+	TArray<TPair<bool, FString>> RelevantLogLines;
+	bool bCurrentlyCapturing = false;
+
+	FTextureErrorLogger(UTexture* InTextureToMonitor)
+	{
+		TextureToMonitor = InTextureToMonitor;
+		GLog->AddOutputDevice(this);
+	}
+	~FTextureErrorLogger()
+	{
+		GLog->RemoveOutputDevice(this);
+	}
+	FTextureErrorLogger(FTextureErrorLogger&&) = delete;
+	FTextureErrorLogger(FTextureErrorLogger&) = delete;
+	FTextureErrorLogger& operator=(FTextureErrorLogger&) = delete;
+	FTextureErrorLogger& operator=(FTextureErrorLogger&&) = delete;
+
+
+	virtual void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category) override
+	{
+		if (TextureToMonitor == nullptr)
+		{
+			return;
+		}
+
+		//
+		// Error messages don't reliably put the texture name in the messages, and we don't necessarily know
+		// that the error will come from a texture category if it's something like bulk data. However, we do
+		// ~generally~ expect that if we have a texture editor open, the only texture that's getting built is
+		// the one we are editing. So we just capture all errors/warning between the time we see "building texture"
+		// for ourselves and when the texture async build is complete.
+		if (bCurrentlyCapturing)
+		{
+			if (TextureToMonitor->IsAsyncCacheComplete())
+			{
+				bCurrentlyCapturing = false;
+				return;
+			}
+
+			// Add any errors or warnings to the list
+			if (Verbosity == ELogVerbosity::Error)
+			{
+				RelevantLogLines.Add(TPair<bool, FString>(true, FString(V)));
+			}
+			else if (Verbosity == ELogVerbosity::Warning)
+			{
+				RelevantLogLines.Add(TPair<bool, FString>(false, FString(V)));
+			}
+			if (RelevantLogLines.Num() == 10)
+			{
+				RelevantLogLines.Add(TPair<bool, FString>(false, TEXT("Too much to show: check Output Log")));
+				bCurrentlyCapturing = false;
+			}
+			return;
+		}
+
+		// Here we aren't capturing yet.
+		// See if the string relates to us.
+		if (FCString::Stristr(V, *TextureToMonitor->GetName()))
+		{
+			// If it's "Building textures" then we started a new build and need to empty our list.
+			if (FCString::Stristr(V, TEXT("Building textures")))
+			{
+				RelevantLogLines.Empty();
+				bCurrentlyCapturing = true;
+			}
+		}
+	}
+};
+
 /* FTextureEditorViewportClient structors
  *****************************************************************************/
 
@@ -46,6 +120,8 @@ FTextureEditorViewportClient::FTextureEditorViewportClient( TWeakPtr<ITextureEdi
 	check(TextureEditorPtr.IsValid() && TextureEditorViewportPtr.IsValid());
 
 	ModifyCheckerboardTextureColors();
+
+	TextureConsoleCapture = MakeUnique<FTextureErrorLogger>(InTextureEditor.Pin()->GetTexture());
 }
 
 
@@ -109,6 +185,21 @@ void FTextureEditorViewportClient::Draw(FViewport* Viewport, FCanvas* Canvas)
 
 	bool bIsVirtualTexture = false;
 
+	UTexture2D* CPUCopyTexture = nullptr;
+	if (Texture2D)
+	{
+		CPUCopyTexture = Texture2D->GetCPUCopyTexture();
+		if (CPUCopyTexture)
+		{
+			FIntPoint CenteringOffset(0, 0);
+			CenteringOffset += Viewport->GetSizeXY() / 2;
+			CenteringOffset -= FIntPoint(Width, Height) / 2;
+
+			Canvas->DrawTile(CenteringOffset.X, CenteringOffset.Y, Width, Height, 0.0f, 0.0f, 1.0f, 1.0f, FLinearColor::White, CPUCopyTexture->GetResource());
+			return;
+		}
+	}
+	
 	TRefCountPtr<FBatchedElementParameters> BatchedElementParameters;
 
 	if (GMaxRHIFeatureLevel >= ERHIFeatureLevel::SM5)
@@ -202,7 +293,8 @@ void FTextureEditorViewportClient::Draw(FViewport* Viewport, FCanvas* Canvas)
 	FTexturePlatformData** RunningPlatformDataPtr = Texture->GetRunningPlatformData();
 	float Exposure = RunningPlatformDataPtr && *RunningPlatformDataPtr && IsHDR((*RunningPlatformDataPtr)->PixelFormat) ? FMath::Pow(2.0f, (float)TextureEditorPinned->GetExposureBias()) : 1.0f;
 
-	if ( Texture->GetResource() != nullptr )
+
+	if ( Texture->GetResource() != nullptr && !CPUCopyTexture )
 	{
 		FCanvasTileItem TileItem( FVector2D( XPos, YPos ), Texture->GetResource(), FVector2D( Width, Height ), FLinearColor(Exposure, Exposure, Exposure) );
 		TileItem.BlendMode = TextureEditorPinned->GetColourChannelBlendMode();
@@ -233,9 +325,11 @@ void FTextureEditorViewportClient::Draw(FViewport* Viewport, FCanvas* Canvas)
 		{
 			FVirtualTexture2DResource* VTResource = static_cast<FVirtualTexture2DResource*>(Texture->GetResource());
 			const FVector2D ScreenSpaceSize((float)Width, (float)Height);
-			const FVector2D ViewportPositon(-(float)XPos, -(float)YPos);
+			const FVector2D ViewportPositon((float)XPos, (float)YPos);
 			const FVector2D UV0 = TileItem.UV0;
 			const FVector2D UV1 = TileItem.UV1;
+
+			UE::RenderCommandPipe::FSyncScope SyncScope;
 
 			const ERHIFeatureLevel::Type InFeatureLevel = GMaxRHIFeatureLevel;
 			ENQUEUE_RENDER_COMMAND(MakeTilesResident)(
@@ -245,11 +339,17 @@ void FTextureEditorViewportClient::Draw(FViewport* Viewport, FCanvas* Canvas)
 				IAllocatedVirtualTexture* AllocatedVT = VTResource->AcquireAllocatedVT();
 
 				IRendererModule& RenderModule = GetRendererModule();
-				RenderModule.RequestVirtualTextureTilesForRegion(AllocatedVT, ScreenSpaceSize, ViewportPositon, ViewportSize, UV0, UV1, (int32)MipLevel);
+				RenderModule.RequestVirtualTextureTiles(AllocatedVT, ScreenSpaceSize, ViewportPositon, ViewportSize, UV0, UV1, (int32)MipLevel);
 				RenderModule.LoadPendingVirtualTextureTiles(RHICmdList, InFeatureLevel);
 			});
 		}
 	}
+
+	UFont* ReportingFont = GEngine->GetLargeFont();
+	const int32 ReportingLineHeight = FMath::CeilToInt(ReportingFont->GetMaxCharHeight()) + 2; // 2 for line spacing
+	const int32 ReportingLineX = 8;
+	int32 ReportingLineY = 8;
+
 
 	// If we are requesting an explicit mip level of a VT asset, test to see if we can even display it properly and warn about it
 	if (bIsVirtualTexture && MipLevel >= 0.f)
@@ -264,16 +364,118 @@ void FTextureEditorViewportClient::Draw(FViewport* Viewport, FCanvas* Canvas)
 
 		if (NumPixels >= NumPhysicalPixels)
 		{
-			UFont* ErrorFont = GEngine->GetLargeFont();
-			const int32 LineHeight = FMath::TruncToInt(ErrorFont->GetMaxCharHeight());
 			const FText Message = NSLOCTEXT("TextureEditor", "InvalidVirtualTextureMipDisplay", "Displaying a virtual texture on a mip level that is larger than the physical cache. Rendering will probably be invalid!");
-			const uint32 MessageWidth = ErrorFont->GetStringSize(*Message.ToString());
-			const uint32 Xpos = (uint32)((ViewportSize.X - MessageWidth) / 2);
-			Canvas->DrawShadowedText(Xpos, LineHeight*1.5,
-				Message,
-				ErrorFont, FLinearColor::Red);
+			Canvas->DrawShadowedText(ReportingLineX, ReportingLineY, Message, ReportingFont, FLinearColor::Red);
+			ReportingLineY += ReportingLineHeight;
 		}
+	}
+
+	// If we have compression deferred, make it clear they are viewing unencoded data.
+	if (Texture->DeferCompression)
+	{
+		const FText Message = NSLOCTEXT("TextureEditor", "CompressionDeferred", "Compression Deferred: Viewing unencoded data!");
+		Canvas->DrawShadowedText(ReportingLineX, ReportingLineY, Message, ReportingFont, FLinearColor::Yellow);
+		ReportingLineY += ReportingLineHeight;
+	}
+	else
+	{
+		// Check if we are viewing an encoding that isn't Final.
+		FTexturePlatformData** PlatformDataPtr = Texture->GetRunningPlatformData();
 		
+		if (PlatformDataPtr &&
+			PlatformDataPtr[0] && // Can be null if we haven't had a chance to call CachePlatformData on the texture (brand new)
+			PlatformDataPtr[0]->ResultMetadata.bIsValid)
+		{
+			FResolvedTextureEncodingSettings const& EncodeSettings = FResolvedTextureEncodingSettings::Get();
+			bool bEncodingDiffers = (EncodeSettings.Project.bFastUsesRDO != EncodeSettings.Project.bFinalUsesRDO ||
+				EncodeSettings.Project.FastEffortLevel != EncodeSettings.Project.FinalEffortLevel ||
+				EncodeSettings.Project.FastRDOLambda != EncodeSettings.Project.FinalRDOLambda ||
+				EncodeSettings.Project.FastUniversalTiling != EncodeSettings.Project.FinalUniversalTiling);
+
+			if (PlatformDataPtr[0]->ResultMetadata.bWasEditorCustomEncoding)
+			{
+				const FText LeadInText = NSLOCTEXT("TextureEditor", "ViewingCustom", "Viewing custom encoding");
+				Canvas->DrawShadowedText(ReportingLineX, ReportingLineY, LeadInText, ReportingFont, FLinearColor::Yellow);
+				ReportingLineY += ReportingLineHeight;
+			}
+			else if (bEncodingDiffers &&
+				PlatformDataPtr[0]->ResultMetadata.bSupportsEncodeSpeed &&
+				PlatformDataPtr[0]->ResultMetadata.EncodeSpeed != (uint8)ETextureEncodeSpeed::Final)
+			{
+				// We aren't final - which might not matter if they encode the same way, so just show the differences from final.
+				int32 CurrentX = ReportingLineX;
+
+				auto DrawComma = [&CurrentX, &ReportingFont, &Canvas, &ReportingLineY]()
+				{
+					const TCHAR* Comma = TEXT(", ");
+					int32 CommaWidth = ReportingFont->GetStringSize(Comma);
+					Canvas->DrawShadowedString(CurrentX, ReportingLineY, Comma, ReportingFont, FLinearColor::Yellow);
+					CurrentX += CommaWidth;
+				};
+
+				const FText LeadInText = NSLOCTEXT("TextureEditor", "EncodingDifference", "Viewing non-shipping encoding, differences are: ");
+				Canvas->DrawShadowedText(CurrentX, ReportingLineY, LeadInText, ReportingFont, FLinearColor::Yellow);
+				CurrentX += ReportingFont->GetStringSize(*LeadInText.ToString()); // afaict you always need to ToString to measure the text.
+
+				const FText HelpText = NSLOCTEXT("TextureEditor", "ShowFinal", "Check \"Editor Show Final Encoding\" to see shipping encoding.");
+				Canvas->DrawShadowedText(ReportingLineX, ReportingLineY + ReportingLineHeight, HelpText, ReportingFont, FLinearColor::Yellow);
+
+				bool bNeedComma = false;
+				if (EncodeSettings.Project.bFastUsesRDO != EncodeSettings.Project.bFinalUsesRDO)
+				{
+					const FText RDOText = NSLOCTEXT("TextureEditor", "RDODifference", "RDO On/Off");
+					Canvas->DrawShadowedText(CurrentX, ReportingLineY, RDOText, ReportingFont, FLinearColor::Yellow);
+					CurrentX += ReportingFont->GetStringSize(*RDOText.ToString());
+					bNeedComma = true;
+				}
+				else if (EncodeSettings.Project.bFinalUsesRDO)
+				{
+					// Some stuff only matters if RDO is on
+					if (EncodeSettings.Project.FastRDOLambda != EncodeSettings.Project.FinalRDOLambda)
+					{
+						if (bNeedComma) 
+						{
+							DrawComma();
+						}
+						const FText RDOText = NSLOCTEXT("TextureEditor", "RDOLambdaDifference", "RDO Lambda");
+						Canvas->DrawShadowedText(CurrentX, ReportingLineY, RDOText, ReportingFont, FLinearColor::Yellow);
+						CurrentX += ReportingFont->GetStringSize(*RDOText.ToString());
+						bNeedComma = true;
+					}
+					if (EncodeSettings.Project.FastUniversalTiling != EncodeSettings.Project.FinalUniversalTiling)
+					{
+						if (bNeedComma)
+						{
+							DrawComma();
+						}
+						const FText EffortText = NSLOCTEXT("TextureEditor", "UTDifference", "RDO Universal Tiling");
+						Canvas->DrawShadowedText(CurrentX, ReportingLineY, EffortText, ReportingFont, FLinearColor::Yellow);
+						CurrentX += ReportingFont->GetStringSize(*EffortText.ToString());;
+						bNeedComma = true;
+					}
+				}
+				if (EncodeSettings.Project.FastEffortLevel != EncodeSettings.Project.FinalEffortLevel)
+				{
+					if (bNeedComma)
+					{
+						DrawComma();
+					}
+					const FText EffortText = NSLOCTEXT("TextureEditor", "EffortDifference", "Encode Effort");
+					Canvas->DrawShadowedText(CurrentX, ReportingLineY, EffortText, ReportingFont, FLinearColor::Yellow);
+					CurrentX += ReportingFont->GetStringSize(*EffortText.ToString());;
+					bNeedComma = true;
+				}
+
+				ReportingLineY += 2*ReportingLineHeight;
+			} // end if difference exists
+		} // end if valid result metadata
+	} // end if not deferring
+
+	// Print any warnings/errors that we saw in the output log.
+	for (TPair<bool, FString>& ReportedLine : TextureConsoleCapture->RelevantLogLines)
+	{
+		Canvas->DrawShadowedText(ReportingLineX, ReportingLineY, FText::FromString(ReportedLine.Value), GEngine->GetLargeFont(), ReportedLine.Key ? FLinearColor::Red : FLinearColor::Yellow);
+		ReportingLineY += ReportingLineHeight;
 	}
 }
 

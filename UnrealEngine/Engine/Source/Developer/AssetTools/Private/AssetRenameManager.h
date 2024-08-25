@@ -107,6 +107,13 @@ private:
 	/** Finds any read only packages and removes them from the save list. Assets referenced by these packages will leave redirectors. */ 
 	void DetectReadOnlyPackages(TArray<FAssetRenameDataWithReferencers>& AssetsToRename, TArray<UPackage*>& InOutReferencingPackagesToSave) const;
 
+	/** 
+	 * Make public any asset that will be referenced from another plugin after the rename.
+	 * If the asset cannot be made public or if moving it requires a referenced asset that's not being modified to become public,
+	 * its rename will fail and other assets that have dependencies between them will also fail to be renamed.
+	 */
+	void SetupPublicAssets(TArray<FAssetRenameDataWithReferencers>& AssetsToRename) const;
+
 	/** Performs the asset rename after the user has selected to proceed */
 	void PerformAssetRename(TArray<FAssetRenameDataWithReferencers>& AssetsToRename) const;
 

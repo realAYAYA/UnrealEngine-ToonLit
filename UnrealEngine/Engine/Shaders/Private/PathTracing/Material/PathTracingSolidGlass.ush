@@ -111,7 +111,7 @@ FMaterialSample RoughGlass_SampleMaterial(
 		}
 
 
-		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, Data.Alpha, V).xyz;
+		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, Data.Alpha, V, bDoSpec).xyz;
 
 		if (bDoSpec)
 		{
@@ -130,7 +130,7 @@ FMaterialSample RoughGlass_SampleMaterial(
 			const float NoH = saturate(H.z);
 
 			// Specular lobe
-			const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
+			const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha, true);
 			const float3 F = F_Schlick(Payload.SpecularColor, VoH);
 			const float3 SpecWeight = (Payload.BSDFOpacity / Data.LobePdf.y) * F * GGXResult.x * Data.Spec.W;
 			const float SpecPdf = GGXResult.y * Data.LobePdf.y;
@@ -147,7 +147,7 @@ FMaterialSample RoughGlass_SampleMaterial(
 			// transform to world space
 			const float3 L_World = normalize(mul(L, Data.Basis));
 
-			const float2 GGXResult = bRefract ? GGXEvalRefraction(L, V, H, Data.Alpha, Data.Eta) : GGXEvalReflection(L, V, H, Data.Alpha);
+			const float2 GGXResult = bRefract ? GGXEvalRefraction(L, V, H, Data.Alpha, Data.Eta) : GGXEvalReflection(L, V, H, Data.Alpha, false);
 
 			return CreateMaterialSample(L_World, (1.0 - Payload.BSDFOpacity) * GGXResult.x / (Data.EGlass * Data.LobePdf.z), F * GGXResult.y * Data.LobePdf.z, bRefract ? -1.0 : 1.0, Payload.Roughness, bRefract ? PATHTRACER_SCATTER_REFRACT : PATHTRACER_SCATTER_SPECULAR);
 		}
@@ -190,17 +190,22 @@ FMaterialEval RoughGlass_EvalMaterial(
 		Result.AddLobeWithMIS(Payload.BSDFOpacity * Diffuse * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal) * DiffuseSpecularScale.x, NoL / PI, Data.LobePdf.x);
 
 		// Specular lobe
-		const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
-		const float3 Fs = F_Schlick(Payload.SpecularColor, VoH);
-		const float3 SpecWeight = Payload.BSDFOpacity * GGXResult.x * Data.Spec.W * Fs;
-		const float SpecPdf = GGXResult.y;
-		Result.AddLobeWithMIS(SpecWeight * DiffuseSpecularScale.y, SpecPdf, Data.LobePdf.y);
+		{
+			const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha, true);
+			const float3 Fs = F_Schlick(Payload.SpecularColor, VoH);
+			const float3 SpecWeight = Payload.BSDFOpacity * GGXResult.x * Data.Spec.W * Fs;
+			const float SpecPdf = GGXResult.y;
+			Result.AddLobeWithMIS(SpecWeight * DiffuseSpecularScale.y, SpecPdf, Data.LobePdf.y);
+		}
 
 		// Glass lobe
-		const float Fg = FresnelReflectance(VoH, Data.Eta, Data.F0);
-		const float3 GlassWeight = GGXResult.x * (1 - Payload.BSDFOpacity) / Data.EGlass;
-		const float GlassPdf = GGXResult.y * Fg;
-		Result.AddLobeWithMIS(GlassWeight * DiffuseSpecularScale.y, GlassPdf, Data.LobePdf.z);
+		{
+			const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha, false);
+			const float Fg = FresnelReflectance(VoH, Data.Eta, Data.F0);
+			const float3 GlassWeight = GGXResult.x * (1 - Payload.BSDFOpacity) / Data.EGlass;
+			const float GlassPdf = GGXResult.y * Fg;
+			Result.AddLobeWithMIS(GlassWeight * DiffuseSpecularScale.y, GlassPdf, Data.LobePdf.z);
+		}
 	}
 	else if (L.z < 0 && Data.LobePdf.z > 0)
 	{

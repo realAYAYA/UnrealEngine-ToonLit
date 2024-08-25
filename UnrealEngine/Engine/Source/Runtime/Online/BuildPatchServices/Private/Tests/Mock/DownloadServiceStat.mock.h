@@ -22,7 +22,7 @@ namespace BuildPatchServices
 			RxDownloadStarted.Emplace(FStatsCollector::GetSeconds(), RequestId, Uri);
 		}
 
-		virtual void OnDownloadProgress(int32 RequestId, int32 BytesReceived) override
+		virtual void OnDownloadProgress(int32 RequestId, uint64 BytesReceived) override
 		{
 			RxDownloadProgress.Emplace(FStatsCollector::GetSeconds(), RequestId, BytesReceived);
 		}

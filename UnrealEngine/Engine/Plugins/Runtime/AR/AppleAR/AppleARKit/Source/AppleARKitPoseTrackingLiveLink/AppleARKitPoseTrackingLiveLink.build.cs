@@ -6,13 +6,7 @@ public class AppleARKitPoseTrackingLiveLink : ModuleRules
 {
 	public AppleARKitPoseTrackingLiveLink(ReadOnlyTargetRules Target) : base(Target)
 	{
-        //OptimizeCode = CodeOptimization.Never;
-		
-		PrivateIncludePaths.AddRange(new string[]
-		{
-			System.IO.Path.Combine(GetModuleDirectory("AppleARKit"), "Private"),
-		});
-			
+        //OptimizeCode = CodeOptimization.Never;	
 		
 		PublicDependencyModuleNames.AddRange(new string[]
 		{

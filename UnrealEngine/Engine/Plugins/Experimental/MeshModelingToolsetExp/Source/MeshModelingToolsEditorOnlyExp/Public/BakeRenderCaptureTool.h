@@ -180,16 +180,8 @@ class MESHMODELINGTOOLSEDITORONLYEXP_API UBakeRenderCaptureToolProperties : publ
 public:
 	
 	/** The map type to preview */
-	UPROPERTY(EditAnywhere, Category = BakeOutput, meta = (DisplayName="Preview Output Type", TransientToolProperty, GetOptions = GetMapPreviewNamesFunc))
-	FString MapPreview;
-	
-	UFUNCTION()
-	const TArray<FString>& GetMapPreviewNamesFunc()
-	{
-		return MapPreviewNamesList;
-	}
-	UPROPERTY(meta = (TransientToolProperty))
-	TArray<FString> MapPreviewNamesList;
+	UPROPERTY(EditAnywhere, Category = BakeOutput, meta = (DisplayName="Preview Output Type", EditCondition = "bEnableMapPreview", HideEditConditionToggle, TransientToolProperty, GetOptions = GetMapPreviewNamesFunc, NoResetToDefault))
+	FString MapPreview = TEXT("");
 
 	/** Number of samples per pixel */
 	UPROPERTY(EditAnywhere, Category = BakeOutput)
@@ -213,6 +205,20 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, Category = BakeOutput, meta = (ClampMin="0", UIMin="0"), DisplayName="Cleanup Threshold")
 	float ValidSampleDepthThreshold = 0.f;
+
+	//~ Hidden properties
+
+	UPROPERTY(Transient, meta = (TransientToolProperty))
+	bool bEnableMapPreview = false;
+
+	UFUNCTION()
+	const TArray<FString>& GetMapPreviewNamesFunc()
+	{
+		return MapPreviewNamesList;
+	}
+
+	UPROPERTY(meta = (TransientToolProperty))
+	TArray<FString> MapPreviewNamesList;
 };
 
 
@@ -310,6 +316,7 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UBakeRenderCaptureToolProperties> Settings;
+	int32 MapPreviewWatcherIndex = -1;
 
 	UPROPERTY()
 	TObjectPtr<URenderCaptureProperties> RenderCaptureProperties;
@@ -330,7 +337,6 @@ protected:
 	void UpdateResult();
 	void UpdateVisualization();
 	void InvalidateResults(UE::Geometry::FRenderCaptureTypeFlags ToInvalidate);
-	void InvalidateCompute();
 	void OnMapsUpdated(const TUniquePtr<UE::Geometry::FMeshMapBaker>& NewResult);
 
 	/**
@@ -346,16 +352,14 @@ protected:
 	/**
 	 * Create texture and material assets from our result map of Texture2D
 	 * @param SourceWorld the source world to define where the assets will be stored.
-	 * @param SourceAsset if not null, result textures/material will be stored adjacent to this asset.
 	 */
-	void CreateAssets(UWorld* SourceWorld, UObject* SourceAsset);
+	void CreateAssets(UWorld* SourceWorld);
 
-	// The baking background compute operation
-	TUniquePtr<TGenericDataBackgroundCompute<UE::Geometry::FMeshMapBaker>> Compute = nullptr;
-	EBakeOpState OpState = EBakeOpState::Evaluate;
+	TUniquePtr<TGenericDataBackgroundCompute<UE::Geometry::FMeshMapBaker>> BakeOp = nullptr;
+	EBakeOpState BakeOpState = EBakeOpState::Evaluate;
 
-	UE::Geometry::FDynamicMesh3 TargetMesh;
-	UE::Geometry::FDynamicMeshAABBTree3 TargetMeshSpatial;
+	TSharedPtr<UE::Geometry::FDynamicMesh3, ESPMode::ThreadSafe> TargetMesh;
+	TSharedPtr<UE::Geometry::FDynamicMeshAABBTree3, ESPMode::ThreadSafe> TargetMeshSpatial;
 	TSharedPtr<TArray<int32>, ESPMode::ThreadSafe> TargetMeshUVCharts;
 	TSharedPtr<UE::Geometry::FMeshTangentsd, ESPMode::ThreadSafe> TargetMeshTangents;
 
@@ -402,7 +406,7 @@ protected:
 	TObjectPtr<UPreviewMesh> PreviewMesh;
 
 	// Note: We need to compute this on the game thread because the implementation has checks for this
-	TUniquePtr<UE::Geometry::FSceneCapturePhotoSet> SceneCapture = nullptr;
+	TSharedPtr<UE::Geometry::FSceneCapturePhotoSet, ESPMode::ThreadSafe> SceneCapture;
 
 	// These are used to determine if we need to re-bake results
 	float ComputedValidDepthThreshold;

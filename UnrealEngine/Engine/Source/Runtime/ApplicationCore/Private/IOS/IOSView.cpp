@@ -19,8 +19,12 @@
 #include "IOS/Accessibility/IOSAccessibilityElement.h"
 #endif
 
-id<MTLDevice> GMetalDevice = nil;
+namespace MTL
+{
+    class Device;
+}
 
+MTL::Device* GMetalDevice = nullptr;
 
 @interface IndexedPosition : UITextPosition {
 	NSUInteger _index;
@@ -130,15 +134,15 @@ id<MTLDevice> GMetalDevice = nil;
 	if ((bSupportsMetal || bSupportsMetalMRT) && MTLCreateSystemDefaultDevice != NULL)
 	{
 		SCOPED_BOOT_TIMING("CreateMetalDevice");
-		// if the device is unable to run with Metal (pre-A7), this will return nil
-		GMetalDevice = MTLCreateSystemDefaultDevice();
+		// if the device is unable to run with Metal (pre-A7), this will return nullptr
+		GMetalDevice = (__bridge MTL::Device*)MTLCreateSystemDefaultDevice();
 
 		// just tracking for printout below
 		bTriedToInit = true;
 	}
 
 #if !UE_BUILD_SHIPPING
-	if (GMetalDevice == nil)
+	if (GMetalDevice == nullptr)
 	{
 		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("Not using Metal because: [Project Settings Disabled Metal? %s :: Commandline Forced ES2? %s :: Older OS? %s :: Pre-A7 Device? %s]"),
 			bSupportsMetal ? TEXT("No") : TEXT("Yes"),
@@ -148,7 +152,7 @@ id<MTLDevice> GMetalDevice = nil;
 	}
 #endif
 
-	if (GMetalDevice != nil)
+	if (GMetalDevice != nullptr)
 	{
 		return [CAMetalLayer class];
 	}
@@ -167,7 +171,7 @@ id<MTLDevice> GMetalDevice = nil;
 	check(GMetalDevice);
 	// if the device is valid, we know Metal is usable (see +layerClass)
 	MetalDevice = GMetalDevice;
-	if (MetalDevice != nil)
+	if (MetalDevice != nullptr)
 	{
 		// grab the MetalLayer and typecast it to match what's in layerClass
 		CAMetalLayer* MetalLayer = (CAMetalLayer*)self.layer;
@@ -179,7 +183,7 @@ id<MTLDevice> GMetalDevice = nil;
 		MetalLayer.backgroundColor = CGColorCreate(CGColorSpaceCreateDeviceRGB(), components);
 		
 		// set the device on the rendering layer and provide a pixel format
-		MetalLayer.device = MetalDevice;
+		MetalLayer.device = (__bridge id<MTLDevice>)MetalDevice;
 		MetalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
 		MetalLayer.framebufferOnly = NO;
 		
@@ -324,7 +328,7 @@ id<MTLDevice> GMetalDevice = nil;
 
 -(void)UpdateRenderWidth:(uint32)Width andHeight:(uint32)Height
 {
-	if (MetalDevice != nil)
+	if (MetalDevice != nullptr)
 	{
 		// grab the MetalLayer and typecast it to match what's in layerClass, then set the new size
 		CAMetalLayer* MetalLayer = (CAMetalLayer*)self.layer;
@@ -1007,12 +1011,16 @@ self.accessibilityElements = @[Window.accessibilityContainer];
  */
 - (void) loadView
 {
+#if PLATFORM_VISIONOS
+	CGRect Frame = CGRectMake(0, 0, 1000, 1000);
+#else
 	// get the landcape size of the screen
 	CGRect Frame = [[UIScreen mainScreen] bounds];
 	if (![IOSAppDelegate GetDelegate].bDeviceInPortraitMode)
 	{
 		Swap(Frame.size.width, Frame.size.height);
 	}
+#endif
 
 	self.view = [[UIView alloc] initWithFrame:Frame];
 

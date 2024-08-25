@@ -121,7 +121,7 @@ protected:
 	void DisplaceKelvinlet(const KelvinletType& Kelvinlet, const FFrame3d& LocalFrame, const TArray<int32>& Vertices, TArray<FVector3d>& NewPositionsOut) const
 	{
 		int32 NumV = Vertices.Num();
-		NewPositionsOut.SetNum(NumV, false);
+		NewPositionsOut.SetNum(NumV, EAllowShrinking::No);
 
 		const bool bForceSingleThread = false;
 
@@ -144,7 +144,7 @@ protected:
 	void IntegrateKelvinlet(const KelvinletType& Kelvinlet, const FFrame3d& LocalFrame, const TArray<int32>& Vertices, TArray<FVector3d>& NewPositionsOut, const double Dt, const int32 Steps) const
 	{
 		int NumV = Vertices.Num();
-		NewPositionsOut.SetNum(NumV, false);
+		NewPositionsOut.SetNum(NumV, EAllowShrinking::No);
 
 		const bool bForceSingleThread = false;
 
@@ -676,7 +676,7 @@ public:
 	void DisplaceKelvinlet(const KelvinletType& Kelvinlet, const TArray<int>& VertexROI, TArray<FVector3d>& ROIPositionBuffer)
 	{
 		int NumV = VertexROI.Num();
-		ROIPositionBuffer.SetNum(NumV, false);
+		ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 		const bool bForceSingleThread = false;
 
@@ -700,7 +700,7 @@ public:
 	void IntegrateKelvinlet(const KelvinletType& Kelvinlet, const TArray<int>& VertexROI, TArray<FVector3d>& ROIPositionBuffer, const double Dt, const int Steps)
 	{
 		int NumV = VertexROI.Num();
-		ROIPositionBuffer.SetNum(NumV, false);
+		ROIPositionBuffer.SetNum(NumV, EAllowShrinking::No);
 
 		const bool bForceSingleThread = false;
 

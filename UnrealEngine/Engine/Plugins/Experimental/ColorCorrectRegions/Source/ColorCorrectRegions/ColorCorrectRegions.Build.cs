@@ -7,13 +7,6 @@ public class ColorCorrectRegions : ModuleRules
 {
 	public ColorCorrectRegions(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				//Used in ColorCorrectRegionsPostProcessMaterial.h
-				Path.Combine(GetModuleDirectory("Renderer"), "Private"),
-			}
-		);
-		
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{

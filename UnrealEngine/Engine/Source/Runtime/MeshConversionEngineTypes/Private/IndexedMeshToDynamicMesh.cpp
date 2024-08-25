@@ -8,13 +8,17 @@
 
 using namespace UE::Geometry;
 
-void UE::Conversion::RenderBuffersToDynamicMesh(
+bool UE::Conversion::RenderBuffersToDynamicMesh(
 	const FStaticMeshVertexBuffers& VertexData,
 	const FRawStaticIndexBuffer& IndexData,
 	const FStaticMeshSectionArray& SectionData,
 	FDynamicMesh3& MeshOut,
 	bool bAttemptToWeldSeams)
 {
+	if (!ensureMsgf(VertexData.StaticMeshVertexBuffer.GetAllowCPUAccess(), TEXT("bAllowCPUAccess must be set to true for StaticMeshes before calling RenderBuffersToDynamicMesh(), otherwise the mesh geometry data isn't accessible!")))
+	{
+		return false;
+	}
 	const FStaticMeshVertexBuffer& VertexBuffer = VertexData.StaticMeshVertexBuffer;
 	const FPositionVertexBuffer& PositionBuffer = VertexData.PositionVertexBuffer;
 	const FColorVertexBuffer& ColorBuffer = VertexData.ColorVertexBuffer;
@@ -179,4 +183,6 @@ void UE::Conversion::RenderBuffersToDynamicMesh(
 		FMergeCoincidentMeshEdges Merge(&MeshOut);
 		Merge.Apply();
 	}
+
+	return true;
 }

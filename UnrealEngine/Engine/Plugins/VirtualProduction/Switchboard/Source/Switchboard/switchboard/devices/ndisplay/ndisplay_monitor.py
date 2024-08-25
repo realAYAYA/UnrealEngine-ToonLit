@@ -5,9 +5,9 @@ from itertools import count
 import time
 import traceback
 
-from PySide2 import QtCore
-from PySide2.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer
-from PySide2.QtGui import QColor
+from PySide6 import QtCore
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer
+from PySide6.QtGui import QColor
 
 from switchboard import message_protocol
 from switchboard.switchboard_logging import LOGGER
@@ -71,7 +71,10 @@ class nDisplayMonitor(QAbstractTableModel):
             'CpuUtilization':
                 'CPU utilization average. The number of overloaded cores (>'
                 f'{self.CORE_OVERLOAD_THRESH}% load) will be displayed in '
-                'parentheses.',
+                'parentheses.\n\n'
+                'in addition, simultaneous multi-threading (SMT), also known\n'
+                'as Hyper-Threading, is known to potentially cause hitches.\n'
+                'If SMT is enabled, that will also be flagged as a warning.',
             'MemUtilization': 'Physical memory, utilized / total.',
             'GpuUtilization':
                 'GPU utilization. The GPU clock speed is displayed in '
@@ -112,8 +115,9 @@ class nDisplayMonitor(QAbstractTableModel):
             return self.COLOR_NORMAL if is_normal else self.COLOR_WARNING
 
         if colname == 'CpuUtilization':
-            no_overload = '(' not in value  # "(# cores > threshold%)"
-            return self.COLOR_NORMAL if no_overload else self.COLOR_WARNING
+            # "(# cores > threshold%)" or "(SMT ENABLED)"
+            no_caveats = '(' not in value
+            return self.COLOR_NORMAL if no_caveats else self.COLOR_WARNING
 
         return self.COLOR_NORMAL
 
@@ -265,8 +269,9 @@ class nDisplayMonitor(QAbstractTableModel):
             # detect stale devices
             self.handle_stale_device(devicedata, deviceIdx)
 
-            # no point in continuing of not connected to listener
-            if not device.unreal_client.is_connected:
+            # no point in continuing if not connected to listener
+            if not (device.unreal_client.is_connected
+                    and device.unreal_client.is_authenticated):
                 continue
 
             # create message
@@ -456,6 +461,9 @@ class nDisplayMonitor(QAbstractTableModel):
             if num_overloaded_cores > 0:
                 data['CpuUtilization'] += f' ({num_overloaded_cores} cores >' \
                     f' {self.CORE_OVERLOAD_THRESH}%)'
+
+            if device.processor_smt:
+                data['CpuUtilization'] += ' (SMT ENABLED)'
         except (KeyError, ValueError):
             data['CpuUtilization'] = self.DATA_MISSING
 
@@ -550,18 +558,18 @@ class nDisplayMonitor(QAbstractTableModel):
         return len(self.colnames)
 
     def headerData(self, section, orientation, role):
-        if role == Qt.DisplayRole:
-            if orientation == Qt.Horizontal:
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
                 return self.colnames[section]
             else:
                 return "{}".format(section)
 
-        if role == Qt.ToolTipRole:
+        if role == Qt.ItemDataRole.ToolTipRole:
             return self.tooltips[section]
 
         return None
 
-    def data(self, index, role=Qt.DisplayRole):
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         column = index.column()
         row = index.row()
 
@@ -573,17 +581,17 @@ class nDisplayMonitor(QAbstractTableModel):
         data = devicedata['data']
         value = data[colname]
 
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             return value
 
-        elif role == Qt.BackgroundRole:
+        elif role == Qt.ItemDataRole.BackgroundRole:
             return self.color_for_column(colname=colname, value=value,
                                          data=data)
 
-        elif role == Qt.TextAlignmentRole:
+        elif role == Qt.ItemDataRole.TextAlignmentRole:
             if colname in ('CpuUtilization', 'GpuUtilization'):
-                return Qt.AlignLeft
-            return Qt.AlignRight
+                return Qt.AlignmentFlag.AlignLeft
+            return Qt.AlignmentFlag.AlignRight
 
         return None
 

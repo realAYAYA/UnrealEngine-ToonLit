@@ -14,24 +14,32 @@
 namespace UE::XRScribe
 {
 
-// The PoseManager has two primary jobs:
+// The ActionPoseManager has two primary jobs:
 // * ingest data from capture
-// * generate estimated poses based on emulator frametimes
+// * generate estimated poses/actions based on captured state + timings
 //
-// When using the PoseManager, we'll interact with it similarly to xrLocateSpace: give it time and spaces,
-// and return locations.
+// When using the ActionPoseManager, we'll interact with it similarly to xrLocateSpace: give it time and spaces,
+// and return locations. On the Action side, give it an action and sync time, and we return an action state.
 //
 // Internally, we'll plan to have all managed poses in tracker-space, and convert to the different spaces
 // as needed. This does mean we'll need to know how to convert between different spaces, even if the
 // original capture might not tell us how to
 
-class FOpenXRPoseManager
+class FOpenXRActionPoseManager
 {
 
 public:
 
 	// Number of poses the manager will keep available relative to 'current' pose, in order for multi-frame pose queries
 	static const int32 PoseHistorySize = 5;
+
+	/**
+	 * Register information about paths to path strings from the capture
+	 *
+	 * @param PathStringMap Captured map of path handles to FNames
+	 *
+	 */
+	void RegisterCapturedPathStrings(const TMap<XrPath, FName>& PathStringMap);
 
 	/**
 	 * Register information about wait frames from a capture file, in order to build a history of
@@ -95,6 +103,31 @@ public:
 		const TMap<XrAction, TArray<FOpenXRGetActionStatePosePacket>>& PoseActionStates);
 
 	/**
+	 * Process all captured pose and action state histories at once, in order to create a unified timeline
+	 *
+	 */
+	void ProcessCapturedHistories();
+
+	/**
+	 * Register emulated path. Manager needs this to match paths between capture and emulation.
+	 *
+	 * @param PathString String used to create path
+	 * @param Path Emulation-created path handle
+	 *
+	 */
+	void RegisterEmulatedPath(FName PathString, XrPath Path);
+
+	/**
+	 * Register emulated action. Manager needs this to match emulated actions against captured action state histories
+	 *
+	 * @param ActionName String used for action name
+	 * @param Action Emulation-created action handle
+	 * @param ActionType Action-type to facilitate history type lookup
+	 *
+	 */
+	void RegisterEmulatedAction(FName ActionName, XrAction Action, XrActionType ActionType);
+
+	/**
 	 * Register emulated reference space. Pose manager needs this to match the new emulated reference space against
 	 * a captured reference space of similar attributes.
 	 *
@@ -131,7 +164,8 @@ public:
 	 * tell the client that the action is active, and poses are ready to fetch
 	 *
 	 * @param ActionName Name from action create info
-	 *
+	 * 
+	 * return ActionName has available pose history
 	 */
 	bool DoesActionContainPoseHistory(TStaticArray<ANSICHAR, XR_MAX_ACTION_NAME_SIZE>& ActionName);
 
@@ -147,6 +181,19 @@ public:
 	XrSpaceLocation GetEmulatedPoseForTime(XrSpace LocatingSpace, XrSpace BaseSpace, XrTime Time);
 
 	/**
+	 * Fetch an action state generated from the captured history, by using XrActionStateGetInfo and most recent sync time
+	 * The function itself is used to designate between different action state histories (bool, float, vector2f). 
+	 *
+	 * @param GetInfo provides an action handle and subpath
+	 * @param LastSyncTime The sync time is managed by the emulation layer, and used to offset into the captured history.
+	 *
+	 * return Action state derived from captured history if available, or default inactive state if action/subpath aren't available.
+	 */
+	XrActionStateBoolean GetEmulatedActionStateBoolean(const XrActionStateGetInfo* GetInfo, XrTime LastSyncTime);
+	XrActionStateFloat GetEmulatedActionStateFloat(const XrActionStateGetInfo* GetInfo, XrTime LastSyncTime);
+	XrActionStateVector2f GetEmulatedActionStateVector2f(const XrActionStateGetInfo* GetInfo, XrTime LastSyncTime);
+
+	/**
 	 * Reset internal emulation state based on session teardown.
 	 *
 	 */
@@ -157,14 +204,44 @@ public:
 	
 	// TODO: add LocateViews to pose manager tracking
 
-private:
+protected:
+	
+	template <typename StateType>
+	struct TActionState
+	{
+		StateType State{};
+		XrBool32 Active = 0;
+	};
+
+	template <typename StateType>
+	struct TActionStateHistory
+	{
+		TArray<TActionState<StateType>> StateValues;
+		TSet<FName> ValidSubpaths;
+	};
+
+	using FBooleanActionState = TActionState<XrBool32>;
+	using FFloatActionState = TActionState<float>;
+	using FVector2fActionState = TActionState<XrVector2f>;
+
+	using FBooleanActionStateHistory = TActionStateHistory<XrBool32>;
+	using FFloatActionStateHistory = TActionStateHistory<float>;
+	using FVector2fActionStateHistory = TActionStateHistory<XrVector2f>;
 
 	/**
 	 * Helper function to fetch underlying reference space type from opaque XrSpace handle
 	 */
 	XrReferenceSpaceType GetCapturedReferenceSpaceType(XrSpace CapturedSpace);
 
+	/**
+	 * Helper function to validate captured space is an action space
+	 */
 	bool VerifyCapturedActionSpace(XrSpace CapturedSpace);
+
+	/**
+	 * Helper function to determine full time range of capture
+	 */
+	void CalculateCapturedTimeRange();
 
 	/**
 	 * sort and remove duplicates in history for single space
@@ -179,13 +256,48 @@ private:
 	void ProcessCapturedReferenceSpaceHistory(const TArray<FOpenXRLocateSpacePacket>& SpaceHistory);
 	void ProcessCapturedActionSpaceHistory(const TArray<FOpenXRLocateSpacePacket>& SpaceHistory);
 
+	FName GetEmulatedActionName(XrAction Action);
+
+	/**
+	 * Helper function to generate index into captured history from emulated time (offset from emulated session start)
+	 */
+	int64 GenerateReplaySliceIndexFromTime(XrTime EmulatedTime);
+
+	bool ValidateSubpath(const TSet<FName>& ValidSubpaths, XrPath ActionSubPath);
+
+	/**
+	 * Helper function to managed 'cached' action states, because we're only supposed to update on state changes
+	 */
+	const XrActionStateBoolean GetCachedEmulatedBooleanState(FName ActionName);
+	void SetCachedEmulatedBooleanState(FName ActionName, const XrActionStateBoolean& EmulatedState);
+	const XrActionStateFloat GetCachedEmulatedFloatState(FName ActionName);
+	void SetCachedEmulatedFloatState(FName ActionName, const XrActionStateFloat& EmulatedState);
+	const XrActionStateVector2f GetCachedEmulatedVector2fState(FName ActionName);
+	void SetCachedEmulatedVector2fState(FName ActionName, const XrActionStateVector2f& EmulatedState);
+
+	TMap<XrPath, FName> CapturedPaths;
+	TMap<XrPath, FName> EmulatedPaths;
+
+	TMap<XrAction, FName> EmulatedActionNames;
+	TMap<FName, XrActionStateBoolean> CachedEmulatedBooleanStates;
+	TMap<FName, XrActionStateFloat> CachedEmulatedFloatStates;
+	TMap<FName, XrActionStateVector2f> CachedEmulatedVector2fStates;
+
 	// Known spaces and relevant actions from capture
 	TArray<FOpenXRCreateReferenceSpacePacket> CapturedReferenceSpaces;
 	TArray<FOpenXRCreateActionSpacePacket> CapturedActionSpaces;
 	TMap<XrAction, FOpenXRCreateActionPacket> CapturedActions;
 
+	TMap<XrSpace, TArray<FOpenXRLocateSpacePacket>> CapturedRawSpaceHistories;
+
+	//TArray<FOpenXRSyncActionsPacket> CapturedRawSyncActionsPackets;
+	TMap<XrAction, TArray<FOpenXRGetActionStateBooleanPacket>> CapturedRawBooleanActionStates;
+	TMap<XrAction, TArray<FOpenXRGetActionStateFloatPacket>> CapturedRawFloatActionStates;
+	TMap<XrAction, TArray<FOpenXRGetActionStateVector2fPacket>> CapturedRawVectorActionStates;
+	TMap<XrAction, TArray<FOpenXRGetActionStatePosePacket>> CapturedRawPoseActionStates;
+
 	/**
-	 * Pose histories for space types, which could be unified across different space handles
+	 * Processed pose histories for space types, which could be unified across different space handles
 	 * with the same underlying reference space type.
 	 */
 	TMap<XrReferenceSpaceType, TArray<FOpenXRLocateSpacePacket>> ReferencePoseHistories;
@@ -195,6 +307,10 @@ private:
 	TMap<FName, TArray<FOpenXRGetActionStateFloatPacket>> FloatActionStateHistories;
 	TMap<FName, TArray<FOpenXRGetActionStateVector2fPacket>> VectorActionStateHistories;
 	TMap<FName, TArray<FOpenXRGetActionStatePosePacket>> PoseActionStateHistories;
+
+	TMap<FName, FBooleanActionStateHistory>  BooleanProcessedHistories;
+	TMap<FName, FFloatActionStateHistory>	 FloatProcessedHistories;
+	TMap<FName, FVector2fActionStateHistory> Vector2fProcessedHistories;
 
 	// Map of emulated spaces to their underlying reference space type (if applicable)
 	TMap<XrSpace, XrReferenceSpaceType> EmulatedReferenceSpaceTypeMap;
@@ -212,9 +328,10 @@ private:
 	int32 LastInsertedFrameIndex = 0;
 
 	int64 CapturedSliceCount = 0;
-	XrTime WaitFrameStart = 0;
-	XrTime WaitFrameEnd = 0;
 	TArray<FOpenXRWaitFramePacket> WaitFrameHistory;
+
+	XrTime CapturedRangeStart = 0;
+	XrTime CapturedRangeEnd = 0;
 
 	XrTime EmulatedBaseTime = INT64_MAX;
 };

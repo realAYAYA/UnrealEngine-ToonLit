@@ -42,12 +42,14 @@ enum class EChaosVDObjectStateType: int8
 
 /** Base struct that declares the interface to be used for any ParticleData Viewer */
 USTRUCT()
-struct FChaosVDParticleDataBase
+struct FChaosVDWrapperDataBase
 {
 	GENERATED_BODY()
-	virtual ~FChaosVDParticleDataBase() = default;
+	virtual ~FChaosVDWrapperDataBase() = default;
 
 	virtual bool HasValidData() const { return bHasValidData; }
+
+	void MarkAsValid() { bHasValidData = true; }
 
 protected:
 	UPROPERTY()
@@ -55,7 +57,7 @@ protected:
 };
 
 USTRUCT()
-struct FChaosVDFRigidParticleControlFlags : public FChaosVDParticleDataBase 
+struct FChaosVDFRigidParticleControlFlags : public FChaosVDWrapperDataBase 
 {
 	GENERATED_BODY()
 
@@ -63,8 +65,9 @@ struct FChaosVDFRigidParticleControlFlags : public FChaosVDParticleDataBase
 		: bGravityEnabled(false),
 		  bCCDEnabled(false),
 		  bOneWayInteractionEnabled(false),
-		  bMaxDepenetrationVelocityOverrideEnabled(false),
-		  bInertiaConditioningEnabled(false), GravityGroupIndex(0)
+		  bInertiaConditioningEnabled(false), 
+		  GravityGroupIndex(0),
+		  bMACDEnabled(false)
 	{
 	}
 
@@ -76,25 +79,25 @@ struct FChaosVDFRigidParticleControlFlags : public FChaosVDParticleDataBase
 		bGravityEnabled = Other.GetGravityEnabled();
 		bCCDEnabled = Other.GetCCDEnabled();
 		bOneWayInteractionEnabled = Other.GetOneWayInteractionEnabled();
-		bMaxDepenetrationVelocityOverrideEnabled = Other.GetMaxDepenetrationVelocityOverrideEnabled();
 		bInertiaConditioningEnabled = Other.GetInertiaConditioningEnabled();
 		GravityGroupIndex = Other.GetGravityGroupIndex();
+		bMACDEnabled = Other.GetMACDEnabled();
 
 		bHasValidData = true;
 	}
 
-	UPROPERTY(EditAnywhere, Category= "Particle Control Flags")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Control Flags")
 	bool bGravityEnabled;
-	UPROPERTY(EditAnywhere, Category= "Particle Control Flags")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Control Flags")
 	bool bCCDEnabled;
-	UPROPERTY(EditAnywhere, Category= "Particle Control Flags")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Control Flags")
 	bool bOneWayInteractionEnabled;
-	UPROPERTY(EditAnywhere, Category= "Particle Control Flags")
-	bool bMaxDepenetrationVelocityOverrideEnabled;
-	UPROPERTY(EditAnywhere, Category= "Particle Control Flags")
+	UPROPERTY(VisibleAnywhere, Category = "Particle Control Flags")
 	bool bInertiaConditioningEnabled;
-	UPROPERTY(EditAnywhere, Category= "Particle Control Flags")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Control Flags")
 	int32 GravityGroupIndex;
+	UPROPERTY(VisibleAnywhere, Category = "Particle Control Flags")
+	bool bMACDEnabled;
 };
 
 inline FArchive& operator<<(FArchive& Ar, FChaosVDFRigidParticleControlFlags& Data)
@@ -116,7 +119,7 @@ struct TStructOpsTypeTraits<FChaosVDFRigidParticleControlFlags> : public TStruct
  * Used to be able to show the values in the editor and allow changes via the Property Editor.
  */
 USTRUCT()
-struct FChaosVDParticlePositionRotation : public FChaosVDParticleDataBase
+struct FChaosVDParticlePositionRotation : public FChaosVDWrapperDataBase
 {
 	GENERATED_BODY()
 
@@ -127,19 +130,19 @@ struct FChaosVDParticlePositionRotation : public FChaosVDParticleDataBase
 	template <typename TOther>
 	void CopyFrom(const TOther& Other)
 	{
-		MX = Other.X();
-		MR = Other.R();
+		MX = Other->GetP();
+		MR = Other->GetQ();
 		
 		bHasValidData = true;
 	}
 
 	CHAOSVDRUNTIME_API bool Serialize(FArchive& Ar);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Velocities")
-	FVector MX;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Velocities")
+	FVector MX = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Velocities")
-	FQuat MR;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Velocities")
+	FQuat MR = FQuat(ForceInit);
 };
 
 inline FArchive& operator<<(FArchive& Ar, FChaosVDParticlePositionRotation& Data)
@@ -161,7 +164,7 @@ struct TStructOpsTypeTraits<FChaosVDParticlePositionRotation> : public TStructOp
  * Used to be able to show the values in the editor and allow changes via the Property Editor.
  */
 USTRUCT()
-struct FChaosVDParticleVelocities : public FChaosVDParticleDataBase
+struct FChaosVDParticleVelocities : public FChaosVDWrapperDataBase
 {
 	GENERATED_BODY()
 
@@ -174,16 +177,16 @@ struct FChaosVDParticleVelocities : public FChaosVDParticleDataBase
 	template <typename TOther>
 	void CopyFrom(const TOther& Other)
 	{
-		MV = Other.V();
-		MW = Other.W();
+		MV = Other.GetV();
+		MW = Other.GetW();
 		bHasValidData = true;
 	}
 	
-	UPROPERTY(EditAnywhere, Category= "Particle Velocities")
-	FVector MV;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Velocities")
+	FVector MV = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Velocities")
-	FVector MW;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Velocities")
+	FVector MW = FVector(ForceInit);
 };
 
 inline FArchive& operator<<(FArchive& Ar, FChaosVDParticleVelocities& Data)
@@ -205,7 +208,7 @@ struct TStructOpsTypeTraits<FChaosVDParticleVelocities> : public TStructOpsTypeT
  * Used to be able to show the values in the editor and allow changes via the Property Editor.
  */
 USTRUCT()
-struct FChaosVDParticleDynamics : public FChaosVDParticleDataBase
+struct FChaosVDParticleDynamics : public FChaosVDWrapperDataBase
 {
 	GENERATED_BODY()
 	
@@ -226,17 +229,17 @@ struct FChaosVDParticleDynamics : public FChaosVDParticleDataBase
 		bHasValidData = true;
 	}
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamics")
-	FVector MAcceleration;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamics")
+	FVector MAcceleration = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamics")
-	FVector MAngularAcceleration;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamics")
+	FVector MAngularAcceleration = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamics")
-	FVector MLinearImpulseVelocity;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamics")
+	FVector MLinearImpulseVelocity = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamics")
-	FVector MAngularImpulseVelocity;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamics")
+	FVector MAngularImpulseVelocity = FVector(ForceInit);
 };
 
 inline FArchive& operator<<(FArchive& Ar, FChaosVDParticleDynamics& Data)
@@ -259,7 +262,7 @@ struct TStructOpsTypeTraits<FChaosVDParticleDynamics> : public TStructOpsTypeTra
  * Used to be able to show the values in the editor and allow changes via the Property Editor.
  */
 USTRUCT()
-struct FChaosVDParticleMassProps : public FChaosVDParticleDataBase
+struct FChaosVDParticleMassProps : public FChaosVDWrapperDataBase
 {
 	GENERATED_BODY()
 
@@ -282,23 +285,23 @@ struct FChaosVDParticleMassProps : public FChaosVDParticleDataBase
 		bHasValidData = true;
 	}
 	
-	UPROPERTY(EditAnywhere, Category= "Particle Mass Props")
-	FVector MCenterOfMass;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Mass Props")
+	FVector MCenterOfMass = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Mass Props")
-	FQuat MRotationOfMass;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Mass Props")
+	FQuat MRotationOfMass = FQuat(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Mass Props")
-	FVector MI;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Mass Props")
+	FVector MI = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Mass Props")
-	FVector MInvI;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Mass Props")
+	FVector MInvI = FVector(ForceInit);
 
-	UPROPERTY(EditAnywhere, Category= "Particle Mass Props")
-	double MM;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Mass Props")
+	double MM = 0.0;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Mass Props")
-	double MInvM;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Mass Props")
+	double MInvM = 0.0;
 };
 
 inline FArchive& operator<<(FArchive& Ar, FChaosVDParticleMassProps& Data)
@@ -320,11 +323,11 @@ struct TStructOpsTypeTraits<FChaosVDParticleMassProps> : public TStructOpsTypeTr
  * Used to be able to show the values in the editor and allow changes via the Property Editor.
  */
 USTRUCT()
-struct FChaosVDParticleDynamicMisc : public FChaosVDParticleDataBase
+struct FChaosVDParticleDynamicMisc : public FChaosVDWrapperDataBase
 {
 	GENERATED_BODY()
 
-	FChaosVDParticleDynamicMisc(): MAngularEtherDrag(0), MMaxLinearSpeedSq(0), MMaxAngularSpeedSq(0),
+	FChaosVDParticleDynamicMisc(): MAngularEtherDrag(0), MMaxLinearSpeedSq(0), MMaxAngularSpeedSq(0), MInitialOverlapDepenetrationVelocity(0), MSleepThresholdMultiplier(1),
 	                               MCollisionGroup(0), MObjectState(), MSleepType(), bDisabled(false)
 	{
 	}
@@ -338,6 +341,8 @@ struct FChaosVDParticleDynamicMisc : public FChaosVDParticleDataBase
 		MAngularEtherDrag = Other.AngularEtherDrag();
 		MMaxLinearSpeedSq = Other.MaxLinearSpeedSq();
 		MMaxAngularSpeedSq = Other.MaxAngularSpeedSq();
+		MInitialOverlapDepenetrationVelocity = Other.InitialOverlapDepenetrationVelocity();
+		MSleepThresholdMultiplier = Other.SleepThresholdMultiplier();
 		MObjectState = static_cast<EChaosVDObjectStateType>(Other.ObjectState());
 		MCollisionGroup = Other.CollisionGroup();
 		MSleepType =  static_cast<EChaosVDSleepType>(Other.SleepType());
@@ -350,31 +355,37 @@ struct FChaosVDParticleDynamicMisc : public FChaosVDParticleDataBase
 		bHasValidData = true;
 	}
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	double MAngularEtherDrag;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	double MMaxLinearSpeedSq;
 	
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	double MMaxAngularSpeedSq;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category = "Particle Dynamic Misc")
+	float MInitialOverlapDepenetrationVelocity;
+
+	UPROPERTY(VisibleAnywhere, Category = "Particle Dynamic Misc")
+	float MSleepThresholdMultiplier;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	int32 MCollisionGroup;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	EChaosVDObjectStateType MObjectState;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	EChaosVDSleepType MSleepType;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	uint32 MCollisionConstraintFlag = 0;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	FChaosVDFRigidParticleControlFlags MControlFlags;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Dynamic Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Dynamic Misc")
 	bool bDisabled;
 };
 
@@ -393,11 +404,147 @@ struct TStructOpsTypeTraits<FChaosVDParticleDynamicMisc> : public TStructOpsType
 	};
 };
 
-/** Simplified UStruct version of FChaosVDParticleDataWrapper.
+/** Represents the data of a connectivity Edge that CVD can use to reconstruct it during playback */
+USTRUCT()
+struct FChaosVDConnectivityEdge
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, Category=ConnectivityEdge)
+	int32 SiblingParticleID = INDEX_NONE;
+
+	UPROPERTY(VisibleAnywhere, Category=ConnectivityEdge)
+	float Strain = 0.0f;
+
+	CHAOSVDRUNTIME_API bool Serialize(FArchive& Ar)
+	{
+		Ar << SiblingParticleID;
+		Ar << Strain;
+
+		return true;
+	}
+};
+
+inline FArchive& operator<<(FArchive& Ar, FChaosVDConnectivityEdge& Data)
+{
+	Data.Serialize(Ar);
+	return Ar;
+}
+
+template<>
+struct TStructOpsTypeTraits<FChaosVDConnectivityEdge> : public TStructOpsTypeTraitsBase2<FChaosVDConnectivityEdge>
+{
+	enum
+	{
+		WithSerializer = true,
+	};
+};
+
+/** Structure contained data from a Clustered Particle.
  * Used to be able to show the values in the editor and allow changes via the Property Editor.
  */
 USTRUCT()
-struct FChaosVDParticleDataWrapper : public FChaosVDParticleDataBase
+struct FChaosVDParticleCluster : public FChaosVDWrapperDataBase
+{
+	GENERATED_BODY()
+
+	FChaosVDParticleCluster()
+	{
+	}
+
+	CHAOSVDRUNTIME_API bool Serialize(FArchive& Ar);
+
+	template <typename TOther>
+	void CopyFrom(const TOther& Other)
+	{
+		ParentParticleID = Other.ClusterIds().Id ? Other.ClusterIds().Id->UniqueIdx().Idx : INDEX_NONE;
+
+		NumChildren = Other.ClusterIds().NumChildren;
+
+		ChildToParent = Other.ChildToParent();
+		ClusterGroupIndex = Other.ClusterGroupIndex();
+		bInternalCluster = Other.InternalCluster();
+		CollisionImpulse = Other.CollisionImpulses();
+		ExternalStrains = Other.GetExternalStrain();
+		InternalStrains = Other.GetInternalStrains();
+		Strain = Other.Strain();
+
+
+		ConnectivityEdges.Reserve(Other.ConnectivityEdges().Num());
+		for (auto& Edge : Other.ConnectivityEdges())
+		{
+			int32 SiblingId = Edge.Sibling ? Edge.Sibling->UniqueIdx().Idx : INDEX_NONE;
+			ConnectivityEdges.Add( { SiblingId,  Edge.Strain });
+		}
+
+		bIsAnchored = Other.IsAnchored();
+		bUnbreakable = Other.Unbreakable();
+		bIsChildToParentLocked = Other.IsChildToParentLocked();
+		
+		bHasValidData = true;
+	}
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	int32 ParentParticleID = INDEX_NONE;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster | Cluster Id")
+	int32 NumChildren = INDEX_NONE;
+	
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	FTransform ChildToParent;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	int32 ClusterGroupIndex = INDEX_NONE;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	bool bInternalCluster = false;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	float CollisionImpulse = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	float ExternalStrains = 0.0f;
+	
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	float InternalStrains = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	float Strain = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	TArray<FChaosVDConnectivityEdge> ConnectivityEdges;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	bool bIsAnchored = false;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	bool bUnbreakable = false;
+
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster")
+	bool bIsChildToParentLocked = false;
+};
+
+inline FArchive& operator<<(FArchive& Ar, FChaosVDParticleCluster& Data)
+{
+	Data.Serialize(Ar);
+	return Ar;
+}
+
+template<>
+struct TStructOpsTypeTraits<FChaosVDParticleCluster> : public TStructOpsTypeTraitsBase2<FChaosVDParticleCluster>
+{
+	enum
+	{
+		WithSerializer = true,
+	};
+};
+
+
+/** Simplified UStruct version of FChaosVDParticleDataWrapper.
+ * Used to be able to show the values in the editor and allow changes via the Property Editor.
+ */
+USTRUCT(DisplayName="Particle Data")
+struct FChaosVDParticleDataWrapper : public FChaosVDWrapperDataBase
 {
 	virtual ~FChaosVDParticleDataWrapper() override = default;
 
@@ -409,7 +556,7 @@ struct FChaosVDParticleDataWrapper : public FChaosVDParticleDataBase
 	{
 	}
 
-	UPROPERTY(EditAnywhere, Category= "Particle Non Frequent Data")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Non Frequent Data")
 	uint32 GeometryHash = 0;
 
 	UPROPERTY(VisibleAnywhere, Category= "Particle Non Frequent Data")
@@ -421,37 +568,35 @@ struct FChaosVDParticleDataWrapper : public FChaosVDParticleDataBase
 	UPROPERTY(VisibleAnywhere, Category= "Particle Non Frequent Data")
 	int32 SolverID = INDEX_NONE;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Non Frequent Data")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Non Frequent Data")
 	EChaosVDParticleType Type = EChaosVDParticleType::Unknown;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Position Rotation")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Position Rotation")
 	FChaosVDParticlePositionRotation ParticlePositionRotation;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Particle Velocities")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Particle Velocities")
 	FChaosVDParticleVelocities ParticleVelocities;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Particle Dynamics")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Particle Dynamics")
 	FChaosVDParticleDynamics ParticleDynamics;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Particle Dynamics Misc")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Particle Dynamics Misc")
 	FChaosVDParticleDynamicMisc ParticleDynamicsMisc;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Particle Mass Props")
+	UPROPERTY(VisibleAnywhere, Category= "Particle Particle Mass Props")
 	FChaosVDParticleMassProps ParticleMassProps;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Collision")
-	TArray<FChaosVDParticlePairMidPhase> ParticleMidPhases;
+	UPROPERTY(VisibleAnywhere, Category= "Particle Cluster Data")
+	FChaosVDParticleCluster ParticleCluster;
 
-	UPROPERTY(EditAnywhere, Category= "Particle Collision")
-	TArray<FChaosVDConstraint> ParticleConstraints;
-	
+	UPROPERTY()
+	TArray<FChaosVDShapeCollisionData> CollisionDataPerShape;
+
 	/** Only used during recording */
-	TSharedPtr<FString> DebugNamePtr;
+	FString* DebugNamePtr = nullptr;
 	bool bHasDebugName = false;
 
 	virtual bool HasValidData() const override { return bHasValidData; }
-
-	void SetHasValidData(bool bNewIsValid){ bHasValidData = bNewIsValid; }
 
 	CHAOSVDRUNTIME_API bool Serialize(FArchive& Ar);
 };

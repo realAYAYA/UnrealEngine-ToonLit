@@ -26,5 +26,5 @@ public:
 	virtual void Unlock() final override;
 
 private:
-	FMetalBuffer ShadowBuffer;
+	FMetalBufferPtr ShadowBuffer = nullptr;
 };

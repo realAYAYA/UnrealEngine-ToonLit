@@ -60,6 +60,22 @@ public:
 		return UVs.Num() > 0 || Normals.Num() > 0;
 	}
 
+	// Reset UV and normal-related on a generator, leaving vertices and triangles alone
+	// @param bResetPolygonIDs Whether to also reset polygon IDs
+	void ResetAttributes(bool bResetPolygonIDs = false)
+	{
+		UVs.Reset();
+		UVParentVertex.Reset();
+		Normals.Reset();
+		NormalParentVertex.Reset();
+		TriangleUVs.Reset();
+		TriangleNormals.Reset();
+		if (bResetPolygonIDs)
+		{
+			TrianglePolygonIDs.Reset();
+		}
+	}
+
 	/** clear arrays so that Generate() can be run again */
 	void Reset()
 	{

@@ -4,8 +4,8 @@
 #include "CoreMinimal.h"
 #include "Containers/SparseArray.h"
 #include "Containers/ArrayView.h"
-#include "Containers/BinaryHeap.h"
 #include "Containers/Array.h"
+#include "Tasks/Task.h"
 
 #include "VirtualShadowMaps/VirtualShadowMapArray.h"
 
@@ -16,6 +16,10 @@ class FRDGBuilder;
 class FVirtualShadowMapPerLightCacheEntry;
 struct FNaniteVisibilityQuery;
 class FShadowScene;
+namespace UE::Renderer::Private
+{
+	class IShadowInvalidatingInstances;
+}
 
 /**
  * Transient scope for per-frame rendering resources for the shadow rendering.
@@ -29,6 +33,11 @@ public:
 	 * Multiply PackedView.LODScale by return value when rendering Nanite shadows.
 	 */
 	static float ComputeNaniteShadowsLODScaleFactor();
+
+	/**
+	 * Call at the start of the frame to kick off work that can be done early.
+	 */
+	void BeginRender(FRDGBuilder& GraphBuilder);
 
 	/**
 	 * Add a cube/spot light for processing this frame.
@@ -80,19 +89,24 @@ public:
 	// One pass projection stuff. Set up in RenderVitualShadowMapProjectionMaskBits
 	FRDGTextureRef VirtualShadowMapMaskBits = nullptr;
 	FRDGTextureRef VirtualShadowMapMaskBitsHairStrands = nullptr;
+	FRDGBufferRef HairTransmittanceMaskBits = nullptr;
 
 	bool UsePackedShadowMaskBits() const
 	{
 		return VirtualShadowMapMaskBits != nullptr;
 	}
+	
+	UE::Tasks::FTask GetRendererSetupTask() const
+	{
+		return RendererSetupTask;
+	}
+
+	UE::Renderer::Private::IShadowInvalidatingInstances *GetInvalidatingInstancesInterface(const FSceneView *SceneView);
 
 private:
-	FVirtualShadowMapProjectionShaderData GetLocalLightProjectionShaderData(float ResolutionLODBiasLocal, const FProjectedShadowInfo* ProjectedShadowInfo, int32 MapIndex) const;
+	UE::Tasks::FTask RendererSetupTask;
 
-	/**
-	 * Select the budgeted set of distant lights to update this frame.
-	 */
-	void UpdateDistantLightPriorityRender();
+	FVirtualShadowMapProjectionShaderData GetLocalLightProjectionShaderData(float ResolutionLODBiasLocal, const FProjectedShadowInfo* ProjectedShadowInfo, int32 MapIndex) const;
 
 	struct FLocalLightShadowFrameSetup
 	{
@@ -111,9 +125,6 @@ private:
 		FProjectedShadowInfo* ProjectedShadowInfo = nullptr;
 	};
 	TArray<FDirectionalLightShadowFrameSetup, SceneRenderingAllocator> DirectionalLights;
-
-	// Priority queue of distant lights to update.
-	FBinaryHeap<int32, uint32> DistantLightUpdateQueue;
 
 	// One pass projection stuff. Set up in RenderVitualShadowMapProjectionMaskBits
 	bool bShouldUseVirtualShadowMapOnePassProjection = false;

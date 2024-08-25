@@ -51,6 +51,11 @@ void FLevelInstanceActorImpl::UnregisterLevelInstance()
 
 		LevelInstance->UnloadLevelInstance();
 
+#if WITH_EDITOR
+		// Make sure our Component doesn't keep a pointer to the Editor Actor once unloaded
+		LevelInstance->GetLevelInstanceComponent()->CachedEditorInstanceActorPtr.Reset();
+#endif
+
 		// To avoid processing PostUnregisterAllComponents multiple times (BP Recompile is one use case)
 		LevelInstanceID = FLevelInstanceID();
 	}
@@ -101,6 +106,16 @@ void FLevelInstanceActorImpl::OnLevelInstanceLoaded()
 }
 
 #if WITH_EDITOR
+bool FLevelInstanceActorImpl::ResolveSubobject(const TCHAR* SubObjectPath, UObject*& OutObject, bool bLoadIfExists)
+{
+	if (ULevel* Level = LevelInstance->GetLoadedLevel())
+	{
+		return Level->ResolveSubobject(SubObjectPath, OutObject, bLoadIfExists);
+	}
+
+	return false;
+}
+
 bool FLevelInstanceActorImpl::SupportsPartialEditorLoading() const
 {
 	return bAllowPartialLoading;
@@ -188,21 +203,6 @@ void FLevelInstanceActorImpl::PostEditImport(TFunctionRef<void()> SuperCall)
 		SuperCall();
 	}
 	LevelInstance->UpdateLevelInstanceFromWorldAsset();
-}
-
-bool FLevelInstanceActorImpl::CanEditChange(const FProperty* Property) const
-{
-	if (LevelInstance->IsEditing())
-	{
-		return false;
-	}
-
-	if (LevelInstance->HasDirtyChildren())
-	{
-		return false;
-	}
-
-	return true;
 }
 
 void FLevelInstanceActorImpl::PreEditChange(FProperty* Property, bool bWorldAssetChange, TFunctionRef<void(FProperty*)> SuperCall)
@@ -307,9 +307,55 @@ void FLevelInstanceActorImpl::EditorGetUnderlyingActors(TSet<AActor*>& OutUnderl
 	}
 }
 
+bool FLevelInstanceActorImpl::IsLockedActor() const
+{
+	AActor* LevelInstanceActor = CastChecked<AActor>(LevelInstance);
+	if (LevelInstanceActor->IsInLevelInstance() && !LevelInstanceActor->IsInEditLevelInstance())
+	{
+		return true;
+	}
+
+	if (LevelInstance->IsEditing())
+	{
+		return true;
+	}
+
+	if (LevelInstance->HasChildEdit())
+	{
+		return true;
+	}
+
+	return false;
+}
+
+bool FLevelInstanceActorImpl::ShouldExport() const
+{
+	return true;
+}
+
+bool FLevelInstanceActorImpl::IsUserManaged() const
+{
+	return !IsLockedActor();
+}
+
 bool FLevelInstanceActorImpl::IsLockLocation() const
 {
-	return LevelInstance->IsEditing() || LevelInstance->HasChildEdit();
+	return IsLockedActor();
+}
+
+bool FLevelInstanceActorImpl::IsActorLabelEditable() const
+{
+	return !IsLockedActor();
+}
+
+bool FLevelInstanceActorImpl::CanEditChange(const FProperty* Property) const
+{
+	return !IsLockedActor();
+}
+
+bool FLevelInstanceActorImpl::CanEditChangeComponent(const UActorComponent* Component, const FProperty* InProperty) const
+{
+	return !IsLockedActor();
 }
 
 bool FLevelInstanceActorImpl::GetBounds(FBox& OutBounds) const

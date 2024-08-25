@@ -77,12 +77,12 @@ namespace Chaos
 				// single particles
 				{
 					SCOPE_CYCLE_COUNTER(STAT_ProcessSingleProxy);
-					for(const FChaosRigidInterpolationData& RigidInterp : Results.RigidInterpolations)
+					for (const FChaosRigidInterpolationData& RigidInterp : Results.RigidInterpolations)
 					{
-						if(FSingleParticlePhysicsProxy* Proxy = RigidInterp.Prev.GetProxy())
+						if (FSingleParticlePhysicsProxy* Proxy = RigidInterp.Prev.GetProxy())
 						{
 							const FDirtyRigidParticleReplicationErrorData* ErrorData = LatestData->DirtyRigidErrors.Find(Proxy);
-							if(Proxy->PullFromPhysicsState(RigidInterp.Prev, SolverTimestamp, &RigidInterp.Next, &Results.Alpha, ErrorData, GetAsyncDeltaTime()))
+							if (Proxy->PullFromPhysicsState(RigidInterp.Prev, SolverTimestamp, &RigidInterp.Next, &Results.Alpha, ErrorData, GetAsyncDeltaTime()))
 							{
 								Private::TPullPhysicsStateDispatchHelper<TDispatcher>::Apply(Dispatcher, Proxy);
 							}
@@ -94,14 +94,16 @@ namespace Chaos
 				// geometry collections
 				{
 					SCOPE_CYCLE_COUNTER(STAT_ProcessGCProxy);
-					for(const FChaosGeometryCollectionInterpolationData& GCInterp : Results.GeometryCollectionInterpolations)
+					for (const FChaosGeometryCollectionInterpolationData& GCInterp : Results.GeometryCollectionInterpolations)
 					{
-						if(FGeometryCollectionPhysicsProxy* Proxy = GCInterp.Prev.GetProxy())
+						if (FGeometryCollectionPhysicsProxy* Proxy = GCInterp.Prev.GetProxy())
 						{
-							if(Proxy->PullFromPhysicsState(GCInterp.Prev, SolverTimestamp, &GCInterp.Next, &Results.Alpha))
+							const FDirtyRigidParticleReplicationErrorData* ErrorData = LatestData->DirtyRigidErrors.Find(Proxy);
+							if (Proxy->PullFromPhysicsState(GCInterp.Prev, SolverTimestamp, &GCInterp.Next, &Results.Alpha, ErrorData, GetAsyncDeltaTime()))
 							{
 								Private::TPullPhysicsStateDispatchHelper<TDispatcher>::Apply(Dispatcher, Proxy);
 							}
+							LatestData->DirtyRigidErrors.Remove(Proxy);
 						}
 					}
 				}
@@ -113,10 +115,12 @@ namespace Chaos
 					{
 						if(FClusterUnionPhysicsProxy* Proxy = ClusterInterp.Prev.GetProxy())
 						{
-							if(Proxy->PullFromPhysicsState(ClusterInterp.Prev, SolverTimestamp, &ClusterInterp.Next, &Results.Alpha))
+							const FDirtyRigidParticleReplicationErrorData* ErrorData = LatestData->DirtyRigidErrors.Find(Proxy);
+							if (Proxy->PullFromPhysicsState(ClusterInterp.Prev, SolverTimestamp, &ClusterInterp.Next, &Results.Alpha, ErrorData, GetAsyncDeltaTime()))
 							{
 								Private::TPullPhysicsStateDispatchHelper<TDispatcher>::Apply(Dispatcher, Proxy);
 							}
+							LatestData->DirtyRigidErrors.Remove(Proxy);
 						}
 					}
 				}

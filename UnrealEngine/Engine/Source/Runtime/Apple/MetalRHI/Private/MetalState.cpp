@@ -8,6 +8,8 @@
 #include "MetalProfiler.h"
 #include "RHIUtilities.h"
 
+#include "MetalBindlessDescriptors.h"
+
 static uint32 GetMetalMaxAnisotropy(ESamplerFilter Filter, uint32 MaxAniso)
 {
 	switch (Filter)
@@ -18,155 +20,155 @@ static uint32 GetMetalMaxAnisotropy(ESamplerFilter Filter, uint32 MaxAniso)
 	}
 }
 
-static mtlpp::SamplerMinMagFilter TranslateZFilterMode(ESamplerFilter Filter)
+static MTL::SamplerMinMagFilter TranslateZFilterMode(ESamplerFilter Filter)
 {	switch (Filter)
 	{
-		case SF_Point:				return mtlpp::SamplerMinMagFilter::Nearest;
-		case SF_AnisotropicPoint:	return mtlpp::SamplerMinMagFilter::Nearest;
-		case SF_AnisotropicLinear:	return mtlpp::SamplerMinMagFilter::Linear;
-		default:					return mtlpp::SamplerMinMagFilter::Linear;
+		case SF_Point:				return MTL::SamplerMinMagFilterNearest;
+		case SF_AnisotropicPoint:	return MTL::SamplerMinMagFilterNearest;
+		case SF_AnisotropicLinear:	return MTL::SamplerMinMagFilterLinear;
+		default:					return MTL::SamplerMinMagFilterLinear;
 	}
 }
 
-static mtlpp::SamplerAddressMode TranslateWrapMode(ESamplerAddressMode AddressMode)
+static MTL::SamplerAddressMode TranslateWrapMode(ESamplerAddressMode AddressMode)
 {
 	switch (AddressMode)
 	{
-		case AM_Clamp:	return mtlpp::SamplerAddressMode::ClampToEdge;
-		case AM_Mirror: return mtlpp::SamplerAddressMode::MirrorRepeat;
+		case AM_Clamp:	return MTL::SamplerAddressModeClampToEdge;
+		case AM_Mirror: return MTL::SamplerAddressModeMirrorRepeat;
 #if PLATFORM_MAC
-		case AM_Border: return mtlpp::SamplerAddressMode::ClampToBorderColor;
+		case AM_Border: return MTL::SamplerAddressModeClampToBorderColor;
 #else
-		case AM_Border: return mtlpp::SamplerAddressMode::ClampToEdge;
+		case AM_Border: return MTL::SamplerAddressModeClampToEdge;
 #endif
-		default:		return mtlpp::SamplerAddressMode::Repeat;
+		default:		return MTL::SamplerAddressModeRepeat;
 	}
 }
 
-static mtlpp::CompareFunction TranslateCompareFunction(ECompareFunction CompareFunction)
+static MTL::CompareFunction TranslateCompareFunction(ECompareFunction CompareFunction)
 {
 	switch(CompareFunction)
 	{
-		case CF_Less:			return mtlpp::CompareFunction::Less;
-		case CF_LessEqual:		return mtlpp::CompareFunction::LessEqual;
-		case CF_Greater:		return mtlpp::CompareFunction::Greater;
-		case CF_GreaterEqual:	return mtlpp::CompareFunction::GreaterEqual;
-		case CF_Equal:			return mtlpp::CompareFunction::Equal;
-		case CF_NotEqual:		return mtlpp::CompareFunction::NotEqual;
-		case CF_Never:			return mtlpp::CompareFunction::Never;
-		default:				return mtlpp::CompareFunction::Always;
+		case CF_Less:			return MTL::CompareFunctionLess;
+		case CF_LessEqual:		return MTL::CompareFunctionLessEqual;
+		case CF_Greater:		return MTL::CompareFunctionGreater;
+		case CF_GreaterEqual:	return MTL::CompareFunctionGreaterEqual;
+		case CF_Equal:			return MTL::CompareFunctionEqual;
+		case CF_NotEqual:		return MTL::CompareFunctionNotEqual;
+		case CF_Never:			return MTL::CompareFunctionNever;
+		default:				return MTL::CompareFunctionAlways;
 	};
 }
 
-static mtlpp::CompareFunction TranslateSamplerCompareFunction(ESamplerCompareFunction SamplerComparisonFunction)
+static MTL::CompareFunction TranslateSamplerCompareFunction(ESamplerCompareFunction SamplerComparisonFunction)
 {
 	switch(SamplerComparisonFunction)
 	{
-		case SCF_Less:		return mtlpp::CompareFunction::Less;
-		case SCF_Never:		return mtlpp::CompareFunction::Never;
-		default:			return mtlpp::CompareFunction::Never;
+		case SCF_Less:		return MTL::CompareFunctionLess;
+		case SCF_Never:		return MTL::CompareFunctionNever;
+		default:			return MTL::CompareFunctionNever;
 	};
 }
 
-static mtlpp::StencilOperation TranslateStencilOp(EStencilOp StencilOp)
+static MTL::StencilOperation TranslateStencilOp(EStencilOp StencilOp)
 {
 	switch(StencilOp)
 	{
-		case SO_Zero:				return mtlpp::StencilOperation::Zero;
-		case SO_Replace:			return mtlpp::StencilOperation::Replace;
-		case SO_SaturatedIncrement:	return mtlpp::StencilOperation::IncrementClamp;
-		case SO_SaturatedDecrement:	return mtlpp::StencilOperation::DecrementClamp;
-		case SO_Invert:				return mtlpp::StencilOperation::Invert;
-		case SO_Increment:			return mtlpp::StencilOperation::IncrementWrap;
-		case SO_Decrement:			return mtlpp::StencilOperation::DecrementWrap;
-		default:					return mtlpp::StencilOperation::Keep;
+		case SO_Zero:				return MTL::StencilOperationZero;
+		case SO_Replace:			return MTL::StencilOperationReplace;
+		case SO_SaturatedIncrement:	return MTL::StencilOperationIncrementClamp;
+		case SO_SaturatedDecrement:	return MTL::StencilOperationDecrementClamp;
+		case SO_Invert:				return MTL::StencilOperationInvert;
+		case SO_Increment:			return MTL::StencilOperationIncrementWrap;
+		case SO_Decrement:			return MTL::StencilOperationDecrementWrap;
+		default:					return MTL::StencilOperationKeep;
 	};
 }
 
-static mtlpp::BlendOperation TranslateBlendOp(EBlendOperation BlendOp)
+static MTL::BlendOperation TranslateBlendOp(EBlendOperation BlendOp)
 {
 	switch(BlendOp)
 	{
-		case BO_Subtract:	return mtlpp::BlendOperation::Subtract;
-		case BO_Min:		return mtlpp::BlendOperation::Min;
-		case BO_Max:		return mtlpp::BlendOperation::Max;
-		default:			return mtlpp::BlendOperation::Add;
+		case BO_Subtract:	return MTL::BlendOperationSubtract;
+		case BO_Min:		return MTL::BlendOperationMin;
+		case BO_Max:		return MTL::BlendOperationMax;
+		default:			return MTL::BlendOperationAdd;
 	};
 }
 
 
-static mtlpp::BlendFactor TranslateBlendFactor(EBlendFactor BlendFactor)
+static MTL::BlendFactor TranslateBlendFactor(EBlendFactor BlendFactor)
 {
 	switch(BlendFactor)
 	{
-		case BF_One:					return mtlpp::BlendFactor::One;
-		case BF_SourceColor:			return mtlpp::BlendFactor::SourceColor;
-		case BF_InverseSourceColor:		return mtlpp::BlendFactor::OneMinusSourceColor;
-		case BF_SourceAlpha:			return mtlpp::BlendFactor::SourceAlpha;
-		case BF_InverseSourceAlpha:		return mtlpp::BlendFactor::OneMinusSourceAlpha;
-		case BF_DestAlpha:				return mtlpp::BlendFactor::DestinationAlpha;
-		case BF_InverseDestAlpha:		return mtlpp::BlendFactor::OneMinusDestinationAlpha;
-		case BF_DestColor:				return mtlpp::BlendFactor::DestinationColor;
-		case BF_InverseDestColor:		return mtlpp::BlendFactor::OneMinusDestinationColor;
-		case BF_Source1Color:			return mtlpp::BlendFactor::Source1Color;
-		case BF_InverseSource1Color:	return mtlpp::BlendFactor::OneMinusSource1Color;
-		case BF_Source1Alpha:			return mtlpp::BlendFactor::Source1Alpha;
-		case BF_InverseSource1Alpha:	return mtlpp::BlendFactor::OneMinusSource1Alpha;
-		default:						return mtlpp::BlendFactor::Zero;
+		case BF_One:					return MTL::BlendFactorOne;
+		case BF_SourceColor:			return MTL::BlendFactorSourceColor;
+		case BF_InverseSourceColor:		return MTL::BlendFactorOneMinusSourceColor;
+		case BF_SourceAlpha:			return MTL::BlendFactorSourceAlpha;
+		case BF_InverseSourceAlpha:		return MTL::BlendFactorOneMinusSourceAlpha;
+		case BF_DestAlpha:				return MTL::BlendFactorDestinationAlpha;
+		case BF_InverseDestAlpha:		return MTL::BlendFactorOneMinusDestinationAlpha;
+		case BF_DestColor:				return MTL::BlendFactorDestinationColor;
+		case BF_InverseDestColor:		return MTL::BlendFactorOneMinusDestinationColor;
+		case BF_Source1Color:			return MTL::BlendFactorSource1Color;
+		case BF_InverseSource1Color:	return MTL::BlendFactorOneMinusSource1Color;
+		case BF_Source1Alpha:			return MTL::BlendFactorSource1Alpha;
+		case BF_InverseSource1Alpha:	return MTL::BlendFactorOneMinusSource1Alpha;
+		default:						return MTL::BlendFactorZero;
 	};
 }
 
-static mtlpp::ColorWriteMask TranslateWriteMask(EColorWriteMask WriteMask)
+static MTL::ColorWriteMask TranslateWriteMask(EColorWriteMask WriteMask)
 {
 	uint32 Result = 0;
-	Result |= (WriteMask & CW_RED) ? (mtlpp::ColorWriteMask::Red) : 0;
-	Result |= (WriteMask & CW_GREEN) ? (mtlpp::ColorWriteMask::Green) : 0;
-	Result |= (WriteMask & CW_BLUE) ? (mtlpp::ColorWriteMask::Blue) : 0;
-	Result |= (WriteMask & CW_ALPHA) ? (mtlpp::ColorWriteMask::Alpha) : 0;
+	Result |= (WriteMask & CW_RED) ? (MTL::ColorWriteMaskRed) : 0;
+	Result |= (WriteMask & CW_GREEN) ? (MTL::ColorWriteMaskGreen) : 0;
+	Result |= (WriteMask & CW_BLUE) ? (MTL::ColorWriteMaskBlue) : 0;
+	Result |= (WriteMask & CW_ALPHA) ? (MTL::ColorWriteMaskAlpha) : 0;
 	
-	return (mtlpp::ColorWriteMask)Result;
+	return (MTL::ColorWriteMask)Result;
 }
 
-static EBlendOperation TranslateBlendOp(MTLBlendOperation BlendOp)
+static EBlendOperation TranslateBlendOp(MTL::BlendOperation BlendOp)
 {
 	switch(BlendOp)
 	{
-		case MTLBlendOperationSubtract:		return BO_Subtract;
-		case MTLBlendOperationMin:			return BO_Min;
-		case MTLBlendOperationMax:			return BO_Max;
-		case MTLBlendOperationAdd: default:	return BO_Add;
+        case MTL::BlendOperationSubtract:		return BO_Subtract;
+        case MTL::BlendOperationMin:			return BO_Min;
+        case MTL::BlendOperationMax:			return BO_Max;
+        case MTL::BlendOperationAdd: default:	return BO_Add;
 	};
 }
 
 
-static EBlendFactor TranslateBlendFactor(MTLBlendFactor BlendFactor)
+static EBlendFactor TranslateBlendFactor(MTL::BlendFactor BlendFactor)
 {
 	switch(BlendFactor)
 	{
-		case MTLBlendFactorOne:							return BF_One;
-		case MTLBlendFactorSourceColor:					return BF_SourceColor;
-		case MTLBlendFactorOneMinusSourceColor:			return BF_InverseSourceColor;
-		case MTLBlendFactorSourceAlpha:					return BF_SourceAlpha;
-		case MTLBlendFactorOneMinusSourceAlpha:			return BF_InverseSourceAlpha;
-		case MTLBlendFactorDestinationAlpha:			return BF_DestAlpha;
-		case MTLBlendFactorOneMinusDestinationAlpha:	return BF_InverseDestAlpha;
-		case MTLBlendFactorDestinationColor:			return BF_DestColor;
-		case MTLBlendFactorOneMinusDestinationColor:	return BF_InverseDestColor;
-		case MTLBlendFactorSource1Color:				return BF_Source1Color;
-		case MTLBlendFactorOneMinusSource1Color:		return BF_InverseSource1Color;
-		case MTLBlendFactorSource1Alpha:				return BF_Source1Alpha;
-		case MTLBlendFactorOneMinusSource1Alpha:		return BF_InverseSource1Alpha;
-		case MTLBlendFactorZero: default:				return BF_Zero;
+        case MTL::BlendFactorOne:						return BF_One;
+        case MTL::BlendFactorSourceColor:				return BF_SourceColor;
+        case MTL::BlendFactorOneMinusSourceColor:		return BF_InverseSourceColor;
+        case MTL::BlendFactorSourceAlpha:				return BF_SourceAlpha;
+        case MTL::BlendFactorOneMinusSourceAlpha:		return BF_InverseSourceAlpha;
+        case MTL::BlendFactorDestinationAlpha:			return BF_DestAlpha;
+        case MTL::BlendFactorOneMinusDestinationAlpha:	return BF_InverseDestAlpha;
+        case MTL::BlendFactorDestinationColor:			return BF_DestColor;
+        case MTL::BlendFactorOneMinusDestinationColor:	return BF_InverseDestColor;
+        case MTL::BlendFactorSource1Color:				return BF_Source1Color;
+        case MTL::BlendFactorOneMinusSource1Color:		return BF_InverseSource1Color;
+        case MTL::BlendFactorSource1Alpha:				return BF_Source1Alpha;
+        case MTL::BlendFactorOneMinusSource1Alpha:		return BF_InverseSource1Alpha;
+        case MTL::BlendFactorZero: default:				return BF_Zero;
 	};
 }
 
-static EColorWriteMask TranslateWriteMask(MTLColorWriteMask WriteMask)
+static EColorWriteMask TranslateWriteMask(MTL::ColorWriteMask WriteMask)
 {
 	uint32 Result = 0;
-	Result |= (WriteMask & MTLColorWriteMaskRed) ? (CW_RED) : 0;
-	Result |= (WriteMask & MTLColorWriteMaskGreen) ? (CW_GREEN) : 0;
-	Result |= (WriteMask & MTLColorWriteMaskBlue) ? (CW_BLUE) : 0;
-	Result |= (WriteMask & MTLColorWriteMaskAlpha) ? (CW_ALPHA) : 0;
+	Result |= (WriteMask & MTL::ColorWriteMaskRed) ? (CW_RED) : 0;
+	Result |= (WriteMask & MTL::ColorWriteMaskGreen) ? (CW_GREEN) : 0;
+	Result |= (WriteMask & MTL::ColorWriteMaskBlue) ? (CW_BLUE) : 0;
+	Result |= (WriteMask & MTL::ColorWriteMaskAlpha) ? (CW_ALPHA) : 0;
 	
 	return (EColorWriteMask)Result;
 }
@@ -222,70 +224,76 @@ private:
 	FRWLock Mutex;
 };
 
-static FMetalStateObjectCache<FSamplerStateInitializerRHI, FMetalSampler> Samplers;
+static FMetalStateObjectCache<FSamplerStateInitializerRHI, MTL::SamplerState*> Samplers;
 static FCriticalSection SamplersCS;
 
-static FMetalSampler FindOrCreateSamplerState(mtlpp::Device Device, const FSamplerStateInitializerRHI& Initializer)
+static MTL::SamplerState* FindOrCreateSamplerState(MTL::Device* Device, const FSamplerStateInitializerRHI& Initializer)
 {
 	FScopeLock Lock(&SamplersCS);
-	FMetalSampler State = Samplers.Find(Initializer);
-	if (!State.GetPtr())
+    MTL::SamplerState* State = Samplers.Find(Initializer);
+	if (!State)
 	{
-		mtlpp::SamplerDescriptor Desc;
+		MTL::SamplerDescriptor* Desc = MTL::SamplerDescriptor::alloc()->init();
+        check(Desc);
+        
 		switch(Initializer.Filter)
 		{
 			case SF_AnisotropicLinear:
 			case SF_AnisotropicPoint:
-				Desc.SetMinFilter(mtlpp::SamplerMinMagFilter::Linear);
-				Desc.SetMagFilter(mtlpp::SamplerMinMagFilter::Linear);
-				Desc.SetMipFilter(mtlpp::SamplerMipFilter::Linear);
+				Desc->setMinFilter(MTL::SamplerMinMagFilterLinear);
+				Desc->setMagFilter(MTL::SamplerMinMagFilterLinear);
+				Desc->setMipFilter(MTL::SamplerMipFilterLinear);
 				break;
 			case SF_Trilinear:
-				Desc.SetMinFilter(mtlpp::SamplerMinMagFilter::Linear);
-				Desc.SetMagFilter(mtlpp::SamplerMinMagFilter::Linear);
-				Desc.SetMipFilter(mtlpp::SamplerMipFilter::Linear);
+				Desc->setMinFilter(MTL::SamplerMinMagFilterLinear);
+				Desc->setMagFilter(MTL::SamplerMinMagFilterLinear);
+				Desc->setMipFilter(MTL::SamplerMipFilterLinear);
 				break;
 			case SF_Bilinear:
-				Desc.SetMinFilter(mtlpp::SamplerMinMagFilter::Linear);
-				Desc.SetMagFilter(mtlpp::SamplerMinMagFilter::Linear);
-				Desc.SetMipFilter(mtlpp::SamplerMipFilter::Nearest);
+				Desc->setMinFilter(MTL::SamplerMinMagFilterLinear);
+				Desc->setMagFilter(MTL::SamplerMinMagFilterLinear);
+				Desc->setMipFilter(MTL::SamplerMipFilterNearest);
 				break;
 			case SF_Point:
-				Desc.SetMinFilter(mtlpp::SamplerMinMagFilter::Nearest);
-				Desc.SetMagFilter(mtlpp::SamplerMinMagFilter::Nearest);
-				Desc.SetMipFilter(mtlpp::SamplerMipFilter::Nearest);
+				Desc->setMinFilter(MTL::SamplerMinMagFilterNearest);
+				Desc->setMagFilter(MTL::SamplerMinMagFilterNearest);
+				Desc->setMipFilter(MTL::SamplerMipFilterNearest);
 				break;
 		}
-		Desc.SetMaxAnisotropy(GetMetalMaxAnisotropy(Initializer.Filter, Initializer.MaxAnisotropy));
-		Desc.SetSAddressMode(TranslateWrapMode(Initializer.AddressU));
-		Desc.SetTAddressMode(TranslateWrapMode(Initializer.AddressV));
-		Desc.SetRAddressMode(TranslateWrapMode(Initializer.AddressW));
-		Desc.SetLodMinClamp(Initializer.MinMipLevel);
-		Desc.SetLodMaxClamp(Initializer.MaxMipLevel);
+		Desc->setMaxAnisotropy(GetMetalMaxAnisotropy(Initializer.Filter, Initializer.MaxAnisotropy));
+		Desc->setSAddressMode(TranslateWrapMode(Initializer.AddressU));
+		Desc->setTAddressMode(TranslateWrapMode(Initializer.AddressV));
+		Desc->setRAddressMode(TranslateWrapMode(Initializer.AddressW));
+		Desc->setLodMinClamp(Initializer.MinMipLevel);
+		Desc->setLodMaxClamp(Initializer.MaxMipLevel);
 #if PLATFORM_TVOS
-		Desc.SetCompareFunction(mtlpp::CompareFunction::Never);	
+		Desc->setCompareFunction(MTL::CompareFunctionNever);
 #elif PLATFORM_IOS
-		Desc.SetCompareFunction(Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily3_v1) ? TranslateSamplerCompareFunction(Initializer.SamplerComparisonFunction) : mtlpp::CompareFunction::Never);
+		Desc->setCompareFunction(Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v1) ? TranslateSamplerCompareFunction(Initializer.SamplerComparisonFunction) : MTL::CompareFunctionNever);
 #else
-		Desc.SetCompareFunction(TranslateSamplerCompareFunction(Initializer.SamplerComparisonFunction));
+		Desc->setCompareFunction(TranslateSamplerCompareFunction(Initializer.SamplerComparisonFunction));
 #endif
 #if PLATFORM_MAC
-		Desc.SetBorderColor(Initializer.BorderColor == 0 ? mtlpp::SamplerBorderColor::TransparentBlack : mtlpp::SamplerBorderColor::OpaqueWhite);
+		Desc->setBorderColor(Initializer.BorderColor == 0 ? MTL::SamplerBorderColorTransparentBlack : MTL::SamplerBorderColorOpaqueWhite);
 #endif
+#if !METAL_USE_METAL_SHADER_CONVERTER
 		if (FMetalCommandQueue::SupportsFeature(EMetalFeaturesIABs))
+#endif
 		{
-			Desc.SetSupportArgumentBuffers(true);
+			Desc->setSupportArgumentBuffers(true);
 		}
 		
-		State = Device.NewSamplerState(Desc);
-		
+		State = Device->newSamplerState(Desc);
+        Desc->release();
+        
 		Samplers.Add(Initializer, State);
 	}
 	return State;
 }
 
-FMetalSamplerState::FMetalSamplerState(mtlpp::Device Device, const FSamplerStateInitializerRHI& Initializer)
+FMetalSamplerState::FMetalSamplerState(FMetalDeviceContext* Context, const FSamplerStateInitializerRHI& Initializer)
 {
+	MTL::Device* Device = Context->GetDevice();
 	State = FindOrCreateSamplerState(Device, Initializer);
 #if !PLATFORM_MAC
 	if (GetMetalMaxAnisotropy(Initializer.Filter, Initializer.MaxAnisotropy))
@@ -295,10 +303,29 @@ FMetalSamplerState::FMetalSamplerState(mtlpp::Device Device, const FSamplerState
 		NoAnisoState = FindOrCreateSamplerState(Device, Init);
 	}
 #endif
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+    FMetalBindlessDescriptorManager* BindlessDescriptorManager = Context->GetBindlessDescriptorManager();
+    check(BindlessDescriptorManager);
+
+	if(IsMetalBindlessEnabled())
+	{
+		BindlessHandle = BindlessDescriptorManager->ReserveDescriptor(ERHIDescriptorHeapType::Sampler);
+		BindlessDescriptorManager->BindSampler(BindlessHandle, State);
+	}
+#endif
 }
 
 FMetalSamplerState::~FMetalSamplerState()
 {
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+    FMetalBindlessDescriptorManager* BindlessDescriptorManager = GetMetalDeviceContext().GetBindlessDescriptorManager();
+    check(BindlessDescriptorManager);
+
+	if(IsMetalBindlessEnabled())
+	{
+		BindlessDescriptorManager->FreeDescriptor(BindlessHandle);
+	}
+#endif
 }
 
 FMetalRasterizerState::FMetalRasterizerState(const FRasterizerStateInitializerRHI& Initializer)
@@ -317,61 +344,75 @@ bool FMetalRasterizerState::GetInitializer(FRasterizerStateInitializerRHI& Init)
 	return true;
 }
 
-static FMetalStateObjectCache<FDepthStencilStateInitializerRHI, mtlpp::DepthStencilState> DepthStencilStates;
+static FMetalStateObjectCache<FDepthStencilStateInitializerRHI, MTL::DepthStencilState*> DepthStencilStates;
 
-FMetalDepthStencilState::FMetalDepthStencilState(mtlpp::Device Device, const FDepthStencilStateInitializerRHI& InInitializer)
+FMetalDepthStencilState::FMetalDepthStencilState(MTL::Device* Device, const FDepthStencilStateInitializerRHI& InInitializer)
 {
 	Initializer = InInitializer;
 
 	State = DepthStencilStates.Find(Initializer);
-	if (!State.GetPtr())
+	if (!State)
 	{
-		mtlpp::DepthStencilDescriptor Desc;
-		
-		Desc.SetDepthCompareFunction(TranslateCompareFunction(Initializer.DepthTest));
-		Desc.SetDepthWriteEnabled(Initializer.bEnableDepthWrite);
+		MTL::DepthStencilDescriptor* Desc = MTL::DepthStencilDescriptor::alloc()->init();
+        check(Desc);
+        
+		Desc->setDepthCompareFunction(TranslateCompareFunction(Initializer.DepthTest));
+		Desc->setDepthWriteEnabled(Initializer.bEnableDepthWrite);
 		
 		if (Initializer.bEnableFrontFaceStencil)
 		{
 			// set up front face stencil operations
-			mtlpp::StencilDescriptor Stencil;
-			Stencil.SetStencilCompareFunction(TranslateCompareFunction(Initializer.FrontFaceStencilTest));
-			Stencil.SetStencilFailureOperation(TranslateStencilOp(Initializer.FrontFaceStencilFailStencilOp));
-			Stencil.SetDepthFailureOperation(TranslateStencilOp(Initializer.FrontFaceDepthFailStencilOp));
-			Stencil.SetDepthStencilPassOperation(TranslateStencilOp(Initializer.FrontFacePassStencilOp));
-			Stencil.SetReadMask(Initializer.StencilReadMask);
-			Stencil.SetWriteMask(Initializer.StencilWriteMask);
-			Desc.SetFrontFaceStencil(Stencil);
+			MTL::StencilDescriptor* Stencil = MTL::StencilDescriptor::alloc()->init();
+            check(Stencil);
+            
+			Stencil->setStencilCompareFunction(TranslateCompareFunction(Initializer.FrontFaceStencilTest));
+			Stencil->setStencilFailureOperation(TranslateStencilOp(Initializer.FrontFaceStencilFailStencilOp));
+			Stencil->setDepthFailureOperation(TranslateStencilOp(Initializer.FrontFaceDepthFailStencilOp));
+			Stencil->setDepthStencilPassOperation(TranslateStencilOp(Initializer.FrontFacePassStencilOp));
+			Stencil->setReadMask(Initializer.StencilReadMask);
+			Stencil->setWriteMask(Initializer.StencilWriteMask);
+			Desc->setFrontFaceStencil(Stencil);
+            
+            Stencil->release();
 		}
 		
 		if (Initializer.bEnableBackFaceStencil)
 		{
 			// set up back face stencil operations
-			mtlpp::StencilDescriptor Stencil;
-			Stencil.SetStencilCompareFunction(TranslateCompareFunction(Initializer.BackFaceStencilTest));
-			Stencil.SetStencilFailureOperation(TranslateStencilOp(Initializer.BackFaceStencilFailStencilOp));
-			Stencil.SetDepthFailureOperation(TranslateStencilOp(Initializer.BackFaceDepthFailStencilOp));
-			Stencil.SetDepthStencilPassOperation(TranslateStencilOp(Initializer.BackFacePassStencilOp));
-			Stencil.SetReadMask(Initializer.StencilReadMask);
-			Stencil.SetWriteMask(Initializer.StencilWriteMask);
-			Desc.SetBackFaceStencil(Stencil);
+            MTL::StencilDescriptor* Stencil = MTL::StencilDescriptor::alloc()->init();
+            check(Stencil);
+            
+			Stencil->setStencilCompareFunction(TranslateCompareFunction(Initializer.BackFaceStencilTest));
+			Stencil->setStencilFailureOperation(TranslateStencilOp(Initializer.BackFaceStencilFailStencilOp));
+			Stencil->setDepthFailureOperation(TranslateStencilOp(Initializer.BackFaceDepthFailStencilOp));
+			Stencil->setDepthStencilPassOperation(TranslateStencilOp(Initializer.BackFacePassStencilOp));
+			Stencil->setReadMask(Initializer.StencilReadMask);
+			Stencil->setWriteMask(Initializer.StencilWriteMask);
+			Desc->setBackFaceStencil(Stencil);
+            
+            Stencil->release();
 		}
 		else if(Initializer.bEnableFrontFaceStencil)
 		{
 			// set up back face stencil operations to front face in single-face mode
-			mtlpp::StencilDescriptor Stencil;
-			Stencil.SetStencilCompareFunction(TranslateCompareFunction(Initializer.FrontFaceStencilTest));
-			Stencil.SetStencilFailureOperation(TranslateStencilOp(Initializer.FrontFaceStencilFailStencilOp));
-			Stencil.SetDepthFailureOperation(TranslateStencilOp(Initializer.FrontFaceDepthFailStencilOp));
-			Stencil.SetDepthStencilPassOperation(TranslateStencilOp(Initializer.FrontFacePassStencilOp));
-			Stencil.SetReadMask(Initializer.StencilReadMask);
-			Stencil.SetWriteMask(Initializer.StencilWriteMask);
-			Desc.SetBackFaceStencil(Stencil);
+            MTL::StencilDescriptor* Stencil = MTL::StencilDescriptor::alloc()->init();
+            check(Stencil);
+            
+			Stencil->setStencilCompareFunction(TranslateCompareFunction(Initializer.FrontFaceStencilTest));
+			Stencil->setStencilFailureOperation(TranslateStencilOp(Initializer.FrontFaceStencilFailStencilOp));
+			Stencil->setDepthFailureOperation(TranslateStencilOp(Initializer.FrontFaceDepthFailStencilOp));
+			Stencil->setDepthStencilPassOperation(TranslateStencilOp(Initializer.FrontFacePassStencilOp));
+			Stencil->setReadMask(Initializer.StencilReadMask);
+			Stencil->setWriteMask(Initializer.StencilWriteMask);
+			Desc->setBackFaceStencil(Stencil);
+            
+            Stencil->release();
 		}
 		
 		// bake out the descriptor
-		State = Device.NewDepthStencilState(Desc);
-		
+		State = Device->newDepthStencilState(Desc);
+        Desc->release();
+        
 		DepthStencilStates.Add(Initializer, State);
 	}
 	
@@ -393,7 +434,7 @@ bool FMetalDepthStencilState::GetInitializer(FDepthStencilStateInitializerRHI& I
 
 
 // statics
-static FMetalStateObjectCache<FBlendStateInitializerRHI::FRenderTarget, mtlpp::RenderPipelineColorAttachmentDescriptor> BlendStates;
+static FMetalStateObjectCache<FBlendStateInitializerRHI::FRenderTarget, MTL::RenderPipelineColorAttachmentDescriptor*> BlendStates;
 TMap<uint32, uint8> FMetalBlendState::BlendSettingsToUniqueKeyMap;
 uint8 FMetalBlendState::NextKey = 0;
 FCriticalSection FMetalBlendState::Mutex;
@@ -411,23 +452,24 @@ FMetalBlendState::FMetalBlendState(const FBlendStateInitializerRHI& Initializer)
 				: Initializer.RenderTargets[0];
 
 		// make a new blend state
-		mtlpp::RenderPipelineColorAttachmentDescriptor BlendState = BlendStates.Find(Init);
+		MTL::RenderPipelineColorAttachmentDescriptor* BlendState = BlendStates.Find(Init);
 
-		if (!BlendState.GetPtr())
+		if (!BlendState)
 		{
-			BlendState = mtlpp::RenderPipelineColorAttachmentDescriptor();
+			BlendState = MTL::RenderPipelineColorAttachmentDescriptor::alloc()->init();
+            check(BlendState);
 			
 			// set values
-			BlendState.SetBlendingEnabled(
+			BlendState->setBlendingEnabled(
 				Init.ColorBlendOp != BO_Add || Init.ColorDestBlend != BF_Zero || Init.ColorSrcBlend != BF_One ||
 				Init.AlphaBlendOp != BO_Add || Init.AlphaDestBlend != BF_Zero || Init.AlphaSrcBlend != BF_One);
-			BlendState.SetSourceRgbBlendFactor(TranslateBlendFactor(Init.ColorSrcBlend));
-			BlendState.SetDestinationRgbBlendFactor(TranslateBlendFactor(Init.ColorDestBlend));
-			BlendState.SetRgbBlendOperation(TranslateBlendOp(Init.ColorBlendOp));
-			BlendState.SetSourceAlphaBlendFactor(TranslateBlendFactor(Init.AlphaSrcBlend));
-			BlendState.SetDestinationAlphaBlendFactor(TranslateBlendFactor(Init.AlphaDestBlend));
-			BlendState.SetAlphaBlendOperation(TranslateBlendOp(Init.AlphaBlendOp));
-			BlendState.SetWriteMask(TranslateWriteMask(Init.ColorWriteMask));
+			BlendState->setSourceRGBBlendFactor(TranslateBlendFactor(Init.ColorSrcBlend));
+			BlendState->setDestinationRGBBlendFactor(TranslateBlendFactor(Init.ColorDestBlend));
+			BlendState->setRgbBlendOperation(TranslateBlendOp(Init.ColorBlendOp));
+			BlendState->setSourceAlphaBlendFactor(TranslateBlendFactor(Init.AlphaSrcBlend));
+			BlendState->setDestinationAlphaBlendFactor(TranslateBlendFactor(Init.AlphaDestBlend));
+			BlendState->setAlphaBlendOperation(TranslateBlendOp(Init.AlphaBlendOp));
+			BlendState->setWriteMask(TranslateWriteMask(Init.ColorWriteMask));
 			
 			BlendStates.Add(Init, BlendState);
 		}
@@ -436,9 +478,9 @@ FMetalBlendState::FMetalBlendState(const FBlendStateInitializerRHI& Initializer)
 
 		// get the unique key
 		uint32 BlendBitMask =
-			((uint32)BlendState.GetSourceRgbBlendFactor() << 0) | ((uint32)BlendState.GetDestinationRgbBlendFactor() << 4) | ((uint32)BlendState.GetRgbBlendOperation() << 8) |
-			((uint32)BlendState.GetSourceAlphaBlendFactor() << 11) | ((uint32)BlendState.GetDestinationAlphaBlendFactor() << 15) | ((uint32)BlendState.GetAlphaBlendOperation() << 19) |
-			((uint32)BlendState.GetWriteMask() << 22);
+			((uint32)BlendState->sourceRGBBlendFactor() << 0) | ((uint32)BlendState->destinationRGBBlendFactor() << 4) | ((uint32)BlendState->rgbBlendOperation() << 8) |
+			((uint32)BlendState->sourceAlphaBlendFactor() << 11) | ((uint32)BlendState->destinationAlphaBlendFactor() << 15) | ((uint32)BlendState->alphaBlendOperation() << 19) |
+			((uint32)BlendState->writeMask() << 22);
 		
 		
 		if(IsRunningRHIInSeparateThread())
@@ -474,17 +516,17 @@ bool FMetalBlendState::GetInitializer(FBlendStateInitializerRHI& Initializer)
 	{
 		// which initializer to use
 		FBlendStateInitializerRHI::FRenderTarget& Init = Initializer.RenderTargets[RenderTargetIndex];
-		MTLRenderPipelineColorAttachmentDescriptor* CurrentState = RenderTargetStates[RenderTargetIndex].BlendState;
+		MTL::RenderPipelineColorAttachmentDescriptor* CurrentState = RenderTargetStates[RenderTargetIndex].BlendState;
 		
 		if (CurrentState)
 		{
-			Init.ColorSrcBlend = TranslateBlendFactor(CurrentState.sourceRGBBlendFactor);
-			Init.ColorDestBlend = TranslateBlendFactor(CurrentState.destinationRGBBlendFactor);
-			Init.ColorBlendOp = TranslateBlendOp(CurrentState.rgbBlendOperation);
-			Init.AlphaSrcBlend = TranslateBlendFactor(CurrentState.sourceAlphaBlendFactor);
-			Init.AlphaDestBlend = TranslateBlendFactor(CurrentState.destinationAlphaBlendFactor);
-			Init.AlphaBlendOp = TranslateBlendOp(CurrentState.alphaBlendOperation);
-			Init.ColorWriteMask = TranslateWriteMask(CurrentState.writeMask);
+			Init.ColorSrcBlend = TranslateBlendFactor(CurrentState->sourceRGBBlendFactor());
+			Init.ColorDestBlend = TranslateBlendFactor(CurrentState->destinationRGBBlendFactor());
+			Init.ColorBlendOp = TranslateBlendOp(CurrentState->rgbBlendOperation());
+			Init.AlphaSrcBlend = TranslateBlendFactor(CurrentState->sourceAlphaBlendFactor());
+			Init.AlphaDestBlend = TranslateBlendFactor(CurrentState->destinationAlphaBlendFactor());
+			Init.AlphaBlendOp = TranslateBlendOp(CurrentState->alphaBlendOperation());
+			Init.ColorWriteMask = TranslateWriteMask(CurrentState->writeMask());
 		}
 		
 		if (!bUseIndependentRenderTargetBlendStates)
@@ -496,36 +538,28 @@ bool FMetalBlendState::GetInitializer(FBlendStateInitializerRHI& Initializer)
 	return true;
 }
 
-
-
-
-
 FSamplerStateRHIRef FMetalDynamicRHI::RHICreateSamplerState(const FSamplerStateInitializerRHI& Initializer)
 {
-    @autoreleasepool {
-	return new FMetalSamplerState(ImmediateContext.Context->GetDevice(), Initializer);
-	}
+    MTL_SCOPED_AUTORELEASE_POOL;
+	return new FMetalSamplerState(ImmediateContext.Context, Initializer);
 }
 
 FRasterizerStateRHIRef FMetalDynamicRHI::RHICreateRasterizerState(const FRasterizerStateInitializerRHI& Initializer)
 {
-	@autoreleasepool {
+    MTL_SCOPED_AUTORELEASE_POOL;
     return new FMetalRasterizerState(Initializer);
-	}
 }
 
 FDepthStencilStateRHIRef FMetalDynamicRHI::RHICreateDepthStencilState(const FDepthStencilStateInitializerRHI& Initializer)
 {
-	@autoreleasepool {
+    MTL_SCOPED_AUTORELEASE_POOL;
 	return new FMetalDepthStencilState(ImmediateContext.Context->GetDevice(), Initializer);
-	}
 }
 
 
 FBlendStateRHIRef FMetalDynamicRHI::RHICreateBlendState(const FBlendStateInitializerRHI& Initializer)
 {
-	@autoreleasepool {
+    MTL_SCOPED_AUTORELEASE_POOL;
 	return new FMetalBlendState(Initializer);
-	}
 }
 

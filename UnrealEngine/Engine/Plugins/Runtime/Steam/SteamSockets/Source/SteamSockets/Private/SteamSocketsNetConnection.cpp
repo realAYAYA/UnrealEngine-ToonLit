@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SteamSocketsNetConnection.h"
+#include "SteamSocketsPackage.h"
 #include "SteamSocketsSubsystem.h"
 #include "SteamSocketsNetDriver.h"
 #include "SteamSocket.h"
@@ -200,6 +201,12 @@ void USteamSocketsNetConnection::HandleRecvMessage(void* InData, int32 SizeOfDat
 
 				UE_LOG(LogNet, Log, TEXT("SteamSockets: Connectionless handshake complete"));
 				bInConnectionlessHandshake = false;
+
+				// Transfer net driver's stateless connection data to the net connection
+				if(StatelessConnectComponent.IsValid())
+				{
+					StatelessConnectComponent.Pin()->SetDriver(SteamNetDriver);
+				}
 				
 				// Reset the challenge data for the future
 				if (StatelessConnect.IsValid())

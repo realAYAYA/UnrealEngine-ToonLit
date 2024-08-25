@@ -10,7 +10,6 @@
 FNiagaraScriptExecutionParameterStore::FNiagaraScriptExecutionParameterStore()
 	: FNiagaraParameterStore()
 	, ParameterSize(0)
-	, PaddedParameterSize(0)
 	, bInitialized(false)
 {}
 
@@ -180,78 +179,12 @@ uint32 FNiagaraScriptExecutionParameterStore::GenerateLayoutInfoInternal(TArray<
 	return InSrcOffset;
 }
 
-void FNiagaraScriptExecutionParameterStore::CoalescePaddingInfo()
-{
-	int32 PaddingIt = 1;
-
-	while (PaddingIt < PaddingInfo.Num())
-	{
-		FNiagaraScriptExecutionPaddingInfo& PreviousEntry = PaddingInfo[PaddingIt - 1];
-		const FNiagaraScriptExecutionPaddingInfo& CurrentEntry = PaddingInfo[PaddingIt];
-
-		if (((PreviousEntry.SrcOffset + PreviousEntry.SrcSize) == CurrentEntry.SrcOffset)
-			&& ((PreviousEntry.DestOffset + PreviousEntry.SrcSize) == CurrentEntry.DestOffset)
-			&& ((TNumericLimits<uint16>::Max() - PreviousEntry.SrcSize) >= CurrentEntry.SrcSize))
-		{
-			PreviousEntry.SrcSize += CurrentEntry.SrcSize;
-			PreviousEntry.DestSize += CurrentEntry.DestSize;
-			PaddingInfo.RemoveAt(PaddingIt);
-		}
-		else
-		{
-			++PaddingIt;
-		}
-	}
-}
-
-void FNiagaraScriptExecutionParameterStore::AddPaddedParamSize(const FNiagaraTypeDefinition& InParamType, uint32 InOffset)
-{
-	if (InParamType.IsDataInterface())
-	{
-		return;
-	}
-
-	uint32 NextMemberOffset = 0;
-	if (PaddingInfo.Num() != 0)
-	{
-		NextMemberOffset = PaddingInfo[PaddingInfo.Num() - 1].DestOffset + PaddingInfo[PaddingInfo.Num() - 1].DestSize;
-	}
-	GenerateLayoutInfoInternal(PaddingInfo, NextMemberOffset, InParamType.GetScriptStruct(), InOffset);
-
-	if (PaddingInfo.Num() != 0)
-	{
-		NextMemberOffset = PaddingInfo[PaddingInfo.Num() - 1].DestOffset + PaddingInfo[PaddingInfo.Num() - 1].DestSize;
-		PaddedParameterSize = Align(NextMemberOffset, SHADER_PARAMETER_STRUCT_ALIGNMENT);
-	}
-	else
-	{
-		PaddedParameterSize = 0;
-	}
-}
-
-void FNiagaraScriptExecutionParameterStore::AddAlignmentPadding()
-{
-	if (PaddingInfo.Num())
-	{
-		const auto& LastEntry = PaddingInfo.Last();
-		const uint32 CurrentOffset = LastEntry.DestOffset + LastEntry.DestSize;
-		const uint32 AlignedOffset = Align(CurrentOffset, SHADER_PARAMETER_STRUCT_ALIGNMENT);
-
-		if (CurrentOffset != AlignedOffset)
-		{
-			PaddingInfo.Emplace(GetParameterDataArray().Num(), CurrentOffset, 0, AlignedOffset - CurrentOffset);
-		}
-	}
-}
-
 void FNiagaraScriptExecutionParameterStore::InitFromOwningScript(UNiagaraScript* Script, ENiagaraSimTarget SimTarget, bool bNotifyAsDirty)
 {
 	//TEMPORARTY:
 	//We should replace the storage on the script with an FNiagaraParameterStore also so we can just copy that over here. Though that is an even bigger refactor job so this is a convenient place to break that work up.
 
 	Empty();
-	PaddedParameterSize = 0;
-	PaddingInfo.Empty();
 
 	if (Script)
 	{
@@ -275,7 +208,6 @@ void FNiagaraScriptExecutionParameterStore::AddScriptParams(UNiagaraScript* Scri
 	{
 		return;
 	}
-	PaddingInfo.Empty();
 
 	const FNiagaraVMExecutableData& ExecutableData = Script->GetVMExecutableData();
 
@@ -295,8 +227,6 @@ void FNiagaraScriptExecutionParameterStore::AddScriptParams(UNiagaraScript* Scri
 
 	if (bIsInterpolatedSpawn)
 	{
-		AddAlignmentPadding();
-
 		for (const FNiagaraVariable& Param : ExecutableData.Parameters.Parameters)
 		{
 			FNiagaraVariable PrevParam(Param.GetType(), FName(*(INTERPOLATED_PARAMETER_PREFIX + Param.GetName().ToString())));
@@ -315,7 +245,10 @@ void FNiagaraScriptExecutionParameterStore::AddScriptParams(UNiagaraScript* Scri
 	{
 		int32 VarOffset = INDEX_NONE;
 		bAdded |= AddParameter(ResolvedDataInterface.ParameterStoreVariable, false, false, &VarOffset);
-		SetDataInterface(ResolvedDataInterface.ResolvedDataInterface, VarOffset);
+		if (GetDataInterfaces().IsValidIndex(VarOffset))
+		{
+			SetDataInterface(ResolvedDataInterface.ResolvedDataInterface, VarOffset);
+		}
 	}
 
 	check(Script->GetVMExecutableData().UObjectInfos.Num() == Script->GetCachedDefaultUObjects().Num());
@@ -323,7 +256,10 @@ void FNiagaraScriptExecutionParameterStore::AddScriptParams(UNiagaraScript* Scri
 	{
 		int32 VarOffset = INDEX_NONE;
 		bAdded |= AddParameter(Info.ResolvedVariable, false, false, &VarOffset);
-		SetUObject(Info.Object, VarOffset);
+		if (GetUObjects().IsValidIndex(VarOffset))
+		{
+			SetUObject(Info.Object, VarOffset);
+		}
 	}
 
 	if (bAdded && bTriggerRebind)
@@ -392,33 +328,6 @@ uint32 FNiagaraScriptInstanceParameterStore::GetExternalParameterSize() const
 		return ScriptStore->ParameterSize;
 	}
 	return 0;
-}
-
-uint32 FNiagaraScriptInstanceParameterStore::GetPaddedParameterSizeInBytes() const
-{
-	if (const auto* ScriptStore = ScriptParameterStore.Get())
-	{
-		return ScriptStore->PaddedParameterSize;
-	}
-	return 0;
-}
-
-void FNiagaraScriptInstanceParameterStore::CopyParameterDataToPaddedBuffer(uint8* InTargetBuffer, uint32 InTargetBufferSizeInBytes) const
-{
-	if (const auto* ScriptStore = ScriptParameterStore.Get())
-	{
-		check((uint32)ScriptStore->ParameterSize <= ScriptStore->PaddedParameterSize);
-		check(InTargetBufferSizeInBytes >= ScriptStore->PaddedParameterSize);
-		FMemory::Memzero(InTargetBuffer, InTargetBufferSizeInBytes);
-		const auto& ParameterDataArray = GetParameterDataArray();
-		const uint8* SrcData = ParameterDataArray.GetData();
-		for (const auto& Padding : ScriptStore->PaddingInfo)
-		{
-			check(uint32(Padding.DestOffset + Padding.DestSize) <= InTargetBufferSizeInBytes);
-			check(uint32(Padding.SrcOffset + Padding.SrcSize) <= (uint32)ParameterDataArray.Num());
-			FMemory::Memcpy(InTargetBuffer + Padding.DestOffset, SrcData + Padding.SrcOffset, Padding.SrcSize);
-		}
-	}
 }
 
 TArrayView<const FNiagaraVariableWithOffset> FNiagaraScriptInstanceParameterStore::ReadParameterVariables() const

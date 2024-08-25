@@ -48,6 +48,7 @@ public:
 	LANDSCAPE_API virtual bool MatchesSearchQuery(const TCHAR* SearchQuery) override;
 #endif
 	LANDSCAPE_API virtual UObject* GetReferencedTexture() const override;
+	LANDSCAPE_API virtual ReferencedTextureArray GetReferencedTextures() const override;
 	virtual bool CanReferenceTexture() const override { return true; }
 #if WITH_EDITOR
 	virtual uint32 GetInputType(int32 InputIndex) override {return MCT_Float | MCT_MaterialAttributes;}

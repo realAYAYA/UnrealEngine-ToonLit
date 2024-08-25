@@ -20,6 +20,11 @@
 #include "UObject/UObjectIterator.h"
 #include "XmlFile.h"
 #include "XmlNode.h"
+#include "Algo/ForEach.h"
+
+#ifndef WITH_SNDFILE_IO
+#define WITH_SNDFILE_IO (0)
+#endif //WITH_SNDFILE_IO
 
 DEFINE_LOG_CATEGORY(LogAudio);
 
@@ -41,8 +46,6 @@ DEFINE_STAT(STAT_AudioFinishedDelegates);
 DEFINE_STAT(STAT_AudioBufferTime);
 DEFINE_STAT(STAT_AudioBufferTimeChannels);
 
-DEFINE_STAT(STAT_VorbisDecompressTime);
-DEFINE_STAT(STAT_VorbisPrepareDecompressionTime);
 DEFINE_STAT(STAT_AudioDecompressTime);
 DEFINE_STAT(STAT_AudioPrepareDecompressionTime);
 DEFINE_STAT(STAT_AudioStreamedDecompressTime);
@@ -89,6 +92,14 @@ FAutoConsoleVariableRef CVarBypassPlayWhenSilent(
 	BypassPlayWhenSilentCVar,
 	TEXT("When set to 1, ignores the Play When Silent flag for non-procedural sources.\n")
 	TEXT("0: Honor the Play When Silent flag, 1: stop all silent non-procedural sources."),
+	ECVF_Default);
+
+static float WaveInstanceMinVolumeThresholdCVar = UE_KINDA_SMALL_NUMBER;
+FAutoConsoleVariableRef CVarMinVolumeThreshold(
+	TEXT("au.WaveInstanceMinVolume"),
+	WaveInstanceMinVolumeThresholdCVar,
+	TEXT("Sets the minimum volume for a wave instance to be considered active\n")
+	TEXT("Default is 0.0001 (-80 dB)"),
 	ECVF_Default);
 
 bool IsAudioPluginEnabled(EAudioPlugin PluginType)
@@ -662,6 +673,31 @@ float FSoundSource::GetPlaybackPercent() const
 
 }
 
+float FSoundSource::GetSourceSampleRate() const
+{
+	if (WaveInstance == nullptr || WaveInstance->WaveData == nullptr || WaveInstance->WaveData->bIsSourceBus)
+	{
+		return AudioDevice->GetSampleRate();
+	}
+
+	return WaveInstance->WaveData->GetSampleRateForCurrentPlatform();
+}
+
+int64 FSoundSource::GetNumFramesPlayed() const
+{
+	return NumFramesPlayed;
+}
+
+int32 FSoundSource::GetNumTotalFrames() const
+{
+	return NumTotalFrames;
+}
+
+int32 FSoundSource::GetStartFrame() const
+{
+	return StartFrame;
+}
+
 void FSoundSource::GetChannelLocations(FVector& Left, FVector&Right) const
 {
 	Left = LeftChannelSourceLocation;
@@ -839,6 +875,7 @@ FWaveInstance::FWaveInstance(const UPTRINT InWaveInstanceHash, FActiveSound& InA
 	, bReportedSpatializationWarning(false)
 	, bIsAmbisonics(false)
 	, bIsStopping(false)
+	, bIsDynamic(false)
 	, SpatializationMethod(ESoundSpatializationAlgorithm::SPATIALIZATION_Default)
 	, SpatializationPluginSettings(nullptr)
 	, OcclusionPluginSettings(nullptr)
@@ -893,7 +930,7 @@ bool FWaveInstance::IsPlaying() const
 	}
 
 	const float WaveInstanceVolume = Volume * VolumeMultiplier * GetDistanceAndOcclusionAttenuation() * GetDynamicVolume();
-	if (WaveInstanceVolume > UE_KINDA_SMALL_NUMBER)
+	if (WaveInstanceVolume > WaveInstanceMinVolumeThresholdCVar)
 	{
 		return true;
 	}
@@ -968,14 +1005,17 @@ void FWaveInstance::AddReferencedObjects( FReferenceCollector& Collector )
 		Collector.AddReferencedObject(SynthSound->GetOwningSynthComponentPtr());
 	}
 
-	for (FAttenuationSubmixSendSettings& SubmixSend : SubmixSendSettings)
+	auto AddSubmixSendRef = [&Collector](FSoundSubmixSendInfoBase& Info)
 	{
-		if (SubmixSend.Submix)
+		if (Info.SoundSubmix)
 		{
-			Collector.AddReferencedObject(SubmixSend.Submix);
-		}
-	}
-
+			Collector.AddReferencedObject(Info.SoundSubmix);
+		}	
+	};
+	
+	Algo::ForEach(SoundSubmixSends, AddSubmixSendRef);
+	Algo::ForEach(AttenuationSubmixSends, AddSubmixSendRef);
+	
 	Collector.AddReferencedObject( SoundClass );
 	NotifyBufferFinishedHooks.AddReferencedObjects( Collector );
 }
@@ -1612,17 +1652,16 @@ bool FWaveModInfo::ReadWaveInfo( const uint8* WaveData, int32 WaveDataSize, FStr
 	SampleDataSize = INTEL_ORDER32( RiffChunk->ChunkLen );
 	SampleDataEnd = SampleDataStart + SampleDataSize;
 
-	if (*pFormatTag != 0x0001 // WAVE_FORMAT_PCM
-		&& *pFormatTag != 0x0002 // WAVE_FORMAT_ADPCM
-		&& *pFormatTag != 0x0011 // WAVE_FORMAT_DVI_ADPCM
-		&& *pFormatTag != 0x0003) // WAVE_FORMAT_IEEE_FLOAT
+#if !WITH_SNDFILE_IO
+	if (!IsFormatSupported())
 	{
 		ReportImportFailure();
 		if (ErrorReason) *ErrorReason = TEXT("Unsupported wave file format.  Only PCM, ADPCM, and DVI ADPCM can be imported.");
 		return false;
 	}
+#endif //WITH_SNDFILE_IO
 
-	if (!InHeaderDataOnly)
+	if (!InHeaderDataOnly && IsFormatSupported())
 	{
 		if ((uint8*)SampleDataEnd > (uint8*)WaveDataEnd)
 		{
@@ -1898,12 +1937,29 @@ void FWaveModInfo::ReportImportFailure() const
 
 uint32 FWaveModInfo::GetNumSamples() const
 {
-	if (*pBitsPerSample != 0)
+	// The calculation below only works for uncompressed formats.
+	// For compressed formats see Audio::SoundFileUtils::GetNumSamples().
+	if (IsFormatUncompressed() && *pBitsPerSample >= 8)
 	{
 		return SampleDataSize / (*pBitsPerSample / 8);
 	}
 
 	return 0;
+}
+
+bool FWaveModInfo::IsFormatSupported() const
+{
+	return (*pFormatTag == WAVE_INFO_FORMAT_PCM
+		|| *pFormatTag == WAVE_INFO_FORMAT_ADPCM
+		|| *pFormatTag == WAVE_INFO_FORMAT_DVI_ADPCM
+		|| *pFormatTag == WAVE_INFO_FORMAT_IEEE_FLOAT
+		|| *pFormatTag == WAVE_INFO_FORMAT_OODLE_WAVE);
+}
+
+bool FWaveModInfo::IsFormatUncompressed() const
+{
+	return (*pFormatTag == WAVE_INFO_FORMAT_PCM
+		|| *pFormatTag == WAVE_INFO_FORMAT_IEEE_FLOAT);
 }
 
 static void WriteUInt32ToByteArrayLE(TArray<uint8>& InByteArray, int32& Index, const uint32 Value)

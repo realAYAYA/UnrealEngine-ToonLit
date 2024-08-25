@@ -19,6 +19,8 @@ class UNiagaraSimCacheCustomStorageInterface : public UInterface
 /**
 The current API for storing data inside a simulation cache.
 This is highly experimental and the API will change as we split editor / runtime data storage.
+
+See INiagaraDataInterfaceSimCacheVisualizer to implement a custom visualizer widget for the stored data.
 */
 class INiagaraSimCacheCustomStorageInterface
 {
@@ -54,6 +56,12 @@ public:
 	Only DataInterfaces with PerInstanceData will have this method called on them.
 	*/
 	virtual void SimCachePostReadFrame(void* OptionalPerInstanceData, FNiagaraSystemInstance* SystemInstance) {}
+
+	/**
+	Called to compare a frame between two separate simulation cache storages
+	This will be called on the CDO object since we do not have the actual data interface.
+	*/
+	virtual bool SimCacheCompareFrame(UObject* LhsStorageObject, UObject* RhsStorageObject, int FrameIndex, TOptional<float> Tolerance, FString& OutErrors) const { OutErrors = TEXT("Compare not implemented"); return false; }
 
 	/**
 	This function allows you to preserve a list of attributes when building a renderer only cache.

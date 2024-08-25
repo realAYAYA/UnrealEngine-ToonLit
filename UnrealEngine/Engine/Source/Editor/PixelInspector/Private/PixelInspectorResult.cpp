@@ -265,7 +265,7 @@ namespace PixelInspector
 			return EMaterialShadingModel::MSM_SingleLayerWater;
 		case PIXEL_INSPECTOR_SHADINGMODELID_THIN_TRANSLUCENT:
 			return EMaterialShadingModel::MSM_ThinTranslucent;
-		case PIXEL_INSPECTOR_SHADINGMODELID_STRATA:
+		case PIXEL_INSPECTOR_SHADINGMODELID_SUBSTRATE:
 			return EMaterialShadingModel::MSM_Strata;
 
 			// Change-begin

@@ -73,11 +73,11 @@ class FSemaphore;
  * IgnoreFile [string]:				Sets the name of the p4 ignore file to use. When submitting payloads we 
  *									create a custom p4 ignore file to override any ignore settings for a project
  *									which allows us to submit from the saved directory which is normally prevented
- *									by the default ignore file. This value can be set to what ever is used by
- *									your perforce environment. [Default=".p4ignore.txt"]
+ *									by the default ignore file. This value should be set to the value of P4IGNORE
+									used by your environment. [Default=".p4ignore.txt"]
  * UseRetryConnectionDialog[bool]	When true a slate dialog will be shown if the initial connection to the 
  *									source control server fails allowing the user to attempt to input the correct
- *									login values. [Default=false]&
+ *									login values. [Default=false]
  * 
  * Environment Variables:
  * UE-VirtualizationWorkingDir [string]:	This can be set to a valid directory path that the backend
@@ -129,7 +129,7 @@ private:
 	virtual bool Initialize(const FString& ConfigEntry) override;
 
 	virtual EConnectionStatus OnConnect() override;
-	IVirtualizationBackend::EConnectionStatus OnConnectInternal(FStringView Port, FStringView Username, bool bSaveConnectionSettings, FText& OutErrorMessage);
+	IVirtualizationBackend::EConnectionStatus OnConnectInternal(FString& InOutPort, FString& InOutUsername, bool bSaveConnectionSettings, FText& OutErrorMessage);
 	
 	virtual bool PushData(TArrayView<FPushRequest> Requests, EPushFlags Flags) override;
 	virtual bool PullData(TArrayView<FPullRequest> Requests, EPullFlags Flags, FText& OutErrors) override;
@@ -147,7 +147,7 @@ private:
 	bool FindSubmissionWorkingDir(const FString& ConfigEntry);
 
 	/** Will display a FMessage notification to the user on the next valid engine tick to try and keep them aware of connection failures */
-	void OnConnectionError(FText Message);
+	void OnConnectionError(FText ErrorMessage);
 
 	/** A source control connection owned by the backend*/
 	TUniquePtr<ISourceControlProvider> SCCProvider;

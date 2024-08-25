@@ -1,61 +1,75 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Callout, DirectionalHint, FontWeights, getTheme, Link, List, mergeStyleSets, SearchBox, Stack } from '@fluentui/react';
+import { Callout, DirectionalHint, FontWeights, Link, List, mergeStyleSets, SearchBox, Stack } from '@fluentui/react';
 import React, { useState } from 'react';
+import { getHordeTheme } from '../styles/theme';
 
 // https://github.com/OfficeDev/@fluentui/react/tree/0afa4fab0b43f3449398c63862370d55f70cb760/packages/@fluentui/react/src/components/Callout
 
-const theme = getTheme();
-const styles = mergeStyleSets({
-    buttonArea: {
-        verticalAlign: 'top',
-        display: 'inline-block',
-        textAlign: 'center',
-        margin: '0 100px',
-        minWidth: 130,
-        height: 32
-    },
-    container: {
-        overflow: 'auto',
-        maxHeight: 500
-    },
-    callout: {
-        maxWidth: 300
-    },
-    header: {
-        padding: '18px 24px 12px'
-    },
-    title: [
-        theme.fonts.xLarge,
-        {
-            margin: 0,
-            fontWeight: FontWeights.semilight
-        }
-    ],
-    inner: {
-        height: '100%',
-        padding: '0 24px 20px'
-    },
-    actions: {
-        position: 'relative',
-        marginTop: 20,
-        width: '100%',
-        whiteSpace: 'nowrap'
-    },
-    subtext: [
-        theme.fonts.small,
-        {
-            margin: 0,
-            fontWeight: FontWeights.semilight
-        }
-    ],
-    link: [
-        theme.fonts.medium,
-        {
-            color: theme.palette.neutralPrimary
-        }
-    ]
-});
+
+let _styles: any;
+
+const getStyles = () => {
+
+   const theme = getHordeTheme();
+
+   const styles = _styles ?? mergeStyleSets({
+
+      buttonArea: {
+          verticalAlign: 'top',
+          display: 'inline-block',
+          textAlign: 'center',
+          margin: '0 100px',
+          minWidth: 130,
+          height: 32
+      },
+      container: {
+          overflow: 'auto',
+          maxHeight: 500
+      },
+      callout: {
+          maxWidth: 300
+      },
+      header: {
+          padding: '18px 24px 12px'
+      },
+      title: [
+          theme.fonts.xLarge,
+          {
+              margin: 0,
+              fontWeight: FontWeights.semilight
+          }
+      ],
+      inner: {
+          height: '100%',
+          padding: '0 24px 20px'
+      },
+      actions: {
+          position: 'relative',
+          marginTop: 20,
+          width: '100%',
+          whiteSpace: 'nowrap'
+      },
+      subtext: [
+          theme.fonts.small,
+          {
+              margin: 0,
+              fontWeight: FontWeights.semilight
+          }
+      ],
+      link: [
+          theme.fonts.medium,
+          {
+              color: theme.palette.neutralPrimary
+          }
+      ]
+   });
+   
+   _styles = styles;
+   return styles;
+}
+
+
 
 type SearchItem = {
     text: string;
@@ -91,7 +105,9 @@ const searchRef = React.createRef<HTMLDivElement>();
 
 export const Search: React.FC = () => {
 
-    const [visible, setVisible] = useState(false);
+   const [visible, setVisible] = useState(false);
+   
+   const styles = getStyles();
 
     return (
         <Stack>

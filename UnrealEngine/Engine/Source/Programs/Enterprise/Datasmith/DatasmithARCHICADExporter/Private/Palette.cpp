@@ -116,7 +116,7 @@ class FPaletteWindow : public DG::Palette,
 			if (--Count == 0)
 			{
 				Count = Delay;
-				TryFunctionCatchAndAlert("AutoSync - Check View State", []() -> GSErrCode {
+				TryFunctionCatchAndLog("AutoSync - Check View State", []() -> GSErrCode {
 					FSynchronizer* Synchronizer = FSynchronizer::GetCurrent();
 					if (Synchronizer != nullptr)
 					{

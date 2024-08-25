@@ -33,7 +33,6 @@ class DNAAPI DescriptorReader : public HeaderReader {
             @warning
                 The index must be less than the value returned by getMetaDataCount.
             @return View over the key name string.
-            @see getMedaData
         */
         virtual StringView getMetaDataKey(std::uint32_t index) const = 0;
         /**

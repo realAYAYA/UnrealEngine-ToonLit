@@ -7,6 +7,7 @@
 #include "ComputeFramework/ShaderParameterMetadataAllocation.h"
 #include "ComputeFramework/ShaderParamTypeDefinition.h"
 #include "OptimusDeformerInstance.h"
+#include "OptimusHelpers.h"
 #include "OptimusVariableDescription.h"
 #include "ShaderParameterMetadataBuilder.h"
 
@@ -93,16 +94,27 @@ UComputeDataProvider* UOptimusGraphDataInterface::CreateDataProvider(TObjectPtr<
 	UOptimusGraphDataProvider* Provider = NewObject<UOptimusGraphDataProvider>();
 	Provider->MeshComponent = Cast<UMeshComponent>(InBinding);
 	Provider->Variables = Variables;
+
+	for (FOptimusGraphVariableDescription& Variable : Provider->Variables)
+	{
+		// When source object was introduced, we also appended a unique index to the value name provided by each value provider
+		// so instead of using the name directly, we need to do this extra step
+		if (!Variable.SourceObject.IsNull())
+		{
+			Variable.CachedSourceValueName = Optimus::ExtractSourceValueName(Variable.Name);
+		}
+	}
+	
 	Provider->ParameterBufferSize = ParameterBufferSize;
 	return Provider;
 }
 
 
-void UOptimusGraphDataProvider::SetConstant(FString const& InVariableName, TArray<uint8> const& InValue)
+void UOptimusGraphDataProvider::SetConstant(TSoftObjectPtr<UObject> InSourceObject, TArray<uint8> const& InValue)
 {
 	for (int32 VariableIndex = 0; VariableIndex < Variables.Num(); ++VariableIndex)
 	{
-		if (Variables[VariableIndex].Name == InVariableName)
+		if (Variables[VariableIndex].SourceObject == InSourceObject)
 		{
 			if (ensure(Variables[VariableIndex].Value.Num() == InValue.Num()))
 			{
@@ -116,6 +128,16 @@ void UOptimusGraphDataProvider::SetConstant(FString const& InVariableName, TArra
 FComputeDataProviderRenderProxy* UOptimusGraphDataProvider::GetRenderProxy()
 {
 	return new FOptimusGraphDataProviderProxy(DeformerInstance, Variables, ParameterBufferSize);
+}
+
+void UOptimusGraphDataProvider::SetDeformerInstance(UOptimusDeformerInstance* InInstance)
+{
+	DeformerInstance = InInstance;
+}
+
+UOptimusDeformerInstance* UOptimusGraphDataProvider::GetDeformerInstance() const
+{
+	return DeformerInstance;
 }
 
 FOptimusGraphDataProviderProxy::FOptimusGraphDataProviderProxy(UOptimusDeformerInstance const* DeformerInstance, TArray<FOptimusGraphVariableDescription> const& Variables, int32 ParameterBufferSize)
@@ -147,7 +169,37 @@ FOptimusGraphDataProviderProxy::FOptimusGraphDataProviderProxy(UOptimusDeformerI
 			{
 				if (VariableValue != nullptr)
 				{
-					if (Variable.ValueType == VariableValue->DataType->ShaderValueType && Variable.Name == VariableValue->VariableName.GetPlainNameString())
+					if (Variable.ValueType != VariableValue->DataType->ShaderValueType)
+					{
+						continue;
+					}
+
+					bool bNameMatch = false;
+					
+					// Once upon a time when these values had no source objects, they also just have simple names
+					// so we can directly use the name to find the matching variable
+					if (Variable.SourceObject.IsNull())
+					{
+						// Using GetPlainNameString here because back then variables in the graph data interface were
+						// also generated using GetPlainNameString. This certainly creates an issue where
+						// multiple variables were sharing the same name, but at least the first matching variable
+						// would still work
+						if (Variable.Name == VariableValue->VariableName.GetPlainNameString())
+						{
+							bNameMatch = true;
+						}	
+					}
+					else
+					{
+						// When source object was introduced, we also appended a unique index to the value name
+						// so instead of using the name directly we use the source value name
+						if (Variable.CachedSourceValueName == VariableValue->VariableName)
+						{
+							bNameMatch = true;
+						}	
+					}
+
+					if (bNameMatch)
 					{
 						if (ensure(ParameterData.Num() >= Variable.Offset + VariableValue->ValueData.Num()))
 						{

@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Templates/RefCounting.h"
 #include "HAL/PlatformProcess.h"
 #include "ShaderCore.h"
@@ -22,89 +21,40 @@
 #include "GBufferInfo.h"
 #include "ShaderMaterial.h"
 #include "Misc/ScopeRWLock.h"
-#include "AsyncCompilationHelpers.h"
-#include "AssetCompilingManager.h"
+#include "IAssetCompilingManager.h"
 #include "Containers/HashTable.h"
 #include "Containers/List.h"
 #include "Containers/Deque.h"
 #include "Hash/Blake3.h"
 #include "SceneTypes.h"
 
+class FAsyncCompilationNotification;
+class FCbObjectView;
+class FCbWriter;
 class FVertexFactoryType;
 class IDistributedBuildController;
 class FMaterialShaderMap;
-
-DECLARE_LOG_CATEGORY_EXTERN(LogShaderCompilers, Log, All);
-
 class FShaderCompileJob;
+class FShaderCompilerStats;
 class FShaderPipelineCompileJob;
 struct FAnalyticsEventAttribute;
 
+DECLARE_LOG_CATEGORY_EXTERN(LogShaderCompilers, Log, All);
+
 #define DEBUG_INFINITESHADERCOMPILE 0
 
+bool AreShaderErrorsFatal();
+
 extern ENGINE_API bool IsShaderJobCacheDDCEnabled();
+extern ENGINE_API bool IsMaterialMapDDCEnabled();
 
 struct FShaderJobCacheStoredOutput;
-
-class FShaderJobCache
-{
-public:
-
-	FShaderJobCache();
-	~FShaderJobCache();
-
-	using FJobInputHash = FShaderCommonCompileJob::FInputHash;
-	using FJobCachedOutput = FSharedBuffer;
-
-	/** Looks for the job in the cache, returns null if not found */
-	FJobCachedOutput* Find(const FJobInputHash& Hash, const bool bCheckDDC);
-
-	/** Adds a job output to the cache */
-	void AddJobOutput(const FShaderCommonCompileJob* FinishedJob, const FJobInputHash& Hash, const FJobCachedOutput& Contents, int InitialHitCount, const bool bAddToDDC);
-
-	/** Calculates memory used by the cache*/
-	uint64 GetAllocatedMemory() const;
-
-	/** Logs out the statistics */
-	void LogStats();
-
-	/** Gather statistics to send to analytics */
-	void GatherAnalytics(const FString& BaseName, TArray<FAnalyticsEventAttribute>& Attributes) const;
-
-	/** Calculates current memory budget, in bytes */
-	uint64 GetCurrentMemoryBudget() const;
-
-private:
-
-	using FJobOutputHash = FBlake3Hash;
-	using FStoredOutput = FShaderJobCacheStoredOutput;
-
-	void RemoveByInputHash(const FJobInputHash& InputHash);
-
-	/* A lot of outputs can be duplicated, so they are deduplicated before storing */
-	TMap<FJobOutputHash, FStoredOutput*> Outputs;
-
-	/** Map of input hashes to output hashes */
-	TMap<FJobInputHash, FJobOutputHash> InputHashToOutput;
-
-	/** Queue to evict oldest elements when memory budget is exceeded */
-	TDeque<FJobInputHash> EvictionQueue;
-
-	/** Statistics - total number of times we tried to Find() some input hash */
-	uint64 TotalSearchAttempts = 0;
-
-	/** Statistics - total number of times we succeded in Find()ing output for some input hash */
-	uint64 TotalCacheHits = 0;
-
-	/** Statistics - allocated memory. If the number is non-zero, we can trust it as accurate. Otherwise, recalculate. */
-	uint64 CurrentlyAllocatedMemory = 0;
-};
-
+class FShaderJobCache;
 
 class FShaderCompileJobCollection
 {
 public:
-	FShaderCompileJobCollection();
+	FShaderCompileJobCollection(FCriticalSection& InCompileQueueSection);
 
 	FShaderCompileJob* PrepareJob(uint32 InId, const FShaderCompileJobKey& InKey, EShaderCompileJobPriority InPriority);
 	FShaderPipelineCompileJob* PrepareJob(uint32 InId, const FShaderPipelineCompileJobKey& InKey, EShaderCompileJobPriority InPriority);
@@ -114,130 +64,31 @@ public:
 
 	void SubmitJobs(const TArray<FShaderCommonCompileJobPtr>& InJobs);
 	
-	/** This is an entry point for all jobs that have finished the compilation (whether real or cached). Can be called from multiple threads.*/
-	void ProcessFinishedJob(FShaderCommonCompileJob* FinishedJob, bool bWasCached = false);
+	/** Called for all completed jobs, including those that were cache hits, duplicates of other in flight jobs, or skipped due to failed preprocessing.
+	 * Can be called from multiple threads.
+	 */
+	void ProcessFinishedJob(FShaderCommonCompileJob* FinishedJob, bool bCompilationSkipped = false);
 
 	/** Adds the job to cache. */
 	void AddToCacheAndProcessPending(FShaderCommonCompileJob* FinishedJob);
 
-	/** Log caching statistics.*/
-	void LogCachingStats();
+	/** Retrieve caching statistics. */
+	void GetCachingStats(FShaderCompilerStats& OutStats) const;
 
-	void GatherAnalytics(const FString& BaseName, TArray<FAnalyticsEventAttribute>& Attributes) const;
+	int32 GetNumPendingJobs(EShaderCompileJobPriority InPriority) const;
 
-	inline int32 GetNumPendingJobs(EShaderCompileJobPriority InPriority) const
-	{
-		return NumPendingJobs[(int32)InPriority];
-	}
-
-	inline int32 GetNumOutstandingJobs() const
-	{
-		return NumOutstandingJobs.GetValue();
-	}
+	int32 GetNumOutstandingJobs() const;
 
 	int32 GetNumPendingJobs() const;
 
 	int32 GetPendingJobs(EShaderCompilerWorkerType InWorkerType, EShaderCompileJobPriority InPriority, int32 MinNumJobs, int32 MaxNumJobs, TArray<FShaderCommonCompileJobPtr>& OutJobs);
 
 private:
-	void InternalAddJob(FShaderCommonCompileJob* Job);
-	void InternalRemoveJob(FShaderCommonCompileJob* InJob);
-	void InternalSetPriority(FShaderCommonCompileJob* Job, EShaderCompileJobPriority InPriority);
-	// cannot allow managing this from outside as the caching logic is not exposed
-	inline int32 InternalSubtractNumOutstandingJobs(int32 Value)
-	{
-		const int32 PrevNumOutstandingJobs = NumOutstandingJobs.Subtract(Value);
-		check(PrevNumOutstandingJobs >= Value);
-		return PrevNumOutstandingJobs - Value;
-	}
-
-	template<typename JobType, typename KeyType>
-	int32 InternalFindJobIndex(uint32 InJobHash, uint32 InJobId, const KeyType& InKey) const
-	{
-		const int32 TypeIndex = (int32)JobType::Type;
-		uint32 CurrentPriorityIndex = 0u;
-		int32 CurrentIndex = INDEX_NONE;
-		for (int32 Index = JobHash[TypeIndex].First(InJobHash); JobHash[TypeIndex].IsValid(Index); Index = JobHash[TypeIndex].Next(Index))
-		{
-			const FShaderCommonCompileJob* Job = Jobs[TypeIndex][Index].GetReference();
-			check(Job->Type == JobType::Type);
-
-			// We find the job that matches the key with the highest priority
-			if (Job->Id == InJobId &&
-				(uint32)Job->Priority >= CurrentPriorityIndex &&
-				static_cast<const JobType*>(Job)->Key == InKey)
-			{
-				CurrentPriorityIndex = (uint32)Job->Priority;
-				CurrentIndex = Index;
-			}
-		}
-		return CurrentIndex;
-	}
-
-	template<typename JobType, typename KeyType>
-	JobType* InternalFindJob(uint32 InJobHash, uint32 InJobId, const KeyType& InKey) const
-	{
-		const int32 TypeIndex = (int32)JobType::Type;
-		const int32 JobIndex = InternalFindJobIndex<JobType>(InJobHash, InJobId, InKey);
-		return JobIndex != INDEX_NONE ? static_cast<JobType*>(Jobs[TypeIndex][JobIndex].GetReference()) : nullptr;
-	}
-
-	template<typename JobType, typename KeyType>
-	JobType* InternalPrepareJob(uint32 InId, const KeyType& InKey, EShaderCompileJobPriority InPriority)
-	{
-		const uint32 Hash = InKey.MakeHash(InId);
-		JobType* PrevJob = nullptr;
-		{
-			FReadScopeLock Locker(Lock);
-			PrevJob = InternalFindJob<JobType>(Hash, InId, InKey);
-		}
-
-		JobType* NewJob = nullptr;
-		if (PrevJob == nullptr || (uint32)InPriority > (uint32)PrevJob->Priority)
-		{
-			FWriteScopeLock Locker(Lock);
-			if (PrevJob == nullptr)
-			{
-				PrevJob = InternalFindJob<JobType>(Hash, InId, InKey);
-			}
-			if (PrevJob == nullptr)
-			{
-				NewJob = new JobType(Hash, InId, InPriority, InKey);
-				InternalAddJob(NewJob);
-			}
-			else if ((uint32)InPriority > (uint32)PrevJob->Priority)
-			{
-				InternalSetPriority(PrevJob, InPriority);
-			}
-		}
-
-		return NewJob;
-	}
-
 	/** Handles the console command to log shader compiler stats */
 	void HandlePrintStats();
 
-	/** Queue of tasks that haven't been assigned to a worker yet. */
-	FShaderCommonCompileJob* PendingJobs[NumShaderCompileJobPriorities];
-	int32 NumPendingJobs[NumShaderCompileJobPriorities];
-
-	/** Number of jobs currently being compiled.  This includes PendingJobs and any jobs that have been assigned to workers but aren't complete yet. */
-	FThreadSafeCounter NumOutstandingJobs;
-
-	TArray<FShaderCommonCompileJobPtr> Jobs[NumShaderCompileJobTypes];
-	TArray<int32> FreeIndices[NumShaderCompileJobTypes];
-	FHashTable JobHash[NumShaderCompileJobTypes];
-	/** Guards access to the above job storage and also the cache structures below - JobsInFlight, WaitList and the Cache itself */
-	mutable FRWLock Lock;
-
-	/** Map of input hash to the jobs that we decided to execute. Note that mapping will miss cloned jobs (to avoid being a multimap). */
-	TMap<FShaderCommonCompileJob::FInputHash, FShaderCommonCompileJob*> JobsInFlight;
-
-	/** Map of input hash to the jobs that we delayed because a job with the same hash was executing. Each job is a head of a linked list of jobs with the same input hash (ihash) */
-	TMap<FShaderCommonCompileJob::FInputHash, FShaderCommonCompileJob*> DuplicateJobsWaitList;
-
-	/** Cache for the completed jobs.*/
-	FShaderJobCache CompletedJobsCache;
+	/** Cache for in flight and completed jobs.*/
+	TPimplPtr<FShaderJobCache> JobsCache;
 
 	/** Debugging - console command to print stats. */
 	class IConsoleObject* PrintStatsCmd;
@@ -262,6 +113,18 @@ public:
 };
 #endif // WITH_EDITOR
 
+struct FShaderCompileMemoryUsage
+{
+	/**
+	* The amount of virtual memory used (committed on Windows)
+	*/
+	uint64 VirtualMemory;
+	/**
+	* The amount of physical memory used.
+	*/
+	uint64 PhysicalMemory;
+};
+
 class FShaderCompileThreadRunnableBase : public FRunnable
 {
 	friend class FShaderCompilingManager;
@@ -276,6 +139,21 @@ protected:
 	int32 MaxPriorityIndex;
 	
 	TAtomic<bool> bForceFinish;
+
+	/**
+	* Tries to print out the memory usage of all shader compile workers. When called during an out-of-memory event, it is useful to allow this process
+	* to wait for any locks, so we can rule out deadlocks while reporting out-of-memory errors.
+	* Returns whether the memory usage was successfully printed.
+	*/
+	virtual bool PrintWorkerMemoryUsage(bool bAllowToWaitForLock=true) { return false; }
+	/** Returns the amount of memory (in bytes) used by external processes related to this, if any. */
+	virtual FShaderCompileMemoryUsage GetExternalWorkerMemoryUsage() { return FShaderCompileMemoryUsage{}; }
+
+	// Returns a name for this thread instance. Defaults to "ShaderCompilingThread".
+	virtual const TCHAR* GetThreadName() const
+	{
+		return TEXT("ShaderCompilingThread");
+	}
 
 public:
 	FShaderCompileThreadRunnableBase(class FShaderCompilingManager* InManager);
@@ -333,6 +211,10 @@ public:
 	FShaderCompileThreadRunnable(class FShaderCompilingManager* InManager);
 	virtual ~FShaderCompileThreadRunnable();
 
+protected:
+	virtual bool PrintWorkerMemoryUsage(bool bAllowToWaitForLock = true) override;
+	virtual FShaderCompileMemoryUsage GetExternalWorkerMemoryUsage() override;
+
 private:
 
 	/** 
@@ -361,13 +243,15 @@ private:
 	virtual int32 CompilingLoop() override;
 
 	virtual void OnMachineResourcesChanged() override;
+
+	void PrintWorkerMemoryUsageWithLockTaken();
 };
 
 class FShaderCompileUtilities
 {
 public:
 	static bool DoWriteTasks(const TArray<FShaderCommonCompileJobPtr>& QueuedJobs, FArchive& TransferFile, IDistributedBuildController* BuildDistributionController = nullptr, bool bUseRelativePaths = false, bool bCompressTaskFile = false);
-	static void DoReadTaskResults(const TArray<FShaderCommonCompileJobPtr>& QueuedJobs, FArchive& OutputFile);
+	static FSCWErrorCode::ECode DoReadTaskResults(const TArray<FShaderCommonCompileJobPtr>& QueuedJobs, FArchive& OutputFile);
 
 	/** Execute the specified (single or pipeline) shader compile job. */
 	static void ExecuteShaderCompileJob(FShaderCommonCompileJob& Job);
@@ -382,7 +266,6 @@ public:
 	static void AppendGBufferDDCKeyString(const EShaderPlatform Platform, FString& KeyString);
 	static ENGINE_API void WriteGBufferInfoAutogen(EShaderPlatform TargetPlatform, ERHIFeatureLevel::Type FeatureLevel);
 
-	static int FetchCompileInt(const FShaderCompilerEnvironment& Enviroment, const char* SrcName);
 	static void ApplyFetchEnvironment(FShaderMaterialPropertyDefines& DefineData, const FShaderCompilerEnvironment& Environment);
 	static void ApplyFetchEnvironment(FShaderGlobalDefines& DefineData, const FShaderCompilerEnvironment& Environment, const EShaderPlatform Platform);
 	static void ApplyFetchEnvironment(FShaderLightmapPropertyDefines& DefineData, const FShaderCompilerEnvironment& Environment);
@@ -425,6 +308,8 @@ private:
 
 	TArray<FString> GetDependencyFilesForJobs(TArray<FShaderCommonCompileJobPtr>& Jobs);
 	void DispatchShaderCompileJobsBatch(TArray<FShaderCommonCompileJobPtr>& JobsToSerialize);
+
+	virtual const TCHAR* GetThreadName() const override;
 };
 
 /** Results for a single compiled and finalized shader map. */
@@ -457,6 +342,35 @@ public:
 		uint32 CompiledDouble = 0;
 		uint32 CookedDouble = 0;
 		float CompileTime = 0.f;
+
+		FShaderStats& operator+=(const FShaderStats& Other)
+		{
+			if (Compiled)
+			{
+				CompiledDouble += Other.Compiled;
+			}
+			else
+			{
+				Compiled += Other.Compiled;
+			}
+
+			if (Cooked)
+			{
+				CookedDouble += Other.Cooked;
+			}
+			else
+			{
+				Cooked += Other.Cooked;
+			}
+
+			CompiledDouble += Other.CompiledDouble;
+			CookedDouble += Other.CookedDouble;
+			CompileTime += Other.CompileTime;
+
+			PermutationCompilations.Append(Other.PermutationCompilations);
+
+			return *this;
+		}
 	};
 	using ShaderCompilerStats = TMap<FString, FShaderStats>;
 
@@ -469,7 +383,25 @@ public:
 		float TotalPreprocessTime = 0.0f;
 		int32 NumCompiled = 0;
 		float AverageCompileTime = 0.0f;	// stored explicitly as an optimization
+
+		FShaderTimings& operator+=(const FShaderTimings& Other)
+		{
+			MinCompileTime = FMath::Min(MinCompileTime, Other.MinCompileTime);
+			MaxCompileTime = FMath::Max(MaxCompileTime, Other.MaxCompileTime);
+			TotalCompileTime += Other.TotalCompileTime;
+			TotalPreprocessTime += Other.TotalPreprocessTime;
+			NumCompiled += Other.NumCompiled;
+			if (NumCompiled)
+			{
+				AverageCompileTime = TotalCompileTime / static_cast<float>(NumCompiled);
+			}
+			return *this;
+		}
 	};
+
+	void IncrementMaterialCook();
+	void IncrementMaterialTranslated(double InTotalTime, double InTranslationOnlyTime, double InSerializeTime);
+	void IncrementMaterialCacheHit();
 
 	ENGINE_API void RegisterCookedShaders(uint32 NumCooked, float CompileTime, EShaderPlatform Platform, const FString MaterialPath, FString PermutationString = FString(""));
 	ENGINE_API void RegisterCompiledShaders(uint32 NumPermutations, EShaderPlatform Platform, const FString MaterialPath, FString PermutationString = FString(""));
@@ -477,6 +409,11 @@ public:
 	ENGINE_API void WriteStats(class FOutputDevice* Ar = nullptr);
 	ENGINE_API void WriteStatSummary();
 	ENGINE_API uint32 GetTotalShadersCompiled();
+
+	ENGINE_API void Aggregate(FShaderCompilerStats& Other);
+	ENGINE_API void WriteToCompactBinary(FCbWriter& Writer);
+	ENGINE_API void ReadFromCompactBinary(FCbObjectView& Reader);
+	inline void SetMultiProcessAggregated() { bMultiProcessAggregated = true; }
 
 	void AddDDCMiss(uint32 NumMisses);
 	uint32 GetDDCMisses() const;
@@ -500,73 +437,196 @@ public:
 	void RegisterAssignedJob(FShaderCommonCompileJob& InOutJob);
 
 	/** Marks the job as finished for the stats purpose. Job will be modified to include the current timestamp. */
-	void RegisterFinishedJob(FShaderCommonCompileJob& InOutJob);
+	void RegisterFinishedJob(FShaderCommonCompileJob& InOutJob, bool bCompilationSkipped);
 
 	/** Informs statistics about a new job batch, so we can tally up batches. */
 	void RegisterJobBatch(int32 NumJobs, EExecutionType ExecType);
 
-	void GatherAnalytics(const FString& BaseName, TArray<FAnalyticsEventAttribute>& Attributes);
+	ENGINE_API void GatherAnalytics(const FString& BaseName, TArray<FAnalyticsEventAttribute>& Attributes);
 
 private:
+	friend class FShaderJobCache;
 	FCriticalSection CompileStatsLock;
 	TSparseArray<ShaderCompilerStats> CompileStats;
 
-	/** This tracks accumulated wait time from local workers during the lifetime of the stats.
-	 *
-	 * Wait time is only counted for local workers that are alive and not between their invocations
-	 */
-	double AccumulatedLocalWorkerIdleTime = 0.0;
+	struct FCounters
+	{
+		/** This tracks accumulated wait time from local workers during the lifetime of the stats.
+		 *
+		 * Wait time is only counted for local workers that are alive and not between their invocations
+		 */
+		double AccumulatedLocalWorkerIdleTime = 0.0;
 
-	/** How many times we registered idle time? */
-	double TimesLocalWorkersWereIdle = 0;
+		/** How many times we registered idle time? */
+		double TimesLocalWorkersWereIdle = 0;
 
-	/** Number of jobs assigned to workers, no matter if they completed or not - used to average pending time. */
-	int64 JobsAssigned = 0;
+		/** Number of jobs assigned to workers, no matter if they completed or not - used to average pending time. */
+		int64 JobsAssigned = 0;
 
-	/** Total number jobs completed. */
-	int64 JobsCompleted = 0;
+		/** Total number jobs completed. */
+		int64 JobsCompleted = 0;
 
-	/** Amount of time a job had to spent in pending queue (i.e. waiting to be assigned to a worker). */
-	double AccumulatedPendingTime = 0;
+		/** Amount of time a job had to spent in pending queue (i.e. waiting to be assigned to a worker). */
+		double AccumulatedPendingTime = 0;
 
-	/** Max amount of time any single job was pending (waiting to be assigned to a worker). */
-	double MaxPendingTime = 0;
+		/** Max amount of time any single job was pending (waiting to be assigned to a worker). */
+		double MaxPendingTime = 0;
 
-	/** Amount of time job spent being processed by the worker. */
-	double AccumulatedJobExecutionTime = 0;
+		/** Amount of time job spent being processed by the worker. */
+		double AccumulatedJobExecutionTime = 0;
 
-	/** Max amount of time any single job spent being processed by the worker. */
-	double MaxJobExecutionTime = 0;
+		/** Max amount of time any single job spent being processed by the worker. */
+		double MaxJobExecutionTime = 0;
 
-	/** Amount of time job spent being processed overall. */
-	double AccumulatedJobLifeTime = 0;
+		/** Amount of time job spent being processed overall. */
+		double AccumulatedJobLifeTime = 0;
 
-	/** Max amount of time any single job spent being processed overall. */
-	double MaxJobLifeTime = 0;
+		/** Max amount of time any single job spent being processed overall. */
+		double MaxJobLifeTime = 0;
 
-	/** Number of local job batches seen. */
-	int64 LocalJobBatchesSeen = 0;
+		/** Time spent in tasks generated in FShaderJobCache::SubmitJobs, plus stall time on mutex locks in those tasks */
+		double AccumulatedTaskSubmitJobs = 0.0;
+		double AccumulatedTaskSubmitJobsStall = 0.0;
 
-	/** Total jobs in local job batches. */
-	int64 TotalJobsReportedInLocalJobBatches = 0;
+		/** Number of local job batches seen. */
+		int64 LocalJobBatchesSeen = 0;
 
-	/** Number of distributed job batches seen. */
-	int64 DistributedJobBatchesSeen = 0;
+		/** Total jobs in local job batches. */
+		int64 TotalJobsReportedInLocalJobBatches = 0;
 
-	/** Total jobs in local job batches. */
-	int64 TotalJobsReportedInDistributedJobBatches = 0;
+		/** Number of distributed job batches seen. */
+		int64 DistributedJobBatchesSeen = 0;
 
-	/** Size of the smallest output shader code. */
-	int32 MinShaderCodeSize = 0;
+		/** Total jobs in local job batches. */
+		int64 TotalJobsReportedInDistributedJobBatches = 0;
 
-	/** Size of the largest output shader code. */
-	int32 MaxShaderCodeSize = 0;
+		/** Size of the smallest output shader code. */
+		int32 MinShaderCodeSize = 0;
 
-	/** Total accumulated size of all output shader codes. */
-	uint64 AccumulatedShaderCodeSize = 0;
+		/** Size of the largest output shader code. */
+		int32 MaxShaderCodeSize = 0;
 
-	/** Number of accumulated output shader codes. */
-	uint64 NumAccumulatedShaderCodes = 0;
+		/** Total accumulated size of all output shader codes. */
+		uint64 AccumulatedShaderCodeSize = 0;
+
+		/** Number of accumulated output shader codes. */
+		uint64 NumAccumulatedShaderCodes = 0;
+
+		/** Total number of DDC misses on shader maps. */
+		uint32 ShaderMapDDCMisses = 0;
+
+		/** Total number of DDC hits on shader maps. */
+		uint32 ShaderMapDDCHits = 0;
+
+		/** Total number of job cache query attempts. */
+		uint64 TotalCacheSearchAttempts = 0;
+
+		/** Total number of hits in the job cache (i.e. input hashes seen >1 time) */
+		uint64 TotalCacheHits = 0;
+
+		/** Total number of duplicate jobs (input hash matches an in-flight job, processed when in-flight job completes) */
+		uint32 TotalCacheDuplicates = 0;
+
+		/** Total number of DDC queries in the job cache (per-shader DDC). */
+		uint32 TotalCacheDDCQueries = 0;
+
+		/** Total number of DDC hits in the job cache (per shader DDC, as opposed to shader map DDC stats above). */
+		uint32 TotalCacheDDCHits = 0;
+
+		/** Total number of unique input hashes seen in job cache queries */
+		uint64 UniqueCacheInputHashes = 0;
+
+		/** Total number of unique job outputs stored in the cache.
+		  * Outputs are deduplicated based on a content hash so this number is in practice smaller than UniqueCacheInputHashes.
+		  */
+		uint64 UniqueCacheOutputs = 0;
+
+		/** Total amount of memory currently used by the job cache */
+		uint64 CacheMemUsed = 0;
+
+		/** Memory budget allocated for the job cache */
+		uint64 CacheMemBudget = 0;
+
+		FCounters& operator+=(const FCounters& Other)
+		{
+			AccumulatedLocalWorkerIdleTime += Other.AccumulatedLocalWorkerIdleTime;
+			TimesLocalWorkersWereIdle += Other.TimesLocalWorkersWereIdle;
+			JobsAssigned += Other.JobsAssigned;
+			JobsCompleted += Other.JobsCompleted;
+			AccumulatedPendingTime += Other.AccumulatedPendingTime;
+			MaxPendingTime = FMath::Max(Other.MaxPendingTime, MaxPendingTime);
+			AccumulatedJobExecutionTime += Other.AccumulatedJobExecutionTime;
+			MaxJobExecutionTime = FMath::Max(Other.MaxJobExecutionTime, MaxJobExecutionTime);
+			AccumulatedJobLifeTime += Other.AccumulatedJobLifeTime;
+			MaxJobLifeTime = FMath::Max(Other.MaxJobLifeTime, MaxJobLifeTime);
+			AccumulatedTaskSubmitJobs += Other.AccumulatedTaskSubmitJobs;
+			AccumulatedTaskSubmitJobsStall += Other.AccumulatedTaskSubmitJobsStall;
+			LocalJobBatchesSeen += Other.LocalJobBatchesSeen;
+			TotalJobsReportedInLocalJobBatches += Other.TotalJobsReportedInLocalJobBatches;
+			DistributedJobBatchesSeen += Other.DistributedJobBatchesSeen;
+			TotalJobsReportedInDistributedJobBatches += Other.TotalJobsReportedInDistributedJobBatches;
+			if (Other.MinShaderCodeSize > 0)
+			{
+				MinShaderCodeSize = (MinShaderCodeSize > 0 ? FMath::Min(MinShaderCodeSize, Other.MinShaderCodeSize) : Other.MinShaderCodeSize);
+			}
+			MaxShaderCodeSize = FMath::Max(Other.MaxShaderCodeSize, MaxShaderCodeSize);
+			AccumulatedShaderCodeSize += Other.AccumulatedShaderCodeSize;
+			NumAccumulatedShaderCodes += Other.NumAccumulatedShaderCodes;
+			ShaderMapDDCMisses += Other.ShaderMapDDCMisses;
+			ShaderMapDDCHits += Other.ShaderMapDDCHits;
+			TotalCacheSearchAttempts += Other.TotalCacheSearchAttempts;
+			TotalCacheHits += Other.TotalCacheHits;
+			TotalCacheDuplicates += Other.TotalCacheDuplicates;
+			TotalCacheDDCQueries += Other.TotalCacheDDCQueries;
+			TotalCacheDDCHits += Other.TotalCacheDDCHits;
+			UniqueCacheInputHashes += Other.UniqueCacheInputHashes;
+			UniqueCacheOutputs += Other.UniqueCacheOutputs;
+			CacheMemUsed += Other.CacheMemUsed;
+			CacheMemBudget += Other.CacheMemBudget;
+
+			return *this;
+		}
+	};
+
+	FCounters Counters;
+
+	struct FMaterialCounters
+	{
+		/** The total number of materials cooked.  This corresponds to UMaterialInterface::Presave() */
+		int32 NumMaterialsCooked = 0;
+
+		/** The total number of materials that have been translated.  */
+		int32 MaterialTranslateCalls = 0;
+
+		/** The total time in seconds to translate all materials.  */
+		double MaterialTranslateTotalTimeSec = 0.0;
+
+		/** The total time spent actually translating materials (rather than for instance accessing the DDC cache). */
+		double MaterialTranslateTranslationOnlyTimeSec = 0.0;
+
+		/** The total time spent serializing DDC results. */
+		double MaterialTranslateSerializationOnlyTimeSec = 0.0;
+
+		/** The total number times a material translation was skipped because the the results were in the DDC. */
+		int32 MaterialCacheHits = 0;
+		
+		FMaterialCounters& operator+=(const FMaterialCounters& Other)
+		{
+			NumMaterialsCooked += Other.NumMaterialsCooked;
+			MaterialTranslateCalls += Other.MaterialTranslateCalls;
+			MaterialTranslateTotalTimeSec += Other.MaterialTranslateTotalTimeSec;
+			MaterialTranslateTranslationOnlyTimeSec += Other.MaterialTranslateTranslationOnlyTimeSec;
+			MaterialTranslateSerializationOnlyTimeSec += Other.MaterialTranslateSerializationOnlyTimeSec;
+			MaterialCacheHits += Other.MaterialCacheHits;
+
+			return *this;
+		}
+
+		void WriteStatSummary(const TCHAR* AggregatedSuffix);
+		void GatherAnalytics(TArray<FAnalyticsEventAttribute>& Attributes);
+	};
+
+	FMaterialCounters MaterialCounters;
 
 	/** Accumulates the job lifetimes without overlaps */
 	TArray<TInterval<double>> JobLifeTimeIntervals;
@@ -574,11 +634,7 @@ private:
 	/** Map of shader names to their compilation timings */
 	TMap<FString, FShaderTimings> ShaderTimings;
 
-	/** Total number of DDC misses on shader maps. */
-	uint32 ShaderMapDDCMisses = 0;
-
-	/** Total number of DDC hits on shader maps. */
-	uint32 ShaderMapDDCHits = 0;
+	bool bMultiProcessAggregated = false;
 };
 
 
@@ -661,6 +717,8 @@ private:
 	bool bAllowAsynchronousShaderCompiling;
 	/** Whether to ask to retry a failed shader compile error. */
 	bool bPromptToRetryFailedShaderCompiles;
+	/** If enabled when we enter the prompt to retry we will break in the debugger if one is attached rather than prompting. */
+	bool bDebugBreakOnPromptToRetryShaderCompile = false;
 	/** Whether to log out shader job completion times on the worker thread.  Useful for tracking down which global shader is taking a long time. */
 	bool bLogJobCompletionTimes;
 	/** Target execution time for ProcessAsyncResults.  Larger values speed up async shader map processing but cause more hitchiness while async compiling is happening. */
@@ -696,8 +754,18 @@ private:
 	/** Opt out of material shader compilation and instead place an empty shader map. */
 	bool bNoShaderCompilation;
 
+	/** If we are using ODSC (On Demand Shader Compilation) we should allow for incomplete maps to still be processed. */
+	bool bAllowForIncompleteShaderMaps;
+
 	/** Used to show a notification accompanying progress. */
-	FAsyncCompilationNotification Notification;
+	TUniquePtr<FAsyncCompilationNotification> Notification;
+
+	/** Delegate handle for delegate used to report memory usage during out-of-memory conditions. */
+	FDelegateHandle OutOfMemoryDelegateHandle;
+
+#if WITH_EDITOR
+	TMap<FString, FDelegateHandle> DirectoryWatcherHandles;
+#endif // WITH_EDITOR
 
 	/** Calculate NumShaderCompilingThreads, during construction or OnMachineResourcesChanged */
 	void CalculateNumberOfCompilingThreads(int32 NumberOfCores, int32 NumberOfCoresIncludingHyperthreads);
@@ -735,6 +803,9 @@ private:
 	/** Returns the first remote compiler controller found */
 	IDistributedBuildController* FindRemoteCompilerController() const;
 
+	/** Prints out the memory usage for shader compile worker processes, if they exist. */
+	void ReportMemoryUsage();
+
 public:
 	
 	ENGINE_API FShaderCompilingManager();
@@ -746,7 +817,8 @@ public:
 	ENGINE_API int32 GetNumPendingJobs() const;
 	ENGINE_API int32 GetNumOutstandingJobs() const;
 
-	ENGINE_API void GatherAnalytics(TArray<FAnalyticsEventAttribute>& Attributes) const;
+	UE_DEPRECATED(5.4, "FShaderCompilingManager::GatherAnalytics is deprecated; use GatherShaderAnalytics function from ShaderAnalytics.h instead")
+	inline void GatherAnalytics(TArray<FAnalyticsEventAttribute>& Attributes) const {}
 
 	/** 
 	 * Returns whether to display a notification that shader compiling is happening in the background. 
@@ -770,6 +842,16 @@ public:
 	bool IsCompiling() const
 	{
 		return GetNumOutstandingJobs() > 0 || HasShaderJobs() || GetNumPendingJobs() > 0 || NumExternalJobs > 0;
+	}
+
+	/**
+	 * Returns whether remote compiling is enabled. Otherwise, only the local machine is used for shader compilation.
+	 * This depends on command line argument '-NoRemoteShaderCompile', CVar 'r.ShaderCompiler.AllowDistributedCompilation',
+	 * and whether the target platform supports remote compilin; see ITargetPlatform::CanSupportRemoteShaderCompile().
+	 */
+	bool IsRemoteCompilingEnabled() const
+	{
+		return BuildDistributionController != nullptr;
 	}
 
 	/**
@@ -861,6 +943,11 @@ public:
 		}
 	}
 
+	void SetAllowForIncompleteShaderMaps(bool toggle)
+	{
+		bAllowForIncompleteShaderMaps = toggle;
+	}
+
 	ENGINE_API bool IsCompilingShaderMap(uint32 Id);
 
 	/** Prepares a job of the given type for compilation.  If a job with the given Id/Key already exists, it will attempt to adjust to the higher priority if possible, and nullptr will be returned.
@@ -902,9 +989,21 @@ public:
 
 	/**
 	 * Prints stats related to shader compilation to the log.
-	 * @param bForceLogIgnoringTimeInverval - this function is called often, so not every invocation normally will actually log the stats. This parameter being true bypasses this pacing.
 	 */
-	ENGINE_API void PrintStats(bool bForceLogIgnoringTimeInverval = false);
+	ENGINE_API void PrintStats();
+
+	UE_DEPRECATED(5.4, "PrintStats no longer accepts a 'force' boolean since printing on an interval has become the responsibility of FShaderStatsCollector. Call the no-argument version instead.")
+	inline void PrintStats(bool bForceLogIgnoringTimeInterval) { PrintStats(); }
+
+	/** Retrieve compiler statistics for all compilation done in this process.
+	  *	Note that this will not include stats for any compilation that occurs in worker processes in a multiprocess cook. 
+	  */
+	ENGINE_API void GetLocalStats(FShaderCompilerStats & OutStats) const;
+
+	/**
+	 * Returns the current memory usage of external local compilation processes in bytes.
+	 */
+	ENGINE_API FShaderCompileMemoryUsage GetExternalMemoryUsage();
 
 	/** 
 	 * Processes completed asynchronous shader maps, and assigns them to relevant materials.
@@ -1168,7 +1267,9 @@ extern ENGINE_API const FString& GetGlobalShaderMapDDCKey();
 extern ENGINE_API const FString& GetMaterialShaderMapDDCKey();
 
 extern ENGINE_API bool ShouldDumpShaderDDCKeys();
+UE_DEPRECATED(5.4, "DumpShaderDDCKeyToFile now takes DebugGroupName as parameter (these files now go into the ShaderDebugInfo folder alongside other debug artifacts).")
 extern ENGINE_API void DumpShaderDDCKeyToFile(const EShaderPlatform InPlatform, bool bWithEditor, const FString& FileName, const FString& DDCKey);
+extern ENGINE_API void DumpShaderDDCKeyToFile(const EShaderPlatform InPlatform, bool bWithEditor, const TCHAR* DebugGroupName, const FString& DDCKey);
 
 /**
 * Handles serializing in MeshMaterialMaps or GlobalShaderMap from a CookOnTheFly command and applying them to the in-memory shadermaps.
@@ -1178,3 +1279,9 @@ extern ENGINE_API void DumpShaderDDCKeyToFile(const EShaderPlatform InPlatform, 
 * @param GlobalShaderMap				Byte array that contains the serialized global shadermap from across the network.
 **/
 extern ENGINE_API void ProcessCookOnTheFlyShaders(bool bReloadGlobalShaders, const TArray<uint8>& MeshMaterialMaps, const TArray<FString>& MaterialsToLoad, const TArray<uint8>& GlobalShaderMap);
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "CoreMinimal.h"
+#include "AsyncCompilationHelpers.h"
+#include "AssetCompilingManager.h"
+#endif

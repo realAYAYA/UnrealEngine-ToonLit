@@ -252,7 +252,7 @@ public:
 	 *
 	 * @param Class					The UClass of assets to load for the test
 	 * @param OutBeautifiedNames	[Filled by method] The beautified filenames of the assets to use in the test
-	 * @oaram OutTestCommands		[Filled by method] The asset name in a form suitable for passing as a param to the test
+	 * @param OutTestCommands		[Filled by method] The asset name in a form suitable for passing as a param to the test
 	 * @param bIgnoreLoaded			If true, ignore any already loaded assets
 	 */
 	static void CollectTestsByClass(UClass * Class, TArray< FString >& OutBeautifiedNames, TArray< FString >& OutTestCommands, bool bIgnoreLoaded) 

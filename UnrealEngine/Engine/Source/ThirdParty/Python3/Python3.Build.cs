@@ -123,11 +123,11 @@ public class Python3 : ModuleRules
 
 			PotentialSDKs.AddRange(
 				new PythonSDKPaths[] {
-					new PythonSDKPaths(Path.Combine(PythonBinaryTPSDir, PlatformDir), new List<string>() { Path.Combine(PythonSourceTPSDir, PlatformDir, "include") }, new List<string>() { Path.Combine(PythonSourceTPSDir, PlatformDir, "libs", "python39.lib") }),
+					new PythonSDKPaths(Path.Combine(PythonBinaryTPSDir, PlatformDir), new List<string>() { Path.Combine(PythonSourceTPSDir, PlatformDir, "include") }, new List<string>() { Path.Combine(PythonSourceTPSDir, PlatformDir, "libs", "python311.lib") }),
 
 					// If you uncomment/add a discovery path here, ensure to discover the 64-bit version of Python. As of Python 3.9.7, the 32-bit version still available on Windows (and will crash the engine if used). To avoid editing this file, use UE_PYTHON_DIR environment variable.
-					//DiscoverPythonSDK("C:/Program Files/Python39"),
-					//DiscoverPythonSDK("C:/Python39"),
+					//DiscoverPythonSDK("C:/Program Files/Python311"),
+					//DiscoverPythonSDK("C:/Python311"),
 				}
 			);
 		}
@@ -141,7 +141,7 @@ public class Python3 : ModuleRules
 							Path.Combine(PythonSourceTPSDir, "Mac", "include")
 						},
 						new List<string>() {
-							Path.Combine(PythonBinaryTPSDir, "Mac", "lib", "libpython3.9.dylib")
+							Path.Combine(PythonBinaryTPSDir, "Mac", "lib", "libpython3.11.dylib")
 						}),
 				}
 			);
@@ -157,9 +157,9 @@ public class Python3 : ModuleRules
 						new PythonSDKPaths(
 							Path.Combine(PythonBinaryTPSDir, PlatformDir),
 							new List<string>() {
-								Path.Combine(PythonSourceTPSDir, PlatformDir, "include", "python3.9")
+								Path.Combine(PythonSourceTPSDir, PlatformDir, "include")
 							},
-							new List<string>() { Path.Combine(PythonSourceTPSDir, PlatformDir, "lib", "libpython3.9.a") }),
+							new List<string>() { Path.Combine(PythonSourceTPSDir, PlatformDir, "lib", "libpython3.11.a") }),
 				});
 				PublicSystemLibraries.Add("util");	// part of libc
 			}
@@ -172,7 +172,7 @@ public class Python3 : ModuleRules
 	{
 		if (Target.Platform == UnrealTargetPlatform.Linux && IsEnginePython)
 		{
-			RuntimeDependencies.Add("$(EngineDir)/Binaries/ThirdParty/Python3/Linux/lib/libpython3.9.so.1.0");
+			RuntimeDependencies.Add("$(EngineDir)/Binaries/ThirdParty/Python3/Linux/lib/libpython3.11.so.1.0");
 		}
 
 		// Copy python dll alongside the target in monolithic builds. We statically link a python stub that triggers the dll
@@ -180,7 +180,7 @@ public class Python3 : ModuleRules
 		// the executable we can guarantee it will be found and loaded
 		if (Target.Platform == UnrealTargetPlatform.Win64 && Target.LinkType == TargetLinkType.Monolithic && IsEnginePython)
 		{
-			RuntimeDependencies.Add("$(TargetOutputDir)/python39.dll", "$(EngineDir)/Binaries/ThirdParty/Python3/Win64/python39.dll", StagedFileType.NonUFS);
+			RuntimeDependencies.Add("$(TargetOutputDir)/python311.dll", "$(EngineDir)/Binaries/ThirdParty/Python3/Win64/python311.dll", StagedFileType.NonUFS);
 		}
 	}
 
@@ -224,17 +224,17 @@ public class Python3 : ModuleRules
 			if (Target.Platform == UnrealTargetPlatform.Win64)
 			{
 				LibFolder = "libs";
-				LibNamePattern = "python*.lib";
+				LibNamePattern = "python311.lib";
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Mac)
 			{
 				LibFolder = "lib";
-				LibNamePattern = "libpython*.dylib";
+				LibNamePattern = "libpython3.11.dylib";
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Linux)
 			{
 				LibFolder = "lib";
-				LibNamePattern = "libpython*.so";
+				LibNamePattern = "libpython3.11.so";
 			}
 
 			if (LibFolder != null && LibNamePattern != null)

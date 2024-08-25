@@ -25,7 +25,7 @@ UWidgetBlueprintExtension* UWidgetBlueprintExtension::RequestExtension(UWidgetBl
 UWidgetBlueprintExtension* UWidgetBlueprintExtension::GetExtension(const UWidgetBlueprint* InBlueprint, TSubclassOf<UWidgetBlueprintExtension> InExtensionType)
 {
 	// Look for an existing extension
-	for (TObjectPtr<UBlueprintExtension> Extension : InBlueprint->GetExtensions())
+	for (const TObjectPtr<UBlueprintExtension>& Extension : InBlueprint->GetExtensions())
 	{
 		if (Extension && Extension->GetClass() == InExtensionType)
 		{
@@ -41,7 +41,7 @@ TArray<UWidgetBlueprintExtension*> UWidgetBlueprintExtension::GetExtensions(cons
 {
 	TArray<UWidgetBlueprintExtension*> Extensions;
 
-	for (TObjectPtr<UBlueprintExtension> Extension : InBlueprint->GetExtensions())
+	for (const TObjectPtr<UBlueprintExtension>& Extension : InBlueprint->GetExtensions())
 	{
 		if (Extension && Extension->GetClass()->IsChildOf(UWidgetBlueprintExtension::StaticClass()))
 		{

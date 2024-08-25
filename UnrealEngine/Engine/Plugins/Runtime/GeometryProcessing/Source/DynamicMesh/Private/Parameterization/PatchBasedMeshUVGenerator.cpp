@@ -120,9 +120,10 @@ FGeometryResult FPatchBasedMeshUVGenerator::AutoComputeUVs(
 	return ResultInfo;
 }
 
-
-
-
+static TAutoConsoleVariable<int32> CVarEnableAutoUVAreaDensitySampling(
+	TEXT("modeling.DisableAutoUVAreaDensitySampling"),
+	0,
+	TEXT("If set, return the behavior of AutoUV's PatchBuilder algorithm to the legacy behavior."));
 
 bool FPatchBasedMeshUVGenerator::ComputeInitialMeshPatches(
 	FDynamicMesh3& TargetMesh,
@@ -137,7 +138,16 @@ bool FPatchBasedMeshUVGenerator::ComputeInitialMeshPatches(
 		FPolygroupsGenerator::EWeightingType::NormalDeviation : FPolygroupsGenerator::EWeightingType::None;
 	FVector3d GeneratorParams(this->PatchNormalWeight, 1.0, 1.0);
 
-	bool bOK = Generator.FindPolygroupsFromFurthestPointSampling(this->TargetPatchCount, WeightType, GeneratorParams, this->GroupConstraint);
+	bool bUseAreaDensitySampling = (CVarEnableAutoUVAreaDensitySampling.GetValueOnAnyThread() == 0);
+	bool bOK = false;
+	if (bUseAreaDensitySampling)
+	{
+		bOK = Generator.FindPolygroupsFromAreaDensityPointSampling(this->TargetPatchCount, WeightType, GeneratorParams, this->GroupConstraint);
+	}
+	else
+	{
+		bOK = Generator.FindPolygroupsFromFurthestPointSampling(this->TargetPatchCount, WeightType, GeneratorParams, this->GroupConstraint);
+	}
 
 	if (!bOK)
 	{

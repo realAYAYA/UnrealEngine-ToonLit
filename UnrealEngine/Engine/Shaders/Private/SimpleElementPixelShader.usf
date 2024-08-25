@@ -57,9 +57,9 @@ float3 SimpleElementFrameBufferBlendOp(float4 Source)
 	return Source.rgb + (Dest.rgb*(1.0 - Source.a));
 #elif SE_BLEND_MODE == SE_BLEND_ALPHAHOLDOUT
 	return (Dest.rgb*(1.0 - Source.a));
-#endif
-
+#else
 	return Source.rgb;
+#endif
 }
 
 float4 SimpleElementEncodeFor32BPPHDR(float4 OutColor)

@@ -9,33 +9,28 @@
 
 class UDMXControlConsoleEditorGlobalLayoutBase;
 class UDMXControlConsoleFaderGroup;
+class UDMXControlConsoleFaderGroupController;
 
 
-/** A row of Fader Groups in the Control Console Global Layout */
+/** A row of Fader Group Controllers in the Control Console Global Layout */
 UCLASS()
 class UDMXControlConsoleEditorGlobalLayoutRow
 	: public UObject
 {
 	GENERATED_BODY()
-
+	
 public:
-	/** Adds the given Fader Group to the Layout Row */
-	void AddToLayoutRow(UDMXControlConsoleFaderGroup* FaderGroup);
+	/** Creates a Controller for the given Fader Group */
+	UDMXControlConsoleFaderGroupController* CreateFaderGroupController(UDMXControlConsoleFaderGroup* InFaderGroup, const FString& ControllerName = "", const int32 Index = INDEX_NONE);
 
-	/** Adds the given array of Fader Groups to the Layout Row */
-	void AddToLayoutRow(const TArray<UDMXControlConsoleFaderGroup*> InFaderGroups);
+	/** Creates a Controller for the given array of Fader Groups */
+	UDMXControlConsoleFaderGroupController* CreateFaderGroupController(const TArray<UDMXControlConsoleFaderGroup*> InFaderGroups, const FString& ControllerName = "", const int32 Index = INDEX_NONE);
 
-	/** Adds the given Fader Group to the Layout Row at the given index */
-	void AddToLayoutRow(UDMXControlConsoleFaderGroup* FaderGroup, const int32 Index);
+	/** Deletes the given Fader Group Controller */
+	void DeleteFaderGroupController(UDMXControlConsoleFaderGroupController* FaderGroupController);
 
-	/** Removes the given Fader Group from the Layout Row */
-	void RemoveFromLayoutRow(UDMXControlConsoleFaderGroup* FaderGroup);
-
-	/** Removes the Fader Group at the given index from the Layout Row */
-	void RemoveFromLayoutRow(const int32 Index);
-
-	/** Gets Fader Groups array for this row */
-	const TArray<TWeakObjectPtr<UDMXControlConsoleFaderGroup>>& GetFaderGroups() const { return FaderGroups; }
+	/** Gets Fader Group Controllers array for this row */
+	const TArray<UDMXControlConsoleFaderGroupController*>& GetFaderGroupControllers() const { return FaderGroupControllers; }
 
 	/** Gets the Index of this row according to the owner layout */
 	int32 GetRowIndex() const;
@@ -43,15 +38,18 @@ public:
 	/** Gets the layout that owns this row */
 	UDMXControlConsoleEditorGlobalLayoutBase& GetOwnerLayoutChecked() const;
 
-	/** Gets the Fader Group at the given index, if valid */
-	UDMXControlConsoleFaderGroup* GetFaderGroupAt(const int32 Index) const { return FaderGroups.IsValidIndex(Index) ? FaderGroups[Index].Get() : nullptr; }
+	/** Gets the Fader Group Controller at the given index, if valid */
+	UDMXControlConsoleFaderGroupController* GetFaderGroupControllerAt(int32 Index) const;
 
-	/** Gets index of the given Fader Group, if valid */
-	int32 GetIndex(const UDMXControlConsoleFaderGroup* FaderGroup) const;
+	/** Gets index of the given Fader Group Controller, if valid */
+	int32 GetIndex(const UDMXControlConsoleFaderGroupController* FaderGroupController) const;
+
+	// Property Name getters
+	FORCEINLINE static FName GetFaderGroupControllersPropertyName() { return GET_MEMBER_NAME_CHECKED(UDMXControlConsoleEditorGlobalLayoutRow, FaderGroupControllers); }
 
 private:
-	/** Reference to Fader Groups array */
+	/** Reference to the Fader Group Controllers array */
 	UPROPERTY()
-	TArray<TWeakObjectPtr<UDMXControlConsoleFaderGroup>> FaderGroups;
+	TArray<TObjectPtr<UDMXControlConsoleFaderGroupController>> FaderGroupControllers;
 };
 

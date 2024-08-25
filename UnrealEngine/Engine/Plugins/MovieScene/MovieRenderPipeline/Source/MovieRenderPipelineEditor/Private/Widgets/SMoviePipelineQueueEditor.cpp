@@ -14,6 +14,7 @@
 #include "MoviePipelineCommands.h"
 #include "MoviePipelineEditorBlueprintLibrary.h"
 #include "Graph/MovieGraphConfig.h"
+#include "Graph/MovieGraphConfigFactory.h"
 
 // Slate Includes
 #include "Widgets/Input/SComboButton.h"
@@ -42,10 +43,12 @@
 #include "AssetRegistry/AssetData.h"
 
 // Misc
+#include "AssetToolsModule.h"
 #include "LevelSequence.h"
 #include "Engine/EngineTypes.h"
 #include "Framework/Application/SlateApplication.h"
 #include "SMoviePipelineConfigPanel.h"
+#include "Graph/MovieGraphPipeline.h"
 #include "Widgets/SWindow.h"
 #include "HAL/FileManager.h"
 #include "Widgets/Layout/SBox.h"
@@ -58,12 +61,35 @@ struct FMoviePipelineMapTreeItem;
 struct FMoviePipelineShotItem;
 class SQueueJobListRow;
 
+namespace UE::MovieGraph::Private
+{
+	/** Returns a new saved UMovieGraphConfig if one could be created, else nullptr. */
+	UMovieGraphConfig* CreateNewSavedGraphAsset()
+	{
+		if (UMovieGraphConfigFactory* GraphFactory = NewObject<UMovieGraphConfigFactory>())
+		{
+			// Make the new graph via save dialog
+			const FAssetToolsModule& AssetToolsModule = FAssetToolsModule::GetModule();
+			UObject* NewAsset = AssetToolsModule.Get().CreateAssetWithDialog(GraphFactory->GetSupportedClass(), GraphFactory);
+
+			// Don't ensure here because a "cancel" in the dialog can cause the returned asset to be null
+			if (UMovieGraphConfig* NewGraph = Cast<UMovieGraphConfig>(NewAsset))
+			{
+				return NewGraph;
+			}
+		}
+
+		return nullptr;
+	}
+}
+
 struct IMoviePipelineQueueTreeItem : TSharedFromThis<IMoviePipelineQueueTreeItem>
 {
 	virtual ~IMoviePipelineQueueTreeItem() {}
 
 	virtual TSharedPtr<FMoviePipelineQueueJobTreeItem> AsJob() { return nullptr; }
 	virtual UMoviePipelineExecutorJob* GetOwningJob() { return nullptr; }
+	virtual UMoviePipelineExecutorShot* GetOwningShot() { return nullptr; }
 	virtual void Delete(UMoviePipelineQueue* InOwningQueue) {}
 	virtual void ResetStatus() {}
 	virtual UMoviePipelineExecutorJob* Duplicate(UMoviePipelineQueue* InOwningQueue) { return nullptr; }
@@ -206,9 +232,16 @@ public:
 		{
 			if (Job->IsUsingGraphConfiguration())
 			{
-				return LOCTEXT("QueueEditorDefaultJobGraph_Text", "Default Graph");
+				if (Job->GetGraphPreset())
+				{
+					return FText::FromString(Job->GetGraphPreset()->GetName());
+				}
+				else
+				{
+					return LOCTEXT("QueueEditorDefaultJobGraph_Text", "Default Graph");
+				}
 			}
-			
+
 			// If the job has a preset origin (ie, its config is based off a preset w/o any modifications), use its
 			// display name. If the config has a preset origin (ie, it's based off a preset, but has modifications), use
 			// that display name. Otherwise, fall back to the config's display name.
@@ -240,6 +273,9 @@ public:
 		UMoviePipelineExecutorJob* Job = WeakJob.Get();
 		if (Job)
 		{
+			FScopedTransaction Transaction(LOCTEXT("PickJobPresetAsset_Transaction", "Set Job Configuration Asset"));
+			Job->Modify();
+
 			if (Job->IsUsingGraphConfiguration())
 			{
 				Job->SetGraphPreset(CastChecked<UMovieGraphConfig>(AssetData.GetAsset()));
@@ -284,9 +320,29 @@ public:
 			return;
 		}
 
-		// Note: Setting the graph preset will transition the job to use a graph-based configuration
-		UMovieGraphConfig* NewGraph = NewObject<UMovieGraphConfig>(Job);
-		Job->SetGraphConfig(NewGraph);
+		SMoviePipelineQueueEditor::AssignDefaultGraphPresetToJob(Job);
+	}
+
+	void OnCreateNewGraphAndAssign() const
+	{
+		if (const UMovieGraphConfig* NewGraph = UE::MovieGraph::Private::CreateNewSavedGraphAsset())
+		{
+			UMoviePipelineExecutorJob* Job = WeakJob.Get();
+			if (ensureMsgf(Job, TEXT("Could not assign new graph to job: Job is invalid.")))
+			{
+				Job->SetGraphPreset(NewGraph);
+			}
+		}
+	}
+
+	void OnClearGraph() const
+	{
+		if (UMoviePipelineExecutorJob* Job = WeakJob.Get())
+		{
+			FScopedTransaction Transaction(LOCTEXT("ClearJobGraph_Transaction", "Replace Graph with Config"));
+			
+			Job->SetGraphPreset(nullptr);
+		}
 	}
 
 	EVisibility GetPrimaryConfigModifiedVisibility() const
@@ -294,6 +350,11 @@ public:
 		UMoviePipelineExecutorJob* Job = WeakJob.Get();
 		if (Job)
 		{
+			if (const UMovieGraphConfig* GraphPreset = Job->GetGraphPreset())
+			{
+				return GraphPreset->GetPackage()->IsDirty() ? EVisibility::Visible : EVisibility::Collapsed;
+			}
+			
 			return (Job->GetPresetOrigin() == nullptr) ? EVisibility::Visible : EVisibility::Collapsed;
 		}
 		
@@ -308,12 +369,10 @@ public:
 	FText GetOutputLabel() const
 	{
 		UMoviePipelineExecutorJob* Job = WeakJob.Get();
-		if (Job && Job->GetConfiguration())
+		FString OutputDir;
+		if (UMoviePipelineEditorBlueprintLibrary::GetDisplayOutputPathFromJob(Job, OutputDir))
 		{
-			UMoviePipelineOutputSetting* OutputSetting = Job->GetConfiguration()->FindSetting<UMoviePipelineOutputSetting>();
-			check(OutputSetting);
-
-			return FText::FromString(OutputSetting->OutputDirectory.Path);
+			return FText::FromString(OutputDir);
 		}
 
 		return LOCTEXT("MissingConfigOutput_Label", "[No Config Set]");
@@ -321,16 +380,18 @@ public:
 
 	void BrowseToOutputFolder()
 	{
-		UMoviePipelineExecutorJob* Job = WeakJob.Get();
-		if (Job && Job->GetConfiguration())
+		if (UMoviePipelineExecutorJob* Job = WeakJob.Get())
 		{
-			FString ResolvedOutputDir = UMoviePipelineEditorBlueprintLibrary::ResolveOutputDirectoryFromJob(Job);
+			const FString ResolvedOutputDir = UMoviePipelineEditorBlueprintLibrary::ResolveOutputDirectoryFromJob(Job);
 
-			// Attempt to make the directory. The user can see the output folder before they render so the folder
-			// may not have been created yet and the ExploreFolder call will fail.
-			IFileManager::Get().MakeDirectory(*ResolvedOutputDir, true);
+			if (!ResolvedOutputDir.IsEmpty())
+			{
+				// Attempt to make the directory. The user can see the output folder before they render so the folder
+				// may not have been created yet and the ExploreFolder call will fail.
+				IFileManager::Get().MakeDirectory(*ResolvedOutputDir, true);
 
-			FPlatformProcess::ExploreFolder(*ResolvedOutputDir);
+				FPlatformProcess::ExploreFolder(*ResolvedOutputDir);
+			}
 		}
 	}
 
@@ -383,26 +444,31 @@ public:
 		UMoviePipelineExecutorJob* Job = WeakJob.Get();
 
 		UClass* ConfigType = Job->IsUsingGraphConfiguration() ? UMovieGraphConfig::StaticClass() : UMoviePipelinePrimaryConfig::StaticClass();
+		constexpr bool bIsShot = false;
 		
 		return OnGenerateConfigPresetPickerMenuFromClass(
 			ConfigType,
 			WeakJob,
+			bIsShot,
 			FOnAssetSelected::CreateRaw(this, &FMoviePipelineQueueJobTreeItem::OnPickPresetFromAsset),
 			FExecuteAction::CreateRaw(this, &FMoviePipelineQueueJobTreeItem::OnPickNewPreset),
-			FExecuteAction::CreateRaw(this, &FMoviePipelineQueueJobTreeItem::OnReplaceWithRenderGraph)
+			FExecuteAction::CreateRaw(this, &FMoviePipelineQueueJobTreeItem::OnReplaceWithRenderGraph),
+			FExecuteAction::CreateRaw(this, &FMoviePipelineQueueJobTreeItem::OnCreateNewGraphAndAssign),
+			FExecuteAction::CreateRaw(this, &FMoviePipelineQueueJobTreeItem::OnClearGraph)
 			);
 	}
 
 	static TSharedRef<SWidget> OnGenerateConfigPresetPickerMenuFromClass(UClass* InClass,
-		TWeakObjectPtr<UMoviePipelineExecutorJob> TargetJob, FOnAssetSelected InOnAssetSelected, FExecuteAction InNewConfig, FExecuteAction InNewRenderGraph)
+		TWeakObjectPtr<UMoviePipelineExecutorJob> TargetJob, const bool bIsShot, FOnAssetSelected InOnAssetSelected, FExecuteAction InNewConfig,
+		FExecuteAction InNewRenderGraph, FExecuteAction InCreateNewGraphAndAssign, FExecuteAction InClearGraph)
 	{
 		FMenuBuilder MenuBuilder(true, nullptr);
 		IContentBrowserSingleton& ContentBrowser = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser").Get();
 
 		FAssetPickerConfig AssetPickerConfig;
 		{
-			const FText NoAssetsFoundWarning = InClass->IsChildOf(UMoviePipelinePrimaryConfig::StaticClass())
-				? LOCTEXT("NoConfigs_Warning", "No Primary Configurations Found")
+			const FText NoAssetsFoundWarning = InClass->IsChildOf(UMoviePipelineConfigBase::StaticClass())
+				? LOCTEXT("NoConfigs_Warning", "No Configurations Found")
 				: LOCTEXT("NoGraphs_Warning", "No Render Graphs Found");
 			
 			AssetPickerConfig.SelectionMode = ESelectionMode::Single;
@@ -421,31 +487,85 @@ public:
 
 			AssetPickerConfig.AssetShowWarningText = NoAssetsFoundWarning;
 			AssetPickerConfig.Filter.ClassPaths.Add(InClass->GetClassPathName());
+
+			// The redirected masterconfig assets aren't found when the new primaryconfig asset path is specified. This is a temporary workaround 
+			// for the AssetRegistry not applying CoreRedirects to the ClassPath. 
+			// This can be removed once that bug (UE-168245) is fixed and the KnownCase in CheckUnacceptableWords can also be removed.
+			if (InClass->GetClassPathName() == FTopLevelAssetPath(TEXT("/Script/MovieRenderPipelineCore.MoviePipelinePrimaryConfig")))
+			{
+				AssetPickerConfig.Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/MovieRenderPipelineCore.MoviePipelineMasterConfig")));
+			}
+
+			AssetPickerConfig.Filter.bRecursiveClasses = true;
 			AssetPickerConfig.OnAssetSelected = InOnAssetSelected;
 		}
 
-		MenuBuilder.BeginSection(NAME_None, LOCTEXT("NewConfig_MenuSection", "New Configuration"));
+		if (TargetJob->IsUsingGraphConfiguration())
 		{
-			MenuBuilder.AddMenuEntry(
-				LOCTEXT("NewConfig_Label", "Clear Config"),
-				LOCTEXT("NewConfig_Tooltip", "Resets the changes to the config and goes back to the defaults."),
-				FSlateIcon(),
-				FUIAction(InNewConfig),
-				NAME_None,
-				EUserInterfaceActionType::Button
-			);
-
-			const bool bIsGraphFeatureEnabled = IConsoleManager::Get().FindConsoleVariable(TEXT("MoviePipeline.EnableRenderGraph"))->GetBool();
-			if (bIsGraphFeatureEnabled && !TargetJob->IsUsingGraphConfiguration())
+			MenuBuilder.BeginSection(NAME_None, LOCTEXT("NewConfig_MenuSection", "New Configuration"));
 			{
 				MenuBuilder.AddMenuEntry(
-					LOCTEXT("ReplaceWithGraph_Label", "Replace with Graph"),
-					LOCTEXT("ReplaceWithGraph_Tooltip", "Replaces the current configuration with a new graph representation."),
+					LOCTEXT("NewGraph_Label", "New Graph"),
+					LOCTEXT("NewGraph_Tooltip", "Creates a new graph asset and assigns it to this job."),
 					FSlateIcon(),
-					FUIAction(InNewRenderGraph),
+					FUIAction(InCreateNewGraphAndAssign),
 					NAME_None,
 					EUserInterfaceActionType::Button
 				);
+			}
+		}
+
+		MenuBuilder.BeginSection(NAME_None, LOCTEXT("CurrentConfig_MenuSection", "Current Configuration"));
+		{
+			if (!TargetJob->IsUsingGraphConfiguration())
+			{
+				MenuBuilder.AddMenuEntry(
+					LOCTEXT("ClearConfig_Label", "Clear Config"),
+					LOCTEXT("ClearConfig_Tooltip", "Resets the changes to the config and goes back to the defaults."),
+					FSlateIcon(),
+					FUIAction(InNewConfig),
+					NAME_None,
+					EUserInterfaceActionType::Button
+				);
+
+				// Only primary jobs can do a Replace with Graph. Shots cannot have a graph config with a parent legacy config.
+				if (!bIsShot)
+				{
+					MenuBuilder.AddMenuEntry(
+						LOCTEXT("ReplaceWithGraph_Label", "Replace with Graph (Experimental)"),
+						LOCTEXT("ReplaceWithGraph_Tooltip", "Replaces the current configuration with a new graph representation."),
+						FSlateIcon(),
+						FUIAction(InNewRenderGraph),
+						NAME_None,
+						EUserInterfaceActionType::Button
+					);
+				}
+			}
+			else
+			{
+				// Shots can clear their graph, meaning they will inherit from the parent graph. Primary jobs can revert to using the legacy system.
+				if (bIsShot)
+				{
+					MenuBuilder.AddMenuEntry(
+						LOCTEXT("ClearGraph_Label", "Clear Graph"),
+						LOCTEXT("ClearGraph_Tooltip", "Remove the graph assigned to this shot. After removal, the shot will inherit the graph from the primary job."),
+						FSlateIcon(),
+						FUIAction(InClearGraph),
+						NAME_None,
+						EUserInterfaceActionType::Button
+					);
+				}
+				else
+				{
+					MenuBuilder.AddMenuEntry(
+						LOCTEXT("ReplaceWithPreset_Label", "Replace with Preset"),
+						LOCTEXT("ReplaceWithPreset_Tooltip", "Replaces the current configuration with a new default (non-graph) config."),
+						FSlateIcon(),
+						FUIAction(InClearGraph),
+						NAME_None,
+						EUserInterfaceActionType::Button
+					);
+				}
 			}
 		}
 
@@ -578,6 +698,7 @@ TSharedRef<SWidget> SQueueJobListRow::GenerateWidgetForColumn(const FName& Colum
 			[
 				SNew(SHyperlink)
 					.Text(Item.Get(), &FMoviePipelineQueueJobTreeItem::GetOutputLabel)
+					.ToolTipText(Item.Get(), &FMoviePipelineQueueJobTreeItem::GetOutputLabel)
 					.OnNavigate(Item.Get(), &FMoviePipelineQueueJobTreeItem::BrowseToOutputFolder)
 			];
 
@@ -755,6 +876,11 @@ struct FMoviePipelineShotItem : IMoviePipelineQueueTreeItem
 		return WeakJob.Get();
 	}
 
+	virtual UMoviePipelineExecutorShot* GetOwningShot() override
+	{
+		return WeakShot.Get();
+	}
+
 	virtual TSharedRef<ITableRow> ConstructWidget(TWeakPtr<SMoviePipelineQueueEditor> InQueueWidget, const TSharedRef<STableViewBase>& OwnerTable) override
 	{
 		WeakQueueEditor = InQueueWidget;
@@ -862,7 +988,12 @@ struct FMoviePipelineShotItem : IMoviePipelineQueueTreeItem
 		{
 			if (Shot->IsUsingGraphConfiguration())
 			{
-				return LOCTEXT("QueueEditorDefaultShotGraph_Text", "Default Graph");
+				if (const UMovieGraphConfig* GraphConfig = Shot->GetGraphPreset())
+				{
+					return FText::FromString(GraphConfig->GetName());
+				}
+				
+				return LOCTEXT("QueueEditorMakeNewShotSubgraph", "Make Subgraph");
 			}
 			
 			// If the shot has a preset origin (ie, its config is based off a preset w/o any modifications), use its
@@ -893,10 +1024,19 @@ struct FMoviePipelineShotItem : IMoviePipelineQueueTreeItem
 		// Close the dropdown menu that showed them the assets to pick from.
 		FSlateApplication::Get().DismissAllMenus();
 
-		UMoviePipelineExecutorShot* Shot = WeakShot.Get();
-		if (Shot)
+		if (UMoviePipelineExecutorShot* Shot = WeakShot.Get())
 		{
-			Shot->SetShotOverridePresetOrigin(CastChecked<UMoviePipelineShotConfig>(AssetData.GetAsset()));
+			FScopedTransaction Transaction(LOCTEXT("PickShotPresetAsset_Transaction", "Set Shot Configuration Asset"));
+			Shot->Modify();
+
+			if (Shot->IsUsingGraphConfiguration())
+			{
+				Shot->SetGraphPreset(CastChecked<UMovieGraphConfig>(AssetData.GetAsset()));
+			}
+			else
+			{
+				Shot->SetShotOverridePresetOrigin(CastChecked<UMoviePipelineShotConfig>(AssetData.GetAsset()));
+			}
 		}
 
 		OnChosePresetCallback.ExecuteIfBound(WeakJob, WeakShot);
@@ -910,6 +1050,8 @@ struct FMoviePipelineShotItem : IMoviePipelineQueueTreeItem
 		UMoviePipelineExecutorShot* Shot = WeakShot.Get();
 		if (Shot)
 		{
+			FScopedTransaction Transaction(LOCTEXT("PickShotClearConfig_Transaction", "Clear Configuration Asset"));
+			Shot->Modify();
 			Shot->SetShotOverrideConfiguration(nullptr);
 		}
 
@@ -925,16 +1067,54 @@ struct FMoviePipelineShotItem : IMoviePipelineQueueTreeItem
 		}
 
 		// Note: Setting the graph preset will transition the job to use a graph-based configuration
-		UMovieGraphConfig* NewGraph = NewObject<UMovieGraphConfig>(Shot);
-		Shot->SetGraphConfig(NewGraph);
+		// Use the default graph specified in Project Settings.
+		const UMovieRenderPipelineProjectSettings* ProjectSettings = GetDefault<UMovieRenderPipelineProjectSettings>();
+		const TSoftObjectPtr<UMovieGraphConfig> ProjectDefaultGraph = ProjectSettings->DefaultGraph;
+		if (const UMovieGraphConfig* DefaultGraph = ProjectDefaultGraph.LoadSynchronous())
+		{
+			FScopedTransaction Transaction(LOCTEXT("PickReplaceWithGraphAsset_Transaction", "Convert Job to Graph"));
+			Shot->Modify();
+			Shot->SetGraphPreset(DefaultGraph);
+		}
+	}
+
+	void OnCreateNewGraphAndAssign() const
+	{
+		if (const UMovieGraphConfig* NewGraph = UE::MovieGraph::Private::CreateNewSavedGraphAsset())
+		{
+			UMoviePipelineExecutorShot* Shot = WeakShot.Get();
+			if (ensureMsgf(Shot, TEXT("Could not assign new graph to shot: Shot is invalid.")))
+			{
+				FScopedTransaction Transaction(LOCTEXT("PickCreateNewGraphAsset_Transaction", "Assign Graph Configuration Asset"));
+				Shot->Modify();
+				Shot->SetGraphPreset(NewGraph);
+			}
+		}
+	}
+
+	void OnClearGraph() const
+	{
+		if (UMoviePipelineExecutorShot* Shot = WeakShot.Get())
+		{
+			FScopedTransaction Transaction(LOCTEXT("ClearShotGraph_Transaction", "Replace Graph with Config"));
+			
+			Shot->SetGraphPreset(nullptr);
+		}
 	}
 
 	EVisibility GetShotConfigModifiedVisibility() const
 	{
-		UMoviePipelineExecutorShot* Shot = WeakShot.Get();
-		if (Shot && Shot->GetShotOverrideConfiguration() && (Shot->GetShotOverridePresetOrigin() == nullptr))
+		if (const UMoviePipelineExecutorShot* Shot = WeakShot.Get())
 		{
-			return EVisibility::Visible;
+			if (const UMovieGraphConfig* GraphPreset = Shot->GetGraphPreset())
+			{
+				return GraphPreset->GetPackage()->IsDirty() ? EVisibility::Visible : EVisibility::Collapsed;
+			}
+		
+			if (Shot->GetShotOverrideConfiguration() && (Shot->GetShotOverridePresetOrigin() == nullptr))
+			{
+				return EVisibility::Visible;
+			}
 		}
 
 		return EVisibility::Collapsed;
@@ -947,12 +1127,20 @@ struct FMoviePipelineShotItem : IMoviePipelineQueueTreeItem
 
 	TSharedRef<SWidget> OnGenerateShotConfigPresetPickerMenu()
 	{
+		const UMoviePipelineExecutorShot* Shot = WeakShot.Get();
+		UClass* ConfigType = Shot && Shot->IsUsingGraphConfiguration() ? UMovieGraphConfig::StaticClass() : UMoviePipelineShotConfig::StaticClass();
+		constexpr bool bIsShot = true;
+		const FExecuteAction ReplaceWithGraph = nullptr;
+		
 		return FMoviePipelineQueueJobTreeItem::OnGenerateConfigPresetPickerMenuFromClass(
-			UMoviePipelineShotConfig::StaticClass(),
+			ConfigType,
 			WeakJob,
+			bIsShot,
 			FOnAssetSelected::CreateRaw(this, &FMoviePipelineShotItem::OnPickShotPresetFromAsset),
 			FExecuteAction::CreateRaw(this, &FMoviePipelineShotItem::OnPickNewShotPreset),
-			FExecuteAction::CreateRaw(this, &FMoviePipelineShotItem::OnReplaceWithRenderGraph)
+			ReplaceWithGraph,
+			FExecuteAction::CreateRaw(this, &FMoviePipelineShotItem::OnCreateNewGraphAndAssign),
+			FExecuteAction::CreateRaw(this, &FMoviePipelineShotItem::OnClearGraph)
 			);
 	}
 };
@@ -1122,11 +1310,11 @@ void SMoviePipelineQueueEditor::Construct(const FArguments& InArgs)
 			.DefaultLabel(LOCTEXT("QueueHeaderJobName_Text", "Job"))
 
 			+ SHeaderRow::Column(SQueueJobListRow::NAME_Settings)
-			.FillWidth(0.20f)
+			.FillWidth(0.25f)
 			.DefaultLabel(LOCTEXT("QueueHeaderSettings_Text", "Settings"))
 
 			+ SHeaderRow::Column(SQueueJobListRow::NAME_Output)
-			.FillWidth(0.5f)
+			.FillWidth(0.45f)
 			.DefaultLabel(LOCTEXT("QueueHeaderOutput_Text", "Output"))
 
 			+ SHeaderRow::Column(SQueueJobListRow::NAME_Status)
@@ -1231,6 +1419,7 @@ TSharedRef<SWidget> SMoviePipelineQueueEditor::OnGenerateNewJobFromAssetMenu()
 
 		AssetPickerConfig.AssetShowWarningText = LOCTEXT("NoSequences_Warning", "No Level Sequences Found");
 		AssetPickerConfig.Filter.ClassPaths.Add(ULevelSequence::StaticClass()->GetClassPathName());
+		AssetPickerConfig.Filter.bRecursiveClasses = true;
 		AssetPickerConfig.OnAssetSelected = FOnAssetSelected::CreateSP(this, &SMoviePipelineQueueEditor::OnCreateJobFromAsset);
 	}
 
@@ -1248,6 +1437,24 @@ TSharedRef<SWidget> SMoviePipelineQueueEditor::OnGenerateNewJobFromAssetMenu()
 	MenuBuilder.EndSection();
 
 	return MenuBuilder.MakeWidget();
+}
+
+void SMoviePipelineQueueEditor::AssignDefaultGraphPresetToJob(UMoviePipelineExecutorJob* InJob)
+{
+	if(!InJob)
+	{
+		return;
+	}
+	
+	FScopedTransaction Transaction(LOCTEXT("ConvertJobToGraphConfig_Transaction", "Convert Job to Graph Config"));
+	InJob->Modify();
+
+	const UMovieRenderPipelineProjectSettings* ProjectSettings = GetDefault<UMovieRenderPipelineProjectSettings>();
+	const TSoftObjectPtr<UMovieGraphConfig> ProjectDefaultGraph = ProjectSettings->DefaultGraph;
+	if (const UMovieGraphConfig* DefaultGraph = ProjectDefaultGraph.LoadSynchronous())
+	{
+		InJob->SetGraphPreset(DefaultGraph);
+	}
 }
 
 UE_ENABLE_OPTIMIZATION_SHIP
@@ -1287,6 +1494,7 @@ void SMoviePipelineQueueEditor::OnCreateJobFromAsset(const FAssetData& InAsset)
 	}
 
 	const UMovieRenderPipelineProjectSettings* ProjectSettings = GetDefault<UMovieRenderPipelineProjectSettings>();
+	const UClass* DefaultPipeline = Cast<UClass>(ProjectSettings->DefaultPipeline.TryLoad());
 	for (UMoviePipelineExecutorJob* NewJob : NewJobs)
 	{
 		PendingJobsToSelect.Add(NewJob);
@@ -1303,6 +1511,12 @@ void SMoviePipelineQueueEditor::OnCreateJobFromAsset(const FAssetData& InAsset)
 		// Ensure the job has the settings specified by the project settings added. If they're already added
 		// we don't modify the object so that we don't make it confused about whether or not you've modified the preset.
 		UMoviePipelineEditorBlueprintLibrary::EnsureJobHasDefaultSettings(NewJob);
+
+		// If the default class is a movie graph, assign the default graph
+		if (DefaultPipeline && DefaultPipeline == UMovieGraphPipeline::StaticClass())
+		{
+			AssignDefaultGraphPresetToJob(NewJob);
+		}
 	}
 }
 
@@ -1387,7 +1601,6 @@ void SMoviePipelineQueueEditor::ReconstructTree()
 
 	TreeView->RequestTreeRefresh();
 }
-
 
 FReply SMoviePipelineQueueEditor::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
 {
@@ -1576,21 +1789,27 @@ void SMoviePipelineQueueEditor::SetSelectedJobs_Impl(const TArray<UMoviePipeline
 void SMoviePipelineQueueEditor::OnJobSelectionChanged_Impl(TSharedPtr<IMoviePipelineQueueTreeItem> TreeItem, ESelectInfo::Type SelectInfo)
 {
 	TArray<UMoviePipelineExecutorJob*> SelectedJobs;
+	TArray<UMoviePipelineExecutorShot*> SelectedShots;
+	
 	if (TreeItem.IsValid())
 	{
 		// Iterate the tree and get all selected items.
 		TArray<TSharedPtr<IMoviePipelineQueueTreeItem>> SelectedTreeItems = TreeView->GetSelectedItems();
 		for (TSharedPtr<IMoviePipelineQueueTreeItem> Item : SelectedTreeItems)
 		{
-			UMoviePipelineExecutorJob* Job = Item->GetOwningJob();
-			if (Job)
+			if (UMoviePipelineExecutorJob* Job = Item->GetOwningJob())
 			{
 				SelectedJobs.AddUnique(Job);
+			}
+
+			if (UMoviePipelineExecutorShot* Shot = Item->GetOwningShot())
+			{
+				SelectedShots.AddUnique(Shot);
 			}
 		}
 	}
 
-	OnJobSelectionChanged.ExecuteIfBound(SelectedJobs);
+	OnJobSelectionChanged.ExecuteIfBound(SelectedJobs, SelectedShots);
 }
 
 void SMoviePipelineQueueEditor::OnQueueLoaded()

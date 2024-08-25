@@ -145,7 +145,7 @@ public:
 	void SetDefaultOptions(CURL* Curl, FCurlHttpHeaders& Headers);
 
 private:
-	const FCbObjectId SessionId = FCbObjectId::NewObjectId();
+	const FCbObjectId SessionId = FApp::GetSessionObjectId();
 	std::atomic<uint32> RequestId = 1;
 	FUtf8StringBuilderBase UserAgent;
 };
@@ -412,6 +412,10 @@ FCurlHttpConnectionPool::FCurlHttpConnectionPool(FCurlHttpManager& InManager, co
 	const uint32 MinConnections = Params.MinConnections ? Params.MinConnections : FMath::Min(Params.MaxConnections, DefaultConnectionCount);
 	curl_multi_setopt(CurlMulti, CURLMOPT_MAXCONNECTS, MinConnections);
 	curl_multi_setopt(CurlMulti, CURLMOPT_MAX_TOTAL_CONNECTIONS, MaxConnections);
+	if (Params.MaxRequestsPerConnection)
+	{
+		curl_multi_setopt(CurlMulti, CURLMOPT_MAX_CONCURRENT_STREAMS, (long)FMath::Min(Params.MaxRequestsPerConnection, (uint32)MAX_int32));
+	}
 	curl_multi_setopt(CurlMulti, CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX);
 }
 
@@ -630,7 +634,7 @@ void FCurlHttpClient::SetDefaultOptions(CURL* Curl, FCurlHttpHeaders& Headers) c
 
 	curl_easy_setopt(Curl, CURLOPT_HTTP_VERSION, ConvertVersion(Params.Version));
 
-	curl_easy_setopt(Curl, CURLOPT_DNS_CACHE_TIMEOUT, FMath::Min<long>(Params.DnsCacheTimeout, MAX_int32));
+	curl_easy_setopt(Curl, CURLOPT_DNS_CACHE_TIMEOUT, (long)FMath::Min(Params.DnsCacheTimeout, (uint32)MAX_int32));
 	curl_easy_setopt(Curl, CURLOPT_CONNECTTIMEOUT_MS, long(Params.ConnectTimeout));
 	curl_easy_setopt(Curl, CURLOPT_LOW_SPEED_LIMIT, long(Params.LowSpeedLimit));
 	curl_easy_setopt(Curl, CURLOPT_LOW_SPEED_TIME, long(Params.LowSpeedTime));
@@ -640,6 +644,10 @@ void FCurlHttpClient::SetDefaultOptions(CURL* Curl, FCurlHttpHeaders& Headers) c
 		(Params.bFollow301Post ? CURL_REDIR_POST_301 : 0) |
 		(Params.bFollow302Post ? CURL_REDIR_POST_302 : 0) |
 		(Params.bFollow303Post ? CURL_REDIR_POST_303 : 0)));
+	if (Params.bBypassProxy)
+	{
+		curl_easy_setopt(Curl, CURLOPT_NOPROXY, "*");
+	}
 	curl_easy_setopt(Curl, CURLOPT_VERBOSE, long(Params.bVerbose));
 }
 

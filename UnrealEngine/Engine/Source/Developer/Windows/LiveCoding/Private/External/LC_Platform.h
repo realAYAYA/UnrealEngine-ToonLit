@@ -31,8 +31,9 @@
 	#pragma error "Unknown platform"
 #endif
 
-
-#define LC_PLATFORM_INCLUDE(_header) LC_PP_STRINGIFY(LC_PP_JOIN(_header, LC_PLATFORM_SUFFIX))
+// BEGIN EPIC MOD
+//#define LC_PLATFORM_INCLUDE(_header) LC_PP_STRINGIFY(LC_PP_JOIN(_header, LC_PLATFORM_SUFFIX))
+// END EPIC MOD
 
 // BEGIN EPIC MOD
 // convenience macro for referring to symbol identifiers.

@@ -27,7 +27,7 @@ public:
 
 	FTimeValue GetMinBufferTimeForPlayback(IAdaptiveStreamSelector::EMinBufferType InBufferingType, FTimeValue InDefaultMBT) override
 	{ return FTimeValue(); }
-	IAdaptiveStreamSelector::FRebufferAction GetRebufferAction(const FParamDict& CurrentPlayerOptions) override;
+	IAdaptiveStreamSelector::FRebufferAction GetRebufferAction() override;
 	IAdaptiveStreamSelector::EHandlingAction PeriodicHandle() override { return IAdaptiveStreamSelector::EHandlingAction::None; }
 	void DebugPrint(void* pThat, void (*pPrintFN)(void* pThat, const char *pFmt, ...)) override { }
 
@@ -130,14 +130,14 @@ double FABRFixedStream::GetAverageLatency()
 }
 
 
-IAdaptiveStreamSelector::FRebufferAction FABRFixedStream::GetRebufferAction(const FParamDict& CurrentPlayerOptions)
+IAdaptiveStreamSelector::FRebufferAction FABRFixedStream::GetRebufferAction()
 {
 	IAdaptiveStreamSelector::FRebufferAction Action;
-	if (CurrentPlayerOptions.GetValue(OptionThrowErrorWhenRebuffering).SafeGetBool(false))
+	if (Info->GetOptionValue(OptionThrowErrorWhenRebuffering).SafeGetBool(false))
 	{
 		Action.Action = IAdaptiveStreamSelector::FRebufferAction::EAction::ThrowError;
 	}
-	else if (CurrentPlayerOptions.GetValue(OptionRebufferingContinuesLoading).SafeGetBool(false))
+	else if (Info->GetOptionValue(OptionRebufferingContinuesLoading).SafeGetBool(false))
 	{
 		Action.Action = IAdaptiveStreamSelector::FRebufferAction::EAction::ContinueLoading;
 	}

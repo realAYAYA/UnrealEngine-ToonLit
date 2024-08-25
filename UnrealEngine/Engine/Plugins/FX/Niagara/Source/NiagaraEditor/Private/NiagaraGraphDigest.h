@@ -14,6 +14,8 @@
 class UEdGraphNode;
 class FNiagaraFixedConstantResolver;
 class FNiagaraCompilationGraph;
+class FNiagaraCompilationGraphDigested;
+class FNiagaraCompilationGraphInstanced;
 class FNiagaraCompilationNode;
 class FNiagaraPrecompileData;
 class FNiagaraCompilationCopyData;
@@ -253,29 +255,23 @@ protected:
 class FNiagaraCompilationGraph
 {
 public:
+	virtual ~FNiagaraCompilationGraph() {};
+
 	using FSharedPtr = TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe>;
 
-	void Create(const UNiagaraGraph* InGraph, const FNiagaraGraphChangeIdBuilder& Digester);
 	bool IsValid() const { return true; } // todo - when creation is offloaded to a task we'll need this to synchronize completion
 
 	TArray<TUniquePtr<FNiagaraCompilationNode>> Nodes;
-	TWeakObjectPtr<const UNiagaraGraph> SourceGraph;
-	const FNiagaraCompilationGraph* InstantiationSourceGraph = nullptr;
 	TArray<int32> InputNodeIndices;
 	TArray<int32> OutputNodeIndices;
 	FNiagaraScriptVariableBinding VariableBinding;
 	TArray<FNiagaraScriptVariableData> ScriptVariableData;
 	TArray<FNiagaraVariableBase> StaticSwitchInputs;
-	bool bInstanced = false;
+
 	// true if the graph contains a static variable or one of it's recursively referenced graphs contains one
 	bool bContainsStaticVariables = false;
 	FString SourceScriptName;
 	FString SourceScriptFullName;
-
-	TMap<FName, UNiagaraDataInterface*> CachedDataInterfaceInstanceDuplicates;
-	TMap<UClass*, UNiagaraDataInterface*> CachedDataInterfaceCDODuplicates;
-
-	TMap<FName, UObject*> CachedNamedObjectAssets;
 
 	void FindOutputNodes(TArray<const FNiagaraCompilationNodeOutput*>& OutputNodes) const;
 	void FindOutputNodes(ENiagaraScriptUsage TargetUsageType, TArray<const FNiagaraCompilationNodeOutput*>& OutputNodes) const;
@@ -295,14 +291,9 @@ public:
 	TOptional<ENiagaraDefaultMode> GetDefaultMode(const FNiagaraVariableBase&, FNiagaraScriptVariableBinding& Binding) const;
 	TOptional<FNiagaraVariableMetaData> GetMetaData(const FNiagaraVariableBase&) const;
 
-	TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> Instantiate(const FNiagaraPrecompileData* PrecompileData, const FNiagaraCompilationCopyData* CopyCompilationData, const TArray<ENiagaraScriptUsage>& Usages, const FNiagaraFixedConstantResolver& ConstantResolver) const;
 	void CollectReachableNodes(const FNiagaraCompilationNodeOutput* OutputNode, TArray<const FNiagaraCompilationNode*>& ReachableNodes) const;
 	void BuildTraversal(const FNiagaraCompilationNode* RootNode, TArray<const FNiagaraCompilationNode*>& OrderedNodes) const;
 	void BuildTraversal(const FNiagaraCompilationNode* RootNode, const FNiagaraCompilationBranchMap& Branches, TArray<const FNiagaraCompilationNode*>& OrderedNodes) const;
-
-	void RegisterDataInterface(FName VariableName, UNiagaraDataInterface* SourceDataInterface);
-	void RegisterObjectAsset(FName VariableName, UObject* SourceObjectAsset);
-	void AddReferencedObjects(FReferenceCollector& Collector);
 
 	void EvaluateStaticBranches(FNiagaraCompilationGraphInstanceContext& Context, FNiagaraCompilationBranchMap& Branches) const;
 
@@ -312,27 +303,76 @@ public:
 		TFunctionRef<bool(const FNiagaraCompilationNodeOutput&)> RootNodeFilter,
 		TFunctionRef<bool(const FNiagaraCompilationNode&)> NodeOperation) const;
 
+	virtual FNiagaraCompilationGraphDigested* AsDigested() { return nullptr; }
+	virtual FNiagaraCompilationGraphInstanced* AsInstanced() { return nullptr; }
+
 protected:
 	const FNiagaraScriptVariableData* GetScriptVariableData(const FNiagaraVariableBase&) const;
 
-	TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> DuplicateSubGraph(
+	TArray<const FNiagaraCompilationNode*> GetOutputNodes() const;
+};
+
+// Digested version of the compilation graph.  Created on the game thread from a UNiagaraGraph
+// this will act as the source for FNiagaraCompilationGraphInstanced that will be crated in async
+// tasks.  Is also responsible for securing references to UObjects over it's lifetime as an FGCObject
+class FNiagaraCompilationGraphDigested : public TSharedFromThis<FNiagaraCompilationGraphDigested, ESPMode::ThreadSafe>
+										, public FNiagaraCompilationGraph
+										, FGCObject
+{
+public:
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override;
+
+	TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> Instantiate(const FNiagaraPrecompileData* PrecompileData, const FNiagaraCompilationCopyData* CopyCompilationData, const TArray<ENiagaraScriptUsage>& Usages, const FNiagaraFixedConstantResolver& ConstantResolver) const;
+
+	void Digest(const UNiagaraGraph* InGraph, const FNiagaraGraphChangeIdBuilder& Digester);
+
+	UNiagaraDataInterface* DigestDataInterface(UNiagaraDataInterface* SourceDataInterface);
+	void RegisterObjectAsset(FName VariableName, UObject* SourceObjectAsset);
+
+	virtual FNiagaraCompilationGraphDigested* AsDigested() override { return this; }
+
+	using FDataInterfaceCDOMap = TMap<TObjectPtr<UClass>, TObjectPtr<UNiagaraDataInterface>>;
+	void CollectReferencedDataInterfaceCDO(FDataInterfaceCDOMap& Interfaces) const;
+
+	using FDataInterfaceDuplicateMap = TMap<TObjectKey<UNiagaraDataInterface>, TObjectPtr<UNiagaraDataInterface>>;
+	FDataInterfaceDuplicateMap CachedDataInterfaceDuplicates;
+	FDataInterfaceCDOMap CachedDataInterfaceCDODuplicates;
+	TMap<FName, TObjectPtr<UObject>> CachedNamedObjectAssets;
+
+	TWeakObjectPtr<const UNiagaraGraph> SourceGraph;
+
+protected:
+	TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> InstantiateSubGraph(
 		const TArray<ENiagaraScriptUsage>& Usages,
 		const FNiagaraCompilationCopyData* CopyCompilationData,
 		const FNiagaraCompilationBranchMap& Branches,
 		TArray<FNiagaraCompilationNodeFunctionCall*>& PendingInstantiations) const;
-	void Refine(FNiagaraCompilationGraphInstanceContext& Context, const FNiagaraCompilationNodeFunctionCall* CallingNode);
-	void ValidateRefinement() const;
 
-	void PatchGenericNumericsFromCaller(FNiagaraCompilationGraphInstanceContext& Context);
+	TArray<const FNiagaraCompilationGraphDigested*> ChildGraphs;
+};
+
+// Instanced version of the compilation graph.  Created from a FNiagaraCompilationGraphDigested
+// this will act as the representation of the UNiagaraGraph that is actually being translated and
+// compiled (i.e. will have nodes stripped out if static branches aren't taken).
+class FNiagaraCompilationGraphInstanced : public FNiagaraCompilationGraph
+{
+public:
+	void AggregateChildGraph(const FNiagaraCompilationGraphInstanced* ChildGraph);
+
 	void ResolveNumerics(FNiagaraCompilationGraphInstanceContext& Context);
+	void Refine(FNiagaraCompilationGraphInstanceContext& Context, const FNiagaraCompilationNodeFunctionCall* CallingNode);
+
+	virtual FNiagaraCompilationGraphInstanced* AsInstanced() { return this; }
+
+	TSharedPtr<const FNiagaraCompilationGraph> InstantiationSourceGraph;
+
+protected:
+	void ValidateRefinement() const;
+	void PatchGenericNumericsFromCaller(FNiagaraCompilationGraphInstanceContext& Context);
 	void InheritDebugState(FNiagaraCompilationGraphInstanceContext& Context, FNiagaraCompilationNodeFunctionCall& FunctionCallNode);
 	void PropagateDefaultValues(FNiagaraCompilationGraphInstanceContext& Context, FNiagaraCompilationNodeFunctionCall& FunctionCallNode);
 	void RemoveUnconnectedNodes();
-
-	void AggregateDataInterfaces(const FNiagaraCompilationGraph* ChildGraph);
-	void AggregateChildGraph(const FNiagaraCompilationGraph* ChildGraph);
-
-	TArray<const FNiagaraCompilationNode*> GetOutputNodes() const;
 };
 
 class FNiagaraCompilationScript
@@ -353,10 +393,13 @@ public:
 	virtual void BuildParameterMapHistory(FParameterMapHistoryBuilder& Builder, bool bRecursive, bool bFilterForCompilation) const override;
 	virtual void Compile(FTranslator* Translator, TArray<int32>& Outputs) const;
 
+	FNiagaraEmitterID EmitterID;
+	FGuid EmitterHandleID;
 	FString EmitterUniqueName;
 	FString EmitterName;
 	FString EmitterPathName;
 	FString EmitterHandleIdString;
+	FName EmitterUniqueFName;
 	FNiagaraCompilationGraph::FSharedPtr CalledGraph;
 	ENiagaraScriptUsage Usage;
 };
@@ -419,6 +462,7 @@ public:
 	FString CustomHlsl;
 	TArray<FString> Tokens;
 	TArray<FNiagaraCustomHlslInclude> CustomIncludePaths;
+	bool bCallsImpureFunctions = false;
 };
 
 class FNiagaraCompilationNodeIf : public FNiagaraCompilationNode
@@ -461,7 +505,7 @@ public:
 	bool bExposed;
 	bool bCanAutoBind;
 
-	TObjectPtr<UNiagaraDataInterface> InstancedDataInterface;
+	TObjectPtr<UNiagaraDataInterface> DuplicatedDataInterface;
 	FSoftObjectPath ObjectAssetPath;
 };
 

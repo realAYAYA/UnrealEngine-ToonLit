@@ -15,6 +15,8 @@
 #include "Android/AndroidPlatformFramePacer.h"
 #include "Android/AndroidJNI.h"
 #include "GenericPlatform/GenericPlatformCrashContext.h"
+#include "String/Find.h"
+#include "String/LexFromString.h"
 
 PFNeglPresentationTimeANDROID eglPresentationTimeANDROID_p = NULL;
 PFNeglGetNextFrameIdANDROID eglGetNextFrameIdANDROID_p = NULL;
@@ -108,6 +110,7 @@ struct FOpenGLRemoteGLProgramCompileJNI
 	jclass ProgramResponseClass = 0;
 	jfieldID ProgramResponse_SuccessField = 0;
 	jfieldID ProgramResponse_ErrorField = 0;
+	jfieldID ProgramResponse_SHMOutputHandleField = 0;
 	jfieldID ProgramResponse_CompiledBinaryField = 0;
 	bool bAllFound = false;
 
@@ -129,7 +132,7 @@ struct FOpenGLRemoteGLProgramCompileJNI
 		{
 			DispatchProgramLink = FJavaWrapper::FindStaticMethod(Env, OGLServiceAccessor, "AndroidThunkJava_OGLRemoteProgramLink", "([BLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lcom/epicgames/unreal/psoservices/PSOProgramServiceAccessor$JNIProgramLinkResponse;", false);
 			CHECK_JNI_EXCEPTIONS(Env);
-			StartRemoteProgramLink = FJavaWrapper::FindStaticMethod(Env, OGLServiceAccessor, "AndroidThunkJava_StartRemoteProgramLink", "(IZ)Z", false);
+			StartRemoteProgramLink = FJavaWrapper::FindStaticMethod(Env, OGLServiceAccessor, "AndroidThunkJava_StartRemoteProgramLink", "(IZZ)Z", false);
 			CHECK_JNI_EXCEPTIONS(Env);
 			StopRemoteProgramLink = FJavaWrapper::FindStaticMethod(Env, OGLServiceAccessor, "AndroidThunkJava_StopRemoteProgramLink", "()V", false);
 			CHECK_JNI_EXCEPTIONS(Env);
@@ -141,9 +144,11 @@ struct FOpenGLRemoteGLProgramCompileJNI
 			CHECK_JNI_EXCEPTIONS(Env);
 			ProgramResponse_ErrorField = FJavaWrapper::FindField(Env, ProgramResponseClass, "ErrorMessage", "Ljava/lang/String;", true);
 			CHECK_JNI_EXCEPTIONS(Env);
+			ProgramResponse_SHMOutputHandleField = FJavaWrapper::FindField(Env, ProgramResponseClass, "SHMOutputHandle", "I", true);
+			CHECK_JNI_EXCEPTIONS(Env);
 		}
 
-		bAllFound = OGLServiceAccessor && DispatchProgramLink && StartRemoteProgramLink && StopRemoteProgramLink && ProgramResponseClass && ProgramResponse_SuccessField && ProgramResponse_CompiledBinaryField && ProgramResponse_ErrorField;
+		bAllFound = OGLServiceAccessor && DispatchProgramLink && StartRemoteProgramLink && StopRemoteProgramLink && ProgramResponseClass && ProgramResponse_SuccessField && ProgramResponse_CompiledBinaryField && ProgramResponse_ErrorField && ProgramResponse_SHMOutputHandleField;
 		UE_CLOG(!bAllFound, LogRHI, Fatal, TEXT("Failed to find JNI GL remote program compiler."));
 	}
 }OpenGLRemoteGLProgramCompileJNI;
@@ -476,7 +481,7 @@ FOpenGLTexture* PlatformCreateBuiltinBackBuffer(FOpenGLDynamicRHI* OpenGLRHI, ui
 			.SetFlags(ETextureCreateFlags::RenderTargetable | ETextureCreateFlags::Presentable | ETextureCreateFlags::ResolveTargetable)
 			.DetermineInititialState();
 
-		return new FOpenGLTexture(CreateDesc);
+		return new FOpenGLTexture(FRHICommandListImmediate::Get(), CreateDesc);
 	}
 	else
 	{
@@ -891,10 +896,31 @@ void FAndroidOpenGL::ProcessExtensions(const FString& ExtensionsString)
 
 	if (bIsAdrenoBased)
 	{
+		uint32 AdrenoDriverMajorVersion = 0;
+		FStringView VersionStringView = MakeStringView(VersionString);
+		FStringView AdrenoDriverVersionPrefix = TEXT("V@");
+		int32 VersionStart = UE::String::FindFirst(VersionStringView, AdrenoDriverVersionPrefix, ESearchCase::CaseSensitive);
+		if (VersionStart != INDEX_NONE)
+		{
+			VersionStart += AdrenoDriverVersionPrefix.Len();
+			const int32 VersionCharCount = UE::String::FindFirst(VersionStringView.Mid(VersionStart), TEXT("."), ESearchCase::CaseSensitive);
+			if (VersionCharCount != INDEX_NONE)
+			{
+				LexFromString(AdrenoDriverMajorVersion, VersionStringView.SubStr(VersionStart, VersionCharCount));
+			}
+		}
+
 		GMaxmimumOcclusionQueries = 510;
 		// This is to avoid a bug in Adreno drivers that define GL_ARM_shader_framebuffer_fetch_depth_stencil even when device does not support this extension
 		// OpenGL ES 3.1 V@127.0 (GIT@I1af360237c)
 		bRequiresARMShaderFramebufferFetchDepthStencilUndef = !bSupportsShaderDepthStencilFetch;
+
+		if (AdrenoDriverMajorVersion > 0 && AdrenoDriverMajorVersion < 331)
+		{
+			// Shader compiler causes a freeze on older drivers
+			// version 331 is known to work, 313 known not to work
+			bSupportsShaderFramebufferFetchProgrammableBlending = false;
+		}
 
 		// FORT-221329's broken adreno driver not common on Android 9 and above. TODO: check adreno driver version instead.
 		bRequiresAdrenoTilingHint = FAndroidMisc::GetAndroidBuildVersion() < 28 || CVarEnableAdrenoTilingHint.GetValueOnAnyThread() == 2;
@@ -1101,7 +1127,7 @@ void FAndroidMisc::GetValidTargetPlatforms(TArray<FString>& TargetPlatformNames)
 void FAndroidAppEntry::PlatformInit()
 {
 	// Try to create an ES3.2 EGL here for gpu queries and don't have to recreate the GL context.
-	AndroidEGL::GetInstance()->Init(AndroidEGL::AV_OpenGLES, 3, 2, false);
+	AndroidEGL::GetInstance()->Init(AndroidEGL::AV_OpenGLES, 3, 2);
 }
 
 void FAndroidAppEntry::ReleaseEGL()
@@ -1133,7 +1159,8 @@ bool FAndroidOpenGL::StartAndWaitForRemoteCompileServices(int NumServices)
 
 	if (Env && AreAndroidOpenGLRemoteCompileServicesAvailable())
 	{
-		bResult = (bool)Env->CallStaticBooleanMethod(OpenGLRemoteGLProgramCompileJNI.OGLServiceAccessor, OpenGLRemoteGLProgramCompileJNI.StartRemoteProgramLink, (jint)NumServices, (jboolean)false);
+		bool bUseRobustContexts = AndroidEGL::GetInstance()->IsUsingRobustContext();
+		bResult = (bool)Env->CallStaticBooleanMethod(OpenGLRemoteGLProgramCompileJNI.OGLServiceAccessor, OpenGLRemoteGLProgramCompileJNI.StartRemoteProgramLink, (jint)NumServices, (jboolean)bUseRobustContexts, /*bUseVulkan*/(jboolean)false);
 		GRemoteCompileServicesActive = bResult;
 	}
 

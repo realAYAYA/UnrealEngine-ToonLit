@@ -652,7 +652,7 @@ struct FNiagaraDataSetAccessorTypeInfo<FNiagaraSpawnInfo>
 	static constexpr int32 NumInt32Components = 2;
 	static FNiagaraTypeDefinition GetStructType() { return FNiagaraTypeDefinition(FNiagaraSpawnInfo::StaticStruct()); }
 
-	static FNiagaraSpawnInfo ReadStruct(int32 InstanceIndex, const float*const* FloatComponents, const int32*const* Int32Components)
+	static FORCENOINLINE FNiagaraSpawnInfo ReadStruct(int32 InstanceIndex, const float*const* FloatComponents, const int32*const* Int32Components)
 	{
 		FNiagaraSpawnInfo SpawnInfo;
 		SpawnInfo.Count			= Int32Components[0][InstanceIndex];

@@ -26,15 +26,12 @@ public class Expat : ModuleRules
 		{
 			string LibraryPath = Path.Combine(ExpatPackagePath, "Android", ConfigName);
 			PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "arm64", "libexpat.a"));
+			PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "x64", "libexpat.a"));
 		}
-		else if (Target.Platform == UnrealTargetPlatform.IOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
-			PublicAdditionalLibraries.Add(Path.Combine(ExpatPackagePath, "IOS", ConfigName, "libexpat.a"));
+			PublicAdditionalLibraries.Add(Path.Combine(ExpatPackagePath, Target.Platform.ToString(), ConfigName, "libexpat.a"));
 		}
-        else if (Target.Platform == UnrealTargetPlatform.TVOS)
-        {
-            PublicAdditionalLibraries.Add(Path.Combine(ExpatPackagePath, "TVOS", ConfigName, "libexpat.a"));
-        }
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Windows))
 		{
 			string LibraryPath = Path.Combine(ExpatPackagePath, "Win64", "VS" + Target.WindowsPlatform.GetVisualStudioCompilerVersionName());

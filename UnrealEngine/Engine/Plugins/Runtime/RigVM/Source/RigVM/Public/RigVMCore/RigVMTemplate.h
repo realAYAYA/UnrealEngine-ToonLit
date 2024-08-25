@@ -4,7 +4,6 @@
 
 #include "Containers/Array.h"
 #include "Containers/Map.h"
-#include "Containers/SparseArray.h"
 #include "Containers/UnrealString.h"
 #include "CoreMinimal.h"
 #include "Delegates/Delegate.h"
@@ -13,8 +12,6 @@
 #include "Math/Color.h"
 #include "Misc/AssertionMacros.h"
 #include "RigVMFunction.h"
-#include "RigVMModule.h"
-#include "RigVMTraits.h"
 #include "RigVMTypeIndex.h"
 #include "RigVMTypeUtils.h"
 #include "UObject/Class.h"
@@ -30,20 +27,19 @@ class FProperty;
 struct FRigVMDispatchFactory;
 struct FRigVMTemplate;
 struct FRigVMDispatchContext;
+struct FRigVMUserDefinedTypeResolver;
+struct FRigVMRegistry;
 
 typedef TMap<FName, TRigVMTypeIndex> FRigVMTemplateTypeMap;
 
-DECLARE_DELEGATE_RetVal_ThreeParams(FRigVMTemplateTypeMap, FRigVMTemplate_NewArgumentTypeDelegate, const FRigVMTemplate* /* InTemplate */, const FName& /* InArgumentName */, TRigVMTypeIndex /* InTypeIndexToAdd */);
-DECLARE_DELEGATE_RetVal_TwoParams(FRigVMFunctionPtr, FRigVMTemplate_RequestDispatchFunctionDelegate, const FRigVMTemplate* /* InTemplate */,  const FRigVMTemplateTypeMap& /* InTypes */);
-DECLARE_DELEGATE_RetVal_TwoParams(TArray<FRigVMFunction>, FRigVMTemplate_RequestDispatchPredicatesDelegate, const FRigVMTemplate* /* InTemplate */,  const FRigVMTemplateTypeMap& /* InTypes */);
+// FRigVMTemplate_NewArgumentTypeDelegate is deprecated, use FRigVMTemplate_GetPermutationsFromArgumentTypeDelegate
+DECLARE_DELEGATE_RetVal_TwoParams(FRigVMTemplateTypeMap, FRigVMTemplate_NewArgumentTypeDelegate, const FName& /* InArgumentName */, TRigVMTypeIndex /* InTypeIndexToAdd */);
 DECLARE_DELEGATE_RetVal(FRigVMDispatchFactory*, FRigVMTemplate_GetDispatchFactoryDelegate);
 
 struct RIGVM_API FRigVMTemplateDelegates
 {
 	FRigVMTemplate_NewArgumentTypeDelegate NewArgumentTypeDelegate;
 	FRigVMTemplate_GetDispatchFactoryDelegate GetDispatchFactoryDelegate;
-	FRigVMTemplate_RequestDispatchFunctionDelegate RequestDispatchFunctionDelegate;
-	FRigVMTemplate_RequestDispatchPredicatesDelegate RequestDispatchPredicatesDelegate;
 };
 
 USTRUCT()
@@ -66,9 +62,9 @@ struct RIGVM_API FRigVMTemplateArgumentType
 	}
 
 	FRigVMTemplateArgumentType(const FName& InCPPType, UObject* InCPPTypeObject = nullptr);
-
-	FRigVMTemplateArgumentType(UClass* InClass)
-	: CPPType(*RigVMTypeUtils::CPPTypeFromObject(InClass))
+	
+	FRigVMTemplateArgumentType(UClass* InClass, RigVMTypeUtils::EClassArgType InClassArgType = RigVMTypeUtils::EClassArgType::AsObject)
+	: CPPType(*RigVMTypeUtils::CPPTypeFromObject(InClass, InClassArgType))
 	, CPPTypeObject(InClass)
 	{
 	}
@@ -197,12 +193,10 @@ struct RIGVM_API FRigVMTemplateArgument
 	// default constructor
 	FRigVMTemplateArgument();
 
+	FRigVMTemplateArgument(const FName& InName, ERigVMPinDirection InDirection);
 	FRigVMTemplateArgument(const FName& InName, ERigVMPinDirection InDirection, TRigVMTypeIndex InType);
 	FRigVMTemplateArgument(const FName& InName, ERigVMPinDirection InDirection, const TArray<TRigVMTypeIndex>& InTypeIndices);
-	FRigVMTemplateArgument(const FName& InName, ERigVMPinDirection InDirection, const TArray<ETypeCategory>& InTypeCategories, const FTypeFilter& InTypeFilter = {});
-
-	// Serialize
-	void Serialize(FArchive& Ar);
+	FRigVMTemplateArgument(const FName& InName, ERigVMPinDirection InDirection, const TArray<ETypeCategory>& InTypeCategories, TFunction<bool(const TRigVMTypeIndex&)> InFilterType = nullptr);
 
 	// returns the name of the argument
 	const FName& GetName() const { return Name; }
@@ -214,7 +208,47 @@ struct RIGVM_API FRigVMTemplateArgument
 	bool SupportsTypeIndex(TRigVMTypeIndex InTypeIndex, TRigVMTypeIndex* OutTypeIndex = nullptr) const;
 
 	// returns the flat list of types (including duplicates) of this argument
-	const TArray<TRigVMTypeIndex>& GetTypeIndices() const;
+	void GetAllTypes(TArray<TRigVMTypeIndex>& OutTypes) const;
+	
+	TRigVMTypeIndex GetTypeIndex(const int32 InIndex) const;
+	int32 GetNumTypes() const;
+	void AddTypeIndex(const TRigVMTypeIndex InTypeIndex);
+	void RemoveType(const int32 InIndex);
+	void ForEachType(TFunction<bool(const TRigVMTypeIndex InType)>&& InCallback) const;
+	int32 FindTypeIndex(const TRigVMTypeIndex InTypeIndex) const;
+
+	template <typename Predicate>
+	int32 IndexOfByPredicate(Predicate Pred) const
+	{
+		if (!bUseCategories)
+		{
+			return TypeIndices.IndexOfByPredicate(Pred);
+		}
+		if (FilterType)
+		{
+			bool bFound = false;
+			int32 ValidIndex = 0;
+			CategoryViews(TypeCategories).ForEachType([this, &ValidIndex, &bFound, Pred](const TRigVMTypeIndex Type)
+			{
+				if (FilterType(Type))
+				{
+					if (Pred(Type))
+					{
+						bFound = true;
+						return false;
+					}
+					ValidIndex++;
+				}
+				return true;
+			});
+			if (bFound)
+			{
+				return ValidIndex;
+			}
+			return INDEX_NONE;
+		}
+		return CategoryViews(TypeCategories).IndexOfByPredicate(Pred);
+	}
 
 	// returns an array of all of the supported types
 	TArray<TRigVMTypeIndex> GetSupportedTypeIndices(const TArray<int32>& InPermutationIndices = TArray<int32>()) const;
@@ -235,28 +269,99 @@ struct RIGVM_API FRigVMTemplateArgument
 
 	RIGVM_API friend uint32 GetTypeHash(const FRigVMTemplateArgument& InArgument);
 
+	// Get the map of types to permutation indices
+	const TArray<int32>& GetPermutations(const TRigVMTypeIndex InType) const;
+	void InvalidatePermutations(const TRigVMTypeIndex InType);
+
 protected:
 
-	int32 Index;
-	FName Name;
-	ERigVMPinDirection Direction;
+	int32 Index = INDEX_NONE;
+	FName Name = NAME_None;
+	ERigVMPinDirection Direction = ERigVMPinDirection::IO;
+
 	TArray<TRigVMTypeIndex> TypeIndices;
+	mutable TMap<TRigVMTypeIndex, TArray<int32>> TypeToPermutations;
 
-	TMap<TRigVMTypeIndex, TArray<int32>> TypeToPermutations;
+	bool bUseCategories = false;
 	TArray<ETypeCategory> TypeCategories;
+	TFunction<bool(const TRigVMTypeIndex&)> FilterType;
 
-	// constructor from a property. this forces the type to be created
 	FRigVMTemplateArgument(FProperty* InProperty);
 
-	void EnsureValidExecuteType();
+	// constructor from a property. this forces the type to be created
+	FRigVMTemplateArgument(FProperty* InProperty, FRigVMRegistry& InRegistry);
+
+	void EnsureValidExecuteType(FRigVMRegistry& InRegistry);
 	void UpdateTypeToPermutations();
 
 	friend struct FRigVMTemplate;
+	friend struct FRigVMDispatchFactory;
 	friend class URigVMController;
 	friend struct FRigVMRegistry;
 	friend struct FRigVMStructUpgradeInfo;
-	friend struct FRigVMSetLibraryTemplateAction;
 	friend class URigVMCompiler;
+
+private:
+	struct CategoryViews
+	{
+		CategoryViews() = delete;
+		CategoryViews(const TArray<ETypeCategory>& InCategories);
+		
+		void ForEachType(TFunction<bool(const TRigVMTypeIndex InType)>&& InCallback) const;
+
+		TRigVMTypeIndex GetTypeIndex(int32 InIndex) const;
+		
+		int32 FindIndex(const TRigVMTypeIndex InTypeIndex) const;
+
+		template <typename Predicate>
+		int32 IndexOfByPredicate(Predicate Pred) const
+		{
+			int32 Offset = 0;
+			for (const TArrayView<const TRigVMTypeIndex>& TypeView: Types)
+			{
+				const int32 Found = TypeView.IndexOfByPredicate(Pred);
+				if (Found != INDEX_NONE)
+				{
+					return Found + Offset;
+				}
+				Offset += TypeView.Num();
+			}
+			return INDEX_NONE;
+		}
+		
+	private:
+		TArray<TArrayView<const TRigVMTypeIndex>> Types;
+	};
+};
+
+/**
+ * FRigVMTemplateArgumentInfo 
+ */
+
+struct RIGVM_API FRigVMTemplateArgumentInfo
+{
+	using ArgumentCallback = TFunction<FRigVMTemplateArgument(const FName /*InName*/, ERigVMPinDirection /*InDirection*/)>;
+	using TypeFilterCallback = TFunction<bool(const TRigVMTypeIndex& InNewType)>;
+	
+	FName Name = NAME_None;
+	ERigVMPinDirection Direction = ERigVMPinDirection::Invalid;
+	TFunction<FRigVMTemplateArgument(const FName /*InName*/, ERigVMPinDirection /*InDirection*/)> FactoryCallback = [](const FName, ERigVMPinDirection) { return FRigVMTemplateArgument(); };
+	
+	FRigVMTemplateArgumentInfo(const FName InName, ERigVMPinDirection InDirection, TRigVMTypeIndex InTypeIndex);
+	FRigVMTemplateArgumentInfo(const FName InName, ERigVMPinDirection InDirection, const TArray<TRigVMTypeIndex>& InTypeIndices);
+	FRigVMTemplateArgumentInfo(const FName InName, ERigVMPinDirection InDirection, const TArray<FRigVMTemplateArgument::ETypeCategory>& InTypeCategories, TypeFilterCallback InTypeFilter = nullptr);
+	FRigVMTemplateArgumentInfo(const FName InName, ERigVMPinDirection InDirection);
+	FRigVMTemplateArgumentInfo(const FName InName, ERigVMPinDirection InDirection, ArgumentCallback&& InCallback);
+
+	FRigVMTemplateArgument GetArgument() const;
+	
+	static FName ComputeTemplateNotation(
+		const FName InTemplateName,
+		const TArray<FRigVMTemplateArgumentInfo>& InInfos);
+	
+	static TArray<TRigVMTypeIndex> GetTypesFromCategories(
+		const TArray<FRigVMTemplateArgument::ETypeCategory>& InTypeCategories,
+		const FRigVMTemplateArgument::FTypeFilter& InTypeFilter = {});	
 };
 
 /**
@@ -274,9 +379,6 @@ public:
 
 	// Default constructor
 	FRigVMTemplate();
-
-	// Serialize
-	void Serialize(FArchive& Ar);
 
 	// returns true if this is a valid template
 	bool IsValid() const;
@@ -358,13 +460,13 @@ public:
 	FRigVMTemplateTypeMap GetTypesForPermutation(const int32 InPermutationIndex) const;
 
 	// returns true if a given argument is valid for a template
-	static bool IsValidArgumentForTemplate(const FRigVMTemplateArgument& InArgument);
+	static bool IsValidArgumentForTemplate(const ERigVMPinDirection InDirection);
 
 	// returns the prefix for an argument in the notation
-	static const FString& GetArgumentNotationPrefix(const FRigVMTemplateArgument& InArgument);
+	static const FString& GetDirectionPrefix(const ERigVMPinDirection InDirection);
 
 	// returns the notation of an argument
-	static FString GetArgumentNotation(const FRigVMTemplateArgument& InArgument);
+	static FString GetArgumentNotation(const FName InName, const ERigVMPinDirection InDirection);
 
 	// recomputes the notation from its arguments
 	void ComputeNotationFromArguments(const FString& InTemplateName);
@@ -373,7 +475,7 @@ public:
 	static TArray<UStruct*> GetSuperStructs(UStruct* InStruct, bool bIncludeLeaf = true);
 
 	// converts the types provided by a string (like "A:float,B:int32") into a type map
-	FTypeMap GetArgumentTypesFromString(const FString& InTypeString) const;
+	FTypeMap GetArgumentTypesFromString(const FString& InTypeString, const FRigVMUserDefinedTypeResolver* InTypeResolver = nullptr) const;
 
 	// converts the types provided to a string (like "A:float,B:int32")
 	static FString GetStringFromArgumentTypes(const FTypeMap& InTypes); 
@@ -397,46 +499,42 @@ public:
 
 #endif
 
-	// Adds a new argument to the template. The template needs to rely on the delegate to ask the
-	// template factory how to deal with the new type.
-	bool AddTypeForArgument(const FName& InArgumentName, TRigVMTypeIndex InTypeIndex);
+	// Updates the template's argument types. This only affects templates which have category based
+	// arguments and will resolve the other arguments to the expected types.
+	bool UpdateArgumentTypes();
 
 	// Invalidates template permutations whenever a type such as a user defined struct is removed
 	void HandleTypeRemoval(TRigVMTypeIndex InTypeIndex);
 	
 	// Returns the delegate to be able to react to type changes dynamically
+	// This delegate is deprecated
 	FRigVMTemplate_NewArgumentTypeDelegate& OnNewArgumentType() { return Delegates.NewArgumentTypeDelegate; }
 
 	// Returns the factory this template was created by
 	const FRigVMDispatchFactory* GetDispatchFactory() const
 	{
-		if(Delegates.GetDispatchFactoryDelegate.IsBound())
-		{
-			return Delegates.GetDispatchFactoryDelegate.Execute();
-		}
-		return nullptr;
+		return UsesDispatch() ? Delegates.GetDispatchFactoryDelegate.Execute() : nullptr;
 	}
 
 	// Returns true if this template is backed by a dispatch factory
 	bool UsesDispatch() const
 	{
-		return Delegates.RequestDispatchFunctionDelegate.IsBound() &&
-			Delegates.GetDispatchFactoryDelegate.IsBound();
+		return Delegates.GetDispatchFactoryDelegate.IsBound();
 	}
 
 	void RecomputeTypesHashToPermutations();
 
-	void UpdateTypesHashToPermutation(const int32& InPermutation);
+	void UpdateTypesHashToPermutation(const int32 InPermutation);
 
 	RIGVM_API friend uint32 GetTypeHash(const FRigVMTemplate& InTemplate);
 
 private:
 
 	// Constructor from a struct, a template name and a function index
-	FRigVMTemplate(UScriptStruct* InStruct, const FString& InTemplateName, int32 InFunctionIndex);
+	FRigVMTemplate(UScriptStruct* InStruct, const FString& InTemplateName, int32 InFunctionIndex = INDEX_NONE);
 
-	// Constructor from a template name, arguments and a function index
-	FRigVMTemplate(const FName& InTemplateName, const TArray<FRigVMTemplateArgument>& InArguments, int32 InFunctionIndex);
+	// Constructor from a template name and argument infos
+	FRigVMTemplate(const FName& InTemplateName, const TArray<FRigVMTemplateArgumentInfo>& InInfos);
 
 	static FLinearColor GetColorFromMetadata(FString InMetadata);
 
@@ -444,6 +542,7 @@ private:
 	const TArray<FRigVMExecuteArgument>& GetExecuteArguments(const FRigVMDispatchContext& InContext) const;
 
 	const FRigVMFunction* GetPermutation_NoLock(int32 InIndex) const;
+	const FRigVMFunction* GetOrCreatePermutation_NoLock(int32 InIndex);
 
 	int32 Index;
 	FName Notation;
@@ -458,6 +557,5 @@ private:
 	friend struct FRigVMRegistry;
 	friend class URigVMController;
 	friend class URigVMLibraryNode;
-	friend struct FRigVMSetLibraryTemplateAction;
 	friend struct FRigVMDispatchFactory;
 };

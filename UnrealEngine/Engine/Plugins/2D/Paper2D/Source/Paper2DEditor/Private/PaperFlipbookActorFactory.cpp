@@ -34,20 +34,6 @@ void UPaperFlipbookActorFactory::PostSpawnActor(UObject* Asset, AActor* NewActor
 	}
 }
 
-void UPaperFlipbookActorFactory::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (UPaperFlipbook* Flipbook = Cast<UPaperFlipbook>(Asset))
-	{
-		if (APaperFlipbookActor* TypedActor = Cast<APaperFlipbookActor>(CDO))
-		{
-			UPaperFlipbookComponent* RenderComponent = TypedActor->GetRenderComponent();
-			check(RenderComponent);
-
-			RenderComponent->SetFlipbook(Flipbook);
-		}
-	}
-}
-
 bool UPaperFlipbookActorFactory::CanCreateActorFrom(const FAssetData& AssetData, FText& OutErrorMsg)
 {
 	if (AssetData.IsValid() && AssetData.IsInstanceOf(UPaperFlipbook::StaticClass()))

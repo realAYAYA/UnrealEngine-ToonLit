@@ -38,9 +38,23 @@ namespace BuildPatchServices
 
 		/**
 		 * Dequeues received messages, pushing them to the provided handlers.
-		 * @param Handlers      The array of handlers.
+		 * NOTE: PumpMessages, RegisterMessageHandler, and UnregisterMessageHandler MUST all be called from the same thread.
 		 */
-		virtual void PumpMessages(const TArray<FMessageHandler*>& Handlers) = 0;
+		virtual void PumpMessages() = 0;
+
+		/**
+		 * Registers a message handler.
+		 * @param MessageHandler    Ptr to the message handler to add. Must not be null.
+		 * NOTE: PumpMessages, RegisterMessageHandler, and UnregisterMessageHandler MUST all be called from the same thread.
+		 */
+		virtual void RegisterMessageHandler(FMessageHandler* MessageHandler) = 0;
+
+		/**
+		 * Unregisters a message handler.
+		 * @param MessageHandler    Ptr to the message handler to remove.
+		 * NOTE: PumpMessages, RegisterMessageHandler, and UnregisterMessageHandler MUST all be called from the same thread.
+		 */
+		virtual void UnregisterMessageHandler(FMessageHandler* MessageHandler) = 0;
 	};
 
 	/**

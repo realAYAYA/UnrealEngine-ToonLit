@@ -143,7 +143,11 @@ public:
 	}
 
 	/** Create an RHI vertex buffer with CPU data. CPU data may be discarded after creation (see TResourceArray::Discard) */
+	FBufferRHIRef CreateRHIBuffer(FRHICommandListBase& RHICmdList);
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_Async();
 
 	/** Similar to Init/ReleaseRHI but only update existing SRV so references to the SRV stays valid */
@@ -183,9 +187,6 @@ private:
 
 	/** Allocates the vertex data storage type. */
 	void AllocateData(bool bNeedsCPUAccess = true);
-
-	template <bool bRenderThread>
-	FBufferRHIRef CreateRHIBuffer_Internal();
 
 	/** Purposely hidden */
 	ENGINE_API FColorVertexBuffer(const FColorVertexBuffer &rhs);

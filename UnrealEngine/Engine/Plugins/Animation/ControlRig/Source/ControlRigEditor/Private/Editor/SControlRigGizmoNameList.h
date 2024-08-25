@@ -14,7 +14,7 @@ class SControlRigShapeNameList : public SBox
 {
 public:
 
-	DECLARE_DELEGATE_RetVal( const TArray<TSharedPtr<FString>>&, FOnGetNameListContent );
+	DECLARE_DELEGATE_RetVal( const TArray<TSharedPtr<FRigVMStringWithTag>>&, FOnGetNameListContent );
 
 	SLATE_BEGIN_ARGS(SControlRigShapeNameList){}
 
@@ -31,17 +31,17 @@ protected:
 
 	void ConstructCommon();
 
-	const TArray<TSharedPtr<FString>>& GetNameList() const;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>& GetNameList() const;
 	FText GetNameListText() const;
 	virtual void SetNameListText(const FText& NewTypeInValue, ETextCommit::Type CommitInfo);
 
-	TSharedRef<SWidget> MakeNameListItemWidget(TSharedPtr<FString> InItem);
-	void OnNameListChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	TSharedRef<SWidget> MakeNameListItemWidget(TSharedPtr<FRigVMStringWithTag> InItem);
+	void OnNameListChanged(TSharedPtr<FRigVMStringWithTag> NewSelection, ESelectInfo::Type SelectInfo);
 	void OnNameListComboBox();
 
-	static const TArray< TSharedPtr<FString> >& GetEmptyList()
+	static const TArray< TSharedPtr<FRigVMStringWithTag> >& GetEmptyList()
 	{
-		static const TArray< TSharedPtr<FString> > EmptyList;
+		static const TArray< TSharedPtr<FRigVMStringWithTag> > EmptyList;
 		return EmptyList;
 	}
 

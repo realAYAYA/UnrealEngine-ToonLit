@@ -45,7 +45,6 @@
 #include "ScopedTransaction.h"
 #include "Sections/MovieSceneEventSectionBase.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Trace/Detail/Channel.h"
 #include "Tracks/MovieSceneEventTrack.h"
@@ -255,7 +254,7 @@ UK2Node_FunctionEntry* FMovieSceneEventUtils::GenerateEntryPoint(FMovieSceneEven
 	FMovieSceneDirectorBlueprintEndpointCall EndpointCall;
 	for (const TPair<FName, FMovieSceneEventPayloadVariable>& Pair : EntrypointDefinition->PayloadVariables)
 	{
-		EndpointCall.PayloadVariables.Add(Pair.Key, Pair.Value.Value);
+		EndpointCall.PayloadVariables.Add(Pair.Key, FMovieSceneDirectorBlueprintVariableValue{ Pair.Value.ObjectValue, Pair.Value.Value });
 	}
 	if (!EntrypointDefinition->BoundObjectPinName.IsNone())
 	{
@@ -271,7 +270,7 @@ void FMovieSceneEventUtils::BindEventSectionToBlueprint(UMovieSceneEventSectionB
 {
 	check(EventSection && DirectorBP);
 
-	for (TObjectPtr<UBlueprintExtension> Extension : DirectorBP->GetExtensions())
+	for (const TObjectPtr<UBlueprintExtension>& Extension : DirectorBP->GetExtensions())
 	{
 		UMovieSceneEventBlueprintExtension* EventExtension = Cast<UMovieSceneEventBlueprintExtension>(Extension);
 		if (EventExtension)

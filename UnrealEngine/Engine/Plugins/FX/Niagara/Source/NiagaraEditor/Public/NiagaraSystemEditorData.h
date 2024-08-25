@@ -129,7 +129,7 @@ public:
 	
 private:
 	NIAGARAEDITOR_API void UpdatePlaybackRangeFromEmitters(UNiagaraSystem& OwnerSystem);
-
+	void PostLoad_TransferModuleStackNotesToNewFormat(UObject* InOwner);
 private:
 	UPROPERTY(Instanced)
 	TObjectPtr<UNiagaraSystemEditorFolder> RootFolder;

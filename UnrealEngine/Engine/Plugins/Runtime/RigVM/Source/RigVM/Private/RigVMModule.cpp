@@ -9,8 +9,13 @@
 #include "HAL/IConsoleManager.h"
 #include "RigVMObjectVersion.h"
 #include "UObject/DevObjectVersion.h"
+#if WITH_EDITOR
+#include "PropertyBagDetails.h"
+#include "PropertyEditorModule.h"
+#endif
 
-IMPLEMENT_MODULE(FDefaultModuleImpl, RigVM);
+
+IMPLEMENT_MODULE(FRigVMModule, RigVM)
 
 DEFINE_LOG_CATEGORY(LogRigVM);
 
@@ -27,10 +32,32 @@ TAutoConsoleVariable<bool> CVarRigVMEnableUObjects(TEXT("RigVM.UObjectSupport"),
 TAutoConsoleVariable<bool> CVarRigVMEnableUInterfaces(TEXT("RigVM.UInterfaceSupport"), true, TEXT("When true the RigVMCompiler will allow UInterfaces."));
 #endif
 
+void FRigVMModule::StartupModule()
+{
+#if WITH_EDITOR
+	// Register the details customizer
+	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+	PropertyModule.RegisterCustomPropertyTypeLayout("RigVMMemoryStorageStruct", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FPropertyBagDetails::MakeInstance));
+	PropertyModule.NotifyCustomizationModuleChanged();
+#endif
+}
+
+void FRigVMModule::ShutdownModule()
+{
+#if WITH_EDITOR
+	// Unregister the details customization
+	if (FPropertyEditorModule* PropertyModule = FModuleManager::Get().GetModulePtr<FPropertyEditorModule>("PropertyEditor"))
+	{
+		PropertyModule->UnregisterCustomPropertyTypeLayout("RigVMMemoryStorageStruct");
+		PropertyModule->NotifyCustomizationModuleChanged();
+	}
+#endif
+}
+
 bool RigVMCore::SupportsUObjects()
 {
 #if UE_RIGVM_UOBJECT_PROPERTIES_ENABLED
-	return CVarRigVMEnableUObjects.GetValueOnGameThread();
+	return CVarRigVMEnableUObjects.GetValueOnAnyThread();
 #else
 	return false;
 #endif
@@ -39,7 +66,7 @@ bool RigVMCore::SupportsUObjects()
 bool RigVMCore::SupportsUInterfaces()
 {
 #if UE_RIGVM_UINTERFACE_PROPERTIES_ENABLED
-	return CVarRigVMEnableUInterfaces.GetValueOnGameThread();
+	return CVarRigVMEnableUInterfaces.GetValueOnAnyThread();
 #else
 	return false;
 #endif

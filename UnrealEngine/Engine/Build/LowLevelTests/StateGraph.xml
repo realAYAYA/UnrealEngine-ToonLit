@@ -1,0 +1,48 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+  <Property Name="TestNames" Value="$(TestNames);StateGraph" />
+  <Property Name="StateGraphDisabled" Value="False" />
+  <Property Name="StateGraphShort" Value="State Graph" />
+  <Property Name="StateGraphStagesWithProjectFile" Value="False" />
+  <Property Name="StateGraphTarget" Value="StateGraphTests" />
+  <Property Name="StateGraphBinariesRelative" Value="Engine\Binaries" />
+  <Property Name="StateGraphReportType" Value="console" />
+  <Property Name="StateGraphGauntletArgs" Value="" />
+  <Property Name="StateGraphExtraArgs" />
+  <Property Name="StateGraphHasAfterSteps" Value="False" />
+  <Property Name="StateGraphUsesCatch2" Value="True" />
+  <Option Name="RunStateGraphTests" DefaultValue="False" Description="Run State Graph Tests" />
+  <Property Name="StateGraphSupportedPlatforms" Value="Win64" />
+  <Property Name="Win64StateGraphTags" Value="" />
+  <Property Name="Win64StateGraphExtraCompilationArgs" Value="" />
+  <Property Name="Win64StateGraphRunSupported" Value="True" />
+  <Property Name="MacStateGraphTags" Value="" />
+  <Property Name="MacStateGraphExtraCompilationArgs" Value="" />
+  <Property Name="MacStateGraphRunSupported" Value="True" />
+  <Property Name="IOSStateGraphTags" Value="" />
+  <Property Name="IOSStateGraphExtraCompilationArgs" Value="" />
+  <Property Name="IOSStateGraphRunSupported" Value="False" />
+  <Property Name="AndroidStateGraphTags" Value="" />
+  <Property Name="AndroidStateGraphExtraCompilationArgs" Value="" />
+  <Property Name="AndroidStateGraphRunSupported" Value="False" />
+  <Property Name="LinuxStateGraphTags" Value="" />
+  <Property Name="LinuxStateGraphExtraCompilationArgs" Value="" />
+  <Property Name="LinuxStateGraphRunSupported" Value="True" />
+  <Property Name="LinuxArm64StateGraphTags" Value="" />
+  <Property Name="LinuxArm64StateGraphExtraCompilationArgs" Value="" />
+  <Property Name="LinuxArm64StateGraphRunSupported" Value="True" />
+  <Property Name="TVOSStateGraphTags" Value="" />
+  <Property Name="TVOSStateGraphExtraCompilationArgs" Value="" />
+  <Property Name="TVOSStateGraphRunSupported" Value="False" />
+  <Property Name="VisionOSStateGraphTags" Value="" />
+  <Property Name="VisionOSStateGraphExtraCompilationArgs" Value="" />
+  <Property Name="VisionOSStateGraphRunSupported" Value="False" />
+  <Property Name="Win64StateGraphRunContainerized" Value="False" />
+  <Property Name="MacStateGraphRunContainerized" Value="False" />
+  <Property Name="IOSStateGraphRunContainerized" Value="False" />
+  <Property Name="AndroidStateGraphRunContainerized" Value="False" />
+  <Property Name="LinuxStateGraphRunContainerized" Value="False" />
+  <Property Name="LinuxArm64StateGraphRunContainerized" Value="False" />
+  <Property Name="TVOSStateGraphRunContainerized" Value="False" />
+  <Property Name="VisionOSStateGraphRunContainerized" Value="False" />
+</BuildGraph>

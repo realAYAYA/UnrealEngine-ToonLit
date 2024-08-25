@@ -14,7 +14,10 @@ bool UTextFilterValueHandlers::HandleTextFilterValue(const FContentBrowserItem& 
 	{
 		if (UClass* TextFilterValueHandlerClass = HandlerClass.LoadSynchronous())
 		{
-			return GetDefault<UTextFilterValueHandler>(TextFilterValueHandlerClass)->HandleTextFilterValue(InContentBrowserItem, InValue, InTextComparisonMode, bOutIsMatch);
+			if (GetDefault<UTextFilterValueHandler>(TextFilterValueHandlerClass)->HandleTextFilterValue(InContentBrowserItem, InValue, InTextComparisonMode, bOutIsMatch))
+			{
+				return true;
+			}
 		}
 	}
 

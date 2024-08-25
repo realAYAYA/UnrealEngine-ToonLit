@@ -1,0 +1,132 @@
+{
+  "$schema": "https://raw.githubusercontent.com/spdx/spdx-spec/v2.2.1/schemas/spdx-schema.json",
+  "spdxVersion": "SPDX-2.2",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "documentNamespace": "https://spdx.org/spdxdocs/detours-x64-windows-static-md-4.0.1#8-034a3875-59df-4f09-90f6-8d5971337773",
+  "name": "detours:x64-windows-static-md@4.0.1#8 c4586eeb273beacd27fa70746df4a8fa774846cfa6ac89d87adcfcb9644a8951",
+  "creationInfo": {
+    "creators": [
+      "Tool: vcpkg-9990a4c9026811a312cb2af78bf77f3d9d288416"
+    ],
+    "created": "2023-08-15T19:17:00Z"
+  },
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-port",
+      "relationshipType": "GENERATES",
+      "relatedSpdxElement": "SPDXRef-binary"
+    },
+    {
+      "spdxElementId": "SPDXRef-port",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-file-0"
+    },
+    {
+      "spdxElementId": "SPDXRef-port",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-file-1"
+    },
+    {
+      "spdxElementId": "SPDXRef-port",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-file-2"
+    },
+    {
+      "spdxElementId": "SPDXRef-binary",
+      "relationshipType": "GENERATED_FROM",
+      "relatedSpdxElement": "SPDXRef-port"
+    },
+    {
+      "spdxElementId": "SPDXRef-file-0",
+      "relationshipType": "CONTAINED_BY",
+      "relatedSpdxElement": "SPDXRef-port"
+    },
+    {
+      "spdxElementId": "SPDXRef-file-1",
+      "relationshipType": "CONTAINED_BY",
+      "relatedSpdxElement": "SPDXRef-port"
+    },
+    {
+      "spdxElementId": "SPDXRef-file-2",
+      "relationshipType": "CONTAINED_BY",
+      "relatedSpdxElement": "SPDXRef-port"
+    }
+  ],
+  "packages": [
+    {
+      "name": "detours",
+      "SPDXID": "SPDXRef-port",
+      "versionInfo": "4.0.1#8",
+      "downloadLocation": "NOASSERTION",
+      "homepage": "https://github.com/microsoft/Detours",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "description": "Detours is a software package for monitoring and instrumenting API calls on Windows.",
+      "comment": "This is the port (recipe) consumed by vcpkg."
+    },
+    {
+      "name": "detours:x64-windows-static-md",
+      "SPDXID": "SPDXRef-binary",
+      "versionInfo": "c4586eeb273beacd27fa70746df4a8fa774846cfa6ac89d87adcfcb9644a8951",
+      "downloadLocation": "NONE",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "This is a binary package built by vcpkg."
+    },
+    {
+      "SPDXID": "SPDXRef-resource-1",
+      "name": "microsoft/Detours",
+      "downloadLocation": "git+https://github.com/microsoft/Detours@4b8c659f549b0ab21cf649377c7a84eb708f5e68",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "checksums": [
+        {
+          "algorithm": "SHA512",
+          "checksumValue": "313e3db37d3271db366641e81c73dbbf1c397fe6daa52ef281c6b151dbb70aff42ce5a8b31329cd49ea4c0784da9db01181cb58d93b74155ff762bb094f82583"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "fileName": "./D:/FN/Engine/Restricted/NotForLicensees/Source/Programs/Box/ThirdParty/./overlay-ports/detours/portfile.cmake",
+      "SPDXID": "SPDXRef-file-0",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a873252d3dd4dd2411376781236b3014c4839c1b066a0bcb5c5b59e51193a373"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "fileName": "./D:/FN/Engine/Restricted/NotForLicensees/Source/Programs/Box/ThirdParty/./overlay-ports/detours/usage",
+      "SPDXID": "SPDXRef-file-1",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "9c52b25b89cf99fcfe48d9cbb32fa67ee1042a73fca1578ca6026bc08451e622"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "fileName": "./D:/FN/Engine/Restricted/NotForLicensees/Source/Programs/Box/ThirdParty/./overlay-ports/detours/vcpkg.json",
+      "SPDXID": "SPDXRef-file-2",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "3231630f682f63d120172a43309838c2508207bd5bb94136b9527ea082dfa234"
+        }
+      ],
+      "licenseConcluded": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    }
+  ]
+}

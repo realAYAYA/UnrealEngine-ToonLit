@@ -25,7 +25,7 @@ float CosTangentThreshold;
 float CoverageThreshold; // Allow to scale the transmittance to compensate its asymptotic behavior 
 uint VelocityType;
 
-RWTexture2D<uint> OutCompactNodeCounter;
+RWStructuredBuffer<uint> OutCompactNodeCounter;
 RWTexture2D<uint> OutCompactNodeIndex;
 RWStructuredBuffer<FPackedHairVis> OutCompactNodeVis;
 RWBuffer<uint2> OutCompactNodeCoord;
@@ -136,7 +136,7 @@ void MainCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_Dispatc
 	// Now allocate all the nodes for this group contiguously in memory
 	if (GroupIndex == 0 && AllocationNodeCount > 0)
 	{
-		InterlockedAdd(OutCompactNodeCounter[uint2(0, 0)], AllocationNodeCount, AllocationNodeOffset);
+		InterlockedAdd(OutCompactNodeCounter[0], AllocationNodeCount, AllocationNodeOffset);
 	}
 	GroupMemoryBarrierWithGroupSync();
 	uint OffsetInStorage = AllocationNodeOffset + PixelDataSubOffsetInStorage;
@@ -403,7 +403,7 @@ void MainCS(
 	GroupMemoryBarrierWithGroupSync();
 	if (GroupIndex == 0 && AllocationNodeCount > 0)
 	{
-		InterlockedAdd(OutCompactNodeCounter[uint2(0, 0)], AllocationNodeCount, AllocationNodeOffset);
+		InterlockedAdd(OutCompactNodeCounter[0], AllocationNodeCount, AllocationNodeOffset);
 	}
 	GroupMemoryBarrierWithGroupSync();
 

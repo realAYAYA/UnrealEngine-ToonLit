@@ -5,7 +5,6 @@
 
 #if PLATFORM_WINDOWS
 #include "Misc/CommandLine.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <ShellAPI.h>
 #include "Windows/HideWindowsPlatformTypes.h"

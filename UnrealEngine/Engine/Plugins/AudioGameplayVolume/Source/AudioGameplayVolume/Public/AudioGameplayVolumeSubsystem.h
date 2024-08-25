@@ -82,7 +82,7 @@ struct FAudioProxyMutatorSearchObject
 	bool bCollectMutators = true;
 	bool bGetDefaultAudioSettings = true;
 
-	void SearchVolumes(const TArray<TWeakObjectPtr<UAudioGameplayVolumeProxy>>& ProxyVolumes, FAudioProxyMutatorSearchResult& OutResult);
+	void SearchVolumes(const TArray<UAudioGameplayVolumeProxy*>& ProxyVolumes, FAudioProxyMutatorSearchResult& OutResult);
 };
 
 /**
@@ -154,8 +154,8 @@ protected:
 	bool DoesSupportWorld(UWorld* World) const;
 
 	/** (Audio Thread Only) Add, Update, Remove ProxyVolumes */
-	bool AddProxy(TWeakObjectPtr<UAudioGameplayVolumeProxy> WeakProxy);
-	bool UpdateProxy(TWeakObjectPtr<UAudioGameplayVolumeProxy> WeakProxy);
+	bool AddProxy(uint32 AudioGameplayVolumeID, uint32 WorldID);
+	bool UpdateProxy(uint32 AudioGameplayVolumeID);
 	bool RemoveProxy(uint32 AudioGameplayVolumeID);
 
 	/** Returns true if a listener associated with WorldID is inside the volume (by ID) */
@@ -167,15 +167,21 @@ protected:
 	/** Update our representation of audio listeners on the audio thread */
 	void UpdateFromListeners();
 
+	/** Generate a list of volume proxies from our component list */
+	void GenerateVolumeProxyList();
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UAudioGameplayVolumeProxy>> TransientProxyList;
+
 	// Components in our system
 	UPROPERTY(Transient)
 	TMap<uint32, TObjectPtr<const UAudioGameplayVolumeComponent>> AGVComponents;
 
+	// List of Component IDs (for proxies) the audio thread is tracking
+	TArray<uint32> KnownProxyIDs;
+
 	// Audio thread representation of Listeners
 	TArray<FAudioGameplayVolumeListener> AGVListeners;
-
-	// Audio thread representation of Volumes
-	TArray<TWeakObjectPtr<UAudioGameplayVolumeProxy>> ProxyVolumes;
 
 	// A collection of data about currently playing active sounds, indexed by the sound's unique ID
 	TMap<uint32, FAudioGameplayActiveSoundInfo> ActiveSoundData;

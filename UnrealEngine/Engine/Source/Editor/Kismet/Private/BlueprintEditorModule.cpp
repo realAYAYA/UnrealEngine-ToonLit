@@ -41,7 +41,6 @@
 #include "SPinValueInspector.h"
 #include "Serialization/ArchiveReplaceObjectRef.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/TypeHash.h"
 #include "UObject/Class.h"
 #include "UObject/Field.h"

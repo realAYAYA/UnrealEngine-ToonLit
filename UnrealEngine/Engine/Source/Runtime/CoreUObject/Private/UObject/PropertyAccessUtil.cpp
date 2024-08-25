@@ -171,37 +171,22 @@ bool ArePropertiesCompatible(const FProperty* InSrcProp, const FProperty* InDest
 		return true;
 	}
 
-	// Compare the classes as these must be an *exact* match as the access is low-level and without property coercion
-	// HOWEVER:
-	// Object properties can either be an ObjectProperty, or an ObjectPtrProperty
-	// We allow coercion between these two types
-	if (InSrcProp->GetClass() != InDestProp->GetClass())
-	{
-		const bool bSrcIsObject = CastField<FObjectProperty>(InSrcProp) || CastField<FObjectPtrProperty>(InSrcProp);
-		const bool bDestIsObject = CastField<FObjectProperty>(InDestProp) || CastField<FObjectPtrProperty>(InDestProp);
-		if (bSrcIsObject && bDestIsObject)
-		{
-			return true;
-		}
-
-		return false;
-	}
-
 	// Containers also need to check their inner types
 	if (const FArrayProperty* SrcArrayProp = CastField<FArrayProperty>(InSrcProp))
 	{
-		const FArrayProperty* DestArrayProp = CastFieldChecked<FArrayProperty>(InDestProp);
-		return ArePropertiesCompatible(SrcArrayProp->Inner, DestArrayProp->Inner);
+		const FArrayProperty* DestArrayProp = CastField<FArrayProperty>(InDestProp);
+		return DestArrayProp && ArePropertiesCompatible(SrcArrayProp->Inner, DestArrayProp->Inner);
 	}
 	if (const FSetProperty* SrcSetProp = CastField<FSetProperty>(InSrcProp))
 	{
-		const FSetProperty* DestSetProp = CastFieldChecked<FSetProperty>(InDestProp);
-		return ArePropertiesCompatible(SrcSetProp->ElementProp, DestSetProp->ElementProp);
+		const FSetProperty* DestSetProp = CastField<FSetProperty>(InDestProp);
+		return DestSetProp && ArePropertiesCompatible(SrcSetProp->ElementProp, DestSetProp->ElementProp);
 	}
 	if (const FMapProperty* SrcMapProp = CastField<FMapProperty>(InSrcProp))
 	{
-		const FMapProperty* DestMapProp = CastFieldChecked<FMapProperty>(InDestProp);
-		return ArePropertiesCompatible(SrcMapProp->KeyProp, DestMapProp->KeyProp)
+		const FMapProperty* DestMapProp = CastField<FMapProperty>(InDestProp);
+		return DestMapProp
+			&& ArePropertiesCompatible(SrcMapProp->KeyProp, DestMapProp->KeyProp)
 			&& ArePropertiesCompatible(SrcMapProp->ValueProp, DestMapProp->ValueProp);
 	}
 
@@ -274,18 +259,6 @@ bool CopySinglePropertyValue(const FProperty* InSrcProp, const void* InSrcValue,
 		return true;
 	}
 
-	// If the source is an ObjectPtr and the destination is an Object, handle the copy in a custom way to ensure we always resolve
-	// the source before copying it to the destination.
-	if (const FObjectPtrProperty* SrcObjectPtrProp = CastField<FObjectPtrProperty>(InSrcProp))
-	{
-		if (const FObjectProperty* DestObjectProp = CastField<FObjectProperty>(InDestProp))
-		{
-			UObject* SrcObject = SrcObjectPtrProp->GetObjectPropertyValue(InSrcValue);
-			DestObjectProp->SetObjectPropertyValue(InDestValue, SrcObject);
-			return true;
-		}
-	}
-	
 	if (IsRealNumberConversion(InSrcProp, InDestProp))
 	{
 		ConvertRealNumber(InSrcProp, InSrcValue, InDestProp, InDestValue, 1);
@@ -302,6 +275,44 @@ bool CopyCompletePropertyValue(const FProperty* InSrcProp, const void* InSrcValu
 
 	if (!ArePropertiesCompatible(InSrcProp, InDestProp) || InSrcProp->ArrayDim != InDestProp->ArrayDim)
 	{
+		if (InDestProp->ArrayDim > 1)
+		{
+			// handle assignment of a dynamic array to a fixed array:
+			if (const FArrayProperty* SrcArray = CastField<FArrayProperty>(InSrcProp))
+			{
+				if (ArePropertiesCompatible(SrcArray->Inner, InDestProp))
+				{
+					FScriptArrayHelper SrcArrayHelper(SrcArray, InSrcValue);
+					if (SrcArrayHelper.Num() == InDestProp->ArrayDim)
+					{
+						for (int32 I = 0; I < InDestProp->ArrayDim; ++I)
+						{
+							void* DestValue = static_cast<uint8*>(InDestValue) + InDestProp->ElementSize * I;
+							CopySinglePropertyValue(SrcArray->Inner, SrcArrayHelper.GetElementPtr(I), InDestProp, DestValue);
+						}
+						return true;
+					}
+				}
+			}
+		}
+		else if (InSrcProp->ArrayDim > 1)
+		{
+			// handle assignment of a fixed array to a dynamic array:
+			if (const FArrayProperty* DstArray = CastField<FArrayProperty>(InDestProp))
+			{
+				if (ArePropertiesCompatible(DstArray->Inner, InSrcProp))
+				{
+					FScriptArrayHelper DstArrayHelper(DstArray, InDestValue);
+					DstArrayHelper.Resize(InSrcProp->ArrayDim);
+					for (int32 I = 0; I < InSrcProp->ArrayDim; ++I)
+					{
+						const void* SrcValue = static_cast<const uint8*>(InSrcValue) + InSrcProp->ElementSize * I;
+						CopySinglePropertyValue(InSrcProp, SrcValue, DstArray->Inner, DstArrayHelper.GetElementPtr(I));
+					}
+					return true;
+				}
+			}
+		}
 		return false;
 	}
 
@@ -334,24 +345,6 @@ bool CopyCompletePropertyValue(const FProperty* InSrcProp, const void* InSrcValu
 			DestBoolProp->SetPropertyValue(DestElemValue, bBoolValue);
 		}
 		return true;
-	}
-
-	// If the source is an ObjectPtr and the destination is an Object, handle the copy in a custom way to ensure we always resolve
-	// the source before copying it to the destination.
-	if (const FObjectPtrProperty* SrcObjectPtrProp = CastField<FObjectPtrProperty>(InSrcProp))
-	{
-		if (const FObjectProperty* DestObjectProp = CastField<FObjectProperty>(InDestProp))
-		{
-			for (int32 Idx = 0; Idx < InSrcProp->ArrayDim; ++Idx)
-			{
-				const void* SrcElemValue = static_cast<const uint8*>(InSrcValue) + (InSrcProp->ElementSize * Idx);
-				void* DestElemValue = static_cast<uint8*>(InDestValue) + (InDestProp->ElementSize * Idx);
-
-				UObject* SrcObject = SrcObjectPtrProp->GetObjectPropertyValue(SrcElemValue);
-				DestObjectProp->SetObjectPropertyValue(DestElemValue, SrcObject);
-			}
-			return true;
-		}
 	}
 	
 	if (IsRealNumberConversion(InSrcProp, InDestProp))
@@ -577,7 +570,10 @@ void EmitPostChangeNotify(const FPropertyAccessChangeNotify* InChangeNotify, con
 
 TUniquePtr<FPropertyAccessChangeNotify> BuildBasicChangeNotify(const FProperty* InProp, const UObject* InObject, const EPropertyAccessChangeNotifyMode InNotifyMode)
 {
-	check(InObject->IsA(InProp->GetOwnerClass()));
+	const UScriptStruct* SparseStruct = InObject->GetClass()->GetSparseClassDataStruct();
+	const bool bIsValidSparseProp = SparseStruct &&
+		SparseStruct->IsChildOf(InProp->GetOwnerStruct());
+	check(InObject->IsA(InProp->GetOwnerClass()) || bIsValidSparseProp);
 #if WITH_EDITOR
 	if (InNotifyMode != EPropertyAccessChangeNotifyMode::Never)
 	{

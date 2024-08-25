@@ -35,7 +35,7 @@ static TAutoConsoleVariable<float> CVarResolutionQuality(
 	0.0f,
 	TEXT("Scalability quality state (internally used by scalability system, ini load/save or using SCALABILITY console command)\n")
 	TEXT(" 10..100, default: 100"),
-	ECVF_ScalabilityGroup | ECVF_Preview);
+	ECVF_Scalability);
 
 static TAutoConsoleVariable<int32> CVarViewDistanceQuality(
 	TEXT("sg.ViewDistanceQuality"),
@@ -102,6 +102,13 @@ static TAutoConsoleVariable<int32> CVarFoliageQuality(
 
 static TAutoConsoleVariable<int32> CVarShadingQuality(
 	TEXT("sg.ShadingQuality"),
+	Scalability::DefaultQualityLevel,
+	TEXT("Scalability quality state (internally used by scalability system, ini load/save or using SCALABILITY console command)\n")
+	TEXT(" 0:low, 1:med, 2:high, 3:epic, 4:cinematic, default: 3"),
+	ECVF_ScalabilityGroup | ECVF_Preview);
+
+static TAutoConsoleVariable<int32> CVarLandscapeQuality(
+	TEXT("sg.LandscapeQuality"),
 	Scalability::DefaultQualityLevel,
 	TEXT("Scalability quality state (internally used by scalability system, ini load/save or using SCALABILITY console command)\n")
 	TEXT(" 0:low, 1:med, 2:high, 3:epic, 4:cinematic, default: 3"),
@@ -174,6 +181,13 @@ static TAutoConsoleVariable<int32> CVarShadingQuality_NumLevels(
 	TEXT("sg.ShadingQuality.NumLevels"),
 	5,
 	TEXT("Number of settings quality levels in sg.ShadingQuality\n")
+	TEXT(" default: 5 (0..4)"),
+	ECVF_ReadOnly);
+
+static TAutoConsoleVariable<int32> CVarLandscapeQuality_NumLevels(
+	TEXT("sg.LandscapeQuality.NumLevels"),
+	5,
+	TEXT("Number of settings quality levels in sg.LandscapeQuality\n")
 	TEXT(" default: 5 (0..4)"),
 	ECVF_ReadOnly);
 
@@ -477,7 +491,14 @@ FText GetScalabilityNameFromQualityLevel(int32 QualityLevel)
 
 static void SetResolutionQualityLevel(float InResolutionQualityLevel)
 {
-	//InResolutionQualityLevel = FMath::Clamp(InResolutionQualityLevel, Scalability::MinResolutionScale, Scalability::MaxResolutionScale);
+	if (InResolutionQualityLevel == 0.0)
+	{
+		// NOP: just use the project's default screen percentage.
+	}
+	else
+	{
+		InResolutionQualityLevel = FMath::Clamp(InResolutionQualityLevel, Scalability::MinResolutionScale, Scalability::MaxResolutionScale);
+	}
 
 //	UE_LOG(LogConsoleResponse, Display, TEXT("  ResolutionQuality %.2f"), "", InResolutionQualityLevel);
 
@@ -544,6 +565,11 @@ void OnChangeShadingQuality(IConsoleVariable* Var)
 	SetGroupQualityLevel(TEXT("ShadingQuality"), Var->GetInt(), CVarShadingQuality_NumLevels->GetInt());
 }
 
+void OnChangeLandscapeQuality(IConsoleVariable* Var)
+{
+	SetGroupQualityLevel(TEXT("LandscapeQuality"), Var->GetInt(), CVarLandscapeQuality_NumLevels->GetInt());
+}
+	
 void InitScalabilitySystem()
 {
 	// needed only once
@@ -569,6 +595,7 @@ void InitScalabilitySystem()
 	CVarEffectsQuality.AsVariable()->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&OnChangeEffectsQuality));
 	CVarFoliageQuality.AsVariable()->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&OnChangeFoliageQuality));
 	CVarShadingQuality.AsVariable()->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&OnChangeShadingQuality));
+	CVarLandscapeQuality.AsVariable()->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&OnChangeLandscapeQuality));
 
 #if WITH_EDITOR
 	ScalabilityShaderPlatform = GMaxRHIShaderPlatform;
@@ -684,6 +711,7 @@ FQualityLevels BenchmarkQualityLevels(uint32 WorkScale, float CPUMultiplier, flo
 	Results.EffectsQuality = ComputeOptionFromPerfIndex(TEXT("EffectsQuality"), CPUPerfIndex, GPUPerfIndex);
 	Results.FoliageQuality = ComputeOptionFromPerfIndex(TEXT("FoliageQuality"), CPUPerfIndex, GPUPerfIndex);
 	Results.ShadingQuality = ComputeOptionFromPerfIndex(TEXT("ShadingQuality"), CPUPerfIndex, GPUPerfIndex);
+	Results.LandscapeQuality = ComputeOptionFromPerfIndex( TEXT("LandscapeQuality"), CPUPerfIndex, GPUPerfIndex);
 	Results.CPUBenchmarkResults = CPUPerfIndex;
 	Results.GPUBenchmarkResults = GPUPerfIndex;
 
@@ -842,6 +870,7 @@ void SetQualityLevels(const FQualityLevels& QualityLevels, bool bForce/* = false
 	ClampedLevels.SetEffectsQuality(QualityLevels.EffectsQuality);
 	ClampedLevels.SetFoliageQuality(QualityLevels.FoliageQuality);
 	ClampedLevels.SetShadingQuality(QualityLevels.ShadingQuality);
+	ClampedLevels.SetLandscapeQuality(QualityLevels.LandscapeQuality);
 
 #if WITH_EDITOR
 	bForce = bForce || bScalabilityShaderPlatformHasBeenChanged;
@@ -868,6 +897,7 @@ void SetQualityLevels(const FQualityLevels& QualityLevels, bool bForce/* = false
 		SetQualityLevelCVar(CVarEffectsQuality, ClampedLevels.EffectsQuality, GScalabilityQualityLevelsOverride.EffectsQuality, bForce);
 		SetQualityLevelCVar(CVarFoliageQuality, ClampedLevels.FoliageQuality, GScalabilityQualityLevelsOverride.FoliageQuality, bForce);
 		SetQualityLevelCVar(CVarShadingQuality, ClampedLevels.ShadingQuality, GScalabilityQualityLevelsOverride.ShadingQuality, bForce);
+		SetQualityLevelCVar(CVarLandscapeQuality, ClampedLevels.LandscapeQuality, GScalabilityQualityLevelsOverride.LandscapeQuality, bForce);
 
 		OnScalabilitySettingsChanged.Broadcast(ClampedLevels);
 	}
@@ -899,6 +929,7 @@ FQualityLevels GetQualityLevels()
 		Ret.EffectsQuality = CVarEffectsQuality.GetValueOnGameThread();
 		Ret.FoliageQuality = CVarFoliageQuality.GetValueOnGameThread();
 		Ret.ShadingQuality = CVarShadingQuality.GetValueOnGameThread();
+		Ret.LandscapeQuality = CVarLandscapeQuality.GetValueOnGameThread();
 	}
 	else
 	{
@@ -969,6 +1000,7 @@ void FQualityLevels::SetFromSingleQualityLevel(int32 Value)
 	EffectsQuality = FMath::Clamp(Value, 0, CVarEffectsQuality_NumLevels->GetInt() - 1);
 	FoliageQuality = FMath::Clamp(Value, 0, CVarFoliageQuality_NumLevels->GetInt() - 1);
 	ShadingQuality = FMath::Clamp(Value, 0, CVarShadingQuality_NumLevels->GetInt() - 1);
+	LandscapeQuality = FMath::Clamp(Value, 0, CVarLandscapeQuality_NumLevels->GetInt() - 1);
 }
 
 void FQualityLevels::SetFromSingleQualityLevelRelativeToMax(int32 Value)
@@ -988,6 +1020,7 @@ void FQualityLevels::SetFromSingleQualityLevelRelativeToMax(int32 Value)
 	EffectsQuality = FMath::Max(CVarEffectsQuality_NumLevels->GetInt() - Value, 0);
 	FoliageQuality = FMath::Max(CVarFoliageQuality_NumLevels->GetInt() - Value, 0);
 	ShadingQuality = FMath::Max(CVarShadingQuality_NumLevels->GetInt() - Value, 0);
+	LandscapeQuality =  FMath::Max(CVarLandscapeQuality_NumLevels->GetInt() - Value, 0);
 }
 
 // Returns the overall value if all settings are set to the same thing
@@ -1021,6 +1054,7 @@ int32 FQualityLevels::GetMinQualityLevel() const
 	Level = FMath::Min(Level, EffectsQuality);
 	Level = FMath::Min(Level, FoliageQuality);
 	Level = FMath::Min(Level, ShadingQuality);
+	Level = FMath::Min(Level, LandscapeQuality);
 
 	return Level;
 }
@@ -1075,6 +1109,11 @@ void FQualityLevels::SetShadingQuality(int32 Value)
 	ShadingQuality = FMath::Clamp(Value, 0, CVarShadingQuality_NumLevels->GetInt() - 1);
 }
 
+void FQualityLevels::SetLandscapeQuality(int32 Value)
+{
+	LandscapeQuality = FMath::Clamp(Value, 0, CVarLandscapeQuality_NumLevels->GetInt() - 1);
+}
+	
 void LoadState(const FString& IniName)
 {
 	check(!IniName.IsEmpty());
@@ -1099,6 +1138,7 @@ void LoadState(const FString& IniName)
 	GConfig->GetInt(Section, TEXT("sg.EffectsQuality"), State.EffectsQuality, IniName);
 	GConfig->GetInt(Section, TEXT("sg.FoliageQuality"), State.FoliageQuality, IniName);
 	GConfig->GetInt(Section, TEXT("sg.ShadingQuality"), State.ShadingQuality, IniName);
+	GConfig->GetInt(Section, TEXT("sg.LandscapeQuality"), State.LandscapeQuality, IniName);
 
 	// If possible apply immediately, else store in backup so we can re-apply later
 	if (!GScalabilityUsingTemporaryQualityLevels)
@@ -1132,6 +1172,7 @@ void SaveState(const FString& IniName)
 	GConfig->SetInt(Section, TEXT("sg.EffectsQuality"), State.EffectsQuality, IniName);
 	GConfig->SetInt(Section, TEXT("sg.FoliageQuality"), State.FoliageQuality, IniName);
 	GConfig->SetInt(Section, TEXT("sg.ShadingQuality"), State.ShadingQuality, IniName);
+	GConfig->SetInt(Section, TEXT("sg.LandscapeQuality"), State.LandscapeQuality, IniName);
 }
 
 void RecordQualityLevelsAnalytics(bool bAutoApplied)
@@ -1153,6 +1194,7 @@ void RecordQualityLevelsAnalytics(bool bAutoApplied)
 		Attributes.Add(FAnalyticsEventAttribute(TEXT("EffectsQuality"), State.EffectsQuality));
 		Attributes.Add(FAnalyticsEventAttribute(TEXT("FoliageQuality"), State.FoliageQuality));
 		Attributes.Add(FAnalyticsEventAttribute(TEXT("ShadingQuality"), State.ShadingQuality));
+		Attributes.Add( FAnalyticsEventAttribute(TEXT("LandscapeQuality"), State.LandscapeQuality));
 		Attributes.Add(FAnalyticsEventAttribute(TEXT("AutoAppliedSettings"), bAutoApplied));
 		Attributes.Add(FAnalyticsEventAttribute(TEXT("Enterprise"), IProjectManager::Get().IsEnterpriseProject()));
 
@@ -1174,6 +1216,7 @@ FQualityLevels GetQualityLevelCounts()
 	Result.EffectsQuality = CVarEffectsQuality_NumLevels->GetInt();
 	Result.FoliageQuality = CVarFoliageQuality_NumLevels->GetInt();
 	Result.ShadingQuality = CVarShadingQuality_NumLevels->GetInt();
+	Result.LandscapeQuality = CVarLandscapeQuality_NumLevels->GetInt();
 	return Result;
 }
 

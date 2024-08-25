@@ -82,7 +82,8 @@ const float FUVEditorUXSettings::SelectionPointThickness(6);
 const float FUVEditorUXSettings::SewLineHighlightThickness(3.0f);
 const float FUVEditorUXSettings::AxisThickness(2.0);
 const float FUVEditorUXSettings::GridMajorThickness(1.0);
-
+const float FUVEditorUXSettings::WireframeThickness(2.0);
+const float FUVEditorUXSettings::BoundaryEdgeThickness(2.0);
 const float FUVEditorUXSettings::ToolPointSize(6);
 const float FUVEditorUXSettings::PivotLineThickness(1.5);
 

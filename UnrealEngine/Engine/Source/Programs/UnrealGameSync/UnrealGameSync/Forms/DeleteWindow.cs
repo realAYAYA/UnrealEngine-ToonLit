@@ -17,7 +17,7 @@ namespace UnrealGameSync
 
 			_filesToDelete = inFilesToDelete;
 
-			foreach(KeyValuePair<string, bool> fileToDelete in _filesToDelete)
+			foreach (KeyValuePair<string, bool> fileToDelete in _filesToDelete)
 			{
 				ListViewItem item = new ListViewItem(fileToDelete.Key);
 				item.Tag = fileToDelete.Key;
@@ -28,7 +28,7 @@ namespace UnrealGameSync
 
 		private void UncheckAll_Click(object sender, EventArgs e)
 		{
-			foreach(ListViewItem? item in FileList.Items)
+			foreach (ListViewItem? item in FileList.Items)
 			{
 				item!.Checked = false;
 			}
@@ -36,7 +36,7 @@ namespace UnrealGameSync
 
 		private void CheckAll_Click(object sender, EventArgs e)
 		{
-			foreach(ListViewItem? item in FileList.Items)
+			foreach (ListViewItem? item in FileList.Items)
 			{
 				item!.Checked = true;
 			}
@@ -44,7 +44,7 @@ namespace UnrealGameSync
 
 		private void ContinueButton_Click(object sender, EventArgs e)
 		{
-			foreach(ListViewItem? item in FileList.Items)
+			foreach (ListViewItem? item in FileList.Items)
 			{
 				_filesToDelete[(string)item!.Tag] = item.Checked;
 			}

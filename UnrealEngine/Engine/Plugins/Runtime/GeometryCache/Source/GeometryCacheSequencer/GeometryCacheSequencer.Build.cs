@@ -20,6 +20,7 @@ namespace UnrealBuildTool.Rules
 					"LevelSequence",
                     "MovieScene",
                     "MovieSceneTracks",
+                    "SequencerCore",
                     "Sequencer",
                     "Slate",
                     "SlateCore",
@@ -28,6 +29,8 @@ namespace UnrealBuildTool.Rules
                     "GeometryCache"
                 }
             );
-        }
-    }
+
+			UnsafeTypeCastWarningLevel = WarningLevel.Error;
+		}
+	}
 }

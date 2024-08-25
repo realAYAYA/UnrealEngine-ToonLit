@@ -20,6 +20,10 @@ class REMOTECONTROLLOGIC_API URCController : public URCVirtualPropertyInContaine
 
 public:
 
+	//~ Begin URCVirtualPropertyBase
+	virtual void UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap) override;
+	//~ End URCVirtualPropertyBase
+	
 #if WITH_EDITOR
 	/** Called after applying a transaction to the object. Used to broadcast Undo related container changes to UI Used to broadcast Undo related container changes to UI */
 	virtual void PostEditUndo();
@@ -30,6 +34,9 @@ public:
 
 	/** Create new behaviour */
 	virtual URCBehaviour* CreateBehaviour(TSubclassOf<URCBehaviourNode> InBehaviourNodeClass);
+
+	/** Create new behaviour without checking if supported */
+	virtual URCBehaviour* CreateBehaviourWithoutCheck(TSubclassOf<URCBehaviourNode> InBehaviourNodeClass);
 
 	/** Remove the behaviour by behaviour UObject pointer */
 	virtual int32 RemoveBehaviour(URCBehaviour* InBehaviour);

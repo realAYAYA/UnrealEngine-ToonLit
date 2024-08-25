@@ -20,6 +20,7 @@
 #include "Materials/MaterialFunction.h"
 #include "MaterialGraph/MaterialGraph.h"
 #include "Engine/Texture.h"
+#include "SparseVolumeTexture/SparseVolumeTexture.h"
 #include "MaterialGraph/MaterialGraphNode_Base.h"
 #include "MaterialGraph/MaterialGraphNode_Comment.h"
 #include "MaterialGraph/MaterialGraphNode.h"
@@ -32,6 +33,7 @@
 #include "Materials/MaterialExpressionPinBase.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionTextureSample.h"
+#include "Materials/MaterialExpressionSparseVolumeTextureSample.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionReroute.h"
 #include "Materials/MaterialExpressionNamedReroute.h"
@@ -41,15 +43,12 @@
 #include "GraphEditorActions.h"
 #include "GraphEditorSettings.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "IAssetTools.h"
 #include "MaterialEditorActions.h"
 #include "MaterialGraphNode_Knot.h"
 #include "RenderUtils.h"
 
 #define LOCTEXT_NAMESPACE "MaterialGraphSchema"
-
-static bool GDisableMaterialFunctionContextMenuActions = false;
-static FAutoConsoleVariableRef DisableMaterialFunctionContextMenuActionsCVar(TEXT("r.Material.DisableMaterialFunctionContextMenuActions"),
-	GDisableMaterialFunctionContextMenuActions, TEXT("Prevents MaterialFunction creation actions from being added to MaterialEditor context menus (False: disabled, True: enabled"));
 
 int32 UMaterialGraphSchema::CurrentCacheRefreshID = 0;
 
@@ -122,7 +121,7 @@ void FMaterialGraphSchemaAction_NewNode::SetFunctionInputType(UMaterialExpressio
 	case MCT_MaterialAttributes:
 		FunctionInput->InputType = FunctionInput_MaterialAttributes;
 		break;
-	case MCT_Strata:
+	case MCT_Substrate:
 		FunctionInput->InputType = FunctionInput_Substrate;
 		break;
 	default:
@@ -839,6 +838,7 @@ void UMaterialGraphSchema::DroppedAssetsOnGraph(const TArray<struct FAssetData>&
 		UClass* MaterialExpressionClass = Cast<UClass>(Asset);
 		UMaterialFunctionInterface* Func = Cast<UMaterialFunctionInterface>(Asset);
 		UTexture* Tex = Cast<UTexture>(Asset);
+		USparseVolumeTexture* SparseVolumeTexture = Cast<USparseVolumeTexture>(Asset);
 		UMaterialParameterCollection* ParameterCollection = Cast<UMaterialParameterCollection>(Asset);
 		
 		if (MaterialExpressionClass && MaterialExpressionClass->IsChildOf(UMaterialExpression::StaticClass()))
@@ -880,6 +880,16 @@ void UMaterialGraphSchema::DroppedAssetsOnGraph(const TArray<struct FAssetData>&
 
 			bAddedNode = true;
 		}
+		else if ( SparseVolumeTexture )
+		{
+			UMaterialExpressionSparseVolumeTextureSample* SparseVolumeTextureSampleNode = CastChecked<UMaterialExpressionSparseVolumeTextureSample>(
+				FMaterialEditorUtilities::CreateNewMaterialExpression(Graph, UMaterialExpressionSparseVolumeTextureSample::StaticClass(), ExpressionPosition, true, true));
+			SparseVolumeTextureSampleNode->SparseVolumeTexture = SparseVolumeTexture;
+
+			FMaterialEditorUtilities::ForceRefreshExpressionPreviews(Graph);
+
+			bAddedNode = true;
+		}
 		else if ( ParameterCollection )
 		{
 			UMaterialExpressionCollectionParameter* CollectionParameterNode = CastChecked<UMaterialExpressionCollectionParameter>(
@@ -904,6 +914,11 @@ void UMaterialGraphSchema::UpdateMaterialOnDefaultValueChanged(const UEdGraph* G
 	FMaterialEditorUtilities::UpdateMaterialAfterGraphChange(Graph);
 }
 
+void UMaterialGraphSchema::MarkMaterialDirty(const UEdGraph* Graph) const
+{
+	FMaterialEditorUtilities::MarkMaterialDirty(Graph);
+}
+
 void UMaterialGraphSchema::UpdateDetailView(const UEdGraph* Graph) const
 {
 	FMaterialEditorUtilities::UpdateDetailView(Graph);
@@ -921,13 +936,6 @@ TSharedPtr<FEdGraphSchemaAction> UMaterialGraphSchema::GetCreateCommentAction() 
 
 void UMaterialGraphSchema::GetMaterialFunctionActions(FGraphActionMenuBuilder& ActionMenuBuilder) const
 {
-	// Note: this is a temporary security solution. We need to improve on this by allowing functions that in included folders, 
-	// also considering that some folders may be aliased to different paths.
-	if (GDisableMaterialFunctionContextMenuActions)
-	{
-		return;
-	}
-
 	// Get type of dragged pin
 	uint32 FromPinType = 0;
 	if (ActionMenuBuilder.FromPin)
@@ -937,6 +945,7 @@ void UMaterialGraphSchema::GetMaterialFunctionActions(FGraphActionMenuBuilder& A
 
 	// Load the asset registry module
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	IAssetTools& AssetTools = IAssetTools::Get();
 
 	// Collect a full list of assets with the specified class
 	TArray<FAssetData> AssetDataList;
@@ -955,6 +964,11 @@ void UMaterialGraphSchema::GetMaterialFunctionActions(FGraphActionMenuBuilder& A
 				{
 					continue;
 				}
+			}
+
+			if (!AssetTools.IsAssetVisible(AssetData))
+			{
+				continue;
 			}
 
 			if (!ActionMenuBuilder.FromPin || HasCompatibleConnection(AssetData, FromPinType, ActionMenuBuilder.FromPin->Direction))
@@ -1002,14 +1016,14 @@ void UMaterialGraphSchema::GetMaterialFunctionActions(FGraphActionMenuBuilder& A
 						LibraryCategoriesText.Add( LOCTEXT("UncategorizedMaterialFunction", "Uncategorized") );
 					}
 
-					// When Strata is disabled, skip all material function related to Strata
-					// STRATA_TODO: remove this when Strata becomes the only shading path
+					// When Substrate is disabled, skip all material function related to Substrate
+					// SUBSTRATE_TODO: remove this when Substrate becomes the only shading path
 					bool bSkipMaterialFunction = false;
 					for (const FText& Category : LibraryCategoriesText)
 					{
 						if (Category.ToString().Contains("Substrate"))
 						{
-							bSkipMaterialFunction = !Strata::IsStrataEnabled();
+							bSkipMaterialFunction = !Substrate::IsSubstrateEnabled();
 							break;
 						}
 					}
@@ -1197,6 +1211,7 @@ void UMaterialGraphSchema::GetAssetsGraphHoverMessage(const TArray<FAssetData>& 
 		UClass* MaterialExpressionClass = Cast<UClass>(Asset);
 		UMaterialFunctionInterface* Func = Cast<UMaterialFunctionInterface>(Asset);
 		UTexture* Tex = Cast<UTexture>(Asset);
+		USparseVolumeTexture* SparseVolumeTexture = Cast<USparseVolumeTexture>(Asset);
 		UMaterialParameterCollection* ParameterCollection = Cast<UMaterialParameterCollection>(Asset);
 
 		if (MaterialExpressionClass && MaterialExpressionClass->IsChildOf(UMaterialExpression::StaticClass()))
@@ -1208,6 +1223,10 @@ void UMaterialGraphSchema::GetAssetsGraphHoverMessage(const TArray<FAssetData>& 
 			OutOkIcon = true;
 		}
 		else if (Tex)
+		{
+			OutOkIcon = true;
+		}
+		else if (SparseVolumeTexture)
 		{
 			OutOkIcon = true;
 		}

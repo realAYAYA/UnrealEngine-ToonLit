@@ -26,4 +26,9 @@ FString UOptimusSource::GetNameForShaderTextEditor() const
 	return GetFName().ToString();
 }
 
+bool UOptimusSource::IsShaderTextReadOnly() const
+{
+	return false;
+}
+
 #endif // WITH_EDITOR	

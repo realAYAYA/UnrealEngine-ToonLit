@@ -74,7 +74,7 @@ private:
 		TSharedPtr<SWindow> Window = FSlateApplication::Get().FindWidgetWindow(AsShared());
 		if (BakeSettings && Delegate.IsBound())
 		{
-			Delegate.Execute(BakeSettings->bReduceKeys, BakeSettings->Tolerance);
+			Delegate.Execute(BakeSettings->bReduceKeys, BakeSettings->Tolerance, BakeSettings->bResetControls);
 		}
 		if (Window.IsValid())
 		{

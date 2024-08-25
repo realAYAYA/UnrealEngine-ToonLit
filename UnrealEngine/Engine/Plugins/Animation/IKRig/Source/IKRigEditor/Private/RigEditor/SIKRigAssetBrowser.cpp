@@ -3,6 +3,7 @@
 #include "RigEditor/SIKRigAssetBrowser.h"
 
 #include "AnimPreviewInstance.h"
+#include "ContentBrowserDataSource.h"
 #include "ContentBrowserModule.h"
 #include "IContentBrowserSingleton.h"
 #include "Animation/AnimMontage.h"
@@ -11,6 +12,7 @@
 #include "RigEditor/IKRigController.h"
 #include "RigEditor/IKRigEditorController.h"
 #include "Engine/SkeletalMesh.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #define LOCTEXT_NAMESPACE "IKRigAssetBrowser"
 
@@ -52,20 +54,24 @@ void SIKRigAssetBrowser::RefreshView()
 	AssetPickerConfig.bAddFilterUI = true;
 	AssetPickerConfig.bShowPathInColumnView = true;
 	AssetPickerConfig.bShowTypeInColumnView = true;
+	AssetPickerConfig.HiddenColumnNames.Add(ContentBrowserItemAttributes::ItemDiskSize.ToString());
+	AssetPickerConfig.HiddenColumnNames.Add(ContentBrowserItemAttributes::VirtualizedData.ToString());
+	AssetPickerConfig.HiddenColumnNames.Add(TEXT("Class"));
+	AssetPickerConfig.HiddenColumnNames.Add(TEXT("RevisionControl"));
 	AssetPickerConfig.OnShouldFilterAsset = FOnShouldFilterAsset::CreateSP(this, &SIKRigAssetBrowser::OnShouldFilterAsset);
 	AssetPickerConfig.DefaultFilterMenuExpansion = EAssetTypeCategories::Animation;
 	AssetPickerConfig.OnAssetDoubleClicked = FOnAssetSelected::CreateSP(this, &SIKRigAssetBrowser::OnAssetDoubleClicked);
 	AssetPickerConfig.OnGetAssetContextMenu = FOnGetAssetContextMenu::CreateSP(this, &SIKRigAssetBrowser::OnGetAssetContextMenu);
-	AssetPickerConfig.GetCurrentSelectionDelegates.Add(&GetCurrentSelectionDelegate);
 	AssetPickerConfig.bAllowNullSelection = false;
 	AssetPickerConfig.bFocusSearchBoxWhenOpened = false;
 
 	// hide all asset registry columns by default (we only really want the name and path)
-	TArray<UObject::FAssetRegistryTag> AssetRegistryTags;
-	UAnimSequence::StaticClass()->GetDefaultObject()->GetAssetRegistryTags(AssetRegistryTags);
-	for(UObject::FAssetRegistryTag& AssetRegistryTag : AssetRegistryTags)
+	UObject* AnimSequenceDefaultObject = UAnimSequence::StaticClass()->GetDefaultObject();
+	FAssetRegistryTagsContextData TagsContext(AnimSequenceDefaultObject, EAssetRegistryTagsCaller::Uncategorized);
+	AnimSequenceDefaultObject->GetAssetRegistryTags(TagsContext);
+	for (const TPair<FName, UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
 	{
-		AssetPickerConfig.HiddenColumnNames.Add(AssetRegistryTag.Name.ToString());
+		AssetPickerConfig.HiddenColumnNames.Add(TagPair.Key.ToString());
 	}
 
 	// Also hide the type column by default (but allow users to enable it, so don't use bShowTypeInColumnView)

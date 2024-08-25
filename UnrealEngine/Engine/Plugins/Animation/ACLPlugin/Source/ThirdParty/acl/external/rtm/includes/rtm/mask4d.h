@@ -25,13 +25,20 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "rtm/math.h"
+#include "rtm/version.h"
 #include "rtm/impl/compiler_utils.h"
 #include "rtm/impl/mask_common.h"
+
+#if !defined(RTM_SSE2_INTRINSICS)
+	#include <cstring>
+#endif
 
 RTM_IMPL_FILE_PRAGMA_PUSH
 
 namespace rtm
 {
+	RTM_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Returns the mask4d [x] component.
 	//////////////////////////////////////////////////////////////////////////
@@ -101,7 +108,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all 4 components are true, otherwise false: all(input != 0)
+	// Returns true if all 4 components are true, otherwise false: all(input.xyzw != 0)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_all_true(const mask4d& input) RTM_NO_EXCEPT
 	{
@@ -113,7 +120,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xy] components are true, otherwise false: all(input != 0)
+	// Returns true if all [xy] components are true, otherwise false: all(input.xy != 0)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_all_true2(const mask4d& input) RTM_NO_EXCEPT
 	{
@@ -125,7 +132,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if all [xyz] components are true, otherwise false: all(input != 0)
+	// Returns true if all [xyz] components are true, otherwise false: all(input.xyz != 0)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_all_true3(const mask4d& input) RTM_NO_EXCEPT
 	{
@@ -137,7 +144,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any 4 components are true, otherwise false: any(input != 0)
+	// Returns true if any 4 components are true, otherwise false: any(input.xyzw != 0)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_any_true(const mask4d& input) RTM_NO_EXCEPT
 	{
@@ -149,7 +156,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xy] components are true, otherwise false: any(input != 0)
+	// Returns true if any [xy] components are true, otherwise false: any(input.xy != 0)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_any_true2(const mask4d& input) RTM_NO_EXCEPT
 	{
@@ -161,7 +168,7 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// Returns true if any [xyz] components are true, otherwise false: any(input != 0)
+	// Returns true if any [xyz] components are true, otherwise false: any(input.xyz != 0)
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_any_true3(const mask4d& input) RTM_NO_EXCEPT
 	{
@@ -171,6 +178,228 @@ namespace rtm
 		return input.x != 0 || input.y != 0 || input.z != 0;
 #endif
 	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if all 4 components are equal, otherwise false: all(lhs.xyzw == rhs.xyzw)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_all_equal(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+		// Cannot use == and != with NaN floats
+#if defined(RTM_SSE2_INTRINSICS)
+		// WARNING: SSE2 doesn't have a 64 bit int compare, we use 32 bit here and we assume
+		// that in a mask all bits are equal
+		__m128i lhs_xy = _mm_castpd_si128(lhs.xy);
+		__m128i lhs_zw = _mm_castpd_si128(lhs.zw);
+		__m128i rhs_xy = _mm_castpd_si128(rhs.xy);
+		__m128i rhs_zw = _mm_castpd_si128(rhs.zw);
+		__m128i xy_eq = _mm_cmpeq_epi32(lhs_xy, rhs_xy);
+		__m128i zw_eq = _mm_cmpeq_epi32(lhs_zw, rhs_zw);
+		return (_mm_movemask_epi8(xy_eq) & _mm_movemask_epi8(zw_eq)) == 0xFFFF;
+#elif defined(RTM_SSE4_INTRINSICS) && 0
+		// TODO
+#else
+		return std::memcmp(&lhs, &rhs, sizeof(uint64_t) * 4) == 0;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if all [xy] components are equal, otherwise false: all(lhs.xy == rhs.xy)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_all_equal2(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+		// Cannot use == and != with NaN floats
+#if defined(RTM_SSE2_INTRINSICS)
+		// WARNING: SSE2 doesn't have a 64 bit int compare, we use 32 bit here and we assume
+		// that in a mask all bits are equal
+		__m128i lhs_xy = _mm_castpd_si128(lhs.xy);
+		__m128i rhs_xy = _mm_castpd_si128(rhs.xy);
+		return _mm_movemask_epi8(_mm_cmpeq_epi32(lhs_xy, rhs_xy)) == 0xFFFF;
+#elif defined(RTM_SSE4_INTRINSICS) && 0
+		// TODO
+#else
+		return std::memcmp(&lhs, &rhs, sizeof(uint64_t) * 2) == 0;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if all [xyz] components are equal, otherwise false: all(lhs.xyz == rhs.xyz)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_all_equal3(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+		// Cannot use == and != with NaN floats
+#if defined(RTM_SSE2_INTRINSICS)
+		// WARNING: SSE2 doesn't have a 64 bit int compare, we use 32 bit here and we assume
+		// that in a mask all bits are equal
+		__m128i lhs_xy = _mm_castpd_si128(lhs.xy);
+		__m128i lhs_zw = _mm_castpd_si128(lhs.zw);
+		__m128i rhs_xy = _mm_castpd_si128(rhs.xy);
+		__m128i rhs_zw = _mm_castpd_si128(rhs.zw);
+		__m128i xy_eq = _mm_cmpeq_epi32(lhs_xy, rhs_xy);
+		__m128i zw_eq = _mm_cmpeq_epi32(lhs_zw, rhs_zw);
+		return _mm_movemask_epi8(xy_eq) == 0xFFFF && (_mm_movemask_epi8(zw_eq) & 0x00FF) == 0x00FF;
+#elif defined(RTM_SSE4_INTRINSICS) && 0
+		// TODO
+#else
+		return std::memcmp(&lhs, &rhs, sizeof(uint64_t) * 3) == 0;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if any 4 components are equal, otherwise false: any(lhs.xyzw == rhs.xyzw)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_any_equal(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+		// Cannot use == and != with NaN floats
+#if defined(RTM_SSE2_INTRINSICS)
+		// WARNING: SSE2 doesn't have a 64 bit int compare, we use 32 bit here and we assume
+		// that in a mask all bits are equal
+		__m128i lhs_xy = _mm_castpd_si128(lhs.xy);
+		__m128i lhs_zw = _mm_castpd_si128(lhs.zw);
+		__m128i rhs_xy = _mm_castpd_si128(rhs.xy);
+		__m128i rhs_zw = _mm_castpd_si128(rhs.zw);
+		__m128i xy_eq = _mm_cmpeq_epi32(lhs_xy, rhs_xy);
+		__m128i zw_eq = _mm_cmpeq_epi32(lhs_zw, rhs_zw);
+		return (_mm_movemask_epi8(xy_eq) | _mm_movemask_epi8(zw_eq)) != 0;
+#elif defined(RTM_SSE4_INTRINSICS) && 0
+		// TODO
+#else
+		return std::memcmp(&lhs.x, &rhs.x, sizeof(uint64_t)) == 0
+			|| std::memcmp(&lhs.y, &rhs.y, sizeof(uint64_t)) == 0
+			|| std::memcmp(&lhs.z, &rhs.z, sizeof(uint64_t)) == 0
+			|| std::memcmp(&lhs.w, &rhs.w, sizeof(uint64_t)) == 0;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if any [xy] components are equal, otherwise false: any(lhs.xy == rhs.xy)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_any_equal2(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+		// Cannot use == and != with NaN floats
+#if defined(RTM_SSE2_INTRINSICS)
+		// WARNING: SSE2 doesn't have a 64 bit int compare, we use 32 bit here and we assume
+		// that in a mask all bits are equal
+		__m128i lhs_xy = _mm_castpd_si128(lhs.xy);
+		__m128i rhs_xy = _mm_castpd_si128(rhs.xy);
+		return _mm_movemask_epi8(_mm_cmpeq_epi32(lhs_xy, rhs_xy)) != 0;
+#elif defined(RTM_SSE4_INTRINSICS) && 0
+		// TODO
+#else
+		return std::memcmp(&lhs.x, &rhs.x, sizeof(uint64_t)) == 0
+			|| std::memcmp(&lhs.y, &rhs.y, sizeof(uint64_t)) == 0;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if any [xyz] components are equal, otherwise false: any(lhs.xyz == rhs.xyz)
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL mask_any_equal3(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+		// Cannot use == and != with NaN floats
+#if defined(RTM_SSE2_INTRINSICS)
+		// WARNING: SSE2 doesn't have a 64 bit int compare, we use 32 bit here and we assume
+		// that in a mask all bits are equal
+		__m128i lhs_xy = _mm_castpd_si128(lhs.xy);
+		__m128i lhs_zw = _mm_castpd_si128(lhs.zw);
+		__m128i rhs_xy = _mm_castpd_si128(rhs.xy);
+		__m128i rhs_zw = _mm_castpd_si128(rhs.zw);
+		__m128i xy_eq = _mm_cmpeq_epi32(lhs_xy, rhs_xy);
+		__m128i zw_eq = _mm_cmpeq_epi32(lhs_zw, rhs_zw);
+		return _mm_movemask_epi8(xy_eq) != 0 || (_mm_movemask_epi8(zw_eq) & 0x00FF) != 0;
+#elif defined(RTM_SSE4_INTRINSICS) && 0
+		// TODO
+#else
+		return std::memcmp(&lhs.x, &rhs.x, sizeof(uint64_t)) == 0
+			|| std::memcmp(&lhs.y, &rhs.y, sizeof(uint64_t)) == 0
+			|| std::memcmp(&lhs.z, &rhs.z, sizeof(uint64_t)) == 0;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Per component logical AND between the inputs: lhs & rhs
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE mask4d mask_and(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		__m128d xy = _mm_and_pd(lhs.xy, rhs.xy);
+		__m128d zw = _mm_and_pd(lhs.zw, rhs.zw);
+		return mask4d{ xy, zw };
+#else
+		const uint64_t* lhs_ = reinterpret_cast<const uint64_t*>(&lhs);
+		const uint64_t* rhs_ = reinterpret_cast<const uint64_t*>(&rhs);
+
+		union
+		{
+			mask4d vector;
+			uint64_t scalar[4];
+		} result;
+
+		result.scalar[0] = lhs_[0] & rhs_[0];
+		result.scalar[1] = lhs_[1] & rhs_[1];
+		result.scalar[2] = lhs_[2] & rhs_[2];
+		result.scalar[3] = lhs_[3] & rhs_[3];
+
+		return result.vector;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Per component logical OR between the inputs: lhs | rhs
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE mask4d mask_or(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		__m128d xy = _mm_or_pd(lhs.xy, rhs.xy);
+		__m128d zw = _mm_or_pd(lhs.zw, rhs.zw);
+		return mask4d{ xy, zw };
+#else
+		const uint64_t* lhs_ = reinterpret_cast<const uint64_t*>(&lhs);
+		const uint64_t* rhs_ = reinterpret_cast<const uint64_t*>(&rhs);
+
+		union
+		{
+			mask4d vector;
+			uint64_t scalar[4];
+		} result;
+
+		result.scalar[0] = lhs_[0] | rhs_[0];
+		result.scalar[1] = lhs_[1] | rhs_[1];
+		result.scalar[2] = lhs_[2] | rhs_[2];
+		result.scalar[3] = lhs_[3] | rhs_[3];
+
+		return result.vector;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// Per component logical XOR between the inputs: lhs ^ rhs
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE mask4d mask_xor(const mask4d& lhs, const mask4d& rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		__m128d xy = _mm_xor_pd(lhs.xy, rhs.xy);
+		__m128d zw = _mm_xor_pd(lhs.zw, rhs.zw);
+		return mask4d{ xy, zw };
+#else
+		const uint64_t* lhs_ = reinterpret_cast<const uint64_t*>(&lhs);
+		const uint64_t* rhs_ = reinterpret_cast<const uint64_t*>(&rhs);
+
+		union
+		{
+			mask4d vector;
+			uint64_t scalar[4];
+		} result;
+
+		result.scalar[0] = lhs_[0] ^ rhs_[0];
+		result.scalar[1] = lhs_[1] ^ rhs_[1];
+		result.scalar[2] = lhs_[2] ^ rhs_[2];
+		result.scalar[3] = lhs_[3] ^ rhs_[3];
+
+		return result.vector;
+#endif
+	}
+
+	RTM_IMPL_VERSION_NAMESPACE_END
 }
 
 RTM_IMPL_FILE_PRAGMA_POP

@@ -149,7 +149,7 @@ protected:
 			if (Socket->RecvFrom(Reader->GetData(), Reader->Num(), Read, *Sender))
 			{
 				ensure((uint32)Read <= MaxReadBufferSize);
-				Reader->RemoveAt(Read, Reader->Num() - Read, false);
+				Reader->RemoveAt(Read, Reader->Num() - Read, EAllowShrinking::No);
 				DataReceivedDelegate.ExecuteIfBound(Reader, FIPv4Endpoint(Sender));
 			}
 		}

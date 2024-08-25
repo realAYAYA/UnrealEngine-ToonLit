@@ -1,6 +1,7 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "LiveLinkBlueprintLibrary.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 #include "Features/IModularFeatures.h"
 #include "ILiveLinkClient.h"
 #include "ILiveLinkSource.h"

@@ -2,7 +2,10 @@
 
 #pragma once
 
+#include "AutomationTestPlatform.h"
 #include "CoreMinimal.h"
+#include "Misc/SecureHash.h"
+
 #include "AutomationTestExcludelist.generated.h"
 
 UENUM()
@@ -45,14 +48,69 @@ inline FString LexToString(ETEST_RHI_FeatureLevel_Options Option)
 	}
 }
 
+inline FString SetToString(const TSet<FName>& Set)
+{
+	if (Set.IsEmpty())
+	{
+		return TEXT("");
+	}
+
+	TArray<FString> List;
+	for (auto& Item : Set)
+	{
+		List.Add(Item.ToString());
+	}
+	List.Sort();
+
+	return FString::Join(List, TEXT(", "));
+}
+
+inline FString SetToShortString(const TSet<FName>& Set)
+{
+	if (Set.IsEmpty())
+	{
+		return TEXT("");
+	}
+
+	TArray<FString> List;
+	for (auto& Item : Set)
+	{
+		List.Add(Item.ToString());
+	}
+	if (List.Num() == 1)
+	{
+		return List[0];
+	}		
+	List.Sort();
+
+	return List[0] + TEXT("+");
+}
+
+UCLASS(config = Engine, defaultconfig, MinimalAPI)
+class UAutomationTestExcludelistSettings : public UAutomationTestPlatformSettings
+{
+	GENERATED_BODY()
+
+public:
+
+	UPROPERTY(Config)
+	TArray<FName> SupportedRHIs;
+
+protected:
+	virtual void InitializeSettingsDefault() { }
+	virtual FString GetSectionName() { return TEXT("AutomationTestExcludelistSettings"); }
+
+};
+
 USTRUCT()
 struct FAutomationTestExcludeOptions
 {
 	GENERATED_BODY()
 
 	template<typename EnumType>
-	static TSet<FName> GetAllRHIOptionNames()
+	static const TSet<FName>& GetAllRHIOptionNames()
 	{
+		LLM_SCOPE_BYNAME(TEXT("AutomationTest/Settings"));
 		static TSet<FName> NameSet;
 		if (NameSet.IsEmpty())
 		{
@@ -70,6 +128,41 @@ struct FAutomationTestExcludeOptions
 		return NameSet;
 	}
 
+	static const TSet<FName>& GetAllRHIOptionNamesFromSettings()
+	{
+		LLM_SCOPE_BYNAME(TEXT("AutomationTest/Settings"));
+		static TSet<FName> NameSet;
+		if (NameSet.IsEmpty())
+		{
+			for (auto Settings : AutomationTestPlatform::GetAllPlatformsSettings(UAutomationTestExcludelistSettings::StaticClass()))
+			{
+				NameSet.Append(CastChecked<UAutomationTestExcludelistSettings>(Settings)->SupportedRHIs);
+			}
+			NameSet.Sort([](const FName& A, const FName& B) { return A.ToString() < B.ToString(); });
+		}
+
+		return NameSet;
+	}
+
+	static const TSet<FName>& GetPlatformRHIOptionNamesFromSettings(const FName& Platform)
+	{
+		LLM_SCOPE_BYNAME(TEXT("AutomationTest/Settings"));
+		static TMap<FName, TSet<FName>> PlatformSettings;
+		if (PlatformSettings.IsEmpty())
+		{
+			for (auto Settings : AutomationTestPlatform::GetAllPlatformsSettings(UAutomationTestExcludelistSettings::StaticClass()))
+			{
+				PlatformSettings.Emplace(Settings->GetPlatformName()).Append(CastChecked<UAutomationTestExcludelistSettings>(Settings)->SupportedRHIs);
+			}
+		}
+
+		return PlatformSettings.FindOrAdd(Platform);
+	}
+
+#if WITH_EDITOR
+	AUTOMATIONTEST_API void UpdateReason(const FString& BeautifiedReason, const FString& TaskTrackerTicketId);
+#endif //WITH_EDITOR
+
 	/* Name of the target test */
 	UPROPERTY(VisibleAnywhere, Category = ExcludeTestOptions)
 	FName Test;
@@ -81,6 +174,10 @@ struct FAutomationTestExcludeOptions
 	/* Options to target specific RHI. No option means it should be applied to all RHIs */
 	UPROPERTY(EditAnywhere, Category = ExcludeTestOptions)
 	TSet<FName> RHIs;
+
+	/* Options to target specific platform. No option means it should be applied to all platforms */
+	UPROPERTY(EditAnywhere, Category = ExcludeTestOptions)
+	TSet<FName> Platforms;
 
 	/* Should the Reason be reported as a warning in the log */
 	UPROPERTY(EditAnywhere, Category = ExcludeTestOptions)
@@ -95,7 +192,8 @@ struct FAutomationTestExcludelistEntry
 	FAutomationTestExcludelistEntry() { }
 
 	FAutomationTestExcludelistEntry(const FAutomationTestExcludeOptions& Options)
-		: Test(Options.Test)
+		: Platforms(Options.Platforms)
+		, Test(Options.Test)
 		, Reason(Options.Reason)
 		, RHIs(Options.RHIs)
 		, Warn(Options.Warn)
@@ -108,6 +206,7 @@ struct FAutomationTestExcludelistEntry
 		Options->Reason = Reason;
 		Options->Warn = Warn;
 		Options->RHIs = RHIs;
+		Options->Platforms = Platforms;
 		
 		return Options;
 	}
@@ -117,7 +216,7 @@ struct FAutomationTestExcludelistEntry
 	{
 		int8 Num = 0;
 		// Test mentions of each RHI option types
-		static const TSet<FName> AllRHI_OptionNames = FAutomationTestExcludeOptions::GetAllRHIOptionNames<ETEST_RHI_Options>();
+		static const TSet<FName> AllRHI_OptionNames = FAutomationTestExcludeOptions::GetAllRHIOptionNamesFromSettings();
 		if (RHIs.Difference(AllRHI_OptionNames).Num() < RHIs.Num())
 		{
 			Num++;
@@ -150,13 +249,19 @@ struct FAutomationTestExcludelistEntry
 		bIsPropagated = false;
 	}
 
+	/* Make the entry specific */
+	void Finalize();
+
+	/* Output string used to generate hash */
+	FString GetStringForHash() const;
+
 	/* Has conditional exclusion */
 	bool HasConditions() const
 	{
-		return !RHIs.IsEmpty();
+		return !RHIs.IsEmpty() || !Platforms.IsEmpty();
 	}
 
-	/* Remove exclusion conditions, return true if a condition was removed */
+	/* Remove overlapping exclusion conditions, return true if at least one condition was removed */
 	bool RemoveConditions(const FAutomationTestExcludelistEntry& Entry)
 	{
 		if (!Entry.HasConditions())
@@ -165,12 +270,20 @@ struct FAutomationTestExcludelistEntry
 		}
 
 		bool GotRemoved = false;
+		int Length;
 		// Check RHIs
-		int Length = RHIs.Num();
+		Length = RHIs.Num();
 		if (Length > 0)
 		{
 			RHIs = RHIs.Difference(Entry.RHIs);
 			GotRemoved = GotRemoved || Length != RHIs.Num();
+		}
+		// Check Platforms
+		Length = Platforms.Num();
+		if (Length > 0)
+		{
+			Platforms = Platforms.Difference(Entry.Platforms);
+			GotRemoved = GotRemoved || Length != Platforms.Num();
 		}
 
 		return GotRemoved;
@@ -180,60 +293,228 @@ struct FAutomationTestExcludelistEntry
 	FString FullTestName;
 	/* Is the entry comes from propagation */
 	bool bIsPropagated = false;
+	/* Platforms to which the entry applies */
+	TSet<FName> Platforms;
 
 	// Use FName instead of FString to read params from config that aren't wrapped with quotes
 
 	/* Hold the name of the target functional test map */
-	UPROPERTY(EditDefaultsOnly, Category = AutomationTestExcludelist)
+	UPROPERTY(Config)
 	FName Map;
 
 	/* Hold the name of the target test - full test name is require here unless for functional tests */
-	UPROPERTY(EditDefaultsOnly, Category = AutomationTestExcludelist)
+	UPROPERTY(Config)
 	FName Test;
 
 	/* Reason to why the test is excluded */
-	UPROPERTY(EditDefaultsOnly, Category = AutomationTestExcludelist)
+	UPROPERTY(Config)
 	FName Reason;
 
 	/* Option to target specific RHI. Empty array means it should be applied to all RHI */
-	UPROPERTY(EditDefaultsOnly, Category = AutomationTestExcludelist)
+	UPROPERTY(Config)
 	TSet<FName> RHIs;
 
 	/* Should the Reason be reported as a warning in the log */
-	UPROPERTY(EditDefaultsOnly, Category = AutomationTestExcludelist)
+	UPROPERTY(Config)
 	bool Warn = false;
 };
 
-
 UCLASS(config = Engine, defaultconfig, MinimalAPI)
+class UAutomationTestExcludelistConfig : public UAutomationTestPlatformSettings
+{
+	GENERATED_BODY()
+
+public:
+	void Reset();
+	void AddEntry(const FAutomationTestExcludelistEntry& Entry);
+	const TArray<FAutomationTestExcludelistEntry>& GetEntries() const;
+	FString GetTaskTrackerURLHashtag() const { return TaskTrackerURLHashtag; }
+	FString GetTaskTrackerURLBase() const { return TaskTrackerURLBase; }
+
+	void SaveConfig();
+
+	void LoadTaskTrackerProperties();
+
+protected:
+	virtual void PostInitProperties() override;
+	virtual void InitializeSettingsDefault() override;
+	virtual FString GetSectionName() override { return TEXT("AutomationTestExcludelist"); }
+
+private:
+	void UpdateHash(const FAutomationTestExcludelistEntry& Entry);
+
+	UPROPERTY(Transient)
+	FString TaskTrackerURLHashtag;
+
+	UPROPERTY(Transient)
+	FString TaskTrackerURLBase;
+
+	UPROPERTY(Config)
+	TArray<FAutomationTestExcludelistEntry> ExcludeTest;
+
+	FString PlatformName;
+	/** Keep track of any changes */
+	FSHAHash EntriesHash;
+	/** Hash of what was last saved */
+	FSHAHash SavedEntriesHash;
+};
+
+UCLASS(MinimalAPI)
 class UAutomationTestExcludelist : public UObject
 {
 	GENERATED_BODY()
 
 public:
-	UAutomationTestExcludelist() {}
+	UAutomationTestExcludelist() { };
 
 	static AUTOMATIONTEST_API UAutomationTestExcludelist* Get();
 
+	/**
+	 * Add an Entry to the exclusion list for TestName
+	 *
+	 * @param TestName The full test name to be added.
+	 * @param Entry The FAutomationTestExcludelistEntry to be excluded.
+	*/
 	AUTOMATIONTEST_API void AddToExcludeTest(const FString& TestName, const FAutomationTestExcludelistEntry& ExcludelistEntry);
+
+	/**
+	 * Remove the Entry from the exclusion list for TestName
+	 *
+	 * @param TestName The full test name to be removed.
+	*/
 	AUTOMATIONTEST_API void RemoveFromExcludeTest(const FString& TestName);
-	AUTOMATIONTEST_API bool IsTestExcluded(const FString& TestName, const TSet<FName>& = TSet<FName>(), FName* OutReason = nullptr, bool* OutWarn = nullptr);
-	AUTOMATIONTEST_API FAutomationTestExcludelistEntry* GetExcludeTestEntry(const FString& TestName, const TSet<FName>& = TSet<FName>());
 
-	AUTOMATIONTEST_API void SaveConfig();
-	FString GetConfigFilename() { return UObject::GetDefaultConfigFilename(); } const
-	// It is called automatically when CDO is created, usually you don't need to call LoadConfig manually
-	void LoadConfig() { UObject::LoadConfig(GetClass()); }
+	/**
+	 * Is the TestName excluded?
+	 *
+	 * @param TestName The full test name to be tested.
+	 * @return True if the test is excluded
+	*/
+	AUTOMATIONTEST_API bool IsTestExcluded(const FString& TestName) const;
 
-	AUTOMATIONTEST_API virtual void OverrideConfigSection(FString& SectionName) override;
+	/**
+	 * Is the TestName excluded?
+	 *
+	 * @param TestName The full test name to be tested.
+	 * @param RHI The RHI the test is being evaluated against.
+	 * @param OutReason The reason why it is excluded.
+	 * @param OutWarn Whether a warning is going to be returned if the test is to be excluded.
+	 * @return True if the test is excluded
+	*/
+	AUTOMATIONTEST_API bool IsTestExcluded(const FString& TestName, const TSet<FName>& RHI, FName* OutReason, bool* OutWarn) const;
 
-protected:
-	AUTOMATIONTEST_API virtual void PostInitProperties() override;
+	/**
+	 * Is the TestName excluded?
+	 *
+	 * @param TestName The full test name to be tested.
+	 * @param Platform The Platform the test is being evaluated against.
+	 * @param RHI The RHI the test is being evaluated against.
+	 * @param OutReason The reason why it is excluded.
+	 * @param OutWarn Whether a warning is going to be returned if the test is to be excluded.
+	 * @return True if the test is excluded
+	*/
+	AUTOMATIONTEST_API bool IsTestExcluded(const FString& TestName, const FName& Platform, const TSet<FName>& RHI, FName* OutReason, bool* OutWarn) const;
+
+	/**
+	 * Get the Entry object of the TestName if excluded
+	 *
+	 * @param TestName The full test name to be tested.
+	 * @return Return the corresponding FAutomationTestExcludelistEntry if excluded otherwise nullptr
+	*/
+	AUTOMATIONTEST_API const FAutomationTestExcludelistEntry* GetExcludeTestEntry(const FString& TestName) const;
+
+	/**
+	 * Get the Entry object of the TestName if excluded
+	 *
+	 * @param TestName The full test name to be tested.
+	 * @param Platform The Platform the test is being evaluated against.
+	 * @return Return the corresponding FAutomationTestExcludelistEntry if excluded otherwise nullptr
+	*/
+	AUTOMATIONTEST_API const FAutomationTestExcludelistEntry* GetExcludeTestEntry(const FString& TestName, const TSet<FName>& RHI) const;
+
+	/**
+	 * Get the Entry object of the TestName if excluded
+	 *
+	 * @param TestName The full test name to be tested.
+	 * @param Platform The Platform the test is being evaluated against.
+	 * @param RHI The RHI the test is being evaluated against.
+	 * @return Return the corresponding FAutomationTestExcludelistEntry if excluded otherwise nullptr
+	*/
+	AUTOMATIONTEST_API const FAutomationTestExcludelistEntry* GetExcludeTestEntry(const FString& TestName, const FName& Platform, const TSet<FName>& RHI) const;
+
+	UE_DEPRECATED(5.4, "Please use GetConfigFilenameForEntry instead.")
+	AUTOMATIONTEST_API FString GetConfigFilename() const;
+
+	/**
+	 * Get the path to the config from which the exclusion was defined from
+	 *
+	 * @param Entry The FAutomationTestExcludelistEntry that is referenced.
+	 * @return Return the path to the corresponding config
+	*/
+	AUTOMATIONTEST_API FString GetConfigFilenameForEntry(const FAutomationTestExcludelistEntry& Entry) const;
+
+	/**
+	 * Get the path to the config from which the exclusion was defined from
+	 *
+	 * @param Entry The FAutomationTestExcludelistEntry that is referenced.
+	 * @param Platform The Platform the test is being evaluated against.
+	 * @return Return the path to the corresponding config
+	*/
+	AUTOMATIONTEST_API FString GetConfigFilenameForEntry(const FAutomationTestExcludelistEntry& Entry, const FName& Platform) const;
+
+	/**
+	 * Get URL base that is used while restoring a task tracker task's URL.
+	 *
+	 * @return Return the URL base.
+	*/
+	AUTOMATIONTEST_API FString GetTaskTrackerURLBase() const;
+
+	/**
+	 * Get non-beautified task tracker's hashtag suffix (from the loaded configs).
+	 *
+	 * @return Return the string that contains non-beautified task tracker's hashtag suffix.
+	 */
+	AUTOMATIONTEST_API FString GetConfigTaskTrackerHashtag() const;
+
+	/**
+	 * Get Task tracker's name if task tracker information is configured.
+	 *
+	 * @return Return task tracker's name if it is configured or empty string otherwise.
+	*/
+	AUTOMATIONTEST_API FString GetTaskTrackerName() const;
+
+	/**
+	 * Get hashtag that is used for referencing tasks if task tracker information is configured.
+	 *
+	 * @return Return hashtag that is used for referencing task tracker tasks if it is configured or empty string otherwise.
+	*/
+	AUTOMATIONTEST_API FString GetTaskTrackerTicketTag() const;
+
+	/** Save all the required configs */
+	AUTOMATIONTEST_API void SaveToConfigs();
+
+	UE_DEPRECATED(5.4, "Please use SaveToConfigs instead.")
+	AUTOMATIONTEST_API void SaveConfig() { SaveToConfigs(); }
 
 private:
-	AUTOMATIONTEST_API FString GetFullTestName(const FAutomationTestExcludelistEntry& ExcludelistEntry);
+	/** Initiate the loading of the configs */
+	void Initialize();
 
-	UPROPERTY(EditDefaultsOnly, globalconfig, Category = AutomationTestExcludelist)
-	TArray<FAutomationTestExcludelistEntry> ExcludeTest;
+	/** Load all possible platform configs */
+	void LoadPlatformConfigs();
+
+	/** Populate the exclusion entries from the loaded configs */
+	void PopulateEntries();
+
+	/** Get beautified hashtag suffix (starts after leading#) that is used for referencing tasks if task tracker information is configured */
+	FString GetBeautifiedTaskTrackerTicketTagSuffix() const;
+
+	/** Exclusion entries */
+	TMap<FString, FAutomationTestExcludelistEntry> Entries;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAutomationTestExcludelistConfig> DefaultConfig;
+
+	UPROPERTY(Transient)
+	TMap<FName, TObjectPtr<UAutomationTestExcludelistConfig>> PlatformConfigs;
 };
-

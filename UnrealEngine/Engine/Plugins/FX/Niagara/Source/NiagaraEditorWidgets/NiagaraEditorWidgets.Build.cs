@@ -14,6 +14,7 @@ public class NiagaraEditorWidgets : ModuleRules
             "NiagaraCore",
 			"Niagara",
 			"NiagaraEditor",
+			"NiagaraBlueprintNodes",
 			"Engine",
 			"Core",
 			"CoreUObject",
@@ -33,7 +34,8 @@ public class NiagaraEditorWidgets : ModuleRules
 			"CurveEditor",
 			"DesktopPlatform",
 			"ToolWidgets",
-			"KismetWidgets"
+			"KismetWidgets",
+			"ToolMenus"
 		});
 
 		PrivateIncludePathModuleNames.AddRange(new string[] {

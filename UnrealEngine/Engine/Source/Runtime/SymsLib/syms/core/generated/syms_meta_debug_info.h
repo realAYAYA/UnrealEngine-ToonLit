@@ -26,6 +26,7 @@ SYMS_SymbolKind_COUNT = 9
 } SYMS_SymbolKind;
 typedef enum SYMS_TypeKind{
 SYMS_TypeKind_Null,
+SYMS_TypeKind_Stub,
 //  @maintenance(allen) sync with 'syms_type_kind_is_basic'
 SYMS_TypeKind_Int8,
 SYMS_TypeKind_Int16,
@@ -54,7 +55,7 @@ SYMS_TypeKind_Complex64,
 SYMS_TypeKind_Complex80,
 SYMS_TypeKind_Complex128,
 SYMS_TypeKind_Void,
-//  @maintenance(allen) sync with 'syms_type_kind_is_user_defined'
+//                                'syms_type_kind_is_record'
 SYMS_TypeKind_Struct,
 SYMS_TypeKind_Class,
 SYMS_TypeKind_Union,
@@ -75,7 +76,7 @@ SYMS_TypeKind_Proc,
 SYMS_TypeKind_Bitfield,
 SYMS_TypeKind_Variadic,
 SYMS_TypeKind_Label,
-SYMS_TypeKind_COUNT = 47
+SYMS_TypeKind_COUNT = 48
 } SYMS_TypeKind;
 typedef SYMS_U32 SYMS_TypeModifiers;
 enum{

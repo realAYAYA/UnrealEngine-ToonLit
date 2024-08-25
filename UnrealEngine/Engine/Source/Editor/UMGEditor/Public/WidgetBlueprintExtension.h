@@ -53,7 +53,7 @@ public:
 	template<typename Predicate>
 	static void ForEachExtension(const UWidgetBlueprint* InWidgetBlueprint, Predicate Pred)
 	{
-		for (TObjectPtr<UBlueprintExtension> BlueprintExtension : InWidgetBlueprint->GetExtensions())
+		for (const TObjectPtr<UBlueprintExtension>& BlueprintExtension : InWidgetBlueprint->GetExtensions())
 		{
 			if (UWidgetBlueprintExtension* WidgetBlueprintExtension = Cast<UWidgetBlueprintExtension>(BlueprintExtension))
 			{
@@ -72,8 +72,9 @@ protected:
 	 */
 	virtual void HandleBeginCompilation(FWidgetBlueprintCompilerContext& InCreationContext) {}
 
-	virtual void HandleCreateFunctionList() {}
+	virtual void HandleCreateFunctionList(const FWidgetBlueprintCompilerContext::FCreateFunctionContext& InCreationContext) {}
 	virtual void HandleCleanAndSanitizeClass(UWidgetBlueprintGeneratedClass* ClassToClean, UObject* OldCDO) {}
+	virtual TArray<UObject*> HandleSaveSubObjectsFromCleanAndSanitizeClass(UWidgetBlueprintGeneratedClass* ClassToClean) { return TArray<UObject*>();  }
 	virtual void HandleCreateClassVariablesFromBlueprint(const FWidgetBlueprintCompilerContext::FCreateVariableContext& Context) {}
 	virtual void HandleCopyTermDefaultsToDefaultObject(UObject* DefaultObject) {}
 	virtual void HandleFinishCompilingClass(UWidgetBlueprintGeneratedClass* Class) {}
@@ -94,14 +95,19 @@ private:
 		HandleBeginCompilation(InCreationContext);
 	}
 
-	void CreateFunctionList()
+	void CreateFunctionList(const FWidgetBlueprintCompilerContext::FCreateFunctionContext& InCreationContext)
 	{
-		HandleCreateFunctionList();
+		HandleCreateFunctionList(InCreationContext);
 	}
 
 	void CleanAndSanitizeClass(UWidgetBlueprintGeneratedClass* ClassToClean, UObject* OldCDO)
 	{
 		HandleCleanAndSanitizeClass(ClassToClean, OldCDO);
+	}
+
+	TArray<UObject*> SaveSubObjectsFromCleanAndSanitizeClass(UWidgetBlueprintGeneratedClass* ClassToClean)
+	{
+		return HandleSaveSubObjectsFromCleanAndSanitizeClass(ClassToClean);
 	}
 
 	void CreateClassVariablesFromBlueprint(const FWidgetBlueprintCompilerContext::FCreateVariableContext& Context)

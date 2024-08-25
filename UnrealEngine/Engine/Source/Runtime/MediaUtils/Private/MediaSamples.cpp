@@ -139,9 +139,9 @@ void FMediaSamples::FlushSamples()
 /**
  * Fetch video sample best suited for the given time range. Samples prior to the selected one will be removed from the queue.
  */
-FMediaSamples::EFetchBestSampleResult FMediaSamples::FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp> & TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse)
+FMediaSamples::EFetchBestSampleResult FMediaSamples::FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp> & TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse, bool bConsistentResult)
 {
-	if (!VideoSampleQueue.FetchBestSampleForTimeRange(TimeRange, OutSample, bReverse))
+	if (!VideoSampleQueue.FetchBestSampleForTimeRange(TimeRange, OutSample, bReverse, bConsistentResult))
 	{
 		return EFetchBestSampleResult::NoSample;
 	}

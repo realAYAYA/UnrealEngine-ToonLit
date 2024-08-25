@@ -60,6 +60,7 @@ void UModelingSelectionInteraction::Initialize(
 	TransformGizmo = UE::TransformGizmoUtil::CreateCustomRepositionableTransformGizmo( 
 		SelectionManager->GetToolsContext()->GizmoManager, ETransformGizmoSubElements::FullTranslateRotateScale,
 		this, TEXT("ModelingSelectionInteraction") );
+	TransformGizmo->SetIsNonUniformScaleAllowedFunction([]() {return true;});
 	TransformGizmo->SetActiveTarget(TransformProxy, SelectionManager->GetToolsContext()->GizmoManager);
 	TransformGizmo->SetVisibility(false);
 
@@ -116,6 +117,15 @@ void UModelingSelectionInteraction::SetActiveDragMode(EModelingSelectionInteract
 	{
 		ActiveDragMode = NewMode;
 		UpdateActiveDragMode();
+	}
+}
+
+void UModelingSelectionInteraction::SetLocalFrameMode(EModelingSelectionInteraction_LocalFrameMode NewLocalFrameMode)
+{
+	if (LocalFrameMode != NewLocalFrameMode)
+	{
+		LocalFrameMode = NewLocalFrameMode;
+		UpdateGizmoOnSelectionChange();
 	}
 }
 
@@ -338,7 +348,14 @@ void UModelingSelectionInteraction::UpdateGizmoOnSelectionChange()
 		TransformGizmo->SetVisibility(true);
 
 		FFrame3d SelectionFrame;
-		SelectionManager->GetSelectionWorldFrame(SelectionFrame);
+		if (LocalFrameMode == EModelingSelectionInteraction_LocalFrameMode::FromGeometry)
+		{
+			SelectionManager->GetSelectionWorldFrame(SelectionFrame);
+		}
+		else
+		{
+			SelectionManager->GetTargetWorldFrame(SelectionFrame);
+		}
 		TransformGizmo->ReinitializeGizmoTransform( SelectionFrame.ToFTransform() );
 	}
 }
@@ -412,7 +429,7 @@ void UModelingSelectionInteraction::ApplyPendingTransformInteractions()
 	FQuaterniond RotateDelta = CurFrame.Rotation - InitialGizmoFrame.Rotation;
 	FVector3d CurScaleDelta = CurScale - InitialGizmoScale;
 
-	const bool bLastUpdateUsedWorldFrame = true;	// for later local-frame support
+	bool bTransformInWorldFrame = TransformGizmo->CurrentCoordinateSystem == EToolContextCoordinateSystem::World;
 
 	// if any of the deltas have deviated from the last delta, forward the transformation change on to targets
 	if ( (TranslationDelta - LastTranslationDelta).SizeSquared() > FMathf::ZeroTolerance
@@ -423,7 +440,7 @@ void UModelingSelectionInteraction::ApplyPendingTransformInteractions()
 		LastRotateDelta = (FVector4d)RotateDelta;
 		LastScaleDelta = CurScaleDelta;
 
-		if (bLastUpdateUsedWorldFrame)
+		if (bTransformInWorldFrame)
 		{
 			// For a world frame gizmo, the scaling needs to happen in world aligned gizmo space, but the 
 			// rotation is still encoded in the local gizmo frame change.

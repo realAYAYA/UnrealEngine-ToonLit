@@ -85,18 +85,20 @@ SYMS_Language_RenderScript,
 //  NOTE(rjf): Misc
 SYMS_Language_Haskell,
 SYMS_Language_OCaml,
-SYMS_Language_COUNT = 52
+SYMS_Language_MipsAssembler,
+SYMS_Language_GoogleRenderScript,
+SYMS_Language_SunAssembler,
+SYMS_Language_BorlandDelphi,
+SYMS_Language_COUNT = 56
 } SYMS_Language;
 typedef enum SYMS_FileFormat{
 SYMS_FileFormat_Null,
 SYMS_FileFormat_PE,
-SYMS_FileFormat_COFF16,
-SYMS_FileFormat_COFF32,
 SYMS_FileFormat_ELF,
 SYMS_FileFormat_MACH,
 SYMS_FileFormat_PDB,
 SYMS_FileFormat_DWARF,
-SYMS_FileFormat_COUNT = 8
+SYMS_FileFormat_COUNT = 6
 } SYMS_FileFormat;
 typedef enum SYMS_ChecksumAlgorithm{
 SYMS_ChecksumAlgorithm_Null,

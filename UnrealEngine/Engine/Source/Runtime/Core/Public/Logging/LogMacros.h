@@ -13,7 +13,6 @@
 #include "Misc/Build.h"
 #include "Misc/VarArgs.h"
 #include "String/FormatStringSan.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsArrayOrRefOfTypeByPredicate.h"
 #include "Templates/IsValidVariadicFunctionArg.h"
@@ -42,7 +41,7 @@ struct FMsg
 	static void SendNotificationStringf(const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a const TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FMsg::SendNotificationStringf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FMsg::SendNotificationStringf");
 
 		SendNotificationStringfImpl((const TCHAR*)Fmt, Args...);
 	}
@@ -52,7 +51,7 @@ struct FMsg
 	static void Logf(const ANSICHAR* File, int32 Line, const FLogCategoryName& Category, ELogVerbosity::Type Verbosity, const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a const TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FMsg::Logf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FMsg::Logf");
 
 		LogfImpl(File, Line, Category, Verbosity, (const TCHAR*)Fmt, Args...);
 	}
@@ -62,7 +61,7 @@ struct FMsg
 	static void Logf_Internal(const ANSICHAR* File, int32 Line, const FLogCategoryName& Category, ELogVerbosity::Type Verbosity, const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a const TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FMsg::Logf_Internal");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FMsg::Logf_Internal");
 
 		Logf_InternalImpl(File, Line, Category, Verbosity, (const TCHAR*)Fmt, Args...);
 	}
@@ -230,12 +229,6 @@ CORE_API void BasicFatalLog(const FLogCategoryBase& Category, const FStaticBasic
 	#define UE_SET_LOG_VERBOSITY(CategoryName, Verbosity) \
 		CategoryName.SetVerbosity(ELogVerbosity::Verbosity);
 
-	#if UE_VALIDATE_FORMAT_STRINGS
-		#define UE_VALIDATE_FORMAT_STRING UE_CHECK_FORMAT_STRING
-	#else
-		#define UE_VALIDATE_FORMAT_STRING(Format, ...)
-	#endif
-
 	/**
 	 * A macro that logs a formatted message if the log category is active at the requested verbosity level.
 	 *
@@ -281,7 +274,8 @@ CORE_API void BasicFatalLog(const FLogCategoryBase& Category, const FStaticBasic
 		static_assert(TIsArrayOrRefOfTypeByPredicate<decltype(Format), TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array."); \
 		UE_VALIDATE_FORMAT_STRING(Format, ##__VA_ARGS__); \
 		static ::UE::Logging::Private::FStaticBasicLogDynamicData LOG_Dynamic; \
-		static constexpr ::UE::Logging::Private::FStaticBasicLogRecord LOG_Static(Format, __builtin_FILE(), __builtin_LINE(), ::ELogVerbosity::Verbosity, LOG_Dynamic); \
+		/* This variable can only be constexpr if the __builtin_FILE() and __builtin_LINE() intrinsic functions are constexpr - otherwise make it plain const */ \
+		static PREPROCESSOR_IF(PLATFORM_COMPILER_SUPPORTS_CONSTEXPR_BUILTIN_FILE_AND_LINE, constexpr, const) ::UE::Logging::Private::FStaticBasicLogRecord LOG_Static(Format, __builtin_FILE(), __builtin_LINE(), ::ELogVerbosity::Verbosity, LOG_Dynamic); \
 		static_assert((::ELogVerbosity::Verbosity & ::ELogVerbosity::VerbosityMask) < ::ELogVerbosity::NumVerbosity && ::ELogVerbosity::Verbosity > 0, "Verbosity must be constant and in range."); \
 		if constexpr ((::ELogVerbosity::Verbosity & ELogVerbosity::VerbosityMask) == ::ELogVerbosity::Fatal) \
 		{ \

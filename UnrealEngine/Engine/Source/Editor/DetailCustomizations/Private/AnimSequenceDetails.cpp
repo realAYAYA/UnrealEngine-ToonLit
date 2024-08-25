@@ -43,7 +43,6 @@
 #include "SlateOptMacros.h"
 #include "SlotBase.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectPtr.h"
@@ -57,6 +56,8 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SViewport.h"
 #include "Widgets/Text/STextBlock.h"
+#include "PropertyCustomizationHelpers.h"
+#include "IDetailChildrenBuilder.h"
 
 class SWidget;
 struct FGeometry;
@@ -75,9 +76,11 @@ BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION
 void FAnimSequenceDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 {
 	/////////////////////////////////////////////////////////////////////////////////
-	// retarget source handler in Animation
+	// Animation
 	/////////////////////////////////////////////////////////////////////////////////
 	IDetailCategoryBuilder& AnimationCategory = DetailBuilder.EditCategory("Animation");
+
+	// *** Retarget source handler ***
 	RetargetSourceNameHandler = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UAnimSequence, RetargetSource));
 	RetargetSourceAssetHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UAnimSequence, RetargetSourceAsset));
 
@@ -200,6 +203,38 @@ void FAnimSequenceDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 	DetailBuilder.HideProperty(RetargetSourceNameHandler);
 	DetailBuilder.HideProperty(RetargetSourceAssetHandle);
 
+	// *** Animation Track Names ***
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	AnimationTrackNamesHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UAnimSequence, AnimationTrackNames));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	if (AnimationTrackNamesHandle.IsValid())
+	{
+		TArray<TWeakObjectPtr<UAnimSequence>> AnimSequences = DetailBuilder.GetSelectedObjectsOfType<UAnimSequence>();
+		AnimationTrackNamesList.Empty();
+
+		if (!AnimSequences.IsEmpty())
+		{
+			for (const TWeakObjectPtr<UAnimSequence>& AnimSequenceWeak : AnimSequences)
+			{
+				if(AnimSequenceWeak.IsValid())
+				{ 
+					if (AnimSequenceWeak->IsDataModelValid())
+					{
+						AnimSequenceWeak->GetDataModelInterface()->GetBoneTrackNames(AnimationTrackNamesList);
+					}
+				}
+			}
+		}
+
+		TSharedRef<FDetailArrayBuilder> AnimationTrackNamesArrayBuilder = MakeShareable(new FDetailArrayBuilder(AnimationTrackNamesHandle.ToSharedRef(), true, false, true));
+		AnimationTrackNamesArrayBuilder->OnGenerateArrayElementWidget(FOnGenerateArrayElementWidget::CreateSP(this, &FAnimSequenceDetails::GenerateAnimationTrackNameArrayElementWidget, &DetailBuilder));
+		AnimationCategory.AddCustomBuilder(AnimationTrackNamesArrayBuilder);
+
+		DetailBuilder.HideProperty(AnimationTrackNamesHandle);
+	}
+
+
 	/////////////////////////////////////////////////////////////////////////////
 	// Additive settings category
 	/////////////////////////////////////////////////////////////////////////////
@@ -245,6 +280,35 @@ void FAnimSequenceDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 	CreateOverridenProperty(DetailBuilder, AdditiveSettingsCategory, RefFrameIndexHandle, TAttribute<EVisibility>( this, &FAnimSequenceDetails::ShouldShowRefFrameIndex ));
 }
 END_SLATE_FUNCTION_BUILD_OPTIMIZATION
+
+void FAnimSequenceDetails::GenerateAnimationTrackNameArrayElementWidget(TSharedRef<IPropertyHandle> PropertyHandle, int32 ArrayIndex, IDetailChildrenBuilder& ChildrenBuilder, IDetailLayoutBuilder* DetailLayout)
+{
+	IDetailPropertyRow& PropRow = ChildrenBuilder.AddProperty(PropertyHandle);
+	PropRow.ShowPropertyButtons(false);
+	PropRow.OverrideResetToDefault(FResetToDefaultOverride::Hide());
+
+	FDetailWidgetRow& WidgetRow = PropRow.CustomWidget(true);
+
+	WidgetRow.NameContent()
+	[
+		PropertyHandle->CreatePropertyNameWidget()
+	];
+
+	WidgetRow.ValueContent()
+	[
+		SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.VAlign(VAlign_Center)
+			.HAlign(HAlign_Fill)
+			.Padding(5, 0, 0, 0)
+			.AutoWidth()
+			[
+				SNew(SEditableTextBox)
+					.Text(FText::FromName(AnimationTrackNamesList[ArrayIndex]))
+					.IsReadOnly(true)
+			]
+	];
+}
 
 void FAnimSequenceDetails::CreateOverridenProperty(IDetailLayoutBuilder& DetailBuilder, IDetailCategoryBuilder& AdditiveSettingsCategory, TSharedPtr<IPropertyHandle> PropertyHandle, TAttribute<EVisibility> VisibilityAttribute)
 {

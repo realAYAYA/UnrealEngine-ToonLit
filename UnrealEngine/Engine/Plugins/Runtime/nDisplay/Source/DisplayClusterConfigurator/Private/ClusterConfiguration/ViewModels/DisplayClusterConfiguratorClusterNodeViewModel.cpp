@@ -10,6 +10,7 @@ FDisplayClusterConfiguratorClusterNodeViewModel::FDisplayClusterConfiguratorClus
 	ClusterNodePtr = ClusterNode;
 
 	INIT_PROPERTY_HANDLE(UDisplayClusterConfigurationClusterNode, ClusterNode, WindowRect);
+	INIT_PROPERTY_HANDLE(UDisplayClusterConfigurationClusterNode, ClusterNode, Host);
 }
 
 void FDisplayClusterConfiguratorClusterNodeViewModel::SetWindowRect(const FDisplayClusterConfigurationRectangle& NewWindowRect)
@@ -59,6 +60,27 @@ void FDisplayClusterConfiguratorClusterNodeViewModel::SetWindowRect(const FDispl
 		check(HHandle);
 
 		HHandle->SetValue(NewWindowRect.H, EPropertyValueSetFlags::NotTransactable);
+	}
+
+	if (bClusterNodeChanged)
+	{
+		ClusterNode->MarkPackageDirty();
+	}
+}
+
+void FDisplayClusterConfiguratorClusterNodeViewModel::SetHost(const FString& NewHost)
+{
+	UDisplayClusterConfigurationClusterNode* ClusterNode = ClusterNodePtr.Get();
+	check(ClusterNode);
+	ClusterNode->Modify();
+
+	bool bClusterNodeChanged = false;
+
+	if (ClusterNode->Host != NewHost)
+	{
+		bClusterNodeChanged = true;
+
+		HostHandle->SetValue(NewHost);
 	}
 
 	if (bClusterNodeChanged)

@@ -344,7 +344,7 @@ void FAssetRegistryReader::SerializeTagsAndBundlesOldVersion(FAssetData& Out, FA
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRegistryTagSerializationTest, "Engine.AssetRegistry.SerializeTagMap", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRegistryTagSerializationTest, "System.AssetRegistry.SerializeTagMap", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
 
 FAssetDataTagMapSharedView MakeLooseMap(std::initializer_list<TPairInitializer<const char*, FString>> Pairs)
 {

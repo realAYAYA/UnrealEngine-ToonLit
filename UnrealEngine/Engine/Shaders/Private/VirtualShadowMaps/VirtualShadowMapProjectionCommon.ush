@@ -8,25 +8,24 @@ VirtualShadowMapProjectionCommon.ush:
 #include "../Common.ush"
 #include "VirtualShadowMapPageAccessCommon.ush"
 #include "VirtualShadowMapProjectionStructs.ush"
-
-/** Light types */
-#define LIGHT_TYPE_DIRECTIONAL 0
-#define LIGHT_TYPE_POINT 1
-#define LIGHT_TYPE_SPOT 2
-#define LIGHT_TYPE_RECT 3
+#include "/Engine/Shared/LightDefinitions.h"
 
 #define VIRTUAL_SHADOW_MAP_MIN_OCCLUDER_DISTANCE 1e-6f
 
-float CalcAbsoluteClipmapLevel(FVirtualShadowMapProjectionShaderData BaseProjectionData, FLWCVector3 WorldPosition)
+float CalcAbsoluteClipmapLevel(FVirtualShadowMapProjectionShaderData BaseProjectionData, float3 TranslatedWorldPosition)
 {
-	float DistanceToClipmapOrigin = length(LWCToFloat(LWCSubtract(WorldPosition, BaseProjectionData.ClipmapWorldOrigin)));
+	float3 ViewToShadowTranslation = DFFastLocalSubtractDemote(BaseProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation);
+	float3 TranslatedWorldOrigin = -BaseProjectionData.ClipmapWorldOriginOffset + ViewToShadowTranslation;
+	float DistanceToClipmapOrigin = length(TranslatedWorldPosition + TranslatedWorldOrigin);
 	return log2(DistanceToClipmapOrigin);
 }
 
-int CalcClipmapLevel(FVirtualShadowMapProjectionShaderData BaseProjectionData, FLWCVector3 WorldPosition)
+// Optionally apply the resolution bias (rather than greedy sampling highest res data) depending on the global setting
+float CalcBiasedAbsoluteClipmapLevelForSampling(FVirtualShadowMapProjectionShaderData BaseProjectionData, float3 TranslatedWorldPosition)
 {
-	float BiasedLevel = CalcAbsoluteClipmapLevel(BaseProjectionData, WorldPosition) + BaseProjectionData.ResolutionLodBias;
-	return int(floor(BiasedLevel));
+	float AbsoluteLevel = CalcAbsoluteClipmapLevel(BaseProjectionData, TranslatedWorldPosition);
+	AbsoluteLevel += VirtualShadowMap.bClipmapGreedyLevelSelection ? 0.0f : BaseProjectionData.ResolutionLodBias;
+	return AbsoluteLevel;
 }
 
 // Calculate the projected pixel footprint onto a local light, scaled in shadow map texels
@@ -317,7 +316,7 @@ struct FVirtualShadowMapSampleResult
 	float OccluderDistance;
 
 	// Debug data; do not reference in non-debug permutations or performance may be affected!
-	uint ClipmapIndexOrMipLevel;
+	int ClipmapOrMipLevel;		// Absolute clipmap level or mip level
 	uint RayCount;
 	uint2 VirtualTexelAddress;
 	uint2 PhysicalTexelAddress;
@@ -331,7 +330,7 @@ FVirtualShadowMapSampleResult InitVirtualShadowMapSampleResult()
 	Result.bValid = false;
 	Result.ShadowFactor = 1.0f;
 	Result.OccluderDistance = -1.0f;
-	Result.ClipmapIndexOrMipLevel = 0;
+	Result.ClipmapOrMipLevel = 0;
 	Result.VirtualTexelAddress = uint2(0xFFFFFFFF, 0xFFFFFFFF);
 	Result.PhysicalTexelAddress = uint2(0xFFFFFFFF, 0xFFFFFFFF);
 	Result.RayCount = 0;
@@ -340,10 +339,11 @@ FVirtualShadowMapSampleResult InitVirtualShadowMapSampleResult()
 }
 
 
-
 /**
+* Sample virtual shadow (clip)map for a directional light
+*
 * VirtualShadowMapId is the ID of the virtual shadow map to sample
-* WorldPosition is the sample position in world space to project into the shadow map
+* TranslatedWorldPosition is the sample position in PrimaryViews translated world space to project into the shadow map
 * RayStartDistance is an optional offset to move the lookup along the shadow ray towards the light
 *   - Should be zero or positive
 *   - This offset is useful in that it does *not* affect the selection of clipmap level, unlike offsetting the WorldPosition itself
@@ -352,107 +352,65 @@ FVirtualShadowMapSampleResult InitVirtualShadowMapSampleResult()
 *   - If bUseOptimalBias is true, this is used to compute a receiver-plane-based bias for the sample point
 *   - The shading normal can be used if the geometric normal is not available, but divergence from the geometric normal can cause biasing issues.
 */
-FVirtualShadowMapSampleResult SampleVirtualShadowMapInner(int VirtualShadowMapId, FLWCVector3 WorldPosition, float RayStartDistance, bool bUseOptimalBias, float3 EstimatedGeoWorldNormal)
+FVirtualShadowMapSampleResult SampleVirtualShadowMapDirectional(
+	int VirtualShadowMapId,
+	float3 TranslatedWorldPosition,
+	float RayStartDistance,
+	float3 EstimatedGeoWorldNormal,
+	bool bUseOptimalBias = true)
 {
 	RayStartDistance = max(RayStartDistance, 0.0f);
 
 	FVirtualShadowMapProjectionShaderData BaseProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
+	checkSlow(BaseProjectionData.LightType == LIGHT_TYPE_DIRECTIONAL);
+	
+	const int ClipmapLevel = int(floor(CalcBiasedAbsoluteClipmapLevelForSampling(BaseProjectionData, TranslatedWorldPosition)));
+	int ClipmapIndex = max(0, ClipmapLevel - BaseProjectionData.ClipmapLevel);
 
-	if (BaseProjectionData.LightType == LIGHT_TYPE_DIRECTIONAL)
+	// Check if sample is within the clipmap range (from camera)
+	if (ClipmapIndex < BaseProjectionData.ClipmapLevelCountRemaining)
 	{
-		const int FirstClipmapLevel = BaseProjectionData.ClipmapLevel;
-		const int ClipmapLevel = CalcClipmapLevel(BaseProjectionData, WorldPosition);
-		int ClipmapIndex = max(0, ClipmapLevel - FirstClipmapLevel);
+		int ClipmapLevelVirtualShadowMapId = VirtualShadowMapId + ClipmapIndex;
+		FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(ClipmapLevelVirtualShadowMapId);
 
-		// Check if sample is within the clipmap range (from camera)
-		if (ClipmapIndex < BaseProjectionData.ClipmapLevelCountRemaining)
-		{
-			int ClipmapLevelVirtualShadowMapId = VirtualShadowMapId + ClipmapIndex;
-			FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(ClipmapLevelVirtualShadowMapId);
+		// No perspective divided needed for ortho projection
+		float3 ViewToShadowTranslation = DFFastLocalSubtractDemote(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation);
+		float3 ShadowTranslatedWorldPosition = TranslatedWorldPosition + ViewToShadowTranslation;
+		float4 ShadowUVz = mul(float4(ShadowTranslatedWorldPosition, 1.0f), ProjectionData.TranslatedWorldToShadowUVMatrix);
 
-			// No perspective divided needed for ortho projection
-			float3 ShadowTranslatedWorldPosition = LWCToFloat(LWCAdd(WorldPosition, ProjectionData.PreViewTranslation));
-			float4 ShadowUVz = mul(float4(ShadowTranslatedWorldPosition, 1.0f), ProjectionData.TranslatedWorldToShadowUVMatrix);
-			
-			FVirtualShadowMapSample SmSample;
-			SmSample = SampleVirtualShadowMapClipmap(ClipmapLevelVirtualShadowMapId, ShadowUVz.xy);
-			
-			if (SmSample.bValid)
-			{
-				int SampledClipmapIndex = SmSample.VirtualShadowMapId - VirtualShadowMapId;
+		FVirtualShadowMapSample SmSample;
+		SmSample = SampleVirtualShadowMapClipmap(ClipmapLevelVirtualShadowMapId, ShadowUVz.xy);
 
-				FVirtualShadowMapSampleResult Result = InitVirtualShadowMapSampleResult();
-				Result.bValid = true;
-				Result.ShadowFactor = 1.0f;
-				Result.OccluderDistance = -1.0f;
-				Result.ClipmapIndexOrMipLevel = ClipmapIndex;
-				Result.VirtualTexelAddress = SmSample.VirtualTexelAddress;
-				Result.PhysicalTexelAddress = SmSample.PhysicalTexelAddress;
-				Result.RayCount = 1;
-
-				float OptimalSlopeBias = bUseOptimalBias 
-					? ComputeVirtualShadowMapOptimalSlopeBias(ClipmapLevelVirtualShadowMapId, SmSample, ShadowTranslatedWorldPosition, EstimatedGeoWorldNormal)
-					: 0.0f;
-				
-				float RayStartBias = -RayStartDistance * ProjectionData.ShadowViewToClipMatrix._33;
-				float BiasedDepth = SmSample.Depth - OptimalSlopeBias - RayStartBias;
-
-				if (BiasedDepth > ShadowUVz.z)
-				{
-					Result.ShadowFactor = 0.0f;
-					Result.OccluderDistance = ComputeOccluderDistanceOrtho(
-						ProjectionData.ShadowViewToClipMatrix,
-						SmSample.Depth,
-						ShadowUVz.z);
-				}
-
-				return Result;
-			}
-		}
-	}
-	else
-	{
-		float3 ShadowTranslatedWorldPosition = LWCToFloat(LWCAdd(WorldPosition, BaseProjectionData.PreViewTranslation));
-
-		if (BaseProjectionData.LightType != LIGHT_TYPE_SPOT)
-		{
-			VirtualShadowMapId += VirtualShadowMapGetCubeFace(ShadowTranslatedWorldPosition);
-			BaseProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
-		}
-
-		// TODO cubemap math directly instead of vector fetching matrix
-		float4 ShadowUVz = mul(float4(ShadowTranslatedWorldPosition, 1.0f), BaseProjectionData.TranslatedWorldToShadowUVMatrix);
-		ShadowUVz.xyz /= ShadowUVz.w;
-
-		FVirtualShadowMapSample SmSample = SampleVirtualShadowMap(VirtualShadowMapId, ShadowUVz.xy);
 		if (SmSample.bValid)
 		{
+			int SampledClipmapIndex = SmSample.VirtualShadowMapId - VirtualShadowMapId;
+
 			FVirtualShadowMapSampleResult Result = InitVirtualShadowMapSampleResult();
 			Result.bValid = true;
 			Result.ShadowFactor = 1.0f;
 			Result.OccluderDistance = -1.0f;
-			Result.ClipmapIndexOrMipLevel = SmSample.MipLevel;
+			Result.ClipmapOrMipLevel = GetVirtualShadowMapProjectionData(SmSample.VirtualShadowMapId).ClipmapLevel;
 			Result.VirtualTexelAddress = SmSample.VirtualTexelAddress;
 			Result.PhysicalTexelAddress = SmSample.PhysicalTexelAddress;
 			Result.RayCount = 1;
 
-			float OptimalSlopeBias = bUseOptimalBias 
-				? ComputeVirtualShadowMapOptimalSlopeBias(VirtualShadowMapId, SmSample, ShadowTranslatedWorldPosition, EstimatedGeoWorldNormal)
-				: 0.0f;
+			float OptimalSlopeBias = 0.0f;
+			BRANCH
+			if (bUseOptimalBias)
+			{
+				OptimalSlopeBias = ComputeVirtualShadowMapOptimalSlopeBias(ClipmapLevelVirtualShadowMapId, SmSample, ShadowTranslatedWorldPosition, EstimatedGeoWorldNormal);
+			}
 
-			float RayStartBias = -RayStartDistance * BaseProjectionData.ShadowViewToClipMatrix._33 / ShadowUVz.w;
+			float RayStartBias = -RayStartDistance * ProjectionData.ShadowViewToClipMatrix._33;
 			float BiasedDepth = SmSample.Depth - OptimalSlopeBias - RayStartBias;
 
 			if (BiasedDepth > ShadowUVz.z)
 			{
 				Result.ShadowFactor = 0.0f;
-				// Shadow view matrix is rotation
-				float ReceiverDistance = length(ShadowTranslatedWorldPosition);
-				Result.OccluderDistance = RayStartDistance + ComputeOccluderDistancePerspective(
-					BaseProjectionData.ShadowViewToClipMatrix,
+				Result.OccluderDistance = ComputeOccluderDistanceOrtho(
+					ProjectionData.ShadowViewToClipMatrix,
 					SmSample.Depth,
-					ShadowUVz.z,
-					ReceiverDistance);
+					ShadowUVz.z);
 			}
 
 			return Result;
@@ -463,37 +421,103 @@ FVirtualShadowMapSampleResult SampleVirtualShadowMapInner(int VirtualShadowMapId
 	return InitVirtualShadowMapSampleResult();
 }
 
-// Sample in world space
-FVirtualShadowMapSampleResult SampleVirtualShadowMap(int VirtualShadowMapId, FLWCVector3 WorldPosition, float RayStartDistance, float3 EstimatedGeoWorldNormal)
+
+/**
+* Sample virtual shadow map for a local light
+* 
+* Parameter descriptions are as above
+*/
+FVirtualShadowMapSampleResult SampleVirtualShadowMapLocal(
+	int VirtualShadowMapId,
+	float3 TranslatedWorldPosition,
+	float RayStartDistance,
+	float3 EstimatedGeoWorldNormal,
+	bool bUseOptimalBias = true)
 {
-	return SampleVirtualShadowMapInner(VirtualShadowMapId, WorldPosition, RayStartDistance, true, EstimatedGeoWorldNormal);
-}
-FVirtualShadowMapSampleResult SampleVirtualShadowMap(int VirtualShadowMapId, FLWCVector3 WorldPosition, float RayStartDistance = 0.0f)
-{
-	return SampleVirtualShadowMapInner(VirtualShadowMapId, WorldPosition, RayStartDistance, false, float3(0, 0, 0));
+	RayStartDistance = max(RayStartDistance, 0.0f);
+
+	FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
+	float3 ViewToShadowTranslation = DFFastLocalSubtractDemote(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation);
+	float3 ShadowTranslatedWorldPosition = TranslatedWorldPosition + ViewToShadowTranslation;
+
+	if (ProjectionData.LightType != LIGHT_TYPE_SPOT)
+	{
+		VirtualShadowMapId += VirtualShadowMapGetCubeFace(ShadowTranslatedWorldPosition);
+		ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
+	}
+
+	// TODO cubemap math directly instead of vector fetching matrix
+	float4 ShadowUVz = mul(float4(ShadowTranslatedWorldPosition, 1.0f), ProjectionData.TranslatedWorldToShadowUVMatrix);
+	ShadowUVz.xyz /= ShadowUVz.w;
+
+	FVirtualShadowMapSample SmSample = SampleVirtualShadowMap(VirtualShadowMapId, ShadowUVz.xy);
+	if (SmSample.bValid)
+	{
+		FVirtualShadowMapSampleResult Result = InitVirtualShadowMapSampleResult();
+		Result.bValid = true;
+		Result.ShadowFactor = 1.0f;
+		Result.OccluderDistance = -1.0f;
+		Result.ClipmapOrMipLevel = int(SmSample.MipLevel);
+		Result.VirtualTexelAddress = SmSample.VirtualTexelAddress;
+		Result.PhysicalTexelAddress = SmSample.PhysicalTexelAddress;
+		Result.RayCount = 1;
+
+		float OptimalSlopeBias = 0.0f;
+		BRANCH
+		if (bUseOptimalBias)
+		{
+			OptimalSlopeBias = ComputeVirtualShadowMapOptimalSlopeBias(VirtualShadowMapId, SmSample, ShadowTranslatedWorldPosition, EstimatedGeoWorldNormal);
+		}
+
+		float RayStartBias = -RayStartDistance * ProjectionData.ShadowViewToClipMatrix._33 / ShadowUVz.w;
+		float BiasedDepth = SmSample.Depth - OptimalSlopeBias - RayStartBias;
+
+		if (BiasedDepth > ShadowUVz.z)
+		{
+			Result.ShadowFactor = 0.0f;
+			// Shadow view matrix is rotation
+			float ReceiverDistance = length(ShadowTranslatedWorldPosition);
+			Result.OccluderDistance = RayStartDistance + ComputeOccluderDistancePerspective(
+				ProjectionData.ShadowViewToClipMatrix,
+				SmSample.Depth,
+				ShadowUVz.z,
+				ReceiverDistance);
+		}
+
+		return Result;
+	}
+
+	// Invalid
+	return InitVirtualShadowMapSampleResult();
 }
 
-// Sample in PrimaryView translated world space
-FVirtualShadowMapSampleResult SampleVirtualShadowMapTranslatedWorld(int VirtualShadowMapId, float3 TranslatedWorldPosition, float RayStartDistance, float3 EstimatedGeoWorldNormal)
+
+// Some common variants/convenience functions
+
+// Sample in PrimaryView translated world space with no optimal bias
+FVirtualShadowMapSampleResult SampleVirtualShadowMapDirectional(int VirtualShadowMapId, float3 TranslatedWorldPosition, float RayStartDistance = 0.0f)
 {
-	FLWCVector3 WorldPosition = LWCSubtract(TranslatedWorldPosition, PrimaryView.PreViewTranslation);
-	return SampleVirtualShadowMapInner(VirtualShadowMapId, WorldPosition, RayStartDistance, true, EstimatedGeoWorldNormal);
+	return SampleVirtualShadowMapDirectional(VirtualShadowMapId, TranslatedWorldPosition, RayStartDistance, float3(0, 0, 0), false);
 }
+FVirtualShadowMapSampleResult SampleVirtualShadowMapLocal(int VirtualShadowMapId, float3 TranslatedWorldPosition, float RayStartDistance = 0.0f)
+{
+	return SampleVirtualShadowMapLocal(VirtualShadowMapId, TranslatedWorldPosition, RayStartDistance, float3(0, 0, 0), false);
+}
+/**
+* Sample a virtual shadow map for an unknown light type with no optimal bias.
+* Will route to the appropriate function above.
+* Generally the directional/local variants should be used when the light's type is known to cut down on the
+* code/register overhead of including both paths.
+*/
 FVirtualShadowMapSampleResult SampleVirtualShadowMapTranslatedWorld(int VirtualShadowMapId, float3 TranslatedWorldPosition, float RayStartDistance = 0.0f)
 {
-	FLWCVector3 WorldPosition = LWCSubtract(TranslatedWorldPosition, PrimaryView.PreViewTranslation);
-	return SampleVirtualShadowMapInner(VirtualShadowMapId, WorldPosition, RayStartDistance, false, float3(0, 0, 0));
-}
-
-// LWC_TODO: Provided for compatibility with other systems that have not yet been updated to use the FLWCVector3 or
-// PrimaryView TranslatedWorldPosition versions below.
-FVirtualShadowMapSampleResult SampleVirtualShadowMapLWCHack(int VirtualShadowMapId, float3 WorldPosition, float RayStartDistance, float3 EstimatedGeoWorldNormal)
-{
-	FLWCVector3 WorldPositionLWC = LWCPromote(WorldPosition);
-	return SampleVirtualShadowMapInner(VirtualShadowMapId, WorldPositionLWC, RayStartDistance, true, EstimatedGeoWorldNormal);
-}
-FVirtualShadowMapSampleResult SampleVirtualShadowMapLWCHack(int VirtualShadowMapId, float3 WorldPosition, float RayStartDistance = 0.0f)
-{
-	FLWCVector3 WorldPositionLWC = LWCPromote(WorldPosition);
-	return SampleVirtualShadowMapInner(VirtualShadowMapId, WorldPositionLWC, RayStartDistance, false, float3(0, 0, 0));
+	FVirtualShadowMapProjectionShaderData BaseProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
+	if (BaseProjectionData.LightType == LIGHT_TYPE_DIRECTIONAL)
+	{
+		return SampleVirtualShadowMapDirectional(VirtualShadowMapId, TranslatedWorldPosition, RayStartDistance);
+	}
+	else
+	{
+		return SampleVirtualShadowMapLocal(VirtualShadowMapId, TranslatedWorldPosition, RayStartDistance);
+	}
 }

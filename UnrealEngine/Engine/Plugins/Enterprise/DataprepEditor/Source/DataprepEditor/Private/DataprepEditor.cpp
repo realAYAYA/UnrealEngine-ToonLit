@@ -792,6 +792,12 @@ void FDataprepEditor::CleanPreviewWorld()
 			UPackage* Package = Cast<UPackage>(PackagePath.ResolveObject());
 
 			UObject* ObjectToDelete = StaticFindObjectFast(nullptr, Package, *SoftObjectPath.GetAssetName());
+			if (!ObjectToDelete)
+			{
+				continue;
+			}
+
+			ObjectToDelete->ClearFlags(RF_Transactional);
 
 			if (UMaterialInstanceConstant* MaterialInstanceConstant = Cast<UMaterialInstanceConstant>(ObjectToDelete))
 			{

@@ -45,6 +45,7 @@ private:
 	TWeakObjectPtr<UMediaPlateComponent> MediaPlate;
 
 	/** Our widgets. */
+	TSharedPtr<STextBlock> MediaPlayerName;
 	TSharedPtr<STextBlock> FormatText;
 	TSharedPtr<STextBlock> FrameRateText;
 	TSharedPtr<STextBlock> LODBiasText;

@@ -22,11 +22,11 @@ private:
 	UPROPERTY(EditAnywhere, Category = Links)
 	FPoseLink Source;
 
-	// The group name that we synchronize with. All nodes employing sync beyond this in the anim graph will implicitly use this sync group.
+	// The group name that we synchronize with (NAME_None if it is not part of any group). 
 	UPROPERTY(EditAnywhere, Category = Settings)
 	FName GroupName;
 
-	// The role this player can assume within the group
+	// The role this animation can assume within the group (ignored if GroupName is not set)
 	UPROPERTY(EditAnywhere, Category = Settings)
 	TEnumAsByte<EAnimGroupRole::Type> GroupRole = EAnimGroupRole::CanBeLeader;
 

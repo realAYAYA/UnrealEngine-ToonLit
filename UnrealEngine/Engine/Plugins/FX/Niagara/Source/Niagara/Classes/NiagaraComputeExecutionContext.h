@@ -5,6 +5,7 @@
 #include "NiagaraCommon.h"
 #include "NiagaraScriptExecutionContext.h"
 #include "NiagaraSimStageData.h"
+#include "NiagaraSimStageExecutionData.h"
 #include "RHIGPUReadback.h"
 
 class FNiagaraGPUInstanceCountManager;
@@ -55,26 +56,20 @@ struct FNiagaraGpuSpawnInfo
 	}
 };
 
-struct FNiagaraComputeExecutionContext
+struct INiagaraComputeDataBufferInterface
+{
+	virtual bool HasTranslucentDataToRender() const = 0;
+	virtual FNiagaraDataBuffer* GetDataToRender(bool bIsLowLatencyTranslucent) const = 0;
+};
+
+struct FNiagaraComputeExecutionContext : public INiagaraComputeDataBufferInterface
 {
 	FNiagaraComputeExecutionContext();
-	~FNiagaraComputeExecutionContext();
+	virtual ~FNiagaraComputeExecutionContext();
 
-	void Reset(FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface);
-
-	void InitParams(UNiagaraScript* InGPUComputeScript, ENiagaraSimTarget InSimTarget);
-	void DirtyDataInterfaces();
-	bool Tick(FNiagaraSystemInstance* ParentSystemInstance);
-
-	bool OptionalContexInit(FNiagaraSystemInstance* ParentSystemInstance);
-
-	void PostTick();
-
-	void SetDataToRender(FNiagaraDataBuffer* InDataToRender);
-	void SetTranslucentDataToRender(FNiagaraDataBuffer* InTranslucentDataToRender);
-	void SetMultiViewPreviousDataToRender(FNiagaraDataBuffer* InMultiViewPreviousDataToRender);
-	bool HasTranslucentDataToRender() const { return TranslucentDataToRender != nullptr; }	
-	FNiagaraDataBuffer* GetDataToRender(bool bIsLowLatencyTranslucent) const
+	// Begin: INiagaraComputeDataBufferInterface
+	virtual bool HasTranslucentDataToRender() const override { return TranslucentDataToRender != nullptr; }
+	virtual FNiagaraDataBuffer* GetDataToRender(bool bIsLowLatencyTranslucent) const override
 	{
 		if (bIsLowLatencyTranslucent)
 		{
@@ -87,6 +82,24 @@ struct FNiagaraComputeExecutionContext
 			return MultiViewPreviousDataToRender ? MultiViewPreviousDataToRender : DataToRender;
 		}
 	}
+	// End: INiagaraComputeDataBufferInterface
+
+	void Reset(FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface);
+
+	void InitParams(UNiagaraScript* InGPUComputeScript, const FNiagaraSimStageExecutionDataPtr& InSimStageExecData, ENiagaraSimTarget InSimTarget);
+	void DirtyDataInterfaces();
+	bool Tick(FNiagaraSystemInstance* ParentSystemInstance);
+
+	bool OptionalContexInit(FNiagaraSystemInstance* ParentSystemInstance);
+
+	void PostTick();
+
+	void SetDataToRender(FNiagaraDataBuffer* InDataToRender);
+	void SetTranslucentDataToRender(FNiagaraDataBuffer* InTranslucentDataToRender);
+	void SetMultiViewPreviousDataToRender(FNiagaraDataBuffer* InMultiViewPreviousDataToRender);
+
+	int32 GetConstantBufferSize() const;
+	uint8* WriteConstantBufferInstanceData(uint8* InTargetBuffer, FNiagaraComputeInstanceData& InstanceData) const;
 
 	struct 
 	{
@@ -194,7 +207,7 @@ public:
 	// The current maximum instances we should allocate on the RT
 	uint32 CurrentMaxAllocateInstances_RT = 0;
 
-	TArray<FSimulationStageMetaData> SimStageInfo;
+	FNiagaraSimStageExecutionDataPtr SimStageExecData;
 
 	bool IsOutputStage(FNiagaraDataInterfaceProxy* DIProxy, uint32 SimulationStageIndex) const;
 	bool IsInputStage(FNiagaraDataInterfaceProxy* DIProxy, uint32 SimulationStageIndex) const;

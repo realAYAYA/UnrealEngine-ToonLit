@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace EpicGames.Horde.Compute
 {
 	/// <summary>
-	/// Full-duplex channel for sending and reciving messages
+	/// Full-duplex channel for sending and receiving messages
 	/// </summary>
 	public interface IComputeLease : IAsyncDisposable
 	{
@@ -25,7 +25,30 @@ namespace EpicGames.Horde.Compute
 		/// <summary>
 		/// Socket to communicate with the remote
 		/// </summary>
-		ComputeSocket Socket { get; }
+		RemoteComputeSocket Socket { get; }
+
+		/// <summary>
+		/// IP address of the remote agent machine running the compute task
+		/// When using relay connection mode, this may be the IP of the relay rather than the remote machine itself.
+		/// </summary>
+		public string Ip { get; }
+
+		/// <summary>
+		/// How to establish a connection to the remote machine (when not using the default socket)
+		/// </summary>
+		public ConnectionMode ConnectionMode { get; }
+
+		/// <summary>
+		/// Assigned ports (externally visible port -> local port on agent)
+		///
+		/// Key is an arbitrary name identifying the port (same as was given when requesting the lease>)
+		/// When relay mode is used, ports can mapped to a different externally visible port.
+		/// If compute task uses and listens to port 7000, that port can be externally represented as something else.
+		/// For example, port 32743 can be pointed to port 7000.
+		/// This makes no difference for the compute task process, but the client/initiator making connections must
+		/// pay attention to this mapping.
+		/// </summary>
+		IReadOnlyDictionary<string, ConnectionMetadataPort> Ports { get; }
 
 		/// <summary>
 		/// Relinquish the lease gracefully

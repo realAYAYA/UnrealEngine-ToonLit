@@ -188,7 +188,7 @@ void UUVEditorTransformTool::Setup()
 		int32 TargetIndex = Targets.Find(&Target);
 
 		TObjectPtr<UUVEditorUVTransformOperatorFactory> Factory = NewObject<UUVEditorUVTransformOperatorFactory>();
-		Factory->TargetTransform = Target.AppliedPreview->PreviewMesh->GetTransform();
+		Factory->TargetTransform = Target.UnwrapPreview->PreviewMesh->GetTransform();
 		Factory->Settings = Settings;
 		Factory->TransformType = ToolMode.Get(EUVEditorUVTransformType::Transform);
 		Factory->OriginalMesh = Target.UnwrapCanonical;
@@ -222,10 +222,10 @@ void UUVEditorTransformTool::Setup()
 			Target.UpdateAppliedPreviewFromUnwrapPreview();
 			
 
-			this->UVToolSelectionAPI->RebuildUnwrapHighlight(Preview->PreviewMesh->GetTransform());
+			this->UVToolSelectionAPI->RebuildUnwrapHighlight(Target.UnwrapPreview->PreviewMesh->GetTransform());
 			});
 
-		Target.UnwrapPreview->OnOpCompleted.AddLambda(
+		Target.UnwrapPreview->OnOpCompleted.AddWeakLambda(this,
 			[this, TargetIndex](const FDynamicMeshOperator* Op)
 			{
 				const FUVEditorUVTransformBaseOp* TransformBaseOp = (const FUVEditorUVTransformBaseOp*)(Op);
@@ -265,9 +265,10 @@ void UUVEditorTransformTool::Setup()
 void UUVEditorTransformTool::Shutdown(EToolShutdownType ShutdownType)
 {
 	Settings->SaveProperties(this);
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->UnwrapPreview->OnMeshUpdated.RemoveAll(this);
+		Target->UnwrapPreview->OnOpCompleted.RemoveAll(this);
 	}
 
 	if (ShutdownType == EToolShutdownType::Accept)
@@ -276,7 +277,7 @@ void UUVEditorTransformTool::Shutdown(EToolShutdownType ShutdownType)
 		const FText TransactionName(TransformToolLocals::ToolTransaction(ToolMode.Get(EUVEditorUVTransformType::Transform)));
 		ChangeAPI->BeginUndoTransaction(TransactionName);
 
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Set things up for undo. 
 			// TODO: It's not entirely clear whether it would be safe to use a FMeshVertexChange instead... It seems like
@@ -305,14 +306,14 @@ void UUVEditorTransformTool::Shutdown(EToolShutdownType ShutdownType)
 	else
 	{
 		// Reset the inputs
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			Target->UpdatePreviewsFromCanonical();
 		}
 	}
 
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->UnwrapPreview->ClearOpFactory();
 	}
@@ -329,7 +330,7 @@ void UUVEditorTransformTool::Shutdown(EToolShutdownType ShutdownType)
 
 void UUVEditorTransformTool::OnTick(float DeltaTime)
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->UnwrapPreview->Tick(DeltaTime);
 	}
@@ -342,7 +343,7 @@ void UUVEditorTransformTool::OnPropertyModified(UObject* PropertySet, FProperty*
 		return;
 	}
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->UnwrapPreview->InvalidateResult();
 	}
@@ -350,11 +351,25 @@ void UUVEditorTransformTool::OnPropertyModified(UObject* PropertySet, FProperty*
 
 bool UUVEditorTransformTool::CanAccept() const
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+
+	if (UVToolSelectionAPI->HaveSelections())
 	{
-		if (!Target->UnwrapPreview->HaveValidResult())
+		for (FUVToolSelection Selection : UVToolSelectionAPI->GetSelections())
 		{
-			return false;
+			if (!Selection.Target->UnwrapPreview->HaveValidResult())
+			{
+				return false;
+			}
+		}
+	}
+	else
+	{
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
+		{
+			if (!Target->UnwrapPreview->HaveValidResult())
+			{
+				return false;
+			}
 		}
 	}
 	return true;
@@ -425,7 +440,7 @@ void UUVEditorTransformTool::RecordAnalytics()
 	if (CanAccept())
 	{
 		TArray<double> PerAssetValidResultComputeTimes;
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Note: This would log -1 if the result was invalid, but checking CanAccept above ensures results are valid
 			PerAssetValidResultComputeTimes.Add(Target->UnwrapPreview->GetValidResultComputeTime());

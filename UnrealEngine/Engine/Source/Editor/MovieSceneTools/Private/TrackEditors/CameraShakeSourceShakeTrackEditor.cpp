@@ -57,7 +57,7 @@
 #include "Sections/MovieSceneCameraShakeSourceShakeSection.h"
 #include "Sections/MovieSceneCameraShakeSourceTriggerSection.h"
 #include "SequencerSectionPainter.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "SlotBase.h"
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
@@ -65,7 +65,6 @@
 #include "Styling/SlateColor.h"
 #include "Styling/WidgetStyle.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Textures/SlateIcon.h"
 #include "TimeToPixel.h"
 #include "Tracks/MovieSceneCameraShakeSourceShakeTrack.h"
@@ -342,30 +341,17 @@ TSharedPtr<SWidget> FCameraShakeSourceShakeTrackEditor::BuildOutlinerEditWidget(
 {
 	if (UMovieSceneCameraShakeSourceShakeTrack* ShakeTrack = Cast<UMovieSceneCameraShakeSourceShakeTrack>(Track))
 	{
-		return SNew(SHorizontalBox)
-			+SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				FSequencerUtilities::MakeAddButton(
+		return UE::Sequencer::MakeAddButton(
 						LOCTEXT("AddShakeSourceShakeSection", "Camera Shake"),
 						FOnGetContent::CreateSP(this, &FCameraShakeSourceShakeTrackEditor::BuildCameraShakeSubMenu, ObjectBinding),
-						Params.NodeIsHovered, GetSequencer())
-			];
+						Params.ViewModel);
 	}
 	else
 	{
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				FSequencerUtilities::MakeAddButton(
+		return UE::Sequencer::MakeAddButton(
 						LOCTEXT("AddSection", "Section"),
 						FOnGetContent::CreateSP(this, &FCameraShakeSourceShakeTrackEditor::BuildCameraShakeTracksMenu, ObjectBinding),
-						Params.NodeIsHovered, 
-						GetSequencer())
-			];
+						Params.ViewModel);
 	}
 }
 

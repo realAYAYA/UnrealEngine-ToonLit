@@ -130,7 +130,7 @@ bool CheckProviderIsRequestedAndSupported(FNiagaraAsyncGpuTraceProvider::EProvid
 	return false;
 }
 
-bool FNiagaraAsyncGpuTraceProvider::RequiresDistanceFieldData(EProviderType InType, const FProviderPriorityArray& Priorities)
+bool FNiagaraAsyncGpuTraceProvider::RequiresGlobalDistanceField(EProviderType InType, const FProviderPriorityArray& Priorities)
 {
 	return CheckProviderIsRequestedAndSupported<FNiagaraAsyncGpuTraceProviderGsdf>(InType, Priorities);
 }

@@ -149,7 +149,8 @@ void SCustomizableObjectNodeLayoutBlocksSelector::AddReferencedObjects( FReferen
 
 TSharedRef<SWidget> SCustomizableObjectNodeLayoutBlocksSelector::BuildLayoutToolBar()
 {
-	FToolBarBuilder LayoutToolbarBuilder(UICommandList, FMultiBoxCustomization::None);
+	FSlimHorizontalToolBarBuilder LayoutToolbarBuilder(UICommandList, FMultiBoxCustomization::None, nullptr, true);
+	LayoutToolbarBuilder.SetLabelVisibility(EVisibility::Visible);
 
 	// Build toolbar widgets
 

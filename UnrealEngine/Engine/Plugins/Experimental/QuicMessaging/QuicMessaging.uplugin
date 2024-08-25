@@ -26,7 +26,8 @@
 		"UnrealRecoverySvc",
 		"UnrealLightmass",
 		"CrashReportClientEditor",
-		"CoopMultiUserServer"
+		"CoopMultiUserServer",
+		"LiveLinkHub"
 	],
 	"Modules": [
 		{
@@ -41,7 +42,8 @@
 				"UnrealRecoverySvc",
 				"UnrealLightmass",
 				"CrashReportClientEditor",
-				"CoopMultiUserServer"
+				"CoopMultiUserServer",
+				"LiveLinkHub"
 			]
 		},
 		{
@@ -56,7 +58,8 @@
 				"UnrealRecoverySvc",
 				"UnrealLightmass",
 				"CrashReportClientEditor",
-				"CoopMultiUserServer"
+				"CoopMultiUserServer",
+				"LiveLinkHub"
 			]
 		}
 	],

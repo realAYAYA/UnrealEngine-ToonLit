@@ -95,14 +95,6 @@ public:
 	virtual TArray<FString> GetStreamerIds() = 0;
 
 	/**
-	 * Get a streamer by an ID. 
-	 * // This method has been renamed as the module isn't responsible for a Streamer's lifetime, so renaming to Find as opposed to Get makes this more obvious
-	 * @return A pointer to the interface for a streamer. nullptr if the streamer isn't found
-	 */
-	UE_DEPRECATED(5.2, "GetStreamer() is deprecated. Please use FindStreamer instead.")
-	virtual TSharedPtr<IPixelStreamingStreamer> GetStreamer(const FString& StreamerId) = 0;
-
-	/**
 	 * Find a streamer by an ID.
 	 * @return A pointer to the interface for a streamer. nullptr if the streamer isn't found
 	 */
@@ -120,32 +112,6 @@ public:
 	 * @param ToBeDeleted The streamer to remove from the internal management.
 	 */
 	virtual void DeleteStreamer(TSharedPtr<IPixelStreamingStreamer> ToBeDeleted) = 0;
-
-	/**
-	 * Get the protocol currently used by each peer.
-	 */
-	UE_DEPRECATED(5.2, "GetProtocol() is deprecated. Simply access the required direction with FPixelStreamingInputProtocol::ToStreamerProcol or FPixelStreamingInputProtocol::FromStreamerProcol")
-	virtual const FPixelStreamingInputProtocol GetProtocol() = 0;
-
-	/**
-	 * @brief Register a new message that peers can send and pixel streaming can receive
-	 *
-	 * @param MessageDirection The direction the message will travel. eg Streamer->Player or Player->Streamer
-	 * @param MessageType The human readable identifier (eg "TouchStarted")
-	 * @param Message The object used to define the structure of the message
-	 * @param Handler The handler for this message. This function will be executed whenever the corresponding message is received
-	 */
-	UE_DEPRECATED(5.2, "RegisterMessage(...) is no longer needed. Just add your message to the protocol using FPixelStreamingInputProtocol::Direction.Add(XXX);, and then add the handler to the Streamer's input handler")
-	virtual void RegisterMessage(EPixelStreamingMessageDirection MessageDirection, const FString& MessageType, FPixelStreamingInputMessage Message, const TFunction<void(FMemoryReader)>& Handler) = 0;
-
-	/**
-	 * @brief Find the function to be called whenever the specified message is received.
-	 *
-	 * @param MessageType The human readable identifier for the message
-	 * @return TFunction<void(FMemoryReader)> The function called when this message is received.
-	 */
-	UE_DEPRECATED(5.2, "FindMessageHandler(...) has been moved from the PixelStreaming module to IPixelStreamingInputHandler. This object can be obtained from an (IPixelStreamingStreamer)->GetInputHandler()")
-	virtual TFunction<void(FMemoryReader)> FindMessageHandler(const FString& MessageType) = 0;
 
 	/**
 	 * Sets the target FPS for Externally Consumed video Tracks

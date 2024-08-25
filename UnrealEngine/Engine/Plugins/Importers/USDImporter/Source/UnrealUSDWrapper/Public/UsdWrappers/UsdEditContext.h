@@ -18,15 +18,15 @@ namespace UE
 	 */
 	class UNREALUSDWRAPPER_API FUsdEditContext final
 	{
-		FUsdEditContext( const FUsdEditContext& Other ) = delete;
-		FUsdEditContext& operator=( const FUsdEditContext& Other ) = delete;
+		FUsdEditContext(const FUsdEditContext& Other) = delete;
+		FUsdEditContext& operator=(const FUsdEditContext& Other) = delete;
 
 	public:
-		explicit FUsdEditContext( const FUsdStageWeak& Stage );
-		FUsdEditContext( const FUsdStageWeak& Stage, const FSdfLayer& EditTarget );
+		explicit FUsdEditContext(const FUsdStageWeak& Stage);
+		FUsdEditContext(const FUsdStageWeak& Stage, const FSdfLayer& EditTarget);
 		~FUsdEditContext();
 
 	private:
-		TUniquePtr< Internal::FUsdEditContextImpl > Impl;
+		TUniquePtr<Internal::FUsdEditContextImpl> Impl;
 	};
 }

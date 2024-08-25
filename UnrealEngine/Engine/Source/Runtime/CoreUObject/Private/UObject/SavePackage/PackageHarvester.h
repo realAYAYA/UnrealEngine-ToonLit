@@ -97,6 +97,7 @@ private:
 		UObject* CurrentExport = nullptr;
 		TSet<TObjectPtr<UObject>> ObjectReferences;
 		TSet<TObjectPtr<UObject>> NativeObjectReferences;
+		int32 ProcessImportDepth = 0;
 		bool bIgnoreDependencies = false;
 	};
 
@@ -147,6 +148,8 @@ private:
 	ESaveableStatus GetSaveableStatusForRealm(UObject* Obj, ESaveRealm RealmInWhichItIsUnsaveable,
 		TObjectPtr<UObject>& OutCulprit, FString& OutReason);
 
+	/** Set HarvestingRealms equal to the given Array. */
+	FHarvestScope EnterRealmsArrayScope(FExportingRealmsArray& Array);
 	/** If bIsEditorOnly is true, remove CurrentExportHarvestingRealms that do not follow editoronly references. */
 	FHarvestScope EnterConditionalEditorOnlyScope(bool bIsEditorOnly);
 	/** If the Object is optional, clear CurrentExportHarvestingRealms and populate it with the Optional Realm. */
@@ -159,6 +162,9 @@ private:
 	FHarvestScope EnterNotPreviouslyExcludedScope(TObjectPtr<UObject> Object);
 	/** Remove CurrentExportHarvestingRealms that return false for IsIncluded(Object). */
 	FHarvestScope EnterIncludedScope(TObjectPtr<UObject> Object);
+	/** Copy CurrentExportHarvestingRealms and split it into two arrays: AlreadyIncluded and NotAlreadyIncluded. */
+	void GetPreviouslyIncludedRealms(TObjectPtr<UObject> Object, FExportingRealmsArray& OutAlreadyIncluded,
+		FExportingRealmsArray& OutNotAlreadyIncluded);
 
 	FSaveContext& SaveContext;
 	TQueue<FExportWithContext> ExportsToProcess;

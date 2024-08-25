@@ -19,6 +19,7 @@ const FName FTimersViewColumns::NameColumnID(TEXT("Name")); // TEXT("_Hierarchy"
 const FName FTimersViewColumns::MetaGroupNameColumnID(TEXT("MetaGroupName"));
 const FName FTimersViewColumns::TypeColumnID(TEXT("Type"));
 const FName FTimersViewColumns::InstanceCountColumnID(TEXT("Count"));
+const FName FTimersViewColumns::ChildInstanceCountColumnID(TEXT("ChildCount"));
 
 // Inclusive Time columns
 const FName FTimersViewColumns::TotalInclusiveTimeColumnID(TEXT("TotalInclTime"));
@@ -71,8 +72,11 @@ void FTimersViewColumnFactory::CreateTimerTreeViewColumns(TArray<TSharedRef<Insi
 	Columns.Add(CreateNameColumn());
 	Columns.Add(CreateTypeColumn());
 	Columns.Add(CreateInstanceCountColumn());
+	Columns.Add(CreateChildInstanceCountColumn());
 	Columns.Add(CreateTotalInclusiveTimeColumn());
+	Columns.Add(CreateAverageInclusiveTimeColumn());
 	Columns.Add(CreateTotalExclusiveTimeColumn());
+	Columns.Add(CreateAverageExclusiveTimeColumn());
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -225,7 +229,7 @@ TSharedRef<Insights::FTableColumn> FTimersViewColumnFactory::CreateInstanceCount
 	Column.SetShortName(LOCTEXT("InstanceCount_ColumnName", "Count"));
 	Column.SetTitleName(LOCTEXT("InstanceCount_ColumnTitle", "Instance Count"));
 
-	FText Description = LOCTEXT("InstanceCount_ColumnDesc", "Number of selected timer's instances");
+	FText Description = LOCTEXT("InstanceCount_ColumnDesc", "Number of timing event instances of the selected timer");
 	Column.SetDescription(ETraceFrameType::TraceFrameType_Count, Description);
 	Column.SetDescription(ETraceFrameType::TraceFrameType_Game, Description);
 	Column.SetDescription(ETraceFrameType::TraceFrameType_Rendering, Description);
@@ -247,6 +251,60 @@ TSharedRef<Insights::FTableColumn> FTimersViewColumnFactory::CreateInstanceCount
 			ensure(Column.GetId() == FTimersViewColumns::InstanceCountColumnID);
 			const FTimerNode& TimerNode = static_cast<const FTimerNode&>(Node);
 			return TOptional<FTableCellValue>(FTableCellValue(static_cast<int64>(TimerNode.GetAggregatedStats().InstanceCount)));
+		}
+	};
+
+	TSharedRef<ITableCellValueGetter> Getter = MakeShared<FInstanceCountValueGetter>();
+	Column.SetValueGetter(Getter);
+
+	TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FInt64ValueFormatterAsNumber>();
+	Column.SetValueFormatter(Formatter);
+
+	//TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
+	TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FTimerNodeSortingByInstanceCount>(ColumnRef);
+	Column.SetValueSorter(Sorter);
+	Column.SetInitialSortMode(EColumnSortMode::Descending);
+
+	return ColumnRef;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+TSharedRef<Insights::FTableColumn> FTimersViewColumnFactory::CreateChildInstanceCountColumn()
+{
+	using namespace Insights;
+
+	TSharedRef<FTimersTableColumn> ColumnRef = MakeShared<FTimersTableColumn>(FTimersViewColumns::ChildInstanceCountColumnID);
+	FTimersTableColumn& Column = *ColumnRef;
+
+	Column.SetShortName(LOCTEXT("ChildInstanceCount_ColumnName", "Child Count"));
+	Column.SetTitleName(LOCTEXT("ChildInstanceCount_ColumnTitle", "Child Instance Count"));
+
+	FText Description = LOCTEXT("ChildInstanceCount_ColumnDesc", "Total number of timing event instances of the child timers (callers or callees)");
+	Column.SetDescription(ETraceFrameType::TraceFrameType_Count, Description);
+	Column.SetDescription(ETraceFrameType::TraceFrameType_Game, Description);
+	Column.SetDescription(ETraceFrameType::TraceFrameType_Rendering, Description);
+
+	Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+
+	Column.SetHorizontalAlignment(HAlign_Right);
+	Column.SetInitialWidth(60.0f);
+
+	Column.SetDataType(ETableCellDataType::Int64);
+
+	class FInstanceCountValueGetter : public FTableCellValueGetter
+	{
+	public:
+		virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const
+		{
+			ensure(Column.GetId() == FTimersViewColumns::ChildInstanceCountColumnID);
+			const FTimerNode& TimerNode = static_cast<const FTimerNode&>(Node);
+			int64 TotalChildInstanceCount = 0;
+			for (const auto& ChildNode : TimerNode.GetChildren())
+			{
+				TotalChildInstanceCount += ChildNode->As<FTimerNode>().GetAggregatedStats().InstanceCount;
+			}
+			return TOptional<FTableCellValue>(FTableCellValue(TotalChildInstanceCount));
 		}
 	};
 
@@ -583,7 +641,7 @@ TSharedRef<Insights::FTableColumn> FTimersViewColumnFactory::CreateMaxExclusiveT
 	Column.SetDescription(ETraceFrameType::TraceFrameType_Count, LOCTEXT("MaxExclusiveTime_ColumnDesc", "Maximum exclusive duration of selected timer's instances, in milliseconds"));
 	Column.SetDescription(ETraceFrameType::TraceFrameType_Game, LOCTEXT("MaxExclusiveTime_GameFrameColumnDesc", "Game Frame Maximum Exclusive Duration.\nExclusive duration is computed for a single frame as the sum of exclusive duration of all instances of the timer in the respective frame.\nThe maximum is selected from these per-frame Exclusive durations. Unit is miliseconds."));
 	Column.SetDescription(ETraceFrameType::TraceFrameType_Rendering, LOCTEXT("MaxExclusiveTime_RenderingFrameColumnDesc", "Rendering Frame Maximum Exclusive Duration.\nExclusive duration is computed for a single frame as the sum of exclusive duration of all instances of the timer in the respective frame. The maximum is selected from these per-frame Exclusive durations.\nUnit is miliseconds."));
-	
+
 	Column.SetFlags(ETableColumnFlags::CanBeHidden |
 					//ETableColumnFlags::ShouldBeVisible |
 					ETableColumnFlags::CanBeFiltered);

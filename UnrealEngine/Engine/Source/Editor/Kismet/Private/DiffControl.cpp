@@ -254,7 +254,10 @@ void FSCSDiffControl::GenerateTreeEntries(TArray<TSharedPtr<FBlueprintDifference
 		{
 			return SNew(STextBlock)
 					.Text(DiffViewUtils::SCSDiffMessage(Entry, ObjectName))
-					.ColorAndOpacity(DiffViewUtils::Differs());
+					.ColorAndOpacity(Entry.DiffType == ETreeDiffType::NODE_CORRUPTED ?
+						DiffViewUtils::Conflicting() :
+						DiffViewUtils::Differs()
+						);
 		};
 
 		for (const FSCSDiffEntry& Difference : DifferingProperties.Entries)
@@ -466,39 +469,7 @@ TAttribute<TArray<FVector2f>> FDetailsDiffControl::GetLinkedScrollRateAttribute(
 TArray<FVector2f> FDetailsDiffControl::GetLinkedScrollRate(TSharedRef<IDetailsView> LeftDetailsView, TSharedRef<IDetailsView> RightDetailsView) const
 {
 	const UObject* LeftObject = LeftDetailsView->GetSelectedObjects()[0].Get();
-	
-	TArray<FIntVector2> MatchingRows;
-
-	// iterate matching rows of both details panels simultaneously
-	auto [LeftRowCount, RightRowCount] = PropertyTreeDifferences[LeftObject].Right->ForEachRow(
-		[&MatchingRows](const TUniquePtr<FAsyncDetailViewDiff::DiffNodeType>& DiffNode, int32 LeftRow, int32 RightRow)->ETreeTraverseControl
-		{
-			// if both trees share this row, sync scrolling here
-			if (DiffNode->ValueA.IsValid() && DiffNode->ValueB.IsValid())
-			{
-				if (MatchingRows.IsEmpty() || (MatchingRows.Last().X != LeftRow && MatchingRows.Last().Y != RightRow))
-				{
-					MatchingRows.Emplace(LeftRow, RightRow);
-				}
-			}
-			return ETreeTraverseControl::Continue;
-		}
-	);
-
-	TArray<FVector2f> FixedPoints;
-	FixedPoints.Emplace(0.f, 0.f);
-	
-	// normalize fixed points
-	for (FIntVector2& MatchingRow : MatchingRows)
-	{
-		FixedPoints.Emplace(
-			StaticCast<float>(MatchingRow.X) / LeftRowCount,
-			StaticCast<float>(MatchingRow.Y) / RightRowCount
-		);
-	}
-	FixedPoints.Emplace(1.f, 1.f);
-	
-	return FixedPoints;
+	return PropertyTreeDifferences[LeftObject].Right->GenerateScrollSyncRate();
 }
 
 

@@ -2,8 +2,8 @@
 
 #pragma once
 
-#include "SimModule/TorqueSimModule.h"
-
+#include "VehicleUtility.h"
+#include "SimModule/SimulationModuleBase.h"
 
 namespace Chaos
 {
@@ -22,32 +22,31 @@ namespace Chaos
 	{
 		FAerofoilSettings()
 			: Offset(FVector::ZeroVector)
-			, UpAxis(FVector(0.f, 0.f, 1.f))
+			, ForceAxis(FVector(0.f, 0.f, 1.f))
+			, ControlRotationAxis(FVector(0.f, 1.f, 0.f))
 			, Area(5.0f)
 			, Camber(3.0f)
 			, MaxControlAngle(1.f)
 			, StallAngle(16.0f)
-			, MaxCeiling(1E30)
-			, MinCeiling(-1E30)
 			, Type(EAerofoil::Fixed)
 			, LiftMultiplier(1.0f)
 			, DragMultiplier(1.0f)
+			, AnimationMagnitudeMultiplier(1.0f)
 		{
 		}
-
+		
 		FVector Offset;
-		FVector UpAxis;
+		FVector ForceAxis;
+		FVector ControlRotationAxis;
 		float Area;
 		float Camber;
 		float MaxControlAngle;
 		float StallAngle;
 
-		float MaxCeiling;
-		float MinCeiling;
-
 		EAerofoil Type;
 		float LiftMultiplier;
 		float DragMultiplier;
+		float AnimationMagnitudeMultiplier;
 
 	};
 
@@ -67,6 +66,8 @@ namespace Chaos
 
 		virtual ~FAerofoilSimModule() {}
 
+		virtual TSharedPtr<FModuleNetData> GenerateNetData(int NodeArrayIndex) const { return nullptr; }
+
 		virtual eSimType GetSimType() const { return eSimType::Aerofoil; }
 
 		virtual const FString GetDebugName() const { return TEXT("Aerofoil"); }
@@ -75,12 +76,13 @@ namespace Chaos
 
 		virtual void Simulate(float DeltaTime, const FAllInputs& Inputs, FSimModuleTree& VehicleModuleSystem) override;
 
+		virtual void Animate(Chaos::FClusterUnionPhysicsProxy* Proxy) override;
+
 		void SetDensityOfMedium(float InDensity)
 		{
 			CurrentAirDensity = InDensity;
 		}
 
-	protected:
 		void SetControlSurface(float CtrlSurfaceInput)
 		{
 			ControlSurfaceAngle = CtrlSurfaceInput * Setup().MaxControlAngle;

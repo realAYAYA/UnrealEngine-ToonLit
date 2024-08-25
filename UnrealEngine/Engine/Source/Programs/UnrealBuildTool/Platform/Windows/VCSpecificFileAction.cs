@@ -99,7 +99,7 @@ namespace UnrealBuildTool
 			{
 				Action.DependencyListFile = FileItem.GetItemByFileReference(FileReference.Combine(IntermediateDirectory, $"{Filename}.dep.json"));
 			}
-			else if (BaseAction.CompilerType.IsMSVC())
+			else if (BaseAction.CompilerType.IsClang())
 			{
 				Action.DependencyListFile = FileItem.GetItemByFileReference(FileReference.Combine(IntermediateDirectory, $"{Filename}.d"));
 			}

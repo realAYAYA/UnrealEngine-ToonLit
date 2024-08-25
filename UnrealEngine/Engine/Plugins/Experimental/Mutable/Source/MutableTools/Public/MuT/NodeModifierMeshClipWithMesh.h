@@ -12,13 +12,7 @@ namespace mu
 {
 
 	// Forward definitions
-	class NodeModifierMeshClipWithMesh;
-	typedef Ptr<NodeModifierMeshClipWithMesh> NodeModifierMeshClipWithMeshPtr;
-	typedef Ptr<const NodeModifierMeshClipWithMesh> NodeModifierMeshClipWithMeshPtrConst;
-
 	class NodeMesh;
-	typedef Ptr<NodeMesh> NodeMeshPtr;
-	typedef Ptr<const NodeMesh> NodeMeshPtrConst;
 
 
 	//! This node makes a new component from several meshes and images.
@@ -35,20 +29,14 @@ namespace mu
 
 		void SerialiseWrapper(OutputArchive& arch) const override;
 		static void Serialise( const NodeModifierMeshClipWithMesh* pNode, OutputArchive& arch );
-		static NodeModifierMeshClipWithMeshPtr StaticUnserialise( InputArchive& arch );
+		static Ptr<NodeModifierMeshClipWithMesh> StaticUnserialise( InputArchive& arch );
 
 		//-----------------------------------------------------------------------------------------
         // Node interface
 		//-----------------------------------------------------------------------------------------
 
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        int GetInputCount() const override;
-        Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
         // Own interface

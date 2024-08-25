@@ -31,6 +31,11 @@ enum class EShadingPath
 	Num,
 };
 
+inline EShadingPath GetFeatureLevelShadingPath(FStaticFeatureLevel InFeatureLevel)
+{
+	return (InFeatureLevel >= ERHIFeatureLevel::SM5) ? EShadingPath::Deferred : EShadingPath::Mobile;
+}
+
 enum class EMobileHDRMode
 {
 	Unset,
@@ -57,9 +62,6 @@ inline bool IsTemporalAccumulationBasedMethod(EAntiAliasingMethod AntiAliasingMe
 	return AntiAliasingMethod == AAM_TemporalAA || AntiAliasingMethod == AAM_TSR;
 }
 
-/** True if HDR is enabled for the mobile renderer. */
-ENGINE_API bool IsMobileHDR();
-
 /** True if Alpha Propagate is enabled for the mobile renderer. */
 ENGINE_API bool IsMobilePropagateAlphaEnabled(EShaderPlatform Platform);
 
@@ -72,6 +74,25 @@ ENGINE_API EAntiAliasingMethod GetDefaultAntiAliasingMethod(const FStaticFeature
 ENGINE_API const TCHAR* GetShortAntiAliasingName(EAntiAliasingMethod AntiAliasingMethod);
 
 ENGINE_API uint32 GetDefaultMSAACount(const FStaticFeatureLevel InFeatureLevel, uint32 PlatformMaxSampleCount = 8);
+
+enum class ECustomDepthMode : uint8
+{
+	// Custom depth is disabled.
+	Disabled,
+
+	// Custom depth is enabled.
+	Enabled,
+
+	// Custom depth is enabled and uses stencil.
+	EnabledWithStencil,
+};
+
+ENGINE_API extern ECustomDepthMode GetCustomDepthMode();
+
+inline bool IsCustomDepthPassEnabled()
+{
+	return GetCustomDepthMode() != ECustomDepthMode::Disabled;
+}
 
 // Callback for calling one action (typical use case: delay a clear until it's actually needed)
 class FDelayedRendererAction

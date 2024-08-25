@@ -37,22 +37,27 @@ float2 GetGGXAlpha(float Roughness, float Anisotropy)
 float3x3 GetGGXBasis(float Roughness, float Anisotropy, float3 WorldNormal, float3 WorldTangent, out float2 Alpha)
 {
 	Roughness = max(Roughness, GGX_MIN_ROUGHNESS);
-	float3x3 Basis;
 	if (abs(Anisotropy) >= GGX_MIN_ANISOTROPY)
 	{
 		// Material is anisotropic, our shading frame should use the tangent vector
 		GetAnisotropicRoughness(Roughness * Roughness, Anisotropy, Alpha.x, Alpha.y);
-		float3 X = WorldTangent;
-		float3 Y = normalize(cross(WorldNormal, X));
-		Basis = float3x3(cross(Y, WorldNormal), Y, WorldNormal);
+		float3 Y = cross(WorldNormal, WorldTangent);
+		float LenY2 = length2(Y);
+		if (LenY2 > 0)
+		{
+			// Tangent vector is valid
+			Y *= rsqrt(LenY2);
+			return float3x3(cross(Y, WorldNormal), Y, WorldNormal);
+		}
+		// Fallthrough to build a default basis if we couldn't build one
 	}
 	else
 	{
-		// No anisotropy, just pick an arbitrary basis
+		// No anisotropy, use simpler formula
 		Alpha = Roughness * Roughness;
-		Basis = GetTangentBasis(WorldNormal);
 	}
-	return Basis;
+	// pick an arbitrary basis (no anisotropy, or invalid tangent vector)
+	return GetTangentBasis(WorldNormal);
 }
 
 float3x3 GetGGXBasis(float Roughness, float3 WorldNormal, out float2 Alpha)
@@ -64,7 +69,7 @@ float3x3 GetGGXBasis(float Roughness, float3 WorldNormal, out float2 Alpha)
 }
 
 // Compute GGX lobe Weight and Pdf (without Fresnel term) given a set of vectors in local space (Z up)
-float2 GGXEvalReflection(float3 L, float3 V, float3 H, float2 Alpha)
+float2 GGXEvalReflection(float3 L, float3 V, float3 H, float2 Alpha, bool bLimitVDNFToReflection = true)
 {
 	const float NoL = saturate(L.z);
 	const float NoV = saturate(V.z);
@@ -74,11 +79,21 @@ float2 GGXEvalReflection(float3 L, float3 V, float3 H, float2 Alpha)
 		const float D = D_GGXaniso(Alpha.x, Alpha.y, H.z, H.x, H.y);
 		// See implementation in Vis_SmithJointAniso for G2/(4*NoV*NoL)
 		// We can simplify a bit further since we need both the weight G2/G1 and the pdf
-		const float LenL = length(float3(L.x * Alpha.x, L.y * Alpha.y, NoL));
-		const float LenV = length(float3(V.x * Alpha.x, V.y * Alpha.y, NoV));
-		const float Weight = NoL * (LenV + NoV) / (NoV * LenL + NoL * LenV);
-		const float Pdf = 0.5 * D * rcp(LenV + NoV);
-
+		const float LenL = length(float3(L.xy * Alpha, NoL));
+		const float LenV = length(float3(V.xy * Alpha, NoV));
+		float k = 1.0;
+#if GGX_BOUNDED_VNDF_SAMPLING
+		if (bLimitVDNFToReflection)
+		{
+			float a = saturate(min(Alpha.x, Alpha.y));
+			float s = 1.0f + length(V.xy);
+			float a2 = a * a, s2 = s * s;
+			k = (s2 - a2 * s2) / (s2 + a2 * NoV * NoV); // Eq. 5
+		}
+#endif
+		const float Weight = NoL * (LenV + k * NoV) / (NoV * LenL + NoL * LenV);
+		const float Pdf = 0.5 * D * rcp(LenV + k * NoV);
+		
 		return float2(Weight, Pdf);
 	}
 	return 0;
@@ -99,8 +114,8 @@ float2 GGXEvalRefraction(float3 L, float3 V, float3 H, float2 Alpha, float Eta)
 		const float LoH = saturate(-dot(L, H));
 
 		// Same as logic above, only the pdf math differs slightly
-		const float LenL = length(float3(L.x * Alpha.x, L.y * Alpha.y, NoL));
-		const float LenV = length(float3(V.x * Alpha.x, V.y * Alpha.y, NoV));
+		const float LenL = length(float3(L.xy * Alpha, NoL));
+		const float LenV = length(float3(V.xy * Alpha, NoV));
 		const float Weight = NoL * (LenV + NoV) / (NoV * LenL + NoL * LenV);
 		const float Pdf = (LoH * VoH * Eta * Eta * 2.0 * D) / (Pow2(VoH - Eta * LoH) * (LenV + NoV));
 

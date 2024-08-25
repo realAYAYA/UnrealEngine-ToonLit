@@ -9,16 +9,6 @@
 #include "UObject/WeakObjectPtr.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-	#include "EntitySystem/MovieScenePropertySystemTypes.h"
-	#include "EntitySystem/TrackInstance/MovieSceneTrackInstance.h"
-	#include "Evaluation/IMovieSceneEvaluationHook.h"
-	#include "Evaluation/MovieSceneAnimTypeID.h"
-	#include "Evaluation/MovieSceneCompletionMode.h"
-	#include "Evaluation/MovieSceneEvaluationKey.h"
-	#include "Misc/TVariant.h"
-#endif
-
 class FMovieScenePreAnimatedState;
 class IMovieScenePlayer;
 class UClass;
@@ -30,18 +20,6 @@ struct FMovieSceneSequenceID;
 struct IMovieScenePreAnimatedGlobalTokenProducer;
 struct IMovieScenePreAnimatedTokenProducer;
 template <typename FuncType> class TFunctionRef;
-
-namespace UE
-{
-namespace MovieScene
-{
-
-struct FPreAnimatedEvaluationHookCaptureSources;
-struct FPreAnimatedStateEntry;
-struct FPreAnimatedTemplateCaptureSources;
-
-}
-}
 
 /**
  * Class that caches pre-animated state for objects that were manipulated by sequencer
@@ -90,12 +68,6 @@ public:
 
 public:
 
-	MOVIESCENE_API void OnFinishedEvaluating(const FMovieSceneEvaluationKey& Key);
-
-	MOVIESCENE_API void OnFinishedEvaluating(const UObject* EvaluationHook, FMovieSceneSequenceID SequenceID);
-
-public:
-
 	MOVIESCENE_API void RestorePreAnimatedState();
 
 	MOVIESCENE_API void RestorePreAnimatedState(UObject& Object);
@@ -103,6 +75,9 @@ public:
 	MOVIESCENE_API void RestorePreAnimatedState(UClass* GeneratedClass);
 
 	MOVIESCENE_API void RestorePreAnimatedState(UObject& Object, TFunctionRef<bool(FMovieSceneAnimTypeID)> InFilter);
+
+	// Discards all pre-animated state without restoring it.
+	MOVIESCENE_API void DiscardPreAnimatedState();
 
 	/**
 	 * Discard any tokens that relate to entity animation (ie sections or tracks) without restoring the values.
@@ -139,11 +114,6 @@ private:
 
 	/** Weak pointer to the linker that we're associated with */
 	TWeakObjectPtr<UMovieSceneEntitySystemLinker> WeakLinker;
-
-	/** Meta-data ledger for any pre-animated state that originates from track templates */
-	TSharedPtr<UE::MovieScene::FPreAnimatedTemplateCaptureSources> TemplateMetaData;
-	/** Meta-data ledger for any pre-animated state that originates from evaluation hooks */
-	TSharedPtr<UE::MovieScene::FPreAnimatedEvaluationHookCaptureSources> EvaluationHookMetaData;
 
 	/** The instance handle for the root sequence instance */
 	UE::MovieScene::FRootInstanceHandle InstanceHandle;

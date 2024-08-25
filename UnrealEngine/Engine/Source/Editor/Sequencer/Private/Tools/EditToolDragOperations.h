@@ -66,6 +66,11 @@ protected:
 	/** End an existing scoped transaction if one exists */
 	void EndTransaction();
 
+	virtual void GetSections(TArray<UMovieSceneSection*>& OutSections) {}
+
+	/** Get the bounds within which the specified section can be resized based on its surrounding sections */
+	TRange<FFrameNumber> GetSectionBoundaries(const UMovieSceneSection* Section);
+
 protected:
 
 	/** Scoped transaction for this drag operation */
@@ -144,6 +149,9 @@ private:
 
 	/** Optional snap field to use when dragging */
 	TOptional<FSequencerSnapField> SnapField;
+
+protected:
+	void GetSections(TArray<UMovieSceneSection*>& OutSections) override { OutSections = Sections.Array(); }
 };
 
 /**
@@ -171,9 +179,6 @@ public:
 protected:
 	/** Calculate the possible horizontal movement we can, constrained by sections running into things. */
 	TOptional<FFrameNumber> GetMovementDeltaX(FFrameTime MouseTime);
-
-	/** Get the bounds within which the specified section can move based on its surrounding sections */
-	TRange<FFrameNumber> GetSectionBoundaries(const UMovieSceneSection* Section);
 
 	/** Move selected sections, if any. */
 	bool HandleSectionMovement(FFrameTime MouseTime, FVector2D VirtualMousePos, FVector2D LocalMousePos, TOptional<FFrameNumber> MaxDeltaX, FFrameNumber DesiredDeltaX);
@@ -230,6 +235,9 @@ protected:
 
 	/** If the user is moving them via clicking on the Section then we'll allow vertical re-arranging, otherwise not. */
 	bool bAllowVerticalMovement;
+
+protected:
+	void GetSections(TArray<UMovieSceneSection*>& OutSections) override { OutSections = Sections.Array(); }
 };
 
 /**

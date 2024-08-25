@@ -108,6 +108,30 @@ void USoundEffectSourcePresetChain::AddReferencedEffects(FReferenceCollector& Co
 	}
 }
 
+int32 USoundEffectSourcePresetChain::GetSupportedChannelCount() const
+{
+	// Check the min number of channels the source effect chain supports
+	// We don't want to instantiate the effect chain if it has an effect that doesn't support its channel count
+	// E.g. we shouldn't instantiate a chain on a quad source if there is an effect in the chain that only supports stereo
+	constexpr int32 InvalidChannelCount = AUDIO_MIXER_MAX_OUTPUT_CHANNELS + 1;
+	int32 EffectChainSupportedChannels = InvalidChannelCount;
+
+	for (const FSourceEffectChainEntry& SourceEffectChainEntry : Chain)
+	{
+		if (SourceEffectChainEntry.Preset)
+		{
+			EffectChainSupportedChannels = FMath::Min(SourceEffectChainEntry.Preset->GetMaxSupportedChannels(), EffectChainSupportedChannels);
+		}
+	}
+
+	return (EffectChainSupportedChannels < InvalidChannelCount) ? EffectChainSupportedChannels : USoundEffectSourcePreset::DefaultSupportedChannels;
+}
+
+bool USoundEffectSourcePresetChain::SupportsChannelCount(const int32 InNumChannels) const
+{
+	return InNumChannels <= GetSupportedChannelCount();
+}
+
 void USoundEffectPreset::UnregisterInstance(TSoundEffectPtr InEffectPtr)
 {
 	if (ensure(IsInAudioThread() || IsInGameThread()))

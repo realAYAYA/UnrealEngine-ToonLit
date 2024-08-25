@@ -24,6 +24,7 @@ namespace Dataflow
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FFleshAssetTerminalDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FSetFleshDefaultPropertiesNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FComputeFiberFieldNode);
+		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FVisualizeFiberFieldNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FComputeIslandsNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGenerateOriginInsertionNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FIsolateComponentNode);
@@ -353,6 +354,38 @@ void FComputeFiberFieldNode::Evaluate(Dataflow::FContext& Context, const FDatafl
 	}
 }
 
+void FVisualizeFiberFieldNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
+{
+	if (Out->IsA<FFieldCollection>(&VectorField))
+	{
+		FManagedArrayCollection InCollection = GetValue<FManagedArrayCollection>(Context, &Collection);
+		FFieldCollection OutVectorField = VectorField;
+		
+		if (TManagedArray<FVector3f>* Vertex = InCollection.FindAttribute<FVector3f>("Vertex", "Vertices"))
+		{
+			if (TManagedArray<FIntVector4>* Elements = InCollection.FindAttribute<FIntVector4>(FTetrahedralCollection::TetrahedronAttribute, FTetrahedralCollection::TetrahedralGroup))
+			{
+				if (TManagedArray<FVector3f>* FiberDirections = InCollection.FindAttribute<FVector3f>("FiberDirection", FTetrahedralCollection::TetrahedralGroup))
+				{
+					ensureMsgf(Elements->Num() == FiberDirections->Num(), TEXT("Fiber direction has different size than elements"));
+					for (int32 ElemIndex = 0; ElemIndex < Elements->Num(); ElemIndex++)
+					{
+						FVector3f VectorStart = { 0,0,0 };
+						for (int32 LocalIndex = 0; LocalIndex < 4; LocalIndex++)
+						{
+							VectorStart += (*Vertex)[(*Elements)[ElemIndex][LocalIndex]];
+						}
+						VectorStart /= float(4);
+						FVector3f VectorEnd = VectorStart + (*FiberDirections)[ElemIndex] * VectorScale;
+						OutVectorField.AddVectorToField(VectorStart, VectorEnd);
+					}
+				}
+			}
+		}
+		
+		Out->SetValue(MoveTemp(OutVectorField), Context);
+	}
+}
 
 TArray<int32> 
 FComputeFiberFieldNode::GetNonZeroIndices(const TArray<uint8>& Map) const
@@ -416,7 +449,7 @@ void FComputeIslandsNode::Evaluate(Dataflow::FContext& Context, const FDataflowO
 				Chaos::Utilities::FindConnectedRegions(Elements->GetConstArray(), ConnectedComponents);
 				TManagedArray<int32>& ComponentIndex = InCollection.ModifyAttribute<int32>("ComponentIndex", FGeometryCollection::VerticesGroup);
 
-				ComponentIndex.Fill(-1);
+				ComponentIndex.Fill(INDEX_NONE); //Isolated points will get index -1 
 
 				for (int32 i = 0; i < ConnectedComponents.Num(); i++)
 				{
@@ -426,7 +459,7 @@ void FComputeIslandsNode::Evaluate(Dataflow::FContext& Context, const FDataflowO
 						for (int32 ie = 0; ie < 4; ie++)
 						{
 							int32 ParticleIndex = (*Elements)[ElementIndex][ie];
-							if (ComponentIndex[ParticleIndex] == -1)
+							if (ComponentIndex[ParticleIndex] == INDEX_NONE)
 							{
 								ComponentIndex[ParticleIndex] = i;
 							}

@@ -82,7 +82,6 @@
 			<graph title="Gamethread Breakdown Raw" budget="16.66"/>
 			<graph title="Gamethread Waits" budget="2"/>
 			<graph title="Gamethread Physics" budget="2"/>
-			<graph title="Gamethread Breakdown Giant" budget="16.66" external="1"/>
 			<graph title="Ticks Breakdown" budget="200"/>
 			<graph title="Actor Counts" budget="0"/>
 			<graph title="Physical Memory" budget="300"/>
@@ -144,7 +143,6 @@
 			<graph title="Gamethread Breakdown Raw" budget="33.33"/>
 			<graph title="Gamethread Waits" budget="4"/>
 			<graph title="Gamethread Physics" budget="4"/>
-			<graph title="Gamethread Breakdown Giant" budget="33.33" external="1"/>
 			<graph title="Ticks Breakdown" budget="200"/>
 			<graph title="Actor Counts" budget="0"/>
 			<graph title="Physical Memory" budget="300"/>

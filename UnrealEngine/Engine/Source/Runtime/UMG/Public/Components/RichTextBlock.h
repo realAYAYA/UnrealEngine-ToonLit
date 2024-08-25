@@ -173,10 +173,6 @@ public:
 public:
 	UMG_API URichTextBlock(const FObjectInitializer& ObjectInitializer);
 
-	//~ Begin UTextLayoutWidget Interface
-	UMG_API virtual void SetJustification(ETextJustify::Type InJustification) override;
-	//~ End UTextLayoutWidget Interface
-
 	// UWidget interface
 	UMG_API virtual void SynchronizeProperties() override;
 	// End of UWidget interface
@@ -227,6 +223,17 @@ public:
 	UMG_API void RefreshTextLayout();
 
 protected:
+	//~ Begin UTextLayoutWidget Interface
+	UMG_API virtual void OnShapedTextOptionsChanged(FShapedTextOptions InShapedTextOptions) override;
+	UMG_API virtual void OnJustificationChanged(ETextJustify::Type InJustification) override;
+	UMG_API virtual void OnWrappingPolicyChanged(ETextWrappingPolicy InWrappingPolicy) override;
+	UMG_API virtual void OnAutoWrapTextChanged(bool InAutoWrapText) override;
+	UMG_API virtual void OnWrapTextAtChanged(float InWrapTextAt) override;
+	UMG_API virtual void OnLineHeightPercentageChanged(float InLineHeightPercentage) override;
+	UMG_API virtual void OnApplyLineHeightToBottomLineChanged(bool InApplyLineHeightToBottomLine) override;
+	UMG_API virtual void OnMarginChanged(const FMargin& InMargin) override;
+	//~ End UTextLayoutWidget Interface
+
 	UMG_API virtual TSharedRef<SWidget> RebuildWidget() override;
 	
 	UMG_API virtual void UpdateStyleData();

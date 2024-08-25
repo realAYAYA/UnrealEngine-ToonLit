@@ -6,14 +6,22 @@
 #include "Chaos/Declares.h"
 #include "Chaos/Framework/PhysicsSolverBase.h"
 #include "Chaos/Framework/PhysicsProxyBase.h"
-#include "Chaos/PBDCollisionConstraints.h"
-#include "Chaos/PBDRigidParticles.h"
 #include "UObject/GCObject.h"
+//
+// NOTE: This file is widely included in Engine code. 
+// Avoid including Chaos headers when possible.
+//
 
 struct FKinematicProxy;
 class FFieldSystemCommand;
 struct FBodyInstance;
 
+namespace Chaos
+{
+	template<typename T, int D> class TPBDRigidParticles;
+
+	using FPBDRigidParticles = TPBDRigidParticles<FReal, 3>;
+}
 
 /**
  * Base object interface for solver objects. Defines the expected API for objects
@@ -40,7 +48,6 @@ public:
 	using FParticleType = Concrete;
 
 	using FParticlesType = Chaos::FPBDRigidParticles;
-	using FCollisionConstraintsType = Chaos::FPBDCollisionConstraints;
 	using FIntArray = Chaos::TArrayCollectionArray<int32>;
 
 	TPhysicsProxy()
@@ -74,7 +81,7 @@ public:
 	void BindParticleCallbackMapping(Chaos::TArrayCollectionArray<PhysicsProxyWrapper> & PhysicsProxyReverseMap, Chaos::TArrayCollectionArray<int32> & ParticleIDReverseMap) {static_cast<Concrete*>(this)->BindParticleCallbackMapping(PhysicsProxyReverseMap, ParticleIDReverseMap);}
 
 	/** Returns the concrete type of the derived class*/
-	EPhysicsProxyType ConcreteType() { return static_cast<Concrete*>(this)->ConcreteType(); }
+	static constexpr EPhysicsProxyType ConcreteType() { return Concrete::ConcreteType(); }
 	
 	/**
 	 * CONTEXT: GAMETHREAD

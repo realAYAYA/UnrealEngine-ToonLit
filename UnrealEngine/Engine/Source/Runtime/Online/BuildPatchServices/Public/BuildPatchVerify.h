@@ -12,7 +12,7 @@ namespace BuildPatchServices
 	enum class EVerifyMode : uint32
 	{
 		// Fully SHA checks all files in the build.
-		ShaVerifyAllFiles,
+		ShaVerifyAllFiles = 0,
 
 		// Fully SHA checks only files touched by the install/patch process.
 		ShaVerifyTouchedFiles,
@@ -21,7 +21,9 @@ namespace BuildPatchServices
 		FileSizeCheckAllFiles,
 
 		// Checks just the existence and file size of only files touched by the install/patch process.
-		FileSizeCheckTouchedFiles
+		FileSizeCheckTouchedFiles,
+
+		InvalidOrMax
 	};
 
 	/**
@@ -30,7 +32,7 @@ namespace BuildPatchServices
 	enum class EVerifyError : uint32
 	{
 		// The file was not found.
-		FileMissing,
+		FileMissing = 0,
 
 		// The file failed to open.
 		OpenFileFailed,
@@ -39,32 +41,78 @@ namespace BuildPatchServices
 		HashCheckFailed,
 
 		// The file was not the expected size.
-		FileSizeFailed
+		FileSizeFailed,
+
+		InvalidOrMax
 	};
-
-	/**
-	 * Returns the string representation of the EVerifyMode value. Used for analytics and logging only.
-	 * @param  VerifyMode     The value.
-	 * @return the enum's string representation.
-	 */
-	inline const FString& EnumToString(const EVerifyMode& VerifyMode)
-	{
-		// Const enum strings, special case no error.
-		static const FString ShaVerifyAllFiles(TEXT("EVerifyMode::ShaVerifyAllFiles"));
-		static const FString ShaVerifyTouchedFiles(TEXT("EVerifyMode::ShaVerifyTouchedFiles"));
-		static const FString FileSizeCheckAllFiles(TEXT("EVerifyMode::FileSizeCheckAllFiles"));
-		static const FString FileSizeCheckTouchedFiles(TEXT("EVerifyMode::FileSizeCheckTouchedFiles"));
-		static const FString InvalidOrMax(TEXT("InvalidOrMax"));
-
-		switch (VerifyMode)
-		{
-			case EVerifyMode::ShaVerifyAllFiles: return ShaVerifyAllFiles;
-			case EVerifyMode::ShaVerifyTouchedFiles: return ShaVerifyTouchedFiles;
-			case EVerifyMode::FileSizeCheckAllFiles: return FileSizeCheckAllFiles;
-			case EVerifyMode::FileSizeCheckTouchedFiles: return FileSizeCheckTouchedFiles;
-			default: return InvalidOrMax;
-		}
-	}
 }
 
 ENUM_RANGE_BY_FIRST_AND_LAST(BuildPatchServices::EVerifyError, BuildPatchServices::EVerifyError::FileMissing, BuildPatchServices::EVerifyError::FileSizeFailed)
+
+static_assert((uint32)BuildPatchServices::EVerifyMode::InvalidOrMax == 4, "Please add support for the extra values to the Lex functions below.");
+
+inline const TCHAR* LexToString(BuildPatchServices::EVerifyMode VerifyMode)
+{
+#define CASE_ENUM_TO_STR(Value) case BuildPatchServices::EVerifyMode::Value: return TEXT(#Value)
+	switch (VerifyMode)
+	{
+		CASE_ENUM_TO_STR(ShaVerifyAllFiles);
+		CASE_ENUM_TO_STR(ShaVerifyTouchedFiles);
+		CASE_ENUM_TO_STR(FileSizeCheckAllFiles);
+		CASE_ENUM_TO_STR(FileSizeCheckTouchedFiles);
+	default: return TEXT("InvalidOrMax");
+	}
+#undef CASE_ENUM_TO_STR
+}
+
+inline void LexFromString(BuildPatchServices::EVerifyMode& VerifyMode, const TCHAR* Buffer)
+{
+#define RETURN_IF_EQUAL(Value) if (FCString::Stricmp(Buffer, TEXT(#Value)) == 0) { VerifyMode = BuildPatchServices::EVerifyMode::Value; return; }
+	const TCHAR* const Prefix = TEXT("EVerifyMode::");
+	const SIZE_T PrefixLen = FCString::Strlen(Prefix);
+	if (FCString::Strnicmp(Buffer, Prefix, PrefixLen) == 0)
+	{
+		Buffer += PrefixLen;
+	}
+	RETURN_IF_EQUAL(ShaVerifyAllFiles);
+	RETURN_IF_EQUAL(ShaVerifyTouchedFiles);
+	RETURN_IF_EQUAL(FileSizeCheckAllFiles);
+	RETURN_IF_EQUAL(FileSizeCheckTouchedFiles);
+	// Did not match
+	VerifyMode = BuildPatchServices::EVerifyMode::InvalidOrMax;
+#undef RETURN_IF_EQUAL
+}
+
+static_assert((uint32)BuildPatchServices::EVerifyError::InvalidOrMax == 4, "Please add support for the extra values to the Lex functions below.");
+
+inline const TCHAR* LexToString(BuildPatchServices::EVerifyError VerifyError)
+{
+#define CASE_ENUM_TO_STR(Value) case BuildPatchServices::EVerifyError::Value: return TEXT(#Value)
+	switch (VerifyError)
+	{
+		CASE_ENUM_TO_STR(FileMissing);
+		CASE_ENUM_TO_STR(OpenFileFailed);
+		CASE_ENUM_TO_STR(HashCheckFailed);
+		CASE_ENUM_TO_STR(FileSizeFailed);
+	default: return TEXT("InvalidOrMax");
+	}
+#undef CASE_ENUM_TO_STR
+}
+
+inline void LexFromString(BuildPatchServices::EVerifyError& VerifyError, const TCHAR* Buffer)
+{
+#define RETURN_IF_EQUAL(Value) if (FCString::Stricmp(Buffer, TEXT(#Value)) == 0) { VerifyError = BuildPatchServices::EVerifyError::Value; return; }
+	const TCHAR* const Prefix = TEXT("EVerifyError::");
+	const SIZE_T PrefixLen = FCString::Strlen(Prefix);
+	if (FCString::Strnicmp(Buffer, Prefix, PrefixLen) == 0)
+	{
+		Buffer += PrefixLen;
+	}
+	RETURN_IF_EQUAL(FileMissing);
+	RETURN_IF_EQUAL(OpenFileFailed);
+	RETURN_IF_EQUAL(HashCheckFailed);
+	RETURN_IF_EQUAL(FileSizeFailed);
+	// Did not match
+	VerifyError = BuildPatchServices::EVerifyError::InvalidOrMax;
+#undef RETURN_IF_EQUAL
+}

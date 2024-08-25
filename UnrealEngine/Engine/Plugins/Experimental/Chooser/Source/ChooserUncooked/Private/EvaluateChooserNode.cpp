@@ -6,6 +6,7 @@
 #include "BlueprintActionDatabaseRegistrar.h"
 #include "BlueprintNodeSpawner.h"
 #include "ChooserFunctionLibrary.h"
+#include "ChooserPropertyAccess.h"
 #include "Containers/UnrealString.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphSchema.h"
@@ -18,6 +19,7 @@
 #include "K2Node_MakeStruct.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "KismetCompiler.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/CString.h"
@@ -219,7 +221,7 @@ void UK2Node_EvaluateChooser::ExpandNode(class FKismetCompilerContext& CompilerC
 
 		UEdGraphPin* OutputPin = CallFunction->GetReturnValuePin();
 
-		if (Chooser->OutputObjectType)
+		if (Chooser && Chooser->OutputObjectType)
 		{
 			UEdGraphPin* OutputClassPin = CallFunction->FindPin(TEXT("ObjectClass"));
 			CallFunction->GetSchema()->TrySetDefaultObject(*OutputClassPin, Chooser->OutputObjectType);
@@ -403,12 +405,8 @@ void UK2Node_EvaluateChooser2::AllocateDefaultPins()
 
 	if (Chooser)
 	{
-		if (Chooser->ContextObjectType_DEPRECATED)
-		{
-			// post load fix up code doesn't run until it's too late when loading a blueprint that references an chooser
-			// need to manually trigger it here so we generate the right pins
-			Chooser->PostLoad();
-		}
+		// ensure any data upgrades have been applied to Chooser before generating pins
+		Chooser->ConditionalPostLoad();
 		
 		for(FInstancedStruct& ContextDataEntry : Chooser->ContextData)
 		{
@@ -617,6 +615,7 @@ void UK2Node_EvaluateChooser2::ExpandNode(class FKismetCompilerContext& Compiler
 		
 		if (Chooser)
 		{
+			bool bFoundObject = false;
 			int ContextDataCount = Chooser->ContextData.Num();
 			for(int ContextDataIndex = 0; ContextDataIndex < ContextDataCount; ContextDataIndex++)
 			{
@@ -626,6 +625,7 @@ void UK2Node_EvaluateChooser2::ExpandNode(class FKismetCompilerContext& Compiler
 					const UScriptStruct* EntryType = ContextDataEntry.GetScriptStruct();
 					if (EntryType == FContextObjectTypeClass::StaticStruct())
 					{
+						bFoundObject = true;
 						const FContextObjectTypeClass& ClassContext = ContextDataEntry.Get<FContextObjectTypeClass>();
 						if (ClassContext.Class)
 						{
@@ -636,7 +636,6 @@ void UK2Node_EvaluateChooser2::ExpandNode(class FKismetCompilerContext& Compiler
 								AddObjectFunction->SetFromFunction(UChooserFunctionLibrary::StaticClass()->FindFunctionByName(GET_MEMBER_NAME_CHECKED(UChooserFunctionLibrary, AddChooserObjectInput)));
 								AddObjectFunction->AllocateDefaultPins();
 								ContextStructPin->MakeLinkTo(AddObjectFunction->FindPin(FName("Context")));
-								PreviousNodeExecOutput = ContextStructNode->GetThenPin();
 
 								PreviousNodeExecOutput->MakeLinkTo(AddObjectFunction->GetExecPin());
 								PreviousNodeExecOutput = AddObjectFunction->GetThenPin();
@@ -692,6 +691,7 @@ void UK2Node_EvaluateChooser2::ExpandNode(class FKismetCompilerContext& Compiler
 								// create a struct to hold the output (or for input structs that were not connected to anything)
 								UK2Node_MakeStruct* OutputStructNode = CompilerContext.SpawnIntermediateNode<UK2Node_MakeStruct>(this, SourceGraph);
 								CompilerContext.MessageLog.NotifyIntermediateObjectCreation(OutputStructNode, this);
+								OutputStructNode->PostPlacedNewNode();
 								OutputStructNode->StructType = static_cast<UScriptStruct*>(StructContext.Struct);
 								OutputStructNode->AllocateDefaultPins();
 								OutputStructNode->FindPin(StructContext.Struct->GetFName(), EGPD_Output)->MakeLinkTo(AddStructPin);
@@ -725,6 +725,23 @@ void UK2Node_EvaluateChooser2::ExpandNode(class FKismetCompilerContext& Compiler
 					}
 				}
 			}
+
+			if (!bFoundObject)
+			{
+				// add Self reference to the end of the context, for debugging purposes
+				UK2Node_CallFunction* AddObjectFunction = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(this, SourceGraph);
+				CompilerContext.MessageLog.NotifyIntermediateObjectCreation(AddObjectFunction, this);
+				AddObjectFunction->SetFromFunction(UChooserFunctionLibrary::StaticClass()->FindFunctionByName(GET_MEMBER_NAME_CHECKED(UChooserFunctionLibrary, AddChooserObjectInput)));
+				AddObjectFunction->AllocateDefaultPins();
+				ContextStructPin->MakeLinkTo(AddObjectFunction->FindPin(FName("Context")));
+	
+				PreviousNodeExecOutput->MakeLinkTo(AddObjectFunction->GetExecPin());
+				PreviousNodeExecOutput = AddObjectFunction->GetThenPin();
+									
+				UEdGraphPin* AddObjectPin = AddObjectFunction->FindPin(FName("Object"));
+				SelfPin->MakeLinkTo(AddObjectPin);
+			}
+			
 
 			if (PreviousNodeExecOutput)
 			{
@@ -762,11 +779,33 @@ void UK2Node_EvaluateChooser2::ExpandNode(class FKismetCompilerContext& Compiler
 
 			if (UEdGraphPin* ResultIsClassPin = CallFunction->FindPin(TEXT("bResultIsClass")))
 			{
+				// this ensures that the function does the right kind of type validation
 				CallFunction->GetSchema()->TrySetDefaultValue(*ResultIsClassPin, Chooser->ResultType == EObjectChooserResultType::ClassResult ? TEXT("true") : TEXT("false"));
+
+				if (Chooser->ResultType == EObjectChooserResultType::ClassResult)
+				{
+					// if it's a class we need to add a CastToClass function to cast it from an Object pointer to a Class poointer
+					UK2Node_CallFunction* CastToClass = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(this, SourceGraph);
+					CompilerContext.MessageLog.NotifyIntermediateObjectCreation(CastToClass, this);
+
+					CastToClass->SetFromFunction(UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_MEMBER_NAME_CHECKED(UKismetSystemLibrary, Conv_ObjectToClass)));
+					CastToClass->AllocateDefaultPins();
+
+					if (UEdGraphPin* ClassPin = CastToClass->FindPin(TEXT("Class")))
+					{
+						CastToClass->GetSchema()->TrySetDefaultObject(*ClassPin, Chooser->OutputObjectType);
+					}
+
+					if (UEdGraphPin* ObjectPin = CastToClass->FindPin(FName("Object")))
+					{
+						CallFunction->GetReturnValuePin()->MakeLinkTo(ObjectPin);
+					}
+
+					OutputPin = CastToClass->GetReturnValuePin();
+				}
 			}
 		}
-
-		
+				
 
 		CompilerContext.MovePinLinksToIntermediate(*ResultPin, *OutputPin);
 	}

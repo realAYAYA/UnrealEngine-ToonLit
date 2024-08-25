@@ -6,6 +6,7 @@
 #include "Landscape.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 
 void FLandscapeActorDesc::Init(const AActor* InActor)
 {
@@ -52,15 +53,17 @@ FBox FLandscapeActorDesc::GetEditorBounds() const
 	return FWorldPartitionActorDesc::GetEditorBounds();
 }
 
-void FLandscapeActorDesc::Unload()
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+void FLandscapeActorDesc::OnUnloadingInstance(const FWorldPartitionActorDescInstance* InActorDescInstance) const
 {
-	if (ALandscapeProxy* LandscapeProxy = Cast<ALandscapeProxy>(GetActor()))
+	if (ALandscapeProxy* LandscapeProxy = Cast<ALandscapeProxy>(InActorDescInstance->GetActor()))
 	{
 		LandscapeProxy->ActorDescReferences.Empty();
 	}
 
-	FPartitionActorDesc::Unload();
+	FPartitionActorDesc::OnUnloadingInstance(InActorDescInstance);
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 bool FLandscapeActorDesc::Equals(const FWorldPartitionActorDesc* Other) const
 {

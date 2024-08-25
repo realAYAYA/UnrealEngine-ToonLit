@@ -49,8 +49,10 @@ static bool GIsUnattended = false;
 	}
 	
 	RunCrashReportClient(*GSavedCommandLine);
-	
-	[NSApp terminate: self];
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSApp terminate: nil];
+    });
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)Sender;

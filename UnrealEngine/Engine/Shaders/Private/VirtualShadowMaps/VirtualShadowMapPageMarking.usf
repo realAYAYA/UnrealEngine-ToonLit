@@ -13,11 +13,12 @@
 #include "../DeferredShadingCommon.ush"
 #include "../HairStrands/HairStrandsVisibilityCommon.ush"
 #include "../HairStrands/HairStrandsTileCommon.ush"
-#include "../Strata/Strata.ush"
+#include "../Substrate/Substrate.ush"
 #include "VirtualShadowMapProjectionDirectional.ush"
 #include "VirtualShadowMapProjectionSpot.ush"
 #include "VirtualShadowMapProjectionCommon.ush"
 #include "VirtualShadowMapStats.ush"
+#include "VirtualShadowMapLightGrid.ush"
 
 // Type of input data consume by the page allocation (i.e., data read from the source buffer: Gbuffer, HairStrands data, ...)
 #define INPUT_TYPE_GBUFFER 0
@@ -34,20 +35,40 @@ float PageDilationBorderSizeLocal;
 uint InputType;
 uint bCullBackfacingPixels;
 uint NumDirectionalLightSmInds;
+uint MipModeLocal;
+
+int GetBiasedClipmapLevel(FVirtualShadowMapProjectionShaderData BaseProjectionData, float3 TranslatedWorldPosition)
+{
+	float BiasedLevel = CalcAbsoluteClipmapLevel(BaseProjectionData, TranslatedWorldPosition) + BaseProjectionData.ResolutionLodBias + VirtualShadowMap.GlobalResolutionLodBias;
+	return int(floor(BiasedLevel));
+}
 
 uint GetMipLevelLocal(int VirtualShadowMapId, float3 TranslatedWorldPosition, float SceneDepth)
 {
 	FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
 
 	// If local lights are near the primary view the combined offset should be small
-	float3 ShadowTranslatedWorldPosition = TranslatedWorldPosition + 
-		LWCToFloat(LWCSubtract(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation));
+	float3 ViewToShadowTranslation = DFFastLocalSubtractDemote(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation);
+	float3 ShadowTranslatedWorldPosition = TranslatedWorldPosition + ViewToShadowTranslation;
 
 	float Footprint = VirtualShadowMapCalcPixelFootprintLocal(ProjectionData, ShadowTranslatedWorldPosition, SceneDepth);
 
-	float MipLevelFloat = log2(Footprint) + ProjectionData.ResolutionLodBias;
+	float MipLevelFloat = log2(Footprint) + ProjectionData.ResolutionLodBias + VirtualShadowMap.GlobalResolutionLodBias;
 	uint MipLevel = uint(max(floor(MipLevelFloat), 0.0f));
-	return min(MipLevel, (VSM_MAX_MIP_LEVELS - 1U));
+	MipLevel = min(MipLevel, (VSM_MAX_MIP_LEVELS - 1U));
+
+	if (MipModeLocal == 1)
+	{
+		// Even mips
+		MipLevel &= ~(1U);
+	}
+	else if (MipModeLocal == 2)
+	{
+		// Odd mips
+		MipLevel |= 1U;
+	}
+
+	return MipLevel;
 }
 
 void MarkPageAddress(uint PageOffset, uint Flags)
@@ -61,11 +82,10 @@ void MarkPage(uint VirtualShadowMapId, uint MipLevel, float3 TranslatedWorldPosi
 	FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
 
 	// MarkPage (or mark pixel pages) should never run for a distant light.
-	checkSlow(!ProjectionData.bCurrentDistantLight);
 	checkSlow(!IsSinglePageVirtualShadowMap(VirtualShadowMapId));
 
-	float3 ShadowTranslatedWorldPosition = TranslatedWorldPosition + 
-		LWCToFloat(LWCSubtract(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation));
+	float3 ViewToShadowTranslation = DFFastLocalSubtractDemote(ProjectionData.PreViewTranslation, PrimaryView.PreViewTranslation);
+	float3 ShadowTranslatedWorldPosition = TranslatedWorldPosition + ViewToShadowTranslation;
 	float4 ShadowUVz = mul(float4(ShadowTranslatedWorldPosition, 1.0f), ProjectionData.TranslatedWorldToShadowUVMatrix);
 	ShadowUVz.xyz /= ShadowUVz.w;
 
@@ -108,11 +128,10 @@ void MarkPage(uint VirtualShadowMapId, uint MipLevel, float3 TranslatedWorldPosi
 void MarkPageClipmap(
 	FVirtualShadowMapProjectionShaderData ProjectionData,
 	bool bUsePageDilation, 
-	float2 PageDilationOffset, 
-	FLWCVector3 WorldPosition,
+	float2 PageDilationOffset,
 	float3 TranslatedWorldPosition)
 {
-	const int ClipmapLevel = CalcClipmapLevel(ProjectionData, WorldPosition);
+	const int ClipmapLevel = GetBiasedClipmapLevel(ProjectionData, TranslatedWorldPosition);
 	int ClipmapIndex = max(0, ClipmapLevel - ProjectionData.ClipmapLevel);
 	if (ClipmapIndex < ProjectionData.ClipmapLevelCountRemaining)
 	{
@@ -127,7 +146,7 @@ RWStructuredBuffer<uint> OutPrunedNumCulledLightsGrid;
 [numthreads(VSM_DEFAULT_CS_GROUP_X, 1, 1)]
 void PruneLightGridCS(uint GridLinearIndex : SV_DispatchThreadID)
 {
-	uint EyeIndex = 0; // ??
+	uint EyeIndex = 0;
 	const FLightGridData GridData = GetLightGridData(EyeIndex);
 
 	if (GridLinearIndex >= GridData.CulledGridSize.x * GridData.CulledGridSize.y * GridData.CulledGridSize.z)
@@ -137,33 +156,39 @@ void PruneLightGridCS(uint GridLinearIndex : SV_DispatchThreadID)
 	const FCulledLightsGridData CulledLightGridData = GetCulledLightsGrid(GridLinearIndex, EyeIndex);
 
 	uint NumRetainedLights = 0U;
+
+	// First pass add the non-distant lights with VSMs
 	LOOP
-	for (uint Index = 0; Index < CulledLightGridData.NumLocalLights; ++Index)
+	for (uint Index = 0; Index < CulledLightGridData.NumLights; ++Index)
 	{
-		const FLocalLightData LightData = GetLocalLightData(CulledLightGridData.DataStartIndex + Index, EyeIndex);
-		int VirtualShadowMapId = LightData.VirtualShadowMapId;
-		// Discard any light without a VSM
-		if (VirtualShadowMapId != INDEX_NONE)
+		int VirtualShadowMapId = GetLocalLightData(CulledLightGridData.DataStartIndex + Index, EyeIndex).VirtualShadowMapId;
+		if (VirtualShadowMapId != INDEX_NONE && !IsSinglePageVirtualShadowMap(VirtualShadowMapId))
 		{
-			FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
-
-			// Discard any distant lights (they get marked through the coarse page marking)
-			if (!ProjectionData.bCurrentDistantLight)
-			{
-				checkSlow(!IsSinglePageVirtualShadowMap(VirtualShadowMapId));
-
-				// Copy light grid data index
-				checkStructuredBufferAccessSlow(OutPrunedLightGridData, CulledLightGridData.DataStartIndex + NumRetainedLights);
-				OutPrunedLightGridData[CulledLightGridData.DataStartIndex + NumRetainedLights++] = GetCulledLightDataGrid(CulledLightGridData.DataStartIndex + Index);
-			}
+			// Copy light grid data index
+			checkStructuredBufferAccessSlow(OutPrunedLightGridData, CulledLightGridData.DataStartIndex + NumRetainedLights);
+			OutPrunedLightGridData[CulledLightGridData.DataStartIndex + NumRetainedLights++] = GetCulledLightDataGrid(CulledLightGridData.DataStartIndex + Index);
 		}
 	}
+
+	// Second pass add the distant lights with VSMs after
+	// NOTE: We could add these to the end in the first pass and then re-pack them instead, but this works
+	// well enough for moderate light counts.
+	LOOP
+	for (uint Index = 0; Index < CulledLightGridData.NumLights; ++Index)
+	{
+		int VirtualShadowMapId = GetLocalLightData(CulledLightGridData.DataStartIndex + Index, EyeIndex).VirtualShadowMapId;
+		// Discard any light without a VSM
+		if (VirtualShadowMapId != INDEX_NONE && IsSinglePageVirtualShadowMap(VirtualShadowMapId))
+		{
+			checkStructuredBufferAccessSlow(OutPrunedLightGridData, CulledLightGridData.DataStartIndex + NumRetainedLights);
+			OutPrunedLightGridData[CulledLightGridData.DataStartIndex + NumRetainedLights++] = GetCulledLightDataGrid(CulledLightGridData.DataStartIndex + Index);
+		}
+	}
+
 	checkStructuredBufferAccessSlow(OutPrunedNumCulledLightsGrid, GridLinearIndex);
 	OutPrunedNumCulledLightsGrid[GridLinearIndex] = NumRetainedLights;
 }
 
-StructuredBuffer<uint> PrunedLightGridData;
-StructuredBuffer<uint> PrunedNumCulledLightsGrid;
 uint2 PixelStride;
 
 #if PERMUTATION_WATER_DEPTH
@@ -186,7 +211,6 @@ struct FPositionData
 	float SceneDepth;
 	float4 SvPosition;
 	float3 TranslatedWorldPosition;
-	FLWCVector3 WorldPosition;
 	float DeviceZ;
 };
 
@@ -199,7 +223,6 @@ FPositionData InitPositionData(uint2 PixelPos, float DeviceZ, bool bIsValid)
 		Out.SceneDepth = ConvertFromDeviceZ(Out.DeviceZ);
 		Out.SvPosition = float4(float2(PixelPos) + 0.5f, Out.DeviceZ, 1.0f);
 		Out.TranslatedWorldPosition = SvPositionToTranslatedWorld(Out.SvPosition);
-		Out.WorldPosition = LWCSubtract(Out.TranslatedWorldPosition, PrimaryView.PreViewTranslation);
 	}
 	return Out;
 }
@@ -252,20 +275,20 @@ void GeneratePageFlagsFromPixels(
 #else // PERMUTATION_INPUT_TYPE == INPUT_TYPE_GBUFFER
 	{
 		DeviceZ = LookupDeviceZ(PixelPos);
-	#if STRATA_ENABLED
-		const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelPos, 0)));
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-		FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
+	#if SUBSTRATE_ENABLED
+		const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelPos, 0)));
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
 		WorldNormal = TopLayerData.WorldNormal;
-		bIsValid = StrataPixelHeader.IsStrataMaterial();
-		bBackfaceCull = bBackfaceCull && !StrataPixelHeader.HasSubsurface();
-	#else // !STRATA_ENABLED
+		bIsValid = SubstratePixelHeader.IsSubstrateMaterial();
+		bBackfaceCull = bBackfaceCull && !SubstratePixelHeader.HasSubsurface();
+	#else // !SUBSTRATE_ENABLED
 		FGBufferData GBuffer = GetGBufferDataUint(PixelPos, true);
 		WorldNormal = GBuffer.WorldNormal;
 		// Excluding unlit to avoid including processing sky dome
 		bIsValid = GBuffer.ShadingModelID != SHADINGMODELID_UNLIT;
 		bBackfaceCull = bBackfaceCull && !IsSubsurfaceModel(GBuffer.ShadingModelID);
-	#endif // STRATA_ENABLED
+	#endif // SUBSTRATE_ENABLED
 
 	#if PERMUTATION_WATER_DEPTH
 		// Assume valid if there is no mask
@@ -379,13 +402,12 @@ void GeneratePageFlagsFromPixels(
 		for (uint Index = 0; Index < NumDirectionalLightSmInds; ++Index)
 		{
 			int VirtualShadowMapId = DirectionalLightIds[Index];
-			FVirtualShadowMapProjectionShaderData BaseProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
+			FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
 
 			bool bBackfaceCulledGBuffer = false;
 			#if PERMUTATION_INPUT_TYPE != INPUT_TYPE_HAIRSTRANDS
 			// Backface test if requested
-			float3 LightDirection = normalize(-BaseProjectionData.TranslatedWorldToShadowViewMatrix._13_23_33);
-			if (bBackfaceCull && IsBackfaceToDirectionalLight(WorldNormal, LightDirection, BaseProjectionData.LightSourceRadius))
+			if (bBackfaceCull && IsBackfaceToDirectionalLight(WorldNormal, ProjectionData.LightDirection, ProjectionData.LightSourceRadius))
 			{
 				bBackfaceCulledGBuffer = true;
 			}
@@ -393,13 +415,13 @@ void GeneratePageFlagsFromPixels(
 
 			if (!bBackfaceCulledGBuffer)
 			{
-				MarkPageClipmap(BaseProjectionData, bUsePageDilation, PageDilationOffset, Primary.WorldPosition, Primary.TranslatedWorldPosition);
+				MarkPageClipmap(ProjectionData, bUsePageDilation, PageDilationOffset, Primary.TranslatedWorldPosition);
 			}
 			
 			#if PERMUTATION_WATER_DEPTH
 			if (bIsWaterDepthValid)
 			{
-				MarkPageClipmap(BaseProjectionData, bUsePageDilation, PageDilationOffset, Water.WorldPosition, Water.TranslatedWorldPosition);
+				MarkPageClipmap(ProjectionData, bUsePageDilation, PageDilationOffset, Water.TranslatedWorldPosition);
 			}
 			#endif // PERMUTATION_INPUT_TYPE == INPUT_TYPE_GBUFFER_AND_WATER_DEPTH
 
@@ -407,7 +429,7 @@ void GeneratePageFlagsFromPixels(
 			#if PERMUTATION_TRANSLUCENCY_DEPTH
 			if (bIsTranslucencyDepthValid)
 			{
-				MarkPageClipmap(BaseProjectionData, bUsePageDilation, PageDilationOffset, Translucency.WorldPosition, Translucency.TranslatedWorldPosition);
+				MarkPageClipmap(ProjectionData, bUsePageDilation, PageDilationOffset, Translucency.TranslatedWorldPosition);
 			}
 			#endif
 		}
@@ -417,24 +439,20 @@ void GeneratePageFlagsFromPixels(
 	{
 		const bool bUsePageDilation = PageDilationBorderSizeLocal > 0.0f;
 		const float2 PageDilationOffset = PageDilationBorderSizeLocal * PageDilationDither;
-
-		uint EyeIndex = 0U; // Has no effect unless INSTANCED_STEREO is enabled, which is not the case for this CS, (used in GetLightGridData to select ForwardLightData or ForwardLightDataISR, but then only uses redundant parameters anyway)
+				
 		uint2 LocalPosition = PixelPos - uint2(View.ViewRectMin.xy);
-		uint3 GridCoordinate = ComputeLightGridCellCoordinate(LocalPosition, Primary.SceneDepth, EyeIndex);
-
-		uint GridLinearIndex = ComputeLightGridCellIndex(GridCoordinate, EyeIndex);
-		const FCulledLightsGridData CulledLightGridData = GetCulledLightsGrid(GridLinearIndex, EyeIndex);
-
-		checkStructuredBufferAccessSlow(PrunedNumCulledLightsGrid, GridLinearIndex);
-		const uint PrunedNumLocalLights = PrunedNumCulledLightsGrid[GridLinearIndex];
+		const FCulledLightsGridData LightGridData = VirtualShadowMapGetLightsGrid(LocalPosition, Primary.SceneDepth);
 
 		LOOP
-		for (uint Index = 0; Index < PrunedNumLocalLights; ++Index)
+		for (uint Index = 0; Index < LightGridData.NumLights; ++Index)
 		{
-			checkStructuredBufferAccessSlow(PrunedLightGridData, CulledLightGridData.DataStartIndex + Index);
-			const uint LightGridLightIndex = PrunedLightGridData[CulledLightGridData.DataStartIndex + Index];
+			const FLocalLightData LightData = VirtualShadowMapGetLocalLightData(LightGridData, Index);
 
-			const FLocalLightData LightData = GetLocalLightDataNonStereo(LightGridLightIndex);
+			// If we hit a distant light, we're done as we sorted those to the end. See PruneLightGridCS.
+			if (IsSinglePageVirtualShadowMap(LightData.VirtualShadowMapId))
+			{
+				break;
+			}
 
 			// Relative to PrimaryView
 			const float3 LightTranslatedWorldPosition = LightData.LightPositionAndInvRadius.xyz;
@@ -452,6 +470,19 @@ void GeneratePageFlagsFromPixels(
 			if (dot(ToLight, LightData.LightDirectionAndShadowMask.xyz) < GetLightSpotAngles(LightData).x)
 			{
 				continue;
+			}
+
+			const uint LightTypeAndPackedShadowMapChannelMask = asuint(LightData.LightDirectionAndShadowMask.w);
+			const uint LightType = UnpackLightType(LightTypeAndPackedShadowMapChannelMask);
+			
+			const bool bIsRectLight = LightType == LIGHT_TYPE_RECT;
+			if (bIsRectLight)
+			{
+				const bool bIsBehindRectLight = dot(ToLight, LightData.LightDirectionAndShadowMask.xyz) < 0;
+				if (bIsBehindRectLight)
+				{
+					continue;
+				}
 			}
 
 			// TODO: Precise radius test necessary?
@@ -500,13 +531,16 @@ void MarkCoarsePages(uint DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
-	checkSlow(ProjectionData.bCurrentDistantLight == IsSinglePageVirtualShadowMap(VirtualShadowMapId));
-
+		
 	// NOTE: Coarse pages are very large and tend to get invalidated a lot due to anything in the scene moving
 	// Rendering non-nanite geometry into these pages can be very expensive and thus isn't always desirable.
 	uint Flags = VSM_ALLOCATED_FLAG;
-
-	if (ProjectionData.LightType == LIGHT_TYPE_DIRECTIONAL)
+				
+	if (ProjectionData.bUnreferenced)
+	{
+		// Don't mark any pages for lights not referenced this render
+	}
+	else if (ProjectionData.LightType == LIGHT_TYPE_DIRECTIONAL)
 	{
 		// Idea here is the clipmaps already cover supersets of lower levels
 		// Thus to get coarser pages we can just mark the center page(s) offset by a level/LOD bias
@@ -518,7 +552,7 @@ void MarkCoarsePages(uint DispatchThreadId : SV_DispatchThreadID)
 		if (((ClipmapIndexMask >> ClipmapIndex) & 1) != 0)
 		{
 			// TODO: Optimize this... can be boiled down to be just in terms of the snap offsets
-			float3 OriginTranslatedWorld = LWCToFloat(LWCAdd(ProjectionData.ClipmapWorldOrigin, ProjectionData.PreViewTranslation));
+			float3 OriginTranslatedWorld = ProjectionData.ClipmapWorldOriginOffset;
 			float4 ShadowUVz = mul(float4(OriginTranslatedWorld, 1.0f), ProjectionData.TranslatedWorldToShadowUVMatrix);
 			float2 VirtualTexelAddressFloat = ShadowUVz.xy * float(CalcLevelDimsTexels(0));
 			float2 PageAddressFloat = VirtualTexelAddressFloat * float(1.0f / VSM_PAGE_SIZE);
@@ -532,7 +566,7 @@ void MarkCoarsePages(uint DispatchThreadId : SV_DispatchThreadID)
 		}
 	}
 	// Note: always mark last mip for "distant" light
-	else if (bMarkCoarsePagesLocal != 0U || ProjectionData.bCurrentDistantLight)
+	else if (bMarkCoarsePagesLocal != 0U || IsSinglePageVirtualShadowMap(VirtualShadowMapId))
 	{
 		// Mark last mip
 		uint PageOffset = CalcPageOffset(VirtualShadowMapId, VSM_MAX_MIP_LEVELS - 1, uint2(0, 0));

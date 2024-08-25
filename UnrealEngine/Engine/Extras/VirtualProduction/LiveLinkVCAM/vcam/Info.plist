@@ -42,7 +42,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>VCAM transmits &amp; receives data from Unreal Engine.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>We don't use the microphone.</string>
+	<string>Your audio will be transmitted to your Unreal Engine workstation for processing.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

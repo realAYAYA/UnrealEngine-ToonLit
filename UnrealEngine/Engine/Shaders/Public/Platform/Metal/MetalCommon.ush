@@ -4,10 +4,10 @@
 	MetalCommon.usf: Common Metal shader code
 =============================================================================*/
 
-// Update this GUID to improve shader recompilation for Metal only shaders
-// GUID = 7DDC23C5-DDBC-4A9F-9047-CC365A54D83C
-
 #pragma once
+
+// Update this GUID to invalidate shader recompilation for only Metal shaders
+#pragma message("UESHADERMETADATA_VERSION E4FA73AD-5066-4067-8B47-814FDC0D6332")
 
 #if VERTEXSHADER && HULLSHADER
 #ifndef TESSELLATIONSHADER
@@ -90,4 +90,31 @@
             InterlockedMax(Dest[Coord], Value);
         }
     #endif
+    
+    #if PLATFORM_SUPPORTS_BINDLESS
+        #define GetResourceFromHeap(Type, Index) ResourceDescriptorHeap[Index]
+        #define GetSamplerFromHeap(Type, Index) SamplerDescriptorHeap[Index]
+    #endif
+#endif
+
+#if PLATFORM_SUPPORTS_MESH_SHADERS_TIER0
+    #define MESH_SHADER_TRIANGLE_ATTRIBUTES(InThreadsX) [numthreads(InThreadsX, 1, 1)][outputtopology("triangle")]
+    #define MESH_SHADER_LINE_ATTRIBUTES(InThreadsX) [numthreads(InThreadsX, 1, 1)][outputtopology("line")]
+
+    #define AMPLIFICATION_SHADER_TRIANGLE_ATTRIBUTES(InThreadsX) [numthreads(InThreadsX, 1, 1)][outputtopology("triangle")]
+    #define AMPLIFICATION_SHADER_LINE_ATTRIBUTES(InThreadsX) [numthreads(InThreadsX, 1, 1)][outputtopology("line")]
+
+    #define MESH_SHADER_VERTEX_EXPORT(VertexType, InMaxVertexCount) out vertices VertexType OutVertices[InMaxVertexCount]
+    #define MESH_SHADER_TRIANGLE_EXPORT(InMaxTriangleCount) out indices uint3 OutTriangles[InMaxTriangleCount]
+    #define MESH_SHADER_LINE_EXPORT(InMaxLineCount) out indices uint2 OutLines[InMaxLineCount]
+
+    #define MESH_SHADER_WRITE_VERTEX(InVertexIndex, Value) OutVertices[InVertexIndex] = Value;
+    #define MESH_SHADER_WRITE_TRIANGLE(InTriangleIndex, Value) OutTriangles[InTriangleIndex] = Value;
+    #define MESH_SHADER_WRITE_LINE(InLineIndex, Value) OutLines[InLineIndex] = Value;
+#endif
+
+#if PLATFORM_SUPPORTS_MESH_SHADERS_TIER1
+    #define MESH_SHADER_PRIMITIVE_EXPORT(PrimitiveType, InMaxPrimitiveCount) out primitives PrimitiveType OutPrimitives[InMaxPrimitiveCount]
+
+    #define MESH_SHADER_WRITE_PRIMITIVE(InPrimitiveIndex, Value) OutPrimitives[InPrimitiveIndex] = Value;
 #endif

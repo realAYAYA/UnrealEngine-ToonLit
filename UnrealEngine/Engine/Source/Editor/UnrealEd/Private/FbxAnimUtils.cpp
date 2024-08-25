@@ -154,7 +154,7 @@ namespace FbxAnimUtils
 										// Maya adds the name of the blendshape and an underscore to the front of the channel name, so remove it
 										if (ChannelName.StartsWith(BlendShapeName))
 										{
-											ChannelName.RightInline(ChannelName.Len() - (BlendShapeName.Len() + 1), false);
+											ChannelName.RightInline(ChannelName.Len() - (BlendShapeName.Len() + 1), EAllowShrinking::No);
 										}
 
 										FbxAnimCurve* Curve = Geometry->GetShapeChannel(BlendShapeIndex, ChannelIndex, (FbxAnimLayer*)AnimStack->GetMember(0));

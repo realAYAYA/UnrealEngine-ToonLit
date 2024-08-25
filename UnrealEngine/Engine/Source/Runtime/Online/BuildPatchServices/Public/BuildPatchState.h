@@ -55,17 +55,61 @@ namespace BuildPatchServices
 	};
 
 	/**
-	 * Returns the string representation of the EBuildPatchState value. Used for analytics and logging only.
-	 * @param State - The value.
-	 * @return The enum's string value.
-	 */
-	BUILDPATCHSERVICES_API const FString& StateToString(const EBuildPatchState& State);
-
-	/**
 	 * Returns the FText representation of the specified EBuildPatchState value. Used for displaying to the user.
 	 * @param State - The error type value.
 	 * @return The display text associated with the progress step.
 	 */
 	UE_DEPRECATED(4.21, "BuildPatchServices::StateToText(const EBuildPatchState& State) has been deprecated. It will no longer be supported by BuildPatchServices in the future.")
 	BUILDPATCHSERVICES_API const FText& StateToText(const EBuildPatchState& State);
+}
+
+static_assert((uint32)BuildPatchServices::EBuildPatchState::NUM_PROGRESS_STATES == 12, "Please add support for the extra values to the Lex functions below.");
+
+inline const TCHAR* LexToString(BuildPatchServices::EBuildPatchState State)
+{
+#define CASE_ENUM_TO_STR(Value) case BuildPatchServices::EBuildPatchState::Value: return TEXT(#Value)
+	switch (State)
+	{
+		CASE_ENUM_TO_STR(Queued);
+		CASE_ENUM_TO_STR(Initializing);
+		CASE_ENUM_TO_STR(Resuming);
+		CASE_ENUM_TO_STR(Downloading);
+		CASE_ENUM_TO_STR(Installing);
+		CASE_ENUM_TO_STR(MovingToInstall);
+		CASE_ENUM_TO_STR(SettingAttributes);
+		CASE_ENUM_TO_STR(BuildVerification);
+		CASE_ENUM_TO_STR(CleanUp);
+		CASE_ENUM_TO_STR(PrerequisitesInstall);
+		CASE_ENUM_TO_STR(Completed);
+		CASE_ENUM_TO_STR(Paused);
+	default: return TEXT("InvalidOrMax");
+	}
+#undef CASE_ENUM_TO_STR
+}
+
+inline void LexFromString(BuildPatchServices::EBuildPatchState& Error, const TCHAR* Buffer)
+{
+#define RETURN_IF_EQUAL(Value) if (FCString::Stricmp(Buffer, TEXT(#Value)) == 0) { Error = BuildPatchServices::EBuildPatchState::Value; return; }
+	const TCHAR* const Prefix = TEXT("EBuildPatchState::");
+	const SIZE_T PrefixLen = FCString::Strlen(Prefix);
+	if (FCString::Strnicmp(Buffer, Prefix, PrefixLen) == 0)
+	{
+		Buffer += PrefixLen;
+	}
+	RETURN_IF_EQUAL(Queued);
+	RETURN_IF_EQUAL(Initializing);
+	RETURN_IF_EQUAL(Resuming);
+	RETURN_IF_EQUAL(Downloading);
+	RETURN_IF_EQUAL(Installing);
+	RETURN_IF_EQUAL(MovingToInstall);
+	RETURN_IF_EQUAL(SettingAttributes);
+	RETURN_IF_EQUAL(BuildVerification);
+	RETURN_IF_EQUAL(CleanUp);
+	RETURN_IF_EQUAL(PrerequisitesInstall);
+	RETURN_IF_EQUAL(Completed);
+	RETURN_IF_EQUAL(Paused);
+	// Did not match
+	Error = BuildPatchServices::EBuildPatchState::NUM_PROGRESS_STATES;
+	return;
+#undef RETURN_IF_EQUAL
 }

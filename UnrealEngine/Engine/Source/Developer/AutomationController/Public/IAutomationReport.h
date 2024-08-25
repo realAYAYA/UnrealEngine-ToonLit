@@ -139,7 +139,7 @@ public:
 	/* The time this test took to complete */
 	float Duration;
 
-	/* The name of the instance which reported these results */
+	/* The instance which reported these results */
 	FString GameInstance;
 
 	/** Artifacts generated during the run of the test. */
@@ -397,8 +397,8 @@ public:
 	 * @param ClusterIndex - Index of the platform reporting the results of this test.  See AutomationDeviceClusterManager.
 	 * @return the name of the device.
 	 */
-	virtual FString GetGameInstanceName( const int32 ClusterIndex ) = 0;
-
+	virtual FString GetGameInstanceName(const int32 ClusterIndex) = 0;
+	
 	/**
 	 * Add a child test to the hierarchy, creating internal tree nodes as needed.
 	 * If NewTestName is Editor.Maps.Loadall.TestName, this will create nodes for Editor, Maps, Loadall, and then a leaf node for the test name with the associated command line

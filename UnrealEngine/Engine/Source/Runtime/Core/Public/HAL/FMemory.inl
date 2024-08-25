@@ -43,7 +43,7 @@ FMEMORY_INLINE_FUNCTION_DECORATOR void* FMemory::Malloc(SIZE_T Count, uint32 Ali
 	// AutoRTFM: This is a no-op for non-transactional code.
 	// For transactional code, this defers a call to Free if the transaction aborts,
 	// so that rolling back this allocation will end up freeing the memory.
-	AutoRTFM::OpenAbort([Ptr]
+	AutoRTFM::OnAbort([Ptr]
 	{
 		// Disable the code analysis warning that complains that Free is being passed
 		// a pointer that may be null. Free explicitly handles this case already.
@@ -105,6 +105,13 @@ FMEMORY_INLINE_FUNCTION_DECORATOR void* FMemory::Realloc(void* Original, SIZE_T 
 		Ptr = FMEMORY_INLINE_GMalloc->Realloc(Original, Count, Alignment);
 	}
 
+	if (Ptr != Original)
+	{
+		// If the pointer we've got back from realloc is new memory, we are
+		// assuming the old memory was free'd.
+		AutoRTFM::DidFree(Original);
+	}
+
 	// optional tracking of every allocation - a realloc with a Count of zero is equivalent to a call 
 	// to free() and will return a null pointer which does not require tracking. If realloc returns null
 	// for some other reason (like failure to allocate) there's also no reason to track it
@@ -124,7 +131,7 @@ FMEMORY_INLINE_FUNCTION_DECORATOR void FMemory::Free(void* Original)
 	// AutoRTFM: For transactional code, in order to support the transaction 
 	// aborting and needing to 'roll back' the Free, we defer the actual
 	// free until commit time.
-	UE_AUTORTFM_OPENCOMMIT(
+	UE_AUTORTFM_ONCOMMIT(
 	{
 		// optional tracking of every allocation
 		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, Original, ELLMAllocType::FMalloc));
@@ -137,6 +144,8 @@ FMEMORY_INLINE_FUNCTION_DECORATOR void FMemory::Free(void* Original)
 		DoGamethreadHook(2);
 		FScopedMallocTimer Timer(2);
 		FMEMORY_INLINE_GMalloc->Free(Original);
+
+		AutoRTFM::DidFree(Original);
 	});
 }
 

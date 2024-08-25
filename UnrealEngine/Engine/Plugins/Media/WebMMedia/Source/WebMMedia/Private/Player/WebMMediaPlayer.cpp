@@ -768,7 +768,7 @@ void FWebMMediaPlayer::Stop()
 
 void FWebMMediaPlayer::AddVideoSampleFromDecodingThread(TSharedRef<FWebMMediaTextureSample, ESPMode::ThreadSafe> Sample)
 {
-	if (Sample->GetTime() < CurrentTime)
+	if (Sample->GetTime().Time < CurrentTime)
 	{
 		// We don't care about expired samples
 		return;
@@ -779,7 +779,7 @@ void FWebMMediaPlayer::AddVideoSampleFromDecodingThread(TSharedRef<FWebMMediaTex
 
 void FWebMMediaPlayer::AddAudioSampleFromDecodingThread(TSharedRef<FWebMMediaAudioSample, ESPMode::ThreadSafe> Sample)
 {
-	if (Sample->GetTime() < CurrentTime)
+	if (Sample->GetTime().Time < CurrentTime)
 	{
 		// We don't care about expired samples
 		return;

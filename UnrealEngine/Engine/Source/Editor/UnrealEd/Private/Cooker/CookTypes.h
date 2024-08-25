@@ -7,6 +7,7 @@
 #include "Containers/Set.h"
 #include "Containers/UnrealString.h"
 #include "Cooker/CookProfiling.h"
+#include "Cooker/MPCollector.h"
 #include "CookOnTheSide/CookOnTheFlyServer.h" // ECookTickFlags
 #include "DerivedDataRequestOwner.h"
 #include "HAL/LowLevelMemTracker.h"
@@ -16,6 +17,7 @@
 #include "Misc/AssertionMacros.h"
 #include "Serialization/PackageWriter.h"
 #include "Templates/Function.h"
+#include "UObject/CookEnums.h"
 #include "UObject/NameTypes.h"
 #include "UObject/SavePackage.h"
 
@@ -106,23 +108,6 @@ namespace UE::Cook
 		Cook
 	};
 
-	/* The Result of a Cook */
-	enum class ECookResult : uint8
-	{
-		/* CookResults have not yet been set */
-		NotAttempted,
-		/* The package was saved with success. */
-		Succeeded,
-		/* The package was processed but SavePackage failed. */
-		Failed,
-		/** The package is a NeverCook package that needs to be added to cookresults for dependency tracking. */
-		NeverCookPlaceholder,
-		/** No information for this platform (used in CookWorker replication) */
-		Invalid,
-		Count,
-		NumBits= FPlatformMath::ConstExprCeilLogTwo(ECookResult::Count),
-	};
-
 	/** Return type for functions called reentrantly that can succeed,fail,or be incomplete */
 	enum class EPollStatus : uint8
 	{
@@ -131,19 +116,29 @@ namespace UE::Cook
 		Incomplete,
 	};
 
-	/**
-	 * The possible reasons that the save-state data on an FPackageData might be released.
-	 * Different levels of teardown will happen based on the reason.
-	 */
-	enum class EReleaseSaveReason : uint8
+	/** The reasons that a FPackageData can change its state, used for diagnostics and some control flow. */
+	enum class EStateChangeReason : uint8
 	{
 		Completed,
 		DoneForNow,
-		Demoted,
-		AbortSave,
+		SaveError,
 		RecreateObjectCache,
+		CookerShutdown,
+		ReassignAbortedPackages,
+		Retraction,
+		Discovered,
+		Requested,
+		RequestCluster,
+		DirectorRequest,
+		Loaded,
+		Saved,
+		CookSuppressed,
+		GarbageCollected,
+		GeneratorPreGarbageCollected,
+		ForceRecook,
+		UrgencyUpdated,
 	};
-	const TCHAR* LexToString(UE::Cook::EReleaseSaveReason Reason);
+	const TCHAR* LexToString(UE::Cook::EStateChangeReason Reason);
 
 	enum class ESuppressCookReason : uint8
 	{
@@ -157,6 +152,7 @@ namespace UE::Cook
 		Redirected,
 		OrphanedGenerated,
 		LoadError,
+		ValidationError,
 		SaveError,
 		OnlyEditorOnly,
 		CookCanceled,
@@ -354,40 +350,6 @@ namespace UE::Cook
 		friend bool ::LoadFromCompactBinary(FCbFieldView Field, UE::Cook::FBeginCookConfigSettings& Value);
 	};
 
-	/**
-	 *  Identifier for a CookWorker process launched from a Director process, or for the local process.
-	 *  A director can have multiple CookWorkers.
-	 */
-	struct FWorkerId
-	{
-	public:
-		FWorkerId() { Id = InvalidId; }
-		constexpr static FWorkerId Invalid() { return FWorkerId(InvalidId); }
-		constexpr static FWorkerId Local() { return FWorkerId(LocalId); }
-		static FWorkerId FromRemoteIndex(uint8 Index) { check(Index < InvalidId-1U);  return FWorkerId(Index + 1U); }
-		static FWorkerId FromLocalOrRemoteIndex(uint8 Index) { check(Index < InvalidId);  return FWorkerId(Index); }
-
-		bool IsValid() const { return Id != InvalidId; }
-		bool IsInvalid() const { return Id == InvalidId; }
-		bool IsLocal() const { return Id == LocalId; }
-		bool IsRemote() const { return Id != InvalidId && Id != LocalId; }
-		uint8 GetRemoteIndex() const { check(IsRemote()); return Id - 1U; }
-		uint8 GetLocalOrRemoteIndex() const { check(IsValid()); return Id; }
-		bool operator==(const FWorkerId& Other) const { return Id == Other.Id; }
-		bool operator!=(const FWorkerId& Other) const { return Id != Other.Id; }
-		bool operator<(const FWorkerId& Other) const { return Id < Other.Id; }
-		inline friend int32 GetTypeHash(const FWorkerId& WorkerId) { return WorkerId.Id; }
-
-	private:
-		constexpr explicit FWorkerId(uint8 InId) : Id(InId) {}
-
-	private:
-		uint8 Id;
-
-		constexpr static uint8 InvalidId = 255;
-		constexpr static uint8 LocalId = 0;
-	};
-
 	/** Report whether commandline/config has disabled use of timeouts throughout the cooker, useful for debugging. */
 	bool IsCookIgnoreTimeouts();
 }
@@ -536,8 +498,13 @@ struct FBeginCookContextPlatform
 	UE::Cook::FPlatformData* PlatformData = nullptr;
 	TMap<FName, FString> CurrentCookSettings;
 
-	/** If true, we are deleting all old results from disk and rebuilding every package. If false, we are building iteratively. */
+	/** If true, we are deleting all old results from the previous cook. If false, we are keeping the old results. */
 	bool bFullBuild = false;
+	/**
+	 * If true, we will use results from the previous cook for the new cook, if present. If false, we will recook.
+	 * -diffonly is the expected case where bFullBuild=false but bAllowIterativeResults=false.
+	 */
+	bool bAllowIterativeResults = true;
 	/** If true, a cook has already been run in the current process and we still have results from it. */
 	bool bHasMemoryResults = false;
 	/** If true, we should delete the in-memory results from an earlier cook in the same process, if we have any. */

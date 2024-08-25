@@ -72,19 +72,19 @@ void FTestRepMovementNetSerializer::SetUp()
 
 void FTestRepMovementNetSerializer::TestIsEqual()
 {
-	constexpr SIZE_T TestRoundCount = 2;
+	constexpr int32 TestRoundCount = 2;
 	TArray<FRepMovement> CompareValues[TestRoundCount];
 	TArray<bool> ExpectedResults[TestRoundCount];
 
-	const SIZE_T ValueCount = Values.Num();
-	for (SIZE_T TestRoundIt = 0, TestRoundEndIt = TestRoundCount; TestRoundIt != TestRoundEndIt; ++TestRoundIt)
+	const int32 ValueCount = Values.Num();
+	for (int32 TestRoundIt = 0, TestRoundEndIt = TestRoundCount; TestRoundIt != TestRoundEndIt; ++TestRoundIt)
 	{
 		CompareValues[TestRoundIt].Reserve(ValueCount);
 		ExpectedResults[TestRoundIt].Reserve(ValueCount);
 
-		const SIZE_T SourceValueItOffset = TestRoundIt;
+		const int32 SourceValueItOffset = TestRoundIt;
 		const bool ExpectedResult = (TestRoundIt == 0U);
-		for (SIZE_T ValueIt = 0, ValueEndIt = ValueCount; ValueIt < ValueEndIt; ++ValueIt)
+		for (int32 ValueIt = 0, ValueEndIt = ValueCount; ValueIt < ValueEndIt; ++ValueIt)
 		{
 			CompareValues[TestRoundIt].Push(Values[(ValueIt + SourceValueItOffset) % ValueEndIt]);
 			ExpectedResults[TestRoundIt].Push(ExpectedResult);

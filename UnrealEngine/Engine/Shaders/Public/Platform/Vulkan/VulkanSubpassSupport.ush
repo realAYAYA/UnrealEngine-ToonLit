@@ -7,6 +7,12 @@
 
 #if COMPILER_DXC && PIXELSHADER
 
+	#ifdef SUBPASS_MSAA_SAMPLES
+		#if SUBPASS_MSAA_SAMPLES > 1
+			#define USE_MULTI_SAMPLE 1
+		#endif
+	#endif
+
 	// Note: Do not rename subpass input attachment declarations, or adjust your changes in VulkanBackend.cpp (see VULKAN_SUBPASS_FETCH_VAR_W)
 
 	[[vk::input_attachment_index(0)]]
@@ -14,8 +20,12 @@
 	#define VulkanSubpassDepthFetch() GENERATED_SubpassDepthFetchAttachment.SubpassLoad( )
 
 	[[vk::input_attachment_index(1)]]
-	SubpassInput<float4> GENERATED_SubpassFetchAttachment0;
-	#define VulkanSubpassFetch0() GENERATED_SubpassFetchAttachment0.SubpassLoad()
+	#ifndef USE_MULTI_SAMPLE
+		SubpassInput<float4> GENERATED_SubpassFetchAttachment0;
+	#else
+		SubpassInputMS<float4> GENERATED_SubpassFetchAttachment0;
+	#endif
+	#define VulkanSubpassFetch0 GENERATED_SubpassFetchAttachment0.SubpassLoad
 
 	[[vk::input_attachment_index(2)]]
 	SubpassInput<float4> GENERATED_SubpassFetchAttachment1;

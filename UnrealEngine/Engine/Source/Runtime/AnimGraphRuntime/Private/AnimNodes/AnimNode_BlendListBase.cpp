@@ -2,10 +2,13 @@
 
 #include "AnimNodes/AnimNode_BlendListBase.h"
 #include "AnimationRuntime.h"
+#include "Animation/AnimInertializationSyncScope.h"
 #include "Animation/BlendProfile.h"
 #include "Animation/AnimInstanceProxy.h"
 #include "Animation/AnimNode_Inertialization.h"
 #include "Animation/AnimTrace.h"
+#include "Animation/SkeletonRemapping.h"
+#include "Animation/SkeletonRemappingRegistry.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_BlendListBase)
 
@@ -96,7 +99,8 @@ void FAnimNode_BlendListBase::Update_AnyThread(const FAnimationUpdateContext& Co
 	const int32 NumPoses = BlendPose.Num();
 	const TArray<float>& CurrentBlendTimes = GetBlendTimes();
 	checkSlow(PerBlendData.Num() == NumPoses);
-
+	bool bRequestedInertializationOnActiveChildIndexChange = false;
+	
 	if (NumPoses > 0)
 	{
 		UBlendProfile* CurrentBlendProfile = GetBlendProfile();
@@ -138,6 +142,7 @@ void FAnimNode_BlendListBase::Update_AnyThread(const FAnimationUpdateContext& Co
 
 					InertializationRequester->RequestInertialization(Request);
 					InertializationRequester->AddDebugRecord(*Context.AnimInstanceProxy, Context.GetCurrentNodeId());
+					bRequestedInertializationOnActiveChildIndexChange = true;
 				}
 				else
 				{
@@ -231,7 +236,10 @@ void FAnimNode_BlendListBase::Update_AnyThread(const FAnimationUpdateContext& Co
 			const float BlendWeight = PerBlendData[i].Weight;
 			if (BlendWeight > ZERO_ANIMWEIGHT_THRESH)
 			{
-				BlendPose[i].Update(Context.FractionalWeight(BlendWeight));
+				FAnimationUpdateContext ChildContext = Context.FractionalWeight(BlendWeight);
+				
+				UE::Anim::TOptionalScopedGraphMessage<UE::Anim::FAnimInertializationSyncScope> InertializationSync(bRequestedInertializationOnActiveChildIndexChange, ChildContext);
+				BlendPose[i].Update((i == ChildIndex) ? ChildContext : ChildContext.AsInactive());
 			}
 		}
 
@@ -281,43 +289,61 @@ void FAnimNode_BlendListBase::Evaluate_AnyThread(FPoseContext& Output)
 	const int32 NumPoses = PosesToEvaluate.Num();
 
 	if ((NumPoses > 0) && (BlendPose.Num() == BlendWeights.Num()))
-	{		
-		// Scratch arrays for evaluation, stack allocated
-		TArray<FCompactPose, TInlineAllocator<8>> FilteredPoses;
-		TArray<FBlendedCurve, TInlineAllocator<8>> FilteredCurve;
-		TArray<UE::Anim::FStackAttributeContainer, TInlineAllocator<8>> FilteredAttributes;
-
-		FilteredPoses.SetNum(NumPoses, false);
-		FilteredCurve.SetNum(NumPoses, false);
-		FilteredAttributes.SetNum(NumPoses, false);
-
-		int32 NumActivePoses = 0;
-		for (int32 i = 0; i < PosesToEvaluate.Num(); ++i)
-		{
-			int32 PoseIndex = PosesToEvaluate[i];
-
-			FPoseContext EvaluateContext(Output);
-
-			FPoseLink& CurrentPose = BlendPose[PoseIndex];
-			CurrentPose.Evaluate(EvaluateContext);
-
-			FilteredPoses[i].MoveBonesFrom(EvaluateContext.Pose);
-			FilteredCurve[i].MoveFrom(EvaluateContext.Curve);
-			FilteredAttributes[i].MoveFrom(EvaluateContext.CustomAttributes);
-		}
-
-		FAnimationPoseData OutAnimationPoseData(Output);
-
-		// Use the calculated blend sample data if we're blending per-bone
+	{
 		UBlendProfile* CurrentBlendProfile = GetBlendProfile();
-		if (CurrentBlendProfile)
+		if(NumPoses == 1 && FAnimWeight::IsFullWeight(BlendWeights[PosesToEvaluate[0]]) && CurrentBlendProfile == nullptr)
 		{
-			FAnimationRuntime::BlendPosesTogetherPerBone(FilteredPoses, FilteredCurve, FilteredAttributes, CurrentBlendProfile, PerBoneSampleData, PosesToEvaluate, OutAnimationPoseData);
+			// Single full weight pose - pass-through fast common case
+			BlendPose[PosesToEvaluate[0]].Evaluate(Output);
 		}
 		else
 		{
-			FAnimationRuntime::BlendPosesTogether(FilteredPoses, FilteredCurve, FilteredAttributes, BlendWeights, PosesToEvaluate, OutAnimationPoseData);
-		}		
+			// Scratch arrays for evaluation, stack allocated
+			TArray<FCompactPose, TInlineAllocator<8>> FilteredPoses;
+			TArray<FBlendedCurve, TInlineAllocator<8>> FilteredCurve;
+			TArray<UE::Anim::FStackAttributeContainer, TInlineAllocator<8>> FilteredAttributes;
+
+			FilteredPoses.SetNum(NumPoses, EAllowShrinking::No);
+			FilteredCurve.SetNum(NumPoses, EAllowShrinking::No);
+			FilteredAttributes.SetNum(NumPoses, EAllowShrinking::No);
+
+			int32 NumActivePoses = 0;
+			for (int32 i = 0; i < PosesToEvaluate.Num(); ++i)
+			{
+				int32 PoseIndex = PosesToEvaluate[i];
+
+				FPoseContext EvaluateContext(Output);
+
+				FPoseLink& CurrentPose = BlendPose[PoseIndex];
+				CurrentPose.Evaluate(EvaluateContext);
+
+				FilteredPoses[i].MoveBonesFrom(EvaluateContext.Pose);
+				FilteredCurve[i].MoveFrom(EvaluateContext.Curve);
+				FilteredAttributes[i].MoveFrom(EvaluateContext.CustomAttributes);
+			}
+
+			FAnimationPoseData OutAnimationPoseData(Output);
+		
+			// Use the calculated blend sample data if we're blending per-bone
+			if (CurrentBlendProfile)
+			{
+				const USkeleton* TargetSkeleton = Output.Pose.GetBoneContainer().GetSkeletonAsset();
+				const USkeleton* SourceSkeleton = CurrentBlendProfile->OwningSkeleton;
+				const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry::Get().GetRemapping(SourceSkeleton, TargetSkeleton);
+				if (SkeletonRemapping.IsValid())
+				{
+					FAnimationRuntime::BlendPosesTogetherPerBoneRemapped(FilteredPoses, FilteredCurve, FilteredAttributes, CurrentBlendProfile, PerBoneSampleData, PosesToEvaluate, SkeletonRemapping, OutAnimationPoseData);
+				}
+				else
+				{
+					FAnimationRuntime::BlendPosesTogetherPerBone(FilteredPoses, FilteredCurve, FilteredAttributes, CurrentBlendProfile, PerBoneSampleData, PosesToEvaluate, OutAnimationPoseData);
+				}
+			}
+			else
+			{
+				FAnimationRuntime::BlendPosesTogether(FilteredPoses, FilteredCurve, FilteredAttributes, BlendWeights, PosesToEvaluate, OutAnimationPoseData);
+			}
+		}
 	}
 	else
 	{

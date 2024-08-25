@@ -378,9 +378,6 @@ protected:
 	// End of SGraphEditorInterface
 
 private:
-	/** One-off active timer to ensure the graph is refreshes as needed */
-	EActiveTimerReturnType TriggerRefresh( double InCurrentTime, float InDeltaTime );
-
 	FText GetZoomText() const;
 
 	FSlateColor GetZoomTextColorAndOpacity() const;
@@ -412,7 +409,6 @@ private:
 	EActiveTimerReturnType HandleFocusEditorDeferred(double InCurrentTime, float InDeltaTime);
 private:
 	TWeakPtr<FActiveTimerHandle> FocusEditorTimer;
-	bool bIsActiveTimerRegistered;
 	uint32 NumNodesAddedSinceLastPointerPosition;
 };
 

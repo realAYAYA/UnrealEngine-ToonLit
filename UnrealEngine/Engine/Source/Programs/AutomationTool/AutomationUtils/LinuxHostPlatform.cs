@@ -1,42 +1,36 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Diagnostics;
 using System.IO;
 using UnrealBuildTool;
-using EpicGames.Core;
-using UnrealBuildBase;
 
 namespace AutomationTool
 {
 	class LinuxHostPlatform : HostPlatform
 	{
-		static string CachedFrameworkMsbuildTool = "";
+		static string CachedFrameworkMsbuildExe = string.Empty;
 
 		public override string GetFrameworkMsbuildExe()
 		{
-			// As of 5.0 mono comes with msbuild which performs better. If that's installed then use it
-			if (string.IsNullOrEmpty(CachedFrameworkMsbuildTool))
+			// Look for dotnet, we only support dotnet.
+			if (string.IsNullOrEmpty(CachedFrameworkMsbuildExe))
 			{
-				int Value;
-				bool CanUseMsBuild = (int.TryParse(Environment.GetEnvironmentVariable("UE_USE_SYSTEM_MONO"), out Value) &&
-						Value != 0 &&
-						!string.IsNullOrEmpty(CommandUtils.WhichApp("msbuild")));
-
-				if (CanUseMsBuild)
+				FileReference dotnet = FileReference.FromString(CommandUtils.WhichApp("dotnet"));
+				if (dotnet != null && FileReference.Exists(dotnet))
 				{
-					CachedFrameworkMsbuildTool = "msbuild";
+					Logger.LogInformation("Using {DotNet}", dotnet.FullName);
+					CachedFrameworkMsbuildExe = "dotnet msbuild";
 				}
 				else
 				{
-					CachedFrameworkMsbuildTool = "xbuild";
+					throw new BuildException("Unable to find installation of dotnet.");
 				}
 			}
 
-			return CachedFrameworkMsbuildTool;
+			return CachedFrameworkMsbuildExe;
 		}
 
 		public override string RelativeBinariesFolder
@@ -81,33 +75,14 @@ namespace AutomationTool
 		public override Process CreateProcess(string AppName)
 		{
 			var NewProcess = new Process();
-			if (AppName == "mono")
-			{
-				// Enable case-insensitive mode for Mono
-				if (!NewProcess.StartInfo.EnvironmentVariables.ContainsKey("MONO_IOMAP"))
-				{
-					NewProcess.StartInfo.EnvironmentVariables.Add("MONO_IOMAP", "case");
-				}
-			}
 			return NewProcess;
 		}
 
 		public override void SetupOptionsForRun(ref string AppName, ref CommandUtils.ERunOptions Options, ref string CommandLine)
 		{
-			if (AppName == "sh" || AppName == "xbuild" || AppName == "codesign")
+			if (AppName == "sh" || AppName == "codesign")
 			{
 				Options &= ~CommandUtils.ERunOptions.AppMustExist;
-			}
-			if (AppName == "xbuild")
-			{
-				AppName = "xbuild";
-				CommandLine = (String.IsNullOrEmpty(CommandLine) ? "" : CommandLine) + " /verbosity:quiet /nologo";
-				// Pass #define MONO to all the automation scripts
-				CommandLine += " /p:DefineConstants=MONO";
-				CommandLine += " /p:DefineConstants=__MonoCS__";
-				// Some projects have TargetFrameworkProfile=Client which causes warnings on Linux
-				// so force it to empty.
-				CommandLine += " /p:TargetFrameworkProfile=";
 			}
 			if (AppName.EndsWith(".exe") || ((AppName.Contains("/Binaries/Win64/") || AppName.Contains("/Binaries/Linux/")) && string.IsNullOrEmpty(Path.GetExtension(AppName))))
 			{
@@ -118,16 +93,16 @@ namespace AutomationTool
 					AppName = AppName.Replace("-Cmd.exe", "");
 					AppName = AppName.Replace(".exe", "");
 				}
-				// some of our C# applications are converted to dotnet core, do not run those via mono
+				// some of our C# applications are converted to dotnet core, do not run those via dotnet
 				else if (AppName.Contains("UnrealBuildTool") || AppName.Contains("AutomationTool"))
 				{
 					Options &= ~CommandUtils.ERunOptions.AppMustExist;
 				}
 				else
 				{
-					// It's a C# app, so run it with Mono
+					// It's a C# app, so run it with dotnet
 					CommandLine = "\"" + AppName + "\" " + (String.IsNullOrEmpty(CommandLine) ? "" : CommandLine);
-					AppName = "mono";
+					AppName = "dotnet";
 					Options &= ~CommandUtils.ERunOptions.AppMustExist;
 				}
 			}
@@ -135,7 +110,7 @@ namespace AutomationTool
 
 		public override void SetConsoleCtrlHandler(ProcessManager.CtrlHandlerDelegate Handler)
 		{
-			// @todo: add mono support
+			// @todo: add dotnet support
 		}
 
 		public override UnrealTargetPlatform HostEditorPlatform

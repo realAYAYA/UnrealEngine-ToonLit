@@ -14,6 +14,8 @@
 #include "Chaos/Capsule.h"
 #include "Chaos/Sphere.h"
 
+struct FHitResult;
+
 extern bool bSkipCapture;
 extern bool GCollisionAnalyzerIsRecording;
 
@@ -157,63 +159,9 @@ inline void CaptureRaycast(const UWorld* World, const FVector& Start, const FVec
 	FCollisionAnalyzerModule::Get()->CaptureQuery(Start, End, FQuat::Identity, ECAQueryType::Raycast, ECAQueryShape::Sphere, QueryMode, FVector(0, 0, 0), TraceChannel, Params, ResponseParams, ObjectParams, Results, TouchAllResults, CPUTime);
 }
 
-inline void CaptureOverlap(const UWorld* World, const FPhysicsGeometryCollection& PGeom, const FTransform& InGeomTransform, ECAQueryMode::Type QueryMode, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, TArray<FOverlapResult>& Results, double CPUTime)
-{
-	if (bSkipCapture || !GCollisionAnalyzerIsRecording || !IsInGameThread())
-	{
-		return;
-	}
+void CaptureOverlap(const UWorld* World, const FPhysicsGeometryCollection& PGeom, const FTransform& InGeomTransform, ECAQueryMode::Type QueryMode, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, TArray<FOverlapResult>& Results, double CPUTime);
 
-	ECAQueryShape::Type QueryShape = ECAQueryShape::Sphere;
-	FVector Dims(0, 0, 0);
-	FQuat UseRot = InGeomTransform.GetRotation();
-	ConvertGeometryCollection(PGeom, UseRot, QueryShape, Dims);
-
-	TArray<FHitResult> HitResults;
-	for (const FOverlapResult& OverlapResult : Results)
-	{
-		FHitResult NewResult = FHitResult(0.f);
-		NewResult.bBlockingHit = OverlapResult.bBlockingHit;
-		NewResult.HitObjectHandle = OverlapResult.OverlapObjectHandle;
-		NewResult.Component = OverlapResult.Component;
-		NewResult.Item = OverlapResult.ItemIndex;
-		HitResults.Add(NewResult);
-	}
-
-	TArray<FHitResult> TouchAllResults;
-	// TODO: Fill in 'all results' for overlaps
-
-	FCollisionAnalyzerModule::Get()->CaptureQuery(InGeomTransform.GetTranslation(), FVector(0, 0, 0), UseRot, ECAQueryType::GeomOverlap, QueryShape, QueryMode, Dims, TraceChannel, Params, ResponseParams, ObjectParams, HitResults, TouchAllResults, CPUTime);
-}
-
-inline void CaptureOverlap(const UWorld* World, const FCollisionShape& PGeom, const FTransform& InGeomTransform, ECAQueryMode::Type QueryMode, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, TArray<FOverlapResult>& Results, double CPUTime)
-{
-	if(bSkipCapture || !GCollisionAnalyzerIsRecording || !IsInGameThread())
-	{
-		return;
-	}
-
-	ECAQueryShape::Type QueryShape = ECAQueryShape::Sphere;
-	FVector Dims(0, 0, 0);
-	FQuat UseRot = InGeomTransform.GetRotation();
-	CollisionShapeToAnalyzerType(PGeom, QueryShape, Dims);
-
-	TArray<FHitResult> HitResults;
-	for(const FOverlapResult& OverlapResult : Results)
-	{
-		FHitResult NewResult = FHitResult(0.f);
-		NewResult.bBlockingHit = OverlapResult.bBlockingHit;
-		NewResult.HitObjectHandle = OverlapResult.OverlapObjectHandle;
-		NewResult.Component = OverlapResult.Component;
-		NewResult.Item = OverlapResult.ItemIndex;
-		HitResults.Add(NewResult);
-	}
-
-	TArray<FHitResult> TouchAllResults;
-	// TODO: Fill in 'all results' for overlaps
-
-	FCollisionAnalyzerModule::Get()->CaptureQuery(InGeomTransform.GetTranslation(), FVector(0, 0, 0), UseRot, ECAQueryType::GeomOverlap, QueryShape, QueryMode, Dims, TraceChannel, Params, ResponseParams, ObjectParams, HitResults, TouchAllResults, CPUTime);
-}
+void CaptureOverlap(const UWorld* World, const FCollisionShape& PGeom, const FTransform& InGeomTransform, ECAQueryMode::Type QueryMode, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, TArray<FOverlapResult>& Results, double CPUTime);
 
 #define STARTQUERYTIMER() double StartTime = FPlatformTime::Seconds()
 #define CAPTUREGEOMSWEEP(World, Start, End, Rot, QueryMode, PGeom, TraceChannel, Params, ResponseParam, ObjectParam, Results) if (GCollisionAnalyzerIsRecording && IsInGameThread()) { CaptureGeomSweep(World, Start, End, Rot, QueryMode, PGeom, TraceChannel, Params, ResponseParam, ObjectParam, Results, FPlatformTime::Seconds() - StartTime); }

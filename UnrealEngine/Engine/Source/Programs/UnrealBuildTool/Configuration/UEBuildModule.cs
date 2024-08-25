@@ -163,6 +163,11 @@ namespace UnrealBuildTool
 		public List<UEBuildModule>? DynamicallyLoadedModules;
 
 		/// <summary>
+		/// Set of modules that have referenced this module
+		/// </summary>
+		protected HashSet<UEBuildModule>? ReferenceStackParentModules;
+
+		/// <summary>
 		/// Set of all allowed restricted folder references
 		/// </summary>
 		private readonly HashSet<DirectoryReference> RestrictedFoldersAllowList;
@@ -212,7 +217,7 @@ namespace UnrealBuildTool
 			HashSet<string> PublicPreBuildLibraries = HashSetFromOptionalEnumerableStringParameter(Rules.PublicPreBuildLibraries);
 			PublicDefinitions = HashSetFromOptionalEnumerableStringParameter(Rules.PublicDefinitions);
 			PublicIncludePaths = CreateDirectoryHashSet(Rules.PublicIncludePaths);
-			InternalIncludePaths = CreateDirectoryHashSet(Rules.InternalncludePaths);
+			InternalIncludePaths = CreateDirectoryHashSet(Rules.InternalIncludePaths);
 			PublicSystemIncludePaths = CreateDirectoryHashSet(Rules.PublicSystemIncludePaths);
 			PublicSystemLibraryPaths = CreateDirectoryHashSet(Rules.PublicSystemLibraryPaths);
 			HashSet<string> PublicAdditionalLibraries = HashSetFromOptionalEnumerableStringParameter(Rules.PublicAdditionalLibraries.Union(PublicPreBuildLibraries));
@@ -336,16 +341,16 @@ namespace UnrealBuildTool
 		public HashSet<UEBuildModule> GetDependencies(bool bWithIncludePathModules, bool bWithDynamicallyLoadedModules)
 		{
 			HashSet<UEBuildModule> Modules = new HashSet<UEBuildModule>();
-			Modules.UnionWith(PublicDependencyModules!);
-			Modules.UnionWith(PrivateDependencyModules!);
+			Modules.UnionWith(PublicDependencyModules ?? new());
+			Modules.UnionWith(PrivateDependencyModules ?? new());
 			if (bWithIncludePathModules)
 			{
-				Modules.UnionWith(PublicIncludePathModules!);
-				Modules.UnionWith(PrivateIncludePathModules!);
+				Modules.UnionWith(PublicIncludePathModules ?? new());
+				Modules.UnionWith(PrivateIncludePathModules ?? new());
 			}
 			if (bWithDynamicallyLoadedModules)
 			{
-				Modules.UnionWith(DynamicallyLoadedModules!);
+				Modules.UnionWith(DynamicallyLoadedModules ?? new());
 			}
 			return Modules;
 		}
@@ -697,12 +702,6 @@ namespace UnrealBuildTool
 			bool bWithLegacyParentIncludePaths
 			)
 		{
-			if (!Rules.bTreatAsEngineModule)
-			{
-				Definitions.Add("DEPRECATED_FORGAME=DEPRECATED");
-				Definitions.Add("UE_DEPRECATED_FORGAME=UE_DEPRECATED");
-			}
-
 			// Add this module's private include paths and definitions.
 			IncludePaths.UnionWith(PrivateIncludePaths);
 
@@ -1104,59 +1103,13 @@ namespace UnrealBuildTool
 			// Set the reference chain for anything referenced by this module
 			string NextReferenceChain = String.Format("{0} -> {1}", ReferenceChain, ThisRefName);
 
-			// We need to check for cycles if this module has already been created and its name is in the stack.
-			bool CheckForCycles = PrivateIncludePathModules != null && ReferenceStack.Contains(this);
-
-			// Add us to the reference stack - note do this before checking for cycles as we allow them if an element in the stack
-			// declares the next element at leading to a dependency cycle.
+			// Add us to the reference stack
 			ReferenceStack.Add(this);
 
 			// Check if this module is invalid for the current target, based on Module attributes
 			if (!ModuleRules.IsValidForTarget(Rules.GetType(), Rules.Target, out string? InvalidReason))
 			{
 				Logger.LogWarning("Warning: Referenced module '{Module}' does not support {InvalidReason} via {ReferenceChain}", ThisRefName, InvalidReason, NextReferenceChain);
-			}
-
-			if (CheckForCycles)
-			{
-				// We are FeatureModuleA and we know we're already in the list so there must be a circular dependency like this:
-				//   Target -> FeatureModuleA -> FeatureModuleB -> BaseModule -> FeatureModuleA
-				// In this case it's up to BaseModule to confess that it's going to introduce a 
-				// cycle by referencing FeatureModuleA so let's check it did that.
-				// (Note: it's *bad* that it is doing this, but it's even worse not to flag these
-				// cycles when they're introduced and have a way of tracking them!)
-
-				string? GuiltyModule = null;
-				string? VictimModule = null;
-
-				for (int i = 0; i < ReferenceStack.Count() - 1; i++)
-				{
-					UEBuildModule ReferringModule = ReferenceStack.ElementAt(i);
-					UEBuildModule TargetModule = ReferenceStack.ElementAt(i + 1);
-
-					if (ReferringModule.HasCircularDependencyOn(TargetModule.Name))
-					{
-						GuiltyModule = ReferringModule.Name;
-						VictimModule = TargetModule.Name;
-						break;
-					}
-				}
-
-				// No module has confessed its guilt, so this is an error.
-				if (String.IsNullOrEmpty(GuiltyModule))
-				{
-					string CycleChain = String.Join(" -> ", ReferenceStack);
-					Logger.LogError("Circular dependency on {Name} detected.\n" +
-						"\tFull Route: {FullRoute}\n" +
-						"\tCycled Route: is {CycleRoot}.\n" +
-						"Break this loop by moving dependencies into a separate module or using Private/PublicIncludePathModuleNames to reference declarations\n",
-						ThisRefName, NextReferenceChain, CycleChain);
-
-				}
-				else
-				{
-					Logger.LogDebug("Found circular reference to {ThisRefName}, but {GuiltyModule} declares a cycle on {VictimModule} which breaks the chain", ThisRefName, GuiltyModule, VictimModule);
-				}
 			}
 
 			// Create all the referenced modules. This path can be recursive, so we check against PublicDependencyModules to ensure we don't recurse through the 
@@ -1166,7 +1119,7 @@ namespace UnrealBuildTool
 				// Log dependencies if required
 				if (Logger.IsEnabled((LogLevel)LogEventType.VeryVerbose))
 				{
-					Logger.LogTrace("Module {0} dependencies:", Name);
+					Logger.LogTrace("Module {Name} dependencies:", Name);
 					LogDependencyNameList("Public:", Rules.PublicDependencyModuleNames, Logger);
 					LogDependencyNameList("Private:", Rules.PrivateDependencyModuleNames, Logger);
 					LogDependencyNameList("Dynamic:", Rules.DynamicallyLoadedModuleNames, Logger);
@@ -1196,6 +1149,97 @@ namespace UnrealBuildTool
 				RecursivelyCreateModulesByName(Rules.DynamicallyLoadedModuleNames, ref DynamicallyLoadedModules, ref bDependsOnVerse, CreateModule, NextReferenceChain, new List<UEBuildModule>(), Logger);
 			}
 
+			// pop us off the current stack
+			ReferenceStack.RemoveAt(ReferenceStack.Count - 1);
+		}
+
+		/// <summary>
+		/// Public entry point to validate a module
+		/// </summary>
+		/// <param name="ReferenceChain"></param>
+		/// <param name="Logger"></param>
+		public bool ValidateModule(string ReferenceChain, ILogger Logger)
+		{
+			List<UEBuildModule> ReferenceStack = new List<UEBuildModule>();
+			RecursivelyCheckForCircularReferences(ReferenceChain, ReferenceStack, Logger);
+
+			return false; // No fatal errors
+		}
+
+		/// <summary>
+		/// Recursively check a module for circular dependencies
+		/// </summary>
+		/// <param name="ReferenceChain">Chain of references before reaching this module</param>
+		/// <param name="ReferenceStack">Stack of module dependencies that led to this module</param>
+		/// <param name="Logger">Logger for output</param>
+		protected void RecursivelyCheckForCircularReferences(string ReferenceChain, List<UEBuildModule> ReferenceStack, ILogger Logger)
+		{
+			// Name of this reference
+			string ThisRefName = (RulesFile == null) ? Name : RulesFile.GetFileName();
+
+			// Set the reference chain for anything referenced by this module
+			string NextReferenceChain = String.Format("{0} -> {1}", ReferenceChain, ThisRefName);
+
+			// We need to check for cycles if this module has already been created and its name is in the stack.
+			bool CheckForCycles = PrivateIncludePathModules != null && ReferenceStack.Contains(this);
+
+			UEBuildModule? PreviousModule = ReferenceStack.LastOrDefault();
+			ReferenceStackParentModules ??= new();
+			if (PreviousModule != null && !ReferenceStackParentModules.Add(PreviousModule))
+			{
+				return;
+			}
+
+			// Add us to the reference stack - note do this before checking for cycles as we allow them if an element in the stack
+			// declares the next element at leading to a dependency cycle.
+			ReferenceStack.Add(this);
+
+			if (CheckForCycles)
+			{
+				// We are FeatureModuleA and we know we're already in the list so there must be a circular dependency like this:
+				//   Target -> FeatureModuleA -> FeatureModuleB -> BaseModule -> FeatureModuleA
+				// In this case it's up to BaseModule to confess that it's going to introduce a 
+				// cycle by referencing FeatureModuleA so let's check it did that.
+				// (Note: it's *bad* that it is doing this, but it's even worse not to flag these
+				// cycles when they're introduced and have a way of tracking them!)
+
+				string? GuiltyModule = null;
+				string? VictimModule = null;
+
+				for (int i = 0; i < ReferenceStack.Count - 1; i++)
+				{
+					UEBuildModule ReferringModule = ReferenceStack.ElementAt(i);
+					UEBuildModule TargetModule = ReferenceStack.ElementAt(i + 1);
+
+					if (ReferringModule.HasCircularDependencyOn(TargetModule.Name))
+					{
+						GuiltyModule = ReferringModule.Name;
+						VictimModule = TargetModule.Name;
+						break;
+					}
+				}
+
+				// No module has confessed its guilt, so this is an error.
+				if (String.IsNullOrEmpty(GuiltyModule))
+				{
+					string CycleChain = String.Join(" -> ", ReferenceStack.SkipWhile(x => x != this));
+					Logger.LogError("Circular dependency on {Name} detected:\n" +
+						"\tFull Route: {FullRoute}\n" +
+						"\tCycled Route: is {CycleRoute}\n" +
+						"Break this loop by moving dependencies into a separate module or using Private/PublicIncludePathModuleNames to reference declarations\n",
+						ThisRefName, NextReferenceChain, CycleChain);
+				}
+				else
+				{
+					Logger.LogDebug("Found circular reference to {ThisRefName}, but {GuiltyModule} declares a cycle on {VictimModule} which breaks the chain", ThisRefName, GuiltyModule, VictimModule);
+				}
+			}
+			else
+			{
+				// Continue checking for circular dependencies until a cycle is found or the graph is exhausted
+				PublicDependencyModules?.ForEach(x => x.RecursivelyCheckForCircularReferences(NextReferenceChain, ReferenceStack, Logger));
+				PrivateDependencyModules?.ForEach(x => x.RecursivelyCheckForCircularReferences(NextReferenceChain, ReferenceStack, Logger));
+			}
 			// pop us off the current stack
 			ReferenceStack.RemoveAt(ReferenceStack.Count - 1);
 		}

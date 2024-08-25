@@ -8,7 +8,9 @@
 #include "UObject/Object.h"
 #include "Templates/SubclassOf.h"
 #include "Engine/EngineTypes.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "NavFilters/NavigationQueryFilter.h"
+#endif
 #include "EnvironmentQuery/Items/EnvQueryItemType.h"
 #include "EnvironmentQuery/EnvQueryContext.h"
 #include "BehaviorTree/BehaviorTreeTypes.h"
@@ -24,6 +26,7 @@ class UEnvQueryGenerator;
 class UEnvQueryItemType_ActorBase;
 class UEnvQueryItemType_VectorBase;
 class UEnvQueryTest;
+class UNavigationQueryFilter;
 struct FEnvQueryInstance;
 
 AIMODULE_API DECLARE_LOG_CATEGORY_EXTERN(LogEQS, Display, All);
@@ -322,15 +325,7 @@ struct FEnvTraceData
 		Detailed,
 	};
 
-	FEnvTraceData() :
-		VersionNum(0), 
-		ProjectDown(1024.0f), ProjectUp(1024.0f), ExtentX(10.0f), ExtentY(10.0f), ExtentZ(10.0f),
-		PostProjectionVerticalOffset(0.0f),	TraceChannel(TraceTypeQuery1), SerializedChannel(ECC_WorldStatic), TraceProfileName(NAME_None),
-		TraceShape(EEnvTraceShape::Line), TraceMode(EEnvQueryTrace::None),
-		bTraceComplex(false), bOnlyBlockingHits(true),
-		bCanTraceOnNavMesh(true), bCanTraceOnGeometry(true), bCanDisableTrace(true), bCanProjectDown(false)
-	{
-	}
+	AIMODULE_API FEnvTraceData();
 
 	/** version number for updates */
 	UPROPERTY()
@@ -1276,6 +1271,10 @@ public:
 	FEnvQueryDebugData DebugData;
 	static AIMODULE_API bool bDebuggingInfoEnabled;
 #endif // USE_EQS_DEBUGGER
+
+#if STATS
+	TStatId StatId;
+#endif
 
 	AIMODULE_API FBox GetBoundingBox() const;
 };

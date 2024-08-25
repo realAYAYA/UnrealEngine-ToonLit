@@ -1,17 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using Horde.Agent.Leases;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace Horde.Agent.Services
 {
@@ -21,11 +15,11 @@ namespace Horde.Agent.Services
 	class WorkerService : BackgroundService, IDisposable
 	{
 		readonly ILogger _logger;
-		readonly IOptions<AgentSettings> _settings;
 		readonly ISessionFactory _sessionFactory;
 		readonly CapabilitiesService _capabilitiesService;
 		readonly StatusService _statusService;
 		readonly LeaseHandler[] _leaseHandlers;
+		readonly LeaseLoggerFactory _leaseLoggerFactory;
 		readonly IServiceProvider _serviceProvider;
 		LeaseManager? _currentLeaseManager;
 
@@ -34,22 +28,22 @@ namespace Horde.Agent.Services
 		static readonly TimeSpan[] s_sessionBackOffTime =
 		{
 			TimeSpan.FromSeconds(5),
+			TimeSpan.FromSeconds(10),
 			TimeSpan.FromSeconds(30),
-			TimeSpan.FromMinutes(1),
-			TimeSpan.FromMinutes(5)
+			TimeSpan.FromMinutes(1)
 		};
 
 		/// <summary>
 		/// Constructor. Registers with the server and starts accepting connections.
 		/// </summary>
-		public WorkerService(IOptions<AgentSettings> settings, ISessionFactory sessionFactory, CapabilitiesService capabilitiesService, StatusService statusService, IEnumerable<LeaseHandler> leaseHandlers, IServiceProvider serviceProvider, ILogger<WorkerService> logger)
+		public WorkerService(ISessionFactory sessionFactory, CapabilitiesService capabilitiesService, StatusService statusService, IEnumerable<LeaseHandler> leaseHandlers, LeaseLoggerFactory leaseLoggerFactory, IServiceProvider serviceProvider, ILogger<WorkerService> logger)
 		{
-			_settings = settings;
 			_sessionFactory = sessionFactory;
 			_capabilitiesService = capabilitiesService;
 			_statusService = statusService;
 			_logger = logger;
 			_leaseHandlers = leaseHandlers.ToArray();
+			_leaseLoggerFactory = leaseLoggerFactory;
 			_serviceProvider = serviceProvider;
 		}
 
@@ -76,13 +70,13 @@ namespace Horde.Agent.Services
 		internal async Task ExecuteInnerAsync(CancellationToken stoppingToken)
 		{
 			// Show the current client id
-			string version = Program.Version;
+			string version = AgentApp.Version;
 			_logger.LogInformation("Version: {Version}", version);
 
 			// Print the server info
 			_logger.LogInformation("Arguments: {Arguments}", Environment.CommandLine);
 
-			await TelemetryService.LogProblematicFilterDrivers(_logger, stoppingToken);
+			// await TelemetryService.LogProblematicFilterDriversAsync(_logger, stoppingToken);
 
 			// Keep trying to start an agent session with the server
 			int failureCount = 0;
@@ -109,7 +103,7 @@ namespace Horde.Agent.Services
 
 						await using (ISession session = await _sessionFactory.CreateAsync(stoppingToken))
 						{
-							_currentLeaseManager = new LeaseManager(session, _capabilitiesService, _statusService, _leaseHandlers, _settings, _logger);
+							_currentLeaseManager = new LeaseManager(session, _capabilitiesService, _statusService, _leaseHandlers, _leaseLoggerFactory, _logger);
 							result = await _currentLeaseManager.RunAsync(false, stoppingToken);
 						}
 
@@ -158,25 +152,6 @@ namespace Horde.Agent.Services
 					_logger.LogInformation("Waiting 5 seconds before restarting session...");
 					await Task.Delay(TimeSpan.FromSeconds(5.0), stoppingToken);
 				}
-			}
-		}
-
-		async Task WaitForMutexAsync(Mutex mutex, CancellationToken stoppingToken)
-		{
-			try
-			{
-				if (!mutex.WaitOne(0))
-				{
-					_logger.LogError("Another instance of HordeAgent is already running. Waiting until it terminates.");
-					while (!mutex.WaitOne(0))
-					{
-						stoppingToken.ThrowIfCancellationRequested();
-						await Task.Delay(TimeSpan.FromSeconds(1.0), stoppingToken);
-					}
-				}
-			}
-			catch (AbandonedMutexException)
-			{
 			}
 		}
 	}

@@ -4,14 +4,8 @@
 
 #include "Dialog/SCustomDialog.h"
 
-class FArchivedSessionHistoryController;
 class IConcertSyncServer;
 class SCheckBox;
-
-namespace UE::ConcertSyncCore
-{
-	struct FHistoryAnalysisResult;
-}
 
 namespace UE::MultiUserServer
 {

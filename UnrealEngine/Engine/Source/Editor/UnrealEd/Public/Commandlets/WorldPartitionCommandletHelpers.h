@@ -12,7 +12,7 @@ class UWorld;
 
 namespace WorldPartitionCommandletHelpers
 {
-	UNREALED_API DECLARE_LOG_CATEGORY_EXTERN(LogWorldParitionCommandletUtils, Log, All);
+	UNREALED_API DECLARE_LOG_CATEGORY_EXTERN(LogWorldPartitionCommandletUtils, Log, All);
 
 	UWorld* LoadAndInitWorld(const FString& LevelToLoad);
 	UWorld* LoadWorld(const FString& LevelToLoad);

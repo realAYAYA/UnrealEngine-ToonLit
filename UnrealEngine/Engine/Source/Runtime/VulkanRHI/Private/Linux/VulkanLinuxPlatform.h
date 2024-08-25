@@ -9,12 +9,11 @@
 #define VULKAN_ENABLE_DUMP_LAYER					0
 #define VULKAN_SHOULD_DEBUG_IN_DEVELOPMENT			1
 #define VULKAN_SHOULD_ENABLE_DRAW_MARKERS			(UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT)
-#define VULKAN_SIGNAL_UNIMPLEMENTED()				checkf(false, TEXT("Unimplemented vulkan functionality: %s"), __PRETTY_FUNCTION__)
+#define VULKAN_SIGNAL_UNIMPLEMENTED()				checkf(false, TEXT("Unimplemented vulkan functionality: %hs"), __PRETTY_FUNCTION__)
 #define VULKAN_SUPPORTS_AMD_BUFFER_MARKER			1
 
 #define VULKAN_RHI_RAYTRACING 						(RHI_RAYTRACING)
 #define VULKAN_SUPPORTS_SCALAR_BLOCK_LAYOUT			(VULKAN_RHI_RAYTRACING)
-#define VULKAN_SUPPORTS_MULTIVIEW					1	// needed for VULKAN_PCES31
 
 #if VULKAN_RHI_RAYTRACING
 #	define UE_VK_API_VERSION						VK_API_VERSION_1_2
@@ -52,8 +51,6 @@ public:
 	static void GetDeviceLayers(TArray<const ANSICHAR*>& OutLayers) {}
 
 	static void CreateSurface(void* WindowHandle, VkInstance Instance, VkSurfaceKHR* OutSurface);
-
-	static bool ForceEnableDebugMarkers();
 
 	static void WriteCrashMarker(const FOptionalVulkanDeviceExtensions& OptionalExtensions, VkCommandBuffer CmdBuffer, VkBuffer DestBuffer, const TArrayView<uint32>& Entries, bool bAdding);
 

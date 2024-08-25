@@ -3,9 +3,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Render/DisplayDevice/Containers/DisplayClusterDisplayDevice_Enums.h"
 
 class IDisplayClusterViewport;
 class IDisplayClusterViewportManager;
+class IDisplayClusterViewportPreview;
+class UMaterialInstanceDynamic;
+class UMeshComponent;
 
 /**
  * Warp policy interface
@@ -55,7 +59,7 @@ public:
 
 	/**
 	* Tick function
-	* The positions of movable preview components may be updated on each frame.
+	* The positions of editable preview components may be updated on each frame.
 	* Use this function to handle these updates.
 	* 
 	* @param InViewportManager - Viewport manager interface
@@ -64,15 +68,65 @@ public:
 	virtual void Tick(IDisplayClusterViewportManager* InViewportManager, float DeltaSeconds)
 	{ }
 
-	/** Override frustum for viewport context
+	/** Should override frustum for viewport context
 	 * 
 	 * @param InViewport - a owner viewport
 	 * @param ContextNum - viewport eye context index
 	 * 
-	 * @return - true if frustum overrided.
+	 * @return - true, if the CalcFrustumOverrideFunc() function will be used
 	 */
-	virtual bool CalcFrustum(IDisplayClusterViewport* InViewport, const uint32 ContextNum)
+	virtual bool ShouldOverrideCalcFrustum(IDisplayClusterViewport* InViewport)
 	{
 		return false;
 	}
+
+	/** Override frustum for viewport context
+	 * This function is called only when the ShouldOverrideCalcFrustum() function returns true
+	 * 
+	 * @param InViewport - a owner viewport
+	 * @param ContextNum - viewport eye context index
+	 * 
+	 * @return - true if frustum is overridden.
+	 */
+	virtual bool OverrideCalcFrustum(IDisplayClusterViewport* InViewport, const uint32 ContextNum)
+	{
+		return false;
+	}
+
+	/** Call before CalcFrustum()
+	 *
+	 * @param InViewport - a owner viewport
+	 * @param ContextNum - viewport eye context index
+	 */
+	virtual void BeginCalcFrustum(IDisplayClusterViewport* InViewport, const uint32 ContextNum)
+	{ }
+
+	/** Call after CalcFrustum()
+	 *
+	 * @param InViewport - a owner viewport
+	 * @param ContextNum - viewport eye context index
+	 */
+	virtual void EndCalcFrustum(IDisplayClusterViewport* InViewport, const uint32 ContextNum)
+	{ }
+
+	/**
+	* Ask warp  policy instance if it has any Editable mesh based preview
+	* @param InViewport - a owner viewport
+	* @return - True if mesh based preview is available
+	*/
+	virtual bool HasPreviewEditableMesh(IDisplayClusterViewport* InViewport)
+	{
+		return false;
+	}
+
+	/** Perform any operations on the  mesh and material instance, such as setting parameter values.
+	* 
+	* @param InViewport - current viewport
+	* @param InMeshType - mesh type
+	* @param InMaterialType - type of material being requested
+	* @param InMeshComponent - mesh component to be updated
+	* @param InMeshMaterialInstance - material instance that used on this mesh
+	*/
+	virtual void OnUpdateDisplayDeviceMeshAndMaterialInstance(IDisplayClusterViewportPreview& InViewportPreview, const EDisplayClusterDisplayDeviceMeshType InMeshType, const EDisplayClusterDisplayDeviceMaterialType InMaterialType, UMeshComponent* InMeshComponent, UMaterialInstanceDynamic* InMeshMaterialInstance) const
+	{ }
 };

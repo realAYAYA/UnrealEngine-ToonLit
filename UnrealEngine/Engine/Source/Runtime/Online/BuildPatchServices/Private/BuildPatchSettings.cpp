@@ -24,39 +24,47 @@ namespace BuildPatchServices
 		Invalid
 	};
 
-	BuildPatchServices::FInstallerAction FInstallerAction::MakeInstall(const IBuildManifestRef& Manifest, TSet<FString> InstallTags /*= TSet<FString>()*/)
+	BuildPatchServices::FInstallerAction FInstallerAction::MakeInstall(const IBuildManifestRef& Manifest, TSet<FString> InstallTags /*= TSet<FString>()*/, FString InstallSubdirectory /*= FString()*/, FString CloudSubdirectory /*= FString()*/)
 	{
 		FInstallerAction InstallerAction;
 		InstallerAction.InstallManifest = Manifest;
 		InstallerAction.InstallTags = MoveTemp(InstallTags);
+		InstallerAction.InstallSubdirectory = MoveTemp(InstallSubdirectory);
+		InstallerAction.CloudSubdirectory = MoveTemp(CloudSubdirectory);
 		InstallerAction.ActionIntent = EInstallActionIntent::Install;
 		return InstallerAction;
 	}
 
-	BuildPatchServices::FInstallerAction FInstallerAction::MakeUpdate(const IBuildManifestRef& CurrentManifest, const IBuildManifestRef& InstallManifest, TSet<FString> InstallTags /*= TSet<FString>()*/)
+	BuildPatchServices::FInstallerAction FInstallerAction::MakeUpdate(const IBuildManifestRef& CurrentManifest, const IBuildManifestRef& InstallManifest, TSet<FString> InstallTags /*= TSet<FString>()*/, FString InstallSubdirectory /*= FString()*/, FString CloudSubdirectory /*= FString()*/)
 	{
 		FInstallerAction InstallerAction;
 		InstallerAction.CurrentManifest = CurrentManifest;
 		InstallerAction.InstallManifest = InstallManifest;
 		InstallerAction.InstallTags = MoveTemp(InstallTags);
+		InstallerAction.InstallSubdirectory = MoveTemp(InstallSubdirectory);
+		InstallerAction.CloudSubdirectory = MoveTemp(CloudSubdirectory);
 		InstallerAction.ActionIntent = EInstallActionIntent::Update;
 		return InstallerAction;
 	}
 
-	BuildPatchServices::FInstallerAction FInstallerAction::MakeRepair(const IBuildManifestRef& Manifest, TSet<FString> InstallTags /*= TSet<FString>()*/)
+	BuildPatchServices::FInstallerAction FInstallerAction::MakeRepair(const IBuildManifestRef& Manifest, TSet<FString> InstallTags /*= TSet<FString>()*/, FString InstallSubdirectory /*= FString()*/, FString CloudSubdirectory /*= FString()*/)
 	{
 		FInstallerAction InstallerAction;
 		InstallerAction.CurrentManifest = Manifest;
 		InstallerAction.InstallManifest = Manifest;
 		InstallerAction.InstallTags = MoveTemp(InstallTags);
+		InstallerAction.InstallSubdirectory = MoveTemp(InstallSubdirectory);
+		InstallerAction.CloudSubdirectory = MoveTemp(CloudSubdirectory);
 		InstallerAction.ActionIntent = EInstallActionIntent::Repair;
 		return InstallerAction;
 	}
 
-	BuildPatchServices::FInstallerAction FInstallerAction::MakeUninstall(const IBuildManifestRef& Manifest)
+	BuildPatchServices::FInstallerAction FInstallerAction::MakeUninstall(const IBuildManifestRef& Manifest, FString InstallSubdirectory /*= FString()*/, FString CloudSubdirectory /*= FString()*/)
 	{
 		FInstallerAction InstallerAction;
 		InstallerAction.CurrentManifest = Manifest;
+		InstallerAction.InstallSubdirectory = MoveTemp(InstallSubdirectory);
+		InstallerAction.CloudSubdirectory = MoveTemp(CloudSubdirectory);
 		InstallerAction.ActionIntent = EInstallActionIntent::Uninstall;
 		return InstallerAction;
 	}
@@ -65,6 +73,8 @@ namespace BuildPatchServices
 		: CurrentManifest(CopyFrom.CurrentManifest)
 		, InstallManifest(CopyFrom.InstallManifest)
 		, InstallTags(CopyFrom.InstallTags)
+		, InstallSubdirectory(CopyFrom.InstallSubdirectory)
+		, CloudSubdirectory(CopyFrom.CloudSubdirectory)
 		, ActionIntent(CopyFrom.ActionIntent)
 	{
 	}
@@ -73,6 +83,8 @@ namespace BuildPatchServices
 		: CurrentManifest(MoveTemp(MoveFrom.CurrentManifest))
 		, InstallManifest(MoveTemp(MoveFrom.InstallManifest))
 		, InstallTags(MoveTemp(MoveFrom.InstallTags))
+		, InstallSubdirectory(MoveTemp(MoveFrom.InstallSubdirectory))
+		, CloudSubdirectory(MoveTemp(MoveFrom.CloudSubdirectory))
 		, ActionIntent(MoveFrom.ActionIntent)
 	{
 	}
@@ -107,6 +119,16 @@ namespace BuildPatchServices
 		return InstallTags;
 	}
 
+	const FString& FInstallerAction::GetInstallSubdirectory() const
+	{
+		return InstallSubdirectory;
+	}
+
+	const FString& FInstallerAction::GetCloudSubdirectory() const
+	{
+		return CloudSubdirectory;
+	}
+
 	IBuildManifestRef FInstallerAction::GetInstallManifest() const
 	{
 		return InstallManifest.ToSharedRef();
@@ -129,36 +151,7 @@ namespace BuildPatchServices
 		, DeltaPolicy(EDeltaPolicy::Skip)
 		, bRunRequiredPrereqs(true)
 		, bAllowConcurrentExecution(false)
-	{
-	}
-
-	FBuildInstallerConfiguration::FBuildInstallerConfiguration(FBuildInstallerConfiguration&& MoveFrom)
-		: InstallerActions(MoveTemp(MoveFrom.InstallerActions))
-		, InstallDirectory(MoveTemp(MoveFrom.InstallDirectory))
-		, StagingDirectory(MoveTemp(MoveFrom.StagingDirectory))
-		, BackupDirectory(MoveTemp(MoveFrom.BackupDirectory))
-		, ChunkDatabaseFiles(MoveTemp(MoveFrom.ChunkDatabaseFiles))
-		, CloudDirectories(MoveTemp(MoveFrom.CloudDirectories))
-		, InstallMode(MoveFrom.InstallMode)
-		, VerifyMode(MoveFrom.VerifyMode)
-		, DeltaPolicy(MoveFrom.DeltaPolicy)
-		, bRunRequiredPrereqs(MoveFrom.bRunRequiredPrereqs)
-		, bAllowConcurrentExecution(MoveFrom.bAllowConcurrentExecution)
-	{
-	}
-
-	FBuildInstallerConfiguration::FBuildInstallerConfiguration(const FBuildInstallerConfiguration& CopyFrom)
-		: InstallerActions(CopyFrom.InstallerActions)
-		, InstallDirectory(CopyFrom.InstallDirectory)
-		, StagingDirectory(CopyFrom.StagingDirectory)
-		, BackupDirectory(CopyFrom.BackupDirectory)
-		, ChunkDatabaseFiles(CopyFrom.ChunkDatabaseFiles)
-		, CloudDirectories(CopyFrom.CloudDirectories)
-		, InstallMode(CopyFrom.InstallMode)
-		, VerifyMode(CopyFrom.VerifyMode)
-		, DeltaPolicy(CopyFrom.DeltaPolicy)
-		, bRunRequiredPrereqs(CopyFrom.bRunRequiredPrereqs)
-		, bAllowConcurrentExecution(CopyFrom.bAllowConcurrentExecution)
+		, bTrackFileOperations(true)
 	{
 	}
 

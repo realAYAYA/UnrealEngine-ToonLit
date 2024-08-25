@@ -411,10 +411,6 @@ const TArray<uint8>& FVariantValue::SafeGetArray() const
 
 
 
-FParamDict::FParamDict()
-{
-}
-
 FParamDict::FParamDict(const FParamDict& Other)
 {
 	InternalCopy(Other);
@@ -424,87 +420,64 @@ FParamDict& FParamDict::operator=(const FParamDict& Other)
 {
 	if (&Other != this)
 	{
-		FScopeLock lock(&Lock);
 		InternalCopy(Other);
 	}
 	return *this;
 }
 
-FParamDict::~FParamDict()
-{
-}
-
 void FParamDict::InternalCopy(const FParamDict& Other)
 {
-	FScopeLock lock(&Other.Lock);
 	Dictionary = Other.Dictionary;
 }
 
-
-
 void FParamDict::Clear()
 {
-	FScopeLock lock(&Lock);
 	Dictionary.Empty();
 }
 
-void FParamDict::Set(const FString& Key, const FVariantValue& Value)
+bool FParamDict::HaveKey(const FName& Key) const
 {
-	FScopeLock lock(&Lock);
-	Dictionary.FindOrAdd(Key, Value);
-}
-
-bool FParamDict::HaveKey(const FString& Key) const
-{
-	FScopeLock lock(&Lock);
 	return Dictionary.Find(Key) != nullptr;
 }
 
-FVariantValue FParamDict::GetValue(const FString& Key) const
+FVariantValue FParamDict::GetValue(const FName& Key) const
 {
 	static FVariantValue Empty;
-	FScopeLock lock(&Lock);
 	const FVariantValue* VariantValue = Dictionary.Find(Key);
 	return VariantValue ? *VariantValue : Empty;
 }
 
-void FParamDict::GetKeys(TArray<FString>& Keys) const
+void FParamDict::Remove(const FName& Key)
 {
-	GetKeysStartingWith(FString(), Keys);
+	Dictionary.Remove(Key); 
 }
 
-void FParamDict::GetKeysStartingWith(const FString& StartsWith, TArray<FString>& Keys) const
+void FParamDict::Set(const FName& Key, const FVariantValue& Value)
+{ 
+	Dictionary.Emplace(Key, Value); 
+}
+
+void FParamDict::GetKeys(TArray<FName>& OutKeys) const
 {
-	Keys.Empty();
-	FScopeLock lock(&Lock);
-	if (StartsWith.IsEmpty())
-	{
-		Dictionary.GenerateKeyArray(Keys);
-	}
-	else
-	{
-		for(const TPair<FString, FVariantValue>& Pair : Dictionary)
-		{
-			if (Pair.Key.StartsWith(StartsWith, ESearchCase::CaseSensitive))
-			{
-				Keys.Emplace(Pair.Key);
-			}
-		}
-	}
+	OutKeys.Empty();
+	Dictionary.GenerateKeyArray(OutKeys);
 }
 
 void FParamDict::ConvertKeysStartingWithTo(TMap<FString, FVariant>& OutVariantMap, const FString& InKeyStartsWith, const FString& InAddPrefixToKey) const
 {
-	FScopeLock lock(&Lock);
-	for(const TPair<FString, FVariantValue>& Pair : Dictionary)
+	OutVariantMap.Reserve(Dictionary.Num());
+	FString NewKey;
+	NewKey.Reserve(64);
+	for(const TPair<FName, FVariantValue>& Pair : Dictionary)
 	{
-		if (!InKeyStartsWith.IsEmpty() && !Pair.Key.StartsWith(InKeyStartsWith, ESearchCase::CaseSensitive))
+		FString s(Pair.Key.ToString());
+		if (!InKeyStartsWith.IsEmpty() && !s.StartsWith(InKeyStartsWith, ESearchCase::CaseSensitive))
 		{
 			continue;
 		}
 
-		FString NewKey = InAddPrefixToKey;
-		NewKey.Append(Pair.Key);
+		NewKey = InAddPrefixToKey;
+		NewKey.Append(s);
 		switch(Pair.Value.GetDataType())
 		{
 			case FVariantValue::EDataType::TypeFString:

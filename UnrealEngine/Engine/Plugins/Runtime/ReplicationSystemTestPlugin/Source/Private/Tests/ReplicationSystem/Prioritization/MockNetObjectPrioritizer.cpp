@@ -94,7 +94,7 @@ void UMockNetObjectPrioritizer::UpdateObjects(FNetObjectPrioritizerUpdateParams&
 		if (UPTRINT* InternalStateOffset = ObjectToPriorityOffset.Find(ObjectIndex))
 		{
 			// Warning: This is generally not safe, not even for primitive types.
-			const float Priority = *reinterpret_cast<const float*>(Params.StateBuffers[ObjectIndex] + *InternalStateOffset);
+			const float Priority = *reinterpret_cast<const float*>((*Params.StateBuffers)[ObjectIndex] + *InternalStateOffset);
 			ObjectToPriority.Emplace(ObjectIndex, Priority);
 		}
 	}

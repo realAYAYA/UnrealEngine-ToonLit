@@ -44,7 +44,7 @@
 #define LOCTEXT_NAMESPACE "UVehicleMovementComponent"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 DEFINE_LOG_CATEGORY(LogVehicle);
@@ -146,7 +146,7 @@ void UChaosVehicleSimulation::TickVehicle(UWorld* WorldIn, float DeltaTime, cons
 	if (World && RigidHandle)
 	{
 #if DEBUG_NETWORK_PHYSICS
-		if (WorldIn->IsNetMode(NM_ListenServer))
+		if (WorldIn->IsNetMode(NM_ListenServer) || WorldIn->IsNetMode(NM_DedicatedServer))
 		{
 			UE_LOG(LogTemp, Log, TEXT("SERVER | PT | TickVehicle | Async tick vehicle with inputs at frame %d : Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Sleeping = %d"),
 				InputData.PhysicsInputs.NetworkInputs.LocalFrame, VehicleInputs.ThrottleInput, VehicleInputs.BrakeInput, VehicleInputs.RollInput, VehicleInputs.PitchInput,
@@ -772,7 +772,7 @@ void UChaosVehicleMovementComponent::OnCreatePhysicsState()
 			{
 				if(NetworkPhysicsComponent)
 				{
-					NetworkPhysicsComponent->CreateDatasHistory<FPhysicsVehicleTraits>(this);
+					NetworkPhysicsComponent->CreateDataHistory<FPhysicsVehicleTraits>(this);
 				}
 			}
 		}
@@ -780,8 +780,9 @@ void UChaosVehicleMovementComponent::OnCreatePhysicsState()
 
 	FBodyInstance* BodyInstance = nullptr;
 	if (USkeletalMeshComponent* SkeletalMesh = GetSkeletalMesh())
-	{
-		SkeletalMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
+	{	
+		// this line was causing the server wheel positions to not be updated - this is already a user property so don't override it here and leave it to user to select the right option for their scenario
+		//SkeletalMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 		BodyInstance = &SkeletalMesh->BodyInstance;
 	}
 }
@@ -803,7 +804,7 @@ void UChaosVehicleMovementComponent::OnDestroyPhysicsState()
 	}
 	if (bUsingNetworkPhysicsPrediction && NetworkPhysicsComponent)
 	{
-		NetworkPhysicsComponent->RemoveDatasHistory();
+		NetworkPhysicsComponent->RemoveDataHistory();
 	}
 }
 
@@ -1959,7 +1960,7 @@ void UChaosVehicleMovementComponent::PutAllEnabledRigidBodiesToSleep()
 
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif
 
 

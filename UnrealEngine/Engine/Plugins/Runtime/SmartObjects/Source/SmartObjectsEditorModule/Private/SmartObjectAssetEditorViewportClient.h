@@ -12,10 +12,7 @@ class SEditorViewport;
 class AActor;
 class USmartObjectDefinition;
 class FScopedTransaction;
-namespace UE::SmartObjects::Editor
-{
-	struct FSelectedItem;
-};
+class FSmartObjectViewModel;
 
 class FSmartObjectAssetEditorViewportClient	: public FEditorViewportClient
 {
@@ -23,6 +20,7 @@ public:
 	explicit FSmartObjectAssetEditorViewportClient(const TSharedRef<const FSmartObjectAssetToolkit>& InAssetEditorToolkit, FPreviewScene* InPreviewScene = nullptr, const TWeakPtr<SEditorViewport>& InEditorViewportWidget = nullptr);
 	virtual ~FSmartObjectAssetEditorViewportClient() override;
 
+	void SetViewModel(TSharedPtr<FSmartObjectViewModel> InViewModel);
 	void SetSmartObjectDefinition(USmartObjectDefinition& Definition);
 	void SetPreviewMesh(UStaticMesh* InStaticMesh);
 	void SetPreviewActor(AActor* InActor);
@@ -51,10 +49,18 @@ protected:
 	FBox GetPreviewBounds() const;
 
 private:
+	void RemoveViewModelDelegates();
+	void HandleSelectionChanged(TConstArrayView<FGuid> Selection);
 
 	void BeginTransaction(FText Text);
 	void EndTransaction();
 
+	/** Helper method to return selection from view model. */
+	TConstArrayView<FGuid> GetSelection() const;
+
+	/** Pointer to the view model */
+	TSharedPtr<FSmartObjectViewModel> ViewModel;
+	
 	/** Weak pointer to the Smart Object definition that is edited */
 	TWeakObjectPtr<USmartObjectDefinition> SmartObjectDefinition = nullptr;
 
@@ -78,7 +84,7 @@ private:
 
 	/** Cached widget location (updated from slots and annotations before manipulating the gizmo) */
 	mutable FVector CachedWidgetLocation = FVector::ZeroVector;
-	
-	/** Currently selected slots. @todo: Make view model and move this there. */
-	TArray<UE::SmartObjects::Editor::FSelectedItem> Selection;
+
+	/** Handle from registered selection change callback in viewmodel */
+	FDelegateHandle SelectionChangedHandle;
 };

@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "LevelSequenceBindingReference.h"
+#include "Modules/ModuleManager.h"
 #include "Engine/Level.h"
-#include "LevelSequenceLegacyObjectReference.h"
 #include "UObject/GarbageCollection.h"
 #include "UObject/Package.h"
 #include "UObject/ObjectMacros.h"
@@ -16,32 +16,14 @@
 #include "Engine/LevelStreamingDynamic.h"
 #include "WorldPartition/IWorldPartitionObjectResolver.h"
 #include "IMovieSceneBoundObjectProxy.h"
+#include "IUniversalObjectLocatorModule.h"
+#include "LevelSequenceLegacyObjectReference.h"
+#include "UniversalObjectLocators/ActorLocatorFragment.h"
+#include "UniversalObjectLocators/AnimInstanceLocatorFragment.h"
+#include "SubObjectLocator.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(LevelSequenceBindingReference)
 
-namespace UE::MovieScene
-{
-
-UObject* FindBoundObjectProxy(UObject* BoundObject)
-{
-	if (!BoundObject)
-	{
-		return nullptr;
-	}
-
-	IMovieSceneBoundObjectProxy* RawInterface = Cast<IMovieSceneBoundObjectProxy>(BoundObject);
-	if (RawInterface)
-	{
-		return RawInterface->NativeGetBoundObjectForSequencer(BoundObject);
-	}
-	else if (BoundObject->GetClass()->ImplementsInterface(UMovieSceneBoundObjectProxy::StaticClass()))
-	{
-		return IMovieSceneBoundObjectProxy::Execute_BP_GetBoundObjectForSequencer(BoundObject, BoundObject);
-	}
-	return BoundObject;
-}
-
-} // namespace UE::MovieScene
 
 FLevelSequenceBindingReference::FLevelSequenceBindingReference(UObject* InObject, UObject* InContext)
 {
@@ -196,34 +178,64 @@ UObject* ResolveByPath(UObject* InContext, const FString& InObjectPath)
 	return nullptr;
 }
 
-UObject* FLevelSequenceLegacyObjectReference::Resolve(UObject* InContext) const
+void FUpgradedLevelSequenceBindingReferences::AddBinding(const FGuid& ObjectId, UObject* InObject, UObject* InContext)
 {
-	if (ObjectId.IsValid() && InContext != nullptr)
+	FUniversalObjectLocator NewLocator(InObject, InContext);
+	if (!NewLocator.IsEmpty())
 	{
-		int32 PIEInstanceID = InContext->GetOutermost()->GetPIEInstanceID();
-		FUniqueObjectGuid FixedUpId = PIEInstanceID == -1 ? ObjectId : ObjectId.FixupForPIE(PIEInstanceID);
+		FMovieSceneBindingReferences::AddBinding(ObjectId, MoveTemp(NewLocator));
+	}
+}
 
-		if (PIEInstanceID != -1 && FixedUpId == ObjectId)
-		{
-			UObject* FoundObject = ResolveByPath(InContext, ObjectPath);
-			if (FoundObject)
-			{
-				return FoundObject;
-			}
+bool FUpgradedLevelSequenceBindingReferences::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
+{
+	using namespace UE::UniversalObjectLocator;
 
-			UE_LOG(LogMovieScene, Warning, TEXT("Attempted to resolve object (%s) with a PIE instance that has not been fixed up yet. This is probably due to a streamed level not being available yet."), *ObjectPath);
-			return nullptr;
-		}
-		FLazyObjectPtr LazyPtr;
-		LazyPtr = FixedUpId;
-
-		if (UObject* FoundObject = LazyPtr.Get())
-		{
-			return FoundObject;
-		}
+	if (!Tag.GetType().IsStruct(FLevelSequenceBindingReferences::StaticStruct()->GetFName()))
+	{
+		return false;
 	}
 
-	return ResolveByPath(InContext, ObjectPath);
+	FLevelSequenceBindingReferences Legacy;
+	FLevelSequenceBindingReferences::StaticStruct()->SerializeItem(Slot, &Legacy, nullptr);
+
+	for (TPair<FGuid, FLevelSequenceBindingReferenceArray>& Pair : Legacy.BindingIdToReferences)
+	{
+		for (FLevelSequenceBindingReference& LegacyRef : Pair.Value.References)
+		{
+			if (LegacyRef.ExternalObjectPath.IsNull())
+			{
+				// Make a copy and add the object path
+				FUniversalObjectLocator NewLocator;
+				NewLocator.AddFragment<FSubObjectLocator>(MoveTemp(LegacyRef.ObjectPath));
+
+				FMovieSceneBindingReferences::AddBinding(Pair.Key, MoveTemp(NewLocator));
+			}
+			else
+			{
+				FUniversalObjectLocator NewLocator;
+				NewLocator.AddFragment<FActorLocatorFragment>(MoveTemp(LegacyRef.ExternalObjectPath));
+
+				FMovieSceneBindingReferences::AddBinding(Pair.Key, MoveTemp(NewLocator));
+			}
+		}
+	}
+	for (const FGuid& AnimInstance : Legacy.AnimSequenceInstances)
+	{
+		FUniversalObjectLocator NewLocator;
+		NewLocator.AddFragment<FAnimInstanceLocatorFragment>(EAnimInstanceLocatorFragmentType::AnimInstance);
+
+		FMovieSceneBindingReferences::AddBinding(AnimInstance, MoveTemp(NewLocator));
+	}
+
+	for (const FGuid& AnimInstance : Legacy.PostProcessInstances)
+	{
+		FUniversalObjectLocator NewLocator;
+		NewLocator.AddFragment<FAnimInstanceLocatorFragment>(EAnimInstanceLocatorFragmentType::PostProcessAnimInstance);
+
+		FMovieSceneBindingReferences::AddBinding(AnimInstance, MoveTemp(NewLocator));
+	}
+	return true;
 }
 
 bool FLevelSequenceObjectReferenceMap::Serialize(FArchive& Ar)
@@ -254,158 +266,3 @@ bool FLevelSequenceObjectReferenceMap::Serialize(FArchive& Ar)
 	}
 	return true;
 }
-
-bool FLevelSequenceBindingReferences::HasBinding(const FGuid& ObjectId) const
-{
-	return BindingIdToReferences.Contains(ObjectId) || AnimSequenceInstances.Contains(ObjectId) || PostProcessInstances.Contains(ObjectId);
-}
-
-void FLevelSequenceBindingReferences::AddBinding(const FGuid& ObjectId, UObject* InObject, UObject* InContext)
-{
-	if (UAnimInstance* AnimInstance = Cast<UAnimInstance>(InObject))
-	{
-		if (AnimInstance->GetOwningComponent()->GetAnimInstance() == InObject)
-		{
-			AnimSequenceInstances.Add(ObjectId);
-		}
-		else if (AnimInstance->GetOwningComponent()->GetPostProcessInstance() == InObject)
-		{
-			PostProcessInstances.Add(ObjectId);
-		}
-		else
-		{
-			UE_LOG(LogMovieScene, Warning, TEXT("Attempted to add a binding for %s which is not an anim instance or post process instance"), *GetNameSafe(InObject));
-		}
-	}
-	else
-	{
-		BindingIdToReferences.FindOrAdd(ObjectId).References.Emplace(InObject, InContext);
-	}
-}
-
-void FLevelSequenceBindingReferences::RemoveBinding(const FGuid& ObjectId)
-{
-	BindingIdToReferences.Remove(ObjectId);
-	AnimSequenceInstances.Remove(ObjectId);
-}
-
-void FLevelSequenceBindingReferences::RemoveObjects(const FGuid& ObjectId, const TArray<UObject*>& InObjects, UObject* InContext)
-{
-	FLevelSequenceBindingReferenceArray* ReferenceArray = BindingIdToReferences.Find(ObjectId);
-	if (!ReferenceArray)
-	{
-		return;
-	}
-
-	for (int32 ReferenceIndex = 0; ReferenceIndex < ReferenceArray->References.Num(); )
-	{
-		UObject* ResolvedObject = ReferenceArray->References[ReferenceIndex].Resolve(InContext, FLevelSequenceBindingReference::FResolveBindingParams());
-		ResolvedObject = UE::MovieScene::FindBoundObjectProxy(ResolvedObject);
-
-		if (InObjects.Contains(ResolvedObject))
-		{
-			ReferenceArray->References.RemoveAt(ReferenceIndex);
-		}
-		else
-		{
-			++ReferenceIndex;
-		}
-	}
-}
-
-void FLevelSequenceBindingReferences::RemoveInvalidObjects(const FGuid& ObjectId, UObject* InContext)
-{
-	FLevelSequenceBindingReferenceArray* ReferenceArray = BindingIdToReferences.Find(ObjectId);
-	if (!ReferenceArray)
-	{
-		return;
-	}
-
-	for (int32 ReferenceIndex = 0; ReferenceIndex < ReferenceArray->References.Num(); )
-	{
-		UObject* ResolvedObject = ReferenceArray->References[ReferenceIndex].Resolve(InContext, FLevelSequenceBindingReference::FResolveBindingParams());
-		ResolvedObject = UE::MovieScene::FindBoundObjectProxy(ResolvedObject);
-
-		if (!IsValid(ResolvedObject))
-		{
-			ReferenceArray->References.RemoveAt(ReferenceIndex);
-		}
-		else
-		{
-			++ReferenceIndex;
-		}
-	}
-}
-
-void FLevelSequenceBindingReferences::ResolveBinding(const FGuid& ObjectId, UObject* InContext, const FLevelSequenceBindingReference::FResolveBindingParams& InResolveBindingParams, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const
-{
-	if (const FLevelSequenceBindingReferenceArray* ReferenceArray = BindingIdToReferences.Find(ObjectId))
-	{
-		for (const FLevelSequenceBindingReference& Reference : ReferenceArray->References)
-		{
-			UObject* ResolvedObject = Reference.Resolve(InContext, InResolveBindingParams);
-			ResolvedObject = UE::MovieScene::FindBoundObjectProxy(ResolvedObject);
-			if (ResolvedObject && ResolvedObject->GetWorld())
-			{
-				OutObjects.Add(ResolvedObject);
-			}
-		}
-	}
-	else if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(InContext))
-	{
-		// If the object ID exists in the AnimSequenceInstances set, then this binding relates to an anim instance on a skeletal mesh component
-		if (SkeletalMeshComponent)
-		{
-			if (AnimSequenceInstances.Contains(ObjectId) && SkeletalMeshComponent->GetAnimInstance())
-			{
-				OutObjects.Add(SkeletalMeshComponent->GetAnimInstance());
-			}
-			else if (PostProcessInstances.Contains(ObjectId) && SkeletalMeshComponent->GetPostProcessInstance())
-			{
-				OutObjects.Add(SkeletalMeshComponent->GetPostProcessInstance());
-			}
-		}
-	}
-}
-
-FGuid FLevelSequenceBindingReferences::FindBindingFromObject(UObject* InObject, UObject* InContext) const
-{
-	FLevelSequenceBindingReference Predicate(InObject, InContext);
-
-	for (const TPair<FGuid, FLevelSequenceBindingReferenceArray>& Pair : BindingIdToReferences)
-	{
-		if (Pair.Value.References.Contains(Predicate))
-		{
-			return Pair.Key;
-		}
-	}
-
-	return FGuid();
-}
-
-void FLevelSequenceBindingReferences::RemoveInvalidBindings(const TSet<FGuid>& ValidBindingIDs)
-{
-	for (auto It = BindingIdToReferences.CreateIterator(); It; ++It)
-	{
-		if (!ValidBindingIDs.Contains(It->Key))
-		{
-			It.RemoveCurrent();
-		}
-	}
-}
-
-
-UObject* FLevelSequenceObjectReferenceMap::ResolveBinding(const FGuid& ObjectId, UObject* InContext) const
-{
-	const FLevelSequenceLegacyObjectReference* Reference = Map.Find(ObjectId);
-	UObject* ResolvedObject = Reference ? Reference->Resolve(InContext) : nullptr;
-	ResolvedObject = UE::MovieScene::FindBoundObjectProxy(ResolvedObject);
-
-	if (ResolvedObject != nullptr)
-	{
-		// if the resolved object does not have a valid world (e.g. world is being torn down), dont resolve
-		return ResolvedObject->GetWorld() != nullptr ? ResolvedObject : nullptr;
-	}
-	return nullptr;
-}
-

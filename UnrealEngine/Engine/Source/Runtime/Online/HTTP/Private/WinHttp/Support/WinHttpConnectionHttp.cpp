@@ -145,10 +145,10 @@ bool FWinHttpConnectionHttp::StartRequest()
 	if (Payload.IsValid())
 	{
 		const uint64 NumBytesToWriteNow = FMath::Min((uint64)(UE_WINHTTP_WRITE_BUFFER_BYTES), Payload->GetContentLength());
-		PayloadBuffer.SetNumUninitialized(NumBytesToWriteNow, false);
+		PayloadBuffer.SetNumUninitialized(NumBytesToWriteNow, EAllowShrinking::No);
 
 		const uint64 BufferSize = Payload->FillOutputBuffer(MakeArrayView(PayloadBuffer), 0);
-		PayloadBuffer.SetNumUninitialized(BufferSize, false);
+		PayloadBuffer.SetNumUninitialized(BufferSize, EAllowShrinking::No);
 	}
 
 	CurrentAction = EState::SendRequest;
@@ -312,7 +312,7 @@ void FWinHttpConnectionHttp::PumpStates()
 			{
 				if (!SendRequest())
 				{
-					FinishRequest(EHttpRequestStatus::Failed_ConnectionError);
+					FinishRequest(EHttpRequestStatus::Failed);
 					return;
 				}
 				continue;
@@ -701,7 +701,7 @@ bool FWinHttpConnectionHttp::SendAdditionalRequestBody()
 	
 	// Resize buffer to max amount of data we can write
 	const int64 OptimalAmountToWrite = FMath::Min(TotalBytesLeftToWrite, UE_WINHTTP_WRITE_BUFFER_BYTES);
-	PayloadBuffer.SetNumUninitialized(OptimalAmountToWrite, false);
+	PayloadBuffer.SetNumUninitialized(OptimalAmountToWrite, EAllowShrinking::No);
 
 	// Read data into our buffer if possible
 	const int64 ActualDataSize = Payload->FillOutputBuffer(MakeArrayView(PayloadBuffer), NumBytesSuccessfullySent);
@@ -713,7 +713,7 @@ bool FWinHttpConnectionHttp::SendAdditionalRequestBody()
 	}
 
 	// Resize our buffer based on how much was actually written to it
-	PayloadBuffer.SetNumUninitialized(ActualDataSize, false);
+	PayloadBuffer.SetNumUninitialized(ActualDataSize, EAllowShrinking::No);
 
 	UE_LOG(LogWinHttp, VeryVerbose, TEXT("WinHttp Http[%p]: Writing Data. NumBytes=[%llu] TotalBytesWritten=[%llu] TotalBytes=[%llu]"), this, PayloadBuffer.Num(), NumBytesSuccessfullySent, Payload->GetContentLength())
 
@@ -791,7 +791,7 @@ bool FWinHttpConnectionHttp::ProcessResponseHeaders()
 	{
 		// Setup buffer to write headers into
 		TArray<wchar_t> AllHeadersBuffer;
-		AllHeadersBuffer.SetNumUninitialized(OutHeaderByteSize / sizeof(wchar_t), false);
+		AllHeadersBuffer.SetNumUninitialized(OutHeaderByteSize / sizeof(wchar_t), EAllowShrinking::No);
 		BufferDestination = AllHeadersBuffer.GetData();
 
 		// Read headers into our buffer
@@ -1147,14 +1147,7 @@ void FWinHttpConnectionHttp::HandleRequestError(const uint32 ErrorApiId, const u
 
 	if (!FinalState.IsSet())
 	{
-		if (!bConnectedToServer && IsErrorCodeAConnectionError(ErrorCode))
-		{
-			FinishRequest(EHttpRequestStatus::Failed_ConnectionError);
-		}
-		else
-		{
-			FinishRequest(EHttpRequestStatus::Failed);
-		}
+		FinishRequest(EHttpRequestStatus::Failed);
 	}
 
 	// If the request was cancelled, we can release the payload memory

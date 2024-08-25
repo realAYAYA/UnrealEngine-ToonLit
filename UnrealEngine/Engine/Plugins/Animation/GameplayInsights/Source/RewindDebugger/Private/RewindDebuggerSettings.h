@@ -19,7 +19,7 @@ enum class ERewindDebuggerCameraMode
 /**
  * Implements the settings for the Rewind Debugger.
  */
-UCLASS(Config=Editor, meta=(DisplayName="Rewind Debugger"))
+UCLASS(config = EditorPerProjectUserSettings, meta=(DisplayName="Rewind Debugger"))
 class URewindDebuggerSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
@@ -38,9 +38,9 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = Camera)
 	ERewindDebuggerCameraMode CameraMode;
 	
-	// /** If enabled, automatically detach player controller at the start of PIE */
-	// UPROPERTY(EditAnywhere, Config, Category = Other, meta = (DisplayName = "Auto Detach Player Controller on PIE"))
-	// bool bShouldAutoDetach;
+	/** If enabled, automatically detach player control when PIE is paused */
+	UPROPERTY(EditAnywhere, Config, Category = Other)
+	bool bShouldAutoEject;
 	
 	/** If enabled, start recording information at the start of PIE */
 	UPROPERTY(EditAnywhere, Config, Category = Other)
@@ -49,6 +49,14 @@ public:
 	/** If enabled, show empty tracks on Rewind Debugger Timeline*/
 	UPROPERTY(EditAnywhere, Config, Category = Filters)
 	bool bShowEmptyObjectTracks;
+	
+	/** The track types listed here will be hidden from the track tree view */
+	UPROPERTY(EditAnywhere, Config, Category = Filters)
+	TArray<FName> HiddenTrackTypes;
+
+	/** The track types listed here will be hidden from the track tree view */
+	UPROPERTY(Config)
+	FString DebugTargetActor;
 	
 	/** Get Mutable CDO of URewindDebuggerSettings */
 	static URewindDebuggerSettings & Get();

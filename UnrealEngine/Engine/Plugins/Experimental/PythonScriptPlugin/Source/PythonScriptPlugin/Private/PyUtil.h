@@ -8,6 +8,7 @@
 #include "Containers/ArrayView.h"
 #include "Logging/LogMacros.h"
 #include "UObject/Field.h"
+#include "UObject/FieldIterator.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogPython, Log, All);
 
@@ -263,6 +264,45 @@ namespace PyUtil
 	public:
 		explicit FMapValueOnScope(const FMapProperty* InProp);
 	};
+
+	/** Helper used to hold the stack data for a UFunction call */
+	struct FFunctionStackOnScope
+	{
+	public:
+		FFunctionStackOnScope(const UFunction* InFunc, void* InStackMemory)
+			: Func(InFunc)
+			, StackMemory(InStackMemory)
+		{
+			for (TFieldIterator<FProperty> PropIt(Func); PropIt; ++PropIt)
+			{
+				PropIt->InitializeValue_InContainer(StackMemory);
+			}
+		}
+
+		~FFunctionStackOnScope()
+		{
+			for (TFieldIterator<FProperty> PropIt(Func); PropIt; ++PropIt)
+			{
+				PropIt->DestroyValue_InContainer(StackMemory);
+			}
+		}
+
+		const UFunction* GetFunction() const
+		{
+			return Func;
+		}
+
+		void* GetMemory() const
+		{
+			return StackMemory;
+		}
+
+	private:
+		const UFunction* Func = nullptr;
+		void* StackMemory = nullptr;
+	};
+	#define PY_UFUNCTION_STACK(NAME, FUNCTION) \
+		PyUtil::FFunctionStackOnScope NAME(FUNCTION, FMemory_Alloca_Aligned(FMath::Max(1, (FUNCTION)->GetStructureSize()), (FUNCTION)->GetMinAlignment()))
 
 	/** Struct containing information needed to construct a property instance */
 	struct FPropertyDef

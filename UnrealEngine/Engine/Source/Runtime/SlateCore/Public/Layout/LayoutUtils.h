@@ -68,6 +68,34 @@ namespace ArrangeUtils
 			return static_cast<int32>(InSlot.GetVerticalAlignment());
 		}
 	};
+
+	/**
+	 * Same as AlignChild but force the alignment to be fill.
+	 * @return  Offset and Size of widget
+	 */
+	template<EOrientation Orientation>
+	static AlignmentArrangeResult AlignFill(float AllottedSize, const FMargin& SlotPadding, const float ContentScale = 1.0f)
+	{
+		const FMargin& Margin = SlotPadding;
+		const float TotalMargin = Margin.GetTotalSpaceAlong<Orientation>();
+		const float MarginPre = (Orientation == Orient_Horizontal) ? Margin.Left : Margin.Top;
+		return AlignmentArrangeResult(MarginPre, FMath::Max((AllottedSize - TotalMargin) * ContentScale, 0.f));
+	}
+
+	/**
+	 * Same as AlignChild but force the alignment to be center.
+	 * @return  Offset and Size of widget
+	 */
+	template<EOrientation Orientation>
+	static AlignmentArrangeResult AlignCenter(float AllottedSize, float ChildDesiredSize, const FMargin& SlotPadding, const float ContentScale = 1.0f, bool bClampToParent = true)
+	{
+		const FMargin& Margin = SlotPadding;
+		const float TotalMargin = Margin.GetTotalSpaceAlong<Orientation>();
+		const float MarginPre = (Orientation == Orient_Horizontal) ? Margin.Left : Margin.Top;
+		const float MarginPost = (Orientation == Orient_Horizontal) ? Margin.Right : Margin.Bottom;
+		const float ChildSize = FMath::Max((bClampToParent ? FMath::Min(ChildDesiredSize, AllottedSize - TotalMargin) : ChildDesiredSize), 0.f);
+		return AlignmentArrangeResult((AllottedSize - ChildSize) / 2.0f + MarginPre - MarginPost, ChildSize);
+	}
 }
 
 

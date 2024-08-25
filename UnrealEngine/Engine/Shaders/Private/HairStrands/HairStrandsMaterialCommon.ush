@@ -34,6 +34,7 @@ uint MaterialPass_MacroGroupId;
 uint MaterialPass_MaterialId;  
 uint MaterialPass_PrimitiveId;
 uint MaterialPass_LightChannelMask;
+uint MaterialPass_Flags;
 float MaterialPass_HairCoverageScale;
 
 #ifndef HAIR_MATERIAL_DEBUG_OUTPUT
@@ -93,7 +94,7 @@ FEvaluateOutput Evaluate(
 	const float SceneDepth = ConvertFromDeviceZ(SampleDepth);
 	const float2 UV = SamplePixelCoord / float2(View.BufferSizeAndInvSize.xy);
 	const float2 ScreenPosition = (UV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
-	const float3 World_P = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+	const float3 World_P = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
 
 	float3 Velocity_World_P;
 	float3 Velocity_World_P_Prev;
@@ -182,7 +183,7 @@ FEvaluateOutput Evaluate(
 
 		FHairRenderInfo HairRenderInfo = GetHairRenderInfo(ResolvedView.HairRenderInfo, ResolvedView.HairRenderInfoBits, bUseStableRasterization);
 		const float LocalSceneDepth = ConvertFromDeviceZ(SvPosition.z); // Linear depth in world unit
-		const float PixelRadius = HairRenderInfo.bIsOrthoView ? HairRenderInfo.RadiusAtDepth1Primary : LocalSceneDepth * HairRenderInfo.RadiusAtDepth1Primary; // Not correct but the coverage is not used (we count instead the number of sub-sample covered)
+		const float PixelRadius = ConvertGivenDepthRadiusForProjectionType(HairRenderInfo.RadiusAtDepth1Primary, LocalSceneDepth); // Not correct but the coverage is not used (we count instead the number of sub-sample covered)
 		Coverage = saturate(WorldStrandRadius / max(WorldStrandRadius, PixelRadius) * MaterialPass_HairCoverageScale);
 
 		SampleCoverage8bit = min(uint(Coverage * 0xFF), 0xFFu);
@@ -197,7 +198,7 @@ FEvaluateOutput Evaluate(
 	OutSample.ControlPointId	= SampleControlPointId;
 	OutSample.MacroGroupId		= MaterialPass_MacroGroupId;
 	OutSample.LightChannelMask	= MaterialPass_LightChannelMask;
-	OutSample.bScatterSceneLighting = UseScatterSceneLighting();
+	OutSample.Flags 			= MaterialPass_Flags;
 
 	// Material computation
 	{
@@ -209,22 +210,21 @@ FEvaluateOutput Evaluate(
 		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
 		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, LocalScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
 
-#if STRATA_ENABLED && MATERIAL_IS_STRATA && MATERIAL_SHADINGMODEL_HAIR
-		FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
-		StrataPixelHeader.SetCastContactShadow(GetPrimitiveData(MaterialParameters).Flags & 0x100);
-		StrataPixelHeader.SetDynamicIndirectShadowCasterRepresentation(GetPrimitiveData(MaterialParameters).Flags & 0x80);
+#if SUBSTRATE_ENABLED && MATERIAL_IS_SUBSTRATE && MATERIAL_SHADINGMODEL_HAIR
+		FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
+		SubstratePixelHeader.SetCastContactShadow(GetPrimitiveData(MaterialParameters).Flags & 0x100);
+		SubstratePixelHeader.SetDynamicIndirectShadowCasterRepresentation(GetPrimitiveData(MaterialParameters).Flags & 0x80);
 
 		float3 Tangent = float3(0,1,0);
-		//if (StrataPixelHeader.StrataTree.BSDFCount > 0)
+		//if (SubstratePixelHeader.SubstrateTree.BSDFCount > 0)
 		{
 			// Using the tree data, instread of the inline BSDF does not seem to work. It is unclear why. It is not very 
 			// important as we expect a single hair BSDF.
 			// Update tree (coverage/transmittance/luminace weights)
-			FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
 			const float3 V = MaterialParameters.CameraVector;
-			const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, false /*bRoughDiffuse*/, -1 /*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
-			StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
-			FStrataBSDF HairBSDF = StrataPixelHeader.StrataTree.BSDFs[0];
+			const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, false /*bRoughDiffuse*/, -1 /*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
+			SubstratePixelHeader.SubstrateUpdateTree(V, Settings);
+			FSubstrateBSDF HairBSDF = SubstratePixelHeader.SubstrateTree.BSDFs[0];
 
 			OutSample.BaseColor = HAIR_BASECOLOR(HairBSDF);
 			OutSample.Roughness = HAIR_ROUGHNESS(HairBSDF);

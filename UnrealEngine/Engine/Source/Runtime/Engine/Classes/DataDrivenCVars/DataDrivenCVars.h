@@ -74,6 +74,7 @@ struct FDataDrivenConsoleVariable
 	ENGINE_API void UnRegister(bool bUseShadowName = false);
 
 	FString ShadowName;
+	FString ShadowToolTip;
 	FDataDrivenCVarType ShadowType;
 };
 

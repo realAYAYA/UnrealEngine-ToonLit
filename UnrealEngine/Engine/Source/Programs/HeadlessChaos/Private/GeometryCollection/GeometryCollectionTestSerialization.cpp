@@ -52,10 +52,10 @@ namespace GeometryCollectionTests
 			EXPECT_EQ(TestCollection.Children[1].Num(), 2);
 			EXPECT_EQ(TestCollection.Children[2].Num(), 0);
 			EXPECT_EQ(TestCollection.Children[3].Num(), 0);
-			EXPECT_EQ(TestCollection.Transform[0].GetTranslation(), FVector(0.0f, 0.0f, 0.0f));
-			EXPECT_EQ(TestCollection.Transform[1].GetTranslation(), FVector(1.0f, 0.0f, 5.0f));
-			EXPECT_EQ(TestCollection.Transform[2].GetTranslation(), FVector(3.0f, 0.0f, 6.0f));
-			EXPECT_EQ(TestCollection.Transform[3].GetTranslation(), FVector(-1.0f, 0.0f, 6.0f));
+			EXPECT_EQ(TestCollection.Transform[0].GetTranslation(), FVector3f(0.0f, 0.0f, 0.0f));
+			EXPECT_EQ(TestCollection.Transform[1].GetTranslation(), FVector3f(1.0f, 0.0f, 5.0f));
+			EXPECT_EQ(TestCollection.Transform[2].GetTranslation(), FVector3f(3.0f, 0.0f, 6.0f));
+			EXPECT_EQ(TestCollection.Transform[3].GetTranslation(), FVector3f(-1.0f, 0.0f, 6.0f));
 		}
 	}
 }

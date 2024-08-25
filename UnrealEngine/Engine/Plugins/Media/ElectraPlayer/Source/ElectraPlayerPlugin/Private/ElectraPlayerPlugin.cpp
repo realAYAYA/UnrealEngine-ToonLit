@@ -61,6 +61,9 @@ FElectraPlayerPlugin::FElectraPlayerPlugin()
 	static_assert((int32)EMediaRateThinning::Unthinned == (int32)IElectraPlayerInterface::EPlayRateType::Unthinned, "check alignment of both enums");
 	static_assert((int32)EMediaRateThinning::Thinned == (int32)IElectraPlayerInterface::EPlayRateType::Thinned, "check alignment of both enums");
 
+	static_assert((int32)EMediaTimeRangeType::Absolute == (int32)IElectraPlayerInterface::ETimeRangeType::Absolute, "check alignment of both enums");
+	static_assert((int32)EMediaTimeRangeType::Current == (int32)IElectraPlayerInterface::ETimeRangeType::Current, "check alignment of both enums");
+
 	static_assert(IMediaPlayerLifecycleManagerDelegate::ResourceFlags_Decoder == IElectraPlayerInterface::ResourceFlags_Decoder, "check alignment of both enums");
 	static_assert(IMediaPlayerLifecycleManagerDelegate::ResourceFlags_OutputBuffers == IElectraPlayerInterface::ResourceFlags_OutputBuffers, "check alignment of both enums");
 	static_assert(IMediaPlayerLifecycleManagerDelegate::ResourceFlags_Any == IElectraPlayerInterface::ResourceFlags_Any, "check alignment of both enums");
@@ -135,21 +138,21 @@ public:
 			}
 		}
 	}
-	
+
 	virtual EOrigin GetOrigin() const override
 	{
 		switch(Metadata->GetOrigin())
 		{
 			default:
-			case IMetaDataDecoderOutput::EOrigin::TimedMetadata:		
+			case IMetaDataDecoderOutput::EOrigin::TimedMetadata:
 			{
 				return FElectraBinarySample::EOrigin::TimedMetadata;
 			}
-			case IMetaDataDecoderOutput::EOrigin::EventStream:		
+			case IMetaDataDecoderOutput::EOrigin::EventStream:
 			{
 				return FElectraBinarySample::EOrigin::EventStream;
 			}
-			case IMetaDataDecoderOutput::EOrigin::InbandEventStream:	
+			case IMetaDataDecoderOutput::EOrigin::InbandEventStream:
 			{
 				return FElectraBinarySample::EOrigin::InbandEventStream;
 			}
@@ -157,11 +160,11 @@ public:
 	}
 
 	virtual FMediaTimeStamp GetTime() const override
-	{ 
-		FDecoderTimeStamp ts = Metadata->GetTime(); 
+	{
+		FDecoderTimeStamp ts = Metadata->GetTime();
 		return FMediaTimeStamp(ts.Time, ts.SequenceIndex);
 	}
-	
+
 	virtual FTimespan GetDuration() const override
 	{
 		FTimespan Duration = Metadata->GetDuration();
@@ -175,9 +178,9 @@ public:
 	}
 
 	virtual TOptional<FMediaTimeStamp> GetTrackBaseTime() const	override
-	{ 
+	{
 		TOptional<FMediaTimeStamp> ms;
-		TOptional<FDecoderTimeStamp> ts = Metadata->GetTime(); 
+		TOptional<FDecoderTimeStamp> ts = Metadata->GetTime();
 		if (ts.IsSet())
 		{
 			ms = FMediaTimeStamp(ts.GetValue().Time, ts.GetValue().SequenceIndex);
@@ -194,16 +197,16 @@ class FElectraSubtitleSample : public IElectraSubtitleSample
 {
 public:
 	virtual FGuid GetGUID() const override
-	{ 
-		return IElectraSubtitleSample::GetSampleTypeGUID(); 
+	{
+		return IElectraSubtitleSample::GetSampleTypeGUID();
 	}
 
 	virtual FMediaTimeStamp GetTime() const override
-	{ 
-		FDecoderTimeStamp ts = Subtitle->GetTime(); 
+	{
+		FDecoderTimeStamp ts = Subtitle->GetTime();
 		return FMediaTimeStamp(ts.Time, ts.SequenceIndex);
 	}
-	
+
 	virtual FTimespan GetDuration() const override
 	{
 		return Subtitle->GetDuration();
@@ -213,14 +216,14 @@ public:
 	{
 		return TOptional<FVector2D>();
 	}
-	
+
 	virtual FText GetText() const override
 	{
 		FUTF8ToTCHAR cnv((const ANSICHAR*)Subtitle->GetData().GetData(), Subtitle->GetData().Num());
 		FString UTF8Text(cnv.Length(), cnv.Get());
 		return FText::FromString(UTF8Text);
 	}
-	
+
 	virtual EMediaOverlaySampleType GetType() const override
 	{
 		return EMediaOverlaySampleType::Subtitle;
@@ -579,11 +582,20 @@ bool FElectraPlayerPlugin::Open(const FString& Url, const IMediaOptions* Options
 	IElectraPlayerInterface::FPlaystartOptions LocalPlaystartOptions;
 
 	// Get playstart options from passed options, if they exist.
+	FName Environment;
 	if (InPlayerOptions)
 	{
-		LocalPlaystartOptions.TimeOffset = InPlayerOptions->SeekTime;
-		LocalPlaystartOptions.InitialAudioTrackAttributes.TrackIndexOverride = InPlayerOptions->Tracks.Audio;
-		LocalPlaystartOptions.InitialSubtitleTrackAttributes.TrackIndexOverride = InPlayerOptions->Tracks.Subtitle;
+		if (InPlayerOptions->SeekTimeType != EMediaPlayerOptionSeekTimeType::Ignored)
+		{
+			LocalPlaystartOptions.TimeOffset = InPlayerOptions->SeekTime;
+		}
+		if (InPlayerOptions->TrackSelection == EMediaPlayerOptionTrackSelectMode::UseTrackOptionIndices)
+		{
+			LocalPlaystartOptions.InitialAudioTrackAttributes.TrackIndexOverride = InPlayerOptions->Tracks.Audio;
+			LocalPlaystartOptions.InitialSubtitleTrackAttributes.TrackIndexOverride = InPlayerOptions->Tracks.Subtitle;
+		}
+		const FVariant* Env = InPlayerOptions->InternalCustomOptions.Find(MediaPlayerOptionValues::Environment());
+		Environment = Env ? Env->GetValue<FName>() : Environment;
 	}
 	FString InitialAudioLanguage = Options->GetMediaOption(TEXT("InitialAudioLanguage"), FString());
 	if (InitialAudioLanguage.Len())
@@ -607,7 +619,7 @@ bool FElectraPlayerPlugin::Open(const FString& Url, const IMediaOptions* Options
 
 	// Set up options to initialize the internal player with.
 	Electra::FParamDict PlayerOptions;
-	const TCHAR * const OptionsByString[] = { TEXT("excluded_codecs_video"), TEXT("excluded_codecs_audio"), TEXT("excluded_codecs_subtitles"), TEXT("preferred_codecs_video"), TEXT("preferred_codecs_audio"),TEXT("preferred_codecs_subtitles") };
+	const FName OptionsByString[] = { TEXT("excluded_codecs_video"), TEXT("excluded_codecs_audio"), TEXT("excluded_codecs_subtitles"), TEXT("preferred_codecs_video"), TEXT("preferred_codecs_audio"),TEXT("preferred_codecs_subtitles") };
 	for(auto &StringOption : OptionsByString)
 	{
 		FString Value = Options->GetMediaOption(StringOption, FString());
@@ -621,49 +633,49 @@ bool FElectraPlayerPlugin::Open(const FString& Url, const IMediaOptions* Options
 	int64 InitialStreamBitrate = Options->GetMediaOption(TEXT("ElectraInitialBitrate"), (int64)-1);
 	if (InitialStreamBitrate > 0)
 	{
-		PlayerOptions.Set("initial_bitrate", Electra::FVariantValue(InitialStreamBitrate));
+		PlayerOptions.Set(TEXT("initial_bitrate"), Electra::FVariantValue(InitialStreamBitrate));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Using initial bitrate of %d bits/second"), this, (int32)InitialStreamBitrate);
 	}
 	FString MediaMimeType = Options->GetMediaOption(TEXT("mimetype"), FString());
 	if (MediaMimeType.Len())
 	{
-		PlayerOptions.Set("mime_type", Electra::FVariantValue(MediaMimeType));
+		PlayerOptions.Set(TEXT("mime_type"), Electra::FVariantValue(MediaMimeType));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Setting media mime type to \"%s\""), this, *MediaMimeType);
 	}
 	int64 MaxVerticalHeight = Options->GetMediaOption(TEXT("MaxElectraVerticalResolution"), (int64)-1);
 	if (MaxVerticalHeight > 0)
 	{
-		PlayerOptions.Set("max_resoY", Electra::FVariantValue(MaxVerticalHeight));
+		PlayerOptions.Set(TEXT("max_resoY"), Electra::FVariantValue(MaxVerticalHeight));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Limiting vertical resolution to %d for all streams"), this, (int32)MaxVerticalHeight);
 	}
 	int64 MaxVerticalHeightAt60 = Options->GetMediaOption(TEXT("MaxElectraVerticalResolutionOf60fpsVideos"), (int64)-1);
 	if (MaxVerticalHeightAt60 > 0)
 	{
-		PlayerOptions.Set("max_resoY_above_30fps", Electra::FVariantValue(MaxVerticalHeightAt60));
+		PlayerOptions.Set(TEXT("max_resoY_above_30fps"), Electra::FVariantValue(MaxVerticalHeightAt60));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Limiting vertical resolution to %d for streams >30fps"), this, (int32)MaxVerticalHeightAt60);
 	}
 	double LiveEdgeDistanceForNormalPresentation = Options->GetMediaOption(TEXT("ElectraLivePresentationOffset"), (double)-1.0);
 	if (LiveEdgeDistanceForNormalPresentation > 0.0)
 	{
-		PlayerOptions.Set("seekable_range_live_end_offset", Electra::FVariantValue(Electra::FTimeValue().SetFromSeconds(LiveEdgeDistanceForNormalPresentation)));
+		PlayerOptions.Set(TEXT("seekable_range_live_end_offset"), Electra::FVariantValue(Electra::FTimeValue().SetFromSeconds(LiveEdgeDistanceForNormalPresentation)));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Setting distance to live edge for normal presentations to %.3f seconds"), this, LiveEdgeDistanceForNormalPresentation);
 	}
 	double LiveEdgeDistanceForAudioOnlyPresentation = Options->GetMediaOption(TEXT("ElectraLiveAudioPresentationOffset"), (double)-1.0);
 	if (LiveEdgeDistanceForAudioOnlyPresentation > 0.0)
 	{
-		PlayerOptions.Set("seekable_range_live_end_offset_audioonly", Electra::FVariantValue(Electra::FTimeValue().SetFromSeconds(LiveEdgeDistanceForAudioOnlyPresentation)));
+		PlayerOptions.Set(TEXT("seekable_range_live_end_offset_audioonly"), Electra::FVariantValue(Electra::FTimeValue().SetFromSeconds(LiveEdgeDistanceForAudioOnlyPresentation)));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Setting distance to live edge for audio-only presentation to %.3f seconds"), this, LiveEdgeDistanceForAudioOnlyPresentation);
 	}
 	bool bUseConservativeLiveEdgeDistance = Options->GetMediaOption(TEXT("ElectraLiveUseConservativePresentationOffset"), (bool)false);
 	if (bUseConservativeLiveEdgeDistance)
 	{
-		PlayerOptions.Set("seekable_range_live_end_offset_conservative", Electra::FVariantValue(bUseConservativeLiveEdgeDistance));
+		PlayerOptions.Set(TEXT("seekable_range_live_end_offset_conservative"), Electra::FVariantValue(bUseConservativeLiveEdgeDistance));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Using conservative live edge for distance calculation"), this);
 	}
 	bool bThrowErrorWhenRebuffering = Options->GetMediaOption(TEXT("ElectraThrowErrorWhenRebuffering"), (bool)false);
 	if (bThrowErrorWhenRebuffering)
 	{
-		PlayerOptions.Set("throw_error_when_rebuffering", Electra::FVariantValue(bThrowErrorWhenRebuffering));
+		PlayerOptions.Set(TEXT("throw_error_when_rebuffering"), Electra::FVariantValue(bThrowErrorWhenRebuffering));
 		UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: Throw playback error when rebuffering"), this);
 	}
 	FString CDNHTTPStatusDenyStream = Options->GetMediaOption(TEXT("ElectraGetDenyStreamCode"), FString());
@@ -673,11 +685,41 @@ bool FElectraPlayerPlugin::Open(const FString& Url, const IMediaOptions* Options
 		LexFromString(HTTPStatus, *CDNHTTPStatusDenyStream);
 		if (HTTPStatus > 0 && HTTPStatus < 1000)
 		{
-			PlayerOptions.Set("abr:cdn_deny_httpstatus", Electra::FVariantValue((int64)HTTPStatus));
+			PlayerOptions.Set(TEXT("abr:cdn_deny_httpstatus"), Electra::FVariantValue((int64)HTTPStatus));
 			UE_LOG(LogElectraPlayerPlugin, Log, TEXT("[%p] IMediaPlayer::Open: CDN HTTP status %d will deny a stream permanently"), this, HTTPStatus);
 		}
 	}
 
+	// Check if there is an environment specified in which this player is used.
+	// Certain optimization settings apply for dedicated environments.
+	if (Environment == MediaPlayerOptionValues::Environment_Preview() || Environment == MediaPlayerOptionValues::Environment_Sequencer())
+	{
+		PlayerOptions.Set(TEXT("optimize_seek_for_scrubbing"), Electra::FVariantValue(true));
+		PlayerOptions.Set(TEXT("new_scrubbing_seek_cancels_current"), Electra::FVariantValue(true));
+		PlayerOptions.Set(TEXT("do_not_hold_back_first_frame"), Electra::FVariantValue(true));
+		PlayerOptions.Set(TEXT("worker_threads"), Electra::FVariantValue(FString(TEXT("worker"))));
+	}
+	else
+	{
+		// Check if there are options to tweak for scrubbing
+		bool bUseScrubOptimizations = Options->GetMediaOption(TEXT("ElectraScrubOptimization"), (bool)false);
+		if (bUseScrubOptimizations)
+		{
+			int64 ScrubSeekBitrate = Options->GetMediaOption(TEXT("ElectraScrubBitrate"), (int64)-1);
+			int64 ScrubCacheSizeKiB = Options->GetMediaOption(TEXT("ElectraScrubCacheSizeKiB"), (int64)-1);
+			if (ScrubSeekBitrate >= 0)
+			{
+				PlayerOptions.Set(TEXT("seekstart_bitrate"), Electra::FVariantValue(ScrubSeekBitrate));
+			}
+			if (ScrubCacheSizeKiB > 0)
+			{
+				PlayerOptions.Set(TEXT("httpcache_max_bytesize"), Electra::FVariantValue(ScrubCacheSizeKiB << 10));
+				PlayerOptions.Set(TEXT("httpcache_max_entries"), Electra::FVariantValue((int64)10000));
+			}
+			PlayerOptions.Set(TEXT("optimize_seek_for_scrubbing"), Electra::FVariantValue(true));
+			PlayerOptions.Set(TEXT("do_not_hold_back_first_frame"), Electra::FVariantValue(true));
+		}
+	}
 
 	// Check for options that can be changed during playback and apply them at startup already.
 	// If a media source supports the MaxResolutionForMediaStreaming option then we can override the max resolution.
@@ -698,6 +740,19 @@ bool FElectraPlayerPlugin::Open(const FString& Url, const IMediaOptions* Options
 
 	bMetadataChanged = false;
 	CurrentMetadata.Reset();
+
+	// Check if we can get a segment cache interface for this playback request...
+	TSharedPtr<FElectraPlayerDataCacheContainer, ESPMode::ThreadSafe> ElectraPlayerDataCacheContainer;
+	TSharedPtr<IMediaOptions::FDataContainer, ESPMode::ThreadSafe> ElectraPlayerDataCacheDefaultValue;
+	TSharedPtr<IMediaOptions::FDataContainer, ESPMode::ThreadSafe> DataContainer = Options->GetMediaOption(TEXT("ElectraPlayerDataCache"), ElectraPlayerDataCacheDefaultValue);
+	if (DataContainer.IsValid())
+	{
+		ElectraPlayerDataCacheContainer = StaticCastSharedPtr<FElectraPlayerDataCacheContainer, IMediaOptions::FDataContainer, ESPMode::ThreadSafe>(DataContainer);
+		if (ElectraPlayerDataCacheContainer.IsValid())
+		{
+			LocalPlaystartOptions.ExternalDataCache = ElectraPlayerDataCacheContainer->Data;
+		}
+	}
 
 	return Player->OpenInternal(Url, PlayerOptions, LocalPlaystartOptions, IElectraPlayerInterface::EOpenType::Media);
 }
@@ -789,6 +844,8 @@ bool FElectraPlayerPlugin::GetPlayerFeatureFlag(EFeatureFlag flag) const
 			return true;
 		case EFeatureFlag::IsTrackSwitchSeamless:
 			return true;
+		case EFeatureFlag::PlayerSelectsDefaultTracks:
+			return true;
 		default:
 			break;
 	}
@@ -843,9 +900,13 @@ bool FElectraPlayerPlugin::CanControl(EMediaControl Control) const
 	{
 		return CurrentState == EMediaState::Paused || CurrentState == EMediaState::Stopped;
 	}
-	else if (Control == EMediaControl::Seek)
+	else if (Control == EMediaControl::Seek || Control == EMediaControl::Scrub)
 	{
 		return CurrentState == EMediaState::Playing || CurrentState == EMediaState::Paused || CurrentState == EMediaState::Stopped;
+	}
+	else if (Control == EMediaControl::PlaybackRange)
+	{
+		return true;
 	}
 	return false;
 }
@@ -926,6 +987,20 @@ bool FElectraPlayerPlugin::Seek(const FTimespan& Time)
 	CSV_EVENT(ElectraPlayer, TEXT("Seeking"));
 
 	return Player->Seek(Time);
+}
+
+TRange<FTimespan> FElectraPlayerPlugin::GetPlaybackTimeRange(EMediaTimeRangeType InRangeToGet) const
+{
+	return Player->GetPlaybackRange(static_cast<IElectraPlayerInterface::ETimeRangeType>(InRangeToGet));
+}
+
+bool FElectraPlayerPlugin::SetPlaybackTimeRange(const TRange<FTimespan>& InTimeRange)
+{
+	IElectraPlayerInterface::FPlaybackRange Range;
+	Range.Start = InTimeRange.GetLowerBoundValue();
+	Range.End = InTimeRange.GetUpperBoundValue();
+	Player->SetPlaybackRange(Range);
+	return true;
 }
 
 

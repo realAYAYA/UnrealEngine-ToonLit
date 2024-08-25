@@ -25,6 +25,7 @@
 #include "ToolTargets/SkeletalMeshComponentToolTarget.h"
 #include "Components/SkeletalMeshComponent.h"
 
+#include "ConvertToPolygonsTool.h"
 #include "DeformMeshPolygonsTool.h"
 #include "DisplaceMeshTool.h"
 #include "DynamicMeshSculptTool.h"
@@ -34,10 +35,12 @@
 #include "ISkeletalMeshEditor.h"
 #include "LatticeDeformerTool.h"
 #include "MeshAttributePaintTool.h"
+#include "MeshGroupPaintTool.h"
 #include "MeshSpaceDeformerTool.h"
 #include "MeshVertexSculptTool.h"
 #include "ModelingToolsManagerActions.h"
 #include "OffsetMeshTool.h"
+#include "PersonaModule.h"
 #include "PolygonOnMeshTool.h"
 #include "ProjectToTargetTool.h"
 #include "RemeshMeshTool.h"
@@ -207,7 +210,13 @@ void USkeletalMeshModelingToolsEditorMode::Enter()
 	RegisterTool(ToolManagerCommands.BeginRemoveOccludedTrianglesTool, TEXT("BeginRemoveOccludedTrianglesTool"), NewObject<URemoveOccludedTrianglesToolBuilder>());
 	RegisterTool(ToolManagerCommands.BeginProjectToTargetTool, TEXT("BeginProjectToTargetTool"), NewObject<UProjectToTargetToolBuilder>());
 	
-
+	RegisterTool(ToolManagerCommands.BeginPolyGroupsTool, TEXT("BeginPolyGroupsTool"), NewObject<UConvertToPolygonsToolBuilder>());
+	UMeshGroupPaintToolBuilder* MeshGroupPaintToolBuilder = NewObject<UMeshGroupPaintToolBuilder>();
+#if ENABLE_STYLUS_SUPPORT 
+	MeshGroupPaintToolBuilder->StylusAPI = StylusStateTracker.Get();
+#endif
+	RegisterTool(ToolManagerCommands.BeginMeshGroupPaintTool, TEXT("BeginMeshGroupPaintTool"), MeshGroupPaintToolBuilder);
+	
 	UMeshVertexSculptToolBuilder* MoveVerticesToolBuilder = NewObject<UMeshVertexSculptToolBuilder>();
 #if ENABLE_STYLUS_SUPPORT
 	MoveVerticesToolBuilder->StylusAPI = StylusStateTracker.Get();
@@ -263,10 +272,19 @@ void USkeletalMeshModelingToolsEditorMode::Exit()
 	UEdMode::Exit();
 }
 
-
 void USkeletalMeshModelingToolsEditorMode::CreateToolkit()
 {
 	Toolkit = MakeShareable(new FSkeletalMeshModelingToolsEditorModeToolkit);
+}
+
+bool USkeletalMeshModelingToolsEditorMode::IsCompatibleWith(FEditorModeID OtherModeID) const
+{
+	if (OtherModeID == FPersonaEditModes::SkeletonSelection)
+	{
+		return true;
+	}
+	
+	return Super::IsCompatibleWith(OtherModeID);
 }
 
 void USkeletalMeshModelingToolsEditorMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
@@ -357,11 +375,24 @@ bool USkeletalMeshModelingToolsEditorMode::ComputeBoundingBoxForViewportFocus(AA
 void USkeletalMeshModelingToolsEditorMode::OnToolStarted(UInteractiveToolManager* Manager, UInteractiveTool* Tool)
 {
 	FSkeletalMeshModelingToolsActionCommands::UpdateToolCommandBinding(Tool, Toolkit->GetToolkitCommands(), false);
+
+	// deactivate SkeletonSelection when a tool is activated.
+	// each tool is responsible for activating SkeletonSelection if necessary
+	if (Owner)
+	{
+		Owner->DeactivateMode(FPersonaEditModes::SkeletonSelection);
+	}
 }
 
 void USkeletalMeshModelingToolsEditorMode::OnToolEnded(UInteractiveToolManager* Manager, UInteractiveTool* Tool)
 {
 	FSkeletalMeshModelingToolsActionCommands::UpdateToolCommandBinding(Tool, Toolkit->GetToolkitCommands(), true);
+
+	// reactivate SkeletonSelection when deactivating a tool
+	if (Owner)
+	{
+		Owner->ActivateMode(FPersonaEditModes::SkeletonSelection);
+	}
 }
 
 void USkeletalMeshModelingToolsEditorMode::SetEditorBinding(const TWeakPtr<ISkeletalMeshEditor>& InSkeletalMeshEditor)

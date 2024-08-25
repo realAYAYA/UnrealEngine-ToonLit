@@ -12,6 +12,7 @@
 #include "ComponentReregisterContext.h"
 #include "Linux/LinuxPlatformApplicationMisc.h"
 #include "GenericPlatform/GenericPlatformFramePacer.h"
+#include "RHIUtilities.h"
 
 /*------------------------------------------------------------------------------
 	OpenGL function pointers.
@@ -146,11 +147,7 @@ void Linux_PlatformCreateDummyGLWindow( FPlatformOpenGLContext *OutContext )
  */
 bool Linux_PlatformOpenGLDebugCtx()
 {
-#if UE_BUILD_DEBUG
-	return ! FParse::Param(FCommandLine::Get(),TEXT("openglNoDebug"));
-#else
-	return FParse::Param(FCommandLine::Get(),TEXT("openglDebug"));
-#endif
+	return IsOGLDebugOutputEnabled();
 }
 
 /**

@@ -23,19 +23,19 @@ namespace UE::AnimNext
 
 		// Finds and returns the decorator handle for the provided decorator UID or an invalid
 		// handle if that decorator hasn't been registered yet.
-		FDecoratorRegistryHandle FindHandle(uint32 DecoratorUID) const;
-
-		// Finds and returns the decorator handle for the provided decorator UID or an invalid
-		// handle if that decorator hasn't been registered yet.
 		FDecoratorRegistryHandle FindHandle(FDecoratorUID DecoratorUID) const;
 
-		// Finds and returns the decorator associated with the provided handle. If the handle
-		// is invalid, nullptr is returned.
+		// Finds and returns the decorator associated with the provided handle.
+		// If the handle is not valid, nullptr is returned.
 		const FDecorator* Find(FDecoratorRegistryHandle DecoratorHandle) const;
 
-		// Finds and returns the decorator associated with the provided decorator UID. If the decorator
-		// is registered, nullptr is returned.
+		// Finds and returns the decorator associated with the provided decorator UID.
+		// If the decorator is not registered, nullptr is returned.
 		const FDecorator* Find(FDecoratorUID DecoratorUID) const;
+
+		// Finds and returns the decorator associated with the provided decorator shared data UScriptStruct.
+		// If the matching decorator is not registered, nullptr is returned.
+		const FDecorator* Find(const UScriptStruct* DecoratorSharedDataStruct) const;
 
 		// Registers a decorator dynamically
 		void Register(FDecorator* Decorator);
@@ -43,11 +43,18 @@ namespace UE::AnimNext
 		// Unregisters a decorator dynamically
 		void Unregister(FDecorator* Decorator);
 
+		// Returns a list of all registered decorators
+		TArray<const FDecorator*> GetDecorators() const;
+
 		// Returns the number of registered decorators
 		uint32 GetNum() const;
 
 	private:
 		FDecoratorRegistry() = default;
+		FDecoratorRegistry(const FDecoratorRegistry&) = delete;
+		FDecoratorRegistry(FDecoratorRegistry&&) = default;
+		FDecoratorRegistry& operator=(const FDecoratorRegistry&) = delete;
+		FDecoratorRegistry& operator=(FDecoratorRegistry&&) = default;
 
 		// Static init lifetime functions
 		static void StaticRegister(DecoratorConstructorFunc DecoratorConstructor);

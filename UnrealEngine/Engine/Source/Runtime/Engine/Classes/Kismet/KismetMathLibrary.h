@@ -177,6 +177,8 @@ struct FQuaternionSpringState
 	}
 };
 
+struct FRuntimeFloatCurve;
+
 UCLASS(meta=(BlueprintThreadSafe, ScriptName = "MathLibrary"), MinimalAPI)
 class UKismetMathLibrary : public UBlueprintFunctionLibrary
 {
@@ -872,6 +874,20 @@ class UKismetMathLibrary : public UBlueprintFunctionLibrary
 	/** Interpolate between A and B, applying an ease in/out function.  Exp controls the degree of the curve. */
 	UFUNCTION(BlueprintPure, Category = "Math|Float")
 	static ENGINE_API double FInterpEaseInOut(double A, double B, double Alpha, double Exponent);
+
+	/**
+	* Evaluate this runtime float curve at the specified time 
+	* 
+	* @param Curve				The runtime float curve to evaluate
+	* @param InTime				The time at which to evaluate the curve
+	* @param InDefaultValue		The default value which should be used if the curve cannot be evaluated at the given time.
+	* 
+	* @return					The curve's value at the given time.
+	* 
+	* @see FRichCurve::Eval
+	*/
+	UFUNCTION(BlueprintPure, Category = "Math|Curves")
+	static ENGINE_API float GetRuntimeFloatCurveValue(const FRuntimeFloatCurve& Curve, const float InTime, const float InDefaultValue = 0.0f);
 
 	/**
 	* Simple function to create a pulsating scalar value
@@ -3706,7 +3722,96 @@ class UKismetMathLibrary : public UBlueprintFunctionLibrary
 	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(Keywords="construct build", NativeMakeFunc))
 	static ENGINE_API FBox MakeBox(FVector Min, FVector Max);
 
+	/** 
+	 * Utility function to build an box from an Origin and Extent 
+	 *
+	 * @param Origin The location of the bounding box.
+	 * @param Extent Half size of the bounding box.
+	 * @return A new axis-aligned bounding box.
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(Keywords="construct build"))
+	static ENGINE_API FBox MakeBoxWithOrigin(const FVector& Origin, const FVector& Extent);
 
+	/**
+	 * Returns true if the InnerTest Box is is completely inside of the OuterTest Box
+	 * 
+	 * @param InnerTest		The box to check if it is on the inside
+	 * @param OuterTest		The box to check if InnerTest is within.
+	 * 
+	 * @return True if InnerTest Box is is completely inside of OuterTest Box
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(DisplayName="Is Inside (Box)"))
+	static ENGINE_API bool Box_IsInside(const FBox& InnerTest, const FBox& OuterTest);
+
+	/**
+	 * Returns true if the InnerTest Box is is completely inside or on OuterTest Box
+	 * 
+	 * @param InnerTest		The box to check if it is on the inside
+	 * @param OuterTest		The box to check if InnerTest is within or on.
+	 * 
+	 * @return True if InnerTest Box is is completely inside of or on OuterTest Box
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(DisplayName="Is Inside Or On (Box)"))
+	static ENGINE_API bool Box_IsInsideOrOn(const FBox& InnerTest, const FBox& OuterTest);
+
+	/** 
+	 * Checks whether the given location is inside this box.
+	 *
+	 * @param Box	The box to test
+	 * @param Point The location to test for inside the bounding volume.
+	 * @return true if location is inside this volume.
+	 *
+	 * @note  This function assumes boxes have open bounds, i.e. points lying on the border of the box are not inside.
+	 *        Use IsPointInBox_Box to include borders in the test.
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(DisplayName="Is Vector Inside (Box)"))
+	static ENGINE_API bool Box_IsPointInside(const FBox& Box, const FVector& Point);
+	
+	/**
+	 * Checks whether the given bounding box A intersects this bounding box B.
+	 *
+	 * @param A The bounding box to check intersection against
+	 * @param B The bounding box to intersect with.
+	 * 
+	 * @return true if the boxes intersect, false otherwise.
+	 *
+	 * @note  This function assumes boxes have closed bounds, i.e. boxes with
+	 *        coincident borders on any edge will overlap.
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(DisplayName="Intersects (Box)"))
+	static ENGINE_API bool Box_Intersects(const FBox& A, const FBox& B);
+
+	/**
+	* Returns a box of increased size.
+	*
+	* @param Negative The size to increase the volume by in the negative direction (positive values move the bounds outwards)
+	* @param Positive The size to increase the volume by in the positive direction (positive values move the bounds outwards)
+	* @return A new bounding box.
+	*/
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(DisplayName="Expand By (Box)"))
+	static ENGINE_API FBox Box_ExpandBy(const FBox& Box, const FVector& Negative, const FVector& Positive);
+
+	/**
+	 * Returns the overlap TBox<T> of two boxes
+	 *
+	 * @param A		The bounding box to test
+	 * @param B		The bounding box to test overlap against
+	 * 
+	 * @return the overlap box. It can be 0 if they don't overlap
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(DisplayName="Overlap (Box)"))
+	static ENGINE_API FBox Box_Overlap(const FBox& A, const FBox& B);
+
+	/**
+	 * Calculates the closest point on or inside the box to a given point in space.
+	 *
+	 * @param Box	The box to check if the point is inside of
+	 * @param Point	The point in space
+	 * @return The closest point on or inside the box.
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Box", meta=(DisplayName="GetClosestPointTo (Box)"))
+	static ENGINE_API FVector Box_GetClosestPointTo(const FBox& Box, const FVector& Point);
+	
 	//
 	// Box2D functions
 	//
@@ -3744,6 +3849,14 @@ class UKismetMathLibrary : public UBlueprintFunctionLibrary
 	/** If bPickA is true, A is returned, otherwise B is */
 	UFUNCTION(BlueprintPure, Category="Utilities|String")
 	static ENGINE_API FString SelectString(const FString& A, const FString& B, bool bPickA);
+
+	/** If bPickA is true, A is returned, otherwise B is */
+	UFUNCTION(BlueprintPure, Category="Utilities|String")
+	static ENGINE_API FText SelectText(const FText A, const FText B, bool bPickA);
+
+	/** If bPickA is true, A is returned, otherwise B is */
+	UFUNCTION(BlueprintPure, Category="Utilities|String")
+	static ENGINE_API FName SelectName(const FName A, const FName B, bool bPickA);
 
 	/** If bPickA is true, A is returned, otherwise B is */
 	UFUNCTION(BlueprintPure, Category="Math|Integer")
@@ -4294,6 +4407,30 @@ class UKismetMathLibrary : public UBlueprintFunctionLibrary
     static ENGINE_API bool IsPointInBox_Box(FVector Point, FBox Box);
 
 	/**
+	 * Gets the volume of this box.
+	 *
+	 * @return The box volume.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Math|Geometry", meta=(DisplayName = "Get Volume (Box)"))
+	static ENGINE_API double GetBoxVolume(const FBox& InBox);
+
+	/**
+	 * Gets the size of this box.
+	 *
+	 * @return The box size.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Math|Geometry", meta=(DisplayName = "Get Size (Box)"))
+	static ENGINE_API FVector GetBoxSize(const FBox& InBox);
+
+	/**
+	 * Gets the center point of this box.
+	 *
+	 * @return The center point.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Math|Geometry", meta=(DisplayName = "Get Center (Box)"))
+	static ENGINE_API FVector GetBoxCenter(const FBox& InBox);
+
+	/**
 	* Determines whether a given point is in a box with a given transform. Includes points on the box.
 	*
 	* @param Point				Point to test
@@ -4433,6 +4570,60 @@ class UKismetMathLibrary : public UBlueprintFunctionLibrary
 	UFUNCTION(BlueprintPure, Category="Math|Smoothing", meta=(DisplayName="Dynamic Weighted Moving Average Rotator"))
 	static ENGINE_API FRotator DynamicWeightedMovingAverage_FRotator(FRotator CurrentSample, FRotator PreviousSample, float MaxDistance, float MinWeight, float MaxWeight);
 	
+	//
+	// Multidimensional index conversions
+	// 
+
+	/**
+	 *
+	 * Maps a 1D array index to a 2D array index.
+	 * 
+	 * @param Index1D - The 1D array index
+	 * @param XSize - X dimension of the 2D array
+	 * 
+	 * @return The equivalent 2D index of the array
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Conversions|Indices", meta=(DisplayName="Convert a 1D Index to a 2D Index"))
+	static FIntPoint Convert1DTo2D(int32 Index1D, int32 XSize);
+
+	/**
+	 *
+	 * Maps a 1D array index to a 3D array index.
+	 *
+	 * @param Index1D - The 1D array index
+	 * @param XSize - X dimension of the 3D array
+	 * @param YSize - Y dimension of the 3D array
+	 *
+	 * @return The equivalent 3D index of the array
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Conversions|Indices", meta=(DisplayName="Convert a 1D Index to a 3D Index"))
+	static FIntVector Convert1DTo3D(int32 Index1D, int32 XSize, int32 YSize);
+
+	/**
+	 *
+	 * Maps a 2D array index to a 1D array index.
+	 *
+	 * @param Index2D - The 2D array index
+	 * @param XSize - X dimension of the 2D array
+	 *
+	 * @return The equivalent 1D index of the array
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Conversions|Indices", meta=(DisplayName="Convert a 2D Index to a 1D Index"))
+	static int32 Convert2DTo1D(const FIntPoint& Index2D, int32 XSize);
+
+	/**
+	 *
+	 * Maps a 3D array index to a 1D array index.
+	 *
+	 * @param Index3D - The 3D array index
+	 * @param XSize - X dimension of the 3D array
+	 * @param YSize - Y dimension of the 3D array
+	 *
+	 * @return The equivalent 1D index of the array
+	 */
+	UFUNCTION(BlueprintPure, Category="Math|Conversions|Indices", meta=(DisplayName="Convert a 3D Index to a 1D Index"))
+	static int32 Convert3DTo1D(const FIntVector& Index3D, int32 XSize, int32 YSize);
+
 	// NetQuantized vector make/breaks
 	UFUNCTION(BlueprintPure, Category = "Math|Vector", meta = (NativeMakeFunc))
 	static FVector_NetQuantize MakeVector_NetQuantize(double X, double Y, double Z) { return FVector_NetQuantize(X, Y, Z); }

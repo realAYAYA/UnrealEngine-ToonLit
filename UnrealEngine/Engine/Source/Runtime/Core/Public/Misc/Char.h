@@ -6,6 +6,7 @@
 #include "Traits/IntType.h"
 #include <ctype.h>
 #include <wctype.h>
+#include <type_traits>
 
 /*-----------------------------------------------------------------------------
 	Character type functions.
@@ -89,17 +90,236 @@ struct TChar : TCharBase<CharType, sizeof(CharType)>
 		return (CharType)(ToUnsigned(Char) + ((uint32(Char) - 'A' < 26u) << 5));
 	}
 
-	static bool IsUpper(CharType Char);
-	static bool IsLower(CharType Char);
-	static bool IsAlpha(CharType Char);
-	static bool IsGraph(CharType Char);
-	static bool IsPrint(CharType Char);
-	static bool IsPunct(CharType Char);
-	static bool IsAlnum(CharType Char);
-	static bool IsDigit(CharType Char);
-	static bool IsHexDigit(CharType Char);
-	static bool IsWhitespace(CharType Char);
-	static bool IsControl(CharType Char);
+	static bool IsUpper(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isupper((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswupper(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isupper((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsLower(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::islower((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswlower(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::islower((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsAlpha(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isalpha((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswalpha(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isalpha((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsGraph(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isgraph((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswgraph(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isgraph((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsPrint(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isprint((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswprint(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isprint((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsPunct(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::ispunct((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswpunct(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::ispunct((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsAlnum(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isalnum((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswalnum(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isalnum((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsDigit(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isdigit((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswdigit(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isdigit((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsHexDigit(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isxdigit((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswxdigit(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isxdigit((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsWhitespace(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::isspace((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswspace(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::isspace((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
+
+	static bool IsControl(CharType Char)
+	{
+		if constexpr (std::is_same_v<CharType, ANSICHAR>)
+		{
+			return ::iscntrl((unsigned char)Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, WIDECHAR>)
+		{
+			return ::iswcntrl(Char) != 0;
+		}
+		else if constexpr (std::is_same_v<CharType, UTF8CHAR>)
+		{
+			return ::iscntrl((unsigned char)Char) != 0;
+		}
+		else
+		{
+			static_assert(sizeof(CharType) == 0, "Not supported");
+			return false;
+		}
+	}
 
 	static bool IsOctDigit(CharType Char)
 	{
@@ -138,37 +358,3 @@ struct TChar : TCharBase<CharType, sizeof(CharType)>
 typedef TChar<TCHAR>    FChar;
 typedef TChar<WIDECHAR> FCharWide;
 typedef TChar<ANSICHAR> FCharAnsi;
-
-/*-----------------------------------------------------------------------------
-	WIDECHAR specialized functions
------------------------------------------------------------------------------*/
-
-template <> inline bool TChar<WIDECHAR>::IsUpper(WIDECHAR Char) { return ::iswupper(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsLower(WIDECHAR Char) { return ::iswlower(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsAlpha(WIDECHAR Char) { return ::iswalpha(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsGraph(WIDECHAR Char) { return ::iswgraph(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsPrint(WIDECHAR Char) { return ::iswprint(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsPunct(WIDECHAR Char) { return ::iswpunct(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsAlnum(WIDECHAR Char) { return ::iswalnum(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsDigit(WIDECHAR Char) { return ::iswdigit(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsHexDigit(WIDECHAR Char) { return ::iswxdigit(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsWhitespace(WIDECHAR Char) { return ::iswspace(Char) != 0; }
-template <> inline bool TChar<WIDECHAR>::IsControl(WIDECHAR Char) { return ::iswcntrl(Char) != 0; }
-
-
-/*-----------------------------------------------------------------------------
-	ANSICHAR specialized functions
------------------------------------------------------------------------------*/
-template <> inline bool TChar<ANSICHAR>::IsUpper(ANSICHAR Char) { return ::isupper((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsLower(ANSICHAR Char) { return ::islower((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsAlpha(ANSICHAR Char) { return ::isalpha((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsGraph(ANSICHAR Char) { return ::isgraph((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsPrint(ANSICHAR Char) { return ::isprint((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsPunct(ANSICHAR Char) { return ::ispunct((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsAlnum(ANSICHAR Char) { return ::isalnum((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsDigit(ANSICHAR Char) { return ::isdigit((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsHexDigit(ANSICHAR Char) { return ::isxdigit((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsWhitespace(ANSICHAR Char) { return ::isspace((unsigned char)Char) != 0; }
-template <> inline bool TChar<ANSICHAR>::IsControl(ANSICHAR Char) { return ::iscntrl((unsigned char)Char) != 0; }
-
-template <> inline bool TChar<UTF8CHAR>::IsWhitespace(UTF8CHAR Char) { return ::isspace((unsigned char)Char) != 0; }

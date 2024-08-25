@@ -4,12 +4,11 @@
 
 #include "Exporters/Exporter.h"
 
-#include "UsdWrappers/ForwardDeclarations.h"
-
 #include "MaterialExporterUSD.generated.h"
 
 class UMaterialInterface;
 struct FUsdMaterialBakingOptions;
+struct FUsdMetadataExportOptions;
 
 UCLASS()
 class UMaterialExporterUsd : public UExporter
@@ -20,7 +19,14 @@ public:
 	UMaterialExporterUsd();
 
 	//~ Begin UExporter Interface
-	virtual bool ExportBinary( UObject* Object, const TCHAR* Type, FArchive& Ar, FFeedbackContext* Warn, int32 FileIndex = 0, uint32 PortFlags=0 ) override;
+	USDEXPORTER_API virtual bool ExportBinary(
+		UObject* Object,
+		const TCHAR* Type,
+		FArchive& Ar,
+		FFeedbackContext* Warn,
+		int32 FileIndex = 0,
+		uint32 PortFlags = 0
+	) override;
 	//~ End UExporter Interface
 
 	/**
@@ -33,6 +39,16 @@ public:
 	 * @param bIsAutomated - Whether the export is being done by a script or not. Just used for analytics
 	 * @return Whether the export was successful or not.
 	 */
+	USDEXPORTER_API static bool ExportMaterial(
+		const UMaterialInterface& Material,
+		const FUsdMaterialBakingOptions& Options,
+		const FUsdMetadataExportOptions& MetadataOptions,
+		const FFilePath& FilePath,
+		bool bReplaceIdentical = true,
+		bool bReExportIdenticalAssets = false,
+		bool bIsAutomated = false
+	);
+	UE_DEPRECATED(5.4, "Please use the function overload that can receive metadata options.")
 	static bool ExportMaterial(
 		const UMaterialInterface& Material,
 		const FUsdMaterialBakingOptions& Options,
@@ -61,6 +77,18 @@ public:
 	 * @param bIsAutomated - Whether the export is being done by a script or not. Just used for analytics
 	 * @return Whether the export was successful or not.
 	 */
+	USDEXPORTER_API static bool ExportMaterialsForStage(
+		const TArray<UMaterialInterface*>& Materials,
+		const FUsdMaterialBakingOptions& Options,
+		const FUsdMetadataExportOptions& MetadataOptions,
+		const FString& StageRootLayerPath,
+		bool bIsAssetLayer,
+		bool bUsePayload,
+		bool bReplaceIdentical = true,
+		bool bReExportIdenticalAssets = false,
+		bool bIsAutomated = false
+	);
+	UE_DEPRECATED(5.4, "Please use the function overload that can receive metadata options.")
 	static bool ExportMaterialsForStage(
 		const TArray<UMaterialInterface*>& Materials,
 		const FUsdMaterialBakingOptions& Options,

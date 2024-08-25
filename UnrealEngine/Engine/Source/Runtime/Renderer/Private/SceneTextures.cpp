@@ -20,7 +20,7 @@
 #include "PostProcess/PostProcessAmbientOcclusionMobile.h"
 #include "PostProcess/PostProcessPixelProjectedReflectionMobile.h"
 #include "IHeadMountedDisplayModule.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 
 static TAutoConsoleVariable<int32> CVarSceneTargetsResizeMethod(
 	TEXT("r.SceneRenderTargetResizeMethod"),
@@ -163,7 +163,7 @@ public:
 		bool bIsReflectionCapture = false;
 		bool bIsVRScene = false;
 
-		for (const FSceneView* View : ViewFamily.Views)
+		for (const FSceneView* View : ViewFamily.AllViews)
 		{
 			bIsSceneCapture |= View->bIsSceneCapture;
 			bIsReflectionCapture |= View->bIsReflectionCapture;
@@ -395,27 +395,27 @@ ENUM_CLASS_FLAGS(FSceneTextureExtentState::ERenderTargetHistory);
 void InitializeSceneTexturesConfig(FSceneTexturesConfig& Config, const FSceneViewFamily& ViewFamily)
 {
 	FIntPoint Extent = FSceneTextureExtentState::Get().Compute(ViewFamily);
-	EShadingPath ShadingPath = FSceneInterface::GetShadingPath(ViewFamily.GetFeatureLevel());
+	EShadingPath ShadingPath = GetFeatureLevelShadingPath(ViewFamily.GetFeatureLevel());
 
 	bool bRequiresAlphaChannel = ShadingPath == EShadingPath::Mobile ? IsMobilePropagateAlphaEnabled(ViewFamily.GetShaderPlatform()) : false;
 	int32 NumberOfViewsWithMultiviewEnabled = 0;
-	for (int32 ViewIndex = 0; ViewIndex < ViewFamily.Views.Num(); ViewIndex++)
+	for (int32 ViewIndex = 0; ViewIndex < ViewFamily.AllViews.Num(); ViewIndex++)
 	{
 		// Planar reflections and scene captures use scene color alpha to keep track of where content has been rendered, for compositing into a different scene later
-		if (ViewFamily.Views[ViewIndex]->bIsPlanarReflection || ViewFamily.Views[ViewIndex]->bIsSceneCapture)
+		if (ViewFamily.AllViews[ViewIndex]->bIsPlanarReflection || ViewFamily.AllViews[ViewIndex]->bIsSceneCapture)
 		{
 			bRequiresAlphaChannel = true;
 		}
 
-		NumberOfViewsWithMultiviewEnabled += (ViewFamily.Views[ViewIndex]->bIsMobileMultiViewEnabled) ? 1 : 0;
+		NumberOfViewsWithMultiviewEnabled += (ViewFamily.AllViews[ViewIndex]->bIsMobileMultiViewEnabled) ? 1 : 0;
 	}
 
-	ensureMsgf(NumberOfViewsWithMultiviewEnabled == 0 || NumberOfViewsWithMultiviewEnabled == ViewFamily.Views.Num(),
+	ensureMsgf(NumberOfViewsWithMultiviewEnabled == 0 || NumberOfViewsWithMultiviewEnabled == ViewFamily.AllViews.Num(),
 		TEXT("Either all or no views in a view family should have multiview enabled. Mixing views with enabled and disabled is not allowed."));
 
-	const bool bAllViewsHaveMultiviewEnabled = NumberOfViewsWithMultiviewEnabled == ViewFamily.Views.Num();
+	const bool bAllViewsHaveMultiviewEnabled = NumberOfViewsWithMultiviewEnabled == ViewFamily.AllViews.Num();
 
-	const bool bNeedsStereoAlloc = ViewFamily.Views.ContainsByPredicate([](const FSceneView* View)
+	const bool bNeedsStereoAlloc = ViewFamily.AllViews.ContainsByPredicate([](const FSceneView* View)
 		{
 			return (IStereoRendering::IsStereoEyeView(*View) && (FindStereoRenderTargetManager() != nullptr));
 		});
@@ -587,8 +587,7 @@ void FSceneTextures::InitializeViewFamily(FRDGBuilder& GraphBuilder, FViewFamily
 		}
 	}
 
-
-	if (Config.ShadingPath == EShadingPath::Mobile && MobileRequiresSceneDepthAux(Config.ShaderPlatform))
+	if (Config.bRequiresDepthAux)
 	{
 		const float FarDepth = (float)ERHIZBuffer::FarPlane;
 		const FLinearColor FarDepthColor(FarDepth, FarDepth, FarDepth, FarDepth);
@@ -618,13 +617,13 @@ void FSceneTextures::InitializeViewFamily(FRDGBuilder& GraphBuilder, FViewFamily
 	}
 #endif
 
-	extern bool MobileForwardEnablePrepassLocalLights(const FStaticShaderPlatform Platform);
-	if(MobileForwardEnablePrepassLocalLights(Config.ShaderPlatform))
+	extern bool MobileMergeLocalLightsInPrepassEnabled(const FStaticShaderPlatform Platform);
+	if(MobileMergeLocalLightsInPrepassEnabled(Config.ShaderPlatform))
 	{
 		FRDGTextureDesc MobileLocalLightTextureADesc = FRDGTextureDesc::Create2D(Config.Extent, PF_FloatR11G11B10, FClearValueBinding::Transparent, TexCreate_RenderTargetable | TexCreate_ShaderResource);
 		SceneTextures.MobileLocalLightTextureA = GraphBuilder.CreateTexture(MobileLocalLightTextureADesc, TEXT("MobileLocalLightTextureA"));
 
-		FRDGTextureDesc MobileLocalLightTextureBDesc = FRDGTextureDesc::Create2D(Config.Extent, PF_A2B10G10R10, FClearValueBinding::Transparent, TexCreate_RenderTargetable | TexCreate_ShaderResource);
+		FRDGTextureDesc MobileLocalLightTextureBDesc = FRDGTextureDesc::Create2D(Config.Extent, PF_B8G8R8A8, FClearValueBinding({ 0.5f, 0.5f, 0.5f, 0.f }), TexCreate_RenderTargetable | TexCreate_ShaderResource);
 		SceneTextures.MobileLocalLightTextureB = GraphBuilder.CreateTexture(MobileLocalLightTextureBDesc, TEXT("MobileLocalLightTextureB"));
 	}
 
@@ -946,6 +945,7 @@ void SetupMobileSceneTextureUniformParameters(
 	SceneTextureParameters.SceneColorTexture = SystemTextures.Black;
 	SceneTextureParameters.SceneColorTextureSampler = TStaticSamplerState<>::GetRHI();
 	SceneTextureParameters.SceneDepthTexture = SystemTextures.DepthDummy;
+	SceneTextureParameters.SceneDepthTextureArray = GSystemTextures.GetDefaultTexture(GraphBuilder, ETextureDimension::Texture2DArray, EPixelFormat::PF_B8G8R8A8, FClearValueBinding::Black);
 	SceneTextureParameters.SceneDepthTextureSampler = TStaticSamplerState<>::GetRHI();
 	SceneTextureParameters.ScenePartialDepthTexture = SystemTextures.DepthDummy;
 	SceneTextureParameters.ScenePartialDepthTextureSampler = TStaticSamplerState<>::GetRHI();
@@ -961,6 +961,7 @@ void SetupMobileSceneTextureUniformParameters(
 	SceneTextureParameters.GBufferDTexture = SystemTextures.Black;
 	// SceneDepthAuxTexture is a color texture on mobile, with DeviceZ values
 	SceneTextureParameters.SceneDepthAuxTexture = SystemTextures.Black;
+	SceneTextureParameters.SceneDepthAuxTextureArray = GSystemTextures.GetDefaultTexture(GraphBuilder, ETextureDimension::Texture2DArray, EPixelFormat::PF_B8G8R8A8, FClearValueBinding::Black);
 	SceneTextureParameters.LocalLightTextureA = SystemTextures.Black;
 	SceneTextureParameters.LocalLightTextureB = SystemTextures.Black;
 	SceneTextureParameters.GBufferATextureSampler = TStaticSamplerState<>::GetRHI();
@@ -981,6 +982,7 @@ void SetupMobileSceneTextureUniformParameters(
 			!EnumHasAnyFlags(SceneTextures->Depth.Resolve->Desc.Flags, TexCreate_Memoryless))
 		{
 			SceneTextureParameters.SceneDepthTexture = SceneTextures->Depth.Resolve;
+			SceneTextureParameters.SceneDepthTextureArray = SceneTextures->Depth.Resolve;
 		}
 
 		if (EnumHasAnyFlags(SetupMode, EMobileSceneTextureSetupMode::SceneDepth) &&
@@ -1018,6 +1020,7 @@ void SetupMobileSceneTextureUniformParameters(
 			if (HasBeenProduced(SceneTextures->DepthAux.Resolve))
 			{
 				SceneTextureParameters.SceneDepthAuxTexture = SceneTextures->DepthAux.Resolve;
+				SceneTextureParameters.SceneDepthAuxTextureArray = SceneTextures->DepthAux.Resolve;
 			}
 		}
 
@@ -1077,11 +1080,11 @@ FSceneTextureShaderParameters CreateSceneTextureShaderParameters(
 	ESceneTextureSetupMode SetupMode)
 {
 	FSceneTextureShaderParameters Parameters;
-	if (FSceneInterface::GetShadingPath(FeatureLevel) == EShadingPath::Deferred)
+	if (GetFeatureLevelShadingPath(FeatureLevel) == EShadingPath::Deferred)
 	{
 		Parameters.SceneTextures = CreateSceneTextureUniformBuffer(GraphBuilder, SceneTextures, FeatureLevel, SetupMode);
 	}
-	else if (FSceneInterface::GetShadingPath(FeatureLevel) == EShadingPath::Mobile)
+	else if (GetFeatureLevelShadingPath(FeatureLevel) == EShadingPath::Mobile)
 	{
 		Parameters.MobileSceneTextures = CreateMobileSceneTextureUniformBuffer(GraphBuilder, SceneTextures, Translate(SetupMode));
 	}
@@ -1091,11 +1094,11 @@ FSceneTextureShaderParameters CreateSceneTextureShaderParameters(
 FSceneTextureShaderParameters CreateSceneTextureShaderParameters(FRDGBuilder& GraphBuilder, const FSceneView& View, ESceneTextureSetupMode SetupMode)
 {
 	FSceneTextureShaderParameters Parameters;
-	if (FSceneInterface::GetShadingPath(View.FeatureLevel) == EShadingPath::Deferred)
+	if (GetFeatureLevelShadingPath(View.FeatureLevel) == EShadingPath::Deferred)
 	{
 		Parameters.SceneTextures = CreateSceneTextureUniformBuffer(GraphBuilder, View, SetupMode);
 	}
-	else if (FSceneInterface::GetShadingPath(View.FeatureLevel) == EShadingPath::Mobile)
+	else if (GetFeatureLevelShadingPath(View.FeatureLevel) == EShadingPath::Mobile)
 	{
 		Parameters.MobileSceneTextures = CreateMobileSceneTextureUniformBuffer(GraphBuilder, View, Translate(SetupMode));
 	}

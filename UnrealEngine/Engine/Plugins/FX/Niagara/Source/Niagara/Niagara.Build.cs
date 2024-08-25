@@ -8,8 +8,6 @@ public class Niagara : ModuleRules
     public Niagara(ReadOnlyTargetRules Target) : base(Target)
 	{
 		NumIncludedBytesPerUnityCPPOverride = 491520; // best unity size found from using UBT ProfileUnitySizes mode
-
-		PrivateIncludePaths.Add("../../../../Shaders/Shared");
 		
 		PrivateDependencyModuleNames.AddRange(
             new string[] {
@@ -43,15 +41,12 @@ public class Niagara : ModuleRules
                 "RHI",
                 "VectorVM",
             }
-        );
+		);
 
-        PrivateIncludePathModuleNames.AddRange(
-                new string[] {
-                        "DerivedDataCache",
-                });
-
-        PrivateIncludePaths.AddRange(
-            new string[] {
+		PrivateIncludePathModuleNames.AddRange(
+			new string[] {
+				"DerivedDataCache",
+				"Shaders"
 			});
 
         if (Target.bBuildEditor == true)

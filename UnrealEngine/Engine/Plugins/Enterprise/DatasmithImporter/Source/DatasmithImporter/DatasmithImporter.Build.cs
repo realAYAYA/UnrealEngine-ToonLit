@@ -12,9 +12,6 @@ namespace UnrealBuildTool.Rules
 				{
 					"Analytics",
 					"ApplicationCore",
-					"Chaos",
-					"ChaosClothAsset",
-					"ChaosClothAssetEngine",
 					"CinematicCamera",
 					"ContentBrowser",
 					"Core",

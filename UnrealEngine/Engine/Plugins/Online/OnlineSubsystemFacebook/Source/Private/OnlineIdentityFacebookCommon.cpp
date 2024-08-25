@@ -287,7 +287,7 @@ void FOnlineIdentityFacebookCommon::RevokeAuthToken(const FUniqueNetId& UserId, 
 	});
 }
 
-void FOnlineIdentityFacebookCommon::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineIdentityFacebookCommon::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	Delegate.ExecuteIfBound(UserId, Privilege, (uint32)EPrivilegeResults::NoFailures);
 }	

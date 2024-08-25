@@ -70,7 +70,7 @@ public:
 #ifdef DEBUG_FACTORY
 		UsedElementNum++;
 #endif
-		return *FreeEntityStack.Pop(false);
+		return *FreeEntityStack.Pop(EAllowShrinking::No);
 	}
 };
 } // namespace UE::CADKernel

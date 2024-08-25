@@ -131,8 +131,6 @@ TOnlineResult<FGetFriends> FSocialOSSAdapter::GetFriends(FGetFriends::Params&& P
 		{
 			return TOnlineResult<FGetFriends>(Errors::InvalidUser());
 		}
-
-		return TOnlineResult<FGetFriends>(Result);
 	}
 	else
 	{

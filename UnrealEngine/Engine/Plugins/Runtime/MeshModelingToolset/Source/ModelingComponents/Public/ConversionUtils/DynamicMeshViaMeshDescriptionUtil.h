@@ -17,7 +17,7 @@ namespace UE {
 namespace Geometry {
 
 	MODELINGCOMPONENTS_API FDynamicMesh3 GetDynamicMeshViaMeshDescription(
-		IMeshDescriptionProvider& MeshDescriptionProvider);
+		IMeshDescriptionProvider& MeshDescriptionProvider, bool bRequestTangents = false);
 
 	MODELINGCOMPONENTS_API void CommitDynamicMeshViaMeshDescription(
 		FMeshDescription&& CurrentMeshDescription,

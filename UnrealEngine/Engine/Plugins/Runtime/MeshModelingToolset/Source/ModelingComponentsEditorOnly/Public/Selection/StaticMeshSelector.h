@@ -48,8 +48,8 @@ public:
 		FText GeometryEditTransactionString) override;
 
 protected:
-	UStaticMeshComponent* StaticMeshComponent = nullptr;
-	UStaticMesh* StaticMesh = nullptr;
+	TWeakObjectPtr<UStaticMeshComponent> WeakStaticMeshComponent = nullptr;
+	TWeakObjectPtr<UStaticMesh> WeakStaticMesh = nullptr;
 	FDelegateHandle StaticMesh_OnMeshChangedHandle;
 
 	// TODO: this is not a great design, it would be better if something external could own this mesh...

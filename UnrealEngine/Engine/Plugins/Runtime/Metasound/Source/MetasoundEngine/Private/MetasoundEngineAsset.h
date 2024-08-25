@@ -5,7 +5,10 @@
 #include "Metasound.h"
 #include "MetasoundAssetManager.h"
 #include "MetasoundBuilderSubsystem.h"
+#include "MetasoundFrontendDocumentIdGenerator.h"
+#include "MetasoundFrontendRegistryKey.h"
 #include "MetasoundUObjectRegistry.h"
+#include "Misc/App.h"
 #include "Serialization/Archive.h"
 
 #if WITH_EDITORONLY_DATA
@@ -39,16 +42,16 @@ namespace Metasound
 		}
 
 		template<typename TMetaSoundObject>
-		static void SetReferencedAssetClasses(TMetaSoundObject& InMetaSound, TSet<Metasound::Frontend::IMetaSoundAssetManager::FAssetInfo>&& InAssetClasses)
+		static void SetReferencedAssetClasses(TMetaSoundObject& InMetaSound, TSet<Frontend::IMetaSoundAssetManager::FAssetInfo>&& InAssetClasses)
 		{
-			using namespace Metasound::Frontend;
+			using namespace Frontend;
 			
 			InMetaSound.ReferencedAssetClassKeys.Reset();
 			InMetaSound.ReferencedAssetClassObjects.Reset();
 
 			for (const IMetaSoundAssetManager::FAssetInfo& AssetClass : InAssetClasses)
 			{
-				InMetaSound.ReferencedAssetClassKeys.Add(AssetClass.RegistryKey);
+				InMetaSound.ReferencedAssetClassKeys.Add(AssetClass.RegistryKey.ToString());
 				if (UObject* Object = AssetClass.AssetPath.TryLoad())
 				{
 					InMetaSound.ReferencedAssetClassObjects.Add(Object);
@@ -60,6 +63,15 @@ namespace Metasound
 			}
 		}
 #endif // WITH_EDITOR
+
+		template <typename TMetaSoundObject>
+		static FTopLevelAssetPath GetAssetPathChecked(TMetaSoundObject& InMetaSound)
+		{
+			FTopLevelAssetPath Path;
+			ensureAlwaysMsgf(Path.TrySetPath(&InMetaSound), TEXT("Failed to set TopLevelAssetPath from MetaSound '%s'. MetaSound must be highest level object in package."), *InMetaSound.GetPathName());
+			ensureAlwaysMsgf(Path.IsValid(), TEXT("Failed to set TopLevelAssetPath from MetaSound '%s'. This may be caused by calling this function when the asset is being destroyed."), *InMetaSound.GetPathName());
+			return Path;
+		}
 
 		template <typename TMetaSoundObject>
 		static TArray<FMetasoundAssetBase*> GetReferencedAssets(TMetaSoundObject& InMetaSound)
@@ -87,7 +99,7 @@ namespace Metasound
 		static void PreSaveAsset(TMetaSoundObject& InMetaSound, FObjectPreSaveContext InSaveContext)
 		{
 #if WITH_EDITORONLY_DATA
-			using namespace Metasound::Frontend;
+			using namespace Frontend;
 
 			// Do not call asset manager on CDO objects which may be loaded before asset 
 			// manager is set.
@@ -98,12 +110,27 @@ namespace Metasound
 
 			if (UMetasoundEditorGraphBase* MetaSoundGraph = Cast<UMetasoundEditorGraphBase>(InMetaSound.GetGraph()))
 			{
-				// Cooked data must be deterministic, so do not call register graph as this can
-				// initiate an auto-update and/or local registry data cache and modify serialized data.
-				if (!InSaveContext.IsCooking())
+				if (InSaveContext.IsCooking() || IsRunningCommandlet())
+				{
+					// Use deterministic ID generation so more can be done at cook rather than runtime
+					if (MetaSoundEnableCookDeterministicIDGeneration != 0)
+					{
+						{
+							constexpr bool bIsDeterministic = true;
+							FDocumentIDGenerator::FScopeDeterminism DeterminismScope = FDocumentIDGenerator::FScopeDeterminism(bIsDeterministic);
+							InMetaSound.CookMetaSound();
+						}
+					}
+				}
+ 				else if (FApp::CanEverRenderAudio())
 				{
 					MetaSoundGraph->RegisterGraphWithFrontend();
 					MetaSoundGraph->GetModifyContext().SetForceRefreshViews();
+				}
+				else
+				{
+					UE_LOG(LogMetaSound, Warning, TEXT("PreSaveAsset for MetaSound: (%s) is doing nothing because InSaveContext.IsCooking, IsRunningCommandlet, and FApp::CanEverRenderAudio were all false")
+						, *InMetaSound.GetPathName());
 				}
 			}
 #endif // WITH_EDITORONLY_DATA
@@ -167,10 +194,9 @@ namespace Metasound
 
 #if WITH_EDITORONLY_DATA
 		template <typename TMetaSoundObject>
-		static void SetMetaSoundRegistryAssetClassInfo(TMetaSoundObject& InMetaSound, const Metasound::Frontend::FNodeClassInfo& InClassInfo)
+		static void SetMetaSoundRegistryAssetClassInfo(TMetaSoundObject& InMetaSound, const Frontend::FNodeClassInfo& InClassInfo)
 		{
-			using namespace Metasound;
-			using namespace Metasound::Frontend;
+			using namespace Frontend;
 
 			check(AssetTags::AssetClassID == GET_MEMBER_NAME_CHECKED(TMetaSoundObject, AssetClassID));
 			check(AssetTags::IsPreset == GET_MEMBER_NAME_CHECKED(TMetaSoundObject, bIsPreset));

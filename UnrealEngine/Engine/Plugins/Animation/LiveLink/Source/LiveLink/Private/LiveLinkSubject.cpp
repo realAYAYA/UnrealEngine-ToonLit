@@ -368,8 +368,28 @@ void FLiveLinkSubject::AddFrameData(FLiveLinkFrameDataStruct&& InFrameData)
 		RemoveFrames(1);
 	}
 
+	ELiveLinkSourceMode Mode = CachedSettings.SourceMode;
+	ModeOverride.Reset();
+	
+	// Check if this frame should be force synced, IE go to frame immediately and discard other frames.
+	if (const FString* ForceSyncStr = InFrameData.IsValid()
+									  ? InFrameData.GetBaseData()->MetaData.StringMetaData.Find(TEXT("ForceSync"))
+									  : nullptr)
+	{
+		Mode = ELiveLinkSourceMode::Latest;
+		bool bForceSync = false;
+		LexFromString(bForceSync, **ForceSyncStr);
+
+		if (bForceSync)
+		{
+			ModeOverride = Mode;
+			// todo: should we only remove frames if the timestamp is less than the new frame? Can they arrive out of order?
+			RemoveFrames(FrameData.Num());
+		}
+	}
+
 	int32 FrameIndex = INDEX_NONE;
-	switch (CachedSettings.SourceMode)
+	switch (Mode)
 	{
 	case ELiveLinkSourceMode::EngineTime:
 		FrameIndex = FindNewFrame_WorldTime(InFrameData.GetBaseData()->WorldTime);
@@ -965,8 +985,7 @@ void FLiveLinkSubject::RemoveFrames(int32 InCount)
 		if (FrameToRemoveIndex != INDEX_NONE)
 		{
 			const int32 Count = 1;
-			const bool bAllowShrinking = false;
-			FrameData.RemoveAt(FrameToRemoveIndex, Count, bAllowShrinking);
+			FrameData.RemoveAt(FrameToRemoveIndex, Count, EAllowShrinking::No);
 		}
 		else
 		{
@@ -1081,6 +1100,11 @@ void FLiveLinkSubject::CacheSettings(ULiveLinkSourceSettings* SourceSetting, ULi
 			}
 		}
 	}
+}
+
+ELiveLinkSourceMode FLiveLinkSubject::GetMode() const
+{
+	return ModeOverride.Get(CachedSettings.SourceMode);
 }
 
 FLiveLinkSubjectTimeSyncData FLiveLinkSubject::GetTimeSyncData()

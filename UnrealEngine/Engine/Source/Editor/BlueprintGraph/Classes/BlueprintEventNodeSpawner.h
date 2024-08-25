@@ -87,7 +87,7 @@ public:
 	 */
 	virtual UK2Node_Event const* FindPreExistingEvent(UBlueprint* Blueprint, FBindingSet const& Bindings) const;
 
-private:
+protected:
 	/** The function to configure new nodes with. */
 	UPROPERTY()
     TObjectPtr<UFunction const> EventFunc;

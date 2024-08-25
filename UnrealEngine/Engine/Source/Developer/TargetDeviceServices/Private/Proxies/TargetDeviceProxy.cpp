@@ -60,6 +60,7 @@ void FTargetDeviceProxy::UpdateFromMessage( const FTargetDeviceServicePong& Mess
 	HostUser = Message.HostUser;
 	Make = Message.Make;
 	Model = Message.Model;
+	Type = Message.Type;
 	Name = Aggregated? Message.AllDevicesName: Message.Name;
 	DeviceUser = Message.DeviceUser;
 	DeviceUserPassword = Message.DeviceUserPassword;

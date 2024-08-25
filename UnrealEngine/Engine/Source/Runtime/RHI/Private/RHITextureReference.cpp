@@ -5,21 +5,25 @@
 #include "RHICommandList.h"
 #include "RHIShaderPlatform.h"
 
-FRHITextureReference::FRHITextureReference()
+FRHITextureReference::FRHITextureReference(FRHITexture* InReferencedTexture)
 	: FRHITexture(RRT_TextureReference)
-	, ReferencedTexture(DefaultTexture.GetReference())
-	, BindlessView(nullptr)
+	, ReferencedTexture(InReferencedTexture ? InReferencedTexture : DefaultTexture.GetReference())
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	, BindlessHandle(FRHIDescriptorHandle())
+#endif
 {
 	check(DefaultTexture);
 }
 
-FRHITextureReference::FRHITextureReference(FRHITexture* InReferencedTexture, FRHIShaderResourceView* InBindlessView)
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+FRHITextureReference::FRHITextureReference(FRHITexture* InReferencedTexture, FRHIDescriptorHandle InBindlessHandle)
 	: FRHITexture(RRT_TextureReference)
 	, ReferencedTexture(InReferencedTexture ? InReferencedTexture : DefaultTexture.GetReference())
-	, BindlessView(InBindlessView)
+	, BindlessHandle(InBindlessHandle)
 {
 	check(DefaultTexture);
 }
+#endif // PLATFORM_SUPPORTS_BINDLESS_RENDERING
 
 FRHITextureReference::~FRHITextureReference() = default;
 
@@ -30,14 +34,14 @@ FRHITextureReference* FRHITextureReference::GetTextureReference()
 
 FRHIDescriptorHandle FRHITextureReference::GetDefaultBindlessHandle() const
 { 
-	check(ReferencedTexture);
-
-	// If an SRV has been created, return its handle
-	if (BindlessView.IsValid())
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	if (BindlessHandle.IsValid())
 	{
-		return BindlessView->GetBindlessHandle();
+		return BindlessHandle;
 	}
+#endif // PLATFORM_SUPPORTS_BINDLESS_RENDERING
 
+	check(ReferencedTexture);
 	return ReferencedTexture->GetDefaultBindlessHandle();
 }
 

@@ -3,6 +3,8 @@
 #include "Widgets/SDMXPixelMappingTransformHandle.h"
 
 #include "Components/DMXPixelMappingMatrixCellComponent.h"
+#include "Components/DMXPixelMappingRendererComponent.h"
+#include "DMXPixelMapping.h"
 #include "Framework/Application/SlateApplication.h"
 #include "ScopedTransaction.h"
 #include "Settings/DMXPixelMappingEditorSettings.h"
@@ -20,65 +22,77 @@ void SDMXPixelMappingTransformHandle::Construct(const FArguments& InArgs, TShare
 	Offset = InOffset;
 
 	Action = EDMXPixelMappingTransformAction::None;
-	ScopedTransaction = nullptr;
 
 	DragDirection = ComputeDragDirection(InTransformDirection);
 	DragOrigin = ComputeOrigin(InTransformDirection);
 
+	SetVisibility(TAttribute<EVisibility>::CreateSP(this, &SDMXPixelMappingTransformHandle::GetHandleVisibility));
+
 	ChildSlot
 	[
 		SNew(SImage)
-		.Visibility(this, &SDMXPixelMappingTransformHandle::GetHandleVisibility)
 		.Image(FAppStyle::Get().GetBrush("UMGEditor.TransformHandle"))
 	];
 }
 
 EVisibility SDMXPixelMappingTransformHandle::GetHandleVisibility() const
 {
-	return EVisibility::Visible;
+	if (TransformDirection == EDMXPixelMappingTransformDirection::BottomRight)
+	{
+		return EVisibility::Visible;
+	}
+
+	const TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.IsValid() ? DesignerViewWeakPtr.Pin()->GetToolkit() : nullptr;
+	if (Toolkit.IsValid() && Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Resize)
+	{
+		return EVisibility::Visible;
+	}
+
+	return EVisibility::Hidden;
 }
 
 FReply SDMXPixelMappingTransformHandle::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	if (MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	const TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.IsValid() ? DesignerViewWeakPtr.Pin()->GetToolkit() : nullptr;
+	if (!Toolkit.IsValid() || MouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
 	{
-		const FVector2D LocalSize = MyGeometry.GetLocalSize();
-		const FVector2D LocalCursorPos = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
+		return FReply::Unhandled();
+	}
 
-		// Only handle dragging the edges of the widget
-		constexpr double MouseThreshold = 10.f;
-		if (LocalCursorPos.X < LocalSize.X - MouseThreshold ||
-			LocalCursorPos.Y < LocalSize.Y - MouseThreshold)
+	const FVector2D LocalSize = MyGeometry.GetLocalSize();
+	const FVector2D LocalCursorPos = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
+
+	// Only handle dragging the edges of the widget
+	constexpr double MouseThreshold = 10.0;
+	if (LocalCursorPos.X < LocalSize.X - MouseThreshold ||
+		LocalCursorPos.Y < LocalSize.Y - MouseThreshold)
+	{
+		return FReply::Unhandled();;
+	}
+
+	Action = ComputeActionAtLocation(MyGeometry, MouseEvent);
+
+	const TSet<FDMXPixelMappingComponentReference> SelectedComponentReferences = Toolkit->GetSelectedComponents();
+	for (const FDMXPixelMappingComponentReference& ComponentReference : SelectedComponentReferences)
+	{
+		UDMXPixelMappingBaseComponent* Component = ComponentReference.GetComponent();
+
+		if (UDMXPixelMappingOutputComponent* OutputComponent = Cast<UDMXPixelMappingOutputComponent>(Component))
 		{
-			return FReply::Unhandled();;
+			InitialSize = OutputComponent->GetSize();
+			InitialRotation = OutputComponent->GetRotation();
 		}
 
-		Action = ComputeActionAtLocation(MyGeometry, MouseEvent);
+		MouseDownPosition = MouseEvent.GetScreenSpacePosition();
 
-		if (TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.Pin()->GetToolkit())
-		{
-			const TSet<FDMXPixelMappingComponentReference> SelectedComponentReferences = Toolkit->GetSelectedComponents();
-			for (const FDMXPixelMappingComponentReference& ComponentReference : SelectedComponentReferences)
-			{
-				UDMXPixelMappingBaseComponent* Component = ComponentReference.GetComponent();
+		const FText TransactionText = Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Resize ?
+			LOCTEXT("ResizePixelMappingComponent", "PixelMapping: Resize Component") :
+			LOCTEXT("RotatePixelMappingComponent", "PixelMapping: Rotate Component");
+	
+		ScopedTransaction = MakeShareable<FScopedTransaction>(new FScopedTransaction(TransactionText));
+		Component->Modify();
 
-				if (UDMXPixelMappingOutputComponent* OutputComponent = Cast<UDMXPixelMappingOutputComponent>(Component))
-				{
-					FMargin Offsets;
-					FVector2D Size = OutputComponent->GetSize();
-					Offsets.Right = Size.X;
-					Offsets.Bottom = Size.Y;
-					StartingOffsets = Offsets;
-				}
-
-				MouseDownPosition = MouseEvent.GetScreenSpacePosition();
-
-				ScopedTransaction = MakeShareable<FScopedTransaction>(new FScopedTransaction(LOCTEXT("ResizePixelMappingComponent", "PixelMapping: Resize Component")));
-				Component->Modify();
-
-				return FReply::Handled().CaptureMouse(SharedThis(this));
-			}
-		}
+		return FReply::Handled().CaptureMouse(SharedThis(this));
 	}
 
 	return FReply::Unhandled();
@@ -86,29 +100,40 @@ FReply SDMXPixelMappingTransformHandle::OnMouseButtonDown(const FGeometry& MyGeo
 
 FReply SDMXPixelMappingTransformHandle::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	if ( HasMouseCapture() && MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton )
+	RequestApplyTransformHandle.Invalidate();
+
+	const TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.IsValid() ? DesignerViewWeakPtr.Pin()->GetToolkit() : nullptr;
+	if (!Toolkit.IsValid() || !HasMouseCapture() || MouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
 	{
-		Action = EDMXPixelMappingTransformAction::None;
+		return FReply::Unhandled();
+	}
 		
-		if (TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.Pin()->GetToolkit())
-		{		
-			const TSet<FDMXPixelMappingComponentReference> SelectedComponentReferences = Toolkit->GetSelectedComponents();
-			for (const FDMXPixelMappingComponentReference& ComponentReference : SelectedComponentReferences)
+	Action = EDMXPixelMappingTransformAction::None;
+
+	const TSet<FDMXPixelMappingComponentReference> SelectedComponentReferences = Toolkit->GetSelectedComponents();
+	for (const FDMXPixelMappingComponentReference& ComponentReference : SelectedComponentReferences)
+	{
+		if (UDMXPixelMappingOutputComponent* EditedComponent = Cast<UDMXPixelMappingOutputComponent>(ComponentReference.GetComponent()))
+		{
+			const FVector2D& CursorPosition = MouseEvent.GetScreenSpacePosition();
+
+			EditedComponent->Modify();
+			if (Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Resize)
 			{
-				if (UDMXPixelMappingOutputComponent* ResizedComponent = Cast<UDMXPixelMappingOutputComponent>(ComponentReference.GetComponent()))
-				{
-					// Set the final size transacted
-					const FVector2D Delta = MouseEvent.GetScreenSpacePosition() - MouseDownPosition;
-					const FVector2D TranslateAmount = Delta * (1.0f / (DesignerViewWeakPtr.Pin()->GetZoomAmount() * MyGeometry.Scale));
-
-					ResizedComponent->Modify();
-					Resize(ResizedComponent, DragDirection, TranslateAmount);
-
-					ScopedTransaction.Reset();
-
-					return FReply::Handled().ReleaseMouseCapture();
-				}
+				Resize(EditedComponent, CursorPosition, MyGeometry.Scale);
 			}
+			else if (Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Rotate)
+			{
+				Rotate(EditedComponent, CursorPosition, MyGeometry.Scale);
+			}
+			else
+			{
+				checkf(0, TEXT("Unhandled enum value"));
+			}
+
+			ScopedTransaction.Reset();
+
+			return FReply::Handled().ReleaseMouseCapture();
 		}
 	}
 
@@ -117,138 +142,178 @@ FReply SDMXPixelMappingTransformHandle::OnMouseButtonUp(const FGeometry& MyGeome
 
 FReply SDMXPixelMappingTransformHandle::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	if (Action != EDMXPixelMappingTransformAction::None && DesignerViewWeakPtr.IsValid())
+	TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.IsValid() ? DesignerViewWeakPtr.Pin()->GetToolkit() : nullptr;
+	if (!Toolkit.IsValid() || Action == EDMXPixelMappingTransformAction::None)
 	{
-		if (TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.Pin()->GetToolkit())
+		return FReply::Unhandled();
+	}
+
+	if (RequestApplyTransformHandle.IsValid())
+	{
+		return FReply::Unhandled();
+	}
+
+	const TSet<FDMXPixelMappingComponentReference> SelectedComponentReferences = Toolkit->GetSelectedComponents();
+	for (const FDMXPixelMappingComponentReference& ComponentReference : SelectedComponentReferences)
+	{
+		UDMXPixelMappingOutputComponent* EditedComponent = Cast<UDMXPixelMappingOutputComponent>(ComponentReference.GetComponent());
+		if (!EditedComponent)
 		{
-			const TSet<FDMXPixelMappingComponentReference> SelectedComponentReferences = Toolkit->GetSelectedComponents();
-			for (const FDMXPixelMappingComponentReference& ComponentReference : SelectedComponentReferences)
-			{
-				if (UDMXPixelMappingOutputComponent* ResizedComponent = Cast<UDMXPixelMappingOutputComponent>(ComponentReference.GetComponent()))
-				{
-					RequestResize(ResizedComponent, DragDirection);
-				}
-			}
+			continue;
 		}
+
+		const FVector2D& CursorPosition = MouseEvent.GetScreenSpacePosition();
+		RequestApplyTransformHandle = GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateLambda(
+			[this, EditedComponent, CursorPosition, MyGeometry, Toolkit]()
+			{					
+				if (Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Resize)
+				{
+					Resize(EditedComponent, CursorPosition, MyGeometry.Scale);
+				}
+				else if (Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Rotate)
+				{
+					Rotate(EditedComponent, CursorPosition, MyGeometry.Scale);
+				}
+				else
+				{
+					checkf(0, TEXT("Unhandled enum value"));
+				}
+
+				RequestApplyTransformHandle.Invalidate();
+			}));
 	}
 
 	return FReply::Unhandled();
 }
 
-void SDMXPixelMappingTransformHandle::RequestResize(UDMXPixelMappingBaseComponent* BaseComponent, const FVector2D& Direction)
-{
-	if (!RequestResizeHandle.IsValid() && DesignerViewWeakPtr.IsValid())
-	{
-		const FVector2D& CursorPosition = FSlateApplication::Get().GetCursorPos();
-		const FVector2D Delta = CursorPosition - MouseDownPosition;
-		const FVector2D TranslateAmount = Delta * (1.0f / (DesignerViewWeakPtr.Pin()->GetZoomAmount() * GetCachedGeometry().Scale));
-
-		RequestResizeHandle = GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateLambda([this, BaseComponent, Direction, TranslateAmount]()
-			{
-				Resize(BaseComponent, Direction, TranslateAmount);
-				RequestResizeHandle.Invalidate();
-			}));
-	}
-
-}
-
-void SDMXPixelMappingTransformHandle::Resize(UDMXPixelMappingBaseComponent* BaseComponent, const FVector2D& Direction, const FVector2D& Amount)
-{
-	if (UDMXPixelMappingOutputComponent* OutputComponent = Cast<UDMXPixelMappingOutputComponent>(BaseComponent))
-	{
-		FMargin Offsets = StartingOffsets;
-
-		const FVector2D Movement = Amount * Direction;
-		if (Direction.X < 0)
-		{
-			Offsets.Left -= Movement.X;
-			Offsets.Right += Movement.X;
-		}
-
-		if (Direction.Y < 0)
-		{
-			Offsets.Top -= Movement.Y;
-			Offsets.Bottom += Movement.Y;
-		}
-
-		if (Direction.X > 0)
-		{
-			Offsets.Left += Movement.X;
-			Offsets.Right += Amount.X * Direction.X;
-		}
-
-		if (Direction.Y > 0)
-		{
-			Offsets.Top += Movement.Y;
-			Offsets.Bottom += Amount.Y * Direction.Y;
-		}
-
-		const FVector2D OldSize = OutputComponent->GetSize();
-		const FVector2D NewSize = FVector2D(Offsets.Right, Offsets.Bottom);
-		if (OldSize == NewSize)
-		{
-			// No unchanged values
-			return;
-		}
-
-		OutputComponent->SetSize(NewSize);
-
-		// Scale children only if desired, no division by zero
-		const FDMXPixelMappingDesignerSettings& DesignerSettings = GetDefault<UDMXPixelMappingEditorSettings>()->DesignerSettings;
-		if (!DesignerSettings.bScaleChildrenWithParent || NewSize == FVector2D::ZeroVector)
-		{
-			return;
-		}
-
-		const FVector2D RatioVector = NewSize / OldSize;
-		for (UDMXPixelMappingBaseComponent* BaseChild : OutputComponent->GetChildren())
-		{
-			if (UDMXPixelMappingOutputComponent* Child = Cast<UDMXPixelMappingOutputComponent>(BaseChild))
-			{
-				if (BaseChild->GetClass() == UDMXPixelMappingMatrixCellComponent::StaticClass())
-				{
-					// Don't scale matrix cells, the matrix component already cares for this
-					if (Child->IsLockInDesigner())
-					{
-						continue;
-					}
-				}
-
-				Child->Modify();
-
-				// Scale size (Note, SetSize already clamps)
-				Child->SetSize(Child->GetSize() * RatioVector);
-
-				// Scale position
-				const FVector2D ChildPosition = Child->GetPosition();
-				const FVector2D NewPositionRelative = (ChildPosition - OutputComponent->GetPosition()) * RatioVector;
-				Child->SetPosition(OutputComponent->GetPosition() + NewPositionRelative);
-			}
-		}
-	}
-}
-
 FCursorReply SDMXPixelMappingTransformHandle::OnCursorQuery(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) const
 {
-	EDMXPixelMappingTransformAction CurrentAction = Action;
-	if ( CurrentAction == EDMXPixelMappingTransformAction::None )
+	const TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.Pin()->GetToolkit();
+	if (!Toolkit.IsValid())
 	{
-		CurrentAction = ComputeActionAtLocation(MyGeometry, MouseEvent);
+		return FCursorReply::Unhandled();
 	}
 
-	switch ( TransformDirection )
+	if (Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Resize)
 	{
+		switch (TransformDirection)
+		{
 		case EDMXPixelMappingTransformDirection::BottomRight:
 			return FCursorReply::Cursor(EMouseCursor::ResizeSouthEast);
-		case EDMXPixelMappingTransformDirection::BottomLeft:
-			return FCursorReply::Cursor(EMouseCursor::ResizeSouthWest);
 		case EDMXPixelMappingTransformDirection::BottomCenter:
 			return FCursorReply::Cursor(EMouseCursor::ResizeUpDown);
 		case EDMXPixelMappingTransformDirection::CenterRight:
 			return FCursorReply::Cursor(EMouseCursor::ResizeLeftRight);
+		}
+	}
+	else if (Toolkit->GetTransformHandleMode() == UE::DMX::EDMXPixelMappingTransformHandleMode::Rotate)
+	{
+		return FCursorReply::Cursor(EMouseCursor::CardinalCross);
+	}
+	else
+	{
+		checkf(0, TEXT("Unhandled enum value"));
 	}
 
 	return FCursorReply::Unhandled();
+}
+
+void SDMXPixelMappingTransformHandle::Rotate(UDMXPixelMappingOutputComponent* OutputComponent, const FVector2D& CursorPosition, double WidgetScale)
+{	
+	if (!OutputComponent)
+	{
+		return;
+	}
+
+	// Position of the initially clicked location to the current mouse position in slate space. Remove zoom and scaling to get to graph space.
+	const FVector2D MouseDownToCurorPosition = CursorPosition - MouseDownPosition;
+	const FVector2D MouseDownToCursorPositionGraphSpace = MouseDownToCurorPosition / DesignerViewWeakPtr.Pin()->GetZoomAmount() / WidgetScale;
+	
+	const FVector2D InitialCenterToBottomRight = OutputComponent->GetSize().GetRotated(InitialRotation) / 2.0;
+	const FVector2D NewCenterToBottomRight = InitialCenterToBottomRight + MouseDownToCursorPositionGraphSpace;
+
+	const double DotProdcutNormalized = FVector2D::DotProduct(InitialCenterToBottomRight.GetSafeNormal(), NewCenterToBottomRight.GetSafeNormal());
+	const double Sign = FVector2D::CrossProduct(InitialCenterToBottomRight, NewCenterToBottomRight) > 0.0 ? 1.0 : -1.0;
+	const double NewAngle = Sign * FMath::UnwindRadians(FMath::Acos(DotProdcutNormalized));
+
+	OutputComponent->Modify();
+	OutputComponent->SetRotation(InitialRotation + FMath::RadiansToDegrees(NewAngle));
+}
+
+void SDMXPixelMappingTransformHandle::Resize(UDMXPixelMappingOutputComponent* OutputComponent, const FVector2D& CursorPosition, double WidgetScale)
+{
+	if (!OutputComponent)
+	{
+		return;
+	}
+
+	// Position of the initially clicked location to the current mouse position in slate space. Remove zoom and scaling to get to graph space.
+	const FVector2D MouseDownToCurorPosition = CursorPosition - MouseDownPosition;
+	const FVector2D MouseDownToCursorPositionGraphSpace = MouseDownToCurorPosition / DesignerViewWeakPtr.Pin()->GetZoomAmount() / WidgetScale;
+
+	// Rotate to axis aligned, and apply the drag direction.
+	const FVector2D ResizeTranslation = MouseDownToCursorPositionGraphSpace.GetRotated(-OutputComponent->GetRotation()) * DragDirection;
+	const FVector2D RequestedSize = InitialSize + ResizeTranslation;
+
+	const FVector2D NewSize = GetSnapSize(OutputComponent, RequestedSize);
+	const FVector2D OldSize = OutputComponent->GetSize();
+	if ((FMath::IsNearlyEqual(OldSize.X, NewSize.X) && FMath::IsNearlyEqual(OldSize.Y, NewSize.Y)) ||
+		NewSize.X < 1.f ||
+		NewSize.Y < 1.f)
+	{
+		// No (nearly) unchanged values, no size < 1 on either axis, no negative values.
+		return;
+	}
+	
+	OutputComponent->Modify();
+	OutputComponent->SetSize(NewSize);
+}
+
+FVector2D SDMXPixelMappingTransformHandle::GetSnapSize(UDMXPixelMappingOutputComponent* OutputComponent, const FVector2D& RequestedSize) const
+{
+	const TSharedPtr<FDMXPixelMappingToolkit> Toolkit = DesignerViewWeakPtr.Pin()->GetToolkit();
+	if (!Toolkit.IsValid() || !OutputComponent || !OutputComponent->GetRendererComponent())
+	{
+		return RequestedSize;
+	}
+	UDMXPixelMappingRendererComponent* RendererComponent = OutputComponent->GetRendererComponent();
+
+	const UDMXPixelMapping* PixelMapping = Toolkit->GetDMXPixelMapping();
+	if (!PixelMapping || !PixelMapping->bGridSnappingEnabled)
+	{
+		return RequestedSize;
+	}
+
+	const FVector2D CellSize = [PixelMapping, RendererComponent]()
+		{
+			const FVector2D TextureSize = RendererComponent->GetSize();
+			return TextureSize / FVector2D(PixelMapping->SnapGridColumns, PixelMapping->SnapGridRows);
+		}();
+
+	// Grid snap bottom right
+	const FVector2D RequestedBottomRight = OutputComponent->GetPositionRotated() + RequestedSize;
+	const int32 BottomColumn = FMath::RoundHalfToZero(RequestedBottomRight.X / CellSize.X);
+	const int32 RightRow = FMath::RoundHalfToZero(RequestedBottomRight.Y / CellSize.Y);
+
+	FVector2D NewBottomRight = OutputComponent->GetPositionRotated() + RequestedSize;
+	if (DragDirection.X > 0.f)
+	{
+		// Snap towards right
+		NewBottomRight.X = BottomColumn * CellSize.X;
+	}
+
+	if (DragDirection.Y > 0.f)
+	{
+		// Snap towards bottom
+		NewBottomRight.Y = RightRow * CellSize.Y;
+	}
+
+	const FVector2D SnapSize = NewBottomRight - OutputComponent->GetPositionRotated();
+	FVector2D SnapSizeClamped;
+	SnapSizeClamped.X = FMath::Max(SnapSize.X, 1.f);
+	SnapSizeClamped.Y = FMath::Max(SnapSize.Y, 1.f);
+
+	return SnapSizeClamped;
 }
 
 FVector2D SDMXPixelMappingTransformHandle::ComputeDragDirection(EDMXPixelMappingTransformDirection InTransformDirection) const
@@ -257,9 +322,6 @@ FVector2D SDMXPixelMappingTransformHandle::ComputeDragDirection(EDMXPixelMapping
 	{
 	case EDMXPixelMappingTransformDirection::CenterRight:
 		return FVector2D(1, 0);
-
-	case EDMXPixelMappingTransformDirection::BottomLeft:
-		return FVector2D(-1, 1);
 	case EDMXPixelMappingTransformDirection::BottomCenter:
 		return FVector2D(0, 1);
 	case EDMXPixelMappingTransformDirection::BottomRight:
@@ -277,9 +339,6 @@ FVector2D SDMXPixelMappingTransformHandle::ComputeOrigin(EDMXPixelMappingTransfo
 	{
 	case EDMXPixelMappingTransformDirection::CenterRight:
 		return Size * FVector2D(0, 0.5);
-
-	case EDMXPixelMappingTransformDirection::BottomLeft:
-		return Size * FVector2D(1, 0);
 	case EDMXPixelMappingTransformDirection::BottomCenter:
 		return Size * FVector2D(0.5, 0);
 	case EDMXPixelMappingTransformDirection::BottomRight:

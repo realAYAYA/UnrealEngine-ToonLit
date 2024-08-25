@@ -18,9 +18,9 @@ UClass* FChaosCacheObjectSpawner::GetSupportedTemplateType() const
 	return AChaosCacheManager::StaticClass();
 }
 
-UObject* FChaosCacheObjectSpawner::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player)
+UObject* FChaosCacheObjectSpawner::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState)
 {
-	UObject* SpawnedObject = FLevelSequenceActorSpawner::SpawnObject(Spawnable, TemplateID, Player);
+	UObject* SpawnedObject = FLevelSequenceActorSpawner::SpawnObject(Spawnable, TemplateID, SharedPlaybackState);
 	
 	if (AChaosCacheManager* ChaosCache = Cast<AChaosCacheManager>(SpawnedObject))
 	{

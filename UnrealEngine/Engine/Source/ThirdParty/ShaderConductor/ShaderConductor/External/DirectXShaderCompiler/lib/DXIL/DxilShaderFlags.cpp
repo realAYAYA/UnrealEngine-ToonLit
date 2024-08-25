@@ -60,6 +60,9 @@ ShaderFlags::ShaderFlags():
 , m_bSamplerDescriptorHeapIndexing(false)
 , m_bAtomicInt64OnHeapResource(false)
 , m_bResMayNotAlias(false)
+// UE Change Begin: Added UserInfo container and check for derivative ops
+, m_bHasDerivativeOps(false)
+// UE Change End: Added UserInfo container and check for derivative ops
 , m_bAdvancedTextureOps(false)
 , m_bWriteableMSAATextures(false)
 , m_align1(0)
@@ -382,6 +385,9 @@ ShaderFlags ShaderFlags::CollectShaderFlags(const Function *F,
 
   bool hasAdvancedTextureOps = false;
   bool hasWriteableMSAATextures = false;
+  // UE Change Begin: Added UserInfo container and check for derivative ops
+  bool hasDerivativeOps = false;
+  // UE Change End: Added UserInfo container and check for derivative ops
 
   // Try to maintain compatibility with a v1.0 validator if that's what we have.
   uint32_t valMajor, valMinor;
@@ -536,6 +542,19 @@ ShaderFlags ShaderFlags::CollectShaderFlags(const Function *F,
             }
           }
           break;
+        // UE Change Begin: Added UserInfo container and check for derivative ops
+        case DXIL::OpCode::QuadOp:
+        case DXIL::OpCode::QuadReadLaneAt:
+        case DXIL::OpCode::QuadVote:
+        case DXIL::OpCode::TextureGather:
+        case DXIL::OpCode::TextureGatherCmp:
+        case DXIL::OpCode::Texture2DMSGetSamplePosition:
+        case DXIL::OpCode::WriteSamplerFeedback:
+        case DXIL::OpCode::WriteSamplerFeedbackBias:
+        case DXIL::OpCode::WriteSamplerFeedbackLevel:
+          hasDerivativeOps = true;
+          break;
+        // UE Change End: Added UserInfo container and check for derivative ops
         case DXIL::OpCode::SampleGrad:
         case DXIL::OpCode::SampleLevel:
         case DXIL::OpCode::SampleCmpLevelZero:
@@ -547,6 +566,9 @@ ShaderFlags ShaderFlags::CollectShaderFlags(const Function *F,
         case DXIL::OpCode::Sample:
         case DXIL::OpCode::SampleBias:
         case DXIL::OpCode::SampleCmp:
+          // UE Change Begin: Added UserInfo container and check for derivative ops
+          hasDerivativeOps = true;
+          // UE Change End: Added UserInfo container and check for derivative ops
           if (!isa<Constant>(CI->getArgOperand(DXIL::OperandIndex::kTextureSampleOffset0OpIdx)) ||
               !isa<Constant>(CI->getArgOperand(DXIL::OperandIndex::kTextureSampleOffset1OpIdx)) ||
               !isa<Constant>(CI->getArgOperand(DXIL::OperandIndex::kTextureSampleOffset2OpIdx)))
@@ -557,6 +579,9 @@ ShaderFlags ShaderFlags::CollectShaderFlags(const Function *F,
         case DXIL::OpCode::DerivCoarseX:
         case DXIL::OpCode::DerivCoarseY:
         case DXIL::OpCode::CalculateLOD: {
+          // UE Change Begin: Added UserInfo container and check for derivative ops
+          hasDerivativeOps = true;
+          // UE Change End: Added UserInfo container and check for derivative ops
           const ShaderModel *pSM = M->GetShaderModel();
           if (pSM->IsAS() || pSM->IsMS())
             hasDerivativesInMeshAndAmpShaders = true;
@@ -580,8 +605,12 @@ ShaderFlags ShaderFlags::CollectShaderFlags(const Function *F,
         case DXIL::OpCode::TextureStoreSample:
           hasWriteableMSAATextures = true;
           LLVM_FALLTHROUGH;
-        case DXIL::OpCode::SampleCmpLevel:
+        // UE Change Begin: Added UserInfo container and check for derivative ops
         case DXIL::OpCode::TextureGatherRaw:
+          hasDerivativeOps = true;
+          LLVM_FALLTHROUGH;
+        case DXIL::OpCode::SampleCmpLevel:
+        // // UE Change End: Added UserInfo container and check for derivative ops
           hasAdvancedTextureOps = true;
           break;
         default:
@@ -699,6 +728,9 @@ ShaderFlags ShaderFlags::CollectShaderFlags(const Function *F,
   flag.SetAtomicInt64OnHeapResource(hasAtomicInt64OnHeapResource);
   flag.SetAdvancedTextureOps(hasAdvancedTextureOps);
   flag.SetWriteableMSAATextures(hasWriteableMSAATextures);
+  // UE Change Begin: Added UserInfo container and check for derivative ops
+  flag.SetHasDerivativeOps(hasDerivativeOps);
+  // UE Change End: Added UserInfo container and check for derivative ops
 
   // Only bother setting the flag when there are UAVs.
   flag.SetResMayNotAlias(canSetResMayNotAlias && hasUAVs &&

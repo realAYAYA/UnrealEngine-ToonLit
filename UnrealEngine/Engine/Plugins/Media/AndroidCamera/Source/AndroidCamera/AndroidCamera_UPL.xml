@@ -126,7 +126,7 @@
 		}
 		
 		// check if camera supported
-		if (!_activity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))
+		if (!activityContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))
 		{
 			AndroidCamera_Count = 0;
 			return AndroidCamera_Count;

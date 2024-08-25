@@ -18,6 +18,7 @@
 #include "Serialization/ArchiveCookData.h"
 #include "Serialization/FileRegions.h"
 #include "Serialization/PackageWriter.h"
+#include "Templates/Function.h"
 #include "Templates/UniquePtr.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/NameTypes.h"
@@ -309,7 +310,9 @@ namespace UE::SavePackageUtilities
 	COREUOBJECT_API int32 GetNumPackagesSaved();
 
 	COREUOBJECT_API void StartSavingEDLCookInfoForVerification();
+	using FEDLMessageCallback = TFunction<void(ELogVerbosity::Type, FStringView)>;
 	COREUOBJECT_API void VerifyEDLCookInfo(bool bFullReferencesExpected = true);
+	COREUOBJECT_API void VerifyEDLCookInfo(const FEDLMessageCallback& MessageCallback, bool bFullReferencesExpected = true);
 	COREUOBJECT_API void EDLCookInfoAddIterativelySkippedPackage(FName LongPackageName);
 	COREUOBJECT_API void EDLCookInfoMoveToCompactBinaryAndClear(FCbWriter& Writer, bool& bOutHasData);
 	COREUOBJECT_API void EDLCookInfoMoveToCompactBinaryAndClear(FCbWriter& Writer, bool& bOutHasData, FName PackageName);

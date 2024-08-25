@@ -4,6 +4,7 @@
 
 #include "PixelCaptureCapturer.h"
 #include "RHI.h"
+#include "RHIGPUReadback.h"
 
 /**
  * A basic capturer that will capture RHI texture frames to I420 buffers utilizing cpu functions.
@@ -30,12 +31,10 @@ protected:
 private:
 	float Scale = 1.0f;
 
+	TSharedPtr<FRHIGPUTextureReadback> TextureReader;
 	FTextureRHIRef StagingTexture;
-	FTextureRHIRef ReadbackTexture;
-	void* ResultsBuffer = nullptr;
-	int32 MappedStride = 0;
 
 	FPixelCaptureCapturerRHIToI420CPU(float InScale);
 	void OnRHIStageComplete(IPixelCaptureOutputFrame* OutputBuffer);
-	void CleanUp();
+	void CheckComplete(IPixelCaptureOutputFrame* OutputBuffer);
 };

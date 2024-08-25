@@ -13,7 +13,7 @@ namespace UE
 	{
 		namespace Private
 		{
-			void FFbxConvert::ConvertScene(FbxScene* SDKScene)
+			void FFbxConvert::ConvertScene(FbxScene* SDKScene, const bool bConvertScene, const bool bForceFrontXAxis, const bool bConvertSceneUnit)
 			{
 				if (!ensure(SDKScene))
 				{
@@ -42,50 +42,39 @@ namespace UE
 					}
 				}
 
-				//Set the original file information
-				FbxAxisSystem FileAxisSystem = SDKScene->GetGlobalSettings().GetAxisSystem();
-				FbxSystemUnit FileUnitSystem = SDKScene->GetGlobalSettings().GetSystemUnit();
 
-
-				//UE is: z up, front x, left handed
-				FbxAxisSystem::EUpVector UpVector = FbxAxisSystem::EUpVector::eZAxis;
-#if CONVERT_TO_FRONT_X
-				FbxAxisSystem::EFrontVector FrontVector = (FbxAxisSystem::EFrontVector)FbxAxisSystem::eParityEven;
-#else
-				FbxAxisSystem::EFrontVector FrontVector = (FbxAxisSystem::EFrontVector) - FbxAxisSystem::eParityOdd;
-#endif //CONVERT_TO_FRONT_X
-				FbxAxisSystem::ECoordSystem CoordSystem = FbxAxisSystem::ECoordSystem::eRightHanded;
-				FbxAxisSystem UnrealImportAxis(UpVector, FrontVector, CoordSystem);
-
-				if (FileAxisSystem != UnrealImportAxis)
+				if (bConvertScene)
 				{
-					FbxRootNodeUtility::RemoveAllFbxRoots(SDKScene);
-					UnrealImportAxis.ConvertScene(SDKScene);
+					//Set the original file information
+					FbxAxisSystem FileAxisSystem = SDKScene->GetGlobalSettings().GetAxisSystem();
+
+
+					//UE is: z up, front x, left handed
+					FbxAxisSystem::EUpVector UpVector = FbxAxisSystem::EUpVector::eZAxis;
+					FbxAxisSystem::EFrontVector FrontVector = (FbxAxisSystem::EFrontVector)(bForceFrontXAxis ? FbxAxisSystem::eParityEven : -FbxAxisSystem::eParityOdd);
+					FbxAxisSystem::ECoordSystem CoordSystem = FbxAxisSystem::ECoordSystem::eRightHanded;
+					FbxAxisSystem UnrealImportAxis(UpVector, FrontVector, CoordSystem);
+
+					if (FileAxisSystem != UnrealImportAxis)
+					{
+						FbxRootNodeUtility::RemoveAllFbxRoots(SDKScene);
+						UnrealImportAxis.ConvertScene(SDKScene);
+					}
 				}
 
-				if (FileUnitSystem != FbxSystemUnit::cm)
+				if (bConvertSceneUnit)
 				{
-					FbxSystemUnit::cm.ConvertScene(SDKScene);
+					FbxSystemUnit FileUnitSystem = SDKScene->GetGlobalSettings().GetSystemUnit();
+					if (FileUnitSystem != FbxSystemUnit::cm)
+					{
+						FbxSystemUnit::cm.ConvertScene(SDKScene);
+					}
 				}
 
 				//Reset all the transform evaluation cache since we change some node transform
 				SDKScene->GetAnimationEvaluator()->Reset();
 			}
 
-			FTransform FFbxConvert::ConvertTransform(const FbxAMatrix& Matrix)
-			{
-				FTransform Out;
-
-				FQuat Rotation = ConvertRotToQuat(Matrix.GetQ());
-				FVector Origin = ConvertPos(Matrix.GetT());
-				FVector Scale = ConvertScale(Matrix.GetS());
-
-				Out.SetTranslation(Origin);
-				Out.SetScale3D(Scale);
-				Out.SetRotation(Rotation);
-
-				return Out;
-			}
 
 			FTransform FFbxConvert::AdjustCameraTransform(const FTransform& Transform)
 			{
@@ -107,99 +96,6 @@ namespace UE
 				return LightTransform;
 			}
 
-			FMatrix FFbxConvert::ConvertMatrix(const FbxAMatrix& Matrix)
-			{
-				FMatrix UEMatrix;
-
-				for (int i = 0; i < 4; ++i)
-				{
-					const FbxVector4 Row = Matrix.GetRow(i);
-					if (i == 1)
-					{
-						UEMatrix.M[i][0] = -Row[0];
-						UEMatrix.M[i][1] = Row[1];
-						UEMatrix.M[i][2] = -Row[2];
-						UEMatrix.M[i][3] = -Row[3];
-					}
-					else
-					{
-						UEMatrix.M[i][0] = Row[0];
-						UEMatrix.M[i][1] = -Row[1];
-						UEMatrix.M[i][2] = Row[2];
-						UEMatrix.M[i][3] = Row[3];
-					}
-				}
-
-				return UEMatrix;
-			}
-
-			FbxAMatrix FFbxConvert::ConvertMatrix(const FMatrix& UEMatrix)
-			{
-				FbxAMatrix FbxMatrix;
-
-				for (int i = 0; i < 4; ++i)
-				{
-					FbxVector4 Row;
-					if (i == 1)
-					{
-						Row[0] = -UEMatrix.M[i][0];
-						Row[1] = UEMatrix.M[i][1];
-						Row[2] = -UEMatrix.M[i][2];
-						Row[3] = -UEMatrix.M[i][3];
-					}
-					else
-					{
-						Row[0] = UEMatrix.M[i][0];
-						Row[1] = -UEMatrix.M[i][1];
-						Row[2] = UEMatrix.M[i][2];
-						Row[3] = UEMatrix.M[i][3];
-					}
-					FbxMatrix.SetRow(i, Row);
-				}
-
-				return FbxMatrix;
-			}
-
-			FQuat FFbxConvert::ConvertRotToQuat(FbxQuaternion Quaternion)
-			{
-				FQuat UnrealQuat;
-				UnrealQuat.X = Quaternion[0];
-				UnrealQuat.Y = -Quaternion[1];
-				UnrealQuat.Z = Quaternion[2];
-				UnrealQuat.W = -Quaternion[3];
-
-				return UnrealQuat;
-			}
-
-			FRotator FFbxConvert::ConvertEuler(FbxDouble3 Euler)
-			{
-				return FRotator::MakeFromEuler(FVector(Euler[0], -Euler[1], Euler[2]));
-			}
-
-			FVector FFbxConvert::ConvertScale(FbxVector4 Vector)
-			{
-				FVector Out;
-				Out[0] = Vector[0];
-				Out[1] = Vector[1];
-				Out[2] = Vector[2];
-				return Out;
-			}
-
-			FRotator FFbxConvert::ConvertRotation(FbxQuaternion Quaternion)
-			{
-				FRotator Out(ConvertRotToQuat(Quaternion));
-				return Out;
-			}
-			FVector FFbxConvert::ConvertPos(const FbxVector4& Vector)
-			{
-				return FVector(Vector[0], -Vector[1], Vector[2]);
-			}
-
-			FVector FFbxConvert::ConvertDir(const FbxVector4& Vector)
-			{
-				return FVector(Vector[0], -Vector[1], Vector[2]);
-			}
-
 			FLinearColor FFbxConvert::ConvertColor(const FbxDouble3& Color)
 			{
 				FLinearColor LinearColor;
@@ -212,11 +108,11 @@ namespace UE
 			}
 
 			/**
-			 * Convert ANSI char to a FString using ANSI_TO_TCHAR macro
+			 * Convert UTF8 char to a FString using ANSI_TO_TCHAR macro
 			 */
 			FString FFbxConvert::MakeString(const ANSICHAR* Name)
 			{
-				return FString(ANSI_TO_TCHAR(Name));
+				return FString(UTF8_TO_TCHAR(Name));
 			}
 
 			void FFbxConvert::ApplyUnroll(FbxNode* Node, FbxAnimLayer* Layer, FbxAnimCurveFilterUnroll* UnrollFilter)

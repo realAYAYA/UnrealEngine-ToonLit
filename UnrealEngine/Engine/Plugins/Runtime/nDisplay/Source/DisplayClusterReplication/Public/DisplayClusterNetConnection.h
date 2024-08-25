@@ -58,9 +58,6 @@ public:
 	 */
 	void ProcessPacket(int32 PacketId);
 
-	/** Return last notified packet id */
-	int32 GetLastNotifiedPacket() const { return GetLastNotifiedPacketId(); }
-
 protected:
 	// Storage for InPackets map keys, prevents reallocs 
 	TArray<int32> PacketIDs;

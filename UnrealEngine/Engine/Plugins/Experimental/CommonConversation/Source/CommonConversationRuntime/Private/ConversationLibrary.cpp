@@ -9,18 +9,11 @@
 
 #define LOCTEXT_NAMESPACE "ConversationLibrary"
 
-//////////////////////////////////////////////////////////////////////////
-// UConversationLibrary
-
-UConversationLibrary::UConversationLibrary()
-{
-}
-
-UConversationInstance* UConversationLibrary::StartConversation(FGameplayTag ConversationEntryTag, AActor* Instigator,
-	FGameplayTag InstigatorTag, AActor* Target, FGameplayTag TargetTag, const TSubclassOf<UConversationInstance> ConversationInstanceClass)
+static UConversationInstance* StartConversationShared(const FGameplayTag& ConversationEntryTag, AActor* Instigator, const FGameplayTag& InstigatorTag,
+	AActor* Target, const FGameplayTag& TargetTag, const TSubclassOf<UConversationInstance> ConversationInstanceClass, const UConversationDatabase* Graph)
 {
 #if WITH_SERVER_CODE
-	if (Instigator == nullptr || Target == nullptr)
+	if (Instigator == nullptr || Target == nullptr || GEngine == nullptr)
 	{
 		return nullptr;
 	}
@@ -44,7 +37,7 @@ UConversationInstance* UConversationLibrary::StartConversation(FGameplayTag Conv
 			UConversationContextHelpers::MakeConversationParticipant(Context, Target, TargetTag);
 			UConversationContextHelpers::MakeConversationParticipant(Context, Instigator, InstigatorTag);
 
-			ConversationInstance->ServerStartConversation(ConversationEntryTag);
+			ConversationInstance->ServerStartConversation(ConversationEntryTag, Graph);
 		}
 
 		return ConversationInstance;
@@ -52,6 +45,25 @@ UConversationInstance* UConversationLibrary::StartConversation(FGameplayTag Conv
 #endif
 
 	return nullptr;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// UConversationLibrary
+
+UConversationLibrary::UConversationLibrary()
+{
+}
+
+UConversationInstance* UConversationLibrary::StartConversation(const FGameplayTag& ConversationEntryTag, AActor* Instigator,
+	const FGameplayTag& InstigatorTag, AActor* Target, const FGameplayTag& TargetTag, const TSubclassOf<UConversationInstance> ConversationInstanceClass)
+{
+	return StartConversationShared(ConversationEntryTag, Instigator, InstigatorTag, Target, TargetTag, ConversationInstanceClass, nullptr);
+}
+
+UConversationInstance* UConversationLibrary::StartConversationFromGraph(const FGameplayTag& ConversationEntryTag, AActor* Instigator, const FGameplayTag& InstigatorTag,
+	AActor* Target, const FGameplayTag& TargetTag, const UConversationDatabase* Graph)
+{
+	return (Graph) ? StartConversationShared(ConversationEntryTag, Instigator, InstigatorTag, Target, TargetTag, nullptr, Graph) : nullptr;
 }
 
 #undef LOCTEXT_NAMESPACE

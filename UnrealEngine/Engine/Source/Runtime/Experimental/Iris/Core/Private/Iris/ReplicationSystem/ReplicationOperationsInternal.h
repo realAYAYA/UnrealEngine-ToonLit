@@ -35,8 +35,8 @@ struct FReplicationInstanceOperationsInternal
 	/** A call to this function will clear the index of the handle into the external statebuffer contained in the Instance Protocol */
 	static IRISCORE_API void UnbindInstanceProtocol(FReplicationInstanceProtocol* InstanceProtocol, const FReplicationProtocol* Protocol);
 
-	/** Copy state data for a single instance */
-	static IRISCORE_API uint32 CopyObjectStateData(FNetBitStreamWriter& ChangeMaskWriter, FChangeMaskCache& Cache, FNetRefHandleManager& NetRefHandleManager, FNetSerializationContext& SerializationContext, uint32 InternalIndex);
+	/** Quantize state data for a single instance */
+	static IRISCORE_API uint32 QuantizeObjectStateData(FNetBitStreamWriter& ChangeMaskWriter, FChangeMaskCache& Cache, FNetRefHandleManager& NetRefHandleManager, FNetSerializationContext& SerializationContext, uint32 InternalIndex);
 
 	/** Reset instance state dirtiness. */
 	static IRISCORE_API void ResetObjectStateDirtiness(FNetRefHandleManager& NetRefHandleManager, uint32 InternalIndex);
@@ -61,9 +61,6 @@ struct FReplicationStateOperationsInternal
 
 	/** Collect references from a state based on the provided changemask information */
 	static IRISCORE_API void CollectReferencesWithMask(FNetSerializationContext& Context, FNetReferenceCollector& Collector, const uint32 ChangeMaskOffset, const uint8* RESTRICT SrcInternalBuffer,  const FReplicationStateDescriptor* Descriptor);
-
-	/** Try to resolve the references in the state described by the descriptor, returns true if all references can be resolved */
-	static IRISCORE_API ENetObjectReferenceResolveResult TryToResolveObjectReferences(FNetSerializationContext& Context, uint8* RESTRICT InternalBuffer, const FReplicationStateDescriptor* Descriptor);
 };
 
 struct FReplicationProtocolOperationsInternal

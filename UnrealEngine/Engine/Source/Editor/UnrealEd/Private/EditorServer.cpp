@@ -39,6 +39,7 @@
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/ActorPrimitiveColorHandler.h"
 #include "CollisionQueryParams.h"
 #include "WorldCollision.h"
 #include "Engine/World.h"
@@ -377,11 +378,11 @@ bool UEditorEngine::SafeExec( UWorld* InWorld, const TCHAR* InStr, FOutputDevice
 				{
 					break;
 				}
-				ObjectName.MidInline( i+1, MAX_int32, false );
+				ObjectName.MidInline( i+1, MAX_int32, EAllowShrinking::No);
 			}
 			if( ObjectName.Find(TEXT("."), ESearchCase::CaseSensitive)>=0 )
 			{
-				ObjectName.LeftInline( ObjectName.Find(TEXT("."), ESearchCase::CaseSensitive), false );
+				ObjectName.LeftInline( ObjectName.Find(TEXT("."), ESearchCase::CaseSensitive), EAllowShrinking::No);
 			}
 		}
 
@@ -529,7 +530,7 @@ bool UEditorEngine::Exec_StaticMesh( UWorld* InWorld, const TCHAR* Str, FOutputD
 		if(FParse::Command(&Str,TEXT("BRUSH")))
 		{
 			const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "StaticMeshToBrush", "StaticMesh to Brush") );
-			WorldBrush->Brush->Modify();
+			WorldBrush->Brush->Modify(false);
 
 			// Find the first selected static mesh actor.
 			AStaticMeshActor* SelectedActor = NULL;
@@ -624,7 +625,7 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 			ABrush* DefaultBrush = InWorld->GetDefaultBrush();
 			if (DefaultBrush != NULL)
 			{
-				DefaultBrush->Brush->Modify();
+				DefaultBrush->Brush->Modify(false);
 				SnapLocation = DefaultBrush->GetActorLocation();
 				PrePivot = DefaultBrush->GetPivotOffset();
 			}
@@ -646,7 +647,7 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 	else if( FParse::Command(&Str,TEXT("RESET")) )
 	{
 		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "BrushReset", "Brush Reset") );
-		WorldBrush->Modify();
+		WorldBrush->Modify(false);
 		WorldBrush->InitPosRotScale();
 		RedrawLevelEditingViewports();
 		return true;
@@ -676,7 +677,7 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 			{
 				if ( Brush->Brush )
 				{
-					Brush->Brush->Modify();
+					Brush->Brush->Modify(false);
 					for( int32 poly = 0 ; poly < Brush->Brush->Polys->Element.Num() ; poly++ )
 					{
 						FPoly* Poly = &(Brush->Brush->Polys->Element[poly]);
@@ -707,7 +708,7 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 	else if( FParse::Command(&Str,TEXT("MOVETO")) )
 	{
 		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "BrushMoveTo", "Brush MoveTo") );
-		WorldBrush->Modify();
+		WorldBrush->Modify(false);
 		FVector TempVector(0.f);
 		GetFVECTOR( Str, TempVector );
 		WorldBrush->SetActorLocation(TempVector, false);
@@ -717,7 +718,7 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 	else if( FParse::Command(&Str,TEXT("MOVEREL")) )
 	{
 		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "BrushMoveRel", "Brush MoveRel") );
-		WorldBrush->Modify();
+		WorldBrush->Modify(false);
 		FVector TempVector( 0, 0, 0 );
 		GetFVECTOR( Str, TempVector );
 		FVector NewLocation = WorldBrush->GetActorLocation();
@@ -756,8 +757,8 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 					LoadAndSelectAssets( SelectedAssets, UMaterial::StaticClass() );
 				}
 
-				InWorld->GetModel()->Modify();
-				NewBrush->Modify();
+				InWorld->GetModel()->Modify(false);
+				NewBrush->Modify(false);
 				bspBrushCSG( NewBrush, InWorld->GetModel(), DWord1, Brush_Add, CSG_None, true, true, true );
 
 				if (FParse::Command(&Str, TEXT("SELECTNEWBRUSH")))
@@ -846,8 +847,8 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 					FActorLabelUtilities::SetActorLabelUnique(NewBrush, FText::Format(NSLOCTEXT("UnrealEd", "BrushName", "{0} Brush"), FText::FromString(NewBrush->GetBrushBuilder()->GetClass()->GetDescription())).ToString());
 				}
 
-				NewBrush->Modify();
-				InWorld->GetModel()->Modify();
+				NewBrush->Modify(false);
+				InWorld->GetModel()->Modify(false);
 				bspBrushCSG( NewBrush, InWorld->GetModel(), 0, Brush_Subtract, CSG_None, true, true, true );
 			}
 			InWorld->InvalidateModelGeometry( InWorld->GetCurrentLevel() );
@@ -915,7 +916,7 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 	else if( FParse::Command (&Str,TEXT("NEW")) )
 	{
 		const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "BrushNew", "Brush New") );
-		WorldBrush->Brush->Modify();
+		WorldBrush->Brush->Modify(false);
 		WorldBrush->Brush->Polys->Element.Empty();
 		RedrawLevelEditingViewports();
 		return true;
@@ -964,7 +965,7 @@ bool UEditorEngine::Exec_Brush( UWorld* InWorld, const TCHAR* Str, FOutputDevice
 
 			GWarn->BeginSlowTask( NSLOCTEXT("UnrealEd", "ImportingBrush", "Importing brush"), true );
 
-			WorldBrush->Brush->Polys->Modify();
+			WorldBrush->Brush->Polys->Modify(false);
 			WorldBrush->Brush->Polys->Element.Empty();
 			uint32 Flags=0;
 			bool Merge=0;
@@ -1149,22 +1150,6 @@ void UEditorEngine::ShowUndoRedoNotification(const FText& NotificationText, bool
 
 void UEditorEngine::HandleTransactorBeforeRedoUndo(const FTransactionContext& TransactionContext)
 {
-	//Get the list of all selected actors before the undo/redo is performed
-	OldSelectedActors.Empty();
-	for ( FSelectionIterator It( GetSelectedActorIterator() ) ; It ; ++It )
-	{
-		AActor* Actor = CastChecked<AActor>( *It );
-		OldSelectedActors.Add( Actor);
-	}
-
-	// Get the list of selected components as well
-	OldSelectedComponents.Empty();
-	for (FSelectionIterator It(GetSelectedComponentIterator()); It; ++It)
-	{
-		auto Component = CastChecked<UActorComponent>(*It);
-		OldSelectedComponents.Add(Component);
-	}
-
 	// Before an undo, store the current operation and hook on object transaction, if we do not have an outer operation already
 	if (CurrentUndoRedoContext->OperationDepth++ == 0)
 	{
@@ -1274,136 +1259,33 @@ UTransactor* UEditorEngine::CreateTrans()
 
 void UEditorEngine::PostUndo(bool)
 {
-	// Cache any Actor that needs to be re-instanced because it still points to a REINST_ class
-	TMap< UClass*, UClass* > OldToNewClassMapToReinstance;
+	UTypedElementSelectionSet* LevelEditorSelection = GetSelectedActors()->GetElementSelectionSet();
 
-	//Update the actor selection followed by the component selection if needed (note: order is important)
-		
-	//Get the list of all selected actors after the operation
-	TArray<AActor*> SelectedActors;
-	for (FSelectionIterator It(GetSelectedActorIterator()); It; ++It)
+	// This is a safeguard in case the function call is triggered after shutdown has initiated
+	if (LevelEditorSelection)
 	{
-		AActor* Actor = CastChecked<AActor>(*It);
-		//if this actor is NOT in a hidden level add it to the list - otherwise de-select it
-		if (FLevelUtils::IsLevelLocked(Actor) == false)
-		{
-			SelectedActors.Add(Actor);
-		}
-		else
-		{
-			GetSelectedActors()->Select(Actor, false);
-		}
-
-		// If the Actor's Class is not the AuthoritativeClass, then it needs to be re-instanced
-		UClass* OldClass = Actor->GetClass();
-		if (OldClass->HasAnyClassFlags(CLASS_NewerVersionExists))
-		{
-			UClass* NewClass = OldClass->GetAuthoritativeClass();
-			if (!ensure(NewClass != OldClass))
+		// Cache any Actor that needs to be re-instanced because it still points to a REINST_ class
+		TMap< UClass*, UClass* > OldToNewClassMapToReinstance;
+		LevelEditorSelection->ForEachSelectedObject<AActor>([&OldToNewClassMapToReinstance](AActor* InActor)
 			{
-				UE_LOG(LogActor, Warning, TEXT("WARNING: %s is out of date and is the same as its AuthoritativeClass during PostUndo!"), *OldClass->GetName());
-			};
-
-			OldToNewClassMapToReinstance.Add(OldClass, NewClass);
-		}
-	}
-
-	USelection* ActorSelection = GetSelectedActors();
-	ActorSelection->BeginBatchSelectOperation();
-
-	//Deselect all of the actors that were selected prior to the operation
-	for (int32 OldSelectedActorIndex = OldSelectedActors.Num() - 1; OldSelectedActorIndex >= 0; --OldSelectedActorIndex)
-	{
-		AActor* Actor = OldSelectedActors[OldSelectedActorIndex];
-
-		//To stop us from unselecting and then reselecting again (causing two force update components, we will remove (from both lists) any object that was selected and should continue to be selected
-		int32 FoundIndex;
-		if (SelectedActors.Find(Actor, FoundIndex))
-		{
-			OldSelectedActors.RemoveAt(OldSelectedActorIndex);
-			SelectedActors.RemoveAt(FoundIndex);
-		}
-		else
-		{
-			SelectActor(Actor, false, false);//First false is to deselect, 2nd is to notify
-			Actor->UpdateComponentTransforms();
-		}
-	}
-
-	//Select all of the actors in SelectedActors
-	for (int32 SelectedActorIndex = 0; SelectedActorIndex < SelectedActors.Num(); ++SelectedActorIndex)
-	{
-		AActor* Actor = SelectedActors[SelectedActorIndex];
-		SelectActor(Actor, true, false);	//false is to stop notify which is done below if bOpWasSuccessful
-		Actor->UpdateComponentTransforms();
-	}
-
-	OldSelectedActors.Empty();
-	ActorSelection->EndBatchSelectOperation();
-	
-	if (GetSelectedComponentCount() > 0)
-	{
-		//@todo Check to see if component owner is in a hidden level
-		
-		// Get a list of all selected components after the operation
-		TArray<UActorComponent*> SelectedComponents;
-		for (FSelectionIterator It(GetSelectedComponentIterator()); It; ++It)
-		{
-			SelectedComponents.Add(CastChecked<UActorComponent>(*It));
-		}
-		
-		USelection* ComponentSelection = GetSelectedComponents();
-		ComponentSelection->BeginBatchSelectOperation();
-
-		//Deselect all of the actors that were selected prior to the operation
-		for (int32 OldSelectedComponentIndex = OldSelectedComponents.Num() - 1; OldSelectedComponentIndex >= 0; --OldSelectedComponentIndex)
-		{
-			UActorComponent* Component = OldSelectedComponents[OldSelectedComponentIndex];
-
-			//To stop us from unselecting and then reselecting again (causing two force update components, we will remove (from both lists) any object that was selected and should continue to be selected
-			int32 FoundIndex;
-			if (SelectedComponents.Find(Component, FoundIndex))
-			{
-				OldSelectedComponents.RemoveAt(OldSelectedComponentIndex);
-				SelectedComponents.RemoveAt(FoundIndex);
-			}
-			else
-			{
-				// Deselect without any notification
-				SelectComponent(Component, false, false);
-
-				AActor* Owner = Component->GetOwner();
-				if (Owner && Owner->IsSelected())
+				// If the Actor's Class is not the AuthoritativeClass, then it needs to be re-instanced
+				UClass* OldClass = InActor->GetClass();
+				if (OldClass->HasAnyClassFlags(CLASS_NewerVersionExists))
 				{
-					// Synchronize selection with owner actors
-					SelectActor(Owner, false, false, true);
+					UClass* NewClass = OldClass->GetAuthoritativeClass();
+					if (!ensure(NewClass != OldClass))
+					{
+						UE_LOG(LogActor, Warning, TEXT("WARNING: %s is out of date and is the same as its AuthoritativeClass during PostUndo!"), *OldClass->GetName());
+					};
+
+					OldToNewClassMapToReinstance.Add(OldClass, NewClass);
 				}
-			}
-		}
+				return true;
+			});
 
-		//Select all of the components left in SelectedComponents
-		for (int32 SelectedComponentIndex = 0; SelectedComponentIndex < SelectedComponents.Num(); ++SelectedComponentIndex)
-		{
-			UActorComponent* Component = SelectedComponents[SelectedComponentIndex];
-			SelectComponent(Component, true, false);	//false is to stop notify which is done below if bOpWasSuccessful
-
-			AActor* Owner = Component->GetOwner();
-			if (Owner && !Owner->IsSelected())
-			{
-				// Synchronize selection with owner actors
-				SelectActor(Owner, true, false, true);
-			}
-		}
-
-		OldSelectedComponents.Empty();
-
-		// We want to broadcast the component SelectionChangedEvent even if the selection didn't actually change
-		ComponentSelection->ForceBatchDirty();
-		ComponentSelection->EndBatchSelectOperation();
+		// Re-instance any actors that need it
+		FBlueprintCompileReinstancer::BatchReplaceInstancesOfClass(OldToNewClassMapToReinstance, FReplaceInstancesOfClassParameters());
 	}
-
-	// Re-instance any actors that need it
-	FBlueprintCompileReinstancer::BatchReplaceInstancesOfClass(OldToNewClassMapToReinstance, FReplaceInstancesOfClassParameters());
 
 	RedrawLevelEditingViewports();
 }
@@ -1770,7 +1652,7 @@ void UEditorEngine::RebuildModelFromBrushes(UModel* Model, bool bSelectedBrushes
 	const int32 NumVectors = Model->Vectors.Num();
 	const int32 NumSurfs = Model->Surfs.Num();
 
-	Model->Modify();
+	Model->Modify(false);
 	Model->EmptyModel(1, 1);
 
 	// Reserve arrays an eighth bigger than the previous allocation
@@ -1843,7 +1725,7 @@ void UEditorEngine::RebuildModelFromBrushes(UModel* Model, bool bSelectedBrushes
 	for (ABrush* Brush : StaticBrushes)
 	{
 		SlowTask.EnterProgressFrame(1);
-		Brush->Modify();
+		Brush->Modify(false);
 		bspBrushCSG(Brush, Model, Brush->PolyFlags, (EBrushType)Brush->BrushType, CSG_None, false, true, false, false);
 	}
 
@@ -1877,7 +1759,7 @@ void UEditorEngine::RebuildModelFromBrushes(TArray<ABrush*> &BrushesToBuild, UMo
 	const int32 NumVectors = Model->Vectors.Num();
 	const int32 NumSurfs = Model->Surfs.Num();
 
-	Model->Modify();
+	Model->Modify(false);
 	Model->EmptyModel(1, 1);
 
 	// Reserve arrays an eighth bigger than the previous allocation
@@ -1894,7 +1776,7 @@ void UEditorEngine::RebuildModelFromBrushes(TArray<ABrush*> &BrushesToBuild, UMo
 	for (ABrush* Brush : BrushesToBuild)
 	{
 		SlowTask.EnterProgressFrame(1);
-		Brush->Modify();
+		Brush->Modify(false);
 		bspBrushCSG(Brush, Model, Brush->PolyFlags, (EBrushType)Brush->BrushType, CSG_None, false, true, false, false);
 	}
 
@@ -1997,8 +1879,8 @@ void UEditorEngine::BSPIntersectionHelper(UWorld* InWorld, ECsgOper Operation)
 	ABrush* DefaultBrush = InWorld->GetDefaultBrush();
 	if (DefaultBrush != NULL)
 	{
-		DefaultBrush->Modify();
-		InWorld->GetModel()->Modify();
+		DefaultBrush->Modify(false);
+		InWorld->GetModel()->Modify(false);
 		FinishAllSnaps();
 		bspBrushCSG(DefaultBrush, InWorld->GetModel(), 0, Brush_MAX, Operation, false, true, true);
 	}
@@ -2737,9 +2619,6 @@ bool UEditorEngine::Map_Load(const TCHAR* Str, FOutputDevice& Ar)
 				}
 				Context.SetCurrentWorld(World);
 				GWorld = World;
-
-				// UE-21181 - Tracking where the loaded editor level's package gets flagged as a PIE object
-				UPackage::EditorPackage = WorldPackage;
 
 				World->WorldType = EWorldType::Editor;
 
@@ -3779,55 +3658,46 @@ namespace
 	/** true if GPropertyColorationProperty is an object property. */
 	static bool				GbColorationPropertyIsObjectProperty = false;
 
-	/** The chain of properties from member to lowest priority*/
-	static FEditPropertyChain*	GPropertyColorationChain = NULL;
+	/** The chain of properties from member to lowest priority. */
+	static TSharedRef<FEditPropertyChain>*	GPropertyColorationChain = nullptr;
 
 	/** Used to collect references to actors that match the property coloration settings. */
 	static TArray<AActor*>*		GPropertyColorationActorCollector = NULL;
 }
 
 
-void UEditorEngine::SetPropertyColorationTarget(UWorld* InWorld, const FString& PropertyValue, FProperty* Property, UClass* CommonBaseClass, FEditPropertyChain* PropertyChain)
+void UEditorEngine::SetPropertyColorationTarget(UWorld* InWorld, const FString& PropertyValue, FProperty* Property, UClass* CommonBaseClass, TSharedRef<FEditPropertyChain>* PropertyChain)
 {
 	if ( GPropertyColorationProperty != Property || 
 		GPropertyColorationClass != CommonBaseClass ||
-		GPropertyColorationChain != PropertyChain ||
+		!!GPropertyColorationChain != !!PropertyChain ||
 		GPropertyColorationValue != PropertyValue )
 	{
 		const FScopedBusyCursor BusyCursor;
 		delete GPropertyColorationChain;
+		GPropertyColorationChain = nullptr;
 
 		GPropertyColorationValue = PropertyValue;
 		GPropertyColorationProperty = Property;
 		GPropertyColorationClass = CommonBaseClass;
-		GPropertyColorationChain = PropertyChain;
+		
+		if (PropertyChain)
+		{
+			GPropertyColorationChain = new TSharedRef<FEditPropertyChain>(*PropertyChain);
+			GbColorationClassIsActor = GPropertyColorationClass->IsChildOf( AActor::StaticClass() );
+			GbColorationPropertyIsObjectProperty = CastField<FObjectPropertyBase>(GPropertyColorationProperty) != NULL;
+			
+			FActorPrimitiveColorHandler::Get().RefreshPrimitiveColorHandler(TEXT("PropertyColor"), InWorld);
+		}
 
-		GbColorationClassIsActor = GPropertyColorationClass->IsChildOf( AActor::StaticClass() );
-		GbColorationPropertyIsObjectProperty = CastField<FObjectPropertyBase>(GPropertyColorationProperty) != NULL;
-
-		InWorld->UpdateWorldComponents( false, false );
 		RedrawLevelEditingViewports();
 	}
 }
 
-
-void UEditorEngine::GetPropertyColorationTarget(FString& OutPropertyValue, FProperty*& OutProperty, UClass*& OutCommonBaseClass, FEditPropertyChain*& OutPropertyChain)
-{
-	OutPropertyValue	= GPropertyColorationValue;
-	OutProperty			= GPropertyColorationProperty;
-	OutCommonBaseClass	= GPropertyColorationClass;
-	OutPropertyChain	= GPropertyColorationChain;
-}
-
-bool UEditorEngine::IsPropertyColorationColorFeatureActivated() const
-{
-	return GPropertyColorationClass && GPropertyColorationChain;
-}
-
-bool UEditorEngine::GetPropertyColorationColor(UObject* Object, FColor& OutColor)
+bool UEditorEngine::GetPropertyColorationMatch(UObject* Object)
 {
 	bool bResult = false;
-	if (IsPropertyColorationColorFeatureActivated() && GPropertyColorationChain->Num() > 0)
+	if (GPropertyColorationChain)
 	{
 		UObject* MatchingBase = NULL;
 		AActor* Owner = NULL;
@@ -3860,9 +3730,9 @@ bool UEditorEngine::GetPropertyColorationColor(UObject* Object, FColor& OutColor
 			bool bDontCompareProps = false;
 
 			uint8* Base = (uint8*) MatchingBase;
-			int32 TotalChainLength = GPropertyColorationChain->Num();
+			int32 TotalChainLength = (*GPropertyColorationChain)->Num();
 			int32 ChainIndex = 0;
-			for ( FEditPropertyChain::TIterator It(GPropertyColorationChain->GetHead()); It; ++It )
+			for ( FEditPropertyChain::TIterator It((*GPropertyColorationChain)->GetHead()); It; ++It )
 			{
 				FProperty* Prop = *It;
 				FObjectPropertyBase* ObjectPropertyBase = CastField<FObjectPropertyBase>(Prop);
@@ -3893,7 +3763,6 @@ bool UEditorEngine::GetPropertyColorationColor(UObject* Object, FColor& OutColor
 				if ( PropertyValue == GPropertyColorationValue )
 				{
 					bResult  = true;
-					OutColor = FColor::Red;
 
 					// Collect actor references.
 					if ( GPropertyColorationActorCollector && Owner )
@@ -4315,7 +4184,7 @@ namespace {
 		{
 			FBspSurf* Surf = *It;
 			UModel* Model = It.GetModel();
-			Model->Modify();
+			Model->Modify(false);
 			const FVector3f TextureU( Model->Vectors[Surf->vTextureU] );
 			const FVector3f TextureV( Model->Vectors[Surf->vTextureV] );
 			Surf->vTextureU = Model->Vectors.Add(TextureU);
@@ -4331,7 +4200,7 @@ namespace {
 		for( FConstLevelIterator Iterator = InWorld->GetLevelIterator(); Iterator; ++Iterator )
 		{
 			UModel* Model = (*Iterator)->Model;
-			Model->Modify();
+			Model->Modify(false);
 			GEditor->polyTexScale( Model, UU, UV, VU, VV, !!Word2 );
 		}
 	}
@@ -4626,7 +4495,7 @@ bool UEditorEngine::Exec_Poly( UWorld* InWorld, const TCHAR* Str, FOutputDevice&
 			{
 				FBspSurf* Surf = *It;
 				UModel* Model = It.GetModel();
-				Model->Modify();
+				Model->Modify(false);
 				const FVector3f Base( Model->Points[Surf->pBase] );
 				Surf->pBase = Model->Points.Add(Base);
 			}
@@ -4636,7 +4505,7 @@ bool UEditorEngine::Exec_Poly( UWorld* InWorld, const TCHAR* Str, FOutputDevice&
 				for( FConstLevelIterator Iterator = InWorld->GetLevelIterator(); Iterator; ++Iterator )
 				{
 					UModel* Model = (*Iterator)->Model;
-					Model->Modify();
+					Model->Modify(false);
 					polyTexPan( Model, 0, 0, 1 );
 				}
 			}
@@ -4646,7 +4515,7 @@ bool UEditorEngine::Exec_Poly( UWorld* InWorld, const TCHAR* Str, FOutputDevice&
 			for( FConstLevelIterator Iterator = InWorld->GetLevelIterator(); Iterator; ++Iterator )
 			{
 				UModel* Model = (*Iterator)->Model;
-				Model->Modify();
+				Model->Modify(false);
 				polyTexPan( Model, PanU, PanV, 0 );
 			}
 		}
@@ -5054,9 +4923,11 @@ void UEditorEngine::MoveViewportCamerasToBox(const FBox& BoundingBox, bool bActi
 			// Update all viewports.
 			for (FLevelEditorViewportClient* LinkedViewportClient : GetLevelViewportClients())
 			{
-				//Dont move camera attach to an actor
-				if (!LinkedViewportClient->IsAnyActorLocked())
+				// Skip viewports that are locked on an actor, like actor previews, except the current viewport as we want to allow focusing while piloting
+				if (!LinkedViewportClient->IsAnyActorLocked() || LinkedViewportClient == GCurrentLevelEditingViewportClient)
+				{
 					LinkedViewportClient->FocusViewportOnBox(BoundingBox);
+				}
 			}
 		}
 
@@ -5603,7 +5474,7 @@ void ListMapPackageDependencies(const TCHAR* InStr)
 					int32 PeriodIdx = ImportPackage.Find(TEXT("."), ESearchCase::CaseSensitive);
 					if (PeriodIdx != INDEX_NONE)
 					{
-						ImportPackage.LeftInline(PeriodIdx, false);
+						ImportPackage.LeftInline(PeriodIdx, EAllowShrinking::No);
 					}
 					ReferencedPackages.Add(ImportPackage, true);
 				}

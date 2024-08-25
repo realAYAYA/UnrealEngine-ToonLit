@@ -71,6 +71,8 @@ public:
 	static SLATE_API TAttribute<bool> UseSmallToolBarIcons;
 	static SLATE_API TAttribute<bool> DisplayMultiboxHooks;
 	static SLATE_API FConstructToolTip ToolTipConstructor;
+	
+	static SLATE_API TAttribute<int> MenuSearchFieldVisibilityThreshold;
 
 	SLATE_API FMultiBoxSettings();
 

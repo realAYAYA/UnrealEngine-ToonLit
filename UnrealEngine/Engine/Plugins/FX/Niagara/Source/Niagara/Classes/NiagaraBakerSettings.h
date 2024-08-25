@@ -167,6 +167,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Settings", AdvancedDisplay, meta = (ClampMin=1, ClampMax=480))
 	int FramesPerSecond = 60;
 
+	/** Locks the playback to the simulation frame rate, i.e. no multi-tick. */
+	UPROPERTY(EditAnywhere, Category = "Settings")
+	uint8 bLockToSimulationFrameRate : 1;
+
 	/** Should the preview playback as looping or not. */
 	UPROPERTY(EditAnywhere, Category = "Settings")
 	uint8 bPreviewLooping : 1;

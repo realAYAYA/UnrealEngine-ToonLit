@@ -311,6 +311,16 @@ namespace UE::Learning
 	}
 
 	/**
+	* Serialize an integer from bytes
+	*/
+	static inline void DeserializeFromBytes(int32& InOutOffset, TLearningArrayView<1, const uint8> Bytes, uint64& OutValue)
+	{
+		UE_LEARNING_CHECK(InOutOffset + sizeof(uint64) <= Bytes.Num());
+		FMemory::Memcpy((uint8*)&OutValue, &Bytes[InOutOffset], sizeof(uint64));
+		InOutOffset += sizeof(uint64);
+	}
+
+	/**
 	* Some additional functions that act on arrays such as copy, set, zero, etc.
 	* 
 	* Unfortunately most of these functions need to be duplicated for Array, ArrayView and their
@@ -413,6 +423,32 @@ namespace UE::Learning
 		*/
 		template<uint8 InDimNum, typename InElementType>
 		inline void Check(const TLearningArrayView<InDimNum, InElementType> View, const FIndexSet Indices)
+		{
+#if UE_LEARNING_ARRAY_CHECK_VALUES == 1
+			if constexpr (InDimNum > 1)
+			{
+				for (const int32 Idx : Indices)
+				{
+					Check(View[Idx]);
+				}
+			}
+			else
+			{
+				for (const int32 Idx : Indices)
+				{
+					UE_LEARNING_ARRAY_VALUE_CHECKF(
+						FMath::IsFinite(View.GetData()[Idx]) && View.GetData()[Idx] != MAX_flt && View.GetData()[Idx] != -MAX_flt,
+						TEXT("Invalid value %f found at flat array index %i"), View.GetData()[Idx], Idx);
+				}
+			}
+#endif
+		}
+
+		/**
+		* Check that an array view does not contain any NaN, Inf, -Inf, MAX_flt, or -MAX_flt
+		*/
+		template<uint8 InDimNum, typename InElementType>
+		inline void Check(const TLearningArray<InDimNum, InElementType>& View, const FIndexSet Indices)
 		{
 #if UE_LEARNING_ARRAY_CHECK_VALUES == 1
 			if constexpr (InDimNum > 1)
@@ -977,6 +1013,23 @@ namespace UE::Learning
 		* Serialize an array to bytes
 		*/
 		template<uint8 InDimNum, typename InElementType, typename Allocator>
+		inline void SerializeToBytes(int32& InOutOffset, TLearningArrayView<1, uint8> Bytes, const TMultiArrayShape<InDimNum> Shape, const TArray<InElementType, Allocator>& InArray)
+		{
+			Learning::SerializeToBytes(InOutOffset, Bytes, (int32)InDimNum);
+			for (uint8 ShapeIdx = 0; ShapeIdx < InDimNum; ShapeIdx++)
+			{
+				Learning::SerializeToBytes(InOutOffset, Bytes, Shape[ShapeIdx]);
+			}
+
+			UE_LEARNING_CHECK(InOutOffset + sizeof(InElementType) * InArray.Num() <= Bytes.Num());
+			FMemory::Memcpy(&Bytes[InOutOffset], (uint8*)InArray.GetData(), sizeof(InElementType) * InArray.Num());
+			InOutOffset += sizeof(InElementType) * InArray.Num();
+		}
+
+		/**
+		* Serialize an array to bytes
+		*/
+		template<uint8 InDimNum, typename InElementType, typename Allocator>
 		inline void SerializeToBytes(int32& InOutOffset, TLearningArrayView<1, uint8> Bytes, const TLearningArray<InDimNum, InElementType, Allocator>& InArray)
 		{
 			Learning::SerializeToBytes(InOutOffset, Bytes, (int32)InDimNum);
@@ -991,7 +1044,30 @@ namespace UE::Learning
 		}
 
 		/**
-		* Serialize an array from bytes
+		* Deserialize an array from bytes
+		*/
+		template<uint8 InDimNum, typename InElementType, typename Allocator>
+		inline void DeserializeFromBytes(int32& InOutOffset, TLearningArrayView<1, const uint8> Bytes, TArray<InElementType, Allocator>& OutArray)
+		{
+			int32 DimNum = INDEX_NONE;
+			Learning::DeserializeFromBytes(InOutOffset, Bytes, DimNum);
+			UE_LEARNING_CHECK(DimNum == InDimNum);
+
+			TLearningArrayShape<InDimNum> Shape;
+			for (uint8 ShapeIdx = 0; ShapeIdx < InDimNum; ShapeIdx++)
+			{
+				Learning::DeserializeFromBytes(InOutOffset, Bytes, Shape[ShapeIdx]);
+			}
+
+			OutArray.SetNumUninitialized(Shape.Total());
+
+			UE_LEARNING_CHECK(InOutOffset + sizeof(InElementType) * OutArray.Num() <= Bytes.Num());
+			FMemory::Memcpy((uint8*)OutArray.GetData(), &Bytes[InOutOffset], sizeof(InElementType) * OutArray.Num());
+			InOutOffset += sizeof(InElementType) * OutArray.Num();
+		}
+
+		/**
+		* Deserialize an array from bytes
 		*/
 		template<uint8 InDimNum, typename InElementType, typename Allocator>
 		inline void DeserializeFromBytes(int32& InOutOffset, TLearningArrayView<1, const uint8> Bytes, TLearningArray<InDimNum, InElementType, Allocator>& OutArray)

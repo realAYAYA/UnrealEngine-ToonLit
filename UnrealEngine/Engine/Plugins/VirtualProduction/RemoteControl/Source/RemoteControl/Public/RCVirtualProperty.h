@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
  
 #pragma once
 
@@ -54,6 +54,12 @@ public:
 	/** Initialization routine. Called after the parent container has setup data for this property */
 	virtual void Init() {}
 
+	/**
+	 * @brief Called internally when entity Ids are renewed.
+	 * @param InEntityIdMap Map of old Id to new Id.
+	 */
+	virtual void UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap) {}
+
 	/** Returns const FProperty for this RC virtual property */
 	virtual const FProperty* GetProperty() const;
 
@@ -92,28 +98,34 @@ public:
 	/** Whether this Virtual Property is a numeric type, i.e. an Integral or Floating point type */
 	bool IsNumericType() const;
 
-	/** Whether this Virtual Property represents an FVector*/
+	/** Whether this Virtual Property represents an FVector */
 	bool IsVectorType() const;
 
-	/** Whether this Virtual Property represents an FColor*/
+	/** Whether this Virtual Property represents an FVector2D */
+	bool IsVector2DType() const;
+
+	/** Whether this Virtual Property represents an FColor */
 	bool IsColorType() const;
 
-	/** Whether this Virtual Property represents an FRotator*/
+	/** Whether this Virtual Property represents an FColor */
+	bool IsLinearColorType() const;
+
+	/** Whether this Virtual Property represents an FRotator */
 	bool IsRotatorType() const;
 
 	/** Compare this virtual property value with given property value */
 	bool IsValueEqual(URCVirtualPropertyBase* InVirtualProperty) const;
 
-	/** Operator > comparison of self with a given virtual property*/
+	/** Operator > comparison of self with a given virtual property */
 	bool IsValueGreaterThan(URCVirtualPropertyBase* InVirtualProperty) const;
 
-	/** Operator >= comparison of self with a given virtual property*/
+	/** Operator >= comparison of self with a given virtual property */
 	bool IsValueGreaterThanOrEqualTo(URCVirtualPropertyBase* InVirtualProperty) const;
 
-	/** Operator < comparison of self with a given virtual property*/
+	/** Operator < comparison of self with a given virtual property */
 	bool IsValueLesserThan(URCVirtualPropertyBase* InVirtualProperty) const;
 
-	/** Operator <= comparison of self with a given virtual property*/
+	/** Operator <= comparison of self with a given virtual property */
 	bool IsValueLesserThanOrEqualTo(URCVirtualPropertyBase* InVirtualProperty) const;
 
 	/** Copy this virtual property's data onto a given FProperty
@@ -124,6 +136,16 @@ public:
 	* @return true if copied successfully
 	*/
 	bool CopyCompleteValue(const FProperty* InTargetProperty, uint8* InTargetValuePtr);
+
+	/** Copy this virtual property's data onto a given FProperty
+	* 
+	* @param InTargetProperty - The property onto which our value is to be copied
+	* @param InTargetValuePtr - The memory location for the target property
+	* @param bPassByteEnumPropertyComparison - Go to the copy if the Property and the Target property are Enum and Byte
+	* 
+	* @return true if copied successfully
+	*/
+	bool CopyCompleteValue(const FProperty* InTargetProperty, uint8* InTargetValuePtr, bool bPassByteEnumPropertyComparison);
 
 	/** Copy this virtual property's data onto a given Virtual Property
 	*
@@ -197,6 +219,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
 	bool GetValueVector(FVector& OutVector) const;
 
+	/** Get Vector2D value from Virtual Property */
+	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
+	bool GetValueVector2D(FVector2D& OutVector2D) const;
+
 	/** Get Rotator value from Virtual Property */
 	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
 	bool GetValueRotator(FRotator& OutRotator) const;
@@ -204,6 +230,10 @@ public:
 	/** Get Color value from Virtual Property */
 	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
 	bool GetValueColor(FColor& OutColor) const;
+
+	/** Get LinearColor value from Virtual Property */
+	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
+	bool GetValueLinearColor(FLinearColor& OutLinearColor) const;
 
 	/** Get Object value from Virtual Property */
 	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
@@ -279,6 +309,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
 	bool SetValueVector(const FVector& InVector);
 
+	/** Set Vector2D value from Virtual Property */
+	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
+	bool SetValueVector2D(const FVector2D& InVector2D);
+
 	/** Set Rotator value from Virtual Property */
 	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
 	bool SetValueRotator(const FRotator& InRotator);
@@ -286,15 +320,19 @@ public:
 	/** Set Color value from Virtual Property */
 	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
 	bool SetValueColor(const FColor& InColor);
-	
+
+	/** Set LinearColor value from Virtual Property */
+	UFUNCTION(BlueprintCallable, Category = "Remote Control Behaviour")
+	bool SetValueLinearColor(const FLinearColor& InLinearColor);
+
 	/** Get FProperty Name */
 	UFUNCTION(BlueprintPure, Category = "Remote Control Behaviour")
 	FName GetPropertyName() const;
 
-	/** Fetches a user-friendly representation of the Virtual Property's type name (i.e. Controller type), given a Property Bag type and value object (for structures)*/
+	/** Fetches a user-friendly representation of the Virtual Property's type name (i.e. Controller type), given a Property Bag type and value object (for structures) */
 	static FName GetVirtualPropertyTypeDisplayName(const EPropertyBagPropertyType InValueType, UObject* InValueTypeObject);
 
-	/** Updates the display index of the virtual property (transaction aware)*/
+	/** Updates the display index of the virtual property (transaction aware) */
 	void SetDisplayIndex(const int32 InDisplayIndex);
 
 public:
@@ -314,9 +352,13 @@ public:
 	UPROPERTY()
 	TWeakObjectPtr<URemoteControlPreset> PresetWeakPtr;
 
-	/** User friendly name of the Controller*/
+	/** Unique user friendly name of the controller, used as identifier in some API. */
 	UPROPERTY()
 	FName DisplayName;
+
+	/** Controller description */
+	UPROPERTY()
+	FText Description;
 
 	/** User configurable Display Index for this Virtual Property (as Logic Controller) when represented as a row in the RC Logic Controllers list  */
 	UPROPERTY()
@@ -395,6 +437,25 @@ public:
 	 * @return true if property duplicated and value copied successfully 
 	 */
 	bool DuplicatePropertyWithCopy(URCVirtualPropertyBase* InVirtualProperty);
+
+	/**
+ 	 * Update property bag value using the property and the container passed.
+ 	 *
+ 	 * @param InProperty Property used to update the bag property value
+ 	 * @param InPropertyContainer Container to take the value using the property
+ 	 *
+ 	 * @return true if SetValue of the bag returned Success otherwise false
+ 	 */
+	bool UpdateValueWithProperty(const FProperty* InProperty, const void* InPropertyContainer);
+
+	/**
+  	* Update property bag value using URCVirtualPropertyBase passed.
+  	*
+  	* @param InVirtualProperty Virtual Property to update from
+  	*
+  	* @return true if value copied successfully
+  	*/
+	bool UpdateValueWithProperty(const URCVirtualPropertyBase* InVirtualProperty);
 
 	/** Resets the property bag instance to empty and remove Virtual Property data */
 	void Reset();

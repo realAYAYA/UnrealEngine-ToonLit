@@ -97,7 +97,7 @@ URigVMEdGraphFunctionRefNodeSpawner* URigVMEdGraphFunctionRefNodeSpawner::Create
 	MenuSignature.MenuName = FText::FromName(InPublicFunction.Name);
 	MenuSignature.Category = FText::FromString(InPublicFunction.Category);
 	MenuSignature.Keywords = FText::FromString(InPublicFunction.Keywords);
-	MenuSignature.Tooltip = InPublicFunction.Tooltip;
+	MenuSignature.Tooltip = InPublicFunction.GetTooltip();
 
 	const FString PackagePathString = InAssetData.PackageName.ToString();
 	if(MenuSignature.Tooltip.IsEmpty())
@@ -266,8 +266,9 @@ UEdGraphNode* URigVMEdGraphFunctionRefNodeSpawner::Invoke(UEdGraph* ParentGraph,
 			}
 		}
 	}
-		
-	if(ReferencedPublicFunctionHeader.IsValid())
+
+	bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
+	if(ReferencedPublicFunctionHeader.IsValid() && !bIsTemplateNode)
 	{
 #if WITH_EDITOR
 		if (GEditor)
@@ -282,37 +283,14 @@ UEdGraphNode* URigVMEdGraphFunctionRefNodeSpawner::Invoke(UEdGraph* ParentGraph,
 	else
 	{
 		// we are only going to get here if we are spawning a template node
-		NewNode = NewObject<URigVMEdGraphNode>(ParentGraph);
-		ParentGraph->AddNode(NewNode, false);
-
-		NewNode->CreateNewGuid();
-		NewNode->PostPlacedNewNode();
-
+		TArray<FPinInfo> Pins;
 		for(const FRigVMGraphFunctionArgument& Arg : ReferencedPublicFunctionHeader.Arguments)
 		{
-			if(Arg.Direction ==  ERigVMPinDirection::Input ||
-				Arg.Direction ==  ERigVMPinDirection::IO)
-			{
-				UEdGraphPin* InputPin = UEdGraphPin::CreatePin(NewNode);
-				NewNode->Pins.Add(InputPin);
-
-				InputPin->Direction = EGPD_Input;
-				InputPin->PinType = RigVMTypeUtils::PinTypeFromCPPType(Arg.CPPType, Arg.CPPTypeObject.Get());
-			}
-
-			if(Arg.Direction ==  ERigVMPinDirection::Output ||
-				Arg.Direction ==  ERigVMPinDirection::IO)
-			{
-				UEdGraphPin* OutputPin = UEdGraphPin::CreatePin(NewNode);
-				NewNode->Pins.Add(OutputPin);
-
-				OutputPin->Direction = EGPD_Output;
-				OutputPin->PinType = RigVMTypeUtils::PinTypeFromCPPType(Arg.CPPType, Arg.CPPTypeObject.Get());
-			}
+			Pins.Emplace(Arg.Name, Arg.Direction, Arg.CPPType, Arg.CPPTypeObject.Get());
 		}
 
-		NewNode->SetFlags(RF_Transactional);
-}
+		NewNode = SpawnTemplateNode(ParentGraph, Pins);
+	}
 
 	return NewNode;
 }
@@ -325,24 +303,17 @@ URigVMEdGraphNode* URigVMEdGraphFunctionRefNodeSpawner::SpawnNode(UEdGraph* Pare
 
 	if (RigBlueprint != nullptr && RigGraph != nullptr)
 	{
-		bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
-		bool const bIsUserFacingNode = !bIsTemplateNode;
+		FName Name = FRigVMBlueprintUtils::ValidateName(RigBlueprint, InFunction.Name.ToString());
+		URigVMController* Controller = RigBlueprint->GetController(ParentGraph);
 
-		FName Name = bIsTemplateNode ? InFunction.Name : FRigVMBlueprintUtils::ValidateName(RigBlueprint, InFunction.Name.ToString());
-		URigVMController* Controller = bIsTemplateNode ? RigGraph->GetTemplateController() : RigBlueprint->GetController(ParentGraph);
+		Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
 
-		if (!bIsTemplateNode)
-		{
-			Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
-		}
-
-		TGuardValue<bool> AllowPrivateFunctionsOnTemplateController(Controller->bAllowPrivateFunctions, bIsTemplateNode);
-		if (URigVMFunctionReferenceNode* ModelNode = Controller->AddFunctionReferenceNodeFromDescription(InFunction, Location, Name.ToString(), bIsUserFacingNode, !bIsTemplateNode))
+		if (URigVMFunctionReferenceNode* ModelNode = Controller->AddFunctionReferenceNodeFromDescription(InFunction, Location, Name.ToString(), true, true))
 		{
 			NewNode = Cast<URigVMEdGraphNode>(RigGraph->FindNodeForModelNodeName(ModelNode->GetFName()));
 			check(NewNode);
 
-			if (NewNode && bIsUserFacingNode)
+			if (NewNode)
 			{
 				Controller->ClearNodeSelection(true);
 				Controller->SelectNode(ModelNode, true, true);
@@ -350,60 +321,38 @@ URigVMEdGraphNode* URigVMEdGraphFunctionRefNodeSpawner::SpawnNode(UEdGraph* Pare
 				URigVMEdGraphUnitNodeSpawner::HookupMutableNode(ModelNode, RigBlueprint);
 			}
 
-			if (!bIsTemplateNode)
+			for(URigVMNode* OtherModelNode : ModelNode->GetGraph()->GetNodes())
 			{
-				for(URigVMNode* OtherModelNode : ModelNode->GetGraph()->GetNodes())
+				if(OtherModelNode == ModelNode)
 				{
-					if(OtherModelNode == ModelNode)
-					{
-						continue;
-					}
-					
-					URigVMFunctionReferenceNode* ExistingFunctionReferenceNode = Cast<URigVMFunctionReferenceNode>(OtherModelNode);
-					if(ExistingFunctionReferenceNode == nullptr)
-					{
-						continue;
-					}
+					continue;
+				}
+				
+				URigVMFunctionReferenceNode* ExistingFunctionReferenceNode = Cast<URigVMFunctionReferenceNode>(OtherModelNode);
+				if(ExistingFunctionReferenceNode == nullptr)
+				{
+					continue;
+				}
 
-					if(!(ExistingFunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer == InFunction.LibraryPointer))
-					{
-						continue;
-					}
+				if(!(ExistingFunctionReferenceNode->GetReferencedFunctionHeader().LibraryPointer == InFunction.LibraryPointer))
+				{
+					continue;
+				}
 
-					for(TPair<FName, FName> MappedVariablePair : ExistingFunctionReferenceNode->GetVariableMap())
+				for(TPair<FName, FName> MappedVariablePair : ExistingFunctionReferenceNode->GetVariableMap())
+				{
+					if(!MappedVariablePair.Value.IsNone())
 					{
-						if(!MappedVariablePair.Value.IsNone())
-						{
-							Controller->SetRemappedVariable(ModelNode, MappedVariablePair.Key, MappedVariablePair.Value, bIsUserFacingNode);
-						}
+						Controller->SetRemappedVariable(ModelNode, MappedVariablePair.Key, MappedVariablePair.Value, true);
 					}
 				}
 			}
-			else
-			{
-				// If the package is a template, do not remove the EdGraphNode
-				// We might be spawning a node to populate the PROTO_ context menu for function declarations.
-				FRigVMControllerNotifGuard NotifGuard(Controller, true);
-				Controller->RemoveNode(ModelNode, false);
-			}
 
-			if (bIsUserFacingNode)
-			{
-				Controller->CloseUndoBracket();
-			}
-			else
-			{
-				Controller->EnableReporting(false);
-				Controller->RemoveNode(ModelNode, false);
-				Controller->EnableReporting(true);
-			}
+			Controller->CloseUndoBracket();
 		}
 		else
 		{
-			if (bIsUserFacingNode)
-			{
-				Controller->CancelUndoBracket();
-			}
+			Controller->CancelUndoBracket();
 		}
 	}
 	return NewNode;

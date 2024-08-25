@@ -79,12 +79,26 @@ public:
 	void SetHeap(ID3D12Heap* HeapIn, const TCHAR* const InName, bool bTrack = true, bool bForceGetGPUAddress = false);
 
 	void BeginTrackingResidency(uint64 Size);
+	void DisallowTrackingResidency(); // Part of workaround for UE-174791 and UE-202367
 
 	void DeferDelete();
 
 	inline FName GetName() const { return HeapName; }
 	inline D3D12_HEAP_DESC GetHeapDesc() const { return HeapDesc; }
-	inline FD3D12ResidencyHandle& GetResidencyHandle() { return ResidencyHandle; }
+	inline TConstArrayView<FD3D12ResidencyHandle*> GetResidencyHandles()
+	{ 
+#if ENABLE_RESIDENCY_MANAGEMENT
+		if (bRequiresResidencyTracking)
+		{
+			checkf(ResidencyHandle, TEXT("Resource requires residency tracking, but BeginTrackingResidency() was not called."));
+			return MakeArrayView(&ResidencyHandle, 1); 
+		}
+		else
+#endif // ENABLE_RESIDENCY_MANAGEMENT
+		{
+			return {};
+		}		
+	}
 	inline D3D12_GPU_VIRTUAL_ADDRESS GetGPUVirtualAddress() const { return GPUVirtualAddress; }
 	inline void SetIsTransient(bool bInIsTransient) { bIsTransient = bInIsTransient; }
 	inline bool GetIsTransient() const { return bIsTransient; }
@@ -96,10 +110,11 @@ private:
 	bool bTrack = true;
 	D3D12_HEAP_DESC HeapDesc;
 	D3D12_GPU_VIRTUAL_ADDRESS GPUVirtualAddress = 0;
-	FD3D12ResidencyHandle ResidencyHandle;
+	FD3D12ResidencyHandle* ResidencyHandle = nullptr; // Residency handle owned by this object
 	HeapId TraceHeapId;
 	HeapId TraceParentHeapId;
 	bool bIsTransient = false; // Whether this is a transient heap
+	bool bRequiresResidencyTracking = bool(ENABLE_RESIDENCY_MANAGEMENT);
 };
 
 struct FD3D12ResourceDesc : public D3D12_RESOURCE_DESC
@@ -122,10 +137,15 @@ struct FD3D12ResourceDesc : public D3D12_RESOURCE_DESC
 	EPixelFormat UAVPixelFormat{ PF_Unknown };
 
 #if D3D12RHI_NEEDS_VENDOR_EXTENSIONS
-	bool bRequires64BitAtomicSupport{ false };
+	bool bRequires64BitAtomicSupport : 1 = false;
 #endif
 
-	bool bReservedResource { false };
+	bool bReservedResource : 1 = false;
+
+	bool bBackBuffer : 1 = false;
+
+	// External resources are owned by another application or middleware, not the Engine
+	bool bExternal : 1 = false;
 
 	// If we support the new format list casting, use the newer APIs; otherwise, fall back to our UAV Aliasing approach.
 #if D3D12RHI_SUPPORTS_UNCOMPRESSED_UAV
@@ -149,7 +169,7 @@ private:
 	TRefCountPtr<ID3D12Resource> UAVAccessResource;
 	TRefCountPtr<FD3D12Heap> Heap;
 
-	TUniquePtr<FD3D12ResidencyHandle> ResidencyHandle;
+	FD3D12ResidencyHandle* ResidencyHandle = nullptr; // Residency handle owned by this object
 
 	D3D12_GPU_VIRTUAL_ADDRESS GPUVirtualAddress{};
 	void* ResourceBaseAddress{};
@@ -174,9 +194,9 @@ private:
 	uint16 SubresourceCount{};
 	uint8 PlaneCount;
 	bool bRequiresResourceStateTracking : 1;
+	bool bRequiresResidencyTracking : 1;
 	bool bDepthStencil : 1;
 	bool bDeferDelete : 1;
-	bool bBackBuffer : 1;
 
 #if UE_BUILD_DEBUG
 	static int64 TotalResourceCount;
@@ -185,7 +205,17 @@ private:
 
 	struct FD3D12ReservedResourceData
 	{
-		TArray<TRefCountPtr<ID3D12Heap>> BackingHeaps;
+		TArray<TRefCountPtr<FD3D12Heap>> BackingHeaps;
+
+		// Flattened array of residency handles owned by backing heaps, used to support batched GetResidencyHandles()
+		TArray<FD3D12ResidencyHandle*> ResidencyHandles;
+		TArray<int32> NumResidencyHandlesPerHeap;
+
+		// Tiles currently assigned to the resource
+		uint32 NumCommittedTiles = 0;
+
+		// Available tiles at the end of the last backing heap
+		uint32 NumSlackTiles = 0;
 	};
 	TUniquePtr<FD3D12ReservedResourceData> ReservedResourceData;
 
@@ -274,8 +304,7 @@ public:
 #endif
 	bool RequiresResourceStateTracking() const { return bRequiresResourceStateTracking; }
 
-	inline bool IsBackBuffer() const { return bBackBuffer; }
-	inline void SetIsBackBuffer(bool bBackBufferIn) { bBackBuffer = bBackBufferIn; }
+	inline bool IsBackBuffer() const { return Desc.bBackBuffer; }
 
 	void SetName(const TCHAR* Name)
 	{
@@ -301,15 +330,61 @@ public:
 	inline bool ShouldDeferDelete() const { return bDeferDelete; }
 	void DeferDelete();
 
+	inline bool IsReservedResource() const { return ReservedResourceData.IsValid(); }
 	inline bool IsPlacedResource() const { return Heap.GetReference() != nullptr; }
 	inline FD3D12Heap* GetHeap() const { return Heap; };
 	inline bool IsDepthStencilResource() const { return bDepthStencil; }
 
 	void StartTrackingForResidency();
 
-	FD3D12ResidencyHandle& GetResidencyHandle()
+	bool IsResident() const
 	{
-		return IsPlacedResource() ? Heap->GetResidencyHandle() : *ResidencyHandle;
+#if ENABLE_RESIDENCY_MANAGEMENT
+		TConstArrayView<FD3D12ResidencyHandle*> ResidencyHandles = GetResidencyHandles();
+		if (ResidencyHandles.IsEmpty())
+		{
+			// No residency tracking for this resource
+			return true;
+		}
+
+		// Treat resource as resident if at least one backing heap is resident.
+		// Technically we should return a partial residency status.
+		for (FD3D12ResidencyHandle* Handle : ResidencyHandles)
+		{
+			if (Handle->ResidencyStatus == FD3D12ResidencyHandle::RESIDENCY_STATUS::RESIDENT)
+			{
+				return true;
+			}
+		}
+		return false;
+#else // ENABLE_RESIDENCY_MANAGEMENT
+		return true;
+#endif // ENABLE_RESIDENCY_MANAGEMENT
+	}
+
+	TConstArrayView<FD3D12ResidencyHandle*> GetResidencyHandles() const
+	{
+#if ENABLE_RESIDENCY_MANAGEMENT
+		if (!bRequiresResidencyTracking)
+		{
+			return {};
+		}
+		else if (IsPlacedResource())
+		{
+			return Heap->GetResidencyHandles();
+		}
+		else if (IsReservedResource())
+		{
+			return ReservedResourceData->ResidencyHandles;
+		}
+		else
+		{
+			checkf(ResidencyHandle, TEXT("Resource requires residency tracking, but StartTrackingForResidency() was not called."));
+			return MakeArrayView(&ResidencyHandle, 1);
+		}
+#else // ENABLE_RESIDENCY_MANAGEMENT
+		return {};
+#endif // ENABLE_RESIDENCY_MANAGEMENT
 	}
 
 	struct FD3D12ResourceTypeHelper
@@ -382,7 +457,9 @@ public:
 		const uint32 bReadBackResource : 1;
 	};
 
-	void CommitReservedResource();
+	// Note: RequiredCommitSizeInBytes is clamped to the maximum size of the resource.
+	// Use UINT64_MAX to commit the entire resource.
+	void CommitReservedResource(ID3D12CommandQueue* D3DCommandQueue, uint64 RequiredCommitSizeInBytes);
 
 private:
 	void InitalizeResourceState(D3D12_RESOURCE_STATES InInitialState, ED3D12ResourceStateMode InResourceStateMode, D3D12_RESOURCE_STATES InDefaultState)
@@ -588,14 +665,13 @@ public:
 	D3D12_GPU_VIRTUAL_ADDRESS          GetGPUVirtualAddress          () const { return GPUVirtualAddress;                                    }
 	uint64                             GetOffsetFromBaseOfResource   () const { return OffsetFromBaseOfResource;                             }
 	uint64                             GetSize                       () const { return Size;                                                 }
-	FD3D12ResidencyHandle&             GetResidencyHandle            ()       { check(ResidencyHandle); return *ResidencyHandle;             }
 	FD3D12BuddyAllocatorPrivateData&   GetBuddyAllocatorPrivateData  ()       { return AllocatorData.BuddyAllocatorPrivateData;              }
 	FD3D12BlockAllocatorPrivateData&   GetBlockAllocatorPrivateData  ()       { return AllocatorData.BlockAllocatorPrivateData;              }
 	FD3D12SegListAllocatorPrivateData& GetSegListAllocatorPrivateData()       { return AllocatorData.SegListAllocatorPrivateData;            }
 	FD3D12PoolAllocatorPrivateData&    GetPoolAllocatorPrivateData   ()       { return AllocatorData.PoolAllocatorPrivateData;               }
 
 	// Pool allocation specific functions
-	bool OnAllocationMoved(FRHIPoolAllocationData* InNewData);
+	bool OnAllocationMoved(FRHICommandListBase& RHICmdList, FRHIPoolAllocationData* InNewData);
 	void UnlockPoolData();
 
 	bool IsValid() const { return Type != ResourceLocationType::eUndefined; }
@@ -678,7 +754,6 @@ private:
 
 	FD3D12BaseShaderResource* Owner{};
 	FD3D12Resource* UnderlyingResource{};
-	FD3D12ResidencyHandle* ResidencyHandle{};
 
 	// Which allocator this belongs to
 	union
@@ -727,11 +802,6 @@ struct FD3D12LockedResource : public FD3D12DeviceChild
 	FD3D12LockedResource(FD3D12Device* Device)
 		: FD3D12DeviceChild(Device)
 		, ResourceLocation(Device)
-		, LockedOffset(0)
-		, LockedPitch(0)
-		, bLocked(false)
-		, bLockedForReadOnly(false)
-		, bHasNeverBeenLocked(true)
 	{}
 
 	inline void Reset()
@@ -739,25 +809,24 @@ struct FD3D12LockedResource : public FD3D12DeviceChild
 		ResourceLocation.Clear();
 		bLocked = false;
 		bLockedForReadOnly = false;
-		LockedOffset = 0;
-		LockedPitch = 0;
+		LockOffset = 0;
+		LockSize = 0;
+		FMemory::Memzero(Footprint);
 	}
 
 	FD3D12ResourceLocation ResourceLocation;
-	uint32 LockedOffset;
-	uint32 LockedPitch;
-	uint32 bLocked : 1;
-	uint32 bLockedForReadOnly : 1;
-	uint32 bHasNeverBeenLocked : 1;
+	D3D12_SUBRESOURCE_FOOTPRINT Footprint = {};
+	uint32 LockOffset = 0;
+	uint32 LockSize = 0;
+	uint32 bLocked : 1 = false;
+	uint32 bLockedForReadOnly : 1 = false;
+	uint32 bHasNeverBeenLocked : 1 = true;
 };
 
 /** Resource which might needs to be notified about changes on dependent resources (Views, RTGeometryObject, Cached binding tables) */
-class FD3D12ShaderResourceRenameListener
+struct FD3D12ShaderResourceRenameListener
 {
-protected:
-
-	friend class FD3D12BaseShaderResource;
-	virtual void ResourceRenamed(FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation) = 0;
+	virtual void ResourceRenamed(FRHICommandListBase& RHICmdList, FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation) = 0;
 };
 
 
@@ -792,12 +861,12 @@ public:
 		return RenameListeners.Num() != 0;
 	}
 
-	void ResourceRenamed()
+	void ResourceRenamed(FRHICommandListBase& RHICmdList)
 	{
 		FScopeLock Lock(&RenameListenersCS);
 		for (FD3D12ShaderResourceRenameListener* RenameListener : RenameListeners)
 		{
-			RenameListener->ResourceRenamed(this, &ResourceLocation);
+			RenameListener->ResourceRenamed(RHICmdList, this, &ResourceLocation);
 		}
 	}
 
@@ -821,8 +890,8 @@ public:
 class FD3D12UniformBuffer : public FRHIUniformBuffer, public FD3D12DeviceChild, public FD3D12LinkedAdapterObject<FD3D12UniformBuffer>
 {
 public:
-#if USE_STATIC_ROOT_SIGNATURE
-	class FD3D12ConstantBufferView* View;
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
+	class FD3D12ConstantBufferView* View = nullptr;
 #endif
 
 	/** The D3D12 constant buffer resource */
@@ -834,9 +903,6 @@ public:
 	FD3D12UniformBuffer(class FD3D12Device* InParent, const FRHIUniformBufferLayout* InLayout, EUniformBufferUsage InUniformBufferUsage)
 		: FRHIUniformBuffer(InLayout)
 		, FD3D12DeviceChild(InParent)
-#if USE_STATIC_ROOT_SIGNATURE
-		, View(nullptr)
-#endif
 		, ResourceLocation(InParent)
 		, UniformBufferUsage(InUniformBufferUsage)
 	{
@@ -874,16 +940,14 @@ public:
 		OutResourceInfo.Type = GetType();
 		OutResourceInfo.VRamAllocation.AllocationSize = ResourceLocation.GetSize();
 		OutResourceInfo.IsTransient = ResourceLocation.IsTransient();
-#if ENABLE_RESIDENCY_MANAGEMENT
-		OutResourceInfo.bResident = GetResource() && GetResource()->GetResidencyHandle().ResidencyStatus == D3DX12Residency::ManagedObject::RESIDENCY_STATUS::RESIDENT;
-#endif
-		
+		OutResourceInfo.bResident = GetResource() && GetResource()->IsResident();
+
 		return true;
 	}
 #endif
 
-	void Rename(FD3D12ResourceLocation& NewLocation);
-	void RenameLDAChain(FD3D12ResourceLocation& NewLocation);
+	void Rename(FRHICommandListBase& RHICmdList, FD3D12ResourceLocation& NewLocation);
+	void RenameLDAChain(FRHICommandListBase& RHICmdList, FD3D12ResourceLocation& NewLocation);
 
 	void TakeOwnership(FD3D12Buffer& Other);
 	void ReleaseOwnership();
@@ -974,6 +1038,18 @@ private:
 	uint32 ShadowBufferSize;
 };
 
+class FD3D12ShaderBundle : public FRHIShaderBundle
+{
+	friend class FD3D12CommandContext;
+	friend class FD3D12DynamicRHI;
+
+public:
+	FD3D12ShaderBundle(FD3D12Device* InDevice, uint32 InNumRecords)
+		: FRHIShaderBundle(InNumRecords)
+	{
+	}
+};
+
 class FD3D12GPUFence final : public FRHIGPUFence
 {
 public:
@@ -1038,7 +1114,11 @@ struct TD3D12ResourceTraits<FRHIStagingBuffer>
 {
 	typedef FD3D12StagingBuffer TConcreteType;
 };
-
+template<>
+struct TD3D12ResourceTraits<FRHIShaderBundle>
+{
+	typedef FD3D12ShaderBundle TConcreteType;
+};
 
 #if D3D12_RHI_RAYTRACING
 template<>

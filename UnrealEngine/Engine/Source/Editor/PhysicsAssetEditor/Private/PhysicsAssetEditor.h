@@ -244,6 +244,8 @@ private:
 	bool IsConstraintRenderingMode(EPhysicsAssetEditorConstraintViewMode Mode, bool bSimulation) const;
 	void ToggleDrawConstraintsAsPoints();
 	bool IsDrawingConstraintsAsPoints() const;
+	void ToggleDrawViolatedLimits();
+	bool IsDrawingViolatedLimits() const;
 	void ToggleRenderOnlySelectedConstraints();
 	bool IsRenderingOnlySelectedConstraints() const;
 	void ToggleRenderOnlySelectedSolid();

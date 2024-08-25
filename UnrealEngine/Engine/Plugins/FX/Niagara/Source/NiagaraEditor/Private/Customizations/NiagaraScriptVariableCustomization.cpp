@@ -244,7 +244,6 @@ void FNiagaraScriptVariableDetails::CustomizeDetailsParameterDefinitionsSynchron
 		[
 			SNew(SEnumComboBox, LibrarySourceDefaultModeEnum)
 			.CurrentValue(this, &FNiagaraScriptVariableDetails::GetLibraryDefaultModeValue)
-			.ButtonStyle(FAppStyle::Get(), "FlatButton.Light")
 			.ContentPadding(FMargin(2, 0))
 			.Font(FAppStyle::GetFontStyle("Sequencer.AnimationOutliner.RegularFont"))
 			.OnEnumSelectionChanged(SEnumComboBox::FOnEnumSelectionChanged::CreateSP(this, &FNiagaraScriptVariableDetails::OnLibrarySourceDefaultModeChanged))
@@ -264,7 +263,6 @@ void FNiagaraScriptVariableDetails::CustomizeDetailsParameterDefinitionsSynchron
 		[
 			SNew(SEnumComboBox, LibrarySynchronizedDefaultModeEnum)
 			.CurrentValue(this, &FNiagaraScriptVariableDetails::GetLibraryDefaultModeValue)
-			.ButtonStyle(FAppStyle::Get(), "FlatButton.Light")
 			.ContentPadding(FMargin(2, 0))
 			.Font(FAppStyle::GetFontStyle("Sequencer.AnimationOutliner.RegularFont"))
 			.OnEnumSelectionChanged(SEnumComboBox::FOnEnumSelectionChanged::CreateSP(this, &FNiagaraScriptVariableDetails::OnLibrarySynchronizedDefaultModeChanged))

@@ -8,13 +8,21 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "GameplayTagContainer.h"
+#include "IDetailGroup.h"
 #include "IDetailsView.h"
+#include "Layout/Visibility.h"
 #include "MuCOE/CustomizableObjectLayout.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeTable.h"
 #include "MuCOE/SCustomizableObjectNodeLayoutBlocksEditor.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
-#include "Widgets/Input/STextComboBox.h"
+#include "Styling/SlateColor.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SSpinBox.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/SWidget.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Widgets/Input/STextComboBox.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectDetails"
 
@@ -37,10 +45,12 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 		Node = Cast<UCustomizableObjectNodeTable>(DetailsView->GetSelectedObjects()[0].Get());
 	}
 
-	if (Node)
+	if (Node.IsValid())
 	{
 		IDetailCategoryBuilder& CustomizableObjectCategory = DetailBuilder->EditCategory("TableProperties");
+		DetailBuilder->HideProperty("VersionColumn");
 		IDetailCategoryBuilder& UICategory = DetailBuilder->EditCategory("UI");
+		DetailBuilder->HideProperty("ParamUIMetadataColumn");
 		IDetailCategoryBuilder& AnimationCategory = DetailBuilder->EditCategory("AnimationProperties");
 		IDetailCategoryBuilder& LayoutCategory = DetailBuilder->EditCategory("DefaultMeshLayoutEditor");
 
@@ -48,6 +58,49 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 		Node->PostReconstructNodeDelegate.AddSP(this, &FCustomizableObjectNodeTableDetails::OnNodePinValueChanged);
 
 		GenerateMeshColumnComboBoxOptions();
+		TSharedPtr<FString> CurrentMutableMetadataColumn = GenerateMutableMetaDataColumnComboBoxOptions();
+		TSharedPtr<FString> CurrentVersionColumn = GenerateVersionColumnComboBoxOptions();
+
+		CustomizableObjectCategory.AddProperty("ParameterName");
+		CustomizableObjectCategory.AddCustomRow(LOCTEXT("VersionColumn_Selector","VersionColumn"))
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("VersionColumn_SelectorText","Version Column"))
+			.ToolTipText(LOCTEXT("VersionColumn_SelectorTooltip","Select the column that contains the version of each row."))
+			.Font(DetailBuilder->GetDetailFont())
+		]
+		.ValueContent()
+		[
+			SAssignNew(VersionColumnsComboBox,STextComboBox)
+			.InitiallySelectedItem(CurrentVersionColumn)
+			.OptionsSource(&VersionColumnsOptionNames)
+			.OnComboBoxOpening(this, &FCustomizableObjectNodeTableDetails::OnOpenVersionColumnComboBox)
+			.OnSelectionChanged(this, &FCustomizableObjectNodeTableDetails::OnVersionColumnComboBoxSelectionChanged)
+			.Font(DetailBuilder->GetDetailFont())
+			.ColorAndOpacity(this, &FCustomizableObjectNodeTableDetails::GetVersionColumnComboBoxTextColor, &VersionColumnsOptionNames)
+		]
+		.OverrideResetToDefault(FResetToDefaultOverride::Create(FSimpleDelegate::CreateSP(this, &FCustomizableObjectNodeTableDetails::OnVersionColumnComboBoxSelectionReset)));
+
+		UICategory.AddCustomRow(LOCTEXT("MutableUIMetadataColumn_Selector","MutableUIMetadataColumn"))
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("MutableUIMetadataColumn_SelectorText","Options UI Metadata Column"))
+			.ToolTipText(LOCTEXT("MutableUIMetadataColumn_SelectorTooltip","Select a column that contains a Parameter UI Metadata for each Parameter Option (table row)."))
+			.Font(DetailBuilder->GetDetailFont())
+		]
+		.ValueContent()
+		[
+			SAssignNew(MutableMetaDataComboBox,STextComboBox)
+			.InitiallySelectedItem(CurrentMutableMetadataColumn)
+			.OptionsSource(&MutableMetaDataColumnsOptionNames)
+			.OnComboBoxOpening(this, &FCustomizableObjectNodeTableDetails::OnOpenMutableMetadataComboBox)
+			.OnSelectionChanged(this, &FCustomizableObjectNodeTableDetails::OnMutableMetaDataColumnComboBoxSelectionChanged)
+			.Font(DetailBuilder->GetDetailFont())
+			.ColorAndOpacity(this, &FCustomizableObjectNodeTableDetails::GetMetadataUIComboBoxTextColor, &MutableMetaDataColumnsOptionNames)
+		]
+		.OverrideResetToDefault(FResetToDefaultOverride::Create(FSimpleDelegate::CreateSP(this, &FCustomizableObjectNodeTableDetails::OnMutableMetaDataColumnComboBoxSelectionReset)));
 
 		AnimationCategory.AddCustomRow(LOCTEXT("AnimationProperties", "Animation Properties"))
 		[
@@ -95,14 +148,20 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 					SNew(STextBlock)
 					.Text(LOCTEXT("AnimBPText", "Animation Blueprint Column: "))
 					.ToolTipText(LOCTEXT("AnimBlueprintColumnTooltip", "Select an animation blueprint column from the Data Table that will be applied to the mesh selected"))
-					.Visibility_Lambda([this]() -> EVisibility
+					.Visibility_Lambda([WeakDetails = SharedThis(this).ToWeakPtr()]() -> EVisibility
 					{
-						if (!AnimComboBox.IsValid())
+						const TSharedPtr<FCustomizableObjectNodeTableDetails> Details = WeakDetails.Pin();
+						if (!Details)
+						{
+							return EVisibility::Collapsed;
+						}
+						
+						if (!Details->AnimComboBox.IsValid())
 						{
 							return EVisibility::Collapsed;
 						}
 
-						return AnimComboBox->GetVisibility();
+						return Details->AnimComboBox->GetVisibility();
 					})
 				]
 
@@ -133,14 +192,20 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 					SNew(STextBlock)
 					.Text(LOCTEXT("AnimSlotText", "Animation Slot Column: "))
 					.ToolTipText(LOCTEXT("AnimSlotColumnTooltip", "Select an animation slot column from the Data Table that will set to the slot value of the animation blueprint"))
-					.Visibility_Lambda([this]() -> EVisibility 
+					.Visibility_Lambda([WeakDetails = SharedThis(this).ToWeakPtr()]() -> EVisibility 
 						{
-							if (!AnimSlotComboBox.IsValid())
+							const TSharedPtr<FCustomizableObjectNodeTableDetails> Details = WeakDetails.Pin();
+							if (!Details)
 							{
 								return EVisibility::Collapsed;
 							}
 
-							return AnimSlotComboBox->GetVisibility();
+							if (!Details->AnimSlotComboBox.IsValid())
+							{
+								return EVisibility::Collapsed;
+							}
+
+							return Details->AnimSlotComboBox->GetVisibility();
 						})
 				]
 
@@ -171,14 +236,20 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 					SNew(STextBlock)
 					.Text(LOCTEXT("AnimTagsText", "Animation Tags Column: "))
 					.ToolTipText(LOCTEXT("AnimTagColumnTooltip", "Select an animation tag column from the Data Table that will set to the animation tags of the animation blueprint"))
-					.Visibility_Lambda([this]() -> EVisibility 
+					.Visibility_Lambda([WeakDetails = SharedThis(this).ToWeakPtr()]() -> EVisibility 
 						{
-							if (!AnimTagsComboBox.IsValid())
+							const TSharedPtr<FCustomizableObjectNodeTableDetails> Details = WeakDetails.Pin();
+							if (!Details)
 							{
 								return EVisibility::Collapsed;
 							}
 
-							return AnimTagsComboBox->GetVisibility();
+							if (!Details->AnimTagsComboBox.IsValid())
+							{
+								return EVisibility::Collapsed;
+							}
+
+							return Details->AnimTagsComboBox->GetVisibility();								
 						})
 				]
 
@@ -215,9 +286,10 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 			]
 		];
 
+		SelectedLayout = nullptr;
 		LayoutBlocksEditor = SNew(SCustomizableObjectNodeLayoutBlocksEditor);
 
-		LayoutCategory.AddCustomRow(LOCTEXT("LayoutEditor", "Layout Editor"))
+		LayoutCategory.AddCustomRow(LOCTEXT("TableLayoutEditor_MeshSelector", "Mesh Selector"))
 		[
 			SNew(SVerticalBox)
 			
@@ -234,6 +306,7 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 					SNew(STextBlock)
 					.Text(LOCTEXT("LayoutMeshColumnText", "Mesh Column: "))
 					.ToolTipText(LOCTEXT("LayoutMeshColumnTooltip", "Select a mesh from the Data Table to edit its layout blocks."))
+					.Font(IDetailLayoutBuilder::GetDetailFont())
 				]
 		
 				+ SHorizontalBox::Slot()
@@ -246,19 +319,93 @@ void FCustomizableObjectNodeTableDetails::CustomizeDetails(const TSharedPtr<IDet
 						.OptionsSource(&LayoutMeshColumnOptionNames)
 						.InitiallySelectedItem(nullptr)
 						.OnSelectionChanged(this, &FCustomizableObjectNodeTableDetails::OnLayoutMeshColumnComboBoxSelectionChanged)
+						.Font(IDetailLayoutBuilder::GetDetailFont())
 					]
 				]
 			]
+		];
 
-			+SVerticalBox::Slot()
-			.Padding(0.0f,20.0f,0.0f,0.0f)
+		// Layout size selector widget
+		LayoutCategory.AddCustomRow(LOCTEXT("TableBlocksDetails_SizeSelector", "SizeSelector"))
+		.Visibility(TAttribute<EVisibility>(this, &FCustomizableObjectNodeTableDetails::LayoutOptionsVisibility))
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("TableLayoutGridSizeText", "Grid Size"))
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		]
+		.ValueContent()
+		[
+			SAssignNew(GridSizeComboBox, STextComboBox)
+			.OptionsSource(&LayoutGridSizes)
+			.OnSelectionChanged(this, &FCustomizableObjectNodeTableDetails::OnGridSizeChanged)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		];
+
+		// Layout strategy selector group widget
+		IDetailGroup* LayoutStrategyOptionsGroup = &LayoutCategory.AddGroup(TEXT("TableLayoutStrategyOptionsGroup"), LOCTEXT("TableLayoutStrategyGroup", "Table Layout Strategy Group"), false, true);
+		LayoutStrategyOptionsGroup->HeaderRow()
+		.Visibility(TAttribute<EVisibility>(this, &FCustomizableObjectNodeTableDetails::LayoutOptionsVisibility))
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("TableLayoutStrategy_Text", "Layout Strategy:"))
+			.ToolTipText(LOCTEXT("TableLayoutStrategyTooltip", "Selects the packing strategy: Resizable Layout or Fixed Layout"))
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		]
+		.ValueContent()
+		[
+			SAssignNew(StrategyComboBox, STextComboBox)
+			.OptionsSource(&LayoutPackingStrategies)
+			.OnSelectionChanged(this, &FCustomizableObjectNodeTableDetails::OnLayoutPackingStrategyChanged)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		];
+
+		// Max layout size selector widget
+		LayoutStrategyOptionsGroup->AddWidgetRow()
+		.Visibility(TAttribute<EVisibility>(this, &FCustomizableObjectNodeTableDetails::FixedStrategyOptionsVisibility))
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("TableMaxLayoutSize_Text", "Max Layout Size:"))
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		]
+		.ValueContent()
+		[
+			SAssignNew(MaxGridSizeComboBox, STextComboBox)
+			.OptionsSource(&LayoutGridSizes)
+			.OnSelectionChanged(this, &FCustomizableObjectNodeTableDetails::OnMaxGridSizeChanged)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		];
+
+		// Reduction method selector widget
+		LayoutStrategyOptionsGroup->AddWidgetRow()
+		.Visibility(TAttribute<EVisibility>(this, &FCustomizableObjectNodeTableDetails::FixedStrategyOptionsVisibility))
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("TableReductionMethod_Text", "Reduction Method:"))
+			.ToolTipText(LOCTEXT("TableReduction_Method_Tooltip", "Select how blocks will be reduced in case that they do not fit in the layout:"
+				"\n Halve: blocks will be reduced by half each time."
+				"\n Unit: blocks will be reduced by one unit each time."))
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		]
+		.ValueContent()
+		[
+			SAssignNew(ReductionMethodComboBox, STextComboBox)
+			.OptionsSource(&BlockReductionMethods)
+			.OnSelectionChanged(this, &FCustomizableObjectNodeTableDetails::OnReductionMethodChanged)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		];
+
+		// Block editor Widget
+		LayoutCategory.AddCustomRow(LOCTEXT("TableLayoutEditor", "Layout Editor"))
+		[
+			SNew(SBox)
+			.HeightOverride(700.0f)
+			.WidthOverride(700.0f)
 			[
-				SNew(SBox)
-				.HeightOverride(700.0f)
-				.WidthOverride(700.0f)
-				[
-					LayoutBlocksEditor.ToSharedRef()
-				]
+				LayoutBlocksEditor.ToSharedRef()
 			]
 		];
 
@@ -272,51 +419,53 @@ void FCustomizableObjectNodeTableDetails::GenerateMeshColumnComboBoxOptions()
 	AnimMeshColumnOptionNames.Empty();
 	LayoutMeshColumnOptionNames.Empty();
 
-	if (Node->Table)
+	const UScriptStruct* TableStruct = Node->GetTableNodeStruct();
+
+	if (!TableStruct)
 	{
-		const UScriptStruct* TableStruct = Node->Table->GetRowStruct();
+		return;
+	}
 
-		// we just need the mesh columns
-		for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
+	// we just need the mesh columns
+	for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
+	{
+		FProperty* ColumnProperty = *It;
+
+		if (!ColumnProperty)
 		{
-			FProperty* ColumnProperty = *It;
+			continue;
+		}
 
-			if (!ColumnProperty)
+		if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(ColumnProperty))
+		{
+			if (SoftObjectProperty->PropertyClass->IsChildOf(USkeletalMesh::StaticClass())
+				|| SoftObjectProperty->PropertyClass->IsChildOf(UStaticMesh::StaticClass()))
 			{
-				continue;
-			}
+				FString MeshColumnName = DataTableUtils::GetPropertyExportName(ColumnProperty);
+				AnimMeshColumnOptionNames.Add(MakeShareable(new FString(MeshColumnName)));
 
-			if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(ColumnProperty))
-			{
-				if (SoftObjectProperty->PropertyClass->IsChildOf(USkeletalMesh::StaticClass())
-					|| SoftObjectProperty->PropertyClass->IsChildOf(UStaticMesh::StaticClass()))
+				for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
 				{
-					FString MeshColumnName = DataTableUtils::GetPropertyExportName(ColumnProperty);
-					AnimMeshColumnOptionNames.Add(MakeShareable(new FString(MeshColumnName)));
+					const UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(Node->GetPinData(*Pin));
 
-					for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+					if (!PinData || PinData->ColumnName != MeshColumnName || Node->GetPinMeshType(Pin) != ETableMeshPinType::SKELETAL_MESH)
 					{
-						const UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(Node->GetPinData(*Pin));
+						continue;
+					}
 
-						if (!PinData || PinData->ColumnName != MeshColumnName || Node->GetPinMeshType(Pin) != ETableMeshPinType::SKELETAL_MESH)
+					if (PinData && PinData->ColumnName == MeshColumnName)
+					{
+						if (PinData->Layouts.Num() > 1)
 						{
-							continue;
+							for (int32 LayoutIndex = 0; LayoutIndex < PinData->Layouts.Num(); ++LayoutIndex)
+							{
+								FString LayoutName = Pin->PinFriendlyName.ToString() + FString::Printf(TEXT(" UV_%d"), LayoutIndex);
+								LayoutMeshColumnOptionNames.Add(MakeShareable(new FString(LayoutName)));
+							}
 						}
-
-						if (PinData && PinData->ColumnName == MeshColumnName)
+						else
 						{
-							if (PinData->Layouts.Num() > 1)
-							{
-								for (int32 LayoutIndex = 0; LayoutIndex < PinData->Layouts.Num(); ++LayoutIndex)
-								{
-									FString LayoutName = Pin->PinFriendlyName.ToString() + FString::Printf(TEXT(" UV_%d"), LayoutIndex);
-									LayoutMeshColumnOptionNames.Add(MakeShareable(new FString(LayoutName)));
-								}
-							}
-							else
-							{
-								LayoutMeshColumnOptionNames.Add(MakeShareable(new FString(Pin->PinFriendlyName.ToString())));
-							}
+							LayoutMeshColumnOptionNames.Add(MakeShareable(new FString(Pin->PinFriendlyName.ToString())));
 						}
 					}
 				}
@@ -338,14 +487,22 @@ void FCustomizableObjectNodeTableDetails::GenerateAnimInstanceComboBoxOptions()
 	AnimSlotComboBox->ClearSelection();
 	AnimTagsComboBox->ClearSelection();
 
-	FString ColumnName;
+	const UScriptStruct* TableStruct = Node->GetTableNodeStruct();
 
-	if (AnimMeshColumnComboBox.IsValid())
+	FString ColumnName;
+	FTableNodeColumnData* MeshColumnData = nullptr;
+
+	if (TableStruct && AnimMeshColumnComboBox.IsValid())
 	{
 		ColumnName = *AnimMeshColumnComboBox->GetSelectedItem();
-	}
+		FGuid ColumnId = Node->GetColumnIdByName(FName(*ColumnName));
 
-	const UScriptStruct* TableStruct = Node->Table->GetRowStruct();
+		MeshColumnData = Node->ColumnDataMap.Find(ColumnId);
+	}
+	else
+	{
+		return;
+	}
 
 	// Fill in name option arrays and set the selected item if any
 	for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
@@ -359,34 +516,24 @@ void FCustomizableObjectNodeTableDetails::GenerateAnimInstanceComboBoxOptions()
 					TSharedPtr<FString> Option = MakeShareable(new FString(DataTableUtils::GetPropertyExportName(ColumnProperty)));
 					AnimOptionNames.Add(Option);
 
-					for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+					if (MeshColumnData && MeshColumnData->AnimInstanceColumnName == *Option)
 					{
-						const UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(Node->GetPinData(*Pin));
-
-						if (PinData && PinData->ColumnName == ColumnName && PinData->AnimInstanceColumnName == *Option)
-						{
-							AnimComboBox->SetSelectedItem(Option);
-							break;
-						}
+						AnimComboBox->SetSelectedItem(Option);
 					}
 				}
 			}
+
 			else if (CastField<FIntProperty>(ColumnProperty) || CastField<FNameProperty>(ColumnProperty))
 			{
 				TSharedPtr<FString> Option = MakeShareable(new FString(DataTableUtils::GetPropertyExportName(ColumnProperty)));
 				AnimSlotOptionNames.Add(Option);
 
-				for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+				if (MeshColumnData && MeshColumnData->AnimSlotColumnName == *Option)
 				{
-					const UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(Node->GetPinData(*Pin));
-
-					if (PinData && PinData->ColumnName == ColumnName && PinData->AnimSlotColumnName == *Option)
-					{
-						AnimSlotComboBox->SetSelectedItem(Option);
-						break;
-					}
+					AnimSlotComboBox->SetSelectedItem(Option);
 				}
 			}
+
 			else if (const FStructProperty* StructProperty = CastField<FStructProperty>(ColumnProperty))
 			{
 				if (StructProperty->Struct == TBaseStructure<FGameplayTagContainer>::Get())
@@ -394,15 +541,9 @@ void FCustomizableObjectNodeTableDetails::GenerateAnimInstanceComboBoxOptions()
 					TSharedPtr<FString> Option = MakeShareable(new FString(DataTableUtils::GetPropertyExportName(ColumnProperty)));
 					AnimTagsOptionNames.Add(Option);
 
-					for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+					if (MeshColumnData && MeshColumnData->AnimTagColumnName == *Option)
 					{
-						const UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(Node->GetPinData(*Pin));
-
-						if (PinData && PinData->ColumnName == ColumnName && PinData->AnimTagColumnName == *Option)
-						{
-							AnimTagsComboBox->SetSelectedItem(Option);
-							break;
-						}
+						AnimTagsComboBox->SetSelectedItem(Option);
 					}
 				}
 			}
@@ -446,6 +587,9 @@ void FCustomizableObjectNodeTableDetails::OnLayoutMeshColumnComboBoxSelectionCha
 					if (PinData->Layouts[LayoutIndex]->GetLayoutName() == *Selection)
 					{
 						LayoutBlocksEditor->SetCurrentLayout(PinData->Layouts[LayoutIndex]);
+						SelectedLayout = PinData->Layouts[LayoutIndex];
+
+						FillLayoutComboBoxOptions();
 					}
 				}
 			}
@@ -456,18 +600,22 @@ void FCustomizableObjectNodeTableDetails::OnLayoutMeshColumnComboBoxSelectionCha
 
 void FCustomizableObjectNodeTableDetails::OnAnimInstanceComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo)
 {
-	if (Selection.IsValid() && AnimMeshColumnComboBox->GetSelectedItem().IsValid())
+	if (Selection.IsValid() && AnimMeshColumnComboBox->GetSelectedItem().IsValid() && SelectInfo != ESelectInfo::Direct)
 	{
 		FString ColumnName = *AnimMeshColumnComboBox->GetSelectedItem();
-
-		for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+		FGuid ColumnId = Node->GetColumnIdByName(FName(*ColumnName));
+		FTableNodeColumnData* MeshColumnData = Node->ColumnDataMap.Find(ColumnId);
+		
+		if (MeshColumnData)
 		{
-			UCustomizableObjectNodeTableMeshPinData* PinData = Cast< UCustomizableObjectNodeTableMeshPinData>(Node->GetPinData(*Pin));
+			MeshColumnData->AnimInstanceColumnName = *Selection;
+		}
+		else if(ColumnId.IsValid())
+		{
+			FTableNodeColumnData NewMeshColumnData;
+			NewMeshColumnData.AnimInstanceColumnName = *Selection;
 
-			if (PinData && PinData->ColumnName == ColumnName)
-			{
-				PinData->AnimInstanceColumnName = *Selection;
-			}
+			Node->ColumnDataMap.Add(ColumnId, NewMeshColumnData);
 		}
 
 		Node->MarkPackageDirty();
@@ -477,18 +625,22 @@ void FCustomizableObjectNodeTableDetails::OnAnimInstanceComboBoxSelectionChanged
 
 void FCustomizableObjectNodeTableDetails::OnAnimSlotComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo)
 {
-	if (Selection.IsValid() && AnimMeshColumnComboBox->GetSelectedItem().IsValid())
+	if (Selection.IsValid() && AnimMeshColumnComboBox->GetSelectedItem().IsValid() && SelectInfo != ESelectInfo::Direct)
 	{
 		FString ColumnName = *AnimMeshColumnComboBox->GetSelectedItem();
+		FGuid ColumnId = Node->GetColumnIdByName(FName(*ColumnName));
+		FTableNodeColumnData* MeshColumnData = Node->ColumnDataMap.Find(ColumnId);
 
-		for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+		if (MeshColumnData)
 		{
-			UCustomizableObjectNodeTableMeshPinData* PinData = Cast< UCustomizableObjectNodeTableMeshPinData>(Node->GetPinData(*Pin));
+			MeshColumnData->AnimSlotColumnName = *Selection;
+		}
+		else if (ColumnId.IsValid())
+		{
+			FTableNodeColumnData NewMeshColumnData;
+			NewMeshColumnData.AnimSlotColumnName = *Selection;
 
-			if (PinData && PinData->ColumnName == ColumnName)
-			{
-				PinData->AnimSlotColumnName = *Selection;
-			}
+			Node->ColumnDataMap.Add(ColumnId, NewMeshColumnData);
 		}
 
 		Node->MarkPackageDirty();
@@ -498,18 +650,24 @@ void FCustomizableObjectNodeTableDetails::OnAnimSlotComboBoxSelectionChanged(TSh
 
 void FCustomizableObjectNodeTableDetails::OnAnimTagsComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo)
 {
-	if (Selection.IsValid() && AnimMeshColumnComboBox->GetSelectedItem().IsValid())
+	if (Selection.IsValid() && AnimMeshColumnComboBox->GetSelectedItem().IsValid() && SelectInfo != ESelectInfo::Direct)
 	{
 		FString ColumnName = *AnimMeshColumnComboBox->GetSelectedItem();
+		FGuid ColumnId = Node->GetColumnIdByName(FName(*ColumnName));
+		FTableNodeColumnData* MeshColumnData = Node->ColumnDataMap.Find(ColumnId);
 
-		for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+		MeshColumnData = Node->ColumnDataMap.Find(ColumnId);
+
+		if (MeshColumnData)
 		{
-			UCustomizableObjectNodeTableMeshPinData* PinData = Cast< UCustomizableObjectNodeTableMeshPinData>(Node->GetPinData(*Pin));
+			MeshColumnData->AnimTagColumnName = *Selection;
+		}
+		else if (ColumnId.IsValid())
+		{
+			FTableNodeColumnData NewMeshColumnData;
+			NewMeshColumnData.AnimTagColumnName = *Selection;
 
-			if (PinData && PinData->ColumnName == ColumnName)
-			{
-				PinData->AnimTagColumnName = *Selection;
-			}
+			Node->ColumnDataMap.Add(ColumnId, NewMeshColumnData);
 		}
 
 		Node->MarkPackageDirty();
@@ -528,47 +686,344 @@ void FCustomizableObjectNodeTableDetails::OnNodePinValueChanged()
 
 FReply FCustomizableObjectNodeTableDetails::OnClearButtonPressed()
 {
-	bool bCleared = false;
-
-	if (AnimMeshColumnComboBox->GetSelectedItem().IsValid())
+	if (!AnimMeshColumnComboBox->GetSelectedItem().IsValid())
 	{
-		FString ColumnName = *AnimMeshColumnComboBox->GetSelectedItem();
+		return FReply::Unhandled();
+	}
+		
+	FString ColumnName = *AnimMeshColumnComboBox->GetSelectedItem();
+	FGuid ColumnId = Node->GetColumnIdByName(FName(*ColumnName));
+	FTableNodeColumnData* MeshColumnData = Node->ColumnDataMap.Find(ColumnId);
 
-		for (const UEdGraphPin* Pin : Node->GetAllNonOrphanPins())
+	if (MeshColumnData)
+	{
+		MeshColumnData->AnimInstanceColumnName.Reset();
+		MeshColumnData->AnimSlotColumnName.Reset();
+		MeshColumnData->AnimTagColumnName.Reset();
+
+		if (AnimComboBox.IsValid())
 		{
-			UCustomizableObjectNodeTableMeshPinData* PinData = Cast< UCustomizableObjectNodeTableMeshPinData>(Node->GetPinData(*Pin));
-
-			if (PinData && PinData->ColumnName == ColumnName)
-			{
-				PinData->AnimInstanceColumnName.Reset();
-				PinData->AnimSlotColumnName.Reset();
-				PinData->AnimTagColumnName.Reset();
-
-				bCleared = true;
-			}
+			AnimComboBox->ClearSelection();
 		}
 
-		if (bCleared)
+		if (AnimSlotComboBox.IsValid())
 		{
-			if (AnimComboBox.IsValid())
+			AnimSlotComboBox->ClearSelection();
+		}
+
+		if (AnimTagsComboBox.IsValid())
+		{
+			AnimTagsComboBox->ClearSelection();
+		}
+
+		Node->MarkPackageDirty();
+		return FReply::Handled();
+	}
+
+	return FReply::Unhandled();
+}
+
+
+TSharedPtr<FString> FCustomizableObjectNodeTableDetails::GenerateMutableMetaDataColumnComboBoxOptions()
+{
+	const UScriptStruct* TableStruct = Node->GetTableNodeStruct();
+	TSharedPtr<FString> CurrentSelection;
+	MutableMetaDataColumnsOptionNames.Reset();
+
+	if (!TableStruct)
+	{
+		return CurrentSelection;
+	}
+
+	// Iterating struct Options
+	for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
+	{
+		FProperty* ColumnProperty = *It;
+
+		if (!ColumnProperty)
+		{
+			continue;
+		}
+
+		if (const FStructProperty* StructProperty = CastField<FStructProperty>(ColumnProperty))
+		{
+			if (StructProperty->Struct == FMutableParamUIMetadata::StaticStruct())
 			{
-				AnimComboBox->ClearSelection();
-			}
-			
-			if (AnimSlotComboBox.IsValid())
-			{
-				AnimSlotComboBox->ClearSelection();
-			}
-			
-			if (AnimTagsComboBox.IsValid())
-			{
-				AnimTagsComboBox->ClearSelection();
+				TSharedPtr<FString> Option = MakeShareable(new FString(DataTableUtils::GetPropertyExportName(ColumnProperty)));
+				MutableMetaDataColumnsOptionNames.Add(Option);
+
+				if (*Option == Node->ParamUIMetadataColumn)
+				{
+					CurrentSelection = MutableMetaDataColumnsOptionNames.Last();
+				}
 			}
 		}
 	}
 
-	return bCleared ? FReply::Handled() : FReply::Unhandled();
+	if (!Node->ParamUIMetadataColumn.IsNone() && !CurrentSelection)
+	{
+		MutableMetaDataColumnsOptionNames.Add(MakeShareable(new FString(Node->ParamUIMetadataColumn.ToString())));
+		CurrentSelection = MutableMetaDataColumnsOptionNames.Last();
+	}
+
+	return CurrentSelection;
 }
 
+
+void FCustomizableObjectNodeTableDetails::OnOpenMutableMetadataComboBox()
+{
+	TSharedPtr<FString> CurrentSelection = GenerateMutableMetaDataColumnComboBoxOptions();
+
+	if (MutableMetaDataComboBox.IsValid())
+	{
+		MutableMetaDataComboBox->ClearSelection();
+		MutableMetaDataComboBox->RefreshOptions();
+		MutableMetaDataComboBox->SetSelectedItem(CurrentSelection);
+	}
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnMutableMetaDataColumnComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo)
+{
+	if (Selection && Node->ParamUIMetadataColumn != FName(*Selection) 
+		&& (SelectInfo == ESelectInfo::OnKeyPress || SelectInfo == ESelectInfo::OnMouseClick))
+	{
+		Node->ParamUIMetadataColumn = FName(*Selection);
+		Node->MarkPackageDirty();
+	}
+}
+
+
+FSlateColor FCustomizableObjectNodeTableDetails::GetMetadataUIComboBoxTextColor(TArray<TSharedPtr<FString>>* CurrentOptions) const
+{	
+	if (Node->FindTableProperty(Node->GetTableNodeStruct(), Node->ParamUIMetadataColumn) || Node->ParamUIMetadataColumn.IsNone())
+	{
+		return FSlateColor::UseForeground();
+	}
+
+	// Table Struct null or does not contain the selected property anymore
+	return FSlateColor(FLinearColor(0.9f, 0.05f, 0.05f, 1.0f));
+}
+
+void FCustomizableObjectNodeTableDetails::OnMutableMetaDataColumnComboBoxSelectionReset()
+{
+	Node->ParamUIMetadataColumn = NAME_None;
+
+	if (MutableMetaDataComboBox.IsValid())
+	{
+		GenerateMutableMetaDataColumnComboBoxOptions();
+		MutableMetaDataComboBox->ClearSelection();
+		MutableMetaDataComboBox->RefreshOptions();
+	}
+}
+
+
+TSharedPtr<FString> FCustomizableObjectNodeTableDetails::GenerateVersionColumnComboBoxOptions()
+{
+	const UScriptStruct* TableStruct = Node->GetTableNodeStruct();
+	TSharedPtr<FString> CurrentSelection;
+	VersionColumnsOptionNames.Reset();
+
+	if (!TableStruct)
+	{
+		return CurrentSelection;
+	}
+
+	// Iterating struct Options
+	for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
+	{
+		FProperty* ColumnProperty = *It;
+
+		if (!ColumnProperty)
+		{
+			continue;
+		}
+
+		TSharedPtr<FString> Option = MakeShareable(new FString(DataTableUtils::GetPropertyExportName(ColumnProperty)));
+		VersionColumnsOptionNames.Add(Option);
+
+		if (*Option == Node->VersionColumn)
+		{
+			CurrentSelection = VersionColumnsOptionNames.Last();
+		}
+	}
+
+	if (!Node->VersionColumn.IsNone() && !CurrentSelection)
+	{
+		VersionColumnsOptionNames.Add(MakeShareable(new FString(Node->VersionColumn.ToString())));
+		CurrentSelection = VersionColumnsOptionNames.Last();
+	}
+
+	return CurrentSelection;
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnOpenVersionColumnComboBox()
+{
+	TSharedPtr<FString> CurrentSelection = GenerateVersionColumnComboBoxOptions();
+
+	if (VersionColumnsComboBox.IsValid())
+	{
+		VersionColumnsComboBox->ClearSelection();
+		VersionColumnsComboBox->RefreshOptions();
+		VersionColumnsComboBox->SetSelectedItem(CurrentSelection);
+	}
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnVersionColumnComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo)
+{
+	if (Selection && Node->VersionColumn != FName(*Selection)
+		&& (SelectInfo == ESelectInfo::OnKeyPress || SelectInfo == ESelectInfo::OnMouseClick))
+	{
+		Node->VersionColumn = FName(*Selection);
+		Node->MarkPackageDirty();
+	}
+}
+
+
+FSlateColor FCustomizableObjectNodeTableDetails::GetVersionColumnComboBoxTextColor(TArray<TSharedPtr<FString>>* CurrentOptions) const
+{
+	if (Node->FindTableProperty(Node->GetTableNodeStruct(), Node->VersionColumn) || Node->VersionColumn.IsNone())
+	{
+		return FSlateColor::UseForeground();
+	}
+
+	// Table Struct null or does not contain the selected property anymore
+	return FSlateColor(FLinearColor(0.9f, 0.05f, 0.05f, 1.0f));
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnVersionColumnComboBoxSelectionReset()
+{
+	Node->VersionColumn = NAME_None;
+
+	if (VersionColumnsComboBox.IsValid())
+	{
+		GenerateVersionColumnComboBoxOptions();
+		VersionColumnsComboBox->ClearSelection();
+		VersionColumnsComboBox->RefreshOptions();
+	}
+}
+
+
+EVisibility FCustomizableObjectNodeTableDetails::LayoutOptionsVisibility() const
+{
+	return SelectedLayout.IsValid() ? EVisibility::Visible : EVisibility::Collapsed;
+}
+
+
+EVisibility FCustomizableObjectNodeTableDetails::FixedStrategyOptionsVisibility() const
+{
+	return (SelectedLayout.IsValid() && SelectedLayout->GetPackingStrategy() == ECustomizableObjectTextureLayoutPackingStrategy::Fixed) ? EVisibility::Visible : EVisibility::Collapsed;
+}
+
+
+void FCustomizableObjectNodeTableDetails::FillLayoutComboBoxOptions()
+{
+	if (SelectedLayout.IsValid() && GridSizeComboBox.IsValid() && StrategyComboBox.IsValid()
+		&& MaxGridSizeComboBox.IsValid() && ReductionMethodComboBox.IsValid())
+	{
+		// Static const variable?
+		int32 MaxGridSize = 32;
+		LayoutGridSizes.Empty();
+
+		for (int32 Size = 1; Size <= MaxGridSize; Size *= 2)
+		{
+			LayoutGridSizes.Add(MakeShareable(new FString(FString::Printf(TEXT("%d x %d"), Size, Size))));
+
+			if (SelectedLayout->GetGridSize() == FIntPoint(Size))
+			{
+				GridSizeComboBox->SetSelectedItem(LayoutGridSizes.Last());
+			}
+
+			if (SelectedLayout->GetMaxGridSize() == FIntPoint(Size))
+			{
+				MaxGridSizeComboBox->SetSelectedItem(LayoutGridSizes.Last());
+			}
+		}
+
+		LayoutPackingStrategies.Empty();
+		LayoutPackingStrategies.Add(MakeShareable(new FString("Resizable")));
+		LayoutPackingStrategies.Add(MakeShareable(new FString("Fixed")));
+		LayoutPackingStrategies.Add(MakeShareable(new FString("Overlay")));
+		StrategyComboBox->SetSelectedItem(LayoutPackingStrategies[(uint32)SelectedLayout->GetPackingStrategy()]);
+
+		BlockReductionMethods.Empty();
+		BlockReductionMethods.Add(MakeShareable(new FString("Halve")));
+		BlockReductionMethods.Add(MakeShareable(new FString("Unitary")));
+		ReductionMethodComboBox->SetSelectedItem(BlockReductionMethods[(uint32)SelectedLayout->GetBlockReductionMethod()]);
+	}
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnGridSizeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+{
+	if (SelectedLayout.IsValid())
+	{
+		int Size = 1 << LayoutGridSizes.Find(NewSelection);
+
+		if (SelectedLayout->GetGridSize().X != Size || SelectedLayout->GetGridSize().Y != Size)
+		{
+			SelectedLayout->SetGridSize(FIntPoint(Size));
+
+			// Adjust all the blocks sizes
+			for (int b = 0; b < SelectedLayout->Blocks.Num(); ++b)
+			{
+				SelectedLayout->Blocks[b].Min.X = FMath::Min(SelectedLayout->Blocks[b].Min.X, Size - 1);
+				SelectedLayout->Blocks[b].Min.Y = FMath::Min(SelectedLayout->Blocks[b].Min.Y, Size - 1);
+				SelectedLayout->Blocks[b].Max.X = FMath::Min(SelectedLayout->Blocks[b].Max.X, Size);
+				SelectedLayout->Blocks[b].Max.Y = FMath::Min(SelectedLayout->Blocks[b].Max.Y, Size);
+			}
+
+			Node->MarkPackageDirty();
+		}
+	}
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnLayoutPackingStrategyChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+{
+	if (SelectedLayout.IsValid())
+	{
+		uint32 selection = LayoutPackingStrategies.IndexOfByKey(NewSelection);
+
+		if (SelectedLayout->GetPackingStrategy() != (ECustomizableObjectTextureLayoutPackingStrategy)selection)
+		{
+			SelectedLayout->SetPackingStrategy((ECustomizableObjectTextureLayoutPackingStrategy)selection);
+			Node->MarkPackageDirty();
+		}
+	}
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnMaxGridSizeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+{
+	if (SelectedLayout.IsValid())
+	{
+		int Size = 1 << LayoutGridSizes.Find(NewSelection);
+
+		if (SelectedLayout->GetMaxGridSize().X != Size || SelectedLayout->GetMaxGridSize().Y != Size)
+		{
+			SelectedLayout->SetMaxGridSize(FIntPoint(Size));
+			SelectedLayout->MarkPackageDirty();
+		}
+	}
+}
+
+
+void FCustomizableObjectNodeTableDetails::OnReductionMethodChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+{
+	if (SelectedLayout.IsValid())
+	{
+		uint32 selection = BlockReductionMethods.IndexOfByKey(NewSelection);
+
+		if (SelectedLayout->GetBlockReductionMethod() != (ECustomizableObjectLayoutBlockReductionMethod)selection)
+		{
+			SelectedLayout->SetBlockReductionMethod((ECustomizableObjectLayoutBlockReductionMethod)selection);
+			Node->MarkPackageDirty();
+		}
+	}
+}
 
 #undef LOCTEXT_NAMESPACE

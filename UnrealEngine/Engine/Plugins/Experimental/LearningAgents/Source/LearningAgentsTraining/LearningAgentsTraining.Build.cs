@@ -35,7 +35,12 @@ public class LearningAgentsTraining : ModuleRules
 				"LearningTraining",
 				// ... add private dependencies that you statically link with here ...	
 			});
-		
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.Add("UnrealEd");
+		}
+
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]
 			{

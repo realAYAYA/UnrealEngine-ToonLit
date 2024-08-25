@@ -289,9 +289,10 @@ struct OodleScratchBuffers
 		else
 		{
 			// tools, like UnrealPak or DDC commandlets
-
-			OO_SINTa EncoderMemorySizeNeeded = OodleLZ_GetCompressScratchMemBound(OodleLZ_Compressor_Mermaid, OodleLZ_CompressionLevel_VeryFast, 256*1024, nullptr);
-			// DecoderMemorySizeNeeded is ~ 450000 , EncoderMemorySizeNeeded is ~ 1200000
+			// allocate scratch space for Kraken Normal, that should get us all the usual cases.
+			// (Mermaid and lower compression levels need less.)
+			OO_SINTa EncoderMemorySizeNeeded = OodleLZ_GetCompressScratchMemBound(OodleLZ_Compressor_Kraken, OodleLZ_CompressionLevel_Normal, 256*1024, nullptr);
+			// DecoderMemorySizeNeeded is ~ 450k , EncoderMemorySizeNeeded is ~ 2160k
 			OodleScratchMemorySize = DecoderMemorySizeNeeded > EncoderMemorySizeNeeded ? DecoderMemorySizeNeeded : EncoderMemorySizeNeeded;
 
 			// allow one scratch buffer per logical core
@@ -650,7 +651,7 @@ int64 CompressParallelSub(
 		check( OODLELZ_FAILED == 0 );
 		check( Ret >= 0 );
 
-		OutCompressedArray.SetNum(Ret,false);
+		OutCompressedArray.SetNum(Ret, EAllowShrinking::No);
 	} , EParallelForFlags::Unbalanced );
 
 	int64 Total = 0;
@@ -740,7 +741,7 @@ int64 CompressParallel(
 		}
 	
 		check( TotalCompLen <= Reserve );
-		OutCompressedArray.SetNum( StartNum + TotalCompLen , false);
+		OutCompressedArray.SetNum( StartNum + TotalCompLen , EAllowShrinking::No);
 		return TotalCompLen;
 	}
 

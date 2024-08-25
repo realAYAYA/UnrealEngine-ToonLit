@@ -4,6 +4,7 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "BlueprintEditor.h"
+#include "BlueprintEditorModes.h"
 #include "BlueprintEditorModule.h"
 #include "BlueprintEditorSettings.h"
 #include "BlueprintNamespaceRegistry.h"
@@ -84,6 +85,7 @@
 #include "Layout/WidgetPath.h"
 #include "Logging/LogCategory.h"
 #include "Logging/LogMacros.h"
+#include "Math/UnitConversion.h"
 #include "Math/Vector2D.h"
 #include "Math/Vector4.h"
 #include "Misc/Attribute.h"
@@ -117,7 +119,6 @@
 #include "SubobjectDataSubsystem.h"
 #include "SupportedRangeTypes.h"	// StructsSupportingRangeVisibility
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Textures/SlateIcon.h"
 #include "Tools/LegacyEdModeWidgetHelpers.h"
@@ -486,7 +487,7 @@ void FBlueprintVarActionDetails::CustomizeDetails( IDetailLayoutBuilder& DetailL
 	TSharedPtr<SToolTip> EditableTooltip = IDocumentation::Get()->CreateToolTip(LOCTEXT("VarEditableTooltip", "Whether this variable is publicly editable on instances of this Blueprint."), NULL, DocLink, TEXT("Editable"));
 
 	Category.AddCustomRow( LOCTEXT("IsVariableEditableLabel", "Instance Editable") )
-	.Visibility(TAttribute<EVisibility>(this, &FBlueprintVarActionDetails::ShowEditableCheckboxVisibilty))
+	.Visibility(TAttribute<EVisibility>(this, &FBlueprintVarActionDetails::ShowEditableCheckboxVisibility))
 	.NameContent()
 	[
 		SNew(STextBlock)
@@ -506,7 +507,7 @@ void FBlueprintVarActionDetails::CustomizeDetails( IDetailLayoutBuilder& DetailL
 	TSharedPtr<SToolTip> ReadOnlyTooltip = IDocumentation::Get()->CreateToolTip(LOCTEXT("VarReadOnlyTooltip", "Whether this variable can be set by Blueprint nodes or if it is read-only."), NULL, DocLink, TEXT("ReadOnly"));
 
 	Category.AddCustomRow(LOCTEXT("IsVariableReadOnlyLabel", "Blueprint Read Only"))
-	.Visibility(TAttribute<EVisibility>(this, &FBlueprintVarActionDetails::ShowReadOnlyCheckboxVisibilty))
+	.Visibility(TAttribute<EVisibility>(this, &FBlueprintVarActionDetails::ShowReadOnlyCheckboxVisibility))
 	.NameContent()
 	[
 		SNew(STextBlock)
@@ -546,7 +547,7 @@ void FBlueprintVarActionDetails::CustomizeDetails( IDetailLayoutBuilder& DetailL
 					SNew(SCheckBox)
 					.IsChecked(this, &FBlueprintVarActionDetails::OnFieldNotifyCheckboxState)
 					.OnCheckStateChanged(this, &FBlueprintVarActionDetails::OnFieldNotifyChanged)
-					.IsEnabled(GetPropertyOwnerBlueprint() && IsABlueprintVariable(VariableProperty) && IsAUserVariable(VariableProperty))
+					.IsEnabled(IsVariableInBlueprint() && GetPropertyOwnerBlueprint() && IsABlueprintVariable(VariableProperty) && IsAUserVariable(VariableProperty))
 					.ToolTip(FieldNotificationTooltip)
 				]
 				+ SHorizontalBox::Slot()
@@ -555,7 +556,7 @@ void FBlueprintVarActionDetails::CustomizeDetails( IDetailLayoutBuilder& DetailL
 					SNew(UE::FieldNotification::SFieldNotificationCheckList)
 					.FieldName(CachedVariableName)
 					.BlueprintPtr(BlueprintPtr)
-					.Visibility(this, &FBlueprintVarActionDetails::GetFieldNotifyCheckboxListVisiblity)
+					.Visibility(this, &FBlueprintVarActionDetails::GetFieldNotifyCheckboxListVisibility)
 				]
 
 			];
@@ -642,25 +643,24 @@ void FBlueprintVarActionDetails::CustomizeDetails( IDetailLayoutBuilder& DetailL
 		.ToolTip(ExposeToCinematicsTooltip)
 	];
 
-	FText LocalisedTooltip;
+	FText LocalizedTooltip;
 	if (IsConfigCheckBoxEnabled())
 	{
 		// Build the property specific config variable tool tip
 		FFormatNamedArguments ConfigTooltipArgs;
 		if (UClass* OwnerClass = VariableProperty->GetOwnerClass())
 		{
-			OwnerClass = OwnerClass->GetAuthoritativeClass();
-			ConfigTooltipArgs.Add(TEXT("ConfigPath"), FText::FromString(OwnerClass->GetConfigName()));
+			ConfigTooltipArgs.Add(TEXT("ConfigName"), FText::FromName(OwnerClass->ClassConfigName));
 			ConfigTooltipArgs.Add(TEXT("ConfigSection"), FText::FromString(OwnerClass->GetPathName()));
 		}
-		LocalisedTooltip = FText::Format(LOCTEXT("VariableExposeToConfig_Tooltip", "Should this variable read its default value from a config file if it is present?\r\n\r\nThis is used for customising variable default values and behavior between different projects and configurations.\r\n\r\nConfig file [{ConfigPath}]\r\nConfig section [{ConfigSection}]"), ConfigTooltipArgs);
+		LocalizedTooltip = FText::Format(LOCTEXT("VariableExposeToConfig_Tooltip", "Should this variable read its default value from a config file if it is present?\r\n\r\nThis is used for customizing variable default values and behavior between different projects and configurations.\r\n\r\nConfig file [{ConfigName}]\r\nConfig section [{ConfigSection}]"), ConfigTooltipArgs);
 	}
 	else if (IsVariableInBlueprint())
 	{
 		// mimics the error that UHT would throw
-		LocalisedTooltip = LOCTEXT("ObjectVariableConfig_Tooltip", "Not allowed to use 'config' with object variables");
+		LocalizedTooltip = LOCTEXT("ObjectVariableConfig_Tooltip", "Not allowed to use 'config' with object variables");
 	}
-	TSharedPtr<SToolTip> ExposeToConfigTooltip = IDocumentation::Get()->CreateToolTip(LocalisedTooltip, NULL, DocLink, TEXT("ExposeToConfig"));
+	TSharedPtr<SToolTip> ExposeToConfigTooltip = IDocumentation::Get()->CreateToolTip(LocalizedTooltip, NULL, DocLink, TEXT("ExposeToConfig"));
 
 	Category.AddCustomRow( LOCTEXT("VariableExposeToConfig", "Config Variable"), true )
 	.Visibility(TAttribute<EVisibility>(this, &FBlueprintVarActionDetails::ExposeConfigVisibility))
@@ -834,6 +834,34 @@ void FBlueprintVarActionDetails::CustomizeDetails( IDetailLayoutBuilder& DetailL
 			.IsEnabled(IsVariableInBlueprint())
 			.Font(DetailFontInfo)
 		]
+	];
+	
+	TSharedPtr<SToolTip> UnitsTooltip = IDocumentation::Get()->CreateToolTip(LOCTEXT("VarUnitsTooltip", "Units of this variable."), NULL, DocLink, TEXT("Units"));
+
+	UnitsOptions.Empty();
+	UnitsOptions.Add(MakeShareable(new FString("None")));
+	for (const TCHAR* UnitsName : FUnitConversion::GetSupportedUnits())
+	{
+		UnitsOptions.Add(MakeShareable(new FString(UnitsName)));
+	}
+	
+	Category.AddCustomRow(LOCTEXT("VariableUnitsLabel", "Units"))
+	.Visibility(TAttribute<EVisibility>(this, &FBlueprintVarActionDetails::GetVariableUnitsVisibility))
+	.NameContent()
+	[
+		SNew(STextBlock)
+		.Text(LOCTEXT("VariableUnitsLabel", "Units"))
+		.ToolTip(UnitsTooltip)
+		.Font(IDetailLayoutBuilder::GetDetailFont())
+	]
+	.ValueContent()
+	[
+		SNew(STextComboBox)
+			.OptionsSource( &UnitsOptions )
+			.InitiallySelectedItem(GetVariableUnits())
+			.OnSelectionChanged( this, &FBlueprintVarActionDetails::OnVariableUnitsChanged )
+			.ToolTip(UnitsTooltip)
+			.Font( DetailFontInfo )
 	];
 
 	TSharedPtr<SToolTip> BitmaskTooltip = IDocumentation::Get()->CreateToolTip(LOCTEXT("VarBitmaskTooltip", "Whether or not to treat this variable as a bitmask."), nullptr, DocLink, TEXT("Bitmask"));
@@ -1064,6 +1092,7 @@ void FBlueprintVarActionDetails::CustomizeDetails( IDetailLayoutBuilder& DetailL
 				UK2Node_FunctionEntry* FuncEntry = EntryNodes[0];
 
 				TSharedPtr<FStructOnScope> StructData = MakeShareable(new FStructOnScope((UFunction*)StructScope));
+				StructData->SetPackage(BlueprintObj->GetPackage());
 
 				for (const FBPVariableDescription& LocalVar : FuncEntry->LocalVariables)
 				{
@@ -1852,7 +1881,7 @@ void FBlueprintVarActionDetails::OnCategorySelectionChanged( TSharedPtr<FText> P
 	}
 }
 
-EVisibility FBlueprintVarActionDetails::ShowEditableCheckboxVisibilty() const
+EVisibility FBlueprintVarActionDetails::ShowEditableCheckboxVisibility() const
 {
 	FProperty* VariableProperty = CachedVariableProperty.Get();
 	if (VariableProperty && GetPropertyOwnerBlueprint())
@@ -1886,7 +1915,7 @@ void FBlueprintVarActionDetails::OnEditableChanged(ECheckBoxState InNewState)
 	FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(BlueprintObj, VarName, !bVariableIsExposed);
 }
 
-EVisibility FBlueprintVarActionDetails::ShowReadOnlyCheckboxVisibilty() const
+EVisibility FBlueprintVarActionDetails::ShowReadOnlyCheckboxVisibility() const
 {
 	FProperty* VariableProperty = CachedVariableProperty.Get();
 	if (VariableProperty && GetPropertyOwnerBlueprint())
@@ -1920,24 +1949,92 @@ void FBlueprintVarActionDetails::OnReadyOnlyChanged(ECheckBoxState InNewState)
 	FBlueprintEditorUtils::SetBlueprintPropertyReadOnlyFlag(BlueprintObj, VarName, bVariableIsReadOnly);
 }
 
-ECheckBoxState FBlueprintVarActionDetails::OnFieldNotifyCheckboxState() const
+EVisibility FBlueprintVarActionDetails::GetVariableUnitsVisibility() const
 {
-	UBlueprint* const BlueprintObj = GetBlueprintObj();
-	const FName VarName = CachedVariableName;
-
-	if (BlueprintObj && !VarName.IsNone())
+	FProperty* VariableProperty = CachedVariableProperty.Get();
+	if (VariableProperty)
 	{
-		const int32 VarIndex = FBlueprintEditorUtils::FindNewVariableIndex(BlueprintObj, VarName);
-		if (VarIndex != INDEX_NONE)
+		const bool bIsInteger = VariableProperty->IsA(FIntProperty::StaticClass()) || VariableProperty->IsA(FInt64Property::StaticClass());
+		const bool bIsReal = VariableProperty->IsA(FFloatProperty::StaticClass()) || VariableProperty->IsA(FDoubleProperty::StaticClass());
+
+		if (IsABlueprintVariable(VariableProperty) && !IsALocalVariable(VariableProperty) && (bIsInteger || bIsReal))
 		{
-			return BlueprintObj->NewVariables[VarIndex].HasMetaData(FBlueprintMetadata::MD_FieldNotify) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-		}
-		else if (BlueprintObj->GeneratedClass && BlueprintObj->GeneratedClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()) && BlueprintObj->GeneratedClass->GetDefaultObject())
-		{
-			TScriptInterface<INotifyFieldValueChanged> DefaultObject = BlueprintObj->GeneratedClass->GetDefaultObject();
-			return DefaultObject->GetFieldNotificationDescriptor().GetField(BlueprintObj->GeneratedClass, VarName).IsValid() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			return EVisibility::Visible;
 		}
 	}
+	return EVisibility::Hidden;
+}
+
+TSharedPtr<FString> FBlueprintVarActionDetails::GetVariableUnits() const
+{
+	if (CachedVariableName != NAME_None)
+	{
+		if (const UBlueprint* BlueprintObj = GetPropertyOwnerBlueprint() )
+		{
+			FString Result;
+			if (FBlueprintEditorUtils::GetBlueprintVariableMetaData(BlueprintObj, CachedVariableName, GetLocalVariableScope(CachedVariableProperty.Get()), "ForceUnits", /*out*/ Result))
+			{
+				for (const TSharedPtr<FString>& UnitOption : UnitsOptions)
+				{
+					if (*UnitOption == Result)
+					{
+						return UnitOption;
+					}
+				}
+			}
+		}
+	}
+	// Return none;
+	return UnitsOptions.IsEmpty() ? MakeShareable(new FString("None")) : UnitsOptions[0];
+}
+
+void FBlueprintVarActionDetails::OnVariableUnitsChanged(TSharedPtr<FString> UnitsSelected, ESelectInfo::Type SelectInfo)
+{
+	if (CachedVariableName != NAME_None)
+	{
+		if ( UBlueprint* BlueprintObj = GetPropertyOwnerBlueprint() )
+		{
+			if (UnitsSelected && !UnitsOptions.IsEmpty() && UnitsSelected != UnitsOptions[0] )
+			{
+				FBlueprintEditorUtils::SetBlueprintVariableMetaData(BlueprintObj, CachedVariableName, GetLocalVariableScope(CachedVariableProperty.Get()), "ForceUnits", *UnitsSelected);
+			}
+			else
+			{
+				FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(BlueprintObj, CachedVariableName, GetLocalVariableScope(CachedVariableProperty.Get()), "ForceUnits");
+			}
+		}
+	}
+}
+
+ECheckBoxState FBlueprintVarActionDetails::OnFieldNotifyCheckboxState() const
+{
+	UBlueprint* const BlueprintObj = GetPropertyOwnerBlueprint();
+	const FName VarName = CachedVariableName;
+
+	if (!VarName.IsNone())
+	{
+		if (BlueprintObj)
+		{
+			const int32 VarIndex = FBlueprintEditorUtils::FindNewVariableIndex(BlueprintObj, VarName);
+			if (VarIndex != INDEX_NONE)
+			{
+				return BlueprintObj->NewVariables[VarIndex].HasMetaData(FBlueprintMetadata::MD_FieldNotify) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			}
+		}
+		
+		const UClass* VarSourceClass = BlueprintObj ? BlueprintObj->GeneratedClass : nullptr;
+		if (VarSourceClass == nullptr && CachedVariableProperty.IsValid())
+		{
+			VarSourceClass = CachedVariableProperty->GetOwner<UClass>();
+		}
+
+		if (VarSourceClass && VarSourceClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()) && VarSourceClass->GetDefaultObject())
+		{
+			TScriptInterface<INotifyFieldValueChanged> DefaultObject = VarSourceClass->GetDefaultObject();
+			return DefaultObject->GetFieldNotificationDescriptor().GetField(VarSourceClass, VarName).IsValid() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+		}
+	}
+	
 	return ECheckBoxState::Unchecked;
 }
 
@@ -1962,7 +2059,7 @@ void FBlueprintVarActionDetails::OnFieldNotifyChanged(ECheckBoxState InNewState)
 	}
 }
 
-EVisibility FBlueprintVarActionDetails::GetFieldNotifyCheckboxListVisiblity() const
+EVisibility FBlueprintVarActionDetails::GetFieldNotifyCheckboxListVisibility() const
 {
 	UBlueprint* const BlueprintObj = GetBlueprintObj();
 	const FName VarName = CachedVariableName;
@@ -2235,26 +2332,41 @@ bool FBlueprintVarActionDetails::ReplicationConditionEnabled() const
 bool FBlueprintVarActionDetails::ReplicationEnabled() const
 {
 	// Update FBlueprintVarActionDetails::ReplicationTooltip if you alter this function
-	// shat users can understand why replication settins are disabled!
+	// so that users can understand why replication settings are disabled!
 	bool bVariableCanBeReplicated = true;
 	const FProperty* const VariableProperty = CachedVariableProperty.Get();
 	if (VariableProperty)
 	{
-		// sets and maps cannot yet be replicated:
-		bVariableCanBeReplicated = CastField<FSetProperty>(VariableProperty) == nullptr && CastField<FMapProperty>(VariableProperty) == nullptr;
+		// sets and maps cannot yet be replicated, neither can Event Dispatchers:
+		bVariableCanBeReplicated =
+			CastField<FSetProperty>(VariableProperty) == nullptr &&
+			CastField<FMapProperty>(VariableProperty) == nullptr &&
+			CastField<FMulticastInlineDelegateProperty>(VariableProperty) == nullptr;
 	}
 	return bVariableCanBeReplicated && IsVariableInBlueprint();
 }
 
 FText FBlueprintVarActionDetails::ReplicationTooltip() const
 {
-	if(ReplicationEnabled())
+	if (ReplicationEnabled())
 	{
 		return LOCTEXT("VariableReplicate_Tooltip", "Should this Variable be replicated over the network?");
 	}
 	else
 	{
-		return LOCTEXT("VariableReplicateDisabled_Tooltip", "Set and Map properties cannot be replicated");
+		const FProperty* const VariableProperty = CachedVariableProperty.Get();
+		if (CastField<FSetProperty>(VariableProperty) || CastField<FMapProperty>(VariableProperty))
+		{
+			return LOCTEXT("VariableReplicateDisabledSetsAndMaps_Tooltip", "Set and Map properties cannot be replicated");
+		}
+		else if (CastField<FMulticastInlineDelegateProperty>(VariableProperty))
+		{
+			return LOCTEXT("VariableReplicateDisabledEventDispatchers_Tooltip", "Event Dispatcher properties cannot be replicated");
+		}
+		else
+		{
+			return LOCTEXT("VariableReplicateDisabledDefault_Tooltip", "This property type cannot be replicated");
+		}
 	}
 }
 
@@ -4224,7 +4336,7 @@ void FBlueprintGraphActionDetails::CustomizeDetails( IDetailLayoutBuilder& Detai
 					if (SelectedNode.IsValid())
 					{
 						UK2Node_CustomEvent const* SelectedCustomEvent = Cast<UK2Node_CustomEvent const>(SelectedNode.Get());
-						check(SelectedCustomEvent != NULL);
+						check(SelectedCustomEvent != nullptr);
 
 						bIsOverride = SelectedCustomEvent->IsOverride();
 					}
@@ -4247,10 +4359,10 @@ void FBlueprintGraphActionDetails::CustomizeDetails( IDetailLayoutBuilder& Detai
 				static bool CanSetReliabilityProperty(TWeakObjectPtr<UK2Node_EditablePinBase> SelectedNode)
 				{
 					bool bIsReliabilitySettingEnabled = false;
-					if (IsNotCustomEventOverride(SelectedNode))
+					if (IsNotCustomEventOverride(SelectedNode) && SelectedNode.IsValid())
 					{
 						UK2Node_CustomEvent const* SelectedCustomEvent = Cast<UK2Node_CustomEvent const>(SelectedNode.Get());
-						check(SelectedCustomEvent != NULL);
+						check(SelectedCustomEvent != nullptr);
 
 						bIsReliabilitySettingEnabled = ((SelectedCustomEvent->GetNetFlags() & FUNC_Net) != 0);
 					}
@@ -4650,42 +4762,49 @@ bool FBlueprintGraphActionDetails::GetIsFieldNotfyEnabled() const
 ECheckBoxState FBlueprintGraphActionDetails::OnFieldNotifyCheckboxState() const
 {
 	UBlueprint* const BlueprintObj = GetBlueprintObj();
-	const FName FuncName = FindFunction()->GetFName();
 
-	if (BlueprintObj && GetIsFieldNotfyEnabled())
+	if (UFunction* Function = FindFunction())
 	{
-		if (!FuncName.IsNone())
-		{
-			return GetMetadataBlock()->HasMetaData(FBlueprintMetadata::MD_FieldNotify) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-		}
-		else if (BlueprintObj->GeneratedClass && BlueprintObj->GeneratedClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()) && BlueprintObj->GeneratedClass->GetDefaultObject())
-		{
-			TScriptInterface<INotifyFieldValueChanged> DefaultObject = BlueprintObj->GeneratedClass->GetDefaultObject();
-			return DefaultObject->GetFieldNotificationDescriptor().GetField(BlueprintObj->GeneratedClass, FuncName).IsValid() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-		}
-	}
+		const FName FuncName = Function->GetFName();
 
-	FBlueprintEditorUtils::RemoveFieldNotifyFromAllMetadata(BlueprintObj, FuncName);
-	GetMetadataBlock()->RemoveMetaData(FBlueprintMetadata::MD_FieldNotify);
+		if (BlueprintObj && GetIsFieldNotfyEnabled())
+		{
+			if (!FuncName.IsNone())
+			{
+				return GetMetadataBlock()->HasMetaData(FBlueprintMetadata::MD_FieldNotify) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			}
+			else if (BlueprintObj->GeneratedClass && BlueprintObj->GeneratedClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()) && BlueprintObj->GeneratedClass->GetDefaultObject())
+			{
+				TScriptInterface<INotifyFieldValueChanged> DefaultObject = BlueprintObj->GeneratedClass->GetDefaultObject();
+				return DefaultObject->GetFieldNotificationDescriptor().GetField(BlueprintObj->GeneratedClass, FuncName).IsValid() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			}
+		}
+
+		FBlueprintEditorUtils::RemoveFieldNotifyFromAllMetadata(BlueprintObj, FuncName);
+		GetMetadataBlock()->RemoveMetaData(FBlueprintMetadata::MD_FieldNotify);
+	}
 	return ECheckBoxState::Unchecked;
 }
 
 void FBlueprintGraphActionDetails::OnFieldNotifyChanged(ECheckBoxState InNewState)
 {
 	UBlueprint* const BlueprintObj = GetBlueprintObj();
-	FName FuncName = FindFunction()->GetFName();
-	const bool bFuncIsFieldNotify = InNewState == ECheckBoxState::Checked;
-
-	if (BlueprintObj)
+	if (UFunction* Function = FindFunction())
 	{
-		if (bFuncIsFieldNotify)
+		const FName FuncName = Function->GetFName();
+		const bool bFuncIsFieldNotify = InNewState == ECheckBoxState::Checked;
+
+		if (BlueprintObj)
 		{
-			GetMetadataBlock()->SetMetaData(FBlueprintMetadata::MD_FieldNotify, FString());
-		}
-		else
-		{
-			FBlueprintEditorUtils::RemoveFieldNotifyFromAllMetadata(BlueprintObj, FuncName);
-			GetMetadataBlock()->RemoveMetaData(FBlueprintMetadata::MD_FieldNotify);
+			if (bFuncIsFieldNotify)
+			{
+				GetMetadataBlock()->SetMetaData(FBlueprintMetadata::MD_FieldNotify, FString());
+			}
+			else
+			{
+				FBlueprintEditorUtils::RemoveFieldNotifyFromAllMetadata(BlueprintObj, FuncName);
+				GetMetadataBlock()->RemoveMetaData(FBlueprintMetadata::MD_FieldNotify);
+			}
 		}
 	}
 }
@@ -6799,44 +6918,50 @@ void FBlueprintGlobalOptionsDetails::CustomizeDetails(IDetailLayoutBuilder& Deta
 			]
 		]
 		.PropertyHandleList({ParentClassProperty});
-		
+
 		const bool bIsInterfaceBP = FBlueprintEditorUtils::IsInterfaceBlueprint(Blueprint);
 		const bool bIsMacroLibrary = Blueprint->BlueprintType == BPTYPE_MacroLibrary;
 		const bool bIsLevelScriptBP = FBlueprintEditorUtils::IsLevelScriptBlueprint(Blueprint);
 		const bool bIsFunctionLibrary = Blueprint->BlueprintType == BPTYPE_FunctionLibrary;
-		const bool bSupportsInterfaces = !bIsInterfaceBP && !bIsMacroLibrary && !bIsFunctionLibrary;
-		const bool bSupportsNamespaces = GetDefault<UBlueprintEditorSettings>()->bEnableNamespaceImportingFeatures;
-
-		if(bSupportsNamespaces)
+		
+		// Interfaces/imports currently rely on the full Blueprint editor context to function properly (e.g. add/remove operations).
+		TSharedPtr<FBlueprintEditor> PinnedBlueprintEditorPtr = BlueprintEditorPtr.Pin();
+		if (PinnedBlueprintEditorPtr.IsValid() && PinnedBlueprintEditorPtr->GetCurrentMode() != FBlueprintEditorApplicationModes::BlueprintDefaultsMode)
 		{
-			// Imported namespace details
-			IDetailCategoryBuilder& ImportsCategory = DetailLayout.EditCategory("Imports", LOCTEXT("BlueprintImportDetailsCategory", "Imports"));
+			const bool bSupportsInterfaces = !bIsInterfaceBP && !bIsMacroLibrary && !bIsFunctionLibrary;
+			const bool bSupportsNamespaces = GetDefault<UBlueprintEditorSettings>()->bEnableNamespaceImportingFeatures;
 
-			TSharedRef<FBlueprintImportsLayout> DefaultImportsLayout = MakeShareable(new FBlueprintImportsLayout(SharedThis(this), /*bShowDefaultImports = */true));
-			ImportsCategory.AddCustomBuilder(DefaultImportsLayout);
+			if (bSupportsNamespaces)
+			{
+				// Imported namespace details
+				IDetailCategoryBuilder& ImportsCategory = DetailLayout.EditCategory("Imports", LOCTEXT("BlueprintImportDetailsCategory", "Imports"));
 
-			TSharedRef<FBlueprintImportsLayout> LocalImportsLayout = MakeShareable(new FBlueprintImportsLayout(SharedThis(this), /*bShowDefaultImports = */false));
-			ImportsCategory.AddCustomBuilder(LocalImportsLayout);
-		}
+				TSharedRef<FBlueprintImportsLayout> DefaultImportsLayout = MakeShareable(new FBlueprintImportsLayout(SharedThis(this), /*bShowDefaultImports = */true));
+				ImportsCategory.AddCustomBuilder(DefaultImportsLayout);
 
-		if (bSupportsInterfaces)
-		{
-			// Interface details customization
-			IDetailCategoryBuilder& InterfacesCategory = DetailLayout.EditCategory("Interfaces", LOCTEXT("BlueprintInterfacesDetailsCategory", "Interfaces"));
+				TSharedRef<FBlueprintImportsLayout> LocalImportsLayout = MakeShareable(new FBlueprintImportsLayout(SharedThis(this), /*bShowDefaultImports = */false));
+				ImportsCategory.AddCustomBuilder(LocalImportsLayout);
+			}
 
-			// ImplementedInterfaces is a hidden property so we have to add it to the property map manually to use it
-			const TSharedPtr<IPropertyHandle> InterfacesProperty = DetailLayout.AddObjectPropertyData({const_cast<UBlueprint*>(Blueprint)}, TEXT("ImplementedInterfaces"));
-			
-			TSharedRef<FBlueprintInterfaceLayout> InheritedInterfacesLayout = MakeShareable(new FBlueprintInterfaceLayout(
-				SharedThis(this)
+			if (bSupportsInterfaces)
+			{
+				// Interface details customization
+				IDetailCategoryBuilder& InterfacesCategory = DetailLayout.EditCategory("Interfaces", LOCTEXT("BlueprintInterfacesDetailsCategory", "Interfaces"));
+
+				// ImplementedInterfaces is a hidden property so we have to add it to the property map manually to use it
+				const TSharedPtr<IPropertyHandle> InterfacesProperty = DetailLayout.AddObjectPropertyData({ const_cast<UBlueprint*>(Blueprint) }, TEXT("ImplementedInterfaces"));
+
+				TSharedRef<FBlueprintInterfaceLayout> InheritedInterfacesLayout = MakeShareable(new FBlueprintInterfaceLayout(
+					SharedThis(this)
 				));
-			InterfacesCategory.AddCustomBuilder(InheritedInterfacesLayout);
+				InterfacesCategory.AddCustomBuilder(InheritedInterfacesLayout);
 
-			TSharedRef<FBlueprintInterfaceLayout> LocalInterfacesLayout = MakeShareable(new FBlueprintInterfaceLayout(
-				SharedThis(this),
-				InterfacesProperty.ToSharedRef()
+				TSharedRef<FBlueprintInterfaceLayout> LocalInterfacesLayout = MakeShareable(new FBlueprintInterfaceLayout(
+					SharedThis(this),
+					InterfacesProperty.ToSharedRef()
 				));
-			InterfacesCategory.AddCustomBuilder(LocalInterfacesLayout);
+				InterfacesCategory.AddCustomBuilder(LocalInterfacesLayout);
+			}
 		}
 
 		// Hide the bDeprecate, we override the functionality.
@@ -7420,7 +7545,7 @@ void FBlueprintComponentDetails::OnBrowseSocket()
 				{
 					// Pop up a combo box to pick socket from mesh
 					FSlateApplication::Get().PushMenu(
-						Editor.ToSharedRef(),
+						BlueprintEditorPtr.Pin()->GetToolkitHost()->GetParentWidget(),
 						FWidgetPath(),
 						SNew(SSocketChooserPopup)
 						.SceneComponent( ParentSceneComponent )

@@ -14,14 +14,15 @@
 	"CanContainContent" : false,
 	"IsBetaVersion" : false,
 	"Installed" : false,
-	"SupportedPrograms" : 
-	[
+	"SupportedPrograms": [
 		"UnrealFrontend",
 		"UnrealMultiUserServer",
 		"UnrealMultiUserSlateServer",
 		"UnrealRecoverySvc",
 		"UnrealLightmass",
-		"CrashReportClientEditor"
+		"CrashReportClientEditor",
+		"LiveLinkHub",
+		"TimeSynchronizationWriter"
 	],
 	"Modules" :
 	[
@@ -38,7 +39,9 @@
 				"UnrealMultiUserSlateServer",
 				"UnrealRecoverySvc",
 				"UnrealLightmass",
-				"CrashReportClientEditor"
+				"CrashReportClientEditor",
+				"LiveLinkHub",
+				"TimeSynchronizationWriter"
 			]
 		}
 	]

@@ -24,17 +24,26 @@ struct FMemAllocTableColumns
 	static const FName StartTimeColumnId;
 	static const FName EndTimeColumnId;
 	static const FName DurationColumnId;
+	static const FName AllocThreadColumnId;
+	static const FName FreeThreadColumnId;
 	static const FName AddressColumnId;
 	static const FName MemoryPageColumnId;
 	static const FName CountColumnId;
 	static const FName SizeColumnId;
+	static const FName LLMSizeColumnId;
+	static const FName LLMDeltaSizeColumnId;
 	static const FName TagColumnId;
 	static const FName AssetColumnId;
 	static const FName PackageColumnId;
 	static const FName ClassNameColumnId;
-	static const FName FunctionColumnId;
-	static const FName SourceFileColumnId;
-	static const FName CallstackSizeColumnId;
+	static const FName AllocFunctionColumnId;
+	static const FName AllocSourceFileColumnId;
+	static const FName AllocCallstackIdColumnId;
+	static const FName AllocCallstackSizeColumnId;
+	static const FName FreeFunctionColumnId;
+	static const FName FreeSourceFileColumnId;
+	static const FName FreeCallstackIdColumnId;
+	static const FName FreeCallstackSizeColumnId;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -54,11 +63,15 @@ public:
 	const FMemoryAlloc* GetMemAlloc(int32 InIndex) const { return IsValidRowIndex(InIndex) ? &Allocs[InIndex] : nullptr; }
 	const FMemoryAlloc& GetMemAllocChecked(int32 InIndex) const { check(IsValidRowIndex(InIndex)); return Allocs[InIndex]; }
 
+	double GetTimeMarkerA() const { return TimeA; }
+	void SetTimeMarkerA(double InTime) { TimeA = InTime; }
+
 private:
 	void AddDefaultColumns();
 
 private:
 	TArray<FMemoryAlloc> Allocs;
+	double TimeA = 0.0;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

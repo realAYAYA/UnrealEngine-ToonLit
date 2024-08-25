@@ -18,7 +18,8 @@ FMinHairRadiusAtDepth1 ComputeMinStrandRadiusAtDepth1(
 	const FIntPoint& Resolution,
 	const float FOV,
 	const uint32 SampleCount,
-	const float OverrideStrandHairRasterizationScale);
+	const float OverrideStrandHairRasterizationScale,
+	const float OrthoWidth = 0.0f);
 
 FIntRect ComputeProjectedScreenRect(const FBox& B, const FViewInfo& View);
 

@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 
 #include "HLSLTree/HLSLTree.h"
+#include "SceneTypes.h"
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "RHIDefinitions.h"
 #endif
@@ -39,7 +40,29 @@ public:
 	virtual bool PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const override;
 	virtual void EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const override;
 	virtual void EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const override;
+	virtual bool EmitValueObject(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, void* OutObjectBase) const override;
 };
+
+/**
+ * Similar to FExpressionForward but switch to a different expression when computing previous frame
+ */
+class FExpressionPreviousFrameSwitch : public FExpressionForward
+{
+public:
+	explicit FExpressionPreviousFrameSwitch(const FExpression* InCurrentFrameExpression, const FExpression* InPreviousFrameExpression)
+		: FExpressionForward(InCurrentFrameExpression)
+		, PreviousFrameExpression(InPreviousFrameExpression)
+	{}
+
+	const FExpression* PreviousFrameExpression;
+
+	virtual const FExpression* ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const override;
+};
+
+namespace Private
+{
+	FPreparedType PrepareConstant(const Shader::FValue& Value);
+}
 
 class FExpressionConstant : public FExpression
 {
@@ -96,11 +119,12 @@ public:
 class FExpressionSetStructField : public FExpression
 {
 public:
-	FExpressionSetStructField(const Shader::FStructType* InStructType, const Shader::FStructField* InField, const FExpression* InStructExpression, const FExpression* InFieldExpression)
+	FExpressionSetStructField(const Shader::FStructType* InStructType, const Shader::FStructField* InField, const FExpression* InStructExpression, const FExpression* InFieldExpression, EMaterialProperty InTestMaterialProperty = MP_MAX)
 		: StructType(InStructType)
 		, Field(InField)
 		, StructExpression(InStructExpression)
 		, FieldExpression(InFieldExpression)
+		, TestMaterialProperty(InTestMaterialProperty)
 	{
 		check(InStructType);
 		check(InField);
@@ -110,12 +134,20 @@ public:
 	const Shader::FStructField* Field;
 	const FExpression* StructExpression;
 	const FExpression* FieldExpression;
+	// If not MP_MAX, the material property to test IsPropertyActive on a given material (instance)
+	EMaterialProperty TestMaterialProperty;
 
 	virtual void ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const override;
 	virtual const FExpression* ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const override;
 	virtual bool PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const override;
 	virtual void EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const override;
 	virtual void EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const override;
+
+private:
+	FRequestedType MakeRequestedStructType(const FActiveStructFieldStack& ActiveFieldStack, const FRequestedType& RequestedType) const;
+	FRequestedType MakeRequestedFieldType(const FActiveStructFieldStack& ActiveFieldStack, const FRequestedType& RequestedType) const;
+
+	bool IsStructFieldActive(FEmitContext& Context) const;
 };
 
 class FExpressionSelect : public FExpression
@@ -138,9 +170,10 @@ public:
 	virtual bool PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const override;
 	virtual void EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const override;
 	virtual void EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const override;
+	virtual bool EmitValueObject(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, void* OutObjectBase) const override;
 };
 
-class FExpressionDerivative : public FExpression
+class ENGINE_API FExpressionDerivative : public FExpression
 {
 public:
 	FExpressionDerivative(EDerivativeCoordinate InCoord, const FExpression* InInput) : Input(InInput), Coord(InCoord) {}
@@ -209,14 +242,14 @@ public:
 	const FExpression* Lhs;
 	const FExpression* Rhs;
 
-	virtual void ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const override;
-	virtual const FExpression* ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const override;
-	virtual bool PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const override;
-	virtual void EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const override;
-	virtual void EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const override;
+	ENGINE_API virtual void ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const override;
+	ENGINE_API virtual const FExpression* ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const override;
+	ENGINE_API virtual bool PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const override;
+	ENGINE_API virtual void EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const override;
+	ENGINE_API virtual void EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const override;
 };
 
-class FExpressionSwitchBase : public FExpression
+class ENGINE_API FExpressionSwitchBase : public FExpression
 {
 public:
 	static constexpr int8 MaxInputs = 8;
@@ -281,6 +314,24 @@ public:
 	virtual bool IsInputActive(const FEmitContext& Context, int32 Index) const override;
 };
 
+class FExpressionVirtualTextureFeatureSwitch : public FExpressionSwitchBase
+{
+public:
+	FExpressionVirtualTextureFeatureSwitch(TConstArrayView<const FExpression*> InInputs);
+
+	virtual const FExpression* NewSwitch(FTree& Tree, TConstArrayView<const FExpression*> InInputs) const override { return Tree.NewExpression<FExpressionVirtualTextureFeatureSwitch>(InInputs); }
+	virtual bool IsInputActive(const FEmitContext& Context, int32 Index) const override;
+};
+
+class FExpressionDistanceFieldsRenderingSwitch : public FExpressionSwitchBase
+{
+public:
+	FExpressionDistanceFieldsRenderingSwitch(TConstArrayView<const FExpression*> InInputs);
+
+	virtual const FExpression* NewSwitch(FTree& Tree, TConstArrayView<const FExpression*> InInputs) const override { return Tree.NewExpression<FExpressionDistanceFieldsRenderingSwitch>(InInputs); }
+	virtual bool IsInputActive(const FEmitContext& Context, int32 Index) const override;
+};
+
 /** Can be used to emit HLSL chunks with no inputs, where it's not worth the trouble of defining a new expression type */
 class FExpressionInlineCustomHLSL : public FExpression
 {
@@ -297,11 +348,17 @@ public:
 class FExpressionCustomHLSL : public FExpression
 {
 public:
-	FExpressionCustomHLSL(FStringView InDeclarationCode, FStringView InFunctionCode, TArrayView<FCustomHLSLInput> InInputs, const Shader::FStructType* InOutputStructType)
+	FExpressionCustomHLSL(FStringView InDeclarationCode, FStringView InFunctionCode, TConstArrayView<FString> InIncludeFilePaths, TArrayView<FCustomHLSLInput> InInputs, const Shader::FStructType* InOutputStructType)
 		: DeclarationCode(InDeclarationCode)
 		, FunctionCode(InFunctionCode)
+		, IncludeFilePaths(InIncludeFilePaths)
 		, Inputs(InInputs)
 		, OutputStructType(InOutputStructType)
+	{}
+
+	UE_DEPRECATED(5.4, "This constructor is deprecated.")
+	FExpressionCustomHLSL(FStringView InDeclarationCode, FStringView InFunctionCode, TArrayView<FCustomHLSLInput> InInputs, const Shader::FStructType* InOutputStructType)
+		: FExpressionCustomHLSL(InDeclarationCode, InFunctionCode, {}, InInputs,  InOutputStructType)
 	{}
 
 	virtual bool PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const override;
@@ -309,6 +366,7 @@ public:
 
 	FStringView DeclarationCode;
 	FStringView FunctionCode;
+	TConstArrayView<FString> IncludeFilePaths;
 	TArray<FCustomHLSLInput, TInlineAllocator<8>> Inputs;
 	const Shader::FStructType* OutputStructType = nullptr;
 };

@@ -28,7 +28,7 @@ void CheckAlignment(FContext* Context, void* Ptr, size_t AlignmentMask)
     }
 }
 
-extern "C" void autortfm_record_write(FContext* Context, void* Ptr, size_t Size)
+extern "C" UE_AUTORTFM_API AUTORTFM_NO_ASAN void autortfm_record_write(void* Ptr, size_t Size)
 {
 	// check for writes to null here so we end up crashing in the user
 	// code rather than in the autortfm runtime.
@@ -37,53 +37,72 @@ extern "C" void autortfm_record_write(FContext* Context, void* Ptr, size_t Size)
 		return;
 	}
 
+	FContext* Context = FContext::Get();
 	Context->RecordWrite(Ptr, Size);
 }
 
-extern "C" void* autortfm_lookup_function(FContext* Context, void* OriginalFunction, const char* Where)
+extern "C" UE_AUTORTFM_API AUTORTFM_NO_ASAN void autortfm_record_write_8(void* Ptr)
 {
-    return FunctionMapLookup(OriginalFunction, Context, Where);
+	// check for writes to null here so we end up crashing in the user
+	// code rather than in the autortfm runtime.
+	if (UNLIKELY(nullptr == Ptr))
+	{
+		return;
+	}
+
+	FContext* Context = FContext::Get();
+	Context->RecordWrite<8>(Ptr);
 }
 
-extern "C" void autortfm_memcpy(void* Dst, const void* Src, size_t Size, FContext* Context)
+extern "C" UE_AUTORTFM_API void* autortfm_lookup_function(void* OriginalFunction, const char* Where)
 {
+	FContext* Context = FContext::Get();
+    return FunctionMapLookup(OriginalFunction, Where);
+}
+
+extern "C" UE_AUTORTFM_API void autortfm_memcpy(void* Dst, const void* Src, size_t Size)
+{
+	FContext* Context = FContext::Get();
     Memcpy(Dst, Src, Size, Context);
 }
 
-extern "C" void autortfm_memmove(void* Dst, const void* Src, size_t Size, FContext* Context)
+extern "C" UE_AUTORTFM_API void autortfm_memmove(void* Dst, const void* Src, size_t Size)
 {
+	FContext* Context = FContext::Get();
     Memmove(Dst, Src, Size, Context);
 }
 
-extern "C" void autortfm_memset(void* Dst, int Value, size_t Size, FContext* Context)
+extern "C" UE_AUTORTFM_API void autortfm_memset(void* Dst, int Value, size_t Size)
 {
+	FContext* Context = FContext::Get();
     Memset(Dst, Value, Size, Context);
 }
 
-extern "C" void autortfm_llvm_fail(FContext* Context, const char* Message)
+extern "C" UE_AUTORTFM_API void autortfm_llvm_fail(const char* Message)
 {
     if (Message)
     {
-		UE_LOG(LogAutoRTFM, Warning, TEXT("Transaction failing because of language issue '%s'."), Message);
+		UE_LOG(LogAutoRTFM, Fatal, TEXT("Transaction failing because of language issue '%s'."), ANSI_TO_TCHAR(Message));
     }
     else
     {
-		UE_LOG(LogAutoRTFM, Warning, TEXT("Transaction failing because of language issue."));
+		UE_LOG(LogAutoRTFM, Fatal, TEXT("Transaction failing because of language issue."));
 	}
 
+	FContext* Context = FContext::Get();
     Context->AbortByLanguageAndThrow();
 }
 
-extern "C" void autortfm_llvm_alignment_error(FContext* Context, void* Ptr, size_t Alignment, const char* Message)
+extern "C" UE_AUTORTFM_API void autortfm_llvm_alignment_error(FContext* Context, void* Ptr, size_t Alignment, const char* Message)
 {
     AbortDueToBadAlignment(Context, Ptr, Alignment, Message);
 }
 
-extern "C" void autortfm_llvm_error(FContext* Context, const char* Message)
+extern "C" UE_AUTORTFM_API void autortfm_llvm_error(const char* Message)
 {
 	if (Message)
 	{
-		UE_LOG(LogAutoRTFM, Fatal, TEXT("Transaction failing because of LLVM issue '%s'."), Message);
+		UE_LOG(LogAutoRTFM, Fatal, TEXT("Transaction failing because of LLVM issue '%s'."), ANSI_TO_TCHAR(Message));
 	}
 	else
 	{

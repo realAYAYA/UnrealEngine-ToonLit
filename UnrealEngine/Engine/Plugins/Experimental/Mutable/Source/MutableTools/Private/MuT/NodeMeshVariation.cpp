@@ -13,8 +13,8 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     // Static initialisation
     //---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeMeshVariation::Private::s_type =
-        NODE_TYPE( "MeshVariation", NodeMesh::GetStaticType() );
+    FNodeType NodeMeshVariation::Private::s_type =
+        FNodeType( "MeshVariation", NodeMesh::GetStaticType() );
 
 
     //---------------------------------------------------------------------------------------------
@@ -22,53 +22,6 @@ namespace mu
     //---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeMeshVariation, EType::Variation, Node, Node::EType::Mesh)
-
-
-    //---------------------------------------------------------------------------------------------
-    int NodeMeshVariation::GetInputCount() const { return 1 + m_pD->m_variations.Num(); }
-
-
-    //---------------------------------------------------------------------------------------------
-    Node* NodeMeshVariation::GetInputNode( int i ) const
-    {
-        check( i >= 0 && i < GetInputCount() );
-
-        if ( i == 0 )
-        {
-            return m_pD->m_defaultMesh.get();
-        }
-        i -= 1;
-
-        if ( i < m_pD->m_variations.Num() )
-        {
-            return m_pD->m_variations[i].m_mesh.get();
-        }
-        i -= m_pD->m_variations.Num();
-
-        return nullptr;
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    void NodeMeshVariation::SetInputNode( int i, NodePtr pNode )
-    {
-        check( i >= 0 && i < GetInputCount() );
-
-        if ( i == 0 )
-        {
-            m_pD->m_defaultMesh = dynamic_cast<NodeMesh*>( pNode.get() );
-            return;
-        }
-
-        i -= 1;
-        if ( i < m_pD->m_variations.Num() )
-        {
-
-            m_pD->m_variations[i].m_mesh = dynamic_cast<NodeMesh*>( pNode.get() );
-            return;
-        }
-        i -= m_pD->m_variations.Num();
-    }
 
 
     //---------------------------------------------------------------------------------------------

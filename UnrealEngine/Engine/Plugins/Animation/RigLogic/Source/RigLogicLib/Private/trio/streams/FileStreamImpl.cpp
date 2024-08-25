@@ -63,6 +63,7 @@ FileStreamImpl::FileStreamImpl(const char* path_, AccessMode accessMode_, OpenMo
     fileAccessMode{accessMode_},
     fileOpenMode{openMode_},
     fileSize{getFileSizeStd(filePath.c_str())},
+    filePos{},
     memRes{memRes_} {
 }
 
@@ -97,7 +98,7 @@ void FileStreamImpl::close() {
 }
 
 std::uint64_t FileStreamImpl::tell() {
-    return static_cast<std::uint64_t>(file.tellp());
+    return filePos;
 }
 
 void FileStreamImpl::seek(std::uint64_t position) {
@@ -108,27 +109,41 @@ void FileStreamImpl::seek(std::uint64_t position) {
     }
 
     file.seekp(static_cast<std::streamoff>(position));
+    filePos = position;
     if (!file.good()) {
         status->set(SeekError, filePath.c_str());
     }
 }
 
 std::size_t FileStreamImpl::read(char* destination, std::size_t size) {
+    if (file.eof()) {
+        return 0ul;
+    }
+
     if ((destination == nullptr) || file.fail() || !file.is_open() || !contains(fileAccessMode, AccessMode::Read)) {
         status->set(ReadError, filePath.c_str());
         return 0ul;
     }
 
     file.read(destination, static_cast<std::streamsize>(size));
-    if (!file.good() && !file.eof()) {
+    if (file.fail() && !file.eof()) {
         status->set(ReadError, filePath.c_str());
     }
 
     const auto bytesRead = file.gcount();
-    return (bytesRead > 0 ? static_cast<std::size_t>(bytesRead) : 0ul);
+    if (bytesRead < 0) {
+        return 0ul;
+    }
+
+    filePos += static_cast<std::size_t>(bytesRead);
+    return static_cast<std::size_t>(bytesRead);
 }
 
 std::size_t FileStreamImpl::read(Writable* destination, std::size_t size) {
+    if (file.eof()) {
+        return 0ul;
+    }
+
     if ((destination == nullptr) || file.fail() || !file.is_open() || !contains(fileAccessMode, AccessMode::Read)) {
         status->set(ReadError, filePath.c_str());
         return 0ul;
@@ -143,11 +158,17 @@ std::size_t FileStreamImpl::read(Writable* destination, std::size_t size) {
     file.read(buffer, static_cast<std::streamsize>(size));
     destination->write(buffer, size);
 
-    if (!file.good() && !file.eof()) {
+    if (file.fail() && !file.eof()) {
         status->set(ReadError, filePath.c_str());
     }
+
     const auto bytesRead = file.gcount();
-    return (bytesRead > 0 ? static_cast<std::size_t>(bytesRead) : 0ul);
+    if (bytesRead < 0) {
+        return 0ul;
+    }
+
+    filePos += static_cast<std::size_t>(bytesRead);
+    return static_cast<std::size_t>(bytesRead);
 }
 
 std::size_t FileStreamImpl::write(const char* source, std::size_t size) {
@@ -156,17 +177,20 @@ std::size_t FileStreamImpl::write(const char* source, std::size_t size) {
         return 0ul;
     }
 
-    const auto preWritePos = file.tellp();
-    file.write(source, static_cast<std::streamsize>(size));
-    const auto postWritePos = file.tellp();
+    #if defined(_MSC_VER) && (_MSC_VER < 1930)
+    // MSVC stdlib or compiler bug workaround
+    file.seekp(file.tellp());
+    #endif  // _MSC_VER
 
+    file.write(source, static_cast<std::streamsize>(size));
     if (!file.good()) {
         status->set(WriteError, filePath.c_str());
-    } else {
-        fileSize = std::max(static_cast<std::uint64_t>(postWritePos), fileSize);
+        return 0ul;
     }
 
-    return (postWritePos > preWritePos ? static_cast<std::size_t>(postWritePos - preWritePos) : 0ul);
+    fileSize = std::max(filePos + size, fileSize);
+    filePos += size;
+    return size;
 }
 
 std::size_t FileStreamImpl::write(Readable* source, std::size_t size) {
@@ -175,7 +199,10 @@ std::size_t FileStreamImpl::write(Readable* source, std::size_t size) {
         return 0ul;
     }
 
-    const auto preWritePos = file.tellp();
+    #if defined(_MSC_VER) && (_MSC_VER < 1930)
+    // MSVC stdlib or compiler bug workaround
+    file.seekp(file.tellp());
+    #endif  // _MSC_VER
 
     char buffer[bufferSize];
     while (size > bufferSize) {
@@ -185,16 +212,14 @@ std::size_t FileStreamImpl::write(Readable* source, std::size_t size) {
     }
     source->read(buffer, size);
     file.write(buffer, static_cast<std::streamsize>(size));
-
-    const auto postWritePos = file.tellp();
-
     if (!file.good()) {
         status->set(WriteError, filePath.c_str());
-    } else {
-        fileSize = std::max(static_cast<std::uint64_t>(postWritePos), fileSize);
+        return 0ul;
     }
 
-    return (postWritePos > preWritePos ? static_cast<std::size_t>(postWritePos - preWritePos) : 0ul);
+    fileSize = std::max(filePos + size, fileSize);
+    filePos += size;
+    return size;
 }
 
 std::uint64_t FileStreamImpl::size() {

@@ -370,7 +370,12 @@ private:
 	/** Regenerates all widgets in the header */
 	SLATE_API void RegenerateWidgets();
 
-	SLATE_API void OnGenerateSelectColumnsSubMenu(FMenuBuilder& InSubMenuBuilder);
+	void ToggleAllColumns();
+	bool CanToggleAllColumns() const;
+	ECheckBoxState GetSelectAllColumnsCheckState() const;
+	FText GetToggleAllColumnsText() const;
+
+	void OnGenerateSelectColumnsSubMenu(FMenuBuilder& InSubMenuBuilder);
 	SLATE_API void ToggleGeneratedColumn(FName ColumnId);
 	SLATE_API ECheckBoxState GetGeneratedColumnCheckedState(FName ColumnId) const;
 

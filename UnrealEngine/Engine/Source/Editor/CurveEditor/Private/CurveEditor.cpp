@@ -42,7 +42,6 @@
 #include "SCurveEditorView.h"
 #include "ScopedTransaction.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Tuple.h"
 #include "Templates/UnrealTemplate.h"
 #include "Trace/Detail/Channel.h"
@@ -626,7 +625,7 @@ void FCurveEditor::ZoomToFitInternal(EAxisList::Type Axes, const TMap<FCurveMode
 		else
 		{
 			// Zoom to the min/max of the specified key set
-			KeyPositionsScratch.SetNum(NumKeys, false);
+			KeyPositionsScratch.SetNum(NumKeys, EAllowShrinking::No);
 			Curve->GetKeyPositions(Pair.Value.AsArray(), KeyPositionsScratch);
 			for (const FKeyPosition& Key : KeyPositionsScratch)
 			{
@@ -691,7 +690,7 @@ void FCurveEditor::ZoomToFitInternal(EAxisList::Type Axes, const TMap<FCurveMode
 			TSharedPtr<SCurveEditorPanel> Panel = WeakPanel.Pin();
 			TSharedPtr<SCurveEditorView> View = WeakView.Pin();
 
-			int32 PanelWidth = 0;
+			double PanelWidth = 0;
 			if (Panel.IsValid())
 			{
 				PanelWidth = WeakPanel.Pin()->GetViewContainerGeometry().GetLocalSize().X;
@@ -701,7 +700,7 @@ void FCurveEditor::ZoomToFitInternal(EAxisList::Type Axes, const TMap<FCurveMode
 				PanelWidth = View->GetViewSpace().GetPhysicalWidth();
 			}
 			
-			double InputPercentage = PanelWidth != 0 ? FMath::Min(Settings->GetFrameInputPadding() / (float)PanelWidth, 0.5) : 0.1; // Cannot pad more than half the width
+			double InputPercentage = PanelWidth != 0 ? FMath::Min(Settings->GetFrameInputPadding() / PanelWidth, 0.5) : 0.1; // Cannot pad more than half the width
 
 			const double MinInputZoom = InputSnapEnabledAttribute.Get() ? InputSnapRateAttribute.Get().AsInterval() : 0.00001;
 			const double InputPadding = FMath::Max((InputMax - InputMin) * InputPercentage, MinInputZoom);
@@ -733,7 +732,7 @@ void FCurveEditor::ZoomToFitInternal(EAxisList::Type Axes, const TMap<FCurveMode
 		{
 			TSharedPtr<SCurveEditorPanel> Panel = WeakPanel.Pin();
 
-			int32 PanelHeight = 0;
+			double PanelHeight = 0;
 			if (Panel.IsValid())
 			{
 				PanelHeight = WeakPanel.Pin()->GetViewContainerGeometry().GetLocalSize().Y;
@@ -743,7 +742,7 @@ void FCurveEditor::ZoomToFitInternal(EAxisList::Type Axes, const TMap<FCurveMode
 				PanelHeight = View->GetViewSpace().GetPhysicalHeight();
 			}
 
-			double OutputPercentage = PanelHeight != 0 ? FMath::Min(Settings->GetFrameOutputPadding() / (float)PanelHeight, 0.5) : 0.1; // Cannot pad more than half the height
+			double OutputPercentage = PanelHeight != 0 ? FMath::Min(Settings->GetFrameOutputPadding() / PanelHeight, 0.5) : 0.1; // Cannot pad more than half the height
 
 			constexpr double MinOutputZoom = 0.00001;
 			const double OutputPadding = FMath::Max((OutputMax - OutputMin) * OutputPercentage, MinOutputZoom);
@@ -1019,7 +1018,7 @@ void FCurveEditor::JumpToStart()
 		return;
 	}
 
-	TimeSliderController->SetScrubPosition(TimeSliderController->GetPlayRange().GetLowerBoundValue(), /*bEvaluate*/ true);
+	TimeSliderController->SetScrubPosition(TimeSliderController->GetTimeBounds().GetLowerBoundValue(), /*bEvaluate*/ true);
 }
 
 void FCurveEditor::JumpToEnd()
@@ -1038,7 +1037,7 @@ void FCurveEditor::JumpToEnd()
 	// Calculate an offset from the end to go to. If they have snapping on (and the scrub style is a block) the last valid frame is represented as one
 	// whole display rate frame before the end, otherwise we just subtract a single frame which matches the behavior of hitting play and letting it run to the end.
 	FFrameTime OneFrame = bInsetDisplayFrame ? FFrameRate::TransformTime(FFrameTime(1), DisplayRate, TickResolution) : FFrameTime(1);
-	FFrameTime NewTime = TimeSliderController->GetPlayRange().GetUpperBoundValue() - OneFrame;
+	FFrameTime NewTime = TimeSliderController->GetTimeBounds().GetUpperBoundValue() - OneFrame;
 
 	TimeSliderController->SetScrubPosition(NewTime, /*bEvaluate*/ true);
 }
@@ -1294,8 +1293,8 @@ void FCurveEditor::CopySelection() const
 					CopyableCurveKeys->LongDisplayName = Curve->GetLongDisplayName().ToString();
 					CopyableCurveKeys->LongIntentionName = Curve->GetLongIntentionName();
 					CopyableCurveKeys->IntentionName = Curve->GetIntentionName();
-					CopyableCurveKeys->KeyPositions.SetNum(NumKeys, false);
-					CopyableCurveKeys->KeyAttributes.SetNum(NumKeys, false);
+					CopyableCurveKeys->KeyPositions.SetNum(NumKeys, EAllowShrinking::No);
+					CopyableCurveKeys->KeyAttributes.SetNum(NumKeys, EAllowShrinking::No);
 
 					TArrayView<const FKeyHandle> KeyHandles = Pair.Value.AsArray();
 
@@ -1439,49 +1438,29 @@ TSet<FCurveModelID> FCurveEditor::GetTargetCurvesForPaste() const
 {
 	TSet<FCurveModelID> TargetCurves;
 
-	TOptional<FCurveModelID> HoveredID;
-	if (WeakPanel.IsValid())
+	TArray<FCurveEditorTreeItemID> NodesToSearch;
+
+	// Try nodes with selected keys
+	for (const TTuple<FCurveModelID, FKeyHandleSet>& Pair : Selection.GetAll())
 	{
-		for (TSharedPtr<SCurveEditorView> View : WeakPanel.Pin()->GetViews())
+		TargetCurves.Add(Pair.Key);
+	}
+
+	// Try selected nodes
+	if (TargetCurves.Num() == 0)
+	{
+		for (const TTuple<FCurveEditorTreeItemID, ECurveEditorTreeSelectionState>& Pair : GetTreeSelection())
 		{
-			if (View.IsValid() && View->GetHoveredCurve().IsSet())
-			{
-				HoveredID = View->GetHoveredCurve().GetValue();
-				break;
-			}
+			NodesToSearch.Add(Pair.Key);
 		}
 	}
 
-	if (HoveredID.IsSet())
+	for (const FCurveEditorTreeItemID& TreeItemID : NodesToSearch)
 	{
-		TargetCurves.Add(HoveredID.GetValue());
-	}
-	else
-	{
-		TArray<FCurveEditorTreeItemID> NodesToSearch;
-
-		// Try nodes with selected keys
-		for (const TTuple<FCurveModelID, FKeyHandleSet>& Pair : Selection.GetAll())
+		const FCurveEditorTreeItem& TreeItem = GetTreeItem(TreeItemID);
+		for (const FCurveModelID& CurveModelID : TreeItem.GetCurves())
 		{
-			TargetCurves.Add(Pair.Key);
-		}
-
-		// Try selected nodes
-		if (TargetCurves.Num() == 0)
-		{
-			for (const TTuple<FCurveEditorTreeItemID, ECurveEditorTreeSelectionState>& Pair : GetTreeSelection())
-			{
-				NodesToSearch.Add(Pair.Key);
-			}
-		}
-
-		for (const FCurveEditorTreeItemID& TreeItemID : NodesToSearch)
-		{
-			const FCurveEditorTreeItem& TreeItem = GetTreeItem(TreeItemID);
-			for (const FCurveModelID& CurveModelID : TreeItem.GetCurves())
-			{
-				TargetCurves.Add(CurveModelID);
-			}
+			TargetCurves.Add(CurveModelID);
 		}
 	}
 
@@ -1811,16 +1790,16 @@ void FCurveEditor::FlattenSelection()
 					}
 					else
 					{
-						KeyAttributesWeighted.RemoveAtSwap(Index, 1, false);
-						KeyHandlesWeighted.RemoveAtSwap(Index, 1, false);
+						KeyAttributesWeighted.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+						KeyHandlesWeighted.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 					}
 				}
 				else
 				{
-					AllKeyPositions.RemoveAtSwap(Index, 1, false);
-					KeyHandles.RemoveAtSwap(Index, 1, false);
-					KeyAttributesWeighted.RemoveAtSwap(Index, 1, false);
-					KeyHandlesWeighted.RemoveAtSwap(Index, 1, false);
+					AllKeyPositions.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+					KeyHandles.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+					KeyAttributesWeighted.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+					KeyHandlesWeighted.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				}
 			}
 
@@ -1876,8 +1855,8 @@ void FCurveEditor::StraightenSelection()
 				}
 				else
 				{
-					AllKeyPositions.RemoveAtSwap(Index, 1, false);
-					KeyHandles.RemoveAtSwap(Index, 1, false);
+					AllKeyPositions.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+					KeyHandles.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				}
 			}
 

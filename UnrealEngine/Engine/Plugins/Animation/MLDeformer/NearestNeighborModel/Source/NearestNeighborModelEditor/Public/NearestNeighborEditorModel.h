@@ -4,113 +4,121 @@
 
 #include "CoreTypes.h"
 #include "MLDeformerMorphModelEditorModel.h"
-#include "MLDeformerEditorActor.h"
+#include "NearestNeighborEditorModelActor.h"
+#include "NearestNeighborModelHelpers.h"
+#include "Types/SlateEnums.h"
 
-class UMLDeformerAsset;
-class USkeletalMesh;
-class UGeometryCache;
 class UMLDeformerComponent;
-class UMLDeformerOptimizedNetwork;
+class UNearestNeighborModelSection;
+class USkeletalMesh;
 class UNearestNeighborModel;
 class UNearestNeighborModelInstance;
-class UNearestNeighborTrainingModel;
 class UNearestNeighborModelVizSettings;
 
 namespace UE::NearestNeighborModel
 {
-	using namespace UE::MLDeformer;
-
+	class FVertVizSelector;
 	class FNearestNeighborEditorModelActor;
-	class FNearestNeighborModelDetails;
-	class FNearestNeighborModelSampler;
+	class FVertexMapSelector;
 
 	class NEARESTNEIGHBORMODELEDITOR_API FNearestNeighborEditorModel
 		: public UE::MLDeformer::FMLDeformerMorphModelEditorModel
 	{
 	public:
+		using FSection = UNearestNeighborModelSection;
+		using FMLDeformerSampler = UE::MLDeformer::FMLDeformerSampler;
+
 		// We need to implement this static MakeInstance method.
 		static FMLDeformerEditorModel* MakeInstance();
 
 		// FGCObject overrides.
 		virtual FString GetReferencerName() const override { return TEXT("FNearestNeighborEditorModel"); }
 		// ~END FGCObject overrides.
-	
-		// FMLDeformerGeomCacheEditorModel overrides.
+
+		// FMLDeformerEditorModel overrides.
 		virtual void Init(const InitSettings& Settings) override;
-		virtual FMLDeformerSampler* CreateSampler() const override;
+		virtual TSharedPtr<FMLDeformerSampler> CreateSamplerObject() const override;
 		virtual void CreateActors(const TSharedRef<IPersonaPreviewScene>& InPersonaPreviewScene) override;
 		virtual void Tick(FEditorViewportClient* ViewportClient, float DeltaTime) override;
-		virtual FMLDeformerEditorActor* CreateEditorActor(const FMLDeformerEditorActor::FConstructSettings& Settings) const override;
-
 		virtual void InitInputInfo(UMLDeformerInputInfo* InputInfo) override;
 		virtual ETrainingResult Train() override;
-		virtual bool IsTrained() const override;
 		virtual bool LoadTrainedNetwork() const override;
+		virtual FMLDeformerTrainingInputAnim* GetTrainingInputAnim(int32 Index) const override;
+		virtual void UpdateTimelineTrainingAnimList() override;
 		virtual void OnPropertyChanged(FPropertyChangedEvent& PropertyChangedEvent) override;
 		virtual void OnPostTraining(ETrainingResult TrainingResult, bool bUsePartiallyTrainedWhenAborted) override;
-		virtual FString GetTrainedNetworkOnnxFile() const override;
-		virtual int32 GetNumTrainingFrames() const override;
-		// ~END FMLDeformerGeomCacheEditorModel overrides.
+		virtual void Render(const FSceneView* View, FViewport* Viewport, FPrimitiveDrawInterface* PDI) override;
+		// ~END FMLDeformerEditorModel overrides.
+		
+		// UMLDeformerMorphModelEditorModel overrides.
+		virtual bool IsMorphWeightClampingSupported() const override	{ return false; }	// We already do input clamping, so output clamping really isn't needed.
+		// ~END UMLDeformerMorphModelEditorModel overrides.
 
-		friend class FNearestNeighborModelSampler;
-		friend class FNearestNeighborModelDetails;
-		friend class ::UNearestNeighborTrainingModel;
+		void OnUpdateClicked();
+		void ClearReferences();
+
+		FVertexMapSelector* GetVertexMapSelector() const;
+		FVertVizSelector* GetVertVizSelector() const;
+
+	protected:
+		virtual void CreateSamplers() override;
+		virtual bool IsAnimIndexValid(int32 Index) const override; 
 
 	private:
+		static constexpr int32 DefaultState = INDEX_NONE; 
+
 		// Some helpers that cast to this model's variants of some classes.
-		UNearestNeighborModel* GetNearestNeighborModel() const { return static_cast<UNearestNeighborModel*>(Model); }
-		UNearestNeighborModelVizSettings* GetNearestNeighborModelVizSettings() const;
-
-		// Recomputes nearest neighbor coeffcients and nearest neighbor vertex offsets. 
-		virtual uint8 UpdateNearestNeighborData();
-
-		// Temporarily set sampler to use part data in nearest neighbor dataset. This is useful when updating nearest neighbor data.
-		uint8 SetSamplerPartData(const int32 PartI);
-
-		// Reset smapler to use the original dataset.
-		void ResetSamplerData();
-
-		void UpdateNearestNeighborActors();
-		void KMeansClusterPoses();
-		TPair<UAnimSequence*, uint8> CreateAnimOfClusterCenters(const FString& PackageName, const TArray<int32>& KmeansResults);
-		uint8 GetKMeansClusterResult() const { return KMeansClusterResult; }
-
-		uint8 InitMorphTargets();
-		void RefreshMorphTargets();
-		void AddFloatArrayToDeltaArray(const TArray<float>& FloatArr, const TArray<uint32>& VertexMap, TArray<FVector3f>& DeltaArr, int32 DeltaArrayOffset = -1, float ScaleFactor = 1);
-
-		int32 GetNumParts();
-
-		void OnMorphTargetUpdate();
-		uint8 GetMorphTargetUpdateResult() { return MorphTargetUpdateResult; }
+		UNearestNeighborModel* GetCastModel() const;
+		UNearestNeighborModelVizSettings* GetCastVizSettings() const;
 		UMLDeformerComponent* GetTestMLDeformerComponent() const;
-		UMLDeformerModelInstance* GetTestMLDeformerModelInstance() const;
-		void InitTestMLDeformerPreviousWeights();
-		uint8 WarnIfNetworkInvalid();
+		USkeletalMeshComponent* GetTestSkeletalMeshComponent() const;
+		UNearestNeighborModelInstance* GetTestNearestNeighborModelInstance() const;
 
-		virtual void CreateNearestNeighborActors(UWorld* World, int32 StartIndex = 0);
+		EOpFlag Update();
+		EOpFlag CheckNetwork();
+		EOpFlag UpdateNearestNeighborData();
+		EOpFlag UpdateMorphDeltas();
+		void ResetMorphTargets();
+		void UpdateNearestNeighborIds();
 
-		template<class TrainingModelClass>
-		TrainingModelClass* InitTrainingModel(FMLDeformerEditorModel* EditorModel)
-		{
-			TArray<UClass*> TrainingModels;
-			GetDerivedClasses(TrainingModelClass::StaticClass(), TrainingModels);
-			if (TrainingModels.IsEmpty())
-			{
-				return nullptr;
-			}
+		FNearestNeighborEditorModelActor* CreateNearestNeighborActor(UWorld* World) const;
+		void UpdateNearestNeighborActor(FNearestNeighborEditorModelActor& Actor) const;
+	
+		FNearestNeighborEditorModelActor* NearestNeighborActor = nullptr;	// This should be only set in CreateActors() and is automatically deleted by the base class.
+		TUniquePtr<FVertexMapSelector> VertexMapSelector;
+		TUniquePtr<FVertVizSelector> VertVizSelector;
+	};
 
-			TrainingModelClass* TrainingModel = Cast<TrainingModelClass>(TrainingModels.Last()->GetDefaultObject());
-			TrainingModel->Init(EditorModel);
-			return TrainingModel;
-		}
+	class FVertexMapSelector
+	{
+	public:
+		void Update(const USkeletalMesh* SkelMesh);
+		TArray<TSharedPtr<FString>>* GetOptions();
+		void OnSelectionChanged(UNearestNeighborModelSection& Section, TSharedPtr<FString> InSelectedItem, ESelectInfo::Type SelectInfo) const;
+		TSharedPtr<FString> GetSelectedItem(const UNearestNeighborModelSection& Section) const;
+		FString GetVertexMapString(const UNearestNeighborModelSection& Section) const;
+		bool IsValid() const;
 
-		// Actors showing the nearest neighbors of the current frame
-		TArray<FNearestNeighborEditorModelActor*> NearestNeighborActors;
+	private:
+		void Reset();
+		TArray<TSharedPtr<FString>> Options;
+		TMap<TSharedPtr<FString>, FString> VertexMapStrings;
+		static TSharedPtr<FString> CustomString;
+	};
 
-		UWorld* EditorWorld = nullptr;
-		uint8 MorphTargetUpdateResult = 0;
-		uint8 KMeansClusterResult = 0;
-		int32 NumTrainingFramesOverride = -1;
+	class FVertVizSelector
+	{
+	public:
+		FVertVizSelector(UNearestNeighborModelVizSettings* InSettings);
+		void Update(int32 NumSections);
+		TArray<TSharedPtr<FString>>* GetOptions();
+		void OnSelectionChanged(TSharedPtr<FString> InSelectedItem, ESelectInfo::Type SelectInfo) const;
+		TSharedPtr<FString> GetSelectedItem() const;
+		int32 GetSectionIndex(TSharedPtr<FString> Item) const;
+		void SelectSection(int32 SectionIndex);
+
+	private:
+		TObjectPtr<UNearestNeighborModelVizSettings> Settings;
+		TArray<TSharedPtr<FString>> Options;
 	};
 }	// namespace UE::NearestNeighborModel

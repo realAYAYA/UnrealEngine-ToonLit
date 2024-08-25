@@ -73,27 +73,27 @@ public:
 
 	virtual void Load(const FJsonObject& Object)
 	{
-		AssignedDevice = Object.GetStringField("AssignedDevice");
-		CommandLine = Object.GetStringField("CommandLine");
-		DeviceId = Object.GetStringField("DeviceId");
-		InitialCulture = Object.GetStringField("InitialCulture");
-		InitialMapName = Object.GetStringField("InitialMapName");
-		Name = Object.GetStringField("Name");
-		InstanceType = (TEnumAsByte<ELauncherProfileRoleInstanceTypes::Type>)((int32)Object.GetNumberField("InstanceType"));
-		VsyncEnabled = Object.GetBoolField("VsyncEnabled");
+		AssignedDevice = Object.GetStringField(TEXT("AssignedDevice"));
+		CommandLine = Object.GetStringField(TEXT("CommandLine"));
+		DeviceId = Object.GetStringField(TEXT("DeviceId"));
+		InitialCulture = Object.GetStringField(TEXT("InitialCulture"));
+		InitialMapName = Object.GetStringField(TEXT("InitialMapName"));
+		Name = Object.GetStringField(TEXT("Name"));
+		InstanceType = (TEnumAsByte<ELauncherProfileRoleInstanceTypes::Type>)((int32)Object.GetNumberField(TEXT("InstanceType")));
+		VsyncEnabled = Object.GetBoolField(TEXT("VsyncEnabled"));
 	}
 
 	virtual void Save(TJsonWriter<>& Writer, const TCHAR* InName = TEXT(""))
 	{
 		Writer.WriteObjectStart(InName);
-		Writer.WriteValue("AssignedDevice", AssignedDevice);
-		Writer.WriteValue("CommandLine", CommandLine);
-		Writer.WriteValue("DeviceId", DeviceId);
-		Writer.WriteValue("InitialCulture", InitialCulture);
-		Writer.WriteValue("InitialMapName", InitialMapName);
-		Writer.WriteValue("Name", InName);
-		Writer.WriteValue("InstanceType", InstanceType);
-		Writer.WriteValue("VsyncEnabled", VsyncEnabled);
+		Writer.WriteValue(TEXT("AssignedDevice"), AssignedDevice);
+		Writer.WriteValue(TEXT("CommandLine"), CommandLine);
+		Writer.WriteValue(TEXT("DeviceId"), DeviceId);
+		Writer.WriteValue(TEXT("InitialCulture"), InitialCulture);
+		Writer.WriteValue(TEXT("InitialMapName"), InitialMapName);
+		Writer.WriteValue(TEXT("Name"), InName);
+		Writer.WriteValue(TEXT("InstanceType"), InstanceType);
+		Writer.WriteValue(TEXT("VsyncEnabled"), VsyncEnabled);
 		Writer.WriteObjectEnd();
 	}
 

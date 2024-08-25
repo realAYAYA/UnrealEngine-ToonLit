@@ -16,12 +16,54 @@ namespace UnrealGameSync
 {
 	public partial class SdkInfoWindow : Form
 	{
+		abstract class SdkAction
+		{
+			public string Name { get; init; }
+
+			public SdkAction(string name)
+			{
+				Name = name;
+			}
+
+			public abstract void Execute();
+		}
+
+		class SdkActionRun : SdkAction
+		{
+			public string Program { get; set; } = "";
+			public string Args { get; set; } = "";
+
+			public SdkActionRun(string name, string program = "", string args = "")
+				: base(name)
+			{
+				Program = program;
+				Args = args;
+			}
+
+			public override void Execute()
+			{
+				try
+				{
+					ProcessStartInfo startInfo = new ProcessStartInfo();
+					startInfo.FileName = Program;
+					startInfo.Arguments = Args;
+					startInfo.UseShellExecute = true;
+					Process.Start(startInfo);
+				}
+
+				catch (Exception ex)
+				{
+					MessageBox.Show($"Unable to run '{Program} {Args}': {ex.Message}");
+				}
+			}
+		}
+
 		class SdkItem
 		{
 			public string Category { get; }
 			public string Description { get; }
-			public string? Install { get; set; }
-			public string? Browse { get; set; }
+
+			public List<SdkAction> Actions = new List<SdkAction>();
 
 			public SdkItem(string category, string description)
 			{
@@ -55,14 +97,14 @@ namespace UnrealGameSync
 			_badgeFont = badgeFont;
 
 			Dictionary<string, ConfigObject> uniqueIdToObject = new Dictionary<string, ConfigObject>(StringComparer.InvariantCultureIgnoreCase);
-			foreach(string sdkInfoEntry in sdkInfoEntries)
+			foreach (string sdkInfoEntry in sdkInfoEntries)
 			{
 				ConfigObject obj = new ConfigObject(sdkInfoEntry);
 
 				string uniqueId = obj.GetValue("UniqueId", Guid.NewGuid().ToString());
 
 				ConfigObject? existingObject;
-				if(uniqueIdToObject.TryGetValue(uniqueId, out existingObject))
+				if (uniqueIdToObject.TryGetValue(uniqueId, out existingObject))
 				{
 					existingObject.AddOverrides(obj, null);
 				}
@@ -73,49 +115,102 @@ namespace UnrealGameSync
 			}
 
 			List<SdkItem> items = new List<SdkItem>();
-			foreach(ConfigObject obj in uniqueIdToObject.Values)
+			foreach (ConfigObject obj in uniqueIdToObject.Values)
 			{
 				string category = obj.GetValue("Category", "Other");
 				string description = obj.GetValue("Description", "");
 				SdkItem item = new SdkItem(category, description);
 
-				item.Install = Utility.ExpandVariables(obj.GetValue("Install", ""), variables);
-				if(item.Install.Contains("$(", StringComparison.Ordinal))
-				{
-					item.Install = null;
-				}
+				List<string> keys = obj.GetKeys().ToList();
 
-				item.Browse = Utility.ExpandVariables(obj.GetValue("Browse", ""), variables);
-				if(item.Browse.Contains("$(", StringComparison.Ordinal))
+				foreach (string key in keys)
 				{
-					item.Browse = null;
-				}
+					string keyToAdd = key;
+					string? value = obj.GetValue(keyToAdd, "");
 
-				if(!String.IsNullOrEmpty(item.Install) && String.IsNullOrEmpty(item.Browse))
-				{
-					try
+					if (String.IsNullOrEmpty(value))
 					{
-						item.Browse = Path.GetDirectoryName(item.Install);
+						continue;
 					}
-					catch
+
+					if (!value.StartsWith('('))
 					{
-						item.Browse = null;
+						// Handle the predefined Install and Browse actions.
+
+						if (keyToAdd == "Install")
+						{
+							string? installArgument = Utility.ExpandVariables(value, variables);
+							if (!installArgument.Contains("$(", StringComparison.Ordinal))
+							{
+								item.Actions.Add(new SdkActionRun("Install", installArgument));
+
+								// If Browse is not explicitly defined, generate it automatically from the Installer path.
+								if (!keys.Contains("Browse"))
+								{
+									keyToAdd = "Browse";
+									value = Path.GetDirectoryName(installArgument);
+
+									if (String.IsNullOrEmpty(value))
+									{
+										continue;
+									}
+								}
+							}
+						}
+
+						if (keyToAdd == "Browse")
+						{
+							string? browseArgument = Utility.ExpandVariables(value, variables);
+							if (!browseArgument.Contains("$(", StringComparison.Ordinal))
+							{
+								item.Actions.Add(new SdkActionRun("Browse", "explorer.exe", browseArgument.Replace('/', '\\')));
+							}
+						}
+					}
+					else
+					{
+						// Handle generic actions i.e. ones with custom names which may launch arbitrary executables with additional parameters.
+						// For instance,
+						//		ReleaseNotes=(Program="notepad.exe", Args="notes.txt")
+						// will add a "ReleaseNotes" badge which, when clicked, will open "notes.txt" in the notepad.
+
+						ConfigObject valueObj = new ConfigObject(value);
+
+						string program = valueObj.GetValue("Program", "");
+						string args = valueObj.GetValue("Args", "");
+
+						program = Utility.ExpandVariables(program, variables);
+						if (program.Contains("$(", StringComparison.Ordinal))
+						{
+							continue;
+						}
+
+						args = Utility.ExpandVariables(args, variables);
+						if (args.Contains("$(", StringComparison.Ordinal))
+						{
+							continue;
+						}
+
+						if (!String.IsNullOrEmpty(program))
+						{
+							item.Actions.Add(new SdkActionRun(keyToAdd, program, args));
+						}
 					}
 				}
 
 				items.Add(item);
 			}
 
-			foreach(IGrouping<string, SdkItem> itemGroup in items.GroupBy(x => x.Category).OrderBy(x => x.Key))
+			foreach (IGrouping<string, SdkItem> itemGroup in items.GroupBy(x => x.Category).OrderBy(x => x.Key))
 			{
 				ListViewGroup group = new ListViewGroup(itemGroup.Key);
 				SdkListView.Groups.Add(group);
 
-				foreach(SdkItem item in itemGroup)
+				foreach (SdkItem item in itemGroup)
 				{
 					ListViewItem newItem = new ListViewItem(group);
 					newItem.SubItems.Add(item.Description);
-					newItem.SubItems.Add(new ListViewItem.ListViewSubItem(){ Tag = item });
+					newItem.SubItems.Add(new ListViewItem.ListViewSubItem() { Tag = item });
 					SdkListView.Items.Add(newItem);
 				}
 			}
@@ -123,7 +218,7 @@ namespace UnrealGameSync
 			System.Reflection.PropertyInfo doubleBufferedProperty = typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
 			doubleBufferedProperty.SetValue(SdkListView, true, null);
 
-			if(SdkListView.Items.Count > 0)
+			if (SdkListView.Items.Count > 0)
 			{
 				int itemsHeight = SdkListView.Items[^1].Bounds.Bottom + 20;
 				Height = SdkListView.Top + itemsHeight + (Height - SdkListView.Bottom);
@@ -147,7 +242,7 @@ namespace UnrealGameSync
 			{
 				e.DrawDefault = true;
 			}
-			else if(e.ColumnIndex != columnHeader3.Index)
+			else if (e.ColumnIndex != columnHeader3.Index)
 			{
 				TextRenderer.DrawText(e.Graphics, e.SubItem.Text, SdkListView.Font, e.Bounds, SdkListView.ForeColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 			}
@@ -156,10 +251,10 @@ namespace UnrealGameSync
 				e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
 				List<BadgeInfo> badges = GetBadges(e.Item, e.SubItem);
-				for(int idx = 0; idx < badges.Count; idx++)
+				for (int idx = 0; idx < badges.Count; idx++)
 				{
-					Color badgeColor = (_hoverBadgeUniqueId == badges[idx].UniqueId)? Color.FromArgb(140, 180, 230) : Color.FromArgb(112, 146, 190);
-					if(badges[idx].OnClick != null)
+					Color badgeColor = (_hoverBadgeUniqueId == badges[idx].UniqueId) ? Color.FromArgb(140, 180, 230) : Color.FromArgb(112, 146, 190);
+					if (badges[idx].OnClick != null)
 					{
 						DrawBadge(e.Graphics, badges[idx].Label, badges[idx].Rectangle, (idx > 0), (idx < badges.Count - 1), badgeColor);
 					}
@@ -172,19 +267,19 @@ namespace UnrealGameSync
 			string? newHoverUniqueId = null;
 
 			ListViewHitTestInfo hitTest = SdkListView.HitTest(e.Location);
-			if(hitTest.Item != null && hitTest.SubItem == hitTest.Item.SubItems[2])
+			if (hitTest.Item != null && hitTest.SubItem == hitTest.Item.SubItems[2])
 			{
 				List<BadgeInfo> badges = GetBadges(hitTest.Item, hitTest.SubItem);
-				foreach(BadgeInfo badge in badges)
+				foreach (BadgeInfo badge in badges)
 				{
-					if(badge.Rectangle.Contains(e.Location))
+					if (badge.Rectangle.Contains(e.Location))
 					{
 						newHoverUniqueId = badge.UniqueId;
 					}
 				}
 			}
 
-			if(newHoverUniqueId != _hoverBadgeUniqueId)
+			if (newHoverUniqueId != _hoverBadgeUniqueId)
 			{
 				_hoverBadgeUniqueId = newHoverUniqueId;
 				SdkListView.Invalidate();
@@ -199,12 +294,12 @@ namespace UnrealGameSync
 		private void SdkListView_MouseDown(object sender, MouseEventArgs e)
 		{
 			ListViewHitTestInfo hitTest = SdkListView.HitTest(e.Location);
-			if(hitTest.Item != null && hitTest.SubItem == hitTest.Item.SubItems[2])
+			if (hitTest.Item != null && hitTest.SubItem == hitTest.Item.SubItems[2])
 			{
 				List<BadgeInfo> badges = GetBadges(hitTest.Item, hitTest.SubItem);
-				foreach(BadgeInfo badge in badges)
+				foreach (BadgeInfo badge in badges)
 				{
-					if(badge.Rectangle.Contains(e.Location) && badge.OnClick != null)
+					if (badge.Rectangle.Contains(e.Location) && badge.OnClick != null)
 					{
 						badge.OnClick();
 					}
@@ -220,22 +315,15 @@ namespace UnrealGameSync
 
 			SdkItem sdk = (SdkItem)subItem.Tag;
 
-			Action? installAction = null;
-			if(!String.IsNullOrEmpty(sdk.Install))
+			foreach (SdkAction action in sdk.Actions)
 			{
-				installAction = () => { Install(sdk.Install); };
-			}
-			badges.Add(new BadgeInfo(uniqueIdPrefix + "_Install", "Install") { OnClick = installAction });
+				Action clickAction = () => { action.Execute(); };
 
-			Action? browseAction = null;
-			if(!String.IsNullOrEmpty(sdk.Browse))
-			{
-				browseAction = () => { Browse(sdk.Browse); };
+				badges.Add(new BadgeInfo($"{uniqueIdPrefix}_{action.Name}", action.Name) { OnClick = clickAction });
 			}
-			badges.Add(new BadgeInfo(uniqueIdPrefix + "_Browse", "Browse"){ OnClick = browseAction });
 
 			int right = subItem.Bounds.Right - 10;
-			for(int idx = badges.Count - 1; idx >= 0; idx--)
+			for (int idx = badges.Count - 1; idx >= 0; idx--)
 			{
 				Size badgeSize = GetBadgeSize(badges[idx].Label);
 				right -= badgeSize.Width;
@@ -243,33 +331,6 @@ namespace UnrealGameSync
 			}
 
 			return badges;
-		}
-
-		private static void Browse(string directoryName)
-		{
-			try
-			{
-				Process.Start("explorer.exe", String.Format("\"{0}\"", directoryName));
-			}
-			catch(Exception ex)
-			{
-				MessageBox.Show(String.Format("Unable to open explorer to {0}: {1}", directoryName, ex.Message));
-			}
-		}
-
-		private static void Install(string fileName)
-		{
-			try
-			{
-				ProcessStartInfo startInfo = new ProcessStartInfo();
-				startInfo.FileName = fileName;
-				startInfo.UseShellExecute = true;
-				Process.Start(startInfo);
-			}
-			catch(Exception ex)
-			{
-				MessageBox.Show(String.Format("Unable to run {0}: {1}", fileName, ex.Message));
-			}
 		}
 
 		private Size GetBadgeSize(string badgeText)
@@ -285,13 +346,13 @@ namespace UnrealGameSync
 			using (GraphicsPath path = new GraphicsPath())
 			{
 				path.StartFigure();
-				path.AddLine(badgeRect.Left + (mergeLeft? 1 : 0), badgeRect.Top, badgeRect.Left - (mergeLeft? 1 : 0), badgeRect.Bottom);
-				path.AddLine(badgeRect.Left - (mergeLeft? 1 : 0), badgeRect.Bottom, badgeRect.Right - 1 - (mergeRight? 1 : 0), badgeRect.Bottom);
-				path.AddLine(badgeRect.Right - 1 - (mergeRight? 1 : 0), badgeRect.Bottom, badgeRect.Right - 1 + (mergeRight? 1 : 0), badgeRect.Top);
-				path.AddLine(badgeRect.Right - 1 + (mergeRight? 1 : 0), badgeRect.Top, badgeRect.Left + (mergeLeft? 1 : 0), badgeRect.Top);
+				path.AddLine(badgeRect.Left + (mergeLeft ? 1 : 0), badgeRect.Top, badgeRect.Left - (mergeLeft ? 1 : 0), badgeRect.Bottom);
+				path.AddLine(badgeRect.Left - (mergeLeft ? 1 : 0), badgeRect.Bottom, badgeRect.Right - 1 - (mergeRight ? 1 : 0), badgeRect.Bottom);
+				path.AddLine(badgeRect.Right - 1 - (mergeRight ? 1 : 0), badgeRect.Bottom, badgeRect.Right - 1 + (mergeRight ? 1 : 0), badgeRect.Top);
+				path.AddLine(badgeRect.Right - 1 + (mergeRight ? 1 : 0), badgeRect.Top, badgeRect.Left + (mergeLeft ? 1 : 0), badgeRect.Top);
 				path.CloseFigure();
 
-				using(SolidBrush brush = new SolidBrush(badgeColor))
+				using (SolidBrush brush = new SolidBrush(badgeColor))
 				{
 					graphics.FillPath(brush, path);
 				}

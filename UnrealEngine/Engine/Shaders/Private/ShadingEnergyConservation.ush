@@ -3,9 +3,9 @@
 #pragma once
 
 // If EnergyConservation flag is not enabled explicitly then:
-// * If strata is enabled: ON by default
-// * If strata is disabled: OFF by default
-#if STRATA_ENABLED || LEGACY_MATERIAL_ENERGYCONSERVATION
+// * If Substrate is enabled: ON by default
+// * If Substrate is disabled: OFF by default
+#if SUBSTRATE_ENABLED || LEGACY_MATERIAL_ENERGYCONSERVATION
 	#undef USE_ENERGY_CONSERVATION
 	#define USE_ENERGY_CONSERVATION 1
 #else
@@ -92,7 +92,7 @@ float DiffuseEnergyLookup(float Roughness, float NoV)
 	//return View.ShadingEnergyDiffuseTexture.SampleLevel(View.ShadingEnergySampler, float2(NoV, Roughness), 0);
 	// For now we do not apply Chan diffuse energy preservation on diffuse ambiant.
 	// This is because Chan is built for F=0.04 and unfortunately this causes ambient to darken a grazing angles.
-	// STRATA_TODO Apply the inverse of Fresnel with F=0.04 on Chan when building the table.
+	// SUBSTRATE_TODO Apply the inverse of Fresnel with F=0.04 on Chan when building the table.
 	return 1.0f;
 #elif USE_ENERGY_CONSERVATION == 2
 	// TODO

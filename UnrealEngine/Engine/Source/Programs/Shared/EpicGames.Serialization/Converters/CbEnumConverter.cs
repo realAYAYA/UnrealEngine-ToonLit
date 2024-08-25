@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -8,11 +7,11 @@ using System.Reflection.Emit;
 
 namespace EpicGames.Serialization.Converters
 {
-	class CbEnumConverter<T> : CbConverterBase<T>, ICbConverterMethods where T : Enum
+	class CbEnumConverter<T> : CbConverter<T>, ICbConverterMethods where T : Enum
 	{
 		readonly Func<CbField, T> _readFunc;
 		readonly Action<CbWriter, T> _writeFunc;
-		readonly Action<CbWriter, Utf8String, T> _writeNamedFunc;
+		readonly Action<CbWriter, CbFieldName, T> _writeNamedFunc;
 
 		public CbEnumConverter()
 		{
@@ -26,9 +25,9 @@ namespace EpicGames.Serialization.Converters
 			CreateEnumWriter(WriteMethod.GetILGenerator());
 			_writeFunc = (Action<CbWriter, T>)WriteMethod.CreateDelegate(typeof(Action<CbWriter, T>));
 
-			WriteNamedMethod = new DynamicMethod($"WriteNamed_{type.Name}", null, new Type[] { typeof(CbWriter), typeof(Utf8String), type });
+			WriteNamedMethod = new DynamicMethod($"WriteNamed_{type.Name}", null, new Type[] { typeof(CbWriter), typeof(CbFieldName), type });
 			CreateNamedEnumWriter(WriteNamedMethod.GetILGenerator());
-			_writeNamedFunc = (Action<CbWriter, Utf8String, T>)WriteNamedMethod.CreateDelegate(typeof(Action<CbWriter, Utf8String, T>));
+			_writeNamedFunc = (Action<CbWriter, CbFieldName, T>)WriteNamedMethod.CreateDelegate(typeof(Action<CbWriter, CbFieldName, T>));
 		}
 
 		public DynamicMethod ReadMethod { get; }
@@ -44,7 +43,7 @@ namespace EpicGames.Serialization.Converters
 
 		public override void Write(CbWriter writer, T value) => _writeFunc(writer, value);
 
-		public override void WriteNamed(CbWriter writer, Utf8String name, T value) => _writeNamedFunc(writer, name, value);
+		public override void WriteNamed(CbWriter writer, CbFieldName name, T value) => _writeNamedFunc(writer, name, value);
 
 		static void CreateEnumReader(ILGenerator generator)
 		{
@@ -94,13 +93,13 @@ namespace EpicGames.Serialization.Converters
 
 	class CbEnumConverterFactory : CbConverterFactory
 	{
-		public override ICbConverter? CreateConverter(Type type)
+		public override CbConverter? CreateConverter(Type type)
 		{
-			ICbConverter? converter = null;
+			CbConverter? converter = null;
 			if (type.IsEnum)
 			{
 				Type converterType = typeof(CbEnumConverter<>).MakeGenericType(type);
-				converter = (ICbConverter?)Activator.CreateInstance(converterType);
+				converter = (CbConverter?)Activator.CreateInstance(converterType);
 			}
 			return converter;
 		}

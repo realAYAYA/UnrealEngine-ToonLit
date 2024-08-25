@@ -243,7 +243,7 @@ bool FCommonAnalogCursor::HandleKeyDownEvent(FSlateApplication& SlateApp, const 
 		{
 			return true;
 		}
-		else
+		else if (!bIsVirtualAccept || ShouldVirtualAcceptSimulateMouseButton(InKeyEvent, IE_Pressed))
 		{
 			// There is no awareness on a mouse event of whether it's real or not, so mark that here.
 			UCommonInputSubsystem& InputSubsytem = ActionRouter.GetInputSubsystem();
@@ -275,7 +275,7 @@ bool FCommonAnalogCursor::HandleKeyUpEvent(FSlateApplication& SlateApp, const FK
 		{
 			return true;
 		}
-		else
+		else if (!bIsVirtualAccept || ShouldVirtualAcceptSimulateMouseButton(InKeyEvent, IE_Released))
 		{
 			return FAnalogCursor::HandleKeyUpEvent(SlateApp, InKeyEvent);
 		}
@@ -325,7 +325,7 @@ bool FCommonAnalogCursor::HandleMouseButtonDownEvent(FSlateApplication& SlateApp
 {
 	if (FAnalogCursor::IsRelevantInput(PointerEvent))
 	{
-#if UE_COMMONUI_PLATFORM_SUPPORTS_TOUCH	
+#if UE_COMMONUI_PLATFORM_REQUIRES_CURSOR_HIDDEN_FOR_TOUCH	
 		// Some platforms don't register as switching its input type, so detect touch input here to hide the cursor.
 		if (PointerEvent.IsTouchEvent() && ShouldHideCursor())
 		{

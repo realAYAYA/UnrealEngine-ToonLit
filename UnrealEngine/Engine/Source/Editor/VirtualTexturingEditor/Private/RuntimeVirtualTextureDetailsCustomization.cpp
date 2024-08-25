@@ -336,9 +336,8 @@ FReply FRuntimeVirtualTextureComponentDetailsCustomization::BuildStreamedMips()
 
 		RuntimeVirtualTextureComponent->GetStreamingTexture()->Modify();
 
-		const bool bDebug = RuntimeVirtualTextureComponent->IsBuildDebugStreamingMips();
-		const ERuntimeVirtualTextureDebugType DebugType = bDebug ? ERuntimeVirtualTextureDebugType::Debug : ERuntimeVirtualTextureDebugType::None;
-		if (RuntimeVirtualTexture::BuildStreamedMips(RuntimeVirtualTextureComponent, DebugType))
+		const FLinearColor FixedColor = RuntimeVirtualTextureComponent->GetStreamingMipsFixedColor();
+		if (RuntimeVirtualTexture::BuildStreamedMips(RuntimeVirtualTextureComponent, FixedColor))
 		{
 			bOK = true;
 		}

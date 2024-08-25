@@ -39,11 +39,10 @@ FAutoConsoleVariableRef CVarLumenTranslucencyReflectionsFrontLayerAllowed(
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
-float GLumenFrontLayerRelativeDepthThreshold = .0001f;
-FAutoConsoleVariableRef CVarLumenFrontLayerRelativeDepthThreshold(
-	TEXT("r.Lumen.TranslucencyReflections.FrontLayer.RelativeDepthThreshold"),
-	GLumenFrontLayerRelativeDepthThreshold,
-	TEXT("Depth test threshold used to determine whether the fragments being rendered match the single layer that reflections were calculated for"),
+static TAutoConsoleVariable<float> CVarLumenFrontLayerDepthThreshold(
+	TEXT("r.Lumen.TranslucencyReflections.FrontLayer.DepthThreshold"),
+	1024.0f,
+	TEXT("Depth test threshold used to determine whether the fragments being rendered match the single layer that reflections were calculated for. In float ULP units."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
@@ -62,7 +61,8 @@ namespace Lumen
 	{
 		return bShouldRenderInMainPass
 			&& ShouldIncludeDomainInMeshPass(Material.GetMaterialDomain())
-			&& Material.IsTranslucencyWritingFrontLayerTransparency();
+			&& Material.IsTranslucencyWritingFrontLayerTransparency()
+			&& !Material.IsTranslucencyAfterMotionBlurEnabled(); // see MTP_AfterMotionBlur
 	}
 }
 
@@ -176,7 +176,7 @@ bool CanMaterialRenderInLumenFrontLayerTranslucencyGBufferPass(
 	const FSceneView* View = ViewFamily.Views[0];
 	check(View);
 
-	return ShouldRenderLumenDiffuseGI(&Scene, *View) && Lumen::ShouldRenderInFrontLayerTranslucencyGBufferPass(PrimitiveSceneProxy.ShouldRenderInMainPass(), Material);
+	return ShouldRenderLumenReflections(*View) && Lumen::ShouldRenderInFrontLayerTranslucencyGBufferPass(PrimitiveSceneProxy.ShouldRenderInMainPass(), Material);
 }
 
 void FLumenFrontLayerTranslucencyGBufferMeshProcessor::AddMeshBatch(const FMeshBatch& RESTRICT MeshBatch, uint64 BatchElementMask, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, int32 StaticMeshId)
@@ -187,7 +187,7 @@ void FLumenFrontLayerTranslucencyGBufferMeshProcessor::AddMeshBatch(const FMeshB
 		&& PrimitiveSceneProxy
 		&& ViewIfDynamicMeshCommand
 		//@todo - this filter should be done at a higher level
-		&& ShouldRenderLumenDiffuseGI(Scene, *ViewIfDynamicMeshCommand))
+		&& ShouldRenderLumenReflections(*ViewIfDynamicMeshCommand))
 	{
 		const FMaterialRenderProxy* MaterialRenderProxy = MeshBatch.MaterialRenderProxy;
 		while (MaterialRenderProxy)
@@ -551,7 +551,7 @@ void FDeferredShadingSceneRenderer::RenderLumenFrontLayerTranslucencyReflections
 			ERDGPassFlags::Compute);
 
 		View.LumenFrontLayerTranslucency.bEnabled = true;
-		View.LumenFrontLayerTranslucency.RelativeDepthThreshold = GLumenFrontLayerRelativeDepthThreshold;
+		View.LumenFrontLayerTranslucency.RelativeDepthThreshold = CVarLumenFrontLayerDepthThreshold.GetValueOnRenderThread();
 		View.LumenFrontLayerTranslucency.Radiance = ReflectionTexture;
 		View.LumenFrontLayerTranslucency.Normal = ReflectionGBuffer.FrontLayerTranslucencyNormal;
 		View.LumenFrontLayerTranslucency.SceneDepth = ReflectionGBuffer.FrontLayerTranslucencySceneDepth;

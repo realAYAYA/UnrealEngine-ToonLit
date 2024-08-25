@@ -15,10 +15,10 @@ const FValueTypeDescription GValueTypeDescriptions[] =
 	{ TEXT("float2"),		EValueType::Float2,		EValueComponentType::Float,		2, sizeof(float) },
 	{ TEXT("float3"),		EValueType::Float3,		EValueComponentType::Float,		3, sizeof(float) },
 	{ TEXT("float4"),		EValueType::Float4,		EValueComponentType::Float,		4, sizeof(float) },
-	{ TEXT("FLWCScalar"),	EValueType::Double1,	EValueComponentType::Double,	1, sizeof(double) },
-	{ TEXT("FLWCVector2"),	EValueType::Double2,	EValueComponentType::Double,	2, sizeof(double) },
-	{ TEXT("FLWCVector3"),	EValueType::Double3,	EValueComponentType::Double,	3, sizeof(double) },
-	{ TEXT("FLWCVector4"),	EValueType::Double4,	EValueComponentType::Double,	4, sizeof(double) },
+	{ TEXT("FWSScalar"),	EValueType::Double1,	EValueComponentType::Double,	1, sizeof(double) },
+	{ TEXT("FWSVector2"),	EValueType::Double2,	EValueComponentType::Double,	2, sizeof(double) },
+	{ TEXT("FWSVector3"),	EValueType::Double3,	EValueComponentType::Double,	3, sizeof(double) },
+	{ TEXT("FWSVector4"),	EValueType::Double4,	EValueComponentType::Double,	4, sizeof(double) },
 	{ TEXT("int"),			EValueType::Int1,		EValueComponentType::Int,		1, sizeof(int32) },
 	{ TEXT("int2"),			EValueType::Int2,		EValueComponentType::Int,		2, sizeof(int32) },
 	{ TEXT("int3"),			EValueType::Int3,		EValueComponentType::Int,		3, sizeof(int32) },
@@ -32,8 +32,8 @@ const FValueTypeDescription GValueTypeDescriptions[] =
 	{ TEXT("Numeric3"),		EValueType::Numeric3,	EValueComponentType::Numeric,	3, sizeof(double) },
 	{ TEXT("Numeric4"),		EValueType::Numeric4,	EValueComponentType::Numeric,	4, sizeof(double) },
 	{ TEXT("float4x4"),		EValueType::Float4x4,	EValueComponentType::Float,		16, sizeof(float) },
-	{ TEXT("FLWCMatrix"),	EValueType::Double4x4,	EValueComponentType::Double,	16, sizeof(double) },
-	{ TEXT("FLWCInverseMatrix"), EValueType::DoubleInverse4x4, EValueComponentType::Double, 16, sizeof(double) },
+	{ TEXT("FWSMatrix"),	EValueType::Double4x4,	EValueComponentType::Double,	16, sizeof(double) },
+	{ TEXT("FWSInverseMatrix"), EValueType::DoubleInverse4x4, EValueComponentType::Double, 16, sizeof(double) },
 	{ TEXT("Numeric4x4"),	EValueType::Numeric4x4, EValueComponentType::Numeric,	16, sizeof(double) },
 	{ TEXT("struct"),		EValueType::Struct,		EValueComponentType::Void,		0, 0 },
 	{ TEXT("object"),		EValueType::Object,		EValueComponentType::Void,		0, 0 },
@@ -171,7 +171,7 @@ EValueType FType::GetFlatFieldType(int32 Index) const
 	}
 }
 
-FType CombineTypes(const FType& Lhs, const FType& Rhs)
+FType CombineTypes(const FType& Lhs, const FType& Rhs, bool bMergeMatrixTypes)
 {
 	if (Lhs.IsVoid() || Lhs.IsAny())
 	{
@@ -182,7 +182,7 @@ FType CombineTypes(const FType& Lhs, const FType& Rhs)
 		return Lhs;
 	}
 
-	if (Lhs.IsNumericVector() && Rhs.IsNumericVector())
+	if ((Lhs.IsNumericVector() && Rhs.IsNumericVector()) || (bMergeMatrixTypes && Lhs.IsNumericMatrix() && Rhs.IsNumericMatrix()))
 	{
 		const FValueTypeDescription& LhsDesc = GetValueTypeDescription(Lhs);
 		const FValueTypeDescription& RhsDesc = GetValueTypeDescription(Rhs);

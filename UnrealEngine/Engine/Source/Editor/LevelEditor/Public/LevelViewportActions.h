@@ -10,7 +10,7 @@
 #include "BufferVisualizationMenuCommands.h"
 #include "NaniteVisualizationMenuCommands.h"
 #include "LumenVisualizationMenuCommands.h"
-#include "StrataVisualizationMenuCommands.h"
+#include "SubstrateVisualizationMenuCommands.h"
 #include "GroomVisualizationMenuCommands.h"
 #include "VirtualShadowMapVisualizationMenuCommands.h"
 
@@ -171,6 +171,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	TSharedPtr< FUICommandInfo > ClearAllBookmarks;
 
 	/** Actor pilot commands */
+	TSharedPtr< FUICommandInfo > SelectPilotedActor;
 	TSharedPtr< FUICommandInfo > EjectActorPilot;
 	TSharedPtr< FUICommandInfo > PilotSelectedActor;
 

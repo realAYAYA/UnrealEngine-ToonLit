@@ -266,3 +266,5 @@ void FControlRigEditorEditMode::GetOnScreenDebugInfo(TArray<FText>& OutDebugInfo
 {
 
 }
+
+FName FModularRigEditorEditMode::ModeName("EditMode.ModularRigEditor");

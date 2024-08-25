@@ -34,11 +34,10 @@ bool FHttpServerIntegrationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("HttpRouter is NOT null on bind failure by default"), ValidHttpRouterOnFail.IsValid());
 
 	// Ensure we can create route bindings
-	const FHttpRequestHandler RequestHandler = [this]
-	(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+	const FHttpRequestHandler RequestHandler = FHttpRequestHandler::CreateLambda([](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 	{
 		return true;
-	};
+	});
 	FHttpRouteHandle HttpRouteHandle = HttpRouter->BindRoute(HttpPath, EHttpServerRequestVerbs::VERB_GET, RequestHandler);
 	TestTrue(TEXT("HttpRouteHandle.IsValid()"), HttpRouteHandle.IsValid());
 
@@ -93,11 +92,11 @@ bool FHttpServerPathParametersTest::RunTest(const FString& Parameters)
 
 		void SetHandler()
 		{
-			Handler = [this](const FHttpServerRequest&, const FHttpResultCallback&)
+			Handler = FHttpRequestHandler::CreateLambda([this](const FHttpServerRequest&, const FHttpResultCallback&)
 			{
 				bRouteQueried = true;
 				return true;
-			};
+			});
 		}
 
 		EVerb QueryVerb;
@@ -157,7 +156,7 @@ bool FHttpServerPathParametersTest::RunTest(const FString& Parameters)
 		FHttpRequestHandlerIterator Iterator(Request, Registrar);
 		if (const FHttpRequestHandler* RequestHandlerPtr = Iterator.Next())
 		{
-			(*RequestHandlerPtr)(*Request, Callback);
+			[[maybe_unused]] bool bHandled = RequestHandlerPtr->Execute(*Request, Callback);
 		}
 
 		if ((Test.bExpectedResult == ShouldMatch && !Test.bRouteQueried) || (Test.bExpectedResult == ShouldNotMatch && Test.bRouteQueried))

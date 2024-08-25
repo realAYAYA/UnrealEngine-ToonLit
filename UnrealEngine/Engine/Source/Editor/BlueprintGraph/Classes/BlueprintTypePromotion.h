@@ -9,7 +9,6 @@
 #include "Containers/Map.h"
 #include "Containers/Set.h"
 #include "CoreMinimal.h"
-#include "Delegates/IDelegateInstance.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
 #include "HAL/IConsoleManager.h"
@@ -152,9 +151,6 @@ private:
 	explicit FTypePromotion();
 	~FTypePromotion();
 
-	/** Callback that will rebuild the op table when hot reload is triggered */
-	static void OnModulesChanged(FName ModuleThatChanged, EModuleChangeReason ReasonForChange);
-
 	bool IsFunctionPromotionReady_Internal(const UFunction* const FuncToConsider) const;
 
 	FEdGraphPinType GetPromotedType_Internal(const TArray<UEdGraphPin*>& WildcardPins) const;
@@ -182,12 +178,6 @@ private:
 	void AddOpFunction(FName OpName, UFunction* Function);
 
 	static FTypePromotion* Instance;
-
-	/** Delegate to handle that will be used to refresh the op table when a module has changed */
-	FDelegateHandle OnModulesChangedDelegateHandle;
-
-	/** Handle that will be used to refresh the top table when a Live coding reload has completed */
-	FDelegateHandle OnReloadCompleteDelegateHandle;
 
 	/** A map of 'Type' to its 'available promotions'. See ctor for creation */
 	const TMap<FName, TArray<FName>> PromotionTable;

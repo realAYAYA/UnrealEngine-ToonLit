@@ -73,7 +73,10 @@ void FLeaderboardsCommon::Initialize()
 {
 	Super::Initialize();
 
-	StatEventHandle = Services.Get<IStats>()->OnStatsUpdated().Add([this](const FStatsUpdated& StatsUpdated) { WriteLeaderboardsByStats(StatsUpdated); });
+	if (IStats* StatsInterface = Services.Get<IStats>())
+	{
+		StatEventHandle = StatsInterface->OnStatsUpdated().Add([this](const FStatsUpdated& StatsUpdated) { WriteLeaderboardsByStats(StatsUpdated); });
+	}
 }
 
 void FLeaderboardsCommon::UpdateConfig()

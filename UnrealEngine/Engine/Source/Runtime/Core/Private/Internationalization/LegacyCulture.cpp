@@ -63,11 +63,11 @@ FString FLegacyCultureImplementation::GetName() const
 	return Name;
 }
 
-FString FLegacyCultureImplementation::GetCanonicalName(const FString& Name)
+FString FLegacyCultureImplementation::GetCanonicalName(const FString& Name, FInternationalization& I18N)
 {
 	if (!Name.IsEmpty())
 	{
-		return InternationalizationUtilities::GetCanonicalCultureName(Name, FString());
+		return InternationalizationUtilities::GetCanonicalCultureName(Name, FString(), I18N);
 	}
 	return Name;
 }

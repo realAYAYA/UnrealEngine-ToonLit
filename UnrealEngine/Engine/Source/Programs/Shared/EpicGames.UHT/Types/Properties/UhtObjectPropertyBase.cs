@@ -222,7 +222,7 @@ namespace EpicGames.UHT.Types
 		}
 
 		/// <summary>
-		/// Log point usage warning/error
+		/// Logs message for Object pointers to convert UObject* to TObjectPtr or the reverse
 		/// </summary>
 		/// <param name="propertySettings">Property settings</param>
 		/// <param name="engineBehavior">Expected behavior for engine types</param>
@@ -261,9 +261,9 @@ namespace EpicGames.UHT.Types
 			}
 
 			string type = tokenReader.GetStringView(typeStartPos, tokenReader.InputPos - typeStartPos).ToString();
-			type = type.Replace("\n", " ", StringComparison.Ordinal);
-			type = type.Replace("\r", "", StringComparison.Ordinal);
-			type = type.Replace("\t", " ", StringComparison.Ordinal);
+			type = type.Replace("\n", "\\n", StringComparison.Ordinal);
+			type = type.Replace("\r", "\\r", StringComparison.Ordinal);
+			type = type.Replace("\t", "\\t", StringComparison.Ordinal);
 
 			switch (behavior)
 			{
@@ -281,11 +281,11 @@ namespace EpicGames.UHT.Types
 				case UhtIssueBehavior.AllowAndLog:
 					if (!String.IsNullOrEmpty(alternativeTypeDesc))
 					{
-						tokenReader.LogTrace($"{pointerTypeDesc} usage in member declaration detected [[[{type}]]].  Consider {alternativeTypeDesc} as an alternative.");
+						tokenReader.LogInfo($"{pointerTypeDesc} usage in member declaration detected [[[{type}]]].  Consider {alternativeTypeDesc} as an alternative.");
 					}
 					else
 					{
-						tokenReader.LogTrace("{PointerTypeDesc} usage in member declaration detected [[[{Type}]]].");
+						tokenReader.LogInfo("{PointerTypeDesc} usage in member declaration detected [[[{Type}]]].");
 					}
 					break;
 
@@ -294,5 +294,13 @@ namespace EpicGames.UHT.Types
 			}
 		}
 		#endregion
+
+		/// <inheritdoc/>
+		protected override bool NeedsGCBarrierWhenPassedToFunctionImpl(UhtFunction function)
+		{
+			Type type = GetType();
+			return type == typeof(UhtObjectProperty)
+				|| (type == typeof(UhtClassProperty) && !PropertyFlags.HasFlag(EPropertyFlags.UObjectWrapper));
+		}
 	}
 }

@@ -4,7 +4,7 @@
 
 #include "EOSVoiceChatUser.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 class FAndroidEOSVoiceChatUser : public FEOSVoiceChatUser
 {
@@ -21,4 +21,4 @@ private:
 	bool bEnableBluetoothMicrophone = false;
 };
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

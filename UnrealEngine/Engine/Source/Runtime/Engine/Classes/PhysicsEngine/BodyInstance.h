@@ -327,12 +327,16 @@ public:
 	UPROPERTY(EditAnywhere, Category = Physics, meta = (DisplayName = "Mode"))
 	TEnumAsByte<EDOFMode::Type> DOFMode;
 
-public:
-
 	/** If true Continuous Collision Detection (CCD) will be used for this component */
 	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Collision)
 	uint8 bUseCCD : 1;
 
+private:
+	/** [EXPERIMENTAL] If true Motion-Aware Collision Detection (MACD) will be used for this component */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = Collision)
+	uint8 bUseMACD : 1;
+
+public:
 	/** If true ignore analytic collisions and treat objects as a general implicit surface */
 	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Collision)
 	uint8 bIgnoreAnalyticCollisions : 1;
@@ -403,7 +407,7 @@ public:
 
 protected:
 
-	/** [PhysX Only] Whether this body instance has its own custom MaxDepenetrationVelocity*/
+	/** Whether this body instance has its own custom MaxDepenetrationVelocity*/
 	UPROPERTY(EditAnywhere, Category = Physics, meta=(InlineEditConditionToggle))
 	uint8 bOverrideMaxDepenetrationVelocity : 1;
 
@@ -440,6 +444,26 @@ protected:
 	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadWrite, Category = Physics)
 	uint8 bInertiaConditioning : 1;
 
+	/** If set to true, this body will treat bodies that do not have the flag set as having infinite mass */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadWrite, Category = Physics)
+	uint8 bOneWayInteraction : 1;
+
+public:
+	/** Set the desired delta time for the body. **/
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Physics)
+	uint8 bOverrideSolverAsyncDeltaTime : 1;
+
+	/** Override value for physics solver async delta time.  With multiple actors specifying this, the solver will use the smallest delta time **/
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Physics, meta = (editcondition = "bOverrideSolverAsyncDeltaTime"))
+	float SolverAsyncDeltaTime;
+
+	float GetSolverAsyncDeltaTime() const { return SolverAsyncDeltaTime; }
+	bool IsSolverAsyncDeltaTimeSet() const { return bOverrideSolverAsyncDeltaTime && SolverAsyncDeltaTime > 0.0; }
+
+	void SetSolverAsyncDeltaTime(const float NewSolverAsyncDeltaTime);
+
+private:
+	void UpdateSolverAsyncDeltaTime();
 
 public:
 	/** Current scale of physics - used to know when and how physics must be rescaled to match current transform of OwnerComponent. */
@@ -476,7 +500,13 @@ private:
 	struct FCollisionResponse CollisionResponses;
 
 protected:
-	/** [PhysX Only] The maximum velocity used to depenetrate this object*/
+	/** 
+	 * The maximum velocity used to depenetrate this object from others when spawned or teleported with initial overlaps (does not affect overlaps as a result of normal movement).
+	 * A value of zero will allow objects that are spawned overlapping to go to sleep without moving rather than pop out of each other. E.g., use zero if you spawn dynamic rocks 
+	 * partially embedded in the ground and want them to be interactive but not pop out of the ground when touched.
+	 * A negative value is equivalent to bOverrideMaxDepenetrationVelocity = false, meaning use the project setting.
+	 * This overrides the CollisionInitialOverlapDepenetrationVelocity project setting on a per-body basis (and not the MaxDepenetrationVelocity solver setting that will be deprecated).
+	*/
 	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Physics, meta = (editcondition = "bOverrideMaxDepenetrationVelocity", ClampMin = "0.0", UIMin = "0.0"))
 	float MaxDepenetrationVelocity;
 
@@ -841,8 +871,23 @@ public:
 	/** Get the maximum angular velocity of this body */
 	ENGINE_API float GetMaxAngularVelocityInRadians() const;
 
-	/** Set the maximum depenetration velocity the physics simulation will introduce */
+	/** Are we overriding the MaxDepenetrationVelocity. See SetMaxDepenetrationVelocity */
+	ENGINE_API bool GetOverrideMaxDepenetrationVelocity() const { return bOverrideMaxDepenetrationVelocity; }
+
+	/** Enable/Disable override of MaxDepenetrationVelocity */
+	ENGINE_API void SetOverrideMaxDepenetrationVelocity(bool bInEnabled);
+
+	/**
+	 * Set the maximum velocity used to depenetrate this object from others when spawned with initial overlaps or teleports (does not affect overlaps as a result of normal movement).
+	 * A value of zero will allow objects that are spawned overlapping to go to sleep as they are rather than pop out of each other.
+	 * Note: implicitly calls SetOverrideMaxDepenetrationVelocity(true)
+	 * Note: MaxDepenetration overrides the CollisionInitialOverlapDepenetrationVelocity project setting (and not the MaxDepenetrationVelocity solver setting that will be deprecated)
+	*/
 	ENGINE_API void SetMaxDepenetrationVelocity(float MaxVelocity);
+
+	/** The maximum velocity at which initally-overlapping bodies will separate. Does not affect normal contact resolution. */
+	ENGINE_API float GetMaxDepenetrationVelocity() const { return MaxDepenetrationVelocity; }
+
 	/** Set whether we should get a notification about physics collisions */
 	ENGINE_API void SetInstanceNotifyRBCollision(bool bNewNotifyCollision);
 	/** Enables/disables whether this body is affected by gravity. */
@@ -854,8 +899,18 @@ public:
 	/** Enables/disabled smoothed edge collisions */
 	ENGINE_API void SetSmoothEdgeCollisionsEnabled(bool bNewSmoothEdgeCollisions);
 
-	/** Enable/disable Continuous Collidion Detection feature */
+	/** Enable/disable Continuous Collision Detection feature */
 	ENGINE_API void SetUseCCD(bool bInUseCCD);
+
+	/** 
+	 * [EXPERIMENTAL] Enable/disable Motion-Aware Collision Detection feature. MACD attempts to take the movement of the
+	 * body into account during collisions detection to reduce the chance of objects passing through each other at moderate
+	 * speeds without the need for CCD. CCD is still required reliable collision between high-speed objects.
+	 */
+	ENGINE_API void SetUseMACD(bool bInUseMACD);
+
+	/** [EXPERIMENTAL] Whether Motion-Aware Collision Detection is enabled */
+	bool GetUseMACD() const { return bUseMACD != 0; }
 
 	/** Disable/Re-Enable this body in the solver,  when disable, the body won't be part of the simulation ( regardless if it's dynamic or kinematic ) and no collision will occur 
 	* this can be used for performance control situation for example
@@ -932,6 +987,12 @@ public:
 
 	/** Get current transform in world space from physics body. */
 	ENGINE_API FTransform GetUnrealWorldTransform_AssumesLocked(bool bWithProjection = true, bool bForceGlobalPose = false) const;
+
+	/** Get the kinematic target transform in world space from physics body. Will only be relevant/useful if the body is kinematic */
+	ENGINE_API FTransform GetKinematicTarget() const;
+
+	/** Get the kinematic target transform in world space from physics body. Will only be relevant/useful if the body is kinematic */
+	ENGINE_API FTransform GetKinematicTarget_AssumesLocked() const;
 
 	/**
 	 *	Move the physics body to a new pose.
@@ -1239,6 +1300,9 @@ public:
 	ENGINE_API const TMap<FPhysicsShapeHandle, FWeldInfo>* GetCurrentWeldInfo() const;
 
 private:
+
+	ENGINE_API void UpdateOneWayInteraction();
+	ENGINE_API void UpdateMaxDepenetrationVelocity();
 
 	/**
 	 * Invalidate Collision Profile Name

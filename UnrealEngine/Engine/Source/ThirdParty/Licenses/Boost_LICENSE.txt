@@ -1,3 +1,8 @@
+================================================================================
+Software Name: Boost
+Version: v1.82.0
+URL:https://github.com/boostorg/boost/blob/boost-1.82.0/LICENSE_1_0.txt
+================================================================================
 Boost Software License - Version 1.0 - August 17th, 2003
 
 Permission is hereby granted, free of charge, to any person or organization

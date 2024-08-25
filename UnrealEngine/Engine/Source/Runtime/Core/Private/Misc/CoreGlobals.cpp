@@ -9,6 +9,7 @@
 #include "Misc/CoreStats.h"
 #include "Misc/TrackedActivity.h"
 #include "Misc/Compression.h"
+#include "Misc/CoreDelegates.h"
 #include "Misc/LazySingleton.h"
 #include "Misc/PlayInEditorLoadingScope.h"
 #include "Misc/CommandLine.h"
@@ -175,6 +176,10 @@ bool GIsRunningUnattendedScript = false;
 #if WITH_EDITOR
 bool					PRIVATE_GIsRunningCookCommandlet	= false;				/** Whether this executable is running the cook commandlet */
 bool					PRIVATE_GIsRunningDLCCookCommandlet = false;				/** Whether this executable is running the cook commandlet on a DLC plugin */
+namespace UE::Private
+{
+int32					GMultiprocessId = 0;
+}
 #endif
 
 #if WITH_ENGINE
@@ -286,6 +291,22 @@ static void appNoop()
 {
 }
 
+bool GEngineStartupModuleLoadingComplete = false;
+CORE_API bool IsEngineStartupModuleLoadingComplete()
+{
+	return GEngineStartupModuleLoadingComplete;
+}
+
+CORE_API void SetEngineStartupModuleLoadingComplete()
+{
+	if (ensure(!GEngineStartupModuleLoadingComplete))
+	{
+		GEngineStartupModuleLoadingComplete = true;
+		SCOPED_BOOT_TIMING("OnAllModuleLoadingPhasesComplete.Broadcast");
+		FCoreDelegates::OnAllModuleLoadingPhasesComplete.Broadcast();
+	}
+}
+
 // This should be left non static to allow *edge* cases only in Core to extern and set this.
 bool GShouldRequestExit = false;
 
@@ -339,34 +360,58 @@ bool (*IsAsyncLoadingMultithreaded)() = &IsAsyncLoadingCoreInternal;
 void (*SuspendTextureStreamingRenderTasks)() = &appNoop;
 void (*ResumeTextureStreamingRenderTasks)() = &appNoop;
 
+static ELoaderType LoaderNotInitialized()
+{
+	return ELoaderType::NotInitialized;
+}
+ELoaderType (*GetLoaderType)() = &LoaderNotInitialized;
+
+const TCHAR* LexToString(ELoaderType Type)
+{
+	switch (Type)
+	{
+	case ELoaderType::NotInitialized:
+		return TEXT("NotInitialized");
+	case ELoaderType::LegacyLoader:
+		return TEXT("LegacyLoader");
+	case ELoaderType::EditorPackageLoader:
+		return TEXT("EditorPackageLoader");
+	case ELoaderType::ZenLoader:
+		return TEXT("ZenLoader");
+	default:
+		check(false);
+		return TEXT("");
+	}
+}
+
 /** Whether the editor is currently loading a package or not												*/
-bool					GIsEditorLoadingPackage				= false;
+bool					GIsEditorLoadingPackage			= false;
 /** Whether the cooker is currently loading a package or not												*/
-bool					GIsCookerLoadingPackage = false;
+bool					GIsCookerLoadingPackage			= false;
 /** Whether GWorld points to the play in editor world														*/
 bool					GIsPlayInEditorWorld			= false;
-/** Unique ID for multiple PIE instances running in one process */
+/** Unique ID for multiple PIE instances running in one process												*/
 FPlayInEditorID			GPlayInEditorID;
-/** Whether or not PIE was attempting to play from PlayerStart							*/
+/** Whether or not PIE was attempting to play from PlayerStart												*/
 bool					GIsPIEUsingPlayerStart			= false;
 /** true if the runtime needs textures to be powers of two													*/
-bool					GPlatformNeedsPowerOfTwoTextures = false;
-/** Time at which FPlatformTime::Seconds() was first initialized (before main)											*/
+bool					GPlatformNeedsPowerOfTwoTextures= false;
+/** Time at which FPlatformTime::Seconds() was first initialized (before main)								*/
 double					GStartTime						= FPlatformTime::InitTiming();
 /** System time at engine init.																				*/
 FString					GSystemStartTime;
 /** Whether we are still in the initial loading proces.														*/
 bool					GIsInitialLoad					= true;
 /* Whether we are using the event driven loader */
-bool					GEventDrivenLoaderEnabled = false;
+bool					GEventDrivenLoaderEnabled		= false;
 
 /** Steadily increasing frame counter.																		*/
 uint64					GFrameCounter					= 0;
 uint64					GFrameCounterRenderThread		= 0;
 
 uint64					GLastGCFrame					= 0;
-/** The time input was sampled, in cycles. */
-uint64					GInputTime					= 0;
+/** The time input was sampled, in cycles.																	*/
+uint64					GInputTime						= 0;
 /** Incremented once per frame before the scene is being rendered. In split screen mode this is incremented once for all views (not for each view). */
 uint32					GFrameNumber					= 1;
 /** NEED TO RENAME, for RT version of GFrameTime use View.ViewFamily->FrameNumber or pass down from RT from GFrameTime). */
@@ -850,4 +895,30 @@ bool IsRunningCookOnTheFly()
 #else
 	return false;
 #endif
+}
+
+namespace UE
+{
+
+int32 GetMultiprocessId()
+{
+#if WITH_EDITOR
+	return UE::Private::GMultiprocessId;
+#else
+	return 0;
+#endif
+}
+
+}
+
+namespace UE::Private
+{
+
+void SetMultiprocessId(int32 MultiprocessId)
+{
+#if WITH_EDITOR
+	UE::Private::GMultiprocessId = MultiprocessId;
+#endif
+}
+
 }

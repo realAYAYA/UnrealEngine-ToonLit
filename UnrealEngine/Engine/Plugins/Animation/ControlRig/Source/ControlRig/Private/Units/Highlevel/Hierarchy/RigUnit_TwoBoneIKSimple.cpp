@@ -66,6 +66,48 @@ FRigVMStructUpgradeInfo FRigUnit_TwoBoneIKSimple::GetUpgradeInfo() const
 	return Info;
 }
 
+#if WITH_EDITOR
+
+bool FRigUnit_TwoBoneIKSimplePerItem::UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_TwoBoneIKSimplePerItem, PoleVector))
+	{
+		const FTransform ParentTransform = Hierarchy->GetParentTransform(PoleVectorSpace, false);
+		Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(PoleVector), false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(PoleVector), true);
+		}
+		return true;
+	}
+	return FRigUnit_HighlevelBaseMutable::UpdateHierarchyForDirectManipulation(InNode, InInstance, InContext, InInfo);
+}
+
+bool FRigUnit_TwoBoneIKSimplePerItem::UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_TwoBoneIKSimplePerItem, PoleVector))
+	{
+		PoleVector = Hierarchy->GetLocalTransform(InInfo->ControlKey, false).GetTranslation();
+		return true;
+	}
+	return FRigUnit_HighlevelBaseMutable::UpdateDirectManipulationFromHierarchy(InNode, InInstance, InContext, InInfo);
+}
+
+#endif
+
 FRigUnit_TwoBoneIKSimplePerItem_Execute()
 {
     DECLARE_SCOPE_HIERARCHICAL_COUNTER_RIGUNIT()

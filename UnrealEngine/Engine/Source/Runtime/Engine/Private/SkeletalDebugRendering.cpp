@@ -71,16 +71,18 @@ void DrawWireBoneAdvanced(
 #if ENABLE_DRAW_DEBUG
 
 	const FVector BoneLocation = InBoneTransform.GetLocation();
+	FTransform BoneNoScale = InBoneTransform;
+	BoneNoScale.SetScale3D(FVector::OneVector);
 
 	// draw wire sphere at joint origin, oriented with the bone
-	DrawWireSphere(PDI, InBoneTransform, InColor, SphereRadius, NumSphereSides, InDepthPriority, 0.0f, 1.0f);
+	DrawWireSphere(PDI, BoneNoScale, InColor, SphereRadius, NumSphereSides, InDepthPriority, 0.0f, 1.0f);
 
 	// draw axes at joint location
 	if (InAxisConfig.bDraw)
 	{
 		const float Thickness = InAxisConfig.Thickness > 0.f ? InAxisConfig.Thickness : 0.f;
 		const float Length = InAxisConfig.Length > 0.f ? InAxisConfig.Length : SphereRadius;
-		SkeletalDebugRendering::DrawAxes(PDI, InBoneTransform, SDPG_Foreground, Thickness, Length);
+		SkeletalDebugRendering::DrawAxes(PDI, BoneNoScale, SDPG_Foreground, Thickness, Length);
 	}
 
 	// draw wire cones to each child
@@ -199,25 +201,27 @@ void DrawBonesFromPoseWatch(
 
 	for (const FBoneIndexType& BoneIndex : InRequiredBones)
 	{
-		check(ParentIndices.IsValidIndex(BoneIndex));
-		const int32 ParentIndex = ParentIndices[BoneIndex];
-
-		if (ParentIndex == INDEX_NONE)
+		if (ParentIndices.IsValidIndex(BoneIndex))
 		{
-			UseWorldTransforms[BoneIndex] = InBoneTransforms[BoneIndex] * WorldTransform;
-			UseWorldTransforms[BoneIndex].AddToTranslation(RelativeOffset);
-		}
-		else
-		{
-			UseWorldTransforms[BoneIndex] = InBoneTransforms[BoneIndex] * UseWorldTransforms[ParentIndex];
-		}
+			const int32 ParentIndex = ParentIndices[BoneIndex];
 
-		if (!ViewportMaskAllowList.Contains(BoneIndex))
-		{
-			continue;
-		}
+			if (ParentIndex == INDEX_NONE)
+			{
+				UseWorldTransforms[BoneIndex] = InBoneTransforms[BoneIndex] * WorldTransform;
+				UseWorldTransforms[BoneIndex].AddToTranslation(RelativeOffset);
+			}
+			else
+			{
+				UseWorldTransforms[BoneIndex] = InBoneTransforms[BoneIndex] * UseWorldTransforms[ParentIndex];
+			}
 
-		UseRequiredBones.Add(BoneIndex);
+			if (!ViewportMaskAllowList.Contains(BoneIndex))
+			{
+				continue;
+			}
+
+			UseRequiredBones.Add(BoneIndex);
+		}
 	}
 
 	const FLinearColor BoneColor = PoseWatch.GetBoneColor();

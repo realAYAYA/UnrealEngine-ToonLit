@@ -14,11 +14,13 @@ class MOVIERENDERPIPELINECORE_API UMovieGraphSetCVarValueNode : public UMovieGra
 public:
 	UMovieGraphSetCVarValueNode() = default;
 
-	virtual FString GetNodeInstanceName() const override { return Name; }
+	virtual FString GetNodeInstanceName() const override;
+	virtual EMovieGraphBranchRestriction GetBranchRestriction() const override;
 
 #if WITH_EDITOR
 	virtual FText GetNodeTitle(const bool bGetDescriptive = false) const override;
 	virtual FText GetMenuCategory() const override;
+	virtual FText GetKeywords() const override;
 	virtual FLinearColor GetNodeTitleColor() const override;
 	virtual FSlateIcon GetIconAndTint(FLinearColor& OutColor) const override;
 
@@ -40,5 +42,5 @@ public:
 
 	/** The new value of the CVar. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Settings", meta = (EditCondition = "bOverride_Value"))
-	FString Value;
+	float Value;
 };

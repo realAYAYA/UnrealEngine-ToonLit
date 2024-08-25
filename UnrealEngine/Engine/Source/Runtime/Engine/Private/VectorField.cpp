@@ -15,6 +15,7 @@
 #include "Engine/CollisionProfile.h"
 #include "Engine/Texture2D.h"
 #include "ComponentReregisterContext.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/UnrealType.h"
 #include "VectorFieldVisualization.h"
 #include "Serialization/MemoryWriter.h"
@@ -659,12 +660,19 @@ void UVectorFieldStatic::PostEditChangeProperty(FPropertyChangedEvent& PropertyC
 #if WITH_EDITORONLY_DATA
 void UVectorFieldStatic::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UVectorFieldStatic::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	if (AssetImportData)
 	{
-		OutTags.Add( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
+		Context.AddTag( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
 	}
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UVectorFieldStatic::PostInitProperties()
@@ -727,9 +735,9 @@ public:
 	 *	This function allows for generating renderer-side resources.
 	 *	Called in the rendering thread.
 	 */
-	virtual void CreateRenderThreadResources() override
+	virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override
 	{
-		VisualizationVertexFactory.InitResource(FRHICommandListImmediate::Get());
+		VisualizationVertexFactory.InitResource(RHICmdList);
 	}
 
 	virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override
@@ -748,7 +756,7 @@ public:
 				if (IsSelected() || View->Family->EngineShowFlags.VectorFields)
 				{
 					FVectorFieldCollectorResources& CollectorResources = Collector.AllocateOneFrameResource<FVectorFieldCollectorResources>(View->GetFeatureLevel());
-					CollectorResources.VisualizationVertexFactory.InitResource(FRHICommandListImmediate::Get());
+					CollectorResources.VisualizationVertexFactory.InitResource(Collector.GetRHICommandList());
 
 					GetVectorFieldMesh(&CollectorResources.VisualizationVertexFactory, VectorFieldInstance, ViewIndex, Collector);
 				}
@@ -1104,7 +1112,7 @@ public:
 	{
 		check(IsInRenderingThread());
 
-		if (GetFeatureLevel() == ERHIFeatureLevel::SM5 && AnimatedVectorField && AnimatedVectorField->Texture && AnimatedVectorField->Texture->GetResource())
+		if (GetFeatureLevel() >= ERHIFeatureLevel::SM5 && AnimatedVectorField && AnimatedVectorField->Texture && AnimatedVectorField->Texture->GetResource())
 		{
 			SCOPED_DRAW_EVENT(RHICmdList, AnimateVectorField);
 
@@ -1203,12 +1211,15 @@ UVectorFieldAnimated::UVectorFieldAnimated(const FObjectInitializer& ObjectIniti
 
 void UVectorFieldAnimated::InitInstance(FVectorFieldInstance* Instance, bool bPreviewInstance)
 {
-	FVectorFieldAnimatedResource* Resource = new FVectorFieldAnimatedResource(this);
-	if (!bPreviewInstance)
+	if (FApp::CanEverRender())
 	{
-		BeginInitResource(Resource);
+		FVectorFieldAnimatedResource* Resource = new FVectorFieldAnimatedResource(this);
+		if (!bPreviewInstance)
+		{
+			BeginInitResource(Resource);
+		}
+		Instance->Init(Resource, /*bInstanced=*/ true);
 	}
-	Instance->Init(Resource, /*bInstanced=*/ true);
 }
 
 static int32 ClampVolumeSize(int32 InVolumeSize)

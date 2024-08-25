@@ -61,7 +61,7 @@ float ComputeLightSampleWorldBluringRadius(float3 TranslatedWorldPosition, uint 
 
 float ProjectWorldDistanceToPixelDistance(float WorldDepth, float WorldDistance)
 {
-	return WorldDistance * View.ViewSizeAndInvSize.x * 0.5 / (WorldDepth * GetTanHalfFieldOfView().x);
+	return WorldDistance * View.ViewSizeAndInvSize.x * 0.5 / GetScreenRayLengthMultiplierForProjectionType(WorldDepth).x;
 }
 
 float WorldBluringRadiusToHarmonic(float WorldDepth, float WorldBluringRadius)

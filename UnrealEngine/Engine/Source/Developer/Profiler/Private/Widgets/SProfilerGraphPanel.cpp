@@ -132,7 +132,7 @@ void SProfilerGraphPanel::HorizontalScrollBar_OnUserScrolled(float ScrollOffset)
 
 		HorizontalScrollBar->SetState(ScrollOffset, ThumbSizeFraction);
 
-		GraphOffset = FMath::TruncToInt(ScrollOffset * NumDataPoints);
+		GraphOffset = FMath::TruncToInt(ScrollOffset * (float)NumDataPoints);
 		DataGraph->ScrollTo(GraphOffset);
 
 		ProfilerMiniView.Pin()->MoveWithoutZoomSelectionBox(GraphOffset, GraphOffset + NumVisiblePoints);

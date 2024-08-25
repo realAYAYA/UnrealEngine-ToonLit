@@ -15,7 +15,7 @@ template<typename T>
 struct TComponentPtr
 {
 	/** Value type is either a T or const T& for read-only types, or T& for writeable types */
-	using ValueType = typename TChooseClass<TIsConst<T>::Value, typename TCallTraits<T>::ParamType, T&>::Result;
+	using ValueType = std::conditional_t<TIsConst<T>::Value, typename TCallTraits<T>::ParamType, T&>;
 
 	TComponentPtr()
 		: ComponentPtr(nullptr)

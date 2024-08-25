@@ -6,6 +6,7 @@
 
 class FDMXPixelMappingToolkit;
 class IDetailLayoutBuilder;
+class IPropertyHandle;
 
 
 class FDMXPixelMappingDetailCustomization_FixtureGroupItem
@@ -21,6 +22,12 @@ public:
 	//~ IPropertyTypeCustomization interface end
 
 private:
+	/** Returns true if the EditorColor property is editable */
+	bool CanEditEditorColor() const;
+
+	/** Handle for the bUsePatchColor property */
+	TSharedPtr<IPropertyHandle> UsePatchColorHandle;
+
 	/** Weak reference to the DMX editor */
 	TWeakPtr<FDMXPixelMappingToolkit> ToolkitWeakPtr;
 };

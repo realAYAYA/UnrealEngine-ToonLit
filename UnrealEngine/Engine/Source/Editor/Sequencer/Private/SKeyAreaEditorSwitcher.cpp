@@ -8,19 +8,20 @@
 #include "SequencerCommonHelpers.h"
 #include "IKeyArea.h"
 #include "MVVM/ViewModels/ChannelModel.h"
+#include "MVVM/ViewModels/SequencerEditorViewModel.h"
 #include "MVVM/Extensions/IObjectBindingExtension.h"
 #include "MVVM/Views/SKeyNavigationButtons.h"
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
-void SKeyAreaEditorSwitcher::Construct(const FArguments& InArgs, TSharedPtr<FChannelGroupModel> InModel, TWeakPtr<ISequencer> InWeakSequencer)
+void SKeyAreaEditorSwitcher::Construct(const FArguments& InArgs, TSharedPtr<FChannelGroupModel> InModel, TWeakPtr<FSequencerEditorViewModel> InWeakEditorModel)
 {
 	WeakModel = InModel;
-	WeakSequencer = InWeakSequencer;
+	WeakEditorModel = InWeakEditorModel;
 	CachedChannelsSerialNumber = 0;
+
+	SetVisibility(MakeAttributeSP(this, &SKeyAreaEditorSwitcher::ComputeVisibility));
 }
 
 int32 SKeyAreaEditorSwitcher::GetWidgetIndex() const
@@ -28,11 +29,18 @@ int32 SKeyAreaEditorSwitcher::GetWidgetIndex() const
 	return VisibleIndex;
 }
 
+EVisibility SKeyAreaEditorSwitcher::ComputeVisibility() const
+{
+	return VisibleIndex != INDEX_NONE
+		? EVisibility::Visible
+		: EVisibility::Collapsed;
+}
+
 void SKeyAreaEditorSwitcher::Rebuild()
 {
-	TSharedPtr<FChannelGroupModel> Model     = WeakModel.Pin();
-	TSharedPtr<ISequencer>         Sequencer = WeakSequencer.Pin();
-	if (!Model || !Sequencer)
+	TSharedPtr<FChannelGroupModel>        Model = WeakModel.Pin();
+	TSharedPtr<FSequencerEditorViewModel> Editor = WeakEditorModel.Pin();
+	if (!Model || !Editor)
 	{
 		// Empty our cache so we don't persistently rebuild
 		CachedKeyAreas.Empty();
@@ -45,46 +53,22 @@ void SKeyAreaEditorSwitcher::Rebuild()
 		return;
 	}
 
-	const bool bIsEnabled = !Sequencer->IsReadOnly();
-
-	// Index 0 is always the spacer node
-	VisibleIndex = 0;
+	SetEnabled(MakeAttributeSP(Editor.ToSharedRef(), &FEditorViewModel::IsEditable));
+	VisibleIndex = INDEX_NONE;
 
 	TSharedRef<SWidgetSwitcher> Switcher = SNew(SWidgetSwitcher)
-		.IsEnabled(bIsEnabled)
-		.WidgetIndex(this, &SKeyAreaEditorSwitcher::GetWidgetIndex)
-
-		+ SWidgetSwitcher::Slot()
-		[
-			SNullWidget::NullWidget
-		];
+		.WidgetIndex(this, &SKeyAreaEditorSwitcher::GetWidgetIndex);
 
 	TSharedPtr<IObjectBindingExtension> ParentObjectBinding = Model->FindAncestorOfType<IObjectBindingExtension>();
 	FGuid ObjectBindingID = ParentObjectBinding.IsValid() ? ParentObjectBinding->GetObjectGuid() : FGuid();
 
 	for (TSharedRef<IKeyArea> KeyArea : CachedKeyAreas)
 	{
-		if (!KeyArea->CanCreateKeyEditor())
-		{
-			// Always generate a slot so that indices line up correctly
-			Switcher->AddSlot()
-			[
-				SNullWidget::NullWidget
-			];
-		}
-		else
-		{
-			Switcher->AddSlot()
-			[
-				SNew(SBox)
-				.IsEnabled(bIsEnabled)
-				.MinDesiredWidth(100)
-				.HAlign(HAlign_Left)
-				[
-					KeyArea->CreateKeyEditor(Sequencer, ObjectBindingID)
-				]
-			];
-		}
+		Switcher->AddSlot()
+		.HAlign(HAlign_Left)
+		[
+			KeyArea->CreateKeyEditor(Editor->GetSequencer(), ObjectBindingID)
+		];
 	}
 
 	ChildSlot
@@ -95,9 +79,9 @@ void SKeyAreaEditorSwitcher::Rebuild()
 
 void SKeyAreaEditorSwitcher::Tick( const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime )
 {
-	TSharedPtr<FChannelGroupModel> Model = WeakModel.Pin();
-	TSharedPtr<ISequencer>         Sequencer = WeakSequencer.Pin();
-	if (!Model || !Sequencer)
+	TSharedPtr<FChannelGroupModel>        Model  = WeakModel.Pin();
+	TSharedPtr<FSequencerEditorViewModel> Editor = WeakEditorModel.Pin();
+	if (!Model || !Editor)
 	{
 		if (CachedKeyAreas.Num() != 0)
 		{
@@ -116,6 +100,13 @@ void SKeyAreaEditorSwitcher::Tick( const FGeometry& AllottedGeometry, const doub
 		{
 			CachedChannelsSerialNumber = NewChannelsSerialNumber;
 			CachedKeyAreas = Model->GetAllKeyAreas();
+			for (int32 Index = CachedKeyAreas.Num()-1; Index >= 0; --Index)
+			{
+				if (!CachedKeyAreas[Index]->CanCreateKeyEditor())
+				{
+					CachedKeyAreas.RemoveAtSwap(Index);
+				}
+			}
 			Rebuild();
 		}
 
@@ -126,18 +117,8 @@ void SKeyAreaEditorSwitcher::Tick( const FGeometry& AllottedGeometry, const doub
 			AllSections.Add(KeyArea->GetOwningSection());
 		}
 
-		const int32 ActiveKeyArea = SequencerHelpers::GetSectionFromTime(AllSections, Sequencer->GetLocalTime().Time.FrameNumber);
-		if (ActiveKeyArea != INDEX_NONE)
-		{
-			// Index 0 is the spacer node, so add 1 to the key area index to get the widget index
-			VisibleIndex = 1 + ActiveKeyArea;
-		}
-		else
-		{
-			VisibleIndex = 0;
-		}
+		VisibleIndex = SequencerHelpers::GetSectionFromTime(AllSections, Editor->GetSequencer()->GetLocalTime().Time.FrameNumber);
 	}
 }
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreTypes.h"
+#include "Containers/Array.h"
 #include "HAL/PreprocessorHelpers.h"
 #include "Logging/LogVerbosity.h"
 #include "Misc/Build.h"
@@ -40,16 +41,18 @@ struct FLogTrace
 	template <typename... Types>
 	FORCENOINLINE static void OutputLogMessage(const void* LogPoint, Types... FormatArgs)
 	{
-		uint8 FormatArgsBuffer[3072];
-		uint16 FormatArgsSize = FFormatArgsTrace::EncodeArguments(FormatArgsBuffer, FormatArgs...);
-		if (FormatArgsSize)
+		// This inline size covers 99.96% of log messages in sampled traces
+		FFormatArgsTrace::TBufferWithOverflow<1600> Buffer;
+		const int32 FormatArgsSize = FFormatArgsTrace::EncodeArgumentsWithArray(Buffer, FormatArgs...);
+		const uint8* FormatArgsBuffer = Buffer.GetData();
+		if (FormatArgsSize && FormatArgsSize < INT32_MAX)
 		{
 			OutputLogMessageInternal(LogPoint, FormatArgsSize, FormatArgsBuffer);
 		}
 	}
 
 private:
-	CORE_API static void OutputLogMessageInternal(const void* LogPoint, uint16 EncodedFormatArgsSize, uint8* EncodedFormatArgs);
+	CORE_API static void OutputLogMessageInternal(const void* LogPoint, int32 EncodedFormatArgsSize, const uint8* EncodedFormatArgs);
 };
 
 #define TRACE_LOG_CATEGORY(Category, Name, DefaultVerbosity) \

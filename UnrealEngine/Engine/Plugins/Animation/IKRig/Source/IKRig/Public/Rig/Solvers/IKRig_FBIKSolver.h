@@ -25,6 +25,13 @@ public:
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Full Body IK Effector")
 	FName BoneName;
 
+	/** Range 0-inf (default is 0). Explicitly set the number of bones up the hierarchy to consider part of this effector's 'chain'.
+	* The "chain" of bones is used to apply Preferred Angles, Pull Chain Alpha and Chain "Sub Solves".
+	* If left at 0, the solver will attempt to determine the root of the chain by searching up the hierarchy until it finds a branch or another effector, whichever it finds first.
+	*/
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Full Body IK Effector", meta = (ClampMin = "0", UIMin = "0"))
+	int32 ChainDepth = 0;
+
 	/** Range 0-1 (default is 1.0). The strength of the effector when pulling the bone towards it's target location.
 	* At 0.0, the effector does not pull at all, but the bones between the effector and the root will still slightly resist motion from other effectors.
 	* This can thus act as a "stabilizer" for parts of the body that you do not want to behave in a pure FK fashion.
@@ -32,10 +39,11 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Full Body IK Effector", meta = (ClampMin = "0", ClampMax = "1", UIMin = "0.0", UIMax = "1.0"))
 	float StrengthAlpha = 1.0f;
 
-	/** Range 0-1 (default is 1.0). When enabled (greater than 0.0), the solver internally partitions the skeleton into 'chains' which extend from the effector to the nearest fork in the skeleton.
-	*These chains are pre-rotated and translated, as a whole, towards the effector targets.
-	*This can improve the results for sparse bone chains, and significantly improve convergence on dense bone chains.
-	*But it may cause undesirable results in highly constrained bone chains (like robot arms).
+	/** Range 0-1 (default is 1.0). When enabled (greater than 0.0), the solver internally partitions the skeleton into 'chains' which extend
+	 * from the effector up the hierarchy by "Chain Depth". If Chain Depth is 0, the chain root is set to the nearest fork in the skeleton.
+	* These chains are pre-rotated and translated, as a whole, towards the effector targets.
+	* This can improve the results for sparse bone chains, and significantly improve convergence on dense bone chains.
+	* But it may cause undesirable results in highly constrained bone chains (like robot arms).
 	*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Full Body IK Effector", meta = (ClampMin = "0", ClampMax = "1", UIMin = "0.0", UIMax = "1.0"))
 	float PullChainAlpha = 1.0f;
@@ -50,6 +58,7 @@ public:
 
 	void CopySettings(const UIKRig_FBIKEffector* Other)
 	{
+		ChainDepth = Other->ChainDepth;
 		StrengthAlpha = Other->StrengthAlpha;
 		PullChainAlpha = Other->PullChainAlpha;
 		PinRotation = Other->PinRotation;
@@ -191,6 +200,10 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = SolverSettings, meta = (ClampMin = "0", ClampMax = "1000", UIMin = "0.0", UIMax = "200.0"))
 	int32 Iterations = 20;
 
+	/** Iterations used for sub-chains defined by the Chain Depth of the effectors. These are solved BEFORE the main iteration pass. Default is 0. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = SolverSettings, meta = (ClampMin = "0", ClampMax = "1000", UIMin = "0.0", UIMax = "200.0"))
+	int32 SubIterations = 0;
+
 	/** A global mass multiplier; higher values will make the joints more stiff, but require more iterations. Typical range is 0.0 to 10.0. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = SolverSettings, meta = (ClampMin = "0", UIMin = "0.0", UIMax = "10.0"))
 	float MassMultiplier = 1.0f;
@@ -219,7 +232,7 @@ public:
 	float MaxAngle = 30.f;
 
 	/** Pushes constraints beyond their normal amount to speed up convergence. Increasing this may speed up convergence, but at the cost of stability. Range is 1.0 - 2.0. Default is 1.3. */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = AdvancedSettings, meta = (ClampMin = "1", UIMin = "1.0", UIMax = "10.0"))
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = AdvancedSettings, meta = (ClampMin = "1",  ClampMax = "2", UIMin = "1.0", UIMax = "2.0"))
 	float OverRelaxation = 1.3f;
 	
 	/** DEPRECATED: When true, the solver is reset each tick to start from the current input pose. Default is true.

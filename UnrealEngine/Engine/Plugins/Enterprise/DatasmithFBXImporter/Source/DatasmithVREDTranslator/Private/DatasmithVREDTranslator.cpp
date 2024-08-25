@@ -70,10 +70,44 @@ bool FDatasmithVREDTranslator::IsSourceSupported(const FDatasmithSceneSource& So
 			}
 		}
 	}
+	if(!bApplicationVendorValid)
+	{
+		const ANSICHAR* TagName = FPlatformString::Strstr(Header, "LastSaved|ApplicationVendor");
+		if (TagName)
+		{
+			const ANSICHAR* TagType = FPlatformString::Strstr(TagName, "KString");
+			if (TagType)
+			{
+				const ANSICHAR* TagData = FPlatformString::Strstr(TagType, "Autodesk");
+				if (TagData)
+				{
+					// The whole tag should be in the same vicinity
+					bApplicationVendorValid = (TagData - TagName) < 256;
+				}
+			}
+		}
+	}
 
 	bool bApplicationNameValid = false;
 	{
 		const ANSICHAR* TagName = FPlatformString::Strstr(Header, "Original|ApplicationName");
+		if (TagName)
+		{
+			const ANSICHAR* TagType = FPlatformString::Strstr(TagName, "KString");
+			if (TagType)
+			{
+				const ANSICHAR* TagData = FPlatformString::Strstr(TagType, "VRED");
+				if (TagData)
+				{
+					// The whole tag should be in the same vicinity
+					bApplicationNameValid = (TagData - TagName) < 256;
+				}
+			}
+		}
+	}
+	if(!bApplicationNameValid)
+	{
+		const ANSICHAR* TagName = FPlatformString::Strstr(Header, "LastSaved|ApplicationName");
 		if (TagName)
 		{
 			const ANSICHAR* TagType = FPlatformString::Strstr(TagName, "KString");

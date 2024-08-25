@@ -8,6 +8,7 @@
 #include "RHITextureTests.h"
 #include "RHIDrawTests.h"
 #include "RHIReadbackTests.h"
+#include "RHIReservedResourceTests.h"
 
 BEGIN_DEFINE_SPEC(FAutomationRHITest, "Rendering.RHI", EAutomationTestFlags::EngineFilter | EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::NonNullRHI)
 END_DEFINE_SPEC(FAutomationRHITest)
@@ -49,6 +50,12 @@ void FAutomationRHITest::Define()
 		{
 			bool bResult = RunOnRenderThreadSynchronous(FRHITextureTests::Test_RHIClearUAV_Texture3D);
 			TestEqual("Clear Texture3D failed", bResult, 1);
+		});
+
+		It("RHI Clear Render Targets", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHITextureTests::Test_ClearRenderTargets);
+			TestEqual("Clear Render Targets failed", bResult, 1);
 		});
 	});
 
@@ -111,10 +118,53 @@ void FAutomationRHITest::Define()
 
 	Describe("Test RHI Draw", [this]()
 	{
+		It("RHI DrawBaseVertexAndInstanceDirect", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHIDrawTests::Test_DrawBaseVertexAndInstanceDirect);
+			TestEqual("RHI DrawBaseVertexAndInstanceDirect", bResult, 1);
+		});
+		It("RHI DrawBaseVertexAndInstanceIndirect", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHIDrawTests::Test_DrawBaseVertexAndInstanceIndirect);
+			TestEqual("RHI DrawBaseVertexAndInstanceIndirect", bResult, 1);
+		});
 		It("RHI MultiDrawIndirect", [this]()
 		{
 			bool bResult = RunOnRenderThreadSynchronous(FRHIDrawTests::Test_MultiDrawIndirect);
 			TestEqual("RHI MultiDrawIndirect", bResult, 1);
+		});
+	});
+
+	Describe("Test RHI Reserved Resource", [this]()
+	{
+		It("Create Reserved Volume Texture", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHIReservedResourceTests::Test_ReservedResource_CreateVolumeTexture);
+			TestEqual("Create Reserved Volume Texture failed", bResult, 1);
+		});
+
+		It("Create Reserved Texture", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHIReservedResourceTests::Test_ReservedResource_CreateTexture);
+			TestEqual("Create Reserved Texture failed", bResult, 1);
+		});
+
+		It("Create Reserved Buffer", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHIReservedResourceTests::Test_ReservedResource_CreateBuffer);
+			TestEqual("Create Reserved Buffer failed", bResult, 1);
+		});
+
+		It("Commit Reserved Buffer", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHIReservedResourceTests::Test_ReservedResource_CommitBuffer);
+			TestEqual("Commit Reserved Buffer failed", bResult, 1);
+		});
+
+		It("Decommit Reserved Buffer", [this]()
+		{
+			bool bResult = RunOnRenderThreadSynchronous(FRHIReservedResourceTests::Test_ReservedResource_DecommitBuffer);
+			TestEqual("Decommit Reserved Buffer failed", bResult, 1);
 		});
 	});
 }

@@ -46,7 +46,11 @@
 // If IsPropertyIndirection() is false, there structures are expected to be standalone, and GetInstances() is used instead to retried the instance values.
 // When indirection is not used and the struct provider is part of an another instance, the provider should return only one instance, since there is no to associate the provided value
 // with an foreign object.
-// 
+//
+// ExpectedType parameter: This is the type that e.g. the UI is currently initialized for (cached via GetBaseStructure()).
+// It is possible that the provided data changes due to some property change callbacks, and the ExpectedType does not match the provided data type.
+// In that case empty data should be returned so that the UI does not try to access incompatible data.
+//
 // Multiple instances are supported when the provider is the root node (e.g. on Structure details view).
 // 
 //-----------------------------------------------------------------------------
@@ -61,8 +65,13 @@ public:
 	/** @return the most common struct of the instance data. This struct will be used to build the UI for the instances. */
 	virtual const UStruct* GetBaseStructure() const = 0;
 
-	/** @return instances to edit. Each provided struct should be compatible with base struct. */
-	virtual void GetInstances(TArray<TSharedPtr<FStructOnScope>>& OutInstances) const = 0;
+	
+	/**
+	 * Returns instances to edit. Each provided struct should be compatible with ExpectedType.
+	 * @param OutInstances returned instances
+	 * @param ExpectedBaseStructure the base type of struct that is expected to be returned (see the documentation above about ExpectedType) 
+	 */
+	virtual void GetInstances(TArray<TSharedPtr<FStructOnScope>>& OutInstances, const UStruct* ExpectedBaseStructure) const = 0;
 
 	/** @return true, if the provider supports handling indirections using GetValueBaseAddress(). */
 	virtual bool IsPropertyIndirection() const { return false; }
@@ -70,10 +79,16 @@ public:
 	/**
 	 * Returns base address of provided struct based on parent property nodes value.
 	 * @param ParentValueAddress Value of the parent 
-	 * @param ExpectedType the type of struct that is expected to be returned (generally the same type as returned by GetBaseStructure())
+	 * @param ExpectedBaseStructure the base type of struct that is expected to be returned (see the documentation above about ExpectedType)
 	 * @return value base address based on parent base address.
 	 */
-	virtual uint8* GetValueBaseAddress(uint8* ParentValueAddress, const UStruct* ExpectedType) const { return ParentValueAddress; }
+	virtual uint8* GetValueBaseAddress(uint8* ParentValueAddress, const UStruct* ExpectedBaseStructure) const { return ParentValueAddress; }
+
+	UE_DEPRECATED(5.4, "Please use and override GetInstances() with ExpectedType instead.")
+	virtual void GetInstances(TArray<TSharedPtr<FStructOnScope>>& OutInstances) const final
+	{
+		return GetInstances(OutInstances, nullptr);
+	}
 };
 
 
@@ -104,9 +119,18 @@ public:
 		return StructData.IsValid() ? StructData->GetStruct() : nullptr;
 	}
 	
-	virtual void GetInstances(TArray<TSharedPtr<FStructOnScope>>& OutInstances) const override
+	virtual void GetInstances(TArray<TSharedPtr<FStructOnScope>>& OutInstances, const UStruct* ExpectedBaseStructure) const override
 	{
-		OutInstances.Add(StructData);
+		if (StructData.IsValid())
+		{
+			const UStruct* Struct = StructData->GetStruct();
+			if (ExpectedBaseStructure
+				&& Struct
+				&& Struct->IsChildOf(ExpectedBaseStructure))
+			{
+				OutInstances.Add(StructData);				
+			}
+		}
 	}
 
 protected:

@@ -35,10 +35,10 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrTestClassWithRef, UObject,
 			UECodeGen_Private::FObjectPropertyParams Params = { };
 			Params.NameUTF8 = "ObjectPtr";
 			Params.Offset = STRUCT_OFFSET(UObjectPtrTestClassWithRef, ObjectPtr);
-			Params.PropertyFlags = CPF_None;
+			Params.PropertyFlags = CPF_TObjectPtrWrapper;
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			Params.ClassFunc = nullptr;
-			auto Property = new FObjectPtrProperty(Class, Params );
+			auto Property = new FObjectProperty(Class, Params );
 			Property->PropertyClass = UObjectPtrTestClass::StaticClass();
 		}
 
@@ -47,10 +47,10 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrTestClassWithRef, UObject,
 			UECodeGen_Private::FObjectPropertyParams Params = { };
 			Params.NameUTF8 = "ObjectPtrNonNullable";
 			Params.Offset = STRUCT_OFFSET(UObjectPtrTestClassWithRef, ObjectPtrNonNullable);
-			Params.PropertyFlags = EPropertyFlags::CPF_NonNullable;
+			Params.PropertyFlags = EPropertyFlags::CPF_NonNullable | CPF_TObjectPtrWrapper;
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			Params.ClassFunc = nullptr;
-			auto Property = new FObjectPtrProperty(Class, Params);
+			auto Property = new FObjectProperty(Class, Params);
 			Property->PropertyClass = UObjectPtrTestClass::StaticClass();
 		}
 
@@ -62,7 +62,7 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrTestClassWithRef, UObject,
 			Params.PropertyFlags = CPF_None;
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			auto Property = new FArrayProperty(Class, Params);
-			auto InnerProperty = new FObjectPtrProperty(Property, TEXT("Inner"), EObjectFlags::RF_NoFlags);
+			auto InnerProperty = new FObjectProperty(Property, TEXT("Inner"), EObjectFlags::RF_NoFlags);
 			InnerProperty->PropertyClass = UObjectPtrTestClass::StaticClass();
 			Property->AddCppProperty(InnerProperty);
 		}
@@ -81,10 +81,10 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrTestClassWithRef, UObject,
 			UECodeGen_Private::FObjectPropertyParams Params = { };
 			Params.NameUTF8 = "ObjectPtr";
 			Params.Offset = STRUCT_OFFSET(UObjectPtrTestClassWithRef, ObjectPtr);
-			Params.PropertyFlags = CPF_None;
+			Params.PropertyFlags = CPF_TObjectPtrWrapper;
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			Params.ClassFunc = nullptr;
-			auto Property = new FObjectPtrProperty(Class, Params);
+			auto Property = new FObjectProperty(Class, Params);
 			Property->PropertyClass = UObjectPtrTestClass::StaticClass();
 		}
 
@@ -92,10 +92,10 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrTestClassWithRef, UObject,
 			UECodeGen_Private::FObjectPropertyParams Params = { };
 			Params.NameUTF8 = "ObjectPtrNonNullable";
 			Params.Offset = STRUCT_OFFSET(UObjectPtrTestClassWithRef, ObjectPtrNonNullable);
-			Params.PropertyFlags = EPropertyFlags::CPF_NonNullable;
+			Params.PropertyFlags = EPropertyFlags::CPF_NonNullable | CPF_TObjectPtrWrapper;
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			Params.ClassFunc = nullptr;
-			auto Property = new FObjectPtrProperty(Class, Params);
+			auto Property = new FObjectProperty(Class, Params);
 			Property->PropertyClass = UObjectPtrTestClass::StaticClass();
 		}
 
@@ -106,7 +106,7 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrTestClassWithRef, UObject,
 			Params.PropertyFlags = CPF_None;
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			auto Property = new FArrayProperty(Class, Params);
-			auto InnerProperty = new FObjectPtrProperty(Property, TEXT("Inner"), EObjectFlags::RF_NoFlags);
+			auto InnerProperty = new FObjectProperty(Property, TEXT("Inner"), EObjectFlags::RF_NoFlags);
 			InnerProperty->PropertyClass = UObjectPtrTestClass::StaticClass();
 			Property->AddCppProperty(InnerProperty);
 		}
@@ -115,14 +115,50 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrTestClassWithRef, UObject,
 
 IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectWithClassProperty, UObject,
 	{
-		UECodeGen_Private::FClassPropertyParams Params = { };
-		Params.NameUTF8 = "ClassPtr";
-		Params.Offset = STRUCT_OFFSET(UObjectWithClassProperty, ClassPtr);
-		Params.PropertyFlags = CPF_None;
-		Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
-		Params.ClassFunc = nullptr;
-		auto Property = new FClassPtrProperty(Class, Params);
-		Property->PropertyClass = UObjectWithClassProperty::StaticClass();
+		{
+			UECodeGen_Private::FClassPropertyParams Params = { };
+			Params.NameUTF8 = "ClassPtr";
+			Params.Offset = STRUCT_OFFSET(UObjectWithClassProperty, ClassPtr);
+			Params.PropertyFlags = CPF_TObjectPtrWrapper;
+			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
+			Params.ClassFunc = nullptr;
+			Params.MetaClassFunc = []()
+			{
+				return UClass::StaticClass();
+			};
+			auto Property = new FClassProperty(Class, Params);
+			Property->PropertyClass = UObject::StaticClass();
+		}
+	
+		{
+			UECodeGen_Private::FClassPropertyParams Params = { };
+			Params.NameUTF8 = "ClassRaw";
+			Params.Offset = STRUCT_OFFSET(UObjectWithClassProperty, ClassRaw);
+			Params.PropertyFlags = EPropertyFlags::CPF_None;
+			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
+			Params.ClassFunc = nullptr;
+			Params.MetaClassFunc = []()
+			{
+				return UClass::StaticClass();
+			};
+			auto Property = new FClassProperty(Class, Params);
+			Property->PropertyClass = UObject::StaticClass();
+		}
+
+		{
+			UECodeGen_Private::FClassPropertyParams Params = { };
+			Params.NameUTF8 = "SubClass";
+			Params.Offset = STRUCT_OFFSET(UObjectWithClassProperty, SubClass);
+			Params.PropertyFlags = EPropertyFlags::CPF_UObjectWrapper;
+			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
+			Params.ClassFunc = nullptr;
+			Params.MetaClassFunc = []()
+			{
+				return UObjectPtrTestClass::StaticClass();
+			};
+			auto Property = new FClassProperty(Class, Params);
+			Property->PropertyClass = UObject::StaticClass();
+		}
 	}
 );
 
@@ -136,7 +172,7 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectWithRawProperty, UObject,
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			Params.ClassFunc = nullptr;
 			auto Property = new FObjectProperty(Class, Params);
-			Property->PropertyClass = UObjectWithRawProperty::StaticClass();
+			Property->PropertyClass = UObjectPtrTestClass::StaticClass();
 		}
 
 		{
@@ -147,7 +183,7 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectWithRawProperty, UObject,
 			Params.ObjectFlags = RF_Public | RF_Transient | RF_MarkAsNative;
 			Params.ClassFunc = nullptr;
 			auto Property = new FObjectProperty(Class, Params);
-			Property->PropertyClass = UObjectWithRawProperty::StaticClass();
+			Property->PropertyClass = UObjectPtrTestClass::StaticClass();
 		}
 	}
 );
@@ -155,5 +191,7 @@ IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectWithRawProperty, UObject,
 IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrDerrivedTestClass, UObjectPtrTestClass, {});
 
 IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrNotLazyTestClass, UObject, {});
+
+IMPLEMENT_CORE_INTRINSIC_CLASS(UObjectPtrStressTestClass, UObject, {});
 
 #endif

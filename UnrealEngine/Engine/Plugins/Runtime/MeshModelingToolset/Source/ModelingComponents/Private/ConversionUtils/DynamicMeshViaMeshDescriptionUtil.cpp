@@ -9,12 +9,22 @@
 #include "MeshDescriptionToDynamicMesh.h"
 
 FDynamicMesh3 UE::Geometry::GetDynamicMeshViaMeshDescription(
-	IMeshDescriptionProvider& MeshDescriptionProvider)
+	IMeshDescriptionProvider& MeshDescriptionProvider, bool bRequestTangents)
 {
 	FDynamicMesh3 DynamicMesh;
 	FMeshDescriptionToDynamicMesh Converter;
 	Converter.bVIDsFromNonManifoldMeshDescriptionAttr = true;
-	Converter.Convert(MeshDescriptionProvider.GetMeshDescription(), DynamicMesh);
+	if (bRequestTangents)
+	{
+		FGetMeshParameters GetMeshParams;
+		GetMeshParams.bWantMeshTangents = true;
+		FMeshDescription MeshDescriptionCopy = MeshDescriptionProvider.GetMeshDescriptionCopy(GetMeshParams);
+		Converter.Convert(&MeshDescriptionCopy, DynamicMesh, bRequestTangents);
+	}
+	else
+	{
+		Converter.Convert(MeshDescriptionProvider.GetMeshDescription(), DynamicMesh, bRequestTangents);
+	}
 	return DynamicMesh;
 }
 

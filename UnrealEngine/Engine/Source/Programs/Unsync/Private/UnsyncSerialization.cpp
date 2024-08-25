@@ -120,7 +120,7 @@ SaveBlocks(const std::vector<FBlock128>& Blocks, uint32 BlockSize, const FPath& 
 {
 	const uint64 OutputSize = sizeof(FBlockFileHeader) + sizeof(FBlock128) * Blocks.size();
 
-	NativeFile File(Filename, EFileMode::CreateReadWrite, OutputSize);
+	FNativeFile File(Filename, EFileMode::CreateReadWrite, OutputSize);
 
 	if (File.IsValid())
 	{
@@ -283,6 +283,27 @@ LoadMacroBlocks(FIOReaderStream& Reader, uint64 Version)
 }
 
 static FBuffer
+LoadFileReadOnlyMask(FIOReaderStream& Reader, FSerializedSectionHeader Header)
+{
+	FBuffer Result;
+
+	if (Header.Version != FFileReadOnlyMaskSection::VERSION)
+	{
+		UNSYNC_ERROR(L"Found read-only file mask section version %llu, but only version %lly is supported.",
+					 llu(Header.Version),
+					 llu(FFileReadOnlyMaskSection::VERSION));
+		return Result;
+	}
+
+	Result.Resize(Header.Size);
+	uint8* ResultData = Result.Data();
+
+	Reader.Read(ResultData, Header.Size);
+
+	return Result;
+}
+
+static FBuffer
 SaveMacroBlocks(const FDirectoryManifest& Manifest)
 {
 	FBuffer			 Result;
@@ -315,6 +336,65 @@ SaveMacroBlocks(const FDirectoryManifest& Manifest)
 
 	return Result;
 }
+
+static FBuffer
+SaveFileReadOnlyMask(const FDirectoryManifest& Manifest)
+{
+	FBuffer			 Result;
+	FVectorStreamOut Writer(Result);
+
+	const uint64 NumFiles		  = Manifest.Files.size();
+	const uint64 NumBitArrayBytes = DivUp(NumFiles, 8);
+
+	Result.Resize(NumBitArrayBytes);
+	memset(Result.Data(), 0, Result.Size());
+
+	uint64 FileIndex = 0;
+	for (const auto& FileIt : Manifest.Files)
+	{
+		const FFileManifest& FileManifest = FileIt.second;
+		BitArraySet(Result.Data(), FileIndex, FileManifest.bReadOnly);
+		++FileIndex;
+	}
+
+	return Result;
+}
+
+static FBuffer
+SaveFileRevisionControl(const FDirectoryManifest& Manifest)
+{
+	FBuffer			 Result;
+	FVectorStreamOut Writer(Result);
+
+	const uint64 NumFiles = Manifest.Files.size();
+	Writer.WriteT(NumFiles);
+	for (const auto& FileIt : Manifest.Files)
+	{
+		Writer.WriteString(FileIt.second.RevisionControlIdentity);
+	}
+
+	return Result;
+}
+
+
+std::vector<std::string>
+LoadFileRevisionControl(FIOReaderStream& Reader, FSerializedSectionHeader Header)
+{
+	std::vector<std::string> Result;
+
+	uint64 NumFiles = 0;
+	Serialize(Reader, NumFiles);
+
+	Result.resize(NumFiles);
+
+	for (uint64 FileIndex = 0; FileIndex < NumFiles; ++FileIndex)
+	{
+		Serialize(Reader, Result[FileIndex]);
+	}
+
+	return Result;
+}
+
 
 bool  // TODO: return a TResult
 LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, FIOReaderStream& Stream)
@@ -359,11 +439,14 @@ LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, FIORea
 
 	if (Version >= FDirectoryManifest::EVersions::V6_VariableHash)
 	{
-		AlgorithmCompatibility = LoadOptionsSectionV5(Stream, OutManifest.Options);
-		HashSize			   = GetHashSize(ToHashType(OutManifest.Options.StrongHashAlgorithmId));
+		AlgorithmCompatibility = LoadOptionsSectionV5(Stream, OutManifest.Algorithm);
+		HashSize			   = GetHashSize(ToHashType(OutManifest.Algorithm.StrongHashAlgorithmId));
 	}
 
 	std::unordered_map<FHash256, FGenericBlockArray> MacroBlocks;
+
+	FBuffer FileReadOnlyMask;
+	std::vector<std::string> FileRevisions; // TODO: use linear arena to store all strings for a manifest
 
 	if (Version >= FDirectoryManifest::EVersions::V7_OptionalSections)
 	{
@@ -399,6 +482,17 @@ LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, FIORea
 							MacroBlocks = LoadMacroBlocks(Stream, SectionHeader.Version);
 							break;
 						}
+					case SERIALIZED_SECTION_ID_FILE_READ_ONLY_MASK:
+						{
+							FileReadOnlyMask = LoadFileReadOnlyMask(Stream, SectionHeader);
+							break;
+						}
+					case SERIALIZED_SECTION_ID_FILE_REVISION_CONTROL:
+						{
+							FileRevisions = LoadFileRevisionControl(Stream, SectionHeader);
+							OutManifest.bHasFileRevisionControl = true;
+							break;
+						}
 					case SERIALIZED_SECTION_ID_TERMINATOR:
 						bDoneLoadingOptionalSections = true;
 						break;
@@ -427,9 +521,12 @@ LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, FIORea
 	if (AlgorithmCompatibility == EAlgorithmCompatibilityResult::Ok)
 	{
 		Serialize(Stream, NumFiles);
-		for (uint64 I = 0; I < NumFiles; ++I)
+
+		const bool bReadOnlyMaskValid = NumFiles <= FileReadOnlyMask.Size() * 8;
+
+		std::string FilenameUtf8; // shared buffer to avoid some of the reallocations
+		for (uint64 FileIndex = 0; FileIndex < NumFiles; ++FileIndex)
 		{
-			std::string FilenameUtf8;
 			Serialize(Stream, FilenameUtf8);
 
 			FFileManifest FileManifest;
@@ -479,6 +576,18 @@ LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, FIORea
 			}
 
 			FileManifest.CurrentPath	= Root / Filename;
+
+			if (bReadOnlyMaskValid)
+			{
+				FileManifest.bReadOnly = BitArrayGet(FileReadOnlyMask.Data(), FileIndex);
+			}
+
+			if (OutManifest.bHasFileRevisionControl)
+			{
+				FileManifest.RevisionControlIdentity = std::move(FileRevisions[FileIndex]);
+			}
+
+			// Store output
 			OutManifest.Files[Filename] = std::move(FileManifest);
 		}
 	}
@@ -486,7 +595,7 @@ LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, FIORea
 	// Old manifest versions always stored options after file blocks
 	if (Version < FDirectoryManifest::EVersions::V6_VariableHash)
 	{
-		AlgorithmCompatibility = LoadOptionsSectionV5(Stream, OutManifest.Options);
+		AlgorithmCompatibility = LoadOptionsSectionV5(Stream, OutManifest.Algorithm);
 	}
 
 	if (AlgorithmCompatibility != EAlgorithmCompatibilityResult::Ok)
@@ -496,7 +605,7 @@ LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, FIORea
 	}
 
 	// Set the hash type in all file manifests
-	const EHashType HashType = ToHashType(OutManifest.Options.StrongHashAlgorithmId);
+	const EHashType HashType = ToHashType(OutManifest.Algorithm.StrongHashAlgorithmId);
 	for (auto& It : OutManifest.Files)
 	{
 		FFileManifest& FileManifest = It.second;
@@ -516,7 +625,7 @@ LoadDirectoryManifest(FDirectoryManifest& OutManifest, const FPath& Root, const 
 	UNSYNC_LOG_INDENT;
 	UNSYNC_VERBOSE(L"Loading directory manifest from '%ls'", ManifestFilename.wstring().c_str());
 
-	// NativeFile manifest_file(manifest_filename, FileMode::ReadOnly);
+	// FNativeFile manifest_file(manifest_filename, FileMode::ReadOnly);
 	FBuffer ManifestBuffer = ReadFileToBuffer(ManifestFilename);
 
 	if (ManifestBuffer.Size() != 0)
@@ -555,12 +664,33 @@ WriteSection(FVectorStreamOut& Stream, const FMetadataStringSection& Section)
 	WriteSection(Stream, FMetadataStringSection::MAGIC, FMetadataStringSection::VERSION, StreamBuffer.View());
 }
 
+template<typename SectionHeaderType>
+static void
+WriteSection(FVectorStreamOut& Stream, FBufferView SectionData)
+{
+	WriteSection(Stream, SectionHeaderType::MAGIC, SectionHeaderType::VERSION, SectionData);
+}
+
+bool
+ManifestHasMacroBlocks(const FDirectoryManifest& Manifest)
+{
+	// TODO: store the macro block count in the manifest runtime data
+	for (const auto& FileIt : Manifest.Files)
+	{
+		if (!FileIt.second.MacroBlocks.empty())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool
 SaveDirectoryManifest(const FDirectoryManifest& Manifest, FVectorStreamOut& Stream)
 {
 	// TODO: use compact binary to store the manifest
 
-	const size_t HashSize = GetHashSize(ToHashType(Manifest.Options.StrongHashAlgorithmId));
+	const size_t HashSize = GetHashSize(ToHashType(Manifest.Algorithm.StrongHashAlgorithmId));
 
 	FBuffer			 BlockStreamBuffer;
 	FVectorStreamOut BlockStream(BlockStreamBuffer);
@@ -570,7 +700,7 @@ SaveDirectoryManifest(const FDirectoryManifest& Manifest, FVectorStreamOut& Stre
 	Serialize(Stream, FDirectoryManifest::MAGIC);
 	Serialize(Stream, FDirectoryManifest::VERSION);
 
-	Serialize(Stream, Manifest.Options);
+	Serialize(Stream, Manifest.Algorithm);
 
 	// Save optional sections
 
@@ -590,10 +720,21 @@ SaveDirectoryManifest(const FDirectoryManifest& Manifest, FVectorStreamOut& Stre
 		WriteSection(Stream, Section);
 	}
 
+	if (ManifestHasMacroBlocks(Manifest))
 	{
-		// TODO: only save macro block section if it's valid
-		FBuffer SerializedMacroBlocks = SaveMacroBlocks(Manifest);
-		WriteSection(Stream, FMacroBlockSection::MAGIC, FMacroBlockSection::VERSION, SerializedMacroBlocks.View());
+		FBuffer SectionBuffer = SaveMacroBlocks(Manifest);
+		WriteSection<FMacroBlockSection>(Stream, SectionBuffer.View());
+	}
+
+	{
+		FBuffer SectionBuffer = SaveFileReadOnlyMask(Manifest);
+		WriteSection<FFileReadOnlyMaskSection>(Stream, SectionBuffer.View());
+	}
+
+	if (Manifest.bHasFileRevisionControl)
+	{
+		FBuffer SectionBuffer = SaveFileRevisionControl(Manifest);
+		WriteSection<FFileRevisionControlSection>(Stream, SectionBuffer.View());
 	}
 
 	// End with the terminator section (default-constructed);
@@ -646,7 +787,7 @@ SaveDirectoryManifest(const FDirectoryManifest& Manifest, const FPath& Filename)
 	bool bSerialized = SaveDirectoryManifest(Manifest, OutputStream);
 	UNSYNC_ASSERT(bSerialized);
 
-	NativeFile OutputFile(Filename, EFileMode::CreateWriteOnly, OutputBuffer.Size());
+	FNativeFile OutputFile(Filename, EFileMode::CreateWriteOnly, OutputBuffer.Size());
 	if (OutputFile.IsValid())
 	{
 		uint64 WroteBytes = OutputFile.Write(OutputBuffer.Data(), 0, OutputBuffer.Size());
@@ -654,7 +795,7 @@ SaveDirectoryManifest(const FDirectoryManifest& Manifest, const FPath& Filename)
 	}
 	else
 	{
-		UNSYNC_ERROR(L"Failed to open manifest output file '%ls'", Filename.wstring().c_str());
+		UNSYNC_ERROR(L"Failed to open manifest output file '%ls' for writing", Filename.wstring().c_str());
 		return false;
 	}
 }

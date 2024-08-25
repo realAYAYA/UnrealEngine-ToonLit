@@ -51,13 +51,15 @@ EAssetCommandResult UAssetDefinition_EditorUtilityWidgetBlueprint::OpenAssets(co
 
 	for (UBlueprint* Blueprint : OpenArgs.LoadObjects<UBlueprint>())
 	{
-		if (Blueprint->SkeletonGeneratedClass && Blueprint->GeneratedClass)
+		if (Blueprint && Blueprint->SkeletonGeneratedClass && Blueprint->GeneratedClass)
 		{
 			TSharedRef<FWidgetBlueprintEditor> NewBlueprintEditor(new FWidgetBlueprintEditor());
 
+			const bool bShouldOpenInDefaultsMode = false;
 			TArray<UBlueprint*> Blueprints;
 			Blueprints.Add(Blueprint);
-			NewBlueprintEditor->InitWidgetBlueprintEditor(EToolkitMode::Standalone, nullptr, Blueprints, true);
+
+			NewBlueprintEditor->InitWidgetBlueprintEditor(EToolkitMode::Standalone, nullptr, Blueprints, bShouldOpenInDefaultsMode);
 		}
 		else
 		{

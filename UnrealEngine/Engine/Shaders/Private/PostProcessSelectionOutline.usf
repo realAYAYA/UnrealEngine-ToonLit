@@ -29,6 +29,7 @@ int OutlineColorIndexBits;
 float SelectionHighlightIntensity;
 float BSPSelectionIntensity;
 float UILuminanceAndIsSCRGB;
+float SecondaryViewportOffset;
 
 struct FPixelInfo
 {
@@ -123,10 +124,10 @@ float4 PerSample(int2 PixelPos, int SampleID, FPixelInfo CenterPixelInfo, float3
 	PixelInfo[0] = CenterPixelInfo;
 
 	// Diagonal cross is thicker than vertical/horizontal cross.
-	PixelInfo[1] = GetPixelInfo(PixelPos, SampleID,  1,  1, DeviceZPlane, DeviceZMinMax);
-	PixelInfo[2] = GetPixelInfo(PixelPos, SampleID, -1, -1, DeviceZPlane, DeviceZMinMax);
-	PixelInfo[3] = GetPixelInfo(PixelPos, SampleID,  1, -1, DeviceZPlane, DeviceZMinMax);
-	PixelInfo[4] = GetPixelInfo(PixelPos, SampleID, -1,  1, DeviceZPlane, DeviceZMinMax);
+	PixelInfo[1] = GetPixelInfo(PixelPos, SampleID, SecondaryViewportOffset + 1,  1, DeviceZPlane, DeviceZMinMax);
+	PixelInfo[2] = GetPixelInfo(PixelPos, SampleID, SecondaryViewportOffset - 1, -1, DeviceZPlane, DeviceZMinMax);
+	PixelInfo[3] = GetPixelInfo(PixelPos, SampleID, SecondaryViewportOffset + 1, -1, DeviceZPlane, DeviceZMinMax);
+	PixelInfo[4] = GetPixelInfo(PixelPos, SampleID, SecondaryViewportOffset - 1,  1, DeviceZPlane, DeviceZMinMax);
 
 	// With (.x != .y) we can detect a border around and between each object.
 	int2 BorderMinMax = int2(255,0);
@@ -218,17 +219,17 @@ void MainPS(
 
 #if MSAA_SAMPLE_COUNT > 1
 	const int4 StencilScout = int4(
-		EditorPrimitivesStencil.Load(ColorPixelPos + int2( ScoutStep,  0), 0) STENCIL_COMPONENT_SWIZZLE,
-		EditorPrimitivesStencil.Load(ColorPixelPos + int2(-ScoutStep,  0), 0) STENCIL_COMPONENT_SWIZZLE,
-		EditorPrimitivesStencil.Load(ColorPixelPos + int2( 0,  ScoutStep), 0) STENCIL_COMPONENT_SWIZZLE,
-		EditorPrimitivesStencil.Load(ColorPixelPos + int2( 0, -ScoutStep), 0) STENCIL_COMPONENT_SWIZZLE
+		EditorPrimitivesStencil.Load(ColorPixelPos + int2( ScoutStep,  0) + int2(SecondaryViewportOffset, 0), 0) STENCIL_COMPONENT_SWIZZLE,
+		EditorPrimitivesStencil.Load(ColorPixelPos + int2(-ScoutStep,  0) + int2(SecondaryViewportOffset, 0), 0) STENCIL_COMPONENT_SWIZZLE,
+		EditorPrimitivesStencil.Load(ColorPixelPos + int2( 0,  ScoutStep) + int2(SecondaryViewportOffset, 0), 0) STENCIL_COMPONENT_SWIZZLE,
+		EditorPrimitivesStencil.Load(ColorPixelPos + int2( 0, -ScoutStep) + int2(SecondaryViewportOffset, 0), 0) STENCIL_COMPONENT_SWIZZLE
 	);
 #else
 	const int4 StencilScout = int4(
-		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2( ScoutStep,  0), 0)) STENCIL_COMPONENT_SWIZZLE,
-		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2(-ScoutStep,  0), 0)) STENCIL_COMPONENT_SWIZZLE,
-		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2( 0,  ScoutStep), 0)) STENCIL_COMPONENT_SWIZZLE,
-		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2( 0, -ScoutStep), 0)) STENCIL_COMPONENT_SWIZZLE
+		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2( ScoutStep,  0) + int2(SecondaryViewportOffset, 0), 0)) STENCIL_COMPONENT_SWIZZLE,
+		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2(-ScoutStep,  0) + int2(SecondaryViewportOffset, 0), 0)) STENCIL_COMPONENT_SWIZZLE,
+		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2( 0,  ScoutStep) + int2(SecondaryViewportOffset, 0), 0)) STENCIL_COMPONENT_SWIZZLE,
+		EditorPrimitivesStencil.Load(int3(ColorPixelPos + int2( 0, -ScoutStep) + int2(SecondaryViewportOffset, 0), 0)) STENCIL_COMPONENT_SWIZZLE
 	);
 #endif
 
@@ -256,7 +257,7 @@ void MainPS(
 		DeviceZMinMax.x = min(Center, min(min(Left, Right), min(Top, Bottom)));
 		DeviceZMinMax.y = max(Center, max(max(Left, Right), max(Top, Bottom)));
 
-		FPixelInfo CenterPixelInfo = GetPixelInfo(ColorPixelPos, 0, 0,  0, DeviceZPlane, DeviceZMinMax);
+		FPixelInfo CenterPixelInfo = GetPixelInfo(ColorPixelPos, 0, SecondaryViewportOffset, 0, DeviceZPlane, DeviceZMinMax);
 
 		float4 Sum = 0;
 #if COMPILER_GLSL && FEATURE_LEVEL >= FEATURE_LEVEL_SM4

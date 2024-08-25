@@ -10,10 +10,14 @@
 #include "IElectraPlayerRuntimeModule.h"
 #include "ElectraPlayerPlugin.h"
 #include "ParameterDictionary.h"
+#include "SimpleElectraAudioPlayer.h"
+#include "IElectraDecoderResourceDelegateBase.h"
 
 #define LOCTEXT_NAMESPACE "ElectraPlayerPluginModule"
 
 DEFINE_LOG_CATEGORY(LogElectraPlayerPlugin);
+
+DECLARE_CYCLE_STAT(TEXT("Electra AsyncJob"), STAT_ElectraAsyncJob, STATGROUP_Media);
 
 // -----------------------------------------------------------------------------------------------------------------------------------
 
@@ -52,6 +56,7 @@ public:
 	virtual void SendAnalyticMetricsPerMinute(const TSharedPtr<IAnalyticsProviderET>& AnalyticsProvider) override
 	{
 		SendAnalyticMetricsPerMinuteDelegate.Broadcast(AnalyticsProvider);
+		ISimpleElectraAudioPlayer::SendAnalyticMetrics(AnalyticsProvider);
 	}
 
 	virtual void ReportVideoStreamingError(const FGuid& PlayerGuid, const FString& LastError) override
@@ -78,6 +83,36 @@ public:
 		}
 	}
 
+	class FAsyncConsecutiveTaskSync : public IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync
+	{
+	public:
+		FAsyncConsecutiveTaskSync() {}
+		virtual ~FAsyncConsecutiveTaskSync() {}
+
+		FGraphEventRef	GraphEvent;
+	};
+
+	static TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync, ESPMode::ThreadSafe> CreateAsyncConsecutiveTaskSync()
+	{
+		return MakeShared<FAsyncConsecutiveTaskSync, ESPMode::ThreadSafe>();
+	}
+
+	static void RunCodeAsync(TFunction<void()>&& CodeToRun, IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync* TaskSync)
+	{
+		FScopeLock Lock(&AsyncJobAccessCS);
+
+		// Execute code async
+		// (We assume this to be code copying buffer data around. Hence we allow only ONE at any time to not clog up
+		//  the buses even more and delay the copy process further)
+		FGraphEventArray Events;
+		auto& Event = TaskSync ? static_cast<FAsyncConsecutiveTaskSync*>(TaskSync)->GraphEvent : RunCodeAsyncEvent;
+		if (Event.IsValid())
+		{
+			Events.Add(Event);
+		}
+		Event = FFunctionGraphTask::CreateAndDispatchWhenReady(MoveTemp(CodeToRun), GET_STATID(STAT_ElectraAsyncJob), &Events);
+	}
+	
 	void StartupModule() override
 	{
 		// Check that we have the player module and that it has initialized successfully.
@@ -105,7 +140,9 @@ public:
 			}
 
 			Electra::FParamDict Params;
-			Params.Set("GetDeviceTypeCallback", Electra::FVariantValue((void*)&FElectraPlayerPluginModule::GetDynamicRHIInfo));
+			Params.Set(FName(TEXT("GetDeviceTypeCallback")), Electra::FVariantValue((void*)&FElectraPlayerPluginModule::GetDynamicRHIInfo));
+			Params.Set(FName(TEXT("CreateAsyncConsecutiveTaskSync")), Electra::FVariantValue((void*)&FElectraPlayerPluginModule::CreateAsyncConsecutiveTaskSync));
+			Params.Set(FName(TEXT("RunCodeAsyncCallback")), Electra::FVariantValue((void*)&FElectraPlayerPluginModule::RunCodeAsync));
 			if (!FElectraPlayerPlatform::StartupPlatformResources(Params))
 			{
 				UE_LOG(LogElectraPlayerPlugin, Log, TEXT("Platform resource setup failed! Electra Player plugin is not initialised."));
@@ -128,7 +165,13 @@ private:
 	FElectraPlayerSendAnalyticMetricsPerMinuteDelegate	SendAnalyticMetricsPerMinuteDelegate;
 	FElectraPlayerReportVideoStreamingErrorDelegate		ReportVideoStreamingErrorDelegate;
 	FElectraPlayerReportSubtitlesMetricsDelegate		ReportSubtitlesMetricsDelegate;
+
+	static FCriticalSection AsyncJobAccessCS;
+	static FGraphEventRef RunCodeAsyncEvent;
 };
+
+FCriticalSection FElectraPlayerPluginModule::AsyncJobAccessCS;
+FGraphEventRef FElectraPlayerPluginModule::RunCodeAsyncEvent;
 
 IMPLEMENT_MODULE(FElectraPlayerPluginModule, ElectraPlayerPlugin);
 

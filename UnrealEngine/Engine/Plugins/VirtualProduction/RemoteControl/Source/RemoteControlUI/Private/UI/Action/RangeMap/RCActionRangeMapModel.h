@@ -3,8 +3,11 @@
 #pragma once
 
 #include "Action/RCFunctionAction.h"
+#include "Action/RCPropertyIdAction.h"
 #include "Action/RCPropertyAction.h"
 #include "UI/Action/RCActionModel.h"
+
+class STextBlock;
 
 /*
  * ~ FRCActionRangeMapModel ~
@@ -34,7 +37,20 @@ public:
 	static TSharedPtr<FRCActionRangeMapModel> GetModelByActionType(URCAction* InAction, const TSharedPtr<class FRCBehaviourModel> InBehaviourItem, const TSharedPtr<SRemoteControlPanel> InRemoteControlPanel);
 
 private:
+	/** Update the condition widget text with the new text given */
+	void UpdateConditionWidget(const FText& InNewText) const;
+
+	/** Called when updating the condition to update every other actions currently selected with the new condition */
+	void UpdateSelectedRangeMapActionModel(double InNewValue, const FText& InNewConditionText) const;
+
+	/** Called when constructing the widget or after editing the condition value */
 	TSharedRef<SWidget> OnGenerateInputWidget(class URCVirtualPropertySelfContainer* InComparand) const;
+
+	/** Called when exiting edit mode to update other selected actions */
+	void OnExitingEditingMode() const;
+
+	/** Holding the widget that display the condition as text */
+	TSharedPtr<STextBlock> ConditionWidget;
 };
 
 /*
@@ -77,5 +93,34 @@ public:
 	virtual FLinearColor GetActionTypeColor() const override
 	{
 		return GetFunctionTypeColor();
+	}
+};
+
+/**
+ * FRCPropertyIdActionRangeMapModel
+ *
+ * UI model for PropertyId based RangeMap Actions
+ */
+class FRCPropertyIdActionRangeMapModel : public FRCActionRangeMapModel, public FRCPropertyIdActionType
+{
+public:
+	FRCPropertyIdActionRangeMapModel(URCPropertyIdAction* InPropertyIdAction, const TSharedPtr<class FRCBehaviourModel> InBehaviourItem, const TSharedPtr<SRemoteControlPanel> InRemoteControlPanel)
+		: FRCActionRangeMapModel(InPropertyIdAction, InBehaviourItem, InRemoteControlPanel)
+		, FRCPropertyIdActionType(InPropertyIdAction)
+	{}
+	/** Color code for this Action*/
+	virtual FLinearColor GetActionTypeColor() const override
+	{
+		return GetPropertyIdTypeColor();
+	}
+	/** Widget representing Action Name field */
+	virtual TSharedRef<SWidget> GetNameWidget() const override
+	{
+		return GetPropertyIdNameWidget();
+	}
+	/** Widget representing the Value field */
+	virtual TSharedRef<SWidget> GetWidget() const override
+	{
+		return GetPropertyIdValueWidget();
 	}
 };

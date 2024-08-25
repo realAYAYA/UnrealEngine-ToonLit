@@ -1,4 +1,5 @@
-pyside2==5.15.2
-python-osc==1.7.4
+pyside6-essentials==6.5.3
+python-osc==1.8.3
 requests==2.24.0
 six==1.15.0
+aioquic==0.9.21

@@ -13,6 +13,7 @@
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Trace/Trace.h"
 #include "Trace/Trace.inl"
+#include <type_traits>
 
 DEFINE_LOG_CATEGORY_STATIC(LogStreamableManager, Log, All);
 
@@ -45,9 +46,10 @@ class FStreamableDelegateDelayHelper : public FTickableGameObject
 public:
 
 	/** Adds a delegate to deferred list */
-	void AddDelegate(const FStreamableDelegate& Delegate, const FStreamableDelegate& CancelDelegate, TSharedPtr<FStreamableHandle> AssociatedHandle)
+	template<typename InStreamableDelegate>
+	void AddDelegate(InStreamableDelegate&& Delegate, InStreamableDelegate&& CancelDelegate, TSharedPtr<FStreamableHandle> AssociatedHandle)
 	{
-		FPendingDelegate* PendingDelegate = new FPendingDelegate(Delegate, CancelDelegate, AssociatedHandle);
+		FPendingDelegate* PendingDelegate = new FPendingDelegate(Forward<InStreamableDelegate>(Delegate), Forward<InStreamableDelegate>(CancelDelegate), AssociatedHandle);
 
 		{
 			FScopeLock Lock(&DataLock);
@@ -215,10 +217,11 @@ private:
 		/** Frames left to delay */
 		int32 DelayFrames;
 
-		FPendingDelegate(const FStreamableDelegate& InDelegate, const FStreamableDelegate& InCancelDelegate, TSharedPtr<FStreamableHandle> InHandle)
-			: Delegate(InDelegate)
-			, CancelDelegate(InCancelDelegate)
-			, RelatedHandle(InHandle)
+		template<typename InStreamableDelegate>
+		FPendingDelegate(InStreamableDelegate&& InDelegate, InStreamableDelegate&& InCancelDelegate, TSharedPtr<FStreamableHandle> InHandle)
+			: Delegate(Forward<InStreamableDelegate>(InDelegate))
+			, CancelDelegate(Forward<InStreamableDelegate>(InCancelDelegate))
+			, RelatedHandle(MoveTemp(InHandle))
 			, DelayFrames(GStreamableDelegateDelayFrames)
 		{}
 	};
@@ -358,7 +361,7 @@ bool FStreamableHandle::BindCompleteDelegate(FStreamableDelegate NewDelegate)
 		return false;
 	}
 
-	CompleteDelegate = NewDelegate;
+	CompleteDelegate = MoveTemp(NewDelegate);
 	return true;
 }
 
@@ -370,7 +373,7 @@ bool FStreamableHandle::BindCancelDelegate(FStreamableDelegate NewDelegate)
 		return false;
 	}
 
-	CancelDelegate = NewDelegate;
+	CancelDelegate = MoveTemp(NewDelegate);
 	return true;
 }
 
@@ -382,7 +385,7 @@ bool FStreamableHandle::BindUpdateDelegate(FStreamableUpdateDelegate NewDelegate
 		return false;
 	}
 
-	UpdateDelegate = NewDelegate;
+	UpdateDelegate = MoveTemp(NewDelegate);
 	return true;
 }
 
@@ -612,7 +615,7 @@ void FStreamableHandle::CancelHandle()
 	bCanceled = true;
 	NotifyParentsOfCancellation();
 
-	ExecuteDelegate(CancelDelegate, SharedThis);
+	ExecuteDelegate(MoveTemp(CancelDelegate), SharedThis);
 	UnbindDelegates();
 
 	// Remove from referenced list. If it is stalled then it won't have been registered with
@@ -764,7 +767,7 @@ void FStreamableHandle::CompleteLoad()
 	{
 		bLoadCompleted = true;
 
-		ExecuteDelegate(CompleteDelegate, AsShared(), CancelDelegate);
+		ExecuteDelegate(MoveTemp(CompleteDelegate), AsShared(), MoveTemp(CancelDelegate));
 		UnbindDelegates();
 
 		NotifyParentsOfCompletion();
@@ -922,26 +925,44 @@ void FStreamableHandle::AsyncLoadCallbackWrapper(const FName& PackageName, UPack
 	}
 }
 
-void FStreamableHandle::ExecuteDelegate(const FStreamableDelegate& Delegate, TSharedPtr<FStreamableHandle> AssociatedHandle, const FStreamableDelegate& CancelDelegate)
+namespace UE::StreamableManager::Private
 {
-	if (Delegate.IsBound())
+	// Internal helper for executing delegates. This avoids code duplication by allowing the delegate to be moved or copied when deferred depending on which overload of ExecuteDelegate is called.
+	template<typename InStreamableDelegate>
+	void ExecuteDelegateInternal(InStreamableDelegate&& Delegate, TSharedPtr<FStreamableHandle> AssociatedHandle, InStreamableDelegate&& CancelDelegate)
 	{
-		if (GStreamableDelegateDelayFrames == 0)
-		{
-			// Execute it immediately
-			Delegate.Execute();
-		}
-		else
-		{
-			// Add to execution queue for next tick
-			if (!StreamableDelegateDelayHelper)
-			{
-				StreamableDelegateDelayHelper = new FStreamableDelegateDelayHelper;
-			}
+		using UnRefCvStreamableDelegate = std::remove_cv_t<std::remove_reference_t<InStreamableDelegate>>;
+		static_assert(std::is_same_v<UnRefCvStreamableDelegate, FStreamableDelegate>, "ExecuteDelegateInternal is only valid to be called with FStreamableDelegate.");
 
-			StreamableDelegateDelayHelper->AddDelegate(Delegate, CancelDelegate, AssociatedHandle);
+		if (Delegate.IsBound())
+		{
+			if (GStreamableDelegateDelayFrames == 0)
+			{
+				// Execute it immediately
+				Delegate.Execute();
+			}
+			else
+			{
+				// Add to execution queue for next tick
+				if (!StreamableDelegateDelayHelper)
+				{
+					StreamableDelegateDelayHelper = new FStreamableDelegateDelayHelper;
+				}
+
+				StreamableDelegateDelayHelper->AddDelegate(Forward<InStreamableDelegate>(Delegate), Forward<InStreamableDelegate>(CancelDelegate), MoveTemp(AssociatedHandle));
+			}
 		}
 	}
+}
+
+void FStreamableHandle::ExecuteDelegate(const FStreamableDelegate& Delegate, TSharedPtr<FStreamableHandle> AssociatedHandle, const FStreamableDelegate& CancelDelegate)
+{
+	UE::StreamableManager::Private::ExecuteDelegateInternal(Delegate, MoveTemp(AssociatedHandle), CancelDelegate);
+}
+
+void FStreamableHandle::ExecuteDelegate(FStreamableDelegate&& Delegate, TSharedPtr<FStreamableHandle> AssociatedHandle, FStreamableDelegate&& CancelDelegate)
+{
+	UE::StreamableManager::Private::ExecuteDelegateInternal(MoveTemp(Delegate), MoveTemp(AssociatedHandle), MoveTemp(CancelDelegate));
 }
 
 TSharedPtr<FStreamableHandle> FStreamableHandle::FindMatchingHandle(TFunction<bool(const FStreamableHandle&)> Predicate) const
@@ -1062,7 +1083,7 @@ struct FStreamable
 		// Cancel active handles, this list includes the loading handles
 		while (ActiveHandles.Num() > 0)
 		{
-			FStreamableHandle* ActiveHandle = ActiveHandles.Pop(/* shrink */ false);
+			FStreamableHandle* ActiveHandle = ActiveHandles.Pop(EAllowShrinking::No);
 			if (!ActiveHandle->bCanceled)
 			{
 				// Full cancel isn't safe any more
@@ -1079,7 +1100,7 @@ struct FStreamable
 					// Keep handle alive to stop the cancel callback from dropping the last reference
 					TSharedPtr<FStreamableHandle> SharedHandle = ActiveHandle->AsShared();
 
-					FStreamableHandle::ExecuteDelegate(ActiveHandle->CancelDelegate, SharedHandle);
+					FStreamableHandle::ExecuteDelegate(MoveTemp(ActiveHandle->CancelDelegate), SharedHandle);
 					ActiveHandle->UnbindDelegates();
 					ActiveHandle->NotifyParentsOfCancellation();
 				}
@@ -1104,7 +1125,7 @@ void RemoveActiveHandle(FStreamable& Streamable, FStreamableHandle& Handle)
 	{
 		if (ActiveHandles[Idx] == &Handle)
 		{
-			ActiveHandles.RemoveAtSwap(Idx, 1, /* shrink */ false);
+			ActiveHandles.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -1329,7 +1350,7 @@ FStreamable* FStreamableManager::StreamInternal(const FSoftObjectPath& InTargetN
 			int32 FirstDot = Package.Find(TEXT("."), ESearchCase::CaseSensitive);
 			if (FirstDot != INDEX_NONE)
 			{
-				Package.LeftInline(FirstDot,false);
+				Package.LeftInline(FirstDot,EAllowShrinking::No);
 			}
 
 			FPackagePath PackagePath;
@@ -1368,7 +1389,7 @@ TSharedPtr<FStreamableHandle> FStreamableManager::RequestAsyncLoad(TArray<FSoftO
 
 	// Schedule a new callback, this will get called when all related async loads are completed
 	TSharedRef<FStreamableHandle> NewRequest = MakeShareable(new FStreamableHandle());
-	NewRequest->CompleteDelegate = DelegateToCall;
+	NewRequest->CompleteDelegate = MoveTemp(DelegateToCall);
 	NewRequest->OwningManager = this;
 	NewRequest->RequestedAssets = MoveTemp(TargetsToStream);
 #if (!PLATFORM_IOS && !PLATFORM_ANDROID)
@@ -1753,7 +1774,7 @@ void FStreamableManager::RemoveReferencedAsset(const FSoftObjectPath& Target, TS
 	// This should always be in the active handles list
 	if (ensureMsgf(Existing, TEXT("Failed to find existing streamable for %s"), *Target.ToString()))
 	{
-		ensureMsgf(Existing->ActiveHandles.RemoveSwap(&Handle.Get(), /* shrink */ false) > 0, TEXT("Failed to remove active handle for %s"), *Target.ToString());
+		ensureMsgf(Existing->ActiveHandles.RemoveSwap(&Handle.Get(), EAllowShrinking::No) > 0, TEXT("Failed to remove active handle for %s"), *Target.ToString());
 
 		// Try removing from loading list if it's still there, this won't call the callback as it's being called from cancel
 		// This may remove more than one copy if streamables were merged

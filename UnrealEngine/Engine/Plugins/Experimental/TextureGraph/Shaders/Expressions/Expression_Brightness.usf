@@ -1,0 +1,16 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/TextureGraph/SamplerStates.ush"
+
+Texture2D SourceTexture;
+float Brightness;
+float Contrast;
+
+float4 FSH_Brightness(float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 Color = SourceTexture.Sample(SamplerStates_NoBorder, uv);
+	float MidPoint = 0.5 + Brightness;
+
+	// TODO: Support HDR values
+	return saturate(lerp(MidPoint, Color + float4(Brightness, Brightness, Brightness, Brightness), float4(Contrast, Contrast, Contrast, Contrast)));
+}

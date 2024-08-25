@@ -21,9 +21,14 @@
 #include "Streaming/Texture2DMipDataProvider_IO.h"
 #include "Streaming/TextureStreamOut.h"
 #include "TextureCompiler.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 #include "ImageCoreUtils.h"
+
+#if WITH_EDITOR
+#include "AsyncCompilationHelpers.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(Texture2DArray)
 
@@ -95,9 +100,6 @@ static UTexture2DArray* GetDefaultTexture2DArray(const UTexture2DArray* Texture)
 UTexture2DArray::UTexture2DArray(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, PrivatePlatformData(nullptr)
-	, PlatformData(
-		[this]()-> FTexturePlatformData* { return GetPlatformData(); },
-		[this](FTexturePlatformData* InPlatformData) { SetPlatformData(InPlatformData); })
 {
 #if WITH_EDITORONLY_DATA
 	SRGB = true;
@@ -113,6 +115,12 @@ FTexturePlatformData** UTexture2DArray::GetRunningPlatformData()
 
 void UTexture2DArray::SetPlatformData(FTexturePlatformData* InPlatformData)
 {
+	if (PrivatePlatformData)
+	{
+		ReleaseResource();
+		delete PrivatePlatformData;
+	}
+
 	PrivatePlatformData = InPlatformData;
 }
 
@@ -171,6 +179,13 @@ FTextureResource* UTexture2DArray::CreateResource()
 	{
 		return new FTexture2DArrayResource(this, GetResourcePostInitState(GetPlatformData(), GSupportsTexture2DArrayStreaming));
 	}
+#if WITH_EDITORONLY_DATA
+	else if (!SourceTextures.Num())
+	{
+		// empty arrays don't have built mips
+		return nullptr;
+	}
+#endif
 	else if (GetNumMips() == 0)
 	{
 		UE_LOG(LogTexture, Warning, TEXT("%s contains no miplevels! Please delete."), *GetFullName());
@@ -235,7 +250,11 @@ uint32 UTexture2DArray::CalcTextureMemorySize(int32 MipCount) const
 
 uint32 UTexture2DArray::CalcTextureMemorySizeEnum(ETextureMipCount Enum) const
 {
-	if (Enum == TMC_ResidentMips || Enum == TMC_AllMipsBiased) 
+	if (Enum == TMC_ResidentMips)
+	{
+		return CalcTextureMemorySize(GetNumResidentMips());
+	}
+	else if (Enum == TMC_AllMipsBiased) 
 	{
 		return CalcTextureMemorySize(GetNumMips() - GetCachedLODBias());
 	}
@@ -529,6 +548,13 @@ void UTexture2DArray::PostLoad()
 
 void UTexture2DArray::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UTexture2DArray::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 #if WITH_EDITOR
 	int32 SizeX = Source.GetSizeX();
 	int32 SizeY = Source.GetSizeY();
@@ -539,10 +565,10 @@ void UTexture2DArray::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) c
 	int32 ArraySize = 0;
 #endif
 	const FString Dimensions = FString::Printf(TEXT("%dx%d*%d"), SizeX, SizeY, ArraySize);
-	OutTags.Add(FAssetRegistryTag("Dimensions", Dimensions, FAssetRegistryTag::TT_Dimensional));
-	OutTags.Add(FAssetRegistryTag("Format", GPixelFormats[GetPixelFormat()].Name, FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("Dimensions", Dimensions, FAssetRegistryTag::TT_Dimensional));
+	Context.AddTag(FAssetRegistryTag("Format", GPixelFormats[GetPixelFormat()].Name, FAssetRegistryTag::TT_Alphabetical));
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 FString UTexture2DArray::GetDesc() 
@@ -676,6 +702,23 @@ bool UTexture2DArray::StreamIn(int32 NewMipCount, bool bHighPrio)
 		return !PendingUpdate->IsCancelled();
 	}
 	return false;
+}
+
+
+int32 UTexture2DArray::GetNumResidentMips() const
+{
+	if (GetResource())
+	{
+		if (CachedSRRState.IsValid())
+		{
+			return CachedSRRState.NumResidentLODs;
+		}
+		else
+		{
+			return GetResource()->GetCurrentMipCount();
+		}
+	}
+	return 0;
 }
 
 #undef LOCTEXT_NAMESPACE

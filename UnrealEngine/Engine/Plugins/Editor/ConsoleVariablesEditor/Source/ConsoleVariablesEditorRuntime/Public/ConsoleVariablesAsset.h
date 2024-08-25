@@ -86,7 +86,7 @@ public:
 	/** Outputs the FConsoleVariablesEditorAssetSaveData matching InCommand. Returns whether a match was found. Case sensitive. */
 	UFUNCTION(BlueprintCallable, Category="Console Variables Asset")
 	bool FindSavedDataByCommandString(
-		const FString InCommandString, FConsoleVariablesEditorAssetSaveData& OutValue, const ESearchCase::Type SearchCase = ESearchCase::IgnoreCase) const;
+		const FString& InCommandString, FConsoleVariablesEditorAssetSaveData& OutValue, const ESearchCase::Type SearchCase = ESearchCase::IgnoreCase) const;
 
 	/** Set the value of a saved console variable if the name matches; add a new console variable to the list if a match is not found. */
 	UFUNCTION(BlueprintCallable, Category="Console Variables Asset")
@@ -94,7 +94,7 @@ public:
 
 	/** Returns true if the element was found and successfully removed. */
 	UFUNCTION(BlueprintCallable, Category="Console Variables Asset")
-	bool RemoveConsoleVariable(const FString InCommandString);
+	bool RemoveConsoleVariable(const FString& InCommandString);
 
 	/** Copy data from input asset to this asset */
 	UFUNCTION(BlueprintCallable, Category="Console Variables Asset")

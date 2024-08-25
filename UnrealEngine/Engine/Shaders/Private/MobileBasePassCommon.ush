@@ -7,6 +7,7 @@
 #include "BasePassCommon.ush"
 #define FogStruct MobileBasePass.Fog
 #define PlanarReflectionStruct MobileBasePass.PlanarReflection
+#define LFVStruct MobileBasePass
 
 #undef NEEDS_LIGHTMAP_COORDINATE
 
@@ -20,6 +21,9 @@
 // Use vertex fogging for translucency and opaque if project does not use per-pixel fog
 // And always use vertex fogging on sky for perf
 #define USE_VERTEX_FOG	(!PROJECT_MOBILE_DISABLE_VERTEX_FOG || MATERIAL_IS_SKY || (MATERIAL_ENABLE_TRANSLUCENCY_FOGGING && (MATERIALBLENDING_ANY_TRANSLUCENT || MATERIAL_SHADINGMODEL_SINGLELAYERWATER)))
+
+// Local fog volumes are always evaluated per vertex for now, on mobile, it simply follow VertexFog.
+#define LOCAL_FOG_VOLUME_ON_TRANSLUCENT (PROJECT_LOCALFOGVOLUME_APPLYONTRANSLUCENT && USE_VERTEX_FOG && !MATERIAL_IS_SKY)
 
 #define PACK_INTERPOLANTS (USE_VERTEX_FOG && NUM_VF_PACKED_INTERPOLANTS > 0 && (ES3_1_PROFILE))
 #define LANDSCAPE_BUG_WORKAROUND (IOS && IS_MOBILE_BASEPASS_VERTEX_SHADER && PACK_INTERPOLANTS)

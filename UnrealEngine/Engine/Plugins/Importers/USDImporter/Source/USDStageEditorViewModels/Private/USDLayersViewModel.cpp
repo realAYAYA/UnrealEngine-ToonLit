@@ -9,19 +9,14 @@
 #include "UsdWrappers/SdfLayer.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/pxr.h"
-	#include "pxr/usd/pcp/cache.h"
-	#include "pxr/usd/pcp/layerStack.h"
-	#include "pxr/usd/sdf/layer.h"
-	#include "pxr/usd/sdf/layerUtils.h"
-	#include "pxr/usd/sdf/layerTree.h"
-	#include "pxr/usd/usd/stage.h"
-	#include "pxr/usd/usdUtils/dependencies.h"
+#include "pxr/usd/pcp/layerStack.h"
+#include "pxr/usd/sdf/layer.h"
+#include "pxr/usd/sdf/layerTree.h"
+#include "pxr/usd/sdf/layerUtils.h"
+#include "pxr/usd/usd/stage.h"
 #include "USDIncludesEnd.h"
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 FUsdLayerViewModel::FUsdLayerViewModel(
 	FUsdLayerViewModel* InParentItem,
@@ -29,23 +24,23 @@ FUsdLayerViewModel::FUsdLayerViewModel(
 	const UE::FUsdStageWeak& InIsolatedStage,
 	const FString& InLayerIdentifier
 )
-	: LayerModel( MakeShared< FUsdLayerModel >() )
-	, ParentItem( InParentItem )
-	, UsdStage( InUsdStage )
-	, IsolatedStage( InIsolatedStage )
-	, LayerIdentifier( InLayerIdentifier )
+	: LayerModel(MakeShared<FUsdLayerModel>())
+	, ParentItem(InParentItem)
+	, UsdStage(InUsdStage)
+	, IsolatedStage(InIsolatedStage)
+	, LayerIdentifier(InLayerIdentifier)
 {
 	RefreshData();
 }
 
 bool FUsdLayerViewModel::IsValid() const
 {
-	return ( bool ) UsdStage && ( !ParentItem || !ParentItem->LayerIdentifier.Equals( LayerIdentifier, ESearchCase::Type::IgnoreCase ) );
+	return (bool)UsdStage && (!ParentItem || !ParentItem->LayerIdentifier.Equals(LayerIdentifier, ESearchCase::Type::IgnoreCase));
 }
 
-TArray< TSharedRef< FUsdLayerViewModel > > FUsdLayerViewModel::GetChildren()
+TArray<TSharedRef<FUsdLayerViewModel>> FUsdLayerViewModel::GetChildren()
 {
-	if ( !IsValid() )
+	if (!IsValid())
 	{
 		return {};
 	}
@@ -56,16 +51,17 @@ TArray< TSharedRef< FUsdLayerViewModel > > FUsdLayerViewModel::GetChildren()
 	{
 		FScopedUsdAllocs UsdAllocs;
 
-		pxr::SdfLayerRefPtr UsdLayer( GetLayer() );
+		pxr::SdfLayerRefPtr UsdLayer(GetLayer());
 
-		if ( UsdLayer )
+		if (UsdLayer)
 		{
 			int32 SubLayerIndex = 0;
-			for ( const std::string& SubLayerPath : UsdLayer->GetSubLayerPaths() )
+			for (const std::string& SubLayerPath : UsdLayer->GetSubLayerPaths())
 			{
-				const FString SubLayerIdentifier = UsdToUnreal::ConvertString( pxr::SdfComputeAssetPathRelativeToLayer( UsdLayer, SubLayerPath ) );
+				const FString SubLayerIdentifier = UsdToUnreal::ConvertString(pxr::SdfComputeAssetPathRelativeToLayer(UsdLayer, SubLayerPath));
 
-				if ( !Children.IsValidIndex( SubLayerIndex ) || !Children[ SubLayerIndex ]->LayerIdentifier.Equals( SubLayerIdentifier, ESearchCase::Type::IgnoreCase ) )
+				if (!Children.IsValidIndex(SubLayerIndex)
+					|| !Children[SubLayerIndex]->LayerIdentifier.Equals(SubLayerIdentifier, ESearchCase::Type::IgnoreCase))
 				{
 					Children.Reset();
 					bNeedsRefresh = true;
@@ -75,16 +71,16 @@ TArray< TSharedRef< FUsdLayerViewModel > > FUsdLayerViewModel::GetChildren()
 				++SubLayerIndex;
 			}
 
-			if ( !bNeedsRefresh && SubLayerIndex < Children.Num() )
+			if (!bNeedsRefresh && SubLayerIndex < Children.Num())
 			{
 				Children.Reset();
 				bNeedsRefresh = true;
 			}
 		}
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-	if ( bNeedsRefresh )
+	if (bNeedsRefresh)
 	{
 		FillChildren();
 	}
@@ -96,7 +92,7 @@ void FUsdLayerViewModel::FillChildren()
 {
 	Children.Reset();
 
-	if ( !IsValid() )
+	if (!IsValid())
 	{
 		return;
 	}
@@ -105,37 +101,37 @@ void FUsdLayerViewModel::FillChildren()
 	{
 		FScopedUsdAllocs UsdAllocs;
 
-		pxr::SdfLayerRefPtr UsdLayer( GetLayer() );
+		pxr::SdfLayerRefPtr UsdLayer(GetLayer());
 
-		if ( UsdLayer )
+		if (UsdLayer)
 		{
-			TSet< FString > AllLayerIdentifiers;
+			TSet<FString> AllLayerIdentifiers;
 
 			FUsdLayerViewModel* CurrentItem = this;
-			while ( CurrentItem )
+			while (CurrentItem)
 			{
-				AllLayerIdentifiers.Add( CurrentItem->LayerIdentifier );
+				AllLayerIdentifiers.Add(CurrentItem->LayerIdentifier);
 				CurrentItem = CurrentItem->ParentItem;
 			}
 
-			for ( std::string SubLayerPath : UsdLayer->GetSubLayerPaths() )
+			for (std::string SubLayerPath : UsdLayer->GetSubLayerPaths())
 			{
-				FString AssetPathRelativeToLayer = UsdToUnreal::ConvertString( pxr::SdfComputeAssetPathRelativeToLayer( UsdLayer, SubLayerPath ) );
+				FString AssetPathRelativeToLayer = UsdToUnreal::ConvertString(pxr::SdfComputeAssetPathRelativeToLayer(UsdLayer, SubLayerPath));
 
 				// Prevent infinite recursions if a sublayer refers to a parent of the same hierarchy
-				if ( !AllLayerIdentifiers.Contains( AssetPathRelativeToLayer ) )
+				if (!AllLayerIdentifiers.Contains(AssetPathRelativeToLayer))
 				{
-					Children.Add( MakeShared< FUsdLayerViewModel >( this, UsdStage, IsolatedStage, AssetPathRelativeToLayer ) );
+					Children.Add(MakeShared<FUsdLayerViewModel>(this, UsdStage, IsolatedStage, AssetPathRelativeToLayer));
 				}
 			}
 		}
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }
 
 void FUsdLayerViewModel::RefreshData()
 {
-	if ( !IsValid() )
+	if (!IsValid())
 	{
 		return;
 	}
@@ -145,17 +141,15 @@ void FUsdLayerViewModel::RefreshData()
 #if USE_USD_SDK
 	FScopedUsdAllocs UsdAllocs;
 
-	pxr::UsdStageRefPtr UsdStageRef( UsdStage );
-	pxr::UsdStageRefPtr IsolatedStageRef( IsolatedStage );
+	pxr::UsdStageRefPtr UsdStageRef(UsdStage);
+	pxr::UsdStageRefPtr IsolatedStageRef(IsolatedStage);
 
-	const std::string UsdLayerIdentifier = UnrealToUsd::ConvertString( *LayerIdentifier ).Get();
+	const std::string UsdLayerIdentifier = UnrealToUsd::ConvertString(*LayerIdentifier).Get();
 
-	LayerModel->DisplayName = UsdToUnreal::ConvertString(
-		pxr::SdfLayer::GetDisplayNameFromIdentifier( UsdLayerIdentifier )
-	);
+	LayerModel->DisplayName = UsdToUnreal::ConvertString(pxr::SdfLayer::GetDisplayNameFromIdentifier(UsdLayerIdentifier));
 
-	pxr::SdfLayerRefPtr UsdLayer = UE::FSdfLayer::FindOrOpen( *LayerIdentifier );
-	if ( UsdLayer )
+	pxr::SdfLayerRefPtr UsdLayer = UE::FSdfLayer::FindOrOpen(*LayerIdentifier);
+	if (UsdLayer)
 	{
 		LayerModel->bIsDirty = UsdLayer->IsDirty() && !UsdLayer->IsAnonymous();
 	}
@@ -165,42 +159,36 @@ void FUsdLayerViewModel::RefreshData()
 	// Note: Originally this was a proper check to see if UsdLayer was inside IsolatedStage's layer stack. However, this
 	// breaks down if the layer is also muted: When that happens the stages basically pretend the layer doesn't exist,
 	// and so any muted layer on the base stage would behave as if it was "non-isolated"
-	LayerModel->bIsInIsolatedStage = !IsolatedStageRef
-		|| bIsIsolatedRootLayer
-		|| ( ParentItem && ParentItem->IsInIsolatedStage() );
+	LayerModel->bIsInIsolatedStage = !IsolatedStageRef || bIsIsolatedRootLayer || (ParentItem && ParentItem->IsInIsolatedStage());
 
 	const pxr::SdfLayerHandle& EditTargetLayer = UsdStageRef->GetEditTarget().GetLayer();
-	const pxr::SdfLayerHandle& FocusedEditTarget = IsolatedStageRef
-		? IsolatedStageRef->GetEditTarget().GetLayer()
-		: pxr::SdfLayerHandle{};
+	const pxr::SdfLayerHandle& FocusedEditTarget = IsolatedStageRef ? IsolatedStageRef->GetEditTarget().GetLayer() : pxr::SdfLayerHandle{};
 
-	LayerModel->bIsEditTarget = ( IsolatedStageRef )
-		? LayerModel->bIsInIsolatedStage && FocusedEditTarget == UsdLayer
-		: EditTargetLayer == UsdLayer;
+	LayerModel->bIsEditTarget = (IsolatedStageRef) ? LayerModel->bIsInIsolatedStage && FocusedEditTarget == UsdLayer : EditTargetLayer == UsdLayer;
 
-	LayerModel->bIsMuted = ( IsolatedStageRef && LayerModel->bIsInIsolatedStage )
-		// If we isolating, we're only muted if we're muted on the isolated stage
-		? IsolatedStageRef->IsLayerMuted( UsdLayerIdentifier )
-		// Otherwise we're muted any time we're muted in the base stage
-		: UsdStageRef->IsLayerMuted( UsdLayerIdentifier );
+	LayerModel->bIsMuted = (IsolatedStageRef && LayerModel->bIsInIsolatedStage)
+							   // If we isolating, we're only muted if we're muted on the isolated stage
+							   ? IsolatedStageRef->IsLayerMuted(UsdLayerIdentifier)
+							   // Otherwise we're muted any time we're muted in the base stage
+							   : UsdStageRef->IsLayerMuted(UsdLayerIdentifier);
 
-	for ( const TSharedRef< FUsdLayerViewModel >& Child : Children )
+	for (const TSharedRef<FUsdLayerViewModel>& Child : Children)
 	{
 		Child->RefreshData();
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }
 
 UE::FSdfLayer FUsdLayerViewModel::GetLayer() const
 {
-	return UE::FSdfLayer::FindOrOpen( *LayerIdentifier );
+	return UE::FSdfLayer::FindOrOpen(*LayerIdentifier);
 }
 
 FText FUsdLayerViewModel::GetDisplayName() const
 {
 	FString DisplayName = LayerModel->DisplayName;
 
-	if ( IsLayerDirty() )
+	if (IsLayerDirty())
 	{
 		DisplayName += TEXT("*");
 	}
@@ -215,20 +203,19 @@ bool FUsdLayerViewModel::IsLayerMuted() const
 
 bool FUsdLayerViewModel::CanMuteLayer() const
 {
-	if ( !IsValid() )
+	if (!IsValid())
 	{
 		return false;
 	}
 
 	UE::FUsdStageWeak AffectedStage = IsolatedStage ? IsolatedStage : UsdStage;
 
-	return !AffectedStage.GetRootLayer().GetIdentifier().Equals( LayerIdentifier, ESearchCase::Type::IgnoreCase )
-		&& !LayerModel->bIsEditTarget;
+	return !AffectedStage.GetRootLayer().GetIdentifier().Equals(LayerIdentifier, ESearchCase::Type::IgnoreCase) && !LayerModel->bIsEditTarget;
 }
 
 void FUsdLayerViewModel::ToggleMuteLayer()
 {
-	if ( !IsValid() || !CanMuteLayer() )
+	if (!IsValid() || !CanMuteLayer())
 	{
 		return;
 	}
@@ -236,37 +223,37 @@ void FUsdLayerViewModel::ToggleMuteLayer()
 #if USE_USD_SDK
 	FScopedUsdAllocs UsdAllocs;
 
-	const TUsdStore< std::string > UsdLayerIdentifier = UnrealToUsd::ConvertString( *LayerIdentifier );
+	const TUsdStore<std::string> UsdLayerIdentifier = UnrealToUsd::ConvertString(*LayerIdentifier);
 
-	pxr::UsdStageRefPtr CurrentStage( IsolatedStage ? IsolatedStage : UsdStage );
+	pxr::UsdStageRefPtr CurrentStage(IsolatedStage ? IsolatedStage : UsdStage);
 
-	if ( CurrentStage->IsLayerMuted( UsdLayerIdentifier.Get() ) )
+	if (CurrentStage->IsLayerMuted(UsdLayerIdentifier.Get()))
 	{
-		CurrentStage->UnmuteLayer( UsdLayerIdentifier.Get() );
+		CurrentStage->UnmuteLayer(UsdLayerIdentifier.Get());
 	}
 	else
 	{
-		CurrentStage->MuteLayer( UsdLayerIdentifier.Get() );
+		CurrentStage->MuteLayer(UsdLayerIdentifier.Get());
 	}
 
 	// We have to refresh all of our view models here, because this layer can appear more than once on the layer
 	// stack and we want all of them to show the updated muted/unmuted icon
 	FUsdLayerViewModel* Ancestor = this;
-	while ( true )
+	while (true)
 	{
 		FUsdLayerViewModel* AncestorParent = Ancestor->ParentItem;
-		if ( !AncestorParent )
+		if (!AncestorParent)
 		{
 			break;
 		}
 
 		Ancestor = AncestorParent;
 	}
-	if ( Ancestor )
+	if (Ancestor)
 	{
 		Ancestor->RefreshData();
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }
 
 bool FUsdLayerViewModel::IsEditTarget() const
@@ -281,16 +268,16 @@ bool FUsdLayerViewModel::CanEditLayer() const
 
 bool FUsdLayerViewModel::EditLayer()
 {
-	UE::FSdfLayer Layer( GetLayer() );
+	UE::FSdfLayer Layer(GetLayer());
 
 	UE::FUsdStageWeak AffectedStage = IsolatedStage ? IsolatedStage : UsdStage;
 
-	if ( !AffectedStage || !Layer || !CanEditLayer() )
+	if (!AffectedStage || !Layer || !CanEditLayer())
 	{
 		return false;
 	}
 
-	AffectedStage.SetEditTarget( Layer );
+	AffectedStage.SetEditTarget(Layer);
 	RefreshData();
 
 	return true;
@@ -301,37 +288,37 @@ bool FUsdLayerViewModel::IsInIsolatedStage() const
 	return LayerModel->bIsInIsolatedStage;
 }
 
-void FUsdLayerViewModel::AddSubLayer( const TCHAR* SubLayerIdentifier )
+void FUsdLayerViewModel::AddSubLayer(const TCHAR* SubLayerIdentifier)
 {
 #if USE_USD_SDK
 	FScopedUsdAllocs UsdAllocs;
-	UsdUtils::InsertSubLayer( pxr::SdfLayerRefPtr( GetLayer() ), SubLayerIdentifier );
-#endif // #if USE_USD_SDK
+	UsdUtils::InsertSubLayer(pxr::SdfLayerRefPtr(GetLayer()), SubLayerIdentifier);
+#endif	  // #if USE_USD_SDK
 }
 
-void FUsdLayerViewModel::NewSubLayer( const TCHAR* SubLayerIdentifier )
+void FUsdLayerViewModel::NewSubLayer(const TCHAR* SubLayerIdentifier)
 {
 #if USE_USD_SDK
 	FScopedUsdAllocs UsdAllocs;
-	UsdUtils::CreateNewLayer( pxr::UsdStageRefPtr( UsdStage ), pxr::SdfLayerRefPtr( GetLayer() ), SubLayerIdentifier );
-#endif // #if USE_USD_SDK
+	UsdUtils::CreateNewLayer(pxr::UsdStageRefPtr(UsdStage), pxr::SdfLayerRefPtr(GetLayer()), SubLayerIdentifier);
+#endif	  // #if USE_USD_SDK
 }
 
-bool FUsdLayerViewModel::RemoveSubLayer( int32 SubLayerIndex )
+bool FUsdLayerViewModel::RemoveSubLayer(int32 SubLayerIndex)
 {
 	bool bLayerRemoved = false;
 
 #if USE_USD_SDK
 	FScopedUsdAllocs UsdAllocs;
 
-	pxr::SdfLayerRefPtr UsdLayer( GetLayer() );
+	pxr::SdfLayerRefPtr UsdLayer(GetLayer());
 
-	if ( UsdLayer )
+	if (UsdLayer)
 	{
-		UsdLayer->RemoveSubLayerPath( SubLayerIndex );
+		UsdLayer->RemoveSubLayerPath(SubLayerIndex);
 		bLayerRemoved = true;
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	return bLayerRemoved;
 }

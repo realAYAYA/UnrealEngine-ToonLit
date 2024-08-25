@@ -48,39 +48,3 @@ private:
 
 	friend FIKRetargetEditorController;
 };
-
-//** Dialog to select path to export to */
-class SBatchExportDialog: public SWindow
-{
-public:
-	SLATE_BEGIN_ARGS(SBatchExportDialog){}
-	SLATE_ARGUMENT(FText, DefaultAssetPath)
-	SLATE_END_ARGS()
-
-	SBatchExportDialog() : UserResponse(EAppReturnType::Cancel)
-	{
-	}
-
-	void Construct(const FArguments& InArgs);
-
-public:
-	/** Displays the dialog in a blocking fashion */
-	EAppReturnType::Type ShowModal();
-
-	/** Gets the resulting asset path */
-	FString GetAssetPath();
-
-	FIKRetargetBatchOperationContext BatchContext;
-
-protected:
-
-	/** The rename rule sample text */
-	FText ExampleText;
-	void UpdateExampleText();
-
-	void OnPathChange(const FString& NewPath);
-	FReply OnButtonClick(EAppReturnType::Type ButtonID);
-
-	EAppReturnType::Type UserResponse;
-	FText AssetPath;
-};

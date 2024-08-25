@@ -8,6 +8,8 @@
 #include <string>
 #include <type_traits>
 #include <variant>
+#include <optional>
+#include <atomic>
 
 namespace unsync {
 
@@ -128,6 +130,13 @@ private:
 	std::variant<T, Et> DataOrError;
 };
 
+template<typename T, typename Te, typename T2>
+inline TResult<T, Te>
+MoveError(TResult<T2, Te>& X)
+{
+	return TResult<T, Te>(std::move(X.GetError()));
+}
+
 template<typename Tx, typename E = FError>
 static TResult<Tx, E>
 ResultOk(Tx Ok)
@@ -141,5 +150,27 @@ ResultOk()
 {
 	return TResult<FEmpty, E>(FEmpty());
 }
+
+struct FAtomicError
+{
+	std::atomic_flag	  Flag;
+	std::optional<FError> Data;
+
+	operator bool() const { return Test(); }
+
+	bool Test() const { return Flag.test(); }
+	bool Set(FError&& InData)
+	{
+		if (Flag.test_and_set() == false)
+		{
+			Data = std::move(InData);
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+};
 
 }  // namespace unsync

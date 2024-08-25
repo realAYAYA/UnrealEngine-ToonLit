@@ -30,7 +30,7 @@ FMovieSceneEntityComponentFieldBuilder::~FMovieSceneEntityComponentFieldBuilder(
 	{
 		if (ensureMsgf(Field->SharedMetaData.Num() == SharedMetaDataIndex+1, TEXT("Additional shared meta-data has been added since this builder was constructed, recursive builders are not supported")))
 		{
-			Field->SharedMetaData.RemoveAt(SharedMetaDataIndex, 1, false);
+			Field->SharedMetaData.RemoveAt(SharedMetaDataIndex, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -250,9 +250,9 @@ void FMovieSceneEvaluationField::Invalidate(const TRange<FFrameNumber>& Range)
 	TRange<int32> OverlappingRange = OverlapRange(Range);
 	if (!OverlappingRange.IsEmpty())
 	{
-		Ranges.RemoveAt(OverlappingRange.GetLowerBoundValue(), OverlappingRange.Size<int32>(), false);
-		Groups.RemoveAt(OverlappingRange.GetLowerBoundValue(), OverlappingRange.Size<int32>(), false);
-		MetaData.RemoveAt(OverlappingRange.GetLowerBoundValue(), OverlappingRange.Size<int32>(), false);
+		Ranges.RemoveAt(OverlappingRange.GetLowerBoundValue(), OverlappingRange.Size<int32>(), EAllowShrinking::No);
+		Groups.RemoveAt(OverlappingRange.GetLowerBoundValue(), OverlappingRange.Size<int32>(), EAllowShrinking::No);
+		MetaData.RemoveAt(OverlappingRange.GetLowerBoundValue(), OverlappingRange.Size<int32>(), EAllowShrinking::No);
 
 #if WITH_EDITORONLY_DATA
 		Signature = FGuid::NewGuid();

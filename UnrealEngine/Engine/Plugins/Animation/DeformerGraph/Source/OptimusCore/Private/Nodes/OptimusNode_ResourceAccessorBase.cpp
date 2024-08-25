@@ -196,7 +196,7 @@ FName UOptimusNode_ResourceAccessorBase::GetResourcePinName(int32 InPinIndex, FN
 }
 
 
-TOptional<FText> UOptimusNode_ResourceAccessorBase::ValidateForCompile() const
+TOptional<FText> UOptimusNode_ResourceAccessorBase::ValidateForCompile(const FOptimusPinTraversalContext& InContext) const
 {
 	const UOptimusResourceDescription* ResourceDescription = GetResourceDescription();
 	if (!ResourceDescription)
@@ -236,7 +236,7 @@ UOptimusComputeDataInterface* UOptimusNode_ResourceAccessorBase::GetDataInterfac
 	return Description->DataInterface;
 }
 
-UOptimusComponentSourceBinding* UOptimusNode_ResourceAccessorBase::GetComponentBinding() const
+UOptimusComponentSourceBinding* UOptimusNode_ResourceAccessorBase::GetComponentBinding(const FOptimusPinTraversalContext& InContext) const
 {
 	if (const UOptimusResourceDescription* Description = ResourceDesc.Get())
 	{

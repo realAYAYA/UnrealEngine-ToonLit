@@ -15,9 +15,12 @@
 #include "HairStrands/HairStrandsRendering.h"
 #include "VirtualShadowMaps/VirtualShadowMapProjection.h"
 #include "Shadows/ShadowSceneRenderer.h"
+#include "Shadows/ScreenSpaceShadows.h"
 #include "RenderCore.h"
 #include "TranslucentLighting.h"
 #include "MobileBasePassRendering.h"
+
+using namespace LightFunctionAtlas;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Directional light
@@ -241,7 +244,7 @@ static TAutoConsoleVariable<int32> CVarHairStrandsCullPerObjectShadowCaster(
 
 DEFINE_GPU_STAT(ShadowProjection);
 
-// Use Shadow stencil mask is set to 0x07u instead of 0xFF so that that last bit can be used for strata classification without clearing the stencil bit for pre-shadow/per-object static shadow mask
+// Use Shadow stencil mask is set to 0x07u instead of 0xFF so that that last bit can be used for Substrate classification without clearing the stencil bit for pre-shadow/per-object static shadow mask
 constexpr uint32 ShadowStencilMask = 0x07u;
 
 // 0:off, 1:low, 2:med, 3:high, 4:very high, 5:max
@@ -465,12 +468,13 @@ static void BindShaderShaders(FRHICommandList& RHICmdList, FGraphicsPipelineStat
 
 	FRHIBatchedShaderParameters& BatchedParameters = RHICmdList.GetScratchShaderParameters();
 
-	PixelShader->SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo);
+	const bool bUseLightFunctionAtlas = LightFunctionAtlas::IsEnabled(View, ELightFunctionAtlasSystem::DeferredLighting);
+	PixelShader->SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo, bUseLightFunctionAtlas);
 
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
-		TRDGUniformBufferRef<FStrataGlobalUniformParameters> StrataUniformBuffer = Strata::BindStrataGlobalUniformParameters(View);
-		PixelShader->FGlobalShader::template SetParameters<FStrataGlobalUniformParameters>(BatchedParameters, StrataUniformBuffer->GetRHIRef());
+		TRDGUniformBufferRef<FSubstrateGlobalUniformParameters> SubstrateUniformBuffer = Substrate::BindSubstrateGlobalUniformParameters(View);
+		PixelShader->FGlobalShader::template SetParameters<FSubstrateGlobalUniformParameters>(BatchedParameters, SubstrateUniformBuffer->GetRHIRef());
 	}
 
 	if (HairStrandsUniformBuffer)
@@ -1065,8 +1069,13 @@ void FProjectedShadowInfo::SetupProjectionStencilMask(
 
 		RHICmdList.SetStreamSource(0, GFrustumVertexBuffer.VertexBufferRHI, 0);
 
+		// Shadow projection stenciling is special-cased to run per-view for instanced stereo views.
+		// TODO: Support instanced stereo properly in the projection stenciling pass.
+		const bool bIsInstancedStereoEmulated = View->bIsInstancedStereoEnabled && !View->bIsMobileMultiViewEnabled && IStereoRendering::IsStereoEyeView(*View);
+		const uint32 NumberOfInstances = bIsInstancedStereoEmulated ? 1 : View->InstanceFactor;
+
 		// Draw the frustum using the stencil buffer to mask just the pixels which are inside the shadow frustum.
-		RHICmdList.DrawIndexedPrimitive(GCubeIndexBuffer.IndexBufferRHI, 0, 0, 8, 0, 12, 1);
+		RHICmdList.DrawIndexedPrimitive(GCubeIndexBuffer.IndexBufferRHI, 0, 0, 8, 0, 12, NumberOfInstances);
 
 		// if rendering modulated shadows mask out subject mesh elements to prevent self shadowing.
 		if (bMobileModulatedProjections && !CVarEnableModulatedSelfShadow.GetValueOnRenderThread())
@@ -1114,7 +1123,7 @@ void FProjectedShadowInfo::SetupProjectionStencilMaskForHair(FRHICommandList& RH
 BEGIN_SHADER_PARAMETER_STRUCT(FShadowProjectionPassParameters, )
 	SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
 	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FHairStrandsViewUniformParameters, HairStrands)
-	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 	SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureShaderParameters, SceneTextures)
 	SHADER_PARAMETER_STRUCT_INCLUDE(FInstanceCullingDrawParams, InstanceCullingDrawParams)
 	RDG_TEXTURE_ACCESS(ShadowTexture0, ERHIAccess::SRVGraphics)
@@ -1286,7 +1295,7 @@ void FProjectedShadowInfo::RenderProjectionInternal(
 
 	const bool bSubPixelSupport = HairStrandsUniformBuffer != nullptr;// HairStrands::HasViewHairStrandsData(*View);
 	const bool bStencilTestEnabled = !bSubPixelSupport && GShadowStencilCulling;
-	const bool bDepthBoundsTestEnabled = IsWholeSceneDirectionalShadow() && GSupportsDepthBoundsTest && CVarCSMDepthBoundsTest.GetValueOnRenderThread() != 0 && !bSubPixelSupport;
+	const bool bDepthBoundsTestEnabled = IsWholeSceneDirectionalShadow() && GSupportsDepthBoundsTest && CVarCSMDepthBoundsTest.GetValueOnRenderThread() != 0;// && !bSubPixelSupport;
 	const uint32 StencilRef = bSubPixelSupport && !IsWholeSceneDirectionalShadow() && !bCameraInsideShadowFrustum ? 1u : 0u;
 
 	if (!bDepthBoundsTestEnabled && bStencilTestEnabled)
@@ -1295,7 +1304,7 @@ void FProjectedShadowInfo::RenderProjectionInternal(
 	}
 
 	// Mark stencil so that only hair pixel within volume bound will be affected by the pre-shadow mask
-	if (bSubPixelSupport)
+	if (bSubPixelSupport && !bDepthBoundsTestEnabled)
 	{
 		DrawClearQuad(RHICmdList, false, FLinearColor::Transparent, false, 0, true, 0);
 		if (!IsWholeSceneDirectionalShadow())
@@ -1354,7 +1363,7 @@ void FProjectedShadowInfo::RenderProjectionInternal(
 	}
 	else
 	{
-		if (bSubPixelSupport)
+		if (bSubPixelSupport && !bDepthBoundsTestEnabled)
 		{
 			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_DepthFartherOrEqual, true, CF_Equal, SO_Keep, SO_Keep, SO_Keep, true, CF_Equal, SO_Keep, SO_Keep, SO_Keep, 0xFF, 0xFF>::GetRHI();
 		}
@@ -1409,16 +1418,17 @@ void FProjectedShadowInfo::RenderProjectionInternal(
 		}
 	}
 
+	uint32 NumberOfInstances = View->InstanceFactor;
 	if (IsWholeSceneDirectionalShadow())
 	{
 		RHICmdList.SetStreamSource(0, GClearVertexBuffer.VertexBufferRHI, 0);
-		RHICmdList.DrawPrimitive(0, 2, 1);
+		RHICmdList.DrawPrimitive(0, 2, NumberOfInstances);
 	}
 	else
 	{
 		RHICmdList.SetStreamSource(0, GFrustumVertexBuffer.VertexBufferRHI, 0);
 		// Draw the frustum using the projection shader..
-		RHICmdList.DrawIndexedPrimitive(GCubeIndexBuffer.IndexBufferRHI, 0, 0, 8, 0, 12, 1);
+		RHICmdList.DrawIndexedPrimitive(GCubeIndexBuffer.IndexBufferRHI, 0, 0, 8, 0, 12, NumberOfInstances);
 	}
 
 	if (!bDepthBoundsTestEnabled && bStencilTestEnabled)
@@ -1739,7 +1749,15 @@ FMatrix FProjectedShadowInfo::GetScreenToShadowMatrix(const FSceneView& View, ui
 				)
 			);
 
-	if (View.bIsMobileMultiViewEnabled && View.Family->Views.Num() > 0)
+	// Aspects creation is embedded in lambda so we don't pay the price for it when it's not needed.
+	auto IsMobileMultiViewEnabledInAspects = [](const FSceneView& View) {
+		const UE::StereoRenderUtils::FStereoShaderAspects Aspects(View.GetShaderPlatform());
+		return Aspects.IsMobileMultiViewEnabled();
+	};
+	
+	// Checking the Aspects is a workaround for editor windows or scene captures where View.bIsMobileMultiViewEnabled
+	// is false but shaders have been compiled with MOBILE_MULTI_VIEW enabled.
+	if (View.bIsMobileMultiViewEnabled || IsMobileMultiViewEnabledInAspects(View))
 	{
 		// In Multiview, we split ViewDependentTransform out into ViewUniformShaderParameters.MobileMultiviewShadowTransform
 		// So we can multiply it later in shader.
@@ -2043,9 +2061,9 @@ void FSceneRenderer::RenderShadowProjections(
 		CommonPassParameters.SceneTextures = SceneTextures.GetSceneTextureShaderParameters(View.FeatureLevel);
 		CommonPassParameters.HairStrands = HairStrands::BindHairStrandsViewUniformParameters(View);
 
-		if (Strata::IsStrataEnabled())
+		if (Substrate::IsSubstrateEnabled())
 		{
-			CommonPassParameters.Strata = Strata::BindStrataGlobalUniformParameters(View);
+			CommonPassParameters.Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 		}
 		
 		CommonPassParameters.RenderTargets[0] = FRenderTargetBinding(OutputTexture, ERenderTargetLoadAction::ELoad);
@@ -2213,7 +2231,7 @@ void FSceneRenderer::BeginAsyncDistanceFieldShadowProjections(FRDGBuilder& Graph
 				{
 					// Kick off distance field shadow calculation in async compute
 					// Don't need store result reference because it is internally cached by FProjectedShadowInfo
-					ProjectedShadowInfo->RenderRayTracedDistanceFieldProjection(GraphBuilder, true, SceneTextures, View);
+					ProjectedShadowInfo->RenderRayTracedDistanceFieldProjection(GraphBuilder, true, SceneTextures, View, ScissorRect);
 				}
 			}
 		}
@@ -2308,26 +2326,13 @@ void FDeferredShadingSceneRenderer::RenderDeferredShadowProjections(
 	{
 		bool bNeedHairShadowMaskPass = false;
 		const bool bVirtualShadowOnePass = VisibleLightInfo.VirtualShadowMapClipmaps.Num() > 0;
-		if (!bVirtualShadowOnePass)
+		if (!bVirtualShadowOnePass && VisibleLightInfo.ShadowsToProject.Num() > 0)
 		{
-			for (int32 ShadowIndex = 0; ShadowIndex < VisibleLightInfo.ShadowsToProject.Num(); ShadowIndex++)
-			{
-				FProjectedShadowInfo* ProjectedShadowInfo = VisibleLightInfo.ShadowsToProject[ShadowIndex];
-				if (ProjectedShadowInfo->HasVirtualShadowMap())
-				{
-					bNeedHairShadowMaskPass = false;
-					break;
-				}
-				else
-				{
-					bNeedHairShadowMaskPass = true;
-					break;
-				}
-			}
+			bNeedHairShadowMaskPass = !VisibleLightInfo.ShadowsToProject[0]->HasVirtualShadowMap();
 		}
 		if (bNeedHairShadowMaskPass)
 		{
-			RenderHairStrandsShadowMask(GraphBuilder, Views, LightSceneInfo, false /*bForward*/, ScreenShadowMaskTexture);
+			RenderHairStrandsShadowMask(GraphBuilder, Views, LightSceneInfo, VisibleLightInfos, false /*bForward*/, ScreenShadowMaskTexture);
 		}
 	}
 }
@@ -2411,6 +2416,8 @@ void FMobileSceneRenderer::RenderMobileShadowProjections(
 		const FVisibleLightInfo& VisibleLightInfo = VisibleLightInfos[LightSceneInfo->Id];
 		const FLightSceneProxy* LightSceneProxy = LightSceneInfo->Proxy;
 
+		const bool bProjectingForForwardShading = true;
+
 		// Local light shadows don't render to shadow mask texture on mobile deferred
 		if (LightSceneProxy->GetLightType() == LightType_Directional || !IsMobileDeferredShadingEnabled(ShaderPlatform))
 		{
@@ -2418,7 +2425,14 @@ void FMobileSceneRenderer::RenderMobileShadowProjections(
 				ScreenShadowMaskTexture,
 				nullptr,
 				LightSceneInfo,
-				true);
+				bProjectingForForwardShading);
+		}
+		
+		if (LightSceneProxy->GetLightType() == LightType_Directional && LightSceneInfo->GetDynamicShadowMapChannel() != -1)
+		{
+			// Dynamic shadows are projected into channels of the light attenuation texture based on their assigned DynamicShadowMapChannel
+			// Only render screen space shadows if light is assigned to a valid DynamicShadowMapChannel
+			RenderScreenSpaceShadows(GraphBuilder, SceneTextures, Views, LightSceneInfo, bProjectingForForwardShading, ScreenShadowMaskTexture);
 		}
 	}
 }

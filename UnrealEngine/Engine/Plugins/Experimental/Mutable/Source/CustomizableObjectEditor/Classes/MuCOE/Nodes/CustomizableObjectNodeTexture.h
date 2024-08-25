@@ -64,7 +64,7 @@ class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeTextureBase : public U
 public:
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	UPROPERTY(EditAnywhere, Category = Texture2D)
 	TObjectPtr<UTexture2D> Texture = nullptr;
 
 	// Determines if the Node is collapsed or not

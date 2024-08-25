@@ -10,7 +10,7 @@ public class RemoteNotificationsInstanceIDListener extends InstanceIDListenerSer
 	@Override
 	public void onTokenRefresh()
 	{
-		Intent intent = new Intent( GameActivity._activity.getApplicationContext(), RemoteNotificationsRegistrationIntentService.class );
+		Intent intent = new Intent( GameActivity.Get().getApplicationContext(), RemoteNotificationsRegistrationIntentService.class );
 		startService( intent );
 	}
 }

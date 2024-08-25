@@ -281,7 +281,7 @@ namespace UnrealBuildTool
 		public override string BinarySuffix => String.Empty;
 
 		/// <summary>
-		/// Currently Mono returns incomplete process names in Process.GetProcesses() so we need to parse 'ps' output.
+		/// (needs confirmation) Currently returns incomplete process names in Process.GetProcesses() so we need to parse 'ps' output.
 		/// </summary>
 		/// <returns></returns>
 		public override ProcessInfo[] GetProcesses()
@@ -328,7 +328,7 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
-		/// Currently Mono returns incomplete list of modules for Process.Modules so we need to parse vmmap output.
+		/// (needs confirmation) Currently returns incomplete list of modules for Process.Modules so we need to parse vmmap output.
 		/// </summary>
 		/// <param name="PID"></param>
 		/// <param name="Filename"></param>
@@ -401,8 +401,8 @@ namespace UnrealBuildTool
 		public override string BinarySuffix => String.Empty;
 
 		/// <summary>
-		/// Currently Mono returns incomplete process names in Process.GetProcesses() so we need to use /proc
-		/// (also, Mono locks up during process traversal sometimes, trying to open /dev/snd/pcm*)
+		/// (needs confirmation) Currently returns incomplete process names in Process.GetProcesses() so we need to use /proc
+		/// (also, locks up during process traversal sometimes, trying to open /dev/snd/pcm*)
 		/// </summary>
 		/// <returns></returns>
 		public override ProcessInfo[] GetProcesses()
@@ -412,8 +412,8 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
-		/// Currently Mono returns incomplete list of modules for Process.Modules so we need to parse /proc/PID/maps.
-		/// (also, Mono locks up during process traversal sometimes, trying to open /dev/snd/pcm*)
+		/// (needs confirmation) Currently returns incomplete list of modules for Process.Modules so we need to parse /proc/PID/maps.
+		/// (also, locks up during process traversal sometimes, trying to open /dev/snd/pcm*)
 		/// </summary>
 		/// <param name="PID"></param>
 		/// <param name="Filename"></param>

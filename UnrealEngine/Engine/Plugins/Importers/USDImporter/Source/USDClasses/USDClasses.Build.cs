@@ -26,12 +26,24 @@ namespace UnrealBuildTool.Rules
 				{
 					"DeveloperSettings",
 					"GeometryCache",
+					"GeometryFramework", // For BaseDynamicMeshSceneProxy.h
 					"HairStrandsCore",
 					"Json", // To read/write plugInfo.json files from UnrealUSDWrapper.cpp
 					"MeshDescription",
+					"RenderCore", // For UUsdDrawModeComponent implementation
 					"RHI",
 				}
 			);
+
+			if (Target.bBuildEditor)
+			{
+				PrivateDependencyModuleNames.AddRange(
+					new string[]
+					{
+						"MaterialEditor", // For SetMaterialInstanceParent, when managing the DisplayColor materials
+					}
+				);
+			}
 		}
 	}
 }

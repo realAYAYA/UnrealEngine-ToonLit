@@ -13,8 +13,8 @@
 
 DEFINE_LOG_CATEGORY(LogMetasoundGenerator);
 
-static FAutoConsoleCommand CommandMetaSoundExperimentalOperatorCacheSetMaxNumOperators(
-	TEXT("au.MetaSound.Experimental.OperatorCache.SetMaxNumOperators"),
+static FAutoConsoleCommand CommandMetaSoundExperimentalOperatorPoolSetMaxNumOperators(
+	TEXT("au.MetaSound.Experimental.OperatorPool.SetMaxNumOperators"),
 	TEXT("Set the maximum number of operators in the MetaSound operator cache."),
 	FConsoleCommandWithArgsDelegate::CreateStatic([](const TArray< FString >& Args)
 	{
@@ -33,10 +33,10 @@ static FAutoConsoleCommand CommandMetaSoundExperimentalOperatorCacheSetMaxNumOpe
 		}
 
 		FMetasoundGeneratorModule& Module = FModuleManager::GetModuleChecked<FMetasoundGeneratorModule>("MetasoundGenerator");
-		TSharedPtr<FOperatorCache> OperatorCache = Module.GetOperatorCache();
-		if (OperatorCache.IsValid())
+		TSharedPtr<FOperatorPool> OperatorPool = Module.GetOperatorPool();
+		if (OperatorPool.IsValid())
 		{
-			OperatorCache->SetMaxNumOperators(static_cast<uint32>(MaxNumOperators));
+			OperatorPool->SetMaxNumOperators(static_cast<uint32>(MaxNumOperators));
 			UE_LOG(LogMetasoundGenerator, Display, TEXT("Metasound operator cache size set to %d operators."), MaxNumOperators);
 		}
 	})
@@ -44,22 +44,41 @@ static FAutoConsoleCommand CommandMetaSoundExperimentalOperatorCacheSetMaxNumOpe
 
 namespace Metasound
 {
+	static const FString InstanceCounterCategory(TEXT("Metasound/Active_Generators"));
+
 	void FMetasoundGeneratorModule::StartupModule()
 	{
-		FOperatorCacheSettings OperatorCacheSettings;
-		OperatorCacheSettings.MaxNumOperators = 64;
+		FOperatorPoolSettings OperatorPoolSettings;
+		OperatorPoolSettings.MaxNumOperators = 64;
 
-		OperatorCache = MakeShared<FOperatorCache>(OperatorCacheSettings);
+		OperatorPool = MakeShared<FOperatorPool>(OperatorPoolSettings);
+		OperatorInstanceCounterManager = MakeShared<FConcurrentInstanceCounterManager>(InstanceCounterCategory);
 	}
 
-	void FMetasoundGeneratorModule::ShutdownModule() 
+	void FMetasoundGeneratorModule::ShutdownModule()
 	{
-		OperatorCache.Reset();
+		if (OperatorPool.IsValid())
+		{
+			TSharedPtr<FOperatorPool> PoolShuttingDown = OperatorPool;
+			OperatorPool.Reset();
+
+			// Clear the pool reference and cancel independent of resetting
+			// the shared pointer to ensure if any references are held elsewhere,
+			// they are properly invalidate.
+			PoolShuttingDown->CancelAllBuildEvents();
+		}
+
+		OperatorInstanceCounterManager.Reset();
 	}
 
-	TSharedPtr<FOperatorCache> FMetasoundGeneratorModule::GetOperatorCache()
+	TSharedPtr<FOperatorPool> FMetasoundGeneratorModule::GetOperatorPool()
 	{
-		return OperatorCache;
+		return OperatorPool;
+	}
+
+	TSharedPtr<FConcurrentInstanceCounterManager> FMetasoundGeneratorModule::GetOperatorInstanceCounterManager()
+	{
+		return OperatorInstanceCounterManager;
 	}
 }
 

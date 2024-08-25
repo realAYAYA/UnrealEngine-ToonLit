@@ -4,6 +4,7 @@
 
 #include "Containers/ContainerAllocationPolicies.h"
 #include "Containers/ContainersFwd.h"
+#include "MuR/MemoryTrackingUtils.h"
 
 #include <atomic>
 #include <type_traits>
@@ -33,103 +34,6 @@ namespace mu
 		enum { NeedsElementType = BaseAlloc::NeedsElementType };
 		enum { RequireRangeCheck = BaseAlloc::RequireRangeCheck };
 
-		class ForAnyElementType : public BaseAlloc::ForAnyElementType
-		{
-			SSIZE_T AllocSize = 0;
-
-		public:
-			ForAnyElementType() 
-				: BaseAlloc::ForAnyElementType()
-			{
-			}
-
-			/** Destructor. */
-			FORCEINLINE ~ForAnyElementType()
-			{
-				CounterType::Counter.fetch_sub(AllocSize, std::memory_order_relaxed);
-
-				AllocSize = 0;
-			}
-
-			template <typename OtherAllocator>
-			FORCEINLINE void MoveToEmptyFromOtherAllocator(typename OtherAllocator::ForAnyElementType& Other) = delete;
-
-			FORCEINLINE void MoveToEmpty(ForAnyElementType& Other)
-			{
-				BaseAlloc::ForAnyElementType::MoveToEmpty(Other);
-				
-				CounterType::Counter.fetch_sub(AllocSize, std::memory_order_relaxed);
-
-				AllocSize = Other.AllocSize;
-				Other.AllocSize = 0;
-			}
-
-			FORCEINLINE void ResizeAllocation(
-				SizeType PreviousNumElements,
-				SizeType NumElements,
-				SIZE_T NumBytesPerElement
-				)
-			{
-				BaseAlloc::ForAnyElementType::ResizeAllocation(
-					PreviousNumElements, NumElements, NumBytesPerElement);
-
-				const SSIZE_T Differential = SSIZE_T(NumElements * NumBytesPerElement) - AllocSize;
-				const SSIZE_T PrevCounterValue = CounterType::Counter.fetch_add(Differential, std::memory_order_relaxed);
-				check(PrevCounterValue >= AllocSize);
-
-				AllocSize = NumElements * NumBytesPerElement;
-			}
-
-			FORCEINLINE typename TEnableIf<TAllocatorTraits<BaseAlloc>::SupportsElementAlignment, void>::Type ResizeAllocation(
-				SizeType PreviousNumElements,
-				SizeType NumElements,
-				SIZE_T NumBytesPerElement,
-				uint32 AlignmentOfElement
-				)
-			{
-				BaseAlloc::ForAnyElementType::ResizeAllocation(
-					PreviousNumElements, NumElements, NumBytesPerElement, AlignmentOfElement);
-
-				const SSIZE_T Differential = SSIZE_T(NumElements * NumBytesPerElement) - AllocSize;
-				const SSIZE_T PrevCounterValue = CounterType::Counter.fetch_add(Differential, std::memory_order_relaxed);
-				check(PrevCounterValue >= AllocSize);
-
-				AllocSize = NumElements * NumBytesPerElement;
-			}
-
-		};
-
-		template<typename ElementType>
-		class ForElementType : public ForAnyElementType
-		{
-			// Some Allocators, e.g, TAlignedHeapAllocator do some static checks. Instanciate the BaseAlloc::ForElementType
-			// at compile time so those warnings are emitted. 
-			using BaseTypeInstantaitionType = decltype(DeclVal<typename BaseAlloc::template ForElementType<ElementType>>());
-
-		public:
-			ForElementType()
-			{
-			}
-
-			FORCEINLINE ElementType* GetAllocation() const
-			{
-				return (ElementType*)ForAnyElementType::GetAllocation();
-			}
-		};
-	};
-
-
-	template<typename BaseAlloc, typename CounterType>
-	class FMemoryTrackingAllocatorWrapper2
-	{
-		static_assert(TIsAMemoryCounter<CounterType>::value);
-
-	public:
-		using SizeType = typename BaseAlloc::SizeType;
-
-		enum { NeedsElementType = BaseAlloc::NeedsElementType };
-		enum { RequireRangeCheck = BaseAlloc::RequireRangeCheck };
-
 		class ForAnyElementType 
 		{
 		public:
@@ -141,6 +45,11 @@ namespace mu
 			FORCEINLINE ~ForAnyElementType()
 			{
 				CounterType::Counter.fetch_sub(AllocSize, std::memory_order_relaxed);
+
+#if UE_MUTABLE_TRACK_ALLOCATOR_MEMORY_PEAK
+				FGlobalMemoryCounter::Update(-AllocSize);
+#endif
+
 				AllocSize = 0;
 			}
 
@@ -158,6 +67,10 @@ namespace mu
 
 				CounterType::Counter.fetch_sub(AllocSize, std::memory_order_relaxed);
 
+#if UE_MUTABLE_TRACK_ALLOCATOR_MEMORY_PEAK
+				FGlobalMemoryCounter::Update(-AllocSize);
+#endif
+
 				AllocSize = Other.AllocSize;
 				Other.AllocSize = 0;
 			}
@@ -174,6 +87,10 @@ namespace mu
 				const SSIZE_T PrevCounterValue = CounterType::Counter.fetch_add(Differential, std::memory_order_relaxed);
 				check(PrevCounterValue >= AllocSize);
 
+#if UE_MUTABLE_TRACK_ALLOCATOR_MEMORY_PEAK
+				FGlobalMemoryCounter::Update(Differential);
+#endif
+
 				AllocSize = NumElements * NumBytesPerElement;
 			}
 
@@ -189,6 +106,10 @@ namespace mu
 				const SSIZE_T Differential = SSIZE_T(NumElements * NumBytesPerElement) - AllocSize;
 				const SSIZE_T PrevCounterValue = CounterType::Counter.fetch_add(Differential, std::memory_order_relaxed);
 				check(PrevCounterValue >= AllocSize);
+
+#if UE_MUTABLE_TRACK_ALLOCATOR_MEMORY_PEAK
+				FGlobalMemoryCounter::Update(Differential);
+#endif
 
 				AllocSize = NumElements * NumBytesPerElement;
 			}
@@ -265,6 +186,17 @@ namespace mu
 			{
 				return Base.GetInitialCapacity();
 			}
+
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+			FORCEINLINE void SlackTrackerLogNum(SizeType NewNumUsed)
+			{
+				if constexpr (TAllocatorTraits<BaseAlloc>::SupportsSlackTracking)
+				{
+					Base.SlackTrackerLogNum(NewNumUsed);
+				}
+			}
+#endif
+
 		private:
 			typename BaseAlloc::ForAnyElementType Base;
 			SSIZE_T AllocSize = 0;
@@ -293,7 +225,7 @@ namespace mu
 	// Default memory tarcking allocator needed for TArray and TMap.
 
 	template<typename CounterType>
-	using FDefaultMemoryTrackingAllocator = FMemoryTrackingAllocatorWrapper2<FDefaultAllocator, CounterType>;
+	using FDefaultMemoryTrackingAllocator = FMemoryTrackingAllocatorWrapper<FDefaultAllocator, CounterType>;
 
 	template<typename CounterType>
 	using FDefaultMemoryTrackingBitArrayAllocator = TInlineAllocator<4, FDefaultMemoryTrackingAllocator<CounterType>>;
@@ -312,18 +244,11 @@ namespace mu
 		DEFAULT_MIN_NUMBER_OF_HASHED_ELEMENTS>;
 }
 
-
 template<typename BaseAlloc, typename Counter>
 struct TAllocatorTraits<mu::FMemoryTrackingAllocatorWrapper<BaseAlloc, Counter>> : public TAllocatorTraitsBase<mu::FMemoryTrackingAllocatorWrapper<BaseAlloc, Counter>>
 {
 	enum { SupportsElementAlignment = TAllocatorTraits<BaseAlloc>::SupportsElementAlignment };
-	enum { SupportsMoveFromOtherAllocator = false };
-};
-
-template<typename BaseAlloc, typename Counter>
-struct TAllocatorTraits<mu::FMemoryTrackingAllocatorWrapper2<BaseAlloc, Counter>> : public TAllocatorTraitsBase<mu::FMemoryTrackingAllocatorWrapper2<BaseAlloc, Counter>>
-{
-	enum { SupportsElementAlignment = TAllocatorTraits<BaseAlloc>::SupportsElementAlignment };
+	enum { SupportsSlackTracking = TAllocatorTraits<BaseAlloc>::SupportsSlackTracking };
 	enum { SupportsMoveFromOtherAllocator = false };
 };
 

@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #define Resolution 16
 
 #define BRICK_NOT_ALLOCATED 0

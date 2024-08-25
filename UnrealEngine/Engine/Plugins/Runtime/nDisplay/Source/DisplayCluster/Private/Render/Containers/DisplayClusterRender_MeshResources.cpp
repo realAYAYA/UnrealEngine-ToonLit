@@ -3,6 +3,7 @@
 #include "DisplayClusterRender_MeshResources.h"
 
 #include "PipelineStateCache.h"
+#include "RHI.h"
 
 void FDisplayClusterMeshVertexDeclaration::InitRHI(FRHICommandListBase& RHICmdList)
 {

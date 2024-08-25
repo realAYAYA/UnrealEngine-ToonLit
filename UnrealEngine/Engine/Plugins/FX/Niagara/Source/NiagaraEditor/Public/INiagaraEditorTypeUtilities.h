@@ -6,6 +6,7 @@
 #include "Internationalization/Text.h"
 #include "Math/UnitConversion.h"
 #include "NiagaraTypes.h"
+#include "NiagaraVariableMetaData.h"
 
 class FStructOnScope;
 class SNiagaraParameterEditor;

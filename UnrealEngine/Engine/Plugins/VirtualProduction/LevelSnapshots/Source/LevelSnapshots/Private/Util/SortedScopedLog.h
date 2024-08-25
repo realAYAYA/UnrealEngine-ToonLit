@@ -75,7 +75,7 @@ public:
 
 	
 	/** Adds a log item. When it goes out of scope, its time is automatically added to LoggedItems. */
-	UE_NODISCARD FScopedLogItem AddScopedLogItem(FString Name, bool bItemLogCondition = true);
+	[[nodiscard]] FScopedLogItem AddScopedLogItem(FString Name, bool bItemLogCondition = true);
 
 	void AddCustomMeasuredLogItem(bool bLogCondition, FString Name, double Time) { if (bLogCondition) { AddCustomMeasuredLogItem(Name, Time); } }
 	/** Adds a time you measured yourself*/

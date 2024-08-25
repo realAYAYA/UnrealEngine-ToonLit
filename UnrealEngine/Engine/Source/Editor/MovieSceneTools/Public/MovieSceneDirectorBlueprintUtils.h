@@ -51,6 +51,18 @@ struct MOVIESCENETOOLS_API FMovieSceneDirectorBlueprintEndpointParameter
 	static FString SanitizePinName(const FString& InPinName);
 };
 
+/*
+* Structure for holding value of a blueprint variable 
+*/
+struct MOVIESCENETOOLS_API FMovieSceneDirectorBlueprintVariableValue
+{
+	/* In the case the variable is a UObject, reference to the UObject */
+	FSoftObjectPath ObjectValue;
+
+	/** String value of the variable */
+	FString Value;
+};
+
 /**
  * Parameters for creating a blueprint endpoint
  */
@@ -122,7 +134,7 @@ struct MOVIESCENETOOLS_API FMovieSceneDirectorBlueprintEndpointCall
 	TArray<FName> ExposedPinNames;
 
 	/** The values to pass to the endpoint node's parameters */
-	TMap<FName, FString> PayloadVariables;
+	TMap<FName, FMovieSceneDirectorBlueprintVariableValue> PayloadVariables;
 
 	/** Callback for customizing the endpoint call */
 	FMovieSceneCustomizeDirectorBlueprintEndpointCallDelegate CustomizeEndpointCall;
@@ -210,6 +222,6 @@ private:
 
 	static bool GenerateEntryPointRawActorParameter(
 			FKismetCompilerContext* Compiler, UEdGraph* Graph, UEdGraphNode* Endpoint, 
-			UK2Node* OriginNode, UEdGraphPin* DestPin, const FString& PayloadValue);
+			UK2Node* OriginNode, UEdGraphPin* DestPin, const FMovieSceneDirectorBlueprintVariableValue& PayloadValue);
 };
 

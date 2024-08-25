@@ -15,6 +15,7 @@
 #include "VisualLogger/VisualLogger.h"
 #include "MassSimulationLOD.h"
 #include "Engine/World.h"
+#include "MassDebugger.h"
 
 #define UNSAFE_FOR_MT 1
 
@@ -42,7 +43,7 @@ UMassZoneGraphLocationInitializer::UMassZoneGraphLocationInitializer()
 {
 	ObservedType = FMassZoneGraphLaneLocationFragment::StaticStruct();
 	Operation = EMassObservedOperation::Add;
-	ExecutionFlags = (int32)(EProcessorExecutionFlags::All);
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 }
 
 void UMassZoneGraphLocationInitializer::ConfigureQueries()
@@ -115,7 +116,7 @@ void UMassZoneGraphLocationInitializer::Execute(FMassEntityManager& EntityManage
 UMassZoneGraphPathFollowProcessor::UMassZoneGraphPathFollowProcessor()
 	: EntityQuery_Conditional(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::Tasks;
 	ExecutionOrder.ExecuteBefore.Add(UE::Mass::ProcessorGroupNames::Avoidance);
 }
@@ -415,7 +416,7 @@ void UMassZoneGraphPathFollowProcessor::Execute(FMassEntityManager& EntityManage
 UMassZoneGraphLaneCacheBoundaryProcessor::UMassZoneGraphLaneCacheBoundaryProcessor()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 
 	bAutoRegisterWithProcessingPhases = true;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::LOD);

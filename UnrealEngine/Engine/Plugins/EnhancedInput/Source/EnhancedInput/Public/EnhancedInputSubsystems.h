@@ -32,7 +32,11 @@ public:
 	virtual UEnhancedInputUserSettings* GetUserSettings() const override;
 	virtual void InitalizeUserSettings() override;
 	virtual void ControlMappingsRebuiltThisFrame() override;
+protected:
+	virtual TMap<TObjectPtr<const UInputAction>, FInjectedInput>& GetContinuouslyInjectedInputs() override { return ContinuouslyInjectedInputs; }
 	// End IEnhancedInputSubsystemInterface
+	
+public:
 
 	template<class UserSettingClass = UEnhancedInputUserSettings>
 	inline UserSettingClass* GetUserSettings() const
@@ -54,6 +58,11 @@ protected:
 	/** The user settings for this subsystem used to store each user's input related settings */
 	UPROPERTY()
 	TObjectPtr<UEnhancedInputUserSettings> UserSettings;
+
+	// Map of inputs that should be injected every frame. These inputs will be injected when ForcedInput is ticked. 
+	UPROPERTY(Transient) 
+	TMap<TObjectPtr<const UInputAction>, FInjectedInput> ContinuouslyInjectedInputs;
+	
 };
 
 /**
@@ -89,8 +98,11 @@ public:
 	//~ Begin IEnhancedInputSubsystemInterface
 	virtual UEnhancedPlayerInput* GetPlayerInput() const override;
 	virtual void ShowDebugInfo(UCanvas* Canvas) override;
+protected:
+	virtual TMap<TObjectPtr<const UInputAction>, FInjectedInput>& GetContinuouslyInjectedInputs() override { return ContinuouslyInjectedInputs; }
 	//~ End IEnhancedInputSubsystemInterface
 
+public:
 	/** Adds this Actor's input component onto the stack to be processed by this subsystem's tick function */
 	UFUNCTION(BlueprintCallable, Category = "Input|World", meta=(DefaultToSelf = "Actor"))
 	void AddActorInputComponent(AActor* Actor);
@@ -137,6 +149,10 @@ protected:
 	/** Internal. This is the current stack of InputComponents that is being processed by the PlayerInput. */
 	UPROPERTY(Transient)
 	TArray<TWeakObjectPtr<UInputComponent>> CurrentInputStack;
+
+	// Map of inputs that should be injected every frame. These inputs will be injected when ForcedInput is ticked. 
+	UPROPERTY(Transient) 
+	TMap<TObjectPtr<const UInputAction>, FInjectedInput> ContinuouslyInjectedInputs;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

@@ -150,7 +150,7 @@ namespace UnrealBuildTool
 			public static string UpdateBundleVersion(string OldPList, string EngineDirectory)
 			{
 				string CFBundleVersion = "-1";
-				if (Environment.GetEnvironmentVariable("IsBuildMachine") != "1")
+				if (!Unreal.IsBuildMachine())
 				{
 					int Index = OldPList.IndexOf("CFBundleVersion");
 					if (Index != -1)
@@ -1217,7 +1217,7 @@ namespace UnrealBuildTool
 				DestFileInfo = new FileInfo(Environment.GetEnvironmentVariable("HOME") + "/Library/MobileDevice/Provisioning Profiles/" + ProjectProvision);
 				DestFileInfo.Attributes = DestFileInfo.Attributes & ~FileAttributes.ReadOnly;
 			}
-			if (!File.Exists(ProvisionWithPrefix) || Environment.GetEnvironmentVariable("IsBuildMachine") == "1")
+			if (!File.Exists(ProvisionWithPrefix) || Unreal.IsBuildMachine())
 			{
 				// copy all provisions from the game directory, the engine directory, notforlicensees directory, and, if defined, the ProvisionDirectory.
 				CopyAllProvisions(BuildDirectory, Logger);

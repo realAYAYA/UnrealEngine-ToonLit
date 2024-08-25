@@ -270,6 +270,7 @@ void FAnalogCursor::UpdateCursorPosition(FSlateApplication& SlateApp, TSharedRef
 		const bool bIsPrimaryUser = FSlateApplication::CursorUserIndex == SlateUser->GetUserIndex();
 		FPointerEvent MouseEvent(
 			SlateUser->GetUserIndex(),
+			FSlateApplication::CursorPointerIndex,
 			UpdatedPosition,
 			OldPosition,
 			bIsPrimaryUser ? SlateApp.GetPressedMouseButtons() : TSet<FKey>(),

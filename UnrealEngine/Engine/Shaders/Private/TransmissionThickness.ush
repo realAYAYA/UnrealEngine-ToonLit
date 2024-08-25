@@ -116,7 +116,7 @@ float CalculateThickness(float ShadowmapDepth, float SceneDepth, float DensityMu
 float CalcTransmissionThickness(float3 ViewPos, float3 LightPos, float3 WorldNormal, FTransmissionProfileParams TransmissionParams, FPCFSamplerSettings Settings)
 {
 	///Get -NoL, maybe unnecessary.
-	float4 HomogeneousWorldPosition = mul(float4(ViewPos.xyz, 1), LWCHackToFloat(PrimaryView.ScreenToWorld));
+	float4 HomogeneousWorldPosition = mul(float4(ViewPos.xyz, 1), DFHackToFloat(PrimaryView.ScreenToWorld));
 	float3 WorldPosition = HomogeneousWorldPosition.xyz / HomogeneousWorldPosition.w;
 	float3 ToLight = LightPos.xyz - WorldPosition;
 	float DistanceSqr = dot(ToLight, ToLight);

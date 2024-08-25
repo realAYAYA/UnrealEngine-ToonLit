@@ -11,7 +11,7 @@ import random
 import os
 from collections import OrderedDict
 
-from PySide2 import QtCore
+from PySide6 import QtCore
 
 
 class RecordingStatus(IntEnum):

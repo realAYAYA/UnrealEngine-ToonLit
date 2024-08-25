@@ -137,5 +137,4 @@ UE::Color::EColorSpace UDMXPixelMappingColorSpace_RGBCMY::ConvertToOutputColorSp
 	}
 
 	return EColorSpace::None;
-	checkf(0, TEXT("Unhandled PixelMapping Color Space enum used in UDMXPixelMappingColorSpace::ConvertToColorSpaceEnum"));
 }

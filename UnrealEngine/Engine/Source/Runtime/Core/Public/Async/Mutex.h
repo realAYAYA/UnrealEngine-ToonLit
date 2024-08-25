@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Async/LockTags.h"
 #include "CoreTypes.h"
 #include <atomic>
 
@@ -12,11 +13,18 @@ namespace UE
 
 /**
  * A one-byte mutex that is not fair and does not support recursive locking.
+ * Note: Changes to this class should also be ported to FExternalMutex.
  */
 class FMutex final
 {
 public:
 	constexpr FMutex() = default;
+
+	/** Construct in a locked state. Avoids an expensive compare-and-swap at creation time. */
+	inline explicit FMutex(FAcquireLock)
+		: State(IsLockedFlag)
+	{
+	}
 
 	FMutex(const FMutex&) = delete;
 	FMutex& operator=(const FMutex&) = delete;

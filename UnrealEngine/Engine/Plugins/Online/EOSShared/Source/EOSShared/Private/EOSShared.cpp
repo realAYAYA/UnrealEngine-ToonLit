@@ -10,7 +10,8 @@
 #include "eos_auth_types.h"
 #include "eos_friends_types.h"
 #include "eos_presence_types.h"
-#include "eos_types.h"
+#include "eos_rtc_types.h"
+#include "eos_userinfo_types.h"
 
 DEFINE_LOG_CATEGORY(LogEOSSDK);
 
@@ -169,46 +170,7 @@ const TCHAR* LexToString(const EOS_Presence_EStatus PresenceStatus)
 	}
 }
 
-bool LexFromString(EOS_EExternalCredentialType& OutEnum, const TCHAR* InString)
-{
-	if (FCString::Stricmp(InString, TEXT("Steam")) == 0)
-	{
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_STEAM_APP_TICKET;
-	}
-	else if (FCString::Stricmp(InString, TEXT("PSN")) == 0)
-	{
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_PSN_ID_TOKEN;
-	}
-	else if (FCString::Stricmp(InString, TEXT("Xbox")) == 0)
-	{
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_XBL_XSTS_TOKEN;
-	}
-	else if (FCString::Stricmp(InString, TEXT("Nintendo")) == 0)
-	{
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_NINTENDO_ID_TOKEN;
-	}
-	else if (FCString::Stricmp(InString, TEXT("NSA")) == 0)
-	{
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_NINTENDO_NSA_ID_TOKEN;
-	}
-	else if (FCString::Stricmp(InString, TEXT("Apple")) == 0)
-	{
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_APPLE_ID_TOKEN;
-	}
-	else if (FCString::Stricmp(InString, TEXT("Google")) == 0)
-	{
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_GOOGLE_ID_TOKEN;
-	}
-	else
-	{
-		// Unknown means OpenID
-		OutEnum = EOS_EExternalCredentialType::EOS_ECT_OPENID_ACCESS_TOKEN;
-	}
-
-	return true;
-}
-
-bool LexFromString(EOS_EAuthScopeFlags& OutEnum, const FStringView InString)
+bool LexFromString(EOS_EAuthScopeFlags& OutEnum, const FStringView& InString)
 {
 	OutEnum = EOS_EAuthScopeFlags::EOS_AS_NoFlags;
 	bool bParsedOk = true;
@@ -288,6 +250,193 @@ bool LexFromString(EOS_ELoginCredentialType& OutEnum, const TCHAR* InString)
 		return false;
 	}
 	return true;
+}
+
+FString GetBestDisplayNameStr(const EOS_UserInfo_BestDisplayName& BestDisplayName)
+{
+	return FString(UTF8_TO_TCHAR(BestDisplayName.Nickname ? BestDisplayName.Nickname : BestDisplayName.DisplayNameSanitized ? BestDisplayName.DisplayNameSanitized : BestDisplayName.DisplayName));
+}
+
+bool LexFromString(EOS_ERTCBackgroundMode& OutEnum, const TCHAR* InString)
+{
+	if (FCString::Stricmp(InString, TEXT("LeaveRooms")) == 0)
+	{
+		OutEnum = EOS_ERTCBackgroundMode::EOS_RTCBM_LeaveRooms;
+	}
+	else if (FCString::Stricmp(InString, TEXT("KeepRoomsAlive")) == 0)
+	{
+		OutEnum = EOS_ERTCBackgroundMode::EOS_RTCBM_KeepRoomsAlive;
+	}
+	else
+	{
+		checkNoEntry();
+		return false;
+	}
+
+	return true;
+}
+
+//TODO: Add support for multiple flags set
+bool LexFromString(EOS_UI_EInputStateButtonFlags& OutEnum, const TCHAR* InString)
+{
+	if (FCString::Stricmp(InString, TEXT("DPad_Left")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_DPad_Left;
+	}
+	else if (FCString::Stricmp(InString, TEXT("DPad_Right")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_DPad_Right;
+	}
+	else if (FCString::Stricmp(InString, TEXT("DPad_Down")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_DPad_Down;
+	}
+	else if (FCString::Stricmp(InString, TEXT("DPad_Up")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_DPad_Up;
+	}
+	else if (FCString::Stricmp(InString, TEXT("FaceButton_Left")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_FaceButton_Left;
+	}
+	else if (FCString::Stricmp(InString, TEXT("FaceButton_Right")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_FaceButton_Right;
+	}
+	else if (FCString::Stricmp(InString, TEXT("FaceButton_Bottom")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_FaceButton_Bottom;
+	}
+	else if (FCString::Stricmp(InString, TEXT("FaceButton_Top")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_FaceButton_Top;
+	}
+	else if (FCString::Stricmp(InString, TEXT("LeftShoulder")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_LeftShoulder;
+	}
+	else if (FCString::Stricmp(InString, TEXT("RightShoulder")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_RightShoulder;
+	}
+	else if (FCString::Stricmp(InString, TEXT("LeftTrigger")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_LeftTrigger;
+	}
+	else if (FCString::Stricmp(InString, TEXT("RightTrigger")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_RightTrigger;
+	}
+	else if (FCString::Stricmp(InString, TEXT("Special_Left")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_Special_Left;
+	}
+	else if (FCString::Stricmp(InString, TEXT("Special_Right")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_Special_Right;
+	}
+	else if (FCString::Stricmp(InString, TEXT("LeftThumbstick")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_LeftThumbstick;
+	}
+	else if (FCString::Stricmp(InString, TEXT("RightThumbstick")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_RightThumbstick;
+	}
+	else if (FCString::Stricmp(InString, TEXT("None")) == 0)
+	{
+		OutEnum = EOS_UI_EInputStateButtonFlags::EOS_UISBF_None;
+	}
+	else
+	{
+		checkNoEntry();
+		return false;
+	}
+
+	return true;
+}
+
+bool LexFromString(EOS_EIntegratedPlatformManagementFlags& OutEnum, const TCHAR* InString)
+{
+	if (FCString::Stricmp(InString, TEXT("ApplicationManagedIdentityLogin")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_ApplicationManagedIdentityLogin;
+	}
+	else if (FCString::Stricmp(InString, TEXT("Disabled")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_Disabled;
+	}
+	else if (FCString::Stricmp(InString, TEXT("DisablePresenceMirroring")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_DisablePresenceMirroring;
+	}
+	else if (FCString::Stricmp(InString, TEXT("DisableSDKManagedSessions")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_DisableSDKManagedSessions;
+	}
+	else if (FCString::Stricmp(InString, TEXT("LibraryManagedByApplication")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_LibraryManagedByApplication;
+	}
+	else if (FCString::Stricmp(InString, TEXT("LibraryManagedBySDK")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_LibraryManagedBySDK;
+	}
+	else if (FCString::Stricmp(InString, TEXT("PreferEOSIdentity")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_PreferEOSIdentity;
+	}
+	else if (FCString::Stricmp(InString, TEXT("PreferIntegratedIdentity")) == 0)
+	{
+		OutEnum = EOS_EIntegratedPlatformManagementFlags::EOS_IPMF_PreferIntegratedIdentity;
+	}
+	else
+	{
+		checkNoEntry();
+		return false;
+	}
+
+	return true;
+}
+
+EOS_OnlinePlatformType EOSOnlinePlatformTypeFromString(const FStringView& InString)
+{
+	if (InString == TEXT("Unknown"))
+	{
+		return EOS_OPT_Unknown;
+	}
+	else if (InString == TEXT("Epic"))
+	{	
+		return EOS_OPT_Epic;
+	}
+	else if (InString == TEXT("Steam"))
+	{	
+		return EOS_OPT_Steam;
+	}
+	else if (InString == TEXT("PSN"))
+	{	
+		return 1000; //EOS_OPT_PSN;
+	}
+	else if (InString == TEXT("Switch"))
+	{	
+		return 2000; //EOS_OPT_SWITCH;
+	}
+	else if (InString == TEXT("XBL"))
+	{	
+		return 3000; //EOS_OPT_XBL;
+	}
+	else
+	{
+		checkNoEntry();
+		return EOS_OPT_Unknown;
+	}
+}
+
+FString LexToString(const EOS_RTC_Option& Option)
+{
+	UE_EOS_CHECK_API_MISMATCH(EOS_RTC_OPTION_API_LATEST, 1);
+	check(Option.ApiVersion == 1);
+	return FString::Printf(TEXT("\"%hs\"=\"%hs\""), Option.Key, Option.Value);
 }
 
 #endif // WITH_EOS_SDK

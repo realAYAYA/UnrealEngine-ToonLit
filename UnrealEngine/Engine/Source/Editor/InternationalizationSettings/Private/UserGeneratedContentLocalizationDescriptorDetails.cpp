@@ -50,7 +50,7 @@ void FUserGeneratedContentLocalizationDescriptorDetails::CustomizeChildren(TShar
 		// Sort by the current display name so that the order in the "native language" picker and the "cultures to generate" list matches
 		AvailableCultures.StableSort([](FCulturePtr One, FCulturePtr Two)
 		{
-			return One->GetDisplayName() < Two->GetDisplayName();
+			return FTextComparison::CompareTo(One->GetDisplayName(), Two->GetDisplayName()) < 0;
 		});
 	}
 

@@ -4,16 +4,13 @@
 
 #include "AnalyticsEventAttribute.h"
 
-void UsdUtils::AddAnalyticsAttributes(
-	const FUsdStageOptions& Options,
-	TArray< FAnalyticsEventAttribute >& InOutAttributes
-)
+void UsdUtils::AddAnalyticsAttributes(const FUsdStageOptions& Options, TArray<FAnalyticsEventAttribute>& InOutAttributes)
 {
-	InOutAttributes.Emplace( TEXT( "MetersPerUnit" ), LexToString( Options.MetersPerUnit ) );
-	InOutAttributes.Emplace( TEXT( "UpAxis" ), Options.UpAxis == EUsdUpAxis::YAxis ? TEXT( "Y" ) : TEXT( "Z" ) );
+	InOutAttributes.Emplace(TEXT("MetersPerUnit"), LexToString(Options.MetersPerUnit));
+	InOutAttributes.Emplace(TEXT("UpAxis"), Options.UpAxis == EUsdUpAxis::YAxis ? TEXT("Y") : TEXT("Z"));
 }
 
-void UsdUtils::HashForExport( const FUsdStageOptions& Options, FSHA1& HashToUpdate )
+void UsdUtils::HashForExport(const FUsdStageOptions& Options, FSHA1& HashToUpdate)
 {
-	HashToUpdate.Update( reinterpret_cast< const uint8* >( &Options ), sizeof( Options ) );
+	HashToUpdate.Update(reinterpret_cast<const uint8*>(&Options), sizeof(Options));
 }

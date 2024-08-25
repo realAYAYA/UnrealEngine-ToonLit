@@ -1,9 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-/*=============================================================================
-	LumenDiffuseIndirect.cpp
-=============================================================================*/
-
 #include "RendererPrivate.h"
 #include "ScenePrivate.h"
 #include "SceneUtils.h"
@@ -16,6 +12,7 @@
 #include "LumenRadianceCache.h"
 #include "GlobalDistanceField.h"
 #include "LumenTracingUtils.h"
+#include "ComponentRecreateRenderStateContext.h"
 
 extern int32 GLumenSceneGlobalSDFSimpleCoverageBasedExpand;
 
@@ -33,7 +30,11 @@ FLumenGatherCvarState::FLumenGatherCvarState()
 static TAutoConsoleVariable<int> CVarLumenGlobalIllumination(
 	TEXT("r.Lumen.DiffuseIndirect.Allow"),
 	1,
-	TEXT("Whether to allow Lumen Global Illumination.  Lumen GI is enabled in the project settings, this cvar can only disable it."),
+	TEXT("Whether to allow Lumen Global Illumination.  Lumen GI is enabled in the project settings, this cvar can only disable it."), 
+	FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* InVariable)
+	{
+		FGlobalComponentRecreateRenderStateContext Context;
+	}),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
@@ -172,6 +173,18 @@ FAutoConsoleVariableRef CVarLumenShouldUseStereoOptimizations(
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
+static TAutoConsoleVariable<int32> CVarOrthoOverrideMeshDFTraceDistances(
+	TEXT("r.Lumen.Ortho.OverrideMeshDFTraceDistances"),
+	1,
+	TEXT("Use the full screen view rect size in Ortho views to determing the SDF trace distances instead of setting the value manually."),
+	ECVF_Scalability | ECVF_RenderThreadSafe
+);
+
+bool LumenDiffuseIndirect::IsAllowed()
+{
+	return CVarLumenGlobalIllumination.GetValueOnAnyThread() != 0;
+}
+
 bool LumenDiffuseIndirect::UseAsyncCompute(const FViewFamilyInfo& ViewFamily)
 {
 	return Lumen::UseAsyncCompute(ViewFamily) && CVarLumenDiffuseIndirectAsyncCompute.GetValueOnRenderThread() != 0;
@@ -263,6 +276,7 @@ bool ShouldRenderLumenDiffuseGI(const FScene* Scene, const FSceneView& View, boo
 		&& CVarLumenGlobalIllumination.GetValueOnAnyThread()
 		&& View.Family->EngineShowFlags.GlobalIllumination 
 		&& View.Family->EngineShowFlags.LumenGlobalIllumination
+		&& !View.Family->EngineShowFlags.PathTracing
 		&& (bSkipTracingDataCheck || Lumen::UseHardwareRayTracedScreenProbeGather(*View.Family) || Lumen::IsSoftwareRayTracingSupported());
 }
 
@@ -287,11 +301,22 @@ bool ShouldUseStereoLumenOptimizations()
 void SetupLumenDiffuseTracingParameters(const FViewInfo& View, FLumenIndirectTracingParameters& OutParameters)
 {
 	OutParameters.StepFactor = FMath::Clamp(GDiffuseTraceStepFactor, .1f, 10.0f);
-	OutParameters.CardTraceEndDistanceFromCamera = GDiffuseCardTraceEndDistanceFromCamera;
+	
 	OutParameters.MinSampleRadius = FMath::Clamp(GLumenDiffuseMinSampleRadius, .01f, 100.0f);
 	OutParameters.MinTraceDistance = FMath::Clamp(GLumenDiffuseMinTraceDistance, .01f, 1000.0f);
 	OutParameters.MaxTraceDistance = Lumen::GetMaxTraceDistance(View);
-	OutParameters.MaxMeshSDFTraceDistance = FMath::Clamp(GLumenGatherCvars.MeshSDFTraceDistance, OutParameters.MinTraceDistance, OutParameters.MaxTraceDistance);
+	if (!View.IsPerspectiveProjection() && CVarOrthoOverrideMeshDFTraceDistances.GetValueOnAnyThread())
+	{
+		float TraceSDFDistance = FMath::Clamp(View.ViewMatrices.GetOrthoDimensions().GetMax(), OutParameters.MinTraceDistance, OutParameters.MaxTraceDistance);
+		OutParameters.MaxMeshSDFTraceDistance = TraceSDFDistance;
+		OutParameters.CardTraceEndDistanceFromCamera = FMath::Max(GDiffuseCardTraceEndDistanceFromCamera, TraceSDFDistance);
+	}
+	else
+	{
+		OutParameters.MaxMeshSDFTraceDistance = FMath::Clamp(GLumenGatherCvars.MeshSDFTraceDistance, OutParameters.MinTraceDistance, OutParameters.MaxTraceDistance);
+		OutParameters.CardTraceEndDistanceFromCamera = GDiffuseCardTraceEndDistanceFromCamera;
+
+	}
 	OutParameters.SurfaceBias = FMath::Clamp(GLumenGatherCvars.SurfaceBias, .01f, 100.0f);
 	OutParameters.CardInterpolateInfluenceRadius = FMath::Clamp(GLumenDiffuseCardInterpolateInfluenceRadius, .01f, 1000.0f);
 	OutParameters.HeightfieldMaxTracingSteps = Lumen::GetHeightfieldMaxTracingSteps();

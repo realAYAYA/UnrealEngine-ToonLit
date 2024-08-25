@@ -64,6 +64,7 @@ protected:
 	COREUOBJECT_API virtual void ExportText_Internal( FString& ValueStr, const void* PropertyValueOrContainer, EPropertyPointerType PropertyPointerType, const void* DefaultValue, UObject* Parent, int32 PortFlags, UObject* ExportRootScope ) const override;
 	COREUOBJECT_API virtual const TCHAR* ImportText_Internal(const TCHAR* Buffer, void* ContainerOrPropertyPtr, EPropertyPointerType PropertyPointerType, UObject* OwnerObject, int32 PortFlags, FOutputDevice* ErrorText) const override;
 public:
+	UE_DEPRECATED(5.4, "UnrealHeaderTool only API.  No replacement available.")
 	COREUOBJECT_API virtual FString GetCPPTypeForwardDeclaration() const override;
 	// End of FProperty interface
 

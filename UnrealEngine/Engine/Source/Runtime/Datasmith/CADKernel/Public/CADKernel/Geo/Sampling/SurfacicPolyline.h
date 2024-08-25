@@ -411,16 +411,16 @@ public:
 
 	void Pop()
 	{
-		Coordinates.Pop(false);
-		Points2D.Pop(false);
-		Points3D.Pop(false);
+		Coordinates.Pop(EAllowShrinking::No);
+		Points2D.Pop(EAllowShrinking::No);
+		Points3D.Pop(EAllowShrinking::No);
 		if (bWithNormals)
 		{
-			Normals.Pop(false);
+			Normals.Pop(EAllowShrinking::No);
 		}
 		if (bWithTangent)
 		{
-			Tangents.Pop(false);
+			Tangents.Pop(EAllowShrinking::No);
 		}
 	}
 

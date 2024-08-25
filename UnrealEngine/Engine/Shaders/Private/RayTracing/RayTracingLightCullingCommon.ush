@@ -1,4 +1,4 @@
-
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 /*=============================================================================================
 	RayTracingLightCullingCommon.ush: Common functions for culling lights.
@@ -7,103 +7,105 @@
 #pragma once
 
 // *************** LIGHT CULLING *********************************
-// Use view-centered, world-aligned volume to store references to lights impacting cells
-// Volume cells store light indices directly if space permits, otherwise indirect into
-// buffer of light indices
+// Use a 2D grid built along the longest axes of the bounding boxes of all finite light sources.
 
 struct FCulledLightList
 {
-	uint4 LightCellData;
+	uint NumLights;
+	uint LightGridOffset;
 
-	static const uint PackedLightBits = 10;
-	static const uint PackedLightsPerComponent = 3;
-	static const uint PackedLightMask = (1u << PackedLightBits) - 1;
-	static const uint PackedLightsMax = 11;
-
-	static FCulledLightList Create(float3 TranslatedWorldPosition)
+	static FCulledLightList Create(float3 TranslatedWorldPos)
 	{
-		FCulledLightList Result = (FCulledLightList)0;
-
-		// volume is centered on the viewer
-		float3 Position = TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin;
-
-		const float Scale = 100.0f;
-		const int Dim = RaytracingLightsDataPacked.CellCount;
-
-		Position /= RaytracingLightsDataPacked.CellScale;
-
-		// symmetric about the viewer
-		float3 Region = sign(Position);
-		Position = abs(Position);
-
-		// logarithmic steps with the closest cells being 2x2x2 m
-		Position = max(Position, 2.0f);
-		Position = min(log2(Position) - 1.0f, (Dim/2 - 1));
-
-		Position = floor(Position);
-
-		// move the the edge to the center
-		Position += 0.5f;
-
-		//  map it back to quadrants
-		Position *= Region;
-
-		// remap [-Dim/2, Dim/2] to [0, Dim]
-		Position += (Dim / 2.0f);
-
-		// keep it inside the volume since we're using Load rather than a sampler
-		Position = min(Position, (Dim - 0.5f));
-		Position = max(Position, 0.0f);
-
-		int3 Coord = Position;
-
-		uint Address = (Coord.z * RaytracingLightsDataPacked.CellCount + Coord.y) * RaytracingLightsDataPacked.CellCount + Coord.x;
-		Result.LightCellData = RaytracingLightsDataPacked.LightCullingVolume[Address];
-
-
+		FCulledLightList Result = (FCulledLightList) 0;
+		Result.NumLights = RaytracingLightGridData.SceneInfiniteLightCount;
+		Result.LightGridOffset = ~0u;
+		
+		const float3 SceneMin = RaytracingLightGridData.SceneLightsTranslatedBoundMin;
+		const float3 SceneMax = RaytracingLightGridData.SceneLightsTranslatedBoundMax;
+		if (all(SceneMin <= TranslatedWorldPos) &&
+			all(TranslatedWorldPos <= SceneMax))
+		{
+			float3 P = TranslatedWorldPos - SceneMin;
+			float3 D = SceneMax - SceneMin;
+			int2 UV = 0;
+			switch (RaytracingLightGridData.LightGridAxis)
+			{
+				case 0: UV = int2(floor(RaytracingLightGridData.LightGridResolution * P.yz / D.yz)); break;
+				case 1: UV = int2(floor(RaytracingLightGridData.LightGridResolution * P.xz / D.xz)); break;
+				case 2: UV = int2(floor(RaytracingLightGridData.LightGridResolution * P.xy / D.xy)); break;
+			}
+			uint LightGridN = RaytracingLightGridData.LightGrid.Load(int3(UV, 0));
+			Result.LightGridOffset = RaytracingLightGridData.LightGridMaxCount * (UV.x + UV.y * RaytracingLightGridData.LightGridResolution);
+			Result.NumLights += LightGridN;
+		}
 		return Result;
 	}
 
-	bool IsPacked()
+	uint GetNumLights()
 	{
-		return (LightCellData[0] & (1 << 31)) > 0;
-	}
-
-	uint NumLights()
-	{
-		return IsPacked() ? (LightCellData[3] >> (PackedLightBits * 2)) & PackedLightMask : LightCellData.x;
+		return NumLights;
 	}
 
 	uint GetLightIndex(int LightNum, out uint Valid)
 	{
-		uint LightIndex = 0;
-		Valid = 0;
-
-		const uint LightCount = NumLights();
-
-		if (IsPacked())
+		if (LightNum >= NumLights)
 		{
-			// packed lights 
-			uint Shift = (LightNum % PackedLightsPerComponent) * PackedLightBits;
-			uint PackedLightIndices = LightCellData[LightNum / PackedLightsPerComponent];
-			uint UnpackedLightIndex = (PackedLightIndices >> Shift) & PackedLightMask;
-
-			if (LightNum < LightCount)
-			{
-				Valid = 1;
-				LightIndex = UnpackedLightIndex;
-			}
+			Valid = 0;
+			return 0;
 		}
-		else
+		Valid = 1;
+		if (LightNum >= RaytracingLightGridData.SceneInfiniteLightCount)
 		{
-			// non-packed lights
-			if (LightNum < LightCount)
-			{
-				Valid = 1;
-				LightIndex = RaytracingLightsDataPacked.LightIndices[LightCellData.y + LightNum];
-			}
+			return RaytracingLightGridData.LightGridData[LightGridOffset + LightNum - RaytracingLightGridData.SceneInfiniteLightCount];
 		}
-		return LightIndex;
+		return LightNum;
 	}
 
+	float3 Visualize(int VisualizeMode)
+	{
+		const float3 OutsideColor = 0.18;
+		const float3 EmptyColor = 0.36;
+
+		if (LightGridOffset != ~0u)
+		{
+			switch (VisualizeMode)
+			{
+				case 2:
+				{
+					// color by unique light list
+					uint H = 0;
+					for (int Index = 0; Index < NumLights; Index++)
+					{
+						uint Valid = 0;
+						uint LightId = GetLightIndex(Index, Valid);
+						if (Valid)
+						{
+							H += LightId;
+							H ^= H >> 16;
+							H *= 0xa812d533;
+							H ^= H >> 15;
+							H *= 0xb278e4ad;
+							H ^= H >> 17;
+						}
+					}
+					return 0.5 + 0.3 * cos(2 * PI * ((H & 0xFFFFFF) * 5.96046447754e-08 + float3(0.0, 0.333, 0.6666)));
+				}
+				default: 
+				{
+					// default mode - color by light count
+					uint N = NumLights - RaytracingLightGridData.SceneInfiniteLightCount;
+					if (N < 1)
+					{
+						return EmptyColor;
+					}
+					float Max = RaytracingLightGridData.LightGridMaxCount;
+					float t = saturate(float(N) / Max);
+					return t * saturate(2.0 - abs(float3(4, 2, 0) - 4.0 * t));
+				}
+			}
+		}
+		// outside light grid bounds
+		return OutsideColor;
+	}
 };
+

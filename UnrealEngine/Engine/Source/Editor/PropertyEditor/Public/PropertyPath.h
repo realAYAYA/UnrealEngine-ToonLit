@@ -71,6 +71,11 @@ public:
 		return Properties[ index ];
 	}
 
+	FPropertyInfo& GetPropertyInfoRef( int32 index )
+	{
+		return Properties[ index ];
+	}
+
 	const FPropertyInfo& GetLeafMostProperty() const
 	{
 		return Properties[ Properties.Num() - 1 ];

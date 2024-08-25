@@ -75,9 +75,37 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Actor Grouping")
 	UNREALED_API virtual void RemoveSelectedFromGroup();
 
+	/**
+	 * Check if the provided list of actors can be grouped together
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Actor Grouping")
+	UNREALED_API bool CanGroupActors(const TArray<AActor*>& ActorsToGroup) const;
+
+	/*
+	 * Check if the currently selected actors can be grouped together
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Actor Grouping")
+	UNREALED_API bool CanGroupSelectedActors() const;
+
+	/**
+	 * External delegates that are run to check if a set of actors can be grouped together
+	 */
+	DECLARE_DELEGATE_RetVal_OneParam(bool, FCanGroupActors, const TArray<AActor*>&);
+	
+	/*
+	 * Add a filter that is checked to see if a set of actors can be grouped together
+	 */
+	UNREALED_API void AddCanGroupActorsDelegate(const FName& Owner, const FCanGroupActors& InGroupActorsDelegate);
+
+	/*
+	 * Remove the filter checked before grouping actors registered by the provided owner
+	 */
+	UNREALED_API void RemoveCanGroupActorsDelegate(const FName& Owner);
+
 protected:
 	static UNREALED_API bool bGroupingActive;
 	static UNREALED_API FSoftClassPath ClassToUse;
+	static UNREALED_API TMap<FName, FCanGroupActors> CanGroupActorsDelegates;
 };
 
 

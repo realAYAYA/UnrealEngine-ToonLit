@@ -1,0 +1,23 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+uint3	ScaleColor_Distribution;
+
+struct FStatelessModule_ScaleColor
+{
+	FStatelessDistributionFloat4	ScaleDistribution;
+};
+
+void ScaleColor_Initialize(inout FStatelessModule_ScaleColor ModuleData, inout FStatelessParticle Particle)
+{
+	ModuleData.ScaleDistribution.Init(Particle, ScaleColor_Distribution);
+}
+	
+void ScaleColor_Simulate(in FStatelessModule_ScaleColor ModuleData, inout FStatelessParticle Particle)
+{
+	if (ModuleData.ScaleDistribution.IsValid())
+	{
+		Particle.Color *= ModuleData.ScaleDistribution.GetValue(Particle.NormalizedAge);
+	}
+}

@@ -89,7 +89,7 @@ void MainPS(
 	// In a distance of 2 pixels, write a gradient with its pic at the root
 	OutColor = 0;
 	const float KernelRadius = KernelSizeInPixels;
-	const float UVDistance = length(VertexUV - RootUV) * OutputResolution;
+	const float UVDistance = length(VertexUV - RootUV) * OutputResolution.x;
 	const float Value = 1 - saturate(UVDistance / KernelRadius);
 
 	if (Value == 0)

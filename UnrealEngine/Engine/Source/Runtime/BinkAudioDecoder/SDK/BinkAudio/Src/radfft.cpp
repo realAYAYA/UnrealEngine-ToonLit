@@ -2104,20 +2104,23 @@ static void init_tables()
 
 #endif
 
-void RADLINK radfft_init()
+static int radfft_init_helper()
 {
-  static int done_init = 0;
-  if ( done_init == 0 )
-  {
-      done_init = 1;
 #ifdef CHOOSE_KERNELS
-      s_kernel = CHOOSE_KERNELS;
+    s_kernel = CHOOSE_KERNELS;
 #endif
 
 #ifndef USETABLES
-      init_tables();
+    init_tables();
 #endif
-  }
+    return 1;
+}
+
+void RADLINK radfft_init()
+{
+    // lean on c++ static init here: this is guaranteed by c++ to be called once
+    // and will be wrapped with a mutex by the compiler.
+    static int done_init = radfft_init_helper();
 }
 
 // Complex FFT

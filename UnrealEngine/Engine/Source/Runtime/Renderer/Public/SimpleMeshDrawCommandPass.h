@@ -66,7 +66,8 @@ template <typename PassParametersType, typename AddMeshBatchesCallbackLambdaType
 void AddSimpleMeshPass(FRDGBuilder& GraphBuilder, PassParametersType* PassParametersIn, const FScene* Scene, const FSceneView &View, FInstanceCullingManager* InstanceCullingManager, FRDGEventName&& PassName,
 	const ERDGPassFlags& PassFlags,
 	AddMeshBatchesCallbackLambdaType AddMeshBatchesCallback,
-	PassPrologueLambdaType PassPrologueCallback)
+	PassPrologueLambdaType PassPrologueCallback,
+	bool bAllowIndirectArgsOverride=true)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(AddSimpleMeshPass);
 
@@ -84,6 +85,11 @@ void AddSimpleMeshPass(FRDGBuilder& GraphBuilder, PassParametersType* PassParame
 	if (Scene != nullptr)
 	{
 		SimpleMeshDrawCommandPass->BuildRenderingCommands(GraphBuilder, View, *Scene, PassParameters->InstanceCullingDrawParams);
+	}
+
+	if (!bAllowIndirectArgsOverride)
+	{
+		PassParameters->InstanceCullingDrawParams.DrawIndirectArgsBuffer = nullptr;
 	}
 
 	GraphBuilder.AddPass(
@@ -110,6 +116,20 @@ void AddSimpleMeshPass(FRDGBuilder& GraphBuilder, PassParametersType* PassParame
 			RHICmdList.SetViewport(static_cast<float>(ViewPortRect.Min.X), static_cast<float>(ViewPortRect.Min.Y), 0.0f,
 			                       static_cast<float>(ViewPortRect.Max.X), static_cast<float>(ViewPortRect.Max.Y), 1.0f);
 		}
+	);
+}
+
+template <typename PassParametersType, typename AddMeshBatchesCallbackLambdaType>
+void AddSimpleMeshPass(FRDGBuilder& GraphBuilder, PassParametersType* PassParameters, const FScene* Scene, const FSceneView& View, FInstanceCullingManager *InstanceCullingManager, FRDGEventName&& PassName, const FIntRect& ViewPortRect, bool bAllowIndirectArgsOverride,
+	AddMeshBatchesCallbackLambdaType AddMeshBatchesCallback)
+{
+	AddSimpleMeshPass(GraphBuilder, PassParameters, Scene, View, InstanceCullingManager, MoveTemp(PassName), ERDGPassFlags::Raster, AddMeshBatchesCallback,
+		[ViewPortRect](FRHICommandList& RHICmdList)
+		{
+			RHICmdList.SetViewport(static_cast<float>(ViewPortRect.Min.X), static_cast<float>(ViewPortRect.Min.Y), 0.0f,
+			                       static_cast<float>(ViewPortRect.Max.X), static_cast<float>(ViewPortRect.Max.Y), 1.0f);
+		},
+		bAllowIndirectArgsOverride
 	);
 }
 

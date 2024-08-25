@@ -2,8 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Sessions;
 
 namespace Horde.Server.Agents.Sessions
 {
@@ -21,14 +23,16 @@ namespace Horde.Server.Agents.Sessions
 		/// <param name="properties">Properties of this agent at the time the session started</param>
 		/// <param name="resources">Resources which the agent has</param>
 		/// <param name="version">Version of the agent software</param>
-		Task<ISession> AddAsync(SessionId id, AgentId agentId, DateTime startTime, IReadOnlyList<string>? properties, IReadOnlyDictionary<string, int>? resources, string? version);
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		Task<ISession> AddAsync(SessionId id, AgentId agentId, DateTime startTime, IReadOnlyList<string>? properties, IReadOnlyDictionary<string, int>? resources, string? version, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Gets information about a particular session
 		/// </summary>
 		/// <param name="sessionId">The unique session id</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The session information</returns>
-		Task<ISession?> GetAsync(SessionId sessionId);
+		Task<ISession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Find sessions for the given agent
@@ -38,16 +42,18 @@ namespace Horde.Server.Agents.Sessions
 		/// <param name="finishTime">Finish time to include in the search</param>
 		/// <param name="index">Index of the first result to return</param>
 		/// <param name="count">Number of results to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of sessions matching the given criteria</returns>
-		Task<List<ISession>> FindAsync(AgentId agentId, DateTime? startTime, DateTime? finishTime, int index, int count);
+		Task<List<ISession>> FindAsync(AgentId agentId, DateTime? startTime, DateTime? finishTime, int index, int count, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Finds any active sessions
 		/// </summary>
 		/// <param name="index">Index of the first result to return</param>
 		/// <param name="count">Number of results to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of sessions</returns>
-		Task<List<ISession>> FindActiveSessionsAsync(int? index = null, int? count = null);
+		Task<List<ISession>> FindActiveSessionsAsync(int? index = null, int? count = null, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Update a session from the collection
@@ -56,14 +62,16 @@ namespace Horde.Server.Agents.Sessions
 		/// <param name="finishTime">Time at which the session finished</param>
 		/// <param name="properties">The agent properties</param>
 		/// <param name="resources">Resources which the agent has</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task UpdateAsync(SessionId sessionId, DateTime finishTime, IReadOnlyList<string> properties, IReadOnlyDictionary<string, int> resources);
+		Task UpdateAsync(SessionId sessionId, DateTime? finishTime, IReadOnlyList<string>? properties, IReadOnlyDictionary<string, int>? resources, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Delete a session from the collection
 		/// </summary>
 		/// <param name="sessionId">The session id</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task DeleteAsync(SessionId sessionId);
+		Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 	}
 }

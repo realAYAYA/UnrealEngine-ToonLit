@@ -1,8 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Linq;
-
 namespace EpicGames.BuildGraph.Expressions
 {
 	/// <summary>
@@ -52,23 +49,23 @@ namespace EpicGames.BuildGraph.Expressions
 		public override void Write(BgBytecodeWriter writer)
 		{
 			BgObject<BgLabelDef> obj = BgObject<BgLabelDef>.Empty;
-			if (!(DashboardName is null))
+			if (DashboardName is not null)
 			{
 				obj = obj.Set(x => x.DashboardName, DashboardName);
 			}
-			if (!(DashboardCategory is null))
+			if (DashboardCategory is not null)
 			{
 				obj = obj.Set(x => x.DashboardCategory, DashboardCategory);
 			}
-			if (!(UgsBadge is null))
+			if (UgsBadge is not null)
 			{
 				obj = obj.Set(x => x.UgsBadge, UgsBadge);
 			}
-			if (!(UgsProject is null))
+			if (UgsProject is not null)
 			{
 				obj = obj.Set(x => x.UgsProject, UgsProject);
 			}
-			if (!(Change is null))
+			if (Change is not null)
 			{
 				obj = obj.Set(x => x.Change, Change);
 			}

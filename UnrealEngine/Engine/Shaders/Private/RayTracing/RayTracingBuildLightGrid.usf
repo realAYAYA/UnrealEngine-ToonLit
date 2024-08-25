@@ -1,0 +1,93 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "/Engine/Shared/LightDefinitions.h"
+#include "/Engine/Shared/RayTracingDefinitions.h"
+#include "/Engine/Shared/RayTracingTypes.h"
+
+uint SceneLightCount;
+StructuredBuffer<FRTLightingData> SceneLights;
+uint SceneInfiniteLightCount;
+float3 SceneLightsTranslatedBoundMin;
+float3 SceneLightsTranslatedBoundMax;
+RWTexture2D<uint> RWLightGrid;
+RWBuffer<uint> RWLightGridData;
+uint LightGridResolution;
+uint LightGridMaxCount;
+int LightGridAxis;
+
+[numthreads(THREADGROUPSIZE_X, THREADGROUPSIZE_Y, 1)]
+void RayTracingBuildLightGridCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (any(DispatchThreadId >= LightGridResolution))
+	{
+		return;
+	}
+	// figure out dimension of the 3d grid and the current ID to be filled
+	uint3 VoxelId = 0, VoxelRes = 1;
+	switch (LightGridAxis)
+	{
+		case 0: VoxelId.yz = DispatchThreadId; VoxelRes.yz = LightGridResolution; break;
+		case 1: VoxelId.xz = DispatchThreadId; VoxelRes.xz = LightGridResolution; break;
+		case 2: VoxelId.xy = DispatchThreadId; VoxelRes.xy = LightGridResolution; break;
+	}
+	// get bounding box of current voxel
+	float3 Lo = lerp(SceneLightsTranslatedBoundMin, SceneLightsTranslatedBoundMax, float3(VoxelId + 0) / float3(VoxelRes));
+	float3 Hi = lerp(SceneLightsTranslatedBoundMin, SceneLightsTranslatedBoundMax, float3(VoxelId + 1) / float3(VoxelRes));
+
+	uint NumVisible = 0;
+	uint MaxVisible = LightGridMaxCount;
+	uint Offset = LightGridMaxCount * (DispatchThreadId.x + LightGridResolution * DispatchThreadId.y);
+	for (uint LightIndex = SceneInfiniteLightCount; LightIndex < SceneLightCount; LightIndex++)
+	{
+		uint LightType = SceneLights[LightIndex].Type;
+		float3 Center = SceneLights[LightIndex].TranslatedLightPosition;
+		float Radius = 1.0 / SceneLights[LightIndex].InvRadius;
+		float3 Normal = -SceneLights[LightIndex].Direction;
+
+		float3 E = max(Lo - Center, 0) + max(Center - Hi, 0);
+		float D2 = dot(E, E);
+
+		// reject against normal
+		if (LightType != LIGHT_TYPE_POINT)
+		{
+			if (dot(select(Normal > 0, Hi, Lo) - Center, Normal) < 0)
+			{
+				continue;
+			}
+		}
+
+		if (LightType == LIGHT_TYPE_SPOT)
+		{
+			float3 Disc = sqrt(saturate(1.0 - Normal * Normal));
+			// box around ray from light center to tip of the cone
+			float3 Tip = Center + Normal * Radius;
+			float3 LightBoundLo = min(Center, Tip);
+			float3 LightBoundHi = max(Center, Tip);
+			// expand by disc around the farthest part of the cone
+
+			float CosOuter = SceneLights[LightIndex].SpotAngles.x;
+			float SinOuter = sqrt(1.0f - CosOuter * CosOuter);
+
+			LightBoundLo = min(LightBoundLo, Center + Radius * (Normal * CosOuter - Disc * SinOuter));
+			LightBoundHi = max(LightBoundHi, Center + Radius * (Normal * CosOuter + Disc * SinOuter));
+
+			if (any(Hi < LightBoundLo) || any(Lo > LightBoundHi))
+			{
+				continue;
+			}
+		}
+
+		if (D2 < Square(Radius))
+		{
+			RWLightGridData[Offset + NumVisible] = LightIndex;
+			NumVisible++;
+			// TODO: handle overflow better?
+			if (NumVisible >= MaxVisible)
+			{
+				break;
+			}
+		}
+	}
+	RWLightGrid[DispatchThreadId] = NumVisible;
+}

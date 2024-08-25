@@ -19,6 +19,9 @@ namespace UnrealBuildTool
 	{
 		/// config section for platform-specific target settings
 		protected virtual string IniSection_PlatformTargetSettings => String.Format("/Script/{0}PlatformEditor.{0}TargetSettings", Platform.ToString());
+		
+		/// config section for  platform-specific general target settings (i.e. settings with are unrelated to manifest generation)
+		protected virtual string? IniSection_GeneralPlatformSettings => null;
 
 		/// config section for general target settings
 		protected virtual string IniSection_GeneralProjectSettings => "/Script/EngineSettings.GeneralProjectSettings";
@@ -61,6 +64,9 @@ namespace UnrealBuildTool
 		
 		/// Whether we have logged the deprecation warning for PerCultureResources CultureId being replaced by StageIdOverrides
 		protected static bool bHasWarnedAboutDeprecatedCultureId = false;
+
+		/// CustomConfig to use when reading the ini files
+		public string CustomConfig = "";
 
 		/// <summary>
 		/// Create a manifest generator for the given platform variant.
@@ -173,8 +179,9 @@ namespace UnrealBuildTool
 		[return: NotNullIfNotNull("DefaultValue")]
 		protected string? GetConfigString(string PlatformKey, string? GenericKey, string? DefaultValue = null)
 		{
+			string? GeneralPlatformValue = (IniSection_GeneralPlatformSettings != null) ? ReadIniString(PlatformKey, IniSection_GeneralPlatformSettings) : null;
 			string? GenericValue = ReadIniString(GenericKey, IniSection_GeneralProjectSettings, DefaultValue);
-			return ReadIniString(PlatformKey, IniSection_PlatformTargetSettings, GenericValue);
+			return GeneralPlatformValue ?? ReadIniString(PlatformKey, IniSection_PlatformTargetSettings, GenericValue);
 		}
 
 		/// <summary>
@@ -182,8 +189,9 @@ namespace UnrealBuildTool
 		/// </summary>
 		protected bool GetConfigBool(string PlatformKey, string? GenericKey, bool DefaultValue = false)
 		{
+			string? GeneralPlatformValue = (IniSection_GeneralPlatformSettings != null) ? ReadIniString(PlatformKey, IniSection_GeneralPlatformSettings) : null;
 			string? GenericValue = ReadIniString(GenericKey, IniSection_GeneralProjectSettings, null);
-			string? ResultStr = ReadIniString(PlatformKey, IniSection_PlatformTargetSettings, GenericValue);
+			string? ResultStr = GeneralPlatformValue ?? ReadIniString(PlatformKey, IniSection_PlatformTargetSettings, GenericValue);
 
 			if (ResultStr == null)
 			{
@@ -369,7 +377,7 @@ namespace UnrealBuildTool
 			bool bPackageNameUseMachineName;
 			if (EngineIni!.GetBool(IniSection_PlatformTargetSettings, "bPackageNameUseMachineName", out bPackageNameUseMachineName) && bPackageNameUseMachineName)
 			{
-				string MachineName = Regex.Replace(Environment.MachineName.ToString(), "[^-.A-Za-z0-9]", "");
+				string MachineName = Regex.Replace(Unreal.MachineName, "[^-.A-Za-z0-9]", "");
 				PackageName = PackageName + ".NOT.SHIPPABLE." + MachineName;
 			}
 
@@ -498,8 +506,8 @@ namespace UnrealBuildTool
 
 			// Load up INI settings. We'll use engine settings to retrieve the manifest configuration, but these may reference
 			// values in either game or engine settings, so we'll keep both.
-			GameIni = ConfigCache.ReadHierarchy(ConfigHierarchyType.Game, DirectoryReference.FromFile(InProjectFile), Platform);
-			EngineIni = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, DirectoryReference.FromFile(InProjectFile), Platform);
+			GameIni = ConfigCache.ReadHierarchy(ConfigHierarchyType.Game, DirectoryReference.FromFile(InProjectFile), Platform, CustomConfig);
+			EngineIni = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, DirectoryReference.FromFile(InProjectFile), Platform, CustomConfig);
 			PostConfigurationInit();
 
 			// Load and verify/clean culture list

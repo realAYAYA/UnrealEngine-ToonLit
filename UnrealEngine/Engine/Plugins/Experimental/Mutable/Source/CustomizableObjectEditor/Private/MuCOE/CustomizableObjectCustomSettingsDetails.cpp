@@ -5,6 +5,7 @@
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
 #include "IDetailsView.h"
+#include "MuCO/CustomizableObject.h"
 #include "MuCOE/CustomizableObjectCustomSettings.h"
 
 TSharedRef<IDetailCustomization> FCustomizableObjectCustomSettingsDetails::MakeInstance()
@@ -20,7 +21,8 @@ void FCustomizableObjectCustomSettingsDetails::CustomizeDetails(IDetailLayoutBui
 		IDetailCategoryBuilder& MainCategory = DetailBuilder.EditCategory("Custom Settings");
 		MainCategory.AddCustomRow(FText::FromString("Custom Settings"))
 		[
-			SNew(SCustomizableObjectCustomSettings, Cast<UCustomizableObjectEmptyClassForSettings>(DetailsView->GetSelectedObjects()[0].Get()))
+			SNew(SCustomizableObjectCustomSettings)
+				.PreviewSettings(Cast<UCustomSettings>(DetailsView->GetSelectedObjects()[0]))
 		];
 	}
 }

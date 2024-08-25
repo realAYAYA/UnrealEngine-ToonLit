@@ -26,7 +26,8 @@ namespace Electra
 
 		virtual void SetPlayerSessionServices(IPlayerSessionServices* SessionServices) = 0;
 
-		virtual void Open(TSharedPtrTS<FAccessUnit::CodecData> InCodecData, const FParamDict& InAdditionalOptions, const FStreamCodecInformation* InMaxStreamConfiguration) = 0;
+		virtual void Open(TSharedPtrTS<FAccessUnit::CodecData> InCodecData, FParamDict&& InAdditionalOptions, const FStreamCodecInformation* InMaxStreamConfiguration) = 0;
+		virtual bool Reopen(TSharedPtrTS<FAccessUnit::CodecData> InCodecData, const FParamDict& InAdditionalOptions, const FStreamCodecInformation* InMaxStreamConfiguration) = 0;
 		virtual void Close() = 0;
 		virtual void DrainForCodecChange() = 0;
 

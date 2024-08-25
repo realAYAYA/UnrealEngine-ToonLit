@@ -9,10 +9,15 @@ namespace UE::StateTree::Delegates
 FOnIdentifierChanged OnIdentifierChanged;
 FOnSchemaChanged OnSchemaChanged;
 FOnParametersChanged OnParametersChanged;
+FOnGlobalDataChanged OnGlobalDataChanged;
 FOnStateParametersChanged OnStateParametersChanged;
 FOnBreakpointsChanged OnBreakpointsChanged;
 FOnPostCompile OnPostCompile;
 FOnRequestCompile OnRequestCompile;
-#endif
-	
+#endif // WITH_EDITOR
+
+#if WITH_STATETREE_DEBUGGER
+FOnTracingStateChanged OnTracingStateChanged;
+#endif // WITH_STATETREE_DEBUGGER
+
 }; // UE::StateTree::Delegates

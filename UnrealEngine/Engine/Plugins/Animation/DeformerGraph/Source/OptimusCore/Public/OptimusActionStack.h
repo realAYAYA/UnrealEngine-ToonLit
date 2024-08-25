@@ -83,6 +83,7 @@ public:
 
 	~FOptimusActionScope();
 
+	void SetTitle(const FString& InTitle);
 private:
 	UOptimusActionStack& ActionStack;
 };

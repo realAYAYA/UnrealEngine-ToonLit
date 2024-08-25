@@ -32,6 +32,9 @@ public:
 	/** Target triangle count of the output Convex Hull */
 	int32 MaxTargetFaceCount = 0;
 
+	/** Minimum extent along the shortest dimension; if greater than zero, the hull may be expanded if it would be too thin */
+	double MinDimension = 0;
+
 	/** Output convex hull */
 	FDynamicMesh3 ConvexHull;
 
@@ -75,6 +78,8 @@ public:
 protected:
 	bool Compute_FullMesh(FProgressCancel* Progress);
 	bool Compute_VertexSubset(FProgressCancel* Progress);
+private:
+	bool Compute_Helper(FProgressCancel* Progress, int32 MaxVertexIndex, TFunctionRef<FVector3d(int32)> GetVertex, TFunctionRef<bool(int32)> IsVertex, bool bTestMinDimension = true);
 };
 
 

@@ -53,10 +53,11 @@ public:
 /**
  * A scope to push/pop data on the metadata stack.
  */
-#define UE_TRACE_METADATA_SCOPE(ScopeName, ChannelExpr) UE_TRACE_LOG_SCOPED(Metadata, ScopeName, ChannelExpr)
+#define UE_TRACE_METADATA_SCOPE(ScopeName, ChannelExpr) \
+	UE_TRACE_LOG_SCOPED(Metadata, ScopeName, ChannelExpr)
 
 /**
- * Temporarily clears the current meta data stack and starts a new one. When this scope is exited the previous
+ * Temporarily clears the current metadata stack and starts a new one. When this scope is exited the previous
  * stack is restored. This is useful for example in situations where an asset causes allocation in an unrelated
  * system, like shared buffers, but that allocation should not be ascribed to a specific asset.
  */
@@ -64,19 +65,19 @@ public:
 	UE_TRACE_LOG_SCOPED(MetadataStack, ClearScope, MetadataChannel)
 
 /**
- * Saves the currents stack, and returns an identifier. The stack can be restored on another thread using
+ * Saves the current metadata stack, and returns an identifier. The stack can be restored on another thread using
  * the identifier. This can be used when the context needs to be applied on a task.
  */
 #define UE_TRACE_METADATA_SAVE_STACK() \
 	FMetadataTrace::SaveStack();
 
 /**
- * A scope that restores a meta stack previously stored with UE_TRACE_METADATA_SAVE_STACK during it's lifetime.
+ * A scope that restores a metadata stack previously stored with UE_TRACE_METADATA_SAVE_STACK during it's lifetime.
  */
 class FMetadataRestoreScope
 {
 public:
-	CORE_API FMetadataRestoreScope(uint32 SavedMetadataIdentifier);
+	CORE_API FMetadataRestoreScope(uint32 InSavedMetadataIdentifier);
 	CORE_API ~FMetadataRestoreScope();
 private:
 	void ActivateScope(uint32 InStackId);

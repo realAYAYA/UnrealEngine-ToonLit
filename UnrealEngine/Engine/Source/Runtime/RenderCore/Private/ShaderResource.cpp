@@ -106,7 +106,7 @@ public:
 
 		if (UnusedIndicies[PayloadIndex].Num() != 0)
 		{
-			uint32 Index = UnusedIndicies[PayloadIndex].Pop(false);
+			uint32 Index = UnusedIndicies[PayloadIndex].Pop(EAllowShrinking::No);
 			checkSlow(Shaders[PayloadIndex][Index] == nullptr);
 			Shaders[PayloadIndex][Index] = Shader;
 			return Index;
@@ -600,11 +600,8 @@ FRHIShader* FShaderMapResource_InlineCode::CreateRHIShaderOrCrash(int32 ShaderIn
 	double TimeFunctionEntered = FPlatformTime::Seconds();
 	ON_SCOPE_EXIT
 	{
-		if (IsInParallelRenderingThread())
-		{
-			double ShaderCreationTime = FPlatformTime::Seconds() - TimeFunctionEntered;
-			INC_FLOAT_STAT_BY(STAT_Shaders_TotalRTShaderInitForRenderingTime, ShaderCreationTime);
-		}
+		double ShaderCreationTime = FPlatformTime::Seconds() - TimeFunctionEntered;
+		INC_FLOAT_STAT_BY(STAT_Shaders_TotalRTShaderInitForRenderingTime, ShaderCreationTime);
 	};
 #endif
 
@@ -657,7 +654,7 @@ FRHIShader* FShaderMapResource_InlineCode::CreateRHIShaderOrCrash(int32 ShaderIn
 	}
 	if (UNLIKELY(RHIShader == nullptr))
 	{
-		UE_LOG(LogShaders, Fatal, TEXT("FShaderMapResource_InlineCode::InitRHI is unable to create a shader (frequency %d)"), static_cast<int32>(Frequency));
+		UE_LOG(LogShaders, Fatal, TEXT("FShaderMapResource_InlineCode::InitRHI is unable to create a shader: frequency=%d, hash=%s."), static_cast<int32>(Frequency), *ShaderHash.ToString());
 		// unreachable
 		return nullptr;
 	}

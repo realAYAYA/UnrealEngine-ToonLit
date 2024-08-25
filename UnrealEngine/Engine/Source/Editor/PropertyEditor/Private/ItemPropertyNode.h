@@ -49,6 +49,11 @@ public:
 	 */
 	virtual FText GetToolTipText() const override;
 
+	/**
+	 * If this is node contains a FOptionalProperty, get its Value FPropertyNode node if set (may create the node if necessary).
+	 */
+	virtual TSharedPtr<FPropertyNode>& GetOrCreateOptionalValueNode() override;
+
 protected:
 	/**
 	 * Overridden function for special setup

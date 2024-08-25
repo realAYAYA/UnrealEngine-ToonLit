@@ -23,6 +23,11 @@ namespace AutomationTool
 		Minimal,
 
 		/// <summary>
+		/// Output a brief summary to the console as an error, and the exception details to the log
+		/// </summary>
+		MinimalError,
+
+		/// <summary>
 		/// Treat the exception as an error
 		/// </summary>
 		Error

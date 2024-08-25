@@ -274,6 +274,11 @@ static void DuplicateJsonArray(const TArray<TSharedPtr<FJsonValue>>& Source, TAr
 	} 
 }
 
+TSharedPtr<FJsonValue> FJsonValue::Duplicate(const TSharedPtr<const FJsonValue>& Src)
+{
+	return Duplicate(ConstCastSharedPtr<FJsonValue>(Src));
+}
+
 TSharedPtr<FJsonValue> FJsonValue::Duplicate(const TSharedPtr<FJsonValue>& Src)
 {
 	switch (Src->Type)

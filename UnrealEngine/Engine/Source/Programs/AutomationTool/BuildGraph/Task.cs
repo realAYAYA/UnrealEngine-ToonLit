@@ -458,6 +458,34 @@ namespace AutomationTool
 				await FileReference.AppendAllLinesAsync(CleanupScript, NewLines);
 			}
 		}
+
+		/// <summary>
+		/// Name of the environment variable containing a file to write Horde graph updates to
+		/// </summary>
+		public const string GraphUpdateEnvVarName = "UE_HORDE_GRAPH_UPDATE";
+
+		/// <summary>
+		/// Updates the graph currently used by Horde
+		/// </summary>
+		/// <param name="Job">Context for the current job that is being executed</param>
+		public static void UpdateGraphForHorde(JobContext Job)
+		{
+			string exportGraphFile = Environment.GetEnvironmentVariable(GraphUpdateEnvVarName);
+			if (String.IsNullOrEmpty(exportGraphFile))
+			{
+				throw new Exception($"Missing environment variable {GraphUpdateEnvVarName}. This is required to update graphs on Horde.");
+			}
+
+			List<string> newParams = new List<string>();
+			newParams.Add("BuildGraph");
+			newParams.AddRange(Job.OwnerCommand.Params.Select(x => $"-{x}"));
+			newParams.RemoveAll(x => x.StartsWith("-SingleNode=", StringComparison.OrdinalIgnoreCase));
+			newParams.Add($"-HordeExport={exportGraphFile}");
+			newParams.Add($"-ListOnly");
+
+			string newCommandLine = CommandLineArguments.Join(newParams);
+			CommandUtils.RunUAT(CommandUtils.CmdEnv, newCommandLine, "bg");
+		}
 	}
 
 	/// <summary>

@@ -66,6 +66,7 @@ UNiagaraRibbonRendererProperties::UNiagaraRibbonRendererProperties()
 	, Shape(ENiagaraRibbonShapeMode::Plane)
 	, bEnableAccurateGeometry(false)
 	, bUseMaterialBackfaceCulling(false)
+	, bUseGeometryNormals(true)
 	, bUseGPUInit(false)
 	, bUseConstantFactor(false)
 	, bScreenSpaceTessellation(true)
@@ -159,6 +160,11 @@ void UNiagaraRibbonRendererProperties::PostLoad()
 		bLinkOrderUseUniqueID = false;
 	}
 
+	if (NiagaraVer < FNiagaraCustomVersion::RibbonPlaneUseGeometryNormals)
+	{
+		bUseGeometryNormals = false;
+	}
+
 	ChangeToPositionBinding(PositionBinding);
 #endif
 	
@@ -176,6 +182,7 @@ void UNiagaraRibbonRendererProperties::PostLoad()
 		MaterialParameterBindings_DEPRECATED.Empty();
 	}
 #endif
+	MaterialParameters.ConditionalPostLoad();
 }
 
 FNiagaraBoundsCalculator* UNiagaraRibbonRendererProperties::CreateBoundsCalculator()
@@ -198,7 +205,7 @@ void UNiagaraRibbonRendererProperties::GetUsedMaterials(const FNiagaraEmitterIns
 	OutMaterials.Add(MaterialInterface ? MaterialInterface : ToRawPtr(Material));
 }
 
-void UNiagaraRibbonRendererProperties::CollectPSOPrecacheData(FPSOPrecacheParamsList& OutParams)
+void UNiagaraRibbonRendererProperties::CollectPSOPrecacheData(const FNiagaraEmitterInstance* InEmitter, FPSOPrecacheParamsList& OutParams) const
 {
 	const FVertexFactoryType* VFType = GetVertexFactoryType();
 	UMaterialInterface* MaterialInterface = ToRawPtr(Material);
@@ -682,6 +689,17 @@ void UNiagaraRibbonRendererProperties::GetRendererFeedback(const FVersionedNiaga
 
 		CheckUVSettingsForChannel(UV0Settings, 0);
 		CheckUVSettingsForChannel(UV1Settings, 1);
+
+		if (DrawDirection != ENiagaraRibbonDrawDirection::FrontToBack)
+		{
+			OutWarnings.Emplace(
+				LOCTEXT("GpuDrawDirectionNoSupportDesc", "Gpu ribbons only support the default Draw Direction for 'Front To Back'"),
+				LOCTEXT("GpuDrawDirectionNoSupportSummary", "Gpu ribbons do not support this Draw Direction mode it will be ignored"),
+				FText(),
+				FNiagaraRendererFeedbackFix(),
+				true
+			);
+		}
 	}
 
 	// If we're in multiplane shape, and multiplane count is even while we're in camera facing mode then one

@@ -13,6 +13,7 @@
 #include "ISequencerChannelInterface.h"
 #include "ISequencerSection.h"
 #include "MVVM/Extensions/ITrackExtension.h"
+#include "MVVM/ViewModels/ObjectBindingModel.h"
 #include "MVVM/ViewModels/SectionModel.h"
 #include "MVVM/ViewModels/SequenceModel.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
@@ -20,10 +21,12 @@
 #include "MVVM/ViewModels/ViewModelIterators.h"
 #include "MVVM/ViewModels/OutlinerViewModel.h"
 #include "MVVM/ViewModels/TrackModel.h"
+#include "MVVM/ViewModels/OutlinerColumns/OutlinerColumnTypes.h"
 #include "MVVM/Selection/Selection.h"
 #include "MVVM/Views/SOutlinerView.h"
 #include "MVVM/Views/SOutlinerItemViewBase.h"
 #include "MVVM/Views/SSequencerKeyNavigationButtons.h"
+#include "MVVM/Views/SOutlinerTrackColorPicker.h"
 #include "MVVM/Views/STrackLane.h"
 #include "Math/UnrealMathUtility.h"
 #include "Misc/AssertionMacros.h"
@@ -48,9 +51,7 @@ class SWidget;
 
 #define LOCTEXT_NAMESPACE "SequencerChannelModel"
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
 FChannelModel::FChannelModel(FName InChannelName, TWeakPtr<ISequencerSection> InSection, FMovieSceneChannelHandle InChannel)
@@ -98,15 +99,19 @@ UMovieSceneSection* FChannelModel::GetSection() const
 
 FOutlinerSizing FChannelModel::GetDesiredSizing() const
 {
+	FOutlinerSizing Sizing(15.f);
+
 	if (KeyArea->ShouldShowCurve())
 	{
 		TViewModelPtr<FSequenceModel> Sequence = FindAncestorOfType<FSequenceModel>();
 		if (Sequence)
 		{
-			return Sequence->GetSequencer()->GetSequencerSettings()->GetKeyAreaHeightWithCurves();
+			Sizing.Height = Sequence->GetSequencer()->GetSequencerSettings()->GetKeyAreaHeightWithCurves();
+			Sizing.Flags  |= EOutlinerSizingFlags::CustomHeight;
 		}
 	}
-	return FOutlinerSizing(15.f);
+
+	return Sizing;
 }
 
 TSharedPtr<ITrackLaneWidget> FChannelModel::CreateTrackLaneView(const FCreateTrackLaneViewParams& InParams)
@@ -267,6 +272,21 @@ FChannelGroupModel::FChannelGroupModel(FName InChannelName, const FText& InDispl
 	, DisplayText(InDisplayText)
 {
 }
+FChannelGroupModel::FChannelGroupModel(FName InChannelName, const FText& InDisplayText, const FText& InTooltipText)
+	: ChannelsSerialNumber(0)
+	, ChannelName(InChannelName)
+	, DisplayText(InDisplayText)
+	, GetTooltipTextDelegate(FGetMovieSceneTooltipText::CreateLambda([InTooltipText](...) {return InTooltipText; }))
+{
+}
+
+FChannelGroupModel::FChannelGroupModel(FName InChannelName, const FText& InDisplayText, FGetMovieSceneTooltipText InGetTooltipTextDelegate)
+	: ChannelsSerialNumber(0)
+	, ChannelName(InChannelName)
+	, DisplayText(InDisplayText)
+	, GetTooltipTextDelegate(InGetTooltipTextDelegate)
+{
+}
 
 FChannelGroupModel::~FChannelGroupModel()
 {
@@ -314,6 +334,31 @@ void FChannelGroupModel::CleanupChannels()
 	{
 		++ChannelsSerialNumber;
 	}
+}
+
+FText FChannelGroupModel::GetTooltipText() const
+{
+	if (GetTooltipTextDelegate.IsBound())
+	{
+		if (TViewModelPtr<FSequenceModel> SequenceModel = FindAncestorOfType<FSequenceModel>())
+		{
+			if (TSharedPtr<FSequencerEditorViewModel> SequencerModel = SequenceModel->GetEditor())
+			{
+				FMovieSceneSequenceID SequenceID = SequenceModel->GetSequenceID();
+				IMovieScenePlayer* Player = SequencerModel->GetSequencer().Get();
+				if (Player)
+				{
+					if (TViewModelPtr<FObjectBindingModel> ObjectBindingModel = FindAncestorOfType<FObjectBindingModel>())
+					{
+						FGuid ObjectBindingID = ObjectBindingModel->GetObjectGuid();
+
+						return GetTooltipTextDelegate.Execute(Player, ObjectBindingID, SequenceID);
+					}
+				}
+			}
+		}
+	}
+	return FText();
 }
 
 TArrayView<const TWeakViewModelPtr<FChannelModel>> FChannelGroupModel::GetChannels() const
@@ -416,6 +461,15 @@ void FChannelGroupModel::CreateCurveModels(TArray<TUniquePtr<FCurveModel>>& OutC
 			}
 		}
 	}
+}
+
+TOptional<FString> FChannelGroupModel::GetUniquePathName() const
+{
+	TStringBuilder<256> StringBuilder;
+	IOutlinerExtension::GetPathName(*this, StringBuilder);
+	FString PathName(StringBuilder.ToString());
+	TOptional<FString> FullPathName = PathName;
+	return FullPathName;
 }
 
 bool FChannelGroupModel::HasCurves() const
@@ -551,7 +605,7 @@ void FChannelGroupOverrideHelper::BuildChannelOverrideMenu(FMenuBuilder& MenuBui
 	}
 
 	UMovieSceneChannelOverrideContainer::FOverrideCandidates CommonCandidateOverrides;
-	for (const TTuple<TSubclassOf<UMovieSceneChannelOverrideContainer>, int32> CandidateCount : CandidateCounts)
+	for (const TTuple<TSubclassOf<UMovieSceneChannelOverrideContainer>, int32>& CandidateCount : CandidateCounts)
 	{
 		if (CandidateCount.Value == NumOverridableChannels)
 		{
@@ -718,8 +772,8 @@ void FChannelGroupOverrideHelper::RemoveChannelOverrides(TSharedPtr<FSequenceMod
 	SequenceModel->GetSequencer()->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemsChanged);
 }
 
-FChannelGroupOutlinerModel::FChannelGroupOutlinerModel(FName InChannelName, const FText& InDisplayText)
-	: TOutlinerModelMixin<FChannelGroupModel>(InChannelName, InDisplayText)
+FChannelGroupOutlinerModel::FChannelGroupOutlinerModel(FName InChannelName, const FText& InDisplayText, FGetMovieSceneTooltipText InGetTooltipTextDelegate)
+	: TOutlinerModelMixin<FChannelGroupModel>(InChannelName, InDisplayText, InGetTooltipTextDelegate)
 {
 	SetIdentifier(InChannelName);
 }
@@ -762,35 +816,58 @@ FOutlinerSizing FChannelGroupOutlinerModel::GetOutlinerSizing() const
 	{
 		const_cast<FChannelGroupOutlinerModel*>(this)->RecomputeSizing();
 	}
-	return ComputedSizing;
+
+	FOutlinerSizing FinalSizing = ComputedSizing;
+	if (!EnumHasAnyFlags(ComputedSizing.Flags, EOutlinerSizingFlags::CustomHeight))
+	{
+		FViewDensityInfo Density = GetEditor()->GetViewDensity();
+		FinalSizing.Height = Density.UniformHeight.Get(FinalSizing.Height);
+	}
+	return FinalSizing;
 }
 
-TSharedRef<SWidget> FChannelGroupOutlinerModel::CreateOutlinerView(const FCreateOutlinerViewParams& InParams)
+TSharedPtr<SWidget> FChannelGroupOutlinerModel::CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName)
 {
-	TSharedPtr<FSequencerEditorViewModel> EditorViewModel = GetEditor();
+	TViewModelPtr<FSequencerEditorViewModel> Editor = InParams.Editor->CastThisShared<FSequencerEditorViewModel>();
+	if (!Editor)
+	{
+		return SNullWidget::NullWidget;
+	}
 
-	return SNew(SOutlinerItemViewBase, SharedThis(this), InParams.Editor, InParams.TreeViewRow)
-	.CustomContent()
-	[
-		// Even if this key area node doesn't have any key areas right now, it may in the future
-		// so we always create the switcher, and just hide it if it is not relevant
-		SNew(SHorizontalBox)
-		.Visibility(this, &FChannelGroupOutlinerModel::GetKeyEditorVisibility)
+	if (InColumnName == FCommonOutlinerNames::Label)
+	{
+		return SNew(SOutlinerItemViewBase, SharedThis(this), InParams.Editor, InParams.TreeViewRow);
+	}
 
-		+ SHorizontalBox::Slot()
-		.HAlign(HAlign_Right)
-		.VAlign(VAlign_Center)
-		[
-			SNew(SKeyAreaEditorSwitcher, SharedThis(this), EditorViewModel->GetSequencer())
-		]
+	if (InColumnName == FCommonOutlinerNames::Edit)
+	{
+		return SNew(SKeyAreaEditorSwitcher, SharedThis(this), Editor)
+			.Visibility(this, &FChannelGroupOutlinerModel::GetKeyEditorVisibility);
+	}
 
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		[
-			SNew(SSequencerKeyNavigationButtons, SharedThis(this), EditorViewModel->GetSequencer())
-		]
-	];
+	if (InColumnName == FCommonOutlinerNames::KeyFrame)
+	{
+		EKeyNavigationButtons Buttons = EKeyNavigationButtons::AddKey;
+		return SNew(SSequencerKeyNavigationButtons, SharedThis(this), Editor->GetSequencer())
+			.Buttons(Buttons);
+	}
+
+	if (InColumnName == FCommonOutlinerNames::Nav)
+	{
+		EKeyNavigationButtons Buttons = InParams.TreeViewRow->IsColumnVisible(FCommonOutlinerNames::KeyFrame)
+			? EKeyNavigationButtons::NavOnly
+			: EKeyNavigationButtons::All;
+
+		return SNew(SSequencerKeyNavigationButtons, SharedThis(this), Editor->GetSequencer())
+			.Buttons(Buttons);
+	}
+
+	if (InColumnName == FCommonOutlinerNames::ColorPicker)
+	{
+		return SNew(SOutlinerTrackColorPicker, SharedThis(this), InParams.Editor);
+	}
+
+	return nullptr;
 }
 
 EVisibility FChannelGroupOutlinerModel::GetKeyEditorVisibility() const
@@ -810,9 +887,19 @@ FSlateFontInfo FChannelGroupOutlinerModel::GetLabelFont() const
 		: FOutlinerItemModelMixin::GetLabelFont();
 }
 
+FText FChannelGroupOutlinerModel::GetLabelToolTipText() const
+{
+	return GetTooltipText();
+}
+
 bool FChannelGroupOutlinerModel::HasCurves() const
 {
 	return FChannelGroupModel::HasCurves();
+}
+
+TOptional<FString> FChannelGroupOutlinerModel::GetUniquePathName() const
+{
+	return FChannelGroupModel::GetUniquePathName();
 }
 
 bool FChannelGroupOutlinerModel::CanDelete(FText* OutErrorMessage) const
@@ -848,8 +935,7 @@ void FChannelGroupOutlinerModel::BuildContextMenu(FMenuBuilder& MenuBuilder)
 	BuildChannelOverrideMenu(MenuBuilder);
 }
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 
 #undef LOCTEXT_NAMESPACE
 

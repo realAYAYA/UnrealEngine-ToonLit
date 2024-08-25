@@ -13,6 +13,9 @@ inline const char* GetContextStatusName(EContextStatus Status)
 {
     switch (Status)
     {
+    default:
+        Unreachable();
+        return nullptr;
     case EContextStatus::Idle:
         return "Idle";
     case EContextStatus::OnTrack:
@@ -23,9 +26,9 @@ inline const char* GetContextStatusName(EContextStatus Status)
         return "AbortedByLanguage";
     case EContextStatus::AbortedByRequest:
         return "AbortedByRequest";
+    case EContextStatus::Committing:
+        return "Committing";
     }
-    ASSERT(!"Should not be reached");
-    return NULL;
 }
 
 } // namespace AutoRTFM

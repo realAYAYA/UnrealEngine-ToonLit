@@ -21,7 +21,10 @@ namespace AutomationScripts
 			}
 			var ThisPlatform = SC.StageTargetPlatform;
 
-			ThisPlatform.GetFilesToArchive(Params, SC);
+			if (SC.CustomDeployment == null || !SC.CustomDeployment.GetFilesToArchive(Params, SC))
+			{
+				ThisPlatform.GetFilesToArchive(Params, SC);
+			}
 
 			//@todo add any archive meta data files as needed
 

@@ -46,7 +46,7 @@ FConstraintChannelCurveModel::FConstraintChannelCurveModel(TMovieSceneChannelHan
 	ChannelHandle = NewChannelProxy->MakeHandle<FMovieSceneConstraintChannel>(InChannel.GetChannelIndex());
 	if (FMovieSceneChannelProxy* ChannelProxy = InChannel.GetChannelProxy())
 	{
-		OnDestroyHandle = NewChannelProxy->OnDestroy.AddRaw(this, &FConstraintChannelCurveModel::NeedNewProxy);
+		OnDestroyHandle = NewChannelProxy->OnDestroy.AddRaw(this, &FConstraintChannelCurveModel::FixupCurve);
 	}
 
 	WeakSection = OwningSection;
@@ -64,7 +64,7 @@ UObject* FConstraintChannelCurveModel::GetOwningObject() const
 
 bool FConstraintChannelCurveModel::HasChangedAndResetTest()
 {
-	if (UMovieSceneSection* Section = WeakSection.Get())
+	if (const UMovieSceneSection* Section = WeakSection.Get())
 	{
 		if (Section->GetSignature() != LastSignature)
 		{
@@ -83,33 +83,21 @@ FConstraintChannelCurveModel::~FConstraintChannelCurveModel()
 		ChannelProxy->OnDestroy.Remove(OnDestroyHandle);
 	}
 }
-void FConstraintChannelCurveModel::NeedNewProxy() const
-{	
-	bNeedNewProxy = true; 
-}
 
-void FConstraintChannelCurveModel::FixupCurve() const
+void FConstraintChannelCurveModel::FixupCurve()
 {
-	if (UMovieSceneSection* Section = WeakSection.Get())
+	if (const UMovieSceneSection* Section = WeakSection.Get())
 	{
-		if (bNeedNewProxy)
-		{
-			if (IMovieSceneConstrainedSection* ConstrainedSection = Cast<IMovieSceneConstrainedSection>(Section))
-			{
-				ConstrainedSection->OnConstraintsChanged();
-			}
-			FMovieSceneChannelProxy* NewChannelProxy = &Section->GetChannelProxy();
-			ChannelHandle = NewChannelProxy->MakeHandle<FMovieSceneConstraintChannel>(ChannelHandle.GetChannelIndex());
-			OnDestroyHandle = NewChannelProxy->OnDestroy.AddRaw(this, &FConstraintChannelCurveModel::NeedNewProxy);
-			bNeedNewProxy = false;
-		}
+		FMovieSceneChannelProxy* NewChannelProxy = &Section->GetChannelProxy();
+		ChannelHandle = NewChannelProxy->MakeHandle<FMovieSceneConstraintChannel>(ChannelHandle.GetChannelIndex());
+		OnDestroyHandle = NewChannelProxy->OnDestroy.AddRaw(this, &FConstraintChannelCurveModel::FixupCurve);
 	}
 }
 
 TArray<FKeyBarCurveModel::FBarRange> FConstraintChannelCurveModel::FindRanges()
 {
 	FMovieSceneConstraintChannel* Channel = GetChannel();
-	UMovieSceneSection* Section = WeakSection.Get();
+	const UMovieSceneSection* Section = WeakSection.Get();
 	TArray<FKeyBarCurveModel::FBarRange> Ranges = FConstraintChannelEditor::GetBarRanges(Channel, Section);
 	return Ranges;
 }
@@ -121,11 +109,8 @@ const void* FConstraintChannelCurveModel::GetCurve() const
 
 FMovieSceneConstraintChannel* FConstraintChannelCurveModel::GetChannel() const
 {
-	FixupCurve();
-	FMovieSceneConstraintChannel* Channel = ChannelHandle.Get();
-	return Channel;
+	return ChannelHandle.Get();
 }
-
 
 void FConstraintChannelCurveModel::Modify()
 {

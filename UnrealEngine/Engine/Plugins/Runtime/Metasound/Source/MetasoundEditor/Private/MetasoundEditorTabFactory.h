@@ -1,19 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
-#include "CoreMinimal.h"
+#include "FindInMetasound.h"
 #include "IDetailsView.h"
+#include "SAudioMeter.h"
 #include "SGraphActionMenu.h"
 #include "SMetasoundPalette.h"
-#include "Styling/AppStyle.h"
 #include "Framework/Docking/TabManager.h"
 #include "Internationalization/Internationalization.h"
-#include "Widgets/Docking/SDockTab.h"
-#include "SAudioMeter.h"
+#include "Styling/AppStyle.h"
 #include "Styling/ISlateStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "Templates/SharedPointer.h"
 #include "Widgets/Colors/SColorBlock.h"
+#include "Widgets/Docking/SDockTab.h"
 
 #define LOCTEXT_NAMESPACE "MetaSoundEditor"
 
@@ -32,6 +32,7 @@ namespace Metasound
 				const FName Members = "MetasoundEditor_Members";
 				const FName Palette = "MetasoundEditor_Palette";
 				const FName Interfaces = "MetasoundEditor_Interfaces";
+				const FName Find = "MetasoundEditor_Find";
 			}
 
 			TSharedRef<SDockTab> CreateAnalyzersTab(TSharedPtr<SWidget> InAnalyzerWidget, const FSpawnTabArgs& Args)
@@ -108,6 +109,17 @@ namespace Metasound
 					.Label(LOCTEXT("MetasoundInterfacesDetailsTitle", "Interfaces"))
 					[
 						InInterfacesDetails.ToSharedRef()
+					];
+			}
+
+			TSharedRef<SDockTab> CreateFindTab(TSharedPtr<SFindInMetasound> InFindWidget, const FSpawnTabArgs& Args)
+			{
+				check(Args.GetTabId() == Names::Find);
+
+				return SNew(SDockTab)
+					.Label(LOCTEXT("MetasoundFindTitle", "Find Results"))
+					[
+						InFindWidget.ToSharedRef()
 					];
 			}
 		}

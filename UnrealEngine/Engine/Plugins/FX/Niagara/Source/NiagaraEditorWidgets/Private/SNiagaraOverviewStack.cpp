@@ -52,6 +52,7 @@
 #include "NiagaraEditorStyle.h"
 #include "NiagaraEditorUtilities.h"
 #include "ScopedTransaction.h"
+#include "SNiagaraStackNote.h"
 #include "Styling/StyleColors.h"
 #include "ViewModels/Stack/NiagaraStackRendererItem.h"
 #include "ViewModels/Stack/NiagaraStackSystemSettingsGroup.h"
@@ -320,7 +321,16 @@ private:
 	{
 		return StackEntry->GetIsExpandedInOverview() ? ExpandedImage : CollapsedImage;
 	}
-	
+
+	EVisibility GetNoteVisibility() const
+	{
+		if(StackEntry->GetStackNote() == nullptr)
+		{
+			return EVisibility::Collapsed;
+		}
+		
+		return EVisibility::Visible;
+	}
 
 	uint32 GetOverviewChildrenCount() const
 	{
@@ -361,10 +371,6 @@ private:
 			else if (StackEntry->GetTotalNumberOfInfoIssues() > 0)
 			{
 				IssueHighlightColor = FStyleColors::AccentBlue.GetSpecifiedColor().Desaturate(DesaturateAmount);
-			}
-			else if (StackEntry->GetTotalNumberOfCustomNotes() > 0)
-			{
-				IssueHighlightColor = FStyleColors::AccentWhite.GetSpecifiedColor().Desaturate(DesaturateAmount);
 			}
 			else
 			{
@@ -644,6 +650,8 @@ private:
 
 void SNiagaraOverviewStack::Construct(const FArguments& InArgs, UNiagaraStackViewModel& InStackViewModel, UNiagaraSystemSelectionViewModel& InOverviewSelectionViewModel)
 {
+	AllowedClasses = InArgs._AllowedClasses;
+	
 	StackCommandContext = MakeShared<FNiagaraStackCommandContext>();
 
 	bUpdatingOverviewSelectionFromStackSelection = false;
@@ -841,19 +849,16 @@ void SNiagaraOverviewStack::RefreshEntryList()
 	{
 		FlattenedEntryList.Empty();
 		EntryObjectKeyToParentChain.Empty();
-		TArray<UClass*> AcceptableClasses;
-		AcceptableClasses.Add(UNiagaraStackItemGroup::StaticClass());
-		AcceptableClasses.Add(UNiagaraStackItem::StaticClass());
 
 		UNiagaraStackEntry* RootEntry = StackViewModel->GetRootEntry();
 		checkf(RootEntry != nullptr, TEXT("Root entry was null."));
-		TArray<UNiagaraStackEntry*> RootChildren;
+		TArray<UNiagaraStackEntry*> RootChildren;		
 		RootEntry->GetFilteredChildren(RootChildren);
 		for (UNiagaraStackEntry* RootChild : RootChildren)
 		{
 			checkf(RootEntry != nullptr, TEXT("Root entry child was null."));
 			TArray<UNiagaraStackEntry*> ParentChain;
-			AddEntriesRecursive(*RootChild, FlattenedEntryList, AcceptableClasses, ParentChain);
+			AddEntriesRecursive(*RootChild, FlattenedEntryList, AllowedClasses, ParentChain);
 		}
 
 		bRefreshEntryListPending = false;
@@ -977,10 +982,33 @@ TSharedRef<ITableRow> SNiagaraOverviewStack::OnGenerateRowForEntry(UNiagaraStack
 
 		TSharedRef<SHorizontalBox> OptionsBox = SNew(SHorizontalBox);
 		
-		UNiagaraStackModuleItem* StackModuleItem = Cast<UNiagaraStackModuleItem>(StackItem);
-
-		if (StackModuleItem)
+		if(StackItem->SupportsStackNotes())
 		{
+			// Stack note
+			OptionsBox->AddSlot()
+			.AutoWidth()
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.Padding(2.f)
+			[
+				SNew(SNiagaraStackInlineNote, StackItem)
+				.bInteractable(false)
+				.Visibility_Lambda([StackItem]()
+				{
+					if(StackItem->GetStackNote() == nullptr)
+					{
+						return EVisibility::Collapsed;
+					}
+	
+					return EVisibility::Visible;
+				})
+			];
+		}
+		
+		UNiagaraStackModuleItem* StackModuleItem = Cast<UNiagaraStackModuleItem>(StackItem);
+		
+		if (StackModuleItem)
+		{			
 			// Scratch icon
 			if(StackModuleItem->IsScratchModule())
 			{
@@ -1000,6 +1028,16 @@ TSharedRef<ITableRow> SNiagaraOverviewStack::OnGenerateRowForEntry(UNiagaraStack
 			// Debug draw 
 			if(StackModuleItem->GetModuleNode().ContainsDebugSwitch())
 			{
+				FText TooltipText = FNiagaraEditorSharedTexts::DebugDrawUIActionBaseText;
+				
+				if(FVersionedNiagaraScriptData* ScriptData = StackModuleItem->GetModuleNode().GetScriptData())
+				{
+					if(ScriptData->DebugDrawMessage.IsEmpty() == false)
+					{
+						TooltipText = ScriptData->DebugDrawMessage;
+					}
+				}
+				
 				OptionsBox->AddSlot()
 					.VAlign(VAlign_Center)
 					.AutoWidth()
@@ -1009,7 +1047,7 @@ TSharedRef<ITableRow> SNiagaraOverviewStack::OnGenerateRowForEntry(UNiagaraStack
 						.HAlign(HAlign_Center)
 						.VAlign(VAlign_Center)
 						.ForegroundColor(FLinearColor::Transparent)
-						.ToolTipText(LOCTEXT("EnableDebugDrawCheckBoxToolTip", "Enable or disable debug drawing for this item."))
+						.ToolTipText(TooltipText)
 						.OnClicked(this, &SNiagaraOverviewStack::ToggleModuleDebugDraw, StackItem)
 						.ContentPadding(FMargin(1.0f))
 						.ButtonStyle(FNiagaraEditorWidgetsStyle::Get(), "NiagaraEditor.Stack.SimpleButton")

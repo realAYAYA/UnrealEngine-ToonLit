@@ -59,11 +59,12 @@ void UTakeRecorderLevelSequenceSource::StartRecording(const FTimecode& InSection
 	// Play the level sequence actors	
 	for (auto ActorToTrigger : ActorsToTrigger)
 	{
-		if (ActorToTrigger->SequencePlayer)
+		ULevelSequencePlayer* SequencePlayer = ActorToTrigger->GetSequencePlayer();
+		if (SequencePlayer)
 		{
-			ActorToTrigger->SequencePlayer->SetDisableCameraCuts(true);
-			ActorToTrigger->SequencePlayer->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(ActorToTrigger->SequencePlayer->GetStartTime().Time, EUpdatePositionMethod::Jump));
-			ActorToTrigger->SequencePlayer->Play();
+			SequencePlayer->SetDisableCameraCuts(true);
+			SequencePlayer->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(SequencePlayer->GetStartTime().Time, EUpdatePositionMethod::Jump));
+			SequencePlayer->Play();
 		}
 		else
 		{
@@ -83,7 +84,7 @@ void UTakeRecorderLevelSequenceSource::StopRecording(class ULevelSequence* InSeq
 		}
 
 		ALevelSequenceActor* ActorToTrigger = Actor.Get();
-		ULevelSequencePlayer* SequencePlayer = ActorToTrigger->SequencePlayer;
+		ULevelSequencePlayer* SequencePlayer = ActorToTrigger->GetSequencePlayer();
 		if (SequencePlayer)
 		{
 			SequencePlayer->SetDisableCameraCuts(false);
@@ -145,7 +146,7 @@ FText UTakeRecorderLevelSequenceSource::GetDescriptionTextImpl() const
 		}
 
 		ALevelSequenceActor* ActorToTrigger = Actor.Get();
-		ULevelSequencePlayer* SequencePlayer = ActorToTrigger->SequencePlayer;
+		ULevelSequencePlayer* SequencePlayer = ActorToTrigger->GetSequencePlayer();
 		if (SequencePlayer && SequencePlayer->IsPlaying())
 		{
 			++NumPlaying;

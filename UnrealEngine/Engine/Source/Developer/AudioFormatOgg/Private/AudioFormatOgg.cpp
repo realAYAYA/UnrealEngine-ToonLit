@@ -5,8 +5,7 @@
 #include "Modules/ModuleManager.h"
 #include "Interfaces/IAudioFormat.h"
 #include "Interfaces/IAudioFormatModule.h"
-#include "VorbisAudioInfo.h"
-
+#include "Decoders/VorbisAudioInfo.h"
 
 #if WITH_OGGVORBIS
 	#pragma pack(push, 8)
@@ -511,7 +510,7 @@ public:
 	// Add a new chunk and reserve ChunkSize bytes in it
 	void AddNewChunk(TArray<TArray<uint8>>& OutBuffers, int32 ChunkReserveSize) const
 	{
-		TArray<uint8>& NewBuffer = *new (OutBuffers) TArray<uint8>;
+		TArray<uint8>& NewBuffer = OutBuffers.AddDefaulted_GetRef();
 		NewBuffer.Empty(ChunkReserveSize);
 	}
 	

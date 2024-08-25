@@ -143,6 +143,19 @@ TSharedRef<SDockTab> FRewindDebuggerModule::SpawnRewindDebuggerTab(const FSpawnT
 							 FIsActionChecked(),
 							 FIsActionButtonVisible::CreateRaw(DebuggerInstance, &FRewindDebugger::CanStopRecording));
 
+	CommandList->MapAction(Commands.AutoEject,
+							 FExecuteAction::CreateLambda([DebuggerInstance]() { DebuggerInstance->SetShouldAutoEject(!DebuggerInstance->ShouldAutoEject()); }),
+							 FCanExecuteAction(),
+							 FCanExecuteAction::CreateRaw(DebuggerInstance, &FRewindDebugger::ShouldAutoEject),
+							 FIsActionButtonVisible());
+							 
+	CommandList->MapAction(Commands.AutoRecord,
+							 FExecuteAction::CreateLambda([DebuggerInstance]() { DebuggerInstance->SetShouldAutoRecordOnPIE(!DebuggerInstance->ShouldAutoRecordOnPIE()); }),
+							 FCanExecuteAction(),
+							 FCanExecuteAction::CreateRaw(DebuggerInstance, &FRewindDebugger::ShouldAutoRecordOnPIE),
+							 FIsActionButtonVisible());
+		 
+
 	// Register PIE Rewind Debugger Commands
 	if (GEditor != nullptr)
 	{
@@ -162,7 +175,7 @@ TSharedRef<SDockTab> FRewindDebuggerModule::SpawnRewindDebuggerTab(const FSpawnT
 	}
 	
 	RewindDebuggerWidget = SNew(SRewindDebugger, CommandList.ToSharedRef(), MajorTab, SpawnTabArgs.GetOwnerWindow())
-								.DebugTargetActor(DebuggerInstance->GetDebugTargetActorProperty())
+								.DebugTargetActor({ DebuggerInstance->GetDebugTargetActorProperty(), URewindDebuggerSettings::Get().DebugTargetActor})
 								.RecordingDuration(DebuggerInstance->GetRecordingDurationProperty())
 								.DebugComponents(&DebuggerInstance->GetDebugTracks())
 								.TraceTime(DebuggerInstance->GetTraceTimeProperty())
@@ -171,6 +184,7 @@ TSharedRef<SDockTab> FRewindDebuggerModule::SpawnRewindDebuggerTab(const FSpawnT
 								.OnComponentDoubleClicked_Raw(DebuggerInstance, &FRewindDebugger::ComponentDoubleClicked)
 								.OnComponentSelectionChanged_Raw(DebuggerInstance, &FRewindDebugger::ComponentSelectionChanged)
 								.BuildComponentContextMenu_Raw(DebuggerInstance, &FRewindDebugger::BuildComponentContextMenu)
+								.TrackTypes_Lambda([]() { return FRewindDebugger::Instance()->GetTrackTypes(); })
 								.ScrubTime_Lambda([]() { return FRewindDebugger::Instance()->GetScrubTime(); });
 
 	DebuggerInstance->OnTrackCursor(FRewindDebugger::FOnTrackCursor::CreateSP(RewindDebuggerWidget.Get(), &SRewindDebugger::TrackCursor));
@@ -231,6 +245,7 @@ void FRewindDebuggerModule::StartupModule()
 	FPropertyTraceMenu::Register();
 	FAnimInstanceMenu::Register();
 	FRewindDebugger::RegisterComponentContextMenu();
+	FRewindDebugger::RegisterToolBar();
 }
 
 void FRewindDebuggerModule::ShutdownModule()

@@ -24,7 +24,6 @@ public:
 	//UObject Interface End
 
 	//UNiagaraDataInterface Interface
-	virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return true; }
 #if WITH_EDITORONLY_DATA
@@ -44,6 +43,12 @@ public:
 	//UNiagaraDataInterface Interface
 
 	void GetMousePositionVM(FVectorVMExternalFunctionContext& Context);	
+
+protected:
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
+
 private:
 	static const FName GetMousePositionName;
 };

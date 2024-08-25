@@ -3,9 +3,7 @@
 #pragma once
 
 #include "TVariantMeta.h"
-#include "Templates/EnableIf.h"
-#include "Templates/IsConstructible.h"
-#include "Templates/Decay.h"
+#include <type_traits>
 
 /**
  * A special tag used to indicate that in-place construction of a variant should take place.
@@ -42,7 +40,7 @@ public:
 	/** Default initialize the TVariant to the first type in the parameter pack */
 	TVariant()
 	{
-		static_assert(TIsConstructible<T>::Value, "To default-initialize a TVariant, the first type in the parameter pack must be default constructible. Use FEmptyVariantState as the first type if none of the other types can be listed first.");
+		static_assert(std::is_constructible_v<T>, "To default-initialize a TVariant, the first type in the parameter pack must be default constructible. Use FEmptyVariantState as the first type if none of the other types can be listed first.");
 		new(&UE::Core::Private::CastToStorage(*this).Storage) T();
 		TypeIndex = 0;
 	}
@@ -194,50 +192,15 @@ private:
 	uint8 TypeIndex;
 };
 
-/** Determine if a type is a variant */
-template <typename T>
-struct TIsVariant
-{
-	static constexpr inline bool Value = false;
-};
-
-template <typename... Ts>
-struct TIsVariant<TVariant<Ts...>>
-{
-	static constexpr inline bool Value = true;
-};
-
-template <typename T> struct TIsVariant<T&> : public TIsVariant<T> {};
-template <typename T> struct TIsVariant<T&&> : public TIsVariant<T> {};
-template <typename T> struct TIsVariant<const T> : public TIsVariant<T> {};
-
-/** Determine the number of types in a TVariant */
-template <typename> struct TVariantSize;
-
-template <typename... Ts>
-struct TVariantSize<TVariant<Ts...>>
-{
-	static constexpr inline SIZE_T Value = sizeof...(Ts);
-};
-
-template <typename T> struct TVariantSize<T&> : public TVariantSize<T> {};
-template <typename T> struct TVariantSize<T&&> : public TVariantSize<T> {};
-template <typename T> struct TVariantSize<const T> : public TVariantSize<T> {};
-
 /** Apply a visitor function to the list of variants */
 template <
 	typename Func,
-	typename... Variants,
-	typename = typename TEnableIf<UE::Core::Private::TIsAllVariant<typename TDecay<Variants>::Type...>::Value>::Type
+	typename... Variants
+	UE_REQUIRES((TIsVariant_V<std::decay_t<Variants>> && ...))
 >
 decltype(auto) Visit(Func&& Callable, Variants&&... Args)
 {
-#if PLATFORM_COMPILER_HAS_FOLD_EXPRESSIONS
-	constexpr SIZE_T NumPermutations = (1 * ... * (TVariantSize<Variants>::Value));
-#else
-	constexpr SIZE_T VariantSizes[] = { TVariantSize<Variants>::Value... };
-	constexpr SIZE_T NumPermutations = UE::Core::Private::Multiply(VariantSizes, sizeof...(Variants));
-#endif
+	constexpr SIZE_T NumPermutations = (1 * ... * (TVariantSize_V<std::decay_t<Variants>>));
 
 	return UE::Core::Private::VisitImpl(
 		UE::Core::Private::EncodeIndices(Args...),

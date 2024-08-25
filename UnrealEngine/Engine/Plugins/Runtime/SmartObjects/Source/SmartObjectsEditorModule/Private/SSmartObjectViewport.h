@@ -16,9 +16,12 @@ class SSmartObjectViewport : public SEditorViewport, public ICommonEditorViewpor
 public:
 	
 	SLATE_BEGIN_ARGS(SSmartObjectViewport) {}
+		SLATE_ARGUMENT(TSharedPtr<FSmartObjectAssetEditorViewportClient>, EditorViewportClient)
+		SLATE_ARGUMENT(TSharedPtr<FSmartObjectAssetToolkit>, AssetEditorToolkit)
+		SLATE_ARGUMENT(FAdvancedPreviewScene*, PreviewScene)
 	SLATE_END_ARGS();
 
-	void Construct(const FArguments& InArgs, const TSharedRef<FSmartObjectAssetToolkit>& InAssetEditorToolkit,FAdvancedPreviewScene* InPreviewScene);
+	void Construct(const FArguments& InArgs);
 	virtual ~SSmartObjectViewport() override {}
 
 	// ~ICommonEditorViewportToolbarInfoProvider interface

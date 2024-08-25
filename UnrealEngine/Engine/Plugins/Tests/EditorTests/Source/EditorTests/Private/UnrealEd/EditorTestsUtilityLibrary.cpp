@@ -20,6 +20,9 @@
 #include "Algo/Transform.h"
 #include "Materials/Material.h"
 #include "TextureCompiler.h"
+#include "WidgetBlueprint.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Widget.h"
 
 void UEditorTestsUtilityLibrary::BakeMaterialsForComponent(UStaticMeshComponent* InStaticMeshComponent, const UMaterialOptions* MaterialOptions, const UMaterialMergeOptions* MaterialMergeOptions)
 {
@@ -149,5 +152,95 @@ void UEditorTestsUtilityLibrary::MergeStaticMeshComponents(TArray<UStaticMeshCom
 			}
 		}
 	}
+}
+
+UWidget* UEditorTestsUtilityLibrary::GetChildEditorWidgetByName(UWidgetBlueprint* WidgetBlueprint, FString Name)
+{
+	if (!ensure(WidgetBlueprint))
+	{
+		return nullptr;
+	}
+
+	UObject* Child = FindObject<UObject>(WidgetBlueprint->WidgetTree, *Name);
+	return Cast<UWidget>(Child);
+}
+
+void UEditorTestsUtilityLibrary::SetEditorWidgetNavigationRule(UWidget* Widget, EUINavigation Nav, EUINavigationRule Rule)
+{
+	if (!Widget)
+	{
+		return;
+	}
+
+	// mimicking the FWidgetNavigationCustomization, this subobject exercises a specific edge case 
+	// within the reinstancing code, and its coverage of reinstancing that I'm interested in- not 
+	// so much editing of the subobject:
+	UWidgetNavigation* WidgetNavigation = Widget->Navigation;
+	if (!WidgetNavigation)
+	{
+		Widget->Navigation = NewObject<UWidgetNavigation>(Widget);
+		WidgetNavigation = Widget->Navigation;
+		WidgetNavigation->SetFlags(RF_Transactional);
+	}
+
+	FWidgetNavigationData* DirectionNavigation = nullptr;
+
+	switch (Nav)
+	{
+	case EUINavigation::Left:
+		DirectionNavigation = &WidgetNavigation->Left;
+		break;
+	case EUINavigation::Right:
+		DirectionNavigation = &WidgetNavigation->Right;
+		break;
+	case EUINavigation::Up:
+		DirectionNavigation = &WidgetNavigation->Up;
+		break;
+	case EUINavigation::Down:
+		DirectionNavigation = &WidgetNavigation->Down;
+		break;
+	case EUINavigation::Next:
+		DirectionNavigation = &WidgetNavigation->Next;
+		break;
+	case EUINavigation::Previous:
+		DirectionNavigation = &WidgetNavigation->Previous;
+		break;
+	default:
+		// Should not be possible.
+		check(false);
+		return;
+	}
+
+	DirectionNavigation->Rule = Rule;
+}
+
+EUINavigationRule UEditorTestsUtilityLibrary::GetEditorWidgetNavigationRule(UWidget* Widget, EUINavigation Nav)
+{
+	if (!Widget || !Widget->Navigation)
+	{
+		return EUINavigationRule::Escape;
+	}
+
+	UWidgetNavigation* WidgetNavigation = Widget->Navigation;
+
+	switch (Nav)
+	{
+	case EUINavigation::Left:
+		return WidgetNavigation->Left.Rule;
+	case EUINavigation::Right:
+		return WidgetNavigation->Right.Rule;
+	case EUINavigation::Up:
+		return WidgetNavigation->Up.Rule;
+	case EUINavigation::Down:
+		return WidgetNavigation->Down.Rule;
+	case EUINavigation::Next:
+		return WidgetNavigation->Next.Rule;
+	case EUINavigation::Previous:
+		return WidgetNavigation->Previous.Rule;
+	default:
+		// Should not be possible.
+		check(false);
+	}
+	return EUINavigationRule::Escape;
 }
 

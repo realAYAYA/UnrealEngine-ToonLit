@@ -44,8 +44,8 @@ void FWeightedRandomSampler::Initialize()
 
 	while (Small.Num() && Large.Num())
 	{
-		int32 SmallIdx = Small.Pop(false);
-		int32 LargeIdx = Large.Pop(false);
+		int32 SmallIdx = Small.Pop(EAllowShrinking::No);
+		int32 LargeIdx = Large.Pop(EAllowShrinking::No);
 
 		Prob[SmallIdx] = P[SmallIdx];
 		Alias[SmallIdx] = LargeIdx;

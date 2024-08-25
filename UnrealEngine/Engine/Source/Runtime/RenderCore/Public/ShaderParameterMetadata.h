@@ -19,6 +19,7 @@
 #include "Misc/StringBuilder.h"
 #include "RHI.h"
 #include "RHIDefinitions.h"
+#include "Serialization/MemoryHasher.h"
 #include "Serialization/MemoryImage.h"
 #include "Serialization/MemoryLayout.h"
 #include "Templates/AlignmentTemplates.h"
@@ -26,6 +27,7 @@
 #include "Templates/SharedPointer.h"
 
 using FThreadSafeSharedStringPtr = TSharedPtr<FString, ESPMode::ThreadSafe>;
+using FThreadSafeSharedAnsiStringPtr = TSharedPtr<TArray<ANSICHAR>, ESPMode::ThreadSafe>;
 using FThreadSafeNameBufferPtr = TSharedPtr<TArray<TCHAR>, ESPMode::ThreadSafe>;
 struct FShaderResourceTableMap;
 
@@ -82,9 +84,6 @@ struct FUniformBufferEntry
 
 /** Parse the shader resource binding from the binding type used in shader code. */
 EShaderCodeResourceBindingType ParseShaderResourceBindingType(const TCHAR* ShaderType);
-
-const TCHAR* GetShaderCodeResourceBindingTypeName(EShaderCodeResourceBindingType BindingType);
-
 
 /** Simple class that registers a uniform buffer static slot in the constructor. */
 class FUniformBufferStaticSlotRegistrar
@@ -158,6 +157,9 @@ public:
 
 		/** On platforms that support emulated uniform buffers, disable them for this uniform buffer */
 		NoEmulatedUniformBuffer = 1 << 0,
+		
+		/** This struct is a view into uniform buffer object, on platforms that support UBO */
+		UniformView = 1 << 1,
 	};
 
 	/** Shader binding name of the uniform buffer that contains the root shader parameters. */
@@ -262,6 +264,10 @@ public:
 		RENDERCORE_API void GenerateShaderParameterType(FString& Result, EShaderPlatform ShaderPlatform) const;
 
 	private:
+		friend class FShaderParametersMetadata;
+#if WITH_EDITOR
+		void HashLayout(FMemoryHasherBlake3& SignatureData);
+#endif
 
 		const TCHAR* Name;
 		const TCHAR* ShaderType;
@@ -353,6 +359,7 @@ public:
 #if WITH_EDITOR
 	inline bool IsUniformBufferDeclarationInitialized() const { return UniformBufferDeclaration.IsValid(); }
 	FThreadSafeSharedStringPtr GetUniformBufferDeclarationPtr() const { return UniformBufferDeclaration; }
+	FThreadSafeSharedAnsiStringPtr GetUniformBufferDeclarationAnsiPtr() const { return UniformBufferDeclarationAnsi; }
 	const FString& GetUniformBufferDeclaration() const { return *UniformBufferDeclaration; }
 	FORCEINLINE const FString& GetUniformBufferPath() const { return UniformBufferPath; }
 	FORCEINLINE const FString& GetUniformBufferInclude() const { return UniformBufferInclude; }
@@ -372,6 +379,9 @@ public:
 	static RENDERCORE_API TLinkedList<FShaderParametersMetadata*>*& GetStructList();
 	/** Speed up finding the uniform buffer by its name */
 	static RENDERCORE_API TMap<FHashedName, FShaderParametersMetadata*>& GetNameStructMap();
+#if WITH_EDITOR
+	static RENDERCORE_API TMap<FString, FShaderParametersMetadata*>& GetStringStructMap();
+#endif // WITH_EDITOR
 
 	/** Initialize all the global shader parameter structs. */
 	static RENDERCORE_API void InitializeAllUniformBufferStructs();
@@ -383,6 +393,31 @@ public:
 		check(IsLayoutInitialized());
 		return LayoutHash;	
 	}
+
+#if WITH_EDITOR
+	inline void AppendKeyString(FString& OutKeyString) const
+	{
+		TStringBuilder<sizeof(TCHAR) * (sizeof(FBlake3Hash::ByteArray) * 2 + 4)> StrBuilder;
+		StrBuilder << "SPM_";
+		StrBuilder << LayoutSignature;
+		OutKeyString.Append(StrBuilder.ToView());
+	}
+#endif
+
+	inline const FBlake3Hash& GetLayoutSignature() const
+	{
+#if WITH_EDITOR
+		check(IsLayoutInitialized());
+		return LayoutSignature;
+#else
+		// shader compilation types & WITH_EDITOR is a massive mess upstream; this should never actually be called outside of the editor
+		// but actually compiling the function out is a headache, so we instead just assert if it's called 
+		checkNoEntry();
+		static FBlake3Hash Dummy;
+		return Dummy;
+#endif
+	}
+
 
 	/** Iterate recursively over all FShaderParametersMetadata. */
 	template<typename TParameterFunction>
@@ -439,6 +474,7 @@ private:
 #if WITH_EDITOR
 	/** Uniform buffer declaration, created once */
 	FThreadSafeSharedStringPtr UniformBufferDeclaration;
+	FThreadSafeSharedAnsiStringPtr UniformBufferDeclarationAnsi;
 
 	/** Cache of uniform buffer resource table, and storage for member names used by the table, created once */
 	TArray<FUniformResourceEntry> ResourceTableCache;
@@ -446,7 +482,7 @@ private:
 
 	/** Strings for uniform buffer generated path and include, created once */
 	FString UniformBufferPath;		// Format:  "/Engine/Generated/UniformBuffers/%s.ush"
-	FString UniformBufferInclude;	// Format:  "#include \"/Engine/Generated/UniformBuffers/%s.ush\"" LINE_TERMINATOR
+	FString UniformBufferInclude;	// Format:  "#include \"/Engine/Generated/UniformBuffers/%s.ush\"" HLSL_LINE_TERMINATOR
 
 	/** Hashes for frequently used strings */
 	uint32 UniformBufferPathHash;
@@ -459,6 +495,13 @@ private:
 	/** Hash about the entire memory layout of the structure. */
 	uint32 LayoutHash = 0;
 
+#if WITH_EDITOR
+	void HashLayout(FMemoryHasherBlake3& SignatureData);
+	
+	/** Strong persistable hash representing the binary layout of the entire parameter structure */
+	FBlake3Hash LayoutSignature;
+#endif
+
 	/** Additional flags for how to use the buffer */
 	uint32 UsageFlags = 0;
 
@@ -467,4 +510,35 @@ private:
 #if WITH_EDITOR
 	RENDERCORE_API void InitializeUniformBufferDeclaration();
 #endif
+};
+
+
+/**
+ * Utility class for caching FName and other info for a shader compiler define.  Don't use directly, use SET_SHADER_DEFINE or SET_SHADER_DEFINE_AND_COMPILE_ARGUMENT
+ * macros defined in ShaderCore.h.
+ *
+ * Placed here temporarily to solve static analysis warning related to deprecation of public access to FShaderCompilerDefinitions.  This structure needs to be
+ * declared before including "Runtime/RenderCore/Internal/ShaderCompilerDefinitions.h", which would normally be accomplished by including ShaderCore.h, but we
+ * can't include that without producing a circular include, which generates a static analysis warning.  The first attempt to solve this involved placing the
+ * include after this structure declaration in ShaderCore.h, but that leads to an "Include after first code block" static analysis warning.  We don't want to move
+ * this structure to the internal header, so we need to place it in another header that's also included in "ShaderCore.h", to avoid producing that warning.  This
+ * is the only candidate shader related source file, so it makes sense to place here for now, and can be moved back to ShaderCore.h next major version.
+ */
+class FShaderCompilerDefineNameCache
+{
+public:
+	FShaderCompilerDefineNameCache(const TCHAR* InName)
+		: Name(InName), MapIndex(INDEX_NONE)
+	{}
+
+	operator FName() const
+	{
+		return Name;
+	}
+
+private:
+	FName Name;
+	int32 MapIndex;
+
+	friend class FShaderCompilerDefinitions;
 };

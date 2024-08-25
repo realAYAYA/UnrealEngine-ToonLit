@@ -158,6 +158,10 @@ void UContentBundleEngineSubsystem::OnPreWorldInitialization(UWorld* World, cons
 	{
 		World->ContentBundleManager = NewObject<UContentBundleManager>(World);
 	}
+	else if (!World->GetWorldPartition() && World->ContentBundleManager != nullptr)
+	{
+		World->ContentBundleManager = nullptr;
+	}
 
 	if (World->ContentBundleManager != nullptr)
 	{

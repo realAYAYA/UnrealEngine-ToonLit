@@ -20,21 +20,9 @@ struct CHOOSER_API FStructContextProperty : public FChooserParameterStructBase
 
 	virtual bool SetValue(FChooserEvaluationContext& Context, const FInstancedStruct &Value) const override;
 
+	CHOOSER_PARAMETER_BOILERPLATE();
+
 #if WITH_EDITOR
-	void SetBinding(const UObject* OuterObject, const TArray<FBindingChainElement>& InBindingChain);
-
-	virtual void GetDisplayName(FText& OutName) const override
-	{
-		if (!Binding.DisplayName.IsEmpty())
-		{
-			OutName = FText::FromString(Binding.DisplayName);
-		} 
-		else if (!Binding.PropertyBindingChain.IsEmpty())
-		{
-			OutName = FText::FromName(Binding.PropertyBindingChain.Last());
-		}
-	}
-
 	virtual UScriptStruct* GetStructType() const override { return Binding.StructType; }
 #endif
 };
@@ -55,14 +43,21 @@ struct CHOOSER_API FOutputStructColumn : public FChooserColumnBase
 #if WITH_EDITOR
 	void StructTypeChanged();
 	mutable FInstancedStruct TestValue;
+
+	virtual void AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
+	virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
 #endif
 	
+	// FallbackValue will be used as the output value if the all rows in the chooser fail, and the FallbackResult from the chooser is used.
+	UPROPERTY(EditAnywhere, Meta = (StructTypeConst), Category=Data);
+   	FInstancedStruct FallbackValue;
+	
 #if WITH_EDITORONLY_DATA
-	UPROPERTY(EditAnywhere, Meta = (StructTypeConst), Category=Runtime);
+	UPROPERTY(EditAnywhere, Meta = (StructTypeConst), Category=Data);
 	FInstancedStruct DefaultRowValue;
 #endif
 	
-	UPROPERTY(EditAnywhere, Meta = (StructTypeConst), Category=Runtime);
+	UPROPERTY(EditAnywhere, Meta = (StructTypeConst), Category=Data);
 	TArray<FInstancedStruct> RowValues; 
 
 	CHOOSER_COLUMN_BOILERPLATE(FChooserParameterStructBase);

@@ -199,6 +199,11 @@ public:
 
 	virtual void PostDuplicate(bool bDuplicateForPIE) override;
 
+	/**
+	 * @brief Rehash the entities after ids have been modified.
+	 */
+	void Rehash();
+	
 private:
 	/** Get a raw pointer to an entity using its id. */
 	TSharedPtr<FRemoteControlEntity> GetEntity(const FGuid& EntityId);

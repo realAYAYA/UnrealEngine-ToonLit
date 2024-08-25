@@ -51,6 +51,14 @@ namespace WaveTable
 		void SetFinalValue(const float InValue);
 		void SetNum(int32 InSize);
 		void Zero();
+
+		FORCEINLINE static void WrapIndexSmooth(int32 InMax, float& InOutIndex)
+		{
+			InOutIndex = FMath::Abs(InOutIndex); // Avoids fractional offset flip at 0 crossing
+			const int32 WrapIndex = FMath::TruncToInt32(InOutIndex) % InMax;
+			const float Fractional = FMath::Frac(InOutIndex);
+			InOutIndex = WrapIndex + Fractional;
+		}
 	};
 } // namespace WaveTable
 
@@ -97,6 +105,7 @@ private:
 	UPROPERTY()
 	float FinalValue = ::WaveTable::InvalidWaveTableValue;
 
+	// Returns the size of the underlying data's sample in number of bytes.
 	FORCEINLINE int32 GetSampleSize() const;
 
 public:
@@ -105,20 +114,43 @@ public:
 	// Provided buffer's size must match this WaveTableData's samples count.
 	void ArrayMixIn(TArrayView<float> OutputWaveSamples, float Gain = 1.0f) const;
 
+	// Empties the underlying data container, deallocating memory and invalidating the FinalValue.
 	void Empty();
 
 	EWaveTableBitDepth GetBitDepth() const;
+
+	// Returns read-only view of byte array that stores sample data.
 	const TArray<uint8>& GetRawData() const;
+
+	// Returns true if ArrayView of underlying Data in the proper sample format,
+	// setting OutData to a view of the Table's data. Returns false if the bit
+	// depth of the provided ArrayView does not match the Table's BitDepth property.
 	bool GetDataView(TArrayView<const float>& OutData) const;
 	bool GetDataView(TArrayView<float>& OutData);
 	bool GetDataView(TArrayView<const int16>& OutData) const;
 	bool GetDataView(TArrayView<int16>& OutData);
+
+	// Returns number of samples within the underlying DataView, not including a FinalValue if set.
+	// (Should not to be confused with the number of bytes used to represent the given DataView in
+	// the internal Data container).
 	int32 GetNumSamples() const;
+
+	// Returns the last data value value as a float.  If DataView is empty, returns 0.
+	float GetLastValue() const;
+
+	// Returns the value to interpolate to beyond the last value of the DataView.
+	// If FinalValue property is set to invalid (default), returns the last value in the 
+	// underlying DataView (see GetLastValue).
 	float GetFinalValue() const;
 
+	// Whether or not the underlying data is empty.
 	bool IsEmpty() const;
 
+	// Resamples the underlying data to a provided new sample rate.
 	bool Resample(int32 InCurrentSampleRate, int32 InNewSampleRate, ::WaveTable::FWaveTableSampler::EInterpolationMode InInterpMode = ::WaveTable::FWaveTableSampler::EInterpolationMode::Cubic);
+
+	// Resets the underlying data to the given number of samples. Does not change
+	// memory allocation of data unless NumSamples is larger than the current size.
 	void Reset(int32 NumSamples);
 
 	// Converts bit depth and sets internal data to the requested bit depth.
@@ -131,5 +163,7 @@ public:
 	void SetRawData(EWaveTableBitDepth InBitDepth, TArray<uint8>&& InData);
 	void SetFinalValue(float InFinalValue);
 
+	// Zeros the underlying data. If InNumSamples is set (optional),
+	// allocates space in underlying data array for the given number of samples.
 	void Zero(int32 InNumSamples = INDEX_NONE);
 };

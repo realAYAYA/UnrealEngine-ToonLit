@@ -88,9 +88,9 @@ FCbAttachment::FObjectValue::FObjectValue(FCbObject&& InObject, const FIoHash* c
 
 FIoHash FCbAttachment::GetHash() const
 {
-	if (const FCompressedBuffer* Buffer = Value.TryGet<FCompressedBuffer>())
+	if (const FCompressedBinaryValue* CompressedValue = Value.TryGet<FCompressedBinaryValue>())
 	{
-		return Buffer->GetRawHash();
+		return CompressedValue->Hash;
 	}
 	else if (const FBinaryValue* BinaryValue = Value.TryGet<FBinaryValue>())
 	{
@@ -153,7 +153,7 @@ bool FCbAttachment::TryLoad(FCbFieldIterator& Fields)
 		else if (FCompressedBuffer CompressedBuffer{FCompressedBuffer::FromCompressed(MoveTemp(Buffer))})
 		{
 			// Compressed Binary
-			Value.Emplace<FCompressedBuffer>(MoveTemp(CompressedBuffer));
+			Value.Emplace<FCompressedBinaryValue>(MoveTemp(CompressedBuffer));
 			++Fields;
 			return true;
 		}
@@ -185,9 +185,9 @@ void FCbAttachment::Save(FCbWriter& Writer) const
 		}
 		Writer.AddBinary(BinaryValue->Buffer);
 	}
-	else if (const FCompressedBuffer* BufferValue = Value.TryGet<FCompressedBuffer>())
+	else if (const FCompressedBinaryValue* CompressedValue = Value.TryGet<FCompressedBinaryValue>())
 	{
-		Writer.AddBinary(BufferValue->GetCompressed());
+		Writer.AddBinary(CompressedValue->Buffer.GetCompressed());
 	}
 	else
 	{

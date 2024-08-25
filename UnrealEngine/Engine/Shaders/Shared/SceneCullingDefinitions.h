@@ -21,15 +21,32 @@ namespace UE::HLSL
 #endif
 
 // Representation in hierarchy buffer
+struct FPackedCellHeader
+{
+	uint ItemChunksOffset;
+	uint NumStaticDynamicItemChunks; // 2x16 bits: (Static << 16) + Dynamic
+};
+
+// Unpacked version of the struct
 struct FCellHeader
 {
 	uint NumItemChunks;
 	uint ItemChunksOffset;
+	uint NumStaticChunks;
 };
+
+inline FCellHeader UnpackCellHeader(FPackedCellHeader Packed)
+{
+	FCellHeader Result;
+	Result.ItemChunksOffset = Packed.ItemChunksOffset;
+	Result.NumStaticChunks = Packed.NumStaticDynamicItemChunks >> 16;
+	Result.NumItemChunks = (Packed.NumStaticDynamicItemChunks & 0xFFFFu) + Result.NumStaticChunks;
+	return Result;
+}
 
 struct FCellBlockData
 {
-	FLWCVector3 WorldPos;
+	FDFVector3 WorldPos;
 	float LevelCellSize; // Note, not the block size, but the cell size.
 	uint Pad;
 };
@@ -80,6 +97,7 @@ struct FInstanceCullingGroupWork
 } // namespace
 
 using FCellHeader = UE::HLSL::FCellHeader;
+using FPackedCellHeader = UE::HLSL::FPackedCellHeader;
 using FCellBlockData = UE::HLSL::FCellBlockData;
 using FCellDraw = UE::HLSL::FCellDraw;
 using FOccludedCellDraw = UE::HLSL::FOccludedCellDraw;

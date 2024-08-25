@@ -70,6 +70,7 @@ export interface BlockagePauseInfo extends BlockagePauseInfoMinimal {
 	targetStream?: string  // Used by create shelf feature to filter user workspaces
 	sourceCl?: number
 	source?: string
+	additionalInfo?: any
 
 	// Set when the Acknowledge button is clicked
 	acknowledger?: string

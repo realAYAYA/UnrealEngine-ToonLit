@@ -38,23 +38,23 @@ const FRigVMTemplate* UDEPRECATED_RigVMIfNode::GetTemplate() const
 		static const FName FalseFName = *FalseName;
 		static const FName ResultFName = *ResultName;
 
-		static TArray<FRigVMTemplateArgument> Arguments;
-		if(Arguments.IsEmpty())
+		static TArray<FRigVMTemplateArgumentInfo> Infos;
+		if(Infos.IsEmpty())
 		{
 			static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {
 				FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
 				FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
 			};
-			Arguments.Reserve(4);
-			Arguments.Emplace(ConditionFName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Bool);
-			Arguments.Emplace(TrueFName, ERigVMPinDirection::Input, Categories);
-			Arguments.Emplace(FalseFName, ERigVMPinDirection::Input, Categories);
-			Arguments.Emplace(ResultFName, ERigVMPinDirection::Output, Categories);
+			Infos.Reserve(4);
+			Infos.Emplace(ConditionFName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Bool);
+			Infos.Emplace(TrueFName, ERigVMPinDirection::Input, Categories);
+			Infos.Emplace(FalseFName, ERigVMPinDirection::Input, Categories);
+			Infos.Emplace(ResultFName, ERigVMPinDirection::Output, Categories);
 		}
 
 		FRigVMTemplateDelegates Delegates;
 		Delegates.NewArgumentTypeDelegate = 
-			FRigVMTemplate_NewArgumentTypeDelegate::CreateLambda([](const FRigVMTemplate*, const FName& InArgumentName, int32 InTypeIndex)
+			FRigVMTemplate_NewArgumentTypeDelegate::CreateLambda([](const FName& InArgumentName, int32 InTypeIndex)
 			{
 				FRigVMTemplateTypeMap Types;
 
@@ -69,7 +69,7 @@ const FRigVMTemplate* UDEPRECATED_RigVMIfNode::GetTemplate() const
 				return Types;
 			});
 
-		IfNodeTemplate = CachedTemplate = FRigVMRegistry::Get().GetOrAddTemplateFromArguments(*IfName, Arguments, Delegates);
+		IfNodeTemplate = CachedTemplate = FRigVMRegistry::Get().GetOrAddTemplateFromArguments(*IfName, Infos, Delegates);
 	}
 	return CachedTemplate;
 }

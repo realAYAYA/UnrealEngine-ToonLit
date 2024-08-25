@@ -7,12 +7,15 @@
 namespace UE::NNERuntimeRDG::Private::Dml
 {
 
-//
-//
-//
 class FOperatorDmlLpNormalization : public FOperatorDml
 {
 	static constexpr float DefaultEpsilon = 1e-5f;
+
+	int32	P;
+	uint32	Axis;
+
+	static constexpr uint32 NumAllowedInputTensors = 1, NumAllowedOutputTensors = 1;
+	static constexpr int32 	MinTensorRank = 0, MaxTensorRank = GMaxTensorRank;
 
 public:
 
@@ -23,33 +26,51 @@ public:
 
 	static bool Validate(const NNE::FAttributeMap& AttributeMap, TConstArrayView<ENNETensorDataType> InputTypes, TConstArrayView<NNE::FSymbolicTensorShape> InputShapes)
 	{
-		//TODO
-		return true;
-	}
+		const FString OpName = TEXT("LpNormalization");
 
-	//
-	//
-	//
-	virtual bool Initialize(IDMLDevice* Device, TArrayView<const NNE::Internal::FTensor> InputTensors, TArrayView<const NNE::Internal::FTensor> OutputTensors, const NNE::FAttributeMap& Attributes) override
-	{
-		check(InputTensors.Num() == 1);
-		check(OutputTensors.Num() == 1);
-
-		const NNE::Internal::FTensor& InputTensor = InputTensors[0];
-		const NNE::Internal::FTensor& OutputTensor = OutputTensors[0];
-
-		if (InputTensor.GetShape().Rank() > 8)
+		if(InputShapes.Num() != NumAllowedInputTensors)
 		{
-			UE_LOG(LogNNE, Error, TEXT("InputTensor rank should be between 1 and 8, got:%d"), InputTensor.GetShape().Rank());
+			UE_LOG(LogNNE, Warning, TEXT("DML %s: Invalid number of input tensors. %d provided, it should be %d."), *OpName, InputShapes.Num(), NumAllowedInputTensors);
+			return false;
+		}
+		
+		if (!CheckGenericTensor(OpName, InputTypes[0], InputShapes[0], 
+			{ 	ENNETensorDataType::Float, ENNETensorDataType::Half
+			},
+			MinTensorRank, MaxTensorRank
+		  	))
+		{
 			return false;
 		}
 
+		return true;
+	}
+
+	virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> Outputs, const NNE::FAttributeMap& Attributes) override
+	{
+		check(Inputs.Num() == NumAllowedInputTensors);
+		check(Outputs.Num() == NumAllowedOutputTensors);
+
 		// Read attributes
-		const int32 P = Attributes.GetValueOrDefault<int32>(TEXT("p"), 1);
+		P = Attributes.GetValueOrDefault<int32>(TEXT("p"), 1);
 		check(P >= 1 && P <= 2);
 
-		int32 OnnxAxis = Attributes.GetValueOrDefault<int32>(TEXT("axis"), 0);
-		
+		Axis = Attributes.GetValueOrDefault<int32>(TEXT("axis"), 0);
+
+		return true;
+	}
+
+	virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		OutputTensors[0]->SetShape(InputTensors[0]->GetShape());
+		return 0;
+	}
+
+	virtual bool Create(IDMLDevice* Device, TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TConstArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		const NNE::Internal::FTensor& InputTensor = *InputTensors[0];
+		const NNE::Internal::FTensor& OutputTensor = *OutputTensors[0];
+
 		FTensorDescDml	DmlInputTensorDesc;
 		
 		if (!DmlInputTensorDesc
@@ -70,13 +91,11 @@ public:
 			return false;
 		}
 
-		uint32 DmlAxis = GetDmlAxis(OnnxAxis, InputTensor.GetShape().Rank(), DmlInputTensorDesc.GetRank());
-
 		DML_LP_NORMALIZATION_OPERATOR_DESC	OpDesc{};
 
 		OpDesc.InputTensor = DmlInputTensorDesc.GetDmlDesc();
 		OpDesc.OutputTensor = DmlOutputTensorDesc.GetDmlDesc();
-		OpDesc.Axis = DmlAxis;
+		OpDesc.Axis = GetDmlAxis(Axis, InputTensor.GetShape().Rank(), DmlInputTensorDesc.GetRank());;
 		OpDesc.Epsilon = DefaultEpsilon;
 		OpDesc.P = P;
 
@@ -85,7 +104,7 @@ public:
 };
 
 // Register operator on Module startup
-NNE_DML_REGISTER_OP(LpNormalization)
+NNE_DML_REGISTER_OP_VERSION(LpNormalization, 1)
 
 } // namespace UE::NNERuntimeRDG::Private::Dml
 

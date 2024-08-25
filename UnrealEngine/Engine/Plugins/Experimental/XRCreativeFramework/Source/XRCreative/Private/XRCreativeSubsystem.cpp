@@ -2,7 +2,7 @@
 
 #include "XRCreativeSubsystem.h"
 #include "XRCreativeSettings.h"
-#include "Misc/CoreDelegates.h"
+#include "Types/MVVMViewModelCollection.h"
 #include "UObject/Package.h"
 
 #if WITH_EDITOR
@@ -13,8 +13,7 @@
 void UXRCreativeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-
-	EngineInitCompleteDelegate = FCoreDelegates::OnFEngineLoopInitComplete.AddUObject(this, &UXRCreativeSubsystem::OnEngineInitComplete);
+	ViewModelCollection = NewObject<UMVVMViewModelCollectionObject>(this);
 }
 
 
@@ -41,15 +40,3 @@ void UXRCreativeSubsystem::ExitVRMode()
 	}
 }
 #endif // #if WITH_EDITOR
-
-
-void UXRCreativeSubsystem::OnEngineInitComplete()
-{
-	EngineInitCompleteDelegate.Reset();
-
-	const UXRCreativeSettings* Settings = UXRCreativeSettings::GetXRCreativeSettings();
-	if (UClass* HelpersClass = Settings->SubsystemHelpersClass.LoadSynchronous())
-	{
-		Helpers = NewObject<UXRCreativeSubsystemHelpers>(GetTransientPackage(), HelpersClass);
-	}
-}

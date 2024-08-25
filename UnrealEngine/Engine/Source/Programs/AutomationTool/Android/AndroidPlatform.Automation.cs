@@ -520,6 +520,12 @@ public class AndroidPlatform : Platform
 		return Path.Combine(Path.GetDirectoryName(Params.GetProjectExeForPlatform(UnrealTargetPlatform.Android).ToString()), DecoratedExeName) + ".so";
 	}
 
+	private static string GetSOName(ProjectParams Params, string DecoratedExeName, UnrealArch? Architecture)
+	{
+		string ArchName = Architecture == null ? "" : "-" + Architecture.ToString();
+		return Path.Combine(Path.GetDirectoryName(Params.GetProjectExeForPlatform(UnrealTargetPlatform.Android).ToString()), DecoratedExeName) + ArchName + ".so";
+	}
+
 	private static string GetFinalApkName(ProjectParams Params, string DecoratedExeName, bool bRenameUnrealGame, UnrealArch? Architecture)
 	{
 		string ProjectDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(Params.RawProjectPath.FullName)), "Binaries/Android");
@@ -1353,7 +1359,7 @@ public class AndroidPlatform : Platform
 					Logger.LogInformation("SavePackageInfo");
 					Deploy.SavePackageInfo(Params.ShortProjectName, SC.ProjectRoot.FullName, Type, true);
 				}
-				Deploy.PrepForUATPackageOrDeploy(Params.RawProjectPath, Params.ShortProjectName, SC.ProjectRoot, SOName, SC.LocalRoot + "/Engine", Params.Distribution, CookFlavor, SC.StageTargets[0].Receipt.Configuration, false, bShouldCompileAsDll);
+				Deploy.PrepForUATPackageOrDeploy(Params.RawProjectPath, Params.ShortProjectName, SC.ProjectRoot, SOName, SC.LocalRoot + "/Engine", Params.Distribution, CookFlavor, SC.StageTargets[0].Receipt.Configuration, false, bShouldCompileAsDll, SC.Archive);
 			}
 
 			// Create APK specific OBB in case we have a detached OBB.
@@ -1520,20 +1526,7 @@ public class AndroidPlatform : Platform
 
 	string GetAFSExecutable(UnrealTargetPlatform Target)
 	{
-		if (Target == UnrealTargetPlatform.Win64)
-		{
-			return "win-x64/UnrealAndroidFileTool.exe";
-		}
-		if (Target == UnrealTargetPlatform.Mac)
-		{
-			return "osx-x64/UnrealAndroidFileTool";
-		}
-		if (Target == UnrealTargetPlatform.Linux)
-		{
-			return "linux-x64/UnrealAndroidFileTool";
-		}
-		Logger.LogWarning("GetAFSExecutable unsupported target, assuming Win64");
-		return "win-x64/UnrealAndroidFileTool.exe";
+		return AndroidExports.GetAFSExecutable(Target, Logger);
 	}
 
 	private class OverflowBatchInstallInfo
@@ -1555,10 +1548,10 @@ public class AndroidPlatform : Platform
 	private List<string> GenerateInstallBatchFile(bool bPackageDataInsideApk, string PackageName, string ApkName, ProjectParams Params, string ObbName, string DeviceObbName, bool bNoObbInstall,
 		string PatchName, string DevicePatchName, bool bNoPatchInstall, List<OverflowBatchInstallInfo> OverflowInfo,
 		bool bIsPC, bool bIsDistribution, bool bRequireRuntimeStoragePermission, bool bDisablePerfHarden, bool bUseAFS, bool bUseAFSProject, string AFSToken, UnrealTargetPlatform Target)
-    {
+	{
 		List<string> BatchLines = new List<string>();
-        string ReadPermissionGrantCommand = "shell pm grant " + PackageName + " android.permission.READ_EXTERNAL_STORAGE";
-        string WritePermissionGrantCommand = "shell pm grant " + PackageName + " android.permission.WRITE_EXTERNAL_STORAGE";
+		string ReadPermissionGrantCommand = "shell pm grant " + PackageName + " android.permission.READ_EXTERNAL_STORAGE";
+		string WritePermissionGrantCommand = "shell pm grant " + PackageName + " android.permission.WRITE_EXTERNAL_STORAGE";
 		string ForegroundPermissionGrantCommand = "shell pm grant " + PackageName + " android.permission.FOREGROUND_SERVICE";
 		string ForegroundDataSyncPermissionGrantCommand = "shell pm grant " + PackageName + " android.permission.FOREGROUND_SERVICE_DATA_SYNC";
 		string NotificationPermissionGrantCommand = "shell pm grant " + PackageName + " android.permission.POST_NOTIFICATIONS";
@@ -1736,7 +1729,7 @@ public class AndroidPlatform : Platform
 				{
 					foreach (OverflowBatchInstallInfo Overflow in OverflowInfo)
 					{
-						OverflowInstallCommands.Add(Overflow.bNoOverflowInstall  ? "%ADB% %DEVICE% shell rm -r %STORAGE%/" + Overflow.DeviceOverflowName : "%ADB% %DEVICE% push " + Path.GetFileName(Overflow.OverflowName) + " " + TargetAndroidTemp + Overflow.DeviceOverflowName);
+						OverflowInstallCommands.Add(Overflow.bNoOverflowInstall ? "%ADB% %DEVICE% shell rm -r %STORAGE%/" + Overflow.DeviceOverflowName : "%ADB% %DEVICE% push " + Path.GetFileName(Overflow.OverflowName) + " " + TargetAndroidTemp + Overflow.DeviceOverflowName);
 						OverflowInstallCommands.Add("if \"%ERRORLEVEL%\" NEQ \"0\" goto Error");
 					}
 				}
@@ -1776,9 +1769,9 @@ public class AndroidPlatform : Platform
 						!bHavePatch ? "" : (bPackageDataInsideApk ? "" : PatchInstallCommand),
 						!bHavePatch ? "" : (bPackageDataInsideApk ? "" : "if \"%ERRORLEVEL%\" NEQ \"0\" goto Error")});
 
-					BatchLines.AddRange(OverflowInstallCommands);
+			BatchLines.AddRange(OverflowInstallCommands);
 
-					BatchLines.AddRange(new string[] {
+			BatchLines.AddRange(new string[] {
 						bDontMoveOBB ? "" : "%ADB% %DEVICE% shell mkdir %STORAGE%/Android/" + TargetAndroidLocation + PackageName, // don't check for error since installing may create the obb directory
 						bDontMoveOBB ? "" : "%ADB% %DEVICE% shell mv " + TargetAndroidTemp + TargetAndroidLocation + PackageName + " %STORAGE%/Android/" + TargetAndroidLocation,
 						bDontMoveOBB ? "" : "if \"%ERRORLEVEL%\" NEQ \"0\" goto Error",
@@ -1790,8 +1783,8 @@ public class AndroidPlatform : Platform
 						bNeedGrantStoragePermission ? "%ADB% %DEVICE% " + ReadPermissionGrantCommand + NullCmd : "",
 						bNeedGrantStoragePermission ? "%ADB% %DEVICE% " + WritePermissionGrantCommand + NullCmd : "",
 						bDisablePerfHarden ? "%ADB% %DEVICE% " + DisablePerfHardenCommand : "",
-                        "@echo.",
-                        "@echo Installation successful",
+						"@echo.",
+						"@echo Installation successful",
 						"goto:eof",
 						":Error",
 						"@echo.",
@@ -1803,9 +1796,10 @@ public class AndroidPlatform : Platform
 						"@echo Check that the device has an SD card.",
 						"@pause"
 					});
-        }
-        return BatchLines;
-    }
+		}
+		return BatchLines;
+	}
+
 
 	private string[] GenerateUninstallBatchFile(bool bPackageDataInsideApk, string PackageName, string ApkName, ProjectParams Params, bool bIsPC)
 	{
@@ -2005,6 +1999,16 @@ public class AndroidPlatform : Platform
 			if (FileExists(AFSApkName))
 			{
 				SC.ArchiveFiles(APKDirectory, Path.GetFileName(AFSApkName));
+			}
+
+			// add any other APKs with a prefix
+			IEnumerable<string> files = Directory.EnumerateFiles(APKDirectory, "*_" + APKNameWithoutExtension + ".apk", SearchOption.TopDirectoryOnly);
+			foreach (string filename in files)
+			{
+				if (filename != AFSApkName)
+				{
+					SC.ArchiveFiles(APKDirectory, Path.GetFileName(filename));
+				}
 			}
 
 			// verify the files exist
@@ -2433,11 +2437,17 @@ public class AndroidPlatform : Platform
 		}
 	}
 
+	private bool GetDontBundleLibrariesInAPK(ProjectParams Params, DeploymentContext SC, bool bVerbose = false)
+	{
+		return AndroidExports.GetDontBundleLibrariesInAPK(Params.RawProjectPath, null, SC.StageTargets[0].Receipt.Configuration, SC.Archive, false,
+			true, bVerbose ? Logger : null);
+	}
+
 	private void DeployAndroidFileServer(ProjectParams Params, DeploymentContext SC, string AFSToken)
 	{
 		ConfigHierarchy Ini = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, DirectoryReference.FromFile(Params.RawProjectPath), UnrealTargetPlatform.Android);
-		bool bDisablePerfHarden;
-		Ini.GetBool("/Script/AndroidRuntimeSettings.AndroidRuntimeSettings", "bEnableMaliPerfCounters", out bDisablePerfHarden);
+		Ini.GetBool("/Script/AndroidRuntimeSettings.AndroidRuntimeSettings", "bEnableMaliPerfCounters", out bool bDisablePerfHarden);
+		bool bDontBundleLibrariesInAPK = GetDontBundleLibrariesInAPK(Params, SC, true);
 
 		bool bUseCompression;
 		bool bLogFiles;
@@ -2453,6 +2463,7 @@ public class AndroidPlatform : Platform
 		{
 			UnrealArch? DeviceArchitecture = GetBestDeviceArchitecture(Params, DeviceName);
 			string ApkName = GetFinalApkName(Params, SC.StageExecutables[0], true, DeviceArchitecture);
+			string FinalSOName = GetSOName(Params, SC.StageExecutables[0], DeviceArchitecture);
 
 			// make sure APK is up to date (this is fast if so)
 			var Deploy = AndroidExports.CreateDeploymentHandler(Params.RawProjectPath, Params.ForcePackageData);
@@ -2461,7 +2472,7 @@ public class AndroidPlatform : Platform
 				string CookFlavor = SC.FinalCookPlatform.IndexOf("_") > 0 ? SC.FinalCookPlatform.Substring(SC.FinalCookPlatform.IndexOf("_")) : "";
 				string SOName = GetSONameWithoutArchitecture(Params, SC.StageExecutables[0]);
 				Deploy.SetAndroidPluginData(GetDeploymentArchitectures(Params, SC), CollectPluginDataPaths(SC));
-				Deploy.PrepForUATPackageOrDeploy(Params.RawProjectPath, Params.ShortProjectName, SC.ProjectRoot, SOName, SC.LocalRoot + "/Engine", Params.Distribution, CookFlavor, SC.StageTargets[0].Receipt.Configuration, true, false);
+				Deploy.PrepForUATPackageOrDeploy(Params.RawProjectPath, Params.ShortProjectName, SC.ProjectRoot, SOName, SC.LocalRoot + "/Engine", Params.Distribution, CookFlavor, SC.StageTargets[0].Receipt.Configuration, true, false, SC.Archive);
 			}
 
 			// now we can use the apk to get more info
@@ -2710,6 +2721,14 @@ public class AndroidPlatform : Platform
 			if (bNeedAPKInstall)
 			{
 				client.FileWriteString("APK: " + APKLastUpdateTime + "\n", "^ext/APKFileStamp.txt");
+			}
+
+			// always update libUnreal.so
+			// TODO potential optimization not to push it every time but compare filestamp instead to check if we need to update it
+			if (bDontBundleLibrariesInAPK)
+			{
+				string FinalSONameStripped = Path.Combine(Path.GetDirectoryName(FinalSOName), Path.GetFileNameWithoutExtension(FinalSOName) + "-stripped" + Path.GetExtension(FinalSOName));
+				client.PushFile(FinalSONameStripped, "^int/libUnreal.so", true);
 			}
 
 			// update the uecommandline.txt
@@ -3048,14 +3067,15 @@ public class AndroidPlatform : Platform
 	private void DeployADB(ProjectParams Params, DeploymentContext SC)
     {
 		ConfigHierarchy Ini = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, DirectoryReference.FromFile(Params.RawProjectPath), UnrealTargetPlatform.Android);
-		bool bDisablePerfHarden = false;
-		Ini.GetBool("/Script/AndroidRuntimeSettings.AndroidRuntimeSettings", "bEnableMaliPerfCounters", out bDisablePerfHarden);
+		Ini.GetBool("/Script/AndroidRuntimeSettings.AndroidRuntimeSettings", "bEnableMaliPerfCounters", out bool bDisablePerfHarden);
+		bool bDontBundleLibrariesInAPK = GetDontBundleLibrariesInAPK(Params, SC, true);
 		int AllowOverflowOBBLimit = AllowOverflowOBBFiles(SC);
 
 		foreach (var DeviceName in Params.DeviceNames)
         {
             UnrealArch? DeviceArchitecture = GetBestDeviceArchitecture(Params, DeviceName);
             string ApkName = GetFinalApkName(Params, SC.StageExecutables[0], true, DeviceArchitecture);
+            string FinalSOName = GetSOName(Params, SC.StageExecutables[0], DeviceArchitecture);
 
             // make sure APK is up to date (this is fast if so)
             var Deploy = AndroidExports.CreateDeploymentHandler(Params.RawProjectPath, Params.ForcePackageData);
@@ -3064,7 +3084,7 @@ public class AndroidPlatform : Platform
                 string CookFlavor = SC.FinalCookPlatform.IndexOf("_") > 0 ? SC.FinalCookPlatform.Substring(SC.FinalCookPlatform.IndexOf("_")) : "";
 				string SOName = GetSONameWithoutArchitecture(Params, SC.StageExecutables[0]);
 				Deploy.SetAndroidPluginData(GetDeploymentArchitectures(Params, SC), CollectPluginDataPaths(SC));
-                Deploy.PrepForUATPackageOrDeploy(Params.RawProjectPath, Params.ShortProjectName, SC.ProjectRoot, SOName, SC.LocalRoot + "/Engine", Params.Distribution, CookFlavor, SC.StageTargets[0].Receipt.Configuration, true, false);
+				Deploy.PrepForUATPackageOrDeploy(Params.RawProjectPath, Params.ShortProjectName, SC.ProjectRoot, SOName, SC.LocalRoot + "/Engine", Params.Distribution, CookFlavor, SC.StageTargets[0].Receipt.Configuration, true, false, SC.Archive);
             }
 
             // now we can use the apk to get more info
@@ -3167,6 +3187,27 @@ public class AndroidPlatform : Platform
                     RunAndLogAdbCommand(Params, DeviceName, WritePermissionCommandLine, out SuccessCode);
                 }
             }
+
+			if (bDontBundleLibrariesInAPK)
+			{
+				int SuccessCode = 0;
+
+				string FinalSOPathStripped = Path.Combine(Path.GetDirectoryName(FinalSOName), Path.GetFileNameWithoutExtension(FinalSOName) + "-stripped" + Path.GetExtension(FinalSOName));
+				string FinalSOFileNameStripped = Path.GetFileName(FinalSOPathStripped);
+
+				string PushSO = $"push -z lz4 {FinalSOPathStripped} /data/local/tmp/{FinalSOFileNameStripped}";
+				string CopySO = $"shell run-as {PackageName} cp /data/local/tmp/{FinalSOFileNameStripped} ./files/libUnreal.so";
+				string DeleteSO = $"shell rm /data/local/tmp/{FinalSOFileNameStripped}";
+				RunAndLogAdbCommand(Params, DeviceName, PushSO, out SuccessCode);
+				RunAndLogAdbCommand(Params, DeviceName, CopySO, out SuccessCode);
+				RunAndLogAdbCommand(Params, DeviceName, DeleteSO, out SuccessCode);
+
+				if (SuccessCode != 0)
+				{
+					string ErrorMessage = $"Installation of '{PackageName}' failed due to failing to push libUnreal.so outside of {ApkName}";
+					throw new AutomationException(ExitCode.Error_AppInstallFailed, ErrorMessage);
+				}
+			}
 
             // update the uecommandline.txt
             // update and deploy uecommandline.txt
@@ -4025,7 +4066,13 @@ public class AndroidPlatform : Platform
 			var CommandLine = "shell am start -n " + PackageName + "/" + GetLaunchableActivityName();
 			if (canReadClientCmdLineViaAmStart)
 			{
-				var ClientSessionCmdLineEscaped = ClientCmdLine.Replace(" ", "\\ ").Replace("\"", "\\\\\\\"");
+				var ToScapeChars = new string[]{" ", "(", ")", "`", "$", "%", "&"};
+				
+				var ClientSessionCmdLineEscaped = ClientCmdLine.Replace("\"", "\\\\\\\"");
+				foreach( var ToScape in ToScapeChars )
+				{
+					ClientSessionCmdLineEscaped = ClientSessionCmdLineEscaped.Replace(ToScape, "\\" + ToScape);
+				}
 				CommandLine += " --es cmdline \"" + ClientSessionCmdLineEscaped + "\"";
 			}
 			RunAdbCommand(DeviceName, CommandLine);

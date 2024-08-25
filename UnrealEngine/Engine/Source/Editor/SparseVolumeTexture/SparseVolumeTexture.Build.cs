@@ -64,5 +64,18 @@ public class SparseVolumeTexture : ModuleRules
 				"OpenVDB"
 			);
 		}
+		else if (Target.Platform == UnrealTargetPlatform.Linux)
+		{
+			bUseRTTI = false;
+			bEnableExceptions = false;
+
+			AddEngineThirdPartyPrivateStaticDependencies(Target,
+				"IntelTBB",
+				"Blosc",
+				"zlib",
+				"Boost",
+				"OpenVDB"
+			);
+		}
 	}
 }

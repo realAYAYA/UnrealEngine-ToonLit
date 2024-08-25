@@ -278,7 +278,14 @@ public:
 	// Get the previous node Id, set when we recurse into graph traversal functions from pose links
 	int32 GetPreviousNodeId() const { return PreviousNodeId; }
 
+	// Get whether the graph branch of this context is active (i.e. NOT blending out). 
+	bool IsActive() const { return bIsActive; }
+
 protected:
+	
+	// Whether this context belongs to graph branch (i.e. NOT blending out).
+	bool bIsActive = true;
+
 	// The current node ID, set when we recurse into graph traversal functions from pose links
 	int32 CurrentNodeId;
 
@@ -372,6 +379,14 @@ public:
 
 		// This is currently only used in the case of cached poses, where we dont want to preserve the previous node, so clear it here
 	//	Result.PreviousNodeId = INDEX_NONE;
+
+		return Result;
+	}
+
+	FAnimationUpdateContext AsInactive() const
+	{
+		FAnimationUpdateContext Result(*this);
+		Result.bIsActive = false;
 
 		return Result;
 	}
@@ -992,7 +1007,7 @@ protected:
 	/** return true if enabled, otherwise, return false. This is utility function that can be used per node level */
 	ENGINE_API bool IsLODEnabled(FAnimInstanceProxy* AnimInstanceProxy);
 
-	/** Get the LOD threshold at which this node is enabled. Node is enabled if the current LOD >= threshold. */
+	/** Get the LOD level at which this node is enabled. Node is enabled if the current LOD is less than or equal to this threshold. */
 	virtual int32 GetLODThreshold() const { return INDEX_NONE; }
 
 	/** Called once, from game thread as the parent anim instance is created */
@@ -1012,6 +1027,7 @@ private:
 	friend struct UE::Anim::FNodeDataId;
 	friend struct UE::Anim::FNodeFunctionCaller;
 	friend class UAnimGraphNode_Base;
+	friend struct FPoseLinkBase;
 
 	// Set the cached ptr to the constant/folded data for this node
 	void SetNodeData(const FAnimNodeData& InNodeData) { NodeData = &InNodeData; }

@@ -162,6 +162,14 @@ bool FElementTools::GetInfoString(const API_Guid& InGUID, GS::UniString* OutStri
 // Tool: Return the localize name for element type id
 const utf8_t* FElementTools::TypeName(API_ElemTypeID InElementType)
 {
+#if AC_VERSION >= 26 
+	if (API_ExternalElemID == InElementType)
+	{
+		// todo: might be possible to extract more information on the exact external type used
+		return "External";	
+	}
+#endif
+
 	UE_AC_Assert(API_FirstElemType <= InElementType && InElementType <= API_LastElemType);
 
 	static const utf8_t* TypeNames[API_LastElemType + 1] = {};

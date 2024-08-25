@@ -43,7 +43,7 @@ public:
 											D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC& OutDesc, TArrayView<D3D12_RAYTRACING_GEOMETRY_DESC>& OutGeometryDescs) const;
 	
 	// Implement FD3D12ShaderResourceRenameListener interface
-	virtual void ResourceRenamed(FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation) override;
+	virtual void ResourceRenamed(FRHICommandListBase& RHICmdList, FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation) override;
 
 	void RegisterAsRenameListener(uint32 InGPUIndex);
 	void UnregisterAsRenameListener(uint32 InGPUIndex);

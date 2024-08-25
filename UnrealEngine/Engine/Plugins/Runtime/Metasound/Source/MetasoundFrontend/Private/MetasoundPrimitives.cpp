@@ -53,6 +53,62 @@ namespace Metasound
 	{
 		static constexpr bool Value = !std::is_arithmetic<ToDataType>::value;
 	};
+
+	// Enable send/receive node registration for data types which existed before
+	// send/receive were deprecated in order to support old UMetaSound assets. 
+	template<>
+	struct TEnableTransmissionNodeRegistration<bool>
+	{
+		static constexpr bool Value = true;
+	};
+	
+	// Enable send/receive node registration for data types which existed before
+	// send/receive were deprecated in order to support old UMetaSound assets. 
+	template<>
+	struct TEnableTransmissionNodeRegistration<int32>
+	{
+		static constexpr bool Value = true;
+	};
+	
+	// Enable send/receive node registration for data types which existed before
+	// send/receive were deprecated in order to support old UMetaSound assets. 
+	template<>
+	struct TEnableTransmissionNodeRegistration<float>
+	{
+		static constexpr bool Value = true;
+	};
+	
+	// Enable send/receive node registration for data types which existed before
+	// send/receive were deprecated in order to support old UMetaSound assets. 
+	template<>
+	struct TEnableTransmissionNodeRegistration<FString>
+	{
+		static constexpr bool Value = true;
+	};
+	
+	// Enable send/receive node registration for data types which existed before
+	// send/receive were deprecated in order to support old UMetaSound assets. 
+	template<>
+	struct TEnableTransmissionNodeRegistration<FTrigger>
+	{
+		static constexpr bool Value = true;
+	};
+	
+	// Enable send/receive node registration for data types which existed before
+	// send/receive were deprecated in order to support old UMetaSound assets. 
+	template<>
+	struct TEnableTransmissionNodeRegistration<FTime>
+	{
+		static constexpr bool Value = true;
+	};
+
+	// Enable send/receive node registration for data types which existed before
+	// send/receive were deprecated in order to support old UMetaSound assets. 
+	template<>
+	struct TEnableTransmissionNodeRegistration<FAudioBuffer>
+	{
+		static constexpr bool Value = true;
+	};
 }
 
 REGISTER_METASOUND_DATATYPE(bool, "Bool", ::Metasound::ELiteralType::Boolean)

@@ -112,7 +112,7 @@ void FDisplayClusterFrameQueue::HandleProcessLatency_RenderThread(FRHICommandLis
 					for (TSharedPtr<IDisplayClusterViewportProxy, ESPMode::ThreadSafe>& ViewportProxyIt : ViewportProxies)
 					{
 						// Handle textures of all viewports that don't have any media input attached. Those don't get rendered.
-						if (ViewportProxyIt.IsValid() && !ViewportProxyIt->GetRenderSettings_RenderThread().bSkipSceneRenderingButLeaveResourcesAvailable)
+						if (ViewportProxyIt.IsValid() && !(ViewportProxyIt->GetRenderSettings_RenderThread().HasAnyMediaStates(EDisplayClusterViewportMediaState::Input)))
 						{
 							// Get viewport texture
 							TArray<FRHITexture*> Textures;

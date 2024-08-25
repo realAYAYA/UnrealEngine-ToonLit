@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ODSC/ODSCManager.h"
+#include "Misc/CommandLine.h"
 #include "Misc/CoreDelegates.h"
 #include "ODSCLog.h"
 #include "ODSCThread.h"

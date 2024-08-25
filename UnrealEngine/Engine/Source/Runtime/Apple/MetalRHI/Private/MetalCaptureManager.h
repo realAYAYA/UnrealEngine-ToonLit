@@ -3,15 +3,13 @@
 #pragma once
 
 #include <Metal/Metal.h>
-#include "capture_scope.hpp"
-#include "device.hpp"
 
 class FMetalCommandQueue;
 
 class FMetalCaptureManager
 {
 public:
-	FMetalCaptureManager(mtlpp::Device Device, FMetalCommandQueue& Queue);
+	FMetalCaptureManager(MTL::Device* Device, FMetalCommandQueue& Queue);
 	~FMetalCaptureManager();
 	
 	// Called by the MetalRHI code to trigger the provided capture scopes visible in Xcode.
@@ -23,7 +21,7 @@ public:
 	void EndCapture(void);
 	
 private:
-	mtlpp::Device Device;
+	MTL::Device* Device;
 	FMetalCommandQueue& Queue;
 	bool bSupportsCaptureManager;
 	
@@ -41,7 +39,7 @@ private:
 		EMetalCaptureType Type;
 		uint32 StepCount;
 		uint32 LastTrigger;
-		mtlpp::CaptureScope MTLScope;
+		MTL::CaptureScope* MTLScope;
 	};
 	
 	TArray<FMetalCaptureScope> ActiveScopes;

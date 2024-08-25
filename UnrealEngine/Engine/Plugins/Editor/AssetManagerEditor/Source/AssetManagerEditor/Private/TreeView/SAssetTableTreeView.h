@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "CookMetadata.h"
 #include "Delegates/DelegateCombinations.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "AssetManagerEditorModule.h"
@@ -70,15 +71,30 @@ public:
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	TSharedPtr<FAssetTreeNode> GetSingleSelectedAssetNode() const { return SelectedAssetNode; }
 
 private:
+
+	enum class ECheckFilesExistAndHashMatchesResult : uint8
+	{
+		Okay,
+		RegistryDoesNotExist,
+		CookMetadataDoesNotExist,
+		FailedToHashRegistry,
+		FailedToLoadCookMetadata,
+		FailedToLoadRegistry,
+		HashesDoNotMatch,
+		Unknown
+	};
+
 	virtual void InternalCreateGroupings() override;
 
 	virtual void ExtendMenu(FMenuBuilder& MenuBuilder) override;
 
 	void RequestOpenRegistry();
 	void OpenRegistry();
+
+	ECheckFilesExistAndHashMatchesResult CheckFilesExistAndHashMatches(const FString& MetadataFilename, const FString& RegistryFilename, UE::Cook::FCookMetadataState& MetadataTemporaryStorage);
+
 	FText GetOpenRegistryToolTipText() const;
 	bool CanChangeRegistry() const;
 	FReply OnClickedOpenRegistry();
@@ -109,12 +125,20 @@ private:
 	void RequestRefreshAssets();
 	void RefreshAssets();
 
-	void RequestRebuildTree();
+	void ClearTableAndTree();
+
+	typedef TSet<const TCHAR*, TStringPointerSetKeyFuncs_DEPRECATED<const TCHAR*>> DeprecatedTCharSetType;
+	void DumpDifferencesBetweenDiscoveredDataAndLoadedMetadata(TMap<const TCHAR*, DeprecatedTCharSetType, FDefaultSetAllocator, TStringPointerMapKeyFuncs_DEPRECATED<const TCHAR*, DeprecatedTCharSetType>>& DiscoveredPluginDependencyEdges) const;
+
+	void RequestRebuildTree(bool bNeedsColumnRebuild = false);
+
+	void UpdateRegistryInfoTextPostLoad(ECheckFilesExistAndHashMatchesResult StatusResult);
 
 private:
 	bool bNeedsToOpenRegistry = false;
 	bool bNeedsToRefreshAssets = false;
 	bool bNeedsToRebuild = false;
+	bool bNeedsToRebuildColumns = false;
 
 	FText FooterLeftTextStoredPreOpen;
 	FText RegistryLoadedText;
@@ -125,8 +149,8 @@ private:
 
 	/** Delegate to invoke when selection changes. */
 	FOnSelectionChanged OnSelectionChanged;
-	TSharedPtr<FAssetTreeNode> SelectedAssetNode;
-	TSet<int32> SelectedIndices;
+	TSet<int32> SelectedAssetIndices;
+	TSet<int32> SelectedPluginIndices;
 
 	/** List of valid registry sources */
 	TArray<TSharedPtr<FString>> SourceComboList;
@@ -135,12 +159,13 @@ private:
 	* Text block where we put the timestamp for the asset registry so the user knows
 	* if they are looking at super out of date data.
 	*/
-	TSharedPtr<STextBlock> RegistrySourceTimeText;
+	TSharedPtr<STextBlock> RegistryInfoText;
 
 	FAssetManagerEditorRegistrySource RegistrySource;
 
+	UE::Cook::FCookMetadataState CookMetadata;
+
 	/** Cached interfaces */
-	class IAssetRegistry* AssetRegistry;
 	class UAssetManager* AssetManager;
 	class IAssetManagerEditorModule* EditorModule;
 };

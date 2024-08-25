@@ -168,6 +168,9 @@ public:
 		return CompPtr ? Cast<OwnerType>(*CompPtr) : nullptr;
 	}
 
+	template<>
+	ENGINE_API UPrimitiveComponent* GetOwningComponent(const IPhysicsProxyBase* PhysicsProxy) const;
+
 	/** Given a component, returns its associated solver objects. */
 	const TArray<IPhysicsProxyBase*>* GetOwnedPhysicsProxies(UPrimitiveComponent* Comp) const
 	{
@@ -257,13 +260,9 @@ public:
 
 	struct FReplicationCacheData
 	{
-		FReplicationCacheData(UPrimitiveComponent* InRootComponent, Chaos::FReal InAccessTime)
-			: RootComponent(InRootComponent)
-			, AccessTime(InAccessTime)
-			, bValidStateCached(false)
-		{}
+		FReplicationCacheData(UPrimitiveComponent* InRootComponent, Chaos::FReal InAccessTime);
 
-		TObjectPtr<UPrimitiveComponent> GetRootComponent()	{ return RootComponent; }
+		UPrimitiveComponent* GetRootComponent()	{ return RootComponent.Get(); }
 		FRigidBodyState& GetState()	{ return State; }
 		void SetAccessTime(Chaos::FReal Time) { AccessTime = Time; }
 		Chaos::FReal GetAccessTime() { return AccessTime; }
@@ -271,7 +270,7 @@ public:
 		bool IsCached() { return bValidStateCached; }
 
 	private:
-		TObjectPtr<UPrimitiveComponent> RootComponent;
+		TWeakObjectPtr<UPrimitiveComponent> RootComponent;
 		Chaos::FReal AccessTime;
 		bool bValidStateCached;
 		FRigidBodyState State;

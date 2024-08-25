@@ -39,7 +39,6 @@ namespace UnrealBuildTool.Rules
 					"Engine",
 					"MetasoundFrontend",
 					"MetasoundStandardNodes",
-					"AudioCodecEngine",
 					"Serialization",
 					"AudioPlatformConfiguration",
 					"WaveTable"

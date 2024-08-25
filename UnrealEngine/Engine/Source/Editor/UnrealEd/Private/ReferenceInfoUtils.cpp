@@ -386,10 +386,10 @@ namespace ReferenceInfoUtils
 		// If any BSP surfaces are selected
 		if (BspMats.Num() > 0)
 		{
-			FReferencedAssets* Referencer = new(Referencers) FReferencedAssets(InWorld->GetModel());
+			FReferencedAssets& Referencer = Referencers.Emplace_GetRef(InWorld->GetModel());
 
 			// Now copy the array
-			Referencer->AssetList = BspMats;
+			Referencer.AssetList = BspMats;
 			ReferenceGraph.Add(ObjectPtrWrap(InWorld->GetModel()), ObjectPtrWrap(BspMats));
 		}
 
@@ -424,10 +424,10 @@ namespace ReferenceInfoUtils
 			SelectedActors[Index]->Mark(OBJECTMARK_TagExp);
 
 			// Create a new entry for this actor
-			FReferencedAssets* Referencer = new(Referencers) FReferencedAssets(SelectedActors[Index]);
+			FReferencedAssets& Referencer = Referencers.Emplace_GetRef(SelectedActors[Index]);
 
 			// Add to the list of referenced assets
-			FFindAssetsArchive(SelectedActors[Index], Referencer->AssetList, &ReferenceGraph, MaxRecursionDepth, bShowScript, bShowDefault);
+			FFindAssetsArchive(SelectedActors[Index], Referencer.AssetList, &ReferenceGraph, MaxRecursionDepth, bShowScript, bShowDefault);
 		}
 
 		// Rebuild the name cache

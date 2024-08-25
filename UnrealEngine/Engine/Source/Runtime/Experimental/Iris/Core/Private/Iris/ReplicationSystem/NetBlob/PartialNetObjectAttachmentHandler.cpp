@@ -3,6 +3,7 @@
 #include "Iris/ReplicationSystem/NetBlob/PartialNetObjectAttachmentHandler.h"
 #include "Iris/ReplicationSystem/NetBlob/PartialNetBlob.h"
 #include "Iris/ReplicationSystem/NetBlob/ShrinkWrapNetBlob.h"
+#include "Iris/ReplicationSystem/ReplicationSystem.h"
 #include "Iris/Serialization/NetSerializationContext.h"
 #include "Iris/Serialization/InternalNetSerializationContext.h"
 #include "Iris/Serialization/NetBitStreamWriter.h"
@@ -29,8 +30,15 @@ void UPartialNetObjectAttachmentHandler::Init(const FPartialNetObjectAttachmentH
 bool UPartialNetObjectAttachmentHandler::PreSerializeAndSplitNetBlob(uint32 ConnectionId, const TRefCountPtr<UE::Net::FNetObjectAttachment>& Blob, TArray<TRefCountPtr<FNetBlob>>& OutPartialBlobs, bool bSerializeWithObject) const
 {
 	using namespace UE::Net;
+	
+	uint32 BitCountSplitThreshold =  GetConfig()->GetBitCountSplitThreshold() & ~31U;	
 
-	const uint32 BitCountSplitThreshold =  GetConfig()->GetBitCountSplitThreshold() & ~31U;
+	const FNetBlobCreationInfo& BlobCreationInfo = Blob->GetCreationInfo();
+	const bool bIsReliable = EnumHasAnyFlags(BlobCreationInfo.Flags, ENetBlobFlags::Reliable);
+	if (!bIsReliable)
+	{
+		BitCountSplitThreshold = (ReplicationSystem->IsServer() ? GetConfig()->GetServerUnreliableBitCountSplitThreshold() : GetConfig()->GetClientUnreliableBitCountSplitThreshold()) & ~31U;
+	}
 
 	TArray<uint32> Payload;
 	Payload.AddUninitialized(BitCountSplitThreshold/32U);
@@ -76,7 +84,7 @@ bool UPartialNetObjectAttachmentHandler::PreSerializeAndSplitNetBlob(uint32 Conn
 	}
 	else
 	{
-		FShrinkWrapNetBlob* ShrinkWrapNetBlob = new FShrinkWrapNetBlob(reinterpret_cast<const TRefCountPtr<FNetBlob>&>(Blob), MoveTemp(Payload), Writer.GetPosBits());
+		FShrinkWrapNetObjectAttachment* ShrinkWrapNetBlob = new FShrinkWrapNetObjectAttachment(Blob, MoveTemp(Payload), Writer.GetPosBits());
 		OutPartialBlobs.AddDefaulted_GetRef() = ShrinkWrapNetBlob;
 		return true;
 	}

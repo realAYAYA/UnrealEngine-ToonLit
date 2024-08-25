@@ -23,6 +23,10 @@ class Auth(unrealcmd.Cmd):
         if value := default.OAuthProviderIdentifier:
             print("found;", value)
             self._service_name = value
+        else:
+            cloud = config.get("Engine", "StorageServers", "Cloud")
+            if value := cloud.OAuthProviderIdentifier:
+                self._service_name = value
 
     def main(self):
         ue_context = self.get_unreal_context()

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GooglePlayGamesWrapper.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemImpl.h"
 #include "OnlineExternalUIInterfaceGooglePlay.h"
@@ -12,13 +13,6 @@
 #include "OnlineStoreGooglePlay.h"
 #include "OnlinePurchaseGooglePlay.h"
 
-THIRD_PARTY_INCLUDES_START
-#include "gpg/game_services.h"
-#include "gpg/android_platform_configuration.h"
-THIRD_PARTY_INCLUDES_END
-
-#include <string>
-
 /** Forward declarations of all interface classes */
 typedef TSharedPtr<class FOnlineIdentityGooglePlay,  ESPMode::ThreadSafe> FOnlineIdentityGooglePlayPtr;
 typedef TSharedPtr<class FOnlineStoreGooglePlayV2, ESPMode::ThreadSafe> FOnlineStoreGooglePlayV2Ptr;
@@ -27,9 +21,6 @@ typedef TSharedPtr<class FOnlineLeaderboardsGooglePlay, ESPMode::ThreadSafe> FOn
 typedef TSharedPtr<class FOnlineAchievementsGooglePlay, ESPMode::ThreadSafe> FOnlineAchievementsGooglePlayPtr;
 typedef TSharedPtr<class FOnlineExternalUIGooglePlay, ESPMode::ThreadSafe> FOnlineExternalUIGooglePlayPtr;
 
-class FOnlineAsyncTaskGooglePlayLogin;
-class FOnlineAsyncTaskGooglePlayShowLoginUI;
-class FOnlineAsyncTaskGooglePlayLogout;
 class FRunnableThread;
 
 /**
@@ -100,14 +91,13 @@ PACKAGE_SCOPE:
 	 */
 	void QueueAsyncTask(class FOnlineAsyncTask* AsyncTask);
 
-	/** Returns a pointer to the Google API entry point */
-	gpg::GameServices* GetGameServices() const { return GameServicesPtr.get(); }
-
-	/** Utility function, useful for Google APIs that take a std::string but we only have an FString */
-	static std::string ConvertFStringToStdString(const FString& InString);
+	FGooglePlayGamesWrapper& GetGooglePlayGamesWrapper() { return GooglePlayGamesWrapper; }
 
 	/** Returns the Google Play-specific version of Identity, useful to avoid unnecessary casting */
 	FOnlineIdentityGooglePlayPtr GetIdentityGooglePlay() const { return IdentityInterface; }
+
+	/** Returns the Google Play-specific version of Leaderboards, useful to avoid unnecessary casting */
+	FOnlineLeaderboardsGooglePlayPtr GetLeaderboardsGooglePlay() const { return LeaderboardsInterface; }
 
 	/** Returns the Google Play-specific version of Achievements, useful to avoid unnecessary casting */
 	FOnlineAchievementsGooglePlayPtr GetAchievementsGooglePlay() const { return AchievementsInterface; }
@@ -118,34 +108,15 @@ PACKAGE_SCOPE:
 	 */
 	bool IsInAppPurchasingEnabled();
 
-	/** Returns true if there are any async login tasks currently being tracked. */
-	bool AreAnyAsyncLoginTasksRunning() const { return CurrentLoginTask != nullptr || CurrentShowLoginUITask != nullptr; }
-
-	/** Start a ShowLoginUI async task. Creates the GameServices object first if necessary. */
-	void StartShowLoginUITask(int PlayerId, const FOnLoginUIClosedDelegate& Delegate = FOnLoginUIClosedDelegate());
-
-	/** Start a logout task if one isn't already in progress. */
-	void StartLogoutTask(int32 LocalUserNum);
-
-	/** Callback from JNI when Google Client is connected */
-	void ProcessGoogleClientConnectResult(bool bInSuccessful, FString AccessToken);
-
 private:
-
-	/** Google callback when auth is complete */
-	void OnAuthActionFinished(gpg::AuthOperation Op, gpg::AuthStatus Status);
-
-	/** Android callback when an activity is finished */
-	void OnActivityResult(JNIEnv *env, jobject thiz, jobject activity, jint requestCode, jint resultCode, jobject data);
-
-	/** Start a ShowLoginUI async task. */
-	void StartShowLoginUITask_Internal(int PlayerId, const FOnLoginUIClosedDelegate& Delegate = FOnLoginUIClosedDelegate());
 
 	/** Online async task runnable */
 	TUniquePtr<class FOnlineAsyncTaskManagerGooglePlay> OnlineAsyncTaskThreadRunnable;
 
 	/** Online async task thread */
 	TUniquePtr<FRunnableThread> OnlineAsyncTaskThread;
+
+	FGooglePlayGamesWrapper GooglePlayGamesWrapper;
 
 	/** Interface to the online identity system */
 	FOnlineIdentityGooglePlayPtr IdentityInterface;
@@ -164,45 +135,6 @@ private:
 
 	/** Interface to the external UI services */
 	FOnlineExternalUIGooglePlayPtr ExternalUIInterface;
-
-	/** Pointer to the main entry point for the Google API */
-	std::unique_ptr<gpg::GameServices> GameServicesPtr;
-
-	// Since the OnAuthActionFinished callback is "global" (within the scope of one GameServices object),
-	// we track the async tasks that depend on this callback to notify us that they're finished.
-	// Only one of these pointers should be non-null at any given time.
-
-	/**
-	 * Track the current login task (if any) so callbacks can notify it.
-	 * Still owned by the AsyncTaskManager, do not delete via this pointer!
-	 **/
-	FOnlineAsyncTaskGooglePlayLogin* CurrentLoginTask;
-
-	/**
-	 * Track the current ShowLoginUI task (if any)
-	 * Still owned by the AsyncTaskManager, do not delete via this pointer!
-	 **/
-	FOnlineAsyncTaskGooglePlayShowLoginUI* CurrentShowLoginUITask;
-
-	/**
-	 * Track the current Logout task
-	 * Still owned by the AsyncTaskManager, do not delete via this pointer!
-	 */
-	FOnlineAsyncTaskGooglePlayLogout* CurrentLogoutTask;
-
-	/** Handle of registered delegate for onActivityResult */
-	FDelegateHandle OnActivityResultDelegateHandle;
-
-	/** This task needs to be able to set the GameServicesPtr and clear CurrentLoginTask*/
-	friend class FOnlineAsyncTaskGooglePlayLogin;
-
-	/** This task needs to be able to clear CurrentShowLoginUITask */
-	friend class FOnlineAsyncTaskGooglePlayShowLoginUI;
-
-	/** This task needs to be able to clear CurrentLogoutTask */
-	friend class FOnlineAsyncTaskGooglePlayLogout;
-
-	gpg::AndroidPlatformConfiguration PlatformConfiguration;
 };
 
 typedef TSharedPtr<FOnlineSubsystemGooglePlay, ESPMode::ThreadSafe> FOnlineSubsystemGooglePlayPtr;

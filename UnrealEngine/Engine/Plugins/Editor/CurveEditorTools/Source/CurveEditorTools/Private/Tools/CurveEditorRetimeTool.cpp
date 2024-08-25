@@ -19,18 +19,18 @@
 #define LOCTEXT_NAMESPACE "CurveEditorToolCommands"
 namespace CurveEditorRetimeTool
 {
-	constexpr float AnchorWidth = 5.f;
-	constexpr float CloseButtonWidth = 18.f;
-	constexpr float CloseButtonPadding = 2.f;
-	constexpr float HighlightOpacity = 0.75f;
+	constexpr double AnchorWidth = 5.0;
+	constexpr double CloseButtonWidth = 18.0;
+	constexpr double CloseButtonPadding = 2.0;
+	constexpr double HighlightOpacity = 0.75;
 }
 
 void FCurveEditorRetimeAnchor::GetGeometry(const FGeometry& InWidgetGeometry, TSharedRef<FCurveEditor> InCurveEditor, FGeometry& OutBarGeometry, FGeometry& OutCloseButtonGeometry) const
 {
 	FCurveEditorScreenSpaceH HorizontalTransform = InCurveEditor->GetPanelInputSpace();
 
-	float AnchorPosition = HorizontalTransform.SecondsToScreen(ValueInSeconds);
-	float BarHeight = InWidgetGeometry.GetLocalSize().Y - (CurveEditorRetimeTool::CloseButtonWidth + CurveEditorRetimeTool::CloseButtonPadding);
+	double AnchorPosition = HorizontalTransform.SecondsToScreen(ValueInSeconds);
+	double BarHeight = InWidgetGeometry.GetLocalSize().Y - (CurveEditorRetimeTool::CloseButtonWidth + CurveEditorRetimeTool::CloseButtonPadding);
 
 	// Vertical Bar
 	FVector2D BarSize = FVector2D(CurveEditorRetimeTool::AnchorWidth, BarHeight);
@@ -346,7 +346,7 @@ void FCurveEditorRetimeTool::DrawAnchor(const FCurveEditorRetimeAnchor& InAnchor
 
 
 		// The width is measured from the top left corners. We subtract the width of one anchor (and then offset by that much) to not overlap the anchors.
-		const float GradientWidth = (NextBarGeometry.GetLocalPositionAtCoordinates(FVector2D(0,0)) - BarGeometry.GetLocalPositionAtCoordinates(FVector2D(0,0))).X - CurveEditorRetimeTool::AnchorWidth;
+		const double GradientWidth = (NextBarGeometry.GetLocalPositionAtCoordinates(FVector2D(0,0)) - BarGeometry.GetLocalPositionAtCoordinates(FVector2D(0,0))).X - CurveEditorRetimeTool::AnchorWidth;
 		const FVector2D GradientSize = FVector2D(GradientWidth, NextBarGeometry.GetLocalSize().Y);
 		const FVector2D GradientOffset = FVector2D(BarGeometry.GetLocalPositionAtCoordinates(FVector2D::ZeroVector) + FVector2D(CurveEditorRetimeTool::AnchorWidth, 0));
 		

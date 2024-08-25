@@ -40,6 +40,7 @@ public class UnrealEd : ModuleRules
 				"Blutility",
 				"SlateReflector",
 				"PackagesDialog",
+				"GraphEditor"
 			}
 		);
 
@@ -181,6 +182,8 @@ public class UnrealEd : ModuleRules
 				"HeadMountedDisplay",
 				"FieldNotification",
 				"VirtualizationEditor",
+				"GeometryCore",
+				"UniversalObjectLocatorEditor",
 			}
 		);
 

@@ -199,7 +199,7 @@ TSharedRef<SDockTab> FPropertyEditorToolkit::SpawnTab_PropertyTree( const FSpawn
 		.Content()
 		[
 			SNew(SBorder)
-			.Padding(4)
+			.Padding(4.0f)
 			.BorderImage( FAppStyle::GetBrush( "ToolPanel.GroupBorder" ) )
 			.Content()
 			[
@@ -279,7 +279,7 @@ void FPropertyEditorToolkit::ConstructTreeColumns( const TSharedRef< class SHead
 	.FixedWidth(24)
 	[
 		SNew(SBorder)
-		.Padding( 0 )
+		.Padding( 0.0f )
 		.BorderImage( FAppStyle::GetBrush( "NoBorder" ) )
 		.HAlign( HAlign_Center )
 		.VAlign( VAlign_Center )

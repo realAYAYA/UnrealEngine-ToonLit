@@ -20,6 +20,7 @@
 
 class FHttpThreadBase;
 class FOutputDevice;
+class IHttpTaskTimerHandle;
 class IHttpThreadedRequest;
 
 enum class EHttpFlushReason : uint8
@@ -27,7 +28,7 @@ enum class EHttpFlushReason : uint8
 	/** Reasonable, typically higher time limits */
 	Default,
 	/** Shorter time limits depending on platform requirements */
-	Background,
+	Background UE_DEPRECATED(5.5, "Flush when go into background is no longer used and will be removed"),
 	/** Shorter time limits depending on platform requirements */
 	Shutdown,
 	/** Infinite wait, should only be used in non-game scenarios where longer waits are acceptable */
@@ -48,6 +49,19 @@ DECLARE_DELEGATE_OneParam(FHttpManagerRequestAddedDelegate, const FHttpRequestRe
  * @param Request Http request that completed
  */
 DECLARE_DELEGATE_OneParam(FHttpManagerRequestCompletedDelegate, const FHttpRequestRef& /*Request*/);
+
+struct FHttpStats
+{
+	/** The max time to successfully connect the backend */
+	float MaxTimeToConnect = -1.0f;
+	/** The max waiting queue in http manager */
+	uint32 MaxRequestsInQueue = 0;
+
+	bool operator==(const FHttpStats& Other) const
+	{
+		return MaxRequestsInQueue == Other.MaxRequestsInQueue && FMath::IsNearlyEqual(MaxTimeToConnect, Other.MaxTimeToConnect);
+	}
+};
 
 /**
  * Manages Http request that are currently being processed
@@ -85,9 +99,21 @@ public:
 	 *
 	 * @param Request - the request object to add
 	 */
+	UE_DEPRECATED(5.4, "AddRequest has been deprecated, use AddThreadedRequest instead")
 	HTTP_API void AddRequest(const FHttpRequestRef& Request);
 
+	/**
+	 * Set a delegate to be triggered when an http request added to http manager. 
+	 * NOTE: The delegate can be triggered from different threads, depends on which
+	 * thread the request created. So make sure the delegate set here is thread-safe.
+	 */
 	HTTP_API void SetRequestAddedDelegate(const FHttpManagerRequestAddedDelegate& Delegate);
+
+	/**
+	 * Set a delegate to be triggered when an http request completed. 
+	 * NOTE: The delegate can be triggered from different threads, it depends on the delegate policy set 
+	 * to each http request. So make sure the delegate set here is thread-safe.
+	 */
 	HTTP_API void SetRequestCompletedDelegate(const FHttpManagerRequestCompletedDelegate& Delegate);
 
 	/**
@@ -219,11 +245,20 @@ public:
 	HTTP_API void AddGameThreadTask(TFunction<void()>&& Task);
 
 	/**
-	 * Add task to be ran on the http thread next tick
+	 * Add task to be ran on the http thread
 	 *
-	 * @param Task The task to be ran next tick
+	 * @param Task The task to be ran
+	 * @param InDelay The delay to wait before running the task
+	 * @return The handle of the timer, which could be used to remove the task before it's triggered
 	 */
-	HTTP_API void AddHttpThreadTask(TFunction<void()>&& Task);
+	HTTP_API TSharedPtr<IHttpTaskTimerHandle> AddHttpThreadTask(TFunction<void()>&& Task, float InDelay = 0.0f);
+
+	/**
+	 * Remove the task from the http thread before it's triggered
+	 *
+	 * @param HttpTaskTimerHandle The handle of the timer
+	 */
+	HTTP_API void RemoveHttpThreadTask(TSharedPtr<IHttpTaskTimerHandle> HttpTaskTimerHandle);
 
 	/**
 	 * Set url request filter through code, instead of setting it through config.
@@ -231,6 +266,8 @@ public:
 	 * @param InURLRequestFilter The request filter to set
 	 */
 	void SetURLRequestFilter(const UE::Core::FURLRequestFilter& InURLRequestFilter) { URLRequestFilter = InURLRequestFilter; }
+
+	FHttpStats GetHttpStats() const { return HttpStats; }
 
 protected:
 	/** 
@@ -255,6 +292,7 @@ protected:
 
 	/** Queue of tasks to run on the game thread */
 	TQueue<TFunction<void()>, EQueueMode::Mpsc> GameThreadQueue;
+	FCriticalSection GameThreadQueueLock;
 
 	// This variable is set to true in Flush(EHttpFlushReason), and prevents new Http requests from being launched
 	bool bFlushing;
@@ -294,14 +332,31 @@ protected:
 
 	TMap<EHttpFlushReason, FHttpFlushTimeLimit> FlushTimeLimitsMap;
 
+	FHttpStats HttpStats;
+
 PACKAGE_SCOPE:
 
 	/** Used to lock access to add/remove/find requests */
 	static FCriticalSection RequestLock;
+
+	/** Used to lock access to get completed requests */
+	static FCriticalSection CompletedRequestLock;
+
 	/**
 	 * Broadcast that a non-threaded HTTP request is complete.
 	 * Called automatically internally for threaded requests.
 	 * Called explicitly by non-threaded requests
 	 */
 	HTTP_API void BroadcastHttpRequestCompleted(const FHttpRequestRef& Request);
+
+	/**
+	 * Access http thread of http manager for internal usage
+	 */
+	HTTP_API FHttpThreadBase* GetThread();
+
+	/** Record the time to connect, to have a general idea how long the client usually take to connect for success requests, to adjust the connection timeout */
+	HTTP_API void RecordStatTimeToConnect(float Duration);
+
+	/** Record the requests waiting in queue, to have an idea if there are too many requests or if request number limit is too small */
+	HTTP_API void RecordStatRequestsInQueue(uint32 RequestsInQueue);
 };

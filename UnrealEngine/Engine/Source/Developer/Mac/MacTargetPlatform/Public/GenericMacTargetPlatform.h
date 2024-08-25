@@ -105,6 +105,11 @@ public:
 			return (HAS_EDITOR_DATA || !IS_DEDICATED_SERVER);
 		}
 
+		if (Feature == ETargetPlatformFeatures::CanCookPackages)
+		{
+			return HAS_EDITOR_DATA;
+		}
+
 		return TSuper::SupportsFeature(Feature);
 	}
 

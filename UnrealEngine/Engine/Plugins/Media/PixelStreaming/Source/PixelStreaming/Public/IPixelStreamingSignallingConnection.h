@@ -26,7 +26,13 @@ public:
 	/**
 	 * Disconnects from the signalling server. Safe to call even when not connected.
 	 */
+	UE_DEPRECATED(5.4, "Disconnect has been deprecated and will be removed in future versions. Please use: Disconnect(FString Reason)")
 	virtual void Disconnect() = 0;
+
+	/**
+	 * Disconnects from the signalling server with a reason message. Safe to call even when not connected.
+	 */
+	virtual void Disconnect(FString Reason) = 0;
 
 	/**
 	 * Checks if the connection is established.

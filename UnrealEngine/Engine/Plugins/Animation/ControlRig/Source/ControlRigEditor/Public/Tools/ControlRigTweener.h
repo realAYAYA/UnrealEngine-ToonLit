@@ -42,7 +42,7 @@ struct FAnimSliderKeySelection
 		void Add(const TArray<int32>& ContiguousKeyIndices);
 	};
 
-	bool Setup(TWeakPtr<ISequencer>& InSequencer);
+	bool Setup(const TWeakPtr<ISequencer>& InSequencer);
 
 	TSharedPtr<FCurveEditor> CurveEditor;
 	TMap<FCurveModelID, FContiguousKeysArray> KeyMap;
@@ -84,7 +84,7 @@ struct FAnimSliderObjectSelection
 		UMovieSceneSection* Section;
 	};
 
-	bool Setup(TWeakPtr<ISequencer>& InSequencer);
+	bool Setup(TWeakPtr<ISequencer>& InSequencer, TWeakPtr<class FControlRigEditMode>& InEditMode);
 	bool Setup(const TArray<UControlRig*>& SelectedControlRigs, TWeakPtr<ISequencer>& InSequencer);
 
 	TArray<FObjectChannels>  ChannelsArray;
@@ -95,7 +95,7 @@ private:
 	void SetupChannel(FFrameNumber CurrentFrame, TArray<FFrameNumber>& KeyTimes, TArray<FKeyHandle>& Handles, FMovieSceneFloatChannel* FloatChannel,
 		FMovieSceneDoubleChannel* DoubleChannel, FChannelKeyBounds& KeyBounds);
 
-	TArray<UControlRig*> GetControlRigs();
+	TArray<UControlRig*> GetControlRigs(TWeakPtr<class FControlRigEditMode>& InEditMode);
 };
 
 /*
@@ -110,7 +110,7 @@ struct FBaseAnimSlider
 	* @param InSequencer Sequencer to get keys, controls, etc. from
 	* @param returns true if we have something that we can blend
 	*/
-	virtual bool Setup(TWeakPtr<ISequencer>& InSequencer);
+	virtual bool Setup(TWeakPtr<ISequencer>& InSequencer, TWeakPtr<FControlRigEditMode>& InEditMode);
 
 	/**
 	* @param InSequencer Sequencer to blend at current time
@@ -122,12 +122,12 @@ struct FBaseAnimSlider
 	/**
 	* @return the name of the slider
 	*/
-	virtual FText GetText() = 0;
+	virtual FText GetText() const = 0;
 
 	/**
 	* @return the tooltip text for the slider
 	*/
-	virtual FText GetTooltipText() = 0;
+	virtual FText GetTooltipText() const = 0;
 
 protected:
 
@@ -139,10 +139,10 @@ protected:
 * Simple manager that holds all of the registered blend tools
 * This will then be used by whatever the view wants to do to display these tool
 */
-class FAnimBlendTooLManager
+class FAnimBlendToolManager
 {
 public:
-	FAnimBlendTooLManager() {};
+	FAnimBlendToolManager() {};
 	void RegisterAnimSlider(TSharedPtr<FBaseAnimSlider> AnimSlider)
 	{
 		AnimSliders.Add(AnimSlider);
@@ -161,13 +161,56 @@ private:
 
 /**
 *
+*  Struct containing data that is used by Blending
+*
+**/
+struct FBlendStruct
+{
+	//Previous and Next are the keys that are before/after the contiguous set of keys, 
+	//to get the Previous key for example you use AllKeyPostions[Indices[CurrentIndex -1]]
+	double PreviousTime; 
+	double PreviousValue; 
+	double CurrentTime; 
+	double CurrentValue;
+	double NextTime;
+	double NextValue;
+	double BlendValue;
+	double FirstValue;
+	double LastValue;
+	TArray<FKeyPosition> AllKeyPositions;
+	TArray <int32> Indices;
+	int32 CurrentIndex; 
+
+	FBlendStruct(const TArray<FKeyPosition>& InAllKeyPositions, const TArray<int32>& InIndices) 
+		: AllKeyPositions(InAllKeyPositions), Indices(InIndices) {};
+	void SetValues(double InPreviousTime, double InPreviousValue, double InCurrentTime, double InCurrentValue,
+		double InNextTime, double InNextValue, double InBlendValue, double InFirstValue, double InLastValue,
+		int32 InCurrentIndex)
+	{
+		PreviousTime = InPreviousTime;
+		PreviousValue = InPreviousValue;
+		CurrentTime = InCurrentTime;
+		CurrentValue = InCurrentValue;
+		NextTime = InNextTime;
+		NextValue = InNextValue;
+		BlendValue = InBlendValue;
+		FirstValue = InFirstValue;
+		LastValue = InLastValue;
+		CurrentIndex = InCurrentIndex;
+	}
+
+private:
+	FBlendStruct() = delete;
+	
+};
+/**
+*
 *  Slider that used the next and previous values to do the blend
 * 
 **/
 struct FBasicBlendSlider : public FBaseAnimSlider
 {
-	virtual double DoBlend(const double PreviousTime, const double PreviousValue, const double CurrentTime, const double CurrentValue,
-		const double NextTime, const double NextValue, const double BlendValue) = 0;
+	virtual double DoBlend(const FBlendStruct& BlendStruct) = 0;
 	//BaseAnimSlider overrides
 	virtual bool Blend(TWeakPtr<ISequencer>& InSequencer, const double BlendValue) override;
 };
@@ -180,13 +223,12 @@ struct FBasicBlendSlider : public FBaseAnimSlider
 struct FControlsToTween :public FBasicBlendSlider
 {
 	//BaseAnimSlider overrides
-	virtual FText GetText() override;
-	virtual FText GetTooltipText() override;
-	virtual bool Setup(TWeakPtr<ISequencer>& InSequencer) override;
+	virtual FText GetText() const override;
+	virtual FText GetTooltipText() const override;
+	virtual bool Setup(TWeakPtr<ISequencer>& InSequencer, TWeakPtr<FControlRigEditMode>& InEditMode) override;
 
 	//BasicBlendSlider overrides
-	virtual double DoBlend(const double PreviousTime, const double PreviousValue, const double CurrentTime, const double CurrentValue,
-		const double NextTime, const double NextValue, const double BlendValue) override;
+	virtual double DoBlend(const FBlendStruct& BlendStruct) override;
 
 	bool Setup(const TArray<UControlRig*>& SelectedControlRigs, TWeakPtr<ISequencer>& InSequencer);
 
@@ -200,12 +242,11 @@ struct FControlsToTween :public FBasicBlendSlider
 struct FPushPullSlider :public FBasicBlendSlider
 {
 	//BaseAnimSlider overrides
-	virtual FText GetText();
-	virtual FText GetTooltipText();
+	virtual FText GetText() const;
+	virtual FText GetTooltipText() const;
 
 	//BasicBlendSlider overrides
-	virtual double DoBlend(const double PreviousTime, const double PreviousValue, const double CurrentTime, const double CurrentValue,
-		const double NextTime, const double NextValue, const double BlendValue) override;
+	virtual double DoBlend(const FBlendStruct& BlendStruct) override;
 };
 
 /**
@@ -216,14 +257,58 @@ struct FPushPullSlider :public FBasicBlendSlider
 struct FBlendNeighborSlider : public FBasicBlendSlider
 {
 	//BaseAnimSlider overrides
-	virtual FText GetText();
-	virtual FText GetTooltipText();
+	virtual FText GetText() const;
+	virtual FText GetTooltipText() const;
 
 	//BasicBlendSlider overrides
-	virtual double DoBlend(const double PreviousTime, const double PreviousValue, const double CurrentTime, const double CurrentValue,
-		const double NextTime, const double NextValue, const double BlendValue) override;
+	virtual double DoBlend(const FBlendStruct& BlendStruct) override;
 };
 
 
+/**
+*
+*   Will offset keys from previous or next values
+*
+**/
+struct FBlendRelativeSlider: public FBasicBlendSlider
+{
+	//BaseAnimSlider overrides
+	virtual FText GetText() const;
+	virtual FText GetTooltipText() const;
 
+	//BasicBlendSlider overrides
+	virtual double DoBlend(const FBlendStruct& BlendStruct) override;
+};
+
+
+/**
+*
+*   Will do an eased blend
+*
+**/
+struct FBlendToEaseSlider : public FBasicBlendSlider
+{
+	//BaseAnimSlider overrides
+	virtual FText GetText() const;
+	virtual FText GetTooltipText() const;
+
+	//BasicBlendSlider overrides
+	virtual double DoBlend(const FBlendStruct& BlendStruct) override;
+};
+
+
+/**
+*
+*   Will do a smooth or rough blend
+*
+**/
+struct FSmoothRoughSlider : public FBasicBlendSlider
+{
+	//BaseAnimSlider overrides
+	virtual FText GetText() const;
+	virtual FText GetTooltipText() const;
+
+	//BasicBlendSlider overrides
+	virtual double DoBlend(const FBlendStruct& BlendStruct) override;
+};
 

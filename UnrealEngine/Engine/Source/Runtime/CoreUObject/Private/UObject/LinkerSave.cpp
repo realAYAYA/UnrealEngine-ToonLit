@@ -265,9 +265,17 @@ FPackageIndex FLinkerSave::MapObject(TObjectPtr<const UObject> Object) const
 				}
 				if (!bFoundDep)
 				{
-					if (SavingExport.Object && SavingExport.Object->IsA(UClass::StaticClass()) && CastChecked<UClass>(SavingExport.Object)->GetDefaultObject() == Object)
+					if (SavingExport.Object && SavingExport.Object->IsA(UClass::StaticClass()))
 					{
-						bFoundDep = true; // the class is saving a ref to the CDO...which doesn't really work or do anything useful, but it isn't an error
+						UClass* Class = CastChecked<UClass>(SavingExport.Object);
+						if (Class->GetDefaultObject() == Object
+					#if WITH_EDITORONLY_DATA
+							|| Class->ClassGeneratedBy == Object
+					#endif
+							)
+						{
+							bFoundDep = true; // the class is saving a ref to the CDO...which doesn't really work or do anything useful, but it isn't an error or it is saving a reference to the class that generated it 
+						}
 					}
 				}
 				if (!bFoundDep)
@@ -283,6 +291,24 @@ FPackageIndex FLinkerSave::MapObject(TObjectPtr<const UObject> Object) const
 		}
 	}
 	return FPackageIndex();
+}
+
+void FLinkerSave::MarkScriptSerializationStart(const UObject* Obj) 
+{
+	if (ensure(Obj == CurrentlySavingExportObject))
+	{
+		FObjectExport& Export = ExportMap[CurrentlySavingExport.ToExport()];
+		Export.ScriptSerializationStartOffset = Tell();
+	}
+}
+
+void FLinkerSave::MarkScriptSerializationEnd(const UObject* Obj) 
+{
+	if (ensure(Obj == CurrentlySavingExportObject))
+	{
+		FObjectExport& Export = ExportMap[CurrentlySavingExport.ToExport()];
+		Export.ScriptSerializationEndOffset = Tell();
+	}
 }
 
 void FLinkerSave::Seek( int64 InPos )
@@ -599,11 +625,17 @@ bool FLinkerSave::SerializeBulkData(FBulkData& BulkData, const FBulkDataSerializ
 
 	const EBulkDataFlags BulkDataFlags	= static_cast<EBulkDataFlags>(BulkData.GetBulkDataFlags());
 	int32 ResourceIndex					= DataResourceMap.Num();
-	const int64 PayloadSize				= BulkData.GetBulkDataSize();
-	TOptional<EFileRegionType> RegionToUse;
+	int64 PayloadSize					= BulkData.GetBulkDataSize();
 	const bool bSupportsMemoryMapping	= IsCooking() && MemoryMappingAlignment >= 0;
 	const bool bSaveAsResourceIndex		= IsCooking();
+
+#if USE_RUNTIME_BULKDATA
+	const bool bCustomElementSerialization = false;
+#else
+	const bool bCustomElementSerialization = BulkData.SerializeBulkDataElements != nullptr;
+#endif
 	
+	TOptional<EFileRegionType> RegionToUse;
 	if (bFileRegionsEnabled)
 	{
 		if (IsCooking())
@@ -618,7 +650,13 @@ bool FLinkerSave::SerializeBulkData(FBulkData& BulkData, const FBulkDataSerializ
 	FBulkMetaResource SerializedMeta;
 	SerializedMeta.Flags = BulkDataFlags;
 	SerializedMeta.ElementCount = PayloadSize / Params.ElementSize;
-	SerializedMeta.SizeOnDisk = PayloadSize; 
+	SerializedMeta.SizeOnDisk = PayloadSize;
+
+	if (bCustomElementSerialization)
+	{
+		// Force 64 bit precision when using custom element serialization
+		FBulkData::SetBulkDataFlagsOn(SerializedMeta.Flags, static_cast<EBulkDataFlags>(BULKDATA_Size64Bit));
+	}
 
 	EBulkDataFlags FlagsToClear = static_cast<EBulkDataFlags>(BULKDATA_PayloadAtEndOfFile | BULKDATA_PayloadInSeperateFile | BULKDATA_WorkspaceDomainPayload | BULKDATA_ForceSingleElementSerialization | BULKDATA_NoOffsetFixUp);
 	if (IsCooking())
@@ -649,6 +687,11 @@ bool FLinkerSave::SerializeBulkData(FBulkData& BulkData, const FBulkDataSerializ
 
 		SerializedMeta.Offset = Tell();
 		SerializedMeta.SizeOnDisk = BulkData.SerializePayload(Ar, SerializedMeta.Flags, RegionToUse);
+		if (bCustomElementSerialization)
+		{
+			PayloadSize = SerializedMeta.SizeOnDisk;
+			SerializedMeta.ElementCount = PayloadSize / Params.ElementSize; 
+		}
 
 		if (bSaveAsResourceIndex == false)
 		{
@@ -712,7 +755,13 @@ bool FLinkerSave::SerializeBulkData(FBulkData& BulkData, const FBulkDataSerializ
 				SerializedMeta.SizeOnDisk = BulkData.SerializePayload(BulkDataAr, SerializedMeta.Flags, RegionToUse);
 			}
 		}
-		
+
+		if (bCustomElementSerialization)
+		{
+			PayloadSize = SerializedMeta.SizeOnDisk;
+			SerializedMeta.ElementCount = PayloadSize / Params.ElementSize; 
+		}
+
 		FArchive& Ar = *this;
 		if (bSaveAsResourceIndex)
 		{
@@ -746,7 +795,7 @@ void FLinkerSave::OnPostSaveBulkData()
 		{
 			FBulkData& BulkData = *Kv.Key;
 			const FObjectDataResource& DataResource = DataResourceMap[Kv.Value];
-			BulkData.SetFlagsFromDiskWrittenValues(static_cast<EBulkDataFlags>(DataResource.Flags), DataResource.SerialOffset, DataResource.SerialSize, Summary.BulkDataStartOffset);
+			BulkData.SetFlagsFromDiskWrittenValues(static_cast<EBulkDataFlags>(DataResource.LegacyBulkDataFlags), DataResource.SerialOffset, DataResource.SerialSize, Summary.BulkDataStartOffset);
 		}
 	}
 #endif

@@ -8,6 +8,7 @@
 #include "MetasoundOutputSubsystem.generated.h"
 
 class UAudioComponent;
+class UMetasoundGeneratorHandle;
 
 /**
  * Provides access to a playing Metasound generator's outputs
@@ -37,6 +38,13 @@ public:
 		const FOnMetasoundOutputValueChanged& OnOutputValueChanged,
 		FName AnalyzerName = NAME_None,
 		FName AnalyzerOutputName = NAME_None);
+
+	bool WatchOutput(
+		UAudioComponent* AudioComponent,
+		FName OutputName,
+		const FOnMetasoundOutputValueChangedNative& OnOutputValueChanged,
+		FName AnalyzerName = NAME_None,
+		FName AnalyzerOutputName = NAME_None);
 	
 	/** Begin UTickableWorldSubsystem */
 	virtual bool IsTickable() const override;
@@ -45,6 +53,8 @@ public:
 	/** End UTickableWorldSubsystem */
 
 private:
+	UMetasoundGeneratorHandle* GetOrCreateGeneratorHandle(UAudioComponent* AudioComponent);
+
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UMetasoundGeneratorHandle>> TrackedGenerators;
 };

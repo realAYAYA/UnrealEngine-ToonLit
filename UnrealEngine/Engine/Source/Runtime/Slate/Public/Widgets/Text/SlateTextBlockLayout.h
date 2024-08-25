@@ -31,6 +31,7 @@ public:
 			const ETextTransformPolicy InTransformPolicy,
 			const FMargin& InMargin,
 			const float InLineHeightPercentage,
+			const bool InApplyLineHeightToBottomLine,
 			const ETextJustify::Type InJustification
 		)
 			: Text(InText)
@@ -38,6 +39,31 @@ public:
 			, Margin(InMargin)
 			, WrapTextAt(InWrapTextAt)
 			, LineHeightPercentage(InLineHeightPercentage)
+			, ApplyLineHeightToBottomLine(InApplyLineHeightToBottomLine)
+			, WrappingPolicy(InWrappingPolicy)
+			, TransformPolicy(InTransformPolicy)
+			, Justification(InJustification)
+			, AutoWrapText(InAutoWrapText)
+		{
+		}
+
+		FORCEINLINE FWidgetDesiredSizeArgs(
+			const FText& InText,
+			const FText& InHighlightText,
+			const float InWrapTextAt,
+			const bool InAutoWrapText,
+			const ETextWrappingPolicy InWrappingPolicy,
+			const ETextTransformPolicy InTransformPolicy,
+			const FMargin& InMargin,
+			const float InLineHeightPercentage,
+			const ETextJustify::Type InJustification
+		)
+			: Text(InText)
+			, HighlightText(InHighlightText)
+			, Margin(InMargin)
+			, WrapTextAt(InWrapTextAt)
+			, LineHeightPercentage(InLineHeightPercentage)
+			, ApplyLineHeightToBottomLine(true)
 			, WrappingPolicy(InWrappingPolicy)
 			, TransformPolicy(InTransformPolicy)
 			, Justification(InJustification)
@@ -50,6 +76,7 @@ public:
 		const FMargin Margin;
 		const float WrapTextAt = 0.f;
 		const float LineHeightPercentage;
+		const bool ApplyLineHeightToBottomLine;
 		const ETextWrappingPolicy WrappingPolicy;
 		const ETextTransformPolicy TransformPolicy;
 		const ETextJustify::Type Justification;
@@ -70,7 +97,7 @@ public:
 			const TAttribute<FMargin>& InMargin, 
 			const TAttribute<float>& InLineHeightPercentage, 
 			const TAttribute<ETextJustify::Type>& InJustification
-			)
+		)
 			: Text(InText)
 			, HighlightText(InHighlightText)
 			, WrapTextAt(InWrapTextAt)
@@ -108,6 +135,16 @@ public:
 	 * Conditionally update the text style if needed
 	 */
 	SLATE_API void ConditionallyUpdateTextStyle(const FTextBlockStyle::CompareParams& InNewStyleParams);
+	
+	/**
+	 * Update the text style.
+	 */
+	SLATE_API void UpdateTextStyle(const FTextBlockStyle& InTextStyle);
+
+	/**
+	 * Update the text style.
+	 */
+	SLATE_API void UpdateTextStyle(const FTextBlockStyle::CompareParams& InNewStyleParams);
 
 	/**
 	 * Get the computed desired size for this layout, updating the internal cache as required
@@ -125,12 +162,13 @@ public:
 	 */
 	UE_DEPRECATED(5.0, "FWidgetArgs is deprecated. Upgrade to FWidgetDesiredSizeArgs instead.")
 	SLATE_API FVector2D ComputeDesiredSize(const FWidgetArgs& InWidgetArgs, const float InScale, const FTextBlockStyle& InTextStyle);
-	SLATE_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/**
 	 * Gets the last computed desired size.
 	 */
-	FVector2D GetDesiredSize() const;
+	SLATE_API FVector2D GetDesiredSize() const;
 
 
 	/**

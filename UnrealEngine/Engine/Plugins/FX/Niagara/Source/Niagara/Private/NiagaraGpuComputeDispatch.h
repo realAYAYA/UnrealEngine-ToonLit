@@ -141,7 +141,7 @@ public:
 	/** Processes all pending readbacks */
 	virtual void ProcessDebugReadbacks(FRHICommandListImmediate& RHICmdList, bool bWaitCompletion) override;
 
-	virtual bool AddSortedGPUSimulation(FNiagaraGPUSortInfo& SortInfo) override;
+	virtual bool AddSortedGPUSimulation(FRHICommandListBase& RHICmdList, FNiagaraGPUSortInfo& SortInfo) override;
 	virtual const FGlobalDistanceFieldParameterData* GetGlobalDistanceFieldData() const override;
 
 	void ResetDataInterfaces(FRDGBuilder& GraphBuilder, const FNiagaraGPUSystemTick& Tick, const FNiagaraComputeInstanceData& InstanceData) const;
@@ -175,6 +175,10 @@ public:
 #endif
 
 	virtual FNiagaraAsyncGpuTraceHelper& GetAsyncGpuTraceHelper() const override;
+
+	//-TODO: Temporary while the count buffer is not an RDG resource
+	bool IsExecutingFirstDispatchGroup() const { return bIsExecutingFirstDispatchGroup; }
+	bool bIsExecutingFirstDispatchGroup = false;
 
 private:
 	void DumpDebugFrame();
@@ -226,7 +230,7 @@ private:
 	FRWBuffer FreeIDListSizesBuffer;
 	uint32 NumAllocatedFreeIDListSizes = 0;
 
-	uint32 NumProxiesThatRequireDistanceFieldData = 0;
+	uint32 NumProxiesThatRequireGlobalDistanceField = 0;
 	uint32 NumProxiesThatRequireDepthBuffer = 0;
 	uint32 NumProxiesThatRequireEarlyViewData = 0;
 	uint32 NumProxiesThatRequireRayTracingScene = 0;
@@ -234,6 +238,8 @@ private:
 	int32 TotalDispatchesThisFrame = 0;
 
 	int32 MaxTicksToFlush = TNumericLimits<int32>::Max();
+
+	UE::FMutex AddSortedGPUSimulationMutex;
 
 	bool bRequiresReadback = false;
 	TArray<FNiagaraSystemGpuComputeProxy*> ProxiesPerStage[ENiagaraGpuComputeTickStage::Max];
@@ -270,7 +276,6 @@ private:
 	struct FCachedViewInitOptions
 	{
 		FGameTime	GameTime;
-		float		GammaCorrection		= 1.0f;
 		FIntRect	ViewRect			= FIntRect(0, 0, 64, 64);
 		FVector		ViewOrigin			= FVector::ZeroVector;
 		FMatrix		ViewRotationMatrix	= FMatrix::Identity;
@@ -298,5 +303,5 @@ private:
 
 	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTexturesUniformParams = nullptr;
 	TRDGUniformBufferRef<FMobileSceneTextureUniformParameters> MobileSceneTexturesUniformParams = nullptr;
-	TRDGUniformBufferRef<FStrataPublicGlobalUniformParameters> StrataPublicGlobalUniformParams = nullptr;
+	TRDGUniformBufferRef<FSubstratePublicGlobalUniformParameters> SubstratePublicGlobalUniformParams = nullptr;
 };

@@ -23,7 +23,7 @@ void FAnimNode_BlendSpaceEvaluator::UpdateAssetPlayer(const FAnimationUpdateCont
 	UpdateInternal(Context);
 
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Name"), GetBlendSpace() ? *GetBlendSpace()->GetName() : TEXT("None"));
-	TRACE_ANIM_NODE_VALUE(Context, TEXT("Blend Space"), GetBlendSpace());
+	TRACE_ANIM_NODE_VALUE(Context, TEXT("Asset"), GetBlendSpace());
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Playback Time"), InternalTimeAccumulator);
 }
 
@@ -32,8 +32,12 @@ void FAnimNode_BlendSpaceEvaluator::GatherDebugData(FNodeDebugData& DebugData)
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_ANIMNODE(GatherDebugData)
 	FString DebugLine = DebugData.GetNodeName(this);
 
-	DebugLine += FString::Printf(TEXT("('%s' Play Time: %.3f)"), *GetBlendSpace()->GetName(), InternalTimeAccumulator);
-	DebugData.AddDebugItem(DebugLine, true);
+	UBlendSpace* CurrentBlendSpace = GetBlendSpace();
+	if (CurrentBlendSpace)
+	{
+		DebugLine += FString::Printf(TEXT("('%s' Play Time: %.3f)"), *CurrentBlendSpace->GetName(), InternalTimeAccumulator);
+		DebugData.AddDebugItem(DebugLine, true);
+	}
 }
 
 float FAnimNode_BlendSpaceEvaluator::GetPlayRate() const

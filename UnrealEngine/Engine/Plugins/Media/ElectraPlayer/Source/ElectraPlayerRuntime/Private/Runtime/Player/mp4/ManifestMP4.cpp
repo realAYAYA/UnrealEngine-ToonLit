@@ -61,13 +61,13 @@ FManifestMP4Internal::~FManifestMP4Internal()
  *
  * @return
  */
-FErrorDetail FManifestMP4Internal::Build(TSharedPtrTS<IParserISO14496_12> MP4Parser, const FString& URL, const HTTP::FConnectionInfo& InConnectionInfo)
+FErrorDetail FManifestMP4Internal::Build(TSharedPtrTS<IParserISO14496_12> MP4Parser, const FString& URL, const HTTP::FConnectionInfo& /*InConnectionInfo*/)
 {
-	ConnectionInfo = InConnectionInfo;
 	MediaAsset = MakeSharedTS<FTimelineAssetMP4>();
 	FErrorDetail Result = MediaAsset->Build(PlayerSessionServices, MP4Parser, URL);
-	FTimeRange PlaybackRange = GetPlaybackRange();
+	FTimeRange PlaybackRange = GetPlaybackRange(IManifest::EPlaybackRangeType::TemporaryPlaystartRange);
 	DefaultStartTime = PlaybackRange.Start;
+	DefaultEndTime = PlaybackRange.End;
 	return Result;
 }
 
@@ -126,15 +126,16 @@ void FManifestMP4Internal::GetTrackMetadata(TArray<FTrackMetadata>& OutMetadata,
  *
  * @return Optionally set time range to which playback is restricted.
  */
-FTimeRange FManifestMP4Internal::GetPlaybackRange() const
+FTimeRange FManifestMP4Internal::GetPlaybackRange(EPlaybackRangeType InRangeType) const
 {
 	FTimeRange FromTo;
 
-	// We are interested in the 't' fragment value here.
+	// We are interested in the 't' or 'r' fragment value here.
 	FString Time;
 	for(auto& Fragment : URLFragmentComponents)
 	{
-		if (Fragment.Name.Equals(TEXT("t")))
+		if ((InRangeType == IManifest::EPlaybackRangeType::TemporaryPlaystartRange && Fragment.Name.Equals(TEXT("t"))) ||
+			(InRangeType == IManifest::EPlaybackRangeType::LockedPlaybackRange && Fragment.Name.Equals(TEXT("r"))))
 		{
 			Time = Fragment.Value;
 		}
@@ -235,9 +236,15 @@ IStreamReader* FManifestMP4Internal::CreateStreamReaderHandler()
  */
 IManifest::FResult FManifestMP4Internal::FindPlayPeriod(TSharedPtrTS<IPlayPeriod>& OutPlayPeriod, const FPlayStartPosition& StartPosition, ESearchType SearchType)
 {
-	// FIXME: We could however check if the start position falls into the duration of the asset. Not sure why it wouldn't or why we would want to do that.
-	OutPlayPeriod = MakeSharedTS<FPlayPeriodMP4>(MediaAsset);
-	return IManifest::FResult(IManifest::FResult::EType::Found);
+	if (MediaAsset.IsValid() && StartPosition.Time.IsValid() && StartPosition.Time < MediaAsset->GetDuration())
+	{
+		OutPlayPeriod = MakeSharedTS<FPlayPeriodMP4>(MediaAsset);
+		return IManifest::FResult(IManifest::FResult::EType::Found);
+	}
+	else
+	{
+		return IManifest::FResult(IManifest::FResult::EType::PastEOS);
+	}
 }
 
 IManifest::FResult FManifestMP4Internal::FindNextPlayPeriod(TSharedPtrTS<IPlayPeriod>& OutPlayPeriod, TSharedPtrTS<const IStreamSegment> CurrentSegment)
@@ -927,10 +934,10 @@ void FManifestMP4Internal::FTimelineAssetMP4::UpdatePlayRangeEndInfo(const FTime
 							TrackLocalTime = PlayRangeEndInfo.Time.GetAsTimebase(TrkIt->GetTimescale());
 						}
 						// Look at the DTS, not the PTS since a frame with a larger PTS may still be referenced
-						// by earlier frames (B frame reordering).
+						// by earlier frames (In case of video: B frame reordering).
 						if (TrkIt->GetDTS() >= TrackLocalTime)
 						{
-							TrackEndBytePos = TrkIt->GetSampleFileOffset();
+							TrackEndBytePos = TrkIt->GetSampleFileOffset() + TrkIt->GetSampleSize();
 							if (TrackEndBytePos > PlayRangeEndInfo.TotalFileEndOffset)
 							{
 								PlayRangeEndInfo.TotalFileEndOffset = TrackEndBytePos;

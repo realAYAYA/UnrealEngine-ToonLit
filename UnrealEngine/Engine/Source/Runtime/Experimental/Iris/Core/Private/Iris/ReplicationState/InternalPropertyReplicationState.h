@@ -22,6 +22,15 @@ IRISCORE_API void DestructPropertyReplicationState(uint8* StateBuffer, const FRe
 /** Copy external state in SrcStateBuffer to external state DstStateBuffer including changemask */
 IRISCORE_API void CopyPropertyReplicationState(uint8* RESTRICT DstStateBuffer, uint8* RESTRICT SrcStateBuffer, const FReplicationStateDescriptor* Descriptor);
 
+/** Copy only properties from external state in SrcStateBuffer to external state DstStateBufferif dirty, destination changemask will also be updated */
+IRISCORE_API void CopyDirtyMembers(uint8* RESTRICT DstStateBuffer, uint8* RESTRICT SrcStateBuffer, const FReplicationStateDescriptor* Descriptor);
+
+/** Copy property value to target. If the property is fully replicated we use the properties copy function, otherwise we do a per member copy of all replicated data. Members with NetSerializers with an Apply() function will call that. */
+IRISCORE_API void InternalApplyPropertyValue(const FReplicationStateDescriptor* Descriptor, uint32 MemberIndex, void* RESTRICT Dst, const void* RESTRICT Src);
+
+/** Copy struct members to target using InternalApplyPropertyValue */
+IRISCORE_API void InternalApplyStructProperty(const FReplicationStateDescriptor* StructDescriptor, void* RESTRICT Dst, const void* RESTRICT Src);
+
 /** Copy property value, if the property is fully replicated we use the properties copy function, otherwise we do a per member copy of all replicated data */
 IRISCORE_API void InternalCopyPropertyValue(const FReplicationStateDescriptor* Descriptor, uint32 MemberIndex, void* RESTRICT Dst, const void* RESTRICT Src);
 

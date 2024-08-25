@@ -9,6 +9,21 @@
 #include "RendererInterface.h"
 #include "Logging/LogMacros.h"
 
+void FClearVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
+{
+	// create a static vertex buffer
+	FRHIResourceCreateInfo CreateInfo(TEXT("FClearVertexBuffer"));
+	VertexBufferRHI = RHICmdList.CreateVertexBuffer(sizeof(FVector4f) * 4, BUF_Static, CreateInfo);
+	void* VoidPtr = RHICmdList.LockBuffer(VertexBufferRHI, 0, sizeof(FVector4f) * 4, RLM_WriteOnly);
+	// Generate the vertices used
+	FVector4f* Vertices = reinterpret_cast<FVector4f*>(VoidPtr);
+	Vertices[0] = FVector4f(-1.0f, 1.0f, 0.0f, 1.0f);
+	Vertices[1] = FVector4f(1.0f, 1.0f, 0.0f, 1.0f);
+	Vertices[2] = FVector4f(-1.0f, -1.0f, 0.0f, 1.0f);
+	Vertices[3] = FVector4f(1.0f, -1.0f, 0.0f, 1.0f);
+	RHICmdList.UnlockBuffer(VertexBufferRHI);
+}
+
 TGlobalResource<FClearVertexBuffer> GClearVertexBuffer;
 
 DEFINE_LOG_CATEGORY_STATIC(LogClearQuad, Log, Log)

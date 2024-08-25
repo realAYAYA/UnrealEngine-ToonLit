@@ -1,22 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Navigation/PathFollowingComponent.h"
-#include "UObject/Package.h"
-#include "TimerManager.h"
-#include "GameFramework/Pawn.h"
-#include "GameFramework/Controller.h"
-#include "NavigationSystem.h"
-#include "NavMesh/RecastNavMesh.h"
+
+#include "AbstractNavData.h"
+#include "AIConfig.h"
+#include "AIController.h"
 #include "AISystem.h"
 #include "BrainComponent.h"
 #include "Engine/Canvas.h"
-#include "AIController.h"
-#include "VisualLogger/VisualLoggerTypes.h"
-#include "VisualLogger/VisualLogger.h"
-#include "AbstractNavData.h"
-#include "NavLinkCustomInterface.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/Pawn.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "Navigation/MetaNavMeshPath.h"
-#include "AIConfig.h"
+#include "NavigationSystem.h"
+#include "NavLinkCustomInterface.h"
+#include "NavMesh/RecastNavMesh.h"
+#include "TimerManager.h"
+#include "UObject/Package.h"
+#include "VisualLogger/VisualLogger.h"
+#include "VisualLogger/VisualLoggerTypes.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PathFollowingComponent)
 
@@ -28,7 +30,7 @@
 
 DEFINE_LOG_CATEGORY(LogPathFollowing);
 
-namespace
+namespace UE::Navigation::Private
 {
 	FORCEINLINE FVector FindGoalLocation(const UPathFollowingComponent& Component, const AActor& GoalActor, const INavAgentInterface* GoalNavAgent, float& GoalRadius, float& GoalHalfHeight)
 	{
@@ -44,6 +46,29 @@ namespace
 		{
 			return GoalActor.GetActorLocation();
 		}
+	}
+
+	FSharedConstNavQueryFilter ExtractNavigationFilterForRequest(UObject* Owner, FNavPathSharedPtr Path, TObjectPtr<ANavigationData> MyNavData, const FAIMoveRequest& RequestData)
+	{
+		if (!Path->CastPath<FAbstractNavigationPath>() && Path->GetFilter() != nullptr)
+		{
+			return Path->GetFilter();
+		}
+
+		if (RequestData.GetNavigationFilter() != nullptr)
+		{
+			return UNavigationQueryFilter::GetQueryFilter(*MyNavData, Owner, RequestData.GetNavigationFilter());
+		}
+
+		if (const AAIController* AIOwner = Cast<AAIController>(Owner))
+		{
+			if (AIOwner->GetDefaultNavigationFilterClass() != nullptr)
+			{
+				return UNavigationQueryFilter::GetQueryFilter(*MyNavData, AIOwner->GetDefaultNavigationFilterClass());
+			}
+		}
+
+		return MyNavData->GetDefaultQueryFilter();
 	}
 }
 
@@ -144,6 +169,7 @@ UPathFollowingComponent::UPathFollowingComponent(const FObjectInitializer& Objec
 	MoveSegmentEndIndex = 1;
 	MoveSegmentStartRef = INVALID_NAVNODEREF;
 	MoveSegmentEndRef = INVALID_NAVNODEREF;
+	bMoveSegmentIsUsingCustomLinkReachCondition = false;
 
 	CachedBrakingDistance = 100.0f;
 	CachedBrakingMaxSpeed = 0.0f;
@@ -152,6 +178,7 @@ UPathFollowingComponent::UPathFollowingComponent(const FObjectInitializer& Objec
 	bReachTestIncludesAgentRadius = true;
 	bReachTestIncludesGoalRadius = true;
 	bMoveToGoalOnLastSegment = true;
+	bMoveToGoalClampedToNavigation = false;
 
 	Status = EPathFollowingStatus::Idle;
 
@@ -170,8 +197,7 @@ void UPathFollowingComponent::LogPathHelper(const AActor* LogOwner, FNavigationP
 	{
 		const FVector PathEnd = *InLogPath->GetPathPointLocation(InLogPath->GetPathPoints().Num() - 1);
 
-		FVisualLogEntry* Entry = Vlog.GetEntryToWrite(LogOwner, LogOwner->GetWorld()->TimeSeconds);
-		if (Entry)
+		if (FVisualLogEntry* Entry = FVisualLogger::GetEntryToWrite(LogOwner, LogPathFollowing))
 		{
 			InLogPath->DescribeSelfToVisLog(Entry);
 			if (LogGoalActor)
@@ -253,7 +279,7 @@ void UPathFollowingComponent::OnPathEvent(FNavigationPath* InPath, ENavPathEvent
 				else if (InPath->IsPartial() && InPath->GetGoalActor())
 				{
 					float IgnoreGoalRadius, IgnoreGoalHalfHeight;
-					OriginalMoveRequestGoalLocation = FindGoalLocation(*this, *InPath->GetGoalActor(), InPath->GetGoalActorAsNavAgent(), IgnoreGoalRadius, IgnoreGoalHalfHeight);
+					OriginalMoveRequestGoalLocation = UE::Navigation::Private::FindGoalLocation(*this, *InPath->GetGoalActor(), InPath->GetGoalActorAsNavAgent(), IgnoreGoalRadius, IgnoreGoalHalfHeight);
 				}
 			}
 			break;
@@ -287,7 +313,7 @@ bool UPathFollowingComponent::HandlePathUpdateEvent()
 	if (PathGoalActor)
 	{
 		float IgnoreGoalRadius, IgnoreGoalHalfHeight;
-		OriginalMoveRequestGoalLocation = FindGoalLocation(*this, *PathGoalActor, Path->GetGoalActorAsNavAgent(), IgnoreGoalRadius, IgnoreGoalHalfHeight);
+		OriginalMoveRequestGoalLocation = UE::Navigation::Private::FindGoalLocation(*this, *PathGoalActor, Path->GetGoalActorAsNavAgent(), IgnoreGoalRadius, IgnoreGoalHalfHeight);
 	}
 	if (FAISystem::IsValidLocation(OriginalMoveRequestGoalLocation))
 	{
@@ -389,6 +415,8 @@ FAIRequestID UPathFollowingComponent::RequestMove(const FAIMoveRequest& RequestD
 			const FVector CurrentLocation = MovementComp ? MovementComp->GetActorFeetLocation() : FAISystem::InvalidLocation;
 			MetaNavPath->Initialize(CurrentLocation);
 		}
+
+		NavigationFilter = UE::Navigation::Private::ExtractNavigationFilterForRequest(GetOwner(), Path, MyNavData, RequestData);
 
 		PathTimeWhenPaused = 0.;
 		OnPathUpdated();
@@ -737,6 +765,7 @@ void UPathFollowingComponent::Reset()
 	MoveSegmentStartRef = INVALID_NAVNODEREF;
 	MoveSegmentEndRef = INVALID_NAVNODEREF;
 	DecelerationSegmentIndex = INDEX_NONE;
+	ResetMoveSegmentCustomLinkCache();
 
 	LocationSamples.Reset();
 	LastSampleTime = 0.0f;
@@ -858,6 +887,26 @@ void UPathFollowingComponent::SetMoveSegment(int32 SegmentStartIndex)
 			SegmentEnd = *CurrentDestination;
 		}
 
+		// Check if the next segment is a custom link and has the need to use its own custom reach conditions
+		if (PathPt1.CustomNavLinkId != FNavLinkId::Invalid)
+		{
+			const UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+			if (const INavLinkCustomInterface* MoveSegmentCustomLink = NavSys->GetCustomLink(PathPt1.CustomNavLinkId))
+			{
+				// Cache the CustomLinkOb for faster access during the update
+				MoveSegmentCustomLinkOb = Cast<const UObject>(MoveSegmentCustomLink);
+				bMoveSegmentIsUsingCustomLinkReachCondition = MoveSegmentCustomLink->IsLinkUsingCustomReachCondition(this);
+			}
+			else
+			{
+				ResetMoveSegmentCustomLinkCache();
+			}
+		}
+		else
+		{
+			ResetMoveSegmentCustomLinkCache();
+		}
+
 		CurrentAcceptanceRadius = (PathInstance->GetPathPoints().Num() == (MoveSegmentEndIndex + 1))
 			? GetFinalAcceptanceRadius(*PathInstance, OriginalMoveRequestGoalLocation)
 			// pick appropriate value base on whether we're going to nav link or not
@@ -959,8 +1008,16 @@ void UPathFollowingComponent::UpdatePathSegment()
 			if (DestinationActor.IsValid() && Path->IsPartial() == false)
 			{
 				const FVector AgentLocation = DestinationAgent ? DestinationAgent->GetNavAgentLocation() : DestinationActor->GetActorLocation();
-				// note that the condition below requires GoalLocation to be in world space.
-				const FVector GoalLocation = FQuatRotationTranslationMatrix(DestinationActor->GetActorQuat(), AgentLocation).TransformPosition(MoveOffset);
+				FVector GoalLocation = FQuatRotationTranslationMatrix(DestinationActor->GetActorQuat(), AgentLocation).TransformPosition(MoveOffset);
+
+				if (bMoveToGoalClampedToNavigation && NavigationFilter)
+				{
+					FVector HitLocation;
+					if (MyNavData->Raycast(CurrentLocation, GoalLocation, HitLocation, NavigationFilter))
+					{
+						GoalLocation = HitLocation;
+					}
+				}
 
 				CurrentDestination.Set(NULL, GoalLocation);
 
@@ -1137,19 +1194,26 @@ bool UPathFollowingComponent::HasReachedDestination(const FVector& CurrentLocati
 	float GoalHalfHeight = 0.0f;
 	
 	// take goal's current location, unless path is partial or last segment doesn't reach goal actor (used by tethered AI)
-	if (DestinationActor.IsValid() && !Path->IsPartial() && bMoveToGoalOnLastSegment)
+	if (!Path->IsPartial() && bMoveToGoalOnLastSegment)
 	{
-		if (DestinationAgent)
-		{
-			const AActor* OwnerActor = GetOwner();
-			FVector GoalOffset;
-			DestinationAgent->GetMoveGoalReachTest(OwnerActor, MoveOffset, GoalOffset, GoalRadius, GoalHalfHeight);
+		GoalLocation = *CurrentDestination;
 
-			GoalLocation = FQuatRotationTranslationMatrix(DestinationActor->GetActorQuat(), DestinationAgent->GetNavAgentLocation()).TransformPosition(GoalOffset);
-		}
-		else
+		// Testing IsNearlyZero is not optimal as (0,0,0) could be a valid world position. Tracking the initialization state inside FBasedPosition would be better.
+		if (GoalLocation.IsNearlyZero() && DestinationActor.IsValid() && !bMoveToGoalClampedToNavigation)
 		{
-			GoalLocation = DestinationActor->GetActorLocation();
+			// In case CurrentDestination is not set because we didn't update MoveSegment yet, let's use the goal Actor's location directly
+			if (DestinationAgent)
+			{
+				const AActor* OwnerActor = GetOwner();
+				FVector GoalOffset;
+				DestinationAgent->GetMoveGoalReachTest(OwnerActor, MoveOffset, GoalOffset, GoalRadius, GoalHalfHeight);
+
+				GoalLocation = FQuatRotationTranslationMatrix(DestinationActor->GetActorQuat(), DestinationAgent->GetNavAgentLocation()).TransformPosition(GoalOffset);
+			}
+			else
+			{
+				GoalLocation = DestinationActor->GetActorLocation();
+			}
 		}
 	}
 
@@ -1163,6 +1227,27 @@ bool UPathFollowingComponent::HasReachedCurrentTarget(const FVector& CurrentLoca
 	if (MovementComp == NULL)
 	{
 		return false;
+	}
+
+	// If the next segment is a link with a custom reach condition, we need to call the HasReachedLinkStart on the link interface.
+	if (bMoveSegmentIsUsingCustomLinkReachCondition)
+	{
+		if (const INavLinkCustomInterface* MoveSegmentCustomLink = Cast<const INavLinkCustomInterface>(MoveSegmentCustomLinkOb.Get()))
+		{
+			if (ensureMsgf(Path.IsValid(), TEXT("%hs: Path should be valid when we get here. Owner [%s]."), __FUNCTION__, *GetNameSafe(GetOwner())))
+			{
+				const FNavPathPoint& LinkStart = Path->GetPathPoints()[MoveSegmentEndIndex];
+				if (Path->GetPathPoints().IsValidIndex(MoveSegmentEndIndex + 1))
+				{
+					const FNavPathPoint& LinkEnd = Path->GetPathPoints()[MoveSegmentEndIndex + 1];
+					return MoveSegmentCustomLink->HasReachedLinkStart(this, CurrentLocation, LinkStart, LinkEnd);
+				}
+				else
+				{
+					UE_LOG(LogPathFollowing, Error, TEXT("%hs: NavLink has a start, but no end. Custom reach condition won't be called. NavLinkID [%llu] - LinkStartPos [%s] - Owner [%s]"), __FUNCTION__, LinkStart.CustomNavLinkId.GetId(), *LinkStart.Location.ToString(), *GetNameSafe(GetOwner()));
+				}
+			}
+		}
 	}
 
 	const FVector CurrentTarget = GetCurrentTargetLocation();
@@ -1402,6 +1487,12 @@ void UPathFollowingComponent::OnActorBump(AActor* SelfActor, AActor* OtherActor,
 		UE_VLOG(GetOwner(), LogPathFollowing, Verbose, TEXT("Collided with goal actor"));
 		bCollidedWithGoal = true;
 	}
+}
+
+void UPathFollowingComponent::ResetMoveSegmentCustomLinkCache()
+{
+	MoveSegmentCustomLinkOb.Reset();
+	bMoveSegmentIsUsingCustomLinkReachCondition = false;
 }
 
 bool UPathFollowingComponent::IsOnPath() const

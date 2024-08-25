@@ -147,7 +147,7 @@ void CullHeightfieldObjectsForViewCS(
 				int LocalCardIndex = LUMEN_HEIGHTFIELD_LOCAL_CARD_INDEX;
 				FLumenCardData LumenCardData = GetLumenCardData(MeshCardsData.CardOffset + LocalCardIndex);
 
-				float DistanceFromCameraSq = LengthSq(LWCHackToFloat(PrimaryView.WorldCameraOrigin) - LumenCardData.Origin) - LengthSq(LumenCardData.LocalExtent);
+				float DistanceFromCameraSq = LengthSq(DFHackToFloat(PrimaryView.WorldCameraOrigin) - LumenCardData.Origin) - LengthSq(LumenCardData.LocalExtent);
 				bShouldKeep = DistanceFromCameraSq < CardTraceEndDistanceFromCamera * CardTraceEndDistanceFromCamera;
 			}
 		}
@@ -204,14 +204,14 @@ void CullMeshSDFObjectsForViewCS(
 	if (ObjectIndex < NumSceneObjects)
 	{
 		FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-		const float3 TranslatedCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PrimaryView.PreViewTranslation));
+		const float3 TranslatedCenter = DFFastAddDemote(DFObjectBounds.Center, PrimaryView.PreViewTranslation);
 
 		float DistanceToViewSq = LengthSq(PrimaryView.TranslatedWorldCameraOrigin - TranslatedCenter);
 
 		if ((DFObjectBounds.bVisible || DFObjectBounds.bAffectIndirectLightingWhileHidden)
 			&& DistanceToViewSq < Square(CardTraceEndDistanceFromCamera + DFObjectBounds.SphereRadius)
 			&& (DFObjectBounds.SphereRadius > MeshSDFRadiusThreshold || DFObjectBounds.bEmissiveLightSource)
-			&& ViewFrustumIntersectSphere(LWCHackToFloat(DFObjectBounds.Center), DFObjectBounds.SphereRadius + MaxMeshSDFInfluenceRadius)) 
+			&& ViewFrustumIntersectSphere(DFHackToFloat(DFObjectBounds.Center), DFObjectBounds.SphereRadius + MaxMeshSDFInfluenceRadius)) 
 		{
 			FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
 
@@ -294,7 +294,7 @@ void MeshSDFObjectCullVS(
 	if (ObjectType == CULL_MESH_TYPE_SDF)
 	{
 		FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-		ObjectWorldOrigin = LWCHackToFloat(DFObjectBounds.Center);
+		ObjectWorldOrigin = DFHackToFloat(DFObjectBounds.Center);
 		ObjectWorldRadius = DFObjectBounds.SphereRadius;
 	}
 	#endif // CULL_MESH_SDF
@@ -311,7 +311,7 @@ void MeshSDFObjectCullVS(
 			ObjectWorldOrigin = LumenCardData.Origin;
 			ObjectWorldRadius = length(LumenCardData.LocalExtent);
 #else
-			ObjectWorldOrigin = LWCHackToFloat(LumenHeightfield.BoundsCenter); // LWC_TODO:
+			ObjectWorldOrigin = DFHackToFloat(LumenHeightfield.BoundsCenter); // LWC_TODO:
 			ObjectWorldRadius = length(LumenHeightfield.BoundsExtent);
 #endif
 		}
@@ -321,7 +321,7 @@ void MeshSDFObjectCullVS(
 	float EffectiveRadius = (ObjectWorldRadius + MaxMeshSDFInfluenceRadius) * ConservativeRadiusScale / 0.7f;
 	float3 WorldPosition = InPosition.xyz * EffectiveRadius + ObjectWorldOrigin;
 
-	OutPosition = mul(float4(WorldPosition, 1), LWCHackToFloat(PrimaryView.WorldToClip));
+	OutPosition = mul(float4(WorldPosition, 1), DFHackToFloat(PrimaryView.WorldToClip));
 	Output.PositionAndRadius.xyz = ObjectWorldOrigin;
 	Output.PositionAndRadius.w = ObjectWorldRadius;
 	Output.ObjectIndex = PackObjectData(ObjectData);
@@ -371,7 +371,7 @@ float3 ComputeCellWorldPosition(uint3 GridCoordinate, float3 CellOffset)
 	float TileDeviceZ = ConvertToDeviceZ(SceneDepth);
 
 	float4 CenterPosition = mul(float4(VolumeNDC, TileDeviceZ, 1), View.ClipToTranslatedWorld);
-	return CenterPosition.xyz / CenterPosition.w - LWCHackToFloat(PrimaryView.PreViewTranslation);
+	return CenterPosition.xyz / CenterPosition.w - DFHackToFloat(PrimaryView.PreViewTranslation);
 }
 
 uint MaxNumberOfCulledObjects;
@@ -418,14 +418,14 @@ void MeshSDFObjectCullPS(
 		WorldObjectPosition = LumenCardData.Origin;
 		WorldObjectExtent = mul(abs(LumenCardData.WorldToLocalRotation), LumenCardData.LocalExtent);
 #else
-		WorldObjectPosition = LWCHackToFloat(LumenHeightfield.BoundsCenter); // LWC_TODO:
+		WorldObjectPosition = DFHackToFloat(LumenHeightfield.BoundsCenter); // LWC_TODO:
 		WorldObjectExtent = LumenHeightfield.BoundsExtent;
 #endif
 	}
 	#endif // CULL_MESH_HEIGHTFIELD
 
 
-	float3 ViewSpaceObjectPosition = mul(float4(WorldObjectPosition + LWCHackToFloat(PrimaryView.PreViewTranslation), 1), View.TranslatedWorldToView).xyz;
+	float3 ViewSpaceObjectPosition = mul(float4(WorldObjectPosition + DFHackToFloat(PrimaryView.PreViewTranslation), 1), View.TranslatedWorldToView).xyz;
 	float3 ViewSpaceObjectInfluenceExtent = mul(WorldObjectExtent, abs((float3x3)View.TranslatedWorldToView)) + MaxMeshSDFInfluenceRadius;
 
 	float4 FrustumPlanes[6];
@@ -509,7 +509,7 @@ void MeshSDFObjectCullPS(
 			CornerLength = max(length(WorldTileCornerVector), CornerLength);
 
 			float TileBoundingSphereRadius = CornerLength + MaxMeshSDFInfluenceRadius;
-			float DistanceToSurface = DistanceToNearestSurfaceForObject(ObjectIndex, LWCPromote(WorldTileCenterPosition), TileBoundingSphereRadius);
+			float DistanceToSurface = DistanceToNearestSurfaceForObject(ObjectIndex, DFPromote(WorldTileCenterPosition), TileBoundingSphereRadius);
 			bTileIntersectsObject = DistanceToSurface < TileBoundingSphereRadius;
 		}
 #endif

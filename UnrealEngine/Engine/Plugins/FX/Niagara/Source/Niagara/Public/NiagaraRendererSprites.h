@@ -23,7 +23,7 @@ public:
 	NIAGARA_API ~FNiagaraRendererSprites();
 
 	//FNiagaraRenderer interface
-	NIAGARA_API virtual void CreateRenderThreadResources() override;
+	NIAGARA_API virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 	NIAGARA_API virtual void ReleaseRenderThreadResources() override;
 
 	NIAGARA_API virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector, const FNiagaraSceneProxy *SceneProxy) const override;
@@ -108,6 +108,7 @@ private:
 	uint32 bEnableCulling : 1;
 	uint32 bEnableDistanceCulling : 1;
 	uint32 bAccurateMotionVectors : 1;
+	uint32 bCastShadows : 1;
 	uint32 bSetAnyBoundVars : 1;
 	uint32 bVisTagInParamStore : 1;
 

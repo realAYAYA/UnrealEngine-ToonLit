@@ -3,11 +3,21 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AnimNextRigVMAsset.h"
 #include "PropertyBag.h"
-#include "RigVMCore/RigVMExecuteContext.h"
+#include "Param/IParameterSource.h"
 #include "AnimNextParameterBlock.generated.h"
 
 class UEdGraph;
+struct FAnimNextScheduleGraphTask;
+struct FAnimNextScheduleParamScopeTask;
+class UAnimNextParameterBlockParameter;
+
+namespace UE::AnimNext
+{
+	struct FContext;
+	struct FParameterBlockProxy;
+}
 
 namespace UE::AnimNext::UncookedOnly
 {
@@ -19,43 +29,17 @@ namespace UE::AnimNext::Editor
 {
 	class FParametersEditor;
 	struct FUtils;
+	class SRigVMAssetViewRow;
+	class FParameterBlockParameterCustomization;
 }
-
-// Library entry used to export to asset registry
-USTRUCT()
-struct FAnimNextParameterBlockAssetRegistryExportEntry
-{
-	GENERATED_BODY()
-
-	FAnimNextParameterBlockAssetRegistryExportEntry() = default;
-
-	FAnimNextParameterBlockAssetRegistryExportEntry(FName InName, const FSoftObjectPath& InLibrary)
-		: Name(InName)
-		, Library(InLibrary)
-	{}
-	
-	UPROPERTY()
-	FName Name;
-
-	UPROPERTY()
-	FSoftObjectPath Library;
-};
-
-// Library used to export to asset registry
-USTRUCT()
-struct FAnimNextParameterBlockAssetRegistryExports
-{
-	GENERATED_BODY()
-
-	UPROPERTY()
-	TArray<FAnimNextParameterBlockAssetRegistryExportEntry> Bindings;
-};
 
 /** An asset used to define AnimNext parameters and their bindings */
 UCLASS(MinimalAPI, BlueprintType)
-class UAnimNextParameterBlock : public UObject
+class UAnimNextParameterBlock : public UAnimNextRigVMAsset
 {
 	GENERATED_BODY()
+
+	UAnimNextParameterBlock(const FObjectInitializer& ObjectInitializer);
 
 	friend class UAnimNextParameterBlockFactory;
 	friend class UAnimNextParameterBlock_EditorData;
@@ -63,29 +47,16 @@ class UAnimNextParameterBlock : public UObject
 	friend struct UE::AnimNext::UncookedOnly::FUtilsPrivate;
 	friend class UE::AnimNext::Editor::FParametersEditor;
 	friend struct UE::AnimNext::Editor::FUtils;
+	friend struct FAnimNode_AnimNextParameters;
+	friend struct FAnimNextScheduleGraphTask;
+	friend struct FAnimNextScheduleParamScopeEntryTask;
+	friend class UE::AnimNext::Editor::SRigVMAssetViewRow;
+	friend class UE::AnimNext::Editor::FParameterBlockParameterCustomization;
+	friend struct UE::AnimNext::FParameterBlockProxy;
+	friend class UAnimNextParameterBlockParameter;
 
-	// UObject interface
-	virtual void PostRename(UObject* OldOuter, const FName OldName) override;
-	virtual void GetPreloadDependencies(TArray<UObject*>& OutDeps) override;
-	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
-
-	// Support rig VM execution
-	ANIMNEXT_API TArray<FRigVMExternalVariable> GetRigVMExternalVariables();
-
-	UPROPERTY()
-	TObjectPtr<URigVM> RigVM;
-
-	UPROPERTY(transient)
-	FRigVMExtendedExecuteContext ExtendedExecuteContext;
-
-	UPROPERTY()
-	FRigVMRuntimeSettings VMRuntimeSettings;
+	void UpdateLayer(UE::AnimNext::FParamStackLayerHandle& InHandle, float InDeltaTime) const;
 
 	UPROPERTY()
 	FInstancedPropertyBag PropertyBag;
-
-#if WITH_EDITORONLY_DATA
-	UPROPERTY(VisibleAnywhere, Instanced, Category = "Parameters", meta = (ShowInnerProperties))
-	TObjectPtr<UObject> EditorData;
-#endif
 };

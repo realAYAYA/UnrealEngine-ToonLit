@@ -13,10 +13,12 @@
 	"CanContainContent": true,
 	"IsBetaVersion": true,
 	"Installed": false,
+	"SupportedPrograms": [ "LiveLinkHub" ],
 	"Modules": [
 		{
 			"Name": "LiveLinkLens",
 			"Type": "Runtime",
+			"ProgramAllowlist": [ "LiveLinkHub" ],
 			"LoadingPhase": "Default"
 		}
 	],
@@ -27,6 +29,10 @@
 		},
 		{
 			"Name": "CameraCalibrationCore",
+			"Enabled": true
+		},
+		{
+			"Name": "LensComponent",
 			"Enabled": true
 		}
 	]

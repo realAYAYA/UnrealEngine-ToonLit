@@ -54,7 +54,7 @@ namespace UE::MassNavigation
 UMassSteerToMoveTargetProcessor::UMassSteerToMoveTargetProcessor()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = int32(EProcessorExecutionFlags::All);
+	ExecutionFlags = int32(EProcessorExecutionFlags::AllNetModes);
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::Tasks);
 	ExecutionOrder.ExecuteBefore.Add(UE::Mass::ProcessorGroupNames::Avoidance);
 }

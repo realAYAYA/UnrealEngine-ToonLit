@@ -666,10 +666,6 @@ class UTransactor : public UObject
 	virtual void SetPrimaryUndoObject( UObject* Object ) PURE_VIRTUAL(UTransactor::SetPrimaryUndoObject,);
 
 	/** Checks if a specific object is referenced by the transaction buffer */
-	UE_DEPRECATED(5.1, "IsObjectInTransationBuffer is deprecated, please use IsObjectInTransactionBuffer instead.")
-	virtual bool IsObjectInTransationBuffer( const UObject* Object ) const { return IsObjectInTransactionBuffer(Object); }
-
-	/** Checks if a specific object is referenced by the transaction buffer */
 	virtual bool IsObjectInTransactionBuffer( const UObject* Object ) const { return false; }
 
 	/** Checks if a specific object is in the transaction currently underway */

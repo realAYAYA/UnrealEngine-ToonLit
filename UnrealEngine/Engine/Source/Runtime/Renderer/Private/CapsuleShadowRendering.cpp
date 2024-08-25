@@ -28,7 +28,7 @@
 #include "PipelineStateCache.h"
 #include "ClearQuad.h"
 #include "RendererPrivateUtils.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 
 DECLARE_GPU_STAT_NAMED(CapsuleShadows, TEXT("Capsule Shadows"));
 
@@ -194,7 +194,7 @@ public:
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTextures)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, RWShadowFactors)
@@ -326,14 +326,14 @@ public:
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ShadowFactorsTexture)
 		SHADER_PARAMETER_SAMPLER(SamplerState, ShadowFactorsSampler)
 		SHADER_PARAMETER(FIntRect, ScissorRectMinAndSize)
 		SHADER_PARAMETER(float, OutputtingToLightAttenuation)
 	END_SHADER_PARAMETER_STRUCT()
 
-	class FUpsampleRequired : SHADER_PERMUTATION_BOOL("UPSAMPLE_REQUIRED");
+	class FUpsampleRequired : SHADER_PERMUTATION_BOOL("SHADOW_FACTORS_UPSAMPLE_REQUIRED");
 	class FApplySSAO : SHADER_PERMUTATION_BOOL("APPLY_TO_SSAO");
 	using FPermutationDomain = TShaderPermutationDomain<FUpsampleRequired, FApplySSAO>;
 
@@ -344,6 +344,7 @@ public:
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
+		OutEnvironment.SetDefine(TEXT("UPSAMPLE_PASS"), 1);
 		OutEnvironment.SetDefine(TEXT("DOWNSAMPLE_FACTOR"), 2);
 	}
 };
@@ -385,7 +386,7 @@ void SetupCapsuleShadowingParameters(
 {
 	Parameters.SceneTextures = SceneTexturesUniformBuffer;
 	Parameters.View = View.ViewUniformBuffer;
-	Parameters.Strata = Strata::BindStrataGlobalUniformParameters(View);
+	Parameters.Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 	if (ShadowingType == ECapsuleShadowingType::MovableSkylightTiledCulling)
 	{
@@ -496,8 +497,8 @@ bool FDeferredShadingSceneRenderer::RenderCapsuleDirectShadows(
 
 	{
 		const FIntPoint BufferSize = GetBufferSizeForCapsuleShadows(Views[0]);
-		const FRDGTextureDesc Desc(FRDGTextureDesc::Create2D(BufferSize, PF_G16R16F, FClearValueBinding::None, TexCreate_RenderTargetable | TexCreate_UAV));
-		RayTracedShadowsRT = GraphBuilder.CreateTexture(Desc, TEXT("RayTracedShadows"));
+		const FRDGTextureDesc Desc(FRDGTextureDesc::Create2D(BufferSize, PF_G16R16F, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV));
+		RayTracedShadowsRT = GraphBuilder.CreateTexture(Desc, TEXT("CapsuleShadows.ShadowFactors"));
 	}
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
@@ -548,9 +549,10 @@ bool FDeferredShadingSceneRenderer::RenderCapsuleDirectShadows(
 				ScissorRect = View.ViewRect;
 			}
 
-			const FIntPoint GroupSize(
+			const FIntPoint GroupSize = FIntPoint(
 				FMath::DivideAndRoundUp(ScissorRect.Size().X / GetCapsuleShadowDownsampleFactor(), GShadowShapeTileSize),
-				FMath::DivideAndRoundUp(ScissorRect.Size().Y / GetCapsuleShadowDownsampleFactor(), GShadowShapeTileSize));
+				FMath::DivideAndRoundUp(ScissorRect.Size().Y / GetCapsuleShadowDownsampleFactor(), GShadowShapeTileSize))
+				.ComponentMax(FIntPoint(1, 1));
 
 			FRDGBufferRef CapsuleTileIntersectionCountsBuffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), GroupSize.X * GroupSize.Y), TEXT("CapsuleTileIntersectionCountsBuffer"));
 			FRDGBufferUAVRef CapsuleTileIntersectionCountsUAV = GraphBuilder.CreateUAV(CapsuleTileIntersectionCountsBuffer);
@@ -623,7 +625,7 @@ bool FDeferredShadingSceneRenderer::RenderCapsuleDirectShadows(
 				PassParameters->VS.ScissorRectMinAndSize = FIntRect(ScissorRect.Min, ScissorRect.Size());
 
 				PassParameters->PS.View = GetShaderBinding(View.ViewUniformBuffer);
-				PassParameters->PS.Strata = Strata::BindStrataGlobalUniformParameters(View);
+				PassParameters->PS.Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 				PassParameters->PS.ShadowFactorsTexture = RayTracedShadowsRT;
 				PassParameters->PS.ShadowFactorsSampler = TStaticSamplerState<SF_Bilinear>::GetRHI();
 				PassParameters->PS.ScissorRectMinAndSize = FIntRect(ScissorRect.Min, ScissorRect.Size());
@@ -982,24 +984,19 @@ void FDeferredShadingSceneRenderer::RenderIndirectCapsuleShadows(FRDGBuilder& Gr
 
 	{
 		const FIntPoint BufferSize = GetBufferSizeForCapsuleShadows(Views[0]);
-		const FRDGTextureDesc Desc(FRDGTextureDesc::Create2D(BufferSize, PF_G16R16F, FClearValueBinding::None, TexCreate_RenderTargetable | TexCreate_UAV));
-		// Reuse temporary target from RTDF shadows
-		RayTracedShadowsRT = GraphBuilder.CreateTexture(Desc, TEXT("RayTracedShadows"));
+		const FRDGTextureDesc Desc(FRDGTextureDesc::Create2D(BufferSize, PF_G16R16F, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV));
+		RayTracedShadowsRT = GraphBuilder.CreateTexture(Desc, TEXT("CapsuleShadows.ShadowFactors"));
 	}
 
-	TArray<FRDGTextureRef, TInlineAllocator<2>> RenderTargets;
+	TArray<FRenderTargetBinding, TInlineAllocator<2>> RenderTargets;
 
 	if (SceneTextures.Color.IsValid())
 	{
-		RenderTargets.Add(SceneTextures.Color.Target);
+		RenderTargets.Emplace(SceneTextures.Color.Target, ERenderTargetLoadAction::ELoad);
 	}
 
 	check(SceneTextures.ScreenSpaceAO);
-	if (!SceneTextures.ScreenSpaceAO->HasBeenProduced())
-	{
-		AddClearRenderTargetPass(GraphBuilder, SceneTextures.ScreenSpaceAO);
-	}
-	RenderTargets.Add(SceneTextures.ScreenSpaceAO);
+	RenderTargets.Emplace(SceneTextures.ScreenSpaceAO, SceneTextures.ScreenSpaceAO->HasBeenProduced() ? ERenderTargetLoadAction::ELoad : ERenderTargetLoadAction::EClear);
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
@@ -1103,7 +1100,10 @@ void FDeferredShadingSceneRenderer::RenderIndirectCapsuleShadows(FRDGBuilder& Gr
 				FUpsampleCapsuleShadowParameters* PassParameters = GraphBuilder.AllocParameters<FUpsampleCapsuleShadowParameters>();
 				for (int32 Index = 0; Index < RenderTargetCount; ++Index)
 				{
-					PassParameters->RenderTargets[Index] = FRenderTargetBinding(RenderTargets[Index], ERenderTargetLoadAction::ELoad);
+					PassParameters->RenderTargets[Index] = RenderTargets[Index];
+
+					// Only allow clears for the first use of the render target.
+					RenderTargets[Index].SetLoadAction(ERenderTargetLoadAction::ELoad);
 				}
 				PassParameters->SceneTextures = SceneTextures.UniformBuffer;
 
@@ -1114,7 +1114,7 @@ void FDeferredShadingSceneRenderer::RenderIndirectCapsuleShadows(FRDGBuilder& Gr
 				PassParameters->VS.ScissorRectMinAndSize = FIntRect(ScissorRect.Min, ScissorRect.Size());
 
 				PassParameters->PS.View = GetShaderBinding(View.ViewUniformBuffer);
-				PassParameters->PS.Strata = Strata::BindStrataGlobalUniformParameters(View);
+				PassParameters->PS.Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 				PassParameters->PS.ShadowFactorsTexture = RayTracedShadowsRT;
 				PassParameters->PS.ShadowFactorsSampler = TStaticSamplerState<SF_Bilinear>::GetRHI();
 				PassParameters->PS.ScissorRectMinAndSize = FIntRect(ScissorRect.Min, ScissorRect.Size());
@@ -1180,6 +1180,7 @@ bool FSceneRenderer::ShouldPrepareForDFInsetIndirectShadow() const
 
 void FDeferredShadingSceneRenderer::RenderCapsuleShadowsForMovableSkylight(
 	FRDGBuilder& GraphBuilder,
+	const FViewInfo& View,
 	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTexturesUniformBuffer,
 	FRDGTextureRef& BentNormalOutput) const
 {
@@ -1188,96 +1189,76 @@ void FDeferredShadingSceneRenderer::RenderCapsuleShadowsForMovableSkylight(
 	{
 		QUICK_SCOPE_CYCLE_COUNTER(STAT_RenderCapsuleShadowsSkylight);
 
-		bool bAnyViewsUseCapsuleShadows = false;
-
-		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
+		if (View.IndirectShadowPrimitives.Num() > 0 && View.ViewState)
 		{
-			const FViewInfo& View = Views[ViewIndex];
+			RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
+			RDG_EVENT_SCOPE(GraphBuilder, "IndirectCapsuleShadows");
+			RDG_GPU_STAT_SCOPE(GraphBuilder, CapsuleShadows);
 
-			if (View.IndirectShadowPrimitives.Num() > 0 && View.ViewState)
-			{
-				bAnyViewsUseCapsuleShadows = true;
-			}
-		}
-
-		if (bAnyViewsUseCapsuleShadows)
-		{
 			FRDGTextureRef NewBentNormal = nullptr;
-			AllocateOrReuseAORenderTarget(GraphBuilder, Views[0], NewBentNormal, TEXT("CapsuleBentNormal"), PF_FloatRGBA);
+			AllocateOrReuseAORenderTarget(GraphBuilder, View, NewBentNormal, TEXT("CapsuleBentNormal"), PF_FloatRGBA);
 
-			for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
+			int32 NumCapsuleShapes = 0;
+			int32 NumMeshesWithCapsules = 0;
+			int32 NumMeshDistanceFieldCasters = 0;
+			IndirectCapsuleShadowsResources Resources = CreateIndirectCapsuleShadowsResources(GraphBuilder, Scene, View, NumCapsuleShapes, NumMeshesWithCapsules, NumMeshDistanceFieldCasters);
+
+			// Don't render indirect occlusion from mesh distance fields when operating on a movable skylight,
+			// DFAO is responsible for indirect occlusion from meshes with distance fields on a movable skylight.
+			// A single mesh should only provide indirect occlusion for a given lighting component in one way.
+			NumMeshDistanceFieldCasters = 0;
+
+			if (NumCapsuleShapes > 0)
 			{
-				const FViewInfo& View = Views[ViewIndex];
+				check(Resources.IndirectShadowLightDirectionSRV);
 
-				if (View.IndirectShadowPrimitives.Num() > 0 && View.ViewState)
+				FIntRect ScissorRect = View.ViewRect;
+
 				{
-					RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
-					RDG_EVENT_SCOPE(GraphBuilder, "IndirectCapsuleShadows");
-					RDG_GPU_STAT_SCOPE(GraphBuilder, CapsuleShadows);
+					uint32 GroupSizeX = FMath::DivideAndRoundUp(ScissorRect.Size().X / GAODownsampleFactor, GShadowShapeTileSize);
+					uint32 GroupSizeY = FMath::DivideAndRoundUp(ScissorRect.Size().Y / GAODownsampleFactor, GShadowShapeTileSize);
 
-					int32 NumCapsuleShapes = 0;
-					int32 NumMeshesWithCapsules = 0;
-					int32 NumMeshDistanceFieldCasters = 0;
-					IndirectCapsuleShadowsResources Resources = CreateIndirectCapsuleShadowsResources(GraphBuilder, Scene, View, NumCapsuleShapes, NumMeshesWithCapsules, NumMeshDistanceFieldCasters);
+					auto* PassParameters = GraphBuilder.AllocParameters<FCapsuleShadowingCS::FParameters>();
 
-					// Don't render indirect occlusion from mesh distance fields when operating on a movable skylight,
-					// DFAO is responsible for indirect occlusion from meshes with distance fields on a movable skylight.
-					// A single mesh should only provide indirect occlusion for a given lighting component in one way.
-					NumMeshDistanceFieldCasters = 0;
+					SetupCapsuleShadowingParameters(
+						GraphBuilder,
+						*PassParameters,
+						ECapsuleShadowingType::MovableSkylightTiledCulling,
+						GraphBuilder.CreateUAV(NewBentNormal),
+						FIntPoint(GroupSizeX, GroupSizeY),
+						BentNormalOutput,
+						FVector2D(GroupSizeX, GroupSizeY),
+						nullptr,
+						ScissorRect,
+						GAODownsampleFactor,
+						GCapsuleMaxIndirectOcclusionDistance,
+						Scene,
+						View,
+						SceneTexturesUniformBuffer,
+						NumCapsuleShapes,
+						Resources.IndirectShadowCapsuleShapesSRV,
+						NumMeshDistanceFieldCasters,
+						Resources.IndirectShadowMeshDistanceFieldCasterIndicesSRV,
+						Resources.IndirectShadowLightDirectionSRV,
+						nullptr
+					);
 
-					if (NumCapsuleShapes > 0)
-					{
-						check(Resources.IndirectShadowLightDirectionSRV);
+					FCapsuleShadowingCS::FPermutationDomain PermutationVector;
+					PermutationVector.Set<FCapsuleShadowingCS::FShapeShadow>(ECapsuleShadowingType::MovableSkylightTiledCulling);
+					PermutationVector.Set<FCapsuleShadowingCS::FIndirectPrimitiveType>(EIndirectShadowingPrimitiveTypes::CapsuleShapes);
+					auto ComputeShader = View.ShaderMap->GetShader<FCapsuleShadowingCS>(PermutationVector);
 
-						FIntRect ScissorRect = View.ViewRect;
-
-						{
-							uint32 GroupSizeX = FMath::DivideAndRoundUp(ScissorRect.Size().X / GAODownsampleFactor, GShadowShapeTileSize);
-							uint32 GroupSizeY = FMath::DivideAndRoundUp(ScissorRect.Size().Y / GAODownsampleFactor, GShadowShapeTileSize);
-
-							auto* PassParameters = GraphBuilder.AllocParameters<FCapsuleShadowingCS::FParameters>();
-
-							SetupCapsuleShadowingParameters(
-								GraphBuilder,
-								*PassParameters,
-								ECapsuleShadowingType::MovableSkylightTiledCulling,
-								GraphBuilder.CreateUAV(NewBentNormal),
-								FIntPoint(GroupSizeX, GroupSizeY),
-								BentNormalOutput,
-								FVector2D(GroupSizeX, GroupSizeY),
-								nullptr,
-								ScissorRect,
-								GAODownsampleFactor,
-								GCapsuleMaxIndirectOcclusionDistance,
-								Scene,
-								View,
-								SceneTexturesUniformBuffer,
-								NumCapsuleShapes,
-								Resources.IndirectShadowCapsuleShapesSRV,
-								NumMeshDistanceFieldCasters,
-								Resources.IndirectShadowMeshDistanceFieldCasterIndicesSRV,
-								Resources.IndirectShadowLightDirectionSRV,
-								nullptr
-							);
-
-							FCapsuleShadowingCS::FPermutationDomain PermutationVector;
-							PermutationVector.Set<FCapsuleShadowingCS::FShapeShadow>(ECapsuleShadowingType::MovableSkylightTiledCulling);
-							PermutationVector.Set<FCapsuleShadowingCS::FIndirectPrimitiveType>(EIndirectShadowingPrimitiveTypes::CapsuleShapes);
-							auto ComputeShader = View.ShaderMap->GetShader<FCapsuleShadowingCS>(PermutationVector);
-
-							FComputeShaderUtils::AddPass(
-								GraphBuilder,
-								RDG_EVENT_NAME("TiledCapsuleShadowing % u capsules among % u meshes", NumCapsuleShapes, NumMeshesWithCapsules),
-								ERDGPassFlags::Compute,
-								ComputeShader,
-								PassParameters,
-								FIntVector(GroupSizeX, GroupSizeY, 1));
-						}
-
-						// Replace the pipeline output with our output that has capsule shadows applied
-						BentNormalOutput = NewBentNormal;
-					}
+					FComputeShaderUtils::AddPass(
+						GraphBuilder,
+						RDG_EVENT_NAME("TiledCapsuleShadowing % u capsules among % u meshes", NumCapsuleShapes, NumMeshesWithCapsules),
+						ERDGPassFlags::Compute,
+						ComputeShader,
+						PassParameters,
+						FIntVector(GroupSizeX, GroupSizeY, 1));
 				}
+
+				// Replace the pipeline output with our output that has capsule shadows applied
+				BentNormalOutput = NewBentNormal;
 			}
 		}
 	}

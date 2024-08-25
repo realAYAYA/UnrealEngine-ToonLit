@@ -32,7 +32,7 @@ protected:
 	virtual void CallRepNotifies(FReplicationStateApplyContext& Context) override;
 
 private:
-	void MimicMinimalReplicationTagCountMapReceiveLogic(FReplicationStateApplyContext& Context);
+	void MimicMinimalReplicationTagCountMapReceiveLogic(FReplicationStateApplyContext& Context) const;
 	void CallRepNotify(FReplicationStateApplyContext& Context);
 
 private:

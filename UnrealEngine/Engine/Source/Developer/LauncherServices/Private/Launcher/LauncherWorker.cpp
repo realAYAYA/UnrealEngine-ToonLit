@@ -493,6 +493,15 @@ FString FLauncherWorker::CreateUATCommand( const ILauncherProfileRef& InProfile,
 		UATCommand += TEXT(" -target=") + InProfile->GetBuildTarget();
 	}
 
+	if (InProfile->IsDeviceASimulator())
+	{
+		if (Platforms.Contains(TEXT("IOS")))
+		{
+			UATCommand += TEXT(" -clientarchitecture=iossimulator");
+		}
+		// TODO: add tvOS and VisionOS simulators below
+	}
+
 	// device list
 	FString DeviceNames = TEXT("");
 	FString DeviceCommand = TEXT("");
@@ -884,12 +893,6 @@ FString FLauncherWorker::CreateUATCommand( const ILauncherProfileRef& InProfile,
 		}
 	}
 
-	if (InProfile->IsUsingIoStore() && 
-		InProfile->IsRetainStagedDirectory())
-	{
-		StageAdditionalCommandLine += TEXT(" -RetainStagedDirectory");
-	}
-
 	// stage/package/deploy
 	if (InProfile->GetDeploymentMode() != ELauncherProfileDeploymentModes::DoNotDeploy)
 	{
@@ -1241,7 +1244,7 @@ bool FLauncherWorker::TerminateLaunchedProcess()
 				int32 InPos = TargetDeviceId.Find("@", ESearchCase::CaseSensitive);
 				if (InPos > 0) 
 				{ 
-					TargetDeviceId.RightInline(TargetDeviceId.Len() -  InPos - 1, false);
+					TargetDeviceId.RightInline(TargetDeviceId.Len() -  InPos - 1, EAllowShrinking::No);
 
 				}
 

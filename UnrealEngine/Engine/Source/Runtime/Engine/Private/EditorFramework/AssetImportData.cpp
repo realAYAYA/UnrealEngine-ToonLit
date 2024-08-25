@@ -85,10 +85,10 @@ TOptional<FAssetImportInfo> FAssetImportInfo::FromJson(FString InJsonString)
 		}
 
 		FString RelativeFilename, TimestampString, MD5String, DisplayLabelName;
-		SourceFile->TryGetStringField("RelativeFilename", RelativeFilename);
-		SourceFile->TryGetStringField("Timestamp", TimestampString);
-		SourceFile->TryGetStringField("FileMD5", MD5String);
-		SourceFile->TryGetStringField("DisplayLabelName", DisplayLabelName);
+		SourceFile->TryGetStringField(TEXT("RelativeFilename"), RelativeFilename);
+		SourceFile->TryGetStringField(TEXT("Timestamp"), TimestampString);
+		SourceFile->TryGetStringField(TEXT("FileMD5"), MD5String);
+		SourceFile->TryGetStringField(TEXT("DisplayLabelName"), DisplayLabelName);
 
 		if (RelativeFilename.IsEmpty())
 		{
@@ -135,6 +135,7 @@ void UAssetImportData::UpdateFilenameOnly(const FString& InPath, int32 Index)
 
 void UAssetImportData::AddFileName(const FString& InPath, int32 Index, FString SourceFileLabel /*= FString()*/)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UAssetImportData::AddFileName);
 	FAssetImportInfo Old = SourceData;
 
 	// Reset our current data
@@ -177,6 +178,7 @@ void UAssetImportData::AddFileName(const FString& InPath, int32 Index, FString S
 
 void UAssetImportData::SetSourceFiles(TArray<FAssetImportInfo::FSourceFile>&& SourceFiles)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UAssetImportData::SetSourceFiles);
 	FAssetImportInfo Old = SourceData;
 
 	for (FAssetImportInfo::FSourceFile& SourceFile : SourceFiles)
@@ -199,6 +201,7 @@ void UAssetImportData::SetSourceFiles(TArray<FAssetImportInfo::FSourceFile>&& So
 
 void UAssetImportData::Update(const FString& InPath, FMD5Hash *Md5Hash/* = nullptr*/)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UAssetImportData::Update);
 	FAssetImportInfo Old = SourceData;
 	SourceData.SourceFiles.Reset();
 	for (int32 SourceIndex = 0; SourceIndex < Old.SourceFiles.Num(); ++SourceIndex)

@@ -14,6 +14,7 @@
 
 #include "DisplayClusterRootActor.h"
 
+#include "Algo/Transform.h"
 #include "EditorViewportCommands.h"
 #include "ScopedTransaction.h"
 #include "SEditorViewportToolBarButton.h"
@@ -914,15 +915,30 @@ void SDisplayClusterLightCardEditorViewport::PasteLightCardsHere()
 {
 	if (LightCardEditorPtr.IsValid())
 	{
-		LightCardEditorPtr.Pin()->PasteActors();
+		const TSharedPtr<FScopedTransaction> Transaction = MakeShared<FScopedTransaction>(LOCTEXT("PasteActorsHereTransactionMessage", "Paste Actors Here"));
+		
+		TArray<AActor*> PastedActors = LightCardEditorPtr.Pin()->PasteActors();
 
-		if (ViewportClient.IsValid())
+		if (ViewportClient.IsValid() && PastedActors.Num() > 0)
 		{
 			// Perform the positioning of the pasted light cards on the next scene refresh, since the light card proxies will have not been 
 			// regenerated until then
-			ViewportClient->GetOnNextSceneRefresh().AddLambda([this]()
+
+			AddActorHereTransactions.Add(Transaction);
+			ViewportClient->GetOnNextSceneRefresh().AddLambda([this, Transaction, PastedActors=MoveTemp(PastedActors)]()
 			{
-				ViewportClient->MoveSelectedActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y));
+				TArray<FDisplayClusterWeakStageActorPtr> PastedStageActors;
+				Algo::TransformIf(PastedActors, PastedStageActors, [](const AActor* InItem)
+				{
+					return IsValid(InItem);
+				},
+				[](const AActor* InItem) -> FDisplayClusterWeakStageActorPtr
+				{
+					return InItem;
+				});
+				
+				ViewportClient->MoveActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y), PastedStageActors);
+				AddActorHereTransactions.Remove(Transaction);
 			});
 		}
 	}
@@ -942,15 +958,19 @@ void SDisplayClusterLightCardEditorViewport::AddLightCardHere()
 {
 	if (LightCardEditorPtr.IsValid())
 	{
-		LightCardEditorPtr.Pin()->AddNewLightCard();
+		const TSharedPtr<FScopedTransaction> Transaction = MakeShared<FScopedTransaction>(LOCTEXT("AddLightCardHereTransactionMessage", "Add Light Card Here"));
+		
+		ADisplayClusterLightCardActor* NewLightCard = LightCardEditorPtr.Pin()->AddNewLightCard();
 
-		if (ViewportClient.IsValid())
+		if (ViewportClient.IsValid() && NewLightCard)
 		{
 			// Perform the positioning of the pasted light cards on the next scene refresh, since the light card proxies will have not been 
 			// regenerated until then
-			ViewportClient->GetOnNextSceneRefresh().AddLambda([this]()
+			AddActorHereTransactions.Add(Transaction);
+			ViewportClient->GetOnNextSceneRefresh().AddLambda([this, Transaction, NewLightCard]()
 			{
-				ViewportClient->MoveSelectedActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y));
+				ViewportClient->MoveActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y), { NewLightCard });
+				AddActorHereTransactions.Remove(Transaction);
 			});
 		}
 	}
@@ -960,15 +980,19 @@ void SDisplayClusterLightCardEditorViewport::AddFlagHere()
 {
 	if (LightCardEditorPtr.IsValid())
 	{
-		LightCardEditorPtr.Pin()->AddNewFlag();
+		const TSharedPtr<FScopedTransaction> Transaction = MakeShared<FScopedTransaction>(LOCTEXT("AddFlagHereTransactionMessage", "Add Flag Here"));
+		
+		ADisplayClusterLightCardActor* NewFlag = LightCardEditorPtr.Pin()->AddNewFlag();
 
-		if (ViewportClient.IsValid())
+		if (ViewportClient.IsValid() && NewFlag)
 		{
 			// Perform the positioning of the pasted light cards on the next scene refresh, since the light card proxies will have not been 
 			// regenerated until then
-			ViewportClient->GetOnNextSceneRefresh().AddLambda([this]()
+			AddActorHereTransactions.Add(Transaction);
+			ViewportClient->GetOnNextSceneRefresh().AddLambda([this, Transaction, NewFlag]()
 			{
-				ViewportClient->MoveSelectedActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y));
+				ViewportClient->MoveActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y), { NewFlag });
+				AddActorHereTransactions.Remove(Transaction);
 			});
 		}
 	}
@@ -978,15 +1002,19 @@ void SDisplayClusterLightCardEditorViewport::AddStageActorHere(UClass* InClass)
 {
 	if (LightCardEditorPtr.IsValid())
 	{
-		LightCardEditorPtr.Pin()->AddNewDynamic(InClass);
+		const TSharedPtr<FScopedTransaction> Transaction = MakeShared<FScopedTransaction>(LOCTEXT("AddStageActorHereTransactionMessage", "Add Stage Actor Here"));
+		
+		AActor* NewActor = LightCardEditorPtr.Pin()->AddNewDynamic(InClass);
 
-		if (ViewportClient.IsValid())
+		if (ViewportClient.IsValid() && NewActor)
 		{
 			// Perform the positioning of the pasted light cards on the next scene refresh, since the light card proxies will have not been 
 			// regenerated until then
-			ViewportClient->GetOnNextSceneRefresh().AddLambda([this]()
+			AddActorHereTransactions.Add(Transaction);
+			ViewportClient->GetOnNextSceneRefresh().AddLambda([this, Transaction, NewActor]()
 			{
-				ViewportClient->MoveSelectedActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y));
+				ViewportClient->MoveActorsToPixel(FIntPoint(PasteHerePos.X, PasteHerePos.Y), { NewActor });
+				AddActorHereTransactions.Remove(Transaction);
 			});
 		}
 	}

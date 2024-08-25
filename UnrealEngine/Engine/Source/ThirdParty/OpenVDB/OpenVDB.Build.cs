@@ -14,10 +14,10 @@ public class OpenVDB : ModuleRules
 
 		bool bDebug = (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT);
 
-		// OpenVDB makes use of both RTTI and C++ exceptions, so clients of
-		// this module should likely enable both of these as well.
-		bUseRTTI = true;
-		bEnableExceptions = true;
+		// The OpenVDB library itself makes use of both RTTI and C++ exceptions, but we
+		// don't compile with either of those on Linux, so our wrapper needs to disable them
+		bUseRTTI = false;
+		bEnableExceptions = false;
 
 		string DeploymentDirectory = Path.Combine(ModuleDirectory, "Deploy", "openvdb-8.1.0");
 
@@ -26,6 +26,7 @@ public class OpenVDB : ModuleRules
 		PublicDefinitions.Add("OPENVDB_STATICLIB");
 		PublicDefinitions.Add("OPENVDB_OPENEXR_STATICLIB");
 		PublicDefinitions.Add("NOMINMAX");
+		PublicDefinitions.Add("VDB_WITH_EPIC_EXTENSIONS=1");
 
 		string LibPostfix = bDebug ? "_d" : "";
 

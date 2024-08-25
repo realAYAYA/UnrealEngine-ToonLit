@@ -65,6 +65,7 @@ public:
 
 #if WITH_EDITOR
 	ENGINE_API virtual bool SupportsPartialEditorLoading() const;
+	ENGINE_API virtual bool ResolveSubobject(const TCHAR* SubObjectPath, UObject*& OutObject, bool bLoadIfExists);
 #endif
 
 	/**
@@ -80,6 +81,7 @@ public:
 	ENGINE_API virtual void PostEditUndo(TSharedPtr<ITransactionObjectAnnotation> TransactionAnnotation, TFunctionRef<void(TSharedPtr<ITransactionObjectAnnotation> TransactionAnnotation)> SuperCall);
 	ENGINE_API virtual void PostEditImport(TFunctionRef<void()> SuperCall);
 	ENGINE_API virtual bool CanEditChange(const FProperty* Property) const;
+	ENGINE_API virtual bool CanEditChangeComponent(const UActorComponent* Component, const FProperty* InProperty) const;
 	ENGINE_API virtual void PreEditChange(FProperty* Property, bool bWorldAssetChange, TFunctionRef<void(FProperty*)> SuperCall);
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent, bool bWorldAssetChange, TFunction<void(FPropertyChangedEvent&)> SuperCall);
 	ENGINE_API virtual bool CanDeleteSelectedActor(FText& OutReason) const;
@@ -87,12 +89,16 @@ public:
 	ENGINE_API virtual bool SetIsHiddenEdLayer(bool bIsHiddenEdLayer, TFunctionRef<bool(bool)> SuperCall);
 	ENGINE_API virtual void EditorGetUnderlyingActors(TSet<AActor*>& OutUnderlyingActors) const;
 	ENGINE_API virtual bool IsLockLocation() const;
+	ENGINE_API virtual bool IsActorLabelEditable() const;
+	ENGINE_API virtual bool IsUserManaged() const;
+	ENGINE_API virtual bool ShouldExport() const;
 	ENGINE_API virtual bool GetBounds(FBox& OutBounds) const;
 	ENGINE_API virtual void PushSelectionToProxies();
 	ENGINE_API virtual void PushLevelInstanceEditingStateToProxies(bool bInEditingState);
 	ENGINE_API virtual void CheckForErrors();
 	// End AActor Implementation
 private:
+	ENGINE_API virtual bool IsLockedActor() const;
 	ENGINE_API virtual void PostEditUndoInternal();
 #endif
 };

@@ -4,6 +4,7 @@
 #include "IPersonaPreviewScene.h"
 #include "BoneControllers/AnimNode_ModifyBone.h"
 #include "AnimPreviewInstance.h"
+#include "Editor.h"
 #include "IPersonaToolkit.h"
 #include "SAdvancedTransformInputBox.h"
 #include "ScopedTransaction.h"
@@ -54,7 +55,7 @@ void UBoneProxy::Tick(float DeltaTime)
 		{
 			if (Component->GetSkeletalMeshAsset() && Component->GetSkeletalMeshAsset()->IsCompiling())
 			{
-				//We do not want to tick if the skeletalmesh is inside a compilation
+				//We do not want to tick if the skeletal mesh is inside a compilation
 				return;
 			}
 
@@ -179,6 +180,9 @@ TOptional<FVector::FReal> UBoneProxy::GetNumericValue(
 
 	switch(TransformType)
 	{
+		case TransformType_Bone:
+			// Pointers are already set.
+			break;
 		case TransformType_Reference:
 		{
 			LocationPtr = &ReferenceLocation;
@@ -233,13 +237,12 @@ TOptional<FVector::FReal> UBoneProxy::GetMultiNumericValue(
 	return FirstValue;
 }
 
-void UBoneProxy::OnNumericValueCommitted(
+void UBoneProxy::OnNumericValueChanged(
 	ESlateTransformComponent::Type Component,
 	ESlateRotationRepresentation::Type Representation,
 	ESlateTransformSubComponent::Type SubComponent,
-	FVector::FReal Value, ETextCommit::Type CommitType,
-	ETransformType TransformType,
-	bool bIsCommit)
+	FVector::FReal Value,
+	ETransformType TransformType)
 {
 	if(TransformType != TransformType_Bone || !bIsTransformEditable)
 	{
@@ -250,7 +253,7 @@ void UBoneProxy::OnNumericValueCommitted(
 	{
 		case ESlateTransformComponent::Location:
 		{
-			OnPreEditChange(GET_MEMBER_NAME_CHECKED(UBoneProxy, Location), bIsCommit);
+			OnPreEditChange(GET_MEMBER_NAME_CHECKED(UBoneProxy, Location));
 				
 			switch(SubComponent)
 			{
@@ -269,14 +272,16 @@ void UBoneProxy::OnNumericValueCommitted(
 					Location.Z = Value;
 					break;
 				}
+				default:
+					checkNoEntry();
 			}
 
-			OnPostEditChangeProperty(GET_MEMBER_NAME_CHECKED(UBoneProxy, Location), bIsCommit);
+			OnPostEditChangeProperty(GET_MEMBER_NAME_CHECKED(UBoneProxy, Location));
 			break;
 		}
 		case ESlateTransformComponent::Rotation:
 		{
-			OnPreEditChange(GET_MEMBER_NAME_CHECKED(UBoneProxy, Rotation), bIsCommit);
+			OnPreEditChange(GET_MEMBER_NAME_CHECKED(UBoneProxy, Rotation));
 				
 			switch(SubComponent)
 			{
@@ -295,14 +300,16 @@ void UBoneProxy::OnNumericValueCommitted(
 					Rotation.Yaw = Value;
 					break;
 				}
+				default:
+					checkNoEntry();
 			}
 
-			OnPostEditChangeProperty(GET_MEMBER_NAME_CHECKED(UBoneProxy, Rotation), bIsCommit);
+			OnPostEditChangeProperty(GET_MEMBER_NAME_CHECKED(UBoneProxy, Rotation));
 			break;
 		}
 		case ESlateTransformComponent::Scale:
 		{
-			OnPreEditChange(GET_MEMBER_NAME_CHECKED(UBoneProxy, Scale), bIsCommit);
+			OnPreEditChange(GET_MEMBER_NAME_CHECKED(UBoneProxy, Scale));
 
 			switch(SubComponent)
 			{
@@ -321,27 +328,87 @@ void UBoneProxy::OnNumericValueCommitted(
 					Scale.Z = Value;
 					break;
 				}
+				default:
+					checkNoEntry();
 			}
 
-			OnPostEditChangeProperty(GET_MEMBER_NAME_CHECKED(UBoneProxy, Scale), bIsCommit);
+			OnPostEditChangeProperty(GET_MEMBER_NAME_CHECKED(UBoneProxy, Scale));
 			break;
 		}
+		default:
+			checkNoEntry();
 	}
 }
 
-void UBoneProxy::OnMultiNumericValueCommitted(
+
+void UBoneProxy::OnSliderMovementStateChanged(
+	ESlateTransformComponent::Type Component,
+	ESlateRotationRepresentation::Type Representation,
+	ESlateTransformSubComponent::Type SubComponent,
+	FVector::FReal Value, 
+	ESliderMovementState SliderMovementState,
+	TArrayView<UBoneProxy*> BoneProxies
+	)
+{
+	// If doing slider movement, we have to start the transaction at slider move begin so that
+	// we can make a copy of the state before value changes begin. The slider end transition
+	// occurs after value commit has happened, so that's where we end the transaction.
+	if (SliderMovementState == ESliderMovementState::Begin)
+	{
+		BeginSetValueTransaction(Component, BoneProxies);
+	}
+	else // == ESliderMovementState::End
+	{
+		EndTransaction();
+	}
+	
+	for(UBoneProxy* BoneProxy : BoneProxies)
+	{
+		BoneProxy->bManipulating = SliderMovementState == ESliderMovementState::Begin;
+	}
+}
+
+
+void UBoneProxy::OnMultiNumericValueChanged(
 	ESlateTransformComponent::Type Component,
 	ESlateRotationRepresentation::Type Representation,
 	ESlateTransformSubComponent::Type SubComponent,
 	FVector::FReal Value,
-	ETextCommit::Type CommitType,
+	ETextCommit::Type InCommitType,
+	bool bInTransactional,
 	ETransformType TransformType,
-	TArrayView<UBoneProxy*> BoneProxies,
-	bool bIsCommit)
+	TArrayView<UBoneProxy*> BoneProxies)
 {
+	if(TransformType != TransformType_Bone)
+	{
+		return;
+	}
+
+	// Are we in a slider movement? In that case, transaction is handled by the OnSliderMovementStateChanged
+	// callback, since that completely brackets calls to OnMultiNumericValueChanged for change/commit values.
+	bool bInSliderMovement = false;
 	for(UBoneProxy* BoneProxy : BoneProxies)
 	{
-		BoneProxy->OnNumericValueCommitted(Component, Representation, SubComponent, Value, CommitType, TransformType, bIsCommit);
+		if (BoneProxy->bManipulating)
+		{
+			bInSliderMovement = true;
+			break;
+		}
+	}
+
+	if (bInTransactional && !bInSliderMovement)
+	{
+		BeginSetValueTransaction(Component, BoneProxies);
+	}
+	
+	for(UBoneProxy* BoneProxy : BoneProxies)
+	{
+		BoneProxy->OnNumericValueChanged(Component, Representation, SubComponent, Value, TransformType);
+	}
+	
+	if (bInTransactional && !bInSliderMovement)
+	{
+		EndTransaction();
 	}
 }
 
@@ -374,15 +441,16 @@ bool UBoneProxy::DiffersFromDefault(ESlateTransformComponent::Type Component, ET
 	return false;
 }
 
+
 void UBoneProxy::ResetToDefault(ESlateTransformComponent::Type InComponent, ETransformType TransformType)
 {
 	if(TransformType == TransformType_Bone && bIsTransformEditable)
 	{
-		if (UDebugSkelMeshComponent* Component = SkelMeshComponent.Get())
+		if (const UDebugSkelMeshComponent* Component = SkelMeshComponent.Get())
 		{
 			if (Component->PreviewInstance && Component->AnimScriptInstance == Component->PreviewInstance)
 			{
-				int32 BoneIndex = Component->GetBoneIndex(BoneName);
+				const int32 BoneIndex = Component->GetBoneIndex(BoneName);
 				if (BoneIndex != INDEX_NONE && BoneIndex < Component->GetNumComponentSpaceTransforms())
 				{
 					Component->PreviewInstance->SetFlags(RF_Transactional);
@@ -394,31 +462,31 @@ void UBoneProxy::ResetToDefault(ESlateTransformComponent::Type InComponent, ETra
 					{
 						case ESlateTransformComponent::Location:
 						{
-							ModifyBone.Translation = ReferenceLocation;
+							ModifyBone.Translation = FVector::ZeroVector;
 							break;
 						}
 						case ESlateTransformComponent::Rotation:
 						{
-							ModifyBone.Rotation = ReferenceRotation;
+							ModifyBone.Rotation = FRotator::ZeroRotator;
 							break;
 						}
 						case ESlateTransformComponent::Scale:
 						{
-							ModifyBone.Scale = ReferenceScale;
+							ModifyBone.Scale = FVector::OneVector;
 							break;
 						}
 						default:
 						{
-							ModifyBone.Translation = ReferenceLocation;
-							ModifyBone.Rotation = ReferenceRotation;
-							ModifyBone.Scale = ReferenceScale;
+							ModifyBone.Translation = FVector::ZeroVector;
+							ModifyBone.Rotation = FRotator::ZeroRotator;
+							ModifyBone.Scale = FVector::OneVector;
 							break;
 						}
 					}
 
-					if(ModifyBone.Translation.Equals(ReferenceLocation) &&
-						ModifyBone.Rotation.Equals(ReferenceRotation) &&
-						ModifyBone.Scale.Equals(ReferenceScale))
+					if(ModifyBone.Translation.Equals(FVector::ZeroVector) &&
+						ModifyBone.Rotation.Equals(FRotator::ZeroRotator) &&
+						ModifyBone.Scale.Equals(FVector::OneVector))
 					{
 						Component->PreviewInstance->RemoveBoneModification(BoneName);
 					}
@@ -428,16 +496,50 @@ void UBoneProxy::ResetToDefault(ESlateTransformComponent::Type InComponent, ETra
 	}
 }
 
+void UBoneProxy::BeginSetValueTransaction(ESlateTransformComponent::Type InComponent, TArrayView<UBoneProxy*> BoneProxies)
+{
+	FText TransactionScopeText;
+	switch (InComponent)
+	{
+	case ESlateTransformComponent::Location:
+		TransactionScopeText = LOCTEXT("SetLocation", "Set Location");
+		break;
+	case ESlateTransformComponent::Rotation:
+		TransactionScopeText = LOCTEXT("SetRotation", "Set Rotation");
+		break;
+	case ESlateTransformComponent::Scale:
+		TransactionScopeText = LOCTEXT("SetScale", "Set Scale");
+		break;
+	default:
+		checkNoEntry();
+	}
+
+	GEditor->BeginTransaction(TransactionScopeText);
+
+	for (UBoneProxy* BoneProxy: BoneProxies)
+	{
+		if (UDebugSkelMeshComponent* Component = BoneProxy->SkelMeshComponent.Get())
+		{
+			if (Component->PreviewInstance && Component->AnimScriptInstance == Component->PreviewInstance)
+			{
+				Component->PreviewInstance->SetFlags(RF_Transactional);
+				Component->PreviewInstance->Modify();
+			}
+		}
+	}
+}
+
+void UBoneProxy::EndTransaction()
+{
+	GEditor->EndTransaction();
+}
+
 void UBoneProxy::PreEditChange(FEditPropertyChain& PropertyAboutToChange)
 {
 	if (UDebugSkelMeshComponent* Component = SkelMeshComponent.Get())
 	{
 		if (Component->PreviewInstance && Component->AnimScriptInstance == Component->PreviewInstance)
 		{
-			bManipulating = true;
-
-			Component->PreviewInstance->Modify();
-
 			if (PropertyAboutToChange.GetActiveMemberNode()->GetValue()->GetFName() == GET_MEMBER_NAME_CHECKED(UBoneProxy, Location))
 			{
 				PreviousLocation = Location;
@@ -462,15 +564,11 @@ void UBoneProxy::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEv
 		{
 			if (Component->PreviewInstance && Component->AnimScriptInstance == Component->PreviewInstance)
 			{
-				bManipulating = (PropertyChangedEvent.ChangeType == EPropertyChangeType::Interactive);
-
 				int32 BoneIndex = Component->GetBoneIndex(BoneName);
 				if (BoneIndex != INDEX_NONE && BoneIndex < Component->GetNumComponentSpaceTransforms())
 				{
 					FTransform BoneTransform = Component->GetBoneTransform(BoneIndex);
 					FMatrix BoneLocalCoordSystem = Component->GetBoneTransform(BoneIndex).ToMatrixNoScale().RemoveTranslation();
-					Component->PreviewInstance->SetFlags(RF_Transactional);
-					Component->PreviewInstance->Modify();
 					FAnimNode_ModifyBone& ModifyBone = Component->PreviewInstance->ModifyBone(BoneName);
 					FTransform ModifyBoneTransform(ModifyBone.Rotation, ModifyBone.Translation, ModifyBone.Scale);
 					FTransform BaseTransform = BoneTransform.GetRelativeTransformReverse(ModifyBoneTransform);
@@ -528,7 +626,7 @@ void UBoneProxy::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEv
 	}
 }
 
-void UBoneProxy::OnPreEditChange(FName PropertyName, bool bIsCommit)
+void UBoneProxy::OnPreEditChange(FName PropertyName)
 {
 	FEditPropertyChain PropertyChain;
 	FProperty* Property = FindFProperty<FProperty>(GetClass(), PropertyName);
@@ -537,10 +635,10 @@ void UBoneProxy::OnPreEditChange(FName PropertyName, bool bIsCommit)
 	PreEditChange(PropertyChain);
 }
 
-void UBoneProxy::OnPostEditChangeProperty(FName PropertyName, bool bIsCommit)
+void UBoneProxy::OnPostEditChangeProperty(FName PropertyName)
 {
 	FProperty* Property = FindFProperty<FProperty>(GetClass(), PropertyName);
-	FPropertyChangedEvent ChangedEvent(Property, bIsCommit ? EPropertyChangeType::Unspecified : EPropertyChangeType::Interactive);
+	FPropertyChangedEvent ChangedEvent(Property, bManipulating ? EPropertyChangeType::Interactive : EPropertyChangeType::ValueSet);
 	PostEditChangeProperty(ChangedEvent);
 }
 

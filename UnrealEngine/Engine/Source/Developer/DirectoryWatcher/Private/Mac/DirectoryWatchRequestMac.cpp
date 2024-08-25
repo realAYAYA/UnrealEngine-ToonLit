@@ -3,6 +3,7 @@
 #include "DirectoryWatchRequestMac.h"
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
+#include "Mac/CocoaThread.h"
 
 void DirectoryWatchMacCallback( ConstFSEventStreamRef StreamRef, void* WatchRequestPtr, size_t EventCount, void* EventPaths, const FSEventStreamEventFlags EventFlags[], const FSEventStreamEventId EventIDs[] )
 {
@@ -33,7 +34,6 @@ void FDirectoryWatchRequestMac::Shutdown( void )
 		check(EventStream);
 
 		FSEventStreamStop(EventStream);
-		FSEventStreamUnscheduleFromRunLoop(EventStream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
 		FSEventStreamInvalidate(EventStream);
 		FSEventStreamRelease(EventStream);
 
@@ -89,7 +89,7 @@ bool FDirectoryWatchRequestMac::Init(const FString& InDirectory)
 		return false;
 	}
 
-	FSEventStreamScheduleWithRunLoop( EventStream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode );
+	FSEventStreamSetDispatchQueue( EventStream, dispatch_get_main_queue() );
 	FSEventStreamStart( EventStream );
 
 	bRunning = true;
@@ -122,34 +122,45 @@ void FDirectoryWatchRequestMac::EndWatchRequest()
 
 void FDirectoryWatchRequestMac::ProcessPendingNotifications()
 {
-	// Trigger all listening delegates with the files that have changed
-	if ( FileChanges.Num() > 0 )
-	{
-		TMap<uint32, TArray<FFileChangeData>> FileChangeCache;
-		for (const FWatchDelegate& Delegate : Delegates)
-		{
-			// Filter list of all file changes down to ones that just match this delegate's flags
-			TArray<FFileChangeData>* CachedChanges = FileChangeCache.Find(Delegate.Value);
-			if (CachedChanges)
-			{
-				Delegate.Key.Execute(*CachedChanges);
-			}
-			else
-			{
-				const bool bIncludeDirs = (Delegate.Value & IDirectoryWatcher::WatchOptions::IncludeDirectoryChanges) != 0;
-				TArray<FFileChangeData>& Changes = FileChangeCache.Add(Delegate.Value);
-				for (const TPair<FFileChangeData, bool>& FileChangeData : FileChanges)
-				{
-					// @todo support IgnoreChangesInSubtree
-					if (!FileChangeData.Value || bIncludeDirs)
-					{
-						Changes.Add(FileChangeData.Key);
-					}
-				}
-				Delegate.Key.Execute(Changes);
-			}
-		}
+	bool bNeedsEmpty = false;
 
+	{
+		FReadScopeLock Lock(FileChangesLock);
+
+		// Trigger all listening delegates with the files that have changed
+		if ( FileChanges.Num() > 0 )
+		{
+			TMap<uint32, TArray<FFileChangeData>> FileChangeCache;
+			for (const FWatchDelegate& Delegate : Delegates)
+			{
+				// Filter list of all file changes down to ones that just match this delegate's flags
+				TArray<FFileChangeData>* CachedChanges = FileChangeCache.Find(Delegate.Value);
+				if (CachedChanges)
+				{
+					Delegate.Key.Execute(*CachedChanges);
+				}
+				else
+				{
+					const bool bIncludeDirs = (Delegate.Value & IDirectoryWatcher::WatchOptions::IncludeDirectoryChanges) != 0;
+					TArray<FFileChangeData>& Changes = FileChangeCache.Add(Delegate.Value);
+					for (const TPair<FFileChangeData, bool>& FileChangeData : FileChanges)
+					{
+						// @todo support IgnoreChangesInSubtree
+						if (!FileChangeData.Value || bIncludeDirs)
+						{
+							Changes.Add(FileChangeData.Key);
+						}
+					}
+					Delegate.Key.Execute(Changes);
+				}
+			}
+			
+			bNeedsEmpty = true;
+		}
+	}
+	if (bNeedsEmpty)
+	{
+		FWriteScopeLock Lock(FileChangesLock);
 		FileChanges.Empty();
 	}
 }
@@ -161,6 +172,8 @@ void FDirectoryWatchRequestMac::ProcessChanges( size_t EventCount, void* EventPa
 		// ignore all events
 		return;
 	}
+
+	FWriteScopeLock Lock(FileChangesLock);
 
 	CFArrayRef EventPathArray = (CFArrayRef)EventPaths;
 

@@ -10,7 +10,6 @@ namespace HordeCommon.Rpc.Tasks
 		public void MergeDefaults(JobOptions other)
 		{
 			Executor ??= other.Executor;
-			UseNewLogStorage ??= other.UseNewLogStorage;
 			UseNewTempStorage ??= other.UseNewTempStorage;
 		}
 	}

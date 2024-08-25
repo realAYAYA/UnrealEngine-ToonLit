@@ -618,7 +618,7 @@ FTreeMapNodeDataPtr ITreeMap::ParseOPMLToTreeMapData( const FString& OPMLFilePat
 													ChildNodeData->HashTags.Add( HashTag );
 
 													// Strip the hash tag ofg of the original string
-													ChildNodeData->Name.MidInline( 0, HashTagCharIndex, false );
+													ChildNodeData->Name.MidInline( 0, HashTagCharIndex, EAllowShrinking::No );
 													if( HashTagCharIndex + HashTagLength < ChildNodeData->Name.Len() )
 													{
 														ChildNodeData->Name += ChildNodeData->Name.Mid( HashTagCharIndex + HashTagLength );

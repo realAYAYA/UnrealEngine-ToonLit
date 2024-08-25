@@ -41,7 +41,7 @@ struct FShaderPlatformCachedIniValue
 		// so instead of hitting an asser below, we detect that the request SP is the current SP, and use the CVar value that is set currently
 		if (IniPlatformName == FPlatformProperties::IniPlatformName() || ActualShaderPlatform == GMaxRHIShaderPlatform)
 		{
-			checkf(CVar != nullptr, TEXT("Failed to find CVar %s when getting current value for FShaderPlatformCachedIniValue"));
+			checkf(CVar != nullptr, TEXT("Failed to find CVar %s when getting current value for FShaderPlatformCachedIniValue"), *CVarName);
 
 			CVar->GetValue(Value);
 			return Value;

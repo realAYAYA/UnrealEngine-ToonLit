@@ -2,8 +2,8 @@
 
 #pragma once
 
-#ifndef STRATA_ENABLED
-#error "This header should only be included when Strata is enabled."
+#ifndef SUBSTRATE_ENABLED
+#error "This header should only be included when Substrate is enabled."
 #endif
 
 #include "PathTracingSubstrateCommon.ush"
@@ -53,7 +53,7 @@ struct FSubstrateThinGlassSlabData
 		F0 = F0RGBToF0(Payload.SpecularColor);
 		F90 = F0ToMicroOcclusion(F0);
 		TransmissionColor = Payload.GetTransmittanceColor();
-		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, STRATA_MIN_FUZZ_ROUGHNESS);
+		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, SUBSTRATE_MIN_FUZZ_ROUGHNESS);
 
 		const float NoV = saturate(V.z);
 		SpecR0 = ComputeGGXSpecEnergyTermsA(RoughnessR.x, NoV, F0, F90);

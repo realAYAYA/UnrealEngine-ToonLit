@@ -121,16 +121,19 @@ bool BoxIntersectsViewFrustum(float3 BoxOrigin, float3 BoxExtent)
 	float FarDepth = 1.0 - Epsilon;
 #endif // HAS_INVERTED_Z_BUFFER
 
+	FDFVector3 BoxWorldOrigin = DFPromote(BoxOrigin); // LWC_TODO
+	float3 BoxTranslatedWorldOrigin = DFFastToTranslatedWorld(BoxWorldOrigin, PrimaryView.PreViewTranslation);
+
 	// Project frustum vertices into world-space
 	float4 Viewport = float4(0.0, 0.0, View.ViewSizeAndInvSize.xy);
-	float3 W_000 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xw, NearDepth, 1)));
-	float3 W_100 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zw, NearDepth, 1)));
-	float3 W_010 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xy, NearDepth, 1)));
-	float3 W_110 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zy, NearDepth, 1)));
-	float3 W_001 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xw, FarDepth, 1)));
-	float3 W_101 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zw, FarDepth, 1)));
-	float3 W_011 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xy, FarDepth, 1)));
-	float3 W_111 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zy, FarDepth, 1)));
+	float3 W_000 = SvPositionToTranslatedWorld(float4(Viewport.xw, NearDepth, 1));
+	float3 W_100 = SvPositionToTranslatedWorld(float4(Viewport.zw, NearDepth, 1));
+	float3 W_010 = SvPositionToTranslatedWorld(float4(Viewport.xy, NearDepth, 1));
+	float3 W_110 = SvPositionToTranslatedWorld(float4(Viewport.zy, NearDepth, 1));
+	float3 W_001 = SvPositionToTranslatedWorld(float4(Viewport.xw, FarDepth, 1));
+	float3 W_101 = SvPositionToTranslatedWorld(float4(Viewport.zw, FarDepth, 1));
+	float3 W_011 = SvPositionToTranslatedWorld(float4(Viewport.xy, FarDepth, 1));
+	float3 W_111 = SvPositionToTranslatedWorld(float4(Viewport.zy, FarDepth, 1));
 
 	float4 Planes[5] = {
 		// Front
@@ -147,7 +150,7 @@ bool BoxIntersectsViewFrustum(float3 BoxOrigin, float3 BoxExtent)
 		CreatePlane(W_000, W_100, W_001)
 	};
 
-	return BoxIntersectsFrustum(BoxOrigin, BoxExtent, Planes);
+	return BoxIntersectsFrustum(BoxTranslatedWorldOrigin, BoxExtent, Planes);
 }
 
 [numthreads(THREADGROUP_SIZE_3D, THREADGROUP_SIZE_3D, THREADGROUP_SIZE_3D)]
@@ -177,7 +180,7 @@ void TopLevelGridCalculateVoxelSize(
 		int HalfWidth = View.ViewSizeAndInvSize.x * 0.5;
 		float PixelWidth = TanHalfFOV.x / HalfWidth;
 
-		float3 WorldCameraOrigin = LWCHackToFloat(LWCSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
+		float3 WorldCameraOrigin = DFHackToFloat(DFFastSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
 		float Distance = length(WorldVoxelCenter - WorldCameraOrigin) - length(WorldVoxelExtent);
 		float VoxelWidth = Distance * PixelWidth * ShadingRate;
 
@@ -281,7 +284,7 @@ void AllocateBottomLevelGrid(
 		}
 
 		// Write the voxel contents
-		FTopLevelGridData TopLevelGridData;
+		FTopLevelGridData TopLevelGridData = (FTopLevelGridData)0;
 		{
 			SetBottomLevelIndex(TopLevelGridData, IndirectionGridIndex);
 			SetBottomLevelVoxelResolution(TopLevelGridData, IndirectionGridResolution);
@@ -458,7 +461,7 @@ void BuildMajorantVoxelGridCS(
 
 	int LinearIndex = GetLinearIndex(VoxelIndex, TopLevelGridResolution);
 	FTopLevelGridData TopLevelGridData = TopLevelGridBuffer[LinearIndex];
-	if (!IsBottomLevelEmpty(TopLevelGridData))
+	if (IsBottomLevelAllocated(TopLevelGridData))
 	{
 		int3 VoxelResolution = GetBottomLevelVoxelResolution(TopLevelGridData);
 		int BottomLevelVoxelCount = VoxelResolution.x * VoxelResolution.y * VoxelResolution.z;
@@ -467,14 +470,17 @@ void BuildMajorantVoxelGridCS(
 		for (int Index = 0; Index < BottomLevelVoxelCount; ++Index)
 		{
 			FTopLevelGridData IndirectionData = IndirectionGridBuffer[IndirectionGridIndex + Index];
-			uint IndirectionIndex = GetBottomLevelIndex(IndirectionData);
-			int3 IndirectionResolution = GetBottomLevelVoxelResolution(IndirectionData);
-			int IndirectionVoxelCount = IndirectionResolution.x * IndirectionResolution.y * IndirectionResolution.z;
-			for (uint VoxelIndex = 0; VoxelIndex < IndirectionVoxelCount; ++VoxelIndex)
+			if (IsBottomLevelAllocated(IndirectionData))
 			{
-				uint BottomLevelIndex = IndirectionIndex + VoxelIndex;
-				float3 Extinction = GetExtinction(ExtinctionGridBuffer[BottomLevelIndex]);
-				UpdateMajorantData(MajorantData, Extinction);
+				uint IndirectionIndex = GetBottomLevelIndex(IndirectionData);
+				int3 IndirectionResolution = GetBottomLevelVoxelResolution(IndirectionData);
+				int IndirectionVoxelCount = IndirectionResolution.x * IndirectionResolution.y * IndirectionResolution.z;
+				for (uint VoxelIndex = 0; VoxelIndex < IndirectionVoxelCount; ++VoxelIndex)
+				{
+					uint BottomLevelIndex = IndirectionIndex + VoxelIndex;
+					float3 Extinction = GetExtinction(ExtinctionGridBuffer[BottomLevelIndex]);
+					UpdateMajorantData(MajorantData, Extinction);
+				}
 			}
 		}
 #else // DIM_ENABLE_INDIRECTION_GRID

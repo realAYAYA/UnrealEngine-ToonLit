@@ -68,10 +68,10 @@ class StreamingConnectionStats {
 class StreamingConnection : NSObject {
 
     weak var delegate: StreamingConnectionDelegate?
+    weak var renderView : UIView?
+    
     var subjectName : String!
     
-    var renderView : UIView?
-
     var name: String {
         get {
             assertionFailure("not implemented")

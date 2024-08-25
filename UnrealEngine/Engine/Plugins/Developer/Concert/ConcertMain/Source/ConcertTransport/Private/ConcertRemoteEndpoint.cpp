@@ -263,7 +263,7 @@ TSharedPtr<FConcertMessageCapturedContext> FConcertRemoteEndpoint::GetNextMessag
 		{
 			// Pop the first message off the queue
 			NextMessageToReceive = QueuedMessagesToReceive[0];
-			QueuedMessagesToReceive.RemoveAt(0, 1, /*bAllowShrinking*/false);
+			QueuedMessagesToReceive.RemoveAt(0, 1, EAllowShrinking::No);
 
 			NextMessageToReceive->CapturedContext.UtcNow = UtcNow;
 

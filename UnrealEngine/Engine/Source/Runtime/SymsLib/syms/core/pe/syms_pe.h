@@ -19,89 +19,25 @@
 */
 
 ////////////////////////////////
-// NOTE(allen): Generated
+//~ allen: Generated
 
-#include "syms/core/generated/syms_meta_coff.h"
 #include "syms/core/generated/syms_meta_pe.h"
 
 ////////////////////////////////
-// NOTE(allen): DOS Header
+//~ allen: DOS Header
 
 // this is the "MZ" as a 16-bit short
 #define SYMS_DOS_MAGIC 0x5a4d
 
 ////////////////////////////////
-
-#define SYMS_COFF_MIN_BIG_OBJ_VERSION 2
-#define SYMS_COFF_BIG_OBJ_MAGIC_LO 0xC7A1BAD1EEBAA94Bull
-#define SYMS_COFF_BIG_OBJ_MAGIC_HI 0xAF20FAF66AA4DCB8ull
-typedef struct SYMS_CoffHeaderBigObj{
-  SYMS_U16 sig1; // SYMS_CoffMachineType_UNKNOWN
-  SYMS_U16 sig2; // SYMS_U16_MAX
-  SYMS_U16 version;
-  SYMS_U16 machine;
-  SYMS_U32 time_stamp;
-  SYMS_U8 magic[16];
-  SYMS_U32 unused[4];
-  SYMS_U32 section_count;
-  SYMS_U32 pointer_to_symbol_table;
-  SYMS_U32 number_of_symbols;
-} SYMS_CoffHeaderBigObj;
-
-#pragma pack(push, 1)
-
-typedef union SYMS_CoffSymbolName{
-  SYMS_U8 short_name[8];
-  struct{
-    // if this field is filled with zeroes we have a long name,
-    // which means name is stored in the string table 
-    // and we need to use the offset to look it up...
-    SYMS_U32 zeroes;
-    SYMS_U32 string_table_offset;
-  } long_name;
-} SYMS_CoffSymbolName;
-
-typedef struct SYMS_CoffSymbol16{
-  SYMS_CoffSymbolName name;
-  SYMS_U32 value;
-  SYMS_U16 section_number;
-  union{
-    struct{
-      SYMS_CoffSymDType msb;
-      SYMS_CoffSymType  lsb;
-    } u;
-    SYMS_U16 v;
-  } type;
-  SYMS_CoffSymStorageClass storage_class;
-  SYMS_U8 number_of_aux_symbols;
-} SYMS_CoffSymbol16;
-
-typedef struct SYMS_CoffSymbol32{
-  SYMS_CoffSymbolName name;
-  SYMS_U32 value;
-  SYMS_U32 section_number;
-  union{
-    struct{
-      SYMS_CoffSymDType msb;
-      SYMS_CoffSymType  lsb;
-    } u;
-    SYMS_U16 v;
-  } type;
-  SYMS_CoffSymStorageClass storage_class;
-  SYMS_U8 number_of_aux_symbols;
-} SYMS_CoffSymbol32;
-
-#pragma pack(pop)
-
-////////////////////////////////
-// NOTE(allen): PE Magic Numbers
+//~ allen: PE Magic Numbers
 
 #define SYMS_PE_MAGIC   0x00004550u
 #define SYMS_PE32_MAGIC     0x010bu
 #define SYMS_PE32PLUS_MAGIC 0x020bu
 
 ////////////////////////////////
-// NOTE(allen): .pdata
+//~ allen: .pdata
 
 // TODO(allen): renaming pass here.
 typedef struct SYMS_PeMipsPdata{
@@ -114,7 +50,7 @@ typedef struct SYMS_PeMipsPdata{
 
 typedef struct SYMS_PeArmPdata{
   SYMS_U32 voff_first;
-  // NOTE(allen): 
+  // NOTE(allen):
   // bits    | meaning
   // [0:7]   | prolog length
   // [8:29]  | function length
@@ -130,7 +66,7 @@ typedef struct SYMS_PeIntelPdata{
 } SYMS_PeIntelPdata;
 
 ////////////////////////////////
-// NOTE(allen): Codeview Info
+//~ allen: Codeview Info
 
 typedef struct SYMS_PeGuid{
   SYMS_U32 data1;
@@ -161,31 +97,44 @@ typedef struct SYMS_PeCvHeaderPDB70{
 #pragma pack(pop)
 
 ////////////////////////////////
-// Import
+//~ nick: Imports & Exports
 
-typedef struct SYMS_PeImportDirectoryEntry{
-  SYMS_U32 lookup_table_virt_off;
+typedef struct SYMS_PeImportEntry{
+  SYMS_U32 lookup_table_voff;
   SYMS_U32 timestamp;
   SYMS_U32 forwarder_chain;
-  SYMS_U32 name_virt_off;
-  SYMS_U32 import_addr_table_virt_off;
-} SYMS_PeImportDirectoryEntry;
+  SYMS_U32 name_voff;
+  SYMS_U32 import_addr_table_voff;
+} SYMS_PeImportEntry;
 
-////////////////////////////////
-// Export
+typedef struct SYMS_PeDelayedImportEntry{
+  // According to PE/COFF spec this field is unused and should be set zero,
+  // but when I compile mule with MSVC 2019 this is set to 1.
+  SYMS_U32 attributes;
+  SYMS_U32 name_voff;                       // Name of the DLL
+  SYMS_U32 module_handle_voff;              // Place where module handle from LoadLibrary is stored
+  SYMS_U32 iat_voff;
+  SYMS_U32 name_table_voff;                 // Array of hint/name or oridnals
+  SYMS_U32 bound_table_voff;                // (Optional) Points to an array of SYMS_PeThunkData
+  SYMS_U32 unload_table_voff;               // (Optional) Copy of iat_voff
+  //  0 not bound
+  // -1 if bound and real timestamp located in bounded import directory
+  // Otherwise time when dll was bound
+  SYMS_U32 timestamp; 
+} SYMS_PeDelayedImportEntry;
 
 typedef struct SYMS_PeExportTable{
   SYMS_U32 flags;                       // must be zero
   SYMS_U32 timestamp;                   // time and date when export table was created
   SYMS_U16 major_ver;                   // table version, user can change major and minor version
   SYMS_U16 minor_ver; 
-  SYMS_U32 name_virt_off;               // ASCII name of the dll
+  SYMS_U32 name_voff;                   // ASCII name of the dll
   SYMS_U32 ordinal_base;                // Starting oridnal number
   SYMS_U32 export_address_table_count;
   SYMS_U32 name_pointer_table_count;
-  SYMS_U32 export_address_table_virt_off;
-  SYMS_U32 name_pointer_table_virt_off;
-  SYMS_U32 ordinal_table_virt_off;
+  SYMS_U32 export_address_table_voff;
+  SYMS_U32 name_pointer_table_voff;
+  SYMS_U32 ordinal_table_voff;
 } SYMS_PeExportTable;
 
 #endif //SYMS_PE_H

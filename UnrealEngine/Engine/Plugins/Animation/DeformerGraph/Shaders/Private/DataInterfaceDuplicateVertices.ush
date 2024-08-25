@@ -19,7 +19,8 @@ uint ReadNumDuplicateVertices_{DataInterfaceName}()
 int2 ReadDuplicateVerticesStartAndLength_{DataInterfaceName}(uint VertexIndex)
 {
 #if ENABLE_DUPLICATED_VERTICES
-	uint BufferIndex = ({DataInterfaceName}_InputStreamStart + VertexIndex) * 2;
+	// DuplicateVertex buffer is provided per section and thus we don't need to offset index with InputStreamStart
+	uint BufferIndex = VertexIndex * 2;
 	return int2({DataInterfaceName}_DuplicateVertexStartAndLength[BufferIndex  + 1], {DataInterfaceName}_DuplicateVertexStartAndLength[BufferIndex]);
 #else	
 	return 0;

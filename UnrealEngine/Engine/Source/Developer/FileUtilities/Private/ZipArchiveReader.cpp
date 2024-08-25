@@ -234,7 +234,7 @@ bool FZipArchiveReader::FImpl::TryReadFile(FStringView FileName, TArray<uint8>& 
 		return false;
 	}
 
-	OutData.SetNumUninitialized(ZipFileStat.size, false /* bAllowShrinking */);
+	OutData.SetNumUninitialized(ZipFileStat.size, EAllowShrinking::No);
 
 	zip_file* EmbeddedFile = zip_fopen_index(ZipFile, *Index, 0 /* flags */);
 	if (!EmbeddedFile)

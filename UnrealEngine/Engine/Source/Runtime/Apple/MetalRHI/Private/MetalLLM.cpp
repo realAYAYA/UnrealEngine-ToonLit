@@ -70,56 +70,56 @@ APPLE_PLATFORM_OBJECT_ALLOC_OVERRIDES(FMetalDeallocHandler)
 }
 @end
 
-static mtlpp::PixelFormat FromSRGBFormat(mtlpp::PixelFormat Format)
+static MTL::PixelFormat FromSRGBFormat(MTL::PixelFormat Format)
 {
-	mtlpp::PixelFormat MTLFormat = Format;
+    MTL::PixelFormat MTLFormat = Format;
 	
 	switch (Format)
 	{
-		case mtlpp::PixelFormat::RGBA8Unorm_sRGB:
-			MTLFormat = mtlpp::PixelFormat::RGBA8Unorm;
+		case MTL::PixelFormatRGBA8Unorm_sRGB:
+			MTLFormat = MTL::PixelFormatRGBA8Unorm;
 			break;
-		case mtlpp::PixelFormat::BGRA8Unorm_sRGB:
-			MTLFormat = mtlpp::PixelFormat::BGRA8Unorm;
+		case MTL::PixelFormatBGRA8Unorm_sRGB:
+			MTLFormat = MTL::PixelFormatBGRA8Unorm;
 			break;
 #if PLATFORM_MAC
-		case mtlpp::PixelFormat::BC1_RGBA_sRGB:
-			MTLFormat = mtlpp::PixelFormat::BC1_RGBA;
+		case MTL::PixelFormatBC1_RGBA_sRGB:
+			MTLFormat = MTL::PixelFormatBC1_RGBA;
 			break;
-		case mtlpp::PixelFormat::BC2_RGBA_sRGB:
-			MTLFormat = mtlpp::PixelFormat::BC2_RGBA;
+		case MTL::PixelFormatBC2_RGBA_sRGB:
+			MTLFormat = MTL::PixelFormatBC2_RGBA;
 			break;
-		case mtlpp::PixelFormat::BC3_RGBA_sRGB:
-			MTLFormat = mtlpp::PixelFormat::BC3_RGBA;
+		case MTL::PixelFormatBC3_RGBA_sRGB:
+			MTLFormat = MTL::PixelFormatBC3_RGBA;
 			break;
-		case mtlpp::PixelFormat::BC7_RGBAUnorm_sRGB:
-			MTLFormat = mtlpp::PixelFormat::BC7_RGBAUnorm;
+		case MTL::PixelFormatBC7_RGBAUnorm_sRGB:
+			MTLFormat = MTL::PixelFormatBC7_RGBAUnorm;
 			break;
 #endif //PLATFORM_MAC
 #if PLATFORM_IOS
-		case mtlpp::PixelFormat::R8Unorm_sRGB:
-			MTLFormat = mtlpp::PixelFormat::R8Unorm;
+		case MTL::PixelFormatR8Unorm_sRGB:
+			MTLFormat = MTL::PixelFormatR8Unorm;
 			break;
-		case mtlpp::PixelFormat::PVRTC_RGBA_2BPP_sRGB:
-			MTLFormat = mtlpp::PixelFormat::PVRTC_RGBA_2BPP;
+		case MTL::PixelFormatPVRTC_RGBA_2BPP_sRGB:
+			MTLFormat = MTL::PixelFormatPVRTC_RGBA_2BPP;
 			break;
-		case mtlpp::PixelFormat::PVRTC_RGBA_4BPP_sRGB:
-			MTLFormat = mtlpp::PixelFormat::PVRTC_RGBA_4BPP;
+		case MTL::PixelFormatPVRTC_RGBA_4BPP_sRGB:
+			MTLFormat = MTL::PixelFormatPVRTC_RGBA_4BPP;
 			break;
-		case mtlpp::PixelFormat::ASTC_4x4_sRGB:
-			MTLFormat = mtlpp::PixelFormat::ASTC_4x4_LDR;
+		case MTL::PixelFormatASTC_4x4_sRGB:
+			MTLFormat = MTL::PixelFormatASTC_4x4_LDR;
 			break;
-		case mtlpp::PixelFormat::ASTC_6x6_sRGB:
-			MTLFormat = mtlpp::PixelFormat::ASTC_6x6_LDR;
+		case MTL::PixelFormatASTC_6x6_sRGB:
+			MTLFormat = MTL::PixelFormatASTC_6x6_LDR;
 			break;
-		case mtlpp::PixelFormat::ASTC_8x8_sRGB:
-			MTLFormat = mtlpp::PixelFormat::ASTC_8x8_LDR;
+		case MTL::PixelFormatASTC_8x8_sRGB:
+			MTLFormat = MTL::PixelFormatASTC_8x8_LDR;
 			break;
-		case mtlpp::PixelFormat::ASTC_10x10_sRGB:
-			MTLFormat = mtlpp::PixelFormat::ASTC_10x10_LDR;
+		case MTL::PixelFormatASTC_10x10_sRGB:
+			MTLFormat = MTL::PixelFormatASTC_10x10_LDR;
 			break;
-		case mtlpp::PixelFormat::ASTC_12x12_sRGB:
-			MTLFormat = mtlpp::PixelFormat::ASTC_12x12_LDR;
+		case MTL::PixelFormatASTC_12x12_sRGB:
+			MTLFormat = MTL::PixelFormatASTC_12x12_LDR;
 			break;
 #endif //PLATFORM_IOS
 		default:
@@ -129,12 +129,12 @@ static mtlpp::PixelFormat FromSRGBFormat(mtlpp::PixelFormat Format)
 	return MTLFormat;
 }
 
-static EPixelFormat MetalToRHIPixelFormat(mtlpp::PixelFormat Format)
+static EPixelFormat MetalToRHIPixelFormat(MTL::PixelFormat Format)
 {
 	Format = FromSRGBFormat(Format);
 	for (uint32 i = 0; i < PF_MAX; i++)
 	{
-		if((mtlpp::PixelFormat)GPixelFormats[i].PlatformFormat == Format)
+		if((MTL::PixelFormat)GPixelFormats[i].PlatformFormat == Format)
 		{
 			return (EPixelFormat)i;
 		}
@@ -143,19 +143,19 @@ static EPixelFormat MetalToRHIPixelFormat(mtlpp::PixelFormat Format)
 	return PF_MAX;
 }
 
-void MetalLLM::LogAllocTexture(mtlpp::Device& Device, mtlpp::TextureDescriptor const& Desc, mtlpp::Texture const& Texture)
+void MetalLLM::LogAllocTexture(MTL::Device* Device, MTL::TextureDescriptor* Desc, MTL::Texture* Texture)
 {
-	mtlpp::SizeAndAlign SizeAlign;
+	MTL::SizeAndAlign SizeAlign;
 	if (FMetalCommandQueue::SupportsFeature(EMetalFeaturesGPUCaptureManager))
 	{
-		SizeAlign = Device.HeapTextureSizeAndAlign(Desc);
+		SizeAlign = Device->heapTextureSizeAndAlign(Desc);
 	}
 	
-	void* Ptr = (void*)Texture.GetPtr();
-	uint64 Size = SizeAlign.Size;
+	void* Ptr = (void*)Texture;
+	uint64 Size = SizeAlign.size;
 	
 #if PLATFORM_IOS
-	bool bMemoryless = (Texture.GetStorageMode() == mtlpp::StorageMode::Memoryless);
+	bool bMemoryless = (Texture->storageMode() == MTL::StorageModeMemoryless);
 	if (!bMemoryless)
 #endif
 	{
@@ -163,18 +163,18 @@ void MetalLLM::LogAllocTexture(mtlpp::Device& Device, mtlpp::TextureDescriptor c
 	}
 	INC_DWORD_STAT(STAT_MetalTextureCount);
 	
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size, ELLMTag::Untagged, ELLMAllocType::System));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size, ELLMTag::Untagged, ELLMAllocType::System));
 	// Assign a dealloc handler to untrack the memory - but don't track the dispatch block!
 	{
 		LLM_SCOPED_PAUSE_TRACKING(ELLMAllocType::System);
 		
-		if (Desc.GetUsage() & mtlpp::TextureUsage::RenderTarget)
+		if (Desc->usage() & MTL::TextureUsageRenderTarget)
 		{
-			objc_setAssociatedObject(Texture.GetPtr(), (void*)&MetalLLM::LogAllocTexture,
+			objc_setAssociatedObject((__bridge id<MTLTexture>)Texture, (void*)&MetalLLM::LogAllocTexture,
 			[[[FMetalDeallocHandler alloc] initWithBlock:^{
 				LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::RenderTargets);
 				
-				LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
+				LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
 				
 #if PLATFORM_IOS
 				if (!bMemoryless)
@@ -188,11 +188,11 @@ void MetalLLM::LogAllocTexture(mtlpp::Device& Device, mtlpp::TextureDescriptor c
 		}
 		else
 		{
-			objc_setAssociatedObject(Texture.GetPtr(), (void*)&MetalLLM::LogAllocTexture,
+			objc_setAssociatedObject((__bridge id<MTLTexture>)Texture, (void*)&MetalLLM::LogAllocTexture,
 			[[[FMetalDeallocHandler alloc] initWithBlock:^{
 				LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::Textures);
 			
-				LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
+				LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
 			
 #if PLATFORM_IOS
 				if (!bMemoryless)
@@ -207,51 +207,63 @@ void MetalLLM::LogAllocTexture(mtlpp::Device& Device, mtlpp::TextureDescriptor c
 	}
 }
 
-void MetalLLM::LogAllocBuffer(mtlpp::Device& Device, mtlpp::Buffer const& Buffer)
+void MetalLLM::LogAllocBuffer(MTL::Device* Device, FMetalBufferPtr Buffer)
 {
-	void* Ptr = (void*)Buffer.GetPtr();
-	uint64 Size = Buffer.GetLength();
+	void* Ptr = (void*)Buffer.Get();
+	uint64 Size = Buffer->GetLength();
 	
 	INC_MEMORY_STAT_BY(STAT_MetalBufferMemory, Size);
 	INC_DWORD_STAT(STAT_MetalBufferCount);
 	
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size, ELLMTag::Untagged, ELLMAllocType::System));
-	// Assign a dealloc handler to untrack the memory - but don't track the dispatch block!
-	{
-		LLM_SCOPED_PAUSE_TRACKING(ELLMAllocType::System);
-		
-		objc_setAssociatedObject(Buffer.GetPtr(), (void*)&MetalLLM::LogAllocBuffer,
-		[[[FMetalDeallocHandler alloc] initWithBlock:^{
-			LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::Buffers);
-			
-			LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
-			
-			DEC_MEMORY_STAT_BY(STAT_MetalBufferMemory, Size);
-			DEC_DWORD_STAT(STAT_MetalBufferCount);
-		}] autorelease],
-		OBJC_ASSOCIATION_RETAIN);
-	}
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size, ELLMTag::Untagged, ELLMAllocType::System));
+    Buffer->MarkAllocated();
 }
 
-void MetalLLM::LogAllocHeap(mtlpp::Device& Device, mtlpp::Heap const& Heap)
+void MetalLLM::LogAllocBufferNative(MTL::Device* Device, MTLBufferPtr Buffer)
 {
-	void* Ptr = (void*)Heap.GetPtr();
-	uint64 Size = Heap.GetSize();
+    void* Ptr = (void*)Buffer.get();
+    uint64 Size = Buffer->length();
+    
+    INC_MEMORY_STAT_BY(STAT_MetalBufferMemory, Size);
+    INC_DWORD_STAT(STAT_MetalBufferCount);
+    
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size, ELLMTag::Untagged, ELLMAllocType::System));
+    // Assign a dealloc handler to untrack the memory - but don't track the dispatch block!
+    {
+        LLM_SCOPED_PAUSE_TRACKING(ELLMAllocType::System);
+        
+        objc_setAssociatedObject((__bridge id<MTLBuffer>)Buffer.get(), (void*)&MetalLLM::LogAllocBufferNative,
+        [[[FMetalDeallocHandler alloc] initWithBlock:^{
+            LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::Buffers);
+            
+			LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
+            
+            DEC_MEMORY_STAT_BY(STAT_MetalBufferMemory, Size);
+            DEC_DWORD_STAT(STAT_MetalBufferCount);
+        }] autorelease],
+        OBJC_ASSOCIATION_RETAIN);
+    }
+}
+
+void MetalLLM::LogAllocHeap(MTL::Device* Device, MTL::Heap* Heap)
+{
+	void* Ptr = (void*)Heap;
+	uint64 Size = Heap->size();
 	
 	INC_MEMORY_STAT_BY(STAT_MetalHeapMemory, Size);
 	INC_DWORD_STAT(STAT_MetalHeapCount);
 	
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size, ELLMTag::Untagged, ELLMAllocType::System));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size, ELLMTag::Untagged, ELLMAllocType::System));
 	// Assign a dealloc handler to untrack the memory - but don't track the dispatch block!
 	{
 		LLM_SCOPED_PAUSE_TRACKING(ELLMAllocType::System);
 		
-		objc_setAssociatedObject(Heap.GetPtr(), (void*)&MetalLLM::LogAllocHeap,
+		objc_setAssociatedObject((__bridge id<MTLHeap>)Heap, (void*)&MetalLLM::LogAllocHeap,
 								 [[[FMetalDeallocHandler alloc] initWithBlock:^{
 			LLM_SCOPE_METAL(ELLMTagMetal::Heaps);
 			LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::Heaps);
 			
-			LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
+			LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr, ELLMAllocType::System));
 			
 			DEC_MEMORY_STAT_BY(STAT_MetalHeapMemory, Size);
 			DEC_DWORD_STAT(STAT_MetalHeapCount);
@@ -260,14 +272,8 @@ void MetalLLM::LogAllocHeap(mtlpp::Device& Device, mtlpp::Heap const& Heap)
 	}
 }
 
-void MetalLLM::LogAliasTexture(mtlpp::Texture const& Texture)
+void MetalLLM::LogAliasTexture(MTL::Texture* Texture)
 {
-	objc_setAssociatedObject(Texture.GetPtr(), (void*)&MetalLLM::LogAllocTexture, nil, OBJC_ASSOCIATION_RETAIN);
+	objc_setAssociatedObject((__bridge id<MTLTexture>)Texture, (void*)&MetalLLM::LogAllocTexture, nullptr, OBJC_ASSOCIATION_RETAIN);
 }
-
-void MetalLLM::LogAliasBuffer(mtlpp::Buffer const& Buffer)
-{
-	objc_setAssociatedObject(Buffer.GetPtr(), (void*)&MetalLLM::LogAllocBuffer, nil, OBJC_ASSOCIATION_RETAIN);
-}
-
 

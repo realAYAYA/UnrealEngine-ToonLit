@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Buffers;
 using System.Buffers.Binary;
 using System.Text;
 using System.Threading;
@@ -26,14 +25,14 @@ namespace EpicGames.Horde.Compute
 		class MessageBuilder : IAgentMessageBuilder
 		{
 			readonly AgentMessageChannel _channel;
-			readonly IComputeBufferWriter _sendBufferWriter;
+			readonly ComputeBufferWriter _sendBufferWriter;
 			readonly AgentMessageType _type;
 			int _length;
 
 			/// <inheritdoc/>
 			public int Length => _length;
 
-			public MessageBuilder(AgentMessageChannel channel, IComputeBufferWriter sendBufferWriter, AgentMessageType type)
+			public MessageBuilder(AgentMessageChannel channel, ComputeBufferWriter sendBufferWriter, AgentMessageType type)
 			{
 				_channel = channel;
 				_sendBufferWriter = sendBufferWriter;
@@ -74,26 +73,33 @@ namespace EpicGames.Horde.Compute
 			public Span<byte> GetSpan(int sizeHint = 0) => GetMemory(sizeHint).Span;
 		}
 
-		readonly IComputeSocket _socket;
-		readonly IComputeBufferReader _recvBufferReader;
-		readonly IComputeBufferWriter _sendBufferWriter;
+		readonly int _channelId;
+		readonly ComputeProtocol _protocol;
+		readonly ComputeBufferReader _recvBufferReader;
+		readonly ComputeBufferWriter _sendBufferWriter;
 
-		// Can lock chunked memory writer to acuqire pointer
+		// Can lock chunked memory writer to acquire pointer
 		readonly ILogger _logger;
 
-#pragma warning disable CA2213
 		MessageBuilder? _currentBuilder;
-#pragma warning restore CA2213
+
+		/// <summary>
+		/// The negotiated compute protocol version number
+		/// </summary>
+		public ComputeProtocol Protocol => _protocol;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
+		/// <param name="channelId"></param>
+		/// <param name="protocol">Protocol version number</param>
 		/// <param name="recvBufferReader"></param>
 		/// <param name="sendBufferWriter"></param>
 		/// <param name="logger">Logger for diagnostic output</param>
-		public AgentMessageChannel(IComputeBufferReader recvBufferReader, IComputeBufferWriter sendBufferWriter, ILogger logger)
+		public AgentMessageChannel(int channelId, ComputeProtocol protocol, ComputeBufferReader recvBufferReader, ComputeBufferWriter sendBufferWriter, ILogger logger)
 		{
-			_socket = null!;
+			_channelId = channelId;
+			_protocol = protocol;
 			_recvBufferReader = recvBufferReader.AddRef();
 			_sendBufferWriter = sendBufferWriter.AddRef();
 			_logger = logger;
@@ -107,13 +113,14 @@ namespace EpicGames.Horde.Compute
 		/// <param name="recvBuffer"></param>
 		/// <param name="sendBuffer"></param>
 		/// <param name="logger">Logger for diagnostic output</param>
-		public AgentMessageChannel(IComputeSocket socket, int channelId, IComputeBuffer recvBuffer, IComputeBuffer sendBuffer, ILogger logger)
+		public AgentMessageChannel(ComputeSocket socket, int channelId, ComputeBuffer recvBuffer, ComputeBuffer sendBuffer, ILogger logger)
 		{
-			_socket = socket;
-			_socket.AttachRecvBuffer(channelId, recvBuffer.Writer);
-			_socket.AttachSendBuffer(channelId, sendBuffer.Reader);
-			_recvBufferReader = recvBuffer.Reader.AddRef();
-			_sendBufferWriter = sendBuffer.Writer.AddRef();
+			socket.AttachRecvBuffer(channelId, recvBuffer);
+			socket.AttachSendBuffer(channelId, sendBuffer);
+			_channelId = channelId;
+			_protocol = socket.Protocol;
+			_recvBufferReader = recvBuffer.CreateReader();
+			_sendBufferWriter = sendBuffer.CreateWriter();
 			_logger = logger;
 		}
 
@@ -124,9 +131,7 @@ namespace EpicGames.Horde.Compute
 		{
 			_currentBuilder?.Dispose();
 
-			_sendBufferWriter.MarkComplete();
 			_sendBufferWriter.Dispose();
-
 			_recvBufferReader.Dispose();
 		}
 
@@ -181,7 +186,7 @@ namespace EpicGames.Horde.Compute
 			{
 				bytes.Append("..");
 			}
-			_logger.LogTrace("{Verb} {Type,-22} [{Length,10:n0}] = {Bytes}", verb, type, data.Length, bytes.ToString());
+			_logger.LogTrace("{Verb} {ChannelId} {Type,-18} [{Length,10:n0}] = {Bytes}", verb, _channelId, type, data.Length, bytes.ToString());
 		}
 
 		/// <inheritdoc/>
@@ -209,9 +214,8 @@ namespace EpicGames.Horde.Compute
 		/// </summary>
 		/// <param name="socket">Socket to create a channel for</param>
 		/// <param name="channelId">Identifier for the channel</param>
-		/// <param name="logger">Logger for the channel</param>
-		public static AgentMessageChannel CreateAgentMessageChannel(this IComputeSocket socket, int channelId, ILogger logger)
-			=> socket.CreateAgentMessageChannel(channelId, 65536, logger);
+		public static AgentMessageChannel CreateAgentMessageChannel(this ComputeSocket socket, int channelId)
+			=> socket.CreateAgentMessageChannel(channelId, 65536);
 
 		/// <summary>
 		/// Creates a message channel with the given identifier
@@ -219,9 +223,8 @@ namespace EpicGames.Horde.Compute
 		/// <param name="socket">Socket to create a channel for</param>
 		/// <param name="channelId">Identifier for the channel</param>
 		/// <param name="bufferSize">Size of the send and receive buffer</param>
-		/// <param name="logger">Logger for the channel</param>
-		public static AgentMessageChannel CreateAgentMessageChannel(this IComputeSocket socket, int channelId, int bufferSize, ILogger logger)
-			=> socket.CreateAgentMessageChannel(channelId, bufferSize, bufferSize, logger);
+		public static AgentMessageChannel CreateAgentMessageChannel(this ComputeSocket socket, int channelId, int bufferSize)
+			=> socket.CreateAgentMessageChannel(channelId, bufferSize, bufferSize);
 
 		/// <summary>
 		/// Creates a message channel with the given identifier
@@ -230,12 +233,11 @@ namespace EpicGames.Horde.Compute
 		/// <param name="channelId">Identifier for the channel</param>
 		/// <param name="sendBufferSize">Size of the send buffer</param>
 		/// <param name="recvBufferSize">Size of the recieve buffer</param>
-		/// <param name="logger">Logger for the channel</param>
-		public static AgentMessageChannel CreateAgentMessageChannel(this IComputeSocket socket, int channelId, int sendBufferSize, int recvBufferSize, ILogger logger)
+		public static AgentMessageChannel CreateAgentMessageChannel(this ComputeSocket socket, int channelId, int sendBufferSize, int recvBufferSize)
 		{
-			using IComputeBuffer sendBuffer = new PooledBuffer(sendBufferSize);
-			using IComputeBuffer recvBuffer = new PooledBuffer(recvBufferSize);
-			return new AgentMessageChannel(socket, channelId, sendBuffer, recvBuffer, logger);
+			using ComputeBuffer sendBuffer = new PooledBuffer(sendBufferSize);
+			using ComputeBuffer recvBuffer = new PooledBuffer(recvBufferSize);
+			return new AgentMessageChannel(socket, channelId, sendBuffer, recvBuffer, socket.Logger);
 		}
 
 		/// <summary>
@@ -248,10 +250,7 @@ namespace EpicGames.Horde.Compute
 		public static async ValueTask<AgentMessage> ReceiveAsync(this AgentMessageChannel channel, AgentMessageType type, CancellationToken cancellationToken = default)
 		{
 			AgentMessage message = await channel.ReceiveAsync(cancellationToken);
-			if (message.Type != type)
-			{
-				throw new InvalidAgentMessageException(message);
-			}
+			message.ThrowIfUnexpectedType(type);
 			return message;
 		}
 

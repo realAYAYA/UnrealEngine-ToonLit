@@ -128,7 +128,7 @@ void UDMXMVRGeneralSceneDescription::WriteDMXLibraryToGeneralSceneDescription(co
 	const TArray<int32> FixtureIDsInUse = GetNumericalFixtureIDsInUse(DMXLibrary);
 	int32 NextFixtureID = FixtureIDsInUse.Num() > 0 ? FixtureIDsInUse.Last() + 1 : 1;
 	
-	for (UDMXMVRFixtureNode* FixtureNode : UE::DMX::DMXMVRGeneralSceneDescription::HotFix::Private::NewNodes)
+	for (UDMXMVRFixtureNode* FixtureNode : UE::DMX::DMXMVRGeneralSceneDescription::HotFix::Private::NewNodes) //-V1078
 	{
 		FixtureNode->FixtureID = FString::FromInt(NextFixtureID);
 		NextFixtureID++;

@@ -12,6 +12,7 @@
 #include "RigVMBlueprintGeneratedClass.h"
 #include "RigVMBlueprint.h"
 #include "RigVMCore/RigVM.h"
+#include "InstancedPropertyBagStructureDataProvider.h"
 
 #define LOCTEXT_NAMESPACE "LocalVariableDetails"
 
@@ -96,7 +97,7 @@ void FRigVMLocalVariableDetailCustomization::CustomizeDetails(IDetailLayoutBuild
 		if (CDO->GetVM() != nullptr)
 		{
 			FString SourcePath = FString::Printf(TEXT("LocalVariableDefault::%s|%s::Const"), *GraphBeingCustomized->GetGraphName(), *VariableDescription.Name.ToString());
-			URigVMMemoryStorage* LiteralMemory = CDO->GetVM()->GetLiteralMemory();
+			FRigVMMemoryStorageStruct* LiteralMemory = CDO->GetVM()->GetLiteralMemory();
 			FProperty* Property = LiteralMemory->FindPropertyByName(*SourcePath);
 			if (Property)
 			{
@@ -104,8 +105,8 @@ void FRigVMLocalVariableDetailCustomization::CustomizeDetails(IDetailLayoutBuild
 				Property->ClearPropertyFlags(CPF_EditConst);
 			
 				const FName SanitizedName = FRigVMPropertyDescription::SanitizeName(*SourcePath);
-				TArray<UObject*> Objects = {LiteralMemory};
-				IDetailPropertyRow* Row = DefaultValueCategory.AddExternalObjectProperty(Objects, SanitizedName);
+				IDetailPropertyRow* Row = DefaultValueCategory.AddExternalStructureProperty(MakeShared<FInstancePropertyBagStructureDataProvider>(*LiteralMemory), SanitizedName);
+
 				Row->DisplayName(FText::FromName(VariableDescription.Name));
 
 				const FSimpleDelegate OnDefaultValueChanged = FSimpleDelegate::CreateLambda([this, Property, LiteralMemory]()

@@ -47,12 +47,20 @@ namespace Chaos
 
 		inline void Apply(TRigidParticles<FReal, 3>& InParticles, const FReal Dt, const int32 Index) const override //-V762
 		{
-			ApplyHelper(InParticles.V(Index), InParticles.W(Index), InParticles.LinearEtherDrag(Index), InParticles.AngularEtherDrag(Index), InParticles.MaxLinearSpeedSq(Index), InParticles.MaxAngularSpeedSq(Index), Dt);
+			FVec3 V = InParticles.GetV(Index);
+			FVec3 W = InParticles.GetW(Index);
+			ApplyHelper(V, W, InParticles.LinearEtherDrag(Index), InParticles.AngularEtherDrag(Index), InParticles.MaxLinearSpeedSq(Index), InParticles.MaxAngularSpeedSq(Index), Dt);
+			InParticles.SetV(Index, V);
+			InParticles.SetW(Index, W);
 		}
 
 		inline void Apply(TTransientPBDRigidParticleHandle<FReal, 3>& Particle, const FReal Dt) const override //-V762
 		{
-			ApplyHelper(Particle.V(), Particle.W(), Particle.LinearEtherDrag(), Particle.AngularEtherDrag(), Particle.MaxLinearSpeedSq(), Particle.MaxAngularSpeedSq(), Dt);
+			FVec3 V = Particle.GetV();
+			FVec3 W = Particle.GetW();
+			ApplyHelper(V, W, Particle.LinearEtherDrag(), Particle.AngularEtherDrag(), Particle.MaxLinearSpeedSq(), Particle.MaxAngularSpeedSq(), Dt);
+			Particle.SetV(V);
+			Particle.SetW(W);
 		}
 	};
 

@@ -183,7 +183,7 @@ namespace Gauntlet
 		[Help("Branch", "Target Branch name. Default: Unknown.")]
 		[Help("Changelist", "Target Changelist number. Default: 0.")]
 		[Help("Configuration", "Target Configuration name. Default: Development.")]
-		[Help("JobLink", "Http Link to Build Job. Default: %UE_HORDE_JOBID%")]
+		[Help("JobLink", "Http Link to Build Job.")]
 
 		public override ExitCode Execute()
 		{
@@ -272,10 +272,6 @@ namespace Gauntlet
 			Context.SetProperty("Changelist", ChangelistString);
 			Context.SetProperty("ChangelistDateTime", GetChangelistDateTime(int.Parse(ChangelistString)));
 
-			if (string.IsNullOrEmpty(JobLink))
-			{
-				JobLink = HordeReport.DefaultHordeJobStepLink;
-			}
 			Context.SetProperty("JobLink", JobLink);
 
 			// Create a report

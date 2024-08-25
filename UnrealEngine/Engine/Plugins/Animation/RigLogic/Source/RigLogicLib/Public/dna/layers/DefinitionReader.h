@@ -67,7 +67,6 @@ class DNAAPI DefinitionReader : public DescriptorReader {
             @warning
                 The index must be less than the value returned by getJointCount.
             @return View over the joint name string.
-            @see Joints
         */
         virtual StringView getJointName(std::uint16_t index) const = 0;
         /**
@@ -122,7 +121,6 @@ class DNAAPI DefinitionReader : public DescriptorReader {
             @warning
                 The index must be less than the value returned by getBlendShapeChannelCount.
             @return View over the blend shape channel name string.
-            @see BlendShapes
         */
         virtual StringView getBlendShapeChannelName(std::uint16_t index) const = 0;
         /**
@@ -155,7 +153,6 @@ class DNAAPI DefinitionReader : public DescriptorReader {
             @warning
                 The index must be less than the value returned by getAnimatedMapCount.
             @return View over the animated map name string.
-            @see AnimatedMaps
         */
         virtual StringView getAnimatedMapName(std::uint16_t index) const = 0;
         /**

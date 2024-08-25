@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Rendering/RenderingCommon.h"
+#include "Rendering/SlateRendererTypes.h"
 #include "Layout/Clipping.h"
 #include "Stats/Stats.h"
 #include "SlateGlobals.h"
@@ -27,6 +28,7 @@ DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Elements (Box)"), STAT_SlateElements_Box
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Elements (Border)"), STAT_SlateElements_Border, STATGROUP_Slate, SLATECORE_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Elements (Text)"), STAT_SlateElements_Text, STATGROUP_Slate, SLATECORE_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Elements (ShapedText)"), STAT_SlateElements_ShapedText, STATGROUP_Slate, SLATECORE_API);
+DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Elements (Sdf)"), STAT_SlateElements_ShapedTextSdf, STATGROUP_Slate, SLATECORE_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Elements (Line)"), STAT_SlateElements_Line, STATGROUP_Slate, SLATECORE_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Elements (Other)"), STAT_SlateElements_Other, STATGROUP_Slate, SLATECORE_API);
 
@@ -198,6 +200,7 @@ public:
 
 	/** Adds a cached batch, used in retained rendering */
 	void AddCachedBatches(const TSparseArray<FSlateRenderBatch>& InCachedBatches);
+	static void AddCachedBatchesToBatchData(FSlateBatchData* BatchDataSDR, FSlateBatchData* BatchDataHDR, const TSparseArray<FSlateRenderBatch>& InCachedBatches);
 private:
 	void FillBuffersFromNewBatch(FSlateRenderBatch& Batch, FSlateVertexArray& FinalVertices, FSlateIndexArray& FinalIndices);
 	void CombineBatches(FSlateRenderBatch& FirstBatch, FSlateRenderBatch& SecondBatch, FSlateVertexArray& FinalVertices, FSlateIndexArray& FinalIndices);
@@ -253,6 +256,16 @@ public:
 	bool HasFXPassses() const { return NumPostProcessPasses > 0;}
 
 	bool CompositeHDRViewports() const { return bCompositeHDRViewports; }
+
+	ESlatePostRT GetUsedSlatePostBuffers() const { return UsedSlatePostBuffers; }
+
+	ESlatePostRT GetResourceUpdatingPostBuffers() const { return ResourceUpdatingPostBuffers; }
+
+	ESlatePostRT GetSkipDefaultUpdatePostBuffers() const { return SkipDefaultUpdatePostBuffers; }
+
+	void SetResourceUpdatingPostBuffers(ESlatePostRT InResourceUpdatingPostBuffers) { ResourceUpdatingPostBuffers = InResourceUpdatingPostBuffers; }
+
+	void SetSkipDefaultUpdatePostBuffers(ESlatePostRT InSkipDefaultUpdatePostBuffers) { SkipDefaultUpdatePostBuffers = InSkipDefaultUpdatePostBuffers; }
 
 	void SetCompositeHDRViewports(bool bInCompositeHDRViewports) { bCompositeHDRViewports = bInCompositeHDRViewports; }
 
@@ -453,6 +466,9 @@ private:
 	/** Track the number of drawn shaped text from the previous frame to report to stats. */
 	int32 ElementStat_ShapedText;
 
+	/** Track the number of drawn shaped text using signed distance field from the previous frame to report to stats. */
+	int32 ElementStat_ShapedTextSdf;
+
 	/** Track the number of drawn lines from the previous frame to report to stats. */
 	int32 ElementStat_Line;
 
@@ -476,4 +492,13 @@ private:
 
 	// true if viewports get composited as a separate pass, instead of being rendered directly to the render target. Useful for HDR displays
 	bool bCompositeHDRViewports;
+
+	// true if we added a resource that is using a slate post buffer 
+	ESlatePostRT UsedSlatePostBuffers;
+
+	// true if a resource is updating a slate post buffer, if true we need to add a fence for the scene draw to complete before clearing unused post buffers
+	ESlatePostRT ResourceUpdatingPostBuffers;
+
+	// true if we should skip the default population of the post buffers with the scene & no UI.
+	ESlatePostRT SkipDefaultUpdatePostBuffers;
 };

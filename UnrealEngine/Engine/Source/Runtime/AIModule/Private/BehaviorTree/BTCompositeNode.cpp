@@ -420,7 +420,7 @@ static bool UpdateOperationStack(const UBehaviorTreeComponent& OwnerComp, FStrin
 		UE_VLOG(OwnerComp.GetOwner(), LogBehaviorTree, Verbose, TEXT("%s%s finished: %s"), *Indent,
 			*DescribeLogicOp(CurrentOp.Op),
 			bTestResult ? TEXT("allowed") : TEXT("forbidden"));
-		Indent.LeftChopInline(2, false);
+		Indent.LeftChopInline(2, EAllowShrinking::No);
 
 		Stack.RemoveAt(Stack.Num() - 1);
 		return UpdateOperationStack(OwnerComp, Indent, Stack, bTestResult, FailedDecoratorIdx, NodeDecoratorIdx, bShouldStoreNodeIndex);
@@ -703,4 +703,15 @@ uint16 UBTCompositeNode::GetInstanceMemorySize() const
 {
 	return sizeof(FBTCompositeMemory);
 }
+
+void UBTCompositeNode::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTCompositeMemory>(NodeMemory, InitType);
+}
+
+void UBTCompositeNode::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTCompositeMemory>(NodeMemory, CleanupType);
+}
+
 

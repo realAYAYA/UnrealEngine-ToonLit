@@ -2,37 +2,22 @@
 
 #include "SUSDPrimInfo.h"
 
-#include "USDIntegrationUtils.h"
-#include "USDStageActor.h"
-#include "USDStageModule.h"
-#include "USDTypesConversion.h"
 #include "Widgets/SUSDIntegrationsPanel.h"
 #include "Widgets/SUSDObjectFieldList.h"
 #include "Widgets/SUSDReferencesList.h"
 #include "Widgets/SUSDVariantSetsList.h"
 
 #include "UsdWrappers/UsdStage.h"
-#include "UsdWrappers/UsdPrim.h"
-#include "UsdWrappers/SdfPath.h"
 
-#include "Styling/AppStyle.h"
-
-#include "Widgets/Views/SListView.h"
-#include "Widgets/Text/STextBlock.h"
 #include "Widgets/SBoxPanel.h"
-#include "Widgets/Layout/SSplitter.h"
-#include "Widgets/Layout/SSpacer.h"
-#include "Widgets/Layout/SSeparator.h"
-#include "Modules/ModuleManager.h"
-#include "Engine/World.h"
-#include "Algo/Find.h"
 
 #if USE_USD_SDK
 
 #define LOCTEXT_NAMESPACE "SUSDPrimInfo"
 
-void SUsdPrimInfo::Construct( const FArguments& InArgs )
+void SUsdPrimInfo::Construct(const FArguments& InArgs)
 {
+	// clang-format off
 	ChildSlot
 	[
 		SNew(SVerticalBox)
@@ -71,7 +56,7 @@ void SUsdPrimInfo::Construct( const FArguments& InArgs )
 		+SVerticalBox::Slot()
 		.AutoHeight()
 		[
-			SNew( SBox )
+			SNew(SBox)
 			.Content()
 			[
 				SAssignNew(PropertyMetadataPanel, SUsdObjectFieldList)
@@ -87,38 +72,39 @@ void SUsdPrimInfo::Construct( const FArguments& InArgs )
 		+SVerticalBox::Slot()
 		.AutoHeight()
 		[
-			SNew( SBox )
+			SNew(SBox)
 			.Content()
 			[
-				SAssignNew( IntegrationsPanel, SUsdIntegrationsPanel )
+				SAssignNew(IntegrationsPanel, SUsdIntegrationsPanel)
 			]
 		]
 
 		+SVerticalBox::Slot()
 		.AutoHeight()
 		[
-			SNew( SBox )
+			SNew(SBox)
 			.Content()
 			[
-				SAssignNew( VariantsList, SVariantsList )
+				SAssignNew(VariantsList, SVariantsList)
 			]
 		]
 
 		+SVerticalBox::Slot()
 		.AutoHeight()
 		[
-			SNew( SBox )
+			SNew(SBox)
 			.Content()
 			[
-				SAssignNew( ReferencesList, SUsdReferencesList )
+				SAssignNew(ReferencesList, SUsdReferencesList)
 			]
 		]
 	];
+	// clang-format on
 }
 
 void SUsdPrimInfo::SetPrimPath(const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath)
 {
-	if ( PropertiesList )
+	if (PropertiesList)
 	{
 		TArray<FString> OldSelectedProperties = PropertiesList->GetSelectedFieldNames();
 		TArray<FString> OldSelectedPropertyMetadata = PropertyMetadataPanel->GetSelectedFieldNames();
@@ -137,7 +123,7 @@ void SUsdPrimInfo::SetPrimPath(const UE::FUsdStageWeak& UsdStage, const TCHAR* P
 		// We need this because apparently the list view doesn't generate a selection changed event when it's items are
 		// fully rebuilt, which will happen on SetObjectPath. If SetSelectedFieldNames can't select anything, nothing will
 		// update the metadata panel
-		if(OldSelectedProperties.Num() != NewSelectedProperties.Num() || NewSelectedProperties.Num() != 1)
+		if (OldSelectedProperties.Num() != NewSelectedProperties.Num() || NewSelectedProperties.Num() != 1)
 		{
 			PropertyMetadataPanel->SetObjectPath({}, TEXT(""));
 			PropertyMetadataPanel->SetVisibility(EVisibility::Collapsed);
@@ -149,22 +135,22 @@ void SUsdPrimInfo::SetPrimPath(const UE::FUsdStageWeak& UsdStage, const TCHAR* P
 		}
 	}
 
-	if ( IntegrationsPanel )
+	if (IntegrationsPanel)
 	{
-		IntegrationsPanel->SetPrimPath( UsdStage, PrimPath );
+		IntegrationsPanel->SetPrimPath(UsdStage, PrimPath);
 	}
 
-	if ( VariantsList )
+	if (VariantsList)
 	{
-		VariantsList->SetPrimPath( UsdStage, PrimPath );
+		VariantsList->SetPrimPath(UsdStage, PrimPath);
 	}
 
-	if ( ReferencesList )
+	if (ReferencesList)
 	{
-		ReferencesList->SetPrimPath( UsdStage, PrimPath );
+		ReferencesList->SetPrimPath(UsdStage, PrimPath);
 	}
 }
 
 #undef LOCTEXT_NAMESPACE
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

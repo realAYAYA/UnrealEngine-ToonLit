@@ -21,19 +21,19 @@ FSimpleElementVS::FSimpleElementVS(const ShaderMetaType::CompiledShaderInitializ
 	FGlobalShader(Initializer)
 {
 	RelativeTransform.Bind(Initializer.ParameterMap,TEXT("Transform"), SPF_Mandatory);
-	TransformTilePosition.Bind(Initializer.ParameterMap, TEXT("TransformTilePosition"), SPF_Optional); // TransformTilePosition may be optimized out if LWC is disabled
+	TransformPositionHigh.Bind(Initializer.ParameterMap, TEXT("TransformPositionHigh"), SPF_Optional); // TransformTilePosition may be optimized out if LWC is disabled
 }
 
 void FSimpleElementVS::SetParameters(FRHIBatchedShaderParameters& BatchedParameters, const FMatrix& WorldToClipMatrix)
 {
 	SetShaderValue(BatchedParameters, RelativeTransform, FMatrix44f(WorldToClipMatrix));
-	SetShaderValue(BatchedParameters, TransformTilePosition, FVector3f::ZeroVector);
+	SetShaderValue(BatchedParameters, TransformPositionHigh, FVector3f::ZeroVector);
 }
 
-void FSimpleElementVS::SetParameters(FRHIBatchedShaderParameters& BatchedParameters, const FRelativeViewMatrices& Matrices)
+void FSimpleElementVS::SetParameters(FRHIBatchedShaderParameters& BatchedParameters, const FDFRelativeViewMatrices& Matrices)
 {
 	SetShaderValue(BatchedParameters, RelativeTransform, Matrices.RelativeWorldToClip);
-	SetShaderValue(BatchedParameters, TransformTilePosition, Matrices.TilePosition);
+	SetShaderValue(BatchedParameters, TransformPositionHigh, Matrices.PositionHigh);
 }
 
 void FSimpleElementVS::SetParameters(FRHICommandList& RHICmdList, const FMatrix& WorldToClipMatrix)
@@ -43,7 +43,7 @@ void FSimpleElementVS::SetParameters(FRHICommandList& RHICmdList, const FMatrix&
 	RHICmdList.SetBatchedShaderParameters(RHICmdList.GetBoundVertexShader(), BatchedParameters);
 }
 
-void FSimpleElementVS::SetParameters(FRHICommandList& RHICmdList, const FRelativeViewMatrices& Matrices)
+void FSimpleElementVS::SetParameters(FRHICommandList& RHICmdList, const FDFRelativeViewMatrices& Matrices)
 {
 	FRHIBatchedShaderParameters& BatchedParameters = RHICmdList.GetScratchShaderParameters();
 	SetParameters(BatchedParameters, Matrices);

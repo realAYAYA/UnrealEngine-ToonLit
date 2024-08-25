@@ -570,11 +570,21 @@ FGuid UAnimDataModel::GenerateGuid() const
 		UpdateSHAWithArray(Attribute.Identifier.GetBoneName().ToString().GetCharArray());
 		UpdateWithData(Attribute.Identifier.GetBoneIndex());
 		UpdateSHAWithArray(Attribute.Identifier.GetType()->GetFName().ToString().GetCharArray());
-		const uint32 StructSize = Attribute.Identifier.GetType()->GetPropertiesSize();
+		const UScriptStruct* TypeStruct = Attribute.Identifier.GetType();
+		const uint32 StructSize = TypeStruct->GetPropertiesSize();
+		const bool bHasTypeHash = TypeStruct->GetCppStructOps()->HasGetTypeHash();
 		for (const FAttributeKey& Key : Attribute.Curve.GetConstRefOfKeys())
 		{
 			UpdateWithData(Key.Time);
-			Sha.Update(Key.GetValuePtr<uint8>(), StructSize);
+			if (bHasTypeHash)
+			{
+				const uint32 KeyHash = TypeStruct->GetStructTypeHash(Key.GetValuePtr<uint8>());
+				UpdateWithData(KeyHash);
+			}
+			else
+			{
+				Sha.Update(Key.GetValuePtr<uint8>(), StructSize);
+			}
 		}
 	}
 
@@ -648,7 +658,7 @@ void ExtractPose(const TArray<FBoneAnimationTrack>& BoneAnimationTracks, const T
 					if (PoseBoneIndex == VB.VBIndex)
 					{
 						// Remove this bone as we have written data for it (false so we dont resize allocation)
-						VBCompactPoseData.RemoveAtSwap(Idx, 1, false);
+						VBCompactPoseData.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 						break; //Modified TArray so must break here
 					}
 				}

@@ -39,8 +39,8 @@ void FMaterialAttributePropertyDetails::CustomizeDetails(IDetailLayoutBuilder& D
 	for (const TPair<FString, FGuid>& NameGUIDPair : AttributeNameToIDList)
 	{
 		// We remove unwanted elements from the list of material attributes that can be used in the material layer workflow.
-		// We do not want to blend strata BSDF which could increase the complexity of the material (BSDF / Slab count) for each blend operation.
-		// Only parameters are allowed to finally be transform into Strata at the end of the chain.
+		// We do not want to blend Substrate BSDF which could increase the complexity of the material (BSDF / Slab count) for each blend operation.
+		// Only parameters are allowed to finally be transform into Substrate at the end of the chain.
 		// This filtering is ran only when constructing the UI element.
 		if (NameGUIDPair.Key != ExcludedFrontMaterialName)
 		{

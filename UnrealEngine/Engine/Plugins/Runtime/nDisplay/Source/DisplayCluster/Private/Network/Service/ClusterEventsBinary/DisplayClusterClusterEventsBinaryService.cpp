@@ -37,7 +37,13 @@ FString FDisplayClusterClusterEventsBinaryService::GetProtocolName() const
 
 TSharedPtr<IDisplayClusterSession> FDisplayClusterClusterEventsBinaryService::CreateSession(FDisplayClusterSessionInfo& SessionInfo)
 {
-	SessionInfo.SessionName = FString::Printf(TEXT("%s_session_%lu_%s"), *GetName(), SessionInfo.SessionId, *SessionInfo.Endpoint.ToString());
+	SessionInfo.SessionName = FString::Printf(TEXT("%s_%lu_%s_%s"),
+		*GetName(),
+		SessionInfo.SessionId,
+		*SessionInfo.Endpoint.ToString(),
+		*SessionInfo.NodeId.Get(TEXT("(na)"))
+	);
+
 	return MakeShared<FDisplayClusterSession<FDisplayClusterPacketBinary, false>>(SessionInfo, *this, *this, FDisplayClusterService::GetThreadPriority());
 }
 

@@ -10,8 +10,10 @@ namespace rl4 {
 enum class CalculationType {
     Scalar,  ///< scalar CPU algorithm
     SSE,  ///< vectorized (SSE) CPU algorithm
-    AVX  ///< vectorized (AVX) CPU algorithm (RigLogic must be built with AVX support,
-         ///< otherwise it falls back to using the Scalar version)
+    AVX,  ///< vectorized (AVX) CPU algorithm (RigLogic must be built with AVX support,
+          ///< otherwise it falls back to using the Scalar version)
+    NEON  ///< vectorized (NEON) CPU algorithm (RigLogic must be built with NEON support,
+          ///< otherwise it falls back to using the Scalar version)
 };
 
 struct Configuration {

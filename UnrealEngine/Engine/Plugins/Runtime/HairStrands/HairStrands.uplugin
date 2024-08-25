@@ -21,6 +21,15 @@
 			"LoadingPhase": "PostConfigInit"
 		},
 		{
+			"Name": "HairStrandsDeformer",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformDenyList": [
+				"Android",
+				"IOS"
+			]
+		},
+		{
 			"Name": "HairStrandsRuntime",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

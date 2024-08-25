@@ -8,10 +8,9 @@
 namespace UE::Net
 {
 
-struct FRotatorAsShortNetSerializer
+template<typename RotatorType>
+struct FRotatorAsShortNetSerializerBase
 {
-	static constexpr uint32 Version = 0;
-
 	struct FQuantizedType
 	{
 		// Using three bits to indicate whether the components are zero or not.
@@ -21,11 +20,8 @@ struct FRotatorAsShortNetSerializer
 		uint16 Z;
 	};
 
-	typedef FRotator SourceType;
+	typedef RotatorType SourceType;
 	typedef FQuantizedType QuantizedType;
-	typedef FRotatorAsShortNetSerializerConfig ConfigType;
-
-	inline static const ConfigType DefaultConfig;
 
 	static void Serialize(FNetSerializationContext&, const FNetSerializeArgs& Args);
 	static void Deserialize(FNetSerializationContext&, const FNetDeserializeArgs& Args);
@@ -55,22 +51,10 @@ protected:
 	static constexpr ScalarType Bias = ScalarType(0.5f);
 	static constexpr ScalarType InvScale = ScalarType(360)/ScalarType(65536);
 };
-UE_NET_IMPLEMENT_SERIALIZER(FRotatorAsShortNetSerializer);
 
-struct FRotatorNetSerializer : public FRotatorAsShortNetSerializer
+template<typename RotatorType>
+struct FRotatorAsByteNetSerializerBase
 {
-	static constexpr uint32 Version = 0;
-
-	typedef FRotatorNetSerializerConfig ConfigType;
-
-	inline static const ConfigType DefaultConfig;
-};
-UE_NET_IMPLEMENT_SERIALIZER(FRotatorNetSerializer);
-
-struct FRotatorAsByteNetSerializer
-{
-	static constexpr uint32 Version = 0;
-
 	struct FQuantizedType
 	{
 		// Using three bits to indicate whether the components are zero or not.
@@ -80,11 +64,8 @@ struct FRotatorAsByteNetSerializer
 		uint8 Z;
 	};
 
-	typedef FRotator SourceType;
+	typedef RotatorType SourceType;
 	typedef FQuantizedType QuantizedType;
-	typedef FRotatorAsByteNetSerializerConfig ConfigType;
-
-	inline static const ConfigType DefaultConfig;
 
 	static void Serialize(FNetSerializationContext&, const FNetSerializeArgs& Args);
 	static void Deserialize(FNetSerializationContext&, const FNetDeserializeArgs& Args);
@@ -114,10 +95,10 @@ protected:
 	static constexpr ScalarType Bias = ScalarType(0.5f);
 	static constexpr ScalarType InvScale = ScalarType(360)/ScalarType(256);
 };
-UE_NET_IMPLEMENT_SERIALIZER(FRotatorAsByteNetSerializer);
 
-// FRotatorAsShortNetSerializer implementation
-void FRotatorAsShortNetSerializer::Serialize(FNetSerializationContext& Context, const FNetSerializeArgs& Args)
+// FRotatorAsShortNetSerializerBase implementation
+template<typename T>
+void FRotatorAsShortNetSerializerBase<T>::Serialize(FNetSerializationContext& Context, const FNetSerializeArgs& Args)
 {
 	const QuantizedType& Value = *reinterpret_cast<const QuantizedType*>(Args.Source);
 
@@ -137,7 +118,8 @@ void FRotatorAsShortNetSerializer::Serialize(FNetSerializationContext& Context, 
 	}
 }
 
-void FRotatorAsShortNetSerializer::Deserialize(FNetSerializationContext& Context, const FNetDeserializeArgs& Args)
+template<typename T>
+void FRotatorAsShortNetSerializerBase<T>::Deserialize(FNetSerializationContext& Context, const FNetDeserializeArgs& Args)
 {
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
@@ -152,7 +134,8 @@ void FRotatorAsShortNetSerializer::Deserialize(FNetSerializationContext& Context
 	Target = Value;
 }
 
-void FRotatorAsShortNetSerializer::SerializeDelta(FNetSerializationContext& Context, const FNetSerializeDeltaArgs& Args)
+template<typename T>
+void FRotatorAsShortNetSerializerBase<T>::SerializeDelta(FNetSerializationContext& Context, const FNetSerializeDeltaArgs& Args)
 {
 	// Per component equality. With the current scaling a 10 degree change would require 12 bits to replicate
 	// due to 11 bits for the value and 1 for the sign. Add a small lookup table index for that and you're
@@ -186,7 +169,8 @@ void FRotatorAsShortNetSerializer::SerializeDelta(FNetSerializationContext& Cont
 	}
 }
 
-void FRotatorAsShortNetSerializer::DeserializeDelta(FNetSerializationContext& Context, const FNetDeserializeDeltaArgs& Args)
+template<typename T>
+void FRotatorAsShortNetSerializerBase<T>::DeserializeDelta(FNetSerializationContext& Context, const FNetDeserializeDeltaArgs& Args)
 {
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
@@ -221,7 +205,8 @@ void FRotatorAsShortNetSerializer::DeserializeDelta(FNetSerializationContext& Co
 	Target = TempValue;
 }
 
-void FRotatorAsShortNetSerializer::Quantize(FNetSerializationContext&, const FNetQuantizeArgs& Args)
+template<typename T>
+void FRotatorAsShortNetSerializerBase<T>::Quantize(FNetSerializationContext&, const FNetQuantizeArgs& Args)
 {
 	const SourceType& Source = *reinterpret_cast<const SourceType*>(Args.Source);
 	QuantizedType& Target = *reinterpret_cast<QuantizedType*>(Args.Target);
@@ -237,7 +222,8 @@ void FRotatorAsShortNetSerializer::Quantize(FNetSerializationContext&, const FNe
 	Target = TempValue;
 }
 
-void FRotatorAsShortNetSerializer::Dequantize(FNetSerializationContext&, const FNetDequantizeArgs& Args)
+template<typename T>
+void FRotatorAsShortNetSerializerBase<T>::Dequantize(FNetSerializationContext&, const FNetDequantizeArgs& Args)
 {
 	const QuantizedType& Source = *reinterpret_cast<const QuantizedType*>(Args.Source);
 	SourceType& Target = *reinterpret_cast<SourceType*>(Args.Target);
@@ -250,7 +236,8 @@ void FRotatorAsShortNetSerializer::Dequantize(FNetSerializationContext&, const F
 	Target = TempValue;
 }
 
-bool FRotatorAsShortNetSerializer::IsEqual(FNetSerializationContext& Context, const FNetIsEqualArgs& Args)
+template<typename T>
+bool FRotatorAsShortNetSerializerBase<T>::IsEqual(FNetSerializationContext& Context, const FNetIsEqualArgs& Args)
 {
 	if (Args.bStateIsQuantized)
 	{
@@ -275,15 +262,17 @@ bool FRotatorAsShortNetSerializer::IsEqual(FNetSerializationContext& Context, co
 	}
 }
 
-bool FRotatorAsShortNetSerializer::Validate(FNetSerializationContext& Context, const FNetValidateArgs& Args)
+template<typename T>
+bool FRotatorAsShortNetSerializerBase<T>::Validate(FNetSerializationContext& Context, const FNetValidateArgs& Args)
 {
 	const SourceType& Value = *reinterpret_cast<SourceType*>(Args.Source);
 	// Make sure values are valid degree angles. This should catch NaNs as well.
-	return (Value.Pitch >= 0.0f && Value.Pitch < 360.0f) && (Value.Yaw >= 0.0f && Value.Yaw < 360.0f) & (Value.Roll >= 0.0f && Value.Roll < 360.0f); 
+	return (Value.Pitch >= ScalarType(0) && Value.Pitch < ScalarType(360)) && (Value.Yaw >= ScalarType(0) && Value.Yaw < ScalarType(360)) & (Value.Roll >= ScalarType(0) && Value.Roll < ScalarType(360)); 
 }
 
-// FRotatorAsByteNetSerializer implementation
-void FRotatorAsByteNetSerializer::Serialize(FNetSerializationContext& Context, const FNetSerializeArgs& Args)
+// FRotatorAsByteNetSerializerBase implementation
+template<typename T>
+void FRotatorAsByteNetSerializerBase<T>::Serialize(FNetSerializationContext& Context, const FNetSerializeArgs& Args)
 {
 	const QuantizedType& Value = *reinterpret_cast<const QuantizedType*>(Args.Source);
 
@@ -303,7 +292,8 @@ void FRotatorAsByteNetSerializer::Serialize(FNetSerializationContext& Context, c
 	}
 }
 
-void FRotatorAsByteNetSerializer::Deserialize(FNetSerializationContext& Context, const FNetDeserializeArgs& Args)
+template<typename T>
+void FRotatorAsByteNetSerializerBase<T>::Deserialize(FNetSerializationContext& Context, const FNetDeserializeArgs& Args)
 {
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
@@ -318,7 +308,8 @@ void FRotatorAsByteNetSerializer::Deserialize(FNetSerializationContext& Context,
 	Target = Value;
 }
 
-void FRotatorAsByteNetSerializer::SerializeDelta(FNetSerializationContext& Context, const FNetSerializeDeltaArgs& Args)
+template<typename T>
+void FRotatorAsByteNetSerializerBase<T>::SerializeDelta(FNetSerializationContext& Context, const FNetSerializeDeltaArgs& Args)
 {
 	const QuantizedType& Value = *reinterpret_cast<QuantizedType*>(Args.Source);
 	const QuantizedType& PrevValue = *reinterpret_cast<QuantizedType*>(Args.Prev);
@@ -344,7 +335,8 @@ void FRotatorAsByteNetSerializer::SerializeDelta(FNetSerializationContext& Conte
 	}
 }
 
-void FRotatorAsByteNetSerializer::DeserializeDelta(FNetSerializationContext& Context, const FNetDeserializeDeltaArgs& Args)
+template<typename T>
+void FRotatorAsByteNetSerializerBase<T>::DeserializeDelta(FNetSerializationContext& Context, const FNetDeserializeDeltaArgs& Args)
 {
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
@@ -376,7 +368,8 @@ void FRotatorAsByteNetSerializer::DeserializeDelta(FNetSerializationContext& Con
 	Target = TempValue;
 }
 
-void FRotatorAsByteNetSerializer::Quantize(FNetSerializationContext&, const FNetQuantizeArgs& Args)
+template<typename T>
+void FRotatorAsByteNetSerializerBase<T>::Quantize(FNetSerializationContext&, const FNetQuantizeArgs& Args)
 {
 	const SourceType& Source = *reinterpret_cast<const SourceType*>(Args.Source);
 	QuantizedType& Target = *reinterpret_cast<QuantizedType*>(Args.Target);
@@ -392,7 +385,8 @@ void FRotatorAsByteNetSerializer::Quantize(FNetSerializationContext&, const FNet
 	Target = TempValue;
 }
 
-void FRotatorAsByteNetSerializer::Dequantize(FNetSerializationContext&, const FNetDequantizeArgs& Args)
+template<typename T>
+void FRotatorAsByteNetSerializerBase<T>::Dequantize(FNetSerializationContext&, const FNetDequantizeArgs& Args)
 {
 	const QuantizedType& Source = *reinterpret_cast<const QuantizedType*>(Args.Source);
 	SourceType& Target = *reinterpret_cast<SourceType*>(Args.Target);
@@ -405,7 +399,8 @@ void FRotatorAsByteNetSerializer::Dequantize(FNetSerializationContext&, const FN
 	Target = TempValue;
 }
 
-bool FRotatorAsByteNetSerializer::IsEqual(FNetSerializationContext& Context, const FNetIsEqualArgs& Args)
+template<typename T>
+bool FRotatorAsByteNetSerializerBase<T>::IsEqual(FNetSerializationContext& Context, const FNetIsEqualArgs& Args)
 {
 	if (Args.bStateIsQuantized)
 	{
@@ -430,11 +425,62 @@ bool FRotatorAsByteNetSerializer::IsEqual(FNetSerializationContext& Context, con
 	}
 }
 
-bool FRotatorAsByteNetSerializer::Validate(FNetSerializationContext& Context, const FNetValidateArgs& Args)
+template<typename T>
+bool FRotatorAsByteNetSerializerBase<T>::Validate(FNetSerializationContext& Context, const FNetValidateArgs& Args)
 {
 	const SourceType& Value = *reinterpret_cast<SourceType*>(Args.Source);
 	// Make sure values are valid degree angles. This should catch NaNs as well.
-	return (Value.Pitch >= 0.0f && Value.Pitch < 360.0f) && (Value.Yaw >= 0.0f && Value.Yaw < 360.0f) & (Value.Roll >= 0.0f && Value.Roll < 360.0f); 
+	return (Value.Pitch >= ScalarType(0) && Value.Pitch < ScalarType(360)) && (Value.Yaw >= ScalarType(0) && Value.Yaw < ScalarType(360)) & (Value.Roll >= ScalarType(0) && Value.Roll < ScalarType(360)); 
 }
+
+struct FRotatorNetSerializer : public FRotatorAsShortNetSerializerBase<FRotator>
+{
+	static constexpr uint32 Version = 0;
+
+	typedef FRotatorNetSerializerConfig ConfigType;
+
+	inline static const ConfigType DefaultConfig;
+};
+UE_NET_IMPLEMENT_SERIALIZER(FRotatorNetSerializer);
+
+struct FRotatorAsByteNetSerializer : public FRotatorAsByteNetSerializerBase<FRotator>
+{
+	static constexpr uint32 Version = 0;
+
+	typedef FRotatorAsByteNetSerializerConfig ConfigType;
+
+	inline static const ConfigType DefaultConfig;
+};
+UE_NET_IMPLEMENT_SERIALIZER(FRotatorAsByteNetSerializer);
+
+struct FRotatorAsShortNetSerializer : public FRotatorAsShortNetSerializerBase<FRotator>
+{
+	static constexpr uint32 Version = 0;
+
+	typedef FRotatorAsShortNetSerializerConfig ConfigType;
+
+	inline static const ConfigType DefaultConfig;
+};
+UE_NET_IMPLEMENT_SERIALIZER(FRotatorAsShortNetSerializer);
+
+struct FRotator3fNetSerializer : public FRotatorAsShortNetSerializerBase<FRotator3f>
+{
+	static constexpr uint32 Version = 0;
+
+	typedef FRotator3fNetSerializerConfig ConfigType;
+
+	inline static const ConfigType DefaultConfig;
+};
+UE_NET_IMPLEMENT_SERIALIZER(FRotator3fNetSerializer);
+
+struct FRotator3dNetSerializer : public FRotatorAsShortNetSerializerBase<FRotator3d>
+{
+	static constexpr uint32 Version = 0;
+
+	typedef FRotator3dNetSerializerConfig ConfigType;
+
+	inline static const ConfigType DefaultConfig;
+};
+UE_NET_IMPLEMENT_SERIALIZER(FRotator3dNetSerializer);
 
 }

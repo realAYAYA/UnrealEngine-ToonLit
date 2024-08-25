@@ -5,7 +5,7 @@
 
 #include "EntitySystem/MovieSceneEntitySystemLinker.h"
 #include "EntitySystem/Interrogation/MovieSceneInterrogationLinker.h"
-#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedEntityCaptureSource.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieScenePropertySystem)
 

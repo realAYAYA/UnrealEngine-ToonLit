@@ -104,7 +104,7 @@ class FRayTracingAmbientOcclusionRGS : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, RWAmbientOcclusionHitDistanceUAV)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 	END_SHADER_PARAMETER_STRUCT()
 };
 
@@ -165,7 +165,7 @@ void FDeferredShadingSceneRenderer::RenderRayTracingAmbientOcclusion(
 	PassParameters->Intensity = View.FinalPostProcessSettings.RayTracingAOIntensity;
 	PassParameters->MaxNormalBias = GetRaytracingMaxNormalBias();
 	PassParameters->TLAS = Scene->RayTracingScene.GetLayerView(ERayTracingSceneLayer::Base);
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	PassParameters->RWAmbientOcclusionMaskUAV = GraphBuilder.CreateUAV(DenoiserInputs.Mask);
 	PassParameters->RWAmbientOcclusionHitDistanceUAV = GraphBuilder.CreateUAV(DenoiserInputs.RayHitDistance);
 	PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;

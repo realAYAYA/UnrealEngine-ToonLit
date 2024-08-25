@@ -2,6 +2,7 @@
 #include "Nodes/InterchangeBaseNode.h"
 
 #include "CoreMinimal.h"
+#include "Misc/SecureHash.h"
 #include "Types/AttributeStorage.h"
 #include "UObject/Class.h"
 #include "UObject/Object.h"
@@ -107,6 +108,8 @@ FName UInterchangeBaseNode::GetIconName() const
 	return NAME_None;
 }
 
+#if WITH_EDITOR
+
 FString UInterchangeBaseNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
 	FString KeyDisplayName = NodeAttributeKey.ToString();
@@ -159,14 +162,51 @@ FString UInterchangeBaseNode::GetKeyDisplayName(const UE::Interchange::FAttribut
 
 bool UInterchangeBaseNode::ShouldHideAttribute(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
+	//If context is preview we hide internal data
+	if (UserInterfaceContext == EInterchangeNodeUserInterfaceContext::Preview)
+	{
+		if (NodeAttributeKey == UE::Interchange::FBaseNodeStaticData::ParentIDKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == UE::Interchange::FBaseNodeStaticData::IsEnabledKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == UE::Interchange::FBaseNodeStaticData::UniqueIDKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == UE::Interchange::FBaseNodeStaticData::NodeContainerTypeKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == UE::Interchange::FBaseNodeStaticData::TargetAssetIDsKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FBaseNodeStaticData::TargetAssetIDsKey().ToString()))
+		{
+			return true;
+		}
+	}
+
+	//Show anything else
 	return false;
 }
 
 FString UInterchangeBaseNode::GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
 	FString CategoryName = TEXT("Attributes");
+	const FString NodeAttributeString = NodeAttributeKey.ToString();
+	if (NodeAttributeString.StartsWith(TEXT("UserDefined_")) && NodeAttributeString.EndsWith(TEXT("_Value")))
+	{
+		CategoryName = TEXT("Custom Attributes");
+	}
 	return CategoryName;
 }
+
+#endif //WITH_EDITOR
 
 bool UInterchangeBaseNode::HasAttribute(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
@@ -376,20 +416,31 @@ FGuid UInterchangeBaseNode::GetHash() const
 
 FString UInterchangeBaseNode::GetAssetName() const
 {
-	if (!Attributes->ContainAttribute(UE::Interchange::FBaseNodeStaticData::AssetNameKey()))
+	FString OutName = GetDisplayLabel();
+	if (Attributes->ContainAttribute(UE::Interchange::FBaseNodeStaticData::AssetNameKey()))
 	{
-		return GetDisplayLabel();
+		UE::Interchange::FAttributeStorage::TAttributeHandle<FString> Handle = Attributes->GetAttributeHandle<FString>(UE::Interchange::FBaseNodeStaticData::AssetNameKey());
+		if (Handle.IsValid())
+		{
+			FString Value;
+			Handle.Get(Value);
+			OutName = Value;
+		}
 	}
-
-	UE::Interchange::FAttributeStorage::TAttributeHandle<FString> Handle = Attributes->GetAttributeHandle<FString>(UE::Interchange::FBaseNodeStaticData::AssetNameKey());
-	if (Handle.IsValid())
+	if (OutName.Len() > 256)
 	{
-		FString Value;
-		Handle.Get(Value);
-		return Value;
-	}
+		// Compute a 128-bit hash based on the string and use that as a GUID :
+		FTCHARToUTF8 Converted(*OutName);
+		FMD5 MD5Gen;
+		MD5Gen.Update((const uint8*)Converted.Get(), Converted.Length());
+		uint32 Digest[4];
+		MD5Gen.Final((uint8*)Digest);
+		FString GuidStr = FGuid(Digest[0], Digest[1], Digest[2], Digest[3]).ToString(EGuidFormats::Base36Encoded);
 
-	return GetDisplayLabel();
+		//Put the guid between the first and last 115 charcaters
+		OutName = OutName.Left(115) + GuidStr + OutName.Right(115);
+	}
+	return OutName;
 }
 
 bool UInterchangeBaseNode::SetAssetName(const FString& AssetName)
@@ -449,6 +500,16 @@ void UInterchangeBaseNode::CompareNodeStorage(const UInterchangeBaseNode* NodeA,
 void UInterchangeBaseNode::CopyStorageAttributes(const UInterchangeBaseNode* SourceNode, UInterchangeBaseNode* DestinationNode, TArray<UE::Interchange::FAttributeKey>& AttributeKeys)
 {
 	UE::Interchange::FAttributeStorage::CopyStorageAttributes(*(SourceNode->Attributes), *(DestinationNode->Attributes), AttributeKeys);
+}
+
+void UInterchangeBaseNode::CopyStorageAttributes(const UInterchangeBaseNode* SourceNode, UE::Interchange::FAttributeStorage& DestinationStorage, TArray<UE::Interchange::FAttributeKey>& AttributeKeys)
+{
+	UE::Interchange::FAttributeStorage::CopyStorageAttributes(*(SourceNode->Attributes), DestinationStorage, AttributeKeys);
+}
+
+void UInterchangeBaseNode::CopyStorageAttributes(const UE::Interchange::FAttributeStorage& SourceStorage, UInterchangeBaseNode* DestinationNode, TArray<UE::Interchange::FAttributeKey>& AttributeKeys)
+{
+	UE::Interchange::FAttributeStorage::CopyStorageAttributes(SourceStorage, *(DestinationNode->Attributes), AttributeKeys);
 }
 
 void UInterchangeBaseNode::CopyStorage(const UInterchangeBaseNode* SourceNode, UInterchangeBaseNode* DestinationNode)

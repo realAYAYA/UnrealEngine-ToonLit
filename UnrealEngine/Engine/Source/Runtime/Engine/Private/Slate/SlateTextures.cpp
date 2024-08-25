@@ -11,6 +11,7 @@ FSlateTexture2DRHIRef::FSlateTexture2DRHIRef( FTexture2DRHIRef InRef, uint32 InW
 	: TSlateTexture( InRef )
 	, Width( InWidth )
 	, Height( InHeight )
+	, TexCreateFlags( TexCreate_None )
 	, PixelFormat( PF_Unknown )
 	, bCreateEmptyTexture( false )
 {
@@ -387,6 +388,9 @@ FIntPoint FSlateTextureRenderTarget2DResource::GetSizeXY() const
 
 float FSlateTextureRenderTarget2DResource::GetDisplayGamma() const
 {
+	// FSlateTextureRenderTarget2DResource doesn't have Owner
+	//return Owner->GetDisplayGamma();
+
 	if (TargetGamma > UE_KINDA_SMALL_NUMBER * 10.0f)
 	{
 		return TargetGamma;

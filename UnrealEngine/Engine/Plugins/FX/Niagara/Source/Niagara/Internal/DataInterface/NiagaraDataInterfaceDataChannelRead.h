@@ -21,10 +21,11 @@ There is working code for this already but the concept/API needs more fleshing o
 
 */
 
+#include "Containers/DynamicRHIResourceArray.h"
 
+#include "NiagaraDataChannelPublic.h"
 #include "NiagaraDataInterfaceDataChannelCommon.h"
 #include "NiagaraDataInterfaceRW.h"
-#include "NiagaraDataInterfaceEmitterBinding.h"
 #include "NiagaraDataSetAccessor.h"
 #include "NiagaraDataInterfaceDataChannelRead.generated.h"
 
@@ -68,14 +69,10 @@ public:
 // 	UPROPERTY(EditAnywhere, Category="Data Channel", meta=(EditCondition = "Scope == ENiagaraDataChannelScope::Local"))
 // 	FName Source;
 
-	/** When reading from external, the channel to consume. */
+	/** The data channel to access and read from. */
 	UPROPERTY(EditAnywhere, Category="Data Channel")
 	TObjectPtr<UNiagaraDataChannelAsset> Channel;
 	
-	/** A bounds emitter instance when using functions like Spawn. Defaults to Self. */
-	UPROPERTY(EditAnywhere, Category = "Spawning", AdvancedDisplay)
-	FNiagaraDataInterfaceEmitterBinding EmitterBinding;
-
 	/** True if this reader will read the current frame's data. If false, we read the previous frame.
 	* Reading the current frame introduces a tick order dependency but allows for zero latency reads. Any data channel elements that are generated after this reader is used are missed.
 	* Reading the previous frame's data introduces a frame of latency but ensures we never miss any data as we have access to the whole frame.
@@ -93,21 +90,25 @@ public:
 	bool bUpdateSourceDataEveryTick = true;
 
 
-	/** When true, Emitter.Spawn group for any spawned particles will be overridden to the index of the data channel element that generated that spawn. This allows particles to read further data from the data channel element that generated them. */
+	/**
+	When true, Emitter.Spawn group for any spawned particles will be overridden to the index of the data channel element that generated that spawn.
+	Doing this will submit all NDC spawns individually and will be less performant.
+	However it will allow particles to access the NDC data that generated then via the SpawnGroup value.
+	It will also mean that Exec Index will be correct on a per NDC Entry level. 
+	Without this settings ExecIndex will be 0...TotalSpawnCount-1. With this it will be 0...SpawnCount for each NDC item individually.
+	Unless absolutely needed this is discouraged as it comes at significant performance cost when spawning and GPU emitters can currently only handle 8 individual spawns per frame.
+	Calling GetNDCSpawnInfo() in the particle spawn script to get the spawning NDC Index is prefered.
+	*/
 	UPROPERTY(EditAnywhere, Category = "Spawning", AdvancedDisplay)
-	bool bOverrideSpawnGroupToDataChannelIndex = true;
+	bool bOverrideSpawnGroupToDataChannelIndex = false;
 
-	/** The spawn info variable we'll read from the data channel to control spawning using the SpawnFromSpawnInfo DI function.*/
-	UPROPERTY(EditAnywhere, Category = "Spawning", AdvancedDisplay)
-	FName SpawnInfoName;
-	
 	//UObject Interface
 	NIAGARA_API virtual void PostInitProperties() override;
 	NIAGARA_API virtual void BeginDestroy() override;
+	NIAGARA_API virtual void Serialize(FArchive& Ar) override;
 	//UObject Interface End
 
 	//UNiagaraDataInterface Interface
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return true; }
 #if WITH_EDITORONLY_DATA
@@ -115,6 +116,8 @@ public:
 	NIAGARA_API virtual void GetCommonHLSL(FString& OutHLSL)override;
 	NIAGARA_API virtual bool GetFunctionHLSL(FNiagaraDataInterfaceHlslGenerationContext& HlslGenContext, FString& OutHLSL) override;
 	NIAGARA_API virtual void GetParameterDefinitionHLSL(FNiagaraDataInterfaceHlslGenerationContext& HlslGenContext, FString& OutHLSL) override;
+
+	virtual bool UpgradeFunctionCall(FNiagaraFunctionSignature& FunctionSignature)override;
 
 	NIAGARA_API virtual void PostCompile()override;
 #endif	
@@ -152,19 +155,51 @@ public:
 	NIAGARA_API void Num(FVectorVMExternalFunctionContext& Context);
 	NIAGARA_API void Read(FVectorVMExternalFunctionContext& Context, int32 FuncIdx);
 	NIAGARA_API void Consume(FVectorVMExternalFunctionContext& Context, int32 FuncIdx);
+	
+	NIAGARA_API void GetNDCSpawnData(FVectorVMExternalFunctionContext& Context);
 
 	//Emitter only functions.
-	NIAGARA_API void SpawnFromSpawnInfo(FVectorVMExternalFunctionContext& Context);
 	NIAGARA_API void SpawnConditional(FVectorVMExternalFunctionContext& Context, int32 FuncIndex);
 
 	FNDIDataChannelCompiledData& GetCompiledData() { return CompiledData; }
 
 protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 	NIAGARA_API UNiagaraDataInterfaceDataChannelWrite* FindSourceDI()const;
 
  	UPROPERTY()
  	FNDIDataChannelCompiledData CompiledData;
+};
+
+struct FNDIDataChannelRead_EmitterSpawnData
+{
+	TArray<int32> NDCSpawnData;
+	int32 NDCSpawnDataBuckets[16];
+
+	void Reset()
+	{
+		NDCSpawnData.Reset();
+		FMemory::Memzero(NDCSpawnDataBuckets, sizeof(int32) * 16);
+	}
+};
+
+struct FNDIDataChannelRead_EmitterInstanceData
+{
+	//Spawn data buffers needed for accessing the correct NDCIndex and spawn data from a particle during CPU or GPU execution.
+	//Rebuilt every frame and only valid inside the spawn execution generated by this DI.
+	FNDIDataChannelRead_EmitterSpawnData NDCSpawnData;
+
+	//Spawn Counts for each entry in the NDC.
+	TArray<int32> NDCSpawnCounts;
+
+	void Reset()
+	{
+		NDCSpawnCounts.Reset();
+		NDCSpawnData.Reset();
+	}
 };
 
 struct FNDIDataChannelReadInstanceData
@@ -185,8 +220,8 @@ struct FNDIDataChannelReadInstanceData
 	/** Cached hash to check if the layout of our source data has changed. */
 	uint64 ChachedDataSetLayoutHash = INDEX_NONE;
 
-	/** When true we should update our RT data next tick. */
-	mutable bool bUpdateRTData = false;
+	/** When true we should update our function binding info on the RT next tick. */
+	mutable bool bUpdateFunctionBindingRTData = false;
 
 	/** Binding info from the Data Channel to each of our function's parameters. */
 	//FNDIDataChannelBindingInfo BindingInfo;
@@ -204,23 +239,17 @@ struct FNDIDataChannelReadInstanceData
 	std::atomic<int32> ConsumeIndex = 0;
 
 	/** 
-	Conditional spawns to inject into the bound emitter based on our DI function calls.
-	Each data channel element we read in a particular execution will have an entry in this array and can spawn(or not) independently.
+	Instance data for each emitter using this DI.
 	*/
-	TArray<FNiagaraSpawnInfo> ConditionalSpawns;
+	TMap<FNiagaraEmitterInstance*,FNDIDataChannelRead_EmitterInstanceData> EmitterInstanceData;
 
-	/*
-	We read a spawn info for future proofing here but currently we only use the spawn count.
-	NOTE: This is 100% dependent on SpawnInfo class not changing. If it does we'll need to update this.
-	*/
-	FNiagaraDataSetAccessor<FNiagaraSpawnInfo> SpawnInfoAccessor;
 	uint32 CachedLayoutHash = INDEX_NONE;
-	FNiagaraEmitterInstance* EmitterInstance = nullptr;
+	FNiagaraSystemInstance* Owner = nullptr;
 
 	virtual ~FNDIDataChannelReadInstanceData();
 	FNiagaraDataBuffer* GetReadBufferCPU(bool bPrevFrame);
 	bool Init(UNiagaraDataInterfaceDataChannelRead* Interface, FNiagaraSystemInstance* Instance);
-	bool Tick(UNiagaraDataInterfaceDataChannelRead* Interface, FNiagaraSystemInstance* Instance);
+	bool Tick(UNiagaraDataInterfaceDataChannelRead* Interface, FNiagaraSystemInstance* Instance, bool bIsInit = false);	
 	bool PostTick(UNiagaraDataInterfaceDataChannelRead* Interface, FNiagaraSystemInstance* Instance);
 };
 
@@ -229,6 +258,9 @@ struct FNiagaraDataInterfaceProxy_DataChannelRead : public FNiagaraDataInterface
 	virtual void ConsumePerInstanceDataFromGameThread(void* PerInstanceData, const FNiagaraSystemInstanceID& Instance) override;
 	virtual int32 PerInstanceDataPassedToRenderThreadSize() const override;
 	virtual void GetDispatchArgs(const FNDIGpuComputeDispatchArgsGenContext& Context) override;
+
+	virtual void PreStage(const FNDIGpuComputePreStageContext& Context)override;
+	virtual void PostSimulate(const FNDIGpuComputePostSimulateContext& Context)override;
 
 	/** Persistent per instance data on the RT. Constructed when consuming data passed from GT->RT. */
 	struct FInstanceData
@@ -251,6 +283,11 @@ struct FNiagaraDataInterfaceProxy_DataChannelRead : public FNiagaraDataInterface
 		At hlsl gen time we can only know which parameter are accessed by each script individually so each script must have it's own parameter binding table.
 		*/
 		TMap<FNiagaraCompileHash, uint32> GPUScriptParameterTableOffsets;
+
+		/** Buffer containing packed data for all emitters NDC spawning data for use on the GPU. */
+		TArray<int32> NDCSpawnData;
+
+		FRDGBufferRef NDCSpawnDataBuffer;
 	};
 
 	TMap<FNiagaraSystemInstanceID, FInstanceData> SystemInstancesToProxyData_RT;

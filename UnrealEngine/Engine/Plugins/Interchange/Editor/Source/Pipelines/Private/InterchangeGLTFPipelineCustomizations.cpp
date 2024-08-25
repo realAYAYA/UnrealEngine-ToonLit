@@ -33,7 +33,7 @@ void FInterchangeGLTFPipelineCustomization::CustomizeDetails(IDetailLayoutBuilde
 		return;
 	}
 
-	IDetailCategoryBuilder& GLTFCategory = DetailBuilder.EditCategory("glTF");
+	IDetailCategoryBuilder& GLTFCategory = DetailBuilder.EditCategory("GLTF"); //glTF gets auto capitalized and separated into "Gl TF".
 
 	FPropertyEditorModule& PropertyEditorModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 
@@ -67,7 +67,7 @@ void FInterchangeGLTFPipelineCustomization::CustomizeDetails(IDetailLayoutBuilde
 			[
 				SNew(STextBlock)
 				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.Text(NSLOCTEXT("InterchangeGLTFPipelineCustomization::Message", "GLTFPredefinedMaterialSubstitutionMessage", "Substitution can be customized in 'Project Settings > Interchange GLTF'."))
+				.Text(NSLOCTEXT("InterchangeGLTFPipelineCustomization::Message", "GLTFPredefinedMaterialSubstitutionMessage", "MaterialInstance Parent Material Substitution can be\ncustomized in 'Project Settings > Interchange GLTF'."))
 				.AutoWrapText(true)
 			];
 	}

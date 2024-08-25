@@ -6,6 +6,12 @@
 #include "Concepts/BaseStructureProvider.h"
 #include "Param/ParamType.h"
 
+class UAnimSequence;
+class UCharacterMovementComponent;
+class UAnimNextMeshComponent;
+struct FAnimNextGraphLODPose;
+struct FAnimNextGraphReferencePose;
+
 namespace UE::AnimNext::Tests
 {
 	class FParamTypesTest;
@@ -43,7 +49,17 @@ struct ANIMNEXT_API FParamTypeHandle
 		Quat,
 		Transform,
 
-		MaxBuiltIn = Transform,
+		// Common object types
+		Object,
+		CharacterMovementComponent,
+		AnimNextMeshComponent,
+		AnimSequence,
+
+		// Common struct types
+		AnimNextGraphLODPose,
+		AnimNextGraphReferencePose,
+
+		MaxBuiltIn = AnimNextGraphReferencePose,
 
 		Custom = 0xff,
 
@@ -52,6 +68,7 @@ struct ANIMNEXT_API FParamTypeHandle
 
 	friend struct ::FAnimNextParamType;
 	friend struct FParamHelpers;
+	friend struct FParamUtils;
 	friend class UE::AnimNext::Tests::FParamTypesTest;
 
 private:
@@ -67,12 +84,6 @@ private:
 	};
 
 private:
-	/** Get the built-in parameter type */
-	EParamType GetParameterType() const
-	{
-		return (EParamType)Fields.BuiltInType;
-	}
-
 	/** Set the built-in parameter type */
 	void SetParameterType(EParamType InType)
 	{
@@ -91,9 +102,12 @@ private:
 		checkf(InIndex < (1 << 24), TEXT("FTypeHandle::SetCustomTypeIndex: Type Index out of range"));
 		Fields.CustomTypeIndex = InIndex;
 	}
-
-	/** Reset the custom type registry, used in tests */
-	static void ResetCustomTypes();
+	
+#if WITH_DEV_AUTOMATION_TESTS
+	// Used to isolate param type handles from automated tests
+	static void BeginTestSandbox();
+	static void EndTestSandbox();
+#endif
 
 	/** Get a custom type index for the passed-in type information */
 	static uint32 GetOrAllocateCustomTypeIndex(FAnimNextParamType::EValueType InValueType, FAnimNextParamType::EContainerType InContainerType, const UObject* InValueTypeObject);
@@ -105,6 +119,8 @@ private:
 	template<typename ParamType>
 	static constexpr void GetHandleInner(FAnimNextParamType::EValueType& OutValueType, UObject*& OutValueTypeObject)
 	{
+		using NonPtrParamType = std::remove_pointer_t<ParamType>;
+
 		if constexpr (std::is_same_v<ParamType, bool>)
 		{
 			OutValueType = FAnimNextParamType::EValueType::Bool;
@@ -156,17 +172,17 @@ private:
 			OutValueType = FAnimNextParamType::EValueType::Struct;
 			OutValueTypeObject = TBaseStructure<ParamType>::Get();
 		}
-		else if constexpr (TModels<CStaticClassProvider, ParamType>::Value)
+		else if constexpr (TModels<CStaticClassProvider, NonPtrParamType>::Value)
 		{
-			if constexpr (std::is_same_v<ParamType, UClass>)
+			if constexpr (std::is_same_v<NonPtrParamType, UClass>)
 			{
 				OutValueType = FAnimNextParamType::EValueType::Class;
-				OutValueTypeObject = ParamType::StaticClass();
+				OutValueTypeObject = NonPtrParamType::StaticClass();
 			}
 			else
 			{
 				OutValueType = FAnimNextParamType::EValueType::Object;
-				OutValueTypeObject = ParamType::StaticClass();
+				OutValueTypeObject = NonPtrParamType::StaticClass();
 			}
 		}
 		else if constexpr (TIsTObjectPtr<ParamType>::Value)
@@ -208,6 +224,15 @@ public:
 		: Value(0)
 	{
 	}
+
+	/** Get the built-in parameter type */
+	EParamType GetParameterType() const
+	{
+		return (EParamType)Fields.BuiltInType;
+	}
+
+	/** Get the custom type info */
+	void GetCustomTypeInfo(FAnimNextParamType::EValueType& OutValueType, FAnimNextParamType::EContainerType& OutContainerType, const UObject*& OutValueTypeObject) const;
 
 	/** Check whether this describes a built-in type (i.e. not a custom type) */
 	bool IsBuiltInType() const
@@ -276,6 +301,30 @@ public:
 		{
 			TypeHandle.SetParameterType(EParamType::Transform);
 		}
+		else if constexpr (std::is_same_v<NonConstType, TObjectPtr<UObject>> || std::is_same_v<NonConstType, UObject*>)
+		{
+			TypeHandle.SetParameterType(EParamType::Object);
+		}
+		else if constexpr (std::is_same_v<NonConstType, TObjectPtr<UCharacterMovementComponent>> || std::is_same_v<NonConstType, UCharacterMovementComponent*>)
+		{
+			TypeHandle.SetParameterType(EParamType::CharacterMovementComponent);
+		}
+		else if constexpr (std::is_same_v<NonConstType, TObjectPtr<UAnimNextMeshComponent>> || std::is_same_v<NonConstType, UAnimNextMeshComponent*>)
+		{
+			TypeHandle.SetParameterType(EParamType::AnimNextMeshComponent);
+		}
+		else if constexpr (std::is_same_v<NonConstType, TObjectPtr<UAnimSequence>> || std::is_same_v<NonConstType, UAnimSequence*>)
+		{
+			TypeHandle.SetParameterType(EParamType::AnimSequence);
+		}
+		else if constexpr (std::is_same_v<NonConstType, FAnimNextGraphLODPose>)
+		{
+			TypeHandle.SetParameterType(EParamType::AnimNextGraphLODPose);
+		}
+		else if constexpr (std::is_same_v<NonConstType, FAnimNextGraphReferencePose>)
+		{
+			TypeHandle.SetParameterType(EParamType::AnimNextGraphReferencePose);
+		}
 		else
 		{
 			// Not a built-in-type, so we need to do some work
@@ -300,7 +349,7 @@ public:
 			}
 		}
 
-		//check(TypeHandle.IsValid());
+		check(TypeHandle.IsValid());
 
 		return TypeHandle;
 	}
@@ -319,6 +368,9 @@ public:
 	/** Make a parameter type handle from a FProperty */
 	static FParamTypeHandle FromProperty(const FProperty* InProperty);
 
+	/** Make a parameter type handle from a UObject */
+	static FParamTypeHandle FromObject(const UObject* InObject);
+	
 	/** Return the raw value that this handle uses to represent itself */
 	uint32 ToRaw() const
 	{

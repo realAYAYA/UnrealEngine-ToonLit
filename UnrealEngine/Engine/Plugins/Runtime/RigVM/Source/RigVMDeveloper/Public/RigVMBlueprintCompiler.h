@@ -32,7 +32,7 @@ public:
 	virtual bool CanIgnoreNode(const UEdGraphNode* Node) const override { return true; }
 	virtual bool ShouldForceKeepNode(const UEdGraphNode* Node) const override { return false; }
 	virtual void PrecompileFunction(FKismetFunctionContext& Context, EInternalCompilerFlags InternalFlags) override {}
-	virtual void PostCompile() override;
+	virtual void OnPostCDOCompiled(const UObject::FPostCDOCompiledContext& Context) override;
 	virtual void CopyTermDefaultsToDefaultObject(UObject* DefaultObject) override;
 	virtual void EnsureProperGeneratedClass(UClass*& TargetUClass) override;
 	virtual void SpawnNewClass(const FString& NewClassName) override;
@@ -49,7 +49,7 @@ private:
 	// used to fail a compilation and mark the blueprint in error
 	void MarkCompilationFailed(const FString& Message);
 
-private:
+protected:
 	/** the new class we are generating */
 	URigVMBlueprintGeneratedClass* NewRigVMBlueprintGeneratedClass;
 };

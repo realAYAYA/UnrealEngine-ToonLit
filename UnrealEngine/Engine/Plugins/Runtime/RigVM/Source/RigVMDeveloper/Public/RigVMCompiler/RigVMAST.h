@@ -102,70 +102,117 @@ public:
 	// disable copy constructor
 	FRigVMExprAST(const FRigVMExprAST&) = delete;
 
-	// returns the parser this expression is owned by
-	// @return the parser this expression is owned by 
+	/// returns the parser this expression is owned by
+	/// @return the parser this expression is owned by 
 	const FRigVMParserAST* GetParser() const { return ParserPtr; }
 
-	// returns the name of the expression (can be NAME_None)
-	// @return the name of the expression
+	/// returns the name of the expression (can be NAME_None)
+	/// @return the name of the expression
 	FName GetName() const { return Name; }
 
-	// returns the exact type of the expression
-	// @return the exact type of the expression
+	/// returns the exact type of the expression
+	/// @return the exact type of the expression
 	EType GetType() const { return Type; }
 
-	// returns the name of the expression's type
-	// @return the name of the expression's type
+	/// returns the name of the expression's type
+	/// @return the name of the expression's type
 	FName GetTypeName() const;
 
-	// provides type checking for inherited types
-	// @param InType the type to check against
-	// @return true if this expression is of a given type
+	/// provides type checking for inherited types
+	/// @param InType the type to check against
+	/// @return true if this expression is of a given type
 	virtual bool IsA(EType InType) const = 0;
 
-	// returns the index of this expression within the parser's storage
-	// @return the index of this expression within the parser's storage
+	/// returns true if the expression is a node expression
+	virtual bool IsNode() const
+	{
+		return false;
+	}
+
+	/// returns true if the expression is a var expression
+	virtual bool IsVar() const
+	{
+		return false;
+	}
+
+	/// returns the index of this expression within the parser's storage
+	/// @return the index of this expression within the parser's storage
 	int32 GetIndex() const { return Index; }
 
-	// returns true if the expressoin is valid
+	/// returns true if the expressoin is valid
 	bool IsValid() const { return GetIndex() != INDEX_NONE; }
 
-	// returns the parent of this expression
-	// @return the parent of this expression
+	/// returns the model proxy this expression relates to
+	virtual const FRigVMASTProxy& GetProxy() const
+	{
+		static const FRigVMASTProxy EmptyProxy;
+		return EmptyProxy;
+	}
+
+	/// returns the parent of this expression
+	/// @return the parent of this expression
 	const FRigVMExprAST* GetParent() const;
 
-	// returns the first parent in the tree of a given type
-	// @param InExprType The type of expression to look for in the parent tree
-	// @return the first parent in the tree of a given type
+	/// returns the first parent in the tree of a given type
+	/// @param InExprType The type of expression to look for in the parent tree
+	/// @return the first parent in the tree of a given type
 	virtual const FRigVMExprAST* GetFirstParentOfType(EType InExprType) const;
 
-	// returns the block of this expression
-	// @return the block of this expression
+	/// returns true if a given expression is parented to another expression
+	/// @param InParentExpr The potential parent to check
+	/// @return True if this expression is parented to the InParentExpr
+	bool IsParentedTo(const FRigVMExprAST* InParentExpr) const;
+
+	/// returns true if a given expression is a parent of another expression
+	/// @param InChildExpr The potential child to check
+	/// @return True if this expression is a parent of the InChildExpr
+	bool IsParentOf(const FRigVMExprAST* InChildExpr) const;
+
+	/// returns the block of this expression
+	/// @return the block of this expression
 	const FRigVMBlockExprAST* GetBlock() const;
 
-	// returns the root / top level block of this expression
-	// @return the root / top level block of this expression
+	/// returns the root / top level block of this expression
+	/// @return the root / top level block of this expression
 	const FRigVMBlockExprAST* GetRootBlock() const;
 
-	// returns the lowest child index found for this expression within a parent (or INDEX_NONE)
-	// @return the lowest child index found for this expression within a parent (or INDEX_NONE)
+	/// returns all of the block this expression is in
+	/// @param bSortByDepth If true the blocks will be returned sorted (head to tail)
+	/// @return all of the block this expression is in
+	typedef TArray<const FRigVMBlockExprAST*, TInlineAllocator<5>> FRigVMBlockArray;
+	FRigVMBlockArray GetBlocks(bool bSortByDepth) const;
+
+	/// returns the unique block combination hash for this expression (or INDEX_NONE)
+	/// @return the unique block combination name for this expression (or INDEX_NONE)
+	TOptional<uint32> GetBlockCombinationHash() const;
+
+	/// returns the unique block combination name for this expression (or an empty string)
+	/// @return the unique block combination name for this expression (or an empty string)
+	const FString& GetBlockCombinationName() const;
+
+	/// returns the lowest child index found for this expression within a parent (or INDEX_NONE)
+	/// @return the lowest child index found for this expression within a parent (or INDEX_NONE)
 	int32 GetMinChildIndexWithinParent(const FRigVMExprAST* InParentExpr) const;
 
-	// returns the number of children of this expression
-	// @return the number of children of this expression
+	/// returns the number of children of this expression
+	/// @return the number of children of this expression
 	int32 NumChildren() const { return Children.Num(); }
 
-	// returns true if this expressions is constant (non varying)
-	// @return true if this expressions is constant (non varying)
+	/// returns true if this expressions is constant (non varying)
+	/// @return true if this expressions is constant (non varying)
 	virtual bool IsConstant() const;
 
-	// returns true if this expressions is varying (non constant)
-	// @return true if this expressions is varying (non constant)
+	/// returns true if this expressions is varying (non constant)
+	/// @return true if this expressions is varying (non constant)
 	bool IsVarying() const { return !IsConstant(); }
 
-	// accessor operator for a given child
-	// @param InIndex the index of the child to retrieve (bound = NumChildren() - 1)
-	// @return the child at the given index
+	/// returns the maximum depth of the expression in tree (number of recursive parents)
+	/// @return the maximum depth of the expression in tree (number of recursive parents)
+	int32 GetMaximumDepth() const;
+
+	/// accessor operator for a given child
+	/// @param InIndex the index of the child to retrieve (bound = NumChildren() - 1)
+	/// @return the child at the given index
 	const FRigVMExprAST* operator[](int32 InIndex) const { return Children[InIndex]; }
 
 	// begin iterator accessor for the children
@@ -173,55 +220,55 @@ public:
 	// end iterator accessor for the children
 	TArray<FRigVMExprAST*>::RangedForConstIteratorType end() const { return Children.end(); }
 
-	// templated getter to retrieve a child with a given index
-	// type checking will occur within the ::To method and raise
-	// @param InIndex the index of the child to retrieve
-	// @return the child at a given index cast to the provided class
+	/// templated getter to retrieve a child with a given index
+	/// type checking will occur within the ::To method and raise
+	/// @param InIndex the index of the child to retrieve
+	/// @return the child at a given index cast to the provided class
 	template<class ObjectType>
 	const ObjectType* ChildAt(int32 InIndex) const
 	{
 		return Children[InIndex]->To<ObjectType>();
 	}
 
-	// getter to retrieve a child with a given index
-	// @param InIndex the index of the child to retrieve
-	// @return the child at a given index
+	/// getter to retrieve a child with a given index
+	/// @param InIndex the index of the child to retrieve
+	/// @return the child at a given index
 	const FRigVMExprAST* ChildAt(int32 InIndex) const
 	{
 		return Children[InIndex];
 	}
 
-	// returns the first parent in the tree of a given type
-	// @param InExprType The type of expression to look for in the parent tree
-	// @return the first parent in the tree of a given type
+	/// returns the first parent in the tree of a given type
+	/// @param InExprType The type of expression to look for in the parent tree
+	/// @return the first parent in the tree of a given type
 	virtual const FRigVMExprAST* GetFirstChildOfType(EType InExprType) const;
 
-	// returns the number of parents of this expression
-	// @return the number of parents of this expression
+	/// returns the number of parents of this expression
+	/// @return the number of parents of this expression
 	int32 NumParents() const { return Parents.Num(); }
 
-	// templated getter to retrieve a parent with a given index
-	// type checking will occur within the ::To method and raise
-	// @param InIndex the index of the parent to retrieve
-	// @return the parent at a given index cast to the provided class
+	/// templated getter to retrieve a parent with a given index
+	/// type checking will occur within the ::To method and raise
+	/// @param InIndex the index of the parent to retrieve
+	/// @return the parent at a given index cast to the provided class
 	template<class ObjectType>
 	const ObjectType* ParentAt(int32 InIndex) const
 	{
 		return Parents[InIndex]->To<ObjectType>();
 	}
 
-	// getter to retrieve a parent with a given index
-	// @param InIndex the index of the parent to retrieve
-	// @return the parent at a given index
+	/// getter to retrieve a parent with a given index
+	/// @param InIndex the index of the parent to retrieve
+	/// @return the parent at a given index
 	const FRigVMExprAST* ParentAt(int32 InIndex) const
 	{
 		return Parents[InIndex];
 	}
 
-	// const templated cast for casting between
-	// different expression types.
-	// specializations below are used for type checking
-	// @return this object cast to the provided class
+	/// const templated cast for casting between
+	/// different expression types.
+	/// specializations below are used for type checking
+	/// @return this object cast to the provided class
 	template<class ObjectType>
 	const ObjectType* To() const
 	{
@@ -229,10 +276,10 @@ public:
 		return nullptr;
 	}
 
-	// templated cast for casting between
-	// different expression types.
-	// specializations below are used for type checking
-	// @return this object cast to the provided class
+	/// templated cast for casting between
+	/// different expression types.
+	/// specializations below are used for type checking
+	/// @return this object cast to the provided class
 	template<class ObjectType>
 	ObjectType* To()
 	{
@@ -273,13 +320,18 @@ protected:
 	// @param InReplacement the expression to replace this one
 	void ReplaceBy(FRigVMExprAST* InReplacement);
 
-protected:
+	// computes all of the block this expression is in
+	void GetBlocksImpl(FRigVMBlockArray& InOutBlocks) const;
 
 	// returns a string containing an indented tree structure
 	// for debugging purposes. this is only used by the parser
 	// @param InPrefix the prefix to use for indentation
 	// @return the text representation of this part of the tree
 	virtual FString DumpText(const FString& InPrefix = FString()) const;
+
+	// Resets the internal caches of the expression
+	void InvalidateCaches();
+	void InvalidateCachesImpl(TArray<bool>& OutProcessed);
 
 	FName Name;
 	EType Type;
@@ -288,6 +340,8 @@ protected:
 	TArray<FRigVMExprAST*> Parents;
 	TArray<FRigVMExprAST*> Children;
 	TMap<FName, int32> PinNameToChildIndex;
+	mutable TOptional<TOptional<uint32>> BlockCombinationHash;
+	mutable TOptional<int32> MaximumDepth;
 
 	friend class FRigVMParserAST;
 	friend class URigVMCompiler;
@@ -489,7 +543,7 @@ public:
 	};
 
 	// returns true in case this block should not be executed
-	bool IsObsolete() const { return bIsObsolete; }
+	bool IsObsolete() const;
 
 protected:
 
@@ -521,7 +575,12 @@ public:
 	FRigVMNodeExprAST(const FRigVMNodeExprAST&) = delete;
 
 	// returns the proxy this expression is using
-	const FRigVMASTProxy& GetProxy() const { return Proxy; }
+	virtual const FRigVMASTProxy& GetProxy() const override { return Proxy; }
+
+	virtual bool IsNode() const
+	{
+		return true;
+	}
 
 	// returns the node from the model this expression is referencing
 	// @return the node from the model this expression is referencing
@@ -755,10 +814,15 @@ public:
 		return InType == EType::Var;
 	};
 
+	virtual bool IsVar() const
+	{
+		return true;
+	}
+
 	virtual bool IsConstant() const override;
 
 	// returns the proxy this expression is using
-	const FRigVMASTProxy& GetProxy() const { return Proxy; }
+	virtual const FRigVMASTProxy& GetProxy() const override { return Proxy; }
 
 	// returns the pin in the model this variable is representing
 	// @return the pin in the model this variable is representing
@@ -923,6 +987,8 @@ public:
 	// returns the target pin for this assignment
 	// @return the target pin for this assignment
 	URigVMPin* GetTargetPin() const { return Link.TargetProxy.GetSubjectChecked<URigVMPin>(); }
+
+	virtual const FRigVMASTProxy& GetProxy() const override { return GetTargetProxy(); }
 
 	// overload of the type checking mechanism
 	virtual bool IsA(EType InType) const override
@@ -1204,9 +1270,6 @@ public:
 
 private:
 
-	// private constructor for a partial build
-	FRigVMParserAST(TArray<URigVMGraph*> InGraphs, const TArray<FRigVMASTProxy>& InNodesToCompute);
-
 	// make function to create an expression
 	template<class ExprType>
 	ExprType* MakeExpr(FRigVMExprAST::EType InType, const FRigVMASTProxy& InProxy)
@@ -1301,9 +1364,6 @@ private:
 	// helper function to inject an exit expression at the end of every entry expressoin
 	void InjectExitsToEntries();
 
-	// helper function to bubble up expressions which are part of multiple blocks
-	void BubbleUpExpressions();
-
 	// helper function to refresh the expression indices (used after deleting an expression)
 	void RefreshExprIndices();
 
@@ -1317,8 +1377,8 @@ private:
 	void FoldAssignments();
 
 	// helper function to inline all contributing nodes of the graph
-	void Inline(TArray<URigVMGraph*> InGraphs);
-	void Inline(TArray<URigVMGraph*> InGraphs, const TArray<FRigVMASTProxy>& InNodeProxies);
+	void Inline(const TArray<URigVMGraph*>& InGraphs);
+	void Inline(const TArray<URigVMGraph*>& InGraphs, const TArray<FRigVMASTProxy>& InNodeProxies);
 
 	// helper functions to retrieve links for a given pin
 	TArray<int32> GetSourceLinkIndices(const FRigVMASTProxy& InPinProxy, bool bRecursive = false) const;
@@ -1356,6 +1416,7 @@ private:
 	TArray<FRigVMExprAST*> RootExpressions;
 	TArray<FRigVMExprAST*> DeletedExpressions;
 	FRigVMBlockExprAST* ObsoleteBlock;
+	mutable TMap<uint32, FString> BlockCombinationHashToName;
 
 	TArray<FRigVMASTProxy> NodeProxies;
 	TMap<FRigVMASTProxy, FRigVMASTProxy> SharedOperandPins;

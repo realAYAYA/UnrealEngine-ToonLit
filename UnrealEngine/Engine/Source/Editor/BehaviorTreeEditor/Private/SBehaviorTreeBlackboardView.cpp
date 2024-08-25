@@ -2,6 +2,7 @@
 
 #include "SBehaviorTreeBlackboardView.h"
 
+#include "BehaviorTreeEditorDelegates.h"
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -101,7 +102,6 @@ class SBehaviorTreeBlackboardItem : public SGraphPaletteItem
 		SLATE_EVENT(FOnGetDebugKeyValue, OnGetDebugKeyValue)
 		SLATE_EVENT(FOnGetDisplayCurrentState, OnGetDisplayCurrentState)
 		SLATE_EVENT(FOnIsDebuggerReady, OnIsDebuggerReady)
-		SLATE_EVENT(FOnBlackboardKeyChanged, OnBlackboardKeyChanged)
 
 	SLATE_END_ARGS()
 
@@ -110,7 +110,6 @@ class SBehaviorTreeBlackboardItem : public SGraphPaletteItem
 		OnGetDebugKeyValue = InArgs._OnGetDebugKeyValue;
 		OnIsDebuggerReady = InArgs._OnIsDebuggerReady;
 		OnGetDisplayCurrentState = InArgs._OnGetDisplayCurrentState;
-		OnBlackboardKeyChanged = InArgs._OnBlackboardKeyChanged;
 
 		const FSlateFontInfo NameFont = FCoreStyle::GetDefaultFontStyle("Regular", 10);
 
@@ -256,7 +255,7 @@ private:
 
 				BlackboardEntryAction->Update();
 
-				OnBlackboardKeyChanged.ExecuteIfBound(BlackboardData, &BlackboardEntryAction->Key);
+				UE::BehaviorTreeEditor::Delegates::OnBlackboardKeyChanged.Broadcast(*BlackboardData, &BlackboardEntryAction->Key);
 
 				if (!BlackboardEntryAction->bIsNew)
 				{
@@ -436,9 +435,6 @@ private:
 	/** Delegate used to determine whether the BT debugger displaying the current state */
 	FOnGetDisplayCurrentState OnGetDisplayCurrentState;
 
-	/** Delegate for when a blackboard key changes (added, removed, renamed) */
-	FOnBlackboardKeyChanged OnBlackboardKeyChanged;
-
 	/** Read-only flag */
 	bool bIsReadOnly;
 };
@@ -452,7 +448,8 @@ void SBehaviorTreeBlackboardView::Construct(const FArguments& InArgs, TSharedRef
 	OnIsDebuggerPaused = InArgs._OnIsDebuggerPaused;
 	OnGetDebugTimeStamp = InArgs._OnGetDebugTimeStamp;
 	OnGetDisplayCurrentState = InArgs._OnGetDisplayCurrentState;
-	OnBlackboardKeyChanged = InArgs._OnBlackboardKeyChanged;
+
+	OnBlackboardKeyChangedDelegateHandle = UE::BehaviorTreeEditor::Delegates::OnBlackboardKeyChanged.AddSP(this, &SBehaviorTreeBlackboardView::HandleBlackboardKeyChanged);
 
 	BlackboardData = InBlackboardData;
 
@@ -529,10 +526,16 @@ void SBehaviorTreeBlackboardView::Construct(const FArguments& InArgs, TSharedRef
 				.OnContextMenuOpening(this, &SBehaviorTreeBlackboardView::HandleContextMenuOpening, InCommandList)
 				.OnActionMatchesName(this, &SBehaviorTreeBlackboardView::HandleActionMatchesName)
 				.AlphaSortItems(GetDefault<UEditorPerProjectUserSettings>()->bDisplayBlackboardKeysInAlphabeticalOrder)
+				.DefaultRowExpanderBaseIndentLevel(1)
 				.AutoExpandActionMenu(true)
 			]
 		]
 	];
+}
+
+SBehaviorTreeBlackboardView::~SBehaviorTreeBlackboardView()
+{
+	UE::BehaviorTreeEditor::Delegates::OnBlackboardKeyChanged.Remove(OnBlackboardKeyChangedDelegateHandle);
 }
 
 TSharedRef<SWidget> SBehaviorTreeBlackboardView::HandleCreateWidgetForAction(FCreateWidgetForActionData* const InCreateData)
@@ -540,8 +543,7 @@ TSharedRef<SWidget> SBehaviorTreeBlackboardView::HandleCreateWidgetForAction(FCr
 	return SNew(SBehaviorTreeBlackboardItem, InCreateData)
 		.OnIsDebuggerReady(OnIsDebuggerReady)
 		.OnGetDebugKeyValue(OnGetDebugKeyValue)
-		.OnGetDisplayCurrentState(this, &SBehaviorTreeBlackboardView::IsUsingCurrentValues)
-		.OnBlackboardKeyChanged(OnBlackboardKeyChanged);
+		.OnGetDisplayCurrentState(this, &SBehaviorTreeBlackboardView::IsUsingCurrentValues);
 }
 
 void SBehaviorTreeBlackboardView::HandleCollectAllActions( FGraphActionListBuilderBase& GraphActionListBuilder )
@@ -642,6 +644,15 @@ void SBehaviorTreeBlackboardView::SetObject(UBlackboardData* InBlackboardData)
 {
 	BlackboardData = InBlackboardData;
 	GraphActionMenu->RefreshAllActions(true);
+}
+
+void SBehaviorTreeBlackboardView::HandleBlackboardKeyChanged(const UBlackboardData& InBlackboardData, FBlackboardEntry* const InKey)
+{
+	// OnBlackboardKeyChanged is a global delegate so refresh only if it's our asset.
+	if (BlackboardData == &InBlackboardData)
+	{
+		GraphActionMenu->RefreshAllActions(true);
+	}
 }
 
 TSharedPtr<SWidget> SBehaviorTreeBlackboardView::HandleContextMenuOpening(TSharedRef<FUICommandList> ToolkitCommands) const

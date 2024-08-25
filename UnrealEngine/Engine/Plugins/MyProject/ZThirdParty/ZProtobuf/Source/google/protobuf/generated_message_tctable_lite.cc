@@ -1628,7 +1628,7 @@ const char* TcParser::MpPackedVarint(PROTOBUF_TC_PARAM_DECL) {
         ptr, [field](uint64_t value) { field->Add(value); });
   }
 
-  return Error(PROTOBUF_TC_PARAM_PASS);
+  //return Error(PROTOBUF_TC_PARAM_PASS);
 }
 
 bool TcParser::MpVerifyUtf8(StringPiece wire_bytes,

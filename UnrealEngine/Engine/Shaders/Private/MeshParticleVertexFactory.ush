@@ -201,7 +201,7 @@ FLWCMatrix GetParticleTransform(FVertexFactoryInput Input)
 	FLWCMatrix FinalMat;
 	if ( MeshParticleVF.bUseLocalSpace )
 	{
-		float3 LWCTile = LWCGetTile(LWCGetOrigin(GetPrimitiveDataFromUniformBuffer().LocalToWorld));
+		float3 LWCTile = LWCGetTile(LWCGetOrigin(DFToTileOffset(GetPrimitiveDataFromUniformBuffer().LocalToWorld)));
 		FinalMat = MakeLWCMatrix(LWCTile, Transform4x4);
 	}
 	else
@@ -240,7 +240,7 @@ FLWCMatrix GetParticlePrevTransform(FVertexFactoryInput Input)
 	FLWCMatrix FinalMat;
 	if ( MeshParticleVF.bUseLocalSpace )
 	{
-		float3 LWCTile = LWCGetTile(LWCGetOrigin(GetPrimitiveDataFromUniformBuffer().PreviousLocalToWorld));
+		float3 LWCTile = LWCGetTile(LWCGetOrigin(DFFastToTileOffset(GetPrimitiveDataFromUniformBuffer().PreviousLocalToWorld)));
 		FinalMat = MakeLWCMatrix(LWCTile, PrevTransform4x4);
 	}
 	else
@@ -336,6 +336,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 #if USE_PARTICLE_POSITION
 	Result.Particle.TranslatedWorldPositionAndSize.xyz = Interpolants.ParticleTranslatedWorldPosition.xyz;
 	Result.Particle.TranslatedWorldPositionAndSize.w = 1;
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 #endif
 
 #if USE_PARTICLE_VELOCITY
@@ -349,10 +350,10 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 	//-TODO: LWC Precision Loss
 	FLWCMatrix ParticleToWorld = LWCPromote(transpose(float4x4(Interpolants.ParticleToWorld[0], Interpolants.ParticleToWorld[1], Interpolants.ParticleToWorld[2], float4(0.0f, 0.0f, 0.0f, 1.0f))));
 	#if NEEDS_PARTICLE_LOCAL_TO_WORLD
-		Result.Particle.ParticleToWorld = ParticleToWorld;
+		Result.Particle.ParticleToWorld = DFFromTileOffset(ParticleToWorld);
 	#endif
 	#if NEEDS_INSTANCE_LOCAL_TO_WORLD_PS
-		Result.InstanceLocalToWorld = ParticleToWorld;
+		Result.InstanceLocalToWorld = DFFromTileOffset(ParticleToWorld);
 	#endif
 #endif
 
@@ -360,10 +361,10 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 	//-TODO: LWC Precision Loss
 	FLWCInverseMatrix WorldToParticle = LWCPromoteInverse(transpose(float4x4(Interpolants.WorldToParticle[0], Interpolants.WorldToParticle[1], Interpolants.WorldToParticle[2], float4(0.0f, 0.0f, 0.0f, 1.0f))));
 	#if NEEDS_PARTICLE_WORLD_TO_LOCAL
-		Result.Particle.WorldToParticle = WorldToParticle;
+		Result.Particle.WorldToParticle = DFFromTileOffset(WorldToParticle);
 	#endif
 	#if NEEDS_INSTANCE_WORLD_TO_LOCAL_PS
-		Result.InstanceWorldToLocal = WorldToParticle;
+		Result.InstanceWorldToLocal = DFFromTileOffset(WorldToParticle);
 	#endif
 #endif
 
@@ -390,6 +391,7 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 
 	Result.Particle.TranslatedWorldPositionAndSize.xyz = Intermediates.ParticleTranslatedWorldPosition.xyz;
 	Result.Particle.TranslatedWorldPositionAndSize.w = 1;
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 	Result.Particle.Velocity = Intermediates.ParticleVelocity;
 	Result.Particle.RelativeTime = Intermediates.RelativeTime;
 
@@ -398,8 +400,8 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 #endif	//USE_DYNAMIC_PARAMETERS
 
 	FLWCMatrix ParticleTransform = GetParticleTransform(Input);
-	Result.InstanceLocalToWorld = ParticleTransform;
-	Result.InstanceWorldToLocal = GetParticleInverseTransform(Input);
+	Result.InstanceLocalToWorld = DFFromTileOffset(ParticleTransform);
+	Result.InstanceWorldToLocal = DFFromTileOffset(GetParticleInverseTransform(Input));
 
 	Result.Particle.Color = Intermediates.ParticleColor;
 	Result.Particle.ParticleToWorld = Result.InstanceLocalToWorld;
@@ -408,9 +410,9 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 	Result.TangentToWorld = mul(TangentToLocal, LWCToFloat3x3(ParticleTransform)); 
 
 #if USE_PREVIOUS_TRANSFORM
-	Result.PrevFrameLocalToWorld = GetParticlePrevTransform(Input);
+	Result.PrevFrameLocalToWorld = DFFromTileOffset(GetParticlePrevTransform(Input));
 #else
-	Result.PrevFrameLocalToWorld = ParticleTransform;
+	Result.PrevFrameLocalToWorld = Result.InstanceLocalToWorld;
 #endif
 
 #if NUM_MATERIAL_TEXCOORDS_VERTEX
@@ -420,13 +422,18 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 	}
 #endif
 
+#if ENABLE_NEW_HLSL_GENERATOR
+	EvaluateVertexMaterialAttributes(Result);
+#endif
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
 float4 CalcWorldPosition(FVertexFactoryInput Input)
 {
 	FLWCMatrix Transform = GetParticleTransform(Input);
-	float3 WorldPosition = LWCToFloat(LWCAdd(LWCMultiply(Input.Position.xyz, Transform), ResolvedView.PreViewTranslation));
+	float3 WorldPosition = LWCToFloat(LWCAdd(LWCMultiply(Input.Position.xyz, Transform), ResolvedView.TileOffset.PreViewTranslation));
 	return float4(WorldPosition, Input.Position.w);
 }
 
@@ -436,7 +443,7 @@ float4 CalcPrevWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermedia
 	if (MeshParticleVF.PrevTransformAvailable > 0)
 	{
 		FLWCMatrix PrevTransform = GetParticlePrevTransform(Input);
-		float3 PrevWorldPosition = LWCToFloat(LWCAdd(LWCMultiply(Input.Position.xyz, PrevTransform), ResolvedView.PrevPreViewTranslation));
+		float3 PrevWorldPosition = LWCToFloat(LWCAdd(LWCMultiply(Input.Position.xyz, PrevTransform), ResolvedView.TileOffset.PrevPreViewTranslation));
 		return float4(PrevWorldPosition, Input.Position.w);
 	}
 	else
@@ -462,7 +469,7 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	Intermediates.WorldToParticle = GetParticleInverseTransform(Input);
 
 	FLWCVector3 ParticleWorldPosition = LWCGetOrigin(LocalToWorldMat);
-	Intermediates.ParticleTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.PreViewTranslation));
+	Intermediates.ParticleTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.TileOffset.PreViewTranslation));
 
 #if PARTICLE_MESH_INSTANCED
 	Intermediates.ParticleColor = Input.ParticleColor;
@@ -502,8 +509,6 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 		Intermediates.DynamicParameter = DynamicParameter;
 	#endif
 #endif	//USE_DYNAMIC_PARAMETERS
-
-	Intermediates.ParticleTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.PreViewTranslation));
 
 #if PARTICLE_MESH_INSTANCED
 	Intermediates.ParticleVelocity = Input.ParticleVelocity;

@@ -8,7 +8,7 @@
 #include "Misc/CommandLine.h"
 #include "InputCoreTypes.h"
 #include "Video/Encoders/Configs/VideoEncoderConfigH264.h"
-#include "Video/Encoders/Configs/VideoEncoderConfigH265.h"
+#include "Video/Encoders/Configs/VideoEncoderConfigAV1.h"
 #include "WebRTCIncludes.h"
 #include "PixelStreamingCodec.h"
 
@@ -26,7 +26,6 @@ namespace UE::PixelStreaming::Settings
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingEnableFillerData;
 	extern TAutoConsoleVariable<FString> CVarPixelStreamingEncoderMultipass;
 	extern TAutoConsoleVariable<FString> CVarPixelStreamingH264Profile;
-	extern TAutoConsoleVariable<FString> CVarPixelStreamingH265Profile;
 	extern TAutoConsoleVariable<FString> CVarPixelStreamingEncoderPreset;
 	extern TAutoConsoleVariable<int32> CVarPixelStreamingEncoderKeyframeInterval;
 	extern TAutoConsoleVariable<int32> CVarPixelStreamingEncoderIntraRefreshPeriodFrames;
@@ -45,6 +44,7 @@ namespace UE::PixelStreaming::Settings
 	extern TAutoConsoleVariable<int> CVarPixelStreamingWebRTCHighQpThreshold;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableReceiveAudio;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableTransmitAudio;
+	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableTransmitVideo;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableAudioSync;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCUseLegacyAudioDevice;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableStats;
@@ -54,6 +54,9 @@ namespace UE::PixelStreaming::Settings
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableFrameDropper;
 	extern TAutoConsoleVariable<float> CVarPixelStreamingWebRTCVideoPacingFactor;
 	extern TAutoConsoleVariable<float> CVarPixelStreamingWebRTCVideoPacingMaxDelay;
+	extern TAutoConsoleVariable<int> CVarPixelStreamingWebRTCMinPort;
+	extern TAutoConsoleVariable<int> CVarPixelStreamingWebRTCMaxPort;
+	extern TAutoConsoleVariable<FString> CVarPixelStreamingWebRTCPortAllocatorFlags;
 	// End WebRTC CVars
 
 	// Begin Pixel Streaming Plugin CVars
@@ -69,6 +72,8 @@ namespace UE::PixelStreaming::Settings
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingExperimentalAudioInput;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingCaptureUseFence;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingDecoupleFramerate;
+	extern TAutoConsoleVariable<float> CVarPixelStreamingDecoupleWaitFactor;
+	extern TAutoConsoleVariable<bool> CVarPixelStreamingUseMediaCapture;
 	// Ends Pixel Streaming Plugin CVars
 
 	/* Pixel Streaming can limit who can send input (keyboard, mouse, etc). */
@@ -89,7 +94,6 @@ namespace UE::PixelStreaming::Settings
 	EMultipassMode GetMultipassCVar();
 	webrtc::DegradationPreference GetDegradationPreference();
 	EH264Profile GetH264Profile();
-	EH265Profile GetH265Profile();
 	EAVPreset GetEncoderPreset();
 	EInputControllerMode GetInputControllerMode();
 	FString GetDefaultStreamerID();
@@ -109,5 +113,6 @@ namespace UE::PixelStreaming::Settings
 	// End utility functions etc.
 
 	extern FPixelStreamingSimulcastParameters SimulcastParameters;
+	extern uint32 PortAllocatorParameters;
 
 } // namespace UE::PixelStreaming::Settings

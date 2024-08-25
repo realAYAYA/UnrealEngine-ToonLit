@@ -12,23 +12,18 @@ namespace UnrealBuildTool.Rules
 
 			DefaultBuildSettings = BuildSettingsVersion.V2;
 			IWYUSupport = IWYUSupport.KeepAsIsForNow;
-			//bUseUnity = false;
-
-			// 
-			bUseRTTI = true;
-			bEnableExceptions = true;
-
-			PrivateIncludePaths.AddRange(new string[] {
-				System.IO.Path.Combine(GetModuleDirectory("MutableRuntime"), "Private"),
-			});
 
 			PublicDependencyModuleNames.AddRange(
                 new string[] {
-					"MutableRuntime", 
+					"MutableRuntime",
 					"Core",
+					"CoreUObject",
 					"GeometryCore",
+					"ImageCore",
+					"TextureCompressor",
+					"TextureBuildUtilities",
 				}
-            );
+			);
 		}
 	}
 }

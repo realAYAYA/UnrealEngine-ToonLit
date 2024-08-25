@@ -13,7 +13,6 @@
 
 #if RHI_RAYTRACING
 
-#include "RayTracing/RayTracingDeferredMaterials.h"
 #include "RayTracing/RaytracingOptions.h"
 #include "RayTracing/RayTracingLighting.h"
 #include "RayTracing/RayTracingMaterialHitShaders.h"
@@ -25,14 +24,14 @@ static TAutoConsoleVariable<int32> CVarLumenShortRangeAOHardwareRayTracing(
 	0,
 	TEXT("0. Screen space tracing for the full resolution Bent Normal (directional occlusion).")
 	TEXT("1. Enable hardware ray tracing of the full resolution Bent Normal (directional occlusion). (Default)\n"),
-	ECVF_RenderThreadSafe
+	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
 static TAutoConsoleVariable<float> CVarLumenShortRangeAOHardwareRayTracingNormalBias(
 	TEXT("r.Lumen.ScreenProbeGather.ShortRangeAO.HardwareRayTracing.NormalBias"),
 	.1f,
 	TEXT("Bias for HWRT Bent Normal to avoid self intersection"),
-	ECVF_RenderThreadSafe
+	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
 namespace Lumen
@@ -57,15 +56,16 @@ class FLumenShortRangeAOHardwareRayTracing : public FGlobalShader
 	SHADER_USE_ROOT_PARAMETER_STRUCT(FLumenShortRangeAOHardwareRayTracing, FGlobalShader)
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWScreenBentNormal)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWScreenBentNormal)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(RaytracingAccelerationStructure, TLAS)
-		SHADER_PARAMETER_STRUCT_INCLUDE(FScreenProbeParameters, ScreenProbeParameters)
+		SHADER_PARAMETER_STRUCT_REF(FBlueNoise, BlueNoise)
 		SHADER_PARAMETER(uint32, NumRays)
 		SHADER_PARAMETER(float, NormalBias)
+		SHADER_PARAMETER(float, MaxScreenTraceFraction)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FVirtualVoxelParameters, HairStrandsVoxel)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 	END_SHADER_PARAMETER_STRUCT()
 
 	class FHairStrandsVoxel : SHADER_PERMUTATION_BOOL("USE_HAIRSTRANDS_VOXEL");
@@ -114,7 +114,8 @@ void RenderHardwareRayTracingShortRangeAO(
 	FRDGBuilder& GraphBuilder,
 	const FScene* Scene,
 	const FSceneTextureParameters& SceneTextures,
-	const FScreenProbeParameters& ScreenProbeParameters,
+	const FBlueNoise& BlueNoise,
+	float MaxScreenTraceFraction,
 	const FViewInfo& View,
 	FRDGTextureRef ScreenBentNormal,
 	uint32 NumPixelRays)
@@ -129,10 +130,11 @@ void RenderHardwareRayTracingShortRangeAO(
 		PassParameters->TLAS = View.GetRayTracingSceneLayerViewChecked(ERayTracingSceneLayer::Base);
 		PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
 		PassParameters->SceneTextures = SceneTextures;
-		PassParameters->ScreenProbeParameters = ScreenProbeParameters;
+		PassParameters->BlueNoise = CreateUniformBufferImmediate(BlueNoise, EUniformBufferUsage::UniformBuffer_SingleDraw);
+		PassParameters->MaxScreenTraceFraction = MaxScreenTraceFraction;
 		PassParameters->NumRays = NumPixelRays;
 		PassParameters->NormalBias = CVarLumenShortRangeAOHardwareRayTracingNormalBias.GetValueOnRenderThread();
-		PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+		PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 		if (bNeedTraceHairVoxel)
 		{

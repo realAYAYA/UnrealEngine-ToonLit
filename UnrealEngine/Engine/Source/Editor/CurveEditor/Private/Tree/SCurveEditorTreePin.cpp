@@ -108,7 +108,7 @@ void SCurveEditorTreePin::UnpinRecursive(FCurveEditorTreeItemID InTreeItem, FCur
 bool SCurveEditorTreePin::IsPinnedRecursive(FCurveEditorTreeItemID InTreeItem, FCurveEditor* CurveEditor) const
 {
 	const FCurveEditorTreeItem* Item = CurveEditor->FindTreeItem(InTreeItem);
-	if (!ensureMsgf(Item != nullptr, TEXT("Can't find curve editor item. Acting like it's not pinned.")))
+	if (!Item)
 	{
 		return false;
 	}

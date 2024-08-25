@@ -750,9 +750,9 @@ namespace EpicGames.Core
 				}
 				return bResult;
 			}
-			catch (CsProjectParseException Ex)
+			catch (CsProjectParseException ex)
 			{
-				throw new CsProjectParseException($"{Ex.Message} while parsing {element} in project file {projectInfo.ProjectPath}", Ex);
+				throw new CsProjectParseException($"{ex.Message} while parsing {element} in project file {projectInfo.ProjectPath}", ex);
 			}
 		}
 

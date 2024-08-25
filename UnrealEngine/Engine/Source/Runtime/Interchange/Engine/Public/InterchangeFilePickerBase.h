@@ -14,15 +14,15 @@ struct FInterchangeFilePickerParameters
 {
 	GENERATED_BODY()
 
-	//If true the user will be able to select multiple files.
+	//If true, the user will be able to select multiple files.
 	UPROPERTY(EditAnywhere, Category = "Interchange | File Picker")
 	bool bAllowMultipleFiles = false;
 
-	//If not empty it will override the default title
+	//If not empty, this will override the default title.
 	UPROPERTY(EditAnywhere, Category = "Interchange | File Picker")
 	FText Title = FText();
 
-	//Set the default open path that the dialog will show to the user
+	//Set the default open path that the dialog will show to the user.
 	UPROPERTY(EditAnywhere, Category = "Interchange | File Picker")
 	FString DefaultPath = TEXT("");
 };
@@ -35,12 +35,12 @@ class UInterchangeFilePickerBase : public UObject
 public:
 
 	/**
-	 * Non virtual helper to allow blueprint to implement event base function to implement the function FilePickerForTranslatorAssetType,
+	 * Non-virtual helper that allows Blueprint to implement an event-based function to implement FilePickerForTranslatorAssetType().
 	 */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Interchange | Utilities")
 	INTERCHANGEENGINE_API bool ScriptedFilePickerForTranslatorAssetType(const EInterchangeTranslatorAssetType TranslatorAssetType, FInterchangeFilePickerParameters& Parameters, TArray<FString>& OutFilenames);
 
-	/** The default implementation (call if the blueprint do not have any implementation) will call the virtual FilePickerForTranslatorAssetType */
+	/** The default implementation, which is called if the Blueprint does not have any implementation, calls the virtual FilePickerForTranslatorAssetType(). */
 	bool ScriptedFilePickerForTranslatorAssetType_Implementation(const EInterchangeTranslatorAssetType TranslatorAssetType, FInterchangeFilePickerParameters& Parameters, TArray<FString>& OutFilenames)
 	{
 		//By default we call the virtual function FilePickerForTranslatorAssetType
@@ -48,12 +48,12 @@ public:
 	}
 
 	/**
-	 * Non virtual helper to allow blueprint to implement event base function to implement the function FilePickerForTranslatorType,
+	 * Non-virtual helper that allows Blueprint to implement an event-based function to implement FilePickerForTranslatorType().
 	 */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Interchange | Utilities")
 	INTERCHANGEENGINE_API bool ScriptedFilePickerForTranslatorType(const EInterchangeTranslatorType TranslatorType, FInterchangeFilePickerParameters& Parameters, TArray<FString>& OutFilenames);
 
-	/** The default implementation (call if the blueprint do not have any implementation) will call the virtual FilePickerForTranslatorType */
+	/** The default implementation, which is called if the Blueprint does not have any implementation, calls the virtual FilePickerForTranslatorType(). */
 	bool ScriptedFilePickerForTranslatorType_Implementation(const EInterchangeTranslatorType TranslatorAssetType, FInterchangeFilePickerParameters& Parameters, TArray<FString>& OutFilenames)
 	{
 		//By default we call the virtual function FilePickerForTranslatorType
@@ -67,7 +67,7 @@ protected:
 	 * This function must set OutFilename with a valid file that can be import to create the specified TranslatorAssetType.
 	 * We expect the user to see a file picker dialog when the editor is available.
 	 * 
-	 * @Return - true if it set OutFilename with a valid file path, false otherwise.
+	 * @Return - true if OutFilename was set with a valid file path, or false otherwise.
 	 */
 	virtual bool FilePickerForTranslatorAssetType(const EInterchangeTranslatorAssetType TranslatorAssetType, FInterchangeFilePickerParameters& Parameters, TArray<FString>& OutFilenames) { return false; }
 
@@ -75,7 +75,7 @@ protected:
 	 * This function must set OutFilename with a valid file that can be import to create the specified TranslatorType.
 	 * We expect the user to see a file picker dialog when the editor is available.
 	 *
-	 * @Return - true if it set OutFilename with a valid file path, false otherwise.
+	 * @Return - true if OutFilename was set with a valid file path, or false otherwise.
 	 */
 	virtual bool FilePickerForTranslatorType(const EInterchangeTranslatorType TranslatorType, FInterchangeFilePickerParameters& Parameters, TArray<FString>& OutFilenames) { return false; }
 

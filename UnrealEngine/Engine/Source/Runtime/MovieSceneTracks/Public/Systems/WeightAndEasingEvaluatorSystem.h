@@ -135,7 +135,7 @@ private:
 	TSparseArray<uint16> CachedInstanceIDToChannel;
 
 	/** Cached output channels for a specific pair (source, target) of hierarchical blends */
-	TMap<TTuple<int16,int16>, uint16> CachedHierarchicalBlendTargetChannels;
+	TMap<TTuple<int16, UE::MovieScene::FHierarchicalBlendTarget>, uint16> CachedHierarchicalBlendTargetChannels;
 
 	UPROPERTY()
 	TObjectPtr<UWeightAndEasingEvaluatorSystem> EvaluatorSystem;

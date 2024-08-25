@@ -18,6 +18,7 @@ precision highp float;
 #define ST_GrayscaleFont	2
 #define ST_ColorFont		3
 #define ST_Line				4
+#define ST_Custom			5
 #define ST_RoundedBox       7
 
 #define USE_LEGACY_DISABLED_EFFECT 0
@@ -303,7 +304,7 @@ void main()
 {
 	vec4 OutColor;
 
-	if( ShaderType == ST_Default )
+	if( ShaderType == ST_Default || ShaderType == ST_Custom )
 	{
 		OutColor = GetDefaultElementColor();
 	}

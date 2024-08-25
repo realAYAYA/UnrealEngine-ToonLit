@@ -141,7 +141,7 @@ void FTestQuatNetSerializerBase<QuatType>::TestIsEqual()
 {
 	TArray<QuatType> CompareValues[2];
 	TArray<bool> ExpectedResults[2];
-	const SIZE_T ValueCount = Values.Num();
+	const int32 ValueCount = Values.Num();
 
 	{
 		// Make sure nothing messes with our test values.
@@ -153,7 +153,7 @@ void FTestQuatNetSerializerBase<QuatType>::TestIsEqual()
 	{
 		CompareValues[1].SetNumUninitialized(ValueCount);
 		ExpectedResults[1].Init(false, ValueCount);
-		for (SIZE_T ValueIt = 0; ValueIt < ValueCount; ++ValueIt)
+		for (int32 ValueIt = 0; ValueIt < ValueCount; ++ValueIt)
 		{
 			// Make sure nothing messes with our test values.
 			FPlatformMemory::Memcpy(CompareValues[1].GetData() + ValueIt, Values.GetData() + ((ValueIt + 1) % ValueCount), sizeof(QuatType));

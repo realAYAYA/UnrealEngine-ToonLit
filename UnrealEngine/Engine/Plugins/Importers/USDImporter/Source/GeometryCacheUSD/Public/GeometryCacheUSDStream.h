@@ -27,4 +27,3 @@ protected:
 	FReadUsdMeshFunction ReadFunc;
 	std::atomic<bool> bReadyForRead;
 };
-

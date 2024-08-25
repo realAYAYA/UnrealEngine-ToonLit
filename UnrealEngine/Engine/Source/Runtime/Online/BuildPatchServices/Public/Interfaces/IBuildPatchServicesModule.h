@@ -48,9 +48,17 @@ public:
 	/**
 	 * Factory providing construction of a build installer class.
 	 * @param Configuration     The configuration for the installer.
+	 * @param OnComplete        The delegate that will be called when the installer completes.
 	 * @return an instance of an IBuildInstaller implementation.
 	 */
 	virtual IBuildInstallerRef CreateBuildInstaller(BuildPatchServices::FBuildInstallerConfiguration Configuration, FBuildPatchInstallerDelegate OnComplete) const = 0;
+
+	/**
+	 * Factory providing construction of a build installer shared context class.
+	 * @param DebugName          Used to tag resources allocated with the shared context.
+	 * @return an instance of an IBuildInstallerSharedContex implementation.
+	 */
+	virtual IBuildInstallerSharedContextRef CreateBuildInstallerSharedContext(const TCHAR* DebugName) const = 0;
 
 	/**
 	 * Factory providing construction of a build statistics class.

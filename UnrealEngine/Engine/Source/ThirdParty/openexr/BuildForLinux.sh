@@ -5,6 +5,11 @@ set -e
 LIBRARY_NAME="OpenEXR"
 REPOSITORY_NAME="openexr"
 
+# If building OpenEXR version 3.2.1, be sure to apply this patch to disable
+# building the website example code. It does not link correctly, but it does
+# not get installed anyway:
+#     patch --directory=openexr-3.2.1/ --strip=1 < openexr_v3.2.1_disable_website_example.patch
+
 BUILD_SCRIPT_NAME="$(basename $BASH_SOURCE)"
 BUILD_SCRIPT_DIR=`cd $(dirname "$BASH_SOURCE"); pwd`
 
@@ -18,11 +23,11 @@ UsageAndExit()
     echo
     echo "Usage examples:"
     echo
-    echo "    $BUILD_SCRIPT_NAME 3.1.6 x86_64-unknown-linux-gnu"
-    echo "      -- Installs $LIBRARY_NAME version 3.1.6 for x86_64 architecture."
+    echo "    $BUILD_SCRIPT_NAME 3.2.1 x86_64-unknown-linux-gnu"
+    echo "      -- Installs $LIBRARY_NAME version 3.2.1 for x86_64 architecture."
     echo
-    echo "    $BUILD_SCRIPT_NAME 3.1.6 aarch64-unknown-linux-gnueabi"
-    echo "      -- Installs $LIBRARY_NAME version 3.1.6 for arm64 architecture."
+    echo "    $BUILD_SCRIPT_NAME 3.2.1 aarch64-unknown-linux-gnueabi"
+    echo "      -- Installs $LIBRARY_NAME version 3.2.1 for arm64 architecture."
     echo
     exit 1
 }
@@ -44,10 +49,7 @@ UE_MODULE_LOCATION=$BUILD_SCRIPT_DIR
 UE_THIRD_PARTY_LOCATION=`cd $UE_MODULE_LOCATION/..; pwd`
 UE_ENGINE_LOCATION=`cd $UE_THIRD_PARTY_LOCATION/../..; pwd`
 
-IMATH_CMAKE_LOCATION="$UE_THIRD_PARTY_LOCATION/Imath/Deploy/Imath-3.1.3/Unix/$ARCH_NAME/lib/cmake/Imath"
-ZLIB_LOCATION="$UE_THIRD_PARTY_LOCATION/zlib/v1.2.8"
-ZLIB_INCLUDE_LOCATION="$ZLIB_LOCATION/include/Unix/$ARCH_NAME"
-ZLIB_LIB_LOCATION="$ZLIB_LOCATION/lib/Unix/$ARCH_NAME/libz.a"
+IMATH_CMAKE_LOCATION="$UE_THIRD_PARTY_LOCATION/Imath/Deploy/Imath-3.1.9/Unix/$ARCH_NAME/lib/cmake/Imath"
 
 SOURCE_LOCATION="$UE_MODULE_LOCATION/$REPOSITORY_NAME-$LIBRARY_VERSION"
 
@@ -72,10 +74,11 @@ pushd $BUILD_LOCATION > /dev/null
 
 # Run Engine/Build/BatchFiles/Linux/SetupToolchain.sh first to ensure
 # that the toolchain is setup and verify that this name matches.
-TOOLCHAIN_NAME=v21_clang-15.0.1-centos7
+TOOLCHAIN_NAME=v22_clang-16.0.6-centos7
 
 UE_TOOLCHAIN_LOCATION="$UE_ENGINE_LOCATION/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/$TOOLCHAIN_NAME"
 
+C_FLAGS=""
 CXX_FLAGS="-fvisibility=hidden -I$UE_THIRD_PARTY_LOCATION/Unix/LibCxx/include/c++/v1"
 LINKER_FLAGS="-nodefaultlibs -L$UE_THIRD_PARTY_LOCATION/Unix/LibCxx/lib/Unix/$ARCH_NAME/ -lc++ -lc++abi -lm -lc -lgcc_s -lgcc"
 
@@ -116,7 +119,8 @@ fi
     set(CMAKE_MODULE_LINKER_FLAGS "${LINKER_FLAGS}")
     set(CMAKE_SHARED_LINKER_FLAGS "${LINKER_FLAGS}")
 
-    set(CMAKE_FIND_ROOT_PATH ${UE_TOOLCHAIN_LOCATION})
+    set(CMAKE_FIND_ROOT_PATH "${UE_TOOLCHAIN_LOCATION}")
+    list(APPEND CMAKE_FIND_ROOT_PATH "${IMATH_CMAKE_LOCATION}")
     set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
     set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
     set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
@@ -127,16 +131,13 @@ _EOF_
 CMAKE_ARGS=(
     -DCMAKE_TOOLCHAIN_FILE="/tmp/__cmake_toolchain.cmake"
     -DCMAKE_INSTALL_PREFIX="$INSTALL_LOCATION"
-    -DImath_DIR="$IMATH_CMAKE_LOCATION"
-    -DZLIB_INCLUDE_DIR="$ZLIB_INCLUDE_LOCATION"
-    -DZLIB_LIBRARY="$ZLIB_LIB_LOCATION"
     -DCMAKE_INSTALL_INCLUDEDIR="$INSTALL_INCLUDEDIR"
     -DCMAKE_INSTALL_BINDIR="$INSTALL_BIN_DIR"
     -DCMAKE_INSTALL_LIBDIR="$INSTALL_LIB_DIR"
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+    -DBUILD_TESTING=OFF
     -DBUILD_SHARED_LIBS=OFF
     -DOPENEXR_BUILD_TOOLS=OFF
-    -DBUILD_TESTING=OFF
     -DOPENEXR_INSTALL_EXAMPLES=OFF
     -DOPENEXR_INSTALL_PKG_CONFIG=OFF
 )

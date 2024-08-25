@@ -5,6 +5,8 @@
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
 #include "WorldPartition/DataLayer/DataLayerSubsystem.h"
 #include "WorldPartition/DataLayer/DataLayerLoadingPolicy.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
 #include "WorldPartition/WorldPartitionDebugHelper.h"
 #include "WorldPartition/WorldPartitionSubsystem.h"
 #include "WorldPartition/WorldPartitionLog.h"
@@ -12,21 +14,26 @@
 #include "WorldPartition/WorldPartitionHelpers.h"
 #include "Engine/Canvas.h"
 #include "Debug/DebugDrawService.h"
+#include "UObject/Package.h"
 
 #if WITH_EDITOR
 #include "WorldPartition/DataLayer/WorldDataLayersActorDesc.h"
 #include "WorldPartition/DataLayer/DataLayerUtils.h"
 #include "WorldPartition/DataLayer/IDataLayerEditorModule.h"
-#include "WorldPartition/ActorDescContainer.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerHelper.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
 #include "WorldPartition/WorldPartitionEditorPerProjectUserSettings.h"
 #include "WorldPartition/WorldPartitionActorLoaderInterface.h"
 #include "WorldPartition/ActorDescList.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "Modules/ModuleManager.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/UObjectGlobals.h"
 #include "Engine/LevelStreaming.h"
 #include "EngineUtils.h"
+#include "Algo/Transform.h"
+#include "Algo/AnyOf.h"
 #include "LevelUtils.h"
 #include "Editor.h"
 #else
@@ -62,16 +69,18 @@ FAutoConsoleCommandWithOutputDevice UDataLayerManager::DumpDataLayersCommand(
 	})
 );
 
+static const FString GToggleDataLayerActivationCommandName(TEXT("wp.Runtime.ToggleDataLayerActivation"));
 FAutoConsoleCommand UDataLayerManager::ToggleDataLayerActivation(
-	TEXT("wp.Runtime.ToggleDataLayerActivation"),
+	*GToggleDataLayerActivationCommandName,
 	TEXT("Toggles DataLayers active state. Args [DataLayerNames]"),
 	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& InArgs)
 	{
 		for (const FWorldContext& Context : GEngine->GetWorldContexts())
 		{
 			UWorld* World = Context.World();
-			if (World && World->IsGameWorld() && !World->IsNetMode(NM_Client))
+			if (World && World->IsGameWorld())
 			{
+				FWorldPartitionHelpers::ServerExecConsoleCommand(World, GToggleDataLayerActivationCommandName, InArgs);
 				if (UWorldPartitionSubsystem* WorldPartitionSubsystem = World->GetSubsystem<UWorldPartitionSubsystem>())
 				{
 					WorldPartitionSubsystem->ForEachWorldPartition([&InArgs](UWorldPartition* WorldPartition)
@@ -92,32 +101,35 @@ FAutoConsoleCommand UDataLayerManager::ToggleDataLayerActivation(
 	})
 );
 
+static const FString GSetDataLayerRuntimeStateCommandCommandName(TEXT("wp.Runtime.SetDataLayerRuntimeState"));
 FAutoConsoleCommand UDataLayerManager::SetDataLayerRuntimeStateCommand(
-	TEXT("wp.Runtime.SetDataLayerRuntimeState"),
+	*GSetDataLayerRuntimeStateCommandCommandName,
 	TEXT("Sets Runtime DataLayers state. Args [State = Unloaded, Loaded, Activated] [DataLayerNames]"),
 	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& InArgs)
 	{
 		if (InArgs.Num() < 2)
 		{
-			UE_LOG(LogWorldPartition, Warning, TEXT("wp.Runtime.SetDataLayerRuntimeState : Requires at least 2 arguments. First argument should be the target state and the next ones should be the list of DataLayers."));
+			UE_LOG(LogWorldPartition, Warning, TEXT("%s : Requires at least 2 arguments. First argument should be the target state and the next ones should be the list of DataLayers."), *GSetDataLayerRuntimeStateCommandCommandName);
 			return;
 		}
 
-		TArray<FString> Args = InArgs;
+		TArray<FString> Args(InArgs);
 		FString StatetStr;
 		Args.HeapPop(StatetStr);
 		EDataLayerRuntimeState State;
 		if (!GetDataLayerRuntimeStateFromName(StatetStr, State))
 		{
-			UE_LOG(LogWorldPartition, Warning, TEXT("wp.Runtime.SetDataLayerRuntimeState : Invalid first argument, expected one of these values : Unloaded, Loaded, Activated."));
+			UE_LOG(LogWorldPartition, Warning, TEXT("%s : Invalid first argument, expected one of these values : Unloaded, Loaded, Activated."), *GSetDataLayerRuntimeStateCommandCommandName);
 			return;
 		}
 
 		for (const FWorldContext& Context : GEngine->GetWorldContexts())
 		{
 			UWorld* World = Context.World();
-			if (World && World->IsGameWorld() && !World->IsNetMode(NM_Client))
+			if (World && World->IsGameWorld())
 			{
+				FWorldPartitionHelpers::ServerExecConsoleCommand(World, GSetDataLayerRuntimeStateCommandCommandName, InArgs);
+
 				if (UWorldPartitionSubsystem* WorldPartitionSubsystem = World->GetSubsystem<UWorldPartitionSubsystem>())
 				{
 					WorldPartitionSubsystem->ForEachWorldPartition([&Args, State](UWorldPartition* WorldPartition)
@@ -151,29 +163,23 @@ void UDataLayerManager::Initialize()
 #if WITH_EDITOR
 	UWorld* OuterWorld = GetTypedOuter<UWorld>();
 	UWorldPartition* OuterWorldPartition = GetOuterUWorldPartition();
-	UActorDescContainer* ActorDescContainer = OuterWorldPartition->GetActorDescContainer();
-
+	UActorDescContainerInstance* ActorDescContainerInstance = OuterWorldPartition->GetActorDescContainerInstance();
+	
 	// Partitioned Level Instance's DataLayerManager will never resolve DataLayers (it's up to its owning WorldPartition DataLayerManager to do the job.
 	ULevelInstanceSubsystem* LevelInstanceSubsystem = !GetWorld()->IsGameWorld() ? UWorld::GetSubsystem<ULevelInstanceSubsystem>(GetWorld()) : nullptr;
 	ILevelInstanceInterface* LevelInstance = LevelInstanceSubsystem ? LevelInstanceSubsystem->GetOwningLevelInstance(OuterWorld->PersistentLevel) : nullptr;
 	bCanResolveDataLayers = (LevelInstance == nullptr);
 
 	// In PIE, main world partition doesn't have an ActorDescContainer and doesn't need it, but instanced world partitions do have one.
-	check(!ActorDescContainer || ActorDescContainer->IsInitialized());
+	check(!ActorDescContainerInstance || ActorDescContainerInstance->IsInitialized());
+
 	AWorldDataLayers* WorldDataLayers = GetWorldDataLayers();
 	if (!WorldDataLayers)
 	{
-		if (ActorDescContainer)
+		if (ActorDescContainerInstance)
 		{
 			// Try to find and load AWorldDataLayers actor
-			for (FActorDescList::TIterator<> ActorDescIterator(ActorDescContainer); ActorDescIterator; ++ActorDescIterator)
-			{
-				if (ActorDescIterator->GetActorNativeClass()->IsChildOf<AWorldDataLayers>())
-				{
-					WorldDataLayersActor = FWorldPartitionReference(OuterWorldPartition, ActorDescIterator->GetGuid());
-					break;
-				}
-			}
+			WorldDataLayersActor = UDataLayerManager::LoadWorldDataLayersActor(ActorDescContainerInstance);
 		}
 
 		WorldDataLayers = GetWorldDataLayers();
@@ -186,6 +192,9 @@ void UDataLayerManager::Initialize()
 			check(WorldDataLayers);
 		}
 	}
+
+	// Initialize WorldDataLayers
+	WorldDataLayers->OnDataLayerManagerInitialized();
 
 	// Some levels do not have the WorldDataLayer actor serialized as part of their Actors array. Make sure we add it here if it isn't.
 	// Make sure WorldDataLayers is part of the Actors list so that it gets cooked properly as part of the Persistent Level
@@ -207,13 +216,13 @@ void UDataLayerManager::Initialize()
 
 	if (CanResolveDataLayers())
 	{
-		UActorDescContainer::OnActorDescContainerInitialized.AddUObject(this, &UDataLayerManager::OnActorDescContainerInitialized);
+		UActorDescContainerInstance::OnActorDescContainerInstanceInitialized.AddUObject(this, &UDataLayerManager::OnActorDescContainerInstanceInitialized);
 
-		// Manually call OnActorDescContainerInitialized on already initialized outer world partition container
-		if (ActorDescContainer)
+		// Manually call OnActorDescContainerInstanceInitialized on already initialized outer world partition container instances
+		OuterWorldPartition->ForEachActorDescContainerInstance([this](UActorDescContainerInstance* ActorDescContainerInstance)
 		{
-			OnActorDescContainerInitialized(ActorDescContainer);
-		}
+			OnActorDescContainerInstanceInitialized(ActorDescContainerInstance);
+		}, true);
 	}
 
 	// SaveAs of a partition world will duplicate actors which will trigger AActor::FixupDataLayer and DataLayerManager is not yet created.
@@ -223,13 +232,23 @@ void UDataLayerManager::Initialize()
 		check(IsValid(*It));
 		It->FixupDataLayers();
 	}
+#else
+	if (AWorldDataLayers* WorldDataLayers = GetWorldDataLayers())
+	{
+		WorldDataLayers->OnDataLayerManagerInitialized();
+	}
 #endif
 }
 
 void UDataLayerManager::DeInitialize()
 {
+	if (AWorldDataLayers* WorldDataLayers = GetWorldDataLayers())
+	{
+		WorldDataLayers->OnDataLayerManagerDeinitialized();
+	}
+
 #if WITH_EDITOR
-	UActorDescContainer::OnActorDescContainerInitialized.RemoveAll(this);
+	UActorDescContainerInstance::OnActorDescContainerInstanceInitialized.RemoveAll(this);
 
 	WorldDataLayersActor = FWorldPartitionReference();
 #endif
@@ -250,6 +269,17 @@ AWorldDataLayers* UDataLayerManager::GetWorldDataLayers() const
 	return GetTypedOuter<UWorld>()->GetWorldDataLayers();
 }
 
+TArray<UDataLayerInstance*> UDataLayerManager::GetDataLayerInstances() const
+{
+	TArray<UDataLayerInstance*> Result;
+	ForEachDataLayerInstance([&Result](UDataLayerInstance* DataLayerInstance)
+	{
+		Result.Add(DataLayerInstance);
+		return true;
+	});
+	return Result;
+}
+
 const UDataLayerInstance* UDataLayerManager::GetDataLayerInstanceFromAsset(const UDataLayerAsset* InDataLayerAsset) const
 {
 	return GetDataLayerInstance(InDataLayerAsset);
@@ -268,8 +298,13 @@ const UDataLayerInstance* UDataLayerManager::GetDataLayerInstanceFromAssetName(c
 
 bool UDataLayerManager::SetDataLayerInstanceRuntimeState(const UDataLayerInstance* InDataLayerInstance, EDataLayerRuntimeState InState, bool bInIsRecursive)
 {
-	UE_CLOG(!InDataLayerInstance, LogWorldPartition, Error, TEXT("Invalid Data Layer Instance."));
-	return InDataLayerInstance ? InDataLayerInstance->SetRuntimeState(InState, bInIsRecursive) : false;
+	if (InDataLayerInstance)
+	{
+		InDataLayerInstance->GetOuterWorldDataLayers()->SetDataLayerRuntimeState(InDataLayerInstance, InState, bInIsRecursive);
+		return true;
+	}
+	UE_LOG(LogWorldPartition, Error, TEXT("Invalid Data Layer Instance."));
+	return false;
 }
 
 bool UDataLayerManager::SetDataLayerRuntimeState(const UDataLayerAsset* InDataLayerAsset, EDataLayerRuntimeState InState, bool bInIsRecursive)
@@ -296,14 +331,22 @@ void UDataLayerManager::BroadcastOnDataLayerInstanceRuntimeStateChanged(const UD
 
 EDataLayerRuntimeState UDataLayerManager::GetDataLayerInstanceRuntimeState(const UDataLayerInstance* InDataLayerInstance) const
 {
-	UE_CLOG(!InDataLayerInstance, LogWorldPartition, Error, TEXT("Invalid Data Layer Instance."));
-	return InDataLayerInstance ? InDataLayerInstance->GetRuntimeState() : EDataLayerRuntimeState::Unloaded;
+	if (InDataLayerInstance)
+	{
+		return InDataLayerInstance->GetRuntimeState();
+	}
+	UE_LOG(LogWorldPartition, Error, TEXT("Invalid Data Layer Instance."));
+	return EDataLayerRuntimeState::Unloaded;
 }
 
 EDataLayerRuntimeState UDataLayerManager::GetDataLayerInstanceEffectiveRuntimeState(const UDataLayerInstance* InDataLayerInstance) const
 {
-	UE_CLOG(!InDataLayerInstance, LogWorldPartition, Error, TEXT("Invalid Data Layer Instance."));
-	return InDataLayerInstance ? InDataLayerInstance->GetEffectiveRuntimeState() : EDataLayerRuntimeState::Unloaded;
+	if (InDataLayerInstance)
+	{
+		return InDataLayerInstance->GetEffectiveRuntimeState();
+	}
+	UE_LOG(LogWorldPartition, Error, TEXT("Invalid Data Layer Instance."));
+	return EDataLayerRuntimeState::Unloaded;
 }
 
 const TSet<FName>& UDataLayerManager::GetEffectiveActiveDataLayerNames() const
@@ -320,7 +363,7 @@ const TSet<FName>& UDataLayerManager::GetEffectiveLoadedDataLayerNames() const
 	return WorldDataLayers ? WorldDataLayers->GetEffectiveLoadedDataLayerNames() : EmptySet;
 }
 
-bool UDataLayerManager::IsAnyDataLayerInEffectiveRuntimeState(const TArray<FName>& InDataLayerNames, EDataLayerRuntimeState InState) const
+bool UDataLayerManager::IsAnyDataLayerInEffectiveRuntimeState(TArrayView<const FName> InDataLayerNames, EDataLayerRuntimeState InState) const
 {
 	if (InState == EDataLayerRuntimeState::Activated)
 	{
@@ -345,6 +388,34 @@ bool UDataLayerManager::IsAnyDataLayerInEffectiveRuntimeState(const TArray<FName
 		}
 	}
 	return false;
+}
+
+bool UDataLayerManager::IsAllDataLayerInEffectiveRuntimeState(TArrayView<const FName> InDataLayerNames, EDataLayerRuntimeState InState) const
+{
+	const TSet<FName>& Activated = GetEffectiveActiveDataLayerNames();
+
+	if (InState == EDataLayerRuntimeState::Activated)
+	{
+		for (const FName& DataLayerName : InDataLayerNames)
+		{
+			if (!Activated.Contains(DataLayerName))
+			{
+				return false;
+			}
+		}
+	}
+	else if (InState == EDataLayerRuntimeState::Loaded)
+	{
+		const TSet<FName>& Loaded = GetEffectiveLoadedDataLayerNames();
+		for (const FName& DataLayerName : InDataLayerNames)
+		{
+			if (!Loaded.Contains(DataLayerName) && !Activated.Contains(DataLayerName))
+			{
+				return false;
+			}
+		}
+	}
+	return true;
 }
 
 void UDataLayerManager::DumpDataLayers(FOutputDevice& OutputDevice) const
@@ -578,7 +649,7 @@ void UDataLayerManager::ForEachDataLayerInstance(TFunctionRef<bool(UDataLayerIns
 			return bShouldContinue;
 		};
 
-		WorldDataLayers->ForEachDataLayer(CallAndSetContinueFunc);
+		WorldDataLayers->ForEachDataLayerInstance(CallAndSetContinueFunc);
 	}
 }
 
@@ -592,7 +663,6 @@ void UDataLayerManager::ForEachDataLayerInstance(TFunctionRef<bool(UDataLayerIns
  */
 
 #if WITH_EDITOR
-
 TSubclassOf<UDataLayerLoadingPolicy> UDataLayerManager::GetDataLayerLoadingPolicyClass() const
 {
 	// Use UDataLayerManager::DataLayerLoadingPolicyClass
@@ -691,12 +761,12 @@ TArray<AWorldDataLayers*> UDataLayerManager::GetActorEditorContextWorldDataLayer
 	return WorldDataLayersArray;
 }
 
-void UDataLayerManager::PushActorEditorContext() const
+void UDataLayerManager::PushActorEditorContext(bool bDuplicateContext) const
 {
 	++DataLayerActorEditorContextID;
 	for (AWorldDataLayers* WorldDataLayers : GetActorEditorContextWorldDataLayers())
 	{
-		WorldDataLayers->PushActorEditorContext(DataLayerActorEditorContextID);
+		WorldDataLayers->PushActorEditorContext(DataLayerActorEditorContextID, bDuplicateContext);
 	}
 }
 
@@ -732,50 +802,62 @@ uint32 UDataLayerManager::GetDataLayerEditorContextHash() const
 
 bool UDataLayerManager::CanResolveDataLayers() const
 {
-	check(GetWorldDataLayers());
 	return (GetWorldDataLayers() != nullptr) && bCanResolveDataLayers;
 }
 
-void UDataLayerManager::OnActorDescContainerInitialized(UActorDescContainer* InActorDescContainer) const
+void UDataLayerManager::OnActorDescContainerInstanceInitialized(UActorDescContainerInstance* InActorDescContainerInstance)
 {
-	ResolveActorDescContainerDataLayers(InActorDescContainer);
+	ResolveActorDescContainerInstanceDataLayers(InActorDescContainerInstance);
 }
 
 void UDataLayerManager::ResolveActorDescContainersDataLayers() const
 {
 	check(CanResolveDataLayers());
-	for (TObjectIterator<UActorDescContainer> ContainerIt; ContainerIt; ++ContainerIt)
+	for (TObjectIterator<UActorDescContainerInstance> ContainerIt; ContainerIt; ++ContainerIt)
 	{
-		if (UActorDescContainer* ActorDescContainer = *ContainerIt; ActorDescContainer)
+		if (UActorDescContainerInstance* ContainerInstance = *ContainerIt; ContainerInstance)
 		{
-			ResolveActorDescContainerDataLayers(ActorDescContainer);
+			ResolveActorDescContainerInstanceDataLayers(ContainerInstance);
 		}
 	}
 }
 
-void UDataLayerManager::ResolveActorDescContainerDataLayers(UActorDescContainer* InActorDescContainer) const
+FWorldPartitionReference UDataLayerManager::LoadWorldDataLayersActor(UActorDescContainerInstance* InActorDescContainerInstance)
 {
-	ResolveActorDescContainerDataLayersInternal(InActorDescContainer, nullptr);
+	FWorldPartitionReference WDLReference;
+	for (UActorDescContainerInstance::TIterator<> Iterator(InActorDescContainerInstance); Iterator; ++Iterator)
+	{
+		if (Iterator->GetActorNativeClass()->IsChildOf<AWorldDataLayers>())
+		{
+			WDLReference = FWorldPartitionReference(InActorDescContainerInstance, Iterator->GetGuid());
+			break;
+		}
+	}
+	return WDLReference;
 }
 
-void UDataLayerManager::ResolveActorDescDataLayers(FWorldPartitionActorDesc* InActorDesc) const
+void UDataLayerManager::ResolveActorDescContainerInstanceDataLayers(UActorDescContainerInstance* InActorDescContainerInstance) const
 {
-	ResolveActorDescContainerDataLayersInternal(InActorDesc->GetContainer(), InActorDesc);
+	ResolveActorDescContainerInstanceDataLayersInternal(InActorDescContainerInstance, nullptr);
 }
 
-void UDataLayerManager::ResolveActorDescContainerDataLayersInternal(UActorDescContainer* InActorDescContainer, FWorldPartitionActorDesc* InActorDesc) const
+void UDataLayerManager::ResolveActorDescInstanceDataLayers(FWorldPartitionActorDescInstance* InActorDescInstance) const
 {
-	check(InActorDescContainer);
-	check(!InActorDesc || (InActorDesc->GetContainer() == InActorDescContainer));
+	ResolveActorDescContainerInstanceDataLayersInternal(InActorDescInstance->GetContainerInstance(), InActorDescInstance);
+}
 
+void UDataLayerManager::ResolveActorDescContainerInstanceDataLayersInternal(UActorDescContainerInstance* InActorDescContainerInstance, FWorldPartitionActorDescInstance* InActorDescInstance) const
+{
+	check(InActorDescContainerInstance);
+	check(!InActorDescInstance || (InActorDescInstance->GetContainerInstance() == InActorDescContainerInstance));
+		
+	const UWorldPartition* ContainerOuterWorldPartition = InActorDescContainerInstance->GetTopWorldPartition();
 	// Skip resolving for template containers (will be done on ActorDescViews)
-	if (InActorDescContainer->IsTemplateContainer())
+	if (!ContainerOuterWorldPartition)
 	{
 		return;
 	}
 
-	// Find owning world partition for this ActorDescContainer
-	const UWorldPartition* ContainerOuterWorldPartition = InActorDescContainer->GetWorldPartition();
 	const ULevelStreaming* ContainerLevelStreaming = FLevelUtils::FindStreamingLevel(ContainerOuterWorldPartition->GetTypedOuter<UWorld>()->PersistentLevel);
 	const UWorld* ContainerLevelStreamingWorld = ContainerLevelStreaming ? ContainerLevelStreaming->GetWorld() : nullptr;
 	const UWorldPartition* ContainerOwningWorldPartition = ContainerLevelStreamingWorld && !ContainerLevelStreamingWorld->IsGameWorld() ? ContainerLevelStreamingWorld->GetWorldPartition() : ContainerOuterWorldPartition;
@@ -786,26 +868,47 @@ void UDataLayerManager::ResolveActorDescContainerDataLayersInternal(UActorDescCo
 	{
 		return;
 	}
-	
+
 	// Resolve ActorDescs DataLayerInstanceNames
 	check(CanResolveDataLayers());
-	if (InActorDesc)
+	if (InActorDescInstance)
 	{
-		InActorDesc->SetDataLayerInstanceNames(FDataLayerUtils::ResolvedDataLayerInstanceNames(this, InActorDesc));
+		InActorDescInstance->SetDataLayerInstanceNames(FDataLayerUtils::ResolveDataLayerInstanceNames(this, InActorDescInstance->GetActorDesc()));
 	}
 	else
 	{
-		for (FActorDescList::TIterator<> Iterator(InActorDescContainer); Iterator; ++Iterator)
+		for (UActorDescContainerInstance::TIterator<> Iterator(InActorDescContainerInstance); Iterator; ++Iterator)
 		{
-			Iterator->SetDataLayerInstanceNames(FDataLayerUtils::ResolvedDataLayerInstanceNames(this, *Iterator));
+			Iterator->SetDataLayerInstanceNames(FDataLayerUtils::ResolveDataLayerInstanceNames(this, Iterator->GetActorDesc()));
 		}
 	}
 }
 
 bool UDataLayerManager::ResolveIsLoadedInEditor(const TArray<FName>& InDataLayerInstanceNames) const
 {
-	TArray<const UDataLayerInstance*> DataLayerInstances = GetDataLayerInstances(InDataLayerInstanceNames);
-	return DataLayerInstances.Num() ? DataLayerLoadingPolicy->ResolveIsLoadedInEditor(DataLayerInstances) : true;
+	TArray<const UDataLayerInstance*> AllDataLayerInstances = GetDataLayerInstances(InDataLayerInstanceNames);
+	TArray<const UDataLayerInstance*> DataLayerInstances;
+	TArray<const UExternalDataLayerInstance*> ExternalDataLayerInstances;
+	for (const UDataLayerInstance* DataLayerInstance : AllDataLayerInstances)
+	{
+		if (const UExternalDataLayerInstance* ExternalDataLayerInstance = Cast<UExternalDataLayerInstance>(DataLayerInstance))
+		{
+			ExternalDataLayerInstances.Add(ExternalDataLayerInstance);
+		}
+		else
+		{
+			DataLayerInstances.Add(DataLayerInstance);
+		}
+	}
+
+	// If part of an External Data Layer, the External Data Layer must be loaded in editor
+	const bool bAnyExternalDataLayerInstanceLoaded = ExternalDataLayerInstances.Num() ? Algo::AnyOf(ExternalDataLayerInstances, [](const UExternalDataLayerInstance* ExternalDataLayerInstance) { return ExternalDataLayerInstance->IsEffectiveLoadedInEditor(); }) : true;
+	if (bAnyExternalDataLayerInstanceLoaded)
+	{
+		const bool bAnyDataLayerInstanceLoaded = DataLayerInstances.Num() ? DataLayerLoadingPolicy->ResolveIsLoadedInEditor(DataLayerInstances) : true;
+		return bAnyDataLayerInstanceLoaded;
+	}
+	return false;
 }
 
 TArray<const UDataLayerInstance*> UDataLayerManager::GetRuntimeDataLayerInstances(const TArray<FName>& InDataLayerInstanceNames) const
@@ -837,5 +940,4 @@ void FDataLayersEditorBroadcast::StaticOnActorDataLayersEditorLoadingStateChange
 	Get().DataLayerEditorLoadingStateChanged.Broadcast(bIsFromUserChange);
 	IWorldPartitionActorLoaderInterface::RefreshLoadedState(bIsFromUserChange);
 }
-
 #endif

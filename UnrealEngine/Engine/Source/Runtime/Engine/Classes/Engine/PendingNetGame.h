@@ -94,6 +94,11 @@ public:
 	void	InitNetDriver();
 
 	/**
+	 * Begin initial handshake if needed, or call SendInitialJoin.
+	 */
+	void BeginHandshake();
+
+	/**
 	 * Send the packet for triggering the initial join
 	 */
 	void SendInitialJoin();

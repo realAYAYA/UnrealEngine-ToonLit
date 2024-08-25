@@ -184,7 +184,7 @@ void FPhysTestSerializer::CreateChaosData()
 			PxActorToChaosHandle.Add(Act, Particle.Get());
 
 			//geometry
-			TArray<TUniquePtr<FImplicitObject>> Geoms;
+			TArray<Chaos::FImplicitObjectPtr> Geoms;
 			const int32 NumShapes = Actor->getNbShapes();
 			TArray<PxShape*> Shapes;
 			Shapes.AddUninitialized(NumShapes);
@@ -201,7 +201,7 @@ void FPhysTestSerializer::CreateChaosData()
 			{
 				if (Geoms.Num() == 1)
 				{
-					auto SharedGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(Geoms[0].Release());
+					auto SharedGeom = FImplicitObjectPtr(Geoms[0]);
 					GTParticle->SetGeometry(SharedGeom);
 					Particle->SetSharedGeometry(SharedGeom);
 				}

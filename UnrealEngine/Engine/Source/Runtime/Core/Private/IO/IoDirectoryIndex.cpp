@@ -9,6 +9,7 @@
 #include "Misc/AssertionMacros.h"
 #include "Misc/CString.h"
 #include "Misc/Paths.h"
+#include "Misc/PathViews.h"
 #include "Serialization/Archive.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
@@ -71,7 +72,7 @@ FString GetCommonRootPath(const TArray<FStringView>& Filenames)
 		}
 		if ((CommonSeparatorIndex + 1) < Root.Len())
 		{
-			Root.MidInline(0, CommonSeparatorIndex + 1, false);
+			Root.MidInline(0, CommonSeparatorIndex + 1, EAllowShrinking::No);
 		}
 	}
 	return Root;
@@ -398,16 +399,18 @@ public:
 			: ~uint32(0);
 	}
 
-	bool IterateDirectoryIndex(FIoDirectoryIndexHandle DirectoryIndexHandle, const FString& Path, FDirectoryIndexVisitorFunction Visit)
+	bool IterateDirectoryIndex(FIoDirectoryIndexHandle DirectoryIndexHandle, FStringView Path, FDirectoryIndexVisitorFunction Visit)
 	{
 		FIoDirectoryIndexHandle File = GetFile(DirectoryIndexHandle);
 		while (File.IsValid())
 		{
 			const uint32 TocEntryIndex = GetFileData(File);
 			FStringView FileName = GetFileName(File);
-			FString FilePath = GetMountPoint() / Path / FString(FileName);
+			TStringBuilder<256> FilePathBuilder;
+			FPathViews::Append(FilePathBuilder, GetMountPoint(), Path, FileName);
+			const FStringView FilePath = FilePathBuilder.ToView();
 
-			if (!Visit(MoveTemp(FilePath), TocEntryIndex))
+			if (!Visit(FilePath, TocEntryIndex))
 			{
 				return false;
 			}
@@ -419,7 +422,9 @@ public:
 		while (ChildDirectory.IsValid())
 		{
 			FStringView DirectoryName = GetDirectoryName(ChildDirectory);
-			FString ChildDirectoryPath = Path / FString(DirectoryName);
+			TStringBuilder<256> ChildDirectoryPathBuilder;
+			FPathViews::Append(ChildDirectoryPathBuilder, Path, DirectoryName);
+			const FStringView ChildDirectoryPath = ChildDirectoryPathBuilder.ToView();
 
 			if (!IterateDirectoryIndex(ChildDirectory, ChildDirectoryPath, Visit))
 			{
@@ -506,7 +511,7 @@ uint32 FIoDirectoryIndexReader::GetFileData(FIoDirectoryIndexHandle File) const
 	return Impl->GetFileData(File);
 }
 
-bool FIoDirectoryIndexReader::IterateDirectoryIndex(FIoDirectoryIndexHandle Directory, const FString& Path, FDirectoryIndexVisitorFunction Visit) const
+bool FIoDirectoryIndexReader::IterateDirectoryIndex(FIoDirectoryIndexHandle Directory, FStringView Path, FDirectoryIndexVisitorFunction Visit) const
 {
 	return Impl->IterateDirectoryIndex(Directory, Path, Visit);
 }

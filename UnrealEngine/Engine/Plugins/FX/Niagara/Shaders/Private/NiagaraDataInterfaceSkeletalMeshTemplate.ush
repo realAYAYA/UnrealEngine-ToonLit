@@ -23,10 +23,11 @@ Buffer<uint>	{ParameterName}_MeshSampleRegionsVertices;
 Buffer<uint>	{ParameterName}_MeshTriangleMatricesOffsetBuffer;
 uint			{ParameterName}_MeshTriangleCount;
 uint			{ParameterName}_MeshVertexCount;
-uint			{ParameterName}_MeshWeightStride;
-uint			{ParameterName}_MeshSkinWeightIndexSize;
 uint			{ParameterName}_MeshNumTexCoord;
 uint			{ParameterName}_MeshNumWeights;
+uint			{ParameterName}_MeshBoneWeightStride;
+uint			{ParameterName}_MeshBoneIndexSizeBytes;
+uint			{ParameterName}_MeshBoneWeightSizeBytes;
 int				{ParameterName}_NumBones;
 int				{ParameterName}_NumFilteredBones;
 int				{ParameterName}_NumUnfilteredBones;
@@ -49,13 +50,39 @@ float			{ParameterName}_InstanceInvDeltaTime;
 float3			{ParameterName}_PreSkinnedLocalBoundsCenter;
 float3			{ParameterName}_PreSkinnedLocalBoundsExtents;
 uint			{ParameterName}_EnabledFeatures;
+#if DISKELMESH_ALLOW_DEFORMED
+Buffer<float>	{ParameterName}_DeformedCurrPositionBuffer;
+Buffer<float>	{ParameterName}_DeformedPrevPositionBuffer;
+Buffer<float4>	{ParameterName}_DeformedTangentBuffer;
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Flags test
-bool UniformTriangleSamplingEnable_{ParameterName}() { return ({ParameterName}_EnabledFeatures & 0x1) == 1; }
-bool UniformSamplingRegionEnabled_{ParameterName}() { return ({ParameterName}_EnabledFeatures & 0x2) == 2; }
-bool UnlimitedBoneInfluences_{ParameterName}() { return ({ParameterName}_EnabledFeatures & 0x4) == 4; }
-bool HasMeshColors_{ParameterName}() { return ({ParameterName}_EnabledFeatures & 0x8) == 8; }
+bool UniformTriangleSamplingEnable_{ParameterName}()	{ return ({ParameterName}_EnabledFeatures & 0x01) == 0x01; }
+bool UniformSamplingRegionEnabled_{ParameterName}()		{ return ({ParameterName}_EnabledFeatures & 0x02) == 0x02; }
+bool UnlimitedBoneInfluences_{ParameterName}()			{ return ({ParameterName}_EnabledFeatures & 0x04) == 0x04; }
+bool HasMeshColors_{ParameterName}()					{ return ({ParameterName}_EnabledFeatures & 0x08) == 0x08; }
+
+#if DISKELMESH_ALLOW_DEFORMED
+bool UseDeformedPositions_{ParameterName}()				{ return ({ParameterName}_EnabledFeatures & 0x10) == 0x10; }
+bool UseDeformedTangents_{ParameterName}()				{ return ({ParameterName}_EnabledFeatures & 0x20) == 0x20; }
+#endif
+
+void GetIndexWeight_{ParameterName}(int BoneIndexOffset, int BoneWeightOffset, int Layer, out int4 BlendIndices, out float4 BlendWeights)
+{
+#if DISKELMESH_ALLOW_16BIT
+	BlendIndices = {ParameterName}_MeshBoneIndexSizeBytes == 1 ?
+		DISkelMesh_UnpackIndices4x8({ParameterName}_MeshSkinWeightBuffer[BoneIndexOffset + Layer]) :
+		DISkelMesh_UnpackIndices4x16({ParameterName}_MeshSkinWeightBuffer[BoneIndexOffset + (Layer << 1)], {ParameterName}_MeshSkinWeightBuffer[BoneIndexOffset + (Layer << 1) + 1]);
+
+	BlendWeights = {ParameterName}_MeshBoneWeightSizeBytes == 1 ?
+		DISkelMesh_UnpackWeights4x8({ParameterName}_MeshSkinWeightBuffer[BoneWeightOffset + Layer]) :
+		DISkelMesh_UnpackWeights4x16({ParameterName}_MeshSkinWeightBuffer[BoneWeightOffset + (Layer << 1)], {ParameterName}_MeshSkinWeightBuffer[BoneWeightOffset + (Layer << 1) + 1]);
+#else
+	BlendIndices = DISkelMesh_UnpackIndices4x8({ParameterName}_MeshSkinWeightBuffer[BoneIndexOffset + Layer]);
+	BlendWeights = DISkelMesh_UnpackWeights4x8({ParameterName}_MeshSkinWeightBuffer[BoneWeightOffset + Layer]);
+#endif
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc functions
@@ -181,14 +208,44 @@ FDISkelMeshSkinnedVertex GetSkinnedVertex_{ParameterName}(uint VertexIndex)
 
 	VertexIndex = clamp(VertexIndex, 0, {ParameterName}_MeshVertexCount - 1);
 
-	//-TODO: Use a R32G32B32 format
-	float3 CurrPosition = float3({ParameterName}_MeshVertexBuffer[VertexIndex * 3], {ParameterName}_MeshVertexBuffer[VertexIndex * 3 + 1], {ParameterName}_MeshVertexBuffer[VertexIndex * 3 + 2]);
-	float3 PrevPosition = CurrPosition;
+	// Read Positions For Skinning
+	bool bNeedsSkinPositions = true;
+	float3 CurrPosition = 0;
+	float3 PrevPosition = 0;
+#if DISKELMESH_ALLOW_DEFORMED
+	if (UseDeformedPositions_{ParameterName}())
+	{
+		bNeedsSkinPositions = false;
+		CurrPosition = float3({ParameterName}_DeformedCurrPositionBuffer[VertexIndex * 3], {ParameterName}_DeformedCurrPositionBuffer[VertexIndex * 3 + 1], {ParameterName}_DeformedCurrPositionBuffer[VertexIndex * 3 + 2]);
+		PrevPosition = float3({ParameterName}_DeformedPrevPositionBuffer[VertexIndex * 3], {ParameterName}_DeformedPrevPositionBuffer[VertexIndex * 3 + 1], {ParameterName}_DeformedPrevPositionBuffer[VertexIndex * 3 + 2]);
+	}
+	else
+#endif
+	{
+		CurrPosition = float3({ParameterName}_MeshVertexBuffer[VertexIndex * 3], {ParameterName}_MeshVertexBuffer[VertexIndex * 3 + 1], {ParameterName}_MeshVertexBuffer[VertexIndex * 3 + 2]);
+		PrevPosition = CurrPosition;
+	}
 
-	float3 TangentX = TangentBias({ParameterName}_MeshTangentBuffer[VertexIndex * 2    ].xyz);
-	float4 TangentZ = TangentBias({ParameterName}_MeshTangentBuffer[VertexIndex * 2 + 1].xyzw);
-	
-	if ( {ParameterName}_MeshNumWeights > 0 )
+	// Read Tangents For Skinning
+	bool bNeedsSkinTangents = true;
+	float3 TangentX = 0;
+	float4 TangentZ = 0;
+#if DISKELMESH_ALLOW_DEFORMED
+	if (UseDeformedTangents_{ParameterName}())
+	{
+		bNeedsSkinTangents = false;
+		TangentX = TangentBias({ParameterName}_DeformedTangentBuffer[VertexIndex * 2    ].xyz);
+		TangentZ = TangentBias({ParameterName}_DeformedTangentBuffer[VertexIndex * 2 + 1].xyzw);
+	}
+	else
+#endif
+	{
+		TangentX = TangentBias({ParameterName}_MeshTangentBuffer[VertexIndex * 2    ].xyz);
+		TangentZ = TangentBias({ParameterName}_MeshTangentBuffer[VertexIndex * 2 + 1].xyzw);
+	}
+
+	// Perform skinning if needed
+	if ( {ParameterName}_MeshNumWeights > 0 && (bNeedsSkinPositions || bNeedsSkinTangents))
 	{
 		float3x4 PrevBoneMatrix;
 		float3x4 CurrBoneMatrix;
@@ -200,62 +257,70 @@ FDISkelMeshSkinnedVertex GetSkinnedVertex_{ParameterName}(uint VertexIndex)
 		BRANCH
 		if (UnlimitedBoneInfluences_{ParameterName}())
 		{
-			uint BlendOffsetCount = {ParameterName}_MeshSkinWeightLookupBuffer[VertexIndex];
-			int NumBoneInfluences = BlendOffsetCount & 0xff;
-			int StreamOffset = BlendOffsetCount >> 8;
-			int WeightsOffset = StreamOffset + ({ParameterName}_MeshSkinWeightIndexSize * NumBoneInfluences);
+			const uint BlendOffsetCount = {ParameterName}_MeshSkinWeightLookupBuffer[VertexIndex];
+			const int NumBoneInfluences = BlendOffsetCount & 0xff;
+			const int StreamOffset = BlendOffsetCount >> 8;
+			const int WeightsOffset = StreamOffset + ({ParameterName}_MeshBoneIndexSizeBytes * NumBoneInfluences);
+			const float WeightNorm = {ParameterName}_MeshBoneWeightSizeBytes == 1 ? 1.0f / 255.0f : 1.0f / 65535.0f;
 
 			PrevBoneMatrix = float3x4(float4(0,0,0,0), float4(0,0,0,0), float4(0,0,0,0));
 			CurrBoneMatrix = float3x4(float4(0,0,0,0), float4(0,0,0,0), float4(0,0,0,0));
 			for (int InfluenceIdx = 0; InfluenceIdx < NumBoneInfluences; InfluenceIdx++)
 			{
-				int BoneIndexOffset = StreamOffset + ({ParameterName}_MeshSkinWeightIndexSize * InfluenceIdx);
+				const int BoneIndexOffset = StreamOffset + ({ParameterName}_MeshBoneIndexSizeBytes * InfluenceIdx);
 				int BoneIndex = {ParameterName}_MeshSkinWeightBuffer[BoneIndexOffset];
-				if ({ParameterName}_MeshSkinWeightIndexSize > 1)
+				if ( {ParameterName}_MeshBoneIndexSizeBytes > 1 )
 				{
-					BoneIndex = {ParameterName}_MeshSkinWeightBuffer[BoneIndexOffset + 1] << 8 | BoneIndex;
-					//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
-					float BoneWeight = float({ParameterName}_MeshSkinWeightBuffer[WeightsOffset + InfluenceIdx]) / 255.0f;
-
-					PrevBoneMatrix += GetPrevBoneSkinningMatrix_{ParameterName}(SectionBoneOffset + BoneIndex) * BoneWeight;
-					CurrBoneMatrix += GetCurrBoneSkinningMatrix_{ParameterName}(SectionBoneOffset + BoneIndex) * BoneWeight;
+					BoneIndex |= {ParameterName}_MeshSkinWeightBuffer[BoneIndexOffset + 1] << 8;
 				}
-				else
+
+				const int BoneWeightOffset = WeightsOffset + ({ParameterName}_MeshBoneWeightSizeBytes * InfluenceIdx);
+				int iBoneWeight = {ParameterName}_MeshSkinWeightBuffer[BoneWeightOffset];
+				if ( {ParameterName}_MeshBoneWeightSizeBytes > 1 )
 				{
-					//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
-					float BoneWeight = float({ParameterName}_MeshSkinWeightBuffer[WeightsOffset + InfluenceIdx]) / 255.0f;
-
-					PrevBoneMatrix += GetPrevBoneSkinningMatrix_{ParameterName}(SectionBoneOffset + BoneIndex) * BoneWeight;
-					CurrBoneMatrix += GetCurrBoneSkinningMatrix_{ParameterName}(SectionBoneOffset + BoneIndex) * BoneWeight;
+					iBoneWeight |= {ParameterName}_MeshSkinWeightBuffer[BoneWeightOffset + 1] << 8;
 				}
+				float BoneWeight = float(iBoneWeight) * WeightNorm;
+				PrevBoneMatrix += GetPrevBoneSkinningMatrix_{ParameterName}(SectionBoneOffset + BoneIndex) * BoneWeight;
+				CurrBoneMatrix += GetCurrBoneSkinningMatrix_{ParameterName}(SectionBoneOffset + BoneIndex) * BoneWeight;
 			}	
 		}
 		else
 #endif
 		{
-			uint WeightOffset = {ParameterName}_MeshNumWeights == 8 ? 2 : 1;
-			int4 BlendIndices = DISkelMesh_UnpackIndices4({ParameterName}_MeshSkinWeightBuffer[VertexIndex * {ParameterName}_MeshWeightStride]);
-	        float4 BlendWeights = DISkelMesh_UnpackWeights4({ParameterName}_MeshSkinWeightBuffer[VertexIndex * {ParameterName}_MeshWeightStride + WeightOffset]);
-			CurrBoneMatrix = GetCurrSkinningMatrix_{ParameterName}(SectionBoneOffset, BlendIndices, BlendWeights);
-			PrevBoneMatrix = GetPrevSkinningMatrix_{ParameterName}(SectionBoneOffset, BlendIndices, BlendWeights);
+			const uint BoneIndexOffset = VertexIndex * {ParameterName}_MeshBoneWeightStride;
+			const uint BoneWeightOffset = BoneIndexOffset + (({ParameterName}_MeshNumWeights * {ParameterName}_MeshBoneIndexSizeBytes) >> 2);
+			int4 BlendIndices;
+			float4 BlendWeights;
+			{
+				GetIndexWeight_{ParameterName}(BoneIndexOffset, BoneWeightOffset, 0, BlendIndices, BlendWeights);
+				CurrBoneMatrix = GetCurrSkinningMatrix_{ParameterName}(SectionBoneOffset, BlendIndices, BlendWeights);
+				PrevBoneMatrix = GetPrevSkinningMatrix_{ParameterName}(SectionBoneOffset, BlendIndices, BlendWeights);
+			}
+
 #if DISKELMESH_BONE_INFLUENCES != DISKELMESH_BONE_INFLUENCES_MAX4
 			// We are in 8 or unlimited mode so need to check for the extended weights
 			if ({ParameterName}_MeshNumWeights == 8)
 			{
-			    BlendIndices = DISkelMesh_UnpackIndices4({ParameterName}_MeshSkinWeightBuffer[VertexIndex * {ParameterName}_MeshWeightStride + 1]);
-			    BlendWeights = DISkelMesh_UnpackWeights4({ParameterName}_MeshSkinWeightBuffer[VertexIndex * {ParameterName}_MeshWeightStride + WeightOffset + 1]);
+				GetIndexWeight_{ParameterName}(BoneIndexOffset, BoneWeightOffset, 1, BlendIndices, BlendWeights);
 				CurrBoneMatrix += GetCurrSkinningMatrix_{ParameterName}(SectionBoneOffset, BlendIndices, BlendWeights);
 				PrevBoneMatrix += GetPrevSkinningMatrix_{ParameterName}(SectionBoneOffset, BlendIndices, BlendWeights);
 			}
 #endif
 		}
 
-		CurrPosition = mul(CurrBoneMatrix, float4(CurrPosition, 1.0f)).xyz;
-		PrevPosition = mul(PrevBoneMatrix, float4(PrevPosition, 1.0f)).xyz;
+		if ( bNeedsSkinPositions )
+		{
+			CurrPosition = mul(CurrBoneMatrix, float4(CurrPosition, 1.0f)).xyz;
+			PrevPosition = mul(PrevBoneMatrix, float4(PrevPosition, 1.0f)).xyz;
+		}
 
-		// Not using InverseTranspose of matrices so assuming uniform scaling only (same as SkinCache)
-		TangentX.xyz = mul(CurrBoneMatrix, float4(TangentX.xyz, 0.0f)).xyz;
-		TangentZ.xyz = mul(CurrBoneMatrix, float4(TangentZ.xyz, 0.0f)).xyz;
+		if ( bNeedsSkinTangents )
+		{
+			// Not using InverseTranspose of matrices so assuming uniform scaling only (same as SkinCache)
+			TangentX.xyz = mul(CurrBoneMatrix, float4(TangentX.xyz, 0.0f)).xyz;
+			TangentZ.xyz = mul(CurrBoneMatrix, float4(TangentZ.xyz, 0.0f)).xyz;
+		}
 	}
 
 	float3 TangentY = cross(TangentZ.xyz, TangentX.xyz) * TangentZ.w;
@@ -266,6 +331,17 @@ FDISkelMeshSkinnedVertex GetSkinnedVertex_{ParameterName}(uint VertexIndex)
 	SkinnedVertex.TangentX = cross(TangentY, TangentZ.xyz) * TangentZ.w;
 	SkinnedVertex.TangentY = TangentY;
 	SkinnedVertex.TangentZ = TangentZ.xyz;
+	return SkinnedVertex;
+}
+
+FDISkelMeshSkinnedVertex GetSkinnedVertexWS_{ParameterName}(uint VertexIndex)
+{
+	FDISkelMeshSkinnedVertex SkinnedVertex = GetSkinnedVertex_{ParameterName}(VertexIndex);
+    SkinnedVertex.Position		= mul(float4(SkinnedVertex.Position, 1.0f), {ParameterName}_InstanceTransform).xyz;
+    SkinnedVertex.PrevPosition	= mul(float4(SkinnedVertex.PrevPosition, 1.0f), {ParameterName}_InstancePrevTransform).xyz;
+    SkinnedVertex.TangentX		= normalize(mul(float4(SkinnedVertex.TangentX, 0.0f), {ParameterName}_InstanceTransform).xyz);
+    SkinnedVertex.TangentY		= normalize(mul(float4(SkinnedVertex.TangentY, 0.0f), {ParameterName}_InstanceTransform).xyz);
+    SkinnedVertex.TangentZ		= normalize(mul(float4(SkinnedVertex.TangentZ, 0.0f), {ParameterName}_InstanceTransform).xyz);
 	return SkinnedVertex;
 }
 
@@ -402,6 +478,118 @@ void GetSkinnedTriangleDataInterpolated_{ParameterName}(in uint TriangleIndex, i
 	OutNormal	= normalize(SkinnedVertex.TangentZ);
 	OutBinormal	= normalize(SkinnedVertex.TangentY);
 	OutTangent	= normalize(SkinnedVertex.TangentX);
+}
+
+void GetSkinnedTriangleVertexDataHelper_{ParameterName}(
+	int TriangleIndex, 
+	float Interp,
+	bool bWorldSpace,
+	out float3 Position0, out float3 Velocity0, out float3 Normal0, out float3 Binormal0, out float3 Tangent0,
+	out float3 Position1, out float3 Velocity1, out float3 Normal1, out float3 Binormal1, out float3 Tangent1,
+	out float3 Position2, out float3 Velocity2, out float3 Normal2, out float3 Binormal2, out float3 Tangent2
+)
+{
+    int VertexIndex0 = 0;
+    int VertexIndex1 = 0;
+    int VertexIndex2 = 0;
+	if ( {ParameterName}_MeshTriangleCount != 0 )
+	{
+		TriangleIndex = clamp(TriangleIndex, 0, int({ParameterName}_MeshTriangleCount) - 1);
+		const uint IndexBufferOffset = TriangleIndex * 3;
+		VertexIndex0 = {ParameterName}_MeshIndexBuffer[IndexBufferOffset];
+		VertexIndex1 = {ParameterName}_MeshIndexBuffer[IndexBufferOffset + 1];
+		VertexIndex2 = {ParameterName}_MeshIndexBuffer[IndexBufferOffset + 2];
+	}
+
+	FDISkelMeshSkinnedVertex SkinnedVertex0;
+	FDISkelMeshSkinnedVertex SkinnedVertex1;
+	FDISkelMeshSkinnedVertex SkinnedVertex2;
+
+	BRANCH
+	if ( bWorldSpace )
+	{
+		SkinnedVertex0 = GetSkinnedVertexWS_{ParameterName}(VertexIndex0);
+		SkinnedVertex1 = GetSkinnedVertexWS_{ParameterName}(VertexIndex1);
+		SkinnedVertex2 = GetSkinnedVertexWS_{ParameterName}(VertexIndex2);
+	}
+	else
+	{
+		SkinnedVertex0 = GetSkinnedVertex_{ParameterName}(VertexIndex0);
+		SkinnedVertex1 = GetSkinnedVertex_{ParameterName}(VertexIndex1);
+		SkinnedVertex2 = GetSkinnedVertex_{ParameterName}(VertexIndex2);
+	}
+
+	Position0		= lerp(SkinnedVertex0.PrevPosition, SkinnedVertex0.Position, Interp);
+	Velocity0		= SkinnedVertex0.Position - SkinnedVertex0.PrevPosition;
+	Normal0			= SkinnedVertex0.TangentZ;
+	Binormal0		= SkinnedVertex0.TangentY;
+	Tangent0		= SkinnedVertex0.TangentX;
+
+	Position1		= lerp(SkinnedVertex1.PrevPosition, SkinnedVertex1.Position, Interp);
+	Velocity1		= SkinnedVertex1.Position - SkinnedVertex1.PrevPosition;
+	Normal1			= SkinnedVertex1.TangentZ;
+	Binormal1		= SkinnedVertex1.TangentY;
+	Tangent1		= SkinnedVertex1.TangentX;
+
+	Position2		= lerp(SkinnedVertex2.PrevPosition, SkinnedVertex2.Position, Interp);
+	Velocity2		= SkinnedVertex2.Position - SkinnedVertex2.PrevPosition;
+	Normal2			= SkinnedVertex2.TangentZ;
+	Binormal2		= SkinnedVertex2.TangentY;
+	Tangent2		= SkinnedVertex2.TangentX;
+}
+
+void GetSkinnedTriangleVertexData_{ParameterName}(
+	int TriangleIndex, 
+	out float3 Position0, out float3 Velocity0, out float3 Normal0, out float3 Binormal0, out float3 Tangent0,
+	out float3 Position1, out float3 Velocity1, out float3 Normal1, out float3 Binormal1, out float3 Tangent1,
+	out float3 Position2, out float3 Velocity2, out float3 Normal2, out float3 Binormal2, out float3 Tangent2
+)
+{
+	GetSkinnedTriangleVertexDataHelper_{ParameterName}(
+		TriangleIndex, 1.0f, false,
+		Position0, Velocity0, Normal0, Binormal0, Tangent0, Position1, Velocity1, Normal1, Binormal1, Tangent1, Position2, Velocity2, Normal2, Binormal2, Tangent2
+	);
+}
+
+void GetSkinnedTriangleVertexDataWS_{ParameterName}(
+	int TriangleIndex, 
+	out float3 Position0, out float3 Velocity0, out float3 Normal0, out float3 Binormal0, out float3 Tangent0,
+	out float3 Position1, out float3 Velocity1, out float3 Normal1, out float3 Binormal1, out float3 Tangent1,
+	out float3 Position2, out float3 Velocity2, out float3 Normal2, out float3 Binormal2, out float3 Tangent2
+)
+{
+	GetSkinnedTriangleVertexDataHelper_{ParameterName}(
+		TriangleIndex, 1.0f, true,
+		Position0, Velocity0, Normal0, Binormal0, Tangent0, Position1, Velocity1, Normal1, Binormal1, Tangent1, Position2, Velocity2, Normal2, Binormal2, Tangent2
+	);
+}
+
+void GetSkinnedTriangleVertexDataInterpolated_{ParameterName}(
+	int TriangleIndex, 
+	float Interp,
+	out float3 Position0, out float3 Velocity0, out float3 Normal0, out float3 Binormal0, out float3 Tangent0,
+	out float3 Position1, out float3 Velocity1, out float3 Normal1, out float3 Binormal1, out float3 Tangent1,
+	out float3 Position2, out float3 Velocity2, out float3 Normal2, out float3 Binormal2, out float3 Tangent2
+)
+{
+	GetSkinnedTriangleVertexDataHelper_{ParameterName}(
+		TriangleIndex, Interp, false,
+		Position0, Velocity0, Normal0, Binormal0, Tangent0, Position1, Velocity1, Normal1, Binormal1, Tangent1, Position2, Velocity2, Normal2, Binormal2, Tangent2
+	);
+}
+
+void GetSkinnedTriangleVertexDataWSInterpolated_{ParameterName}(
+	int TriangleIndex, 
+	float Interp,
+	out float3 Position0, out float3 Velocity0, out float3 Normal0, out float3 Binormal0, out float3 Tangent0,
+	out float3 Position1, out float3 Velocity1, out float3 Normal1, out float3 Binormal1, out float3 Tangent1,
+	out float3 Position2, out float3 Velocity2, out float3 Normal2, out float3 Binormal2, out float3 Tangent2
+)
+{
+	GetSkinnedTriangleVertexDataHelper_{ParameterName}(
+		TriangleIndex, Interp, true,
+		Position0, Velocity0, Normal0, Binormal0, Tangent0, Position1, Velocity1, Normal1, Binormal1, Tangent1, Position2, Velocity2, Normal2, Binormal2, Tangent2
+	);
 }
 
 void GetTriUV_{ParameterName}(in uint TriangleIndex, in float3 BaryCoord, in int UVSet, out float2 OutUV)
@@ -638,6 +826,11 @@ void GetTriCoordVertices_{ParameterName}(in int TriangleIndex, out int VertexInd
 	GetTriVertices_{ParameterName}(TriangleIndex, VertexIndex0, VertexIndex1, VertexIndex2);
 }
 
+void GetTriangleIndices_{ParameterName}(int Tri, out int Index0, out int Index1, out int Index2)
+{
+	GetTriVertices_{ParameterName}(Tri, Index0, Index1, Index2);
+}
+
 void GetTriColor_{ParameterName}(in uint TriangleIndex, in float3 BaryCoord, out float4 OutColor)
 {
 	// Early out for bad data
@@ -670,6 +863,28 @@ void GetSkinnedVertexDataWS_{ParameterName}(in int VertexIndex, out float3 OutPo
     FDISkelMeshSkinnedVertex SkinnedVertex = GetSkinnedVertex_{ParameterName}(VertexIndex);
     OutPosition = mul(float4(SkinnedVertex.Position, 1.0f), {ParameterName}_InstanceTransform).xyz;
     float3 PrevPosition = mul(float4(SkinnedVertex.PrevPosition, 1.0f), {ParameterName}_InstancePrevTransform).xyz;
+    OutVelocity = (SkinnedVertex.Position - SkinnedVertex.PrevPosition) * {ParameterName}_InstanceInvDeltaTime;
+    OutNormal   = normalize(mul(float4(SkinnedVertex.TangentZ, 0.0f), {ParameterName}_InstanceTransform).xyz);
+    OutBinormal = normalize(mul(float4(SkinnedVertex.TangentY, 0.0f), {ParameterName}_InstanceTransform).xyz);
+    OutTangent  = normalize(mul(float4(SkinnedVertex.TangentX, 0.0f), {ParameterName}_InstanceTransform).xyz);
+}
+
+void GetSkinnedVertexDataInterpolated_{ParameterName}(in int VertexIndex, in float Interp, out float3 OutPosition, out float3 OutVelocity, out float3 OutNormal, out float3 OutBinormal, out float3 OutTangent)
+{
+    FDISkelMeshSkinnedVertex SkinnedVertex = GetSkinnedVertex_{ParameterName}(VertexIndex);
+    OutPosition = lerp(SkinnedVertex.PrevPosition, SkinnedVertex.Position, Interp);
+    OutVelocity = (SkinnedVertex.Position - SkinnedVertex.PrevPosition) * {ParameterName}_InstanceInvDeltaTime;
+	OutNormal = SkinnedVertex.TangentZ;
+	OutBinormal = SkinnedVertex.TangentY;
+	OutTangent = SkinnedVertex.TangentX;
+}
+
+void GetSkinnedVertexDataInterpolatedWS_{ParameterName}(in int VertexIndex, in float Interp, out float3 OutPosition, out float3 OutVelocity, out float3 OutNormal, out float3 OutBinormal, out float3 OutTangent)
+{
+    FDISkelMeshSkinnedVertex SkinnedVertex = GetSkinnedVertex_{ParameterName}(VertexIndex);
+    OutPosition = mul(float4(SkinnedVertex.Position, 1.0f), {ParameterName}_InstanceTransform).xyz;
+    const float3 PrevPosition = mul(float4(SkinnedVertex.PrevPosition, 1.0f), {ParameterName}_InstancePrevTransform).xyz;
+    OutPosition	= lerp(OutPosition, PrevPosition, Interp);
     OutVelocity = (SkinnedVertex.Position - SkinnedVertex.PrevPosition) * {ParameterName}_InstanceInvDeltaTime;
     OutNormal   = normalize(mul(float4(SkinnedVertex.TangentZ, 0.0f), {ParameterName}_InstanceTransform).xyz);
     OutBinormal = normalize(mul(float4(SkinnedVertex.TangentY, 0.0f), {ParameterName}_InstanceTransform).xyz);

@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeMeshApplyPose.h"
 
 #include "Misc/AssertionMacros.h"
@@ -10,15 +9,14 @@
 #include "MuT/NodePrivate.h"
 
 
-
 namespace mu
 {
 
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeMeshApplyPose::Private::s_type =
-            NODE_TYPE( "MeshApplyPose", NodeMesh::GetStaticType() );
+    FNodeType NodeMeshApplyPose::Private::s_type =
+            FNodeType( "MeshApplyPose", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,61 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeMeshApplyPose, EType::ApplyPose, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeMeshApplyPose::GetInputCount() const
-	{
-        return 2;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeMeshApplyPose::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0:
-            pResult = m_pD->m_pBase.get();
-            break;
-        case 1:
-            pResult = m_pD->m_pPose.get();
-			break;
-        default:
-            check(false);
-            break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeMeshApplyPose::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0:
-            m_pD->m_pBase = dynamic_cast<NodeMesh*>(pNode.get());
-            break;
-
-		case 1:
-            m_pD->m_pPose = dynamic_cast<NodeMesh*>(pNode.get());
-			break;
-
-        default:
-            check(false);
-            break;
-        }
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -120,8 +63,7 @@ namespace mu
 
 		if ( m_pBase )
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>( m_pBase->GetBasePrivate() );
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>( m_pBase->GetBasePrivate() );
 
 			pResult = pPrivate->GetLayout( index );
 		}

@@ -77,6 +77,12 @@ UCSVImportFactory::UCSVImportFactory(const FObjectInitializer& ObjectInitializer
 	Formats.Add(TEXT("csv;Comma-separated values"));
 }
 
+bool UCSVImportFactory::IsAutomatedImport() const
+{
+	return Super::IsAutomatedImport()
+		|| AutomatedImportSettings.bForceAutomatedImport;
+}
+
 FText UCSVImportFactory::GetDisplayName() const
 {
 	return LOCTEXT("CSVImportFactoryDescription", "Comma Separated Values");

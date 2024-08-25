@@ -216,11 +216,3 @@ dependencies and build optimized binary with debug symbols:
 > cmake -B build -S .
 > cmake --build build --config RelWithDebInfo
 ```
-
-Some optional features, such as TLS support, may be disabled at compile time to
-produce a smaller executable:
-
-```cmd
-> cmake -DUNSYNC_USE_TLS=OFF -B build -S .
-```
-

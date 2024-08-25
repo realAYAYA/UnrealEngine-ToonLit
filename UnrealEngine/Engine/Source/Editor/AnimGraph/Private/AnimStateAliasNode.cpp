@@ -13,7 +13,6 @@
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet2/Kismet2NameValidators.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SharedPointer.h"
 #include "UObject/Object.h"
 #include "UObject/WeakObjectPtr.h"

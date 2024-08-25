@@ -18,18 +18,14 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		string m_value;
+		FString m_value;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 0;
+            uint32 ver = 1;
 			arch << ver;
 
 			arch << m_value;
@@ -38,11 +34,20 @@ namespace mu
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
-			check(ver==0);
+			check(ver<=1);
 
-			arch >> m_value;
+			if (ver <= 0)
+			{
+				std::string Temp;
+				arch >> Temp;
+				m_value = Temp.c_str();
+			}
+			else
+			{
+				arch >> m_value;
+			}
 		}
 	};
 

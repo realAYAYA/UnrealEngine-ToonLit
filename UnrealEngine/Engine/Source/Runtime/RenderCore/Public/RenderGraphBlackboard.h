@@ -132,6 +132,7 @@ private:
 	{
 		// Forces the compiler to only evaluate the assert on a concrete type.
 		static_assert(sizeof(StructType) == 0, "Struct has not been registered with the RDG blackboard. Use RDG_REGISTER_BLACKBOARD_STRUCT to do this.");
+		return FString();
 	}
 
 	static RENDERCORE_API FString GetTypeName(const TCHAR* ClassName, const TCHAR* FileName, uint32 LineNumber);

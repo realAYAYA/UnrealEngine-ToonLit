@@ -19,6 +19,8 @@ public class ReplicationGraph : ModuleRules
 
 		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 
+		bAllowAutoRTFMInstrumentation = true;
+
 		SetupGameplayDebuggerSupport(Target);
 	}
 }

@@ -17,23 +17,27 @@ UENUM()
 enum class EStateTreeTraceEventType : uint8
 {
 	Unset,
-	OnEntering			UMETA(DisplayName = "Entering"),
-	OnEntered			UMETA(DisplayName = "Entered"),
-	OnExiting			UMETA(DisplayName = "Exiting"),
-	OnExited			UMETA(DisplayName = "Exited"),
-	Push				UMETA(DisplayName = "Push"),
-	Pop					UMETA(DisplayName = "Pop"),
-	OnStateSelected		UMETA(DisplayName = "Selected"),
-	OnStateCompleted	UMETA(DisplayName = "Completed"),
-	OnTicking			UMETA(DisplayName = "Tick"),
-	OnTaskCompleted		UMETA(DisplayName = "Completed"),
-	OnTicked			UMETA(DisplayName = "Ticked"),
-	Passed				UMETA(DisplayName = "Passed"),
-	Failed				UMETA(DisplayName = "Failed"),
-	OnEvaluating		UMETA(DisplayName = "Evaluating"),
-	OnTransition		UMETA(DisplayName = "Transition"),
-	OnTreeStarted		UMETA(DisplayName = "Tree Started"),
-	OnTreeStopped		UMETA(DisplayName = "Tree Stopped")
+	OnEntering				UMETA(DisplayName = "Entering"),
+	OnEntered				UMETA(DisplayName = "Entered"),
+	OnExiting				UMETA(DisplayName = "Exiting"),
+	OnExited				UMETA(DisplayName = "Exited"),
+	Push					UMETA(DisplayName = "Push"),
+	Pop						UMETA(DisplayName = "Pop"),
+	OnStateSelected			UMETA(DisplayName = "Selected"),
+	OnStateCompleted		UMETA(DisplayName = "Completed"),
+	OnTicking				UMETA(DisplayName = "Tick"),
+	OnTaskCompleted			UMETA(DisplayName = "Completed"),
+	OnTicked				UMETA(DisplayName = "Ticked"),
+	Passed					UMETA(DisplayName = "Passed"),
+	Failed					UMETA(DisplayName = "Failed"),
+	ForcedSuccess			UMETA(DisplayName = "Forced Success"),
+	ForcedFailure			UMETA(DisplayName = "Forced Failure"),
+	InternalForcedFailure	UMETA(DisplayName = "Internal Forced Failure"),
+	OnEvaluating			UMETA(DisplayName = "Evaluating"),
+	OnTransition			UMETA(DisplayName = "Transition"),
+	OnTreeStarted			UMETA(DisplayName = "Tree Started"),
+	OnTreeStopped			UMETA(DisplayName = "Tree Stopped")
+
 };
 
 #if WITH_STATETREE_DEBUGGER
@@ -129,9 +133,8 @@ struct FStateTreeTraceNodeEvent : FStateTreeTraceBaseEvent
 
 struct FStateTreeTraceStateEvent : FStateTreeTraceNodeEvent
 {
-	explicit FStateTreeTraceStateEvent(const double RecordingWorldTime, const FStateTreeIndex16 Index, const EStateTreeTraceEventType EventType, const EStateTreeStateSelectionBehavior SelectionBehavior)
+	explicit FStateTreeTraceStateEvent(const double RecordingWorldTime, const FStateTreeIndex16 Index, const EStateTreeTraceEventType EventType)
 		: FStateTreeTraceNodeEvent(RecordingWorldTime, Index, EventType)
-		, SelectionBehavior(SelectionBehavior)
 	{
 	}
 
@@ -139,8 +142,6 @@ struct FStateTreeTraceStateEvent : FStateTreeTraceNodeEvent
 	STATETREEMODULE_API FString GetValueString(const UStateTree& StateTree) const;
 	STATETREEMODULE_API FString GetTypeString(const UStateTree& StateTree) const;
 	STATETREEMODULE_API FStateTreeStateHandle GetStateHandle() const;
-
-	EStateTreeStateSelectionBehavior SelectionBehavior;
 };
 
 struct FStateTreeTraceTaskEvent : FStateTreeTraceNodeEvent
@@ -205,16 +206,38 @@ struct FStateTreeTraceConditionEvent : FStateTreeTraceNodeEvent
 	FString InstanceDataAsText;
 };
 
+struct FStateTreeTraceActiveStates
+{
+	struct FAssetActiveStates
+	{
+		TWeakObjectPtr<const UStateTree> WeakStateTree;
+		TArray<FStateTreeStateHandle> ActiveStates;
+	};
+
+	TArray<FAssetActiveStates> PerAssetStates;
+};
+
 struct FStateTreeTraceActiveStatesEvent : FStateTreeTraceBaseEvent
 {
 	// Intentionally implemented in source file to compile 'TArray<FStateTreeStateHandle>' using only forward declaration.
-	explicit FStateTreeTraceActiveStatesEvent(const double RecordingWorldTime);
+	STATETREEMODULE_API explicit FStateTreeTraceActiveStatesEvent(const double RecordingWorldTime);
 
 	STATETREEMODULE_API FString ToFullString(const UStateTree& StateTree) const;
 	STATETREEMODULE_API FString GetValueString(const UStateTree& StateTree) const;
 	STATETREEMODULE_API FString GetTypeString(const UStateTree& StateTree) const;
 
-	TArray<FStateTreeStateHandle> ActiveStates;
+	FStateTreeTraceActiveStates ActiveStates;
+};
+
+struct FStateTreeTraceInstanceFrameEvent : FStateTreeTraceBaseEvent
+{
+	explicit FStateTreeTraceInstanceFrameEvent(const double RecordingWorldTime, const EStateTreeTraceEventType EventType, const UStateTree* StateTree);
+
+	STATETREEMODULE_API FString ToFullString(const UStateTree& StateTree) const;
+	STATETREEMODULE_API FString GetValueString(const UStateTree& StateTree) const;
+	STATETREEMODULE_API FString GetTypeString(const UStateTree& StateTree) const;
+
+	TWeakObjectPtr<const UStateTree> WeakStateTree;
 };
 
 /** Type aliases for statetree trace events */
@@ -227,6 +250,7 @@ using FStateTreeTraceEventVariantType = TVariant<FStateTreeTracePhaseEvent,
 												FStateTreeTraceEvaluatorEvent,
 												FStateTreeTraceTransitionEvent,
 												FStateTreeTraceConditionEvent,
-												FStateTreeTraceActiveStatesEvent>;
+												FStateTreeTraceActiveStatesEvent,
+												FStateTreeTraceInstanceFrameEvent>;
 
 #endif // WITH_STATETREE_DEBUGGER

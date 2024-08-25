@@ -27,7 +27,6 @@
 #include "Misc/AssertionMacros.h"
 #include "Styling/AppStyle.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Class.h"
 #include "UObject/NameTypes.h"
 #include "UObject/Object.h"

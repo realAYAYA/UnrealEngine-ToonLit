@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeObjectGroup.h"
 
 #include "HAL/PlatformCrt.h"
@@ -9,9 +8,6 @@
 #include "MuT/NodeObjectGroupPrivate.h"
 #include "MuT/NodeObjectPrivate.h"
 #include "MuT/NodePrivate.h"
-
-#include <memory>
-#include <utility>
 
 
 namespace mu
@@ -22,8 +18,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeObjectGroup::Private::s_type =
-            NODE_TYPE( "ObjectGroup", NodeObjectGroup::GetStaticType() );
+	FNodeType NodeObjectGroup::Private::s_type = FNodeType( "ObjectGroup", NodeObject::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -34,82 +29,31 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeObjectGroup::GetInputCount() const
-	{
-		return m_pD->m_children.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeObjectGroup::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		if ( i<m_pD->m_children.Num() )
-		{
-			pResult = m_pD->m_children[i].get();
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeObjectGroup::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		if ( i<m_pD->m_children.Num() )
-		{
-			m_pD->m_children[i] = dynamic_cast<NodeObject*>( pNode.get() );
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-	const char* NodeObjectGroup::GetName() const
+	const FString& NodeObjectGroup::GetName() const
 	{
-		return m_pD->m_name.c_str();
+		return m_pD->Name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeObjectGroup::SetName( const char* strName )
+	void NodeObjectGroup::SetName( const FString& Name )
 	{
-		if( strName )
-		{
-			m_pD->m_name = strName;
-		}
-		else
-		{
-			m_pD->m_name = "";
-		}
+		m_pD->Name = Name;
 	}
 
 
-	const char* NodeObjectGroup::GetUid() const
+	const FString& NodeObjectGroup::GetUid() const
 	{
-		return m_pD->m_uid.c_str();
+		return m_pD->Uid;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeObjectGroup::SetUid( const char* strUid )
+	void NodeObjectGroup::SetUid( const FString& Uid )
 	{
-		if( strUid )
-		{
-			m_pD->m_uid = strUid;
-		}
-		else
-		{
-			m_pD->m_uid = "";
-		}
+		m_pD->Uid = Uid;
 	}
 
 
@@ -169,9 +113,7 @@ namespace mu
 		{
 			if (m_children[i])
 			{
-				NodeObject::Private* pPrivate =
-						dynamic_cast<NodeObject::Private*>( m_children[i]->GetBasePrivate() );
-
+				NodeObject::Private* pPrivate = static_cast<NodeObject::Private*>( m_children[i]->GetBasePrivate() );
                 pLayout = pPrivate->GetLayout( lod, component, surface, texture );
 			}
 		}
@@ -180,6 +122,10 @@ namespace mu
 		return pLayout;
 	}
 
+	void NodeObjectGroup::SetDefaultValue(int32 Value)
+	{
+		m_pD->DefaultValue = Value;
+	}
 
 }
 

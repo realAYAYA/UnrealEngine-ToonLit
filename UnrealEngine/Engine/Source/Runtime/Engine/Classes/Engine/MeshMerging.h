@@ -894,9 +894,17 @@ struct FMeshApproximationSettings
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = MeshSettings)
 	bool bGenerateNaniteEnabledMesh = false;
 
-	/** Percentage of triangles to reduce down to for generating a coarse proxy mesh from the Nanite mesh */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, AdvancedDisplay, Category = MeshSettings, meta = (EditConditionHides, EditCondition = "bGenerateNaniteEnabledMesh", ClampMin = 0, ClampMax = 100))
-	float NaniteProxyTrianglePercent = 0;
+	/** Which heuristic to use when generating the Nanite fallback mesh. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, AdvancedDisplay, Category = MeshSettings, meta = (EditConditionHides, EditCondition = "bGenerateNaniteEnabledMesh"))
+	ENaniteFallbackTarget NaniteFallbackTarget = ENaniteFallbackTarget::Auto;
+
+	/** Percentage of triangles to keep from source Nanite mesh for fallback. 1.0 = no reduction, 0.0 = no triangles. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, AdvancedDisplay, Category = MeshSettings, meta = (EditConditionHides, EditCondition = "bGenerateNaniteEnabledMesh && NaniteFallbackTarget == ENaniteFallbackTarget::PercentTriangles", ClampMin = 0, ClampMax = 1))
+	float NaniteFallbackPercentTriangles = 1.0f;
+
+	/** Reduce Nanite fallback mesh until at least this amount of error is reached relative to size of the mesh. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, AdvancedDisplay, Category = MeshSettings, meta = (EditConditionHides, EditCondition = "bGenerateNaniteEnabledMesh && NaniteFallbackTarget == ENaniteFallbackTarget::RelativeError", ClampMin = 0))
+	float NaniteFallbackRelativeError = 1.0f;
 
 	/** Whether ray tracing will be supported on this mesh. Disable this to save memory if the generated mesh will only be rendered in the distance. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = MeshSettings)
@@ -979,7 +987,9 @@ struct FMeshApproximationSettings
 			&& TrianglesPerM == Other.TrianglesPerM
 			&& GeometricDeviation == Other.GeometricDeviation
 			&& bGenerateNaniteEnabledMesh == Other.bGenerateNaniteEnabledMesh
-			&& NaniteProxyTrianglePercent == Other.NaniteProxyTrianglePercent
+			&& NaniteFallbackTarget == Other.NaniteFallbackTarget
+			&& NaniteFallbackPercentTriangles == Other.NaniteFallbackPercentTriangles
+			&& NaniteFallbackRelativeError == Other.NaniteFallbackRelativeError
 			&& bSupportRayTracing == Other.bSupportRayTracing
 			&& bAllowDistanceField == Other.bAllowDistanceField
 			&& MultiSamplingAA == Other.MultiSamplingAA
@@ -996,4 +1006,26 @@ struct FMeshApproximationSettings
 	{
 		return !(*this == Other);
 	}
+
+#if WITH_EDITORONLY_DATA
+	/** Handles deprecated properties */
+	void PostSerialize(const FArchive& Ar);
+#endif
+
+private:
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	float NaniteProxyTrianglePercent_DEPRECATED = 0;
+#endif
+};
+
+template<>
+struct TStructOpsTypeTraits<FMeshApproximationSettings> : public TStructOpsTypeTraitsBase2<FMeshApproximationSettings>
+{
+#if WITH_EDITORONLY_DATA
+	enum
+	{
+		WithPostSerialize = true,
+	};
+#endif
 };

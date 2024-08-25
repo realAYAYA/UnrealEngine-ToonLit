@@ -77,7 +77,7 @@ struct ANIMATIONWARPINGRUNTIME_API FAnimNode_StrideWarping : public FAnimNode_Sk
 	TArray<FStrideWarpingFootDefinition> FootDefinitions;
 
 	// Modifies the final stride scale value by optionally clamping and/or interpolating
-	UPROPERTY(EditAnywhere, Category=Settings)
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(PinHiddenByDefault))
 	FInputClampConstants StrideScaleModifier;
 
 	// Floor normal direction, this value will internally convert into a corresponding Component-space representation prior to warping
@@ -106,6 +106,10 @@ struct ANIMATIONWARPINGRUNTIME_API FAnimNode_StrideWarping : public FAnimNode_Sk
 	// Clamps the IK foot warping to prevent over-extension relative to the overall FK leg
 	UPROPERTY(EditAnywhere, Category=Advanced, meta=(DisplayName="Clamp IK Using FK Limits", EditCondition="bCompensateIKUsingFKThighRotation"))
 	bool bClampIKUsingFKLimits = true;
+
+	// Do not execute stride warping if animation data has no root motion
+	UPROPERTY(EditAnywhere, Category=Advanced)
+	bool bDisableIfMissingRootMotion = true;
 
 #if WITH_EDITORONLY_DATA
 	// Scale all debug drawing visualization by a factor

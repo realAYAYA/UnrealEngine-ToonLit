@@ -21,7 +21,7 @@ namespace UnrealGameSync
 
 			_filesToClobber = inFilesToClobber;
 
-			foreach(KeyValuePair<string, bool> fileToClobber in _filesToClobber)
+			foreach (KeyValuePair<string, bool> fileToClobber in _filesToClobber)
 			{
 				ListViewItem item = new ListViewItem(Path.GetFileName(fileToClobber.Key));
 				item.Tag = fileToClobber.Key;
@@ -58,7 +58,7 @@ namespace UnrealGameSync
 
 		private void ContinueButton_Click(object sender, EventArgs e)
 		{
-			foreach(ListViewItem? item in FileList.Items)
+			foreach (ListViewItem? item in FileList.Items)
 			{
 				if (item != null)
 				{

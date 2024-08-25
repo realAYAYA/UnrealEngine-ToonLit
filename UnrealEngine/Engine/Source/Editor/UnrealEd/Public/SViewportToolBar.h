@@ -64,7 +64,5 @@ protected:
 private:
 	/** The pulldown menu that is open if any */
 	TWeakPtr< SMenuAnchor > OpenedMenu;
-	/** True if the mouse is inside the toolbar */
-	bool bIsHovered;
 };
 

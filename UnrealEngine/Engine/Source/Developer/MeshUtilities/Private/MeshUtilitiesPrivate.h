@@ -60,8 +60,8 @@ private:
 		const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 		const FStaticMeshLODResources& LODModel,
 		class FQueuedThreadPool& ThreadPool,
-		const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
-		const FBoxSphereBounds& Bounds,
+		const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
+		const FBoxSphereBounds3f& Bounds,
 		float DistanceFieldResolutionScale,
 		bool bGenerateAsIfTwoSided,
 		FDistanceFieldVolumeData& OutData) override;
@@ -71,7 +71,7 @@ private:
 		const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 		const FStaticMeshLODResources& LODModel,
 		class FQueuedThreadPool& ThreadPool,
-		const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
+		const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
 		const FBoxSphereBounds& Bounds,
 		const FDistanceFieldVolumeData* DistanceFieldVolumeData,
 		int32 MaxLumenMeshCards,
@@ -156,7 +156,7 @@ private:
 
 	virtual void GenerateRuntimeSkinWeightData(const FSkeletalMeshLODModel* ImportedModel, const TArray<FRawSkinWeight>& InRawSkinWeights, bool bInUseHighPrecisionWeights, FRuntimeSkinWeightProfileData& InOutSkinWeightOverrideData) const override;
 
-	virtual void CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh) const override;
+	virtual void CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh, bool bInResetReductionAsNeeded) const override;
 
 	void RegisterMenus();
 

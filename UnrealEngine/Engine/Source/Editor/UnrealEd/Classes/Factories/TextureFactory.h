@@ -124,7 +124,7 @@ class UTextureFactory : public UFactory, public IImportSettingsParser
 
 	/** Channel values to compare to when preserving alpha coverage from a mask. */
 	UPROPERTY(EditAnywhere, Category=PreserveAlphaCoverage, meta=(ToolTip="Channel values to compare to when preserving alpha coverage from a mask for mips"))
-	FVector4 AlphaCoverageThresholds = FVector4(0,0,0,0);
+	FVector4 AlphaCoverageThresholds = FVector4(0,0,0,0.75f);
 
 	/** If enabled, preserve the value of border pixels when creating mip-maps */
 	UPROPERTY(EditAnywhere, Category=PreserveBorder, meta=(ToolTip="If enabled, preserve the value of border pixels when creating mip-maps"))

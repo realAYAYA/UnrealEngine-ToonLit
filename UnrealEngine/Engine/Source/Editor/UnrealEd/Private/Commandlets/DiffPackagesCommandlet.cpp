@@ -104,38 +104,6 @@ struct FObjectComparison
 	EObjectDiff OverallDiffType;
 };
 
-/**
- * Constructor
- *
- * Populates the PropertyData and PropertyText members if associated with a valid UObject
- */
-FNativePropertyData::FNativePropertyData( UObject* InObject )
-: Object(InObject)
-{
-	SetObject(InObject);
-}
-
-namespace DiffPackagesCommandletImpl
-{
-	void LoadNativePropertyData(UObject* Object, TArray<uint8>& out_NativePropertyData);
-}
-
-/**
- * Changes the UObject associated with this native property data container and re-initializes the
- * PropertyData and PropertyText members
- */
-void FNativePropertyData::SetObject( UObject* NewObject )
-{
-	Object = NewObject;
-	PropertyData.Empty();
-	PropertyText.Empty();
-
-	if ( Object != NULL )
-	{
-		DiffPackagesCommandletImpl::LoadNativePropertyData(Object, PropertyData);
-		Object->GetNativePropertyValues(PropertyText, PPF_SimpleObjectText);
-	}
-}
 
 /**
  * Constructor
@@ -196,52 +164,6 @@ FObjectGraph::FObjectGraph( UObject* RootObject, int32 PackageIndex, TArray<FObj
 UObject* FObjectGraph::GetRootObject() const
 {
 	return Objects[0].Object;
-}
-
-namespace DiffPackagesCommandletImpl
-{
-
-void LoadNativePropertyData( UObject* Object, TArray<uint8>& out_NativePropertyData )
-{
-	// first, validate our input parameters
-	check(Object);
-
-	auto ObjectLinker = Object->GetLinker();
-	check(ObjectLinker);
-
-	int32 ObjectLinkerIndex = Object->GetLinkerIndex();
-	check(ObjectLinker->ExportMap.IsValidIndex(ObjectLinkerIndex));
-
-	// now begin the process of loading the data for this object's natively serialized properties into the memory archive
-	out_NativePropertyData.Empty();
-	
-	FObjectExport& ObjectExport = ObjectLinker->ExportMap[ObjectLinkerIndex];
-	const int64 ScriptStartPos = ObjectExport.ScriptSerializationStartOffset;
-	const int64 ScriptEndPos = ObjectExport.ScriptSerializationEndOffset;
-
-	const int64 NativeStartPos = ScriptEndPos;
-	const int64 NativeEndPos = ObjectExport.SerialOffset + ObjectExport.SerialSize;
-
-	const int64 NativePropertySerialSize = NativeEndPos - NativeStartPos;
-	if ( NativePropertySerialSize > 0 )
-	{
-		checkSlow(NativeStartPos>=ObjectExport.SerialOffset);
-		checkSlow(NativeStartPos<NativeEndPos);
-		// but this might not be the case - need to make sure we catch any native data that is serialized before the property data
-		const int64 SavedPos = ((FArchive*)ObjectLinker)->Tell();
-
-		((FArchive*)ObjectLinker)->Seek(NativeStartPos);
-		((FArchive*)ObjectLinker)->Precache(NativeStartPos, NativePropertySerialSize);
-
-		// allocate enough space to contain the data we're about to read from disk
-		out_NativePropertyData.AddZeroed(IntCastChecked<int32, int64>(NativePropertySerialSize));
-		((FArchive*)ObjectLinker)->Serialize(out_NativePropertyData.GetData(), NativePropertySerialSize);
-
-		// return the linker to its previous position
-		((FArchive*)ObjectLinker)->Seek(SavedPos);
-	}
-}
-
 }
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS;

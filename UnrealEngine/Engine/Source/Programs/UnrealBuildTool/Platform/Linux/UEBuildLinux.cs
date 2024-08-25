@@ -212,7 +212,7 @@ namespace UnrealBuildTool
 			{
 				Target.StaticAnalyzer = StaticAnalyzer.Default;
 				Target.StaticAnalyzerOutputType = (Environment.GetEnvironmentVariable("CLANG_ANALYZER_OUTPUT")?.Contains("html", StringComparison.OrdinalIgnoreCase) == true) ? StaticAnalyzerOutputType.Html : StaticAnalyzerOutputType.Text;
-				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow") ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
+				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow", StringComparison.OrdinalIgnoreCase) ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
 			}
 			else if (Target.StaticAnalyzer == StaticAnalyzer.Clang)
 			{
@@ -224,6 +224,9 @@ namespace UnrealBuildTool
 			{
 				Target.bDisableLinking = true;
 				Target.bIgnoreBuildOutputs = true;
+
+				// Clang static analysis requires non unity builds
+				Target.bUseUnityBuild = false;
 			}
 
 			// Editor target types get overwritten in UEBuildTarget.cs so lets avoid adding this here. ResetTarget is called with
@@ -234,11 +237,6 @@ namespace UnrealBuildTool
 			if (!Target.IsNameOverriden() && !String.IsNullOrEmpty(Target.BuildVersion) && Target.Type != TargetType.Editor)
 			{
 				string? SanitizerSuffix = null;
-
-				if (Target.bUseAutoRTFMCompiler)
-				{
-					SanitizerSuffix = "AutoRTFM";
-				}
 
 				if (Target.LinuxPlatform.bEnableAddressSanitizer)
 				{
@@ -381,7 +379,7 @@ namespace UnrealBuildTool
 		public override void ModifyModuleRulesForOtherPlatform(string ModuleName, ModuleRules Rules, ReadOnlyTargetRules Target)
 		{
 			// don't do any target platform stuff if SDK is not available
-			if (!UEBuildPlatform.IsPlatformAvailableForTarget(Platform, Target))
+			if (!UEBuildPlatform.IsPlatformAvailableForTarget(Platform, Target, bIgnoreSDKCheck:true))
 			{
 				return;
 			}
@@ -491,7 +489,7 @@ namespace UnrealBuildTool
 
 			if (CompileEnvironment.bPGOOptimize)
 			{
-				DirectoryReference BaseDir = Unreal.EngineDirectory;
+				DirectoryReference BaseDir = Unreal.WritableEngineDirectory;
 				if (Target.ProjectFile != null)
 				{
 					BaseDir = DirectoryReference.FromFile(Target.ProjectFile);
@@ -678,7 +676,7 @@ namespace UnrealBuildTool
 			}
 
 			// Disable color logging if we are on a build machine
-			if (Environment.GetEnvironmentVariable("IsBuildMachine") == "1")
+			if (Unreal.IsBuildMachine())
 			{
 				Log.ColorConsoleOutput = false;
 			}
@@ -723,11 +721,13 @@ namespace UnrealBuildTool
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.Linux, UnrealPlatformGroup.Linux);
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.Linux, UnrealPlatformGroup.Unix);
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.Linux, UnrealPlatformGroup.Desktop);
+			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.Linux, UnrealPlatformGroup.PosixOS);
 
 			UEBuildPlatform.RegisterBuildPlatform(new LinuxPlatform(UnrealTargetPlatform.LinuxArm64, SDKArm64, Logger), Logger);
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.LinuxArm64, UnrealPlatformGroup.Linux);
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.LinuxArm64, UnrealPlatformGroup.Unix);
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.LinuxArm64, UnrealPlatformGroup.Desktop);
+			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.LinuxArm64, UnrealPlatformGroup.PosixOS);
 		}
 	}
 }

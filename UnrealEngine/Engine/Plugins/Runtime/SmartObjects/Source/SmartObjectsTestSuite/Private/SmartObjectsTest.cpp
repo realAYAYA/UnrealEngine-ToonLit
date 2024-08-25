@@ -78,9 +78,10 @@ struct FSmartObjectTestBase : FAITestBase
 		// Add some test slot definition data
 		FSmartObjectSlotTestDefinitionData DefinitionData;
 		DefinitionData.SomeSharedFloat = 123.456f;
-		FirstSlot.Data.Add(FInstancedStruct::Make(DefinitionData));
-		SecondSlot.Data.Add(FInstancedStruct::Make(DefinitionData));
-		ThirdSlot.Data.Add(FInstancedStruct::Make(DefinitionData));
+
+		FirstSlot.DefinitionData.Add(FSmartObjectDefinitionDataProxy::Make(DefinitionData));
+		SecondSlot.DefinitionData.Add(FSmartObjectDefinitionDataProxy::Make(DefinitionData));
+		ThirdSlot.DefinitionData.Add(FSmartObjectDefinitionDataProxy::Make(DefinitionData));
 
 		// Setup filter
 		TestFilter.BehaviorDefinitionClasses = { USmartObjectTestBehaviorDefinition::StaticClass() };
@@ -184,7 +185,7 @@ struct FClaimAndReleaseSmartObject : FSmartObjectTestBase
 		Subsystem->FindSlots(FirstFindResult.SmartObjectHandle, TestFilter, ResultsBeforeClaim);
 
 		// Claim candidate
-		const FSmartObjectClaimHandle ClaimHandle = Subsystem->MarkSlotAsClaimed(FirstFindResult.SlotHandle);
+		const FSmartObjectClaimHandle ClaimHandle = Subsystem->MarkSlotAsClaimed(FirstFindResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("ClaimHandle.IsValid()", ClaimHandle.IsValid());
 
 		// Gather remaining available candidates
@@ -218,7 +219,7 @@ struct FFindAfterClaimSmartObject : FSmartObjectTestBase
 		AITEST_TRUE("Result.SmartObjectHandle.IsValid()", FirstFindResult.SmartObjectHandle.IsValid());
 
 		// Claim first candidate
-		const FSmartObjectClaimHandle FirstClaimHandle = Subsystem->MarkSlotAsClaimed(FirstFindResult.SlotHandle);
+		const FSmartObjectClaimHandle FirstClaimHandle = Subsystem->MarkSlotAsClaimed(FirstFindResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("ClaimHandle.IsValid() after first find result", FirstClaimHandle.IsValid());
 
 		// Find second candidate
@@ -245,17 +246,82 @@ struct FDoubleClaimSmartObject : FSmartObjectTestBase
 		AITEST_TRUE("Result.SmartObjectHandle.IsValid()", PreClaimResult.SmartObjectHandle.IsValid());
 
 		// Claim first candidate
-		const FSmartObjectClaimHandle FirstHdl = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle);
+		const FSmartObjectClaimHandle FirstHdl = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("ClaimHandle.IsValid() after first claim", FirstHdl.IsValid());
 
 		// Claim first candidate again
-		const FSmartObjectClaimHandle SecondHdl = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle);
+		const FSmartObjectClaimHandle SecondHdl = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_FALSE("ClaimHandle.IsValid() after second claim", SecondHdl.IsValid());
 
 		return true;
 	}
 };
 IMPLEMENT_AI_INSTANT_TEST(FDoubleClaimSmartObject, "System.AI.SmartObjects.Double Claim");
+
+struct FOverrideClaimSmartObject : FSmartObjectTestBase
+{
+	virtual bool InstantTest() override
+	{
+		FSmartObjectRequest Request(FSmartObjectTest::QueryBounds, TestFilter);
+		TArray<FSmartObjectRequestResult> PostClaimResults;
+
+		// Find candidate
+		const FSmartObjectRequestResult PreClaimResult = Subsystem->FindSmartObject(Request);
+		AITEST_TRUE("Result.IsValid()", PreClaimResult.IsValid());
+		AITEST_TRUE("Result.SmartObjectHandle.IsValid()", PreClaimResult.SmartObjectHandle.IsValid());
+
+		// Claim slot the first time with Normal priority, should succeed.
+		const FSmartObjectClaimHandle FirstHandle = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle, ESmartObjectClaimPriority::Normal);
+		AITEST_TRUE("FirstHandle.IsValid() after first claim", FirstHandle.IsValid());
+
+		// Try to claim slot again with Low priority, should fail.
+		const FSmartObjectClaimHandle SecondHandle = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle, ESmartObjectClaimPriority::Low);
+		AITEST_FALSE("SecondHandle.IsValid() after second claim", SecondHandle.IsValid());
+
+		// Try to claim slot again with High priority, should succeed.
+		const FSmartObjectClaimHandle ThirdHandle = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle, ESmartObjectClaimPriority::High);
+		AITEST_TRUE("ThirdHandle.IsValid() after third claim", ThirdHandle.IsValid());
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FOverrideClaimSmartObject, "System.AI.SmartObjects.Override Claim");
+
+
+struct FFindClaimPrioritySmartObject : FSmartObjectTestBase
+{
+	virtual bool InstantTest() override
+	{
+		FSmartObjectRequest Request(FSmartObjectTest::QueryBounds, TestFilter);
+		TArray<FSmartObjectRequestResult> PostClaimResults;
+
+		// Find candidate
+		const FSmartObjectRequestResult PreClaimResult = Subsystem->FindSmartObject(Request);
+		AITEST_TRUE("Result.IsValid()", PreClaimResult.IsValid());
+		AITEST_TRUE("Result.SmartObjectHandle.IsValid()", PreClaimResult.SmartObjectHandle.IsValid());
+
+		// Claim first candidate
+		const FSmartObjectClaimHandle FirstHdl = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle, ESmartObjectClaimPriority::Normal);
+		AITEST_TRUE("ClaimHandle.IsValid() after first claim", FirstHdl.IsValid());
+
+		// Find candidate should not contain the first result on "normal" claim priority.
+		Request.Filter.ClaimPriority = ESmartObjectClaimPriority::Normal;
+		PostClaimResults.Reset();
+		Subsystem->FindSmartObjects(Request, PostClaimResults);
+		const bool bContainsClaimedNormal = PostClaimResults.Contains(PreClaimResult);
+		AITEST_FALSE("bContainsClaimed", bContainsClaimedNormal);
+		
+		// Find candidate should contain the first result on "high" claim priority.
+		Request.Filter.ClaimPriority = ESmartObjectClaimPriority::High;
+		PostClaimResults.Reset();
+		Subsystem->FindSmartObjects(Request, PostClaimResults);
+		const bool bContainsClaimedHigh = PostClaimResults.Contains(PreClaimResult);
+		AITEST_TRUE("bContainsClaimed", bContainsClaimedHigh);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FFindClaimPrioritySmartObject, "System.AI.SmartObjects.Find Claim Priority");
 
 struct FUseAndReleaseSmartObject : FSmartObjectTestBase
 {
@@ -269,7 +335,7 @@ struct FUseAndReleaseSmartObject : FSmartObjectTestBase
 		AITEST_TRUE("Result.SmartObjectHandle.IsValid()", PreClaimResult.SmartObjectHandle.IsValid());
 
 		// Claim & Use candidate
-		const FSmartObjectClaimHandle Hdl = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle);
+		const FSmartObjectClaimHandle Hdl = Subsystem->MarkSlotAsClaimed(PreClaimResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("ClaimHandle.IsValid()", Hdl.IsValid());
 
 		// Use specific behavior
@@ -300,7 +366,7 @@ struct FFindAfterUseSmartObject : FSmartObjectTestBase
 		AITEST_TRUE("Result.SmartObjectHandle.IsValid()", FirstFindResult.SmartObjectHandle.IsValid());
 
 		// Claim & Use first candidate
-		const FSmartObjectClaimHandle FirstClaimHandle = Subsystem->MarkSlotAsClaimed(FirstFindResult.SlotHandle);
+		const FSmartObjectClaimHandle FirstClaimHandle = Subsystem->MarkSlotAsClaimed(FirstFindResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("ClaimHandle.IsValid() after first claim", FirstClaimHandle.IsValid());
 		const USmartObjectBehaviorDefinition* FirstDefinition = Subsystem->MarkSlotAsOccupied<USmartObjectBehaviorDefinition>(FirstClaimHandle);
 		AITEST_NOT_NULL("Behavior definition pointer", FirstDefinition);
@@ -313,7 +379,7 @@ struct FFindAfterUseSmartObject : FSmartObjectTestBase
 		AITEST_NOT_EQUAL("Result is expected to point to a different slot since first slot was claimed", FirstFindResult.SlotHandle, SecondFindResult.SlotHandle);
 
 		// Claim & use second candidate
-		const FSmartObjectClaimHandle SecondClaimHandle = Subsystem->MarkSlotAsClaimed(SecondFindResult.SlotHandle);
+		const FSmartObjectClaimHandle SecondClaimHandle = Subsystem->MarkSlotAsClaimed(SecondFindResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("ClaimHandle.IsValid() after second claim", SecondClaimHandle.IsValid());
 		const USmartObjectBehaviorDefinition* SecondDefinition = Subsystem->MarkSlotAsOccupied<USmartObjectBehaviorDefinition>(SecondClaimHandle);
 		AITEST_NOT_NULL("Behavior definition pointer", SecondDefinition);
@@ -346,7 +412,7 @@ struct FSlotCustomData : FSmartObjectTestBase
 		AITEST_NULL("Runtime data pointer", RuntimeData);
 
 		// Claim
-		const FSmartObjectClaimHandle ClaimHandle = Subsystem->MarkSlotAsClaimed(FindResult.SlotHandle);
+		const FSmartObjectClaimHandle ClaimHandle = Subsystem->MarkSlotAsClaimed(FindResult.SlotHandle, ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("ClaimHandle.IsValid() after first claim", ClaimHandle.IsValid());
 
 		// Add new data, note that this will invalidate the view...
@@ -422,6 +488,56 @@ struct FBoundToSimulation : FSmartObjectTestBase
 	}
 };
 IMPLEMENT_AI_INSTANT_TEST(FBoundToSimulation, "System.AI.SmartObjects.Add to/Remove from simulation");
+
+struct FEnabledReasons : FSmartObjectTestBase
+{
+	virtual bool InstantTest() override
+	{
+		const USmartObjectComponent* SmartObjectComponent = SOList[0];
+		const FSmartObjectHandle Handle = SmartObjectComponent->GetRegisteredHandle();
+
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		Subsystem->SetEnabled(Handle, false);
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, UE::SmartObject::EnabledReason::Gameplay));
+
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag1));
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag2));
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag3));
+
+		Subsystem->SetEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag1, false);
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag1));
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		Subsystem->SetEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag2, false);
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag2));
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		Subsystem->SetEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag3, false);
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag3));
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		Subsystem->SetEnabled(Handle, true);
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		Subsystem->SetEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag1, true);
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag1));
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		Subsystem->SetEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag2, true);
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag2));
+		AITEST_FALSE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		Subsystem->SetEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag3, true);
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabledForReason(Handle, FNativeGameplayTags::Get().TestTag3));
+
+		AITEST_TRUE("SmartObjectComponent is enabled", Subsystem->IsEnabled(Handle));
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FEnabledReasons, "System.AI.SmartObjects.Enabled Reasons");
 
 struct FActivityTagsMergingPolicy : FSmartObjectTestBase
 {
@@ -805,7 +921,7 @@ struct FInstanceTagsFilter : FSmartObjectTestBase
 		AITEST_TRUE("Num slot handles", SlotHandles.Num() >= 3);
 
 		// Claim first slot
-		const FSmartObjectClaimHandle FirstClaimHandle = Subsystem->MarkSlotAsClaimed(SlotHandles[0]);
+		const FSmartObjectClaimHandle FirstClaimHandle = Subsystem->MarkSlotAsClaimed(SlotHandles[0], ESmartObjectClaimPriority::Normal);
 		AITEST_TRUE("FirstClaimHandle.IsValid()", FirstClaimHandle.IsValid());
 
 		// Use First slot

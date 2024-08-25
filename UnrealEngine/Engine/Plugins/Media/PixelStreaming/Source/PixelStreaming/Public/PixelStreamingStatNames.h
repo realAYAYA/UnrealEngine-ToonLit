@@ -6,7 +6,21 @@
 
 namespace PixelStreamingStatNames
 {
+	// Calculated stats
+	const FName Bitrate					= FName(TEXT("bitrate"));
+	const FName BitrateMegabits			= FName(TEXT("bitrateMbits"));
+	const FName TargetBitrateMegabits	= FName(TEXT("targetBitrateMbits"));
+	const FName MeanSendDelay			= FName(TEXT("captureToSend"));
+	const FName SourceFps				= FName(TEXT("captureFps"));
+	const FName Fps						= FName(TEXT("captureFps"));
+	const FName MeanEncodeTime			= FName(TEXT("encodeTime"));
+	const FName EncodedFramesPerSecond	= FName(TEXT("encodeFps"));
+	const FName DecodedFramesPerSecond	= FName(TEXT("decodeFps"));
+	const FName MeanQPPerSecond			= FName(TEXT("qp"));
+	const FName FramesSentPerSecond		= FName(TEXT("transmitFps"));
+	const FName FramesReceivedPerSecond	= FName(TEXT("receiveFps"));
 
+	// WebRTC stats
 	const FName JitterBufferDelay		  = FName(TEXT("jitterBufferDelay"));
 	const FName FramesSent				  = FName(TEXT("framesSent"));
 	const FName FramesReceived			  = FName(TEXT("framesReceived"));
@@ -41,19 +55,17 @@ namespace PixelStreamingStatNames
 	const FName TotalPacketSendDelay	  = FName(TEXT("totalPacketSendDelay"));
 	const FName FramesEncoded			  = FName(TEXT("framesEncoded"));
 	const FName QualityController		  = FName(TEXT("qualityController"));
-	const FName InputController			  = FName(TEXT("inputController"));
 	const FName AvgSendDelay			  = FName(TEXT("packetSendDelay"));
+	const FName MessagesSent			  = FName(TEXT("messagesSent"));
+	const FName MessagesReceived		  = FName(TEXT("messagesReceived"));
 
-	// Calculated stats
-	const FName FramesSentPerSecond		= FName(TEXT("transmitFps"));
-	const FName FramesReceivedPerSecond	= FName(TEXT("receiveFps"));
-	const FName Bitrate					= FName(TEXT("bitrate"));
-	const FName MeanQPPerSecond			= FName(TEXT("qp"));
-	const FName MeanEncodeTime			= FName(TEXT("encodeTime"));
-	const FName EncodedFramesPerSecond	= FName(TEXT("encodeFps"));
-	const FName DecodedFramesPerSecond	= FName(TEXT("decodeFps"));
-	const FName MeanSendDelay			= FName(TEXT("captureToSend"));
-	const FName SourceFps				= FName(TEXT("captureFps"));
-	const FName Fps						= FName(TEXT("captureFps"));
+	// Data-channel stats
+	const FName DataChannelBytesSent		  = FName(TEXT("data-channel-bytesSent"));
+	const FName DataChannelBytesReceived	  = FName(TEXT("data-channel-bytesReceived"));
+	const FName DataChannelMessagesSent		  = FName(TEXT("data-channel-messagesSent"));
+	const FName DataChannelMessagesReceived	  = FName(TEXT("data-channel-messagesReceived"));
+
+	// Pixel Streaming specific stats
+	const FName InputController			  = FName(TEXT("inputController"));
 
 } // namespace PixelStreamingStatNames

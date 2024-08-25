@@ -27,6 +27,12 @@ struct SRCPanelExposedEntity : public SRCPanelTreeNode
 	virtual FGuid GetRCId() const override final { return EntityId; }
 	/** Make the group name's text box editable. */
 	virtual void EnterRenameMode() override;
+	/** Get the PropertyId of this Node. */
+	virtual FName GetPropertyId() override;
+	/** Set the PropertyId of this Node. */
+	virtual void SetPropertyId(FName InNewPropertyId) override { PropertyIdLabel = InNewPropertyId; };
+	/** Set the Name of this Node. */
+	virtual void SetName(FName InNewName) override { CachedLabel = InNewName; }
 	/** Updates the highlight text to active search term. */
 	virtual void SetHighlightText(const FText& InHightlightText = FText::GetEmpty()) override { HighlightText = InHightlightText; }
 
@@ -43,6 +49,9 @@ protected:
 
 	/** Create an exposed entity widget with a drag handle and unexpose button. */
 	TSharedRef<SWidget> CreateEntityWidget(TSharedPtr<SWidget> ValueWidget, TSharedPtr<SWidget> ResetWidget = SNullWidget::NullWidget, const FText& OptionalWarningMessage = FText::GetEmpty(), TSharedRef<SWidget> EditConditionWidget = SNullWidget::NullWidget);
+
+	/** Returns populated args to display this widget. */
+	virtual FMakeNodeWidgetArgs CreateEntityWidgetInternal(TSharedPtr<SWidget> ValueWidget, TSharedPtr<SWidget> ResetWidget = SNullWidget::NullWidget, const FText& OptionalWarningMessage = FText::GetEmpty(), TSharedRef<SWidget> EditConditionWidget = SNullWidget::NullWidget);
 
 protected:
 	/** Id of the entity. */
@@ -61,13 +70,16 @@ protected:
 	bool bValidBinding = false;
 	/** Display name of the entity. */
 	FName CachedLabel;
+	/** Display PropertyId of the entity. */
+	FName PropertyIdLabel;
 	/** Cached entity field path. */
 	FString CachedFieldPath;
 	/** Text to be highlighted while searching. */
 	TAttribute<FText> HighlightText;
 	/** Panel Style reference. */
 	const FRCPanelStyle* RCPanelStyle;
-
+	/** Extra information to add to the tooltips. */
+	static const FText SelectInOutliner;
 private:
 	/** Handles changing the object this entity is bound to upon selecting an actor in the rebinding dropdown. */
 	void OnActorSelected(AActor* InActor) const;
@@ -117,8 +129,9 @@ public:
 
 	using WidgetType = SWidget;
 
-	FExposedEntityDragDrop(TSharedPtr<SWidget> InWidget, const FGuid& InId)
-		: Id(InId)
+	FExposedEntityDragDrop(const TSharedPtr<SWidget>& InWidget, const FGuid& InNodeId, const TArray<FGuid>& InSelectedIds)
+		: NodeId(InNodeId)
+		, SelectedIds(InSelectedIds)
 	{
 		DecoratorWidget = SNew(SBorder)
 			.Padding(1.0f)
@@ -130,9 +143,15 @@ public:
 	}
 
 	/** Get the ID of the represented entity or group. */
-	FGuid GetId() const
+	FGuid GetNodeId() const
 	{
-		return Id;
+		return NodeId;
+	}
+
+	/** Get the IDs that were selected at the time the drag started. */
+	const TArray<FGuid>& GetSelectedIds() const
+	{
+		return SelectedIds;
 	}
 
 	virtual void OnDrop(bool bDropWasHandled, const FPointerEvent& MouseEvent) override
@@ -146,6 +165,10 @@ public:
 	}
 
 private:
-	FGuid Id;
+	/** ID of the represented entity or group. */
+	FGuid NodeId;
+	/** IDs that were selected at the time the drag started. */
+	TArray<FGuid> SelectedIds;
+	/** Decorator Drag and Drop widget. */
 	TSharedPtr<SWidget> DecoratorWidget;
 };

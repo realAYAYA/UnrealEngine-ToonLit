@@ -1,9 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "InterchangeTaskImportObject.h"
 
-#if WITH_EDITOR
-#include "AssetToolsModule.h"
-#endif //WITH_EDITOR
 #include "AssetCompilingManager.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "CoreMinimal.h"
@@ -15,7 +12,9 @@
 #include "InterchangeResult.h"
 #include "InterchangeSourceData.h"
 #include "InterchangeTranslatorBase.h"
-#include "Misc/NamePermissionList.h"
+#include "Interfaces/Interface_AsyncCompilation.h"
+#include "Misc/App.h"
+#include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
 #include "PackageUtils/PackageUtils.h"
 #include "Stats/Stats.h"
@@ -30,7 +29,7 @@ namespace UE::Interchange::Private
 {
 	void InternalGetPackageName(const UE::Interchange::FImportAsyncHelper& AsyncHelper, const int32 SourceIndex, const FString& PackageBasePath, const UInterchangeFactoryBaseNode* FactoryNode, FString& OutPackageName, FString& OutAssetName)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::Private::InternalGetPackageName")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::Private::InternalGetPackageName)
 		const UInterchangeSourceData* SourceData = AsyncHelper.SourceDatas[SourceIndex];
 		check(SourceData);
 		FString NodeDisplayName = FactoryNode->GetAssetName();
@@ -52,7 +51,7 @@ namespace UE::Interchange::Private
 	}
 	bool ShouldReimportFactoryNode(UInterchangeFactoryBaseNode* FactoryNode, const UInterchangeBaseNodeContainer* NodeContainer, UObject* ReimportObject)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::Private::ShouldReimportFactoryNode")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::Private::ShouldReimportFactoryNode)
 
 		if (!NodeContainer)
 		{
@@ -122,43 +121,11 @@ namespace UE::Interchange::Private
 
 	bool CanImportClass(UE::Interchange::FImportAsyncHelper& AsyncHelper, UInterchangeFactoryBaseNode& FactoryNode, int32 SourceIndex)
 	{
-	#if WITH_EDITOR
 		if (UClass* Class = FactoryNode.GetObjectClass())
 		{
-			if (AsyncHelper.AllowedClasses.Contains(Class))
-			{
-				return true;
-			}
-			else if (AsyncHelper.DeniedClasses.Contains(Class))
-			{
-				return false;
-			}
-			else
-			{
-				IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
-				TSharedPtr<FPathPermissionList> AssetClassPermissionList = AssetTools.GetAssetClassPathPermissionList(EAssetClassAction::ImportAsset);
-				if (AssetClassPermissionList && AssetClassPermissionList->HasFiltering())
-				{
-					if (!AssetClassPermissionList->PassesFilter(Class->GetPathName()))
-					{
-						UE_LOG(LogInterchangeEngine, Display, TEXT("The creation of asset of class '%s' is not allowed in this project."), *Class->GetName());
-						AsyncHelper.DeniedClasses.Add(Class);
-						return false;
-					}
-				}
-
-				AsyncHelper.AllowedClasses.Add(Class);
-
-				return true;
-			}
+			return AsyncHelper.IsClassImportAllowed(Class);
 		}
-		else
-		{
-			return false;
-		}
-	#endif //WITH_EDITOR
-
-		return true;
+		return false;
 	}
 
 	UInterchangeFactoryBase::FImportAssetResult InternalImportObjectStartup(TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper
@@ -232,7 +199,7 @@ namespace UE::Interchange::Private
 					Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
 					Message->DestinationAssetName = AssetName;
 					Message->AssetType = FactoryNode->GetObjectClass();
-					Message->Text = NSLOCTEXT("InternalImportObjectStartup", "BadPackage", "It was not possible to create the asset as its package was not created correctly.");
+					Message->Text = NSLOCTEXT("InternalImportObjectStartup", "BadPackage", "It was not possible to create the asset because its package was not created correctly.");
 					return ErrorImportAssetResult;
 				}
 
@@ -241,7 +208,7 @@ namespace UE::Interchange::Private
 					UInterchangeResultError_Generic* Message = Factory->AddMessage<UInterchangeResultError_Generic>();
 					Message->DestinationAssetName = AssetName;
 					Message->AssetType = FactoryNode->GetObjectClass();
-					Message->Text = NSLOCTEXT("InternalImportObjectStartup", "SourceDataOrTranslatorInvalid", "It was not possible to create the asset as its translator was not created correctly.");
+					Message->Text = NSLOCTEXT("InternalImportObjectStartup", "SourceDataOrTranslatorInvalid", "It was not possible to create the asset because its translator was not created correctly.");
 					return ErrorImportAssetResult;
 				}
 			}
@@ -280,10 +247,13 @@ namespace UE::Interchange::Private
 
 void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FTaskImportObject_GameThread::DoTask")
+	TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FTaskImportObject_GameThread::DoTask)
 #if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
 	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(TaskImportObject_GameThread)
 #endif
+
+	LLM_SCOPE_BYNAME(TEXT("Interchange"));
+
 	using namespace UE::Interchange;
 
 	TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
@@ -327,7 +297,7 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 		Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
 		Message->DestinationAssetName = ObjectToReimport ? ObjectToReimport->GetName() : FactoryNode->GetAssetName();
 		Message->AssetType = FactoryNode->GetObjectClass();
-		Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "GarbageCollectIsRunning_Error", "Cannot import asset '{0}'; the garbage collect is running during the import process.")
+		Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "GarbageCollectIsRunning_Error", "Cannot import asset '{0}'. The garbage collector is running during the import process.")
 			, FText::FromString(AssetName));
 		return;
 	}
@@ -339,12 +309,13 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 		Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
 		Message->DestinationAssetName = ObjectToReimport ? ObjectToReimport->GetName() : FactoryNode->GetAssetName();
 		Message->AssetType = FactoryNode->GetObjectClass();
-		Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "InvalidBaseNodeContainer", "Cannot import asset '{0}'; the node container is invalid for this source index.")
+		Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "InvalidBaseNodeContainer", "Cannot import asset '{0}'. The node container is invalid for this source index.")
 			, FText::FromString(AssetName));
 		return;
 	}
 	UInterchangeBaseNodeContainer* NodeContainer = AsyncHelper->BaseNodeContainers[SourceIndex].Get();
 
+	bool bSkipObjectNoReplace = false;
 	UObject* ExistingAsset = nullptr;
 	//If we do a reimport no need to create a package
 	if (ObjectToReimport)
@@ -371,7 +342,8 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 		{
 			if (!FactoryNode->ShouldForceNodeReimport())
 			{
-				return;
+				//Skip this object, simply assign it to the node, so we can retrieve it later.
+				bSkipObjectNoReplace = true;
 			}
 		}
 
@@ -384,7 +356,7 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 			Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
 			Message->DestinationAssetName = AssetName;
 			Message->AssetType = FactoryNode->GetObjectClass();
-			Message->Text = NSLOCTEXT("FTaskImportObject_GameThread", "MapExistsWithSameName", "You cannot create an asset with this name, as there is already a map file with the same name in this folder.");
+			Message->Text = NSLOCTEXT("FTaskImportObject_GameThread", "MapExistsWithSameName", "You cannot create an asset with this name because there is already a map file with the same name in this folder.");
 			return;
 		}
 
@@ -411,7 +383,7 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 			Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
 			Message->DestinationAssetName = AssetName;
 			Message->AssetType = FactoryNode->GetObjectClass();
-			Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "CouldntCreatePackage", "It was not possible to create a package named '{0}'; the asset will not be imported.")
+			Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "CouldntCreatePackage", "It was not possible to create a package named '{0}'. The asset will not be imported.")
 				, FText::FromString(PackageName));
 			return;
 		}
@@ -431,6 +403,48 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 			}
 		}
 		ExistingAsset = StaticFindObject(nullptr, Pkg, *AssetName);
+		if (!bSkipObjectNoReplace && ExistingAsset && !AsyncHelper->TaskData.bReplaceExisting)
+		{
+			const FString AssetFullName = ExistingAsset->GetFullName();
+			//If the bReplaceExistingAllDialogAnswer was set do not show again the message dialog, simply reuse the previous answer.
+			if (AsyncHelper->TaskData.bReplaceExistingAllDialogAnswer.IsSet())
+			{
+				bSkipObjectNoReplace = !AsyncHelper->TaskData.bReplaceExistingAllDialogAnswer.GetValue();
+			}
+			else
+			{
+				bSkipObjectNoReplace = true;
+				FText OverrideDialogMessage = FText::Format(NSLOCTEXT("InterchangeTaskimportObject", "OverrideAssetMessage", "Are you sure you want to override asset '{0}'?")
+					, FText::FromString(AssetFullName));
+				if (!GIsAutomationTesting && !FApp::IsUnattended() && !FApp::IsGame())
+				{
+					EAppReturnType::Type DialogResult = FMessageDialog::Open(EAppMsgType::YesNoYesAllNoAll, OverrideDialogMessage);
+					switch (DialogResult)
+					{
+						case EAppReturnType::YesAll:
+							AsyncHelper->TaskData.bReplaceExistingAllDialogAnswer = true;
+						case EAppReturnType::Yes:
+							bSkipObjectNoReplace = false;
+							break;
+						case EAppReturnType::NoAll:
+							AsyncHelper->TaskData.bReplaceExistingAllDialogAnswer = false;
+						case EAppReturnType::No:
+							bSkipObjectNoReplace = true;
+					}
+				}
+			}
+
+			if (bSkipObjectNoReplace)
+			{
+				//Do not replace existing asset, the option tell us to not override it. Skip this asset with a display message
+				UInterchangeResultWarning_Generic* Message = Factory->AddMessage<UInterchangeResultWarning_Generic>();
+				Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
+				Message->DestinationAssetName = AssetFullName;
+				Message->AssetType = FactoryNode->GetObjectClass();
+				Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "CouldntReplaceExistingAsset", "The option bReplaceExisting is false, we are not overriding the asset named '{0}'.")
+					, FText::FromString(AssetFullName));
+			}
+		}
 	}
 
 	if (ExistingAsset)
@@ -447,7 +461,7 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 			const FText ExistingClassNameText = FText::FromString(ExistingAsset->GetClass()->GetName());
 			const FText AssetNameText = FText::FromString(AssetName);
 			const FText FolderNameText = FText::FromString(FPaths::GetPath(Pkg->GetPathName()));
-			Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "AssetVersusFactoryClassWrong_Error", "You cannot create a '{0}' asset named '{1}' in '{2}', as there is already a '{3}' asset with the same name in this folder.")
+			Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "AssetVersusFactoryClassWrong_Error", "You cannot create an asset of class '{0}' named '{1}' in '{2}' because there is already an asset of class '{3}' with the same name in that folder.")
 				, TargetClassNameText
 				, AssetNameText
 				, FolderNameText
@@ -465,7 +479,7 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 				Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
 				Message->DestinationAssetName = AssetName;
 				Message->AssetType = FactoryNode->GetObjectClass();
-				Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "InvalidExistingAsset", "An invalid asset exist at the same asset location [{0}]. This asset will be skip.")
+				Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "InvalidExistingAsset", "An invalid asset exists at the same asset location [{0}]. This asset will be skipped.")
 					, FText::FromString(AssetName));
 				return;
 			}
@@ -473,6 +487,10 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 
 		//Set the factory node reference to the existing object, so we do not need to find the asset in the factory
 		FactoryNode->SetCustomReferenceObject(FSoftObjectPath(ExistingAsset));
+		if (bSkipObjectNoReplace)
+		{
+			return;
+		}
 
 		if (UInterchangeManager::GetInterchangeManager().IsObjectBeingImported(ExistingAsset))
 		{
@@ -481,7 +499,7 @@ void UE::Interchange::FTaskImportObject_GameThread::DoTask(ENamedThreads::Type C
 			Message->SourceAssetName = AsyncHelper->SourceDatas[SourceIndex]->GetFilename();
 			Message->DestinationAssetName = AssetName;
 			Message->AssetType = FactoryNode->GetObjectClass();
-			Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "AssetCollisionBetweenImportTask", "Multiple import task are importing the same asset at the same location [{0}]. This asset will be skip. See more information in the log")
+			Message->Text = FText::Format(NSLOCTEXT("FTaskImportObject_GameThread", "AssetCollisionBetweenImportTask", "Multiple import tasks are importing the same asset at the same location [{0}]. This asset will be skipped. See the log for more information.")
 				, FText::FromString(AssetName));
 			return;
 		}
@@ -543,6 +561,9 @@ void UE::Interchange::FTaskImportObject_Async::DoTask(ENamedThreads::Type Curren
 #if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
 	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(TaskImportObject_Async)
 #endif
+
+	LLM_SCOPE_BYNAME(TEXT("Interchange"));
+
 	using namespace UE::Interchange;
 
 	TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
@@ -566,6 +587,7 @@ void UE::Interchange::FTaskImportObject_Async::DoTask(ENamedThreads::Type Curren
 		, PackageBasePath
 		, [&Factory](UInterchangeFactoryBase::FImportAssetObjectParams& ImportAssetObjectParams)
 		{
+			LLM_SCOPE_BYNAME(TEXT("Interchange"));
 			return Factory->ImportAsset_Async(ImportAssetObjectParams);
 		});
 }
@@ -575,6 +597,9 @@ void UE::Interchange::FTaskImportObjectFinalize_GameThread::DoTask(ENamedThreads
 #if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
 	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(TaskImportObjectFinalize_GameThread)
 #endif
+
+	LLM_SCOPE_BYNAME(TEXT("Interchange"));
+
 	using namespace UE::Interchange;
 
 	TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
@@ -598,6 +623,7 @@ void UE::Interchange::FTaskImportObjectFinalize_GameThread::DoTask(ENamedThreads
 		, PackageBasePath
 		, [&Factory](UInterchangeFactoryBase::FImportAssetObjectParams& ImportAssetObjectParams)
 		{
+			LLM_SCOPE_BYNAME(TEXT("Interchange"));
 			return Factory->EndImportAsset_GameThread(ImportAssetObjectParams);
 		});
 

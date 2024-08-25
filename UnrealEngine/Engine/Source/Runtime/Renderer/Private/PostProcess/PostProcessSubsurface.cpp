@@ -15,11 +15,10 @@
 #include "DataDrivenShaderPlatformInfo.h"
 #include "Engine/SubsurfaceProfile.h"
 #include "CanvasTypes.h"
-#include "RenderTargetTemp.h"
 #include "ScenePrivate.h"
 #include "GenerateMips.h"
 #include "ClearQuad.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "PostProcess/TemporalAA.h"
 #include "SubsurfaceTiles.h"
 #include "UnrealEngine.h"
@@ -92,7 +91,7 @@ namespace
 		2,
 		TEXT("Enables or disables checkerboard rendering for subsurface profile rendering.\n")
 		TEXT("This is necessary if SceneColor does not include a floating point alpha channel (e.g 32-bit formats)\n")
-		TEXT(" 0: Disabled (high quality) \n")
+		TEXT(" 0: Disabled (high quality). If the rendertarget format does not have an alpha channel (e.g., PF_FloatR11G11B10), it leads to over-washed SSS. \n")
 		TEXT(" 1: Enabled (low quality). Surface lighting will be at reduced resolution.\n")
 		TEXT(" 2: Automatic. Non-checkerboard lighting will be applied if we have a suitable rendertarget format\n"),
 		ECVF_RenderThreadSafe);
@@ -326,7 +325,7 @@ uint32 GetSubsurfaceRequiredViewMask(TArrayView<const FViewInfo> Views)
 
 bool IsSubsurfaceCheckerboardFormat(EPixelFormat SceneColorFormat)
 {
-	if (Strata::IsOpaqueRoughRefractionEnabled())
+	if (Substrate::IsOpaqueRoughRefractionEnabled())
 	{
 		// With this mode, specular and subsurface colors are correctly separated so checkboard is not required.
 		return false;
@@ -385,7 +384,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FSubsurfaceVisualizePS, FSubsurfaceShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSubsurfaceParameters, Subsurface)
 		SHADER_PARAMETER_STRUCT(FSubsurfaceInput, SubsurfaceInput0)
 		SHADER_PARAMETER_TEXTURE(Texture2D, MiniFontTexture)
@@ -530,7 +529,7 @@ public:
 	}
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSubsurfaceParameters, Subsurface)
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Output)
 		SHADER_PARAMETER_STRUCT(FSubsurfaceInput, SubsurfaceInput0)
@@ -568,7 +567,7 @@ public:
 	}
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSubsurfaceParameters, Subsurface)
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Output)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, SSSColorUAV)
@@ -828,7 +827,7 @@ class FSubsurfaceRecombinePS : public FSubsurfaceShader
 	SHADER_USE_PARAMETER_STRUCT(FSubsurfaceRecombinePS, FSubsurfaceShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSubsurfaceParameters, Subsurface)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSubsurfaceTilePassVS::FParameters, TileParameters)
 		SHADER_PARAMETER_STRUCT(FSubsurfaceInput, SubsurfaceInput0)
@@ -930,7 +929,7 @@ class FSubsurfaceRecombineCopyPS : public FSubsurfaceShader
 	SHADER_USE_PARAMETER_STRUCT(FSubsurfaceRecombineCopyPS, FSubsurfaceShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSubsurfaceParameters, Subsurface)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSubsurfaceTilePassVS::FParameters, TileParameters)
 		SHADER_PARAMETER_STRUCT(FSubsurfaceInput, SubsurfaceInput0)
@@ -1016,10 +1015,10 @@ void AddSubsurfaceViewPass(
 	const FScreenPassTextureViewportParameters SubsurfaceViewportParameters = GetScreenPassTextureViewportParameters(SubsurfaceViewport);
 	const FScreenPassTextureViewportParameters SceneViewportParameters = GetScreenPassTextureViewportParameters(SceneViewport);
 
-	const bool bReadSeparatedSubSurfaceSceneColor = Strata::IsOpaqueRoughRefractionEnabled();
-	const bool bWriteSeparatedOpaqueRoughRefractionSceneColor = Strata::IsOpaqueRoughRefractionEnabled();
-	FRDGTextureRef SeparatedSubSurfaceSceneColor = View.StrataViewData.SceneData->SeparatedSubSurfaceSceneColor;
-	FRDGTextureRef SeparatedOpaqueRoughRefractionSceneColor = View.StrataViewData.SceneData->SeparatedOpaqueRoughRefractionSceneColor;
+	const bool bReadSeparatedSubSurfaceSceneColor = Substrate::IsOpaqueRoughRefractionEnabled();
+	const bool bWriteSeparatedOpaqueRoughRefractionSceneColor = Substrate::IsOpaqueRoughRefractionEnabled();
+	FRDGTextureRef SeparatedSubSurfaceSceneColor = View.SubstrateViewData.SceneData->SeparatedSubSurfaceSceneColor;
+	FRDGTextureRef SeparatedOpaqueRoughRefractionSceneColor = View.SubstrateViewData.SceneData->SeparatedOpaqueRoughRefractionSceneColor;
 
 	FRDGTextureRef SetupTexture = SceneColorTexture;
 	FRDGTextureRef SubsurfaceSubpassOneTex = nullptr;
@@ -1125,7 +1124,7 @@ void AddSubsurfaceViewPass(
 			PassParameters->RWTileTypeCountBuffer = GraphBuilder.CreateUAV(Tiles.TileTypeCountBuffer, EPixelFormat::PF_R32_UINT);
 
 			PassParameters->SubsurfaceUniformParameters = UniformBuffer;
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 			SHADER::FPermutationDomain ComputeShaderPermutationVector;
 			ComputeShaderPermutationVector.Set<SHADER::FDimensionHalfRes>(bHalfRes);
@@ -1272,7 +1271,7 @@ void AddSubsurfaceViewPass(
 				PassParameters->GroupBuffer = SubsurfaceBufferUsage[SubsurfaceTypeIndex];
 				PassParameters->TileTypeCountBuffer = GraphBuilder.CreateSRV(Tiles.TileTypeCountBuffer,EPixelFormat::PF_R32_UINT);
 				PassParameters->IndirectDispatchArgsBuffer = Tiles.TileIndirectDispatchBuffer;
-				PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+				PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 				if (SubsurfacePassFunction == SHADER::ESubsurfacePass::PassOne && SubsurfaceType == SHADER::ESubsurfaceType::BURLEY)
 				{
@@ -1354,7 +1353,7 @@ void AddSubsurfaceViewPass(
 			PassParameters->RenderTargets[0] = FRenderTargetBinding(SubsurfaceIntermediateTexture, SceneColorTextureLoadAction);
 			PassParameters->SubsurfaceInput0 = GetSubsurfaceInput(bReadSeparatedSubSurfaceSceneColor ? SeparatedSubSurfaceSceneColor : SceneColorTexture, SceneViewportParameters);
 			PassParameters->SubsurfaceSampler0 = BilinearBorderSampler;
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 			// Scattering output target is only used when scattering is enabled.
 			if (SubsurfaceMode != ESubsurfaceMode::Bypass)
@@ -1418,7 +1417,7 @@ void AddSubsurfaceViewPass(
 				FRenderTargetBinding(SceneColorTexture, SceneColorTextureLoadAction);
 			PassParameters->SubsurfaceInput0 = GetSubsurfaceInput(SubsurfaceIntermediateTexture, SceneViewportParameters);
 			PassParameters->SubsurfaceSampler0 = PointClampSampler;
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 			TShaderMapRef<FSubsurfaceRecombineCopyPS> PixelShader(View.ShaderMap);			
 			TShaderMapRef<FSubsurfaceTilePassVS> VertexShader(View.ShaderMap);
@@ -1506,7 +1505,7 @@ FScreenPassTexture AddVisualizeSubsurfacePass(FRDGBuilder& GraphBuilder, const F
 	PassParameters->SubsurfaceInput0.Viewport = GetScreenPassTextureViewportParameters(InputViewport);
 	PassParameters->SubsurfaceSampler0 = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 	PassParameters->MiniFontTexture = GetMiniFontTexture();
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 	TShaderMapRef<FSubsurfaceVisualizePS> PixelShader(View.ShaderMap);
 

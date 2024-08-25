@@ -446,6 +446,215 @@ namespace ChaosTest
 		}
 	}
 
+	template<typename ConvexType>
+	void TestConvexPlaneVertices(const ConvexType& Convex)
+	{
+		const FReal NormalTolerance = UE_SMALL_NUMBER;
+		const FReal PositionTolerance = UE_KINDA_SMALL_NUMBER;
+
+		for (int32 PlaneIndex = 0; PlaneIndex < Convex.NumPlanes(); ++PlaneIndex)
+		{
+			const FVec3 PlaneN = Convex.GetPlane(PlaneIndex).Normal();
+			const FVec3 PlaneX = Convex.GetPlane(PlaneIndex).X();
+
+			const int NumPlaneVertices = Convex.NumPlaneVertices(PlaneIndex);
+			for (int32 PlaneVertexIndex0 = 0; PlaneVertexIndex0 < NumPlaneVertices; ++PlaneVertexIndex0)
+			{
+				const int32 VertexIndex0 = Convex.GetPlaneVertex(PlaneIndex, PlaneVertexIndex0);
+
+				// All vertices are actually on the plane
+				const FVec3 Vertex0 = Convex.GetVertex(VertexIndex0);
+				EXPECT_NEAR(FVec3::DotProduct(Vertex0, PlaneN), FVec3::DotProduct(PlaneX, PlaneN), PositionTolerance) << "PlaneIndex=" << PlaneIndex << " PlaneVertexIndex0=" << PlaneVertexIndex0;
+
+				// Winding is correct
+				int PlaneVertexIndex1 = (PlaneVertexIndex0 < NumPlaneVertices - 1) ? PlaneVertexIndex0 + 1 : 0;
+				int PlaneVertexIndex2 = (PlaneVertexIndex0 < NumPlaneVertices - 2) ? PlaneVertexIndex0 + 2 : PlaneVertexIndex0 - NumPlaneVertices + 2;
+				const int32 VertexIndex1 = Convex.GetPlaneVertex(PlaneIndex, PlaneVertexIndex1);
+				const int32 VertexIndex2 = Convex.GetPlaneVertex(PlaneIndex, PlaneVertexIndex2);
+				const FVec3 Vertex1 = Convex.GetVertex(VertexIndex1);
+				const FVec3 Vertex2 = Convex.GetVertex(VertexIndex2);
+
+				const FReal WindingMag = FVec3::DotProduct(FVec3::CrossProduct(Vertex1 - Vertex0, Vertex2 - Vertex1), PlaneN);
+				const FReal Winding = FMath::Sign(WindingMag);
+				const int32 ExpectedWinding = Convex.GetWindingOrder();
+				EXPECT_EQ(Winding, ExpectedWinding) << "PlaneIndex=" << PlaneIndex << " PlaneVertexIndex0=" << PlaneVertexIndex0;
+			}
+		}
+	}
+
+	template<typename ConvexType>
+	void TestConvexEdges(const ConvexType& Convex)
+	{
+		// Check the edges
+		for (int32 EdgeIndex = 0; EdgeIndex < Convex.NumEdges(); ++EdgeIndex)
+		{
+			const int PlaneIndex0 = Convex.GetEdgePlane(EdgeIndex, 0);
+			const int PlaneIndex1 = Convex.GetEdgePlane(EdgeIndex, 1);
+			const int32 VertexIndex0 = Convex.GetEdgeVertex(EdgeIndex, 0);
+			const int32 VertexIndex1 = Convex.GetEdgeVertex(EdgeIndex, 0);
+
+			// Plane0 contains the two vertices
+			bool bFoundVertex0 = false;
+			bool bFoundVertex1 = false;
+			for (int32 PlaneVertexIndex0 = 0; PlaneVertexIndex0 < Convex.NumPlaneVertices(PlaneIndex0); ++PlaneVertexIndex0)
+			{
+				const int32 ThisVertexIndex = Convex.GetPlaneVertex(PlaneIndex0, PlaneVertexIndex0);
+				if (ThisVertexIndex == VertexIndex0)
+				{
+					bFoundVertex0 = true;
+				}
+				if (ThisVertexIndex == VertexIndex1)
+				{
+					bFoundVertex1 = true;
+				}
+			}
+			EXPECT_TRUE(bFoundVertex0) << "EdgeIndex=" << EdgeIndex << "PlaneIndex=" << PlaneIndex0 << " VertexIndex=" << VertexIndex0;
+			EXPECT_TRUE(bFoundVertex1) << "EdgeIndex=" << EdgeIndex << "PlaneIndex=" << PlaneIndex0 << " VertexIndex=" << VertexIndex1;
+
+			// Plane1 contains the two vertices
+			bFoundVertex0 = false;
+			bFoundVertex1 = false;
+			for (int32 PlaneVertexIndex1 = 0; PlaneVertexIndex1 < Convex.NumPlaneVertices(PlaneIndex1); ++PlaneVertexIndex1)
+			{
+				const int32 ThisVertexIndex = Convex.GetPlaneVertex(PlaneIndex1, PlaneVertexIndex1);
+				if (ThisVertexIndex == VertexIndex0)
+				{
+					bFoundVertex0 = true;
+				}
+				if (ThisVertexIndex == VertexIndex1)
+				{
+					bFoundVertex1 = true;
+				}
+			}
+			EXPECT_TRUE(bFoundVertex0) << "EdgeIndex=" << EdgeIndex << "PlaneIndex=" << PlaneIndex1 << " VertexIndex=" << VertexIndex0;
+			EXPECT_TRUE(bFoundVertex1) << "EdgeIndex=" << EdgeIndex << "PlaneIndex=" << PlaneIndex1 << " VertexIndex=" << VertexIndex1;
+		}
+	}
+
+	// Verify that the box Plane Edge and Vertex APIs return the elements exactly as they are defined in Box.cpp
+	GTEST_TEST(ConvexStructureTests, TestBoxStructureDataDetails)
+	{
+		// These arrays are copied from Box.cpp - any changes there should trigger a failure here
+		// so we can be sure the change was expected.
+		const TArray<FVec3> PlaneNormals =
+		{
+			FVec3(-1,  0,  0),		// -X
+			FVec3(0, -1,  0),		// -Y
+			FVec3(0,  0, -1),		// -Z
+			FVec3(1,  0,  0),		//  X
+			FVec3(0,  1,  0),		//  Y
+			FVec3(0,  0,  1),		//  Z
+		};
+
+		const TArray<FVec3> UnitVertices =
+		{
+			FVec3(-1, -1, -1),		// 0 
+			FVec3(1, -1, -1),		// 1 
+			FVec3(-1,  1, -1),		// 2 
+			FVec3(1,  1, -1),		// 3 
+			FVec3(-1, -1,  1),		// 4 
+			FVec3(1, -1,  1),		// 5 
+			FVec3(-1,  1,  1),		// 6 
+			FVec3(1,  1,  1),		// 7 
+		};
+
+		TArray<TArray<int32>> PlaneVertices
+		{
+			{ 0, 4, 6, 2 },			// -X,
+			{ 0, 1, 5, 4 },			// -Y
+			{ 0, 2, 3, 1 },			// -Z
+			{ 1, 3, 7, 5 },			//  X
+			{ 2, 6, 7, 3 },			//  Y
+			{ 4, 5, 7, 6 },			//  Z
+		};
+
+		const FReal NormalTolerance = UE_SMALL_NUMBER;
+		const FReal PositionTolerance = UE_KINDA_SMALL_NUMBER;
+
+		const FVec3 Center = FVec3(0, 0, 0);
+		const FVec3 HalfExtent = FVec3(100, 200, 300);
+		const FReal Margin = FReal(0);
+
+		const FImplicitBox3 Box = FImplicitBox3(Center - HalfExtent, Center + HalfExtent, Margin);
+
+		EXPECT_EQ(Box.NumPlanes(), 6);
+		EXPECT_EQ(Box.NumEdges(), 12);
+		EXPECT_EQ(Box.NumVertices(), 8);
+
+		// Check that the vertices are in the expected order
+		for (int32 VertexIndex = 0; VertexIndex < UnitVertices.Num(); ++VertexIndex)
+		{
+			const FVec3 Vertex = Box.GetVertex(VertexIndex);
+			const FVec3 ExpectedVertex = UnitVertices[VertexIndex] * HalfExtent;
+			EXPECT_NEAR(Vertex.X, ExpectedVertex.X, PositionTolerance);
+			EXPECT_NEAR(Vertex.Y, ExpectedVertex.Y, PositionTolerance);
+			EXPECT_NEAR(Vertex.Z, ExpectedVertex.Z, PositionTolerance);
+		}
+
+		// Check that the planes have the correct normal and position
+		for (int32 PlaneIndex = 0; PlaneIndex < PlaneNormals.Num(); ++PlaneIndex)
+		{
+			TPlaneConcrete<FReal> Plane = Box.GetPlane(PlaneIndex);
+
+			// Normals are in the expected direction
+			EXPECT_NEAR(Plane.Normal().X, PlaneNormals[PlaneIndex].X, NormalTolerance) << "PlaneIndex=" << PlaneIndex;
+			EXPECT_NEAR(Plane.Normal().Y, PlaneNormals[PlaneIndex].Y, NormalTolerance) << "PlaneIndex=" << PlaneIndex;
+			EXPECT_NEAR(Plane.Normal().Z, PlaneNormals[PlaneIndex].Z, NormalTolerance) << "PlaneIndex=" << PlaneIndex;
+
+			// Positions are in the correct plane
+			const FReal PlaneDistance = FVec3::DotProduct(Plane.Normal(), Plane.X());
+			const FReal ExpectedPlaneDistance = FVec3::DotProduct(PlaneNormals[PlaneIndex], PlaneNormals[PlaneIndex] * HalfExtent);
+			EXPECT_NEAR(PlaneDistance, ExpectedPlaneDistance, PositionTolerance);
+		}
+
+		// Check that the planes have the correct vertices
+		for (int32 PlaneIndex = 0; PlaneIndex < PlaneNormals.Num(); ++PlaneIndex)
+		{
+			const int NumPlaneVertices = Box.NumPlaneVertices(PlaneIndex);
+			EXPECT_EQ(NumPlaneVertices, PlaneVertices[PlaneIndex].Num()) << "PlaneIndex=" << PlaneIndex;	// Always 4
+
+			for (int32 PlaneVertexIndex0 = 0; PlaneVertexIndex0 < NumPlaneVertices; ++PlaneVertexIndex0)
+			{
+				const int32 VertexIndex0 = Box.GetPlaneVertex(PlaneIndex, PlaneVertexIndex0);
+				EXPECT_EQ(VertexIndex0, PlaneVertices[PlaneIndex][PlaneVertexIndex0]) << "PlaneIndex=" << PlaneIndex << " PlaneVertexIndex0=" << PlaneVertexIndex0;
+			}
+		}
+
+		// Check the plane vertices are in the plane and have the correct winding order 
+		TestConvexPlaneVertices(Box);
+
+		// Check that the edges report planes that actually share vertices
+		TestConvexEdges(Box);
+	}
+
+	// Check that a Box implemented as a FImplicitConvex3 meets the same specs as ImplicitBox3
+	GTEST_TEST(ConvexStructureTests, TestConvexBoxStructureDataDetails)
+	{
+		const FVec3f Center = FVec3(0, 0, 0);
+		const FVec3f HalfExtent = FVec3(100, 200, 300);
+		const FRealSingle Margin = FReal(0);
+
+		const TArray<FVec3f> Vertices =
+		{
+			Center + HalfExtent * FVec3f(-1, -1, -1),		// 0 
+			Center + HalfExtent * FVec3f( 1, -1, -1),		// 1 
+			Center + HalfExtent * FVec3f(-1,  1, -1),		// 2 
+			Center + HalfExtent * FVec3f( 1,  1, -1),		// 3 
+			Center + HalfExtent * FVec3f(-1, -1,  1),		// 4 
+			Center + HalfExtent * FVec3f( 1, -1,  1),		// 5 
+			Center + HalfExtent * FVec3f(-1,  1,  1),		// 6 
+			Center + HalfExtent * FVec3f( 1,  1,  1),		// 7 
+		};
+
+		FImplicitConvex3 Convex = FImplicitConvex3(Vertices, Margin);
+
+		// Check the plane vertices are in the plane and have the correct winding order 
+		TestConvexPlaneVertices(Convex);
+
+		// Check that the edges report planes that actually share vertices
+		TestConvexEdges(Convex);
+	}
+
 	// The set of vertices generated from a unit box when creating a GeometryCollection from the default box in the editor.
 	// The default cube is tesselated. It has 26 vertices which include the 8 corners, plus mid-points along each edge and in the middle of each face.
 	// 

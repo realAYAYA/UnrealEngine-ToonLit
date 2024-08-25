@@ -5,7 +5,7 @@
 
 //------------------------------------------------------- CONFIG
 
-#if DIM_NYQUIST
+#if DIM_NYQUIST_WAVE_SIZE != 0
 	#define WAVE_COUNT_X 1
 	#define WAVE_COUNT_Y 1
 
@@ -16,7 +16,13 @@
 	#define TILE_SIZE (GROUP_TILE_SIZE - 2u)
 
 	#define LANE_OUTPUT_STRIDE_X 2u
-	#define LANE_OUTPUT_STRIDE_Y 1u
+	#if DIM_NYQUIST_WAVE_SIZE == 16
+		#define LANE_OUTPUT_STRIDE_Y 2u
+	#elif DIM_NYQUIST_WAVE_SIZE == 32
+		#define LANE_OUTPUT_STRIDE_Y 1u
+	#else
+		#error Unknown wave size
+	#endif
 	#define LANE_INPUT_STRIDE_X (LANE_OUTPUT_STRIDE_X * DOWNSAMPLE_FACTOR)
 	#define LANE_INPUT_STRIDE_Y (LANE_OUTPUT_STRIDE_Y * DOWNSAMPLE_FACTOR)
 	
@@ -30,6 +36,7 @@
 
 	#define tsr_input_halfC  TLaneVector2D<tsr_half, CONFIG_CHANNEL_COUNT, LANE_INPUT_STRIDE_X, LANE_INPUT_STRIDE_Y>
 	#define tsr_output_halfC TLaneVector2D<tsr_half, CONFIG_CHANNEL_COUNT, LANE_OUTPUT_STRIDE_X, LANE_OUTPUT_STRIDE_Y>
+	#define tsr_output_half  TLaneVector2D<tsr_half, 1, LANE_OUTPUT_STRIDE_X, LANE_OUTPUT_STRIDE_Y>
 
 #else
 	#define TILE_SIZE 8
@@ -44,7 +51,7 @@
 
 //------------------------------------------------------- CONVOLUTIONS
 
-#if DIM_NYQUIST
+#if DIM_NYQUIST_WAVE_SIZE != 0
 	#include "TSRConvolutionNetwork.ush"
 #endif
 
@@ -133,10 +140,10 @@ RWTexture2D<tsr_halfC> SceneColorOutputMip1;
 
 //------------------------------------------------------- ENTRY POINT NYQUIST DOWNSAMPLE
 
-#if DIM_NYQUIST
+#if DIM_NYQUIST_WAVE_SIZE != 0
 
 #if COMPILER_SUPPORTS_WAVE_SIZE
-	WAVESIZE(32)
+	WAVESIZE(DIM_NYQUIST_WAVE_SIZE)
 #endif
 [numthreads(LANE_COUNT, 1, 1)]
 void MainCS(
@@ -240,6 +247,17 @@ void MainCS(
 			tsr_short2(OutputViewRectMin) +
 			tsr_short2(GroupId) * tsr_short(TILE_SIZE).xx);
 		
+		Output = clamp(Output, tsr_output_halfC::Const(tsr_half(0.0)), tsr_output_halfC::Const(tsr_half(Max10BitsFloat)));
+
+		// Ensure that alpha values that are expected to be opaque (but are only close to opaque) are forced to be opaque.
+		// (0.995 chosen to accommodate handling of 254/255)
+		#if CONFIG_SCENE_COLOR_ALPHA
+		{
+			Output.SetComponent(3, select(Output[3] > tsr_output_half::Const(0.995), tsr_output_half::Const(1.0), Output[3]));
+			Output.SetComponent(3, select(Output[3] < tsr_output_half::Const(0.005), tsr_output_half::Const(0.0), Output[3]));
+		}
+		#endif
+
 		UNROLL_N(OUTPUT_SIMD_SIZE)
 		for (uint SimdIndex = 0; SimdIndex < OUTPUT_SIMD_SIZE; SimdIndex++)
 		{
@@ -253,6 +271,11 @@ void MainCS(
 		
 		{
 			tsr_output_halfC HalfResOutput = Output * tsr_half(0.25);
+			// Forces the * tsr_half(0.25) to be applied before to avoid turning bright pixels to +inf in the adds below.
+			#if CONFIG_FP16_PRECISE_MULTIPLY_ORDER
+				HalfResOutput = min(HalfResOutput, tsr_output_halfC::Const(tsr_half(Max10BitsFloat * 0.25)));
+			#endif
+
 			HalfResOutput = HalfResOutput + WaveAccessNeighborTexel(HalfResOutput, tsr_short2(1, 0));
 			HalfResOutput = HalfResOutput + WaveAccessNeighborTexel(HalfResOutput, tsr_short2(0, 1));
 		
@@ -269,7 +292,7 @@ void MainCS(
 	}
 }
 
-#else // !DIM_NYQUIST
+#else // DIM_NYQUIST_WAVE_SIZE == 0
 
 //------------------------------------------------------- ENTRY POINT REFERENCE
 
@@ -334,6 +357,17 @@ void MainCS(
 	
 	// Compute final output
 	tsr_halfC FinalOutputColor = Color;
+	
+	FinalOutputColor = clamp(FinalOutputColor, tsr_half(0.0), tsr_half(Max10BitsFloat));
+
+	// Ensure that alpha values that are expected to be opaque (but are only close to opaque) are forced to be opaque.
+	// (0.995 chosen to accommodate handling of 254/255)
+	#if CONFIG_SCENE_COLOR_ALPHA
+	{
+		FinalOutputColor[3] = select(FinalOutputColor[3] > tsr_half(0.995), tsr_half(1.0), FinalOutputColor[3]);
+		FinalOutputColor[3] = select(FinalOutputColor[3] < tsr_half(0.005), tsr_half(0.0), FinalOutputColor[3]);
+	}
+	#endif
 
 	tsr_short2 OutputPixelPosition = InvalidateOutputPixelPos(tsr_short2(OutputViewRectMin + DispatchThreadId), OutputViewRectMax);
 	
@@ -347,6 +381,11 @@ void MainCS(
 		uint LocalGroupThreadIndex = GroupThreadIndex;
 
 		tsr_halfC HalfResOutput = FinalOutputColor * tsr_half(0.25);
+		// Forces the * tsr_half(0.25) to be applied before to avoid turning bright pixels to +inf in the adds below.
+		#if CONFIG_FP16_PRECISE_MULTIPLY_ORDER
+			HalfResOutput = min(HalfResOutput, tsr_half(Max10BitsFloat * 0.25));
+		#endif
+
 		tsr_short2 HalfResOutputPixelPos;
 		HalfResOutputPixelPos[0] = (OutputPixelPosition[0] >> tsr_short(1)) | (((OutputPixelPosition[0] & tsr_short(0x1)) | tsr_short(!bGenerateOutputMip1)) * tsr_short(~0));
 		HalfResOutputPixelPos[1] = (OutputPixelPosition[1] >> tsr_short(1)) | (((OutputPixelPosition[1] & tsr_short(0x1)) | tsr_short(!bGenerateOutputMip1)) * tsr_short(~0));
@@ -388,4 +427,4 @@ void MainCS(
 	#endif
 }
 
-#endif // !DIM_NYQUIST
+#endif // DIM_NYQUIST_WAVE_SIZE == 0

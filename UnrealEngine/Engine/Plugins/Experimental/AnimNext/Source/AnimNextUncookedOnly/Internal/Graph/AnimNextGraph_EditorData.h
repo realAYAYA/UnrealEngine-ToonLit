@@ -3,14 +3,20 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AnimNextGraph_Controller.h"
 #include "RigVMModel/RigVMGraph.h"
 #include "AnimNextGraph_EdGraph.h"
-#include "RigVMCore/RigVMGraphFunctionHost.h"
-#include "RigVMBlueprint.h"
+#include "AnimNextRigVMAssetEditorData.h"
+#include "Graph/AnimNextExecuteContext.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 #include "AnimNextGraph_EditorData.generated.h"
 
 class UAnimNextGraph;
 enum class ERigVMGraphNotifType : uint8;
+class FAnimationAnimNextRuntimeTest_GraphAddDecorator;
+class FAnimationAnimNextRuntimeTest_GraphExecute;
+class FAnimationAnimNextRuntimeTest_GraphExecuteLatent;
+
 namespace UE::AnimNext::UncookedOnly
 {
 	struct FUtils;
@@ -19,124 +25,72 @@ namespace UE::AnimNext::UncookedOnly
 namespace UE::AnimNext::Editor
 {
 	class FGraphEditor;
+	class SAnimNextGraphView;
+	struct FUtils;
 }
 
-enum class EAnimNextGraphLoadType : uint8
-{
-	PostLoad,
-	CheckUserDefinedStructs
-};
-
+/**
+ * The Schema is used to determine which actions are allowed
+ * on a graph. This includes any topological change.
+ */
 UCLASS()
 class UAnimNextGraph_Schema : public URigVMSchema
 {
 	GENERATED_BODY()
 };
 
-UCLASS(MinimalAPI)
-class UAnimNextGraph_EditorData : public UObject, public IRigVMClientHost, public IRigVMGraphFunctionHost
+// Script-callable editor API hoisted onto UAnimNextGraph
+UCLASS()
+class ANIMNEXTUNCOOKEDONLY_API UAnimNextGraphLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
-	UAnimNextGraph_EditorData(const FObjectInitializer& ObjectInitializer);
-	
+	/** Adds a graph to an AnimNext Graph asset */
+	UFUNCTION(BlueprintCallable, Category = "AnimNext|Graph", meta=(ScriptMethod))
+	static UAnimNextGraphEntry* AddGraph(UAnimNextGraph* InGraph, FName InName, bool bSetupUndoRedo = true, bool bPrintPythonCommand = true);
+};
+
+/** Editor data for AnimNext graphs */
+UCLASS(MinimalAPI)
+class UAnimNextGraph_EditorData : public UAnimNextRigVMAssetEditorData
+{
+	GENERATED_BODY()
+
 	friend class UAnimNextGraphFactory;
 	friend class UAnimNextGraph_EdGraph;
+	friend class UAnimNextGraphEntry;
 	friend struct UE::AnimNext::UncookedOnly::FUtils;
+	friend struct UE::AnimNext::Editor::FUtils;
 	friend class UE::AnimNext::Editor::FGraphEditor;
+	friend class UE::AnimNext::Editor::SAnimNextGraphView;
 	friend struct FAnimNextGraphSchemaAction_RigUnit;
 	friend struct FAnimNextGraphSchemaAction_DispatchFactory;
+	friend class FAnimationAnimNextRuntimeTest_GraphAddDecorator;
+	friend class FAnimationAnimNextRuntimeTest_GraphExecute;
+	friend class FAnimationAnimNextRuntimeTest_GraphExecuteLatent;
+	
+public:
+	/** Adds a graph to this asset */
+	ANIMNEXTUNCOOKEDONLY_API UAnimNextGraphEntry* AddGraph(FName InName, bool bSetupUndoRedo = true, bool bPrintPythonCommand = true);
 
+private:
 	// UObject interface
-	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
-	virtual bool IsEditorOnly() const override { return true; }
-#if WITH_EDITOR
-	void HandlePackageDone(const FEndLoadPackageContext& Context);
-	void HandlePackageDone();
-#endif // WITH_EDITOR
 
 	// IRigVMClientHost interface
-	virtual FRigVMClient* GetRigVMClient() override;
-	virtual const FRigVMClient* GetRigVMClient() const override;
-	virtual IRigVMGraphFunctionHost* GetRigVMGraphFunctionHost() override;
-	virtual const IRigVMGraphFunctionHost* GetRigVMGraphFunctionHost() const override;
-	virtual void HandleRigVMGraphAdded(const FRigVMClient* InClient, const FString& InNodePath) override;
-	virtual void HandleRigVMGraphRemoved(const FRigVMClient* InClient, const FString& InNodePath) override {}
-	virtual void HandleRigVMGraphRenamed(const FRigVMClient* InClient, const FString& InOldNodePath, const FString& InNewNodePath) override {}
-	virtual void HandleConfigureRigVMController(const FRigVMClient* InClient, URigVMController* InControllerToConfigure) override;
-	virtual UObject* GetEditorObjectForRigVMGraph(URigVMGraph* InVMGraph) const override;
+	virtual void RecompileVM() override;
 
-	// IRigVMGraphFunctionHost interface
-	virtual FRigVMGraphFunctionStore* GetRigVMGraphFunctionStore() override;
-	virtual const FRigVMGraphFunctionStore* GetRigVMGraphFunctionStore() const override;
+	// UAnimNextRigVMAssetEditorData interface
+	virtual TSubclassOf<URigVMController> GetControllerClass() const override { return UAnimNextGraph_Controller::StaticClass(); }
+	virtual TSubclassOf<URigVMSchema> GetRigVMSchemaClass() const override { return UAnimNextGraph_Schema::StaticClass(); }
+	virtual UScriptStruct* GetExecuteContextStruct() const override { return FAnimNextExecuteContext::StaticStruct(); }
+	virtual UEdGraph* CreateEdGraph(URigVMGraph* InRigVMGraph, bool bForce) override;
+	virtual bool RemoveEdGraph(URigVMGraph* InModel) override;
+	virtual void CreateEdGraphForCollapseNode(URigVMCollapseNode* InNode) override;
+	virtual void HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URigVMGraph* InGraph, UObject* InSubject) override;
+	virtual TConstArrayView<TSubclassOf<UAnimNextRigVMAssetEntry>> GetEntryClasses() const override;
 
-	ANIMNEXTUNCOOKEDONLY_API void Initialize(bool bRecompileVM);
-
-	void RefreshAllModels(EAnimNextGraphLoadType InLoadType);
-
-	void RecompileVM();
-	
-	void RecompileVMIfRequired();
-
-	void RequestAutoVMRecompilation();
-	
-	void HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URigVMGraph* InGraph, UObject* InSubject);
-
-	ANIMNEXTUNCOOKEDONLY_API URigVMGraph* GetVMGraphForEdGraph(const UEdGraph* InGraph) const;
-
-	void CreateEdGraphForCollapseNode(URigVMCollapseNode* InNode);
-
-	bool IsNodeExecConnected(const UEdGraphNode* Node) const;
-
+private:
 	UPROPERTY()
-	TObjectPtr<UAnimNextGraph_EdGraph> RootGraph;
-
-	UPROPERTY()
-	TObjectPtr<UAnimNextGraph_EdGraph> EntryPointGraph;
-
-	UPROPERTY()
-	TObjectPtr<UAnimNextGraph_EdGraph> FunctionLibraryEdGraph;
-
-	UPROPERTY()
-	FRigVMClient RigVMClient;
-
-	UPROPERTY()
-	FRigVMGraphFunctionStore GraphFunctionStore;
-
-	UPROPERTY()
-	TObjectPtr<URigVMLibraryNode> EntryPoint;
-
-	UPROPERTY(transient)
-	TMap<TObjectPtr<URigVMGraph>, TObjectPtr<URigVMController>> Controllers;
-
-	UPROPERTY(EditAnywhere, Category = "User Interface")
-	FRigVMEdGraphDisplaySettings RigGraphDisplaySettings;
-
-	UPROPERTY(EditAnywhere, Category = "VM")
-	FRigVMRuntimeSettings VMRuntimeSettings;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VM", meta = (AllowPrivateAccess = "true"))
-	FRigVMCompileSettings VMCompileSettings;
-
-	UPROPERTY(transient, DuplicateTransient)
-	TMap<FString, FRigVMOperand> PinToOperandMap;
-
-	UPROPERTY(transient, DuplicateTransient)
-	bool bVMRecompilationRequired = false;
-
-	UPROPERTY(transient, DuplicateTransient)
-	bool bIsCompiling = false;
-	
-	FCompilerResultsLog CompileLog;
-
-	FOnRigVMCompiledEvent VMCompiledEvent;
-	FRigVMGraphModifiedEvent ModifiedEvent;
-
-	bool bAutoRecompileVM = true;
-	bool bErrorsDuringCompilation = false;
-	bool bSuspendModelNotificationsForSelf = false;
-	bool bSuspendModelNotificationsForOthers = false;
-	bool bSuspendAllNotifications = false;
-	bool bCompileInDebugMode = false;
+	TArray<TObjectPtr<UAnimNextGraph_EdGraph>> Graphs_DEPRECATED;
 };

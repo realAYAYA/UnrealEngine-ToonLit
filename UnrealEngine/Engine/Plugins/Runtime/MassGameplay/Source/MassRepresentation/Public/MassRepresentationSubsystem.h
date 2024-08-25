@@ -7,7 +7,7 @@
 #include "Misc/MTAccessDetector.h"
 #include "MassRepresentationTypes.h"
 #include "MassActorSpawnerSubsystem.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassRepresentationSubsystem.generated.h"
 
 class UMassVisualizationComponent;
@@ -25,7 +25,7 @@ class UWorldPartitionSubsystem;
  * Subsystem responsible for all visual of mass agents, will handle actors spawning and static mesh instances
  */
 UCLASS()
-class MASSREPRESENTATION_API UMassRepresentationSubsystem : public UWorldSubsystem
+class MASSREPRESENTATION_API UMassRepresentationSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 
@@ -35,9 +35,40 @@ public:
 	 * @param Desc is the information for the static mesh that will be instantiated later via AddStaticMeshInstance()
 	 * @return The index of the static mesh type 
 	 */
-	int16 FindOrAddStaticMeshDesc(const FStaticMeshInstanceVisualizationDesc& Desc);
+	FStaticMeshInstanceVisualizationDescHandle FindOrAddStaticMeshDesc(const FStaticMeshInstanceVisualizationDesc& Desc);
 
-	/** @todo: need to add a release API at some point for static mesh types */
+	/**
+	 * Creates a dedicated visual type described by host Desc and ties ISMComponent to it.
+	 * @note this is a helper function for a common "single ISMComponent" case. Calls AddVisualDescWithISMComponents under the hood.
+	 * @return The index of the visual type
+	 */
+	FStaticMeshInstanceVisualizationDescHandle AddVisualDescWithISMComponent(const FStaticMeshInstanceVisualizationDesc& Desc, UInstancedStaticMeshComponent& ISMComponent);
+
+	/**
+	 * Creates a dedicated visual type described by host Desc and ties given ISMComponents to it.
+	 * @return The index of the visual type
+	 */
+	FStaticMeshInstanceVisualizationDescHandle AddVisualDescWithISMComponents(const FStaticMeshInstanceVisualizationDesc& Desc, TArrayView<TObjectPtr<UInstancedStaticMeshComponent>> ISMComponents);
+
+	/**
+	 * Fetches FMassISMCSharedData indicated by DescriptionIndex, or nullptr if it's not a valid index
+	 */
+	const FMassISMCSharedData* GetISMCSharedDataForDescriptionIndex(const int32 DescriptionIndex) const;
+
+	/**
+	 * Removes the visualization data associated with the given ISM component. Note that this is safe to do only when
+	 * there are no entities relying on this data. No entity data patching will take place.
+	 * Note that the function will assert if there's more ISM components associated with given visualization. Also, in 
+	 * that case RemoveVisualDescByIndex will be called under the hood. 
+	 */
+	UE_DEPRECATED(5.4, "RemoveISMComponent has been deprecated in favor of RemoveVisualDescByIndex. Please use that instead.")
+	void RemoveISMComponent(UInstancedStaticMeshComponent& ISMComponent);
+
+	/** 
+	 * Removes all data associated with a given VisualizationIndex. Note that this is safe to do only if there are no
+	 * entities relying on this index. No entity data patching will take place.
+	 */
+	void RemoveVisualDesc(const FStaticMeshInstanceVisualizationDescHandle VisualizationHandle);
 
 	/** 
 	 * @return the array of all the static mesh instance component information
@@ -65,7 +96,7 @@ public:
 	 * @param ActorPostSpawnDelegate is an optional delegate called once the actor is spawned
 	 * @return The spawned actor from the template actor type if ready
 	 */
-	AActor* GetOrSpawnActorFromTemplate(const FMassEntityHandle MassAgent, const FTransform& Transform, const int16 TemplateActorIndex, FMassActorSpawnRequestHandle& SpawnRequestHandle, float Priority = MAX_FLT,
+	AActor* GetOrSpawnActorFromTemplate(const FMassEntityHandle MassAgent, const FTransform& Transform, const int16 TemplateActorIndex, FMassActorSpawnRequestHandle& InOutSpawnRequestHandle, float Priority = MAX_FLT,
 		FMassActorPreSpawnDelegate ActorPreSpawnDelegate = FMassActorPreSpawnDelegate(), FMassActorPostSpawnDelegate ActorPostSpawnDelegate = FMassActorPostSpawnDelegate());
 
 	/**
@@ -113,7 +144,9 @@ public:
 	/**
 	 * Release all references to static meshes and template actors
 	 * Use with caution, all entities using this representation subsystem must be destroy otherwise they will point to invalid resources */
-	 void ReleaseAllResources();
+	void ReleaseAllResources();
+
+	UMassActorSpawnerSubsystem* GetActorSpawnerSubsystem() const { return ActorSpawnerSubsystem; }
 
 protected:
 	// USubsystem BEGIN

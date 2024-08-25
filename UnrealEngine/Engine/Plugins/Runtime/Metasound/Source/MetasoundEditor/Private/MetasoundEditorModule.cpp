@@ -15,7 +15,6 @@
 #include "ISettingsModule.h"
 #include "Metasound.h"
 #include "MetasoundAssetSubsystem.h"
-#include "MetasoundAssetTypeActions.h"
 #include "MetasoundAudioBuffer.h"
 #include "MetasoundBuilderSubsystem.h"
 #include "MetasoundDetailCustomization.h"
@@ -228,10 +227,25 @@ namespace Metasound
 			}
 		}
 
+		// A structure that contains information about registered custom pin types. 
+		struct FGraphPinConfiguration
+		{
+			FEdGraphPinType PinType;
+			const FSlateBrush* PinConnectedIcon = nullptr;
+			const FSlateBrush* PinDisconnectedIcon = nullptr;
+		};
+
 		class FModule : public IMetasoundEditorModule
 		{
 			void LoadAndRegisterAsset(const FAssetData& InAssetData)
 			{
+				// Ignore requests if running cook, as presave will register and cook using the
+				// proper node register call which avoids async registration/igraph generation.
+				if (IsRunningCookCommandlet())
+				{
+					return;
+				}
+
 				Frontend::FMetaSoundAssetRegistrationOptions RegOptions;
 				RegOptions.bForceReregister = false;
 				if (const UMetaSoundSettings* Settings = GetDefault<UMetaSoundSettings>())
@@ -304,7 +318,7 @@ namespace Metasound
 						const FNodeRegistryKey RegistryKey = AssetSubsystem->AddOrUpdateAsset(InAssetData);
 
 						// Can be invalid if being called for the first time on an asset before FRenameRootGraphClass is called
-						if (NodeRegistryKey::IsValid(RegistryKey))
+						if (RegistryKey.IsValid())
 						{
 							const bool bPrimeRequested = AssetPrimeStatus > EAssetPrimeStatus::NotRequested;
 							const bool bIsRegistered = FMetasoundFrontendRegistryContainer::Get()->IsNodeRegistered(RegistryKey);
@@ -515,7 +529,7 @@ namespace Metasound
 
 						// Types like triggers & AudioBuffer are specialized, so ignore their preferred
 						// literal types to classify the category.
-						if (!FGraphBuilder::IsPinCategoryMetaSoundCustomDataType(PinCategory))
+						if (!FGraphBuilder::IsPinCategoryMetaSoundCustomDataType(PinCategory) && !CustomPinCategories.Contains(PinCategory))
 						{
 							// Primitives
 							switch (RegistryInfo.PreferredLiteralType)
@@ -595,7 +609,7 @@ namespace Metasound
 				}
 			}
 
-			void RegisterPinType(FName InDataTypeName, FName InPinCategory, FName InPinSubCategory)
+			virtual void RegisterPinType(FName InDataTypeName, FName InPinCategory, FName InPinSubCategory, const FSlateBrush* InPinConnectedIcon = nullptr, const FSlateBrush* InPinDisconnectedIcon = nullptr) override
 			{
 				using namespace Frontend;
 
@@ -606,11 +620,35 @@ namespace Metasound
 				const FName PinCategory = InPinCategory.IsNone() ? FGraphBuilder::PinCategoryObject : InPinCategory;
 
 				const EPinContainerType ContainerType = DataTypeInfo.bIsArrayType ? EPinContainerType::Array : EPinContainerType::None;
-				FEdGraphPinType PinType(PinCategory, InPinSubCategory, nullptr, ContainerType, false, FEdGraphTerminalType());
+				FGraphPinConfiguration PinConfiguration;
+				PinConfiguration.PinType.PinCategory = PinCategory;
+				PinConfiguration.PinType.PinSubCategory = InPinSubCategory;
+				PinConfiguration.PinType.ContainerType = ContainerType;
 				UClass* ClassToUse = IDataTypeRegistry::Get().GetUClassForDataType(InDataTypeName);
-				PinType.PinSubCategoryObject = Cast<UObject>(ClassToUse);
+				PinConfiguration.PinType.PinSubCategoryObject = Cast<UObject>(ClassToUse);
+				PinConfiguration.PinConnectedIcon = InPinConnectedIcon;
+				PinConfiguration.PinDisconnectedIcon = InPinDisconnectedIcon;
+				PinTypes.Emplace(InDataTypeName, MoveTemp(PinConfiguration));
+			}
 
-				PinTypes.Emplace(InDataTypeName, MoveTemp(PinType));
+			virtual void RegisterCustomPinType(FName InDataTypeName, const FGraphPinParams& Params) override
+			{
+				RegisterPinType(InDataTypeName, Params.PinCategory, Params.PinSubcategory, Params.PinConnectedIcon, Params.PinDisconnectedIcon);
+				if (Params.PinCategory.IsNone())
+				{
+					return;
+				}
+				
+				if (FGraphBuilder::IsPinCategoryMetaSoundCustomDataType(InDataTypeName))
+				{
+					UE_LOG(LogMetasoundEditor, Warning, TEXT("Attempted to register a \"Custom Pin Type\": \"%s\", but this is already a Metasound Custom Data Type"), *InDataTypeName.ToString());
+					return;
+				}
+				
+				CustomPinCategories.Add(Params.PinCategory);
+				UMetasoundEditorSettings* Settings = GetMutableDefault<UMetasoundEditorSettings>();
+				Settings->CustomPinTypeColors.Add(Params.PinCategory, Params.PinColor ? *Params.PinColor : Settings->DefaultPinTypeColor);
+
 			}
 
 			void ShutdownAssetClassRegistry()
@@ -709,10 +747,40 @@ namespace Metasound
 					return bIsConstructorType ? &Style::GetSlateBrushSafe("MetasoundEditor.Graph.ConstructorPin") : FAppStyle::GetBrush("Icons.BulletPoint");
 				}
 			}
+			
+			virtual bool GetCustomPinIcons(UEdGraphPin* InPin, const FSlateBrush*& PinConnectedIcon, const FSlateBrush*& PinDisconnectedIcon) const override
+			{
+				if (const UEdGraphNode* Node = InPin->GetOwningNode())
+				{
+					if (const UMetasoundEditorGraphNode* MetaSoundNode = Cast<UMetasoundEditorGraphNode>(InPin->GetOwningNode()))
+					{
+						Metasound::Frontend::FDataTypeRegistryInfo RegistryInfo = MetaSoundNode->GetPinDataTypeInfo(*InPin);
+						return GetCustomPinIcons(RegistryInfo.DataTypeName, PinConnectedIcon, PinDisconnectedIcon);
+					}
+				}
+				return false;
+			}
+
+			virtual bool GetCustomPinIcons(FName InDataType, const FSlateBrush*& PinConnectedIcon, const FSlateBrush*& PinDisconnectedIcon) const override
+			{
+				const FGraphPinConfiguration* PinConfiguration = PinTypes.Find(InDataType);
+				if (!PinConfiguration || (!PinConfiguration->PinConnectedIcon && !PinConfiguration->PinDisconnectedIcon))
+				{
+					return false;
+				}
+				PinConnectedIcon = PinConfiguration->PinConnectedIcon;
+				PinDisconnectedIcon = PinConfiguration->PinDisconnectedIcon ? PinConfiguration->PinDisconnectedIcon : PinConfiguration->PinConnectedIcon;
+				return true;
+			}
 
 			virtual const FEdGraphPinType* FindPinType(FName InDataTypeName) const
 			{
-				return PinTypes.Find(InDataTypeName);
+				const FGraphPinConfiguration* PinConfiguration = PinTypes.Find(InDataTypeName);
+				if (PinConfiguration)
+				{
+					return &PinConfiguration->PinType;
+				}
+				return nullptr;
 			}
 
 			virtual bool IsMetaSoundAssetClass(const FTopLevelAssetPath& InClassName) const override
@@ -730,9 +798,6 @@ namespace Metasound
 				METASOUND_LLM_SCOPE;
 				// Register Metasound asset type actions
 				IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(AssetToolName).Get();
-
-				AddAssetAction<FAssetTypeActions_MetaSoundPatch>(AssetTools, AssetActions);
-				AddAssetAction<FAssetTypeActions_MetaSoundSource>(AssetTools, AssetActions);
 
 				FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 				
@@ -797,9 +862,6 @@ namespace Metasound
 					NSLOCTEXT("MetaSoundsEditor", "MetaSoundEditorSettingsDescription", "Customize MetaSound Editor."),
 					GetMutableDefault<UMetasoundEditorSettings>()
 				);
-
-				FAssetTypeActions_MetaSoundPatch::RegisterMenuActions();
-				FAssetTypeActions_MetaSoundSource::RegisterMenuActions();
 
 				FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 				if (AssetRegistryModule.Get().IsLoadingAssets())
@@ -925,7 +987,8 @@ namespace Metasound
 			
 			TArray<TSharedPtr<FAssetTypeActions_Base>> AssetActions;
 			TMap<EMetasoundFrontendLiteralType, const TSubclassOf<UMetasoundEditorGraphMemberDefaultLiteral>> InputDefaultLiteralClassRegistry;
-			TMap<FName, FEdGraphPinType> PinTypes;
+			TMap<FName, FGraphPinConfiguration> PinTypes;
+			TSet<FName> CustomPinCategories;
 
 			TMap<UClass*, TUniquePtr<IMemberDefaultLiteralCustomizationFactory>> LiteralCustomizationFactories;
 

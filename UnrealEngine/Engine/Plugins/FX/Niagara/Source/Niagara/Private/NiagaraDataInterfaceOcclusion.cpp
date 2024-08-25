@@ -55,7 +55,8 @@ void UNiagaraDataInterfaceOcclusion::PostInitProperties()
 	}
 }
 
-void UNiagaraDataInterfaceOcclusion::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceOcclusion::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIOcclusionImpl;
 
@@ -146,7 +147,6 @@ void UNiagaraDataInterfaceOcclusion::GetFunctions(TArray<FNiagaraFunctionSignatu
 	}
 }
 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceOcclusion::AppendCompileHash(FNiagaraCompileHashVisitor* InVisitor) const
 {
 	using namespace NDIOcclusionImpl;
@@ -183,7 +183,7 @@ bool UNiagaraDataInterfaceOcclusion::UpgradeFunctionCall(FNiagaraFunctionSignatu
 	if (FunctionSignature.FunctionVersion < FNiagaraOcclusionDIFunctionVersion::LatestVersion)
 	{
 		TArray<FNiagaraFunctionSignature> AllFunctions;
-		GetFunctions(AllFunctions);
+		GetFunctionsInternal(AllFunctions);
 		for (const FNiagaraFunctionSignature& Sig : AllFunctions)
 		{
 			if (FunctionSignature.Name == Sig.Name)

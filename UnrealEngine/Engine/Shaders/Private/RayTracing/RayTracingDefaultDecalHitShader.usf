@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 #include "/Engine/Private/RayTracing/RayTracingCommon.ush"
 
 RAY_TRACING_ENTRY_CLOSEST_HIT(RayTracingDefaultOpaqueDecalMaterialCHS,
@@ -5,16 +7,15 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(RayTracingDefaultOpaqueDecalMaterialCHS,
 	FRayTracingIntersectionAttributes, Attributes)
 {
 	Payload.HitT = RayTCurrent();
-
-	Payload.SetTransparency(0.0f);
-	Payload.SetBaseColor(float3(0, 0, 0));
-	Payload.SetFlags(DECAL_WRITE_BASE_COLOR_FLAG);
+	// Equivalent to a pure black BaseColor only decal
+	Payload.SetBaseColor(float4(0, 0, 0, 0));
 }
 
 RAY_TRACING_ENTRY_CLOSEST_HIT(RayTracingDefaultHiddenDecalMaterialCHS,
 	FDecalShaderPayload, Payload,
 	FRayTracingIntersectionAttributes, Attributes)
 {
+	// nothing to do here since AHS will ignore the hit
 }
 
 RAY_TRACING_ENTRY_ANY_HIT(RayTracingDefaultHiddenDecalMaterialAHS,

@@ -5,12 +5,21 @@
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
 #include "PathTracingDenoiser.h"
+#include "RenderGraphBuilder.h"
 #include "RHICommandList.h"
+#include "RHIGPUReadback.h"
 #include "RHIResources.h"
 #include "RHITypes.h"
-#include "RHIGPUReadback.h"
+#include "SceneView.h"
 
 #include "OpenImageDenoise/oidn.hpp"
+
+BEGIN_SHADER_PARAMETER_STRUCT(FDenoiseTextureParameters, )
+	RDG_TEXTURE_ACCESS(InputTexture, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(InputAlbedo, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(InputNormal, ERHIAccess::CopySrc)
+	RDG_TEXTURE_ACCESS(OutputTexture, ERHIAccess::CopyDest)
+END_SHADER_PARAMETER_STRUCT()
 
 class FOpenImageDenoiseModule : public IModuleInterface
 {
@@ -156,7 +165,6 @@ static void CopyTextureFromCPUToGPU(FRHICommandListImmediate& RHICmdList, const 
 	RHICmdList.UnlockTexture2D(DstTexture, 0, false);
 }
 
-
 static void Denoise(FRHICommandListImmediate& RHICmdList, FRHITexture* ColorTex, FRHITexture* AlbedoTex, FRHITexture* NormalTex, FRHITexture* OutputTex, FRHIGPUMask GPUMask)
 {
 	static IConsoleVariable* DenoiseModeCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.Denoiser"));
@@ -209,13 +217,42 @@ static void Denoise(FRHICommandListImmediate& RHICmdList, FRHITexture* ColorTex,
 #endif
 }
 
+using namespace UE::Renderer::Private;
+
+class FOIDNDenoiser : public IPathTracingDenoiser
+{
+public:
+	~FOIDNDenoiser() {}
+
+	void AddPasses(FRDGBuilder& GraphBuilder, const FSceneView& View, const FInputs& Inputs) const override
+	{
+		FDenoiseTextureParameters* DenoiseParameters = GraphBuilder.AllocParameters<FDenoiseTextureParameters>();
+		DenoiseParameters->InputTexture = Inputs.ColorTex;
+		DenoiseParameters->InputAlbedo = Inputs.AlbedoTex;
+		DenoiseParameters->InputNormal = Inputs.NormalTex;
+		DenoiseParameters->OutputTexture = Inputs.OutputTex;
+
+		// Need to read GPU mask outside Pass function, as the value is not refreshed inside the pass
+		GraphBuilder.AddPass(RDG_EVENT_NAME("OIDN Denoiser Plugin"), DenoiseParameters, ERDGPassFlags::Readback,
+			[DenoiseParameters, GPUMask = View.GPUMask](FRHICommandListImmediate& RHICmdList)
+		{
+			Denoise(RHICmdList,
+				DenoiseParameters->InputTexture->GetRHI()->GetTexture2D(),
+				DenoiseParameters->InputAlbedo->GetRHI()->GetTexture2D(),
+				DenoiseParameters->InputNormal->GetRHI()->GetTexture2D(),
+				DenoiseParameters->OutputTexture->GetRHI()->GetTexture2D(),
+				GPUMask);
+		});
+	}
+};
 
 void FOpenImageDenoiseModule::StartupModule()
 {
 #if WITH_EDITOR
 	UE_LOG(LogOpenImageDenoise, Log, TEXT("OIDN starting up"));
 #endif
-	GPathTracingDenoiserFunc = &Denoise;
+
+	GPathTracingDenoiserPlugin = MakeUnique<FOIDNDenoiser>();
 }
 
 void FOpenImageDenoiseModule::ShutdownModule()
@@ -223,7 +260,8 @@ void FOpenImageDenoiseModule::ShutdownModule()
 #if WITH_EDITOR
 	UE_LOG(LogOpenImageDenoise, Log, TEXT("OIDN shutting down"));
 #endif
+
 	// Release scratch memory and destroy the OIDN device and filters
 	DenoiserState.Reset();
-	GPathTracingDenoiserFunc = nullptr;
+	GPathTracingDenoiserPlugin.Reset();
 }

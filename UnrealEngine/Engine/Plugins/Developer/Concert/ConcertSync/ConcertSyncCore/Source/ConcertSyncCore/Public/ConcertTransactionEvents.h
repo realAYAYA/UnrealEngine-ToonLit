@@ -156,6 +156,9 @@ struct FConcertExportedObject
 	int32 ObjectPathDepth = 0;
 
 	UPROPERTY()
+	bool bHasLevelInstanceObject = false;
+
+	UPROPERTY()
 	FConcertSerializedObjectData ObjectData;
 
 	UPROPERTY()

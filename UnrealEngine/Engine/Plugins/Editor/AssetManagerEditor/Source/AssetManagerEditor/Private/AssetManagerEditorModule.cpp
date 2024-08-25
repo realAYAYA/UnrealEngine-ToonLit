@@ -109,8 +109,6 @@ const FName IAssetManagerEditorModule::ManagedDiskSizeName = FName("ManagedDiskS
 const FName IAssetManagerEditorModule::TotalUsageName = FName("TotalUsage");
 const FName IAssetManagerEditorModule::CookRuleName = FName("CookRule");
 const FName IAssetManagerEditorModule::ChunksName = FName("Chunks");
-const FName IAssetManagerEditorModule::StageChunkSizeName = FName("Stage_ChunkSize");
-const FName IAssetManagerEditorModule::StageChunkCompressedSizeName = FName("Stage_ChunkCompressedSize");
 const FName IAssetManagerEditorModule::PluginName = FName("GameFeaturePlugins");
 
 const FString FAssetManagerEditorRegistrySource::EditorSourceName = TEXT("Editor");
@@ -322,7 +320,7 @@ public:
 	virtual void GetAvailableRegistrySources(TArray<const FAssetManagerEditorRegistrySource*>& AvailableSources) override;
 	virtual const FAssetManagerEditorRegistrySource* GetCurrentRegistrySource(bool bNeedManagementData = false) override;
 	virtual void SetCurrentRegistrySource(const FString& SourceName) override;
-	virtual bool PopulateRegistrySource(FAssetManagerEditorRegistrySource* OutRegistrySource) override;
+	virtual bool PopulateRegistrySource(FAssetManagerEditorRegistrySource* OutRegistrySource, const FString* OptInFilePath = nullptr) override;
 	virtual void RefreshRegistryData() override;
 	virtual bool IsPackageInCurrentRegistrySource(FName PackageName) override;
 	virtual bool FilterAssetIdentifiersForCurrentRegistrySource(TArray<FAssetIdentifier>& AssetIdentifiers, const FAssetManagerDependencyQuery& DependencyQuery = FAssetManagerDependencyQuery::None(), bool bForwardDependency = true) override;
@@ -1348,18 +1346,8 @@ bool FAssetManagerEditorModule::GetStringValueForCustomColumn(const FAssetData& 
 	}
 	else if (ColumnName == PluginName)
 	{
-		TArray<FString> ParsedPath;
-		const FString& PackageNameString = AssetData.PackageName.ToString();
-		if (PackageNameString.StartsWith(TEXT("/Game/")))
-		{
-			OutValue = TEXT("BaseGame");
-			return true;
-		}
-		else if (PackageNameString.ParseIntoArray(ParsedPath, TEXT("/")) >= 1)
-		{
-			OutValue = ParsedPath[0];
-			return true;
-		}
+		OutValue = FPackageName::SplitPackageNameRoot(AssetData.PackageName.ToString(), nullptr);
+		return OutValue.Len() > 0;
 	}
 	else
 	{
@@ -1381,7 +1369,7 @@ bool FAssetManagerEditorModule::GetDisplayTextForCustomColumn(const FAssetData& 
 
 	UAssetManager& AssetManager = UAssetManager::Get();
 
-	if (ColumnName == ManagedResourceSizeName || ColumnName == ManagedDiskSizeName || ColumnName == DiskSizeName || ColumnName == TotalUsageName || ColumnName == StageChunkSizeName || ColumnName == StageChunkCompressedSizeName)
+	if (ColumnName == ManagedResourceSizeName || ColumnName == ManagedDiskSizeName || ColumnName == DiskSizeName || ColumnName == TotalUsageName || ColumnName == UE::AssetRegistry::Stage_ChunkSizeFName || ColumnName == UE::AssetRegistry::Stage_ChunkCompressedSizeFName)
 	{
 		// Get integer, convert to string
 		int64 IntegerValue = 0;
@@ -1499,7 +1487,7 @@ bool FAssetManagerEditorModule::GetIntegerValueForCustomColumn(const FAssetData&
 	{
 		// If the asset registry has the staged sizes written back, then use that as an accurate representation of the
 		// actual chunks in the package.
-		if (RegistrySource->GetAssetTagByObjectPath(AssetData.GetSoftObjectPath(), StageChunkSizeName, OutValue))
+		if (RegistrySource->GetAssetTagByObjectPath(AssetData.GetSoftObjectPath(), UE::AssetRegistry::Stage_ChunkSizeFName, OutValue))
 		{
 			return true;
 		}
@@ -1662,26 +1650,33 @@ void FAssetManagerEditorRegistrySource::LoadRegistryTimestamp()
 	}
 }
 
-bool FAssetManagerEditorModule::PopulateRegistrySource(FAssetManagerEditorRegistrySource* InOutRegistrySource)
+bool FAssetManagerEditorModule::PopulateRegistrySource(FAssetManagerEditorRegistrySource* InOutRegistrySource, const FString* OptInFilePath/*= nullptr*/)
 {
 	if (InOutRegistrySource->SourceName == FAssetManagerEditorRegistrySource::CustomSourceName)
 	{
-		IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
-		const void* ParentWindowWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
-		const TCHAR* DevelopmentAssetRegistryFilename = GetDevelopmentAssetRegistryFilename();
-		const FText Title = LOCTEXT("LoadAssetRegistry", "Load DevelopmentAssetRegistry");
-		const FString FileTypes = FString::Printf(TEXT("%s|*.bin"), DevelopmentAssetRegistryFilename);
-
 		TArray<FString> OutFilenames;
-		DesktopPlatform->OpenFileDialog(
-			ParentWindowWindowHandle,
-			Title.ToString(),
-			TEXT(""),
-			DevelopmentAssetRegistryFilename,
-			FileTypes,
-			EFileDialogFlags::None,
-			OutFilenames
-		);
+		if (OptInFilePath != nullptr && IFileManager::Get().FileExists(**OptInFilePath))
+		{
+			OutFilenames.Add(*OptInFilePath);
+		}
+		else
+		{
+			IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+			const void* ParentWindowWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+			const TCHAR* DevelopmentAssetRegistryFilename = GetDevelopmentAssetRegistryFilename();
+			const FText Title = LOCTEXT("LoadAssetRegistry", "Load DevelopmentAssetRegistry");
+			const FString FileTypes = FString::Printf(TEXT("%s|*.bin"), DevelopmentAssetRegistryFilename);
+
+			DesktopPlatform->OpenFileDialog(
+				ParentWindowWindowHandle,
+				Title.ToString(),
+				TEXT(""),
+				DevelopmentAssetRegistryFilename,
+				FileTypes,
+				EFileDialogFlags::None,
+				OutFilenames
+			);
+		}
 
 		if (OutFilenames.Num() == 1)
 		{

@@ -68,6 +68,14 @@ class UKismetStringLibrary : public UBlueprintFunctionLibrary
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "To String (Object)", CompactNodeTitle = "->", BlueprintAutocast), Category="Utilities|String")
 	static ENGINE_API FString Conv_ObjectToString(class UObject* InObj);
 
+	/** Converts a FBox value to a string */
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "To String (Box)", CompactNodeTitle = "->", BlueprintAutocast), Category="Utilities|String")
+	static ENGINE_API FString Conv_BoxToString(const FBox& Box);
+
+	/** Converts a FBox value to a string of its Center and Extents values. */
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "To String Center and Extents (Box)", CompactNodeTitle = "->", BlueprintAutocast), Category="Utilities|String")
+	static ENGINE_API FString Conv_BoxCenterAndExtentsToString(const FBox& Box);
+
 	/** Converts a InputDeviceId value to a string */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "To String (InputDeviceId)", CompactNodeTitle = "->", BlueprintAutocast), Category="Utilities|String")
 	static ENGINE_API FString Conv_InputDeviceIdToString(FInputDeviceId InDeviceId);

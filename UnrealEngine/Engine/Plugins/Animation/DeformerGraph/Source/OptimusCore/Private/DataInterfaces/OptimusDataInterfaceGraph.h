@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "IOptimusDeformerInstanceAccessor.h"
 #include "ComputeFramework/ComputeDataInterface.h"
 #include "ComputeFramework/ComputeDataProvider.h"
 #include "ComputeFramework/ShaderParamTypeDefinition.h"
@@ -27,6 +28,12 @@ struct FOptimusGraphVariableDescription
 
 	UPROPERTY()
 	int32 Offset = 0;
+
+	UPROPERTY()
+	TSoftObjectPtr<UObject> SourceObject;
+
+	// Cached SourceValueName extracted from Name, Initialized by the DataProvider for when SourceObject is not null
+	FString CachedSourceValueName;
 };
 
 /** Compute Framework Data Interface used for marshaling compute graph parameters and variables. */
@@ -57,7 +64,9 @@ private:
 
 /** Compute Framework Data Provider for marshaling compute graph parameters and variables. */
 UCLASS(BlueprintType, editinlinenew, Category = ComputeFramework)
-class UOptimusGraphDataProvider : public UComputeDataProvider
+class UOptimusGraphDataProvider :
+	public UComputeDataProvider,
+	public IOptimusDeformerInstanceAccessor
 {
 	GENERATED_BODY()
 
@@ -66,18 +75,24 @@ public:
 	TObjectPtr<UMeshComponent> MeshComponent = nullptr;
 
 	UPROPERTY()
-	TObjectPtr<UOptimusDeformerInstance> DeformerInstance = nullptr;
-
-	UPROPERTY()
 	TArray<FOptimusGraphVariableDescription> Variables;
 
 	int32 ParameterBufferSize = 0;
 
-	void SetConstant(FString const& InVariableName, TArray<uint8> const& InValue);
-
+	void SetConstant(TSoftObjectPtr<UObject> InSourceObject, TArray<uint8> const& InValue);
+	
 	//~ Begin UComputeDataProvider Interface
 	FComputeDataProviderRenderProxy* GetRenderProxy() override;
 	//~ End UComputeDataProvider Interface
+
+	//~ Begin IOptimusDeformerInstanceAccessor Interface
+	void SetDeformerInstance(UOptimusDeformerInstance* InInstance) override;
+	UOptimusDeformerInstance* GetDeformerInstance() const override;
+	//~ End IOptimusDeformerInstanceAccessor Interface
+
+private:
+	UPROPERTY()
+	TObjectPtr<UOptimusDeformerInstance> DeformerInstance = nullptr;
 };
 
 class FOptimusGraphDataProviderProxy : public FComputeDataProviderRenderProxy

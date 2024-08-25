@@ -37,7 +37,7 @@ namespace UnrealBuildTool.Rules
 					"TcpMessaging/Private/Transport",
 				});
 
-			if (Target.Type == TargetType.Editor)
+			if (Target.bCompileAgainstEditor)
 			{
 				DynamicallyLoadedModuleNames.AddRange(
 					new string[] {

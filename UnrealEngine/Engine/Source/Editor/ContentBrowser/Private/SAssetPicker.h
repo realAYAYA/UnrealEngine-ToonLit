@@ -85,9 +85,6 @@ private:
 	/** Called from external code to set the filter after the widget was created */
 	void SetNewBackendFilter(const FARFilter& NewFilter);
 
-	/** Called to create the menu for the filter button */
-	TSharedRef<SWidget> MakeAddFilterMenu();
-
 	/** Called when the user changes filters */
 	void OnFilterChanged();
 
@@ -143,6 +140,9 @@ private:
 
 	/** Handler for the context menu for asset or folder items */
 	TSharedPtr<SWidget> GetItemContextMenu(TArrayView<const FContentBrowserItem> SelectedItems);
+
+	/** Converts an asset type category into an asset category path, if possible. This is done because the asset picker config still uses asset type categories. */
+	TOptional<FAssetCategoryPath> ConvertAssetTypeCategoryToAssetCategoryPath(EAssetTypeCategories::Type DefaultFilterMenuExpansion);
 
 private:
 
@@ -203,4 +203,7 @@ private:
 
 	/** If set, view settings will be saved and loaded for the asset view using this name in ini files */
 	FString SaveSettingsName;
+
+	/** Wether to allow renaming of items */
+	bool bAllowRename;
 };

@@ -6,6 +6,7 @@
 #include "ObjectTrace.h"
 #include "Styling/SlateIconFinder.h"
 #include "Widgets/Images/SImage.h"
+#include "RewindDebuggerStyle.h"
 
 #include "RewindDebugger.h"
 #include "Widgets/Images/SLayeredImage.h"
@@ -23,6 +24,60 @@ SRewindDebuggerComponentTree::~SRewindDebuggerComponentTree()
 
 }
 
+class SRewindDebuggerComponentTreeTableRow : public STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>
+{
+public:
+	
+	SLATE_BEGIN_ARGS(SRewindDebuggerComponentTreeTableRow) {}
+	SLATE_END_ARGS()
+	
+	void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView)
+	{
+		STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::Construct( STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::FArguments(), InOwnerTableView);
+		Style =  &FRewindDebuggerStyle::Get().GetWidgetStyle<FTableRowStyle>("RewindDebugger.TableRow");
+
+		SetHover(TAttribute<bool>::CreateLambda([this]()
+		{
+			if (TSharedPtr<ITypedTableView<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>> TableView = OwnerTablePtr.Pin())
+			{
+				if (const TSharedPtr<RewindDebugger::FRewindDebuggerTrack>* Track = GetItemForThis(TableView.ToSharedRef()))
+				{
+					return (*Track)->GetIsHovered();
+				}
+			}
+
+			return false;
+		}));
+	}
+
+	virtual void OnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		if (TSharedPtr<ITypedTableView<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>> TableView = OwnerTablePtr.Pin())
+		{
+			if (const TSharedPtr<RewindDebugger::FRewindDebuggerTrack>* Track = GetItemForThis(TableView.ToSharedRef()))
+			{
+				(*Track)->SetIsTreeHovered(true);
+			}
+		}
+		STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::OnMouseEnter(MyGeometry, MouseEvent);
+	}
+	
+	virtual void OnMouseLeave(const FPointerEvent& MouseEvent) override
+	{
+		STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::OnMouseLeave(MouseEvent);
+
+		if (TSharedPtr<ITypedTableView<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>> TableView = OwnerTablePtr.Pin())
+		{
+			if (const TSharedPtr<RewindDebugger::FRewindDebuggerTrack>* Track = GetItemForThis(TableView.ToSharedRef()))
+			{
+				(*Track)->SetIsTreeHovered(false);
+			}
+		}
+	}
+
+};
+
+
 TSharedRef<ITableRow> SRewindDebuggerComponentTree::ComponentTreeViewGenerateRow(TSharedPtr<RewindDebugger::FRewindDebuggerTrack> InItem, const TSharedRef<STableViewBase>& OwnerTable)
 {
 	const FSlateIcon ObjectIcon = InItem->GetIcon();
@@ -36,9 +91,10 @@ TSharedRef<ITableRow> SRewindDebuggerComponentTree::ComponentTreeViewGenerateRow
 		LayeredIcons->AddLayer(ObjectIcon.GetOverlayIcon());
 	}
 	
-	return 
-		SNew(STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>, OwnerTable)
-		[
+	TSharedRef<SRewindDebuggerComponentTreeTableRow> Row = SNew(SRewindDebuggerComponentTreeTableRow, OwnerTable);
+
+
+	Row->SetContent(
 			SNew(SHorizontalBox)
 			+SHorizontalBox::Slot().AutoWidth().Padding(2)
 			[
@@ -51,8 +107,11 @@ TSharedRef<ITableRow> SRewindDebuggerComponentTree::ComponentTreeViewGenerateRow
 			[
 				SNew(STextBlock)
 				.Text(InItem->GetDisplayName())
+				.Font_Lambda([this,  InItem]() { return InItem->GetIsHovered() ? FCoreStyle::GetDefaultFontStyle("Bold", 10) : FCoreStyle::GetDefaultFontStyle("Regular", 10); })
 			]
-		];
+		);
+
+	return Row;
 }
 
 void ComponentTreeViewGetChildren(TSharedPtr<RewindDebugger::FRewindDebuggerTrack> InItem, TArray<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>& OutChildren)
@@ -120,7 +179,7 @@ static void RestoreExpansion(TSharedPtr<RewindDebugger::FRewindDebuggerTrack> Tr
 
 void SRewindDebuggerComponentTree::RestoreExpansion()
 {
-	for (auto& Track : *DebugComponents)
+	for (TSharedPtr<RewindDebugger::FRewindDebuggerTrack>& Track : *DebugComponents)
 	{
 		::RestoreExpansion(Track, ComponentTreeView);
 	}

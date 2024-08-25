@@ -23,6 +23,7 @@
 #include "Styling/AppStyle.h"
 #include "Styling/ISlateStyle.h"
 #include "TimeSliderArgs.h"
+#include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Input/SSpinBox.h"
@@ -1478,7 +1479,46 @@ namespace UE::MLDeformer
 						[
 							SNew(SHorizontalBox)
 							+SHorizontalBox::Slot()
-							.FillWidth(1.0f)
+							.FillWidth(0.9)
+							.Padding(2.0f)
+							[
+								SNew(SComboBox<TSharedPtr<FMLDeformerTrainingInputAnimName>>)
+								.OptionsSource(&TrainingAnimNames)
+								.OnGenerateWidget(this, &SMLDeformerTimeline::OnGenerateAnimListComboWidget)
+								.OnSelectionChanged(this, &SMLDeformerTimeline::OnSelectTrainingAnim)
+								.Visibility_Lambda
+								(
+									[this]()
+									{
+										if (!Model.IsValid())
+										{
+											return EVisibility::Hidden;
+										}
+
+										TSharedPtr<FMLDeformerEditorModel> EditorModel = Model.Pin();
+										check(EditorModel.IsValid());										
+										const EMLDeformerVizMode VizMode = EditorModel->GetModel()->GetVizSettings()->GetVisualizationMode();
+										return (VizMode == EMLDeformerVizMode::TrainingData && EditorModel->GetNumTrainingInputAnims() > 0) ? EVisibility::Visible : EVisibility::Hidden;
+									}
+								)
+								[
+									SNew(STextBlock)
+									.Text_Lambda
+									(
+										[this]()
+										{
+											if (SelectedTrainingAnimNameIndex != INDEX_NONE && TrainingAnimNames.IsValidIndex(SelectedTrainingAnimNameIndex))
+											{
+												return FText::FromString(TrainingAnimNames[SelectedTrainingAnimNameIndex]->Name);
+											}
+
+											return FText::FromString("Select Animation");
+										}
+									)
+								]
+							]
+							+SHorizontalBox::Slot()
+							.FillWidth(0.1f)
 							.VAlign(VAlign_Center)
 							+SHorizontalBox::Slot()
 							.VAlign(VAlign_Center)
@@ -1835,6 +1875,27 @@ namespace UE::MLDeformer
 		TransportControls->SetModel(Model);
 	}
 
+	void SMLDeformerTimeline::SetTrainingAnimNames(const TArray<TSharedPtr<FMLDeformerTrainingInputAnimName>>& Names)
+	{
+		TrainingAnimNames = Names;
+
+		const int32 OldSelectedItemIndex = SelectedTrainingAnimNameIndex;
+		if (!Names.IsEmpty() && SelectedTrainingAnimNameIndex == INDEX_NONE)
+		{
+			SelectedTrainingAnimNameIndex = 0;
+		}
+
+		if (Names.IsEmpty())
+		{
+			SelectedTrainingAnimNameIndex = INDEX_NONE;
+		}
+
+		if (OldSelectedItemIndex != SelectedTrainingAnimNameIndex && SelectedTrainingAnimNameIndex != INDEX_NONE)
+		{
+			OnSelectTrainingAnim(TrainingAnimNames[SelectedTrainingAnimNameIndex], ESelectInfo::Type::Direct);
+		}
+	}
+
 	void SMLDeformerTimeline::OnColumnFillCoefficientChanged(float FillCoefficient, int32 ColumnIndex)
 	{
 		ColumnFillCoefficients[ColumnIndex] = FillCoefficient;
@@ -1871,6 +1932,66 @@ namespace UE::MLDeformer
 		if (Model.IsValid())
 		{
 			Model.Pin()->SetScrubPosition(FrameTime);
+		}
+	}
+
+	TSharedRef<SWidget> SMLDeformerTimeline::OnGenerateAnimListComboWidget(TSharedPtr<FMLDeformerTrainingInputAnimName> Item) const
+	{
+		return SNew(STextBlock)
+			.Text(FText::FromString(Item->Name));
+	}
+
+	void SMLDeformerTimeline::OnSelectTrainingAnim(TSharedPtr<FMLDeformerTrainingInputAnimName> Item, ESelectInfo::Type SelectInfo)
+	{
+		if (Item.IsValid())
+		{
+			SelectedTrainingAnimNameIndex = TrainingAnimNames.Find(Item);
+
+			if (Model.IsValid())
+			{
+				TSharedPtr<FMLDeformerEditorModel> EditorModel = Model.Pin();
+				EditorModel->SetActiveTrainingInputAnimIndex(Item->TrainingInputAnimIndex);
+				if (EditorModel->GetEditor())
+				{
+					EditorModel->GetEditor()->UpdateTimeSliderRange();					
+				}
+				EditorModel->TriggerInputAssetChanged();
+			}
+		}
+	}
+
+	void SMLDeformerTimeline::OnDeletedTrainingInputAnim(int32 Index)
+	{
+		if (TrainingAnimNames.IsEmpty())
+		{
+			SelectedTrainingAnimNameIndex = INDEX_NONE;
+			return;
+		}
+
+		const int32 OldSelectedItemIndex = SelectedTrainingAnimNameIndex;
+		if (TrainingAnimNames[SelectedTrainingAnimNameIndex]->TrainingInputAnimIndex >= Index)
+		{
+			// Find a new valid selected item index.
+			SelectedTrainingAnimNameIndex--;
+			if (SelectedTrainingAnimNameIndex < 0 && !TrainingAnimNames.IsEmpty())
+			{
+				SelectedTrainingAnimNameIndex = 0;
+			}
+
+			if (SelectedTrainingAnimNameIndex < 0)
+			{
+				SelectedTrainingAnimNameIndex = INDEX_NONE;
+			}
+
+			if (SelectedTrainingAnimNameIndex > TrainingAnimNames.Num() - 1)
+			{
+				SelectedTrainingAnimNameIndex = TrainingAnimNames.Num() - 1;
+			}
+		}
+
+		if (OldSelectedItemIndex != SelectedTrainingAnimNameIndex)
+		{
+			OnSelectTrainingAnim(TrainingAnimNames[SelectedTrainingAnimNameIndex], ESelectInfo::Type::Direct);
 		}
 	}
 }	// namespace UE::MLDeformer

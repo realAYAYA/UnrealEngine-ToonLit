@@ -49,7 +49,7 @@ protected:
 public:
 	//~ Begin UDMXPixelMappingBaseComponent implementation
 	virtual const FName& GetNamePrefix() override;
-	virtual void ResetDMX() override;
+	virtual void ResetDMX(EDMXPixelMappingResetDMXMode ResetMode = EDMXPixelMappingResetDMXMode::SendDefaultValues) override;
 	virtual void SendDMX() override;
 	virtual FString GetUserName() const override;
 	//~ End UDMXPixelMappingBaseComponent implementation

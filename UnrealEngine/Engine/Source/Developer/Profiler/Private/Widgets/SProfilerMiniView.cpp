@@ -674,7 +674,7 @@ void SProfilerMiniView::ProcessData()
 		for( int32 FrameIndex = 0; FrameIndex < NumAllFrames; ++FrameIndex )
 		{
 			const FFrameThreadTimes& FrameThreadTimes = AllFrames[FrameIndex];
-			const int32 SampleIndex = FMath::TruncToInt( ScaleRatio*FrameIndex );
+			const int32 SampleIndex = FMath::TruncToInt( ScaleRatio * (float)FrameIndex );
 
 			FMiniViewSample& Dest = MiniViewSamples[SampleIndex];
 			Dest.AddFrameAndFindMax( FrameThreadTimes );

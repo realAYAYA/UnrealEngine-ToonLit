@@ -404,7 +404,7 @@ void UDiffAssetRegistriesCommandlet::ConsistencyCheck(const FString& OldPath, co
 			return;
 		}
 
-		if (!OldState.Load(SerializedAssetData))
+		if (!NewState.Load(SerializedAssetData))
 		{
 			UE_LOG(LogDiffAssets, Error, TEXT("Failed to parse file '%s' as asset registry."), *NewPath);
 			return;
@@ -418,7 +418,7 @@ void UDiffAssetRegistriesCommandlet::ConsistencyCheck(const FString& OldPath, co
 	}
 	// We're looking for packages that the Cooked check says are modified, but that the Guid check says are not
 	// We're ignoring new packages for this, as those are obviously going to change
-	TSet<FName> GuidModified, CookModified;
+	TSet<FName> HashModified, CookModified;
 	TSet<FName> New;
 
 	for (const TPair<FName, const FAssetPackageData*>& Pair : NewState.GetAssetPackageDataMap())
@@ -433,11 +433,9 @@ void UDiffAssetRegistriesCommandlet::ConsistencyCheck(const FString& OldPath, co
 		}
 		else
 		{
-			PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			if (Data->PackageGuid != PrevData->PackageGuid)
-			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			if (Data->GetPackageSavedHash() != PrevData->GetPackageSavedHash())
 			{
-				GuidModified.Add(Name);
+				HashModified.Add(Name);
 			}
 			if (Data->CookedHash != PrevData->CookedHash)
 			{
@@ -446,8 +444,8 @@ void UDiffAssetRegistriesCommandlet::ConsistencyCheck(const FString& OldPath, co
 		}
 	}
 
-	// recurse through the referencer lists to fill out GuidModified
-	TArray<FName> Recurse = GuidModified.Array();
+	// recurse through the referencer lists to fill out HashModified
+	TArray<FName> Recurse = HashModified.Array();
 	
 	for (int32 RecurseIndex = 0; RecurseIndex < Recurse.Num(); RecurseIndex++)
 	{
@@ -458,9 +456,9 @@ void UDiffAssetRegistriesCommandlet::ConsistencyCheck(const FString& OldPath, co
 		for (const FAssetIdentifier& Referencer : Referencers)
 		{
 			FName ReferencerPackage = Referencer.PackageName;
-			if (!New.Contains(ReferencerPackage) && !GuidModified.Contains(ReferencerPackage))
+			if (!New.Contains(ReferencerPackage) && !HashModified.Contains(ReferencerPackage))
 			{
-				GuidModified.Add(ReferencerPackage);
+				HashModified.Add(ReferencerPackage);
 				Recurse.Add(ReferencerPackage);
 			}
 		}
@@ -469,13 +467,13 @@ void UDiffAssetRegistriesCommandlet::ConsistencyCheck(const FString& OldPath, co
 	int64 Changes = 0;
 	int64 ChangeBytes = 0;
 
-	// find all entries of CookModified that do not exist in GuidModified
+	// find all entries of CookModified that do not exist in HashModified
 	const TMap<FName, const FAssetPackageData*>& PackageMap = NewState.GetAssetPackageDataMap();
 	for (FName const &Package : CookModified)
 	{
 		const FAssetPackageData* Data = PackageMap[Package];
 
-		if (!GuidModified.Contains(Package) && Data->DiskSize >= 0)
+		if (!HashModified.Contains(Package) && Data->DiskSize >= 0)
 		{
 			++Changes;
 			ChangeBytes += Data->DiskSize;
@@ -1156,9 +1154,7 @@ void UDiffAssetRegistriesCommandlet::DiffAssetRegistries(const FString& OldPath,
 				New.Add(Name);
 				RecordAdd(Name, *Data);
 			}
-			PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			else if (Data->PackageGuid != PrevData->PackageGuid)
-			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			else if (Data->GetPackageSavedHash() != PrevData->GetPackageSavedHash())
 			{
 				Modified.Add(Name);
 			}
@@ -1232,9 +1228,7 @@ void UDiffAssetRegistriesCommandlet::DiffAssetRegistries(const FString& OldPath,
 			{
 				RecordEdit(Name, *Data, *PrevData);
 				AssetPathFlags.FindOrAdd(Name) |= EAssetFlags::HashChange;
-				PRAGMA_DISABLE_DEPRECATION_WARNINGS
-				if (Data->PackageGuid != PrevData->PackageGuid)
-				PRAGMA_ENABLE_DEPRECATION_WARNINGS
+				if (Data->GetPackageSavedHash() != PrevData->GetPackageSavedHash())
 				{
 					AssetPathFlags.FindOrAdd(Name) |= EAssetFlags::GuidChange;
 				}

@@ -4,18 +4,16 @@
 
 #include "Debugger/SStateTreeDebuggerViewRow.h"
 #include "StateTreeEditorStyle.h"
-#include "StateTreeViewModel.h"
+#include "StateTree.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Text/STextBlock.h"
 
 
 void SStateTreeDebuggerViewRow::Construct(const FArguments& InArgs,
 										  const TSharedPtr<STableViewBase>& InOwnerTableView,
-										  const TSharedPtr<FStateTreeDebuggerEventTreeElement>& InElement,
-										  const TSharedRef<FStateTreeViewModel>& InStateTreeViewModel)
+										  const TSharedPtr<FStateTreeDebuggerEventTreeElement>& InElement)
 {
 	Item = InElement;
-	StateTreeViewModel = InStateTreeViewModel.ToSharedPtr();
 	STableRow::Construct(InArgs, InOwnerTableView.ToSharedRef());
 
 	const TSharedPtr<SHorizontalBox> HorizontalBox = SNew(SHorizontalBox);
@@ -70,8 +68,9 @@ TSharedPtr<SWidget> SStateTreeDebuggerViewRow::GenerateEventWidget() const
 		const FSlateBrush* Image = nullptr;
 		switch (PhaseEvent->Phase)
 		{
-		case EStateTreeUpdatePhase::EnterStates:	Image = StyleSet.GetBrush("StateTreeEditor.Debugger.State.Enter");	break;
-		case EStateTreeUpdatePhase::ExitStates:		Image = StyleSet.GetBrush("StateTreeEditor.Debugger.State.Exit");	break;
+		case EStateTreeUpdatePhase::EnterStates:	Image = StyleSet.GetBrush("StateTreeEditor.Debugger.State.Enter");		break;
+		case EStateTreeUpdatePhase::ExitStates:		Image = StyleSet.GetBrush("StateTreeEditor.Debugger.State.Exit");		break;
+		case EStateTreeUpdatePhase::StateCompleted:	Image = StyleSet.GetBrush("StateTreeEditor.Debugger.State.Completed");	break;
 		default:
 			return nullptr;
 		}
@@ -86,7 +85,6 @@ TSharedPtr<SWidget> SStateTreeDebuggerViewRow::GenerateEventWidget() const
 		switch (StateEvent->EventType)
 		{
 		case EStateTreeTraceEventType::OnStateSelected:		Image = StyleSet.GetBrush("StateTreeEditor.Debugger.State.Selected");	break;
-		case EStateTreeTraceEventType::OnStateCompleted:	Image = StyleSet.GetBrush("StateTreeEditor.Debugger.State.Completed");	break;
 		default:
 			return nullptr;
 		}
@@ -126,10 +124,13 @@ TSharedPtr<SWidget> SStateTreeDebuggerViewRow::GenerateEventWidget() const
 
 		switch (ConditionEvent.EventType)
 		{
-		case EStateTreeTraceEventType::Passed:			Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.Passed");			break;
-		case EStateTreeTraceEventType::Failed:			Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.Failed");			break;
-		case EStateTreeTraceEventType::OnEvaluating:	Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.OnEvaluating");	break;
-		case EStateTreeTraceEventType::OnTransition:	Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.OnTransition");	break;
+		case EStateTreeTraceEventType::Passed:					Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.Passed");			break;
+		case EStateTreeTraceEventType::ForcedSuccess:			Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.Passed");			break;
+		case EStateTreeTraceEventType::Failed:					Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.Failed");			break;
+		case EStateTreeTraceEventType::ForcedFailure:			Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.Failed");			break;
+		case EStateTreeTraceEventType::InternalForcedFailure:	Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.Failed");			break;
+		case EStateTreeTraceEventType::OnEvaluating:			Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.OnEvaluating");	break;
+		case EStateTreeTraceEventType::OnTransition:			Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Condition.OnTransition");	break;
 		default:
 			Image = StyleSet.GetBrush("StateTreeEditor.Debugger.Unset");
 		}
@@ -162,8 +163,7 @@ FText SStateTreeDebuggerViewRow::GetEventDescription() const
 	FString EventDescription;
 	if (Item->Description.IsEmpty())
 	{
-		check(StateTreeViewModel);
-		if (const UStateTree* StateTree = StateTreeViewModel->GetStateTree())
+		if (const UStateTree* StateTree = Item->WeakStateTree.Get())
 		{
 			// Some types have some custom representations so we want to use a more minimal description.
 			if (Item->Event.IsType<FStateTreeTraceStateEvent>()
@@ -198,8 +198,7 @@ FText SStateTreeDebuggerViewRow::GetEventDescription() const
 FText SStateTreeDebuggerViewRow::GetEventTooltip() const
 {
 	FString Tooltip;
-	check(StateTreeViewModel);
-	if (const UStateTree* StateTree = StateTreeViewModel->GetStateTree())
+	if (const UStateTree* StateTree = Item->WeakStateTree.Get())
 	{
 		Visit([&Tooltip, StateTree](auto& TypedEvent)
 			{

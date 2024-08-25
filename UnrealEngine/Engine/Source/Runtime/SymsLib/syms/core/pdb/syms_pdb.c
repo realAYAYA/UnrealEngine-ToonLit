@@ -4,12 +4,7 @@
 #define SYMS_PDB_C
 
 ////////////////////////////////
-// NOTE(allen): Codeview
-
-#include "syms/core/generated/syms_meta_cv.c"
-
-////////////////////////////////
-//~ NOTE(allen): PDB Hash Function
+//~ allen: PDB Hash Function
 
 SYMS_API SYMS_U32 syms_pdb_hashV1(SYMS_String8 string);
 

@@ -36,6 +36,7 @@ namespace SkeletonEditorTabs
 	extern const FName AssetBrowserTab;
 	extern const FName AnimNotifiesTab;
 	extern const FName CurveMetadataTab;
+	extern const FName CurveDebuggerTab;
 	extern const FName AdvancedPreviewTab;
 	extern const FName RetargetManagerTab;
 	extern const FName SlotNamesTab;

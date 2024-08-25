@@ -65,7 +65,7 @@ namespace BuildPatchServices
 		, CloudChunkSourceStatistics(FCloudChunkSourceStatisticsFactory::Create(InstallerAnalytics.Get(), &BuildProgress, FileOperationTracker.Get()))
 		, FileConstructorStatistics(FFileConstructorStatisticsFactory::Create(FileReadSpeedRecorder.Get(), FileWriteSpeedRecorder.Get(), &BuildProgress, FileOperationTracker.Get()))
 		, DownloadConnectionCount(FDownloadConnectionCountFactory::Create(BuildConnectionCountConfig(), DownloadServiceStatistics.Get()))
-		, DownloadService(FDownloadServiceFactory::Create(FTSTicker::GetCoreTicker(), HttpManager.Get(), FileSystem.Get(), DownloadServiceStatistics.Get(), InstallerAnalytics.Get()))
+		, DownloadService(FDownloadServiceFactory::Create(HttpManager.Get(), FileSystem.Get(), DownloadServiceStatistics.Get(), InstallerAnalytics.Get()))
 		, MessagePump(FMessagePumpFactory::Create())
 		, bIsShuttingDown(false)
 		, RequestTrigger(FPlatformProcess::GetSynchEventFromPool(false))
@@ -150,13 +150,8 @@ namespace BuildPatchServices
 
 	void FBuildInstallStreamer::Initialise()
 	{
-		// Queue update to chunk data size cache on main thread
-		AsyncHelpers::ExecuteOnCustomThread<void>(
-			[this]()
-			{
-				ChunkDataSizeProvider->AddManifestData(BuildPatchManifest);
-			},
-			TickQueue).Wait();
+		// update to chunk data size cache
+		ChunkDataSizeProvider->AddManifestData(BuildPatchManifest);
 	}
 
 	void FBuildInstallStreamer::RequestWorkerThread()
@@ -281,7 +276,7 @@ namespace BuildPatchServices
 
 				TProcessTimer<class FStatsCollector, false> RequestTimer;
 				RequestTimer.Start();
-				AsyncHelpers::ExecuteOnCustomThread<void>([this]() { DownloadServiceStatistics->Reset(); }, TickQueue);
+				DownloadServiceStatistics->Reset();
 				TSharedPtr<IVirtualFileCache, ESPMode::ThreadSafe> VirtualFileCache = IVirtualFileCache::CreateVirtualFileCache();
 				InstallerError->Reset();
 
@@ -427,7 +422,7 @@ namespace BuildPatchServices
 	{
 		const bool bKeepTicking = true;
 
-		MessagePump->PumpMessages(MessageHandlers);
+		MessagePump->PumpMessages();
 
 		TFunction<void()> TickFunc;
 		while (TickQueue.Dequeue(TickFunc))

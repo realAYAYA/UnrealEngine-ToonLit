@@ -8,14 +8,16 @@ Texture2DMipDataProvider_DDC.cpp : Implementation of FTextureMipDataProvider usi
 #include "EngineLogs.h"
 #include "Rendering/StreamableTextureResource.h"
 #include "Serialization/MemoryReader.h"
+#include "TextureCompiler.h"
 
 #if WITH_EDITORONLY_DATA
 
 #include "DerivedDataCache.h"
 
-FTexture2DMipDataProvider_DDC::FTexture2DMipDataProvider_DDC(const UTexture* Texture)
-	: FTextureMipDataProvider(Texture, ETickState::Init, ETickThread::Async)
+FTexture2DMipDataProvider_DDC::FTexture2DMipDataProvider_DDC(UTexture* InTexture)
+	: FTextureMipDataProvider(InTexture, ETickState::Init, ETickThread::Async)
 	, DDCRequestOwner(UE::DerivedData::EPriority::Normal)
+	, Texture(InTexture)
 {
 }
 
@@ -92,6 +94,10 @@ void FTexture2DMipDataProvider_DDC::Init(const FTextureUpdateContext& Context, c
 						const int32 MipIndex = int32(Response.UserData);
 						check(!DDCBuffers[MipIndex]);
 						DDCBuffers[MipIndex] = MoveTemp(Response.RawData);
+					}
+					else if (Response.Status == EStatus::Error)
+					{
+						FTextureCompilingManager::Get().ForceDeferredTextureRebuildAnyThread({Texture});
 					}
 				});
 			}

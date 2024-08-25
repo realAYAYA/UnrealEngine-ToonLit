@@ -21,8 +21,14 @@ public:
 	// Only valid use is to explicitly read chaos bulk data
 	explicit FChaosDerivedDataReader(FBulkData* InBulkData);
 
+	UE_DEPRECATED(5.4, "Please use ConvexGeometries instead")
 	TArray<TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe>> ConvexImplicitObjects;
+	
+	UE_DEPRECATED(5.4, "Please use TrimeshGeometries instead")
 	TArray<TSharedPtr<Chaos::FTriangleMeshImplicitObject, ESPMode::ThreadSafe>> TrimeshImplicitObjects;
+
+	TArray<Chaos::FConvexPtr> ConvexGeometries;
+	TArray<Chaos::FTriangleMeshImplicitObjectPtr> TriMeshGeometries;
 	FBodySetupUVInfo UVInfo;
 	TArray<int32> FaceRemap;
 

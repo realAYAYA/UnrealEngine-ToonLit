@@ -10,6 +10,7 @@
 #include "Misc/OutputDeviceRedirector.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/App.h"
+#include "Misc/CommandLine.h"
 #include "Modules/ModuleManager.h"
 #include "GenericPlatform/GenericPlatformDriver.h"
 #include "GenericPlatform/GenericPlatformCrashContext.h"
@@ -22,7 +23,6 @@
 #include "RHIImmutableSamplerState.h"
 #include "RHIStrings.h"
 #include "RHITextureReference.h"
-#include "Serialization/MemoryImage.h"
 
 static_assert(sizeof(FRayTracingGeometryInstance) <= 104,
 	"Ray tracing instance descriptor is expected to be no more than 104 bytes, as there may be a very large number of them.");
@@ -34,34 +34,27 @@ static_assert(sizeof(FRayTracingGeometryInstance) <= 104,
 // Globals.
 FDynamicRHI* GDynamicRHI = NULL;
 RHIGetGPUUsageType RHIGetGPUUsage = nullptr;
+bool bDriverDenylistMessageShown = false;
 
-static TAutoConsoleVariable<int32> CVarWarnOfBadDrivers(
+static int32 GWarnOfBadDrivers = true;
+static FAutoConsoleVariableRef CVarWarnOfBadDrivers(
 	TEXT("r.WarnOfBadDrivers"),
-	1,
-	TEXT("On engine startup we can check the current GPU driver and warn the user about issues and suggest a specific version\n")
-	TEXT("The test is fast so this should not cost any performance.\n")
+	GWarnOfBadDrivers,
+	TEXT("Check the current GPU driver on engine startup, warn the user about issues and suggest a specific version.\n")
+	TEXT("The driver denylist is used to check for bad drivers according to their release date and/or driver versions.\n")
 	TEXT(" 0: off\n")
-	TEXT(" 1: a message on startup might appear (default)\n")
-	TEXT(" 2: Simulating the system has a NVIDIA driver on the deny list (UI should appear)\n")
-	TEXT(" 3: Simulating the system has a AMD driver on the deny list (UI should appear)\n")
-	TEXT(" 4: Simulating the system has an allowed AMD driver (no UI should appear)\n")
-	TEXT(" 5: Simulating the system has a Intel driver (no UI should appear)"),
+	TEXT(" 1: check the driver and display a pop-up message if the driver is denylisted (default)"),
 	ECVF_RenderThreadSafe
 	);
 
-static TAutoConsoleVariable<int32> CVarBadDriverWarningIsFatal(
+static bool GBadDriverWarningIsFatal = false;
+static FAutoConsoleVariableRef CVarBadDriverWarningIsFatal(
 	TEXT("r.BadDriverWarningIsFatal"),
-	0,
-	TEXT("If non-zero, trigger a fatal error when warning of bad drivers.\n")
+	GBadDriverWarningIsFatal,
+	TEXT("If non-zero, trigger a fatal error if a denylisted driver is detected.\n")
 	TEXT("For the fatal error to occur, r.WarnOfBadDrivers must be non-zero.\n")
 	TEXT(" 0: off (default)\n")
-	TEXT(" 1: a fatal error occurs after the out of date driver message is dismissed\n"),
-	ECVF_RenderThreadSafe);
-
-static TAutoConsoleVariable<int32> CVarDisableDriverWarningPopupIfGFN(
-	TEXT("r.DisableDriverWarningPopupIfGFN"),
-	1,
-	TEXT("If non-zero, disable driver version warning popup if running on a GFN cloud machine."),
+	TEXT(" 1: a fatal error occurs after the out-of-date driver message is dismissed (non-Shipping only)\n"),
 	ECVF_RenderThreadSafe);
 
 void InitNullRHI()
@@ -86,19 +79,21 @@ void InitNullRHI()
 }
 
 #if PLATFORM_WINDOWS || PLATFORM_UNIX
-static void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
+void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
 {
+	// Don't show another prompt if we already did during this session.
+	if (bDriverDenylistMessageShown)
+	{
+		return;
+	}
+
 	if (GRHIVendorId == 0)
 	{
 		UE_LOG(LogRHI, Log, TEXT("Skipping Driver Check, no vendor ID set."));
 		return;
 	}
 
-	int32 WarnMode = CVarWarnOfBadDrivers.GetValueOnGameThread();
-
 	FGPUDriverInfo DriverInfo;
-
-	// later we should make the globals use the struct directly
 	DriverInfo.VendorId = GRHIVendorId;
 	DriverInfo.DeviceDescription = GRHIAdapterName;
 	DriverInfo.ProviderName = TEXT("Unknown");
@@ -107,50 +102,22 @@ static void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
 	DriverInfo.DriverDate = GRHIAdapterDriverDate;
 	DriverInfo.RHIName = GDynamicRHI ? GDynamicRHI->GetName() : FString();
 
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	// for testing
-	if(WarnMode == 2)
-	{
-		DriverInfo.SetNVIDIA();
-		DriverInfo.DeviceDescription = TEXT("Test NVIDIA (bad)");
-		DriverInfo.UserDriverVersion = TEXT("346.43");
-		DriverInfo.InternalDriverVersion = TEXT("9.18.134.643");
-		DriverInfo.DriverDate = TEXT("01-01-1900");
-	}
-	else if(WarnMode == 3)
-	{
-		DriverInfo.SetAMD();
-		DriverInfo.DeviceDescription = TEXT("Test AMD (bad)");
-		DriverInfo.UserDriverVersion = TEXT("Test Catalyst Version");
-		DriverInfo.InternalDriverVersion = TEXT("13.152.1.1000");
-		DriverInfo.DriverDate = TEXT("09-10-13");
-	}
-	else if(WarnMode == 4)
-	{
-		DriverInfo.SetAMD();
-		DriverInfo.DeviceDescription = TEXT("Test AMD (good)");
-		DriverInfo.UserDriverVersion = TEXT("Test Catalyst Version");
-		DriverInfo.InternalDriverVersion = TEXT("15.30.1025.1001");
-		DriverInfo.DriverDate = TEXT("01-01-16");
-	}
-	else if(WarnMode == 5)
-	{
-		DriverInfo.SetIntel();
-		DriverInfo.DeviceDescription = TEXT("Test Intel (good)");
-		DriverInfo.UserDriverVersion = TEXT("Test Intel Version");
-		DriverInfo.InternalDriverVersion = TEXT("8.15.10.2302");
-		DriverInfo.DriverDate = TEXT("01-01-15");
-	}
-#endif // !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-
-	FGPUHardware DetectedGPUHardware(DriverInfo);
+	FGPUDriverHelper DetectedGPUHardware(DriverInfo);
 
 	// Pre-GCN GPUs usually don't support updating to latest driver
 	// But it is unclear what is the latest version supported as it varies from card to card
 	// So just don't complain if pre-gcn
 	if (DriverInfo.IsValid() && !GRHIDeviceIsAMDPreGCNArchitecture)
 	{
-		FDriverDenyListEntry DenyListEntry = DetectedGPUHardware.FindDriverDenyListEntry();
+		TOptional<FDriverDenyListEntry> DenyListEntry = DetectedGPUHardware.FindDriverDenyListEntry();
+
+		GRHIAdapterDriverOnDenyList = DenyListEntry.IsSet() && DenyListEntry->IsValid();
+		FGenericCrashContext::SetEngineData(TEXT("RHI.DriverDenylisted"), GRHIAdapterDriverOnDenyList ? TEXT("true") : TEXT("false"));
+
+		if(!GRHIAdapterDriverOnDenyList)
+		{
+			return;
+		}
 
 		TArray<FString> DeviceCanUpdateDriverList;
 		GConfig->GetArray(TEXT("Devices"), TEXT("DeviceCanUpdateDriverList"), DeviceCanUpdateDriverList, GHardwareIni);
@@ -179,29 +146,20 @@ static void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
 			}
 		}
 
-		GRHIAdapterDriverOnDenyList = DenyListEntry.IsValid();
-		FGenericCrashContext::SetEngineData(TEXT("RHI.DriverDenylisted"), DenyListEntry.IsValid() ? TEXT("true") : TEXT("false"));
-
-		if(!GRHIAdapterDriverOnDenyList)
-		{
-			return;
-		}
-
 		// Only alert users who are capable of updating their driver. Assume vendors with an empty list can always update.
+		// The warning message can also be suppressed with r.WarnOfBadDrivers=0.
 		bool bShowPrompt = bDeviceCanUpdateDriver || !bVendorHasEntries;
-		bShowPrompt = bShowPrompt && !FApp::IsUnattended() && WarnMode != 0;
+		bShowPrompt = bShowPrompt && !FApp::IsUnattended() && GWarnOfBadDrivers != 0;
 
 		if (bShowPrompt)
 		{
-			bool bLatestDenied = DetectedGPUHardware.IsLatestDenied();
-
 			// Note: we don't localize the vendor's name.
 			FString VendorString = DriverInfo.ProviderName;
 			FText HyperlinkText;
 			if (DriverInfo.IsNVIDIA())
 			{
 				VendorString = TEXT("NVIDIA");
-				HyperlinkText = NSLOCTEXT("MessageDialog", "DriverDownloadLinkNVIDIA", "https://www.nvidia.com/en-us/geforce/drivers/");
+				HyperlinkText = NSLOCTEXT("MessageDialog", "DriverDownloadLinkNVIDIA", "https://www.nvidia.com/download/index.aspx");
 			}
 			else if (DriverInfo.IsAMD())
 			{
@@ -214,39 +172,43 @@ static void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
 				HyperlinkText = NSLOCTEXT("MessageDialog", "DriverDownloadLinkIntel", "https://downloadcenter.intel.com/product/80939/Graphics");
 			}
 
-			// format message box UI
 			FFormatNamedArguments Args;
 			Args.Add(TEXT("AdapterName"), FText::FromString(DriverInfo.DeviceDescription));
 			Args.Add(TEXT("Vendor"), FText::FromString(VendorString));
-			Args.Add(TEXT("RHI"), FText::FromString(DenyListEntry.RHIName));
 			Args.Add(TEXT("Hyperlink"), HyperlinkText);
-			Args.Add(TEXT("RecommendedVer"), FText::FromString(DetectedGPUHardware.GetSuggestedDriverVersion(DriverInfo.RHIName)));
 			Args.Add(TEXT("InstalledVer"), FText::FromString(DriverInfo.UserDriverVersion));
 
-			// this message can be suppressed with r.WarnOfBadDrivers=0
-			FText LocalizedMsg;
-			if (bLatestDenied)
+			// Find the best driver version to recommend.
+			TOptional<FSuggestedDriverEntry> SuggestedDriver = DetectedGPUHardware.FindSuggestedDriverVersion();
+			if (SuggestedDriver)
 			{
-				if (!DenyListEntry.RHIName.IsEmpty())
+				// Suggest the latest too, if not denylisted.
+				if (!DenyListEntry->AppliesToLatestDrivers())
 				{
-					LocalizedMsg = FText::Format(NSLOCTEXT("MessageDialog", "LatestVideoCardDriverRHIIssueReport", "The latest version of the {Vendor} graphics driver has known issues in {RHI}.\nPlease install the recommended driver version or switch to a different rendering API.\n\nWould you like to visit the following URL to download the driver?\n\n{Hyperlink}\n\n{AdapterName}\nInstalled: {InstalledVer}\nRecommended: {RecommendedVer}"), Args);
+					Args.Add(TEXT("RecommendedVer"), FText::Format(NSLOCTEXT("MessageDialog", "SuggestedDriverOrLatest", "{0} or latest driver available"), FText::FromString(SuggestedDriver->SuggestedDriverVersion)));
 				}
 				else
 				{
-					LocalizedMsg = FText::Format(NSLOCTEXT("MessageDialog", "LatestVideoCardDriverIssueReport", "The latest version of the {Vendor} graphics driver has known issues.\nPlease install the recommended driver version.\n\nWould you like to visit the following URL to download the driver?\n\n{Hyperlink}\n\n{AdapterName}\nInstalled: {InstalledVer}\nRecommended: {RecommendedVer}"), Args);
+					Args.Add(TEXT("RecommendedVer"), FText::FromString(SuggestedDriver->SuggestedDriverVersion));
 				}
 			}
 			else
 			{
-				if (!DenyListEntry.RHIName.IsEmpty())
-				{
-					LocalizedMsg = FText::Format(NSLOCTEXT("MessageDialog", "VideoCardDriverRHIIssueReport", "The installed version of the {Vendor} graphics driver has known issues in {RHI}.\nPlease install the latest driver version or switch to a different rendering API.\n\nWould you like to visit the following URL to download the driver?\n\n{Hyperlink}\n\n{AdapterName}\nInstalled: {InstalledVer}\nMinimum required: {RecommendedVer}"), Args);
-				}
-				else
-				{
-					LocalizedMsg = FText::Format(NSLOCTEXT("MessageDialog", "VideoCardDriverIssueReport", "The installed version of the {Vendor} graphics driver has known issues.\nPlease install the latest driver version.\n\nWould you like to visit the following URL to download the driver?\n\n{Hyperlink}\n\n{AdapterName}\nInstalled: {InstalledVer}\nMinimum required: {RecommendedVer}"), Args);
-				}
+				ensureMsgf(!DenyListEntry->AppliesToLatestDrivers(), TEXT("Latest drivers are denylisted but no recommended driver driver has been provided"));
+				Args.Add(TEXT("RecommendedVer"), NSLOCTEXT("MessageDialog", "LatestDriver", "latest driver available"));
 			}
+
+			FText LocalizedMsg;
+			if (DenyListEntry->RHINameConstraint)
+			{
+				Args.Add(TEXT("RHI"), FText::FromString(*DenyListEntry->RHINameConstraint));
+				LocalizedMsg = FText::Format(NSLOCTEXT("MessageDialog", "VideoCardDriverRHIIssueReport", "The installed version of the {Vendor} graphics driver has known issues in {RHI}.\nPlease install the recommended driver version or switch to a different rendering API.\n\nWould you like to visit the following URL to download the driver?\n\n{Hyperlink}\n\n{AdapterName}\nInstalled: {InstalledVer}\nRecommended: {RecommendedVer}"), Args);
+			}
+			else
+			{
+				LocalizedMsg = FText::Format(NSLOCTEXT("MessageDialog", "VideoCardDriverIssueReport", "The installed version of the {Vendor} graphics driver has known issues.\nPlease install the recommended driver version.\n\nWould you like to visit the following URL to download the driver?\n\n{Hyperlink}\n\n{AdapterName}\nInstalled: {InstalledVer}\nRecommended: {RecommendedVer}"), Args);
+			}
+
 
 			FText Title = NSLOCTEXT("MessageDialog", "TitleVideoCardDriverIssue", "WARNING: Known issues with graphics driver");
 			EAppReturnType::Type Response = FMessageDialog::Open(EAppMsgType::YesNo, LocalizedMsg, Title);
@@ -255,26 +217,31 @@ static void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
 				FPlatformProcess::LaunchURL(*HyperlinkText.ToString(), nullptr, nullptr);
 			}
 #if !UE_BUILD_SHIPPING
-			if (CVarBadDriverWarningIsFatal.GetValueOnGameThread())
+			if (GBadDriverWarningIsFatal)
 			{
-				// Force a fatal error depending on CVar
+				// Force a fatal error depending on CVar.
 				UE_LOG(LogRHI, Fatal, TEXT("Fatal crash requested when graphics drivers are out of date.\n")
 					TEXT("To prevent this crash, please update drivers."));
 			}
 #endif
+			bDriverDenylistMessageShown = true;
 		}
 		else
 		{
-			UE_LOG(LogRHI, Warning, TEXT("Running with bad GPU drivers but warning dialog will not be shown: bDeviceCanUpdateDriver=%d, VendorHasEntries=%d, IsUnattended=%d, r.WarnOfBadDrivers=%d"), bDeviceCanUpdateDriver, bVendorHasEntries, FApp::IsUnattended(), WarnMode);
+			UE_LOG(LogRHI, Warning, TEXT("Running with bad GPU drivers but warning dialog will not be shown: bDeviceCanUpdateDriver=%d, VendorHasEntries=%d, IsUnattended=%d, r.WarnOfBadDrivers=%d"), bDeviceCanUpdateDriver, bVendorHasEntries, FApp::IsUnattended(), GWarnOfBadDrivers);
 		}
 	}
 }
 #elif PLATFORM_MAC
-static void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
+void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
 {
-	int32 CVarValue = CVarWarnOfBadDrivers.GetValueOnGameThread();
+	// Don't show another prompt if we already did during this session.
+	if (bDriverDenylistMessageShown)
+	{
+		return;
+	}
 
-	if (!CVarValue || GRHIVendorId == 0 || bHasEditorToken || FApp::IsUnattended())
+	if (!GWarnOfBadDrivers || GRHIVendorId == 0 || bHasEditorToken || FApp::IsUnattended())
 	{
 		return;
 	}
@@ -287,13 +254,14 @@ static void RHIDetectAndWarnOfBadDrivers(bool bHasEditorToken)
 								 *NSLOCTEXT("MessageDialog", "UpdateMacOSX_Title", "Update macOS").ToString());
 		
 #if !UE_BUILD_SHIPPING
-		if (CVarBadDriverWarningIsFatal.GetValueOnGameThread())
+		if (GBadDriverWarningIsFatal)
 		{
 			// Force a fatal error depending on CVar
 		UE_LOG(LogRHI, Fatal, TEXT("Fatal crash requested when graphics drivers are out of date.\n")
 			TEXT("To prevent this crash, please update macOS."));
 		}
 #endif
+		bDriverDenylistMessageShown = true;
 	}
 }
 #endif // PLATFORM_WINDOWS
@@ -396,7 +364,7 @@ void RHIInit(bool bHasEditorToken)
 
 	// add an ability to override the shader platform, intended for preview platforms only
 	FString ShaderPlatformName;
-	if (FParse::Value(FCommandLine::Get(), TEXT("OverrideSP"), ShaderPlatformName) && !ShaderPlatformName.IsEmpty())
+	if (FParse::Value(FCommandLine::Get(), TEXT("OverrideSP="), ShaderPlatformName) && !ShaderPlatformName.IsEmpty())
 	{
 		EShaderPlatform OverrideShaderPlatform = FDataDrivenShaderPlatformInfo::GetShaderPlatformFromName(*ShaderPlatformName);
 		if (OverrideShaderPlatform != SP_NumPlatforms)
@@ -440,6 +408,12 @@ void RHIPostInit(const TArray<uint32>& InPixelFormatByteWidth)
 	check(GDynamicRHI);
 	GDynamicRHI->InitPixelFormatInfo(InPixelFormatByteWidth);
 	GDynamicRHI->PostInit();
+
+#if PLATFORM_ANDROID
+	// The Android HW window is locked during init to prevent it being destroyed asynch during app backgrounding
+	// It is unlocked after the RHI is initialized as it is able to handle backgrounding.
+	FAndroidMisc::UnlockAndroidWindow();
+#endif
 }
 
 void RHIExit()
@@ -469,6 +443,10 @@ void RHIExit()
 	}
 
 	FRHICommandListImmediate::CleanupGraphEvents();
+}
+
+void FDynamicRHI::RHIBeginFrame(FRHICommandListImmediate& RHICmdList)
+{
 }
 
 // Default fallback; will not work for non-8-bit surfaces and it's extremely slow.
@@ -553,9 +531,10 @@ void FDynamicRHI::EnableIdealGPUCaptureOptions(bool bEnabled)
 	}	
 }
 
-void FDynamicRHI::RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
+FTextureReferenceRHIRef FDynamicRHI::RHICreateTextureReference(FRHICommandListBase& RHICmdList, FRHITexture* InReferencedTexture)
 {
-	UE_LOG(LogRHI, Fatal, TEXT("RHITransferBufferUnderlyingResource isn't implemented for the current RHI"));
+	FRHITexture* ReferencedTexture = InReferencedTexture ? InReferencedTexture : FRHITextureReference::GetDefaultTexture();
+	return new FRHITextureReference(ReferencedTexture);
 }
 
 void FDynamicRHI::RHIUpdateTextureReference(FRHICommandListBase& RHICmdList, FRHITextureReference* TextureRef, FRHITexture* InReferencedTexture)
@@ -578,35 +557,6 @@ uint64 FDynamicRHI::RHIGetMinimumAlignmentForBufferBackedSRV(EPixelFormat Format
 {
 	return GPixelFormats[Format].BlockBytes;
 }
-
-FTextureRHIRef FDynamicRHI::RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips)
-{
-	FGraphEventRef CompletionEvent;
-	FTextureRHIRef Result = this->RHIAsyncCreateTexture2D(SizeX, SizeY, Format, NumMips, Flags, InResourceState, InitialMipData, NumInitialMips, CompletionEvent);
-	if (CompletionEvent)
-	{
-		CompletionEvent->Wait();
-	}
-	return Result;
-}
-
-FTextureReferenceRHIRef FDynamicRHI::RHICreateTextureReference(FRHITexture* InReferencedTexture)
-{
-	FRHITexture* ReferencedTexture = InReferencedTexture ? InReferencedTexture : FRHITextureReference::GetDefaultTexture();
-
-	FShaderResourceViewRHIRef ShaderResourceView;
-
-#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
-	// If the referenced texture is configured for bindless, make sure we also create an SRV to use for bindless.
-	if (ReferencedTexture && ReferencedTexture->GetDefaultBindlessHandle().IsValid())
-	{
-		ShaderResourceView = FRHICommandListImmediate::Get().CreateShaderResourceView(ReferencedTexture, 0u);
-	}
-#endif
-
-	return new FRHITextureReference(ReferencedTexture, ShaderResourceView);
-}
-
 
 uint64 FDynamicRHI::RHIComputeStatePrecachePSOHash(const FGraphicsPipelineStateInitializer& Initializer)
 {

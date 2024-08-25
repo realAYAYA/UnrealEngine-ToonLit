@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "InstancedStruct.h"
 #include "StructView.h"
+#include "Serialization/CustomVersion.h"
 #include "Serialization/PropertyLocalizationDataGathering.h"
+#include "Serialization/CustomVersion.h"
 #include "StructUtilsTypes.h"
 
 #if WITH_ENGINE
@@ -247,7 +249,7 @@ bool FInstancedStruct::Serialize(FArchive& Ar)
 		Ar << SerialSize;
 		Ar.Seek(FinalOffset);	// Reset archive to its position
 	}
-	else if (Ar.IsCountingMemory() || Ar.IsModifyingWeakAndStrongReferences())
+	else if (Ar.IsCountingMemory() || Ar.IsModifyingWeakAndStrongReferences() || Ar.IsObjectReferenceCollector())
 	{
 		// Report type
 		Ar << NonConstStruct;
@@ -319,7 +321,7 @@ bool FInstancedStruct::ImportTextItem(const TCHAR*& Buffer, int32 PortFlags, UOb
 bool FInstancedStruct::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	static const FName NAME_StructVariant = "StructVariant";
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == NAME_StructVariant)
+	if (Tag.GetType().IsStruct(NAME_StructVariant))
 	{
 		auto SerializeStructVariant = [this, &Tag, &Slot]()
 		{

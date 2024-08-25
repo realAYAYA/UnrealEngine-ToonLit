@@ -1,9 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#ifndef DIM_DENOISER_OUTPUT
-	#define DIM_DENOISER_OUTPUT 0
-#endif
 
+#include "/Engine/Shared/RayTracingTypes.h"
 #include "../Common.ush"
 
 #define SUPPORT_CONTACT_SHADOWS		0
@@ -84,8 +82,8 @@ float3 GetSkyRadiance(float3 Direction, float Roughness)
 
 RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 {
-	// STRATA_TODO
-#if !STRATA_ENABLED
+	// SUBSTRATE_TODO
+#if !SUBSTRATE_ENABLED
 	uint2 DispatchThreadId = DispatchRaysIndex().xy + View.ViewRectMin.xy;
 	uint2 PixelCoord = GetPixelCoord(DispatchThreadId, UpscaleFactor);
 	uint LinearIndex = PixelCoord.y * View.BufferSizeAndInvSize.x + PixelCoord.x; // TODO(Denoiser): PixelCoord or DispatchThreadId
@@ -130,8 +128,8 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 	const bool bSkyLightAffectReflection = ShouldSkyLightAffectReflection();
 	
 	const bool bPrimaryView = (ERayTracingPrimaryRaysFlag_PrimaryView & PrimaryRayFlags) != 0;
-	bool bHasScattered = bPrimaryView;
-	float AccumulatedOpacity = 0.0;
+	bool bHasScattered = false;
+	float BackgroundVisibility = 0.0;
 
 	// Integrated data by path tracing
 	float3 PathRadiance = 0.0;
@@ -141,8 +139,9 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 
 	for (uint RefractionRayIndex = 0; RefractionRayIndex < MaxRefractionRays; ++RefractionRayIndex)
 	{
-		const uint RefractionRayFlags = RefractionRayIndex == 0 ? RAY_FLAG_CULL_BACK_FACING_TRIANGLES : 0;
-		const uint RefractionInstanceInclusionMask = (!bPrimaryView && RefractionRayIndex == 0) || !TranslucencyRefraction ? RAY_TRACING_MASK_TRANSLUCENT : RAY_TRACING_MASK_ALL;
+		const bool bIsCameraRay = !bHasScattered;
+		const uint RefractionRayFlags = bIsCameraRay ? RAY_FLAG_CULL_BACK_FACING_TRIANGLES : 0;
+		const uint RefractionInstanceInclusionMask = (!bPrimaryView && bIsCameraRay) || !TranslucencyRefraction ? RAY_TRACING_MASK_TRANSLUCENT : RAY_TRACING_MASK_ALL;
 		const bool bRefractionRayTraceSkyLightContribution = false;
 		const bool bRefractionDecoupleSampleGeneration = true;
 #if PROJECT_SUPPORTS_LUMEN
@@ -169,6 +168,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 			ShouldDoEmissiveAndIndirectLighting,
 			bRefractionRayTraceSkyLightContribution,
 			bRefractionDecoupleSampleGeneration,
+			bIsCameraRay,
 			RayCone,
 			bRefractionEnableSkyLightContribution,
 			PathVertexRadiance);
@@ -186,15 +186,15 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 			}
 			break;
 		}
-		float3 HitPoint = Ray.Origin + Ray.Direction * Payload.HitT;
+		float3 TranslatedHitPoint = Ray.Origin + Ray.Direction * Payload.HitT;
 		float NextMaxRayDistance = Ray.TMax - Payload.HitT;
 
 		//
 		// Handle surface lighting
 		//
 
-		float vertexRadianceWeight = Payload.Opacity;	// Opacity as coverage. This works for RAY_TRACING_BLEND_MODE_OPAQUE and RAY_TRACING_BLEND_MODE_TRANSLUCENT.
-		// It is also needed for RAY_TRACING_BLEND_MODE_ADDITIVE and  RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE: radiance continbution is alway weighted by coverage.
+		const float vertexRadianceWeight = Payload.Opacity;	// Opacity as coverage. This works for RAY_TRACING_BLEND_MODE_OPAQUE and RAY_TRACING_BLEND_MODE_TRANSLUCENT.
+		// It is also needed for RAY_TRACING_BLEND_MODE_ADDITIVE and  RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE: radiance contribution is alway weighted by coverage.
 		// #dxr_todo: I have not been able to setup a material using RAY_TRACING_BLEND_MODE_MODULATE.
 
 		//
@@ -204,9 +204,9 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 		float4 ViewFogInScatteringAndTransmittance = float4(0.0, 0.0, 0.0, 1.0);
 		if (HeightFog > 0)
 		{
-			float3 WorldPositionRelativeToCameraPrimaryRay = PrimaryView.TranslatedWorldCameraOrigin - (Ray.Origin + Ray.Direction * Payload.HitT);
+			float3 WorldPositionRelativeToCameraPrimaryRay = PrimaryView.TranslatedWorldCameraOrigin - TranslatedHitPoint;
 
-			// We always samplg the height fog to make sure all the intersected transparent surface get affected by it.
+			// We always sample the height fog to make sure all the intersected transparent surface get affected by it.
 			// We cannot only do it for the primary ray otherwise refelction on secondary surface will look too bright. 
 			// For that sample the fog for the hit position and view assuming no refraction. This seems acceptable.
 			ViewFogInScatteringAndTransmittance = CalculateHeightFog(WorldPositionRelativeToCameraPrimaryRay);
@@ -214,7 +214,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 			if (FogStruct.ApplyVolumetricFog > 0
 				&& !bHasScattered) // We can only sample the volumetric fog contribution (always camera aligned) if the ray is not scattered around
 			{
-				float4 ClipPos = mul(float4(HitPoint, 1.0f), PrimaryView.TranslatedWorldToClip); // HitPoint is translated world space
+				float4 ClipPos = mul(float4(TranslatedHitPoint, 1.0f), PrimaryView.TranslatedWorldToClip);
 				float3 VolumeUV = ComputeVolumeUVFromNDC(ClipPos);
 
 				ViewFogInScatteringAndTransmittance = CombineVolumetricFog(ViewFogInScatteringAndTransmittance, VolumeUV, 0/*EyeIndex*/, GBufferData.Depth);
@@ -223,7 +223,12 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 
 		PathRadiance += PathThroughput * vertexRadianceWeight * (PathVertexRadiance * ViewFogInScatteringAndTransmittance.a + ViewFogInScatteringAndTransmittance.rgb);
 
-		AccumulatedOpacity += vertexRadianceWeight;
+		const bool bIsHoldout = Payload.IsHoldout();
+		if (bIsHoldout)
+		{
+			// A holdout object acts as if it was a background pixel so that it influences the alpha channel
+			BackgroundVisibility += Luminance(PathThroughput) * vertexRadianceWeight;
+		}
 
 		//
 		// Handle reflection tracing with a ray per vertex of the refraction path
@@ -240,7 +245,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 			FRayDesc ReflectionRay;
 			ReflectionRay.TMin = 0.01;
 			ReflectionRay.TMax = LocalMaxRayDistance;
-			ReflectionRay.Origin = HitPoint;
+			ReflectionRay.Origin = TranslatedHitPoint;
 
 			ModifyGGXAnisotropicNormalRoughness(Payload.WorldTangent, Payload.Anisotropy, Payload.Roughness, Payload.WorldNormal, Ray.Direction);
 
@@ -267,6 +272,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 				ShouldDoEmissiveAndIndirectLighting,
 				bReflectionRayTraceSkyLightContribution,
 				bReflectionDecoupleSampleGeneration,
+				false,
 				RayCone,
 				bReflectionEnableSkyLightContribution,
 				ReflectionRadiance);
@@ -295,13 +301,13 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 		{
 			float3 VolumeLighting = 0;
 
-			const float3 TranslucencyEvaluationTranslatedPosition = HitPoint;
+			const float3 TranslucencyEvaluationTranslatedPosition = TranslatedHitPoint;
 
 #if PROJECT_SUPPORTS_LUMEN
 			if (IsLumenTranslucencyGIEnabled() && ShouldDoEmissiveAndIndirectLighting)
 			{
 				// Lumen Dynamic GI + shadowed Skylight
-				FLWCVector3 TranslucencyEvaluationPosition = LWCSubtract(TranslucencyEvaluationTranslatedPosition, PrimaryView.PreViewTranslation);
+				FDFVector3 TranslucencyEvaluationPosition = DFFastSubtract(TranslucencyEvaluationTranslatedPosition, PrimaryView.PreViewTranslation);
 
 				FTwoBandSHVectorRGB TranslucencyGISH = GetTranslucencyGIVolumeLighting(TranslucencyEvaluationPosition, PrimaryView.WorldToClip, true);
 
@@ -316,8 +322,8 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 					VolumeLighting.rgb += max(half3(0, 0, 0), DotSH(TranslucencyGISH, SubsurfaceTransferSH)) / PI;
 				}
 			}
-#endif
 			else
+#endif
 			{
 				// noop => if lumen is not enabled: bRefractionEnableSkyLightContribution == true
 			}
@@ -339,6 +345,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 			}
 			case RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE:
 			case RAY_TRACING_BLEND_MODE_TRANSLUCENT:
+			case RAY_TRACING_BLEND_MODE_ALPHA_HOLDOUT:
 			{
 				PathThroughput *= 1.0 - Payload.Opacity;
 				break;
@@ -372,9 +379,26 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 			const float3 Transmittance = Payload.CustomData.xyz;
 			const float PathLength = rcp(saturate(abs(NoV) + 1e-5));
 			PathThroughput *= pow(Transmittance, PathLength) * Pow2(1 - F);
+			bHasScattered = true; // treat the thin translucency as refraction for consistency with solid glass, even though the ray is not bent
+			if (bIsHoldout)
+			{
+				// In the refraction case, the non-opaque part should also contribute to the holdout
+				// The net result is that the entire object becomes opaque for the alpha channel.
+				BackgroundVisibility += Luminance(PathThroughput) * (1.0 - Payload.Opacity);
+				PathThroughput = 0.0;
+				break;
+			}
 		}
 		else if (TranslucencyRefraction && Payload.BlendingMode == RAY_TRACING_BLEND_MODE_TRANSLUCENT && Payload.Ior > 0.0)
 		{
+			if (bIsHoldout)
+			{
+				// In the refraction case, the non-opaque part should also contribute to the holdout
+				// The net result is that the entire object becomes opaque for the alpha channel.
+				BackgroundVisibility += Luminance(PathThroughput) * (1.0 - Payload.Opacity);
+				PathThroughput = 0.0;
+				break;
+			}
 			float Ior = Payload.Ior;
 			bHasScattered |= Ior > 1.0 ? true : false;
 
@@ -410,7 +434,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 		// Setup refracted ray to be traced
 		//
 
-		Ray.Origin = HitPoint;
+		Ray.Origin = TranslatedHitPoint;
 		Ray.TMin = 0.01;
 		Ray.TMax = NextMaxRayDistance;
 		Ray.Direction = RefractedDirection;
@@ -420,24 +444,26 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
 
 	if (!bHasScattered)
 	{
-		// Use the scene radiance for ray that has not been scattered/refracted (no surface or IORin=IORout). Still apply the throughtput in case we have traversed surfaces with opacity>0.
-		PathRadiance += PathThroughput * SceneColorTexture.SampleLevel(GlobalPointClampedSampler, UV, 0).xyz / View.PreExposure;
+		// If the ray did not bend, composite over the SceneColor texture and accumulate alpha
+		if (bPrimaryView)
+		{
+			// our path reached the background, accumulate its contribution for the alpha channel
+			BackgroundVisibility += Luminance(PathThroughput);
+		}
+		else
+		{
+			float4 SceneColorContrib = SceneColorTexture.SampleLevel(GlobalPointClampedSampler, UV, 0);
+			PathRadiance += PathThroughput * SceneColorContrib.xyz / View.PreExposure;
+			BackgroundVisibility += Luminance(PathThroughput) * SceneColorContrib.w;
+		}
 	}
 
-	float FinalAlpha = 0.0f;
-	if (AccumulatedOpacity > 0.0f)
-	{
-		FinalAlpha = saturate(1.0 - AccumulatedOpacity);
-	}
-	else
-	{
-		FinalAlpha = SceneColorTexture.SampleLevel(GlobalPointClampedSampler, UV, 0).w;
-	}
+	// NOTE: UE by convention tracks background visibility which is (1.0-AccumulatedOpacity) (the complement of traditional alpha)
+	const float FinalAlpha = saturate(BackgroundVisibility);
 
-	PathRadiance.rgb *= View.PreExposure;
-
+	PathRadiance *= View.PreExposure;
 	PathRadiance = ClampToHalfFloatRange(PathRadiance);
 	ColorOutput[DispatchThreadId] = float4(PathRadiance, FinalAlpha);
 	RayHitDistanceOutput[DispatchThreadId] = HitDistance;
-#endif // !STRATA_ENABLED
+#endif // !SUBSTRATE_ENABLED
 }

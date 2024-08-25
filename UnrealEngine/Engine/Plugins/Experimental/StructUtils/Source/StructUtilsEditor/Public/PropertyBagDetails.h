@@ -57,10 +57,85 @@ private:
 class STRUCTUTILSEDITOR_API FPropertyBagInstanceDataDetails : public FInstancedStructDataDetails
 {
 public:
+
 	FPropertyBagInstanceDataDetails(TSharedPtr<IPropertyHandle> InStructProperty, const TSharedPtr<IPropertyUtilities>& InPropUtils, const bool bInFixedLayout, const bool bInAllowArrays = true);
 
 	virtual void OnChildRowAdded(IDetailPropertyRow& ChildRow) override;
+	
+	/** Enum describing if a property is overridden, or undetermined (e.g. multiselection) */
+	enum class EPropertyOverrideState
+	{
+		Yes,
+		No,
+		Undetermined,
+	};
 
+	/** Interface to allow to modify override status of a specific parameter. */
+	struct IPropertyBagOverrideProvider
+	{
+		virtual ~IPropertyBagOverrideProvider()
+		{
+		}
+
+		virtual bool IsPropertyOverridden(const FGuid PropertyID) const = 0;
+		virtual void SetPropertyOverride(const FGuid PropertyID, const bool bIsOverridden) const = 0;
+	};
+
+	/**
+	 * Callback function for EnumeratePropertyBags.
+	 * @return true to continue enumeration
+	 */
+	using EnumeratePropertyBagFuncRef = TFunctionRef<bool(const FInstancedPropertyBag& /*DefaultPropertyBag*/, FInstancedPropertyBag& /*PropertyBag*/, IPropertyBagOverrideProvider& /*OverrideProvider*/)>;
+
+	/**
+	 * Method that is called to determine if a derived class has property override logic implemented.
+	 * If true is returned, the overridden class is expected to implement PreChangeOverrides(), PostChangeOverrides(), EnumeratePropertyBags().
+	 * @return true of derived class has override logic implemented.
+	 */
+	virtual bool HasPropertyOverrides() const
+	{
+		return false;
+	}
+
+	/** Called before property override is changed. */
+	virtual void PreChangeOverrides()
+	{
+		// ParentPropertyHandle would be the property that holds the property overrides. 
+		//		ParentPropertyHandle->NotifyPreChange();
+		checkf(false, TEXT("PreChangeOverrides() is expecgted to be implemented when HasPropertyOverrides() returns true."));
+	}
+
+	/** Called after property override is changed. */
+	virtual void PostChangeOverrides()
+	{
+		// ParentPropertyHandle is be the property that holds the property overrides. 
+		//		ParentPropertyHandle->NotifyPostChange(EPropertyChangeType::ValueSet);
+		//		ParentPropertyHandle->NotifyFinishedChangingProperties();
+		checkf(false, TEXT("PostChangeOverrides() is expecgted to be implemented when HasPropertyOverrides() returns true."));
+	}
+
+	/**
+	 * Called to enumerate each property bag on the property handle.
+	 * The Func expects DefaultPropertyBag (the values that are override), and PropertyBag (the one that PropertyBagHandle points to),
+	 * and instance of IPropertyBagOverrideProvider which is used to query if specific property is overridden, or to set the property override state.
+	 */
+	virtual void EnumeratePropertyBags(TSharedPtr<IPropertyHandle> PropertyBagHandle, const EnumeratePropertyBagFuncRef& Func) const
+	{
+		checkf(false, TEXT("EnumeratePropertyBags() is expecgted to be implemented when HasPropertyOverrides() returns true."));
+	}
+
+	/** @return true if property of specified child property is overridden. */
+	virtual EPropertyOverrideState IsPropertyOverridden(TSharedPtr<IPropertyHandle> ChildPropertyHandle) const;
+	
+	/** Called to set the override state of specified child property. */
+	virtual void SetPropertyOverride(TSharedPtr<IPropertyHandle> ChildPropertyHandle, const bool bIsOverridden);
+
+	/** @return true if the child property has default value. */
+	virtual bool IsDefaultValue(TSharedPtr<IPropertyHandle> ChildPropertyHandle) const;
+
+	/** Called to reset the child property to default value. */
+	virtual void ResetToDefault(TSharedPtr<IPropertyHandle> ChildPropertyHandle);
+	
 protected:
 	TSharedRef<SWidget> OnPropertyNameContent(TSharedPtr<IPropertyHandle> ChildPropertyHandle, TSharedPtr<SInlineEditableTextBlock> InlineWidget) const;
 

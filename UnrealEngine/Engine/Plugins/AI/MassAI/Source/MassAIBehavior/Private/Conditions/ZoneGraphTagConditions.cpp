@@ -70,9 +70,9 @@ namespace UE::MassBehavior::ZoneGraph
 		case EZoneLaneTagMaskComparison::Not:
 			return LOCTEXT("ContainsNot", "Not");
 		default:
-			return FText::FromString(TEXT("??"));
+			break;
 		}
-		return FText::GetEmpty();
+		return FText::FromString(TEXT("??"));
 	}
 
 }

@@ -1,5 +1,21 @@
 # Significant changes per release
 
+## 2.1.5
+
+*  Force macro expansion in version namespace identifier
+
+## 2.1.4
+
+*  Add support for clang 12, 13, and 14
+*  Add support for GCC 11
+*  Add support for XCode 12 and 13
+*  Add support for Arm64 development on OS X and Linux
+*  Misc CI improvements
+
+## 2.1.3
+
+*  Add versioned namespace to allow multiple versions to coexist within a binary
+
 ## 2.1.2
 
 *  Fix MSVC/clang static analysis warnings

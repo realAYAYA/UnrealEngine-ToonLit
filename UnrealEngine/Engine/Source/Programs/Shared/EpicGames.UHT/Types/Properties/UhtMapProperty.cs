@@ -47,7 +47,7 @@ namespace EpicGames.UHT.Types
 			KeyProperty = key;
 
 			// If the creation of the value property set more flags, then copy those flags to ourselves
-			PropertyFlags |= ValueProperty.PropertyFlags & EPropertyFlags.UObjectWrapper;
+			PropertyFlags |= ValueProperty.PropertyFlags & (EPropertyFlags.UObjectWrapper | EPropertyFlags.TObjectPtr);
 
 			// Make sure the 'UObjectWrapper' flag is maintained so that both 'TMap<TSubclassOf<...>, ...>' and 'TMap<UClass*, TSubclassOf<...>>' works correctly
 			KeyProperty.PropertyFlags = (ValueProperty.PropertyFlags & ~EPropertyFlags.UObjectWrapper) | (KeyProperty.PropertyFlags & EPropertyFlags.UObjectWrapper);
@@ -169,6 +169,14 @@ namespace EpicGames.UHT.Types
 		}
 
 		/// <inheritdoc/>
+		public override StringBuilder AppendMetaDataDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
+		{
+			builder.AppendMetaDataDecl(ValueProperty, context, name, GetNameSuffix(nameSuffix, "_ValueProp"), tabs);
+			builder.AppendMetaDataDecl(KeyProperty, context, name, GetNameSuffix(nameSuffix, "_Key_KeyProp"), tabs);
+			return base.AppendMetaDataDecl(builder, context, name, nameSuffix, tabs);
+		}
+
+		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
 		{
 			builder.AppendMemberDecl(ValueProperty, context, name, GetNameSuffix(nameSuffix, "_ValueProp"), tabs);
@@ -232,6 +240,12 @@ namespace EpicGames.UHT.Types
 		{
 			base.ValidateDeprecated();
 			KeyProperty.ValidateDeprecated();
+		}
+
+		/// <inheritdoc/>
+		protected override bool NeedsGCBarrierWhenPassedToFunctionImpl(UhtFunction function)
+		{
+			return KeyProperty.NeedsGCBarrierWhenPassedToFunction(function) || ValueProperty.NeedsGCBarrierWhenPassedToFunction(function);
 		}
 
 		/// <inheritdoc/>

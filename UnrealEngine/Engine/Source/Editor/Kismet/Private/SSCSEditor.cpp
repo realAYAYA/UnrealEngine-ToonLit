@@ -94,7 +94,6 @@
 #include "Styling/SlateIconFinder.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Subsystems/PanelExtensionSubsystem.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Function.h"
 #include "Textures/SlateIcon.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
@@ -3943,7 +3942,23 @@ void SSCSEditor::Construct( const FArguments& InArgs )
 		);
 
 	CommandList->MapAction( FGraphEditorCommands::Get().FindReferences,
-		FUIAction( FExecuteAction::CreateSP( this, &SSCSEditor::OnFindReferences ) )
+		FUIAction( FExecuteAction::CreateSP( this, &SSCSEditor::OnFindReferences, false, EGetFindReferenceSearchStringFlags::Legacy) )
+	);
+
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByNameLocal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSCSEditor::OnFindReferences, false, EGetFindReferenceSearchStringFlags::None ) )
+	);
+	
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByNameGlobal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSCSEditor::OnFindReferences, true, EGetFindReferenceSearchStringFlags::None ) )
+	);
+	
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberLocal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSCSEditor::OnFindReferences, false, EGetFindReferenceSearchStringFlags::UseSearchSyntax ) )
+	);
+
+	CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberGlobal,
+		FUIAction( FExecuteAction::CreateSP( this, &SSCSEditor::OnFindReferences, true, EGetFindReferenceSearchStringFlags::UseSearchSyntax ) )
 	);
 
 	FSlateBrush const* MobilityHeaderBrush = FAppStyle::GetBrush(TEXT("ClassIcon.ComponentMobilityHeaderIcon"));
@@ -4360,7 +4375,13 @@ void SSCSEditor::PopulateContextMenu(UToolMenu* Menu)
 						FToolMenuSection& BlueprintSCSSection = Menu->AddSection("BlueprintSCS");
 						if (SelectedItems.Num() == 1)
 						{
-							BlueprintSCSSection.AddMenuEntry(FGraphEditorCommands::Get().FindReferences);
+							// Expandable menu: insert sub-menu here
+                            BlueprintSCSSection.AddSubMenu(
+                            	FName("FindReferenceSubMenu"),
+                            	LOCTEXT("FindReferences_Label", "Find References"),
+                            	LOCTEXT("FindReferences_Tooltip", "Options for finding references to class members"),
+                            	FNewToolMenuChoice(FNewMenuDelegate::CreateStatic(&FGraphEditorCommands::BuildFindReferencesMenu))
+                            );
 						}
 
 						// Create an "Add Event" option in the context menu only if we can edit
@@ -4579,7 +4600,7 @@ void SSCSEditor::ViewEvent(UBlueprint* Blueprint, const FName EventName, const F
 	}
 }
 
-void SSCSEditor::OnFindReferences()
+void SSCSEditor::OnFindReferences(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags)
 {
 	TArray<FSCSEditorTreeNodePtrType> SelectedNodes = SCSTreeWidget->GetSelectedItems();
 	if (SelectedNodes.Num() == 1)
@@ -4591,9 +4612,10 @@ void SSCSEditor::OnFindReferences()
 
 			FMemberReference MemberReference;
 			MemberReference.SetSelfMember(*VariableName);
-			const FString SearchTerm = MemberReference.GetReferenceSearchString(GetBlueprint()->SkeletonGeneratedClass);
+			const FString SearchTerm = EnumHasAnyFlags(Flags, EGetFindReferenceSearchStringFlags::UseSearchSyntax) ? MemberReference.GetReferenceSearchString(GetBlueprint()->SkeletonGeneratedClass) : FString::Printf(TEXT("\"%s\""), *VariableName);;
 
 			TSharedRef<IBlueprintEditor> BlueprintEditor = StaticCastSharedRef<IBlueprintEditor>(FoundAssetEditor.ToSharedRef());
+			const bool bSetFindWithinBlueprint = !bSearchAllBlueprints;
 			BlueprintEditor->SummonSearchUI(true, SearchTerm);
 		}
 	}

@@ -15,7 +15,7 @@
 class FMetalContext;
 class FMetalQueryBufferPool;
 class FMetalQueryResult;
-struct FMetalCommandBufferFence;
+class FMetalCommandBufferFence;
 
 
 //------------------------------------------------------------------------------
@@ -26,13 +26,13 @@ struct FMetalCommandBufferFence;
 class FMetalQueryBuffer : public FRHIResource
 {
 public:
-	FMetalQueryBuffer(FMetalContext* InContext, FMetalBuffer InBuffer);
+	FMetalQueryBuffer(FMetalContext* InContext, FMetalBufferPtr InBuffer);
 	virtual ~FMetalQueryBuffer();
 
 	uint64 GetResult(uint32 Offset);
 
 	TWeakPtr<FMetalQueryBufferPool, ESPMode::ThreadSafe> Pool;
-	FMetalBuffer Buffer;
+	FMetalBufferPtr Buffer;
 	uint32 WriteOffset;
 };
 
@@ -61,10 +61,10 @@ public:
 	void Allocate(FMetalQueryResult& NewQuery);
 	FMetalQueryBuffer* GetCurrentQueryBuffer();
 	void ReleaseCurrentQueryBuffer();
-	void ReleaseQueryBuffer(FMetalBuffer& Buffer);
+	void ReleaseQueryBuffer(FMetalBufferPtr Buffer);
 
 	TRefCountPtr<FMetalQueryBuffer> CurrentBuffer;
-	TArray<FMetalBuffer> Buffers;
+	TArray<FMetalBufferPtr> Buffers;
 	FMetalContext* Context;
 };
 

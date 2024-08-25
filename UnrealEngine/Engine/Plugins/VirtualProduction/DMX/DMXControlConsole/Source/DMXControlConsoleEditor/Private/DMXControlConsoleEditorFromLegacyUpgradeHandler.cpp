@@ -2,20 +2,19 @@
 
 #include "DMXControlConsoleEditorFromLegacyUpgradeHandler.h"
 
-#include "DMXControlConsole.h"
+#include "AssetToolsModule.h"
 #include "DMXControlConsoleData.h"
 #include "DMXControlConsoleFaderGroup.h"
 #include "DMXControlConsoleFaderGroupRow.h"
 #include "DMXControlConsoleRawFader.h"
 #include "DMXEditorSettings.h"
-#include "Models/DMXControlConsoleEditorModel.h"
-
-#include "AssetToolsModule.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "Misc/CoreDelegates.h"
-#include "Misc/Paths.h"
+#include "Factories/DMXControlConsoleFactory.h"
+#include "Layouts/Controllers/DMXControlConsoleElementController.h"
+#include "Layouts/Controllers/DMXControlConsoleFaderGroupController.h"
+#include "Layouts/DMXControlConsoleEditorGlobalLayoutBase.h"
+#include "Layouts/DMXControlConsoleEditorLayouts.h"
+#include "Misc/CoreDelegates.h"	
 #include "UObject/Package.h"
-#include "UObject/UObjectGlobals.h"
 
 
 #define LOCTEXT_NAMESPACE "DMXControlConsoleEditorFromLegacyUpgradeHandler"
@@ -49,16 +48,29 @@ bool FDMXControlConsoleEditorFromLegacyUpgradeHandler::TryUpgradePathFromLegacy(
 	const FString AssetPath = TEXT("/Game");
 	const FString AssetName = TEXT("DefaultControlConsole");
 
-	UDMXControlConsoleEditorModel* EditorConsoleModel = GetMutableDefault<UDMXControlConsoleEditorModel>();
-	UpgradePathControlConsole = EditorConsoleModel->CreateNewConsoleAsset(AssetPath, AssetName, ControlConsoleData);
-	if (UpgradePathControlConsole.IsValid())
-	{
-		UpgradePathControlConsole->GetOnControlConsoleSaved().AddStatic(&FDMXControlConsoleEditorFromLegacyUpgradeHandler::OnUpgradePathControlConsoleSaved);
+	FString UniquePackageName;
+	FString UniqueAssetName;
+	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+	AssetToolsModule.Get().CreateUniqueAssetName(AssetPath / AssetName, TEXT(""), UniquePackageName, UniqueAssetName);
 
-		return true;
+	const UDMXControlConsoleFactory* ControlConsoleFactory = NewObject<UDMXControlConsoleFactory>();
+	UpgradePathControlConsole = ControlConsoleFactory->CreateConsoleAssetFromData(AssetPath, UniqueAssetName, ControlConsoleData);
+	if (!UpgradePathControlConsole.IsValid())
+	{
+		return false;
 	}
 
-	return false;
+	UDMXControlConsoleEditorLayouts* ControlConsoleLayouts = NewObject<UDMXControlConsoleEditorLayouts>(UpgradePathControlConsole.Get(), NAME_None, RF_Transactional);
+	UDMXControlConsoleEditorGlobalLayoutBase* UserLayout = ControlConsoleLayouts->AddUserLayout(TEXT(""));
+	if (UserLayout)
+	{
+		UserLayout->GenerateLayoutByControlConsoleData(ControlConsoleData);
+	}
+
+	UpgradePathControlConsole->ControlConsoleEditorLayouts = ControlConsoleLayouts; 
+	UpgradePathControlConsole->GetOnControlConsoleSaved().AddStatic(&FDMXControlConsoleEditorFromLegacyUpgradeHandler::OnUpgradePathControlConsoleSaved);
+	
+	return true;
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -106,7 +118,6 @@ UDMXControlConsoleRawFader* FDMXControlConsoleEditorFromLegacyUpgradeHandler::Cr
 	Fader->SetUniverseID(FaderDescriptor.UniversID);
 	Fader->SetAddressRange(FaderDescriptor.StartingAddress);
 	Fader->SetValue(FaderDescriptor.Value);
-
 	return Fader;
 }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

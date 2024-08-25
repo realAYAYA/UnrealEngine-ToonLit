@@ -178,7 +178,8 @@ FD3D12Texture* GetSwapChainSurface(FD3D12Device* Parent, EPixelFormat PixelForma
 		Parent->GetDevice()->CreateCommittedResource(&HeapProps, D3D12_HEAP_FLAG_NONE, &TextureDesc, D3D12_RESOURCE_STATE_PRESENT, nullptr, IID_PPV_ARGS(BackBufferResource.GetInitReference()));
 	}
 
-	D3D12_RESOURCE_DESC BackBufferDesc = BackBufferResource->GetDesc();
+	FD3D12ResourceDesc BackBufferDesc = BackBufferResource->GetDesc();
+	BackBufferDesc.bBackBuffer = true;
 
 	FString Name = FString::Printf(TEXT("BackBuffer%d"), BackBufferIndex);
 
@@ -216,9 +217,7 @@ FD3D12Texture* GetSwapChainSurface(FD3D12Device* Parent, EPixelFormat PixelForma
 		if (Device->GetGPUIndex() == Parent->GetGPUIndex())
 		{
 			FD3D12Resource* NewResourceWrapper = new FD3D12Resource(Device, FRHIGPUMask::All(), BackBufferResource, InitialState, BackBufferDesc);
-			NewResourceWrapper->SetIsBackBuffer(true);
 			NewResourceWrapper->AddRef();
-			NewResourceWrapper->StartTrackingForResidency();
 			NewTexture->ResourceLocation.AsStandAlone(NewResourceWrapper);
 		}
 		else // If this is not the GPU which will hold the back buffer, create a compatible texture so that it can still render to the viewport.
@@ -285,8 +284,6 @@ FD3D12Texture* GetSwapChainSurface(FD3D12Device* Parent, EPixelFormat PixelForma
 	});
 
 	SetName(SwapChainTexture->GetResource(), *Name);
-
-	SwapChainTexture->GetResource()->SetIsBackBuffer(true);
 
 	const D3D12_RESOURCE_ALLOCATION_INFO AllocationInfo = Parent->GetDevice()->GetResourceAllocationInfo(0, 1, &SwapChainTexture->GetResource()->GetDesc());
 	SwapChainTexture->ResourceLocation.SetSize(AllocationInfo.SizeInBytes);
@@ -413,7 +410,37 @@ void FD3D12Viewport::Resize(uint32 InSizeX, uint32 InSizeY, bool bInIsFullscreen
 		CustomPresent->OnBackBufferResize();
 	}
 
+	bool bWaitForBackBuffersUAVDelete = false;
 	// Release our backbuffer reference, as required by DXGI before calling ResizeBuffers.
+	for (uint32 i = 0; i < NumBackBuffers; ++i)
+	{
+		if (IsValidRef(BackBuffersUAV[i]))
+		{
+			bWaitForBackBuffersUAVDelete = true;
+			// Tell the back buffer to delete immediately so that we can call resize.
+			if (BackBuffersUAV[i]->GetRefCount() != 1)
+			{
+				UE_LOG(LogD3D12RHI, Log, TEXT("Backbuffer %d leaking with %d refs during Resize."), i, BackBuffersUAV[i]->GetRefCount());
+			}
+			check(BackBuffersUAV[i]->GetRefCount() == 1);
+
+			for (FD3D12UnorderedAccessView& Uav : *BackBuffersUAV[i])
+			{
+				Uav.GetResource()->DoNotDeferDelete();
+			}
+		}
+
+		BackBuffersUAV[i].SafeRelease();
+		check(BackBuffersUAV[i] == nullptr);
+	}
+
+	if (bWaitForBackBuffersUAVDelete)
+	{
+		// The D3D12 UAV releases don't happen immediately, but are pushed to a delete queue processed on the RHI Thread. We need to ensure these are processed before releasing the swapchain buffers
+        // Calling FlushRenderingCommands is enough because it calls ImmediateFlush(EImmediateFlushType::FlushRHIThreadFlushResources) / ImmediateFlush(EImmediateFlushType::FlushRHIThread) internally
+		FlushRenderingCommands();
+	}
+
 	for (uint32 i = 0; i < NumBackBuffers; ++i)
 	{
 		if (IsValidRef(BackBuffers[i]))
@@ -430,27 +457,9 @@ void FD3D12Viewport::Resize(uint32 InSizeX, uint32 InSizeY, bool bInIsFullscreen
 				Tex.GetResource()->DoNotDeferDelete();
 			}
 		}
-		
+
 		BackBuffers[i].SafeRelease();
 		check(BackBuffers[i] == nullptr);
-
-		if (IsValidRef(BackBuffersUAV[i]))
-		{
-			// Tell the back buffer to delete immediately so that we can call resize.
-			if (BackBuffersUAV[i]->GetRefCount() != 1)
-			{
-				UE_LOG(LogD3D12RHI, Log, TEXT("Backbuffer %d leaking with %d refs during Resize."), i, BackBuffersUAV[i]->GetRefCount());
-			}
-			check(BackBuffersUAV[i]->GetRefCount() == 1);
-
-			for (FD3D12UnorderedAccessView& Uav : *BackBuffersUAV[i])
-			{
-				Uav.GetResource()->DoNotDeferDelete();
-			}
-		}
-
-		BackBuffersUAV[i].SafeRelease();
-		check(BackBuffersUAV[i] == nullptr);
 
 		if (IsValidRef(SDRBackBuffers[i]))
 		{
@@ -520,6 +529,20 @@ void FD3D12Viewport::Resize(uint32 InSizeX, uint32 InSizeY, bool bInIsFullscreen
 			// Use ConditionalResetSwapChain to call SetFullscreenState, to handle the failure case.
 			// Ignore the viewport's focus state; since Resize is called as the result of a user action we assume authority without waiting for Focus.
 			ConditionalResetSwapChain(true);
+
+#if D3D12_VIEWPORT_EXPOSES_SWAP_CHAIN
+			if (!bIsFullscreen)
+			{
+				// When exiting fullscreen, make sure that the window has the correct size. This is necessary in the following scenario:
+				//	* we enter exclusive fullscreen with a resolution lower than the monitor's native resolution, or from windowed with a window size smaller than the screen
+				//	* the application loses focus, so Slate asks us to switch to Windowed Fullscreen (see FSlateRenderer::IsViewportFullscreen)
+				//	* InSizeX and InSizeY are given to us as the monitor resolution, so we resize the buffers to the correct resolution below (in ResizeInternal)
+				//	* however, the target still has the smaller size, because Slate doesn't know it has to resize the window too (as far as it's concerned, it's already the right size)
+				//	* therefore, we need to call ResizeTarget, which in windowed mode behaves like SetWindowPos.
+				const DXGI_MODE_DESC BufferDesc = SetupDXGI_MODE_DESC();
+				SwapChain1->ResizeTarget(&BufferDesc);
+			}
+#endif // D3D12_VIEWPORT_EXPOSES_SWAP_CHAIN
 		}
 	}
 
@@ -767,7 +790,7 @@ void FD3D12Viewport::IssueFrameEvent()
 	TArray<FD3D12Payload*> Payloads;
 	for (FD3D12Device* Device : ParentAdapter->GetDevices())
 	{
-		FD3D12ContextCommon& Context = Device->GetDefaultCommandContext();
+		FD3D12CommandContext& Context = Device->GetDefaultCommandContext();
 
 		FD3D12SyncPointRef SyncPoint = FD3D12SyncPoint::Create(ED3D12SyncPointType::GPUAndCPU);
 
@@ -849,9 +872,6 @@ void FD3D12DynamicRHI::RHITick(float DeltaTime)
 
 void FD3D12CommandContextBase::RHIBeginDrawingViewport(FRHIViewport* ViewportRHI, FRHITexture* RenderTargetRHI)
 {
-	ensure(!bDrawingViewport);
-	bDrawingViewport = true;
-
 	FD3D12Viewport* Viewport = FD3D12DynamicRHI::ResourceCast(ViewportRHI);
 
 	SCOPE_CYCLE_COUNTER(STAT_D3D12PresentTime);
@@ -888,9 +908,6 @@ void FD3D12CommandContextBase::RHIBeginDrawingViewport(FRHIViewport* ViewportRHI
 void FD3D12CommandContextBase::RHIEndDrawingViewport(FRHIViewport* ViewportRHI, bool bPresent, bool bLockToVsync)
 {
 	FD3D12Viewport* Viewport = FD3D12DynamicRHI::ResourceCast(ViewportRHI);
-
-	ensure(bDrawingViewport);
-	bDrawingViewport = false;
 
 #if !UE_BUILD_SHIPPING
 	if (RHIConsoleVariables::LogViewportEvents)

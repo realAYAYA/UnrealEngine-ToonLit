@@ -44,11 +44,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Coordinates, meta = (PinShownByDefault, AllowPrivateAccess))
 	float Y = 0.0f;
 
-	// The group name that we synchronize with. All nodes employing sync beyond this in the anim graph will implicitly use this sync group.
+	// The group name that we synchronize with (NAME_None if it is not part of any group). Note that
+	// this is the name of the group used to sync the output of this node - it will not force
+	// syncing of animations contained by it. Animations inside this Blend Space have their own
+	// options for syncing.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Sync, meta = (NeverAsPin, AllowPrivateAccess))
 	FName GroupName = NAME_None;
 
-	// The role this player can assume within the group
+	// The role this Blend Space can assume within the group (ignored if GroupName is not set). Note
+	// that this is the role of the output of this node, not of animations contained by it.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Sync, meta = (NeverAsPin, AllowPrivateAccess))
 	TEnumAsByte<EAnimGroupRole::Type> GroupRole = EAnimGroupRole::CanBeLeader;
 

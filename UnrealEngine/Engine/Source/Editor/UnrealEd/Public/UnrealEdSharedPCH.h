@@ -21,8 +21,10 @@
 #include "GameplayTaskTypes.h"
 #include "GameplayTask.h"
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 // From NavigationSystem:
 #include "NavFilters/NavigationQueryFilter.h"
+#endif
 
 // From UnrealEd:
 #include "AssetThumbnail.h"

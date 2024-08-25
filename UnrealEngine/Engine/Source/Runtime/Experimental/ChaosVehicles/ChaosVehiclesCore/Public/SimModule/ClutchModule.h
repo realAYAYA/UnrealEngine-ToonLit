@@ -21,6 +21,32 @@ namespace Chaos
 		float ClutchStrength;
 	};
 
+
+	struct CHAOSVEHICLESCORE_API FClutchSimModuleDatas : public FTorqueSimModuleDatas
+	{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		FClutchSimModuleDatas(int NodeArrayIndex, const FString& InDebugString) : FTorqueSimModuleDatas(NodeArrayIndex, InDebugString) {}
+#else
+		FClutchSimModuleDatas(int NodeArrayIndex) : FTorqueSimModuleDatas(NodeArrayIndex) {}
+#endif
+
+		virtual eSimType GetType() override { return eSimType::Clutch; }
+
+		virtual void FillSimState(ISimulationModuleBase* SimModule) override
+		{
+			check(SimModule->GetSimType() == eSimType::Clutch);
+			FTorqueSimModuleDatas::FillSimState(SimModule);
+		}
+
+		virtual void FillNetState(const ISimulationModuleBase* SimModule) override
+		{
+			check(SimModule->GetSimType() == eSimType::Clutch);
+			FTorqueSimModuleDatas::FillNetState(SimModule);
+		}
+
+	};
+
+
 	/// <summary>
 	/// 
 	/// a vehicle component that transmits torque from one source to another through a clutch system, i.e. connect an engine to a transmission
@@ -35,6 +61,16 @@ namespace Chaos
 	public:
 
 		FClutchSimModule(const FClutchSettings& Settings);
+
+		virtual TSharedPtr<FModuleNetData> GenerateNetData(int SimArrayIndex) const
+		{
+			return MakeShared<FClutchSimModuleDatas>(
+				SimArrayIndex
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+				, GetDebugName()
+#endif			
+			);
+		}
 
 		virtual eSimType GetSimType() const { return eSimType::Clutch; }
 

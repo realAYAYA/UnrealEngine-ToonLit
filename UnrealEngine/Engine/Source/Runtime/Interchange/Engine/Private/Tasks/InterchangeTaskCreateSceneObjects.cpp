@@ -35,7 +35,7 @@ UE::Interchange::FTaskCreateSceneObjects::FTaskCreateSceneObjects(const FString&
 
 void UE::Interchange::FTaskCreateSceneObjects::DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FTaskCreateSceneObjects::DoTask")
+	TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FTaskCreateSceneObjects::DoTask)
 #if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
 	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(SpawnActor)
 #endif
@@ -57,10 +57,11 @@ void UE::Interchange::FTaskCreateSceneObjects::DoTask(ENamedThreads::Type Curren
 	}
 
 	UObject* ReimportObject = AsyncHelper->TaskData.ReimportObject;
-	ULevel* CurrentLevel = GWorld->GetCurrentLevel();
-	const FString WorldPath = GWorld->GetOutermost()->GetPathName();
-	const FString WorldName = GWorld->GetName();
-	const FString NodePrefix = CurrentLevel->GetName() + TEXT(".");
+	ULevel* ImportLevel = AsyncHelper->TaskData.ImportLevel ? AsyncHelper->TaskData.ImportLevel : GWorld->GetCurrentLevel();
+	UWorld* ImportWorld = ImportLevel->GetWorld();
+	const FString WorldPath = ImportWorld->GetOutermost()->GetPathName();
+	const FString WorldName = ImportWorld->GetName();
+	const FString NodePrefix = ImportLevel->GetName() + TEXT(".");
 
 	for (UInterchangeFactoryBaseNode* FactoryNode : FactoryNodes)
 	{
@@ -73,19 +74,20 @@ void UE::Interchange::FTaskCreateSceneObjects::DoTask(ENamedThreads::Type Curren
 		Factory->SetResultsContainer(AsyncHelper->AssetImportResult->GetResults());
 		AsyncHelper->AddCreatedFactory(FactoryNode->GetUniqueID(), Factory);
 
-		FString NodeDisplayName = FactoryNode->GetDisplayLabel();
-		SanitizeObjectName(NodeDisplayName);
+		FString SceneNodeName = FactoryNode->GetAssetName();
+		SanitizeObjectName(SceneNodeName);
 
 		UInterchangeFactoryBase::FImportSceneObjectsParams CreateSceneObjectsParams;
-		CreateSceneObjectsParams.ObjectName = NodeDisplayName;
+		CreateSceneObjectsParams.ObjectName = SceneNodeName;
 		CreateSceneObjectsParams.FactoryNode = FactoryNode;
-		CreateSceneObjectsParams.Level = CurrentLevel;
-		CreateSceneObjectsParams.ReimportObject = FFactoryCommon::GetObjectToReimport(ReimportObject, *FactoryNode, WorldPath, WorldName, NodePrefix + NodeDisplayName);
-		CreateSceneObjectsParams.ReimportFactoryNode = FFactoryCommon::GetFactoryNode(ReimportObject, WorldPath, WorldName, NodePrefix + NodeDisplayName);
+		CreateSceneObjectsParams.Level = ImportLevel;
+		CreateSceneObjectsParams.ReimportObject = FFactoryCommon::GetObjectToReimport(ReimportObject, *FactoryNode, WorldPath, WorldName, NodePrefix + SceneNodeName);
+		CreateSceneObjectsParams.ReimportFactoryNode = FFactoryCommon::GetFactoryNode(ReimportObject, WorldPath, WorldName, NodePrefix + SceneNodeName);
 
 		if (AsyncHelper->BaseNodeContainers.IsValidIndex(SourceIndex))
 		{
 			CreateSceneObjectsParams.NodeContainer = AsyncHelper->BaseNodeContainers[SourceIndex].Get();
+			CreateSceneObjectsParams.SourceData = AsyncHelper->SourceDatas[SourceIndex];
 		}
 
 		UObject* SceneObject = Factory->ImportSceneObject_GameThread(CreateSceneObjectsParams);

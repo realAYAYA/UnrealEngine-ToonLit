@@ -76,7 +76,7 @@ void SRigVMGraphPinNameListValueWidget::Construct(const FArguments& InArgs)
 	// Need to establish the selected item at point of construction so its available for querying
 	// NB: If you need a selection to fire use SetItemSelection rather than setting an IntiallySelectedItem
 	SelectedItem = InArgs._InitiallySelectedItem;
-	if (TListTypeTraits<TSharedPtr<FString>>::IsPtrValid(SelectedItem))
+	if (TListTypeTraits<TSharedPtr<FRigVMStringWithTag>>::IsPtrValid(SelectedItem))
 	{
 		ComboListView->Private_SetItemSelection(SelectedItem, true);
 	}
@@ -88,9 +88,9 @@ void SRigVMGraphPinNameListValueWidget::ClearSelection()
 	ComboListView->ClearSelection();
 }
 
-void SRigVMGraphPinNameListValueWidget::SetSelectedItem(TSharedPtr<FString> InSelectedItem)
+void SRigVMGraphPinNameListValueWidget::SetSelectedItem(TSharedPtr<FRigVMStringWithTag> InSelectedItem)
 {
-	if (TListTypeTraits<TSharedPtr<FString>>::IsPtrValid(InSelectedItem))
+	if (TListTypeTraits<TSharedPtr<FRigVMStringWithTag>>::IsPtrValid(InSelectedItem))
 	{
 		ComboListView->SetSelection(InSelectedItem);
 	}
@@ -100,14 +100,14 @@ void SRigVMGraphPinNameListValueWidget::SetSelectedItem(TSharedPtr<FString> InSe
 	}
 }
 
-void SRigVMGraphPinNameListValueWidget::SetOptionsSource(const TArray<TSharedPtr<FString>>* InOptionsSource)
+void SRigVMGraphPinNameListValueWidget::SetOptionsSource(const TArray<TSharedPtr<FRigVMStringWithTag>>* InOptionsSource)
 {
 	check(InOptionsSource);
 	OptionsSource = InOptionsSource;
 	ComboListView->SetItemsSource(OptionsSource);
 }
 
-TSharedPtr<FString> SRigVMGraphPinNameListValueWidget::GetSelectedItem()
+TSharedPtr<FRigVMStringWithTag> SRigVMGraphPinNameListValueWidget::GetSelectedItem()
 {
 	return SelectedItem;
 }
@@ -120,7 +120,7 @@ void SRigVMGraphPinNameListValueWidget::RefreshOptions()
 	}
 }
 
-TSharedRef<ITableRow> SRigVMGraphPinNameListValueWidget::GenerateMenuItemRow(TSharedPtr<FString> InItem, const TSharedRef<STableViewBase>& OwnerTable)
+TSharedRef<ITableRow> SRigVMGraphPinNameListValueWidget::GenerateMenuItemRow(TSharedPtr<FRigVMStringWithTag> InItem, const TSharedRef<STableViewBase>& OwnerTable)
 {
 	if (OnGenerateWidget.IsBound())
 	{
@@ -129,13 +129,13 @@ TSharedRef<ITableRow> SRigVMGraphPinNameListValueWidget::GenerateMenuItemRow(TSh
 		if (!SearchToken.IsEmpty())
 		{
 			FString SearchTokenUnderscores = SearchToken.Replace(TEXT(" "), TEXT("_"));
-			if ((InItem->ToLower().Find(SearchToken) < 0) &&
-				(InItem->ToLower().Find(SearchTokenUnderscores) < 0))
+			if ((InItem->GetString().ToLower().Find(SearchToken) < 0) &&
+				(InItem->GetString().ToLower().Find(SearchTokenUnderscores) < 0))
 			{
 				WidgetVisibility = EVisibility::Collapsed;
 			}
 		}
-		return SNew(SComboRow<TSharedPtr<FString>>, OwnerTable)
+		return SNew(SComboRow<TSharedPtr<FRigVMStringWithTag>>, OwnerTable)
 			.Visibility(WidgetVisibility)
 			[
 				OnGenerateWidget.Execute(InItem)
@@ -143,7 +143,7 @@ TSharedRef<ITableRow> SRigVMGraphPinNameListValueWidget::GenerateMenuItemRow(TSh
 	}
 	else
 	{
-		return SNew(SComboRow<TSharedPtr<FString>>, OwnerTable)
+		return SNew(SComboRow<TSharedPtr<FRigVMStringWithTag>>, OwnerTable)
 			[
 				SNew(STextBlock).Text(NSLOCTEXT("SlateCore", "ComboBoxMissingOnGenerateWidgetMethod", "Please provide a .OnGenerateWidget() handler."))
 			];
@@ -155,7 +155,7 @@ void SRigVMGraphPinNameListValueWidget::OnMenuOpenChanged(bool bOpen)
 {
 	if (bOpen == false)
 	{
-		if (TListTypeTraits<TSharedPtr<FString>>::IsPtrValid(SelectedItem))
+		if (TListTypeTraits<TSharedPtr<FRigVMStringWithTag>>::IsPtrValid(SelectedItem))
 		{
 			// Ensure the ListView selection is set back to the last committed selection
 			ComboListView->SetSelection(SelectedItem, ESelectInfo::OnNavigation);
@@ -196,7 +196,7 @@ EActiveTimerReturnType SRigVMGraphPinNameListValueWidget::SetFocusPostConstruct(
 	return EActiveTimerReturnType::Continue;
 }
 
-void SRigVMGraphPinNameListValueWidget::OnSelectionChanged_Internal(TSharedPtr<FString> ProposedSelection, ESelectInfo::Type SelectInfo, bool bForce)
+void SRigVMGraphPinNameListValueWidget::OnSelectionChanged_Internal(TSharedPtr<FRigVMStringWithTag> ProposedSelection, ESelectInfo::Type SelectInfo, bool bForce)
 {
 	// Ensure that the proposed selection is different
 	if (SelectInfo != ESelectInfo::OnNavigation || bForce)
@@ -219,7 +219,7 @@ void SRigVMGraphPinNameListValueWidget::OnSearchTextChanged(const FText& Changed
 
 	for (int32 i = 0; i < OptionsSource->Num(); i++)
 	{
-		const TSharedPtr<FString>& Option = (*OptionsSource)[i];
+		const TSharedPtr<FRigVMStringWithTag>& Option = (*OptionsSource)[i];
 
 		TSharedPtr<ITableRow> Row = ComboListView->WidgetFromItem(Option);
 		if (Row)
@@ -228,14 +228,14 @@ void SRigVMGraphPinNameListValueWidget::OnSearchTextChanged(const FText& Changed
 			{
 				Row->AsWidget()->SetVisibility(EVisibility::Visible);
 			}
-			else if (Option->ToLower() == SearchToken)
+			else if (Option->GetString().ToLower() == SearchToken)
 			{
 				Row->AsWidget()->SetVisibility(EVisibility::Visible);
 				ComboListView->Private_ClearSelection();
 				ComboListView->Private_SetItemSelection(Option, true);
 			}
-			else if ((Option->ToLower().Find(SearchToken) >= 0) ||
-				(Option->ToLower().Find(SearchTokenUnderscores) >= 0))
+			else if ((Option->GetString().ToLower().Find(SearchToken) >= 0) ||
+				(Option->GetString().ToLower().Find(SearchTokenUnderscores) >= 0))
 			{
 				Row->AsWidget()->SetVisibility(EVisibility::Visible);
 			}
@@ -248,7 +248,7 @@ void SRigVMGraphPinNameListValueWidget::OnSearchTextChanged(const FText& Changed
 
 	ComboListView->RequestListRefresh();
 
-	SelectedItem = TSharedPtr< FString >();
+	SelectedItem = TSharedPtr< FRigVMStringWithTag >();
 }
 
 void SRigVMGraphPinNameListValueWidget::OnSearchTextCommitted(const FText& ChangedText, ETextCommit::Type CommitType)
@@ -258,8 +258,8 @@ void SRigVMGraphPinNameListValueWidget::OnSearchTextCommitted(const FText& Chang
 		const FString LowerCaseProposedSelection = ChangedText.ToString().ToLower();
 		for (int32 i = 0; i < OptionsSource->Num(); i++)
 		{
-			const TSharedPtr<FString>& Option = (*OptionsSource)[i];
-			if (Option->ToLower() == LowerCaseProposedSelection)
+			const TSharedPtr<FRigVMStringWithTag>& Option = (*OptionsSource)[i];
+			if (Option->GetString().ToLower() == LowerCaseProposedSelection)
 			{
 				OnSelectionChanged_Internal(Option, ESelectInfo::OnKeyPress, true);
 				return;
@@ -268,7 +268,7 @@ void SRigVMGraphPinNameListValueWidget::OnSearchTextCommitted(const FText& Chang
 
 		if(AllowUserProvidedText)
 		{
-			const TSharedPtr<FString> UserDefinedOption = MakeShareable(new FString(ChangedText.ToString()));
+			const TSharedPtr<FRigVMStringWithTag> UserDefinedOption = MakeShareable(new FRigVMStringWithTag(ChangedText.ToString()));
 			OnSelectionChanged_Internal(UserDefinedOption, ESelectInfo::OnKeyPress, true);
 		}
 	}
@@ -280,7 +280,7 @@ FReply SRigVMGraphPinNameListValueWidget::OnSearchTextKeyDown(const FGeometry& M
 	{
 		for (int32 i = 0; i < OptionsSource->Num(); i++)
 		{
-			const TSharedPtr<FString>& Option = (*OptionsSource)[i];
+			const TSharedPtr<FRigVMStringWithTag>& Option = (*OptionsSource)[i];
 			TSharedPtr<ITableRow> Row = ComboListView->WidgetFromItem(Option);
 			if (Row)
 			{
@@ -306,7 +306,7 @@ FReply SRigVMGraphPinNameListValueWidget::OnComboListKeyDown(const FGeometry& My
 {
 	if (InKeyEvent.GetKey() == EKeys::Enter)
 	{
-		TArray<TSharedPtr<FString>> SelectedItems = ComboListView->GetSelectedItems();
+		TArray<TSharedPtr<FRigVMStringWithTag>> SelectedItems = ComboListView->GetSelectedItems();
 		if (SelectedItems.Num() > 0)
 		{
 			OnSelectionChanged_Internal(SelectedItems[0], ESelectInfo::OnKeyPress);
@@ -324,7 +324,7 @@ FReply SRigVMGraphPinNameListValueWidget::OnButtonClicked()
 	if (this->IsOpen())
 	{
 		// Re-select first selected item, just in case it was selected by navigation previously
-		TArray<TSharedPtr<FString>> SelectedItems = ComboListView->GetSelectedItems();
+		TArray<TSharedPtr<FRigVMStringWithTag>> SelectedItems = ComboListView->GetSelectedItems();
 		if (SelectedItems.Num() > 0)
 		{
 			OnSelectionChanged_Internal(SelectedItems[0], ESelectInfo::Direct);

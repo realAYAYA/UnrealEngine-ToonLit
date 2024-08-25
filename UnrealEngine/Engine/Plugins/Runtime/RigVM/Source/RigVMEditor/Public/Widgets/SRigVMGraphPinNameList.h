@@ -15,8 +15,8 @@ class RIGVMEDITOR_API SRigVMGraphPinNameList : public SGraphPin
 {
 public:
 
-	DECLARE_DELEGATE_RetVal_OneParam( const TArray<TSharedPtr<FString>>*, FOnGetNameListContent, URigVMPin*);
-	DECLARE_DELEGATE_RetVal( const TArray<TSharedPtr<FString>>, FOnGetNameFromSelection);
+	DECLARE_DELEGATE_RetVal_OneParam( const TArray<TSharedPtr<FRigVMStringWithTag>>*, FOnGetNameListContent, URigVMPin*);
+	DECLARE_DELEGATE_RetVal( const TArray<TSharedPtr<FRigVMStringWithTag>>, FOnGetNameFromSelection);
 	DECLARE_DELEGATE_RetVal_ThreeParams( FReply, FOnGetSelectedClicked, URigVMEdGraph*, URigVMPin*, FString);
 	DECLARE_DELEGATE_RetVal_ThreeParams( FReply, FOnBrowseClicked, URigVMEdGraph*, URigVMPin*, FString);
 
@@ -47,23 +47,23 @@ protected:
 	virtual TSharedRef<SWidget>	GetDefaultValueWidget() override;
 	//~ End SGraphPin Interface
 
-	const TArray<TSharedPtr<FString>>* GetNameList(bool bForContent = true) const;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>* GetNameList(bool bForContent = true) const;
 	FText GetNameListText() const;
 	FSlateColor GetNameColor() const;
 	virtual void SetNameListText(const FText& NewTypeInValue, ETextCommit::Type CommitInfo);
 	void UpdateNameLists(bool bUpdateCurrent = true, bool bUpdateValidation = true);
 
-	TSharedRef<SWidget> MakeNameListItemWidget(TSharedPtr<FString> InItem);
-	void OnNameListChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	TSharedRef<SWidget> MakeNameListItemWidget(TSharedPtr<FRigVMStringWithTag> InItem);
+	void OnNameListChanged(TSharedPtr<FRigVMStringWithTag> NewSelection, ESelectInfo::Type SelectInfo);
 	void OnNameListComboBox();
 
 	FOnGetNameListContent OnGetNameListContent;
 	FOnGetNameListContent OnGetNameListContentForValidation;
 	URigVMPin* ModelPin;
 	TSharedPtr<SRigVMGraphPinNameListValueWidget> NameListComboBox;
-	TArray<TSharedPtr<FString>> EmptyList;
-	const TArray<TSharedPtr<FString>>* CurrentList;
-	const TArray<TSharedPtr<FString>>* ValidationList;
+	TArray<TSharedPtr<FRigVMStringWithTag>> EmptyList;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>* CurrentList;
+	const TArray<TSharedPtr<FRigVMStringWithTag>>* ValidationList;
 	bool bMarkupInvalidItems;
 	bool EnableNameListCache;
 	FText SearchHintText;

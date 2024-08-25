@@ -4,6 +4,7 @@
 
 #include "BrainComponent.h"
 #include "GameplayTaskOwnerInterface.h"
+#include "IStateTreeSchemaProvider.h"
 #include "StateTreeReference.h"
 #include "StateTreeInstanceData.h"
 #include "UObject/Package.h"
@@ -19,7 +20,7 @@ class UStateTree;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStateTreeRunStatusChanged, EStateTreeRunStatus, StateTreeRunStatus);
 
 UCLASS(ClassGroup = AI, HideCategories = (Activation, Collision), meta = (BlueprintSpawnableComponent))
-class GAMEPLAYSTATETREEMODULE_API UStateTreeComponent : public UBrainComponent, public IGameplayTaskOwnerInterface
+class GAMEPLAYSTATETREEMODULE_API UStateTreeComponent : public UBrainComponent, public IGameplayTaskOwnerInterface, public IStateTreeSchemaProvider
 {
 	GENERATED_BODY()
 public:
@@ -52,6 +53,10 @@ public:
 	virtual void OnGameplayTaskInitialized(UGameplayTask& Task) override;
 	// END IGameplayTaskOwnerInterface
 
+	// BEGIN IStateTreeSchemaProvider
+	TSubclassOf<UStateTreeSchema> GetSchema() const override;
+	// END
+
 	/**
 	 * Sets whether the State Tree is started automatically on being play.
 	 * This function sets the bStartLogicAutomatically property, and should be used mostly from constructions sscripts.
@@ -59,7 +64,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Gameplay|StateTree")
 	void SetStartLogicAutomatically(const bool bInStartLogicAutomatically);
-
+	 
 	/** Sends event to the running StateTree. */
 	UFUNCTION(BlueprintCallable, Category = "Gameplay|StateTree")
 	void SendStateTreeEvent(const FStateTreeEvent& Event);
@@ -85,8 +90,10 @@ protected:
 	virtual void PostLoad() override;
 #endif
 	
-	bool SetContextRequirements(FStateTreeExecutionContext& Context, bool bLogErrors = false);
-
+	virtual bool SetContextRequirements(FStateTreeExecutionContext& Context, bool bLogErrors = false);
+	
+	virtual bool CollectExternalData(const FStateTreeExecutionContext& Context, const UStateTree* StateTree, TArrayView<const FStateTreeExternalDataDesc> Descs, TArrayView<FStateTreeDataView> OutDataViews) const;
+	
 #if WITH_EDITORONLY_DATA
 	UE_DEPRECATED(5.1, "This property has been deprecated. Use StateTreeReference instead.")
 	UPROPERTY()

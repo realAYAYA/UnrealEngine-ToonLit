@@ -172,6 +172,11 @@ bool FDisplayClusterShadersPostprocess_OutputRemap::RenderPostprocess_OutputRema
 
 		TShaderMapRef<FOutputRemapVS> VertexShader(GlobalShaderMap);
 		TShaderMapRef<FOutputRemapPS> PixelShader(GlobalShaderMap);
+		if (!VertexShader.IsValid() || !PixelShader.IsValid())
+		{
+			// Always check if shaders are available on the current platform and hardware
+			return false;
+		}
 
 		FGraphicsPipelineStateInitializer GraphicsPSOInit;
 		// Set the graphic pipeline state.
@@ -179,7 +184,7 @@ bool FDisplayClusterShadersPostprocess_OutputRemap::RenderPostprocess_OutputRema
 
 		if (MeshProxy->BeginRender_RenderThread(RHICmdList, GraphicsPSOInit))
 		{
-			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Never>::GetRHI();
+			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
 			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<>::GetRHI();
 
 			GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();

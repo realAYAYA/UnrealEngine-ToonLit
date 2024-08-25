@@ -94,6 +94,30 @@ inline TRange<FFrameNumber> MakeDiscreteRange(FFrameNumber MinInclusive, FFrameN
 
 
 /**
+ * Make a new range that includes both the lower and upper bounds of the given range.
+ */
+inline TRange<FFrameNumber> MakeHullRange(const TRange<FFrameNumber>& InRange)
+{
+	return TRange<FFrameNumber>(
+			InRange.HasLowerBound() ? TRangeBound<FFrameNumber>::Inclusive(InRange.GetLowerBoundValue()) : TRangeBound<FFrameNumber>::Open(),
+			InRange.HasUpperBound() ? TRangeBound<FFrameNumber>::Inclusive(InRange.GetUpperBoundValue()) : TRangeBound<FFrameNumber>::Open());
+}
+
+
+/**
+ * Make a new range that includes both the given minimum and maximum.
+ *
+ * @param MinInclusive The minimum value for the inclusive lower bound
+ * @param MaxInclusive The maximum value for the inclusive lower bound
+ * @return A new range.
+ */
+inline TRange<FFrameNumber> MakeHullRange(FFrameNumber MinInclusive, FFrameNumber MaxInclusive)
+{
+	return TRange<FFrameNumber>(TRangeBound<FFrameNumber>::Inclusive(MinInclusive), TRangeBound<FFrameNumber>::Inclusive(MaxInclusive));
+}
+
+
+/**
  * Return whether the given range is empty or zero frames wide
  */
 inline bool IsEmptyOrZeroSize(const TRange<FFrameNumber>& InRange)

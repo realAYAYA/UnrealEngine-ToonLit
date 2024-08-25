@@ -2,11 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using EpicGames.Horde.Api;
-using Horde.Server.Projects;
-using Horde.Server.Streams;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Devices;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
@@ -83,6 +83,16 @@ namespace Horde.Server.Devices
 		public List<DeviceId> Devices { get; }
 
 		/// <summary>
+		/// StepIds that use the reservation
+		/// </summary>
+		public List<JobStepId>? ReservedStepIds { get; }
+
+		/// <summary>
+		/// Whether a device problem was reported for the reservation
+		/// </summary>
+		public DeviceId? ProblemDevice { get; }
+
+		/// <summary>
 		/// The requested device platforms for reservation, which may differ from IDevice platform due to devices that support more than one platform, or legacy platforms
 		/// </summary>
 		public List<string> RequestedDevicePlatforms { get; }
@@ -102,7 +112,7 @@ namespace Horde.Server.Devices
 		/// Unique identifier of device platform 
 		/// </summary>
 		public DevicePlatformId Id { get; }
-		
+
 		/// <summary>
 		/// Device platform name, for example Android, PS5, etc
 		/// </summary>
@@ -112,28 +122,38 @@ namespace Horde.Server.Devices
 		/// A list of valid models for the platform
 		/// </summary>
 		public IReadOnlyList<string>? Models { get; }
+
+		/// <summary>
+		/// Legacy names which older versions of Gauntlet may be using
+		/// </summary>
+		public IReadOnlyList<string>? LegacyNames { get; }
+
+		/// <summary>
+		/// Model name for the high perf spec, which may be requested by Gauntlet
+		/// </summary>
+		public string? LegacyPerfSpecHighModel { get; }
 	}
 
-    /// <summary>
-    /// The type of device pool
-    /// </summary>
-    public enum DevicePoolType
-    {
-        /// <summary>
-        /// Available to CIS jobs
-        /// </summary>
-        Automation,
+	/// <summary>
+	/// The type of device pool
+	/// </summary>
+	public enum DevicePoolType
+	{
+		/// <summary>
+		/// Available to CIS jobs
+		/// </summary>
+		Automation,
 
-        /// <summary>
-        /// Shared by users with remote checking and checkouts
-        /// </summary>
-        Shared
-    }
+		/// <summary>
+		/// Shared by users with remote checking and checkouts
+		/// </summary>
+		Shared
+	}
 
-    /// <summary>
-    /// A logical pool of devices
-    /// </summary>
-    public interface IDevicePool
+	/// <summary>
+	/// A logical pool of devices
+	/// </summary>
+	public interface IDevicePool
 	{
 		/// <summary>
 		/// Unique identifier of pool
@@ -164,22 +184,22 @@ namespace Horde.Server.Devices
 		/// <summary>
 		/// The job id which utilized device
 		/// </summary>
-		public string? JobId { get; set;}
+		public string? JobId { get; set; }
 
 		/// <summary>
 		/// The job's step id
 		/// </summary>
-		public string? StepId { get; set;}
+		public string? StepId { get; set; }
 
 		/// <summary>
 		/// The time device was reserved
 		/// </summary>
-		public DateTime ReservationStartUtc { get; set;}
+		public DateTime ReservationStartUtc { get; set; }
 
 		/// <summary>
 		/// The time device was freed
 		/// </summary>
-		public DateTime? ReservationFinishUtc { get; set;}
+		public DateTime? ReservationFinishUtc { get; set; }
 
 		/// <summary>
 		/// Private constructor
@@ -193,7 +213,7 @@ namespace Horde.Server.Devices
 		/// Constructor
 		/// </summary>
 		/// <param name="reservationStartUtc"></param>
-		public DeviceUtilizationTelemetry( DateTime reservationStartUtc )
+		public DeviceUtilizationTelemetry(DateTime reservationStartUtc)
 		{
 			ReservationStartUtc = reservationStartUtc;
 		}
@@ -344,7 +364,7 @@ namespace Horde.Server.Devices
 		/// <summary>
 		/// Device id for reservation
 		/// </summary>
-		public DeviceId DeviceId { get;}
+		public DeviceId DeviceId { get; }
 
 		/// <summary>
 		/// Job id associated with reservation

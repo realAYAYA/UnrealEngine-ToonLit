@@ -2,19 +2,48 @@
 
 #pragma once
 
+#include "ChaosVDOptionalDataChannel.h"
 #include "Containers/Array.h"
 #include "Containers/ContainerAllocationPolicies.h"
 #include "HAL/ThreadSingleton.h"
+#include "Templates/SharedPointer.h"
 
 #if WITH_CHAOS_VISUAL_DEBUGGER
 
 #include "ChaosVDRuntimeModule.h"
+
+enum class EChaosVDContextType : int32
+{
+	Any,
+	Solver,
+	Query,
+	SubTraceQuery,
+};
+
+enum class EChaosVDContextAttributes : int32
+{
+	None = 0,
+	Resimulated = 1 << 0
+};
+ENUM_CLASS_FLAGS(EChaosVDContextAttributes)
 
 /** Chaos Visual Debugger data used to context for logging or debugging purposes */
 struct FChaosVDContext
 {
 	int32 OwnerID = INDEX_NONE;
 	int32 Id = INDEX_NONE;
+	int32 Type = INDEX_NONE;
+	int32 Attributes = 0;
+
+	FORCEINLINE void SetDataChannel(const TSharedRef<Chaos::VisualDebugger::FChaosVDOptionalDataChannel>& NewDataChannel)
+	{
+		CurrentDataChannel = NewDataChannel;
+	}
+
+	FORCEINLINE bool IsDataChannelEnabled() const { return CurrentDataChannel->IsChannelEnabled(); }
+
+private:
+	TSharedRef<Chaos::VisualDebugger::FChaosVDOptionalDataChannel> CurrentDataChannel = CVDDC_Default;
 };
 
 /** Singleton class that manages the thread local storage used to store CVD Context data */
@@ -34,6 +63,13 @@ public:
 	 * @return true if the copy was successful
 	 */
 	bool GetCurrentContext(FChaosVDContext& OutContext);
+	
+	/** Gets the current CVD context data -
+	 * Don't use of a function that will recursively push new context data as it might invalidate the pointer
+	 * @param Type type of the context we want to get
+	 * @return Ptr to the Current CVD context data if it matches the provided type
+	 */
+	const FChaosVDContext* GetCurrentContext(EChaosVDContextType Type);
 	
 	/** Gets the current CVD context data -
 	 * Don't use of a function that will recursively push new context data as it might invalidate the pointer
@@ -72,6 +108,19 @@ protected:
 	friend struct FChaosVDScopedTLSBufferAccessor;
 };
 
+namespace Chaos::VisualDebugger::Utils
+{
+	FORCEINLINE bool IsContextEnabledAndValid(const FChaosVDContext* Context)
+	{
+		if (!ensure(Context))
+		{
+			return false;
+		}
+
+		return Context->IsDataChannelEnabled();
+	}
+}
+
 /** Utility Class that will push the provided CVD Context Data to the local thread storage
  * and remove it when it goes out of scope
  */
@@ -83,6 +132,25 @@ struct FChaosVDScopeContext
 	}
 
 	~FChaosVDScopeContext()
+	{
+		FChaosVDThreadContext::Get().PopContext();
+	}
+};
+
+struct FChaosCVDScopedDataChannelOverride
+{
+	FChaosCVDScopedDataChannelOverride(const TSharedRef<Chaos::VisualDebugger::FChaosVDOptionalDataChannel>& NewDataChannel)
+	{
+		if (const FChaosVDContext* CVDContextData = FChaosVDThreadContext::Get().GetCurrentContext())
+		{
+			FChaosVDContext NewContext = *CVDContextData;
+			NewContext.SetDataChannel(NewDataChannel);
+
+			FChaosVDThreadContext::Get().PushContext(MoveTemp(NewContext));
+		}
+	}
+
+	~FChaosCVDScopedDataChannelOverride()
 	{
 		FChaosVDThreadContext::Get().PopContext();
 	}
@@ -134,6 +202,11 @@ struct FChaosVDScopedTLSBufferAccessor
 		FChaosVDScopeContext CVDScope(InContext);
 #endif
 
+#ifndef CVD_SCOPED_DATA_CHANNEL_OVERRIDE
+	#define CVD_SCOPED_DATA_CHANNEL_OVERRIDE(DataChannel) \
+	FChaosCVDScopedDataChannelOverride CVDDC_Scope_Override##DataChannel(DataChannel);
+#endif
+
 #else // WITH_CHAOS_VISUAL_DEBUGGER
 
 #ifndef CVD_GET_CURRENT_CONTEXT
@@ -146,6 +219,10 @@ struct FChaosVDScopedTLSBufferAccessor
 
 #ifndef CVD_GET_WRAPPED_CURRENT_CONTEXT
 	#define CVD_GET_WRAPPED_CURRENT_CONTEXT(OutWrappedContext)
+#endif
+
+#ifndef CVD_SCOPED_CONTEXT_DATA_CHANNEL_OVERRIDE
+	#define CVD_SCOPED_CONTEXT_DATA_CHANNEL_OVERRIDE(DataChannel)
 #endif
 
 #endif // WITH_CHAOS_VISUAL_DEBUGGER

@@ -13,6 +13,7 @@
 #include "UObject/ObjectSaveContext.h"
 #include "WorldPartition/LevelInstance/LevelInstanceActorDesc.h"
 #include "LevelInstance/LevelInstanceEditorPivotActor.h"
+#include "Misc/MessageDialog.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "LevelInstanceActor"
@@ -224,6 +225,16 @@ bool ALevelInstance::CanEditChange(const FProperty* Property) const
 	return Super::CanEditChange(Property) && LevelInstanceActorImpl.CanEditChange(Property);
 }
 
+bool ALevelInstance::CanEditChangeComponent(const UActorComponent* InComponent, const FProperty* InProperty) const
+{
+	return Super::CanEditChangeComponent(InComponent, InProperty) && LevelInstanceActorImpl.CanEditChangeComponent(InComponent, InProperty);
+}
+
+bool ALevelInstance::ResolveSubobject(const TCHAR* SubObjectPath, UObject*& OutObject, bool bLoadIfExists)
+{
+	return LevelInstanceActorImpl.ResolveSubobject(SubObjectPath, OutObject, bLoadIfExists);
+}
+
 void ALevelInstance::PostEditImport()
 {
 	LevelInstanceActorImpl.PostEditImport([this]() { Super::PostEditImport(); });
@@ -261,9 +272,24 @@ FBox ALevelInstance::GetStreamingBounds() const
 	return Super::GetStreamingBounds();
 }
 
+bool ALevelInstance::IsUserManaged() const
+{
+	return Super::IsUserManaged() || LevelInstanceActorImpl.IsUserManaged();
+}
+
+bool ALevelInstance::ShouldExport()
+{
+	return Super::ShouldExport() && LevelInstanceActorImpl.ShouldExport();
+}
+
 bool ALevelInstance::IsLockLocation() const
 {
 	return Super::IsLockLocation() || LevelInstanceActorImpl.IsLockLocation();
+}
+
+bool ALevelInstance::IsActorLabelEditable() const
+{
+	return Super::IsActorLabelEditable() && LevelInstanceActorImpl.IsActorLabelEditable();
 }
 
 bool ALevelInstance::GetReferencedContentObjects(TArray<UObject*>& Objects) const
@@ -284,7 +310,13 @@ bool ALevelInstance::GetSoftReferencedContentObjects(TArray<FSoftObjectPath>& So
 
 bool ALevelInstance::OpenAssetEditor()
 {
-	return CanEnterEdit() ? EnterEdit() : false;
+	FText Reason;
+	if (!CanEnterEdit(&Reason))
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, Reason);
+		return false;
+	}
+	return EnterEdit();
 }
 
 bool ALevelInstance::EditorCanAttachFrom(const AActor* InChild, FText& OutReason) const

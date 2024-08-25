@@ -1,9 +1,6 @@
 #!/bin/bash
 # Copyright Epic Games, Inc. All Rights Reserved.
 
-# Certain versions of mono can crash while running GitDependencies
-# This script checks if that happened and simply re-runs the tool.
-
 ARGS=$@
 
 SCRIPT_PATH=$0

@@ -2,13 +2,12 @@
 
 #include "CookWorkerClient.h"
 
-#include "CompactBinaryTCP.h"
-#include "CookDirector.h"
-#include "CookMPCollector.h"
-#include "CookPackageData.h"
-#include "CookPlatformManager.h"
-#include "CookTypes.h"
-#include "CookWorkerServer.h"
+#include "Cooker/CompactBinaryTCP.h"
+#include "Cooker/CookDirector.h"
+#include "Cooker/CookPackageData.h"
+#include "Cooker/CookPlatformManager.h"
+#include "Cooker/CookTypes.h"
+#include "Cooker/CookWorkerServer.h"
 #include "CoreGlobals.h"
 #include "HAL/PlatformTime.h"
 #include "Interfaces/ITargetPlatform.h"
@@ -31,24 +30,24 @@ constexpr float WaitForConnectReplyTimeout = 60.f;
 FCookWorkerClient::FCookWorkerClient(UCookOnTheFlyServer& InCOTFS)
 	: COTFS(InCOTFS)
 {
-	FLogMessagesMessageHandler* Handler = new FLogMessagesMessageHandler();
-	Handler->InitializeClient();
-	Register(Handler);
-	Register(new IMPCollectorCbClientMessage<FRetractionRequestMessage>([this]
+	LogMessageHandler = new FLogMessagesMessageHandler();
+	LogMessageHandler->InitializeClient();
+	Register(LogMessageHandler);
+	Register(new TMPCollectorClientMessageCallback<FRetractionRequestMessage>([this]
 	(FMPCollectorClientMessageContext& Context, bool bReadSuccessful, FRetractionRequestMessage&& Message)
 		{
 			HandleRetractionMessage(Context, bReadSuccessful, MoveTemp(Message));
-		}, TEXT("HandleRetractionMessage")));
-	Register(new IMPCollectorCbClientMessage<FAbortPackagesMessage>([this]
+		}));
+	Register(new TMPCollectorClientMessageCallback<FAbortPackagesMessage>([this]
 	(FMPCollectorClientMessageContext& Context, bool bReadSuccessful, FAbortPackagesMessage&& Message)
 		{
 			HandleAbortPackagesMessage(Context, bReadSuccessful, MoveTemp(Message));
-		}, TEXT("HandleAbortPackagesMessage")));
-	Register(new IMPCollectorCbClientMessage<FHeartbeatMessage>([this]
+		}));
+	Register(new TMPCollectorClientMessageCallback<FHeartbeatMessage>([this]
 	(FMPCollectorClientMessageContext& Context, bool bReadSuccessful, FHeartbeatMessage&& Message)
 		{
 			HandleHeartbeatMessage(Context, bReadSuccessful, MoveTemp(Message));
-		}, TEXT("HandleHeartbeatMessage")));
+		}));
 	Register(new FAssetRegistryMPCollector(COTFS));
 	Register(new FPackageWriterMPCollector(COTFS));
 }
@@ -398,7 +397,7 @@ void FCookWorkerClient::CreateServerSocket(const FDirectorConnectionInfo& Connec
 
 	FWorkerConnectMessage ConnectMessage;
 	ConnectMessage.RemoteIndex = ConnectInfo.RemoteIndex;
-	EConnectionStatus Status = TryWritePacket(ServerSocket, SendBuffer, ConnectMessage);
+	EConnectionStatus Status = TryWritePacket(ServerSocket, SendBuffer, MarshalToCompactBinaryTCP(ConnectMessage));
 	if (Status == EConnectionStatus::Incomplete)
 	{
 		SendToState(EConnectStatus::PollWriteConnectMessage);
@@ -554,7 +553,7 @@ void FCookWorkerClient::LogConnected()
 void FCookWorkerClient::PumpSendMessages()
 {
 	UE::CompactBinaryTCP::EConnectionStatus Status = UE::CompactBinaryTCP::TryFlushBuffer(ServerSocket, SendBuffer);
-	if (Status == UE::CompactBinaryTCP::Failed)
+	if (Status == UE::CompactBinaryTCP::EConnectionStatus::Failed)
 	{
 		UE_LOG(LogCook, Error, TEXT("CookWorkerClient failed to write message to Director. We will abort the CookAsCookWorker commandlet."));
 		SendToState(EConnectStatus::LostConnection);
@@ -732,9 +731,10 @@ void FCookWorkerClient::PumpDisconnect(FTickStackData& StackData)
 	}
 }
 
-void FCookWorkerClient::SendMessage(const UE::CompactBinaryTCP::IMessage& Message)
+void FCookWorkerClient::SendMessage(const IMPCollectorMessage& Message)
 {
-	UE::CompactBinaryTCP::TryWritePacket(ServerSocket, SendBuffer, Message);
+	UE::CompactBinaryTCP::TryWritePacket(ServerSocket, SendBuffer,
+		MarshalToCompactBinaryTCP(Message));
 }
 
 void FCookWorkerClient::SendToState(EConnectStatus TargetStatus)
@@ -793,7 +793,7 @@ void FCookWorkerClient::AssignPackages(FAssignPackagesMessage& Message)
 		}
 		PackageData.FindOrAddPlatformData(CookerLoadingPlatformKey).MarkCookableForWorker(*this);
 		PackageData.SetInstigator(*this, FInstigator(AssignData.Instigator));
-		PackageData.SendToState(EPackageState::Request, ESendFlags::QueueAddAndRemove);
+		PackageData.SendToState(EPackageState::Request, ESendFlags::QueueAddAndRemove, EStateChangeReason::DirectorRequest);
 	}
 
 	// Clear the SoftGC diagnostic ExpectedNeverLoadPackages because we have new assigned packages
@@ -825,7 +825,13 @@ void FCookWorkerClient::Unregister(IMPCollector* Collector)
 	}
 }
 
-void FCookWorkerClient::TickCollectors(FTickStackData& StackData, bool bFlush)
+void FCookWorkerClient::FlushLogs()
+{
+	FTickStackData TickData(MAX_flt, ECookTickFlags::None);
+	TickCollectors(TickData, true, LogMessageHandler);
+}
+
+void FCookWorkerClient::TickCollectors(FTickStackData& StackData, bool bFlush, IMPCollector* SingleCollector)
 {
 	if (StackData.LoopStartTime < NextTickCollectorsTimeSeconds && !bFlush)
 	{
@@ -839,9 +845,8 @@ void FCookWorkerClient::TickCollectors(FTickStackData& StackData, bool bFlush)
 		Context.bFlush = bFlush;
 		TArray<UE::CompactBinaryTCP::FMarshalledMessage> MarshalledMessages;
 
-		for (const TPair<FGuid, TRefCountPtr<IMPCollector>>& Pair: Collectors)
+		auto TickCollector = [&MarshalledMessages, &Context](IMPCollector* Collector)
 		{
-			IMPCollector* Collector = Pair.Value.GetReference();
 			Collector->ClientTick(Context);
 			if (!Context.Messages.IsEmpty())
 			{
@@ -851,6 +856,18 @@ void FCookWorkerClient::TickCollectors(FTickStackData& StackData, bool bFlush)
 					MarshalledMessages.Add({ MessageType, MoveTemp(Object) });
 				}
 				Context.Messages.Reset();
+			}
+		};
+
+		if (SingleCollector)
+		{
+			TickCollector(SingleCollector);
+		}
+		else
+		{
+			for (const TPair<FGuid, TRefCountPtr<IMPCollector>>& Pair : Collectors)
+			{
+				TickCollector(Pair.Value.GetReference());
 			}
 		}
 

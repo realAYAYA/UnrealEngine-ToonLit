@@ -44,9 +44,9 @@ public:
 	 */
 	struct FPrimitiveInfo
 	{
-		AActor* Owner;
+		UObject* Owner;
 		FPrimitiveComponentId ComponentId;
-		UPrimitiveComponent* Component;
+		IPrimitiveComponent* ComponentInterface;
 		FPrimitiveSceneInfo* PrimitiveSceneInfo;
 		TArray<UMaterialInterface*> Materials;
 		FString Name;
@@ -80,7 +80,7 @@ private:
 	
 	TArray<FPrimitiveInfo> Primitives;
 
-	RENDERER_API void ProcessPrimitive(FPrimitiveSceneInfo* PrimitiveSceneInfo, const FViewInfo& View, FScene* Scene, const UPrimitiveComponent* DebugComponent);
+	RENDERER_API void ProcessPrimitive(FPrimitiveSceneInfo* PrimitiveSceneInfo, const FViewInfo& View, FScene* Scene, const IPrimitiveComponent* DebugComponent);
 
 	RENDERER_API void CaptureNextFrame();
 

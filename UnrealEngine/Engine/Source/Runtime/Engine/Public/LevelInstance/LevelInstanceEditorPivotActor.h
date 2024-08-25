@@ -22,6 +22,7 @@ public:
 	ENGINE_API virtual void PostEditUndo() override;
 	virtual bool ShouldExport() override { return false; }
 private:
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const override { return false; }
+	virtual bool ActorTypeSupportsDataLayer() const override { return false; }
+	virtual bool ActorTypeSupportsExternalDataLayer() const override { return false; }
 #endif
 };

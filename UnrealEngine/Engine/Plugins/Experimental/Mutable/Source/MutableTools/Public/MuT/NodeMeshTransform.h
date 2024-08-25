@@ -6,7 +6,7 @@
 #include "MuR/RefCounted.h"
 #include "MuT/Node.h"
 #include "MuT/NodeMesh.h"
-
+#include "Math/MathFwd.h"
 
 namespace mu
 {
@@ -37,14 +37,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        int GetInputCount() const override;
-        Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -55,8 +49,8 @@ namespace mu
 		void SetSource( NodeMesh* );
 
         //! \param pMat4x4 pointer to 16 floats representing the 4x4 matrix to apply
-        void SetTransform( const float* pMat4x4 );
-        void GetTransform( float* pMat4x4 ) const;
+        void SetTransform(const FMatrix44f&);
+		const FMatrix44f& GetTransform() const;
 
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern

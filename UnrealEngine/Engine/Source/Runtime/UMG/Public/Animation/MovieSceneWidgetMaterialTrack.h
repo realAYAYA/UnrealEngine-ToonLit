@@ -37,7 +37,10 @@ class UMovieSceneWidgetMaterialTrack
 public:
 
 	// UMovieSceneTrack interface
-	virtual FName GetTrackName() const override;
+	virtual FName GetTrackName() const override;	
+	
+	virtual bool SupportsType(TSubclassOf<UMovieSceneSection> SectionClass) const override;
+	virtual UMovieSceneSection* CreateNewSection() override;
 
 	/*~ IMovieSceneEntityProvider */
 	virtual void ImportEntityImpl(UMovieSceneEntitySystemLinker* EntityLinker, const FEntityImportParams& Params, FImportedEntity* OutImportedEntity) override;

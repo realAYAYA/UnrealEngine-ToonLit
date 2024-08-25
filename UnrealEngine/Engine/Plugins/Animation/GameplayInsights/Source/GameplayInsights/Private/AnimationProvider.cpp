@@ -3,6 +3,7 @@
 #include "AnimationProvider.h"
 #include "GameplayProvider.h"
 #include "Insights/ViewModels/TimingEventsTrack.h"
+#include "AnimationAnalyzer.h"
 
 #define LOCTEXT_NAMESPACE "AnimationProvider"
 
@@ -13,6 +14,7 @@ FAnimationProvider::FAnimationProvider(TraceServices::IAnalysisSession& InSessio
 	, GameplayProvider(InGameplayProvider)
 	, SkeletalMeshPoseTransforms(InSession.GetLinearAllocator(), 256)
 	, SkeletalMeshCurves(InSession.GetLinearAllocator(), 256)
+	, ExternalMorphWeights(InSession.GetLinearAllocator(), 256)
 	, SkeletalMeshParentIndices(InSession.GetLinearAllocator(), 256)
 	, PoseWatchRequiredBones(InSession.GetLinearAllocator(), 256)
 	, bHasAnyData(false)
@@ -155,6 +157,18 @@ void FAnimationProvider::EnumeratePoseWatchCurves(const FPoseWatchMessage& InMes
 	}
 }
 
+void FAnimationProvider::EnumerateExternalMorphSets(const FSkeletalMeshPoseMessage& InMessage, TFunctionRef<void(const FExternalMorphWeightMessage&)> Callback) const
+{
+	Session.ReadAccessCheck();
+
+	const uint64 StartIndex = InMessage.ExternalMorphStartIndex;
+	const uint64 EndIndex = StartIndex + InMessage.NumExternalMorphSets;
+	for (uint64 Index = StartIndex; Index < EndIndex; ++Index)
+	{
+		Callback(ExternalMorphWeights[Index]);
+	}
+}
+
 void FAnimationProvider::EnumerateTickRecordIds(uint64 InObjectId, TFunctionRef<void(uint64, int32)> Callback) const
 {
 	Session.ReadAccessCheck();
@@ -188,6 +202,40 @@ bool FAnimationProvider::ReadTickRecordTimeline(uint64 InObjectId, TFunctionRef<
 	}
 
 	return false;
+}
+
+bool FAnimationProvider::ReadInertializationTimeline(uint64 InObjectId, TFunctionRef<void(const InertializationTimeline&)> Callback) const
+{
+	Session.ReadAccessCheck();
+
+	const uint32* IndexPtr = ObjectIdToInertializationTimelines.Find(InObjectId);
+	if (IndexPtr != nullptr)
+	{
+		if (*IndexPtr < uint32(InertializationTimelineStorage.Num()))
+		{
+			Callback(*InertializationTimelineStorage[*IndexPtr]->Timeline.Get());
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void FAnimationProvider::EnumerateInertializationNodes(uint64 InObjectId, TFunctionRef<void(int32 NodeId, EInertializationType Type)> Callback) const
+{
+	Session.ReadAccessCheck();
+
+	const uint32* IndexPtr = ObjectIdToInertializationTimelines.Find(InObjectId);
+	if (IndexPtr != nullptr)
+	{
+		if (*IndexPtr < uint32(InertializationTimelineStorage.Num()))
+		{
+			for(auto& Entry : InertializationTimelineStorage[*IndexPtr]->NodeTypes)
+			{
+				Callback(Entry.Key, Entry.Value);
+			}
+		}
+	}
 }
 
 void FAnimationProvider::EnumerateAnimGraphTimelines(TFunctionRef<void(uint64 ObjectId, const AnimGraphTimeline&)> Callback) const
@@ -497,7 +545,7 @@ FText FAnimationProvider::FormatNodeValue(const FAnimNodeValueMessage& InMessage
 	case EAnimNodeValueType::Object:
 	{
 		const FObjectInfo& ObjectInfo = GameplayProvider.GetObjectInfo(InMessage.Value.Object.Value);
-		Text = FText::FromString(ObjectInfo.PathName);
+		Text = FText::FromString(ObjectInfo.Name);
 		break;
 	}
 	case EAnimNodeValueType::Class:
@@ -515,6 +563,24 @@ FText FAnimationProvider::FormatNodeValue(const FAnimNodeValueMessage& InMessage
 	}
 
 	return Text;
+}
+
+bool FAnimationProvider::HasExternalMorphSets(uint64 InObjectId) const
+{
+	//ObjectIdToSkeletalMeshPoseTimelines
+	Session.ReadAccessCheck();
+
+	const uint32* IndexPtr = ObjectIdToSkeletalMeshPoseTimelines.Find(InObjectId);
+	if(IndexPtr != nullptr)
+	{
+		if (*IndexPtr < uint32(SkeletalMeshPoseTimelineStorage.Num()))
+		{
+			const TSharedRef<FSkeletalMeshTimelineStorage>& SkeletalMeshTimelineStorage = SkeletalMeshPoseTimelineStorage[*IndexPtr];
+			return (SkeletalMeshTimelineStorage->NumExternalMorphSets > 0);
+		}
+	}
+
+	return false;
 }
 
 bool FAnimationProvider::HasAnyData() const
@@ -695,7 +761,18 @@ static FTransform ConvertTransform(int TransformSize, const float* TransformFloa
 	return FTransform(Rotation, Translation, Scale3D);
 }
 
-void FAnimationProvider::AppendSkeletalMeshComponent(uint64 InObjectId, uint64 InMeshId, double InProfileTime, double InRecordingTime, uint16 InLodIndex, uint16 InFrameCounter, const TArrayView<const float>& InComponentToWorldRaw, const TArrayView<const float>& InPoseRaw, const TArrayView<const uint32>& InCurveIds, const TArrayView<const float>& InCurveValues)
+void FAnimationProvider::AppendSkeletalMeshComponent(
+	uint64 InObjectId,
+	uint64 InMeshId,
+	double InProfileTime,
+	double InRecordingTime,
+	uint16 InLodIndex,
+	uint16 InFrameCounter,
+	const TArrayView<const float>& InComponentToWorldRaw,
+	const TArrayView<const float>& InPoseRaw,
+	const TArrayView<const uint32>& InCurveIds,
+	const TArrayView<const float>& InCurveValues)
+
 {
 	Session.WriteAccessCheck();
 
@@ -783,6 +860,127 @@ void FAnimationProvider::AppendSkeletalMeshComponent(uint64 InObjectId, uint64 I
 	Session.UpdateDurationSeconds(InProfileTime);
 }
 
+void FAnimationProvider::AppendSkeletalMeshComponent(
+	uint64 InObjectId,
+	uint64 InMeshId,
+	double InProfileTime,
+	double InRecordingTime,
+	uint16 InLodIndex,
+	uint16 InFrameCounter,
+	const TArrayView<const float>& InComponentToWorldRaw,
+	const TArrayView<const float>& InPoseRaw,
+	const TArrayView<const uint32>& InCurveIds,
+	const TArrayView<const float>& InCurveValues,
+	const TArrayView<const float>& InExternalMorphWeights,
+	const TArrayView<const int32>& InExternalMorphCounts)
+{
+	Session.WriteAccessCheck();
+
+	bHasAnyData = true;
+
+	TSharedPtr<FSkeletalMeshTimelineStorage> TimelineStorage;
+	uint32* IndexPtr = ObjectIdToSkeletalMeshPoseTimelines.Find(InObjectId);
+	if(IndexPtr != nullptr)
+	{
+		TimelineStorage = SkeletalMeshPoseTimelineStorage[*IndexPtr];
+	}
+	else
+	{
+		TimelineStorage = MakeShared<FSkeletalMeshTimelineStorage>();
+		TimelineStorage->Timeline = MakeShared<TraceServices::TIntervalTimeline<FSkeletalMeshPoseMessage>>(Session.GetLinearAllocator());
+		ObjectIdToSkeletalMeshPoseTimelines.Add(InObjectId, SkeletalMeshPoseTimelineStorage.Num());
+		SkeletalMeshPoseTimelineStorage.Add(TimelineStorage.ToSharedRef());
+	}
+
+	// terminate existing scopes
+	uint64 NumEvents = TimelineStorage->Timeline->GetEventCount();
+	if (NumEvents > 0)
+	{
+		// Add end event at current time
+		if (TimelineStorage->Timeline->GetEventEndTime(NumEvents - 1) > InProfileTime)
+		{
+			TimelineStorage->Timeline->EndEvent(NumEvents - 1, InProfileTime);
+		}
+	}
+
+	const int32 NumCurves = InCurveIds.Num();
+
+	const int CaptureTransformSize = InComponentToWorldRaw.Num();
+	const int LocalTransformSize = sizeof (FTransform) / sizeof(float);
+
+	FTransform ComponentToWorld;
+
+	if (CaptureTransformSize == LocalTransformSize)
+	{
+	 	FMemory::Memcpy(&ComponentToWorld, &InComponentToWorldRaw[0], sizeof(FTransform));
+	}
+	else
+	{
+	 	ComponentToWorld = ConvertTransform(CaptureTransformSize, &InComponentToWorldRaw[0]);
+	}
+
+	const int PoseTransformCount = InPoseRaw.Num()/CaptureTransformSize;
+
+	FSkeletalMeshPoseMessage Message;
+	Message.RecordingTime = InRecordingTime;
+	Message.ComponentToWorld = ComponentToWorld;
+	Message.TransformStartIndex = SkeletalMeshPoseTransforms.Num();
+	Message.CurveStartIndex = SkeletalMeshCurves.Num();
+	Message.ComponentId = InObjectId;
+	Message.MeshId = InMeshId;
+	Message.MeshName = GameplayProvider.GetObjectInfo(Message.MeshId).Name;
+	Message.NumTransforms = (uint16)PoseTransformCount;
+	Message.NumCurves = (uint16)NumCurves;
+	Message.LodIndex = InLodIndex;
+	Message.FrameCounter = InFrameCounter;
+	Message.ExternalMorphStartIndex = static_cast<uint64>(ExternalMorphWeights.Num());
+	Message.NumExternalMorphSets = static_cast<uint16>(InExternalMorphCounts.Num());
+
+	TimelineStorage->Timeline->AppendBeginEvent(InProfileTime, Message);
+
+	if (CaptureTransformSize == LocalTransformSize)
+	{
+		for(int i=0; i<PoseTransformCount; i++)
+		{
+			FMemory::Memcpy(&SkeletalMeshPoseTransforms.PushBack(), &InPoseRaw[CaptureTransformSize * i], sizeof(FTransform));
+		}
+	}
+	else
+	{
+		for(int i=0; i<PoseTransformCount; i++)
+		{
+			SkeletalMeshPoseTransforms.PushBack() = ConvertTransform(CaptureTransformSize, &InPoseRaw[CaptureTransformSize * i]);
+		}
+	}
+
+	for(int32 CurveIndex = 0; CurveIndex < NumCurves; ++CurveIndex)
+	{
+		SkeletalMeshCurves.PushBack() = { InCurveIds[CurveIndex], InCurveValues[CurveIndex] };
+		TimelineStorage->AllCurveIds.Add(InCurveIds[CurveIndex]);
+	}
+
+	// Save the weights of all morph targets inside each external morph set.
+	int32 WeightOffset = 0;
+	for (int32 MorphSetIndex = 0; MorphSetIndex < InExternalMorphCounts.Num(); ++MorphSetIndex)
+	{
+		// Get the weight values for the current morph set.
+		const int32 NumWeightsInMorphSet = InExternalMorphCounts[MorphSetIndex];
+		const TConstArrayView<float> SetWeights(&InExternalMorphWeights[WeightOffset], NumWeightsInMorphSet);
+
+		// Record them in our buffer by copying them.
+		FExternalMorphWeightMessage& NewWeights = ExternalMorphWeights.PushBack();
+		NewWeights.Weights = SetWeights;
+		NewWeights.NumMorphs = NumWeightsInMorphSet;
+		NewWeights.Index = MorphSetIndex;
+
+		WeightOffset += NumWeightsInMorphSet;
+	}
+
+	TimelineStorage->NumExternalMorphSets = InExternalMorphCounts.Num();
+
+	Session.UpdateDurationSeconds(InProfileTime);
+}
+	
 void FAnimationProvider::AppendName(uint32 InId, const TCHAR* InName)
 {
 	Session.WriteAccessCheck();
@@ -1527,6 +1725,36 @@ void FAnimationProvider::AppendPoseWatch(uint64 InComponentId, uint64 InAnimInst
 	}
 
 	Session.UpdateDurationSeconds(InTime);
+}
+
+void FAnimationProvider::AppendInertialization(uint64 InAnimInstanceId, double InProfileTime, double InRecordingTime, int32 InNodeId, float InWeight, EInertializationType InType)
+{
+	Session.WriteAccessCheck();
+	
+	TSharedPtr<FInertializationTimelineStorage> TimelineStorage;
+	uint32* IndexPtr = ObjectIdToInertializationTimelines.Find(InAnimInstanceId);
+	if(IndexPtr != nullptr)
+	{
+		TimelineStorage = InertializationTimelineStorage[*IndexPtr];
+	}
+	else
+	{
+		TimelineStorage = MakeShared<FInertializationTimelineStorage>();
+		TimelineStorage->Timeline = MakeShared<TraceServices::TPointTimeline<FInertializationMessage>>(Session.GetLinearAllocator());
+		TimelineStorage->Timeline->SetEnumerateOutsideRange(true);
+		ObjectIdToInertializationTimelines.Add(InAnimInstanceId, InertializationTimelineStorage.Num());
+		InertializationTimelineStorage.Add(TimelineStorage.ToSharedRef());
+	}
+	
+	
+	FInertializationMessage Message;
+	Message.AnimInstanceId = InAnimInstanceId;
+	Message.RecordingTime = InRecordingTime;
+	Message.NodeId = InNodeId;
+	Message.Weight = InWeight;
+	Message.Type = InType;
+	TimelineStorage->Timeline->AppendEvent(InProfileTime, Message);
+	TimelineStorage->NodeTypes.Add(InNodeId, InType);
 }
 
 #undef LOCTEXT_NAMESPACE

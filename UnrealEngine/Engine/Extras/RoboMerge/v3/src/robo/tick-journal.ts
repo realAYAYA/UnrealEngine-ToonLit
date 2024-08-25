@@ -10,6 +10,9 @@ export const ANALYTICS_SIMPLE_COUNTERS = {
 	// Keep track of how many successful stomp requests have been queued
 	stompQueued: 'stompreqqueued',
 
+	// Keep track of how many successful unlock requests have been queued
+	unlockQueued: 'unlockreqqueued',
+
 	// how many trace routes called (from CIS/build tools)
 	traces: 'traceroute',
 	failedTraces: 'tracefail'

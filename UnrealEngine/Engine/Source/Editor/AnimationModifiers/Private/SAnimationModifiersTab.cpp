@@ -38,7 +38,6 @@
 #include "Styling/AppStyle.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Toolkits/AssetEditorToolkit.h"
 #include "Types/SlateEnums.h"

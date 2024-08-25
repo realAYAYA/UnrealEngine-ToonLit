@@ -23,8 +23,8 @@ enum EPixelFormat : uint8
 	PF_DXT3                 =6,
 	PF_DXT5                 =7,
 	PF_UYVY                 =8,
-	PF_FloatRGB             =9, // 16F
-	PF_FloatRGBA            =10, // 16F
+	PF_FloatRGB             =9,  // FloatRGB == PF_FloatR11G11B10 , NOT 16F usually, but varies
+	PF_FloatRGBA            =10, // RGBA16F
 	PF_DepthStencil         =11,
 	PF_ShadowDepth          =12,
 	PF_R32_FLOAT            =13,
@@ -303,6 +303,8 @@ static inline bool IsBlockCompressedFormat(EPixelFormat Format)
 	return false;
 }
 
+// unclear what IsHDR is supposed to mean
+//	see also IsFloatFormat
 FORCEINLINE bool IsHDR(EPixelFormat PixelFormat)
 {
 	return PixelFormat == PF_FloatRGBA || PixelFormat == PF_BC6H || PixelFormat == PF_R16F || PixelFormat == PF_R32_FLOAT || PixelFormat == PF_A32B32G32R32F
@@ -334,6 +336,7 @@ FORCEINLINE bool IsInteger(EPixelFormat PixelFormat)
 	return false;
 }
 
+// IsFloatFormat does not include all floating point formats; see also IsHDR
 static bool IsFloatFormat(EPixelFormat Format)
 {
 	switch (Format)

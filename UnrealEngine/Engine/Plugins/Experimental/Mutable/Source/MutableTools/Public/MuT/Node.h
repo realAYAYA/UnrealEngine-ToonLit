@@ -41,13 +41,28 @@ namespace mu
 	//! Information about the type of a node, to provide some means to the tools to deal generically
 	//! with nodes.
 	//! \ingroup tools
-	struct NODE_TYPE
+	struct FNodeType
 	{
-		NODE_TYPE();
-		NODE_TYPE( const char* strName, const NODE_TYPE* pParent );
+		FNodeType();
+		FNodeType( const char* strName, const FNodeType* pParent );
 
 		const char* m_strName;
-		const NODE_TYPE* m_pParent;
+		const FNodeType* m_pParent;
+
+		inline bool IsA(const FNodeType* CandidateType) const
+		{
+			if (CandidateType == this)
+			{
+				return true;
+			}
+
+			if (m_pParent)
+			{
+				return m_pParent->IsA(CandidateType);
+			}
+
+			return false;
+		}
 	};
 
 
@@ -88,23 +103,18 @@ namespace mu
 
 		static void Serialise( const Node* pNode, OutputArchive& arch );
 		virtual void SerialiseWrapper(OutputArchive& arch) const = 0;
-		static NodePtr StaticUnserialise( InputArchive& arch );
+		static Ptr<Node> StaticUnserialise( InputArchive& arch );
 
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
 		//-----------------------------------------------------------------------------------------
 
-		//! Node type hierarchy data.
-        virtual const NODE_TYPE* GetType() const;
-		static const NODE_TYPE* GetStaticType();
+		/** Node type hierarchy data. */
+        virtual const FNodeType* GetType() const;
+		static const FNodeType* GetStaticType();
 
-		//! Generic access to graph connections
-        virtual int GetInputCount() const = 0;
-		virtual Node* GetInputNode( int i ) const = 0;
-        virtual void SetInputNode( int i, NodePtr pNode ) = 0;
-
-		//! Set the opaque context returned in messages in the compiler log.
+		/** Set the opaque context returned in messages in the compiler log. */
 		void SetMessageContext( const void* context );
 
 		//-----------------------------------------------------------------------------------------

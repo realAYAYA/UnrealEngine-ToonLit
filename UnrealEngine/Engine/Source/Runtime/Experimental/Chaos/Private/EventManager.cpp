@@ -31,14 +31,18 @@ namespace Chaos
 	void FEventManager::UnregisterHandler(const EEventType& EventType, const void* InHandler)
 	{
 		const FEventID EventID = (FEventID)EventType;
-		ContainerLock.WriteLock();
+		ContainerLock.ReadLock();
 		checkf(EventID < EventContainers.Num(), TEXT("Unregistering event Handler for an event ID that does not exist"));
 		EventContainers[EventID]->UnregisterHandler(InHandler);
-		ContainerLock.WriteUnlock();
+		ContainerLock.ReadUnlock();
 	}
 
 	void FEventManager::FillProducerData(const Chaos::FPBDRigidsSolver* Solver, bool bResetData)
 	{
+		if (BufferMode == EMultiBufferMode::Double)
+		{
+			ResourceLock.ReadLock();
+		}
 		ContainerLock.ReadLock();
 		for (FEventContainerBasePtr EventContainer : EventContainers)
 		{
@@ -48,11 +52,19 @@ namespace Chaos
 			}
 		}
 		ContainerLock.ReadUnlock();
+		if (BufferMode == EMultiBufferMode::Double)
+		{
+			ResourceLock.ReadUnlock();
+		}
 	}
 
 	void FEventManager::FlipBuffersIfRequired()
 	{
-		if (BufferMode == EMultiBufferMode::Double)
+		if (BufferMode == EMultiBufferMode::Single)
+		{
+			return;
+		}
+		else if (BufferMode == EMultiBufferMode::Double)
 		{
 			ResourceLock.WriteLock();
 		}
@@ -62,6 +74,7 @@ namespace Chaos
 		{
 			if (EventContainer)
 			{
+				EventContainer->ResetConsumerBuffer();
 				EventContainer->FlipBufferIfRequired();
 			}
 		}
@@ -75,11 +88,6 @@ namespace Chaos
 
 	void FEventManager::DispatchEvents()
 	{
-		FScopeLock ScopeLock(&AccessDeferredHandlersLock);
-
-		check(!bCurrentlyDispatchingEvents);
-		bCurrentlyDispatchingEvents = true;
-		
 		if (BufferMode == EMultiBufferMode::Double)
 		{
 			ResourceLock.ReadLock();
@@ -98,22 +106,17 @@ namespace Chaos
 		if (BufferMode == EMultiBufferMode::Double)
 		{
 			ResourceLock.ReadUnlock();
-		}
-		
-		ensure(bCurrentlyDispatchingEvents);
-		bCurrentlyDispatchingEvents = false;
-
-		// If we deferred any handler registration in RegisterHandler, complete it now. 
-		if (DeferredHandlers.Num() > 0)
+		} 
+		else if (BufferMode == EMultiBufferMode::Single)
 		{
-			ContainerLock.WriteLock();
-			for (TPair<FEventID, IEventHandler*>& DeferredHandler : DeferredHandlers)
+			for (FEventContainerBasePtr EventContainer : EventContainers)
 			{
-				checkf(DeferredHandler.Key < EventContainers.Num(), TEXT("Registering event Handler for an event ID that does not exist"));
-				EventContainers[DeferredHandler.Key]->RegisterHandler(DeferredHandler.Value);
+				if (EventContainer)
+				{
+					EventContainer->ResetConsumerBuffer();
+					EventContainer->FlipBufferIfRequired();
+				}
 			}
-			DeferredHandlers.Reset();
-			ContainerLock.WriteUnlock();
 		}
 	}
 

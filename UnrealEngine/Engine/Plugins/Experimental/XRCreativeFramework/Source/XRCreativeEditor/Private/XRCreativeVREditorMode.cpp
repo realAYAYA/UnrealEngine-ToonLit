@@ -39,14 +39,15 @@ void UXRCreativeVREditorMode::Enter()
 		return;
 	}
 
-	Super::Enter();
-
 	UXRCreativeToolset* Toolset = ToolsetClass.LoadSynchronous();
 	Avatar = Cast<AXRCreativeAvatar>(SpawnTransientSceneActor(Toolset->Avatar, "XRCreativeAvatar"));
 	Avatar->RegisterObjectForInput(this);
 	Avatar->ConfigureToolset(Toolset);
 
+	Super::Enter();
+
 	BP_OnEnter();
+	Avatar->BP_OnVRInitialize();
 }
 
 
@@ -217,10 +218,40 @@ void UXRCreativeVREditorMode::EnableStereo()
 		Viewport->EnableStereoRendering(true);
 		Viewport->SetRenderDirectlyToWindow(true);
 	}
+	
+	TSet<UInputMappingContext*> Contexts;
+	for (const TObjectPtr<UXRCreativeTool>& Tool : Avatar->GetTools())
+	{
+		if (UXRCreativeBlueprintableTool* BPTool = Cast<UXRCreativeBlueprintableTool>(Tool))
+		{
+			if (UInputMappingContext* ToolIMC = BPTool->GetToolInputMappingContext())
+			{
+				Contexts.Add(ToolIMC);
+			}
+		}
+	}
 
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UOpenXRInputFunctionLibrary::BeginXRSession(Cast<UPlayerMappableInputConfig>(MappableInputConfig.TryLoad()));
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	if (const UXRCreativeToolset* Toolset = Avatar->GetToolset())
+	{
+		if (Toolset->RightHandedInputMappingContext)
+		{
+			Contexts.Add(Toolset->RightHandedInputMappingContext);
+		}
+
+		if (Toolset->LeftHandedInputMappingContext)
+		{
+			Contexts.Add(Toolset->LeftHandedInputMappingContext);
+		}
+	}
+	
+	if (Contexts.IsEmpty())
+	{
+		UE_LOG(LogXRCreativeEditor, Warning, TEXT("No UInputMappingContexts provided in the UXRCreativeToolset. Action bindings will not be visible to the OpenXR runtime."));
+	}
+
+	Contexts.Empty(); // TODO this is a temporary fix because OpenXRInput.cpp does not respect input priorities. So instead we force it to fall back to legacy bindings because these actually work. 
+
+	UOpenXRInputFunctionLibrary::BeginXRSession(Contexts);
 }
 
 

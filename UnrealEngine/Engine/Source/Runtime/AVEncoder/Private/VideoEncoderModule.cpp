@@ -11,7 +11,9 @@ public:
 
 	void ShutdownModule()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		AVEncoder::FVideoEncoderFactory::Shutdown();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 };
 

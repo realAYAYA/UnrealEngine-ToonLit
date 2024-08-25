@@ -7,8 +7,109 @@
 #include "GLTFNode.h"
 #include "MaterialUtilities.h"
 
+#if USE_DRACO_LIBRARY
+#include "draco/mesh/mesh.h"
+#include "draco/core/decoder_buffer.h"
+#include "draco/compression/decode.h"
+#endif
+
 namespace GLTF
 {
+#if USE_DRACO_LIBRARY
+	namespace DracoHelpers
+	{
+		template <typename T>
+		void AcquireIndicesFromDracoMesh(draco::Mesh* Mesh, T* BinaryDataPtr)
+		{
+			for (size_t FaceIndex = 0; FaceIndex < Mesh->num_faces(); FaceIndex++)
+			{
+				const draco::Mesh::Face& Face = Mesh->face(draco::FaceIndex(FaceIndex));
+				BinaryDataPtr[FaceIndex * 3 + 0] = Face[0].value();
+				BinaryDataPtr[FaceIndex * 3 + 1] = Face[1].value();
+				BinaryDataPtr[FaceIndex * 3 + 2] = Face[2].value();
+			}
+		}
+
+		bool AcquireIndicesFromDracoMesh(draco::Mesh* Mesh, const FAccessor::EComponentType ComponentType, uint8* BinaryDataPtr)
+		{
+			switch (ComponentType)
+			{
+			case FAccessor::EComponentType::U8:
+				AcquireIndicesFromDracoMesh<uint8>(Mesh, BinaryDataPtr);
+				break;
+			case FAccessor::EComponentType::U16:
+				AcquireIndicesFromDracoMesh<uint16>(Mesh, reinterpret_cast<uint16*>(BinaryDataPtr));
+				break;
+			case FAccessor::EComponentType::U32:
+				AcquireIndicesFromDracoMesh<uint32>(Mesh, reinterpret_cast<uint32*>(BinaryDataPtr));
+				break;
+			case FAccessor::EComponentType::S8:
+			case FAccessor::EComponentType::S16:
+			case FAccessor::EComponentType::F32:
+			default:
+				return false;
+			}
+
+			return true;
+		}
+
+		template <typename T>
+		bool AcquireDataFromDracoAttribute(
+			const draco::PointAttribute* Attribute,
+			uint32 VertexCount,
+			uint32 Stride,
+			uint32 NumberOfComponents,
+			uint8* BinaryDataPtr)
+		{
+			size_t ByteOffset = 0;
+			TArray<T> Values;
+			Values.Reserve(NumberOfComponents);
+			Values.SetNumUninitialized(NumberOfComponents);
+
+			for (size_t VertexIndex = 0; VertexIndex < VertexCount; VertexIndex++)
+			{
+				const draco::AttributeValueIndex MappedIndex = Attribute->mapped_index(draco::PointIndex(VertexIndex));
+				if (!Attribute->ConvertValue<T>(MappedIndex, NumberOfComponents, Values.GetData()))
+				{
+					return false;
+				}
+
+				std::memcpy(BinaryDataPtr + ByteOffset, Values.GetData(), Stride);
+				ByteOffset += Stride;
+			}
+
+			return true;
+		}
+
+		bool AcquireDataFromDracoAttribute(
+			const FAccessor::EComponentType ComponentType,
+			const draco::PointAttribute* Attribute,
+			uint32 VertexCount,
+			uint32 Stride,
+			uint32 NumberOfComponents,
+			uint8* BinaryDataPtr)
+		{
+			switch (ComponentType)
+			{
+			case FAccessor::EComponentType::S8:
+				return AcquireDataFromDracoAttribute<int8>(Attribute, VertexCount, Stride, NumberOfComponents, BinaryDataPtr);
+			case FAccessor::EComponentType::U8:
+				return AcquireDataFromDracoAttribute<uint8>(Attribute, VertexCount, Stride, NumberOfComponents, BinaryDataPtr);
+			case FAccessor::EComponentType::S16:
+				return AcquireDataFromDracoAttribute<int16>(Attribute, VertexCount, Stride, NumberOfComponents, BinaryDataPtr);
+			case FAccessor::EComponentType::U16:
+				return AcquireDataFromDracoAttribute<uint16>(Attribute, VertexCount, Stride, NumberOfComponents, BinaryDataPtr);
+			case FAccessor::EComponentType::U32:
+				return AcquireDataFromDracoAttribute<uint32>(Attribute, VertexCount, Stride, NumberOfComponents, BinaryDataPtr);
+			case FAccessor::EComponentType::F32:
+				return AcquireDataFromDracoAttribute<float>(Attribute, VertexCount, Stride, NumberOfComponents, BinaryDataPtr);
+			default:
+				return false;
+			}
+		}
+	}
+#endif
+
 	namespace
 	{
 		static const TArray<FString> LightExtensions = { GLTF::ToString(GLTF::EExtension::KHR_LightsPunctual), GLTF::ToString(GLTF::EExtension::KHR_Lights) };
@@ -117,6 +218,7 @@ namespace GLTF
 			EExtension::KHR_MaterialsIOR,
 			EExtension::KHR_MaterialsSpecular,
 			EExtension::KHR_MaterialsEmissiveStrength,
+			EExtension::KHR_MaterialsIridescence,
 			EExtension::MSFT_PackingOcclusionRoughnessMetallic,
 			EExtension::MSFT_PackingNormalRoughnessMetallic 
 		};
@@ -268,6 +370,21 @@ namespace GLTF
 					}
 				}
 				break;
+				case EExtension::KHR_MaterialsIridescence:
+				{
+					const FJsonObject& Iridescence = ExtObj;
+
+					Material.Iridescence.bHasIridescence = true;
+
+					Material.Iridescence.Factor = GetScalar(Iridescence, TEXT("iridescenceFactor"), 0.0f);
+					GLTF::SetTextureMap(Iridescence, TEXT("iridescenceTexture"), nullptr, Asset->Textures, Material.Iridescence.Texture, Messages);
+					Material.Iridescence.IOR = GetScalar(Iridescence, TEXT("iridescenceIor"), 1.3f);
+
+					Material.Iridescence.Thickness.Minimum = GetScalar(Iridescence, TEXT("iridescenceThicknessMinimum"), 100.0f);
+					Material.Iridescence.Thickness.Maximum = GetScalar(Iridescence, TEXT("iridescenceThicknessMaximum"), 400.0f);
+					GLTF::SetTextureMap(Iridescence, TEXT("iridescenceThicknessTexture"), nullptr, Asset->Textures, Material.Iridescence.Thickness.Texture, Messages);
+				}
+				break;
 				default:
 					if (!ensure(false))
 					{
@@ -298,7 +415,7 @@ namespace GLTF
 		CheckExtensions(Object, Extensions);
 	}
 
-	void FExtensionsHandler::SetupPrimitiveExtensions(const FJsonObject& Object, FPrimitive& Primitive) const
+	void FExtensionsHandler::SetupPrimitiveExtensions(const FJsonObject& Object, FPrimitive& Primitive, uint32 PrimitiveIndex, const FString& MeshUniqueId) const
 	{
 		if (!Object.HasTypedField<EJson::Object>(TEXT("extensions")))
 		{
@@ -306,7 +423,8 @@ namespace GLTF
 		}
 
 		static const TArray<EExtension> Extensions = {
-			EExtension::KHR_MaterialsVariants
+			EExtension::KHR_MaterialsVariants,
+			EExtension::KHR_DracoMeshCompression
 		};
 		TArray<FString> ExtensionsStringified;
 		for (size_t ExtensionIndex = 0; ExtensionIndex < Extensions.Num(); ExtensionIndex++)
@@ -349,12 +467,91 @@ namespace GLTF
 					Asset->ProcessedExtensions.Add(EExtension::KHR_MaterialsVariants);
 				}
 				break;
+
+#if USE_DRACO_LIBRARY
+				case EExtension::KHR_DracoMeshCompression:
+				{
+					const int32 BufferViewIndex = GetIndex(ExtObj, TEXT("bufferView"));
+					if (Asset->BufferViews.IsValidIndex(BufferViewIndex))
+					{
+						const FBufferView& BufferView = Asset->BufferViews[BufferViewIndex];
+
+						const FJsonObject& AttributesObj = *ExtObj.GetObjectField(TEXT("attributes"));
+
+						draco::Decoder* Decoder = new draco::Decoder();
+
+						draco::DecoderBuffer DecoderBuffer;
+						DecoderBuffer.Init((char*)BufferView.Buffer.Data + BufferView.ByteOffset, BufferView.ByteLength);
+
+						const draco::EncodedGeometryType geom_type = draco::Decoder::GetEncodedGeometryType(&DecoderBuffer).value();
+
+						//Point Cloud is not supported by glTF
+						if (geom_type == draco::TRIANGULAR_MESH)
+						{
+							std::unique_ptr<draco::Mesh> Mesh = Decoder->DecodeMeshFromBuffer(&DecoderBuffer).value();
+
+							//Acquire Indices:
+							{
+								uint32 AccessorIndex = Primitive.GetIndicesAccessorIndex();
+								if (Asset->Accessors.IsValidIndex(AccessorIndex))
+								{
+									FAccessor& Accessor = Asset->CreateBuffersForAccessorIndex(AccessorIndex);
+
+									//Acquire uncompressed Binary Data:
+									if (!DracoHelpers::AcquireIndicesFromDracoMesh(Mesh.get(), Accessor.ComponentType, Accessor.BufferView.Buffer.Data))
+									{
+										Accessor.BufferView = FBufferView();
+										Messages.Emplace(EMessageSeverity::Warning, FString::Printf(TEXT("Failed to acquire Indices from Draco Mesh, for PrimitiveIdx: %s, in Mesh: %s"), *FString::FromInt(PrimitiveIndex), *MeshUniqueId));
+									}
+								}
+							}
+
+							//Acquire Attributes:
+							{
+								auto ProcessDracoAttribute = [this, &Primitive, &Mesh, &AttributesObj, &PrimitiveIndex, &MeshUniqueId](EMeshAttributeType MeshAttributeType)
+								{
+									if (uint32 DracoAttributeId; GetIndex(AttributesObj, *ToString(MeshAttributeType), DracoAttributeId))
+									{
+										//In a draco compression description the Attributes hold the unique attribute Identifier for within the compressed data.
+										//(Compared to the 'basic' Attributes which hold the indices of the actual Accessor from within the Accessors list.)
+
+										const draco::PointAttribute* Attribute = Mesh->GetAttributeByUniqueId(DracoAttributeId);
+										if (Attribute != nullptr)
+										{
+											uint32 AccessorIndex = Primitive.GetAttributeAccessorIndex(MeshAttributeType);
+											if (Asset->Accessors.IsValidIndex(AccessorIndex))
+											{
+												FAccessor& Accessor = Asset->CreateBuffersForAccessorIndex(AccessorIndex);
+
+												//Acquire uncompressed Binary Data:
+												if (!DracoHelpers::AcquireDataFromDracoAttribute(Accessor.ComponentType, Attribute, Accessor.Count, Accessor.ByteStride, Accessor.NumberOfComponents, Accessor.BufferView.Buffer.Data))
+												{
+													//Clear out the BufferView so it is not used:
+													Accessor.BufferView = FBufferView();
+													Messages.Emplace(EMessageSeverity::Warning, FString::Printf(TEXT("Failed to acquire %s Attributes from Draco Mesh, for PrimitiveIdx: %s, in Mesh: %s"), *ToString(MeshAttributeType), *FString::FromInt(PrimitiveIndex), *MeshUniqueId));
+												}
+											}
+										}
+									}
+								};
+
+								for (size_t AttirbuteType = 0; AttirbuteType < EMeshAttributeType::COUNT; AttirbuteType++)
+								{
+									ProcessDracoAttribute(EMeshAttributeType(AttirbuteType));
+								}
+							}
+						}
+					}
+				}
+				break;
+#endif
+
 				default:
 					if (!ensure(false))
 					{
 						Messages.Emplace(RuntimeWarningSeverity(), FString::Printf(TEXT("Primitive.Extension not supported: %s"), *ToString(Extension)));
 					}
-					break;
+				break;
 			}
 		}
 

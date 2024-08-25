@@ -128,6 +128,7 @@ void FTextProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Value, v
 
 void FTextProperty::ExportText_Internal( FString& ValueStr, const void* PropertyValueOrContainer, EPropertyPointerType PropertyPointerType, const void* DefaultValue, UObject* Parent, int32 PortFlags, UObject* ExportRootScope ) const
 {
+	// get current value:
 	FText TextValue;
 	if (PropertyPointerType == EPropertyPointerType::Container && HasGetter())
 	{
@@ -138,7 +139,8 @@ void FTextProperty::ExportText_Internal( FString& ValueStr, const void* Property
 		TextValue = GetPropertyValue(PointerToValuePtr(PropertyValueOrContainer, PropertyPointerType));
 	}
 
-	if (PortFlags & PPF_PropertyWindow)
+	// export based on flags:
+	auto WriteSimpleTextToBuffer = [&ValueStr, &TextValue, PortFlags]()
 	{
 		if (PortFlags & PPF_Delimited)
 		{
@@ -150,10 +152,34 @@ void FTextProperty::ExportText_Internal( FString& ValueStr, const void* Property
 		{
 			ValueStr += TextValue.ToString();
 		}
+	};
+
+	auto WriteComplexTextToBuffer = [&ValueStr, &TextValue, PortFlags]()
+	{
+		FTextStringHelper::WriteToBuffer(ValueStr, TextValue, !!(PortFlags & PPF_Delimited));
+	};
+
+	if (PortFlags & PPF_ForDiff)
+	{
+		if (TextValue.IsCultureInvariant() || TextValue.IsFromStringTable())
+		{
+			// Invariant and StringTable text values still need to export in their complex text form for diffing to avoid invariant and non-invariant text, 
+			// and different StringTable values that have a different ID but the same display string from being considered identical
+			WriteComplexTextToBuffer();
+		}
+		else
+		{
+			// Any other kind of text should exported as a simple string, to avoid ID changes from instancing text into other packages from being treated as significant
+			WriteSimpleTextToBuffer();
+		}
+	}
+	else if (PortFlags & PPF_PropertyWindow)
+	{
+		WriteSimpleTextToBuffer();
 	}
 	else
 	{
-		FTextStringHelper::WriteToBuffer(ValueStr, TextValue, !!(PortFlags & PPF_Delimited));
+		WriteComplexTextToBuffer();
 	}
 }
 

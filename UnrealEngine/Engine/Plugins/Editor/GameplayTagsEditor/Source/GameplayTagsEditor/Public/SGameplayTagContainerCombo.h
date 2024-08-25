@@ -8,7 +8,6 @@
 #include "Widgets/Views/SListView.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "GameplayTagContainer.h"
-#include "EditorUndoClient.h"
 #include "SGameplayTagChip.h"
 
 class IPropertyHandle;
@@ -21,7 +20,7 @@ class SComboButton;
 /**
  * Widget for editing a Gameplay Tag Container.
  */
-class SGameplayTagContainerCombo : public SCompoundWidget, public FEditorUndoClient
+class SGameplayTagContainerCombo : public SCompoundWidget
 {
 	SLATE_DECLARE_WIDGET(SGameplayTagContainerCombo, SCompoundWidget)
 	
@@ -64,18 +63,13 @@ public:
 	SLATE_END_ARGS();
 
 	GAMEPLAYTAGSEDITOR_API SGameplayTagContainerCombo();
-	GAMEPLAYTAGSEDITOR_API virtual ~SGameplayTagContainerCombo() override;
 
 	GAMEPLAYTAGSEDITOR_API void Construct(const FArguments& InArgs);
 
-protected:
-	//~ Begin FEditorUndoClient Interface
-	virtual void PostUndo(bool bSuccess) override;
-	virtual void PostRedo(bool bSuccess) override;
-	//~ End FEditorUndoClient Interface
-
 private:
 
+	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
+	
 	struct FEditableItem
 	{
 		FEditableItem() = default;
@@ -97,6 +91,7 @@ private:
 	TSharedRef<SWidget> OnGetMenuContent();
 	
 	FReply OnTagMenu(const FPointerEvent& MouseEvent, const FGameplayTag GameplayTag);
+	FReply OnEmptyMenu(const FPointerEvent& MouseEvent);
 	FReply OnEditClicked(const FGameplayTag TagToHilight);
 	FReply OnClearAllClicked();
 	FReply OnClearTagClicked(const FGameplayTag TagToClear);
@@ -115,7 +110,6 @@ private:
 	FString Filter;
 	FString SettingsName;
 	bool bIsReadOnly = false;
-	bool bRegisteredForUndo = false;
 	FOnTagContainerChanged OnTagContainerChanged;
 	TSharedPtr<IPropertyHandle> PropertyHandle;
 	TSharedPtr<SMenuAnchor> MenuAnchor;

@@ -70,6 +70,6 @@ public:
 
 public:
 	/** Create a request object that is used to actually start a session with these settings */
-	UFUNCTION(BlueprintCallable, BlueprintPure=false)
-	UCommonSession_HostSessionRequest* CreateHostingRequest() const;
+	UFUNCTION(BlueprintCallable, BlueprintPure=false, meta = (WorldContext = "WorldContextObject"))
+	UCommonSession_HostSessionRequest* CreateHostingRequest(const UObject* WorldContextObject) const;
 };

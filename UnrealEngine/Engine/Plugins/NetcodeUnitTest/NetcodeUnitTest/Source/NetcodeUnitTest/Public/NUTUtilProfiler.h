@@ -25,7 +25,7 @@ public:
 	 * @param InTargetEvent				The event to be targeted/probed
 	 * @param InFramePercentThreshold	The percentage of frame time used by the event, needed to trigger detection
 	 */
-	FFrameProfiler(FName InTargetEvent, uint8 InFramePercentThreshold)
+	FFrameProfiler(FName InTargetEvent, int32 InFramePercentThreshold)
 		: TargetEvent(InTargetEvent)
 		, FramePercentThreshold(InFramePercentThreshold)
 		, bActive(false)
@@ -73,7 +73,7 @@ public:
 	FName TargetEvent;
 
 	/** The percentage of frame time used by the event needed to trigger detection */
-	uint8 FramePercentThreshold;
+	int32 FramePercentThreshold;
 
 
 protected:

@@ -19,16 +19,16 @@ namespace UE::HLSL
 struct FLightSceneData
 {
 	// Position of the light in world space.
-	FLWCVector3 WorldPosition;
+	FDFVector3 WorldPosition;
 
 	// 1 / light's falloff radius from Position.
 	float InvRadius;
 
-	// Color of the light.
-	float4 Color;
-
 	// The exponent for the falloff of the light intensity from the distance.
 	float FalloffExponent;
+
+	// Color of the light.
+	float4 Color;
 
 	// Direction of the light if applies.
 	float3 Direction;
@@ -65,8 +65,15 @@ struct FLightSceneData
 
 	float InverseExposureBlend;
 
+	// could pack IESAtlasIndex with other data in the future since it doesn't require 32 bits
+	// FLocalLightData packs it in 16 bits (see UnpackLigthIESAtlasIndex(...))
+	// could probably go down to 8 bits (with some logic in GIESTextureManager to warn about overflow)
+	float IESAtlasIndex;
+
 	// Extra fields
 	uint LightTypeAndShadowMapChannelMaskPacked;
+
+	float2 Padding;
 };
 
 #ifdef __cplusplus

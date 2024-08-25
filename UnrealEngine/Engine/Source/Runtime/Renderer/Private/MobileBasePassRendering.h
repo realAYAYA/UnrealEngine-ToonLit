@@ -25,22 +25,29 @@
 #include "SkyAtmosphereRendering.h"
 #include "RenderUtils.h"
 #include "DebugViewModeRendering.h"
+#include "LocalFogVolumeRendering.h"
+#include "DBufferTextures.h"
+#include "CompositionLighting/PostProcessDeferredDecals.h"
 
-bool MobileForwardEnablePrepassLocalLights(const FStaticShaderPlatform Platform);
+bool MobileLocalLightsBufferEnabled(const FStaticShaderPlatform Platform);
+bool MobileMergeLocalLightsInPrepassEnabled(const FStaticShaderPlatform Platform);
+bool MobileMergeLocalLightsInBasepassEnabled(const FStaticShaderPlatform Platform);
 
 struct FMobileBasePassTextures
 {
 	FRDGTextureRef ScreenSpaceAO = nullptr;
+	FDBufferTextures DBufferTextures = {};
 };
 
 BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FMobileBasePassUniformParameters, )
 	SHADER_PARAMETER(float, AmbientOcclusionStaticFraction)
 	SHADER_PARAMETER_STRUCT(FFogUniformParameters, Fog)
+	SHADER_PARAMETER_STRUCT(FLocalFogVolumeUniformParameters, LFV)
 	SHADER_PARAMETER_STRUCT(FForwardLightData, Forward)
 	SHADER_PARAMETER_STRUCT(FForwardLightData, ForwardMMV)
 	SHADER_PARAMETER_STRUCT(FPlanarReflectionUniformParameters, PlanarReflection) // Single global planar reflection for the forward pass.
 	SHADER_PARAMETER_STRUCT(FMobileSceneTextureUniformParameters, SceneTextures)
-	SHADER_PARAMETER_STRUCT(FStrataMobileForwardPassUniformParameters, Strata)
+	SHADER_PARAMETER_STRUCT(FSubstrateMobileForwardPassUniformParameters, Substrate)
 	SHADER_PARAMETER_STRUCT(FDebugViewModeUniformParameters, DebugViewMode)
 	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, QuadOverdraw)
 	SHADER_PARAMETER_STRUCT(FReflectionUniformParameters, ReflectionsParameters)
@@ -52,6 +59,7 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FMobileBasePassUniformParameters, )
 	SHADER_PARAMETER_SAMPLER(SamplerState, AmbientOcclusionSampler)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ScreenSpaceShadowMaskTexture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, ScreenSpaceShadowMaskSampler)
+	SHADER_PARAMETER_STRUCT_INCLUDE(FDBufferParameters, DBuffer)
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 
 enum class EMobileBasePass
@@ -97,12 +105,20 @@ enum EOutputFormat
 	HDR_LINEAR_64,
 };
 
-enum EMobileLocalLightSetting
+EMobileLocalLightSetting GetMobileForwardLocalLightSetting(EShaderPlatform ShaderPlatform);
+
+enum class EMobileTranslucentColorTransmittanceMode
 {
-	LOCAL_LIGHTS_DISABLED,
-	LOCAL_LIGHTS_ENABLED,
-	LOCAL_LIGHTS_PREPASS_ENABLED
+	DEFAULT,
+	DUAL_SRC_BLENDING,
+	PROGRAMMABLE_BLENDING,
+	SINGLE_SRC_BLENDING, // Grey transmittance
 };
+
+EMobileTranslucentColorTransmittanceMode MobileDefaultTranslucentColorTransmittanceMode(EShaderPlatform Platform);
+EMobileTranslucentColorTransmittanceMode MobileActiveTranslucentColorTransmittanceMode(EShaderPlatform Platform, bool bExplicitDefaultMode);
+bool MaterialRequiresColorTransmittanceBlending(const FMaterialShaderParameters& MaterialParameters);
+bool ShouldCacheShaderForColorTransmittanceFallback(const FMaterialShaderPermutationParameters& Parameters, EMobileTranslucentColorTransmittanceMode TranslucentColorTransmittanceFallback);
 
 bool ShouldCacheShaderByPlatformAndOutputFormat(EShaderPlatform Platform, EOutputFormat OutputFormat);
 // shared defines for mobile base pass VS and PS
@@ -147,27 +163,18 @@ public:
 	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FMeshMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-
-		// @lh-todo:
-		//		This is a workaround to prevent Z-fighting due to a mismatch between HLSLCC compiled shaders (from cooked materials) and DXC compiled shaders (from user materials).
-		//		It effectively disables CVar "r.Shaders.ForceDXC" which we partially enabled during the HLSLCC to DXC transition for certain platform backends.
-		if (!Strata::IsStrataEnabled())
-		{
-			OutEnvironment.SetCompileArgument(TEXT("WORKAROUND_DISABLE_rShadersForceDXC"), true);
-		}
 	}
 
 	void GetShaderBindings(
 		const FScene* Scene,
-		ERHIFeatureLevel::Type FeatureLevel,
+		const FStaticFeatureLevel FeatureLevel,
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const TMobileBasePassShaderElementData<LightMapPolicyType>& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 		LightMapPolicyType::GetVertexShaderBindings(
 			PrimitiveSceneProxy,
@@ -247,12 +254,6 @@ public:
 		FMeshMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		// Modify compilation environment depending upon material shader quality level settings.
 		ModifyCompilationEnvironmentForQualityLevel(Parameters.Platform, Parameters.MaterialParameters.QualityLevel, OutEnvironment);
-
-		// @lh-todo: Same workaround as for the VS of MobileBasePass. See TMobileBasePassVSPolicyParamType::ModifyCompilationEnvironment for details.
-		if (!Strata::IsStrataEnabled())
-		{
-			OutEnvironment.SetCompileArgument(TEXT("WORKAROUND_DISABLE_rShadersForceDXC"), true);
-		}
 	}
 
 	/** Initialization constructor. */
@@ -278,11 +279,10 @@ private:
 public:
 	void GetShaderBindings(
 		const FScene* Scene,
-		ERHIFeatureLevel::Type FeatureLevel,
+		const FStaticFeatureLevel FeatureLevel,
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const TMobileBasePassShaderElementData<LightMapPolicyType>& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const;
 
@@ -316,11 +316,12 @@ public:
 
 namespace MobileBasePass
 {
+	bool IsUsingDirectionalLightForLighmapPolicySelection(const FScene* Scene);
+
 	ELightMapPolicyType SelectMeshLightmapPolicy(
 		const FScene* Scene, 
 		const FMeshBatch& MeshBatch, 
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy, 
-		const FLightSceneInfo* MobileDirectionalLight, 
 		bool bPrimReceivesCSM, 
 		bool bUsedDeferredShading,
 		bool bIsLitMaterial,
@@ -355,7 +356,7 @@ namespace MobileBasePass
 	}
 };
 
-template< typename LightMapPolicyType, EOutputFormat OutputFormat, bool bEnableSkyLight, EMobileLocalLightSetting LocalLightSetting>
+template< typename LightMapPolicyType, EOutputFormat OutputFormat, bool bEnableSkyLight, EMobileLocalLightSetting LocalLightSetting, EMobileTranslucentColorTransmittanceMode TranslucentColorTransmittanceFallback = EMobileTranslucentColorTransmittanceMode::DEFAULT>
 class TMobileBasePassPS : public TMobileBasePassPSBaseType<LightMapPolicyType>
 {
 	DECLARE_SHADER_TYPE(TMobileBasePassPS,MeshMaterial);
@@ -376,23 +377,26 @@ public:
 		}
 		
 		const bool bDeferredShadingEnabled = IsMobileDeferredShadingEnabled(Parameters.Platform);
-		const bool bMaterialUsesForwardShading = bIsLit && 
-			(IsTranslucentBlendMode(Parameters.MaterialParameters) || Parameters.MaterialParameters.ShadingModels.HasShadingModel(MSM_SingleLayerWater));
+		const bool bIsTranslucent = IsTranslucentBlendMode(Parameters.MaterialParameters) || Parameters.MaterialParameters.ShadingModels.HasShadingModel(MSM_SingleLayerWater);
+		const bool bMaterialUsesForwardShading = bIsLit && bIsTranslucent;
 		// Translucent materials always support clustered shading on mobile deferred
 		const bool bForwardShading = !bDeferredShadingEnabled || bMaterialUsesForwardShading;
-		const bool bSupportsLocalLights = bForwardShading && MobileForwardEnableLocalLights(Parameters.Platform);
 
+		EMobileLocalLightSetting SupportedLocalLightsType = EMobileLocalLightSetting::LOCAL_LIGHTS_DISABLED;
+		if (bForwardShading && bIsLit)
+		{
+			SupportedLocalLightsType = GetMobileForwardLocalLightSetting(Parameters.Platform);
+		}
 		// Deferred shading does not need SkyLight and LocalLight permutations
 		// TODO: skip skylight permutations for deferred	
 		bool bEnableLocalLights = LocalLightSetting != EMobileLocalLightSetting::LOCAL_LIGHTS_DISABLED;
-		const bool bShouldCacheByShading = (bForwardShading || !bEnableLocalLights);
-		const bool bShouldCacheByLocalLights = !bEnableLocalLights || (bIsLit && bEnableLocalLights == bSupportsLocalLights);
+		const bool bShouldCacheByLocalLights = !bEnableLocalLights || (bIsLit && (SupportedLocalLightsType == LocalLightSetting));
 
 		return TMobileBasePassPSBaseType<LightMapPolicyType>::ShouldCompilePermutation(Parameters) && 
 				ShouldCacheShaderByPlatformAndOutputFormat(Parameters.Platform, OutputFormat) && 
 				bShouldCacheBySkylight && 
-				bShouldCacheByLocalLights &&
-				bShouldCacheByShading;
+				bShouldCacheByLocalLights && 
+				ShouldCacheShaderForColorTransmittanceFallback(Parameters, TranslucentColorTransmittanceFallback);
 	}
 	
 	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
@@ -401,19 +405,47 @@ public:
 
 		const bool bMobileUsesShadowMaskTexture = MobileUsesShadowMaskTexture(Parameters.Platform);
 		const bool bEnableClusteredReflections = MobileForwardEnableClusteredReflections(Parameters.Platform);
+		const bool bDeferredShadingEnabled = IsMobileDeferredShadingEnabled(Parameters.Platform);
 		const bool bTranslucentMaterial = IsTranslucentBlendMode(Parameters.MaterialParameters) || Parameters.MaterialParameters.ShadingModels.HasShadingModel(MSM_SingleLayerWater);
+		const bool bIsLit = Parameters.MaterialParameters.ShadingModels.IsLit();
+		const bool bMaterialUsesForwardShading = bIsLit && bTranslucentMaterial;
+		// Translucent materials always support clustered shading on mobile deferred
+		const bool bForwardShading = !bDeferredShadingEnabled || bMaterialUsesForwardShading;
+		// Only stationary skylights contribute into basepass with deferred shading materials. Has to do this test as on some project configurations we dont have a separate permutation for no-skylight
+		const bool bEnableSkylightInBasePass = bEnableSkyLight && (bForwardShading || FReadOnlyCVARCache::EnableStationarySkylight());
 
 		TMobileBasePassPSBaseType<LightMapPolicyType>::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("ENABLE_SKY_LIGHT"), bEnableSkyLight);
+		OutEnvironment.SetDefine(TEXT("ENABLE_SKY_LIGHT"), bEnableSkylightInBasePass);
 		OutEnvironment.SetDefine(TEXT("ENABLE_AMBIENT_OCCLUSION"), IsMobileAmbientOcclusionEnabled(Parameters.Platform) ? 1u : 0u);
 		
 		FForwardLightingParameters::ModifyCompilationEnvironment(Parameters.Platform, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("ENABLE_CLUSTERED_LIGHTS"), (LocalLightSetting == EMobileLocalLightSetting::LOCAL_LIGHTS_ENABLED) ? 1u : 0u);
 
 		// Translucent materials don't write to depth so cannot use prepass
-		OutEnvironment.SetDefine(TEXT("PREPASS_LOCAL_LIGHTS_MOBILE"), !bTranslucentMaterial && (LocalLightSetting == EMobileLocalLightSetting::LOCAL_LIGHTS_PREPASS_ENABLED) ? 1u: 0u);
+		uint32 MergedLocalLights = 0u;
+		if (LocalLightSetting == EMobileLocalLightSetting::LOCAL_LIGHTS_BUFFER)
+		{
+			if (MobileMergeLocalLightsInPrepassEnabled(Parameters.Platform) && !bTranslucentMaterial)
+			{
+				MergedLocalLights = 1u;
+			}
+			else if (MobileMergeLocalLightsInBasepassEnabled(Parameters.Platform) || bTranslucentMaterial)
+			{
+				MergedLocalLights = 2u;
+			}
+		}
+		OutEnvironment.SetDefine(TEXT("MERGED_LOCAL_LIGHTS_MOBILE"), MergedLocalLights);
 		OutEnvironment.SetDefine(TEXT("ENABLE_CLUSTERED_REFLECTION"), bEnableClusteredReflections ? 1u : 0u);
 		OutEnvironment.SetDefine(TEXT("USE_SHADOWMASKTEXTURE"), bMobileUsesShadowMaskTexture && !bTranslucentMaterial ? 1u : 0u);
+		OutEnvironment.SetDefine(TEXT("ENABLE_DBUFFER_TEXTURES"), Parameters.MaterialParameters.MaterialDomain == MD_Surface ? 1u : 0u);
+		EMobileTranslucentColorTransmittanceMode TranslucentColorTransmittanceMode = EMobileTranslucentColorTransmittanceMode::DEFAULT;
+		if (Parameters.MaterialParameters.ShadingModels.HasShadingModel(MSM_ThinTranslucent))
+		{
+			TranslucentColorTransmittanceMode = (TranslucentColorTransmittanceFallback == EMobileTranslucentColorTransmittanceMode::DEFAULT) ? MobileDefaultTranslucentColorTransmittanceMode(Parameters.Platform) : TranslucentColorTransmittanceFallback;
+		}
+		OutEnvironment.SetDefine(TEXT("MOBILE_TRANSLUCENT_COLOR_TRANSMITTANCE_DUAL_SRC_BLENDING"), TranslucentColorTransmittanceMode == EMobileTranslucentColorTransmittanceMode::DUAL_SRC_BLENDING ? 1u : 0u);
+		OutEnvironment.SetDefine(TEXT("MOBILE_TRANSLUCENT_COLOR_TRANSMITTANCE_PROGRAMMABLE_BLENDING"), TranslucentColorTransmittanceMode == EMobileTranslucentColorTransmittanceMode::PROGRAMMABLE_BLENDING ? 1u : 0u);
+		OutEnvironment.SetDefine(TEXT("MOBILE_TRANSLUCENT_COLOR_TRANSMITTANCE_SINGLE_SRC_BLENDING"), TranslucentColorTransmittanceMode == EMobileTranslucentColorTransmittanceMode::SINGLE_SRC_BLENDING ? 1u : 0u);
 	}
 	
 	/** Initialization constructor. */
@@ -448,7 +480,6 @@ public:
 	FMobileBasePassMeshProcessor(
 		EMeshPass::Type InMeshPassType,
 		const FScene* InScene,
-		ERHIFeatureLevel::Type InFeatureLevel,
 		const FSceneView* InViewIfDynamicMeshCommand,
 		const FMeshPassProcessorRenderState& InDrawRenderState,
 		FMeshPassDrawListContext* InDrawListContext,

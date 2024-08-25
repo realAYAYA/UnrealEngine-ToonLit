@@ -10,20 +10,13 @@ class SWidget;
 namespace UE::AnimNext::Editor
 {
 
-class FAssetTypeActions_AnimNextGraph;
 struct FParameterPickerArgs;
 
-class FModule : public IModuleInterface
+class IModule : public IModuleInterface
 {
 public:
 	// Create a parameter picker
-	TSharedPtr<SWidget> CreateParameterPicker(const FParameterPickerArgs& InArgs);
-	
-private:
-	virtual void StartupModule() override;
-	virtual void ShutdownModule() override;
-
-	TSharedPtr<FAssetTypeActions_AnimNextGraph> AssetTypeActions_AnimNextGraph;
+	virtual TSharedRef<SWidget> CreateParameterPicker(const FParameterPickerArgs& InArgs) = 0;
 };
 
 }

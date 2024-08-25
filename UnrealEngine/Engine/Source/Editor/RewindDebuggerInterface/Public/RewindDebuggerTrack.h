@@ -2,8 +2,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "IRewindDebuggerViewCreator.h"
 #include "IRewindDebugger.h"
+#include "Widgets/SWidget.h"
+#include "Textures/SlateIcon.h"
 
 namespace TraceServices
 {
@@ -18,7 +19,7 @@ namespace RewindDebugger
 class FRewindDebuggerTrack
 {
 public:
-	FRewindDebuggerTrack(): bExpanded(true), bVisible(true)
+	FRewindDebuggerTrack()
 	{
 	}
 
@@ -34,6 +35,41 @@ public:
 	void SetIsExpanded(bool bIsExpanded)
 	{
 		bExpanded = bIsExpanded;
+	}
+	
+	bool GetIsSelected()
+	{
+		return bSelected;
+	}
+
+	void SetIsSelected(bool bIsSelected)
+	{
+		bSelected = bIsSelected;
+	}
+    		
+	bool GetIsTreeHovered()
+	{
+		return bTreeHovered;
+	}
+	
+	void SetIsTreeHovered(bool bIsHovered)
+   	{
+   		bTreeHovered = bIsHovered;
+   	}	
+		
+	bool GetIsTrackHovered()
+	{
+		return bTrackHovered;
+	}
+	
+	void SetIsTrackHovered(bool bIsHovered)
+   	{
+   		bTrackHovered = bIsHovered;
+   	}
+	
+	bool GetIsHovered()
+	{
+		return bTrackHovered || bTreeHovered;
 	}
 
 	// Update should do work to compute children etc for the current time range.  Return true if children have changed.
@@ -58,12 +94,6 @@ public:
 	FName GetName() const
 	{
 		return GetNameInternal();
-	}
-	
-	// unique name for track (must match creator name if track is created by an IRewindDebuggerViewCreator) 
-	int GetSortOrderPriority() const
-	{
-		return GetSortOrderPriorityInternal();
 	}
 
 	// icon to display in the tree view
@@ -115,7 +145,6 @@ private:
 	virtual TSharedPtr<SWidget> GetDetailsViewInternal() { return TSharedPtr<SWidget>(); }
 	virtual FSlateIcon GetIconInternal() { return FSlateIcon(); }
 	virtual FName GetNameInternal() const { return ""; }
-	virtual int GetSortOrderPriorityInternal() const { return 0; }
 	virtual FText GetDisplayNameInternal() const { return FText(); }
 	virtual uint64 GetObjectIdInternal() const { return 0; }
 	virtual bool HasDebugDataInternal() const { return true; }
@@ -127,8 +156,11 @@ private:
 		return true;
 	};
 
-	bool bExpanded;
-	bool bVisible;
+	bool bSelected : 1 = false;
+	bool bTrackHovered : 1 = false;
+	bool bTreeHovered : 1 = false;
+	bool bExpanded : 1 = true;
+	bool bVisible : 1 = true;
 };
 	
 }

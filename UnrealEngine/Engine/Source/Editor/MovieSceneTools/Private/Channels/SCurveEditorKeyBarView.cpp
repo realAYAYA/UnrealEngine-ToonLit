@@ -27,7 +27,6 @@
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/ISlateStyle.h"
-#include "Templates/ChooseClass.h"
 
 class FCurveModel;
 class FMenuBuilder;

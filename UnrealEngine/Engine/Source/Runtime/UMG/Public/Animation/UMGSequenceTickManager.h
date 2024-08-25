@@ -7,11 +7,6 @@
 #include "UObject/Object.h"
 #include "MovieSceneLatentActionManager.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-	#include "MovieSceneSequenceTickManager.h"
-	#include "EntitySystem/MovieSceneEntitySystemRunner.h"
-#endif
-
 #include "UMGSequenceTickManager.generated.h"
 
 class FMovieSceneEntitySystemRunner;

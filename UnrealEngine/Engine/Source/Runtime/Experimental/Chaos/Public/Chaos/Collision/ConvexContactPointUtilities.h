@@ -3,9 +3,10 @@
 
 #include "Chaos/Core.h"
 #include "Chaos/Capsule.h"
+#include "Chaos/Collision/ContactPoint.h"
 #include "Chaos/Triangle.h"
 
-namespace Chaos
+namespace Chaos:: Private
 {
 	// Project a convex onto an axis and return the projected range as well as the vertex indices that bound the range
 	template <typename ConvexType>
@@ -69,10 +70,31 @@ namespace Chaos
 		else
 		{
 			MinVertexIndex = 1;
-			MaxVertexIndex = 01;
+			MaxVertexIndex = 0;
 			PMin = D1;
 			PMax = D0;
 		}
 	}
+}
 
+namespace Chaos
+{
+	template <typename ConvexType>
+	UE_DEPRECATED(5.4, "Not part of public API")
+	inline void ProjectOntoAxis(const ConvexType& Convex, const FVec3& AxisN, const FVec3& AxisX, FReal& PMin, FReal& PMax, int32& MinVertexIndex, int32& MaxVertexIndex, TArrayView<FReal>* VertexDs)
+	{
+		return Private::ProjectOntoAxis(Convex, AxisN, AxisX, PMin, PMax, MinVertexIndex, MaxVertexIndex, VertexDs);
+	}
+
+	UE_DEPRECATED(5.4, "Not part of public API")
+	inline void ProjectOntoAxis(const FTriangle& Triangle, const FVec3& AxisN, const FVec3& AxisX, FReal& PMin, FReal& PMax, int32& MinVertexIndex, int32& MaxVertexIndex)
+	{
+		return Private::ProjectOntoAxis(Triangle, AxisN, AxisX, PMin, PMax, MinVertexIndex, MaxVertexIndex);
+	}
+
+	UE_DEPRECATED(5.4, "Not part of public API")
+	inline void ProjectOntoAxis(const FCapsule& Capsule, const FVec3& AxisN, const FVec3& AxisX, FReal& PMin, FReal& PMax, int32& MinVertexIndex, int32& MaxVertexIndex)
+	{
+		return Private::ProjectOntoAxis(Capsule, AxisN, AxisX, PMin, PMax, MinVertexIndex, MaxVertexIndex);
+	}
 }

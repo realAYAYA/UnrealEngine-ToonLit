@@ -26,45 +26,42 @@ void UInAppPurchaseRestoreCallbackProxy2::Trigger(const TArray<FInAppPurchasePro
 	bool bFailedToEvenSubmit = true;
 
 	WorldPtr = nullptr;
-	APlayerState* PlayerState = nullptr;
-	if (PlayerController != nullptr)
+	if (PlayerController)
 	{
 		WorldPtr = PlayerController->GetWorld();
-		PlayerState = ToRawPtr(PlayerController->PlayerState);
-	}
-
-	if (PlayerState != nullptr)
-	{
-		if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
+		if (APlayerState* PlayerState = ToRawPtr(PlayerController->PlayerState))
 		{
-			PurchaseInterface = OnlineSub->GetPurchaseInterface();
-			if (PurchaseInterface.IsValid())
+			if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
 			{
-				bFailedToEvenSubmit = false;
+				PurchaseInterface = OnlineSub->GetPurchaseInterface();
+				if (PurchaseInterface.IsValid())
+				{
+					bFailedToEvenSubmit = false;
 
-				check(PlayerController);
-				PurchasingPlayer = (*PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId()).AsShared();
-				PurchaseInterface->QueryReceipts(*PurchasingPlayer, true, FOnQueryReceiptsComplete::CreateUObject(this, &UInAppPurchaseRestoreCallbackProxy2::OnQueryReceiptsComplete));
+					check(PlayerController);
+					PurchasingPlayer = (*PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId()).AsShared();
+					PurchaseInterface->QueryReceipts(*PurchasingPlayer, true, FOnQueryReceiptsComplete::CreateUObject(this, &UInAppPurchaseRestoreCallbackProxy2::OnQueryReceiptsComplete));
+				}
+				else
+				{
+					FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseRestoreCallbackProxy2::Trigger - In-App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
+				}
 			}
 			else
 			{
-				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseRestoreCallbackProxy2::Trigger - In-App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
+				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseRestoreCallbackProxy2::Trigger - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
 			}
 		}
 		else
 		{
-			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseRestoreCallbackProxy2::Trigger - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
+			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseRestoreCallbackProxy2::Trigger - Invalid player state"), ELogVerbosity::Warning);
 		}
-	}
-	else
-	{
-		FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseRestoreCallbackProxy2::Trigger - Invalid player state"), ELogVerbosity::Warning);
-	}
 
-	if (bFailedToEvenSubmit && (PlayerController != NULL))
-	{
-		bWasSuccessful = false;
-		OnInAppPurchaseRestoreComplete();
+		if (bFailedToEvenSubmit)
+		{
+			bWasSuccessful = false;
+			OnInAppPurchaseRestoreComplete();
+		}
 	}
 }
 

@@ -4,6 +4,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Layout/WidgetPath.h"
+#include "RemoteControlSettings.h"
 
 void SRCHeaderRow::Construct(const FArguments& InArgs)
 {
@@ -12,6 +13,7 @@ void SRCHeaderRow::Construct(const FArguments& InArgs)
 	TArray<SHeaderRow::FColumn*> Slots;
 	for (FColumn* const Column : InArgs.Slots)
 	{
+		Column->bIsVisible = !InArgs._HiddenColumnsList.Contains(Column->ColumnId);
 		Columns.Add(Column);
 		SHeaderRow::FColumn* HeaderRowSlot = CreateHeaderRowColumn(*Column);
 		Slots.Add(HeaderRowSlot);
@@ -21,6 +23,7 @@ void SRCHeaderRow::Construct(const FArguments& InArgs)
 	HeaderRowArgs._Style = InArgs._Style;
 	HeaderRowArgs.Slots = Slots;
 	HeaderRowArgs._CanSelectGeneratedColumn = InArgs._CanSelectGeneratedColumn;
+	HeaderRowArgs._HiddenColumnsList = InArgs._HiddenColumnsList;
 	SHeaderRow::Construct(HeaderRowArgs);
 }
 
@@ -118,9 +121,39 @@ void SRCHeaderRow::ToggleOverriddenGeneratedColumn(FName ColumnId)
 			break;
 		}
 	}
+
+	StoreHiddenColumnsSettings();
 }
 
 ECheckBoxState SRCHeaderRow::GetOverriddenGeneratedColumnCheckedState(FName ColumnId) const
 {
 	return IsColumnGenerated(ColumnId) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+}
+
+void SRCHeaderRow::StoreHiddenColumnsSettings()
+{
+	URemoteControlSettings* Settings = GetMutableDefault<URemoteControlSettings>();
+	
+	if (!Settings)
+	{
+		return;
+	}
+
+	TSet<FName> HiddenColumns;
+	
+	for (const FColumn& SomeColumn : Columns)
+	{
+		if (!SomeColumn.bIsVisible)
+		{
+			const FName& ColumnName = SomeColumn.ColumnId;
+			if (URemoteControlSettings::GetExposedEntitiesColumnNames().Contains(ColumnName))
+			{
+				HiddenColumns.Add(ColumnName);
+			}
+		}
+	}
+	
+	Settings->EntitiesListHiddenColumns = HiddenColumns;
+	Settings->PostEditChange();
+	Settings->SaveConfig();
 }

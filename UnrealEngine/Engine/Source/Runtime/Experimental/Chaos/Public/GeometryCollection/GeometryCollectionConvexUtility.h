@@ -4,19 +4,16 @@
 
 #include "CoreMinimal.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
+#include "Chaos/ImplicitFwd.h"
 
 #include "GeometryCollectionConvexUtility.generated.h"
 
 class FGeometryCollection;
 
-namespace Chaos
-{
-	class FConvex;
-}
-
 namespace UE::Geometry
 {
 	class FSphereCovering;
+	struct FNegativeSpaceSampleSettings;
 }
 
 UENUM()
@@ -58,7 +55,7 @@ namespace UE::GeometryCollectionConvexUtility
 	// Note these hulls are typically computed in a shared coordinate space, in contrast to the final hulls on the geometry collection which are in the local space of each bone
 	struct FConvexHulls
 	{
-		TArray<TUniquePtr<::Chaos::FConvex>> Hulls;
+		TArray<::Chaos::FConvexPtr> Hulls;
 
 		// Mapping from geometry collection bones indices to indices in the Hulls array. A Set is used to support multiple hulls per bone.
 		TArray<TSet<int32>> TransformToHullsIndices;
@@ -78,6 +75,10 @@ namespace UE::GeometryCollectionConvexUtility
 	void CHAOS_API IntersectConvexHulls(::Chaos::FConvex* ResultHull, const ::Chaos::FConvex* ClipHull, float ClipHullOffset, const ::Chaos::FConvex* UpdateHull,
 		const FTransform* ClipHullTransform = nullptr, const FTransform* UpdateHullTransform = nullptr, const FTransform* UpdateToResultTransform = nullptr, double SimplificationDistanceThreshold = 0.0);
 
+	// Get the existing convex hulls from the collection, transformed to the global/shared space of the overall collection
+	// @param bLeafOnly		Only include the convex hulls of leaf (rigid) nodes
+	bool CHAOS_API GetExistingConvexHullsInSharedSpace(const FManagedArrayCollection* Collection, FConvexHulls& OutConvexHulls, bool bLeafOnly = false);
+
 }
 
 class FGeometryCollectionConvexUtility
@@ -87,7 +88,7 @@ public:
 	struct FGeometryCollectionConvexData
 	{
 		TManagedArray<TSet<int32>>& TransformToConvexIndices;
-		TManagedArray<TUniquePtr<Chaos::FConvex>>& ConvexHull;
+		TManagedArray<Chaos::FConvexPtr>& ConvexHull;
 	};
 
 	/** Ensure that convex hull data exists for the Geometry Collection and construct it if not (or if some data is missing. */
@@ -136,10 +137,16 @@ public:
 	{
 		int32 MaxConvexCount = -1;
 		double ErrorToleranceInCm = 0.0;
+		// Optional externally-provided empty space, to be used for all hull merges
 		UE::Geometry::FSphereCovering* EmptySpace = nullptr;
+
+		// Optional settings to compute targeted empty space per-bone
+		UE::Geometry::FNegativeSpaceSampleSettings* ComputeEmptySpacePerBoneSettings = nullptr;
 	};
 	// Merge convex hulls that are currently on each (selected) transform. If convex hulls are not present, does nothing.
-	static CHAOS_API void MergeHullsOnTransforms(FManagedArrayCollection& Collection, const FGeometryCollectionConvexUtility::FMergeConvexHullSettings& Settings, bool bRestrictToSelection, const TArrayView<const int32> OptionalTransformSelection);
+	// @params OptionalSphereCoveringOut		If non-null, will be filled with spheres from all used sphere covering.
+	static CHAOS_API void MergeHullsOnTransforms(FManagedArrayCollection& Collection, const FGeometryCollectionConvexUtility::FMergeConvexHullSettings& Settings, bool bRestrictToSelection, const TArrayView<const int32> OptionalTransformSelection,
+		UE::Geometry::FSphereCovering* OptionalSphereCoveringOut = nullptr);
 
 	// Additional settings for filtering when the EGenerateConvexMethod::IntersectExternalWithComputed is applied
 	struct FIntersectionFilters
@@ -210,15 +217,26 @@ public:
 
 		// Convex decomposition settings, applied to convex hulls generated from geometry
 		FConvexDecompositionSettings DecompositionSettings;
+
+		// For GenerateMethod == IntersectExternalWithComputed, whether to compute the intersection before computing convex hulls
+		// Note: It seems more logical for this setting to be true, but we expose it as an option because in some special cases the results when it was false were preferred
+		bool bComputeIntersectionsBeforeHull = true;
 	};
 	
 	static CHAOS_API void GenerateLeafConvexHulls(FGeometryCollection& Collection, bool bRestrictToSelection, const TArrayView<const int32> TransformSubset, const FLeafConvexHullSettings& Settings);
 
 	/** Returns the convex hull of the vertices contained in the specified geometry. */
-	static CHAOS_API TUniquePtr<Chaos::FConvex> FindConvexHull(const FGeometryCollection* GeometryCollection, int32 GeometryIndex);
+	static CHAOS_API Chaos::FConvexPtr GetConvexHull(const FGeometryCollection* GeometryCollection, int32 GeometryIndex);
+
+	UE_DEPRECATED(5.4, "Please Use GetConvexHull instead.")
+	static CHAOS_API TUniquePtr<Chaos::FConvex> FindConvexHull(const FGeometryCollection* GeometryCollection, int32 GeometryIndex)
+	{
+		check(false);
+		return nullptr;
+	}
 
 	/** Delete the convex hulls pointed at by the transform indices provided. */
-	static CHAOS_API void RemoveConvexHulls(FGeometryCollection* GeometryCollection, const TArray<int32>& SortedTransformDeletes);
+	static CHAOS_API void RemoveConvexHulls(FManagedArrayCollection* GeometryCollection, const TArray<int32>& TransformsToClearHullsFrom);
 
 	/** Delete the convex hulls that are null */
 	static CHAOS_API void RemoveEmptyConvexHulls(FManagedArrayCollection& GeometryCollection);
@@ -248,18 +266,24 @@ public:
 	 */
 	static CHAOS_API void CopyChildConvexes(const FGeometryCollection* FromCollection, const TArrayView<const int32>& FromTransformIdx, FGeometryCollection* ToCollection, const TArrayView<const int32>& ToTransformIdx, bool bLeafOnly);
 
+	struct FTransformedConvex
+	{
+		Chaos::FConvexPtr Convex;
+		FTransform Transform;
+	};
+
 	// Compute just the hulls of the leaf / rigid nodes that hold geometry directly, with no cluster hulls and no overlap removal by cutting
 	// This is an initial step of several algorithms: The CreateNonOverlappingConvexHullData function as well as convex-based proximity detection (TODO: and the auto-embed algorithm?)
 	// (TODO: Make auto-embed use this instead of the full hulls?)
-	// @param GlobalTransformArray		GeometryCollection's transforms to global space, as computed by GeometryCollectionAlgo::GlobalMatrices
+	// @param GlobalTransformArray				GeometryCollection's transforms to global space, as computed by GeometryCollectionAlgo::GlobalMatrices
+	// @param SkipBoneFn						Indicator function returns true for transform indices that do not need a convex hull to be computed, if non-null
+	// @param OptionalDecompositionSettings		Optionally generate multiple convex hulls per transform, if these settings are provided
+	// @param OptionalIntersectConvexHulls		Convex hulls to optionally intersect with the computed hulls, so that the resulting hulls will not extend outside of these provided hulls.
+	// @param OptionalTransformToIntersectHulls	Mapping from transforms to the OptionalIntersectConvexHulls
 	static CHAOS_API UE::GeometryCollectionConvexUtility::FConvexHulls ComputeLeafHulls(FGeometryCollection* GeometryCollection, const TArray<FTransform>& GlobalTransformArray, double SimplificationDistanceThreshold = 0.0, double OverlapRemovalShrinkPercent = 0.0,
-		TFunction<bool(int32)> SkipBoneFn = nullptr, const FConvexDecompositionSettings* OptionalDecompositionSettings = nullptr);
-
-	struct FTransformedConvex
-	{
-		TSharedPtr<Chaos::FConvex> Convex;
-		FTransform Transform;
-	};
+		TFunction<bool(int32)> SkipBoneFn = nullptr, const FConvexDecompositionSettings* OptionalDecompositionSettings = nullptr,
+		const TArray<FTransformedConvex>* OptionalIntersectConvexHulls = nullptr,
+		const TArray<TSet<int32>>* OptionalTransformToIntersectHulls = nullptr);
 
 	// generate a list of convex out of a hierarchy of implciit shapes
 	// suported shapes are scaled / transformed implicits as well as Boxes, convexes, spheres and capsules

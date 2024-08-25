@@ -243,7 +243,7 @@ void GetVectorFieldMesh(
 		Collector.RegisterOneFrameMaterialProxy(VisualizationMaterial);
 
 		// Set up parameters.
-		const FLargeWorldRenderPosition VolumeToWorldOrigin(VectorFieldInstance->VolumeToWorld.GetOrigin());
+		const FLargeWorldRenderPosition VolumeToWorldOrigin(VectorFieldInstance->VolumeToWorld.GetOrigin()); //DF_TODO
 
 		FVectorFieldVisualizationParameters UniformParameters;
 		UniformParameters.VolumeToWorldTile = VolumeToWorldOrigin.GetTile();

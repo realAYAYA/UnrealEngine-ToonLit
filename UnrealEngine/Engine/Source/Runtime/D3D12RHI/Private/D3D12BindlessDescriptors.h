@@ -3,88 +3,151 @@
 #pragma once
 
 #include "D3D12RHICommon.h"
+#include "D3D12Descriptors.h"
 #include "RHIDefinitions.h"
+#include "RHIDescriptorAllocator.h"
+#include "RHIPipeline.h"
 #include "Templates/RefCounting.h"
+
+class FD3D12CommandContext;
+class FRHICommandListBase;
+class FD3D12SamplerState;
+class FD3D12ShaderResourceView;
+class FD3D12UnorderedAccessView;
+
+struct FD3D12Payload;
 
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
 
-struct FD3D12DescriptorHeap;
-using FD3D12DescriptorHeapPtr = TRefCountPtr<FD3D12DescriptorHeap>;
+#include COMPILED_PLATFORM_HEADER(D3D12BindlessDescriptors.h)
 
-class FD3D12BindlessDescriptorHeapManager : public FD3D12DeviceChild
+namespace UE::D3D12BindlessDescriptors
+{
+	FD3D12DescriptorHeap* CreateCpuHeap(FD3D12Device* InDevice, ERHIDescriptorHeapType InType, uint32 InNewNumDescriptorsPerHeap);
+	FD3D12DescriptorHeap* CreateGpuHeap(FD3D12Device* InDevice, ERHIDescriptorHeapType InType, uint32 InNewNumDescriptorsPerHeap);
+	void DeferredFreeHeap(FD3D12Device* InDevice, FD3D12DescriptorHeap* InHeap);
+}
+
+/** Manager specifically for bindless sampler descriptors. */
+class FD3D12BindlessSamplerManager : public FD3D12DeviceChild
 {
 public:
-	FD3D12BindlessDescriptorHeapManager() = delete;
-	FD3D12BindlessDescriptorHeapManager(FD3D12Device* InDevice, ERHIDescriptorHeapType InType, ERHIBindlessConfiguration InConfiguration, uint32 InNumDescriptorsPerHeap, TConstArrayView<TStatId> InStats);
+	FD3D12BindlessSamplerManager() = delete;
+	FD3D12BindlessSamplerManager(FD3D12Device* InDevice, uint32 InNumDescriptors, TConstArrayView<TStatId> InStats);
+
+	void CleanupResources();
+
+	FRHIDescriptorHandle AllocateAndInitialize(FD3D12SamplerState* SamplerState);
+	void                 Free(FRHIDescriptorHandle InHandle);
+
+	void OpenCommandList(FD3D12CommandContext& Context);
+	void CloseCommandList(FD3D12CommandContext& Context);
+
+	FD3D12DescriptorHeap* GetHeap() { return GpuHeap.GetReference(); }
+
+private:
+	FD3D12DescriptorHeapPtr      GpuHeap;
+	FRHIHeapDescriptorAllocator  Allocator;
+};
+
+#if !D3D12RHI_CUSTOM_BINDLESS_RESOURCE_MANAGER
+
+struct FD3D12PendingDescriptorUpdates
+{
+	// List of handles that need updating
+	TArray<FRHIDescriptorHandle>    Handles;
+	// Copies of descriptors to update each handle with. These need to be freed in a specific way.
+	TArray<FD3D12OfflineDescriptor> OfflineDescriptors;
+
+	~FD3D12PendingDescriptorUpdates()
+	{
+		checkSlow(Handles.Num() == 0);
+	}
+
+	void Add(FD3D12Device* Device, FRHIDescriptorHandle DestinationHandle, const FD3D12OfflineDescriptor& OfflineDescriptor)
+	{
+		if (ensure(DestinationHandle.IsValid()))
+		{
+			Handles.Emplace(DestinationHandle);
+			OfflineDescriptors.Emplace(OfflineDescriptor);
+		}
+	}
+
+	void Empty(FD3D12Device* Device)
+	{
+		for (FD3D12OfflineDescriptor& OfflineDescriptor : OfflineDescriptors)
+		{
+			UE::D3D12Descriptors::FreeOfflineCopy(Device, OfflineDescriptor, ERHIDescriptorHeapType::Standard);
+		}
+
+		Handles.Empty();
+		OfflineDescriptors.Empty();
+	}
+
+	int32 Num()     const { return Handles.Num(); }
+	bool  IsEmpty() const { return Num() == 0; }
+};
+
+// Helper container for all context related bindless state.
+struct FD3D12ContextBindlessState
+{
+	FD3D12PendingDescriptorUpdates   PendingDescriptorRollbacks;
+	FD3D12DescriptorHeapPtr          CurrentGpuHeap;
+
+	// All heaps used on the context. Used for lifetime management.
+	TArray<FD3D12DescriptorHeapPtr> UsedHeaps;
+
+	FD3D12ContextBindlessState() = default;
+	~FD3D12ContextBindlessState()
+	{
+		check(PendingDescriptorRollbacks.IsEmpty());
+	}
+
+	bool HasAnyPending() const
+	{
+		return UsedHeaps.Num() > 0 || PendingDescriptorRollbacks.Num() > 0;
+	}
+};
+
+/** Manager specifically for bindless resource descriptors. Has to handle renames on command lists. */
+class FD3D12BindlessResourceManager : public FD3D12DeviceChild
+{
+public:
+	FD3D12BindlessResourceManager() = delete;
+	FD3D12BindlessResourceManager(FD3D12Device* InDevice, uint32 InNumDescriptors, TConstArrayView<TStatId> InStats);
+
+	void CleanupResources();
 
 	FRHIDescriptorHandle Allocate();
 	void                 Free(FRHIDescriptorHandle InHandle);
 
-	void UpdateImmediately(FRHIDescriptorHandle InHandle, D3D12_CPU_DESCRIPTOR_HANDLE InSourceCpuHandle);
-	void UpdateDeferred   (FRHIDescriptorHandle InHandle, D3D12_CPU_DESCRIPTOR_HANDLE InSourceCpuHandle);
+	void UpdateDescriptorImmediately(FRHIDescriptorHandle DstHandle, FD3D12View* View);
+	void UpdateDescriptor(FRHICommandListBase& RHICmdList, FRHIDescriptorHandle DstHandle, FD3D12View* View);
 
-	      FD3D12DescriptorHeap* GetHeap()       { return GpuHeap.GetReference(); }
-	const FD3D12DescriptorHeap* GetHeap() const { return GpuHeap.GetReference(); }
-	ERHIDescriptorHeapType      GetType() const { return Type; }
-	
-	bool HandlesAllocation(ERHIDescriptorHeapType InType) const { return GetType() == InType; }
-	bool HandlesConfiguration(ERHIBindlessConfiguration InConfiguration) const { return Configuration != ERHIBindlessConfiguration::Disabled && Configuration <= InConfiguration; }
+	void FlushPendingDescriptorUpdates(FD3D12CommandContext& Context);
 
-	bool HandlesAllocation(ERHIDescriptorHeapType InType, ERHIBindlessConfiguration InConfiguration) const
+	void OpenCommandList(FD3D12CommandContext& Context);
+	void CloseCommandList(FD3D12CommandContext& Context);
+	void FinalizeContext(FD3D12CommandContext& Context);
+
+	FD3D12DescriptorHeap* GetHeap(ERHIPipeline Pipeline)
 	{
-		return HandlesAllocation(InType) && HandlesConfiguration(InConfiguration);
+		checkNoEntry();
+		return nullptr;
 	}
 
 private:
-	void SetupInitialState(uint32 InNumDescriptorsPerHeap);
-	void ResizeHeaps(uint32 InNewNumDescriptorsPerHeap);
+	void CopyCpuHeap(FD3D12DescriptorHeap* DestinationHeap);
+	void CreateHeapOnState(FD3D12ContextBindlessState& State);
+	void FinalizeHeapOnState(FD3D12ContextBindlessState& State);
 
-	FD3D12DescriptorHeap* CreateCpuHeapInternal(uint32 InNumDescriptorsPerHeap);
-	FD3D12DescriptorHeap* CreateGpuHeapInternal(uint32 InNumDescriptorsPerHeap);
-
-	void UpdateGpuHeap(FD3D12DescriptorHeap* GpuHeap);
-
-	void RecordAlloc()
-	{
-#if STATS
-		for (TStatId Stat : Stats)
-		{
-			INC_DWORD_STAT_FName(Stat.GetName());
-		}
-#endif
-	}
-
-	void RecordFree()
-	{
-#if STATS
-		for (TStatId Stat : Stats)
-		{
-			DEC_DWORD_STAT_FName(Stat.GetName());
-		}
-#endif
-	}
-
-private:
-	using AllocationListType = TBitArray<>;
-
-	FCriticalSection        CriticalSection;
-	
-	FD3D12DescriptorHeapPtr CpuHeap;
-	FD3D12DescriptorHeapPtr GpuHeap;
-
-	AllocationListType      Allocations;
-	int32                   NumAllocations = 0;
-
-	const ERHIDescriptorHeapType    Type;
-	const ERHIBindlessConfiguration Configuration;
-	uint32                          NumDescriptorsPerHeap;
-
-#if STATS
-	TArray<TStatId> Stats;
-#endif
+	FD3D12DescriptorHeapPtr      CpuHeap;
+	FRHIHeapDescriptorAllocator  Allocator;
 };
 
-/** Manager for resource descriptors used in bindless rendering. */
+#endif
+
+/** Manager for descriptors used in bindless rendering. */
 class FD3D12BindlessDescriptorManager : public FD3D12DeviceChild
 {
 public:
@@ -92,28 +155,48 @@ public:
 	~FD3D12BindlessDescriptorManager();
 
 	void Init();
+	void CleanupResources();
 
 	ERHIBindlessConfiguration GetResourcesConfiguration() const { return ResourcesConfiguration; }
 	ERHIBindlessConfiguration GetSamplersConfiguration()  const { return SamplersConfiguration; }
 
+	bool AreResourcesBindless() const { return GetResourcesConfiguration() != ERHIBindlessConfiguration::Disabled; }
+	bool AreSamplersBindless()  const { return GetSamplersConfiguration()  != ERHIBindlessConfiguration::Disabled; }
+
+	bool AreResourcesBindless(ERHIBindlessConfiguration InConfiguration) const { return GetResourcesConfiguration() != ERHIBindlessConfiguration::Disabled && GetResourcesConfiguration() <= InConfiguration; }
+	bool AreSamplersBindless(ERHIBindlessConfiguration InConfiguration)  const { return GetSamplersConfiguration()  != ERHIBindlessConfiguration::Disabled && GetSamplersConfiguration() <= InConfiguration; }
+
 	bool AreResourcesFullyBindless() const { return GetResourcesConfiguration() == ERHIBindlessConfiguration::AllShaders; }
 	bool AreSamplersFullyBindless () const { return GetSamplersConfiguration()  == ERHIBindlessConfiguration::AllShaders; }
 
-	FRHIDescriptorHandle Allocate(ERHIDescriptorHeapType InType);
+	FRHIDescriptorHandle AllocateResourceHandle();
+	FRHIDescriptorHandle AllocateAndInitialize(FD3D12SamplerState* SamplerState);
 	void                 ImmediateFree(FRHIDescriptorHandle InHandle);
 	void                 DeferredFreeFromDestructor(FRHIDescriptorHandle InHandle);
 
-	void UpdateImmediately(FRHIDescriptorHandle InHandle, D3D12_CPU_DESCRIPTOR_HANDLE InSourceCpuHandle);
-	void UpdateDeferred(FRHIDescriptorHandle InHandle, D3D12_CPU_DESCRIPTOR_HANDLE InSourceCpuHandle);
+	void UpdateDescriptorImmediately(FRHIDescriptorHandle DstHandle, FD3D12View* View);
+	void UpdateDescriptor(FRHICommandListBase& RHICmdList, FRHIDescriptorHandle DstHandle, FD3D12View* SourceView);
 
-	FD3D12DescriptorHeap* GetHeap(ERHIDescriptorHeapType InType);
-	FD3D12DescriptorHeap* GetHeap(ERHIDescriptorHeapType InType, ERHIBindlessConfiguration InConfiguration);
-	bool                  HasHeap(ERHIDescriptorHeapType InType, ERHIBindlessConfiguration InConfiguration) const;
+	void FinalizeContext(FD3D12CommandContext& Context);
 
-	D3D12_GPU_DESCRIPTOR_HANDLE GetGpuHandle(FRHIDescriptorHandle InHandle) const;
+	void OpenCommandList(FD3D12CommandContext& Context);
+	void CloseCommandList(FD3D12CommandContext& Context);
+
+	void FlushPendingDescriptorUpdates(FD3D12CommandContext& Context);
+
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
+	TRHIPipelineArray<FD3D12DescriptorHeapPtr> AllocateResourceHeapsForAllPipelines(int32 InSize);
+#endif
+
+	FD3D12DescriptorHeap* GetResourceHeap(ERHIPipeline Pipeline);
+	FD3D12DescriptorHeap* GetSamplerHeap();
+
+	FD3D12DescriptorHeap* GetResourceHeap(ERHIPipeline Pipeline, ERHIBindlessConfiguration InConfiguration);
+	FD3D12DescriptorHeap* GetSamplerHeap(ERHIBindlessConfiguration InConfiguration);
 
 private:
-	TArray<FD3D12BindlessDescriptorHeapManager> Managers;
+	TUniquePtr<FD3D12BindlessResourceManager> ResourceManager;
+	TUniquePtr<FD3D12BindlessSamplerManager>  SamplerManager;
 
 	ERHIBindlessConfiguration ResourcesConfiguration{};
 	ERHIBindlessConfiguration SamplersConfiguration{};

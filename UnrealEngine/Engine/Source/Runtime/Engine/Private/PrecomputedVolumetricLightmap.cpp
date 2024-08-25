@@ -529,9 +529,12 @@ ENGINE_API void FPrecomputedVolumetricLightmapData::AddToSceneData(FPrecomputedV
 				uint8 Value = (uint8)IndexInCPUSubLevelBrickDataList;
 				SceneData->CPUSubLevelBrickDataList[IndexInCPUSubLevelBrickDataList] = this;
 
+				const int32 PaddedBrickSize = BrickSize + 1;
+				const FIntVector BrickLayoutDimensions = BrickDataDimensions / PaddedBrickSize;
+
 				for (int32 BrickIndex = 0; BrickIndex < SubLevelBrickPositions.Num(); BrickIndex++)
 				{
-					const FIntVector BrickLayoutPosition = ComputeBrickLayoutPosition(BrickIndex, BrickDataDimensions);
+					const FIntVector BrickLayoutPosition = ComputeBrickLayoutPosition(BrickIndex, BrickLayoutDimensions);
 
 					const FIntVector IndirectionDestDataCoordinate = SubLevelBrickPositions[BrickIndex];
 					const int32 IndirectionDestDataIndex =
@@ -627,7 +630,7 @@ ENGINE_API void FPrecomputedVolumetricLightmapData::RemoveFromSceneData(FPrecomp
 								*(IndirectionVoxelPtr + 0) = OriginalValue.R;
 								*(IndirectionVoxelPtr + 1) = OriginalValue.G;
 								*(IndirectionVoxelPtr + 2) = OriginalValue.B;
-								*(IndirectionVoxelPtr + 3) = 1;
+								*(IndirectionVoxelPtr + 3) = OriginalValue.A;
 							}
 
 							{
@@ -666,9 +669,7 @@ FPrecomputedVolumetricLightmap::~FPrecomputedVolumetricLightmap()
 
 void FPrecomputedVolumetricLightmap::AddToScene(FSceneInterface* Scene, UMapBuildDataRegistry* Registry, FGuid LevelBuildDataId, bool bIsPersistentLevel)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-
-	if (AllowStaticLightingVar->GetValueOnAnyThread() == 0)
+	if (!IsStaticLightingAllowed())
 	{
 		return;
 	}
@@ -696,9 +697,9 @@ void FPrecomputedVolumetricLightmap::AddToScene(FSceneInterface* Scene, UMapBuil
 		FPrecomputedVolumetricLightmap* Volume = this;
 
 		ENQUEUE_RENDER_COMMAND(SetVolumeDataCommand)
-			([Volume, NewData, Scene](FRHICommandListImmediate& RHICmdList) 
+			([Volume, NewData, Scene] (FRHICommandListBase& RHICmdList)
 			{
-				Volume->SetData(NewData, Scene);
+				Volume->SetData(RHICmdList, NewData, Scene);
 			});
 		Scene->AddPrecomputedVolumetricLightmap(this, bIsPersistentLevel);
 	}
@@ -706,9 +707,7 @@ void FPrecomputedVolumetricLightmap::AddToScene(FSceneInterface* Scene, UMapBuil
 
 void FPrecomputedVolumetricLightmap::RemoveFromScene(FSceneInterface* Scene)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-
-	if (AllowStaticLightingVar->GetValueOnAnyThread() == 0)
+	if (!IsStaticLightingAllowed())
 	{
 		return;
 	}
@@ -720,7 +719,8 @@ void FPrecomputedVolumetricLightmap::RemoveFromScene(FSceneInterface* Scene)
 		// Certain paths in the editor (namely, ReloadPackages and ForceDelete) will GC the registry before the UWorld destruction (which destructs FScene)
 		ensureMsgf(
 			SourceRegistry.IsValid() // either SourceRegistry is valid
-			|| (!Scene->GetWorld() || !IsValidChecked(Scene->GetWorld()) || Scene->GetWorld()->IsUnreachable()) // or the world we're in is going away (usually during shutdown)
+			|| Scene == nullptr // or there is no scene
+			|| !Scene->GetWorld() || !IsValidChecked(Scene->GetWorld()) || Scene->GetWorld()->IsUnreachable() // or the world we're in is going away (usually during shutdown)
 			, TEXT("UMapBuildDataRegistry is garbage collected before an FPrecomputedVolumetricLightmap is removed from the scene. Is there a missing ReleaseRenderingResources() call?"));
 
 		// While that can be explained as missing ReleaseRenderingResources() calls, this fail-safe guard is added here
@@ -738,7 +738,7 @@ void FPrecomputedVolumetricLightmap::RemoveFromScene(FSceneInterface* Scene)
 	WorldOriginOffset = FVector::ZeroVector;
 }
 
-void FPrecomputedVolumetricLightmap::SetData(FPrecomputedVolumetricLightmapData* NewData, FSceneInterface* Scene)
+void FPrecomputedVolumetricLightmap::SetData(FRHICommandListBase& RHICmdList, FPrecomputedVolumetricLightmapData* NewData, FSceneInterface* Scene)
 {
 	Data = NewData;
 
@@ -750,7 +750,7 @@ void FPrecomputedVolumetricLightmap::SetData(FPrecomputedVolumetricLightmapData*
 
 		if (Scene->GetFeatureLevel() >= ERHIFeatureLevel::SM5)
 		{
-			Data->InitResource(FRHICommandListImmediate::Get());
+			Data->InitResource(RHICmdList);
 		}
 	}
 }
@@ -830,37 +830,27 @@ FVector ComputeBrickTextureCoordinate(
 
 bool FRemoveSubLevelBricksCS::ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-
-	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && AllowStaticLightingVar->GetValueOnAnyThread() != 0;
+	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && IsStaticLightingAllowed();
 }
 
 bool FCopyResidentBricksCS::ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-
-	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && AllowStaticLightingVar->GetValueOnAnyThread() != 0;
+	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && IsStaticLightingAllowed();
 }
 
 bool FCopyResidentBrickSHCoefficientsCS::ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-
-	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && AllowStaticLightingVar->GetValueOnAnyThread() != 0;
+	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && IsStaticLightingAllowed();
 }
 
 bool FPatchIndirectionTextureCS::ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-
-	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && AllowStaticLightingVar->GetValueOnAnyThread() != 0;
+	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && IsStaticLightingAllowed();
 }
 
 bool FMoveWholeIndirectionTextureCS::ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-
-	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && AllowStaticLightingVar->GetValueOnAnyThread() != 0;
+	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && IsStaticLightingAllowed();
 }
 
 IMPLEMENT_GLOBAL_SHADER(FRemoveSubLevelBricksCS, "/Engine/Private/VolumetricLightmapStreaming.usf", "RemoveSubLevelBricksCS", SF_Compute);

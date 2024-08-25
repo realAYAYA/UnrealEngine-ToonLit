@@ -2,21 +2,18 @@
 
 #include "Rendering/SlateSVGRasterizer.h"
 
+#if !UE_SERVER
 THIRD_PARTY_INCLUDES_START
-// These are required for nanosvg
-#include <stdio.h>
-#include <string.h>
-#include <math.h>
-#define NANOSVG_IMPLEMENTATION	
-#include "ThirdParty/nanosvg/src/nanosvg.h"
-#define NANOSVGRAST_IMPLEMENTATION
-#include "ThirdParty/nanosvg/src/nanosvgrast.h"
+#include <nanosvg.h>
+#include <nanosvgrast.h>
 THIRD_PARTY_INCLUDES_END
+#endif
 
 #include "Misc/FileHelper.h"
 #include "Containers/StringConv.h"
 #include "SlateGlobals.h"
 
+#if !UE_SERVER
 namespace SVGConstants
 {
 	// The DPI is only used for unit conversion
@@ -24,6 +21,7 @@ namespace SVGConstants
 	// Bytes per pixel (RGBA)
 	static const int32 BPP = 4;
 }
+#endif
 
 TArray<uint8> FSlateSVGRasterizer::RasterizeSVGFromFile(const FString& Filename, FIntPoint PixelSize)
 {
@@ -32,6 +30,7 @@ TArray<uint8> FSlateSVGRasterizer::RasterizeSVGFromFile(const FString& Filename,
 	FString SVGString;
 	if (FFileHelper::LoadFileToString(SVGString, *Filename))
 	{
+#if !UE_SERVER
 		NSVGimage* Image = nsvgParse(TCHAR_TO_ANSI(*SVGString), "px", SVGConstants::DPI);
 
 		if (Image)
@@ -50,6 +49,9 @@ TArray<uint8> FSlateSVGRasterizer::RasterizeSVGFromFile(const FString& Filename,
 
 			nsvgDelete(Image);
 		}
+#else
+		UE_LOG(LogSlate, Warning, TEXT("Unable to rasterize '%s'. Nanosvg library not available in server build."), *Filename);
+#endif
 	}
 	else
 	{

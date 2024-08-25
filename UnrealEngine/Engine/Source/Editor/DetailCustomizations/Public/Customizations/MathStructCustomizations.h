@@ -8,11 +8,13 @@
 #include "Delegates/Delegate.h"
 #include "IPropertyTypeCustomization.h"
 #include "Internationalization/Text.h"
+#include "Math/UnitConversion.h"
 #include "Misc/Optional.h"
 #include "PropertyHandle.h"
 #include "Styling/SlateTypes.h"
 #include "Templates/SharedPointer.h"
 #include "Types/SlateEnums.h"
+#include "Widgets/Input/NumericTypeInterface.h"
 #include "Widgets/SWidget.h"
 
 class FDetailWidgetRow;
@@ -69,12 +71,15 @@ public:
 		TOptional<NumericType> MaxValue;
 		TOptional<NumericType> SliderMinValue;
 		TOptional<NumericType> SliderMaxValue;
+		TSharedPtr<INumericTypeInterface<NumericType>> TypeInterface;
 		NumericType SliderExponent;
 		NumericType Delta;
 		int32 LinearDeltaSensitivity;
-		int32 ShiftMouseMovePixelPerDelta;
+		float ShiftMultiplier;
+		float CtrlMultiplier;
 		bool bSupportDynamicSliderMaxValue;
 		bool bSupportDynamicSliderMinValue;
+		bool bAllowSpinBox;
 	};
 
 	/** Utility function that will extract common Math related numeric metadata */	
@@ -83,10 +88,10 @@ public:
 
 	template <typename NumericType>
 	UE_DEPRECATED(5.0, "Use ExtractNumericMetadata overload with struct argument instead.")
-	DETAILCUSTOMIZATIONS_API static void ExtractNumericMetadata(TSharedRef<IPropertyHandle>& PropertyHandle, TOptional<NumericType>& MinValue, 
-		TOptional<NumericType>& MaxValue, TOptional<NumericType>& SliderMinValue, TOptional<NumericType>& SliderMaxValue,
-		NumericType& SliderExponent, NumericType& Delta, int32& ShiftMouseMovePixelPerDelta, 
-		bool& bSupportDynamicSliderMaxValue, bool& bSupportDynamicSliderMinValue);
+		DETAILCUSTOMIZATIONS_API static void ExtractNumericMetadata(TSharedRef<IPropertyHandle>& PropertyHandle, TOptional<NumericType>& MinValue,
+			TOptional<NumericType>& MaxValue, TOptional<NumericType>& SliderMinValue, TOptional<NumericType>& SliderMaxValue,
+			NumericType& SliderExponent, NumericType& Delta, int32& ShiftMouseMovePixelPerDelta,
+			bool& bSupportDynamicSliderMaxValue, bool& bSupportDynamicSliderMinValue);
 
 protected:
 
@@ -172,6 +177,8 @@ private:
 
 	/** Called when the user toggles preserve ratio. */
 	void OnPreserveScaleRatioToggled(ECheckBoxState NewState, TWeakPtr<IPropertyHandle> PropertyHandle);
+
+	FReply OnNormalizeClicked(TWeakPtr<IPropertyHandle> PropertyHandle);
 
 private:
 

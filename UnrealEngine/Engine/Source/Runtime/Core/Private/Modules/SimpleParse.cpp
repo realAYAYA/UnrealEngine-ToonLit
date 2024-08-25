@@ -77,9 +77,6 @@ bool SimpleParseString(const TCHAR*& InOutPtr, T& OutStr)
 				break;
 		}
 	}
-
-	InOutPtr = Ptr + 1;
-	return true;
 }
 
 bool FSimpleParse::ParseString(const TCHAR*& InOutPtr, FString& OutStr)

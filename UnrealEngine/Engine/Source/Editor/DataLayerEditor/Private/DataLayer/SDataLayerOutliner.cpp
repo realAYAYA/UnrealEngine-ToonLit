@@ -74,9 +74,9 @@ bool SDataLayerOutliner::CanAddSelectedActorsToSelectedDataLayersClicked() const
 {
 	if (GEditor->GetSelectedActorCount() > 0)
 	{
-		TArray<UDataLayerInstance*> SelectedDataLayers = GetSelectedDataLayers();
-		const bool bSelectedDataLayersContainsLocked = !!SelectedDataLayers.FindByPredicate([](const UDataLayerInstance* DataLayer) { return DataLayer->IsLocked(); });
-		return (!SelectedDataLayers.IsEmpty() && !bSelectedDataLayersContainsLocked);
+		TArray<UDataLayerInstance*> SelectedDataLayerInstances = GetSelectedDataLayers();
+		const bool bSelectedDataLayerInstancesContainsReadOnly = !!SelectedDataLayerInstances.FindByPredicate([](const UDataLayerInstance* DataLayerInstance) { return DataLayerInstance->IsReadOnly(); });
+		return (!SelectedDataLayerInstances.IsEmpty() && !bSelectedDataLayerInstancesContainsReadOnly);
 	}
 	return false;
 }
@@ -91,7 +91,7 @@ FReply SDataLayerOutliner::OnAddSelectedActorsToSelectedDataLayersClicked()
 	if (CanAddSelectedActorsToSelectedDataLayersClicked())
 	{
 		TArray<UDataLayerInstance*> SelectedDataLayers = GetSelectedDataLayers();
-		const FScopedTransaction Transaction(LOCTEXT("AddSelectedActorsToSelectedDataLayers", "Add Selected Actors to Selected Data Layers"));
+		const FScopedTransaction Transaction(LOCTEXT("AddSelectedActorsToSelectedDataLayers", "Add Selected Actor(s) to Selected Data Layer(s)"));
 		UDataLayerEditorSubsystem::Get()->AddSelectedActorsToDataLayers(SelectedDataLayers);
 	}
 	return FReply::Handled();

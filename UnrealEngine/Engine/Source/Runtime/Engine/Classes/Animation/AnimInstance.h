@@ -81,6 +81,7 @@ enum class EMontagePlayReturnType : uint8
 DECLARE_DELEGATE_OneParam(FOnMontageStarted, UAnimMontage*)
 DECLARE_DELEGATE_TwoParams(FOnMontageEnded, UAnimMontage*, bool /*bInterrupted*/)
 DECLARE_DELEGATE_TwoParams(FOnMontageBlendingOutStarted, UAnimMontage*, bool /*bInterrupted*/)
+DECLARE_DELEGATE_OneParam(FOnMontageBlendedInEnded, UAnimMontage*)
 /**
 * Delegate for when Montage is started
 */
@@ -104,6 +105,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllMontageInstancesEndedMCDelegate);
 * bInterrupted = true if it was not property finished
 */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMontageBlendingOutStartedMCDelegate, UAnimMontage*, Montage, bool, bInterrupted);
+
+/** Delegate for when Montage finished blending in */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMontageBlendedInEndedMCDelegate, UAnimMontage*, Montage);
 
 /** Delegate that native code can hook to to provide additional transition logic */
 DECLARE_DELEGATE_RetVal(bool, FCanTakeTransition);
@@ -201,6 +205,17 @@ struct FQueuedMontageBlendingOutEvent
 	FQueuedMontageBlendingOutEvent(class UAnimMontage* InMontage, bool InbInterrupted, FOnMontageBlendingOutStarted InDelegate)
 		: Montage(InMontage)
 		, bInterrupted(InbInterrupted)
+		, Delegate(InDelegate)
+	{}
+};
+
+struct FQueuedMontageBlendedInEvent
+{
+	TObjectPtr<class UAnimMontage> Montage;
+	FOnMontageBlendedInEnded Delegate;
+
+	FQueuedMontageBlendedInEvent(class UAnimMontage* InMontage, FOnMontageBlendedInEnded InDelegate)
+		: Montage(InMontage)
 		, Delegate(InDelegate)
 	{}
 };
@@ -491,6 +506,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Animation")
 	ENGINE_API USkeletalMeshComponent* GetOwningComponent() const;
 
+	/** Get the 'main' anim instance, i.e. the one that is hosted on the skeletal mesh component */
+	UFUNCTION(BlueprintCallable, Category = "Animation", meta = (DisplayName="Get Main Anim Instance", BlueprintThreadSafe))
+	ENGINE_API UAnimInstance* Blueprint_GetMainAnimInstance() const;
+
 public:
 
 	/** Executed when the Animation is initialized */
@@ -516,7 +535,7 @@ public:
 	/** Executed when the Animation Blueprint is updated on a worker thread, just prior to graph update */
 	UFUNCTION(BlueprintImplementableEvent, meta=(BlueprintThreadSafe))
 	ENGINE_API void BlueprintThreadSafeUpdateAnimation(float DeltaTime);
-	
+
 	ENGINE_API bool CanTransitionSignature() const;
 	
 	/*********************************************************************************************
@@ -662,6 +681,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Animation|Montage")
 	ENGINE_API float Montage_GetEffectivePlayRate(const UAnimMontage* Montage) const;
 
+	/** Returns true if there is an animation montage is currently active and playing that was created from the provided animation. */
+	UFUNCTION(BlueprintPure, Category = "Animation|Montage")
+	ENGINE_API bool DynamicMontage_IsPlayingFrom(const UAnimSequenceBase* Animation) const;
+
 	/*********************************************************************************************
 	* AnimMontage sync. See notes in AnimMontage.h
 	********************************************************************************************* */
@@ -690,6 +713,10 @@ public:
 	/** Called when a montage starts blending out, whether interrupted or finished */
 	UPROPERTY(BlueprintAssignable)
 	FOnMontageBlendingOutStartedMCDelegate OnMontageBlendingOut;
+
+	/** Called when a montage finishes blending in */
+	UPROPERTY(BlueprintAssignable)
+	FOnMontageBlendedInEndedMCDelegate OnMontageBlendedIn;
 	
 	/** Called when a montage has started */
 	UPROPERTY(BlueprintAssignable)
@@ -713,7 +740,9 @@ public:
 	    If Montage reference is NULL, it will pick the first active montage found.*/
 	ENGINE_API FOnMontageEnded* Montage_GetEndedDelegate(UAnimMontage* Montage = nullptr);
 	
-	ENGINE_API void Montage_SetBlendingOutDelegate(FOnMontageBlendingOutStarted & InOnMontageBlendingOut, UAnimMontage* Montage = NULL);
+	ENGINE_API void Montage_SetBlendingOutDelegate(FOnMontageBlendingOutStarted& InOnMontageBlendingOut, UAnimMontage* Montage = NULL);
+
+	ENGINE_API void Montage_SetBlendedInDelegate(FOnMontageBlendedInEnded& InOnMontageBlendingIn, UAnimMontage* Montage = nullptr);
 	
 	/** Get pointer to BlendingOutStarted delegate for Montage.
 	If Montage reference is NULL, it will pick the first active montage found. */
@@ -728,6 +757,9 @@ public:
 
 	/** Get Active FAnimMontageInstance for given Montage asset. Will return NULL if Montage is not currently Active. */
 	ENGINE_API FAnimMontageInstance* GetActiveInstanceForMontage(const UAnimMontage* Montage) const;
+
+	/** Get FAnimMontageInstance for given Montage asset (even when blending out). Will return NULL if Montage is not currently playing. */
+	ENGINE_API FAnimMontageInstance* GetInstanceForMontage(const UAnimMontage* Montage) const;
 
 	/** Get the FAnimMontageInstance currently running that matches this ID.  Will return NULL if no instance is found. */
 	ENGINE_API FAnimMontageInstance* GetMontageInstanceForID(int32 MontageInstanceID);
@@ -816,9 +848,9 @@ public:
 	UE_DEPRECATED(4.24, "Function renamed, please use GetLinkedAnimLayerInstanceByClass")
 	UAnimInstance* GetLayerSubInstanceByClass(TSubclassOf<UAnimInstance> InClass) const { return GetLinkedAnimLayerInstanceByClass(InClass); }
 
-	/** Gets the first layer linked instance corresponding to the specified class */
+	/** Gets the first layer linked instance corresponding to the specified class, optionally if bCheckForChildClass is true, it will check IsChildOf on InClass. */
 	UFUNCTION(BlueprintPure, Category = "Animation|Linked Anim Graphs")
-	ENGINE_API UAnimInstance* GetLinkedAnimLayerInstanceByClass(TSubclassOf<UAnimInstance> InClass) const;
+	ENGINE_API UAnimInstance* GetLinkedAnimLayerInstanceByClass(TSubclassOf<UAnimInstance> InClass, bool bCheckForChildClass = false) const;
 
 	/** Sets up initial layer groupings */
 	ENGINE_API void InitializeGroupedLayers(bool bInDeferSubGraphInitialization);
@@ -887,6 +919,9 @@ public:
 	/** Queue a Montage BlendingOut Event to be triggered. */
 	ENGINE_API void QueueMontageBlendingOutEvent(const FQueuedMontageBlendingOutEvent& MontageBlendingOutEvent);
 
+	/** Queue a Montage BlendedIn Event to be triggered. */
+	ENGINE_API void QueueMontageBlendedInEvent(const FQueuedMontageBlendedInEvent& MontageBlendedInEvent);
+
 	/** Queue a Montage Ended Event to be triggered. */
 	ENGINE_API void QueueMontageEndedEvent(const FQueuedMontageEndedEvent& MontageEndedEvent);
 
@@ -897,11 +932,17 @@ private:
 	/** Queued Montage BlendingOut events. */
 	TArray<FQueuedMontageBlendingOutEvent> QueuedMontageBlendingOutEvents;
 
+	/** Queued Montage BlendedIn events. */
+	TArray<FQueuedMontageBlendedInEvent> QueuedMontageBlendedInEvents;
+
 	/** Queued Montage Ended Events */
 	TArray<FQueuedMontageEndedEvent> QueuedMontageEndedEvents;
 
 	/** Trigger a Montage BlendingOut event */
 	ENGINE_API void TriggerMontageBlendingOutEvent(const FQueuedMontageBlendingOutEvent& MontageBlendingOutEvent);
+
+	/** Trigger a Montage BlendingIn event */
+	ENGINE_API void TriggerMontageBlendedInEvent(const FQueuedMontageBlendedInEvent& MontageBlendedInEvent);
 
 	/** Trigger a Montage Ended event */
 	ENGINE_API void TriggerMontageEndedEvent(const FQueuedMontageEndedEvent& MontageEndedEvent);
@@ -1117,6 +1158,9 @@ public:
 
 	/** Returns value of named curved in OutValue, returns whether the curve was actually found or not. */
 	ENGINE_API bool GetCurveValue(FName CurveName, float& OutValue) const;
+
+	/** Overrides the value of a named curve. Will be reset next evaluation */
+	ENGINE_API void OverrideCurveValue(FName CurveName, float Value);
 
 	/** Returns the name of a currently active state in a state machine. */
 	UFUNCTION(BlueprintPure, Category="Animation|State Machines", meta=(BlueprintInternalUseOnly = "true", AnimGetter = "true", BlueprintThreadSafe))

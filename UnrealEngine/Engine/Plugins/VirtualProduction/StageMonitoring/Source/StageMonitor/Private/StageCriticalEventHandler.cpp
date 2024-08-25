@@ -46,7 +46,7 @@ void FStageCriticalEventHandler::HandleCriticalEventMessage(const FCriticalState
 	{
 		if (ActiveEvents.Contains(Identifier))
 		{
-			ActiveEvents[Identifier].RemoveSingleSwap(Message->SourceName, false);
+			ActiveEvents[Identifier].RemoveSingleSwap(Message->SourceName, EAllowShrinking::No);
 			
 			//Verify if this machine has no more events active
 			if (ActiveEvents[Identifier].Num() <= 0)

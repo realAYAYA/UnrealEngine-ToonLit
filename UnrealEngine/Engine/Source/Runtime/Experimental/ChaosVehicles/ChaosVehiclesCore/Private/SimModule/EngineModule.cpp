@@ -5,7 +5,7 @@
 #include "VehicleUtility.h"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 namespace Chaos
@@ -20,9 +20,16 @@ namespace Chaos
 
 		// TODO: Engine braking effect
 		DriveTorque = GetEngineTorque(Inputs.ControlInputs.Throttle, GetRPM());
-		
-		float BrakeTorque = 0.f;
-		TransmitTorque(VehicleModuleSystem, DriveTorque, BrakeTorque);
+
+		if (DriveTorque < SMALL_NUMBER)
+		{
+			BrakingTorque = Setup().EngineBrakeEffect;
+		}
+		else
+		{
+			BrakingTorque = 0.0f;
+		}
+		TransmitTorque(VehicleModuleSystem, DriveTorque, BrakingTorque);
 		IntegrateAngularVelocity(DeltaTime, Setup().EngineInertia);
 
 		// clamp RPM
@@ -56,8 +63,6 @@ namespace Chaos
 
 	float FEngineSimModule::GetTorqueFromRPM(float RPM, bool LimitToIdle)
 	{
-		//return Setup().MaxTorque; // TODO: Fix this - engine RPM running rampant
-
 		if (!EngineStarted || (FMath::Abs(RPM - Setup().MaxRPM) < 1.0f) || Setup().MaxRPM == 0)
 		{
 			return 0.0f;
@@ -71,8 +76,37 @@ namespace Chaos
 		return Setup().TorqueCurve.GetValue(RPM, Setup().MaxRPM, Setup().MaxTorque);
 	}
 
+	void FEngineOutputData::FillOutputState(const ISimulationModuleBase* SimModule)
+	{
+		check(SimModule->GetSimType() == eSimType::Engine);
+
+		FSimOutputData::FillOutputState(SimModule);
+
+		if (const FEngineSimModule* Sim = static_cast<const FEngineSimModule*>(SimModule))
+		{
+			RPM = Sim->GetRPM();
+		}
+	}
+
+	void FEngineOutputData::Lerp(const FSimOutputData& InCurrent, const FSimOutputData& InNext, float Alpha)
+	{
+		const FEngineOutputData& Current = static_cast<const FEngineOutputData&>(InCurrent);
+		const FEngineOutputData& Next = static_cast<const FEngineOutputData&>(InNext);
+
+		RPM = FMath::Lerp(Current.RPM, Next.RPM, Alpha);
+		Torque = FMath::Lerp(Current.Torque, Next.Torque, Alpha);
+	}
+
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+	FString FEngineOutputData::ToString()
+	{
+		return FString::Printf(TEXT("%s, RPM=%3.3f, Torque=%3.3f")
+			, *DebugString, RPM, Torque);
+	}
+#endif
+
 } // namespace Chaos
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif

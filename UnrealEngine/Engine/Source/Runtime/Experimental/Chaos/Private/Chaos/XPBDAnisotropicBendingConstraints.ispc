@@ -4,58 +4,18 @@
 
 #include "Math/Vector.isph"
 #include "Chaos/PBDSofts.isph"
-
-static inline FVector3f SafeDivide(const FVector3f& Numerator, const float Denominator)
-{
-	return VectorSelect(Denominator <= FLOAT_SMALL_NUMBER, FloatZeroVector, Numerator / Denominator);
-}
-
-static inline varying float SafeDivide(const varying float Numerator, const varying float Denominator)
-{
-	return select(Denominator <= FLOAT_SMALL_NUMBER, (uniform float)0, Numerator / Denominator);
-}
-
-// Returns Angle
-static inline float CalcGradientsAndAngle(const FVector3f& P1, const FVector3f& P2, const FVector3f& P3, const FVector3f& P4, FVector3f& Grad1, FVector3f& Grad2, FVector3f& Grad3, FVector3f& Grad4)
-{
-	const FVector3f SharedEdgeNormalized = VectorGetSafeNormal(P2 - P1);
-	const FVector3f P13CrossP23 = VectorCross(P1 - P3, P2 - P3);
-	const float Normal1Len = VectorSize(P13CrossP23);
-	const FVector3f Normal1 = SafeDivide(P13CrossP23, Normal1Len);
-	const FVector3f P24CrossP14 = VectorCross(P2 - P4, P1 - P4);
-	const float Normal2Len = VectorSize(P24CrossP14);
-	const FVector3f Normal2 = SafeDivide(P24CrossP14, Normal2Len);
-
-	const FVector3f N2CrossN1 = VectorCross(Normal2, Normal1);
-
-	const float CosPhi = clamp(VectorDot(Normal1, Normal2), (uniform float)(-1), (uniform float)(1));
-	const float SinPhi = clamp(VectorDot(N2CrossN1, SharedEdgeNormalized), (uniform float)(-1), (uniform float)(1));
-
-	const FVector3f DPhiDN1_OverNormal1Len = SafeDivide(CosPhi * VectorCross(SharedEdgeNormalized, Normal2) - SinPhi * Normal2, Normal1Len);
-	const FVector3f DPhiDN2_OverNormal2Len = SafeDivide(CosPhi * VectorCross(Normal1, SharedEdgeNormalized) - SinPhi * Normal1, Normal2Len);
-
-	const FVector3f DPhiDP13 = VectorCross(P2 - P3, DPhiDN1_OverNormal1Len);
-	const FVector3f DPhiDP23 = VectorCross(DPhiDN1_OverNormal1Len, P1 - P3);
-	const FVector3f DPhiDP24 = VectorCross(P1 - P4, DPhiDN2_OverNormal2Len);
-	const FVector3f DPhiDP14 = VectorCross(DPhiDN2_OverNormal2Len, P2 - P4);
-
-	Grad1 = DPhiDP13 + DPhiDP14;
-	Grad2 = DPhiDP23 + DPhiDP24;
-	Grad3 = -1 * DPhiDP13 - DPhiDP23;
-	Grad4 = -1 * DPhiDP14 - DPhiDP24;
-
-	return atan2(SinPhi, CosPhi);
-}
-
+#include "Chaos/XPBDBendingElement.isph"
 
 export void ApplyXPBDAnisotropicBendingConstraints(uniform FVector4f PandInvM[],
-									const uniform FIntVector4 Constraints[],
+									const uniform int32 ConstraintIndex1[],
+									const uniform int32 ConstraintIndex2[],
+									const uniform int32 ConstraintIndex3[],
+									const uniform int32 ConstraintIndex4[],
 									const uniform float RestAngles[],
 									const uniform bool IsBuckled[],
 									const uniform FVector3f WarpWeftBiasBaseMultiplers[],
 									uniform float Lambdas[],
 									const uniform float Dt,
-									const uniform float MinStiffness,
 									const uniform FVector3f& Stiffness,
 									const uniform FVector3f& BucklingStiffness,
 									const uniform int32 NumConstraints)
@@ -63,69 +23,54 @@ export void ApplyXPBDAnisotropicBendingConstraints(uniform FVector4f PandInvM[],
 
 	foreach(i = 0 ... NumConstraints)
 	{
-		const varying FIntVector4 Constraint = VectorLoad(&Constraints[extract(i,0)]);
+		const varying int32 i1 = ConstraintIndex1[i];
+		const varying int32 i2 = ConstraintIndex2[i];
+		const varying int32 i3 = ConstraintIndex3[i];
+		const varying int32 i4 = ConstraintIndex4[i];
 
-		const varying int32 i1 = Constraint.V[0];
-		const varying int32 i2 = Constraint.V[1];
-		const varying int32 i3 = Constraint.V[2];
-		const varying int32 i4 = Constraint.V[3];
-		
 		const varying FVector4f PandInvM1 = VectorGather(&PandInvM[i1]);
 		const varying FVector4f PandInvM2 = VectorGather(&PandInvM[i2]);
 		const varying FVector4f PandInvM3 = VectorGather(&PandInvM[i3]);
 		const varying FVector4f PandInvM4 = VectorGather(&PandInvM[i4]);
 
 		varying FVector3f P1, P2, P3, P4;
-		varying float M1, M2, M3, M4;
+		varying float InvM1, InvM2, InvM3, InvM4;
 
-		UnzipPandInvM(PandInvM1, P1, M1);
-		UnzipPandInvM(PandInvM2, P2, M2);
-		UnzipPandInvM(PandInvM3, P3, M3);
-		UnzipPandInvM(PandInvM4, P4, M4);
-
-		varying FVector3f Grad1, Grad2, Grad3, Grad4;
-		const varying float Angle = CalcGradientsAndAngle(P1, P2, P3, P4, Grad1, Grad2, Grad3, Grad4);
+		UnzipPandInvM(PandInvM1, P1, InvM1);
+		UnzipPandInvM(PandInvM2, P2, InvM2);
+		UnzipPandInvM(PandInvM3, P3, InvM3);
+		UnzipPandInvM(PandInvM4, P4, InvM4);
 		
-		const varying float RestAngle = RestAngles[i];
-		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorGather(&WarpWeftBiasBaseMultiplers[i]);
+		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorLoad(&WarpWeftBiasBaseMultiplers[extract(i,0)]);
 		const varying float StiffnessValue = select(IsBuckled[i], VectorDot(WarpWeftBiasBaseMultiplier, BucklingStiffness), VectorDot(WarpWeftBiasBaseMultiplier, Stiffness));
 		
 		const varying float Lambda = Lambdas[i];
-		const varying float Alpha  = 1.f / (StiffnessValue * Dt * Dt);
-		const varying float Denom = M1 * VectorSizeSquared(Grad1) + M2 * VectorSizeSquared(Grad2) + M3 * VectorSizeSquared(Grad3) + M4 * VectorSizeSquared(Grad4) + Alpha;
 
-		const varying float ComputedDLambda = (Angle - RestAngle - Alpha * Lambda) / Denom;
-		const varying float DLambda = select(StiffnessValue < MinStiffness, (uniform float)0, ComputedDLambda);
+		varying FVector3f Delta1, Delta2, Delta3, Delta4;
+		const varying float DLambda = GetXPBDBendingElementDeltas(P1, P2, P3, P4, InvM1, InvM2, InvM3, InvM4, Dt, RestAngles[i], Lambda, StiffnessValue, Delta1, Delta2, Delta3, Delta4);
+
 		Lambdas[i] = Lambda + DLambda;
-
-		if (M1 > 0)
-		{
-			VectorScatter(&PandInvM[i1], SetVector4(P1 - DLambda * M1 * Grad1, M1));
-		}
-		if (M2 > 0)
-		{
-			VectorScatter(&PandInvM[i2], SetVector4(P2 - DLambda * M2 * Grad2, M2));
-		}
-		if (M3 > 0)
-		{
-			VectorScatter(&PandInvM[i3], SetVector4(P3 - DLambda * M3 * Grad3, M3));
-		}
-		if (M4 > 0)
-		{
-			VectorScatter(&PandInvM[i4], SetVector4(P4 - DLambda * M4 * Grad4, M4));
-		}
+		VectorScatter(&PandInvM[i1], SetVector4(P1 + Delta1, InvM1));
+		VectorScatter(&PandInvM[i2], SetVector4(P2 + Delta2, InvM2));
+		VectorScatter(&PandInvM[i3], SetVector4(P3 + Delta3, InvM3));
+		VectorScatter(&PandInvM[i4], SetVector4(P4 + Delta4, InvM4));
 	}
 }
 
 export void ApplyXPBDAnisotropicBendingConstraintsWithDamping(uniform FVector4f PandInvM[],
-									const uniform FVector3f X[],
-									const uniform FIntVector4 Constraints[],
+									const uniform FVector3f X1Array[],
+									const uniform FVector3f X2Array[],
+									const uniform FVector3f X3Array[],
+									const uniform FVector3f X4Array[],
+									const uniform int32 ConstraintIndex1[],
+									const uniform int32 ConstraintIndex2[],
+									const uniform int32 ConstraintIndex3[],
+									const uniform int32 ConstraintIndex4[],
 									const uniform float RestAngles[],
 									const uniform bool IsBuckled[],
 									const uniform FVector3f WarpWeftBiasBaseMultiplers[],
 									uniform float Lambdas[],
 									const uniform float Dt,
-									const uniform float MinStiffness,
 									const uniform FVector3f& Stiffness,
 									const uniform FVector3f& BucklingStiffness,
 									const uniform float DampingRatio,
@@ -134,12 +79,10 @@ export void ApplyXPBDAnisotropicBendingConstraintsWithDamping(uniform FVector4f 
 
 	foreach(i = 0 ... NumConstraints)
 	{
-		const varying FIntVector4 Constraint = VectorLoad(&Constraints[extract(i,0)]);
-
-		const varying int32 i1 = Constraint.V[0];
-		const varying int32 i2 = Constraint.V[1];
-		const varying int32 i3 = Constraint.V[2];
-		const varying int32 i4 = Constraint.V[3];
+		const varying int32 i1 = ConstraintIndex1[i];
+		const varying int32 i2 = ConstraintIndex2[i];
+		const varying int32 i3 = ConstraintIndex3[i];
+		const varying int32 i4 = ConstraintIndex4[i];
 		
 		const varying FVector4f PandInvM1 = VectorGather(&PandInvM[i1]);
 		const varying FVector4f PandInvM2 = VectorGather(&PandInvM[i2]);
@@ -153,100 +96,129 @@ export void ApplyXPBDAnisotropicBendingConstraintsWithDamping(uniform FVector4f 
 		UnzipPandInvM(PandInvM2, P2, M2);
 		UnzipPandInvM(PandInvM3, P3, M3);
 		UnzipPandInvM(PandInvM4, P4, M4);
-
-		varying FVector3f Grad1, Grad2, Grad3, Grad4;
-		const varying float Angle = CalcGradientsAndAngle(P1, P2, P3, P4, Grad1, Grad2, Grad3, Grad4);
 		
-		const varying float RestAngle = RestAngles[i];
-		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorGather(&WarpWeftBiasBaseMultiplers[i]);
+		const uniform int32 i0 = extract(i,0);
+
+		const varying FVector3f X1 = VectorLoad(&X1Array[i0]);
+		const varying FVector3f X2 = VectorLoad(&X2Array[i0]);
+		const varying FVector3f X3 = VectorLoad(&X3Array[i0]);
+		const varying FVector3f X4 = VectorLoad(&X4Array[i0]);
+		
+		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorLoad(&WarpWeftBiasBaseMultiplers[i0]);
 		const varying float StiffnessValue = select(IsBuckled[i], VectorDot(WarpWeftBiasBaseMultiplier, BucklingStiffness), VectorDot(WarpWeftBiasBaseMultiplier, Stiffness));
-
-		const varying FVector3f X1 = VectorGather(&X[i1]);
-		const varying FVector3f X2 = VectorGather(&X[i2]);
-		const varying FVector3f X3 = VectorGather(&X[i3]);
-		const varying FVector3f X4 = VectorGather(&X[i4]);
-
-		const varying float CombinedInvMass = M1 + M2 + M3 + M4;
-		const varying float Damping = 2.f * DampingRatio * sqrt(StiffnessValue / CombinedInvMass);
-
 		const varying float Lambda = Lambdas[i];
-		const varying float Alpha  = 1.f / (StiffnessValue * Dt * Dt);
-		const varying float Gamma = Alpha * Damping * Dt;
 
-		const varying FVector3f V1TimesDt = P1 - X1;
-		const varying FVector3f V2TimesDt = P2 - X2;
-		const varying FVector3f V3TimesDt = P3 - X3;
-		const varying FVector3f V4TimesDt = P4 - X4;
-		const varying float DampingTerm = Gamma * (VectorDot(V1TimesDt, Grad1) + VectorDot(V2TimesDt, Grad2) + VectorDot(V3TimesDt, Grad3) + VectorDot(V4TimesDt, Grad4));
+		varying FVector3f Delta1, Delta2, Delta3, Delta4;
+		const varying float DLambda = GetXPBDBendingElementDeltasWithDamping(P1, P2, P3, P4, X1, X2, X3, X4, M1, M2, M3, M4, Dt, RestAngles[i], Lambda, StiffnessValue, DampingRatio, Delta1, Delta2, Delta3, Delta4);
 
-		const varying float Denom = (1.f + Gamma)*(M1 * VectorSizeSquared(Grad1) + M2 * VectorSizeSquared(Grad2) + M3 * VectorSizeSquared(Grad3) + M4 * VectorSizeSquared(Grad4)) + Alpha;
-
-		const varying float ComputedDLambda = (Angle - RestAngle - Alpha * Lambda + DampingTerm) / Denom;
-		const varying float DLambda = select(StiffnessValue < MinStiffness, (uniform float)0, ComputedDLambda);
 		Lambdas[i] = Lambda + DLambda;
 
-		if (M1 > 0)
-		{
-			VectorScatter(&PandInvM[i1], SetVector4(P1 - DLambda * M1 * Grad1, M1));
-		}
-		if (M2 > 0)
-		{
-			VectorScatter(&PandInvM[i2], SetVector4(P2 - DLambda * M2 * Grad2, M2));
-		}
-		if (M3 > 0)
-		{
-			VectorScatter(&PandInvM[i3], SetVector4(P3 - DLambda * M3 * Grad3, M3));
-		}
-		if (M4 > 0)
-		{
-			VectorScatter(&PandInvM[i4], SetVector4(P4 - DLambda * M4 * Grad4, M4));
-		}
+		VectorScatter(&PandInvM[i1], SetVector4(P1 + Delta1, M1));
+		VectorScatter(&PandInvM[i2], SetVector4(P2 + Delta2, M2));
+		VectorScatter(&PandInvM[i3], SetVector4(P3 + Delta3, M3));
+		VectorScatter(&PandInvM[i4], SetVector4(P4 + Delta4, M4));
+	}
+}
+
+export void ApplyXPBDAnisotropicBendingDampingConstraints(uniform FVector4f PandInvM[],
+									const uniform FVector3f X1Array[],
+									const uniform FVector3f X2Array[],
+									const uniform FVector3f X3Array[],
+									const uniform FVector3f X4Array[],
+									const uniform int32 ConstraintIndex1[],
+									const uniform int32 ConstraintIndex2[],
+									const uniform int32 ConstraintIndex3[],
+									const uniform int32 ConstraintIndex4[],
+									const uniform float RestAngles[],
+									const uniform bool IsBuckled[],
+									const uniform FVector3f WarpWeftBiasBaseMultiplers[],
+									uniform float Lambdas[],
+									const uniform float Dt,
+									const uniform FVector3f& Stiffness,
+									const uniform FVector3f& BucklingStiffness,
+									const uniform float DampingRatio,
+									const uniform int32 NumConstraints)
+{
+
+	foreach(i = 0 ... NumConstraints)
+	{
+		const varying int32 i1 = ConstraintIndex1[i];
+		const varying int32 i2 = ConstraintIndex2[i];
+		const varying int32 i3 = ConstraintIndex3[i];
+		const varying int32 i4 = ConstraintIndex4[i];
+		
+		const varying FVector4f PandInvM1 = VectorGather(&PandInvM[i1]);
+		const varying FVector4f PandInvM2 = VectorGather(&PandInvM[i2]);
+		const varying FVector4f PandInvM3 = VectorGather(&PandInvM[i3]);
+		const varying FVector4f PandInvM4 = VectorGather(&PandInvM[i4]);
+
+		varying FVector3f P1, P2, P3, P4;
+		varying float M1, M2, M3, M4;
+
+		UnzipPandInvM(PandInvM1, P1, M1);
+		UnzipPandInvM(PandInvM2, P2, M2);
+		UnzipPandInvM(PandInvM3, P3, M3);
+		UnzipPandInvM(PandInvM4, P4, M4);
+		
+		const uniform int32 i0 = extract(i,0);
+
+		const varying FVector3f X1 = VectorLoad(&X1Array[i0]);
+		const varying FVector3f X2 = VectorLoad(&X2Array[i0]);
+		const varying FVector3f X3 = VectorLoad(&X3Array[i0]);
+		const varying FVector3f X4 = VectorLoad(&X4Array[i0]);
+		
+		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorLoad(&WarpWeftBiasBaseMultiplers[i0]);
+		const varying float StiffnessValue = select(IsBuckled[i], VectorDot(WarpWeftBiasBaseMultiplier, BucklingStiffness), VectorDot(WarpWeftBiasBaseMultiplier, Stiffness));
+		const varying float Lambda = Lambdas[i];
+
+		varying FVector3f Delta1, Delta2, Delta3, Delta4;
+		const varying float DLambda = GetXPBDBendingElementDampingDeltas(P1, P2, P3, P4, X1, X2, X3, X4, M1, M2, M3, M4, Dt, RestAngles[i], Lambda, StiffnessValue, DampingRatio, Delta1, Delta2, Delta3, Delta4);
+
+		Lambdas[i] = Lambda + DLambda;
+		VectorScatter(&PandInvM[i1], SetVector4(P1 + Delta1, M1));
+		VectorScatter(&PandInvM[i2], SetVector4(P2 + Delta2, M2));
+		VectorScatter(&PandInvM[i3], SetVector4(P3 + Delta3, M3));
+		VectorScatter(&PandInvM[i4], SetVector4(P4 + Delta4, M4));
 	}
 }
 
 export void ApplyXPBDAnisotropicBendingConstraintsWithMaps(uniform FVector4f PandInvM[],
-											const uniform FIntVector4 Constraints[],
+											const uniform int32 ConstraintIndex1[],
+											const uniform int32 ConstraintIndex2[],
+											const uniform int32 ConstraintIndex3[],
+											const uniform int32 ConstraintIndex4[],
 											const uniform float RestAngles[],
 											const uniform bool IsBuckled[],
 											const uniform FVector3f WarpWeftBiasBaseMultiplers[],
 											uniform float Lambdas[],
 											const uniform float Dt,
-											const uniform float MinStiffness,
 											const uniform bool StiffnessHasMap,
-											const uniform uint8 StiffnessIndices[],
-											const uniform float StiffnessTable[],
+											const uniform FVector2f& StiffnessOffsetRange,
+											const uniform float StiffnessMapValues[],
 											const uniform bool StiffnessWeftHasMap,
-											const uniform uint8 StiffnessWeftIndices[],
-											const uniform float StiffnessWeftTable[],
+											const uniform FVector2f& StiffnessWeftOffsetRange,
+											const uniform float StiffnessWeftMapValues[],
 											const uniform bool StiffnessBiasHasMap,
-											const uniform uint8 StiffnessBiasIndices[],
-											const uniform float StiffnessBiasTable[],
+											const uniform FVector2f& StiffnessBiasOffsetRange,
+											const uniform float StiffnessBiasMapValues[],
 											const uniform bool BucklingStiffnessHasMap,
-											const uniform uint8 BucklingStiffnessIndices[],
-											const uniform float BucklingStiffnessTable[],
+											const uniform FVector2f& BucklingStiffnessOffsetRange,
+											const uniform float BucklingStiffnessMapValues[],
 											const uniform bool BucklingStiffnessWeftHasMap,
-											const uniform uint8 BucklingStiffnessWeftIndices[],
-											const uniform float BucklingStiffnessWeftTable[],
+											const uniform FVector2f& BucklingStiffnessWeftOffsetRange,
+											const uniform float BucklingStiffnessWeftMapValues[],
 											const uniform bool BucklingStiffnessBiasHasMap,
-											const uniform uint8 BucklingStiffnessBiasIndices[],
-											const uniform float BucklingStiffnessBiasTable[],
+											const uniform FVector2f& BucklingStiffnessBiasOffsetRange,
+											const uniform float BucklingStiffnessBiasMapValues[],
 											const uniform int32 NumConstraints)
 {
 
 	foreach(i = 0 ... NumConstraints)
 	{
-		const varying FIntVector4 Constraint = VectorLoad(&Constraints[extract(i,0)]);
-
-		const varying int32 i1 = Constraint.V[0];
-		const varying int32 i2 = Constraint.V[1];
-		const varying int32 i3 = Constraint.V[2];
-		const varying int32 i4 = Constraint.V[3];
-		const varying int8 StiffnessIndex = StiffnessHasMap ? StiffnessIndices[i] : 0;
-		const varying int8 StiffnessWeftIndex = StiffnessWeftHasMap ? StiffnessWeftIndices[i] : 0;
-		const varying int8 StiffnessBiasIndex = StiffnessBiasHasMap ? StiffnessBiasIndices[i] : 0;
-		const varying int8 BucklingStiffnessIndex = BucklingStiffnessHasMap ? BucklingStiffnessIndices[i] : 0;
-		const varying int8 BucklingStiffnessWeftIndex = BucklingStiffnessWeftHasMap ? BucklingStiffnessWeftIndices[i] : 0;
-		const varying int8 BucklingStiffnessBiasIndex = BucklingStiffnessBiasHasMap ? BucklingStiffnessBiasIndices[i] : 0;
+		const varying int32 i1 = ConstraintIndex1[i];
+		const varying int32 i2 = ConstraintIndex2[i];
+		const varying int32 i3 = ConstraintIndex3[i];
+		const varying int32 i4 = ConstraintIndex4[i];
 
 		const varying FVector4f PandInvM2 = VectorGather(&PandInvM[i2]);
 		const varying FVector4f PandInvM3 = VectorGather(&PandInvM[i3]);
@@ -261,107 +233,79 @@ export void ApplyXPBDAnisotropicBendingConstraintsWithMaps(uniform FVector4f Pan
 		UnzipPandInvM(PandInvM3, P3, M3);
 		UnzipPandInvM(PandInvM4, P4, M4);
 
-
-		varying FVector3f Grad1, Grad2, Grad3, Grad4;
-		const varying float Angle = CalcGradientsAndAngle(P1, P2, P3, P4, Grad1, Grad2, Grad3, Grad4);
-		
-		#pragma ignore warning(perf)
-		const varying float Stiffness = StiffnessTable[StiffnessIndex];
-		#pragma ignore warning(perf)
-		const varying float StiffnessWeft = StiffnessWeftTable[StiffnessWeftIndex];
-		#pragma ignore warning(perf)
-		const varying float StiffnessBias = StiffnessBiasTable[StiffnessBiasIndex];
+		const varying float Stiffness = StiffnessHasMap ? StiffnessOffsetRange.V[0] + StiffnessMapValues[i]*StiffnessOffsetRange.V[1] : StiffnessOffsetRange.V[0];
+		const varying float StiffnessWeft = StiffnessWeftHasMap ? StiffnessWeftOffsetRange.V[0] + StiffnessWeftMapValues[i]*StiffnessWeftOffsetRange.V[1] : StiffnessWeftOffsetRange.V[0];
+		const varying float StiffnessBias = StiffnessBiasHasMap ? StiffnessBiasOffsetRange.V[0] + StiffnessBiasMapValues[i]*StiffnessBiasOffsetRange.V[1] : StiffnessBiasOffsetRange.V[0];
 
 		const varying FVector3f StiffnessVector = {{StiffnessWeft, Stiffness, StiffnessBias}};
-
-		#pragma ignore warning(perf)
-		const varying float BucklingStiffness = BucklingStiffnessTable[BucklingStiffnessIndex];
-		#pragma ignore warning(perf)
-		const varying float BucklingStiffnessWeft = BucklingStiffnessWeftTable[BucklingStiffnessWeftIndex];
-		#pragma ignore warning(perf)
-		const varying float BucklingStiffnessBias = BucklingStiffnessBiasTable[BucklingStiffnessBiasIndex];
+		
+		const varying float BucklingStiffness = BucklingStiffnessHasMap ? BucklingStiffnessOffsetRange.V[0] + BucklingStiffnessMapValues[i]*BucklingStiffnessOffsetRange.V[1] : BucklingStiffnessOffsetRange.V[0];
+		const varying float BucklingStiffnessWeft = BucklingStiffnessWeftHasMap ? BucklingStiffnessWeftOffsetRange.V[0] + BucklingStiffnessWeftMapValues[i]*BucklingStiffnessWeftOffsetRange.V[1] : BucklingStiffnessWeftOffsetRange.V[0];
+		const varying float BucklingStiffnessBias = BucklingStiffnessBiasHasMap ? BucklingStiffnessBiasOffsetRange.V[0] + BucklingStiffnessBiasMapValues[i]*BucklingStiffnessBiasOffsetRange.V[1] : BucklingStiffnessBiasOffsetRange.V[0];
 		
 		const varying FVector3f BucklingStiffnessVector = {{BucklingStiffnessWeft, BucklingStiffness, BucklingStiffnessBias}};
 		
-		const varying float RestAngle = RestAngles[i];
-		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorGather(&WarpWeftBiasBaseMultiplers[i]);
+		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorLoad(&WarpWeftBiasBaseMultiplers[extract(i,0)]);
 		const varying float StiffnessValue = select(IsBuckled[i], VectorDot(WarpWeftBiasBaseMultiplier, BucklingStiffnessVector), VectorDot(WarpWeftBiasBaseMultiplier, StiffnessVector));
 		
 		const varying float Lambda = Lambdas[i];
-		const varying float Alpha  = 1.f / (StiffnessValue * Dt * Dt);
-		const varying float Denom = M1 * VectorSizeSquared(Grad1) + M2 * VectorSizeSquared(Grad2) + M3 * VectorSizeSquared(Grad3) + M4 * VectorSizeSquared(Grad4) + Alpha;
 
-		const varying float ComputedDLambda = (Angle - RestAngle - Alpha * Lambda) / Denom;
-		const varying float DLambda = select( StiffnessValue < MinStiffness, (uniform float)0, ComputedDLambda);
+		varying FVector3f Delta1, Delta2, Delta3, Delta4;
+		const varying float DLambda = GetXPBDBendingElementDeltas(P1, P2, P3, P4, M1, M2, M3, M4, Dt, RestAngles[i], Lambda, StiffnessValue, Delta1, Delta2, Delta3, Delta4);
+
 		Lambdas[i] = Lambda + DLambda;
-
-		if (M1 > 0)
-		{
-			VectorScatter(&PandInvM[i1], SetVector4(P1 - DLambda * M1 * Grad1, M1));
-		}
-		if (M2 > 0)
-		{
-			VectorScatter(&PandInvM[i2], SetVector4(P2 - DLambda * M2 * Grad2, M2));
-		}
-		if (M3 > 0)
-		{
-			VectorScatter(&PandInvM[i3], SetVector4(P3 - DLambda * M3 * Grad3, M3));
-		}
-		if (M4 > 0)
-		{
-			VectorScatter(&PandInvM[i4], SetVector4(P4 - DLambda * M4 * Grad4, M4));
-		}
+		
+		VectorScatter(&PandInvM[i1], SetVector4(P1 + Delta1, M1));
+		VectorScatter(&PandInvM[i2], SetVector4(P2 + Delta2, M2));
+		VectorScatter(&PandInvM[i3], SetVector4(P3 + Delta3, M3));
+		VectorScatter(&PandInvM[i4], SetVector4(P4 + Delta4, M4));
 	}
 }
 
 export void ApplyXPBDAnisotropicBendingConstraintsWithDampingAndMaps(uniform FVector4f PandInvM[],
-											const uniform FVector3f X[],
-											const uniform FIntVector4 Constraints[],
+											const uniform FVector3f X1Array[],
+											const uniform FVector3f X2Array[],
+											const uniform FVector3f X3Array[],
+											const uniform FVector3f X4Array[],
+											const uniform int32 ConstraintIndex1[],
+											const uniform int32 ConstraintIndex2[],
+											const uniform int32 ConstraintIndex3[],
+											const uniform int32 ConstraintIndex4[],
 											const uniform float RestAngles[],
 											const uniform bool IsBuckled[],
 											const uniform FVector3f WarpWeftBiasBaseMultiplers[],
 											uniform float Lambdas[],
 											const uniform float Dt,
-											const uniform float MinStiffness,
 											const uniform bool StiffnessHasMap,
-											const uniform uint8 StiffnessIndices[],
-											const uniform float StiffnessTable[],
+											const uniform FVector2f& StiffnessOffsetRange,
+											const uniform float StiffnessMapValues[],
 											const uniform bool StiffnessWeftHasMap,
-											const uniform uint8 StiffnessWeftIndices[],
-											const uniform float StiffnessWeftTable[],
+											const uniform FVector2f& StiffnessWeftOffsetRange,
+											const uniform float StiffnessWeftMapValues[],
 											const uniform bool StiffnessBiasHasMap,
-											const uniform uint8 StiffnessBiasIndices[],
-											const uniform float StiffnessBiasTable[],
+											const uniform FVector2f& StiffnessBiasOffsetRange,
+											const uniform float StiffnessBiasMapValues[],
 											const uniform bool BucklingStiffnessHasMap,
-											const uniform uint8 BucklingStiffnessIndices[],
-											const uniform float BucklingStiffnessTable[],
+											const uniform FVector2f& BucklingStiffnessOffsetRange,
+											const uniform float BucklingStiffnessMapValues[],
 											const uniform bool BucklingStiffnessWeftHasMap,
-											const uniform uint8 BucklingStiffnessWeftIndices[],
-											const uniform float BucklingStiffnessWeftTable[],
+											const uniform FVector2f& BucklingStiffnessWeftOffsetRange,
+											const uniform float BucklingStiffnessWeftMapValues[],
 											const uniform bool BucklingStiffnessBiasHasMap,
-											const uniform uint8 BucklingStiffnessBiasIndices[],
-											const uniform float BucklingStiffnessBiasTable[],
+											const uniform FVector2f& BucklingStiffnessBiasOffsetRange,
+											const uniform float BucklingStiffnessBiasMapValues[],
 											const uniform bool DampingHasMap,
-											const uniform uint8 DampingIndices[],
-											const uniform float DampingTable[],
+											const uniform FVector2f& DampingOffsetRange,
+											const uniform float DampingMapValues[],
 											const uniform int32 NumConstraints)
 {
 
 	foreach(i = 0 ... NumConstraints)
 	{
-		const varying FIntVector4 Constraint = VectorLoad(&Constraints[extract(i,0)]);
-
-		const varying int32 i1 = Constraint.V[0];
-		const varying int32 i2 = Constraint.V[1];
-		const varying int32 i3 = Constraint.V[2];
-		const varying int32 i4 = Constraint.V[3];
-		const varying int8 StiffnessIndex = StiffnessHasMap ? StiffnessIndices[i] : 0;
-		const varying int8 StiffnessWeftIndex = StiffnessWeftHasMap ? StiffnessWeftIndices[i] : 0;
-		const varying int8 StiffnessBiasIndex = StiffnessBiasHasMap ? StiffnessBiasIndices[i] : 0;
-		const varying int8 BucklingStiffnessIndex = BucklingStiffnessHasMap ? BucklingStiffnessIndices[i] : 0;
-		const varying int8 BucklingStiffnessWeftIndex = BucklingStiffnessWeftHasMap ? BucklingStiffnessWeftIndices[i] : 0;
-		const varying int8 BucklingStiffnessBiasIndex = BucklingStiffnessBiasHasMap ? BucklingStiffnessBiasIndices[i] : 0;
-		const varying int8 DampingIndex = DampingHasMap ? DampingIndices[i] : 0;
+		const varying int32 i1 = ConstraintIndex1[i];
+		const varying int32 i2 = ConstraintIndex2[i];
+		const varying int32 i3 = ConstraintIndex3[i];
+		const varying int32 i4 = ConstraintIndex4[i];
 
 		const varying FVector4f PandInvM2 = VectorGather(&PandInvM[i2]);
 		const varying FVector4f PandInvM3 = VectorGather(&PandInvM[i3]);
@@ -376,75 +320,136 @@ export void ApplyXPBDAnisotropicBendingConstraintsWithDampingAndMaps(uniform FVe
 		UnzipPandInvM(PandInvM3, P3, M3);
 		UnzipPandInvM(PandInvM4, P4, M4);
 
-
-		varying FVector3f Grad1, Grad2, Grad3, Grad4;
-		const varying float Angle = CalcGradientsAndAngle(P1, P2, P3, P4, Grad1, Grad2, Grad3, Grad4);
-		
-		
-		#pragma ignore warning(perf)
-		const varying float Stiffness = StiffnessTable[StiffnessIndex];
-		#pragma ignore warning(perf)
-		const varying float StiffnessWeft = StiffnessWeftTable[StiffnessWeftIndex];
-		#pragma ignore warning(perf)
-		const varying float StiffnessBias = StiffnessBiasTable[StiffnessBiasIndex];
+		const varying float Stiffness = StiffnessHasMap ? StiffnessOffsetRange.V[0] + StiffnessMapValues[i]*StiffnessOffsetRange.V[1] : StiffnessOffsetRange.V[0];
+		const varying float StiffnessWeft = StiffnessWeftHasMap ? StiffnessWeftOffsetRange.V[0] + StiffnessWeftMapValues[i]*StiffnessWeftOffsetRange.V[1] : StiffnessWeftOffsetRange.V[0];
+		const varying float StiffnessBias = StiffnessBiasHasMap ? StiffnessBiasOffsetRange.V[0] + StiffnessBiasMapValues[i]*StiffnessBiasOffsetRange.V[1] : StiffnessBiasOffsetRange.V[0];
 
 		const varying FVector3f StiffnessVector = {{StiffnessWeft, Stiffness, StiffnessBias}};
-
-		#pragma ignore warning(perf)
-		const varying float BucklingStiffness = BucklingStiffnessTable[BucklingStiffnessIndex];
-		#pragma ignore warning(perf)
-		const varying float BucklingStiffnessWeft = BucklingStiffnessWeftTable[BucklingStiffnessWeftIndex];
-		#pragma ignore warning(perf)
-		const varying float BucklingStiffnessBias = BucklingStiffnessBiasTable[BucklingStiffnessBiasIndex];
+		
+		const varying float BucklingStiffness = BucklingStiffnessHasMap ? BucklingStiffnessOffsetRange.V[0] + BucklingStiffnessMapValues[i]*BucklingStiffnessOffsetRange.V[1] : BucklingStiffnessOffsetRange.V[0];
+		const varying float BucklingStiffnessWeft = BucklingStiffnessWeftHasMap ? BucklingStiffnessWeftOffsetRange.V[0] + BucklingStiffnessWeftMapValues[i]*BucklingStiffnessWeftOffsetRange.V[1] : BucklingStiffnessWeftOffsetRange.V[0];
+		const varying float BucklingStiffnessBias = BucklingStiffnessBiasHasMap ? BucklingStiffnessBiasOffsetRange.V[0] + BucklingStiffnessBiasMapValues[i]*BucklingStiffnessBiasOffsetRange.V[1] : BucklingStiffnessBiasOffsetRange.V[0];
 		
 		const varying FVector3f BucklingStiffnessVector = {{BucklingStiffnessWeft, BucklingStiffness, BucklingStiffnessBias}};
 		
-		#pragma ignore warning(perf)
-		const varying float DampingRatio = DampingTable[DampingIndex];
+		const varying float DampingRatio = DampingHasMap ? DampingOffsetRange.V[0] + DampingMapValues[i]*DampingOffsetRange.V[1] : DampingOffsetRange.V[0];
 		
-		const varying float RestAngle = RestAngles[i];
-		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorGather(&WarpWeftBiasBaseMultiplers[i]);
+		const uniform int32 i0 = extract(i,0);
+
+		const varying FVector3f X1 = VectorLoad(&X1Array[i0]);
+		const varying FVector3f X2 = VectorLoad(&X2Array[i0]);
+		const varying FVector3f X3 = VectorLoad(&X3Array[i0]);
+		const varying FVector3f X4 = VectorLoad(&X4Array[i0]);
+		
+		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorLoad(&WarpWeftBiasBaseMultiplers[i0]);
 		const varying float StiffnessValue = select(IsBuckled[i], VectorDot(WarpWeftBiasBaseMultiplier, BucklingStiffnessVector), VectorDot(WarpWeftBiasBaseMultiplier, StiffnessVector));
-
-		const varying FVector3f X1 = VectorGather(&X[i1]);
-		const varying FVector3f X2 = VectorGather(&X[i2]);
-		const varying FVector3f X3 = VectorGather(&X[i3]);
-		const varying FVector3f X4 = VectorGather(&X[i4]);
-
-		const varying float CombinedInvMass = M1 + M2 + M3 + M4;
-		const varying float Damping = 2.f * DampingRatio * sqrt(StiffnessValue / CombinedInvMass);
 		
 		const varying float Lambda = Lambdas[i];
-		const varying float Alpha  = 1.f / (StiffnessValue * Dt * Dt);
-		const varying float Gamma = Alpha * Damping * Dt;
 
-		const varying FVector3f V1TimesDt = P1 - X1;
-		const varying FVector3f V2TimesDt = P2 - X2;
-		const varying FVector3f V3TimesDt = P3 - X3;
-		const varying FVector3f V4TimesDt = P4 - X4;
-		const varying float DampingTerm = Gamma * (VectorDot(V1TimesDt, Grad1) + VectorDot(V2TimesDt, Grad2) + VectorDot(V3TimesDt, Grad3) + VectorDot(V4TimesDt, Grad4));
+		varying FVector3f Delta1, Delta2, Delta3, Delta4;
+		const varying float DLambda = GetXPBDBendingElementDeltasWithDamping(P1, P2, P3, P4, X1, X2, X3, X4, M1, M2, M3, M4, Dt, RestAngles[i], Lambda, StiffnessValue, DampingRatio, Delta1, Delta2, Delta3, Delta4);
 
-		const varying float Denom = (1.f + Gamma)*(M1 * VectorSizeSquared(Grad1) + M2 * VectorSizeSquared(Grad2) + M3 * VectorSizeSquared(Grad3) + M4 * VectorSizeSquared(Grad4)) + Alpha;
-
-		const varying float ComputedDLambda = (Angle - RestAngle - Alpha * Lambda + DampingTerm) / Denom;
-		const varying float DLambda = select( StiffnessValue < MinStiffness, (uniform float)0, ComputedDLambda);
 		Lambdas[i] = Lambda + DLambda;
 
-		if (M1 > 0)
-		{
-			VectorScatter(&PandInvM[i1], SetVector4(P1 - DLambda * M1 * Grad1, M1));
-		}
-		if (M2 > 0)
-		{
-			VectorScatter(&PandInvM[i2], SetVector4(P2 - DLambda * M2 * Grad2, M2));
-		}
-		if (M3 > 0)
-		{
-			VectorScatter(&PandInvM[i3], SetVector4(P3 - DLambda * M3 * Grad3, M3));
-		}
-		if (M4 > 0)
-		{
-			VectorScatter(&PandInvM[i4], SetVector4(P4 - DLambda * M4 * Grad4, M4));
-		}
+		VectorScatter(&PandInvM[i1], SetVector4(P1 + Delta1, M1));
+		VectorScatter(&PandInvM[i2], SetVector4(P2 + Delta2, M2));
+		VectorScatter(&PandInvM[i3], SetVector4(P3 + Delta3, M3));
+		VectorScatter(&PandInvM[i4], SetVector4(P4 + Delta4, M4));
+	}
+}
+
+export void ApplyXPBDAnisotropicBendingDampingConstraintsWithMaps(uniform FVector4f PandInvM[],
+											const uniform FVector3f X1Array[],
+											const uniform FVector3f X2Array[],
+											const uniform FVector3f X3Array[],
+											const uniform FVector3f X4Array[],
+											const uniform int32 ConstraintIndex1[],
+											const uniform int32 ConstraintIndex2[],
+											const uniform int32 ConstraintIndex3[],
+											const uniform int32 ConstraintIndex4[],
+											const uniform float RestAngles[],
+											const uniform bool IsBuckled[],
+											const uniform FVector3f WarpWeftBiasBaseMultiplers[],
+											uniform float Lambdas[],
+											const uniform float Dt,
+											const uniform bool StiffnessHasMap,
+											const uniform FVector2f& StiffnessOffsetRange,
+											const uniform float StiffnessMapValues[],
+											const uniform bool StiffnessWeftHasMap,
+											const uniform FVector2f& StiffnessWeftOffsetRange,
+											const uniform float StiffnessWeftMapValues[],
+											const uniform bool StiffnessBiasHasMap,
+											const uniform FVector2f& StiffnessBiasOffsetRange,
+											const uniform float StiffnessBiasMapValues[],
+											const uniform bool BucklingStiffnessHasMap,
+											const uniform FVector2f& BucklingStiffnessOffsetRange,
+											const uniform float BucklingStiffnessMapValues[],
+											const uniform bool BucklingStiffnessWeftHasMap,
+											const uniform FVector2f& BucklingStiffnessWeftOffsetRange,
+											const uniform float BucklingStiffnessWeftMapValues[],
+											const uniform bool BucklingStiffnessBiasHasMap,
+											const uniform FVector2f& BucklingStiffnessBiasOffsetRange,
+											const uniform float BucklingStiffnessBiasMapValues[],
+											const uniform bool DampingHasMap,
+											const uniform FVector2f& DampingOffsetRange,
+											const uniform float DampingMapValues[],
+											const uniform int32 NumConstraints)
+{
+
+	foreach(i = 0 ... NumConstraints)
+	{
+		const varying int32 i1 = ConstraintIndex1[i];
+		const varying int32 i2 = ConstraintIndex2[i];
+		const varying int32 i3 = ConstraintIndex3[i];
+		const varying int32 i4 = ConstraintIndex4[i];
+
+		const varying FVector4f PandInvM2 = VectorGather(&PandInvM[i2]);
+		const varying FVector4f PandInvM3 = VectorGather(&PandInvM[i3]);
+		const varying FVector4f PandInvM1 = VectorGather(&PandInvM[i1]);
+		const varying FVector4f PandInvM4 = VectorGather(&PandInvM[i4]);
+
+		varying FVector3f P1, P2, P3, P4;
+		varying float M1, M2, M3, M4;
+
+		UnzipPandInvM(PandInvM1, P1, M1);
+		UnzipPandInvM(PandInvM2, P2, M2);
+		UnzipPandInvM(PandInvM3, P3, M3);
+		UnzipPandInvM(PandInvM4, P4, M4);
+
+		const varying float Stiffness = StiffnessHasMap ? StiffnessOffsetRange.V[0] + StiffnessMapValues[i]*StiffnessOffsetRange.V[1] : StiffnessOffsetRange.V[0];
+		const varying float StiffnessWeft = StiffnessWeftHasMap ? StiffnessWeftOffsetRange.V[0] + StiffnessWeftMapValues[i]*StiffnessWeftOffsetRange.V[1] : StiffnessWeftOffsetRange.V[0];
+		const varying float StiffnessBias = StiffnessBiasHasMap ? StiffnessBiasOffsetRange.V[0] + StiffnessBiasMapValues[i]*StiffnessBiasOffsetRange.V[1] : StiffnessBiasOffsetRange.V[0];
+
+		const varying FVector3f StiffnessVector = {{StiffnessWeft, Stiffness, StiffnessBias}};
+		
+		const varying float BucklingStiffness = BucklingStiffnessHasMap ? BucklingStiffnessOffsetRange.V[0] + BucklingStiffnessMapValues[i]*BucklingStiffnessOffsetRange.V[1] : BucklingStiffnessOffsetRange.V[0];
+		const varying float BucklingStiffnessWeft = BucklingStiffnessWeftHasMap ? BucklingStiffnessWeftOffsetRange.V[0] + BucklingStiffnessWeftMapValues[i]*BucklingStiffnessWeftOffsetRange.V[1] : BucklingStiffnessWeftOffsetRange.V[0];
+		const varying float BucklingStiffnessBias = BucklingStiffnessBiasHasMap ? BucklingStiffnessBiasOffsetRange.V[0] + BucklingStiffnessBiasMapValues[i]*BucklingStiffnessBiasOffsetRange.V[1] : BucklingStiffnessBiasOffsetRange.V[0];
+		
+		const varying FVector3f BucklingStiffnessVector = {{BucklingStiffnessWeft, BucklingStiffness, BucklingStiffnessBias}};
+		
+		const varying float DampingRatio = DampingHasMap ? DampingOffsetRange.V[0] + DampingMapValues[i]*DampingOffsetRange.V[1] : DampingOffsetRange.V[0];
+
+		const uniform int32 i0 = extract(i,0);
+
+		const varying FVector3f X1 = VectorLoad(&X1Array[i0]);
+		const varying FVector3f X2 = VectorLoad(&X2Array[i0]);
+		const varying FVector3f X3 = VectorLoad(&X3Array[i0]);
+		const varying FVector3f X4 = VectorLoad(&X4Array[i0]);
+		
+		const varying FVector3f WarpWeftBiasBaseMultiplier = VectorLoad(&WarpWeftBiasBaseMultiplers[i0]);
+		const varying float StiffnessValue = select(IsBuckled[i], VectorDot(WarpWeftBiasBaseMultiplier, BucklingStiffnessVector), VectorDot(WarpWeftBiasBaseMultiplier, StiffnessVector));
+		
+		const varying float Lambda = Lambdas[i];
+
+		varying FVector3f Delta1, Delta2, Delta3, Delta4;
+		const varying float DLambda = GetXPBDBendingElementDampingDeltas(P1, P2, P3, P4, X1, X2, X3, X4, M1, M2, M3, M4, Dt, RestAngles[i], Lambda, StiffnessValue, DampingRatio, Delta1, Delta2, Delta3, Delta4);
+
+		Lambdas[i] = Lambda + DLambda;
+		
+		VectorScatter(&PandInvM[i1], SetVector4(P1 + Delta1, M1));
+		VectorScatter(&PandInvM[i2], SetVector4(P2 + Delta2, M2));
+		VectorScatter(&PandInvM[i3], SetVector4(P3 + Delta3, M3));
+		VectorScatter(&PandInvM[i4], SetVector4(P4 + Delta4, M4));
 	}
 }

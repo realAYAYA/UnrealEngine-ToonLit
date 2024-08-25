@@ -39,6 +39,15 @@ enum class EMotionExtractor_Axis : uint8
 	XYZ
 };
 
+/** Reference frame/space to use when calculating motion */
+UENUM(BlueprintType)
+enum class EMotionExtractor_Space : uint8
+{
+	ComponentSpace,
+	LocalSpace,
+	RelativeToBone,
+};
+
 /** Math operations that can be applied to the extracted value before add it to the curve */
 UENUM(BlueprintType)
 enum class EMotionExtractor_MathOperation : uint8

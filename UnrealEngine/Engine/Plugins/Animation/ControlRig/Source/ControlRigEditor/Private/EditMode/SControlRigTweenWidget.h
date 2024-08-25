@@ -25,6 +25,7 @@ class SControlRigTweenSlider : public SCompoundWidget
 {
 	SLATE_BEGIN_ARGS(SControlRigTweenSlider) {}
 	SLATE_ARGUMENT(TSharedPtr<FBaseAnimSlider>, InAnimSlider)
+	SLATE_ARGUMENT(TWeakPtr<FControlRigEditMode>, InWeakEditMode)
 	SLATE_END_ARGS()
 	~SControlRigTweenSlider()
 	{
@@ -51,8 +52,8 @@ private:
 	double PoseBlendValue;
 	bool bIsBlending;
 	bool bSliderStartedTransaction;
-
 	
+	TWeakPtr<FControlRigEditMode> WeakEditMode;
 	TWeakPtr<ISequencer> WeakSequencer;
 	TSharedPtr<FBaseAnimSlider> AnimSlider;
 	TSharedPtr<SSpinBox<double>> SpinBox;
@@ -64,6 +65,7 @@ class SControlRigTweenWidget : public SCompoundWidget
 {
 	SLATE_BEGIN_ARGS(SControlRigTweenWidget) {}
 	SLATE_ARGUMENT(TSharedPtr<FControlRigEditModeToolkit>, InOwningToolkit)
+	SLATE_ARGUMENT(TSharedPtr<FControlRigEditMode>, InOwningEditMode)
 	SLATE_END_ARGS()
 		~SControlRigTweenWidget()
 	{
@@ -90,7 +92,9 @@ private:
 
 	TWeakPtr<ISequencer> WeakSequencer;
 	TWeakPtr<FControlRigEditModeToolkit> OwningToolkit;
-	FAnimBlendTooLManager  AnimBlendTools;
+	FAnimBlendToolManager  AnimBlendTools;
+
+	TWeakPtr<FControlRigEditMode> OwningEditMode;
 
 	TSharedPtr<SControlRigTweenSlider> SliderWidget;
 	static int32 ActiveSlider;

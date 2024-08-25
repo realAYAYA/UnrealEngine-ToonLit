@@ -18,6 +18,9 @@ public:
 	/** Creates a new view model for the specified viewport configuration object */
 	FDisplayClusterConfiguratorViewportViewModel(UDisplayClusterConfigurationViewport* Viewport);
 
+	/** Sets the camera property of the viewport, propagating the change through property handles and marking the viewport's package as dirty  */
+	void SetCamera(const FString& NewCamera);
+
 	/** Sets the region of the viewport,  propagating the change through property handles and marking the viewport's package as dirty */
 	void SetRegion(const FDisplayClusterConfigurationRectangle& NewRegion);
 
@@ -28,6 +31,7 @@ private:
 	/** A pointer to the viewport configuration object the view model encapsulates */
 	TWeakObjectPtr<UDisplayClusterConfigurationViewport> ViewportPtr;
 
+	PROPERTY_HANDLE(Camera);
 	PROPERTY_HANDLE(Region);
 	PROPERTY_HANDLE(ViewportRemap);
 };

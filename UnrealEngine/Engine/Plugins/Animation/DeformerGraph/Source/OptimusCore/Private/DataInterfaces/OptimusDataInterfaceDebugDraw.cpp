@@ -14,6 +14,14 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OptimusDataInterfaceDebugDraw)
 
 
+UOptimusDebugDrawDataInterface::UOptimusDebugDrawDataInterface()
+{
+	if (ShaderPrint::IsSupported(GMaxRHIShaderPlatform))
+	{
+		bIsSupported = true;
+	}
+}
+
 FString UOptimusDebugDrawDataInterface::GetDisplayName() const
 {
 	return TEXT("Debug Draw");
@@ -45,7 +53,7 @@ void UOptimusDebugDrawDataInterface::RegisterTypes()
 		FName("FDebugDraw"),
 		nullptr,
 		FLinearColor(0.3f, 0.7f, 0.4f, 1.0f),
-		EOptimusDataTypeUsageFlags::None);
+		EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 }
 
 void UOptimusDebugDrawDataInterface::GetSupportedInputs(TArray<FShaderFunctionDefinition>& OutFunctions) const
@@ -62,13 +70,13 @@ BEGIN_SHADER_PARAMETER_STRUCT(FDebugDrawDataInterfaceParameters, )
 	SHADER_PARAMETER(FIntPoint, Resolution)
 	SHADER_PARAMETER(FVector2f, FontSize)
 	SHADER_PARAMETER(FVector2f, FontSpacing)
-	SHADER_PARAMETER(uint32, MaxValueCount)
+	SHADER_PARAMETER(uint32, MaxCharacterCount)
 	SHADER_PARAMETER(uint32, MaxSymbolCount)
 	SHADER_PARAMETER(uint32, MaxStateCount)
 	SHADER_PARAMETER(uint32, MaxLineCount)
 	SHADER_PARAMETER(uint32, MaxTriangleCount)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint2>, StateBuffer)
-	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<ShaderPrintItem>, RWEntryBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, StateBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, RWEntryBuffer)
 END_SHADER_PARAMETER_STRUCT()
 
 void UOptimusDebugDrawDataInterface::GetShaderParameters(TCHAR const* UID, FShaderParametersMetadataBuilder& InOutBuilder, FShaderParametersMetadataAllocations& InOutAllocations) const
@@ -128,7 +136,7 @@ FOptimusDebugDrawDataProviderProxy::FOptimusDebugDrawDataProviderProxy(UPrimitiv
 	Setup.FontSize = InDebugDrawParameters.FontSize;
 	Setup.MaxLineCount = Setup.bEnabled ? InDebugDrawParameters.MaxLineCount : 0;
 	Setup.MaxTriangleCount = Setup.bEnabled ? InDebugDrawParameters.MaxTriangleCount : 0;
-	Setup.MaxValueCount = Setup.bEnabled ? InDebugDrawParameters.MaxCharacterCount : 0;
+	Setup.MaxCharacterCount = Setup.bEnabled ? InDebugDrawParameters.MaxCharacterCount : 0;
 	Setup.PreViewTranslation = PreViewTranslation;
 
 	ShaderPrint::GetParameters(Setup, ConfigParameters);
@@ -151,6 +159,11 @@ bool FOptimusDebugDrawDataProviderProxy::IsValid(FValidationData const& InValida
 		return false;
 	}
 
+	if (!ShaderPrint::IsSupported(GMaxRHIShaderPlatform))
+	{
+		return false;
+	}
+	
 	return true;
 }
 
@@ -183,7 +196,7 @@ void FOptimusDebugDrawDataProviderProxy::GatherDispatchData(FDispatchData const&
 		Parameters.Resolution = ConfigParameters.Resolution;
 		Parameters.FontSize = ConfigParameters.FontSize;
 		Parameters.FontSpacing = ConfigParameters.FontSpacing;
-		Parameters.MaxValueCount = ConfigParameters.MaxValueCount;
+		Parameters.MaxCharacterCount = ConfigParameters.MaxCharacterCount;
 		Parameters.MaxSymbolCount = ConfigParameters.MaxSymbolCount;
 		Parameters.MaxStateCount = ConfigParameters.MaxStateCount;
 		Parameters.MaxLineCount = ConfigParameters.MaxLineCount;

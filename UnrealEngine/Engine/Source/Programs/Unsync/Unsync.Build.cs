@@ -14,7 +14,6 @@ public class Unsync : ModuleRules
 
 		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "ThirdParty"));
 
-		PrivateDefinitions.Add("UNSYNC_USE_TLS=1");
 		PrivateDefinitions.Add("UNSYNC_USE_DEBUG_HEAP=1");
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)

@@ -6,6 +6,8 @@
 #include "Components/DisplayClusterICVFXCameraComponent.h"
 #include "Components/DisplayClusterScreenComponent.h"
 #include "Components/DisplayClusterXformComponent.h"
+#include "Render/DisplayDevice/Components/DisplayClusterDisplayDeviceBaseComponent.h"
+#include "Components/DisplayClusterInFrustumFitCameraComponent.h"
 
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Images/SImage.h"
@@ -238,12 +240,23 @@ void SDisplayClusterConfiguratorComponentClassCombo::OnAddComponentSelectionChan
 				if (ComponentClass == nullptr)
 				{
 					// The class is not loaded yet, so load it:
-					const ELoadFlags LoadFlags = LOAD_None;
-					UBlueprint* LoadedObject = LoadObject<UBlueprint>(nullptr, *InItem->GetComponentPath(), nullptr, LoadFlags, nullptr);
-					ComponentClass = GetAuthoritativeBlueprintClass(LoadedObject);
+					if (UObject* LoadedObject = LoadObject<UObject>(nullptr, *InItem->GetComponentPath()))
+					{
+						if (UClass* LoadedClass = Cast<UClass>(LoadedObject))
+						{
+							ComponentClass = LoadedClass;
+						}
+						else if (const UBlueprint* LoadedBP = Cast<UBlueprint>(LoadedObject))
+						{
+							ComponentClass = GetAuthoritativeBlueprintClass(LoadedBP);
+						}
+					}
 				}
 				
-				FSubobjectDataHandle NewActorCompHandle = OnSubobjectClassSelected.Execute(ComponentClass, InItem->GetComponentCreateAction(), InItem->GetAssetOverride());
+				const FSubobjectDataHandle NewActorCompHandle =
+					OnSubobjectClassSelected.IsBound() ?
+					OnSubobjectClassSelected.Execute(ComponentClass, InItem->GetComponentCreateAction(), InItem->GetAssetOverride())
+					: FSubobjectDataHandle::InvalidHandle;
 				if(NewActorCompHandle.IsValid())
 				{
 					InItem->GetOnSubobjectCreated().ExecuteIfBound(NewActorCompHandle);
@@ -455,10 +468,28 @@ void SDisplayClusterConfiguratorComponentClassCombo::GenerateComponentClassList(
 	AddDCComp(UDisplayClusterXformComponent::StaticClass());
 	AddDCComp(UDisplayClusterScreenComponent::StaticClass());
 	AddDCComp(UDisplayClusterCameraComponent::StaticClass());
+	AddDCComp(UDisplayClusterInFrustumFitCameraComponent::StaticClass());
 
 	AddHeader("nDisplay ICVFX Components");
 	AddDCComp(UDisplayClusterICVFXCameraComponent::StaticClass());
 
+	AddHeader("nDisplay Display Device Components");
+	{
+		// Locate all derived display device components. Only handles native classes. If we allow display devices
+		// to be extended in BP then we'll need to handle unloaded assets.
+		
+		TArray<UClass*> DisplayDeviceClasses;
+		GetDerivedClasses(UDisplayClusterDisplayDeviceBaseComponent::StaticClass(), DisplayDeviceClasses);
+
+		for (UClass* Class : DisplayDeviceClasses)
+		{
+			if (!Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+			{
+				AddDCComp(Class);
+			}
+		}
+	}
+	
 	int32 CompIterationIdx = 0;
 	for (const TSharedPtr<FComponentClassComboEntry>& Comp : *ComponentClassListPtr)
 	{

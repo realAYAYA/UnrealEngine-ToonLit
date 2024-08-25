@@ -34,8 +34,6 @@ public:
 	virtual FIntPoint GetDim() const;
 
 #if PLATFORM_WINDOWS
-	virtual TRefCountPtr<IMFSample> GetMFSample() const override;
-
 	virtual TRefCountPtr<IUnknown> GetTexture() const override;
 	virtual TRefCountPtr<IUnknown> GetSync(uint64& SyncValue) const override;
 	virtual TRefCountPtr<ID3D11Device> GetDevice() const override;

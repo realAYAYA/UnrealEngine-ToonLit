@@ -121,7 +121,7 @@ public:
 	 * @return This instance (for method chaining).
 	 * @see BoundToAddress
 	 */
-	FUdpSocketBuilder& BoundToPort(int32 Port)
+	FUdpSocketBuilder& BoundToPort(uint16 Port)
 	{
 		BoundEndpoint = FIPv4Endpoint(BoundEndpoint.Address, Port);
 		Bound = true;

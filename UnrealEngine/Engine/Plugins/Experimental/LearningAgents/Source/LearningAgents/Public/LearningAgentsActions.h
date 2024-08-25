@@ -3,409 +3,1405 @@
 #pragma once
 
 #include "LearningArray.h"
-#include "LearningAgentsDebug.h"
+#include "LearningAction.h"
 
-#include "Templates/SharedPointer.h"
-#include "UObject/Object.h"
+#include "LearningAgentsNeuralNetwork.h" // Included for ELearningAgentsActivationFunction
+
+#include "Engine/EngineTypes.h"
+#include "GameFramework/OnlineReplStructs.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 
 #include "LearningAgentsActions.generated.h"
 
-namespace UE::Learning
+class ULearningAgentsActionSchema;
+class ULearningAgentsActionObject;
+struct FLearningAgentsActionSchemaElement;
+struct FLearningAgentsActionObjectElement;
+
+/** An element of an Action Schema */
+USTRUCT(BlueprintType)
+struct LEARNINGAGENTS_API FLearningAgentsActionSchemaElement
 {
-	struct FFeatureObject;
-	struct FFloatFeature;
-	struct FPlanarVelocityFeature;
-	struct FRotationVectorFeature;
-}
+	GENERATED_BODY()
 
-class ULearningAgentsInteractor;
+	UE::Learning::Action::FSchemaElement SchemaElement;
+};
 
-// For functions in this file, we are favoring having more verbose names such as "AddFloatAction" vs simply "Add" in 
-// order to keep it easy to find the correct function in blueprints.
+/** An element of an Action Object */
+USTRUCT(BlueprintType)
+struct LEARNINGAGENTS_API FLearningAgentsActionObjectElement
+{
+	GENERATED_BODY()
 
-//------------------------------------------------------------------
+	UE::Learning::Action::FObjectElement ObjectElement;
+};
+
+/** Comparison operator for Action Object Elements */
+bool operator==(const FLearningAgentsActionObjectElement& Lhs, const FLearningAgentsActionObjectElement& Rhs);
+
+/** Hashing operator for Action Object Elements */
+uint32 GetTypeHash(const FLearningAgentsActionObjectElement& Element);
+
+template<>
+struct TStructOpsTypeTraits<FLearningAgentsActionObjectElement> : public TStructOpsTypeTraitsBase2<FLearningAgentsActionObjectElement>
+{
+	enum
+	{
+		WithIdenticalViaEquality = true,
+	};
+};
 
 /**
- * The base class for all actions. Actions define the outputs from your agents. Action getters are marked non-pure by
- * convention as many of them do non-trivial amounts of work that can cause performance issues when marked pure in 
- * blueprints.
+ * Action Schema
+ *
+ * This object is used to construct a schema describing some structure of actions.
  */
-UCLASS(Abstract, BlueprintType)
-class LEARNINGAGENTS_API ULearningAgentsAction : public UObject
+UCLASS(BlueprintType)
+class LEARNINGAGENTS_API ULearningAgentsActionSchema : public UObject
 {
 	GENERATED_BODY()
 
 public:
 
-	/** Reference to the Interactor this action is associated with. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
-	TObjectPtr<ULearningAgentsInteractor> Interactor;
-
-public:
-
-	/** Initialize the internal state for a given maximum number of agents */
-	void Init(const int32 MaxAgentNum);
-
-	/**
-	 * Called whenever agents are added to the associated ULearningAgentsInteractor object.
-	 * @param AgentIds Array of agent ids which have been added
-	 */
-	virtual void OnAgentsAdded(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are removed from the associated ULearningAgentsInteractor object.
-	 * @param AgentIds Array of agent ids which have been removed
-	 */
-	virtual void OnAgentsRemoved(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are reset on the associated ULearningAgentsInteractor object.
-	 * @param AgentIds Array of agent ids which have been reset
-	 */
-	virtual void OnAgentsReset(const TArray<int32>& AgentIds);
-
-	/** Get the number of times an action has been got for the given agent id. */
-	uint64 GetAgentGetIteration(const int32 AgentId) const;
-
-	/** Get the number of times an action has been set for the given agent id. */
-	uint64 GetAgentSetIteration(const int32 AgentId) const;
-
-public:
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Color used to draw this action in the visual log */
-	FLinearColor VisualLogColor = FColor::Blue;
-
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const {}
-#endif
-
-protected:
-
-	/** Number of times this action has been got for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> AgentGetIteration;
-
-	/** Number of times this action has been set for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> AgentSetIteration;
+	UE::Learning::Action::FSchema ActionSchema;
 };
 
-//------------------------------------------------------------------
+/**
+ * Action Object
+ *
+ * This object is used to construct or get the values of actions.
+ */
+UCLASS(BlueprintType)
+class LEARNINGAGENTS_API ULearningAgentsActionObject : public UObject
+{
+	GENERATED_BODY()
 
-/** A simple float action. Used as a catch-all for situations where a more type-specific action does not exist yet. */
+public:
+
+	UE::Learning::Action::FObject ActionObject;
+};
+
+/** Enum Type representing either action A or action B */
+UENUM(BlueprintType)
+enum class ELearningAgentsEitherAction : uint8
+{
+	A,
+	B,
+};
+
+/** Enum Type representing either a Null action or some Valid action */
+UENUM(BlueprintType)
+enum class ELearningAgentsOptionalAction : uint8
+{
+	Null,
+	Valid,
+};
+
 UCLASS()
-class LEARNINGAGENTS_API UFloatAction : public ULearningAgentsAction
+class LEARNINGAGENTS_API ULearningAgentsActions : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
 
 	/**
-	 * Adds a new float action to the given agent interactor. Call during ULearningAgentsInteractor::SetupActions event.
-	 * @param InInteractor The agent interactor to add this action to.
-	 * @param Name The name of this new action. Used for debugging.
-	 * @param Scale Used to normalize the data for the action.
-	 * @return The newly created action.
+	 * Validates that the given action object matches the schema. Will log errors on objects that don't match.
+	 *
+	 * @param Schema				Action Schema
+	 * @param SchemaElement			Action Schema Element
+	 * @param Object				Action Object
+	 * @param ObjectElement			Action Object Element
+	 * @returns						true if the object matches the schema
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UFloatAction* AddFloatAction(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents")
+	static bool ValidateActionObjectMatchesSchema(
+		const ULearningAgentsActionSchema* Schema,
+		const FLearningAgentsActionSchemaElement SchemaElement,
+		const ULearningAgentsActionObject* Object,
+		const FLearningAgentsActionObjectElement ObjectElement);
 
 	/**
-	 * Gets the data for this action. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @return The current action value.
+	 * Logs an Action Object Element. Useful for debugging.
+	 *
+	 * @param Object				Action Object
+	 * @param ObjectElement			Action Object Element
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	float GetFloatAction(const int32 AgentId);
-
-	/**
-	 * Sets the data for this action. Call during ULearningAgentsController::SetActions event.
-	 * @param AgentId The agent id to set data for.
-	 * @param Value The current action value.
-	 */	
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetFloatAction(const int32 AgentId, const float Value);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
-
-/** A simple float array action. Used as a catch-all for situations where a more type-specific action does not exist yet. */
-UCLASS()
-class LEARNINGAGENTS_API UFloatArrayAction : public ULearningAgentsAction
-{
-	GENERATED_BODY()
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents")
+	static void LogAction(const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element);
 
 public:
 
 	/**
-	 * Adds a new float array action to the given agent interactor. Call during ULearningAgentsInteractor::SetupActions event.
-	 * @param InInteractor The agent interactor to add this action to.
-	 * @param Name The name of this new action. Used for debugging.
-	 * @param Num The number of floats in the array
-	 * @param Scale Used to normalize the data for the action.
-	 * @return The newly created action.
+	 * Specifies a new null action. This represents an empty action and can be useful when an action is needed which does nothing.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UFloatArrayAction* AddFloatArrayAction(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 Num = 1, const float Scale = 1.0f);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyNullAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("NullAction"));
 
 	/**
-	 * Gets the data for this action. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @param OutValues The output array of floats
+	 * Specifies a new continuous action. This represents an action made up of several float values sampled from a Gaussian distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Size The number of float values in the action.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void GetFloatArrayAction(const int32 AgentId, TArray<float>& OutValues);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionSchemaElement SpecifyContinuousAction(ULearningAgentsActionSchema* Schema, const int32 Size, const FName Tag = TEXT("ContinuousAction"));
 
 	/**
-	 * Sets the data for this action. Call during ULearningAgentsController::SetActions event.
-	 * @param AgentId The agent id to set data for.
-	 * @param Values The current action values.
+	 * Specifies a new exclusive discrete action. This represents an action which is an exclusive choice from a number of discrete options, sampled 
+	 * from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Size The number of discrete options in the action.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a uniform distribution over options. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetFloatArrayAction(const int32 AgentId, const TArray<float>& Values);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyExclusiveDiscreteAction(ULearningAgentsActionSchema* Schema, const int32 Size, const TArray<float>& PriorProbabilities, const FName Tag = TEXT("DiscreteExclusiveAction"));
+	
+	/**
+	 * Specifies a new exclusive discrete action. This represents an action which is an exclusive choice from a number of discrete options, sampled
+	 * from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Size The number of discrete options in the action.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a uniform distribution over options. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	static FLearningAgentsActionSchemaElement SpecifyExclusiveDiscreteActionFromArrayView(ULearningAgentsActionSchema* Schema, const int32 Size, const TArrayView<const float> PriorProbabilities = {}, const FName Tag = TEXT("DiscreteExclusiveAction"));
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
+	/**
+	 * Specifies a new inclusive discrete action. This represents an action which is an inclusive choice from a number of discrete options, sampled
+	 * from a Bernoulli distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Size The number of discrete options in the action.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a probability of 0.5 for each option.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyInclusiveDiscreteAction(ULearningAgentsActionSchema* Schema, const int32 Size, const TArray<float>& PriorProbabilities, const FName Tag = TEXT("DiscreteInclusiveAction"));
+	
+	/**
+	 * Specifies a new inclusive discrete action. This represents an action which is an inclusive choice from a number of discrete options, sampled
+	 * from a Bernoulli distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Size The number of discrete options in the action.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a probability of 0.5 for each option.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	static FLearningAgentsActionSchemaElement SpecifyInclusiveDiscreteActionFromArrayView(ULearningAgentsActionSchema* Schema, const int32 Size, const TArrayView<const float> PriorProbabilities = {}, const FName Tag = TEXT("DiscreteInclusiveAction"));
 
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
+	/**
+	 * Specifies a new struct action. This represents an action which is made up of a number of named sub-actions.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Elements The sub-actions.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionSchemaElement SpecifyStructAction(ULearningAgentsActionSchema* Schema, const TMap<FName, FLearningAgentsActionSchemaElement>& Elements, const FName Tag = TEXT("StructAction"));
 
-//------------------------------------------------------------------
+	/**
+	 * Specifies a new struct action. This represents an action which is made up of a number of named sub-actions.
+	 *
+	 * @param Schema The Action Schema
+	 * @param ElementNames The names of the sub-actions.
+	 * @param Elements The corresponding sub-actions. Must be the same size as ElementNames.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionSchemaElement SpecifyStructActionFromArrays(ULearningAgentsActionSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsActionSchemaElement>& Elements, const FName Tag = TEXT("StructAction"));
+	
+	/**
+	 * Specifies a new struct action. This represents an action which is made up of a number of named sub-actions.
+	 *
+	 * @param Schema The Action Schema
+	 * @param ElementNames The names of the sub-actions.
+	 * @param Elements The corresponding sub-actions. Must be the same size as ElementNames.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	static FLearningAgentsActionSchemaElement SpecifyStructActionFromArrayViews(ULearningAgentsActionSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsActionSchemaElement> Elements, const FName Tag = TEXT("StructAction"));
 
-/** A simple FVector action. */
-UCLASS()
-class LEARNINGAGENTS_API UVectorAction : public ULearningAgentsAction
-{
-	GENERATED_BODY()
+	/**
+	 * Specifies a new exclusive union action. This represents an action which is an exclusive choice from a number of named sub-actions, sampled
+	 * from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Elements The sub-actions.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a uniform distribution over options. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyExclusiveUnionAction(ULearningAgentsActionSchema* Schema, const TMap<FName, FLearningAgentsActionSchemaElement>& Elements, const TMap<FName, float>& PriorProbabilities, const FName Tag = TEXT("ExclusiveUnionAction"));
+
+	/**
+	 * Specifies a new exclusive union action. This represents an action which is an exclusive choice from a number of named sub-actions, sampled
+	 * from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param ElementNames The names of the sub-actions.
+	 * @param Elements The corresponding sub-actions. Must be the same size as ElementNames.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a uniform distribution over options. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyExclusiveUnionActionFromArrays(ULearningAgentsActionSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsActionSchemaElement>& Elements, const TArray<float>& PriorProbabilities, const FName Tag = TEXT("ExclusiveUnionAction"));
+	
+	/**
+	 * Specifies a new exclusive union action. This represents an action which is an exclusive choice from a number of named sub-actions, sampled
+	 * from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param ElementNames The names of the sub-actions.
+	 * @param Elements The corresponding sub-actions. Must be the same size as ElementNames.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a uniform distribution over options. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	static FLearningAgentsActionSchemaElement SpecifyExclusiveUnionActionFromArrayViews(ULearningAgentsActionSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsActionSchemaElement> Elements, const TArrayView<const float> PriorProbabilities = {}, const FName Tag = TEXT("ExclusiveUnionAction"));
+
+	/**
+	 * Specifies a new inclusive union action. This represents an action which is an inclusive choice from a number of named sub-actions, sampled
+	 * from a Bernoulli distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Elements The sub-actions.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a probability of 0.5 for each option.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyInclusiveUnionAction(ULearningAgentsActionSchema* Schema, const TMap<FName, FLearningAgentsActionSchemaElement>& Elements, const TMap<FName, float>& PriorProbabilities, const FName Tag = TEXT("InclusiveUnionAction"));
+
+	/**
+	 * Specifies a new inclusive union action. This represents an action which is an inclusive choice from a number of named sub-actions, sampled
+	 * from a Bernoulli distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param ElementNames The names of the sub-actions.
+	 * @param Elements The corresponding sub-actions. Must be the same size as ElementNames.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a probability of 0.5 for each option.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyInclusiveUnionActionFromArrays(ULearningAgentsActionSchema* Schema, const TArray<FName> ElementNames, const TArray<FLearningAgentsActionSchemaElement>& Elements, const TArray<float>& PriorProbabilities, const FName Tag = TEXT("InclusiveUnionAction"));
+	
+	/**
+	 * Specifies a new inclusive union action. This represents an action which is an inclusive choice from a number of named sub-actions, sampled
+	 * from a Bernoulli distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param ElementNames The names of the sub-actions.
+	 * @param Elements The corresponding sub-actions. Must be the same size as ElementNames.
+	 * @param PriorProbabilities The prior probabilities of each option. Can be left empty to use a probability of 0.5 for each option.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	static FLearningAgentsActionSchemaElement SpecifyInclusiveUnionActionFromArrayViews(ULearningAgentsActionSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsActionSchemaElement> Elements, const TArrayView<const float> PriorProbabilities = {}, const FName Tag = TEXT("InclusiveUnionAction"));
+
+	/**
+	 * Specifies a new static array action. This represents an action which is a fixed sized array of some sub-action.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Element The sub-action.
+	 * @param Num The number of elements in the array.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionSchemaElement SpecifyStaticArrayAction(ULearningAgentsActionSchema* Schema, const FLearningAgentsActionSchemaElement Element, const int32 Num, const FName Tag = TEXT("StaticArrayAction"));
+
+	/**
+	 * Specifies a new pair action. This represents an action which is made up of a key and value sub-actions.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Key The key sub-action.
+	 * @param Value The value sub-action.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionSchemaElement SpecifyPairAction(ULearningAgentsActionSchema* Schema, const FLearningAgentsActionSchemaElement Key, const FLearningAgentsActionSchemaElement Value, const FName Tag = TEXT("PairAction"));
+
+	/**
+	 * Specifies a new enum action. This represents an action which is an exclusive choice from entries of an Enum, sampled from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Enum The Enum type.
+	 * @param PriorProbabilities The prior probabilities of each enum element. Can be left empty to use a uniform distribution over elements. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyEnumAction(ULearningAgentsActionSchema* Schema, const UEnum* Enum, const TMap<uint8, float>& PriorProbabilities, const FName Tag = TEXT("EnumAction"));
+
+	/**
+	 * Specifies a new enum action. This represents an action which is an exclusive choice from entries of an Enum, sampled from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Enum The Enum type.
+	 * @param PriorProbabilities The prior probabilities of each enum element. Can be left empty to use a uniform distribution over elements. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyEnumActionFromArray(ULearningAgentsActionSchema* Schema, const UEnum* Enum, const TArray<float>& PriorProbabilities, const FName Tag = TEXT("EnumAction"));
+	
+	/**
+	 * Specifies a new enum action. This represents an action which is an exclusive choice from entries of an Enum, sampled from a Categorical distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Enum The Enum type.
+	 * @param PriorProbabilities The prior probabilities of each enum element. Can be left empty to use a uniform distribution over elements. Should sum to one.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	static FLearningAgentsActionSchemaElement SpecifyEnumActionFromArrayView(ULearningAgentsActionSchema* Schema, const UEnum* Enum, const TArrayView<const float> PriorProbabilities = {}, const FName Tag = TEXT("EnumAction"));
+
+	/**
+	 * Specifies a new bitmask action. This represents an action which is an inclusive choice from entries of an Enum, sampled from a Bernoulli 
+	 * distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Enum The Enum type.
+	 * @param PriorProbabilities The prior probabilities of each enum element. Can be left empty to use a probability of 0.5 for each element.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyBitmaskAction(ULearningAgentsActionSchema* Schema, const UEnum* Enum, const TMap<uint8, float>& PriorProbabilities, const FName Tag = TEXT("BitmaskAction"));
+
+	/**
+	 * Specifies a new bitmask action. This represents an action which is an inclusive choice from entries of an Enum, sampled from a Bernoulli
+	 * distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Enum The Enum type.
+	 * @param PriorProbabilities The prior probabilities of each enum element. Can be left empty to use a probability of 0.5 for each element.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "PriorProbabilities"))
+	static FLearningAgentsActionSchemaElement SpecifyBitmaskActionFromArray(ULearningAgentsActionSchema* Schema, const UEnum* Enum, const TArray<float>& PriorProbabilities, const FName Tag = TEXT("BitmaskAction"));
+	
+	/**
+	 * Specifies a new bitmask action. This represents an action which is an inclusive choice from entries of an Enum, sampled from a Bernoulli
+	 * distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Enum The Enum type.
+	 * @param PriorProbabilities The prior probabilities of each enum element. Can be left empty to use a probability of 0.5 for each element.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	static FLearningAgentsActionSchemaElement SpecifyBitmaskActionFromArrayView(ULearningAgentsActionSchema* Schema, const UEnum* Enum, const TArrayView<const float> PriorProbabilities = {}, const FName Tag = TEXT("BitmaskAction"));
+
+	/**
+	 * Specifies a new optional action. This represents an action which may or may not be generated.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Element The sub-action.
+	 * @param PriorProbabilities The prior probability of sampling this action.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionSchemaElement SpecifyOptionalAction(ULearningAgentsActionSchema* Schema, const FLearningAgentsActionSchemaElement Element, const float PriorProbability = 0.5f, const FName Tag = TEXT("OptionalAction"));
+
+	/**
+	 * Specifies a new either action. This represents an action which is either action A or action B.
+	 *
+	 * @param Schema The Action Schema
+	 * @param A The sub-action A.
+	 * @param B The sub-action B.
+	 * @param PriorProbabilityOfA The prior probability of sampling action A over action B.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionSchemaElement SpecifyEitherAction(ULearningAgentsActionSchema* Schema, const FLearningAgentsActionSchemaElement A, const FLearningAgentsActionSchemaElement B, const float PriorProbabilityOfA = 0.5f, const FName Tag = TEXT("EitherAction"));
+
+	/**
+	 * Specifies a new encoding action. This represents an action which will be a decoding of another sub-action using a small neural network.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Element The sub-action.
+	 * @param EncodingSize The encoding size used to decode this sub-action.
+	 * @param HiddenLayerNum The number of hidden layers used to decode this sub-action.
+	 * @param ActivationFunction The activation function used to decode this sub-action.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionSchemaElement SpecifyEncodingAction(ULearningAgentsActionSchema* Schema, const FLearningAgentsActionSchemaElement Element, const int32 EncodingSize = 128, const int32 HiddenLayerNum = 1, const ELearningAgentsActivationFunction ActivationFunction = ELearningAgentsActivationFunction::ELU, const FName Tag = TEXT("EncodingAction"));
+
+	/**
+	 * Specifies a new bool action. This represents an action which is either true or false.
+	 *
+	 * @param Schema The Action Schema
+	 * @param PriorProbability The prior probability of this action being true.
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyBoolAction(ULearningAgentsActionSchema* Schema, const float PriorProbability = 0.5f, const FName Tag = TEXT("BoolAction"));
+
+	/**
+	 * Specifies a new float action. This represents an action which is a single float sampled from a Gaussian distribution. It can be used as a 
+	 * catch-all for situations where a type-specific action does not exist.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyFloatAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("FloatAction"));
+
+	/**
+	 * Specifies a new location action. This represents an action which is a location sampled from a Gaussian distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyLocationAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("LocationAction"));
+
+	/**
+	 * Specifies a new rotation action. This represents an action which is a rotation sampled from a Gaussian distribution in the angle-axis space.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyRotationAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("RotationAction"));
+
+	/**
+	 * Specifies a new scale action. This represents an action which is a scale sampled from a Gaussian distribution in the log space.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyScaleAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("ScaleAction"));
+
+	/**
+	 * Specifies a new transform action.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyTransformAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("TransformAction"));
+
+	/**
+	 * Specifies a new angle action. This represents an action which is an angle sampled from a Gaussian distribution centered around zero.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyAngleAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("AngleAction"));
+
+	/**
+	 * Specifies a new velocity action. This represents an action which is a velocity sampled from a Gaussian distribution.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyVelocityAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("VelocityAction"));
+
+	/**
+	 * Specifies a new direction action. This represents an action which is a direction sampled from a Gaussian distribution and normalized.
+	 *
+	 * @param Schema The Action Schema
+	 * @param Tag The tag of this new action. Used during action object validation and debugging.
+	 * @return The newly created action schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionSchemaElement SpecifyDirectionAction(ULearningAgentsActionSchema* Schema, const FName Tag = TEXT("DirectionAction"));
+
+public:
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionObjectElement MakeNullAction(ULearningAgentsActionObject* Object, const FName Tag = TEXT("NullAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeContinuousAction(ULearningAgentsActionObject* Object, const TArray<float>& Values, const FName Tag = TEXT("ContinuousAction"));
+	static FLearningAgentsActionObjectElement MakeContinuousActionFromArrayView(ULearningAgentsActionObject* Object, const TArrayView<const float> Values, const FName Tag = TEXT("ContinuousAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeExclusiveDiscreteAction(ULearningAgentsActionObject* Object, const int32 Index, const FName Tag = TEXT("DiscreteExclusiveAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeInclusiveDiscreteAction(ULearningAgentsActionObject* Object, const TArray<int32>& Indices, const FName Tag = TEXT("DiscreteInclusiveAction"));
+	static FLearningAgentsActionObjectElement MakeInclusiveDiscreteActionFromArrayView(ULearningAgentsActionObject* Object, const TArrayView<const int32> Indices, const FName Tag = TEXT("DiscreteInclusiveAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeStructAction(ULearningAgentsActionObject* Object, const TMap<FName, FLearningAgentsActionObjectElement>& Elements, const FName Tag = TEXT("StructAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeStructActionFromArrays(ULearningAgentsActionObject* Object, const TArray<FName>& ElementNames, const TArray<FLearningAgentsActionObjectElement>& Elements, const FName Tag = TEXT("StructAction"));
+	static FLearningAgentsActionObjectElement MakeStructActionFromArrayViews(ULearningAgentsActionObject* Object, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsActionObjectElement> Elements, const FName Tag = TEXT("StructAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeExclusiveUnionAction(ULearningAgentsActionObject* Object, const FName ElementName, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("ExclusiveUnionAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeInclusiveUnionAction(ULearningAgentsActionObject* Object, const TMap<FName, FLearningAgentsActionObjectElement>& Elements, const FName Tag = TEXT("InclusiveUnionAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeInclusiveUnionActionFromArrays(ULearningAgentsActionObject* Object, const TArray<FName>& ElementNames, const TArray<FLearningAgentsActionObjectElement>& Elements, const FName Tag = TEXT("InclusiveUnionAction"));
+	static FLearningAgentsActionObjectElement MakeInclusiveUnionActionFromArrayViews(ULearningAgentsActionObject* Object, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsActionObjectElement> Elements, const FName Tag = TEXT("InclusiveUnionAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeStaticArrayAction(ULearningAgentsActionObject* Object, const TArray<FLearningAgentsActionObjectElement>& Elements, const FName Tag = TEXT("StaticArrayAction"));
+	static FLearningAgentsActionObjectElement MakeStaticArrayActionFromArrayView(ULearningAgentsActionObject* Object, const TArrayView<const FLearningAgentsActionObjectElement> Elements, const FName Tag = TEXT("StaticArrayAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakePairAction(ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Key, const FLearningAgentsActionObjectElement Value, const FName Tag = TEXT("PairAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeEnumAction(ULearningAgentsActionObject* Object, const UEnum* Enum, const uint8 EnumValue, const FName Tag = TEXT("EnumAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeBitmaskAction(ULearningAgentsActionObject* Object, const UEnum* Enum, const int32 BitmaskValue, const FName Tag = TEXT("BitmaskAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeOptionalAction(ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const ELearningAgentsOptionalAction Option, const FName Tag = TEXT("OptionalAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsActionObjectElement MakeOptionalNullAction(ULearningAgentsActionObject* Object, const FName Tag = TEXT("OptionalAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeOptionalValidAction(ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("OptionalAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeEitherAction(ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const ELearningAgentsEitherAction Either, const FName Tag = TEXT("EitherAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DisplayName = "Make Either A Action"))
+	static FLearningAgentsActionObjectElement MakeEitherAAction(ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement A, const FName Tag = TEXT("EitherAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DisplayName = "Make Either B Action"))
+	static FLearningAgentsActionObjectElement MakeEitherBAction(ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement B, const FName Tag = TEXT("EitherAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeEncodingAction(ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("EncodingAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsActionObjectElement MakeBoolAction(ULearningAgentsActionObject* Object, const bool bValue, const FName Tag = TEXT("BoolAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeFloatAction(ULearningAgentsActionObject* Object, const float Value, const float FloatScale = 1.0f, const FName Tag = TEXT("FloatAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsActionObjectElement MakeLocationAction(ULearningAgentsActionObject* Object, const FVector Location, const FTransform RelativeTransform = FTransform(), const float LocationScale = 100.0f, const FName Tag = TEXT("LocationAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsActionObjectElement MakeRotationAction(ULearningAgentsActionObject* Object, const FRotator Rotation, const FRotator RelativeRotation = FRotator::ZeroRotator, const float RotationScale = 90.0f, const FName Tag = TEXT("RotationAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsActionObjectElement MakeRotationActionFromQuat(ULearningAgentsActionObject* Object, const FQuat Rotation, const FQuat RelativeRotation, const float RotationScale = 90.0f, const FName Tag = TEXT("RotationAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeScaleAction(ULearningAgentsActionObject* Object, const FVector Scale, const FVector RelativeScale = FVector(1, 1, 1), const FName Tag = TEXT("ScaleAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsActionObjectElement MakeTransformAction(ULearningAgentsActionObject* Object, const FTransform Transform, const FTransform RelativeTransform = FTransform(), const float LocationScale = 100.0f, const FName Tag = TEXT("TransformAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsActionObjectElement MakeAngleAction(ULearningAgentsActionObject* Object, const float Angle, const float RelativeAngle = 0.0f, const float AngleScale = 90.0f, const FName Tag = TEXT("AngleAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsActionObjectElement MakeAngleActionRadians(ULearningAgentsActionObject* Object, const float Angle, const float RelativeAngle = 0.0f, const float AngleScale = 1.57079632679f, const FName Tag = TEXT("AngleAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsActionObjectElement MakeVelocityAction(ULearningAgentsActionObject* Object, const FVector Velocity, const FTransform RelativeTransform = FTransform(), const float VelocityScale = 200.0f, const FName Tag = TEXT("VelocityAction"));
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsActionObjectElement MakeDirectionAction(ULearningAgentsActionObject* Object, const FVector Direction, const FTransform RelativeTransform = FTransform(), const FName Tag = TEXT("DirectionAction"));
 
 public:
 
 	/**
-	 * Adds a new vector action to the given agent interactor. Call during ULearningAgentsInteractor::SetupActions event.
-	 * @param InInteractor The agent interactor to add this action to.
-	 * @param Name The name of this new action. Used for debugging.
-	 * @param Scale Used to normalize the data for the action.
-	 * @return The newly created action.
+	 * Get a null action.
+	 *
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UVectorAction* AddVectorAction(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 2, ReturnDisplayName = "Success"))
+	static bool GetNullAction(const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("NullAction"));
 
 	/**
-	 * Gets the data for this action. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @return The current action values.
+	 * Get the number of values in a continuous action.
+	 *
+	 * @param OutNum The output number of values.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	FVector GetVectorAction(const int32 AgentId);
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetContinuousActionNum(int32& OutNum, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("ContinuousAction"));
 
 	/**
-	 * Sets the data for this action. Call during ULearningAgentsController::SetActions event.
-	 * @param AgentId The agent id to set data for.
-	 * @param Value The current action values.
+	 * Get the values of a continuous action.
+	 *
+	 * @param OutValues The output values.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetVectorAction(const int32 AgentId, const FVector Value);
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetContinuousAction(
+		TArray<float>& OutValues, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FName Tag = TEXT("ContinuousAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+	
+	/**
+	 * Get the values of a continuous action. The OutValues ArrayView must be the correct size.
+	 *
+	 * @param OutValues The output values.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	static bool GetContinuousActionToArrayView(
+		TArrayView<float> OutValues, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FName Tag = TEXT("ContinuousAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
+	/**
+	 * Get the index for an exclusive discrete action.
+	 *
+	 * @param OutIndex The output index.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetExclusiveDiscreteAction(
+		int32& OutIndex, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FName Tag = TEXT("DiscreteExclusiveAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
 
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
+	/**
+	 * Get the number of indices for an inclusive discrete action.
+	 *
+	 * @param OutNum The output number of indices.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetInclusiveDiscreteActionNum(int32& OutNum, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("DiscreteInclusiveAction"));
+
+	/**
+	 * Get the indices for an inclusive discrete action.
+	 *
+	 * @param OutIndices The output indices.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetInclusiveDiscreteAction(
+		TArray<int32>& OutIndices, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FName Tag = TEXT("DiscreteInclusiveAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+	
+	/**
+	 * Get the indices for an inclusive discrete action. The OutIndices ArrayView must be the correct size.
+	 *
+	 * @param OutIndices The output indices.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	static bool GetInclusiveDiscreteActionToArrayView(
+		TArrayView<int32> OutIndices, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FName Tag = TEXT("DiscreteInclusiveAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the number of sub-actions for a struct action.
+	 *
+	 * @param OutNum The output number of sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStructActionNum(int32& OutNum, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("StructAction"));
+
+	/**
+	 * Get the sub-actions for a struct action.
+	 *
+	 * @param OutElements The output sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStructAction(TMap<FName, FLearningAgentsActionObjectElement>& OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("StructAction"));
+
+	/**
+	 * Get the sub-actions for a struct action.
+	 *
+	 * @param OutElementNames The output sub-action names.
+	 * @param OutElements The output sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetStructActionToArrays(TArray<FName>& OutElementNames, TArray<FLearningAgentsActionObjectElement>& OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("StructAction"));
+	
+	/**
+	 * Get the sub-actions for a struct action. The OutElementNames and OutElements ArrayViews must be the correct size.
+	 *
+	 * @param OutElementNames The output sub-action names.
+	 * @param OutElements The output sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	static bool GetStructActionToArrayViews(TArrayView<FName> OutElementNames, TArrayView<FLearningAgentsActionObjectElement> OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("StructAction"));
+
+	/**
+	 * Get the chosen sub-action for an exclusive union action.
+	 *
+	 * @param OutElement The output sub-action.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetExclusiveUnionAction(FName& OutElementName, FLearningAgentsActionObjectElement& OutElement, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("ExclusiveUnionAction"));
+
+	/**
+	 * Get the number of sub-actions for an inclusive union action.
+	 *
+	 * @param OutNum The output number of sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetInclusiveUnionActionNum(int32& OutNum, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("InclusiveUnionAction"));
+
+	/**
+	 * Get the chosen sub-actions for an inclusive union action.
+	 *
+	 * @param OutElements The output sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetInclusiveUnionAction(TMap<FName, FLearningAgentsActionObjectElement>& OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("InclusiveUnionAction"));
+
+	/**
+	 * Get the chosen sub-actions for an inclusive union action.
+	 *
+	 * @param OutElementNames The output sub-action names.
+	 * @param OutElements The output sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetInclusiveUnionActionToArrays(TArray<FName>& OutElementNames, TArray<FLearningAgentsActionObjectElement>& OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("InclusiveUnionAction"));
+	
+	/**
+	 * Get the chosen sub-actions for an inclusive union action. The OutElementNames and OutElements ArrayViews must be the correct size.
+	 *
+	 * @param OutElementNames The output sub-action names.
+	 * @param OutElements The output sub-actions.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	static bool GetInclusiveUnionActionToArrayViews(TArrayView<FName> OutElementNames, TArrayView<FLearningAgentsActionObjectElement> OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("InclusiveUnionAction"));
+
+	/**
+	 * Get the number of entries in a static array action.
+	 *
+	 * @param OutNum The output number of entries.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStaticArrayActionNum(int32& OutNum, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("StaticArrayAction"));
+
+	/**
+	 * Get the entries of a static array action.
+	 *
+	 * @param OutElements The output sub-elements.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStaticArrayAction(TArray<FLearningAgentsActionObjectElement>& OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("StaticArrayAction"));
+	
+	/**
+	 * Get the entries of a static array action. The OutElements ArrayView must be the correct size.
+	 *
+	 * @param OutElements The output sub-elements.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	static bool GetStaticArrayActionToArrayView(TArrayView<FLearningAgentsActionObjectElement> OutElements, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("StaticArrayAction"));
+
+	/**
+	 * Get the sub-actions of a pair action.
+	 *
+	 * @param OutKey The output key sub-element.
+	 * @param OutValue The output value sub-element.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetPairAction(FLearningAgentsActionObjectElement& OutKey, FLearningAgentsActionObjectElement& OutValue, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("PairAction"));
+
+	/**
+	 * Get the enum value of an enum action.
+	 *
+	 * @param OutEnumValue The output enum value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Enum The Enum
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetEnumAction(
+		uint8& OutEnumValue, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const UEnum* Enum, 
+		const FName Tag = TEXT("EnumAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the bitmask value of a bitmask action.
+	 *
+	 * @param OutBitmaskValue The output bitmask value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Enum The Enum
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetBitmaskAction(
+		int32& OutBitmaskValue, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const UEnum* Enum, 
+		const FName Tag = TEXT("BitmaskAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the sub-action of an option action.
+	 *
+	 * @param OutOption The output optional specifier.
+	 * @param OutElement The output sub-action.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ExpandEnumAsExecs = "OutOption", ReturnDisplayName = "Success"))
+	static bool GetOptionalAction(ELearningAgentsOptionalAction& OutOption, FLearningAgentsActionObjectElement& OutElement, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("OptionalAction"));
+
+	/**
+	 * Get the sub-action of an either action.
+	 *
+	 * @param OutEither The output either specifier.
+	 * @param OutElement The output sub-action.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ExpandEnumAsExecs = "OutEither", ReturnDisplayName = "Success"))
+	static bool GetEitherAction(ELearningAgentsEitherAction& OutEither, FLearningAgentsActionObjectElement& OutElement, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("EitherAction"));
+
+	/**
+	 * Get the sub-action of an encoding action.
+	 *
+	 * @param OutElement The output sub-action.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetEncodingAction(FLearningAgentsActionObjectElement& OutElement, const ULearningAgentsActionObject* Object, const FLearningAgentsActionObjectElement Element, const FName Tag = TEXT("EncodingAction"));
+
+	/**
+	 * Get the value for a bool action.
+	 *
+	 * @param bOutValue The output bool value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetBoolAction(
+		bool& bOutValue, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FName Tag = TEXT("BoolAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a float action.
+	 *
+	 * @param OutValue The output float value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param FloatScale The scale used to control the overall magnitude of the outputted float action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetFloatAction(
+		float& OutValue, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const float FloatScale = 1.0f, 
+		const FName Tag = TEXT("FloatAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a location action.
+	 *
+	 * @param OutLocation The output location value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeTransform The relative transform to transform the location by.
+	 * @param LocationScale The scale used to control the overall magnitude of the outputted location action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetLocationAction(
+		FVector& OutLocation, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FTransform RelativeTransform = FTransform(), 
+		const float LocationScale = 100.0f, 
+		const FName Tag = TEXT("LocationAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a rotation action.
+	 *
+	 * @param OutRotation The output rotation value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeRotation The relative rotation to transform the rotation by.
+	 * @param RotationScale The scale used to control the overall magnitude of the outputted rotation action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerRotationLocation A location for the visual logger to display the rotation in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetRotationAction(
+		FRotator& OutRotation, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FRotator RelativeRotation = FRotator::ZeroRotator, 
+		const float RotationScale = 90.0f, 
+		const FName Tag = TEXT("RotationAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerRotationLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a rotation action as a quaternion.
+	 *
+	 * @param OutRotation The output rotation value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeRotation The relative rotation to transform the rotation by.
+	 * @param RotationScale The scale used to control the overall magnitude of the outputted rotation action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerRotationLocation A location for the visual logger to display the rotation in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetRotationActionAsQuat(
+		FQuat& OutRotation, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FQuat RelativeRotation, 
+		const float RotationScale = 90.0f, 
+		const FName Tag = TEXT("RotationAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerRotationLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a scale action.
+	 *
+	 * @param OutScale The output scale value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeScale The relative scale to transform the scale by.
+	 * @param Scale The scale used to control the overall magnitude of the outputted scale action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetScaleAction(
+		FVector& OutScale, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FVector RelativeScale = FVector(1, 1, 1), 
+		const float Scale = 1.0f, 
+		const FName Tag = TEXT("ScaleAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a transform action.
+	 *
+	 * @param OutTransform The output transform value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeTransform The relative transform.
+	 * @param LocationScale The scale used to control the overall magnitude of the outputted location action.
+	 * @param RotationScale The scale used to control the overall magnitude of the outputted rotation action.
+	 * @param ScaleScale The scale used to control the overall magnitude of the outputted scale action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 7, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetTransformAction(
+		FTransform& OutTransform, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FTransform RelativeTransform = FTransform(), 
+		const float LocationScale = 100.0f, 
+		const float RotationScale = 1.0f, 
+		const float ScaleScale = 1.0f, 
+		const FName Tag = TEXT("TransformAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for an angle action. Returned angle is in degrees.
+	 *
+	 * @param OutAngle The output angle value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeAngle The relative angle to transform the angle by.
+	 * @param AngleScale The scale used to control the overall magnitude of the outputted scale action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerAngleLocation A location for the visual logger to display the angle in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetAngleAction(
+		float& OutAngle, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const float RelativeAngle = 0.0f, 
+		const float AngleScale = 90.0f, 
+		const FName Tag = TEXT("AngleAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerAngleLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for an angle action. Returned angle is in radians.
+	 *
+	 * @param OutAngle The output angle value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeAngle The relative angle to transform the angle by.
+	 * @param AngleScale The scale used to control the overall magnitude of the outputted scale action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerAngleLocation A location for the visual logger to display the angle in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetAngleActionRadians(
+		float& OutAngle, 
+		const ULearningAgentsActionObject* Object,
+		const FLearningAgentsActionObjectElement Element, 
+		const float RelativeAngle = 0.0f,
+		const float AngleScale = 1.57079632679f, 
+		const FName Tag = TEXT("AngleAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerAngleLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a velocity action.
+	 *
+	 * @param OutVelocity The output velocity value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeTransform The relative transform to transform the velocity by.
+	 * @param VelocityScale The scale used to control the overall magnitude of the outputted velocity action.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerVelocityLocation A location for the visual logger to display the velocity in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetVelocityAction(
+		FVector& OutVelocity, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FTransform RelativeTransform = FTransform(), 
+		const float VelocityScale = 200.0f, 
+		const FName Tag = TEXT("VelocityAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerVelocityLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
+
+	/**
+	 * Get the value for a direction action.
+	 *
+	 * @param OutDirection The output direction value.
+	 * @param Object The Action Object
+	 * @param Element The Action Object Element
+	 * @param RelativeTransform The relative transform to transform the direction by.
+	 * @param Tag The tag of the corresponding action. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this action. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this action.
+	 * @param VisualLoggerDirectionLocation A location for the visual logger to display the direction in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerArrowLength The length of the arrow to display to represent the direction.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return true if the provided Element is the correct type, otherwise false.
+	 */
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success", DefaultToSelf = "VisualLoggerListener"))
+	static bool GetDirectionAction(
+		FVector& OutDirection, 
+		const ULearningAgentsActionObject* Object, 
+		const FLearningAgentsActionObjectElement Element, 
+		const FTransform RelativeTransform = FTransform(),
+		const FName Tag = TEXT("DirectionAction"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerDirectionLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const float VisualLoggerArrowLength = 100.0f,
+		const FLinearColor VisualLoggerColor = FLinearColor::Blue);
 };
 
-/** A simple array of FVector action. */
-UCLASS()
-class LEARNINGAGENTS_API UVectorArrayAction : public ULearningAgentsAction
-{
-	GENERATED_BODY()
 
-public:
 
-	/**
-	 * Adds a new vector action to the given agent interactor. Call during ULearningAgentsInteractor::SetupActions event.
-	 * @param InInteractor The agent interactor to add this action to.
-	 * @param Name The name of this new action. Used for debugging.
-	 * @param Num The number of vectors in the array
-	 * @param Scale Used to normalize the data for the action.
-	 * @return The newly created action.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UVectorArrayAction* AddVectorArrayAction(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 Num = 1, const float Scale = 1.0f);
 
-	/**
-	 * Gets the data for this action. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @param OutVectors The current action values.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void GetVectorArrayAction(const int32 AgentId, TArray<FVector>& OutVectors);
-
-	/**
-	 * Sets the data for this action. Call during ULearningAgentsController::SetActions event.
-	 * @param AgentId The agent id to set data for.
-	 * @param Vectors The current action values.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetVectorArrayAction(const int32 AgentId, const TArray<FVector>& Vectors);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** A planar velocity action. */
-UCLASS()
-class LEARNINGAGENTS_API UPlanarVelocityAction : public ULearningAgentsAction
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new planar velocity action to the given agent interactor. The axis parameters define the plane.
-	 * Call during ULearningAgentsInteractor::SetupActions event.
-	 * @param InInteractor The agent interactor to add this action to.
-	 * @param Name The name of this new action. Used for debugging.
-	 * @param Scale Used to normalize the data for the action.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created action.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPlanarVelocityAction* AddPlanarVelocityAction(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 200.0f, const FVector Axis0 = FVector::ForwardVector, const FVector Axis1 = FVector::RightVector);
-
-	/**
-	 * Gets the data for this action. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @return The current action value.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	FVector GetPlanarVelocityAction(const int32 AgentId);
-
-	/**
-	 * Sets the data for this action. Call during ULearningAgentsController::SetActions event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocity The velocity currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarVelocityAction(const int32 AgentId, const FVector Velocity);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarVelocityFeature> FeatureObject;
-};
-
-/** A rotation action. */
-UCLASS()
-class LEARNINGAGENTS_API URotationAction : public ULearningAgentsAction
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new rotation action to the given agent interactor. Call during ULearningAgentsInteractor::SetupActions event.
-	 * @param InInteractor The agent interactor to add this action to.
-	 * @param Name The name of this new action. Used for debugging.
-	 * @param Scale Used to normalize the data for the action.
-	 * @return The newly created action.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static URotationAction* AddRotationAction(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 180.0f);
-
-	/**
-	 * Gets the data for this action as a rotator. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @return The current action value.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	FRotator GetRotationAction(const int32 AgentId);
-
-	/**
-	 * Gets the data for this action as a rotation vector. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @return The current action value.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	FVector GetRotationActionAsRotationVector(const int32 AgentId);
-
-	/**
-	 * Gets the data for this action as a quaternion. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @return The current action value.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	FQuat GetRotationActionAsQuat(const int32 AgentId);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FRotationVectorFeature> FeatureObject;
-};
-
-/** An array of rotation actions. */
-UCLASS()
-class LEARNINGAGENTS_API URotationArrayAction : public ULearningAgentsAction
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new rotation array action to the given agent interactor. Call during ULearningAgentsInteractor::SetupActions event.
-	 * @param InInteractor The agent interactor to add this action to.
-	 * @param Name The name of this new action. Used for debugging.
-	 * @param RotationNum The number of rotations in the array.
-	 * @param Scale Used to normalize the data for the action.
-	 * @return The newly created action.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static URotationArrayAction* AddRotationArrayAction(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 RotationNum = 1, const float Scale = 180.0f);
-
-	/**
-	 * Gets the data for this action as rotators. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @param OutRotations The current action values.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void GetRotationArrayAction(const int32 AgentId, TArray<FRotator>& OutRotations);
-
-	/**
-	 * Gets the data for this action as rotation vectors. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @param OutRotationVectors The current action values.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void GetRotationArrayActionAsRotationVectors(const int32 AgentId, TArray<FVector>& OutRotationVectors);
-
-	/**
-	 * Gets the data for this action as quaternions. Call during ULearningAgentsInteractor::GetActions event.
-	 * @param AgentId The agent id to get data for.
-	 * @param OutRotations The current action values.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void GetRotationArrayActionAsQuats(const int32 AgentId, TArray<FQuat>& OutRotations);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this action to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FRotationVectorFeature> FeatureObject;
-};

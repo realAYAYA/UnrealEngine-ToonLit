@@ -146,3 +146,27 @@ void FOnlineStats::DecrementIntStat(const FName& StatName, int32 DecBy)
 		Properties.Add(StatName, NewValue);
 	}
 }
+
+FString FOnlineStatsRow::ToLogString() const
+{
+	FString LogString = FString::Printf(TEXT("%d : %s"), Rank, *NickName);
+
+	for (const TPair<FName, FVariantData>& Column : Columns)
+	{
+		LogString += FString::Printf(TEXT("\t\t%s : %s"), *Column.Key.ToString(), *Column.Value.ToString());
+	}
+
+	return LogString;
+}
+
+FString FOnlineLeaderboardRead::ToLogString() const
+{
+	FString LogString = FString::Printf(TEXT("\nLeaderboardName: %s\nSortedColumn: %s\nRows:\n"), *LeaderboardName.ToString(), *SortedColumn.ToString());
+
+	for (const FOnlineStatsRow& Row : Rows)
+	{
+		LogString += FString::Printf(TEXT("\t%s\n"), *Row.ToLogString());
+	}
+
+	return LogString;
+}

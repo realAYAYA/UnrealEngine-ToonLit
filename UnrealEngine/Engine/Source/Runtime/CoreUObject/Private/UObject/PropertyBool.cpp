@@ -1,13 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CoreMinimal.h"
+#include "UObject/UnrealType.h"
 
 #include "Hash/Blake3.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/UObjectGlobals.h"
-#include "UObject/UnrealType.h"
-#include "UObject/UnrealTypePrivate.h"
 #include "UObject/PropertyHelper.h"
+#include "UObject/UnrealTypePrivate.h"
 
 /*-----------------------------------------------------------------------------
 	FBoolProperty.
@@ -294,21 +291,19 @@ EConvertFromTypeResult FBoolProperty::ConvertFromType(const FPropertyTag& Tag, F
 	}
 	else if (Tag.Type == NAME_ByteProperty)
 	{
-		// if the byte property was an enum we won't allow a conversion to bool
-		if (Tag.EnumName == NAME_None)
-		{
-			// If we're a nested property the EnumName tag got lost, don't allow this
-			if (GetOwner<FProperty>())
-			{
-				return EConvertFromTypeResult::UseSerializeItem;
-			}
-
-			LoadFromType<uint8>(this, Tag, Slot, Data);
-		}
-		else
+		// Disallow conversion of enum to bool.
+		if (Tag.GetType().GetParameterCount() > 0)
 		{
 			return EConvertFromTypeResult::UseSerializeItem;
 		}
+
+		// Disallow a nested byte property prior to complete type names because it was impossible to distinguish from a nested enum.
+		if (GetOwner<FProperty>() && Slot.GetArchiveState().UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
+		{
+			return EConvertFromTypeResult::UseSerializeItem;
+		}
+
+		LoadFromType<uint8>(this, Tag, Slot, Data);
 	}
 	else if (Tag.Type == NAME_UInt16Property)
 	{

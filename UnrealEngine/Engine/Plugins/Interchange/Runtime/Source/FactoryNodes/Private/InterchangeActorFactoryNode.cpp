@@ -38,8 +38,28 @@ bool UInterchangeActorFactoryNode::SetCustomGlobalTransform(const FTransform& At
 	IMPLEMENT_NODE_ATTRIBUTE_SETTER_WITH_CUSTOM_DELEGATE_WITH_CUSTOM_CLASS(UInterchangeActorFactoryNode, GlobalTransform, FTransform, USceneComponent);
 }
 
+bool UInterchangeActorFactoryNode::GetCustomLocalTransform(FTransform& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(GlobalTransform, FTransform);
+}
+
+bool UInterchangeActorFactoryNode::SetCustomLocalTransform(const FTransform& AttributeValue, bool bAddApplyDelegate)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_WITH_CUSTOM_DELEGATE_WITH_CUSTOM_CLASS(UInterchangeActorFactoryNode, GlobalTransform, FTransform, USceneComponent);
+}
+
 bool UInterchangeActorFactoryNode::ApplyCustomGlobalTransformToAsset(UObject* Asset) const
 {
+	FTransform LocalTransform;
+	if (GetCustomLocalTransform(LocalTransform))
+	{
+		if (USceneComponent* Component = Cast<USceneComponent>(Asset))
+		{
+			Component->SetRelativeTransform(LocalTransform);
+			return true;
+		}
+	}
+
 	FTransform GlobalTransform;
 	if (GetCustomGlobalTransform(GlobalTransform))
 	{
@@ -57,8 +77,10 @@ bool UInterchangeActorFactoryNode::FillCustomGlobalTransformFromAsset(UObject* A
 {
 	if (const USceneComponent* Component = Cast<USceneComponent>(Asset))
 	{
-		FTransform Transform = Component->GetComponentToWorld();
-		return this->SetCustomGlobalTransform(Transform, false);
+		FTransform LocalTransform = Component->GetRelativeTransform();
+		FTransform GlobalTransform = Component->GetComponentToWorld();
+
+		return this->SetCustomLocalTransform(LocalTransform, false) || this->SetCustomGlobalTransform(GlobalTransform, false);
 	}
 
 	return false;

@@ -172,7 +172,7 @@ int32 FGeometryCacheStreamingManager::BlockTillAllRequestsFinished(float TimeLim
 		double EndTime = FPlatformTime::Seconds() + TimeLimit;
 		for (auto Iter = StreamingGeometryCaches.CreateIterator(); Iter; ++Iter)
 		{
-			float ThisTimeLimit = EndTime - FPlatformTime::Seconds();
+			float ThisTimeLimit = static_cast<float>(EndTime - FPlatformTime::Seconds());
 			if (ThisTimeLimit < .001f || // one ms is the granularity of the platform event system
 				!Iter.Value()->BlockTillAllRequestsFinished(ThisTimeLimit))
 			{

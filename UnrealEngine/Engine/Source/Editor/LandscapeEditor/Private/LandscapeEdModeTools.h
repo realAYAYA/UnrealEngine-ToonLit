@@ -1479,15 +1479,15 @@ public:
 	{
 		TRACE_BOOKMARK(TEXT("BeginTool - %s"), GetToolName());
 
-		if (ShouldUpdateEditingLayer())
+		ALandscape* Landscape = this->EdMode->GetLandscape();
+		if (Landscape)
 		{
-			ALandscape* Landscape = this->EdMode->GetLandscape();
-			if (Landscape)
+			if (ShouldUpdateEditingLayer())
 			{
 				Landscape->RequestLayersContentUpdate(GetBeginToolContentUpdateFlag());
 				Landscape->SetEditingLayer(this->EdMode->GetCurrentLayerGuid());	// legacy way to set the edit layer, via Landscape state
-				Landscape->SetGrassUpdateEnabled(false);
 			}
+			Landscape->SetGrassUpdateEnabled(false);
 		}
 
 		if (!ensure(InteractorPositions.Num() == 0))
@@ -1555,15 +1555,15 @@ public:
 		EdMode->CurrentBrush->EndStroke();
 		EdMode->UpdateLayerUsageInformation(&EdMode->CurrentToolTarget.LayerInfo);
 
-		if (ShouldUpdateEditingLayer())
+		ALandscape* Landscape = this->EdMode->GetLandscape();
+		if (Landscape)
 		{
-			ALandscape* Landscape = this->EdMode->GetLandscape();
-			if (Landscape)
+			if (ShouldUpdateEditingLayer())
 			{
 				Landscape->RequestLayersContentUpdate(GetEndToolContentUpdateFlag());
 				Landscape->SetEditingLayer();
-				Landscape->SetGrassUpdateEnabled(true);
 			}
+			Landscape->SetGrassUpdateEnabled(true);
 		}
 
 		TRACE_BOOKMARK(TEXT("EndTool - %s"), GetToolName());

@@ -14,12 +14,26 @@
     <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
     <Nullable>enable</Nullable>
     <NeutralLanguage>en-US</NeutralLanguage>
+    <RunAnalyzersDuringBuild>False</RunAnalyzersDuringBuild>
+    <Configurations>Debug;Release;Analyze;DebugAutoUpdate;ReleaseAutoUpdate</Configurations>
   </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Analyze|AnyCPU' ">
+    <RunAnalyzersDuringBuild>True</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>True</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <DocumentationFile></DocumentationFile>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
     <DefineConstants>TRACE;DEBUG;WITH_TELEMETRY</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DefineConstants>TRACE;WITH_TELEMETRY</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'DebugAutoUpdate' or '$(Configuration)' == 'ReleaseAutoUpdate'">
+    <DefineConstants>$(DefineConstants);WITH_AUTOUPDATE</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="EnvDTE" Version="16.7.30328.74" />

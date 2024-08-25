@@ -10,6 +10,18 @@ struct FAnimationInitializeContext;
 struct FComponentSpacePoseContext;
 struct FNodeDebugData;
 
+
+UENUM(BlueprintType)
+enum class EOrientationWarpingSpace : uint8
+{
+	// apply warping relative to current component transform
+	ComponentTransform,
+	// Apply warping relative to previous frame's root bone transform. Use this mode when using an OffsetRootBone node which allows the root bone and component transforms to differ. 
+	RootBoneTransform,
+	// Provide a custom transform pin
+	CustomTransform
+};
+
 USTRUCT(BlueprintInternalUseOnly)
 struct ANIMATIONWARPINGRUNTIME_API FAnimNode_OrientationWarping : public FAnimNode_SkeletalControlBase
 {
@@ -28,6 +40,11 @@ struct ANIMATIONWARPINGRUNTIME_API FAnimNode_OrientationWarping : public FAnimNo
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Evaluation, meta=(PinShownByDefault))
 	float LocomotionAngle = 0.f;
 
+	// The character movement direction vector in world space
+	// This will be used to compute LocomotionAngle automatically
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Evaluation, meta=(PinShownByDefault))
+	FVector LocomotionDirection = { 0.f, 0.f, 0.f };
+	
 	// Minimum root motion speed required to apply orientation warping
 	// This is useful to prevent unnatural re-orientation when the animation has a portion with no root motion (i.e starts/stops/idles)
 	// When this value is greater than 0, it's recommended to enable interpolation with RotationInterpSpeed > 0
@@ -63,7 +80,7 @@ struct ANIMATIONWARPINGRUNTIME_API FAnimNode_OrientationWarping : public FAnimNo
 	TEnumAsByte<EAxis::Type> RotationAxis = EAxis::Z;
 
 	// Specifies how much rotation is applied to the character body versus IK feet
-	UPROPERTY(EditAnywhere, Category=Settings, meta=(ClampMin="0.0", ClampMax="1.0"))
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(ClampMin="0.0", ClampMax="1.0", PinHiddenByDefault))
 	float DistributedBoneOrientationAlpha = 0.5f;
 
 	// Specifies the interpolation speed (in Alpha per second) towards reaching the final warped rotation angle
@@ -71,14 +88,36 @@ struct ANIMATIONWARPINGRUNTIME_API FAnimNode_OrientationWarping : public FAnimNo
 	UPROPERTY(EditAnywhere, Category=Settings, meta=(ClampMin="0.0"))
 	float RotationInterpSpeed = 10.f;
 
-	UPROPERTY(EditAnywhere, Category = Experimental, meta=(PinHiddenByDefault, ClampMin="0.0", ClampMax="1.0"))
-	float WarpingAlpha = 1.0f;
+	// Max correction we're allowed to do per-second when using interpolation.
+	// This minimizes pops when we have a large difference between current and target orientation.
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(ClampMin="0.0", EditCondition="RotationInterpSpeed > 0.0f"))
+	float MaxCorrectionDegrees = 180.f;
 
-	UPROPERTY(EditAnywhere, Category = Experimental, meta=(PinHiddenByDefault, ClampMin="0.0", ClampMax="1.0"))
-	float OffsetAlpha = 0.0f;
+	// Don't compensate our interpolator when the instantaneous root motion delta is higher than this. This is likely a pivot.
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(ClampMin="0.0", EditCondition="RotationInterpSpeed > 0.0f"))
+	float MaxRootMotionDeltaToCompensateDegrees = 45.f;
 
-	UPROPERTY(EditAnywhere, Category = Experimental, meta=(PinHiddenByDefault, ClampMin="0.0", ClampMax="180.0"))
-	float MaxOffsetAngle = 70.0f;
+	// Whether to counter compensate interpolation by the animated root motion angle change over time.
+	// This helps to conserve the motion from our animation.
+	// Disable this if your root motion is expected to be jittery, and you want orientation warping to smooth it out.
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(EditCondition="RotationInterpSpeed > 0.0f"))
+	bool bCounterCompenstateInterpolationByRootMotion = true;
+
+	UPROPERTY(EditAnywhere, Category=Experimental, meta=(PinHiddenByDefault))
+	bool bScaleByGlobalBlendWeight = false;
+
+	UPROPERTY(EditAnywhere, Category=Experimental, meta=(PinHiddenByDefault))
+	bool bUseManualRootMotionVelocity = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Experimental, meta=(PinHiddenByDefault))
+	FVector ManualRootMotionVelocity = FVector::ZeroVector;
+
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Evaluation, meta=(PinHiddenByDefault))
+	EOrientationWarpingSpace WarpingSpace = EOrientationWarpingSpace::ComponentTransform;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Evaluation, meta=(PinHiddenByDefault))
+	FTransform WarpingSpaceTransform;
 
 #if WITH_EDITORONLY_DATA
 	// Scale all debug drawing visualization by a factor
@@ -151,22 +190,13 @@ private:
 
 	// Computed IK bone indices for the specified foot definitions 
 	FOrientationWarpingFootData IKFootData;
-
-	// Internal previous frame root motion delta direction
-	FVector PreviousRootMotionDeltaDirection = FVector::ZeroVector;
-
-	// Internal previous frame orientation warping angle
-	float PreviousOrientationAngle = 0.f;
 	
+	// Internal current frame root motion delta direction
+	FVector RootMotionDeltaDirection = FVector::ZeroVector;
+
 	// Internal orientation warping angle
-	float ActualOrientationAngle = 0.f;
-
-	// Our component's heading
-	float ComponentHeading = 0.0;
-
-	// Our accumulated heading offset based on component frame deltas
-	float HeadingOffset = 0.0;
-	float LastOffsetAlpha = 0.0f;
+	float ActualOrientationAngleRad = 0.f;
+	float BlendWeight = 0.0f;
 
 	FGraphTraversalCounter UpdateCounter;
 	bool bIsFirstUpdate = false;

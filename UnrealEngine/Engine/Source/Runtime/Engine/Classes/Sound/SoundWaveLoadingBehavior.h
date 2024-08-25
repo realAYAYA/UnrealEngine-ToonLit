@@ -4,6 +4,10 @@
 #include "CoreTypes.h"
 #include "UObject/ObjectMacros.h"
 
+#if WITH_EDITOR
+#include "PerPlatformProperties.h"
+#endif //WITH_EDITOR
+
 #include "SoundWaveLoadingBehavior.generated.h"
 
 /**
@@ -32,4 +36,33 @@ enum class ESoundWaveLoadingBehavior : uint8
 	Uninitialized = 0xff UMETA(Hidden)
 };
 
-const TCHAR* EnumToString(ESoundWaveLoadingBehavior InCurrentState);
+ENGINE_API const TCHAR* EnumToString(ESoundWaveLoadingBehavior InCurrentState);
+
+#if WITH_EDITOR
+
+class USoundWave;
+class USoundClass;
+class ITargetPlatform;
+
+class ISoundWaveLoadingBehaviorUtil
+{
+public:
+	virtual ~ISoundWaveLoadingBehaviorUtil() = default;
+
+	struct FClassData
+	{
+		FClassData() = default;
+		FClassData(const USoundClass* InClass);
+
+		bool CompareGreater(const FClassData&, const ITargetPlatform*) const;
+
+		ESoundWaveLoadingBehavior LoadingBehavior = ESoundWaveLoadingBehavior::Uninitialized;
+		FPerPlatformFloat LengthOfFirstChunkInSeconds;
+	};
+
+	static ISoundWaveLoadingBehaviorUtil* Get();	
+
+	virtual FClassData FindOwningLoadingBehavior(const USoundWave*, const ITargetPlatform*) const = 0;
+};
+
+#endif //WITH_EDITOR

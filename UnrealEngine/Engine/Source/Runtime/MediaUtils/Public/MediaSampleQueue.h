@@ -144,8 +144,13 @@ public:
 		return false;
 	}
 
-	bool FetchBestSampleForTimeRange(const TRange<FMediaTimeStamp>& TimeRange, TSharedPtr<SampleType, ESPMode::ThreadSafe>& OutSample, bool bReverse)
+	bool FetchBestSampleForTimeRange(const TRange<FMediaTimeStamp>& TimeRange, TSharedPtr<SampleType, ESPMode::ThreadSafe>& OutSample, bool bReverse, bool bConsistentResult)
 	{
+		// Notes:
+		// - Reverse playback still works with increasing indices in the queue. PTS values will be going down in it, rather than up,
+		//   but the order of indices is still identical.
+		// - The code below must be able to deal with time ranges that span loop points (different secondary sequence indices)
+		
 		// Code below assumes a fully specified range, no open bounds!
 		check(TimeRange.HasLowerBound() && TimeRange.HasUpperBound());
 
@@ -159,56 +164,86 @@ public:
 		// Found anything?
 		if (FirstPossibleIndex >= 0)
 		{
-			if (FirstPossibleIndex != LastPossibleIndex)
+			if (!bConsistentResult)
 			{
-				// More then one sample. Find the one that fits the bill, best...
-				// (we look for the one with the largest overlap & newest time)
-				FMediaTimeStamp BestDuration(FTimespan::Zero(), -1);
-				int32 BestIndex = FirstPossibleIndex;
+				//
+				// Return the latest sample with the most "coverage" for the given time range that can be fetched
+				// (this naturally depends on how many samples or available and hence timing - the result is not consistent between instances or repeat runs)
+				//
+				if (FirstPossibleIndex != LastPossibleIndex)
+				{
+					// More then one sample. Find the one that fits the bill, best...
+					// (we look for the one with the largest overlap & newest time)
+					FMediaTimeStamp BestDuration(FTimespan::Zero(), -1);
+					int32 BestIndex = FirstPossibleIndex;
+					for (int32 Idx = FirstPossibleIndex; Idx <= LastPossibleIndex; ++Idx)
+					{
+						const TSharedPtr<SampleType, ESPMode::ThreadSafe>& Sample = Samples[Idx];
+
+						// Check once more if this sample is actually overlapping as we may get non-monotonically increasing data...
+						TRange<FMediaTimeStamp> SampleTimeRange = TRange<FMediaTimeStamp>(Sample->GetTime(), Sample->GetTime() + Sample->GetDuration());
+
+						if (TimeRange.Overlaps(SampleTimeRange))
+						{
+							// Ok. This one is real, see if it is a better fit than the last one...
+							TRange<FMediaTimeStamp> SampleInRangeRange(TRange<FMediaTimeStamp>::Intersection(SampleTimeRange, TimeRange));
+
+							FMediaTimeStamp SampleDuration(SampleInRangeRange.Size<FMediaTimeStamp>());
+							if (SampleDuration >= BestDuration)
+							{
+								BestDuration = SampleDuration;
+								BestIndex = Idx;
+							}
+						}
+					}
+
+					check(BestIndex >= NumOldSamplesAtBegin);
+
+					// Found the best. Return it & delete all candidate samples up and including it from the queue
+					OutSample = Samples[BestIndex];
+					Samples.RemoveAt(FirstPossibleIndex, BestIndex - FirstPossibleIndex + 1);
+				}
+				else
+				{
+					// Single sample found: we just take it!
+					OutSample = Samples[FirstPossibleIndex]; //-V781 PVS-Studio triggers incorrectly here: Variable checked after being used (likely a template code issue, but harmless)
+					Samples.RemoveAt(FirstPossibleIndex);
+				}
+			}
+			else
+			{
+				//
+				// Return the first sample with maximum possible coverage given the time range or nothing if the sample is not yet in the queue
+				// (this yields reproducible results between instances as far as the selection of frames is concerned if the passed in ranges are identical in each run / instance)
+				// 
+
 				for (int32 Idx = FirstPossibleIndex; Idx <= LastPossibleIndex; ++Idx)
 				{
 					const TSharedPtr<SampleType, ESPMode::ThreadSafe>& Sample = Samples[Idx];
 
-					// Check once more if this sample is actually overlapping as we may get non-monotonically increasing data...
-					TRange<FMediaTimeStamp> SampleTimeRange = !bReverse ? TRange<FMediaTimeStamp>(Sample->GetTime(), Sample->GetTime() + Sample->GetDuration())
-						: TRange<FMediaTimeStamp>(Sample->GetTime() - Sample->GetDuration(), Sample->GetTime());
+					TRange<FMediaTimeStamp> SampleTimeRange = TRange<FMediaTimeStamp>(Sample->GetTime(), Sample->GetTime() + Sample->GetDuration());
 
-					if (TimeRange.Overlaps(SampleTimeRange))
+					check(TimeRange.Overlaps(SampleTimeRange));
+					TRange<FMediaTimeStamp> SampleInRangeRange(TRange<FMediaTimeStamp>::Intersection(SampleTimeRange, TimeRange));
+
+					FMediaTimeStamp SampleDuration(SampleInRangeRange.Size<FMediaTimeStamp>());
+
+					// Do we either have full coverage or no "better" sample could be after this one and still in range?
+					if (!bReverse ? (SampleDuration.Time >= Sample->GetDuration() || (TimeRange.GetUpperBoundValue() - (Sample->GetTime() + Sample->GetDuration())) < SampleDuration)
+								  : (SampleDuration.Time >= Sample->GetDuration() || (Sample->GetTime() - TimeRange.GetLowerBoundValue()) < SampleDuration))
 					{
-						// Ok. This one is real, see if it is a better fit than the last one...
-						TRange<FMediaTimeStamp> SampleInRangeRange(TRange<FMediaTimeStamp>::Intersection(SampleTimeRange, TimeRange));
-
-						FMediaTimeStamp SampleDuration(SampleInRangeRange.Size<FMediaTimeStamp>());
-						if (SampleDuration >= BestDuration)
-						{
-							BestDuration = SampleDuration;
-							BestIndex = Idx;
-						}
+						// Yes, so we return this one and remove all candidates and this one from the queue
+						OutSample = Sample;
+						Samples.RemoveAt(FirstPossibleIndex, Idx - FirstPossibleIndex + 1);
+						break;
 					}
 				}
-
-				check(BestIndex >= NumOldSamplesAtBegin);
-
-				// Found the best. Return it & delete all candidate samples up and including it from the queue
-				OutSample = Samples[BestIndex];
-				Samples.RemoveAt(FirstPossibleIndex, BestIndex - FirstPossibleIndex + 1);
-			}
-			else
-			{
-				// Single sample found: we just take it!
-				OutSample = Samples[FirstPossibleIndex]; //-V781 PVS-Studio triggers incorrectly here: Variable checked after being used (likely a template code issue, but harmless)
-				Samples.RemoveAt(FirstPossibleIndex);
 			}
 		}
 
 		// Any frames considered outdated?
 		if (NumOldSamplesAtBegin != 0)
 		{
-			// In case we got no new frame that fits into the current frame, return the newest of the "old" frames
-			if (!OutSample.IsValid())
-			{
-				OutSample = Samples[NumOldSamplesAtBegin - 1];
-			}
 			// Cleanup samples that are now considered outdated...
 			Samples.RemoveAt(0, NumOldSamplesAtBegin);
 		}
@@ -305,8 +340,7 @@ protected:
 			for (int32 Idx = 0; Idx < Num; ++Idx)
 			{
 				const TSharedPtr<SampleType, ESPMode::ThreadSafe>& Sample = Samples[Idx];
-				TRange<FMediaTimeStamp> SampleTimeRange = !bReverse ? TRange<FMediaTimeStamp>(Sample->GetTime(), Sample->GetTime() + Sample->GetDuration())
-					: TRange<FMediaTimeStamp>(Sample->GetTime() - Sample->GetDuration(), Sample->GetTime());
+				TRange<FMediaTimeStamp> SampleTimeRange = TRange<FMediaTimeStamp>(Sample->GetTime(), Sample->GetTime() + Sample->GetDuration());
 
 				if (TimeRange.Overlaps(SampleTimeRange))
 				{
@@ -320,7 +354,7 @@ protected:
 				else
 				{
 					if (!bReverse ? (SampleTimeRange.GetLowerBoundValue() >= TimeRange.GetUpperBoundValue()) :
-						(SampleTimeRange.GetUpperBoundValue() <= TimeRange.GetLowerBoundValue()))
+									(SampleTimeRange.GetUpperBoundValue() <= TimeRange.GetLowerBoundValue()))
 					{
 						// Sample is entirely past requested time range, we can stop
 						// (we assume monotonically increasing time stamps here)

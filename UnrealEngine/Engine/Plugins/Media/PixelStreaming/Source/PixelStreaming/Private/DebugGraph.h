@@ -18,6 +18,9 @@ namespace UE::PixelStreaming
 		void Draw(FCanvas* Canvas, FVector2D Position, FVector2D Size) const;
 
 	private:
+		void AddValueInternal(float InValue);
+
+	private:
 		FName Name;
 		int MaxSamples = 0;
 		float MinRange = 0.0f;
@@ -29,6 +32,7 @@ namespace UE::PixelStreaming
 		TArray<float> AvgValues;
 		int InsertIndex = 0;
 		int BufferedValues = 0;
+		bool bFirstValue = true;
 
 		mutable FCriticalSection CriticalSection;
 	};

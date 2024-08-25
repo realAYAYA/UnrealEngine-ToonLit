@@ -31,12 +31,12 @@ bool UEditorValidator_Load::IsEnabled() const
 	return !IsRunningCommandlet() && Super::IsEnabled();
 }
 
-bool UEditorValidator_Load::CanValidateAsset_Implementation(UObject* InAsset) const
+bool UEditorValidator_Load::CanValidateAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
 	return Super::CanValidateAsset_Implementation(InAsset) && InAsset != nullptr;
 }
 
-EDataValidationResult UEditorValidator_Load::ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors)
+EDataValidationResult UEditorValidator_Load::ValidateLoadedAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& Context)
 {
 	check(InAsset);
 
@@ -45,12 +45,12 @@ EDataValidationResult UEditorValidator_Load::ValidateLoadedAsset_Implementation(
 	{
 		for (const FString& WarningOrError : WarningsAndErrors)
 		{
-			AssetFails(InAsset, FText::FromString(WarningOrError), ValidationErrors);
+			AssetFails(InAsset, FText::FromString(WarningOrError));
 		}
 	}
 	else
 	{
-		AssetFails(InAsset, LOCTEXT("Load_FailedLoad", "Failed to get package load warnings and errors"), ValidationErrors);
+		AssetFails(InAsset, LOCTEXT("Load_FailedLoad", "Failed to get package load warnings and errors"));
 	}
 
 	if (GetValidationResult() != EDataValidationResult::Invalid)
@@ -74,7 +74,7 @@ bool UEditorValidator_Load::GetLoadWarningsAndErrorsForPackage(const FString& Pa
 	}
 
 	// Skip World or External Actor packages
-	if (ExistingPackage && UWorld::IsWorldOrExternalActorPackage(ExistingPackage))
+	if (ExistingPackage && UWorld::IsWorldOrWorldExternalPackage(ExistingPackage))
 	{
 		return true;
 	}

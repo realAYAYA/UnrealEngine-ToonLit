@@ -4,9 +4,9 @@ import backend from "../backend";
 import { GetServerSettingsResponse, ServerUpdateResponse } from "../backend/Api";
 import dashboard from "../backend/Dashboard";
 import { useWindowSize } from "../base/utilities/hooks";
-import { detailClasses, hordeClasses } from "../styles/Styles";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { TopNav } from "./TopNav";
+import { getHordeStyling } from "../styles/Styles";
 
 const settingStyles = mergeStyleSets({
 
@@ -51,6 +51,8 @@ type ServerPanel = {
 }
 
 const UpdateErrorModal: React.FC<{ errors: string[], onClose: () => void }> = ({ errors, onClose }) => {
+
+   const { hordeClasses } = getHordeStyling();
 
     const close = () => {
         onClose();
@@ -107,7 +109,9 @@ export const ServerSettingsView: React.FC = () => {
 
     const [settings, setSettings] = useState<GetServerSettingsResponse | undefined>(undefined);
     const [state, setState] = useState<{ selectedPanelKey: string, modified: Map<string, string | boolean | number>, submitting?: boolean, errors?: string[] }>({ selectedPanelKey: `key_server`, modified: new Map() })
-    const windowSize = useWindowSize();
+   const windowSize = useWindowSize();
+   
+   const { hordeClasses, detailClasses, modeColors } = getHordeStyling();
 
     const editDisabled = true;
 

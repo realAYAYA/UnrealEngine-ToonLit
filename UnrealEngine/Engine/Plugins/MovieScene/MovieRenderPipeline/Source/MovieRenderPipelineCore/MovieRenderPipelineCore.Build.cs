@@ -42,6 +42,14 @@ public class MovieRenderPipelineCore : ModuleRules
 
 		if (Target.bBuildEditor == true)
         {
+	        PrivateDependencyModuleNames.AddRange(
+		        new string[]
+		        {
+			        "ClassViewer",
+			        "SceneOutliner",
+			        "UnrealEd",
+		        });
+	        
 			PublicDependencyModuleNames.Add("MovieSceneTools");
         }
 	}

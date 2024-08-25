@@ -32,10 +32,6 @@ IPersonaPreviewScene& FIKRetargetDefaultMode::GetAnimPreviewScene() const
 	return *static_cast<IPersonaPreviewScene*>(static_cast<FAssetEditorModeManager*>(Owner)->GetPreviewScene());
 }
 
-void FIKRetargetDefaultMode::GetOnScreenDebugInfo(TArray<FText>& OutDebugInfo) const
-{
-}
-
 void FIKRetargetDefaultMode::Initialize()
 {
 	const TSharedPtr<FIKRetargetEditorController> Controller = EditorController.Pin();
@@ -333,6 +329,31 @@ bool FIKRetargetDefaultMode::HandleClick(FEditorViewportClient* InViewportClient
 
 bool FIKRetargetDefaultMode::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
+	return HandleBeginTransform(InViewportClient);
+}
+
+bool FIKRetargetDefaultMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
+{
+	return HandleEndTransform();
+}
+
+bool FIKRetargetDefaultMode::BeginTransform(const FGizmoState& InState)
+{
+	return HandleBeginTransform(Owner->GetFocusedViewportClient());
+}
+
+bool FIKRetargetDefaultMode::EndTransform(const FGizmoState& InState)
+{
+	return HandleEndTransform();
+}
+
+bool FIKRetargetDefaultMode::HandleBeginTransform(const FEditorViewportClient* InViewportClient)
+{
+	if (!InViewportClient)
+	{
+		return false;
+	}
+	
 	bIsTranslating = false;
 
 	// not manipulating any widget axes, so stop tracking
@@ -360,7 +381,7 @@ bool FIKRetargetDefaultMode::StartTracking(FEditorViewportClient* InViewportClie
 	return false;
 }
 
-bool FIKRetargetDefaultMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
+bool FIKRetargetDefaultMode::HandleEndTransform()
 {
 	GEditor->EndTransaction();
 	bIsTranslating = false;
@@ -472,11 +493,6 @@ void FIKRetargetDefaultMode::Tick(FEditorViewportClient* ViewportClient, float D
 	{
 		Initialize();
 	}
-}
-
-void FIKRetargetDefaultMode::DrawHUD(FEditorViewportClient* ViewportClient, FViewport* Viewport, const FSceneView* View, FCanvas* Canvas)
-{
-	FEdMode::DrawHUD(ViewportClient, Viewport, View, Canvas);
 }
 
 #undef LOCTEXT_NAMESPACE

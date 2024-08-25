@@ -9,60 +9,53 @@
 #include "MuT/NodeModifierMeshClipDeform.h"
 #include "MuT/NodeModifierMeshClipMorphPlane.h"
 #include "MuT/NodeModifierMeshClipWithMesh.h"
+#include "MuT/NodeModifierMeshClipWithUVMask.h"
 #include "MuT/NodeModifierPrivate.h"
 #include "MuT/NodePrivate.h"
 
 
 namespace mu
 {
-
-
-	//---------------------------------------------------------------------------------------------
 	// Static initialisation
-	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeModifierType =
-			NODE_TYPE( "NodeModifier", Node::GetStaticType() );
+	static FNodeType s_nodeModifierType = FNodeType( "NodeModifier", Node::GetStaticType() );
 
+	MUTABLE_IMPLEMENT_ENUM_SERIALISABLE(EMutableMultipleTagPolicy);
 
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeModifier::GetType() const
+	const FNodeType* NodeModifier::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeModifier::GetStaticType()
+	const FNodeType* NodeModifier::GetStaticType()
 	{
-          return &s_nodeModifierType;
-        }
+		return &s_nodeModifierType;
+    }
 
 
-	//---------------------------------------------------------------------------------------------
 	void NodeModifier::Serialise( const NodeModifier* p, OutputArchive& arch )
 	{
         uint32 ver = 0;
 		arch << ver;
 
-#define SERIALISE_CHILDREN( C, ID ) \
-        ( const C* pTyped##ID = dynamic_cast<const C*>(p) )			\
-        {                                                           \
+	#define SERIALISE_CHILDREN( C, ID ) \
+		( p->GetType()==C::GetStaticType() )					\
+		{ 														\
+			const C* pTyped = static_cast<const C*>(p);			\
             arch << (uint32)ID;									\
-            C::Serialise( pTyped##ID, arch );						\
-		}
+			C::Serialise( pTyped, arch );						\
+		}														\
 
 		if SERIALISE_CHILDREN(NodeModifierMeshClipMorphPlane, 			0 )
 		else if SERIALISE_CHILDREN(NodeModifierMeshClipWithMesh, 		1 )
 		else if SERIALISE_CHILDREN(NodeModifierMeshClipDeform, 		    2 )
+		else if SERIALISE_CHILDREN(NodeModifierMeshClipWithUVMask, 		3 )
 		else check(false);
 
 #undef SERIALISE_CHILDREN
     }
 
         
-	//---------------------------------------------------------------------------------------------
 	NodeModifierPtr NodeModifier::StaticUnserialise( InputArchive& arch )
 	{
         uint32 ver;
@@ -76,54 +69,32 @@ namespace mu
 		{
 		case 0 :  return NodeModifierMeshClipMorphPlane::StaticUnserialise( arch ); break;
 		case 1 :  return NodeModifierMeshClipWithMesh::StaticUnserialise( arch ); break;
-		case 2 :  return NodeModifierMeshClipDeform::StaticUnserialise( arch ); break;
+		case 2 :  return NodeModifierMeshClipDeform::StaticUnserialise(arch); break;
+		case 3 :  return NodeModifierMeshClipWithUVMask::StaticUnserialise(arch); break;
 		default : check(false);
 		}
 
 		return 0;
 	}
 
-	//---------------------------------------------------------------------------------------------
-	void NodeModifier::AddTag(const char* tagName)
+	void NodeModifier::AddTag(const FString& Value)
 	{
-		NodeModifier::Private* pD = dynamic_cast<NodeModifier::Private*>(GetBasePrivate());
-		check(pD);
-
-		pD->m_tags.Add(tagName);
+		NodeModifier::Private* pD = static_cast<NodeModifier::Private*>(GetBasePrivate());
+		pD->RequiredTags.Add(Value);
 	}
 
 
-    //---------------------------------------------------------------------------------------------
-    int NodeModifier::GetTagCount() const
-    {
-        NodeModifier::Private* pD = dynamic_cast<NodeModifier::Private*>(GetBasePrivate());
-        check(pD);
-
-        return pD->m_tags.Num();
-    }
+	void NodeModifier::SetMultipleTagPolicy(EMutableMultipleTagPolicy Value)
+	{
+		NodeModifier::Private* pD = static_cast<NodeModifier::Private*>(GetBasePrivate());
+		pD->MultipleTagsPolicy = Value;
+	}
 
 
-    //---------------------------------------------------------------------------------------------
-    const char* NodeModifier::GetTag( int i ) const
-    {
-        NodeModifier::Private* pD = dynamic_cast<NodeModifier::Private*>(GetBasePrivate());
-        check(pD);
-
-        if (i>=0 && i<GetTagCount())
-        {
-            return pD->m_tags[i].c_str();
-        }
-        return nullptr;
-    }
-
-
-	//---------------------------------------------------------------------------------------------
 	void NodeModifier::SetStage(bool bBeforeNormalOperation)
 	{
-		NodeModifier::Private* pD = dynamic_cast<NodeModifier::Private*>(GetBasePrivate());
-		check(pD);
-
-		pD->m_applyBeforeNormalOperations = bBeforeNormalOperation; 
+		NodeModifier::Private* pD = static_cast<NodeModifier::Private*>(GetBasePrivate());
+		pD->bApplyBeforeNormalOperations = bBeforeNormalOperation; 
 	}
 
 }

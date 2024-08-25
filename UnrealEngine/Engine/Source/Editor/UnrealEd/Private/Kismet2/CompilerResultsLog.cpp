@@ -21,13 +21,11 @@
 #define LOCTEXT_NAMESPACE "Editor.Stats"
 
 const FName FCompilerResultsLog::Name(TEXT("CompilerResultsLog"));
-FCompilerResultsLog* FCompilerResultsLog::CurrentEventTarget = nullptr;
 FDelegateHandle FCompilerResultsLog::GetGlobalModuleCompilerDumpDelegateHandle;
 
 //////////////////////////////////////////////////////////////////////////
-// FCompilerResultsLog
+// FBacktrackMap
 
-/** Update the source backtrack map to note that NewObject was most closely generated/caused by the SourceObject */
 void FBacktrackMap::NotifyIntermediateObjectCreation(UObject* NewObject, UObject* SourceObject)
 {
 	// Chase the source to make sure it's really a top-level ('source code') node
@@ -40,7 +38,6 @@ void FBacktrackMap::NotifyIntermediateObjectCreation(UObject* NewObject, UObject
 	SourceBacktrackMap.Add(NewObject, SourceObject);
 }
 
-/** Update the pin source backtrack map to note that NewPin was most closely generated/caused by the SourcePin */
 void FBacktrackMap::NotifyIntermediatePinCreation(UEdGraphPin* NewPin, UEdGraphPin* SourcePin)
 {
 	check(NewPin->GetOwningNode() && SourcePin->GetOwningNode());
@@ -54,7 +51,6 @@ void FBacktrackMap::NotifyIntermediatePinCreation(UEdGraphPin* NewPin, UEdGraphP
 	PinSourceBacktrackMap.Add(NewPin, SourcePin);
 }
 
-/** Returns the true source object for the passed in object */
 UObject* FBacktrackMap::FindSourceObject(UObject* PossiblyDuplicatedObject)
 {
 	UObject** RemappedIfExisting = SourceBacktrackMap.Find(PossiblyDuplicatedObject);
@@ -134,18 +130,10 @@ FCompilerResultsLog::FCompilerResultsLog(bool bIsCompatibleWithEvents/* = true*/
 	, EventDisplayThresholdMs(0)
 {
 	CurrentEventScope = nullptr;
-	if(bIsCompatibleWithEvents && CurrentEventTarget == nullptr)
-	{
-		CurrentEventTarget = this;
-	}
 }
 
 FCompilerResultsLog::~FCompilerResultsLog()
 {
-	if(CurrentEventTarget == this)
-	{
-		CurrentEventTarget = nullptr;
-	}
 }
 
 void FCompilerResultsLog::Register()
@@ -276,6 +264,7 @@ void FCompilerResultsLog::InternalLogSummary()
 
 		if(bLogDetailedResults)
 		{
+			// This will not do anything for the default BP compiler log
 			Note(*LOCTEXT("PerformanceSummaryHeading", "Performance summary:").ToString());
 			InternalLogEvent(*CurrentEventScope.Get());
 		}
@@ -315,7 +304,6 @@ bool FCompilerResultsLog::CommitPotentialMessages(UEdGraphNode* Source)
 	return false;
 }
 
-/** Update the source backtrack map to note that NewObject was most closely generated/caused by the SourceObject */
 void FCompilerResultsLog::NotifyIntermediateObjectCreation(UObject* NewObject, UObject* SourceObject)
 {
 	SourceBacktrackMap.NotifyIntermediateObjectCreation(NewObject, SourceObject);
@@ -326,7 +314,6 @@ void FCompilerResultsLog::NotifyIntermediatePinCreation(UEdGraphPin* NewPin, UEd
 	SourceBacktrackMap.NotifyIntermediatePinCreation(NewPin, SourcePPin);
 }
 
-/** Returns the true source object for the passed in object */
 UObject* FCompilerResultsLog::FindSourceObject(UObject* PossiblyDuplicatedObject)
 {
 	return SourceBacktrackMap.FindSourceObject(PossiblyDuplicatedObject);
@@ -553,7 +540,7 @@ TArray< TSharedRef<FTokenizedMessage> > FCompilerResultsLog::ParseCompilerLogDum
 		FString Line = MessageLines[i];
 		if (Line.EndsWith(TEXT("\r"), ESearchCase::CaseSensitive))
 		{
-			Line.LeftChopInline(1, false);
+			Line.LeftChopInline(1, EAllowShrinking::No);
 		}
 		Line.ConvertTabsToSpacesInline(4);
 		Line.TrimEndInline();
@@ -617,7 +604,7 @@ void FCompilerResultsLog::OnGotoError(const TSharedRef<IMessageToken>& Token)
 	FString FullPath, LineNumberString;
 	if (Token->ToText().ToString().Split(TEXT("("), &FullPath, &LineNumberString, ESearchCase::CaseSensitive))
 	{
-		LineNumberString.LeftChopInline(1, false); // remove right parenthesis
+		LineNumberString.LeftChopInline(1, EAllowShrinking::No); // remove right parenthesis
 		int32 LineNumber = FCString::Strtoi(*LineNumberString, NULL, 10);
 
 		FSourceCodeNavigation::OpenSourceFile( FullPath, LineNumber );

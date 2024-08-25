@@ -359,6 +359,9 @@ public:
 	/** See LineHeightPercentage attribute */
 	SLATE_API void SetLineHeightPercentage(const TAttribute<float>& InLineHeightPercentage);
 
+	/** See ApplyLineHeightToBottomLine attribute */
+	SLATE_API void SetApplyLineHeightToBottomLine(const TAttribute<bool>& InApplyLineHeightToBottomLine);
+
 	/** See Margin attribute */
 	SLATE_API void SetMargin(const TAttribute<FMargin>& InMargin);
 

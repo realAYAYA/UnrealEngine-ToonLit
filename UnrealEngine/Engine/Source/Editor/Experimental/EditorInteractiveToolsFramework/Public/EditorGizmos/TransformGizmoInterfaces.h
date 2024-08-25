@@ -67,6 +67,11 @@ public:
 	 */
 	virtual bool GetVisible() const PURE_VIRTUAL(ITransformGizmoSource::GetVisible, return false;);
 
+	/* 
+	 * Returns whether the gizmo can interact.
+	 */
+	virtual bool CanInteract() const PURE_VIRTUAL(ITransformGizmoSource::CanInteract, return false;);
+
 	/*
 	 * Get current scale type
 	 */

@@ -14,62 +14,89 @@ class FText;
 template<typename NumericType> struct FNumericUnit;
 
 /** Enum *must* be zero-indexed and sequential. Must be grouped by relevance and ordered by magnitude. */
-/** Enum *must* match the mirrored enum that exists in CoreUObject/Classes/Object.h for the purposes of UObject reflection */
+/** Enum *must* match the mirrored enum that exists in CoreUObject/NoExportTypes.h for the purposes of UObject reflection */
 enum class EUnit : uint8
 {
-	/** Scalar distance/length units */
+	/** Scalar distance/length unit. */
 	Micrometers, Millimeters, Centimeters, Meters, Kilometers,
 	Inches, Feet, Yards, Miles,
 	Lightyears,
 
-	/** Angular units */
+	/** Angular unit. */
 	Degrees, Radians,
 
-	/** Speed units */
+	/** Speed unit. */
 	CentimetersPerSecond, MetersPerSecond, KilometersPerHour, MilesPerHour,
 
-	/** Temperature units */
+	/** Angular speed unit. */
+	DegreesPerSecond, RadiansPerSecond,
+
+	/** Acceleration unit. */
+	CentimetersPerSecondSquared, MetersPerSecondSquared,
+
+	/** Temperature unit. */
 	Celsius, Farenheit, Kelvin,
 
-	/** Mass units */
+	/** Mass unit. */
 	Micrograms, Milligrams, Grams, Kilograms, MetricTons,
 	Ounces, Pounds, Stones,
 
-	/** Force units */
+	/** Density unit. */
+	GramsPerCubicCentimeter, GramsPerCubicMeter, KilogramsPerCubicCentimeter, KilogramsPerCubicMeter,
+
+	/** Force unit. */
 	Newtons, PoundsForce, KilogramsForce, KilogramCentimetersPerSecondSquared,
 
-	/** Torque Units */
+	/** Torque unit. */
 	NewtonMeters, KilogramCentimetersSquaredPerSecondSquared,
 
-	/** Frequency units */
+	/** Impulse unit. */
+	NewtonSeconds, KilogramCentimeters, KilogramMeters,
+
+	/** Frequency unit. */
 	Hertz, Kilohertz, Megahertz, Gigahertz, RevolutionsPerMinute,
 
-	/** Data Size units */
+	/** Data Size unit. */
 	Bytes, Kilobytes, Megabytes, Gigabytes, Terabytes,
 
-	/** Luminous flux units, luminous intensity, illuminance, luminance, exposure value */
-	Lumens, Candela, Lux, CandelaPerMeter2, ExposureValue,
+	/** Luminous flux unit. */
+	Lumens,
+	
+	/** Luminous intensity unit. */
+	Candela,
+	
+	/** Illuminance unit. */
+	Lux,
+	
+	/** Luminance unit. */
+	CandelaPerMeter2,
+	
+	/** Exposure value unit. */
+	ExposureValue,
 
-	/** Time units */
+	/** Time unit. */
 	Nanoseconds, Microseconds, Milliseconds, Seconds, Minutes, Hours, Days, Months, Years,
 
-	/** Pixel density units */
+	/** Pixel density unit. */
 	PixelsPerInch,
 
-	/** Arbitrary multipliers */
-	Percentage,	Multiplier,
+	/** Percentage. */
+	Percentage,
 
-	/** Stress units */
+	/** Arbitrary multiplier. */
+	Multiplier,
+
+	/** Stress unit. */
 	Pascals, KiloPascals, MegaPascals, GigaPascals,
 
-	/** Symbolic entry, not specifiable on meta data */
+	/** Symbolic entry, not specifiable on meta data. */
 	Unspecified
 };
 
 /** Enumeration that specifies particular classes of unit */
 enum class EUnitType
 {
-	Distance, Angle, Speed, Temperature, Mass, Force, Torque, Frequency, DataSize, LuminousFlux, LuminousIntensity, Illuminance, Luminance, Time, PixelDensity, Multipliers, ExposureValue, Stress,
+	Distance, Angle, Speed, AngularSpeed, Acceleration, Temperature, Mass, Density, Force, Torque, Impulse, PositionalImpulse, Frequency, DataSize, LuminousFlux, LuminousIntensity, Illuminance, Luminance, Time, PixelDensity, Multipliers, ExposureValue, Stress,
 
 	// Symbolic entry - do not use directly
 	NumberOf,
@@ -128,6 +155,9 @@ struct FUnitConversion
 
 	/** Helper function to find a unit from a string (name or display string) */
 	static CORE_API TOptional<EUnit> UnitFromString(const TCHAR* UnitString);
+
+	/** Helper function to get all supported units */
+	static CORE_API TConstArrayView<const TCHAR*> GetSupportedUnits();
 
 public:
 
@@ -228,6 +258,9 @@ private:
 	}
 };
 
+template <typename CharType, typename T>
+TStringBuilderBase<CharType>& operator<<(TStringBuilderBase<CharType>& Builder, const FNumericUnit<T>& NumericUnit);
+
 template<typename T>
 FString LexToString(const FNumericUnit<T>& NumericUnit);
 
@@ -239,7 +272,6 @@ void LexFromString(FNumericUnit<T>& OutValue, const TCHAR* String);
 	
 template<typename T>
 bool LexTryParseString(FNumericUnit<T>& OutValue, const TCHAR* String);
-
 
 // Include template definitions
 #include "Math/UnitConversion.inl" // IWYU pragma: export

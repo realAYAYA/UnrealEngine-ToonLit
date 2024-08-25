@@ -6,6 +6,7 @@
 #include "ComponentRecreateRenderStateContext.h"
 #include "LumenHeightfields.h"
 #include "MeshCardBuild.h"
+#include "InstanceDataSceneProxy.h"
 
 TAutoConsoleVariable<float> CVarLumenMeshCardsMinSize(
 	TEXT("r.LumenScene.SurfaceCache.MeshCardsMinSize"),
@@ -171,13 +172,12 @@ public:
 	{
 		// Note: layout must match GetLumenCardData in usf
 
-		const FLargeWorldRenderPosition WorldPosition(Card.WorldOBB.Origin);
-		const FVector3f Offset = WorldPosition.GetOffset();
+		const FDFVector3 WorldPosition(Card.WorldOBB.Origin);
 
-		OutData[0] = WorldPosition.GetTile();
-		OutData[1] = FVector4f(Card.WorldOBB.AxisX[0], Card.WorldOBB.AxisY[0], Card.WorldOBB.AxisZ[0], Offset.X);
-		OutData[2] = FVector4f(Card.WorldOBB.AxisX[1], Card.WorldOBB.AxisY[1], Card.WorldOBB.AxisZ[1], Offset.Y);
-		OutData[3] = FVector4f(Card.WorldOBB.AxisX[2], Card.WorldOBB.AxisY[2], Card.WorldOBB.AxisZ[2], Offset.Z);
+		OutData[0] = WorldPosition.High;
+		OutData[1] = FVector4f(Card.WorldOBB.AxisX[0], Card.WorldOBB.AxisY[0], Card.WorldOBB.AxisZ[0], WorldPosition.Low.X);
+		OutData[2] = FVector4f(Card.WorldOBB.AxisX[1], Card.WorldOBB.AxisY[1], Card.WorldOBB.AxisZ[1], WorldPosition.Low.Y);
+		OutData[3] = FVector4f(Card.WorldOBB.AxisX[2], Card.WorldOBB.AxisY[2], Card.WorldOBB.AxisZ[2], WorldPosition.Low.Z);
 
 		const FIntPoint ResLevelBias = Card.ResLevelToResLevelXYBias();
 		const uint32 LightingChannelMask = InPrimitiveGroup ? InPrimitiveGroup->LightingChannelMask : UINT32_MAX;
@@ -238,13 +238,12 @@ void FLumenMeshCardsGPUData::FillData(const FLumenMeshCards& RESTRICT MeshCards,
 {
 	// Note: layout must match GetLumenMeshCardsData in usf
 
-	const FLargeWorldRenderPosition WorldOrigin(MeshCards.LocalToWorld.GetOrigin());
-	const FVector3f WorldOriginOffset = WorldOrigin.GetOffset();
+	const FDFVector3 WorldOrigin(MeshCards.LocalToWorld.GetOrigin());
 
-	OutData[0] = WorldOrigin.GetTile();
-	OutData[1] = FVector4f(FVector4(MeshCards.WorldToLocalRotation.GetScaledAxis(EAxis::X), WorldOriginOffset.X));
-	OutData[2] = FVector4f(FVector4(MeshCards.WorldToLocalRotation.GetScaledAxis(EAxis::Y), WorldOriginOffset.Y));
-	OutData[3] = FVector4f(FVector4(MeshCards.WorldToLocalRotation.GetScaledAxis(EAxis::Z), WorldOriginOffset.Z));
+	OutData[0] = WorldOrigin.High;
+	OutData[1] = FVector4f(FVector4(MeshCards.WorldToLocalRotation.GetScaledAxis(EAxis::X), WorldOrigin.Low.X));
+	OutData[2] = FVector4f(FVector4(MeshCards.WorldToLocalRotation.GetScaledAxis(EAxis::Y), WorldOrigin.Low.Y));
+	OutData[3] = FVector4f(FVector4(MeshCards.WorldToLocalRotation.GetScaledAxis(EAxis::Z), WorldOrigin.Low.Z));
 
 	uint32 PackedData[4];
 	PackedData[0] = MeshCards.FirstCardIndex;
@@ -647,19 +646,18 @@ void BuildMeshCardsDataForMergedInstances(const FLumenPrimitiveGroup& PrimitiveG
 	for (const FPrimitiveSceneInfo* PrimitiveSceneInfo : PrimitiveGroup.Primitives)
 	{
 		const FMatrix& PrimitiveToWorld = PrimitiveSceneInfo->Proxy->GetLocalToWorld();
-		const TConstArrayView<FInstanceSceneData> InstanceSceneData = PrimitiveSceneInfo->Proxy->GetInstanceSceneData();
-
 		const FBoxSphereBounds& PrimitiveBounds = PrimitiveSceneInfo->Proxy->GetBounds();
 		float InstanceArea = BoxSurfaceArea(PrimitiveBounds.BoxExtent);
 		FMatrix InstanceMeshCardsLocalToWorld = PrimitiveToWorld;
 
-		for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData.Num(); ++InstanceIndex)
+		if (const FInstanceSceneDataBuffers *InstanceSceneData = PrimitiveSceneInfo->GetInstanceSceneDataBuffers())
 		{
-			const FInstanceSceneData& Instance = InstanceSceneData[InstanceIndex];
-			InstanceArea = BoxSurfaceArea((FVector)PrimitiveSceneInfo->Proxy->GetInstanceLocalBounds(InstanceIndex).GetExtent());
-			InstanceMeshCardsLocalToWorld = Instance.LocalToPrimitive.ToMatrix() * PrimitiveToWorld;
+			for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData->GetNumInstances(); ++InstanceIndex)
+			{
+				InstanceArea = BoxSurfaceArea((FVector)InstanceSceneData->GetInstanceLocalBounds(InstanceIndex).GetExtent());
+				InstanceMeshCardsLocalToWorld = InstanceSceneData->GetInstanceToWorld(InstanceIndex);
+			}
 		}
-
 		if (InstanceArea > LargestInstanceArea)
 		{
 			MeshCardsLocalToWorld = InstanceMeshCardsLocalToWorld;
@@ -680,18 +678,17 @@ void BuildMeshCardsDataForMergedInstances(const FLumenPrimitiveGroup& PrimitiveG
 		if (CardRepresentationData)
 		{
 			const FMatrix& PrimitiveToWorld = PrimitiveSceneInfo->Proxy->GetLocalToWorld();
-			const TConstArrayView<FInstanceSceneData> InstanceSceneData = PrimitiveSceneInfo->Proxy->GetInstanceSceneData();
 			const FMeshCardsBuildData& PrimitiveMeshCardsBuildData = CardRepresentationData->MeshCardsBuildData;
 			const FMatrix PrimitiveLocalToMeshCardsLocal = PrimitiveToWorld * WorldToMeshCardsLocal;
 
-			if (InstanceSceneData.Num() > 0)
+			if (const FInstanceSceneDataBuffers *InstanceSceneData = PrimitiveSceneInfo->GetInstanceSceneDataBuffers())
 			{
-				for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData.Num(); ++InstanceIndex)
+				for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData->GetNumInstances(); ++InstanceIndex)
 				{
-					const FInstanceSceneData& Instance = InstanceSceneData[InstanceIndex];
+					FMatrix InstanceToWorld = InstanceSceneData->GetInstanceToWorld(InstanceIndex);
 					MergedMeshCards.AddInstance(
-						PrimitiveSceneInfo->Proxy->GetInstanceLocalBounds(InstanceIndex).ToBox(),
-						Instance.LocalToPrimitive.ToMatrix() * PrimitiveLocalToMeshCardsLocal,
+						InstanceSceneData->GetInstanceLocalBounds(InstanceIndex).ToBox(),
+						InstanceToWorld * WorldToMeshCardsLocal,
 						PrimitiveMeshCardsBuildData);
 				}
 			}
@@ -781,12 +778,10 @@ void FLumenSceneData::AddMeshCards(int32 PrimitiveGroupIndex)
 			const FPrimitiveSceneInfo* PrimitiveSceneInfo = PrimitiveGroup.Primitives[0];
 
 			FMatrix LocalToWorld = PrimitiveSceneInfo->Proxy->GetLocalToWorld();
-			const TConstArrayView<FInstanceSceneData> InstanceSceneData = PrimitiveSceneInfo->Proxy->GetInstanceSceneData();
-
-			if (InstanceSceneData.Num() > 0)
+			if (const FInstanceSceneDataBuffers *InstanceData = PrimitiveSceneInfo->GetInstanceSceneDataBuffers())
 			{
-				const int32 PrimitiveInstanceIndex = FMath::Clamp(PrimitiveGroup.PrimitiveInstanceIndex, 0, InstanceSceneData.Num() - 1);
-				LocalToWorld = InstanceSceneData[PrimitiveInstanceIndex].LocalToPrimitive.ToMatrix() * LocalToWorld;
+				const int32 PrimitiveInstanceIndex = FMath::Clamp(PrimitiveGroup.PrimitiveInstanceIndex, 0, InstanceData->GetNumInstances() - 1);
+				LocalToWorld = InstanceData->GetInstanceToWorld(PrimitiveInstanceIndex);
 			}
 
 			const FCardRepresentationData* CardRepresentationData = PrimitiveSceneInfo->Proxy->GetMeshCardRepresentation();
@@ -797,13 +792,24 @@ void FLumenSceneData::AddMeshCards(int32 PrimitiveGroupIndex)
 			}
 		}
 
-		// Update surface cache mapping
-		for (const FPrimitiveSceneInfo* ScenePrimitive : PrimitiveGroup.Primitives)
+		if (PrimitiveGroup.MeshCardsIndex >= 0)
 		{
-			PrimitivesToUpdateMeshCards.Add(ScenePrimitive->GetIndex());
-		}
+			// Copy ScenePrimitive->GetIndex() in order to prevent from deferencing possibly deleted ScenePrimitive*
+			FLumenMeshCards& MeshCardsInstance = MeshCards[PrimitiveGroup.MeshCardsIndex];
 
-		if (PrimitiveGroup.MeshCardsIndex < 0)
+			MeshCardsInstance.ScenePrimitiveIndices.Reset();
+			MeshCardsInstance.ScenePrimitiveIndices.Reserve(PrimitiveGroup.Primitives.Num());
+
+			for (const FPrimitiveSceneInfo* ScenePrimitive : PrimitiveGroup.Primitives)
+			{
+				if (ScenePrimitive->IsIndexValid())
+				{
+					MeshCardsInstance.ScenePrimitiveIndices.Add(ScenePrimitive->GetIndex());
+					PrimitivesToUpdateMeshCards.Add(ScenePrimitive->GetIndex());
+				}
+			}
+		}
+		else
 		{
 			// Can't spawn mesh cards, mark this primitive as invalid
 			PrimitiveGroup.bValidMeshCards = false;
@@ -939,7 +945,7 @@ void FLumenSceneData::RemoveMeshCards(int32 PrimitiveGroupIndex)
 
 	if (PrimitiveGroup.MeshCardsIndex >= 0)
 	{
-		const FLumenMeshCards& MeshCardsInstance = MeshCards[PrimitiveGroup.MeshCardsIndex];
+		FLumenMeshCards& MeshCardsInstance = MeshCards[PrimitiveGroup.MeshCardsIndex];
 
 		for (uint32 CardIndex = MeshCardsInstance.FirstCardIndex; CardIndex < MeshCardsInstance.FirstCardIndex + MeshCardsInstance.NumCards; ++CardIndex)
 		{
@@ -952,6 +958,13 @@ void FLumenSceneData::RemoveMeshCards(int32 PrimitiveGroupIndex)
 			HeightfieldIndicesToUpdateInBuffer.Add(PrimitiveGroup.HeightfieldIndex);
 		}
 
+		// Update surface cache mapping
+		for (int32 ScenePrimitiveIndex : MeshCardsInstance.ScenePrimitiveIndices)
+		{
+			PrimitivesToUpdateMeshCards.Add(ScenePrimitiveIndex);
+		}
+		MeshCardsInstance.ScenePrimitiveIndices.Reset();
+
 		Cards.RemoveSpan(MeshCardsInstance.FirstCardIndex, MeshCardsInstance.NumCards);
 		MeshCards.RemoveSpan(PrimitiveGroup.MeshCardsIndex, 1);
 
@@ -959,12 +972,6 @@ void FLumenSceneData::RemoveMeshCards(int32 PrimitiveGroupIndex)
 
 		PrimitiveGroup.MeshCardsIndex = -1;
 		PrimitiveGroup.HeightfieldIndex = -1;
-
-		// Update surface cache mapping
-		for (const FPrimitiveSceneInfo* ScenePrimitive : PrimitiveGroup.Primitives)
-		{
-			PrimitivesToUpdateMeshCards.Add(ScenePrimitive->GetIndex());
-		}
 
 		PrimitiveGroupIndicesToUpdateInBuffer.Add(PrimitiveGroupIndex);
 	}

@@ -14,12 +14,11 @@ struct FDisplayClusterViewportStereoscopicPass
 
 	inline static EStereoscopicPass EncodeStereoscopicPass(const uint32 ContextNum, const uint32 ContextAmount, const FDisplayClusterRenderFrameSettings& InFrameSettings)
 	{
-#if WITH_EDITOR
-		if (InFrameSettings.bIsRenderingInEditor)
+		// Use special rendering mode (DCRA preview)
+		if (!InFrameSettings.bUseDisplayClusterRenderDevice)
 		{
 			return EStereoscopicPass::eSSP_FULL;
 		}
-#endif
 
 		// 'bEnableStereoscopicRenderingOptimization'
 		// When stereoscopic rendering optimization is enabled, one image family and one RTT for both eyes is used. 

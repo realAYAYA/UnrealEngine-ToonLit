@@ -1,30 +1,18 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
-#include "Templates/SharedPointer.h"
 
-class ISlateStyle;
+#include "Styling/SlateStyle.h"
+
 
 class FDMXPixelMappingEditorStyle
+	: public FSlateStyleSet
 {
 public:
-	static void Initialize();
+	FDMXPixelMappingEditorStyle();
 
-	static void Shutdown();
+	virtual ~FDMXPixelMappingEditorStyle();
 
-	/** reloads textures used by slate renderer */
-	static void ReloadTextures();
-
-	/** @return The Slate style set for niagara editor widgets */
+	/** @return The Slate style set for pixel mapping editor widgets */
 	static const ISlateStyle& Get();
-
-	static FName GetStyleSetName();
-
-private:
-
-	static TSharedRef< class FSlateStyleSet > Create();
-
-private:
-
-	static TSharedPtr< class FSlateStyleSet > DMXPixelMappingEditorStyleInstance;
 };

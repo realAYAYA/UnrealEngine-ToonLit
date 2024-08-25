@@ -34,7 +34,7 @@ void SPropertyAssetPicker::Construct( const FArguments& InArgs )
 			.ButtonStyle( FAppStyle::Get(), "HoverHintOnly" )
 			.OnClicked( this, &SPropertyAssetPicker::OnClicked )
 			.ToolTipText(LOCTEXT("PickButtonLabel", "Pick Asset"))
-			.ContentPadding(0)
+			.ContentPadding(0.0f)
 			.ForegroundColor( FSlateColor::UseForeground() )
 			.IsFocusable(false)
 			[ 
@@ -83,8 +83,8 @@ TSharedRef<SWidget> SPropertyAssetPicker::OnGenerateAssetPicker()
 	
 	TSharedRef<SWidget> MenuContent = 
 		SNew(SBox)
-		.HeightOverride(300)
-		.WidthOverride(300)
+		.HeightOverride(300.0f)
+		.WidthOverride(300.0f)
 		[
 			SNew( SBorder )
 			.BorderImage( FAppStyle::GetBrush("Menu.Background") )

@@ -15,6 +15,7 @@
 #include "Serialization/UnversionedPropertySerialization.h"
 #include "Templates/PimplPtr.h"
 #include "Templates/UniquePtr.h"
+#include "UObject/ArchiveCookContext.h"
 #include "UObject/LinkerSave.h"
 #include "UObject/NameTypes.h"
 #include "UObject/ObjectMacros.h"
@@ -134,6 +135,11 @@ struct FHarvestedRealm
 		}
 	}
 
+	void AddDirectImport(TObjectPtr<UObject> InObject)
+	{
+		DirectImports.Add(InObject);
+	}
+
 	void AddImport(TObjectPtr<UObject> InObject)
 	{
 		Imports.Add(InObject);
@@ -147,6 +153,11 @@ struct FHarvestedRealm
 	void AddExcluded(TObjectPtr<UObject> InObject)
 	{
 		Excluded.Add(InObject);
+	}
+
+	void AddNotExcluded(TObjectPtr<UObject> InObject)
+	{
+		NotExcluded.Add(InObject);
 	}
 
 	bool IsImport(TObjectPtr<UObject> InObject) const
@@ -173,6 +184,11 @@ struct FHarvestedRealm
 		return Excluded.Contains(InObject);
 	}
 
+	bool IsNotExcluded(TObjectPtr<UObject> InObject) const
+	{
+		return NotExcluded.Contains(InObject);
+	}
+
 	TSet<FTaggedExport>& GetExports()
 	{
 		return Exports;
@@ -181,6 +197,11 @@ struct FHarvestedRealm
 	const TSet<FTaggedExport>& GetExports() const
 	{
 		return Exports;
+	}
+
+	const TSet<TObjectPtr<UObject>>& GetDirectImports() const
+	{
+		return DirectImports;
 	}
 
 	const TSet<TObjectPtr<UObject>>& GetImports() const
@@ -258,23 +279,14 @@ struct FHarvestedRealm
 		return ExportNativeObjectDependencies;
 	}
 
-	bool NameExists(FNameEntryId ComparisonId) const
+	bool NameExists(const FName& Name) const
 	{
-		for (FNameEntryId DisplayId : NamesReferencedFromExportData)
-		{
-			if (FName::GetComparisonIdFromDisplayId(DisplayId) == ComparisonId)
-			{
-				return true;
-			}
-		}
-		for (FNameEntryId DisplayId : NamesReferencedFromPackageHeader)
-		{
-			if (FName::GetComparisonIdFromDisplayId(DisplayId) == ComparisonId)
-			{
-				return true;
-			}
-		}
-		return false;
+		// Normally FName comparisons would be case insensitive and done using the comparisonIndex however 
+		// NamesReferencedFromExportData and NamesReferencedFromPackageHeader contain DisplayIndices and the passed in 'Name' 
+		// comes from memory (rather than disk) where we will not have case-sensitive descrepancies. Using the more restrictive 
+		// case-sensitive search in this case is valid and faster.
+		const FNameEntryId DisplayId = Name.GetDisplayIndex();
+		return NamesReferencedFromExportData.Find(DisplayId) || NamesReferencedFromPackageHeader.Find(DisplayId);
 	}
 
 	FLinkerSave* GetLinker() const
@@ -367,10 +379,17 @@ private:
 
 	// Set of objects excluded (import or exports) through marks or otherwise (i.e. transient flags, etc)
 	TSet<TObjectPtr<UObject>> Excluded;
+	// Set of objects not excluded through marks or otherwise (i.e. transient flags, etc) while not being marked specifically included yet
+	TSet<TObjectPtr<UObject>> NotExcluded;
 	// Set of objects marked as export
 	TSet<FTaggedExport> Exports;
 	// Set of objects marked as import
 	TSet<TObjectPtr<UObject>> Imports;
+	// Set of objects that were referenced directly from an export. Some imports are transitively added by
+	// FPackageHarvester::ProcessImport (Outer, Class, CDO, CDO subobjects, others?) for long-standing reasons
+	// (performance, loading behavior, other?)/ But some features such as allowed-import access warnings need
+	// to consider only the direct imports.
+	TSet<TObjectPtr<UObject>> DirectImports;
 	// Set of names referenced from export serialization
 	TSet<FNameEntryId> NamesReferencedFromExportData;
 	// Set of names referenced from the package header (import and export table object names etc)
@@ -465,6 +484,11 @@ public:
 		}
 
 		ObjectSaveContext.Set(InPackage, GetTargetPlatform(), TargetPackagePath, SaveArgs.SaveFlags);
+		if (SaveArgs.ArchiveCookData)
+		{
+			ObjectSaveContext.CookType = SaveArgs.ArchiveCookData->CookContext.GetCookType();
+			ObjectSaveContext.CookingDLC = SaveArgs.ArchiveCookData->CookContext.GetCookingDLC();
+		}
 
 		// Setup the harvesting flags and generate the context for harvesting the package
 		SetupHarvestingRealms();
@@ -764,6 +788,11 @@ public:
 		GetHarvestedRealm().AddImport(InObject);
 	}
 
+	void AddDirectImport(UObject* InObject)
+	{
+		GetHarvestedRealm().AddDirectImport(InObject);
+	}
+
 	void AddExport(FTaggedExport InTagObj)
 	{
 		GetHarvestedRealm().AddExport(MoveTemp(InTagObj));
@@ -797,6 +826,11 @@ public:
 	const TSet<TObjectPtr<UObject>>& GetImports() const
 	{
 		return GetHarvestedRealm().GetImports();
+	}
+
+	const TSet<TObjectPtr<UObject>>& GetDirectImports() const
+	{
+		return GetHarvestedRealm().GetDirectImports();
 	}
 
 	const TSet<TObjectPtr<UObject>>& GetImportsUsedInGame() const
@@ -859,9 +893,9 @@ public:
 		return GetHarvestedRealm().GetNativeObjectDependencies();
 	}
 
-	bool NameExists(FNameEntryId ComparisonId) const
+	bool NameExists(const FName& Name) const
 	{
-		return GetHarvestedRealm().NameExists(ComparisonId);
+		return GetHarvestedRealm().NameExists(Name);
 	}
 
 	const FCustomVersionContainer& GetCustomVersions() const

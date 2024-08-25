@@ -127,7 +127,7 @@ public:
 	 *
 	 * @return The data item from which TheWidget was generated
 	 */
-	virtual const ItemType* Private_ItemFromWidget( const ITableRow* TheWidget ) const = 0;
+	virtual const TObjectPtrWrapTypeOf<ItemType>* Private_ItemFromWidget( const ITableRow* TheWidget ) const = 0;
 
 	/**
 	 * Set whether some data item is expanded or not.

@@ -76,10 +76,23 @@ public:
 	// so that they can be called from non-editor-only classes in editor contexts.
 #if WITH_EDITOR
 
+	/**
+	 * Verifies that the PatchManager and Landscape pointers are set up properly and alters them if needed. Public so
+	 * that it can be called from a console command.
+	 */
+	void SetUpPatchManagerData();
+
+	/**
+	 * Dirties the patch if it was modified in a construction script but was unable to mark itself
+	 * dirty. Meant to be used by cleanup commands.
+	 */
+	void MarkDirtyIfModifiedInConstructionScript();
+
 	// USceneComponent
 	virtual void OnUpdateTransform(EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport) override;
 
 	// UActorComponent
+	virtual void CheckForErrors() override;
 	virtual void OnComponentCreated() override;
 	virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
 	virtual void OnRegister() override;
@@ -89,12 +102,12 @@ public:
 	// UObject
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual bool IsPostLoadThreadSafe() const override { return true; }
-	virtual void PostLoad();
+	virtual void PostLoad() override;
+	virtual void PreSave(FObjectPreSaveContext SaveContext) override;
 #endif
 	virtual bool IsEditorOnly() const override { return true; }
 	virtual bool NeedsLoadForClient() const override { return false; }
 	virtual bool NeedsLoadForServer() const override { return false; }
-
 protected:
 	/**
 	 * Move the patch to be the last processed patch in the current patch manager. This is a way to
@@ -132,12 +145,20 @@ private:
 	UPROPERTY()
 	TSoftObjectPtr<ALandscapePatchManager> PreviousPatchManager = nullptr;
 
+	// Verifies that we're not an archetype, trash, or not in a proper world
+	bool IsRealPatch();
+
 #if WITH_EDITOR
 	// Used to avoid spamming warning messages
 	bool bGaveMissingPatchManagerWarning = false;
 	bool bGaveNotInPatchManagerWarning = false;
 	bool bGaveMissingLandscapeWarning = false;
 	void ResetWarnings();
+
+	// Automatic patch registration during on-load construction script reruns could end up modifying
+	// the patch without dirtying. This is dangerous as it can result in unstable patch ordering,
+	// so we want to detect this case.
+	bool bDirtiedByConstructionScript = false;
 #endif
 
 	friend struct FLandscapePatchComponentInstanceData;
@@ -165,10 +186,17 @@ struct FLandscapePatchComponentInstanceData : public FSceneComponentInstanceData
 		CastChecked<ULandscapePatchComponent>(Component)->ApplyComponentInstanceData(this);
 	}
 
+#if WITH_EDITORONLY_DATA
+	// The UPROPERTY tags inside a FSceneComponentInstanceData might not be necessary, but might 
+	// potentially be used in some multiuser code paths.
+
+	UPROPERTY()
+	TSoftObjectPtr<ALandscapePatchManager> PatchManager = nullptr;
 	UPROPERTY()
 	int32 IndexInManager = -1;
-
-#if WITH_EDITORONLY_DATA
+	
+	UPROPERTY()
+	bool bDirtiedByConstructionScript = false;
 
 	// Used so that we don't spam warning messages while rerunning construction scripts on a patch
 	// that triggers one of the warnings.

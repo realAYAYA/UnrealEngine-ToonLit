@@ -24,14 +24,20 @@ SWidgetSwitcher::FSlot::FSlotArguments SWidgetSwitcher::Slot()
 
 SWidgetSwitcher::FScopedWidgetSlotArguments SWidgetSwitcher::AddSlot(int32 SlotIndex)
 {
+	TWeakPtr<SWidgetSwitcher> WeakSwitcher = SharedThis(this);
 	if (!AllChildren.IsValidIndex(SlotIndex))
 	{
 		// Insert at the end
-		return FScopedWidgetSlotArguments{ MakeUnique<FSlot>(), AllChildren, INDEX_NONE };
+		return FScopedWidgetSlotArguments{ MakeUnique<FSlot>(), AllChildren, INDEX_NONE, [WeakSwitcher](const FSlot*, int32 SlotIndex)
+			{
+				if (TSharedPtr<SWidgetSwitcher> Switcher = WeakSwitcher.Pin())
+				{
+					Switcher->OnSlotAdded(SlotIndex);
+				}
+			} };
 	}
 	else
 	{
-		TWeakPtr<SWidgetSwitcher> WeakSwitcher = SharedThis(this);
 		return FScopedWidgetSlotArguments{ MakeUnique<FSlot>(), AllChildren, SlotIndex, [WeakSwitcher](const FSlot*, int32 SlotIndex)
 			{
 				if (TSharedPtr<SWidgetSwitcher> Switcher = WeakSwitcher.Pin())
@@ -41,6 +47,7 @@ SWidgetSwitcher::FScopedWidgetSlotArguments SWidgetSwitcher::AddSlot(int32 SlotI
 					{
 						Switcher->WidgetIndex = Switcher->WidgetIndex.Get() + 1;
 					}
+					Switcher->OnSlotAdded(SlotIndex);
 				}
 			}};
 	}
@@ -97,12 +104,14 @@ int32 SWidgetSwitcher::RemoveSlot( TSharedRef<SWidget> WidgetToRemove )
 		if (AllChildren[SlotIndex].GetWidget() == WidgetToRemove)
 		{
 			// adjust the active WidgetIndex based on this slot change
+			bool bWasActiveSlot = false;
 			if (!WidgetIndex.IsBound())
 			{
 				int32 ActiveWidgetIndex = WidgetIndex.Get();
 
 				if (SlotIndex == ActiveWidgetIndex)
 				{
+					bWasActiveSlot = true;
 					Invalidate(EInvalidateWidget::ChildOrder);
 				}
 
@@ -113,6 +122,7 @@ int32 SWidgetSwitcher::RemoveSlot( TSharedRef<SWidget> WidgetToRemove )
 			}
 
 			AllChildren.RemoveAt(SlotIndex);
+			OnSlotRemoved(SlotIndex, WidgetToRemove, bWasActiveSlot);
 			return SlotIndex;
 		}
 	}

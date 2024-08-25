@@ -18,6 +18,11 @@ class FSkeletonEditingToolDetailCustomization : public IDetailCustomization
 public:
 	static TSharedRef<IDetailCustomization> MakeInstance();
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+private:
+	void CustomizeEditAction(IDetailCategoryBuilder& InActionCategory) const;
+	void CustomizeComponentSelection(IDetailLayoutBuilder& DetailBuilder) const;
+	
+	TWeakObjectPtr<USkeletonEditingTool> Tool = nullptr;
 };
 
 /**

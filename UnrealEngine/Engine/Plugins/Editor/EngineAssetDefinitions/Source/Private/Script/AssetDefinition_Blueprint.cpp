@@ -19,6 +19,7 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "BlueprintEditor.h"
+#include "MergeUtils.h"
 #include "SBlueprintDiff.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "ThumbnailRendering/SceneThumbnailInfo.h"
@@ -63,6 +64,11 @@ EAssetCommandResult UAssetDefinition_Blueprint::Merge(const FAssetAutomaticMerge
 {
 	UBlueprint* AsBlueprint = CastChecked<UBlueprint>(MergeArgs.LocalAsset);
 	
+	if (FBlueprintEditorUtils::IsDataOnlyBlueprint(AsBlueprint))
+	{
+		return MergeUtils::Merge(MergeArgs);
+	}
+	
 	// Kludge to get the merge panel in the blueprint editor to show up:
 	bool Success = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AsBlueprint);
 	if (Success)
@@ -78,15 +84,40 @@ EAssetCommandResult UAssetDefinition_Blueprint::Merge(const FAssetAutomaticMerge
 
 EAssetCommandResult UAssetDefinition_Blueprint::Merge(const FAssetManualMergeArgs& MergeArgs) const
 {
-	UBlueprint* AsBlueprint = CastChecked<UBlueprint>(MergeArgs.LocalAsset);
+	UBlueprint* LocalBlueprint = Cast<UBlueprint>(MergeArgs.LocalAsset);
+	if(!ensureMsgf(LocalBlueprint, TEXT("Merge LocalAsset is not a Blueprint")))
+	{
+		return Super::Merge(MergeArgs);
+	}
+	
+	const UBlueprint* RemoteBlueprint = Cast<UBlueprint>(MergeArgs.RemoteAsset);
+	if(!ensureMsgf(RemoteBlueprint, TEXT("Merge RemoteAsset is not a Blueprint")))
+	{
+		return Super::Merge(MergeArgs);
+	}
+	
+	const UBlueprint* BaseBlueprint = Cast<UBlueprint>(MergeArgs.BaseAsset);
+	if(!ensureMsgf(BaseBlueprint, TEXT("Merge BaseAsset is not a Blueprint")))
+	{
+		return Super::Merge(MergeArgs);
+	}
+	
+	if ( // all assets are data only
+		FBlueprintEditorUtils::IsDataOnlyBlueprint(LocalBlueprint) &&
+		FBlueprintEditorUtils::IsDataOnlyBlueprint(RemoteBlueprint) &&
+		FBlueprintEditorUtils::IsDataOnlyBlueprint(BaseBlueprint)
+	)
+	{
+		return MergeUtils::Merge(MergeArgs);
+	}
 	check(MergeArgs.LocalAsset->GetClass() == MergeArgs.BaseAsset->GetClass());
 	check(MergeArgs.LocalAsset->GetClass() == MergeArgs.RemoteAsset->GetClass());
 
-	if (GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AsBlueprint))
+	if (GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(LocalBlueprint))
 	{
 		FBlueprintEditorModule& BlueprintEditorModule = FModuleManager::LoadModuleChecked<FBlueprintEditorModule>("Kismet");
 
-		FBlueprintEditor* BlueprintEditor = static_cast<FBlueprintEditor*>(GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(AsBlueprint, /*bFocusIfOpen =*/false));
+		FBlueprintEditor* BlueprintEditor = static_cast<FBlueprintEditor*>(GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(LocalBlueprint, /*bFocusIfOpen =*/false));
 		BlueprintEditor->CreateMergeToolTab(Cast<UBlueprint>(MergeArgs.BaseAsset), Cast<UBlueprint>(MergeArgs.RemoteAsset), 
 			FOnMergeResolved::CreateLambda([ResolutionCallback = MergeArgs.ResolutionCallback](UPackage* MergedPackage, EMergeResult::Type Result)
 			{
@@ -98,7 +129,7 @@ EAssetCommandResult UAssetDefinition_Blueprint::Merge(const FAssetManualMergeArg
 		);		
 	}
 	
-	return EAssetCommandResult::Handled;
+	 return EAssetCommandResult::Handled;
 }
 
 EAssetCommandResult UAssetDefinition_Blueprint::PerformAssetDiff(const FAssetDiffArgs& DiffArgs) const
@@ -306,7 +337,7 @@ namespace MenuExtension_Blueprint
 							
 							// Ensure that all the selected blueprints are actors
 							const bool bAreAllSelectedBlueprintsActors =
-								Algo::AllOf(SelectedBlueprintParentClasses, [](UClass* ParentClass){ return ParentClass->IsChildOf(AActor::StaticClass()); });
+								Algo::AllOf(SelectedBlueprintParentClasses, [](UClass* ParentClass){ return ParentClass && ParentClass->IsChildOf(AActor::StaticClass()); });
 							
 							if (bAreAllSelectedBlueprintsActors)
 							{

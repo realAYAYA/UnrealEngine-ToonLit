@@ -55,6 +55,7 @@ TSharedRef<SDockTab> FWorkflowTabFactory::SpawnTab(const FWorkflowTabSpawnInfo& 
 	TSharedRef<SDockTab> NewTab = SNew(SDockTab)
 		.TabRole(this->TabRole)
 		.Label(ConstructTabName(Info))
+		.LabelSuffix(ConstructTabLabelSuffix(Info))
 		.ShouldAutosize(bShouldAutosize)
 		[
 			TabBody
@@ -98,6 +99,7 @@ void FWorkflowTabFactory::UpdateTab(TSharedPtr<SDockTab> InDockTab, const FWorkf
 
 	InDockTab->SetContent(TabBody);
 	InDockTab->SetLabel(ConstructTabName(Info));
+	InDockTab->SetTabLabelSuffix(ConstructTabLabelSuffix(Info));
 	InDockTab->SetTabIcon(GetTabIcon(Info));
 	InDockTab->SetTabToolTipWidget(CreateTabToolTipWidget(Info));
 }
@@ -156,6 +158,11 @@ FTabSpawnerEntry& FWorkflowTabFactory::RegisterTabSpawner(TSharedRef<FTabManager
 TAttribute<FText> FWorkflowTabFactory::ConstructTabName(const FWorkflowTabSpawnInfo& Info) const
 {
 	return TabLabel;
+}
+
+TAttribute<FText> FWorkflowTabFactory::ConstructTabLabelSuffix(const FWorkflowTabSpawnInfo& Info) const
+{
+	return FText::GetEmpty();
 }
 
 TSharedRef<SWidget> FWorkflowTabFactory::CreateTabBody(const FWorkflowTabSpawnInfo& Info) const

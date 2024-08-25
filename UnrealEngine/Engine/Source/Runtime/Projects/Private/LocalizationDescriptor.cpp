@@ -69,9 +69,43 @@ const TCHAR* ELocalizationTargetDescriptorLoadingPolicy::ToString(const ELocaliz
 	}
 }
 
-FLocalizationTargetDescriptor::FLocalizationTargetDescriptor(FString InName, ELocalizationTargetDescriptorLoadingPolicy::Type InLoadingPolicy)
+ELocalizationConfigGenerationPolicy::Type ELocalizationConfigGenerationPolicy::FromString(const TCHAR* String)
+{
+	ELocalizationConfigGenerationPolicy ::Type TestType = (ELocalizationConfigGenerationPolicy::Type)0;
+	for (; TestType < ELocalizationConfigGenerationPolicy::Max; TestType = (ELocalizationConfigGenerationPolicy::Type)(TestType + 1))
+	{
+		const TCHAR* TestString = ToString(TestType);
+		if (FCString::Stricmp(String, TestString) == 0)
+		{
+			break;
+		}
+	}
+	return TestType;
+}
+
+const TCHAR* ELocalizationConfigGenerationPolicy::ToString(const ELocalizationConfigGenerationPolicy::Type Value)
+{
+	switch (Value)
+	{
+	case Never:
+		return TEXT("Never");
+
+	case Auto:
+		return TEXT("Auto");
+
+	case User:
+		return TEXT("User");
+
+	default:
+		ensureMsgf(false, TEXT("ELocalizationTargetDescriptorGenerationPolicy ::ToString - Unrecognized ELocalizationTargetDescriptorGenerationPolicy value: %i"), Value);
+		return nullptr;
+	}
+}
+
+FLocalizationTargetDescriptor::FLocalizationTargetDescriptor(FString InName, ELocalizationTargetDescriptorLoadingPolicy::Type InLoadingPolicy, ELocalizationConfigGenerationPolicy::Type InGenerationPolicy)
 	: Name(MoveTemp(InName))
 	, LoadingPolicy(InLoadingPolicy)
+	, ConfigGenerationPolicy(InGenerationPolicy)
 {
 }
 
@@ -103,6 +137,22 @@ bool FLocalizationTargetDescriptor::Read(const FJsonObject& InObject, FText* Out
 			return false;
 		}
 	}
+
+		// Read the target generation policy
+	TSharedPtr<FJsonValue> ConfigGenerationPolicyValue = InObject.TryGetField(TEXT("ConfigGenerationPolicy"));
+	if (ConfigGenerationPolicyValue.IsValid() && ConfigGenerationPolicyValue->Type == EJson::String)
+	{
+		ConfigGenerationPolicy = ELocalizationConfigGenerationPolicy::FromString(*ConfigGenerationPolicyValue->AsString());
+		if (ConfigGenerationPolicy == ELocalizationConfigGenerationPolicy::Max)
+		{
+			if (OutFailReason)
+			{
+				*OutFailReason = FText::Format(LOCTEXT("TargetWithInvalidGenerationPolicy", "Localization Target entry '{0}' specified an unrecognized target GenerationPolicy'{1}'"), FText::FromString(Name), FText::FromString(ConfigGenerationPolicyValue->AsString()));
+			}
+			return false;
+		}
+	}
+	// If we can't find the value, GenerationPolicy already defaults to Never so it's ok 
 
 	return true;
 }
@@ -165,6 +215,7 @@ void FLocalizationTargetDescriptor::UpdateJson(FJsonObject& JsonObject) const
 {
 	JsonObject.SetStringField(TEXT("Name"), Name);
 	JsonObject.SetStringField(TEXT("LoadingPolicy"), FString(ELocalizationTargetDescriptorLoadingPolicy::ToString(LoadingPolicy)));
+	JsonObject.SetStringField(TEXT("ConfigGenerationPolicy"), FString(ELocalizationConfigGenerationPolicy::ToString(ConfigGenerationPolicy)));
 }
 
 void FLocalizationTargetDescriptor::WriteArray(TJsonWriter<>& Writer, const TCHAR* ArrayName, const TArray<FLocalizationTargetDescriptor>& Descriptors)

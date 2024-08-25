@@ -12,6 +12,22 @@ class GenericApplication;
 struct FGuid;
 class IPlatformChunkInstall;
 
+#if PLATFORM_CPU_X86_FAMILY
+namespace ECPUFeatureBits_X86
+{
+	constexpr uint32 SSE2 = 1U << 2;
+	constexpr uint32 SSSE3 = 1U << 3;
+	constexpr uint32 SSE42 = 1U << 4;
+	constexpr uint32 AVX = 1U << 5;
+	constexpr uint32 BMI1 = 1U << 6; // Bit Manipulation Instructions - 1
+	constexpr uint32 BMI2 = 1U << 7; // Bit Manipulation Instructions - 2
+	constexpr uint32 AVX2 = 1U << 8;
+	constexpr uint32 F16C = 1U << 9; // Float16 conversion instructions
+	constexpr uint32 AVX512 = 1U << 10; // Skylake feature set : AVXF512{ F,VL,BW,DQ}.
+	constexpr uint32 AVX512_NOCAVEATS = 1U << 11; // Set when we have AVX512 without caveats like throttling.
+}
+#endif
+
 /** Helper struct used to get the string version of the Windows version. */
 struct FWindowsOSVersionHelper
 {
@@ -36,6 +52,42 @@ enum class ECOMModel : uint8
 {
 	Singlethreaded = 0,		///< Single-Threaded Apartment (STA)
 	Multithreaded,			///< Multi-Threaded Apartment (MTA)
+};
+
+/**
+ * Type of storage device
+ */
+enum class EStorageDeviceType : uint8
+{
+	/** Drive type cannot be determined */
+	Unknown = 0,
+	/** Drive is a hard disk, may or may not have a cache. */
+	HDD = 1,
+	/** Drive is a Solid State disk, typically with faster IO and constant latency. */
+	SSD = 2,
+	/** Drive is an NVMe . */
+	NVMe = 3,
+	/** Drive is a hybrid SSD/HDD */
+	Hybrid = 4,
+
+	Other = 0xff
+};
+
+CORE_API const TCHAR* LexToString(EStorageDeviceType StorageType);
+
+/**
+ * Storage drive information
+ */
+struct FPlatformDriveStats
+{
+	/** Drive name, usually C or D */
+	TCHAR DriveName;
+	/** Total number of used bytes on the drive, determined during PlatformInit. This information can be refreshed using FWindowsPlatformMisc::UpdateDriveFreeSpace(); */
+	uint64 UsedBytes;
+	/** Total number of free bytes on the drive, determined during PlatformInit. This information can be refreshed using FWindowsPlatformMisc::UpdateDriveFreeSpace(); */
+	uint64 FreeBytes;
+	/** Type of underlying hardware. */
+	EStorageDeviceType DriveType;
 };
 
 /**
@@ -89,8 +141,6 @@ struct FWindowsPlatformMisc
 
 	static CORE_API void SetUTF8Output();
 	static CORE_API void LocalPrint(const TCHAR *Message);
-
-	static CORE_API bool IsLowLevelOutputDebugStringStructured();
 
 	static bool IsLocalPrintThreadSafe()
 	{ 
@@ -161,6 +211,13 @@ struct FWindowsPlatformMisc
 	 */
 	static CORE_API bool VerifyWindowsVersion(uint32 MajorVersion, uint32 MinorVersion, uint32 BuildNumber = 0);
 
+	/** 
+	 * Determines if we are running under Wine rather than a real version of Windows
+	 *
+	 * @return	Returns true if the current runtime environment is Wine
+	 */
+	static bool IsWine();
+
 #if !UE_BUILD_SHIPPING
 	static CORE_API void PromptForRemoteDebugging(bool bIsEnsure);
 #endif	//#if !UE_BUILD_SHIPPING
@@ -172,6 +229,14 @@ struct FWindowsPlatformMisc
 	 * @return	Returns true if cpuid is supported
 	 */
 	static CORE_API bool HasCPUIDInstruction();
+
+#if PLATFORM_CPU_X86_FAMILY
+	// Query the CPUID and parse out various feature bits. This is safe to call multiple times and caches the result internally for rapid access.
+	// Bits are all from the ECPUFeatureBits_X86 namespace.
+	static CORE_API uint32 GetFeatureBits_X86();
+	static CORE_API bool CheckFeatureBit_X86(uint32 FeatureBit_X86) { return (GetFeatureBits_X86() & FeatureBit_X86) != 0; }
+	static CORE_API bool CheckAllFeatureBits_X86(uint32 FeatureBits_X86) { return (GetFeatureBits_X86() & FeatureBits_X86) == FeatureBits_X86; }
+#endif
 
 	/**
 	 * Determines if AVX2 instruction set is supported on this platform
@@ -261,21 +326,18 @@ struct FWindowsPlatformMisc
 
 	FORCEINLINE static void ChooseHDRDeviceAndColorGamut(uint32 DeviceId, uint32 DisplayNitLevel, EDisplayOutputFormat& OutputDevice, EDisplayColorGamut& ColorGamut)
 	{
-		if (DeviceId == 0x1002 /*AMD*/ || DeviceId == 0x10DE /*NVIDIA*/)
-		{
-			// needs to match GRHIHDRDisplayOutputFormat chosen in FD3D12DynamicRHI::Init
+		// needs to match GRHIHDRDisplayOutputFormat chosen in FD3D12DynamicRHI::Init
 #if WITH_EDITOR
 		// ScRGB, 1000 or 2000 nits
-			OutputDevice = (DisplayNitLevel == 1000) ? EDisplayOutputFormat::HDR_ACES_1000nit_ScRGB : EDisplayOutputFormat::HDR_ACES_2000nit_ScRGB;
-			// Rec709
-			ColorGamut = EDisplayColorGamut::sRGB_D65;
+		OutputDevice = (DisplayNitLevel == 1000) ? EDisplayOutputFormat::HDR_ACES_1000nit_ScRGB : EDisplayOutputFormat::HDR_ACES_2000nit_ScRGB;
+		// Rec709
+		ColorGamut = EDisplayColorGamut::sRGB_D65;
 #else
 		// ST-2084, 1000 or 2000 nits
-			OutputDevice = (DisplayNitLevel == 1000) ? EDisplayOutputFormat::HDR_ACES_1000nit_ST2084 : EDisplayOutputFormat::HDR_ACES_2000nit_ST2084;
-			// Rec2020
-			ColorGamut = EDisplayColorGamut::Rec2020_D65;
+		OutputDevice = (DisplayNitLevel == 1000) ? EDisplayOutputFormat::HDR_ACES_1000nit_ST2084 : EDisplayOutputFormat::HDR_ACES_2000nit_ST2084;
+		// Rec2020
+		ColorGamut = EDisplayColorGamut::Rec2020_D65;
 #endif
-		}
 	}
 
 	/**
@@ -292,6 +354,12 @@ struct FWindowsPlatformMisc
 	static CORE_API uint64 GetFileVersion(const FString &FileName);
 
 	static CORE_API int32 GetMaxRefreshRate();
+
+	/** Update statistics of free/used bytes on all drives. */
+	static CORE_API void UpdateDriveFreeSpace();
+
+	/** Retrieve information about a drive, or nullptr if no information is available. */
+	static CORE_API const FPlatformDriveStats* GetDriveStats(WIDECHAR DriveLetter);
 };
 
 

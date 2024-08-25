@@ -55,14 +55,14 @@ namespace Chaos::Softs
 		)
 			: GSBase(InParticles, InMesh, EMeshArray, NuMeshArray, MoveTemp(AlphaJMeshArray), MoveTemp(IncidentElementsIn), MoveTemp(IncidentElementsLocalIn), ParticleStartIndexIn, ParticleEndIndexIn, bDoQuasistaticsIn, bDoSORIn, InOmegaSOR, InParams, NuMesh, bRecordMetricIn)
 		{
-			InitializeLambdas();
+			InitializeNeohookeanLambdas();
 		}
 
 		virtual ~FGaussSeidelNeohookeanConstraints() {}
 
 	protected:
 
-		void InitializeLambdas() override
+		void InitializeNeohookeanLambdas() 
 		{
 			ComputeStress = [](const Chaos::PMatrix<T, 3, 3>& Fe, const T mu, const T lambda, Chaos::PMatrix<T, 3, 3>& P)
 			{

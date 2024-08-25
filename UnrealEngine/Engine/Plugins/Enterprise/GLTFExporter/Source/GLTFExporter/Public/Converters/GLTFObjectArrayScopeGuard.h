@@ -6,7 +6,7 @@
 #include "UObject/GCObject.h"
 
 template <typename ObjectType = UObject, typename = typename TEnableIf<TIsDerivedFrom<ObjectType, UObject>::Value>::Type>
-class FGLTFObjectArrayScopeGuard : public FGCObject, public TArray<ObjectType*>
+class FGLTFObjectArrayScopeGuard : public FGCObject, public TArray<TObjectPtr<ObjectType>>
 {
 public:
 
@@ -14,7 +14,7 @@ public:
 	{
 	}
 
-	using TArray<ObjectType*>::TArray;
+	using TArray<TObjectPtr<ObjectType>>::TArray;
 
 	/** Non-copyable */
 	FGLTFObjectArrayScopeGuard(const FGLTFObjectArrayScopeGuard&) = delete;

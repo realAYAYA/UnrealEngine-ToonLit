@@ -25,11 +25,13 @@ bool UPackage::SavePackage(UPackage* InOuter, UObject* Base, EObjectFlags TopLev
 	const ITargetPlatform* TargetPlatform, const FDateTime& FinalTimeStamp, bool bSlowTask)
 {
 	// CookData should only be nonzero if we are cooking.
+	TOptional<FArchiveCookContext> CookContext;
 	TOptional<FArchiveCookData> CookData;
-	FArchiveCookContext CookContext(InOuter, FArchiveCookContext::ECookTypeUnknown, FArchiveCookContext::ECookingDLCUnknown);
 	if (TargetPlatform != nullptr)
 	{
-		CookData.Emplace(*TargetPlatform, CookContext);
+		CookContext.Emplace(InOuter, UE::Cook::ECookType::Unknown,
+			UE::Cook::ECookingDLC::Unknown, TargetPlatform);
+		CookData.Emplace(*TargetPlatform, *CookContext);
 	}
 	FSavePackageArgs SaveArgs = { nullptr /* deprecated target platform */, CookData.GetPtrOrNull(), TopLevelFlags, SaveFlags, bForceByteSwapping,
 		bWarnOfLongFilename, bSlowTask, FinalTimeStamp, Error };

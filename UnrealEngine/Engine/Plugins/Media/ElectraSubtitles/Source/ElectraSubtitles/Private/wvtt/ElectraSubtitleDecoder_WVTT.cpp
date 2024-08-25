@@ -8,6 +8,15 @@
 namespace ElectraSubtitleDecoderWVTTUtils
 {
 
+namespace OptionKeys
+{
+	static const FName Width(TEXT("width"));
+	static const FName Height(TEXT("height"));
+	static const FName OffsetX(TEXT("offset_x"));
+	static const FName OffsetY(TEXT("offset_y"));
+	static const FName Timescale(TEXT("timescale"));
+}
+
 #if !PLATFORM_LITTLE_ENDIAN
 	static inline uint8 GetFromBigEndian(uint8 value)		{ return value; }
 	static inline int8 GetFromBigEndian(int8 value)			{ return value; }
@@ -242,11 +251,11 @@ bool FElectraSubtitleDecoderWVTT::InitializeStreamWithCSD(const TArray<uint8>& I
 		}														\
 
 	// Get dimension, placement offset and other data from the sideband dictionary.
-	Width = (int32) InAdditionalInfo.GetValue(TEXT("width")).SafeGetInt64(0);
-	Height = (int32) InAdditionalInfo.GetValue(TEXT("height")).SafeGetInt64(0);
-	TranslationX = (int32) InAdditionalInfo.GetValue(TEXT("offset_x")).SafeGetInt64(0);
-	TranslationY = (int32) InAdditionalInfo.GetValue(TEXT("offset_y")).SafeGetInt64(0);
-	Timescale = (uint32) InAdditionalInfo.GetValue(TEXT("timescale")).SafeGetInt64(0);
+	Width = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderWVTTUtils::OptionKeys::Width).SafeGetInt64(0);
+	Height = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderWVTTUtils::OptionKeys::Height).SafeGetInt64(0);
+	TranslationX = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderWVTTUtils::OptionKeys::OffsetX).SafeGetInt64(0);
+	TranslationY = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderWVTTUtils::OptionKeys::OffsetY).SafeGetInt64(0);
+	Timescale = (uint32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderWVTTUtils::OptionKeys::Timescale).SafeGetInt64(0);
 
 	ElectraSubtitleDecoderWVTTUtils::FDataReaderMP4 r(InCSD);
 

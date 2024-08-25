@@ -29,4 +29,4 @@ private:
 	bool IsPotentialGeometryCacheRoot() const;
 };
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

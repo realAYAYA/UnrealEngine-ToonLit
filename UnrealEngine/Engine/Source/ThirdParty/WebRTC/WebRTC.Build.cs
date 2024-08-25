@@ -12,14 +12,15 @@ public class WebRTC : ModuleRules
 	{
 		get =>
 			Target.Platform.IsInGroup(UnrealPlatformGroup.Windows) ||
-			(Target.IsInPlatformGroup(UnrealPlatformGroup.Unix) && Target.Architecture == UnrealArch.X64);
+			(Target.IsInPlatformGroup(UnrealPlatformGroup.Unix) && Target.Architecture == UnrealArch.X64) ||
+			Target.Platform == UnrealTargetPlatform.Mac;
 	}
 
 	//Config switch to use new WebRTC version 5414 (M109)
 	protected virtual bool bShouldUse5414WebRTC
 	{
 		get =>
-			false;
+			true;
 	}
 
 	public WebRTC(ReadOnlyTargetRules Target) : base(Target)
@@ -98,6 +99,15 @@ public class WebRTC : ModuleRules
 				string LibraryPath = Path.Combine(WebRtcSdkPath, "Lib", PlatformSubdir, Target.Architecture.LinuxName, ConfigPath);
 				PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "libwebrtc.a"));
 			}
+			else if (Target.Platform == UnrealTargetPlatform.Mac && bShouldUse5414WebRTC)
+            {
+				// NOTE: We can't use Target.Platform.IsInGroup(UnrealPlatformGroup.Apple) because that includes tvOS and iOS which we don't support
+                PublicDefinitions.Add("WEBRTC_MAC=1");
+                PublicDefinitions.Add("WEBRTC_POSIX=1");
+
+                string LibraryPath = Path.Combine(WebRtcSdkPath, "Lib", PlatformSubdir, ConfigPath);
+                PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "libwebrtc.a"));
+            }
 
 			AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
 			AddEngineThirdPartyPrivateStaticDependencies(Target, "libOpus");

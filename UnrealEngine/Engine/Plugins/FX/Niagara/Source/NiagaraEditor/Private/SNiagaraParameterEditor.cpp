@@ -2,7 +2,7 @@
 
 #include "SNiagaraParameterEditor.h"
 
-const float SNiagaraParameterEditor::DefaultInputSize = 110.0f;
+const float SNiagaraParameterEditor::DefaultInputSize = 125.0f;
 
 void SNiagaraParameterEditor::Construct(const FArguments& InArgs)
 {

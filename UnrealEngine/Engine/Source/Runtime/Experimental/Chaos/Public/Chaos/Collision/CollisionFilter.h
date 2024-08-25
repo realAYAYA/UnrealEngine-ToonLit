@@ -5,6 +5,7 @@
 
 #include "Chaos/Core.h"
 #include "Chaos/Collision/CollisionConstraintFlags.h"
+#include "Chaos/Collision/CollisionFilterBits.h"
 #include "Chaos/CollisionFilterData.h"
 #include "Chaos/GeometryParticles.h"
 #include "Chaos/ImplicitObjectType.h"
@@ -13,8 +14,6 @@
 namespace Chaos
 {
 	typedef uint8 FMaskFilter;
-	enum { NumExtraFilterBits = 6 };
-	enum { NumCollisionChannelBits = 5 };
 
 	/**
 	 * Check whether the two particles need to be considered in the broadphase.
@@ -112,51 +111,43 @@ namespace Chaos
 		return (!Shape || (Shape->GetSimEnabled() && IsFilterValid(Shape->GetSimData())));
 	}
 
+	inline bool DoCollide(EImplicitObjectType ImplicitType, const FPerShapeData* Shape)
+	{
+		//
+		// Disabled shapes do not collide
+		//
+		if (!FilterHasSimEnabled(Shape)) return false;
+
+		//
+		// Triangle Mesh geometry is only used if the shape specifies UseComplexAsSimple
+		//
+		if (Shape)
+		{
+			if (ImplicitType == ImplicitObjectType::TriangleMesh && Shape->GetCollisionTraceType() != EChaosCollisionTraceFlag::Chaos_CTF_UseComplexAsSimple)
+			{
+				return false;
+			}
+			else if (Shape->GetCollisionTraceType() == EChaosCollisionTraceFlag::Chaos_CTF_UseComplexAsSimple && ImplicitType != ImplicitObjectType::TriangleMesh)
+			{
+				return false;
+			}
+		}
+		else if (ImplicitType == ImplicitObjectType::TriangleMesh)
+		{
+			return false;
+		}
+
+		return true;
+	}
+
 	/**
 	* Sim Collision filter (i.e., not Query collision filter)
 	*/
 	inline bool DoCollide(EImplicitObjectType Implicit0Type, const FPerShapeData* Shape0, EImplicitObjectType Implicit1Type, const FPerShapeData* Shape1)
 	{
-		//
-		// Disabled shapes do not collide
-		//
-		if (!FilterHasSimEnabled(Shape0)) return false;
-		if (!FilterHasSimEnabled(Shape1)) return false;
 
-		//
-		// Triangle Mesh geometry is only used if the shape specifies UseComplexAsSimple
-		//
-		if (Shape0)
-		{
-			if (Implicit0Type == ImplicitObjectType::TriangleMesh && Shape0->GetCollisionTraceType() != EChaosCollisionTraceFlag::Chaos_CTF_UseComplexAsSimple)
-			{
-				return false;
-			}
-			else if (Shape0->GetCollisionTraceType() == EChaosCollisionTraceFlag::Chaos_CTF_UseComplexAsSimple && Implicit0Type != ImplicitObjectType::TriangleMesh)
-			{
-				return false;
-			}
-		}
-		else if (Implicit0Type == ImplicitObjectType::TriangleMesh)
-		{
-			return false;
-		}
-
-		if (Shape1)
-		{
-			if (Implicit1Type == ImplicitObjectType::TriangleMesh && Shape1->GetCollisionTraceType() != EChaosCollisionTraceFlag::Chaos_CTF_UseComplexAsSimple)
-			{
-				return false;
-			}
-			else if (Shape1->GetCollisionTraceType() == EChaosCollisionTraceFlag::Chaos_CTF_UseComplexAsSimple && Implicit1Type != ImplicitObjectType::TriangleMesh)
-			{
-				return false;
-			}
-		}
-		else if (Implicit1Type == ImplicitObjectType::TriangleMesh)
-		{
-			return false;
-		}
+		if (!DoCollide(Implicit0Type, Shape0)) { return false; }
+		if (!DoCollide(Implicit1Type, Shape1)) { return false; }
 
 		//
 		// Shape Filtering

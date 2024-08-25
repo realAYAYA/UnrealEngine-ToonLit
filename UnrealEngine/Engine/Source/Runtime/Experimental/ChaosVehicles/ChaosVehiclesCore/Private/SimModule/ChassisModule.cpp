@@ -3,6 +3,9 @@
 #include "SimModule/ChassisModule.h"
 #include "SimModule/SimModuleTree.h"
 
+#if VEHICLE_DEBUGGING_ENABLED
+UE_DISABLE_OPTIMIZATION
+#endif
 
 namespace Chaos
 {
@@ -15,9 +18,21 @@ namespace Chaos
 
 	void FChassisSimModule::Simulate(float DeltaTime, const FAllInputs& Inputs, FSimModuleTree& VehicleModuleSystem)
 	{
-		AddLocalForce(FVector(20000000,0,0));
+		FVector VelocityMs = Chaos::CmToM(LocalLinearVelocity);
+		float DragForceMagnitude = -VelocityMs.SizeSquared() * Setup().DensityOfMedium * 0.5f * Setup().AreaMetresSquared * Setup().DragCoefficient * Chaos::MToCmScaling();
+		FVector ForceVector = LocalLinearVelocity.GetSafeNormal() * DragForceMagnitude;
+		ForceVector.X *= Setup().XAxisMultiplier;
+		ForceVector.Y *= Setup().YAxisMultiplier;
+		AddLocalForce(ForceVector);
 
+		float Value = Setup().AngularDamping * Chaos::MToCmScaling();
+		FVector Torque = LocalAngularVelocity * -Value;
+		AddLocalTorque(Torque);
 	}
 
 
 } // namespace Chaos
+
+#if VEHICLE_DEBUGGING_ENABLED
+UE_ENABLE_OPTIMIZATION
+#endif

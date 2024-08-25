@@ -2,43 +2,61 @@
 
 #include "DMXPixelMappingPreprocessRenderer.h"
 
+#include "DMXPixelMappingApplyFilterMaterialProxy.h"
+#include "DMXPixelMappingRenderInputMaterialProxy.h"
+#include "DMXPixelMappingRenderInputTextureProxy.h"
+#include "DMXPixelMappingRenderInputUserWidgetProxy.h"
 #include "DMXStats.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "PreprocessApplyFilterMaterialProxy.h"
-#include "PreprocessRenderInputMaterialProxy.h"
-#include "PreprocessRenderInputTextureProxy.h"
-#include "PreprocessRenderInputUserWidgetProxy.h"
 #include "UObject/Package.h"
 
 
-DECLARE_CYCLE_STAT(TEXT("PixelMapping PreprocessInputTexture"), STAT_PreprocessInputTexture, STATGROUP_DMX);
+DECLARE_CYCLE_STAT(TEXT("PixelMapping PreprocessInputTexture"), STAT_DMXPixelMappingPreprocessInputTexture, STATGROUP_DMX);
 
-void UDMXPixelMappingPreprocessRenderer::SetInputTexture(UTexture* InTexture)
+void UDMXPixelMappingPreprocessRenderer::SetInputTexture(UTexture* InTexture, EPixelFormat InFormat)
 {
 	using namespace UE::DMXPixelMapping::Rendering::Preprocess::Private;
-	RenderInputProxy = MakeShared<FPreprocessRenderInputTextureProxy>(InTexture);
-	ApplyMaterialProxy = MakeShared<FPreprocessApplyFilterMaterialProxy>();
+	RenderInputProxy = MakeShared<FDMXPixelMappingRenderInputTextureProxy>(InTexture);
+	ApplyMaterialProxy = MakeShared<FDMXPixelMappingApplyFilterMaterialProxy>(InFormat);
 
 	bShowInputSize = false;
 }
 
-void UDMXPixelMappingPreprocessRenderer::SetInputMaterial(UMaterialInterface* InMaterial)
+void UDMXPixelMappingPreprocessRenderer::SetInputMaterial(UMaterialInterface* InMaterial, EPixelFormat InFormat)
 {
 	using namespace UE::DMXPixelMapping::Rendering::Preprocess::Private;
-	RenderInputProxy = MakeShared<FPreprocessRenderInputMaterialProxy>(InMaterial, InputSize);
-	ApplyMaterialProxy = MakeShared<FPreprocessApplyFilterMaterialProxy>();
+	RenderInputProxy = MakeShared<FDMXPixelMappingRenderInputMaterialProxy>(InMaterial, InputSize, InFormat);
+	ApplyMaterialProxy = MakeShared<FDMXPixelMappingApplyFilterMaterialProxy>(InFormat);
 
 	bShowInputSize = true;
 }
 
-void UDMXPixelMappingPreprocessRenderer::SetInputUserWidget(UUserWidget* InUserWidget)
+void UDMXPixelMappingPreprocessRenderer::SetInputUserWidget(UUserWidget* InUserWidget, EPixelFormat InFormat)
 {
 	using namespace UE::DMXPixelMapping::Rendering::Preprocess::Private;
-	RenderInputProxy = MakeShared<FPreprocessRenderInputUserWidgetProxy>(InUserWidget, InputSize);
-	ApplyMaterialProxy = MakeShared<FPreprocessApplyFilterMaterialProxy>();
+	RenderInputProxy = MakeShared<FDMXPixelMappingRenderInputUserWidgetProxy>(InUserWidget, InputSize, InFormat);
+	ApplyMaterialProxy = MakeShared<FDMXPixelMappingApplyFilterMaterialProxy>(InFormat);
 
 	bShowInputSize = true;
+}
+
+void UDMXPixelMappingPreprocessRenderer::SetInputTexture(UTexture* InTexture)
+{
+	// DERPECATED 5.4 - Use EPixelFormat::PF_B8G8R8A8 as it was used up to 5.4
+	SetInputTexture(InTexture, EPixelFormat::PF_B8G8R8A8);
+}
+
+void UDMXPixelMappingPreprocessRenderer::SetInputMaterial(UMaterialInterface* InMaterial)
+{
+	// DERPECATED 5.4 - Use EPixelFormat::PF_B8G8R8A8 as it was used up to 5.4
+	SetInputMaterial(InMaterial, EPixelFormat::PF_B8G8R8A8);
+}
+
+void UDMXPixelMappingPreprocessRenderer::SetInputUserWidget(UUserWidget* InUserWidget)
+{
+	// DERPECATED 5.4 - Use EPixelFormat::PF_B8G8R8A8 as it was used up to 5.4
+	SetInputUserWidget(InUserWidget, EPixelFormat::PF_B8G8R8A8);
 }
 
 void UDMXPixelMappingPreprocessRenderer::ClearInput()
@@ -49,7 +67,7 @@ void UDMXPixelMappingPreprocessRenderer::ClearInput()
 
 void UDMXPixelMappingPreprocessRenderer::Render()
 {
-	SCOPE_CYCLE_COUNTER(STAT_PreprocessInputTexture);
+	SCOPE_CYCLE_COUNTER(STAT_DMXPixelMappingPreprocessInputTexture);
 
 	if (RenderInputProxy.IsValid())
 	{
@@ -79,7 +97,6 @@ TOptional<FVector2D> UDMXPixelMappingPreprocessRenderer::GetDesiredOutputSize2D(
 	}
 
 	return TOptional<FVector2D>();
-	checkf(0, TEXT("Unhandled output size mode in DMXPixelMappingRenderInputTextureProxy"));
 }
 
 FVector2D UDMXPixelMappingPreprocessRenderer::GetResultingSize2D() const

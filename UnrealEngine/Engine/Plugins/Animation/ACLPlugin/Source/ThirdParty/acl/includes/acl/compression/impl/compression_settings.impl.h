@@ -1,4 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -27,6 +26,7 @@
 
 // Included only once from compression_settings.h
 
+#include "acl/version.h"
 #include "acl/core/error_result.h"
 #include "acl/core/hash.h"
 #include "acl/core/track_formats.h"
@@ -35,6 +35,8 @@
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	inline uint32_t compression_database_settings::get_hash() const
 	{
 		uint32_t hash_value = 0;
@@ -84,6 +86,32 @@ namespace acl
 		return error_result();
 	}
 
+	inline bool compression_keyframe_stripping_settings::is_enabled() const
+	{
+		return proportion > 0.0F || threshold > 0.0F || strip_trivial;
+	}
+
+	inline uint32_t compression_keyframe_stripping_settings::get_hash() const
+	{
+		uint32_t hash_value = 0;
+		hash_value = hash_combine(hash_value, hash32(proportion));
+		hash_value = hash_combine(hash_value, hash32(threshold));
+		hash_value = hash_combine(hash_value, hash32(strip_trivial));
+
+		return hash_value;
+	}
+
+	inline error_result compression_keyframe_stripping_settings::is_valid() const
+	{
+		if (!rtm::scalar_is_finite(proportion) || proportion < 0.0F || proportion > 1.0F)
+			return error_result("proportion must be in the range [0.0, 1.0]");
+
+		if (!rtm::scalar_is_finite(threshold) || threshold < 0.0F)
+			return error_result("threshold must be positive definite");
+
+		return error_result();
+	}
+
 	inline uint32_t compression_settings::get_hash() const
 	{
 		uint32_t hash_value = 0;
@@ -96,20 +124,8 @@ namespace acl
 			hash_value = hash_combine(hash_value, error_metric->get_hash());
 
 		hash_value = hash_combine(hash_value, enable_database_support);
-// @third party code - Epic Games Begin
-		hash_value = hash_combine(hash_value, enable_frame_stripping);
-		if (enable_frame_stripping)
-		{
-			if (frame_stripping_use_proportion)
-			{
-				hash_value = hash_combine(hash_value, hash32(frame_stripping_proportion));
-			}
-			else
-			{
-				hash_value = hash_combine(hash_value, hash32(frame_stripping_error_distance));
-			}
-		}
-// @third party code - Epic Games End
+		hash_value = hash_combine(hash_value, optimize_loops);
+		hash_value = hash_combine(hash_value, keyframe_stripping.get_hash());
 		hash_value = hash_combine(hash_value, metadata.get_hash());
 
 		return hash_value;
@@ -120,9 +136,16 @@ namespace acl
 		if (error_metric == nullptr)
 			return error_result("error_metric cannot be NULL");
 
+		const error_result keyframe_stripping_result = keyframe_stripping.is_valid();
+		if (keyframe_stripping_result.any())
+			return keyframe_stripping_result;
+
 		const error_result metadata_result = metadata.is_valid();
 		if (metadata_result.any())
 			return metadata_result;
+
+		if (keyframe_stripping.is_enabled() && enable_database_support)
+			return error_result("Cannot enable keyframe stripping with database support");
 
 		return error_result();
 	}
@@ -139,6 +162,10 @@ namespace acl
 		settings.rotation_format = rotation_format8::quatf_drop_w_variable;
 		settings.translation_format = vector_format8::vector3f_variable;
 		settings.scale_format = vector_format8::vector3f_variable;
+		settings.optimize_loops = true;
+		settings.keyframe_stripping.strip_trivial = true;
 		return settings;
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }

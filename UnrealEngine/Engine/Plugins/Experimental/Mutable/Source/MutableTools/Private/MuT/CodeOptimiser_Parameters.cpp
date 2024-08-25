@@ -1,18 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "HAL/PlatformCrt.h"
-#include "HAL/PlatformMath.h"
-#include "Logging/LogCategory.h"
-#include "Logging/LogMacros.h"
-#include "Misc/AssertionMacros.h"
-#include "MuR/Image.h"
-#include "MuR/ImagePrivate.h"
-#include "MuR/MutableTrace.h"
-#include "MuR/Operations.h"
-#include "MuR/ParametersPrivate.h"
-#include "MuR/Platform.h"
-#include "MuR/Ptr.h"
-#include "MuR/RefCounted.h"
 #include "MuT/AST.h"
 #include "MuT/ASTOpAddLOD.h"
 #include "MuT/ASTOpConditional.h"
@@ -30,11 +17,24 @@
 #include "MuT/CompilerPrivate.h"
 #include "MuT/DataPacker.h"
 #include "MuT/Platform.h"
+#include "MuR/Image.h"
+#include "MuR/ImagePrivate.h"
+#include "MuR/MutableTrace.h"
+#include "MuR/Operations.h"
+#include "MuR/ParametersPrivate.h"
+#include "MuR/Platform.h"
+#include "MuR/Ptr.h"
+#include "MuR/RefCounted.h"
+#include "MuR/MutableRuntimeModule.h"
+
+#include "HAL/PlatformCrt.h"
+#include "HAL/PlatformMath.h"
+#include "Logging/LogCategory.h"
+#include "Logging/LogMacros.h"
+#include "Misc/AssertionMacros.h"
 #include "Trace/Detail/Channel.h"
 
 #include <array>
-#include <memory>
-#include <utility>
 
 
 namespace mu
@@ -43,7 +43,7 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
-    RuntimeParameterVisitorAST::RuntimeParameterVisitorAST(const STATE_COMPILATION_DATA* pState)
+    RuntimeParameterVisitorAST::RuntimeParameterVisitorAST(const FStateCompilationData* pState)
         : m_pState(pState)
     {
     }
@@ -141,8 +141,8 @@ namespace mu
                     case OP_TYPE::PR_PARAMETER:
                     case OP_TYPE::IM_PARAMETER:
                     {
-						const ASTOpParameter* typed = dynamic_cast<const ASTOpParameter*>(at.get());
-                        const TArray<string>& params = m_pState->nodeState.m_runtimeParams;
+						const ASTOpParameter* typed = static_cast<const ASTOpParameter*>(at.get());
+                        const TArray<FString>& params = m_pState->nodeState.m_runtimeParams;
                         if ( params.Find( typed->parameter.m_name)
                              !=
                              INDEX_NONE )
@@ -155,7 +155,7 @@ namespace mu
 
                     case OP_TYPE::ME_INTERPOLATE:
                     {
-						const ASTOpFixed* typed = dynamic_cast<const ASTOpFixed*>(at.get());
+						const ASTOpFixed* typed = static_cast<const ASTOpFixed*>(at.get());
                         PENDING_ITEM childItem;
                         childItem.itemType = 0;
                         childItem.onlyLayoutsRelevant = item.onlyLayoutsRelevant;
@@ -269,7 +269,7 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
     ParameterOptimiserAST::ParameterOptimiserAST(
-            STATE_COMPILATION_DATA& s,
+		FStateCompilationData& s,
             const FModelOptimizationOptions& optimisationOptions
             )
             : m_stateProps(s)
@@ -381,7 +381,7 @@ namespace mu
         //-------------------------------------------------------------------------------------
         case OP_TYPE::IM_CONDITIONAL:
         {
-			const ASTOpConditional* typedAt = dynamic_cast<const ASTOpConditional*>(at.get());
+			const ASTOpConditional* typedAt = static_cast<const ASTOpConditional*>(at.get());
 
             // If the condition is not runtime, but the branches are, try to move the
             // conditional down
@@ -401,8 +401,8 @@ namespace mu
                     {
                         case OP_TYPE::IM_COMPOSE:
                         {
-						const ASTOpImageCompose* typedYes = dynamic_cast<const ASTOpImageCompose*>(typedAt->yes.child().get());
-						const ASTOpImageCompose* typedNo = dynamic_cast<const ASTOpImageCompose*>(typedAt->no.child().get());
+						const ASTOpImageCompose* typedYes = static_cast<const ASTOpImageCompose*>(typedAt->yes.child().get());
+						const ASTOpImageCompose* typedNo = static_cast<const ASTOpImageCompose*>(typedAt->no.child().get());
                         if ( typedYes->BlockIndex
                              ==
                              typedNo->BlockIndex
@@ -462,7 +462,7 @@ namespace mu
                         {
                             optimised = true;
 
-							const ASTOpImageLayerColor* typedYes = dynamic_cast<const ASTOpImageLayerColor*>(typedAt->yes.child().get());
+							const ASTOpImageLayerColor* typedYes = static_cast<const ASTOpImageLayerColor*>(typedAt->yes.child().get());
 
                             Ptr<ASTOpFixed> blackOp = new ASTOpFixed;
                             blackOp->op.type = OP_TYPE::CO_CONSTANT;
@@ -569,7 +569,7 @@ namespace mu
                         {
                             optimised = true;
 
-                            const ASTOpImageLayerColor* typedNo = dynamic_cast<const ASTOpImageLayerColor*>(typedAt->no.child().get());
+                            const ASTOpImageLayerColor* typedNo = static_cast<const ASTOpImageLayerColor*>(typedAt->no.child().get());
 
                             Ptr<ASTOpFixed> blackOp = new ASTOpFixed;
                             blackOp->op.type = OP_TYPE::CO_CONSTANT;
@@ -855,7 +855,7 @@ namespace mu
         //-----------------------------------------------------------------------------------------
         case OP_TYPE::IM_COMPOSE:
         {
-			const ASTOpImageCompose* typedAt = dynamic_cast<const ASTOpImageCompose*>(at.get());
+			const ASTOpImageCompose* typedAt = static_cast<const ASTOpImageCompose*>(at.get());
 
             Ptr<ASTOp> blockAt = typedAt->BlockImage.child();
 			Ptr<ASTOp> baseAt = typedAt->Base.child();
@@ -887,8 +887,8 @@ namespace mu
                     {
                         optimised = true;
 
-						const ASTOpImageLayerColor* typedBaseAt = dynamic_cast<const ASTOpImageLayerColor*>(baseAt.get());
-						const ASTOpImageLayerColor* typedBlockAt = dynamic_cast<const ASTOpImageLayerColor*>(blockAt.get());
+						const ASTOpImageLayerColor* typedBaseAt = static_cast<const ASTOpImageLayerColor*>(baseAt.get());
+						const ASTOpImageLayerColor* typedBlockAt = static_cast<const ASTOpImageLayerColor*>(blockAt.get());
 
                         // The mask is a compose of the block mask on the base mask, but if none has
                         // a mask we don't need to make one.
@@ -929,8 +929,8 @@ namespace mu
                     {
                         optimised = true;
 
-						const ASTOpImageLayer* typedBaseAt = dynamic_cast<const ASTOpImageLayer*>(baseAt.get());
-						const ASTOpImageLayer* typedBlockAt = dynamic_cast<const ASTOpImageLayer*>(blockAt.get());
+						const ASTOpImageLayer* typedBaseAt = static_cast<const ASTOpImageLayer*>(baseAt.get());
+						const ASTOpImageLayer* typedBlockAt = static_cast<const ASTOpImageLayer*>(blockAt.get());
 
                         // The mask is a compose of the block mask on the base mask, but if none has
                         // a mask we don't need to make one.
@@ -987,7 +987,7 @@ namespace mu
                  &&
                  baseType == OP_TYPE::IM_COMPOSE )
             {
-				const ASTOpImageCompose* typedBaseAt = dynamic_cast<const ASTOpImageCompose*>(baseAt.get());
+				const ASTOpImageCompose* typedBaseAt = static_cast<const ASTOpImageCompose*>(baseAt.get());
 
 				Ptr<ASTOp> baseBlockAt = typedBaseAt->BlockImage.child();
                 bool baseBlockHasAny = m_hasRuntimeParamVisitor.HasAny( baseBlockAt );
@@ -1024,7 +1024,7 @@ namespace mu
                 {
                     optimised = true;
 
-					const ASTOpImageLayerColor* typedBlockAt = dynamic_cast<const ASTOpImageLayerColor*>(blockAt.get());
+					const ASTOpImageLayerColor* typedBlockAt = static_cast<const ASTOpImageLayerColor*>(blockAt.get());
 
 					Ptr<ASTOp> blockImage = typedBlockAt->base.child();
 					Ptr<ASTOp> blockMask = typedBlockAt->mask.child();
@@ -1079,7 +1079,7 @@ namespace mu
                 {
                     optimised = true;
 
-                    const ASTOpImageLayer* typedBlockAt = dynamic_cast<const ASTOpImageLayer*>(blockAt.get());
+                    const ASTOpImageLayer* typedBlockAt = static_cast<const ASTOpImageLayer*>(blockAt.get());
 
 					Ptr<ASTOp> blockImage = typedBlockAt->base.child();
 					Ptr<ASTOp> blockBlended = typedBlockAt->blend.child();
@@ -1205,7 +1205,7 @@ namespace mu
                 {
                     optimised = true;
 
-                    const ASTOpImageLayerColor* typedBaseAt = dynamic_cast<const ASTOpImageLayerColor*>(baseAt.get());
+                    const ASTOpImageLayerColor* typedBaseAt = static_cast<const ASTOpImageLayerColor*>(baseAt.get());
 
 					Ptr<ASTOpImageCompose> maskOp = mu::Clone<ASTOpImageCompose>(at);
                     {
@@ -1252,7 +1252,7 @@ namespace mu
                 {
                     optimised = true;
 
-                    const ASTOpImageLayer* typedBaseAt = dynamic_cast<const ASTOpImageLayer*>(baseAt.get());
+                    const ASTOpImageLayer* typedBaseAt = static_cast<const ASTOpImageLayer*>(baseAt.get());
 
 					Ptr<ASTOpImageCompose> maskOp = mu::Clone<ASTOpImageCompose>(at);
                     {
@@ -1426,7 +1426,7 @@ namespace mu
         // Sink the mipmap if worth it.
         case OP_TYPE::IM_MIPMAP:
         {
-			const ASTOpImageMipmap* typedAt = dynamic_cast<const ASTOpImageMipmap*>(at.get());
+			const ASTOpImageMipmap* typedAt = static_cast<const ASTOpImageMipmap*>(at.get());
 
 			Ptr<ASTOp> sourceOp = typedAt->Source.child();
 
@@ -1434,7 +1434,7 @@ namespace mu
             {
             case OP_TYPE::IM_LAYERCOLOUR:
             {
-                const ASTOpImageLayerColor* typedSource = dynamic_cast<const ASTOpImageLayerColor*>(sourceOp.get());
+                const ASTOpImageLayerColor* typedSource = static_cast<const ASTOpImageLayerColor*>(sourceOp.get());
 
                 bool colourHasRuntime = m_hasRuntimeParamVisitor.HasAny( typedSource->color.child() );
 
@@ -1527,7 +1527,7 @@ namespace mu
             // TODO: Code shared with the constant data format optimisation visitor
             case OP_TYPE::IM_LAYERCOLOUR:
             {
-                const ASTOpImageLayerColor* typedAt = dynamic_cast<const ASTOpImageLayerColor*>(at.get());
+                const ASTOpImageLayerColor* typedAt = static_cast<const ASTOpImageLayerColor*>(at.get());
 
                 RecurseWithCurrentState( typedAt->base.child() );
                 RecurseWithCurrentState( typedAt->color.child() );
@@ -1546,7 +1546,7 @@ namespace mu
 
             case OP_TYPE::IM_LAYER:
             {
-                const ASTOpImageLayer* typedAt = dynamic_cast<const ASTOpImageLayer*>(at.get());
+                const ASTOpImageLayer* typedAt = static_cast<const ASTOpImageLayer*>(at.get());
 
                 RecurseWithCurrentState( typedAt->base.child() );
                 RecurseWithCurrentState( typedAt->blend.child() );
@@ -1566,7 +1566,7 @@ namespace mu
 
             case OP_TYPE::IM_DISPLACE:
             {
-				const ASTOpFixed* typedAt = dynamic_cast<const ASTOpFixed*>(at.get());
+				const ASTOpFixed* typedAt = static_cast<const ASTOpFixed*>(at.get());
 
                 RecurseWithCurrentState( typedAt->children[typedAt->op.args.ImageDisplace.source].child() );
 
@@ -1619,10 +1619,10 @@ namespace mu
     void SubtreeRelevantParametersVisitorAST::Run( Ptr<ASTOp> root )
     {
         // Cached?
-		std::unordered_map< STATE, std::unordered_set< string >, state_hash >::iterator it = m_resultCache.find( STATE(root,false) );
-        if (it!=m_resultCache.end())
+		TSet<FString>* it = m_resultCache.Find( FState(root,false) );
+        if (it)
         {
-            m_params = it->second;
+            m_params = *it;
             return;
         }
 
@@ -1630,7 +1630,7 @@ namespace mu
         {
             MUTABLE_CPUPROFILER_SCOPE(SubtreeRelevantParametersVisitorAST);
 
-            m_params.clear();
+            m_params.Empty();
 
             // The state is the onlyLayoutRelevant flag
             ASTOp::Traverse_TopDown_Unique_Imprecise_WithState<bool>( root, false,
@@ -1647,8 +1647,8 @@ namespace mu
                 case OP_TYPE::PR_PARAMETER:
                 case OP_TYPE::IM_PARAMETER:
                 {
-					const ASTOpParameter* typedAt = dynamic_cast<const ASTOpParameter*>(at.get());
-                    m_params.insert(typedAt->parameter.m_name);
+					const ASTOpParameter* typedAt = static_cast<const ASTOpParameter*>(at.get());
+                    m_params.Add(typedAt->parameter.m_name);
 
                     // Not interested in the parameters from the parameters decorators.
                     return false;
@@ -1659,7 +1659,7 @@ namespace mu
 				case OP_TYPE::LA_FROMMESH:
 				{
 					// Manually choose how to recurse this op
-					const ASTOpLayoutFromMesh* pTyped = dynamic_cast<const ASTOpLayoutFromMesh*>(at.get());
+					const ASTOpLayoutFromMesh* pTyped = static_cast<const ASTOpLayoutFromMesh*>(at.get());
 
 					// For that mesh we only want to know about the layouts
 					if (const ASTChild& Mesh = pTyped->Mesh)
@@ -1673,7 +1673,7 @@ namespace mu
                 case OP_TYPE::ME_MORPH:
                 {
                     // Manually choose how to recurse this op
-					const ASTOpMeshMorph* pTyped = dynamic_cast<const ASTOpMeshMorph*>( at.get() );
+					const ASTOpMeshMorph* pTyped = static_cast<const ASTOpMeshMorph*>( at.get() );
 
                     if ( pTyped->Base )
                     {
@@ -1704,7 +1704,7 @@ namespace mu
                 return true;
             });
 
-            m_resultCache[STATE(root,false)] = m_params;
+            m_resultCache.Add( FState(root,false), m_params );
         }
     }
 
@@ -1721,7 +1721,7 @@ namespace mu
     {
     public:
 
-        StateCacheDetectorAST( STATE_COMPILATION_DATA* pState )
+        StateCacheDetectorAST(FStateCompilationData* pState )
             : m_hasRuntimeParamVisitor( pState )
         {
             ASTOpList roots;
@@ -1748,8 +1748,8 @@ namespace mu
                     subtreeParams.Run( i.Key );
 
 					// Temp copy
-					TArray<mu::string> ParamCopy;
-					for ( const string& e: subtreeParams.m_params )
+					TArray<FString> ParamCopy;
+					for ( const FString& e: subtreeParams.m_params )
 					{
 						ParamCopy.Add(e);
 					}
@@ -1800,7 +1800,7 @@ namespace mu
                 case OP_TYPE::IN_ADDSCALAR:
                 case OP_TYPE::IN_ADDSTRING:
                 {
-					const ASTOpInstanceAdd* typedAt = dynamic_cast<const ASTOpInstanceAdd*>(at.get());
+					const ASTOpInstanceAdd* typedAt = static_cast<const ASTOpInstanceAdd*>(at.get());
 
                     TPair<bool,bool> newState;
                     newState.Key = false; //resource root
@@ -1849,7 +1849,7 @@ namespace mu
     {
     public:
 
-        StateCacheFormatOptimiserAST( STATE_COMPILATION_DATA& state,
+        StateCacheFormatOptimiserAST(FStateCompilationData& state,
                                    const AccumulateAllImageFormatsOpAST& opFormats )
             : m_state(state)
             , m_opFormats(opFormats)
@@ -1898,7 +1898,7 @@ namespace mu
 
     private:
 
-        STATE_COMPILATION_DATA& m_state;
+		FStateCompilationData& m_state;
 
         const AccumulateAllImageFormatsOpAST& m_opFormats;
     };
@@ -1908,7 +1908,7 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
     RuntimeTextureCompressionRemoverAST::RuntimeTextureCompressionRemoverAST(
-		STATE_COMPILATION_DATA* pState,
+		FStateCompilationData* pState,
 		bool bInAlwaysUncompress
 	)
         : m_hasRuntimeParamVisitor(pState)
@@ -1927,7 +1927,7 @@ namespace mu
         // textures? We don't want them uncompressed.
         if( type==OP_TYPE::IN_ADDIMAGE )
         {
-			ASTOpInstanceAdd* typedAt = dynamic_cast<ASTOpInstanceAdd*>(at.get());
+			ASTOpInstanceAdd* typedAt = static_cast<ASTOpInstanceAdd*>(at.get());
 			Ptr<ASTOp> imageAt = typedAt->value.child();
 
             // Does it have a runtime parameter in its subtree?
@@ -1978,7 +1978,7 @@ namespace mu
 
         if( at->GetOpType()==OP_TYPE::IN_ADDLOD )
         {
-			ASTOpAddLOD* typedAt = dynamic_cast<ASTOpAddLOD*>(at.get());
+			ASTOpAddLOD* typedAt = static_cast<ASTOpAddLOD*>(at.get());
 
             if (typedAt->lods.Num()>(size_t)m_lodCount)
             {
@@ -2004,7 +2004,7 @@ namespace mu
     {
         MUTABLE_CPUPROFILER_SCOPE(OptimiseStatesAST);
 
-         for ( size_t s=0; s<m_states.size(); ++s )
+         for ( int32 s=0; s<m_states.Num(); ++s )
          {
             // Remove the unnecessary lods
             if (m_states[s].nodeState.m_optimisation.bOnlyFirstLOD)
@@ -2013,12 +2013,14 @@ namespace mu
             }
 
 			// Apply texture compression strategy
+			bool bModified = false;
 			switch (m_states[s].nodeState.m_optimisation.TextureCompressionStrategy)
 			{
 			case ETextureCompressionStrategy::DontCompressRuntime:
 			{
 				MUTABLE_CPUPROFILER_SCOPE(RuntimeTextureCompressionRemover);
 				RuntimeTextureCompressionRemoverAST r(&m_states[s], false);
+				bModified = true;
 				break;
 			}
 
@@ -2026,6 +2028,7 @@ namespace mu
 			{
 				MUTABLE_CPUPROFILER_SCOPE(RuntimeTextureCompressionRemover);
 				RuntimeTextureCompressionRemoverAST r(&m_states[s], true);
+				bModified = true;
 				break;
 			}
 
@@ -2034,7 +2037,7 @@ namespace mu
 			}
 
             // If a state has no runtime parameters, skip its optimisation alltogether
-            if (m_states[s].nodeState.m_runtimeParams.Num())
+            if (bModified || m_states[s].nodeState.m_runtimeParams.Num())
             {
                 // Promote the intructions that depend on runtime parameters, and sink new
                 // format instructions.
@@ -2099,7 +2102,7 @@ namespace mu
         // necessary at this stage before GPU optimisation.
         {
             TArray<Ptr<ASTOp>> roots;
-            for(const STATE_COMPILATION_DATA& s:m_states)
+            for(const FStateCompilationData& s:m_states)
             {
                 roots.Add(s.root);
             }
@@ -2107,7 +2110,7 @@ namespace mu
             AccumulateAllImageFormatsOpAST opFormats;
             opFormats.Run(roots);
 
-            for (STATE_COMPILATION_DATA& s: m_states )
+            for (FStateCompilationData& s: m_states )
             {
                 {
                     UE_LOG(LogMutableCore, Verbose, TEXT(" - state cache"));
@@ -2127,11 +2130,12 @@ namespace mu
         {
             MUTABLE_CPUPROFILER_SCOPE(Reoptimise);
             bool modified = true;
-            int numIterations = 0;
+            int32 numIterations = 0;
+			int32 Pass = 1;
             while (modified && (!m_optimizeIterationsMax || m_optimizeIterationsLeft>0 || !numIterations ))
             {
                 TArray<Ptr<ASTOp>> roots;
-                for(const STATE_COMPILATION_DATA& s:m_states)
+                for(const FStateCompilationData& s:m_states)
                 {
                     roots.Add(s.root);
                 }
@@ -2145,7 +2149,7 @@ namespace mu
 
                 UE_LOG(LogMutableCore, Verbose, TEXT(" - semantic optimiser"));
                 modified |=
-                    SemanticOptimiserAST( roots, m_options->GetPrivate()->OptimisationOptions, 1 );
+                    SemanticOptimiserAST( roots, m_options->GetPrivate()->OptimisationOptions, Pass );
 				UE_LOG(LogMutableCore, Verbose, TEXT("(int) %s : %ld"), TEXT("ast size"), int64(ASTOp::CountNodes(roots)));
 
                 // Image size operations are treated separately
@@ -2154,14 +2158,14 @@ namespace mu
 				UE_LOG(LogMutableCore, Verbose, TEXT("(int) %s : %ld"), TEXT("ast size"), int64(ASTOp::CountNodes(roots)));
 			}
 
-            for(STATE_COMPILATION_DATA& s:m_states)
+            for(FStateCompilationData& s:m_states)
             {
                 UE_LOG(LogMutableCore, Verbose, TEXT(" - constant optimiser"));
-                ConstantGeneratorAST( m_options->GetPrivate(), s.root );
-            }
+				modified = ConstantGeneratorAST( m_options->GetPrivate(), s.root, Pass );
+			}
 
             TArray<Ptr<ASTOp>> roots;
-            for(const STATE_COMPILATION_DATA& s:m_states)
+            for(const FStateCompilationData& s:m_states)
             {
                 roots.Add(s.root);
             }
@@ -2178,7 +2182,7 @@ namespace mu
 
         // Gather all the current roots
         TArray<Ptr<ASTOp>> roots;
-        for(const STATE_COMPILATION_DATA& s:m_states)
+        for(const FStateCompilationData& s:m_states)
         {
             roots.Add(s.root);
         }
@@ -2187,8 +2191,7 @@ namespace mu
         {
             MUTABLE_CPUPROFILER_SCOPE(DataFormats);
 
-            DataOptimiseAST( m_options->GetPrivate()->ImageCompressionQuality, roots,
-                             m_options->GetPrivate()->OptimisationOptions );
+            DataOptimise( m_options.get(), roots);
 
             // After optimising the data formats, we may remove more constants
             DuplicatedDataRemoverAST( roots );
@@ -2196,7 +2199,7 @@ namespace mu
 
             // Update the marks for the instructions that don't depend on runtime parameters to be
             // cached.
-            for (STATE_COMPILATION_DATA& s:m_states)
+            for (FStateCompilationData& s:m_states)
             {
                 StateCacheDetectorAST c( &s );
             }

@@ -7,3 +7,8 @@ UXRCreativeSettings* UXRCreativeSettings::GetXRCreativeSettings()
 {
 	return GetMutableDefault<UXRCreativeSettings>();
 }
+
+UXRCreativeEditorSettings* UXRCreativeEditorSettings::GetXRCreativeEditorSettings()
+{
+	return GetMutableDefault<UXRCreativeEditorSettings>();
+}

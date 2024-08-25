@@ -7,10 +7,10 @@
 #include "NiagaraCommon.h"
 #include "NiagaraShared.h"
 
+#include "NiagaraSimCache.h"
 #include "NiagaraSystem.h"
 #include "NiagaraWorldManager.h"
 #include "NiagaraSystemInstance.h"
-
 
 #include "NiagaraDataChannel.h"
 #include "NiagaraDataChannelHandler.h"
@@ -19,7 +19,6 @@
 #if WITH_EDITOR
 #include "INiagaraEditorOnlyDataUtlities.h"
 #include "Modules/ModuleManager.h"
-#include "NiagaraModule.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "NiagaraDataInterfaceDataChannelWrite"
@@ -212,8 +211,7 @@ struct FNDIDataChannelWriteInstanceData
 			{
 				if (DataChannelData == nullptr || Interface->bUpdateDestinationDataEveryTick)
 				{
-					FNiagaraDataChannelSearchParameters SearchParams;
-					SearchParams.OwningComponent = Instance->GetAttachComponent();
+					FNiagaraDataChannelSearchParameters SearchParams(Instance->GetAttachComponent());
 					DataChannelData = DataChannelPtr->FindData(SearchParams, ENiagaraResourceAccess::WriteOnly);
 				}
 			}
@@ -287,8 +285,10 @@ struct FNDIDataChannelWriteInstanceData
 				PublishRequest.bVisibleToGame = Interface->bPublishToGame;
 				PublishRequest.bVisibleToCPUSims = Interface->bPublishToCPU;
 				PublishRequest.bVisibleToGPUSims = Interface->bPublishToGPU;
-				PublishRequest.Data = Data->GetCurrentData();
 				PublishRequest.LwcTile = Instance->GetLWCTile();
+#if WITH_NIAGARA_DEBUGGER
+				PublishRequest.DebugSource = FString::Format(TEXT("{0} ({1})"), {Instance->GetSystem()->GetName(), GetPathNameSafe(Interface)});
+#endif
 				DataChannelData->Publish(PublishRequest);
 			}
 		}
@@ -422,6 +422,24 @@ void UNiagaraDataInterfaceDataChannelWrite::ProvidePerInstanceDataForRenderThrea
 	//FNDIDataChannelProxy::ProvidePerInstanceDataForRenderThread(DataForRenderThread, PerInstanceData, SystemInstance);
 }
 
+bool UNiagaraDataInterfaceDataChannelWrite::HasTickGroupPostreqs() const
+{
+	if (Channel && Channel->Get())
+	{
+		return Channel->Get()->ShouldEnforceTickGroupReadWriteOrder();
+	}
+	return false;
+}
+
+ETickingGroup UNiagaraDataInterfaceDataChannelWrite::CalculateFinalTickGroup(const void* PerInstanceData) const
+{
+	if(Channel && Channel->Get() && Channel->Get()->ShouldEnforceTickGroupReadWriteOrder())
+	{
+		return Channel->Get()->GetFinalWriteTickGroup();
+	}
+	return NiagaraLastTickGroup;
+}
+
 #if WITH_EDITORONLY_DATA
 
 void UNiagaraDataInterfaceDataChannelWrite::PostCompile()
@@ -472,7 +490,7 @@ void UNiagaraDataInterfaceDataChannelWrite::GetFeedback(UNiagaraSystem* InAsset,
 	if (const UNiagaraDataChannel* DataChannel = RuntimeDI->Channel->Get())
 	{
 		//Ensure the data channel contains all the parameters this function is requesting.
-		TConstArrayView<FNiagaraVariable> ChannelVars = DataChannel->GetVariables();
+		TConstArrayView<FNiagaraDataChannelVariable> ChannelVars = DataChannel->GetVariables();
 		for (const FNDIDataChannelFunctionInfo& FuncInfo : RuntimeDI->GetCompiledData().GetFunctionInfo())
 		{
 			TArray<FNiagaraVariableBase> MissingParams;
@@ -482,7 +500,7 @@ void UNiagaraDataInterfaceDataChannelWrite::GetFeedback(UNiagaraSystem* InAsset,
 				for (const FNiagaraVariableBase& FuncParam : Parameters)
 				{
 					bool bParamFound = false;
-					for (const FNiagaraVariable& ChannelVar : ChannelVars)
+					for (const FNiagaraDataChannelVariable& ChannelVar : ChannelVars)
 					{
 						FNiagaraVariable SWCVar(ChannelVar);
 
@@ -565,6 +583,114 @@ bool UNiagaraDataInterfaceDataChannelWrite::Equals(const UNiagaraDataInterface* 
 	return false;
 }
 
+UObject* UNiagaraDataInterfaceDataChannelWrite::SimCacheBeginWrite(UObject* SimCache, FNiagaraSystemInstance* NiagaraSystemInstance, const void* OptionalPerInstanceData, FNiagaraSimCacheFeedbackContext& FeedbackContext) const
+{
+	return NewObject<UNDIDataChannelWriteSimCacheData>(SimCache);
+}
+
+bool UNiagaraDataInterfaceDataChannelWrite::SimCacheWriteFrame(UObject* StorageObject, int FrameIndex, FNiagaraSystemInstance* SystemInstance, const void* OptionalPerInstanceData, FNiagaraSimCacheFeedbackContext& FeedbackContext) const
+{
+	if (!Channel || !Channel->Get())
+	{
+		FeedbackContext.Errors.Add(TEXT("Missing data channel asset for data channel writer DI"));
+		return false;
+	}
+	if (OptionalPerInstanceData == nullptr)
+	{
+		FeedbackContext.Errors.Add(TEXT("Missing per instance data for data channel writer DI"));
+		return false;
+	}
+	// put data from instance data into the storage object
+	const FNDIDataChannelWriteInstanceData* InstanceData = static_cast<const FNDIDataChannelWriteInstanceData*>(OptionalPerInstanceData);
+	if (UNDIDataChannelWriteSimCacheData* Storage = Cast<UNDIDataChannelWriteSimCacheData>(StorageObject))
+	{
+		ensure(Storage->FrameData.Num() == FrameIndex);
+		Storage->DataChannelReference = Channel.Get();
+		FNDIDataChannelWriteSimCacheFrame& FrameData = Storage->FrameData.AddDefaulted_GetRef();
+		
+		if (InstanceData->DataChannelData && ShouldPublish() && InstanceData->Data && InstanceData->Data->GetCurrentData() && InstanceData->Data->GetCurrentData()->GetNumInstances() > 0)
+		{
+			FNiagaraDataChannelGameData GameData;
+			GameData.Init(Channel->Get());
+			GameData.AppendFromDataSet(InstanceData->Data->GetCurrentData(), SystemInstance->GetLWCTile());
+			
+			FrameData.NumElements = GameData.Num();
+			for (const FNiagaraDataChannelVariableBuffer& VarBuffer : GameData.GetVariableBuffers())
+			{
+				FNDIDataChannelWriteSimCacheFrameBuffer& FrameBuffer = FrameData.VariableData.AddDefaulted_GetRef();
+				FrameBuffer.Size = VarBuffer.Size;
+				FrameBuffer.Data = VarBuffer.Data;
+			}
+			const FNiagaraDataChannelGameDataLayout& Layout = Channel->Get()->GetGameDataLayout();
+			for (const TPair<FNiagaraVariableBase, int32>& VarPair : Layout.VariableIndices)
+			{
+				FrameData.VariableData[VarPair.Value].SourceVar = VarPair.Key;
+			}
+			
+			FrameData.bVisibleToGame = bPublishToGame;
+			FrameData.bVisibleToCPUSims = bPublishToCPU;
+			FrameData.bVisibleToGPUSims = bPublishToGPU;
+		}
+		return true;
+	} 
+	return false;
+}
+
+bool UNiagaraDataInterfaceDataChannelWrite::SimCacheReadFrame(UObject* StorageObject, int FrameA, int FrameB, float Interp, FNiagaraSystemInstance* SystemInstance, void* OptionalPerInstanceData)
+{
+	if (Channel == nullptr || Channel->Get() == nullptr)
+	{
+		return false;
+	}
+
+	FNiagaraDataChannelDataPtr DataChannelData;
+	if (FNiagaraWorldManager* WorldMan = FNiagaraWorldManager::Get(SystemInstance->GetWorld()))
+	{
+		if (UNiagaraDataChannelHandler* Handler = WorldMan->GetDataChannelManager().FindDataChannelHandler(Channel->Get()))
+		{
+			FNiagaraDataChannelSearchParameters SearchParams(SystemInstance->GetAttachComponent());
+			DataChannelData = Handler->FindData(SearchParams, ENiagaraResourceAccess::WriteOnly);
+		}
+	}
+	if (!DataChannelData.IsValid())
+	{
+		return false;
+	}
+	
+	if (UNDIDataChannelWriteSimCacheData* Storage = Cast<UNDIDataChannelWriteSimCacheData>(StorageObject))
+	{
+		if (Storage->FrameData.IsValidIndex(FrameA))
+		{
+			FNDIDataChannelWriteSimCacheFrame& Frame = Storage->FrameData[FrameA];
+			FNiagaraDataChannelPublishRequest PublishRequest;
+			PublishRequest.bVisibleToGame = Frame.bVisibleToGame;
+			PublishRequest.bVisibleToCPUSims = Frame.bVisibleToCPUSims;
+			PublishRequest.bVisibleToGPUSims = Frame.bVisibleToGPUSims;
+#if WITH_NIAGARA_DEBUGGER
+			PublishRequest.DebugSource = FString::Format(TEXT("{0} (Sim cache {1})"), {SystemInstance->GetSystem()->GetName(), GetPathNameSafe(StorageObject->GetOuter())});
+#endif
+
+			PublishRequest.GameData = MakeShared<FNiagaraDataChannelGameData>();
+			PublishRequest.GameData->Init(Channel->Get());
+			PublishRequest.GameData->SetNum(Frame.NumElements);
+			for (int32 i = 0; i < Frame.VariableData.Num(); i++)
+			{
+				const FNDIDataChannelWriteSimCacheFrameBuffer& Buffer = Frame.VariableData[i];
+				PublishRequest.GameData->SetFromSimCache(Buffer.SourceVar, Buffer.Data, Buffer.Size);
+			}
+			
+			DataChannelData->Publish(PublishRequest);
+			return true;
+		}
+	}
+	return false;
+}
+
+void UNiagaraDataInterfaceDataChannelWrite::SimCachePostReadFrame(void* OptionalPerInstanceData, FNiagaraSystemInstance* SystemInstance)
+{
+	// send data to data channel
+}
+
 bool UNiagaraDataInterfaceDataChannelWrite::CopyToInternal(UNiagaraDataInterface* Destination)const
 {
 	if (!Super::CopyToInternal(Destination))
@@ -588,14 +714,13 @@ bool UNiagaraDataInterfaceDataChannelWrite::CopyToInternal(UNiagaraDataInterface
 	return false;
 }
 
-void UNiagaraDataInterfaceDataChannelWrite::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceDataChannelWrite::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature Sig;
 		Sig.Name = NDIDataChannelWriteLocal::NumName;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("NumFunctionDescription", "Returns the current number of DataChannel accessible by this interface.");
-#endif
 		Sig.bMemberFunction = true;
 		Sig.bExperimental = true;
 		Sig.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("DataChannel interface")));
@@ -609,9 +734,7 @@ void UNiagaraDataInterfaceDataChannelWrite::GetFunctions(TArray<FNiagaraFunction
 	{
 		FNiagaraFunctionSignature Sig;
 		Sig.Name = NDIDataChannelWriteLocal::WriteName;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("WriteFunctionDescription", "Writes DataChannel data at a specific index.  Values in the DataChannel that are not written here are set to their defaults. Returns success if an DataChannel was written to.");
-#endif
 		Sig.bMemberFunction = true;
 		Sig.bRequiresExecPin = true;
 		Sig.bExperimental = true;
@@ -625,9 +748,7 @@ void UNiagaraDataInterfaceDataChannelWrite::GetFunctions(TArray<FNiagaraFunction
 	{
 		FNiagaraFunctionSignature Sig;
 		Sig.Name = NDIDataChannelWriteLocal::AppendName;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("AppendFunctionDescription", "Appends a new DataChannel to the end of the DataChannel array and writes the specified values. Values in the DataChannel that are not written here are set to their defaults. Returns success if an DataChannel was successfully pushed.");
-#endif
 		Sig.bMemberFunction = true;
 		Sig.bRequiresExecPin = true;
 		Sig.bExperimental = true;
@@ -638,6 +759,7 @@ void UNiagaraDataInterfaceDataChannelWrite::GetFunctions(TArray<FNiagaraFunction
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceDataChannelWrite::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {

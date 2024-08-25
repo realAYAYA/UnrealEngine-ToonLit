@@ -13,41 +13,39 @@
 class USDSTAGEIMPORTER_API SUsdOptionsWindow : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS( SUsdOptionsWindow ) : _OptionsObject( nullptr ) {}
-		SLATE_ARGUMENT( UObject*, OptionsObject )
-		SLATE_ARGUMENT( TSharedPtr<SWindow>, WidgetWindow )
-		SLATE_ARGUMENT( FText, AcceptText )
-		SLATE_ARGUMENT( const UE::FUsdStage*, Stage )
+	SLATE_BEGIN_ARGS(SUsdOptionsWindow)
+		: _OptionsObject(nullptr)
+	{
+	}
+	SLATE_ARGUMENT(UObject*, OptionsObject)
+	SLATE_ARGUMENT(TSharedPtr<SWindow>, WidgetWindow)
+	SLATE_ARGUMENT(FText, AcceptText)
+	SLATE_ARGUMENT(const UE::FUsdStage*, Stage)
 	SLATE_END_ARGS()
 
 public:
 	// Show the options window with the given text
-	static bool ShowOptions(
-		UObject& OptionsObject,
-		const FText& WindowTitle,
-		const FText& AcceptText,
-		const UE::FUsdStage* Stage = nullptr
-	);
+	static bool ShowOptions(UObject& OptionsObject, const FText& WindowTitle, const FText& AcceptText, const UE::FUsdStage* Stage = nullptr);
 
 	// Shortcut functions that show the standard import/export text
-	static bool ShowImportOptions( UObject& OptionsObject, const UE::FUsdStage* StageToImport );
-	static bool ShowExportOptions( UObject& OptionsObject );
+	static bool ShowImportOptions(UObject& OptionsObject, const UE::FUsdStage* StageToImport);
+	static bool ShowExportOptions(UObject& OptionsObject);
 
-	void Construct( const FArguments& InArgs );
+	void Construct(const FArguments& InArgs);
 	virtual bool SupportsKeyboardFocus() const override;
 
 	FReply OnAccept();
 	FReply OnCancel();
 
-	virtual FReply OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent ) override;
+	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 	bool UserAccepted() const;
 	TArray<FString> GetSelectedFullPrimPaths() const;
 
 private:
 	UObject* OptionsObject;
 
-	TWeakPtr< SWindow > Window;
-	TSharedPtr< class SUsdStagePreviewTree > StagePreviewTree;
+	TWeakPtr<SWindow> Window;
+	TSharedPtr<class SUsdStagePreviewTree> StagePreviewTree;
 
 	FText AcceptText;
 	bool bAccepted;

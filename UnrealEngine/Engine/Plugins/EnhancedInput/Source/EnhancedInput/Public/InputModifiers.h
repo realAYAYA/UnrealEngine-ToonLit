@@ -52,6 +52,65 @@ public:
 	FLinearColor GetVisualizationColor(FInputActionValue SampleValue, FInputActionValue FinalValue) const;
 };
 
+/** Behavior options for how the value is calculated in UInputModifierSmoothDelta. */
+UENUM()
+enum class ENormalizeInputSmoothingType : uint8
+{
+	None UMETA(Hidden),
+	Lerp,
+	Interp_To,
+	Interp_Constant_To,
+	Interp_Circular_In, 
+	Interp_Circular_Out, 
+	Interp_Circular_In_Out,
+	Interp_Ease_In, 
+	Interp_Ease_Out, 
+	Interp_Ease_In_Out,
+	Interp_Expo_In,
+	Interp_Expo_Out,
+	Interp_Expo_In_Out,
+	Interp_Sin_In,
+	Interp_Sin_Out,
+	Interp_Sin_In_Out
+};
+
+/**
+* Normalized Smooth Delta
+* 
+* Produces a smoothed normalized delta of the current(new) and last(old) input value.
+* Boolean input values will be returned as is.
+*/
+UCLASS(NotBlueprintable, MinimalAPI, meta = (DisplayName = "Smooth Delta"))
+class UInputModifierSmoothDelta : public UInputModifier
+{
+	GENERATED_BODY()
+
+public:
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = Settings, Config)
+	ENormalizeInputSmoothingType SmoothingMethod = ENormalizeInputSmoothingType::Lerp;
+
+	// Speed, or Alpha. If the speed given is 0, then jump to the target.
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = Settings, Config)
+	float Speed = 0.5f;
+
+	/**
+	 * For ease functions, this controls the degree of the curve.
+	 * 
+	 * This only affects the Interp_Ease_In, Interp_Ease_Out, and Interp_Ease_In_Out smoothing methods
+	 */
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = Settings, Config, meta=(EditCondition="SmoothingMethod == ENormalizeInputSmoothingType::Interp_Ease_In ||SmoothingMethod == ENormalizeInputSmoothingType::Interp_Ease_Out || SmoothingMethod == ENormalizeInputSmoothingType::Interp_Ease_In_Out"))
+	float EasingExponent = 2.0f;
+
+protected:
+	virtual FInputActionValue ModifyRaw_Implementation(const UEnhancedPlayerInput* PlayerInput, FInputActionValue CurrentValue, float DeltaTime) override;
+	
+	FVector OldValue = FVector::ZeroVector;
+    
+    FVector Delta = FVector::ZeroVector;
+};
+
+
 UENUM()
 enum class EDeadZoneType : uint8
 {
@@ -105,7 +164,13 @@ public:
 	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 #endif
 
-	// TODO: Detail customization to only show modifiable axes for the relevant binding? This thing has no idea what it's bound to...
+	/**
+	 * The scalar that will be applied to the input value.
+	 *
+	 * For example, if you have a scalar of (2.0, 2.0, 2.0), each input axis will be multiplied by 2.0.
+	 *  
+	 * Note: This will do nothing on boolean input action types, as they can only be true or false.
+	 */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category=Settings)
 	FVector Scalar = FVector::OneVector;
 

@@ -136,7 +136,8 @@ namespace SkeletalSimplifier
 			const float VolumeImportance,
 			const bool bVolumePreservation,
 			const bool bEnforceBoundaries,
-			const bool  bMergeCoincidentVertBones);
+			const bool bMergeCoincidentVertBones,
+			const bool bUseLegacyAttrGradient);
 
 		~FMeshSimplifier();
 
@@ -290,6 +291,9 @@ namespace SkeletalSimplifier
 
 		// --- End Magic numbers
 
+		// forces the simplifier to use the old attribute interpolation gradient method.  Needed for backward compatibilty with certain cloth assets
+		bool bUseLegacyAttrGrad;
+
 
 		// Heap that maps edges to the cost of collapse
 		FBinaryHeap<double>		CollapseCostHeap;
@@ -336,7 +340,7 @@ namespace SkeletalSimplifier
 		{
 			return FMeshSimplifier::WedgeQuadricType(
 				tri.verts[0]->vert, tri.verts[1]->vert, tri.verts[2]->vert,
-				this->BasicAttrWeights, this->AdditionalAttrWeights);
+				this->BasicAttrWeights, this->AdditionalAttrWeights, bUseLegacyAttrGrad);
 		};
 
 		return QuadricCache.GetWedgeQuadric(v, TriQuadricFatory);

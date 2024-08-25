@@ -5,43 +5,43 @@ import flow.describe
 
 #-------------------------------------------------------------------------------
 fzf_linux = flow.describe.Tool()
-fzf_linux.version("0.33.0")
+fzf_linux.version("0.44.1")
+fzf_linux.payload("https://github.com/junegunn/fzf/releases/download/$VERSION/fzf-$VERSION-linux_amd64.tar.gz")
+fzf_linux.sha1("e7780f1e5e2dd4c8aa5e94dcbcbedf4cebfaaceb")
 fzf_linux.platform("linux")
-fzf_linux.payload("https://github.com/junegunn/fzf/releases/download/0.33.0/fzf-0.33.0-linux_amd64.tar.gz")
 fzf_linux.bin("fzf")
-fzf_linux.sha1("41aeb1c7bc01c700614768a777c5df91919a180c")
 
 fzf_darwin = flow.describe.Tool()
-fzf_darwin.version("0.33.0")
+fzf_darwin.version("0.44.1")
+fzf_darwin.payload("https://github.com/junegunn/fzf/releases/download/$VERSION/fzf-$VERSION-darwin_amd64.zip")
+fzf_darwin.sha1("405156eb6fc3d5275774cc569e24feaed362eab5")
 fzf_darwin.platform("darwin")
-fzf_darwin.payload("https://github.com/junegunn/fzf/releases/download/0.33.0/fzf-0.33.0-darwin_amd64.zip")
 fzf_darwin.bin("fzf")
-fzf_darwin.sha1("f83505967ca3d0ad849a461029d60cd414e3ed76")
 
 
 
 #-------------------------------------------------------------------------------
 ripgrep_win32 = flow.describe.Tool()
-ripgrep_win32.version("13.0.0")
+ripgrep_win32.version("14.0.3")
+ripgrep_win32.payload("https://github.com/BurntSushi/ripgrep/releases/download/$VERSION/ripgrep-$VERSION-x86_64-pc-windows-msvc.zip")
+ripgrep_win32.sha1("5508b3dd5c12206c5d1c7994490bacf317cee0aa")
 ripgrep_win32.platform("win32")
-ripgrep_win32.payload("https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-pc-windows-msvc.zip")
 ripgrep_win32.bin("rg.exe")
-ripgrep_win32.sha1("f54ffef82c50d6079f211ed5348a81aa98274881")
-ripgrep_win32.source("https://github.com/BurntSushi/ripgrep/releases/latest", "ripgrep-(\d+\.\d+\.\d+)-x86_64")
+ripgrep_win32.source("https://github.com/BurntSushi/ripgrep/releases/latest", r"ripgrep-(\d+\.\d+\.\d+)-x86_64")
 
 ripgrep_linux = flow.describe.Tool()
-ripgrep_linux.version("13.0.0")
+ripgrep_linux.version("14.0.3")
+ripgrep_linux.payload("https://github.com/BurntSushi/ripgrep/releases/download/$VERSION/ripgrep-$VERSION-x86_64-unknown-linux-musl.tar.gz")
+ripgrep_linux.sha1("25a759834819f91625ac739c890a4b0139df7b63")
 ripgrep_linux.platform("linux")
-ripgrep_linux.payload("https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-unknown-linux-musl.tar.gz")
 ripgrep_linux.bin("rg")
-ripgrep_linux.sha1("eae550a5ed0fcef8bc555c9ec41c593b8b5aea46")
 
 ripgrep_darwin = flow.describe.Tool()
-ripgrep_darwin.version("13.0.0")
+ripgrep_darwin.version("14.0.3")
+ripgrep_darwin.payload("https://github.com/BurntSushi/ripgrep/releases/download/$VERSION/ripgrep-$VERSION-x86_64-apple-darwin.tar.gz")
+ripgrep_darwin.sha1("d5af393ea9b5a443544edc686cf939f517be35ea")
 ripgrep_darwin.platform("darwin")
-ripgrep_darwin.payload("https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-apple-darwin.tar.gz")
 ripgrep_darwin.bin("rg")
-ripgrep_darwin.sha1("f09500e866c49c641ecb42fd8a0089d664d7d385")
 
 
 
@@ -147,6 +147,31 @@ ddc_auth.source("cmds/ddc.py", "Auth")
 ddc_auth.invoke("ddc", "auth")
 
 #-------------------------------------------------------------------------------
+zen_start = flow.describe.Command()
+zen_start.source("cmds/zen.py", "Start")
+zen_start.invoke("zen", "start")
+
+zen_stop = flow.describe.Command()
+zen_stop.source("cmds/zen.py", "Stop")
+zen_stop.invoke("zen", "stop")
+
+zen_dashboard = flow.describe.Command()
+zen_dashboard.source("cmds/zen.py", "Dashboard")
+zen_dashboard.invoke("zen", "dashboard")
+
+zen_status = flow.describe.Command()
+zen_status.source("cmds/zen.py", "Status")
+zen_status.invoke("zen", "status")
+
+zen_version = flow.describe.Command()
+zen_version.source("cmds/zen.py", "Version")
+zen_version.invoke("zen", "version")
+
+zen_importsnapshot = flow.describe.Command()
+zen_importsnapshot.source("cmds/zen.py", "ImportSnapshot")
+zen_importsnapshot.invoke("zen", "importsnapshot")
+
+#-------------------------------------------------------------------------------
 sln_generate = flow.describe.Command()
 sln_generate.source("cmds/sln.py", "Generate")
 sln_generate.invoke("sln", "generate")
@@ -217,29 +242,15 @@ tips.prefix("$")
 
 #-------------------------------------------------------------------------------
 vswhere = flow.describe.Tool()
-vswhere.version("3.0.1")
+vswhere.version("3.1.7")
+vswhere.payload("https://github.com/microsoft/vswhere/releases/download/$VERSION/vswhere.exe")
+vswhere.sha1("e3fa9b2db259d8875170717469779ea1280c8466")
 vswhere.platform("win32")
-vswhere.payload("https://github.com/microsoft/vswhere/releases/download/3.0.1/vswhere.exe")
 vswhere.bin("vswhere.exe")
-vswhere.sha1("209d10bd07c6dc032ad26b40e4d93227c7c385fb")
-vswhere.source("https://github.com/microsoft/vswhere/releases", "(\d+\.\d+\.\d+)/vswhere.exe")
-
-
-
-#-------------------------------------------------------------------------------
-def _add_debugger(name):
-    extension = flow.describe.Extension()
-    extension.source(f"debuggers/{name}.py", "Debugger")
-    extension.mount("debuggers", name)
-    globals()[name] = extension
-
-_add_debugger("lldb")
-if sys.platform == "win32":
-    _add_debugger("vs")
+vswhere.source("https://github.com/microsoft/vswhere/releases", r"(\d+\.\d+\.\d+)/vswhere.exe")
 
 
 
 #-------------------------------------------------------------------------------
 unreal = flow.describe.Channel()
 unreal.version("0")
-unreal.extendable("debuggers")

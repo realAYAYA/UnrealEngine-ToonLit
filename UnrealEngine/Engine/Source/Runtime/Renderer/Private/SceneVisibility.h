@@ -11,25 +11,6 @@ class FVisibilityTaskData;
 class FSceneRenderer;
 class FInstanceCullingManager;
 class FVirtualTextureUpdater;
-class FGlobalDynamicIndexBuffer;
-class FGlobalDynamicVertexBuffer;
-class FGlobalDynamicReadBuffer;
-
-struct FGlobalDynamicBuffers
-{
-	FGlobalDynamicBuffers(
-		FGlobalDynamicIndexBuffer& InDynamicIndexBuffer,
-		FGlobalDynamicVertexBuffer& InDynamicVertexBuffer,
-		FGlobalDynamicReadBuffer& InDynamicReadBuffer)
-		: Index(&InDynamicIndexBuffer)
-		, Vertex(&InDynamicVertexBuffer)
-		, Read(&InDynamicReadBuffer)
-	{}
-
-	FGlobalDynamicIndexBuffer* Index;
-	FGlobalDynamicVertexBuffer* Vertex;
-	FGlobalDynamicReadBuffer* Read;
-};
 
 class FViewCommands
 {
@@ -45,6 +26,7 @@ public:
 	TStaticArray<FMeshCommandOneFrameArray, EMeshPass::Num> MeshCommands;
 	TStaticArray<int32, EMeshPass::Num> NumDynamicMeshCommandBuildRequestElements;
 	TStaticArray<TArray<const FStaticMeshBatch*, SceneRenderingAllocator>, EMeshPass::Num> DynamicMeshCommandBuildRequests;
+	TStaticArray<TArray<EMeshDrawCommandCullingPayloadFlags, SceneRenderingAllocator>, EMeshPass::Num> DynamicMeshCommandBuildFlags;
 };
 
 class IVisibilityTaskData
@@ -52,8 +34,14 @@ class IVisibilityTaskData
 public:
 	virtual ~IVisibilityTaskData() {}
 
+	/** [Optional] Call to allow early processing of async GDME tasks when it is safe to do so. Otherwise, this is automatically called from ProcessRenderThreadTasks. */
+	virtual void StartGatherDynamicMeshElements() = 0;
+
 	/** Processes all visibility tasks that must be performed on the render thread. */
-	virtual void ProcessRenderThreadTasks(FExclusiveDepthStencil::Type BasePassDepthStencilAccess, FInstanceCullingManager& InstanceCullingManager, FVirtualTextureUpdater* VirtualTextureUpdater) = 0;
+	virtual void ProcessRenderThreadTasks() = 0;
+
+	/** Called to finish processing of the GDME tasks. */
+	virtual void FinishGatherDynamicMeshElements(FExclusiveDepthStencil::Type BasePassDepthStencilAccess, FInstanceCullingManager& InstanceCullingManager, FVirtualTextureUpdater* VirtualTextureUpdater) = 0;
 
 	/** Waits for the task graph and cleans up. */
 	virtual void Finish() = 0;
@@ -79,4 +67,4 @@ public:
 	//////////////////////////////////////////////////////////////////////////////
 };
 
-extern IVisibilityTaskData* LaunchVisibilityTasks(FRHICommandListImmediate& RHICmdList, FSceneRenderer& SceneRenderer, FGlobalDynamicBuffers GlobalDynamicBuffers);
+extern IVisibilityTaskData* LaunchVisibilityTasks(FRHICommandListImmediate& RHICmdList, FSceneRenderer& SceneRenderer, const UE::Tasks::FTask& BeginInitVisibilityTaskPrerequisites);

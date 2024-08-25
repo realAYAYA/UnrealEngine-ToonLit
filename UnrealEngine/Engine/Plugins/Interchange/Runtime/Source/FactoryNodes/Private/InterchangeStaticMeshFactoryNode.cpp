@@ -90,6 +90,48 @@ UClass* UInterchangeStaticMeshFactoryNode::GetObjectClass() const
 #endif
 }
 
+#if WITH_EDITOR
+
+FString UInterchangeStaticMeshFactoryNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
+{
+	FString KeyDisplayName = NodeAttributeKey.ToString();
+	const FString OriginalKeyName = KeyDisplayName;
+	if (NodeAttributeKey == UE::Interchange::FStaticMeshNodeStaticData::GetSocketUidsBaseKey())
+	{
+		KeyDisplayName = TEXT("Socket Count");
+	}
+	else if (NodeAttributeKey == UE::Interchange::FStaticMeshNodeStaticData::GetSocketUidsBaseKey())
+	{
+		KeyDisplayName = TEXT("Socket Index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = OriginalKeyName.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < OriginalKeyName.Len())
+		{
+			KeyDisplayName += OriginalKeyName.RightChop(IndexPosition);
+		}
+	}
+	else
+	{
+		KeyDisplayName = Super::GetKeyDisplayName(NodeAttributeKey);
+	}
+
+	return KeyDisplayName;
+}
+
+FString UInterchangeStaticMeshFactoryNode::GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
+{
+	if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FStaticMeshNodeStaticData::GetSocketUidsBaseKey().ToString()))
+	{
+		return TEXT("Sockets");
+	}
+	else
+	{
+		return Super::GetAttributeCategory(NodeAttributeKey);
+	}
+}
+
+#endif //WITH_EDITOR
+
 bool UInterchangeStaticMeshFactoryNode::GetCustomBuildNanite(bool& AttributeValue) const
 {
 	IMPLEMENT_NODE_ATTRIBUTE_GETTER(BuildNanite, bool)

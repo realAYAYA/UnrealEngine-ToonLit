@@ -6,52 +6,91 @@
 #include "RigVMCore/RigVMTypeIndex.h"
 #include "RigVMCore/RigVMUnknownType.h"
 #include "UObject/Interface.h"
+#include "Engine/UserDefinedEnum.h"
 #include "Engine/UserDefinedStruct.h"
 #include "UObject/CoreRedirects.h"
 #include "UObject/Package.h"
+#include "UObject/SoftObjectPath.h"
+
+struct FRigVMTemplateArgumentType;
+
+struct RIGVM_API FRigVMUserDefinedTypeResolver
+{
+	FRigVMUserDefinedTypeResolver() = default;
+	explicit FRigVMUserDefinedTypeResolver(const TFunction<UObject*(const FString&)>& InResolver) : Resolver(InResolver) {}
+	explicit FRigVMUserDefinedTypeResolver(TMap<FString, FSoftObjectPath>&& InObjectMap) : ObjectMap(InObjectMap) {} 
+	
+	UObject* GetTypeObjectByName(const FString& InTypeName) const
+	{
+		if (Resolver)
+		{
+			return Resolver(InTypeName);
+		}
+		
+		if (const FSoftObjectPath *ObjectPath = ObjectMap.Find(InTypeName))
+		{
+			return ObjectPath->TryLoad();
+		}
+		return nullptr;
+	}
+
+	bool IsValid() const
+	{
+		return Resolver || !ObjectMap.IsEmpty();
+	}
+	
+private:
+	TFunction<UObject*(const FString&)> Resolver;
+	TMap<FString, FSoftObjectPath> ObjectMap;
+};
 
 namespace RigVMTypeUtils
 {
 	const TCHAR TArrayPrefix[] = TEXT("TArray<");
 	const TCHAR TObjectPtrPrefix[] = TEXT("TObjectPtr<");
+	const TCHAR TSubclassOfPrefix[] = TEXT("TSubclassOf<");
 	const TCHAR TScriptInterfacePrefix[] = TEXT("TScriptInterface<");
 	const TCHAR TArrayTemplate[] = TEXT("TArray<%s>");
 	const TCHAR TObjectPtrTemplate[] = TEXT("TObjectPtr<%s%s>");
+	const TCHAR TSubclassOfTemplate[] = TEXT("TSubclassOf<%s%s>");
 	const TCHAR TScriptInterfaceTemplate[] = TEXT("TScriptInterface<%s%s>");
 
-	const FString BoolType = TEXT("bool");
-	const FString FloatType = TEXT("float");
-	const FString DoubleType = TEXT("double");
-	const FString Int32Type = TEXT("int32");
-	const FString UInt32Type = TEXT("uint32");
-	const FString UInt8Type = TEXT("uint8");
-	const FString FNameType = TEXT("FName");
-	const FString FStringType = TEXT("FString");
-	const FString BoolArrayType = TEXT("TArray<bool>");
-	const FString FloatArrayType = TEXT("TArray<float>");
-	const FString DoubleArrayType = TEXT("TArray<double>");
-	const FString Int32ArrayType = TEXT("TArray<int32>");
-	const FString UInt32ArrayType = TEXT("TArray<uint32>");
-	const FString UInt8ArrayType = TEXT("TArray<uint8>");
-	const FString FNameArrayType = TEXT("TArray<FName>");
-	const FString FStringArrayType = TEXT("TArray<FString>");
+	const inline TCHAR* BoolType = TEXT("bool");
+	const inline TCHAR* FloatType = TEXT("float");
+	const inline TCHAR* DoubleType = TEXT("double");
+	const inline TCHAR* Int32Type = TEXT("int32");
+	const inline TCHAR* UInt32Type = TEXT("uint32");
+	const inline TCHAR* UInt8Type = TEXT("uint8");
+	const inline TCHAR* FNameType = TEXT("FName");
+	const inline TCHAR* FStringType = TEXT("FString");
+	const inline TCHAR* FTextType = TEXT("FText");
+	const inline TCHAR* BoolArrayType = TEXT("TArray<bool>");
+	const inline TCHAR* FloatArrayType = TEXT("TArray<float>");
+	const inline TCHAR* DoubleArrayType = TEXT("TArray<double>");
+	const inline TCHAR* Int32ArrayType = TEXT("TArray<int32>");
+	const inline TCHAR* UInt32ArrayType = TEXT("TArray<uint32>");
+	const inline TCHAR* UInt8ArrayType = TEXT("TArray<uint8>");
+	const inline TCHAR* FNameArrayType = TEXT("TArray<FName>");
+	const inline TCHAR* FStringArrayType = TEXT("TArray<FString>");
+	const inline TCHAR* FTextArrayType = TEXT("TArray<FText>");
 
-	const FName BoolTypeName = *BoolType;
-	const FName FloatTypeName = *FloatType;
-	const FName DoubleTypeName = *DoubleType;
-	const FName Int32TypeName = *Int32Type;
-	const FName UInt32TypeName = *UInt32Type;
-	const FName UInt8TypeName = *UInt8Type;
-	const FName FNameTypeName = *FNameType;
-	const FName FStringTypeName = *FStringType;
-	const FName BoolArrayTypeName = *BoolArrayType;
-	const FName FloatArrayTypeName = *FloatArrayType;
-	const FName DoubleArrayTypeName = *DoubleArrayType;
-	const FName Int32ArrayTypeName = *Int32ArrayType;
-	const FName UInt32ArrayTypeName = *UInt32ArrayType;
-	const FName UInt8ArrayTypeName = *UInt8ArrayType;
-	const FName FNameArrayTypeName = *FNameArrayType;
-	const FName FStringArrayTypeName = *FStringArrayType;
+	const FLazyName BoolTypeName(BoolType);
+	const FLazyName FloatTypeName(FloatType);
+	const FLazyName DoubleTypeName(DoubleType);
+	const FLazyName Int32TypeName(Int32Type);
+	const FLazyName UInt32TypeName(UInt32Type);
+	const FLazyName UInt8TypeName(UInt8Type);
+	const FLazyName FNameTypeName(FNameType);
+	const FLazyName FStringTypeName(FStringType);
+	const FLazyName FTextTypeName(FTextType);
+	const FLazyName BoolArrayTypeName(BoolArrayType);
+	const FLazyName FloatArrayTypeName(FloatArrayType);
+	const FLazyName DoubleArrayTypeName(DoubleArrayType);
+	const FLazyName Int32ArrayTypeName(Int32ArrayType);
+	const FLazyName UInt32ArrayTypeName(UInt32ArrayType);
+	const FLazyName UInt8ArrayTypeName(UInt8ArrayType);
+	const FLazyName FNameArrayTypeName(FNameArrayType);
+	const FLazyName FStringArrayTypeName(FStringArrayType);
 
 	class RIGVM_API TypeIndex
 	{
@@ -94,11 +133,16 @@ namespace RigVMTypeUtils
 		return InCPPType.RightChop(7).LeftChop(1).TrimStartAndEnd();
 	}
 
+	inline FString GetUniqueStructTypeName(const FGuid& InStructGuid)
+	{
+		return FString::Printf(TEXT("FUserDefinedStruct_%s"), *InStructGuid.ToString());
+	}
+
 	inline FString GetUniqueStructTypeName(const UScriptStruct* InScriptStruct)
 	{
 		if (const UUserDefinedStruct* UserDefinedStruct = Cast<UUserDefinedStruct>(InScriptStruct))
 		{
-			return FString::Printf(TEXT("FUserDefinedStruct_%s"), *UserDefinedStruct->GetCustomGuid().ToString());
+			return GetUniqueStructTypeName(UserDefinedStruct->GetCustomGuid());
 		}
 
 		return InScriptStruct->GetStructCPPName();
@@ -106,14 +150,17 @@ namespace RigVMTypeUtils
 
 	inline FString CPPTypeFromEnum(const UEnum* InEnum)
 	{
-		check(InEnum);
-
 		FString CPPType = InEnum->CppType;
 		if(CPPType.IsEmpty()) // this might be a user defined enum
 		{
-			CPPType = InEnum->GetName();
+			CPPType = FString::Printf(TEXT("EUserDefinedEnum_%s_%08x"), *InEnum->GetName(), GetTypeHash(InEnum->GetPathName()));
 		}
 		return CPPType;
+	}
+
+	inline bool IsUClassType(const FString& InCPPType)
+	{
+		return InCPPType.StartsWith(TSubclassOfPrefix);
 	}
 
 	inline bool IsUObjectType(const FString& InCPPType)
@@ -172,6 +219,7 @@ namespace RigVMTypeUtils
 			TEXT("TArray<TObjectPtr<"),
 			TEXT("TArray<TArray<TObjectPtr<"),
 			TEXT("TScriptInterface<")
+			TEXT("TSubclassOf<")
 		};
 		static const TArray<FString> PrefixesNotRequiringCPPTypeObject = {
 			TEXT("UInt"), 
@@ -274,11 +322,26 @@ namespace RigVMTypeUtils
 		return Object;
 	}
 
-	static FString CPPTypeFromObject(const UObject* InCPPTypeObject)
+	// A UClass argument is used to signify both the object type and its class type.
+	// This argument differentiates between the two
+	enum class EClassArgType
+	{
+		// This type signifies a class
+		AsClass,
+
+		// This type signifies an object 
+		AsObject
+	};
+
+	static FString CPPTypeFromObject(const UObject* InCPPTypeObject, EClassArgType InClassArgType = EClassArgType::AsObject)
 	{
 		if (const UClass* Class = Cast<UClass>(InCPPTypeObject))
 		{
-			if (Class->IsChildOf(UInterface::StaticClass()))
+			if (InClassArgType == EClassArgType::AsClass)
+			{
+				return FString::Printf(RigVMTypeUtils::TSubclassOfPrefix, Class->GetPrefixCPP(), *Class->GetName());
+			}
+			else if (Class->IsChildOf(UInterface::StaticClass()))
 			{
 				return FString::Printf(RigVMTypeUtils::TScriptInterfaceTemplate, TEXT("I"), *Class->GetName());
 			}
@@ -299,8 +362,11 @@ namespace RigVMTypeUtils
 		return FString();
 	}
 
+	// Finds the CPPTypeObject from a CPP type of a potentially missing / unloaded user defined struct or enum
+	RIGVM_API UObject* UserDefinedTypeFromCPPType(FString& InOutCPPType, const FRigVMUserDefinedTypeResolver* InTypeResolver = nullptr);
+
 	// Finds the CPPTypeObject from the CPPType. If not found, tries to use redirectors and modifies the InOutCPPType.
-	static UObject* ObjectFromCPPType(FString& InOutCPPType, bool bUseRedirector = true)
+	static UObject* ObjectFromCPPType(FString& InOutCPPType, bool bUseRedirector = true, const FRigVMUserDefinedTypeResolver* InTypeResolver = nullptr)
 	{
 		if (!RequiresCPPTypeObject(InOutCPPType))
 		{
@@ -314,9 +380,23 @@ namespace RigVMTypeUtils
 			BaseCPPType = BaseTypeFromArrayType(BaseCPPType);
 		}
 		FString CPPType = BaseCPPType;
+		const bool bIsClass = CPPType.StartsWith(TSubclassOfPrefix);
 
+		static const FString PrefixObjectPtr = TObjectPtrPrefix;
+		static const FString PrefixSubclassOf = TSubclassOfPrefix;
 		static const FString PrefixScriptInterface = TScriptInterfacePrefix;
-		if (CPPType.StartsWith(TScriptInterfacePrefix))
+
+		if (CPPType.StartsWith(PrefixObjectPtr))
+		{
+			// Chop the prefix + the U indicating object class
+			CPPType = CPPType.RightChop(PrefixObjectPtr.Len() + 1).LeftChop(1);
+		}
+		else if (CPPType.StartsWith(PrefixSubclassOf))
+		{
+			// Chop the prefix + the U indicating object class
+			CPPType = CPPType.RightChop(PrefixSubclassOf.Len() + 1).LeftChop(1);
+		}
+		else if (CPPType.StartsWith(TScriptInterfacePrefix))
 		{
 			// Chop the prefix + the I indicating interface class
 			CPPType = CPPType.RightChop(PrefixScriptInterface.Len() + 1).LeftChop(1);
@@ -336,21 +416,28 @@ namespace RigVMTypeUtils
 
 		if(CPPTypeObject == nullptr)
 		{
+			CPPType = BaseCPPType;
+			CPPTypeObject = UserDefinedTypeFromCPPType(CPPType, InTypeResolver);
+		}
+
+		if(CPPTypeObject == nullptr)
+		{
 			InOutCPPType.Reset();
 			return nullptr;
 		}
 
-		CPPType = CPPTypeFromObject(CPPTypeObject);
+		CPPType = CPPTypeFromObject(CPPTypeObject, bIsClass ? EClassArgType::AsClass : EClassArgType::AsObject);
 		InOutCPPType.ReplaceInline(*BaseCPPType, *CPPType);
 		return CPPTypeObject;
 	}
 
-	static FString PostProcessCPPType(const FString& InCPPType, UObject* InCPPTypeObject = nullptr)
+	static FString PostProcessCPPType(const FString& InCPPType, UObject* InCPPTypeObject = nullptr, const FRigVMUserDefinedTypeResolver* InResolvalInfo = nullptr)
 	{
 		FString CPPType = InCPPType;
 		if (InCPPTypeObject)
 		{
-			CPPType = CPPTypeFromObject(InCPPTypeObject);	
+			const bool bIsClass = CPPType.StartsWith(TSubclassOfPrefix);
+			CPPType = CPPTypeFromObject(InCPPTypeObject, bIsClass ? EClassArgType::AsClass : EClassArgType::AsObject);
 			if(CPPType != InCPPType)
 			{
 				FString TemplateType = InCPPType;
@@ -364,7 +451,7 @@ namespace RigVMTypeUtils
 		else if (RequiresCPPTypeObject(CPPType))
 		{
 			// Uses redirectors and updates the CPPType if necessary
-			ObjectFromCPPType(CPPType, true);
+			ObjectFromCPPType(CPPType, true, InResolvalInfo);
 		}
 	
 		return CPPType;
@@ -419,5 +506,52 @@ namespace RigVMTypeUtils
 	static T* FindObjectFromCPPTypeObjectPath(const FString& InObjectPath)
 	{
 		return Cast<T>(FindObjectFromCPPTypeObjectPath(InObjectPath));
+	}
+
+	static bool AreCompatible(const FProperty* InSourceProperty, const FProperty* InTargetProperty)
+	{
+		bool bCompatible = InSourceProperty->SameType(InTargetProperty);
+		if (!bCompatible)
+		{
+			if(const FFloatProperty* TargetFloatProperty = CastField<FFloatProperty>(InTargetProperty))
+			{
+				bCompatible = InSourceProperty->IsA<FDoubleProperty>();
+			}
+			else if(const FDoubleProperty* TargetDoubleProperty = CastField<FDoubleProperty>(InTargetProperty))
+			{
+				bCompatible = InSourceProperty->IsA<FFloatProperty>();
+			}
+			else if (const FByteProperty* TargetByteProperty = CastField<FByteProperty>(InTargetProperty))
+			{
+				bCompatible = InSourceProperty->IsA<FEnumProperty>();
+			}
+			else if (const FEnumProperty* TargetEnumProperty = CastField<FEnumProperty>(InTargetProperty))
+			{
+				bCompatible = InSourceProperty->IsA<FByteProperty>();
+			}
+			else if(const FArrayProperty* TargetArrayProperty = CastField<FArrayProperty>(InTargetProperty))
+			{
+				if(const FArrayProperty* SourceArrayProperty = CastField<FArrayProperty>(InSourceProperty))
+				{
+					if(TargetArrayProperty->Inner->IsA<FFloatProperty>())
+					{
+						bCompatible = SourceArrayProperty->Inner->IsA<FDoubleProperty>();
+					}
+					else if(TargetArrayProperty->Inner->IsA<FDoubleProperty>())
+					{
+						bCompatible = SourceArrayProperty->Inner->IsA<FFloatProperty>();
+					}
+					else if(FByteProperty* TargetArrayInnerByteProperty = CastField<FByteProperty>(TargetArrayProperty->Inner))
+					{
+						bCompatible = SourceArrayProperty->Inner->IsA<FEnumProperty>();
+					}
+					else if(FEnumProperty* TargetArrayInnerEnumProperty = CastField<FEnumProperty>(TargetArrayProperty->Inner))
+					{
+						bCompatible = SourceArrayProperty->Inner->IsA<FByteProperty>();
+					}
+				}
+			}
+		}
+		return bCompatible;
 	}
 }

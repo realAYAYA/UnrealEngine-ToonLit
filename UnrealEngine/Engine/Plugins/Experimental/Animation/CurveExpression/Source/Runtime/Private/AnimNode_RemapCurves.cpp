@@ -16,20 +16,32 @@ void FAnimNode_RemapCurves::Evaluate_AnyThread(FPoseContext& Output)
 	SourcePose.Evaluate(SourceData);
 	
 	FBlendedCurve Curve;
+	Curve.CopyFrom(SourceData.Curve);
 	Curve.Reserve(GetCompiledAssignments().Num());
 	
 	for (const TTuple<FName, FExpressionObject>& Assignment: GetCompiledAssignments())
 	{
-		Curve.Add(Assignment.Key, FEngine().Execute(Assignment.Value,
+		const float Value = FEngine().Execute(Assignment.Value,
 			[&SourceCurve = SourceData.Curve](const FName InName) -> TOptional<float>
 			{
 				return SourceCurve.Get(InName);
 			}
-		));
+		);
+		
+		// If the value is valid, set the curve's value. If the value is NaN, remove the curve, since it's a signal
+		// for removal from the expression (i.e. `undef()` was used).
+		if (!FMath::IsNaN(Value))
+		{
+			Curve.Set(Assignment.Key, Value);
+		}
+		else
+		{
+			Curve.InvalidateCurveWeight(Assignment.Key);
+		}
 	}
 	
 	Output = SourceData;
-	Output.Curve.Combine(Curve);
+	Output.Curve.MoveFrom(Curve);
 }
 
 bool FAnimNode_RemapCurves::Serialize(FArchive& Ar)

@@ -105,6 +105,7 @@ public:
 	NIAGARAEDITOR_API virtual FText GetTooltipText() const override;
 	NIAGARAEDITOR_API virtual bool GetIsEnabled() const override;
 	NIAGARAEDITOR_API virtual UObject* GetExternalAsset() const override;
+	virtual bool SupportsStackNotes() override { return true; }
 	virtual bool SupportsCut() const override { return true; }
 	NIAGARAEDITOR_API virtual bool TestCanCutWithMessage(FText& OutMessage) const override;
 	NIAGARAEDITOR_API virtual FText GetCutTransactionText() const override;
@@ -189,6 +190,9 @@ public:
 
 	/** Sets this input's local value. */
 	NIAGARAEDITOR_API void SetLocalValue(TSharedRef<FStructOnScope> InLocalValue);
+
+	/** Sets this input's data interface value. */
+	NIAGARAEDITOR_API void SetDataInterfaceValue(const UNiagaraDataInterface& InDataInterface);
 	
 	/** Returns whether or not the value or handle of this input has been overridden and can be reset. */
 	NIAGARAEDITOR_API bool CanReset() const;
@@ -403,6 +407,8 @@ private:
 	NIAGARAEDITOR_API UNiagaraScript* FindConversionScript(const FNiagaraTypeDefinition& FromType, TMap<FNiagaraTypeDefinition, UNiagaraScript*>& ConversionScriptCache, bool bIncludeConversionScripts) const;
 
 	NIAGARAEDITOR_API bool FilterInlineChildren(const UNiagaraStackEntry& Child) const;
+
+	void ReportScriptVersionChange() const;
 
 private:
 	/** The module function call which owns this input entry. NOTE: This input might not be an input to the module function

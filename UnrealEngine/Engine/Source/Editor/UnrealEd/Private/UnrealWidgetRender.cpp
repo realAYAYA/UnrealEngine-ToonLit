@@ -13,6 +13,7 @@
 #include "SnappingUtils.h"
 #include "DynamicMeshBuilder.h"
 #include "CanvasTypes.h"
+#include "EditorInteractiveGizmoManager.h"
 
 /*
  *  Simple struct used to create and group data related to the current window's / viewport's space,
@@ -187,11 +188,7 @@ void FWidget::Render( const FSceneView* View,FPrimitiveDrawInterface* PDI, FEdit
 	bool bUseLegacyWidget = (WidgetMode == UE::Widget::EWidgetMode::WM_TranslateRotateZ || WidgetMode == UE::Widget::EWidgetMode::WM_2D);
 	if (!bUseLegacyWidget)
 	{
-		static IConsoleVariable* const UseLegacyWidgetCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("Gizmos.UseLegacyWidget"));
-		if (ensure(UseLegacyWidgetCVar))
-		{
-			bUseLegacyWidget = UseLegacyWidgetCVar->GetInt() > 0;
-		}
+		bUseLegacyWidget = !UEditorInteractiveGizmoManager::UsesNewTRSGizmos();
 	}
 
 	bool bDrawWidget;

@@ -3,14 +3,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "IConcertSyncClient.h"
-#include "Misc/ITransaction.h"
-#include "IConcertClientWorkspace.h"
-#include "IConcertSessionHandler.h"
+#include "ConcertBridges.h"
 #include "ConcertSyncSessionFlags.h"
 #include "ConcertWorkspaceMessages.h"
 #include "ConcertClientWorkspaceData.h"
+#include "ConcertSyncClientLiveSession.h"
 #include "Delegates/Delegate.h"
+#include "IConcertSyncClient.h"
+#include "IConcertClientWorkspace.h"
+#include "IConcertSessionHandler.h"
 
 class IConcertClientSession;
 class IConcertClientPackageBridge;
@@ -24,6 +25,17 @@ class FConcertSyncClientLiveSession;
 class ISourceControlProvider;
 class FConcertClientDataStore;
 
+namespace UE::ConcertSyncClient
+{
+	struct FSessionBindArgs
+	{
+		TSharedPtr<FConcertSyncClientLiveSession> LiveSession;
+		FConcertBridges Bridges;
+		
+		bool IsValid() const { return LiveSession->IsValidSession() && Bridges.IsValid(); }
+	};
+}
+
 struct FScopedSlowTask;
 
 DECLARE_MULTICAST_DELEGATE(FOnWorkspaceEndFrameCompleted);
@@ -31,7 +43,7 @@ DECLARE_MULTICAST_DELEGATE(FOnWorkspaceEndFrameCompleted);
 class FConcertClientWorkspace : public IConcertClientWorkspace
 {
 public:
-	FConcertClientWorkspace(TSharedRef<FConcertSyncClientLiveSession> InLiveSession, IConcertClientPackageBridge* InPackageBridge, IConcertClientTransactionBridge* InTransactionBridge, TSharedPtr<IConcertFileSharingService> InFileSharingService, IConcertSyncClient* InOwnerSyncClient);
+	FConcertClientWorkspace(const UE::ConcertSyncClient::FSessionBindArgs& SessionBindArgs, TSharedPtr<IConcertFileSharingService> InFileSharingService, IConcertSyncClient* InOwnerSyncClient);
 	virtual ~FConcertClientWorkspace();
 
 	// IConcertClientWorkspace interface
@@ -80,7 +92,7 @@ public:
 private:
 
 	/** Bind the workspace to this session. */
-	void BindSession(TSharedPtr<FConcertSyncClientLiveSession> InLiveSession, IConcertClientPackageBridge* InPackageBridge, IConcertClientTransactionBridge* InTransactionBridge);
+	void BindSession(const UE::ConcertSyncClient::FSessionBindArgs& SessionBindArgs);
 
 	/** Unbind the workspace to its bound session. */
 	void UnbindSession();

@@ -21,6 +21,7 @@
 FLevelSequenceEditorSpawnRegister::FLevelSequenceEditorSpawnRegister()
 {
 	bShouldClearSelectionCache = true;
+	bIsEngineCollectingGarbage = false;
 
 	FLevelEditorModule& LevelEditor = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
 	OnActorSelectionChangedHandle = LevelEditor.OnActorSelectionChanged().AddRaw(this, &FLevelSequenceEditorSpawnRegister::HandleActorSelectionChanged);
@@ -31,6 +32,9 @@ FLevelSequenceEditorSpawnRegister::FLevelSequenceEditorSpawnRegister()
 	OnObjectModifiedHandle = FCoreUObjectDelegates::OnObjectModified.AddRaw(this, &FLevelSequenceEditorSpawnRegister::OnObjectModified);
 	OnObjectSavedHandle    = FCoreUObjectDelegates::OnObjectPreSave.AddRaw(this, &FLevelSequenceEditorSpawnRegister::OnPreObjectSaved);
 #endif
+
+	OnPreGarbageCollectHandle = FCoreUObjectDelegates::GetPreGarbageCollectDelegate().AddRaw(this, &FLevelSequenceEditorSpawnRegister::UpdateIsEngineCollectingGarbage, true);
+	OnPostGarbageCollectHandle = FCoreUObjectDelegates::GetPostGarbageCollect().AddRaw(this, &FLevelSequenceEditorSpawnRegister::UpdateIsEngineCollectingGarbage, false);
 }
 
 
@@ -53,17 +57,20 @@ FLevelSequenceEditorSpawnRegister::~FLevelSequenceEditorSpawnRegister()
 	FCoreUObjectDelegates::OnObjectModified.Remove(OnObjectModifiedHandle);
 	FCoreUObjectDelegates::OnObjectPreSave.Remove(OnObjectSavedHandle);
 #endif
+
+	FCoreUObjectDelegates::GetPostGarbageCollect().Remove(OnPostGarbageCollectHandle);
+	FCoreUObjectDelegates::GetPreGarbageCollectDelegate().Remove(OnPreGarbageCollectHandle);
 }
 
 
 /* FLevelSequenceSpawnRegister interface
  *****************************************************************************/
 
-UObject* FLevelSequenceEditorSpawnRegister::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player)
+UObject* FLevelSequenceEditorSpawnRegister::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState)
 {
 	TGuardValue<bool> Guard(bShouldClearSelectionCache, false);
 
-	UObject* NewObject = FLevelSequenceSpawnRegister::SpawnObject(Spawnable, TemplateID, Player);
+	UObject* NewObject = FLevelSequenceSpawnRegister::SpawnObject(Spawnable, TemplateID, SharedPlaybackState);
 	
 	if (AActor* NewActor = Cast<AActor>(NewObject))
 	{
@@ -105,7 +112,7 @@ void FLevelSequenceEditorSpawnRegister::PreDestroyObject(UObject& Object, const 
 		if (TrackedState && TrackedState->bHasBeenModified)
 		{
 			// SaveDefaultSpawnableState will reset bHasBeenModified to false
-			SaveDefaultSpawnableStateImpl(*Spawnable, Sequence, SpawnedObject, *Sequencer);
+			SaveDefaultSpawnableStateImpl(*Spawnable, Sequence, SpawnedObject, Sequencer->GetSharedPlaybackState());
 
 			Sequence->MarkPackageDirty();
 		}
@@ -125,14 +132,14 @@ void FLevelSequenceEditorSpawnRegister::PreDestroyObject(UObject& Object, const 
 	FLevelSequenceSpawnRegister::PreDestroyObject(Object, BindingId, TemplateID);
 }
 
-void FLevelSequenceEditorSpawnRegister::SaveDefaultSpawnableState(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player)
+void FLevelSequenceEditorSpawnRegister::SaveDefaultSpawnableState(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
-	UMovieSceneSequence* Sequence = Player.GetEvaluationTemplate().GetSequence(TemplateID);
+	UMovieSceneSequence* Sequence = SharedPlaybackState->GetSequence(TemplateID);
 
 	UObject* Object = FindSpawnedObject(Spawnable.GetGuid(), TemplateID).Get();
 	if (Object && Sequence)
 	{
-		SaveDefaultSpawnableStateImpl(Spawnable, Sequence, Object, Player);
+		SaveDefaultSpawnableStateImpl(Spawnable, Sequence, Object, SharedPlaybackState);
 		Sequence->MarkPackageDirty();
 	}
 }
@@ -164,14 +171,16 @@ void FLevelSequenceEditorSpawnRegister::SaveDefaultSpawnableState(const FGuid& B
 		UObject* Object = FindSpawnedObject(Spawnable->GetGuid(), TemplateID).Get();
 		if (Object)
 		{
-			SaveDefaultSpawnableStateImpl(*Spawnable, Sequence, Object, *Sequencer);
+			SaveDefaultSpawnableStateImpl(*Spawnable, Sequence, Object, Sequencer->GetSharedPlaybackState());
 			Sequence->MarkPackageDirty();
 		}
 	}
 }
 
-void FLevelSequenceEditorSpawnRegister::SaveDefaultSpawnableStateImpl(FMovieSceneSpawnable& Spawnable, UMovieSceneSequence* Sequence, UObject* SpawnedObject, IMovieScenePlayer& Player)
+void FLevelSequenceEditorSpawnRegister::SaveDefaultSpawnableStateImpl(FMovieSceneSpawnable& Spawnable, UMovieSceneSequence* Sequence, UObject* SpawnedObject, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
+	IMovieScenePlayer* Player = UE::MovieScene::FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState);
+
 	FMovieSceneAnimTypeID SpawnablesTypeID = UMovieSceneSpawnablesSystem::GetAnimTypeID();
 	auto RestorePredicate = [SpawnablesTypeID](FMovieSceneAnimTypeID TypeID){ return TypeID != SpawnablesTypeID; };
 
@@ -182,13 +191,13 @@ void FLevelSequenceEditorSpawnRegister::SaveDefaultSpawnableStateImpl(FMovieScen
 		{
 			if (Component)
 			{
-				Player.PreAnimatedState.RestorePreAnimatedState(*Component, RestorePredicate);
+				Player->PreAnimatedState.RestorePreAnimatedState(*Component, RestorePredicate);
 			}
 		}
 	}
 
 	// Restore state on the object itself
-	Player.PreAnimatedState.RestorePreAnimatedState(*SpawnedObject, RestorePredicate);
+	Player->PreAnimatedState.RestorePreAnimatedState(*SpawnedObject, RestorePredicate);
 
 	// Copy the template
 	Spawnable.CopyObjectTemplate(*SpawnedObject, *Sequence);
@@ -254,6 +263,13 @@ void FLevelSequenceEditorSpawnRegister::OnObjectsReplaced(const TMap<UObject*, U
 
 void FLevelSequenceEditorSpawnRegister::OnObjectModified(UObject* ModifiedObject)
 {
+	// If we are reinstancing then renaming existing objects aside can cause this callback to be called,
+	// which can end up with unnecessary template objects getting updated when we close sequencer down
+	if (GIsReinstancing || GIsGCingAfterBlueprintCompile || bIsEngineCollectingGarbage)
+	{
+		return;
+	}
+
 	// If the sequence is evaluating, we don't want object modifications to dirty the sequence itself. 
 	// For example, this protects against situations where OnObjectModified would be called in response 
 	// to the spawnable being attached with AttachToComponent
@@ -310,7 +326,7 @@ void FLevelSequenceEditorSpawnRegister::OnPreObjectSaved(UObject* Object, FObjec
 
 				if (SpawnedObject && Spawnable && ThisSequence == SequenceBeingSaved)
 				{
-					SaveDefaultSpawnableStateImpl(*Spawnable, ThisSequence, SpawnedObject, *Sequencer);
+					SaveDefaultSpawnableStateImpl(*Spawnable, ThisSequence, SpawnedObject, Sequencer->GetSharedPlaybackState());
 				}
 			}
 		}
@@ -345,7 +361,7 @@ void FLevelSequenceEditorSpawnRegister::SetupDefaultsForSpawnable(UObject* Spawn
 	}
 }
 
-void FLevelSequenceEditorSpawnRegister::HandleConvertPossessableToSpawnable(UObject* OldObject, IMovieScenePlayer& Player, TOptional<FTransformData>& OutTransformData)
+void FLevelSequenceEditorSpawnRegister::HandleConvertPossessableToSpawnable(UObject* OldObject, TSharedRef<const FSharedPlaybackState> SharedPlaybackState, TOptional<FTransformData>& OutTransformData)
 {
 	// @TODO: this could probably be handed off to a spawner if we need anything else to be convertible between spawnable/posessable
 
@@ -361,7 +377,8 @@ void FLevelSequenceEditorSpawnRegister::HandleConvertPossessableToSpawnable(UObj
 		}
 
 		GEditor->SelectActor(OldActor, false, true);
-		UWorld* World = Cast<UWorld>(Player.GetPlaybackContext());
+		UObject* PlaybackContext = SharedPlaybackState->GetPlaybackContext();
+		UWorld* World = PlaybackContext ? PlaybackContext->GetWorld() : nullptr;
 		if (World)
 		{
 			World->EditorDestroyActor(OldActor, true);
@@ -388,5 +405,9 @@ bool FLevelSequenceEditorSpawnRegister::CanConvertSpawnableToPossessable(FMovieS
 
 #endif
 
+void FLevelSequenceEditorSpawnRegister::UpdateIsEngineCollectingGarbage(bool bIsCollectingGarbage)
+{
+	bIsEngineCollectingGarbage = bIsCollectingGarbage;
+}
 
 #undef LOCTEXT_NAMESPACE

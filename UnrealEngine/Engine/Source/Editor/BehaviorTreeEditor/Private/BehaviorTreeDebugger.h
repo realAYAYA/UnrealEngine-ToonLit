@@ -47,6 +47,7 @@ public:
 	bool IsDebuggerRunning() const;
 	bool IsShowingCurrentState() const;
 	int32 GetShownStateIndex() const;
+	bool IsBehaviorExecutionPaused() const;
 
 	void OnObjectSelected(UObject* Object);
 	void OnAIDebugSelected(const APawn* Pawn);
@@ -85,6 +86,8 @@ public:
 	void InitializeFromParent(class FBehaviorTreeDebugger* ParentDebugger);
 	bool HasContinuousNextStep() const;
 	bool HasContinuousPrevStep() const;
+
+	UBehaviorTree* GetDynamicSubtreeTaskBehaviorTree(const UBTTask_RunBehaviorDynamic* Node) const;
 
 	/**
 	 * Find a (display) value for a given key.

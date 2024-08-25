@@ -208,6 +208,11 @@ void UQuartzSubsystem::Tick(float DeltaTime)
 	TickableObjectManagerPtr->Tick(DeltaTime);
 }
 
+bool UQuartzSubsystem::IsTickableWhenPaused() const
+{
+	return bTickEvenWhenPaused;
+}
+
 bool UQuartzSubsystem::IsTickable() const
 {
 	check(TickableObjectManagerPtr);
@@ -276,35 +281,6 @@ Audio::FQuartzQuantizedRequestData UQuartzSubsystem::CreateRequestDataForSchedul
 
 	return CommandInitInfo;
 }
-
-
-Audio::FQuartzQuantizedRequestData UQuartzSubsystem::CreateDataForTickRateChange(UQuartzClockHandle* InClockHandle, const FOnQuartzCommandEventBP& InDelegate, const Audio::FQuartzClockTickRate& InNewTickRate, const FQuartzQuantizationBoundary& InQuantizationBoundary)
-{
-	// new static function
-	return UQuartzSubsystem::CreateRequestDataForTickRateChange(InClockHandle, InDelegate, InNewTickRate, InQuantizationBoundary);
-}
-
-
-Audio::FQuartzQuantizedRequestData UQuartzSubsystem::CreateDataForTransportReset(UQuartzClockHandle* InClockHandle, const FQuartzQuantizationBoundary& InQuantizationBoundary, const FOnQuartzCommandEventBP& InDelegate)
-{
-	// new static function
-	return UQuartzSubsystem::CreateRequestDataForTransportReset(InClockHandle, InQuantizationBoundary, InDelegate);
-}
-
-
-Audio::FQuartzQuantizedRequestData CreateDataForStartOtherClock(UQuartzClockHandle* InClockHandle, FName InClockToStart, const FQuartzQuantizationBoundary& InQuantizationBoundary, const FOnQuartzCommandEventBP& InDelegate)
-{
-	// new static function
-	return UQuartzSubsystem::CreateRequestDataForStartOtherClock(InClockHandle, InClockToStart, InQuantizationBoundary, InDelegate);
-}
-
-
-Audio::FQuartzQuantizedRequestData CreateDataDataForSchedulePlaySound(UQuartzClockHandle* InClockHandle, const FOnQuartzCommandEventBP& InDelegate, const FQuartzQuantizationBoundary& InQuantizationBoundary)
-{
-	// new static function
-	return UQuartzSubsystem::CreateRequestDataForSchedulePlaySound(InClockHandle, InDelegate, InQuantizationBoundary);
-}
-
 
 bool UQuartzSubsystem::IsQuartzEnabled()
 {
@@ -660,14 +636,9 @@ float UQuartzSubsystem::GetRoundTripMaxLatency(const UObject* WorldContextObject
 	return GetAudioRenderThreadToGameThreadMinLatency() + GetGameThreadToAudioRenderThreadMinLatency(WorldContextObject);
 }
 
-
-void UQuartzSubsystem::AddCommandToClock(const UObject* WorldContextObject, Audio::FQuartzQuantizedCommandInitInfo& InQuantizationCommandInitInfo, FName ClockName)
+void UQuartzSubsystem::SetQuartzSubsystemTickableWhenPaused(const bool bInTickableWhenPaused)
 {
-	Audio::FQuartzClockProxy* Proxy = FindProxyByName(ClockName);
-	if(Proxy && Proxy->IsValid())
-	{
-		Proxy->SendCommandToClock([=](Audio::FQuartzClock* InClock) mutable{ InClock->AddQuantizedCommand(InQuantizationCommandInitInfo); });
-	}
+	bTickEvenWhenPaused = bInTickableWhenPaused;
 }
 
 TWeakPtr<FQuartzTickableObjectsManager> UQuartzSubsystem::GetTickableObjectManager() const
@@ -689,7 +660,7 @@ void UQuartzSubsystem::PruneStaleProxiesInternal(TArray<Audio::FQuartzClockProxy
 	 {
 		 if(ContainerToPrune[i].IsValid() == false)
 		 {
-		 	ContainerToPrune.RemoveAtSwap(i--, 1, false);
+		 	ContainerToPrune.RemoveAtSwap(i--, 1, EAllowShrinking::No);
 		 }
 	 }
 }

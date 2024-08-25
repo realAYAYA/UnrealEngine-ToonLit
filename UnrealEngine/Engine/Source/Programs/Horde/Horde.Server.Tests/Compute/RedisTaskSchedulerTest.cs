@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Horde.Server.Compute;
@@ -22,29 +23,26 @@ namespace Horde.Server.Tests.Compute
 			_scheduler = new RedisTaskScheduler<string, string>(redisService.ConnectionPool, new RedisKey("myBaseKey"), loggerFactory.CreateLogger<RedisTaskScheduler<string, string>>());
 		}
 
-		protected override void Dispose(bool disposing)
+		public override async ValueTask DisposeAsync()
 		{
-			base.Dispose(disposing);
-
-			if (disposing)
-			{
-				_scheduler.Dispose();
-			}
+			await _scheduler.DisposeAsync();
+			await base.DisposeAsync();
+			GC.SuppressFinalize(this);
 		}
 
 		[TestMethod]
-		public async Task EnqueueAndDequeueTask()
+		public async Task EnqueueAndDequeueTaskAsync()
 		{
 			await _scheduler.EnqueueAsync("queue", "task1", true);
 			string? dequeuedTask = await _scheduler.DequeueAsync("queue");
 			Assert.AreEqual("task1", dequeuedTask);
 		}
-		
+
 		[TestMethod]
 		[Ignore("Currently fails as nothing picks up tasks(?)")]
-		public async Task DequeueWithPredicateFromMiddleOfQueue()
+		public async Task DequeueWithPredicateFromMiddleOfQueueAsync()
 		{
-			using CancellationTokenSource cts = new (2000);
+			using CancellationTokenSource cts = new(2000);
 			await _scheduler.EnqueueAsync("queue", "task1", true);
 			await _scheduler.EnqueueAsync("queue", "task2", true);
 			await _scheduler.EnqueueAsync("queue", "task3", true);
@@ -55,44 +53,44 @@ namespace Horde.Server.Tests.Compute
 			Assert.AreEqual("queue", queueId);
 			Assert.AreEqual("task2", task);
 		}
-		
+
 		[TestMethod]
-		public async Task EnqueueTaskAtFront()
+		public async Task EnqueueTaskAtFrontAsync()
 		{
 			await _scheduler.EnqueueAsync("queue", "task1", true);
 			await _scheduler.EnqueueAsync("queue", "task2", true);
 			Assert.AreEqual("task2", await _scheduler.DequeueAsync("queue"));
 		}
-		
+
 		[TestMethod]
-		public async Task EnqueueTaskAtBack()
+		public async Task EnqueueTaskAtBackAsync()
 		{
 			await _scheduler.EnqueueAsync("queue", "task1", false);
 			await _scheduler.EnqueueAsync("queue", "task2", false);
 			Assert.AreEqual("task1", await _scheduler.DequeueAsync("queue"));
 		}
-		
+
 		[TestMethod]
-		public async Task EnqueueTasksOnSeparateQueues()
+		public async Task EnqueueTasksOnSeparateQueuesAsync()
 		{
 			await _scheduler.EnqueueAsync("queue1", "task1", true);
 			await _scheduler.EnqueueAsync("queue2", "task2", true);
 			Assert.AreEqual("task1", await _scheduler.DequeueAsync("queue1"));
 			Assert.AreEqual("task2", await _scheduler.DequeueAsync("queue2"));
 		}
-		
+
 		[TestMethod]
-		public async Task DequeueEmptyQueue()
+		public async Task DequeueEmptyQueueAsync()
 		{
 			Assert.IsNull(await _scheduler.DequeueAsync("queue"));
 		}
-		
+
 		[TestMethod]
-		public async Task DequeuingMakesQueueActive()
+		public async Task DequeuingMakesQueueActiveAsync()
 		{
 			await _scheduler.EnqueueAsync("queue", "task1", true);
 			Assert.AreEqual(1, (await _scheduler.GetInactiveQueuesAsync()).Count);
-			
+
 			await _scheduler.DequeueAsync("queue");
 			Assert.AreEqual(0, (await _scheduler.GetInactiveQueuesAsync()).Count);
 		}

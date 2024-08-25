@@ -7,32 +7,22 @@
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
 
-void UCustomizableObjectNodeColorSwitch::Serialize(FArchive& Ar)
+void UCustomizableObjectNodeColorSwitch::BackwardsCompatibleFixup()
 {
-	Super::Serialize(Ar);
+	Super::BackwardsCompatibleFixup();
 
-	if (Ar.CustomVer(FCustomizableObjectCustomVersion::GUID) < FCustomizableObjectCustomVersion::BugPinsSwitch)
+	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
+
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::BugPinsSwitch)
 	{
 		OutputPinReference = FindPin(TEXT("Color"));	
 	}
 }
 
 
-FString UCustomizableObjectNodeColorSwitch::GetOutputPinName() const
-{
-	return TEXT("Color");
-}
-	
-
 FName UCustomizableObjectNodeColorSwitch::GetCategory() const
 {
 	return UEdGraphSchema_CustomizableObject::PC_Color;
-}
-
-
-FString UCustomizableObjectNodeColorSwitch::GetPinPrefix() const
-{
-	return TEXT("Color ");
 }
 
 

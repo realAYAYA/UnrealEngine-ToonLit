@@ -9,16 +9,13 @@ namespace CurveExpression::Evaluator
 {
 
 #define CE_EXPR(_N_, _A_, _E_) { \
-	FEngine::FunctionNameIndex.Add(FName(#_N_), FEngine::Functions.Num()); \
-	FEngine::Functions.Add({_A_, [](TArrayView<const float> V) -> float { return _E_; } }); \
+	FunctionNameIndex.Add(FName(#_N_), Functions.Num()); \
+	Functions.Add({_A_, [](TArrayView<const float> V) -> float { return _E_; } }); \
 	}  
 
-TArray<FEngine::FFunctionInfo> FEngine::Functions;
-TMap<FName, int32> FEngine::FunctionNameIndex;
-
-struct FInitializeBuiltinFunctions
+static struct FBuiltinFunctions
 {
-	FInitializeBuiltinFunctions()
+	FBuiltinFunctions()
 	{
 		// clamp(value, min, max)
 		CE_EXPR(clamp, 3, FMath::Clamp(V[0], V[1], V[2]))
@@ -62,10 +59,37 @@ struct FInitializeBuiltinFunctions
 		/** pi() */
 		CE_EXPR(pi, 0, UE_PI)
 		
-		/** pi() */
+		/** e() */
 		CE_EXPR(e, 0, UE_EULERS_NUMBER)
+
+		/** undef() */
+		CE_EXPR(undef, 0, std::numeric_limits<float>::signaling_NaN());
 	}
-} GInitializeBuiltinFunctions;
+
+	int32 FindByName(const FName InName) const
+	{
+		if (const int32* Index = FunctionNameIndex.Find(InName))
+		{
+			return *Index;
+		}
+		return INDEX_NONE;
+	}
+
+	bool IsValidFunctionIndex(const int32 InIndex) const
+	{
+		return Functions.IsValidIndex(InIndex);
+	}
+	
+	const FEngine::FFunctionInfo& GetInfoByIndex(const int32 InIndex) const
+	{
+		return Functions[InIndex];
+	}
+	
+private:
+	TMap<FName, int32> FunctionNameIndex;
+	TArray<FEngine::FFunctionInfo> Functions;
+	
+} GBuiltinFunctions;
 #undef CE_EXPR
 
 
@@ -723,15 +747,15 @@ TVariant<FExpressionObject, FParseError> FEngine::Parse(
 				if (!Expression.IsEmpty() && Expression.Top().IsType<FName>())
 				{
 					FName ConstantName = Expression.Top().Get<FName>();
-					const int32 *FunctionIndexPtr = FunctionNameIndex.Find(ConstantName);
-					if (FunctionIndexPtr == nullptr)
+					const int32 FunctionIndex = GBuiltinFunctions.FindByName(ConstantName);
+					if (FunctionIndex == INDEX_NONE)
 					{
 						return ParseError(FString::Printf(TEXT("Unknown function '%s'"), *ConstantName.ToString()), Locations.Top());
 					}
 
 					Expression.Pop();
 					const FParseLocation LastLocation = Locations.Pop();
-					FunctionStack.Push({*FunctionIndexPtr, 0, OperatorStack.Num(), Expression.Num(), LastLocation});
+					FunctionStack.Push({FunctionIndex, 0, OperatorStack.Num(), Expression.Num(), LastLocation});
 				}
 			}
 			else if (Op == EOperatorToken::ParenClose)
@@ -742,14 +766,14 @@ TVariant<FExpressionObject, FParseError> FEngine::Parse(
 					{
 						return ParseError(TEXT("Mismatched parentheses"), ParseResult.Location); 
 					}
-					PushOperatorTokenToExpression(OperatorStack.Pop(false));
+					PushOperatorTokenToExpression(OperatorStack.Pop(EAllowShrinking::No));
 				}
 
 				if (!FunctionStack.IsEmpty() && FunctionStack.Top().OpeningOpStackSize == OperatorStack.Num())
 				{
 					// Compute the number of arguments.
 					const FFunctionCallInfo CallInfo = FunctionStack.Pop();
-					const FFunctionInfo& FunctionInfo = Functions[CallInfo.FunctionIndex];
+					const FFunctionInfo& FunctionInfo = GBuiltinFunctions.GetInfoByIndex(CallInfo.FunctionIndex);
 					const int32 ArgumentCount = CallInfo.CountedCommas + (CallInfo.ExpressionSize != Expression.Num());
 
 					if (ArgumentCount != FunctionInfo.ArgumentCount)
@@ -763,7 +787,7 @@ TVariant<FExpressionObject, FParseError> FEngine::Parse(
 				}
 				
 				// Remove the now unneeded open parentheses.
-				OperatorStack.Pop(false);
+				OperatorStack.Pop(EAllowShrinking::No);
 			}
 			else if (Op == EOperatorToken::Comma)
 			{
@@ -778,7 +802,7 @@ TVariant<FExpressionObject, FParseError> FEngine::Parse(
 				// Peel off all operators that have the same precedence or higher.
 				while (!OperatorStack.IsEmpty() && GetOperatorTokenInfo(OperatorStack.Last().Get<0>()).Precedence >= TokenInfo.Precedence)
 				{
-					PushOperatorTokenToExpression(OperatorStack.Pop(false));
+					PushOperatorTokenToExpression(OperatorStack.Pop(EAllowShrinking::No));
 				}
 				OperatorStack.Push({Op, ParseResult.Location});
 			}
@@ -787,7 +811,7 @@ TVariant<FExpressionObject, FParseError> FEngine::Parse(
 				// Peel off all operators that have higher precedence.
 				while (!OperatorStack.IsEmpty() && GetOperatorTokenInfo(OperatorStack.Last().Get<0>()).Precedence > TokenInfo.Precedence)
 				{
-					PushOperatorTokenToExpression(OperatorStack.Pop(false));
+					PushOperatorTokenToExpression(OperatorStack.Pop(EAllowShrinking::No));
 				}
 				OperatorStack.Push({Op, ParseResult.Location});
 			}
@@ -803,7 +827,7 @@ TVariant<FExpressionObject, FParseError> FEngine::Parse(
 		{
 			return ParseError(TEXT("Mismatched parentheses"), OperatorStack.Last().Get<1>()); 
 		}
-		PushOperatorTokenToExpression(OperatorStack.Pop(false));
+		PushOperatorTokenToExpression(OperatorStack.Pop(EAllowShrinking::No));
 	}
 
 	// If a constant evaluator function is given, then check if the constants exist.  
@@ -865,25 +889,25 @@ float FEngine::Execute(
 				
 			case FExpressionObject::EOperator::Add:
 				{
-					const float V = ValueStack.Pop(false);
+					const float V = ValueStack.Pop(EAllowShrinking::No);
 					ValueStack.Last() += V;
 				}
 				break;	
 			case FExpressionObject::EOperator::Subtract:
 				{
-					const float V = ValueStack.Pop(false);
+					const float V = ValueStack.Pop(EAllowShrinking::No);
 					ValueStack.Last() -= V;
 				}
 				break;	
 			case FExpressionObject::EOperator::Multiply:
 				{
-					const float V = ValueStack.Pop(false);
+					const float V = ValueStack.Pop(EAllowShrinking::No);
 					ValueStack.Last() *= V;
 				}
 				break;
 			case FExpressionObject::EOperator::Divide:
 				{
-					const float V = ValueStack.Pop(false);
+					const float V = ValueStack.Pop(EAllowShrinking::No);
 					if (FMath::IsNearlyZero(V))
 					{
 						ValueStack.Last() = 0.0f;
@@ -896,7 +920,7 @@ float FEngine::Execute(
 				break;	
 			case FExpressionObject::EOperator::Modulo:
 				{
-					const float V = ValueStack.Pop(false);
+					const float V = ValueStack.Pop(EAllowShrinking::No);
 					if (FMath::IsNearlyZero(V))
 					{
 						ValueStack.Last() = 0.0f;
@@ -909,7 +933,7 @@ float FEngine::Execute(
 				break;	
 			case FExpressionObject::EOperator::Power:
 				{
-					const float V = ValueStack.Pop(false);
+					const float V = ValueStack.Pop(EAllowShrinking::No);
 					ValueStack.Last() = FMath::Pow(ValueStack.Last(), V);
 					if (!FMath::IsFinite(ValueStack.Last()))
 					{
@@ -919,7 +943,7 @@ float FEngine::Execute(
 				break;	
 			case FExpressionObject::EOperator::FloorDivide:
 				{
-					const float V = ValueStack.Pop(false);
+					const float V = ValueStack.Pop(EAllowShrinking::No);
 					if (FMath::IsNearlyZero(V))
 					{
 						ValueStack.Last() = 0.0f;
@@ -935,14 +959,21 @@ float FEngine::Execute(
 		}
 		else if (const FExpressionObject::FFunctionRef* FuncRef = Token.TryGet<FExpressionObject::FFunctionRef>())
 		{
-			const FFunctionInfo& FunctionInfo = Functions[FuncRef->Index];
+			// Technically, this shouldn't be necessary, but if the expression stream is broken, or from the wrong version,
+			// exit early to avoid a crash.
+			if (!GBuiltinFunctions.IsValidFunctionIndex(FuncRef->Index))
+			{
+				return 0.0f;
+			}
+				
+			const FFunctionInfo& FunctionInfo = GBuiltinFunctions.GetInfoByIndex(FuncRef->Index);
 			check(FunctionInfo.ArgumentCount <= ValueStack.Num());
 
 			TArrayView<float> ValueView(ValueStack.GetData() + ValueStack.Num() - FunctionInfo.ArgumentCount, FunctionInfo.ArgumentCount);
 			const float FuncValue = FunctionInfo.FunctionPtr(ValueView);
 			for (int32 Index = 0; Index < FunctionInfo.ArgumentCount; Index++)
 			{
-				ValueStack.Pop(false);
+				ValueStack.Pop(EAllowShrinking::No);
 			}
 			ValueStack.Push(FuncValue);
 		}

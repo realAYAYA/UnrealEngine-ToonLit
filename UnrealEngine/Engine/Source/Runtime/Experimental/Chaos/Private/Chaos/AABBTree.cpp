@@ -31,5 +31,14 @@ FAutoConsoleVariableRef FAABBTreeCVars::CVarDynamicTreeBoundingBoxPadding(TEXT("
 int32 FAABBTreeCVars::DynamicTreeLeafCapacity = 8;
 FAutoConsoleVariableRef FAABBTreeCVars::CVarDynamicTreeLeafCapacity(TEXT("p.aabbtree.DynamicTreeLeafCapacity"), FAABBTreeCVars::DynamicTreeLeafCapacity, TEXT("Dynamic Tree Leaf Capacity"));
 
-bool FAABBTreeCVars::DynamicTreeSkipCheckAuntOnRotate = false;
-FAutoConsoleVariableRef FAABBTreeCVars::CVarDynamicTreeSkipCheckAuntOnRotate(TEXT("p.aabbtree.DynamicTreeSkipCheckAuntOnRotate"), FAABBTreeCVars::DynamicTreeSkipCheckAuntOnRotate, TEXT("When rotating a node to balance a dynamic tree, do not check validity of aunt node before rotating"));
+bool FAABBTimeSliceCVars::bUseTimeSliceMillisecondBudget = true;
+FAutoConsoleVariableRef FAABBTimeSliceCVars::CVarUseTimeSliceByMillisecondBudget(TEXT("p.aabbtree.UseTimeSliceMillisecondBudget"), FAABBTimeSliceCVars::bUseTimeSliceMillisecondBudget, TEXT("Set to True if we want to timeslice tree generation by a milisecond budget instead of per nodes processed"));
+
+float FAABBTimeSliceCVars::MaxProcessingTimePerSliceSeconds = 0.001f;
+FAutoConsoleVariableRef FAABBTimeSliceCVars::CVarMaxProcessingTimePerSlice(TEXT("p.aabbtree.MaxProcessingTimePerSliceSeconds"), FAABBTimeSliceCVars::MaxProcessingTimePerSliceSeconds, TEXT("Set to True if we want to timeslice tree generation by a milisecond budget instead of per nodes processed or data size copied"));
+
+int32 FAABBTimeSliceCVars::MinNodesChunkToProcessBetweenTimeChecks = 250;
+FAutoConsoleVariableRef FAABBTimeSliceCVars::CVarMinNodesChunkToProcessBetweenTimeChecks(TEXT("p.aabbtree.MinNodesChunkToProcessBetweenTimeChecks"), FAABBTimeSliceCVars::MinNodesChunkToProcessBetweenTimeChecks, TEXT("Minimum amount of nodes we want to process before checking if we are withing budget"));
+
+int32 FAABBTimeSliceCVars::MinDataChunkToProcessBetweenTimeChecks = 500;
+FAutoConsoleVariableRef FAABBTimeSliceCVars::CVarMinDataChunkToProcessBetweenTimeChecks(TEXT("p.aabbtree.MinDataChunkToProcessBetweenTimeChecks"), FAABBTimeSliceCVars::MinDataChunkToProcessBetweenTimeChecks, TEXT("Minimum amount of data elements to process before checking if we are withing budget"));

@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "Components/ShapeComponent.h"
+#include "ShowFlags.h"
 #include "BoxComponent.generated.h"
 
 class FPrimitiveSceneProxy;
@@ -23,9 +24,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, export, Category=Shape)
 	FVector BoxExtent;
 
-	/** Used to control the line thickness when rendering */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, export, Category=Shape)
-	float LineThickness;
+#if WITH_EDITOR
+	/** List of all show flags this box component visualizer should respect. */
+	FEngineShowFlags ShowFlags;
+#endif // WITH_EDITOR
 
 public:
 	/** 
@@ -35,10 +37,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category="Components|Box")
 	ENGINE_API void SetBoxExtent(FVector InBoxExtent, bool bUpdateOverlaps=true);
-
-	// Set the LineThickness
-	UFUNCTION(BlueprintCallable, Category="Components|Box")
-	ENGINE_API void SetLineThickness(float Thickness);
 
 	// @return the box extent, scaled by the component scale.
 	UFUNCTION(BlueprintCallable, Category="Components|Box")
@@ -64,6 +62,11 @@ public:
 
 	// Sets the box extents without triggering a render or physics update.
 	FORCEINLINE void InitBoxExtent(const FVector& InBoxExtent) { BoxExtent = InBoxExtent; }
+
+#if WITH_EDITOR
+	ENGINE_API FEngineShowFlags GetShowFlags() const { return ShowFlags; }
+	ENGINE_API void SetShowFlags(const FEngineShowFlags& InShowFlags);
+#endif // WITH_EDITOR
 };
 
 

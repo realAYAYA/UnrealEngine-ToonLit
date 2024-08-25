@@ -3,8 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Security.Claims;
-using System.Text.Json.Serialization;
-using EpicGames.Horde.Api;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Secrets;
 using Horde.Server.Acls;
 using Horde.Server.Server;
 
@@ -15,9 +15,6 @@ namespace Horde.Server.Secrets
 	/// </summary>
 	public class SecretConfig
 	{
-		[JsonIgnore]
-		internal GlobalConfig GlobalConfig { get; private set; } = null!;
-
 		/// <summary>
 		/// Identifier for this secret
 		/// </summary>
@@ -36,7 +33,7 @@ namespace Horde.Server.Secrets
 		/// <summary>
 		/// Defines access to this particular secret
 		/// </summary>
-		public AclConfig? Acl { get; set; }
+		public AclConfig Acl { get; set; } = new AclConfig();
 
 		/// <summary>
 		/// Called after the config has been read
@@ -44,7 +41,7 @@ namespace Horde.Server.Secrets
 		/// <param name="globalConfig">Parent GlobalConfig object</param>
 		public void PostLoad(GlobalConfig globalConfig)
 		{
-			GlobalConfig = globalConfig;
+			Acl.PostLoad(globalConfig.Acl, $"secret:{Id}");
 		}
 
 		/// <summary>
@@ -53,9 +50,7 @@ namespace Horde.Server.Secrets
 		/// <param name="action">The action being performed</param>
 		/// <param name="user">The principal to validate</param>
 		public bool Authorize(AclAction action, ClaimsPrincipal user)
-		{
-			return Acl?.Authorize(action, user) ?? GlobalConfig.Authorize(action, user);
-		}
+			=> Acl.Authorize(action, user);
 	}
 
 	/// <summary>

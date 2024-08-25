@@ -28,7 +28,7 @@ TAutoConsoleVariable<float> CVarBloomCross(
 BEGIN_SHADER_PARAMETER_STRUCT(FBloomSetupParameters, )
 	SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 	SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Input)
-	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+	SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, InputTexture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, InputSampler)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, LumBilateralGrid)
 	SHADER_PARAMETER_SAMPLER(SamplerState, LumBilateralGridSampler)
@@ -49,7 +49,7 @@ FBloomSetupParameters GetBloomSetupParameters(
 	FBloomSetupParameters Parameters;
 	Parameters.View = View.ViewUniformBuffer;
 	Parameters.Input = GetScreenPassTextureViewportParameters(InputViewport);
-	Parameters.InputTexture = Inputs.SceneColor.Texture;
+	Parameters.InputTexture = Inputs.SceneColor.TextureSRV;
 	Parameters.InputSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 	Parameters.LumBilateralGrid = Inputs.LocalExposureTexture;
 	Parameters.LumBilateralGridSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
@@ -69,7 +69,8 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FBloomSetupPS, FGlobalShader);
 
 	class FLocalExposureDim : SHADER_PERMUTATION_BOOL("USE_LOCAL_EXPOSURE");
-	using FPermutationDomain = TShaderPermutationDomain<FLocalExposureDim>;
+	class FThresholdDim : SHADER_PERMUTATION_BOOL("USE_THRESHOLD");
+	using FPermutationDomain = TShaderPermutationDomain<FLocalExposureDim, FThresholdDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FBloomSetupParameters, BloomSetup)
@@ -92,7 +93,8 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FBloomSetupCS, FGlobalShader);
 
 	class FLocalExposureDim : SHADER_PERMUTATION_BOOL("USE_LOCAL_EXPOSURE");
-	using FPermutationDomain = TShaderPermutationDomain<FLocalExposureDim>;
+	class FThresholdDim : SHADER_PERMUTATION_BOOL("USE_THRESHOLD");
+	using FPermutationDomain = TShaderPermutationDomain<FLocalExposureDim, FThresholdDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FBloomSetupParameters, BloomSetup)
@@ -119,14 +121,19 @@ FScreenPassTexture AddBloomSetupPass(FRDGBuilder& GraphBuilder, const FViewInfo&
 {
 	check(Inputs.SceneColor.IsValid());
 	check(Inputs.EyeAdaptationBuffer);
-	check(Inputs.Threshold > -1.0f || Inputs.EyeAdaptationParameters != nullptr);
 
 	const bool bIsComputePass = View.bUseComputePasses;
 	const bool bLocalExposureEnabled = Inputs.LocalExposureTexture != nullptr;
+	const bool bThresholdEnabled = Inputs.Threshold > -1.0f;
 
-	FRDGTextureDesc OutputDesc = Inputs.SceneColor.Texture->Desc;
-	OutputDesc.Reset();
-	OutputDesc.Flags |= bIsComputePass ? TexCreate_UAV : TexCreate_RenderTargetable;
+	check(bLocalExposureEnabled || bThresholdEnabled);
+
+	const FRDGTextureDesc& InputDesc = Inputs.SceneColor.TextureSRV->Desc.Texture->Desc;
+	FRDGTextureDesc OutputDesc = FRDGTextureDesc::Create2D(
+		InputDesc.Extent,
+		InputDesc.Format,
+		FClearValueBinding::None,
+		/* InFlags = */ TexCreate_ShaderResource | (bIsComputePass ? TexCreate_UAV : TexCreate_RenderTargetable) | (InputDesc.Flags & (TexCreate_FastVRAM | TexCreate_FastVRAMPartialAlloc)));
 
 	const FScreenPassTextureViewport Viewport(Inputs.SceneColor);
 	const FScreenPassRenderTarget Output(GraphBuilder.CreateTexture(OutputDesc, TEXT("BloomSetup")), Viewport.Rect, ERenderTargetLoadAction::ENoAction);
@@ -139,6 +146,7 @@ FScreenPassTexture AddBloomSetupPass(FRDGBuilder& GraphBuilder, const FViewInfo&
 
 		FBloomSetupCS::FPermutationDomain PermutationVector;
 		PermutationVector.Set<FBloomSetupCS::FLocalExposureDim>(bLocalExposureEnabled);
+		PermutationVector.Set<FBloomSetupCS::FThresholdDim>(bThresholdEnabled);
 
 		auto ComputeShader = View.ShaderMap->GetShader<FBloomSetupCS>(PermutationVector);
 
@@ -160,6 +168,7 @@ FScreenPassTexture AddBloomSetupPass(FRDGBuilder& GraphBuilder, const FViewInfo&
 
 		FBloomSetupPS::FPermutationDomain PermutationVector;
 		PermutationVector.Set<FBloomSetupPS::FLocalExposureDim>(bLocalExposureEnabled);
+		PermutationVector.Set<FBloomSetupPS::FThresholdDim>(bThresholdEnabled);
 
 		auto PixelShader = View.ShaderMap->GetShader<FBloomSetupPS>(PermutationVector);
 

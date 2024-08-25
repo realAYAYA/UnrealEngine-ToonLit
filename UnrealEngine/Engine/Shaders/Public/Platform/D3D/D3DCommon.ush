@@ -1,22 +1,18 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 /*=============================================================================
-D3DCommon.usf: Common defines for the d3d shader compiler
+D3DCommon.ush: Common defines for the D3D shader compiler
 =============================================================================*/
 
 // Update this GUID to invalidate D3D shaders and force a shader recompilation for D3D RHIs.
-// GUID: A44B0FDA-31ED-4E3B-9E04-A80DFDD5B015
+#pragma message("UESHADERMETADATA_VERSION 46268304-2E81-419C-8152-0154868CFB1E")
+
+#include "/Engine/Shared/HLSLReservedSpaces.h"
 
 #if SM6_PROFILE
 	#define COMPILER_SUPPORTS_WAVE_SIZE 1
 	#define WAVESIZE(N) [WaveSize(N)]
 #endif
-
-precise float MakePrecise(float v) { precise float pv = v; return pv; }
-precise float2 MakePrecise(float2 v) { precise float2 pv = v; return pv; }
-precise float3 MakePrecise(float3 v) { precise float3 pv = v; return pv; }
-precise float4 MakePrecise(float4 v) { precise float4 pv = v; return pv; }
-#define INVARIANT(X) MakePrecise(X)
 
 #if PLATFORM_SUPPORTS_STATIC_SAMPLERS
 
@@ -38,7 +34,7 @@ SamplerState D3DStaticTrilinearClampedSampler   : register(s5, space1000);
 // Diagnostic buffer which will be automatically bound by the RHI as a root parameter
 // Counterpart to FD3D12DiagnosticBufferData in D3D12DirectCommandListManager.h
 // Diagnostic message layout: [uint counter, uint message_id, uint4 payload] (6 DWORDs total)
-RWStructuredBuffer<uint> UEDiagnosticBuffer : register(u0, space999);
+RWStructuredBuffer<uint> UEDiagnosticBuffer : UE_HLSL_REGISTER(u, 0, UE_HLSL_SPACE_DIAGNOSTIC);
 
 void UEReportAssertWithPayload(uint AssertID, uint4 Payload)
 {
@@ -75,6 +71,9 @@ void UEReportAssertWithPayload(uint AssertID, uint4 Payload)
 #define PLATFORM_ASSERT2(condition, assert_id, a, b)       { if (!(condition)) UEReportAssertWithPayload(assert_id, uint4(a, b, 0, 0));  }
 #define PLATFORM_ASSERT3(condition, assert_id, a, b, c)    { if (!(condition)) UEReportAssertWithPayload(assert_id, uint4(a, b, c, 0));  }
 #define PLATFORM_ASSERT4(condition, assert_id, a, b, c, d) { if (!(condition)) UEReportAssertWithPayload(assert_id, uint4(a, b, c, d));  }
+
+#define check(condition) 									{ if (!(condition)) { UEReportAssertWithPayload(0xCECC, uint4(__LINE__, TEXT(__FILE__), TEXT(#condition), 0)); } }
+#define checkf(condition, message) 							{ if (!(condition)) { UEReportAssertWithPayload(0xCECC, uint4(__LINE__, TEXT(__FILE__), message, 0)); } }
 
 #endif // PLATFORM_SUPPORTS_DIAGNOSTIC_BUFFER
 
@@ -131,6 +130,6 @@ void UEReportAssertWithPayload(uint AssertID, uint4 Payload)
 
 #if PLATFORM_SUPPORTS_BINDLESS
 	// SM6.6 path
-	COMPILER_DEFINE GetResourceFromHeap(Type, Index) ResourceDescriptorHeap[Index]
-	COMPILER_DEFINE GetSamplerFromHeap(Type, Index) SamplerDescriptorHeap[Index]
+	#define GetResourceFromHeap(Type, Index) ResourceDescriptorHeap[Index]
+	#define GetSamplerFromHeap(Type, Index) SamplerDescriptorHeap[Index]
 #endif

@@ -9,6 +9,7 @@ namespace UnrealBuildTool.Rules
 			PrivateDependencyModuleNames.AddRange(
 				new string[] {
 					"Core",
+					"RenderCore",
 					"Renderer",
 					"RHI",
 					"IntelOIDN"

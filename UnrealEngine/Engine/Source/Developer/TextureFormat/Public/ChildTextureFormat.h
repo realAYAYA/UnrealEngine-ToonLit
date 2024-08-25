@@ -66,7 +66,7 @@ public:
 		ITextureFormatManagerModule& TFM = GetTextureFormatManagerRef();
 		const ITextureFormat* FormatObject = TFM.FindTextureFormat(BaseFormatName);
 
-		checkf(FormatObject != nullptr, TEXT("Bad FormatName %s passed to FChildTextureFormat::GetBaseFormatObject()"));
+		checkf(FormatObject != nullptr, TEXT("Bad FormatName %s passed to FChildTextureFormat::GetBaseFormatObject()"), *BaseFormatName.ToString());
 
 		return FormatObject;
 	}

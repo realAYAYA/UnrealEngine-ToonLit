@@ -26,6 +26,8 @@
 #include "Misc/LazySingleton.h"
 #include "Misc/ScopeExit.h"
 #include "UObject/LinkerLoad.h"
+#include "Engine/GameEngine.h"
+#include "Streaming/LevelStreamingDelegates.h"
 
 static bool GDisableLevelInstanceEditorPartialLoading = false;
 FAutoConsoleVariableRef CVarDisableLevelInstanceEditorPartialLoading(
@@ -33,6 +35,14 @@ FAutoConsoleVariableRef CVarDisableLevelInstanceEditorPartialLoading(
 	GDisableLevelInstanceEditorPartialLoading,
 	TEXT("Allow disabling partial loading of level instances in the editor."),
 	ECVF_Default);
+
+static bool GForceEditorWorldMode = false;
+FAutoConsoleVariableRef CVarForceEditorWorldMode(
+	TEXT("LevelInstance.ForceEditorWorldMode"),
+	GForceEditorWorldMode,
+	TEXT("Allow -game instances to behave like an editor with temporary root object attached to instance. This will prevent HLOD from working in -game. This feature is only supported on non WP worlds."),
+	ECVF_Default);
+
 
 namespace FLevelInstanceLevelStreamingUtils
 {
@@ -74,6 +84,23 @@ ILevelInstanceInterface* ULevelStreamingLevelInstance::GetLevelInstance() const
 }
 
 #if WITH_EDITOR
+
+bool ULevelStreamingLevelInstance::IsEditorWorldMode() const
+{
+	bool bCanSupportForceEditorWorldMode = !GIsEditor;
+	if (GForceEditorWorldMode && !GIsEditor)
+	{
+		UWorld* OwningWorld = GetWorld();
+		check(OwningWorld);
+		// We do not support GForceEditorWorldMode in WP worlds.
+		if (OwningWorld->GetWorldPartition() != nullptr)
+		{
+			bCanSupportForceEditorWorldMode = false;
+		}
+	}
+	return (GForceEditorWorldMode && bCanSupportForceEditorWorldMode) || !GetWorld()->IsGameWorld();
+}
+
 TOptional<FFolder::FRootObject> ULevelStreamingLevelInstance::GetFolderRootObject() const
 {
 	if (ILevelInstanceInterface* LevelInstance = GetLevelInstance())
@@ -107,25 +134,74 @@ FBox ULevelStreamingLevelInstance::GetBounds() const
 	return CachedBounds;
 }
 
-void ULevelStreamingLevelInstance::OnLoadedActorPreAddedToLevel(const TArray<AActor*>& InActors)
+void ULevelStreamingLevelInstance::OnLoadedActorsAddedToLevelPreEvent(const TArray<AActor*>& InActors)
 {
-	check(LevelInstanceEditorInstanceActor.IsValid());
-	if (ILevelInstanceInterface* LevelInstance = GetLevelInstance())
+	if (IsEditorWorldMode())
 	{
-		for (AActor* Actor : InActors)
+		if (ILevelInstanceInterface* LevelInstance = GetLevelInstance())
 		{
-			// Must happen before the actors are registered with the world, which is the case for this delegate.
-			const FActorContainerID& ContainerID = LevelInstance->GetLevelInstanceID().GetContainerID();
-			FSetActorInstanceGuid SetActorInstanceGuid(Actor, ContainerID.GetActorGuid(Actor->GetActorGuid()));
+			for (AActor* Actor : InActors)
+			{
+				if (IsValid(Actor))
+				{
+					if (Actor->IsPackageExternal())
+					{
+						if (bResetLoadersCalled)
+						{
+							ResetLoaders(Actor->GetExternalPackage());
+							ForEachObjectWithOuter(Actor, [](UObject* InObject)
+							{
+								if (InObject && InObject->IsPackageExternal())
+								{
+									ResetLoaders(InObject->GetExternalPackage());
+								}
+							}, /*bIncludeNestedObjects*/ true);
+						}
+
+						FLevelInstanceLevelStreamingUtils::MarkObjectsInPackageAsTransientAndNonTransactional(Actor->GetExternalPackage());
+					}
+
+					// Must happen before the actors are registered with the world, which is the case for this delegate.
+					const FActorContainerID& ContainerID = LevelInstance->GetLevelInstanceID().GetContainerID();
+					FSetActorInstanceGuid SetActorInstanceGuid(Actor, ContainerID.GetActorGuid(Actor->GetActorGuid()));
+
+					FSetActorIsInLevelInstance SetIsInLevelInstance(Actor);
+				}
+			}
 		}
 	}
 }
 
-void ULevelStreamingLevelInstance::OnLoadedActorAddedToLevel(AActor& InActor)
+void ULevelStreamingLevelInstance::OnLoadedActorsAddedToLevelPostEvent(const TArray<AActor*>& InActors)
 {
-	check(LevelInstanceEditorInstanceActor.IsValid());
-	// If bResetLoadersCalled is false, wait for ResetLevelInstanceLoaders call to do the ResetLoaders calls
-	PrepareLevelInstanceLoadedActor(InActor, GetLevelInstance(), bResetLoadersCalled);
+	if (IsEditorWorldMode())
+	{
+		if (GetLoadedLevel()->bAreComponentsCurrentlyRegistered)
+		{
+			if (ILevelInstanceInterface* LevelInstance = GetLevelInstance())
+			{
+				for (AActor* Actor : InActors)
+				{
+					if (IsValid(Actor))
+					{
+						Actor->PushSelectionToProxies();
+						if (LevelInstance)
+						{
+							Actor->PushLevelInstanceEditingStateToProxies(CastChecked<AActor>(LevelInstance)->IsInEditLevelInstanceHierarchy());
+						}
+
+						if (LevelInstanceEditorInstanceActor.IsValid())
+						{
+							if (Actor->GetAttachParentActor() == nullptr && !Actor->IsChildActor())
+							{
+								Actor->AttachToActor(LevelInstanceEditorInstanceActor.Get(), FAttachmentTransformRules::KeepWorldTransform);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 void ULevelStreamingLevelInstance::ResetLevelInstanceLoaders()
@@ -152,62 +228,42 @@ void ULevelStreamingLevelInstance::ResetLevelInstanceLoaders()
 			LinkerLoad->DetachLoader();
 		}
 
-		for (AActor* Actor : LoadedLevel->Actors)
+		ForEachObjectWithOuter(LoadedLevel, [](UObject* InObject)
 		{
-			if (Actor && Actor->IsPackageExternal())
+			if (InObject && InObject->IsPackageExternal())
 			{
-				ResetLoaders(Actor->GetExternalPackage());
+				ResetLoaders(InObject->GetExternalPackage());
 			}
-		}
-
-		LoadedLevel->ForEachActorFolder([](UActorFolder* ActorFolder)
-		{
-			if (ActorFolder->IsPackageExternal())
-			{
-				ResetLoaders(ActorFolder->GetExternalPackage());
-			}
-			return true;
-		});
+		}, /*bIncludeNestedObjects*/ true);
 
 		bResetLoadersCalled = true;
 	}
 }
 
-void ULevelStreamingLevelInstance::PrepareLevelInstanceLoadedActor(AActor& InActor, ILevelInstanceInterface* InLevelInstance, bool bResetLoaders)
+void ULevelStreamingLevelInstance::OnLoadedActorsRemovedFromLevelPostEvent(const TArray<AActor*>& InActors)
 {
-	if (InActor.IsPackageExternal())
+	// Detach actor or else it will keep it alive (attachement keeps a reference to the actor)
+	check(LevelInstanceEditorInstanceActor.IsValid());
+
+	for (AActor* Actor : InActors)
 	{
-		if (bResetLoaders)
+		if (IsValid(Actor))
 		{
-			ResetLoaders(InActor.GetExternalPackage());
-		}
-
-		FLevelInstanceLevelStreamingUtils::MarkObjectsInPackageAsTransientAndNonTransactional(InActor.GetExternalPackage());
-	}
-
-	InActor.PushSelectionToProxies();
-	if (InLevelInstance)
-	{
-		InActor.PushLevelInstanceEditingStateToProxies(CastChecked<AActor>(InLevelInstance)->IsInEditingLevelInstance());
-	}
-
-	if (LevelInstanceEditorInstanceActor.IsValid())
-	{
-		if (InActor.GetAttachParentActor() == nullptr && !InActor.IsChildActor())
-		{
-			InActor.AttachToActor(LevelInstanceEditorInstanceActor.Get(), FAttachmentTransformRules::KeepWorldTransform);
+			if (Actor->GetAttachParentActor() == LevelInstanceEditorInstanceActor.Get())
+			{
+				Actor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+			}
 		}
 	}
 }
 
-void ULevelStreamingLevelInstance::OnLoadedActorRemovedFromLevel(AActor& InActor)
+void ULevelStreamingLevelInstance::OnPreInitializeContainerInstance(UActorDescContainerInstance::FInitializeParams& InInitParams, UActorDescContainerInstance* InContainerInstance)
 {
-	// Detach actor or else it will keep it alive (attachement keeps a reference to the actor)
-	check(LevelInstanceEditorInstanceActor.IsValid());
-	if (InActor.GetAttachParentActor() == LevelInstanceEditorInstanceActor.Get())
-	{
-		InActor.DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	}
+	AActor* LevelInstanceActor = Cast<AActor>(GetLevelInstance());
+	UWorldPartition* OwningWorldPartition = LevelInstanceActor->GetLevel()->GetWorldPartition();
+	
+	// In Editor it is possible to have a non WP parent world in which case we pass in null to the SetParent method, this will ensure that in editor the Level Instance container ID won't be a IsMainContainer() and will properly handle IsMainWorldOnly actors
+	InInitParams.SetParent(OwningWorldPartition ? OwningWorldPartition->GetActorDescContainerInstance() : nullptr, LevelInstanceActor->GetActorGuid());
 }
 
 #endif
@@ -243,69 +299,28 @@ ULevelStreamingLevelInstance* ULevelStreamingLevelInstance::LoadInstance(ILevelI
 	Params.OptionalLevelNameOverride = &Suffix;
 	Params.OptionalLevelStreamingClass = LevelInstance->GetLevelStreamingClass();
 	Params.bLoadAsTempPackage = true;
+#if WITH_EDITOR
+	Params.EditorPathOwner = LevelInstanceActor;
+#endif
 	
 	if (World->IsGameWorld())
 	{
 		Params.bInitiallyVisible = LevelInstance->IsInitiallyVisible();
+		Params.bAllowReuseExitingLevelStreaming = true;
 	}
 
 	const FString LevelInstancePackageName = ULevelStreamingDynamic::GetLevelInstancePackageName(Params);
-
-#if WITH_EDITOR
-	FActorInstanceGuidMapper& ActorInstanceGuidMapper = TLazySingleton<FActorInstanceGuidMapper>::Get();
-	ActorInstanceGuidMapper.RegisterGuidMapper(*LevelInstancePackageName, [LevelInstance](const FGuid& InActorGuid) { return LevelInstance->GetLevelInstanceID().GetContainerID().GetActorGuid(InActorGuid); });
-	ON_SCOPE_EXIT { ActorInstanceGuidMapper.UnregisterGuidMapper(*LevelInstancePackageName); };
-#endif
 
 	ULevelStreamingLevelInstance* LevelStreaming = Cast<ULevelStreamingLevelInstance>(ULevelStreamingDynamic::LoadLevelInstance(Params, bOutSuccess));
 	if (bOutSuccess)
 	{
 		LevelStreaming->LevelInstanceID = LevelInstance->GetLevelInstanceID();
-		
+		LevelStreaming->LevelColor = FLinearColor::MakeRandomSeededColor(GetTypeHash(LevelInstance->GetLevelInstanceID()));
+
 #if WITH_EDITOR
 		if (!World->IsGameWorld())
 		{
 			GEngine->BlockTillLevelStreamingCompleted(LevelInstanceActor->GetWorld());
-
-			// Most of the code here is meant to allow partial support for undo/redo of LevelInstance Instance Loading:
-			// by setting the objects RF_Transient and !RF_Transactional we can check when unloading if those flags
-			// have been changed and figure out if we need to clear the transaction buffer or not.
-			// It might not be the final solution to support Undo/Redo in LevelInstances but it handles most of the non-editing part
-			if (ULevel* Level = LevelStreaming->GetLoadedLevel())
-			{
-				check(LevelStreaming->GetLevelStreamingState() == ELevelStreamingState::LoadedVisible);
-
-				Level->OnLoadedActorAddedToLevelPreEvent.AddUObject(LevelStreaming, &ULevelStreamingLevelInstance::OnLoadedActorPreAddedToLevel);
-				Level->OnLoadedActorAddedToLevelEvent.AddUObject(LevelStreaming, &ULevelStreamingLevelInstance::OnLoadedActorAddedToLevel);
-				Level->OnLoadedActorRemovedFromLevelEvent.AddUObject(LevelStreaming, &ULevelStreamingLevelInstance::OnLoadedActorRemovedFromLevel);
-
-				FLevelInstanceLevelStreamingUtils::MarkObjectsInPackageAsTransientAndNonTransactional(Level->GetPackage());
-
-				for (AActor* LevelActor : Level->Actors)
-				{
-					if (LevelActor)
-					{
-						LevelStreaming->PrepareLevelInstanceLoadedActor(*LevelActor, LevelInstance, false);
-					}
-				}
-
-				Level->ForEachActorFolder([](UActorFolder* ActorFolder)
-				{
-					if (ActorFolder->IsPackageExternal())
-					{
-						FLevelInstanceLevelStreamingUtils::MarkObjectsInPackageAsTransientAndNonTransactional(ActorFolder->GetPackage());
-					}
-					return true;
-				});
-
-				// Create special actor that will handle selection and transform
-				LevelStreaming->LevelInstanceEditorInstanceActor = ALevelInstanceEditorInstanceActor::Create(LevelInstance, Level);
-			}
-			else
-			{
-				// Failed to load package
-				return nullptr;
-			}
 		}
 #endif
 		return LevelStreaming;
@@ -314,21 +329,58 @@ ULevelStreamingLevelInstance* ULevelStreamingLevelInstance::LoadInstance(ILevelI
 	return nullptr;
 }
 
+#if WITH_EDITOR
+void ULevelStreamingLevelInstance::OnLevelStreamingStateChanged(UWorld* InWorld, const ULevelStreaming* InLevelStreaming, ULevel* InLevelIfLoaded, ELevelStreamingState InPrevState, ELevelStreamingState InNewState)
+{
+	if (InNewState == ELevelStreamingState::LoadedVisible && InLevelStreaming == this)
+	{
+		ILevelInstanceInterface* LevelInstance = GetLevelInstance();
+
+		ULevel* Level = GetLoadedLevel();
+		check(GetLevelStreamingState() == ELevelStreamingState::LoadedVisible);
+
+		// Flag all Level Objects as non RF_Transactional & RF_Transient so that they can't be added to the Transaction Buffer and will be allowed to be unloaded / reloaded without clearing the Transaction Buffer
+		FLevelInstanceLevelStreamingUtils::MarkObjectsInPackageAsTransientAndNonTransactional(Level->GetPackage());
+
+		ForEachObjectWithOuter(Level, [](UObject* InObject)
+		{
+			// Skip actors as they are already handled in OnLoadedActorsAddedToLevelPreEvent
+			if (InObject && InObject->IsPackageExternal() && !InObject->IsA<AActor>())
+			{
+				FLevelInstanceLevelStreamingUtils::MarkObjectsInPackageAsTransientAndNonTransactional(InObject->GetPackage());
+			}
+		}, /*bIncludeNestedObjects*/ true);
+
+		OnLoadedActorsAddedToLevelPreEvent(Level->Actors);
+
+		Level->OnLoadedActorAddedToLevelPreEvent.AddUObject(this, &ULevelStreamingLevelInstance::OnLoadedActorsAddedToLevelPreEvent);
+		Level->OnLoadedActorAddedToLevelPostEvent.AddUObject(this, &ULevelStreamingLevelInstance::OnLoadedActorsAddedToLevelPostEvent);
+		Level->OnLoadedActorRemovedFromLevelPreEvent.AddUObject(this, &ULevelStreamingLevelInstance::OnLoadedActorsRemovedFromLevelPostEvent);
+
+		// Create special actor that will handle selection and transform
+		LevelInstanceEditorInstanceActor = ALevelInstanceEditorInstanceActor::Create(LevelInstance, Level);
+
+		// Push editing state to child actors
+		AActor* LevelInstanceActor = CastChecked<AActor>(LevelInstance);
+		LevelInstanceActor->PushLevelInstanceEditingStateToProxies(LevelInstanceActor->IsInEditLevelInstanceHierarchy());
+
+		// Unregister
+		FLevelStreamingDelegates::OnLevelStreamingStateChanged.RemoveAll(this);
+	}
+}
+#endif
+
 void ULevelStreamingLevelInstance::UnloadInstance(ULevelStreamingLevelInstance* LevelStreaming)
 {
-	if (LevelStreaming->GetWorld()->IsGameWorld())
-	{
-		LevelStreaming->SetShouldBeLoaded(false);
-		LevelStreaming->SetShouldBeVisible(false);
-		LevelStreaming->SetIsRequestingUnloadAndRemoval(true);
-	}
 #if WITH_EDITOR
-	else
+	if (LevelStreaming->IsEditorWorldMode())
 	{
+		FLevelStreamingDelegates::OnLevelStreamingStateChanged.RemoveAll(LevelStreaming);
+
 		ULevel* LoadedLevel = LevelStreaming->GetLoadedLevel();
 		LoadedLevel->OnLoadedActorAddedToLevelPreEvent.RemoveAll(LevelStreaming);
-		LoadedLevel->OnLoadedActorAddedToLevelEvent.RemoveAll(LevelStreaming);
-		LoadedLevel->OnLoadedActorRemovedFromLevelEvent.RemoveAll(LevelStreaming);
+		LoadedLevel->OnLoadedActorAddedToLevelPostEvent.RemoveAll(LevelStreaming);
+		LoadedLevel->OnLoadedActorRemovedFromLevelPreEvent.RemoveAll(LevelStreaming);
 		LevelStreaming->LevelInstanceEditorInstanceActor.Reset();
 
 		// Check if we need to flush the Trans buffer...
@@ -343,11 +395,19 @@ void ULevelStreamingLevelInstance::UnloadInstance(ULevelStreamingLevelInstance* 
 				return false;
 			}
 			return true;
-		}, true);
+		}, /*bIncludeNestedObjects*/ true);
 
 		LevelStreaming->GetWorld()->GetSubsystem<ULevelInstanceSubsystem>()->RemoveLevelsFromWorld({ LevelStreaming->GetLoadedLevel() }, bResetTrans);
 	}
-#endif 
+	else
+#endif
+	if (LevelStreaming->GetWorld()->IsGameWorld())
+	{
+		LevelStreaming->SetShouldBeLoaded(false);
+		LevelStreaming->SetShouldBeVisible(false);
+		LevelStreaming->SetIsRequestingUnloadAndRemoval(true);
+	}
+
 }
 
 void ULevelStreamingLevelInstance::OnLevelLoadedChanged(ULevel* InLevel)
@@ -356,6 +416,13 @@ void ULevelStreamingLevelInstance::OnLevelLoadedChanged(ULevel* InLevel)
 
 	if (ULevel* NewLoadedLevel = GetLoadedLevel())
 	{
+#if WITH_EDITOR
+		if (IsEditorWorldMode())
+		{
+			FLevelStreamingDelegates::OnLevelStreamingStateChanged.AddUObject(this, &ULevelStreamingLevelInstance::OnLevelStreamingStateChanged);
+		}
+#endif
+
 		check(InLevel == NewLoadedLevel);
 		if (!NewLoadedLevel->bAlreadyMovedActors)
 		{
@@ -372,6 +439,14 @@ void ULevelStreamingLevelInstance::OnLevelLoadedChanged(ULevel* InLevel)
 			if (UWorldPartition* OuterWorldPartition = NewLoadedLevel->GetWorldPartition())
 			{
 				check(!OuterWorldPartition->IsInitialized());
+				
+				// In Non-Editor worlds we want the container of a Level Instance to be considered the main container, it will do its own generate streaming if it is a World Partition
+				// so we don't need to be called on Pre init
+				if (IsEditorWorldMode())
+				{
+					OuterWorldPartition->OnActorDescContainerInstancePreInitialize.BindUObject(this, &ULevelStreamingLevelInstance::OnPreInitializeContainerInstance);
+				}
+
 				if (UWorldPartition* OwningWorldPartition = GetWorld()->GetWorldPartition(); OwningWorldPartition && OwningWorldPartition->IsStreamingEnabled())
 				{
 					if (GDisableLevelInstanceEditorPartialLoading)

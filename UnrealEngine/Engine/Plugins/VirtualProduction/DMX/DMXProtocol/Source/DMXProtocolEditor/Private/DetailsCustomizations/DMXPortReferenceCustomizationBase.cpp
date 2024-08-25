@@ -110,8 +110,6 @@ void FDMXPortReferenceCustomizationBase::CustomizeChildren(TSharedRef<IPropertyH
 
 void FDMXPortReferenceCustomizationBase::OnPortSelected()
 {
-	check(PortSelector.IsValid());
-	
 	ApplySelectedPortGuid();
 }
 
@@ -178,7 +176,11 @@ void FDMXPortReferenceCustomizationBase::ApplySelectedPortGuid()
 	if (!GetPortGuids().Contains(SelectedGuid))
 	{
 		const TSharedPtr<IPropertyHandle>& PortGuidHandle = GetPortGuidHandle();
-		check(PortGuidHandle.IsValid() && PortGuidHandle->IsValidHandle());
+		if (!PortGuidHandle.IsValid() || !PortGuidHandle->IsValidHandle())
+		{
+			// May be invalid while port arrays are changing
+			return;
+		}
 
 		PortGuidHandle->NotifyPreChange();
 
@@ -197,7 +199,11 @@ void FDMXPortReferenceCustomizationBase::ApplySelectedPortGuid()
 TArray<FGuid> FDMXPortReferenceCustomizationBase::GetPortGuids() const
 {
 	const TSharedPtr<IPropertyHandle>& PortGuidHandle = GetPortGuidHandle();
-	check(PortGuidHandle.IsValid() && PortGuidHandle->IsValidHandle());
+	if (!PortGuidHandle.IsValid() || !PortGuidHandle->IsValidHandle())
+	{			
+		// May be invalid while port arrays are changing
+		return TArray<FGuid>();
+	}
 
 	TArray<void*> RawDataArray;
 	PortGuidHandle->AccessRawData(RawDataArray);

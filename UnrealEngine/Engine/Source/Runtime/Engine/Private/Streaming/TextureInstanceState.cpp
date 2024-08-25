@@ -107,8 +107,8 @@ void FRenderAssetInstanceState::AddElement(const UPrimitiveComponent* InComponen
 	int32 ElementIndex = INDEX_NONE;
 	if (FreeElementIndices.Num())
 	{
-		const bool bAllowShrinking = false;
-		ElementIndex = FreeElementIndices.Pop(bAllowShrinking);
+		ElementIndex = FreeElementIndices.Pop(EAllowShrinking::No);
+		check(ElementIndex < Elements.Num());
 	}
 	else
 	{
@@ -127,6 +127,7 @@ void FRenderAssetInstanceState::AddElement(const UPrimitiveComponent* InComponen
 	FRenderAssetDesc* AssetDesc = RenderAssetMap.Find(InAsset);
 	if (AssetDesc)
 	{
+		check(AssetDesc->HeadLink < Elements.Num());
 		FElement& AssetLinkElement = Elements[AssetDesc->HeadLink];
 
 		// The new inserted element as the head element.
@@ -137,7 +138,10 @@ void FRenderAssetInstanceState::AddElement(const UPrimitiveComponent* InComponen
 	else
 	{
 		RenderAssetMap.Add(InAsset, FRenderAssetDesc(ElementIndex, InAsset->GetLODGroupForStreaming()));
+		check(Element.NextRenderAssetLink == INDEX_NONE);
 	}
+
+	check(Element.PrevRenderAssetLink == INDEX_NONE);
 
 	// Simple sanity check to ensure that the component link passed in param is the right one
 	checkSlow(ComponentLink == ComponentMap.Find(InComponent));
@@ -175,6 +179,7 @@ void FRenderAssetInstanceState::AddElement(const UPrimitiveComponent* InComponen
 
 void FRenderAssetInstanceState::RemoveElement(int32 ElementIndex, int32& NextComponentLink, int32& BoundsIndex, const UStreamableRenderAsset*& Asset)
 {
+	check(ElementIndex < Elements.Num());
 	FElement& Element = Elements[ElementIndex];
 	NextComponentLink = Element.NextComponentLink; 
 	BoundsIndex = Element.BoundsIndex; 
@@ -182,7 +187,7 @@ void FRenderAssetInstanceState::RemoveElement(int32 ElementIndex, int32& NextCom
 	// Removed compiled elements. This happens when a static component is not registered after the level became visible.
 	if (HasCompiledElements())
 	{
-		CompiledRenderAssetMap.FindChecked(Element.RenderAsset).RemoveSingleSwap(FCompiledElement(Element), false);
+		CompiledRenderAssetMap.FindChecked(Element.RenderAsset).RemoveSingleSwap(FCompiledElement(Element), EAllowShrinking::No);
 
 		if (Element.TexelFactor < 0.f
 			&& Element.RenderAsset
@@ -231,6 +236,7 @@ void FRenderAssetInstanceState::RemoveElement(int32 ElementIndex, int32& NextCom
 	}
 	else
 	{
+		check(RenderAssetMap.IsEmpty());
 		Elements.Empty();
 		FreeElementIndices.Empty();
 	}
@@ -831,8 +837,8 @@ void FRenderAssetInstanceState::TrimBounds()
 
 			if (bDefragRangeIsFree)
 			{
-				Bounds4.RemoveAt(Bounds4.Num() - DefragThreshold / 4, DefragThreshold / 4, false);
-				Bounds4Components.RemoveAt(Bounds4Components.Num() - DefragThreshold, DefragThreshold, false);
+				Bounds4.RemoveAt(Bounds4.Num() - DefragThreshold / 4, DefragThreshold / 4, EAllowShrinking::No);
+				Bounds4Components.RemoveAt(Bounds4Components.Num() - DefragThreshold, DefragThreshold, EAllowShrinking::No);
 				bUpdateFreeBoundIndices = true;
 			}
 		}

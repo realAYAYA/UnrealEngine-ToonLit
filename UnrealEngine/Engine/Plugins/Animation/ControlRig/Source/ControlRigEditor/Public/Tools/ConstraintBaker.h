@@ -6,12 +6,17 @@
 #include "Templates/SharedPointer.h"
 #include "BakingAnimationKeySettings.h"
 
+struct FConstraintAndActiveChannel;
 class UMovieSceneSection;
 class UTransformableHandle;
 class UTickableTransformConstraint;
 class ISequencer;
 class UWorld;
 struct FFrameNumber;
+struct FMovieSceneFloatChannel;
+struct FMovieSceneDoubleChannel;
+enum class EMovieSceneTransformChannel : uint32;
+
 struct FConstraintBaker
 {
 public:
@@ -40,5 +45,17 @@ private:
 		UMovieSceneSection* InSection,
 		const TOptional< FBakingAnimationKeySettings>& Settings,
 		TArray<FFrameNumber>& OutFramesToBake);
+
+	/** Delete the handle's transform keys within active ranges. */
+	static void DeleteTransformKeysInActiveRanges(
+		const TArrayView<FMovieSceneFloatChannel*>& InFloatTransformChannels,
+		const TArrayView<FMovieSceneDoubleChannel*>& InDoubleTransformChannels,
+		const EMovieSceneTransformChannel& InChannels,
+		const TArray<FFrameNumber>& InFramesToBake,
+		const TArrayView<const FFrameNumber>& InConstraintFrames,
+		const TArray<bool>& InConstraintValues);
+
+	/** Removes unnecessary inactive keys to ensure the cleanest possible active channel once baked */
+	static void CleanupConstraintKeys(FConstraintAndActiveChannel& InOutActiveChannel);
 };
 

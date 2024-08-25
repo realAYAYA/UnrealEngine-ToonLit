@@ -1,9 +1,5 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -14,9 +10,11 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using EpicGames.OIDC;
-using UnrealGameSync.Forms;
-using Microsoft.Extensions.Logging.Abstractions;
+using EpicGames.Core;
+using EpicGames.Horde;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -27,7 +25,7 @@ namespace UnrealGameSync
 		readonly SynchronizationContext _mainThreadSynchronizationContext;
 
 		readonly IPerforceSettings _defaultPerforceSettings;
-		UpdateMonitor _updateMonitor;
+		readonly UpdateMonitor _updateMonitor;
 		readonly string? _apiUrl;
 		readonly DirectoryReference _dataFolder;
 		readonly DirectoryReference _cacheFolder;
@@ -84,7 +82,7 @@ namespace UnrealGameSync
 
 			// Make sure a synchronization context is set. We spawn a bunch of threads (eg. UpdateMonitor) at startup, and need to make sure we can post messages 
 			// back to the main thread at any time.
-			if(SynchronizationContext.Current == null)
+			if (SynchronizationContext.Current == null)
 			{
 				_synchronizationContext = new WindowsFormsSynchronizationContext();
 				SynchronizationContext.SetSynchronizationContext(_synchronizationContext);
@@ -95,20 +93,20 @@ namespace UnrealGameSync
 
 			// Read the user's settings
 			_settings = UserSettings.Create(dataFolder, serviceProvider.GetRequiredService<ILogger<UserSettings>>());
-			if(!String.IsNullOrEmpty(projectFileName))
+			if (!String.IsNullOrEmpty(projectFileName))
 			{
 				string fullProjectFileName = Path.GetFullPath(projectFileName);
-				if(!_settings.OpenProjects.Any(x => x.LocalPath != null && String.Equals(x.LocalPath, fullProjectFileName, StringComparison.OrdinalIgnoreCase)))
+				if (!_settings.OpenProjects.Any(x => x.LocalPath != null && String.Equals(x.LocalPath, fullProjectFileName, StringComparison.OrdinalIgnoreCase)))
 				{
 					_settings.OpenProjects.Add(new UserSelectedProjectSettings(null, null, UserSelectedProjectType.Local, null, fullProjectFileName));
 				}
 			}
 
 			// Update the settings to the latest version
-			if(_settings.Version < UserSettingsVersion.Latest)
+			if (_settings.Version < UserSettingsVersion.Latest)
 			{
 				// Clear out the server settings for anything using the default server
-				if(_settings.Version < UserSettingsVersion.DefaultServerSettings)
+				if (_settings.Version < UserSettingsVersion.DefaultServerSettings)
 				{
 					_logger.LogInformation("Clearing project settings for default server");
 					for (int idx = 0; idx < _settings.OpenProjects.Count; idx++)
@@ -197,19 +195,20 @@ namespace UnrealGameSync
 				if (IsValidProject(projectSettings, _logger))
 				{
 					ILogger<OpenProjectInfo> logger = serviceProvider.GetRequiredService<ILogger<OpenProjectInfo>>();
-					OidcTokenManager oidcTokenManager = serviceProvider.GetRequiredService<OidcTokenManager>();
-					Task<OpenProjectInfo> startupTask = Task.Run(() => OpenProjectInfo.CreateAsync(defaultPerforceSettings, projectSettings, _settings, oidcTokenManager, logger, _startupCancellationSource.Token), _startupCancellationSource.Token);
+					Task<OpenProjectInfo> startupTask = Task.Run(() => OpenProjectInfo.CreateAsync(defaultPerforceSettings, projectSettings, _settings, false, logger, _startupCancellationSource.Token), _startupCancellationSource.Token);
 					startupTasks.Add((projectSettings, new ModalTask<OpenProjectInfo>(startupTask)));
 				}
 			}
-			_startupTask = Task.Run(() => WaitForStartupTasks(startupTasks));
+
+			HordeHttpAuthHandlerState? hordeAuthState = _serviceProvider.GetService<HordeHttpAuthHandlerState>();
+			_startupTask = Task.Run(() => WaitForStartupTasks(startupTasks, hordeAuthState));
 
 			_startupWindow = new ModalTaskWindow("Opening Projects", "Opening projects, please wait...", FormStartPosition.CenterScreen, _startupTask, _startupCancellationSource);
 			_components.Add(_startupWindow);
 
-			if(restoreState)
+			if (restoreState)
 			{
-				if(_settings.WindowVisible)
+				if (_settings.WindowVisible)
 				{
 					_startupWindow.Show();
 				}
@@ -226,7 +225,7 @@ namespace UnrealGameSync
 		{
 			try
 			{
-				bool valid = String.IsNullOrEmpty(projectSettings.LocalPath) || File.Exists(projectSettings.LocalPath);
+				bool valid = projectSettings.Type != UserSelectedProjectType.Local || File.Exists(projectSettings.LocalPath);
 				return valid;
 			}
 			catch
@@ -236,7 +235,7 @@ namespace UnrealGameSync
 			}
 		}
 
-		static async Task WaitForStartupTasks(List<(UserSelectedProjectSettings, ModalTask<OpenProjectInfo>)> startupTasks)
+		static async Task WaitForStartupTasks(List<(UserSelectedProjectSettings, ModalTask<OpenProjectInfo>)> startupTasks, HordeHttpAuthHandlerState? hordeAuthState)
 		{
 			foreach ((_, ModalTask<OpenProjectInfo> modalTask) in startupTasks)
 			{
@@ -257,6 +256,11 @@ namespace UnrealGameSync
 				{
 					Program.CaptureException(ex);
 				}
+			}
+
+			if (hordeAuthState != null)
+			{
+				await hordeAuthState.LoginAsync(false, CancellationToken.None);
 			}
 		}
 
@@ -298,7 +302,7 @@ namespace UnrealGameSync
 			if (visible)
 			{
 				_mainWindowInstance.Show();
-				if(!_restoreState)
+				if (!_restoreState)
 				{
 					_mainWindowInstance.Activate();
 				}
@@ -313,7 +317,7 @@ namespace UnrealGameSync
 
 		private void OnActivationListenerCallback()
 		{
-			if(_mainWindowInstance != null && !_mainWindowInstance.IsDisposed)
+			if (_mainWindowInstance != null && !_mainWindowInstance.IsDisposed)
 			{
 				_mainWindowInstance.ShowAndActivate();
 			}
@@ -326,9 +330,9 @@ namespace UnrealGameSync
 
 		private void OnUpdateAvailable(UpdateType type)
 		{
-			if(_mainWindowInstance != null && !_isClosing)
+			if (_mainWindowInstance != null && !_isClosing)
 			{
-				if(type == UpdateType.UserInitiated || _mainWindowInstance.CanPerformUpdate())
+				if (type == UpdateType.UserInitiated || _mainWindowInstance.CanPerformUpdate())
 				{
 					_isClosing = true;
 					_mainWindowInstance.ForceClose();
@@ -338,7 +342,7 @@ namespace UnrealGameSync
 		}
 
 		private void OnUpdateAvailableCallback(UpdateType type)
-		{ 
+		{
 			_mainThreadSynchronizationContext.Post((o) => OnUpdateAvailable(type), null);
 		}
 
@@ -346,13 +350,7 @@ namespace UnrealGameSync
 		{
 			base.Dispose(disposing);
 
-			if(_updateMonitor != null)
-			{
-				_updateMonitor.Dispose();
-				_updateMonitor = null!;
-			}
-
-			if(_activationListener != null)
+			if (_activationListener != null)
 			{
 				_activationListener.OnActivate -= OnActivationListenerAsyncCallback;
 				_activationListener.Stop();
@@ -372,13 +370,13 @@ namespace UnrealGameSync
 				_notifyIcon = null!;
 			}
 
-			if(_mainWindowInstance != null)
+			if (_mainWindowInstance != null)
 			{
 				_mainWindowInstance.ForceClose();
 				_mainWindowInstance = null!;
 			}
 
-			if(_startupWindow != null)
+			if (_startupWindow != null)
 			{
 				_startupWindow.Close();
 				_startupWindow = null;
@@ -444,7 +442,7 @@ namespace UnrealGameSync
 				_startupWindow = null;
 			}
 
-			if(_mainWindowInstance != null)
+			if (_mainWindowInstance != null)
 			{
 				_mainWindowInstance.ForceClose();
 				_mainWindowInstance = null;
@@ -457,7 +455,7 @@ namespace UnrealGameSync
 		{
 			base.ExitThreadCore();
 
-			if(_notifyIcon != null)
+			if (_notifyIcon != null)
 			{
 				_notifyIcon.Visible = false;
 			}

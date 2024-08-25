@@ -9,10 +9,12 @@ namespace UnrealBuildTool.Rules
 			PublicDependencyModuleNames.AddRange(
 				new string[]
 				{
+					"ClothingSystemRuntimeCommon",
 					"Core",
 					"CoreUObject",
 					"Engine",
 					"InterchangeCore",
+					"InterchangeCommon",
 					"InterchangeDispatcher",
 					"InterchangeEngine",
 					"InterchangeFactoryNodes",
@@ -50,6 +52,7 @@ namespace UnrealBuildTool.Rules
 					new string[]
 					{
 						"BSPUtils",
+						"InterchangeFbxParser",
 						"MaterialEditor",
 						"SkeletalMeshUtilitiesCommon",
 						"UnrealEd",

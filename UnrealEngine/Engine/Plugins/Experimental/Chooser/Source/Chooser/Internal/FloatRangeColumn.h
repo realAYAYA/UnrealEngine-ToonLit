@@ -1,11 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
+#include <IHasContext.h>
+
 #include "CoreMinimal.h"
 #include "IChooserColumn.h"
 #include "IChooserParameterFloat.h"
 #include "ChooserPropertyAccess.h"
 #include "InstancedStruct.h"
+#include "Serialization/MemoryReader.h"
 #include "FloatRangeColumn.generated.h"
 
 USTRUCT(DisplayName = "Float Property Binding")
@@ -29,30 +32,9 @@ struct CHOOSER_API FFloatContextProperty :  public FChooserParameterFloatBase
 			Binding.PropertyBindingChain = PropertyBindingChain_DEPRECATED;
 			PropertyBindingChain_DEPRECATED.SetNum(0);
 		}
-	}	
-
-#if WITH_EDITOR
-	static bool CanBind(const FProperty& Property)
-	{
-		static FString DoubleTypeName = "double";
-		static FString FloatTypeName = "float";
-		const FString& TypeName = Property.GetCPPType();
-		return TypeName == FloatTypeName || TypeName == DoubleTypeName;
 	}
 	
-	void SetBinding(const TArray<FBindingChainElement>& InBindingChain)
-	{
-		UE::Chooser::CopyPropertyChain(InBindingChain, Binding);
-	}
-
-	virtual void GetDisplayName(FText& OutName) const override
-	{
-		if (!Binding.PropertyBindingChain.IsEmpty())
-		{
-			OutName = FText::FromName(Binding.PropertyBindingChain.Last());
-		}
-	}
-#endif
+	CHOOSER_PARAMETER_BOILERPLATE();
 };
 
 USTRUCT()
@@ -88,14 +70,23 @@ struct CHOOSER_API FFloatRangeColumn : public FChooserColumnBase
 	// should match the length of the Results array 
 	TArray<FChooserFloatRangeRowData> RowValues;
 	
-	virtual void Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const override;
+	virtual void Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const override;
 
 #if WITH_EDITOR
-	mutable float TestValue;
+	mutable double TestValue = 0.0;
 	virtual bool EditorTestFilter(int32 RowIndex) const override
 	{
 		return RowValues.IsValidIndex(RowIndex) && TestValue >= RowValues[RowIndex].Min && TestValue <= RowValues[RowIndex].Max;
 	}
+	
+	virtual void SetTestValue(TArrayView<const uint8> Value) override
+	{
+		FMemoryReaderView Reader(Value);
+		Reader << TestValue;
+	}
+
+	virtual void AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
+	virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
 #endif
 	
 	virtual void PostLoad() override
@@ -105,7 +96,7 @@ struct CHOOSER_API FFloatRangeColumn : public FChooserColumnBase
 			InputValue.GetMutable<FChooserParameterBase>().PostLoad();
 		}
 	}
-	
+
 	CHOOSER_COLUMN_BOILERPLATE(FChooserParameterFloatBase);
 
 };

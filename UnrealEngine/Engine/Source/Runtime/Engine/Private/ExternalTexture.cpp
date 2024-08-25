@@ -32,7 +32,7 @@ void FExternalTextureRegistry::RegisterExternalTexture(const FGuid& InGuid, FTex
 
 	for (const FMaterialRenderProxy* MaterialRenderProxy : ReferencingMaterialRenderProxies)
 	{
-		const_cast<FMaterialRenderProxy*>(MaterialRenderProxy)->CacheUniformExpressions(false);
+		const_cast<FMaterialRenderProxy*>(MaterialRenderProxy)->CacheUniformExpressions(FRHICommandListImmediate::Get(), false);
 	}
 }
 
@@ -45,14 +45,13 @@ void FExternalTextureRegistry::UnregisterExternalTexture(const FGuid& InGuid)
 
 	for (const FMaterialRenderProxy* MaterialRenderProxy : ReferencingMaterialRenderProxies)
 	{
-		const_cast<FMaterialRenderProxy*>(MaterialRenderProxy)->CacheUniformExpressions(false);
+		const_cast<FMaterialRenderProxy*>(MaterialRenderProxy)->CacheUniformExpressions(FRHICommandListImmediate::Get(), false);
 	}
 }
 
 
 void FExternalTextureRegistry::RemoveMaterialRenderProxyReference(const FMaterialRenderProxy* MaterialRenderProxy)
 {
-	check(IsInRenderingThread());
 	FScopeLock Lock(&CriticalSection);
 	ReferencingMaterialRenderProxies.Remove(MaterialRenderProxy);
 }

@@ -5,6 +5,7 @@
 #include "GeometryParticlesfwd.h"
 #include "ChaosCheck.h"
 #include "ChaosDebugDrawDeclares.h"
+#include "Containers/HashTable.h"
 
 namespace Chaos
 {
@@ -341,6 +342,7 @@ public:
 	virtual void DebugDraw(ISpacialDebugDrawInterface<T>* InInterface) const {}
 	virtual void DebugDrawLeaf(ISpacialDebugDrawInterface<T>& InInterface, const FLinearColor& InLinearColor, float InThickness) const {}
 	virtual void DumpStats() const {}
+	virtual void DumpStatsTo(class FOutputDevice& Ar) const {}
 #endif
 
 	static ISpatialAcceleration<TPayloadType, T, d>* SerializationFactory(FChaosArchive& Ar, ISpatialAcceleration<TPayloadType, T, d>* Accel)
@@ -360,7 +362,6 @@ public:
 		case ESpatialAcceleration::Collection: check(false);	//Collections must be serialized directly since they are variadic
 		default: check(false); return nullptr;
 		}
-		return nullptr;
 	}
 
 	virtual void Serialize(FChaosArchive& Ar)
@@ -496,9 +497,42 @@ private:
 template <typename TKey, typename TValue>
 class TArrayAsMap
 {
+	struct FEntry
+	{
+		TValue Value;
+		bool bSet;
+
+		FEntry()
+			: bSet(false)
+		{
+
+		}
+	};
+
 public:
 	// @todo(chaos): rename with "F"
 	using ElementType = TValue;
+
+	static constexpr uint32 GetTypeSize()
+	{
+		return sizeof(FEntry);
+	}
+
+	SIZE_T GetAllocatedSize() const
+	{
+		SIZE_T AllocatedSize = Entries.GetAllocatedSize();
+
+#if CHAOS_SERIALIZE_OUT
+		AllocatedSize += KeysToSerializeOut.GetAllocatedSize();
+#endif
+
+		return AllocatedSize;
+	}
+
+	int32 Capacity() const
+	{
+		return Entries.Max();
+	}
 
 	// @todo(chaos): rename with "F"
 	struct Element
@@ -525,7 +559,7 @@ public:
 	TValue* Find(const TKey& Key)
 	{
 		const int32 Idx = GetUniqueIdx(Key).Idx;
-		if(Idx < Entries.Num() && Entries[Idx].bSet)
+		if(Entries.IsValidIndex(Idx) && Entries[Idx].bSet)
 		{
 			return &Entries[Idx].Value;
 		}
@@ -656,19 +690,7 @@ public:
 	}
 
 private:
-	
-	struct FEntry
-	{
-		TValue Value;
-		bool bSet;
 
-		FEntry()
-			: bSet(false)
-		{
-
-		}
-	};
-	
 	TArray<FEntry> Entries;
 
 #if CHAOS_SERIALIZE_OUT
@@ -679,12 +701,294 @@ private:
 };
 
 template <typename TKey, typename TValue>
+struct SQMapKeyWithValue
+{
+	SQMapKeyWithValue() = default;
+	SQMapKeyWithValue(const TKey& InKey, const TValue& InValue)
+		: Key(InKey)
+		, Value(InValue)
+	{}
+
+	TKey Key;
+	TValue Value;
+};
+
+template <typename TKey, typename TValue>
+FChaosArchive& operator<< (FChaosArchive& Ar, SQMapKeyWithValue<TKey, TValue>& Pair)
+{
+	Ar << Pair.Key;
+	Ar << Pair.Value;
+
+	return Ar;
+}
+
+class FSQHashTable : public FHashTable
+{
+public:
+	SIZE_T GetAllocatedSize() const
+	{
+		return IndexSize == 0 ? 0 : (IndexSize + HashSize) * sizeof(uint32);
+	}
+
+	uint32 GetIndexSize() const
+	{
+		return IndexSize;
+	}
+};
+
+/**
+ * Map structure using FHashTable as a base store for payload data
+ * FHashTable is a fast, limited API map that requires some management.
+ * In this case as we already have unique values we can just mix the bits
+ * to get a reasonable distribution (the calls to MurmurFinalize32).
+ */
+template <typename TKey, typename TValue>
+class TSQMap
+{
+public:
+
+	using ElementType = TValue;
+	using PairType = SQMapKeyWithValue<TKey, TValue>;
+
+	static constexpr uint32 GetTypeSize()
+	{
+		return sizeof(PairType);
+	}
+
+	SIZE_T GetAllocatedSize() const
+	{
+		return Elements.GetAllocatedSize() + HashTable.GetAllocatedSize();
+	}
+
+	int32 Num() const
+	{
+		return Elements.Num();
+	}
+
+	int32 Capacity() const
+	{
+		return HashTable.GetIndexSize();
+	}
+
+	void Reserve(int32 NumToReserve)
+	{
+		Elements.Reserve(NumToReserve);
+
+		// FHashTable requires powers of two but doesn't assert it.
+		const uint32 RequiredSize = FMath::RoundUpToPowerOfTwo(NumToReserve + 1);
+
+		// #TODO should we allow SQ shrinking?
+		if(RequiredSize > HashTable.GetIndexSize())
+		{
+			HashTable.Resize(RequiredSize);
+		}
+	}
+
+	void ResizeHashBuckets(uint32 NewSize)
+	{
+		const uint32 NumElements = Elements.Num();
+		HashTable.Clear(NewSize, FMath::RoundUpToPowerOfTwo(NumElements + 1));
+
+		// Rehash the elements, we don't use the other Add function here
+		// as that will search for the element and we know it's not in here
+		// as we're building a new hash table
+		for(uint32 ElemIdx = 0; ElemIdx < NumElements; ++ElemIdx)
+		{
+			const uint32 ElemHash = MurmurFinalize32(GetUniqueIdx(Elements[ElemIdx].Key).Idx);
+			HashTable.Add(ElemHash, ElemIdx);
+		}
+	}
+
+	TValue* Find(const TKey& Key)
+	{
+		int32 Index = FindIndex(Key);
+
+		if(Index != INDEX_NONE)
+		{
+			return &Elements[Index].Value;
+		}
+
+		return nullptr;
+	}
+
+	const TValue* Find(const TKey& Key) const
+	{
+		int32 Index = FindIndex(Key);
+
+		if(Index != INDEX_NONE)
+		{
+			return &Elements[Index].Value;
+		}
+
+		return nullptr;
+	}
+
+	TValue& FindChecked(const TKey& Key)
+	{
+		int32 Index = FindIndex(Key);
+		check(Index != INDEX_NONE);
+		return Elements[Index].Value;
+	}
+
+	const TValue& FindChecked(const TKey& Key) const
+	{
+		int32 Index = FindIndex(Key);
+		check(Index != INDEX_NONE);
+		return Elements[Index].Value;
+	}
+
+	TValue& FindOrAdd(const TKey& Key)
+	{
+		const int32 KeyIndex = GetUniqueIdx(Key).Idx;
+		const uint32 Hash = MurmurFinalize32(KeyIndex);
+		int32 Index = FindIndex(Hash, KeyIndex);
+		
+		if(Index == INDEX_NONE)
+		{
+			return Add(Hash, Key);
+		}
+
+		return Elements[Index].Value;
+	}
+
+	void Empty()
+	{
+		Elements.Empty();
+		HashTable.Free();
+	}
+
+	FORCEINLINE TValue& Add(const TKey& Key)
+	{
+		return Add(MurmurFinalize32(GetUniqueIdx(Key).Idx), Key);
+	}
+
+	FORCEINLINE TValue& Add(uint32 InHash, const TKey& Key)
+	{
+		int32 ExistingIndex = FindIndex(InHash, GetUniqueIdx(Key).Idx);
+
+		if(ExistingIndex == INDEX_NONE)
+		{
+			Elements.Emplace(Key, TValue{});
+			ExistingIndex = Elements.Num() - 1;
+			HashTable.Add(InHash, ExistingIndex);
+		}
+
+		return Elements[ExistingIndex].Value;
+	}
+
+	void Add(const TKey& Key, const TValue& Value)
+	{
+		Add(Key) = Value;
+	}
+
+	void RemoveChecked(const TKey& Key)
+	{
+		const int32 NumBefore = Elements.Num();
+		Remove(Key);
+		check(NumBefore > Elements.Num());
+	}
+
+	void Remove(const TKey& Key)
+	{
+		const int32 KeyIndex = GetUniqueIdx(Key).Idx;
+		const uint32 Hash = MurmurFinalize32(KeyIndex);
+		const int32 Index = FindIndex(Hash, KeyIndex);
+
+		if(Index != INDEX_NONE)
+		{
+			HashTable.Remove(Hash, Index);
+
+			// Before removing from the array, if we have more than 1 element we
+			// swap the back element into the empty slot and rehash it. Maybe
+			// we should use a freelist? (profile this)
+			const int32 NumElems = Elements.Num();
+			const int32 BackIndex = NumElems - 1;
+			if(NumElems > 1)
+			{
+				if(Index == BackIndex)
+				{
+					// If we're already the back element, there's nothing to re-add
+					Elements.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+				}
+				else
+				{
+					PairType& BackPair = Elements[NumElems - 1];
+					const uint32 BackHash = MurmurFinalize32(GetUniqueIdx(BackPair.Key).Idx);
+					HashTable.Remove(BackHash, NumElems - 1);
+					Elements.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+					HashTable.Add(BackHash, Index);
+				}
+			}
+			else
+			{
+				Elements.Reset();
+			}
+		}
+	}
+
+	void Reset()
+	{
+		Elements.Reset();
+		HashTable.Clear();
+	}
+
+	FORCEINLINE int32 FindIndex(const TKey& Key) const
+	{
+		const int32 KeyIndex = GetUniqueIdx(Key).Idx;
+		return FindIndex(MurmurFinalize32(KeyIndex), KeyIndex);
+	}
+
+	FORCEINLINE int32 FindIndex(uint32 InHash, int32 UniqueIndex) const
+	{
+		for(uint32 i = HashTable.First(InHash); HashTable.IsValid(i); i = HashTable.Next(i))
+		{
+			if(GetUniqueIdx(Elements[i].Key).Idx == UniqueIndex)
+			{
+				return i;
+			}
+		}
+
+		return INDEX_NONE;
+	}
+
+	void Serialize(FChaosArchive& Ar)
+	{
+		Ar << Elements;
+
+		if(Ar.IsLoading())
+		{
+			const uint32 NumElements = Elements.Num();
+			HashTable.Clear(1024, FMath::RoundUpToPowerOfTwo(NumElements));
+			for(uint32 i = 0; i < NumElements; ++i)
+			{
+				HashTable.Add(MurmurFinalize32(GetUniqueIdx(Elements[i].Key).Idx), i);
+			}
+		}
+	}
+
+	void AddFrom(const TSQMap<TKey, TValue>& Source, int32 SourceIndex)
+	{
+		const PairType& SourcePair = Source.Elements[SourceIndex];
+		Add(SourcePair.Key, SourcePair.Value);
+	}
+
+	TArray<PairType> Elements;
+	FSQHashTable HashTable;
+};
+
+template <typename TKey, typename TValue>
 FChaosArchive& operator<< (FChaosArchive& Ar, TArrayAsMap<TKey, TValue>& Map)
 {
 	Map.Serialize(Ar);
 	return Ar;
 }
 
+template <typename TKey, typename TValue>
+FChaosArchive& operator<< (FChaosArchive& Ar, TSQMap<TKey, TValue>& Map)
+{
+	Map.Serialize(Ar);
+	return Ar;
+}
 
 template <typename TPayload, typename TVisitor>
 typename TEnableIf<!TIsPointer<TPayload>::Value, bool>::Type PrePreFilterHelper(const TPayload& Payload, const TVisitor& Visitor)

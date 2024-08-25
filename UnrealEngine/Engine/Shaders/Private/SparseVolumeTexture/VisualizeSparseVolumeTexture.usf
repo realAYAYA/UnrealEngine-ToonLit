@@ -45,7 +45,6 @@ SamplerState TileDataTextureSampler;
 Texture3D<uint> SparseVolumeTexturePageTable;
 Texture3D<float4> SparseVolumeTextureA;
 Texture3D<float4> SparseVolumeTextureB;
-ByteAddressBuffer StreamingInfoBuffer;
 uint4 PackedSVTUniforms0;
 uint4 PackedSVTUniforms1;
 float3 SparseVolumeTextureResolution;
@@ -53,9 +52,9 @@ int MipLevel;
 float4 WorldToLocal0;
 float4 WorldToLocal1;
 float4 WorldToLocal2;
-float3 WorldToLocalNoScale0;
-float3 WorldToLocalNoScale1;
-float3 WorldToLocalNoScale2;
+float3 WorldToLocalRotation0;
+float3 WorldToLocalRotation1;
+float3 WorldToLocalRotation2;
 uint ComponentToVisualize;
 float Extinction;
 
@@ -65,15 +64,10 @@ void VisualizeSparseVolumeTexturePS(
 )
 {
 	ResolvedView = ResolveView();
-	const uint2 PixelCoord = uint2(SVPos.xy);
-	float2 UvBuffer = PixelCoord * View.BufferSizeAndInvSize.zw;	// Uv for depth buffer read (size can be larger than viewport)
 
-	float2 ScreenPosition = SvPositionToScreenPosition(SVPos).xy;
-	const float Depth = 10000.0f;
-	float4 TranslatedWorldPos = mul(float4(ScreenPosition * Depth, Depth, 1), View.ScreenToTranslatedWorld);
-
-	const float3 RayDirWorld = normalize(TranslatedWorldPos.xyz - View.TranslatedWorldCameraOrigin);
-	const float3 RayOrigWorld = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
+	const float3 TranslatedWorldPos = SvPositionToResolvedTranslatedWorld(SVPos);
+	const float3 RayDirWorld = GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPos);
+	const float3 RayOriginWorld = SvPositionToResolvedTranslatedWorld(float4(SVPos.xy, NearDepthValue, 1.0f));
 
 	// Transform into local [-1.0f, 1.0f] space
 	float3 RayDir;
@@ -82,9 +76,9 @@ void VisualizeSparseVolumeTexturePS(
 	RayDir.z = dot(WorldToLocal2.xyz, RayDirWorld);
 
 	float3 RayOrig;
-	RayOrig.x = dot(WorldToLocal0, float4(RayOrigWorld, 1.0f));
-	RayOrig.y = dot(WorldToLocal1, float4(RayOrigWorld, 1.0f));
-	RayOrig.z = dot(WorldToLocal2, float4(RayOrigWorld, 1.0f));
+	RayOrig.x = dot(WorldToLocal0, float4(RayOriginWorld, 1.0f));
+	RayOrig.y = dot(WorldToLocal1, float4(RayOriginWorld, 1.0f));
+	RayOrig.z = dot(WorldToLocal2, float4(RayOriginWorld, 1.0f));
 
 	OutLuminanceAlpha = float4(0.0, 0.0, 0.0, 1.0);
 
@@ -116,9 +110,9 @@ void VisualizeSparseVolumeTexturePS(
 
 		// DDA requires the ray direction not to be non-(uniformly) scaled.
 		float3 RayDirNoScale;
-		RayDirNoScale.x = dot(WorldToLocalNoScale0, RayDirWorld);
-		RayDirNoScale.y = dot(WorldToLocalNoScale1, RayDirWorld);
-		RayDirNoScale.z = dot(WorldToLocalNoScale2, RayDirWorld);
+		RayDirNoScale.x = dot(WorldToLocalRotation0, RayDirWorld);
+		RayDirNoScale.y = dot(WorldToLocalRotation1, RayDirWorld);
+		RayDirNoScale.z = dot(WorldToLocalRotation2, RayDirWorld);
 
 		// Amanatides 3D-DDA data preparation
 		float3 stepSign = sign(RayDirNoScale);
@@ -132,7 +126,7 @@ void VisualizeSparseVolumeTexturePS(
 		tMax.y *= tDelta.y;
 		tMax.z *= tDelta.z;
 
-		const FSparseVolumeTextureUniforms SVTUniforms = SparseVolumeTextureUnpackUniforms(PackedSVTUniforms0, PackedSVTUniforms1, StreamingInfoBuffer);
+		const FSparseVolumeTextureUniforms SVTUniforms = SparseVolumeTextureUnpackUniforms(PackedSVTUniforms0, PackedSVTUniforms1);
 
 		float StepLength = 1.0f;
 

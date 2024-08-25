@@ -663,7 +663,10 @@ void FLandscapeEditorStructCustomization_FGizmoImportLayer::CustomizeChildren(TS
 FReply FLandscapeEditorStructCustomization_FGizmoImportLayer::OnGizmoImportLayerFilenameButtonClicked(TSharedRef<IPropertyHandle> PropertyHandle_LayerFilename)
 {
 	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
-	check(LandscapeEdMode != NULL);
+	if (!LandscapeEdMode)
+	{
+		return FReply::Handled();
+	}
 
 	// Prompt the user for the Filenames
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();

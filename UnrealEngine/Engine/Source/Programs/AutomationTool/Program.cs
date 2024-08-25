@@ -42,6 +42,7 @@ namespace AutomationToolDriver
 			string Option_ScriptsForProject = "-ScriptsForProject";
 			string Option_ScriptDir = "-ScriptDir";
 			string Option_Telemetry = "-Telemetry";
+			string Option_WaitForStdStreams = "-WaitForStdStreams";
 
 			// The parameter was not found in the list of global parameters, continue looking...
 			if (CurrentParam.StartsWith(Option_ScriptsForProject + "=", StringComparison.InvariantCultureIgnoreCase))
@@ -103,7 +104,12 @@ namespace AutomationToolDriver
             {
 				string TelemetryPath = CurrentParam.Substring(CurrentParam.IndexOf('=') + 1);
 				AutomationToolCommandLine.SetUnchecked(Option_Telemetry, TelemetryPath);
-            }
+			}
+			else if (CurrentParam.StartsWith(Option_WaitForStdStreams + "=", StringComparison.InvariantCultureIgnoreCase))
+			{
+				string WaitTime = CurrentParam.Substring(CurrentParam.IndexOf('=') + 1);
+				AutomationToolCommandLine.SetUnchecked(Option_WaitForStdStreams, WaitTime);
+			}
 			else if (CurrentParam.StartsWith("-"))
 			{
 				if (CurrentCommand != null)
@@ -286,7 +292,8 @@ namespace AutomationToolDriver
 					{"-UseLocalBuildStorage", @"Allows you to use local storage for your root build storage dir {default of P:\Builds {on PC} is changed to Engine\Saved\LocalBuilds}. Used for local testing."},
 					{"-WaitForDebugger", "Waits for a debugger to be attached, and breaks once debugger successfully attached."},
 					{"-BuildMachine", "" },
-					{"-WaitForUATMutex", "" }
+					{"-WaitForUATMutex", "" },
+					{"-WaitForStdStreams", "Time in milliseconds to wait for std streams to close in child processes." }
 				},
 				new HashSet<string>(StringComparer.InvariantCultureIgnoreCase) { "-msbuild-verbose", "-NoCompileUAT" }
 			);

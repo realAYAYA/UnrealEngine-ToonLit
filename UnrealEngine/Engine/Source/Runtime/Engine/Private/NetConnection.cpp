@@ -41,6 +41,9 @@
 #include "LevelUtils.h"
 #include "Net/RPCDoSDetection.h"
 #include "Net/NetConnectionFaultRecovery.h"
+#include "Net/NetSubObjectRegistryGetter.h"
+#include "Net/RepLayout.h"
+#include "Net/Subsystems/NetworkSubsystem.h"
 #if UE_WITH_IRIS
 #include "Iris/IrisConfig.h"
 #include "Iris/ReplicationSystem/ReplicationSystem.h"
@@ -203,6 +206,51 @@ namespace UE::Net::Connection::Private
 
 	int32 bTrackFlushedDormantObjects = true;
 	FAutoConsoleVariableRef CVarNetTrackFlushedDormantObjects(TEXT("net.TrackFlushedDormantObjects"), bTrackFlushedDormantObjects, TEXT("If enabled, track dormant subobjects when dormancy is flushed, so they can be properly deleted if destroyed prior to the next ReplicateActor."));
+
+	int32 bEnableFlushDormantSubObjects = true;
+	FAutoConsoleVariableRef CVarNetFlushDormantSubObjects(TEXT("net.EnableFlushDormantSubObjects"), bEnableFlushDormantSubObjects, TEXT("If enabled, FlushNetDormancy will flush replicated subobjects in addition to replicated components. Only applies to objects using the replicated subobject list."));
+
+	int32 bEnableFlushDormantSubObjectsCheckConditions = true;
+	FAutoConsoleVariableRef CVarNetFlushDormantSubObjectsCheckConditions(TEXT("net.EnableFlushDormantSubObjectsCheckConditions"), bEnableFlushDormantSubObjectsCheckConditions, TEXT("If enabled, when net.EnableFlushDormantSubObjects is also true a dormancy flush will also check replicated subobject conditions"));
+
+	int32 bFlushDormancyUseDefaultStateForUnloadedLevels = true;
+	FAutoConsoleVariableRef CVarFlushDormancyUseDefaultStateForUnloadedLevels(TEXT("net.FlushDormancyUseDefaultStateForUnloadedLevels"), bFlushDormancyUseDefaultStateForUnloadedLevels, TEXT("If enabled, dormancy flushing will init replicators with default object state if the client doesn't have the actor's level loaded."));
+
+	// Tracking for dormancy-flushed subobjects for correct deletion, see UE-77163
+	void TrackFlushedSubObject(FDormantObjectMap& InOutFlushedGuids, UObject* FlushedObject, const TSharedPtr<FNetGUIDCache>& GuidCache)
+	{
+		if (Connection::Private::bTrackFlushedDormantObjects)
+		{
+			// Searching for the guid because the value on the replicator built in FlushDormancyForObject can be invalid until the next replication
+			// We can then safely ignore any object that still has no guid, since it won't have ever been replicated
+			FNetworkGUID ObjectNetGUID = GuidCache->GetNetGUID(FlushedObject);
+			if (ObjectNetGUID.IsValid())
+			{
+				InOutFlushedGuids.Add(ObjectNetGUID, FlushedObject);
+			}
+		}
+	}
+
+	// Flushes dormancy for registered subobjects of either an actor or component
+	void FlushDormancyForSubObjects(UNetConnection* Connection, AActor* Actor, const UE::Net::FSubObjectRegistry& SubObjects, FDormantObjectMap& InOutFlushedGuids, const TStaticBitArray<COND_Max>& ConditionMap, const FNetConditionGroupManager* NetConditionGroupManager)
+	{
+		QUICK_SCOPE_CYCLE_COUNTER(STAT_NetConnection_FlushDormancyForSubObjects);
+
+		for (const FSubObjectRegistry::FEntry& SubObjectInfo : SubObjects.GetRegistryList())
+		{
+			UObject* SubObject = SubObjectInfo.GetSubObject();
+			if (ensureMsgf(IsValid(SubObject), TEXT("Found invalid subobject (%s) registered in %s"), *GetNameSafe(SubObject), *Actor->GetName()))
+			{
+				if (!bEnableFlushDormantSubObjectsCheckConditions ||
+					!NetConditionGroupManager ||
+					UActorChannel::CanSubObjectReplicateToClient(Connection->PlayerController, SubObjectInfo.NetCondition, SubObjectInfo.Key, ConditionMap, *NetConditionGroupManager))
+				{
+					Connection->FlushDormancyForObject(Actor, SubObject);
+					TrackFlushedSubObject(InOutFlushedGuids, SubObject, Connection->Driver->GuidCache);
+				}
+			}
+		}
+	}
 }
 
 // ChannelRecord Implementation
@@ -750,6 +798,12 @@ int32 UNetConnection::GetLastNotifiedPacketId() const
 	return LastNotifiedPacketId;
 }
 
+AActor* UNetConnection::GetConnectionViewTarget() const
+{
+	AActor* TempViewTarget = PlayerController ? PlayerController->GetViewTarget() : nullptr;
+	return (TempViewTarget && TempViewTarget->GetWorld()) ? TempViewTarget : ToRawPtr(OwningActor);
+}
+
 void UNetConnection::EnableEncryption(const FEncryptionData& EncryptionData)
 {
 	if (Handler.IsValid())
@@ -976,8 +1030,6 @@ const TCHAR* LexToString(const EConnectionState Value)
 		return TEXT("Invalid");
 		break;
 	}
-
-	return TEXT("Invalid");
 }
 
 void UNetConnection::Close(FNetResult&& CloseReason)
@@ -1040,11 +1092,6 @@ void UNetConnection::Close(FNetResult&& CloseReason)
 		}
 
 		NetPing.Reset();
-
-		if (const uint32 MyConnectionId = GetConnectionId())
-		{
-			UE_NET_TRACE_CONNECTION_CLOSED(NetTraceId, MyConnectionId);
-		}
 	}
 
 	LogCallLastTime		= 0;
@@ -1258,11 +1305,17 @@ void UNetConnection::CleanUp()
 		}
 	}
 
+	const uint32 MyConnectionId = GetConnectionId();
+	if (MyConnectionId)
+	{
+		UE_NET_TRACE_CONNECTION_CLOSED(NetTraceId, MyConnectionId);
+	}
+
 	if (Driver != nullptr)
 	{
 		// It would be nicer to have the Driver handle this internally, but unfortunately the ServerConnection member is public.
 		// Otherwise we'd be able to do the appropriate logic in Add/Remove Client/ServerConnection
-		if (const uint32 MyConnectionId = GetConnectionId())
+		if (MyConnectionId)
 		{
 #if UE_WITH_IRIS
 			if (UReplicationSystem* ReplicationSystem = Driver->GetReplicationSystem())
@@ -1450,7 +1503,7 @@ FNetLevelVisibilityTransactionId UNetConnection::UpdateLevelStreamStatusChangedT
 			if (const ULevel* Level = LevelObject->GetLoadedLevel())
 			{
 				const UReplicationBridge* ReplicationBridge = ReplicationSystem->GetReplicationBridge();
-				if (UE::Net::FNetObjectGroupHandle GroupHandle = ReplicationBridge->GetLevelGroup(Level); GroupHandle != UE::Net::InvalidNetObjectGroupHandle)
+				if (UE::Net::FNetObjectGroupHandle GroupHandle = ReplicationBridge->GetLevelGroup(Level); GroupHandle.IsValid())
 				{
 					ReplicationSystem->SetGroupFilterStatus(GroupHandle, GetConnectionId(), UE::Net::ENetFilterStatus::Disallow);
 				}
@@ -1466,7 +1519,7 @@ FNetLevelVisibilityTransactionId UNetConnection::UpdateLevelStreamStatusChangedT
 	return TransactionId;
 }
 
-bool UNetConnection::ClientHasInitializedLevelFor(const AActor* TestActor) const
+bool UNetConnection::ClientHasInitializedLevel(const ULevel* TestLevel) const
 {
 	checkSlow(Driver);
 	checkSlow(Driver->IsServer());
@@ -1474,16 +1527,21 @@ bool UNetConnection::ClientHasInitializedLevelFor(const AActor* TestActor) const
 	// This function is called a lot, basically for every replicated actor every time it replicates, on every client connection
 	// Each client connection has a different visibility state (what levels are currently loaded for them).
 
-	const FName PackageName = TestActor->GetLevel()->GetPackage()->GetFName();
+	const FName PackageName = TestLevel->GetPackage()->GetFName();
 
 	if (const bool* bIsVisible = ClientVisibleActorOuters.Find(PackageName))
 	{
 		return *bIsVisible;
 	}
 
-	// The actor's outer was not in the acceleration map so we perform the "legacy" function and 
+	// The level was not in the acceleration map so we perform the "legacy" function and 
 	// cache the result so that we don't do this every time:
 	return UpdateCachedLevelVisibility(PackageName);
+}
+
+bool UNetConnection::ClientHasInitializedLevelFor(const AActor* TestActor) const
+{
+	return ClientHasInitializedLevel(TestActor->GetLevel());
 }
 
 bool UNetConnection::UpdateCachedLevelVisibility(const FName& PackageName) const
@@ -1601,7 +1659,7 @@ void UNetConnection::UpdateLevelVisibilityInternal(const FUpdateLevelVisibilityL
 				if (Level)
 				{
 					const UReplicationBridge* ReplicationBridge = ReplicationSystem->GetReplicationBridge();
-					if (UE::Net::FNetObjectGroupHandle GroupHandle = ReplicationBridge->GetLevelGroup(Level); GroupHandle != UE::Net::InvalidNetObjectGroupHandle)
+					if (UE::Net::FNetObjectGroupHandle GroupHandle = ReplicationBridge->GetLevelGroup(Level); GroupHandle.IsValid())
 					{
 						ReplicationSystem->SetGroupFilterStatus(GroupHandle, GetConnectionId(), UE::Net::ENetFilterStatus::Allow);
 					}
@@ -1698,7 +1756,7 @@ void UNetConnection::UpdateLevelVisibilityInternal(const FUpdateLevelVisibilityL
 					// The reason for this is that the client currently destroys the instances rather then managing this through the replication system
 					// If we implement a way to re-instantiate instances on the client we might be able to persist the state
 					const UReplicationBridge* ReplicationBridge = ReplicationSystem->GetReplicationBridge();
-					if (UE::Net::FNetObjectGroupHandle GroupHandle = ReplicationBridge->GetLevelGroup(Level); GroupHandle != UE::Net::InvalidNetObjectGroupHandle)
+					if (UE::Net::FNetObjectGroupHandle GroupHandle = ReplicationBridge->GetLevelGroup(Level); GroupHandle.IsValid())
 					{
 						ReplicationSystem->SetGroupFilterStatus(GroupHandle, GetConnectionId(), UE::Net::ENetFilterStatus::Disallow);
 					}
@@ -1719,6 +1777,26 @@ void UNetConnection::UpdateLevelVisibilityInternal(const FUpdateLevelVisibilityL
 			if (Channel->Actor && Channel->Actor->GetLevel() && Channel->Actor->GetLevel()->GetOutermost()->GetFName() == LevelVisibility.PackageName)
 			{
 				Channel->Close(EChannelCloseReason::LevelUnloaded);
+			}
+		}
+
+		// If the server is not sending override levels to clients, clients won't have another way to destroy spawned,
+		// dormant actors in streaming levels that go invisible. Send them a destruction info so that they clean it up.
+		if (!UE::Net::Private::SerializeNewActorOverrideLevel)
+		{
+			const ULevelStreaming* StreamingLevel = FLevelUtils::FindStreamingLevel(GetWorld(), LevelVisibility.PackageName);
+			const ULevel* Level = StreamingLevel ? StreamingLevel->GetLoadedLevel() : nullptr;
+
+			if (Level)
+			{
+				for (AActor* ThisActor : Level->Actors)
+				{
+					// Only do this for spawned actors
+					if (ThisActor && !ThisActor->IsNetStartupActor())
+					{
+						Driver->SendDestructionInfoForLevelUnloadIfDormant(ThisActor, this);
+					}
+				}
 			}
 		}
 
@@ -2024,7 +2102,7 @@ void UNetConnection::ReinjectDelayedPackets()
 		}
 
 		// Delete processed packets
-		DelayedIncomingPackets.RemoveAt(0, NbReinjected, false);
+		DelayedIncomingPackets.RemoveAt(0, NbReinjected, EAllowShrinking::No);
 	}
 }
 #endif //#if DO_ENABLE_NET_TEST
@@ -2033,6 +2111,8 @@ uint32 GNetOutBytes = 0;
 
 void UNetConnection::FlushNet(bool bIgnoreSimulation)
 {
+	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(FlushNet);
+
 	check(Driver);
 
 	// Update info.
@@ -2152,7 +2232,6 @@ void UNetConnection::FlushNet(bool bIgnoreSimulation)
 		OutLagTime[Index]				= PacketSentTimeInS;
 		OutBytesPerSecondHistory[Index]	= FMath::Min(OutBytesPerSecond / 1024, 255);
 		
-
 		// Increase outgoing sequence number
 		if (!IsInternalAck())
 		{
@@ -2330,6 +2409,11 @@ int32 UNetConnection::IsNetReady(bool Saturate)
 	}
 
 	return QueuedBits + SendBuffer.GetNumBits() <= 0;
+}
+
+bool UNetConnection::IsPacketSequenceWindowFull(uint32 SafetyMargin)
+{
+	return PacketNotify.IsSequenceWindowFull(SafetyMargin);
 }
 
 void UNetConnection::ReadInput( float DeltaSeconds )
@@ -2767,6 +2851,9 @@ void UNetConnection::ReceivedPacket( FBitReader& Reader, bool bIsReinjectedPacke
 
 	const FEngineNetworkCustomVersion::Type PacketEngineNetVer = static_cast<FEngineNetworkCustomVersion::Type>(Reader.EngineNetVer());
 
+	// If we choose to not process this packet we need to restore it
+	const int32 OldInPacketId = InPacketId;
+
 	if (IsInternalAck())
 	{
 		++InPacketId;
@@ -2873,6 +2960,49 @@ void UNetConnection::ReceivedPacket( FBitReader& Reader, bool bIsReinjectedPacke
 				return;
 			}
 
+			// Process acks
+			// Lambda to dispatch delivery notifications, 
+			auto HandlePacketNotification = [&Header, &ChannelsToClose, this](FNetPacketNotify::SequenceNumberT AckedSequence, bool bDelivered)
+			{
+				// Increase LastNotifiedPacketId, this is a full packet Id
+				++LastNotifiedPacketId;
+				++OutTotalNotifiedPackets;
+				Driver->IncreaseOutTotalNotifiedPackets();
+
+				// Sanity check
+				if (FNetPacketNotify::SequenceNumberT(LastNotifiedPacketId) != AckedSequence)
+				{
+					UE_LOG(LogNet, Warning, TEXT("LastNotifiedPacketId != AckedSequence"));
+
+					Close(ENetCloseResult::AckSequenceMismatch);
+
+					return;
+				}
+
+				if (bDelivered)
+				{
+					ReceivedAck(LastNotifiedPacketId, ChannelsToClose);
+				}
+				else
+				{
+					ReceivedNak(LastNotifiedPacketId);
+				};
+			};
+
+			// Update incoming sequence data and deliver packet notifications
+			// Packet is only accepted if both the incoming sequence number and incoming ack data are valid		
+			const int32 UpdatedPacketSequenceDelta = PacketNotify.Update(Header, HandlePacketNotification);
+			if (PacketNotify.IsWaitingForSequenceHistoryFlush())
+			{
+				// Mark acks dirty
+				++HasDirtyAcks;
+
+				// Since we did not necessarily ack or nack all packets we need to update the InPacketId to reflect this.
+				InPacketId = OldInPacketId + UpdatedPacketSequenceDelta;
+
+				return;
+			}
+
 			if (MissingPacketCount > 10)
 			{
 				UE_LOG(LogNetTraffic, Verbose, TEXT("High single frame packet loss. PacketsLost: %i %s" ), MissingPacketCount, *Describe());
@@ -2883,6 +3013,8 @@ void UNetConnection::ReceivedPacket( FBitReader& Reader, bool bIsReinjectedPacke
 			Driver->InPacketsLost += MissingPacketCount;
 			Driver->InTotalPacketsLost += MissingPacketCount;
 			InPacketId += PacketSequenceDelta;
+
+			check(FNetPacketNotify::SequenceNumberT(InPacketId).Get() == Header.Seq.Get());
 
 			PacketAnalytics.TrackInPacket(InPacketId, MissingPacketCount);
 		}
@@ -2913,38 +3045,6 @@ void UNetConnection::ReceivedPacket( FBitReader& Reader, bool bIsReinjectedPacke
 			// which protects everything in one fell swoop
 			return;
 		}
-
-		// Lambda to dispatch delivery notifications, 
-		auto HandlePacketNotification = [&Header, &ChannelsToClose, this](FNetPacketNotify::SequenceNumberT AckedSequence, bool bDelivered)
-		{
-			// Increase LastNotifiedPacketId, this is a full packet Id
-			++LastNotifiedPacketId;
-			++OutTotalNotifiedPackets;
-			Driver->IncreaseOutTotalNotifiedPackets();
-
-			// Sanity check
-			if (FNetPacketNotify::SequenceNumberT(LastNotifiedPacketId) != AckedSequence)
-			{
-				UE_LOG(LogNet, Warning, TEXT("LastNotifiedPacketId != AckedSequence"));
-
-				Close(ENetCloseResult::AckSequenceMismatch);
-
-				return;
-			}
-
-			if (bDelivered)
-			{
-				ReceivedAck(LastNotifiedPacketId, ChannelsToClose);
-			}
-			else
-			{
-				ReceivedNak(LastNotifiedPacketId);
-			};
-		};
-
-		// Update incoming sequence data and deliver packet notifications
-		// Packet is only accepted if both the incoming sequence number and incoming ack data are valid
-		PacketNotify.Update(Header, HandlePacketNotification);
 
 		// Extra information associated with the header (read only after acks have been processed)
 		if (PacketSequenceDelta > 0 && !ReadPacketInfo(Reader, bHasPacketInfoPayload, PacketEngineNetVer))
@@ -3008,22 +3108,22 @@ void UNetConnection::ReceivedPacket( FBitReader& Reader, bool bIsReinjectedPacke
 	}
 
 	// Acknowledge the packet.
-	if ( !bSkipAck )
+	if (!bSkipAck)
 	{
 		LastGoodPacketRealtime = PostReceiveTime;
 	}
 
-	if( !IsInternalAck() )
+	if(!IsInternalAck())
 	{
 		// We always call AckSequence even if we are explicitly rejecting the packet as this updates the expected InSeq used to drive future acks.
-		if ( bSkipAck )
+		if (bSkipAck)
 		{
 			// Explicit Nak, we treat this packet as dropped but we still report it to the sending side as quickly as possible
-			PacketNotify.NakSeq( InPacketId );
+			PacketNotify.NakSeq(InPacketId);
 		}
 		else
 		{
-			PacketNotify.AckSeq( InPacketId );
+			PacketNotify.AckSeq(InPacketId);
 
 			// Keep stats happy
 			++OutTotalAcks;
@@ -3033,20 +3133,6 @@ void UNetConnection::ReceivedPacket( FBitReader& Reader, bool bIsReinjectedPacke
 		// We do want to let the other side know about the ack, so even if there are no other outgoing data when we tick the connection we will send an ackpacket.
 		TimeSensitive = 1;
 		++HasDirtyAcks;
-
-		// This is to allow us to recover from hitches were we process more than FNetPacketNotify::SequenceHistoryLength packets in a row withouht sending out any packets.
-		// In most cases this allows us to recover smoothly without reporting any pessimistic naks which will be the case if we overshoot the ack history.
-		// Note: This should only occur if we are running with no timeouts!
-		if (HasDirtyAcks >= FNetPacketNotify::MaxSequenceHistoryLength)
-		{
-			UE_LOG(LogNet, Warning, TEXT("UNetConnection::ReceivedPacket - Too many received packets to ack (%u) since last sent packet. InSeq: %u %s NextOutGoingSeq: %u"), HasDirtyAcks, PacketNotify.GetInSeq().Get(), *Describe(), PacketNotify.GetOutSeq().Get());
-
-			FlushNet();
-			if (HasDirtyAcks) // if acks still are dirty, flush again
-			{
-				FlushNet();
-			}
-		}
 	}
 
 	// Flush trace content collector
@@ -3098,7 +3184,7 @@ void UNetConnection::DispatchPacket( FBitReader& Reader, int32 PacketId, bool& b
 			FInBunch Bunch( this );
 			int32 IncomingStartPos		= Reader.GetPosBits();
 			uint8 bControl				= Reader.ReadBit();
-			Bunch.PacketId				= InPacketId;
+			Bunch.PacketId				= PacketId;
 			Bunch.bOpen					= bControl ? Reader.ReadBit() : 0;
 			Bunch.bClose				= bControl ? Reader.ReadBit() : 0;
 		
@@ -3214,7 +3300,7 @@ void UNetConnection::DispatchPacket( FBitReader& Reader, int32 PacketId, bool& b
 			else if ( Bunch.bPartial )
 			{
 				// If this is an unreliable partial bunch, we simply use packet sequence since we already have it
-				Bunch.ChSequence = InPacketId;
+				Bunch.ChSequence = PacketId;
 			}
 			else
 			{
@@ -3302,8 +3388,10 @@ void UNetConnection::DispatchPacket( FBitReader& Reader, int32 PacketId, bool& b
 			// Trace bunch read
 			UE_NET_TRACE_BUNCH_SCOPE(InTraceCollector, Bunch, StartPos, HeaderPos - StartPos);
 
-			Bunch.SetData( Reader, BunchDataBits );
-			if( Reader.IsError() )
+			// Iris requires bitstream data allocations to be a multiple of four bytes.
+			const int64 BunchDataBits32BitAligned = (BunchDataBits + 31) & ~31;
+			Bunch.ResetData(Reader, BunchDataBits, BunchDataBits32BitAligned);
+			if (Reader.IsError())
 			{
 				// Bunch claims it's larger than the enclosing packet.
 				UE_LOG(LogNet, Warning, TEXT("Bunch data overflowed (%i %i+%i/%i)"), IncomingStartPos, HeaderPos, BunchDataBits,
@@ -3638,6 +3726,7 @@ void UNetConnection::DispatchPacket( FBitReader& Reader, int32 PacketId, bool& b
 			}
 			Driver->InBunches++;
 			Driver->InTotalBunches++;
+			Driver->InTotalReliableBunches += Bunch.bReliable ? 1 : 0;
 
 			if (Bunch.IsCriticalError() || Bunch.IsError())
 			{
@@ -3646,7 +3735,7 @@ void UNetConnection::DispatchPacket( FBitReader& Reader, int32 PacketId, bool& b
 				// Disconnect if we received a corrupted packet from the client (eg server crash attempt).
 				if (bIsServer)
 				{
-					UE_LOG(LogNetTraffic, Error, TEXT("Received corrupted packet data with SequenceId: %d from client %s. Disconnecting."), InPacketId, *LowLevelGetRemoteAddress());
+					UE_LOG(LogNetTraffic, Error, TEXT("Received corrupted packet data with SequenceId: %d from client %s. Disconnecting."), PacketId, *LowLevelGetRemoteAddress());
 
 					Close(AddToAndConsumeChainResultPtr(Bunch.ExtendedError, ENetCloseResult::CorruptData));
 
@@ -3654,12 +3743,12 @@ void UNetConnection::DispatchPacket( FBitReader& Reader, int32 PacketId, bool& b
 				}
 				else
 				{
-					UE_LOG(LogNetTraffic, Error, TEXT("Received corrupted packet data with SequenceId: %d from server %s"), InPacketId, *LowLevelGetRemoteAddress());
+					UE_LOG(LogNetTraffic, Error, TEXT("Received corrupted packet data with SequenceId: %d from server %s"), PacketId, *LowLevelGetRemoteAddress());
 #if UE_WITH_IRIS
 					// If Iris reports errors they are unrecoverable.
 					if (Driver->GetReplicationSystem() != nullptr)
 					{
-						ensureAlwaysMsgf(false, TEXT("Received corrupted packet data with SequenceId: %d from server."), InPacketId);
+						ensureMsgf(false, TEXT("Received corrupted packet data. Iris cannot recover from this."));
 						Close(AddToAndConsumeChainResultPtr(Bunch.ExtendedError, ENetCloseResult::CorruptData));
 						return;
 					}
@@ -3963,6 +4052,7 @@ int32 UNetConnection::SendRawBunch(FOutBunch& Bunch, bool InAllowMerge, const FN
 	check(!Bunch.IsError());
 	Driver->OutBunches++;
 	Driver->OutTotalBunches++;
+	Driver->OutTotalReliableBunches += Bunch.bReliable ? 1 : 0;
 
 	// Build header.
 	SendBunchHeader.Reset();
@@ -4048,7 +4138,7 @@ int32 UNetConnection::SendRawBunch(FOutBunch& Bunch, bool InAllowMerge, const FN
 	PrepareWriteBitsToSendBuffer(BunchHeaderBits, BunchBits);
 
 	// We want to mark the packet in which we write the data as TimeSensitive
-	// Note: we want to mark the packet as TimeSensitive here, as PrepareWriteBitsToSendBuffer migth flush the packet
+	// Note: we want to mark the packet as TimeSensitive here, as PrepareWriteBitsToSendBuffer might flush the packet
 	TimeSensitive = 1;
 
 	// Report bunch
@@ -4258,7 +4348,7 @@ void UNetConnection::Tick(float DeltaSeconds)
 				}
 			}
 
-			Delayed.RemoveAt(0, NbPacketsSent, false);
+			Delayed.RemoveAt(0, NbPacketsSent, EAllowShrinking::No);
 		}
 	}
 #endif
@@ -4488,7 +4578,7 @@ void UNetConnection::Tick(float DeltaSeconds)
 				// Remove the actor channel from the array
 				if ( bRemoveChannel )
 				{
-					ActorChannelArray.RemoveAt( ActorChannelIdx, 1, false );
+					ActorChannelArray.RemoveAt( ActorChannelIdx, 1, EAllowShrinking::No);
 					--ActorChannelIdx;
 				}
 			}
@@ -4624,11 +4714,10 @@ void UNetConnection::HandleClientPlayer( APlayerController *PC, UNetConnection* 
 
 	// Hook up the Viewport to the new player actor.
 	ULocalPlayer*	LocalPlayer = NULL;
-	for(FLocalPlayerIterator It(GEngine, Driver->GetWorld());It;++It)
+	if (FLocalPlayerIterator It(GEngine, Driver->GetWorld()); It)
 	{
 		LocalPlayer = *It;
-		break;
-	}
+	} 
 
 	// Detach old player if it's in the same level.
 	check(LocalPlayer);
@@ -4894,43 +4983,86 @@ void UNetConnection::ClearDormantReplicatorsReference()
 
 void UNetConnection::FlushDormancy(AActor* Actor)
 {
-	UE_LOG( LogNetDormancy, Verbose, TEXT( "FlushDormancy: %s. Connection: %s" ), *Actor->GetName(), *GetName() );
+	using namespace UE::Net;
+	using namespace Connection::Private;
+
+	UE_LOG(LogNetDormancy, Verbose, TEXT( "FlushDormancy: %s. Connection: %s" ), *Actor->GetName(), *GetName());
 	
-	if ( Driver->GetNetworkObjectList().MarkActive( Actor, this, Driver ) )
+	if (Driver->GetNetworkObjectList().MarkActive(Actor, this, Driver))
 	{
-		FlushDormancyForObject( Actor, Actor );
+		FlushDormancyForObject(Actor, Actor);
 
-		const TArray<UActorComponent*>& ReplicatedComponents = Actor->GetReplicatedComponents();
+		const FSubObjectRegistry& ActorSubObjects = FSubObjectRegistryGetter::GetSubObjects(Actor);
+		const TArray<FReplicatedComponentInfo>& ReplicatedComponents = FSubObjectRegistryGetter::GetReplicatedComponents(Actor);
 
-		UE::Net::FDormantObjectMap FlushedGuids;
-		if (UE::Net::Connection::Private::bTrackFlushedDormantObjects)
+		FDormantObjectMap FlushedGuids;
+		if (Connection::Private::bTrackFlushedDormantObjects)
 		{
-			FlushedGuids.Reserve(ReplicatedComponents.Num());
+			// This doesn't reserve space for subobjects of components, but avoids iterating the component list twice.
+			FlushedGuids.Reserve(ReplicatedComponents.Num() + ActorSubObjects.GetRegistryList().Num());
 		}
 
-		// TODO: Is this set of objects sufficient? Should we query the dormancy map from the connection instead?
-		for (UActorComponent* ActorComp : ReplicatedComponents)
-		{
-			if (ActorComp && ActorComp->GetIsReplicated())
-			{
-				FlushDormancyForObject(Actor, ActorComp);
+		TStaticBitArray<COND_Max> ConditionMap;
+		const FNetConditionGroupManager* NetConditionGroupManager = nullptr;
 
-				if (UE::Net::Connection::Private::bTrackFlushedDormantObjects)
+		if (bEnableFlushDormantSubObjectsCheckConditions)
+		{
+			// Fill in the flags used by conditional subobjects
+			FReplicationFlags RepFlags;
+		
+			// Since a dormant object won't necessarily have an FObjectReplicator or channel, we can't check for
+			// initial replication in the normal way. So always flush for NetInitial to be safe, it may create
+			// an extra replicator but the condition will be checked again before the object is actually replicated.
+			RepFlags.bNetInitial = true;
+
+			UNetConnection* OwningConnection = Actor->GetNetConnection();
+			RepFlags.bNetOwner = (OwningConnection == this || (OwningConnection != nullptr && OwningConnection->IsA(UChildConnection::StaticClass()) && ((UChildConnection*)OwningConnection)->Parent == this));
+		
+			RepFlags.bNetSimulated = (Actor->GetRemoteRole() == ROLE_SimulatedProxy);
+			RepFlags.bRepPhysics = Actor->GetReplicatedMovement().bRepPhysics;
+			RepFlags.bReplay = bReplay;
+
+			ConditionMap = UE::Net::BuildConditionMapFromRepFlags(RepFlags);
+			
+			const UWorld* const World = Actor->GetWorld();
+			const UNetworkSubsystem* const NetworkSubsystem = World ? World->GetSubsystem<UNetworkSubsystem>() : nullptr;
+			NetConditionGroupManager = NetworkSubsystem ? &NetworkSubsystem->GetNetConditionGroupManager() : nullptr;
+			ensureMsgf(NetConditionGroupManager, TEXT("UNetConnection::FlushDormancy: couldn't find a NetConditionGroupManager for %s."), *Actor->GetName());
+		}
+
+		if (bEnableFlushDormantSubObjects)
+		{
+			FlushDormancyForSubObjects(this, Actor, ActorSubObjects, FlushedGuids, ConditionMap, NetConditionGroupManager);
+		}
+
+		for (const FReplicatedComponentInfo& RepComponentInfo : ReplicatedComponents)
+		{
+			UActorComponent* ActorComp = RepComponentInfo.Component;
+
+			if (ensureMsgf(IsValid(ActorComp), TEXT("Found invalid replicated component (%s) registered in %s"), *GetNameSafe(ActorComp), *Actor->GetName()))
+			{
+				if (!bEnableFlushDormantSubObjectsCheckConditions ||
+					!NetConditionGroupManager ||
+					UActorChannel::CanSubObjectReplicateToClient(PlayerController, RepComponentInfo.NetCondition, RepComponentInfo.Key, ConditionMap, *NetConditionGroupManager))
 				{
-					// Searching for the guid because the value on the replicator built in FlushDormancyForObject can be invalid until the next replication
-					// We can then safely ignore any object that still has no guid, since it won't have ever been replicated
-					FNetworkGUID ObjectNetGUID = Driver->GuidCache->GetNetGUID(ActorComp);
-					if (ObjectNetGUID.IsValid())
+					FlushDormancyForObject(Actor, ActorComp);
+					TrackFlushedSubObject(FlushedGuids, ActorComp, Driver->GuidCache);
+
+					if (bEnableFlushDormantSubObjects)
 					{
-						FlushedGuids.Add(ObjectNetGUID, ActorComp);
+						const FSubObjectRegistry* const ComponentSubObjects = FSubObjectRegistryGetter::GetSubObjectsOfActorComponent(Actor, ActorComp);
+						if (ComponentSubObjects)
+						{
+							FlushDormancyForSubObjects(this, Actor, *ComponentSubObjects, FlushedGuids, ConditionMap, NetConditionGroupManager);
+						}
 					}
 				}
 			}
 		}
 
-		if (UE::Net::Connection::Private::bTrackFlushedDormantObjects && !FlushedGuids.IsEmpty())
+		if (bTrackFlushedDormantObjects && !FlushedGuids.IsEmpty())
 		{
-			UE::Net::FDormantObjectMap& DormantObjects = DormantReplicatorSet.FindOrAddFlushedObjectsForActor(Actor);
+			FDormantObjectMap& DormantObjects = DormantReplicatorSet.FindOrAddFlushedObjectsForActor(Actor);
 			DormantObjects.Append(FlushedGuids);
 		}
 	}
@@ -4966,6 +5098,8 @@ void UNetConnection::ForcePropertyCompare( AActor* Actor )
 
 void UNetConnection::FlushDormancyForObject(AActor* DormantActor, UObject* ReplicatedObject)
 {
+	using namespace UE::Net::Connection::Private;
+
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_NetConnection_FlushDormancyForObject)
 
 	bool bReuseReplicators = false;
@@ -4996,8 +5130,15 @@ void UNetConnection::FlushDormancyForObject(AActor* DormantActor, UObject* Repli
 		bool bOverwroteExistingReplicator = false;
 		const TSharedRef<FObjectReplicator>& ObjectReplicatorRef = DormantReplicatorSet.CreateAndStoreReplicator(DormantActor, ReplicatedObject, bOverwroteExistingReplicator);
 		
-		// Init using the objects current state
-		constexpr bool bUseDefaultState = false; 
+		bool bUseDefaultState = false;
+		
+		// Init using the object's current state if the client has this actor's level loaded. If the level
+		// is unloaded, we need to use the default state since the client has no current state.
+		if (bFlushDormancyUseDefaultStateForUnloadedLevels && !ClientHasInitializedLevel(DormantActor->GetLevel()))
+		{
+			bUseDefaultState = true;
+		}
+
 		ObjectReplicatorRef->InitWithObject(ReplicatedObject, this, bUseDefaultState);
 
 #if UE_REPLICATED_OBJECT_REFCOUNTING

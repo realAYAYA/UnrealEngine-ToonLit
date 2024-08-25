@@ -5,7 +5,7 @@
 #define SYMS_CV_H
 
 ////////////////////////////////
-//~ NOTE(allen): Index Types
+//~ allen: Index Types
 
 typedef SYMS_U32 SYMS_CvTypeIndex;
 // "TPI"
@@ -19,23 +19,23 @@ typedef SYMS_U16 SYMS_CvModIndex;
 typedef SYMS_U16 SYMS_CvSectionIndex;
 
 ////////////////////////////////
-//~ NOTE(allen): Registers
+//~ allen: Registers
 
 typedef SYMS_U16 SYMS_CvReg;
 
 ////////////////////////////////
-//~ NOTE(allen): Generated Enums
+//~ allen: Generated Enums
 
 #include "syms/core/generated/syms_meta_cv.h"
 
 ////////////////////////////////
-//~ NOTE(allen): Basic Types
+//~ allen: Basic Types
 
 #define SYMS_CvBasicTypeFromTypeId(x)        (((x)   )&0xff)
 #define SYMS_CvBasicPointerKindFromTypeId(x) (((x)>>8)&0xff)
 
 ////////////////////////////////
-//~ NOTE(rjf): Checksum
+//~ rjf: Checksum
 
 // This format likes to use packed types.
 #pragma pack(push, 1)
@@ -47,7 +47,7 @@ typedef struct SYMS_CvChecksum{
 } SYMS_CvChecksum;
 
 ////////////////////////////////
-// NOTE(allen): Registers
+//~ allen: Registers
 
 enum{
   SYMS_CvReg_NONE     =   0,
@@ -999,7 +999,7 @@ enum{
 };
 
 ////////////////////////////////
-// NOTE(allen): PDB Symbol Parser Helper
+//~ allen: PDB Symbol Parser Helper
 
 // TODO(allen): rename SYMS_CvElementHeader
 //SYMS_CvSubSecKind_SYMBOLS
@@ -1010,7 +1010,7 @@ typedef struct SYMS_CvSymbolHelper{
 
 
 ////////////////////////////////
-// NOTE(allen): PDB Misc. Types
+//~ allen: PDB Misc. Types
 
 typedef struct SYMS_CvMethod{
   SYMS_CvFieldAttribs attribs;
@@ -1020,7 +1020,7 @@ typedef struct SYMS_CvMethod{
 } SYMS_CvMethod;
 
 ////////////////////////////////
-// NOTE(allen): "C13" Lines
+//~ allen: "C13" Lines
 
 #define SYMS_CvSubSectionKind_IGNORE_FLAG 0x80000000
 
@@ -1067,7 +1067,29 @@ typedef struct SYMS_CvColumn{
 } SYMS_CvColumn;
 
 ////////////////////////////////
-// NOTE(allen): End Codeview Packed Types
+// Data structs for C13 frame data sub-section
+
+enum {
+  SYMS_CvFrameDataFlag_HAS_SEH       = (1 << 0),
+  SYMS_CvFrameDataFlag_HAS_EH        = (1 << 1),
+  SYMS_CvFrameDataFlag_IS_FUNC_START = (1 << 2)
+};
+typedef SYMS_U32 SYMS_CvFrameDataFlags;
+
+typedef struct SYMS_CvFrameData{
+  SYMS_U32 start_voff;
+  SYMS_U32 code_size;
+  SYMS_U32 local_size;
+  SYMS_U32 params_size;
+  SYMS_U32 max_stack_size;
+  SYMS_U32 frame_func;
+  SYMS_U16 prolog_size;
+  SYMS_U16 saved_reg_size;
+  SYMS_CvFrameDataFlags flags;
+} SYMS_CvFrameData;
+
+////////////////////////////////
+//~ allen: End Codeview Packed Types
 
 #pragma pack(pop)
 

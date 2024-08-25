@@ -7,6 +7,8 @@
 #include "Misc/FileHelper.h"
 #include "Tasks/Task.h"
 
+#include <limits>
+
 namespace TraceServices
 {
 
@@ -125,9 +127,19 @@ bool FTableImportTask::CreateLayout(const FString& Line)
 			ColumnNames[Index] = FString::Format(TEXT("Column {0}"), {Index});
 		}
 
-		if (Values[Index].IsNumeric())
+		const FString& Value = Values[Index];
+		if (Value.IsEmpty())
 		{
-			if (Values[Index].Contains(TEXT(".")))
+			// If the first line has an empty value assume it is an int, the most restrictive type and downgrade if we encounter other types.  
+			Layout.AddColumn<uint32>(*ColumnNames[Index], ProjectorFunc, TableColumnDisplayHint_Summable);
+		}
+		else if (Value.Equals(TEXT("inf")) || Value.Equals(TEXT("-inf")) || Value.Equals(TEXT("infinity")) || Value.Equals(TEXT("-infinity")) || Value.Equals(TEXT("nan")))
+		{
+			Layout.AddColumn<double>(*ColumnNames[Index], ProjectorFunc, TableColumnDisplayHint_Summable);
+		}
+		else if (Value.IsNumeric())
+		{
+			if (Value.Contains(TEXT(".")))
 			{
 				Layout.AddColumn<double>(*ColumnNames[Index], ProjectorFunc, TableColumnDisplayHint_Summable);
 			}
@@ -150,6 +162,9 @@ bool FTableImportTask::ParseData(TArray<FString>& Lines)
 	TTableLayout<FImportTableRow>& Layout = Table->EditLayout();
 	bool Restart = false;
 
+	TArray<bool> HasNonEmptyValues;
+	HasNonEmptyValues.AddDefaulted(ColumnNames.Num());
+
 	for (int32 LineIndex = 1; LineIndex < Lines.Num(); ++LineIndex)
 	{
 		TArray<FString> Values;
@@ -166,39 +181,71 @@ bool FTableImportTask::ParseData(TArray<FString>& Lines)
 		for (int32 ValueIndex = 0; ValueIndex < Values.Num(); ++ValueIndex)
 		{
 			ETableColumnType ColumnType = Layout.GetColumnType(ValueIndex);
-			const TCHAR* Value = *Values[ValueIndex];
+			const FString& Value = Values[ValueIndex];
 			if (ColumnType == TableColumnType_CString)
 			{
-				const TCHAR* StoredValue = Table->GetStringStore().Store(Value);
+				HasNonEmptyValues[ValueIndex] = true;
+				const TCHAR* StoredValue = Table->GetStringStore().Store(*Value);
 				NewRow.SetValue(ValueIndex, StoredValue);
 			}
 			else if (ColumnType == TableColumnType_Double)
 			{
-				if (!Values[ValueIndex].IsNumeric())
+				if (Value.IsEmpty())
 				{
-					Layout.SetColumnType(ValueIndex, TableColumnType_CString);
-					Restart = true;
-					break;
+					NewRow.SetValue(ValueIndex, 0.0f);
+					continue;
+				}
+				else if (Value.IsNumeric())
+				{
+					HasNonEmptyValues[ValueIndex] = true;
+					NewRow.SetValue(ValueIndex, FCString::Atod(*Value));
+					continue;
+				}
+				else if (Value.Equals(TEXT("inf")) || Value.Equals(TEXT("infinity")))
+				{
+					HasNonEmptyValues[ValueIndex] = true;
+					NewRow.SetValue(ValueIndex, std::numeric_limits<double>::infinity());
+					continue;
+				}
+				else if (Value.Equals(TEXT("-inf")) || Value.Equals(TEXT("-infinity")))
+				{
+					HasNonEmptyValues[ValueIndex] = true;
+					NewRow.SetValue(ValueIndex, -std::numeric_limits<double>::infinity());
+					continue;
+				}
+				else if (Value.Equals(TEXT("nan")))
+				{
+					HasNonEmptyValues[ValueIndex] = true;
+					NewRow.SetValue(ValueIndex, std::numeric_limits<double>::quiet_NaN());
+					continue;
 				}
 
-				NewRow.SetValue(ValueIndex, FCString::Atod(Value));
+				Layout.SetColumnType(ValueIndex, TableColumnType_CString);
+				Restart = true;
+				break;
 			}
 			else if (ColumnType == TableColumnType_Int)
 			{
-				if (!Values[ValueIndex].IsNumeric())
+				if (Value.IsEmpty())
+				{
+					NewRow.SetValue(ValueIndex, 0);
+					continue;
+				}
+				else if (!Value.IsNumeric())
 				{
 					Layout.SetColumnType(ValueIndex, TableColumnType_CString);
 					Restart = true;
 					break;
 				}
-				else if (Values[ValueIndex].Contains(TEXT(".")))
+				else if (Value.Contains(TEXT(".")))
 				{
 					Layout.SetColumnType(ValueIndex, TableColumnType_Double);
 					Restart = true;
 					break;
 				}
 
-				NewRow.SetValue(ValueIndex, FCString::Atoi64(Value));
+				HasNonEmptyValues[ValueIndex] = true;
+				NewRow.SetValue(ValueIndex, FCString::Atoi64(*Value));
 			}
 		}
 
@@ -209,8 +256,27 @@ bool FTableImportTask::ParseData(TArray<FString>& Lines)
 			Table = NewTable;
 			ParseData(Lines);
 
-			break;
+			return true;
 		}
+	}
+
+	// If we have columns with only empty values, switch their type to string and reprocess the data.
+	const TCHAR* EmptyValue = Table->GetStringStore().Store(TEXT(""));
+	for (int32 Index = 0; Index < HasNonEmptyValues.Num(); ++Index)
+	{
+		if (HasNonEmptyValues[Index] == false)
+		{
+			Layout.SetColumnType(Index, TableColumnType_CString);
+			Restart = true;
+		}
+	}
+
+	if (Restart)
+	{
+		TSharedPtr<TImportTable<FImportTableRow >> NewTable = MakeShared<TImportTable<FImportTableRow>>();
+		NewTable->EditLayout() = Layout;
+		Table = NewTable;
+		ParseData(Lines);
 	}
 
 	return true;

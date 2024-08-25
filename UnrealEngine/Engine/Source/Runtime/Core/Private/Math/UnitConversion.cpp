@@ -27,7 +27,7 @@ struct FParseCandidate
 };
 
 //TODO: Add note about updating
-FParseCandidate ParseCandidates[] = {
+constexpr FParseCandidate ParseCandidates[] = {
 	
 	{ TEXT("Micrometers"),			EUnit::Micrometers },			{ TEXT("um"),		EUnit::Micrometers }, 			{ TEXT("\u00B5m"),	EUnit::Micrometers },
 	{ TEXT("Millimeters"),			EUnit::Millimeters },			{ TEXT("mm"),		EUnit::Millimeters },
@@ -47,6 +47,12 @@ FParseCandidate ParseCandidates[] = {
 	{ TEXT("MetersPerSecond"),		EUnit::MetersPerSecond },		{ TEXT("m/s"),		EUnit::MetersPerSecond },
 	{ TEXT("KilometersPerHour"),	EUnit::KilometersPerHour },		{ TEXT("km/h"),		EUnit::KilometersPerHour },		{ TEXT("kmph"),		EUnit::KilometersPerHour },
 	{ TEXT("MilesPerHour"),			EUnit::MilesPerHour },			{ TEXT("mi/h"),		EUnit::MilesPerHour },			{ TEXT("mph"),		EUnit::MilesPerHour },
+
+	{ TEXT("DegreesPerSecond"),		EUnit::DegreesPerSecond },		{ TEXT("deg/s"),	EUnit::DegreesPerSecond },
+	{ TEXT("RadiansPerSecond"),		EUnit::RadiansPerSecond },		{ TEXT("rad/s"),	EUnit::RadiansPerSecond },
+
+	{ TEXT("CentimetersPerSecondSquared"),		EUnit::CentimetersPerSecondSquared },	{ TEXT("cm/s2"),	EUnit::CentimetersPerSecondSquared },{ TEXT("cm/s\u00B2"),	EUnit::CentimetersPerSecondSquared },{ TEXT("cm/s^2"),	EUnit::CentimetersPerSecondSquared },
+	{ TEXT("MetersPerSecondSquared"),			EUnit::MetersPerSecondSquared },		{ TEXT("m/s2"),	EUnit::MetersPerSecondSquared },	{ TEXT("m/s\u00B2"),	EUnit::MetersPerSecondSquared },{ TEXT("m/s^2"),	EUnit::MetersPerSecondSquared },
 		
 	{ TEXT("Celsius"),				EUnit::Celsius },				{ TEXT("C"),		EUnit::Celsius },				{ TEXT("degC"),		EUnit::Celsius },			{ TEXT("\u00B0C"),		EUnit::Celsius },
 	{ TEXT("Farenheit"),			EUnit::Farenheit },				{ TEXT("F"),		EUnit::Farenheit },				{ TEXT("degF"),		EUnit::Farenheit },			{ TEXT("\u00B0F"),		EUnit::Farenheit },
@@ -61,6 +67,11 @@ FParseCandidate ParseCandidates[] = {
 	{ TEXT("Pounds"),				EUnit::Pounds },				{ TEXT("lb"),		EUnit::Pounds },
 	{ TEXT("Stones"),				EUnit::Stones },				{ TEXT("st"),		EUnit::Stones },
 
+	{ TEXT("GramsPerCubicCentimeter"),		EUnit::GramsPerCubicCentimeter },		{ TEXT("g/cm3"),	EUnit::GramsPerCubicCentimeter },		{ TEXT("g/cm\u00B3"), EUnit::GramsPerCubicCentimeter },
+	{ TEXT("GramsPerCubicMeter"),			EUnit::GramsPerCubicMeter },			{ TEXT("g/m3"),		EUnit::GramsPerCubicMeter },			{ TEXT("g/m\u00B3"), EUnit::GramsPerCubicMeter },
+	{ TEXT("KilogramsPerCubicCentimeter"),	EUnit::KilogramsPerCubicCentimeter },	{ TEXT("kg/cm3"),	EUnit::KilogramsPerCubicCentimeter },	{ TEXT("kg/cm\u00B3"), EUnit::KilogramsPerCubicCentimeter },
+	{ TEXT("KilogramsPerCubicMeter"),		EUnit::KilogramsPerCubicMeter },		{ TEXT("kg/m3"),	EUnit::KilogramsPerCubicMeter },		{ TEXT("kg/m\u00B3"), EUnit::KilogramsPerCubicMeter },
+
 	{ TEXT("Newtons"),				EUnit::Newtons },				{ TEXT("N"),		EUnit::Newtons },
 	{ TEXT("PoundsForce"),			EUnit::PoundsForce },			{ TEXT("lbf"),		EUnit::PoundsForce },
 	{ TEXT("KilogramsForce"),		EUnit::KilogramsForce },		{ TEXT("kgf"),		EUnit::KilogramsForce },
@@ -68,6 +79,10 @@ FParseCandidate ParseCandidates[] = {
 
 	{ TEXT("NewtonMeters"),			EUnit::NewtonMeters },			{ TEXT("Nm"),		EUnit::NewtonMeters },
 	{ TEXT("KilogramsCentimetersSquaredPerSecondSquared"),	EUnit::KilogramCentimetersSquaredPerSecondSquared },		{ TEXT("kgcm2/s2"),	EUnit::KilogramCentimetersSquaredPerSecondSquared },	{ TEXT("kgcm\u00B2/s\u00B2"),	EUnit::KilogramCentimetersSquaredPerSecondSquared },
+
+	{ TEXT("NewtonSeconds"),		EUnit::NewtonSeconds },			{ TEXT("Ns"),		EUnit::NewtonSeconds },
+	{ TEXT("KilogramCentimeters"),	EUnit::KilogramCentimeters },	{ TEXT("kgcm"),		EUnit::KilogramCentimeters },
+	{ TEXT("KilogramMeters"),		EUnit::KilogramMeters },		{ TEXT("kgm"),		EUnit::KilogramMeters },
 
 	{ TEXT("Hertz"),				EUnit::Hertz },					{ TEXT("Hz"),		EUnit::Hertz },
 	{ TEXT("Kilohertz"),			EUnit::Kilohertz },				{ TEXT("KHz"),		EUnit::Kilohertz },
@@ -101,7 +116,7 @@ FParseCandidate ParseCandidates[] = {
 
 	{ TEXT("Percent"),				EUnit::Percentage },			{ TEXT("%"),	EUnit::Percentage },
 
-	{ TEXT("times"),				EUnit::Multiplier },			{ TEXT("x"),	EUnit::Multiplier },			{ TEXT("multiplier"),		EUnit::Multiplier },
+	{ TEXT("Times"),				EUnit::Multiplier },			{ TEXT("x"),	EUnit::Multiplier },			{ TEXT("Multiplier"),		EUnit::Multiplier },
 
 	{ TEXT("Pascals"),				EUnit::Pascals },				{ TEXT("Pa"),	EUnit::Pascals},
 	{ TEXT("KiloPascals"),			EUnit::KiloPascals},			{ TEXT("kPa"),	EUnit::KiloPascals},
@@ -110,7 +125,7 @@ FParseCandidate ParseCandidates[] = {
 };
 
 /** Static array of display strings that directly map to EUnit enumerations */
-const TCHAR* const DisplayStrings[] = {
+constexpr const TCHAR* const DisplayStrings[] = {
 	TEXT("\u00B5m"),			TEXT("mm"),					TEXT("cm"),					TEXT("m"),					TEXT("km"),
 	TEXT("in"),					TEXT("ft"),					TEXT("yd"),					TEXT("mi"),
 	TEXT("ly"),
@@ -119,14 +134,22 @@ const TCHAR* const DisplayStrings[] = {
 
 	TEXT("cm/s"), TEXT("m/s"), TEXT("km/h"), TEXT("mi/h"),
 
+	TEXT("deg/s"), TEXT("rad/s"),
+
+	TEXT("cm/s\u00B2"), TEXT("m/s\u00B2"),
+
 	TEXT("\u00B0C"), TEXT("\u00B0F"), TEXT("K"),
 
 	TEXT("\u00B5g"), TEXT("mg"), TEXT("g"), TEXT("kg"), TEXT("t"),
 	TEXT("oz"), TEXT("lb"), TEXT("st"),
 
+	TEXT("g/cm\u00B3"), TEXT("g/m\u00B3"), TEXT("kg/cm\u00B3"), TEXT("kg/m\u00B3"),
+
 	TEXT("N"), TEXT("lbf"), TEXT("kgf"), TEXT("kgcm/s\u00B2"),
 
 	TEXT("Nm"), TEXT("kgcm\u00B2/s\u00B2"),
+
+	TEXT("Ns"), TEXT("kgcm"), TEXT("kgm"),
 
 	TEXT("Hz"), TEXT("KHz"), TEXT("MHz"), TEXT("GHz"), TEXT("rpm"),
 
@@ -145,7 +168,107 @@ const TCHAR* const DisplayStrings[] = {
 	TEXT("Pa"), TEXT("kPa"), TEXT("MPa"), TEXT("GPa"),
 };
 
-const EUnitType UnitTypes[] = {
+constexpr const TCHAR* const SupportedUnitsStrings[] = {
+	TEXT("Micrometers"),
+	TEXT("Millimeters"),		
+	TEXT("Centimeters"),		
+	TEXT("Meters"),				
+	TEXT("Kilometers"),			
+	TEXT("Inches"),				
+	TEXT("Feet"),				
+	TEXT("Yards"),				
+	TEXT("Miles"),				
+	TEXT("Lightyears"),			
+
+	TEXT("Degrees"),				
+	TEXT("Radians"),				
+		
+	TEXT("CentimetersPerSecond"),	
+	TEXT("MetersPerSecond"),		
+	TEXT("KilometersPerHour"),	
+	TEXT("MilesPerHour"),			
+
+	TEXT("DegreesPerSecond"),		
+	TEXT("RadiansPerSecond"),
+	
+	TEXT("CentimetersPerSecondSquared"),		
+	TEXT("MetersPerSecondSquared"),	
+		
+	TEXT("Celsius"),			
+	TEXT("Farenheit"),			
+	TEXT("Kelvin"),				
+					
+	TEXT("Micrograms"),			
+	TEXT("Milligrams"),			
+	TEXT("Grams"),				
+	TEXT("Kilograms"),			
+	TEXT("MetricTons"),			
+	TEXT("Ounces"),				
+	TEXT("Pounds"),				
+	TEXT("Stones"),				
+
+	TEXT("GramsPerCubicCentimeter"),	
+	TEXT("GramsPerCubicMeter"),			
+	TEXT("KilogramsPerCubicCentimeter"),
+	TEXT("KilogramsPerCubicMeter"),		
+
+	TEXT("Newtons"),			
+	TEXT("PoundsForce"),		
+	TEXT("KilogramsForce"),		
+	TEXT("KilogramsCentimetersPerSecondSquared"),	
+
+	TEXT("NewtonMeters"),			
+	TEXT("KilogramsCentimetersSquaredPerSecondSquared"),
+
+	TEXT("NewtonSeconds"),
+	TEXT("KilogramCentimeters"),
+	TEXT("KilogramMeters"),
+
+	TEXT("Hertz"),				
+	TEXT("Kilohertz"),			
+	TEXT("Megahertz"),			
+	TEXT("Gigahertz"),			
+	TEXT("RevolutionsPerMinute")
+
+	TEXT("Bytes"),				
+	TEXT("Kilobytes"),		
+	TEXT("Megabytes"),		
+	TEXT("Gigabytes"),		
+	TEXT("Terabytes"),		
+
+	TEXT("Lumens"),				
+	TEXT("Candela"),			
+	TEXT("Lux"),				
+	TEXT("CandelaPerMeterSquared"), 
+	TEXT("EV"),				
+
+	TEXT("Nanoseconds"),			
+	TEXT("Microseconds"),			
+	TEXT("Milliseconds"),			
+	TEXT("Seconds"),				
+	TEXT("Minutes"),		
+	TEXT("Hours"),			
+	TEXT("Days"),			
+	TEXT("Months"),			
+	TEXT("Years"),			
+
+	TEXT("ppi"),			
+
+	TEXT("Percent"),
+
+	TEXT("Times"),
+	TEXT("Multiplier"),	
+
+	TEXT("Pascals"),		
+	TEXT("KiloPascals"),	
+	TEXT("MegaPascals"),	
+	TEXT("GigaPascals")
+};
+
+static_assert(UE_ARRAY_COUNT(DisplayStrings) == UE_ARRAY_COUNT(SupportedUnitsStrings));
+static_assert(UE_ARRAY_COUNT(DisplayStrings) == (uint32)EUnit::Unspecified);
+
+constexpr EUnitType UnitTypes[] = {
 	EUnitType::Distance,	EUnitType::Distance,	EUnitType::Distance,	EUnitType::Distance,	EUnitType::Distance,
 	EUnitType::Distance,	EUnitType::Distance,	EUnitType::Distance,	EUnitType::Distance,
 	EUnitType::Distance,
@@ -154,14 +277,22 @@ const EUnitType UnitTypes[] = {
 
 	EUnitType::Speed,		EUnitType::Speed,		EUnitType::Speed, 		EUnitType::Speed,
 
+	EUnitType::AngularSpeed, EUnitType::AngularSpeed,
+	
+	EUnitType::Acceleration, EUnitType::Acceleration,
+
 	EUnitType::Temperature,	EUnitType::Temperature,	EUnitType::Temperature,
 
 	EUnitType::Mass,		EUnitType::Mass,		EUnitType::Mass,		EUnitType::Mass,		EUnitType::Mass,
 	EUnitType::Mass,		EUnitType::Mass,		EUnitType::Mass,
 
+	EUnitType::Density,		EUnitType::Density,		EUnitType::Density,		EUnitType::Density,
+
 	EUnitType::Force,		EUnitType::Force,		EUnitType::Force,		EUnitType::Force,
 
 	EUnitType::Torque,		EUnitType::Torque,
+
+	EUnitType::Impulse,		EUnitType::PositionalImpulse, EUnitType::PositionalImpulse,
 
 	EUnitType::Frequency,	EUnitType::Frequency,	EUnitType::Frequency,	EUnitType::Frequency,	EUnitType::Frequency,
 
@@ -177,8 +308,6 @@ const EUnitType UnitTypes[] = {
 
 	EUnitType::Stress, EUnitType::Stress, EUnitType::Stress, EUnitType::Stress,
 };
-
-
 
 DEFINE_EXPRESSION_NODE_TYPE(FNumericUnit<double>, 0x3C138BC9, 0x71314F0B, 0xBB469BF7, 0xED47D147)
 
@@ -398,7 +527,7 @@ struct FUnitExpressionParser
 			if (WasOpAssign)
 			{
 				Tokens.Insert(FExpressionToken(Context, InExistingValue), 0);
-				Tokens.RemoveAt(2, 1, false);
+				Tokens.RemoveAt(2, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -442,10 +571,15 @@ FUnitSettings::FUnitSettings()
 	DisplayUnits[(uint8)EUnitType::Distance].Add(EUnit::Centimeters);
 	DisplayUnits[(uint8)EUnitType::Angle].Add(EUnit::Degrees);
 	DisplayUnits[(uint8)EUnitType::Speed].Add(EUnit::MetersPerSecond);
+	DisplayUnits[(uint8)EUnitType::AngularSpeed].Add(EUnit::DegreesPerSecond);
+	DisplayUnits[(uint8)EUnitType::Acceleration].Add(EUnit::CentimetersPerSecondSquared);
 	DisplayUnits[(uint8)EUnitType::Temperature].Add(EUnit::Celsius);
 	DisplayUnits[(uint8)EUnitType::Mass].Add(EUnit::Kilograms);
+	DisplayUnits[(uint8)EUnitType::Density].Add(EUnit::GramsPerCubicCentimeter);
 	DisplayUnits[(uint8)EUnitType::Force].Add(EUnit::Newtons);
 	DisplayUnits[(uint8)EUnitType::Torque].Add(EUnit::NewtonMeters);
+	DisplayUnits[(uint8)EUnitType::Impulse].Add(EUnit::NewtonSeconds);
+	DisplayUnits[(uint8)EUnitType::PositionalImpulse].Add(EUnit::KilogramCentimeters);
 	DisplayUnits[(uint8)EUnitType::Frequency].Add(EUnit::Hertz);
 	DisplayUnits[(uint8)EUnitType::DataSize].Add(EUnit::Megabytes);
 	DisplayUnits[(uint8)EUnitType::LuminousFlux].Add(EUnit::Lumens);
@@ -562,6 +696,11 @@ TOptional<EUnit> FUnitConversion::UnitFromString(const TCHAR* UnitString)
 	return TOptional<EUnit>();
 }
 
+TConstArrayView<const TCHAR*> FUnitConversion::GetSupportedUnits()
+{
+	return TConstArrayView<const TCHAR*>(SupportedUnitsStrings,  UE_ARRAY_COUNT(SupportedUnitsStrings));
+}
+
 namespace UnitConversion
 {
 
@@ -608,6 +747,27 @@ namespace UnitConversion
 		}
 	}
 
+
+	double AngularSpeedUnificationFactor(EUnit From)
+	{
+		// Convert to degrees/second
+		switch (From)
+		{
+			case EUnit::RadiansPerSecond:	return (180.0 / UE_DOUBLE_PI);
+			default: 						return 1.0;
+		}
+	}
+	
+	double AccelerationUnificationFactor(EUnit From)
+	{
+		// Convert to meters/second2
+		switch (From)
+		{
+		case EUnit::CentimetersPerSecondSquared:	return 0.01f;
+		default: 									return 1.0;
+		}
+	}
+
 	double MassUnificationFactor(EUnit From)
 	{
 		double Factor = 1;
@@ -623,6 +783,19 @@ namespace UnitConversion
 			case EUnit::Pounds:				Factor *= 16;		// fallthrough
 			case EUnit::Ounces:				Factor *= 28.3495;	// fallthrough
 			default: 						return Factor;		// return
+		}
+	}
+
+	double DensityUnificationFactor(EUnit From)
+	{
+		// Convert to g/cm^3
+		switch (From)
+		{
+		case EUnit::GramsPerCubicCentimeter:		return 1;
+		case EUnit::GramsPerCubicMeter:				return 0.000001;
+		case EUnit::KilogramsPerCubicCentimeter:	return 1000;
+		case EUnit::KilogramsPerCubicMeter:			return 0.001;
+		default:									return 1;
 		}
 	}
 
@@ -645,6 +818,16 @@ namespace UnitConversion
 		{
 		case EUnit::KilogramCentimetersSquaredPerSecondSquared:	return 0.0001;
 		default: 												return 1;
+		}
+	}
+
+	double PositionalImpulseUnificationFactor(EUnit From)
+	{
+		// Convert to KilogramMeters
+		switch (From)
+		{
+		case EUnit::KilogramCentimeters:	return 0.01;
+		default:							return 1;
 		}
 	}
 
@@ -754,6 +937,8 @@ namespace UnitConversion
 			TArray<FQuantizationInfo> MetricMass;
 			TArray<FQuantizationInfo> ImperialMass;
 
+			TArray<FQuantizationInfo> MetricDensity;
+
 			TArray<FQuantizationInfo> Frequency;
 			TArray<FQuantizationInfo> DataSize;
 
@@ -784,22 +969,28 @@ namespace UnitConversion
 				ImperialMass.Emplace(EUnit::Pounds,	14.0f);
 				ImperialMass.Emplace(EUnit::Stones,	0.0f);
 
+				MetricDensity.Emplace(EUnit::GramsPerCubicCentimeter,		0.000001f);
+				MetricDensity.Emplace(EUnit::GramsPerCubicMeter,			1000.0f);
+				MetricDensity.Emplace(EUnit::KilogramsPerCubicCentimeter,	0.000001f);
+				MetricDensity.Emplace(EUnit::KilogramsPerCubicMeter,		0.0f);
+
 				Frequency.Emplace(EUnit::Hertz,		1000.0f);
 				Frequency.Emplace(EUnit::Kilohertz,	1000.0f);
 				Frequency.Emplace(EUnit::Megahertz,	1000.0f);
 				Frequency.Emplace(EUnit::Gigahertz,	0.0f);
 
-				DataSize.Emplace(EUnit::Bytes,		1000.0f);
-				DataSize.Emplace(EUnit::Kilobytes,	1000.0f);
-				DataSize.Emplace(EUnit::Megabytes,	1000.0f);
-				DataSize.Emplace(EUnit::Gigabytes,	1000.0f);
+				DataSize.Emplace(EUnit::Bytes,		1024.0f);
+				DataSize.Emplace(EUnit::Kilobytes,	1024.0f);
+				DataSize.Emplace(EUnit::Megabytes,	1024.0f);
+				DataSize.Emplace(EUnit::Gigabytes,	1024.0f);
 				DataSize.Emplace(EUnit::Terabytes,	0.0f);
 
-				Time.Emplace(EUnit::Milliseconds,		1000.0f);
-				Time.Emplace(EUnit::Seconds,			60.0f);
-				Time.Emplace(EUnit::Minutes,			60.0f);
+				Time.Emplace(EUnit::Microseconds,	1000.0f);
+				Time.Emplace(EUnit::Milliseconds,	1000.0f);
+				Time.Emplace(EUnit::Seconds,		60.0f);
+				Time.Emplace(EUnit::Minutes,		60.0f);
 				Time.Emplace(EUnit::Hours,			24.0f);
-				Time.Emplace(EUnit::Days,				365.242f / 12.0f);
+				Time.Emplace(EUnit::Days,			365.242f / 12.0f);
 				Time.Emplace(EUnit::Months,			12.0f);
 				Time.Emplace(EUnit::Years,			0.0f);
 
@@ -826,13 +1017,19 @@ namespace UnitConversion
 		case EUnit::Ounces: case EUnit::Pounds: case EUnit::Stones:
 			return &Bounds.ImperialMass;
 
+		case EUnit::GramsPerCubicCentimeter:
+		case EUnit::GramsPerCubicMeter:
+		case EUnit::KilogramsPerCubicCentimeter:
+		case EUnit::KilogramsPerCubicMeter:
+			return &Bounds.MetricDensity;
+
 		case EUnit::Hertz: case EUnit::Kilohertz: case EUnit::Megahertz: case EUnit::Gigahertz: case EUnit::RevolutionsPerMinute:
 			return &Bounds.Frequency;
 
 		case EUnit::Bytes: case EUnit::Kilobytes: case EUnit::Megabytes: case EUnit::Gigabytes: case EUnit::Terabytes:
 			return &Bounds.DataSize;
 
-		case EUnit::Milliseconds: case EUnit::Seconds: case EUnit::Minutes: case EUnit::Hours: case EUnit::Days: case EUnit::Months: case EUnit::Years:
+		case EUnit::Microseconds: case EUnit::Milliseconds: case EUnit::Seconds: case EUnit::Minutes: case EUnit::Hours: case EUnit::Days: case EUnit::Months: case EUnit::Years:
 			return &Bounds.Time;
 
 		case EUnit::Pascals: case EUnit::KiloPascals: case EUnit::MegaPascals: case EUnit::GigaPascals:

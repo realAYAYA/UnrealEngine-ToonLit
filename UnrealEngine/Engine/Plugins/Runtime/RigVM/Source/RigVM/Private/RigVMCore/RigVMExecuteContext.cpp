@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RigVMCore/RigVMExecuteContext.h"
+#include "RigVMObjectVersion.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMExecuteContext)
 
@@ -36,7 +37,7 @@ void FRigVMExecuteContext::SetWorld(const UWorld* InWorld)
 bool FRigVMExecuteContext::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	static const FName ControlRigExecuteContextName("ControlRigExecuteContext");
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == ControlRigExecuteContextName)
+	if (Tag.GetType().IsStruct(ControlRigExecuteContextName))
 	{
 		static const FString CRExecuteContextPath = TEXT("/Script/ControlRig.ControlRigExecuteContext");
 		UScriptStruct* OldStruct = FindFirstObject<UScriptStruct>(*CRExecuteContextPath, EFindFirstObjectOptions::NativeFirst | EFindFirstObjectOptions::EnsureIfAmbiguous);
@@ -50,27 +51,36 @@ bool FRigVMExecuteContext::SerializeFromMismatchedTag(const FPropertyTag& Tag, F
 	return false;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+FRigVMExtendedExecuteContext::~FRigVMExtendedExecuteContext()
+{
+	Reset();
+}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+// --- FRigVMExtendedExecuteContext ---
+
 void FRigVMExtendedExecuteContext::Reset()
 {
 	VMHash = 0;
 
 	ResetExecutionState();
 
-	CurrentMemory = TArrayView<URigVMMemoryStorage*>();
+	WorkMemoryStorage = FRigVMMemoryStorageStruct();
+	DebugMemoryStorage = FRigVMMemoryStorageStruct();
+
+	CurrentVMMemory = TArrayView<FRigVMMemoryStorageStruct*>();
 	ExecutionReachedExit().Clear();
 
 	CachedMemoryHandles.Reset();
-	CachedMemory.Reset();
 
-#if WITH_EDITOR
-	DebugInfo = nullptr;
-	ExecutionHalted().Clear();
-#endif // WITH_EDITOR
-
-	LazyBranchInstanceData.Reset();
+	LazyBranchExecuteState.Reset();
 	ExternalVariableRuntimeData.Reset();
 
-	NumExecutions = 0;
+	if(PublicDataScope.IsValid())
+	{
+		GetPublicData<>().NumExecutions = 0;
+	}
 
 	ExecutingThreadId = INDEX_NONE;
 
@@ -81,17 +91,11 @@ void FRigVMExtendedExecuteContext::Reset()
 	bCurrentlyRunningRootEntry = false;
 
 #if WITH_EDITOR
-	HaltedAtBreakpoint = FRigVMBreakpoint();
-	HaltedAtBreakpointHit = INDEX_NONE;
-	CurrentBreakpointAction = ERigVMBreakpointAction::None;
-
-	InstructionVisitedDuringLastRun.Reset();
-	InstructionCyclesDuringLastRun.Reset();
-	InstructionVisitOrder.Reset();
-	FirstEntryEventInQueue = NAME_None;
-
-	StartCycles = 0;
-	OverallCycles = 0;
+	if (DebugInfo != nullptr)
+	{
+		DebugInfo->Reset();
+		DebugInfo = nullptr;
+	}
 #endif // WITH_EDITOR
 }
 
@@ -111,9 +115,16 @@ void FRigVMExtendedExecuteContext::ResetExecutionState()
 	Factory = nullptr;
 }
 
-FRigVMExtendedExecuteContext& FRigVMExtendedExecuteContext::operator =(const FRigVMExtendedExecuteContext& Other)
+void FRigVMExtendedExecuteContext::CopyMemoryStorage(const FRigVMExtendedExecuteContext& Other)
 {
 	VMHash = Other.VMHash;
+	WorkMemoryStorage = Other.WorkMemoryStorage;
+	DebugMemoryStorage = Other.DebugMemoryStorage;
+}
+
+FRigVMExtendedExecuteContext& FRigVMExtendedExecuteContext::operator =(const FRigVMExtendedExecuteContext& Other)
+{
+	CopyMemoryStorage(Other);
 
 	const UScriptStruct* OtherPublicDataStruct = Cast<UScriptStruct>(Other.PublicDataScope.GetStruct());
 	check(OtherPublicDataStruct);
@@ -135,6 +146,11 @@ FRigVMExtendedExecuteContext& FRigVMExtendedExecuteContext::operator =(const FRi
 	VM = Other.VM;
 	Slices = Other.Slices;
 	SliceOffsets = Other.SliceOffsets;
+
+	CachedMemoryHandles = Other.CachedMemoryHandles;
+
+	LazyBranchExecuteState = Other.LazyBranchExecuteState;
+	ExternalVariableRuntimeData = Other.ExternalVariableRuntimeData;
 
 	return *this;
 }

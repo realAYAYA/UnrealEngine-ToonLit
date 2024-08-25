@@ -287,15 +287,16 @@ void FOpenXRCaptureDecoder::DecodeCreateReferenceSpace(const FOpenXRAPIPacketBas
 void FOpenXRCaptureDecoder::DecodeGetReferenceSpaceBoundsRect(const FOpenXRAPIPacketBase& BasePacket)
 {
 	check(BasePacket.ApiId == EOpenXRAPIPacketId::GetReferenceSpaceBoundsRect);
-	check(BasePacket.Result == XR_SUCCESS);
 
 	FOpenXRGetReferenceSpaceBoundsRectPacket Data(XrResult::XR_ERROR_RUNTIME_FAILURE);
 
 	EncodedData << Data;
 
-	ReferenceSpaceBounds.Add(Data.ReferenceSpaceType, Data.Bounds);
-
-	// TODO: Check for existing bounds associated with reference space?
+	if (Data.Result == XR_SUCCESS)
+	{
+		ReferenceSpaceBounds.Add(Data.ReferenceSpaceType, Data.Bounds);
+		// TODO: Check for existing bounds associated with reference space?
+	}
 }
 
 void FOpenXRCaptureDecoder::DecodeCreateActionSpace(const FOpenXRAPIPacketBase& BasePacket)
@@ -520,7 +521,7 @@ void FOpenXRCaptureDecoder::DecodeWaitFrame(const FOpenXRAPIPacketBase& BasePack
 void FOpenXRCaptureDecoder::DecodeBeginFrame(const FOpenXRAPIPacketBase& BasePacket)
 {
 	check(BasePacket.ApiId == EOpenXRAPIPacketId::BeginFrame);
-	check(BasePacket.Result == XR_SUCCESS);
+	check(BasePacket.Result == XR_SUCCESS || BasePacket.Result == XR_FRAME_DISCARDED);
 
 	FOpenXRBeginFramePacket Data(XrResult::XR_ERROR_RUNTIME_FAILURE);
 
@@ -569,7 +570,7 @@ void FOpenXRCaptureDecoder::DecodeStringToPath(const FOpenXRAPIPacketBase& BaseP
 
 	EncodedData << Data;
 
-	PathToStringMap.Add(Data.GeneratedPath, FString(ANSI_TO_TCHAR(Data.PathStringToWrite.GetData())));
+	PathToStringMap.Add(Data.GeneratedPath, FName(ANSI_TO_TCHAR(Data.PathStringToWrite.GetData())));
 
 	// TODO: Do we need a bi-directional map at any point?
 }

@@ -20,10 +20,13 @@ namespace UnrealBuildTool.Rules
 				new string[]
 				{
 					"Concert",
+					"ConcertClientSharedSlate",
+					"ConcertSharedSlate",
 					"ConcertTransport",
 					"ConcertSyncCore",
 					"ConcertSyncClient",
 					"ConcertSyncServer",
+					"Engine"
 				}
 			);
 

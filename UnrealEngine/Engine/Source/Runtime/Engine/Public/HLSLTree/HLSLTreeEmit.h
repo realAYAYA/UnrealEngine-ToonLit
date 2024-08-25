@@ -15,6 +15,7 @@
 #include "RHIFeatureLevel.h"
 #include "HLSLTree/HLSLTreeTypes.h"
 #include "HLSLTree/HLSLTreeHash.h"
+#include "MaterialShared.h"
 
 class FMaterial;
 class FMaterialCompilationOutput;
@@ -42,6 +43,7 @@ class FEmitShaderExpression;
 class FEmitShaderStatement;
 
 struct FEmitPreshaderScope;
+struct FEmitValuePreshaderResult;
 
 struct FEmitShaderScopeEntry
 {
@@ -370,9 +372,9 @@ public:
 
 	ENGINE_API void EmitDeclarationsCode(FStringBuilderBase& OutCode);
 
-	ENGINE_API const FPreparedType& GetPreparedType(const FExpression* Expression) const;
-	ENGINE_API FRequestedType GetRequestedType(const FExpression* Expression) const;
-	ENGINE_API Shader::FType GetType(const FExpression* Expression) const;
+	ENGINE_API FPreparedType GetPreparedType(const FExpression* Expression, const FRequestedType& RequestedType) const;
+	ENGINE_API Shader::FType GetResultType(const FExpression* Expression, const FRequestedType& RequestedType) const;
+	ENGINE_API Shader::FType GetTypeForPinColoring(const FExpression* Expression) const;
 	ENGINE_API EExpressionEvaluation GetEvaluation(const FExpression* Expression, const FEmitScope& Scope, const FRequestedType& RequestedType) const;
 
 	ENGINE_API FPreparedType PrepareExpression(const FExpression* InExpression, FEmitScope& Scope, const FRequestedType& RequestedType);
@@ -399,6 +401,8 @@ public:
 	}
 
 	ENGINE_API void Finalize();
+
+	void ResetPastRequestedTypes();
 
 	ENGINE_API FEmitShaderExpression* InternalEmitExpression(FEmitScope& Scope, TArrayView<FEmitShaderNode*> Dependencies, bool bInline, const Shader::FType& Type, FStringView Code);
 
@@ -577,18 +581,27 @@ public:
 	bool bMarkLiveValues = false;
 	bool bUseAnalyticDerivatives = false;
 
+	bool bCompiledShadingModels = false;
 	bool bUsesSkyAtmosphere = false;
+	bool bUsesSpeedTree = false;
+	bool bUsesSphericalParticleOpacity = false;
+	bool bUsesWorldPositionExcludingShaderOffsets = false;
 
 	uint32 DynamicParticleParameterMask = 0u;
+
+	FActiveStructFieldStack ActiveStructFieldStack;
 
 	TArray<const FOwnedNode*, TInlineAllocator<32>> OwnerStack;
 	TArray<FEmitShaderNode*> EmitNodes;
 	TMap<const FScope*, FEmitScope*> EmitScopeMap;
-	TMap<const FExpression*, FPrepareValueResult*> PrepareValueMap;
+	TMap<FXxHash64, FPrepareValueResult*> PrepareValueMap;
+	TMap<FXxHash64, FRequestedType*> RequestedTypeTracker;
+	TMap<FMaterialParameterInfo, FMaterialParameterValue> SeenStaticParameterValues;
 	TMap<const FExpression*, FEmitScope*> PrepareLocalPHIMap;
-	TMap<const FExpression*, FEmitShaderExpression*> EmitLocalPHIMap;
+	TMap<FXxHash64, FEmitShaderExpression*> EmitLocalPHIMap;
 	TMap<FXxHash64, FEmitShaderExpression*> EmitExpressionMap;
 	TMap<FXxHash64, FEmitShaderExpression*> EmitPreshaderMap;
+	TMap<FXxHash64, FEmitShaderExpression*> EmitValueMap;
 	TMap<const FFunction*, FEmitShaderNode*> EmitFunctionMap;
 	TMap<FXxHash64, FEmitCustomHLSL> EmitCustomHLSLMap;
 	TArray<struct FPreshaderLoopScope*> PreshaderLoopScopes;
@@ -608,6 +621,7 @@ public:
 	 * Would also need some generic interface between the preshaders generated here, and the preshaders stored in FMaterialCompilationOutput
 	 */
 	const FMaterial* Material = nullptr;
+	const UMaterialInterface* MaterialInterface = nullptr;
 	FMaterialCompilationOutput* MaterialCompilationOutput = nullptr;
 	uint32 UniformPreshaderOffset = 0u;
 	uint32 CurrentBoolUniformOffset = ~0u;
@@ -623,12 +637,28 @@ struct FEmitOwnerScope
 
 	~FEmitOwnerScope()
 	{
-		verify(Context.OwnerStack.Pop(false) == Node);
+		verify(Context.OwnerStack.Pop(EAllowShrinking::No) == Node);
 	}
 
 	FEmitContext& Context;
 	const FOwnedNode* Node;
 };
+
+namespace Private
+{
+void MoveToScope(FEmitShaderNode* EmitNode, FEmitScope& Scope);
+
+void EmitPreshaderField(
+	FEmitContext& Context,
+	TMemoryImageArray<FMaterialUniformPreshaderHeader>& UniformPreshaders,
+	TMemoryImageArray<FMaterialUniformPreshaderField>& UniformPreshaderFields,
+	Shader::FPreshaderData& UniformPreshaderData,
+	FMaterialUniformPreshaderHeader*& PreshaderHeader,
+	TFunction<void (FEmitValuePreshaderResult&)> EmitPreshaderOpcode,
+	const Shader::FValueTypeDescription& TypeDesc,
+	int32 ComponentIndex,
+	FStringBuilderBase& FormattedCode);
+}
 
 } // namespace UE::HLSLTree
 

@@ -13,6 +13,7 @@
 #include "CollectionManagerModule.h"
 #include "AssetManagerEditorModule.h"
 #include "Engine/AssetManager.h"
+#include "Interfaces/IPluginManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(EdGraph_ReferenceViewer)
 
@@ -142,6 +143,22 @@ void UEdGraph_ReferenceViewer::SetCurrentCollectionFilter(FName NewFilter)
 	CurrentCollectionFilter = NewFilter;
 }
 
+TArray<FName> UEdGraph_ReferenceViewer::GetCurrentPluginFilter() const
+{
+	return CurrentPluginFilter;
+}
+
+void UEdGraph_ReferenceViewer::SetCurrentPluginFilter(TArray<FName> NewFilter)
+{
+	CurrentPluginFilter = NewFilter;
+}
+
+TArray<FName> UEdGraph_ReferenceViewer::GetEncounteredPluginsAmongNodes() const
+{
+	return EncounteredPluginsAmongNodes;
+}
+
+
 void UEdGraph_ReferenceViewer::SetCurrentFilterCollection(TSharedPtr< TFilterCollection< FReferenceNodeInfo& > > InFilterCollection )
 {
 	FilterCollection = InFilterCollection;
@@ -177,7 +194,6 @@ FAssetManagerDependencyQuery UEdGraph_ReferenceViewer::GetReferenceSearchFlags(b
 
 UEdGraphNode_Reference* UEdGraph_ReferenceViewer::ConstructNodes(const TArray<FAssetIdentifier>& GraphRootIdentifiers, const FIntPoint& GraphRootOrigin )
 {
-	UEdGraphNode_Reference* RootNode = nullptr;
 	if (GraphRootIdentifiers.Num() > 0)
 	{
 		// It both were false, nothing (other than the GraphRootIdentifiers) would be displayed
@@ -197,13 +213,29 @@ UEdGraphNode_Reference* UEdGraph_ReferenceViewer::ConstructNodes(const TArray<FA
 			}
 		}
 
+		// Prepare for plugin filtering.
+		{
+			// Collect plugin names from assets reachable in the graph if the graph had been unfiltered.
+			EncounteredPluginsAmongNodes.Empty();
+			GetUnfilteredGraphPluginNames(GraphRootIdentifiers, EncounteredPluginsAmongNodes);
+
+			// Remove plugins from the current filter that were not encountered in the new unfiltered graph.
+			for (TArray<FName>::TIterator It(CurrentPluginFilter); It; ++It)
+			{
+				if (!EncounteredPluginsAmongNodes.Contains(*It))
+				{
+					It.RemoveCurrent();
+				}
+			}
+		}
+
 		// Create & Populate the NodeInfo Maps 
 		// Note to add an empty parent to the root so that if the root node again gets found again as a duplicate, that next parent won't be 
 		// identified as the primary root and also it will appear as having multiple parents.
 		TMap<FAssetIdentifier, FReferenceNodeInfo> NewReferenceNodeInfos;
 		for (const FAssetIdentifier& RootIdentifier : GraphRootIdentifiers)
 		{
-			FReferenceNodeInfo& RootNodeInfo = NewReferenceNodeInfos.FindOrAdd( RootIdentifier, FReferenceNodeInfo(RootIdentifier, true));
+			FReferenceNodeInfo& RootNodeInfo = NewReferenceNodeInfos.FindOrAdd(RootIdentifier, FReferenceNodeInfo(RootIdentifier, true));
 			RootNodeInfo.Parents.Emplace(FAssetIdentifier(NAME_None));
 		}
 		if (!Settings->GetFindPathEnabled())
@@ -506,6 +538,45 @@ void UEdGraph_ReferenceViewer::GetSortedLinks(const TArray<FAssetIdentifier>& Id
 		if (bReferencers)
 		{
 			AssetRegistry.GetReferencers(AssetId, LinksToAsset, Query.Categories, Query.Flags);
+
+			if (!Settings->IsShowExternalReferencers())
+			{
+				TSet<FName> PackageNames;
+				for (const FAssetDependency& LinkToAsset : LinksToAsset)
+				{
+					if (!LinkToAsset.AssetId.IsValue() && !LinkToAsset.AssetId.PackageName.IsNone())
+					{
+						PackageNames.Add(LinkToAsset.AssetId.PackageName);
+					}
+				}
+
+				TMap<FName, FAssetData> PackagesToAssetDataMap;
+				UE::AssetRegistry::GetAssetForPackages(PackageNames.Array(), PackagesToAssetDataMap);
+
+				TSet<FName> OuterPathNames;
+				for (int32 LinksToAssetIndex = 0; LinksToAssetIndex < LinksToAsset.Num(); LinksToAssetIndex++)
+				{
+					FAssetDependency& AssetDependency = LinksToAsset[LinksToAssetIndex];				
+					if (FAssetData* AssetData = PackagesToAssetDataMap.Find(AssetDependency.AssetId.PackageName))
+					{
+						if (FName OuterPathName = AssetData->GetOptionalOuterPathName(); !OuterPathName.IsNone())
+						{
+							if (!OuterPathNames.Contains(OuterPathName))
+							{
+								FAssetDependency OuterDependency;
+								OuterDependency.AssetId = FAssetIdentifier(*FSoftObjectPath(OuterPathName.ToString()).GetLongPackageName());
+								OuterDependency.Category = AssetDependency.Category;
+								OuterDependency.Properties = AssetDependency.Properties;
+								LinksToAsset.Add(OuterDependency);
+
+								OuterPathNames.Add(OuterPathName);
+							}
+
+							LinksToAsset.RemoveAtSwap(LinksToAssetIndex--);
+						}
+					}
+				}
+			}
 		}
 		else
 		{
@@ -564,6 +635,11 @@ void UEdGraph_ReferenceViewer::GetSortedLinks(const TArray<FAssetIdentifier>& Id
 		{
 			It.RemoveCurrent();
 		}
+
+		else if (!IsPackageIdentifierPassingPluginFilter(It.Key()))
+		{
+			It.RemoveCurrent();
+		}
 	}
 }
 
@@ -581,6 +657,31 @@ bool UEdGraph_ReferenceViewer::IsPackageIdentifierPassingFilter(const FAssetIden
 	return true;
 }
 
+bool UEdGraph_ReferenceViewer::IsPackageIdentifierPassingPluginFilter(const FAssetIdentifier& InAssetIdentifier) const
+{
+	if (!ShouldFilterByPlugin())
+	{
+		return true;
+	}
+	
+	if (!InAssetIdentifier.IsPackage())
+	{
+		return true;
+	}
+	
+	const FString AssetPath = InAssetIdentifier.PackageName.ToString();
+
+	for (const FName& PluginName : CurrentPluginFilter)
+	{
+		if (AssetPath.StartsWith("/" + PluginName.ToString()))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool UEdGraph_ReferenceViewer::IsAssetPassingSearchTextFilter(const FAssetIdentifier& InAssetIdentifier) const
 {
 	if (Settings->IsShowFilteredPackagesOnly() && IsAssetIdentifierPassingSearchFilterCallback.IsSet() && !(*IsAssetIdentifierPassingSearchFilterCallback)(InAssetIdentifier))
@@ -589,6 +690,92 @@ bool UEdGraph_ReferenceViewer::IsAssetPassingSearchTextFilter(const FAssetIdenti
 	}
 
 	return true;
+}
+
+void UEdGraph_ReferenceViewer::GetUnfilteredGraphPluginNamesRecursive(bool bReferencers, const FAssetIdentifier& InAssetIdentifier, int32 InCurrentDepth, int32 InMaxDepth, const FAssetManagerDependencyQuery& Query, TSet<FAssetIdentifier>& OutAssetIdentifiers)
+{
+	if (ExceedsMaxSearchDepth(InCurrentDepth, InMaxDepth))
+	{
+		return;
+	}
+	
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	TArray<FAssetDependency> LinksToAsset;
+	if (bReferencers)
+	{
+		AssetRegistry.GetReferencers(InAssetIdentifier, LinksToAsset);
+	}
+	else
+	{
+		AssetRegistry.GetDependencies(InAssetIdentifier, LinksToAsset);
+	}
+	
+	for (const FAssetDependency& Link : LinksToAsset)
+	{
+		// Avoid loops by skipping assets we've already visited.
+		if (OutAssetIdentifiers.Contains(Link.AssetId))
+		{
+			continue;;
+		}
+
+		// Don't add assets that will be hidden by Reference Viewer settings the user cannot change.
+		if (!IsPackageIdentifierPassingFilter(Link.AssetId))
+		{
+			continue;
+		}
+
+		OutAssetIdentifiers.Add(Link.AssetId);
+
+		GetUnfilteredGraphPluginNamesRecursive(bReferencers, Link.AssetId, InCurrentDepth + 1, InMaxDepth, Query, OutAssetIdentifiers);
+	}
+}
+
+void UEdGraph_ReferenceViewer::GetUnfilteredGraphPluginNames(TArray<FAssetIdentifier> RootIdentifiers, TArray<FName>& OutPluginNames)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(UEdGraph_ReferenceViewer::GetUnfilteredGraphPluginNames);
+	
+	const FAssetManagerDependencyQuery Query = GetReferenceSearchFlags(false);
+	
+	TSet<FAssetIdentifier> AssetIdentifiers;
+	for (const FAssetIdentifier& RootIdentifier : RootIdentifiers)
+	{
+		TSet<FAssetIdentifier> AssetReferencerIdentifiers;
+		GetUnfilteredGraphPluginNamesRecursive(true, RootIdentifier, 0, Settings->GetSearchReferencerDepthLimit(), Query, AssetReferencerIdentifiers);
+		AssetIdentifiers.Append(AssetReferencerIdentifiers);
+
+		TSet<FAssetIdentifier> AssetDependencyIdentifiers;
+		GetUnfilteredGraphPluginNamesRecursive(false, RootIdentifier, 0, Settings->GetSearchDependencyDepthLimit(), Query, AssetDependencyIdentifiers);
+		AssetIdentifiers.Append(AssetDependencyIdentifiers);
+	}
+
+	for (const FAssetIdentifier& AssetIdentifier : AssetIdentifiers)
+	{
+		if (!AssetIdentifier.IsPackage())
+		{
+			continue;
+		}
+
+		FString FirstPathSegment;
+		{
+			FString AssetPath = AssetIdentifier.PackageName.ToString();
+			
+			// Chop of any leading slashes.
+			while (AssetPath.StartsWith("/"))
+			{
+				AssetPath = AssetPath.Mid(1);
+			}
+
+			const int32 SecondSlash = AssetPath.Find("/");
+			if (SecondSlash != INDEX_NONE)
+			{
+				AssetPath = AssetPath.Left(SecondSlash);
+			}
+			
+			FirstPathSegment = AssetPath;
+		}
+
+		OutPluginNames.AddUnique(FName(FirstPathSegment));
+	}
 }
 
 void
@@ -845,5 +1032,10 @@ void UEdGraph_ReferenceViewer::RemoveAllNodes()
 bool UEdGraph_ReferenceViewer::ShouldFilterByCollection() const
 {
 	return Settings->GetEnableCollectionFilter() && CurrentCollectionFilter != NAME_None;
+}
+
+bool UEdGraph_ReferenceViewer::ShouldFilterByPlugin() const
+{
+	return Settings->GetEnablePluginFilter() && CurrentPluginFilter.Num() > 0;
 }
 

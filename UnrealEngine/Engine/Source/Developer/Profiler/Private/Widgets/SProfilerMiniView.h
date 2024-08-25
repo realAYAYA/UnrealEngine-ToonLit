@@ -293,7 +293,7 @@ protected:
 	*/
 	const float FrameIndexToPosition( const int32 FrameIndex ) const
 	{
-		return FrameIndex*NumPixelsPerFrame;
+		return (float)FrameIndex * NumPixelsPerFrame;
 	}
 
 protected:
@@ -301,7 +301,7 @@ protected:
 
 	void UpdateNumPixelsPerSample()
 	{
-		NumPixelsPerSample = FMath::Max( (float)MIN_NUM_PIXELS_PER_SAMPLE, (float)ThisGeometry.GetLocalSize().X / AllFrames.Num() );
+		NumPixelsPerSample = FMath::Max( (float)MIN_NUM_PIXELS_PER_SAMPLE, (float)ThisGeometry.GetLocalSize().X / (float)AllFrames.Num() );
 	}
 
 	const float GetNumPixelsPerSample() const

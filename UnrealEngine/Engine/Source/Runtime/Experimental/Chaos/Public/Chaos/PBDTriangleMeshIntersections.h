@@ -29,7 +29,8 @@ public:
 
 	~FPBDTriangleMeshIntersections() = default;
 
-	CHAOS_API void Apply(FSolverParticles& Particles, const TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& Intersections, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void Apply(SolverParticlesOrRange& Particles, const TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& Intersections, const FSolverReal Dt) const;
 
 private:
 	const FTriangleMesh& TriangleMesh;

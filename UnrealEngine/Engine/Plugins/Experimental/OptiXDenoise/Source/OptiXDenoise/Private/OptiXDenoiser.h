@@ -42,7 +42,6 @@ DECLARE_LOG_CATEGORY_EXTERN(LogOptiXDenoise, Log, All);
 #include "OptiXDenoiseBase.h"
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "Windows/AllowWindowsPlatformAtomics.h"
 #include "Windows/WindowsPlatformAtomics.h"

@@ -555,6 +555,7 @@ namespace CrossCompiler
 			const TCHAR* Name;
 			const TCHAR* ParentName;
 			TLinearArray<FNode*> Members;
+			bool bForwardDeclaration;
 		};
 
 		struct FCBufferDeclaration : public FNode
@@ -644,12 +645,15 @@ namespace CrossCompiler
 			virtual void Write(FASTWriter& Writer) const override;
 
 			FFullySpecifiedType* ReturnType;
+			const TCHAR* ScopeIdentifier;
 			const TCHAR* Identifier;
 			FSemanticSpecifier* ReturnSemantic;
 
 			TLinearArray<FNode*> Parameters;
 
-			bool bIsDefinition = false;
+			bool bIsDefinition;
+			bool bIsOperator;
+			bool bIsStatic;
 
 			//Signature
 		};

@@ -49,7 +49,8 @@ public:
 		, _SupportDynamicSliderMaxValue(false)
 		, _SupportDynamicSliderMinValue(false)
 		, _MainDelta(0.01f)
-		, _MainShiftMouseMovePixelPerDelta(10)
+		, _MainShiftMultiplier(10.f)
+		, _MainCtrlMultiplier(0.1f)
 		, _ColorGradingModes(EColorGradingModes::Saturation)
 		, _OnColorCommitted()
 		, _OnQueryCurrentColor()
@@ -68,7 +69,12 @@ public:
 
 		SLATE_ARGUMENT( float, MainDelta )
 
-		SLATE_ARGUMENT( int32, MainShiftMouseMovePixelPerDelta)
+		/** Multiplier to use when shift is held down */
+		SLATE_ARGUMENT(float, MainShiftMultiplier)
+		/** Multiplier to use when ctrl is held down */
+		SLATE_ARGUMENT(float, MainCtrlMultiplier)
+
+		SLATE_ARGUMENT_DEPRECATED( int32, MainShiftMouseMovePixelPerDelta, 5.4, "Shift Mouse Move Pixel Per Delta is deprecated and incrementing by a fixed delta per pixel is no longer supported. Please use ShiftMultiplier and CtrlMultiplier which will multiply the step per mouse move")
 
 		SLATE_ARGUMENT( EColorGradingModes, ColorGradingModes)
 
@@ -141,7 +147,8 @@ protected:
 	float SliderValueMin;
 	float SliderValueMax;
 	float MainDelta;
-	int32 MainShiftMouseMovePixelPerDelta;
+	float MainShiftMultiplier;
+	float MainCtrlMultiplier;
 	EColorGradingModes ColorGradingModes;
 
 	TSharedPtr<SNumericEntryBox<float>> NumericEntryBoxWidget;

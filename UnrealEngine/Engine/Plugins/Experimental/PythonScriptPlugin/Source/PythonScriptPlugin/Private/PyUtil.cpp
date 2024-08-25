@@ -1042,7 +1042,7 @@ FString GetInterpreterExecutablePath(bool* OutIsEnginePython)
 #if PLATFORM_WINDOWS
 	PythonPath /= TEXT("python.exe");
 #elif PLATFORM_MAC || PLATFORM_LINUX
-	PythonPath /= TEXT("bin/python");
+	PythonPath /= TEXT("bin/python3");
 #else
 	static_assert(false, "Python not supported on this platform!");
 #endif
@@ -1230,7 +1230,7 @@ FString GetCleanTypename(PyTypeObject* InPyType)
 	int32 LastDotIndex = INDEX_NONE;
 	if (Typename.FindLastChar(TEXT('.'), LastDotIndex))
 	{
-		Typename.RemoveAt(0, LastDotIndex + 1, false);
+		Typename.RemoveAt(0, LastDotIndex + 1, EAllowShrinking::No);
 	}
 
 	return Typename;

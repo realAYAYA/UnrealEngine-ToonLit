@@ -1,10 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ControlRigSchema.h"
+#include "ControlRigBlueprint.h"
 #include "RigVMModel/RigVMController.h"
 #include "Rigs/RigHierarchyPose.h"
 #include "Curves/CurveFloat.h"
 #include "Units/RigUnitContext.h"
+#include "Units/Modules/RigUnit_ConnectorExecution.h"
+#include "Units/Modules/RigUnit_ConnectionCandidates.h"
 
 UControlRigSchema::UControlRigSchema(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -34,4 +37,22 @@ bool UControlRigSchema::ShouldUnfoldStruct(URigVMController* InController, const
 	}
 	
 	return true;
+}
+
+bool UControlRigSchema::SupportsUnitFunction(URigVMController* InController, const FRigVMFunction* InUnitFunction) const
+{
+	if (InUnitFunction->Struct == FRigUnit_ConnectorExecution::StaticStruct() ||
+		InUnitFunction->Struct == FRigUnit_GetCandidates::StaticStruct() ||
+		InUnitFunction->Struct == FRigUnit_DiscardMatches::StaticStruct())
+	{
+		if (UControlRigBlueprint* Blueprint = Cast<UControlRigBlueprint>(InController->GetOuter()))
+		{
+			if (Blueprint->IsControlRigModule())
+			{
+				return true;
+			}
+			return false;
+		}
+	}
+	return Super::SupportsUnitFunction(InController, InUnitFunction);
 }

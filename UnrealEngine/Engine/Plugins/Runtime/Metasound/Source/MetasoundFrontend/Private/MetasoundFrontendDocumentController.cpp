@@ -5,6 +5,7 @@
 #include "Algo/ForEach.h"
 #include "HAL/FileManager.h"
 #include "MetasoundFrontendGraphController.h"
+#include "MetasoundFrontendDocumentIdGenerator.h"
 #include "MetasoundFrontendInvalidController.h"
 #include "MetasoundJsonBackend.h"
 #include "StructSerializer.h"
@@ -292,7 +293,7 @@ namespace Metasound
 
 					return NewClassPtr;
 				};
-
+				
 				if (FMetasoundFrontendClass* MetasoundClass = ClassPtr.Get())
 				{
 					// External node classes must match version to return shared definition.
@@ -305,7 +306,8 @@ namespace Metasound
 						FMetasoundFrontendClass NewClass = GenerateClass(InKey);
 						if (NewClass.Metadata.GetVersion().Major != MetasoundClass->Metadata.GetVersion().Major)
 						{
-							return AddClass(MoveTemp(NewClass), FGuid::NewGuid());
+							const FGuid ClassId = FDocumentIDGenerator::Get().CreateClassID(*Document);
+							return AddClass(MoveTemp(NewClass), ClassId);
 						}
 					}
 
@@ -321,7 +323,8 @@ namespace Metasound
 				}
 
 				FMetasoundFrontendClass NewClass = GenerateClass(InKey);
-				return AddClass(MoveTemp(NewClass), FGuid::NewGuid());
+				const FGuid ClassId = FDocumentIDGenerator::Get().CreateClassID(*Document);
+				return AddClass(MoveTemp(NewClass), ClassId);
 			}
 
 			return FConstClassAccessPtr();
@@ -367,7 +370,7 @@ namespace Metasound
 						case EMetasoundFrontendClassType::Output:
 						{
 							FMetasoundFrontendClass NewClass;
-							FNodeRegistryKey Key = NodeRegistryKey::CreateKey(InMetadata);
+							FNodeRegistryKey Key = FNodeRegistryKey(InMetadata);
 
 							if (FRegistry::GetFrontendClassFromRegistered(Key, NewClass))
 							{
@@ -379,7 +382,7 @@ namespace Metasound
 #if WITH_EDITOR
 								UE_LOG(LogMetaSound, Error,
 									TEXT("Cannot add external dependency. No Metasound class found with matching registry key [Key:%s, Name:%s, Version:%s]. Suggested solution \"%s\" by %s."),
-									*Key,
+									*Key.ToString(),
 									*InMetadata.GetClassName().GetFullName().ToString(),
 									*InMetadata.GetVersion().ToString(),
 									*InMetadata.GetPromptIfMissing().ToString(),
@@ -387,7 +390,7 @@ namespace Metasound
 #else
 								UE_LOG(LogMetaSound, Error,
 									TEXT("Cannot add external dependency. No Metasound class found with matching registry key [Key:%s, Name:%s, Version:%s]."),
-									*Key,
+									*Key.ToString(),
 									*InMetadata.GetClassName().GetFullName().ToString(),
 									*InMetadata.GetVersion().ToString());
 #endif // !WITH_EDITOR
@@ -467,9 +470,8 @@ namespace Metasound
 			{
 				for (FMetasoundFrontendClass& Class : Document->Dependencies)
 				{
-					FNodeRegistryKey RegistryKey = NodeRegistryKey::CreateKey(Class.Metadata);
-
 					FMetasoundFrontendClass RegistryVersion;
+					FNodeRegistryKey RegistryKey(Class.Metadata);
 					if (FMetasoundFrontendRegistryContainer::Get()->FindFrontendClassFromRegistered(RegistryKey, RegistryVersion))
 					{
 						if (Class.Metadata.GetChangeID() != RegistryVersion.Metadata.GetChangeID())
@@ -507,6 +509,16 @@ namespace Metasound
 					});
 			}
 			return IGraphController::GetInvalidHandle();
+		}
+
+		FDocumentAccessPtr FDocumentController::GetDocumentPtr()
+		{
+			return DocumentPtr;
+		}
+
+		const FDocumentAccessPtr FDocumentController::GetDocumentPtr() const
+		{
+			return DocumentPtr;
 		}
 
 		TArray<FGraphHandle> FDocumentController::GetSubgraphHandles() 

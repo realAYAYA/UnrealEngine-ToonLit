@@ -66,6 +66,32 @@ inline EPixelFormat GetPixelFormatFromRenderTargetFormat(ETextureRenderTargetFor
 	return PF_Unknown;
 }
 
+UENUM(BlueprintType)
+enum class ETextureRenderTargetSampleCount : uint8
+{
+	RTSC_1 UMETA(DisplayName = "MSAAx1"),
+	RTSC_2 UMETA(DisplayName = "MSAAx2"),
+	RTSC_4 UMETA(DisplayName = "MSAAx4"),
+	RTSC_8 UMETA(DisplayName = "MSAAx8"),
+
+	RTSC_MAX,
+};
+
+inline int32 GetNumFromRenderTargetSampleCount(ETextureRenderTargetSampleCount InSampleCount)
+{
+	switch (InSampleCount)
+	{
+	case ETextureRenderTargetSampleCount::RTSC_1: return 1 << 0;
+	case ETextureRenderTargetSampleCount::RTSC_2: return 1 << 1;
+	case ETextureRenderTargetSampleCount::RTSC_4: return 1 << 2;
+	case ETextureRenderTargetSampleCount::RTSC_8: return 1 << 3;
+
+	default:
+		ensureMsgf(false, TEXT("Unhandled ETextureRenderTargetSampleCount entry %u"), (uint32)InSampleCount);
+		return 1;
+	}
+}
+
 /**
  * TextureRenderTarget2D
  *
@@ -101,6 +127,9 @@ class UTextureRenderTarget2D : public UTextureRenderTarget
 	/** True to force linear gamma space for this render target */
 	UPROPERTY()
 	uint8 bForceLinearGamma:1;
+
+	/** If true fast clear will be disabled on the rendertarget. */
+	uint8 bNoFastClear:1;
 
 	/** Whether to support storing HDR values, which requires more memory. */
 	UPROPERTY()
@@ -156,39 +185,53 @@ class UTextureRenderTarget2D : public UTextureRenderTarget
 	ENGINE_API void ResizeTarget(uint32 InSizeX, uint32 InSizeY);
 
 	/**
-	 * Utility for creating a new UTexture2D from a TextureRenderTarget2D
-	 * TextureRenderTarget2D must be square and a power of two size.
-	 * @param Outer - Outer to use when constructing the new Texture2D.
-	 * @param NewTexName - Name of new UTexture2D object.
-	 * @param ObjectFlags - Flags to apply to the new Texture2D object
-	 * @param Flags - Various control flags for operation (see EConstructTextureFlags)
-	 * @param AlphaOverride - If specified, the values here will become the alpha values in the resulting texture
+	 * Utility for creating a new UTexture2D from a UTextureRenderTarget2D
+	 * @param InOuter - Outer to use when constructing the new UTexture2D.
+	 * @param InNewTextureName - Name of new UTexture2D object.
+	 * @param InObjectFlags - Flags to apply to the new UTexture2D object
+	 * @param InFlags - Various control flags for operation (see EConstructTextureFlags)
+	 * @param InAlphaOverride - If specified, the values here will become the alpha values in the resulting texture
 	 * @return New UTexture2D object.
 	 */
-	ENGINE_API UTexture2D* ConstructTexture2D(UObject* InOuter, const FString& NewTexName, EObjectFlags InObjectFlags, uint32 Flags=CTF_Default, TArray<uint8>* AlphaOverride=NULL);
+	ENGINE_API UTexture2D* ConstructTexture2D(UObject* InOuter, const FString& InNewTextureName, EObjectFlags InObjectFlags, uint32 InFlags = CTF_Default, TArray<uint8>* InAlphaOverride = nullptr);
+	
+	UE_DEPRECATED(5.4, "Use CanConvertToTexture")
 	ENGINE_API ETextureSourceFormat GetTextureFormatForConversionToTexture2D() const;
+
+	//~ Begin UTextureRenderTarget Interface
+	virtual bool CanConvertToTexture(ETextureSourceFormat& OutTextureSourceFormat, EPixelFormat& OutPixelFormat, FText* OutErrorMessage) const override;
+	virtual TSubclassOf<UTexture> GetTextureUClass() const override;
+	virtual EPixelFormat GetFormat() const override;
+	virtual bool IsSRGB() const override;
+	virtual float GetDisplayGamma() const override;
+	virtual ETextureClass GetRenderTargetTextureClass() const override { return ETextureClass::TwoD; }
+	//~ End UTextureRenderTarget Interface
 
 	/**
 	 * Utility for updating an existing UTexture2D from a TextureRenderTarget2D
-	 * TextureRenderTarget2D must be square and a power of two size.
 	 * @param InTexture2D					Texture which will contain the content of this render target after the call.
 	 * @param InTextureFormat				Format in which the texture should be stored.
 	 * @param Flags				Optional	Various control flags for operation (see EConstructTextureFlags)
 	 * @param AlphaOverride		Optional	If non-null, the values here will become the alpha values in the resulting texture
 	 */
-	ENGINE_API void UpdateTexture2D(UTexture2D* InTexture2D, ETextureSourceFormat InTextureFormat, uint32 Flags = CTF_Default, TArray<uint8>* AlphaOverride = NULL);
+	UE_DEPRECATED(5.4, "Use URenderTarget::UpdateTexture")
+	ENGINE_API void UpdateTexture2D(UTexture2D* InTexture2D, ETextureSourceFormat InTextureFormat, uint32 Flags = CTF_Default, TArray<uint8>* AlphaOverride = nullptr);
 
 	/**
 	 * Utility for updating an existing UTexture2D from a TextureRenderTarget2D
-	 * TextureRenderTarget2D must be square and a power of two size.
 	 * @param InTexture2D				Texture which will contain the content of this render target after the call.
 	 * @param InTextureFormat			Format in which the texture should be stored.
 	 * @param Flags						Various control flags for operation (see EConstructTextureFlags)
 	 * @param AlphaOverride				If non-null, the values here will become the alpha values in the resulting texture
 	 * @param TextureChangingDelegate	If the texture needs to be modified (as it's properties or content will change), this delegate will be called beforehand.
 	 */
+	UE_DEPRECATED(5.4, "Use URenderTarget::FOnTextureChangingDelegate")
 	DECLARE_DELEGATE_OneParam(FTextureChangingDelegate, UTexture2D*);
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.4, "Use URenderTarget::UpdateTexture")
 	ENGINE_API void UpdateTexture2D(UTexture2D* InTexture2D, ETextureSourceFormat InTextureFormat, uint32 Flags, TArray<uint8>* AlphaOverride, FTextureChangingDelegate TextureChangingDelegate);
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/**
 	 * Updates (resolves) the render target texture immediately.
@@ -221,30 +264,7 @@ class UTextureRenderTarget2D : public UTextureRenderTarget
 		return NumMips;
 	}
 
-
-	FORCEINLINE EPixelFormat GetFormat() const
-	{
-		if (OverrideFormat == PF_Unknown)
-		{
-			return GetPixelFormatFromRenderTargetFormat(RenderTargetFormat);
-		}
-		else
-		{
-			return OverrideFormat;
-		}
-	}
-
-	bool IsSRGB() const
-	{
-		if (OverrideFormat == PF_Unknown)
-		{
-			return RenderTargetFormat == RTF_RGBA8_SRGB;
-		}
-		else
-		{
-			return !bForceLinearGamma;
-		}
-	}
+	virtual ETextureRenderTargetSampleCount GetSampleCount() const;
 
 private:
 	int32	NumMips;

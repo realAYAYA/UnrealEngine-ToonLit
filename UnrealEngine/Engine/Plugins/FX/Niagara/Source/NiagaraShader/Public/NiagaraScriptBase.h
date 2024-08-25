@@ -59,7 +59,7 @@ USTRUCT()
 struct FSimulationStageMetaData
 {
 	GENERATED_USTRUCT_BODY()
-public:
+
 	NIAGARASHADER_API FSimulationStageMetaData();
 
 	/** User simulation stage name. */
@@ -151,14 +151,14 @@ public:
 
 	/** Dispatch type set for this stage. */
 	UPROPERTY()
-	ENiagaraGpuDispatchType GpuDispatchType;
+	ENiagaraGpuDispatchType GpuDispatchType = ENiagaraGpuDispatchType::OneD;
 
 	UPROPERTY()
 	ENiagaraDirectDispatchElementType GpuDirectDispatchElementType = ENiagaraDirectDispatchElementType::NumThreads;
 
 	/** When in custom mode this is the num threads. */
 	UPROPERTY()
-	FIntVector GpuDispatchNumThreads;
+	FIntVector GpuDispatchNumThreads = FIntVector(0, 0, 0);
 };
 
 UCLASS(MinimalAPI, abstract)

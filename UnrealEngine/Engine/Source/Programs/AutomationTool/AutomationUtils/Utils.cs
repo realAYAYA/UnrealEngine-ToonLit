@@ -14,6 +14,7 @@ using UnrealBuildBase;
 using Microsoft.Extensions.Logging;
 
 using static AutomationTool.CommandUtils;
+using System.Management;
 
 namespace AutomationTool
 {
@@ -436,7 +437,7 @@ namespace AutomationTool
 		/// <param name="SourceName">Source name</param>
 		/// <param name="TargetName">Target name</param>
 		/// <returns>True if the operation was successful, false otherwise.</returns>
-		public static bool SafeCopyFile(string SourceName, string TargetName, bool bQuiet = false, List<string> IniKeyDenyList = null, List<string> IniSectionDenyList = null, List<string> IniSectionAllowList = null, bool bSafeCreateDirectory = false)
+		public static bool SafeCopyFile(string SourceName, string TargetName, bool bQuiet = false, OverrideCopyDelegate OverrideCopyHandler = null, List<string> IniKeyDenyList = null, List<string> IniSectionDenyList = null, List<string> IniSectionAllowList = null, bool bSafeCreateDirectory = false)
 		{
 			if (!bQuiet)
 			{
@@ -465,6 +466,11 @@ namespace AutomationTool
 					{
 						FilterIniFile(SourceName, TargetName, IniKeyDenyList, IniSectionDenyList, IniSectionAllowList);
 						// ini files may change size, don't check
+						bSkipSizeCheck = true;
+					}
+					else if (OverrideCopyHandler != null && OverrideCopyHandler.Invoke(Logger, SourceName, TargetName))
+					{
+						// handlers may change the file sizes, don't check
 						bSkipSizeCheck = true;
 					}
 					else
@@ -922,6 +928,64 @@ namespace AutomationTool
 	    }
 
 		/// <summary>
+		/// Attempts to get the shared network path for a given mapped network drive
+		/// e.g.  X:\Shared\Path\   -> \\MyServer\Root\Shared\Path\
+		/// </summary>
+		/// <param name="InPath">Source path</param>
+		/// <param name="UNCPath">Receives the UNC path</param>
+		/// <returns>true on success</returns>
+		public static bool TryResolveMappedNetworkPath( string InPath, out string UNCPath )
+		{
+			UNCPath = "";
+
+			// only works on Windows at the moment
+			if (HostPlatform.Current.HostEditorPlatform != UnrealTargetPlatform.Win64)
+			{
+				return false;
+			}
+
+			// path is already a network shared path
+			if (InPath.StartsWith("\\\\"))
+			{
+				UNCPath = InPath;
+				return true;
+			}
+
+			// path has no drive
+			if (!Path.IsPathRooted(InPath))
+			{
+				return false;
+			}
+
+			// see if the path is on a network drive & try to resolve the target
+			try
+			{
+				DriveInfo Drive = new(InPath);
+				if (Drive.DriveType == DriveType.Network)
+				{
+					if (OperatingSystem.IsWindows())
+					{
+						using (ManagementObject ManObj = new($"Win32_LogicalDisk='{Drive.Name.TrimEnd(Path.DirectorySeparatorChar)}'")) // Win32_LogicalDisk='X:'
+						{
+							string UNCRoot = ManObj["ProviderName"].ToString(); // e.g. \\MyServer\Root
+							string SharedPathFragment = InPath.Replace(Drive.Name, "", StringComparison.InvariantCultureIgnoreCase);
+
+							UNCPath = Path.Combine(UNCRoot, SharedPathFragment);
+							return true;
+						}
+					}
+				}
+			}
+			catch
+			{
+			}
+
+			// something failed, or the drive isn't a network drive
+			return false;
+		}
+
+
+		/// <summary>
 		/// Efficient iterator for walking over a string line by line.
 		/// </summary>
 		/// <param name="Str">string to walk over</param>
@@ -1284,7 +1348,7 @@ namespace AutomationTool
 		{
 			if(CommandUtils.IsReadOnly(FileName))
 			{
-				if(CommandUtils.P4Enabled)
+				if(CommandUtils.P4Enabled && !CommandUtils.IsBuildMachine)
 				{
 					CommandUtils.P4.Sync(String.Format("\"{0}#0\"", FileName), false, false);
 				}

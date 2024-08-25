@@ -192,10 +192,10 @@ FReply FRigVMCompileSettingsDetails::OnInspectMemory(ERigVMMemoryType InMemoryTy
 	{
 		if(UControlRig* DebuggedRig = Cast<UControlRig>(BlueprintBeingCustomized->GetObjectBeingDebugged()))
 		{
-			if(URigVMMemoryStorage* MemoryStorage = DebuggedRig->GetVM()->GetMemoryByType(InMemoryType))
+			if(FRigVMMemoryStorageStruct* MemoryStorage = DebuggedRig->GetMemoryByType(InMemoryType))
 			{
-				TArray<UObject*> ObjectsToSelect = {MemoryStorage};
-				BlueprintBeingCustomized->RequestInspectObject(ObjectsToSelect);
+				TArray<FRigVMMemoryStorageStruct*> InStructs = { MemoryStorage };
+				BlueprintBeingCustomized->RequestInspectMemoryStorage(InStructs);
 			}
 		}
 	}
@@ -223,7 +223,7 @@ FReply FRigVMCompileSettingsDetails::OnCopyByteCodeClicked()
 		{
 			if(UControlRig* ControlRig = Cast<UControlRig>(BlueprintBeingCustomized->GetObjectBeingDebugged()))
 			{
-				FString ByteCodeContent = ControlRig->GetVM()->DumpByteCodeAsText();
+				FString ByteCodeContent = ControlRig->GetVM()->DumpByteCodeAsText(ControlRig->GetRigVMExtendedExecuteContext());
 				FPlatformApplicationMisc::ClipboardCopy(*ByteCodeContent);
 			}
 		}
@@ -261,16 +261,19 @@ FReply FRigVMCompileSettingsDetails::OnCopyGeneratedCodeClicked()
 			{
 				if(CDO->GetVM())
 				{
-					CDO->GetVM()->ClearExternalVariables(CDO->GetExtendedExecuteContext());
-					TArray<FRigVMExternalVariable> ExternalVariables = CDO->GetExternalVariables();
+					CDO->GetVM()->ClearExternalVariables(CDO->GetRigVMExtendedExecuteContext());
+					TArray<FRigVMExternalVariable> ExternalVariables = CDO->GetExternalVariablesImpl(false);
 					for(const FRigVMExternalVariable& ExternalVariable : ExternalVariables)
 					{
-						CDO->GetVM()->AddExternalVariable(CDO->GetExtendedExecuteContext(), ExternalVariable);
+						CDO->GetVM()->AddExternalVariable(CDO->GetRigVMExtendedExecuteContext(), ExternalVariable);
 					}
 					
+					FRigVMExtendedExecuteContext& CDOContext = CDO->GetRigVMExtendedExecuteContext();
+
 					FRigVMCodeGenerator CodeGenerator(ClassName,
-						TEXT("TestModule"), BlueprintBeingCustomized->GetDefaultModel(), CDO->GetVM(), CDO->GetPublicContextStruct(), BlueprintBeingCustomized->PinToOperandMap);
-					const FString Content = CodeGenerator.DumpHeader() + TEXT("\r\n\r\n") + CodeGenerator.DumpSource();
+						TEXT("TestModule"), BlueprintBeingCustomized->GetDefaultModel(), CDO->GetVM(), CDOContext,
+						CDO->GetPublicContextStruct(), BlueprintBeingCustomized->PinToOperandMap);
+					const FString Content = CodeGenerator.DumpHeader(CDOContext) + TEXT("\r\n\r\n") + CodeGenerator.DumpSource(CDOContext);
 					FPlatformApplicationMisc::ClipboardCopy(*Content);
 				}
 			}

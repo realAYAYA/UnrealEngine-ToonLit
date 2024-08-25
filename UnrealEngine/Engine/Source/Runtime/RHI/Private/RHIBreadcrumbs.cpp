@@ -39,7 +39,7 @@ FRHIBreadcrumb* FRHIBreadcrumbStack::PushBreadcrumbPrintf(FMemStackBase& Allocat
 	TCHAR BreadcrumbString[1024];
 	int32 WrittenLength = 0;
 
-	GET_VARARGS_RESULT(BreadcrumbString, UE_ARRAY_COUNT(BreadcrumbString), UE_ARRAY_COUNT(BreadcrumbString) - 1, InFormat, InFormat, WrittenLength);
+	GET_TYPED_VARARGS_RESULT(TCHAR, BreadcrumbString, UE_ARRAY_COUNT(BreadcrumbString), UE_ARRAY_COUNT(BreadcrumbString) - 1, InFormat, InFormat, WrittenLength);
 
 	return PushBreadcrumb(Allocator, BreadcrumbString, WrittenLength);
 }
@@ -111,7 +111,8 @@ void FRHIBreadcrumbStack::WriteRenderBreadcrumbs(FCrashContextExtendedWriter& Wr
 		if (BreadcrumbStackStringSize < MAX_BREADCRUMB_STRING)
 		{
 			int32 WrittenLength = 0;
-			GET_VARARGS_RESULT(
+			GET_TYPED_VARARGS_RESULT(
+				TCHAR,
 				&StaticBreadcrumbStackString[BreadcrumbStackStringSize],
 				MAX_BREADCRUMB_STRING - BreadcrumbStackStringSize,
 				MAX_BREADCRUMB_STRING - BreadcrumbStackStringSize - 1,

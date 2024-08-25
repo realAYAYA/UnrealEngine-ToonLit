@@ -175,7 +175,7 @@ void ComputeShadowCullingVolume(bool bReverseCulling, const FVector* CascadeFrus
 			FVector C = A + LightDirection * (A - B).Size();
 
 			// Account for winding
-			if (XOR(DotA >= 0.0f, bReverseCulling))
+			if ((DotA >= 0.0f) != bReverseCulling)
 			{
 				Planes.Add(FPlane(A, B, C));
 			}
@@ -190,8 +190,7 @@ void ComputeShadowCullingVolume(bool bReverseCulling, const FVector* CascadeFrus
 
 float ComputeWholeSceneDynamicShadowRadius(EComponentMobility::Type Mobility, float DynamicShadowDistanceMovableLight, float DynamicShadowDistanceStationaryLight)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
+	const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 	if (Mobility == EComponentMobility::Movable || !bAllowStaticLighting)
 	{
@@ -406,6 +405,7 @@ public:
 		LightParameters.RectLightAtlasUVScale = FVector2f::ZeroVector;
 		LightParameters.RectLightAtlasMaxLevel = FLightRenderParameters::GetRectLightAtlasInvalidMIPLevel();
 		LightParameters.IESAtlasIndex = INDEX_NONE;
+		LightParameters.LightFunctionAtlasLightIndex = GetLightFunctionAtlasLightIndex();
 		LightParameters.InverseExposureBlend = 0.0f;
 	}
 
@@ -1072,8 +1072,7 @@ bool UDirectionalLightComponent::CanEditChange(const FProperty* InProperty) cons
 {
 	if (InProperty)
 	{
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 		FString PropertyName = InProperty->GetName();
 

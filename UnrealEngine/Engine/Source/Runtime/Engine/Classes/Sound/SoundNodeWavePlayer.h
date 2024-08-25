@@ -73,6 +73,7 @@ public:
 	//~ Begin USoundNodeAssetReferencer Interface
 	virtual void LoadAsset(bool bAddToRoot = false) override;
 	virtual void ClearAssetReferences() override;
+	virtual bool ContainsProceduralSoundReference() const override;
 	//~ End USoundNode Interface
 
 	// If this returns true, this wave player currently has an async load for the USoundWave in flight.

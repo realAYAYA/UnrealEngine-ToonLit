@@ -31,15 +31,15 @@ struct AUDIOMODULATION_API FSoundControlModulationInput
 	FSoundControlModulationInput();
 
 	/** Get the modulated input value on parent patch initialization and hold that value for its lifetime */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Input, meta = (DisplayName = "Sample-And-Hold"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Input, meta = (DisplayName = "Sample-And-Hold", DisplayPriority = "30"))
 	uint8 bSampleAndHold : 1;
 
 	/** Transform to apply to the input prior to mix phase */
-	UPROPERTY(EditAnywhere, Category = Input)
+	UPROPERTY(EditAnywhere, Category = Input, meta = (DisplayPriority = "20"))
 	FSoundModulationTransform Transform;
 
 	/** The input bus */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Input)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Input, meta = (DisplayPriority = "10"))
 	TObjectPtr<USoundControlBus> Bus = nullptr;
 
 	const USoundControlBus* GetBus() const;

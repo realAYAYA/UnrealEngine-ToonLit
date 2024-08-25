@@ -38,14 +38,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		
-
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-		int GetInputCount() const override;
-		Node* GetInputNode( int i ) const override;
-		void SetInputNode( int i, NodePtr pNode ) override;
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -53,7 +47,7 @@ namespace mu
 
         typedef enum {
             FT_LAYOUT_BLOCKS = 0,
-            FT_FACE_GROUP
+            FT_FACE_GROUP_DEPRECATED
         } FRAGMENT_TYPE;
 
         //! Get the type of mesh fragment to extract.

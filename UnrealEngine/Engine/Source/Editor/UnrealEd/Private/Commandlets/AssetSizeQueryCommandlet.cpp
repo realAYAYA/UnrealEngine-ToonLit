@@ -145,7 +145,7 @@ int32 UAssetSizeQueryCommandlet::Main(const FString& FullCommandLine)
 		 &AssetFilter](const FAssetData& AssetData)
 	{
 		FString CompressedSize;
-		if (AssetData.GetTagValue("Stage_ChunkCompressedSize", CompressedSize) == false ||
+		if (AssetData.GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize) == false ||
 			CompressedSize.Len() == 0)
 		{
 			return true;

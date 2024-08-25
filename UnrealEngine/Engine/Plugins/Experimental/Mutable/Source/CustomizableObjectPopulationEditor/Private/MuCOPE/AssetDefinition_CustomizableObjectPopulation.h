@@ -24,5 +24,5 @@ public:
 	
 	virtual TConstArrayView<FAssetCategoryPath> GetAssetCategories() const override;
 	
-	virtual EAssetCommandResult OpenAssets(const FAssetOpenArgs& OpenArgs) const override;;
+	virtual EAssetCommandResult OpenAssets(const FAssetOpenArgs& OpenArgs) const override;
 };

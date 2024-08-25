@@ -65,7 +65,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBoneTransformsFinalized);  // Deprecated, 
 
 DECLARE_MULTICAST_DELEGATE(FOnBoneTransformsFinalizedMultiCast);
 
-DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnLODRequiredBonesUpdateMulticast, USkeletalMeshComponent*, int32, const TArray<FBoneIndexType>&);
+DECLARE_TS_MULTICAST_DELEGATE_ThreeParams(FOnLODRequiredBonesUpdateMulticast, USkeletalMeshComponent*, int32, const TArray<FBoneIndexType>&);
 typedef FOnLODRequiredBonesUpdateMulticast::FDelegate FOnLODRequiredBonesUpdate;
 
 /** Method used when retrieving a attribute value*/
@@ -316,13 +316,13 @@ class USkeletalMeshComponent : public USkinnedMeshComponent, public IInterface_C
 	friend struct FLinkedInstancesAdapter;
 	friend struct FLinkedAnimLayerClassData;
 	
-//#if WITH_EDITORONLY_DATA  // TODO: Re-add these guards once the MovieScene getters/setters are working, so that we can get rid of this redundant pointer in all cooked builds
+#if WITH_EDITORONLY_DATA 
 private:
 	/** The skeletal mesh used by this component. */
 	UE_DEPRECATED(5.1, "This property isn't deprecated, but getter and setter must be used at all times to preserve correct operations.")
 	UPROPERTY(EditAnywhere, Transient, Setter = SetSkeletalMeshAsset, BlueprintSetter = SetSkeletalMeshAsset, Getter = GetSkeletalMeshAsset, BlueprintGetter = GetSkeletalMeshAsset, Category = Mesh)
 	TObjectPtr<USkeletalMesh> SkeletalMeshAsset;
-//#endif
+#endif
 
 public:
 	/**
@@ -679,10 +679,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Clothing)
 	uint8 bForceCollisionUpdate : 1;
 
-	/** Deprecated. */
-	UE_DEPRECATED(5.2, "Cloth simulation always happens in local space.")
-	UPROPERTY(BlueprintReadWrite, Category = Clothing, meta = (DeprecationMessage = "This property is deprecated. Cloth simulation always happens in local space."))
-	uint8 bLocalSpaceSimulation : 1;
+	/**
+	 * Scale applied to the component induced velocity of all cloth particles prior to stepping the cloth solver.
+	 * Use 1.0 for fully induced velocity (default), or use 0.0 for no induced velocity, and any other values in between for a reduced induced velocity.
+	 * When set to 0.0, it also provides a way to force the clothing to simulate in local space.
+	 * This value multiplies to individual cloth's velocity scale settings, still allowing for differences in behavior between the various pieces of clothing within the same component.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Clothing, Meta = (UIMin = 0.f, UIMax = 1.f, ClampMin = 0.f, ClampMax = 1.f))
+	float ClothVelocityScale = 1.f;
 
 	/** reset the clothing after moving the clothing position (called teleport) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Clothing)
@@ -804,6 +808,10 @@ private:
 	uint8 bNeedsQueuedAnimEventsDispatched:1;
 
 	uint8 bPostEvaluatingAnimation:1;
+
+public:
+	/** Physics-engine representation of aggregate which contains a physics asset instance with more than numbers of bodies. */
+	FPhysicsAggregateHandle Aggregate;
 
 public:
 
@@ -942,6 +950,9 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	const TArray<UAnimInstance*>& GetLinkedAnimInstances() const { return LinkedInstances; }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	/** If true, next time that ConditionallyDispatchQueuedAnimEvents() is called it will trigger any queued anim notifies available. */
+	ENGINE_API void AllowQueuedAnimEventsNextDispatch();
+	
 private:
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TArray<TObjectPtr<UAnimInstance>>& GetLinkedAnimInstances() { return LinkedInstances; }
@@ -1374,9 +1385,6 @@ public:
 	/** Array of FConstraintInstance structs, storing per-instance state about each constraint. */
 	TArray<struct FConstraintInstance*> Constraints;
 
-	/** Physics-engine representation of aggregate which contains a physics asset instance with more than numbers of bodies. */
-	FPhysicsAggregateHandle Aggregate;
-
 	FSkeletalMeshComponentClothTickFunction ClothTickFunction;
 
 	/**
@@ -1435,13 +1443,6 @@ private:
 
 	ENGINE_API void ComputeTeleportRotationThresholdInRadians();
 	ENGINE_API void ComputeTeleportDistanceThresholdInRadians();
-
-	// Can't rely on time value, because those may be affected by dilation and whether or not
-	// the game is paused.
-	// Also can't just rely on a flag as other components (like CharacterMovementComponent) may tick
-	// the pose and we can't guarantee tick order.
-	UPROPERTY(Transient)
-	uint32 LastPoseTickFrame;
 
 public:
 
@@ -1752,6 +1753,7 @@ public:
 
 	ENGINE_API virtual class UBodySetup* GetBodySetup() override;
 	ENGINE_API virtual bool CanEditSimulatePhysics() override;
+	ENGINE_API virtual bool IsSimulatingPhysics(FName BoneName = NAME_None) const override;
 	ENGINE_API virtual FBodyInstance* GetBodyInstance(FName BoneName = NAME_None, bool bGetWelded = true, int32 Index = INDEX_NONE) const override;
 	ENGINE_API virtual void UpdatePhysicsToRBChannels() override;
 	ENGINE_API virtual void SetAllPhysicsAngularVelocityInRadians(FVector const& NewVel, bool bAddToCurrent = false) override;
@@ -1896,6 +1898,7 @@ protected:
 	 * TransformToRoot offset. Otherwise, it returns the component transform.
 	 */
 	ENGINE_API virtual FTransform GetComponentTransformFromBodyInstance(FBodyInstance* UseBI) override;
+	ENGINE_API virtual void GetPrimitiveStats(FPrimitiveStats& PrimitiveStats) const override;
 	//~ End UPrimitiveComponent Interface.
 
 public:
@@ -2096,6 +2099,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Physics")
 	ENGINE_API void SetAllBodiesBelowSimulatePhysics(const FName& InBoneName, bool bNewSimulate, bool bIncludeSelf = true );
 
+	/** Set a single bone to be simulated (or not) */
+	UFUNCTION(BlueprintCallable, Category="Physics")
+	ENGINE_API void SetBodySimulatePhysics(const FName& InBoneName, bool bSimulate);
+
 	/** Allows you to reset bodies Simulate state based on where bUsePhysics is set to true in the BodySetup. */
 	UFUNCTION(BlueprintCallable, Category="Physics")
 	ENGINE_API void ResetAllBodiesSimulatePhysics();
@@ -2186,7 +2193,7 @@ public:
 
 	/** 
 	 *	Iterate over each physics body in the physics for this mesh, and for each 'kinematic' (ie fixed or default if owner isn't simulating) one, update its
-	 *	transform based on the animated transform.
+	 *	transform based on the animated transform. This update is also done for simulating bodies if a teleport is being requested. 
 	 *	@param	InComponentSpaceTransforms	Array of bone transforms in component space
 	 *	@param	Teleport					Whether movement is a 'teleport' (ie infers no physics velocity, but moves simulating bodies) or not
 	 *	@param	bNeedsSkinning				Whether we may need  to send new triangle data for per-poly skeletal mesh collision
@@ -2641,6 +2648,15 @@ private:
 	 * Cooking does not guarantee skeleton containing all names
 	 */
 	ENGINE_API bool AreRequiredCurvesUpToDate() const;
+
+
+private:
+	// Can't rely on time value, because those may be affected by dilation and whether or not
+	// the game is paused.
+	// Also can't just rely on a flag as other components (like CharacterMovementComponent) may tick
+	// the pose and we can't guarantee tick order.
+	UPROPERTY(Transient)
+	uint32 LastPoseTickFrame; 
 
 public:
 	ENGINE_API void ConditionallyDispatchQueuedAnimEvents();

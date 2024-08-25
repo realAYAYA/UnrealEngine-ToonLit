@@ -78,7 +78,7 @@ public:
 			if (Releasers[Index].Identifier == InIdentifier)
 			{
 				Releasers[Index].Callback();
-				Releasers.RemoveAtSwap(Index, 1, false);
+				Releasers.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 		}
 	}

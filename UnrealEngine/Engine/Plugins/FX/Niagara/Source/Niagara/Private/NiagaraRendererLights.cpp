@@ -18,6 +18,14 @@
 
 DECLARE_CYCLE_STAT(TEXT("Generate Particle Lights"), STAT_NiagaraGenLights, STATGROUP_Niagara);
 
+static int32 GbEnableNiagaraLightRendering = 1;
+static FAutoConsoleVariableRef CVarEnableNiagaraLightRendering(
+	TEXT("fx.EnableNiagaraLightRendering"),
+	GbEnableNiagaraLightRendering,
+	TEXT("If == 0, Niagara Light Renderers are disabled. \n"),
+	ECVF_Default
+);
+
 struct FNiagaraDynamicDataLights : public FNiagaraDynamicDataBase
 {
 	FNiagaraDynamicDataLights(const FNiagaraEmitterInstance* InEmitter)
@@ -69,8 +77,8 @@ FNiagaraDynamicDataBase* FNiagaraRendererLights::GenerateDynamicData(const FNiag
 
 	//Bail if we don't have the required attributes to render this emitter.
 	const UNiagaraLightRendererProperties* Properties = CastChecked<const UNiagaraLightRendererProperties>(InProperties);
-	FNiagaraDataSet& Data = Emitter->GetData();
-	FNiagaraDataBuffer* DataToRender = Data.GetCurrentData();
+	const FNiagaraDataSet& Data = Emitter->GetParticleData();
+	const FNiagaraDataBuffer* DataToRender = Data.GetCurrentData();
 	if (DataToRender == nullptr || Emitter->GetParentSystemInstance() == nullptr)
 	{
 		return nullptr;
@@ -109,6 +117,7 @@ FNiagaraDynamicDataBase* FNiagaraRendererLights::GenerateDynamicData(const FNiag
 	const FNiagaraBool DefaultEnabled = ParameterStore.GetParameterValueOrDefault(Properties->LightRenderingEnabledBinding.GetParamMapBindableVariable(), FNiagaraBool(true));
 	const int32 DefaultVisibilityTag = ParameterStore.GetParameterValueOrDefault(Properties->RendererVisibilityTagBinding.GetParamMapBindableVariable(), Properties->RendererVisibility);
 	const float DefaultExponent = ParameterStore.GetParameterValueOrDefault(Properties->LightExponentBinding.GetParamMapBindableVariable(), Properties->DefaultExponent);
+	const float DefaultSpecularScale = ParameterStore.GetParameterValueOrDefault(Properties->SpecularScaleBinding.GetParamMapBindableVariable(), Properties->SpecularScale);
 
 	const float InverseExposureBlend = Properties->bOverrideInverseExposureBlend ? Properties->InverseExposureBlend : GetDefault<UNiagaraSettings>()->DefaultLightInverseExposureBlend;
 
@@ -124,6 +133,7 @@ FNiagaraDynamicDataBase* FNiagaraRendererLights::GenerateDynamicData(const FNiag
 		const auto ScatteringReader = Properties->ScatteringDataSetAccessor.GetReader(Data);
 		const auto EnabledReader = Properties->EnabledDataSetAccessor.GetReader(Data);
 		const auto VisTagReader = Properties->RendererVisibilityTagAccessor.GetReader(Data);
+		const auto SpecularScaleReader = Properties->SpecularScaleAccessor.GetReader(Data);
 
 		for (uint32 ParticleIndex = 0; ParticleIndex < DataToRender->GetNumInstances(); ParticleIndex++)
 		{
@@ -144,6 +154,7 @@ FNiagaraDynamicDataBase* FNiagaraRendererLights::GenerateDynamicData(const FNiag
 				LightData.LightEntry.InverseExposureBlend = InverseExposureBlend;
 				LightData.LightEntry.bAffectTranslucency = Properties->bAffectsTranslucency;
 				LightData.LightEntry.VolumetricScatteringIntensity = ScatteringReader.GetSafe(ParticleIndex, DefaultScattering);
+				LightData.LightEntry.SpecularScale = SpecularScaleReader.GetSafe(ParticleIndex, DefaultSpecularScale);
 				LightData.PerViewEntry.Position = SimToWorld.TransformPosition(FVector(SimPos));
 			}
 		}
@@ -168,6 +179,8 @@ FNiagaraDynamicDataBase* FNiagaraRendererLights::GenerateDynamicData(const FNiag
 			LightData.LightEntry.InverseExposureBlend = InverseExposureBlend;
 			LightData.LightEntry.bAffectTranslucency = Properties->bAffectsTranslucency;
 			LightData.LightEntry.VolumetricScatteringIntensity = LightScattering;
+			LightData.LightEntry.SpecularScale = Properties->SpecularScale;
+
 			LightData.PerViewEntry.Position = SimToWorld.TransformPosition(FVector(SimPos));
 		}
 	}
@@ -177,6 +190,11 @@ FNiagaraDynamicDataBase* FNiagaraRendererLights::GenerateDynamicData(const FNiag
 
 void FNiagaraRendererLights::GatherSimpleLights(FSimpleLightArray& OutParticleLights)const
 {
+	if (GbEnableNiagaraLightRendering == 0)
+	{
+		return;
+	}
+
 	if (const FNiagaraDynamicDataLights* DynamicData = static_cast<const FNiagaraDynamicDataLights*>(DynamicDataRender))
 	{
 		const int32 LightCount = DynamicData->LightArray.Num();

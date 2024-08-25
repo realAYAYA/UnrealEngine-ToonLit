@@ -23,9 +23,9 @@ namespace AutomationTool
 	class UnrealBuildException : AutomationException
 	{
 		public UnrealBuildException(string Message)
-			: base("BUILD FAILED: " + Message)
+			: base(ExitCode.Error_UBTFailure, "BUILD FAILED: " + Message)
 		{
-			OutputFormat = AutomationExceptionOutputFormat.Minimal;
+			OutputFormat = AutomationExceptionOutputFormat.MinimalError;
 		}
 
 		public UnrealBuildException(string Format, params object[] Args)
@@ -320,7 +320,7 @@ namespace AutomationTool
 			FileReference BuildVersionFile = BuildVersion.GetDefaultFileName();
 
 			// Get the revision to sync files to before 
-			if(CommandUtils.P4Enabled && ChangelistNumber > 0)
+			if(CommandUtils.P4Enabled && ChangelistNumber > 0 && !CommandUtils.IsBuildMachine)
 			{
 				CommandUtils.P4.Sync(String.Format("-f \"{0}@{1}\"", BuildVersionFile, ChangelistNumber), false, false);
 			}
@@ -521,9 +521,10 @@ namespace AutomationTool
 		/// <param name="InDeleteBuildProducts">if specified, determines if the build products will be deleted before building. If not specified -clean parameter will be used,</param>
 		/// <param name="InUpdateVersionFiles">True if the version files are to be updated </param>
 		/// <param name="InForceNoXGE">If true will force XGE off</param>
-		/// <param name="InUseParallelExecutor">If true AND XGE not present or not being used then use ParallelExecutor</param>
 		/// <param name="InAllCores">If true AND XGE not present or not being used then ensure UBT uses all available cores</param>
-		public void Build(BuildAgenda Agenda, bool? InDeleteBuildProducts = null, bool InUpdateVersionFiles = true, bool InForceNoXGE = false, bool InUseParallelExecutor = false, bool InShowProgress = false, bool InAllCores = false, int? InChangelistNumberOverride = null, Dictionary<BuildTarget, BuildManifest> InTargetToManifest = null)
+		/// <param name="InChangelistNumberOverride"></param>
+		/// <param name="InTargetToManifest"></param>
+		public void Build(BuildAgenda Agenda, bool? InDeleteBuildProducts = null, bool InUpdateVersionFiles = true, bool InForceNoXGE = false, bool InAllCores = false, int? InChangelistNumberOverride = null, Dictionary<BuildTarget, BuildManifest> InTargetToManifest = null)
 		{
 			if (!CommandUtils.CmdEnv.HasCapabilityToCompile)
 			{
@@ -572,11 +573,8 @@ namespace AutomationTool
 			bool bDisableXGE = ParseParam("NoXGE") || InForceNoXGE;
 			bool bCanUseXGE = !bDisableXGE && PlatformExports.TryGetXgConsoleExecutable(out XGEConsole);
 
-			// only run ParallelExecutor if not running XGE (and we've requested ParallelExecutor and it exists)
-			bool bCanUseParallelExecutor = InUseParallelExecutor && (HostPlatform.Current.HostEditorPlatform == UnrealTargetPlatform.Win64);
 			Logger.LogDebug("************************* UnrealBuild:");
 			Logger.LogDebug("************************* UseXGE: {bCanUseXGE}", bCanUseXGE);
-			Logger.LogDebug("************************* UseParallelExecutor: {bCanUseParallelExecutor}", bCanUseParallelExecutor);
 
 			// Clean all the targets
 			foreach (BuildTarget Target in Agenda.Targets)

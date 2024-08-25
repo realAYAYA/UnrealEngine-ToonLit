@@ -14,7 +14,7 @@ void	CallstackTrace_InitializeInternal();
 UE_TRACE_CHANNEL_DEFINE(CallstackChannel)
 UE_TRACE_EVENT_DEFINE(Memory, CallstackSpec)
 
-uint32 GCallStackTracingTlsSlotIndex = MAX_uint32;
+uint32 GCallStackTracingTlsSlotIndex = FPlatformTLS::InvalidTlsSlot;
 
 ////////////////////////////////////////////////////////////////////////////////
 void CallstackTrace_Create(class FMalloc* InMalloc)

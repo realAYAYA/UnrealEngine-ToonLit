@@ -12,7 +12,7 @@ class UMaterialInterface;
 class UMaterial;
 
 
-UCLASS(Blueprintable, Config = Engine, PerObjectConfig)
+UCLASS(Blueprintable)
 class WORLDPARTITIONHLODUTILITIES_API UHLODBuilderMeshMergeSettings : public UHLODBuilderSettings
 {
 	GENERATED_UCLASS_BODY()
@@ -20,12 +20,12 @@ class WORLDPARTITIONHLODUTILITIES_API UHLODBuilderMeshMergeSettings : public UHL
 	virtual uint32 GetCRC() const override;
 
 	/** Merged mesh generation settings */
-	UPROPERTY(EditAnywhere, Config, Category = HLOD)
+	UPROPERTY(EditAnywhere, Category = HLOD)
 	FMeshMergingSettings MeshMergeSettings;
 
 	/** Material that will be used by the generated HLOD static mesh */
-	UPROPERTY(EditAnywhere, Config, AdvancedDisplay, Category = HLOD, meta = (DisplayName = "HLOD Material"))
-	TSoftObjectPtr<UMaterialInterface> HLODMaterial;
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = HLOD, meta = (DisplayName = "HLOD Material"))
+	TObjectPtr<UMaterialInterface> HLODMaterial;
 };
 
 

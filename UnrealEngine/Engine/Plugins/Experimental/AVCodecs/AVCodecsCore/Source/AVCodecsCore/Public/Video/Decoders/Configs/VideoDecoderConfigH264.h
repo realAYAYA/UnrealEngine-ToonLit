@@ -19,7 +19,9 @@ struct AVCODECSCORE_API FVideoDecoderConfigH264 : public FVideoDecoderConfig
 	{
 	}
 
-	FAVResult Parse(TSharedRef<FAVInstance> const& Instance, FVideoPacket const& Packet, TArray<UE::AVCodecCore::H264::Slice_t>& OutSlices);
+	FAVResult Parse(FVideoPacket const& Packet, TArray<UE::AVCodecCore::H264::Slice_t>& OutSlices);
+
+    TOptional<int> GetLastSliceQP(TArray<UE::AVCodecCore::H264::Slice_t>& Slices);
 };
 
 DECLARE_TYPEID(FVideoDecoderConfigH264, AVCODECSCORE_API);

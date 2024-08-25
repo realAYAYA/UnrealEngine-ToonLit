@@ -93,6 +93,15 @@ public:
 	void ResetMaterialToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
 	bool ShouldShowResetMaterialToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
 
+	void ResetLocationToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
+	bool ShouldShowResetLocationlToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
+
+	void ResetRotationToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
+	bool ShouldShowResetRotationToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
+
+	void ResetScaleToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
+	bool ShouldShowResetScaleToDefault(TSharedPtr<IPropertyHandle> InPropertyHandle);
+
 protected:
 
 	bool bUsingSlider;

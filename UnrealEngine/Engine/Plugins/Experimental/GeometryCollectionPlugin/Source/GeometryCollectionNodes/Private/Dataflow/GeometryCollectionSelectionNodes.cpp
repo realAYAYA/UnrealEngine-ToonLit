@@ -122,6 +122,10 @@ void FCollectionTransformSelectionSetOperationDataflowNode::Evaluate(Dataflow::F
 			{
 				InTransformSelectionA.XOR(InTransformSelectionB, NewTransformSelection);
 			}
+			else if (Operation == ESetOperationEnum::Dataflow_SetOperation_Subtract)
+			{
+				InTransformSelectionA.Subtract(InTransformSelectionB, NewTransformSelection);
+			}
 		}
 		else
 		{
@@ -1142,6 +1146,10 @@ void FCollectionVertexSelectionSetOperationDataflowNode::Evaluate(Dataflow::FCon
 			else if (Operation == ESetOperationEnum::Dataflow_SetOperation_XOR)
 			{
 				InVertexSelectionA.XOR(InVertexSelectionB, NewVertexSelection);
+			}
+			else if (Operation == ESetOperationEnum::Dataflow_SetOperation_Subtract)
+			{
+				InVertexSelectionA.Subtract(InVertexSelectionB, NewVertexSelection);
 			}
 		}
 		else

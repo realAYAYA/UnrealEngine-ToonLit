@@ -26,55 +26,6 @@ namespace UE4PathViews_Private
 
 	static bool IsSlashOrBackslashOrPeriod(TCHAR C) { return C == TEXT('/') || C == TEXT('\\') || C == TEXT('.'); }
 
-	static bool HasRedundantTerminatingSeparator(FStringView A)
-	{
-		if (A.Len() <= 2)
-		{
-			if (A.Len() <= 1)
-			{
-				// "", "c", or "/", All of these are either not slash terminating or not redundant
-				return false;
-			}
-			else if (!IsSlashOrBackslash(A[1]))
-			{
-				// "/c" or "cd"
-				return false;
-			}
-			else if (IsSlashOrBackslash(A[0]))
-			{
-				// "//"
-				return false;
-			}
-			else if (A[0] == ':')
-			{
-				// ":/", which is an invalid path, and we arbitrarily decide its terminating slash is not redundant
-				return false;
-			}
-			else
-			{
-				// "c/"
-				return true;
-			}
-		}
-		else if (!IsSlashOrBackslash(A[A.Len() - 1]))
-		{
-			// "/Some/Path"
-			return false;
-		}
-		else if (A[A.Len() - 2] == ':')
-		{
-			// "Volume:/",  "Volume:/Some/Path:/"
-			// The first case is the root dir of the volume and is not redundant
-			// The second case is an invalid path (at most one colon), and we arbitrarily decide its terminating slash is not redundant
-			return false;
-		}
-		else
-		{
-			// /Some/Path/
-			return true;
-		}
-	}
-
 	static bool StringEqualsIgnoreCaseIgnoreSeparator(FStringView A, FStringView B)
 	{
 		if (A.Len() != B.Len())
@@ -198,6 +149,57 @@ FStringView FPathViews::GetPathLeaf(const FStringView& InPath)
 	return FStringView();
 }
 
+bool FPathViews::HasRedundantTerminatingSeparator(FStringView A)
+{
+	using namespace UE4PathViews_Private;
+
+	if (A.Len() <= 2)
+	{
+		if (A.Len() <= 1)
+		{
+			// "", "c", or "/", All of these are either not slash terminating or not redundant
+			return false;
+		}
+		else if (!IsSlashOrBackslash(A[1]))
+		{
+			// "/c" or "cd"
+			return false;
+		}
+		else if (IsSlashOrBackslash(A[0]))
+		{
+			// "//"
+			return false;
+		}
+		else if (A[0] == ':')
+		{
+			// ":/", which is an invalid path, and we arbitrarily decide its terminating slash is not redundant
+			return false;
+		}
+		else
+		{
+			// "c/"
+			return true;
+		}
+	}
+	else if (!IsSlashOrBackslash(A[A.Len() - 1]))
+	{
+		// "/Some/Path"
+		return false;
+	}
+	else if (A[A.Len() - 2] == ':')
+	{
+		// "Volume:/",  "Volume:/Some/Path:/"
+		// The first case is the root dir of the volume and is not redundant
+		// The second case is an invalid path (at most one colon), and we arbitrarily decide its terminating slash is not redundant
+		return false;
+	}
+	else
+	{
+		// /Some/Path/
+		return true;
+	}
+}
+
 bool FPathViews::IsPathLeaf(FStringView InPath)
 {
 	using namespace UE4PathViews_Private;
@@ -229,8 +231,18 @@ void FPathViews::Split(const FStringView& InPath, FStringView& OutPath, FStringV
 	const TCHAR* DotPos = Algo::FindLast(CleanName, TEXT('.'));
 	const int32 NameLen = DotPos ? UE_PTRDIFF_TO_INT32(DotPos - CleanName.GetData()) : CleanName.Len();
 	OutPath = InPath.LeftChop(CleanName.Len() + 1);
-	OutName = CleanName.Left(NameLen);
-	OutExt = CleanName.RightChop(NameLen + 1);
+	// If there is a ., check for CleanName == ..; that is a special case that is incorrectly handled if we
+	// always interpret the last . as a file extension marker
+	if (DotPos && CleanName == TEXTVIEW(".."))
+	{
+		OutName = CleanName;
+		OutExt.Reset();
+	}
+	else
+	{
+		OutName = CleanName.Left(NameLen);
+		OutExt = CleanName.RightChop(NameLen + 1);
+	}
 }
 
 FString FPathViews::ChangeExtension(const FStringView& InPath, const FStringView& InNewExtension)
@@ -513,15 +525,10 @@ void FPathViews::NormalizeFilename(FStringBuilderBase& InOutPath)
 	FPlatformMisc::NormalizePath(InOutPath);
 }
 
-static bool ShouldRemoveTrailingSlash(FStringView Dir)
-{
-	return Dir.EndsWith(TEXT('/')) && !Dir.EndsWith(TEXTVIEW("//"), ESearchCase::CaseSensitive) && !Dir.EndsWith(TEXTVIEW(":/"), ESearchCase::CaseSensitive);
-}
-
 void FPathViews::NormalizeDirectoryName(FStringBuilderBase& InOutPath)
 {
 	Algo::Replace(MakeArrayView(InOutPath), TEXT('\\'), TEXT('/'));
-	InOutPath.RemoveSuffix(ShouldRemoveTrailingSlash(InOutPath.ToView()) ? 1 : 0);
+	InOutPath.RemoveSuffix(HasRedundantTerminatingSeparator(InOutPath.ToView()) ? 1 : 0);
 	FPlatformMisc::NormalizePath(InOutPath);
 }
 
@@ -690,6 +697,165 @@ void FPathViews::SplitFirstComponent(FStringView InPath, FStringView& OutFirstCo
 	{
 		OutRemainder.RightChopInline(1);
 	}
+}
+
+bool FPathViews::IsDriveSpecifierWithoutRoot(FStringView InPath)
+{
+	const int32 PathLen = InPath.Len();
+	const TCHAR* const PathData = InPath.GetData();
+	for (int32 Index = 0; Index < PathLen; ++Index)
+	{
+		TCHAR C = PathData[Index];
+		if (UE4PathViews_Private::IsSlashOrBackslash(C))
+		{
+			// '/' or '/root' or 'root/' or 'root/remainder'
+			return false;
+		}
+		if (C == ':')
+		{
+			++Index;
+			if (Index == PathLen)
+			{
+				// 'D:'
+				return true;
+			}
+			C = PathData[Index];
+			if (C == ':')
+			{
+				// 'D::root'
+				// Path is even more invalid: two colons are not allowed. Arbitrarily return false for this case.
+				return false;
+			}
+			if (UE4PathViews_Private::IsSlashOrBackslash(C))
+			{
+				// 'D:/root'
+				return false;
+			}
+			// 'D:root'
+			return true;
+		}
+	}
+	// 'root'
+	return false;
+}
+
+void FPathViews::SplitVolumeSpecifier(FStringView InPath, FStringView& OutVolumeSpecifier, FStringView& OutRemainder)
+{
+	const int32 PathLen = InPath.Len();
+	const TCHAR* const PathData = InPath.GetData();
+
+	if (PathLen == 0)
+	{
+		OutVolumeSpecifier.Reset();
+		OutRemainder.Reset();
+		return;
+	}
+
+	if (PathData[0] == ':')
+	{
+		OutVolumeSpecifier = InPath.Left(1);
+		if (PathLen == 1)
+		{
+			// ':'
+			OutRemainder.Reset();
+		}
+		else
+		{
+			// ':remainder'
+			OutRemainder = InPath.RightChop(1);
+		}
+		return;
+	}
+
+	if (PathLen == 1)
+	{
+		// '/' or 'D'
+		OutVolumeSpecifier.Reset();
+		OutRemainder = InPath;
+		return;
+	}
+
+	if (UE4PathViews_Private::IsSlashOrBackslash(PathData[0]))
+	{
+		if (UE4PathViews_Private::IsSlashOrBackslash(PathData[1]))
+		{
+			// '//' '///' or '//volume or //volume/remainder
+			if (PathLen == 2)
+			{
+				OutVolumeSpecifier = InPath;
+				OutRemainder.Reset();
+				return;
+			}
+
+			// //////volume/remainder -> { '//////volume', 'remainder' }
+			int32 SlashSlashEnd = 2;
+			while (SlashSlashEnd < PathLen && UE4PathViews_Private::IsSlashOrBackslash(PathData[SlashSlashEnd]))
+			{
+				++SlashSlashEnd;
+			}
+
+			const TCHAR* VolumeEnd = Algo::FindByPredicate(FStringView(PathData + SlashSlashEnd, PathLen-SlashSlashEnd),
+				UE4PathViews_Private::IsSlashOrBackslash);
+			if (!VolumeEnd)
+			{
+				// '//' or '//volume'
+				OutVolumeSpecifier = InPath;
+				OutRemainder.Reset();
+				return;
+			}
+
+			// '//' or '/////' or '//volume/remainder
+			OutVolumeSpecifier = InPath.Left(static_cast<int32>(VolumeEnd - PathData));
+			OutRemainder = InPath.RightChop(OutVolumeSpecifier.Len());
+			return;
+		}
+
+		// '/remainder' or '/:'
+		OutVolumeSpecifier.Reset();
+		OutRemainder = InPath;
+		return;
+	}
+
+	if (PathData[1] == ':')
+	{
+		// 'D:' or 'D:remainder'
+		OutVolumeSpecifier = InPath.Left(2);
+		OutRemainder = InPath.RightChop(2);
+		return;
+	}
+
+	// root or root/remainder or drive:remainder
+	for (int32 Index = 2; Index < PathLen; ++Index)
+	{
+		TCHAR C = PathData[Index];
+		if (UE4PathViews_Private::IsSlashOrBackslash(C))
+		{
+			// 'root/remainder'
+			OutVolumeSpecifier.Reset();
+			OutRemainder = InPath;
+			return;
+		}
+		if (C == ':')
+		{
+			++Index;
+			OutVolumeSpecifier = InPath.Left(Index);
+			if (Index == PathLen)
+			{
+				// 'drive:'
+				OutRemainder.Reset();
+			}
+			else
+			{
+				// 'drive:remainder'
+				OutRemainder = InPath.RightChop(Index);
+			}
+			return;
+		}
+	}
+
+	// 'root'
+	OutVolumeSpecifier.Reset();
+	OutRemainder = InPath;
 }
 
 void FPathViews::AppendPath(FStringBuilderBase& InOutPath, FStringView AppendPath)

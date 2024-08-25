@@ -17,13 +17,13 @@ struct FProgram;
 //---------------------------------------------------------------------------------------------
 //! Adds a named ExtensionData to an Instance
 //---------------------------------------------------------------------------------------------
-class ASTOpAddExtensionData : public ASTOp
+class ASTOpAddExtensionData final : public ASTOp
 {
 public:
 
 	ASTChild Instance;
 	ASTChild ExtensionData;
-	string ExtensionDataName;
+	FString ExtensionDataName;
 
 public:
 

@@ -13,6 +13,7 @@
 #include "Editor/UnrealEdEngine.h"
 #include "UnrealEdGlobals.h"
 #include "PropertyEditorHelpers.h"
+#include "PropertyEditorUtils.h"
 #include "StructurePropertyNode.h"
 #include "ScopedTransaction.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -22,14 +23,21 @@
 
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "Types/SlateVector2.h"
 #include "UObject/EnumProperty.h"
 #include "UObject/FieldPathProperty.h"
 #include "IDetailPropertyRow.h"
+#include "IDetailsViewPrivate.h"
 #include "ObjectEditorUtils.h"
 #include "SResetToDefaultPropertyEditor.h"
 #include "PropertyPathHelpers.h"
 #include "PropertyTextUtilities.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "UObject/OverridableManager.h"
+#include "UObject/PropertyOptional.h"
+#include "SStandaloneCustomizedValueWidget.h"
+#include "Modules/ModuleManager.h"
+#include "PropertyEditorModule.h"
 
 #define LOCTEXT_NAMESPACE "PropertyHandleImplementation"
 
@@ -208,7 +216,7 @@ void FPropertyValueImpl::GenerateArrayIndexMapToObjectNode( TMap<FString,int32>&
 	if( PropertyNode )
 	{
 		OutArrayIndexMap.Empty();
-		for (FPropertyNode* IterationNode = PropertyNode; (IterationNode != nullptr) && (IterationNode->AsObjectNode() == nullptr); IterationNode = IterationNode->GetParentNode())
+		for (FPropertyNode* IterationNode = PropertyNode; (IterationNode != nullptr); IterationNode = IterationNode->GetParentNode())
 		{
 			FProperty* Property = IterationNode->GetProperty();
 			if (Property)
@@ -318,7 +326,7 @@ FPropertyAccess::Result FPropertyValueImpl::ImportText( const TArray<FObjectBase
 
 			// Cache the value of the property before modifying it.
 			FString PreviousValue;
-			FPropertyTextUtilities::PropertyToTextHelper(PreviousValue, InPropertyNode, NodeProperty, Cur, PPF_None);
+			FPropertyTextUtilities::PropertyToTextHelper(PreviousValue, InPropertyNode, NodeProperty, Cur, PPF_ForDiff);
 
 			// If this property is the inner-property of a container, cache the current value as well
 			FString PreviousContainerValue;
@@ -363,18 +371,13 @@ FPropertyAccess::Result FPropertyValueImpl::ImportText( const TArray<FObjectBase
 							ElementProp->DestroyAndFreeValue(TempElementStorage);
 						};
 
-						for (int32 Index = 0, ItemsLeft = Helper.Num(); ItemsLeft > 0; ++Index)
+						for (FScriptSetHelper::FIterator It(Helper); It; ++It)
 						{
-							if (Helper.IsValidIndex(Index))
+							const uint8* Element = Helper.GetElementPtr(It);
+
+							if (Element != InBaseAddress && ElementProp->ImportText_Direct(*InElementValue, TempElementStorage, nullptr, 0) && ElementProp->Identical(Element, TempElementStorage))
 							{
-								--ItemsLeft;
-
-								const uint8* Element = Helper.GetElementPtr(Index);
-
-								if (Element != InBaseAddress && ElementProp->ImportText_Direct(*InElementValue, TempElementStorage, nullptr, 0) && ElementProp->Identical(Element, TempElementStorage))
-								{
-									return true;
-								}
+								return true;
 							}
 						}
 
@@ -419,19 +422,14 @@ FPropertyAccess::Result FPropertyValueImpl::ImportText( const TArray<FObjectBase
 							KeyProp->DestroyAndFreeValue(TempKeyStorage);
 						};
 
-						for (int32 Index = 0, ItemsLeft = Helper.Num(); ItemsLeft > 0; ++Index)
+						for (FScriptMapHelper::FIterator It(Helper); It; ++It)
 						{
-							if (Helper.IsValidIndex(Index))
+							const uint8* PairPtr = Helper.GetPairPtr(It);
+							const uint8* KeyPtr = KeyProp->ContainerPtrToValuePtr<const uint8>(PairPtr);
+
+							if (KeyPtr != InBaseAddress && KeyProp->ImportText_Direct(*InKeyValue, TempKeyStorage, nullptr, 0) && KeyProp->Identical(KeyPtr, TempKeyStorage))
 							{
-								--ItemsLeft;
-
-								const uint8* PairPtr = Helper.GetPairPtr(Index);
-								const uint8* KeyPtr = KeyProp->ContainerPtrToValuePtr<const uint8>(PairPtr);
-
-								if (KeyPtr != InBaseAddress && KeyProp->ImportText_Direct(*InKeyValue, TempKeyStorage, nullptr, 0) && KeyProp->Identical(KeyPtr, TempKeyStorage))
-								{
-									return true;
-								}
+								return true;
 							}
 						}
 
@@ -487,13 +485,28 @@ FPropertyAccess::Result FPropertyValueImpl::ImportText( const TArray<FObjectBase
 				bInteractiveChangeInProgress = (Flags & EPropertyValueSetFlags::InteractiveChange) != 0;
 			}
 
+			const bool bDidOptionalHaveValueNode = !!(InPropertyNode->GetOptionalValueNode());
+
 			// Set the new value.
 			EPropertyPortFlags PortFlags = (Flags & EPropertyValueSetFlags::InstanceObjects) != 0 ? PPF_InstanceSubobjects : PPF_None;
 			FPropertyTextUtilities::TextToPropertyHelper(*NewValue, InPropertyNode, NodeProperty, Cur, PortFlags);
 
+			// If we are an FOptionalProperty, this check tells us whether we have changed between set/unset and 
+			// thus require a re-draw of our node in the details panel UI which is accomplished by having our parent rebuild us.
+			// 
+			// NOTE: It seems that the property propagation below relies entierly on the FProperty and not the FPropertyNode.
+			// So, we don't worry about updating `InPropertyNode->OptionalValueNode` as we are going to rebuild anyways which will handle this for us.
+			if (FOptionalProperty* OptionalProperty = CastField<FOptionalProperty>(NodeProperty))
+			{
+				if (ParentNode && bDidOptionalHaveValueNode != OptionalProperty->IsSet(Cur.BaseAddress))
+				{
+					ParentNode->RequestRebuildChildren();
+				}
+			}
+
 			// Cache the value of the property after having modified it.
 			FString ValueAfterImport;
-			FPropertyTextUtilities::PropertyToTextHelper(ValueAfterImport, InPropertyNode, NodeProperty, Cur, PPF_None);
+			FPropertyTextUtilities::PropertyToTextHelper(ValueAfterImport, InPropertyNode, NodeProperty, Cur, PPF_ForDiff);
 
 			if (CurObject)
 			{
@@ -502,7 +515,8 @@ FPropertyAccess::Result FPropertyValueImpl::ImportText( const TArray<FObjectBase
 					!bIsGameWorld)
 				{
 					// propagate the changes to instances unless we're modifying class shared data
-					if (!bIsSparseClassData)
+					// or the object is using overridable serialization, the propagation is done via reinstantiation
+					if (!bIsSparseClassData && !FOverridableManager::Get().IsEnabled(*CurObject))
 					{
 						InPropertyNode->PropagatePropertyChange(CurObject, *NewValue, PreviousContainerValue.IsEmpty() ? PreviousValue : PreviousContainerValue);
 					}
@@ -867,46 +881,38 @@ bool FPropertyValueImpl::IsPropertyTypeOf(FFieldClass* ClassType ) const
 }
 
 template< typename Type>
-static Type ClampValueFromMetaData(Type InValue, FPropertyNode& InPropertyNode )
+static Type ClampValueFromMetaData(Type InValue, FPropertyHandleBase& InPropertyHandle)
 {
-	FProperty* Property = InPropertyNode.GetProperty();
-
 	Type RetVal = InValue;
-	if( Property )
+	//enforce min
+	const FString& MinString = InPropertyHandle.GetMetaData(TEXT("ClampMin"));
+	if(MinString.Len())
 	{
-		//enforce min
-		const FString& MinString = Property->GetMetaData(TEXT("ClampMin"));
-		if(MinString.Len())
-		{
-			checkSlow(MinString.IsNumeric());
-			Type MinValue;
-			TTypeFromString<Type>::FromString(MinValue, *MinString);
-			RetVal = FMath::Max<Type>(MinValue, RetVal);
-		}
-		//Enforce max 
-		const FString& MaxString = Property->GetMetaData(TEXT("ClampMax"));
-		if(MaxString.Len())
-		{
-			checkSlow(MaxString.IsNumeric());
-			Type MaxValue;
-			TTypeFromString<Type>::FromString(MaxValue, *MaxString);
-			RetVal = FMath::Min<Type>(MaxValue, RetVal);
-		}
+		checkSlow(MinString.IsNumeric());
+		Type MinValue;
+		TTypeFromString<Type>::FromString(MinValue, *MinString);
+		RetVal = FMath::Max<Type>(MinValue, RetVal);
+	}
+	//Enforce max 
+	const FString& MaxString = InPropertyHandle.GetMetaData(TEXT("ClampMax"));
+	if(MaxString.Len())
+	{
+		checkSlow(MaxString.IsNumeric());
+		Type MaxValue;
+		TTypeFromString<Type>::FromString(MaxValue, *MaxString);
+		RetVal = FMath::Min<Type>(MaxValue, RetVal);
 	}
 
 	return RetVal;
 }
 
 template <typename Type>
-static Type ClampIntegerValueFromMetaData(Type InValue, FPropertyNode& InPropertyNode )
+static Type ClampIntegerValueFromMetaData(Type InValue, FPropertyHandleBase& InPropertyHandle, FPropertyNode& InPropertyNode)
 {
-	Type RetVal = ClampValueFromMetaData<Type>( InValue, InPropertyNode );
-
-	FProperty* Property = InPropertyNode.GetProperty();
-
+	Type RetVal = ClampValueFromMetaData<Type>(InValue, InPropertyHandle);
 
 	//if there is "Multiple" meta data, the selected number is a multiple
-	const FString& MultipleString = Property->GetMetaData(TEXT("Multiple"));
+	const FString& MultipleString = InPropertyHandle.GetMetaData(TEXT("Multiple"));
 	if (MultipleString.Len())
 	{
 		check(MultipleString.IsNumeric());
@@ -919,18 +925,18 @@ static Type ClampIntegerValueFromMetaData(Type InValue, FPropertyNode& InPropert
 	}
 
 	//enforce array bounds
-	const FString& ArrayClampString = Property->GetMetaData(TEXT("ArrayClamp"));
+	const FString& ArrayClampString = InPropertyHandle.GetMetaData(TEXT("ArrayClamp"));
 	if (ArrayClampString.Len())
 	{
 		FObjectPropertyNode* ObjectPropertyNode = InPropertyNode.FindObjectItemParent();
 		if (ObjectPropertyNode && ObjectPropertyNode->GetNumObjects() == 1)
 		{
-			Type LastValidIndex = GetArrayPropertyLastValidIndex(ObjectPropertyNode, ArrayClampString);
+			Type LastValidIndex = static_cast<Type>(GetArrayPropertyLastValidIndex(ObjectPropertyNode, ArrayClampString));
 			RetVal = FMath::Clamp<Type>(RetVal, 0, LastValidIndex);
 		}
 		else
 		{
-			UE_LOG(LogPropertyNode, Warning, TEXT("Array Clamping isn't supported in multi-select (Param Name: %s)"), *Property->GetName());
+			UE_LOG(LogPropertyNode, Warning, TEXT("Array Clamping isn't supported in multi-select (Param Name: %s)"), *InPropertyHandle.GetProperty()->GetName());
 		}
 	}
 
@@ -1329,20 +1335,13 @@ void FPropertyValueImpl::ClearChildren()
 							FObjectProperty* ElementObjectProperty = CastField<FObjectProperty>(SetProperty->ElementProp);
 							if (ShouldOwnInstance(ElementObjectProperty, PropertyNodePin.Get()))
 							{
-								int32 ElementsToRemove = SetHelper.Num();
-								int32 Index = 0;
-								while (ElementsToRemove > 0)
+								for (FScriptSetHelper::FIterator It(SetHelper); It; ++It)
 								{
-									if (SetHelper.IsValidIndex(Index))
+									if (UObject* InstancedObject = *reinterpret_cast<UObject**>(SetHelper.GetElementPtr(It)))
 									{
-										if (UObject* InstancedObject = *reinterpret_cast<UObject**>(SetHelper.GetElementPtr(Index)))
-										{
-											InstancedObject->Modify();
-											InstancedObject->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
-										}
-										--ElementsToRemove;
+										InstancedObject->Modify();
+										InstancedObject->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
 									}
-									++Index;
 								}
 							}
 
@@ -1357,20 +1356,13 @@ void FPropertyValueImpl::ClearChildren()
 							FObjectProperty* ValueObjectProperty = CastField<FObjectProperty>(MapProperty->ValueProp);
 							if (ShouldOwnInstance(ValueObjectProperty, PropertyNodePin.Get()))
 							{
-								int32 ElementsToRemove = MapHelper.Num();
-								int32 Index = 0;
-								while (ElementsToRemove > 0)
+								for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 								{
-									if (MapHelper.IsValidIndex(Index))
+									if (UObject* InstancedObject = *reinterpret_cast<UObject**>(MapHelper.GetValuePtr(It)))
 									{
-										if (UObject* InstancedObject = *reinterpret_cast<UObject**>(MapHelper.GetValuePtr(Index)))
-										{
-											InstancedObject->Modify();
-											InstancedObject->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
-										}
-										--ElementsToRemove;
+										InstancedObject->Modify();
+										InstancedObject->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
 									}
-									++Index;
 								}
 							}
 
@@ -2146,7 +2138,7 @@ void FPropertyValueImpl::DuplicateChild( TSharedPtr<FPropertyNode> ChildNodeToDu
 
 bool FPropertyValueImpl::HasValidPropertyNode() const
 {
-	return PropertyNode.IsValid();
+	return PropertyNode.IsValid() && !PropertyNode.Pin()->IsDestroyed();
 }
 
 FText FPropertyValueImpl::GetDisplayName() const
@@ -2292,6 +2284,15 @@ FStringView FPropertyHandleBase::GetPropertyPath() const
 	return FStringView();
 }
 
+TSharedPtr<FPropertyPath> FPropertyHandleBase::CreateFPropertyPath() const
+{
+	if (Implementation->GetPropertyNode().IsValid())
+ 	{
+ 		return FPropertyNode::CreatePropertyPath(Implementation->GetPropertyNode().ToSharedRef());
+ 	}
+	return TSharedPtr<FPropertyPath>();
+}
+
 int32 FPropertyHandleBase::GetArrayIndex() const
 {
 	if (Implementation->GetPropertyNode().IsValid())
@@ -2316,6 +2317,11 @@ bool FPropertyHandleBase::IsFavorite() const
 		return Implementation->GetPropertyNode()->IsFavorite();
 	}
 	return false;
+}
+
+bool FPropertyHandleBase::IsCategoryHandle() const
+{
+	return Implementation->GetPropertyNode().IsValid() && Implementation->GetPropertyNode()->AsCategoryNode();
 }
 
 bool FPropertyHandleBase::IsCustomized() const
@@ -2413,6 +2419,37 @@ TSharedRef<SWidget> FPropertyHandleBase::CreatePropertyValueWidget( bool bDispla
 	return SNullWidget::NullWidget;
 }
 
+TSharedRef<SWidget> FPropertyHandleBase::CreatePropertyValueWidgetWithCustomization( const IDetailsView* DetailsView )
+{
+	FCustomPropertyTypeLayoutMap CustomPropertyTypeLayoutMap = [DetailsView]()
+	{
+		if ( DetailsView )
+		{
+			return static_cast<const IDetailsViewPrivate*>( DetailsView )->GetCustomPropertyTypeLayoutMap();
+		}
+		else
+		{
+			return FCustomPropertyTypeLayoutMap();
+		}
+	}();
+
+	FPropertyEditorModule& PropertyEditorModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
+
+	FPropertyTypeLayoutCallback LayoutCallback = PropertyEditorModule.GetPropertyTypeCustomization( GetProperty(), *this, CustomPropertyTypeLayoutMap );
+	if (LayoutCallback.IsValid())
+	{
+		TSharedRef<IPropertyTypeCustomization> PropertyTypeCustomization = LayoutCallback.GetCustomizationInstance();
+
+		return SNew( SStandaloneCustomizedValueWidget, PropertyTypeCustomization, AsShared() );
+	}
+	else
+	{
+		// Opting to not generate the default buttons since the code path that goes through a customization would likely not have them
+		const bool bDisplayDefaultPropertyButtons = false;
+		return CreatePropertyValueWidget( bDisplayDefaultPropertyButtons );
+	}
+}
+
 class SDefaultPropertyButtonWidgets : public SCompoundWidget
 {
 	SLATE_BEGIN_ARGS(SDefaultPropertyButtonWidgets)	{}
@@ -2431,7 +2468,7 @@ class SDefaultPropertyButtonWidgets : public SCompoundWidget
 			.AutoWidth()
 			.HAlign(HAlign_Center)
 			.VAlign(VAlign_Center)
-			.Padding(2.0f, 1.0f)
+			.Padding(2.0f, 0.0f)
 			[
 				RequiredButton
 			];
@@ -2585,6 +2622,17 @@ void FPropertyHandleBase::GetOuterObjects( TArray<UObject*>& OuterObjects ) cons
 			{
 				OuterObjects.Add(ObjectNode->GetUObject(ObjectIndex));
 			}
+		}
+	}
+}
+
+void FPropertyHandleBase::GetOuterStructs( TArray<TSharedPtr<FStructOnScope>>& OutStructs ) const
+{
+	if (Implementation->GetPropertyNode().IsValid())
+	{
+		if (const FStructurePropertyNode* StructNode = Implementation->GetPropertyNode()->FindStructureItemParent())
+		{
+			StructNode->GetAllStructureData(OutStructs);
 		}
 	}
 }
@@ -2963,7 +3011,7 @@ FPropertyAccess::Result FPropertyHandleBase::GetPerObjectValues( TArray<FString>
 		if( ReadAddresses.Num() > 0 )
 		{
 			// Copy each object's value into the value list
-			OutPerObjectValues.SetNum( ReadAddresses.Num(), /*bAllowShrinking*/false );
+			OutPerObjectValues.SetNum( ReadAddresses.Num(), EAllowShrinking::No );
 			for ( int32 AddrIndex = 0 ; AddrIndex < ReadAddresses.Num() ; ++AddrIndex )
 			{
 				uint8* Address = ReadAddresses.GetAddress(AddrIndex);
@@ -3073,8 +3121,13 @@ bool FPropertyHandleBase::GeneratePossibleValues(TArray< TSharedPtr<FString> >& 
 
 	if( Enum )
 	{
+		TArray<UObject*> OuterObjects;
+		GetOuterObjects(OuterObjects);		
+		
 		const TArray<FName> ValidEnumValues = PropertyEditorHelpers::GetValidEnumsFromPropertyOverride(Property, Enum);
 		const TArray<FName> InvalidEnumValues = PropertyEditorHelpers::GetInvalidEnumsFromPropertyOverride(Property, Enum);
+		const TArray<FName> RestrictedEnumValues = PropertyEditorHelpers::GetRestrictedEnumsFromPropertyOverride(OuterObjects, Property, Enum);
+		
 		const TMap<FName, FText> EnumValueDisplayNameOverrides = PropertyEditorHelpers::GetEnumValueDisplayNamesFromPropertyOverride(Property, Enum);
 
 		//NumEnums() - 1, because the last item in an enum is the _MAX item
@@ -3086,12 +3139,12 @@ bool FPropertyHandleBase::GeneratePossibleValues(TArray< TSharedPtr<FString> >& 
 			{
 				if(ValidEnumValues.Num() > 0)
 				{
-					bShouldBeHidden = ValidEnumValues.Find(Enum->GetNameByIndex(EnumIndex)) == INDEX_NONE;
+					bShouldBeHidden = !ValidEnumValues.Contains(Enum->GetNameByIndex(EnumIndex));
 				}
 				// If both are specified, InvalidEnumValues takes precedence
 				else if(InvalidEnumValues.Num() > 0)
 				{
-					bShouldBeHidden = InvalidEnumValues.Find(Enum->GetNameByIndex(EnumIndex)) != INDEX_NONE;
+					bShouldBeHidden = InvalidEnumValues.Contains(Enum->GetNameByIndex(EnumIndex));
 				}
 			}
 
@@ -3111,7 +3164,7 @@ bool FPropertyHandleBase::GeneratePossibleValues(TArray< TSharedPtr<FString> >& 
 				}
 
 				FText RestrictionTooltip;
-				const bool bIsRestricted = GenerateRestrictionToolTip(EnumName, RestrictionTooltip);
+				const bool bIsRestricted = GenerateRestrictionToolTip(EnumName, RestrictionTooltip) || RestrictedEnumValues.Contains(Enum->GetNameByIndex(EnumIndex));
 				OutRestrictedItems.Add(bIsRestricted);
 
 				if (EnumDisplayName.Len() == 0)
@@ -3142,67 +3195,10 @@ bool FPropertyHandleBase::GeneratePossibleValues(TArray< TSharedPtr<FString> >& 
 		FString GetOptionsFunctionName = Property->GetOwnerProperty()->GetMetaData(MetaDataKey);
 		if (!GetOptionsFunctionName.IsEmpty())
 		{
-			TArray<UObject*> OutObjects;
-			GetOuterObjects(OutObjects);
+			TArray<UObject*> OuterObjects;
+			GetOuterObjects(OuterObjects);
 
-			// Check for external function references
-			if (GetOptionsFunctionName.Contains(TEXT(".")))
-			{
-				OutObjects.Empty();
-				UFunction* GetOptionsFunction = FindObject<UFunction>(nullptr, *GetOptionsFunctionName, true);
-
-				if (ensureMsgf(GetOptionsFunction && GetOptionsFunction->HasAnyFunctionFlags(EFunctionFlags::FUNC_Static), TEXT("Invalid GetOptions: %s"), *GetOptionsFunctionName))
-				{
-					UObject* GetOptionsCDO = GetOptionsFunction->GetOuterUClass()->GetDefaultObject();
-					GetOptionsFunction->GetName(GetOptionsFunctionName);
-					OutObjects.Add(GetOptionsCDO);
-				}
-			}
-
-			if (OutObjects.Num() > 0)
-			{
-				TArray<FString> OptionIntersection;
-				TSet<FString> OptionIntersectionSet;
-
-				for (UObject* Target : OutObjects)
-				{
-					TArray<FString> StringOptions;
-					{
-						FEditorScriptExecutionGuard ScriptExecutionGuard;
-
-						FCachedPropertyPath Path(GetOptionsFunctionName);
-						if (!PropertyPathHelpers::GetPropertyValue(Target, Path, StringOptions))
-						{
-							TArray<FName> NameOptions;
-							if (PropertyPathHelpers::GetPropertyValue(Target, Path, NameOptions))
-							{
-								Algo::Transform(NameOptions, StringOptions, [](const FName& InName) { return InName.ToString(); });
-							}
-						}
-					}
-
-					// If this is the first time there won't be any options.
-					if (OptionIntersection.Num() == 0)
-					{
-						OptionIntersection = StringOptions;
-						OptionIntersectionSet = TSet<FString>(StringOptions);
-					}
-					else
-					{
-						TSet<FString> StringOptionsSet(StringOptions);
-						OptionIntersectionSet = StringOptionsSet.Intersect(OptionIntersectionSet);
-						OptionIntersection.RemoveAll([&OptionIntersectionSet](const FString& Option){ return !OptionIntersectionSet.Contains(Option); });
-					}
-
-					// If we're out of possible intersected options, we can stop.
-					if (OptionIntersection.Num() == 0)
-					{
-						break;
-					}
-				}
-
-				Algo::Transform(OptionIntersection, OutOptionStrings, [](const FString& InString) { return MakeShared<FString>(InString); });
-			}
+			PropertyEditorUtils::GetPropertyOptions(OuterObjects, GetOptionsFunctionName, OutOptionStrings);
 		}
 	}
 	else if( Property->IsA(FClassProperty::StaticClass()) || Property->IsA(FSoftClassProperty::StaticClass()) )		
@@ -3514,6 +3510,7 @@ IMPLEMENT_PROPERTY_VALUE( FPropertyHandleByte )
 IMPLEMENT_PROPERTY_VALUE( FPropertyHandleString )
 IMPLEMENT_PROPERTY_VALUE( FPropertyHandleObject )
 IMPLEMENT_PROPERTY_VALUE( FPropertyHandleArray )
+IMPLEMENT_PROPERTY_VALUE(FPropertyHandleOptional)
 IMPLEMENT_PROPERTY_VALUE( FPropertyHandleText )
 IMPLEMENT_PROPERTY_VALUE( FPropertyHandleSet )
 IMPLEMENT_PROPERTY_VALUE( FPropertyHandleMap )
@@ -3644,7 +3641,7 @@ FPropertyAccess::Result FPropertyHandleInt::SetValue(const int8& NewValue, EProp
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	int8 FinalValue = ClampIntegerValueFromMetaData<int8>( NewValue, *Implementation->GetPropertyNode() );
+	int8 FinalValue = ClampIntegerValueFromMetaData<int8>( NewValue, *this, *Implementation->GetPropertyNode());
 
 	const FString ValueStr = LexToString(FinalValue);
 	Res = Implementation->ImportText(ValueStr, Flags);
@@ -3657,7 +3654,7 @@ FPropertyAccess::Result FPropertyHandleInt::SetValue(const int16& NewValue, EPro
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	int16 FinalValue = ClampIntegerValueFromMetaData<int16>(NewValue, *Implementation->GetPropertyNode());
+	int16 FinalValue = ClampIntegerValueFromMetaData<int16>(NewValue, *this, *Implementation->GetPropertyNode());
 
 	const FString ValueStr = LexToString(FinalValue);
 	Res = Implementation->ImportText(ValueStr, Flags);
@@ -3670,7 +3667,7 @@ FPropertyAccess::Result FPropertyHandleInt::SetValue( const int32& NewValue, EPr
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	int32 FinalValue = ClampIntegerValueFromMetaData<int32>( NewValue, *Implementation->GetPropertyNode() );
+	int32 FinalValue = ClampIntegerValueFromMetaData<int32>( NewValue, *this, *Implementation->GetPropertyNode());
 
 	const FString ValueStr = LexToString(FinalValue);
 	Res = Implementation->ImportText( ValueStr, Flags );
@@ -3683,7 +3680,7 @@ FPropertyAccess::Result FPropertyHandleInt::SetValue(const int64& NewValue, EPro
 	FPropertyAccess::Result Res;
 
 	// Clamp the value from any meta data ranges stored on the property value
-	int64 FinalValue = ClampIntegerValueFromMetaData<int64>(NewValue, *Implementation->GetPropertyNode());
+	int64 FinalValue = ClampIntegerValueFromMetaData<int64>(NewValue, *this, *Implementation->GetPropertyNode());
 
 	const FString ValueStr = LexToString(FinalValue);
 	Res = Implementation->ImportText(ValueStr, Flags);
@@ -3694,7 +3691,7 @@ FPropertyAccess::Result FPropertyHandleInt::SetValue(const uint16& NewValue, EPr
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	uint16 FinalValue = ClampIntegerValueFromMetaData<uint16>(NewValue, *Implementation->GetPropertyNode());
+	uint16 FinalValue = ClampIntegerValueFromMetaData<uint16>(NewValue, *this, *Implementation->GetPropertyNode());
 
 	const FString ValueStr = LexToString(FinalValue);
 	Res = Implementation->ImportText(ValueStr, Flags);
@@ -3707,7 +3704,7 @@ FPropertyAccess::Result FPropertyHandleInt::SetValue(const uint32& NewValue, EPr
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	uint32 FinalValue = ClampIntegerValueFromMetaData<uint32>(NewValue, *Implementation->GetPropertyNode());
+	uint32 FinalValue = ClampIntegerValueFromMetaData<uint32>(NewValue, *this, *Implementation->GetPropertyNode());
 
 	const FString ValueStr = LexToString(FinalValue);
 	Res = Implementation->ImportText(ValueStr, Flags);
@@ -3719,7 +3716,7 @@ FPropertyAccess::Result FPropertyHandleInt::SetValue(const uint64& NewValue, EPr
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	uint64 FinalValue = ClampIntegerValueFromMetaData<uint64>(NewValue, *Implementation->GetPropertyNode());
+	uint64 FinalValue = ClampIntegerValueFromMetaData<uint64>(NewValue, *this, *Implementation->GetPropertyNode());
 
 	const FString ValueStr = LexToString(FinalValue);
 	Res = Implementation->ImportText(ValueStr, Flags);
@@ -3756,7 +3753,7 @@ FPropertyAccess::Result FPropertyHandleFloat::SetValue( const float& NewValue, E
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	float FinalValue = ClampValueFromMetaData<float>( NewValue, *Implementation->GetPropertyNode() );
+	float FinalValue = ClampValueFromMetaData<float>( NewValue, *this);
 
 	const FString ValueStr = FString::Printf( TEXT("%f"), FinalValue );
 	Res = Implementation->ImportText( ValueStr, Flags );
@@ -3794,7 +3791,7 @@ FPropertyAccess::Result FPropertyHandleDouble::SetValue( const double& NewValue,
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	double FinalValue = ClampValueFromMetaData<double>( NewValue, *Implementation->GetPropertyNode() );
+	double FinalValue = ClampValueFromMetaData<double>( NewValue, *this);
 	
 	FDoubleProperty* NumericProperty = CastFieldChecked<FDoubleProperty>(Implementation->GetPropertyNode()->GetProperty());
 	const FString ValueStr = NumericProperty->GetNumericPropertyValueToString(&FinalValue);
@@ -3879,7 +3876,7 @@ FPropertyAccess::Result FPropertyHandleByte::GetValue( uint8& OutValue ) const
 		else
 		{
 			check(PropertyNodePin.IsValid());
-			OutValue = CastFieldChecked<FEnumProperty>(Property)->GetUnderlyingProperty()->GetUnsignedIntPropertyValue(PropValue);
+			OutValue = static_cast<uint8>(CastFieldChecked<FEnumProperty>(Property)->GetUnderlyingProperty()->GetUnsignedIntPropertyValue(PropValue));
 		}
 	}
 
@@ -4157,7 +4154,7 @@ FPropertyAccess::Result FPropertyHandleObject::SetValueFromFormattedString(const
 			{
 				for (const FString& ClassName : AllowedClassNames)
 				{
-					UClass* AllowedClass = nullptr;
+					const UClass* AllowedClass = nullptr;
 					if (!FPackageName::IsShortPackageName(ClassName))
 					{
 						AllowedClass = FindObject<UClass>(nullptr, *ClassName);
@@ -4184,19 +4181,94 @@ FPropertyAccess::Result FPropertyHandleObject::SetValueFromFormattedString(const
 
 			if (bSupportedObject)
 			{
+				const FString& GetAllowedClassesFunctionName = NodeProperty->GetMetaData("GetAllowedClasses");
+				if (!GetAllowedClassesFunctionName.IsEmpty() && NodeProperty->GetOwnerUObject())
+				{
+					TArray<UObject*> OuterObjects;
+					GetOuterObjects(OuterObjects);
+					for (UObject* Object : OuterObjects)
+					{
+						const UFunction* GetAllowedClassesFunction = Object->FindFunction(*GetAllowedClassesFunctionName);
+						if (GetAllowedClassesFunction)
+						{
+							DECLARE_DELEGATE_RetVal(TArray<UClass*>, FGetAllowedClasses);
+							TArray<UClass*> AllowedClasses = FGetAllowedClasses::CreateUFunction(Object, GetAllowedClassesFunction->GetFName()).Execute();
+							if (AllowedClasses.Num() > 0)
+							{
+								bSupportedObject = false;
+								for (const UClass* AllowedClass : AllowedClasses)
+								{
+									const bool bIsInterface = AllowedClass && AllowedClass->HasAnyClassFlags(CLASS_Interface);
+				
+									// Check if the object is an allowed class type this property supports
+									if ((AllowedClass && QualifiedClass->IsChildOf(AllowedClass)) || (bIsInterface && QualifiedObject->GetClass()->ImplementsInterface(AllowedClass)))
+									{
+										bSupportedObject = true;
+										break;
+									}
+								}
+								if (!bSupportedObject)
+								{
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if (bSupportedObject)
+			{
 				const FString& DisallowedClassesString = NodeProperty->GetMetaData("DisallowedClasses");
 				TArray<FString> DisallowedClassNames;
 				DisallowedClassesString.ParseIntoArrayWS(DisallowedClassNames, TEXT(","), true);
 
 				for (const FString& DisallowedClassName : DisallowedClassNames)
 				{
-					UClass* DisallowedClass = UClass::TryFindTypeSlow<UClass>(DisallowedClassName);
+					const UClass* DisallowedClass = UClass::TryFindTypeSlow<UClass>(DisallowedClassName);
 					const bool bIsInterface = DisallowedClass && DisallowedClass->HasAnyClassFlags(CLASS_Interface);
 
 					if ((DisallowedClass && QualifiedClass->IsChildOf(DisallowedClass)) || (bIsInterface && QualifiedObject->GetClass()->ImplementsInterface(DisallowedClass)))
 					{
 						bSupportedObject = false;
 						break;
+					}
+				}
+			}
+
+			if (bSupportedObject)
+			{
+				const FString& GetDisallowedClassesFunctionName = NodeProperty->GetMetaData("GetDisallowedClasses");
+				if (!GetDisallowedClassesFunctionName.IsEmpty() && NodeProperty->GetOwnerUObject())
+				{
+					TArray<UObject*> OuterObjects;
+					GetOuterObjects(OuterObjects);
+					for (UObject* Object : OuterObjects)
+					{
+						const UFunction* GetDisallowedClassesFunction = Object->FindFunction(*GetDisallowedClassesFunctionName);
+						if (GetDisallowedClassesFunction)
+						{
+							DECLARE_DELEGATE_RetVal(TArray<UClass*>, FGetAllowedClasses);
+							TArray<UClass*> DisallowedClasses = FGetAllowedClasses::CreateUFunction(Object, GetDisallowedClassesFunction->GetFName()).Execute();
+							if (DisallowedClasses.Num() > 0)
+							{
+								for (const UClass* DisallowedClass : DisallowedClasses)
+								{
+									const bool bIsInterface = DisallowedClass && DisallowedClass->HasAnyClassFlags(CLASS_Interface);
+					
+									// Check if the object is an allowed class type this property supports
+									if ((DisallowedClass && QualifiedClass->IsChildOf(DisallowedClass)) || (bIsInterface && QualifiedObject->GetClass()->ImplementsInterface(DisallowedClass)))
+									{
+										bSupportedObject = false;
+										break;
+									}
+								}
+								if (!bSupportedObject)
+								{
+									break;
+								}
+							}
+						}
 					}
 				}
 			}
@@ -4410,7 +4482,7 @@ FPropertyAccess::Result FPropertyHandleMixed::SetValue(const double& NewValue, E
 {
 	FPropertyAccess::Result Res;
 	// Clamp the value from any meta data ranges stored on the property value
-	double FinalValue = ClampValueFromMetaData<double>(NewValue, *Implementation->GetPropertyNode());
+	double FinalValue = ClampValueFromMetaData<double>(NewValue, *this);
 
 	const FString ValueStr = FString::Printf(TEXT("%f"), FinalValue);
 	Res = Implementation->ImportText(ValueStr, Flags);
@@ -4422,7 +4494,7 @@ FPropertyAccess::Result FPropertyHandleMixed::GetValue(float& OutValue) const
 {
 	double AsDouble;
 	FPropertyAccess::Result Res = GetValue(AsDouble);
-	OutValue = AsDouble;
+	OutValue = static_cast<float>(AsDouble);
 	return Res;
 }
 
@@ -4479,7 +4551,8 @@ bool FPropertyHandleVector::Supports( TSharedRef<FPropertyNode> PropertyNode )
 		bSupported = StructName == NAME_Vector ||
 			StructName == NAME_Vector2D ||
 			StructName == NAME_Vector4 ||
-			StructName == NAME_Quat;
+			StructName == NAME_Quat ||
+			StructName == FDeprecateSlateVector2D::StaticStruct()->GetFName();
 	}
 
 	return bSupported;
@@ -4715,6 +4788,8 @@ FPropertyAccess::Result FPropertyHandleVector::SetW(double InValue, EPropertyVal
 	if( VectorComponents.Num() == 4 )
 	{
 		FPropertyAccess::Result Res = VectorComponents[3]->SetValue( InValue, Flags );
+		
+		return Res;
 	}
 
 	return FPropertyAccess::Fail;
@@ -4738,18 +4813,36 @@ bool FPropertyHandleRotator::Supports( TSharedRef<FPropertyNode> PropertyNode )
 FPropertyHandleRotator::FPropertyHandleRotator( TSharedRef<class FPropertyNode> PropertyNode, FNotifyHook* NotifyHook, TSharedPtr<IPropertyUtilities> PropertyUtilities )
 	: FPropertyHandleStruct( PropertyNode, NotifyHook, PropertyUtilities ) 
 {
-	const bool bRecurse = false;
-	// A vector is a struct property that has 3 children.  We get/set the values from the children
-	RollValue = MakeShareable( new FPropertyHandleMixed( Implementation->GetChildNode("Roll", bRecurse).ToSharedRef(), NotifyHook, PropertyUtilities ) );
+	if (Implementation->GetNumChildren() > 0)
+	{
+		const bool bRecurse = false;
 
-	PitchValue = MakeShareable( new FPropertyHandleMixed( Implementation->GetChildNode("Pitch", bRecurse).ToSharedRef(), NotifyHook, PropertyUtilities ) );
+		// A rotator is a struct property that has 3 children.  We get/set the values from the children
+		if (TSharedPtr<FPropertyNode> RollNode = Implementation->GetChildNode("Roll", bRecurse))
+		{
+			RollValue = MakeShareable(new FPropertyHandleMixed(RollNode.ToSharedRef(), NotifyHook, PropertyUtilities));
+		}
 
-	YawValue = MakeShareable( new FPropertyHandleMixed( Implementation->GetChildNode("Yaw", bRecurse).ToSharedRef(), NotifyHook, PropertyUtilities ) );
+		if (TSharedPtr<FPropertyNode> PitchNode = Implementation->GetChildNode("Pitch", bRecurse))
+		{
+			PitchValue = MakeShareable(new FPropertyHandleMixed(PitchNode.ToSharedRef(), NotifyHook, PropertyUtilities));
+		}
+
+		if (TSharedPtr<FPropertyNode> YawNode = Implementation->GetChildNode("Yaw", bRecurse))
+		{
+			YawValue = MakeShareable(new FPropertyHandleMixed(YawNode.ToSharedRef(), NotifyHook, PropertyUtilities));
+		}
+	}
 }
 
 
 FPropertyAccess::Result FPropertyHandleRotator::GetValue( FRotator& OutValue ) const
 {
+	if (!RollValue || !PitchValue || !YawValue)
+	{
+		return FPropertyAccess::Fail;
+	}
+
 	// To get the value from the rotator we read each child.  If reading a child fails, the value for that component is not set
 	FPropertyAccess::Result ResR = RollValue->GetValue( OutValue.Roll );
 	FPropertyAccess::Result ResP = PitchValue->GetValue( OutValue.Pitch );
@@ -4771,6 +4864,11 @@ FPropertyAccess::Result FPropertyHandleRotator::GetValue( FRotator& OutValue ) c
 
 FPropertyAccess::Result FPropertyHandleRotator::SetValue( const FRotator& NewValue, EPropertyValueSetFlags::Type Flags )
 {
+	if (!RollValue || !PitchValue || !YawValue)
+	{
+		return FPropertyAccess::Fail;
+	}
+
 	// To set the value from the rotator we set each child. 
 	FPropertyAccess::Result ResR = RollValue->SetValue( NewValue.Roll, Flags );
 	FPropertyAccess::Result ResP = PitchValue->SetValue( NewValue.Pitch, Flags );
@@ -4788,18 +4886,33 @@ FPropertyAccess::Result FPropertyHandleRotator::SetValue( const FRotator& NewVal
 
 FPropertyAccess::Result FPropertyHandleRotator::SetRoll( double InRoll, EPropertyValueSetFlags::Type Flags )
 {
+	if (!RollValue)
+	{
+		return FPropertyAccess::Fail;
+	}
+
 	FPropertyAccess::Result Res = RollValue->SetValue( InRoll, Flags );
 	return Res;
 }
 
 FPropertyAccess::Result FPropertyHandleRotator::SetPitch( double InPitch, EPropertyValueSetFlags::Type Flags )
 {
+	if (!PitchValue)
+	{
+		return FPropertyAccess::Fail;
+	}
+
 	FPropertyAccess::Result Res = PitchValue->SetValue( InPitch, Flags );
 	return Res;
 }
 
 FPropertyAccess::Result FPropertyHandleRotator::SetYaw( double InYaw, EPropertyValueSetFlags::Type Flags )
 {
+	if (!YawValue)
+	{
+		return FPropertyAccess::Fail;
+	}
+
 	FPropertyAccess::Result Res = YawValue->SetValue( InYaw, Flags );
 	return Res;
 }
@@ -4981,10 +5094,290 @@ FPropertyAccess::Result FPropertyHandleArray::MoveElementTo(int32 OriginalIndex,
 	return Result;
 }
 
+FPropertyAccess::Result FPropertyHandleArray::SetValueFromFormattedString(const FString& InValue, EPropertyValueSetFlags::Type Flags)
+{
+	FPropertyAccess::Result Result = FPropertyAccess::Success;
+
+	// for array of objects, copy each object individually in case some objects are forbidden
+	if (InValue.StartsWith("(\"") && InValue.EndsWith("\")"))
+	{
+		if (EmptyArray() != FPropertyAccess::Success)
+		{
+			return FPropertyAccess::Fail;
+		}
+
+		TArray<FString> Values;
+
+		// Remove firsts and lasts parenthesis, and split the string 
+		InValue.LeftChop(1).RightChop(1).ParseIntoArrayWS(Values, TEXT(","), true);
+
+		for (const FString& Value : Values)
+		{
+			if (AddItem() != FPropertyAccess::Success)
+			{
+				return FPropertyAccess::Fail;
+			}
+			uint32 NumElements = 0;
+			if (GetNumElements(NumElements) != FPropertyAccess::Success || NumElements == 0)
+			{
+				return FPropertyAccess::Fail;
+			}
+			
+			const TSharedRef<IPropertyHandle> Property = GetElement( NumElements - 1 );
+			ensure(!Property->AsStruct());
+			if (Property->IsValidHandle() && Property->SetValueFromFormattedString(Value, Flags) == FPropertyAccess::Fail)
+			{
+				Result = FPropertyAccess::Fail;
+			}
+		}
+	}
+	else
+	{
+		Result = FPropertyHandleBase::SetValueFromFormattedString(InValue, Flags);
+	}
+	return Result;
+}
+
 bool FPropertyHandleArray::IsEditable() const
 {
 	// Property is editable if its a non-const dynamic array
 	return Implementation->HasValidPropertyNode() && !Implementation->IsEditConst() && Implementation->IsPropertyTypeOf(FArrayProperty::StaticClass());
+}
+
+bool FPropertyHandleOptional::Supports(TSharedRef<FPropertyNode> PropertyNode)
+{
+	FProperty* Property = PropertyNode->GetProperty();
+
+	return !!CastField<FOptionalProperty>(Property);
+}
+
+/** IPropertyHandleOptional interface */
+FPropertyAccess::Result FPropertyHandleOptional::GetOptionalValue(FProperty*& OutValue)
+{
+	const TSharedPtr<FPropertyNode>& PropertyNode = Implementation->GetPropertyNode();
+	FOptionalProperty* OptionalProperty = CastField<FOptionalProperty>(PropertyNode->GetProperty());
+	
+	uint8* ValueAddress = nullptr;
+	FPropertyAccess::Result Result = PropertyNode->GetSingleReadAddress(ValueAddress);
+
+	if (Result != FPropertyAccess::Success)
+	{
+		return Result;
+	}
+
+	if (OptionalProperty->IsSet(ValueAddress))
+	{
+		OutValue = OptionalProperty->GetValueProperty();
+	}
+
+	return Result;
+}
+
+FPropertyAccess::Result FPropertyHandleOptional::SetOptionalValue(FProperty* NewValue)
+{
+	TSharedPtr<FPropertyNode> PropertyNode = Implementation->GetPropertyNode();
+	FOptionalProperty* OptionalProperty = CastField<FOptionalProperty>(PropertyNode->GetProperty());
+	
+	FReadAddressList ReadAddresses;
+	if (!PropertyNode->GetReadAddress(ReadAddresses))
+	{
+		return FPropertyAccess::Fail;
+	}
+	
+	TArray<TArray<UObject*>> AffectedInstancesPerObject;
+	AffectedInstancesPerObject.SetNum(ReadAddresses.Num());
+
+	// List of top level objects sent to the PropertyChangedEvent
+	TArray<const UObject*> TopLevelObjects;
+	TopLevelObjects.Reserve(ReadAddresses.Num());
+
+	// Begin a property edit transaction.
+	FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "SetOptional", "Set Optional"));
+	FObjectPropertyNode* ObjectNode = PropertyNode->FindObjectItemParent();
+
+	for ( int32 i = 0 ; i < ReadAddresses.Num() ; ++i )
+	{
+		void* Addr = ReadAddresses.GetAddress(i);
+		if ( Addr )
+		{
+			if (!FApp::IsGame())
+			{
+				UObject* Obj = ObjectNode ? ObjectNode->GetUObject(i) : nullptr;
+				if (IsTemplate(Obj))
+				{
+					PropertyNode->GatherInstancesAffectedByContainerPropertyChange(Obj, Addr, EPropertyArrayChangeType::Add, AffectedInstancesPerObject[i]);
+				}
+			}
+		}
+	}
+
+	TSet< UObject* > AllAffectedInstances;
+	for (const TArray<UObject*>& AffectedInstances : AffectedInstancesPerObject)
+	{
+		AllAffectedInstances.Append(AffectedInstances);
+	}
+
+	// send the PreEditChange notification to all selected objects
+	FNotifyHook* NotifyHook = Implementation->GetNotifyHook();
+	PropertyNode->NotifyPreChange(OptionalProperty, NotifyHook, AllAffectedInstances);
+
+	for (int i = 0; i < ReadAddresses.Num(); i++)
+	{
+		void* Addr = ReadAddresses.GetAddress(i);
+		OptionalProperty->MarkSetAndGetInitializedValuePointerToReplace(Addr);
+		
+		if (NewValue)
+		{
+			OptionalProperty->SetValueProperty(NewValue);
+		}
+
+		UObject* Obj = ObjectNode ? ObjectNode->GetUObject(i) : nullptr;
+		TopLevelObjects.Add(Obj);
+
+		// If our OptionalValue is a ptr to an object and we are not setting to a passed in value
+		// we need to intialize a default of that object and set the ptr to it.
+		FObjectProperty* ObjectProperty = CastField<FObjectProperty>(OptionalProperty->GetValueProperty());
+		if (ObjectProperty)
+		{
+			UObject* Outer = Obj;
+
+			if (Outer)
+			{
+				UObject* NewDefaultObjectValue = NewObject<UObject>(Outer, ObjectProperty->PropertyClass);
+				if (NewDefaultObjectValue)
+				{
+					void* ObjectPropertyValuePtr = ObjectProperty->ContainerPtrToValuePtr<void>(Addr);
+					ObjectProperty->SetObjectPropertyValue(ObjectPropertyValuePtr, NewDefaultObjectValue);
+				}
+			}
+			else
+			{
+				Implementation->ShowInvalidOperationError(LOCTEXT("SetOptionalElement", "Could not create a default value for optional object as could not determine outer object."));
+			}
+		}
+	}
+
+	FPropertyChangedEvent ChangeEvent(OptionalProperty, EPropertyChangeType::ValueSet, MakeArrayView(TopLevelObjects));
+	ChangeEvent.SetInstancesChanged(MoveTemp(AllAffectedInstances));
+
+	// send the PostEditChange notification; it will be propagated to all selected objects
+	PropertyNode->NotifyPostChange(ChangeEvent, NotifyHook);
+
+	if (TSharedPtr<IPropertyUtilities> PropertyUtilities = Implementation->GetPropertyUtilities())
+	{
+		PropertyNode->FixPropertiesInEvent(ChangeEvent);
+		PropertyUtilities->NotifyFinishedChangingProperties(ChangeEvent);
+	}
+
+	// Rebuild our parent as we require a re-draw in the details panel
+	if (FPropertyNode* ParentNode = PropertyNode->GetParentNode())
+	{
+		ParentNode->RequestRebuildChildren();
+	}
+
+	return FPropertyAccess::Success;
+}
+
+FPropertyAccess::Result FPropertyHandleOptional::ClearOptionalValue()
+{
+	if (!IsEditable())
+	{
+		return FPropertyAccess::Fail;
+	}
+
+	const TSharedPtr<FPropertyNode>& PropertyNode = Implementation->GetPropertyNode();
+	FOptionalProperty* OptionalProperty = CastField<FOptionalProperty>(PropertyNode->GetProperty());
+
+	if (!OptionalProperty)
+	{
+		return FPropertyAccess::Fail;
+	}
+
+	FReadAddressList ReadAddresses;
+	if (!PropertyNode->GetReadAddress(ReadAddresses))
+	{
+		return FPropertyAccess::Fail;
+	}
+
+	TArray<TArray<UObject*>> AffectedInstancesPerObject;
+	AffectedInstancesPerObject.SetNum(ReadAddresses.Num());
+
+	// List of top level objects sent to the PropertyChangedEvent
+	TArray<const UObject*> TopLevelObjects;
+	TopLevelObjects.Reserve(ReadAddresses.Num());
+
+	// Begin a property edit transaction.
+	FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "ClearOptional", "Clear Optional"));
+	FObjectPropertyNode* ObjectNode = PropertyNode->FindObjectItemParent();
+
+	for ( int32 i = 0 ; i < ReadAddresses.Num() ; ++i )
+	{
+		void* Addr = ReadAddresses.GetAddress(i);
+		if ( Addr )
+		{
+			if (!FApp::IsGame())
+			{
+				UObject* Obj = ObjectNode ? ObjectNode->GetUObject(i) : nullptr;
+				if (IsTemplate(Obj))
+				{
+					PropertyNode->GatherInstancesAffectedByContainerPropertyChange(Obj, Addr, EPropertyArrayChangeType::Clear, AffectedInstancesPerObject[i]);
+				}
+			}
+		}
+	}
+
+	TSet< UObject* > AllAffectedInstances;
+	for (const TArray<UObject*>& AffectedInstances : AffectedInstancesPerObject)
+	{
+		AllAffectedInstances.Append(AffectedInstances);
+	}
+
+	// send the PreEditChange notification to all selected objects
+	FNotifyHook* NotifyHook = Implementation->GetNotifyHook();
+	PropertyNode->NotifyPreChange(OptionalProperty, NotifyHook, AllAffectedInstances);
+	
+	for (int i = 0; i < ReadAddresses.Num(); i++)
+	{
+		UObject* Obj = ObjectNode ? ObjectNode->GetUObject(i) : nullptr;
+		TopLevelObjects.Add(Obj);
+
+		void* Addr = ReadAddresses.GetAddress(i);
+		OptionalProperty->MarkUnset(Addr);
+	}
+
+	// Could be removed as unecessary (rebuild will do this for us... but removing now makes any future debugging clearer)
+	PropertyNode->GetOptionalValueNode().Reset();
+
+	FPropertyChangedEvent ChangeEvent(OptionalProperty, EPropertyChangeType::ValueSet, MakeArrayView(TopLevelObjects));
+	ChangeEvent.SetInstancesChanged(MoveTemp(AllAffectedInstances));
+
+	// send the PostEditChange notification; it will be propagated to all selected objects
+	PropertyNode->NotifyPostChange(ChangeEvent, NotifyHook);
+
+	if (TSharedPtr<IPropertyUtilities> PropertyUtilities = Implementation->GetPropertyUtilities())
+	{
+		PropertyNode->FixPropertiesInEvent(ChangeEvent);
+		PropertyUtilities->NotifyFinishedChangingProperties(ChangeEvent);
+	}
+
+	// Rebuild our parent as we require a re-draw in the details panel
+	if (FPropertyNode* ParentNode = PropertyNode->GetParentNode())
+	{
+		ParentNode->RequestRebuildChildren();
+	}
+
+	return FPropertyAccess::Success;
+}
+
+TSharedPtr<IPropertyHandleOptional> FPropertyHandleOptional::AsOptional()
+{
+	return SharedThis(this);
+}
+
+bool FPropertyHandleOptional::IsEditable() const
+{
+	// Property is editable if its a non-const dynamic array
+	return Implementation->HasValidPropertyNode() && !Implementation->IsEditConst() && Implementation->IsPropertyTypeOf(FOptionalProperty::StaticClass());
 }
 
 // Localized Text
@@ -5060,15 +5453,116 @@ FPropertyAccess::Result FPropertyHandleSet::AddItem()
 	FPropertyAccess::Result Result = FPropertyAccess::Fail;
 	if (IsEditable())
 	{
-		if (!HasDefaultElement())
+		/**
+		 * Checks if an element has already been added to the set
+		 *
+		 * @param	Helper			The set helper used to query the property.
+		 * @param	InBaseAddress	The base address of the set
+		 * @param	InElementValue	The element value to check for
+		 *
+		 * @return	True if the element is found in the set, false otherwise
+		 */
+		static auto HasElement = [](const FScriptSetHelper& Helper, void* InBaseAddress, const FString& InElementValue)
+			{
+				FProperty* ElementProp = Helper.GetElementProperty();
+
+				void* TempElementStorage = ElementProp->AllocateAndInitializeValue();
+				ON_SCOPE_EXIT
+				{
+					ElementProp->DestroyAndFreeValue(TempElementStorage);
+				};
+
+				for (int32 Index = 0, ItemsLeft = Helper.Num(); ItemsLeft > 0; ++Index)
+				{
+					if (Helper.IsValidIndex(Index))
+					{
+						--ItemsLeft;
+
+						const uint8* Element = Helper.GetElementPtr(Index);
+
+						if (Element != InBaseAddress && ElementProp->ImportText_Direct(*InElementValue, TempElementStorage, nullptr, 0) && ElementProp->Identical(Element, TempElementStorage))
+						{
+							return true;
+						}
+					}
+				}
+
+				return false;
+			};
+
+		TSharedPtr<FPropertyNode> PropNode = Implementation->GetPropertyNode();
+		if (PropNode.IsValid())
 		{
-			Implementation->AddChild();
-			Result = FPropertyAccess::Success;
+			TArray<FObjectBaseAddress> Addresses;
+			Implementation->GetObjectsToModify(Addresses, PropNode.Get());
+
+			if (Addresses.Num() > 0)
+			{
+				const bool bIsSparseClassData = PropNode->HasNodeFlags(EPropertyNodeFlags::IsSparseClassData) != 0;
+				const bool bIsStruct = !Addresses[0].Object;
+				uint8* ValueBaseAddress = PropNode->GetValueBaseAddress(Addresses[0].StructAddress, bIsSparseClassData, bIsStruct);
+
+				FSetProperty* SetProperty = CastFieldChecked<FSetProperty>(PropNode->GetProperty());
+				FScriptSetHelper SetHelper(SetProperty, ValueBaseAddress);
+
+				if (const FEnumProperty* EnumProperty = CastField<const FEnumProperty>(SetProperty->GetElementProperty()))
+				{
+					if (UEnum* Enum = EnumProperty->GetEnum())
+					{
+						static FString HiddenName(TEXT("Hidden"));
+						static FString SpacerName(TEXT("Spacer"));
+						// NumEnums() - 1, because the last item in an enum is the _MAX item
+						for (int32 EnumIndex = 0; EnumIndex < Enum->NumEnums() - 1; ++EnumIndex)
+						{
+							// Skip hidden and spacers so we don't add them.
+							const bool bShouldBeHidden = Enum->HasMetaData(*HiddenName, EnumIndex) || Enum->HasMetaData(*SpacerName, EnumIndex);
+							if (bShouldBeHidden)
+							{
+								continue;
+							}
+
+							// Skip duplicate elements.
+							if (HasElement(SetHelper, ValueBaseAddress, Enum->GetNameStringByIndex(EnumIndex)))
+							{
+								continue;
+							}
+
+							// If we don't have this element then add an entry and set it to this element value.
+							Implementation->AddChild();
+							Implementation->GetPropertyNode()->RebuildChildren();
+
+							// Grab the last entry since we just added it.
+							const int32 ChildNodeIndex = PropNode->GetNumChildNodes() - 1;
+							if (ChildNodeIndex >= 0)
+							{
+								TSharedPtr<FPropertyNode> ChildNode = Implementation->GetChildNode(ChildNodeIndex);
+								if (ChildNode.IsValid())
+								{
+									// Set the new entry to have the element value.
+									Implementation->ImportText(Enum->GetNameStringByIndex(EnumIndex), ChildNode.Get(), EPropertyValueSetFlags::DefaultFlags);
+									Result = FPropertyAccess::Success;
+									break;
+								}
+							}
+						}
+					}
+				}
+				else
+				{
+					if (!HasDefaultElement())
+					{
+						Implementation->AddChild();
+						Implementation->GetPropertyNode()->RebuildChildren();
+						Result = FPropertyAccess::Success;
+					}
+				}
+			}
 		}
-		else
-		{
-			Implementation->ShowInvalidOperationError(LOCTEXT("DuplicateSetElement_Add", "Cannot add a new element to the set while an element with the default value exists"));
-		}
+	}
+
+	if (Result != FPropertyAccess::Success)
+	{
+		Implementation->ShowInvalidOperationError(LOCTEXT("DuplicateSetElement_Add", "Cannot add a new element to the set while an element with the same value exists"));
 	}
 
 	return Result;
@@ -5133,6 +5627,45 @@ bool FPropertyHandleSet::IsEditable() const
 	return Implementation->HasValidPropertyNode() && !Implementation->IsEditConst() && Implementation->IsPropertyTypeOf(FSetProperty::StaticClass());
 }
 
+FPropertyAccess::Result FPropertyHandleSet::SetValueFromFormattedString(const FString& InValue, EPropertyValueSetFlags::Type Flags)
+{
+	FPropertyAccess::Result Result = FPropertyAccess::Success;
+
+	// for sets of objects, copy each object individually in case some objects are forbidden
+	if (InValue.StartsWith("(\"") && InValue.EndsWith("\")"))
+	{
+		if (Empty() != FPropertyAccess::Success)
+		{
+			return FPropertyAccess::Fail;
+		}
+		
+		TArray<FString> Values;
+
+		// Remove firsts and lasts parenthesis  
+		InValue.LeftChop(1).RightChop(1).ParseIntoArrayWS(Values, TEXT(","), true);
+		for (const FString& Value : Values)
+		{
+			AddItem();
+			uint32 NumElements = 0;
+			if (GetNumElements(NumElements) != FPropertyAccess::Success || NumElements == 0)
+			{
+				return FPropertyAccess::Fail;
+			}
+			const TSharedRef<IPropertyHandle> Property = GetElement( NumElements - 1 );
+			ensure(!Property->AsStruct());
+			if ( Property->IsValidHandle() && Property->SetValueFromFormattedString(Value, Flags) == FPropertyAccess::Fail)
+			{
+				Result = FPropertyAccess::Fail;
+			}
+		}
+	}
+	else
+	{
+		Result = FPropertyHandleBase::SetValueFromFormattedString(InValue, Flags);
+	}
+	return Result;
+}
+
 // Maps
 
 bool FPropertyHandleMap::Supports(TSharedRef<FPropertyNode> PropertyNode)
@@ -5170,15 +5703,120 @@ FPropertyAccess::Result FPropertyHandleMap::AddItem()
 	FPropertyAccess::Result Result = FPropertyAccess::Fail;
 	if (IsEditable())
 	{
-		if ( !HasDefaultKey() )
+		/**
+		 * Checks if a key in the map matches the specified key
+		 *
+		 * @param	Helper			The map helper used to query the property.
+		 * @param	InBaseAddress	The base address of the map
+		 * @param	InKeyValue		The key to find within the map
+		 *
+		 * @return	True if the key is found, false otherwise
+		 */
+		static auto HasKey = [](const FScriptMapHelper& Helper, void* InBaseAddress, const FString& InKeyValue)
+			{
+				FProperty* KeyProp = Helper.GetKeyProperty();
+
+				void* TempKeyStorage = KeyProp->AllocateAndInitializeValue();
+				ON_SCOPE_EXIT
+				{
+					KeyProp->DestroyAndFreeValue(TempKeyStorage);
+				};
+
+				for (int32 Index = 0, ItemsLeft = Helper.Num(); ItemsLeft > 0; ++Index)
+				{
+					if (Helper.IsValidIndex(Index))
+					{
+						--ItemsLeft;
+
+						const uint8* PairPtr = Helper.GetPairPtr(Index);
+						const uint8* KeyPtr = KeyProp->ContainerPtrToValuePtr<const uint8>(PairPtr);
+
+						if (KeyPtr != InBaseAddress && KeyProp->ImportText_Direct(*InKeyValue, TempKeyStorage, nullptr, 0) && KeyProp->Identical(KeyPtr, TempKeyStorage))
+						{
+							return true;
+						}
+					}
+				}
+
+				return false;
+			};
+
+		TSharedPtr<FPropertyNode> PropNode = Implementation->GetPropertyNode();
+		if (PropNode.IsValid())
 		{
-			Implementation->AddChild();
-			Result = FPropertyAccess::Success;
+			TArray<FObjectBaseAddress> Addresses;
+			Implementation->GetObjectsToModify(Addresses, PropNode.Get());
+
+			if (Addresses.Num() > 0)
+			{
+				const bool bIsSparseClassData = PropNode->HasNodeFlags(EPropertyNodeFlags::IsSparseClassData) != 0;
+				const bool bIsStruct = !Addresses[0].Object;
+				uint8* ValueBaseAddress = PropNode->GetValueBaseAddress(Addresses[0].StructAddress, bIsSparseClassData, bIsStruct);
+			
+				FMapProperty* MapProperty = CastFieldChecked<FMapProperty>(PropNode->GetProperty());
+				FScriptMapHelper MapHelper(MapProperty, ValueBaseAddress);
+
+				if (const FEnumProperty* EnumProperty = CastField<const FEnumProperty>(MapProperty->GetKeyProperty()))
+				{
+					if (UEnum* Enum = EnumProperty->GetEnum())
+					{
+						static FString HiddenName(TEXT("Hidden"));
+						static FString SpacerName(TEXT("Spacer"));
+						// NumEnums() - 1, because the last item in an enum is the _MAX item
+						for (int32 EnumIndex = 0; EnumIndex < Enum->NumEnums() - 1; ++EnumIndex)
+						{
+							// Skip hidden and spacers so we don't add them.
+							const bool bShouldBeHidden = Enum->HasMetaData(*HiddenName, EnumIndex) || Enum->HasMetaData(*SpacerName, EnumIndex);
+							if (bShouldBeHidden)
+							{
+								continue;
+							}
+
+							// Skip duplicate keys.
+							if (HasKey(MapHelper, ValueBaseAddress, Enum->GetNameStringByIndex(EnumIndex)))
+							{
+								continue;
+							}
+
+							// If we don't have this key then add an entry and set it to this key value.
+							Implementation->AddChild();
+
+							// Grab the last entry since we just added it.
+							const int32 ChildNodeIndex = PropNode->GetNumChildNodes() - 1;
+							if (ChildNodeIndex >= 0)
+							{
+								TSharedPtr<FPropertyNode> ChildNode = Implementation->GetChildNode(ChildNodeIndex);
+								if (ChildNode.IsValid())
+								{
+									// We want to change the key, so get the key property.
+									TSharedPtr<FPropertyNode> ChildKeyNode = ChildNode->GetPropertyKeyNode();
+									if (ChildKeyNode.IsValid())
+									{
+										// Set the new entry to have the key value.
+										Implementation->ImportText(Enum->GetNameStringByIndex(EnumIndex), ChildKeyNode.Get(), EPropertyValueSetFlags::DefaultFlags);
+										Result = FPropertyAccess::Success;
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+				else
+				{
+					if (!HasDefaultKey())
+					{
+						Implementation->AddChild();
+						Result = FPropertyAccess::Success;
+					}
+				}
+			}
 		}
-		else
-		{
-			Implementation->ShowInvalidOperationError(LOCTEXT("DuplicateMapKey_Add", "Cannot add a new key to the map while a key with the default value exists"));
-		}
+	}
+
+	if (Result != FPropertyAccess::Success)
+	{
+		Implementation->ShowInvalidOperationError(LOCTEXT("DuplicateMapKey_Add", "Cannot add a new key to the map while a key with the same value exists"));
 	}
 
 	return Result;
@@ -5214,6 +5852,12 @@ FPropertyAccess::Result FPropertyHandleMap::GetNumElements(uint32& OutNumChildre
 {
 	OutNumChildren = Implementation->GetNumChildren();
 	return FPropertyAccess::Success;
+}
+
+TSharedRef<IPropertyHandle> FPropertyHandleMap::GetElement(int32 Index) const
+{
+	TSharedPtr<FPropertyNode> PropertyNode = Implementation->GetChildNode(Index);
+	return PropertyEditorHelpers::GetPropertyHandle(PropertyNode.ToSharedRef(), Implementation->GetNotifyHook(), Implementation->GetPropertyUtilities()).ToSharedRef();
 }
 
 FDelegateHandle FPropertyHandleMap::SetOnNumElementsChanged( const FSimpleDelegate& OnChildrenChanged )

@@ -10,6 +10,7 @@
 #include "Tracks/MovieSceneSkeletalAnimationTrack.h"
 #include "MovieSceneSpawnable.h"
 #include "Tracks/MovieSceneSpawnTrack.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #include "TemplateSequenceActor.h"
 #include "TemplateSequencePlayer.h"
@@ -245,16 +246,23 @@ UObject* UTemplateSequence::MakeSpawnableTemplateFromInstance(UObject& InSourceO
 
 void UTemplateSequence::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UTemplateSequence::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	if (BoundActorClass.IsValid())
 	{
 		FAssetRegistryTag Tag("BoundActorClass", BoundActorClass->GetPathName(), FAssetRegistryTag::TT_Alphabetical);
-		OutTags.Add(Tag);
+		Context.AddTag(Tag);
 	}
 	else
 	{
-		OutTags.Emplace("BoundActorClass", "(None)", FAssetRegistryTag::TT_Alphabetical);
+		Context.AddTag(FAssetRegistryTag("BoundActorClass", "(None)", FAssetRegistryTag::TT_Alphabetical));
 	}
 }
 

@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*=============================================================================
 	VolumetricFog.usf 
 =============================================================================*/
@@ -5,6 +7,7 @@
 #include "Common.ush"
 #include "Definitions.usf"
 #define SUPPORT_CONTACT_SHADOWS 0
+#define USE_SOURCE_TEXTURE USE_RECT_LIGHT_TEXTURE
 #include "DeferredLightingCommon.ush"
 #include "LightGridCommon.ush"
 #include "HeightFogCommon.ush"
@@ -15,6 +18,7 @@
 #endif
 #include "VolumeLightingCommon.ush"
 #include "VolumetricLightmapShared.ush"
+#include "ReflectionEnvironmentShared.ush"
 #include "ForwardShadowingCommon.ush"
 #include "ParticipatingMediaCommon.ush"
 #include "LightDataUniforms.ush"
@@ -26,6 +30,10 @@
 
 #if VIRTUAL_SHADOW_MAP
 #include "VirtualShadowMaps/VirtualShadowMapProjectionCommon.ush"
+#endif
+
+#if USE_LOCAL_FOG_VOLUMES
+#include "LocalFogVolumes/LocalFogVolumeCommon.ush"
 #endif
 
 #ifndef USE_EMISSIVE
@@ -77,7 +85,7 @@ float3 ComputeCellTranslatedWorldPosition(uint3 GridCoordinate, float3 CellOffse
 
 float3 ComputeCellWorldPosition(uint3 GridCoordinate, float3 CellOffset, out float SceneDepth)
 {
-	return ComputeCellTranslatedWorldPosition(GridCoordinate, CellOffset, SceneDepth) - LWCHackToFloat(PrimaryView.PreViewTranslation);
+	return ComputeCellTranslatedWorldPosition(GridCoordinate, CellOffset, SceneDepth) - DFHackToFloat(PrimaryView.PreViewTranslation);
 }
 
 float3 ComputeCellWorldPosition(uint3 GridCoordinate, float3 CellOffset)
@@ -149,11 +157,100 @@ void MaterialSetupCS(
 	float3 Scattering = Albedo * Extinction;
 	float Absorption = max(Extinction - Luminance(Scattering), 0.0f);
 
+	float3 AdditionalEmissive = 0.0f;
+
+#if USE_LOCAL_FOG_VOLUMES
+	float CellOffset = .5f;
+	float SceneDepth;
+	float3 TranslatedWorldPosition = ComputeCellTranslatedWorldPosition(GridCoordinate, CellOffset, SceneDepth);
+	if(length(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin) > LFVGlobalStartDistance)
+	{
+		float3 CamRayTranslatedWorldOrigin = PrimaryView.TranslatedWorldCameraOrigin;
+		float3 PreViewTranslation = DFHackToFloat(PrimaryView.PreViewTranslation);
+		//float3 TranslatedWorldPosition = WorldPosition + PreViewTranslation;
+
+
+		float4 VertexClipSpacePosition = mul(float4(TranslatedWorldPosition.xyz, 1), PrimaryView.TranslatedWorldToClip);
+		float2 SvPosition = (VertexClipSpacePosition.xy / VertexClipSpacePosition.w * float2(.5f, -.5f) + .5f) * PrimaryView.ViewSizeAndInvSize.xy;
+		uint2 TilePos = clamp(uint2(SvPosition.xy / float(LFVTilePixelSize)), uint2(0, 0), LFVTileDataResolution - 1);
+
+		uint LFVCount = LFVTileDataTex[uint3(TilePos, 0)];
+
+		for (int LFVIndex = 0; LFVIndex < LFVCount; ++LFVIndex)
+		{
+			uint InstanceIndex = LFVTileDataTex[uint3(TilePos, 1 + LFVIndex)];
+
+			float3 CamRayWorldOrigin = CamRayTranslatedWorldOrigin - PreViewTranslation;
+			float3 CamRayTranslatedWorldDir = normalize(TranslatedWorldPosition - CamRayTranslatedWorldOrigin);
+			float3 CamRayWorldDir = CamRayTranslatedWorldDir;
+
+			// LFV_TODO skip if out of sphere of influence
+			FLocalFogVolumeGPUInstanceData FogInstance = GetLocalFogVolumeGPUInstanceData(InstanceIndex);
+
+			float3 UnitSpacePos = mul(float4(WorldPosition, 1.0), FogInstance.InvTransform).xyz;
+
+			float DistToCenter = length(UnitSpacePos - float3(0.0f, 0.0f, 0.0f));
+			float SphereFade = saturate(1.0f - DistToCenter);
+
+			// Evaluate both radial and height local fog contribution
+			float LFVExtinctionHeight = SphereFade <= 0.0f ? 0.0f : FogInstance.HeightFogExtinction * exp(-FogInstance.HeightFogFalloff * (UnitSpacePos.z - FogInstance.HeightFogOffset));
+			float LFVExtinctionRadial = SphereFade <= 0.0f ? 0.0f : FogInstance.RadialFogExtinction * pow(SphereFade, 0.82); // 0.82 is a correction factor needed to get a better match. It is unclear why it is needed...
+
+			// As for the local fog volume analitical evaluation, we want to combine both two optical depth for the "opacity"=1-transmittance to be combined together.
+			// This helps to have soft edges when using height fog. 
+			/*
+			In this case, we have to find math so that the combined extinction resulting in a transmittance representing the multiplication of coverage = 1 - transmittance factors.
+
+			Reminder
+				Transmittance as T
+				Optical Depth as Tau
+				T   =  exp(-Tau)
+				Tau = -log(T)		(*)
+
+			We want to combine the both mode transmittance Tr (radial) and Th (height) as done in LocalFogVolumeEvaluateAnalyticalIntegral to have
+				 T		= 1 - (1-Tr)(1-Th)											// Where (1-Tr) is virtual coverage of the medium expressed from transmittance for the radial fog.
+				 T		= 1 - (1 - exp(-Tau_r)) (1 - exp(-Tau_h)))					// Where Tr = exp(-Tau_r)
+				-Tau	= log(1 - (1 - exp(-Tau_r)) (1 - exp(-Tau_h)))				// Using (*)
+				 Tau	=-log(exp(-Tau_r) - exp((-Tau_r-Tau_h) + exp(-Tau_h)))
+
+			Optical Depth Tau = Sigma_t * dt so it is linear with respect to dt and extinction Sigma_t. So we can also write
+				Sigma_T = -log(exp(-Sigma_T_r) - exp((-Sigma_T_r-Sigma_T_h) + exp(-Sigma_T_h)))
+
+			Factoring some values a bit we can get
+				A		= exp(-Sigma_T_r)
+				B		= exp(-Sigma_T_h)
+				Sigma_T	= -log(A - A*B + B)
+			*/
+
+			// Optical Depth is linear with Extinction so there is no need to account for the step length.
+			float FactorA = exp(-LFVExtinctionHeight);
+			float FactorB = exp(-LFVExtinctionRadial);
+			float LFVExtinction = -log(FactorA - FactorA * FactorB + FactorB);
+			LFVExtinction = max(0.0f, LFVExtinction);
+
+			// Convert extinction from unit volume 1/m into extinction for volumetric fog as 1/cm
+			LFVExtinction *= (1.0f / METER_TO_CENTIMETER);
+
+			LFVExtinction = min(LFVMaxDensityIntoVolumetricFog, LFVExtinction);
+
+			float3 LFVScattering = LFVExtinction * FogInstance.Albedo;
+
+			Scattering += LFVScattering;
+			Absorption += max(LFVExtinction - Luminance(LFVScattering), 0.0f);
+
+	#if USE_EMISSIVE
+			// Emissive follow the density of the medium
+			AdditionalEmissive += LFVExtinction * FogInstance.Emissive;
+	#endif
+		}
+	}
+#endif // USE_LOCAL_FOG_VOLUMES
+
 	if (all((int3)GridCoordinate < VolumetricFog.ResourceGridSizeInt))
 	{
 		RWVBufferA[GridCoordinate] = float4(Scattering, Absorption);
 #if USE_EMISSIVE
-		RWVBufferB[GridCoordinate] = float4(GlobalEmissive.rgb, 0); 
+		RWVBufferB[GridCoordinate] = float4(GlobalEmissive.rgb + AdditionalEmissive, 0);
 #endif
 	}
 }
@@ -229,49 +326,7 @@ int VirtualShadowMapId;
 #define HISTORY_MISS_SUPER_SAMPLE_COUNT 1
 #endif
 
-#if	USE_LIGHT_FUNCTION
-
-/** Matrix can be either WorldToShadow or WorldToLight depending on light type. */
-float4x4 LocalLightFunctionMatrix;
-float4 LightFunctionAtlasTileMinMaxUvBound;
-
-Texture2D LightFunctionAtlasTexture;
-SamplerState LightFunctionAtlasSampler;
-
-float GetLocalLightFunction(float3 TranslatedWorldPosition, bool bSpotLight, bool bRectLight)
-{
-	float2 LightFunctionUV;
-
-	if(bSpotLight)
-	{
-		float4 HomogeneousShadowPosition = mul(float4(TranslatedWorldPosition, 1), LocalLightFunctionMatrix);
-		HomogeneousShadowPosition.xyz /= HomogeneousShadowPosition.w;
-		LightFunctionUV = HomogeneousShadowPosition.xy;
-		LightFunctionUV.x = 1 - LightFunctionUV.x;
-		LightFunctionUV.y = 1 - LightFunctionUV.y;
-	}
-	else if (bRectLight)
-	{
-		float4 HomogeneousShadowPosition = mul(float4(TranslatedWorldPosition, 1), LocalLightFunctionMatrix).zyxw;
-		HomogeneousShadowPosition.xyz /= HomogeneousShadowPosition.w;
-		LightFunctionUV = HomogeneousShadowPosition.xy;
-
-		LightFunctionUV = LightFunctionUV * 0.5 + 0.5;
-		LightFunctionUV = frac(LightFunctionUV);
-	}
-	else // Point light
-	{
-		// Get vector from light to cell world pos.
-		float3 LightVec = normalize(TranslatedWorldPosition - DeferredLightUniforms.TranslatedWorldPosition);
-		// Transform and swizzle
-		LightVec = mul(float4(LightVec.xyz, 0), LocalLightFunctionMatrix).zyx;
-		// Map to spherical coordinate
-		LightFunctionUV = float2((atan2Fast(LightVec.y, LightVec.x) + PI) / (2 * PI), acosFast(LightVec.z) / PI);
-	}
-	
-	return Texture2DSampleLevel(LightFunctionAtlasTexture, LightFunctionAtlasSampler, LightFunctionAtlasTileMinMaxUvBound.xy + LightFunctionUV * (LightFunctionAtlasTileMinMaxUvBound.zw - LightFunctionAtlasTileMinMaxUvBound.xy), 0).x;
-}
-#endif
+#include "LightFunctionAtlas/LightFunctionAtlasCommon.usf"
 
 Texture2D<float> ConservativeDepthTexture;
 float2 PrevConservativeDepthTextureSize;
@@ -349,7 +404,7 @@ float4 InjectShadowedLocalLightCommon(uint3 GridCoordinate)
 
 			float SceneDepth;
 			float3 TranslatedWorldPosition = ComputeCellTranslatedWorldPosition(GridCoordinate, CellOffset, SceneDepth);
-			float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+			float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 			float3 CameraVector = normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
 
 			float CellRadius = length(TranslatedWorldPosition - ComputeCellTranslatedWorldPosition(GridCoordinate + uint3(1, 1, 1), CellOffset));
@@ -365,6 +420,15 @@ float4 InjectShadowedLocalLightCommon(uint3 GridCoordinate)
 				FRect Rect = GetRect(ToLight, LightData);
 
 				Lighting = IntegrateLight(Rect);
+
+#if USE_RECT_LIGHT_TEXTURE
+				if (IsRectVisible(Rect))
+				{
+					const FRectTexture SourceTexture = ConvertToRectTexture(LightData);
+					const float3 FalloffColor = SampleSourceTexture(Lighting, Rect, SourceTexture);
+					LightColor *= FalloffColor;
+				}
+#endif // USE_RECT_LIGHT_TEXTURE
 			}
 			else
 			{
@@ -396,11 +460,12 @@ float4 InjectShadowedLocalLightCommon(uint3 GridCoordinate)
 			}
 #endif
 	
-#if	USE_LIGHT_FUNCTION
-			ShadowFactor *= GetLocalLightFunction(TranslatedWorldPosition, LightData.bSpotLight, LightData.bRectLight);
+			FLightFunctionColor LightFunctionColor = 1.0f;
+#if	USE_LIGHT_FUNCTION_ATLAS
+			LightFunctionColor = GetLocalLightFunctionCommon(TranslatedWorldPosition, LightData.LightFunctionAtlasLightIndex);
 #endif
 
-			OutScattering.rgb += LightColor * (PhaseFunction(PhaseG, dot(L, -CameraVector)) * CombinedAttenuation * ShadowFactor * VolumetricScatteringIntensity);
+			OutScattering.rgb += LightColor * LightFunctionColor * (PhaseFunction(PhaseG, dot(L, -CameraVector)) * CombinedAttenuation * ShadowFactor * VolumetricScatteringIntensity);
 				
 			// To debug culling
 			//OutScattering.rgb += DeferredLightUniforms.Color * .0000001f;
@@ -581,23 +646,37 @@ float ComputeSkyVisibility(float3 TranslatedWorldPosition, float3 BrickTextureUV
 }
 
 float4x4 DirectionalLightFunctionTranslatedWorldToShadow;
-Texture2D LightFunctionTexture;
-SamplerState LightFunctionSampler;
+Texture2D DirectionalLightLightFunctionTexture;
+SamplerState DirectionalLightLightFunctionSampler;
+uint DirectionalApplyLightFunctionFromAtlas;
+uint DirectionalLightFunctionAtlasLightIndex;
 
-float GetDirectionalLightFunction(float3 TranslatedWorldPosition) // directional light
+FLightFunctionColor GetDirectionalLightFunction(float3 TranslatedWorldPosition) // directional light
 {
+#if USE_LIGHT_FUNCTION_ATLAS  // Used when injecting lights from the light grid
+	if (DirectionalApplyLightFunctionFromAtlas > 0)
+	{
+		return GetLocalLightFunctionCommon(TranslatedWorldPosition, DirectionalLightFunctionAtlasLightIndex);
+	}
+#endif
+
 	float4 HomogeneousShadowPosition = mul(float4(TranslatedWorldPosition, 1), DirectionalLightFunctionTranslatedWorldToShadow);
 	float2 LightFunctionUV = HomogeneousShadowPosition.xy * .5f + .5f;
 	LightFunctionUV.y = 1 - LightFunctionUV.y;
 
-	return Texture2DSampleLevel(LightFunctionTexture, LightFunctionSampler, LightFunctionUV, 0).x;
+	return Texture2DSampleLevel(DirectionalLightLightFunctionTexture, DirectionalLightLightFunctionSampler, LightFunctionUV, 0).x;
 }
 
-float SkyLightVolumetricScatteringIntensity;
-float4 SkySH[3];
+uint SampleSkyLightDiffuseEnvMap;
 float2 UseHeightFogColors;	// x=override directional light using height fog inscattering color, y=override sky light using heigh fog inscattering cubemap
 float UseDirectionalLightShadowing;
 float StaticLightingScatteringIntensity;
+
+#if SHADING_PATH_MOBILE
+uint   MobileHasDirectionalLight;
+float3 MobileDirectionalLightColor;
+float3 MobileDirectionalLightDirection;
+#endif
 
 Texture3D<float> RaytracedShadowsVolume;
 
@@ -644,9 +723,9 @@ void LightScatteringCS(
 	float3 HistoryUV = ComputeHistoryVolumeUV_DEPRECATED(ComputeCellTranslatedWorldPosition(GridCoordinate, .5f), UnjitteredPrevTranslatedWorldToClip);
 	float HistoryAlpha = HistoryWeight;
 
-	// We need to test with View.VolumetricFogPrevUVMax for HistoryUV because that is what we clamp with in ComputeHistoryVolumeUV_DEPRECATED.
+	// We need to test with View.VolumetricFogPrevUVMaxForTemporalBlend for HistoryUV because that is what we clamp with in ComputeHistoryVolumeUV_DEPRECATED.
 	FLATTEN
-	if (any(HistoryUV < 0) || any(HistoryUV >= float3(View.VolumetricFogPrevUVMax, 1.0f)) || CellWasOccluded)
+	if (any(HistoryUV < 0) || any(HistoryUV >= float3(View.VolumetricFogPrevUVMaxForTemporalBlend, 1.0f)) || CellWasOccluded)
 	{
 		HistoryAlpha = 0;
 	}
@@ -665,12 +744,21 @@ void LightScatteringCS(
 
 		float SceneDepth;
 		float3 TranslatedWorldPosition = ComputeCellTranslatedWorldPosition(GridCoordinate, CellOffset, SceneDepth);
-		float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
+		float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
 		float CameraVectorLength = length(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
 		float3 CameraVector = (TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin) / CameraVectorLength;
-
+		
+	#if SHADING_PATH_MOBILE
+		const bool	 bHasDirectionalLight		= MobileHasDirectionalLight > 0;
+		const float3 InDirectionalLightColor	= MobileDirectionalLightColor;	// DirectionalLightVolumetricScatteringIntensity is baked in MobileDirectionalLightColor
+		const float3 InDirectionalLightDirection= MobileDirectionalLightDirection;
+	#else
+		const bool	 bHasDirectionalLight		= ForwardLightData.HasDirectionalLight;
+		const float3 InDirectionalLightColor	= ForwardLightData.DirectionalLightColor * ForwardLightData.DirectionalLightVolumetricScatteringIntensity;
+		const float3 InDirectionalLightDirection= ForwardLightData.DirectionalLightDirection;
+	#endif
 		BRANCH
-		if (ForwardLightData.HasDirectionalLight)
+		if (bHasDirectionalLight)
 		{
 			float ShadowFactor = 1;
 			
@@ -695,20 +783,17 @@ void LightScatteringCS(
 #endif
 			}
 
-			ShadowFactor *= GetDirectionalLightFunction(TranslatedWorldPosition);
+			FLightFunctionColor LightFunctionColor = GetDirectionalLightFunction(TranslatedWorldPosition);
 
-			float3 DirectionalLightColor = ForwardLightData.DirectionalLightColor;
+			float3 DirectionalLightColor = InDirectionalLightColor;
 
 			if (UseHeightFogColors.x > 0)
 			{
 				// Attempt to maintain intensity ratio between sky and sun
-				DirectionalLightColor = VolumetricFog.HeightFogDirectionalLightInscatteringColor * Luminance(ForwardLightData.DirectionalLightColor);
+				DirectionalLightColor = VolumetricFog.HeightFogDirectionalLightInscatteringColor * Luminance(InDirectionalLightColor);
 			}
 
-			LightScattering += DirectionalLightColor
-				* (ShadowFactor 
-				* ForwardLightData.DirectionalLightVolumetricScatteringIntensity 
-				* PhaseFunction(PhaseG, dot(ForwardLightData.DirectionalLightDirection, -CameraVector)));
+			LightScattering += DirectionalLightColor * LightFunctionColor * ShadowFactor * PhaseFunction(PhaseG, dot(InDirectionalLightDirection, -CameraVector));
 		}
 
 		FTwoBandSHVector RotatedHGZonalHarmonic;
@@ -717,7 +802,7 @@ void LightScatteringCS(
 		float3 BrickTextureUVs = 0;
 
 #if ALLOW_STATIC_LIGHTING
-		if (SkyLightVolumetricScatteringIntensity > 0 || StaticLightingScatteringIntensity > 0)
+		if (View.SkyLightVolumetricScatteringIntensity > 0 || StaticLightingScatteringIntensity > 0)
 		{
 			BrickTextureUVs = ComputeVolumetricLightmapBrickTextureUVs(WorldPosition);
 		}
@@ -726,13 +811,13 @@ void LightScatteringCS(
 #if LUMEN_GI
 
 		// Lumen Dynamic GI + shadowed Skylight
-		FTwoBandSHVectorRGB TranslucencyGISH = GetTranslucencyGIVolumeLighting(LWCPromote(WorldPosition), PrimaryView.WorldToClip, false); // LUMEN_LWC_TODO
+		FTwoBandSHVectorRGB TranslucencyGISH = GetTranslucencyGIVolumeLighting(DFPromote(WorldPosition), PrimaryView.WorldToClip, false); // LUMEN_LWC_TODO
 
 		LightScattering += max(DotSH(TranslucencyGISH, RotatedHGZonalHarmonic), 0);
 
 #else
 		// Skylight
-		if (SkyLightVolumetricScatteringIntensity > 0)
+		if (View.SkyLightVolumetricScatteringIntensity > 0)
 		{
 			float3 SkyLighting;
 
@@ -749,16 +834,11 @@ void LightScatteringCS(
 			}
 			else
 			{
-				FTwoBandSHVectorRGB SkyIrradianceSH;
-				SkyIrradianceSH.R.V = SkySH[0];
-				SkyIrradianceSH.G.V = SkySH[1];
-				SkyIrradianceSH.B.V = SkySH[2];
-
-				SkyLighting = View.SkyLightColor.rgb * max(DotSH(SkyIrradianceSH, RotatedHGZonalHarmonic), 0) / PI;
+				SkyLighting = SampleSkyLightDiffuseEnvMap > 0 ? View.SkyLightColor.rgb * GetSkySHDiffuseSimple(CameraVector * -PhaseG) : 0.0f.xxx;
 			}
 
 			float SkyVisibility = ComputeSkyVisibility(TranslatedWorldPosition, BrickTextureUVs);
-			LightScattering += (SkyVisibility * SkyLightVolumetricScatteringIntensity) * SkyLighting;
+			LightScattering += (SkyVisibility * View.SkyLightVolumetricScatteringIntensity) * SkyLighting;
 		}
 #endif
 
@@ -782,9 +862,9 @@ void LightScatteringCS(
 
 		// Forward lighting of unshadowed point and spot lights
 		LOOP
-		for (uint LocalLightListIndex = 0; LocalLightListIndex < CulledLightsGrid.NumLocalLights; LocalLightListIndex++)
+		for (uint GridLightListIndex = 0; GridLightListIndex < CulledLightsGrid.NumLights; GridLightListIndex++)
 		{
-			const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + LocalLightListIndex, 0);
+			const FLocalLightData LocalLight = GetLocalLightData(CulledLightsGrid.DataStartIndex + GridLightListIndex, 0);
 
 			const float VolumetricScatteringIntensity = UnpackVolumetricScatteringIntensity(LocalLight);
 
@@ -813,7 +893,12 @@ void LightScatteringCS(
 
 				float CombinedAttenuation = Lighting * LightMask;
 
-				LightScattering += LightData.Color * (PhaseFunction(PhaseG, dot(L, -CameraVector)) * CombinedAttenuation * VolumetricScatteringIntensity);
+				FLightFunctionColor LightFunctionColor = 1.0f;
+			#if	USE_LIGHT_FUNCTION_ATLAS
+				LightFunctionColor = GetLocalLightFunctionCommon(TranslatedWorldPosition, LightData.LightFunctionAtlasLightIndex);
+			#endif
+
+				LightScattering += LightData.Color * LightFunctionColor * (PhaseFunction(PhaseG, dot(L, -CameraVector)) * CombinedAttenuation * VolumetricScatteringIntensity);
 
 				// To debug culling
 				//LightScattering += LocalLight.LightColorAndFalloffExponent.xyz * .0000001f;
@@ -841,8 +926,8 @@ void LightScatteringCS(
 	BRANCH
 	if (HistoryAlpha > 0)
 	{
-		float4 PreExposedHistoryScatteringAndExtinction = Texture3DSampleLevel(LightScatteringHistory, LightScatteringHistorySampler, HistoryUV, 0);
-		PreExposedHistoryScatteringAndExtinction *= LightScatteringHistoryPreExposureAndInv.y * View.PreExposure; // Bring previous frame pre exposed history luminance as current frame pre exposed luminance.
+		float4 PreExposedHistoryScatteringAndExtinction = Texture3DSampleLevel(LightScatteringHistory, LightScatteringHistorySampler, min(HistoryUV, float3(View.VolumetricFogPrevUVMax, 1.0f)), 0);
+		PreExposedHistoryScatteringAndExtinction.rgb *= LightScatteringHistoryPreExposureAndInv.y * View.PreExposure; // Bring previous frame pre exposed history luminance as current frame pre exposed luminance. Leave extinction untouched! 
 		PreExposedScatteringAndExtinction = lerp(PreExposedScatteringAndExtinction, PreExposedHistoryScatteringAndExtinction, HistoryAlpha);
 	}
 	

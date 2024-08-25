@@ -5,10 +5,7 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/Interface.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "GameplayPrediction.h"
-#include "GameplayEffect.h"
-#endif
+
 #include "AbilitySystemReplicationProxyInterface.generated.h"
 
 class UAbilitySystemComponent;

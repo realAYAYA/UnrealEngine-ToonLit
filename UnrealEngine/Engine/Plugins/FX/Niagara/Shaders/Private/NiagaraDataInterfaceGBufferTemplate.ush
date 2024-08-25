@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "/Engine/Private/DeferredShadingCommon.ush"
-#include "/Engine/Public/StrataPublic.ush"
+#include "/Engine/Public/SubstratePublic.ush"
 
 #define NDIGBUFFER_HAS_GBUFFER				(FEATURE_LEVEL >= FEATURE_LEVEL_SM5)
 #define NDIGBUFFER_USE_GBUFFER_VELOCITY		(false && NDIGBUFFER_HAS_GBUFFER)
@@ -40,9 +40,9 @@ void DecodeWorldNormal_{ParameterName}(in float2 ScreenUV, in bool bApplyViewpor
 	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
 	IsValid = true;
 
-	#if STRATA_ENABLED
+	#if Substrate_ENABLED
 		uint2 ScreenPos = uint2(ScreenUV * View.BufferSizeAndInvSize.xy);
-		OutValue = StrataPublic_GetWorldNormal(ScreenPos);
+		OutValue = SubstratePublic_GetWorldNormal(ScreenPos);
 	#else
 		FGBufferData GBufferData = GetGBufferData(ScreenUV);
 		OutValue = GBufferData.WorldNormal;
@@ -109,7 +109,7 @@ void DecodeWorldVelocity_{ParameterName}(in float2 ScreenUV, in bool bApplyViewp
 		float2 PrevScreenPosition = ScreenPosition - Velocity.xy;
 		float3 PrevTranslatedWorldPosition = mul(float4(PrevScreenPosition * PrevSceneDepth, PrevSceneDepth, 1), PrimaryView.PrevScreenToTranslatedWorld).xyz;
 
-		float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+		float3 PreViewTranslationOffset = DFFastLocalSubtractDemote(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation);
  
 		OutValue = TranslatedWorldPosition - PrevTranslatedWorldPosition - PreViewTranslationOffset;
 	}

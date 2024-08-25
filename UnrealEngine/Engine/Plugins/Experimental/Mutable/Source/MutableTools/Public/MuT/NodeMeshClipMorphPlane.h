@@ -37,14 +37,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		virtual const NODE_TYPE* GetType() const;
-		static const NODE_TYPE* GetStaticType();
-
-		virtual int GetInputCount() const;
-		virtual const char* GetInputName( int i ) const;
-		virtual const NODE_TYPE* GetInputType( int i ) const;
-		virtual Node* GetInputNode( int i ) const;
-		virtual void SetInputNode( int i, NodePtr pNode );
+		virtual const FNodeType* GetType() const;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface

@@ -6,7 +6,7 @@ namespace Gauntlet
 	/// TargetDevice extension for platforms that contain an online service.
 	/// Enables more robust user sign in verification.
 	/// </summary>
-	internal interface IOnlineServiceLogin
+	public interface IOnlineServiceLogin
 	{
 		/// <summary>
 		/// Verifies the device has connected to its relevant platform network.

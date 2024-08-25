@@ -740,19 +740,13 @@ bool FLoopCleaner::RemoveSelfIntersectionsOfLoop()
 		if (IntersectionCount == 1)
 		{
 			NextIntersectionIndex = IntersectionIndex + 1;
-			for (; NextIntersectionIndex < Intersections.Num(); ++NextIntersectionIndex)
+			if (Intersections.IsValidIndex(NextIntersectionIndex) && Intersections[NextIntersectionIndex].Key <= Intersection.Value)
 			{
-				if (Intersections[NextIntersectionIndex].Key > Intersection.Value)
-				{
-					break;
-				}
-
 				bIntersectionForward = false;
 				++IntersectionCount;
-#ifdef DEBUG_REMOVE_LOOP_INTERSECTIONS		
+#ifdef DEBUG_REMOVE_LOOP_INTERSECTIONS
 				DisplayIntersection(Intersections[NextIntersectionIndex]);
 #endif
-				break;
 			}
 		}
 

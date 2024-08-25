@@ -64,6 +64,7 @@ class IMappedFileHandle;
 class IMappedFileRegion;
 struct FFileRegion;
 struct IIoDispatcherBackend;
+struct FIoOffsetAndLength;
 template <typename CharType> class TStringBuilderBase;
 template <typename OptionalType> struct TOptional;
 
@@ -350,11 +351,15 @@ public:
 	static CORE_API FIoDispatcher& Get();
 
 private:
+	CORE_API bool					DoesChunkExist(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange) const;
+	CORE_API TIoStatusOr<uint64>	GetSizeForChunk(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange, uint64& OutAvailable) const;
+
 	FIoDispatcherImpl* Impl = nullptr;
 
 	friend class FIoRequest;
 	friend class FIoBatch;
 	friend class FIoQueue;
+	friend class FBulkData;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -414,7 +419,7 @@ private:
 	uint32 Handle = InvalidHandle;
 };
 
-using FDirectoryIndexVisitorFunction = TFunctionRef<bool(FString, const uint32)>;
+using FDirectoryIndexVisitorFunction = TFunctionRef<bool(FStringView, const uint32)>;
 
 class FIoDirectoryIndexReader
 {
@@ -432,7 +437,7 @@ public:
 	CORE_API FStringView GetFileName(FIoDirectoryIndexHandle File) const;
 	CORE_API uint32 GetFileData(FIoDirectoryIndexHandle File) const;
 
-	CORE_API bool IterateDirectoryIndex(FIoDirectoryIndexHandle Directory, const FString& Path, FDirectoryIndexVisitorFunction Visit) const;
+	CORE_API bool IterateDirectoryIndex(FIoDirectoryIndexHandle Directory, FStringView Path, FDirectoryIndexVisitorFunction Visit) const;
 
 private:
 	UE_NONCOPYABLE(FIoDirectoryIndexReader);
@@ -446,6 +451,9 @@ struct FIoStoreWriterSettings
 {
 	FName CompressionMethod = NAME_None;
 	uint64 CompressionBlockSize = 64 << 10;
+
+	// This does not align every entry - it tries to prevent excess crossings of this boundary by inserting padding.
+	// and happens whether or not the entry is compressed.
 	uint64 CompressionBlockAlignment = 0;
 	int32 CompressionMinBytesSaved = 0;
 	int32 CompressionMinPercentSaved = 0;
@@ -505,19 +513,21 @@ struct FIoContainerSettings
 struct FIoStoreWriterResult
 {
 	FIoContainerId ContainerId;
-	FString ContainerName;
+	FString ContainerName; // This is the base filename of the utoc used for output.
 	int64 TocSize = 0;
 	int64 TocEntryCount = 0;
 	int64 PaddingSize = 0;
-	int64 UncompressedContainerSize = 0;
-	int64 CompressedContainerSize = 0;
+	int64 UncompressedContainerSize = 0; // this is the size the container would be if it were uncompressed.
+	int64 CompressedContainerSize = 0; // this is the size of the container with the given compression (which may be none). Should be the sum of all partition file sizes.
 	int64 DirectoryIndexSize = 0;
+	uint64 TotalEntryCompressedSize = 0; // sum of the compressed size of entries excluding encryption alignment.
+	uint64 ReferenceCacheMissBytes = 0; // number of compressed bytes excluding alignment that could have been from refcache but weren't.
 	uint64 AddedChunksCount = 0;
 	uint64 AddedChunksSize = 0;
 	uint64 ModifiedChunksCount = 0;
 	uint64 ModifiedChunksSize = 0;
 	FName CompressionMethod = NAME_None;
-	EIoContainerFlags ContainerFlags;
+	EIoContainerFlags ContainerFlags = EIoContainerFlags::None;
 };
 
 struct FIoWriteOptions
@@ -557,7 +567,7 @@ public:
 	CORE_API FIoStoreWriterContext();
 	CORE_API ~FIoStoreWriterContext();
 
-	UE_NODISCARD CORE_API FIoStatus Initialize(const FIoStoreWriterSettings& InWriterSettings);
+	[[nodiscard]] CORE_API FIoStatus Initialize(const FIoStoreWriterSettings& InWriterSettings);
 	CORE_API TSharedPtr<class IIoStoreWriter> CreateContainer(const TCHAR* InContainerPath, const FIoContainerSettings& InContainerSettings);
 	CORE_API void Flush();
 	CORE_API FProgress GetProgress() const;
@@ -612,20 +622,52 @@ struct FIoStoreTocCompressedBlockInfo
 
 struct FIoStoreCompressedBlockInfo
 {
+	/**
+	* Hash of the block on disk. Note that this can be all zero if the hash info was not computed when
+	* the utoc was created.
+	*/
+	FIoHash DiskHash;
+
+	/** Name of the method used to compress the block. */
 	FName CompressionMethod;
-	// The size of relevant data in the block (i.e. what you pass to decompress)
+	/** The size of relevant data in the block (i.e. what you pass to decompress). */
 	uint32 CompressedSize;
-	// The size of the _block_ after decompression. This is not adjusted for any FIoReadOptions used.
+	/** The size of the _block_ after decompression. This is not adjusted for any FIoReadOptions used. */
 	uint32 UncompressedSize;
-	// The size of the data this block takes in IoBuffer (i.e. after padding for decryption)
+	/** The size of the data this block takes in IoBuffer (i.e. after padding for decryption). */
 	uint32 AlignedSize;
-	// Where in IoBuffer this block starts.
+	/** Where in IoBuffer this block starts. */
 	uint64 OffsetInBuffer;
+};
+
+struct FIoStoreCompressedChunkInfo
+{
+	/** Info about the blocks that the chunk is split up into. */
+	TArray<FIoStoreCompressedBlockInfo> Blocks;
+
+	/**
+	* Hash of the compressed chunk on disk. Note that this can be all zero if the hash info was
+	* not computed when the utoc was created.
+	*/
+	FIoHash DiskHash;
+
+	/** There is where the data starts in IoBuffer(for when you pass in a data range via FIoReadOptions). */
+	uint64 UncompressedOffset = 0;
+	/**
+	 * This is the total size requested via FIoReadOptions. Notably, if you requested a narrow range, you could
+	 * add up all the block uncompressed sizes and it would be larger than this.
+	 */
+	uint64 UncompressedSize = 0;
+	/** This is the total size of compressed data, which is less than IoBuffer size due to padding for decryption. */
+	uint64 TotalCompressedSize = 0;
 };
 
 struct FIoStoreCompressedReadResult
 {
+	/** The buffer containing the chunk. */
 	FIoBuffer IoBuffer;
+
+	/** Info about the blocks that the chunk is split up into. */
 	TArray<FIoStoreCompressedBlockInfo> Blocks;
 	// There is where the data starts in IoBuffer (for when you pass in a data range via FIoReadOptions)
 	uint64 UncompressedOffset = 0;
@@ -635,7 +677,6 @@ struct FIoStoreCompressedReadResult
 	// This is the total size of compressed data, which is less than IoBuffer size due to padding for decryption.
 	uint64 TotalCompressedSize = 0;
 };
-
 
 class IIoStoreWriterReferenceChunkDatabase
 {
@@ -666,13 +707,18 @@ public:
 	* Quick synchronous existence check that returns the number of blocks for the chunk. This is used to set up
 	* the necessary structures without needing to read the source data for the chunk.
 	*/
-	virtual bool ChunkExists(const TPair<FIoContainerId, FIoChunkHash>& InChunkKey, uint32& OutNumChunkBlocks) = 0;
+	virtual bool ChunkExists(const TPair<FIoContainerId, FIoChunkHash>& InChunkKey, const FIoChunkId& InChunkId, uint32& OutNumChunkBlocks) = 0;
 
 	/*
 	* Returns the compression block size that was used to break up the IoChunks in the source containers. If this is different than what we want, 
 	* then none of the chunks will ever match. Knowing this up front allows us to only match on hash
 	*/
 	virtual uint32 GetCompressionBlockSize() const = 0;
+
+	/*
+	* Called by an iostore writer implementation to notify the ref cache it's been added
+	*/
+	virtual void NotifyAddedToWriter(const FIoContainerId& InContainerId) = 0;
 };
 
 /**
@@ -713,14 +759,16 @@ public:
 	CORE_API FIoStoreReader();
 	CORE_API ~FIoStoreReader();
 
-	UE_NODISCARD CORE_API FIoStatus Initialize(const TCHAR* ContainerPath, const TMap<FGuid, FAES::FAESKey>& InDecryptionKeys);
+	[[nodiscard]] CORE_API FIoStatus Initialize(FStringView ContainerPath, const TMap<FGuid, FAES::FAESKey>& InDecryptionKeys);
 	CORE_API FIoContainerId GetContainerId() const;
 	CORE_API uint32 GetVersion() const;
 	CORE_API EIoContainerFlags GetContainerFlags() const;
 	CORE_API FGuid GetEncryptionKeyGuid() const;
+
 	CORE_API void EnumerateChunks(TFunction<bool(FIoStoreTocChunkInfo&&)>&& Callback) const;
 	CORE_API TIoStatusOr<FIoStoreTocChunkInfo> GetChunkInfo(const FIoChunkId& Chunk) const;
 	CORE_API TIoStatusOr<FIoStoreTocChunkInfo> GetChunkInfo(const uint32 TocEntryIndex) const;
+	CORE_API TIoStatusOr<FIoStoreCompressedChunkInfo> GetChunkCompressedInfo(const FIoChunkId& Chunk) const;
 
 	// Reads the chunk off the disk, decrypting/decompressing as necessary.
 	CORE_API TIoStatusOr<FIoBuffer> Read(const FIoChunkId& Chunk, const FIoReadOptions& Options) const;
@@ -743,6 +791,9 @@ public:
 	CORE_API const TArray<FName>& GetCompressionMethods() const;
 	CORE_API void EnumerateCompressedBlocks(TFunction<bool(const FIoStoreTocCompressedBlockInfo&)>&& Callback) const;
 	CORE_API void EnumerateCompressedBlocksForChunk(const FIoChunkId& Chunk, TFunction<bool(const FIoStoreTocCompressedBlockInfo&)>&& Callback) const;
+
+	// Returns the .ucas file path and all partition(s) ({containername}_s1.ucas, {containername}_s2.ucas)
+	CORE_API void GetContainerFilePaths(TArray<FString>& OutPaths);
 
 private:
 	FIoStoreReaderImpl* Impl;

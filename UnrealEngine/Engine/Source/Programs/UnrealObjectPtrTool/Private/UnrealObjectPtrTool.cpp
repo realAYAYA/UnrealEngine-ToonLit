@@ -90,12 +90,18 @@ private:
 
 FStringView ParseBracketedStringSegment(const FString& InString, int32& InOutCurrentIndex, const TCHAR* BracketStart, const TCHAR* BracketEnd)
 {
-	int32 ParsedStartIndex = InString.Find(BracketStart, ESearchCase::IgnoreCase, ESearchDir::FromStart, InOutCurrentIndex);
-	if (ParsedStartIndex == INDEX_NONE)
+	int32 ParsedStartIndex = 0;
+
+	if (BracketStart != nullptr)
 	{
-		return FStringView();
+		ParsedStartIndex = InString.Find(BracketStart, ESearchCase::IgnoreCase, ESearchDir::FromStart, InOutCurrentIndex);
+		if (ParsedStartIndex == INDEX_NONE)
+		{
+			return FStringView();
+		}
+		ParsedStartIndex += FCString::Strlen(BracketStart);
 	}
-	ParsedStartIndex += FCString::Strlen(BracketStart);
+
 	int32 ParsedEndIndex = InString.Find(BracketEnd, ESearchCase::IgnoreCase, ESearchDir::FromStart, ParsedStartIndex);
 	if (ParsedEndIndex == INDEX_NONE)
 	{
@@ -110,7 +116,7 @@ TValueOrError<FPointerUpgrader::FPointerUpgradeList, FString> FPointerUpgrader::
 	FPointerUpgradeList UpgradeList;
 	const TCHAR* Preamble = EnumHasAllFlags(BehaviorFlags, EPointerUpgradeBehaviorFlags::Reverse) ? TEXT("ObjectPtr usage in member declaration detected [[") : TEXT("Native pointer usage in member declaration detected [[");
 	TArray<FString> PointerUpgradeEntries;
-	if (!FFileHelper::LoadFileToStringArrayWithPredicate(PointerUpgradeEntries, *LogFilename, [&Preamble](const FString& Line) { return Line.Contains("LogCompile: ") && Line.Contains(Preamble);  }))
+	if (!FFileHelper::LoadFileToStringArrayWithPredicate(PointerUpgradeEntries, *LogFilename, [&Preamble](const FString& Line) { return Line.Contains("Info: ") && Line.Contains(Preamble);  }))
 	{
 		return MakeError(FString::Printf(TEXT("Unable to load UHT log: %s"), *LogFilename));
 	}
@@ -119,7 +125,7 @@ TValueOrError<FPointerUpgrader::FPointerUpgradeList, FString> FPointerUpgrader::
 	for (const FString& Entry : PointerUpgradeEntries)
 	{
 		int32 CurrentIndex = 0;
-		FStringView FilenameView = ParseBracketedStringSegment(Entry, CurrentIndex, TEXT("LogCompile: "), TEXT("("));
+		FStringView FilenameView = ParseBracketedStringSegment(Entry, CurrentIndex, nullptr, TEXT("("));
 		if (FilenameView.IsEmpty())
 		{
 			return MakeError(FString::Printf(TEXT("Failed to parse filename from pointer member upgrade statement: %s"), *Entry));

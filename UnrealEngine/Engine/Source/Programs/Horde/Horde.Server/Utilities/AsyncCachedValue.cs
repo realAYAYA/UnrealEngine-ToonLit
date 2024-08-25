@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
 
 namespace Horde.Server.Utilities
 {
@@ -11,7 +12,7 @@ namespace Horde.Server.Utilities
 	/// Caches a value and asynchronously updates it after a period of time
 	/// </summary>
 	/// <typeparam name="T"></typeparam>
-	public class AsyncCachedValue<T>
+	public sealed class AsyncCachedValue<T> : IAsyncDisposable
 	{
 		class State
 		{
@@ -28,6 +29,8 @@ namespace Horde.Server.Utilities
 			}
 		}
 
+		CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+
 		/// <summary>
 		/// The current state
 		/// </summary>
@@ -36,7 +39,7 @@ namespace Horde.Server.Utilities
 		/// <summary>
 		/// Generator for the new value
 		/// </summary>
-		readonly Func<Task<T>> _generator;
+		readonly Func<CancellationToken, Task<T>> _generator;
 
 		/// <summary>
 		/// Time at which to start to refresh the value
@@ -51,7 +54,7 @@ namespace Horde.Server.Utilities
 		/// <summary>
 		/// Default constructor
 		/// </summary>
-		public AsyncCachedValue(Func<Task<T>> generator, TimeSpan refreshTime)
+		public AsyncCachedValue(Func<CancellationToken, Task<T>> generator, TimeSpan refreshTime)
 			: this(generator, refreshTime * 0.75, refreshTime)
 		{
 		}
@@ -59,11 +62,28 @@ namespace Horde.Server.Utilities
 		/// <summary>
 		/// Default constructor
 		/// </summary>
-		public AsyncCachedValue(Func<Task<T>> generator, TimeSpan minRefreshTime, TimeSpan maxRefreshTime)
+		public AsyncCachedValue(Func<CancellationToken, Task<T>> generator, TimeSpan minRefreshTime, TimeSpan maxRefreshTime)
 		{
 			_generator = generator;
 			_minRefreshTime = minRefreshTime;
 			_maxRefreshTime = maxRefreshTime;
+		}
+
+		/// <inheritdoc/>
+		public async ValueTask DisposeAsync()
+		{
+			if (_current != null)
+			{
+				await _cancellationTokenSource.CancelAsync();
+				await _current.IgnoreCanceledExceptionsAsync();
+				_current = null;
+			}
+
+			if (_cancellationTokenSource != null)
+			{
+				_cancellationTokenSource.Dispose();
+				_cancellationTokenSource = null!;
+			}
 		}
 
 		/// <summary>
@@ -94,12 +114,12 @@ namespace Horde.Server.Utilities
 			if (cancellationToken.CanBeCanceled)
 			{
 				// The returned task object is shared, so we don't want to cancel computation of it; just the wait for a result.
-				task = WrapCancellation(task, cancellationToken);
+				task = WrapCancellationAsync(task, cancellationToken);
 			}
 			return task;
 		}
 
-		static async Task<T> WrapCancellation(Task<T> task, CancellationToken cancellationToken)
+		static async Task<T> WrapCancellationAsync(Task<T> task, CancellationToken cancellationToken)
 		{
 			await Task.WhenAny(task, Task.Delay(-1, cancellationToken));
 			cancellationToken.ThrowIfCancellationRequested();
@@ -108,7 +128,7 @@ namespace Horde.Server.Utilities
 
 		async Task<T> GetInternalAsync(TimeSpan maxAge)
 		{
-			Task<State> stateTask = CreateOrGetStateTask(ref _current);
+			Task<State> stateTask = CreateOrGetStateTaskAsync(ref _current);
 
 			State state = await stateTask;
 			if (state._next != null && state._next.IsCompleted)
@@ -118,19 +138,19 @@ namespace Horde.Server.Utilities
 			}
 			if (state.Elapsed > maxAge)
 			{
-				state = await CreateOrGetStateTask(ref state._next);
+				state = await CreateOrGetStateTaskAsync(ref state._next);
 			}
 			if (state.Elapsed > _minRefreshTime)
 			{
-				_ = CreateOrGetStateTask(ref state._next);
+				_ = CreateOrGetStateTaskAsync(ref state._next);
 			}
 
 			return state.Value;
 		}
 
-		Task<State> CreateOrGetStateTask(ref Task<State>? stateTask)
+		Task<State> CreateOrGetStateTaskAsync(ref Task<State>? stateTask)
 		{
-			for(; ;)
+			for (; ; )
 			{
 				Task<State>? currentStateTask = stateTask;
 				if (currentStateTask != null)
@@ -138,7 +158,7 @@ namespace Horde.Server.Utilities
 					return currentStateTask;
 				}
 
-				Task<Task<State>> innerNewStateTask = new Task<Task<State>>(() => CreateState());
+				Task<Task<State>> innerNewStateTask = new Task<Task<State>>(() => CreateStateAsync());
 				if (Interlocked.CompareExchange(ref stateTask, innerNewStateTask.Unwrap(), null) == null)
 				{
 					innerNewStateTask.Start();
@@ -146,9 +166,9 @@ namespace Horde.Server.Utilities
 			}
 		}
 
-		async Task<State> CreateState()
+		async Task<State> CreateStateAsync()
 		{
-			return new State(await _generator());
+			return new State(await _generator(_cancellationTokenSource.Token));
 		}
 	}
 }

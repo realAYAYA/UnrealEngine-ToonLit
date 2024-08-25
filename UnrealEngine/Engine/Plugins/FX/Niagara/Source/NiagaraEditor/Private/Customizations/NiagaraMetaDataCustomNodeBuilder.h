@@ -2,8 +2,10 @@
 
 #pragma once
 
+#include "UObject/StructOnScope.h"
 #include "IDetailCustomNodeBuilder.h"
 #include "NiagaraTypes.h"
+#include "NiagaraVariableMetaData.h"
 #include "NiagaraMetaDataCustomNodeBuilder.generated.h"
 
 class UNiagaraGraph;

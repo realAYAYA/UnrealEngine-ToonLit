@@ -788,6 +788,31 @@ struct FRCWebSocketTransactionEndBody : public FRCRequest
 };
 
 /**
+ * Holds a request made via websocket to change the compression mode.
+ */
+USTRUCT()
+struct FRCWebSocketCompressionChangeBody : public FRCRequest
+{
+	GENERATED_BODY()
+
+	FRCWebSocketCompressionChangeBody()
+	{
+		AddStructParameter(ParametersFieldLabel());
+	}
+
+	/**
+	 * Get the label for the property value struct.
+	 */
+	static FString ParametersFieldLabel() { return TEXT("Parameters"); }
+
+	/**
+	 * The compression mode to use.
+	 */
+	UPROPERTY()
+	ERCWebSocketCompressionMode Mode = ERCWebSocketCompressionMode::NONE;
+};
+
+/**
  * Struct representation of SetPresetController HTTP request
  */
 USTRUCT()

@@ -59,7 +59,7 @@ void UAssetEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	GEditor->OnEditorClose().AddUObject(this, &UAssetEditorSubsystem::OnEditorClose);
 	FCoreDelegates::OnEnginePreExit.AddUObject(this, &UAssetEditorSubsystem::UnregisterEditorModes);
-	FCoreDelegates::OnPostEngineInit.AddUObject(this, &UAssetEditorSubsystem::RegisterEditorModes);
+	FCoreDelegates::OnAllModuleLoadingPhasesComplete.AddUObject(this, &UAssetEditorSubsystem::RegisterEditorModes);
 
 	if (FAssetRegistryModule* AssetRegistryModule = FModuleManager::GetModulePtr<FAssetRegistryModule>(TEXT("AssetRegistry")))
 	{
@@ -111,7 +111,7 @@ void UAssetEditorSubsystem::Deinitialize()
 void UAssetEditorSubsystem::InitializeRecentAssets()
 {
 	// The current max allowed is 30 assets
-	RecentAssetsList = MakeUnique<FMainMRUFavoritesList>(TEXT("AssetEditorSubsystemRecents"), 30);
+	RecentAssetsList = MakeUnique<FMainMRUFavoritesList>(TEXT("AssetEditorSubsystemRecents"), TEXT("AssetEditorSubsystemFavorites"), 30);
 	RecentAssetsList->ReadFromINI();
 	
 	TArray<FString> RecentAssetEditors;
@@ -288,14 +288,17 @@ TArray<IAssetEditorInstance*> UAssetEditorSubsystem::FindEditorsForAssetAndSubOb
 {
 	TArray<IAssetEditorInstance*> EditorInstances;
 
-	for (const TPair<FAssetEntry, IAssetEditorInstance*>& Pair : OpenedAssets)
+	if (Asset)
 	{
-		if (Pair.Key.RawPtr == Asset || (Pair.Key.ObjectPtr.IsValid() && Pair.Key.ObjectPtr.Get()->IsIn(Asset)))
-		{		
-			EditorInstances.Add(Pair.Value);
+		for (const TPair<FAssetEntry, IAssetEditorInstance*>& Pair : OpenedAssets)
+		{
+			if (Pair.Key.RawPtr == Asset || (Pair.Key.ObjectPtr.IsValid() && Pair.Key.ObjectPtr.Get()->IsIn(Asset)))
+			{		
+				EditorInstances.Add(Pair.Value);
+			}
 		}
 	}
-
+	
 	return EditorInstances;
 }
 
@@ -389,7 +392,7 @@ void UAssetEditorSubsystem::NotifyAssetOpened(UObject* Asset, IAssetEditorInstan
 
 	AssetOpenedInEditorEvent.Broadcast(Asset, InInstance);
 
-	if(InInstance->IncludeAssetInRestoreOpenAssetsPrompt())
+	if(InInstance->IncludeAssetInRestoreOpenAssetsPrompt(Asset))
 	{
 		SaveOpenAssetEditors(false);
 	}
@@ -407,6 +410,8 @@ void UAssetEditorSubsystem::NotifyAssetsOpened(const TArray< UObject* >& Assets,
 
 void UAssetEditorSubsystem::NotifyAssetClosed(UObject* Asset, IAssetEditorInstance* InInstance)
 {
+	AssetClosedInEditorEvent.Broadcast(Asset, InInstance);
+
 	OpenedEditors.RemoveSingle(InInstance, Asset);
 	OpenedAssets.RemoveSingle(Asset, InInstance);
 
@@ -421,6 +426,10 @@ void UAssetEditorSubsystem::NotifyEditorClosed(IAssetEditorInstance* InInstance)
 	OpenedEditors.MultiFind(InInstance, /*out*/ Assets);
 	for (int32 AssetIndex = 0; AssetIndex < Assets.Num(); ++AssetIndex)
 	{
+		if(UObject* Asset = Assets[AssetIndex].ObjectPtr.Get())
+		{
+			AssetClosedInEditorEvent.Broadcast(Asset, InInstance);
+		}
 		OpenedAssets.Remove(Assets[AssetIndex], InInstance);
 	}
 
@@ -484,11 +493,20 @@ bool UAssetEditorSubsystem::IsAssetEditable(const UObject* Asset)
 
 bool UAssetEditorSubsystem::OpenEditorForAsset(UObject* Asset, const EToolkitMode::Type ToolkitMode, TSharedPtr< IToolkitHost > OpenedFromLevelEditor, const bool bShowProgressWindow, const EAssetTypeActivationOpenedMethod OpenedMethod)
 {
-	SCOPE_STALL_REPORTER(UAssetEditorSubsystem::OpenEditorForAsset, 2.0);
-
-	if (!Asset)
+	FText ErrorMessage;
+	if(!CanOpenEditorForAsset(Asset, OpenedMethod, &ErrorMessage))
 	{
-		UE_LOG(LogAssetEditorSubsystem, Error, TEXT("Opening Asset editor failed because asset is null"));
+		// We also log the error if the asset was null
+		if(!Asset)
+		{
+			UE_LOG(LogAssetEditorSubsystem, Error, TEXT("%s"), *ErrorMessage.ToString());
+		}
+		
+		if (TSharedPtr<SNotificationItem> InfoItem = FSlateNotificationManager::Get().AddNotification(FNotificationInfo(ErrorMessage)))
+        {
+        	InfoItem->SetCompletionState(SNotificationItem::CS_Fail);
+        }
+
 		return false;
 	}
 
@@ -499,28 +517,6 @@ bool UAssetEditorSubsystem::OpenEditorForAsset(UObject* Asset, const EToolkitMod
 	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 
 	const bool bBringToFrontIfOpen = true;
-
-	if (OpenedMethod == EAssetTypeActivationOpenedMethod::Edit)
-	{
-		if (UPackage* Package = Asset->GetOutermost())
-		{
-			// Don't open asset editors for cooked packages
-			if (Package->bIsCookedForEditor)
-			{
-				if (TSharedPtr<SNotificationItem> InfoItem = FSlateNotificationManager::Get().AddNotification(FNotificationInfo(LOCTEXT("NotifyBlockedByCookedAsset", "Unable to Edit Cooked asset"))))
-				{
-					InfoItem->SetCompletionState(SNotificationItem::CS_Fail);
-				}
-				return false;
-			}
-
-			if (!AssetToolsModule.Get().GetWritableFolderPermissionList()->PassesStartsWithFilter(Package->GetName()))
-			{
-				AssetToolsModule.Get().NotifyBlockedByWritableFolderFilter();
-				return false;
-			}
-		}
-	}
 
 	AssetEditorRequestOpenEvent.Broadcast(Asset);
 
@@ -538,6 +534,12 @@ bool UAssetEditorSubsystem::OpenEditorForAsset(UObject* Asset, const EToolkitMod
 	}
 
 	UE_LOG(LogAssetEditorSubsystem, Log, TEXT("Opening Asset editor for %s"), *Asset->GetFullName());
+
+	const FString AssetPath = Asset->GetPathName();
+	EAssetOpenMethod AssetOpenMethod = OpenedMethod == EAssetTypeActivationOpenedMethod::View ? EAssetOpenMethod::View : EAssetOpenMethod::Edit;
+
+	// We store the open method for this asset, so that FAssetEditorToolkit can query us for this information during init
+	AssetOpenMethodCache.Add(AssetPath, AssetOpenMethod);
 
 	TWeakPtr<IAssetTypeActions> AssetTypeActions = AssetToolsModule.Get().GetAssetTypeActionsForClass(Asset->GetClass());
 
@@ -564,17 +566,13 @@ bool UAssetEditorSubsystem::OpenEditorForAsset(UObject* Asset, const EToolkitMod
 		FAssetEditorToolkit::SetPreviousWorldCentricToolkitHostForNewAssetEditor(OpenedFromLevelEditor.ToSharedRef());
 	}
 
-	// Disallow opening an asset editor for classes
-	bool bCanSummonSimpleAssetEditor = !Asset->IsA<UClass>();
-
-	if (AssetTypeActions.IsValid() && AssetTypeActions.Pin()->SupportsOpenedMethod(OpenedMethod))
+	if (AssetTypeActions.IsValid())
 	{
 		TArray<UObject*> AssetsToEdit;
 		AssetsToEdit.Add(Asset);
 
 		// Some assets (like UWorlds) may be destroyed and recreated as part of opening. To protect against this, keep the path to the asset and try to re-find it if it disappeared.
 		TWeakObjectPtr<UObject> WeakAsset = Asset;
-		const FString AssetPath = Asset->GetPathName();
 
 		AssetTypeActions.Pin()->OpenAssetEditor(AssetsToEdit, OpenedMethod, ActualToolkitMode == EToolkitMode::WorldCentric ? OpenedFromLevelEditor : TSharedPtr<IToolkitHost>());
 
@@ -586,7 +584,7 @@ bool UAssetEditorSubsystem::OpenEditorForAsset(UObject* Asset, const EToolkitMod
 
 		AssetEditorOpenedEvent.Broadcast(Asset);
 	}
-	else if (bCanSummonSimpleAssetEditor)
+	else
 	{
 		// No asset type actions for this asset. Just use a properties editor.
 		FSimpleAssetEditor::CreateEditor(ActualToolkitMode, ActualToolkitMode == EToolkitMode::WorldCentric ? OpenedFromLevelEditor : TSharedPtr<IToolkitHost>(), Asset);
@@ -602,14 +600,17 @@ bool UAssetEditorSubsystem::OpenEditorForAsset(UObject* Asset, const EToolkitMod
 	{
 		if (Asset->IsAsset() && !Asset->IsA(UMapBuildDataRegistry::StaticClass()))
 		{
-			FString AssetPath = Asset->GetOuter()->GetPathName();
-			if (FPackageName::IsValidLongPackageName(AssetPath))
+			FString AssetOuterPath = Asset->GetOuter()->GetPathName();
+			if (FPackageName::IsValidLongPackageName(AssetOuterPath))
 			{
-				RecentAssetsList->AddMRUItem(AssetPath);
+				RecentAssetsList->AddMRUItem(AssetOuterPath);
 				CullRecentAssetEditorsMap();
 			}
 		}
 	}
+
+	// Since the Asset Editor has finished init once we are here, we can remove the open method from the cache
+	AssetOpenMethodCache.Remove(AssetPath);
 	
 	return true;
 }
@@ -649,10 +650,11 @@ bool UAssetEditorSubsystem::OpenEditorForAssets_Advanced(const TArray <UObject*>
 		TArray<UObject*> SkipOpenAssets;
 		for (UObject* Asset : Assets)
 		{
-			// If any of the assets are already open or the package is cooked,
+			// If any of the assets are already open or they cannot be opened in this open method
 			// remove them from the list of assets to open an editor for
 			UPackage* Package = Asset->GetOutermost();
-			if (FindEditorForAsset(Asset, true) != nullptr || (OpenedMethod == EAssetTypeActivationOpenedMethod::Edit && Package && Package->bIsCookedForEditor))
+			FText ErrorMessage;
+			if (FindEditorForAsset(Asset, true) != nullptr || !CanOpenEditorForAsset(Asset, OpenedMethod, &ErrorMessage))
 			{
 				SkipOpenAssets.Add(Asset);
 			}
@@ -711,11 +713,16 @@ bool UAssetEditorSubsystem::OpenEditorForAssets_Advanced(const TArray <UObject*>
 						: WeakAsset(InWeakAsset), AssetPath(InAssetPath) {}
 				};
 
+				EAssetOpenMethod AssetOpenMethod = OpenedMethod == EAssetTypeActivationOpenedMethod::View ? EAssetOpenMethod::View : EAssetOpenMethod::Edit;
+
 				TArray<FLocalAssetInfo> AssetInfoList;
 				AssetInfoList.Reserve(Assets.Num());
 				for (UObject* Asset : Assets)
 				{
 					AssetInfoList.Add(FLocalAssetInfo(Asset, Asset->GetPathName()));
+
+					// We store the open method for this asset, so that FAssetEditorToolkit can query us for this information during init
+					AssetOpenMethodCache.Add(Asset->GetPathName(), AssetOpenMethod);
 				}
 
 				// How to handle multiple assets is left up to the type actions (i.e. open a single shared editor or an editor for each)
@@ -731,6 +738,9 @@ bool UAssetEditorSubsystem::OpenEditorForAssets_Advanced(const TArray <UObject*>
 					{
 						Asset = FindObject<UObject>(nullptr, *AssetInfo.AssetPath);
 					}
+
+					// Since the Asset Editor has finished init once we are here, we can remove the open method from the cache
+					AssetOpenMethodCache.Remove(AssetInfo.AssetPath);
 				}
 
 				//@todo if needed, broadcast the event for every asset. It is possible, however, that a single shared editor was opened by the AssetTypeActions, not an editor for each asset.
@@ -760,19 +770,72 @@ bool UAssetEditorSubsystem::OpenEditorForAssets(const TArray<UObject*>& Assets, 
 	return OpenEditorForAssets_Advanced(Assets, EToolkitMode::Standalone, TSharedPtr<IToolkitHost>(), OpenedMethod);
 }
 
+TOptional<EAssetOpenMethod> UAssetEditorSubsystem::GetAssetBeingOpenedMethod(TObjectPtr<UObject> Asset)
+{
+	if(!Asset)
+	{
+		return TOptional<EAssetOpenMethod>();
+	}
+	
+	EAssetOpenMethod* OpenMethod = AssetOpenMethodCache.Find(Asset->GetPathName());
+
+	return OpenMethod ? *OpenMethod : TOptional<EAssetOpenMethod>();
+}
+
+TOptional<EAssetOpenMethod> UAssetEditorSubsystem::GetAssetsBeingOpenedMethod(TArray<TObjectPtr<UObject>> Assets)
+{
+	TOptional<EAssetOpenMethod> FoundOpenMethod;
+
+	// If an asset editor supports opening multiple assets, if any of them are being opened in read only mode we ask the asset editor to open in read only mode
+	for(const TObjectPtr<UObject>& Asset : Assets)
+	{
+		TOptional<EAssetOpenMethod> AssetOpenMethod = GetAssetBeingOpenedMethod(Asset);
+
+		if(AssetOpenMethod.IsSet())
+		{
+			FoundOpenMethod = AssetOpenMethod.GetValue();
+
+			if(FoundOpenMethod == EAssetOpenMethod::View)
+			{
+				return FoundOpenMethod;
+			}
+		}
+	}
+
+	return FoundOpenMethod;
+}
+
+void UAssetEditorSubsystem::AddReadOnlyAssetFilter(const FName& Owner, const FReadOnlyAssetFilter& ReadOnlyAssetFilter)
+{
+	ReadOnlyAssetFilters.Add(Owner, ReadOnlyAssetFilter);
+}
+
+void UAssetEditorSubsystem::RemoveReadOnlyAssetFilter(const FName& Owner)
+{
+	ReadOnlyAssetFilters.Remove(Owner);
+}
+
+
 void UAssetEditorSubsystem::HandleRequestOpenAssetMessage(const FAssetEditorRequestOpenAsset& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
 {
 	OpenEditorForAsset(Message.AssetName);
 }
 
-void UAssetEditorSubsystem::OpenEditorForAsset(const FSoftObjectPath& AssetPath, const EAssetTypeActivationOpenedMethod OpenedMethod)
+UObject* UAssetEditorSubsystem::FindOrLoadAssetForOpening(const FSoftObjectPath& AssetPath)
 {
 	UObject* Object = FindObject<UObject>(AssetPath.GetAssetPath());
 	if (!Object)
 	{
 		Object = LoadObject<UObject>(nullptr, *AssetPath.GetAssetPathString(), nullptr, LOAD_NoRedirects);
 	}
-	if (Object)
+
+	return Object;
+	
+}
+
+void UAssetEditorSubsystem::OpenEditorForAsset(const FSoftObjectPath& AssetPath, const EAssetTypeActivationOpenedMethod OpenedMethod)
+{
+	if (UObject* Object = FindOrLoadAssetForOpening(AssetPath))
 	{
 		OpenEditorForAsset(Object, EToolkitMode::Standalone, TSharedPtr<IToolkitHost>(), true, OpenedMethod);
 	}
@@ -1195,7 +1258,20 @@ void UAssetEditorSubsystem::CreateRecentAssetsMenu(UToolMenu* InMenu, const FNam
 		FUIAction(
 			FExecuteAction::CreateLambda([this, CurRecent]()
 				{
-					OpenEditorForAsset(CurRecent);
+					if (UObject* Object = FindOrLoadAssetForOpening(CurRecent))
+					{
+						FText ErrorMessage;
+
+						// Try to open the asset in edit mode. If that is not allowed, try to open it in read only mode
+						if(CanOpenEditorForAsset(Object, EAssetTypeActivationOpenedMethod::Edit, &ErrorMessage))
+						{
+							OpenEditorForAsset(Object, EToolkitMode::Standalone, TSharedPtr<IToolkitHost>(), true, EAssetTypeActivationOpenedMethod::Edit);
+						}
+						else if(CanOpenEditorForAsset(Object, EAssetTypeActivationOpenedMethod::View, &ErrorMessage))
+						{
+							OpenEditorForAsset(Object, EToolkitMode::Standalone, TSharedPtr<IToolkitHost>(), true, EAssetTypeActivationOpenedMethod::View);
+						}
+					}
 				})
 			)
 		);
@@ -1292,10 +1368,10 @@ void UAssetEditorSubsystem::SaveOpenAssetEditors(const bool bOnShutdown)
 		for (const TPair<IAssetEditorInstance*, FAssetEntry>& EditorPair : OpenedEditors)
 		{
 			IAssetEditorInstance* Editor = EditorPair.Key;
-			if (Editor != nullptr && Editor->IncludeAssetInRestoreOpenAssetsPrompt())
+			if (Editor != nullptr)
 			{
 				UObject* EditedObject = EditorPair.Value.ObjectPtr.Get();
-				if (EditedObject != nullptr)
+				if (EditedObject != nullptr && Editor->IncludeAssetInRestoreOpenAssetsPrompt(EditedObject))
 				{
 					// only record assets that have a valid saved package
 					UPackage* Package = EditedObject->GetOutermost();
@@ -1418,6 +1494,94 @@ void UAssetEditorSubsystem::OpenEditorsForAssets(const TArray<FName>& AssetsToOp
 	{
 		OpenEditorForAsset(AssetName.ToString(), OpenedMethod);
 	}
+}
+
+bool UAssetEditorSubsystem::CanOpenEditorForAsset(UObject* Asset, const EAssetTypeActivationOpenedMethod OpenedMethod, FText* OutErrorMsg)
+{
+	if (!Asset)
+	{
+		if(OutErrorMsg)
+		{
+			*OutErrorMsg = LOCTEXT("AssetNull", "Opening Asset editor failed because asset is null");
+		}
+		
+		return false;
+	}
+	
+	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+	TWeakPtr<IAssetTypeActions> AssetTypeActions = AssetToolsModule.Get().GetAssetTypeActionsForClass(Asset->GetClass());
+
+	// First we check with the asset type action to see if it supports the open method
+	if(AssetTypeActions.IsValid())
+	{
+		if(!AssetTypeActions.Pin()->SupportsOpenedMethod(OpenedMethod))
+		{
+			if(OutErrorMsg)
+			{
+				if(OpenedMethod == EAssetTypeActivationOpenedMethod::Edit)
+				{
+					*OutErrorMsg = FText::Format(LOCTEXT("AssetTypeDoesntSupportEdit", "A {0} does not support being edited!"), AssetTypeActions.Pin()->GetName());
+				}
+				else
+				{
+					*OutErrorMsg = FText::Format(LOCTEXT("AssetTypeDoesntSupportReadOnly", "A {0} does not support being opened in read only mode!"), AssetTypeActions.Pin()->GetName());
+				}
+
+			}
+			return false;
+		}
+	}
+	else
+	{
+		// Disallow opening an asset editor for classes
+		if(Asset->IsA<UClass>())
+		{
+			if(OutErrorMsg)
+			{
+				*OutErrorMsg = LOCTEXT("UClassesCantBeOpened", "UClasses cannot be opened in Asset Editors!");
+			}
+			return false;
+		}
+	}
+
+	// If the asset needs to be edited, make sure that is possible
+	if(OpenedMethod == EAssetTypeActivationOpenedMethod::Edit)
+	{
+		if(!IsAssetEditable(Asset))
+		{
+			if(OutErrorMsg)
+			{
+				*OutErrorMsg = LOCTEXT("AssetCantBeEdited", "Unable to Edit Cooked asset");
+			}
+			return false;
+		}
+	}
+
+	if(OpenedMethod == EAssetTypeActivationOpenedMethod::View)
+	{
+		if (UPackage* Package = Asset->GetPackage())
+		{
+			for(const TPair<FName, FReadOnlyAssetFilter>& Filter : ReadOnlyAssetFilters)
+			{
+				if(!Filter.Value.Execute(Package->GetPathName()))
+				{
+					if(OutErrorMsg)
+					{
+						*OutErrorMsg = LOCTEXT("AssetDoesntSupportOpenMethod", "This asset does not support being opened in read only mode.");
+					}
+					return false;
+				}
+			}
+		}
+		else
+		{
+			return false; // failsafe, but the package should exist at this point
+		}
+
+		
+	}
+
+	return true; 
 }
 
 void UAssetEditorSubsystem::RegisterEditorModes()

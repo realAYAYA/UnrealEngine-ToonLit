@@ -57,6 +57,30 @@ FCanKeyPropertyParams::FCanKeyPropertyParams(const UClass* InObjectClass, const 
 {
 }
 
+const UStruct* FCanKeyPropertyParams::FindPropertyOwner(const FProperty* ForProperty) const
+{
+	check(ForProperty);
+
+	bool bFoundProperty = false;
+	for (int32 Index = PropertyPath.GetNumProperties() - 1; Index >= 0; --Index)
+	{
+		FProperty* Property = PropertyPath.GetPropertyInfo(Index).Property.Get();
+		if (!bFoundProperty)
+		{
+			bFoundProperty = Property == ForProperty;
+			if (bFoundProperty)
+			{
+				return Property->GetOwnerStruct();
+			}
+		}
+		else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
+		{
+			return StructProperty->Struct;
+		}
+	}
+	return ObjectClass;
+}
+
 const UStruct* FCanKeyPropertyParams::FindPropertyContainer(const FProperty* ForProperty) const
 {
 	check(ForProperty);

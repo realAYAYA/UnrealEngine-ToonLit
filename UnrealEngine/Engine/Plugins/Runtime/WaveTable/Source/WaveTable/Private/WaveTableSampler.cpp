@@ -267,75 +267,10 @@ namespace WaveTable
 		{
 			return 0.f;
 		}
-		
+
 		TArrayView<float> OutSamplesView { &OutSample, 1 };
-		float Index = Process(InTableView, { }, { }, { }, OutSamplesView);
-
-		// Sampler functions by default cyclically and interpolates against initial value so
-		// early out as following index check and potential interp re-evaluation isn't necessary.
-		if (InMode == ESingleSampleMode::Loop)
-		{
-			return Index;
-		}
-
-		// If interpolating between last value and next, check
-		// to see if interpolation needs to be re-evaluated.
-		// This check is expensive in the context of buffer
-		// eval and thus only supported in "single-sample" mode.
-		const bool bIsFinalInterp = Index > InTableView.Num() - 1;
-		const bool bHasCompleted = Index == 0 && (Settings.Phase > 0.0f || LastIndex > 0);
-		if (bIsFinalInterp || bHasCompleted)
-		{
-			float ModeValue = 0.f;
-			
-			switch (InMode)
-			{
-				case ESingleSampleMode::Zero:
-				case ESingleSampleMode::Unit:
-				{
-					ModeValue = static_cast<float>(InMode);
-				}
-				break;
-
-				case ESingleSampleMode::Hold:
-				{
-					ModeValue = InTableView.FinalValue;
-				}
-				break;
-				
-				case ESingleSampleMode::Loop:
-				{
-					checkNoEntry(); // Should be handled above
-				}
-				break;
-
-				default:
-				break;
-			}
-
-			if (bIsFinalInterp)
-			{
-				TArray<float> FinalInterp = { InTableView.SampleView.Last(), ModeValue };
-				OutSample = FMath::Frac(Index);
-				Interpolate(FinalInterp, OutSamplesView, Settings.InterpolationMode);
-			}
-			else
-			{
-				OutSample = ModeValue;
-			}
-
-			if (!FMath::IsNearlyEqual(Settings.Amplitude, 1.0f))
-			{
-				OutSample *= Settings.Amplitude;
-			}
-
-			if (!FMath::IsNearlyZero(Settings.Offset))
-			{
-				OutSample += Settings.Offset;
-			}
-		}
-
-		return Index;
+		const float Index = Process(InTableView, OutSamplesView);
+		return FinalizeSingleSample(Index, InTableView.Num(), OutSamplesView, InTableView.SampleView.Last(), InTableView.FinalValue, InMode);
 	}
 
 	float FWaveTableSampler::Process(const FWaveTableView& InTableView, TArrayView<float> OutSamplesView)
@@ -379,6 +314,19 @@ namespace WaveTable
 		}
 
 		return CurViewLastIndex;
+	}
+
+	float FWaveTableSampler::Process(const FWaveTableData& InTableData, float& OutSample, ESingleSampleMode InMode)
+	{
+		if (InTableData.IsEmpty())
+		{
+			return 0.f;
+		}
+
+		TArrayView<float> OutSamplesView { &OutSample, 1 };
+		const float Index = Process(InTableData, OutSamplesView);
+		return FinalizeSingleSample(Index, InTableData.GetNumSamples(), OutSamplesView, InTableData.GetLastValue(), InTableData.GetFinalValue(), InMode);
+
 	}
 
 	float FWaveTableSampler::Process(const FWaveTableData& InTableData, TArrayView<float> OutSamplesView)
@@ -532,7 +480,7 @@ namespace WaveTable
 		}
 	}
 
-	int32 FWaveTableSampler::ComputeIndexFinished(TArrayView<const float> InSyncTriggers, TArrayView<float> OutIndicesView)
+	float FWaveTableSampler::ComputeIndexFinished(TArrayView<const float> InSyncTriggers, TArrayView<float> OutIndicesView)
 	{
 		check(!OutIndicesView.IsEmpty());
 
@@ -580,6 +528,75 @@ namespace WaveTable
 
 		OneShotData.IndexFinished = INDEX_NONE;
 		return OutIndicesView.Last();
+	}
+
+	float FWaveTableSampler::FinalizeSingleSample(float Index, int32 NumSamples, TArrayView<float> OutSampleView, float LastTableValue, float FinalValue, ESingleSampleMode InMode)
+	{
+		// Sampler functions by default cyclically and interpolates against initial value so
+		// early out as following index check and potential interp re-evaluation isn't necessary.
+		if (InMode == FWaveTableSampler::ESingleSampleMode::Loop)
+		{
+			return Index;
+		}
+
+		// If interpolating between last value and next, check
+		// to see if interpolation needs to be re-evaluated.
+		// This check is expensive in the context of buffer
+		// eval and thus only supported in "single-sample" mode.
+		const bool bIsFinalInterp = Index > NumSamples - 1;
+		const bool bHasCompleted = Index == 0 && (Settings.Phase > 0.0f || LastIndex > 0);
+		if (bIsFinalInterp || bHasCompleted)
+		{
+			float ModeValue = 0.f;
+
+			switch (InMode)
+			{
+				case ESingleSampleMode::Zero:
+				case ESingleSampleMode::Unit:
+				{
+					ModeValue = static_cast<float>(InMode);
+				}
+				break;
+
+				case ESingleSampleMode::Hold:
+				{
+					ModeValue = FinalValue;
+				}
+				break;
+
+				case ESingleSampleMode::Loop:
+				{
+					checkNoEntry(); // Should be handled above
+				}
+				break;
+
+				default:
+					break;
+			}
+
+			if (bIsFinalInterp)
+			{
+				TArray<float> FinalInterp = { LastTableValue, ModeValue };
+				OutSampleView.Last() = FMath::Frac(Index);
+				Interpolate(FinalInterp, OutSampleView, Settings.InterpolationMode);
+			}
+			else
+			{
+				OutSampleView.Last() = ModeValue;
+			}
+
+			if (!FMath::IsNearlyEqual(Settings.Amplitude, 1.0f))
+			{
+				OutSampleView.Last() *= Settings.Amplitude;
+			}
+
+			if (!FMath::IsNearlyZero(Settings.Offset))
+			{
+				OutSampleView.Last() += Settings.Offset;
+			}
+		}
+
+		return Index;
 	}
 
 	int32 FWaveTableSampler::GetIndexFinished() const

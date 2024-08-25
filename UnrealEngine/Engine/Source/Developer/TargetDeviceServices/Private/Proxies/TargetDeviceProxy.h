@@ -185,6 +185,11 @@ public:
 		return Shared;
 	}
 	
+	virtual bool IsSimulated() const override
+	{
+		return (ConnectionType == TEXT("Simulator"));
+	}
+	
 	virtual bool TerminateLaunchedProcess(FName InVariant, const FString& ProcessIdentifier) override;
 
 	virtual void PowerOff(bool Force) override;

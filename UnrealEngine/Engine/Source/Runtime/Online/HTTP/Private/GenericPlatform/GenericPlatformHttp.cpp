@@ -118,11 +118,21 @@ public:
 	virtual bool ProcessRequest() override { return false; }
 	virtual void CancelRequest() override {}
 	virtual EHttpRequestStatus::Type GetStatus() const override { return EHttpRequestStatus::NotStarted; }
+	virtual EHttpFailureReason GetFailureReason() const override { return EHttpFailureReason::None; }
+	virtual const FString& GetEffectiveURL() const override { return EffectiveURL; }
 	virtual const FHttpResponsePtr GetResponse() const override { return nullptr; }
 	virtual void Tick(float DeltaSeconds) override {}
 	virtual float GetElapsedTime() const override { return 0.0f; }
 	virtual void SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy InDelegateThreadPolicy) override {}
 	virtual EHttpRequestDelegateThreadPolicy GetDelegateThreadPolicy() const override { return EHttpRequestDelegateThreadPolicy::CompleteOnGameThread; }
+	virtual void SetTimeout(float InTimeoutSecs) override {}
+	virtual void ClearTimeout() override {}
+	virtual TOptional<float> GetTimeout() const override { return TOptional<float>(); }
+	virtual void SetActivityTimeout(float InTimeoutSecs) override {}
+	virtual void ProcessRequestUntilComplete() override {}
+
+private:
+	FString EffectiveURL;
 };
 
 FDefaultUserAgentBuilder::FDefaultUserAgentBuilder()
@@ -300,12 +310,12 @@ IHttpRequest* FGenericPlatformHttp::ConstructRequest()
 	return new FGenericPlatformHttpRequest();
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 bool FGenericPlatformHttp::UsesThreadedHttp()
 {
-	// Many platforms use libcurl.  Our libcurl implementation uses threading.
-	// Platforms that don't use libcurl but have threading will need to override UsesThreadedHttp to return true for their platform.
-	return WITH_CURL;
+	return true;
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 static bool IsAllowedChar(UTF8CHAR LookupChar)
 {
@@ -474,7 +484,6 @@ FString FGenericPlatformHttp::GetUrlDomainAndPort(const FStringView Url)
 	return FString(DomainAndPort);
 }
 
-
 FString FGenericPlatformHttp::GetUrlDomain(const FStringView Url)
 {
 	FStringView Protocol;
@@ -496,6 +505,22 @@ FString FGenericPlatformHttp::GetUrlDomain(const FStringView Url)
 	}
 
 	return FString(Domain);
+}
+
+FString FGenericPlatformHttp::GetUrlBase(const FStringView Url)
+{
+	FStringView UrlBase = Url;
+	for (int32 Index = Url.Find(TEXT("://")) + 3; Index < Url.Len(); ++Index)
+	{
+		const TCHAR Character = Url[Index];
+		if (Character == TEXT('/') || Character == TEXT('?') || Character == TEXT('#'))
+		{
+			UrlBase.LeftInline(Index);
+			break;
+		}
+	}
+
+	return FString(UrlBase);
 }
 
 FString FGenericPlatformHttp::GetMimeType(const FString& FilePath)

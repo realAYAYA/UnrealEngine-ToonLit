@@ -25,7 +25,7 @@ bool UPhysicsAssetThumbnailRenderer::CanVisualizeAsset(UObject* Object)
 		return false;
 	}
 	USkeletalMesh* SkeletalMesh = PhysicsAsset->PreviewSkeletalMesh.LoadSynchronous();
-	const bool bValidRenderData = SkeletalMesh && !SkeletalMesh->IsCompiling() && SkeletalMesh->GetResourceForRendering();
+	const bool bValidRenderData = SkeletalMesh && SkeletalMesh->IsReadyToRenderInThumbnail();
 	if (!bValidRenderData)
 	{
 		return false;
@@ -39,7 +39,7 @@ void UPhysicsAssetThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, uin
 	if (PhysicsAsset)
 	{
 		USkeletalMesh* SkeletalMesh = PhysicsAsset->PreviewSkeletalMesh.LoadSynchronous();
-		const bool bValidRenderData = SkeletalMesh && !SkeletalMesh->IsCompiling() && SkeletalMesh->GetResourceForRendering();
+		const bool bValidRenderData = SkeletalMesh && SkeletalMesh->IsReadyToRenderInThumbnail();
 		if (!bValidRenderData)
 		{
 			return;

@@ -14,6 +14,7 @@
 #include "NavigationOctree.h"
 #include "AI/NavigationSystemHelpers.h"
 #include "AI/Navigation/PathFollowingAgentInterface.h"
+#include "Engine/OverlapResult.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NavLinkCustomComponent)
@@ -53,7 +54,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	if (!HasAnyFlags(RF_ClassDefaultObject))
 	{
-		AuxiliaryCustomLinkId = FNavLinkAuxiliaryId::GenerateUniqueAuxiliaryId();
+		const FString PathName = GetPathName();
+		AuxiliaryCustomLinkId = FNavLinkAuxiliaryId::GenerateUniqueAuxiliaryId(*PathName);
 	}
 }
 
@@ -136,7 +138,9 @@ void UNavLinkCustomComponent::PostEditImport()
 
 	// Generate a new AuxiliarLinkUserId and set CustomLinkId to Invalid, this is then inline with the constructor in this regard.
 	// CustomLinkId is set to a valid Id later in OnRegister().
-	AuxiliaryCustomLinkId = FNavLinkAuxiliaryId::GenerateUniqueAuxiliaryId();
+	const FString PathName = GetPathName();
+	AuxiliaryCustomLinkId = FNavLinkAuxiliaryId::GenerateUniqueAuxiliaryId(*PathName);
+
 	CustomLinkId = FNavLinkId::Invalid;
 }
 #endif // WITH_EDITOR

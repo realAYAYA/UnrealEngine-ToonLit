@@ -11,7 +11,7 @@ public class OnlineSubsystemApple : ModuleRules
     {
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			ConfigHierarchy PlatformGameConfig = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, DirectoryReference.FromFile(Target.ProjectFile), UnrealTargetPlatform.IOS);
 			PlatformGameConfig.GetBool("/Script/IOSRuntimeSettings.IOSRuntimeSettings", "bEnableSignInWithAppleSupport", out bSignInWithAppleSupported);
@@ -32,7 +32,7 @@ public class OnlineSubsystemApple : ModuleRules
 			"OnlineSubsystem",
         });
 
-		if (Target.Platform == UnrealTargetPlatform.Mac || Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
 		{
 			if (bSignInWithAppleSupported)
 			{

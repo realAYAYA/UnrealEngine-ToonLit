@@ -16,26 +16,13 @@
 
 void LockGLContext(NSOpenGLContext* Context)
 {
-	if (FPlatformMisc::IsRunningOnMavericks())
-	{
-		CGLLockContext([Context CGLContextObj]);
-	}
-	else
-	{
-		[Context lock];
-	}
+	[Context lock];
 }
 
 void UnlockGLContext(NSOpenGLContext* Context)
 {
-	if (FPlatformMisc::IsRunningOnMavericks())
-	{
-		CGLUnlockContext([Context CGLContextObj]);
-	}
-	else
-	{
-		[Context unlock];
-	}
+
+	[Context unlock];
 }
 
 @implementation FSlateOpenGLLayer
@@ -197,20 +184,8 @@ void FSlateOpenGLContext::Initialize(void* InWindow, const FSlateOpenGLContext* 
 		}
 
 		MainThreadCall(^{
-			if (FPlatformMisc::IsRunningOnMavericks() && ([Window styleMask] & NSWindowStyleMaskTexturedBackground))
-			{
-				NSView* SuperView = [[Window contentView] superview];
-				[SuperView addSubview:View];
-				[SuperView setWantsLayer:YES];
-				[SuperView addSubview:[Window standardWindowButton:NSWindowCloseButton]];
-				[SuperView addSubview:[Window standardWindowButton:NSWindowMiniaturizeButton]];
-				[SuperView addSubview:[Window standardWindowButton:NSWindowZoomButton]];
-			}
-			else
-			{
-				[View setWantsLayer:YES];
-				[Window setContentView:View];
-			}
+			[View setWantsLayer:YES];
+			[Window setContentView:View];
 
 			[[Window standardWindowButton:NSWindowCloseButton] setAction:@selector(performClose:)];
 		}, NSDefaultRunLoopMode, true);

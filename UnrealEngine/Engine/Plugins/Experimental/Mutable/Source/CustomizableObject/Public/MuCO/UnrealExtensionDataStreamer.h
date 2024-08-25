@@ -8,14 +8,14 @@
 #include "MuR/ExtensionDataStreamer.h"
 #include "Templates/SharedPointerFwd.h"
 
-class FCustomizableObjectSystemPrivate;
+class UCustomizableObjectSystemPrivate;
 class UCustomizableObject;
 
 /** An implementation of mu::ExtensionDataStreamer designed to work with the Customizable Object integration */
 class CUSTOMIZABLEOBJECT_API FUnrealExtensionDataStreamer : public mu::ExtensionDataStreamer
 {
 public:
-	FUnrealExtensionDataStreamer(const TSharedRef<FCustomizableObjectSystemPrivate>& InSystemPrivate);
+	FUnrealExtensionDataStreamer(const TWeakObjectPtr<UCustomizableObjectSystemPrivate>& InSystemPrivateWeak);
 	virtual ~FUnrealExtensionDataStreamer();
 
 	/** Not copyable because TFuture isn't copyable. This shouldn't be limiting in practise. */
@@ -58,14 +58,14 @@ public:
 private:
 	/** Queued up on the Game thread to start the async load */
 	static TSharedPtr<FStreamableHandle> StartLoadOnGameThread(
-		const TSharedRef<FCustomizableObjectSystemPrivate>& SystemPrivate,
+		const TWeakObjectPtr<UCustomizableObjectSystemPrivate>& SystemPrivateWeak,
 		const TWeakObjectPtr<UCustomizableObject>& ObjectToLoadFor,
 		const TSharedRef<mu::FExtensionDataLoadHandle>& LoadHandle);
 
 	/** Called when the async load has finished loading the Extension Data */
 	void NotifyLoadCompleted(UCustomizableObject* Object, const TSharedRef<mu::FExtensionDataLoadHandle>& LoadHandle);
 
-	TSharedRef<FCustomizableObjectSystemPrivate> SystemPrivate;
+	TWeakObjectPtr<UCustomizableObjectSystemPrivate> SystemPrivate; // Can not be a TStrongObjectPtr since then it will create a cycle b TSharedPtr and UObjects.
 
 	/** Guards PendingLoads, ShouldCancelPtr and ActiveObject */
 	FCriticalSection* Mutex = nullptr;

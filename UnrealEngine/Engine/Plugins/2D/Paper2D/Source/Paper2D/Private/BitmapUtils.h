@@ -34,7 +34,7 @@ struct FBitmap : public FAlphaBitmap
 		QueuedPoints.Add(FIntPoint(StartX, StartY));
 		while (QueuedPoints.Num() > 0)
 		{
-			FIntPoint Point = QueuedPoints.Pop(false);
+			FIntPoint Point = QueuedPoints.Pop(EAllowShrinking::No);
 			if (MaskBitmap.GetPixel(Point.X, Point.Y) == 0 && GetPixel(Point.X, Point.Y) == 1)
 			{
 				MaskBitmap.SetPixel(Point.X, Point.Y, 1);
@@ -195,7 +195,7 @@ struct FBitmap : public FAlphaBitmap
 								{
 									NewRect = FIntRect(FMath::Min(NewRect.Min.X, ExistingRect.Min.X), FMath::Min(NewRect.Min.Y, ExistingRect.Min.Y),
 													   FMath::Max(NewRect.Max.X, ExistingRect.Max.X), FMath::Max(NewRect.Max.Y, ExistingRect.Max.Y));
-									OutRects.RemoveAtSwap(OutRectIndex, 1, false);
+									OutRects.RemoveAtSwap(OutRectIndex, 1, EAllowShrinking::No);
 									break;
 								}
 							}

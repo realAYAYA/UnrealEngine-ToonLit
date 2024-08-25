@@ -128,6 +128,13 @@ const COMMAND_LINE_ARGS: {[param: string]: Arg<any>} = {
 		dflt: false
 	},
 
+	previewOnly: {
+		match: /^(-previewOnly)$/,
+		parse: str => str === "false" ? false : true,
+		env: 'ROBO_PREVIEW_ONLY',
+		dflt: false
+	},
+
 	// Sentry environment designation -- use 'PROD' to enable Sentry bug tracking
 	epicEnv: {
 		match: /^(-epicEnv)$/,
@@ -167,6 +174,24 @@ const COMMAND_LINE_ARGS: {[param: string]: Arg<any>} = {
 		match: /^-persistenceDir=(.+)$/,
 		env: 'ROBO_PERSISTENCE_DIR',
 		dflt: process.platform === 'win32' ? 'D:/ROBO' : path.resolve(process.env.HOME || '/root', '.robomerge')
+	},
+	persistenceBackupPath: {
+		match: /^-persistenceBackupPath=(.*)$/,
+		env: 'ROBO_PERSISTENCE_BACKUP_PATH',
+		dflt: '//GamePlugins/RobomergePersistence'
+	},
+	persistenceBackupWorkspace: {
+		match: /^-bs_workspace=(.+)$/,
+		env: 'ROBO_PERSISTENCE_BACKUP_WORKSPACE',
+		dflt: 'robomerge-persistence-' + os.hostname()
+	},
+	persistenceBackupFrequency: {
+		match: /^-persistenceBackupFrequency=([0-9]+)$/,
+		env: 'ROBO_PERSISTENCE_BACKUP_FREQUENCY',
+		parse: (str: string) => {
+			return parseInt(str)
+		},
+		dflt: 60
 	}
 };
 
@@ -302,7 +327,7 @@ async function _initWorkspacesForGraphBot(graphBot: GraphBot, existingWorkspaces
 		}
 	}
 
-	Promise.all(reloadedWorkspaces)
+	await Promise.all(reloadedWorkspaces)
 	if (workspacesToReset.length > 0) {
 		logger.info('The following workspaces already exist and will be reset: ' + workspacesToReset.join(', '))
 		await p4util.cleanWorkspaces(robo.p4, workspacesToReset)
@@ -355,7 +380,7 @@ async function _onBranchSpecReloaded(graphBot: GraphBot, logger: ContextualLogge
 		--specReloadEntryCount
 	}
 
-	graphBot.initBots(robo.graph)
+	graphBot.initBots(robo.graph, args.previewOnly)
 
 	if (specReloadEntryCount === 0) {
 		// regenerate ubergraph (last update to finish does regen if multiple in flight)
@@ -380,10 +405,35 @@ async function _onBranchSpecReloaded(graphBot: GraphBot, logger: ContextualLogge
 
 async function init(logger: ContextualLogger) {
 
-	if (!args.branchSpecsRootPath) {
-		logger.warn('Auto brancher updater not configured!')
+	let lookupStream = async function(rootPath: string): Promise<string> {
+
+		const match = rootPath.match(/(\/\/.*?\/.*?)(\/|$)/)
+		if (match) {
+			const stream = match[1]
+
+			while (true) {
+				try {
+					const streams = await robo.p4.streams();
+					if (streams.has(stream)) {
+						break
+					}
+				}
+				catch (err) {
+				}
+
+				const timeout = 5.0;
+				logger.info(`Will check for ${stream} again in ${timeout} sec...`);
+				await _setTimeout(timeout*1000);
+			}
+			return stream
+		}
+		else {
+			logger.warn(`Unable to determine stream from root path '${rootPath}'`)
+			return ""
+		}
 	}
-	else {
+
+	if (args.branchSpecsRootPath) {
 		const branchSpecsAbsPath = fs.realpathSync(args.branchSpecsDirectory)
 		const autoUpdaterConfig = {
 			rootPath: args.branchSpecsRootPath,
@@ -394,37 +444,42 @@ async function init(logger: ContextualLogger) {
 		// Ensure we have a workspace for branch specs
 		const workspace: Object[] = await robo.p4.find_workspace_by_name(args.branchSpecsWorkspace)
 		if (workspace.length === 0) {
-			logger.info("Cannot find branch spec workspace " + args.branchSpecsWorkspace + 
-						", creating a new one.")
+			logger.info(`Cannot find workspace ${args.branchSpecsWorkspace}, creating a new one.`)
 
-			while (true) {
-				const match = args.branchSpecsRootPath.match(/(\/\/.*?\/.*?)(\/|$)/)
-				if (match) {
-					const branchSpecsStream = match[1]
-					try {
-						const streams = await robo.p4.streams();
-						if (streams.has(branchSpecsStream)) {
-							break
-						}
-					}
-					catch (err) {
-					}
-
-					const timeout = 5.0;
-					logger.info(`Will check again in ${timeout} sec...`);
-					await _setTimeout(timeout*1000);
-				}
-				else {
-					logger.warn(`Unable to determine stream from root path '${args.branchSpecsRootPath}'`)
-				}
+			if ((await lookupStream(args.branchSpecsRootPath)).length > 0) {
+				await robo.p4.newBranchSpecWorkspace(autoUpdaterConfig.workspace, args.branchSpecsRootPath)
 			}
-
-			await robo.p4.newBranchSpecWorkspace(autoUpdaterConfig.workspace, args.branchSpecsRootPath)
 		}
 
 		// make sure we've got the latest branch specs
 		logger.info('Syncing latest branch specs')
 		await AutoBranchUpdater.init({p4: robo.p4}, autoUpdaterConfig, logger)
+
+	} else {
+		logger.warn('Auto brancher updater not configured!')
+	}
+
+	if (args.persistenceBackupFrequency > 0 && !args.previewOnly) {
+		const workspace: Object[] = await robo.p4.find_workspace_by_name(args.persistenceBackupWorkspace)
+		if (workspace.length === 0) {
+			logger.info(`Cannot find workspace ${args.persistenceBackupWorkspace}, creating a new one.`)
+
+			const workspace = {directory: fs.realpathSync(args.persistenceDir), name: args.persistenceBackupWorkspace}
+			const stream = await lookupStream(args.persistenceBackupPath)
+			if (stream.length > 0) {
+				let roots: string | string[] = '/app/data' // default linux path
+				if (workspace.directory !== roots) {
+					roots = [roots, workspace.directory] // specified directory
+				}
+				const params: any = {
+					AltRoots: roots,
+					Stream: stream
+				}		
+				await robo.p4.newWorkspace(args.persistenceBackupWorkspace, params)
+			}
+		}
+	} else {
+		logger.warn('Persistence backup not configured!')
 	}
 
 	_initMailer(logger)
@@ -436,7 +491,7 @@ async function init(logger: ContextualLogger) {
 	const graph = new Graph
 	robo.graph = new GraphAPI(graph)
 	for (const graphBot of robo.graphBots.values()) {
-		graphBot.initBots(robo.graph)
+		graphBot.initBots(robo.graph, args.previewOnly)
 		addBranchGraph(graph, graphBot.branchGraph)
 	}
 }

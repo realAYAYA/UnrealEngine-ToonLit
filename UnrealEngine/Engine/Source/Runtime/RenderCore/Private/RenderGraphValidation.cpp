@@ -10,45 +10,6 @@
 
 namespace
 {
-template <typename TFunction>
-void EnumerateSubresources(const FRHITransitionInfo& Transition, uint32 NumMips, uint32 NumArraySlices, uint32 NumPlaneSlices, TFunction Function)
-{
-	uint32 MinMipIndex = 0;
-	uint32 MaxMipIndex = NumMips;
-	uint32 MinArraySlice = 0;
-	uint32 MaxArraySlice = NumArraySlices;
-	uint32 MinPlaneSlice = 0;
-	uint32 MaxPlaneSlice = NumPlaneSlices;
-
-	if (!Transition.IsAllMips())
-	{
-		MinMipIndex = Transition.MipIndex;
-		MaxMipIndex = MinMipIndex + 1;
-	}
-
-	if (!Transition.IsAllArraySlices())
-	{
-		MinArraySlice = Transition.ArraySlice;
-		MaxArraySlice = MinArraySlice + 1;
-	}
-
-	if (!Transition.IsAllPlaneSlices())
-	{
-		MinPlaneSlice = Transition.PlaneSlice;
-		MaxPlaneSlice = MinPlaneSlice + 1;
-	}
-
-	for (uint32 PlaneSlice = MinPlaneSlice; PlaneSlice < MaxPlaneSlice; ++PlaneSlice)
-	{
-		for (uint32 ArraySlice = MinArraySlice; ArraySlice < MaxArraySlice; ++ArraySlice)
-		{
-			for (uint32 MipIndex = MinMipIndex; MipIndex < MaxMipIndex; ++MipIndex)
-			{
-				Function(FRDGTextureSubresource(MipIndex, ArraySlice, PlaneSlice));
-			}
-		}
-	}
-}
 
 const ERHIAccess AccessMaskCopy    = ERHIAccess::CopySrc | ERHIAccess::CopyDest | ERHIAccess::CPURead;
 const ERHIAccess AccessMaskCompute = ERHIAccess::SRVCompute | ERHIAccess::UAVCompute;
@@ -200,7 +161,7 @@ void FRDGUserValidation::ValidateCreateResource(FRDGResourceRef Resource)
 void FRDGUserValidation::ValidateCreateViewableResource(FRDGViewableResource* Resource)
 {
 	ValidateCreateResource(Resource);
-	Resource->ViewableDebugData = Allocator.Alloc<FRDGViewableResourceDebugData>();
+	Resource->ViewableDebugData = Allocator.AllocNoDestruct<FRDGViewableResourceDebugData>();
 }
 
 void FRDGUserValidation::ValidateCreateTexture(FRDGTextureRef Texture)
@@ -211,7 +172,7 @@ void FRDGUserValidation::ValidateCreateTexture(FRDGTextureRef Texture)
 	}
 
 	ValidateCreateViewableResource(Texture);
-	Texture->TextureDebugData = Allocator.Alloc<FRDGTextureDebugData>();
+	Texture->TextureDebugData = Allocator.AllocNoDestruct<FRDGTextureDebugData>();
 	if (GRDGDebug)
 	{
 		TrackedTextures.Add(Texture);
@@ -226,6 +187,9 @@ void FRDGUserValidation::ValidateCreateBuffer(FRDGBufferRef Buffer)
 	}
 
 	ValidateCreateViewableResource(Buffer);
+
+	checkf(Buffer->Desc.GetSize() > 0 || Buffer->NumElementsCallback, TEXT("Creating buffer '%s' is zero bytes in size."), Buffer->Name);
+
 	Buffer->BufferDebugData = Allocator.Alloc<FRDGBufferDebugData>();
 	if (GRDGDebug)
 	{
@@ -293,7 +257,7 @@ void FRDGUserValidation::ValidateRegisterExternalTexture(
 		return;
 	}
 
-	checkf(Name, TEXT("Attempted to register external texture with NULL name."));
+	checkf(Name!=nullptr, TEXT("Attempted to register external texture with NULL name."));
 	checkf(ExternalPooledTexture.IsValid(), TEXT("Attempted to register NULL external texture."));
 	ExecuteGuard(TEXT("RegisterExternalTexture"), Name);
 }
@@ -305,7 +269,7 @@ void FRDGUserValidation::ValidateRegisterExternalBuffer(const TRefCountPtr<FRDGP
 		return;
 	}
 
-	checkf(Name, TEXT("Attempted to register external buffer with NULL name."));
+	checkf(Name!=nullptr, TEXT("Attempted to register external buffer with NULL name."));
 	checkf(ExternalPooledBuffer.IsValid(), TEXT("Attempted to register NULL external buffer."));
 	ExecuteGuard(TEXT("RegisterExternalBuffer"), Name);
 }
@@ -337,7 +301,7 @@ void FRDGUserValidation::ValidateCreateTexture(const FRDGTextureDesc& Desc, cons
 		return;
 	}
 
-	checkf(Name, TEXT("Creating a texture requires a valid debug name."));
+	checkf(Name!=nullptr, TEXT("Creating a texture requires a valid debug name."));
 	ExecuteGuard(TEXT("CreateTexture"), Name);
 
 	// Make sure the descriptor is supported by the RHI.
@@ -363,10 +327,8 @@ void FRDGUserValidation::ValidateCreateBuffer(const FRDGBufferDesc& Desc, const 
 		return;
 	}
 
-	checkf(Name, TEXT("Creating a buffer requires a valid debug name."));
+	checkf(Name!=nullptr, TEXT("Creating a buffer requires a valid debug name."));
 	ExecuteGuard(TEXT("CreateBuffer"), Name);
-
-	checkf(Desc.GetSize() > 0, TEXT("Creating buffer '%s' is zero bytes in size."), Name);
 
 	if (EnumHasAllFlags(Desc.Usage, EBufferUsageFlags::StructuredBuffer | EBufferUsageFlags::ByteAddressBuffer))
 	{
@@ -466,6 +428,18 @@ void FRDGUserValidation::ValidateUploadBuffer(FRDGBufferRef Buffer, const void* 
 	check((InitialData || InitialDataSize == 0) && InitialDataFreeCallback);
 }
 
+void FRDGUserValidation::ValidateUploadBuffer(FRDGBufferRef Buffer, const FRDGBufferInitialDataFillCallback& InitialDataFillCallback)
+{
+	if (!GRDGValidation)
+	{
+		return;
+	}
+
+	check(Buffer);
+	checkf(!Buffer->bQueuedForUpload, TEXT("Buffer %s already has an upload queued. Only one upload can be done for each graph."), Buffer->Name);
+	check(InitialDataFillCallback);
+}
+
 void FRDGUserValidation::ValidateUploadBuffer(FRDGBufferRef Buffer, const FRDGBufferInitialDataCallback& InitialDataCallback, const FRDGBufferInitialDataSizeCallback& InitialDataSizeCallback)
 {
 	if (!GRDGValidation)
@@ -488,6 +462,19 @@ void FRDGUserValidation::ValidateUploadBuffer(FRDGBufferRef Buffer, const FRDGBu
 	check(Buffer);
 	checkf(!Buffer->bQueuedForUpload, TEXT("Buffer %s already has an upload queued. Only one upload can be done for each graph."), Buffer->Name);
 	check(InitialDataCallback && InitialDataSizeCallback && InitialDataFreeCallback);
+}
+
+void FRDGUserValidation::ValidateCommitBuffer(FRDGBufferRef Buffer, uint64 CommitSizeInBytes)
+{
+	if (!GRDGValidation)
+	{
+		return;
+	}
+
+	check(Buffer);
+	checkf(EnumHasAnyFlags(Buffer->Desc.Usage, BUF_ReservedResource), TEXT("Buffer %s is not marked as reserved and thus cannot be queued for reserved resource commit."), Buffer->Name);
+	checkf(Buffer->IsExternal(), TEXT("Only external buffers support commit operation. It is expected that reserved resource commit mechanism is only used when perserving buffer contents is required."));
+	checkf(CommitSizeInBytes > 0, TEXT("Attempted to set a reserved buffer commit size of 0 for buffer %s"), Buffer->Name);
 }
 
 void FRDGUserValidation::ValidateExtractTexture(FRDGTextureRef Texture, TRefCountPtr<IPooledRenderTarget>* OutTexturePtr)
@@ -735,10 +722,10 @@ void FRDGUserValidation::ValidateAddPass(const void* ParameterStruct, const FSha
 		TEXT("Pass %s specified both Raster and AsyncCompute. They are mutually exclusive."), Name.GetTCHAR());
 
 	checkf(!EnumHasAllFlags(Flags, ERDGPassFlags::SkipRenderPass) || EnumHasAllFlags(Flags, ERDGPassFlags::Raster),
-		TEXT("Pass %s specified SkipRenderPass without Raster. Only raster passes support this flag."));
+		TEXT("Pass %s specified SkipRenderPass without Raster. Only raster passes support this flag."), Name.GetTCHAR());
 
 	checkf(!EnumHasAllFlags(Flags, ERDGPassFlags::NeverMerge) || EnumHasAllFlags(Flags, ERDGPassFlags::Raster),
-		TEXT("Pass %s specified NeverMerge without Raster. Only raster passes support this flag."));
+		TEXT("Pass %s specified NeverMerge without Raster. Only raster passes support this flag."), Name.GetTCHAR());
 }
 
 void FRDGUserValidation::ValidateAddPass(const FRDGPass* Pass, bool bSkipPassAccessMarking)
@@ -1358,7 +1345,7 @@ void FRDGBarrierValidation::ValidateBarrierBatchBegin(const FRDGPass* Pass, cons
 		for (int32 Index = 0; Index < Batch.Transitions.Num(); ++Index)
 		{
 			FRDGViewableResource* Resource = Batch.DebugTransitionResources[Index];
-			const FRHITransitionInfo& Transition = Batch.Transitions[Index];
+			const FRDGTransitionInfo& Transition = Batch.Transitions[Index];
 
 			if (Resource->Type == ERDGViewableResourceType::Texture)
 			{
@@ -1426,29 +1413,21 @@ void FRDGBarrierValidation::ValidateBarrierBatchBegin(const FRDGPass* Pass, cons
 
 		const FRDGTextureSubresourceLayout SubresourceLayout = Texture->GetSubresourceLayout();
 
-		for (const FRHITransitionInfo& Transition : Transitions)
+		for (const FRDGTransitionInfo& Transition : Transitions)
 		{
-			check(SubresourceLayout.GetSubresourceCount() > 0);
-
-			EnumerateSubresources(Transition, SubresourceLayout.NumMips, SubresourceLayout.NumArraySlices, SubresourceLayout.NumPlaneSlices,
-				[&](FRDGTextureSubresource Subresource)
-			{
-				const int32 SubresourceIndex = SubresourceLayout.GetSubresourceIndex(Subresource);
-
-				UE_LOG(LogRDG, Display, TEXT("\t\tMip(%d), Array(%d), Slice(%d): [%s, %s] -> [%s, %s]"),
-					Subresource.MipIndex, Subresource.ArraySlice, Subresource.PlaneSlice,
-					*GetRHIAccessName(Transition.AccessBefore),
-					*GetRHIPipelineName(Batch.DebugPipelinesToBegin),
-					*GetRHIAccessName(Transition.AccessAfter),
-					*GetRHIPipelineName(Batch.DebugPipelinesToEnd));
-			});
+			UE_LOG(LogRDG, Display, TEXT("\t\tMip(%d), Array(%d), Slice(%d): [%s, %s] -> [%s, %s]"),
+				Transition.MipIndex, Transition.ArraySlice, Transition.PlaneSlice,
+				*GetRHIAccessName(Transition.AccessBefore),
+				*GetRHIPipelineName(Batch.DebugPipelinesToBegin),
+				*GetRHIAccessName(Transition.AccessAfter),
+				*GetRHIPipelineName(Batch.DebugPipelinesToEnd));
 		}
 	}
 
 	for (const auto& Pair : ResourceMap->Buffers)
 	{
 		FRDGBufferRef Buffer = Pair.Key;
-		const FRHITransitionInfo& Transition = Pair.Value;
+		const FRDGTransitionInfo& Transition = Pair.Value;
 
 		if (!IsDebugAllowedForResource(Buffer->Name))
 		{

@@ -596,8 +596,11 @@ bool UWidgetInteractionComponent::PressKey(FKey Key, bool bRepeat)
 	bool bKeyCharResult = false;
 	if (bHasCharCode)
 	{
-		FCharacterEvent CharacterEvent(CharCode, ModifierKeys, VirtualUser->GetUserIndex(), bRepeat);
-		bKeyCharResult = FSlateApplication::Get().ProcessKeyCharEvent(CharacterEvent);
+		if (CharCode <= 0xD7FF || (CharCode >= 0xE000 && CharCode <= 0xFFFF)) // This is a valid UTF16 char from Basic Multilangual Plane
+		{
+			FCharacterEvent CharacterEvent(static_cast<const TCHAR>(CharCode), ModifierKeys, VirtualUser->GetUserIndex(), bRepeat);
+			bKeyCharResult = FSlateApplication::Get().ProcessKeyCharEvent(CharacterEvent);
+		}
 	}
 
 	return bDownResult || bKeyCharResult;

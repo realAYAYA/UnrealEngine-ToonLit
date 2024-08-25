@@ -65,6 +65,10 @@ public:
 	virtual void FocusWindow(UObject* ObjectToFocusOn = NULL) override;
 	//~ End IBehaviorTreeEditor Interface
 
+	//~ Begin IAssetEditorInstance Interface
+	virtual bool IncludeAssetInRestoreOpenAssetsPrompt(UObject* Asset) const override;
+	//~ End IAssetEditorInstance Interface
+
 	//~ Begin FEditorUndoClient Interface
 	virtual void PostUndo(bool bSuccess) override;
 	virtual void PostRedo(bool bSuccess) override;
@@ -195,9 +199,6 @@ public:
 	/** Delegate handler for determining whether to display the current state */
 	bool HandleGetDisplayCurrentState() const;
 
-	/** Delegate handler for when a blackboard key changes (added, removed, renamed) */
-	void HandleBlackboardKeyChanged(UBlackboardData* InBlackboardData, FBlackboardEntry* const InKey);
-
 	/** Check whether blackboard mode is current */
 	bool HandleIsBlackboardModeActive() const;
 
@@ -268,6 +269,7 @@ protected:
 	FName GraphName;
 	FText CornerText;
 	FText TitleText;
+	FText RootNodeNoteText;
 
 private:
 	/** Create widget for graph editing */
@@ -353,4 +355,7 @@ public:
 	/** Modes in mode switcher */
 	static const FName BehaviorTreeMode;
 	static const FName BlackboardMode;
+
+	static FText BehaviorTreeModeText;
+	static FText BlackboardModeText;
 };

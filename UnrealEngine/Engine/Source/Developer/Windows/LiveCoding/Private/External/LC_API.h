@@ -3,7 +3,8 @@
 #pragma once
 
 // BEGIN EPIC MOD
-#include "stddef.h"
+#include <stddef.h>
+#include <stdint.h>
 // END EPIC MOD
 #include "LPP_API.h"
 

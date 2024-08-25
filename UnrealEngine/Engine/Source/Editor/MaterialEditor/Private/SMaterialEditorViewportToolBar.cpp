@@ -89,7 +89,6 @@ bool SMaterialEditorViewportToolBar::IsViewModeSupported(EViewModeIndex ViewMode
 	default:
 		return true;
 	}
-	return true; 
 }
 
 #undef LOCTEXT_NAMESPACE

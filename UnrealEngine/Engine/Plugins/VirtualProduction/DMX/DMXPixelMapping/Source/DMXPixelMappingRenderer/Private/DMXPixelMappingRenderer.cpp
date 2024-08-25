@@ -89,9 +89,8 @@ public:
 		SHADER_PARAMETER_SAMPLER(SamplerState, InputSampler)
 
 		SHADER_PARAMETER(float, Brightness)
-		SHADER_PARAMETER(FIntPoint, InputTextureSize)
-		SHADER_PARAMETER(FIntPoint, OutputTextureSize)
-		SHADER_PARAMETER(FVector2f, UVCellSize)
+		SHADER_PARAMETER(FVector2f, UVTopLeftRotated)
+		SHADER_PARAMETER(FVector2f, UVTopRightRotated)
 	END_SHADER_PARAMETER_STRUCT()
 
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
@@ -193,9 +192,6 @@ void FDMXPixelMappingRenderer::DownsampleRender(
 					PSParameters.InputTexture = InputTextureRHI;
 					PSParameters.Brightness = Brightness;
 					PSParameters.InputSampler = TStaticSamplerState<SF_Trilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-					PSParameters.InputTextureSize = InputTextureSize;
-					PSParameters.OutputTextureSize = OutputTextureSize;
-					PSParameters.UVCellSize = FVector2f(PixelParam.UVCellSize);
 					SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), PSParameters);
 
 					// Draw a two triangle on the entire viewport.

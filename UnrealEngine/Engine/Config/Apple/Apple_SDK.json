@@ -1,0 +1,10 @@
+{
+	// Xcode versions
+	"MainVersion": "14.1",
+	"MinVersion": "14.1.0",
+	"MaxVersion": "15.9.0",
+
+	// The versions on Windows are iTunes versions
+	"MinVersion_Win64": "1100.0.0.0",
+	"MaxVersion_Win64": "8999.0"
+}

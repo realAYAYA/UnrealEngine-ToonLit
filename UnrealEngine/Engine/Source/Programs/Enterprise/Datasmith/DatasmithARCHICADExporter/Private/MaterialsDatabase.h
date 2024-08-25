@@ -18,10 +18,26 @@ enum ESided : bool
 	kDoubleSide = true
 };
 
+#if AC_VERSION > 26
+extern const API_AttributeIndex kInvalidMaterialIndex;
+inline bool operator != (GS::Int32 V1, const API_AttributeIndex& V2)
+{
+	return V1 != V2.ToInt32_Deprecated();
+}
+inline bool operator <= (GS::Int32 V1, const API_AttributeIndex& V2)
+{
+	return V1 <= V2.ToInt32_Deprecated();
+}
+inline bool operator < (GS::Int32 V1, const API_AttributeIndex& V2)
+{
+	return V1 < V2.ToInt32_Deprecated();
+}
+#else
 enum : int32
 {
 	kInvalidMaterialIndex = 0
 };
+#endif
 
 class FMaterialKey
 {

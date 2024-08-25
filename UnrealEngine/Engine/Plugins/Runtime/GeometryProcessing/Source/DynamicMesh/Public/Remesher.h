@@ -102,6 +102,8 @@ public:
 	/** Override constant SmoothSpeedT with function */
 	TFunction<double(const FDynamicMesh3&, int)> CustomSmoothSpeedF;
 
+	/** Scale the computed edge length to allow for adaptive remeshing */
+	TFunction<double(const FDynamicMesh3& Mesh, int VertexA, int VertexB)> CustomEdgeLengthScaleF;
 
 
 	/** enable parallel projection. Only applied in AfterRefinement mode */
@@ -210,17 +212,17 @@ protected:
 	// sequential edge IDs, and all edges are < min edge length, then we can easily end
 	// up successively collapsing each tiny edge, and eroding away the entire mesh!
 	// By using modulo-index loop we jump around and hence this is unlikely to happen.
-	const int ModuloPrime = 31337;     // any prime will do...
-	int MaxEdgeID = 0;
+	uint64 MaxEdgeID = 0;
 	virtual int StartEdges()
 	{
-		MaxEdgeID = Mesh->MaxEdgeID();
+		MaxEdgeID = static_cast<uint64>(Mesh->MaxEdgeID());
 		return 0;
 	}
 
 	virtual int GetNextEdge(int CurEdgeID, bool& bDone)
 	{
-		int new_eid = (CurEdgeID + ModuloPrime) % MaxEdgeID;
+		constexpr uint64 ModuloPrime = 4294967311ull;     // choose prime > max uint32, to always be co-prime with MaxEdgeID
+		int new_eid = static_cast<int>( (static_cast<uint64>(CurEdgeID) + ModuloPrime) % MaxEdgeID );
 		bDone = (new_eid == 0);
 		return new_eid;
 	}

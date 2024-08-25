@@ -552,8 +552,14 @@ namespace Clipper2Lib
   {
     if (radiusX <= 0) return Path<T>();
     if (radiusY <= 0) radiusY = radiusX;
-    if (steps <= 2)
-      steps = static_cast<int>(PI * sqrt((radiusX + radiusY) / 2));
+	// @UE BEGIN
+	// restrict max steps to prevent integer overflow / excessive steps for very large radius, when determining steps from radius
+	if (steps <= 2)
+	{
+		constexpr int32 MaxSteps = 100000;
+		steps = static_cast<int>(FMath::Min((double)MaxSteps, PI * sqrt((radiusX + radiusY) / 2)));
+	}
+	// @UE END
 
     // @UE BEGIN
     // explicit casts

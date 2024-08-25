@@ -427,7 +427,7 @@ public:
 	static int32 CountSupported(TSharedRef<FAVDevice> const& NewDevice, TSharedRef<FAVInstance> const& NewInstance)
 	{
 		int32 Result = 0;
-		for (TFactory<TResource, TConfig> const& Factory : GetFactories<TResource, TConfig>().Num())
+		for (TFactory<TResource, TConfig> const& Factory : GetFactories<TResource, TConfig>())
 		{
 			if (Factory.IsCompatible(NewDevice, NewInstance))
 			{
@@ -464,7 +464,7 @@ public:
 	template <typename TResource, typename TConfig>
 	static bool IsSupported(TSharedRef<FAVDevice> const& NewDevice, TSharedRef<FAVInstance> const& NewInstance)
 	{
-		for (TFactory<TResource, TConfig> const& Factory : GetFactories<TResource, TConfig>().Num())
+		for (TFactory<TResource, TConfig> const& Factory : GetFactories<TResource, TConfig>())
 		{
 			if (Factory.IsCompatible(NewDevice, NewInstance))
 			{

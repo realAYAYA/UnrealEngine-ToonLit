@@ -83,15 +83,25 @@ void FMassFragmentRequirements::SortRequirements()
 
 bool FMassFragmentRequirements::CheckValidity() const
 {
-	return
-		RequiredAllFragments.IsEmpty() == false || RequiredAnyFragments.IsEmpty() == false || RequiredOptionalFragments.IsEmpty() == false ||
-		RequiredAllTags.IsEmpty() == false || RequiredAnyTags.IsEmpty() == false;
+	if (bValidityIsCached == false)
+	{
+		bAreRequirementsValid = RequiredAllFragments.IsEmpty() == false || RequiredAnyFragments.IsEmpty() == false
+			|| RequiredOptionalFragments.IsEmpty() == false	|| RequiredAllTags.IsEmpty() == false || RequiredAnyTags.IsEmpty() == false;
+		bValidityIsCached = true;
+	}
+	return bAreRequirementsValid;
 }
 
 bool FMassFragmentRequirements::IsEmpty() const
 {
-	return FragmentRequirements.IsEmpty() && ChunkFragmentRequirements.IsEmpty() && ConstSharedFragmentRequirements.IsEmpty() 
-		&& SharedFragmentRequirements.IsEmpty() && RequiredAllTags.IsEmpty() && RequiredAnyTags.IsEmpty() && RequiredNoneTags.IsEmpty();
+	if (bEmptynessIsCached == false)
+	{
+		bAreRequirementsEmpty = FragmentRequirements.IsEmpty() && ChunkFragmentRequirements.IsEmpty() && ConstSharedFragmentRequirements.IsEmpty()
+			&& SharedFragmentRequirements.IsEmpty() && RequiredAllTags.IsEmpty() && RequiredAnyTags.IsEmpty() && RequiredNoneTags.IsEmpty();
+		bEmptynessIsCached = true;
+	}
+
+	return bAreRequirementsEmpty;
 }
 
 bool FMassFragmentRequirements::DoesArchetypeMatchRequirements(const FMassArchetypeHandle& ArchetypeHandle) const

@@ -7,17 +7,17 @@
 
 enum class EUsdDragDropOpType
 {
-    None,
-    Prims,
-    Layers,
-    Attributes
+	None,
+	Prims,
+	Layers,
+	Attributes
 };
 
 class FUsdDragDropOp : public FDecoratedDragDropOp
 {
 public:
-	DRAG_DROP_OPERATOR_TYPE( FUsdDragDropOp, FDecoratedDragDropOp )
+	DRAG_DROP_OPERATOR_TYPE(FUsdDragDropOp, FDecoratedDragDropOp)
 
-    EUsdDragDropOpType OpType;
+	EUsdDragDropOpType OpType;
 	TSet<TSharedRef<IUsdTreeViewItem>> DraggedItems;
 };

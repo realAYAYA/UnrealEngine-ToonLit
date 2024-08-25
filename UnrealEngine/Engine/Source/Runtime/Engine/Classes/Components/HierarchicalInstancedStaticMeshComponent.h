@@ -11,7 +11,6 @@
 
 #include "HierarchicalInstancedStaticMeshComponent.generated.h"
 
-class FClusterBuilder;
 class FStaticLightingTextureMapping_InstancedStaticMesh;
 
 
@@ -183,10 +182,6 @@ class UHierarchicalInstancedStaticMeshComponent : public UInstancedStaticMeshCom
 	// Current value of density scaling applied to this component
 	float CurrentDensityScaling;
 
-	/** Scale applied to change the computation of LOD distances when using the StaticMesh screen sizes. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Culling)
-	float InstanceLODDistanceScale;
-
 	// The number of nodes in the occlusion layer
 	UPROPERTY()
 	int32 OcclusionLayerNumNodes;
@@ -194,9 +189,6 @@ class UHierarchicalInstancedStaticMeshComponent : public UInstancedStaticMeshCom
 	// The last mesh bounds that was cache
 	UPROPERTY()
 	FBoxSphereBounds CacheMeshExtendedBounds;
-
-	UPROPERTY()
-	bool bDisableCollision;
 
 	// Instances to render (including removed one until the build is complete)
 	UPROPERTY()
@@ -212,10 +204,88 @@ class UHierarchicalInstancedStaticMeshComponent : public UInstancedStaticMeshCom
 	bool bCanEnableDensityScaling : 1;
 #endif
 
+public:
+	struct FClusterTree
+	{
+		TArray<FClusterNode> Nodes;
+		TArray<int32> SortedInstances;
+		TArray<int32> InstanceReorderTable;
+		int32 OutOcclusionLayerNum = 0;
+
+		bool PrintLevel(int32 NodeIndex, int32 Level, int32 CurrentLevel, int32 Parent);
+	};
+
+	class FClusterBuilder
+	{
+	public:
+		ENGINE_API FClusterBuilder(TArray<FMatrix> InTransforms, TArray<float> InCustomDataFloats, int32 InNumCustomDataFloats, const FBox& InInstBox, int32 InMaxInstancesPerLeaf, float InDensityScaling, int32 InInstancingRandomSeed, bool InGenerateInstanceScalingRange);
+		ENGINE_API void BuildTreeAndBufferAsync(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent);
+		ENGINE_API void BuildTreeAndBuffer();
+		ENGINE_API void BuildTree();
+
+	protected:
+		void Split(int32 InNum);
+		void Split(int32 Start, int32 End);
+		void BuildInstanceBuffer();
+		void Init();
+
+	public:
+		TUniquePtr<FClusterTree> Result;
+		TUniquePtr<FStaticMeshInstanceData> BuiltInstanceData;
+
+	protected:
+		int32 OriginalNum;
+		int32 Num;
+		FBox InstBox;
+		int32 BranchingFactor;
+		int32 InternalNodeBranchingFactor;
+		int32 OcclusionLayerTarget;
+		int32 MaxInstancesPerLeaf;
+		int32 NumRoots;
+
+		int32 InstancingRandomSeed;
+		float DensityScaling;
+		bool GenerateInstanceScalingRange;
+
+		TArray<int32> SortIndex;
+		TArray<FVector> SortPoints;
+		TArray<FMatrix> Transforms;
+		TArray<float> CustomDataFloats;
+		int32 NumCustomDataFloats;
+
+		struct FRunPair
+		{
+			int32 Start;
+			int32 Num;
+
+			FRunPair(int32 InStart, int32 InNum)
+				: Start(InStart)
+				, Num(InNum)
+			{
+			}
+
+			bool operator< (const FRunPair& Other) const
+			{
+				return Start < Other.Start;
+			}
+		};
+		TArray<FRunPair> Clusters;
+
+		struct FSortPair
+		{
+			float d;
+			int32 Index;
+
+			bool operator< (const FSortPair& Other) const
+			{
+				return d < Other.d;
+			}
+		};
+		TArray<FSortPair> SortPairs;
+	};
+
 	// Apply the results of the async build
 	ENGINE_API void ApplyBuildTreeAsync(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent, TSharedRef<FClusterBuilder, ESPMode::ThreadSafe> Builder, double StartTime);
-
-public:
 
 	//Begin UObject Interface
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
@@ -233,7 +303,7 @@ public:
 
 	// UInstancedStaticMesh interface
 	ENGINE_API virtual int32 AddInstance(const FTransform& InstanceTransform, bool bWorldSpace = false) override;
-	ENGINE_API virtual TArray<int32> AddInstances(const TArray<FTransform>& InstanceTransforms, bool bShouldReturnIndices, bool bWorldSpace = false) override;
+	ENGINE_API virtual TArray<int32> AddInstances(const TArray<FTransform>& InstanceTransforms, bool bShouldReturnIndices, bool bWorldSpace = false, bool bUpdateNavigation = true) override;
 	ENGINE_API virtual bool RemoveInstance(int32 InstanceIndex) override;
 	ENGINE_API virtual bool RemoveInstances(const TArray<int32>& InstancesToRemove) override;
 	ENGINE_API virtual bool RemoveInstances(const TArray<int32>& InstancesToRemove, bool bInstanceArrayAlreadySortedInReverseOrder) override;
@@ -252,13 +322,6 @@ public:
 	ENGINE_API virtual void PreAllocateInstancesMemory(int32 AddedInstanceCount) override;
 	virtual bool SupportsRemoveSwap() const override { return true; }
 
-	/** Sets the fading start and culling end distances for this component. */
-	UFUNCTION(BlueprintCallable, Category = "Components|HierarchicalInstancedStaticMesh")
-	ENGINE_API void SetLODDistanceScale(float InLODDistanceScale);
-
-	UFUNCTION(BlueprintCallable, Category = "Components|HierarchicalInstancedStaticMesh")
-	float GetLODDistanceScale() const { return InstanceLODDistanceScale; }
-
 	/** Get the number of instances that overlap a given sphere */
 	ENGINE_API int32 GetOverlappingSphereCount(const FSphere& Sphere) const;
 	/** Get the number of instances that overlap a given box */
@@ -266,16 +329,10 @@ public:
 	/** Get the transforms of instances inside the provided box */
 	ENGINE_API void GetOverlappingBoxTransforms(const FBox& Box, TArray<FTransform>& OutTransforms) const;
 
-	ENGINE_API virtual bool ShouldCreatePhysicsState() const override;
-
 	ENGINE_API bool BuildTreeIfOutdated(bool Async, bool ForceUpdate);
-	UE_DEPRECATED(5.1, "The BuildTreeAnyThread method is moving to UGrassInstancedStaticMeshComponent. Please update your project to use the new component and method or your project may not compile in the next udpate.")
-	static ENGINE_API void BuildTreeAnyThread(TArray<FMatrix>& InstanceTransforms, TArray<float>& InstanceCustomDataFloats, int32 NumCustomDataFloats, const FBox& MeshBox, TArray<FClusterNode>& OutClusterTree, TArray<int32>& OutSortedInstances, TArray<int32>& OutInstanceReorderTable, int32& OutOcclusionLayerNum, int32 MaxInstancesPerLeaf, bool InGenerateInstanceScalingRange);
-	UE_DEPRECATED(5.1, "The AcceptPrebuiltTree method is moving to UGrassInstancedStaticMeshComponent. Please update your project to use the new component and method or your project may not compile in the next udpate.")
-	ENGINE_API void AcceptPrebuiltTree(TArray<FInstancedStaticMeshInstanceData>& InInstanceData, TArray<FClusterNode>& InClusterTree, int32 InOcclusionLayerNumNodes, int32 InNumBuiltRenderInstances);
 	bool IsAsyncBuilding() const { return bIsAsyncBuilding; }
 	bool IsTreeFullyBuilt() const { return !bIsOutOfDate; }
-	ENGINE_API void GetTree(TArray<FClusterNode>& OutClusterTree);
+	ENGINE_API void GetTree(TArray<FClusterNode>& OutClusterTree) const;
 	ENGINE_API FVector GetAverageScale() const;
 
 	/** Heuristic for the number of leaves in the tree **/
@@ -294,6 +351,9 @@ public:
 	EHISMViewRelevanceType GetViewRelevanceType() const { return ViewRelevanceType; }
 
 protected:
+	ENGINE_API virtual void BuildComponentInstanceData(ERHIFeatureLevel::Type FeatureLevel, FInstanceUpdateComponentDesc& OutData) override;
+
+
 	ENGINE_API void BuildTree();
 	ENGINE_API void BuildTreeAsync();
 	ENGINE_API void ApplyBuildTree(FClusterBuilder& Builder, const bool bWasAsyncBuild);
@@ -305,7 +365,7 @@ protected:
 	ENGINE_API void InitializeInstancingRandomSeed();
 
 	/** Removes specified instances */ 
-	ENGINE_API void RemoveInstancesInternal(const int32* InstanceIndices, int32 Num);
+	ENGINE_API void RemoveInstancesInternal(TConstArrayView<int32> InstanceIndices);
 	
 	/** Gets and approximate number of verts for each LOD to generate heuristics **/
 	ENGINE_API int32 GetVertsForLOD(int32 LODIndex);
@@ -320,12 +380,21 @@ protected:
 
 	virtual FVector GetTranslatedInstanceSpaceOrigin() const override { return TranslatedInstanceSpaceOrigin; }
 
+	ENGINE_API static FBox GetClusterTreeBounds(TArray<FClusterNode> const& InClusterTree, const FVector& InOffset);
+
+	UE_DEPRECATED(5.4, "UHierarchicalInstancedStaticMeshComponent is no longer overriding UInstancedStaticMeshComponent::GetNavigationPerInstanceTransforms.")
 	ENGINE_API virtual void GetNavigationPerInstanceTransforms(const FBox& AreaBox, TArray<FTransform>& InstanceData) const override;
+	UE_DEPRECATED(5.4, "UHierarchicalInstancedStaticMeshComponent is no longer overriding UInstancedStaticMeshComponent::PartialNavigationUpdate.")
 	ENGINE_API virtual void PartialNavigationUpdate(int32 InstanceIdx) override;
-	virtual bool SupportsPartialNavigationUpdate() const override { return true; }
-	ENGINE_API virtual FBox GetNavigationBounds() const override;
+	UE_DEPRECATED(5.4, "UHierarchicalInstancedStaticMeshComponent is no longer overriding UInstancedStaticMeshComponent::SupportsPartialNavigationUpdate.")
+	virtual bool SupportsPartialNavigationUpdate() const override { return Super::SupportsPartialNavigationUpdate(); }
+	UE_DEPRECATED(5.4, "FlushAccumulatedNavigationUpdates has been deprecated. Use UInstancedStaticMeshComponent::PartialNavigationUpdates if you want to manually update the navigation data.")
 	ENGINE_API void FlushAccumulatedNavigationUpdates();
-	mutable FBox AccumulatedNavigationDirtyArea;
+
+	UE_DEPRECATED(5.4, "AccumulatedNavigationDirtyArea has been deprecated.")
+    mutable FBox AccumulatedNavigationDirtyArea;
+	UE_DEPRECATED(5.4, "AccumulatedNavigationDirtyAreas has been deprecated.")
+	mutable TArray<FBox> AccumulatedNavigationDirtyAreas;	//Remember to also remove the disable deprecation macro wrapper around ~UHierarchicalInstancedStaticMeshComponent() when removing the variable
 
 	FGraphEventArray BuildTreeAsyncTasks;
 	EHISMViewRelevanceType ViewRelevanceType = EHISMViewRelevanceType::HISM;
@@ -338,6 +407,6 @@ protected:
 	friend FStaticLightingTextureMapping_InstancedStaticMesh;
 	friend FInstancedLightMap2D;
 	friend FInstancedShadowMap2D;
-	friend class FClusterBuilder;
+	friend FClusterBuilder;
 };
 

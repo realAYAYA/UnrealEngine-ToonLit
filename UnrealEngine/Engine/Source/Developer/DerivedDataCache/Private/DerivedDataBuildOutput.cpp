@@ -94,13 +94,14 @@ public:
 	{
 		checkf(!Name.IsEmpty(), TEXT("A build output requires a non-empty name."));
 		AssertValidBuildFunctionName(Function, Name);
+		MetaWriter.BeginObject();
 		MessageWriter.BeginArray();
 		LogWriter.BeginArray();
 	}
 
 	~FBuildOutputBuilderInternal() final = default;
 
-	void SetMeta(FCbObject&& InMeta) final { Meta = MoveTemp(InMeta); Meta.MakeOwned(); }
+	void AddMeta(FUtf8StringView Key, const FCbField& Meta) final;
 	void AddValue(const FValueId& Id, const FValue& Value) final;
 	void AddMessage(const FBuildOutputMessage& Message) final;
 	void AddLog(const FBuildOutputLog& Log) final;
@@ -109,8 +110,8 @@ public:
 
 	FSharedString Name;
 	FUtf8SharedString Function;
-	FCbObject Meta;
 	TArray<FValueWithId> Values;
+	FCbWriter MetaWriter;
 	FCbWriter MessageWriter;
 	FCbWriter LogWriter;
 	bool bHasMessages = false;
@@ -144,6 +145,7 @@ public:
 	const FUtf8SharedString& GetFunction() const final { return Function; }
 
 	const FCbObject& GetMeta() const final { return Meta; }
+	bool FindMeta(FUtf8StringView Key, FCbField& OutMeta) const final;
 
 	const FValueWithId& GetValue(const FValueId& Id) const final;
 	TConstArrayView<FValueWithId> GetValues() const final { return Values; }
@@ -232,6 +234,12 @@ FBuildOutputInternal::FBuildOutputInternal(
 	AssertValidBuildFunctionName(Function, Name);
 	Values.RemoveAll([](const FValueWithId& Value) { return Value.GetId() == GBuildOutputValueId; });
 	bOutIsValid = TryLoad();
+}
+
+bool FBuildOutputInternal::FindMeta(FUtf8StringView Key, FCbField& OutMeta) const
+{
+	OutMeta = Meta.Find(Key);
+	return !!OutMeta;
 }
 
 const FValueWithId& FBuildOutputInternal::GetValue(const FValueId& Id) const
@@ -368,6 +376,12 @@ void FBuildOutputInternal::Save(FCacheRecordBuilder& RecordBuilder) const
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void FBuildOutputBuilderInternal::AddMeta(FUtf8StringView Key, const FCbField& Meta)
+{
+	checkf(!Key.IsEmpty(), TEXT("Key for metadata must be non-empty."));
+	MetaWriter.AddField(Key, Meta);
+}
+
 void FBuildOutputBuilderInternal::AddValue(const FValueId& Id, const FValue& Value)
 {
 	checkf(Id.IsValid(), TEXT("Null value added in output for build of '%s' by %s."),
@@ -409,6 +423,7 @@ FBuildOutput FBuildOutputBuilderInternal::Build()
 	{
 		Values.Empty();
 	}
+	MetaWriter.EndObject();
 	MessageWriter.EndArray();
 	LogWriter.EndArray();
 	FCbObject Output;
@@ -429,7 +444,7 @@ FBuildOutput FBuildOutputBuilderInternal::Build()
 		Writer.EndObject();
 		Output = Writer.Save().AsObject();
 	}
-	return CreateBuildOutput(new FBuildOutputInternal(MoveTemp(Name), MoveTemp(Function), MoveTemp(Meta), MoveTemp(Output), MoveTemp(Values)));
+	return CreateBuildOutput(new FBuildOutputInternal(MoveTemp(Name), MoveTemp(Function), MetaWriter.Save().AsObject(), MoveTemp(Output), MoveTemp(Values)));
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

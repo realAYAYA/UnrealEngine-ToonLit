@@ -18,9 +18,8 @@ SamplerState InputSampler;
 
 // PS Parameters
 float Brightness;
-int2 InputTextureSize;
-int2 OutputTextureSize;
-float2 UVCellSize;
+float2 UVTopLeftRotated;
+float2 UVTopRightRotated;
 
 struct InputVS
 {

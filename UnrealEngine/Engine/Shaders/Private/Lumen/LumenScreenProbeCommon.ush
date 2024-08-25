@@ -5,6 +5,7 @@
 #include "../MonteCarlo.ush"
 #include "../BlueNoise.ush"
 #include "../SceneTextureParameters.ush"
+#include "LumenPosition.ush"
 
 //Note: Also have to change format on C++ side
 #define SH_QUANTIZE_DIRECTIONAL_COEFFICIENTS 0
@@ -61,8 +62,9 @@ StructuredBuffer<uint> AdaptiveScreenProbeData;
 Texture2D<uint> ScreenTileAdaptiveProbeHeader;
 Texture2D<uint> ScreenTileAdaptiveProbeIndices;
 
+uint ScreenProbeRayDirectionFrameIndex;
 #define SCREEN_TEMPORAL_INDEX			(FixedJitterIndex < 0 ? View.StateFrameIndexMod8 : FixedJitterIndex)
-#define RAY_DIRECTION_TEMPORAL_INDEX	(FixedJitterIndex < 0 ? View.StateFrameIndex : FixedJitterIndex)
+#define SCREEN_PROBE_JITTER_INDEX		(FixedJitterIndex < 0 ? View.StateFrameIndex : FixedJitterIndex)
 #define GENERAL_TEMPORAL_INDEX			(FixedJitterIndex < 0 ? View.StateFrameIndexMod8 : FixedJitterIndex)
 
 // Returns the jitter offset in the range [0, ScreenProbeDownsampleFactor - 1]
@@ -157,64 +159,6 @@ float2 GetScreenUVFromScreenProbePosition(uint2 ScreenProbeScreenPosition)
 	// Probe ScreenUV can be outside of valid viewport, since probes are downsampled with DivideAndRoundUp
 	float2 ScreenCoord = min((float2)ScreenProbeScreenPosition, View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy - 1.0f);
 	return (ScreenCoord + .5f) * View.BufferSizeAndInvSize.zw;
-}
-
-float3 GetWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
-{
-	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
-	float3 WorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
-	return WorldPosition;
-}
-
-float3 GetTranslatedWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
-{
-	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
-	float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-	return TranslatedWorldPosition;
-}
-
-// This version ignores TAA jitter, use when sampling a history texture
-float3 GetHistoryScreenPosition(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
-{
-	float3 HistoryScreenPosition = float3(ScreenPosition, DeviceZ);
-	bool bIsDynamicPixel = false;
-
-	{
-		float4 ThisClip = float4(HistoryScreenPosition, 1);
-		float4 PrevClip = mul(ThisClip, View.ClipToPrevClip); //<=== doesn't contain AA offsets
-
-		float3 PrevScreen = PrevClip.xyz / PrevClip.w;
-		float3 Velocity = HistoryScreenPosition - PrevScreen;
-		float4 EncodedVelocity = GBufferVelocityTexture.SampleLevel(GlobalPointClampedSampler, ScreenUV, 0);
-		bIsDynamicPixel = EncodedVelocity.x > 0.0;
-
-		if (bIsDynamicPixel)
-		{
-			// Note: overwriting velocity, this only works if DeviceZ matches what's in the depth buffer
-			Velocity = DecodeVelocityFromTexture(EncodedVelocity);
-		}
-
-		HistoryScreenPosition -= Velocity;
-	}
-
-	return HistoryScreenPosition;
-}
-
-// This version accounts for TAA jitter, use when comparing positions like calculating world space velocity
-float3 GetHistoryScreenPositionIncludingTAAJitter(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
-{
-	float3 HistoryScreenPosition = GetHistoryScreenPosition(ScreenPosition - View.TemporalAAJitter.xy, ScreenUV, DeviceZ);
-	HistoryScreenPosition.xy += View.TemporalAAJitter.zw;
-	return HistoryScreenPosition;
-}
-
-float3 GetPrevTranslatedWorldPosition(float3 HistoryScreenPosition)
-{
-	float HistorySceneDepth = ConvertFromDeviceZ(HistoryScreenPosition.z);
-	float3 PrevPositionTranslatedWorld = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition.xy, HistorySceneDepth), HistorySceneDepth, 1), View.PrevScreenToTranslatedWorld).xyz;
-	float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
-	float3 PrevTranslatedWorldPosition = PrevPositionTranslatedWorld + PreViewTranslationOffset;
-	return PrevTranslatedWorldPosition;
 }
 
 uint EncodeScreenProbeSpeed(float ProbeSpeed, bool bTwoSidedFoliage)

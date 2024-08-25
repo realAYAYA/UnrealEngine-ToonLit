@@ -7,9 +7,13 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "UObject/ObjectMacros.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "AI/Navigation/NavigationTypes.h"
+#endif
 #include "GameFramework/Volume.h"
 #include "AI/Navigation/NavAgentSelector.h"
 #include "NavMeshBoundsVolume.generated.h"

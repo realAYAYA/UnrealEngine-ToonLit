@@ -19,7 +19,7 @@ class ELECTRABASE_API FVariantValue
 	{
 	public:
 		virtual ~FSharedPtrHolderBase() {}
-		virtual void SetValueOn(FSharedPtrHolderBase *Dst) const = 0;
+		virtual void SetValueOn(FSharedPtrHolderBase* Dst) const = 0;
 	};
 
 	template<typename T> class TSharedPtrHolder : public FSharedPtrHolderBase
@@ -33,7 +33,7 @@ class ELECTRABASE_API FVariantValue
 
 		SharedPtrType	Pointer;
 
-		virtual void SetValueOn(FSharedPtrHolderBase *Dst) const override
+		virtual void SetValueOn(FSharedPtrHolderBase* Dst) const override
 		{
 			new(Dst) TSharedPtrHolder<T>(reinterpret_cast<const SharedPtrType&>(Pointer));
 		}
@@ -43,7 +43,7 @@ public:
 	FVariantValue();
 	~FVariantValue();
 	FVariantValue(const FVariantValue& rhs);
-	FVariantValue& operator=(const FVariantValue&rhs);
+	FVariantValue& operator=(const FVariantValue& rhs);
 
 	explicit FVariantValue(const FString& StringValue);
 	explicit FVariantValue(double DoubleValue);
@@ -157,34 +157,99 @@ private:
 class ELECTRABASE_API FParamDict
 {
 public:
-	FParamDict();
+	FParamDict() {}
 	FParamDict(const FParamDict& Other);
 	FParamDict& operator=(const FParamDict& Other);
-	~FParamDict();
+	~FParamDict() = default;
 	void Clear();
-	void Set(const FString& Key, const FVariantValue& Value);
-	bool HaveKey(const FString& Key) const;
-	FVariantValue GetValue(const FString& Key) const;
-	void Remove(const FString& Key)
-	{
-		FScopeLock lock(&Lock);
-		Dictionary.Remove(Key); 
-	}
-	void SetOrUpdate(const FString& Key, const FVariantValue& Value)
-	{ 
-		FScopeLock lock(&Lock);
-		Dictionary.Add(Key, Value); 
-	}
+	void Set(const FName& Key, const FVariantValue& Value);
+	void GetKeys(TArray<FName>& OutKeys) const;
+	bool HaveKey(const FName& Key) const;
+	FVariantValue GetValue(const FName& Key) const;
+	void Remove(const FName& Key);
 
 	void ConvertTo(TMap<FString, FVariant>& OutVariantMap, const FString& InAddPrefixToKey) const;
 	void ConvertKeysStartingWithTo(TMap<FString, FVariant>& OutVariantMap, const FString& InKeyStartsWith, const FString& InAddPrefixToKey) const;
-
-	void GetKeys(TArray<FString>& Keys) const;
-	void GetKeysStartingWith(const FString& StartsWith, TArray<FString>& Keys) const;
 private:
 	void InternalCopy(const FParamDict& Other);
+	TMap<FName, FVariantValue> Dictionary;
+};
+
+class ELECTRABASE_API FParamDictTS
+{
+public:
+	FParamDictTS() {}
+	FParamDictTS(const FParamDictTS& Other)
+	{
+		Dictionary = Other.Dictionary;
+	}
+	FParamDictTS& operator=(const FParamDictTS& Other)
+	{
+		if (&Other != this)
+		{
+			FScopeLock lock(&Lock);
+			Dictionary = Other.Dictionary;
+		}
+		return *this;
+	}
+	FParamDictTS& operator=(const FParamDict& Other)
+	{
+		FScopeLock lock(&Lock);
+		Dictionary = Other;
+		return *this;
+	}
+
+	~FParamDictTS() = default;
+
+	FParamDict GetDictionary() const
+	{
+		FScopeLock lock(&Lock);
+		return Dictionary;
+	}
+
+	void Clear()
+	{
+		FScopeLock lock(&Lock);
+		Dictionary.Clear();
+	}
+	void Set(const FName& Key, const FVariantValue& Value)
+	{
+		FScopeLock lock(&Lock);
+		Dictionary.Set(Key, Value);
+	}
+	void GetKeys(TArray<FName>& OutKeys) const
+	{
+		FScopeLock lock(&Lock);
+		Dictionary.GetKeys(OutKeys);
+	}
+	bool HaveKey(const FName& Key) const
+	{
+		FScopeLock lock(&Lock);
+		return Dictionary.HaveKey(Key);
+	}
+	FVariantValue GetValue(const FName& Key) const
+	{
+		FScopeLock lock(&Lock);
+		return Dictionary.GetValue(Key);
+	}
+	void Remove(const FName& Key)
+	{
+		FScopeLock lock(&Lock);
+		Dictionary.Remove(Key);
+	}
+	void ConvertTo(TMap<FString, FVariant>& OutVariantMap, const FString& InAddPrefixToKey) const
+	{
+		FScopeLock lock(&Lock);
+		Dictionary.ConvertTo(OutVariantMap, InAddPrefixToKey);
+	}
+	void ConvertKeysStartingWithTo(TMap<FString, FVariant>& OutVariantMap, const FString& InKeyStartsWith, const FString& InAddPrefixToKey) const
+	{
+		FScopeLock lock(&Lock);
+		Dictionary.ConvertKeysStartingWithTo(OutVariantMap, InKeyStartsWith, InAddPrefixToKey);
+	}
+private:
 	mutable FCriticalSection Lock;
-	TMap<FString, FVariantValue> Dictionary;
+	FParamDict Dictionary;
 };
 
 

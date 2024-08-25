@@ -309,6 +309,12 @@ public:
 	UE_DEPRECATED(5.1, "FNames containing full object paths are deprecated. Use FSoftObjectPath instead.")
 	virtual bool HandleRedirectorDeleted(const FName& ObjectPath) = 0;
 
+	/**
+	 * Called to notify the collections that redirectors have been deleted and that they should ensure their on-disk representation is re-saved with the fixed up in-memory version
+	 * @return true if all of the collections that were referencing these redirectors could be re-saved, false otherwise
+	 */
+	virtual bool HandleRedirectorsDeleted(TConstArrayView<FSoftObjectPath> ObjectPaths) = 0;
+
 	/** Called to notify the collections that an object has been renamed or moved */
 	virtual void HandleObjectRenamed(const FSoftObjectPath& OldObjectPath, const FSoftObjectPath& NewObjectPath) = 0;
 	UE_DEPRECATED(5.1, "FNames containing full object paths are deprecated. Use FSoftObjectPath instead.")
@@ -318,6 +324,9 @@ public:
 	virtual void HandleObjectDeleted(const FSoftObjectPath& ObjectPath) = 0;
 	UE_DEPRECATED(5.1, "FNames containing full object paths are deprecated. Use FSoftObjectPath instead.")
 	virtual void HandleObjectDeleted(const FName& ObjectPath) = 0;
+
+	/** Called to notify the collections that objects have been deleted */
+	virtual void HandleObjectsDeleted(TConstArrayView<FSoftObjectPath> ObjectPaths) = 0;
 
 	/** Event for when collections are created */
 	DECLARE_EVENT_OneParam( ICollectionManager, FCollectionCreatedEvent, const FCollectionNameType& );

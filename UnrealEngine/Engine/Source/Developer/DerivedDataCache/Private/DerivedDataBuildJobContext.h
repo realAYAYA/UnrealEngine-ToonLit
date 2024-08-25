@@ -59,6 +59,8 @@ private:
 	FCbObject FindConstant(FUtf8StringView Key) const final;
 	FSharedBuffer FindInput(FUtf8StringView Key) const final;
 
+	void AddMeta(FUtf8StringView Key, const FCbField& Meta) final;
+
 	void AddValue(const FValueId& Id, const FValue& Value) final;
 	void AddValue(const FValueId& Id, const FCompressedBuffer& Buffer) final;
 	void AddValue(const FValueId& Id, const FCompositeBuffer& Buffer, uint64 BlockSize) final;

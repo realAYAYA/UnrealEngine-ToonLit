@@ -31,9 +31,9 @@ namespace
 
 			for (int32 Layer = 0; Layer < NumLayers; ++Layer)
 			{
-				check(InLayerFormats[Layer] == PF_G16 || InLayerFormats[Layer] == PF_B8G8R8A8 || InLayerFormats[Layer] == PF_DXT1 || InLayerFormats[Layer] == PF_DXT5 || InLayerFormats[Layer] == PF_BC5
-					|| InLayerFormats[Layer] == PF_R5G6B5_UNORM || InLayerFormats[Layer] == PF_B5G5R5A1_UNORM);
-				LayerFormats[Layer] = InLayerFormats[Layer] == PF_G16 ? PF_G16 : PF_B8G8R8A8;
+				check(InLayerFormats[Layer] == PF_G16 || InLayerFormats[Layer] == PF_B8G8R8A8 || InLayerFormats[Layer] == PF_DXT1 || InLayerFormats[Layer] == PF_DXT5 || InLayerFormats[Layer] == PF_BC4
+					|| InLayerFormats[Layer] == PF_BC5 || InLayerFormats[Layer] == PF_R5G6B5_UNORM || InLayerFormats[Layer] == PF_B5G5R5A1_UNORM);
+				LayerFormats[Layer] = InLayerFormats[Layer] == PF_G16 || InLayerFormats[Layer] == PF_BC4 ? PF_G16 : PF_B8G8R8A8;
 				LayerOffsets[Layer] = TotalSizeBytes;
 				TotalSizeBytes += CalculateImageBytes(InTileSize, InTileSize, 0, LayerFormats[Layer]) * InNumTilesX * InNumTilesY;
 			}
@@ -153,13 +153,13 @@ namespace RuntimeVirtualTexture
 		return true;
 	}
 	
-	bool BuildStreamedMips(URuntimeVirtualTextureComponent* InComponent, ERuntimeVirtualTextureDebugType DebugType)
+	bool BuildStreamedMips(URuntimeVirtualTextureComponent* InComponent, FLinearColor const& FixedColor)
 	{
 		EShadingPath ShadingPath = (InComponent && InComponent->GetScene()) ? InComponent->GetScene()->GetShadingPath() : EShadingPath::Deferred;
-		return BuildStreamedMips(ShadingPath, InComponent, DebugType);
+		return BuildStreamedMips(ShadingPath, InComponent, FixedColor);
 	}
 
-	bool BuildStreamedMips(EShadingPath ShadingPath, URuntimeVirtualTextureComponent* InComponent, ERuntimeVirtualTextureDebugType DebugType)
+	bool BuildStreamedMips(EShadingPath ShadingPath, URuntimeVirtualTextureComponent* InComponent, FLinearColor const& FixedColor)
 	{
 		if (!HasStreamedMips(ShadingPath, InComponent))
 		{
@@ -213,6 +213,8 @@ namespace RuntimeVirtualTexture
 		TArray64<uint8> FinalPixels;
 		FinalPixels.SetNumUninitialized(RenderTileResourcesBytes);
 
+		UE::RenderCommandPipe::FSyncScope SyncScope;
+
 		// Iterate over all tiles and render/store each one to the final image
 		for (int32 TileY = 0; TileY < NumTilesY && !Task.ShouldCancel(); TileY++)
 		{
@@ -241,7 +243,7 @@ namespace RuntimeVirtualTexture
 					TileX, TileY,
 					TileSize, ImageSizeX, ImageSizeY, 
 					&FinalPixels,
-					DebugType](FRHICommandListImmediate& RHICmdList)
+					FixedColor](FRHICommandListImmediate& RHICmdList)
 				{
 					const FBox2D TileBox(FVector2D(0, 0), FVector2D(TileSize, TileSize));
 					const FIntRect TileRect(0, 0, TileSize, TileSize);
@@ -264,7 +266,7 @@ namespace RuntimeVirtualTexture
 						Desc.MaxLevel = MaxLevel;
 						Desc.bClearTextures = true;
 						Desc.bIsThumbnails = false;
-						Desc.DebugType = DebugType;
+						Desc.FixedColor = FixedColor;
 						Desc.NumPageDescs = 1;
 						Desc.Targets[0].Texture = RenderTileResources.GetRenderTarget(0);
 						Desc.Targets[1].Texture = RenderTileResources.GetRenderTarget(1);

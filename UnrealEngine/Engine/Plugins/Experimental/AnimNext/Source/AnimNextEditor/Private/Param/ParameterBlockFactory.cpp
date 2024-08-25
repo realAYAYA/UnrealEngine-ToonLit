@@ -3,7 +3,7 @@
 #include "Param/ParameterBlockFactory.h"
 #include "Param/AnimNextParameterBlock.h"
 #include "Param/AnimNextParameterBlock_EditorData.h"
-#include "Param/ParametersExecuteContext.h"
+#include "Param/AnimNextParameterExecuteContext.h"
 #include "UncookedOnlyUtils.h"
 
 UAnimNextParameterBlockFactory::UAnimNextParameterBlockFactory()
@@ -20,12 +20,17 @@ bool UAnimNextParameterBlockFactory::ConfigureProperties()
 
 UObject* UAnimNextParameterBlockFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext)
 {
-	UAnimNextParameterBlock* NewBlock = NewObject<UAnimNextParameterBlock>(InParent, Class, Name, Flags | RF_Public | RF_Standalone | RF_Transactional | RF_LoadCompleted);
+	EObjectFlags FlagsToUse = Flags | RF_Public | RF_Standalone | RF_Transactional | RF_LoadCompleted;
+	if(InParent == GetTransientPackage())
+	{
+		FlagsToUse &= ~RF_Standalone;
+	}
+
+	UAnimNextParameterBlock* NewBlock = NewObject<UAnimNextParameterBlock>(InParent, Class, Name, FlagsToUse);
 
 	UAnimNextParameterBlock_EditorData* EditorData = NewObject<UAnimNextParameterBlock_EditorData>(NewBlock, TEXT("EditorData"), RF_Transactional);
 	NewBlock->EditorData = EditorData;
 	EditorData->Initialize(/*bRecompileVM*/false);
-	EditorData->GetRigVMClient()->SetExecuteContextStruct(FAnimNextParametersExecuteContext::StaticStruct());
 
 	// Compile the initial skeleton
 	UE::AnimNext::UncookedOnly::FUtils::Compile(NewBlock);

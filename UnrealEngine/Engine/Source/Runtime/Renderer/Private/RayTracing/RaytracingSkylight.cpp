@@ -125,9 +125,9 @@ int32 GetSkyLightSamplesPerPixel(const FSkyLightSceneProxy* SkyLightSceneProxy)
 	return GRayTracingSkyLightSamplesPerPixel >= 0 ? GRayTracingSkyLightSamplesPerPixel : FMath::Max(SkyLightSceneProxy->SamplesPerPixel, 2);
 }
 
-bool ShouldRenderRayTracingSkyLight(const FSkyLightSceneProxy* SkyLightSceneProxy)
+bool ShouldRenderRayTracingSkyLight(const FSkyLightSceneProxy* SkyLightSceneProxy, EShaderPlatform ShaderPlatform)
 {
-	if (SkyLightSceneProxy == nullptr)
+	if (SkyLightSceneProxy == nullptr || !IsRayTracingEnabled(ShaderPlatform))
 	{
 		return false;
 	}
@@ -260,7 +260,7 @@ IMPLEMENT_GLOBAL_SHADER(FRayTracingSkyLightRGS, "/Engine/Private/Raytracing/Rayt
 
 void FDeferredShadingSceneRenderer::PrepareRayTracingSkyLight(const FViewInfo& View, const FScene& Scene, TArray<FRHIRayTracingShader*>& OutRayGenShaders)
 {
-	if (!ShouldRenderRayTracingSkyLight(Scene.SkyLight))
+	if (!ShouldRenderRayTracingSkyLight(Scene.SkyLight, View.GetShaderPlatform()))
 	{
 		return;
 	}
@@ -369,7 +369,7 @@ void FDeferredShadingSceneRenderer::RenderRayTracingSkyLight(
 	FSkyLightSceneProxy* SkyLight = Scene->SkyLight;
 	
 	// Fill Sky Light parameters
-	const bool bShouldRenderRayTracingSkyLight = ShouldRenderRayTracingSkyLight(SkyLight);
+	const bool bShouldRenderRayTracingSkyLight = ShouldRenderRayTracingSkyLight(SkyLight, Scene->GetShaderPlatform());
 	FPathTracingSkylight SkylightParameters;
 	FSkyLightData SkyLightData;
 	if (!SetupSkyLightParameters(GraphBuilder, Scene, Views[0], bShouldRenderRayTracingSkyLight, &SkylightParameters, &SkyLightData))
@@ -427,6 +427,7 @@ void FDeferredShadingSceneRenderer::RenderRayTracingSkyLight(
 	FSceneTextureParameters SceneTextures = GetSceneTextureParameters(GraphBuilder, Views[0]);
 
 	int32 ViewIndex = 0;
+	int32 LastViewIndex = Views.Num() - 1;
 	for (FViewInfo& View : Views)
 	{
 		RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
@@ -504,7 +505,7 @@ void FDeferredShadingSceneRenderer::RenderRayTracingSkyLight(
 		if (GRayTracingSkyLightDenoiser != 0)
 		{
 			const IScreenSpaceDenoiser* DefaultDenoiser = IScreenSpaceDenoiser::GetDefaultDenoiser();
-			const IScreenSpaceDenoiser* DenoiserToUse = DefaultDenoiser;// GRayTracingGlobalIlluminationDenoiser == 1 ? DefaultDenoiser : GScreenSpaceDenoiser;
+			const IScreenSpaceDenoiser* DenoiserToUse = DefaultDenoiser;
 
 			IScreenSpaceDenoiser::FDiffuseIndirectInputs DenoiserInputs;
 			DenoiserInputs.Color = OutSkyLightTexture;
@@ -528,7 +529,11 @@ void FDeferredShadingSceneRenderer::RenderRayTracingSkyLight(
 					DenoiserInputs,
 					RayTracingConfig);
 
-				OutSkyLightTexture = DenoiserOutputs.Color;
+				// Need to set output used by the caller on the last iteration of the view loop
+				if (ViewIndex == LastViewIndex)
+				{
+					OutSkyLightTexture = DenoiserOutputs.Color;
+				}
 			}
 		}
 
@@ -642,155 +647,5 @@ void FDeferredShadingSceneRenderer::CompositeRayTracingSkyLight(
 #else
 {
 	unimplemented();
-}
-#endif
-
-class FVisualizeSkyLightMipTreePS : public FGlobalShader
-{
-	DECLARE_SHADER_TYPE(FVisualizeSkyLightMipTreePS, Global);
-
-public:
-	static bool ShouldCache(EShaderPlatform Platform)
-	{
-		return IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5);
-	}
-
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return ShouldCompileRayTracingShadersForProject(Parameters.Platform);
-	}
-
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-	}
-
-	FVisualizeSkyLightMipTreePS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
-		: FGlobalShader(Initializer)
-	{
-		DimensionsParameter.Bind(Initializer.ParameterMap, TEXT("Dimensions"));
-		MipTreePosXParameter.Bind(Initializer.ParameterMap, TEXT("MipTreePosX"));
-		MipTreeNegXParameter.Bind(Initializer.ParameterMap, TEXT("MipTreeNegX"));
-		MipTreePosYParameter.Bind(Initializer.ParameterMap, TEXT("MipTreePosY"));
-		MipTreeNegYParameter.Bind(Initializer.ParameterMap, TEXT("MipTreeNegY"));
-		MipTreePosZParameter.Bind(Initializer.ParameterMap, TEXT("MipTreePosZ"));
-		MipTreeNegZParameter.Bind(Initializer.ParameterMap, TEXT("MipTreeNegZ"));
-	}
-
-	FVisualizeSkyLightMipTreePS() {}
-
-	void SetParameters(
-		FRHIBatchedShaderParameters& BatchedParameters,
-		const FViewInfo& View,
-		const FIntVector Dimensions,
-		const FRWBuffer& MipTreePosX,
-		const FRWBuffer& MipTreeNegX,
-		const FRWBuffer& MipTreePosY,
-		const FRWBuffer& MipTreeNegY,
-		const FRWBuffer& MipTreePosZ,
-		const FRWBuffer& MipTreeNegZ)
-	{
-		FGlobalShader::SetParameters<FViewUniformShaderParameters>(BatchedParameters, View.ViewUniformBuffer);
-
-		SetShaderValue(BatchedParameters, DimensionsParameter, Dimensions);
-		SetSRVParameter(BatchedParameters, MipTreePosXParameter, MipTreePosX.SRV);
-		SetSRVParameter(BatchedParameters, MipTreeNegXParameter, MipTreeNegX.SRV);
-		SetSRVParameter(BatchedParameters, MipTreePosYParameter, MipTreePosY.SRV);
-		SetSRVParameter(BatchedParameters, MipTreeNegYParameter, MipTreeNegY.SRV);
-		SetSRVParameter(BatchedParameters, MipTreePosZParameter, MipTreePosZ.SRV);
-		SetSRVParameter(BatchedParameters, MipTreeNegZParameter, MipTreeNegZ.SRV);
-	}
-
-private:
-	LAYOUT_FIELD(FShaderParameter, DimensionsParameter);
-	LAYOUT_FIELD(FShaderResourceParameter, MipTreePosXParameter);
-	LAYOUT_FIELD(FShaderResourceParameter, MipTreeNegXParameter);
-	LAYOUT_FIELD(FShaderResourceParameter, MipTreePosYParameter);
-	LAYOUT_FIELD(FShaderResourceParameter, MipTreeNegYParameter);
-	LAYOUT_FIELD(FShaderResourceParameter, MipTreePosZParameter);
-	LAYOUT_FIELD(FShaderResourceParameter, MipTreeNegZParameter);
-};
-
-#if RHI_RAYTRACING
-
-IMPLEMENT_SHADER_TYPE(, FVisualizeSkyLightMipTreePS, TEXT("/Engine/Private/RayTracing/VisualizeSkyLightMipTreePS.usf"), TEXT("VisualizeSkyLightMipTreePS"), SF_Pixel)
-
-void FDeferredShadingSceneRenderer::VisualizeSkyLightMipTree(
-	FRHICommandListImmediate& RHICmdList,
-	const FViewInfo& View,
-	const TRefCountPtr<IPooledRenderTarget>& SceneColor,
-	FRWBuffer& SkyLightMipTreePosX,
-	FRWBuffer& SkyLightMipTreeNegX,
-	FRWBuffer& SkyLightMipTreePosY,
-	FRWBuffer& SkyLightMipTreeNegY,
-	FRWBuffer& SkyLightMipTreePosZ,
-	FRWBuffer& SkyLightMipTreeNegZ,
-	const FIntVector& SkyLightMipDimensions)
-{
-	// Allocate render target
-	FPooledRenderTargetDesc Desc = SceneColor->GetDesc();
-	Desc.Flags &= ~(TexCreate_FastVRAM);
-	TRefCountPtr<IPooledRenderTarget> SkyLightMipTreeRT;
-	GRenderTargetPool.FindFreeElement(RHICmdList, Desc, SkyLightMipTreeRT, TEXT("SkyLightMipTreeRT"));
-
-	// Define shaders
-	const auto ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
-	TShaderMapRef<FPostProcessVS> VertexShader(ShaderMap);
-	TShaderMapRef<FVisualizeSkyLightMipTreePS> PixelShader(ShaderMap);
-	FRHITexture* RenderTargets[2] =
-	{
-		SceneColor->GetRHI(),
-		SkyLightMipTreeRT->GetRHI()
-	};
-	FRHIRenderPassInfo RenderPassInfo(2, RenderTargets, ERenderTargetActions::Load_Store);
-	RHICmdList.BeginRenderPass(RenderPassInfo, TEXT("SkyLight Visualization"));
-
-	// PSO definition
-	FGraphicsPipelineStateInitializer GraphicsPSOInit;
-	RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
-	GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_One>::GetRHI();
-	GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
-	GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
-	GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GFilterVertexDeclaration.VertexDeclarationRHI;
-	GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
-	GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
-	GraphicsPSOInit.PrimitiveType = PT_TriangleList;
-	SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit, 0);
-
-	// Transition to graphics
-	RHICmdList.Transition({
-		FRHITransitionInfo(SkyLightMipTreePosX.UAV, ERHIAccess::Unknown, ERHIAccess::SRVGraphics),
-		FRHITransitionInfo(SkyLightMipTreeNegX.UAV, ERHIAccess::Unknown, ERHIAccess::SRVGraphics),
-		FRHITransitionInfo(SkyLightMipTreePosY.UAV, ERHIAccess::Unknown, ERHIAccess::SRVGraphics),
-		FRHITransitionInfo(SkyLightMipTreeNegY.UAV, ERHIAccess::Unknown, ERHIAccess::SRVGraphics),
-		FRHITransitionInfo(SkyLightMipTreePosZ.UAV, ERHIAccess::Unknown, ERHIAccess::SRVGraphics),
-		FRHITransitionInfo(SkyLightMipTreeNegZ.UAV, ERHIAccess::Unknown, ERHIAccess::SRVGraphics)
-	});
-
-	// Draw
-	RHICmdList.SetViewport((float)View.ViewRect.Min.X, (float)View.ViewRect.Min.Y, 0.0f, (float)View.ViewRect.Max.X, (float)View.ViewRect.Max.Y, 1.0f);
-	SetShaderParametersLegacyPS(RHICmdList, PixelShader, View, SkyLightMipDimensions, SkyLightMipTreePosX, SkyLightMipTreeNegX, SkyLightMipTreePosY, SkyLightMipTreeNegY, SkyLightMipTreePosZ, SkyLightMipTreeNegZ);
-	DrawRectangle(
-		RHICmdList,
-		0, 0,
-		View.ViewRect.Width(), View.ViewRect.Height(),
-		View.ViewRect.Min.X, View.ViewRect.Min.Y,
-		View.ViewRect.Width(), View.ViewRect.Height(),
-		FIntPoint(View.ViewRect.Width(), View.ViewRect.Height()),
-		View.GetSceneTexturesConfig().Extent,
-		VertexShader);
-	RHICmdList.EndRenderPass();
-	GVisualizeTexture.SetCheckPoint(RHICmdList, SkyLightMipTreeRT);
-
-	// Transition to compute
-	RHICmdList.Transition({
-		FRHITransitionInfo(SceneColor->GetRHI(), ERHIAccess::RTV, ERHIAccess::SRVMask),
-		FRHITransitionInfo(SkyLightMipTreePosX.UAV, ERHIAccess::SRVGraphics, ERHIAccess::UAVCompute),
-		FRHITransitionInfo(SkyLightMipTreeNegX.UAV, ERHIAccess::SRVGraphics, ERHIAccess::UAVCompute),
-		FRHITransitionInfo(SkyLightMipTreePosY.UAV, ERHIAccess::SRVGraphics, ERHIAccess::UAVCompute),
-		FRHITransitionInfo(SkyLightMipTreeNegY.UAV, ERHIAccess::SRVGraphics, ERHIAccess::UAVCompute),
-		FRHITransitionInfo(SkyLightMipTreePosZ.UAV, ERHIAccess::SRVGraphics, ERHIAccess::UAVCompute),
-		FRHITransitionInfo(SkyLightMipTreeNegZ.UAV, ERHIAccess::SRVGraphics, ERHIAccess::UAVCompute)
-	});
 }
 #endif

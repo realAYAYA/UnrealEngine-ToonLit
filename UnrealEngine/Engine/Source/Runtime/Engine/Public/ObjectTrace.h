@@ -153,6 +153,12 @@ struct FObjectTrace
 
 #else
 
+struct FObjectTrace
+{
+	/** Helper function to get the UObject from an ObjectId, if the UObject still exists */
+	ENGINE_API static UObject* GetObjectFromId(uint64 id) { return nullptr; }
+};
+
 #define TRACE_CLASS(Class)
 #define TRACE_OBJECT(Object)
 #define TRACE_OBJECT_EVENT(Object, Event)

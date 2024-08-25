@@ -4,9 +4,11 @@ import { Stack, Text } from '@fluentui/react';
 import React from 'react';
 import { GetBatchResponse, GetLabelResponse, GetStepResponse } from '../../../backend/Api';
 import { JobDetails } from '../../../backend/JobDetails';
-import { hordeClasses } from '../../../styles/Styles';
+import { getHordeStyling } from '../../../styles/Styles';
 
 export const JobDetailPluginExample: React.FC<{ jobDetails: JobDetails; step?: GetStepResponse; batch?: GetBatchResponse, label?: GetLabelResponse}> = ({ jobDetails, step, batch, label }) => {
+
+   const { hordeClasses } = getHordeStyling();
 
     // do not render on batch or label views
     if (batch || label || !step) {

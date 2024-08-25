@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Misc/AutomationTest.h"
 #include "RemoteControlPreset.h"
@@ -7,7 +7,7 @@
 
 BEGIN_DEFINE_SPEC(
 	FRCTypeTranslatorSpec,
-	"Plugin.RemoteControlUI.RCTypeTranslator",
+	"Plugins.RemoteControlUI.RCTypeTranslator",
 	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter)
 	TStrongObjectPtr<URemoteControlPreset> Preset;
 	TStrongObjectPtr<URCVirtualPropertyBase> BoolVirtualProperty;

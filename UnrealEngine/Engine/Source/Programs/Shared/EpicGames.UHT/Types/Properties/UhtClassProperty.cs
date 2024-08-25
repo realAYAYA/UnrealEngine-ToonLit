@@ -49,7 +49,7 @@ namespace EpicGames.UHT.Types
 		/// <inheritdoc/>
 		private StringBuilder AppendSubClassText(StringBuilder builder)
 		{
-			builder.Append("TSubclassOf<").Append(MetaClass?.SourceName).Append("> "); //COMPATIBILITY-TODO - Extra space in old UHT
+			builder.Append("TSubclassOf<").Append(MetaClass?.SourceName).Append(">");
 			return builder;
 		}
 
@@ -132,7 +132,7 @@ namespace EpicGames.UHT.Types
 		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
 		{
-			return base.AppendMemberDecl(builder, context, name, nameSuffix, tabs, "FClassPropertyParams");
+			return AppendMemberDecl(builder, context, name, nameSuffix, tabs, "FClassPropertyParams");
 		}
 
 		/// <inheritdoc/>

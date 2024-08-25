@@ -49,10 +49,11 @@ namespace UE::Chaos::ClothGenerator
 				if (UMLDeformerModel* Model = EditorModel->GetModel())
 				{
 					Properties->SkeletalMeshAsset = Model->GetSkeletalMesh();
-					Properties->AnimationSequence = Model->GetAnimSequence();
+					Properties->AnimationSequence = EditorModel->GetActiveTrainingInputAnimSequence();
 					if (UMLDeformerGeomCacheModel* GeomCacheModel = Cast<UMLDeformerGeomCacheModel>(Model))
 					{
-						if (UGeometryCache* GeomCache = GeomCacheModel->GetGeometryCache())
+						const UE::MLDeformer::FMLDeformerGeomCacheEditorModel* GeomCacheEditorModel = static_cast<const UE::MLDeformer::FMLDeformerGeomCacheEditorModel*>(EditorModel);
+						if (UGeometryCache* GeomCache = GeomCacheEditorModel->GetActiveGeometryCache())
 						{
 							Properties->SimulatedCache = GeomCache;
 						}

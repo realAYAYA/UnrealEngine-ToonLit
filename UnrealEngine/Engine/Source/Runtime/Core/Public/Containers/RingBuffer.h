@@ -6,11 +6,10 @@
 #include "Misc/AssertionMacros.h"
 #include "Containers/ArrayView.h"
 #include "Templates/IsPODType.h"
-#include "Templates/IsTriviallyDestructible.h"
-#include "Templates/MakeSigned.h"
-#include "Templates/MakeUnsigned.h"
 #include "Templates/MemoryOps.h"
 #include "Templates/UnrealTemplate.h"
+
+#include <type_traits>
 
 template< typename ContainerType, typename ElementType, typename SizeType>
 class TRingBufferIterator
@@ -140,9 +139,9 @@ public:
 	/* The Allocator type being used */
 	typedef AllocatorT Allocator;
 	/** Type used to request values at a given index in the container. */
-	typedef typename TMakeSigned<typename Allocator::SizeType>::Type IndexType;
+	typedef std::make_signed_t<typename Allocator::SizeType> IndexType;
 	/** Type used to communicate size and capacity and counts */
-	typedef typename TMakeUnsigned<typename Allocator::SizeType>::Type SizeType;
+	typedef std::make_unsigned_t<typename Allocator::SizeType> SizeType;
 	/** Iterator type used for ranged-for traversal. */
 	typedef TRingBufferIterator<TRingBuffer, ElementType, typename Allocator::SizeType> TIterator;
 	typedef TRingBufferIterator<const TRingBuffer, const ElementType, typename Allocator::SizeType> TConstIterator;
@@ -153,7 +152,7 @@ private:
 	 * They may have added on multiples of the capacity due to wrapping around, but will be interpreted as pointing to the value at (value & IndexMask).
 	 * StorageModuloTypes are also allowed to underflow/overflow their integer storage type; the only constraint is that X - Front <= Capacity for all valid indexes and for AfterBack.
 	 */
-	typedef typename TMakeUnsigned<typename Allocator::SizeType>::Type StorageModuloType;
+	typedef std::make_unsigned_t<typename Allocator::SizeType> StorageModuloType;
 public:
 
 	/** Construct Empty Queue with capacity 0. */
@@ -771,7 +770,7 @@ public:
 private:
 	static constexpr bool NeedsDestructElements()
 	{
-		return !TIsTriviallyDestructible<T>::Value;
+		return !std::is_trivially_destructible_v<T>;
 	}
 
 	/** Set the capacity to the given value and move or copy all elements from the old storage into a new storage with the given capacity.  Assumes the capacity has already been normalized and is greater than or equal to the number of elements in the RingBuffer. */
@@ -992,3 +991,9 @@ private:
 	 */
 	StorageModuloType AfterBack;
 };
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/IsTriviallyDestructible.h"
+#include "Templates/MakeSigned.h"
+#include "Templates/MakeUnsigned.h"
+#endif

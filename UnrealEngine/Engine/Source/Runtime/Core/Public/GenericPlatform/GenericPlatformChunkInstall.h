@@ -21,6 +21,10 @@ class IPlatformChunkInstall;
 
 CORE_API DECLARE_LOG_CATEGORY_EXTERN(LogChunkInstaller, Log, All);
 
+#ifndef ENABLE_PLATFORM_CHUNK_INSTALL
+	#define ENABLE_PLATFORM_CHUNK_INSTALL (1)
+#endif
+
 namespace EChunkLocation
 {
 	enum Type
@@ -65,6 +69,14 @@ namespace EChunkProgressReportingType
 	};
 }
 
+struct FNamedChunkCompleteCallbackParam
+{
+	FName NamedChunk;
+	EChunkLocation::Type Location;
+	bool bIsInstalled;
+	bool bHasSucceeded;
+};
+
 /**
  * Platform Chunk Install Module Interface
  */
@@ -75,17 +87,29 @@ public:
 	virtual IPlatformChunkInstall* GetPlatformChunkInstall() = 0;
 };
 
-/** Deprecated delegate */
-DECLARE_DELEGATE_OneParam(FPlatformChunkInstallCompleteDelegate, uint32);
+/**
+ * Platform Chunk Install Manifest Interface
+ */
+class IPlatformChunkInstallManifest
+{
+public:
+	virtual bool HasManifest() const = 0;
+	virtual int32 GetChunkIDFromPakchunkIndex(int32 PakchunkIndex) const = 0;
+	virtual TArray<FString> GetPakFilesInChunk(int32 ChunkID) const = 0;
+};
+
 
 /** Delegate called when a chunk either successfully installs or fails to install, bool is success */
 DECLARE_DELEGATE_TwoParams(FPlatformChunkInstallDelegate, uint32, bool);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FPlatformChunkInstallMultiDelegate, uint32, bool);
 
-/** Delegate called when a Named Chunk either successfully installs or fails to install, bool is success */
+/** Deprecated delegate called when a Named Chunk either successfully installs or fails to install, bool is success */
 DECLARE_DELEGATE_TwoParams(FPlatformNamedChunkInstallDelegate, FName, bool);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FPlatformNamedChunkInstallMultiDelegate, FName, bool);
 
+/** Delegate called when a Named Chunk either successfully installs or fails to install */
+DECLARE_DELEGATE_OneParam(FPlatformNamedChunkCompleteDelegate, const FNamedChunkCompleteCallbackParam&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FPlatformNamedChunkCompleteMultiDelegate, const FNamedChunkCompleteCallbackParam&);
 
 enum class ECustomChunkType : uint8
 {
@@ -127,6 +151,13 @@ enum class ENamedChunkType : uint8
 	Invalid,
 	OnDemand,
 	Language,
+};
+
+struct FChunkInstallationStatusDetail
+{
+	uint64 CurrentInstallSize;
+	uint64 FullInstallSize;
+	bool bIsInstalled;
 };
 
 /**
@@ -210,18 +241,6 @@ public:
 	 */
 	virtual void RemoveChunkInstallDelegate( FDelegateHandle Delegate ) = 0;
 
-
-	UE_DEPRECATED(5.1, "Call SupportsNamedChunkInstall instead")
-	virtual bool SupportsIntelligentInstall() = 0;
-
-	UE_DEPRECATED(5.1, "Call IsNamedChunkInProgress instead")
-	virtual bool IsChunkInstallationPending(const TArray<FCustomChunk>& ChunkTagsID) = 0;
-
-	UE_DEPRECATED(5.1, "Call InstallNamedChunks instead")
-	virtual bool InstallChunks(const TArray<FCustomChunk>& ChunkTagsID) = 0;
-
-	UE_DEPRECATED(5.1, "Call UninstallNamedChunks instead")
-	virtual bool UninstallChunks(const TArray<FCustomChunk>& ChunkTagsID) = 0;
 
 	UE_DEPRECATED(5.2, "Call GetNamedChunksByType instead")
 	virtual TArray<FCustomChunk> GetCustomChunksByType(ECustomChunkType DesiredChunkType) = 0;
@@ -310,13 +329,66 @@ public:
 	 * @param Delegate		The delegate to call when any named chunk is installed or fails to install
 	 * @return				Handle to the bound delegate
 	 */
+	UE_DEPRECATED(5.4, "use AddNamedChunkCompleteDelegate instead")
 	virtual FDelegateHandle AddNamedChunkInstallDelegate( FPlatformNamedChunkInstallDelegate Delegate ) = 0;
 
 	/**
 	 * Remove a delegate callback on named chunk install completion.
 	 * @param Delegate		The delegate to remove.
 	 */
+	UE_DEPRECATED(5.4, "use RemoveNamedChunkCompleteDelegate instead")
 	virtual void RemoveNamedChunkInstallDelegate( FDelegateHandle Delegate ) = 0;
+	
+	/** 
+	 * Request a delegate callback on named chunk install completion or failure. Request may not be respected.
+	 * @param Delegate		The delegate to call when any named chunk is installed or fails to install
+	 * @return				Handle to the bound delegate
+	 */
+	virtual FDelegateHandle AddNamedChunkCompleteDelegate( FPlatformNamedChunkCompleteDelegate Delegate ) = 0;
+
+	/**
+	 * Remove a delegate callback on named chunk install completion.
+	 * @param Delegate		The delegate to remove.
+	 */
+	virtual void RemoveNamedChunkCompleteDelegate( FDelegateHandle Delegate ) = 0;
+
+
+
+	/** 
+	 * Returns whether this platform chunk installer implements all the API functions to support the platform chunk install bundle source
+	 */
+	virtual bool SupportsBundleSource() const = 0;
+
+	/** 
+	 * Set whether pak files are auto-mounted when they are installed (the default is that they are mounted)
+	 * @param bEnabled	Whether to auto-mount pak files
+	 * @return			false if this function is not supported
+	 */
+	virtual bool SetAutoPakMountingEnabled( bool bEnabled ) = 0;
+	
+	/**
+	 * Get the list of pak files in the given named chunk.
+	 * @param NamedChunk		The named chunk to query
+	 * @param OutFilesInChunk	The pak files names in the named chunk
+	 * @return					true if the named chunk is valid and this function is supported
+	 */
+	virtual bool GetPakFilesInNamedChunk( const FName NamedChunk, TArray<FString>& OutFilesInChunk) const = 0;
+
+	/**
+	 * Get detailed installation status for the given named chunk
+	 * @param NamedChunk			The named chunk to query
+	 * @param OutChunkStatusDetail	(out) structure that will contain the status detail
+	 * @return						true if the structure has been filled in
+	 */
+	virtual bool GetNamedChunkInstallationStatus( const FName NamedChunk, FChunkInstallationStatusDetail& OutChunkStatusDetail ) const = 0;
+
+	/**
+	 * Determine if the given named chunk is suitable for the current system locale
+	 * @param NamedChunk			The named chunk to query
+	 * @returns						false if the chunk is associated with a different locale
+	 */
+	virtual bool IsNamedChunkForCurrentLocale( const FName NamedChunk ) const = 0;
+	
 
 protected:
 		/**
@@ -408,26 +480,6 @@ public:
 		InstallDelegate.Remove(Delegate);
 	}
 
-	virtual bool SupportsIntelligentInstall() override
-	{
-		return false;
-	}
-
-	virtual bool IsChunkInstallationPending(const TArray<FCustomChunk>& ChunkTags) override
-	{
-		return false;
-	}
-
-	virtual bool InstallChunks(const TArray<FCustomChunk>& ChunkTagIDs) override
-	{
-		return false;
-	}
-
-	virtual bool UninstallChunks(const TArray<FCustomChunk>& ChunkTagsID) override
-	{
-		return false;
-	}
-
 	virtual TArray<FCustomChunk> GetCustomChunksByType(ECustomChunkType DesiredChunkType) override
 	{
 		return TArray<FCustomChunk>();
@@ -498,12 +550,51 @@ public:
 		NamedChunkInstallDelegate.Remove(Delegate);
 	}
 
+	virtual void RemoveNamedChunkCompleteDelegate(FDelegateHandle Delegate) override
+	{
+		NamedChunkCompleteDelegate.Remove(Delegate);
+	}
+
+	virtual FDelegateHandle AddNamedChunkCompleteDelegate(FPlatformNamedChunkCompleteDelegate Delegate) override
+	{
+		return NamedChunkCompleteDelegate.Add(Delegate);
+	}
+
+
+	virtual bool SupportsBundleSource() const override 
+	{ 
+		return false; 
+	}
+
+	virtual bool SetAutoPakMountingEnabled( bool bEnabled ) 
+	{ 
+		return false; 
+	}
+
+	virtual bool GetPakFilesInNamedChunk( const FName NamedChunk, TArray<FString>& OutFilesInChunk) const override 
+	{ 
+		return false; 
+	}
+
+	virtual bool GetNamedChunkInstallationStatus( const FName NamedChunk, FChunkInstallationStatusDetail& OutChunkStatusDetail ) const override 
+	{ 
+		return false; 
+	}
+
+	virtual bool IsNamedChunkForCurrentLocale( const FName NamedChunk ) const 
+	{ 
+		return true; 
+	}
 
 protected:
+
+	void DoNamedChunkCompleteCallbacks( const FName NamedChunk, EChunkLocation::Type Location, bool bHasSucceeded ) const;
+	void DoNamedChunkCompleteCallbacks( const TArrayView<const FName>& NamedChunks, EChunkLocation::Type Location, bool bHasSucceeded ) const;
 
 	/** Delegates called when installation succeeds or fails */
 	FPlatformChunkInstallMultiDelegate InstallDelegate;
 	FPlatformNamedChunkInstallMultiDelegate NamedChunkInstallDelegate;
+	FPlatformNamedChunkCompleteMultiDelegate NamedChunkCompleteDelegate;
 
 	virtual EChunkLocation::Type GetChunkLocation(uint32 ChunkID) override
 	{
@@ -512,14 +603,5 @@ protected:
 };
 
 
-// temporary helper base class for platform chunk installers that have implemented named chunk support to provide FCustomChunk emulation
-class FGenericPlatformChunkInstall_WithEmulatedCustomChunks : public FGenericPlatformChunkInstall
-{
-public:
-	virtual bool SupportsIntelligentInstall() override final { return true; }
-	CORE_API virtual bool IsChunkInstallationPending(const TArray<FCustomChunk>& ChunkTagsID) override final;
-	CORE_API virtual bool InstallChunks(const TArray<FCustomChunk>& ChunkTagsID)  override final;
-	CORE_API virtual bool UninstallChunks(const TArray<FCustomChunk>& ChunkTagsID) override final;
-};
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

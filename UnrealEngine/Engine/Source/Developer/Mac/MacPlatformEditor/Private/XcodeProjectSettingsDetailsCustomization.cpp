@@ -84,6 +84,10 @@ void FXcodeProjectSettingsDetailsCustomization::CustomizeDetails(IDetailLayoutBu
 			{
 				SortOrder = 3;
 			}
+			else if(CategoryName == "Privacy Manifests")
+			{
+				SortOrder = 4;
+			}
             else
             {
                 // Unknown category, should explicitly set order

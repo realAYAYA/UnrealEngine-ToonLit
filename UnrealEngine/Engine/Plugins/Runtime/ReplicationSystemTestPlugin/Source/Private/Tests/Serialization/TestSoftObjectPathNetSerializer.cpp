@@ -126,7 +126,7 @@ void FTestSoftObjectPathNetSerializer::TestValidate()
 
 void FTestSoftObjectPathNetSerializer::TestIsEqual()
 {
-	const SIZE_T TestValueCount = TestValues.Num();
+	const int32 TestValueCount = TestValues.Num();
 
 	TArray<FSoftObjectPath> CompareValues[2];
 	TArray<bool> ExpectedResults[2];
@@ -138,8 +138,8 @@ void FTestSoftObjectPathNetSerializer::TestIsEqual()
 	ExpectedResults[1].Reserve(TestValueCount);
 	for (const FSoftObjectPath& Value : TestValues)
 	{
-		const SIZE_T ValueIndex = &Value - TestValues.GetData();
-		const SIZE_T NextValueIndex = (ValueIndex + 1U) % TestValueCount;
+		const int32 ValueIndex = static_cast<int32>(&Value - TestValues.GetData());
+		const int32 NextValueIndex = (ValueIndex + 1U) % TestValueCount;
 		CompareValues[1].Add(TestValues[NextValueIndex]);
 		ExpectedResults[1].Add(TestValues[ValueIndex] == TestValues[NextValueIndex]);
 	}

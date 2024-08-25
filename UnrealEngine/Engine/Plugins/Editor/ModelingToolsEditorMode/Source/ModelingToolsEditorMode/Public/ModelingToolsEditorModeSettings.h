@@ -358,6 +358,9 @@ public:
 	UPROPERTY(config)
 	int32 LastMeshSelectionDragMode = 0;
 
+	UPROPERTY(config)
+	int32 LastMeshSelectionLocalFrameMode = 0;
+
 public:
 
 	// saved-state for various mode settings that does not persist between editor runs

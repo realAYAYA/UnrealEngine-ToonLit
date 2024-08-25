@@ -17,7 +17,7 @@ export const DebugView: React.FC = () => {
 
                 if (lease) {
 
-                  navigate(`/log/${lease.logId}?leaseId=${lease.id}`, {replace: true});
+                  navigate(`/log/${lease.logId}`, {replace: true});
 
                 } else {
                     console.error("Unable to get lease ", params.leaseId);

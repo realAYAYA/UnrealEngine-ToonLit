@@ -59,6 +59,9 @@ protected:
 	FStaticMeshLODResources* LODModel;
 	/** LOD Index for which data has to be retrieved / altered*/
 	int32 MeshLODIndex;
+
+	// Texture override state
+	UE::MeshPaintingToolset::FDefaultTextureOverride TextureOverridesState;
 };
 
 //////////////////////////////////////////////////////////////////////////

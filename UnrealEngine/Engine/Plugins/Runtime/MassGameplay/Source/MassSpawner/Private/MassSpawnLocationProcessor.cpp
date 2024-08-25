@@ -5,6 +5,7 @@
 #include "MassEntityManager.h"
 #include "MassExecutionContext.h"
 #include "MassSpawnerTypes.h"
+#include "MassCommonUtils.h"
 #include "Engine/World.h"
 #include "VisualLogger/VisualLogger.h"
 
@@ -15,6 +16,7 @@ UMassSpawnLocationProcessor::UMassSpawnLocationProcessor()
 	: EntityQuery(*this)
 {
 	bAutoRegisterWithProcessingPhases = false;
+	RandomStream.Initialize(UE::Mass::Utils::GenerateRandomSeed());
 }
 
 void UMassSpawnLocationProcessor::ConfigureQueries()
@@ -61,11 +63,11 @@ void UMassSpawnLocationProcessor::Execute(FMassEntityManager& EntityManager, FMa
 		Transforms.AddUninitialized(NumToAdd);
 		for (int i = 0; i < NumToAdd; ++i)
 		{
-			Transforms[NumSpawnTransforms + i] = Transforms[FMath::RandRange(0, NumSpawnTransforms - 1)];
+			Transforms[NumSpawnTransforms + i] = Transforms[RandomStream.RandRange(0, NumSpawnTransforms - 1)];
 		}
 	}
 
-	if (AuxData.bRandomize)
+	if (AuxData.bRandomize && !UE::Mass::Utils::IsDeterministic())
 	{
 		EntityQuery.ForEachEntityChunk(EntityManager, Context, [&Transforms, this](FMassExecutionContext& Context)
 			{
@@ -73,9 +75,9 @@ void UMassSpawnLocationProcessor::Execute(FMassEntityManager& EntityManager, FMa
 				const int32 NumEntities = Context.GetNumEntities();
 				for (int32 i = 0; i < NumEntities; ++i)
 				{
-					const int32 AuxIndex = FMath::RandRange(0, Transforms.Num() - 1);
+					const int32 AuxIndex = RandomStream.RandRange(0, Transforms.Num() - 1);
 					LocationList[i].GetMutableTransform() = Transforms[AuxIndex];
-					Transforms.RemoveAtSwap(AuxIndex, 1, /*bAllowShrinking=*/false);
+					Transforms.RemoveAtSwap(AuxIndex, 1, EAllowShrinking::No);
 				}
 			});
 	}

@@ -4,6 +4,8 @@
 
 #include "ConcertTransportMessages.h"
 #include "Delegates/IDelegateInstance.h"
+#include "HAL/IConsoleManager.h"
+
 #include "IConcertClient.h"
 #include "IConcertSyncClient.h"
 #include "IConcertSession.h"
@@ -328,11 +330,22 @@ struct FManagerImpl
 			return ERemoteCVarChangeType::Update;
 		}
 	}
+
 	void HandleCVarSet(const FConcertSessionContext& Context, const FConcertSetConsoleVariableEvent& InEvent)
 	{
+		// Ignore this message if we generated it
+		if (TSharedPtr<IConcertClientSession> Session = WeakSession.Pin())
+		{
+			if (Context.SourceEndpointId == Session->GetSessionClientEndpointId())
+			{
+				return;
+			}
+		}
+
 		if (CanReceiveConsoleVariable())
 		{
-			RemoteCVarChanged.Broadcast(ConvertChangeType(InEvent.ChangeType), InEvent.Variable, InEvent.Value);
+			EConsoleVariableFlags Flags = static_cast<EConsoleVariableFlags>(InEvent.Flags);
+			RemoteCVarChanged.Broadcast(ConvertChangeType(InEvent.ChangeType), InEvent.Variable, InEvent.Value, Flags);
 		}
 	}
 
@@ -415,7 +428,7 @@ struct FManagerImpl
 	 * Sends the given console variable name with the specified value to all connected endpoints.  It is up to the
 	 * endpoint to implement the change locally based on configured synchronization state.
 	 */
-	void SendConsoleVariableChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue)
+	void SendConsoleVariableChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue, EConsoleVariableFlags InFlags)
 	{
 		TSharedPtr<IConcertClientSession> Session = WeakSession.Pin();
 		if (!bIsEnabled || !Session.IsValid())
@@ -423,7 +436,15 @@ struct FManagerImpl
 			return;
 		}
 
-		FConcertSetConsoleVariableEvent OutEvent{ConvertChangeType(InChangeType), MoveTemp(InName), MoveTemp(InValue)};
+		const bool bRenderThreadVersion = InFlags & ECVF_RenderThreadSafe;
+		if (bRenderThreadVersion)
+		{
+			// The receiver is never dealing with the render thread version of the CVar thus should not be applied to remote callers.
+			return;
+		}
+
+		uint32 OutFlags = static_cast<uint32>(InFlags);
+		FConcertSetConsoleVariableEvent OutEvent{ConvertChangeType(InChangeType), MoveTemp(InName), MoveTemp(InValue), InFlags};
 		Session->SendCustomEvent(OutEvent, Session->GetSessionClientEndpointIds(),
 								 EConcertMessageFlags::ReliableOrdered | EConcertMessageFlags::UniqueId);
 	}
@@ -495,9 +516,9 @@ FOnMultiUserConnectionChange& FManager::OnConnectionChange()
 	return Implementation->ConnectionChanged;
 }
 
-void FManager::SendConsoleVariableChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue)
+void FManager::SendConsoleVariableChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue, EConsoleVariableFlags InFlags)
 {
-	Implementation->SendConsoleVariableChange(InChangeType, MoveTemp(InName), MoveTemp(InValue));
+	Implementation->SendConsoleVariableChange(InChangeType, MoveTemp(InName), MoveTemp(InValue), InFlags);
 }
 
 void FManager::SendListItemCheckStateChange(FString InName, ECheckBoxState InCheckedState)
@@ -513,6 +534,21 @@ void FManager::SetEnableMultiUserSupport(bool bIsEnabled)
 bool FManager::IsInitialized() const
 {
 	return Implementation->bIsInitialized;
+}
+
+bool FManager::IsSyncEnabled() const
+{
+	return Implementation->bIsEnabled;
+}
+
+bool FManager::IsSessionValid() const
+{
+	return Implementation->WeakSession.IsValid();
+}
+
+bool FManager::IsLocalUserInMultiUserSession()
+{
+	return IsSyncEnabled() && IsSessionValid();
 }
 };
 

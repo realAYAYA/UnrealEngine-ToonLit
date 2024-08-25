@@ -50,14 +50,18 @@ class SSocketDisplayItem : public SMultiColumnTableRow< TSharedPtr<SocketListIte
 
 public:
 	
-	SLATE_BEGIN_ARGS( SSocketDisplayItem )
-		{}
+	SLATE_BEGIN_ARGS( SSocketDisplayItem ):
+		_ReadOnly(false)
+		{} 
 
 		/** The socket this item displays. */
 		SLATE_ARGUMENT( TWeakPtr< SocketListItem >, SocketItem )
 
 		/** Pointer back to the socket manager */
 		SLATE_ARGUMENT( TWeakPtr< SSocketManager >, SocketManagerPtr )
+
+		/** Whether the widget should be editable or not */
+		SLATE_ARGUMENT( bool, ReadOnly)
 	SLATE_END_ARGS()
 
 	/**
@@ -69,6 +73,7 @@ public:
 	{
 		SocketItem = InArgs._SocketItem;
 		SocketManagerPtr = InArgs._SocketManagerPtr;
+		bReadOnly = InArgs._ReadOnly;
 
 		ImportedSocketBrush = FAppStyle::Get().GetBrush("Icons.Import");
 		NotImportedSocketBrush = FAppStyle::Get().GetBrush("NoBrush");
@@ -87,6 +92,7 @@ public:
 			TSharedPtr< SInlineEditableTextBlock > InlineWidget;
 
 			SAssignNew( InlineWidget, SInlineEditableTextBlock )
+			.IsReadOnly(bReadOnly)
 			.Text( this, &SSocketDisplayItem::GetSocketName )
 			.OnVerifyTextChanged( this, &SSocketDisplayItem::OnVerifySocketNameChanged )
 			.OnTextCommitted( this, &SSocketDisplayItem::OnCommitSocketName )
@@ -211,6 +217,8 @@ private:
 
 	const FSlateBrush* ImportedSocketBrush;
 	const FSlateBrush* NotImportedSocketBrush;
+
+	bool bReadOnly;
 };
 
 TSharedPtr<ISocketManager> ISocketManager::CreateSocketManager(TSharedPtr<class IStaticMeshEditor> InStaticMeshEditor, FSimpleDelegate InOnSocketSelectionChanged )
@@ -218,7 +226,8 @@ TSharedPtr<ISocketManager> ISocketManager::CreateSocketManager(TSharedPtr<class 
 	TSharedPtr<SSocketManager> SocketManager;
 	SAssignNew(SocketManager, SSocketManager)
 		.StaticMeshEditorPtr(InStaticMeshEditor)
-		.OnSocketSelectionChanged( InOnSocketSelectionChanged );
+		.OnSocketSelectionChanged( InOnSocketSelectionChanged )
+		.ReadOnly(InStaticMeshEditor->GetOpenMethod() == EAssetOpenMethod::View);
 
 	TSharedPtr<ISocketManager> ISocket;
 	ISocket = StaticCastSharedPtr<ISocketManager>(SocketManager);
@@ -230,6 +239,8 @@ void SSocketManager::Construct(const FArguments& InArgs)
 	StaticMeshEditorPtr = InArgs._StaticMeshEditorPtr;
 
 	OnSocketSelectionChanged = InArgs._OnSocketSelectionChanged;
+
+	bReadOnly = InArgs._ReadOnly;
 
 	TSharedPtr<IStaticMeshEditor> StaticMeshEditorPinned = StaticMeshEditorPtr.Pin();
 	if (!StaticMeshEditorPinned.IsValid())
@@ -252,6 +263,16 @@ void SSocketManager::Construct(const FArguments& InArgs)
 
 	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	SocketDetailsView = PropertyModule.CreateDetailView(Args);
+	
+	SocketDetailsView->SetIsPropertyEditingEnabledDelegate(FIsPropertyEditingEnabled::CreateLambda([this]
+	{
+		if(TSharedPtr<IStaticMeshEditor> StaticMeshEditorPinned = StaticMeshEditorPtr.Pin())
+		{
+			return StaticMeshEditorPinned->GetOpenMethod() == EAssetOpenMethod::Edit;
+		}
+
+		return true;
+	}));
 
 	WorldSpaceRotation = FVector::ZeroVector;
 
@@ -299,6 +320,7 @@ void SSocketManager::Construct(const FArguments& InArgs)
 							.ButtonStyle(FAppStyle::Get(), "SimpleButton")
 							.ToolTipText(LOCTEXT("CreateSocket", "Create Socket"))
 							.OnClicked(this, &SSocketManager::CreateSocket_Execute)
+							.Visibility(this, &SSocketManager::CreateSocket_IsVisible )
 							.VAlign(VAlign_Center)
 							[
 								SNew(SImage)
@@ -449,7 +471,8 @@ TSharedRef< ITableRow > SSocketManager::MakeWidgetFromOption( TSharedPtr<SocketL
 {
 	return SNew( SSocketDisplayItem, OwnerTable )
 				.SocketItem(InItem)
-				.SocketManagerPtr(SharedThis(this));
+				.SocketManagerPtr(SharedThis(this))
+				.ReadOnly(bReadOnly);
 }
 
 void SSocketManager::CreateSocket()
@@ -660,6 +683,11 @@ FReply SSocketManager::CreateSocket_Execute()
 
 	return FReply::Handled();
 }
+
+EVisibility SSocketManager::CreateSocket_IsVisible() const
+{
+	return bReadOnly ? EVisibility::Collapsed : EVisibility::Visible;
+}	
 
 FText SSocketManager::GetSocketHeaderText() const
 {

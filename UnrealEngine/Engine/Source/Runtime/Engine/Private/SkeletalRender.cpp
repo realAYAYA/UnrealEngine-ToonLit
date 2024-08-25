@@ -12,6 +12,8 @@
 #include "SceneView.h"
 #include "GPUSkinCache.h"
 #include "Rendering/SkeletalMeshRenderData.h"
+#include "Engine/RendererSettings.h"
+
 
 /*-----------------------------------------------------------------------------
 Globals
@@ -21,6 +23,25 @@ Globals
 const float MinMorphTargetBlendWeight = UE_SMALL_NUMBER;
 // largest blend weight for vertex anims
 const float MaxMorphTargetBlendWeight = 5.0f;
+
+static float GMorphTargetMaxBlendWeight = 5.f;
+static FAutoConsoleVariableRef CVarMorphTargetMinBlendWeight(
+	TEXT("r.MorphTarget.MaxBlendWeight"),
+	GMorphTargetMaxBlendWeight,
+	TEXT("Maximum value accepted as a morph target blend weight..\n")
+	TEXT("Blend target weights will be checked against this value for validation.Values smaller than this number will be clamped.\n"),
+	ECVF_Default
+);
+
+namespace UE::SkeletalRender::Settings
+{
+	float GetMorphTargetMaxBlendWeight()
+	{
+		static const IConsoleVariable* MorphTargetMaxBlendWeightCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.MorphTarget.MaxBlendWeight"));
+
+		return (MorphTargetMaxBlendWeightCVar != nullptr) ? MorphTargetMaxBlendWeightCVar->GetFloat() : GetDefault<URendererSettings>()->MorphTargetMaxBlendWeight;
+	}
+}
 
 #if RHI_RAYTRACING
 static bool IsSkeletalMeshRayTracingSupported()
@@ -38,7 +59,7 @@ FSkeletalMeshObject
 -----------------------------------------------------------------------------*/
 
 FSkeletalMeshObject::FSkeletalMeshObject(USkinnedMeshComponent* InMeshComponent, FSkeletalMeshRenderData* InSkelMeshRenderData, ERHIFeatureLevel::Type InFeatureLevel)
-:	MinDesiredLODLevel(FMath::Max<int32>(InMeshComponent->GetPredictedLODLevel(), InSkelMeshRenderData->CurrentFirstLODIdx))
+:	MinDesiredLODLevel(InMeshComponent->GetPredictedLODLevel())
 ,	MaxDistanceFactor(0.f)
 ,	WorkingMinDesiredLODLevel(MinDesiredLODLevel)
 ,	WorkingMaxDistanceFactor(0.f)
@@ -65,7 +86,7 @@ FSkeletalMeshObject::FSkeletalMeshObject(USkinnedMeshComponent* InMeshComponent,
 ,	bUsePerBoneMotionBlur(InMeshComponent->bPerBoneMotionBlur)
 ,	StatId(InMeshComponent->GetSkinnedAsset()->GetStatID(true))
 ,	FeatureLevel(InFeatureLevel)
-,	ComponentId(InMeshComponent->ComponentId.PrimIDValue)
+,	ComponentId(InMeshComponent->GetPrimitiveSceneId().PrimIDValue)
 ,	WorldScale(InMeshComponent->GetComponentScale())
 #if RHI_ENABLE_RESOURCE_INFO
 ,	AssetPathName(InMeshComponent->GetSkinnedAsset()->GetPathName())
@@ -95,7 +116,7 @@ FSkeletalMeshObject::~FSkeletalMeshObject()
 {
 }
 
-void FSkeletalMeshObject::UpdateMinDesiredLODLevel(const FSceneView* View, const FBoxSphereBounds& Bounds, int32 FrameNumber, uint8 CurFirstLODIdx)
+void FSkeletalMeshObject::UpdateMinDesiredLODLevel(const FSceneView* View, const FBoxSphereBounds& Bounds, int32 FrameNumber)
 {
 	// Thumbnail rendering doesn't contribute to MinDesiredLODLevel calculation
 	if (View->Family && (View->Family->bThumbnailRendering || !View->Family->GetIsInFocus()))
@@ -140,7 +161,6 @@ void FSkeletalMeshObject::UpdateMinDesiredLODLevel(const FSceneView* View, const
 		}
 	}
 
-	NewLODLevel = FMath::Max<int32>(NewLODLevel, CurFirstLODIdx);
 	if (!LastFrameNumber)
 	{
 		// We don't have last frame value on the first call to FSkeletalMeshObject::UpdateMinDesiredLODLevel so

@@ -86,7 +86,7 @@ FString RigVMPythonUtils::PythonizeName(FStringView InName, const RigVMPythonUti
 			{
 				break;
 			}
-			PythonizedName.RemoveAt(CharIndex, 1, false);
+			PythonizedName.RemoveAt(CharIndex, 1, EAllowShrinking::No);
 		}
 
 		PrevBreak = NameBreak;

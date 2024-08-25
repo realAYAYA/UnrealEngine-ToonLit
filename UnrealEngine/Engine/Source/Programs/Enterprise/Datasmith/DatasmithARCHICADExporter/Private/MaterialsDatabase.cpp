@@ -13,6 +13,9 @@
 #include "DatasmithSceneFactory.h"
 
 BEGIN_NAMESPACE_UE_AC
+#if AC_VERSION > 26
+const API_AttributeIndex kInvalidMaterialIndex = ACAPI_CreateAttributeIndex(0);
+#endif
 
 class FMaterialInfo
 {
@@ -82,7 +85,7 @@ void FMaterialInfo::Init(const FSyncContext& SyncContext, const API_Component3D&
 									  SyncContext.GetTexturesCache().GetTexture(SyncContext, textureIndex).Fingerprint);
 			}
 			UE_AC_VerboseF("Simulate Guid for material %d, %s Guid=%s\n", MaterialKey.ACMaterialIndex,
-						   DisplayName.ToUtf8(), APIGuidToString(MatGuid).ToUtf8());
+						   TCHAR_TO_UTF8(*DatasmithLabel), APIGuidToString(MatGuid).ToUtf8());
 		}
 		SyncData.MaterialId = APIGuid2GSGuid(MatGuid);
 		SyncData.MaterialIndex = CUmat.umat.mater.head.index;
@@ -392,7 +395,11 @@ const FMaterialsDatabase::FMaterialSyncData& FMaterialsDatabase::GetMaterial(con
 	if (inACTextureIndex < kInvalidMaterialIndex)
 	{
 		UE_AC_DebugF("FMaterialsDatabase::GetMaterial - Invalid texture index (%d)\n", inACTextureIndex);
+#if AC_VERSION > 26
+		inACTextureIndex = kInvalidMaterialIndex.ToInt32_Deprecated();
+#else
 		inACTextureIndex = kInvalidMaterialIndex;
+#endif
 	}
 	FMaterialKey MaterialKey(inACMaterialIndex, inACTextureIndex, InSided);
 

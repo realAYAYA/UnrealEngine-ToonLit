@@ -113,6 +113,7 @@ class GEOMETRYCACHE_API UGeometryCacheTrackStreamable : public UGeometryCacheTra
 	virtual void SetDuration(float NewDuration) override;
 	virtual const FGeometryCacheTrackSampleInfo& GetSampleInfo(float Time, const bool bLooping) override;
 	virtual bool GetMeshDataAtTime(float Time, FGeometryCacheMeshData& OutMeshData) override;
+	virtual bool GetMeshDataAtSampleIndex(int32 SampleIndex, FGeometryCacheMeshData& OutMeshData) override;
 	virtual uint64 GetHash() const override;
 	//~ End UGeometryCacheTrack Interface.
 

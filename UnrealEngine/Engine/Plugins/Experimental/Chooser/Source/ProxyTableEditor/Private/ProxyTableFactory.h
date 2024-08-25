@@ -19,4 +19,5 @@ class UProxyTableFactory : public UFactory
 	{
 		return FactoryCreateNew(Class, InParent, Name, Flags, Context, Warn, NAME_None);
 	}
+	virtual FName GetNewAssetThumbnailOverride() const override { return "ProxyTableEditor.ProxyTableIconLarge"; }
 };

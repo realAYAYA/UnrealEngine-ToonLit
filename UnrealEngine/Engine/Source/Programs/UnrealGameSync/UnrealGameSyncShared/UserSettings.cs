@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -11,6 +9,8 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json.Serialization;
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -85,7 +85,7 @@ namespace UnrealGameSync
 				changeType.Good = definitionObject.GetValue("bGood", false);
 				changeType.Starred = definitionObject.GetValue("bStarred", false);
 				changeType.FindNewestGoodContent = definitionObject.GetValue("bFindNewestGoodContent", false);
-				changeType.RequiredBadges.AddRange(definitionObject.GetValue("RequiredBadges", "").Split(new char[] { ',',' '}, StringSplitOptions.RemoveEmptyEntries));
+				changeType.RequiredBadges.AddRange(definitionObject.GetValue("RequiredBadges", "").Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
 				changeType.ReadFrom = definitionObject.GetValue("ReadFrom", null);
 				return true;
@@ -221,34 +221,34 @@ namespace UnrealGameSync
 			ConfigObject obj = new ConfigObject(text);
 
 			UserSelectedProjectType type;
-			if(Enum.TryParse(obj.GetValue("Type", ""), out type))
+			if (Enum.TryParse(obj.GetValue("Type", ""), out type))
 			{
 				string? serverAndPort = obj.GetValue("ServerAndPort", null);
-				if(String.IsNullOrWhiteSpace(serverAndPort))
+				if (String.IsNullOrWhiteSpace(serverAndPort))
 				{
 					serverAndPort = null;
 				}
 
 				// Fixup for code that was saving server host name rather than DNS entry
-				if(serverAndPort != null && serverAndPort.Equals("p4-nodeb.epicgames.net:1666", StringComparison.OrdinalIgnoreCase))
+				if (serverAndPort != null && serverAndPort.Equals("p4-nodeb.epicgames.net:1666", StringComparison.OrdinalIgnoreCase))
 				{
 					serverAndPort = "perforce:1666";
 				}
 
 				string? userName = obj.GetValue("UserName", null);
-				if(String.IsNullOrWhiteSpace(userName))
+				if (String.IsNullOrWhiteSpace(userName))
 				{
 					userName = null;
 				}
 
 				string? localPath = obj.GetValue("LocalPath", null);
-				if(String.IsNullOrWhiteSpace(localPath))
+				if (String.IsNullOrWhiteSpace(localPath))
 				{
 					localPath = null;
 				}
 
 				string? clientPath = obj.GetValue("ClientPath", null);
-				if(String.IsNullOrWhiteSpace(clientPath))
+				if (String.IsNullOrWhiteSpace(clientPath))
 				{
 					clientPath = null;
 				}
@@ -275,22 +275,22 @@ namespace UnrealGameSync
 		{
 			ConfigObject obj = new ConfigObject();
 
-			if(ServerAndPort != null)
+			if (ServerAndPort != null)
 			{
 				obj.SetValue("ServerAndPort", ServerAndPort);
 			}
-			if(UserName != null)
+			if (UserName != null)
 			{
 				obj.SetValue("UserName", UserName);
 			}
 
 			obj.SetValue("Type", Type.ToString());
 
-			if(ClientPath != null)
+			if (ClientPath != null)
 			{
 				obj.SetValue("ClientPath", ClientPath);
 			}
-			if(LocalPath != null)
+			if (LocalPath != null)
 			{
 				obj.SetValue("LocalPath", LocalPath);
 			}
@@ -458,7 +458,7 @@ namespace UnrealGameSync
 				return false;
 			}
 		}
-		
+
 		void SaveInternal()
 		{
 			lock (_syncRoot)
@@ -475,9 +475,9 @@ namespace UnrealGameSync
 		/// </summary>
 		public enum RobomergeShowChangesOption
 		{
-			All,		// Show all changes from robomerge
-			Badged,		// Show only robomerge changes that have an associated badge
-			None		// Show no robomerge changes
+			All,        // Show all changes from robomerge
+			Badged,     // Show only robomerge changes that have an associated badge
+			None        // Show no robomerge changes
 		};
 
 		readonly FileReference _fileName;
@@ -515,7 +515,7 @@ namespace UnrealGameSync
 		public bool WindowVisible { get; set; }
 		public string WindowState { get; set; }
 		public Rectangle? WindowBounds { get; set; }
-		
+
 		// Schedule settings
 		public bool ScheduleEnabled { get; set; }
 		public TimeSpan ScheduleTime { get; set; }
@@ -544,25 +544,25 @@ namespace UnrealGameSync
 			List<UserSelectedProjectSettings> projects = new List<UserSelectedProjectSettings>();
 
 			string[]? projectStrings = _configFile.GetValues(settingName, null);
-			if(projectStrings != null)
+			if (projectStrings != null)
 			{
-				foreach(string projectString in projectStrings)
+				foreach (string projectString in projectStrings)
 				{
 					UserSelectedProjectSettings? project;
-					if(UserSelectedProjectSettings.TryParseConfigEntry(projectString, out project))
+					if (UserSelectedProjectSettings.TryParseConfigEntry(projectString, out project))
 					{
 						projects.Add(project);
 					}
 				}
 			}
-			else if(legacySettingName != null)
+			else if (legacySettingName != null)
 			{
 				string[]? legacyProjectStrings = _configFile.GetValues(legacySettingName, null);
-				if(legacyProjectStrings != null)
+				if (legacyProjectStrings != null)
 				{
-					foreach(string legacyProjectString in legacyProjectStrings)
+					foreach (string legacyProjectString in legacyProjectStrings)
 					{
-						if(!String.IsNullOrWhiteSpace(legacyProjectString))
+						if (!String.IsNullOrWhiteSpace(legacyProjectString))
 						{
 							projects.Add(new UserSelectedProjectSettings(null, null, UserSelectedProjectType.Local, null, legacyProjectString));
 						}
@@ -657,7 +657,7 @@ namespace UnrealGameSync
 			FilterIndex = _configFile.GetValue("General.FilterIndex", 0);
 
 			string? lastProjectString = _configFile.GetValue("General.LastProject", null);
-			if(lastProjectString != null)
+			if (lastProjectString != null)
 			{
 				UserSelectedProjectSettings? lastProject;
 				if (!UserSelectedProjectSettings.TryParseConfigEntry(lastProjectString, out lastProject))
@@ -669,7 +669,7 @@ namespace UnrealGameSync
 			else
 			{
 				string? lastProjectFileName = _configFile.GetValue("General.LastProjectFileName", null);
-				if(lastProjectFileName != null)
+				if (lastProjectFileName != null)
 				{
 					LastProject = new UserSelectedProjectSettings(null, null, UserSelectedProjectType.Local, null, lastProjectFileName);
 				}
@@ -696,30 +696,30 @@ namespace UnrealGameSync
 			}
 
 			// Build configuration
-			CompiledEditorBuildConfig = _configFile.GetEnumValue("General.BuildConfig", BuildConfig.DebugGame);
+			CompiledEditorBuildConfig = _configFile.GetEnumValue("General.BuildConfig", BuildConfig.Development);
 
 			// Tab names
 			TabLabels = _configFile.GetEnumValue("General.TabLabels", TabLabels.Stream);
 
 			// Editor arguments
-			string[] arguments = _configFile.GetValues("General.EditorArguments", new string[]{ "0:-log", "0:-fastload" });
+			string[] arguments = _configFile.GetValues("General.EditorArguments", new string[] { "0:-log", "0:-fastload" });
 			if (Version < UserSettingsVersion.XgeShaderCompilation)
 			{
 				arguments = Enumerable.Concat(arguments, new string[] { "0:-noxgeshadercompile" }).ToArray();
 			}
-			foreach(string argument in arguments)
+			foreach (string argument in arguments)
 			{
-				if(argument.StartsWith("0:", StringComparison.Ordinal))
+				if (argument.StartsWith("0:", StringComparison.Ordinal))
 				{
-					EditorArguments.Add(new Tuple<string,bool>(argument.Substring(2), false));
+					EditorArguments.Add(new Tuple<string, bool>(argument.Substring(2), false));
 				}
-				else if(argument.StartsWith("1:", StringComparison.Ordinal))
+				else if (argument.StartsWith("1:", StringComparison.Ordinal))
 				{
-					EditorArguments.Add(new Tuple<string,bool>(argument.Substring(2), true));
+					EditorArguments.Add(new Tuple<string, bool>(argument.Substring(2), true));
 				}
 				else
 				{
-					EditorArguments.Add(new Tuple<string,bool>(argument, true));
+					EditorArguments.Add(new Tuple<string, bool>(argument, true));
 				}
 			}
 			EditorArgumentsPrompt = _configFile.GetValue("General.EditorArgumentsPrompt", false);
@@ -762,7 +762,7 @@ namespace UnrealGameSync
 			ScheduleEnabled = _configFile.GetValue("Schedule.Enabled", false);
 
 			TimeSpan scheduleTime;
-			if(!TimeSpan.TryParse(_configFile.GetValue("Schedule.Time", ""), out scheduleTime))
+			if (!TimeSpan.TryParse(_configFile.GetValue("Schedule.Time", ""), out scheduleTime))
 			{
 				scheduleTime = new TimeSpan(6, 0, 0);
 			}
@@ -822,7 +822,7 @@ namespace UnrealGameSync
 			int w = obj.GetValue("W", -1);
 			int h = obj.GetValue("H", -1);
 
-			if(x == -1 || y == -1 || w == -1 || h == -1)
+			if (x == -1 || y == -1 || w == -1 || h == -1)
 			{
 				return null;
 			}
@@ -867,24 +867,24 @@ namespace UnrealGameSync
 		{
 			// Read the workspace settings
 			ConfigSection? workspaceSection = _configFile.FindSection(clientName + branchPath);
-			if(workspaceSection == null)
+			if (workspaceSection == null)
 			{
 				string legacyBranchAndClientKey = clientName + branchPath;
 
 				int slashIdx = legacyBranchAndClientKey.IndexOf('/', StringComparison.Ordinal);
-				if(slashIdx != -1)
+				if (slashIdx != -1)
 				{
 					legacyBranchAndClientKey = legacyBranchAndClientKey.Substring(0, slashIdx) + "$" + legacyBranchAndClientKey.Substring(slashIdx + 1);
 				}
 
 				string? currentSync = _configFile.GetValue("Clients." + legacyBranchAndClientKey, null);
-				if(currentSync != null)
+				if (currentSync != null)
 				{
 					int atIdx = currentSync.LastIndexOf('@');
-					if(atIdx != -1)
+					if (atIdx != -1)
 					{
 						int changeNumber;
-						if(Int32.TryParse(currentSync.Substring(atIdx + 1), out changeNumber))
+						if (Int32.TryParse(currentSync.Substring(atIdx + 1), out changeNumber))
 						{
 							currentWorkspace.ProjectIdentifier = currentSync.Substring(0, atIdx);
 							currentWorkspace.CurrentChangeNumber = changeNumber;
@@ -893,16 +893,16 @@ namespace UnrealGameSync
 				}
 
 				string? lastUpdateResultText = _configFile.GetValue("Clients." + legacyBranchAndClientKey + "$LastUpdate", null);
-				if(lastUpdateResultText != null)
+				if (lastUpdateResultText != null)
 				{
 					int colonIdx = lastUpdateResultText.LastIndexOf(':');
-					if(colonIdx != -1)
+					if (colonIdx != -1)
 					{
 						int changeNumber;
-						if(Int32.TryParse(lastUpdateResultText.Substring(0, colonIdx), out changeNumber))
+						if (Int32.TryParse(lastUpdateResultText.Substring(0, colonIdx), out changeNumber))
 						{
 							WorkspaceUpdateResult result;
-							if(Enum.TryParse(lastUpdateResultText.Substring(colonIdx + 1), out result))
+							if (Enum.TryParse(lastUpdateResultText.Substring(colonIdx + 1), out result))
 							{
 								currentWorkspace.LastSyncChangeNumber = changeNumber;
 								currentWorkspace.LastSyncResult = result;
@@ -916,10 +916,10 @@ namespace UnrealGameSync
 				currentWorkspace.ProjectIdentifier = workspaceSection.GetValue("CurrentProjectPath", "");
 				currentWorkspace.CurrentChangeNumber = workspaceSection.GetValue("CurrentChangeNumber", -1);
 				currentWorkspace.CurrentSyncFilterHash = workspaceSection.GetValue("CurrentSyncFilterHash", null);
-				foreach(string additionalChangeNumberString in workspaceSection.GetValues("AdditionalChangeNumbers", Array.Empty<string>()))
+				foreach (string additionalChangeNumberString in workspaceSection.GetValues("AdditionalChangeNumbers", Array.Empty<string>()))
 				{
 					int additionalChangeNumber;
-					if(Int32.TryParse(additionalChangeNumberString, out additionalChangeNumber))
+					if (Int32.TryParse(additionalChangeNumberString, out additionalChangeNumber))
 					{
 						currentWorkspace.AdditionalChangeNumbers.Add(additionalChangeNumber);
 					}
@@ -930,7 +930,7 @@ namespace UnrealGameSync
 				currentWorkspace.LastSyncChangeNumber = workspaceSection.GetValue("LastSyncChangeNumber", -1);
 
 				DateTime lastSyncTime;
-				if(DateTime.TryParse(workspaceSection.GetValue("LastSyncTime", ""), out lastSyncTime))
+				if (DateTime.TryParse(workspaceSection.GetValue("LastSyncTime", ""), out lastSyncTime))
 				{
 					currentWorkspace.LastSyncTime = lastSyncTime;
 				}
@@ -938,19 +938,21 @@ namespace UnrealGameSync
 				currentWorkspace.LastSyncDurationSeconds = workspaceSection.GetValue("LastSyncDuration", 0);
 				currentWorkspace.LastBuiltChangeNumber = workspaceSection.GetValue("LastBuiltChangeNumber", 0);
 
+				currentWorkspace.LastSyncEditorArchive = workspaceSection.GetValue("LastSyncEditorArchive", "0");
+
 				currentWorkspace.ExpandedArchiveTypes.Clear();
 				currentWorkspace.ExpandedArchiveTypes.UnionWith(workspaceSection.GetValues("ExpandedArchiveName", Array.Empty<string>()));
 
 				string[] bisectEntries = workspaceSection.GetValues("Bisect", Array.Empty<string>());
-				foreach(string bisectEntry in bisectEntries)
+				foreach (string bisectEntry in bisectEntries)
 				{
 					ConfigObject bisectEntryObject = new ConfigObject(bisectEntry);
 
 					int changeNumber = bisectEntryObject.GetValue("Change", -1);
-					if(changeNumber != -1)
+					if (changeNumber != -1)
 					{
 						BisectState state;
-						if(Enum.TryParse(bisectEntryObject.GetValue("State", ""), out state))
+						if (Enum.TryParse(bisectEntryObject.GetValue("State", ""), out state))
 						{
 							BisectEntry entry = new BisectEntry();
 							entry.Change = changeNumber;
@@ -1011,7 +1013,7 @@ namespace UnrealGameSync
 			generalSection.SetValue("RobomergeFilter", ShowRobomerge.ToString());
 			generalSection.SetValue("AnnotateRobomerge", AnnotateRobmergeChanges);
 			generalSection.SetValue("ShowLocalTimes", ShowLocalTimes);
-			if(LastProject != null)
+			if (LastProject != null)
 			{
 				generalSection.SetValue("LastProject", LastProject.ToConfigEntry());
 			}
@@ -1031,9 +1033,9 @@ namespace UnrealGameSync
 
 			// Editor arguments
 			List<string> editorArgumentList = new List<string>();
-			foreach(Tuple<string, bool> editorArgument in EditorArguments)
+			foreach (Tuple<string, bool> editorArgument in EditorArguments)
 			{
-				editorArgumentList.Add(String.Format("{0}:{1}", editorArgument.Item2? 1 : 0, editorArgument.Item1));
+				editorArgumentList.Add(String.Format("{0}:{1}", editorArgument.Item2 ? 1 : 0, editorArgument.Item1));
 			}
 			generalSection.SetValues("EditorArguments", editorArgumentList.ToArray());
 			generalSection.SetValue("EditorArgumentsPrompt", EditorArgumentsPrompt);
@@ -1067,7 +1069,7 @@ namespace UnrealGameSync
 			windowSection.Clear();
 			windowSection.SetValue("Visible", WindowVisible);
 			windowSection.SetValue("State", WindowState);
-			if(WindowBounds != null)
+			if (WindowBounds != null)
 			{
 				windowSection.SetValue("Bounds", FormatRectangleValue(WindowBounds.Value));
 			}
@@ -1111,17 +1113,17 @@ namespace UnrealGameSync
 		[return: NotNullIfNotNull("text")]
 		static string? UnescapeText(string? text)
 		{
-			if(text == null)
+			if (text == null)
 			{
 				return null;
 			}
 
 			StringBuilder result = new StringBuilder();
-			for(int idx = 0; idx < text.Length; idx++)
+			for (int idx = 0; idx < text.Length; idx++)
 			{
-				if(text[idx] == '\\' && idx + 1 < text.Length)
+				if (text[idx] == '\\' && idx + 1 < text.Length)
 				{
-					switch(text[++idx])
+					switch (text[++idx])
 					{
 						case 't':
 							result.Append('\t');

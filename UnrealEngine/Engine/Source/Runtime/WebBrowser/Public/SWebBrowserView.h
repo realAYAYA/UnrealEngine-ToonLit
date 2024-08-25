@@ -167,6 +167,8 @@ public:
 
 	virtual bool SupportsKeyboardFocus() const override {return true;}
 
+	virtual FReply OnFocusReceived(const FGeometry& MyGeometry, const FFocusEvent& InFocusEvent) override;
+
 	/**
 	 * Construct the widget.
 	 *

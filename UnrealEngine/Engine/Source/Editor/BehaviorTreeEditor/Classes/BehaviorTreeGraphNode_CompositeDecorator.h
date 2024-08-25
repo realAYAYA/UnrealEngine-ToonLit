@@ -48,6 +48,7 @@ class BEHAVIORTREEEDITOR_API UBehaviorTreeGraphNode_CompositeDecorator : public 
 	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
 	virtual void AllocateDefaultPins() override;
 	virtual FText GetDescription() const override;
+	virtual FText GetTooltipText() const override;
 	virtual void PostPlacedNewNode() override;
 	virtual void PostLoad() override;
 	virtual UEdGraph* GetBoundGraph() const override { return BoundGraph; }
@@ -70,6 +71,8 @@ class BEHAVIORTREEEDITOR_API UBehaviorTreeGraphNode_CompositeDecorator : public 
 	void UpdateBrokenInstances();
 
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+
+	virtual FLinearColor GetBackgroundColor(bool bIsActiveForDebugger) const override;
 
 	void ResetExecutionRange();
 

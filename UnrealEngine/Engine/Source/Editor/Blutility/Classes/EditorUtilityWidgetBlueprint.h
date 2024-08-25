@@ -77,6 +77,9 @@ public:
 	virtual UWidgetEditingProjectSettings* GetRelevantSettings() override;
 	virtual const UWidgetEditingProjectSettings* GetRelevantSettings() const override;
 
+public:
+	static void MarkTransientRecursive(UEditorUtilityWidget* UtilityWidget);
+
 private:
 	bool IsWidgetEnabled() const;
 

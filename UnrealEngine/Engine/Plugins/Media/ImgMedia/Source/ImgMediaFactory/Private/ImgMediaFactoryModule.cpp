@@ -22,7 +22,7 @@
 
 #include "ImgMediaSettings.h"
 
-#include "../../ImgMedia/Public/IImgMediaModule.h"
+#include "IImgMediaModule.h"
 
 
 DEFINE_LOG_CATEGORY(LogImgMediaFactory);

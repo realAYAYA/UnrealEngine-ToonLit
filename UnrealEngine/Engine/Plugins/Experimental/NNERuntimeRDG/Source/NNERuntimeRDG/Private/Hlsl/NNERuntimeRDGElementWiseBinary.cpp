@@ -27,7 +27,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 2);
 			check(OutputTensors.Num() == 1);
@@ -153,22 +153,52 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterElementWiseBinaryOperators(FOperatorRegistryHlsl& Registry)
 	{
-#define OP(Name) Registry.OpAdd(TEXT(#Name), CreateElementWiseBinaryOperator<NNE::Internal::EElementWiseBinaryOperatorType::Name>, ValidateElementWiseBinaryOperator)
-		OP(Add);
-		//OP(And);
-		OP(Div);
-		//OP(Equal);
-		//OP(Greater);
-		//OP(GreaterOrEqual);
-		//OP(Less);
-		//OP(LessOrEqual);
-		OP(Mod);
-		OP(Mul);
-		//OP(Or);
-		OP(Prelu);
-		OP(Pow);
-		OP(Sub);
-		//OP(Or);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+#define OP(Name, Version) Registry.OpAdd({{TEXT(#Name), TEXT("Onnx")}, Version}, CreateElementWiseBinaryOperator<NNE::Internal::EElementWiseBinaryOperatorType::Name>, ValidateElementWiseBinaryOperator);
+#define OP_ALL_VERSIONS(Name) \
+OP(Name, 6) \
+OP(Name, 7) \
+OP(Name, 13) \
+OP(Name, 14)
+		
+		OP_ALL_VERSIONS(Add)
+		//OP(And, 1)
+		//OP(And, 7)
+		OP_ALL_VERSIONS(Div)
+		//OP(Equal, 1)
+		//OP(Equal, 7)
+		//OP(Equal, 11)
+		//OP(Equal, 13)
+		//OP(Equal, 19)
+		//OP(Greater, 1)
+		//OP(Greater, 7)
+		//OP(Greater, 9)
+		//OP(Greater, 13)
+		//OP(GreaterOrEqual, 12)
+		//OP(GreaterOrEqual, 16)
+		//OP(Less, 1)
+		//OP(Less, 7)
+		//OP(Less, 9)
+		//OP(Less, 13)
+		//OP(LessOrEqual, 12)
+		//OP(LessOrEqual, 16)
+		OP(Mod, 10)
+		OP(Mod, 13)
+		OP_ALL_VERSIONS(Mul)
+		//OP(Or, 1)
+		//OP(Or, 7)
+		OP(Prelu, 6)
+		OP(Prelu, 7)
+		OP(Prelu, 9)
+		OP(Prelu, 16)
+		OP(Pow, 7)
+		OP(Pow, 12)
+		OP(Pow, 13)
+		OP(Pow, 15)
+		OP_ALL_VERSIONS(Sub)
+		//OP(Xor, 1)
+		//OP(Xor, 7)
+#undef OP_ALL_VERSIONS
 #undef OP
 
 		return true;

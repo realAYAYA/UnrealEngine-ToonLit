@@ -5,6 +5,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 #include "NavigationSystem.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "NavMesh/RecastNavMesh.h"
 #include "VisualLogger/VisualLogger.h"
 #include "AIModuleLog.h"

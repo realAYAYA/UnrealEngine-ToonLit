@@ -1,0 +1,214 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#pragma once
+
+#define StatelessDistributionFlag_Random	0x00000001
+#define StatelessDistributionFlag_Uniform	0x00000002
+#define StatelessDistributionFlag_Binding	0x00000004
+
+struct FStatelessDistributionFloat
+{
+	bool	bRandomDistribution;
+	bool	bUniformValue;
+	bool	bBindingValue;
+	uint	TableOffset;
+	float	TableLength;
+	float	RandomOffset;
+
+	void Init(inout FStatelessParticle Particle, uint3 Parameters)
+	{
+		bRandomDistribution = (Parameters.x & StatelessDistributionFlag_Random) != 0;
+		bUniformValue		= (Parameters.x & StatelessDistributionFlag_Uniform) != 0;
+		bBindingValue		= (Parameters.x & StatelessDistributionFlag_Binding) != 0;
+		TableOffset			= Parameters.y;
+		TableLength			= asfloat(Parameters.z);
+		RandomOffset		= RandomFloat(Particle);
+	}
+
+	bool IsValid()
+	{
+		return TableLength > 0.0f;
+	}
+	
+	float GetValue(float NormalizedAge)
+	{
+		if ( bBindingValue )
+		{
+			return GetParameterBufferFloat(TableOffset, 0);
+		}
+		else if ( bRandomDistribution )
+		{
+			const float	Value0 = GetStaticFloat(TableOffset, 0);
+			const float	Value1 = GetStaticFloat(TableOffset, 1);
+			return lerp(Value0, Value1, RandomOffset);
+		}
+		else
+		{
+			const float Offset = NormalizedAge * TableLength;
+			const float	Value0 = GetStaticFloat(TableOffset, floor(Offset));
+			const float	Value1 = GetStaticFloat(TableOffset, ceil(Offset));
+			return lerp(Value0, Value1, frac(Offset));
+		}
+	}
+};
+
+struct FStatelessDistributionFloat2
+{
+	bool	bRandomDistribution;
+	bool	bUniformValue;
+	bool	bBindingValue;
+	uint	TableOffset;
+	float	TableLength;
+	float2	RandomOffset;
+
+	void Init(inout FStatelessParticle Particle, uint3 Parameters)
+	{
+		bRandomDistribution = (Parameters.x & StatelessDistributionFlag_Random) != 0;
+		bUniformValue		= (Parameters.x & StatelessDistributionFlag_Uniform) != 0;
+		bBindingValue		= (Parameters.x & StatelessDistributionFlag_Binding) != 0;
+		TableOffset			= Parameters.y;
+		TableLength			= asfloat(Parameters.z);
+		RandomOffset		= 0;
+		if ( bRandomDistribution )
+		{
+			RandomOffset	= bUniformValue ? RandomFloat(Particle) : RandomFloat2(Particle);
+		}
+	}
+
+	bool IsValid()
+	{
+		return TableLength > 0.0f;
+	}
+	
+	float2 GetValue(float NormalizedAge)
+	{
+		if ( bBindingValue )
+		{
+			return GetParameterBufferFloat2(TableOffset, 0);
+		}
+		else if ( bRandomDistribution )
+		{
+			const float2 Value0 = GetStaticFloat2(TableOffset, 0);
+			const float2 Value1 = GetStaticFloat2(TableOffset, 1);
+			return float2(
+				lerp(Value0.x, Value1.x, RandomOffset.x),
+				lerp(Value0.y, Value1.y, RandomOffset.y)
+			);
+		}
+		else
+		{
+			const float  Offset = NormalizedAge * TableLength;
+			const float2 Value0 = GetStaticFloat2(TableOffset, floor(Offset));
+			const float2 Value1 = GetStaticFloat2(TableOffset, ceil(Offset));
+			return lerp(Value0, Value1, frac(Offset));
+		}
+	}
+};
+
+struct FStatelessDistributionFloat3
+{
+	bool	bRandomDistribution;
+	bool	bUniformValue;
+	bool	bBindingValue;
+	uint	TableOffset;
+	float	TableLength;
+	float3	RandomOffset;
+
+	void Init(inout FStatelessParticle Particle, uint3 Parameters)
+	{
+		bRandomDistribution = (Parameters.x & StatelessDistributionFlag_Random) != 0;
+		bUniformValue		= (Parameters.x & StatelessDistributionFlag_Uniform) != 0;
+		bBindingValue		= (Parameters.x & StatelessDistributionFlag_Binding) != 0;
+		TableOffset			= Parameters.y;
+		TableLength			= asfloat(Parameters.z);
+		RandomOffset		= 0;
+		if ( bRandomDistribution )
+		{
+			RandomOffset	= bUniformValue ? RandomFloat(Particle) : RandomFloat3(Particle);
+		}
+	}
+
+	bool IsValid()
+	{
+		return TableLength > 0.0f;
+	}
+	
+	float3 GetValue(float NormalizedAge)
+	{
+		if ( bBindingValue )
+		{
+			return GetParameterBufferFloat3(TableOffset, 0);
+		}
+		else if ( bRandomDistribution )
+		{
+			const float3 Value0 = GetStaticFloat3(TableOffset, 0);
+			const float3 Value1 = GetStaticFloat3(TableOffset, 1);
+			return float3(
+				lerp(Value0.x, Value1.x, RandomOffset.x),
+				lerp(Value0.y, Value1.y, RandomOffset.y),
+				lerp(Value0.z, Value1.z, RandomOffset.z)
+			);
+		}
+		else
+		{
+			const float  Offset = NormalizedAge * TableLength;
+			const float3 Value0 = GetStaticFloat3(TableOffset, floor(Offset));
+			const float3 Value1 = GetStaticFloat3(TableOffset, ceil(Offset));
+			return lerp(Value0, Value1, frac(Offset));
+		}
+	}
+};
+
+struct FStatelessDistributionFloat4
+{
+	bool	bRandomDistribution;
+	bool	bUniformValue;
+	bool	bBindingValue;
+	uint	TableOffset;
+	float	TableLength;
+	float4	RandomOffset;
+
+	void Init(inout FStatelessParticle Particle, uint3 Parameters)
+	{
+		bRandomDistribution = (Parameters.x & StatelessDistributionFlag_Random) != 0;
+		bUniformValue		= (Parameters.x & StatelessDistributionFlag_Uniform) != 0;
+		bBindingValue		= (Parameters.x & StatelessDistributionFlag_Binding) != 0;
+		TableOffset			= Parameters.y;
+		TableLength			= asfloat(Parameters.z);
+		RandomOffset		= 0;
+		if ( bRandomDistribution )
+		{
+			RandomOffset	= bUniformValue ? RandomFloat(Particle) : RandomFloat4(Particle);
+		}
+	}
+
+	bool IsValid()
+	{
+		return TableLength > 0.0f;
+	}
+	
+	float4 GetValue(float NormalizedAge)
+	{
+		if ( bBindingValue )
+		{
+			return GetParameterBufferFloat4(TableOffset, 0);
+		}
+		else if ( bRandomDistribution )
+		{
+			const float4 Value0 = GetStaticFloat4(TableOffset, 0);
+			const float4 Value1 = GetStaticFloat4(TableOffset, 1);
+			return float4(
+				lerp(Value0.x, Value1.x, RandomOffset.x),
+				lerp(Value0.y, Value1.y, RandomOffset.y),
+				lerp(Value0.z, Value1.z, RandomOffset.z),
+				lerp(Value0.w, Value1.w, RandomOffset.w)
+			);
+		}
+		else
+		{
+			const float  Offset = NormalizedAge * TableLength;
+			const float4 Value0 = GetStaticFloat4(TableOffset, floor(Offset));
+			const float4 Value1 = GetStaticFloat4(TableOffset, ceil(Offset));
+			return lerp(Value0, Value1, frac(Offset));
+		}
+	}
+};

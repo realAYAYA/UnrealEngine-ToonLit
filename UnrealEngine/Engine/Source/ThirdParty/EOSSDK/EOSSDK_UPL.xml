@@ -12,6 +12,9 @@
 		<isArch arch="arm64-v8a">
 			<setBool result="bSupported" value="true"/>
 		</isArch>
+		<isArch arch="x86_64">
+			<setBool result="bSupported" value="true"/>
+		</isArch>
 		<if condition="bSupported">
 			<false>
 				<log text="EOSSDK unsupported architecture: $S(Architecture)"/>
@@ -38,7 +41,7 @@
 					}
 				</insert>
 
-				<insertValue value="dependencies.implementation files ('$S(AbsEngineDir)/Source/ThirdParty/EOSSDK/SDK/Bin/Android/static-stdc++/aar/eos-sdk.aar')"/>
+				<insertValue value="dependencies.implementation files ('$S(AbsEngineDir)/Source/ThirdParty/EOSSDK/SDK/Bin/Android/static-stdc++/aar/eossdk-StaticSTDC-release.aar')"/>
 				<insertNewline/>
 				<insert>
 					dependencies {

@@ -202,17 +202,16 @@ void UNiagaraDataInterfaceCollisionQuery::GetAssetTagsForContext(const UObject* 
 	Super::GetAssetTagsForContext(InAsset, AssetVersion, InProperties, NumericKeys, StringKeys);
 }
 
-void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceCollisionQuery::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature SigDepth;
 		SigDepth.Name = NDICollisionQueryLocal::SceneDepthName;
 		SigDepth.bMemberFunction = true;
 		SigDepth.bSupportsCPU = false;
-#if WITH_EDITORONLY_DATA
 		SigDepth.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		SigDepth.Description = LOCTEXT("SceneDepthSignatureDescription", "Projects a given world position to view space and then queries the depth buffer with that position.");
-#endif
 		const FText DepthSamplePosWorldDescription = LOCTEXT("DepthSamplePosWorldDescription", "The world position where the depth should be queried. The position gets automatically transformed to view space to query the depth buffer.");
 		const FText SceneDepthDescription = LOCTEXT("SceneDepthDescription", "If the query was successful this returns the scene depth, otherwise -1.");
 		const FText CameraPosWorldDescription = LOCTEXT("CameraPosWorldDescription", "Returns the current camera position in world space.");
@@ -235,11 +234,9 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		SigPartialDepth.bMemberFunction = true;
 		SigPartialDepth.bSupportsCPU = false;
 		SigPartialDepth.MiscUsageBitMask = (uint16)ENiagaraScriptMiscUsageMask::UsesPartialDepthCollisionQuery;
-#if WITH_EDITORONLY_DATA
 		SigPartialDepth.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		SigPartialDepth.Description = LOCTEXT("ScenePartialDepthSignatureDescription", "Projects a given world position to view space and then queries the partial depth buffer (opaque emitter using this function are not in this depth buffer) with that position.");
 		SigPartialDepth.ExperimentalMessage = LOCTEXT("ScenePartialDepthSignatureEpxMessage", "Careful: using this node involve a scene depth copy that might slow down the base pass on some platform.");
-#endif
 		SigPartialDepth.bExperimental = true;
 		SigPartialDepth.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		SigPartialDepth.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("DepthSamplePosWorld")), DepthSamplePosWorldDescription);
@@ -255,10 +252,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		SigCustomDepth.Name = NDICollisionQueryLocal::CustomDepthName;
 		SigCustomDepth.bMemberFunction = true;
 		SigCustomDepth.bSupportsCPU = false;
-#if WITH_EDITORONLY_DATA
 		SigCustomDepth.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		SigCustomDepth.Description = LOCTEXT("CustomDepthDescription", "Projects a given world position to view space and then queries the custom depth buffer with that position.");
-#endif
 		SigCustomDepth.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		SigCustomDepth.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("DepthSamplePosWorld")), DepthSamplePosWorldDescription);
 		SigCustomDepth.AddOutput(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("SceneDepth")), SceneDepthDescription);
@@ -274,10 +269,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		SigMeshField.Name = NDICollisionQueryLocal::DistanceFieldName;
 		SigMeshField.bMemberFunction = true;
 		SigMeshField.bSupportsCPU = false;
-#if WITH_EDITORONLY_DATA
 		SigMeshField.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		SigMeshField.Description = LOCTEXT("DistanceFieldDescription", "Queries the global distance field for a given world position.\nPlease note that the distance field resolution gets lower the farther away the queried position is from the camera.");
-#endif
 		const FText FieldSamplePosWorldDescription = LOCTEXT("FieldSamplePosWorldDescription", "The world position where the distance field should be queried.");
 		const FText DistanceToNearestSurfaceDescription = LOCTEXT("DistanceToNearestSurfaceDescription", "If the query was successful this returns the distance to the nearest surface, otherwise returns 0.");
 		const FText FieldGradientDescription = LOCTEXT("FieldGradientDescription", "If the query was successful this returns the non-normalized direction to the nearest surface, otherwise returns (0, 0, 0).");
@@ -307,10 +300,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		IssueRayTrace.bMemberFunction = true;
 		IssueRayTrace.bSupportsCPU = false;
 		IssueRayTrace.bSoftDeprecatedFunction = true;
-#if WITH_EDITORONLY_DATA
 		IssueRayTrace.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		IssueRayTrace.Description = LOCTEXT("IssueAsync_RayTraceDescription", "Enqueues a GPU raytrace with the result being available the following frame");
-#endif
 		IssueRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		IssueRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("QueryID")), QueryIDDescription);
 		IssueRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceStartWorld")), TraceStartWorldDescription);
@@ -324,10 +315,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		CreateRayTrace.bMemberFunction = true;
 		CreateRayTrace.bSupportsCPU = false;
 		CreateRayTrace.bSoftDeprecatedFunction = true;
-#if WITH_EDITORONLY_DATA
 		CreateRayTrace.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		CreateRayTrace.Description = LOCTEXT("CreateAsync_RayTraceDescription", "Creates a GPU raytrace with the result being available the following frame (index is returned)");
-#endif
 		CreateRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		CreateRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceStartWorld")), TraceStartWorldDescription);
 		CreateRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceEndWorld")), TraceEndWorldDescription);
@@ -343,10 +332,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		ReserveRayTrace.bMemberFunction = true;
 		ReserveRayTrace.bSupportsCPU = false;
 		ReserveRayTrace.bSoftDeprecatedFunction = true;
-#if WITH_EDITORONLY_DATA
 		ReserveRayTrace.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		ReserveRayTrace.Description = LOCTEXT("ReserveAsync_RayTraceDescription", "Reserves a number of ray trace request slots");
-#endif
 		ReserveRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		ReserveRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("TraceCount")), LOCTEXT("ReserveAsync_QueryIDDescription", "Number of async raytrace requests to be reserved"));
 		ReserveRayTrace.AddOutput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("FirstQueryID")), LOCTEXT("ReserveAsync_TraceChannelDescription", "The first index in the block reserved through this call"));
@@ -359,10 +346,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		ReadRayTrace.bMemberFunction = true;
 		ReadRayTrace.bSupportsCPU = false;
 		ReadRayTrace.bSoftDeprecatedFunction = true;
-#if WITH_EDITORONLY_DATA
 		ReadRayTrace.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		ReadRayTrace.Description = LOCTEXT("ReadAsync_RayTraceDescription", "Reads the results of a previously enqueued GPU ray trace");
-#endif
 		ReadRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		ReadRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("PreviousFrameQueryID")), LOCTEXT("ReadAsync_PreviousFrameQueryIDDescription", "The index of the results being retrieved"));
 		ReadRayTrace.AddOutput(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("CollisionValid")), LOCTEXT("ReadAsync_CollisionValidDescription", "Returns true if a Hit was encountered"));
@@ -387,11 +372,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		SigCpuSync.Name = NDICollisionQueryLocal::SyncTraceName;
 		SigCpuSync.bMemberFunction = true;
 		SigCpuSync.bSupportsGPU = false;
-#if WITH_EDITORONLY_DATA
 		SigCpuSync.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		SigCpuSync.Description = LOCTEXT("SigCpuSyncDescription", "Traces a ray against the world using a specific channel and return the first blocking hit.");
-#endif
-	
 		SigCpuSync.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		SigCpuSync.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceStartWorld")), TraceStartWorldDescription);
 		SigCpuSync.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceEndWorld")), TraceEndWorldDescription);
@@ -410,11 +392,8 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 		SigCpuAsync.Name = NDICollisionQueryLocal::AsyncTraceName;
 		SigCpuAsync.bMemberFunction = true;
 		SigCpuAsync.bSupportsGPU = false;
-#if WITH_EDITORONLY_DATA
 		SigCpuAsync.FunctionVersion = FNiagaraCollisionDIFunctionVersion::LatestVersion;
 		SigCpuAsync.Description = LOCTEXT("SigCpuAsyncDescription", "Traces a ray against the world using a specific channel and return the first blocking hit the next frame.\nNote that this is the ASYNC version of the trace function, meaning it will not returns the result right away, but with one frame latency.");
-#endif
-	
 		SigCpuAsync.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("CollisionQuery")));
 		SigCpuAsync.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("PreviousFrameQueryID")), LOCTEXT("TraceAsync_PreviousFrameQueryIDDescription", "The query ID returned from the last frame's async trace call.\nRegardless if it is a valid ID or not this function call with issue a new async line trace, but it will only return results with a valid ID."));
 		SigCpuAsync.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceStartWorld")), TraceStartWorldDescription);
@@ -436,9 +415,6 @@ void UNiagaraDataInterfaceCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSi
 // build the shader function HLSL; function name is passed in, as it's defined per-DI; that way, configuration could change
 // the HLSL in the spirit of a static switch
 // TODO: need a way to identify each specific function here
-
-// 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceCollisionQuery::GetFunctionHLSL(const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, const FNiagaraDataInterfaceGeneratedFunction& FunctionInfo, int FunctionInstanceIndex, FString& OutHLSL)
 {
 	if ( (FunctionInfo.DefinitionName == NDICollisionQueryLocal::SceneDepthName) ||
@@ -464,7 +440,7 @@ bool UNiagaraDataInterfaceCollisionQuery::UpgradeFunctionCall(FNiagaraFunctionSi
 	if (FunctionSignature.FunctionVersion < FNiagaraCollisionDIFunctionVersion::LatestVersion)
 	{
 		TArray<FNiagaraFunctionSignature> AllFunctions;
-		GetFunctions(AllFunctions);
+		GetFunctionsInternal(AllFunctions);
 		for (const FNiagaraFunctionSignature& Sig : AllFunctions)
 		{
 			if (FunctionSignature.Name == Sig.Name)

@@ -242,7 +242,7 @@ uint NumMips;
 #ifdef USE_COMPUTE
 int FaceThreadGroupSize;
 int2 ValidDispatchCoord;
-RWTextureCube<float4> OutTextureMipColor;	// All slices, i.e. faces, of a cube map mip level
+RWTexture2DArray<float4> OutTextureMipColor;	// All slices, i.e. faces, of a cube map mip level
 #endif 
 
 #ifdef USE_COMPUTE
@@ -480,6 +480,13 @@ void DownsamplePS_Mobile(
 	OutColor = SampleCubemap(CubeCoordinates);
 }
 
+#if SHADING_PATH_MOBILE
+// There's a precision problem in OpenGL because the default precision in the Pixel Shader is set to half, even for constant values, use Hammersley16 instead.
+#define HammersleyDistribution Hammersley16
+#else
+#define HammersleyDistribution Hammersley
+#endif
+
 #ifdef USE_COMPUTE
 int CubeFaceOffset;
 [numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
@@ -524,7 +531,7 @@ void FilterPS(
 	}
 
 	uint CubeSize = 1u << ( NumMips - 1 );
-	const float SolidAngleTexel = 4.0f * PI / float(6 * CubeSize * CubeSize) * 2.0f;
+	const float SolidAngleTexel = 4.0f * PI / float(6.0f * CubeSize * CubeSize) * 2.0f;
 
 	//const uint NumSamples = 1024;
 	const uint NumSamples = Roughness < 0.1 ? 32 : 64;
@@ -538,7 +545,7 @@ void FilterPS(
 		LOOP
 		for( uint i = 0; i < NumSamples; i++ )
 		{
-			float2 E = Hammersley( i, NumSamples, 0 );
+			float2 E = HammersleyDistribution( i, NumSamples, 0 );
 
 			float3 L = CosineSampleHemisphere( E ).xyz;
 
@@ -561,7 +568,7 @@ void FilterPS(
 		LOOP
 		for( uint i = 0; i < NumSamples; i++ )
 		{
-			float2 E = Hammersley( i, NumSamples, 0 );
+			float2 E = HammersleyDistribution( i, NumSamples, 0 );
 
 			// 6x6 Offset rows. Forms uniform star pattern
 			//uint2 Index = uint2( i % 6, i / 6 );
@@ -915,7 +922,7 @@ float3 GetIlluminance()
 	// See https://www.ppsloan.org/publications/StupidSH36.pdf, p.9.
 	IlluminanceAcc.rgb *= 4.0 * PI / IlluminanceAcc.a;
 
-	return IlluminanceAcc;
+	return IlluminanceAcc.rgb;
 }
 
 float GetSimpleAutoExposure()
@@ -992,7 +999,7 @@ void VisualizeIlluminanceMeterPS(
 		float3 SkyLightIlluminance = GetIlluminance();
 
 #if PROJECT_SUPPORT_SKY_ATMOSPHERE
-		const float3 PlanetCenterToTranslatedWorldPos = (LWCToFloat(LWCAdd(SkyLightCaptureWorlPos, ResolvedView.PreViewTranslation)) - ResolvedView.SkyPlanetTranslatedWorldCenterAndViewHeight.xyz) * CM_TO_SKY_UNIT;
+		const float3 PlanetCenterToTranslatedWorldPos = (DFFastAddDemote(SkyLightCaptureWorlPos, ResolvedView.PreViewTranslation) - ResolvedView.SkyPlanetTranslatedWorldCenterAndViewHeight.xyz) * CM_TO_SKY_UNIT;
 		// GetAtmosphereTransmittance does a shadow test against the virtual planet.
 		const float3 TransmittanceToLight = GetAtmosphereTransmittance(
 			PlanetCenterToTranslatedWorldPos, ResolvedView.AtmosphereLightDirection[0].xyz, ResolvedView.SkyAtmosphereBottomRadiusKm, ResolvedView.SkyAtmosphereTopRadiusKm,
@@ -1047,26 +1054,26 @@ void VisualizeIlluminanceMeterPS(
 		float2 UV = (SVPos.xy - float2(IlluMapPreviewOrigin)) / float2(IlluMapPreviewSize);
 		float4 DebugVis = SampleCubeAsLatLon(SourceCubemapTexture, SourceCubemapSampler, UV);
 		DebugVis.rgb *= 1.0 / DebugVis.a;	// This is a way to remove the texel dArea factor to show what luminance is integrated as a unction of NoL.
-		OutColor = float4(DebugVis.rgb, 0.0);
+		OutColor = float4(DebugVis.rgb * ResolvedView.PreExposure, 0.0);
 	}
 	else if (all(uint2(SVPos.xy) >= SkyMapPreviewOrigin) && all(uint2(SVPos.xy) <= (SkyMapPreviewOrigin + SkyMapPreviewSize)))
 	{
 		float2 UV = (SVPos.xy - float2(SkyMapPreviewOrigin)) / float2(SkyMapPreviewSize);
 		float4 DebugVis = SampleCubeAsLatLon(SkyLightCubeTexture, SkyLightCubeSampler, UV);
-		OutColor = float4(DebugVis.rgb, 0.0);
+		OutColor = float4(DebugVis.rgb * ResolvedView.PreExposure, 0.0);
 	}
 	else if (all(uint2(SVPos.xy) >= SphereIlluMapPreviewOrigin) && all(uint2(SVPos.xy) <= (SphereIlluMapPreviewOrigin + SphereIlluMapPreviewSize)))
 	{
 		float2 UV = (SVPos.xy - float2(SphereIlluMapPreviewOrigin)) / float2(SphereIlluMapPreviewSize);
 		float4 DebugVis = SampleCubeAsSphere(SourceCubemapTexture, SourceCubemapSampler, UV);
 		DebugVis.rgb *= 1.0 / DebugVis.a;	// This is a way to remove the texel dArea factor to show what luminance is integrated as a unction of NoL.
-		OutColor = float4(DebugVis.rgb, 0.0);
+		OutColor = float4(DebugVis.rgb * ResolvedView.PreExposure, 0.0);
 	}
 	else if (all(uint2(SVPos.xy) >= SphereSkyMapPreviewOrigin) && all(uint2(SVPos.xy) <= (SphereSkyMapPreviewOrigin + SphereSkyMapPreviewSize)))
 	{
 		float2 UV = (SVPos.xy - float2(SphereSkyMapPreviewOrigin)) / float2(SphereSkyMapPreviewSize);
 		float4 DebugVis = SampleCubeAsSphere(SkyLightCubeTexture, SkyLightCubeSampler, UV);
-		OutColor = float4(DebugVis.rgb, 0.0);
+		OutColor = float4(DebugVis.rgb * ResolvedView.PreExposure, 0.0);
 	}
 	else
 	{

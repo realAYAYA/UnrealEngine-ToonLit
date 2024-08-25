@@ -19,12 +19,13 @@ struct FGLTFExporterAnalytics
 	bool bExportSuccessful;
 	double ExportDuration;
 
-	FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& Builder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime);
-	FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& Builder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime, uint64 EndTime);
+	FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& InBuilder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime);
+	FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& InBuilder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime, uint64 EndTime);
 
 	void Send() const;
 
 private:
+	const FGLTFConvertBuilder& Builder;
 
 	static void GetAttributesFromStruct(const UStruct* Struct, const void* ContainerPtr, const FString& AttributeName, TArray<FAnalyticsEventAttribute>& OutAttributes);
 	static void GetAttributesFromProperty(const FProperty* Property, const void* ValuePtr, const FString& AttributeName, TArray<FAnalyticsEventAttribute>& OutAttributes);

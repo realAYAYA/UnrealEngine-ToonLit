@@ -14,31 +14,29 @@ class UObject;
 struct FFrame;
 
 
-UCLASS()
+UCLASS(Abstract)
 class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeSwitchBase : public UCustomizableObjectNode
 {
 public:
 	GENERATED_BODY()
 
-
 	// UObject interface
 	virtual void Serialize(FArchive& Ar) override;
 	
 	// Begin EdGraphNode interface
-	FText GetNodeTitle(ENodeTitleType::Type TitleType) const;
-	FLinearColor GetNodeTitleColor() const override;
-	FText GetTooltipText() const override;
-	void PinConnectionListChanged(UEdGraphPin* Pin) override;
+	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+	virtual FLinearColor GetNodeTitleColor() const override;
+	virtual FText GetTooltipText() const override;
+	virtual void PinConnectionListChanged(UEdGraphPin* Pin) override;
 	virtual void PostPasteNode() override;
-
 
 	// UCustomizableObjectNode interface
 	virtual void PostBackwardsCompatibleFixup() override;
-	void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
-	void ReconstructNode(UCustomizableObjectNodeRemapPins* RemapPins) override;
+	virtual void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
+	virtual void ReconstructNode(UCustomizableObjectNodeRemapPins* RemapPins) override;
 
-	/** Get the output pin catergory. Override. */
-	virtual FName GetCategory() const { return FName(); };
+	/** Get the output pin category. Override. */
+	virtual FName GetCategory() const PURE_VIRTUAL(UCustomizableObjectNodeSwitchBase::GetCategory, return {}; );
 
 	UEdGraphPin* OutputPin() const;
 
@@ -54,13 +52,14 @@ public:
 	/** Links the PostEditChangeProperty delegate */
 	void LinkPostEditChangePropertyDelegate(const UEdGraphPin& Pin);
 
-protected:
-	/** Get the pin prefix. Used for retrocompatibility. Override. */
-	virtual FString GetPinPrefix() const { return FString(); };
-
 	/** Get the ouput pin name. Override. */
-	virtual FString GetOutputPinName() const { return FString(); };
+	virtual FString GetOutputPinName() const;
 
+private:
+	/** Get the pin prefix. Used for retrocompatibility. Override. */
+	virtual FString GetPinPrefix() const;
+
+protected:
 	UPROPERTY()
 	FEdGraphPinReference OutputPinReference;
 
@@ -70,7 +69,7 @@ private:
 
 	void ReloadEnumParam();
 
-	/** Last NodeEnumParameter connected. Used to remove the callback once desconnected. */
+	/** Last NodeEnumParameter connected. Used to remove the callback once disconnected. */
 	TWeakObjectPtr<UCustomizableObjectNode> LastNodeEnumParameterConnected;
 
 	/** NodeEnumParameter property changed callback function. Reconstructs the node. */
@@ -83,7 +82,6 @@ private:
 	UPROPERTY()
 	TArray<FString> ReloadingElementsNames;
 
-private:
 	UPROPERTY()
 	FEdGraphPinReference SwitchParameterPinReference;
 };

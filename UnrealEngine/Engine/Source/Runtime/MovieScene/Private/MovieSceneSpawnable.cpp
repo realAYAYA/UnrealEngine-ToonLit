@@ -8,6 +8,7 @@
 #include "Misc/StringBuilder.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneSpawnable)
 
@@ -54,8 +55,23 @@ void FMovieSceneSpawnable::CopyObjectTemplate(UObject& InSourceObject, UMovieSce
 
 FName FMovieSceneSpawnable::GetNetAddressableName(IMovieScenePlayer& Player, FMovieSceneSequenceID SequenceID) const
 {
-	UObject* PlayerObject = Player.AsUObject();
-	if (!PlayerObject)
+	return GetNetAddressableName(Player.GetSharedPlaybackState(), SequenceID);
+}
+
+FName FMovieSceneSpawnable::GetNetAddressableName(TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID SequenceID) const
+{
+	UObject* AddressingContext = nullptr;
+
+	if (IMovieScenePlayer* Player = UE::MovieScene::FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState))
+	{
+		AddressingContext = Player->AsUObject();
+	}
+	else if (UObject* PlaybackContext = SharedPlaybackState->GetPlaybackContext())
+	{
+		AddressingContext = PlaybackContext;
+	}
+
+	if (!AddressingContext)
 	{
 		return NAME_None;
 	}
@@ -72,7 +88,7 @@ FName FMovieSceneSpawnable::GetNetAddressableName(IMovieScenePlayer& Player, FMo
 	AddressableName.Appendf(TEXT("_%08X%08X%08X%08X"), Guid.A, Guid.B, Guid.C, Guid.D);
 
 	// Actor / player Name
-	if (AActor* OuterActor = PlayerObject->GetTypedOuter<AActor>())
+	if (AActor* OuterActor = AddressingContext->GetTypedOuter<AActor>())
 	{
 		AddressableName.AppendChar(TEXT('_'));
 		OuterActor->GetFName().AppendString(AddressableName);
@@ -80,7 +96,7 @@ FName FMovieSceneSpawnable::GetNetAddressableName(IMovieScenePlayer& Player, FMo
 	else
 	{
 		AddressableName.AppendChar(TEXT('_'));
-		PlayerObject->GetFName().AppendString(AddressableName);
+		AddressingContext->GetFName().AppendString(AddressableName);
 	}
 
 	return FName(AddressableName.Len(), AddressableName.GetData());

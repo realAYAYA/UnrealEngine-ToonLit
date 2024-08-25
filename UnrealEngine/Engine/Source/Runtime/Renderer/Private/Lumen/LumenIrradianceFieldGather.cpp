@@ -193,7 +193,7 @@ class FIrradianceFieldGatherCS : public FGlobalShader
 		SHADER_PARAMETER_STRUCT_INCLUDE(LumenReflections::FCompositeParameters, ReflectionsCompositeParameters)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER(float, ProbeOcclusionViewBias)
 		SHADER_PARAMETER(float, ProbeOcclusionNormalBias)
 	END_SHADER_PARAMETER_STRUCT()
@@ -328,8 +328,8 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenIrradianceFieldGath
 		PassParameters->RadianceCacheParameters = RadianceCacheParameters;
 		PassParameters->View = View.ViewUniformBuffer;
 		PassParameters->SceneTexturesStruct = SceneTextures.UniformBuffer;
-		PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
-		LumenReflections::SetupCompositeParameters(PassParameters->ReflectionsCompositeParameters);
+		PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
+		LumenReflections::SetupCompositeParameters(View, PassParameters->ReflectionsCompositeParameters);
 		PassParameters->ProbeOcclusionViewBias = GLumenIrradianceFieldProbeOcclusionViewBias;
 		PassParameters->ProbeOcclusionNormalBias = GLumenIrradianceFieldProbeOcclusionNormalBias;
 

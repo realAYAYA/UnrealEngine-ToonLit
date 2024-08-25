@@ -53,6 +53,15 @@ public class MeshModelingToolsExp : ModuleRules
 			}
 		);
 
+		if (Target.bCompileAgainstEditor) // #if WITH_EDITOR
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+					"ModelingComponentsEditorOnly"
+				});
+		}
+
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]
 			{

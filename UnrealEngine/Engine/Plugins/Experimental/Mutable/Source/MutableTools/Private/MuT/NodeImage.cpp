@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeImage.h"
 
 #include "Misc/AssertionMacros.h"
@@ -30,7 +29,6 @@
 #include "MuT/NodeImageTable.h"
 #include "MuT/NodeImageTransform.h"
 #include "MuT/NodeImageVariation.h"
-#include "MuT/NodeImageReference.h"
 
 
 namespace mu
@@ -39,7 +37,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeImageType = 	NODE_TYPE( "NodeImage", Node::GetStaticType() );
+	static FNodeType s_nodeImageType = 	FNodeType( "NodeImage", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -95,7 +93,7 @@ namespace mu
         case 32 :  return NodeImageVariation::StaticUnserialise( arch ); break;
         case 33 :  return NodeImageNormalComposite::StaticUnserialise( arch ); break;
 		case 34:  return NodeImageTransform::StaticUnserialise(arch); break;
-		case 35:  return NodeImageReference::StaticUnserialise(arch); break;
+		//case 35:  return NodeImageReference::StaticUnserialise(arch); break;
 		default : check(false);
 		}
 
@@ -104,14 +102,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeImage::GetType() const
+	const FNodeType* NodeImage::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeImage::GetStaticType()
+	const FNodeType* NodeImage::GetStaticType()
 	{
 		return &s_nodeImageType;
 	}

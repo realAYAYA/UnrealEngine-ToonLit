@@ -154,6 +154,21 @@ export class Session {
 		})
 	}
 
+	static oktaLogin(user: string, displayName: string, groups: string) {
+		let groupsArray: string[] = JSON.parse(groups);
+		let tags = new Set<string>();
+
+		for (const groupInfo of groupsArray) {
+			const tagsForGroup = Session.BOT_GROUPS.get(groupInfo);
+			if (tagsForGroup) {
+				tags = new Set<string>([...tagsForGroup, ...tags]);
+			}
+		}
+		
+		const authData = {user: user, displayName: displayName, tags};
+		return Session.authDataToToken(authData);
+	}
+
 	static tokenToAuthData(token: string): AuthData | null {
 		const parts = token.replace(/-/g, '+').replace(/_/g, '/').split(':')
 		if (parts.length !== 2) {

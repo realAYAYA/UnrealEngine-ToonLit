@@ -4,6 +4,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/VRObjectVersion.h"
 #include "Containers/StringConv.h"
+#include "EngineLogs.h"
 #include "Misc/CoreMisc.h"
 #include "ARSessionConfigCookSupport.h"
 #include "MaterialDomain.h"

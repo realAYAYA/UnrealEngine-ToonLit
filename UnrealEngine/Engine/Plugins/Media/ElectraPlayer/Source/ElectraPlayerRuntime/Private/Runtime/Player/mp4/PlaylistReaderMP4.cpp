@@ -334,8 +334,6 @@ void FPlaylistReaderMP4::ReadNextChunk(int64 InFromOffset, int64 ChunkSize)
 	ReceiveBuffer = MakeSharedTS<IElectraHttpManager::FReceiveBuffer>();
 	ReceiveBuffer->Buffer.Reserve(ChunkSize);
 
-	const FParamDict& Options = PlayerSessionServices->GetOptions();
-
 	Request = MakeSharedTS<IElectraHttpManager::FRequest>();
 	Request->Parameters.URL = MasterPlaylistURL;
 	Request->Parameters.Range.SetStart(InFromOffset);
@@ -345,8 +343,8 @@ void FPlaylistReaderMP4::ReadNextChunk(int64 InFromOffset, int64 ChunkSize)
 		LastByte = FileSize - 1;
 	}
 	Request->Parameters.Range.SetEndIncluding(LastByte);
-	Request->Parameters.ConnectTimeout = Options.GetValue(MP4::OptionKeyMP4LoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
-	Request->Parameters.NoDataTimeout = Options.GetValue(MP4::OptionKeyMP4LoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
+	Request->Parameters.ConnectTimeout = PlayerSessionServices->GetOptionValue(MP4::OptionKeyMP4LoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
+	Request->Parameters.NoDataTimeout = PlayerSessionServices->GetOptionValue(MP4::OptionKeyMP4LoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
 	Request->ReceiveBuffer = ReceiveBuffer;
 	Request->ProgressListener = ProgressListener;
 	Request->ResponseCache = PlayerSessionServices->GetHTTPResponseCache();

@@ -158,7 +158,7 @@ uint32 FPrestonMDRMessageThread::Run()
 				SendMessageToServer(&FMDRProtocol::ACK, 1);
 				bReadyToSendCommandToServer = true;
 
-				ReceiveBuffer.RemoveAt(0, PacketLength, false);
+				ReceiveBuffer.RemoveAt(0, PacketLength, EAllowShrinking::No);
 				ReceiveBuffer.AddZeroed(PacketLength);
 
 				TotalBytesRead -= PacketLength;

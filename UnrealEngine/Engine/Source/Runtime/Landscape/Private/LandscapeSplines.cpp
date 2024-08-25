@@ -91,7 +91,7 @@ struct FLandscapeFixSplines
 	{
 		bool bFixed = false;
 
-		for (TObjectIterator<UWorld> It; It; ++It)
+		for (TObjectIterator<UWorld> It(/*AdditionalExclusionFlags = */RF_ClassDefaultObject, /*bIncludeDerivedClasses = */true, /*InInternalExclusionFlags = */EInternalObjectFlags::Garbage); It; ++It)
 		{
 			UWorld* CurrentWorld = *It;
 			if (!CurrentWorld->IsGameWorld())
@@ -789,9 +789,10 @@ void ULandscapeSplinesComponent::CopyToSplineComponent(USplineComponent* SplineC
 	ULandscapeSplineControlPoint* LastControlPoint = nullptr;
 
 	// Arrive Tangent to apply to the next spline point.  Populated as the previous spline mesh's End Tangent
-	FVector ArriveTangent;
-	
-	ULandscapeSplineSegment* CurrentSegment = Segments[0];
+	FVector ArriveTangent(0,0,0);
+
+	ULandscapeSplineSegment* FirstSegment = Segments[0];
+	ULandscapeSplineSegment* CurrentSegment = FirstSegment;
 	do
 	{
 		if (!ensure(NumIterations < MAX_ITERATIONS))
@@ -814,65 +815,71 @@ void ULandscapeSplinesComponent::CopyToSplineComponent(USplineComponent* SplineC
 
 		VisitedSegments.Add(CurrentSegment);
 
-		// No guarantee if the control point we're looking at is the segments start or end control point
+		// No guarantee if the control point we're looking at is the segment's start or end control point
 		// If it's the end control point, we must reverse the direction we traverse over this segment
 		// Connections[0] == Start; Connections[1] == End;
-		bool bReverseTraversal = CurrentSegment->Connections[1].ControlPoint == LastControlPoint;
+		const bool bReverseTraversal = CurrentSegment->Connections[1].ControlPoint == LastControlPoint;
+		const FLandscapeSplineSegmentConnection& CurrentConnection = bReverseTraversal ? CurrentSegment->Connections[1] : CurrentSegment->Connections[0];
+		const FLandscapeSplineSegmentConnection& NextConnection = bReverseTraversal ? CurrentSegment->Connections[0] : CurrentSegment->Connections[1];
 
-		// Walk down the spline meshes
 		TArray<USplineMeshComponent*> SegmentSplineMeshComponents = CurrentSegment->GetLocalMeshComponents();
-		if (!bReverseTraversal)
+
+		// No guarantee on the direction of individual spline mesh component directions
+		// Test the first one and determine if the start or end location is closer
+		bool bReverseSplineMeshes = false;
+		const FVector ControlPointWorldLocation = GetComponentTransform().TransformPosition(CurrentConnection.ControlPoint->Location);
+		if (const USplineMeshComponent* FirstSplineMesh = SegmentSplineMeshComponents[bReverseTraversal ? SegmentSplineMeshComponents.Num() - 1 : 0])
 		{
-			for (int Index = 0; Index < SegmentSplineMeshComponents.Num(); ++Index)
-			{
-				USplineMeshComponent* SplineMesh = SegmentSplineMeshComponents[Index];
-				if (SplineMesh == nullptr)
-				{
-					continue;
-				}
-
-				// Create a spline component point from each spline mesh in the segment
-				SplineComponent->AddSplinePoint(SplineMesh->GetStartPosition() + SplineMesh->GetComponentLocation(), ESplineCoordinateSpace::World, false);
-				SplineComponent->SetTangentsAtSplinePoint(CurrentPointIndex, ArriveTangent, SplineMesh->GetStartTangent(), ESplineCoordinateSpace::World, false);
-
-				++CurrentPointIndex;
-				ArriveTangent = SplineMesh->GetEndTangent();
-			}
+			const float StartDistanceSqr = FVector::DistSquared(FirstSplineMesh->GetStartPosition() + FirstSplineMesh->GetComponentLocation(), ControlPointWorldLocation);
+			const float EndDistanceSqr = FVector::DistSquared(FirstSplineMesh->GetEndPosition() + FirstSplineMesh->GetComponentLocation(), ControlPointWorldLocation);
+			bReverseSplineMeshes = EndDistanceSqr < StartDistanceSqr;
 		}
-		else
+		
+		// Walk down the spline meshes
+		for (int32 Index = 0; Index < SegmentSplineMeshComponents.Num(); ++Index)
 		{
-			// Same as the true block, but reversed direction
-			for (int Index = SegmentSplineMeshComponents.Num() - 1; Index >= 0; --Index)
+			const int32 ActualIndex = bReverseTraversal ? SegmentSplineMeshComponents.Num() - (1 + Index) : Index;
+			
+			USplineMeshComponent* SplineMesh = SegmentSplineMeshComponents[ActualIndex];
+			if (SplineMesh == nullptr)
 			{
-				USplineMeshComponent* SplineMesh = SegmentSplineMeshComponents[Index];
-				if (SplineMesh == nullptr)
-				{
-					continue;
-				}
-
-				// Swap start with end since we're going in reverse
-				SplineComponent->AddSplinePoint(SplineMesh->GetEndPosition() + SplineMesh->GetComponentLocation(), ESplineCoordinateSpace::World, false);
-				SplineComponent->SetTangentsAtSplinePoint(CurrentPointIndex, ArriveTangent, SplineMesh->GetEndTangent(), ESplineCoordinateSpace::World, false);
-
-				++CurrentPointIndex;
-				ArriveTangent = SplineMesh->GetStartTangent();
+				continue;
 			}
+
+			FVector Position = bReverseSplineMeshes ? SplineMesh->GetEndPosition() : SplineMesh->GetStartPosition();
+			Position += SplineMesh->GetComponentLocation();
+			
+			FVector LeaveTangent = bReverseSplineMeshes ? -SplineMesh->GetEndTangent() : SplineMesh->GetStartTangent();
+
+			// Create a spline component point from each spline mesh in the segment
+			SplineComponent->AddSplinePoint(Position, ESplineCoordinateSpace::World, false);
+			SplineComponent->SetTangentsAtSplinePoint(CurrentPointIndex, ArriveTangent, LeaveTangent, ESplineCoordinateSpace::World, false);
+			
+			ArriveTangent = bReverseSplineMeshes ? SplineMesh->GetStartPosition() : SplineMesh->GetEndTangent();
+				
+			++CurrentPointIndex;
 		}
 		
 		// Search for the next segment
-		FLandscapeSplineSegmentConnection& Connection = bReverseTraversal ? CurrentSegment->Connections[0] : CurrentSegment->Connections[1];
 		bool bFoundNextSegment = false;
-		if (Connection.ControlPoint)
+		bool bLoopingSpline = false;
+		if (NextConnection.ControlPoint)
 		{
-			for (FLandscapeSplineConnection& ControlPointConnection : Connection.ControlPoint->ConnectedSegments)
+			for (FLandscapeSplineConnection& ControlPointConnection : NextConnection.ControlPoint->ConnectedSegments)
 			{
 				if (ControlPointConnection.Segment == nullptr || VisitedSegments.Contains(ControlPointConnection.Segment))
 				{
+					// Check for loop
+					if (ControlPointConnection.Segment == FirstSegment)
+					{
+						bLoopingSpline = true;
+					}
+					
 					continue;
 				}
 				
 				CurrentSegment = ControlPointConnection.Segment;
-				LastControlPoint = Connection.ControlPoint;
+				LastControlPoint = NextConnection.ControlPoint;
 				bFoundNextSegment = true;
 				break;
 			}
@@ -880,6 +887,18 @@ void ULandscapeSplinesComponent::CopyToSplineComponent(USplineComponent* SplineC
 
 		if (!bFoundNextSegment)
 		{
+			SplineComponent->SetClosedLoop(bLoopingSpline);
+			
+			if (bLoopingSpline)
+			{
+				// Populate first point's arrive tangent
+				if (SplineComponent->GetNumberOfSplinePoints() > 0)
+				{
+					const FVector LeaveTangent = SplineComponent->SplineCurves.Position.Points[0].LeaveTangent;
+					SplineComponent->SetTangentsAtSplinePoint(0, ArriveTangent, LeaveTangent, ESplineCoordinateSpace::World, false);
+				}
+			}
+			
 			UE_LOG(LogLandscape, Verbose, TEXT("%s Could not find next segment or all segments have been traversed."), ANSI_TO_TCHAR(__FUNCTION__));
 			break;
 		}
@@ -1135,13 +1154,6 @@ void ULandscapeSplinesComponent::RequestSplineLayerUpdate()
 		SplineOwner->GetLandscapeInfo()->RequestSplineLayerUpdate();
 	}
 }
-
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-void ULandscapeSplinesComponent::SetDefaultEditorSplineMesh()
-{
-	SplineEditorMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/EditorLandscapeResources/SplineEditorMesh"));
-}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void ULandscapeSplinesComponent::ShowSplineEditorMesh(bool bShow)
 {
@@ -1985,12 +1997,62 @@ void ULandscapeSplineControlPoint::SetSplineSelected(bool bInSelected)
 	}
 }
 
-void ULandscapeSplineControlPoint::AutoCalcRotation()
+void ULandscapeSplineControlPoint::AutoCalcRotation(bool bAlwaysRotateForward)
 {
 	Modify();
 
+	// always rotate forward only applies when there is exactly 2 segments connected
+	if (bAlwaysRotateForward && ConnectedSegments.Num() == 2)
+	{
+		const FLandscapeSplineSegmentConnection& Near0 = ConnectedSegments[0].GetNearConnection();
+		const FLandscapeSplineSegmentConnection& Far0 = ConnectedSegments[0].GetFarConnection();
+
+		// we modify the rotation so it is halfway between the two connected segments
+		// Get the start and end location/rotation of this connection
+		FVector StartLocation0; FRotator StartRotation0;
+		this->GetConnectionLocationAndRotation(Near0.SocketName, StartLocation0, StartRotation0);
+		FVector EndLocation0; FRotator EndRotation0;
+		Far0.ControlPoint->GetConnectionLocationAndRotation(Far0.SocketName, EndLocation0, EndRotation0);
+		const FVector DesiredDirection0 = (EndLocation0 - StartLocation0);
+
+		const FLandscapeSplineSegmentConnection& Near1 = ConnectedSegments[1].GetNearConnection();
+		const FLandscapeSplineSegmentConnection& Far1 = ConnectedSegments[1].GetFarConnection();
+		FVector StartLocation1; FRotator StartRotation1;
+		this->GetConnectionLocationAndRotation(Near1.SocketName, StartLocation1, StartRotation1);
+		FVector EndLocation1; FRotator EndRotation1;
+		Far1.ControlPoint->GetConnectionLocationAndRotation(Far1.SocketName, EndLocation1, EndRotation1);
+		const FVector DesiredDirection1 = (EndLocation1 - StartLocation1);
+
+		// compute orientations for incoming and outgoing segments from their direction
+		FRotator Rot0 = DesiredDirection0.Rotation();
+		FRotator Rot1 = (-DesiredDirection1).Rotation();
+
+		// determine the midpoint orientation via slerp, then convert back to rotator representation
+		FRotator DesiredRot = FQuat::Slerp(Rot0.Quaternion(), Rot1.Quaternion(), 0.5).Rotator();
+
+		// enforce pitch as the average of the incoming and outgoing orientations
+		DesiredRot.Pitch = (Rot0.Pitch + Rot1.Pitch) * 0.5;
+		
+		// Remove socket local rotation to calculate the Rotation setting
+		FVector StartLocalLocation; FRotator StartLocalRotation;
+		this->GetConnectionLocalLocationAndRotation(Near0.SocketName, StartLocalLocation, StartLocalRotation);
+		FQuat SocketLocalRotation = StartLocalRotation.Quaternion();
+		if (FMath::Sign(Near0.TangentLen) < 0)	// flip 180 if the tangent is inverted
+		{
+			SocketLocalRotation = SocketLocalRotation * FRotator(0, 180, 0).Quaternion();
+		}
+
+		FQuat LocalQuat = DesiredRot.Quaternion() * SocketLocalRotation.Inverse();
+		Rotation = LocalQuat.Rotator().GetNormalized();
+
+		AutoFlipTangents();
+
+		return;
+	}
+
 	FRotator Delta = FRotator::ZeroRotator;
 
+	// check all connections to this control point
 	for (const FLandscapeSplineConnection& Connection : ConnectedSegments)
 	{
 		// Get the start and end location/rotation of this connection
@@ -3006,7 +3068,7 @@ void ULandscapeSplineSegment::UpdateSplinePoints(bool bUpdateCollision, bool bUp
 	TMap<ULandscapeSplinesComponent*, TArray<USplineMeshComponent*>> ForeignMeshComponentsMap = GetForeignMeshComponents();
 	
 	// Unregister components, Remove Foreign/Local Associations
-	for (TObjectPtr<USplineMeshComponent> LocalMeshComponent : OldLocalMeshComponents)
+	for (TObjectPtr<USplineMeshComponent>& LocalMeshComponent : OldLocalMeshComponents)
 	{
 		USplineMeshComponent* Comp = LocalMeshComponent.Get();
 		checkSlow(OuterSplines->MeshComponentLocalOwnersMap.FindRef(Comp) == this);
@@ -3097,7 +3159,7 @@ void ULandscapeSplineSegment::UpdateSplinePoints(bool bUpdateCollision, bool bUp
 			{
 				if (OldLocalMeshComponents.Num() > 0)
 				{
-					MeshComponent = OldLocalMeshComponents.Pop(false).Get();
+					MeshComponent = OldLocalMeshComponents.Pop(EAllowShrinking::No).Get();
 				}
 			}
 			else
@@ -3106,7 +3168,7 @@ void ULandscapeSplineSegment::UpdateSplinePoints(bool bUpdateCollision, bool bUp
 				if (ForeignMeshComponents && ForeignMeshComponents->Num() > 0)
 				{
 					MeshComponentOuterSplines->UpdateModificationKey(this);
-					MeshComponent = ForeignMeshComponents->Pop(false);
+					MeshComponent = ForeignMeshComponents->Pop(EAllowShrinking::No);
 				}
 			}
 
@@ -3382,7 +3444,7 @@ void ULandscapeSplineSegment::UpdateSplinePoints(bool bUpdateCollision, bool bUp
 	}
 	
 	// Clean up unused components
-	for (TObjectPtr<USplineMeshComponent> LocalMeshComponent : OldLocalMeshComponents)
+	for (TObjectPtr<USplineMeshComponent>& LocalMeshComponent : OldLocalMeshComponents)
 	{
 		LocalMeshComponent->DestroyComponent();
 	}

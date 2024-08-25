@@ -3,6 +3,7 @@
 #include "VulkanRHIPrivate.h"
 #include "VulkanGenericPlatform.h"
 #include "HAL/FileManager.h"
+#include "Misc/CommandLine.h"
 
 static TAutoConsoleVariable<int32> CVarVulkanUseProfileCheck(
 	TEXT("r.Vulkan.UseProfileCheck"),
@@ -21,6 +22,15 @@ void FVulkanGenericPlatform::SetupFeatureLevels(TArrayView<EShaderPlatform> Shad
 	ShaderPlatformForFeatureLevel[ERHIFeatureLevel::SM4_REMOVED] = SP_NumPlatforms;
 	ShaderPlatformForFeatureLevel[ERHIFeatureLevel::SM5] = SP_VULKAN_SM5;
 	ShaderPlatformForFeatureLevel[ERHIFeatureLevel::SM6] = SP_VULKAN_SM6;
+}
+
+ERHIFeatureLevel::Type FVulkanGenericPlatform::GetFeatureLevel(ERHIFeatureLevel::Type InRequestedFeatureLevel)
+{
+	const bool bForceES3_1 = (FVulkanPlatform::RequiresMobileRenderer() ||
+		(InRequestedFeatureLevel == ERHIFeatureLevel::ES3_1) ||
+		FParse::Param(FCommandLine::Get(), TEXT("FeatureLevelES31")) || FParse::Param(FCommandLine::Get(), TEXT("FeatureLevelES3_1")));
+
+	return (!GIsEditor && bForceES3_1) ? ERHIFeatureLevel::ES3_1 : InRequestedFeatureLevel;
 }
 
 bool FVulkanGenericPlatform::PSOBinaryCacheMatches(FVulkanDevice* Device, const TArray<uint8>& DeviceCache)

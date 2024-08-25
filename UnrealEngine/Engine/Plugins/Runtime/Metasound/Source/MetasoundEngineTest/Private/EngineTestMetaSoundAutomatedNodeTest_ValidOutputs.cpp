@@ -18,27 +18,35 @@
 #if WITH_EDITORONLY_DATA
 
 
-IMPLEMENT_COMPLEX_AUTOMATION_TEST(FMetasoundAutomatedNodeTest_ValidOutputs, "Audio.Metasound.AutomatedNodeTest.ValidOutputs", EAutomationTestFlags::EditorContext | EAutomationTestFlags::StressFilter)
+IMPLEMENT_COMPLEX_AUTOMATION_TEST(FMetasoundAutomatedNodeTest_ValidOutputs, "Audio.Metasound.AutomatedNodeTest.ValidOutputs", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 void FMetasoundAutomatedNodeTest_ValidOutputs::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
 {
 	using namespace Metasound::EngineTest;
-	GetAllRegisteredNodes(OutBeautifiedNames, OutTestCommands);
+	GetAllRegisteredNativeNodes(OutBeautifiedNames, OutTestCommands);
 
 	UE_LOG(LogMetaSound, Verbose, TEXT("Found %d metasound nodes to test"), OutTestCommands.Num());
 }
 
-bool FMetasoundAutomatedNodeTest_ValidOutputs::RunTest(const FString& InRegistryKey)
+bool FMetasoundAutomatedNodeTest_ValidOutputs::RunTest(const FString& InRegistryKeyString)
 {
 	using namespace Metasound;
 	using namespace Metasound::EngineTest;
+	using namespace Metasound::Frontend;
 
 	static const FOperatorSettings OperatorSettings{48000  /* samplerate */, 100.f /* block rate */};
 	static const FMetasoundEnvironment SourceEnvironment = GetSourceEnvironmentForTest();
 
-	TUniquePtr<INode> Node = CreateNodeFromRegistry(InRegistryKey);
+	FNodeRegistryKey RegistryKey;
+	if (!FNodeRegistryKey::Parse(InRegistryKeyString, RegistryKey))
+	{
+		AddError(FString::Printf(TEXT("Failed to parse registry key string %s"), *InRegistryKeyString));
+		return false;
+	}
+
+	TUniquePtr<INode> Node = CreateNodeFromRegistry(RegistryKey);
 	if (!Node.IsValid())
 	{
-		AddError(FString::Printf(TEXT("Failed to create node %s from registry"), *InRegistryKey));
+		AddError(FString::Printf(TEXT("Failed to create node %s from registry"), *InRegistryKeyString));
 		return false;
 	}
 
@@ -74,7 +82,7 @@ bool FMetasoundAutomatedNodeTest_ValidOutputs::RunTest(const FString& InRegistry
 
 		if (!Operator.IsValid())
 		{
-			AddError(FString::Printf(TEXT("Failed to create operator from node %s - %s."), *InRegistryKey, *GetPrettyName(InRegistryKey)));
+			AddError(FString::Printf(TEXT("Failed to create operator from node %s - %s."), *InRegistryKeyString, *GetPrettyName(RegistryKey)));
 		}
 
 
@@ -95,7 +103,7 @@ bool FMetasoundAutomatedNodeTest_ValidOutputs::RunTest(const FString& InRegistry
 		{
 			if (!OutputTester.AreAllAnalyzableOutputsValid())
 			{
-				AddError(FString::Printf(TEXT("Invalid output value encountered from node %s - %s."), *InRegistryKey, *GetPrettyName(InRegistryKey)));
+				AddError(FString::Printf(TEXT("Invalid output value encountered from node %s - %s."), *InRegistryKeyString, *GetPrettyName(RegistryKey)));
 			}
 		};
 		// Initial values should all be valid.

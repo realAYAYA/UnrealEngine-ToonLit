@@ -5,6 +5,7 @@
 #include "Animation/AnimNode_Inertialization.h"
 #include "Animation/AnimTrace.h"
 #include "AnimationRuntime.h"
+#include "Animation/AnimInertializationSyncScope.h"
 #include "Animation/AttributesRuntime.h"
 #include "Animation/MirrorSyncScope.h"
 
@@ -135,6 +136,8 @@ void FAnimNode_MirrorBase::Update_AnyThread(const FAnimationUpdateContext& Conte
 	GetEvaluateGraphExposedInputs().Execute(Context);
 
 	bool bMirror = GetMirror();
+	bool bRequestedInertialization = false;
+	
 	if (bMirrorStateIsValid && bMirrorState != bMirror)
 	{
 		if (GetBlendTimeOnMirrorStateChange() > SMALL_NUMBER)
@@ -152,6 +155,8 @@ void FAnimNode_MirrorBase::Update_AnyThread(const FAnimationUpdateContext& Conte
 
 				InertializationRequester->RequestInertialization(Request);
 				InertializationRequester->AddDebugRecord(*Context.AnimInstanceProxy, Context.GetCurrentNodeId());
+				
+				bRequestedInertialization = true;
 			}
 			else
 			{
@@ -168,6 +173,7 @@ void FAnimNode_MirrorBase::Update_AnyThread(const FAnimationUpdateContext& Conte
 	}
 	UMirrorDataTable* MirrorDataTable = GetMirrorDataTable();
 	UE::Anim::TOptionalScopedGraphMessage<UE::Anim::FMirrorSyncScope> Message(bMirror, Context, Context, MirrorDataTable);
+	UE::Anim::TOptionalScopedGraphMessage<UE::Anim::FAnimInertializationSyncScope> InertializationSync(bRequestedInertialization, Context);
 
 	bMirrorState = bMirror;
 	bMirrorStateIsValid = true;

@@ -199,6 +199,9 @@ FDetailCategoryImpl::FDetailCategoryImpl(FName InCategoryName, TSharedRef<FDetai
 	, bFavoriteCategory(false)
 	, bShowOnlyChildren(false)
 	, bHasVisibleAdvanced(false)
+	, bPendingRefresh(false)
+	, bPendingRefreshNeedsRefilter(false)
+	, bIsEmpty(false)
 {
 	const UStruct* BaseStruct = InDetailLayout->GetRootNode()->GetBaseStructure();
 
@@ -380,10 +383,11 @@ IDetailCategoryBuilder& FDetailCategoryImpl::RestoreExpansionState(bool bRestore
 	return *this;
 }
 
-IDetailCategoryBuilder& FDetailCategoryImpl::HeaderContent(TSharedRef<SWidget> InHeaderContent)
+IDetailCategoryBuilder& FDetailCategoryImpl::HeaderContent(TSharedRef<SWidget> InHeaderContent, bool bWholeRowContent)
 {
 	ensureMsgf(!this->HeaderContentWidget.IsValid(), TEXT("Category already has a header content widget defined!"));
 	this->HeaderContentWidget = InHeaderContent;
+	this->bHeaderContentWholeRowContent = bWholeRowContent;
 	return *this;
 }
 
@@ -498,10 +502,38 @@ IDetailPropertyRow* FDetailCategoryImpl::AddExternalStructureProperty(TSharedPtr
 	return NewRow.Get();
 }
 
+IDetailPropertyRow* FDetailCategoryImpl::AddExternalStructureProperty(TSharedPtr<IStructureDataProvider> StructDataProvider, FName PropertyName, EPropertyLocation::Type Location, const FAddPropertyParams& Params)
+{
+	FDetailLayoutCustomization NewCustomization;
+	NewCustomization.bCustom = true;
+	NewCustomization.bAdvanced = Location == EPropertyLocation::Advanced;
+
+	FDetailPropertyRow::MakeExternalPropertyRowCustomization(StructDataProvider, PropertyName, AsShared(), NewCustomization, Params);
+
+	TSharedPtr<FDetailPropertyRow> NewRow = NewCustomization.PropertyRow;
+
+	if (NewRow.IsValid())
+	{
+		TSharedPtr<FPropertyNode> PropertyNode = NewRow->GetPropertyNode();
+		TSharedPtr<FComplexPropertyNode> RootNode = StaticCastSharedRef<FComplexPropertyNode>(PropertyNode->FindComplexParent()->AsShared());
+
+		AddCustomLayout(NewCustomization);
+	}
+
+	return NewRow.Get();
+}
+
 TArray<TSharedPtr<IPropertyHandle>> FDetailCategoryImpl::AddAllExternalStructureProperties(TSharedRef<FStructOnScope> StructData, EPropertyLocation::Type Location, TArray<IDetailPropertyRow*>* OutPropertiesRow)
 {
+	return AddAllExternalStructureProperties(MakeShared<FStructOnScopeStructureDataProvider>(StructData), Location, OutPropertiesRow);
+}
+
+TArray<TSharedPtr<IPropertyHandle>> FDetailCategoryImpl::AddAllExternalStructureProperties(
+	TSharedPtr<IStructureDataProvider> StructProvider, EPropertyLocation::Type Location,
+	TArray<IDetailPropertyRow*>* OutPropertiesRow)
+{
 	TSharedPtr<FStructurePropertyNode> RootPropertyNode(new FStructurePropertyNode);
-	RootPropertyNode->SetStructure(StructData);
+	RootPropertyNode->SetStructure(StructProvider);
 
 	FPropertyNodeInitParams InitParams;
 	InitParams.ParentNode = nullptr;
@@ -600,6 +632,16 @@ FDetailLayoutCustomization* FDetailCategoryImpl::GetDefaultCustomization(TShared
 	return Customization;
 }
 
+bool FDetailCategoryImpl::IsEmpty() const
+{
+	return bIsEmpty;
+}
+
+void FDetailCategoryImpl::SetIsEmpty(bool bInIsEmpty)
+{
+	bIsEmpty = bInIsEmpty;
+}
+ 
 bool FDetailCategoryImpl::ShouldAdvancedBeExpanded() const
 {
 	return bUserShowAdvanced || bForceAdvanced;
@@ -657,7 +699,22 @@ void FDetailCategoryImpl::RequestItemExpanded(TSharedRef<FDetailTreeNode> TreeNo
 	}
 }
 
+void FDetailCategoryImpl::Tick(float DeltaTime)
+{
+	ensure(bPendingRefresh);
+	RefreshTreeInternal(bPendingRefreshNeedsRefilter);
+	bPendingRefresh = false;
+	RemoveTickableNode(*this);
+}
+
 void FDetailCategoryImpl::RefreshTree(bool bRefilterCategory)
+{
+	bPendingRefresh = true;
+	bPendingRefreshNeedsRefilter = bRefilterCategory;
+	AddTickableNode(*this);
+}
+
+void FDetailCategoryImpl::RefreshTreeInternal(bool bRefilterCategory)
 {
 	if (bRefilterCategory)
 	{
@@ -801,13 +858,42 @@ TSharedRef<ITableRow> FDetailCategoryImpl::GenerateWidgetForTableView(const TSha
 		HeaderContent = Row.ValueWidget.Widget;
 	}
 
+	InitializeObjectName();
 	TSharedPtr<FDetailLayoutBuilderImpl> ParentLayout = GetParentLayoutImpl();
 
 	return SNew(SDetailCategoryTableRow, AsShared(), OwnerTable)
 		.PasteFromText(OnPasteFromText())
+		.ObjectName( ObjectName )
+		.IsEmpty( bIsEmpty )
 		.InnerCategory(ParentLayout.IsValid() ? ParentLayout->IsLayoutForExternalRoot() : false)
 		.DisplayName(GetDisplayName())
-		.HeaderContent(HeaderContent);
+		.HeaderContent(HeaderContent)
+		.WholeRowHeaderContent(bHeaderContentWholeRowContent);
+}
+
+void FDetailCategoryImpl::InitializeObjectName()
+{
+	if (!DetailLayoutBuilder.IsValid())
+	{
+		return;
+	}
+	
+	const TSharedPtr<FComplexPropertyNode> Node = DetailLayoutBuilder.Pin()->GetRootNode();
+	
+	if (Node.IsValid())
+	{
+		if (const FObjectPropertyNode* Object = Node->AsObjectNode())
+		{
+			if (Object->GetNumObjects() > 0)
+			{
+				if (const UObject* CategoryObject = Object->GetUObject(0))
+				{
+					const FName Name{ CategoryObject->GetName() };
+					ObjectName = Name;
+				}
+			}
+		}
+	}	
 }
 
 bool FDetailCategoryImpl::GenerateStandaloneWidget(FDetailWidgetRow& OutRow) const
@@ -1064,6 +1150,11 @@ void FDetailCategoryImpl::GenerateChildrenForLayouts()
 void FDetailCategoryImpl::GetChildren(FDetailNodeList& OutChildren, const bool& bInIgnoreVisibility)
 {
 	GetGeneratedChildren(OutChildren, bInIgnoreVisibility, false);
+}
+
+FName FDetailCategoryImpl::GetObjectName() const
+{
+	return ObjectName;
 }
 
 void FDetailCategoryImpl::GetGeneratedChildren(FDetailNodeList& OutChildren, bool bIgnoreVisibility, bool bIgnoreAdvanced)

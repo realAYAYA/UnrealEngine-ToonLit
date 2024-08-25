@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 // D3D headers.

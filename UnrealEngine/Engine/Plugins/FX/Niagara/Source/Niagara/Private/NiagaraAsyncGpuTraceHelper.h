@@ -88,7 +88,7 @@ public:
 	FNiagaraGpuScratchPad GetTraceCounts() { return TraceCounts; }
 
 	static ENDICollisionQuery_AsyncGpuTraceProvider::Type ResolveSupportedType(ENDICollisionQuery_AsyncGpuTraceProvider::Type InType);
-	static bool RequiresDistanceFieldData(ENDICollisionQuery_AsyncGpuTraceProvider::Type InType);
+	static bool RequiresGlobalDistanceField(ENDICollisionQuery_AsyncGpuTraceProvider::Type InType);
 	static bool RequiresRayTracingScene(ENDICollisionQuery_AsyncGpuTraceProvider::Type InType);
 
 #if NIAGARA_ASYNC_GPU_TRACE_COLLISION_GROUPS

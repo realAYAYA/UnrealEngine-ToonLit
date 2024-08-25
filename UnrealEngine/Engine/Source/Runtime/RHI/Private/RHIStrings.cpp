@@ -2,8 +2,8 @@
 
 #include "RHIStrings.h"
 #include "DataDrivenShaderPlatformInfo.h"
-#include "RHI.h"
 #include "RHIAccess.h"
+#include "RHIGlobals.h"
 #include "RHIShaderFormatDefinitions.inl"
 #include "RHIStaticShaderPlatformNames.h"
 #include "RHIPipeline.h"
@@ -330,10 +330,14 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		case BUF_FastVRAM:				return TEXT("BUF_FastVRAM");
 		case BUF_Shared:				return TEXT("BUF_Shared");
 		case BUF_AccelerationStructure:	return TEXT("BUF_AccelerationStructure");
-		case BUF_RayTracingScratch:		return TEXT("BUF_RayTracingScratch");
 		case BUF_VertexBuffer:			return TEXT("BUF_VertexBuffer");
 		case BUF_IndexBuffer:			return TEXT("BUF_IndexBuffer");
 		case BUF_StructuredBuffer:		return TEXT("BUF_StructuredBuffer");
+		case BUF_MultiGPUAllocate:		return TEXT("BUF_MultiGPUAllocate");
+		case BUF_MultiGPUGraphIgnore:	return TEXT("BUF_MultiGPUGraphIgnore");
+		case BUF_RayTracingScratch:		return TEXT("BUF_RayTracingScratch");
+		case BUF_NullResource:			return TEXT("BUF_NullResource");
+		case BUF_UniformBuffer:			return TEXT("BUF_UniformBuffer");
 		}
 	});
 }
@@ -427,7 +431,6 @@ static const FRHIResourceTypeName GRHIResourceTypeNames[] =
 	RHI_RESOURCE_TYPE_DEF(GPUFence),
 	RHI_RESOURCE_TYPE_DEF(RenderQuery),
 	RHI_RESOURCE_TYPE_DEF(RenderQueryPool),
-	RHI_RESOURCE_TYPE_DEF(ComputeFence),
 	RHI_RESOURCE_TYPE_DEF(Viewport),
 	RHI_RESOURCE_TYPE_DEF(UnorderedAccessView),
 	RHI_RESOURCE_TYPE_DEF(ShaderResourceView),
@@ -713,6 +716,37 @@ const TCHAR* GetUniformBufferBaseTypeString(EUniformBufferBaseType BaseType)
 		return TEXT("UBMT_REFERENCED_STRUCT");
 	case UBMT_RENDER_TARGET_BINDING_SLOTS:
 		return TEXT("UBMT_RENDER_TARGET_BINDING_SLOTS");
+	}
+	return TEXT("");
+}
+
+const TCHAR* GetShaderCodeResourceBindingTypeName(EShaderCodeResourceBindingType BindingType)
+{
+	switch (BindingType)
+	{
+	case EShaderCodeResourceBindingType::Invalid:							return TEXT("Invalid");
+	case EShaderCodeResourceBindingType::SamplerState:						return TEXT("SamplerState");
+	case EShaderCodeResourceBindingType::Texture2D:							return TEXT("Texture2D");
+	case EShaderCodeResourceBindingType::Texture2DArray:					return TEXT("Texture2DArray");
+	case EShaderCodeResourceBindingType::Texture2DMS:						return TEXT("Texture2DMS");
+	case EShaderCodeResourceBindingType::Texture3D:							return TEXT("Texture3D");
+	case EShaderCodeResourceBindingType::TextureCube:						return TEXT("TextureCube");
+	case EShaderCodeResourceBindingType::TextureCubeArray:					return TEXT("TextureCubeArray");
+	case EShaderCodeResourceBindingType::TextureMetadata:					return TEXT("TextureMetadata");
+	case EShaderCodeResourceBindingType::Buffer:							return TEXT("Buffer");
+	case EShaderCodeResourceBindingType::StructuredBuffer:					return TEXT("StructuredBuffer");
+	case EShaderCodeResourceBindingType::ByteAddressBuffer:					return TEXT("ByteAddressBuffer");
+	case EShaderCodeResourceBindingType::RaytracingAccelerationStructure:	return TEXT("RaytracingAccelerationStructure");
+	case EShaderCodeResourceBindingType::RWTexture2D:						return TEXT("RWTexture2D");
+	case EShaderCodeResourceBindingType::RWTexture2DArray:					return TEXT("RWTexture2DArray");
+	case EShaderCodeResourceBindingType::RWTexture3D:						return TEXT("RWTexture3D");
+	case EShaderCodeResourceBindingType::RWTextureCube:						return TEXT("RWTextureCube");
+	case EShaderCodeResourceBindingType::RWTextureMetadata:					return TEXT("RWTextureMetadata");
+	case EShaderCodeResourceBindingType::RWBuffer:							return TEXT("RWBuffer");
+	case EShaderCodeResourceBindingType::RWStructuredBuffer:				return TEXT("RWStructuredBuffer");
+	case EShaderCodeResourceBindingType::RWByteAddressBuffer:				return TEXT("RWByteAddressBuffer");
+	case EShaderCodeResourceBindingType::RasterizerOrderedTexture2D:		return TEXT("RasterizerOrderedTexture2D");
+	default:																checkf(false, TEXT("Missing EShaderCodeResourceBindingType %d"), BindingType);
 	}
 	return TEXT("");
 }

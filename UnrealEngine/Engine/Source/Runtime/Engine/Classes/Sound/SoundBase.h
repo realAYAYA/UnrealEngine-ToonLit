@@ -36,15 +36,17 @@ namespace Audio
 } // namespace Audio
 
 class ISoundGenerator;
+class UAssetUserData;
+class UAudioPropertiesSheetAssetBase;
+class UAudioPropertiesBindings;
 class USoundAttenuation;
 class USoundClass;
 class USoundEffectSourcePreset;
+class USoundEffectSourcePresetChain;
 class USoundSourceBus;
 class USoundSubmix;
 class USoundSubmixBase;
 class USoundWave;
-class USoundEffectSourcePresetChain;
-class UAssetUserData;
 enum class EBusSendType : uint8;
 namespace EMaxConcurrentResolutionRule { enum Type : int; }
 struct FActiveSound;
@@ -215,8 +217,14 @@ public:
 	/** Array of user data stored with the asset */
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = Advanced)
 	TArray<TObjectPtr<UAssetUserData>> AssetUserData;
-
 #if WITH_EDITORONLY_DATA	
+	UPROPERTY(EditAnywhere, Category = AudioProperties)
+	TObjectPtr<UAudioPropertiesSheetAssetBase> AudioPropertiesSheet;
+
+	UPROPERTY(EditAnywhere, Category = AudioProperties)
+	TObjectPtr<UAudioPropertiesBindings> AudioPropertiesBindings;
+
+
 private:
 	UPROPERTY()
 	FSoundTimecodeOffset TimecodeOffset;
@@ -230,6 +238,10 @@ public:
 	ENGINE_API virtual bool CanBeClusterRoot() const override;
 	ENGINE_API virtual bool CanBeInCluster() const override;
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
+
+#if WITH_EDITOR
+	ENGINE_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	//~ End UObject interface.
 
@@ -352,5 +364,7 @@ public:
 #if WITH_EDITORONLY_DATA
 	ENGINE_API void SetTimecodeOffset(const FSoundTimecodeOffset& InTimecodeOffset);
 	ENGINE_API TOptional<FSoundTimecodeOffset> GetTimecodeOffset() const;
+
+	void InjectPropertySheet();
 #endif //WITH_EDITORONLY_DATA
 };

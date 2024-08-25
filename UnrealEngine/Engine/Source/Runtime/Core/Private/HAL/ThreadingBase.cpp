@@ -18,7 +18,7 @@
 #include "AutoRTFM/AutoRTFM.h"
 
 #if PLATFORM_WINDOWS
-#include "Microsoft/MinimalWindowsApi.h"
+#include "Windows/WindowsHWrapper.h"
 #endif
 
 #include <atomic>
@@ -94,7 +94,7 @@ FTaskTagScope::FTaskTagScope(bool InTagOnlyIfNone, ETaskTag InTag) : Tag(InTag),
 		// the PE loading process prior to calling the thread's entry point. This
 		// results static initialisation unexpectedly happening on RenderDoc's injection
 		// thread and the ensure below fails.
-		static bool bRenderDocDetected = (Windows::LoadLibraryW(L"renderdoc.dll") != nullptr);
+		static bool bRenderDocDetected = (::GetModuleHandleW(L"renderdoc.dll") != nullptr);
 		if (!bRenderDocDetected)
 #	endif
 		{
@@ -236,7 +236,7 @@ CORE_API bool IsAudioThreadRunning()
 
 CORE_API bool IsInAudioThread()
 {
-	return GIsAudioThreadRunning.load(std::memory_order_acquire) && !GIsAudioThreadSuspended.load(std::memory_order_acquire) ? GAudioPipe.IsInContext() : IsInGameThread();
+	return (GIsAudioThreadRunning.load(std::memory_order_acquire) && !GIsAudioThreadSuspended.load(std::memory_order_acquire)) ? GAudioPipe.IsInContext() : IsInGameThread();
 }
 
 CORE_API TAtomic<int32> GIsRenderingThreadSuspended(0);
@@ -452,6 +452,21 @@ public:
 };
 uint32 FFakeThread::ThreadIdCounter = 0xffff;
 
+bool FThreadManager::CheckThreadListSafeToContinueIteration()
+{
+	if (bIsThreadListDirty)
+	{
+		UE_LOG(LogCore, Error, TEXT("FThreadManager::Threads was modified during unsafe iteration. Iteration will be aborted."));
+		return false;
+	}
+
+	return true;
+}
+
+void FThreadManager::OnThreadListModified()
+{
+	bIsThreadListDirty = true;
+}
 
 void FThreadManager::AddThread(uint32 ThreadId, FRunnableThread* Thread)
 {
@@ -495,6 +510,7 @@ void FThreadManager::AddThread(uint32 ThreadId, FRunnableThread* Thread)
 	if (!Threads.Contains(ThreadId))
 	{
 		Threads.Add(ThreadId, Thread);
+		OnThreadListModified();
 	}
 }
 
@@ -505,6 +521,7 @@ void FThreadManager::RemoveThread(FRunnableThread* Thread)
 	if (ThreadId)
 	{
 		Threads.Remove(*ThreadId);
+		OnThreadListModified();
 	}
 }
 
@@ -541,27 +558,33 @@ const FString& FThreadManager::GetThreadNameInternal(uint32 ThreadId)
 }
 
 #if PLATFORM_SUPPORTS_ALL_THREAD_BACKTRACES
+static TConstArrayView<uint64> ThreadStackBackTraces_PerformStackWalk(uint32 CurThreadId, uint32 ThreadId, TArrayView<uint64> OutProgramCounters)
+{
+	uint32 Depth;
+	if (CurThreadId != ThreadId)
+	{
+		Depth = FPlatformStackWalk::CaptureThreadStackBackTrace(ThreadId, OutProgramCounters.GetData(), OutProgramCounters.Num());
+	}
+	else
+	{
+		Depth = FPlatformStackWalk::CaptureStackBackTrace(OutProgramCounters.GetData(), OutProgramCounters.Num());
+	}
+	return OutProgramCounters.Left(Depth);
+}
+
 static void GetAllThreadStackBackTraces_ProcessSingle(
 	uint32 CurThreadId,
 	uint32 ThreadId,
 	const TCHAR* ThreadName,
 	typename FThreadManager::FThreadStackBackTrace& OutStackTrace)
 {
-	constexpr uint32 MaxDepth = 100;
 	OutStackTrace.ThreadId = ThreadId;
 	OutStackTrace.ThreadName = ThreadName;
-	auto& PCs = OutStackTrace.ProgramCounters;
-	PCs.AddZeroed(MaxDepth);
-	uint32 Depth;
-	if (CurThreadId != ThreadId)
-	{
-		Depth = FPlatformStackWalk::CaptureThreadStackBackTrace(ThreadId, PCs.GetData(), MaxDepth);
-	}
-	else
-	{
-		Depth = FPlatformStackWalk::CaptureStackBackTrace(PCs.GetData(), MaxDepth);
-	}
-	PCs.SetNum(Depth);
+
+	FThreadManager::FThreadStackBackTrace::FProgramCountersArray& PCs = OutStackTrace.ProgramCounters;
+	PCs.SetNumZeroed(FThreadManager::FThreadStackBackTrace::ProgramCountersMaxStackSize);
+	const TConstArrayView<uint64> WrittenProgramCounters = ThreadStackBackTraces_PerformStackWalk(CurThreadId, ThreadId, PCs);
+	PCs.SetNum(WrittenProgramCounters.Num());
 }
 
 void FThreadManager::GetAllThreadStackBackTraces(TArray<FThreadStackBackTrace>& StackTraces)
@@ -580,6 +603,38 @@ void FThreadManager::GetAllThreadStackBackTraces(TArray<FThreadStackBackTrace>& 
 			GetAllThreadStackBackTraces_ProcessSingle(CurThreadId, ThreadId, *Name, StackTraces.AddDefaulted_GetRef());
 		}
 	);
+}
+
+void FThreadManager::ForEachThreadStackBackTrace(TFunctionRef<bool(uint32 ThreadId, const TCHAR* ThreadName, const TConstArrayView<uint64>& StackTrace)> Func)
+{
+	const uint32 CurThreadId = FPlatformTLS::GetCurrentThreadId();
+	FThreadStackBackTrace::FProgramCountersArray ProgramCounterBuffer;
+	ProgramCounterBuffer.SetNumZeroed(FThreadStackBackTrace::ProgramCountersMaxStackSize);
+
+	FScopeLock Lock(&ThreadsCritical);
+	bIsThreadListDirty = false;
+
+	{
+		const TConstArrayView<uint64> ProgramCounterOutputArrayView = ThreadStackBackTraces_PerformStackWalk(CurThreadId, GGameThreadId, ProgramCounterBuffer);
+		const bool bContinue = Func(GGameThreadId, TEXT("GameThread"), ProgramCounterOutputArrayView);
+		if (!CheckThreadListSafeToContinueIteration() || !bContinue)
+		{
+			return;
+		}
+	}
+
+	for (const TPair<uint32, FRunnableThread*>& Pair : Threads)
+	{
+		const uint32 ThreadId = Pair.Key;
+		const FRunnableThread* Thread = Pair.Value;
+		const FString& ThreadName = Thread->GetThreadName();
+		const TConstArrayView<uint64> ProgramCounterOutputArrayView = ThreadStackBackTraces_PerformStackWalk(CurThreadId, ThreadId, ProgramCounterBuffer);
+		const bool bContinue = Func(ThreadId, *ThreadName, ProgramCounterOutputArrayView);
+		if (!CheckThreadListSafeToContinueIteration() || !bContinue)
+		{
+			return;
+		}
+	}
 }
 #endif
 
@@ -888,7 +943,7 @@ IQueuedWork* FThreadPoolPriorityQueue::Dequeue(EQueuedWorkPriority* OutDequeuedW
 			// queued and never done
 			Work = QueuedWork[0];
 			// Remove it from the list so no one else grabs it
-			QueuedWork.RemoveAt(0, 1, /* do not allow shrinking */ false);
+			QueuedWork.RemoveAt(0, 1, EAllowShrinking::No);
 
 			FirstNonEmptyQueueIndex = QueueIndex;
 			NumQueuedWork--;
@@ -1231,7 +1286,7 @@ public:
 
 			Thread = QueuedThreads[ThreadIndex];
 			// Remove it from the list so no one else grabs it
-			QueuedThreads.RemoveAt(ThreadIndex, 1, /* do not allow shrinking */ false);
+			QueuedThreads.RemoveAt(ThreadIndex, 1, EAllowShrinking::No);
 		}
 
 		// Tell our chosen thread to do the work
@@ -1361,14 +1416,19 @@ FTlsAutoCleanup* FThreadSingletonInitializer::Get( TFunctionRef<FTlsAutoCleanup*
 			}
 		}
 	});
-	
-	FTlsAutoCleanup* ThreadSingleton = (FTlsAutoCleanup*)FPlatformTLS::GetTlsValue( TlsSlot );
-	if( !ThreadSingleton )
+
+	FTlsAutoCleanup* ThreadSingleton = nullptr;
+	UE_AUTORTFM_OPEN(
 	{
-		ThreadSingleton = CreateInstance();
-		ThreadSingleton->Register();
-		FPlatformTLS::SetTlsValue( TlsSlot, ThreadSingleton );
-	}
+		ThreadSingleton = (FTlsAutoCleanup*)FPlatformTLS::GetTlsValue( TlsSlot );
+		if( !ThreadSingleton )
+		{
+			// these are generally left open and only get cleaned up on thread exit so avoiding dealing with an OPENABORT here to clean this up
+			ThreadSingleton = CreateInstance();
+			ThreadSingleton->Register();
+			FPlatformTLS::SetTlsValue( TlsSlot, ThreadSingleton );
+		}
+	});
 	return ThreadSingleton;
 }
 

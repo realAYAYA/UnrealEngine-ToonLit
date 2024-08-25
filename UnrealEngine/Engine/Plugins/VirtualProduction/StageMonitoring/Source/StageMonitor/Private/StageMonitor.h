@@ -73,18 +73,8 @@ private:
 	{
 #if ENABLE_STAGEMONITOR_LOGGING
 		static_assert(TIsDerivedFrom<MessageType, FStageMonitorBaseMessage>::IsDerived, "MessageType must be a FStageMonitorBaseMessage derived UStruct.");
-		if constexpr(sizeof...(Args) == 1 && std::is_same<MessageType,TTupleElement<0,TTuple<Args...>>>::value)
-		{
-			MessageType TempObj = Forward<MessageType>(MoveTempIfPossible(TTuple<Args...>::Get<0>(Tie(args...))));
-			return SendMessageInternal(&TempObj, MessageType::StaticStruct(), Flags);
-		}
-		else
-		{
-			MessageType TempObj = MessageType(Forward<Args>(MoveTempIfPossible(args))...);
-			return SendMessageInternal(&TempObj, MessageType::StaticStruct(), Flags);
-		}
-
-
+		MessageType TempObj(Forward<Args>(args)...);
+		return SendMessageInternal(&TempObj, MessageType::StaticStruct(), Flags);
 #endif
 		return false;
 	}
@@ -95,7 +85,7 @@ private:
 	{
 #if ENABLE_STAGEMONITOR_LOGGING
 		static_assert(TIsDerivedFrom<MessageType, FStageMonitorBaseMessage>::IsDerived, "MessageType must be a FStageMonitorBaseMessage derived UStruct.");
-		MessageType TempObj = MessageType(Forward<Args>(MoveTempIfPossible(args))...);
+		MessageType TempObj(Forward<Args>(args)...);
 		PublishMessageInternal(&TempObj, MessageType::StaticStruct());
 #endif
 	}

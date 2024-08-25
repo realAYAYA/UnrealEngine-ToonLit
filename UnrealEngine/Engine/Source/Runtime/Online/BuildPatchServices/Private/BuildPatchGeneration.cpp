@@ -614,7 +614,7 @@ bool FBuildDataGenerator::ChunkBuildDirectory(const BuildPatchServices::FChunkBu
 						uint8* CopyTo = DataBuffer.GetData();
 						uint8* CopyFrom = CopyTo + (PreviousSize - ScannerOverlapSize);
 						FMemory::Memcpy(CopyTo, CopyFrom, ScannerOverlapSize);
-						DataBuffer.SetNum(ScannerOverlapSize, false);
+						DataBuffer.SetNum(ScannerOverlapSize, EAllowShrinking::No);
 						DataBufferFirstIdx += (PreviousSize - ScannerOverlapSize);
 					}
 
@@ -623,7 +623,7 @@ bool FBuildDataGenerator::ChunkBuildDirectory(const BuildPatchServices::FChunkBu
 					DataBuffer.SetNumUninitialized(ScannerDataSize);
 					const bool bWaitForData = true;
 					ReadLen = BuildStream->DequeueData(DataBuffer.GetData() + PreviousSize, ScannerDataSize - PreviousSize, bWaitForData);
-					DataBuffer.SetNum(PreviousSize + ReadLen, false);
+					DataBuffer.SetNum(PreviousSize + ReadLen, EAllowShrinking::No);
 
 					// Only make a scanner if we are getting new data.
 					if (ReadLen > 0)

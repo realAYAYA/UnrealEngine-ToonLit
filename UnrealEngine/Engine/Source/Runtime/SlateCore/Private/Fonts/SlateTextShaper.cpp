@@ -3,10 +3,12 @@
 #include "Fonts/SlateTextShaper.h"
 #include "Fonts/FontCacheCompositeFont.h"
 #include "Fonts/SlateFontRenderer.h"
+#include "Fonts/FontProviderInterface.h"
 #include "Internationalization/BreakIterator.h"
 #include "SlateGlobals.h"
 
 #include <limits>
+#include "Fonts/FontUtils.h"
 
 DECLARE_CYCLE_STAT(TEXT("Shape Bidirectional Text"), STAT_SlateShapeBidirectionalText, STATGROUP_Slate);
 DECLARE_CYCLE_STAT(TEXT("Shape Unidirectional Text"), STAT_SlateShapeUnidirectionalText, STATGROUP_Slate);
@@ -282,7 +284,6 @@ FShapedGlyphSequenceRef FSlateTextShaper::FinalizeTextShaping(TArray<FShapedGlyp
 
 		if (FaceGlyphData.FaceAndMemory.IsValid() && FaceGlyphData.FaceAndMemory->IsFaceValid())
 		{
-
 			if (FMath::IsNearlyEqual(InFontInfo.GetClampSkew(), 0.f))
 			{
 				FT_Set_Transform(FaceGlyphData.FaceAndMemory->GetFace(), nullptr, nullptr);
@@ -299,14 +300,23 @@ FShapedGlyphSequenceRef FSlateTextShaper::FinalizeTextShaping(TArray<FShapedGlyp
 			}
 
 			FreeTypeUtils::ApplySizeAndScale(FaceGlyphData.FaceAndMemory->GetFace(), InFontInfo.Size, InFontScale);
-			
-			TextBaseline = FreeTypeUtils::Convert26Dot6ToRoundedPixel<int16>(FaceGlyphData.FaceAndMemory->GetDescender());
-			MaxHeight = FreeTypeUtils::Convert26Dot6ToRoundedPixel<uint16>(FaceGlyphData.FaceAndMemory->GetScaledHeight());
+
+			const bool IsAscentDescentOverridenEnabled = UE::Slate::FontUtils::IsAscentDescentOverrideEnabled(InFontInfo.FontObject);
+			TextBaseline = FreeTypeUtils::Convert26Dot6ToRoundedPixel<int16>(FaceGlyphData.FaceAndMemory->GetDescender(IsAscentDescentOverridenEnabled));
+			MaxHeight = FreeTypeUtils::Convert26Dot6ToRoundedPixel<uint16>(FaceGlyphData.FaceAndMemory->GetScaledHeight(IsAscentDescentOverridenEnabled));
 		}
 	}
 #endif // WITH_FREETYPE
 
-	return MakeShared<FShapedGlyphSequence>(MoveTemp(InGlyphsToRender), TextBaseline, MaxHeight, InFontInfo.FontMaterial, InFontInfo.OutlineSettings, InSourceTextRange);
+	const IFontProviderInterface* const FontObject = Cast<const IFontProviderInterface>(InFontInfo.FontObject);
+	return MakeShared<FShapedGlyphSequence>(MoveTemp(InGlyphsToRender), 
+											TextBaseline, 
+											MaxHeight, 
+											InFontInfo.FontMaterial.Get(),
+											InFontInfo.OutlineSettings,
+											FontObject ? FontObject->GetFontRasterizationMode() : EFontRasterizationMode::Bitmap,
+											FontObject ? FontObject->GetSdfSettings() : FFontSdfSettings(),
+											InSourceTextRange);
 }
 
 #if WITH_FREETYPE
@@ -405,6 +415,15 @@ void FSlateTextShaper::PerformKerningOnlyTextShaping(const TCHAR* InText, const 
 			ensure(LetterSpacingScaledAsFloat <= std::numeric_limits<int16>::max());
 			const int16 LetterSpacingScaled = (int16)LetterSpacingScaledAsFloat;
 
+			// Used for monospacing
+			int16 FixedAdvance = INDEX_NONE;
+			if (InFontInfo.bForceMonospaced)
+			{
+				const float MonospacingScaledAsFloat = InFontInfo.MonospacedWidth != 0 ? InFontInfo.MonospacedWidth * InFontInfo.Size * FinalFontScale : 0.f;
+				ensure(MonospacingScaledAsFloat <= std::numeric_limits<int16>::max());
+				FixedAdvance = (int16)MonospacingScaledAsFloat;
+			}
+
 			FreeTypeUtils::ApplySizeAndScale(KerningOnlyTextSequenceEntry.FaceAndMemory->GetFace(), InFontInfo.Size, FinalFontScale);
 			TSharedRef<FShapedGlyphFaceData> ShapedGlyphFaceData = MakeShared<FShapedGlyphFaceData>(KerningOnlyTextSequenceEntry.FaceAndMemory, GlyphFlags, InFontInfo.Size, FinalFontScale, InFontInfo.GetClampSkew());
 			TSharedPtr<FFreeTypeKerningCache> KerningCache = FTCacheDirectory->GetKerningCache(KerningOnlyTextSequenceEntry.FaceAndMemory->GetFace(), FT_KERNING_DEFAULT, InFontInfo.Size, FinalFontScale);
@@ -439,9 +458,9 @@ void FSlateTextShaper::PerformKerningOnlyTextShaping(const TCHAR* InText, const 
 					ShapedGlyphEntry.FontFaceData = ShapedGlyphFaceData;
 					ShapedGlyphEntry.GlyphIndex = GlyphIndex;
 					ShapedGlyphEntry.SourceIndex = CurrentCharIndex;
-					ShapedGlyphEntry.XAdvance = XAdvance;
+					ShapedGlyphEntry.XAdvance = !InFontInfo.bForceMonospaced ? XAdvance : FixedAdvance;
 					ShapedGlyphEntry.YAdvance = 0;
-					ShapedGlyphEntry.XOffset = 0;
+					ShapedGlyphEntry.XOffset = !InFontInfo.bForceMonospaced ? 0 : (FixedAdvance - XAdvance) / 2;
 					ShapedGlyphEntry.YOffset = 0;
 					ShapedGlyphEntry.Kerning = 0;
 					ShapedGlyphEntry.NumCharactersInGlyph = 1;
@@ -459,7 +478,7 @@ void FSlateTextShaper::PerformKerningOnlyTextShaping(const TCHAR* InText, const 
 							PreviousShapedGlyphEntry.XAdvance += LetterSpacingScaled;
 						}
 
-						if (ShapedGlyphEntry.bIsVisible)
+						if (ShapedGlyphEntry.bIsVisible && !InFontInfo.bForceMonospaced)
 						{
 							FT_Vector KerningVector;
 							if (KerningCache && KerningCache->FindOrCache(PreviousShapedGlyphEntry.GlyphIndex, ShapedGlyphEntry.GlyphIndex, KerningVector))
@@ -684,10 +703,24 @@ void FSlateTextShaper::PerformHarfBuzzTextShaping(const TCHAR* InText, const int
 			SlateFontRendererUtils::AppendGlyphFlags(*HarfBuzzTextSequenceEntry.FaceAndMemory, *HarfBuzzTextSequenceEntry.FontDataPtr, GlyphFlags);
 			const float FinalFontScale = InFontScale * HarfBuzzTextSequenceEntry.SubFontScalingFactor;
 
-			hb_font_t* HarfBuzzFont = HarfBuzzFontFactory.CreateFont(*HarfBuzzTextSequenceEntry.FaceAndMemory, GlyphFlags, InFontInfo.Size, FinalFontScale);
-			TSharedRef<FShapedGlyphFaceData> ShapedGlyphFaceData = MakeShared<FShapedGlyphFaceData>(HarfBuzzTextSequenceEntry.FaceAndMemory, GlyphFlags, InFontInfo.Size, FinalFontScale, InFontInfo.GetClampSkew());
-			TSharedPtr<FFreeTypeKerningCache> KerningCache = FTCacheDirectory->GetKerningCache(HarfBuzzTextSequenceEntry.FaceAndMemory->GetFace(), FT_KERNING_DEFAULT, InFontInfo.Size, FinalFontScale);
-			TSharedRef<FFreeTypeAdvanceCache> AdvanceCache = FTCacheDirectory->GetAdvanceCache(HarfBuzzTextSequenceEntry.FaceAndMemory->GetFace(), ShapedGlyphFaceData->GlyphFlags, InFontInfo.Size, FinalFontScale);
+			hb_font_t* HarfBuzzFont = HarfBuzzFontFactory.CreateFont(*HarfBuzzTextSequenceEntry.FaceAndMemory, GlyphFlags, InFontInfo, FinalFontScale);
+			if (!HarfBuzzFont)
+			{
+				continue;
+			}
+			TSharedRef<FShapedGlyphFaceData> ShapedGlyphFaceData = MakeShared<FShapedGlyphFaceData>(HarfBuzzTextSequenceEntry.FaceAndMemory, 
+																									GlyphFlags, 
+																									InFontInfo.Size, 
+																									FinalFontScale, 
+																									InFontInfo.GetClampSkew());
+			TSharedPtr<FFreeTypeKerningCache> KerningCache = FTCacheDirectory->GetKerningCache(HarfBuzzTextSequenceEntry.FaceAndMemory->GetFace(), 
+																							   FT_KERNING_DEFAULT,
+																							   InFontInfo.Size, 
+																							   FinalFontScale);
+			TSharedRef<FFreeTypeAdvanceCache> AdvanceCache = FTCacheDirectory->GetAdvanceCache(HarfBuzzTextSequenceEntry.FaceAndMemory->GetFace(), 
+																							   GlyphFlags,
+																							   InFontInfo.Size, 
+																							   FinalFontScale);
 
 			for (const FHarfBuzzTextSequenceEntry::FSubSequenceEntry& HarfBuzzTextSubSequenceEntry : HarfBuzzTextSequenceEntry.SubSequence)
 			{
@@ -922,7 +955,16 @@ bool FSlateTextShaper::InsertSubstituteGlyphs(const TCHAR* InText, const int32 I
 		GetSpecifiedGlyphIndexAndAdvance(TEXT(' '), SpaceGlyphIndex, SpaceXAdvance);
 
 		// We insert a spacer glyph with (up-to) the width of 4 space glyphs in-place of a tab character
-		const int16 NumSpacesToInsert = 4 - (OutGlyphsToRender.Num() % 4);
+		// TODO: Tabulation handling should be refactored to work properly: the tabbing is currently relative to the last characters,
+		// while it should be relative to the beginning of a line). This existing implementation work properly only with leading tabulation.
+		static const int16 TabWidthInSpaces = 4;
+		int16 NumSpacesToIgnore = 0;
+		for (int32 Idx = FMath::Max(0, InCharIndex - TabWidthInSpaces); Idx < InCharIndex; ++Idx)
+		{
+			NumSpacesToIgnore = InText[Idx] == TEXT('\t') ? 0 : (NumSpacesToIgnore + 1) % TabWidthInSpaces;
+		}
+
+		const int16 NumSpacesToInsert = TabWidthInSpaces - NumSpacesToIgnore;
 		if (NumSpacesToInsert > 0)
 		{
 			FShapedGlyphEntry& ShapedGlyphEntry = OutGlyphsToRender.AddDefaulted_GetRef();

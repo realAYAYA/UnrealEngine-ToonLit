@@ -25,16 +25,12 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
 		Private()
 		{
 			m_pLayout = new Layout();
 		}
 
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		LayoutPtr m_pLayout;
 

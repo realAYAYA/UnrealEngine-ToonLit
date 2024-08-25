@@ -1,14 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using Horde.Agent.Parser;
 using Horde.Agent.Utility;
@@ -21,7 +16,7 @@ namespace Horde.Agent.Commands.Utilities
 	/// <summary>
 	/// Runs a BuildGraph script and captures the processed log output
 	/// </summary>
-	[Command("buildgraph", "Executes a BuildGraph script with the given arguments using a build of UAT within the current branch, and runs the output through the log processor")]
+	[Command("buildgraph", "Executes a BuildGraph script with the given arguments using a build of UAT within the current branch, and runs the output through the log processor", Advertise = false)]
 	class BuildGraphCommand : Command
 	{
 		sealed class LogSink : IJsonRpcLogSink, IAsyncDisposable, IDisposable
@@ -79,7 +74,7 @@ namespace Horde.Agent.Commands.Utilities
 				while (span.Length > 0)
 				{
 					int idx = span.IndexOf((byte)'\n');
-					if(idx == -1)
+					if (idx == -1)
 					{
 						break;
 					}
@@ -94,7 +89,7 @@ namespace Horde.Agent.Commands.Utilities
 		/// <inheritdoc/>
 		public override void Configure(CommandLineArguments arguments, ILogger logger)
 		{
-			for(int idx = 0; idx < arguments.Count; idx++)
+			for (int idx = 0; idx < arguments.Count; idx++)
 			{
 				if (!arguments.HasBeenUsed(idx))
 				{
@@ -119,7 +114,7 @@ namespace Horde.Agent.Commands.Utilities
 				}
 
 				DirectoryReference? nextDir = baseDir.ParentDirectory;
-				if(nextDir == null)
+				if (nextDir == null)
 				{
 					logger.LogError("Unable to find RunUAT.bat in the current path");
 					return 1;
@@ -130,7 +125,7 @@ namespace Horde.Agent.Commands.Utilities
 
 			using (LogSink sink = new LogSink(runUatBat.Directory, logger))
 			{
-				await using (JsonRpcLogger jsonLogger = new JsonRpcLogger(sink, "log", null, logger))
+				await using (ServerLogger jsonLogger = new ServerLogger(sink, default, null, LogLevel.Information, logger, logger))
 				{
 					using (LogParser filter = new LogParser(jsonLogger, new List<string>()))
 					{
@@ -149,7 +144,7 @@ namespace Horde.Agent.Commands.Utilities
 							using (ManagedProcess process = new ManagedProcess(processGroup, fileName, commandLine, runUatBat.Directory.FullName, newEnvironment, null, ProcessPriorityClass.Normal))
 							{
 								await process.CopyToAsync((buffer, offset, length) => filter.WriteData(buffer.AsMemory(offset, length)), 4096, CancellationToken.None);
-								process.WaitForExit();
+								await process.WaitForExitAsync(CancellationToken.None);
 							}
 						}
 						filter.Flush();

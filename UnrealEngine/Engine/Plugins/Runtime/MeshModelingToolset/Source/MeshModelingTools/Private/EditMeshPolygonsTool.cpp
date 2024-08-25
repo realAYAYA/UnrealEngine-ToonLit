@@ -18,6 +18,7 @@
 #include "DynamicMeshEditor.h"
 #include "FaceGroupUtil.h"
 #include "GroupTopology.h"
+#include "Input/Reply.h"
 #include "InteractiveGizmoManager.h"
 #include "InteractiveToolManager.h"
 #include "Mechanics/DragAlignmentMechanic.h"
@@ -33,12 +34,14 @@
 #include "Selection/StoredMeshSelectionUtil.h"
 #include "Selection/PolygonSelectionMechanic.h"
 #include "Selections/MeshConnectedComponents.h"
+#include "Styling/AppStyle.h"
 #include "TargetInterfaces/MaterialProvider.h"
 #include "TargetInterfaces/MeshDescriptionCommitter.h"
 #include "TargetInterfaces/MeshDescriptionProvider.h"
 #include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
 #include "ToolActivities/PolyEditActivityContext.h"
 #include "ToolActivities/PolyEditExtrudeActivity.h"
+#include "ToolActivities/PolyEditExtrudeEdgeActivity.h"
 #include "ToolActivities/PolyEditInsertEdgeActivity.h"
 #include "ToolActivities/PolyEditInsertEdgeLoopActivity.h"
 #include "ToolActivities/PolyEditInsetOutsetActivity.h"
@@ -46,6 +49,7 @@
 #include "ToolActivities/PolyEditPlanarProjectionUVActivity.h"
 #include "ToolActivities/PolyEditBevelEdgeActivity.h"
 #include "ToolContextInterfaces.h" // FToolBuilderState
+#include "ToolHostCustomizationAPI.h"
 #include "ToolSetupUtil.h"
 #include "ToolTargetManager.h"
 #include "TransformTypes.h"
@@ -63,11 +67,11 @@ namespace EditMeshPolygonsToolLocals
 {
 	FText PolyEditDefaultMessage = LOCTEXT("OnStartEditMeshPolygonsTool_TriangleMode", "Select triangles to edit mesh. Use middle mouse on gizmo to "
 		"reposition it. Hold Ctrl while translating or (in local mode) rotating to align to scene. Shift and Ctrl "
-		"change marquee select behavior. Q toggles Gizmo Orientation Lock.");
+		"change marquee select behavior. Ctrl+R toggles Gizmo Orientation Lock.");
 
 	FText TriEditDefaultMessage = LOCTEXT("OnStartEditMeshPolygonsTool", "Select PolyGroups to edit mesh. Use middle mouse on gizmo to reposition it. "
 		"Hold Ctrl while translating or (in local mode) rotating to align to scene. Shift and Ctrl change marquee select "
-		"behavior. Q toggles Gizmo Orientation Lock.");
+		"behavior. Ctrl+R toggles Gizmo Orientation Lock.");
 
 	FString GetPropertyCacheIdentifier(bool bTriangleMode)
 	{
@@ -166,6 +170,10 @@ bool UEditMeshPolygonsActionModeToolBuilder::CanBuildTool(const FToolBuilderStat
 			{
 				return (TopologyType == EGeometryTopologyType::Polygroup && ElementType != EGeometryElementType::Vertex && bIsEmpty == false);
 			}
+			else if (StartupAction == EEditMeshPolygonsToolActions::ExtrudeEdges)
+			{
+				return (ElementType == EGeometryElementType::Edge && !bIsEmpty);
+			}
 		}
 	}
 	return false;
@@ -175,6 +183,27 @@ bool UEditMeshPolygonsActionModeToolBuilder::CanBuildTool(const FToolBuilderStat
 void UEditMeshPolygonsActionModeToolBuilder::InitializeNewTool(USingleTargetWithSelectionTool* Tool, const FToolBuilderState& SceneState) const
 {
 	UEditMeshPolygonsToolBuilder::InitializeNewTool(Tool, SceneState);
+
+	// Need to enable triangle mode on the tool if our selection was a triangle (not group) selection.
+	// This normally gets done in the base class if bTriangleMode is true, but we can't change that in a
+	// const method.
+	if (UGeometrySelectionManager* SelectionManager = SceneState.ToolManager->GetContextObjectStore()->FindContext<UGeometrySelectionManager>())
+	{
+		EGeometryTopologyType TopologyType = EGeometryTopologyType::Triangle;
+		EGeometryElementType ElementType = EGeometryElementType::Face;
+		int NumTargets;
+		bool bIsEmpty = false;
+		SelectionManager->GetActiveSelectionInfo(TopologyType, ElementType, NumTargets, bIsEmpty);
+
+		if (TopologyType == EGeometryTopologyType::Triangle)
+		{
+			if (UEditMeshPolygonsTool* EditPolygonsTool = Cast<UEditMeshPolygonsTool>(Tool))
+			{
+				EditPolygonsTool->EnableTriangleMode();
+			}
+		}
+	}
+
 	UEditMeshPolygonsTool* EditPolygonsTool = CastChecked<UEditMeshPolygonsTool>(Tool);
 
 	EEditMeshPolygonsToolActions UseAction = StartupAction;
@@ -441,17 +470,6 @@ void UEditMeshPolygonsTool::Setup()
 	// We add an empty line for the error message so that things don't jump when we use it.
 	GetToolManager()->DisplayMessage(FText(), EToolMessageLevel::UserWarning);
 
-	CancelAction = NewObject<UEditMeshPolygonsToolCancelAction>();
-	CancelAction->Initialize(this);
-	AddToolPropertySource(CancelAction);
-	SetToolPropertySourceEnabled(CancelAction, false);
-
-	AcceptCancelAction = NewObject<UEditMeshPolygonsToolAcceptCancelAction>();
-	AcceptCancelAction->Initialize(this);
-	AddToolPropertySource(AcceptCancelAction);
-	SetToolPropertySourceEnabled(AcceptCancelAction, false);
-
-
 	// Initialize the common properties but don't add them yet, because we want them to be under the activity-specific ones.
 	CommonProps = NewObject<UPolyEditCommonProperties>(this);
 	CommonProps->RestoreProperties(this, GetPropertyCacheIdentifier(bTriangleMode));
@@ -585,24 +603,43 @@ void UEditMeshPolygonsTool::Setup()
 
 	ExtrudeActivity = NewObject<UPolyEditExtrudeActivity>();
 	ExtrudeActivity->Setup(this);
+	// The icons/labels differ depending on whether we're doing extrude, offset, or push/pull, so
+	// set those when we launch the activity.
 	
 	InsetOutsetActivity = NewObject<UPolyEditInsetOutsetActivity>();
 	InsetOutsetActivity->Setup(this);
+	// The icons/labels differ depending on whether we are doing an inset or outset, so we set those 
+	// when we launch the activity.
 
 	CutFacesActivity = NewObject<UPolyEditCutFacesActivity>();
 	CutFacesActivity->Setup(this);
+	ActivityLabels.Add(CutFacesActivity, LOCTEXT("CutFacesActivityLabel", "Cut Faces"));
+	ActivityIconNames.Add(CutFacesActivity, "PolyEd.CutFaces");
 
 	PlanarProjectionUVActivity = NewObject<UPolyEditPlanarProjectionUVActivity>();
 	PlanarProjectionUVActivity->Setup(this);
+	ActivityLabels.Add(PlanarProjectionUVActivity, LOCTEXT("UVProjectActivityLabel", "UV Project"));
+	ActivityIconNames.Add(PlanarProjectionUVActivity, "PolyEd.ProjectUVs");
 
 	InsertEdgeLoopActivity = NewObject<UPolyEditInsertEdgeLoopActivity>();
 	InsertEdgeLoopActivity->Setup(this);
+	ActivityLabels.Add(InsertEdgeLoopActivity, LOCTEXT("InsertEdgeLoopsActivityLabel", "Insert Edge Loops"));
+	ActivityIconNames.Add(InsertEdgeLoopActivity, "PolyEd.InsertEdgeLoop");
 
 	InsertEdgeActivity = NewObject<UPolyEditInsertEdgeActivity>();
 	InsertEdgeActivity->Setup(this);
+	ActivityLabels.Add(InsertEdgeActivity, LOCTEXT("InsertEdgesActivityLabel", "Insert Edges"));
+	ActivityIconNames.Add(InsertEdgeActivity, "PolyEd.InsertGroupEdge");
 
 	BevelEdgeActivity = NewObject<UPolyEditBevelEdgeActivity>();
 	BevelEdgeActivity->Setup(this);
+	ActivityLabels.Add(BevelEdgeActivity, LOCTEXT("BevelActivityLabel", "Bevel"));
+	ActivityIconNames.Add(BevelEdgeActivity, "PolyEd.Bevel");
+
+	ExtrudeEdgeActivity = NewObject<UPolyEditExtrudeEdgeActivity>();
+	ExtrudeEdgeActivity->Setup(this);
+	ActivityLabels.Add(ExtrudeEdgeActivity, LOCTEXT("EdgeExtrudeActivityLabel", "Extrude Edges"));
+	ActivityIconNames.Add(ExtrudeEdgeActivity, "PolyEd.ExtrudeEdge");
 
 	// Now that we've initialized the activities, add in the selection settings and 
 	// CommonProps so that they are at the bottom.
@@ -707,6 +744,10 @@ void UEditMeshPolygonsTool::OnShutdown(EToolShutdownType ShutdownType)
 
 	if (CurrentActivity)
 	{
+		if (IToolHostCustomizationAPI* ButtonCustomizer = IToolHostCustomizationAPI::Find(GetToolManager()).GetInterface())
+		{
+			ButtonCustomizer->ClearButtonOverrides();
+		}
 		CurrentActivity->End(ShutdownType);
 		CurrentActivity = nullptr;
 	}
@@ -724,6 +765,7 @@ void UEditMeshPolygonsTool::OnShutdown(EToolShutdownType ShutdownType)
 	InsertEdgeActivity->Shutdown(ShutdownType);
 	InsertEdgeLoopActivity->Shutdown(ShutdownType);
 	BevelEdgeActivity->Shutdown(ShutdownType);
+	ExtrudeEdgeActivity->Shutdown(ShutdownType);
 
 	GetToolManager()->GetPairedGizmoManager()->DestroyAllGizmosByOwner(this);
 
@@ -805,8 +847,6 @@ void UEditMeshPolygonsTool::OnShutdown(EToolShutdownType ShutdownType)
 	EditEdgeActions = nullptr;
 	EditEdgeActions_Triangles = nullptr;
 	EditUVActions = nullptr;
-	CancelAction = nullptr;
-	AcceptCancelAction = nullptr;
 
 	ExtrudeActivity = nullptr;
 	InsetOutsetActivity = nullptr;
@@ -815,6 +855,7 @@ void UEditMeshPolygonsTool::OnShutdown(EToolShutdownType ShutdownType)
 	InsertEdgeActivity = nullptr;
 	InsertEdgeLoopActivity = nullptr;
 	BevelEdgeActivity = nullptr;
+	ExtrudeEdgeActivity = nullptr;
 
 	SelectionMechanic = nullptr;
 	DragAlignmentMechanic = nullptr;
@@ -835,14 +876,16 @@ void UEditMeshPolygonsTool::RegisterActions(FInteractiveToolActionSet& ActionSet
 		TEXT("ToggleLockRotation"),
 		LOCTEXT("ToggleLockRotationUIName", "Lock Rotation"),
 		LOCTEXT("ToggleLockRotationTooltip", "Toggle Frame Rotation Lock on and off"),
-		EModifierKey::None, EKeys::Q,
+		EModifierKey::Control, EKeys::R,
 		[this]() { CommonProps->bLockRotation = !CommonProps->bLockRotation; });
 	
 	// Backspace and delete both trigger deletion (as long as the delete button is also enabled)
 	auto OnDeletionKeyPress = [this]() 
 	{
 		if ((EditActions && EditActions->IsPropertySetEnabled())
-			|| (EditActions_Triangles && EditActions_Triangles->IsPropertySetEnabled()))
+			|| (EditActions_Triangles && EditActions_Triangles->IsPropertySetEnabled())
+			|| (EditEdgeActions && EditEdgeActions->IsPropertySetEnabled())
+			)
 		{
 			RequestAction(EEditMeshPolygonsToolActions::Delete);
 		}
@@ -1196,8 +1239,22 @@ void UEditMeshPolygonsTool::OnTick(float DeltaTime)
 		//Interactive operations:
 		case EEditMeshPolygonsToolActions::Extrude:
 		{
+			if (SelectionMechanic->GetActiveSelection().SelectedGroupIDs.IsEmpty()
+				&& !SelectionMechanic->GetActiveSelection().SelectedEdgeIDs.IsEmpty())
+			{
+				// This particular button happens to be under "face edits", but it's very tempting to click it anyway
+				// when you have an edge selection and expect it to extrude edges. We'll allow it to avoid frustrating
+				// the user. Not relevant for mesh element selection, where we don't use PolyEd and instead extrude
+				// the adjacent faces when edges are selected.
+				StartActivity(ExtrudeEdgeActivity);
+				break;
+			}
 			ExtrudeActivity->ExtrudeMode = FExtrudeOp::EExtrudeMode::MoveAndStitch;
 			ExtrudeActivity->PropertySetToUse = UPolyEditExtrudeActivity::EPropertySetToUse::Extrude;
+
+			ActivityLabels.Add(ExtrudeActivity, LOCTEXT("ExtrudeActivityLabel", "Extrude"));
+			ActivityIconNames.Add(ExtrudeActivity, "PolyEd.Extrude");
+
 			StartActivity(ExtrudeActivity);
 			break;
 		}
@@ -1205,6 +1262,10 @@ void UEditMeshPolygonsTool::OnTick(float DeltaTime)
 		{
 			ExtrudeActivity->ExtrudeMode = FExtrudeOp::EExtrudeMode::Boolean;
 			ExtrudeActivity->PropertySetToUse = UPolyEditExtrudeActivity::EPropertySetToUse::PushPull;
+
+			ActivityLabels.Add(ExtrudeActivity, LOCTEXT("PushPullActivityLabel", "Push/Pull"));
+			ActivityIconNames.Add(ExtrudeActivity, "PolyEd.PushPull");
+
 			StartActivity(ExtrudeActivity);
 			break;
 		}
@@ -1212,18 +1273,30 @@ void UEditMeshPolygonsTool::OnTick(float DeltaTime)
 		{
 			ExtrudeActivity->ExtrudeMode = FExtrudeOp::EExtrudeMode::MoveAndStitch;
 			ExtrudeActivity->PropertySetToUse = UPolyEditExtrudeActivity::EPropertySetToUse::Offset;
+
+			ActivityLabels.Add(ExtrudeActivity, LOCTEXT("OffsetActivityLabel", "Offset"));
+			ActivityIconNames.Add(ExtrudeActivity, "PolyEd.Offset");
+
 			StartActivity(ExtrudeActivity);
 			break;
 		}
 		case EEditMeshPolygonsToolActions::Inset:
 		{
 			InsetOutsetActivity->Settings->bOutset = false;
+			
+			ActivityLabels.Add(InsetOutsetActivity, LOCTEXT("InsetActivityLabel", "Inset"));
+			ActivityIconNames.Add(InsetOutsetActivity, "PolyEd.Inset");
+			
 			StartActivity(InsetOutsetActivity);
 			break;
 		}
 		case EEditMeshPolygonsToolActions::Outset:
 		{
 			InsetOutsetActivity->Settings->bOutset = true;
+			
+			ActivityLabels.Add(InsetOutsetActivity, LOCTEXT("OutsetActivityLabel", "Outset"));
+			ActivityIconNames.Add(InsetOutsetActivity, "PolyEd.Outset");
+
 			StartActivity(InsetOutsetActivity);
 			break;
 		}
@@ -1247,22 +1320,31 @@ void UEditMeshPolygonsTool::OnTick(float DeltaTime)
 			StartActivity(InsertEdgeLoopActivity);
 			break;
 		}
+		case EEditMeshPolygonsToolActions::ExtrudeEdges:
+		{
+			// Hack: We currently don't support extra corners in mesh element selection, and
+			// the switch to using them can cause us to lose some of our selected edges. For
+			// now we just rebuild topology without the corners in this scenario, but we should
+			// fix instead just carry over the selection properly (and carry it back).
+			if (bTerminateOnPendingActionComplete && HasGeometrySelection())
+			{
+				const FGeometrySelection& CurSelection = GetGeometrySelection();
+				if (CurSelection.TopologyType == EGeometryTopologyType::Polygroup && bTriangleMode == false)
+				{
+					TSet<int32> EmptySet;
+					RebuildTopologyWithGivenExtraCorners(EmptySet);
+					SelectionMechanic->SetSelection_AsGroupTopology(CurSelection); // Have to reinitialize selection
+				}
+			}
+
+			StartActivity(ExtrudeEdgeActivity);
+			break;
+		}
 
 		case EEditMeshPolygonsToolActions::BevelFaces:
 		case EEditMeshPolygonsToolActions::BevelEdges:
 		{
 			StartActivity(BevelEdgeActivity);
-			break;
-		}
-
-		case EEditMeshPolygonsToolActions::CancelCurrent:
-		{
-			EndCurrentActivity(EToolShutdownType::Cancel);
-			break;
-		}
-		case EEditMeshPolygonsToolActions::AcceptCurrent:
-		{
-			EndCurrentActivity(EToolShutdownType::Accept);
 			break;
 		}
 
@@ -1353,13 +1435,49 @@ void UEditMeshPolygonsTool::StartActivity(TObjectPtr<UInteractiveToolActivity> A
 
 		if ( bTerminateOnPendingActionComplete == false )
 		{
-			if (CurrentActivity->HasAccept())
+			// Customize the tool accept/cancel buttons to the current activity.
+			if (IToolHostCustomizationAPI* ButtonCustomizer = IToolHostCustomizationAPI::Find(GetToolManager()).GetInterface())
 			{
-				SetToolPropertySourceEnabled(AcceptCancelAction, true);
-			}
-			else
-			{
-				SetToolPropertySourceEnabled(CancelAction, true);
+				const FText SubActionFallbackLabel = LOCTEXT("SubActionFallbackLabel", "Current Action");
+				if (CurrentActivity->HasAccept())
+				{
+					IToolHostCustomizationAPI::FAcceptCancelButtonOverrideParams Params;
+					Params.Label = ActivityLabels.Contains(CurrentActivity) ? ActivityLabels[CurrentActivity] : SubActionFallbackLabel;
+					if (ActivityIconNames.Contains(CurrentActivity))
+					{
+						Params.IconName = ActivityIconNames[CurrentActivity];
+					}
+					Params.OverrideAcceptButtonText = LOCTEXT("AcceptSubActionButton", "Accept Action");
+					Params.OverrideAcceptButtonTooltip = LOCTEXT("AcceptSubActionTooltip", "Accept the action currently being performed.");
+					Params.OverrideCancelButtonText = LOCTEXT("CancelSubActionButton", "Cancel Action");
+					Params.OverrideCancelButtonTooltip = LOCTEXT("CancelSubActionTooltip", "Cancel the action currently being performed.");
+					Params.CanAccept = [this]() { return CurrentActivity->CanAccept(); };
+					Params.OnAcceptCancelTriggered = [this](bool bAccept) 
+					{ 
+						EndCurrentActivity(bAccept ? EToolShutdownType::Accept : EToolShutdownType::Cancel);
+						return FReply::Handled();
+					};
+
+					ButtonCustomizer->RequestAcceptCancelButtonOverride(Params);
+				}
+				else
+				{
+					IToolHostCustomizationAPI::FCompleteButtonOverrideParams Params;
+					Params.Label = ActivityLabels.Contains(CurrentActivity) ? ActivityLabels[CurrentActivity] : SubActionFallbackLabel;
+					if (ActivityIconNames.Contains(CurrentActivity))
+					{
+						Params.IconName = ActivityIconNames[CurrentActivity];
+					}
+					Params.OverrideCompleteButtonText = LOCTEXT("CompleteSubActionButton", "Done");
+					Params.OverrideCompleteButtonTooltip = LOCTEXT("CompleteSubActionTooltip", "Exit the current activity.");
+					Params.OnCompleteTriggered = [this]() 
+					{
+						EndCurrentActivity(EToolShutdownType::Completed);
+						return FReply::Handled();
+					};
+
+					ButtonCustomizer->RequestCompleteButtonOverride(Params);
+				}
 			}
 		}
 		else
@@ -1397,8 +1515,10 @@ void UEditMeshPolygonsTool::EndCurrentActivity(EToolShutdownType ShutdownType)
 			return;
 		}
 
-		SetToolPropertySourceEnabled(CancelAction, false);
-		SetToolPropertySourceEnabled(AcceptCancelAction, false);
+		if (IToolHostCustomizationAPI* ButtonCustomizer = IToolHostCustomizationAPI::Find(GetToolManager()).GetInterface())
+		{
+			ButtonCustomizer->ClearButtonOverrides();
+		}
 		SetActionButtonPanelsVisible(true);
 		SelectionMechanic->SetIsEnabled(true);
 		SetToolPropertySourceEnabled(TopologyProperties, true);
@@ -1536,6 +1656,26 @@ void UEditMeshPolygonsTool::UpdateFromCurrentMesh(bool bUpdateTopology)
 
 
 
+void UEditMeshPolygonsTool::ApplyDelete()
+{
+	if (BeginMeshFaceEditChange())
+	{
+		ApplyDeleteFaces();
+	}
+	else if (BeginMeshEdgeEditChange())
+	{
+		ApplyDeleteEdges();
+	}
+	else
+	{
+		GetToolManager()->DisplayMessage(
+			LOCTEXT("OnDeleteFailedMessage", "Cannot Delete Current Selection"),
+			EToolMessageLevel::UserWarning);
+	}
+}
+
+
+
 void UEditMeshPolygonsTool::ApplyMerge()
 {
 	if (BeginMeshFaceEditChange() == false)
@@ -1569,16 +1709,8 @@ void UEditMeshPolygonsTool::ApplyMerge()
 
 
 
-void UEditMeshPolygonsTool::ApplyDelete()
+void UEditMeshPolygonsTool::ApplyDeleteFaces()
 {
-	if (BeginMeshFaceEditChange() == false)
-	{
-		GetToolManager()->DisplayMessage(
-			LOCTEXT("OnDeleteFailedMessage", "Cannot Delete Current Selection"),
-			EToolMessageLevel::UserWarning);
-		return;
-	}
-
 	FDynamicMesh3* Mesh = CurrentMesh.Get();
 
 	// prevent deleting all triangles
@@ -1597,7 +1729,7 @@ void UEditMeshPolygonsTool::ApplyDelete()
 	Editor.RemoveTriangles(ActiveTriangleSelection, true);
 
 	FGroupTopologySelection NewSelection;
-	EmitCurrentMeshChangeAndUpdate(LOCTEXT("PolyMeshDeleteChange", "Delete"),
+	EmitCurrentMeshChangeAndUpdate(LOCTEXT("PolyMeshDeleteFacesChange", "Delete Faces"),
 		ChangeTracker.EndChange(), NewSelection);
 }
 
@@ -1907,7 +2039,7 @@ void UEditMeshPolygonsTool::ApplyCollapseEdge()
 {
 	// AAAHHH cannot do because of overlays!
 	return;
-
+#if 0
 	if (SelectionMechanic->GetActiveSelection().SelectedEdgeIDs.Num() != 1 || BeginMeshEdgeEditChange() == false)
 	{
 		GetToolManager()->DisplayMessage(
@@ -1937,6 +2069,7 @@ void UEditMeshPolygonsTool::ApplyCollapseEdge()
 	FGroupTopologySelection NewSelection;
 	EmitCurrentMeshChangeAndUpdate(LOCTEXT("PolyMeshEdgeCollapseChange", "Collapse"),
 		ChangeTracker.EndChange(), NewSelection);
+#endif
 }
 
 
@@ -2086,6 +2219,48 @@ void UEditMeshPolygonsTool::ApplyStraightenEdges()
 		ChangeTracker.EndChange(), NewSelection);
 }
 
+void UEditMeshPolygonsTool::ApplyDeleteEdges()
+{
+	FDynamicMesh3* Mesh = CurrentMesh.Get();
+	FDynamicMeshChangeTracker ChangeTracker(Mesh);
+	FGroupTopologySelection NewSelection;
+	FMeshConnectedComponents Components(Mesh);
+
+	// Using sets here because we only want unique triangles/edges
+	TSet<int32> EdgeIDs;
+	TSet<int32> SeedTriangleIDs;
+	for (FSelectedEdge& Edge : ActiveEdgeSelection)
+	{
+		for (int32 Eid : Edge.EdgeIDs)
+		{
+			FIndex2i AdjacentTriangles = Mesh->GetEdgeT(Eid);
+			EdgeIDs.Add(Eid);
+			SeedTriangleIDs.Add(AdjacentTriangles.A);
+			if (AdjacentTriangles.B != FDynamicMesh3::InvalidID)
+			{
+				SeedTriangleIDs.Add(AdjacentTriangles.B);
+			}
+		}
+	}
+	
+	Components.FindTrianglesConnectedToSeeds(SeedTriangleIDs.Array(), [&Mesh, &EdgeIDs](int32 t0, int32 t1)
+	{
+		return Mesh->GetTriangleGroup(t0) == Mesh->GetTriangleGroup(t1) || EdgeIDs.Contains(Mesh->FindEdgeFromTriPair(t0,t1));
+	});
+	
+	ChangeTracker.BeginChange();
+	
+	for (FMeshConnectedComponents::FComponent& Component : Components.Components)
+	{
+		ChangeTracker.SaveTriangles(Component.Indices, true);
+		int32 NewGroupID = Mesh->GetTriangleGroup(Component.Indices[0]);
+		FaceGroupUtil::SetGroupID(*Mesh, Component.Indices, NewGroupID);
+		NewSelection.SelectedGroupIDs.Add(NewGroupID);
+	}
+	
+	EmitCurrentMeshChangeAndUpdate(LOCTEXT("PolyMeshDeleteEdgesChange", "Delete Edges"),
+		ChangeTracker.EndChange(), NewSelection);
+}
 
 void UEditMeshPolygonsTool::ApplySimplifyAlongEdges()
 {

@@ -3,6 +3,8 @@
 #pragma once
 
 #include "NiagaraEditorDataBase.h"
+#include "NiagaraMessages.h"
+#include "NiagaraNodeFunctionCall.h"
 
 #include "NiagaraStackEditorData.generated.h"
 struct FStackIssue;
@@ -16,6 +18,16 @@ enum class ENiagaraStackEntryInlineDisplayMode
 	GraphVertical,
 	GraphHybrid,
 	None
+};
+
+/* Defines stack options for stateless modules */
+USTRUCT()
+struct FNiagaraStatelessModuleEditorData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	bool bShowWhenDisabled = false;
 };
 
 /** Editor only UI data for emitters. */
@@ -79,6 +91,14 @@ public:
 	 * @param bWasExpandedPreSearch Whether or not the entry was expanded pre-search.
 	 */
 	void SetStackEntryWasExpandedPreSearch(const FString& StackEntryKey, bool bWasExpandedPreSearch);
+
+	const TMap<FString, FNiagaraStackNoteData>& GetAllStackNotes();
+	NIAGARAEDITOR_API TOptional<FNiagaraStackNoteData> GetStackNote(const FString& StackEntryKey);
+	NIAGARAEDITOR_API bool HasStackNote(const FString& StackEntryKey);
+	NIAGARAEDITOR_API void AddOrReplaceStackNote(const FString& StackEntryKey, FNiagaraStackNoteData NewStackMessage, bool bBroadcast = true);
+	NIAGARAEDITOR_API void DeleteStackNote(const FString& StackEntryKey);
+	
+	void TransferDeprecatedStackNotes(const UNiagaraNodeFunctionCall& FunctionCallNode);
 
 	/*
 	 * Gets whether or not this entry should display all of its content inline. 
@@ -177,6 +197,19 @@ public:
 	/* Gets a reference to the dismissed stack issue array */
 	NIAGARAEDITOR_API const TArray<FString>& GetDismissedStackIssueIds();
 
+	/*
+	* Gets whether or not a stateless module item should be shown when it's disabled.
+	* @param StackEntryKey A unique key for the entry.
+	*/
+	bool GetStatelessModuleShowWhenDisabled(const FString& StackEntryKey) const;
+
+	/*
+	* Sets whether or not a stateless module item should be shown when it's disabled.
+	* @param StackEntryKey A unique key for the entry.
+	* @param bInShowWhenDisabled Whether or not the item should be shown when disabled.
+	*/
+	void SetStatelessModuleShowWhenDisabled(const FString& StackEntryKey, bool bInShowWhenDisabled);
+
 	UPROPERTY()
 	bool bHideDisabledModules = false;
 
@@ -197,6 +230,12 @@ private:
 	TMap<FString, bool> StackEntryKeyToExpandedOverviewMap;
 
 	TMap<FString, FText> StackEntryKeyToActiveSectionMap;
+
+	UPROPERTY()
+	TMap<FString, FNiagaraStackNoteData> StackNotes;
+
+	UPROPERTY()
+	TMap<FString, FNiagaraStatelessModuleEditorData> StackEntryKeyToStatelessModuleEditorData;
 
 	/* Marking those FTexts explicitly as editoronly_data will make localization not pick these up.
 	 * This is a workaround. EditorDataBase in system & emitter is already flagged as editor only, but it doesn't propagate properly */

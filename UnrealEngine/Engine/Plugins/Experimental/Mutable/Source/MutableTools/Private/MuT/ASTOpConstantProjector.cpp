@@ -30,8 +30,9 @@ namespace mu
 
 	bool ASTOpConstantProjector::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpConstantProjector*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpConstantProjector* other = static_cast<const ASTOpConstantProjector*>(&otherUntyped);
 			return value == other->value;
 		}
 		return false;

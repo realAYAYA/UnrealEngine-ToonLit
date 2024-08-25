@@ -144,7 +144,6 @@ UUpdateManager::EUpdateStartResult UUpdateManager::StartUpdateCheckInternal(cons
 	{
 		bCheckHotfixAvailabilityOnly = ContextDefinition.bCheckAvailabilityOnly;
 		bCurrentUpdatePatchCheckEnabled = ContextDefinition.bPatchCheckEnabled;
-		bCurrentUpdatePlatformEnvironmentDetectionEnabled = ContextDefinition.bPlatformEnvironmentDetectionEnabled;
 
 		// Immediately move into a pending state so the UI state trigger fires
 		SetUpdateState(EUpdateState::UpdatePending);
@@ -245,7 +244,6 @@ void UUpdateManager::CheckComplete(EUpdateCompletionStatus Result, bool bUpdateT
 
 		bCheckHotfixAvailabilityOnly = false;
 		bCurrentUpdatePatchCheckEnabled = true;
-		bCurrentUpdatePlatformEnvironmentDetectionEnabled = true;
 		
 		OnUpdateCheckComplete().Broadcast(FinalResult);
 	};
@@ -352,7 +350,7 @@ void UUpdateManager::InstallBundlePatchCheckComplete(EInstallBundleManagerPatchC
 
 	if (PatchResult == EInstallBundleManagerPatchCheckResult::NoPatchRequired)
 	{
-		StartPlatformEnvironmentCheck();
+		StartHotfixCheck();
 	}
 	else if (PatchResult == EInstallBundleManagerPatchCheckResult::NoLoggedInUser)
 	{
@@ -366,53 +364,6 @@ void UUpdateManager::InstallBundlePatchCheckComplete(EInstallBundleManagerPatchC
 
 		// Skip hotfix check in error states, but still preload data as if there was nothing wrong
 		StartInitialPreload();
-	}
-}
-
-void UUpdateManager::StartPlatformEnvironmentCheck()
-{
-	if (bCurrentUpdatePlatformEnvironmentDetectionEnabled && !bPlatformEnvironmentDetected)
-	{
-#if UPDATEMANAGER_PLATFORM_ENVIRONMENT_DETECTION
-		if (DetectPlatformEnvironment())
-		{
-			return;
-		}
-#endif
-	}
-	
-	StartHotfixCheck();
-}
-
-void UUpdateManager::OnDetectPlatformEnvironmentComplete(const FOnlineError& Result)
-{
-	if (Result.WasSuccessful())
-	{
-		bPlatformEnvironmentDetected = true;
-		StartHotfixCheck();
-	}
-	else
-	{
-		if (Result.GetErrorCode().Contains(TEXT("getUserAccessCode failed : 0x8055000f"), ESearchCase::IgnoreCase))
-		{
-			UE_LOG(LogHotfixManager, Warning, TEXT("Failed to complete login because patch is required"));
-			CheckComplete(EUpdateCompletionStatus::UpdateSuccess_NeedsPatch);
-		}
-		else
-		{
-			if (Result.GetErrorCode().Contains(TEXT("com.epicgames.identity.notloggedin"), ESearchCase::IgnoreCase))
-			{
-				UE_LOG(LogHotfixManager, Warning, TEXT("Failed to detect online environment for the platform, no user signed in"));
-				CheckComplete(EUpdateCompletionStatus::UpdateFailure_NotLoggedIn);
-			}
-			else
-			{
-				// just a platform env error, assume production and keep going
-				UE_LOG(LogHotfixManager, Warning, TEXT("Failed to detect online environment for the platform"));
-				bPlatformEnvironmentDetected = true;
-				StartHotfixCheck();
-			}
-		}
 	}
 }
 

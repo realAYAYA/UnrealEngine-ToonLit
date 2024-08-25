@@ -40,7 +40,7 @@ namespace UE::TextureShare::PostProcess
 	{
 		if (InViewportManager)
 		{
-			if (UWorld* CurrentWorld = InViewportManager->GetCurrentWorld())
+			if (UWorld* CurrentWorld = InViewportManager->GetConfiguration().GetCurrentWorld())
 			{
 				if (UGameViewportClient* GameViewportClientPtr = CurrentWorld->GetGameViewport())
 				{

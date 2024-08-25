@@ -27,8 +27,8 @@ void VLMVoxelizationVS(
 	ResolvedView = ResolveView();
 
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
-	Output.WorldPosition = VertexFactoryGetWorldPosition(Input, VFIntermediates) - float4(LWCHackToFloat(ResolvedView.PreViewTranslation), 0.0f);
-	Output.WorldPosition = float4((Output.WorldPosition.xyz - VLMVoxelizationParams.VolumeCenter) / max(VLMVoxelizationParams.VolumeExtent, float4(0.0001, 0.0001, 0.0001, 0)), 1.0f);
+	Output.WorldPosition = VertexFactoryGetWorldPosition(Input, VFIntermediates) - float4(DFHackToFloat(ResolvedView.PreViewTranslation), 0.0f);
+	Output.WorldPosition = float4((Output.WorldPosition.xyz - VLMVoxelizationParams.VolumeCenter.xyz) / max(VLMVoxelizationParams.VolumeExtent.xyz, float3(0.0001, 0.0001, 0.0001)), 1.0f);
 }
 
 struct FVLMVoxelizationVertex
@@ -123,12 +123,14 @@ void VLMVoxelizationGS(triangle FVLMVoxelizationVSToGS Inputs[3], inout Triangle
 	
 	float MaxProj[3] = {0, 0, 0};
 	float3 EdgeNormal[3];
-	for (int i = 0; i < 3; i++)
 	{
-		EdgeNormal[i] = cross(Edge[i], float3(0,0, TriangleNormal[DominantAxis] > 0 ? 1 : -1)); // Unnormalized, doesn't matter
-		for (int Dir = 0; Dir < 4; Dir++)
+		for (int i = 0; i < 3; i++)
 		{
-			MaxProj[i] = max(dot(SemiDiagonalVectors[Dir], EdgeNormal[i]), MaxProj[i]);
+			EdgeNormal[i] = cross(Edge[i], float3(0, 0, TriangleNormal[DominantAxis] > 0 ? 1 : -1)); // Unnormalized, doesn't matter
+			for (int Dir = 0; Dir < 4; Dir++)
+			{
+				MaxProj[i] = max(dot(SemiDiagonalVectors[Dir], EdgeNormal[i]), MaxProj[i]);
+			}
 		}
 	}
 
@@ -137,12 +139,14 @@ void VLMVoxelizationGS(triangle FVLMVoxelizationVSToGS Inputs[3], inout Triangle
 	Vertices[2].ScreenPosition.xyz += ( MaxProj[2] * Edge[1]/dot(Edge[1].xy,EdgeNormal[2].xy) + MaxProj[1] * Edge[2]/dot(Edge[2].xy,EdgeNormal[1].xy) );
 #endif
 
-	for (int i = 0; i < 3; i++)
 	{
-		Vertices[i].ScreenPosition.z += 1;
-		Vertices[i].ScreenPosition.z /= 2;
+		for (int i = 0; i < 3; i++)
+		{
+			Vertices[i].ScreenPosition.z += 1;
+			Vertices[i].ScreenPosition.z /= 2;
 	
-		OutStream.Append(Vertices[i]);
+			OutStream.Append(Vertices[i]);
+		}
 	}
 }
 

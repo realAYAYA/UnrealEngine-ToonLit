@@ -87,6 +87,37 @@ bool UInterchangeLightNode::SetCustomIESTexture(const FString& AttributeValue)
 	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(IESTexture, FString)
 }
 
+bool UInterchangeLightNode::GetCustomUseIESBrightness(bool& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(UseIESBrightness, bool);
+}
+
+bool UInterchangeLightNode::SetCustomUseIESBrightness(const bool& AttributeValue, bool bAddApplyDelegate)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(UseIESBrightness, bool);
+}
+
+bool UInterchangeLightNode::GetCustomIESBrightnessScale(float& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(IESBrightnessScale, float);
+}
+
+bool UInterchangeLightNode::SetCustomIESBrightnessScale(const float& AttributeValue, bool bAddApplyDelegate)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(IESBrightnessScale, float);
+}
+
+bool UInterchangeLightNode::GetCustomRotation(FRotator& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(Rotation, FRotator);
+}
+
+bool UInterchangeLightNode::SetCustomRotation(const FRotator& AttributeValue, bool bAddApplyDelegate)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(Rotation, FRotator);
+}
+
+
 FString UInterchangePointLightNode::GetTypeName() const
 {
 	return TEXT("PointLightNode");

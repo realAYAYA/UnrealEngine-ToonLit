@@ -1,9 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Kismet/KismetTextLibrary.h"
+
+#include "Engine/World.h"
 #include "Internationalization/PolyglotTextData.h"
 #include "Internationalization/TextFormatter.h"
 #include "Internationalization/TextKey.h"
+#include "Internationalization/TextPackageNamespaceUtil.h"
+#include "Misc/RuntimeErrors.h"
 
 #define LOCTEXT_NAMESPACE "Kismet"
 
@@ -88,6 +92,11 @@ FText UKismetTextLibrary::Conv_StringToText(const FString& InString)
 FText UKismetTextLibrary::Conv_NameToText(FName InName)
 {
 	return FText::AsCultureInvariant(InName.ToString());
+}
+
+FText UKismetTextLibrary::MakeInvariantText(const FString& InString)
+{
+	return FText::AsCultureInvariant(InString);
 }
 
 bool UKismetTextLibrary::TextIsEmpty(const FText& InText)
@@ -317,6 +326,23 @@ bool UKismetTextLibrary::StringTableIdAndKeyFromText(FText Text, FName& OutTable
 	return FTextInspector::GetTableIdAndKey(Text, OutTableId, OutKey);
 }
 
+bool UKismetTextLibrary::GetTextId(FText Text, FString& OutNamespace, FString& OutKey)
+{
+	const FTextId TextId = FTextInspector::GetTextId(Text);
+	if (!TextId.IsEmpty())
+	{
+		OutNamespace = TextId.GetNamespace().GetChars();
+		OutKey = TextId.GetKey().GetChars();
+		return true;
+	}
+	return false;
+}
+
+FString UKismetTextLibrary::GetTextSourceString(FText Text)
+{
+	return Text.BuildSourceString();
+}
+
 void UKismetTextLibrary::IsPolyglotDataValid(const FPolyglotTextData& PolyglotData, bool& IsValid, FText& ErrorMessage)
 {
 	IsValid = PolyglotData.IsValid(&ErrorMessage);
@@ -325,6 +351,79 @@ void UKismetTextLibrary::IsPolyglotDataValid(const FPolyglotTextData& PolyglotDa
 FText UKismetTextLibrary::PolyglotDataToText(const FPolyglotTextData& PolyglotData)
 {
 	return PolyglotData.GetText();
+}
+
+bool UKismetTextLibrary::EditTextSourceString(UObject* TextOwner, FText& Text, const FString& SourceString)
+{
+	// We should never hit this! Stubbed to avoid NoExport on the class.
+	check(0);
+	return false;
+}
+
+DEFINE_FUNCTION(UKismetTextLibrary::execEditTextSourceString)
+{
+	P_GET_OBJECT(UObject, TextOwner);
+
+	P_GET_PROPERTY_REF(FTextProperty, Text);
+	FTextProperty* TextProperty = CastField<FTextProperty>(Stack.MostRecentProperty);
+
+	P_GET_PROPERTY_REF(FStrProperty, SourceString);
+
+	P_FINISH;
+
+	P_NATIVE_BEGIN;
+	{
+		*(bool*)RESULT_PARAM = false;
+
+		if (!TextOwner)
+		{
+			LogRuntimeWarning(LOCTEXT("EditTextSourceString.Warning.NullTextOwner", "The given TextOwner was null!"));
+			return;
+		}
+
+		if (!TextProperty)
+		{
+			LogRuntimeWarning(LOCTEXT("EditTextSourceString.Warning.NullTextProperty", "The given Text value was not a TextProperty!"));
+			return;
+		}
+
+		if (!TextOwner->GetClass()->HasProperty(TextProperty))
+		{
+			LogRuntimeWarning(FText::Format(LOCTEXT("EditTextSourceString.Warning.InvalidTextProperty", "The given Text resolved to a TextProperty ({0}) that doesn't belong to the given TextOwner ({1})!"), FText::AsCultureInvariant(TextProperty->GetPathName()), FText::AsCultureInvariant(TextOwner->GetPathName())));
+			return;
+		}
+		
+		auto TextOwnerIsInEditorWorld = [TextOwner]()
+		{
+			const UWorld* WorldContext = TextOwner->GetWorld();
+			return WorldContext && WorldContext->WorldType == EWorldType::Editor;
+		};
+
+		auto TextOwnerIsInAsset = [TextOwner]()
+		{
+			for (const UObject* Obj = TextOwner; Obj; Obj = Obj->GetOuter())
+			{
+				if (Obj->IsAsset())
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+
+		const bool bApplyPackageNamespace = GIsEditor && (TextOwnerIsInEditorWorld() || TextOwnerIsInAsset());
+		auto DeterministicTextKeyGenerator = [TextOwner, TextProperty, bApplyPackageNamespace]()
+		{
+			return TextNamespaceUtil::GenerateDeterministicTextKey(TextOwner, TextProperty, bApplyPackageNamespace);
+		};
+
+		if (TextNamespaceUtil::EditTextProperty(TextOwner, TextProperty, TextNamespaceUtil::ETextEditAction::SourceString, SourceString, DeterministicTextKeyGenerator, bApplyPackageNamespace))
+		{
+			*(bool*)RESULT_PARAM = true;
+			Text = TextProperty->GetPropertyValue_InContainer(TextOwner);
+		}
+	}
+	P_NATIVE_END;
 }
 
 #undef LOCTEXT_NAMESPACE

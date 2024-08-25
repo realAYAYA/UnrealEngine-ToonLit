@@ -29,4 +29,8 @@ struct FShadowDepthVSToPS
 	// world space position needed in some cases, could be changed to be reconsructed from SvPosition (more tricky as this is not from camera perspective)
 	float3 PixelPosition	: TEXCOORD7;
 #endif
+
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS
+	float3 PixelPositionExcludingWPO : TEXCOORD9;
+#endif
 };

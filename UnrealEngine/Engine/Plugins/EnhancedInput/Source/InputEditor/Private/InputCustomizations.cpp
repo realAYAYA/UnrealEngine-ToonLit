@@ -227,7 +227,7 @@ bool FEnhancedActionMappingCustomization::DoesTriggerArrayContainCombo() const
 	if (const FEnhancedActionKeyMapping* ActionKeyMapping = GetActionKeyMapping(MappingPropertyHandle))
 	{
 		// checking context triggers for combo triggers
-		for (TObjectPtr<UInputTrigger> Trigger : ActionKeyMapping->Triggers)
+		for (const TObjectPtr<UInputTrigger>& Trigger : ActionKeyMapping->Triggers)
 		{
 			if (Trigger.IsA(UInputTriggerCombo::StaticClass()))
 			{
@@ -237,7 +237,7 @@ bool FEnhancedActionMappingCustomization::DoesTriggerArrayContainCombo() const
 		// checking input action triggers for combo triggers
 		if (ActionKeyMapping->Action)
 		{
-			for (TObjectPtr<UInputTrigger> Trigger : ActionKeyMapping->Action->Triggers)
+			for (const TObjectPtr<UInputTrigger>& Trigger : ActionKeyMapping->Action->Triggers)
 			{
 				if (Trigger.IsA(UInputTriggerCombo::StaticClass()))
 				{

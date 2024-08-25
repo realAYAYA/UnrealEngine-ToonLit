@@ -15,18 +15,15 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		Ptr<NodeMesh> m_pBaseMesh;
-		Ptr<NodeMesh> m_pBaseShape;
-		Ptr<NodeMesh> m_pTargetShape;
-		bool m_reshapeVertices = true;
-		bool m_reshapeSkeleton = false;
-		bool m_reshapePhysicsVolumes = false;
+		Ptr<NodeMesh> BaseMesh;
+		Ptr<NodeMesh> BaseShape;
+		Ptr<NodeMesh> TargetShape;
+		bool bReshapeVertices = true;
+		bool bApplyLaplacian = false;
+		bool bReshapeSkeleton = false;
+		bool bReshapePhysicsVolumes = false;
 
 		EVertexColorUsage ColorRChannelUsage = EVertexColorUsage::None;
 		EVertexColorUsage ColorGChannelUsage = EVertexColorUsage::None;
@@ -38,18 +35,23 @@ namespace mu
         //!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 10;
+            uint32 ver = 11;
 			arch << ver;
 
-			arch << m_pBaseMesh;
-			arch << m_pBaseShape;
-			arch << m_pTargetShape;
-			arch << m_reshapeVertices;
-			arch << m_reshapeSkeleton;
+			arch << BaseMesh;
+			arch << BaseShape;
+			arch << TargetShape;
+
+			arch << bReshapeVertices;
+			arch << bApplyLaplacian;
+			
+			arch << bReshapeSkeleton;
 			arch << BonesToDeform;
-			arch << m_reshapePhysicsVolumes;
+
+			arch << bReshapePhysicsVolumes;
 			arch << PhysicsToDeform;
 
+			
 			arch << ColorRChannelUsage;
 			arch << ColorGChannelUsage;
 			arch << ColorBChannelUsage;
@@ -59,20 +61,25 @@ namespace mu
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
-			check(ver <= 10);
+			check(ver <= 11);
 
-			arch >> m_pBaseMesh;
-			arch >> m_pBaseShape;
-			arch >> m_pTargetShape;
+			arch >> BaseMesh;
+			arch >> BaseShape;
+			arch >> TargetShape;
 			
 			if (ver >= 8)
 			{
-				arch >> m_reshapeVertices;
+				arch >> bReshapeVertices;
 			}
 
-			arch >> m_reshapeSkeleton;
+			if (ver >= 11)
+			{
+				arch >> bApplyLaplacian;
+			}
+
+			arch >> bReshapeSkeleton;
 			if (ver <= 9)
 			{
 				bool bEnableRigidParts_DEPRECATED;
@@ -109,7 +116,7 @@ namespace mu
 
 		  	if (ver >= 4)
 		 	{
-				arch >> m_reshapePhysicsVolumes;
+				arch >> bReshapePhysicsVolumes;
 		 	}
 
 			if (ver >= 5 && ver < 7)

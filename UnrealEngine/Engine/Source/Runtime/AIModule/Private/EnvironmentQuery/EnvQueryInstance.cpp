@@ -341,7 +341,7 @@ void FEnvQueryInstance::ExecuteOneStep(double TimeLimit)
 					if (InnerCompositeGen)
 					{
 						GeneratorList.Append(InnerCompositeGen->Generators);
-						GeneratorList.RemoveAt(InnerIdx, 1, false);
+						GeneratorList.RemoveAt(InnerIdx, 1, EAllowShrinking::No);
 						InnerIdx--;
 					}
 				}

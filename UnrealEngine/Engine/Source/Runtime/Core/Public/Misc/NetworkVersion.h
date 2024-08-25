@@ -44,7 +44,7 @@ public:
 enum class EEngineNetworkRuntimeFeatures : uint16
 {
 	None = 0,
-	IrisEnabled = 1 << None, // Are we running the Iris or Legacy network system
+	IrisEnabled = 1 << None, // Are we running the Iris or Generic replication system
 };
 ENUM_CLASS_FLAGS(EEngineNetworkRuntimeFeatures);
 

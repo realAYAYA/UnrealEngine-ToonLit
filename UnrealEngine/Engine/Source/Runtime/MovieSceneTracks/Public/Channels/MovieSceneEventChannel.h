@@ -60,7 +60,8 @@ public:
 	MOVIESCENETRACKS_API virtual int32 GetNumKeys() const override;
 	MOVIESCENETRACKS_API virtual void Reset() override;
 	MOVIESCENETRACKS_API virtual void Offset(FFrameNumber DeltaPosition) override;
-
+	MOVIESCENETRACKS_API virtual FKeyHandle GetHandle(int32 Index) override;
+	MOVIESCENETRACKS_API virtual int32 GetIndex(FKeyHandle Handle) override;
 private:
 
 	/** Array of times for each key */

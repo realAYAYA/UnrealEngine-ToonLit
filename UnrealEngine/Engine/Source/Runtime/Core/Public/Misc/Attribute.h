@@ -98,7 +98,7 @@ public:
 	 *
 	 * @param  InGetter		Delegate to bind
 	 */
-	UE_NODISCARD static TAttribute Create( const FGetter& InGetter )
+	[[nodiscard]] static TAttribute Create( const FGetter& InGetter )
 	{
 		const bool bExplicitConstructor = true;
 		return TAttribute( InGetter, bExplicitConstructor );
@@ -112,7 +112,7 @@ public:
 	 * @param  InFuncPtr Member function to bind.  The function's structure (return value, arguments, etc) must match IBoundAttributeDelegate's definition.
 	 */
 	template <typename... VarTypes >
-	UE_NODISCARD static TAttribute CreateStatic( TIdentity_T< typename FGetter::template TFuncPtr< VarTypes... > > InFuncPtr, VarTypes... Vars )
+	[[nodiscard]] static TAttribute CreateStatic( TIdentity_T< typename FGetter::template TFuncPtr< VarTypes... > > InFuncPtr, VarTypes... Vars )
 	{
 		const bool bExplicitConstructor = true;
 		return TAttribute( FGetter::CreateStatic( InFuncPtr, Vars... ), bExplicitConstructor );
@@ -126,7 +126,7 @@ public:
 	 * @param  InFuncPtr Member function to bind.  The function's structure (return value, arguments, etc) must match IBoundAttributeDelegate's definition.
 	 */
 	template <typename FuncPtrType, typename... VarTypes >
-	UE_NODISCARD static TAttribute CreateStatic(FuncPtrType&& InFuncPtr, VarTypes... Vars)
+	[[nodiscard]] static TAttribute CreateStatic(FuncPtrType&& InFuncPtr, VarTypes... Vars)
 	{
 		const bool bExplicitConstructor = true;
 		return TAttribute(FGetter::CreateStatic(InFuncPtr, MoveTemp(Vars)...), bExplicitConstructor);
@@ -137,7 +137,7 @@ public:
 	 */
 	template<typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
 	UE_DEPRECATED(5.0, "Attribute's Getter should be const.")
-	UE_NODISCARD FORCEINLINE static TAttribute CreateRaw(SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type... InputPayload)
+	[[nodiscard]] FORCEINLINE static TAttribute CreateRaw(SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type... InputPayload)
 	{
 		return Create(FGetter::CreateRaw(InObject, InMethod, MoveTemp(InputPayload)...));
 	}
@@ -146,7 +146,7 @@ public:
 	 * Helper function for creating TAttributes from a const member function pointer, accessed through a raw pointer
 	 */
 	template<typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
-	UE_NODISCARD FORCEINLINE static TAttribute CreateRaw(const SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type... InputPayload)
+	[[nodiscard]] FORCEINLINE static TAttribute CreateRaw(const SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type... InputPayload)
 	{
 		return Create(FGetter::CreateRaw(InObject, InMethod, MoveTemp(InputPayload)...));
 	}
@@ -156,7 +156,7 @@ public:
 	 */
 	template<typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
 	UE_DEPRECATED(5.0, "Attribute's Getter should be const.")
-	UE_NODISCARD FORCEINLINE static TAttribute CreateSP(SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type... InputPayload)
+	[[nodiscard]] FORCEINLINE static TAttribute CreateSP(SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type... InputPayload)
 	{
 		return Create(FGetter::CreateSP(InObject, InMethod, MoveTemp(InputPayload)...));
 	}
@@ -165,7 +165,7 @@ public:
 	 * Helper function for creating TAttributes from a const member function pointer, accessed through a weak pointer to the shared object
 	 */
 	template<typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
-	UE_NODISCARD FORCEINLINE static TAttribute CreateSP(const SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type... InputPayload)
+	[[nodiscard]] FORCEINLINE static TAttribute CreateSP(const SourceType* InObject, ObjectType (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type... InputPayload)
 	{
 		return Create(FGetter::CreateSP(InObject, InMethod, MoveTemp(InputPayload)...));
 	}
@@ -175,7 +175,7 @@ public:
 	 * TAttribute<float> FloatAttribute = TAttribute<float>::CreateLambda([]{ return 10.f; });
 	 */
 	template<typename LambdaType, typename... PayloadTypes>
-	UE_NODISCARD FORCEINLINE static TAttribute CreateLambda(LambdaType&& InCallable, PayloadTypes&&... InputPayload)
+	[[nodiscard]] FORCEINLINE static TAttribute CreateLambda(LambdaType&& InCallable, PayloadTypes&&... InputPayload)
 	{
 		return Create(FGetter::CreateLambda(InCallable, Forward<PayloadTypes>(InputPayload)...));
 	}
@@ -189,14 +189,14 @@ public:
 	 * @param  InFunctionName Member function name to bind.
 	 */
 	template< class SourceType >
-	UE_NODISCARD static TAttribute< ObjectType > Create(SourceType* InUserObject, const FName& InFunctionName)
+	[[nodiscard]] static TAttribute< ObjectType > Create(SourceType* InUserObject, const FName& InFunctionName)
 	{
 		TAttribute< ObjectType > Attrib;
 		Attrib.BindUFunction<SourceType>(InUserObject, InFunctionName);
 		return Attrib;
 	}
 
-	UE_NODISCARD FORCEINLINE static TAttribute< ObjectType > Create(TFunction<ObjectType(void)>&& InLambda)
+	[[nodiscard]] FORCEINLINE static TAttribute< ObjectType > Create(TFunction<ObjectType(void)>&& InLambda)
 	{
 		return Create(TAttribute< ObjectType >::FGetter::CreateLambda(MoveTemp(InLambda)));
 	}
@@ -395,7 +395,7 @@ public:
 	 *
 	 * @return  The attribute's FGetter.
 	 */
-	UE_NODISCARD const FGetter& GetBinding() const
+	[[nodiscard]] const FGetter& GetBinding() const
 	{
 		return Getter;
 	}
@@ -405,7 +405,7 @@ public:
 	 *
 	 * @return  The attribute's FGetter or `Value`
 	 */
-	UE_NODISCARD TVariant<ObjectType, FGetter> Steal()
+	[[nodiscard]] TVariant<ObjectType, FGetter> Steal()
 	{
 		checkf(IsSet(), TEXT("It is an error to call Steal() on an unset TAttribute. Check IsSet() before calling Steal()."));
 		bIsSet = false;
@@ -466,7 +466,7 @@ private:
  */
 template<typename T, typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
 UE_DEPRECATED(5.0, "Attribute's Getter should be const.")
-UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeRaw(SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type... InputPayload)
+[[nodiscard]] FORCEINLINE TAttribute<T> MakeAttributeRaw(SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type... InputPayload)
 {
 	return TAttribute<T>::Create(TAttribute<T>::FGetter::CreateRaw(InObject, InMethod, MoveTemp(InputPayload)...));
 }
@@ -475,7 +475,7 @@ UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeRaw(SourceType* InObject, T 
  * Helper function for creating TAttributes from a const member function pointer, accessed through a raw pointer
  */
 template<typename T, typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
-UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeRaw(const SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type... InputPayload)
+[[nodiscard]] FORCEINLINE TAttribute<T> MakeAttributeRaw(const SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type... InputPayload)
 {
 	return TAttribute<T>::Create(TAttribute<T>::FGetter::CreateRaw(InObject, InMethod, MoveTemp(InputPayload)...));
 }
@@ -485,7 +485,7 @@ UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeRaw(const SourceType* InObje
  */
 template<typename T, typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
 UE_DEPRECATED(5.0, "Attribute's Getter should be const.")
-UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeSP(SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type...  InputPayload)
+[[nodiscard]] FORCEINLINE TAttribute<T> MakeAttributeSP(SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...), typename TDecay<PayloadTypes>::Type...  InputPayload)
 {
 	return TAttribute<T>::Create(TAttribute<T>::FGetter::CreateSP(InObject, InMethod, MoveTemp(InputPayload)...));
 }
@@ -494,9 +494,20 @@ UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeSP(SourceType* InObject, T (
  * Helper function for creating TAttributes from a const member function pointer, accessed through a weak pointer to the shared object
  */
 template<typename T, typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
-UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeSP(const SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type...  InputPayload)
+[[nodiscard]] FORCEINLINE TAttribute<T> MakeAttributeSP(const SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type...  InputPayload)
 {
 	return TAttribute<T>::Create(TAttribute<T>::FGetter::CreateSP(InObject, InMethod, MoveTemp(InputPayload)...));
+}
+template<typename T, typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
+[[nodiscard]] FORCEINLINE TAttribute<T> MakeAttributeSP(TSharedRef<SourceType> InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type...  InputPayload)
+{
+	return TAttribute<T>::Create(TAttribute<T>::FGetter::CreateSP(InObject, InMethod, MoveTemp(InputPayload)...));
+}
+
+template<typename T, typename SourceType, typename SourceTypeOrBase, typename... PayloadTypes>
+[[nodiscard]] FORCEINLINE TAttribute<T> MakeAttributeUObject(const SourceType* InObject, T (SourceTypeOrBase::*InMethod)(PayloadTypes...) const, typename TDecay<PayloadTypes>::Type... InputPayload)
+{
+	return TAttribute<T>::Create(TAttribute<T>::FGetter::CreateUObject(InObject, InMethod, MoveTemp(InputPayload)...));
 }
 
 /**
@@ -504,7 +515,7 @@ UE_NODISCARD FORCEINLINE TAttribute<T> MakeAttributeSP(const SourceType* InObjec
  * TAttribute<float> FloatAttribute = MakeAttributeLambda([]{ return 10.f; });
  */
 template<typename LambdaType, typename... PayloadTypes>
-UE_NODISCARD decltype(auto) MakeAttributeLambda(LambdaType&& InCallable, PayloadTypes&&... InputPayload)
+[[nodiscard]] decltype(auto) MakeAttributeLambda(LambdaType&& InCallable, PayloadTypes&&... InputPayload)
 {
 	typedef decltype(InCallable(DeclVal<PayloadTypes>()...)) T;
 

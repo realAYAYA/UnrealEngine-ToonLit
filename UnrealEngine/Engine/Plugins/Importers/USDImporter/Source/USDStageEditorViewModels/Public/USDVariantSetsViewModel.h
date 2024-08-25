@@ -4,22 +4,21 @@
 
 #include "Templates/SharedPointer.h"
 
-#include "UsdWrappers/UsdPrim.h"
 #include "UsdWrappers/UsdStage.h"
 
 class FUsdVariantSetsViewModel;
 
-class USDSTAGEEDITORVIEWMODELS_API FUsdVariantSetViewModel : public TSharedFromThis< FUsdVariantSetViewModel >
+class USDSTAGEEDITORVIEWMODELS_API FUsdVariantSetViewModel : public TSharedFromThis<FUsdVariantSetViewModel>
 {
 public:
-	explicit FUsdVariantSetViewModel( FUsdVariantSetsViewModel* InOwner );
+	explicit FUsdVariantSetViewModel(FUsdVariantSetsViewModel* InOwner);
 
-	void SetVariantSelection( const TSharedPtr< FString >& InVariantSelection );
+	void SetVariantSelection(const TSharedPtr<FString>& InVariantSelection);
 
 public:
 	FString SetName;
-	TSharedPtr< FString > VariantSelection;
-	TArray< TSharedPtr< FString > > Variants;
+	TSharedPtr<FString> VariantSelection;
+	TArray<TSharedPtr<FString>> Variants;
 
 private:
 	FUsdVariantSetsViewModel* Owner;
@@ -28,11 +27,11 @@ private:
 class USDSTAGEEDITORVIEWMODELS_API FUsdVariantSetsViewModel
 {
 public:
-	void UpdateVariantSets( const UE::FUsdStageWeak& InUsdStage, const TCHAR* PrimPath );
+	void UpdateVariantSets(const UE::FUsdStageWeak& InUsdStage, const TCHAR* PrimPath);
 
 public:
 	UE::FUsdStageWeak UsdStage;
 	FString PrimPath;
 
-	TArray< TSharedPtr< FUsdVariantSetViewModel > > VariantSets;
+	TArray<TSharedPtr<FUsdVariantSetViewModel>> VariantSets;
 };

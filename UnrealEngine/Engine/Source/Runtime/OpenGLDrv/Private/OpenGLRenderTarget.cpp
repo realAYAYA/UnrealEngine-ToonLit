@@ -594,7 +594,7 @@ void FOpenGLDynamicRHI::ReadSurfaceDataRaw(FOpenGLContextState& ContextState, FR
 		uint8* TargetPtr = TargetBuffer;
 		for( int32 DepthValueIndex = 0; DepthValueIndex < DepthValueCount; ++DepthValueIndex )
 		{
-			uint8 Value = (uint8)( *DataPtr++ * 255.0f );
+			uint8 Value = FColor::QuantizeUNormFloatTo8( *DataPtr++ );
 			*TargetPtr++ = Value;
 			*TargetPtr++ = Value;
 			*TargetPtr++ = Value;
@@ -811,39 +811,48 @@ void FOpenGLDynamicRHI::RHIReadSurfaceData(FRHITexture* TextureRHI, FIntRect Rec
 	RHITHREAD_GLCOMMAND_EPILOGUE();
 }
 
-void FOpenGLDynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFence* FenceRHI, void*& OutData, int32& OutWidth, int32& OutHeight, uint32 GPUIndex)
+void FOpenGLDynamicRHI::RHIMapStagingSurface_RenderThread(class FRHICommandListImmediate& RHICmdList, FRHITexture* TextureRHI, uint32 GPUIndex, FRHIGPUFence* Fence, void*& OutData, int32& OutWidth, int32& OutHeight)
 {
-	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
+	// Fence is not important, GL driver handles synchonization
+	RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThread);
 
 	RHITHREAD_GLCOMMAND_PROLOGUE();
 
 	VERIFY_GL_SCOPE();
-	
+
 	FOpenGLTexture* Texture = ResourceCast(TextureRHI->GetTexture2D());
 	check(Texture);
 	check(EnumHasAnyFlags(Texture->GetDesc().Flags, TexCreate_CPUReadback));
 
 	OutWidth = Texture->GetSizeX();
 	OutHeight = Texture->GetSizeY();
-	
+
 	uint32 Stride = 0;
 	OutData = Texture->Lock( 0, 0, RLM_ReadOnly, Stride );
 	RHITHREAD_GLCOMMAND_EPILOGUE();
 }
 
+void FOpenGLDynamicRHI::RHIUnmapStagingSurface_RenderThread(class FRHICommandListImmediate& RHICmdList, FRHITexture* TextureRHI, uint32 GPUIndex)
+{
+	RunOnGLRenderContextThread([TextureRHI = TextureRHI]()
+	{
+		VERIFY_GL_SCOPE();
+		FOpenGLTexture* Texture = ResourceCast(TextureRHI->GetTexture2D());
+		check(Texture);
+		Texture->Unlock( 0, 0 );
+	});
+}
+
+void FOpenGLDynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFence* FenceRHI, void*& OutData, int32& OutWidth, int32& OutHeight, uint32 GPUIndex)
+{
+	// Everything is handled in RHIMapStagingSurface_RenderThread. This function should not be called directly.
+	checkNoEntry(); 
+}
+
 void FOpenGLDynamicRHI::RHIUnmapStagingSurface(FRHITexture* TextureRHI, uint32 GPUIndex)
 {
-	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
-
-	RHITHREAD_GLCOMMAND_PROLOGUE();
-
-	VERIFY_GL_SCOPE();
-	
-	FOpenGLTexture* Texture = ResourceCast(TextureRHI->GetTexture2D());
-	check(Texture);
-
-	Texture->Unlock( 0, 0 );
-	RHITHREAD_GLCOMMAND_EPILOGUE();
+	// Everything is handled in RHIUnmapStagingSurface_RenderThread. This function should not be called directly.
+	checkNoEntry(); 
 }
 
 void FOpenGLDynamicRHI::RHIReadSurfaceFloatData(FRHITexture* TextureRHI,FIntRect Rect,TArray<FFloat16Color>& OutData,ECubeFace CubeFace,int32 ArrayIndex,int32 MipIndex)

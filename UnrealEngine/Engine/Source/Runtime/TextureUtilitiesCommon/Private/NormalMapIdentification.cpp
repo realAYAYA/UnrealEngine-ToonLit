@@ -6,7 +6,6 @@
 
 #include "Engine/Texture2D.h"
 #include "Framework/Notifications/NotificationManager.h"
-#include "TextureCompiler.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
 #define NORMALMAP_IDENTIFICATION_TIMING	(0)
@@ -54,150 +53,40 @@ namespace
 	const float RejectedToTakenRatioThreshold = 0.33f;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Texture sampler classes
-class NormalMapSamplerBase
-{
-public:
-	NormalMapSamplerBase()
-	: SourceTexture(NULL)
-	, TextureSizeX(0)
-	, TextureSizeY(0)
-	, SourceTextureData(NULL)
-	{
-	}
-
-	~NormalMapSamplerBase()
-	{
-		if ( SourceTextureData != NULL )
-		{
-			SourceTexture->Source.UnlockMip(0);
-		}
-	}
-
-	bool SetSourceTexture( UTexture* Texture )
-	{
-		SourceTexture = Texture;
-		TextureSizeX = Texture->Source.GetSizeX();
-		TextureSizeY = Texture->Source.GetSizeY();
-		SourceTextureData = Texture->Source.LockMipReadOnly(0);
-		return SourceTextureData != nullptr;
-	}
-
-	UTexture* SourceTexture;
-	int64 TextureSizeX;
-	int64 TextureSizeY;
-	const uint8* SourceTextureData;
-};
-
-template<int RIdx, int GIdx, int BIdx, int AIdx> class SampleNormalMapPixel8 : public NormalMapSamplerBase
-{
-public:
-	SampleNormalMapPixel8() {}
-	~SampleNormalMapPixel8() {}
-
-	FLinearColor DoSampleColor( int32 X, int32 Y )
-	{
-		FLinearColor Result;
-		const uint8* PixelToSample = SourceTextureData + ((Y * TextureSizeX + X) * 4);
-
-		const float OneOver255 = 1.0f / 255.0f;
-
-		Result.B = (float)PixelToSample[BIdx] * OneOver255;
-		Result.G = (float)PixelToSample[GIdx] * OneOver255;
-		Result.R = (float)PixelToSample[RIdx] * OneOver255;
-		Result.A = (float)PixelToSample[AIdx] * OneOver255;
-
-		return Result;
-	}
-
-	float ScaleAndBiasComponent( float Value ) const
-	{
-		return Value * 2.0f - 1.0f;
-	}
-};
-typedef SampleNormalMapPixel8<2, 1, 0, 3> SampleNormalMapPixelBGRA8;
-typedef SampleNormalMapPixel8<0, 1, 2, 3> SampleNormalMapPixelRGBA8;
-
-class SampleNormalMapPixelRGBA16 : public NormalMapSamplerBase
-{
-public:
-	SampleNormalMapPixelRGBA16() {}
-	~SampleNormalMapPixelRGBA16() {}
-
-	FLinearColor DoSampleColor( int32 X, int32 Y )
-	{
-		FLinearColor Result;
-		const uint8* PixelToSample = SourceTextureData + ((Y * TextureSizeX + X) * 8);
-
-		const float OneOver65535 = 1.0f / 65535.0f;
-
-		Result.R = (float)((uint16*)PixelToSample)[0] * OneOver65535;
-		Result.G = (float)((uint16*)PixelToSample)[1] * OneOver65535;
-		Result.B = (float)((uint16*)PixelToSample)[2] * OneOver65535;
-		Result.A = (float)((uint16*)PixelToSample)[3] * OneOver65535;
-
-		return Result;
-	}
-
-	float ScaleAndBiasComponent( float Value ) const
-	{
-		return Value * 2.0f - 1.0f;
-	}
-};
-class SampleNormalMapPixelF16 : public NormalMapSamplerBase
-{
-public:
-	SampleNormalMapPixelF16() {}
-	~SampleNormalMapPixelF16() {}
-
-	FLinearColor DoSampleColor( int32 X, int32 Y )
-	{
-		const uint8* PixelToSample = SourceTextureData + ((Y * TextureSizeX + X) * sizeof(FFloat16Color));
-
-		// this assume the normal map to be in linear (not the case if Photoshop converts a 8bit normalmap to float and saves it as 16bit dds)
-		
-		return ((const FFloat16Color*)PixelToSample)->GetFloats();
-	}
-
-	float ScaleAndBiasComponent( float Value ) const
-	{
-		// no need to scale and bias floating point components.
-		return Value;
-	}
-};
-class SampleNormalMapPixelF32 : public NormalMapSamplerBase
-{
-public:
-	SampleNormalMapPixelF32() {}
-	~SampleNormalMapPixelF32() {}
-
-	FLinearColor DoSampleColor( int32 X, int32 Y )
-	{
-		const uint8* PixelToSample = SourceTextureData + ((Y * TextureSizeX + X) * sizeof(FLinearColor));
-		return *((const FLinearColor*)PixelToSample);
-	}
-
-	float ScaleAndBiasComponent( float Value ) const
-	{
-		// no need to scale and bias floating point components.
-		return Value;
-	}
-};
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-template<class SamplerClass> class TNormalMapAnalyzer
+class FNormalMapAnalyzer
 {
 public:
-	TNormalMapAnalyzer()
+	FNormalMapAnalyzer(const FImageView& InMipToAnalyze)
 	: NumSamplesTaken(0)
 	, NumSamplesRejected(0)
 	, NumSamplesThreshold(0)
 	, AverageColor(0.0f,0.0f,0.0f,0.0f)
+	, SourceImage(InMipToAnalyze)
 	{
 	}
+
+	FVector3f ConvertToVectorForAnalysis(FLinearColor InColor)
+	{
+		// floating point formats don't need to be biased.
+		FVector3f Result;
+		if (SourceImage.Format == ERawImageFormat::BGRA8 ||
+			SourceImage.Format == ERawImageFormat::RGBA16)
+		{
+			Result.X = InColor.R * 2.0f - 1.0f;
+			Result.Y = InColor.G * 2.0f - 1.0f;
+			Result.Z = InColor.B * 2.0f - 1.0f;
+			return Result;
+		}
+		Result.X = InColor.R;
+		Result.Y = InColor.G;
+		Result.Z = InColor.B;
+		return Result;
+	}
+
 
 	/**
 	 * EvaluateSubBlock
@@ -211,7 +100,7 @@ public:
 		{
 			for ( int32 X=Left; X != (Left+Width); X++ )
 			{
-				FLinearColor ColorSample = Sampler.DoSampleColor( X, Y );
+				FLinearColor ColorSample = SourceImage.GetOnePixelLinear( X, Y );
 
 				// Nearly black or transparent pixels don't contribute to the calculation
 				if (FMath::IsNearlyZero(ColorSample.A, AlphaComponentNearlyZeroThreshold) ||
@@ -221,11 +110,8 @@ public:
 				}
 
 				// Scale and bias, if required, to get a signed vector
-				float Vx = Sampler.ScaleAndBiasComponent( ColorSample.R );
-				float Vy = Sampler.ScaleAndBiasComponent( ColorSample.G );
-				float Vz = Sampler.ScaleAndBiasComponent( ColorSample.B );
-
-				const float Length = FMath::Sqrt(Vx * Vx + Vy * Vy + Vz * Vz);
+				FVector3f Vector = ConvertToVectorForAnalysis(ColorSample);
+				const float Length = Vector.Length();
 				if (Length < ColorComponentNearlyZeroThreshold)
 				{
 					// mid-grey pixels representing (0,0,0) are also not considered as they may be used to denote unused areas
@@ -240,7 +126,7 @@ public:
 				}
 
 				// If the vector is pointing backwards then it is an invalid sample, so consider it invalid
-				if (Vz < 0.0f)
+				if (Vector.Z < 0.0f)
 				{
 					NumSamplesRejected++;
 					continue;
@@ -277,20 +163,15 @@ public:
 	 * value specifications. If the vector satisfies those tolerances then the texture is
 	 * considered to be a normal map.
 	 */
-	bool DoesTextureLookLikelyToBeANormalMap( UTexture* Texture )
+	bool DoesTextureLookLikelyToBeANormalMap()
 	{
-		int32 TextureSizeX = Texture->Source.GetSizeX();
-		int32 TextureSizeY = Texture->Source.GetSizeY();
+		int32 TextureSizeX = SourceImage.GetWidth();
+		int32 TextureSizeY = SourceImage.GetHeight();
 
 		// Calculate the number of tiles in each axis, but limit the number
 		// we interact with to a maximum of 16 tiles (4x4)
 		int32 NumTilesX = FMath::Min( TextureSizeX / SampleTileEdgeLength, MaxTilesPerAxis );
 		int32 NumTilesY = FMath::Min( TextureSizeY / SampleTileEdgeLength, MaxTilesPerAxis );
-
-		if ( ! Sampler.SetSourceTexture( Texture ) )
-		{
-			return false;
-		}
 
 		if (( NumTilesX > 0 ) &&
 			( NumTilesY > 0 ))
@@ -331,14 +212,12 @@ public:
 			AverageColor /= (float)NumSamplesTaken;
 
 			// See if the resulting vector lies anywhere near the {0,0,1} vector
-			float Vx = Sampler.ScaleAndBiasComponent( AverageColor.R );
-			float Vy = Sampler.ScaleAndBiasComponent( AverageColor.G );
-			float Vz = Sampler.ScaleAndBiasComponent( AverageColor.B );
+			FVector3f Vector = ConvertToVectorForAnalysis(AverageColor);
 
-			float Magnitude = FMath::Sqrt( Vx*Vx + Vy*Vy + Vz*Vz );
+			float Magnitude = Vector.Length();
 
 			// The normalized value of the Z component tells us how close to {0,0,1} the average vector is
-			float NormalizedZ = Vz / Magnitude;
+			float NormalizedZ = Vector.Z / Magnitude;
 
 			// if the average vector is longer than or equal to the min length, shorter than the max length
 			// and the normalized Z value means that the vector is close enough to {0,0,1} then we consider
@@ -357,7 +236,7 @@ public:
 	int32 NumSamplesThreshold;
 	FLinearColor AverageColor;
 
-	SamplerClass Sampler;
+	const FImageView& SourceImage;
 };
 
 /**
@@ -367,9 +246,9 @@ public:
  *
  * @return bool true if the texture is likely a normal map (although it's not necessarily guaranteed)
  */
-static bool IsTextureANormalMap( UTexture* Texture )
+static bool IsImageANormalMap( const FImageView& Image, FStringView TextureDebugName )
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(IsTextureANormalMap);
+	TRACE_CPUPROFILER_EVENT_SCOPE(IsImageANormalMap);
 
 #if NORMALMAP_IDENTIFICATION_TIMING
 	double StartSeconds = FPlatformTime::Seconds();
@@ -377,46 +256,32 @@ static bool IsTextureANormalMap( UTexture* Texture )
 
 	// Analyze the source texture to try and figure out if it's a normal map.
 	// First check is to make sure it's an appropriate surface format.
-	ETextureSourceFormat SourceFormat = Texture->Source.GetFormat();
-
+	
 	bool bIsNormalMap = false;
-	switch ( SourceFormat )
+	if (Image.Format == ERawImageFormat::BGRA8 ||
+		Image.Format == ERawImageFormat::RGBA16 ||
+		Image.Format == ERawImageFormat::RGBA16F ||
+		Image.Format == ERawImageFormat::RGBA32F)
 	{
 		// The texture could be a normal map if it's one of these formats
-		case TSF_BGRA8:
-			{
-				TNormalMapAnalyzer<SampleNormalMapPixelBGRA8> Analyzer;
-				bIsNormalMap = Analyzer.DoesTextureLookLikelyToBeANormalMap( Texture );
-			}
-			break;
-		case TSF_RGBA16:
-			{
-				TNormalMapAnalyzer<SampleNormalMapPixelRGBA16> Analyzer;
-				bIsNormalMap = Analyzer.DoesTextureLookLikelyToBeANormalMap( Texture );
-			}
-			break;
-		case TSF_RGBA16F:
-			{
-				TNormalMapAnalyzer<SampleNormalMapPixelF16> Analyzer;
-				bIsNormalMap = Analyzer.DoesTextureLookLikelyToBeANormalMap( Texture );
-			}
-			break;
-		case TSF_RGBA32F:
-			{
-				TNormalMapAnalyzer<SampleNormalMapPixelF32> Analyzer;
-				bIsNormalMap = Analyzer.DoesTextureLookLikelyToBeANormalMap( Texture );
-			}
-			break;
 
-		default:
-			// assume the texture is not a normal map
-			break;
+		// for BGRA8 sources, interpret them as linear, not SRGB-encoded
+		FImageView LinearImage = Image;
+		if ( LinearImage.GetGammaSpace() != EGammaSpace::Linear )
+		{
+			// note, not converting pixels and copying image
+			//	just reinterpretting
+			LinearImage.GammaSpace = EGammaSpace::Linear;
+		}
+
+		FNormalMapAnalyzer Analyzer(LinearImage);
+		bIsNormalMap = Analyzer.DoesTextureLookLikelyToBeANormalMap();
 	}
 
 #if NORMALMAP_IDENTIFICATION_TIMING
 	double EndSeconds = FPlatformTime::Seconds();
 
-	FString Msg = FString::Printf( TEXT("NormalMapIdentification took %f seconds to analyze %s"), (EndSeconds-StartSeconds), *Texture->GetFullName() ); 
+	FString Msg = FString::Printf( TEXT("NormalMapIdentification took %f seconds to analyze %.*s"), (EndSeconds-StartSeconds), TextureDebugName.Len(), TextureDebugName.GetData() ); 
 
 	GLog->Log(Msg);
 #endif
@@ -452,28 +317,15 @@ public:
 		UTexture2D* Texture2D = Texture.IsValid() ? Cast<UTexture2D>(Texture.Get()) : NULL;
 		if ( Texture2D )
 		{
-			if (FTextureCompilingManager::Get().IsCompilingTexture(Texture2D))
-			{
-				// Block until compile is done
-				TArray<UTexture*> TextureArray;
-				TextureArray.Add(Texture2D);
-				FTextureCompilingManager::Get().FinishCompilation(TextureArray);
-			}
-
 			if ( Texture2D->CompressionSettings == TC_Normalmap )
 			{
-				// Must wait until the texture is done with previous operations before changing settings and getting it to rebuild.
-				Texture2D->WaitForPendingInitOrStreaming();
-
+				Texture2D->PreEditChange(nullptr);
 				Texture2D->SetFlags(RF_Transactional);
-				// Modify calls FinishCachePlatformData to wait on any async build of this texture
-				Texture2D->Modify();
-				Texture2D->PreEditChange(NULL);
-				{
-					Texture2D->CompressionSettings = TC_Default;
-					Texture2D->SRGB = true;
-					Texture2D->LODGroup = TEXTUREGROUP_World;
-				}
+
+				Texture2D->CompressionSettings = TC_Default;
+				Texture2D->LODGroup = TEXTUREGROUP_World;
+				Texture2D->SRGB = true;
+
 				Texture2D->PostEditChange();
 			}
 		}
@@ -489,13 +341,13 @@ public:
 	TWeakPtr<SNotificationItem> Notification;
 };
 
-bool UE::NormalMapIdentification::HandleAssetPostImport( UTexture* Texture )
+bool UE::NormalMapIdentification::HandleAssetPostImport( UTexture* Texture, const FImageView& InMipToAnalyze )
 {
 	if( Texture != NULL)
 	{
 		// Try to automatically identify a normal map
 		//	this only reads Texture->Source
-		if ( IsTextureANormalMap( Texture ) )
+		if ( IsImageANormalMap( InMipToAnalyze, Texture->GetPathName()) )
 		{
 			// Set the compression settings and no gamma correction for a normal map
 			{

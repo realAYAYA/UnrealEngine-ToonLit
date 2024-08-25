@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Buffers;
 using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Collections.Concurrent;
@@ -494,7 +493,7 @@ namespace EpicGames.Perforce
 						PropertyInfo propertyCopy = property;
 						if (fieldType == typeof(DateTime))
 						{
-							tagInfo.Write = (writer, value) => WriteUtf8StringWithTag(writer, ((long)((DateTime)value - PerforceReflection.UnixEpoch).TotalSeconds).ToString());
+							tagInfo.Write = (writer, value) => WriteUtf8StringWithTag(writer, new Utf8String(((long)((DateTime)value - PerforceReflection.UnixEpoch).TotalSeconds).ToString()));
 							tagInfo.ReadFromString = (obj, value) => propertyCopy.SetValue(obj, ParseStringAsDateTime(value));
 						}
 						else if (fieldType == typeof(bool))
@@ -514,7 +513,7 @@ namespace EpicGames.Perforce
 						}
 						else if (fieldType == typeof(long))
 						{
-							tagInfo.Write = (writer, value) => WriteUtf8StringWithTag(writer, ((long)value).ToString());
+							tagInfo.Write = (writer, value) => WriteUtf8StringWithTag(writer, new Utf8String(((long)value).ToString()));
 							tagInfo.ReadFromString = (obj, value) => propertyCopy.SetValue(obj, ParseStringAsLong(value));
 						}
 						else if (fieldType == typeof(string))

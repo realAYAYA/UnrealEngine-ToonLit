@@ -15,7 +15,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//! From a source mesh, remove a list of fragments with a condition.
 	//---------------------------------------------------------------------------------------------
-	class ASTOpMeshRemoveMask : public ASTOp
+	class ASTOpMeshRemoveMask final : public ASTOp
 	{
 	public:
 

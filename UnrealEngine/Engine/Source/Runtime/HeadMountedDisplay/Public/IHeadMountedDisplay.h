@@ -266,4 +266,9 @@ public:
 	 * If true, scene rendering should be skipped.
 	 */
 	virtual bool IsRenderingPaused() const { return false; }
+
+	/**
+	 * Set the multiply and offset colors for composited images in the HMD
+	 */
+	virtual bool SetColorScaleAndBias(FLinearColor ColorScale, FLinearColor ColorBias) { return false;  };
 };

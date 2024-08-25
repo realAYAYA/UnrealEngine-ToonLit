@@ -16,6 +16,10 @@
 #include "Materials/Material.h"
 #include "UObject/ConstructorHelpers.h"
 
+#if WITH_EDITOR
+#include "IDisplayClusterLightCardExtenderModule.h"
+#endif
+
 ENUM_RANGE_BY_COUNT(EColorCorrectRegionsType, EColorCorrectRegionsType::MAX)
 
 
@@ -54,6 +58,14 @@ AColorCorrectRegion::AColorCorrectRegion(const FObjectInitializer& ObjectInitial
 		CreateIcon();
 	}
 #endif
+
+#if WITH_EDITOR
+	if (!IsTemplate())
+	{
+		IDisplayClusterLightCardExtenderModule& LightCardExtenderModule = IDisplayClusterLightCardExtenderModule::Get();
+		LightCardExtenderModule.GetOnSequencerTimeChanged().AddUObject(this, &AColorCorrectRegion::OnSequencerTimeChanged);
+	}
+#endif
 }
 
 void AColorCorrectRegion::BeginPlay()
@@ -74,7 +86,7 @@ void AColorCorrectRegion::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (ColorCorrectRegionsSubsystem.IsValid())
 	{
-		ColorCorrectRegionsSubsystem->OnActorDeleted(this);
+		ColorCorrectRegionsSubsystem->OnActorDeleted(this, false);
 		ColorCorrectRegionsSubsystem = nullptr;
 	}
 	Super::EndPlay(EndPlayReason);
@@ -84,7 +96,7 @@ void AColorCorrectRegion::BeginDestroy()
 {
 	if (ColorCorrectRegionsSubsystem.IsValid())
 	{
-		ColorCorrectRegionsSubsystem->OnActorDeleted(this);
+		ColorCorrectRegionsSubsystem->OnActorDeleted(this, true);
 		ColorCorrectRegionsSubsystem = nullptr;
 	}
 	
@@ -197,9 +209,9 @@ void AColorCorrectRegion::TransferState()
 	}
 
 	// Store component id to be used on render thread.
-	if (!(TempCCRStateRenderThread->FirstPrimitiveId == IdentityComponent->ComponentId))
+	if (!(TempCCRStateRenderThread->FirstPrimitiveId == IdentityComponent->GetPrimitiveSceneId()))
 	{
-		TempCCRStateRenderThread->FirstPrimitiveId = IdentityComponent->ComponentId;
+		TempCCRStateRenderThread->FirstPrimitiveId = IdentityComponent->GetPrimitiveSceneId();
 	}
 
 	{
@@ -211,6 +223,15 @@ void AColorCorrectRegion::TransferState()
 	}
 
 }
+
+#if WITH_EDITOR
+void AColorCorrectRegion::OnSequencerTimeChanged(TWeakPtr<ISequencer> InSequencer)
+{
+	bNotifyOnParamSetter = false;
+	UpdatePositionalParamsFromTransform();
+	bNotifyOnParamSetter = true;
+}
+#endif
 
 void AColorCorrectRegion::HandleAffectedActorsPropertyChange(uint32 ActorListChangeType)
 {
@@ -298,10 +319,20 @@ void AColorCorrectRegion::CreateIcon()
 }
 #endif 
 
+AColorCorrectRegion::~AColorCorrectRegion()
+{
+#if WITH_EDITOR
+	if (!IsTemplate())
+	{
+		IDisplayClusterLightCardExtenderModule& LightCardExtenderModule = IDisplayClusterLightCardExtenderModule::Get();
+		LightCardExtenderModule.GetOnSequencerTimeChanged().RemoveAll(this);
+	}
+#endif
+}
+
 #if WITH_EDITOR
 void AColorCorrectRegion::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
 {
-	Super::PostEditChangeProperty(PropertyChangedEvent);
 	const FName PropertyName = PropertyChangedEvent.GetPropertyName();
 
 	if (!ColorCorrectRegionsSubsystem.IsValid())
@@ -331,16 +362,190 @@ void AColorCorrectRegion::PostEditChangeProperty(struct FPropertyChangedEvent& P
 			ColorCorrectRegionsSubsystem->SortRegionsByPriority();
 		}
 	}
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(AColorCorrectRegion, Type) || PropertyChangedEvent.Property == nullptr)
+
+	// Stage actor properties
 	{
-		if (ColorCorrectRegionsSubsystem.IsValid())
+		const FStructProperty* StructProperty = CastField<FStructProperty>(PropertyChangedEvent.MemberProperty);
+		const bool bIsOrientation = StructProperty ? StructProperty->Struct == FDisplayClusterPositionalParams::StaticStruct() : false;
+	
+		if (bIsOrientation)
 		{
-			ColorCorrectRegionsSubsystem->OnLevelsChanged();
+			UpdateStageActorTransform();
+			// Updates MU in real-time. Skip our method as the positional coordinates are already correct.
+			AActor::PostEditMove(PropertyChangedEvent.ChangeType != EPropertyChangeType::Interactive);
+		}
+		else if (
+			PropertyName == USceneComponent::GetRelativeLocationPropertyName() ||
+			PropertyName == USceneComponent::GetRelativeRotationPropertyName() ||
+			PropertyName == USceneComponent::GetRelativeScale3DPropertyName())
+		{
+			bNotifyOnParamSetter = false;
+			UpdatePositionalParamsFromTransform();
+			bNotifyOnParamSetter = true;
 		}
 	}
+
+	// Call after stage actor transform is updated, so any observers will have both the correct actor transform and
+	// positional properties.
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+}
+
+void AColorCorrectRegion::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+
+	bNotifyOnParamSetter = false;
+	UpdatePositionalParamsFromTransform();
+	bNotifyOnParamSetter = true;
+}
+
+void AColorCorrectRegion::PostTransacted(const FTransactionObjectEvent& TransactionEvent)
+{
+	Super::PostTransacted(TransactionEvent);
+	FixMeshComponentReferences();
 }
 #endif //WITH_EDITOR
 
+#define NOTIFY_PARAM_SETTER()\
+	if (bNotifyOnParamSetter)\
+	{\
+		UpdateStageActorTransform();\
+	}\
+
+void AColorCorrectRegion::SetLongitude(double InValue)
+{
+	PositionalParams.Longitude = InValue;
+	NOTIFY_PARAM_SETTER()
+}
+
+double AColorCorrectRegion::GetLongitude() const
+{
+	return PositionalParams.Longitude;
+}
+
+void AColorCorrectRegion::SetLatitude(double InValue)
+{
+	PositionalParams.Latitude = InValue;
+	NOTIFY_PARAM_SETTER()
+}
+
+double AColorCorrectRegion::GetLatitude() const
+{
+	return PositionalParams.Latitude;
+}
+
+void AColorCorrectRegion::SetDistanceFromCenter(double InValue)
+{
+	PositionalParams.DistanceFromCenter = InValue;
+	NOTIFY_PARAM_SETTER()
+}
+
+double AColorCorrectRegion::GetDistanceFromCenter() const
+{
+	return PositionalParams.DistanceFromCenter;
+}
+
+void AColorCorrectRegion::SetSpin(double InValue)
+{
+	PositionalParams.Spin = InValue;
+	NOTIFY_PARAM_SETTER()
+}
+
+double AColorCorrectRegion::GetSpin() const
+{
+	return PositionalParams.Spin;
+}
+
+void AColorCorrectRegion::SetPitch(double InValue)
+{
+	PositionalParams.Pitch = InValue;
+	NOTIFY_PARAM_SETTER()
+}
+
+double AColorCorrectRegion::GetPitch() const
+{
+	return PositionalParams.Pitch;
+}
+
+void AColorCorrectRegion::SetYaw(double InValue)
+{
+	PositionalParams.Yaw = InValue;
+	NOTIFY_PARAM_SETTER()
+}
+
+double AColorCorrectRegion::GetYaw() const
+{
+	return PositionalParams.Yaw;
+}
+
+void AColorCorrectRegion::SetRadialOffset(double InValue)
+{
+	PositionalParams.RadialOffset = InValue;
+	NOTIFY_PARAM_SETTER()
+}
+
+double AColorCorrectRegion::GetRadialOffset() const
+{
+	return PositionalParams.RadialOffset;
+}
+
+void AColorCorrectRegion::SetScale(const FVector2D& InScale)
+{
+	PositionalParams.Scale = InScale;
+	NOTIFY_PARAM_SETTER()
+}
+
+FVector2D AColorCorrectRegion::GetScale() const
+{
+	return PositionalParams.Scale;
+}
+
+void AColorCorrectRegion::SetOrigin(const FTransform& InOrigin)
+{
+	Origin = InOrigin;
+}
+
+FTransform AColorCorrectRegion::GetOrigin() const
+{
+	return Origin;
+}
+
+void AColorCorrectRegion::SetPositionalParams(const FDisplayClusterPositionalParams& InParams)
+{
+	PositionalParams = InParams;
+	NOTIFY_PARAM_SETTER()
+}
+
+FDisplayClusterPositionalParams AColorCorrectRegion::GetPositionalParams() const
+{
+	return PositionalParams;
+}
+
+void AColorCorrectRegion::GetPositionalProperties(FPositionalPropertyArray& OutPropertyPairs) const
+{
+	void* Container = (void*)(&PositionalParams);
+
+	const TSet<FName>& PropertyNames = GetPositionalPropertyNames();
+	OutPropertyPairs.Reserve(PropertyNames.Num());
+
+	for (const FName& PropertyName : PropertyNames)
+	{
+		if (FProperty* Property = FindFProperty<FProperty>(FDisplayClusterPositionalParams::StaticStruct(), PropertyName))
+		{
+			OutPropertyPairs.Emplace(Container, Property);
+		}
+	}
+
+	if (FStructProperty* ParamsProperty = FindFProperty<FStructProperty>(GetClass(), GET_MEMBER_NAME_CHECKED(AColorCorrectRegion, PositionalParams)))
+	{
+		OutPropertyPairs.Emplace((void*)this, ParamsProperty);
+	}
+}
+
+FName AColorCorrectRegion::GetPositionalPropertiesMemberName() const
+{
+	return GET_MEMBER_NAME_CHECKED(AColorCorrectRegion, PositionalParams);
+}
 
 AColorCorrectionRegion::AColorCorrectionRegion(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -366,26 +571,12 @@ AColorCorrectionRegion::AColorCorrectionRegion(const FObjectInitializer& ObjectI
 		MeshComponent->CastShadow = false;
 		MeshComponent->SetHiddenInGame(true);
 	}
-
-	SetMeshVisibilityForRegionType();
-
+	ChangeShapeVisibilityForActorType();
 }
 
-void AColorCorrectionRegion::SetMeshVisibilityForRegionType()
+void AColorCorrectionRegion::ChangeShapeVisibilityForActorType()
 {
-	for (EColorCorrectRegionsType CCRType : TEnumRange<EColorCorrectRegionsType>())
-	{
-		uint8 TypeIndex = static_cast<uint8>(CCRType);
-
-		if (CCRType == Type)
-		{
-			MeshComponents[TypeIndex]->SetVisibility(true, true);
-		}
-		else
-		{
-			MeshComponents[TypeIndex]->SetVisibility(false, true);
-		}
-	}
+	ChangeShapeVisibilityForActorTypeInternal<EColorCorrectRegionsType>(Type);
 }
 
 #if WITH_EDITOR
@@ -394,13 +585,21 @@ void AColorCorrectionRegion::PostEditChangeProperty(struct FPropertyChangedEvent
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 	const FName PropertyName = PropertyChangedEvent.GetPropertyName();
 
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(AColorCorrectionRegion, Type))
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(AColorCorrectRegion, Type) || PropertyChangedEvent.Property == nullptr)
 	{
-		SetMeshVisibilityForRegionType();
+		ChangeShapeVisibilityForActorType();
 	}
 }
+
 FName AColorCorrectionRegion::GetCustomIconName() const
 {
 	return TEXT("CCR.OutlinerThumbnail");
 }
+
+void AColorCorrectionRegion::FixMeshComponentReferences()
+{
+	FixMeshComponentReferencesInternal<EColorCorrectRegionsType>(Type);
+}
 #endif
+
+#undef NOTIFY_PARAM_SETTER

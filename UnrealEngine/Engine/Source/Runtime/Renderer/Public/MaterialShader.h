@@ -14,10 +14,6 @@
 #include "RHIFwd.h"
 #include "Serialization/MemoryLayout.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "SceneRenderTargetParameters.h"
-#endif
-
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"
 #include "GlobalShader.h"

@@ -40,7 +40,7 @@ public:
 
 private:
 
-	TSharedPtr<IImageWrapper> LoadFrameImage(const FString& ImagePath, TArray64<uint8>& OutBuffer, FImgMediaFrameInfo& OutInfo, bool bUseLoaderFirstFrame);
+	TSharedPtr<IImageWrapper> LoadFrameImage(const FString& ImagePath, TArray64<uint8>& OutBuffer, FImgMediaFrameInfo& OutInfo);
 
 	/** The image wrapper module. */
 	IImageWrapperModule& ImageWrapperModule;

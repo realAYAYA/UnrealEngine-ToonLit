@@ -39,7 +39,7 @@ public:
 		SLATE_STYLE_ARGUMENT(FButtonStyle, ButtonStyle)
 
 		/** Selection of strings to pick from */
-		SLATE_ARGUMENT( TArray< TSharedPtr<FString> >*, OptionsSource )
+		SLATE_ITEMS_SOURCE_ARGUMENT(TSharedPtr<FString>, OptionsSource)
 
 		/** Text color and opacity */
 		SLATE_ATTRIBUTE( FSlateColor, ColorAndOpacity )
@@ -74,6 +74,24 @@ public:
 	TSharedPtr<FString> GetSelectedItem()
 	{
 		return SelectedItem;
+	}
+
+	/** Sets new item source */
+	void SetItemsSource(const TArray<TSharedPtr<FString>>* InListItemsSource)
+	{
+		StringCombo->SetItemsSource(InListItemsSource);
+	}
+
+	/** Sets new item source */
+	void SetItemsSource(TSharedRef<::UE::Slate::Containers::TObservableArray<TSharedPtr<FString>>> InListItemsSource)
+	{
+		StringCombo->SetItemsSource(InListItemsSource);
+	}
+
+	/** Clears current item source */
+	void ClearItemsSource()
+	{
+		StringCombo->ClearItemsSource();
 	}
 
 	/** Request to reload the text options in the combobox from the OptionsSource attribute */

@@ -70,7 +70,7 @@ protected:
 	//~ End UContentBundleEditorSubsystemModule interface
 
 private:
-	void PushContentBundleEditing();
+	void PushContentBundleEditing(bool bDuplicateContext);
 	void PopContentBundleEditing();
 	void StartEditing(TSharedPtr<FContentBundleEditor>& ContentBundleEditor);
 	void StopEditing(TSharedPtr<FContentBundleEditor>& ContentBundleEditor);
@@ -132,9 +132,10 @@ public:
 	bool IsEditingContentBundle(const FGuid& ContentBundleGuid) const;
 	bool ActivateContentBundleEditing(TSharedPtr<FContentBundleEditor>& ContentBundleEditor) const override;
 	bool DeactivateContentBundleEditing(TSharedPtr<FContentBundleEditor>& ContentBundleEditor) const override;
+	virtual bool DeactivateCurrentContentBundleEditing() const override;
 	bool IsContentBundleEditingActivated(TSharedPtr<FContentBundleEditor>& ContentBundleEditor) const;
 
-	virtual void PushContentBundleEditing() override;
+	virtual void PushContentBundleEditing(bool bDuplicateContext) override;
 	virtual void PopContentBundleEditing() override;
 
 private:

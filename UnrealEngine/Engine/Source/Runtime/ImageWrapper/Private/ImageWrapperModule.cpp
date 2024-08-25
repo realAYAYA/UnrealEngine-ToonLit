@@ -11,6 +11,7 @@
 #include "Formats/IcnsImageWrapper.h"
 #include "Formats/IcoImageWrapper.h"
 #include "Formats/JpegImageWrapper.h"
+#include "Formats/UEJpegImageWrapper.h"
 #include "Formats/PngImageWrapper.h"
 #include "Formats/TgaImageWrapper.h"
 #include "Formats/TiffImageWrapper.h"
@@ -32,6 +33,7 @@ namespace
 	static const uint8 IMAGE_MAGIC_ICO[]  = {0x00, 0x00, 0x01, 0x00};
 	static const uint8 IMAGE_MAGIC_EXR[]  = {0x76, 0x2F, 0x31, 0x01};
 	static const uint8 IMAGE_MAGIC_ICNS[] = {0x69, 0x63, 0x6E, 0x73};
+	static const uint8 IMAGE_MAGIC_UEJPEG[] = {'O', 'O', 'J', 'P', 'E', 'G'};
 
 	// Binary for #?RADIANCE
 	static const uint8 IMAGE_MAGIC_HDR[] = {0x23, 0x3f, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4e, 0x43, 0x45, 0x0a};
@@ -99,6 +101,16 @@ public:
 			break;
 #endif	//WITH_UNREALJPEG
 
+#if WITH_UEJPEG
+		case EImageFormat::UEJPEG:
+			ImageWrapper = MakeShared<FUEJpegImageWrapper>();
+			break;
+
+		case EImageFormat::GrayscaleUEJPEG:
+			ImageWrapper = MakeShared<FUEJpegImageWrapper>(1);
+			break;
+#endif // WITH_UEJPEG
+
 		case EImageFormat::BMP:
 			ImageWrapper = MakeShared<FBmpImageWrapper>();
 			break;
@@ -156,6 +168,10 @@ public:
 		{
 			Format = EImageFormat::JPEG; // @Todo: Should we detect grayscale vs non-grayscale?
 		}
+		else if (StartsWith((uint8*)CompressedData, CompressedSize, IMAGE_MAGIC_UEJPEG))
+		{
+			Format = EImageFormat::UEJPEG; // @Todo: Should we detect grayscale vs non-grayscale?
+		}
 		else if (StartsWith((uint8*) CompressedData, CompressedSize, IMAGE_MAGIC_BMP))
 		{
 			Format = EImageFormat::BMP;
@@ -207,6 +223,8 @@ public:
 		case EImageFormat::PNG: return TEXT("png");
 		case EImageFormat::JPEG: return TEXT("jpg");
 		case EImageFormat::GrayscaleJPEG: return TEXT("jpg");
+		case EImageFormat::UEJPEG: return TEXT("uej");
+		case EImageFormat::GrayscaleUEJPEG: return TEXT("uej");
 		case EImageFormat::BMP: return TEXT("bmp");
 		case EImageFormat::ICO: return TEXT("ico");
 		case EImageFormat::EXR: return TEXT("exr");
@@ -237,6 +255,10 @@ public:
 		 || FCString::Stricmp(Name,TEXT("jpeg")) == 0 )
 		{
 			return EImageFormat::JPEG;
+		}
+		else if (FCString::Stricmp(Name, TEXT("uej")) == 0)
+		{
+			return EImageFormat::UEJPEG;
 		}
 		else if ( FCString::Stricmp(Name,TEXT("bmp")) == 0 )
 		{

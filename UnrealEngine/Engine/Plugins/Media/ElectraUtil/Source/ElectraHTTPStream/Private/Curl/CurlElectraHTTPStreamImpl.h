@@ -102,6 +102,8 @@ private:
 	TArray<TSharedPtr<FElectraHTTPStreamRequestLibCurl, ESPMode::ThreadSafe>> NewRequests;
 	TArray<TSharedPtr<FElectraHTTPStreamRequestLibCurl, ESPMode::ThreadSafe>> ActiveRequests;
 	TArray<TSharedPtr<FElectraHTTPStreamRequestLibCurl, ESPMode::ThreadSafe>> CompletedRequests;
+
+	static FName OptionName_Proxy;
 };
 
 #endif

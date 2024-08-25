@@ -32,8 +32,8 @@ enum class EAnimAssetFindReplaceMode : int32
 };
 
 /** Processor base class to allow systems to add their own find/replace functionality */
-UCLASS(MinimalAPI, Abstract)
-class UAnimAssetFindReplaceProcessor : public UObject
+UCLASS(Abstract)
+class PERSONA_API UAnimAssetFindReplaceProcessor : public UObject
 {
 	GENERATED_BODY()
 
@@ -87,8 +87,14 @@ public:
 	virtual void RefreshCachedData() {}
 
 protected:
+	UE_DEPRECATED(5.4, "Please use RequestRefreshUI.")
+	void RequestUIRefresh() { RequestRefreshUI(); }
+
 	/** Requests the entire find UI to be refreshed */
-	void RequestUIRefresh();
+	void RequestRefreshUI();
+
+	/** Requests cached data and search results */
+	void RequestRefreshCachedData();
 
 	/** Requests search results to be refreshed */
 	void RequestRefreshSearchResults();
@@ -99,8 +105,8 @@ private:
 };
 
 /** Processor for string-based animation asset operations */
-UCLASS(MinimalAPI, Abstract)
-class UAnimAssetFindReplaceProcessor_StringBase : public UAnimAssetFindReplaceProcessor
+UCLASS(Abstract)
+class PERSONA_API UAnimAssetFindReplaceProcessor_StringBase : public UAnimAssetFindReplaceProcessor
 {
 	GENERATED_BODY()
 
@@ -110,7 +116,7 @@ public:
 	{}
 
 	/** Set the current find string */
-	PERSONA_API void SetFindString(const FString& InString);
+	void SetFindString(const FString& InString);
 
 	/** Get the current find string */
 	FStringView GetFindString() const { return FindString; }
@@ -119,7 +125,7 @@ public:
 	const FString& GetFindStringRef() const { return FindString; }
 
 	/** Set the current replace string */
-	PERSONA_API void SetReplaceString(const FString& InString);
+	void SetReplaceString(const FString& InString);
 
 	/** Get the current replace string */
 	FStringView GetReplaceString() const { return ReplaceString; }
@@ -128,19 +134,19 @@ public:
 	const FString& GetReplaceStringRef() const { return ReplaceString; }
 	
 	/** Set the current skeleton filter */
-	PERSONA_API void SetSkeletonFilter(const FAssetData& InSkeletonFilter);
+	void SetSkeletonFilter(const FAssetData& InSkeletonFilter);
 
 	/** Get the current skeleton filter **/
 	const FAssetData& GetSkeletonFilter() const { return SkeletonFilter; }
 
 	/** Sets whether to match whole words when searching strings */
-	PERSONA_API void SetFindWholeWord(bool bInFindWholeWord);
+	void SetFindWholeWord(bool bInFindWholeWord);
 
 	/** Gets whether to match whole words when searching strings */
 	bool GetFindWholeWord() const { return bFindWholeWord; }
 
 	/** Sets case comparison to use when searching */
-	PERSONA_API void SetSearchCase(ESearchCase::Type InSearchCase);
+	void SetSearchCase(ESearchCase::Type InSearchCase);
 
 	/** Gets case comparison to use when searching */
 	ESearchCase::Type GetSearchCase() const { return SearchCase; }
@@ -148,7 +154,7 @@ public:
 	/** Optional override point for derived classes to supply auto complete names to display in the UI */
 	virtual void GetAutoCompleteNames(TArrayView<FAssetData> InAssetDatas, TSet<FString>& OutUniqueNames) const {}
 
-private:
+protected:
 	/** UAnimAssetFindReplaceProcessor interface */
 	virtual bool SupportsMode(EAnimAssetFindReplaceMode InMode) const override { return true; }
 	virtual void ExtendToolbar(FToolMenuSection& InSection) override;

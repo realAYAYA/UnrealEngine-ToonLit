@@ -33,7 +33,6 @@ namespace EpicGames.Perforce.Managed
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		/// <param name="Root"></param>
 		/// <param name="hashToTree"></param>
 		public StreamTreeMemoryReader(Dictionary<IoHash, CbObject> hashToTree)
 		{

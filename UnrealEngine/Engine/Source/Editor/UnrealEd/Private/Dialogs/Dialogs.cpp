@@ -2,6 +2,8 @@
 
 
 #include "Dialogs/Dialogs.h"
+
+#include "Dialog/DialogUtils.h"
 #include "Dialogs/DialogsPrivate.h"
 #include "Misc/App.h"
 #include "Misc/AssertionMacros.h"
@@ -59,21 +61,7 @@ public:
 
 		TSharedPtr<SUniformGridPanel> ButtonBox;
 
-		const FSlateBrush* IconBrush = FAppStyle::Get().GetBrush("Icons.WarningWithColor.Large");
-		switch (InArgs._MessageCategory)
-		{
-		case EAppMsgCategory::Error:
-			IconBrush = FAppStyle::Get().GetBrush("Icons.ErrorWithColor.Large");
-			break;
-		case EAppMsgCategory::Success:
-			IconBrush = FAppStyle::Get().GetBrush("Icons.SuccessWithColor.Large");
-			break;
-		case EAppMsgCategory::Info:
-			IconBrush = FAppStyle::Get().GetBrush("Icons.InfoWithColor.Large");
-			break;
-		default:
-			break;
-		}
+		const FSlateBrush* IconBrush = FDialogUtils::GetMessageCategoryIcon(InArgs._MessageCategory);
 
 		this->ChildSlot
 		[	
@@ -117,6 +105,7 @@ public:
 				]
 
 				+SVerticalBox::Slot()
+				.Padding(0.f, 32.f, 0.f, 0.f)
 				.AutoHeight()
 				[
 					SNew(SHorizontalBox)
@@ -163,7 +152,7 @@ public:
 					.VAlign(VAlign_Center)
 					[
 						SAssignNew( ButtonBox, SUniformGridPanel )
-						.SlotPadding(FMargin(16.f, 0.f, 0.f, 0.f))
+						.SlotPadding(FMargin(8.f, 0.f, 0.f, 0.f))
 						.MinDesiredSlotWidth(FAppStyle::Get().GetFloat("StandardDialog.MinDesiredSlotWidth"))
 						.MinDesiredSlotHeight(FAppStyle::Get().GetFloat("StandardDialog.MinDesiredSlotHeight"))
 					]
@@ -278,21 +267,21 @@ public:
 		switch(ReturnType)
 		{
 		case EAppReturnType::No:
-			return LOCTEXT("EAppReturnTypeNo", "No");
+			return FDialogButtonTexts::Get().No;
 		case EAppReturnType::Yes:
-			return LOCTEXT("EAppReturnTypeYes", "Yes");
+			return FDialogButtonTexts::Get().Yes;
 		case EAppReturnType::YesAll:
-			return LOCTEXT("EAppReturnTypeYesAll", "Yes All");
+			return FDialogButtonTexts::Get().YesAll;
 		case EAppReturnType::NoAll:
-			return LOCTEXT("EAppReturnTypeNoAll", "No All");
+			return FDialogButtonTexts::Get().NoAll;
 		case EAppReturnType::Cancel:
-			return LOCTEXT("EAppReturnTypeCancel", "Cancel");
+			return FDialogButtonTexts::Get().Cancel;
 		case EAppReturnType::Ok:
-			return LOCTEXT("EAppReturnTypeOk", "OK");
+			return FDialogButtonTexts::Get().Ok;
 		case EAppReturnType::Retry:
-			return LOCTEXT("EAppReturnTypeRetry", "Retry");
+			return FDialogButtonTexts::Get().Retry;
 		case EAppReturnType::Continue:
-			return LOCTEXT("EAppReturnTypeContinue", "Continue");
+			return FDialogButtonTexts::Get().Continue;
 		default:
 			return LOCTEXT("MissingType", "MISSING RETURN TYPE");
 		}
@@ -587,7 +576,8 @@ class SModalDialogWithCheckbox : public SCompoundWidget
 {
 public:
 	SLATE_BEGIN_ARGS( SModalDialogWithCheckbox )
-	:_bHasCancelButton(false) 
+	: _bHasCancelButton(false)
+	, _WrapMessageAt(512.0f)
 	{}
 		/** Warning message displayed on the dialog */
 		SLATE_ATTRIBUTE(FText, Message)
@@ -606,6 +596,9 @@ public:
 
 		/** Default value of the checkbox */
 		SLATE_ARGUMENT(bool, bDefaultCheckValue)
+
+		/** Wrap message at specified length, zero or negative number will disable the wrapping */
+		SLATE_ARGUMENT(float, WrapMessageAt)
 
 		/** Typically an icon to help the user more easily identify the nature of the issue */
 		SLATE_ATTRIBUTE( const FSlateBrush*, Image )
@@ -630,6 +623,7 @@ public:
 		ChildSlot
 		[
 			SNew(SBorder)
+			.Padding(16.f)
 			.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
 			[
 				SNew( SVerticalBox )
@@ -649,7 +643,6 @@ public:
 						+SHorizontalBox::Slot()
 						.AutoWidth()
 						.VAlign(VAlign_Center)
-						.Padding(16) // currently hardcoded until we adjust StandardDialog.SlotPadding
 						[
 							SNew( SImage )
 							.Image(InArgs._Image)
@@ -659,11 +652,11 @@ public:
 						+SHorizontalBox::Slot()
 						.AutoWidth()
 						.VAlign(VAlign_Center)
-						.Padding(0)
+						.Padding(FMargin(16.f, 0.f, 0.f, 0.f))
 						[
 							SNew( STextBlock )
-							.WrapTextAt(512.0f)
-							.Text( MyMessage )
+							.WrapTextAt(InArgs._WrapMessageAt)
+							.Text(MyMessage)
 							.Font(MessageFont)
 						]
 					]
@@ -672,6 +665,7 @@ public:
 				+SVerticalBox::Slot()
 				.AutoHeight()
 				.HAlign(HAlign_Fill)
+				.Padding(FMargin(0.f, 32.f, 0.f, 0.f))
 				[
 					ConstructConditionalInternals(InArgs)
 				]
@@ -693,7 +687,6 @@ public:
 		// checkbox with user specified text
 		HorizontalBox->AddSlot()
 		.HAlign(HAlign_Left)
-		.Padding(16) // currently hardcoded until we adjust StandardDialog.SlotPadding
 		.FillWidth(1.0)
 		[
 			SNew(SCheckBox)
@@ -708,7 +701,7 @@ public:
 		];
 		HorizontalBox->AddSlot()
 		.HAlign(HAlign_Right)
-		.Padding(16) // currently hardcoded until we adjust StandardDialog.SlotPadding
+		.Padding(FMargin(16.f, 0.f, 0.f, 0.f)) // currently hardcoded until we adjust StandardDialog.SlotPadding
 		.AutoWidth()
 		[
 			SNew(SPrimaryButton)
@@ -724,7 +717,7 @@ public:
 			// cancel/stop/abort button
 			HorizontalBox->AddSlot()
 			.HAlign(HAlign_Right)
-			.Padding(0, 16, 16, 16) // currently hardcoded until we adjust StandardDialog.SlotPadding
+			.Padding(FMargin(8.f, 0.f, 0.f, 0.f)) // currently hardcoded until we adjust StandardDialog.SlotPadding
 			.AutoWidth()
 			[
 				SNew( SButton )
@@ -815,6 +808,13 @@ private:
 	TAttribute<FText> MyCheckboxMessage;
 };
 
+TSet<FString> FSuppressableWarningDialog::SuppressedInTheSession = {};
+
+FString SuppressableWarningDialogGetSessionKey(const FString& IniSettingName, const FString& IniSettingFileName)
+{
+	return IniSettingFileName + TEXT("_") + IniSettingName;
+}
+
 FSuppressableWarningDialog::FSuppressableWarningDialog(const FSetupInfo& Info)
 {
 	// Ensure proper usage of the suppression warning.
@@ -828,8 +828,28 @@ FSuppressableWarningDialog::FSuppressableWarningDialog(const FSetupInfo& Info)
 	IniSettingName = Info.IniSettingName;
 	IniSettingFileName = Info.IniSettingFileName;
 	Prompt = Info.Message;
+	ResponseIniSettingName = Info.IniSettingName + TEXT("_ConfirmResponse");
 
-	GConfig->GetBool( *ConfigSection, *IniSettingName, bShouldSuppressDialog, IniSettingFileName );
+	// bDontPersistSuppressionAcrossSessions takes precedence until removed
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	if (Info.bDontPersistSuppressionAcrossSessions)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	{
+		DialogMode = EMode::DontPersistSuppressionAcrossSessions;
+	}
+	else
+	{
+		DialogMode = Info.DialogMode;
+	}
+
+	if (DialogMode == EMode::DontPersistSuppressionAcrossSessions)
+	{
+		bShouldSuppressDialog = SuppressedInTheSession.Contains(SuppressableWarningDialogGetSessionKey(IniSettingName, IniSettingFileName));
+	}
+	else
+	{
+		GConfig->GetBool( *ConfigSection, *IniSettingName, bShouldSuppressDialog, IniSettingFileName );
+	}
 	
 	if (!bShouldSuppressDialog && FSlateApplication::IsInitialized())
 	{
@@ -849,7 +869,8 @@ FSuppressableWarningDialog::FSuppressableWarningDialog(const FSetupInfo& Info)
 			.bDefaultCheckValue(Info.bDefaultToSuppressInTheFuture)
 			.CheckboxMessage(Info.CheckBoxText)
 			.ParentWindow(ModalWindow)
-			.Image((Info.Image != NULL) ? Info.Image : DefaultImage);
+			.Image((Info.Image != NULL) ? Info.Image : DefaultImage)
+			.WrapMessageAt(Info.WrapMessageAt);
 
 		ModalWindow->SetContent( MessageBox.ToSharedRef() );
 	}
@@ -862,25 +883,65 @@ FSuppressableWarningDialog::EResult FSuppressableWarningDialog::ShowModal() cons
 	bool bShouldSuppressDialog = false;
 
 	// Get the setting from the config file.
-	GConfig->GetBool( *ConfigSection, *IniSettingName, bShouldSuppressDialog, IniSettingFileName );
+	if (DialogMode == EMode::DontPersistSuppressionAcrossSessions)
+	{
+		bShouldSuppressDialog = SuppressedInTheSession.Contains(SuppressableWarningDialogGetSessionKey(IniSettingName, IniSettingFileName));
+	}
+	else
+	{
+		GConfig->GetBool( *ConfigSection, *IniSettingName, bShouldSuppressDialog, IniSettingFileName );
+	}
 
 	EResult RetCode = Suppressed;
 	if( !bShouldSuppressDialog )
 	{
 		GEditor->EditorAddModalWindow(ModalWindow.ToSharedRef());
 		RetCode = (MessageBox->GetResponse()) ? Confirm : Cancel;
+		
+		// Set the ini variable to the state of the disable check box
+		bShouldSuppressDialog = MessageBox->GetCheckBoxState();
 
 		if( RetCode == Confirm )
 		{
-			// Set the ini variable to the state of the disable check box
-			bShouldSuppressDialog = MessageBox->GetCheckBoxState();
-			GConfig->SetBool( *ConfigSection, *IniSettingName, bShouldSuppressDialog, IniSettingFileName );
+			if (DialogMode == EMode::DontPersistSuppressionAcrossSessions)
+			{
+				if (bShouldSuppressDialog)
+				{
+					SuppressedInTheSession.Add(SuppressableWarningDialogGetSessionKey(IniSettingName, IniSettingFileName));
+				}
+			}
+			else
+			{
+				GConfig->SetBool(*ConfigSection, *IniSettingName, bShouldSuppressDialog, IniSettingFileName);
+
+				if (DialogMode == EMode::PersistUserResponse)
+				{
+					GConfig->SetBool(*ConfigSection, *ResponseIniSettingName, true, IniSettingFileName);
+				}
+			}
+		}
+		else
+		{
+			if (DialogMode == EMode::PersistUserResponse)
+			{
+				GConfig->SetBool(*ConfigSection, *IniSettingName, bShouldSuppressDialog, IniSettingFileName);
+				GConfig->SetBool(*ConfigSection, *ResponseIniSettingName, false, IniSettingFileName);
+			}
 		}
 	}
 	else
 	{
 		// If the dialog is suppressed, log the warning
 		UE_LOG(LogDialogs, Warning, TEXT("Suppressed: %s"), *Prompt.ToString());
+
+		if (DialogMode == EMode::PersistUserResponse)
+		{
+			// Get the saved response
+			bool bWasConfirmed = false;
+			GConfig->GetBool(*ConfigSection, *ResponseIniSettingName, bWasConfirmed, IniSettingFileName);
+
+			RetCode = bWasConfirmed ? Confirm : Cancel;
+		}
 	}
 
 	return RetCode;
@@ -993,7 +1054,7 @@ void SGenericDialogWidget::Construct( const FArguments& InArgs )
 		+SVerticalBox::Slot()
 		.HAlign(HAlign_Right)
 		.AutoHeight()
-		.Padding(0.0f, 2.0f, 0.0f, 0.0f)
+		.Padding(0.f, 2.f, 0.f, 0.f)
 		[
 			SNew(SButton)
 			.Text( NSLOCTEXT("UnrealEd", "OK", "OK") )
@@ -1048,6 +1109,38 @@ FReply SGenericDialogWidget::OnOK_Clicked(void)
 	MyWindow.Pin()->RequestDestroyWindow();
 
 	return FReply::Handled();
+}
+
+TSharedRef<SWindow> UE::Private::CreateModalDialogWindow(
+	const FText& InTitle,
+	TSharedRef<SWidget> Contents,
+	ESizingRule Sizing,
+	FVector2D MinDimensions)
+{
+	// clang-format off
+	return SNew(SWindow)
+		.Title(InTitle)
+		.SizingRule(Sizing)
+		.MinWidth(MinDimensions.X)
+		.MinHeight(MinDimensions.Y)
+		.ClientSize(MinDimensions)
+		.SupportsMaximize(false)
+		.SupportsMinimize(false)
+		.HasCloseButton(false)
+		[
+			SNew(SBorder)
+			.Padding(4.f)
+			.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+			[
+				MoveTemp(Contents)
+			]
+		];
+	// clang-format on
+}
+
+void UE::Private::ShowModalDialogWindow(TSharedRef<SWindow> Window)
+{
+	GEditor->EditorAddModalWindow(Window);
 }
 
 #undef LOCTEXT_NAMESPACE 

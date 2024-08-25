@@ -295,9 +295,55 @@ Audio::FModulationParameter USoundModulationParameterVolume::CreateDefaultParame
 	return NewParam;
 }
 
+USoundModulationParameterAdditive::USoundModulationParameterAdditive(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	Settings.ValueNormalized = 0.0f;
+}
+
+bool USoundModulationParameterAdditive::RequiresUnitConversion() const
+{
+	return true;
+}
+
+Audio::FModulationMixFunction USoundModulationParameterAdditive::GetMixFunction() const
+{
+	return [](float& InOutValueA, float InValueB)
+	{
+		InOutValueA += InValueB;
+	};
+}
+
+Audio::FModulationUnitConversionFunction USoundModulationParameterAdditive::GetUnitConversionFunction() const
+{
+	return [InUnitMin = UnitMin, InUnitMax = UnitMax](float& InOutValue)
+	{
+		InOutValue = FMath::Lerp(InUnitMin, InUnitMax, InOutValue);
+	};
+}
+
+Audio::FModulationNormalizedConversionFunction USoundModulationParameterAdditive::GetNormalizedConversionFunction() const
+{
+	return [InUnitMin = UnitMin, InUnitMax = UnitMax](float& InOutValue)
+	{
+		const float Denom = FMath::Max(SMALL_NUMBER, InUnitMax - InUnitMin);
+		InOutValue = (InOutValue - InUnitMin) / Denom;
+	};
+}
+
+float USoundModulationParameterAdditive::GetUnitMax() const
+{
+	return UnitMax;
+}
+
+float USoundModulationParameterAdditive::GetUnitMin() const
+{
+	return UnitMin;
+}
+
 namespace AudioModulation
 {
-	const Audio::FModulationParameter& GetOrRegisterParameter(const USoundModulationParameter* InParameter, const FString& InBreadcrumb)
+	const Audio::FModulationParameter& GetOrRegisterParameter(const USoundModulationParameter* InParameter, const FString& InName, const FString& InClassName)
 	{
 		FName ParamName;
 		if (InParameter)
@@ -305,10 +351,20 @@ namespace AudioModulation
 			ParamName = InParameter->GetFName();
 			if (!Audio::IsModulationParameterRegistered(ParamName))
 			{
+				TStringBuilder<128> Breadcrumb;
+				if (InClassName.IsEmpty())
+				{
+					Breadcrumb.Append(*InName);
+				}
+				else
+				{
+					Breadcrumb.Append(*InClassName).Append(" '").Append(*InName).Append("'");
+				}
+
 				UE_LOG(LogAudioModulation, Display,
 					TEXT("Parameter '%s' not registered.  Registration forced via '%s'."),
 					*ParamName.ToString(),
-					*InBreadcrumb);
+					*Breadcrumb);
 
 				Audio::RegisterModulationParameter(ParamName, InParameter->CreateParameter());
 			}
@@ -320,6 +376,6 @@ namespace AudioModulation
 
 	FSoundModulationPluginParameterAssetProxy::FSoundModulationPluginParameterAssetProxy(USoundModulationParameter* InParameter)
 	{
-		Parameter = GetOrRegisterParameter(InParameter, TEXT("FSoundModulationPluginParameterAssetProxy construction"));
+		Parameter = GetOrRegisterParameter(InParameter, TEXT("FSoundModulationPluginParameterAssetProxy construction"), FString());
 	}
 }

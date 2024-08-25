@@ -295,6 +295,9 @@ tasks.whenTaskAdded { task ->
 	afs_outfile.withWriter { writer ->
 		afs_infile.withReader { reader ->
 			while ((afs_line = reader.readLine()) != null) {
+				if (afs_line.contains('__ExcludeFromAFS="true"')) {
+					continue;
+				}
 				if (afs_line.contains('android.permission.FOREGROUND_SERVICE_DATA_SYNC')) {
 					afs_hasForeServiceDataPerm = true
 				} else if (afs_line.contains('android.permission.FOREGROUND_SERVICE')) {
@@ -365,7 +368,7 @@ import com.epicgames.unreal.RemoteFileManager;
 		</if>
 	</gameActivityImportAdditions>
 
-	<gameActivityClassAdditions>
+	<gameApplicationClassAdditions>
 		<if condition="bEmbedAFS">
 			<true>
 				<insert>
@@ -383,7 +386,21 @@ import com.epicgames.unreal.RemoteFileManager;
 				<insertNewline/>
 				<insert>
 	}
+				</insert>
+			</true>
+			<false>
+	public static boolean AndroidFileServer_Verify(String Token)
+	{
+		return false;
+	}
+			</false>
+		</if>
+	</gameApplicationClassAdditions>
 
+	<gameActivityClassAdditions>
+		<if condition="bEmbedAFS">
+			<true>
+				<insert>
 <![CDATA[
 	public int AndroidThunkJava_AndroidFileServer_IsRunning()
 	{
@@ -544,13 +561,8 @@ import com.epicgames.unreal.RemoteFileManager;
 				</insert>
 			</true>
 			<false>
-	public static boolean AndroidFileServer_Verify(String Token)
-	{
-		return false;
-	}
-
 	public boolean AndroidThunkJava_AndroidFileServer_IsRunning()
-	{
+	{ 
 		return false;
 	}
 

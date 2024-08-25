@@ -2,9 +2,6 @@
 
 #pragma once
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "RenderGraph.h"
-#endif
 #include "RendererInterface.h"
 #include "SceneTexturesConfig.h"
 

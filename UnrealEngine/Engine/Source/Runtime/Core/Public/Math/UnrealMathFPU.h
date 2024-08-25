@@ -93,6 +93,11 @@ typedef VectorRegister4Double VectorRegister4;
 typedef VectorRegister4 VectorRegister;
 typedef VectorRegister4Int VectorRegisterInt;
 
+typedef struct
+{
+	VectorRegister4Float val[4];
+} VectorRegister4x4Float;
+
 
 // Forward declarations
 VectorRegister4Float VectorLoadAligned(const float* Ptr);
@@ -386,6 +391,22 @@ FORCEINLINE VectorRegister4Double VectorLoad(const double* Ptr)
 	return MakeVectorRegisterDouble(Ptr[0], Ptr[1], Ptr[2], Ptr[3]);
 }
 
+/**
+ * Loads 16 floats from unaligned memory into 4 vector registers.
+ *
+ * @param Ptr	Unaligned memory pointer to the 4 floats
+ * @return		VectorRegister4x4Float containing 16 floats
+ */
+FORCEINLINE VectorRegister4x4Float VectorLoad16(const float* Ptr)
+{
+	VectorRegister4x4Float Result;
+	Result.val[0] = VectorLoad(Ptr);
+	Result.val[1] = VectorLoad(Ptr + 4);
+	Result.val[2] = VectorLoad(Ptr + 8);
+	Result.val[3] = VectorLoad(Ptr + 12);
+	return Result;
+}
+
 
 /**
  * Loads 3 FLOATs from unaligned memory and sets W=0.
@@ -540,6 +561,17 @@ FORCEINLINE void VectorStore(const VectorRegister4Float& Vec, float* Dst)
 FORCEINLINE void VectorStore(const VectorRegister4Double& Vec, double* Dst)
 {
 	FMemory::Memcpy(Dst, &(Vec), 4 * sizeof(double));
+}
+
+/**
+ * Stores 4 vectors to memory (aligned or unaligned).
+ *
+ * @param Vec	Vector to store
+ * @param Ptr	Memory pointer
+ */
+FORCEINLINE void VectorStore16(const VectorRegister4x4Float& Vec, float* Dst)
+{
+	FMemory::Memcpy(Dst, &(Vec), 16 * sizeof(float));
 }
 
 

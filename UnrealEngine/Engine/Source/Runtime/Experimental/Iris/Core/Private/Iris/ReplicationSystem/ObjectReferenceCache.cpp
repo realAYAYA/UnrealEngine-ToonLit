@@ -8,6 +8,7 @@
 #include "Iris/ReplicationSystem/ReplicationSystem.h"
 #include "Iris/ReplicationSystem/ReplicationSystemInternal.h"
 #include "Iris/ReplicationSystem/StringTokenStore.h"
+#include "Iris/ReplicationSystem/PendingBatchData.h"
 #include "Iris/Serialization/InternalNetSerializationContext.h"
 #include "Iris/Serialization/NetBitStreamReader.h"
 #include "Iris/Serialization/NetBitStreamUtil.h"
@@ -15,6 +16,7 @@
 #include "Iris/Serialization/NetExportContext.h"
 #include "Iris/Serialization/NetSerializationContext.h"
 #include "Iris/Serialization/ObjectNetSerializer.h"
+#include "Iris/Stats/NetStatsContext.h"
 #include "Misc/CoreMiscDefines.h"
 #include "Misc/PackageName.h"
 #include "Misc/StringBuilder.h"
@@ -119,7 +121,7 @@ bool FObjectReferenceCache::SupportsObjectInternal(const UObject* Object) const
 // $IRIS: $TODO: refactor into utility methods as this is coped from GUIDCache
 bool FObjectReferenceCache::IsDynamicObject(const UObject* Object) const
 {
-	checkSlow(Object != NULL);
+	checkSlow(Object != nullptr);
 	checkSlow(Object->IsSupportedForNetworking());
 
 	// Any non net addressable object is dynamic
@@ -241,42 +243,42 @@ bool FObjectReferenceCache::CreateObjectReferenceInternal(const UObject* Object,
 		if (FCachedNetObjectReference* CachedObjectPtr = ReferenceHandleToCachedReference.Find(RefHandle))
 		{
 			FCachedNetObjectReference& CachedObject = *CachedObjectPtr;
-		if (CachedObject.Object.Get() == Object)
-		{
+			if (CachedObject.Object.Get() == Object)
+			{
 				UE_LOG_REFERENCECACHE(VeryVerbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle Found existing %s for ObjectPath %s Object: %s (0x%p), OuterNetRefHandle: %s"),
 				*CachedObject.NetRefHandle.ToString(), ToCStr(Object->GetPathName()), *GetNameSafe(Object), Object, *CachedObject.OuterNetRefHandle.ToString());
 				OutReference = MakeNetObjectReference(CachedObject);
-			return true;
-		}
-		else
-		{
-				UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle Removed %s from ObjectToNetReferenceHandle due to stale cache. Cached Object (0x%p).  New object %s (0x%p)"),
-					*CachedObject.NetRefHandle.ToString(), CachedObject.ObjectKey, *GetNameSafe(Object), Object);
-
-			ObjectToNetReferenceHandle.Remove(CachedObject.ObjectKey);
-			ObjectToNetReferenceHandle.Remove(Object);
-				RefHandlePtr = nullptr;
-
-			if (RefHandle.IsStatic())
-			{
-					UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle clearing stale cache for static handle %s. Cached Object (0x%p).  New object %s (0x%p)"),
-						*CachedObject.NetRefHandle.ToString(), CachedObject.ObjectKey, *GetNameSafe(Object), Object);
-
-				// Note we only cleanse the object reference
-				// we still keep the cachedObject data around in order to be able to serialize static destruction infos
-				CachedObject.ObjectKey = nullptr;
-				CachedObject.Object = nullptr;
-
+				return true;
 			}
 			else
 			{
+				UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle Removed %s from ObjectToNetReferenceHandle due to stale cache. Cached Object (0x%p).  New object %s (0x%p)"),
+					*CachedObject.NetRefHandle.ToString(), CachedObject.ObjectKey, *GetNameSafe(Object), Object);
+
+				ObjectToNetReferenceHandle.Remove(CachedObject.ObjectKey);
+				ObjectToNetReferenceHandle.Remove(Object);
+				RefHandlePtr = nullptr;
+
+				if (RefHandle.IsStatic())
+				{
+					UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle clearing stale cache for static handle %s. Cached Object (0x%p).  New object %s (0x%p)"),
+						*CachedObject.NetRefHandle.ToString(), CachedObject.ObjectKey, *GetNameSafe(Object), Object);
+
+					// Note we only cleanse the object reference
+					// we still keep the cachedObject data around in order to be able to serialize static destruction infos
+					CachedObject.ObjectKey = nullptr;
+					CachedObject.Object = nullptr;
+
+				}
+				else
+				{
 					UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle removing cache for handle %s. Cached Object (0x%p). New object %s (0x%p)"),
 						*CachedObject.NetRefHandle.ToString(), CachedObject.ObjectKey, *GetNameSafe(Object), Object);
 
-				ReferenceHandleToCachedReference.Remove(RefHandle);
+					ReferenceHandleToCachedReference.Remove(RefHandle);
+				}
 			}
 		}
-	}
 		else
 		{
 			UE_LOG_REFERENCECACHE(Warning, TEXT("ObjectReferenceCache::CreateObjectReferenceInternal removed %s from ObjectToNetReferenceHandle due to mismatch with cache. Object %s (0x%p) "), *RefHandle.ToString(), *GetNameSafe(Object), Object);
@@ -341,7 +343,7 @@ bool FObjectReferenceCache::CreateObjectReferenceInternal(const UObject* Object,
 			constexpr bool bReading = false;
 			// The connection ID isn't used unless reading.
 			RenamePathForPie(UE::Net::InvalidConnectionId, ObjectPath, bReading);
-			OutReference = MakeNetObjectReference(FNetRefHandle(), StringTokenStore->GetOrCreateToken(ObjectPath));	
+			OutReference = MakeNetObjectReference(FNetRefHandle::GetInvalid(), StringTokenStore->GetOrCreateToken(ObjectPath));	
 			return true;
 		}
 	}
@@ -359,6 +361,11 @@ bool FObjectReferenceCache::CreateObjectReferenceInternal(const UObject* Object,
 		constexpr bool bReading = false;
 		// The connection ID isn't used unless reading.
 		RenamePathForPie(UE::Net::InvalidConnectionId, ObjectPath, bReading);
+
+#if WITH_EDITOR
+		ensureMsgf(!ObjectPath.IsEmpty(), TEXT("NetworkRemapPath found %s to be an invalid name for %s. This object will not replicate!"), *Object->GetName(), *GetPathNameSafe(Object));
+#endif
+
 		PathToken = StringTokenStore->GetOrCreateToken(ObjectPath);
 	}
 
@@ -391,7 +398,7 @@ bool FObjectReferenceCache::CreateObjectReferenceInternal(const UObject* Object,
 	}
 #endif
 	
-	UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle Adding %s to ObjectToNetReferenceHandle and Cache for ObjectPath %s, Object (0x%p), OuterNetRefHandle: %s"), 
+	UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::CreateObjectReferenceHandle Adding %s to ObjectToNetReferenceHandle and Cache for ObjectPath %s, Name: %s, Object (0x%p), OuterNetRefHandle: %s"), 
 		*CachedObject.NetRefHandle.ToString(), ToCStr(Object->GetPathName()), *GetNameSafe(Object), Object, *CachedObject.OuterNetRefHandle.ToString());
 
 	// Create reference
@@ -412,11 +419,11 @@ bool FObjectReferenceCache::CreateObjectReferenceInternal(const UObject* Object,
 	return true;
 }
 
-FNetRefHandle FObjectReferenceCache::GetObjectReferenceHandleFromObject(const UObject* Object) const
+FNetRefHandle FObjectReferenceCache::GetObjectReferenceHandleFromObject(const UObject* Object, EGetRefHandleFlags GetRefHandleFlags) const
 {
 	if (Object == nullptr)
 	{
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	// Check if we already know about this object
@@ -429,12 +436,13 @@ FNetRefHandle FObjectReferenceCache::GetObjectReferenceHandleFromObject(const UO
 		{
 			UE_LOG_REFERENCECACHE(Verbose, TEXT("ObjectReferenceCache::GetObjectReferenceHandleFromObject removed %s from ObjectToNetReferenceHandle due to ReferenceHandleToCachedReference not holding the handle. For Object %s (0x%p) "), *Reference->ToString(), *GetNameSafe(Object), Object);
 			const_cast<TMap<const UObject*, FNetRefHandle>&>(ObjectToNetReferenceHandle).Remove(Object);
-			return FNetRefHandle();
+			return FNetRefHandle::GetInvalid();
 		}
 
 		const FCachedNetObjectReference& CachedObject = *CachedObjectPtr;
 
-		const UObject* ExistingObject = CachedObject.Object.Get();
+		const bool bEvenIfGarbage = EnumHasAnyFlags(GetRefHandleFlags, EGetRefHandleFlags::EvenIfGarbage);
+		const UObject* ExistingObject = CachedObject.Object.Get(bEvenIfGarbage);
 		if (ExistingObject == Object)
 		{
 			UE_LOG_REFERENCECACHE(VeryVerbose, TEXT("ObjectReferenceCache::GetObjectReferenceHandleFromObject Found existing %s for Object %s, OuterNetRefHandle: %s"), *CachedObject.NetRefHandle.ToString(), ToCStr(Object->GetPathName()), *CachedObject.OuterNetRefHandle.ToString());
@@ -448,7 +456,7 @@ FNetRefHandle FObjectReferenceCache::GetObjectReferenceHandleFromObject(const UO
 		}
 	}
 
-	return FNetRefHandle();
+	return FNetRefHandle::GetInvalid();
 }
 
 void FObjectReferenceCache::AddRemoteReference(FNetRefHandle RefHandle, const UObject* Object)
@@ -497,7 +505,7 @@ void FObjectReferenceCache::AddRemoteReference(FNetRefHandle RefHandle, const UO
 			CachedObject.ObjectKey = Object;
 			CachedObject.NetRefHandle = RefHandle;
 			CachedObject.RelativePath = FNetToken();
-			CachedObject.OuterNetRefHandle = FNetRefHandle();
+			CachedObject.OuterNetRefHandle = FNetRefHandle::GetInvalid();
 			CachedObject.bIsPackage = false;
 			CachedObject.bNoLoad = false;
 			CachedObject.bIsBroken = false;
@@ -633,6 +641,35 @@ bool FObjectReferenceCache::IsNetRefHandleBroken(FNetRefHandle RefHandle, bool b
 	return CacheObjectPtr ? CacheObjectPtr->bIsBroken : bMustBeRegistered;
 }
 
+bool FObjectReferenceCache::IsNetRefHandlePending(FNetRefHandle NetRefHandle, const FPendingBatches& PendingBatches) const
+{
+	// Check Outer chain
+	while (NetRefHandle.IsValid())
+	{
+		// Need lambda to figure this one out
+		if (PendingBatches.Find(NetRefHandle))
+		{
+			return true;
+		}
+
+		const FCachedNetObjectReference* CacheObjectPtr = ReferenceHandleToCachedReference.Find(NetRefHandle);
+
+		if (!CacheObjectPtr)
+		{
+			return false;
+		}
+
+		if (CacheObjectPtr->bIsPending)
+		{
+			return true;
+		}
+
+		NetRefHandle = CacheObjectPtr->OuterNetRefHandle;
+	}
+
+	return false;
+}
+
 // $IRIS: $TODO: Most of the logic comes from GUIDCache::GetObjectFromNetGUID so we want to keep this in sync
 UObject* FObjectReferenceCache::ResolveObjectReferenceHandleInternal(FNetRefHandle RefHandle, const FNetObjectResolveContext& ResolveContext, bool& bOutMustBeMapped)
 {
@@ -753,6 +790,10 @@ UObject* FObjectReferenceCache::ResolveObjectReferenceHandleInternal(FNetRefHand
 	constexpr bool bReading = true;
 	RenamePathForPie(ResolveContext.ConnectionId, ObjectPath, bReading);
 
+#if WITH_EDITOR
+	ensureMsgf(!ObjectPath.IsEmpty(), TEXT("NetworkRemapPath found %s to be an invalid name. This object will not be binded and replicated!"), ResolvedToken);
+#endif
+
 	const FName ObjectPathName(ObjectPath);
 
 	// See if this object is in memory
@@ -799,7 +840,7 @@ UObject* FObjectReferenceCache::ResolveObjectReferenceHandleInternal(FNetRefHand
 				}
 
 				// There is nothing else to do except wait on the delegate to tell us this package is done loading
-				return NULL;
+				return nullptr;
 			}
 			else
 			{
@@ -1073,7 +1114,7 @@ FNetObjectReference FObjectReferenceCache::GetReplicatedOuter(const FNetObjectRe
 	}
 
 	const FCachedNetObjectReference* CachedObject = ReferenceHandleToCachedReference.Find(Reference.GetRefHandle());
-	FNetRefHandle OuterNetRefHandle = CachedObject ? CachedObject->OuterNetRefHandle : FNetRefHandle();
+	FNetRefHandle OuterNetRefHandle = CachedObject ? CachedObject->OuterNetRefHandle : FNetRefHandle::GetInvalid();
 
 	while (OuterNetRefHandle.IsValid())
 	{
@@ -1083,7 +1124,7 @@ FNetObjectReference FObjectReferenceCache::GetReplicatedOuter(const FNetObjectRe
 		}
 
 		CachedObject = ReferenceHandleToCachedReference.Find(OuterNetRefHandle);
-		OuterNetRefHandle = CachedObject ? CachedObject->OuterNetRefHandle : FNetRefHandle();
+		OuterNetRefHandle = CachedObject ? CachedObject->OuterNetRefHandle : FNetRefHandle::GetInvalid();
 	};
 
 	return FNetObjectReference();
@@ -1103,7 +1144,7 @@ FNetRefHandle FObjectReferenceCache::GetDynamicRoot(const FNetRefHandle Handle) 
 	}
 	else
 	{
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 }
 
@@ -1208,7 +1249,7 @@ void FObjectReferenceCache::WriteFullReferenceInternal(FNetSerializationContext&
 	{
 		UE_CLOG(RefHandle.IsValid(), LogIris, Log, TEXT("ObjectReferenceCache::WriteFullReference Trying to write Stale handle, %s"), *RefHandle.ToString());
 
-		WriteNetRefHandle(Context, FNetRefHandle());
+		WriteNetRefHandle(Context, FNetRefHandle::GetInvalid());
 		return;			
 	}
 
@@ -1257,7 +1298,7 @@ void FObjectReferenceCache::ReadFullReferenceInternal(FNetSerializationContext& 
 		return;
 	}
 
-	UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle(), *Context.GetBitStreamReader(), Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
+	UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle::GetInvalid(), *Context.GetBitStreamReader(), Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
 
 	const FNetRefHandle NetRefHandle = ReadNetRefHandle(Context);
 
@@ -1402,7 +1443,7 @@ void FObjectReferenceCache::ReadFullReference(FNetSerializationContext& Context,
 
 	FNetObjectReference ObjectRef;
 
-	UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle(), *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
+	UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle::GetInvalid(), *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
 	ReadFullReferenceInternal(Context, ObjectRef, 0U);
 
 	UE_NET_TRACE_SET_SCOPE_OBJECTID(ReferenceScope, ObjectRef.GetRefHandle());
@@ -1468,7 +1509,7 @@ void FObjectReferenceCache::WriteReference(FNetSerializationContext& Context, FN
 	{
 		UE_CLOG(RefHandle.IsValid(), LogIris, Verbose, TEXT("ObjectReferenceCache::WriteReference Trying to write Stale handle, %s"), *RefHandle.ToString());
 
-		WriteNetRefHandle(Context, FNetRefHandle());
+		WriteNetRefHandle(Context, FNetRefHandle::GetInvalid());
 
 		return;
 	}
@@ -1484,7 +1525,7 @@ void FObjectReferenceCache::WriteReference(FNetSerializationContext& Context, FN
 void FObjectReferenceCache::ReadReference(FNetSerializationContext& Context, FNetObjectReference& OutRef)
 {
 	UE_NET_TRACE_SCOPE(NetObjectReference, *Context.GetBitStreamReader(), Context.GetTraceCollector(), ENetTraceVerbosity::Trace);
-	UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle(), *Context.GetBitStreamReader(), Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
+	UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle::GetInvalid(), *Context.GetBitStreamReader(), Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
 
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
@@ -1551,7 +1592,7 @@ void FObjectReferenceCache::AddPendingExports(FNetSerializationContext& Context,
 	}
 }
 
-FObjectReferenceCache::EWriteExportsResult FObjectReferenceCache::WritePendingExports(FNetSerializationContext& Context)
+FObjectReferenceCache::EWriteExportsResult FObjectReferenceCache::WritePendingExports(FNetSerializationContext& Context, FInternalNetRefIndex ObjectIndex)
 {	
 	FNetBitStreamWriter& Writer = *Context.GetBitStreamWriter();
 
@@ -1571,6 +1612,10 @@ FObjectReferenceCache::EWriteExportsResult FObjectReferenceCache::WritePendingEx
 	{
 		FForceInlineExportScope ForceInlineExportScope(Context.GetInternalContext());
 
+#if UE_NET_IRIS_CSV_STATS
+		uint32 CountExports = 0;
+#endif
+
 		for (const FNetObjectReference& Reference : ExportsView)
 		{
 			const bool bIsClientAssigned = Reference.PathToken.IsValid();
@@ -1579,15 +1624,21 @@ FObjectReferenceCache::EWriteExportsResult FObjectReferenceCache::WritePendingEx
 			{
 				Writer.WriteBool(true);
 				WriteFullReference(Context, Reference);
+
+#if UE_NET_IRIS_CSV_STATS
+				++CountExports;
+#endif
 			}
 		}
+
+		UE_NET_IRIS_STATS_ADD_COUNT_FOR_OBJECT(Context.GetNetStatsContext(), WriteExports, ObjectIndex, CountExports);
 
 		// Write stop bit
 		Writer.WriteBool(false);
 	}
 
 	// We also write any must be mapped exports
-	WriteMustBeMappedExports(Context, ExportsView);
+	WriteMustBeMappedExports(Context, ObjectIndex, ExportsView);
 
 	// Reset state of pending exports
 	ExportContext->ClearPendingExports();
@@ -1632,7 +1683,7 @@ bool FObjectReferenceCache::ReadExports(FNetSerializationContext& Context, TArra
 	return !Context.HasErrorOrOverflow();
 }
 
-bool FObjectReferenceCache::WriteMustBeMappedExports(FNetSerializationContext& Context, TArrayView<const FNetObjectReference> ExportsView) const
+bool FObjectReferenceCache::WriteMustBeMappedExports(FNetSerializationContext& Context, FInternalNetRefIndex ObjectIndex,TArrayView<const FNetObjectReference> ExportsView) const
 {
 	FNetBitStreamWriter& Writer = *Context.GetBitStreamWriter();
 	FNetExportContext* ExportContext = Context.GetExportContext();
@@ -1640,6 +1691,10 @@ bool FObjectReferenceCache::WriteMustBeMappedExports(FNetSerializationContext& C
 	if (IsAuthority() && ShouldAsyncLoad() && ExportContext)
 	{
 		UE_NET_TRACE_SCOPE(MustBeMappedExports, Writer, Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
+
+#if UE_NET_IRIS_CSV_STATS
+		uint32 CountExports = 0;
+#endif
 
 		for (const FNetObjectReference& Reference : ExportsView)
 		{
@@ -1650,8 +1705,14 @@ bool FObjectReferenceCache::WriteMustBeMappedExports(FNetSerializationContext& C
 				UE_NET_TRACE_OBJECT_SCOPE(Handle, *Context.GetBitStreamWriter(), Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
 				Writer.WriteBool(true);
 				WriteNetRefHandle(Context, Handle);
+
+#if UE_NET_IRIS_CSV_STATS
+				++CountExports;
+#endif
 			}
 		}
+
+		UE_NET_IRIS_STATS_ADD_COUNT_FOR_OBJECT(Context.GetNetStatsContext(), WriteExports, ObjectIndex, CountExports);
 	}
 
 	// Write stop bit
@@ -1669,7 +1730,7 @@ void FObjectReferenceCache::ReadMustBeMappedExports(FNetSerializationContext& Co
 
 	while (bHasExportsToRead && !Context.HasErrorOrOverflow())
 	{
-		UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle(), *Context.GetBitStreamReader(), Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
+		UE_NET_TRACE_NAMED_OBJECT_SCOPE(ReferenceScope, FNetRefHandle::GetInvalid(), *Context.GetBitStreamReader(), Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
 		const FNetRefHandle MustBeMappedHandle = ReadNetRefHandle(Context);
 		UE_NET_TRACE_SET_SCOPE_OBJECTID(ReferenceScope, MustBeMappedHandle);	
 
@@ -1680,6 +1741,34 @@ void FObjectReferenceCache::ReadMustBeMappedExports(FNetSerializationContext& Co
 			MustBeMappedExports->Add(MustBeMappedHandle);
 		}
 	}
+}
+
+FString FObjectReferenceCache::DescribeObjectReference(const FNetObjectReference Ref, const FNetObjectResolveContext& ResolveContext)
+{
+	FString FullPath;
+
+	GenerateFullPath_r(Ref.GetRefHandle(), ResolveContext, FullPath);
+
+	// Only client assigned FNetObjectReferences has a path stored directly
+	if (Ref.PathToken.IsValid())
+	{
+		// This path is only used by Client to Server references
+		const TCHAR* ResolvedToken = StringTokenStore->ResolveRemoteToken(Ref.PathToken, *ResolveContext.RemoteNetTokenStoreState);
+		if (ResolvedToken)
+		{
+			if (!FullPath.IsEmpty())
+			{
+				FullPath += TEXT(".");
+			}
+
+			FString ObjectPath(ResolvedToken);
+			constexpr bool bReading = true;
+			RenamePathForPie(ResolveContext.ConnectionId, ObjectPath, bReading);
+			FullPath += FString::Printf(TEXT("%s"), ResolvedToken);
+		}
+	}
+
+	return FullPath;
 }
 
 FString FObjectReferenceCache::FullPath(FNetRefHandle RefHandle, const FNetObjectResolveContext& ResolveContext) const
@@ -1799,7 +1888,12 @@ void FObjectReferenceCache::StartAsyncLoadingPackage(FCachedNetObjectReference& 
 
 	//DelinquentAsyncLoads.MaxConcurrentAsyncLoads = FMath::Max<uint32>(DelinquentAsyncLoads.MaxConcurrentAsyncLoads, PendingAsyncLoadRequests.Num());
 
-	LoadPackageAsync(PackagePath.ToString(), FLoadPackageAsyncDelegate::CreateRaw(this, &FObjectReferenceCache::AsyncPackageCallback));
+	LoadPackageAsync(PackagePath.ToString(), FLoadPackageAsyncDelegate::CreateWeakLambda(ReplicationSystem, 
+		[this](const FName& PackageName, UPackage* Package, EAsyncLoadingResult::Type Result)
+		{
+			AsyncPackageCallback(PackageName, Package, Result);
+		}
+	));
 }
 
 void FObjectReferenceCache::AsyncPackageCallback(const FName& PackageName, UPackage* Package, EAsyncLoadingResult::Type Result)

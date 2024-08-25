@@ -31,7 +31,6 @@ namespace Chaos
 
 
 	using FJointConstraintDirtyFlags = TDirtyFlags<EJointConstraintFlags>;
-	typedef TVector<FTransform, 2> FTransformPair;
 
 	class FJointConstraint : public FConstraintBase
 	{

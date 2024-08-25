@@ -5,6 +5,7 @@
 #include "HttpServerHttpVersion.h"
 #include "HttpServerConstantsPrivate.h"
 #include "Sockets.h"
+#include "SocketSubsystem.h"
 
 DEFINE_LOG_CATEGORY(LogHttpConnectionResponseWriteContext);
 
@@ -79,8 +80,17 @@ bool FHttpConnectionResponseWriteContext::WriteBytes(const uint8* Bytes, int32 B
 	bool bWriteSuccess = Socket->Send(Bytes, BytesLen, OutBytesWritten);
 	if (!bWriteSuccess)
 	{
-		UE_LOG(LogHttpConnectionResponseWriteContext, Warning,
-			TEXT("WriteBytes sent %d/%d bytes"), OutBytesWritten, BytesLen);
+		ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+		const ESocketErrors Err = SocketSubsystem->GetLastErrorCode();
+		if (Err == SE_EWOULDBLOCK || Err == SE_TRY_AGAIN)
+		{
+			bWriteSuccess = true;
+			OutBytesWritten = 0;
+		}
+		else
+		{
+			UE_LOG(LogHttpConnectionResponseWriteContext, Warning, TEXT("WriteBytes sent %d/%d bytes"), OutBytesWritten, BytesLen);
+		}
 	}
 
 	if (OutBytesWritten > 0)

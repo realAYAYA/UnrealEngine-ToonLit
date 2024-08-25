@@ -15,11 +15,13 @@
 #include "ShaderParameterMacros.h"
 #include "ShaderParameters.h"
 
-struct FFrozenShaderPrintData;
-class FSceneView;
-struct FShaderPrintData;
 class FRDGBuilder;
+class FSceneView;
 class FViewInfo;
+struct FFrozenShaderPrintData;
+struct FGlobalShaderPermutationParameters;
+struct FShaderCompilerEnvironment;
+struct FShaderPrintData;
 
 namespace ShaderPrint
 {
@@ -30,23 +32,28 @@ namespace ShaderPrint
 		SHADER_PARAMETER(FVector3f, TranslatedWorldOffset)
 		SHADER_PARAMETER(FVector2f, FontSize)
 		SHADER_PARAMETER(FVector2f, FontSpacing)
-		SHADER_PARAMETER(uint32, MaxValueCount)
+		SHADER_PARAMETER(uint32, MaxCharacterCount)
 		SHADER_PARAMETER(uint32, MaxSymbolCount)
 		SHADER_PARAMETER(uint32, MaxStateCount)
 		SHADER_PARAMETER(uint32, MaxLineCount)
 		SHADER_PARAMETER(uint32, MaxTriangleCount)
+		SHADER_PARAMETER(uint32, IsDrawLocked)
 	END_GLOBAL_SHADER_PARAMETER_STRUCT()
 
 	// ShaderPrint parameter struct declaration
 	BEGIN_SHADER_PARAMETER_STRUCT(FShaderParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FShaderPrintCommonParameters, Common)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint2>, ShaderPrint_StateBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<ShaderPrintItem>, ShaderPrint_RWEntryBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, ShaderPrint_StateBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, ShaderPrint_RWEntryBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 	// Does the platform support the ShaderPrint system?
 	// Use this to create debug shader permutations only for supported platforms.
 	RENDERER_API bool IsSupported(EShaderPlatform Platform);
+
+	// Set any flags or defines needed when using ShaderPrint
+	RENDERER_API void ModifyCompilationEnvironment(const EShaderPlatform Platform, FShaderCompilerEnvironment& OutEnvironment);
+	RENDERER_API void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 
 	// Have we enabled the ShaderPrint system?
 	// Note that even when the ShaderPrint system is enabled, it may be disabled on any view due to platform support or view flags.
@@ -74,13 +81,27 @@ namespace ShaderPrint
 	RENDERER_API bool IsDefaultViewEnabled();
 
 	/**
-	 * Call to ensure enough space for some number of characters/lines, is added cumulatively each frame, to make 
+	 * Call to ensure enough space for some number of characters, is added cumulatively each frame, to make 
 	 * it possible for several systems to request a certain number independently.
 	 * Is used to grow the max element count for subsequent frames (as the allocation happens early in the frame).
-	 * @param The number of elements requested, an element corresponds to a line, so a cube, for example, needs 12 elements.
+	 * @param The number of characters requested.
 	 */
 	RENDERER_API void RequestSpaceForCharacters(uint32 MaxElementCount);
+
+	/**
+	* Call to ensure enough space for some number of lines segments, is added cumulatively each frame, to make 
+	* it possible for several systems to request a certain number independently.
+	* Is used to grow the max element count for subsequent frames (as the allocation happens early in the frame).
+	* @param The number of line segments requested.
+	*/
 	RENDERER_API void RequestSpaceForLines(uint32 MaxElementCount);
+
+	/**
+	* Call to ensure enough space for some number of solid triangles, is added cumulatively each frame, to make 
+	* it possible for several systems to request a certain number independently.
+	* Is used to grow the max element count for subsequent frames (as the allocation happens early in the frame).
+	* @param The number of triangles requested.
+	*/
 	RENDERER_API void RequestSpaceForTriangles(uint32 MaxElementCount);
 
 	/** Structure containing setup for shader print capturing. */
@@ -108,13 +129,15 @@ namespace ShaderPrint
 		/** Font spacing in pixels (not including font size). */
 		FIntPoint FontSpacing = 1;
 		/** Initial size of character buffer. Will also be increased by RequestSpaceForCharacters(). */
-		uint32 MaxValueCount = 0;
+		uint32 MaxCharacterCount = 0;
 		/** Initial size of widget buffer. */
 		uint32 MaxStateCount = 0;
 		/** Initial size of line buffer. Will also be increased by RequestSpaceForLines(). */
 		uint32 MaxLineCount = 0;
 		/** Initial size of triangle buffer. Will also be increased by RequestSpaceForLines(). */
 		uint32 MaxTriangleCount = 0;
+		// Whether current draw is locked or not. Useful to stop rendering new stuff on top of the history. */
+		bool bIsDrawLocked = false;
 	};
 
 	/** Fill the ShaderPrintCommonParameters uniform buffer structure for our setup. */

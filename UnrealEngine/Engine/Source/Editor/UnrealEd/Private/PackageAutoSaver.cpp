@@ -32,6 +32,8 @@
 #include "IVREditorModule.h"
 #include "LevelEditorViewport.h"
 #include "AssetCompilingManager.h"
+#include "AssetDefinition.h"
+#include "AssetDefinitionRegistry.h"
 
 namespace PackageAutoSaverJson
 {
@@ -43,11 +45,12 @@ namespace PackageAutoSaverJson
 	typedef TJsonReader<CharType> FJsonReader;
 	typedef TJsonReaderFactory<CharType> FJsonReaderFactory;
 
-	static const FString TagRestoreEnabled	= TEXT("RestoreEnabled");
-	static const FString TagPackages		= TEXT("Packages");
-	static const FString TagPackagePathName = TEXT("PackagePathName");
-	static const FString TagAutoSavePath	= TEXT("AutoSavePath");
-	static const FString RestoreFilename	= TEXT("PackageRestoreData.json");
+	static const FString TagRestoreEnabled	 = TEXT("RestoreEnabled");
+	static const FString TagPackages		 = TEXT("Packages");
+	static const FString TagPackagePathName  = TEXT("PackagePathName");
+	static const FString TagPackageAssetName = TEXT("PackageAssetName");
+	static const FString TagAutoSavePath	 = TEXT("AutoSavePath");
+	static const FString RestoreFilename	 = TEXT("PackageRestoreData.json");
 
 	/**
 	 * @param bEnsurePath True to ensure that the directory for the restore file exists
@@ -61,7 +64,7 @@ namespace PackageAutoSaverJson
 	 *
 	 * @return The packages that have auto-saves that they can be restored from
 	 */
-	TMap<FString, FString> LoadRestoreFile();
+	TMap<FString, TPair<FString, FString>> LoadRestoreFile();
 
 	/**
 	 * Save the file on disk that's used to restore auto-saved packages in the event of a crash
@@ -550,7 +553,7 @@ void FPackageAutoSaver::UpdateDirtyListsForPackage(UPackage* Pkg)
 		}
 
 		// Add package into the appropriate list (map or content)
-		if (UWorld::IsWorldOrExternalActorPackage(Pkg))
+		if (UWorld::IsWorldOrWorldExternalPackage(Pkg))
 		{
 			DirtyMapsForAutoSave.Add(Pkg);
 		}
@@ -876,9 +879,9 @@ FString PackageAutoSaverJson::GetRestoreFilename(const bool bEnsurePath)
 	return Filename;
 }
 
-TMap<FString, FString> PackageAutoSaverJson::LoadRestoreFile()
+TMap<FString, TPair<FString, FString>> PackageAutoSaverJson::LoadRestoreFile()
 {
-	TMap<FString, FString> PackagesThatCanBeRestored;
+	TMap<FString, TPair<FString, FString>> PackagesThatCanBeRestored;
 
 	const FString Filename = GetRestoreFilename(false);
 	FArchive* const FileAr = IFileManager::Get().CreateFileReader(*Filename);
@@ -909,7 +912,11 @@ TMap<FString, FString> PackageAutoSaverJson::LoadRestoreFile()
 
 		const FString PackagePathName = EntryObject->GetStringField(TagPackagePathName);
 		const FString AutoSavePath = EntryObject->GetStringField(TagAutoSavePath);
-		PackagesThatCanBeRestored.Add(PackagePathName, AutoSavePath);
+
+		FString PackageAssetName;
+		EntryObject->TryGetStringField(TagPackageAssetName, PackageAssetName);
+
+		PackagesThatCanBeRestored.Add(PackagePathName, TPair<FString, FString>(PackageAssetName, AutoSavePath));
 	}
 
 	return PackagesThatCanBeRestored;
@@ -938,9 +945,22 @@ void PackageAutoSaverJson::SaveRestoreFile(const bool bRestoreEnabled, const TMa
 			if(PackagePtr && !AutoSavePath.IsEmpty())
 			{
 				const FString& PackagePathName = PackagePtr->GetPathName();
-
 				TSharedPtr<FJsonObject> EntryObject = MakeShareable(new FJsonObject);
 				EntryObject->SetStringField(TagPackagePathName, PackagePathName);
+
+				if (UObject* PackageAsset = PackagePtr->FindAssetInPackage())
+				{
+					if (UAssetDefinitionRegistry* AssetDefinitionRegistry = UAssetDefinitionRegistry::Get())
+					{
+						const UAssetDefinition* AssetDefinition = AssetDefinitionRegistry->GetAssetDefinitionForClass(PackageAsset->GetClass());
+						if (AssetDefinition)
+						{
+							const FString PackagAssetName = AssetDefinition->GetObjectDisplayNameText(PackageAsset).ToString();
+							EntryObject->SetStringField(TagPackageAssetName, PackagAssetName);
+						}
+					}					
+				}				
+				
 				EntryObject->SetStringField(TagAutoSavePath, AutoSavePath);
 
 				TSharedPtr<FJsonValue> EntryValue = MakeShareable(new FJsonValueObject(EntryObject));

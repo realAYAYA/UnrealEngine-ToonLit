@@ -33,8 +33,10 @@ UMLDeformerComponent::UMLDeformerComponent(const FObjectInitializer& ObjectIniti
 
 void UMLDeformerComponent::Init()
 {
+	UnbindDelegates();
+
 	// If there is no deformer asset linked, release what we currently have.
-	if (DeformerAsset == nullptr)
+	if (!DeformerAsset)
 	{
 		ReleaseModelInstance();
 		return;
@@ -53,7 +55,7 @@ void UMLDeformerComponent::Init()
 	}
 	else
 	{
-		ModelInstance = nullptr;
+		ReleaseModelInstance();
 		UE_LOG(LogMLDeformer, Warning, TEXT("ML Deformer component on '%s' has a deformer asset that has no ML model setup."), *GetOuter()->GetName());
 	}
 }
@@ -77,13 +79,13 @@ void UMLDeformerComponent::SetupComponent(UMLDeformerAsset* InDeformerAsset, USk
 		AddTickPrerequisiteComponent(InSkelMeshComponent);
 	}
 
+	UnbindDelegates();
+
 	DeformerAsset = InDeformerAsset;
 	SkelMeshComponent = InSkelMeshComponent;
 
 	// Initialize and make sure we have a model instance.
-	UnbindDelegates();
 	Init();
-	BindDelegates();
 
 	// Verify that a mesh deformer has been setup when the used ML model requires one.
 	if (!bSuppressMeshDeformerLogWarnings && DeformerAsset && ModelInstance && ModelInstance->GetModel() && SkelMeshComponent)
@@ -112,13 +114,17 @@ void UMLDeformerComponent::SetupComponent(UMLDeformerAsset* InDeformerAsset, USk
 void UMLDeformerComponent::BindDelegates()
 {
 	UMLDeformerModel* Model = DeformerAsset ? DeformerAsset->GetModel() : nullptr;
-	if (Model)
+	if (Model && !ReinitModelInstanceDelegateHandle.IsValid())
 	{
-		ReinitModelInstanceDelegateHandle = Model->GetReinitModelInstanceDelegate().AddLambda(
+		ReinitModelInstanceDelegateHandle = Model->GetReinitModelInstanceDelegate().AddLambda( 
 			[this]()
 			{
 				Init();
 			});
+	}
+	else
+	{
+		ReinitModelInstanceDelegateHandle = FDelegateHandle();
 	}
 }
 
@@ -128,20 +134,20 @@ void UMLDeformerComponent::UnbindDelegates()
 	if (Model && ReinitModelInstanceDelegateHandle.IsValid())
 	{
 		Model->GetReinitModelInstanceDelegate().Remove(ReinitModelInstanceDelegateHandle);	
+		ReinitModelInstanceDelegateHandle = FDelegateHandle();
 	}
-
-	ReinitModelInstanceDelegateHandle = FDelegateHandle();
 }
 
 void UMLDeformerComponent::BeginDestroy()
 {
 	UnbindDelegates();
+	ReleaseModelInstance();
 	Super::BeginDestroy();
 }
 
 void UMLDeformerComponent::ReleaseModelInstance()
 {
-	if (ModelInstance)
+	if (ModelInstance && IsValid(ModelInstance))
 	{
 		ModelInstance->ConditionalBeginDestroy(); // Force destruction immediately instead of waiting for the next GC.
 		ModelInstance = nullptr;
@@ -151,17 +157,17 @@ void UMLDeformerComponent::ReleaseModelInstance()
 USkeletalMeshComponent* UMLDeformerComponent::FindSkeletalMeshComponent(const UMLDeformerAsset* const Asset) const
 {
 	USkeletalMeshComponent* ResultingComponent = nullptr;
-	if (Asset != nullptr)
+	if (Asset)
 	{
 		// First search for a skeletal mesh component that uses the same skeletal mesh as the ML Deformer asset was trained on.
 		const UMLDeformerModel* Model = Asset ? Asset->GetModel() : nullptr;
-		if (Model && Model->GetSkeletalMesh())
+		if (Model && Model->GetInputInfo() && Model->GetInputInfo()->GetSkeletalMesh().IsValid())
 		{
 			const FSoftObjectPath& ModelSkeletalMesh = Model->GetInputInfo()->GetSkeletalMesh();
 
 			// Get a list of all skeletal mesh components on the actor.
 			TArray<USkeletalMeshComponent*> Components;
-			AActor* Actor = Cast<AActor>(GetOuter());
+			const AActor* Actor = Cast<AActor>(GetOuter());
 			if (Actor)
 			{
 				Actor->GetComponents<USkeletalMeshComponent>(Components);
@@ -185,8 +191,8 @@ USkeletalMeshComponent* UMLDeformerComponent::FindSkeletalMeshComponent(const UM
 
 void UMLDeformerComponent::UpdateSkeletalMeshComponent()
 {
-	SkelMeshComponent = FindSkeletalMeshComponent(DeformerAsset.Get());
-	SetupComponent(DeformerAsset, SkelMeshComponent);
+	USkeletalMeshComponent* Component = FindSkeletalMeshComponent(DeformerAsset.Get());
+	SetupComponent(DeformerAsset, Component);
 }
 
 void UMLDeformerComponent::Activate(bool bReset)
@@ -202,12 +208,19 @@ void UMLDeformerComponent::Deactivate()
 	#endif
 
 	UnbindDelegates();
-	if (ModelInstance)
-	{
-		ModelInstance->ConditionalBeginDestroy();
-		ModelInstance = nullptr;
-	}
+	ReleaseModelInstance();
 	Super::Deactivate();
+}
+
+
+float UMLDeformerComponent::GetFinalMLDeformerWeight() const
+{
+	float FinalWeight = Weight;
+	if (GMLDeformerOverrideWeight >= 0.0f)
+	{
+		FinalWeight = FMath::Min(GMLDeformerOverrideWeight, 1.0f);
+	}
+	return FinalWeight;
 }
 
 void UMLDeformerComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -220,15 +233,13 @@ void UMLDeformerComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 	if (TickType != ELevelTick::LEVELTICK_PauseTick)
 	{
 		if (ModelInstance &&
+			ModelInstance->GetModel() &&
 			SkelMeshComponent && 
-			SkelMeshComponent->GetPredictedLODLevel() == 0)
+			SkelMeshComponent->GetPredictedLODLevel() < ModelInstance->GetModel()->GetMaxNumLODs())
 		{
 			TRACE_CPUPROFILER_EVENT_SCOPE(UMLDeformerComponent::TickComponent)
-			float ApplyWeight = Weight;
-			if (GMLDeformerOverrideWeight >= 0.0f)
-			{
-				ApplyWeight = FMath::Min(GMLDeformerOverrideWeight, 1.0f);
-			}
+			
+			const float ApplyWeight = GetFinalMLDeformerWeight();
 			ModelInstance->Tick(DeltaTime, ApplyWeight);
 
 			#if WITH_EDITOR
@@ -255,11 +266,19 @@ void UMLDeformerComponent::SetWeightInternal(const float NormalizedWeightValue)
 
 void UMLDeformerComponent::SetDeformerAssetInternal(UMLDeformerAsset* const InDeformerAsset)
 { 
-	DeformerAsset = InDeformerAsset;
-	UpdateSkeletalMeshComponent();
+	USkeletalMeshComponent* SkelMeshComp = FindSkeletalMeshComponent(InDeformerAsset);
+	SetupComponent(InDeformerAsset, SkelMeshComp);
 }
 
 #if WITH_EDITOR
+	void UMLDeformerComponent::PreEditChange(FProperty* Property)
+	{
+		if (Property->GetFName() == GET_MEMBER_NAME_CHECKED(UMLDeformerComponent, DeformerAsset))
+		{
+			UnbindDelegates();
+		}
+	}
+
 	void UMLDeformerComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 	{
 		const FProperty* Property = PropertyChangedEvent.Property;

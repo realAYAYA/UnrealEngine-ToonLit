@@ -152,7 +152,7 @@ void GetTexCoordAndIncrement(in float2 TextureCoordinate, out int NumSteps, out 
 	const float MaxSteps = 128;
 
 	//View Local->World transform
-	float3x3 ViewMatrix = TraceViewMatrix; // GetTraceViewMatrix();
+	float3x3 ViewMatrix = (float3x3)TraceViewMatrix; // GetTraceViewMatrix();
 
 	//Allow FOV to be specified in Degrees via settings
 	const float FOV = 90;

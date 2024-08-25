@@ -125,7 +125,7 @@ public:
 
 		SetupIcons();
 #if WITH_SNDFILE_IO
-		if (!Audio::InitSoundFileIOManager())
+		if (!Audio::SoundFileUtils::InitSoundFileIOManager())
 		{
 			UE_LOG(LogAudioEditor, Display, TEXT("LibSoundFile failed to load. Importing audio will not work correctly."));
 		}
@@ -136,7 +136,7 @@ public:
 	{
 		LLM_SCOPE(ELLMTag::AudioMisc);
 #if WITH_SNDFILE_IO
-		Audio::ShutdownSoundFileIOManager();
+		Audio::SoundFileUtils::ShutdownSoundFileIOManager();
 #endif // WITH_SNDFILE_IO
 
 		SoundClassExtensibility.Reset();

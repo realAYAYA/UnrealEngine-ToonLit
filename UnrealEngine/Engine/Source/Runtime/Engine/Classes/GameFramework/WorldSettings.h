@@ -12,6 +12,7 @@
 #include "GameFramework/Info.h"
 #include "Sound/AudioVolume.h"
 #include "UObject/ConstructorHelpers.h"
+#include "WorldGridPreviewer.h"
 #include "WorldPartition/WorldPartitionEditorPerProjectUserSettings.h"
 #include "WorldSettings.generated.h"
 
@@ -457,7 +458,7 @@ struct FBroadphaseSettings
 /**
  * Actor containing all script accessible world properties.
  */
-UCLASS(config=game, hidecategories=(Actor, Advanced, Display, Events, Object, Attachment, Info, Input, Blueprint, Layers, Tags, Replication), showcategories=(Rendering, WorldPartition, "Input|MouseInput", "Input|TouchInput"), notplaceable, MinimalAPI)
+UCLASS(config=game, hidecategories=(Actor, Advanced, Display, Events, Object, Attachment, Info, Input, Blueprint, Layers, Tags, Replication, LevelInstance), showcategories=(Rendering, WorldPartition, "Input|MouseInput", "Input|TouchInput"), notplaceable, MinimalAPI)
 class AWorldSettings : public AInfo, public IInterface_AssetUserData
 {
 	GENERATED_UCLASS_BODY()
@@ -624,6 +625,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = Foliage)
 	uint32 InstancedFoliageGridSize;
 
+	UPROPERTY(EditAnywhere, Category = Foliage, Transient, SkipSerialization)
+	bool bShowInstancedFoliageGrid;
+
 	UPROPERTY(EditAnywhere, Category = Landscape)
 	uint32 LandscapeSplineMeshesGridSize;
 
@@ -642,6 +646,10 @@ public:
 	/** Default size of the grid for placed elements from the editor */
 	UPROPERTY()
 	uint32 DefaultPlacementGridSize;
+#endif
+
+#if WITH_EDITOR
+	mutable TUniquePtr<FWorldGridPreviewer> InstancedFoliageGridGridPreviewer;
 #endif
 
 	/**

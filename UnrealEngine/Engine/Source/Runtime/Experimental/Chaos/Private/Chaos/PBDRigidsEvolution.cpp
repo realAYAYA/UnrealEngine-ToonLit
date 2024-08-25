@@ -6,6 +6,7 @@
 #include "Chaos/PBDRigidsEvolutionGBF.h"
 #include "Chaos/ParticleHandle.h"
 #include "Chaos/SpatialAccelerationCollection.h"
+#include "Chaos/PhysicsMaterialUtilities.h"
 
 CSV_DECLARE_CATEGORY_EXTERN(ChaosPhysicsTimers);
 
@@ -23,6 +24,12 @@ FAutoConsoleVariableRef CVarChaosNumContactIterationsOverride(TEXT("p.ChaosNumCo
 
 namespace Chaos
 {
+	namespace CVars
+	{
+		extern bool bChaos_Solver_TestMode_Enabled;
+		extern int32 Chaos_Solver_TestMode_Step;
+	}
+
 	CHAOS_API int32 FixBadAccelerationStructureRemoval = 1;
 	FAutoConsoleVariableRef CVarFixBadAccelerationStructureRemoval(TEXT("p.FixBadAccelerationStructureRemoval"), FixBadAccelerationStructureRemoval, TEXT(""));
 
@@ -210,6 +217,8 @@ namespace Chaos
 		, bIsSingleThreaded(InIsSingleThreaded)
 		, bCanStartAsyncTasks(true)
 		, LatestExternalTimestampConsumed_Internal(-1)
+		, bAccelerationStructureTaskStarted(nullptr)
+		, bAccelerationStructureTaskSignalKill(nullptr)
 		, SpatialCollectionFactory(new FDefaultCollectionFactory())
 	{
 		Particles.GetParticleHandles().AddArray(&PhysicsMaterials);
@@ -249,7 +258,9 @@ namespace Chaos
 		, FAccelerationStructure* InExternalAccelerationStructure
 		, bool InForceFullBuild
 		, bool InIsSingleThreaded
-		, bool InNeedsReset)
+		, bool InNeedsReset
+		, std::atomic<bool>** bOutStarted
+		, std::atomic<bool>** bOutKillTask)
 		: SpatialCollectionFactory(InSpatialCollectionFactory)
 		, SpatialAccelerationCache(InSpatialAccelerationCache)
 		, InternalStructure(InInternalAccelerationStructure)
@@ -257,8 +268,11 @@ namespace Chaos
 		, IsForceFullBuild(InForceFullBuild)
 		, bIsSingleThreaded(InIsSingleThreaded)
 		, bNeedsReset(InNeedsReset)
+		, bStarted(false)
+		, bKillTask(false)
 	{
-
+		*bOutStarted = &bStarted;
+		*bOutKillTask = &bKillTask;
 	}
 
 	TStatId FPBDRigidsEvolutionBase::FChaosAccelerationStructureTask::GetStatId()
@@ -504,6 +518,12 @@ namespace Chaos
 
 	void FPBDRigidsEvolutionBase::FChaosAccelerationStructureTask::DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 	{
+		bStarted = true;
+		if (bKillTask) // We can kill the task before it has really started
+		{
+			return;
+		}		
+
 		LLM_SCOPE(ELLMTag::ChaosAcceleration);
 
 #if !WITH_EDITOR
@@ -651,11 +671,11 @@ namespace Chaos
 				{
 					FGeometryParticle* UpdateParticle = SpatialData.AccelerationHandle.GetExternalGeometryParticle_ExternalThread();
 					FAABB3 WorldBounds;
-					const bool bHasBounds = UpdateParticle->Geometry() && UpdateParticle->Geometry()->HasBoundingBox();
+					const bool bHasBounds = UpdateParticle->GetGeometry() && UpdateParticle->GetGeometry()->HasBoundingBox();
 					if(bHasBounds)
 					{
 						TRigidTransform<FReal,3> WorldTM(UpdateParticle->X(),UpdateParticle->R());
-						WorldBounds = UpdateParticle->Geometry()->BoundingBox().TransformedAABB(WorldTM);
+						WorldBounds = UpdateParticle->GetGeometry()->BoundingBox().TransformedAABB(WorldTM);
 					}
 					const bool bExisted = Acceleration.UpdateElementIn(UpdateParticle,WorldBounds,bHasBounds,SpatialData.SpatialIdx);
 					if (SpatialData.Operation == EPendingSpatialDataOperation::Add)
@@ -808,7 +828,7 @@ namespace Chaos
 			if (bCanStartAsyncTasks)
 			{
 				// we run the task for both starting a new accel structure as well as for the time-slicing
-				AccelerationStructureTaskComplete = TGraphTask<FChaosAccelerationStructureTask>::CreateTask().ConstructAndDispatchWhenReady(*SpatialCollectionFactory, SpatialAccelerationCache, AsyncInternalAcceleration, AsyncExternalAcceleration, ForceFullBuild, bIsSingleThreaded, bNeedsReset);
+				AccelerationStructureTaskComplete = TGraphTask<FChaosAccelerationStructureTask>::CreateTask().ConstructAndDispatchWhenReady(*SpatialCollectionFactory, SpatialAccelerationCache, AsyncInternalAcceleration, AsyncExternalAcceleration, ForceFullBuild, bIsSingleThreaded, bNeedsReset, &bAccelerationStructureTaskStarted, &bAccelerationStructureTaskSignalKill);
 			}
 		}
 		else
@@ -1030,6 +1050,7 @@ namespace Chaos
 		const EObjectStateType InitialState = Particle->ObjectState();
 		const bool bWasDynamic = (InitialState == EObjectStateType::Dynamic) || (InitialState == EObjectStateType::Sleeping);
 		const bool bIsDynamic = (ObjectState == EObjectStateType::Dynamic) || (ObjectState == EObjectStateType::Sleeping);
+		const bool bIsSleeping = (ObjectState == EObjectStateType::Sleeping);
 
 		Particle->SetObjectStateLowLevel(ObjectState);
 
@@ -1059,6 +1080,20 @@ namespace Chaos
 			{
 				Particle->SetSleepCounter(0);
 			}
+
+			// If all particles in an island are explicitly put to sleep, the island and all its
+			// constraints need to sleep at the start of the next tick. This is because we don't
+			// detect collisions on sleeping particles, and we destroy collisions that are 
+			// awake and were not updated this tick.
+			if (bIsSleeping)
+			{
+				IslandManager.SleepParticle(Particle);
+			}
+
+			// If we are not kinematic, the MovingKinematic flag should be cleared
+			// If we are kinematic and are (or become) moving, the flag will be updated in ApplyKinematicTargets
+			// Either way, we can reset the flag here
+			Particle->ClearIsMovingKinematic();
 		}
 
 		// If we are now dynamic and enabled, we need to be in the graph if not already there. We may not be
@@ -1075,13 +1110,36 @@ namespace Chaos
 		}
 	}
 
+	void FPBDRigidsEvolutionBase::WakeParticle(FPBDRigidParticleHandle* Particle)
+	{
+		if (Particle->IsSleeping())
+		{
+			// Set to dynamic - this will also wake the particle's island
+			SetParticleObjectState(Particle, EObjectStateType::Dynamic);
+		}
+
+		// Explicitly waking a particle should reset any sleep state, even if we are already awake.
+		// E.g., this will reset the sleep counter to prevent the particle from immediately sleeping again.
+		// NOTE: This also allows us to "wake" a kinematic which will wake all islands that the kinematic is in.
+		IslandManager.WakeParticleIslands(Particle);
+	}
+
 	void FPBDRigidsEvolutionBase::SetParticleSleepType(FPBDRigidParticleHandle* Particle, ESleepType InSleepType)
 	{
 		//ESleepType InitialSleepType = Particle->SleepType();
 		const EObjectStateType InitialState = Particle->ObjectState();
 		Particle->SetSleepType(InSleepType);
 		const EObjectStateType ObjectState = Particle->ObjectState();
-		Particles.SetDynamicParticleSOA(Particle);
+		
+		if (FPBDRigidClusteredParticleHandle* ClusteredParticle = Particle->CastToClustered())
+		{
+			Particles.SetClusteredParticleSOA(ClusteredParticle);
+		}
+		else
+		{
+			Particles.SetDynamicParticleSOA(Particle);
+		}
+
 		if (InitialState != ObjectState)
 		{
 			if(ObjectState != EObjectStateType::Dynamic)
@@ -1113,7 +1171,7 @@ namespace Chaos
 		// Record removal for event generation
 		FRemovalData& Removal = MAllRemovals.AddDefaulted_GetRef();
 		Removal.Proxy = Particle->PhysicsProxy();
-		Removal.Location = Particle->X();
+		Removal.Location = Particle->GetX();
 		
 		if (Chaos::FPBDRigidParticleHandle* RigidParticle = Particle->CastToRigidParticle())
 		{
@@ -1124,13 +1182,129 @@ namespace Chaos
 			Removal.Mass = 0.0;
 		}
 		
-		if (Particle->Geometry() && Particle->Geometry()->HasBoundingBox())
+		if (Particle->GetGeometry() && Particle->GetGeometry()->HasBoundingBox())
 		{
-			Removal.BoundingBox = Particle->Geometry()->BoundingBox();
+			Removal.BoundingBox = Particle->GetGeometry()->BoundingBox();
 		}
 		
-		GetIslandManager().RemoveParticle(Particle);
 		DisableParticle(Particle);
 	}
+
+	const FChaosPhysicsMaterial* FPBDRigidsEvolutionBase::GetFirstPhysicsMaterial(const FGeometryParticleHandle* Particle) const
+	{
+		return Private::GetFirstPhysicsMaterial(Particle, &PhysicsMaterials, &PerParticlePhysicsMaterials, &SolverPhysicsMaterials);
+	}
+
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
+	void FPBDRigidsEvolutionBase::TestModeStep()
+	{
+		if (CVars::Chaos_Solver_TestMode_Step > 0)
+		{
+			TestModeData.Reset();
+			--CVars::Chaos_Solver_TestMode_Step;
+		}
+	}
+
+	void FPBDRigidsEvolutionBase::TestModeParticleDisabled(FGeometryParticleHandle* Particle)
+	{
+		if (FPBDRigidParticleHandle* Rigid = Particle->CastToRigidParticle())
+		{
+			TestModeData.Remove(Rigid);
+		}
+	}
+
+	void FPBDRigidsEvolutionBase::TestModeSaveParticles()
+	{
+		if (!CVars::bChaos_Solver_TestMode_Enabled)
+		{
+			return;
+		}
+
+		for (auto& Rigid : Particles.GetNonDisabledDynamicView())
+		{
+			TestModeSaveParticle(Rigid.Handle());
+		}
+	}
+
+	void FPBDRigidsEvolutionBase::TestModeSaveParticle(FGeometryParticleHandle* Particle)
+	{
+		if (!CVars::bChaos_Solver_TestMode_Enabled)
+		{
+			return;
+		}
+
+		if (FPBDRigidParticleHandle* Rigid = Particle->CastToRigidParticle())
+		{
+			FTestModeParticleData* Data = TestModeData.Find(Rigid);
+			if (Data == nullptr)
+			{
+				TestModeData.Add(Rigid);
+				TestModeUpdateSavedParticle(Particle);
+			}
+		}
+	}
+
+	void FPBDRigidsEvolutionBase::TestModeUpdateSavedParticle(FGeometryParticleHandle* Particle)
+	{
+		if (!CVars::bChaos_Solver_TestMode_Enabled)
+		{
+			return;
+		}
+
+		if (FPBDRigidParticleHandle* Rigid = Particle->CastToRigidParticle())
+		{
+			FTestModeParticleData* Data = TestModeData.Find(Rigid);
+			if (Data != nullptr)
+			{
+				Data->X = Rigid->GetX();
+				Data->P = Rigid->GetP();
+				Data->R = Rigid->GetR();
+				Data->Q = Rigid->GetQ();
+				Data->V = Rigid->GetV();
+				Data->W = Rigid->GetW();
+			}
+		}
+	}
+
+	void FPBDRigidsEvolutionBase::TestModeRestoreParticles()
+	{
+		if (!CVars::bChaos_Solver_TestMode_Enabled)
+		{
+			return;
+		}
+
+		for (auto& Rigid : Particles.GetNonDisabledDynamicView())
+		{
+			// If this is the first time we have seen this particle, save its data, otherwise restore it from the cache
+			FTestModeParticleData* Data = TestModeData.Find(Rigid.Handle());
+			if (Data != nullptr)
+			{
+				TestModeRestoreParticle(Rigid.Handle());
+			}
+		}
+	}
+
+	void FPBDRigidsEvolutionBase::TestModeRestoreParticle(FGeometryParticleHandle* Particle)
+	{
+		if (!CVars::bChaos_Solver_TestMode_Enabled)
+		{
+			return;
+		}
+
+		if (FPBDRigidParticleHandle* Rigid = Particle->CastToRigidParticle())
+		{
+			FTestModeParticleData* Data = TestModeData.Find(Rigid);
+			if (Data != nullptr)
+			{
+				Rigid->SetX(Data->X);
+				Rigid->SetP(Data->P);
+				Rigid->SetR(Data->R);
+				Rigid->SetQ(Data->Q);
+				Rigid->SetV(Data->V);
+				Rigid->SetW(Data->W);
+			}
+		}
+	}
+#endif
 
 }

@@ -9,6 +9,9 @@
 #include "Math/Vector.h"
 #include "Math/Vector4.h"
 #include "Misc/LargeWorldCoordinates.h"
+#include "Math/DoubleFloat.h"
+
+static constexpr double UE_LWC_RENDER_TILE_SIZE = 2097152.0;
 
 template <typename TScalar>
 struct TLargeWorldRenderScalar
@@ -17,8 +20,11 @@ private:
 	using VectorType = UE::Math::TVector<TScalar>;
 
 public:
-	// This should become inline at some point, but keeping it in cpp file for now to make iteration faster when experimenting with tile size
-	CORE_API static TScalar GetTileSize();
+	FORCEINLINE static TScalar GetTileSize()
+	{
+		return static_cast<TScalar>(UE_LWC_RENDER_TILE_SIZE);
+	}
+
 	CORE_API static FVector3f GetTileFor(FVector InPosition);
 
 	static TScalar MakeTile(double InValue)

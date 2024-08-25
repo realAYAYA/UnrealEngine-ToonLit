@@ -32,6 +32,8 @@ public:
 	{}
 
 	FName Name;
+	// An alternate name for search purposes, such as Divide and '/'
+	TOptional<FName> AlternateSearchName;
 	FText Category;
 	FText FriendlyName;
 	FText CompactName;

@@ -12,20 +12,20 @@ namespace PerfSummaries
 {
 	class FPSChartSummary : Summary
 	{
-		public FPSChartSummary(XElement element, string baseXmlDirectory)
+		public FPSChartSummary(XElement element, XmlVariableMappings vars, string baseXmlDirectory)
 		{
-			ReadStatsFromXML(element);
-			fps = Convert.ToInt32(element.Attribute("fps").Value);
-			hitchThreshold = (float)Convert.ToDouble(element.Attribute("hitchThreshold").Value, System.Globalization.CultureInfo.InvariantCulture);
-			bUseEngineHitchMetric = element.GetSafeAttibute<bool>("useEngineHitchMetric", false);
+			ReadStatsFromXML(element, vars);
+			fps = element.GetRequiredAttribute<int>(vars, "fps");
+			hitchThreshold = (float)element.GetRequiredAttribute<double>(vars, "hitchThreshold");
+			bUseEngineHitchMetric = element.GetSafeAttribute<bool>(vars, "useEngineHitchMetric", false);
 			if (bUseEngineHitchMetric)
 			{
-				engineHitchToNonHitchRatio = element.GetSafeAttibute<float>("engineHitchToNonHitchRatio", 1.5f);
-				engineMinTimeBetweenHitchesMs = element.GetSafeAttibute<float>("engineMinTimeBetweenHitchesMs", 200.0f);
+				engineHitchToNonHitchRatio = element.GetSafeAttribute<float>(vars, "engineHitchToNonHitchRatio", 1.5f);
+				engineMinTimeBetweenHitchesMs = element.GetSafeAttribute<float>(vars, "engineMinTimeBetweenHitchesMs", 200.0f);
 			}
 
-			bIgnoreHitchTimePercent = element.GetSafeAttibute<bool>("ignoreHitchTimePercent", false);
-			bIgnoreMVP = element.GetSafeAttibute<bool>("ignoreMVP", false);
+			bIgnoreHitchTimePercent = element.GetSafeAttribute<bool>(vars, "ignoreHitchTimePercent", false);
+			bIgnoreMVP = element.GetSafeAttribute<bool>(vars, "ignoreMVP", false);
 		}
 
 		public FPSChartSummary() { }
@@ -157,8 +157,30 @@ namespace PerfSummaries
 			public bool isAverageValue;
 		};
 
-		public override void WriteSummaryData(System.IO.StreamWriter htmlFile, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
+		private ColourThresholdList ComputeFrameTimeColorThresholdsFromMVP( int fps )
 		{
+			ColourThresholdList mvpColorThresholdList = GetStatColourThresholdList("MVP"+ fps.ToString());
+			ColourThresholdList colorThresholdListOut = null;
+			if (mvpColorThresholdList != null && mvpColorThresholdList.Count == 4)
+			{
+				colorThresholdListOut = new ColourThresholdList();
+				double idealFrameTime = 1000.0 / (double)fps;
+				for (int i = 0; i < 4; i++)
+				{
+					// MVP = (1/idealFrameTime - 1/avgFrameTime) * idealFrameTime
+					// avgFrameTime = idealFrameTime / (1 - MVP)
+					ThresholdInfo mvpThreshold = mvpColorThresholdList.Thresholds[i];
+					double frameTimeThreshold = idealFrameTime / (1.0 - mvpThreshold.value / 100.0);
+					colorThresholdListOut.Thresholds.Add(new ThresholdInfo(frameTimeThreshold, mvpThreshold.colour));
+				}
+			}
+			return colorThresholdListOut;
+		}
+
+		public override HtmlSection WriteSummaryData(bool bWriteHtml, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
+		{
+			HtmlSection htmlSection = null;
+
 			System.IO.StreamWriter statsCsvFile = null;
 			if (bWriteSummaryCsv)
 			{
@@ -205,7 +227,6 @@ namespace PerfSummaries
 					}
 				}
 
-				float value = 0.0f;
 				string ValueType = " Avg";
 				bool bIsAvg = false;
 				if (!csvStats.Stats.ContainsKey(baseStatName.ToLower()))
@@ -215,6 +236,7 @@ namespace PerfSummaries
 
 				bool bUnstripped = statAttributes.Contains("unstripped");
 				StatSamples stat = bUnstripped ? csvStatsUnstripped.Stats[baseStatName.ToLower()] : csvStats.Stats[baseStatName.ToLower()];
+				float value;
 				if (statAttributes.Contains("min"))
 				{
 					value = stat.ComputeMinValue();
@@ -236,7 +258,15 @@ namespace PerfSummaries
 				{
 					detailStr = "all frames";
 				}
-				Columns.Add(new ColumnInfo(baseStatName + ValueType, value, GetStatColourThresholdList(statName), detailStr, bIsAvg));
+
+				ColourThresholdList colorThresholdList = GetStatColourThresholdList(statName);
+
+				// If the frametime color thresholds are not specified then compute them based on MVP
+				if (!bIgnoreMVP && colorThresholdList == null && baseStatName.ToLower() == "frametime" && fps > 0)
+				{
+					colorThresholdList = ComputeFrameTimeColorThresholdsFromMVP(fps);
+				}
+				Columns.Add(new ColumnInfo(baseStatName + ValueType, value, colorThresholdList, detailStr, bIsAvg));
 			}
 
 			// Output summary table row data
@@ -270,8 +300,9 @@ namespace PerfSummaries
 			}
 
 			// Output HTML
-			if (htmlFile != null)
+			if (bWriteHtml)
 			{
+				htmlSection = new HtmlSection("FPSChart", bStartCollapsed);
 				string HeaderRow = "";
 				string ValueRow = "";
 				HeaderRow += "<th>Section Name</th>";
@@ -292,10 +323,9 @@ namespace PerfSummaries
 					HeaderRow += "<th>" + TableUtil.FormatStatName(columnName) + "</th>";
 					ValueRow += "<td bgcolor=" + column.Color + ">" + column.Value.ToString("0.00") + "</td>";
 				}
-				htmlFile.WriteLine("  <h2>FPSChart</h2>");
-				htmlFile.WriteLine("<table border='0' style='width:400'>");
-				htmlFile.WriteLine("  <tr>" + HeaderRow + "</tr>");
-				htmlFile.WriteLine("  <tr>" + ValueRow + "</tr>");
+				htmlSection.WriteLine("<table border='0' style='width:400'>");
+				htmlSection.WriteLine("  <tr>" + HeaderRow + "</tr>");
+				htmlSection.WriteLine("  <tr>" + ValueRow + "</tr>");
 			}
 
 			// Output CSV
@@ -414,7 +444,7 @@ namespace PerfSummaries
 					}
 
 					// Output HTML
-					if (htmlFile != null)
+					if (htmlSection != null)
 					{
 						string ValueRow = "";
 						ValueRow += "<td>" + CapRange.name + "</td>";
@@ -422,7 +452,7 @@ namespace PerfSummaries
 						{
 							ValueRow += "<td bgcolor=" + column.Color + ">" + column.Value.ToString("0.00") + "</td>";
 						}
-						htmlFile.WriteLine("  <tr>" + ValueRow + "</tr>");
+						htmlSection.WriteLine("  <tr>" + ValueRow + "</tr>");
 					}
 
 					// Output CSV
@@ -446,16 +476,17 @@ namespace PerfSummaries
 				}
 			}
 
-			if (htmlFile != null)
+			if (htmlSection != null)
 			{
-				htmlFile.WriteLine("</table>");
-				htmlFile.WriteLine("<p style='font-size:8'>Engine hitch metric: " + (bUseEngineHitchMetric ? "enabled" : "disabled") + "</p>");
+				htmlSection.WriteLine("</table>");
+				htmlSection.WriteLine("<p style='font-size:8'>Engine hitch metric: " + (bUseEngineHitchMetric ? "enabled" : "disabled") + "</p>");
 			}
 
 			if (statsCsvFile != null)
 			{
 				statsCsvFile.Close();
 			}
+			return htmlSection;
 		}
 		public override void PostInit(ReportTypeInfo reportTypeInfo, CsvStats csvStats)
 		{

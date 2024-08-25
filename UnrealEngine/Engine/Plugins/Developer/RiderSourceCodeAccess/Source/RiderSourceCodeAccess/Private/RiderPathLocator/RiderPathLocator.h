@@ -142,6 +142,7 @@ class FRiderPathLocator
 public:
 	// Platform specific implementation
 	static TOptional<FInstallInfo> GetInstallInfoFromRiderPath(const FString& Path, FInstallInfo::EInstallType InstallType);
+	static bool DirectoryExistsAndNonEmpty(const FString& Path);
 	static TSet<FInstallInfo> CollectAllPaths();
 private:
 	static void ParseProductInfoJson(FInstallInfo& Info, const FString& ProductInfoJsonPath);

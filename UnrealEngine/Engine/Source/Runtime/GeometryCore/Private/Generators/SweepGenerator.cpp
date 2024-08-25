@@ -109,6 +109,8 @@ FMeshShapeGenerator& FProfileSweepGenerator::Generate()
 		Reset();
 		return *this;
 	}
+	
+	TRACE_CPUPROFILER_EVENT_SCOPE(ProfileSweepGenerator_Generate);
 
 	/*
 	The generated vertices are organized and connected as follows:

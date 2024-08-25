@@ -62,14 +62,14 @@ private:
 		FDynamicMesh3& InMesh,
 		float InStiffness,
 		const AnimationCore::FBoneWeightsSettings& InSettings
-		);
+		) const;
 
 
 	void CreateSkinWeights_GeodesicVoxel(
 		FDynamicMesh3& InMesh,
 		float InStiffness,
 		const AnimationCore::FBoneWeightsSettings& InSettings
-		);
+		) const; 
 };
 
 

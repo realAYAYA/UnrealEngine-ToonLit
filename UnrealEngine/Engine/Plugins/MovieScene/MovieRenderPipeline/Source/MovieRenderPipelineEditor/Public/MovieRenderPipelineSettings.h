@@ -8,6 +8,7 @@
 #include "Engine/EngineTypes.h"
 #include "MovieRenderPipelineSettings.generated.h"
 
+class UMovieGraphConfig;
 class UMoviePipelineExecutorBase;
 class UMoviePipeline;
 class UMoviePipelinePrimaryConfig;
@@ -22,6 +23,14 @@ public:
 	GENERATED_BODY()
 	
 	MOVIERENDERPIPELINEEDITOR_API UMovieRenderPipelineProjectSettings();
+	
+	/**
+	* This allows you to implement your own Pipeline to handle timing and rendering of a movie. Changing
+	* this will allow you to re-use the existing UI/Executors while providing your own logic for producing
+	* a single render.
+	*/
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, NoClear, meta = (MetaClass = "/Script/MovieRenderPipelineCore.MoviePipelineBase"), Category="Movie Render Pipeline", DisplayName = "Default Configuration Pipeline")
+	FSoftClassPath DefaultPipeline;
 
 	/**
 	* Which directory should we try to save presets in by default?
@@ -61,14 +70,10 @@ public:
 	*/
 	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, meta = (MetaClass = "/Script/MovieRenderPipelineCore.MoviePipelineExecutorJob"), Category="Movie Render Pipeline")
 	FSoftClassPath DefaultExecutorJob;
-	
-	/**
-	* This allows you to implement your own Pipeline to handle timing and rendering of a movie. Changing
-	* this will allow you to re-use the existing UI/Executors while providing your own logic for producing
-	* a single render.
-	*/
-	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, meta = (MetaClass = "/Script/MovieRenderPipelineCore.MoviePipelineBase"), Category="Movie Render Pipeline")
-	FSoftClassPath DefaultPipeline;
+
+	/** The graph that newly-created graph assets will be based off of. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category="Movie Render Pipeline")
+	TSoftObjectPtr<UMovieGraphConfig> DefaultGraph;
 
 	/**
 	* The settings specified here will automatically be added to a Movie Pipeline Primary Configuration when using the UI. 
@@ -80,4 +85,8 @@ public:
 	* add settings by hand for each job you create. */
 	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Movie Render Pipeline", meta = (MetaClass = "/Script/MovieRenderPipelineCore.MoviePipelineSetting"), DisplayName = "Default Job Settings Classes")
 	TArray<FSoftClassPath> DefaultClasses;
+
+public:
+	/** Gets the path to the default graph asset supplied by MRQ. */
+	static FSoftObjectPath GetDefaultGraphPath();
 };

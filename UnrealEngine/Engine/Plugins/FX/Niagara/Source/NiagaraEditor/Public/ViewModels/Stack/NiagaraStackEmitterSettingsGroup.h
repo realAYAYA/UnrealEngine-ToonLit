@@ -73,14 +73,12 @@ public:
 	NIAGARAEDITOR_API virtual void OnEditButtonClicked() override;
 	NIAGARAEDITOR_API virtual TOptional<FText> GetEditModeButtonText() const override;
 	NIAGARAEDITOR_API virtual TOptional<FText> GetEditModeButtonTooltip() const override;
-	NIAGARAEDITOR_API virtual EVisibility IsEditButtonVisible() const override;
 
 protected:
-
 	NIAGARAEDITOR_API virtual void RefreshChildrenInternal(const TArray<UNiagaraStackEntry*>& CurrentChildren, TArray<UNiagaraStackEntry*>& NewChildren, TArray<FStackIssue>& NewIssues) override;
+	
 	virtual void ToggleShowAdvancedInternal() override;
-private:
-	NIAGARAEDITOR_API void SelectSummaryNodesFromEmitterEditorDataRootNodes(TArray<TSharedRef<IDetailTreeNode>> Source, TArray<TSharedRef<IDetailTreeNode>>* Selected);
+
 private:
 	FVersionedNiagaraEmitterWeakPtr Emitter;
 
@@ -99,37 +97,14 @@ public:
 	virtual EIconMode GetSupportedIconMode() const override { return EIconMode::Text; }
 	NIAGARAEDITOR_API virtual  FText GetIconText() const override;
 	virtual bool GetCanExpandInOverview() const override { return false; }
-	virtual bool GetShouldShowInStack() const override { return false; }
 
 protected:
-	NIAGARAEDITOR_API void RefreshChildrenInternal(const TArray<UNiagaraStackEntry*>& CurrentChildren, TArray<UNiagaraStackEntry*>& NewChildren, TArray<FStackIssue>& NewIssues) override;
-
+	virtual bool GetShouldShowInStack() const override { return false; }
+	virtual bool GetShouldShowInOverview() const override { return true; }
+	
+	NIAGARAEDITOR_API virtual void RefreshChildrenInternal(const TArray<UNiagaraStackEntry*>& CurrentChildren, TArray<UNiagaraStackEntry*>& NewChildren, TArray<FStackIssue>& NewIssues) override;
 
 private:
 	UPROPERTY()
 	TObjectPtr<UNiagaraStackEmitterSummaryItem> SummaryItem;
-};
-
-
-UCLASS(MinimalAPI)
-class UNiagaraStackSummaryViewCollapseButton : public UNiagaraStackEntry
-{
-	GENERATED_BODY()
-
-public:
-	NIAGARAEDITOR_API void Initialize(FRequiredEntryData InRequiredEntryData);
-
-	//~ UNiagaraStackEntry interface
-	NIAGARAEDITOR_API virtual FText GetDisplayName() const override;
-	NIAGARAEDITOR_API virtual EStackRowStyle GetStackRowStyle() const override;
-	NIAGARAEDITOR_API virtual FText GetTooltipText() const override;
-
-	virtual bool GetCanExpandInOverview() const override { return true; }
-	NIAGARAEDITOR_API virtual bool GetIsEnabled() const override;
-	virtual void SetIsEnabled(bool bEnabled) {}
-	virtual bool SupportsChangeEnabled() const { return false; }
-	
-protected:
-	NIAGARAEDITOR_API virtual void RefreshChildrenInternal(const TArray<UNiagaraStackEntry*>& CurrentChildren, TArray<UNiagaraStackEntry*>& NewChildren, TArray<FStackIssue>& NewIssues) override;
-
 };

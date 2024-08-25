@@ -16,6 +16,14 @@ void UCommonWidgetGroupBase::AddWidget(UWidget* InWidget)
 	}
 }
 
+void UCommonWidgetGroupBase::AddWidgets(const TArray<UWidget*>& Widgets)
+{
+	for (UWidget* Widget : Widgets)
+	{
+		AddWidget(Widget);
+	}
+}
+
 void UCommonWidgetGroupBase::RemoveWidget(UWidget* InWidget)
 {
 	if (ensure(InWidget) && InWidget->IsA(GetWidgetType()))

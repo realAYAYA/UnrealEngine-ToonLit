@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Modules/ModuleInterface.h"
+#include "Logging/LogMacros.h"
 
 
 // This will use unreal's malloc instead of system malloc for mutable memory operations
@@ -14,6 +15,9 @@
 
 // This slows down mutable, but gathers some data about memory usage for debug
 #define USE_STAT_MUTABLE_MEMORY					0
+
+
+MUTABLERUNTIME_API DECLARE_LOG_CATEGORY_EXTERN(LogMutableCore, Log, All);
 
 
 class MUTABLERUNTIME_API FMutableRuntimeModule : public IModuleInterface

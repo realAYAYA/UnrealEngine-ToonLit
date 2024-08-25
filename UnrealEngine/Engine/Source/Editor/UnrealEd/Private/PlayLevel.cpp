@@ -211,7 +211,7 @@ private:
 			FMessageLog(NAME_CategoryPIE).SuppressLoggingToOutputLog(true).Error(Line.Message);
 			break;
 		case ELogVerbosity::Fatal:
-			checkf(false, *Line.Message.ToString());
+			checkf(false, TEXT("%s"), *Line.Message.ToString());
 			break;
 		}
 	}
@@ -511,9 +511,9 @@ void UEditorEngine::EndPlayMap()
 		Arguments.Add(TEXT("Object"), FText::FromString(Object->GetFullName()));
 
 		// We cannot safely recover from this.
-		if (UObjectBaseUtility::IsPendingKillEnabled())
+		if (UObjectBaseUtility::IsGarbageEliminationEnabled())
 		{
-			checkf(false, *FText::Format(
+			checkf(false, TEXT("%s"), *FText::Format(
 				LOCTEXT("PIEObjectStillReferenced", "Object '{Object}' from PIE level still referenced. Shortest path from root: {Path}"), Arguments).ToString());
 		}
 		else
@@ -528,7 +528,7 @@ void UEditorEngine::EndPlayMap()
 	}
 
 	// Try and recover by renaming leaked packages 
-	if (!UObjectBaseUtility::IsPendingKillEnabled())
+	if (!UObjectBaseUtility::IsGarbageEliminationEnabled())
 	{
 		for (UPackage* ObjectPackage : LeakedPackages)
 		{
@@ -667,6 +667,8 @@ void UEditorEngine::EndPlayMap()
 		}
 	}
 	GEditor->GetSelectedActors()->EndBatchSelectOperation(true);
+	
+	FEditorDelegates::ShutdownPIE.Broadcast(bIsSimulatingInEditor);
 }
 
 void UEditorEngine::CleanupPIEOnlineSessions(TArray<FName> OnlineIdentifiers)
@@ -1142,6 +1144,8 @@ void UEditorEngine::StartQueuedPlaySessionRequestImpl()
 		return;
 	}
 
+	FEditorDelegates::StartPIE.Broadcast(PlayInEditorSessionInfo->OriginalRequestParams.WorldType == EPlaySessionWorldType::SimulateInEditor);
+
 	// We'll branch primarily based on the Session Destination, because it affects which settings we apply and how.
 	switch (PlaySessionRequest->SessionDestination)
 	{
@@ -1252,7 +1256,7 @@ int32 FInternalPlayLevelUtils::ResolveDirtyBlueprints(const bool bPromptForCompi
 	}
 
 	bool bRunCompilation = bAutoCompile;
-	if (bPromptForCompile)
+	if (bPromptForCompile && (InNeedOfRecompile.Num() > 0))
 	{
 		FFormatNamedArguments Args;
 		Args.Add(TEXT("DirtyBlueprints"), FText::FromString(PromptDirtyList));
@@ -2303,9 +2307,7 @@ UWorld* UEditorEngine::CreatePIEWorldByDuplication(FWorldContext &WorldContext, 
 	PlayWorldPackage->SetPackageFlags(PKG_PlayInEditor | PKG_NewlyCreated);
 	PlayWorldPackage->SetPIEInstanceID(WorldContext.PIEInstance);
 	PlayWorldPackage->SetLoadedPath(InPackage->GetLoadedPath());
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	PlayWorldPackage->SetGuid( InPackage->GetGuid() );
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	PlayWorldPackage->SetSavedHash( InPackage->GetSavedHash() );
 	PlayWorldPackage->MarkAsFullyLoaded();
 
 	// check(GPlayInEditorID == -1 || GPlayInEditorID == WorldContext.PIEInstance);
@@ -3263,7 +3265,10 @@ TSharedRef<SPIEViewport> UEditorEngine::GeneratePIEViewportWindow(const FRequest
 	
 	// VR Preview overrides window location.
 	const bool bVRPreview = InWorldContext.bIsPrimaryPIEInstance && InSessionParams.SessionPreviewTypeOverride.Get(EPlaySessionPreviewType::NoPreview) == EPlaySessionPreviewType::VRPreview;
-	bool bUseOSWndBorder = bVRPreview;
+
+	// Because we could switch primary PIE on the fly, we should make all PIE windows with the same UI style
+	bool bUseOSWndBorder = InSessionParams.SessionPreviewTypeOverride.Get(EPlaySessionPreviewType::NoPreview) == EPlaySessionPreviewType::VRPreview;
+
 	if (bVRPreview)
 	{
 		bCenterNewWindowOverride = true;

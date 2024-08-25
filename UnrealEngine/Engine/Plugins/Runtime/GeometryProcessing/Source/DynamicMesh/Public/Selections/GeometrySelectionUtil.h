@@ -244,6 +244,10 @@ DYNAMICMESH_API bool ConvertSelection(
  * since any FGeometrySelection can be represented as an overlay element selection because
  * any overlay element can be represented as a (Triangle,Vertex) pair.
  *
+ * If TriangleVertexSelectionIncidentToEdgeSelection is not null and MeshSelection is an Edge Selection it will
+ * be set to a Vertex selection with Triangle Topology corresponding to the vertices touched by the edge selection. This
+ * is useful when users expect an edge selection to behave similarly to the incident vertex selection.
+ *
  * @note it is not necessarily the case that all vertices of triangles in TrianglesOut will be in VerticesOut.
  * @return false if the MeshSelection topology type is not Triangle and true otherwise
  */
@@ -251,7 +255,48 @@ DYNAMICMESH_API bool ConvertTriangleSelectionToOverlaySelection(
 	const UE::Geometry::FDynamicMesh3& Mesh,
 	const FGeometrySelection& MeshSelection,
 	TSet<int>& TrianglesOut,
+	TSet<int>& VerticesOut,
+	FGeometrySelection* TriangleVertexSelectionIncidentToEdgeSelection = nullptr);
+
+/**
+ * Convert the given MeshSelection to a list of Triangles and Vertices into the Mesh,
+ * which can be used to represent a selection of overlay elements. This is always possible
+ * since any FGeometrySelection can be represented as an overlay element selection because
+ * any overlay element can be represented as a (Triangle,Vertex) pair.
+ * 
+ * For Polygroup Faces, all triangles in the face are included.
+ * For Polygroup Edges, all triangles in any group adjacent to the edge are included.
+ * For Polygroup Corners, all triangles in any group touching the corner are included.
+ * See ConvertPolygroupSelectionToIncidentOverlaySelection for a similar function which only includes triangles
+ * immediately incident to the polygroup element
+ * 
+ * @return false if the MeshSelection topology type is not Polygroup and true otherwise
+ */
+DYNAMICMESH_API bool ConvertPolygroupSelectionToOverlaySelection(
+	const UE::Geometry::FDynamicMesh3& Mesh,
+	const FPolygroupSet& GroupSet,
+	const FGeometrySelection& MeshSelection,
+	TSet<int>& TrianglesOut,
 	TSet<int>& VerticesOut);
+
+/**
+ * Like ConvertPolygroupSelectionToOverlaySelection but only includes overlay elements that are immediately incident to
+ * Polygroup Vertices/Edges.
+ *
+ * If TriangleVertexSelectionIncidentToEdgeOrVertexSelection is not null and MeshSelection is an Edge or Vertex
+ * selection it will be set to a Vertex selection with Triangle Topology corresponding to the vertices touched by the
+ * edge selection. This is useful when users expect an edge selection to behave similarly to the incident vertex
+ * selection.
+ *
+ * @return false if the MeshSelection topology type is not Polygroup and true otherwise
+ */
+DYNAMICMESH_API bool ConvertPolygroupSelectionToIncidentOverlaySelection(
+	const UE::Geometry::FDynamicMesh3& Mesh,
+	const FGroupTopology& GroupTopology,
+	const FGeometrySelection& MeshSelection,
+	TSet<int>& TrianglesOut,
+	TSet<int>& VerticesOut,
+	FGeometrySelection* TriangleVertexSelectionIncidentToEdgeOrVertexSelection = nullptr);
 
 
 /**

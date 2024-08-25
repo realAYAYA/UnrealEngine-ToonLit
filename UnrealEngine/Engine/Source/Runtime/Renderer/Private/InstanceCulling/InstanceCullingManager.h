@@ -5,6 +5,7 @@
 #include "InstanceCulling/InstanceCullingContext.h"
 #include "InstanceCullingLoadBalancer.h"
 #include "RenderGraphResources.h"
+#include "Async/Mutex.h"
 
 class FGPUScene;
 class FSceneUniformBuffer;
@@ -65,6 +66,9 @@ public:
 	// Helper to translate from view info, extracts the needed data for setting up instance culling.
 	int32 RegisterView(const FViewInfo& ViewInfo);
 
+	// Allocate space for views ahead of time prior to calling RegisterView.
+	void AllocateViews(int32 NumViews);
+
 	/**
 	 * Upload all registered views if the number has changed (grown). This must be done before calls to FInstanceCullingContext::BuildRenderingCommands that references
 	 * the views.
@@ -93,7 +97,9 @@ public:
 	// Populated by CullInstances, used when performing final culling & rendering 
 	FInstanceCullingIntermediate CullingIntermediate;
 
-	const TArray<Nanite::FPackedView>& GetCullingViews() { return CullingViews; }
+	// Reference to a buffer owned by FInstanceCullingOcclusionQueryRenderer
+	FRDGBufferRef InstanceOcclusionQueryBuffer = {};
+	EPixelFormat InstanceOcclusionQueryBufferFormat = PF_Unknown;
 
 private:
 
@@ -106,6 +112,7 @@ private:
 	FInstanceCullingManager(FInstanceCullingManager &) = delete;
 
 	FSceneUniformBuffer& SceneUB;
+	std::atomic_int32_t NumRegisteredViews = {0};
 	TArray<Nanite::FPackedView> CullingViews;
 	bool bIsEnabled;
 };

@@ -137,7 +137,7 @@ void SMVVMSelectViewModel::HandleClassPicked(UClass* ClassPicked)
 	if (Private::IsValidViewModel(ClassPicked, DisallowedClassFlags))
 	{
 		SelectedClass = ClassPicked;
-		BindingListWidget->AddSource(ClassPicked, FName(), FGuid());
+		BindingListWidget->AddSource(FBindingSource::CreateEmptySource(ClassPicked));
 	}
 }
 

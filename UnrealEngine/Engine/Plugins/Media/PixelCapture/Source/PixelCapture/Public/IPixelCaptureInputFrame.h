@@ -4,6 +4,7 @@
 
 #include "PixelCaptureFrameMetadata.h"
 #include "HAL/PlatformTime.h"
+#include "rtc_base/time_utils.h"
 
 /**
  * The base interface that is fed into the capture system. This wrapper is fed into the
@@ -13,7 +14,7 @@
 class PIXELCAPTURE_API IPixelCaptureInputFrame
 {
 public:
-	IPixelCaptureInputFrame() { Metadata.SourceTime = FPlatformTime::Cycles64(); }
+	IPixelCaptureInputFrame() { Metadata.SourceTime = rtc::TimeMillis(); }
 	virtual ~IPixelCaptureInputFrame() = default;
 
 	/**

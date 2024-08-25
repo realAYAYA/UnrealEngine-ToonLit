@@ -6,6 +6,7 @@
 #include "Logging/MessageLog.h"
 #include "MuCO/ICustomizableObjectModule.h"
 #include "MuCO/CustomizableObjectExtension.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCOE/CustomizableObjectEditorLogger.h"
 #include "MuCOE/CustomizableObjectGraph.h"
 #include "MuCOE/EdGraphSchema_CustomizableObject.h"
@@ -58,6 +59,22 @@ void UCustomizableObjectNodeObject::BackwardsCompatibleFixup()
 			}
 		}
 	}
+	
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::RegenerateNodeObjectsIds)
+	{
+		// This will regenerate all the Node Object Guids to finally remove the duplicated Guids warning.
+		// It is safe to do this here as Node Object do not use its node guid to link themeselves to other nodes.
+		CreateNewGuid();
+	}
+
+	// Update state never-stream flag from deprecated enum
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::CustomizableObjectStateHasSeparateNeverStreamFlag)
+	{
+		for (FCustomizableObjectState& s : States)
+		{
+			s.bDisableTextureStreaming = s.TextureCompressionStrategy != ETextureCompressionStrategy::None;
+		}
+	}
 }
 
 
@@ -72,7 +89,7 @@ void UCustomizableObjectNodeObject::PostEditChangeProperty(FPropertyChangedEvent
 	UCustomizableObject* CustomizableObject = Cast<UCustomizableObject>( GetCustomizableObjectGraph()->GetOuter() );
 	if (CustomizableObject)
 	{
-		CustomizableObject->bIsChildObject = ParentObject != nullptr;
+		CustomizableObject->GetPrivate()->SetIsChildObject(ParentObject != nullptr);
 	}
 
 	FProperty* PropertyThatChanged = PropertyChangedEvent.Property;
@@ -263,7 +280,7 @@ void UCustomizableObjectNodeObject::PostBackwardsCompatibleFixup()
 	{
 		FCustomizableObjectEditorLogger::CreateLog(LOCTEXT("ResaveNode","Please re-save this Customizable Object to avoid binary differences when packaging"))
 		.Severity(EMessageSeverity::Warning)
-		.Node(*this)
+		.Context(*this)
 		.Log();
 	}
 
@@ -294,6 +311,7 @@ void UCustomizableObjectNodeObject::PostDuplicate(bool bDuplicateForPIE)
 	Identifier = FGuid::NewGuid();
 }
 
+
 void UCustomizableObjectNodeObject::SetParentObject(UCustomizableObject* CustomizableParentObject)
 {
 	if (CustomizableParentObject != GetGraphEditor()->GetCustomizableObject())
@@ -304,7 +322,7 @@ void UCustomizableObjectNodeObject::SetParentObject(UCustomizableObject* Customi
 		UCustomizableObject* CustomizableObject = Cast<UCustomizableObject>(GetCustomizableObjectGraph()->GetOuter());
 		if (CustomizableObject)
 		{
-			CustomizableObject->bIsChildObject = ParentObject != nullptr;
+			CustomizableObject->GetPrivate()->SetIsChildObject(ParentObject != nullptr);
 
 			TSharedPtr<ICustomizableObjectEditor> Editor = GetGraphEditor();
 

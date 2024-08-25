@@ -112,7 +112,7 @@ void FWaterQuadTree::FNode::AddNodeForRender(const FNodeData& InNodeData, const 
 			Color = GColorList.GetFColorByIndex(DensityIndex + 1);
 		}
 
-		DrawWireBox(InTraversalDesc.DebugPDI, Bounds.ExpandBy(FVector(-20.0f, -20.0f, 0.0f)), Color, SDPG_World);
+		DrawWireBox(InTraversalDesc.DebugPDI, Bounds.ExpandBy(FVector(-20.0f, -20.0f, 0.0f)), Color, InTraversalDesc.bDebugDrawIntoForeground ? SDPG_Foreground : SDPG_World);
 	}
 #endif
 }
@@ -131,10 +131,21 @@ void FWaterQuadTree::FNode::SelectLODRefinement(const FNodeData& InNodeData, int
 	const FWaterBodyRenderData& WaterBodyRenderData = InNodeData.WaterBodyRenderData[WaterBodyIndex];
 	const FVector CenterPosition = Bounds.GetCenter();
 	const FVector Extent = Bounds.GetExtent();
+	const FBox2D Bounds2D = FBox2D(FVector2D(Bounds.Min), FVector2D(Bounds.Max));
 
 	// Early out on frustum culling 
-	if (InTraversalDesc.Frustum.IntersectBox(CenterPosition, Extent))
+	check(InTraversalDesc.WaterInfoBounds.bIsValid);
+	if (InTraversalDesc.Frustum.IntersectBox(CenterPosition, Extent) && Bounds2D.Intersect(InTraversalDesc.WaterInfoBounds))
 	{
+		// Occlusion culling
+		if (InTraversalDesc.OcclusionCullingResults 
+			&& (BreadthFirstIndex < (uint32)InTraversalDesc.OcclusionCullingFarMeshOffset) 
+			&& InTraversalDesc.OcclusionCullingResults->IsValidIndex(BreadthFirstIndex)
+			&& (*InTraversalDesc.OcclusionCullingResults)[BreadthFirstIndex])
+		{
+			return;
+		}
+
 		// This LOD can represent all its leaf nodes, simply add node
 		if (CanRender(DensityLevel, InTraversalDesc.ForceCollapseDensityLevel, WaterBodyRenderData))
 		{
@@ -159,16 +170,26 @@ void FWaterQuadTree::FNode::SelectLOD(const FNodeData& InNodeData, int32 InLODLe
 	const FWaterBodyRenderData& WaterBodyRenderData = InNodeData.WaterBodyRenderData[WaterBodyIndex];
 	const FVector CenterPosition = Bounds.GetCenter();
 	const FVector Extent = Bounds.GetExtent();
+	const FBox2D Bounds2D = FBox2D(FVector2D(Bounds.Min), FVector2D(Bounds.Max));
 
 	// Early out on frustum culling 
-	if (!InTraversalDesc.Frustum.IntersectBox(CenterPosition, Extent))
+	check(InTraversalDesc.WaterInfoBounds.bIsValid);
+	if (!InTraversalDesc.Frustum.IntersectBox(CenterPosition, Extent) || !Bounds2D.Intersect(InTraversalDesc.WaterInfoBounds))
 	{
 		// Handled
 		return;
 	}
 
+	// Occlusion culling
+	if (InTraversalDesc.OcclusionCullingResults
+		&& (BreadthFirstIndex < (uint32)InTraversalDesc.OcclusionCullingFarMeshOffset)
+		&& InTraversalDesc.OcclusionCullingResults->IsValidIndex(BreadthFirstIndex)
+		&& (*InTraversalDesc.OcclusionCullingResults)[BreadthFirstIndex])
+	{
+		return;
+	}
+
 	// Distance to tile (if 0, position is inside quad)
-	FBox2D Bounds2D(FVector2D(Bounds.Min), FVector2D(Bounds.Max));
 	const float ClosestDistanceToTile = FMath::Sqrt(Bounds2D.ComputeSquaredDistanceToPoint(FVector2D(InTraversalDesc.ObserverPosition)));
 
 	// If quad is outside this LOD range, it belongs to the LOD above, assume it fits in that LOD and drill down to find renderable nodes
@@ -263,68 +284,6 @@ void FWaterQuadTree::FNode::SelectLOD(const FNodeData& InNodeData, int32 InLODLe
 	}
 }
 
-void FWaterQuadTree::FNode::SelectLODWithinBounds(const FNodeData& InNodeData, int32 InLODLevel, const FTraversalDesc& InTraversalDesc, FTraversalOutput& Output) const
-{
-	// #todo_water [roey]: this function currently forces all nodes to render at their lowest lod size. This isn't _that_ bad considering most of the nodes are close
-	// enough to the camera to render at lowest lod level anyways but ideally we would leverage the same lod selection system as the non-bounds implementation.
-
-	const FWaterBodyRenderData& WaterBodyRenderData = InNodeData.WaterBodyRenderData[WaterBodyIndex];
-	const FVector CenterPosition = Bounds.GetCenter();
-	const FVector Extent = Bounds.GetExtent();
-
-	// Early out on frustum culling 
-	if (!InTraversalDesc.Frustum.IntersectBox(CenterPosition, Extent))
-	{
-		// Handled
-		return;
-	}
-
-	check(InTraversalDesc.TessellatedWaterMeshBounds.bIsValid);
-	if (InLODLevel == 0)
-	{
-		if ((InTraversalDesc.TessellatedWaterMeshBounds.IsInsideOrOn(FVector2D(Bounds.Min)) && InTraversalDesc.TessellatedWaterMeshBounds.IsInsideOrOn(FVector2D(Bounds.Max))) &&
-			CanRender(0, InTraversalDesc.ForceCollapseDensityLevel, WaterBodyRenderData))
-		{
-			AddNodeForRender(InNodeData, WaterBodyRenderData, 0, InLODLevel, InTraversalDesc, Output);
-		}
-	}
-	else
-	{
-		// If this node has a complete subtree it will not contain any actual children, they are implicit to save memory so we generate them here
-		if (HasCompleteSubtree && IsSubtreeSameWaterBody)
-		{
-			FNode ChildNode;
-			const FVector HalfBoundSize(Extent.X, Extent.Y, Extent.Z*2.0f);
-			const FVector HalfOffsets[] = { {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f} , {0.0f, 1.0f, 0.0f} , {1.0f, 1.0f, 0.0f} };
-			for (int i = 0; i < 4; i++)
-			{
-				const FVector ChildMin = Bounds.Min + HalfBoundSize * HalfOffsets[i];
-				const FVector ChildMax = ChildMin + HalfBoundSize;
-				const FBox ChildBounds(ChildMin, ChildMax);
-
-				// Create a temporary node to traverse
-				ChildNode.HasCompleteSubtree = 1;
-				ChildNode.IsSubtreeSameWaterBody = 1;
-				ChildNode.TransitionWaterBodyIndex = TransitionWaterBodyIndex;
-				ChildNode.WaterBodyIndex = WaterBodyIndex;
-				ChildNode.Bounds = ChildBounds;
-
-				ChildNode.SelectLODWithinBounds(InNodeData, InLODLevel - 1, InTraversalDesc, Output);
-			}
-		}
-		else
-		{
-			for (int32 ChildIndex : Children)
-			{
-				if (ChildIndex > 0)
-				{
-					InNodeData.Nodes[ChildIndex].SelectLODWithinBounds(InNodeData, InLODLevel - 1, InTraversalDesc, Output);
-				}
-			}
-		}
-	}
-}
-
 void FWaterQuadTree::FNode::AddNodes(FNodeData& InNodeData, const FBox& InMeshBounds, const FBox& InWaterBodyBounds, uint32 InWaterBodyIndex, int32 InLODLevel, uint32 InParentIndex)
 {
 	const FWaterBodyRenderData& InWaterBody = InNodeData.WaterBodyRenderData[InWaterBodyIndex];
@@ -336,13 +295,19 @@ void FWaterQuadTree::FNode::AddNodes(FNodeData& InNodeData, const FBox& InMeshBo
 	// Check is this node should be marked for material overlap 
 	if (InWaterBody.IsRiver() && ((ThisWaterBody.IsLake() && InWaterBody.RiverToLakeMaterial) || (ThisWaterBody.IsOcean() && InWaterBody.RiverToOceanMaterial)))
 	{
-		// If the incoming water body is a river with a transition, and if the existing water body is either ocean or lake, we set transition water body index
-		TransitionWaterBodyIndex = (uint16)WaterBodyIndex;
+		// If the incoming water body is a river with a transition, and if the existing water body is either ocean or lake, we set transition water body index, but only if the new water body has a higher priority
+		if ((TransitionWaterBodyIndex == 0) || (ThisWaterBody.Priority >= InNodeData.WaterBodyRenderData[TransitionWaterBodyIndex].Priority))
+		{
+			TransitionWaterBodyIndex = (uint16)WaterBodyIndex;
+		}
 	}
 	else if (ThisWaterBody.IsRiver() && ((InWaterBody.IsLake() && ThisWaterBody.RiverToLakeMaterial) || (InWaterBody.IsOcean() && ThisWaterBody.RiverToOceanMaterial)))
 	{
-		// If the existing water body is a river with a transition, and if the incoming water body is either ocean or lake, we set transition water body index
-		TransitionWaterBodyIndex = (uint16)InWaterBodyIndex;
+		// If the existing water body is a river with a transition, and if the incoming water body is either ocean or lake, we set transition water body index, but only if the new water body has a higher priority
+		if (TransitionWaterBodyIndex == 0 || InWaterBody.Priority >= InNodeData.WaterBodyRenderData[TransitionWaterBodyIndex].Priority)
+		{
+			TransitionWaterBodyIndex = (uint16)InWaterBodyIndex;
+		}
 	}
 
 	// Assign the render data here (based on priority)
@@ -486,12 +451,14 @@ bool FWaterQuadTree::FNode::QueryBoundsAtLocation(const FNodeData& InNodeData, c
 	return ChildCount == 0;
 }
 
-void FWaterQuadTree::InitTree(const FBox2D& InBounds, float InTileSize, FIntPoint InExtentInTiles)
+void FWaterQuadTree::InitTree(const FBox2D& InBounds, float InTileSize, FIntPoint InExtentInTiles, bool bInIsGPUQuadTree)
 {
 	ensure(InBounds.GetArea() > 0.0f);
 	ensure(InTileSize > 0.0f);
 	ensure(InExtentInTiles.X > 0);
 	ensure(InExtentInTiles.Y > 0);
+
+	bIsGPUQuadTree = bInIsGPUQuadTree;
 
 	FarMeshData.Clear();
 
@@ -507,9 +474,19 @@ void FWaterQuadTree::InitTree(const FBox2D& InBounds, float InTileSize, FIntPoin
 
 	TileRegion = InBounds;
 
+	WaterBodyRasterInfos.Reset();
+	BreadthFirstOrder.Reset();
+
 	// Allocate theoretical max, shrink later in Lock()
 	// This is so that the node array doesn't move in memory while inserting
-	NodeData.Nodes.Empty((float)(FMath::Square(RootDim) * 4) / 3.0f);
+	if (!bIsGPUQuadTree)
+	{
+		NodeData.Nodes.Empty((float)(FMath::Square(RootDim) * 4) / 3.0f);
+	}
+	else
+	{
+		NodeData.Nodes.Empty(1);
+	}
 
 	// Add defaulted water body render data to slot 0. This is the "null" render data, pointed to by all newly created nodes. Has lowest priority so it will always be overwritten
 	NodeData.WaterBodyRenderData.Empty(1);
@@ -602,18 +579,80 @@ void FWaterQuadTree::Unlock(bool bPruneRedundantNodes)
 		NodeData.Nodes.SetNum(EndIndex + 1);
 	}
 
+	// Compute breadth first indices
+	{
+		class FQueue
+		{
+		public:
+			explicit FQueue(int32 InCapacity) 
+			{ 
+				Capacity = InCapacity;
+				Queue.SetNumUninitialized(Capacity);
+			}
+
+			void Add(int32 Element)
+			{
+				check(NumElements < Capacity);
+				Queue[(Front + NumElements) % Capacity] = Element;
+				++NumElements;
+			}
+
+			int32 Pop() 
+			{ 
+				check(NumElements > 0);
+				const int32 Result = Queue[Front]; 
+				Front = (Front + 1) % Capacity;
+				--NumElements;
+				return Result;
+			}
+
+			bool IsEmpty() const { return NumElements == 0; }
+		private:
+			TArray<int32> Queue;
+			int32 Capacity = 0;
+			int32 Front = 0;
+			int32 NumElements = 0;
+		};
+		
+		FQueue Queue(GetMaxLeafCount());
+		uint32 NextBreadthFirstIndex = 0;
+		
+		check(BreadthFirstOrder.IsEmpty());
+		BreadthFirstOrder.Reserve(NodeData.Nodes.Num());
+
+		Queue.Add(0);
+
+		while (!Queue.IsEmpty())
+		{
+			const int32 NodeIndex = Queue.Pop();
+			FNode& Node = NodeData.Nodes[NodeIndex];
+			Node.BreadthFirstIndex = NextBreadthFirstIndex++;
+			BreadthFirstOrder.Add(NodeIndex);
+
+			for (uint32 ChildIndex : Node.Children)
+			{
+				if (ChildIndex > 0)
+				{
+					Queue.Add(ChildIndex);
+				}
+			}
+		}
+	}
+
 	bIsReadOnly = true;
 }
 
 void FWaterQuadTree::AddWaterTilesInsideBounds(const FBox& InBounds, uint32 InWaterBodyIndex)
 {
 	check(!bIsReadOnly);
+	check(!bIsGPUQuadTree);
 	NodeData.Nodes[0].AddNodes(NodeData, FBox(FVector(TileRegion.Min, 0.0f), FVector(TileRegion.Max, 0.0f)),  InBounds, InWaterBodyIndex, TreeDepth, 0);
 }
 
 void FWaterQuadTree::AddOcean(const TArray<FVector2D>& InPoly, const FBox& InOceanBounds, uint32 InWaterBodyIndex)
 {
 	check(!bIsReadOnly);
+	check(!bIsGPUQuadTree);
 	const FBox2D OceanBounds(FVector2D(InOceanBounds.Min), FVector2D(InOceanBounds.Max));
 	AddOceanRecursive(InPoly, OceanBounds, FVector2D(InOceanBounds.Min.Z, InOceanBounds.Max.Z), true, TreeDepth * 2, InWaterBodyIndex);
 }
@@ -621,11 +660,12 @@ void FWaterQuadTree::AddOcean(const TArray<FVector2D>& InPoly, const FBox& InOce
 void FWaterQuadTree::AddLake(const TArray<FVector2D>& InPoly, const FBox& InLakeBounds, uint32 InWaterBodyIndex)
 {
 	check(!bIsReadOnly);
+	check(!bIsGPUQuadTree);
 	const FBox2D LakeBounds(FVector2D(NodeData.Nodes[0].Bounds.Min), FVector2D(NodeData.Nodes[0].Bounds.Max));
 	AddLakeRecursive(InPoly, LakeBounds, FVector2D(InLakeBounds.Min.Z, InLakeBounds.Max.Z), true, TreeDepth * 2, InWaterBodyIndex);
 }
 
-void FWaterQuadTree::AddFarMesh(const UMaterialInterface* InFarMeshMaterial, double InFarDistanceMeshExtent, double InFarDistanceMeshHeight)
+void FWaterQuadTree::AddFarMesh(const UMaterialInterface* InFarMeshMaterial, const FBox2D& InInnerRegion, double InFarDistanceMeshExtent, double InFarDistanceMeshHeight)
 {
 	// Checking for not being read only here to keep things consistent with the other Add functions. In reality the FarMesh isn't added to the QuadTree itself, so it could technically be done whenever.
 	ensure(!bIsReadOnly);
@@ -644,10 +684,18 @@ void FWaterQuadTree::AddFarMesh(const UMaterialInterface* InFarMeshMaterial, dou
 	// |_|_|_|
 	FarMeshData.InstanceData.SetNum(8);
 	FarMeshData.Material = InFarMeshMaterial;
+	
+	{
+		// Center position of the total far mesh bounds
+		const FVector FarMeshWorldCenter = FVector(InInnerRegion.GetCenter(), InFarDistanceMeshHeight);
+		// 3D Extents from the center of the far mesh bounds to the edge. Bounds are 2cm tall (1cm above, 1cm below plane)
+		const FVector FarMeshTotalExtent = FVector(InInnerRegion.GetExtent() + InFarDistanceMeshExtent, 1.0);
+		FarMeshData.FarMeshBounds = FBox(FarMeshWorldCenter - FarMeshTotalExtent, FarMeshWorldCenter + FarMeshTotalExtent);
+	}
 
-	const FVector2D WaterCenter = GetTileRegion().GetCenter();
-	const FVector2D WaterExtents = GetTileRegion().GetExtent();
-	const FVector2D WaterSize = GetTileRegion().GetSize();
+	const FVector2D WaterCenter = InInnerRegion.GetCenter();
+	const FVector2D WaterExtents = InInnerRegion.GetExtent();
+	const FVector2D WaterSize = InInnerRegion.GetSize();
 	const FVector2D TileOffets[] = { {-1.0, 1.0}, {0.0, 1.0}, {1.0, 1.0}, {1.0, 0.0}, {1.0, -1.0}, {0.0, -1.0}, {-1.0, -1.0}, {-1.0, 0.0} };
 
 	for (int32 i = 0; i < 8; i++)
@@ -707,11 +755,8 @@ void FWaterQuadTree::BuildWaterTileInstanceData(const FTraversalDesc& InTraversa
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(BuildWaterTileInstanceData);
 	check(bIsReadOnly);
-	if (InTraversalDesc.TessellatedWaterMeshBounds.bIsValid)
-	{
-		NodeData.Nodes[0].SelectLODWithinBounds(NodeData, TreeDepth, InTraversalDesc, Output);
-	}
-	else
+
+	if (!bIsGPUQuadTree)
 	{
 		NodeData.Nodes[0].SelectLOD(NodeData, TreeDepth, InTraversalDesc, Output);
 	}
@@ -724,23 +769,46 @@ void FWaterQuadTree::BuildWaterTileInstanceData(const FTraversalDesc& InTraversa
 
 		// Bucket index calculation is MaterialIndex*DensityCount+CurrentDensity. Since far mesh doesn't have any Density(aka LOD) steps and should render only using a 2 triangle quad, we enter it only into the last Density bucket (this always corresponds to a 2 triangle quad). 
 		const int32 BucketIndex = FarMeshData.MaterialIndex * InTraversalDesc.DensityCount + (InTraversalDesc.DensityCount - 1);
-		Output.BucketInstanceCounts[BucketIndex] += FarMeshTileCount;
-		Output.InstanceCount += FarMeshTileCount;
-
-		const int32 StartIndex = Output.StagingInstanceData.AddUninitialized(FarMeshTileCount);
-
+		
 		for (int32 i = 0; i < FarMeshTileCount; i++)
 		{
+			// Frustum culling
+			if (!InTraversalDesc.Frustum.IntersectBox(FarMeshData.InstanceData[i].WorldPosition, FVector(FarMeshData.InstanceData[i].Scale.X * 0.5, FarMeshData.InstanceData[i].Scale.Y * 0.5, 1.0)))
+			{
+				continue;
+			}
+
+			// Occlusion culling
+			if (InTraversalDesc.OcclusionCullingResults 
+				&& InTraversalDesc.OcclusionCullingResults->IsValidIndex(InTraversalDesc.OcclusionCullingFarMeshOffset + i)
+				&& (*InTraversalDesc.OcclusionCullingResults)[InTraversalDesc.OcclusionCullingFarMeshOffset + i])
+			{
+				continue;
+			}
+
+			++Output.BucketInstanceCounts[BucketIndex];
+			++Output.InstanceCount;
+
 			// Build instance data
 			// Transform worldposition to Translated World Position
 			const FVector TranslatedWorldPosition(FarMeshData.InstanceData[i].WorldPosition + InTraversalDesc.PreViewTranslation);
-			Output.StagingInstanceData[StartIndex + i].Data[0] = FVector4f(FVector4(TranslatedWorldPosition, 0.0));
-			Output.StagingInstanceData[StartIndex + i].Data[1] = FVector4f(FVector2f::ZeroVector, FarMeshData.InstanceData[i].Scale);
+
+			FStagingInstanceData& StagingInstanceData = Output.StagingInstanceData[Output.StagingInstanceData.AddUninitialized()];
+			StagingInstanceData.BucketIndex = BucketIndex;
+			StagingInstanceData.Data[0] = FVector4f(FVector4(TranslatedWorldPosition, 0.0));
+			StagingInstanceData.Data[1] = FVector4f(FVector2f::ZeroVector, FarMeshData.InstanceData[i].Scale);
 #if WITH_WATER_SELECTION_SUPPORT
-			Output.StagingInstanceData[StartIndex + i].Data[2] = FHitProxyId::InvisibleHitProxyId.GetColor().ReinterpretAsLinear();
+			StagingInstanceData.Data[2] = FHitProxyId::InvisibleHitProxyId.GetColor().ReinterpretAsLinear();
 #endif // WITH_WATER_SELECTION_SUPPORT
 
-			Output.StagingInstanceData[StartIndex + i].BucketIndex = BucketIndex;
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+			// Debug drawing
+			if (InTraversalDesc.DebugShowTile != 0)
+			{
+				const FBox DebugBounds = FBox(FarMeshData.InstanceData[i].WorldPosition - FVector(FarMeshData.InstanceData[i].Scale.X * 0.5, FarMeshData.InstanceData[i].Scale.Y * 0.5, 1.0), FarMeshData.InstanceData[i].WorldPosition + FVector(FarMeshData.InstanceData[i].Scale.X * 0.5, FarMeshData.InstanceData[i].Scale.Y * 0.5, 1.0));
+				DrawWireBox(InTraversalDesc.DebugPDI, DebugBounds.ExpandBy(FVector(-20.0f, -20.0f, 0.0f)), FColor::Orange, InTraversalDesc.bDebugDrawIntoForeground ? SDPG_Foreground : SDPG_World);
+			}
+#endif
 		}
 	}
 }
@@ -817,6 +885,41 @@ void FWaterQuadTree::GatherHitProxies(TArray<TRefCountPtr<HHitProxy> >& OutHitPr
 	}
 }
 #endif //WITH_WATER_SELECTION_SUPPORT
+
+TArray<FBoxSphereBounds> FWaterQuadTree::ComputeNodeBounds(int32 MaxNumBounds, float OcclusionCullExpandBoundsAmountXY, bool bIncludeFarMeshTiles, int32* OutFarMeshOffset) const
+{
+	const int32 NumNodes = NodeData.Nodes.Num();
+	const int32 ClampedNumNodes = (MaxNumBounds > 0) ? FMath::Min(MaxNumBounds, NumNodes) : NumNodes;
+	const int32 NumFarMeshTiles = FarMeshData.InstanceData.Num();
+	const int32 NumToReserve = ClampedNumNodes + (bIncludeFarMeshTiles ? NumFarMeshTiles : 0);
+
+	TArray<FBoxSphereBounds> Result;
+	Result.Reserve(NumToReserve);
+
+	// Quadtree tiles
+	for (int32 i = 0; i < ClampedNumNodes; ++i)
+	{
+		// Expand bounds by given amount, only in XY to reduce occlusion 
+		const FBox Bounds = NodeData.Nodes[BreadthFirstOrder[i]].Bounds;
+		Result.Add(Bounds.ExpandBy(FVector(OcclusionCullExpandBoundsAmountXY, OcclusionCullExpandBoundsAmountXY, 0.0)));
+	}
+
+	*OutFarMeshOffset = Result.Num();
+
+	// Far mesh tiles
+	if (bIncludeFarMeshTiles)
+	{
+		for (int32 i = 0; i < NumFarMeshTiles; ++i)
+		{
+			const FFarMeshData::FFarMeshInstanceData& InstanceData = FarMeshData.InstanceData[i];
+			const FVector Extent = FVector(InstanceData.Scale.X * 0.5, InstanceData.Scale.Y * 0.5, 1.0);
+			const FBox Bounds = FBox(InstanceData.WorldPosition - Extent, InstanceData.WorldPosition + Extent).ExpandBy(FVector(OcclusionCullExpandBoundsAmountXY, OcclusionCullExpandBoundsAmountXY, 0.0));
+			Result.Add(Bounds);
+		}
+	}
+
+	return Result;
+}
 
 /** Split a 2D polygon with a 2D line. Return both polygons */
 static void SplitPolyWithLine(const TArray<FVector2D>& InPoly, const FVector2D& LinePoint, const FVector2D& LineNormal, TArray<FVector2D>& OutPoly0, TArray<FVector2D>& OutPoly1)

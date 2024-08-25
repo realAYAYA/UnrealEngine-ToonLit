@@ -3,6 +3,7 @@
 #include "Engine/GameViewportClient.h"
 #include "Engine/GameInstance.h"
 #include "EngineGlobals.h"
+#include "GameFramework/ActorPrimitiveColorHandler.h"
 #include "GameFramework/Pawn.h"
 #include "ImageCore.h"
 #include "Misc/FileHelper.h"
@@ -113,6 +114,15 @@ static TAutoConsoleVariable<float> CVarSecondaryScreenPercentage( // TODO: make 
 	TEXT("Override secondary screen percentage for game viewport.\n")
 	TEXT(" 0: Compute secondary screen percentage = 100 / DPIScalefactor automaticaly (default);\n")
 	TEXT(" 1: override secondary screen percentage."),
+	ECVF_Default);
+
+
+static TAutoConsoleVariable<bool> CVarRemapDeviceIdForOffsetPlayerGamepadIds(
+	TEXT("input.bRemapDeviceIdForOffsetPlayerGamepadIds"),
+	true,
+	TEXT("If true, then when bOffsetPlayerGamepadIds is true we will create a new Input Device Id\n")
+	TEXT("as needed for the next local player. This fixes the behavior in split screen.\n")
+	TEXT("Note: This CVar will be removed in a future release, this is a temporary wrapper for bug fix behavior."),
 	ECVF_Default);
 
 #if CSV_PROFILER
@@ -227,7 +237,7 @@ UGameViewportClient::UGameViewportClient(const FObjectInitializer& ObjectInitial
 	, CurrentBufferVisualizationMode(NAME_None)
 	, CurrentNaniteVisualizationMode(NAME_None)
 	, CurrentLumenVisualizationMode(NAME_None)
-	, CurrentStrataVisualizationMode(NAME_None)
+	, CurrentSubstrateVisualizationMode(NAME_None)
 	, CurrentGroomVisualizationMode(NAME_None)
 	, CurrentVirtualShadowMapVisualizationMode(NAME_None)
 	, HighResScreenshotDialog(nullptr)
@@ -323,7 +333,7 @@ UGameViewportClient::UGameViewportClient(FVTableHelper& Helper)
 	, CurrentBufferVisualizationMode(NAME_None)
 	, CurrentNaniteVisualizationMode(NAME_None)
 	, CurrentLumenVisualizationMode(NAME_None)
-	, CurrentStrataVisualizationMode(NAME_None)
+	, CurrentSubstrateVisualizationMode(NAME_None)
 	, CurrentGroomVisualizationMode(NAME_None)
 	, CurrentVirtualShadowMapVisualizationMode(NAME_None)
 	, HighResScreenshotDialog(nullptr)
@@ -551,7 +561,7 @@ void UGameViewportClient::Init(struct FWorldContext& WorldContext, UGameInstance
 	// Set all the software cursors.
 	for ( auto& Entry : UISettings->SoftwareCursors )
 	{
-		AddSoftwareCursor(Entry.Key, Entry.Value);
+		SetSoftwareCursorFromClassPath(Entry.Key, Entry.Value);
 	}
 
 	// Set all the hardware cursors.
@@ -567,7 +577,7 @@ void UGameViewportClient::RebuildCursors()
 	// Set all the software cursors.
 	for (auto& Entry : UISettings->SoftwareCursors)
 	{
-		AddSoftwareCursor(Entry.Key, Entry.Value);
+		SetSoftwareCursorFromClassPath(Entry.Key, Entry.Value);
 	}
 
 	// Set all the hardware cursors.
@@ -605,6 +615,33 @@ void UGameViewportClient::RemapControllerInput(FInputKeyEventArgs& InOutEventArg
 
 	if (NumLocalPlayers > 1 && InOutEventArgs.Key.IsGamepadKey() && GetDefault<UGameMapsSettings>()->bOffsetPlayerGamepadIds)
 	{
+		// Temp cvar in case this change somehow breaks input for any split screen games.
+		if (CVarRemapDeviceIdForOffsetPlayerGamepadIds.GetValueOnAnyThread())
+		{
+			const TArray<ULocalPlayer*>& CurrentLocalPlayers = World->GetGameInstance()->GetLocalPlayers();
+			if (CurrentLocalPlayers.IsValidIndex(InOutEventArgs.ControllerId) && CurrentLocalPlayers.IsValidIndex(InOutEventArgs.ControllerId + 1))
+			{
+				const FPlatformUserId DesiredPlatformUser = CurrentLocalPlayers[InOutEventArgs.ControllerId + 1]->GetPlatformUserId();
+
+				IPlatformInputDeviceMapper& DeviceMapper = IPlatformInputDeviceMapper::Get();
+
+				// Check for if this FPlatformUserID already has a primary input device ID. If it does, we can use that
+				FInputDeviceId DesiredInputDeviceId = DeviceMapper.GetPrimaryInputDeviceForUser(DesiredPlatformUser);
+				if (!DesiredInputDeviceId.IsValid())
+				{
+					// Otherwise we need to create a new "Fake" input device ID...
+					DesiredInputDeviceId = DeviceMapper.AllocateNewInputDeviceId();
+
+					// ...  and map it to our desired platform user so that the PlayerController knows it that this is associated with the local player
+					DeviceMapper.Internal_MapInputDeviceToUser(DesiredInputDeviceId, DesiredPlatformUser, EInputDeviceConnectionState::Connected);
+				}
+
+				// Say that this input event is from the other local player's input device!
+				InOutEventArgs.InputDevice = DesiredInputDeviceId;
+			}
+		}
+
+		// We still want to increment the controller ID in case there is any legacy code listening for it
 		InOutEventArgs.ControllerId++;
 	}
 	else if (InOutEventArgs.Viewport->IsPlayInEditorViewport() && InOutEventArgs.Key.IsGamepadKey())
@@ -1030,41 +1067,71 @@ EMouseCursor::Type UGameViewportClient::GetCursor(FViewport* InViewport, int32 X
 
 void UGameViewportClient::SetVirtualCursorWidget(EMouseCursor::Type Cursor, UUserWidget* UserWidget)
 {
-	TSharedPtr<SWidget>& ExistingWidget = CursorWidgets.FindOrAdd(Cursor);
-	TSharedPtr<SWidget> NewWidget = UserWidget ? UserWidget->TakeWidget() : TSharedPtr<SWidget>();
-	if (NewWidget != ExistingWidget)
+	if (UserWidget)
 	{
-		// Pure safety
-		ExistingWidget.Reset();
-		ExistingWidget = NewWidget;
+		SetSoftwareCursorWidget(Cursor, UserWidget);
+	}
+	else
+	{
+		CursorWidgets.Remove(Cursor);
+	}
+}
+
+void UGameViewportClient::AddSoftwareCursorFromSlateWidget(EMouseCursor::Type InCursorType, TSharedPtr<SWidget> CursorWidgetPtr)
+{
+	// We set it only when it's not null to be on parity with the behavior we had before deprecation.
+	if (CursorWidgetPtr.IsValid())
+	{
+		SetSoftwareCursorWidget(InCursorType, CursorWidgetPtr);
 	}
 }
 
 void UGameViewportClient::AddSoftwareCursor(EMouseCursor::Type Cursor, const FSoftClassPath& CursorClass)
+{
+	SetSoftwareCursorFromClassPath(Cursor, CursorClass);
+}
+
+void UGameViewportClient::SetSoftwareCursorFromClassPath(EMouseCursor::Type Cursor, const FSoftClassPath & CursorClass)
 {
 	if (CursorClass.IsValid())
 	{
 		if (UClass* Class = CursorClass.TryLoadClass<UUserWidget>())
 		{
 			UUserWidget* UserWidget = CreateWidget(GetGameInstance(), Class);
-			AddCursorWidget(Cursor, UserWidget);
+			SetSoftwareCursorWidget(Cursor, UserWidget);
 		}
 		else
 		{
-			FMessageLog("PIE").Warning(FText::Format(LOCTEXT("AddCursor:LoadFailed", "UGameViewportClient::AddCursor: Could not load cursor class '{0}'."), FText::FromString(CursorClass.GetAssetName())));
+			FMessageLog("PIE").Warning(FText::Format(LOCTEXT("SetSoftwareCursorFromClassPath:LoadFailed", "UGameViewportClient::SetSoftwareCursorFromClassPath: Could not load cursor class '{0}'."), FText::FromString(CursorClass.GetAssetName())));
 		}
 	}
 	else
 	{
-		FMessageLog("PIE").Warning(LOCTEXT("AddCursor:InvalidClass", "UGameViewportClient::AddCursor: Invalid class specified."));
+		FMessageLog("PIE").Warning(LOCTEXT("SetSoftwareCursorFromClassPath:InvalidClass", "UGameViewportClient::SetSoftwareCursorFromClassPath: Invalid class specified."));
 	}
 }
 
-void UGameViewportClient::AddSoftwareCursorFromSlateWidget(EMouseCursor::Type InCursorType, TSharedPtr<SWidget> CursorWidgetPtr)
+void UGameViewportClient::SetSoftwareCursorWidget(EMouseCursor::Type InCursorType, TSharedPtr<SWidget> CursorWidgetPtr)
 {
 	if (CursorWidgetPtr.IsValid())
 	{
 		CursorWidgets.Emplace(InCursorType, CursorWidgetPtr);
+	}
+	else
+	{
+		CursorWidgets.Remove(InCursorType);
+	}
+}
+
+void UGameViewportClient::SetSoftwareCursorWidget(EMouseCursor::Type InCursorType, class UUserWidget* UserWidget)
+{
+	if (UserWidget)
+	{
+		SetSoftwareCursorWidget(InCursorType, UserWidget->TakeWidget());
+	}
+	else
+	{
+		CursorWidgets.Remove(InCursorType);
 	}
 }
 
@@ -1088,9 +1155,10 @@ bool UGameViewportClient::HasSoftwareCursor(EMouseCursor::Type Cursor) const
 
 void UGameViewportClient::AddCursorWidget(EMouseCursor::Type Cursor, class UUserWidget* CursorWidget)
 {
-	if (ensure(CursorWidget))
+	// We set it only when it's not null to be on parity with the behavior we had before deprecation.
+	if (CursorWidget)
 	{
-		CursorWidgets.Add(Cursor, CursorWidget->TakeWidget());
+		SetSoftwareCursorWidget(Cursor, CursorWidget->TakeWidget());
 	}
 }
 
@@ -1302,6 +1370,7 @@ void UGameViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCanvas)
 {
 	//Valid SceneCanvas is required.  Make this explicit.
 	check(SceneCanvas);
+	check(GEngine);
 
 	BeginDrawDelegate.Broadcast();
 
@@ -1342,11 +1411,20 @@ void UGameViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCanvas)
 	}
 
 	// create the view family for rendering the world scene to the viewport's render target
+	bool bRequireMultiView = false;
+	if (GEngine->IsStereoscopic3D())
+	{
+		static const auto MobileMultiViewCVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("vr.MobileMultiView"));
+		const bool bUsingMobileRenderer = GetFeatureLevelShadingPath(MyWorld->Scene->GetFeatureLevel()) == EShadingPath::Mobile;
+		bRequireMultiView = (GSupportsMobileMultiView || GRHISupportsArrayIndexFromAnyShader) && bUsingMobileRenderer && (MobileMultiViewCVar && MobileMultiViewCVar->GetValueOnAnyThread() != 0);
+	}
+
 	FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
 		InViewport,
 		MyWorld->Scene,
 		EngineShowFlags)
-		.SetRealtimeUpdate(true));
+		.SetRealtimeUpdate(true)
+		.SetRequireMobileMultiView(bRequireMultiView));
 
 	ViewFamily.DebugDPIScale = GetDPIScale();
 
@@ -1367,10 +1445,17 @@ void UGameViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCanvas)
 		ViewExt->SetupViewFamily(ViewFamily);
 	}
 
-	if (bStereoRendering && GEngine->XRSystem.IsValid() && GEngine->XRSystem->GetHMDDevice())
+	if (bStereoRendering)
 	{
-		// Allow HMD to modify screen settings
-		GEngine->XRSystem->GetHMDDevice()->UpdateScreenSettings(Viewport);
+		if (GEngine->XRSystem.IsValid() && GEngine->XRSystem->GetHMDDevice())
+		{
+			// Allow HMD to modify screen settings
+			GEngine->XRSystem->GetHMDDevice()->UpdateScreenSettings(Viewport);
+		}
+		
+		// Update stereo flag in viewport client so we can accurately run GetViewStatusForScreenPercentage()
+		static bool bEmulateStereo = FParse::Param(FCommandLine::Get(), TEXT("emulatestereo"));
+		EngineShowFlags.StereoRendering = bEmulateStereo ? true : ViewFamily.EngineShowFlags.StereoRendering;
 	}
 
 	ESplitScreenType::Type SplitScreenConfig = GetCurrentSplitscreenConfiguration();
@@ -1564,7 +1649,7 @@ void UGameViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCanvas)
 					View->CurrentBufferVisualizationMode = CurrentBufferVisualizationMode;
 					View->CurrentNaniteVisualizationMode = CurrentNaniteVisualizationMode;
 					View->CurrentLumenVisualizationMode = CurrentLumenVisualizationMode;
-					View->CurrentStrataVisualizationMode = CurrentStrataVisualizationMode;
+					View->CurrentSubstrateVisualizationMode = CurrentSubstrateVisualizationMode;
 					View->CurrentGroomVisualizationMode = CurrentGroomVisualizationMode;
 					View->CurrentVirtualShadowMapVisualizationMode = CurrentVirtualShadowMapVisualizationMode;
 
@@ -1764,13 +1849,6 @@ void UGameViewportClient::Draw(FViewport* InViewport, FCanvas* SceneCanvas)
 	else
 	{
 		GetRendererModule().PerFrameCleanupIfSkipRenderer();
-
-		// Make sure RHI resources get flushed if we're not using a renderer
-		ENQUEUE_RENDER_COMMAND(UGameViewportClient_FlushRHIResources)(
-			[](FRHICommandListImmediate& RHICmdList)
-			{
-				RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThreadFlushResources);
-			});
 	}
 
 	// Beyond this point, only UI rendering independent from dynamc resolution.
@@ -2013,7 +2091,7 @@ bool ProcessScreenshotData(TArray<FColorType>& Bitmap, FIntVector Size, TChannel
 					FMemory::Memmove(Data + Row * NewWidth, Data + (Row + CaptureMinY) * OldWidth + CaptureMinX, NewWidth * sizeof(*Data));
 				}
 
-				Bitmap.RemoveAt(NewWidth * NewHeight, OldWidth * OldHeight - NewWidth * NewHeight, false);
+				Bitmap.RemoveAt(NewWidth * NewHeight, OldWidth * OldHeight - NewWidth * NewHeight, EAllowShrinking::No);
 				Size = FIntVector(NewWidth, NewHeight, 0);
 			}
 		}
@@ -3218,7 +3296,13 @@ bool UGameViewportClient::HandleShowCommand( const TCHAR* Cmd, FOutputDevice& Ar
 
 	// EngineShowFlags
 	{
-		int32 FlagIndex = FEngineShowFlags::FindIndexByName(Cmd);
+		TArray<FString> ShowFlagsArgs;
+		if (!FString(Cmd).ParseIntoArray(ShowFlagsArgs, TEXT(" ")))
+		{
+			ShowFlagsArgs.Add(Cmd);
+		}
+
+		int32 FlagIndex = FEngineShowFlags::FindIndexByName(*ShowFlagsArgs[0]);
 
 		if(FlagIndex != -1)
 		{
@@ -3226,26 +3310,32 @@ bool UGameViewportClient::HandleShowCommand( const TCHAR* Cmd, FOutputDevice& Ar
 
 			if(GIsEditor)
 			{
-				if(!FEngineShowFlags::CanBeToggledInEditor(Cmd))
+				if(!FEngineShowFlags::CanBeToggledInEditor(*ShowFlagsArgs[0]))
 				{
 					bCanBeToggled = false;
 				}
 			}
 
-			bool bIsACollisionFlag = FEngineShowFlags::IsNameThere(Cmd, TEXT("Collision"));
-
 			if(bCanBeToggled)
 			{
 				bool bOldState = EngineShowFlags.GetSingleFlag(FlagIndex);
 
+				if (FEngineShowFlags::IsNameThere(*ShowFlagsArgs[0], TEXT("ActorColoration")))
+				{
+					if (ShowFlagsArgs.Num() > 1)
+					{
+						bOldState &= !FActorPrimitiveColorHandler::Get().SetActivePrimitiveColorHandler(*ShowFlagsArgs[1], InWorld);
+					}
+				}
+
 				EngineShowFlags.SetSingleFlag(FlagIndex, !bOldState);
 
-				if(FEngineShowFlags::IsNameThere(Cmd, TEXT("Navigation,Cover")))
+				if(FEngineShowFlags::IsNameThere(*ShowFlagsArgs[0], TEXT("Navigation,Cover")))
 				{
 					VerifyPathRenderingComponents();
 				}
 
-				if(FEngineShowFlags::IsNameThere(Cmd, TEXT("Volumes")))
+				if(FEngineShowFlags::IsNameThere(*ShowFlagsArgs[0], TEXT("Volumes")))
 				{
 					// TODO: Investigate why this is doesn't appear to work
 					if (AllowDebugViewmodes())
@@ -3259,7 +3349,7 @@ bool UGameViewportClient::HandleShowCommand( const TCHAR* Cmd, FOutputDevice& Ar
 				}
 			}
 
-			if(bIsACollisionFlag)
+			if(FEngineShowFlags::IsNameThere(*ShowFlagsArgs[0], TEXT("Collision")))
 			{
 				ToggleShowCollision();
 			}
@@ -3573,7 +3663,7 @@ bool UGameViewportClient::HandleViewModeCommand( const TCHAR* Cmd, FOutputDevice
 #if UE_BUILD_TEST || UE_BUILD_SHIPPING
 	Ar.Logf(TEXT("Debug viewmodes not allowed in Test or Shipping builds."));
 	ViewModeIndex = VMI_Lit;
-#endif
+#else
 
 	if ((ViewModeIndex != VMI_Lit && ViewModeIndex != VMI_ShaderComplexity) && !AllowDebugViewmodes())
 	{
@@ -3596,6 +3686,7 @@ bool UGameViewportClient::HandleViewModeCommand( const TCHAR* Cmd, FOutputDevice
 			ViewModeIndex = VMI_Lit;
 		}
 	}
+#endif
 #endif
 
 	ApplyViewMode((EViewModeIndex)ViewModeIndex, true, EngineShowFlags);
@@ -3712,6 +3803,11 @@ bool UGameViewportClient::SetDisplayConfiguration(const FIntPoint* Dimensions, E
 
 bool UGameViewportClient::HandleToggleFullscreenCommand()
 {
+	if (!Viewport)
+	{
+		return true;
+	}
+
 	static auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.FullScreenMode"));
 	check(CVar);
 	auto FullScreenMode = CVar->GetValueOnGameThread() == 0 ? EWindowMode::Fullscreen : EWindowMode::WindowedFullscreen;

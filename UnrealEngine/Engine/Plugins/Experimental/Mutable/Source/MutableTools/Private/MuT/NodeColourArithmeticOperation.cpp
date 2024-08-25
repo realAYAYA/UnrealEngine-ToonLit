@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeColourArithmeticOperation::Private::s_type =
-			NODE_TYPE( "ColourArithmenticOperation", NodeColour::GetStaticType() );
+	FNodeType NodeColourArithmeticOperation::Private::s_type =
+			FNodeType( "ColourArithmenticOperation", NodeColour::GetStaticType() );
 
 	//---------------------------------------------------------------------------------------------
 	//!
@@ -33,45 +33,6 @@ namespace mu
         "Multiply",
         "Divide"
     };
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeColourArithmeticOperation::GetInputCount() const
-	{
-		return 2;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeColourArithmeticOperation::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0: pResult = m_pD->m_pA.get(); break;
-		case 1: pResult = m_pD->m_pB.get(); break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeColourArithmeticOperation::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-
-		switch (i)
-		{
-		case 0: m_pD->m_pA = dynamic_cast<NodeColour*>(pNode.get()); break;
-		case 1: m_pD->m_pB = dynamic_cast<NodeColour*>(pNode.get()); break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

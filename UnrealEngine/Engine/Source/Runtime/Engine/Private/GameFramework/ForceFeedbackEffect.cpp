@@ -74,7 +74,7 @@ float UForceFeedbackEffect::GetTotalDevicePropertyDuration()
 	float LongestDuration = 0.0f;
 
 	// Check the device properties for any longer durations
-	for (TObjectPtr<UInputDeviceProperty> DeviceProperty : DeviceProperties)
+	for (const TObjectPtr<UInputDeviceProperty>& DeviceProperty : DeviceProperties)
 	{
 		if (DeviceProperty)
 		{
@@ -189,7 +189,7 @@ void FActiveForceFeedbackEffect::ActivateDeviceProperties()
 	{
 		if (UInputDeviceSubsystem* System = UInputDeviceSubsystem::Get())
 		{
-			for (TObjectPtr<UInputDeviceProperty> DeviceProp : ForceFeedbackEffect->DeviceProperties)
+			for (const TObjectPtr<UInputDeviceProperty>& DeviceProp : ForceFeedbackEffect->DeviceProperties)
 			{
 				if (DeviceProp)
 				{

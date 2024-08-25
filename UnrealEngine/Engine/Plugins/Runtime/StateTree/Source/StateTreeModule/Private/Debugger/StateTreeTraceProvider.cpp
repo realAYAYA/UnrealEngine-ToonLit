@@ -3,7 +3,6 @@
 #if WITH_STATETREE_DEBUGGER
 
 #include "Debugger/StateTreeTraceProvider.h"
-#include "StateTreeTypes.h"
 #include "Debugger/StateTreeDebugger.h"
 
 FName FStateTreeTraceProvider::ProviderName("StateTreeDebuggerProvider");
@@ -79,7 +78,7 @@ void FStateTreeTraceProvider::AppendEvent(const FStateTreeInstanceDebugId InInst
 }
 
 void FStateTreeTraceProvider::AppendInstanceEvent(
-	const UStateTree* InStateTree,
+	const FStateTreeIndex16 AssetDebugId,
 	const FStateTreeInstanceDebugId InInstanceId,
 	const TCHAR* InInstanceName,
 	const double InTime,
@@ -88,12 +87,27 @@ void FStateTreeTraceProvider::AppendInstanceEvent(
 {
 	if (InEventType == EStateTreeTraceEventType::Push)
 	{
-		Descriptors.Emplace(InStateTree, InInstanceId, InInstanceName, TRange<double>(InWorldRecordingTime, std::numeric_limits<double>::max()));
+		TWeakObjectPtr<const UStateTree> WeakStateTree;
+		if (GetAssetFromDebugId(AssetDebugId, WeakStateTree))
+		{
+			if (const UStateTree* StateTree = WeakStateTree.Get())
+			{
+				Descriptors.Emplace(StateTree, InInstanceId, InInstanceName, TRange<double>(InWorldRecordingTime, std::numeric_limits<double>::max()));
 
-		check(InstanceIdToDebuggerEntryTimelines.Find(InInstanceId) == nullptr);
-		InstanceIdToDebuggerEntryTimelines.Add(InInstanceId, EventsTimelines.Num());
+				check(InstanceIdToDebuggerEntryTimelines.Find(InInstanceId) == nullptr);
+				InstanceIdToDebuggerEntryTimelines.Add(InInstanceId, EventsTimelines.Num());
 		
-		EventsTimelines.Emplace(MakeShared<TraceServices::TPointTimeline<FStateTreeTraceEventVariantType>>(Session.GetLinearAllocator()));
+				EventsTimelines.Emplace(MakeShared<TraceServices::TPointTimeline<FStateTreeTraceEventVariantType>>(Session.GetLinearAllocator()));
+			}
+			else
+			{
+				UE_LOG(LogStateTree, Error, TEXT("Instance event refers to an unloaded asset."));	
+			}
+		}
+		else
+		{
+			UE_LOG(LogStateTree, Error, TEXT("Instance event refers to an asset Id that wasn't added previously."));
+		}
 	}
 	else if (InEventType == EStateTreeTraceEventType::Pop)
 	{
@@ -106,6 +120,29 @@ void FStateTreeTraceProvider::AppendInstanceEvent(
 	}
 
 	Session.UpdateDurationSeconds(InTime);
+}
+
+void FStateTreeTraceProvider::AppendAssetDebugId(const UStateTree* InStateTree, const FStateTreeIndex16 AssetDebugId)
+{
+	TWeakObjectPtr<const UStateTree> WeakStateTree;
+	if (ensureMsgf(AssetDebugId.IsValid(), TEXT("Expecting valid asset debug Id."))
+		&& !GetAssetFromDebugId(AssetDebugId, WeakStateTree))
+	{
+		StateTreeAssets.Emplace(FStateTreeDebugIdPair(InStateTree, AssetDebugId));
+	}
+}
+
+bool FStateTreeTraceProvider::GetAssetFromDebugId(const FStateTreeIndex16 AssetDebugId, TWeakObjectPtr<const UStateTree>& WeakStateTree) const
+{
+	verifyf(AssetDebugId.IsValid(), TEXT("Expecting valid asset debug Id."));
+	const FStateTreeDebugIdPair* ExistingPair = StateTreeAssets.FindByPredicate([AssetDebugId](const FStateTreeDebugIdPair& Pair)
+	{
+		return Pair.Id == AssetDebugId;
+	});
+
+	WeakStateTree = ExistingPair ? ExistingPair->WeakStateTree : nullptr; 
+
+	return ExistingPair != nullptr;
 }
 
 void FStateTreeTraceProvider::GetInstances(TArray<UE::StateTreeDebugger::FInstanceDescriptor>& OutInstances) const

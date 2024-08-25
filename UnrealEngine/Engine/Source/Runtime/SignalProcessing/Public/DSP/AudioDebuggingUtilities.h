@@ -4,12 +4,6 @@
 
 #include "HAL/Platform.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1 
-#include "CoreMinimal.h"
-#include "Misc/ScopeLock.h"
-#include "BufferVectorOperations.h"
-#endif
-
 #define USE_AUDIO_DEBUGGING UE_BUILD_DEBUG
 
 SIGNALPROCESSING_API void BreakWhenAudible(float* InBuffer, int32 NumSamples);

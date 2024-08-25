@@ -22,7 +22,7 @@ const FString* FMovieSceneStringChannel::Evaluate(FFrameTime InTime) const
 bool FMovieSceneStringChannel::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	static const FName StringCurveName("StringCurve");
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == StringCurveName)
+	if (Tag.GetType().IsStruct(StringCurveName))
 	{
 		FStringCurve StringCurve;
 		FStringCurve::StaticStruct()->SerializeItem(Slot, &StringCurve, nullptr);
@@ -90,6 +90,16 @@ void FMovieSceneStringChannel::DeleteKeysFrom(FFrameNumber InTime, bool bDeleteK
 	}
 
 	GetData().DeleteKeysFrom(InTime, bDeleteKeysBefore);
+}
+
+FKeyHandle FMovieSceneStringChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneStringChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
 }
 
 void FMovieSceneStringChannel::ChangeFrameResolution(FFrameRate SourceRate, FFrameRate DestinationRate)

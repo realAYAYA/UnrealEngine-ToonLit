@@ -35,7 +35,7 @@ public class HeadlessChaos : TestModuleRules
 		{
 			PublicDefinitions.Add("GTEST_OS_MAC=1");
 		}
-		else if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			PublicDefinitions.Add("GTEST_OS_IOS=1");
 		}

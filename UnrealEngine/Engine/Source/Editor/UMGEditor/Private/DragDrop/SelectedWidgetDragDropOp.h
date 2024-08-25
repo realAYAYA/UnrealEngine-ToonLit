@@ -20,7 +20,12 @@ class FSelectedWidgetDragDropOp : public FDecoratedDragDropOp
 public:
 	DRAG_DROP_OPERATOR_TYPE(FSelectedWidgetDragDropOp, FDecoratedDragDropOp);
 
+	DECLARE_MULTICAST_DELEGATE(FOnDragDropEnded);
+	FOnDragDropEnded OnDragDropEnded;
+
 	virtual ~FSelectedWidgetDragDropOp();
+
+	virtual void OnDrop(bool bDropWasHandled, const FPointerEvent& MouseEvent) override;
 
 	struct FDraggingWidgetReference
 	{

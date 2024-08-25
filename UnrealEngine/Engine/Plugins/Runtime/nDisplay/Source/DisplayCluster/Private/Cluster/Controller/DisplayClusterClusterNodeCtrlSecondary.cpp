@@ -153,10 +153,10 @@ bool FDisplayClusterClusterNodeCtrlSecondary::InitializeClients()
 	UE_LOG(LogDisplayClusterCluster, Log, TEXT("%s - initializing secondary node clients..."), *GetControllerName());
 
 	// Instantiate local clients
-	ClusterSyncClient         = MakeUnique<FDisplayClusterClusterSyncClient>();
-	RenderSyncClient          = MakeUnique<FDisplayClusterRenderSyncClient>();
-	ClusterEventsJsonClient   = MakeUnique<FDisplayClusterClusterEventsJsonClient>();
-	ClusterEventsBinaryClient = MakeUnique<FDisplayClusterClusterEventsBinaryClient>();
+	ClusterSyncClient         = TUniquePtr<FDisplayClusterClusterSyncClient        , FDisplayClusterClientDeleter>(new FDisplayClusterClusterSyncClient()        , FDisplayClusterClientDeleter());
+	RenderSyncClient          = TUniquePtr<FDisplayClusterRenderSyncClient         , FDisplayClusterClientDeleter>(new FDisplayClusterRenderSyncClient()         , FDisplayClusterClientDeleter());
+	ClusterEventsJsonClient   = TUniquePtr<FDisplayClusterClusterEventsJsonClient  , FDisplayClusterClientDeleter>(new FDisplayClusterClusterEventsJsonClient()  , FDisplayClusterClientDeleter());
+	ClusterEventsBinaryClient = TUniquePtr<FDisplayClusterClusterEventsBinaryClient, FDisplayClusterClientDeleter>(new FDisplayClusterClusterEventsBinaryClient(), FDisplayClusterClientDeleter());
 
 	return ClusterSyncClient && RenderSyncClient && ClusterEventsJsonClient && ClusterEventsBinaryClient;
 }

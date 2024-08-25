@@ -26,11 +26,11 @@
 
 #define OPENCV_INCLUDES_END static_assert(false, "Include PostOpenCVHeaders.h instead of using this macro");
 
-#if WITH_OPENCV
-
 class UTexture2D;
 class FString;
 class FName;
+
+#if WITH_OPENCV
 
 namespace cv
 {
@@ -41,8 +41,37 @@ namespace cv
 	typedef Point_<float> Point2f;
 	typedef Point3_<float> Point3f;
 };
+
 #endif	// WITH_OPENCV
 
+UENUM(BlueprintType)
+enum class EArucoDictionary : uint8
+{
+	None                 UMETA(DisplayName = "None"),
+	DICT_4X4_50          UMETA(DisplayName = "DICT_4X4_50"),
+	DICT_4X4_100		 UMETA(DisplayName = "DICT_4X4_100"),
+	DICT_4X4_250		 UMETA(DisplayName = "DICT_4X4_250"),
+	DICT_4X4_1000		 UMETA(DisplayName = "DICT_4X4_1000"),
+	DICT_5X5_50			 UMETA(DisplayName = "DICT_5X5_50"),
+	DICT_5X5_100		 UMETA(DisplayName = "DICT_5X5_100"),
+	DICT_5X5_250		 UMETA(DisplayName = "DICT_5X5_250"),
+	DICT_5X5_1000		 UMETA(DisplayName = "DICT_5X5_1000"),
+	DICT_6X6_50			 UMETA(DisplayName = "DICT_6X6_50"),
+	DICT_6X6_100		 UMETA(DisplayName = "DICT_6X6_100"),
+	DICT_6X6_250		 UMETA(DisplayName = "DICT_6X6_250"),
+	DICT_6X6_1000		 UMETA(DisplayName = "DICT_6X6_1000"),
+	DICT_7X7_50			 UMETA(DisplayName = "DICT_7X7_50"),
+	DICT_7X7_100		 UMETA(DisplayName = "DICT_7X7_100"),
+	DICT_7X7_250		 UMETA(DisplayName = "DICT_7X7_250"),
+	DICT_7X7_1000		 UMETA(DisplayName = "DICT_7X7_1000"),
+	DICT_ARUCO_ORIGINAL	 UMETA(DisplayName = "DICT_ARUCO_ORIGINAL")
+};
+
+struct OPENCVHELPER_API FArucoMarker
+{
+	int32 MarkerID = 0;
+	FVector2f Corners[4];
+};
 
 class OPENCVHELPER_API FOpenCVHelper
 {
@@ -70,7 +99,7 @@ public:
 		return UnitVectors[std::underlying_type_t<EAxis>(Axis)];
 	};
 
-	/** Converts in-place the coordinate system of the given FTransform by specifying the source axes in terms of the destionation axes */
+	/** Converts in-place the coordinate system of the given FTransform by specifying the source axes in terms of the destination axes */
 	static void ConvertCoordinateSystem(FTransform& Transform, const EAxis DstXInSrcAxis, const EAxis DstYInSrcAxis, const EAxis DstZInSrcAxis);
 
 	/** Converts in-place an FTransform in Unreal coordinates to OpenCV coordinates */
@@ -79,8 +108,14 @@ public:
 	/** Converts in-place an FTransform in OpenCV coordinates to Unreal coordinates */
 	static void ConvertOpenCVToUnreal(FTransform& Transform);
 
-#if WITH_OPENCV
+	/** Converts an FVector in Unreal coordinates to OpenCV coordinates */
+	static FVector ConvertUnrealToOpenCV(const FVector& Transform);
+
+	/** Converts an FTransform in OpenCV coordinates to Unreal coordinates */
+	static FVector ConvertOpenCVToUnreal(const FVector& Transform);
+
 public:
+#if WITH_OPENCV
 	/**
 	 * Creates a Texture from the given Mat, if its properties (e.g. pixel format) are supported.
 	 * 
@@ -93,14 +128,49 @@ public:
 	static UTexture2D* TextureFromCvMat(cv::Mat& Mat, const FString* PackagePath = nullptr, const FName* TextureName = nullptr);
 	static UTexture2D* TextureFromCvMat(cv::Mat& Mat, UTexture2D* InTexture);
 
-	/** Converts an FTransform to a rotation vector (cv::Mat) and a translation vector (cv::Mat) */
-	static void ConvertTransformToVectors(const FTransform& InTransform, cv::Mat& OutRotation, cv::Mat& OutTranslation);
+	/** 
+	 * Takes a rotation vector (in rodrigues form) and translation vector that represent a change of basis from object space to camera space (in OpenCV's coordinate system),
+	 * inverts them to generate a camera pose, and converts it to an FTransform in UE's coordinate system. 
+	 * The input rotation and translation vectors are expected to match the form of an "rvec" and "tvec" that are generated functions like cv::calibrateCamera() and cv::solvePnP()
+	 */
+	static void MakeCameraPoseFromObjectVectors(const cv::Mat& InRotation, const cv::Mat& InTranslation, FTransform& OutTransform);
 
-	/** Converts a rotation vector (cv::Mat) and a translation vector (cv::Mat) to an FTransform */
-	static void ConvertVectorsToTransform(const cv::Mat& InRotation, const cv::Mat& InTranslation, FTransform& OutTransform);
-
-	static double ComputeReprojectionError(const FTransform& CameraPose, const cv::Mat& CameraIntrinsicMatrix, const std::vector<cv::Point3f>& Points3d, const std::vector<cv::Point2f>& Points2d);
+	/**
+	 * Takes a camera pose transform in UE's coordinate system, converts it to a rotation vector (in rodrigues form) and translation vector (in OpenCV's coordinate system),
+	 * and inverts them to generate vectors that represent a change of basis from object space to camera space.
+	 * The output rotation and translation vectors are expected to match the form of an "rvec" and "tvec" that are consumed by functions like cv::calibrateCamera() and cv::solvePnP()
+	 */
+	static void MakeObjectVectorsFromCameraPose(const FTransform& InTransform, cv::Mat& OutRotation, cv::Mat& OutTranslation);
 #endif	// WITH_OPENCV
+
+	/** Identify a set of aruco markers in the input image that belong to the input aruco dictionary, and output the marker IDs and the 2D coordinates of the 4 corners of each marker */
+	static bool IdentifyArucoMarkers(TArray<FColor>& Image, FIntPoint ImageSize, EArucoDictionary DictionaryName, TArray<FArucoMarker>& OutMarkers);
+
+	/** Draw a debug view of the input aruco markers on top of the input texture */
+	static bool DrawArucoMarkers(const TArray<FArucoMarker>& Markers, UTexture2D* DebugTexture);
+
+	/** Identify a checkerboard pattern in the input image that with the given checkerboard dimensions (columns x rows), and output the 2D coordinates of the intersections between each checkerboard square */
+	static bool IdentifyCheckerboard(TArray<FColor>& Image, FIntPoint ImageSize, FIntPoint CheckerboardDimensions, TArray<FVector2f>& OutCorners);
+
+	/** Draw a debug view of the input checkerboard corners on top of the input texture */
+	static bool DrawCheckerboardCorners(const TArray<FVector2f>& Corners, FIntPoint CheckerboardDimensions, UTexture2D* DebugTexture);
+
+	/** Compute the camera pose that minimizes the reprojection error of the input object points and image points */
+	static bool SolvePnP(const TArray<FVector>& ObjectPoints, const TArray<FVector2f>& ImagePoints, const FVector2D& FocalLength, const FVector2D& ImageCenter, const TArray<float>& DistortionParameters, FTransform& OutCameraPose);
+
+	/** Project the input object points to the 2D image plane defined by the input camera intrinsics and camera pose */
+	static bool ProjectPoints(const TArray<FVector>& ObjectPoints, const FVector2D& FocalLength, const FVector2D& ImageCenter, const TArray<float>& DistortionParameters, const FTransform& CameraPose, TArray<FVector2f>& OutImagePoints);
+
+	/** Find a 3D fit line that passes through the input points, as well as a point on that line */
+	static bool FitLine3D(const TArray<FVector>& InPoints, FVector& OutLine, FVector& OutPointOnLine);
+
+#if WITH_OPENCV
+	UE_DEPRECATED(5.4, "The version of ComputeReprojectionError takes OpenCV types as input parameters is deprecated. Please use the version that takes all UE types.")
+	static double ComputeReprojectionError(const FTransform& CameraPose, const cv::Mat& CameraIntrinsicMatrix, const std::vector<cv::Point3f>& Points3d, const std::vector<cv::Point2f>& Points2d);
+#endif
+
+	/** Project the 3D objects points to the 2D image plane represented by the input camera intrinsics and pose, and compute the reprojection error (euclidean distance) between the input image points and the reprojected points */
+	static double ComputeReprojectionError(const TArray<FVector>& ObjectPoints, const TArray<FVector2f>& ImagePoints, const FVector2D& FocalLength, const FVector2D& ImageCenter, const FTransform& CameraPose);
 };
 
 /**

@@ -74,7 +74,7 @@ UClass* UOptimusNode_ComputeKernelFunctionGeneratorClass::CreateNodeClass(
 		NextProperty = &(*NextProperty)->Next;
 	}
 
-	TMap<const FProperty*, const TArray<uint8>*> PropertyValues;
+	//TMap<const FProperty*, const TArray<uint8>*> PropertyValues;
 	for (const FOptimusParameterBinding& InputBinding: InInputBindings)
 	{
 		if (InputBinding.DataDomain.IsSingleton())
@@ -106,7 +106,7 @@ UClass* UOptimusNode_ComputeKernelFunctionGeneratorClass::CreateNodeClass(
 	KernelClass->AddToRoot();
 
 	// Grab the CDO and update the default values based on the raw values in the value bindings.
-	UOptimusNode_ComputeKernelFunction *KernelCDO = Cast<UOptimusNode_ComputeKernelFunction>(KernelClass->GetDefaultObject());
+	/*UOptimusNode_ComputeKernelFunction *KernelCDO = Cast<UOptimusNode_ComputeKernelFunction>(KernelClass->GetDefaultObject());
 
 	// Copy the default values from the incoming properties.
 	for (const TPair<const FProperty*, const TArray<uint8>*>& Item: PropertyValues)
@@ -115,7 +115,7 @@ UClass* UOptimusNode_ComputeKernelFunctionGeneratorClass::CreateNodeClass(
 		const TArray<uint8>& RawValue = *Item.Value;
 
 		Property->CopyCompleteValue(Property->ContainerPtrToValuePtr<UOptimusNode_ComputeKernelFunction>(KernelCDO), RawValue.GetData());
-	}
+	}*/
 	
 	return KernelClass;
 }
@@ -185,7 +185,7 @@ FIntVector UOptimusNode_ComputeKernelFunction::GetGroupSize() const
 
 FString UOptimusNode_ComputeKernelFunction::GetKernelSourceText() const
 {
-	return GetCookedKernelSource(GetPathName(), GetGeneratorClass()->ShaderSource, GetKernelName(), GetGroupSize());
+	return Optimus::GetCookedKernelSource(GetPathName(), GetGeneratorClass()->ShaderSource, GetKernelName(), GetGroupSize());
 }
 
 
@@ -204,9 +204,9 @@ void UOptimusNode_ComputeKernelFunction::ConstructNode()
 }
 
 
-FName UOptimusNode_ComputeKernelFunction::GetExecutionDomain() const
+FOptimusExecutionDomain UOptimusNode_ComputeKernelFunction::GetExecutionDomain() const
 {
-	return GetGeneratorClass()->ExecutionDomain.Name;
+	return GetGeneratorClass()->ExecutionDomain;
 }
 
 

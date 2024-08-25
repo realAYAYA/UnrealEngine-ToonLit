@@ -464,7 +464,7 @@ void SDirectLinkStreamManager::UpdateData(const DirectLink::FRawInfo& RawInfo)
 			TSharedRef<FStreamData>& Stream = Streams[Index];
 			if ( !Stream->bIsActive )
 			{
-				Streams.RemoveAtSwap( Index, 1, false );
+				Streams.RemoveAtSwap( Index, 1, EAllowShrinking::No );
 				--Index;
 			}
 		}

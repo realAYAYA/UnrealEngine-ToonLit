@@ -23,7 +23,6 @@
 #include "OpenColorIODisplayExtension.h"
 #include "RendererInterface.h"
 #include "RenderGraphResources.h"
-#include "RenderGraphUtils.h"
 #include "ScreenPass.h"
 #include "Slate/SceneViewport.h"
 #include "TextureResource.h"
@@ -434,7 +433,7 @@ FRDGTextureDesc UMediaCapture::GetOutputTextureDescription() const
 					GetOutputSize(),
 					GetOutputPixelFormat(),
 					FClearValueBinding::None,
-					TexCreate_Shared | TexCreate_RenderTargetable | TexCreate_UAV);
+					GetOutputTextureFlags());
 }
 
 bool UMediaCapture::UpdateSource(TSharedPtr<UE::MediaCapture::Private::FCaptureSource> InCaptureSource)

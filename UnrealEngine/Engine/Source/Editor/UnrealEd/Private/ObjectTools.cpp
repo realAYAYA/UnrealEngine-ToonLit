@@ -99,12 +99,12 @@
 #include "HAL/PlatformApplicationMisc.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Subsystems/AssetEditorSubsystem.h"
-#include "TextureCompiler.h"
 #include "UObject/ReferencerFinder.h"
 #include "Containers/Set.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Logging/LogMacros.h"
 #include "UncontrolledChangelistsModule.h"
+#include "AssetCompilingManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogObjectTools, Log, All);
 
@@ -202,7 +202,7 @@ namespace ObjectTools
 		FUObjectItem* ObjectItem = GUObjectArray.ObjectToObjectItem(Object);
 		return
 			ObjectItem->IsRootSet() ||
-			ObjectItem->HasAnyFlags(EInternalObjectFlags::GarbageCollectionKeepFlags) ||
+			ObjectItem->HasAnyFlags(EInternalObjectFlags_GarbageCollectionKeepFlags) ||
 			(GARBAGE_COLLECTION_KEEPFLAGS != RF_NoFlags && Object->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS));
 	}
 
@@ -285,7 +285,7 @@ namespace ObjectTools
 			// it does make an exception with very specific package metadata case.
 			for (UObject* ObjectToDelete : ObjectsToDelete)
 			{
-				if ((ObjectToDelete->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS) || ObjectToDelete->HasAnyInternalFlags(EInternalObjectFlags::GarbageCollectionKeepFlags)) &&
+				if ((ObjectToDelete->HasAnyFlags(GARBAGE_COLLECTION_KEEPFLAGS) || ObjectToDelete->HasAnyInternalFlags(EInternalObjectFlags_GarbageCollectionKeepFlags)) &&
 					(!bIsGatheringPackageRef || !ObjectToDelete->IsA<UMetaData>()))
 				{
 					InternalReferences.Add(ObjectToDelete);
@@ -392,7 +392,7 @@ namespace ObjectTools
 				// determine whether the transaction buffer is the only thing holding a reference to the object
 				// and if so, offer the user the option to reset the transaction buffer.
 				GEditor->Trans->DisableObjectSerialization();
-				bOutIsReferenced = IsReferenced(InObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, OutMemoryReferences);
+				bOutIsReferenced = IsReferenced(InObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, OutMemoryReferences);
 				if (!bOutIsReferenced)
 				{
 					UE_LOG(LogObjectTools, Warning, TEXT("Detected inconsistencies between reference gathering algorithms. Switching 'Editor.UseLegacyGetReferencersForDeletion' on for the remainder of this editor session."));
@@ -404,13 +404,13 @@ namespace ObjectTools
 		// This is the old/slower behavior that is kept for debug/comparison and is going to be removed in a future release
 		else
 		{
-			bOutIsReferenced = IsReferenced(InObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, OutMemoryReferences);
+			bOutIsReferenced = IsReferenced(InObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, OutMemoryReferences);
 			if (bOutIsReferenced)
 			{
 				// determine whether the transaction buffer is the only thing holding a reference to the object
 				// and if so, offer the user the option to reset the transaction buffer.
 				GEditor->Trans->DisableObjectSerialization();
-				bOutIsReferenced = IsReferenced(InObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, OutMemoryReferences);
+				bOutIsReferenced = IsReferenced(InObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, OutMemoryReferences);
 				GEditor->Trans->EnableObjectSerialization();
 
 				// If object is referenced both in undo and non-undo, we can't determine which one it is but
@@ -2407,9 +2407,9 @@ namespace ObjectTools
 
 			bool bIsReferenced = false;
 
-			// Skip external actor packages when considering whether to clear the transaction buffer, as you should be able to undo deleting an actor (but not an asset)
-			// If an external actor package is kept alive by the transaction buffer then it will be re-marked as "newly created" further down this function
-			if ( Package != nullptr && bPerformReferenceCheck && !Package->GetName().Contains(FPackagePath::GetExternalActorsFolderName()))
+			// Skip external object packages when considering whether to clear the transaction buffer, as you should be able to undo deleting an actor, an actor folder, etc. (but not an asset)
+			// If an external object package is kept alive by the transaction buffer then it will be re-marked as "newly created" further down this function
+			if ( Package != nullptr && bPerformReferenceCheck && !Package->GetName().Contains(FPackagePath::GetExternalActorsFolderName()) && !Package->GetName().Contains(FPackagePath::GetExternalObjectsFolderName()))
 			{
 				bool bIsReferencedByUndo = false;
 				GatherObjectReferencersForDeletion(Package, bIsReferenced, bIsReferencedByUndo);
@@ -2685,7 +2685,7 @@ namespace ObjectTools
 		TArray<UObject*> ObjectsToPrivatize;
 		for (const FAssetData& AssetToPrivatize : AssetsToPrivatize)
 		{
-			UObject* ObjectToPrivatize = AssetToPrivatize.GetAsset({ ULevel::LoadAllExternalObjectsTag });
+			UObject* ObjectToPrivatize = AssetToPrivatize.GetAsset();
 
 			if (ObjectToPrivatize)
 			{
@@ -3350,6 +3350,8 @@ namespace ObjectTools
 
 		GWarn->BeginSlowTask( NSLOCTEXT("UnrealEd", "Deleting", "Deleting"), true );
 
+		FEditorDelegates::OnPreForceDeleteObjects.Broadcast(ShownObjectsToDelete);
+		
 		struct FSCSNodeToDelete
 		{
 			USimpleConstructionScript* SimpleConstructionScript;
@@ -5182,7 +5184,7 @@ namespace ThumbnailTools
 					OutData.AddUninitialized(OutThumbnail->GetImageWidth() * OutThumbnail->GetImageHeight() * sizeof(FColor));
 
 					// Copy the contents of the remote texture to system memory
-					// NOTE: OutRawImageData must be a preallocated buffer!
+					// prefer GetRenderTargetImage()
 					RenderTargetResource->ReadPixelsPtr((FColor*)OutData.GetData(), FReadSurfaceDataFlags(), InSrcRect);
 				}
 			}
@@ -5208,7 +5210,8 @@ namespace ThumbnailTools
 
 			if ( UTexture* Texture = Cast<UTexture>(InObject) )
 			{
-				FTextureCompilingManager::Get().FinishCompilation({Texture});
+				// SetForceMipLevelsToBeResident ?
+				Texture->BlockOnAnyAsyncBuild();
 				Texture->WaitForStreaming();
 			}
 
@@ -5656,6 +5659,7 @@ namespace ThumbnailTools
 	/** Loads thumbnails from the specified package file name, try loading from external cache file if not found in package file */
 	bool LoadThumbnailsFromPackage( const FString& InPackageFileName, const TSet< FName >& InObjectFullNames, FThumbnailMap& InOutThumbnails )
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE_STR("ThumbnailTools::LoadThumbnailsFromPackage");
 		if (LoadThumbnailsFromPackageInternal(InPackageFileName, InObjectFullNames, InOutThumbnails))
 		{
 			return true;

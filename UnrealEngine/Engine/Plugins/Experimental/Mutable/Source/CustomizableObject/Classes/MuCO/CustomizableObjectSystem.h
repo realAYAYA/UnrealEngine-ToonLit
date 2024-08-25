@@ -8,6 +8,7 @@
 #include "MuCO/CustomizableObjectInstance.h"
 #include "MuCO/CustomizableObjectInstanceDescriptor.h"
 #include "MuR/Parameters.h"
+#include "MuR/Image.h"
 #include "MuR/Types.h"
 
 #if WITH_EDITOR
@@ -24,47 +25,27 @@ class SNotificationItem;
 class UCustomizableObject;
 class UDefaultImageProvider;
 class USkeletalMesh;
+class UMaterialInterface;
 class UTexture2D;
+class UCustomizableObjectSystemPrivate; // This is used to hide Mutable SDK members in the public headers.
+class FUpdateContextPrivate;
 struct FFrame;
 struct FGuid;
 
 
-// Split StreamedBulkData into chunks smaller than MUTABLE_STREAMED_DATA_MAXCHUNKSIZE
-#define MUTABLE_STREAMED_DATA_MAXCHUNKSIZE		(512 * 1024 * 1024)
-
-// In case of async file operations, what priority to use
-#define MUTABLE_SYSTEM_ASYNC_STREAMING_PRIORITY			EAsyncIOPriorityAndFlags::AIOP_Normal
-
-// This is used to hide Mutable SDK members in the public headers.
-class FCustomizableObjectSystemPrivate;
-
-
-// Mutable stats
-DECLARE_STATS_GROUP(TEXT("Mutable"), STATGROUP_Mutable, STATCAT_Advanced);
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Created Mutable Skeletal Meshes"), STAT_MutableNumSkeletalMeshes, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Cached Mutable Skeletal Meshes"), STAT_MutableNumCachedSkeletalMeshes, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Allocated Mutable Skeletal Meshes"), STAT_MutableNumAllocatedSkeletalMeshes, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Instances at LOD 0"), STAT_MutableNumInstancesLOD0, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Instances at LOD 1"), STAT_MutableNumInstancesLOD1, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Instances at LOD 2 or more"), STAT_MutableNumInstancesLOD2, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Skeletal Mesh Resource Memory"), STAT_MutableSkeletalMeshResourceMemory, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Created Mutable Textures"), STAT_MutableNumTextures, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Cached Mutable Textures"), STAT_MutableNumCachedTextures, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Allocated Mutable Textures"), STAT_MutableNumAllocatedTextures, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Texture Resource Memory"), STAT_MutableTextureResourceMemory, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Texture Generated Memory"), STAT_MutableTextureGeneratedMemory, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Texture Locked Memory"), STAT_MutableTextureCacheMemory, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Pending Instance Updates"), STAT_MutablePendingInstanceUpdates, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Abandoned Instance Updates"), STAT_MutableAbandonedInstanceUpdates, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Last Instance Build Time"), STAT_MutableInstanceBuildTime, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Avrg Instance Build Time"), STAT_MutableInstanceBuildTimeAvrg, STATGROUP_Mutable, );
-DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Streaming Ops"), STAT_MutableStreamingOps, STATGROUP_Mutable, );
-
+constexpr uint64 KEY_OFFSET_COMPILATION_OUT_OF_DATE = 1;
 
 extern TAutoConsoleVariable<bool> CVarClearWorkingMemoryOnUpdateEnd;
 
 extern TAutoConsoleVariable<bool> CVarReuseImagesBetweenInstances;
 
+extern TAutoConsoleVariable<bool> CVarPreserveUserLODsOnFirstGeneration;
+
+extern TAutoConsoleVariable<bool> CVarEnableMeshCache;
+
+extern TAutoConsoleVariable<bool> CVarRollbackFixModelDiskStreamerDataRace;
+
+extern TAutoConsoleVariable<bool> CVarEnableNewSplitMutableTask;
 
 #if WITH_EDITOR
 
@@ -72,7 +53,7 @@ extern TAutoConsoleVariable<bool> CVarReuseImagesBetweenInstances;
 struct FEditorCompileSettings 
 {
 	// General case
-	bool bDisableCompilation;
+	bool bIsMutableEnabled = true;
 
 	// Auto Compile 
 	bool bEnableAutomaticCompilation = true;
@@ -82,29 +63,27 @@ struct FEditorCompileSettings
 
 #endif
 
-//
 namespace EMutableProfileMetric
 {
 	typedef uint8 Type;
 
-	const Type BuiltInstances = 1;
-	const Type UpdateOperations = 2;
-	const Type Count = 4;
+	constexpr Type BuiltInstances = 1;
+	constexpr Type UpdateOperations = 2;
+	constexpr Type Count = 4;
 
 };
 
+
 USTRUCT()
-struct FPendingReleaseSkeletalMeshInfo
+struct FPendingReleaseMaterialsInfo
 {
-public:
 	GENERATED_USTRUCT_BODY()
 
-public:
 	UPROPERTY()
-	TObjectPtr<USkeletalMesh> SkeletalMesh = nullptr;
+	TArray<TObjectPtr<UMaterialInterface>> Materials;
 
 	UPROPERTY()
-	double TimeStamp = 0.0f;
+	int32 TicksUntilRelease = 0;
 };
 
 
@@ -114,17 +93,16 @@ struct FMutableImageReference
 {
 	/** Original image ID. Once generated it will be unique. However, future updates of the image may return a different ID for the
 	* same image, if many other resources have been built in the middle. For this reason the rest of the data in the struct is what
-	* must be used to request the additional mips.
-	*/
+	* must be used to request the additional mips.	*/
 	uint32 ImageID = 0;
 
-	/** */
 	uint32 SurfaceId = 0;
 
-	/** */
 	uint8 LOD = 0;
 	uint8 Component = 0;
 	uint8 Image = 0;
+
+	uint8 BaseMip = 0;
 };
 
 
@@ -180,31 +158,40 @@ public:
 
 	// Used in the editor to show the list of available options.
 	// Only necessary if the images are required in editor previews.
-	virtual void GetTextureParameterValues(TArray<FCustomizableObjectExternalTexture>& OutValues) {};
+	virtual void GetTextureParameterValues(TArray<FCustomizableObjectExternalTexture>& OutValues) {}
 };
-
-
-// Before the Mutable Queue rework this made sense, but this is no longer the case. Remove this when doing MTBL-1409.
-/** End a Customizable Object Instance Update. All code paths of an update have to end here. */
-void FinishUpdateGlobal(UCustomizableObjectInstance* Instance, EUpdateResult UpdateResult, FInstanceUpdateDelegate* UpdateCallback, const FDescriptorRuntimeHash InUpdatedHash = FDescriptorRuntimeHash());
 
 
 UCLASS(Blueprintable, BlueprintType)
 class CUSTOMIZABLEOBJECT_API UCustomizableObjectSystem : public UObject
 {
+	// Friends
+	friend class UCustomizableObjectSystemPrivate;
+
 public:
 	GENERATED_BODY()
 
 	UCustomizableObjectSystem() = default;
 	void InitSystem();
 
-	/** Get the singleton object. It will be created if it doesn't exist yet.
-	 * @param bCreate Create a system if it does not has been created yet. */
+	/** Get the singleton object. It will be created if it doesn't exist yet. */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = Status)
 	static UCustomizableObjectSystem* GetInstance();
 	
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = Status)
+	static UCustomizableObjectSystem* GetInstanceChecked();
+
+	/** Determines if the result of the instance update is valid or not.
+	 * @return true if the result is successful or has warnings, false if the result is from the Error category */
+	UFUNCTION(BlueprintCallable, Category = Status)
+	static bool IsUpdateResultValid(const EUpdateResult UpdateResult);
+	
 	// Return true if the singleton has been created. It is different than GetInstance in that GetInstance will create it if it doesn't exist.
 	static bool IsCreated();
+
+	/** Returns the current status of Mutable. Only when active is it possible to compile COs, generate instances, and stream textures.
+	  * @return True if Mutable is enabled. */
+	static bool IsActive();
 
 	// Begin UObject interface.
 	virtual void BeginDestroy() override;
@@ -212,7 +199,7 @@ public:
 	// End UObject interface.
 
 	// Creates a new Customizable Object Compiler (Only does real work in editor builds). The caller is responsible for freeing the new compiler
-	class FCustomizableObjectCompilerBase* GetNewCompiler();
+	FCustomizableObjectCompilerBase* GetNewCompiler();
 	void SetNewCompilerFunc(FCustomizableObjectCompilerBase* (*NewCompilerFunc)());
 
 	bool IsReplaceDiscardedWithReferenceMeshEnabled() const;
@@ -226,10 +213,10 @@ public:
 	// Lock a CustomizableObjects, preventing the generation or update of any of its instances
 	// Will return true if successful, false if it fails to lock because an update is already underway
 	// This is usually only used in the editor
-	bool LockObject(const class UCustomizableObject*);
-	void UnlockObject(const class UCustomizableObject*);
+	bool LockObject(const UCustomizableObject*);
+	void UnlockObject(const UCustomizableObject*);
 
-	/** Checks if there are any outstading disk or mip update operations in flight for the parameter Customizable Object that may
+	/** Checks if there are any outstanding disk or mip update operations in flight for the parameter Customizable Object that may
 	* make it unsafe to compile at the moment.
 	* @return true if there are operations in flight and it's not safe to compile */
 	bool CheckIfDiskOrMipUpdateOperationsPending(const UCustomizableObject& Object) const;
@@ -237,19 +224,22 @@ public:
 	// Called whenever the Mutable Editor Settings change, copying the new value of the current needed settings to the Customizable Object System
 	void EditorSettingsChanged(const FEditorCompileSettings& InEditorSettings);
 
-	// If compilation is disabled, Customizable Objects won't be compiled in the editor
-	bool IsCompilationDisabled() const;
-
 	// If true, uncompiled Customizable Objects will be compiled whenever an instance update is required
 	bool IsAutoCompileEnabled() const;
 
+	/** Return true if inside commandlets uncompiled Customizable Objects will be compiled whenever an instance update is required. */
+	bool IsAutoCompileCommandletEnabled() const;
+
+	/** Set if inside commandlets uncompiled Customizable Objects will be compiled whenever an instance update is required. */
+	void SetAutoCompileCommandletEnabled(bool bValue);
+	
 	// If true, uncompiled Customizable Objects will be compiled synchronously
 	bool IsAutoCompilationSync() const;
-
-	// Copy of the Mutable Editor Settings tied to CO compilation. They are updated whenever changed
-	FEditorCompileSettings EditorSettings;
-
 #endif
+	
+	// Return the current MinLodQualityLevel for skeletal meshes.
+	int32 GetSkeletalMeshMinLODQualityLevel() const;
+
 	bool IsSupport16BitBoneIndexEnabled() const;
 
 	bool IsProgressiveMipStreamingEnabled() const;
@@ -258,16 +248,9 @@ public:
 	bool IsOnlyGenerateRequestedLODsEnabled() const;
 	void SetOnlyGenerateRequestedLODsEnabled(bool bIsEnabled);
 
-	void AddPendingReleaseSkeletalMesh( USkeletalMesh* SkeletalMesh );
-
-	void PurgePendingReleaseSkeletalMesh();
-
-private:
-
-	UPROPERTY()
-	TArray<FPendingReleaseSkeletalMeshInfo> PendingReleaseSkeletalMesh;
-
-public:
+#if WITH_EDITOR
+	void SetImagePixelFormatOverride(const mu::FImageOperator::FImagePixelFormatFunc&);
+#endif
 
 	/** [Texture Parameters] Get a list of all the possible values for external texture parameters according to the various providers registered with RegisterImageProvider. */
 	TArray<FCustomizableObjectExternalTexture> GetTextureParameterValues();
@@ -278,7 +261,7 @@ public:
 	/** [Texture Parameters] Remove a previously registered provider. */
 	void UnregisterImageProvider(UCustomizableSystemImageProvider* Provider);
 
-	/** [Texture Parameters] Interface to actually cache Images in the Mutable system and make them availabe at run-time.
+	/** [Texture Parameters] Interface to actually cache Images in the Mutable system and make them available at run-time.
 		Any cached image has to be registered by an Image provider before caching it.
 		Have in mind that once an image has been cached, it will spend memory according to its size, except in the case
 		of images of type UCustomizableSystemImageProvider::ValueType::Unreal_Deferred, where only a very small amount of
@@ -291,21 +274,11 @@ public:
 	/** [Texture Parameters] Remove all images from the cache. */
 	void ClearImageCache();
 
-	/** Initialize (if was not already) and get the default image provider. */
-	UDefaultImageProvider& GetOrCreateDefaultImageProvider();
-
-private:
-	/** Mutable default image provider. Used by the COIEditor and Instance/Descriptor APIs. */
-	UPROPERTY()
-	TObjectPtr<UDefaultImageProvider> DefaultImageProvider = nullptr;
-
-public:
-    
 	// Show a warning on-screen and via a notification (if in Editor) and log an error when a CustomizableObject is
 	// being used and it's not compiled.  Callers can add additional information to the error log.
 	void AddUncompiledCOWarning(const UCustomizableObject& InObject, FString const* OptionalLogInfo = nullptr);
 
-	// Enables the collection of internal mutabe performance data. It has a performance cost.
+	// Enables the collection of internal Mutable performance data. It has a performance cost.
 	void EnableBenchmark();
 	// Writes the benchmark results
 	void EndBenchmark();
@@ -313,21 +286,14 @@ public:
 	// Show data about all UCustomizableObjectInstance existing elements
 	void LogShowData(bool bFullInfo, bool ShowMaterialInfo) const;
 
-
 	// Give access to the internal object data.
-	FCustomizableObjectSystemPrivate* GetPrivate();
-	const FCustomizableObjectSystemPrivate* GetPrivate() const;
+	UCustomizableObjectSystemPrivate* GetPrivate();
+	const UCustomizableObjectSystemPrivate* GetPrivate() const;
 
-	FCustomizableObjectSystemPrivate* GetPrivateChecked();
-	const FCustomizableObjectSystemPrivate* GetPrivateChecked() const;
-	
-	FStreamableManager& GetStreamableManager() { return StreamableManager; }
-
-	UCustomizableInstanceLODManagementBase* GetInstanceLODManagement() { return CurrentInstanceLODManagement.Get(); }
+	UCustomizableInstanceLODManagementBase* GetInstanceLODManagement() const;
 
 	// Pass a null ptr to reset to the default InstanceLODManagement
-	void SetInstanceLODManagement(UCustomizableInstanceLODManagementBase* NewInstanceLODManagement) 
-		{ CurrentInstanceLODManagement = NewInstanceLODManagement ? NewInstanceLODManagement : ToRawPtr(DefaultInstanceLODManagement); }
+	void SetInstanceLODManagement(UCustomizableInstanceLODManagementBase* NewInstanceLODManagement);
 
 	// Find out the version of the plugin
 	UFUNCTION(BlueprintCallable, Category = Status)
@@ -341,13 +307,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = Status)
 	int32 GetNumPendingInstances() const;
 
-	// Get the total number of instances includingbuilt and not built.
+	// Get the total number of instances including built and not built.
 	UFUNCTION(BlueprintCallable, Category = Status)
 	int32 GetTotalInstances() const;
 
-	// Get the amount of memory in use for textures generated by mutable.
+	// Get the amount of GPU memory in use in bytes for textures generated by mutable.
 	UFUNCTION(BlueprintCallable, Category = Status)
-	int32 GetTextureMemoryUsed() const;
+	int64 GetTextureMemoryUsed() const;
 
 	// Return the average build/update time of an instance in ms.
 	UFUNCTION(BlueprintCallable, Category = Status)
@@ -372,26 +338,12 @@ public:
 
 	void ClearCurrentMutableOperation();
 
-	UPROPERTY(Transient)
-	TObjectPtr<UCustomizableInstanceLODManagementBase> DefaultInstanceLODManagement = nullptr;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UCustomizableInstanceLODManagementBase> CurrentInstanceLODManagement = nullptr;
-
-	// Array where textures are added temporarily while the mutable thread may want to
-	// reused them for some instance under construction.
-	UPROPERTY(Transient)
-	TArray< TObjectPtr<UTexture2D> > ProtectedCachedTextures;
-
 private:
-
-	TSharedPtr<FCustomizableObjectSystemPrivate> Private = nullptr;
-
-	// For async material loading
-	FStreamableManager StreamableManager;
-
 	// Most of the work in this plugin happens here.
 	bool Tick(float DeltaTime);
+
+	/** Returns the number of remaining operations. */
+	int32 TickInternal();
 
 	// If there is an on-going operation, advance it.
 	void AdvanceCurrentOperation();
@@ -399,37 +351,39 @@ private:
 	void DiscardInstances();
 	void ReleaseInstanceIDs();
 
+public:
+	/** Return true if the instance is being updated. */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = CustomizableObjectSystem)
+	bool IsUpdating(const UCustomizableObjectInstance* Instance) const;
+
+private:
 	// TODO: Can we move this to the editor module?
 #if WITH_EDITOR
-
 	// Used to ask the user if they want to recompile uncompiled PIE COs
 	void OnPreBeginPIE(const bool bIsSimulatingInEditor);
 
 	void StartNextRecompile();
 	void TickRecompileCustomizableObjects();
+#endif
 
-	FCustomizableObjectCompilerBase* RecompileCustomizableObjectsCompiler = nullptr;
-	
-	TArray<FAssetData> ObjectsToRecompile;
-	uint32 TotalNumObjectsToRecompile = 0;
-	uint32 NumObjectsCompiled = 0;
+public:
+	/** Set Mutable's working memory limit (bytes). Mutable will flush internal caches to try to keep its memory consumption below the WorkingMemory (i.e., it is not a hard limit).
+	 * The working memory limit will especially reduce the memory required to perform Instance Updates and Texture Streaming.
+ 	 * Notice that Mutable does not track all its memory (e.g., UObjects memory is no tracked).
+	 * This value can also be set using "mutable.WorkingMemory" CVar. */
+	void SetWorkingMemory(int32 Bytes);
 
-	/** Recompile progress bar handle */
-	FProgressNotificationHandle RecompileNotificationHandle;
+	/** Get Mutable's working memory limit (bytes). See SetWorkingMemory(int32). */
+	int32 GetWorkingMemory() const;
 
-	// Array to keep track of cached objects
-	TArray<FGuid> UncompiledCustomizableObjectIds;
-
-	/** Weak pointer to the Uncompiled Customizable Objects notification */
-	TWeakPtr<SNotificationItem> UncompiledCustomizableObjectsNotificationPtr;
-
-	/** Map used to cache per platform MaxChunkSize. If MaxChunkSize > 0, streamed data will be split in multiple files */
-	TMap<FString, int64> PlatformMaxChunkSize;
-	
+#if WITH_EDITOR
+	// Copy of the Mutable Editor Settings tied to CO compilation. They are updated whenever changed
+	FEditorCompileSettings EditorSettings;
 #endif
 	
-	// Friends
-	friend class FCustomizableObjectSystemPrivate;
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<UCustomizableObjectSystemPrivate> Private = nullptr;
 };
 
 

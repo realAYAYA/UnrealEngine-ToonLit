@@ -2,9 +2,9 @@
 
 #pragma once
 
-#include "IOptimusExecutionDomainProvider.h"
 #include "OptimusNode_ComputeKernelBase.h"
 #include "OptimusBindingTypes.h"
+#include "OptimusExecutionDomain.h"
 
 #include "OptimusNode_ComputeKernelFunction.generated.h"
 
@@ -76,10 +76,11 @@ public:
 	void ConstructNode() override;
 	
 	// IOptimusComputeKernelProvider
-	FName GetExecutionDomain() const override; 
+	FOptimusExecutionDomain GetExecutionDomain() const override;
 	const UOptimusNodePin* GetPrimaryGroupPin() const override { return {}; }
-	UComputeDataInterface* GetKernelDataInterface(UObject* InOuter) const override { return nullptr; };
-	
+	UComputeDataInterface* MakeKernelDataInterface(UObject* InOuter) const override { return nullptr; };
+	bool DoesOutputPinSupportAtomic(const UOptimusNodePin* InPin) const override {return false;};
+	bool DoesOutputPinSupportRead(const UOptimusNodePin* InPin) const override {return false;};
 private:
 	UOptimusNode_ComputeKernelFunctionGeneratorClass *GetGeneratorClass() const;
 };

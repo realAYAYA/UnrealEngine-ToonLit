@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SRCControllerPanelList.h"
 
@@ -52,7 +52,8 @@ namespace UE::RCControllerPanelList
 	namespace Columns
 	{
 		const FName TypeColor = TEXT("TypeColor");
-		const FName Name = TEXT("Controller Name");
+		const FName ControllerId = TEXT("Controller Id");
+		const FName Description = TEXT("Controller Description");
 		const FName Value = TEXT("Controller Value");
 		const FName DragHandle = TEXT("Drag Handle");
 		const FName FieldId = TEXT("Controller Field Id");
@@ -63,6 +64,7 @@ namespace UE::RCControllerPanelList
 	{
 		static const TSet<UScriptStruct*> SupportedStructs = {
 			TBaseStructure<FVector>::Get(),
+			TBaseStructure<FVector2D>::Get(),
 			TBaseStructure<FRotator>::Get(),
 			TBaseStructure<FColor>::Get()
 		};
@@ -134,9 +136,13 @@ namespace UE::RCControllerPanelList
 			{
 				return WrapWithDropTarget(ControllerItem->GetTypeSelectionWidget());
 			}
-			else if (ColumnName == UE::RCControllerPanelList::Columns::Name)
+			else if (ColumnName == UE::RCControllerPanelList::Columns::ControllerId)
 			{
 				return WrapWithDropTarget(ControllerItem->GetNameWidget());
+			}
+			else if (ColumnName == UE::RCControllerPanelList::Columns::Description)
+			{
+				return WrapWithDropTarget(ControllerItem->GetDescriptionWidget());
 			}
 			else if (ColumnName == UE::RCControllerPanelList::Columns::Value)
 			{
@@ -235,15 +241,18 @@ namespace UE::RCControllerPanelList
 				if (TSharedPtr<FExposedEntityDragDrop> DragDropOp = StaticCastSharedPtr<FExposedEntityDragDrop>(DragDropOperation))
 				{
 					// Fetch the Exposed Entity
-					const FGuid ExposedEntityId = DragDropOp->GetId();
+					const TArray<FGuid>& ExposedEntitiesIds = DragDropOp->GetSelectedIds();
 
-					if (URemoteControlPreset* Preset = ControllerPanelList->GetPreset())
+					if (ExposedEntitiesIds.Num() == 1)
 					{
-						if (TSharedPtr<const FRemoteControlProperty> RemoteControlProperty = Preset->GetExposedEntity<FRemoteControlProperty>(ExposedEntityId).Pin())
+						if (URemoteControlPreset* Preset = ControllerPanelList->GetPreset())
 						{
-							if (URCController* Controller = Cast<URCController>(ControllerItem->GetVirtualProperty()))
+							if (TSharedPtr<const FRemoteControlProperty> RemoteControlProperty = Preset->GetExposedEntity<FRemoteControlProperty>(ExposedEntitiesIds[0]).Pin())
 							{
-								ControllerPanelList->CreateBindBehaviourAndAssignTo(Controller, RemoteControlProperty.ToSharedRef(), true);
+								if (URCController* Controller = Cast<URCController>(ControllerItem->GetVirtualProperty()))
+								{
+									ControllerPanelList->CreateBindBehaviourAndAssignTo(Controller, RemoteControlProperty.ToSharedRef(), true);
+								}
 							}
 						}
 					}
@@ -284,21 +293,24 @@ namespace UE::RCControllerPanelList
 						if (TSharedPtr<FExposedEntityDragDrop> DragDropOp = StaticCastSharedPtr<FExposedEntityDragDrop>(DragDropOperation))
 						{
 							// Fetch the Exposed Entity
-							const FGuid ExposedEntityId = DragDropOp->GetId();
+							const TArray<FGuid>& ExposedEntitiesIds = DragDropOp->GetSelectedIds();
 
-							if (URemoteControlPreset* Preset = ControllerPanelList->GetPreset())
+							if (ExposedEntitiesIds.Num() == 1)
 							{
-								if (TSharedPtr<const FRemoteControlField> RemoteControlField = Preset->GetExposedEntity<FRemoteControlField>(ExposedEntityId).Pin())
+								if (URemoteControlPreset* Preset = ControllerPanelList->GetPreset())
 								{
-									if (URCController* Controller = Cast<URCController>(ControllerItem->GetVirtualProperty()))
+									if (TSharedPtr<const FRemoteControlField> RemoteControlField = Preset->GetExposedEntity<FRemoteControlField>(ExposedEntitiesIds[0]).Pin())
 									{
-										const bool bAllowNumericInputAsStrings = true;
+										if (URCController* Controller = Cast<URCController>(ControllerItem->GetVirtualProperty()))
+										{
+											const bool bAllowNumericInputAsStrings = true;
 
-										const bool bAllowDrop = URCBehaviourBind::CanHaveActionForField(Controller, RemoteControlField.ToSharedRef(), bAllowNumericInputAsStrings);
+											const bool bAllowDrop = URCBehaviourBind::CanHaveActionForField(Controller, RemoteControlField.ToSharedRef(), bAllowNumericInputAsStrings);
 
-										ControllerPanelList->bIsAnyControllerItemEligibleForDragDrop |= (bAllowDrop && bIsDragActive);
+											ControllerPanelList->bIsAnyControllerItemEligibleForDragDrop |= (bAllowDrop && bIsDragActive);
 
-										return bAllowDrop;
+											return bAllowDrop;
+										}
 									}
 								}
 							}
@@ -315,7 +327,7 @@ namespace UE::RCControllerPanelList
 		{
 			if (ControllerItem.IsValid())
 			{
-				ControllerItem->EnterRenameMode();
+				ControllerItem->EnterDescriptionEditingMode();
 			}
 
 			return FSuperRowType::OnMouseButtonDoubleClick(InMyGeometry, InMouseEvent);
@@ -347,19 +359,23 @@ void SRCControllerPanelList::Construct(const FArguments& InArgs, const TSharedRe
 			.Style(&RCPanelStyle->HeaderRowStyle)
 
 			+ SHeaderRow::Column(UE::RCControllerPanelList::Columns::TypeColor)
-			.DefaultLabel(LOCTEXT("ControllerNameColumnName", ""))
-			.FixedWidth(30)
+			.DefaultLabel(LOCTEXT("ControllerColorColumnName", ""))
+			.FixedWidth(15)
 			.HeaderContentPadding(RCPanelStyle->HeaderRowPadding)
 
 			+ SHeaderRow::Column(UE::RCControllerPanelList::Columns::DragHandle)
 			.DefaultLabel(FText::GetEmpty())
-			.FixedWidth(30)
+			.FixedWidth(15)
 			.HeaderContentPadding(RCPanelStyle->HeaderRowPadding)
 
-			+ SHeaderRow::Column(UE::RCControllerPanelList::Columns::Name)
-			.DefaultLabel(LOCTEXT("ControllerNameColumnName", "Name"))
-			.FillWidth(0.15f)
+			+ SHeaderRow::Column(UE::RCControllerPanelList::Columns::ControllerId)
+			.DefaultLabel(LOCTEXT("ControllerIdColumnName", "Controller Id"))
+			.FillWidth(0.2f)
 			.HeaderContentPadding(RCPanelStyle->HeaderRowPadding)
+
+			+ SHeaderRow::Column(UE::RCControllerPanelList::Columns::Description)
+			.DefaultLabel(LOCTEXT("ControllerNameColumnDescription", "Description"))
+			.FillWidth(0.35f)
 
 			+ SHeaderRow::Column(UE::RCControllerPanelList::Columns::Value)
 			.DefaultLabel(LOCTEXT("ControllerValueColumnName", "Input"))
@@ -436,7 +452,10 @@ void SRCControllerPanelList::Reset()
 	check(Preset);
 
 	PropertyRowGenerator->SetStructure(Preset->GetControllerContainerStructOnScope());
-	PropertyRowGenerator->OnFinishedChangingProperties().AddSP(this, &SRCControllerPanelList::OnFinishedChangingProperties);
+	if (!PropertyRowGenerator->OnFinishedChangingProperties().IsBoundToObject(this))
+	{
+		PropertyRowGenerator->OnFinishedChangingProperties().AddSP(this, &SRCControllerPanelList::OnFinishedChangingProperties);
+	}
 
 	// Generator should be moved to separate class
 	TArray<TSharedRef<IDetailTreeNode>> RootTreeNodes = PropertyRowGenerator->GetRootTreeNodes();
@@ -723,9 +742,19 @@ bool SRCControllerPanelList::IsListFocused() const
 	return ListView->HasAnyUserFocus().IsSet() || ContextMenuWidgetCached.IsValid();
 }
 
-void SRCControllerPanelList::DeleteSelectedPanelItem()
+void SRCControllerPanelList::DeleteSelectedPanelItems()
 {
-	DeleteItemFromLogicPanel<FRCControllerModel>(ControllerItems, ListView->GetSelectedItems());
+	DeleteItemsFromLogicPanel<FRCControllerModel>(ControllerItems, ListView->GetSelectedItems());
+}
+
+TArray<TSharedPtr<FRCLogicModeBase>> SRCControllerPanelList::GetSelectedLogicItems()
+{
+	// Controllers don't support multi selection
+	if (const TSharedPtr<FRCLogicModeBase> SelectedControllerItemPtr = SelectedControllerItemWeakPtr.Pin())
+	{
+		return { SelectedControllerItemPtr };
+	}
+	return TArray<TSharedPtr<FRCLogicModeBase>>();
 }
 
 void SRCControllerPanelList::NotifyPreChange(FEditPropertyChain* PropertyAboutToChange)
@@ -745,7 +774,7 @@ void SRCControllerPanelList::EnterRenameMode()
 {
 	if (TSharedPtr<FRCControllerModel> SelectedItem = SelectedControllerItemWeakPtr.Pin())
 	{
-		SelectedItem->EnterRenameMode();
+		SelectedItem->EnterDescriptionEditingMode();
 	}
 }
 
@@ -804,6 +833,12 @@ bool SRCControllerPanelList::IsEntitySupported(const FGuid ExposedEntityId)
 	{
 		if (const TSharedPtr<const FRemoteControlProperty>& RemoteControlProperty = Preset->GetExposedEntity<FRemoteControlProperty>(ExposedEntityId).Pin())
 		{
+			if (!RemoteControlProperty->IsEditable())
+			{
+				// Property with error(s)
+				return false;
+			}
+
 			if (RemoteControlProperty->FieldType == EExposedFieldType::Property)
 			{
 				const FProperty* Property = RemoteControlProperty->GetProperty();
@@ -848,13 +883,13 @@ bool SRCControllerPanelList::OnAllowDrop(TSharedPtr<FDragDropOperation> DragDrop
 		return false;
 	}
 
-	if (const TSharedPtr<FExposedEntityDragDrop>& DragDropOp = GetExposedEntityDragDrop(DragDropOperation))
+	if (TSharedPtr<FExposedEntityDragDrop> DragDropOp = GetExposedEntityDragDrop(DragDropOperation))
 	{
 		// Fetch the Exposed Entity
-		const FGuid ExposedEntityId = DragDropOp->GetId();
+		const TArray<FGuid>& ExposedEntitiesIds = DragDropOp->GetSelectedIds();
 
-		// Check if Entity is supported by controllers
-		return IsEntitySupported(ExposedEntityId);
+		// Check if Entity is supported by controllers and currently only 1 dragged entity dragged is supported
+		return ExposedEntitiesIds.Num() == 1 && IsEntitySupported(ExposedEntitiesIds[0]);
 	}
 
 	return false;
@@ -865,7 +900,7 @@ FReply SRCControllerPanelList::OnControllerListViewDragDrop(TSharedPtr<FDragDrop
 	if (TSharedPtr<FExposedEntityDragDrop> DragDropOp = GetExposedEntityDragDrop(DragDropOperation))
 	{
 		// Fetch the Exposed Entity
-		const FGuid ExposedEntityId = DragDropOp->GetId();
+		const FGuid ExposedEntityId = DragDropOp->GetNodeId();
 
 		if (URemoteControlPreset* Preset = GetPreset())
 		{

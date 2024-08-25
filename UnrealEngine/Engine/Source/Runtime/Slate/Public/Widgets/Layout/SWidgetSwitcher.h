@@ -140,6 +140,8 @@ protected:
 	SLATE_API virtual void OnArrangeChildren( const FGeometry& AllottedGeometry, FArrangedChildren& ArrangedChildren ) const override;
 	SLATE_API virtual FVector2D ComputeDesiredSize( float ) const override;
 	SLATE_API virtual FChildren* GetChildren( ) override;
+	SLATE_API virtual void OnSlotAdded(int32 AddedIndex) {}
+	SLATE_API virtual void OnSlotRemoved(int32 RemovedIndex, TSharedRef<SWidget> RemovedWidget, bool bWasActiveSlot) {}
 	virtual bool ComputeVolatility() const override { return WidgetIndex.IsBound(); }
 	SLATE_API const FSlot* GetActiveSlot() const;
 

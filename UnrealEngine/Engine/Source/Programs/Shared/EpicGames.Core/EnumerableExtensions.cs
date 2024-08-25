@@ -11,6 +11,18 @@ namespace EpicGames.Core
 	public static class EnumerableExtensions
 	{
 		/// <summary>
+		/// Dispose all elements in a sequence
+		/// </summary>
+		/// <param name="sequence">Sequence of elements to dispose</param>
+		public static void DisposeAll(this IEnumerable<IDisposable> sequence)
+		{
+			foreach (IDisposable element in sequence)
+			{
+				element.Dispose();
+			}
+		}
+
+		/// <summary>
 		/// Split the sequence into batches of at most the given size
 		/// </summary>
 		/// <typeparam name="TElement">The element type</typeparam>

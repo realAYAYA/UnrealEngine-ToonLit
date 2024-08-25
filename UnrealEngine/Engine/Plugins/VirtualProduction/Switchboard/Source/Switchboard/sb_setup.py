@@ -208,7 +208,10 @@ class SbSetup:
                     'which does not appear to be a venv')
                 return 1
 
-        builder = SbEnvBuilder(with_pip=True, prompt='switchboard_venv')
+        builder = SbEnvBuilder(
+            with_pip=True,
+            symlinks=(os.name == 'posix'),
+            prompt='switchboard_venv')
 
         logging.info('Creating virtual environment')
         builder.create(venv_dir)
@@ -221,7 +224,8 @@ class SbSetup:
     def run_verify(self, options: argparse.Namespace) -> Dict[str, Any]:
         result = {}
         result['imports'] = {
-            'PySide2': False,
+            'aioquic': False,
+            'PySide6': False,
             'pythonosc.osc_server': False,
             'requests': False,
             'six': False,

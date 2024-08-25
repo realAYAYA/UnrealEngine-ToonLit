@@ -12,7 +12,6 @@ class FReflexLatencyMarkers : public ILatencyMarkerModule, public FTickableGameO
 public:
 	virtual ~FReflexLatencyMarkers() {}
 
-	bool bProperDriverVersion = false;
 	bool bFeatureSupport = false;
 
 	float AverageTotalLatencyMs = 0.0f;

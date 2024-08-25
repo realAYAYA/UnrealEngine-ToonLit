@@ -138,7 +138,7 @@ namespace Chaos
 	void FCharacterGroundConstraintProxy::BufferPhysicsResults(FDirtyCharacterGroundConstraintData& Buffer)
 	{
 		Buffer.SetProxy(*this);
-		if (Constraint_PT != nullptr && Constraint_PT->IsValid())
+		if (Constraint_PT != nullptr && Constraint_PT->IsValid() && Constraint_PT->IsEnabled())
 		{
 			Buffer.Force = Constraint_PT->GetSolverAppliedForce();
 			Buffer.Torque = Constraint_PT->GetSolverAppliedTorque();
@@ -164,7 +164,7 @@ namespace Chaos
 				Data.TargetDeltaFacing = Buffer.TargetDeltaFacing;
 				});
 
-			if (Buffer.GroundParticle)
+			if (Buffer.GroundParticle && (Buffer.GroundParticle->ParticleIdx != INDEX_NONE))
 			{
 				FSingleParticlePhysicsProxy* NewGroundProxy = (FSingleParticlePhysicsProxy*)(Buffer.GroundParticle->PhysicsProxy());
 				Constraint_GT->GroundProxy.Modify(false, Constraint_GT->DirtyFlags, Constraint_GT->Proxy, [NewGroundProxy](FParticleProxyProperty& Data)

@@ -115,7 +115,11 @@ struct FConcertSetConsoleVariableEvent
 
 	/** The value to set the named console variable. */
 	UPROPERTY()
-	FString Value;
+    FString Value;
+
+	/** The flags for this console variable. */
+    UPROPERTY()
+	uint32 Flags = 0;
 };
 
 USTRUCT()

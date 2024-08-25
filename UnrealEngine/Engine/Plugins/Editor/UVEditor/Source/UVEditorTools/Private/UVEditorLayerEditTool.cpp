@@ -522,7 +522,7 @@ void UUVEditorChannelEditTool::Setup()
 
 void UUVEditorChannelEditTool::Shutdown(EToolShutdownType ShutdownType)
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->OnCanonicalModified.RemoveAll(this);
 	}

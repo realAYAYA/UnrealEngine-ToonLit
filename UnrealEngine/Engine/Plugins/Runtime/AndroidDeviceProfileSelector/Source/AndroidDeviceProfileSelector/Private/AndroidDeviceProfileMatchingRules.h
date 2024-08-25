@@ -22,6 +22,7 @@ enum ESourceType : int
 	SRC_Chipset,
 	SRC_ConfigRuleVar,
 	SRC_HMDSystemName,
+	SRC_SM5Available,
 	SRC_MAX,
 };
 

@@ -38,6 +38,7 @@ class APlayerController;
 struct FDialogueContext;
 
 
+
 /** Delegate called from AsyncLoadGameFromSlot. First two parameters are passed in SlotName and UserIndex, third parameter is a bool indicating success (true) or failure (false). */
 DECLARE_DELEGATE_ThreeParams(FAsyncSaveGameToSlotDelegate, const FString&, const int32, bool);
 
@@ -550,6 +551,27 @@ private:
 	static ENGINE_API UParticleSystemComponent* InternalSpawnEmitterAtLocation(UWorld* World, UParticleSystem* EmitterTemplate, FVector Location, FRotator Rotation, FVector Scale, bool bAutoDestroy, EPSCPoolMethod PoolingMethod = EPSCPoolMethod::None, bool bAutoActivate = true);
 
 public:
+
+	/* Struct of parameters passed to SuggestProjectileVelocity function. */
+	struct FSuggestProjectileVelocityParameters
+	{
+	public:
+		const UObject* WorldContextObject = nullptr;
+		FVector Start = FVector::ZeroVector;
+		FVector End = FVector::ZeroVector;
+		float TossSpeed = 0.f;
+		bool bFavorHighArc = false;
+		float CollisionRadius = 0.f;
+		float OverrideGravityZ = 0;
+		ESuggestProjVelocityTraceOption::Type TraceOption = ESuggestProjVelocityTraceOption::TraceFullPath;
+		FCollisionResponseParams& ResponseParam = FCollisionResponseParams::DefaultResponseParam;
+		TArray<AActor*> ActorsToIgnore = TArray<AActor*>();
+		bool bDrawDebug = false;
+		bool bAcceptClosestOnNoSolutions = false;
+
+		FSuggestProjectileVelocityParameters(const UObject* World, FVector StartLocation, FVector EndLocation, float Speed)
+			: WorldContextObject{ World }, Start{ StartLocation }, End{ EndLocation }, TossSpeed{ Speed } {}
+	};
 
 	/** Plays the specified effect attached to and following the specified component. The system will go away when the effect is complete. Does not replicate.
 	* @param EmitterTemplate - particle system to create
@@ -1253,22 +1275,30 @@ public:
 
 	/**
 	 * Calculates an launch velocity for a projectile to hit a specified point.
-	 * @param TossVelocity		(output) Result launch velocity.
-	 * @param StartLocation		Intended launch location
-	 * @param EndLocation		Desired landing location
-	 * @param LaunchSpeed		Desired launch speed
-	 * @param OverrideGravityZ	Optional gravity override.  0 means "do not override".
-	 * @param TraceOption		Controls whether or not to validate a clear path by tracing along the calculated arc
-	 * @param CollisionRadius	Radius of the projectile (assumed spherical), used when tracing
-	 * @param bFavorHighArc		If true and there are 2 valid solutions, will return the higher arc.  If false, will favor the lower arc.
-	 * @param bDrawDebug		When true, a debug arc is drawn (red for an invalid arc, green for a valid arc)
-	 * @return					Returns false if there is no valid solution or the valid solutions are blocked.  Returns true otherwise.
+	 * @param TossVelocity					(output) Result launch velocity.
+	 * @param StartLocation					Intended launch location
+	 * @param EndLocation					Desired landing location
+	 * @param LaunchSpeed					Desired launch speed
+	 * @param OverrideGravityZ				Optional gravity override.  0 means "do not override".
+	 * @param TraceOption					Controls whether or not to validate a clear path by tracing along the calculated arc
+	 * @param CollisionRadius				Radius of the projectile (assumed spherical), used when tracing
+	 * @param bFavorHighArc					If true and there are 2 valid solutions, will return the higher arc.  If false, will favor the lower arc.
+	 * @param bDrawDebug					When true, a debug arc is drawn (red for an invalid arc, green for a valid arc)
+	 * @param bAcceptClosestOnNoSolutions	If target is unreachable and no solutions are possible, provide a velocity that gets as close to the target as possible given this launch speed
+	 * @return								Returns false if there is no valid solution or the valid solutions are blocked.  Returns true otherwise.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Game", DisplayName="Suggest Projectile Velocity", meta=(WorldContext="WorldContextObject"))
-	static ENGINE_API bool BlueprintSuggestProjectileVelocity(const UObject* WorldContextObject, FVector& TossVelocity, FVector StartLocation, FVector EndLocation, float LaunchSpeed, float OverrideGravityZ, ESuggestProjVelocityTraceOption::Type TraceOption, float CollisionRadius, bool bFavorHighArc, bool bDrawDebug);
+	static bool BlueprintSuggestProjectileVelocity(const UObject* WorldContextObject, FVector& TossVelocity, FVector StartLocation, FVector EndLocation, float LaunchSpeed, float OverrideGravityZ, ESuggestProjVelocityTraceOption::Type TraceOption, float CollisionRadius, bool bFavorHighArc, bool bDrawDebug, bool bAcceptClosestOnNoSolutions = false);
+
+	UE_DEPRECATED(5.4, "Deprecated parameter list. Please use FSuggestProjectileVelocityParameters instead.")
+	static ENGINE_API bool SuggestProjectileVelocity(const UObject* WorldContextObject, FVector& TossVelocity, FVector StartLocation, FVector EndLocation, float TossSpeed, bool bHighArc = false, float CollisionRadius = 0.f, float OverrideGravityZ = 0, ESuggestProjVelocityTraceOption::Type TraceOption = ESuggestProjVelocityTraceOption::TraceFullPath, FCollisionResponseParams& ResponseParam = FCollisionResponseParams::DefaultResponseParam, TArray<AActor*> ActorsToIgnore = TArray<AActor*>(), bool bDrawDebug = false, bool bAcceptClosestOnNoSolutions = false);
 
 	/** Native version, has more options than the Blueprint version. */
-	static ENGINE_API bool SuggestProjectileVelocity(const UObject* WorldContextObject, FVector& TossVelocity, FVector StartLocation, FVector EndLocation, float TossSpeed, bool bHighArc = false, float CollisionRadius = 0.f, float OverrideGravityZ = 0, ESuggestProjVelocityTraceOption::Type TraceOption = ESuggestProjVelocityTraceOption::TraceFullPath, const FCollisionResponseParams& ResponseParam = FCollisionResponseParams::DefaultResponseParam, const TArray<AActor*>& ActorsToIgnore = TArray<AActor*>(), bool bDrawDebug = false);
+	static ENGINE_API bool SuggestProjectileVelocity(const FSuggestProjectileVelocityParameters& ProjectileParams, FVector& OutTossVelocity);
+
+
+	/** Stepwise trace along the path of a given velocity*/
+	static ENGINE_API bool IsProjectileTrajectoryBlocked(const UWorld* World, FVector StartLocation, FVector& ProjectileVelocity, float TargetDeltaXY, float GravityZ, float CollisionRadius = 0.f, ESuggestProjVelocityTraceOption::Type TraceOption = ESuggestProjVelocityTraceOption::TraceFullPath, const FCollisionResponseParams& ResponseParam = FCollisionResponseParams::DefaultResponseParam, const TArray<AActor*>& ActorsToIgnore = TArray<AActor*>(), bool bDrawDebug = false);
 
 	/**
 	* Predict the arc of a virtual projectile affected by gravity with collision checks along the arc. Returns a list of positions of the simulated arc and the destination reached by the simulation.

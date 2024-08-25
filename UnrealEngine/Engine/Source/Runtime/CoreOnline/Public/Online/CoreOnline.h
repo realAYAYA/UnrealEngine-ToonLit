@@ -570,15 +570,7 @@ struct FUniqueNetIdWrapper
 	}
 
 	/** Convert this value to a string */
-	FString ToString() const
-	{
-		FString Result;
-		if(IsValid() && ensure(IsV1()))
-		{
-			Result = GetV1Unsafe()->ToString();
-		}
-		return Result;
-	}
+	COREONLINE_API FString ToString() const;
 
 	/** Convert this value to a string with additional information */
 	COREONLINE_API FString ToDebugString() const;

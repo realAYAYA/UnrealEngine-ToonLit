@@ -7,9 +7,7 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "UObject/ScriptMacros.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "IMovieScenePlayer.h"
-#endif
+#include "Evaluation/CameraCutPlaybackCapability.h"
 #include "Evaluation/MovieScenePlayback.h"
 #include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
 #include "Evaluation/PersistentEvaluationData.h"
@@ -17,6 +15,7 @@
 #include "Misc/QualifiedFrameTime.h"
 #include "LevelSequence.h"
 #include "LevelSequenceCameraSettings.h"
+#include "WorldPartition/WorldPartitionActorContainerID.h"
 #include "LevelSequencePlayer.generated.h"
 
 class AActor;
@@ -25,7 +24,7 @@ class FLevelSequenceSpawnRegister;
 class FViewportClient;
 class UCameraComponent;
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLevelSequencePlayerCameraCutEvent, UCameraComponent*, CameraComponent);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLevelSequencePlayerCameraCutEvent , UCameraComponent*, CameraComponent);
 
 /**
  * Frame snapshot information for a level sequence
@@ -83,6 +82,7 @@ private:
 UCLASS(BlueprintType, MinimalAPI)
 class ULevelSequencePlayer
 	: public UMovieSceneSequencePlayer
+	, public UE::MovieScene::FCameraCutPlaybackCapability
 {
 public:
 	LEVELSEQUENCE_API ULevelSequencePlayer(const FObjectInitializer&);
@@ -98,12 +98,7 @@ public:
 	 */
 	LEVELSEQUENCE_API void Initialize(ULevelSequence* InLevelSequence, ULevel* InLevel, const FLevelSequenceCameraSettings& InCameraSettings);
 
-	UE_DEPRECATED(5.1, "Use SetPlaybackSettings(...) then Initialize(ULevelSequence*, ULevel*, const FLevelSequenceCameraSettings&)")
-	void Initialize(ULevelSequence* InLevelSequence, ULevel* InLevel, const FMovieSceneSequencePlaybackSettings& Settings, const FLevelSequenceCameraSettings& InCameraSettings)
-	{
-		SetPlaybackSettings(Settings);
-		Initialize(InLevelSequence, InLevel, InCameraSettings);
-	}
+	LEVELSEQUENCE_API void SetSourceActorContext(UWorld* InStreamingWorld, FActorContainerID InContainerID, FTopLevelAssetPath InSourceAssetPath);
 
 public:
 
@@ -137,14 +132,21 @@ public:
 protected:
 
 	// IMovieScenePlayer interface
-	LEVELSEQUENCE_API virtual void UpdateCameraCut(UObject* CameraObject, const EMovieSceneCameraCutParams& CameraCutParams) override;
-	LEVELSEQUENCE_API virtual void ResolveBoundObjects(const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& InSequence, UObject* ResolutionContext, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const override;
+	
+	LEVELSEQUENCE_API virtual void ResolveBoundObjects(UE::UniversalObjectLocator::FResolveParams& ResolveParams, const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& Sequence, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const override;
+	LEVELSEQUENCE_API virtual void InitializeRootInstance(TSharedRef<UE::MovieScene::FSharedPlaybackState> NewSharedPlaybackState) override;
 
 	//~ UMovieSceneSequencePlayer interface
 	LEVELSEQUENCE_API virtual bool CanPlay() const override;
 	LEVELSEQUENCE_API virtual void OnStartedPlaying() override;
 	LEVELSEQUENCE_API virtual void OnStopped() override;
 	LEVELSEQUENCE_API virtual void UpdateMovieSceneInstance(FMovieSceneEvaluationRange InRange, EMovieScenePlayerStatus::Type PlayerStatus, const FMovieSceneUpdateArgs& Args) override;
+
+	//~ FCameraCutPlaybackCapability interface
+	LEVELSEQUENCE_API virtual bool ShouldUpdateCameraCut() override;
+	LEVELSEQUENCE_API virtual float GetCameraBlendPlayRate() override;
+	LEVELSEQUENCE_API virtual TOptional<EAspectRatioAxisConstraint> GetAspectRatioAxisConstraintOverride() override;
+	LEVELSEQUENCE_API virtual void OnCameraCutUpdated(const UE::MovieScene::FOnCameraCutUpdatedParams& Params) override;
 
 public:
 
@@ -161,8 +163,7 @@ private:
 
 	LEVELSEQUENCE_API void EnableCinematicMode(bool bEnable);
 
-	// Save the last view target, so that it can all be restored when the camera object is null.
-	void ValidateLastViewTarget(UObject* CameraObject, AActor* ViewTarget);
+	void InitializeLevelSequenceRootInstance(TSharedRef<UE::MovieScene::FSharedPlaybackState> NewSharedPlaybackState);
 
 private:
 
@@ -172,26 +173,8 @@ private:
 	/** The world this player will spawn actors in, if needed */
 	TWeakObjectPtr<ULevel> Level;
 
-	/** The full asset path (/Game/Folder/MapName.MapName) of the streaming level this player resides within. Bindings to actors with the same FSoftObjectPath::GetAssetPath are resolved within the cached level, rather than globally.. */
-	FTopLevelAssetPath StreamedLevelAssetPath;
-
-	/** The world to use for resolving FWorldPartitionResolveData */
-	TWeakObjectPtr<UWorld> StreamingWorld;
-
 	/** The camera settings to use when playing the sequence */
 	FLevelSequenceCameraSettings CameraSettings;
-
-	/** The last view target to reset to when updating camera cuts to null */
-	TWeakObjectPtr<AActor> LastViewTarget;
-
-	/** The last player on which to reset the aspect ratio axis constraint in case the level is changing */
-	TWeakObjectPtr<ULocalPlayer> LastLocalPlayer;
-
-	/** The last aspect ratio axis constraint to reset to when the camera cut is null */
-	TOptional<EAspectRatioAxisConstraint> LastAspectRatioAxisConstraint;
-
-	/** The last camera cut object received during a cinematic */
-	UObject* LastCameraObject = nullptr;
 
 protected:
 
@@ -202,4 +185,11 @@ protected:
 private:
 
 	TOptional<FLevelSequencePlayerSnapshot> PreviousSnapshot;
+
+	/** Optional streaming world that should be used primarily for resolving actor references. Used for locating actors within World Partition runtime cells. */
+	TWeakObjectPtr<UWorld> WeakStreamingWorld;
+	/** Source asset path denoting the level asset path that has been streamed in. */
+	FTopLevelAssetPath SourceAssetPath;
+	/** World Partition container ID for the world that should be added to any actor locaters when being resolved within the same world. */
+	FActorContainerID ContainerID;
 };

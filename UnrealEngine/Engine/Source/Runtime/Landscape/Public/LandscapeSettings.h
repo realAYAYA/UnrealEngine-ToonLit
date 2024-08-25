@@ -10,8 +10,6 @@
 class UMaterialInterface;
 class ULandscapeLayerInfoObject;
 
-DECLARE_DELEGATE_OneParam(FnOnMaxComponentsChanged, uint64);
-
 UENUM()
 enum class ELandscapeDirtyingMode : uint8
 {
@@ -40,11 +38,22 @@ public:
 
 	int32 GetSideResolutionLimit() const { return SideResolutionLimit; }
 
+	float GetBrushSizeUIMax() const { return BrushSizeUIMax; }
+	float GetBrushSizeClampMax() const { return BrushSizeClampMax; }
+
+	int32 GetHLODMaxTextureSize() const { return HLODMaxTextureSize; }
+
 	/** Returns the default landscape material that should be used when creating a new landscape. */
 	TSoftObjectPtr<UMaterialInterface> GetDefaultLandscapeMaterial() const { return DefaultLandscapeMaterial; }
 
 	/** Returns the default landscape layer info object that will be assigned to unset layers when creating a new landscape. */
 	TSoftObjectPtr<ULandscapeLayerInfoObject> GetDefaultLayerInfoObject() const { return DefaultLayerInfoObject; }
+
+#if WITH_EDITOR
+	//~ Begin UObject Interface.
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif // WITH_EDITOR
+
 public:
 	UPROPERTY(config, EditAnywhere, Category = "Layers", meta=(UIMin = "1", UIMax = "32", ClampMin = "1", ClampMax = "32", ToolTip = "This option controls the maximum editing layers that can be added to a Landscape"))
 	int32 MaxNumberOfLayers = 8;
@@ -74,7 +83,16 @@ protected:
 	UPROPERTY(EditAnywhere, config, Category = "Layers", meta = (ToolTip = "Default Layer Info Object"))
 	TSoftObjectPtr<ULandscapeLayerInfoObject> DefaultLayerInfoObject;
 
+	UPROPERTY(EditAnywhere, config, Category = "Configuration", meta = (ToolTip = "Maximum size that can be set via the slider for the landscape sculpt/paint brushes"))
+	float BrushSizeUIMax = 8192;
+
+	UPROPERTY(EditAnywhere, config, Category = "Configuration", meta = (ToolTip = "Maximum size that can be set manually for the landscape sculpt/paint brushes"))
+	float BrushSizeClampMax = 65536;
+
+	UPROPERTY(EditAnywhere, config, Category = "HLOD", meta = (DisplayName = "HLOD Max Texture Size", ClampMin = "64", ClampMax = "8192", ToolTip = "Maximum size of the textures generated for landscape HLODs"))
+	int32 HLODMaxTextureSize = 1024;
+
 	UPROPERTY(transient)
 	bool bRestrictiveMode = false;
-
 };
+

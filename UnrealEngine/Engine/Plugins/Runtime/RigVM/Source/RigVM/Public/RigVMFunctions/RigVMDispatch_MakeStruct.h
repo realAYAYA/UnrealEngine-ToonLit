@@ -18,12 +18,13 @@ public:
 		FactoryScriptStruct = StaticStruct();
 	}
 	
-	virtual const TArray<FRigVMTemplateArgument>& GetArguments() const override;
+	virtual const TArray<FRigVMTemplateArgumentInfo>& GetArgumentInfos() const override;
 	virtual FRigVMTemplateTypeMap OnNewArgumentType(const FName& InArgumentName, TRigVMTypeIndex InTypeIndex) const override;
 #if WITH_EDITOR
 	virtual FString GetNodeTitle(const FRigVMTemplateTypeMap& InTypes) const override;
 	virtual FText GetNodeTooltip(const FRigVMTemplateTypeMap& InTypes) const override;
 	virtual FString GetArgumentMetaData(const FName& InArgumentName, const FName& InMetaDataKey) const override;
+	virtual FString GetKeywords() const override;
 #endif
 
 protected:
@@ -48,9 +49,10 @@ public:
 		FactoryScriptStruct = StaticStruct();
 	}
 
-	virtual const TArray<FRigVMTemplateArgument>& GetArguments() const override;
+	virtual const TArray<FRigVMTemplateArgumentInfo>& GetArgumentInfos() const override;
 #if WITH_EDITOR
 	virtual FText GetNodeTooltip(const FRigVMTemplateTypeMap& InTypes) const override;
+	virtual FString GetKeywords() const override;
 #endif
 };
 

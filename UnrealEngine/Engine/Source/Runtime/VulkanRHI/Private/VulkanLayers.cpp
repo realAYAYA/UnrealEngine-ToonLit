@@ -8,6 +8,7 @@
 #include "VulkanExtensions.h"
 #include "IHeadMountedDisplayModule.h"
 #include "IHeadMountedDisplayVulkanExtensions.h"
+#include "Misc/CommandLine.h"
 
 #if VULKAN_HAS_DEBUGGING_ENABLED
 bool GRenderDocFound = false;
@@ -20,22 +21,13 @@ bool GRenderDocFound = false;
 #if VULKAN_HAS_DEBUGGING_ENABLED
 TAutoConsoleVariable<int32> GValidationCvar(
 	TEXT("r.Vulkan.EnableValidation"),
-	0,
-	TEXT("0 to disable validation layers (default)\n")
+	VULKAN_VALIDATION_DEFAULT_VALUE,
+	TEXT("0 to disable validation layers\n")
 	TEXT("1 to enable errors\n")
 	TEXT("2 to enable errors & warnings\n")
 	TEXT("3 to enable errors, warnings & performance warnings\n")
 	TEXT("4 to enable errors, warnings, performance & information messages\n")
 	TEXT("5 to enable all messages"),
-	ECVF_ReadOnly | ECVF_RenderThreadSafe
-);
-
-static TAutoConsoleVariable<int32> GStandardValidationCvar(
-	TEXT("r.Vulkan.StandardValidation"),
-	2,
-	TEXT("2 to use VK_LAYER_KHRONOS_validation (default) if available\n")
-	TEXT("1 to use VK_LAYER_LUNARG_standard_validation if available, or \n")
-	TEXT("0 to use individual validation layers (removed)"),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe
 );
 
@@ -53,7 +45,6 @@ TAutoConsoleVariable<int32> GGPUValidationCvar(
 #endif
 
 #define KHRONOS_STANDARD_VALIDATION_LAYER_NAME	"VK_LAYER_KHRONOS_validation"
-#define STANDARD_VALIDATION_LAYER_NAME			"VK_LAYER_LUNARG_standard_validation"
 
 #endif // VULKAN_HAS_DEBUGGING_ENABLED
 
@@ -273,7 +264,7 @@ static TArray<const ANSICHAR*> SetupLayers(SetupHelperType& VulkanSetupHelper, T
 
 				if (bFound)
 				{
-					Array.RemoveAtSwap(OuterIndex, 1, false);
+					Array.RemoveAtSwap(OuterIndex, 1, EAllowShrinking::No);
 				}
 			}
 		};
@@ -379,7 +370,8 @@ void FVulkanIntanceSetupHelper::AddDebugLayers(const TArray<FLayerWithExtensions
 			const bool bApiDumpFound = AddRequestedLayer(VkApiDumpName, LayerProperties, UEExtensions, OutLayers);
 			if (bApiDumpFound)
 			{
-				FPlatformMisc::SetEnvironmentVar(TEXT("VK_APIDUMP_LOG_FILENAME"), TEXT("vk_apidump.txt"));
+				const FString ApiDumpFileName = FString::Printf(TEXT("%s/vk_apidump.%s.txt"), *FPaths::ProjectLogDir(), *FDateTime::Now().ToString());
+				FPlatformMisc::SetEnvironmentVar(TEXT("VK_APIDUMP_LOG_FILENAME"), *ApiDumpFileName);
 				FPlatformMisc::SetEnvironmentVar(TEXT("VK_APIDUMP_DETAILED"), TEXT("true"));
 				FPlatformMisc::SetEnvironmentVar(TEXT("VK_APIDUMP_FLUSH"), TEXT("true"));
 				FPlatformMisc::SetEnvironmentVar(TEXT("VK_APIDUMP_OUTPUT_FORMAT"), TEXT("text"));
@@ -395,31 +387,19 @@ void FVulkanIntanceSetupHelper::AddDebugLayers(const TArray<FLayerWithExtensions
 	const bool bUseVulkanValidation = GRHIGlobals.IsDebugLayerEnabled;
 	if (!bGfxReconstructOrVkTrace && bUseVulkanValidation)
 	{
-		if (GStandardValidationCvar.GetValueOnAnyThread() != 0)
+		if (!AddRequestedLayer(KHRONOS_STANDARD_VALIDATION_LAYER_NAME, LayerProperties, UEExtensions, OutLayers))
 		{
-			if (GStandardValidationCvar.GetValueOnAnyThread() == 2)
-			{
-				if (!AddRequestedLayer(KHRONOS_STANDARD_VALIDATION_LAYER_NAME, LayerProperties, UEExtensions, OutLayers))
-				{
 #if PLATFORM_WINDOWS || PLATFORM_LINUX
-					//#todo-rco: We don't package DLLs so if this fails it means no DLL was found anywhere, so don't try to load standard validation layers
-					UE_LOG(LogVulkanRHI, Warning, TEXT("Unable to find Vulkan instance validation layer %s;  Do you have the Vulkan SDK Installed?"), TEXT(STANDARD_VALIDATION_LAYER_NAME));
+			//#todo-rco: We don't package DLLs so if this fails it means no DLL was found anywhere, so don't try to load standard validation layers
+			UE_LOG(LogVulkanRHI, Warning, TEXT("Unable to find Vulkan instance validation layer %s;  Do you have the Vulkan SDK Installed?"), TEXT(KHRONOS_STANDARD_VALIDATION_LAYER_NAME));
 #else
-					UE_LOG(LogVulkanRHI, Warning, TEXT("Unable to find Vulkan instance validation layer %s"), TEXT(STANDARD_VALIDATION_LAYER_NAME));
+			UE_LOG(LogVulkanRHI, Warning, TEXT("Unable to find Vulkan instance validation layer %s"), TEXT(KHRONOS_STANDARD_VALIDATION_LAYER_NAME));
 #endif
-				}
-			}
-			else
-			{
-				if (!AddRequestedLayer(STANDARD_VALIDATION_LAYER_NAME, LayerProperties, UEExtensions, OutLayers))
-				{
-					UE_LOG(LogVulkanRHI, Warning, TEXT("Unable to find Vulkan instance validation layer %s"), TEXT(STANDARD_VALIDATION_LAYER_NAME));
-				}
-			}
 		}
 	}
 
-	if (bUseVulkanValidation && (ActiveDebugLayerExtension == FVulkanDynamicRHI::EActiveDebugLayerExtension::None))
+	const bool bForceDebugUtils = VULKAN_ENABLE_DRAW_MARKERS || FParse::Param(FCommandLine::Get(), TEXT("vulkandebugutils"));
+	if ((bUseVulkanValidation || bForceDebugUtils) && (ActiveDebugLayerExtension == FVulkanDynamicRHI::EActiveDebugLayerExtension::None))
 	{
 		auto FindLayerContainingExtension = [](const ANSICHAR* ExtensionName, const TArray<FLayerWithExtensions>& LayerProperties)
 		{
@@ -462,16 +442,9 @@ void FVulkanIntanceSetupHelper::AddDebugLayers(const TArray<FLayerWithExtensions
 			return false;
 		};
 
-#if VULKAN_SUPPORTS_DEBUG_UTILS
 		if (ActivateDebuggingExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
 		{
 			ActiveDebugLayerExtension = FVulkanDynamicRHI::EActiveDebugLayerExtension::DebugUtilsExtension;
-		}
-		else
-#endif
-		if (ActivateDebuggingExtension(VK_EXT_DEBUG_REPORT_EXTENSION_NAME))
-		{
-			ActiveDebugLayerExtension = FVulkanDynamicRHI::EActiveDebugLayerExtension::DebugReportExtension;
 		}
 
 		const bool bRequiresValidationFeatures = (GGPUValidationCvar.GetValueOnAnyThread() != 0) ||
@@ -485,8 +458,6 @@ void FVulkanIntanceSetupHelper::AddDebugLayers(const TArray<FLayerWithExtensions
 #endif	// VULKAN_HAS_DEBUGGING_ENABLED
 }
 
-
-
 // Return a list of debug layers to activate
 void FVulkanDeviceSetupHelper::AddDebugLayers(const TArray<FLayerWithExtensions>& LayerProperties, FVulkanDeviceExtensionArray& UEExtensions, TArray<const ANSICHAR*>& OutLayers)
 {
@@ -495,17 +466,6 @@ void FVulkanDeviceSetupHelper::AddDebugLayers(const TArray<FLayerWithExtensions>
 	GRenderDocFound = (FindLayerIndexInList(RENDERDOC_LAYER_NAME, LayerProperties) != INDEX_NONE);
 #else
 	GRenderDocFound = false;
-#endif
-
-	// Verify that all requested debugging device-layers are available. Skip validation layers under RenderDoc
-	if (!GRenderDocFound && GRHIGlobals.IsDebugLayerEnabled && (GStandardValidationCvar.GetValueOnAnyThread() != 0))
-	{
-		// Path for older drivers
-		AddRequestedLayer(STANDARD_VALIDATION_LAYER_NAME, LayerProperties, UEExtensions, OutLayers);
-	}
-#endif	// VULKAN_HAS_DEBUGGING_ENABLED
+#endif // VULKAN_ENABLE_DRAW_MARKERS
+#endif // VULKAN_HAS_DEBUGGING_ENABLED
 }
-
-
-
-

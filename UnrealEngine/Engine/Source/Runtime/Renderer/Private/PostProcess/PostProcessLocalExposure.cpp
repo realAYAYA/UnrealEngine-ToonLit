@@ -7,6 +7,7 @@
 #include "PostProcess/PostProcessLocalExposure.h"
 #include "PostProcess/PostProcessEyeAdaptation.h"
 #include "PostProcess/PostProcessWeightedSampleSum.h"
+#include "Curves/CurveFloat.h"
 #include "SceneRendering.h"
 #include "ShaderCompilerCore.h"
 #include "DataDrivenShaderPlatformInfo.h"
@@ -28,7 +29,7 @@ public:
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, EyeAdaptation)
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Input)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, InputTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, OutputFloat)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -62,7 +63,7 @@ public:
 
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Input)
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Output)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, InputTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputFloat4)
 
 		SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, EyeAdaptation)
@@ -110,13 +111,36 @@ FLocalExposureParameters GetLocalExposureParameters(const FViewInfo& View, FIntP
 
 	const FVector2f LocalExposureBilateralGridUVScale = GetLocalExposureBilateralGridUVScale(ViewRectSize);
 
+	float HighlightContrast = Settings.LocalExposureHighlightContrastScale;
+	float ShadowContrast = Settings.LocalExposureShadowContrastScale;
+
+	const float AverageSceneLuminance = View.GetLastAverageSceneLuminance();
+	if (AverageSceneLuminance > 0)
+	{
+		const float LuminanceMax = LuminanceMaxFromLensAttenuation();
+		// We need the Log2(0.18) to convert from average luminance to saturation luminance
+		const float LuminanceEV100 = LuminanceToEV100(LuminanceMax, AverageSceneLuminance) + FMath::Log2(1.0f / 0.18f);
+
+		if (Settings.LocalExposureHighlightContrastCurve)
+		{
+			HighlightContrast *= Settings.LocalExposureHighlightContrastCurve->GetFloatValue(LuminanceEV100);
+		}
+
+		if (Settings.LocalExposureShadowContrastCurve)
+		{
+			ShadowContrast *= Settings.LocalExposureShadowContrastCurve->GetFloatValue(LuminanceEV100);
+		}
+	}
+
 	FLocalExposureParameters Parameters;
-	Parameters.HighlightContrastScale = Settings.LocalExposureHighlightContrastScale;
-	Parameters.ShadowContrastScale = Settings.LocalExposureShadowContrastScale;
+	Parameters.HighlightContrastScale = HighlightContrast;
+	Parameters.ShadowContrastScale = ShadowContrast;
 	Parameters.DetailStrength = Settings.LocalExposureDetailStrength;
 	Parameters.BlurredLuminanceBlend = Settings.LocalExposureBlurredLuminanceBlend;
 	Parameters.MiddleGreyExposureCompensation = LocalExposureMiddleGreyExposureCompensation;
 	Parameters.BilateralGridUVScale = LocalExposureBilateralGridUVScale;
+	Parameters.HighlightThreshold = Settings.LocalExposureHighlightThreshold;
+	Parameters.ShadowThreshold = Settings.LocalExposureShadowThreshold;
 	return Parameters;
 }
 
@@ -124,7 +148,7 @@ FRDGTextureRef AddLocalExposureBlurredLogLuminancePass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
-	FScreenPassTexture InputTexture)
+	FScreenPassTextureSlice InputTexture)
 {
 	check(InputTexture.IsValid());
 
@@ -146,7 +170,7 @@ FRDGTextureRef AddLocalExposureBlurredLogLuminancePass(
 		PassParameters->View = View.ViewUniformBuffer;
 		PassParameters->EyeAdaptation = EyeAdaptationParameters;
 		PassParameters->Input = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(InputTexture));
-		PassParameters->InputTexture = InputTexture.Texture;
+		PassParameters->InputTexture = InputTexture.TextureSRV;
 		PassParameters->OutputFloat = GraphBuilder.CreateUAV(GaussianLumSetupTexture);
 
 		FComputeShaderUtils::AddPass(
@@ -164,7 +188,7 @@ FRDGTextureRef AddLocalExposureBlurredLogLuminancePass(
 		FGaussianBlurInputs GaussianBlurInputs;
 		GaussianBlurInputs.NameX = TEXT("LocalExposureGaussianX");
 		GaussianBlurInputs.NameY = TEXT("LocalExposureGaussianY");
-		GaussianBlurInputs.Filter = FScreenPassTexture(GaussianLumSetupTexture, InputTexture.ViewRect);
+		GaussianBlurInputs.Filter = FScreenPassTextureSlice::CreateFromScreenPassTexture(GraphBuilder, FScreenPassTexture(GaussianLumSetupTexture));
 		GaussianBlurInputs.TintColor = FLinearColor::White;
 		GaussianBlurInputs.CrossCenterWeight = FVector2f::ZeroVector;
 		GaussianBlurInputs.KernelSizePercent = View.FinalPostProcessSettings.LocalExposureBlurredLuminanceKernelSizePercent;
@@ -184,8 +208,8 @@ void AddApplyLocalExposurePass(
 	const FLocalExposureParameters& LocalExposureParamaters,
 	FRDGTextureRef LocalExposureTexture,
 	FRDGTextureRef BlurredLogLuminanceTexture,
-	FScreenPassTexture Input,
-	FScreenPassTexture Output,
+	FScreenPassTextureSlice Input,
+	FScreenPassTextureSlice Output,
 	ERDGPassFlags PassFlags)
 {
 	check(Input.IsValid() && Output.IsValid());
@@ -198,8 +222,18 @@ void AddApplyLocalExposurePass(
 	PassParameters->Input = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(Input));
 	PassParameters->Output = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(Output));
 
-	PassParameters->InputTexture = Input.Texture;
-	PassParameters->OutputFloat4 = GraphBuilder.CreateUAV(Output.Texture);
+	PassParameters->InputTexture = Input.TextureSRV;
+	{
+		FRDGTextureUAVDesc OutputDesc(Output.TextureSRV->Desc.Texture);
+		if (Output.TextureSRV->Desc.Texture->Desc.IsTextureArray())
+		{
+			OutputDesc.DimensionOverride = ETextureDimension::Texture2D;
+			OutputDesc.FirstArraySlice = Output.TextureSRV->Desc.FirstArraySlice;
+			OutputDesc.NumArraySlices = 1;
+		}
+
+		PassParameters->OutputFloat4 = GraphBuilder.CreateUAV(OutputDesc);
+	}
 
 	PassParameters->EyeAdaptation = EyeAdaptationParameters;
 	PassParameters->EyeAdaptationBuffer = GraphBuilder.CreateSRV(EyeAdaptationBuffer);

@@ -70,15 +70,19 @@ private:
 	};
 
 public:
-	FMemAllocGroupingByCallstack(bool bInIsInverted, bool bInIsGroupingByFunction);
+	FMemAllocGroupingByCallstack(bool bInIsAllocCallstack, bool bInIsInverted, bool bInIsGroupingByFunction);
 	virtual ~FMemAllocGroupingByCallstack();
 
 	virtual void GroupNodes(const TArray<FTableTreeNodePtr>& Nodes, FTableTreeNode& ParentGroup, TWeakPtr<FTable> InParentTable, IAsyncOperationProgress& InAsyncOperationProgress) const override;
 
 	bool IsInverted() const { return bIsInverted; }
+	bool IsAllocCallstack() const { return bIsAllocCallstack; }
 
 	bool IsGroupingByFunction() const { return bIsGroupingByFunction; }
 	void SetGroupingByFunction(bool bOnOff) { bIsGroupingByFunction = bOnOff; }
+
+	bool ShouldSkipFilteredFrames() const { return bShouldSkipFilteredFrames; }
+	void SetSkipFilteredFrames(bool bOnOff) { bShouldSkipFilteredFrames = bOnOff; }
 
 private:
 	FName GetGroupName(const TraceServices::FStackFrame* Frame) const;
@@ -89,8 +93,10 @@ private:
 	FTableTreeNode* CreateEmptyCallstackGroup(TWeakPtr<FTable> ParentTable, FTableTreeNode& Parent) const;
 
 private:
+	bool bIsAllocCallstack;
 	bool bIsInverted;
-	bool bIsGroupingByFunction;
+	std::atomic<bool> bIsGroupingByFunction;
+	std::atomic<bool> bShouldSkipFilteredFrames;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

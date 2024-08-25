@@ -6,8 +6,8 @@
 
 class FProperty;
 class FString;
-
 class UCustomizableObjectNodeTable;
+class UDataTable;
 class UEdGraphPin;
 struct FMutableGraphGenerationContext;
 
@@ -57,4 +57,21 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode, mu::TablePtr
 	FMutableGraphGenerationContext& GenerationContext);
 
 
-mu::TablePtr GenerateMutableSourceTable(const FString& TableName, const UEdGraphPin* Pin, FMutableGraphGenerationContext& GenerationContext);
+mu::TablePtr GenerateMutableSourceTable(const UDataTable* DataTable, const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext);
+
+/** Generates a new FParameterUIData for a new table parameter. Also, adds the UIData to the parameters map. */
+void GenerateTableParameterUIData(const UDataTable* DataTable, const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext);
+
+/** Gets the data table needed during the compilation process */
+UDataTable* GetDataTable(const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext);
+
+/** Gets all the rows of a data table that are going to be compiled. Some rows can be disabled with a bool column or an asset version system 
+	@return Array with all the names of the rows that are going to be compiled */
+TArray<FName> GetRowsToCompile(const UDataTable& DataTable, const UCustomizableObjectNodeTable& TableNode, FMutableGraphGenerationContext& GenerationContext);
+
+/** Generates a Data Table from the Data Tables referenced in a Script Struct */
+UDataTable* GenerateDataTableFromStruct(const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext);
+
+/** This method adds the original Data Table(s) of the processed row at the end of the log message when the data table is a Composite Data table. */
+void LogRowGenerationMessage(const UCustomizableObjectNodeTable* TableNode, const UDataTable* DataTable, FMutableGraphGenerationContext& GenerationContext, const FString& Message, const FString& RowName);
+

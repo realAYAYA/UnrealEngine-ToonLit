@@ -3,7 +3,7 @@ setlocal
 
 pushd %~dp0
 set WIXDIR=..\..\..\ThirdParty\WiX\3.8
-set SRCDIR=..\UnrealGameSyncLauncher\bin\Release\net6.0-windows
+set SRCDIR=..\UnrealGameSync\bin\Release\net6.0-windows
 
 %WIXDIR%\heat.exe dir "%SRCDIR%" -cg UGSLauncher_Project -dr INSTALLFOLDER -scom -sreg -srd -var var.BasePath -gg -sfrag -out obj/Release/UGSLauncher.wxs -nologo 
 if errorlevel 1 goto :eof

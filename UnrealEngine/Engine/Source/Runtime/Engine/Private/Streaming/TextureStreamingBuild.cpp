@@ -687,7 +687,7 @@ void FStreamingTextureLevelContext::ProcessMaterial(const FBoxSphereBounds& Comp
 		{
 			if (*BuildDataIndex != INDEX_NONE)
 			{
-				FStreamingRenderAssetPrimitiveInfo& Info = *new(OutStreamingTextures) FStreamingRenderAssetPrimitiveInfo();
+				FStreamingRenderAssetPrimitiveInfo& Info = OutStreamingTextures.AddDefaulted_GetRef();
 				const FStreamingTextureBuildInfo& BuildInfo = (*ComponentBuildData)[*BuildDataIndex];
 
 				Info.RenderAsset = Texture;
@@ -712,7 +712,7 @@ void FStreamingTextureLevelContext::ProcessMaterial(const FBoxSphereBounds& Comp
 
 			if (TextureDensity)
 			{
-				FStreamingRenderAssetPrimitiveInfo& Info = *new(OutStreamingTextures) FStreamingRenderAssetPrimitiveInfo();
+				FStreamingRenderAssetPrimitiveInfo& Info = OutStreamingTextures.AddDefaulted_GetRef();
 
 				Info.RenderAsset = Texture;
 				Info.TexelFactor = TextureDensity * ComponentScaling;

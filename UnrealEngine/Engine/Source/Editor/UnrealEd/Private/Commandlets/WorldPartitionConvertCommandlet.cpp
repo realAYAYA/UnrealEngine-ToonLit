@@ -19,6 +19,7 @@
 #include "Engine/MapBuildDataRegistry.h"
 #include "ActorReferencesUtils.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionSettings.h"
 #include "WorldPartition/WorldPartitionSubsystem.h"
 #include "WorldPartition/HLOD/HLODActor.h"
 #include "WorldPartition/WorldPartitionMiniMap.h"
@@ -45,15 +46,11 @@
 #include "FoliageHelper.h"
 #include "Engine/WorldComposition.h"
 #include "ActorPartition/ActorPartitionSubsystem.h"
+#include "Serialization/ArchiveReplaceObjectRef.h"
 #include "InstancedFoliage.h"
-#include "Landscape.h"
 #include "LandscapeStreamingProxy.h"
 #include "LandscapeInfo.h"
 #include "LandscapeConfigHelper.h"
-#include "ILandscapeSplineInterface.h"
-#include "LandscapeSplineActor.h"
-#include "LandscapeSplinesComponent.h"
-#include "LandscapeSplineControlPoint.h"
 #include "LandscapeGizmoActor.h"
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
@@ -242,26 +239,30 @@ UWorldPartition* UWorldPartitionConvertCommandlet::CreateWorldPartition(AWorldSe
 		WorldPartition->RuntimeHash->LoadConfig(*RuntimeHashClass, *LevelConfigFilename);
 
 		// Use specified existing default HLOD layer if valid 
-		if (UHLODLayer* ExistingHLODLayer = LoadObject<UHLODLayer>(NULL, *DefaultHLODLayerAsset, nullptr, LOAD_NoWarn))
+		if (UHLODLayer* ExistingHLODLayer = LoadObject<UHLODLayer>(NULL, *DefaultHLODLayerAsset.ToString(), nullptr, LOAD_NoWarn))
 		{
 			WorldPartition->DefaultHLODLayer = ExistingHLODLayer;
 		}
-		else if(UHLODLayer* FoundLayer = HLODLayers.FindRef(DefaultHLODLayerName))
-		{
-			WorldPartition->DefaultHLODLayer = FoundLayer;
-		}
 	}
 
+	// Duplicate the default HLOD setup
 	if ((WorldPartition->DefaultHLODLayer == UHLODLayer::GetEngineDefaultHLODLayersSetup()) && !bDisableStreaming)
 	{
-		WorldPartition->DefaultHLODLayer = UHLODLayer::DuplicateHLODLayersSetup(UHLODLayer::GetEngineDefaultHLODLayersSetup(), WorldPartition->GetPackage()->GetName(), WorldPartition->GetWorld()->GetName());
+		UHLODLayer* CurHLODLayer = WorldPartition->GetDefaultHLODLayer();
+		UHLODLayer* NewHLODLayer = UHLODLayer::DuplicateHLODLayersSetup(CurHLODLayer, WorldPartition->GetPackage()->GetName(), WorldPartition->GetWorld()->GetName());
+		
+		WorldPartition->SetDefaultHLODLayer(NewHLODLayer);
 
-		UHLODLayer* CurrentHLODLayer = WorldPartition->DefaultHLODLayer;
-		while (CurrentHLODLayer)
+		TMap<UHLODLayer*, UHLODLayer*> ReplacementMap;
+		while (NewHLODLayer)
 		{
-			PackagesToSave.Add(CurrentHLODLayer->GetPackage());
-			CurrentHLODLayer = CurrentHLODLayer->GetParentLayer();
+			ReplacementMap.Add(CurHLODLayer, NewHLODLayer);
+			PackagesToSave.Add(NewHLODLayer->GetPackage());
+			CurHLODLayer = CurHLODLayer->GetParentLayer();
+			NewHLODLayer = NewHLODLayer->GetParentLayer();
 		}
+							
+		FArchiveReplaceObjectRef<UHLODLayer> ReplaceObjectRefAr(WorldPartition->RuntimeHash, ReplacementMap, EArchiveReplaceObjectFlags::IgnoreOuterRef | EArchiveReplaceObjectFlags::IgnoreArchetypeRef);							
 	}
 	
 	return WorldPartition;
@@ -583,40 +584,6 @@ bool UWorldPartitionConvertCommandlet::RenameWorldPackageWithSuffix(UWorld* Worl
 	return true;
 }
 
-
-UHLODLayer* UWorldPartitionConvertCommandlet::CreateHLODLayerFromINI(const FString& InHLODLayerName)
-{
-	const FString PackagePath = HLODLayerAssetsPath / InHLODLayerName;
-	UPackage* AssetPackage = CreatePackage(*PackagePath);
-	if (!AssetPackage)
-	{
-		UE_LOG(LogWorldPartitionConvertCommandlet, Error, TEXT("Package \"%s\" creation failed"), *PackagePath);
-		return nullptr;
-	}
-
-	// Make sure we overwrite any existing HLODLayer asset package
-	AssetPackage->MarkAsFullyLoaded();
-
-	UHLODLayer* HLODLayer = NewObject<UHLODLayer>(AssetPackage, *InHLODLayerName, RF_Public | RF_Standalone);
-	if (!HLODLayer)
-	{
-		UE_LOG(LogWorldPartitionConvertCommandlet, Error, TEXT("HLODLayer \"%s\" creation failed"), *InHLODLayerName);
-		return nullptr;
-	}
-
-	HLODLayer->LoadConfig(nullptr, *LevelConfigFilename);
-
-	// Notify the asset registry
-	FAssetRegistryModule::AssetCreated(HLODLayer);
-
-	// Mark the package dirty...
-	HLODLayer->Modify();
-
-	PackagesToSave.Add(HLODLayer->GetOutermost());
-
-	return HLODLayer;
-}
-
 void UWorldPartitionConvertCommandlet::SetupHLOD()
 {
 	// No need to spawn HLOD actors during the conversion
@@ -627,23 +594,13 @@ void UWorldPartitionConvertCommandlet::SetupHLOD()
 
 void UWorldPartitionConvertCommandlet::SetupHLODLayerAssets()
 {
-	TArray<FString> HLODLayerSectionsNames;
-	if (GConfig->GetPerObjectConfigSections(LevelConfigFilename, TEXT("HLODLayer"), HLODLayerSectionsNames))
-	{
-		for(const FString& HLODLayerSectionName : HLODLayerSectionsNames)
-		{
-			FString HLODLayerName(*HLODLayerSectionName.Left(HLODLayerSectionName.Find(TEXT(" "))));
-			UHLODLayer* HLODLayer = CreateHLODLayerFromINI(HLODLayerName);
-			HLODLayers.Add(HLODLayerName, HLODLayer);
-		}
-	}
-
 	// Assign HLOD layers to the classes listed in the level config
 	for (const FHLODLayerActorMapping& Entry : HLODLayersForActorClasses)
 	{
-		UHLODLayer* HLODLayer = HLODLayers.FindRef(Entry.HLODLayer);
-		if (!ensure(HLODLayer))
+		UHLODLayer* HLODLayer = LoadObject<UHLODLayer>(NULL, *Entry.HLODLayer.ToString(), nullptr, LOAD_NoWarn);
+		if (!HLODLayer)
 		{
+			UE_LOG(LogWorldPartitionConvertCommandlet, Warning, TEXT("Unable to load HLOD Layer %s, skipping assignment to class %s"), *Entry.HLODLayer.ToString(), *Entry.ActorClass.ToString());
 			continue;
 		}
 
@@ -749,6 +706,12 @@ int32 UWorldPartitionConvertCommandlet::Main(const FString& Params)
 		LogWorldPartitionConvertCommandlet.SetVerbosity(ELogVerbosity::Verbose);
 	}
 
+	if (Switches.Contains(TEXT("RunningFromUnrealEd")))
+	{
+		UseCommandletResultAsExitCode = true;	// The process return code will match the return code of the commandlet
+		FastExit = true;						// Faster exit which avoids crash during shutdown. The engine isn't shutdown cleanly.
+	}
+
 	bConversionSuffix = Switches.Contains(TEXT("ConversionSuffix"));
 
 	// Load configuration file
@@ -763,8 +726,8 @@ int32 UWorldPartitionConvertCommandlet::Main(const FString& Params)
 		}
 		else
 		{
-			EditorHashClass = FindObject<UClass>(nullptr, TEXT("/Script/Engine.WorldPartitionEditorSpatialHash"));
-			RuntimeHashClass = FindObject<UClass>(nullptr, TEXT("/Script/Engine.WorldPartitionRuntimeSpatialHash"));
+			EditorHashClass = UWorldPartitionSettings::Get()->GetEditorHashDefaultClass();
+			RuntimeHashClass = UWorldPartitionSettings::Get()->GetRuntimeHashDefaultClass();
 		}
 	}
 
@@ -974,64 +937,6 @@ int32 UWorldPartitionConvertCommandlet::Main(const FString& Params)
 		return true;
 	};
 
-	TSet<AActor*> NewSplineActors;
-
-	auto PartitionLandscape = [this, MainWorld, &NewSplineActors](ULandscapeInfo* LandscapeInfo)
-	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(PartitionLandscape);
-
-		// Handle Landscapes with missing LandscapeActor(s)
-		if (!LandscapeInfo->LandscapeActor.Get())
-		{
-			// Use the first proxy as the landscape template
-			if (ALandscapeProxy* FirstProxy = LandscapeInfo->StreamingProxies[0].Get())
-			{
-				FActorSpawnParameters SpawnParams;
-				FTransform LandscapeTransform = FirstProxy->LandscapeActorToWorld();
-				ALandscape* NewLandscape = MainWorld->SpawnActor<ALandscape>(ALandscape::StaticClass(), LandscapeTransform, SpawnParams);
-
-				NewLandscape->CopySharedProperties(FirstProxy);
-
-				LandscapeInfo->RegisterActor(NewLandscape);
-			}
-		}
-
-		auto MoveControlPointToNewSplineActor = [&NewSplineActors, LandscapeInfo](ULandscapeSplineControlPoint* ControlPoint)
-		{
-			AActor* CurrentOwner = ControlPoint->GetTypedOuter<AActor>();
-			// Control point as already been moved through its connected segments
-			if (NewSplineActors.Contains(CurrentOwner))
-			{
-				return;
-			}
-			
-			const FTransform LocalToWorld = ControlPoint->GetOuterULandscapeSplinesComponent()->GetComponentTransform();
-			const FVector NewActorLocation = LocalToWorld.TransformPosition(ControlPoint->Location);
-						
-			ALandscapeSplineActor* NewSplineActor = LandscapeInfo->CreateSplineActor(NewActorLocation);
-
-			NewSplineActors.Add(NewSplineActor);
-			LandscapeInfo->MoveSpline(ControlPoint, NewSplineActor);
-		};
-				
-		// Iterate on copy since we are creating new spline actors
-		TArray<TScriptInterface<ILandscapeSplineInterface>> OldSplineActors(LandscapeInfo->GetSplineActors());
-		for (TScriptInterface<ILandscapeSplineInterface> PreviousSplineActor : OldSplineActors)
-		{
-			if (ULandscapeSplinesComponent* SplineComponent = PreviousSplineActor->GetSplinesComponent())
-			{
-				SplineComponent->ForEachControlPoint(MoveControlPointToNewSplineActor);
-			}
-		}
-
-		TSet<AActor*> ActorsToDelete;
-		FLandscapeConfigHelper::ChangeGridSize(LandscapeInfo, LandscapeGridSize, ActorsToDelete);
-		for (AActor* ActorToDelete : ActorsToDelete)
-		{
-			MainWorld->DestroyActor(ActorToDelete);
-		}
-	};
-
 	IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();
 
 	auto ConvertActorLayersToDataLayers = [this, MainWorldDataLayers, &AssetTools](AActor* Actor)
@@ -1067,7 +972,7 @@ int32 UWorldPartitionConvertCommandlet::Main(const FString& Params)
 		}
 	};
 
-	auto PrepareLevelActors = [this, PartitionFoliage, PartitionLandscape, MainWorld, ConvertActorLayersToDataLayers](ULevel* Level, TArray<AActor*>& Actors, bool bMainLevel) -> bool
+	auto PrepareLevelActors = [this, PartitionFoliage, MainWorld, ConvertActorLayersToDataLayers](ULevel* Level, TArray<AActor*>& Actors, bool bMainLevel) -> bool
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(PrepareLevelActors);
 
@@ -1146,27 +1051,30 @@ int32 UWorldPartitionConvertCommandlet::Main(const FString& Params)
 			}
 		}
 
-		// do loop after as it may modify Level->Actors
-		if (IFAs.Num())
+		if (!bOnlyMergeSubLevels)
 		{
-			UE_SCOPED_TIMER(TEXT("PartitionFoliage"), LogWorldPartitionConvertCommandlet, Display);
-
-			for (AInstancedFoliageActor* IFA : IFAs)
+			// do loop after as it may modify Level->Actors
+			if (IFAs.Num())
 			{
-				if (!PartitionFoliage(IFA))
+				UE_SCOPED_TIMER(TEXT("PartitionFoliage"), LogWorldPartitionConvertCommandlet, Display);
+
+				for (AInstancedFoliageActor* IFA : IFAs)
 				{
-					return false;
+					if (!PartitionFoliage(IFA))
+					{
+						return false;
+					}
 				}
 			}
-		}
 
-		if (LandscapeInfos.Num())
-		{
-			UE_SCOPED_TIMER(TEXT("PartitionLandscape"), LogWorldPartitionConvertCommandlet, Display);
-
-			for (ULandscapeInfo* LandscapeInfo : LandscapeInfos)
+			if (LandscapeInfos.Num())
 			{
-				PartitionLandscape(LandscapeInfo);
+				UE_SCOPED_TIMER(TEXT("PartitionLandscape"), LogWorldPartitionConvertCommandlet, Display);
+
+				for (ULandscapeInfo* LandscapeInfo : LandscapeInfos)
+				{
+					FLandscapeConfigHelper::PartitionLandscape(MainWorld, LandscapeInfo, LandscapeGridSize);
+				}
 			}
 		}
 
@@ -1710,11 +1618,6 @@ int32 UWorldPartitionConvertCommandlet::Main(const FString& Params)
 			{
 				WorldPartition->EditorHash->SaveConfig(CPF_Config, *LevelConfigFilename);
 				WorldPartition->RuntimeHash->SaveConfig(CPF_Config, *LevelConfigFilename);
-			}
-			
-			for(const auto& Pair : HLODLayers)
-			{
-				Pair.Value->SaveConfig(CPF_Config, *LevelConfigFilename);
 			}
 
 			UE_LOG(LogWorldPartitionConvertCommandlet, Display, TEXT("Generated ini file: %s"), *LevelConfigFilename);

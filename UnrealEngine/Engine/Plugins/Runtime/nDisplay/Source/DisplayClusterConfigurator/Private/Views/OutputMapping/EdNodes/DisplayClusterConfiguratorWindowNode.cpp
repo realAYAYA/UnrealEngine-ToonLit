@@ -78,7 +78,7 @@ bool UDisplayClusterConfiguratorWindowNode::IsPrimary() const
 	}
 
 	UDisplayClusterConfigurationClusterNode* ClusterNode = GetObjectChecked<UDisplayClusterConfigurationClusterNode>();
-	return FDisplayClusterConfiguratorClusterUtils::IsClusterNodePrimary(ClusterNode);
+	return UE::DisplayClusterConfiguratorClusterUtils::IsClusterNodePrimary(ClusterNode);
 }
 
 FDelegateHandle UDisplayClusterConfiguratorWindowNode::RegisterOnPreviewImageChanged(const FOnPreviewImageChangedDelegate& Delegate)
@@ -147,7 +147,7 @@ void UDisplayClusterConfiguratorWindowNode::DeleteObject()
 	}
 
 	UDisplayClusterConfigurationClusterNode* ClusterNode = GetObjectChecked<UDisplayClusterConfigurationClusterNode>();
-	FDisplayClusterConfiguratorClusterUtils::RemoveClusterNodeFromCluster(ClusterNode);
+	UE::DisplayClusterConfiguratorClusterUtils::RemoveClusterNodeFromCluster(ClusterNode);
 }
 
 void UDisplayClusterConfiguratorWindowNode::WriteNodeStateToObject()

@@ -216,7 +216,7 @@ namespace
 			CurrentPath.FindLastChar(TEXT('*'), WildcardStarIndex);
 			if (WildcardStarIndex != INDEX_NONE)
 			{
-				CurrentPath.LeftInline(WildcardStarIndex, false);
+				CurrentPath.LeftInline(WildcardStarIndex, EAllowShrinking::No);
 			}
 		}
 

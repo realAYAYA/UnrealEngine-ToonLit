@@ -65,7 +65,7 @@ namespace UnrealGameSync
 			// CleanBtn
 			// 
 			this.CleanBtn.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-			this.CleanBtn.DialogResult = System.Windows.Forms.DialogResult.Cancel;
+			this.CleanBtn.DialogResult = System.Windows.Forms.DialogResult.OK;
 			this.CleanBtn.Location = new System.Drawing.Point(607, 560);
 			this.CleanBtn.Name = "CleanBtn";
 			this.CleanBtn.Size = new System.Drawing.Size(101, 26);

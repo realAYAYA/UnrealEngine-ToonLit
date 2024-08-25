@@ -53,7 +53,7 @@ namespace p4api.net.unit.test
 
 						Assert.IsNotNull(c);
 
-						string machinename = System.Environment.MachineName;
+						string machinename = Unreal.MachineName;
 
                         Assert.IsTrue(c.HostName.ToLower().Contains(machinename.ToLower()));
 

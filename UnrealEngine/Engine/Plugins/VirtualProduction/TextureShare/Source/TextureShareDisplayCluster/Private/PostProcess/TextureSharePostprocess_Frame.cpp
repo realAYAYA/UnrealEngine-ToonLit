@@ -25,7 +25,7 @@ void FTextureSharePostprocess::UpdateSupportedViews(IDisplayClusterViewportManag
 	if (InViewportManager)
 	{
 		// Get all existing viewports on DC node
-		for (const TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InViewportManager->GetViewports())
+		for (const TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InViewportManager->GetCurrentRenderFrameViewports())
 		{
 			if (ViewportIt.IsValid())
 			{
@@ -44,7 +44,7 @@ void FTextureSharePostprocess::UpdateManualProjectionPolicy(IDisplayClusterViewp
 {
 	if (InViewportManager)
 	{
-		for (const TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InViewportManager->GetViewports())
+		for (const TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InViewportManager->GetCurrentRenderFrameViewports())
 		{
 			if (ViewportIt.IsValid())
 			{
@@ -80,7 +80,7 @@ void FTextureSharePostprocess::UpdateViews(IDisplayClusterViewportManager* InVie
 	if (InViewportManager)
 	{
 		//Register all viewport for scene eye data capture by default
-		for (const TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InViewportManager->GetViewports())
+		for (const TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : InViewportManager->GetCurrentRenderFrameViewports())
 		{
 			if (ViewportIt.IsValid())
 			{

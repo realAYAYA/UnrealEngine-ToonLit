@@ -86,6 +86,7 @@ public:
 	virtual TArray<TPair<int32, FPropertyPath>> GetPropertyRowNumbers() const override;
 	virtual int32 CountRows() const override;
 	virtual void HighlightProperty(const FPropertyPath& Property) override;
+	virtual void ScrollPropertyIntoView(const FPropertyPath& Property, bool bExpandProperty = false) override;
 	virtual FSlateRect GetPaintSpacePropertyBounds(const TSharedRef<FDetailTreeNode>& InDetailTreeNode, bool bIncludeChildren = true) const override;
 	virtual FSlateRect GetTickSpacePropertyBounds(const TSharedRef<FDetailTreeNode>& InDetailTreeNode, bool bIncludeChildren = true) const override;
 	virtual bool IsAncestorCollapsed(const TSharedRef<IDetailTreeNode>& Node) const override;
@@ -134,6 +135,7 @@ public:
 	bool GetCustomSavedExpansionState(const FString& NodePath) const override;
 	virtual void NotifyFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent) override;
 	void RefreshTree() override;
+	virtual void RequestForceRefresh() override;
 	TSharedPtr<FAssetThumbnailPool> GetThumbnailPool() const override;
 	virtual const TArray<TSharedRef<IClassViewerFilter>>& GetClassViewerFilters() const override;
 	TSharedPtr<IPropertyUtilities> GetPropertyUtilities() override;
@@ -179,6 +181,12 @@ public:
 
 	/** Restore all expanded items in root nodes and external root nodes. */
 	void RestoreAllExpandedItems();
+
+	/**
+	 * Returns a @code TSharedPtr @endcode to the @code FDetailsDisplayManager @endcode for this
+	 * details view
+	 */
+	virtual TSharedPtr<FDetailsDisplayManager> GetDisplayManager() override;
 
 	// SWidget interface
 	virtual bool SupportsKeyboardFocus() const override;
@@ -387,7 +395,14 @@ protected:
 	void HandlePendingCleanupTimer();
 	/** Free memory that is pending delete */
 	void HandlePendingCleanup();
-	
+
+	/** Set timer to force refresh if one not already set */
+	void SetPendingRefreshTimer();
+	/** Clear timer to force refresh if set */
+	void ClearPendingRefreshTimer();
+	/** Force refresh during editor tick */
+	void HandlePendingRefreshTimer();
+
 	void SavePreSearchExpandedItems();
 	void RestorePreSearchExpandedItems();
 
@@ -471,6 +486,12 @@ protected:
 	/** The list of nodes whose widgets should be animating. */
 	TArray<FAnimatingNodeCollection> CurrentlyAnimatingNodeCollections;
 
+	/**
+	 * The @code DetailsDisplayManager @endcode which provides an API to manage some of the characteristics of the
+	 * details display
+	 */
+	TSharedPtr<FDetailsDisplayManager> DisplayManager;
+
 	/** Current set of expanded detail nodes (by path) that should be saved when the details panel closes */
 	FStringPrefixTree ExpandedDetailNodes;
 	FStringPrefixTree PreSearchExpandedItems;
@@ -506,6 +527,9 @@ protected:
 
 	/** Are we currently running deferred actions? */
 	bool bRunningDeferredActions : 1;
+
+	/** Handle to the pending refresh request, if any */
+	FTimerHandle PendingRefreshTimerHandle;
 
 	mutable TSharedPtr<FEditConditionParser> EditConditionParser;
 	

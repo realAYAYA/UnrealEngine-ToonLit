@@ -71,7 +71,7 @@ public:
 		return ActorPtr.Get();
 	}
 
-	bool SetSceneActor(AActor* InActor)
+	bool SetSceneActor(const AActor* InActor)
 	{
 		FScopeLock lock(&DataGuard);
 
@@ -87,7 +87,9 @@ public:
 
 				WorldPtr = TWeakObjectPtr<UWorld>(InActor->GetWorld());
 				ActorClassPtr = TWeakObjectPtr<UClass>(ActorClass);
-				ActorPtr = TWeakObjectPtr<AActor>(InActor);
+
+				// Ignore const
+				ActorPtr = TWeakObjectPtr<AActor>((AActor*)InActor);
 
 				return true;
 			}
@@ -206,7 +208,7 @@ public:
 	// For killed object ptr, reset and find component new object ptr by name and save to [mutable] ComponentPtr
 	USceneComponent* GetOrFindSceneComponent() const;
 
-	bool SetSceneComponent(USceneComponent* InComponent)
+	bool SetSceneComponent(USceneComponent* const InComponent)
 	{
 		FScopeLock lock(&DataGuard);
 

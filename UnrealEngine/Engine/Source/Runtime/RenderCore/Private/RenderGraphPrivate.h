@@ -260,8 +260,6 @@ FORCEINLINE bool IsAsyncComputeSupported()
 	return GRDGAsyncCompute > 0 && !IsImmediateMode() && GSupportsEfficientAsyncCompute && GRHISupportsSeparateDepthStencilCopyAccess && !GTriggerGPUProfile;
 }
 
-bool IsDumpingRDGResources();
-
 extern bool IsParallelExecuteEnabled();
 extern bool IsParallelSetupEnabled();
 

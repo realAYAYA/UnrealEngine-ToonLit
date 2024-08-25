@@ -100,7 +100,7 @@ public:
 	TMap<FString, FVariant> ExtraValues;
 
 	TWeakPtr<FElectraVideoDecoderH265_Android, ESPMode::ThreadSafe> OwningDecoder;
-	IElectraH265VideoDecoderAndroidJava::FOutputBufferInfo OwningDecoderBufferInfo;
+	mutable IElectraH265VideoDecoderAndroidJava::FOutputBufferInfo OwningDecoderBufferInfo;
 	mutable bool bBufferGotReferenced = false;
 };
 
@@ -286,6 +286,7 @@ void IElectraVideoDecoderH265_Android::GetConfigurationOptions(TMap<FString, FVa
 	OutOptions.Emplace(IElectraDecoderFeature::IsAdaptive, FVariant(false));
 	OutOptions.Emplace(IElectraDecoderFeature::NeedReplayDataOnDecoderLoss, FVariant(true));
 	OutOptions.Emplace(IElectraDecoderFeature::MustBeSuspendedInBackground, FVariant(true));
+	OutOptions.Emplace(IElectraDecoderFeature::SupportsDroppingOutput, FVariant(true));
 }
 
 TSharedPtr<IElectraDecoder, ESPMode::ThreadSafe> IElectraVideoDecoderH265_Android::Create(const TMap<FString, FVariant>& InOptions, TSharedPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> InResourceDelegate)
@@ -460,6 +461,15 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH265_Android::DecodeAccessUni
 		return IElectraDecoder::EDecoderError::EndOfData;
 	}
 
+	// CSD only buffer is not handled at the moment.
+	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
+
+	// If this is discardable and won't be output we do not need to handle it at all.
+	if ((InInputAccessUnit.Flags & (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable)) == (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable))
+	{
+		return IElectraDecoder::EDecoderError::None;
+	}
+
 	// Still creating the decoder?
 	if (DecodeState == EDecodeState::CreatingDecoder)
 	{
@@ -472,9 +482,6 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH265_Android::DecodeAccessUni
 			return IElectraDecoder::EDecoderError::NoBuffer;
 		}
 	}
-
-	// CSD only buffer is not handled at the moment.
-	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
 
 	// Need a valid CSD to create a decoder.
 	if (!ConfigRecord.IsValid())
@@ -1063,8 +1070,8 @@ FElectraVideoDecoderH265_Android::EConvertResult FElectraVideoDecoderH265_Androi
 		return EConvertResult::Failure;
 	}
 
-	// If this is a replay frame we do not need to set it up and merely release the buffer immediately.
-	if ((In->AccessUnit.Flags & EElectraDecoderFlags::IsReplaySample) != EElectraDecoderFlags::None)
+	// If this is a replay frame or a frame that will not be output, we do not need to set it up and merely release the buffer immediately.
+	if ((In->AccessUnit.Flags & (EElectraDecoderFlags::IsReplaySample | EElectraDecoderFlags::DoNotOutput)) != EElectraDecoderFlags::None)
 	{
 		DETAILLOG(LogElectraDecoders, Log, TEXT("VideoDecoderH265::ConvertDecoderOutput() - Discard replay output %lld, 0x%x"), (long long int)In->AccessUnit.PTS.GetTicks(), In->AccessUnit.Flags);
 		if (DecoderInstance.IsValid())
@@ -1118,6 +1125,7 @@ void FElectraVideoDecoderOutputH265_Android::ReleaseOutputBuffer()
 		{
 			Decoder->ReleaseOutputBuffer(&OwningDecoderBufferInfo, bBufferGotReferenced, -1);
 		}
+		OwningDecoderBufferInfo.BufferIndex = -1;
 	}
 }
 
@@ -1130,6 +1138,12 @@ IElectraDecoderVideoOutput::EImageCopyResult FElectraVideoDecoderOutputH265_Andr
 
 		InCopyResources->SetBufferIndex(OwningDecoderBufferInfo.BufferIndex);
 		InCopyResources->SetValidCount(OwningDecoderBufferInfo.ValidCount);
+
+		if (InCopyResources->ShouldReleaseBufferImmediately())
+		{
+			Decoder->ReleaseOutputBuffer(&OwningDecoderBufferInfo, bBufferGotReferenced, -1);
+			OwningDecoderBufferInfo.BufferIndex = -1;
+		}
 
 		return IElectraDecoderVideoOutput::EImageCopyResult::Succeeded; 
 	}

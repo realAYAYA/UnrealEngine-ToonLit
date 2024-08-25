@@ -356,12 +356,10 @@ FReply FNiagaraComponentDetails::OnCaptureSelectedSystem()
 
 	if (NiagaraComponentToUse)
 	{
-		
-		int32 CaptureIndex = ComponentCaptures.AddDefaulted();
+		TSharedPtr<FNiagaraSimCacheCapture> SimCacheCapture = MakeShared<FNiagaraSimCacheCapture>();
 		UNiagaraSimCache* SimCache = NewObject<UNiagaraSimCache>(GetTransientPackage());
 		SimCache->SetFlags(RF_Transient);
 		CapturedCaches.Emplace(SimCache);
-		FNiagaraSimCacheCapture& SimCacheCapture = ComponentCaptures[CaptureIndex];
 
 		FNiagaraSimCacheCreateParameters CreateParameters;
 		
@@ -374,23 +372,15 @@ FReply FNiagaraComponentDetails::OnCaptureSelectedSystem()
 		
 		if(NiagaraComponentToUse->GetWorld())
 		{
-			
-			SimCacheCapture.CaptureNiagaraSimCache(SimCache, CreateParameters, NiagaraComponentToUse, CaptureParameters);
-
-			SimCacheCapture.OnCaptureComplete().AddLambda(
-			[CaptureIndex, this](UNiagaraSimCache* CapturedSimCache)
+			SimCacheCapture->OnCaptureComplete().AddLambda(
+			[SimCacheCapture, this](UNiagaraSimCache* CapturedSimCache)
 			{
 				if(CapturedSimCache)
 				{
 					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(CapturedSimCache, EToolkitMode::Standalone);
 				}
-
-				if(ComponentCaptures.IsValidIndex(CaptureIndex))
-				{
-					ComponentCaptures.RemoveAt(CaptureIndex);
-				}
-				
 			});
+			SimCacheCapture->CaptureNiagaraSimCache(SimCache, CreateParameters, NiagaraComponentToUse, CaptureParameters);
 		}
 
 		

@@ -39,6 +39,7 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 		[
 			SNew(SButton)
 			.Text(LOCTEXT("Component.ClearSelection", "Clear Component Selection"))
+			.ToolTipText(LOCTEXT("Component.ClearSelectionToolTip", "Removes all components from the current selection"))
 			.HAlign(HAlign_Center)
 			.OnClicked_Static(&FLandscapeEditorDetailCustomization_MiscTools::OnClearComponentSelectionButtonClicked)
 		];
@@ -51,6 +52,7 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 		[
 			SNew(SButton)
 			.Text(LOCTEXT("Mask.ClearSelection", "Clear Region Selection"))
+			.ToolTipText(LOCTEXT("Mask.ClearSelectionToolTip", "Removes all painted regions from the current selection"))
 			.HAlign(HAlign_Center)
 			.OnClicked_Static(&FLandscapeEditorDetailCustomization_MiscTools::OnClearRegionSelectionButtonClicked)
 		];
@@ -84,7 +86,6 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 					.MaxValue(32768.0f)
 					.SliderExponentNeutralValue(0.0f)
 					.SliderExponent(5.0f)
-					.ShiftMouseMovePixelPerDelta(20)
 					.MinSliderValue(-32768.0f)
 					.MaxSliderValue(32768.0f)
 					.MinDesiredValueWidth(75.0f)
@@ -185,6 +186,21 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 				]
 			]
 		];
+		ToolsCategory.AddCustomRow(LOCTEXT("Spline.bAlwaysForward.Selected", "Auto-Rotate Always Forward"))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.Padding(0, 6, 0, 0)
+			[
+				SNew(SCheckBox)
+				.OnCheckStateChanged(this, &FLandscapeEditorDetailCustomization_MiscTools::OnbAlwaysRotateForwardChanged)
+				.IsChecked(this, &FLandscapeEditorDetailCustomization_MiscTools::GetbAlwaysRotateForward)
+				.Content()
+				[
+					SNew(STextBlock).Text(LOCTEXT("Spline.bAlwaysForward.Selected", "Auto-Rotate Always Forward"))
+				]
+			]
+		];
 	}
 
 
@@ -213,6 +229,7 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 				[
 					SNew(SButton)
 					.Text(LOCTEXT("Ramp.Reset", "Reset"))
+					.ToolTipText(LOCTEXT("Ramp.ResetToolTip", "Clear the added ramp points"))
 					.HAlign(HAlign_Center)
 					.OnClicked_Static(&FLandscapeEditorDetailCustomization_MiscTools::OnResetRampButtonClicked)
 				]
@@ -222,6 +239,7 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 					SNew(SButton)
 					.IsEnabled_Static(&FLandscapeEditorDetailCustomization_MiscTools::GetApplyRampButtonIsEnabled)
 					.Text(LOCTEXT("Ramp.Apply", "Add Ramp"))
+					.ToolTipText(LOCTEXT("Ramp.ApplyToolTip", "Applies the current ramp to the height map of the currently selected edit layer"))
 					.HAlign(HAlign_Center)
 					.OnClicked_Static(&FLandscapeEditorDetailCustomization_MiscTools::OnApplyRampButtonClicked)
 				]
@@ -244,6 +262,7 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 				[
 					SNew(SButton)
 					.Text(LOCTEXT("Mirror.Reset", "Recenter"))
+					.ToolTipText(LOCTEXT("Mirror.ResetToolTip", "Center the mirror point on the current landscape"))
 					.HAlign(HAlign_Center)
 					.OnClicked_Lambda(&FLandscapeEditorDetailCustomization_MiscTools::OnResetMirrorPointButtonClicked)
 				]
@@ -253,6 +272,7 @@ void FLandscapeEditorDetailCustomization_MiscTools::CustomizeDetails(IDetailLayo
 					SNew(SButton)
 					.IsEnabled_Lambda([]() { FEdModeLandscape* LandscapeEdMode = GetEditorMode(); return LandscapeEdMode && LandscapeEdMode->CanEditLayer(); })
 					.Text(LOCTEXT("Mirror.Apply", "Apply"))
+					.ToolTipText(LOCTEXT("Mirror.ApplyToolTip", "Apply the mirror operation to the current landscape edit layer"))
 					.HAlign(HAlign_Center)
 					.OnClicked_Static(&FLandscapeEditorDetailCustomization_MiscTools::OnApplyMirrorButtonClicked)
 				]
@@ -412,6 +432,25 @@ ECheckBoxState FLandscapeEditorDetailCustomization_MiscTools::GetbUseAutoRotateC
 	if (LandscapeEdMode)
 	{
 		return LandscapeEdMode->GetbUseAutoRotateOnJoin() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	}
+	return ECheckBoxState::Unchecked;
+}
+
+void FLandscapeEditorDetailCustomization_MiscTools::OnbAlwaysRotateForwardChanged(ECheckBoxState NewState)
+{
+	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
+	if (LandscapeEdMode)
+	{
+		LandscapeEdMode->SetbAlwaysRotateForward(NewState == ECheckBoxState::Checked);
+	}
+}
+
+ECheckBoxState FLandscapeEditorDetailCustomization_MiscTools::GetbAlwaysRotateForward() const
+{
+	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
+	if (LandscapeEdMode)
+	{
+		return LandscapeEdMode->GetbAlwaysRotateForward() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 	}
 	return ECheckBoxState::Unchecked;
 }

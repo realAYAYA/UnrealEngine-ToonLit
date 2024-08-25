@@ -846,7 +846,7 @@ namespace UnrealBuildTool
 				if (BuildType == FBBuildType.Windows)
 				{
 					VCEnv = VCEnvironment.Create(
-						Compiler: WindowsPlatform.GetDefaultCompiler(null, UnrealArch.X64, Logger),
+						Compiler: WindowsPlatform.GetDefaultCompiler(null, UnrealArch.X64, Logger, true),
 						ToolChain: WindowsCompiler.Default,
 						Platform: UnrealTargetPlatform.Win64,
 						Architecture: UnrealArch.X64,
@@ -900,7 +900,6 @@ namespace UnrealBuildTool
 
 				switch (VCEnv.Compiler)
 				{
-					case WindowsCompiler.VisualStudio2019:
 					case WindowsCompiler.VisualStudio2022:
 						// For now we are working with the 140 version, might need to change to 141 or 150 depending on the version of the Toolchain you chose
 						// to install
@@ -1029,7 +1028,6 @@ namespace UnrealBuildTool
 					FinalMSVCRedistPath = PrefferedMSVCRedistPath;
 				}
 
-				// if (VCEnv.Compiler == WindowsCompiler.VisualStudio2019)
 				{
 					AddText($"\t\t'$Root$/msvcp{platformVersionNumber}.dll'\n");
 					AddText(String.Format("\t\t'{0}/vccorlib{1}.dll'\n", FinalMSVCRedistPath, platformVersionNumber));
@@ -1046,7 +1044,7 @@ namespace UnrealBuildTool
 
 			if (BuildHostPlatform.Current.Platform == UnrealTargetPlatform.Mac)
 			{
-				AddText($".MacBaseSDKDir = '{MacToolChain.Settings.BaseSDKDir}'\n");
+				AddText($".MacBaseSDKDir = '{MacToolChain.Settings.GetSDKPath()}'\n");
 				AddText($".MacToolchainDir = '{MacToolChain.Settings.ToolchainDir}'\n");
 				AddText($"Compiler('UEAppleCompiler') \n{{\n");
 				AddText($"\t.Executable = '$MacToolchainDir$/clang++'\n");

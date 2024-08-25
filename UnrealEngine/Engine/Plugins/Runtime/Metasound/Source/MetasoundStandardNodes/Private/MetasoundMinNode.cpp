@@ -58,18 +58,18 @@ namespace Metasound
 				OutMin = FMath::Min(InA, InB);
 			}
 
-			static TDataReadReference<int32> CreateInRefA(const FCreateOperatorParams& InParams)
+			static TDataReadReference<int32> CreateInRefA(const FBuildOperatorParams& InParams)
 			{
 				using namespace MinVertexNames;
-				const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-				return InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputAValue), InParams.OperatorSettings);
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputAValue), InParams.OperatorSettings);
 			}
 
-			static TDataReadReference<int32> CreateInRefB(const FCreateOperatorParams& InParams)
+			static TDataReadReference<int32> CreateInRefB(const FBuildOperatorParams& InParams)
 			{
 				using namespace MinVertexNames;
-				const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-				return InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputBValue), InParams.OperatorSettings);
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputBValue), InParams.OperatorSettings);
 			}
 		};
 
@@ -82,18 +82,18 @@ namespace Metasound
 				OutMin = FMath::Min(InA, InB);
 			}
 
-			static TDataReadReference<float> CreateInRefA(const FCreateOperatorParams& InParams)
+			static TDataReadReference<float> CreateInRefA(const FBuildOperatorParams& InParams)
 			{
 				using namespace MinVertexNames;
-				const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-				return InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputAValue), InParams.OperatorSettings);
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputAValue), InParams.OperatorSettings);
 			}
 
-			static TDataReadReference<float> CreateInRefB(const FCreateOperatorParams& InParams)
+			static TDataReadReference<float> CreateInRefB(const FBuildOperatorParams& InParams)
 			{
 				using namespace MinVertexNames;
-				const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-				return InParams.InputDataReferences.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputBValue), InParams.OperatorSettings);
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputBValue), InParams.OperatorSettings);
 			}
 		};
 
@@ -112,16 +112,18 @@ namespace Metasound
 				}
 			}
 
-			static TDataReadReference<FAudioBuffer> CreateInRefA(const FCreateOperatorParams& InParams)
+			static TDataReadReference<FAudioBuffer> CreateInRefA(const FBuildOperatorParams& InParams)
 			{
 				using namespace MinVertexNames;
-				return InParams.InputDataReferences.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAValue), InParams.OperatorSettings);
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAValue), InParams.OperatorSettings);
 			}
 
-			static TDataReadReference<FAudioBuffer> CreateInRefB(const FCreateOperatorParams& InParams)
+			static TDataReadReference<FAudioBuffer> CreateInRefB(const FBuildOperatorParams& InParams)
 			{
 				using namespace MinVertexNames;
-				return InParams.InputDataReferences.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputBValue), InParams.OperatorSettings);
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
+				return InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputBValue), InParams.OperatorSettings);
 			}
 		};
 
@@ -166,7 +168,7 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			TDataReadReference<ValueType> InputA = MetasoundMinNodePrivate::TMin<ValueType>::CreateInRefA(InParams);
 			TDataReadReference<ValueType> InputB = MetasoundMinNodePrivate::TMin<ValueType>::CreateInRefB(InParams);

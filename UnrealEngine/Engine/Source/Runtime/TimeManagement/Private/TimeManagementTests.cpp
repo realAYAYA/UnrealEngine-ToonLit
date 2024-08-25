@@ -139,7 +139,7 @@ bool FFrameTimeAdditionTest::RunTest(const FString& Parameters)
 			FFrameTime Actual   = Time + TimeToAdd;
 			FFrameTime Expected = ExpectedTimes[Index];
 
-			ensureAlwaysMsgf(IsNearlyEqual(Actual, Expected), TEXT("%d+.3f + 10.1: %d+%.3f (actual) == %d+%.3f (expected)"),
+			ensureAlwaysMsgf(IsNearlyEqual(Actual, Expected), TEXT("%d+%.3f + 10.1: %d+%.3f (actual) == %d+%.3f (expected)"),
 				Time.GetFrame().Value,     Time.GetSubFrame(),
 				Actual.GetFrame().Value,   Actual.GetSubFrame(),
 				Expected.GetFrame().Value, Expected.GetSubFrame()
@@ -594,7 +594,7 @@ bool FFrameTimeToSecondsConversionTest::RunTest(const FString& Parameters)
 
 			// Verify seconds value against interval * FrameIndex
 			ensureAlwaysMsgf(FMath::IsNearlyEqual(IntervalSeconds, FrameAsSeconds),
-						TEXT("Did not expect value %d ::AsSeconds for input %i (%d)."),
+						TEXT("Did not expect value %f ::AsSeconds for input %i (%f)."),
 						FrameAsSeconds, FrameIndex, IntervalSeconds
 					);
 			
@@ -604,19 +604,19 @@ bool FFrameTimeToSecondsConversionTest::RunTest(const FString& Parameters)
 
 			// Verify frame numbers match original FrameIndex value
 			ensureAlwaysMsgf(FrameTime.GetFrame() == FrameIndex,
-						TEXT("Did not expect frame number %i ::AsFrameTime for input %i (%d)."),
+						TEXT("Did not expect frame number %i ::AsFrameTime for input %i (%f)."),
 						FrameNumber.Value, FrameIndex, FrameAsSeconds
 					);
 			
 			ensureAlwaysMsgf(FrameNumber.Value == FrameIndex,
-						TEXT("Did not expect frame number %i ::AsFrameNumber for input %i (%d)."),
+						TEXT("Did not expect frame number %i ::AsFrameNumber for input %i (%f)."),
 						FrameNumber.Value, FrameIndex, FrameAsSeconds
 					);
 			
 			// Convert FrameTime back to seconds and verify against value used to generate it
 			const double ConvertedSeconds = FrameRate.AsSeconds(FrameTime);
 			ensureAlwaysMsgf(FMath::IsNearlyEqual(ConvertedSeconds, FrameAsSeconds),
-				TEXT("Did not expect value %d ::AsSeconds for input %i (%d) - %s."),
+				TEXT("Did not expect value %f ::AsSeconds for input %i (%f) - %s."),
 				ConvertedSeconds, FrameIndex, FrameAsSeconds, *LexToString(FrameTime)
 			);
 		}

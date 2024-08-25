@@ -308,7 +308,7 @@ struct FObjectComponent
 	MOVIESCENE_API UObject* GetObject() const;
 
 	/** Conditionally add a reference for the specified component data based on whether it is strongly referenced or not */
-	friend void AddReferencedObjectForComponent(FReferenceCollector& ReferenceCollector, FObjectComponent* ComponentData);
+	MOVIESCENE_API friend void AddReferencedObjectForComponent(FReferenceCollector* ReferenceCollector, FObjectComponent* ComponentData);
 
 private:
 
@@ -324,6 +324,233 @@ private:
 
 	/** Default constructed for strong pointers. Assigned on construction for weak ptrs. */
 	FObjectKey ObjectKey;
+};
+
+
+enum class EMovieSceneBindingLifetimeState : uint8
+{
+	/** Object Binding State is Active. Tracks on this binding will be active. */
+	Active,
+	/** Object Binding is Inactive. Tracks on this binding will be inactive and states will be restored/kept depending on settings. */
+	Inactive
+};
+
+struct FMovieSceneBindingLifetimeComponentData
+{
+	FGuid BindingGuid;
+
+	EMovieSceneBindingLifetimeState BindingLifetimeState = EMovieSceneBindingLifetimeState::Active;
+};
+
+/**
+ * Specifies a unique, sorted path of hbiases that contribute to a blended output
+ * Supports up to 8 unique HBiases in its path
+ */
+struct FHierarchicalBlendTarget
+{
+	/** Default Constructor */
+	MOVIESCENE_API FHierarchicalBlendTarget();
+
+	MOVIESCENE_API FHierarchicalBlendTarget(const FHierarchicalBlendTarget& RHS);
+	MOVIESCENE_API FHierarchicalBlendTarget& operator=(const FHierarchicalBlendTarget& RHS);
+
+	MOVIESCENE_API FHierarchicalBlendTarget(FHierarchicalBlendTarget&& RHS);
+	MOVIESCENE_API FHierarchicalBlendTarget& operator=(FHierarchicalBlendTarget&& RHS);
+
+	MOVIESCENE_API ~FHierarchicalBlendTarget();
+
+	/**
+	 * Add the specified HBias to this blend target.
+	 * Duplicates are not supported - if the HBias already exists in this chain, this function does nothing.
+	 */
+	MOVIESCENE_API void Add(int16 HBias);
+
+	/**
+	 * Return the number of hbiases that contribute to this blend target
+	 */
+	MOVIESCENE_API int32 Num() const;
+
+	/**
+	 * Return the HBias at the specified index. Out of bounds indices will fail an assertion
+	 */
+	MOVIESCENE_API int16 operator[](int32 Index) const;
+
+	/**
+	 * Convert this blend target into an array view
+	 */
+	MOVIESCENE_API TArrayView<const int16> AsArray() const;
+
+	/**
+	 * Retrieve the current capacity of this container - only to be used for debugging and testing purposes
+	 */
+	uint16 GetCapacity() const
+	{
+		return Capacity;
+	}
+
+public:
+
+	friend uint32 GetTypeHash(const FHierarchicalBlendTarget& In)
+	{
+		// Use 32 bit ints for hashing speed
+		const void* Memory = In.GetMemory();
+		const uint32* Data32 = static_cast<const uint32*>(Memory);
+
+		if (In.Capacity == InlineCapacity)
+		{
+			static_assert(sizeof(FHierarchicalBlendTarget) == sizeof(uint32)*4);
+
+			// Use 32 bit ints for hashing speed
+			// this actually ends up hashing the capacity as well since we have 7 int16s + 1 uint16
+			return HashCombine(Data32[0], Data32[1]) ^ HashCombine(Data32[2], Data32[3]);
+		}
+		else
+		{
+			static_assert(GrowAmount%4 == 0, "GrowAmount is not a multiple of 2 which is required for this loop to work");
+			check(In.Capacity%4 == 0);
+			uint32 Hash = 0;
+			for (int32 Index = 0; Index < In.Capacity/4; Index += 4)
+			{
+				Hash ^= HashCombine(Data32[Index+0], Data32[Index+1]) ^ HashCombine(Data32[Index+2], Data32[Index+3]);
+			}
+			return Hash;
+		}
+	}
+	friend bool operator<(const FHierarchicalBlendTarget& A, const FHierarchicalBlendTarget& B)
+	{
+		if (A.Capacity != B.Capacity)
+		{
+			return A.Capacity < B.Capacity;
+		}
+		return FMemory::Memcmp(A.GetMemory(), B.GetMemory(), sizeof(int16)*A.Capacity) < 0;
+	}
+	friend bool operator==(const FHierarchicalBlendTarget& A, const FHierarchicalBlendTarget& B)
+	{
+		if (A.Capacity != B.Capacity)
+		{
+			return false;
+		}
+		return FMemory::Memcmp(A.GetMemory(), B.GetMemory(), sizeof(int16)*A.Capacity) == 0;
+	}
+	friend bool operator!=(const FHierarchicalBlendTarget& A, const FHierarchicalBlendTarget& B)
+	{
+		if (A.Capacity != B.Capacity)
+		{
+			return true;
+		}
+		return FMemory::Memcmp(A.GetMemory(), B.GetMemory(), sizeof(int16)*A.Capacity) != 0;
+	}
+
+private:
+
+	void FreeAllocation();
+
+	MOVIESCENE_API int16* GetMemory();
+	MOVIESCENE_API const int16* GetMemory() const;
+
+	TArrayView<int16> GetAllEntries();
+	TArrayView<const int16> GetAllEntries() const;
+
+	void Grow(uint16 NewCapacity);
+
+	/**
+	 * 14 bytes of hbias chain.
+	 * Type is either:
+	 *		int16[7] where Capacity == InlineCapacity
+	 *		int16*   (heap allocated) where Capacity > InlineCapacity
+	 * Supports inline up to a maximum of 7 sub-sequences, or any number on the heap allocation.
+	 * Implemented using type-erasure since a union would be padded up to 16 bytes, and we want to keep sizeof this type == 16 bytes
+	 */
+	alignas(8) uint8 Data[14];
+
+	/** 2 bytes - maximum number of hbiases in this chain. */
+	uint16 Capacity;
+
+	static constexpr int32 InlineCapacity = sizeof(Data) / sizeof(int16);
+	static constexpr uint16 GrowAmount = 16u;
+};
+
+/**
+ * The key to a grouping policy registered on the grouping system (see UMovieSceneEntityGroupingSystem)
+ */
+struct FEntityGroupingPolicyKey
+{
+	static const FEntityGroupingPolicyKey Invalid() { return FEntityGroupingPolicyKey(); }
+
+	FEntityGroupingPolicyKey() {}
+	FEntityGroupingPolicyKey(int32 FromIndex) : Index(FromIndex) {}
+
+	bool IsValid() const
+	{
+		return Index != INDEX_NONE;
+	}
+
+	friend uint32 GetTypeHash(const FEntityGroupingPolicyKey& Key)
+	{
+		return GetTypeHash(Key.Index);
+	}
+
+	friend bool operator==(const FEntityGroupingPolicyKey& A, const FEntityGroupingPolicyKey& B)
+	{
+		return A.Index == B.Index;
+	}
+
+	int32 Index = INDEX_NONE;
+};
+
+/**
+ * Flags for FEntityGroupID
+ */
+enum class EEntityGroupFlags : uint8
+{
+	None = 0,
+	RemovedFromGroup = 1 << 0
+};
+
+ENUM_CLASS_FLAGS(EEntityGroupFlags);
+
+/**
+ * The component data for describing what group an entity belongs to (see UMovieSceneEntityGroupingSystem)
+ */
+struct FEntityGroupID
+{
+	static const FEntityGroupID Invalid() { return FEntityGroupID(); }
+
+	FEntityGroupingPolicyKey PolicyKey;
+	int32 GroupIndex = INDEX_NONE;
+	EEntityGroupFlags Flags = EEntityGroupFlags::None;
+
+	FEntityGroupID() {}
+	FEntityGroupID(const FEntityGroupingPolicyKey InPolicyKey, int32 InGroupIndex) : PolicyKey(InPolicyKey), GroupIndex(InGroupIndex) {}
+
+	/**
+	 * Returns whether this component points to a valid grouping policy, and has a valid group.
+	 */
+	bool IsValid() const
+	{
+		return PolicyKey.IsValid() && GroupIndex != INDEX_NONE;
+	}
+
+	/**
+	 * Returns whether this component is valid (see IsValid) and if it still belongs to a group.
+	 * If the entity was removed from its group, the GroupIndex would still be valid, but we would
+	 * have set Flags to RemovedFromGroup. This lets downstream systems still know what group the
+	 * entity *used* to be part of, for their own book-keeping.
+	 */
+	bool HasGroup() const
+	{
+		return PolicyKey.IsValid() && GroupIndex != INDEX_NONE && !EnumHasAnyFlags(Flags, EEntityGroupFlags::RemovedFromGroup);
+	}
+
+	friend uint32 GetTypeHash(const FEntityGroupID& GroupID)
+	{
+		return HashCombine(GetTypeHash(GroupID.PolicyKey.Index), GetTypeHash(GroupID.GroupIndex));
+	}
+
+	friend bool operator==(const FEntityGroupID& A, const FEntityGroupID& B)
+	{
+		return A.PolicyKey == B.PolicyKey && A.GroupIndex == B.GroupIndex;
+	}
 };
 
 /**
@@ -364,6 +591,8 @@ public:
 
 	TComponentTypeID<double>              EvalSeconds;
 
+	TComponentTypeID<FEntityGroupID>	  Group;
+
 public:
 
 	TComponentTypeID<FMovieSceneBlendChannelID> BlendChannelInput;
@@ -386,6 +615,9 @@ public:
 
 	// An FGuid relating to a spawnable binding in a sequence
 	TComponentTypeID<FGuid> SpawnableBinding;
+
+	// Data relating to the lifetime of bindings
+	TComponentTypeID<FMovieSceneBindingLifetimeComponentData> BindingLifetime;
 
 public:
 
@@ -464,7 +696,7 @@ public:
 	TComponentTypeID<FMovieSceneSequenceID> HierarchicalEasingProvider;
 
 	// Defines an HBias level that is the highest blend target for a given set of components that need to blend together
-	TComponentTypeID<int16>       HierarchicalBlendTarget;
+	TComponentTypeID<FHierarchicalBlendTarget> HierarchicalBlendTarget;
 
 	// A float representing the evaluated easing weight
 	TComponentTypeID<double> WeightAndEasingResult;
@@ -535,6 +767,8 @@ public:
 
 		FComponentTypeID DontOptimizeConstants;
 
+		FComponentTypeID RemoveHierarchicalBlendTarget;
+
 	} Tags;
 
 	struct
@@ -571,6 +805,9 @@ private:
 	TMap<FComponentTypeID, FComponentTypeID> ResultToBase;
 };
 
+#if UE_MOVIESCENE_ENTITY_DEBUG
+template<> struct TComponentDebugType<FEntityGroupID> { static const EComponentDebugType Type = EComponentDebugType::GroupID; };
+#endif
 
 } // namespace MovieScene
 } // namespace UE

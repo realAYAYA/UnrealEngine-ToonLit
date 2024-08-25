@@ -15,8 +15,8 @@ class FStateTreeViewModel;
 /** An item in the StateTreeDebugger trace event tree */
 struct FStateTreeDebuggerEventTreeElement : TSharedFromThis<FStateTreeDebuggerEventTreeElement>
 {
-	explicit FStateTreeDebuggerEventTreeElement(const TraceServices::FFrame& Frame, const FStateTreeTraceEventVariantType& Event)
-		: Frame(Frame), Event(Event)
+	explicit FStateTreeDebuggerEventTreeElement(const TraceServices::FFrame& Frame, const FStateTreeTraceEventVariantType& Event, const UStateTree* StateTree)
+		: Frame(Frame), Event(Event), WeakStateTree(StateTree)
 	{
 	}
 
@@ -24,6 +24,7 @@ struct FStateTreeDebuggerEventTreeElement : TSharedFromThis<FStateTreeDebuggerEv
 	FStateTreeTraceEventVariantType Event;
 	TArray<TSharedPtr<FStateTreeDebuggerEventTreeElement>> Children;
 	FString Description;
+	TWeakObjectPtr<const UStateTree> WeakStateTree;
 };
 
 
@@ -35,16 +36,14 @@ class SStateTreeDebuggerViewRow : public STableRow<TSharedPtr<FStateTreeDebugger
 public:
 	void Construct(const FArguments& InArgs,
 				   const TSharedPtr<STableViewBase>& InOwnerTableView,
-				   const TSharedPtr<FStateTreeDebuggerEventTreeElement>& InElement,
-				   const TSharedRef<FStateTreeViewModel>& InStateTreeViewModel);
+				   const TSharedPtr<FStateTreeDebuggerEventTreeElement>& InElement);
 
 private:
 	TSharedPtr<SWidget> GenerateEventWidget() const;
 	const FTextBlockStyle& GetEventTextStyle() const;
 	FText GetEventDescription() const;
 	FText GetEventTooltip() const;
-	
-	TSharedPtr<FStateTreeViewModel> StateTreeViewModel;
+
 	TSharedPtr<FStateTreeDebuggerEventTreeElement> Item;
 };
 

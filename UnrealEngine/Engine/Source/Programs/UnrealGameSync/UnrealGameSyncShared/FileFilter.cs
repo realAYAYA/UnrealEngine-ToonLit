@@ -78,7 +78,7 @@ namespace UnrealGameSync
 		/// <summary>
 		/// Adds an include or exclude rule to the filter
 		/// </summary>
-		/// <param name="Pattern">Pattern to match. See CreateRegex() for details.</param>
+		/// <param name="rule">Pattern to match. See CreateRegex() for details.</param>
 		public void AddRule(string rule)
 		{
 			if (rule.StartsWith("-", StringComparison.Ordinal))
@@ -94,28 +94,29 @@ namespace UnrealGameSync
 		/// <summary>
 		/// Adds an include or exclude rule to the filter. The rule may be 
 		/// </summary>
-		/// <param name="Pattern">Pattern to match. See CreateRegex() for details.</param>
+		/// <param name="rule">Pattern to match. See CreateRegex() for details.</param>
+		/// <param name="allowTags"></param>
 		public void AddRule(string rule, params string[] allowTags)
 		{
 			string cleanRule = rule.Trim();
-			if(cleanRule.StartsWith("{", StringComparison.Ordinal))
+			if (cleanRule.StartsWith("{", StringComparison.Ordinal))
 			{
 				// Find the end of the condition
 				int conditionEnd = cleanRule.IndexOf('}', StringComparison.Ordinal);
-				if(conditionEnd == -1)
+				if (conditionEnd == -1)
 				{
 					throw new Exception(String.Format("Missing closing parenthesis in rule: {0}", cleanRule));
 				}
 
 				// Check there's a matching tag
 				string[] ruleTags = cleanRule.Substring(1, conditionEnd - 1).Split(',').Select(x => x.Trim()).ToArray();
-				if(!ruleTags.Any(x => allowTags.Contains(x)))
+				if (!ruleTags.Any(x => allowTags.Contains(x)))
 				{
 					return;
 				}
 
 				// Strip the condition from the rule
-				cleanRule = cleanRule.Substring(conditionEnd + 1).TrimStart(); 
+				cleanRule = cleanRule.Substring(conditionEnd + 1).TrimStart();
 			}
 			AddRule(cleanRule);
 		}
@@ -123,10 +124,10 @@ namespace UnrealGameSync
 		/// <summary>
 		/// Adds several rules to the filter
 		/// </summary>
-		/// <param name="Patterns">List of patterns to match.</param>
+		/// <param name="rules">List of patterns to match.</param>
 		public void AddRules(IEnumerable<string> rules)
 		{
-			foreach(string rule in rules)
+			foreach (string rule in rules)
 			{
 				AddRule(rule);
 			}
@@ -136,11 +137,9 @@ namespace UnrealGameSync
 		/// Adds several rules in the given lines. Rules may be prefixed with conditions of the syntax {Key=Value, Key2=Value2}, which
 		/// will be evaluated using variables in the given dictionary before being added.
 		/// </summary>
-		/// <param name="Lines"></param>
-		/// <param name="Variables">Lookup for variables to test against</param>
 		public void AddRules(IEnumerable<string> rules, params string[] tags)
 		{
-			foreach(string rule in rules)
+			foreach (string rule in rules)
 			{
 				AddRule(rule, tags);
 			}
@@ -149,22 +148,19 @@ namespace UnrealGameSync
 		/// <summary>
 		/// Reads a configuration file split into sections
 		/// </summary>
-		/// <param name="Filter"></param>
-		/// <param name="RulesFileName"></param>
-		/// <param name="Conditions"></param>
 		public void ReadRulesFromFile(string fileName, string sectionName, params string[] allowTags)
 		{
 			bool inSection = false;
-			foreach(string line in File.ReadAllLines(fileName))
+			foreach (string line in File.ReadAllLines(fileName))
 			{
 				string trimLine = line.Trim();
-				if(!trimLine.StartsWith(";", StringComparison.Ordinal) && trimLine.Length > 0)
+				if (!trimLine.StartsWith(";", StringComparison.Ordinal) && trimLine.Length > 0)
 				{
-					if(trimLine.StartsWith("[", StringComparison.Ordinal))
+					if (trimLine.StartsWith("[", StringComparison.Ordinal))
 					{
 						inSection = (trimLine == "[" + sectionName + "]");
 					}
-					else if(inSection)
+					else if (inSection)
 					{
 						AddRule(line, allowTags);
 					}
@@ -218,7 +214,7 @@ namespace UnrealGameSync
 		/// Adds an include or exclude rule to the filter
 		/// </summary>
 		/// <param name="pattern">The pattern which the rule should match</param>
-		/// <param name="bInclude">Whether to include or exclude files matching this rule</param>
+		/// <param name="type">Whether to include or exclude files matching this rule</param>
 		public void AddRule(string pattern, FileFilterType type)
 		{
 			string normalizedPattern = pattern.Replace('\\', '/');
@@ -228,7 +224,7 @@ namespace UnrealGameSync
 			{
 				normalizedPattern = normalizedPattern.Substring(1);
 			}
-			else if(!normalizedPattern.StartsWith("...", StringComparison.Ordinal))
+			else if (!normalizedPattern.StartsWith("...", StringComparison.Ordinal))
 			{
 				normalizedPattern = ".../" + normalizedPattern;
 			}
@@ -326,7 +322,7 @@ namespace UnrealGameSync
 		{
 			string[] tokens = folderName.Trim('/', '\\').Split('/', '\\');
 
-			FileFilterNode matchingNode = FindMatchingNode(_rootNode, tokens.Union(new string[]{ "" }).ToArray(), 0, _defaultNode);
+			FileFilterNode matchingNode = FindMatchingNode(_rootNode, tokens.Union(new string[] { "" }).ToArray(), 0, _defaultNode);
 
 			return matchingNode.Type == FileFilterType.Include || HighestPossibleIncludeMatch(_rootNode, tokens, 0, matchingNode.RuleNumber) > matchingNode.RuleNumber;
 		}
@@ -349,7 +345,7 @@ namespace UnrealGameSync
 		/// <param name="tokenIdx"></param>
 		/// <param name="currentBestNode"></param>
 		/// <returns></returns>
-		FileFilterNode FindMatchingNode(FileFilterNode currentNode, string[] tokens, int tokenIdx, FileFilterNode currentBestNode)
+		static FileFilterNode FindMatchingNode(FileFilterNode currentNode, string[] tokens, int tokenIdx, FileFilterNode currentBestNode)
 		{
 			// If we've matched all the input tokens, check if this rule is better than any other we've seen
 			if (tokenIdx == tokens.Length)
@@ -393,7 +389,7 @@ namespace UnrealGameSync
 		/// <param name="tokenIdx">Current token index</param>
 		/// <param name="currentBestRuleNumber">The highest rule number seen so far. Used to optimize tree traversals.</param>
 		/// <returns>New highest rule number</returns>
-		int HighestPossibleIncludeMatch(FileFilterNode currentNode, string[] tokens, int tokenIdx, int currentBestRuleNumber)
+		static int HighestPossibleIncludeMatch(FileFilterNode currentNode, string[] tokens, int tokenIdx, int currentBestRuleNumber)
 		{
 			// If we've matched all the input tokens, check if this rule is better than any other we've seen
 			if (tokenIdx == tokens.Length)
@@ -483,7 +479,7 @@ namespace UnrealGameSync
 		/// </summary>
 		public bool IsMatch(string token)
 		{
-			if(Pattern.EndsWith(".", StringComparison.Ordinal))
+			if (Pattern.EndsWith(".", StringComparison.Ordinal))
 			{
 				return !token.Contains('.', StringComparison.Ordinal) && IsMatch(token, 0, Pattern.Substring(0, Pattern.Length - 1), 0);
 			}

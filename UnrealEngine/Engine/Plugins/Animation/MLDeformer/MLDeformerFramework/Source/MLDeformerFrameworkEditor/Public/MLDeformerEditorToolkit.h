@@ -25,6 +25,7 @@ namespace UE::MLDeformer
 {
 	class SMLDeformerTimeline;
 	class FMLDeformerApplicationMode;
+	class SMLDeformerDebugSelectionWidget;
 
 	namespace MLDeformerEditorModes
 	{
@@ -54,7 +55,6 @@ namespace UE::MLDeformer
 	public:
 		friend class FMLDeformerApplicationMode;
 		friend struct FMLDeformerVizSettingsTabSummoner;
-
 
 		~FMLDeformerEditorToolkit();
 
@@ -129,8 +129,19 @@ namespace UE::MLDeformer
 		bool IsTrainButtonEnabled() const;
 		bool IsTraining() const;
 
+		/** Get the actor we want to debug, if any. Returns a nullptr when we don't want to debug anything. */
+		AActor* GetDebugActor() const;
+
+		/** Get the component space transforms of the actor we want to debug. Returns an empty array if GetDebugActor returns a nullptr. */
+		TArray<FTransform> GetDebugActorComponentSpaceTransforms() const;
+
+		void ZoomOnActors();
+
+		TSharedPtr<SMLDeformerDebugSelectionWidget> GetDebugWidget() const { return DebugWidget; }
+
 		static void AddToolsMenuExtender(TUniquePtr<FToolsMenuExtender> Extender);
 		static TConstArrayView<TUniquePtr<FToolsMenuExtender>> GetToolsMenuExtenders();
+
 	private:
 		UE_DEPRECATED(5.3, "Please use the OnModelChanged that takes two parameters instead.")
 		void OnModelChanged(int Index);
@@ -157,8 +168,8 @@ namespace UE::MLDeformer
 		FText GetActiveModelName() const;
 		FText GetCurrentVizModeName() const;
 		FText GetVizModeName(EMLDeformerVizMode Mode) const;
-		void ZoomOnActors();
 		void ShowNoModelsWarningIfNeeded();
+		EVisibility GetDebuggingVisibility() const;
 
 		TSharedRef<SWidget> GenerateModelButtonContents(TSharedRef<FUICommandList> InCommandList);
 		TSharedRef<SWidget> GenerateVizModeButtonContents(TSharedRef<FUICommandList> InCommandList);
@@ -166,26 +177,30 @@ namespace UE::MLDeformer
 
 	private:
 		/** The persona toolkit. */	
-		TSharedPtr<IPersonaToolkit> PersonaToolkit = nullptr;
+		TSharedPtr<IPersonaToolkit> PersonaToolkit;
 
 		/** Model details view. */
-		TSharedPtr<IDetailsView> ModelDetailsView = nullptr;
+		TSharedPtr<IDetailsView> ModelDetailsView;
 
 		/** Model viz settings details view. */
-		TSharedPtr<IDetailsView> VizSettingsDetailsView = nullptr;
+		TSharedPtr<IDetailsView> VizSettingsDetailsView;
 
 		/** The timeline slider widget. */
-		TSharedPtr<SMLDeformerTimeline> TimeSlider = nullptr;
+		TSharedPtr<SMLDeformerTimeline> TimeSlider;
 
 		/** The currently active editor model. */
-		TSharedPtr<FMLDeformerEditorModel> ActiveModel = nullptr;
+		TSharedPtr<FMLDeformerEditorModel> ActiveModel;
 
 		// Persona viewport.
-		TSharedPtr<IPersonaViewport> PersonaViewport = nullptr;
+		TSharedPtr<IPersonaViewport> PersonaViewport;
 
 		/** The ML Deformer Asset. */
-		TObjectPtr<UMLDeformerAsset> DeformerAsset = nullptr;
+		TObjectPtr<UMLDeformerAsset> DeformerAsset;
 
+		/** The widget where you select which actor to debug. */
+		TSharedPtr<SMLDeformerDebugSelectionWidget> DebugWidget;
+
+		/** The active application mode. */
 		FMLDeformerApplicationMode* ApplicationMode = nullptr;
 
 		/** Has the asset editor been initialized? */

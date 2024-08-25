@@ -193,7 +193,7 @@ public:
 		}
 		else
 		{
-			return !AccessToken.IsEmpty() && !RefreshToken.IsEmpty();
+			return !AccessToken.IsEmpty();
 		}
 	}
 
@@ -218,6 +218,11 @@ public:
 			return true;
 		}
 		return false;
+	}
+
+	inline void AddAuthData(FString Key, const FString& Value)
+	{
+		AuthData.Add(MoveTemp(Key), Value);
 	}
 
 	/** Type of auth this token represents */
@@ -251,10 +256,6 @@ private:
 		ONLINE_JSON_SERIALIZE("refresh_token", RefreshToken);
 		ONLINE_JSON_SERIALIZE("id_token", IdToken);
 	END_ONLINE_JSON_SERIALIZER
-
-#if PLATFORM_IOS
-	friend bool GetAuthTokenFromGoogleUser(GIDGoogleUser* user, FAuthTokenGoogle& OutAuthToken);
-#endif
 };
 
 /**

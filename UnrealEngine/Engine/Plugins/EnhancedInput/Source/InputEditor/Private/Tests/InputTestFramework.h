@@ -64,18 +64,27 @@ struct FBindingTargets
 };
 
 // Mock input subsystems to avoid having to create an actual subsystem + local player + game instance.
-class FMockedEnhancedInputSubsystem : public IEnhancedInputSubsystemInterface
+UCLASS()
+class UMockedEnhancedInputSubsystem : public UObject, public IEnhancedInputSubsystemInterface
 {
+	GENERATED_BODY()
+	
 	TWeakObjectPtr<UEnhancedPlayerInput> PlayerInput;
 	
 	TWeakObjectPtr<UEnhancedInputUserSettings> UserSettings;
 	
 public:
-	FMockedEnhancedInputSubsystem(const class UControllablePlayer& PlayerData);
-	void Init() { InitalizeUserSettings(); }
+	void Init(const class UControllablePlayer& PlayerData); 
 	virtual UEnhancedPlayerInput* GetPlayerInput() const override { return PlayerInput.Get(); }
 	virtual UEnhancedInputUserSettings* GetUserSettings() const override;
 	virtual void InitalizeUserSettings() override;
+
+protected:
+	virtual TMap<TObjectPtr<const UInputAction>, FInjectedInput>& GetContinuouslyInjectedInputs() override { return ContinuouslyInjectedInputs; }
+	
+	// Map of inputs that should be injected every frame. These inputs will be injected when ForcedInput is ticked.
+	UPROPERTY(Transient)
+	TMap<TObjectPtr<const UInputAction>, FInjectedInput> ContinuouslyInjectedInputs;
 };
 
 UCLASS(hidedropdown, NotBlueprintable, NotBlueprintType)
@@ -119,10 +128,10 @@ public:
 	UPROPERTY()
 	TObjectPtr<UEnhancedInputUserSettings> UserSettings;
 
-	bool IsValid() const { return Player && Subsystem && PlayerInput.IsValid() && InputComponent.IsValid() && UserSettings; }
+	bool IsValid() const { return Player && Subsystem.IsValid() && PlayerInput.IsValid() && InputComponent.IsValid() && UserSettings; }
 
 	// Mocked subsystem implementing IEnhancedInputSubsystemInterface
-	TUniquePtr<FMockedEnhancedInputSubsystem> Subsystem;
+	TWeakObjectPtr<UMockedEnhancedInputSubsystem> Subsystem;
 };
 
 // A subclass of UInputAction that will have it's player mappable key settings object set automatically so 

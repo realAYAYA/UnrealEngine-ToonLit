@@ -6,11 +6,12 @@ using System.IO;
 public class UEOgg : ModuleRules
 {
     protected virtual string OggVersion { get { return "libogg-1.2.2"; } }
-	protected virtual string IncRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
-	protected virtual string LibRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
+    // no longer needed, remove when subclasses remove overrides
+	protected virtual string IncRootDirectory { get { return ""; } }
+	protected virtual string LibRootDirectory { get { return ""; } }
 
-	protected virtual string OggIncPath { get { return Path.Combine(IncRootDirectory, "Ogg", OggVersion, "include"); } }
-	protected virtual string OggLibPath { get { return Path.Combine(LibRootDirectory, "Ogg", OggVersion, "lib"); } }
+	protected virtual string OggIncPath { get { return Path.Combine(ModuleDirectory, OggVersion, "include"); } }
+	protected virtual string OggLibPath { get { return Path.Combine(PlatformModuleDirectory, OggVersion, "lib"); } }
 
     public UEOgg(ReadOnlyTargetRules Target) : base(Target)
 	{
@@ -57,10 +58,10 @@ public class UEOgg : ModuleRules
         {
             PublicAdditionalLibraries.Add(Path.Combine(OggLibPath, "tvos", "libogg.a"));
         }
-		else if (Target.Platform == UnrealTargetPlatform.IOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
         {
 			string LibName = (Target.Architecture == UnrealArch.IOSSimulator) ? "libogg.sim.a" : "libogg.a";
-			PublicAdditionalLibraries.Add(Path.Combine(OggLibPath, "ios", LibName));
+            PublicAdditionalLibraries.Add(Path.Combine(OggLibPath, PlatformSubdirectoryName, LibName));        
         }
     }
 }

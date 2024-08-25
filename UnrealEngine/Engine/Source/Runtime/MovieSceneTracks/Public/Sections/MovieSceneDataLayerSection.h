@@ -34,10 +34,22 @@ public:
 	MOVIESCENETRACKS_API void SetPrerollState(EDataLayerRuntimeState InPrerollState);
 
 	UFUNCTION(BlueprintPure, Category = "Sequencer|Section")
+	MOVIESCENETRACKS_API bool GetFlushOnActivated() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Section")
+	MOVIESCENETRACKS_API void SetFlushOnActivated(bool bFlushOnActivated);
+
+	UFUNCTION(BlueprintPure, Category = "Sequencer|Section")
 	MOVIESCENETRACKS_API bool GetFlushOnUnload() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Section")
 	MOVIESCENETRACKS_API void SetFlushOnUnload(bool bFlushOnUnload);
+		
+	UFUNCTION(BlueprintPure, Category = "Sequencer|Section")
+	MOVIESCENETRACKS_API bool GetPerformGCOnUnload() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Section")
+	MOVIESCENETRACKS_API void SetPerformGCOnUnload(bool bPerformGCOnUnload);
 
 	UFUNCTION(BlueprintPure, Category = "Sequencer|Section")
 	const TArray<UDataLayerAsset*>& GetDataLayerAssets() const { return DataLayerAssets; }
@@ -70,10 +82,21 @@ private:
 	EDataLayerRuntimeState DesiredState;
 
 	/** The desired state for the data layers on this section when the section is pre or post-rolling. */
-	UPROPERTY(EditAnywhere, Category=DataLayer)
+	UPROPERTY(EditAnywhere, Category=DataLayer, Meta=(EditCondition="HasPreRoll", EditConditionHides))
 	EDataLayerRuntimeState PrerollState;
 
+	/** Determine if we need to flush level streaming when the data layers are activated. May result in a hitch. */
+	UPROPERTY(EditAnywhere, Category=DataLayer, Meta=(EditCondition="DesiredState == EDataLayerRuntimeState::Activated", EditConditionHides))
+	bool bFlushOnActivated;
+
 	/** Determine if we need to flush level streaming when the data layers unloads. */
-	UPROPERTY(EditAnywhere, Category=DataLayer)
+	UPROPERTY(EditAnywhere, Category=DataLayer, Meta=(EditCondition="DesiredState == EDataLayerRuntimeState::Unloaded", EditConditionHides))
 	bool bFlushOnUnload;
+
+	/** Determine if we need to perform a GC when the data layers unloads. */
+	UPROPERTY(EditAnywhere, Category=DataLayer, Meta=(EditCondition="DesiredState == EDataLayerRuntimeState::Unloaded", EditConditionHides, DisplayName="Perform GC On Unload"))
+	bool bPerformGCOnUnload;
+
+	UFUNCTION()
+	bool HasPreRoll() const { return GetPreRollFrames() > 0.0f; }
 };

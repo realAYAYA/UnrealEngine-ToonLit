@@ -31,11 +31,56 @@ void FAnimNode_AssetPlayerBase::CreateTickRecordForNode(const FAnimationUpdateCo
 
 	UE::Anim::FAnimSyncGroupScope& SyncScope = Context.GetMessageChecked<UE::Anim::FAnimSyncGroupScope>();
 
+	// Active asset player's tick record
+	FAnimTickRecord TickRecord(Sequence, bLooping, PlayRate, bIsEvaluator, FinalBlendWeight, /*inout*/ InternalTimeAccumulator, MarkerTickRecord);
+	TickRecord.GatherContextData(Context);
+	TickRecord.RootMotionWeightModifier = Context.GetRootMotionWeightModifier();
+	TickRecord.DeltaTimeRecord = &DeltaTimeRecord;
+	TickRecord.bRequestedInertialization = Context.GetMessage<UE::Anim::FAnimInertializationSyncScope>() != nullptr;;
+
+	// Add asset player to synchronizer
+	SyncScope.AddTickRecord(TickRecord, GetSyncParams(TickRecord.bRequestedInertialization), UE::Anim::FAnimSyncDebugInfo(Context));
+
+	TRACE_ANIM_TICK_RECORD(Context, TickRecord);
+}
+
+float FAnimNode_AssetPlayerBase::GetAccumulatedTime() const
+{
+	return InternalTimeAccumulator;
+}
+
+void FAnimNode_AssetPlayerBase::SetAccumulatedTime(float NewTime)
+{
+	InternalTimeAccumulator = NewTime;
+	MarkerTickRecord.Reset();
+}
+
+float FAnimNode_AssetPlayerBase::GetCachedBlendWeight() const
+{
+	return BlendWeight;
+}
+
+void FAnimNode_AssetPlayerBase::ClearCachedBlendWeight()
+{
+	BlendWeight = 0.0f;
+}
+
+float FAnimNode_AssetPlayerBase::GetCurrentAssetTimePlayRateAdjusted() const
+{
+	return GetCurrentAssetTime();
+}
+
+const FDeltaTimeRecord* FAnimNode_AssetPlayerBase::GetDeltaTimeRecord() const
+{
+	return &DeltaTimeRecord;
+}
+
+UE::Anim::FAnimSyncParams FAnimNode_AssetPlayerBase::GetSyncParams(bool bRequestedInertialization) const
+{
 	const EAnimGroupRole::Type SyncGroupRole = GetGroupRole();
 	const FName SyncGroupName = GetGroupName();
 	FName GroupNameToUse = SyncGroupName;
 	EAnimSyncMethod MethodToUse = GetGroupMethod();
-	const bool bRequestedInertialization = Context.GetMessage<UE::Anim::FAnimInertializationSyncScope>() != nullptr;
 	
 	// Skip sync based on roles.
 	{
@@ -60,48 +105,5 @@ void FAnimNode_AssetPlayerBase::CreateTickRecordForNode(const FAnimationUpdateCo
 		}
 	}
 
-	// Setup parameters for synchronizer
-	const UE::Anim::FAnimSyncParams SyncParams(GroupNameToUse, SyncGroupRole, MethodToUse);
-
-	// Active asset player's tick record
-	FAnimTickRecord TickRecord(Sequence, bLooping, PlayRate, bIsEvaluator, FinalBlendWeight, /*inout*/ InternalTimeAccumulator, MarkerTickRecord);
-	TickRecord.GatherContextData(Context);
-	TickRecord.RootMotionWeightModifier = Context.GetRootMotionWeightModifier();
-	TickRecord.DeltaTimeRecord = &DeltaTimeRecord;
-	TickRecord.bRequestedInertialization = bRequestedInertialization;
-
-	// Add asset player to synchronizer
-	SyncScope.AddTickRecord(TickRecord, SyncParams, UE::Anim::FAnimSyncDebugInfo(Context));
-
-	TRACE_ANIM_TICK_RECORD(Context, TickRecord);
-}
-
-float FAnimNode_AssetPlayerBase::GetAccumulatedTime() const
-{
-	return InternalTimeAccumulator;
-}
-
-void FAnimNode_AssetPlayerBase::SetAccumulatedTime(float NewTime)
-{
-	InternalTimeAccumulator = NewTime;
-}
-
-float FAnimNode_AssetPlayerBase::GetCachedBlendWeight() const
-{
-	return BlendWeight;
-}
-
-void FAnimNode_AssetPlayerBase::ClearCachedBlendWeight()
-{
-	BlendWeight = 0.0f;
-}
-
-float FAnimNode_AssetPlayerBase::GetCurrentAssetTimePlayRateAdjusted() const
-{
-	return GetCurrentAssetTime();
-}
-
-const FDeltaTimeRecord* FAnimNode_AssetPlayerBase::GetDeltaTimeRecord() const
-{
-	return &DeltaTimeRecord;
+	return UE::Anim::FAnimSyncParams(GroupNameToUse, SyncGroupRole, MethodToUse);
 }

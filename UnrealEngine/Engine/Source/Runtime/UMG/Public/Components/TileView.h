@@ -58,6 +58,7 @@ protected:
 		Args.bWrapDirectionalNavigation = bWrapHorizontalNavigation;
 		Args.Orientation = Orientation;
 		Args.ScrollBarStyle = &ScrollBarStyle;
+		Args.ScrollbarDisabledVisibility = UWidget::ConvertSerializedVisibilityToRuntime(ScrollbarDisabledVisibility);
 
 		if (IsAligned() && !bEntrySizeIncludesEntrySpacing)
 		{
@@ -100,6 +101,10 @@ protected:
 	/** True to allow left/right navigation to wrap back to the tile on the opposite edge */
 	UPROPERTY(EditAnywhere, Category = Navigation)
 	bool bWrapHorizontalNavigation = false;
+
+	/** Set the visibility of the Scrollbar when it's not needed */
+	UPROPERTY(EditAnywhere, Category = ListView, meta=(ValidEnumValues="Collapsed, Hidden, Visible"))
+	ESlateVisibility ScrollbarDisabledVisibility = ESlateVisibility::Collapsed;
 
 	TSharedPtr<STileView<UObject*>> MyTileView;
 

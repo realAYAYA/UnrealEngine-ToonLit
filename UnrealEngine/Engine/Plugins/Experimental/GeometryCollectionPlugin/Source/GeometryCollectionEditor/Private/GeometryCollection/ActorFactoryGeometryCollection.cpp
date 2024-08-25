@@ -61,15 +61,4 @@ void UActorFactoryGeometryCollection::PostSpawnActor(UObject* Asset, AActor* New
 	NewGeometryCollectionActor->GetGeometryCollectionComponent()->RegisterComponent();
 }
 
-void UActorFactoryGeometryCollection::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != NULL && CDO != NULL)
-	{
-		UGeometryCollection* GeometryCollection = CastChecked<UGeometryCollection>(Asset);
-		AGeometryCollectionActor* GeometryCollectionActor = CastChecked<AGeometryCollectionActor>(CDO);
-
-		GeometryCollectionActor->GetGeometryCollectionComponent()->SetRestCollection(GeometryCollection);
-	}
-}
-
 #undef LOCTEXT_NAMESPACE

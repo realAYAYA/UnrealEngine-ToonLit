@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "HAL/ThreadSafeCounter.h"
+#include "ImageCoreBP.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/ScriptMacros.h"
 #include "Engine/Texture.h"
@@ -11,7 +12,6 @@
 #include "TextureResource.h"
 #endif
 #include "Engine/TextureAllMipDataProviderFactory.h"
-#include "Misc/FieldAccessor.h"
 #include "Serialization/BulkData.h"
 #include "Texture2D.generated.h"
 
@@ -77,10 +77,6 @@ private:
 	FTexturePlatformData* PrivatePlatformData;
 
 public:
-#if WITH_TEXTURE_PLATFORMDATA_DEPRECATIONS
-	UE_DEPRECATED(5.0, "Use GetPlatformData() / SetPlatformData() accessors instead.")
-	TFieldPtrAccessor<FTexturePlatformData> PlatformData;
-#endif
 
 	/** Set the derived data for this texture on this platform. */
 	ENGINE_API void SetPlatformData(FTexturePlatformData* PlatformData);
@@ -124,6 +120,8 @@ public:
 	virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	virtual FString GetDesc() override;
 	//~ End UObject Interface.
@@ -309,11 +307,49 @@ public:
 
 #endif // WITH_EDITOR
 
+#if WITH_EDITORONLY_DATA
+	/** If we ever show the CPU accessible image in the editor we'll need a transient texture with
+	* those bits in it. If we don't have a CPU copy, then this is null. Use the GetCPUCopyTexture to
+	* access as it's created on demand.
+	*/
+	UPROPERTY();
+	TObjectPtr<UTexture2D> CPUCopyTexture;
+
+	/**
+	* Creates and returns a 2d texture that holds the CPU copy. This is just so that we have something to show
+	* in the editor for the cpu texture and should never be used at runtime or for game data. This function
+	* stalls while the texture is encoding due to GetPlatformData, and will return nullptr if the texture
+	* is not cpu accessible.
+	* 
+	* For game code access to the cpu copy image, use GetCPUCopy().
+	*/
+	ENGINE_API UTexture2D* GetCPUCopyTexture();
+
+	/**
+	 * Returns true if the Downscale and DownscaleOptions properties should be editable in the UI.
+	 * Currently downscaling is only supported for 2d textures without mipmaps.
+	 */
+	virtual bool AreDownscalePropertiesEditable() const override { return MipGenSettings == TMGS_NoMipmaps || MipGenSettings == TMGS_FromTextureGroup; }
+#endif
+
 	friend struct FRenderAssetStreamingManager;
 	friend struct FStreamingRenderAsset;
 	
-	/** creates and initializes a new Texture2D with the requested settings */
-	ENGINE_API static class UTexture2D* CreateTransient(int32 InSizeX, int32 InSizeY, EPixelFormat InFormat = PF_B8G8R8A8, const FName InName = NAME_None);
+	/** creates and initializes a new Texture2D with the requested settings. The texture will have 1 mip level of the given size, optionally filled with the provided data. */
+	ENGINE_API static class UTexture2D* CreateTransient(int32 InSizeX, int32 InSizeY, EPixelFormat InFormat = PF_B8G8R8A8, const FName InName = NAME_None, TConstArrayView64<uint8> InImageData = TConstArrayView64<uint8>());
+
+	/** creates a new texture2d from the first slice of the given image. If the image format isn't supported a texture isn't created. */
+	ENGINE_API static class UTexture2D* CreateTransientFromImage(const FImage* InImage, const FName InName = NAME_None);
+
+	/**
+	* If the texture has a cpu accessible copy, this returns that copy. It will wait for encoding in the editor,
+	* but otherwise may return an invalid reference if the texture is not ready or doesn't have a cpu copy.
+	*/
+	ENGINE_API FSharedImageConstRef GetCPUCopy() const;
+
+	UFUNCTION(BlueprintCallable, meta=(DisplayName = "GetCPUCopy"), Category = "Rendering|Texture")
+	FSharedImageConstRefBlueprint Blueprint_GetCPUCopy() const;
+
 
 	/**
 	 * Gets the X size of the texture, in pixels

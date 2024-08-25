@@ -35,11 +35,6 @@ void UTerrainSplineActorFactory::PostSpawnActor(UObject* Asset, AActor* NewActor
 	}
 }
 
-void UTerrainSplineActorFactory::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	checkf(false, TEXT("APaperTerrainActor isn't blueprintable; how did you get here?"));
-}
-
 bool UTerrainSplineActorFactory::CanCreateActorFrom(const FAssetData& AssetData, FText& OutErrorMsg)
 {
 	if (GetDefault<UPaperRuntimeSettings>()->bEnableTerrainSplineEditing)

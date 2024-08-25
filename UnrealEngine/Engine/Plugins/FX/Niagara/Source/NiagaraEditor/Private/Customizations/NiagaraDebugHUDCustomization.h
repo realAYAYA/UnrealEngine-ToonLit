@@ -10,6 +10,8 @@
 #include "Layout/Visibility.h"
 #include "NiagaraDebuggerCommon.h"
 
+class IDetailCategoryBuilder;
+class IDetailLayoutBuilder;
 class FDetailWidgetRow;
 class IPropertyHandle;
 class IPropertyHandleArray;
@@ -57,8 +59,11 @@ public:
 	}
 
 	// Begin IDetailCustomization interface
-	virtual void CustomizeDetails(class IDetailLayoutBuilder& DetailBuilder) override;
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
 	// End IDetailCustomization interface
+
+private:
+	void MakeCustomAssetSearch(IDetailLayoutBuilder& DetailBuilder, IDetailCategoryBuilder& DetailCategory, TSharedRef<IPropertyHandle> PropertyHandle, UClass* ObjRefClass, TFunction<bool& ()> GetEditBool);
 
 private:
 	TWeakObjectPtr<UNiagaraDebugHUDSettings> WeakSettings = nullptr;

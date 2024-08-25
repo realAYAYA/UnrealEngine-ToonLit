@@ -1,9 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -16,6 +12,10 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Core;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -100,7 +100,7 @@ namespace UnrealGameSync
 
 			public void AddRequest(PerforceChangeRange range)
 			{
-				lock(_lockObject)
+				lock (_lockObject)
 				{
 					_requests.Add(range);
 				}
@@ -125,16 +125,16 @@ namespace UnrealGameSync
 			{
 				using IPerforceConnection perforce = await PerforceConnection.CreateAsync(_perforceSettings, _logger);
 
-				List<PerforceChangeRange> completedRequests = new List<PerforceChangeRange>(); 
-				while(!cancellationToken.IsCancellationRequested)
+				List<PerforceChangeRange> completedRequests = new List<PerforceChangeRange>();
+				while (!cancellationToken.IsCancellationRequested)
 				{
 					Task refreshTask = _refreshEvent.Task;
 
 					// Check if there's a request in the queue
 					PerforceChangeRange? nextRequest = null;
-					lock(_lockObject)
+					lock (_lockObject)
 					{
-						if(_requests.Count > 0)
+						if (_requests.Count > 0)
 						{
 							nextRequest = _requests[0];
 							_requests.RemoveAt(0);
@@ -142,12 +142,12 @@ namespace UnrealGameSync
 					}
 
 					// Process the request
-					if(nextRequest != null)
+					if (nextRequest != null)
 					{
-						string rangeFilter = String.Format("{0}@{1},{2}", _filter, nextRequest.MinChange, (nextRequest.MaxChange == -1)? "now" : nextRequest.MaxChange.ToString());
+						string rangeFilter = String.Format("{0}@{1},{2}", _filter, nextRequest.MinChange, (nextRequest.MaxChange == -1) ? "now" : nextRequest.MaxChange.ToString());
 
 						PerforceResponseList<ChangesRecord> newChanges = await perforce.TryGetChangesAsync(ChangesOptions.None, -1, ChangeStatus.Submitted, rangeFilter, cancellationToken);
-						if(newChanges.Succeeded)
+						if (newChanges.Succeeded)
 						{
 							nextRequest.Changes = newChanges.Data;
 							completedRequests.Add(nextRequest);
@@ -163,17 +163,17 @@ namespace UnrealGameSync
 
 					// Figure out which changes to fetch
 					List<ChangesRecord> describeChanges;
-					lock(_lockObject)
+					lock (_lockObject)
 					{
 						describeChanges = completedRequests.SelectMany(x => x.Changes ?? new List<ChangesRecord>()).Where(x => !_changeNumberToDetails.ContainsKey(x.Number)).ToList();
 					}
 
 					// Fetch info on each individual change
-					foreach(ChangesRecord describeChange in describeChanges)
+					foreach (ChangesRecord describeChange in describeChanges)
 					{
-						lock(_lockObject)
+						lock (_lockObject)
 						{
-							if(cancellationToken.IsCancellationRequested || _requests.Count > 0)
+							if (cancellationToken.IsCancellationRequested || _requests.Count > 0)
 							{
 								break;
 							}
@@ -183,7 +183,7 @@ namespace UnrealGameSync
 						if (response.Succeeded)
 						{
 							DescribeRecord record = response.Data;
-							lock(_lockObject)
+							lock (_lockObject)
 							{
 								_changeNumberToDetails[record.Number] = new PerforceChangeDetailsWithDescribeRecord(record);
 							}
@@ -202,7 +202,7 @@ namespace UnrealGameSync
 
 			public bool TryGetChangeDetails(int changeNumber, [NotNullWhen(true)] out PerforceChangeDetailsWithDescribeRecord? details)
 			{
-				lock(_lockObject)
+				lock (_lockObject)
 				{
 					return _changeNumberToDetails.TryGetValue(changeNumber, out details);
 				}
@@ -247,12 +247,12 @@ namespace UnrealGameSync
 			{
 				Color textColor = Color.Gray;
 				FontStyle style = FontStyle.Italic;
-				if(MouseDown)
+				if (MouseDown)
 				{
 					textColor = Color.FromArgb(textColor.B / 2, textColor.G / 2, textColor.R);
 					style |= FontStyle.Underline;
 				}
-				else if(MouseOver)
+				else if (MouseOver)
 				{
 					textColor = Color.FromArgb(textColor.B, textColor.G, textColor.R);
 					style |= FontStyle.Underline;
@@ -306,15 +306,15 @@ namespace UnrealGameSync
 			issueMonitor.OnIssuesChanged += OnUpdateIssuesAsync;
 			issueMonitor.StartTracking(issue.Id);
 
-			BuildListView.SmallImageList = new ImageList(){ ImageSize = new Size(1, 20) };
+			BuildListView.SmallImageList = new ImageList() { ImageSize = new Size(1, 20) };
 
 			System.Reflection.PropertyInfo doubleBufferedProperty = typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-			doubleBufferedProperty.SetValue(BuildListView, true, null); 
+			doubleBufferedProperty.SetValue(BuildListView, true, null);
 
-			using(Graphics graphics = Graphics.FromHwnd(IntPtr.Zero))
+			using (Graphics graphics = Graphics.FromHwnd(IntPtr.Zero))
 			{
 				float dpiScaleX = graphics.DpiX / 96.0f;
-				foreach(ColumnHeader? column in BuildListView.Columns)
+				foreach (ColumnHeader? column in BuildListView.Columns)
 				{
 					if (column != null)
 					{
@@ -324,15 +324,15 @@ namespace UnrealGameSync
 			}
 
 			int selectIdx = 0;
-			foreach(string stream in issueBuilds.Select(x => x.Stream).Distinct().OrderBy(x => x))
+			foreach (string stream in issueBuilds.Select(x => x.Stream).Distinct().OrderBy(x => x))
 			{
 				StreamComboBox.Items.Add(stream);
-				if(stream == currentStream)
+				if (stream == currentStream)
 				{
 					selectIdx = StreamComboBox.Items.Count - 1;
 				}
 			}
-			if(StreamComboBox.Items.Count > 0)
+			if (StreamComboBox.Items.Count > 0)
 			{
 				StreamComboBox.SelectedIndex = selectIdx;
 			}
@@ -370,7 +370,7 @@ namespace UnrealGameSync
 
 		private void StartUpdateTimer()
 		{
-			if(_updateTimer == null)
+			if (_updateTimer == null)
 			{
 				_updateTimer = new System.Windows.Forms.Timer();
 				_updateTimer.Interval = 100;
@@ -383,7 +383,7 @@ namespace UnrealGameSync
 
 		private void StopUpdateTimer()
 		{
-			if(_updateTimer != null)
+			if (_updateTimer != null)
 			{
 				components.Remove(_updateTimer);
 
@@ -411,13 +411,13 @@ namespace UnrealGameSync
 			for (int idx = 0; idx < text.Length; idx++)
 			{
 				char character = text[idx];
-				if(character == '\n')
+				if (character == '\n')
 				{
 					result.Append(@"\line");
 				}
-				else if(character >= 0x20 && character <= 0x7f)
+				else if (character >= 0x20 && character <= 0x7f)
 				{
-					if(character == '\\' || character == '{' || character == '}')
+					if (character == '\\' || character == '{' || character == '}')
 					{
 						result.Append('\\');
 					}
@@ -478,7 +478,7 @@ namespace UnrealGameSync
 				}
 
 				IssueDiagnosticData[] diagnosticsArray = group.ToArray();
-				for(int idx = 0; idx < diagnosticsArray.Length; idx++)
+				for (int idx = 0; idx < diagnosticsArray.Length; idx++)
 				{
 					IssueDiagnosticData diagnostic = diagnosticsArray[idx];
 
@@ -501,7 +501,7 @@ namespace UnrealGameSync
 					richText.AppendLine(@"\par");
 
 					// Error text
-					foreach(string line in diagnostic.Message.TrimEnd().Split('\n'))
+					foreach (string line in diagnostic.Message.TrimEnd().Split('\n'))
 					{
 						richText.Append(@"\pard");   // Paragraph default
 						richText.Append(@"\cf0");    // Foreground color
@@ -527,18 +527,18 @@ namespace UnrealGameSync
 			UpdateSummaryTextIfChanged(SummaryTextBox, _issue.Summary.ToString());
 
 			IssueBuildData? firstFailingBuild = _issueBuilds.FirstOrDefault(x => x.ErrorUrl != null);
-			BuildLinkLabel.Text = (firstFailingBuild != null)? firstFailingBuild.JobName : "Unknown";
+			BuildLinkLabel.Text = (firstFailingBuild != null) ? firstFailingBuild.JobName : "Unknown";
 
 			StringBuilder status = new StringBuilder();
-			if(_issueMonitor.HasPendingUpdate())
+			if (_issueMonitor.HasPendingUpdate())
 			{
 				status.Append("Updating...");
 			}
-			else if(_issue.FixChange != 0)
+			else if (_issue.FixChange != 0)
 			{
-				if(_issue.FixChange < 0)
+				if (_issue.FixChange < 0)
 				{
-					if(_issue.ResolvedAt.HasValue)
+					if (_issue.ResolvedAt.HasValue)
 					{
 						status.AppendFormat("Closed as systemic issue.", _issue.FixChange);
 					}
@@ -549,7 +549,7 @@ namespace UnrealGameSync
 				}
 				else
 				{
-					if(_issue.ResolvedAt.HasValue)
+					if (_issue.ResolvedAt.HasValue)
 					{
 						status.AppendFormat("Closed. Fixed in CL {0}.", _issue.FixChange);
 					}
@@ -559,22 +559,22 @@ namespace UnrealGameSync
 					}
 				}
 			}
-			else if(_issue.ResolvedAt.HasValue)
+			else if (_issue.ResolvedAt.HasValue)
 			{
 				status.Append("Resolved");
 			}
-			else if(_issue.Owner == null)
+			else if (_issue.Owner == null)
 			{
 				status.Append("Currently unassigned");
 			}
 			else
 			{
 				status.Append(Utility.FormatUserName(_issue.Owner));
-				if(_issue.NominatedBy != null)
+				if (_issue.NominatedBy != null)
 				{
 					status.AppendFormat(" nominated by {0}", Utility.FormatUserName(_issue.NominatedBy));
 				}
-				if(_issue.AcknowledgedAt.HasValue)
+				if (_issue.AcknowledgedAt.HasValue)
 				{
 					status.AppendFormat(" (acknowledged {0})", Utility.FormatRecentDateTime(_issue.AcknowledgedAt.Value.ToLocalTime()));
 				}
@@ -587,14 +587,14 @@ namespace UnrealGameSync
 
 			StringBuilder openSince = new StringBuilder();
 			openSince.Append(Utility.FormatRecentDateTime(_issue.CreatedAt.ToLocalTime()));
-			if(openSince.Length > 0)
+			if (openSince.Length > 0)
 			{
 				openSince[0] = Char.ToUpper(openSince[0]);
 			}
 			openSince.AppendFormat(" ({0})", Utility.FormatDurationMinutes(_issue.RetrievedAt - _issue.CreatedAt));
 			UpdateSummaryTextIfChanged(OpenSinceTextBox, openSince.ToString());
 
-			if(_lastOwner != _issue.Owner)
+			if (_lastOwner != _issue.Owner)
 			{
 				_lastOwner = _issue.Owner;
 				BuildListView.Invalidate();
@@ -614,7 +614,7 @@ namespace UnrealGameSync
 				_lastDetailsText = rtfText;
 			}
 
-			if(_issue.FixChange == 0)
+			if (_issue.FixChange == 0)
 			{
 				MarkFixedBtn.Text = "Mark Fixed...";
 			}
@@ -632,7 +632,7 @@ namespace UnrealGameSync
 
 		void FetchBuildChanges(PerforceChangeRange range)
 		{
-			if(!range.Expanded)
+			if (!range.Expanded)
 			{
 				range.Expanded = true;
 				_perforceWorker!.AddRequest(range);
@@ -642,11 +642,11 @@ namespace UnrealGameSync
 
 		static bool FilterMatch(Regex filterRegex, ChangesRecord summary)
 		{
-			if(filterRegex.IsMatch(summary.User))
+			if (filterRegex.IsMatch(summary.User))
 			{
 				return true;
 			}
-			if(filterRegex.IsMatch(summary.Description))
+			if (filterRegex.IsMatch(summary.Description))
 			{
 				return true;
 			}
@@ -655,15 +655,15 @@ namespace UnrealGameSync
 
 		static bool FilterMatch(Regex filterRegex, DescribeRecord describeRecord)
 		{
-			if(filterRegex.IsMatch(describeRecord.User))
+			if (filterRegex.IsMatch(describeRecord.User))
 			{
 				return true;
 			}
-			if(filterRegex.IsMatch(describeRecord.Description))
+			if (filterRegex.IsMatch(describeRecord.Description))
 			{
 				return true;
 			}
-			if(describeRecord.Files.Any(x => filterRegex.IsMatch(x.DepotFile)))
+			if (describeRecord.Files.Any(x => filterRegex.IsMatch(x.DepotFile)))
 			{
 				return true;
 			}
@@ -677,17 +677,17 @@ namespace UnrealGameSync
 
 			// Capture the initial selection
 			object? prevSelection = null;
-			if(BuildListView.SelectedItems.Count > 0)
+			if (BuildListView.SelectedItems.Count > 0)
 			{
 				prevSelection = BuildListView.SelectedItems[0].Tag;
 			}
 
 			// Get all the search terms
-			string[] filterTerms = FilterTextBox.Text.Split(new char[]{ ' ' }, StringSplitOptions.RemoveEmptyEntries);
+			string[] filterTerms = FilterTextBox.Text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
 			// Build a regex from each filter term
 			List<Regex> filterRegexes = new List<Regex>();
-			foreach(string filterTerm in filterTerms)
+			foreach (string filterTerm in filterTerms)
 			{
 				string regexText = Regex.Escape(filterTerm);
 				regexText = regexText.Replace("\\?", ".", StringComparison.Ordinal);
@@ -701,11 +701,11 @@ namespace UnrealGameSync
 			bool onlyShowContentChanges = (FilterTypeComboBox.SelectedIndex == 2);
 
 			// Create rows for all the ranges
-			foreach(PerforceChangeRange range in _selectedStreamRanges)
+			foreach (PerforceChangeRange range in _selectedStreamRanges)
 			{
-				if(range.Expanded)
+				if (range.Expanded)
 				{
-					if(range.Changes == null)
+					if (range.Changes == null)
 					{
 						ListViewItem fetchingItem = new ListViewItem("");
 						fetchingItem.Tag = range;
@@ -714,7 +714,7 @@ namespace UnrealGameSync
 
 						StatusLineListViewWidget fetchingWidget = new StatusLineListViewWidget(fetchingItem, _statusElementResources);
 						fetchingWidget.HorizontalAlignment = HorizontalAlignment.Left;
-						if(range.ErrorMessage != null)
+						if (range.ErrorMessage != null)
 						{
 							fetchingWidget.Line.AddText(range.ErrorMessage, Color.Gray, FontStyle.Italic);
 						}
@@ -722,43 +722,43 @@ namespace UnrealGameSync
 						{
 							fetchingWidget.Line.AddText("Fetching changes, please wait...", Color.Gray, FontStyle.Italic);
 						}
-			
-						fetchingItem.SubItems.Add(new ListViewItem.ListViewSubItem(fetchingItem, ""){ Tag = fetchingWidget });
-						fetchingItem.SubItems.Add(new ListViewItem.ListViewSubItem(fetchingItem, ""){ Tag = fetchingWidget });
+
+						fetchingItem.SubItems.Add(new ListViewItem.ListViewSubItem(fetchingItem, "") { Tag = fetchingWidget });
+						fetchingItem.SubItems.Add(new ListViewItem.ListViewSubItem(fetchingItem, "") { Tag = fetchingWidget });
 
 						BuildListView.Items.Insert(numNewItems++, fetchingItem);
 					}
 					else
 					{
-						foreach(ChangesRecord change in range.Changes)
+						foreach (ChangesRecord change in range.Changes)
 						{
 							PerforceChangeDetailsWithDescribeRecord? details;
 							_perforceWorker!.TryGetChangeDetails(change.Number, out details);
 
-							if(filterRegexes.Count > 0 || onlyShowCodeChanges || onlyShowContentChanges)
+							if (filterRegexes.Count > 0 || onlyShowCodeChanges || onlyShowContentChanges)
 							{
-								if(details == null)
+								if (details == null)
 								{
-									if(onlyShowCodeChanges || onlyShowCodeChanges)
+									if (onlyShowCodeChanges || onlyShowCodeChanges)
 									{
 										continue;
 									}
-									if(filterRegexes.Any(x => !FilterMatch(x, change)))
+									if (filterRegexes.Any(x => !FilterMatch(x, change)))
 									{
 										continue;
 									}
 								}
 								else
 								{
-									if(onlyShowCodeChanges && !details.ContainsCode)
+									if (onlyShowCodeChanges && !details.ContainsCode)
 									{
 										continue;
 									}
-									if(onlyShowContentChanges && !details.ContainsContent)
+									if (onlyShowContentChanges && !details.ContainsContent)
 									{
 										continue;
 									}
-									if(filterRegexes.Any(x => !FilterMatch(x, details.DescribeRecord)))
+									if (filterRegexes.Any(x => !FilterMatch(x, details.DescribeRecord)))
 									{
 										continue;
 									}
@@ -827,23 +827,23 @@ namespace UnrealGameSync
 				buildWidget.HorizontalAlignment = HorizontalAlignment.Left;
 
 				buildWidget.Line.AddLink(range.BuildGroup.JobName, FontStyle.Underline, () => Utility.OpenUrl(range.BuildGroup.JobUrl));
-				buildItem.SubItems.Add(new ListViewItem.ListViewSubItem(buildItem, ""){ Tag = buildWidget });
-				buildItem.SubItems.Add(new ListViewItem.ListViewSubItem(buildItem, ""){ Tag = buildWidget });
+				buildItem.SubItems.Add(new ListViewItem.ListViewSubItem(buildItem, "") { Tag = buildWidget });
+				buildItem.SubItems.Add(new ListViewItem.ListViewSubItem(buildItem, "") { Tag = buildWidget });
 
 				BuildListView.Items.Insert(numNewItems++, buildItem);
 			}
-			
+
 			// Re-select the original item
-			for(int idx = 0; idx < BuildListView.Items.Count; idx++)
+			for (int idx = 0; idx < BuildListView.Items.Count; idx++)
 			{
-				if(BuildListView.Items[idx].Tag == prevSelection)
+				if (BuildListView.Items[idx].Tag == prevSelection)
 				{
 					BuildListView.Items[idx].Selected = true;
 				}
 			}
 
 			// Remove all the items we no longer need
-			while(BuildListView.Items.Count > numNewItems)
+			while (BuildListView.Items.Count > numNewItems)
 			{
 				BuildListView.Items.RemoveAt(BuildListView.Items.Count - 1);
 			}
@@ -860,7 +860,7 @@ namespace UnrealGameSync
 			_selectedBuildGroup = buildGroup;
 
 			int minIndex = JobContextMenu.Items.IndexOf(JobContextMenu_StepSeparatorMin) + 1;
-			while(JobContextMenu.Items.Count > minIndex)
+			while (JobContextMenu.Items.Count > minIndex)
 			{
 				JobContextMenu.Items.RemoveAt(minIndex);
 			}
@@ -882,17 +882,17 @@ namespace UnrealGameSync
 		static void UpdateChangeTypeWidget(StatusLineListViewWidget typeWidget, PerforceChangeDetails? details)
 		{
 			typeWidget.Line.Clear();
-			if(details == null)
+			if (details == null)
 			{
 				typeWidget.Line.AddBadge("Unknown", Color.FromArgb(192, 192, 192), null);
 			}
 			else
 			{
-				if(details.ContainsCode)
+				if (details.ContainsCode)
 				{
 					typeWidget.Line.AddBadge("Code", Color.FromArgb(116, 185, 255), null);
 				}
-				if(details.ContainsContent)
+				if (details.ContainsContent)
 				{
 					typeWidget.Line.AddBadge("Content", Color.FromArgb(162, 155, 255), null);
 				}
@@ -902,21 +902,21 @@ namespace UnrealGameSync
 		void CreateWorker()
 		{
 			string? newSelectedStream = StreamComboBox.SelectedItem as string;
-			if(_selectedStream != newSelectedStream)
+			if (_selectedStream != newSelectedStream)
 			{
 				DestroyWorker();
-			
+
 				_selectedStream = newSelectedStream;
 
 				BuildListView.BeginUpdate();
 				BuildListView.Items.Clear();
 
-				if(_selectedStream != null)
+				if (_selectedStream != null)
 				{
 					_selectedStreamRanges = new List<PerforceChangeRange>();
 
 					int maxChange = -1;
-					foreach(IGrouping<string, IssueBuildData> group in _issueBuilds.Where(x => x.Stream == _selectedStream).OrderByDescending(x => x.Change).ThenByDescending(x => x.JobUrl).GroupBy(x => x.JobUrl))
+					foreach (IGrouping<string, IssueBuildData> group in _issueBuilds.Where(x => x.Stream == _selectedStream).OrderByDescending(x => x.Change).ThenByDescending(x => x.JobUrl).GroupBy(x => x.JobUrl))
 					{
 						IssueBuildOutcome outcome = group.Any(x => x.Outcome == IssueBuildOutcome.Error) ? IssueBuildOutcome.Error : group.Any(x => x.Outcome == IssueBuildOutcome.Warning) ? IssueBuildOutcome.Warning : IssueBuildOutcome.Success;
 						BuildGroup buildGroup = new BuildGroup(group.First().JobName, group.Key, group.First().Change, outcome, group.ToList());
@@ -931,9 +931,9 @@ namespace UnrealGameSync
 
 					UpdateBuildList();
 
-					for(int idx = 0; idx + 2 < _selectedStreamRanges.Count; idx++)
+					for (int idx = 0; idx + 2 < _selectedStreamRanges.Count; idx++)
 					{
-						if(_selectedStreamRanges[idx].BuildGroup.Outcome != _selectedStreamRanges[idx + 1].BuildGroup.Outcome)
+						if (_selectedStreamRanges[idx].BuildGroup.Outcome != _selectedStreamRanges[idx + 1].BuildGroup.Outcome)
 						{
 							FetchBuildChanges(_selectedStreamRanges[idx + 1]);
 						}
@@ -949,9 +949,9 @@ namespace UnrealGameSync
 		void OnUpdateIssues()
 		{
 			List<IssueData> newIssues = _issueMonitor.GetIssues();
-			foreach(IssueData newIssue in newIssues)
+			foreach (IssueData newIssue in newIssues)
 			{
-				if(newIssue.Id == _issue.Id)
+				if (newIssue.Id == _issue.Id)
 				{
 					_issue = newIssue;
 					UpdateCurrentIssue();
@@ -962,18 +962,18 @@ namespace UnrealGameSync
 
 		private void OnUpdateIssuesAsync()
 		{
-			_mainThreadSynchronizationContext.Post((o) => 
-			{ 
-				if(!_isDisposing)
-				{ 
-					OnUpdateIssues(); 
-				} 
+			_mainThreadSynchronizationContext.Post((o) =>
+			{
+				if (!_isDisposing)
+				{
+					OnUpdateIssues();
+				}
 			}, null);
 		}
 
 		void DestroyWorker()
 		{
-			if(_perforceWorker != null)
+			if (_perforceWorker != null)
 			{
 				_perforceWorker.Dispose();
 				_perforceWorker = null!;
@@ -987,15 +987,15 @@ namespace UnrealGameSync
 
 		void UpdateChangeMetadata(ChangesRecord change)
 		{
-			if(FilterTextBox.Text.Length > 0 || FilterTypeComboBox.SelectedIndex != 0)
+			if (FilterTextBox.Text.Length > 0 || FilterTypeComboBox.SelectedIndex != 0)
 			{
 				StartUpdateTimer();
 			}
 			else
 			{
-				foreach(ListViewItem? item in BuildListView.Items)
+				foreach (ListViewItem? item in BuildListView.Items)
 				{
-					if(item != null && item.Tag == change)
+					if (item != null && item.Tag == change)
 					{
 						PerforceChangeDetailsWithDescribeRecord? details;
 						_perforceWorker!.TryGetChangeDetails(change.Number, out details);
@@ -1045,7 +1045,7 @@ namespace UnrealGameSync
 		public static void Show(Form owner, IssueMonitor issueMonitor, IPerforceSettings perforceSettings, TimeSpan? serverTimeOffset, IssueData issue, List<IssueBuildData> issueBuilds, IServiceProvider serviceProvider, string? currentStream)
 		{
 			IssueDetailsWindow? window = s_existingWindows.FirstOrDefault(x => x._issueMonitor == issueMonitor && x._issue.Id == issue.Id);
-			if(window == null)
+			if (window == null)
 			{
 				List<IssueDiagnosticData> diagnostics = new List<IssueDiagnosticData>();
 
@@ -1098,26 +1098,26 @@ namespace UnrealGameSync
 
 		private void BuildListView_DrawItem(object sender, DrawListViewItemEventArgs e)
 		{
-			if(e.Item.Selected)
+			if (e.Item.Selected)
 			{
 				BuildListView.DrawSelectedBackground(e.Graphics, e.Bounds);
 			}
-			else if(e.ItemIndex == BuildListView.HoverItem)
+			else if (e.ItemIndex == BuildListView.HoverItem)
 			{
 				BuildListView.DrawTrackedBackground(e.Graphics, e.Bounds);
 			}
-			else if(e.Item.Tag is BuildGroup buildGroup)
+			else if (e.Item.Tag is BuildGroup buildGroup)
 			{
 				Color backgroundColor;
-				if(buildGroup.Outcome == IssueBuildOutcome.Error)
+				if (buildGroup.Outcome == IssueBuildOutcome.Error)
 				{
 					backgroundColor = Color.FromArgb(254, 248, 246);
 				}
-				else if(buildGroup.Outcome == IssueBuildOutcome.Warning)
+				else if (buildGroup.Outcome == IssueBuildOutcome.Warning)
 				{
 					backgroundColor = Color.FromArgb(254, 254, 246);
 				}
-				else if(buildGroup.Outcome == IssueBuildOutcome.Success)
+				else if (buildGroup.Outcome == IssueBuildOutcome.Success)
 				{
 					backgroundColor = Color.FromArgb(248, 254, 246);
 				}
@@ -1126,7 +1126,7 @@ namespace UnrealGameSync
 					backgroundColor = Color.FromArgb(245, 245, 245);
 				}
 
-				using(SolidBrush brush = new SolidBrush(backgroundColor))
+				using (SolidBrush brush = new SolidBrush(backgroundColor))
 				{
 					e.Graphics.FillRectangle(brush, e.Bounds);
 				}
@@ -1148,51 +1148,51 @@ namespace UnrealGameSync
 
 			Color textColor = SystemColors.WindowText;
 
-			if(e.SubItem.Tag is CustomListViewWidget)
+			if (e.SubItem.Tag is CustomListViewWidget)
 			{
 				BuildListView.DrawCustomSubItem(e.Graphics, e.SubItem);
 			}
-			else if(e.Item.Tag is ChangesRecord change)
+			else if (e.Item.Tag is ChangesRecord change)
 			{
 				Font changeFont = BuildListView.Font;
-				if(_issue.Owner != null && String.Equals(change.User, _issue.Owner, StringComparison.OrdinalIgnoreCase))
+				if (_issue.Owner != null && String.Equals(change.User, _issue.Owner, StringComparison.OrdinalIgnoreCase))
 				{
 					changeFont = _boldFont!;
 				}
 
-				if(e.ColumnIndex == ChangeHeader.Index)
+				if (e.ColumnIndex == ChangeHeader.Index)
 				{
 					TextRenderer.DrawText(e.Graphics, e.SubItem.Text, changeFont, e.Bounds, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				}
-				else if(e.ColumnIndex == AuthorHeader.Index)
+				else if (e.ColumnIndex == AuthorHeader.Index)
 				{
 					TextRenderer.DrawText(e.Graphics, e.SubItem.Text, changeFont, e.Bounds, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				}
-				else if(e.ColumnIndex == DescriptionHeader.Index)
+				else if (e.ColumnIndex == DescriptionHeader.Index)
 				{
 					TextRenderer.DrawText(e.Graphics, e.SubItem.Text, changeFont, e.Bounds, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				}
-				else if(e.ColumnIndex == TimeHeader.Index)
+				else if (e.ColumnIndex == TimeHeader.Index)
 				{
 					TextRenderer.DrawText(e.Graphics, e.SubItem.Text, changeFont, e.Bounds, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				}
 			}
-			else if(e.Item.Tag is IssueBuildData buildData)
+			else if (e.Item.Tag is IssueBuildData buildData)
 			{
 				Font boldFont = BuildListView.Font;
 
-//				TextColor = SystemColors.Window;
-				if(e.ColumnIndex == IconHeader.Index)
+				//				TextColor = SystemColors.Window;
+				if (e.ColumnIndex == IconHeader.Index)
 				{
-					if(buildData.Outcome == IssueBuildOutcome.Success)
+					if (buildData.Outcome == IssueBuildOutcome.Success)
 					{
 						BuildListView.DrawIcon(e.Graphics, e.Bounds, WorkspaceControl.GoodBuildIcon);
 					}
-					else if(buildData.Outcome == IssueBuildOutcome.Warning)
+					else if (buildData.Outcome == IssueBuildOutcome.Warning)
 					{
 						BuildListView.DrawIcon(e.Graphics, e.Bounds, WorkspaceControl.MixedBuildIcon);
 					}
-					else if(buildData.Outcome == IssueBuildOutcome.Error)
+					else if (buildData.Outcome == IssueBuildOutcome.Error)
 					{
 						BuildListView.DrawIcon(e.Graphics, e.Bounds, WorkspaceControl.BadBuildIcon);
 					}
@@ -1201,22 +1201,22 @@ namespace UnrealGameSync
 						BuildListView.DrawIcon(e.Graphics, e.Bounds, WorkspaceControl.DefaultBuildIcon);
 					}
 				}
-				else if(e.ColumnIndex == ChangeHeader.Index)
+				else if (e.ColumnIndex == ChangeHeader.Index)
 				{
 					TextRenderer.DrawText(e.Graphics, buildData.Change.ToString(), boldFont, e.Bounds, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				}
-				else if(e.ColumnIndex == TypeHeader.Index)
+				else if (e.ColumnIndex == TypeHeader.Index)
 				{
 					string status;
-					if(buildData.Outcome == IssueBuildOutcome.Success)
+					if (buildData.Outcome == IssueBuildOutcome.Success)
 					{
 						status = "Succeeded";
 					}
-					else if(buildData.Outcome == IssueBuildOutcome.Warning)
+					else if (buildData.Outcome == IssueBuildOutcome.Warning)
 					{
 						status = "Warning";
 					}
-					else if(buildData.Outcome == IssueBuildOutcome.Error)
+					else if (buildData.Outcome == IssueBuildOutcome.Error)
 					{
 						status = "Failed";
 					}
@@ -1226,7 +1226,7 @@ namespace UnrealGameSync
 					}
 					TextRenderer.DrawText(e.Graphics, status, boldFont, e.Bounds, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				}
-				else if(e.ColumnIndex == AuthorHeader.Index)
+				else if (e.ColumnIndex == AuthorHeader.Index)
 				{
 					Rectangle bounds = new Rectangle(e.Bounds.X, e.Bounds.Y, e.Bounds.Width + e.Item.SubItems[e.ColumnIndex].Bounds.Width, e.Bounds.Height);
 					TextRenderer.DrawText(e.Graphics, buildData.JobName, Font, bounds, textColor, TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
@@ -1235,11 +1235,11 @@ namespace UnrealGameSync
 			else
 			{
 				TextFormatFlags flags = TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix;
-				if(BuildListView.Columns[e.ColumnIndex].TextAlign == HorizontalAlignment.Left)
+				if (BuildListView.Columns[e.ColumnIndex].TextAlign == HorizontalAlignment.Left)
 				{
 					flags |= TextFormatFlags.Left;
 				}
-				else if(BuildListView.Columns[e.ColumnIndex].TextAlign == HorizontalAlignment.Center)
+				else if (BuildListView.Columns[e.ColumnIndex].TextAlign == HorizontalAlignment.Center)
 				{
 					flags |= TextFormatFlags.HorizontalCenter;
 				}
@@ -1262,13 +1262,13 @@ namespace UnrealGameSync
 
 		private void BuildListView_MouseClick(object sender, MouseEventArgs args)
 		{
-			if(args.Button == MouseButtons.Right)
+			if (args.Button == MouseButtons.Right)
 			{
 				ListViewHitTestInfo hitTest = BuildListView.HitTest(args.Location);
-				if(hitTest.Item != null && hitTest.Item.Tag != null)
+				if (hitTest.Item != null && hitTest.Item.Tag != null)
 				{
-					_contextMenuChange = hitTest.Item.Tag as ChangesRecord; 
-					if(_contextMenuChange != null)
+					_contextMenuChange = hitTest.Item.Tag as ChangesRecord;
+					if (_contextMenuChange != null)
 					{
 						BuildListContextMenu_Assign.Text = String.Format("Assign to {0}", _contextMenuChange.User);
 						BuildListContextMenu.Show(BuildListView, args.Location);
@@ -1287,7 +1287,7 @@ namespace UnrealGameSync
 
 		private void BuildListContextMenu_Blame_Click(object sender, EventArgs e)
 		{
-			if(_contextMenuChange != null && _contextMenuChange.User != null)
+			if (_contextMenuChange != null && _contextMenuChange.User != null)
 			{
 				AssignToUser(_contextMenuChange.User);
 			}
@@ -1299,7 +1299,7 @@ namespace UnrealGameSync
 			update.Id = _issue.Id;
 			update.Owner = user;
 			update.FixChange = 0;
-			if(String.Equals(user, _perforceSettings.UserName, StringComparison.OrdinalIgnoreCase))
+			if (String.Equals(user, _perforceSettings.UserName, StringComparison.OrdinalIgnoreCase))
 			{
 				update.NominatedBy = "";
 				update.Acknowledged = true;
@@ -1322,7 +1322,7 @@ namespace UnrealGameSync
 		private void AssignToOtherBtn_Click(object sender, EventArgs e)
 		{
 			string? selectedUserName;
-			if(SelectUserWindow.ShowModal(this, _perforceSettings, _serviceProvider, out selectedUserName))
+			if (SelectUserWindow.ShowModal(this, _perforceSettings, _serviceProvider, out selectedUserName))
 			{
 				AssignToUser(selectedUserName);
 			}
@@ -1342,9 +1342,9 @@ namespace UnrealGameSync
 		private void MarkFixedBtn_Click(object sender, EventArgs e)
 		{
 			int fixChangeNumber = _issue.FixChange;
-			if(fixChangeNumber == 0)
+			if (fixChangeNumber == 0)
 			{
-				if(IssueFixedWindow.ShowModal(this, _perforceSettings, _serviceProvider, ref fixChangeNumber))
+				if (IssueFixedWindow.ShowModal(this, _perforceSettings, _serviceProvider, ref fixChangeNumber))
 				{
 					IssueUpdateData update = new IssueUpdateData();
 					update.Id = _issue.Id;
@@ -1364,7 +1364,7 @@ namespace UnrealGameSync
 		private void DescriptionLabel_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
 		{
 			IssueBuildData? lastBuild = _issueBuilds.Where(x => x.Stream == _selectedStream).OrderByDescending(x => x.Change).ThenByDescending(x => x.ErrorUrl).FirstOrDefault();
-			if(lastBuild != null)
+			if (lastBuild != null)
 			{
 				Utility.OpenUrl(lastBuild.ErrorUrl);
 			}
@@ -1395,13 +1395,13 @@ namespace UnrealGameSync
 
 		private void BuildListView_MouseUp(object sender, MouseEventArgs e)
 		{
-			if((e.Button & MouseButtons.Right) != 0)
+			if ((e.Button & MouseButtons.Right) != 0)
 			{
 				ListViewHitTestInfo hitTest = BuildListView.HitTest(e.Location);
-				if(hitTest.Item != null)
+				if (hitTest.Item != null)
 				{
 					BuildGroup? group = hitTest.Item.Tag as BuildGroup;
-					if(group != null)
+					if (group != null)
 					{
 						ShowJobContextMenu(e.Location, group);
 					}

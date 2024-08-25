@@ -221,10 +221,7 @@ struct FParameterUIData
 	GENERATED_BODY()
 
 	FParameterUIData() 
-		: Type(EMutableParameterType::None)
-		, IntegerParameterGroupType(ECustomizableObjectGroupType::COGT_ONE_OR_NONE)
 	{
-
 	}
 
 	FParameterUIData(
@@ -233,8 +230,7 @@ struct FParameterUIData
 		EMutableParameterType ParamType) :
 		Name(ParamName),
 		ParamUIMetadata(InParamUIMetadata),
-		Type(ParamType), 
-		IntegerParameterGroupType(ECustomizableObjectGroupType::COGT_ONE_OR_NONE)
+		Type(ParamType)
 	{
 
 	}
@@ -248,7 +244,7 @@ struct FParameterUIData
 
 	/** Parameter type, using uint8 since the enum in declared in the class it is used */
 	UPROPERTY(BlueprintReadWrite, Category = UI)
-	EMutableParameterType Type;
+	EMutableParameterType Type = EMutableParameterType::None;
 
 	/** In the case of an integer parameter, store here all options */
 	UPROPERTY(BlueprintReadWrite, Category = UI)
@@ -256,12 +252,15 @@ struct FParameterUIData
 
 	/** In the case of an integer parameter, how are the different options selected (one, one or none, etc...) */
 	UPROPERTY(BlueprintReadWrite, Category = UI)
-	ECustomizableObjectGroupType IntegerParameterGroupType;
+	ECustomizableObjectGroupType IntegerParameterGroupType = ECustomizableObjectGroupType::COGT_ONE_OR_NONE;
 
-	/** Not really relevant for UI, but apparently bDontCompressRuntimeTextures_DEPRECATED was used to decided some texture properties at runtime.
-	* TODO: Try to handle the NeverStream without going through this. */
+	/** Not really relevant for UI, but apparently bDontCompressRuntimeTextures_DEPRECATED was used to decided some texture properties at runtime. */
 	UPROPERTY()
 	ETextureCompressionStrategy TextureCompressionStrategy = ETextureCompressionStrategy::None;
+
+	/** If this is enabled, texture streaming won't be used for this state, and full images will be generated when an instance is first updated. */
+	UPROPERTY()
+	bool bDisableTextureStreaming = false;
 
 	/** In this mode instances and their temp data will be reused between updates. It will be much faster but spend as much as ten times the memory.
 	    Useful for customization lockers with few characters that are going to have their parameters changed many times, not for in-game */
@@ -279,6 +278,7 @@ struct FParameterUIData
 		if (Name != Other.Name || ParamUIMetadata != Other.ParamUIMetadata || Type != Other.Type 
 			|| ArrayIntegerParameterOption != Other.ArrayIntegerParameterOption || IntegerParameterGroupType != Other.IntegerParameterGroupType 
 			|| bLiveUpdateMode != Other.bLiveUpdateMode || bReuseInstanceTextures != Other.bReuseInstanceTextures
+			|| bDisableTextureStreaming != Other.bDisableTextureStreaming
 			|| !ForcedParameterValues.OrderIndependentCompareEqual(Other.ForcedParameterValues)
 			)
 		{
@@ -296,6 +296,7 @@ struct FParameterUIData
 		Ar << UIData.ArrayIntegerParameterOption;
 		Ar << UIData.IntegerParameterGroupType;
 		Ar << UIData.TextureCompressionStrategy;
+		Ar << UIData.bDisableTextureStreaming;
 		Ar << UIData.bLiveUpdateMode;
 		Ar << UIData.bReuseInstanceTextures;
 		Ar << UIData.ForcedParameterValues;

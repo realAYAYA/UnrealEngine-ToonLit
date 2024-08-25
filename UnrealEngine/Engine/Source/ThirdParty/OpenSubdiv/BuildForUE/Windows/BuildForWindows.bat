@@ -19,6 +19,14 @@ set UE_MODULE_LOCATION=%BUILD_SCRIPT_LOCATION%..\..
 
 set SOURCE_LOCATION=%UE_MODULE_LOCATION%\OpenSubdiv-%OPENSUBDIV_VERSION%
 
+set UE_ENGINE_LOCATION=%UE_MODULE_LOCATION%\..\..\..
+
+rem To simplify cross-compilation, we provide the path to the engine's Python
+rem interpreter so that we use OpenSubdiv's Python version of the stringify
+rem tool, preventing it from building the C++ version.
+set PYTHON_BINARIES_LOCATION=%UE_ENGINE_LOCATION%\Binaries\ThirdParty\Python3\Win64
+set PYTHON_EXECUTABLE_LOCATION=%PYTHON_BINARIES_LOCATION%\python.exe
+
 set BUILD_LOCATION=%UE_MODULE_LOCATION%\Intermediate
 
 rem Specify all of the include/bin/lib directory variables so that CMake can
@@ -47,6 +55,8 @@ cmake -G "Visual Studio 17 2022" %SOURCE_LOCATION%^
     -DCMAKE_INSTALL_PREFIX="%INSTALL_LOCATION%"^
     -DCMAKE_BINDIR_BASE="%INSTALL_BIN_DIR%"^
     -DCMAKE_LIBDIR_BASE="%INSTALL_LIB_DIR%"^
+    -DCMAKE_INSTALL_LIBDIR="%INSTALL_LIB_DIR%"^
+    -DPython_EXECUTABLE="%PYTHON_EXECUTABLE_LOCATION%"^
     -DCMAKE_DEBUG_POSTFIX=_d^
     -DNO_REGRESSION=ON^
     -DNO_TESTS=ON^
@@ -60,7 +70,8 @@ cmake -G "Visual Studio 17 2022" %SOURCE_LOCATION%^
     -DNO_OPENCL=ON^
     -DNO_DX=ON^
     -DNO_GLEW=ON^
-    -DNO_GLFW=ON
+    -DNO_GLFW=ON^
+    -DBUILD_SHARED_LIBS=OFF
 if %errorlevel% neq 0 exit /B %errorlevel%
 
 echo Building OpenSubdiv for Debug...

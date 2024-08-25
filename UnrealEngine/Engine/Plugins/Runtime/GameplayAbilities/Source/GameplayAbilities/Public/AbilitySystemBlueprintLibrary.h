@@ -413,6 +413,18 @@ class GAMEPLAYABILITIES_API UAbilitySystemBlueprintLibrary : public UBlueprintFu
 	static const UGameplayEffect* GetGameplayEffectFromActiveEffectHandle(const FActiveGameplayEffectHandle& ActiveHandle);
 
 	// -------------------------------------------------------------------------------
+	//		Gameplay Effect
+	// -------------------------------------------------------------------------------
+
+	/** Returns all tags that the Gameplay Effect *has* (that denote the GE Asset itself) and *does not* grant to any Actor. */
+	UFUNCTION(BlueprintPure, Category = "Ability|GameplayEffect", meta = (DisplayName = "Get Asset Tags"))
+	static const FGameplayTagContainer& GetGameplayEffectAssetTags(TSubclassOf<UGameplayEffect> EffectClass);
+
+	/** Returns all tags that the Gameplay Effect grants to the target Actor */
+	UFUNCTION(BlueprintPure, Category = "Ability|GameplayEffect", meta = (DisplayName = "Get Granted Tags"))
+	static const FGameplayTagContainer& GetGameplayEffectGrantedTags(TSubclassOf<UGameplayEffect> EffectClass);
+
+	// -------------------------------------------------------------------------------
 	//		GameplayAbility
 	// -------------------------------------------------------------------------------
 

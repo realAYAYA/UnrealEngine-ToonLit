@@ -220,7 +220,7 @@ private:
 	bool CanAddNewGoal() const;
 	void HandleRenameGoal() const;
 	bool CanRenameGoal() const;
-	void HandleDeleteElement();
+	void HandleDeleteElements();
 	bool CanDeleteElement() const;
 	/** END creating / renaming / deleting goals */
 

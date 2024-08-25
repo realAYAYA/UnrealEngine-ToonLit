@@ -29,17 +29,17 @@ namespace RenderCaptureInterface
 		}
 	}
 
-	FScopedCapture::FScopedCapture(bool bEnable, FRHICommandListImmediate* InRHICommandList, TCHAR const* InEventName, TCHAR const* InFileName)
-		: bCapture(bEnable && IRenderCaptureProvider::IsAvailable())
+	FScopedCapture::FScopedCapture(bool bEnable, FRHICommandList* InRHICommandList, TCHAR const* InEventName, TCHAR const* InFileName)
+		: bCapture(bEnable && IRenderCaptureProvider::IsAvailable() && InRHICommandList->IsImmediate())
 		, bEvent(InEventName != nullptr)
 		, RHICommandList(InRHICommandList)
 		, GraphBuilder(nullptr)
 	{
-		check(!GIsThreadedRendering || IsInRenderingThread());
-
 		if (bCapture)
 		{
-			IRenderCaptureProvider::Get().BeginCapture(RHICommandList, IRenderCaptureProvider::ECaptureFlags_Launch, FString(InFileName));
+			check(!GIsThreadedRendering || IsInRenderingThread());
+
+			IRenderCaptureProvider::Get().BeginCapture(&FRHICommandListImmediate::Get(*RHICommandList), IRenderCaptureProvider::ECaptureFlags_Launch, FString(InFileName));
 		
 			if (bEvent)
 			{
@@ -103,7 +103,7 @@ namespace RenderCaptureInterface
 					RHICommandList->PopEvent();
 				}
 
-				IRenderCaptureProvider::Get().EndCapture(RHICommandList);
+				IRenderCaptureProvider::Get().EndCapture(&FRHICommandListImmediate::Get(*RHICommandList));
 			}
 			else
 			{

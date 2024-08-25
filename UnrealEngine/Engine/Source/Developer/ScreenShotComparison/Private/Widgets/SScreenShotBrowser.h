@@ -12,8 +12,8 @@
 #include "Interfaces/IScreenShotManager.h"
 #include "Widgets/Views/STableViewBase.h"
 #include "Widgets/Views/STableRow.h"
-
-class FScreenComparisonModel;
+#include "Widgets/Images/SThrobber.h"
+#include "Models/ScreenComparisonModel.h"
 
 /**
  * Implements a Slate widget for browsing active game sessions.
@@ -46,7 +46,7 @@ public:
 	void DisplaySuccess_OnCheckStateChanged(ECheckBoxState NewRadioState);
 	void DisplayError_OnCheckStateChanged(ECheckBoxState NewRadioState);
 	void DisplayNew_OnCheckStateChanged(ECheckBoxState NewRadioState);
-	void OnFilterStringCommitted(const FText& InText, ETextCommit::Type InCommitType);
+	void OnReportFilterTextChanged(const FText& InText);
 
 private:
 
@@ -57,11 +57,45 @@ private:
 	void OnReportsChanged(const TArray<struct FFileChangeData>& /*FileChanges*/);
 
 	/**
-	 * Regenerate the widgets when the filter changes
+	 * Requests regeneration of the widgets when it is needed.
 	 */
-	void RebuildTree();
+	void RequestRebuildTree();
+
+	/**
+	* Rebuilds screenshot tree if there are any pending comparison reports that are ready to be displayed.
+	*/
+	void ContinueRebuildTreeIfReady();
+
+	/**
+	* Finishes rebuilding of screenshot tree if all the report model metadata is loaded.
+	*/
+	void FinishRebuildTreeIfReady();
+
+	/**
+	* Gets reports tree widget visibility.
+	*/
+	EVisibility GetReportsVisibility() const;
+
+	/**
+	* Gets throbber visibility (report tree rebuild process is in progress).
+	*/
+	EVisibility GetReportsUpdatingThrobberVisibility() const;
 
 	bool CanAddNewReportResult(const FImageComparisonResult& Comparison);
+
+	/**
+	* Checks whether or not the information is valid against the report filtering criteria.
+	*
+	* @param ComparisonName - The name of the item to be checked against.
+	* @param ComparisonResult - The ImageComparisonResult used to be checked against the display criteria.
+	* @return true if the passed in information matches the current filtering criteria
+	*/
+	bool MatchesReportFilterCriteria(const FString& ComparisonName, const FImageComparisonResult& ComparisonResult) const;
+
+	/**
+	* Apply the current report filter to the widgets of comparison view.
+	*/
+	void ApplyReportFilterToWidgets();
 
 private:
 
@@ -72,10 +106,13 @@ private:
 	FString ComparisonRoot;
 
 	/** The imported screenshot results */
-	TArray<FComparisonReport> CurrentReports;
+	TSharedPtr<TArray<FComparisonReport>> CurrentReports;
 
-	/** The imported screenshot results copied into an array usable by the list view */
+	/** The imported screenshot results copied into an array to be filtered */
 	TArray<TSharedPtr<FScreenComparisonModel>> ComparisonList;
+
+	/** The filtered screenshot results copied into an array usable by the list view */
+	TArray<TSharedPtr<FScreenComparisonModel>> FilteredComparisonList;
 
 	/**  */
 	TSharedPtr< SListView< TSharedPtr<FScreenComparisonModel> > > ComparisonView;
@@ -92,9 +129,15 @@ private:
 	/** Whether or not we're currently displaying tests with errors */
 	bool bDisplayingError;
 
-	/** Whether or not we're currently displaying warnings*/
+	/** Whether or not we're currently displaying warnings */
 	bool bDisplayingNew;
 
 	/** Filter string for our reports, if any */
 	FString ReportFilterString;
+
+	/** Stores comparison reports that are loaded asynchronously if ready */
+	TFuture<TSharedPtr<TArray<FComparisonReport>>> PendingOpenComparisonReportsResult;
+
+	/** Stores comparison reports' model objects that are loaded asynchronously if ready */
+	TFuture<TArray<TSharedPtr<FScreenComparisonModel>>> PendingScreenComparisonModelsLoadResult;
 };

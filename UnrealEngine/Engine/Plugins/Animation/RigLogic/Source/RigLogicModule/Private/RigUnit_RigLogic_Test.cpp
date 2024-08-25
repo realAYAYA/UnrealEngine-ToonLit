@@ -9,7 +9,6 @@
 #include "SharedRigRuntimeContext.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Units/RigUnitContext.h"
-#include "ControlRig.h"
 #include "Math/TransformNonVectorized.h"
 #include "DNAUtils.h"
 

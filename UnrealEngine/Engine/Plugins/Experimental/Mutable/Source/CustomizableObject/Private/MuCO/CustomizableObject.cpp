@@ -6,7 +6,9 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Async/AsyncFileHandle.h"
 #include "EdGraph/EdGraph.h"
+#include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/Skeleton.h"
 #include "Engine/AssetUserData.h"
 #include "HAL/FileManager.h"
@@ -18,8 +20,11 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "MuCO/CustomizableObjectInstance.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
 #include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCO/CustomizableObjectSystem.h"
+#include "MuCO/CustomizableObjectSystemPrivate.h"
+#include "MuCO/CustomizableObjectUIData.h"
 #include "MuCO/ICustomizableObjectModule.h"
 #include "MuCO/MutableProjectorTypeUtils.h"
 #include "MuCO/UnrealMutableModelDiskStreamer.h"
@@ -28,7 +33,10 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
+#include "MuCO/ICustomizableObjectEditorModule.h"
+#include "MuCO/CustomizableObjectSystemPrivate.h"
 
 #if WITH_EDITOR
 #include "Editor.h"
@@ -41,20 +49,40 @@
 
 DEFINE_LOG_CATEGORY(LogMutable);
 
-#if WITH_EDITOR
-static bool bUsesOnCookStart = false;
+#if WITH_EDITORONLY_DATA
+
+namespace UE::Mutable::Private
+{
+
+template <typename T>
+T* MoveOldObjectAndCreateNew(UClass* Class, UObject* InOuter)
+{
+	FName ObjectFName = Class->GetFName();
+	FString ObjectNameStr = ObjectFName.ToString();
+	UObject* Existing = FindObject<UAssetUserData>(InOuter, *ObjectNameStr);
+	if (Existing)
+	{
+		// Move the old object out of the way
+		Existing->Rename(nullptr /* Rename will pick a free name*/, GetTransientPackage(), REN_DontCreateRedirectors);
+	}
+	return NewObject<T>(InOuter, Class, *ObjectNameStr);
+}
+
+}
+
 #endif
+
 //-------------------------------------------------------------------------------------------------
 
 UCustomizableObject::UCustomizableObject()
 	: UObject()
 {
-	PrivateData = TSharedPtr<FCustomizableObjectPrivateData>( new FCustomizableObjectPrivateData() );
+	Private = CreateDefaultSubobject<UCustomizableObjectPrivate>(FName("Private"));
 
 #if WITH_EDITORONLY_DATA
 	const FString CVarName = TEXT("r.SkeletalMesh.MinLodQualityLevel");
 	const FString ScalabilitySectionName = TEXT("ViewDistanceQuality");
-	LODSettings.MinQualityLevelLOD.Init(*CVarName, *ScalabilitySectionName);
+	LODSettings.MinQualityLevelLOD.SetQualityLevelCVarForCooking(*CVarName, *ScalabilitySectionName);
 #endif
 }
 
@@ -66,26 +94,38 @@ bool UCustomizableObject::IsEditorOnly() const
 }
 
 
-void UCustomizableObject::UpdateVersionId()
+void UCustomizableObjectPrivate::UpdateVersionId()
 {
-	VersionId = FGuid::NewGuid();
+	GetPublic()->VersionId = FGuid::NewGuid();
+}
+
+
+FGuid UCustomizableObjectPrivate::GetVersionId() const
+{
+	return GetPublic()->VersionId;
 }
 
 
 void UCustomizableObject::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UCustomizableObject::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	int32 isRoot = 0;
-#if WITH_EDITOR
+
 	FCustomizableObjectCompilerBase* Compiler = UCustomizableObjectSystem::GetInstance()->GetNewCompiler();
 	if (Compiler)
 	{
 		isRoot = Compiler->IsRootObject(this) ? 1 : 0;
 		delete Compiler;
 	}
-#endif
 
-	OutTags.Add(FAssetRegistryTag("IsRoot", FString::FromInt(isRoot), FAssetRegistryTag::TT_Numerical));
-	Super::GetAssetRegistryTags(OutTags);
+	Context.AddTag(FAssetRegistryTag("IsRoot", FString::FromInt(isRoot), FAssetRegistryTag::TT_Numerical));
+	Super::GetAssetRegistryTags(Context);
 }
 
 
@@ -94,12 +134,8 @@ void UCustomizableObject::PreSave(FObjectPreSaveContext ObjectSaveContext)
 	Super::PreSave(ObjectSaveContext);
 
 	// Update the derived child object flag
-	FCustomizableObjectCompilerBase* Compiler = UCustomizableObjectSystem::GetInstance()->GetNewCompiler();
-	if (Compiler)
+	if (GetPrivate()->TryUpdateIsChildObject())
 	{
-		bIsChildObject = !Compiler->IsRootObject(this);
-		delete Compiler;
-
 		if (bIsChildObject)
 		{
 			GetPackage()->SetPackageFlags(PKG_EditorOnly);
@@ -110,17 +146,18 @@ void UCustomizableObject::PreSave(FObjectPreSaveContext ObjectSaveContext)
 		}
 	}
 
-#if WITH_EDITORONLY_DATA
 	if (ObjectSaveContext.IsCooking() && !bIsChildObject)
 	{
-		if (const FMutableCachedPlatformData* PlatformData = CachedPlatformsData.Find(ObjectSaveContext.GetTargetPlatform()->PlatformName()))
+		const ITargetPlatform* TargetPlatform = ObjectSaveContext.GetTargetPlatform();
+		// Load cached data before saving
+		if (GetPrivate()->TryLoadCompiledCookDataForPlatform(TargetPlatform))
 		{
-			// Load cached data before saving
-			FMemoryReaderView MemoryReader(PlatformData->ModelData);
-			LoadCompiledData(MemoryReader, true);
-
 			// Create an export object to manage the streamable data
-			BulkData = NewObject<UCustomizableObjectBulk>(this);
+			if (!BulkData)
+			{
+				BulkData = UE::Mutable::Private::MoveOldObjectAndCreateNew<UCustomizableObjectBulk>(
+					UCustomizableObjectBulk::StaticClass(), this);
+			}
 			BulkData->Mark(OBJECTMARK_TagExp);
 
 			// Split streamable data into smaller chunks and fix up the CO HashToStreamableBlock's FileIndex and Offset
@@ -131,13 +168,69 @@ void UCustomizableObject::PreSave(FObjectPreSaveContext ObjectSaveContext)
 			UE_LOG(LogMutable, Warning, TEXT("Cook: Customizable Object [%s] is missing [%s] platform data."), *GetName(),
 				*ObjectSaveContext.GetTargetPlatform()->PlatformName());
 			
-			ClearCompiledData();
-			SetModel(nullptr);
+			GetPrivate()->ClearCompiledData(true);
 		}
 	}
-#endif
 }
 
+
+void UCustomizableObject::PostSaveRoot(FObjectPostSaveRootContext ObjectSaveContext)
+{
+	MUTABLE_CPUPROFILER_SCOPE(UCustomizableObject::PostSaveRoot);
+
+	Super::PostSaveRoot(ObjectSaveContext);
+
+	if (ObjectSaveContext.IsCooking())
+	{
+		// Free cached data after saving;
+		const ITargetPlatform* TargetPlatform = ObjectSaveContext.GetTargetPlatform();
+		GetPrivate()->CachedPlatformsData.Remove(TargetPlatform->PlatformName());
+	}
+}
+
+
+bool UCustomizableObjectPrivate::TryUpdateIsChildObject()
+{
+	FCustomizableObjectCompilerBase* Compiler = UCustomizableObjectSystem::GetInstance()->GetNewCompiler();
+	if (Compiler)
+	{
+		GetPublic()->bIsChildObject = !Compiler->IsRootObject(GetPublic());
+		delete Compiler;
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+
+bool UCustomizableObject::IsChildObject() const
+{
+	return bIsChildObject;
+}
+
+
+void UCustomizableObjectPrivate::SetIsChildObject(bool bIsChildObject)
+{
+	GetPublic()->bIsChildObject = bIsChildObject;
+}
+
+
+#if WITH_EDITOR
+bool UCustomizableObjectPrivate::TryLoadCompiledCookDataForPlatform(const ITargetPlatform* TargetPlatform)
+{
+	const FMutableCachedPlatformData* PlatformData = CachedPlatformsData.Find(TargetPlatform->PlatformName());
+	if (!PlatformData)
+	{
+		return false;
+	}
+
+	FMemoryReaderView MemoryReader(PlatformData->ModelData);
+	LoadCompiledData(MemoryReader, TargetPlatform, true);
+	return true;
+}
+#endif
 
 #endif // End WITH_EDITOR
 
@@ -146,42 +239,51 @@ void UCustomizableObject::PostLoad()
 {
 	Super::PostLoad();
 
-	// Make sure mutable has been initialised.
-	UCustomizableObjectSystem::GetInstance();
-
 #if WITH_EDITOR
 	if (ReferenceSkeletalMesh_DEPRECATED)
 	{
 		ReferenceSkeletalMeshes.Add(ReferenceSkeletalMesh_DEPRECATED);
 		ReferenceSkeletalMesh_DEPRECATED = nullptr;
 	}
+
+	// Register to dirty delegate so we update derived data version ID each time that the package is marked as dirty.
+	if (UPackage* Package = GetOutermost())
+	{
+		Package->PackageMarkedDirtyEvent.AddWeakLambda(this, [this](UPackage* Pkg, bool bWasDirty)
+			{
+				if (GetPackage() == Pkg)
+				{
+					GetPrivate()->UpdateVersionId();
+				}
+			});
+	}
+
+	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
+
+	if (!IsRunningCookCommandlet())
+	{
+		GetPrivate()->Status.NextState(FCustomizableObjectStatusTypes::EState::Loading);
+
+		ITargetPlatformManagerModule& TargetPlatformManager = GetTargetPlatformManagerRef();
+		const ITargetPlatform* RunningPlatform = TargetPlatformManager.GetRunningTargetPlatform();
+
+		const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+		if (AssetRegistryModule.Get().IsLoadingAssets())
+		{
+			AssetRegistryModule.Get().OnFilesLoaded().AddUObject(GetPrivate(), &UCustomizableObjectPrivate::LoadCompiledDataFromDisk);
+		}
+		else
+		{
+			GetPrivate()->LoadCompiledDataFromDisk();
+		}
+	}
 #endif
 }
 
 
-void UCustomizableObject::BeginDestroy()
+bool UCustomizableObjectPrivate::IsLocked() const
 {
-#if !WITH_EDITORONLY_DATA
-	if (RefSkeletalMeshStreamingHandle.IsValid() && RefSkeletalMeshStreamingHandle->IsActive())
-	{
-		RefSkeletalMeshStreamingHandle->CancelHandle();
-	}
-	
-	RefSkeletalMeshStreamingHandle = nullptr;
-#endif
-
-	Super::BeginDestroy();
-}
-
-
-bool UCustomizableObject::IsLocked() const
-{
-	if (PrivateData.IsValid())
-	{
-		return PrivateData->bLocked;
-	}
-
-	return false;
+	return bLocked;
 }
 
 
@@ -197,24 +299,19 @@ void UCustomizableObject::Serialize(FArchive& Ar_Asset)
 		if (Ar_Asset.IsSaving())
 		{
 			UE_LOG(LogMutable, Verbose, TEXT("Serializing cooked data for Customizable Object [%s]."), *GetName());
-			SaveEmbeddedData(Ar_Asset);
+			GetPrivate()->SaveEmbeddedData(Ar_Asset);
 		}
 	}
 	else
 	{
 		// Can't remove this or saved customizable objects will fail to load
-		int64 InternalVersion = CurrentSupportedVersion;
+		int64 InternalVersion = UCustomizableObjectPrivate::CurrentSupportedVersion;
 		Ar_Asset << InternalVersion;
-		
-		if (Ar_Asset.IsLoading())
-		{
-			LoadCompiledDataFromDisk();
-		}
 	}
 #else
 	if (Ar_Asset.IsLoading())
 	{
-		LoadEmbeddedData(Ar_Asset);
+		GetPrivate()->LoadEmbeddedData(Ar_Asset);
 	}
 #endif
 }
@@ -232,248 +329,289 @@ void UCustomizableObject::PostRename(UObject * OldOuter, const FName OldName)
 }
 
 
-void UCustomizableObject::PostDuplicate(EDuplicateMode::Type DuplicateMode)
-{
-	Super::PostDuplicate(DuplicateMode);
-
-	if (DuplicateMode == EDuplicateMode::Normal)
-	{
-		// Create a new Private Data or it will use the same as the original Customizable Object
-		PrivateData = TSharedPtr<FCustomizableObjectPrivateData>(new FCustomizableObjectPrivateData());
-	}
-}
-
-
 void UCustomizableObject::BeginCacheForCookedPlatformData(const ITargetPlatform* TargetPlatform)
 {
-	bool bIsRelevantForThisTarget =
-		(Relevancy == ECustomizableObjectRelevancy::All)
-		||
-		(TargetPlatform && Relevancy == ECustomizableObjectRelevancy::ClientOnly && !TargetPlatform->IsServerOnly());
-	
-	if (TargetPlatform && bIsRelevantForThisTarget)
+	if (!TargetPlatform)
 	{
-		if (PrivateData->CachedPlatformNames.Find(TargetPlatform->PlatformName()) == INDEX_NONE)
-		{
-			if (!bUsesOnCookStart)
-			{
-				// Compile and save in the CachedPlatformsData map
-				CompileForTargetPlatform(TargetPlatform);
-			}
-			else
-			{
-				// Load from Disk
-				LoadCompiledDataFromDisk(false, TargetPlatform);
-
-				if (!PrivateData->bModelCompiledForCook)
-				{
-					LoadReferencedObjects();
-					PrivateData->bModelCompiledForCook = true;
-				}
-			}
-
-			PrivateData->CachedPlatformNames.Add(TargetPlatform->PlatformName());
-		}
+		return;
 	}
-	else
+
+	if (Private->CachedPlatformNames.Find(TargetPlatform->PlatformName()) == INDEX_NONE)
 	{
-		ClearCompiledData();
-		PrivateData->SetModel(nullptr, FGuid()); // Discard compilation
-		if (TargetPlatform)
-		{
-			PrivateData->CachedPlatformNames.Add(TargetPlatform->PlatformName());
-		}
+		// Compile and save in the CachedPlatformsData map
+		GetPrivate()->CompileForTargetPlatform(TargetPlatform);
+		GetPrivate()->CachedPlatformNames.Add(TargetPlatform->PlatformName());
 	}
 }
 
 
 bool UCustomizableObject::IsCachedCookedPlatformDataLoaded( const ITargetPlatform* TargetPlatform ) 
-{ 
-	return PrivateData->CachedPlatformNames.Find(TargetPlatform->PlatformName()) != INDEX_NONE;
-}
-
-// TODO COOK: Remove Hack to add new references to the package
-void UCustomizableObject::LoadReferencedObjects()
 {
-	for (TSoftObjectPtr<UMaterialInterface> r : ReferencedMaterials)
-	{
-		r.LoadSynchronous();
-	}
-
-	for(TPair<FString, TSoftObjectPtr<UPhysicsAsset>>& p : PhysicsAssetsMap)
-	{
-		p.Value.LoadSynchronous();
-	}
-	
-	for (TPair<FString, FParameterUIData>& i : ParameterUIDataMap)
-	{
-		i.Value.LoadResources();
-	}
-
-	for (TPair<FString, FParameterUIData>& s : StateUIDataMap)
-	{
-		s.Value.LoadResources();
-	}
+	return !TargetPlatform || Private->CachedPlatformNames.Find(TargetPlatform->PlatformName()) != INDEX_NONE;
 }
 
 
-void UCustomizableObject::ClearCompiledData()
+FGuid GenerateIdentifier(const UCustomizableObject& CustomizableObject)
 {
-	ReferenceSkeletalMeshesData.Empty();
-	ReferencedMaterials.Empty();
-	ReferencedMaterialSlotNames.Empty();
-	ReferencedSkeletons.Empty();
-	ImageProperties.Empty();
-	ParameterUIDataMap.Empty();
-	StateUIDataMap.Empty();
-	PhysicsAssetsMap.Empty();
-	ContributingMorphTargetsInfo.Empty();
-	MorphTargetReconstructionData.Empty();
-	ClothMeshToMeshVertData.Empty();
-	ContributingClothingAssetsData.Empty();
-	ClothSharedConfigsData.Empty();
-	SkinWeightProfilesInfo.Empty();
-	AnimBpOverridePhysiscAssetsInfo.Empty();
-	BoneNames.Empty();
+	// Generate the Identifier using the path and name of the asset
+	uint32 FullPathHash = GetTypeHash(CustomizableObject.GetFullName());
+	uint32 OutermostHash = GetTypeHash(GetNameSafe(CustomizableObject.GetOutermost()));
+	uint32 OuterHash = GetTypeHash(CustomizableObject.GetName());
+	return FGuid(0, FullPathHash, OutermostHash, OuterHash);
+}
+
+
+void UCustomizableObjectPrivate::ClearCompiledData(bool bIsCooking)
+{
+	GetModelResources(bIsCooking) = FModelResources();
+
+	GetPublic()->ClothMeshToMeshVertData.Empty();
+	GetPublic()->ContributingClothingAssetsData.Empty();
+	GetPublic()->ClothSharedConfigsData.Empty();
 
 #if WITH_EDITORONLY_DATA
 	CustomizableObjectPathMap.Empty();
 	GroupNodeMap.Empty();
+	ParticipatingObjects.Empty();
 #endif
 
-	HashToStreamableBlock.Empty();
-	BulkData = nullptr;
+	GetPublic()->BulkData = nullptr;
 }
 
 
-void UCustomizableObject::UpdateCompiledDataFromModel()
+void SerializeStreamedResources(FArchive& Ar, UObject* Object, TArray<FCustomizableObjectStreamedResourceData>& StreamedResources, bool bIsCooking)
 {
-	TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = PrivateData->GetModel();
-
-	// Generate a map that using the resource id tells the offset and size of the resource inside the bulk data
-	if (Model)
+	if (Ar.IsSaving())
 	{
-		uint64 Offset = 0;
+		int32 NumStreamedResources = StreamedResources.Num();
+		Ar << NumStreamedResources;
 
-		const int32 NumStreamingFiles = Model->GetRomCount();
-		HashToStreamableBlock.Empty(NumStreamingFiles);
-
-		for (size_t FileIndex = 0; FileIndex < NumStreamingFiles; ++FileIndex)
+		for (const FCustomizableObjectStreamedResourceData& ResourceData : StreamedResources)
 		{
-			const uint32 ResourceId = Model->GetRomId(FileIndex);
-			const uint32 ResourceSize = Model->GetRomSize(FileIndex);
+			const FCustomizableObjectResourceData& Data = ResourceData.GetLoadedData();
+			uint32 ResourceDataType = (uint32)Data.Type;
+			Ar << ResourceDataType;
 
-			HashToStreamableBlock.Add(ResourceId, FMutableStreamableBlock({0, Offset, ResourceSize }));
-			Offset += ResourceSize;
+			switch (Data.Type)
+			{
+			case ECOResourceDataType::AssetUserData:
+			{
+				const FCustomizableObjectAssetUserData* AssetUserData = Data.Data.GetPtr<FCustomizableObjectAssetUserData>();
+				FString AssetUserDataPath;
+
+				if (AssetUserData->AssetUserDataEditor)
+				{
+					AssetUserDataPath = TSoftObjectPtr<UAssetUserData>(AssetUserData->AssetUserDataEditor).ToString();
+				}
+
+				Ar << AssetUserDataPath;
+				break;
+			}
+			default:
+				check(false);
+				break;
+			}
 		}
 	}
+	else 
+	{
+		const FString CustomizableObjectName = GetNameSafe(Object) + TEXT("_");
 
-	// Generate ParameterProperties and IntParameterLookUpTable
-	UpdateParameterPropertiesFromModel();
+		int32 NumStreamedResources = 0;
+		Ar << NumStreamedResources;
+
+		StreamedResources.SetNum(NumStreamedResources);
+
+		for (int32 ResourceIndex = 0; ResourceIndex < NumStreamedResources; ++ResourceIndex)
+		{
+			// Override existing containers
+			UCustomizableObjectResourceDataContainer* Container = StreamedResources[ResourceIndex].GetPath().Get();
+
+			// Create a new container if none.
+			if (!Container)
+			{
+				// Generate a deterministic name to help with deterministic cooking
+				const FString ContainerName = CustomizableObjectName + FString::Printf(TEXT("SR_%d"), ResourceIndex);
+
+				UCustomizableObjectResourceDataContainer* ExistingContainer = FindObject<UCustomizableObjectResourceDataContainer>(Object, *ContainerName);
+				Container = ExistingContainer ? ExistingContainer : NewObject<UCustomizableObjectResourceDataContainer>(
+					Object,
+					FName(*ContainerName),
+					RF_Public);
+
+				StreamedResources[ResourceIndex] = { Container };
+			}
+
+			check(Container);
+			uint32 Type = 0;
+			Ar << Type;
+			
+			Container->Data.Type = (ECOResourceDataType)Type;
+			switch (Container->Data.Type)
+			{
+				case ECOResourceDataType::AssetUserData:
+				{
+					FString AssetUserDataPath;
+					Ar << AssetUserDataPath;
+					
+					FCustomizableObjectAssetUserData ResourceData;
+
+					TSoftObjectPtr<UAssetUserData> SoftAssetUserData(AssetUserDataPath);
+					ResourceData.AssetUserDataEditor = !SoftAssetUserData.IsNull() ? SoftAssetUserData.LoadSynchronous() : nullptr;
+
+					if (!ResourceData.AssetUserDataEditor)
+					{
+						UE_LOG(LogMutable, Warning, TEXT("Failed to load streamed resource of type AssetUserData. Resource name: [%s]"), *AssetUserDataPath);
+					}
+
+					if (bIsCooking)
+					{
+						// Rename the asset user data for duplicate
+						const FString AssetName = CustomizableObjectName + GetNameSafe(ResourceData.AssetUserDataEditor);
+						
+						// Find or duplicate the AUD replacing the outer
+						ResourceData.AssetUserData = FindObject<UAssetUserData>(Container, *AssetName);
+						if (!ResourceData.AssetUserData)
+						{
+							// AUD may be private objects within meshes. Duplicate changing the outer to avoid including meshes into the builds.
+							ResourceData.AssetUserData = DuplicateObject<UAssetUserData>(ResourceData.AssetUserDataEditor, Container, FName(*AssetName));
+						}
+					}
+
+					Container->Data.Data = FInstancedStruct::Make(ResourceData);
+					break;
+				}
+				default:
+					check(false);
+					break;
+			}
+		}
+	}
 }
 
 
-void UCustomizableObject::SaveCompiledData(FArchive& MemoryWriter, bool bSkipEditorOnlyData)
+void UCustomizableObjectPrivate::SaveCompiledData(FArchive& MemoryWriter, bool bIsCooking)
 {
-	int32 InternalVersion = CurrentSupportedVersion;
-	MutableCompiledDataStreamHeader Header(InternalVersion, VersionId);
+	int32 InternalVersion = UCustomizableObjectPrivate::CurrentSupportedVersion;
+	MutableCompiledDataStreamHeader Header(InternalVersion, GetVersionId());
 	MemoryWriter << Header;
 
-	MemoryWriter << ReferenceSkeletalMeshesData;
-	
-	int32 NumReferencedMaterials = ReferencedMaterials.Num();
+	FModelResources& LocalModelResources = GetModelResources(false);
+
+	MemoryWriter << LocalModelResources.ReferenceSkeletalMeshesData;
+
+	SerializeStreamedResources(MemoryWriter, GetPublic(), GetPublic()->StreamedResourceData, bIsCooking);
+
+	int32 NumReferencedMaterials = LocalModelResources.Materials.Num();
 	MemoryWriter << NumReferencedMaterials;
 
-	for (const TSoftObjectPtr<UMaterialInterface>& Material : ReferencedMaterials)
+	for (const TSoftObjectPtr<UMaterialInterface>& Material : LocalModelResources.Materials)
 	{
-		FString StringRef = Material.ToSoftObjectPath().ToString();
+		FString StringRef = Material.ToString();
 		MemoryWriter << StringRef;
 	}
 
-	int32 NumReferencedMaterialSlotNames = ReferencedMaterialSlotNames.Num();
-	MemoryWriter << NumReferencedMaterialSlotNames;
-
-	for (const FName& MaterialSlotName : ReferencedMaterialSlotNames)
-	{
-		FString StringRef = MaterialSlotName.ToString();
-		MemoryWriter << StringRef;
-	}
-
-	int32 NumReferencedSkeletons = ReferencedSkeletons.Num();
+	int32 NumReferencedSkeletons = LocalModelResources.Skeletons.Num();
 	MemoryWriter << NumReferencedSkeletons;
 
-	for (const TSoftObjectPtr<USkeleton>& Skeleton : ReferencedSkeletons)
+	for (const TSoftObjectPtr<USkeleton>& Skeleton : LocalModelResources.Skeletons)
 	{
-		FString StringRef = Skeleton.ToSoftObjectPath().ToString();
+		FString StringRef = Skeleton.ToString();
 		MemoryWriter << StringRef;
 	}
 
-	MemoryWriter << ImageProperties;
-	MemoryWriter << ParameterUIDataMap;
-	MemoryWriter << StateUIDataMap;
+	int32 NumPassthroughTextures = LocalModelResources.PassThroughTextures.Num();
+	MemoryWriter << NumPassthroughTextures;
 
-	int32 NumPhysicsAssets = PhysicsAssetsMap.Num();
+	for (const TSoftObjectPtr<UTexture>& PassthroughTexture : LocalModelResources.PassThroughTextures)
+	{
+		FString StringRef = PassthroughTexture.ToString();
+		MemoryWriter << StringRef;
+	}
+
+	int32 NumPhysicsAssets = LocalModelResources.PhysicsAssets.Num();
 	MemoryWriter << NumPhysicsAssets;
 
-	for (const TPair<FString, TSoftObjectPtr<class UPhysicsAsset>>& PhysicsAsset : PhysicsAssetsMap)
+	for (const TSoftObjectPtr<UPhysicsAsset>& PhysicsAsset : LocalModelResources.PhysicsAssets)
 	{
-		FString StringRef = PhysicsAsset.Value.ToSoftObjectPath().ToString();
+		FString StringRef = PhysicsAsset.ToString();
 		MemoryWriter << StringRef;
 	}
 
-	MemoryWriter << ContributingMorphTargetsInfo;
-	MemoryWriter << MorphTargetReconstructionData;
-	
-	MemoryWriter << ClothMeshToMeshVertData;
-	MemoryWriter << ContributingClothingAssetsData;
-	MemoryWriter << ClothSharedConfigsData; 
-	
-	MemoryWriter << SkinWeightProfilesInfo;
+	int32 NumAnimBps = LocalModelResources.AnimBPs.Num();
+	MemoryWriter << NumAnimBps;
 
-	MemoryWriter << AnimBpOverridePhysiscAssetsInfo;
-
-	MemoryWriter << BoneNames;
-
-	MemoryWriter << HashToStreamableBlock;
-
-	// All Editor Only data must be serialized here
-	if (!bSkipEditorOnlyData)
+	for (const TSoftClassPtr<UAnimInstance>& AnimBp : LocalModelResources.AnimBPs)
 	{
-		MemoryWriter << CustomizableObjectPathMap;
-		MemoryWriter << GroupNodeMap;
+		FString StringRef = AnimBp.ToString();
+		MemoryWriter << StringRef;
 	}
 
-	MemoryWriter << LODSettings.NumLODsInRoot;
-	MemoryWriter << NumMeshComponentsInRoot;
+	MemoryWriter << LocalModelResources.AnimBpOverridePhysiscAssetsInfo;
 
-	MemoryWriter << LODSettings.FirstLODAvailable;
+	MemoryWriter << LocalModelResources.MaterialSlotNames;
+	MemoryWriter << LocalModelResources.BoneNames;
+	MemoryWriter << LocalModelResources.SocketArray;
 
-	MemoryWriter << LODSettings.NumLODsToStream;
-	MemoryWriter << LODSettings.bLODStreamingEnabled;
+	MemoryWriter << LocalModelResources.SkinWeightProfilesInfo;
+
+	MemoryWriter << LocalModelResources.ImageProperties;
+	MemoryWriter << LocalModelResources.ParameterUIDataMap;
+	MemoryWriter << LocalModelResources.StateUIDataMap;
+
+	MemoryWriter << LocalModelResources.RealTimeMorphTargetNames;
+	MemoryWriter << LocalModelResources.RealTimeMorphStreamableBlocks;
+
+	MemoryWriter << LocalModelResources.HashToStreamableBlock;
+
+	MemoryWriter << GetPublic()->ClothMeshToMeshVertData;
+	MemoryWriter << GetPublic()->ContributingClothingAssetsData;
+	MemoryWriter << GetPublic()->ClothSharedConfigsData; 
+
+	MemoryWriter << LocalModelResources.NumComponents;
+	MemoryWriter << LocalModelResources.NumLODs;
+	MemoryWriter << LocalModelResources.NumLODsToStream;
+	MemoryWriter << LocalModelResources.FirstLODAvailable;
+
+	// Editor Only data
+	MemoryWriter << bDisableTextureStreaming;
+	MemoryWriter << bIsCompiledWithoutOptimization;
+	MemoryWriter << CustomizableObjectPathMap;
+	MemoryWriter << GroupNodeMap;
+	MemoryWriter << ParticipatingObjects;
+
+	if (!bIsCooking)
+	{
+		MemoryWriter << LocalModelResources.EditorOnlyMorphTargetReconstructionData;
+	}
 }
 
-void UCustomizableObject::LoadCompiledData(FArchive& MemoryReader, bool bSkipEditorOnlyData)
+void UCustomizableObjectPrivate::LoadCompiledData(FArchive& MemoryReader, const ITargetPlatform* InTargetPlatform, bool bIsCooking)
 {
-	PrivateData->SetModel(nullptr, FGuid());
-	ClearCompiledData();
+	TSharedPtr<mu::Model, ESPMode::ThreadSafe> LoadedModel;
+	ClearCompiledData(bIsCooking);
 
 	MutableCompiledDataStreamHeader Header;
 	MemoryReader << Header;
 
-	if (CurrentSupportedVersion == Header.InternalVersion)
+	if (UCustomizableObjectPrivate::CurrentSupportedVersion == Header.InternalVersion)
 	{
 		// Make sure mutable has been initialised.
 		UCustomizableObjectSystem::GetInstance();
 
-		MemoryReader << ReferenceSkeletalMeshesData;
+		FModelResources& LocalModelResource = GetModelResources(bIsCooking);
+		LocalModelResource = FModelResources();
+
+		MemoryReader << LocalModelResource.ReferenceSkeletalMeshesData;
+
+		SerializeStreamedResources(MemoryReader, GetPublic(), GetPublic()->StreamedResourceData, bIsCooking);
 
 		// Initialize resources. 
-		for(FMutableRefSkeletalMeshData& ReferenceSkeletalMeshData : ReferenceSkeletalMeshesData)
+		for(FMutableRefSkeletalMeshData& ReferenceSkeletalMeshData : LocalModelResource.ReferenceSkeletalMeshesData)
 		{
-			ReferenceSkeletalMeshData.InitResources(this);
+			ReferenceSkeletalMeshData.InitResources(GetPublic(), InTargetPlatform);
 		}
 
-		// We can load
 		int32 NumReferencedMaterials = 0;
 		MemoryReader << NumReferencedMaterials;
 
@@ -482,18 +620,7 @@ void UCustomizableObject::LoadCompiledData(FArchive& MemoryReader, bool bSkipEdi
 			FString StringRef;
 			MemoryReader << StringRef;
 
-			ReferencedMaterials.Add(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(StringRef)));
-		}
-
-		int32 NumReferencedMaterialSlotNames = 0;
-		MemoryReader << NumReferencedMaterialSlotNames;
-
-		for (int32 i = 0; i < NumReferencedMaterialSlotNames; ++i)
-		{
-			FString StringRef;
-			MemoryReader << StringRef;
-
-			ReferencedMaterialSlotNames.Add(FName(*StringRef));
+			LocalModelResource.Materials.Add(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(StringRef)));
 		}
 
 		int32 NumReferencedSkeletons = 0;
@@ -504,12 +631,19 @@ void UCustomizableObject::LoadCompiledData(FArchive& MemoryReader, bool bSkipEdi
 			FString StringRef;
 			MemoryReader << StringRef;
 
-			ReferencedSkeletons.Add(TSoftObjectPtr<USkeleton>(FSoftObjectPath(StringRef)));
+			LocalModelResource.Skeletons.Add(TSoftObjectPtr<USkeleton>(FSoftObjectPath(StringRef)));
 		}
 
-		MemoryReader << ImageProperties;
-		MemoryReader << ParameterUIDataMap;
-		MemoryReader << StateUIDataMap;
+		int32 NumPassthroughTextures = 0;
+		MemoryReader << NumPassthroughTextures;
+
+		for (int32 Index = 0; Index < NumPassthroughTextures; ++Index)
+		{
+			FString StringRef;
+			MemoryReader << StringRef;
+
+			LocalModelResource.PassThroughTextures.Add(TSoftObjectPtr<UTexture>(FSoftObjectPath(StringRef)));
+		}
 
 		int32 NumPhysicsAssets = 0;
 		MemoryReader << NumPhysicsAssets;
@@ -519,81 +653,101 @@ void UCustomizableObject::LoadCompiledData(FArchive& MemoryReader, bool bSkipEdi
 			FString StringRef;
 			MemoryReader << StringRef;
 
-			PhysicsAssetsMap.Add(StringRef, TSoftObjectPtr<UPhysicsAsset>(FSoftObjectPath(StringRef)));
+			LocalModelResource.PhysicsAssets.Add(TSoftObjectPtr<UPhysicsAsset>(FSoftObjectPath(StringRef)));
 		}
 
-		MemoryReader << ContributingMorphTargetsInfo;
-		MemoryReader << MorphTargetReconstructionData;
 
-		MemoryReader << ClothMeshToMeshVertData;
-		MemoryReader << ContributingClothingAssetsData;
-		MemoryReader << ClothSharedConfigsData;
+		int32 NumAnimBps = 0;
+		MemoryReader << NumAnimBps;
 
-		MemoryReader << SkinWeightProfilesInfo;
-
-		MemoryReader << AnimBpOverridePhysiscAssetsInfo;
-
-		TArray<FString> StringBoneNames;
-		MemoryReader << StringBoneNames;
-
-		BoneNames.Reserve(StringBoneNames.Num());
-		for (const FString& BoneName : StringBoneNames)
+		for (int32 Index = 0; Index < NumAnimBps; ++Index)
 		{
-			BoneNames.Add(FName(*BoneName));
+			FString StringRef;
+			MemoryReader << StringRef;
+
+			LocalModelResource.AnimBPs.Add(TSoftClassPtr<UAnimInstance>(StringRef));
 		}
 
-		MemoryReader << HashToStreamableBlock;
+		MemoryReader << LocalModelResource.AnimBpOverridePhysiscAssetsInfo;
 
-		// All Editor Only data must be loaded here
-		if (!bSkipEditorOnlyData)
+		MemoryReader << LocalModelResource.MaterialSlotNames;
+		MemoryReader << LocalModelResource.BoneNames;
+		MemoryReader << LocalModelResource.SocketArray;
+
+		MemoryReader << LocalModelResource.SkinWeightProfilesInfo;
+
+		MemoryReader << LocalModelResource.ImageProperties;
+		MemoryReader << LocalModelResource.ParameterUIDataMap;
+		MemoryReader << LocalModelResource.StateUIDataMap;
+
+		MemoryReader << LocalModelResource.RealTimeMorphTargetNames;
+		MemoryReader << LocalModelResource.RealTimeMorphStreamableBlocks;
+
+		MemoryReader << LocalModelResource.HashToStreamableBlock;
+
+		MemoryReader << GetPublic()->ClothMeshToMeshVertData;
+		MemoryReader << GetPublic()->ContributingClothingAssetsData;
+		MemoryReader << GetPublic()->ClothSharedConfigsData;
+
+		MemoryReader << LocalModelResource.NumComponents;
+		MemoryReader << LocalModelResource.NumLODs;
+		MemoryReader << LocalModelResource.NumLODsToStream;
+		MemoryReader << LocalModelResource.FirstLODAvailable;
+
+		bool bInvalidateModel = false;
+
+		// Editor Only data
 		{
+			MemoryReader << bDisableTextureStreaming;
+			MemoryReader << bIsCompiledWithoutOptimization;
 			MemoryReader << CustomizableObjectPathMap;
 			MemoryReader << GroupNodeMap;
+			MemoryReader << ParticipatingObjects;
+
+			if (!bIsCooking)
+			{
+				MemoryReader << LocalModelResource.EditorOnlyMorphTargetReconstructionData;
+				
+				DirtyParticipatingObjects.Empty();
+
+				TArray<FName> OutOfDatePackages;
+				bInvalidateModel = IsCompilationOutOfDate(&OutOfDatePackages);
+
+				if (bInvalidateModel)
+				{
+					UE_LOG(LogMutable, Display, TEXT("Invalidating compiled data due to changes in %s."), *OutOfDatePackages[0].ToString());
+				}
+			}
 		}
-
-		MemoryReader << LODSettings.NumLODsInRoot;
-		MemoryReader << NumMeshComponentsInRoot;
-
-		MemoryReader << LODSettings.FirstLODAvailable;
-
-		MemoryReader << LODSettings.NumLODsToStream;
-		MemoryReader << LODSettings.bLODStreamingEnabled;
 
 		bool bModelSerialized = false;
 		MemoryReader << bModelSerialized;
 
-		if (bModelSerialized)
+		if (bModelSerialized && !bInvalidateModel)
 		{
-			UnrealMutableInputStream stream(MemoryReader);
-			mu::InputArchive arch(&stream);
-			TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = mu::Model::StaticUnserialise( arch );
-
-			PrivateData->SetModel(Model, Identifier);
+			UnrealMutableInputStream Stream(MemoryReader);
+			mu::InputArchive Arch(&Stream);
+			LoadedModel = mu::Model::StaticUnserialise(Arch);
 		}
 	}
-
-	UpdateParameterPropertiesFromModel();
+	
+	UpdateParameterPropertiesFromModel(LoadedModel);
+	SetModel(LoadedModel, GenerateIdentifier(*GetPublic()));
 }
 
-void UCustomizableObject::LoadCompiledDataFromDisk(bool bIsEditorData, const ITargetPlatform* InTargetPlatform)
+
+void UCustomizableObjectPrivate::LoadCompiledDataFromDisk()
 {
-	FString PlatformName = InTargetPlatform ? InTargetPlatform->PlatformName() : FPlatformProperties::PlatformName();
-
-	if (!bIsEditorData) // Loading cooked data
-	{
-		// If we don't use OnCookStart there's nothing to be loaded. Same case for child objects.
-		if (!bUsesOnCookStart || bIsChildObject) return;
-
-		// Platform Data already cached
-		if (CachedPlatformsData.Contains(PlatformName)) return;
-	}
+	ITargetPlatformManagerModule& TargetPlatformManager = GetTargetPlatformManagerRef();
+	const ITargetPlatform* RunningPlatform = TargetPlatformManager.GetRunningTargetPlatform();
+	check(RunningPlatform);
 
 	// Compose Folder Name
-	const FString FolderPath = GetCompiledDataFolderPath(bIsEditorData);
+	const FString FolderPath = GetCompiledDataFolderPath();
 
 	// Compose File Names
-	FString ModelFileName = FolderPath + GetCompiledDataFileName(true, InTargetPlatform);
-	FString StreamableFileName = FolderPath + GetCompiledDataFileName(false, InTargetPlatform);
+	const FString ModelFileName = FolderPath + GetCompiledDataFileName(true, RunningPlatform);
+	const FString StreamableFileName = FolderPath + GetCompiledDataFileName(false, RunningPlatform);
 
 	IFileManager& FileManager = IFileManager::Get();
 	if (FileManager.FileExists(*ModelFileName) && FileManager.FileExists(*StreamableFileName))
@@ -620,13 +774,13 @@ void UCustomizableObject::LoadCompiledDataFromDisk(bool bIsEditorData, const ITa
 			AuxMemoryReader << StreamableDataHeader;
 		}
 
-		if (CompiledDataHeader.InternalVersion == CurrentSupportedVersion
+		if (CompiledDataHeader.InternalVersion == UCustomizableObjectPrivate::CurrentSupportedVersion
 			&&
 			CompiledDataHeader.InternalVersion == StreamableDataHeader.InternalVersion 
 			&&
 			CompiledDataHeader.VersionId == StreamableDataHeader.VersionId)
 		{
-			if ( bIsEditorData && (IsRunningGame() || CompiledDataHeader.VersionId == VersionId) )
+			if (IsRunningGame() || CompiledDataHeader.VersionId == GetVersionId())
 			{ 
 				int64 CompiledDataSize = CompiledDataFileHandle->Size() - HeaderSize;
 				TArray64<uint8> CompiledDataBytes;
@@ -636,35 +790,25 @@ void UCustomizableObject::LoadCompiledDataFromDisk(bool bIsEditorData, const ITa
 				CompiledDataFileHandle->Read(CompiledDataBytes.GetData(), CompiledDataSize);
 
 				FMemoryReaderView MemoryReader(CompiledDataBytes);
-				LoadCompiledData(MemoryReader);
-			}
-			else if (!bIsEditorData)// Caching Cooked Data
-			{
-				FMutableCachedPlatformData& CachedData = CachedPlatformsData.Add(PlatformName);
-				int64 CompiledDataSize = CompiledDataFileHandle->Size() - HeaderSize;
-				int64 StreamableDataSize = StreamableDataFileHandle->Size() - HeaderSize;
-
-				CachedData.ModelData.SetNumUninitialized(CompiledDataSize);
-				CachedData.StreamableData.SetNumUninitialized(StreamableDataSize);
-
-				// Change the current read position to exclude the header
-				CompiledDataFileHandle->Seek(HeaderSize);
-				StreamableDataFileHandle->Seek(HeaderSize);
-
-				// Read Data
-				CompiledDataFileHandle->Read(CachedData.ModelData.GetData(), CompiledDataSize);
-				StreamableDataFileHandle->Read(CachedData.StreamableData.GetData(), StreamableDataSize);
+				LoadCompiledData(MemoryReader, RunningPlatform);
 			}
 		}
 
 		delete CompiledDataFileHandle;
 		delete StreamableDataFileHandle;
 	}
+
+	if (!GetModel()) // Not failed to load the model
+	{
+		Status.NextState(FCustomizableObjectStatusTypes::EState::NoModel);
+	}
 }
 
 
-void UCustomizableObject::CachePlatformData(const ITargetPlatform* InTargetPlatform, const TArray64<uint8>& InModelBytes, const TArray64< uint8>& InBulkBytes)
+void UCustomizableObjectPrivate::CachePlatformData(const ITargetPlatform* InTargetPlatform, TArray64<uint8>& InModelBytes, TArray64<uint8>& InBulkBytes, TArray64<uint8>& InMorphBytes)
 {
+	MUTABLE_CPUPROFILER_SCOPE(CachePlatformData)
+
 	FString PlatformName = InTargetPlatform ? InTargetPlatform->PlatformName() : FPlatformProperties::PlatformName();
 
 	check(!CachedPlatformsData.Find(PlatformName));
@@ -677,40 +821,31 @@ void UCustomizableObject::CachePlatformData(const ITargetPlatform* InTargetPlatf
 	Data.ModelData.Append(InModelBytes);
 
 	// Cache streamable bulk data
-	Data.StreamableData.Reset(InBulkBytes.Num());
-	Algo::Copy(InBulkBytes, Data.StreamableData);
+	Data.StreamableData = MoveTemp(InBulkBytes);
+	Data.MorphData = MoveTemp(InMorphBytes);
 }
 
 
-void UCustomizableObject::CompileForTargetPlatform(const ITargetPlatform* TargetPlatform, bool bIsOnCookStart)
+void UCustomizableObjectPrivate::CompileForTargetPlatform(const ITargetPlatform* TargetPlatform)
 {
-	// TEMP COOK: Remove together with OnCookStart
-	bUsesOnCookStart = bIsOnCookStart;
+	if (!TargetPlatform)
+	{
+		return;
+	}
 
 	FCustomizableObjectCompilerBase* Compiler = UCustomizableObjectSystem::GetInstance()->GetNewCompiler();
 
-	bool bIsRootObject = Compiler->IsRootObject(this);
-	
-	bool bIsRelevantForThisTarget =
-		(Relevancy == ECustomizableObjectRelevancy::All)
-		||
-		(TargetPlatform && Relevancy == ECustomizableObjectRelevancy::ClientOnly && !TargetPlatform->IsServerOnly());
-
-	// Discard any older compilation
-	PrivateData->SetModel(nullptr, FGuid());
-
-	if (bIsRootObject && bIsRelevantForThisTarget)
+	const bool bIsRootObject = Compiler->IsRootObject(GetPublic());
+	if (bIsRootObject)
 	{
-
 		FCompilationOptions Options;
-		Options.OptimizationLevel = 3;	// max optimization when packaging.
-		Options.bTextureCompression = true;
+		Options.OptimizationLevel = UE_MUTABLE_MAX_OPTIMIZATION;	// max optimization when packaging.
+		Options.TextureCompression = ECustomizableObjectTextureCompression::HighQuality;
 		Options.bIsCooking = true;
-		Options.bSaveCookedDataToDisk = bUsesOnCookStart;
 		Options.TargetPlatform = TargetPlatform;
 		Options.CustomizableObjectNumBoneInfluences = ICustomizableObjectModule::Get().GetNumBoneInfluences();
 
-		Compiler->Compile(*this, Options, false);
+		Compiler->Compile(*GetPublic(), Options, false);
 	}
 
 	delete Compiler;
@@ -721,14 +856,20 @@ bool UCustomizableObject::ConditionalAutoCompile()
 {
 	check(IsInGameThread());
 
+	// Don't compile objects being compiled
+	if (GetPrivate()->IsLocked())
+	{
+		return false;
+	}
+
 	// Don't compile compiled objects
 	if (IsCompiled())
 	{
 		return true;
 	}
 
-	// Don't compile objects being compiled
-	if (IsLocked())
+	// Model has not loaded yet
+	if (GetPrivate()->Status.Get() == FCustomizableObjectStatusTypes::EState::Loading)
 	{
 		return false;
 	}
@@ -740,27 +881,24 @@ bool UCustomizableObject::ConditionalAutoCompile()
 	}
 
 	// Don't re-compile objects if they failed to compile. 
-	if (CompilationState == ECustomizableObjectCompilationState::Failed)
+	if (GetPrivate()->CompilationState == ECustomizableObjectCompilationState::Failed)
 	{
 		return false;
 	}
 
-	// Don't compile if the cook commandlet is running. Do not add a warning/error. Otherwise, we could end up
-	// invalidating the cook for no reason.
-	if (IsRunningCookCommandlet())
+	// By default, don't compile in a commandlet.
+	// Notice that the cook is also a commandlet. Do not add a warning/error, otherwise we could end up invalidating the cook for no reason.
+	if (IsRunningCookCommandlet() || (IsRunningCommandlet() && !System->IsAutoCompileCommandletEnabled()))
 	{
 		return false;
 	}
 
-	// Don't compile if we're running game, Compile and/or if AutoCompile is disabled
-	if (IsRunningGame() || System->IsCompilationDisabled() || !System->IsAutoCompileEnabled())
+	// Don't compile if we're running game or if Mutable or AutoCompile is disabled.
+	if (IsRunningGame() || !System->IsActive() || !System->IsAutoCompileEnabled())
 	{
 		System->AddUncompiledCOWarning(*this);
 		return false;
 	}
-
-	// Discard any older compilation
-	PrivateData->SetModel(nullptr, FGuid());
 
 	// Sync/Async compilation
 	if (System->IsAutoCompilationSync())
@@ -771,7 +909,7 @@ bool UCustomizableObject::ConditionalAutoCompile()
 	}
 	else
 	{
-		const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+		const FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 		const FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(UE_MUTABLE_OBJECTPATH(GetPathName()));
 		System->RecompileCustomizableObjectAsync(AssetData, this);
 	}
@@ -780,9 +918,8 @@ bool UCustomizableObject::ConditionalAutoCompile()
 }
 
 
-FReply UCustomizableObject::AddNewParameterProfile(FString Name, UCustomizableObjectInstance& CustomInstance)
+FReply UCustomizableObjectPrivate::AddNewParameterProfile(FString Name, UCustomizableObjectInstance& CustomInstance)
 {
-
 	if (Name.IsEmpty())
 	{
 		Name = "Unnamed_Profile";
@@ -794,7 +931,7 @@ FReply UCustomizableObject::AddNewParameterProfile(FString Name, UCustomizableOb
 	bool bUniqueNameFound = false;
 	while (!bUniqueNameFound)
 	{
-		FProfileParameterDat* Found = InstancePropertiesProfiles.FindByPredicate(
+		FProfileParameterDat* Found = GetPublic()->InstancePropertiesProfiles.FindByPredicate(
 			[&ProfileName](const FProfileParameterDat& Profile) { return Profile.ProfileName == ProfileName; });
 
 		bUniqueNameFound = static_cast<bool>(!Found);
@@ -805,10 +942,10 @@ FReply UCustomizableObject::AddNewParameterProfile(FString Name, UCustomizableOb
 		}
 	}
 
-	int32 ProfileIndex = InstancePropertiesProfiles.Emplace();
+	int32 ProfileIndex = GetPublic()->InstancePropertiesProfiles.Emplace();
 
-	InstancePropertiesProfiles[ProfileIndex].ProfileName = ProfileName;
-	CustomInstance.SaveParametersToProfile(ProfileIndex);
+	GetPublic()->InstancePropertiesProfiles[ProfileIndex].ProfileName = ProfileName;
+	CustomInstance.GetPrivate()->SaveParametersToProfile(ProfileIndex);
 
 	Modify();
 
@@ -816,26 +953,16 @@ FReply UCustomizableObject::AddNewParameterProfile(FString Name, UCustomizableOb
 }
 
 
-FString UCustomizableObject::GetCompiledDataFolderPath(bool bIsEditorData) const
+FString UCustomizableObjectPrivate::GetCompiledDataFolderPath() const
 {	
-	const FString FolderName = bIsEditorData ? TEXT("MutableStreamedDataEditor/") : TEXT("MutableStreamedData/");
-	return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() + FolderName);
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() + TEXT("MutableStreamedDataEditor/"));
 }
 
 
-FString UCustomizableObject::GetCompiledDataFileName(bool bIsModel, const ITargetPlatform* InTargetPlatform, bool bIsDiskStreamer)
+FString UCustomizableObjectPrivate::GetCompiledDataFileName(bool bIsModel, const ITargetPlatform* InTargetPlatform, bool bIsDiskStreamer)
 {
-	// Generate the Identifier using the path and name of the asset
-	if (!bIsDiskStreamer)
-	{
-		uint32 FullPathHash = GetTypeHash(GetFullName());
-		uint32 OutermostHash = GetTypeHash(GetNameSafe(GetOutermost()));
-		uint32 OuterHash = GetTypeHash(GetName());
-		Identifier = FGuid(0, FullPathHash, OutermostHash, OuterHash);
-	}
-
 	const FString PlatformName = InTargetPlatform ? InTargetPlatform->PlatformName() : FPlatformProperties::PlatformName();
-	const FString FileIdentifier = bIsDiskStreamer ? GetPrivate()->Identifier.ToString() : Identifier.ToString();
+	const FString FileIdentifier = bIsDiskStreamer ? Identifier.ToString() : GenerateIdentifier(*GetPublic()).ToString();
 	const FString Extension = bIsModel ? TEXT("_M.mut") : TEXT("_S.mut");
 	return PlatformName + FileIdentifier + Extension;
 }
@@ -843,40 +970,34 @@ FString UCustomizableObject::GetCompiledDataFileName(bool bIsModel, const ITarge
 
 FString UCustomizableObject::GetDesc()
 {
-	int states = GetStateCount();
-	int params = GetParameterCount();
-	return FString::Printf(TEXT("%d States, %d Parameters"), states, params);
+	int32 States = GetStateCount();
+	int32 Params = GetParameterCount();
+	return FString::Printf(TEXT("%d States, %d Parameters"), States, Params);
 }
 
 
-void UCustomizableObject::SaveEmbeddedData(FArchive& Ar)
+void UCustomizableObjectPrivate::SaveEmbeddedData(FArchive& Ar)
 {
 	UE_LOG(LogMutable, Verbose, TEXT("Saving embedded data for Customizable Object [%s] now at position %d."), *GetName(), int(Ar.Tell()));
 
-	int32 InternalVersion = PrivateData->GetModel() ? CurrentSupportedVersion : -1;
+	int32 InternalVersion = GetModel() ? CurrentSupportedVersion : -1;
 	Ar << InternalVersion;
 
-	if (PrivateData->GetModel())
-	{
-		// Serialize morph data
+	if (GetModel())
+	{	
 		{
-			Ar << ContributingMorphTargetsInfo;
-			Ar << MorphTargetReconstructionData;
-		}
-		
-		{
-			Ar << ClothMeshToMeshVertData;
-			Ar << ContributingClothingAssetsData;
-			Ar << ClothSharedConfigsData;
+			Ar << GetPublic()->ClothMeshToMeshVertData;
+			Ar << GetPublic()->ContributingClothingAssetsData;
+			Ar << GetPublic()->ClothSharedConfigsData;
 		}
 
 		// Serialise the entire model, but unload the streamable data first.
 		{
-			PrivateData->GetModel()->UnloadExternalData();
+			GetModel()->UnloadExternalData();
 
-			UnrealMutableOutputStream stream(Ar);
-			mu::OutputArchive arch(&stream);
-			mu::Model::Serialise(PrivateData->GetModel().Get(), arch);
+			UnrealMutableOutputStream Stream(Ar);
+			mu::OutputArchive Arch(&Stream);
+			mu::Model::Serialise(GetModel().Get(), Arch);
 		}
 
 		UE_LOG(LogMutable, Verbose, TEXT("Saved embedded data for Customizable Object [%s] now at position %d."), *GetName(), int(Ar.Tell()));
@@ -885,7 +1006,7 @@ void UCustomizableObject::SaveEmbeddedData(FArchive& Ar)
 
 #endif // End WITH_EDITOR 
 
-void UCustomizableObject::LoadEmbeddedData(FArchive& Ar)
+void UCustomizableObjectPrivate::LoadEmbeddedData(FArchive& Ar)
 {
 	MUTABLE_CPUPROFILER_SCOPE(UCustomizableObject::LoadEmbeddedData)
 
@@ -894,50 +1015,49 @@ void UCustomizableObject::LoadEmbeddedData(FArchive& Ar)
 
 	// If this fails, something went wrong with the packaging: we have data that belongs
 	// to a different version than the code.
-	check(CurrentSupportedVersion==InternalVersion);
+	check(CurrentSupportedVersion == InternalVersion);
 
 	if(CurrentSupportedVersion == InternalVersion)
-	{
-		// Load morph data
+	{	
 		{
-			Ar << ContributingMorphTargetsInfo;
-			Ar << MorphTargetReconstructionData;
-		}
-		
-		{
-			Ar << ClothMeshToMeshVertData;
-			Ar << ContributingClothingAssetsData;
-			Ar << ClothSharedConfigsData;
+			Ar << GetPublic()->ClothMeshToMeshVertData;
+			Ar << GetPublic()->ContributingClothingAssetsData;
+			Ar << GetPublic()->ClothSharedConfigsData;
 		}
 		
 		// Load model
-		UnrealMutableInputStream stream(Ar);
-		mu::InputArchive arch(&stream);
-		TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = mu::Model::StaticUnserialise( arch );
-		PrivateData->SetModel( Model, FGuid());
+		UnrealMutableInputStream Stream(Ar);
+		mu::InputArchive Arch(&Stream);
+		TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = mu::Model::StaticUnserialise(Arch);
 
 		// Create parameter properties
-		UpdateParameterPropertiesFromModel();
+		UpdateParameterPropertiesFromModel(Model);
+
+		SetModel(Model, FGuid());
 	}
 }
 
 
-FCustomizableObjectPrivateData* UCustomizableObject::GetPrivate() const
+UCustomizableObjectPrivate* UCustomizableObject::GetPrivate() const
 {
-	check(PrivateData)
-	return PrivateData.Get();
+	check(Private);
+	return Private;
 }
 
 
 bool UCustomizableObject::IsCompiled() const
 {
-	bool IsCompiled = PrivateData->GetModel() != nullptr;
+#if WITH_EDITOR
+	const bool bIsCompiled = Private->GetModel() != nullptr && Private->GetModel()->IsValid();
+#else
+	const bool bIsCompiled = Private->GetModel() != nullptr;
+#endif
 
-	return IsCompiled;
+	return bIsCompiled;
 }
 
 
-void UCustomizableObject::AddUncompiledCOWarning(const FString& AdditionalLoggingInfo)
+void UCustomizableObjectPrivate::AddUncompiledCOWarning(const FString& AdditionalLoggingInfo)
 {
 	// Send a warning (on-screen notification, log error, and in-editor notification)
 	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
@@ -946,11 +1066,11 @@ void UCustomizableObject::AddUncompiledCOWarning(const FString& AdditionalLoggin
 		return;
 	}
 
-	System->AddUncompiledCOWarning(*this, &AdditionalLoggingInfo);
+	System->AddUncompiledCOWarning(*GetPublic(), &AdditionalLoggingInfo);
 }
 
 
-USkeletalMesh* UCustomizableObject::GetRefSkeletalMesh(int32 ComponentIndex)
+USkeletalMesh* UCustomizableObject::GetRefSkeletalMesh(int32 ComponentIndex) const
 {
 #if WITH_EDITORONLY_DATA
 	if (ReferenceSkeletalMeshes.IsValidIndex(ComponentIndex))
@@ -958,156 +1078,23 @@ USkeletalMesh* UCustomizableObject::GetRefSkeletalMesh(int32 ComponentIndex)
 		return ReferenceSkeletalMeshes[ComponentIndex];
 	}
 #else
-	if (ReferenceSkeletalMeshesData.IsValidIndex(ComponentIndex))
+	const FModelResources& ModelResources = Private->GetModelResources();
+	if (ModelResources.ReferenceSkeletalMeshesData.IsValidIndex(ComponentIndex))
 	{
 		// Can be nullptr if RefSkeletalMeshes are not loaded yet.
-		return ReferenceSkeletalMeshesData[ComponentIndex].SkeletalMesh;
+		return ModelResources.ReferenceSkeletalMeshesData[ComponentIndex].SkeletalMesh;
 	}
 #endif
 	return nullptr;
 }
-
-
-FMutableRefSkeletalMeshData* UCustomizableObject::GetRefSkeletalMeshData(int32 ComponentIndex)
-{
-	if(ReferenceSkeletalMeshesData.IsValidIndex(ComponentIndex))
-	{
-		return &ReferenceSkeletalMeshesData[ComponentIndex];
-	}
-
-	UE_LOG(LogMutable, Warning, TEXT("UCustomizableObject::GetRefSkeletalMeshData with an invalid Index. "
-			"Reference SkeletalMesh data and compiled model may be out of sync. "
-			"Try recompiling the CustomizableObject [%s]."), *GetName() );
-	
-	return nullptr;
-}
-
-
-TSoftObjectPtr<UMaterialInterface> UCustomizableObject::GetReferencedMaterialAssetPtr( uint32 Index )
-{
-	if (ReferencedMaterials.IsValidIndex(Index))
-	{
-		return ReferencedMaterials[Index];
-	}
-
-	UE_LOG(LogMutable, Warning, TEXT("UCustomizableObject::GetReferencedMaterial with an invalid Index. "
-		"Source material data and CustomizableObject data may be out of sync. "
-		"Try recompiling and saving the CustomizableObject asset [%s]."), *GetName() );
-	return nullptr;
-}
-
-
-TSoftObjectPtr<USkeleton> UCustomizableObject::GetReferencedSkeletonAssetPtr( uint32 Index )
-{
-	if (ReferencedSkeletons.IsValidIndex(Index))
-	{
-		return ReferencedSkeletons[Index];
-	}
-
-	UE_LOG(LogMutable, Warning, TEXT("UCustomizableObject::GetReferencedSkeleton with an invalid Index. "
-		"Skeleton data and CustomizableObject data may be out of sync. "
-		"Try recompiling and saving the CustomizableObject asset [%s]."), *GetName());
-	return nullptr;
-}
-
-
-void UCustomizableObject::LoadReferenceSkeletalMeshesAsync()
-{
-#if !WITH_EDITORONLY_DATA
-	if (!RefSkeletalMeshStreamingHandle)
-	{
-		TArray<FSoftObjectPath> MeshesToStream;
-
-		for (const FMutableRefSkeletalMeshData& RefSkeletalMeshData : ReferenceSkeletalMeshesData)
-		{
-			MeshesToStream.Add(RefSkeletalMeshData.SkeletalMeshAssetPath);
-		}
-
-		if (!MeshesToStream.IsEmpty())
-		{
-			TWeakObjectPtr<UCustomizableObject> WeakCO(this);
-
-			FStreamableManager& StreamableManager = UCustomizableObjectSystem::GetInstance()->GetStreamableManager();
-			RefSkeletalMeshStreamingHandle = StreamableManager.RequestAsyncLoad(MeshesToStream, FStreamableDelegate::CreateUObject(this, &UCustomizableObject::OnReferenceSkeletalMeshesAsyncLoaded),
-				FStreamableManager::AsyncLoadHighPriority);
-		}
-
-	}
-#endif
-}
-
-
-void UCustomizableObject::UnloadReferenceSkeletalMeshes()
-{
-#if !WITH_EDITORONLY_DATA
-	for (FMutableRefSkeletalMeshData& Data : ReferenceSkeletalMeshesData)
-	{
-		Data.SkeletalMesh = nullptr;
-	}
-#endif
-}
-
-
-void UCustomizableObject::OnReferenceSkeletalMeshesAsyncLoaded()
-{
-#if !WITH_EDITORONLY_DATA
-	if (RefSkeletalMeshStreamingHandle)
-	{
-		for (FMutableRefSkeletalMeshData& Data : ReferenceSkeletalMeshesData)
-		{
-			Data.SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(Data.SkeletalMeshAssetPath).Get();
-			check(Data.SkeletalMesh);
-		}
-
-		RefSkeletalMeshStreamingHandle.Reset();
-	}
-#endif
-}
-
-
-TObjectPtr<USkeleton> UCustomizableObject::GetCachedMergedSkeleton(const int32 ComponentIndex, const TArray<uint16>& SkeletonIds) const
-{
-	const FMergedSkeleton* MergedSkeleton = MergedSkeletons.FindByPredicate([&ComponentIndex, &SkeletonIds](const FMergedSkeleton& MergedSkeleton) 
-		{ return MergedSkeleton.ComponentIndex == ComponentIndex && MergedSkeleton.SkeletonIds == SkeletonIds; });
-
-	if (MergedSkeleton && MergedSkeleton->Skeleton.IsValid())
-	{
-		return MergedSkeleton->Skeleton.Get();
-	}
-
-	return nullptr;
-}
-
-
-void UCustomizableObject::CacheMergedSkeleton(const int32 ComponentIndex, const TArray<uint16>& SkeletonIds, TObjectPtr<USkeleton> Skeleton)
-{
-	if (Skeleton)
-	{
-		MergedSkeletons.AddUnique({ Skeleton, ComponentIndex, SkeletonIds });
-	}
-}
-
-
-void UCustomizableObject::UnCacheInvalidSkeletons()
-{
-	for (int32 SkeletonIndex = MergedSkeletons.Num() - 1; SkeletonIndex >= 0; --SkeletonIndex)
-	{
-		FMergedSkeleton& MergedSkeleton = MergedSkeletons[SkeletonIndex];
-		if (!MergedSkeleton.Skeleton.IsValid())
-		{
-			MergedSkeletons.RemoveSingleSwap(MergedSkeleton);
-		}
-	}
-}
-
 
 
 int32 UCustomizableObject::FindState( const FString& Name ) const
 {
 	int32 Result = -1;
-	if (PrivateData->GetModel())
+	if (Private->GetModel())
 	{
-		Result = PrivateData->GetModel()->FindState( StringCast<ANSICHAR>(*Name).Get() );
+		Result = Private->GetModel()->FindState(Name);
 	}
 
 	return Result;
@@ -1118,9 +1105,9 @@ int32 UCustomizableObject::GetStateCount() const
 {
 	int32 Result = 0;
 
-	if (PrivateData->GetModel())
+	if (Private->GetModel())
 	{
-		Result = PrivateData->GetModel()->GetStateCount();
+		Result = Private->GetModel()->GetStateCount();
 	}
 
 	return Result;
@@ -1129,11 +1116,17 @@ int32 UCustomizableObject::GetStateCount() const
 
 FString UCustomizableObject::GetStateName(int32 StateIndex) const
 {
+	return GetPrivate()->GetStateName(StateIndex);
+}
+
+
+FString UCustomizableObjectPrivate::GetStateName(int32 StateIndex) const
+{
 	FString Result;
 
-	if (PrivateData->GetModel())
+	if (GetModel())
 	{
-		Result = StringCast<TCHAR>( PrivateData->GetModel()->GetStateName(StateIndex) ).Get();
+		Result = GetModel()->GetStateName(StateIndex);
 	}
 
 	return Result;
@@ -1144,9 +1137,9 @@ int32 UCustomizableObject::GetStateParameterCount( int32 StateIndex ) const
 {
 	int32 Result = 0;
 
-	if (PrivateData->GetModel())
+	if (Private->GetModel())
 	{
-		Result = PrivateData->GetModel()->GetStateParameterCount(StateIndex);
+		Result = Private->GetModel()->GetStateParameterCount(StateIndex);
 	}
 
 	return Result;
@@ -1156,9 +1149,9 @@ int32 UCustomizableObject::GetStateParameterIndex(int32 StateIndex, int32 Parame
 {
 	int32 Result = 0;
 
-	if (PrivateData->GetModel())
+	if (Private->GetModel())
 	{
-		Result = PrivateData->GetModel()->GetStateParameterIndex(StateIndex, ParameterIndex);
+		Result = Private->GetModel()->GetStateParameterIndex(StateIndex, ParameterIndex);
 	}
 
 	return Result;
@@ -1187,11 +1180,31 @@ FString UCustomizableObject::GetStateParameterName(int32 StateIndex, int32 Param
 
 
 #if WITH_EDITORONLY_DATA
-void UCustomizableObject::PostCompile()
+void UCustomizableObjectPrivate::PostCompile()
 {
-	CompilationGuid = FGuid::NewGuid();
-
 	PostCompileDelegate.Broadcast();
+}
+#endif
+
+
+const UCustomizableObjectBulk* UCustomizableObjectPrivate::GetStreamableBulkData() const
+{
+	return GetPublic()->BulkData;
+}
+
+
+UCustomizableObject* UCustomizableObjectPrivate::GetPublic() const
+{
+	UCustomizableObject* Public = StaticCast<UCustomizableObject*>(GetOuter());
+	check(Public);
+
+	return Public;
+}
+
+#if WITH_EDITORONLY_DATA
+FPostCompileDelegate& UCustomizableObject::GetPostCompileDelegate() const
+{
+	return GetPrivate()->PostCompileDelegate;
 }
 #endif
 
@@ -1202,7 +1215,7 @@ UCustomizableObjectInstance* UCustomizableObject::CreateInstance()
 
 	UCustomizableObjectInstance* PreviewInstance = NewObject<UCustomizableObjectInstance>(GetTransientPackage(), NAME_None, RF_Transient);
 	PreviewInstance->SetObject(this);
-	PreviewInstance->bShowOnlyRuntimeParameters = false;
+	PreviewInstance->GetPrivate()->bShowOnlyRuntimeParameters = false;
 
 	UE_LOG(LogMutable, Verbose, TEXT("Created Customizable Object Instance."));
 
@@ -1210,44 +1223,39 @@ UCustomizableObjectInstance* UCustomizableObject::CreateInstance()
 }
 
 
-TSharedPtr<mu::Model, ESPMode::ThreadSafe> UCustomizableObject::GetModel() const
-{
-	return PrivateData->GetModel();
-}
-
-#if WITH_EDITOR
-void UCustomizableObject::SetModel(TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model)
-{
-	PrivateData->SetModel(Model, Identifier);
-	
-	UpdateCompiledDataFromModel();
-}
-
-void UCustomizableObject::SetBoneNamesArray(const TArray<FName>& InBoneNames)
-{
-	BoneNames = InBoneNames;
-}
-
-#endif // End WITH_EDITOR
-
-
 int32 UCustomizableObject::GetNumLODs() const
 {
-	return LODSettings.NumLODsInRoot;
+	if (IsCompiled())
+	{
+		return GetPrivate()->GetModelResources().NumLODs;
+	}
+
+	return 0;
 }
 
 int32 UCustomizableObject::GetComponentCount() const
 {
-	return IsCompiled() ? NumMeshComponentsInRoot : 0;
+	if (IsCompiled())
+	{
+		return GetPrivate()->GetModelResources().NumComponents;
+	}
+
+	return 0;
 }
 
-int UCustomizableObject::GetParameterCount() const
+int32 UCustomizableObject::GetParameterCount() const
 {
-	return ParameterProperties.Num();
+	return GetPrivate()->ParameterProperties.Num();
 }
 
 
 EMutableParameterType UCustomizableObject::GetParameterType(int32 ParamIndex) const
+{
+	return GetPrivate()->GetParameterType(ParamIndex);
+}
+
+
+EMutableParameterType UCustomizableObjectPrivate::GetParameterType(int32 ParamIndex) const
 {
 	if (ParamIndex >= 0 && ParamIndex < ParameterProperties.Num())
 	{
@@ -1264,21 +1272,21 @@ EMutableParameterType UCustomizableObject::GetParameterType(int32 ParamIndex) co
 
 EMutableParameterType UCustomizableObject::GetParameterTypeByName(const FString& Name) const
 {
-	const int* IndexPtr = ParameterPropertiesLookupTable.Find(Name);
+	const int* IndexPtr = GetPrivate()->ParameterPropertiesLookupTable.Find(Name);
 	int Index = IndexPtr ? *IndexPtr : INDEX_NONE;
 
-	if (ParameterProperties.IsValidIndex(Index))
+	if (GetPrivate()->ParameterProperties.IsValidIndex(Index))
 	{
-		return ParameterProperties[Index].Type;
+		return GetPrivate()->ParameterProperties[Index].Type;
 	}
 
 	UE_LOG(LogMutable, Warning, TEXT("Name '%s' does not exist in ParameterProperties lookup table at GetParameterTypeByName at CO %s."), *Name, *GetName());
 
-	for (int32 ParamIndex = 0; ParamIndex < ParameterProperties.Num(); ++ParamIndex)
+	for (int32 ParamIndex = 0; ParamIndex < GetPrivate()->ParameterProperties.Num(); ++ParamIndex)
 	{
-		if (ParameterProperties[ParamIndex].Name == Name)
+		if (GetPrivate()->ParameterProperties[ParamIndex].Name == Name)
 		{
-			return ParameterProperties[ParamIndex].Type;
+			return GetPrivate()->ParameterProperties[ParamIndex].Type;
 		}
 	}
 
@@ -1292,9 +1300,9 @@ static const FString s_EmptyString;
 
 const FString & UCustomizableObject::GetParameterName(int32 ParamIndex) const
 {
-	if (ParamIndex >= 0 && ParamIndex < ParameterProperties.Num())
+	if (ParamIndex >= 0 && ParamIndex < GetPrivate()->ParameterProperties.Num())
 	{
-		return ParameterProperties[ParamIndex].Name;
+		return GetPrivate()->ParameterProperties[ParamIndex].Name;
 	}
 	else
 	{
@@ -1305,11 +1313,11 @@ const FString & UCustomizableObject::GetParameterName(int32 ParamIndex) const
 }
 
 
-void UCustomizableObject::UpdateParameterPropertiesFromModel()
+void UCustomizableObjectPrivate::UpdateParameterPropertiesFromModel(const TSharedPtr<mu::Model>& Model)
 {
-	if (PrivateData->GetModel())
+	if (Model)
 	{
-		mu::ParametersPtr MutableParameters = mu::Model::NewParameters(PrivateData->GetModel());
+		mu::ParametersPtr MutableParameters = mu::Model::NewParameters(Model);
 		int paramCount = MutableParameters->GetCount();
 
 		ParameterProperties.Reset(paramCount);
@@ -1395,9 +1403,9 @@ int32 UCustomizableObject::GetParameterDescriptionCount(const FString& ParamName
 
 int32 UCustomizableObject::GetIntParameterNumOptions(int32 ParamIndex) const
 {
-	if (ParamIndex >= 0 && ParamIndex < ParameterProperties.Num())
+	if (ParamIndex >= 0 && ParamIndex < GetPrivate()->ParameterProperties.Num())
 	{
-		return ParameterProperties[ParamIndex].PossibleValues.Num();
+		return GetPrivate()->ParameterProperties[ParamIndex].PossibleValues.Num();
 	}
 	else
 	{
@@ -1410,11 +1418,11 @@ int32 UCustomizableObject::GetIntParameterNumOptions(int32 ParamIndex) const
 
 const FString& UCustomizableObject::GetIntParameterAvailableOption(int32 ParamIndex, int32 K) const
 {
-	if (ParamIndex >= 0 && ParamIndex < ParameterProperties.Num())
+	if (ParamIndex >= 0 && ParamIndex < GetPrivate()->ParameterProperties.Num())
 	{
 		if (K >= 0 && K < GetIntParameterNumOptions(ParamIndex))
 		{
-			return ParameterProperties[ParamIndex].PossibleValues[K].Name;
+			return GetPrivate()->ParameterProperties[ParamIndex].PossibleValues[K].Name;
 		}
 		else
 		{
@@ -1432,6 +1440,12 @@ const FString& UCustomizableObject::GetIntParameterAvailableOption(int32 ParamIn
 
 int32 UCustomizableObject::FindParameter(const FString& Name) const
 {
+	return GetPrivate()->FindParameter(Name);
+}
+
+
+int32 UCustomizableObjectPrivate::FindParameter(const FString& Name) const
+{
 	const int32 * Found = ParameterPropertiesLookupTable.Find(Name);
 	if (Found == nullptr)
 	{
@@ -1442,6 +1456,12 @@ int32 UCustomizableObject::FindParameter(const FString& Name) const
 
 
 int32 UCustomizableObject::FindIntParameterValue(int32 ParamIndex, const FString& Value) const
+{
+	return GetPrivate()->FindIntParameterValue(ParamIndex, Value);
+}
+
+
+int32 UCustomizableObjectPrivate::FindIntParameterValue(int32 ParamIndex, const FString& Value) const
 {
 	int32 MinValueIndex = 0;
 	if (ParamIndex >= 0 && ParamIndex < ParameterProperties.Num())
@@ -1478,9 +1498,9 @@ int32 UCustomizableObject::FindIntParameterValue(int32 ParamIndex, const FString
 
 FString UCustomizableObject::FindIntParameterValueName(int32 ParamIndex, int32 ParamValue) const
 {
-	if (ParamIndex >= 0 && ParamIndex < ParameterProperties.Num())
+	if (ParamIndex >= 0 && ParamIndex < GetPrivate()->ParameterProperties.Num())
 	{
-		const TArray<FMutableModelParameterValue> & PossibleValues = ParameterProperties[ParamIndex].PossibleValues;
+		const TArray<FMutableModelParameterValue> & PossibleValues = GetPrivate()->ParameterProperties[ParamIndex].PossibleValues;
 
 		const int32 MinValueIndex = !PossibleValues.IsEmpty() ? PossibleValues[0].Value : 0;
 		ParamValue = ParamValue - MinValueIndex;
@@ -1501,7 +1521,7 @@ FString UCustomizableObject::FindIntParameterValueName(int32 ParamIndex, int32 P
 
 FParameterUIData UCustomizableObject::GetParameterUIMetadata(const FString& ParamName) const
 {
-	const FParameterUIData* ParameterUIData = ParameterUIDataMap.Find(ParamName);
+	const FParameterUIData* ParameterUIData = Private->GetModelResources().ParameterUIDataMap.Find(ParamName);
 
 	return ParameterUIData ? *ParameterUIData : FParameterUIData();
 }
@@ -1515,7 +1535,13 @@ FParameterUIData UCustomizableObject::GetParameterUIMetadataFromIndex(int32 Para
 
 FParameterUIData UCustomizableObject::GetStateUIMetadata(const FString& StateName) const
 {
-	const FParameterUIData* StateUIData = StateUIDataMap.Find(StateName);
+	return GetPrivate()->GetStateUIMetadata(StateName);
+}
+
+
+FParameterUIData UCustomizableObjectPrivate::GetStateUIMetadata(const FString& StateName) const
+{
+	const FParameterUIData* StateUIData = GetModelResources().StateUIDataMap.Find(StateName);
 
 	return StateUIData ? *StateUIData : FParameterUIData();
 }
@@ -1523,19 +1549,13 @@ FParameterUIData UCustomizableObject::GetStateUIMetadata(const FString& StateNam
 
 FParameterUIData UCustomizableObject::GetStateUIMetadataFromIndex(int32 StateIndex) const
 {
+	return GetPrivate()->GetStateUIMetadataFromIndex(StateIndex);
+}
+
+
+FParameterUIData UCustomizableObjectPrivate::GetStateUIMetadataFromIndex(int32 StateIndex) const
+{
 	return GetStateUIMetadata(GetStateName(StateIndex));
-}
-
-
-void UCustomizableObject::LoadMaskOutCache()
-{
-	MaskOutCache_HardRef = MaskOutCache.LoadSynchronous();
-}
-
-
-void UCustomizableObject::UnloadMaskOutCache()
-{
-	MaskOutCache_HardRef = nullptr;
 }
 
 
@@ -1544,11 +1564,11 @@ float UCustomizableObject::GetFloatParameterDefaultValue(const FString& InParame
 	const int32 ParameterIndex = FindParameter(InParameterName);
 	if (ParameterIndex == INDEX_NONE)
 	{
-		checkNoEntry();
+		UE_LOG(LogMutable, Error, TEXT("Tried to access the default value of the nonexistent float parameter [%s] in the CustomizableObject [%s]."), *InParameterName, *GetName());
 		return FCustomizableObjectFloatParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 
-	const TSharedPtr<mu::Model> Model = GetModel();
+	const TSharedPtr<mu::Model> Model = GetPrivate()->GetModel();
 	if (!Model)
 	{
 		checkNoEntry();
@@ -1564,11 +1584,11 @@ int32 UCustomizableObject::GetIntParameterDefaultValue(const FString& InParamete
 	const int32 ParameterIndex = FindParameter(InParameterName);
 	if (ParameterIndex == INDEX_NONE)
 	{
-		checkNoEntry();
+		UE_LOG(LogMutable, Error, TEXT("Tried to access the default value of the nonexistent integer parameter [%s] in the CustomizableObject [%s]."), *InParameterName, *GetName());
 		return FCustomizableObjectIntParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 
-	const TSharedPtr<mu::Model> Model = GetModel();
+	const TSharedPtr<mu::Model> Model = GetPrivate()->GetModel();
 	if (!Model)
 	{
 		checkNoEntry();
@@ -1584,15 +1604,15 @@ bool UCustomizableObject::GetBoolParameterDefaultValue(const FString& InParamete
 	const int32 ParameterIndex = FindParameter(InParameterName);
 	if (ParameterIndex == INDEX_NONE)
 	{
-		checkNoEntry();
+		UE_LOG(LogMutable, Error, TEXT("Tried to access the default value of the nonexistent boolean parameter [%s] in the CustomizableObject [%s]."), *InParameterName, *GetName());
 		return FCustomizableObjectBoolParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 
-	const TSharedPtr<mu::Model> Model = GetModel();
+	const TSharedPtr<mu::Model> Model = GetPrivate()->GetModel();
 	if (!Model)
 	{
 		checkNoEntry();
-		return FCustomizableObjectBoolParameterValue::DEFAULT_PARAMETER_VALUE;;
+		return FCustomizableObjectBoolParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 	
 	return Model->GetBoolDefaultValue(ParameterIndex);
@@ -1604,11 +1624,11 @@ FLinearColor UCustomizableObject::GetColorParameterDefaultValue(const FString& I
 	const int32 ParameterIndex = FindParameter(InParameterName);
 	if (ParameterIndex == INDEX_NONE)
 	{
-		checkNoEntry();
-		return FCustomizableObjectVectorParameterValue::DEFAULT_PARAMETER_VALUE;;
+		UE_LOG(LogMutable, Error, TEXT("Tried to access the default value of the nonexistent color parameter [%s] in the CustomizableObject [%s]."), *InParameterName, *GetName());
+		return FCustomizableObjectVectorParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 
-	const TSharedPtr<mu::Model> Model = GetModel();
+	const TSharedPtr<mu::Model> Model = GetPrivate()->GetModel();
 	if (!Model)
 	{
 		checkNoEntry();
@@ -1616,7 +1636,7 @@ FLinearColor UCustomizableObject::GetColorParameterDefaultValue(const FString& I
 	}
 	
 	FLinearColor Value;
-	Model->GetColourDefaultValue(ParameterIndex, &Value.R, &Value.G, &Value.B);
+	Model->GetColourDefaultValue(ParameterIndex, &Value.R, &Value.G, &Value.B, &Value.A);
 
 	return Value;
 }
@@ -1642,11 +1662,11 @@ FCustomizableObjectProjector UCustomizableObject::GetProjectorParameterDefaultVa
 	const int32 ParameterIndex = FindParameter(InParameterName);
 	if (ParameterIndex == INDEX_NONE)
 	{
-		checkNoEntry();
+		UE_LOG(LogMutable, Error, TEXT("Tried to access the default value of the nonexistent projector [%s] in the CustomizableObject [%s]."), *InParameterName, *GetName());
 		return FCustomizableObjectProjectorParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 
-	const TSharedPtr<mu::Model> Model = GetModel();
+	const TSharedPtr<mu::Model> Model = GetPrivate()->GetModel();
 	if (!Model)
 	{
 		checkNoEntry();
@@ -1667,15 +1687,15 @@ FName UCustomizableObject::GetTextureParameterDefaultValue(const FString& InPara
 	const int32 ParameterIndex = FindParameter(InParameterName);
 	if (ParameterIndex == INDEX_NONE)
 	{
-		checkNoEntry();
-		return FName();
+		UE_LOG(LogMutable, Error, TEXT("Tried to access the default value of the nonexistent texture parameter [%s] in the CustomizableObject [%s]."), *InParameterName, *GetName());
+		return FCustomizableObjectTextureParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 
-	const TSharedPtr<mu::Model> Model = GetModel();
+	const TSharedPtr<mu::Model> Model = GetPrivate()->GetModel();
 	if (!Model)
 	{
 		checkNoEntry();
-		return FName();
+		return FCustomizableObjectTextureParameterValue::DEFAULT_PARAMETER_VALUE;
 	}
 	
 	return Model->GetImageDefaultValue(ParameterIndex);
@@ -1687,8 +1707,8 @@ bool UCustomizableObject::IsParameterMultidimensional(const FString& InParameter
 	const int32 ParameterIndex = FindParameter(InParameterName);
 	if (ParameterIndex == INDEX_NONE)
 	{
-		checkNoEntry();
-		return {};
+		UE_LOG(LogMutable, Error, TEXT("Tried to access the default value of the nonexistent parameter [%s] in the CustomizableObject [%s]."), *InParameterName, *GetName());
+		return false;
 	}
 
 	return IsParameterMultidimensional(ParameterIndex);
@@ -1698,16 +1718,16 @@ bool UCustomizableObject::IsParameterMultidimensional(const FString& InParameter
 bool UCustomizableObject::IsParameterMultidimensional(const int32& InParamIndex) const
 {
 	check(InParamIndex != INDEX_NONE);
-	if (PrivateData->GetModel())
+	if (Private->GetModel())
 	{
-		return PrivateData->GetModel()->IsParameterMultidimensional(InParamIndex);
+		return Private->GetModel()->IsParameterMultidimensional(InParamIndex);
 	}
 
 	return false;
 }
 
 
-void UCustomizableObject::ApplyStateForcedValuesToParameters( int32 State, mu::Parameters* Parameters)
+void UCustomizableObjectPrivate::ApplyStateForcedValuesToParameters( int32 State, mu::Parameters* Parameters)
 {
 	FParameterUIData StateMetaData = GetStateUIMetadataFromIndex(State);
 	for (const TPair<FString, FString>& ForcedParameter : StateMetaData.ForcedParameterValues)
@@ -1754,16 +1774,17 @@ void UCustomizableObject::ApplyStateForcedValuesToParameters( int32 State, mu::P
 }
 
 
-void UCustomizableObject::GetLowPriorityTextureNames(TArray<FString>& OutTextureNames)
+void UCustomizableObjectPrivate::GetLowPriorityTextureNames(TArray<FString>& OutTextureNames)
 {
-	OutTextureNames.Reset(LowPriorityTextures.Num());
+	OutTextureNames.Reset(GetPublic()->LowPriorityTextures.Num());
 
-	if (!LowPriorityTextures.IsEmpty())
+	if (!GetPublic()->LowPriorityTextures.IsEmpty())
 	{
-		const int32 ImageCount = ImageProperties.Num();
+		const FModelResources& LocalModelResources = GetModelResources();
+		const int32 ImageCount = LocalModelResources.ImageProperties.Num();
 		for (int32 ImageIndex = 0; ImageIndex < ImageCount; ++ImageIndex)
 		{
-			if (LowPriorityTextures.Find(FName(ImageProperties[ImageIndex].TextureParameterName)) != INDEX_NONE)
+			if (GetPublic()->LowPriorityTextures.Find(FName(LocalModelResources.ImageProperties[ImageIndex].TextureParameterName)) != INDEX_NONE)
 			{
 				OutTextureNames.Add(FString::FromInt(ImageIndex));
 			}
@@ -1772,101 +1793,247 @@ void UCustomizableObject::GetLowPriorityTextureNames(TArray<FString>& OutTexture
 }
 
 
-const TArray<FName>& UCustomizableObject::GetBoneNamesArray() const
+int32 UCustomizableObjectPrivate::GetMinLODIndex() const
 {
-	return BoneNames;
+	int32 MinLODIdx = 0;
+
+	if (GEngine && GEngine->UseSkeletalMeshMinLODPerQualityLevels)
+	{
+		if (UCustomizableObjectSystem::GetInstance() != nullptr)
+		{
+			MinLODIdx = GetPublic()->LODSettings.MinQualityLevelLOD.GetValue(UCustomizableObjectSystem::GetInstance()->GetSkeletalMeshMinLODQualityLevel());
+		}
+	}
+	else
+	{
+		MinLODIdx = GetPublic()->LODSettings.MinLOD.GetValue();
+	}
+
+	return FMath::Max(MinLODIdx, static_cast<int32>(GetModelResources().FirstLODAvailable));
 }
 
 
-FGuid UCustomizableObject::GetCompilationGuid() const
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+
+USkeletalMesh* FMeshCache::Get(const TArray<mu::FResourceID>& Key)
 {
-	return CompilationGuid;
+	const TWeakObjectPtr<USkeletalMesh>* Result = GeneratedMeshes.Find(Key);
+	return Result ? Result->Get() : nullptr;
 }
 
 
-//-------------------------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------------------------
-
-void FCustomizableObjectPrivateData::SetModel(const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& Model, const FGuid Id)
+void FMeshCache::Add(const TArray<mu::FResourceID>& Key, USkeletalMesh* Value)
 {
-	MutableModel = Model;
+	if (!Value)
+	{
+		return;
+	}
+	
+	GeneratedMeshes.Add(Key, Value);
 
+	// Remove invalid SkeletalMeshes from the cache.
+	for (auto MeshIterator = GeneratedMeshes.CreateIterator(); MeshIterator; ++MeshIterator)
+	{
+		if (MeshIterator.Value().IsStale())
+		{
+			MeshIterator.RemoveCurrent();
+		}
+	}	
+}
+
+
+USkeleton* FSkeletonCache::Get(const TArray<uint16>& Key)
+{
+	const TWeakObjectPtr<USkeleton>* Result = MergedSkeletons.Find(Key);
+	return Result ? Result->Get() : nullptr;
+}
+
+
+void FSkeletonCache::Add(const TArray<uint16>& Key, USkeleton* Value)
+{
+	if (!Value)
+	{
+		return;
+	}
+
+	MergedSkeletons.Add(Key, Value);
+
+	// Remove invalid SkeletalMeshes from the cache.
+	for (auto SkeletonIterator = MergedSkeletons.CreateIterator(); SkeletonIterator; ++SkeletonIterator)
+	{
+		if (SkeletonIterator.Value().IsStale())
+		{
+			SkeletonIterator.RemoveCurrent();
+		}
+	}
+}
+
+
+UCustomizableObjectPrivate::UCustomizableObjectPrivate()
+{
 #if WITH_EDITOR
-	Identifier = Id;
+	UPackage::PackageMarkedDirtyEvent.AddUObject(this, &UCustomizableObjectPrivate::OnParticipatingObjectDirty);
 #endif
 }
 
 
-const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& FCustomizableObjectPrivateData::GetModel()
+void UCustomizableObjectPrivate::SetModel(const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& Model, const FGuid Id)
+{
+	if (MutableModel == Model
+#if WITH_EDITOR
+		&& Identifier == Id
+#endif
+		)
+	{
+		return;
+	}
+	
+#if WITH_EDITOR
+	if (MutableModel)
+	{
+		MutableModel->Invalidate();
+	}
+
+	Identifier = Id;
+#endif
+	
+	MutableModel = Model;
+
+	using EState = FCustomizableObjectStatus::EState;
+	Status.NextState(Model ? EState::ModelLoaded : EState::NoModel);
+}
+
+
+const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& UCustomizableObjectPrivate::GetModel()
 {
 	return MutableModel;
 }
 
 
-TSharedPtr<const mu::Model, ESPMode::ThreadSafe> FCustomizableObjectPrivateData::GetModel() const
+TSharedPtr<const mu::Model, ESPMode::ThreadSafe> UCustomizableObjectPrivate::GetModel() const
 {
 	return MutableModel;
 }
 
 
-//-------------------------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------------------------
-FMergedSkeleton::FMergedSkeleton(TObjectPtr<USkeleton> InSkeleton, const int32 InComponentIndex, const TArray<uint16>& InSkeletonIds)
+const FModelResources& UCustomizableObjectPrivate::GetModelResources() const
 {
-	check(InSkeleton);
-	Skeleton = InSkeleton;
-	ComponentIndex = InComponentIndex;
-	SkeletonIds = InSkeletonIds;
+#if WITH_EDITORONLY_DATA
+	return ModelResourcesEditor;
+#else
+	return ModelResources;
+#endif
+}
+
+
+#if WITH_EDITORONLY_DATA
+FModelResources& UCustomizableObjectPrivate::GetModelResources(bool bIsCooking)
+{
+	return bIsCooking ? ModelResources : ModelResourcesEditor;
+}
+#endif
+
+
+#if WITH_EDITOR
+bool UCustomizableObjectPrivate::IsCompilationOutOfDate(TArray<FName>* OutOfDatePackages) const
+{
+	if (const ICustomizableObjectEditorModule* Module = ICustomizableObjectEditorModule::Get())
+	{
+		return Module->IsCompilationOutOfDate(*GetPublic(), OutOfDatePackages);
+	}
+
+	return false;		
+}
+
+
+void UCustomizableObjectPrivate::OnParticipatingObjectDirty(UPackage* Package, bool)
+{
+	if (ParticipatingObjects.Contains(Package->GetFName()))
+	{
+		DirtyParticipatingObjects.AddUnique(Package->GetFName());		
+	}
+}
+#endif
+
+
+TArray<FString>& UCustomizableObjectPrivate::GetCustomizableObjectClassTags()
+{
+	return GetPublic()->CustomizableObjectClassTags;
+}
+
+
+TArray<FString>& UCustomizableObjectPrivate::GetPopulationClassTags()
+{
+	return GetPublic()->PopulationClassTags;
+}
+
+
+TMap<FString, FParameterTags>& UCustomizableObjectPrivate::GetCustomizableObjectParametersTags()
+{
+	return GetPublic()->CustomizableObjectParametersTags;
+}
+
+
+#if WITH_EDITORONLY_DATA
+TArray<FProfileParameterDat>& UCustomizableObjectPrivate::GetInstancePropertiesProfiles()
+{
+	return GetPublic()->InstancePropertiesProfiles;
+}
+#endif
+
+
+TArray<FCustomizableObjectResourceData>& UCustomizableObjectPrivate::GetAlwaysLoadedExtensionData()
+{
+	return GetPublic()->AlwaysLoadedExtensionData;
+}
+
+
+TArray<FCustomizableObjectStreamedResourceData>& UCustomizableObjectPrivate::GetStreamedExtensionData()
+{
+	return GetPublic()->StreamedExtensionData;
+}
+
+
+TArray<FCustomizableObjectStreamedResourceData>& UCustomizableObjectPrivate::GetStreamedResourceData()
+{
+	return GetPublic()->StreamedResourceData;
 }
 
 
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
+
+ECustomizableObjectCompilationState FCustomizableObjectCompilerBase::GetCompilationState() const
+{
+	return ECustomizableObjectCompilationState::None;
+}
+
 
 void UCustomizableObjectBulk::PostLoad()
 {
 	UObject::PostLoad();
 
-	const FString PackageFilename = FPackageName::LongPackageNameToFilename(GetOutermost()->GetName(), TEXT(".uasset"));
-	FString OuterPathName = FPaths::GetPath(PackageFilename);
-
-	for(FString& FilePath : BulkDataFileNames)
-	{
-		FilePath = OuterPathName / FilePath;
-	}
-
+	const FString OutermostName = GetOutermost()->GetName();
+	const FString PackageFilename = FPackageName::LongPackageNameToFilename(OutermostName);
+	BulkFilePrefix = PackageFilename;
 }
 
-
-TArray<TSharedPtr<IAsyncReadFileHandle>> UCustomizableObjectBulk::GetAsyncReadFileHandles() const
+TUniquePtr<IAsyncReadFileHandle> UCustomizableObjectBulk::OpenFileAsyncRead(uint32 FileId) const
 {
-	TArray<TSharedPtr<IAsyncReadFileHandle>> ReadFileHandles;
-	ReadFileHandles.Reserve(BulkDataFileNames.Num());
+	check(IsInGameThread());
 
-	for (const FString& FilePath : BulkDataFileNames)
-	{
-		TSharedPtr<IAsyncReadFileHandle> ReadFileHandle = MakeShareable(FPlatformFileManager::Get().GetPlatformFile().OpenAsyncRead(*FilePath));
-		
-		if (!ReadFileHandle)
-		{
-			UE_LOG(LogMutable, Error, TEXT("Failed to create AsyncReadFileHandle. File Path [%s]."), *FilePath);
-			break;
-		}
+	FString FilePath = FString::Printf(TEXT("%s-%08x.mut"), *BulkFilePrefix, FileId);
 
-		ReadFileHandles.Add(ReadFileHandle);
-	}
+	IAsyncReadFileHandle* Result = FPlatformFileManager::Get().GetPlatformFile().OpenAsyncRead(*FilePath);
+	
+	// Result being null does not mean the file does not exist. A request has to be made. Let the callee deal with it.
+	//UE_CLOG(!Result, LogMutable, Warning, TEXT("CustomizableObjectBulkData: Failed to open file [%s]."), *FilePath);
 
-	if (ReadFileHandles.Num() != BulkDataFileNames.Num())
-	{
-		ReadFileHandles.Empty();
-	}
-
-	return ReadFileHandles;
+	return TUniquePtr<IAsyncReadFileHandle>(Result);
 }
-
 
 #if WITH_EDITOR
 
@@ -1882,129 +2049,477 @@ void UCustomizableObjectBulk::CookAdditionalFilesOverride(const TCHAR* PackageFi
 	
 	check(CustomizableObject);
 	
-	FMutableCachedPlatformData* PlatformData = CustomizableObject->CachedPlatformsData.Find(TargetPlatform->PlatformName());
+	FMutableCachedPlatformData* PlatformData = CustomizableObject->GetPrivate()->CachedPlatformsData.Find(TargetPlatform->PlatformName());
 	check(PlatformData);
 
-	// Data to serialize in separate files
-	uint8* Data = PlatformData->StreamableData.GetData();
-
-	// Path to the asset
-	const FString CookedFilePath = FPaths::GetPath(PackageFilename);
-
-	const uint16 NumBulkDataFiles = BulkDataFilesSize.Num();
-	for(uint16 FileIndex = 0; FileIndex < NumBulkDataFiles; ++FileIndex)
+	const int32 NumBulkDataFiles = BulkDataFiles.Num();
+	for(int32 FileIndex = 0; FileIndex < NumBulkDataFiles; ++FileIndex)
 	{
-		const FString CookedBulkFileName = CookedFilePath / BulkDataFileNames[FileIndex];
+		const FFile& CurrentFile = BulkDataFiles[FileIndex];
 
-		const int64 NumBytes = BulkDataFilesSize[FileIndex];
-		WriteAdditionalFile(*CookedBulkFileName, (void*)Data, NumBytes);
-		Data += NumBytes;
+		const uint8* SourceData = nullptr;
+		if (CurrentFile.DataType == EDataType::Model)
+		{
+			SourceData = PlatformData->StreamableData.GetData();
+		}
+		else if (CurrentFile.DataType == EDataType::RealTimeMorph)
+		{
+			SourceData = PlatformData->MorphData.GetData();
+		}
+		else
+		{
+			checkf(false, TEXT("Unknown file DataType found."));
+			continue;
+		}
+
+		int64 FileSize = 0;
+		for (const FBlock& Block : CurrentFile.Blocks)
+		{
+			FileSize += Block.Size;
+		}
+
+		// Generate the bulk data file in memory
+		TArray64<uint8> FileBulkData;
+		FileBulkData.SetNum(FileSize);
+		uint8* FileData = FileBulkData.GetData();
+
+		for (const FBlock& Block : CurrentFile.Blocks)
+		{
+			FMemory::Memcpy(FileData, SourceData + Block.Offset, Block.Size);
+			FileData += Block.Size;
+		}
+
+		// Path to the asset
+		const FString CookedFilePath = FPaths::GetPath(PackageFilename);
+
+		FString CookedBulkFileName = FString::Printf(TEXT("%s/%s-%08x.mut"), *CookedFilePath, *CustomizableObject->GetName(), CurrentFile.Id);
+		WriteAdditionalFile(*CookedBulkFileName, FileBulkData.GetData(), FileBulkData.Num());
 	}
 }
-
 
 void UCustomizableObjectBulk::PrepareBulkData(UCustomizableObject* InOuter, const ITargetPlatform* TargetPlatform)
 {
 	CustomizableObject = InOuter;
 	check(CustomizableObject);
 
-	BulkDataFilesSize.Empty();
-	BulkDataFileNames.Empty();
-	
-	// Split the Streamable data into several separate files and fix up FileIndex and Offset of each StreamableBlock
-	if (TSharedPtr<const mu::Model, ESPMode::ThreadSafe> Model = CustomizableObject->GetModel())
+	BulkDataFiles.Empty();
+
+	TSharedPtr<const mu::Model, ESPMode::ThreadSafe> Model = CustomizableObject->GetPrivate()->GetModel();
+	if (!Model)
 	{
-		const uint64 MaxChunkSize = UCustomizableObjectSystem::GetInstance()->GetMaxChunkSizeForPlatform(TargetPlatform);
+		return;
+	}
 
-		const FString BulkFileName = CustomizableObject->GetName() + FString(TEXT("_Bulk"));
+	FModelResources& ModelResources = CustomizableObject->GetPrivate()->GetModelResources(true);
 
-		uint16 CurrentFileIndex = 0;
-		uint64 CurrentChunkSize = 0;
+	uint64 TargetBulkDataFileBytes = CustomizableObject->CompileOptions.PackagedDataBytesLimit;
+	const uint64 MaxChunkSize = UCustomizableObjectSystem::GetInstance()->GetMaxChunkSizeForPlatform(TargetPlatform);
+	TargetBulkDataFileBytes = FMath::Min(TargetBulkDataFileBytes, MaxChunkSize);
 
-		const int32 NumStreamingFiles = Model->GetRomCount();
-		for (size_t FileIndex = 0; FileIndex < NumStreamingFiles; ++FileIndex)
+
+	// TODO:
+	// To avoid influence of the order of the streamed data (their index), classify it recursively based on hash values
+	// until the tree leaves have either a single block, or a sum of blocks below the desired file size.
+	struct FClassifyNode
+	{
+		TArray<FBlock> Blocks;
+
+		//TSharedPtr<FClassifyNode> Child0;
+		//TSharedPtr<FClassifyNode> Child1;
+		//uint32 Depth=0;
+	};
+
+	FClassifyNode RootNode;
+	// Create blocks data, filtering out the ones that are too big and will go on its own file in any case.
+	{
+		const int32 NumBlocks = Model->GetRomCount();
+		RootNode.Blocks.Reserve(NumBlocks);
+		
+		uint64 SourceOffset = 0;
+		for (int32 BlockIndex = 0; BlockIndex < NumBlocks; ++BlockIndex)
 		{
-			const uint32 ResourceId = Model->GetRomId(FileIndex);
-
-			FMutableStreamableBlock& StreamableBlock = CustomizableObject->HashToStreamableBlock[ResourceId];
-
+			uint32 BlockId = Model->GetRomId(BlockIndex);
+			const FMutableStreamableBlock& StreamableBlock = ModelResources.HashToStreamableBlock[BlockId];
 			const uint32 BlockSize = StreamableBlock.Size;
-			if(CurrentChunkSize + BlockSize > MaxChunkSize)
+
+			FBlock CurrentBlock = { EDataType::Model, BlockId, BlockSize, SourceOffset };
+			if (BlockSize > TargetBulkDataFileBytes)
 			{
-				BulkDataFileNames.Add(BulkFileName + FString::Printf(TEXT("%d.mut"), CurrentFileIndex));
-
-				if(CurrentChunkSize == 0)
-				{
-					BulkDataFilesSize.Add(BlockSize);
-					StreamableBlock.FileIndex = CurrentFileIndex++;
-					StreamableBlock.Offset = 0;
-					continue;
-				}
-
-				BulkDataFilesSize.Add(CurrentChunkSize);
-			
-				CurrentFileIndex++;
-				CurrentChunkSize = 0;
+				// It will go to its own file
+				BulkDataFiles.Add(FFile{EDataType::Model, 0, {CurrentBlock}});
+			}
+			else
+			{
+				// It may merge with other small blocks
+				RootNode.Blocks.Add(CurrentBlock);
 			}
 
-			StreamableBlock.FileIndex = CurrentFileIndex;
-			StreamableBlock.Offset = CurrentChunkSize;
-			CurrentChunkSize += BlockSize;			
+			SourceOffset += BlockSize;
+		}
+	}
+
+	// TODO: This should create a new classification branch when the tree is implemented.
+	// For now append after Model roms. 
+	{
+		uint64 SourceOffset = 0;
+		
+		constexpr bool bGetCooked = false;
+		const TArray<FMutableStreamableBlock>& RealTimeMorphTargetsBlocks = 
+					CustomizableObject->GetPrivate()->GetModelResources(bGetCooked).RealTimeMorphStreamableBlocks;
+
+		const int32 NumBlocks = RealTimeMorphTargetsBlocks.Num();
+		for (int32 BlockIndex = 0; BlockIndex < NumBlocks; ++BlockIndex)
+		{
+			const FMutableStreamableBlock& StreamableBlock = RealTimeMorphTargetsBlocks[BlockIndex];
+			const uint32 BlockSize = StreamableBlock.Size;
+			
+			check(SourceOffset == StreamableBlock.Offset);
+			FBlock CurrentBlock = { EDataType::RealTimeMorph, BlockIndex, BlockSize, SourceOffset };
+			
+			if (BlockSize > TargetBulkDataFileBytes)
+			{
+				// It will go to its own file
+				BulkDataFiles.Add(FFile{ EDataType::RealTimeMorph, 0, {CurrentBlock} });
+			}
+			else
+			{
+				// It may merge with other small blocks
+				RootNode.Blocks.Add(CurrentBlock);
+			}
+
+			SourceOffset += BlockSize;
+		}
+	}
+
+	// Temp: Group by order in the array
+	for (int32 BlockIndex = 0; BlockIndex < RootNode.Blocks.Num(); )
+	{
+		int32 CurrentFileSize = 0;
+		
+		FFile CurrentFile;
+		CurrentFile.DataType = RootNode.Blocks[BlockIndex].DataType;
+
+		while(BlockIndex < RootNode.Blocks.Num())
+		{
+			FBlock CurrentBlock = RootNode.Blocks[BlockIndex];
+
+			// Next file?
+			// Store different data types in different files. Blocks should be sorted by DataType
+			// so data is properly packeted
+			if (CurrentFile.DataType != CurrentBlock.DataType)
+			{
+				break;
+			}
+			
+			if (CurrentFileSize > 0 && CurrentFileSize + CurrentBlock.Size > TargetBulkDataFileBytes)
+			{
+				break;
+			}
+
+			// Add the block to the current file
+			CurrentFile.Blocks.Add(CurrentBlock);
+			CurrentFileSize += CurrentBlock.Size;
+
+			// Next block
+			++BlockIndex;			
 		}
 
-		BulkDataFilesSize.Add(CurrentChunkSize);
-		BulkDataFileNames.Add(BulkFileName + FString::Printf(TEXT("%d.mut"), CurrentFileIndex));
+		BulkDataFiles.Add(MoveTemp(CurrentFile));
+	}
+
+	// Create the file list
+	for (int32 FileIndex = 0; FileIndex < BulkDataFiles.Num(); ++FileIndex)
+	{
+		// Generate the id for this file
+		FFile& CurrentFile = BulkDataFiles[FileIndex];
+		uint32 FileId = 0;
+		for (int32 FileBlockIndex = 0; FileBlockIndex < CurrentFile.Blocks.Num(); ++FileBlockIndex)
+		{
+			FBlock ThisBlock = CurrentFile.Blocks[FileBlockIndex];
+			FileId = (FileBlockIndex == 0) ? ThisBlock.Id : HashCombine(HashCombine(FileId, ThisBlock.Id), uint32(CurrentFile.DataType));
+		}
+
+		// Ensure the FileId is unique
+		bool bUnique = false;
+		while (!bUnique)
+		{
+			bUnique = true;
+			for (int32 PreviousFileIndex = 0; PreviousFileIndex < FileIndex; ++PreviousFileIndex)
+			{
+				if (BulkDataFiles[PreviousFileIndex].Id == FileId)
+				{
+					bUnique = false;
+					++FileId;
+					break;
+				}
+			}
+		}
+
+		// Set it to the editor-only file descriptor
+		CurrentFile.Id = FileId;
+
+		if (CurrentFile.DataType == EDataType::Model)
+		{
+			// Set it to all streamable blocks
+			uint32 OffsetInFile = 0;
+			for (int32 FileBlockIndex = 0; FileBlockIndex < CurrentFile.Blocks.Num(); ++FileBlockIndex)
+			{
+				FBlock ThisBlock = CurrentFile.Blocks[FileBlockIndex];
+
+				FMutableStreamableBlock& StreamableBlock = ModelResources.HashToStreamableBlock[ThisBlock.Id];
+				check(StreamableBlock.Size == ThisBlock.Size);
+				StreamableBlock.FileId = FileId;
+				StreamableBlock.Offset = OffsetInFile;
+				OffsetInFile += ThisBlock.Size;
+			}
+		}
+		else if (CurrentFile.DataType == EDataType::RealTimeMorph)
+		{
+			constexpr bool bGetCooked = true;
+			TArray<FMutableStreamableBlock>& MorphBlocks = 
+					CustomizableObject->GetPrivate()->GetModelResources(bGetCooked).RealTimeMorphStreamableBlocks;
+			// Set it to all streamable blocks
+			uint32 OffsetInFile = 0;
+			for (int32 FileBlockIndex = 0; FileBlockIndex < CurrentFile.Blocks.Num(); ++FileBlockIndex)
+			{
+				FBlock ThisBlock = CurrentFile.Blocks[FileBlockIndex];
+
+				FMutableStreamableBlock& StreamableBlock = MorphBlocks[ThisBlock.Id];
+				check(StreamableBlock.Size == ThisBlock.Size);
+				StreamableBlock.FileId = FileId;
+				StreamableBlock.Offset = OffsetInFile;
+				OffsetInFile += ThisBlock.Size;
+			}
+		}
+		else
+		{
+			UE_LOG(LogMutable, Error, TEXT("Unknown DataType found while fixing streaming block files ids."));
+			check(false);
+		}
 	}
 }
 
-#if WITH_EDITORONLY_DATA
+#endif // WITH_EDITOR
 
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
-void FMutableRefAssetUserData::InitResources(UCustomizableObject* InOuter)
+bool FAnimBpOverridePhysicsAssetsInfo::operator==(const FAnimBpOverridePhysicsAssetsInfo& Rhs) const
 {
-	UClass* AssetUserDataClass = FindObject<UClass>(nullptr, *ClassPath);
-	if (AssetUserDataClass)
-	{
-		AssetUserData = NewObject<UAssetUserData>(InOuter, AssetUserDataClass);
-		if (AssetUserData)
-		{
-			FMemoryReaderView MemoryReader(Bytes);
-			AssetUserData->Serialize(MemoryReader);
+	return AnimInstanceClass == Rhs.AnimInstanceClass &&
+		SourceAsset == Rhs.SourceAsset &&
+		PropertyIndex == Rhs.PropertyIndex;
+}
 
-			ClassPath.Empty();
-			Bytes.Empty();
-		}
+
+bool FMutableModelImageProperties::operator!=(const FMutableModelImageProperties& Other) const
+{
+	return
+		TextureParameterName != Other.TextureParameterName ||
+		Filter != Other.Filter ||
+		SRGB != Other.SRGB ||
+		FlipGreenChannel != Other.FlipGreenChannel ||
+		IsPassThrough != Other.IsPassThrough ||
+		LODBias != Other.LODBias ||
+		LODGroup != Other.LODGroup ||
+		AddressX != Other.AddressX ||
+		AddressY != Other.AddressY;
+}
+
+
+bool FMutableRefSocket::operator==(const FMutableRefSocket& Other) const
+{
+	if (
+		SocketName == Other.SocketName &&
+		BoneName == Other.BoneName &&
+		RelativeLocation == Other.RelativeLocation &&
+		RelativeRotation == Other.RelativeRotation &&
+		RelativeScale == Other.RelativeScale &&
+		bForceAlwaysAnimated == Other.bForceAlwaysAnimated &&
+		Priority == Other.Priority)
+	{
+		return true;
 	}
+
+	return false;
+}
+
+
+bool FMutableSkinWeightProfileInfo::operator==(const FMutableSkinWeightProfileInfo& Other) const
+{
+	return Name == Other.Name;
+}
+
+
+#if WITH_EDITORONLY_DATA
+FArchive& operator<<(FArchive& Ar, FMutableModelImageProperties& ImageProps)
+{
+	Ar << ImageProps.TextureParameterName;
+	Ar << ImageProps.Filter;
+
+	// Bitfields don't serialize automatically with FArchive
+	if (Ar.IsLoading())
+	{
+		int32 Aux = 0;
+		Ar << Aux;
+		ImageProps.SRGB = Aux;
+
+		Aux = 0;
+		Ar << Aux;
+		ImageProps.FlipGreenChannel = Aux;
+
+		Aux = 0;
+		Ar << Aux;
+		ImageProps.IsPassThrough = Aux;
+	}
+	else
+	{
+		int32 Aux = ImageProps.SRGB;
+		Ar << Aux;
+
+		Aux = ImageProps.FlipGreenChannel;
+		Ar << Aux;
+
+		Aux = ImageProps.IsPassThrough;
+		Ar << Aux;
+	}
+
+	Ar << ImageProps.LODBias;
+	Ar << ImageProps.LODGroup;
+
+	Ar << ImageProps.AddressX;
+	Ar << ImageProps.AddressY;
+
+	return Ar;
+}
+
+
+FArchive& operator<<(FArchive& Ar, FAnimBpOverridePhysicsAssetsInfo& Info)
+{
+	FString AnimInstanceClassPathString;
+	FString PhysicsAssetPathString;
+
+	if (Ar.IsLoading())
+	{
+		Ar << AnimInstanceClassPathString;
+		Ar << PhysicsAssetPathString;
+		Ar << Info.PropertyIndex;
+
+		Info.AnimInstanceClass = TSoftClassPtr<UAnimInstance>(AnimInstanceClassPathString);
+		Info.SourceAsset = TSoftObjectPtr<UPhysicsAsset>(PhysicsAssetPathString);
+	}
+
+	if (Ar.IsSaving())
+	{
+		AnimInstanceClassPathString = Info.AnimInstanceClass.ToString();
+		PhysicsAssetPathString = Info.SourceAsset.ToString();
+
+		Ar << AnimInstanceClassPathString;
+		Ar << PhysicsAssetPathString;
+		Ar << Info.PropertyIndex;
+	}
+
+	return Ar;
+}
+
+
+FArchive& operator<<(FArchive& Ar, FMutableRefSocket& Data)
+{
+	Ar << Data.SocketName;
+	Ar << Data.BoneName;
+	Ar << Data.RelativeLocation;
+	Ar << Data.RelativeRotation;
+	Ar << Data.RelativeScale;
+	Ar << Data.bForceAlwaysAnimated;
+	Ar << Data.Priority;
+
+	return Ar;
+}
+
+
+FArchive& operator<<(FArchive& Ar, FMutableRefLODRenderData& Data)
+{
+	Ar << Data.bIsLODOptional;
+	Ar << Data.bStreamedDataInlined;
+
+	return Ar;
+}
+
+
+FArchive& operator<<(FArchive& Ar, FMutableRefLODInfo& Data)
+{
+	Ar << Data.ScreenSize;
+	Ar << Data.LODHysteresis;
+	Ar << Data.bSupportUniformlyDistributedSampling;
+	Ar << Data.bAllowCPUAccess;
+
+	return Ar;
+}
+
+
+FArchive& operator<<(FArchive& Ar, FMutableRefLODData& Data)
+{
+	Ar << Data.LODInfo;
+	Ar << Data.RenderData;
+
+	return Ar;
+}
+
+
+FArchive& operator<<(FArchive& Ar, FMutableRefSkeletalMeshSettings& Data)
+{
+	Ar << Data.bEnablePerPolyCollision;
+	Ar << Data.DefaultUVChannelDensity;
+
+	return Ar;
 }
 
 
 FArchive& operator<<(FArchive& Ar, FMutableRefAssetUserData& Data)
 {
-	if (Ar.IsSaving())
-	{
-		if (Data.AssetUserData)
-		{
-			Data.ClassPath = Data.AssetUserData->GetClass()->GetPathName();
-
-			FMemoryWriter MemoryWriter(Data.Bytes);
-			Data.AssetUserData->Serialize(MemoryWriter);
-		}
-
-		Ar << Data.ClassPath;
-		Ar << Data.Bytes;
-
-		Data.ClassPath.Empty();
-		Data.Bytes.Empty();
-	}
-	else
-	{
-		Ar << Data.ClassPath;
-		Ar << Data.Bytes;
-	}
+	Ar << Data.AssetUserDataIndex;
 
 	return Ar;
+}
+
+
+FArchive& operator<<(FArchive& Ar, FMutableSkinWeightProfileInfo& Info)
+{
+	Ar << Info.Name;
+	Ar << Info.DefaultProfile;
+	Ar << Info.DefaultProfileFromLODIndex;
+
+	return Ar;
+}
+
+
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+void FMutableRefSkeletalMeshData::InitResources(UCustomizableObject* InOuter, const ITargetPlatform* InTargetPlatform)
+{
+	check(InOuter);
+
+	const bool bHasServer = InTargetPlatform ? !InTargetPlatform->IsClientOnly() : false;
+	if (InOuter->bEnableUseRefSkeletalMeshAsPlaceholder || bHasServer)
+	{
+		SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(SoftSkeletalMesh).LoadSynchronous();
+	}
+
+	// Initialize AssetUserData
+	for (FMutableRefAssetUserData& Data : AssetUserData)
+	{
+		if (!InOuter->GetPrivate()->GetStreamedResourceData().IsValidIndex(Data.AssetUserDataIndex))
+		{
+			check(false);
+			continue;
+		}
+
+		FCustomizableObjectStreamedResourceData& StreamedResource = InOuter->GetPrivate()->GetStreamedResourceData()[Data.AssetUserDataIndex];
+		Data.AssetUserData = StreamedResource.GetPath().LoadSynchronous();
+		check(Data.AssetUserData);
+		check(Data.AssetUserData->Data.Type == ECOResourceDataType::AssetUserData);
+	}
 }
 
 
@@ -2017,19 +2532,19 @@ FArchive& operator<<(FArchive& Ar, FMutableRefSkeletalMeshData& Data)
 
 	if (Ar.IsSaving())
 	{
-		FString AssetPath = Data.SkeletalMeshAssetPath.ToString();
+		FString AssetPath = Data.SoftSkeletalMesh.ToString();
 		Ar << AssetPath;
 
-		AssetPath = Data.Skeleton.ToSoftObjectPath().ToString();
+		AssetPath = TSoftObjectPtr<USkeleton>(Data.Skeleton).ToString();
 		Ar << AssetPath;
 
-		AssetPath = Data.PhysicsAsset.ToSoftObjectPath().ToString();
+		AssetPath = TSoftObjectPtr<UPhysicsAsset>(Data.PhysicsAsset).ToString();
 		Ar << AssetPath;
 
-		AssetPath = Data.PostProcessAnimInst.ToSoftObjectPath().ToString();
+		AssetPath = Data.PostProcessAnimInst.ToString();
 		Ar << AssetPath;
 
-		AssetPath = Data.ShadowPhysicsAsset.ToSoftObjectPath().ToString();
+		AssetPath = TSoftObjectPtr<UPhysicsAsset>(Data.ShadowPhysicsAsset).ToString();
 		Ar << AssetPath;
 
 	}
@@ -2037,23 +2552,23 @@ FArchive& operator<<(FArchive& Ar, FMutableRefSkeletalMeshData& Data)
 	{
 		FString SkeletalMeshAssetPath;
 		Ar << SkeletalMeshAssetPath;
-		Data.SkeletalMeshAssetPath = SkeletalMeshAssetPath;
+		Data.SoftSkeletalMesh = SkeletalMeshAssetPath;
 
 		FString SkeletonAssetPath;
 		Ar << SkeletonAssetPath;
-		Data.Skeleton = TSoftObjectPtr<USkeleton>(FSoftObjectPath(SkeletonAssetPath));
+		Data.Skeleton = TSoftObjectPtr<USkeleton>(SkeletonAssetPath).LoadSynchronous();
 
 		FString PhysicsAssetPath;
 		Ar << PhysicsAssetPath;
-		Data.PhysicsAsset = TSoftObjectPtr<UPhysicsAsset>(FSoftObjectPath(PhysicsAssetPath));
+		Data.PhysicsAsset = TSoftObjectPtr<UPhysicsAsset>(PhysicsAssetPath).LoadSynchronous();
 
 		FString PostProcessAnimInstAssetPath;
 		Ar << PostProcessAnimInstAssetPath;
-		Data.PostProcessAnimInst = TSoftClassPtr<UAnimInstance>(FSoftObjectPath(PostProcessAnimInstAssetPath));
+		Data.PostProcessAnimInst = TSoftClassPtr<UAnimInstance>(PostProcessAnimInstAssetPath).LoadSynchronous();
 
 		FString ShadowPhysicsAssetPath;
 		Ar << ShadowPhysicsAssetPath;
-		Data.ShadowPhysicsAsset = TSoftObjectPtr<UPhysicsAsset>(FSoftObjectPath(ShadowPhysicsAssetPath));
+		Data.ShadowPhysicsAsset = TSoftObjectPtr<UPhysicsAsset>(ShadowPhysicsAssetPath).LoadSynchronous();
 	}
 
 	Ar << Data.AssetUserData;
@@ -2061,25 +2576,6 @@ FArchive& operator<<(FArchive& Ar, FMutableRefSkeletalMeshData& Data)
 	return Ar;
 }
 
-
-void FMutableRefSkeletalMeshData::InitResources(UCustomizableObject* InOuter)
-{
-	check(InOuter);
-	if (InOuter->bEnableUseRefSkeletalMeshAsPlaceholder)
-	{
-		SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(SkeletalMeshAssetPath).LoadSynchronous();
-	}
-
-	// Initialize AssetUserData
-	for (FMutableRefAssetUserData& Data : AssetUserData)
-	{
-		Data.InitResources(InOuter);
-	}
-}
-
-
-#endif
-
-#endif
+#endif // WITH_EDITORONLY_DATA
 
 #undef LOCTEXT_NAMESPACE

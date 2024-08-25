@@ -8,7 +8,11 @@
 #include "Templates/SubclassOf.h"
 #include "ImagePixelData.h"
 #include "Containers/Queue.h"
+#include "Containers/Set.h"
 #include "Misc/FrameRate.h"
+#include "MovieRenderPipelineDataTypes.h"
+#include "Engine/EngineCustomTimeStep.h"
+
 #include "MovieGraphDataTypes.generated.h"
 
 // Forward Declares
@@ -28,18 +32,29 @@ namespace UE::MovieGraph
 }
 
 USTRUCT(BlueprintType)
+struct FMovieGraphImagePreviewData
+{
+	GENERATED_BODY()
+
+	FMovieGraphImagePreviewData()
+	: Texture(nullptr)
+	{}
+
+	/** The texture this preview image was rendered to. */
+	UPROPERTY(BlueprintReadOnly, Category = "Movie Graph")
+	class UTexture* Texture;
+	
+	/** The identifier for the image, containing the branch name, renderer, etc. */
+	UPROPERTY(BlueprintReadOnly, Category = "Movie Graph")
+	FMovieGraphRenderDataIdentifier Identifier;
+};
+
+USTRUCT(BlueprintType)
 struct MOVIERENDERPIPELINECORE_API FMovieGraphInitConfig
 {
 	GENERATED_BODY()
 	
 	FMovieGraphInitConfig();
-	
-	/** 
-	* Which class should the UMovieGraphPipeline use to handle calculating per frame 
-	* timesteps? Defaults to UMovieGraphLinearTimeStep.
-	*/
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
-	TSubclassOf<UMovieGraphTimeStepBase> TimeStepClass;
 	
 	/**
 	* Which class should the UMovieGraphPipeline use to look for render layers and
@@ -57,6 +72,13 @@ struct MOVIERENDERPIPELINECORE_API FMovieGraphInitConfig
 	TSubclassOf<UMovieGraphDataSourceBase> DataSourceClass;
 
 	/**
+	 * Which class should the UMovieGraphPipeline use to generate audio. Defaults to
+	 * UMovieGraphDefaultAudioOutput.
+	 */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
+	TSubclassOf<UMovieGraphAudioRendererBase> AudioRendererClass;
+
+	/**
 	* Should the UMovieGraphPipeline render the full player viewport? Defaults
 	* to false (so no 3d content is rendered) so we can display the UMG widgets
 	* and MRQ rendering always happens in an off-screen render target.
@@ -64,34 +86,6 @@ struct MOVIERENDERPIPELINECORE_API FMovieGraphInitConfig
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	bool bRenderViewport;
 };
-
-USTRUCT(BlueprintType)
-struct FMovieGraphRenderPassOutputData
-{
-	GENERATED_BODY()
-public:
-	/** A list of file paths on disk (in order) that were generated for this particular render pass. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Pipeline")
-	TArray<FString> FilePaths;
-};
-
-USTRUCT(BlueprintType)
-struct MOVIERENDERPIPELINECORE_API FMovieGraphRenderOutputData
-{
-	GENERATED_BODY()
-public:
-	/** Which shot is this output data for. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Graph")
-	TWeakObjectPtr<UMoviePipelineExecutorShot> Shot;
-
-	/**
-	* A mapping between render passes (such as "beauty") and an array containing the files written for that shot.
-	* Will be multiple files if using image sequences
-	*/
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movie Graph")
-	TMap<FMovieGraphRenderDataIdentifier, FMovieGraphRenderPassOutputData> RenderPassData;
-};
-
 
 UCLASS(BlueprintType, Abstract)
 class MOVIERENDERPIPELINECORE_API UMovieGraphTimeStepBase : public UObject
@@ -101,7 +95,9 @@ public:
 	/** Called each frame while the Movie Graph Pipeline is in a producing frames state. */
 	virtual void TickProducingFrames() {}
 
-	/** Called when the Movie Graph Pipeline is shutting down, use this to restore any changes. */
+	/** Called when this time step instance becomes active (ie: at the start of a shot). */
+	virtual void Initialize() {}
+	/** Called when this time step instance is no longer active (ie: at the end of a shot). */
 	virtual void Shutdown() {}
 
 	/** 
@@ -109,9 +105,76 @@ public:
 	* called at the end of the frame when we kick off the renders for the frame. Should return data
 	* needed to calculate the correct rendering timestep.
 	*/
+	UFUNCTION(BlueprintCallable, Category = "Movie Graph")
 	virtual FMovieGraphTimeStepData GetCalculatedTimeData() const { return FMovieGraphTimeStepData(); }
+	
+	/**
+	* When expanding shots, do we need to expand the first frame by one extra to account for how
+	* temporal sub-sampling can sample outside the first frame (due to centered frame evals).
+	*/
+	virtual bool IsExpansionForTSRequired(const TObjectPtr<UMovieGraphEvaluatedConfig>& InConfig) const { return false; }
 
 	UMovieGraphPipeline* GetOwningGraph() const;
+};
+
+
+UCLASS()
+class MOVIERENDERPIPELINECORE_API UMovieGraphEngineTimeStep : public UEngineCustomTimeStep
+{
+	GENERATED_BODY()
+public:
+	UMovieGraphEngineTimeStep();
+
+	struct FTimeStepCache
+	{
+		FTimeStepCache()
+			: UndilatedDeltaTime(0.0)
+		{}
+
+		FTimeStepCache(double InUndilatedDeltaTime)
+			: UndilatedDeltaTime(InUndilatedDeltaTime)
+		{}
+
+		double UndilatedDeltaTime;
+	};
+
+	struct FSharedData
+	{
+		FSharedData()
+			: OutputFrameNumber(0)
+			, RenderedFrameNumber(0)
+		{}
+		
+		
+		/** Which output frame are we working on, relative to zero.*/
+		int32 OutputFrameNumber;
+
+		/** 
+		* Index of which frames we've submitted for rendering. Doesn't line up with OutputFrameNumber when using warm-up frames.
+		* Used internally by the rendering engine to keep track of which frames need to be read back.
+		*/
+		int32 RenderedFrameNumber;
+	};
+
+public:
+	void SetCachedFrameTiming(const FTimeStepCache& InTimeCache);
+
+	// UEngineCustomTimeStep Interface
+	virtual bool Initialize(UEngine* InEngine) override;
+	virtual void Shutdown(UEngine* InEngine) override;
+	virtual bool UpdateTimeStep(UEngine* InEngine) override;
+	virtual ECustomTimeStepSynchronizationState GetSynchronizationState() const override { return ECustomTimeStepSynchronizationState::Synchronized; }
+	// ~UEngineCustomTimeStep Interface
+
+	/** We don't do any thinking on our own, instead we just spit out the numbers stored in our time cache. */
+	FTimeStepCache TimeCache;
+
+	/** Data that should be shared between all shot time step instances. */
+	FSharedData SharedTimeStepData;
+
+	// Not cached in TimeCache as TimeCache is reset every frame.
+	float PrevMinUndilatedFrameTime;
+	float PrevMaxUndilatedFrameTime;
 };
 
 UCLASS(BlueprintType, Abstract)
@@ -119,6 +182,10 @@ class MOVIERENDERPIPELINECORE_API UMovieGraphRendererBase : public UObject
 {
 	GENERATED_BODY()
 public:
+	/** Get an array of image previews that are valid this frame. */
+	UFUNCTION(BlueprintCallable, Category = "Movie Graph")
+	virtual TArray<FMovieGraphImagePreviewData> GetPreviewData() const { return TArray<FMovieGraphImagePreviewData>(); }
+		
 	virtual void Render(const FMovieGraphTimeStepData& InTimeData) {}
 	virtual void SetupRenderingPipelineForShot(UMoviePipelineExecutorShot* InShot) {}
 	virtual void TeardownRenderingPipelineForShot(UMoviePipelineExecutorShot* InShot) {}
@@ -148,8 +215,16 @@ public:
 
 	/** Called by the Time Step system when it wants the external data source to update. Time is in TickResolution scale. */
 	virtual void SyncDataSourceTime(const FFrameTime& InTime) {}
+	
+	/** Called by the Time Step system when the external data source should start playback (time values will have been set by SyncDataSourceTime */
+	virtual void PlayDataSource() {}
 
-	virtual void BuildTimeRanges() { }
+	/** Called by the Time Step system when the external data source should pause playback. */
+	virtual void PauseDataSource() {}
+
+	/** Called by the Time Step system when the external data source should jump to the given time. Time is in TickResolution scale. */
+	virtual void JumpDataSource(const FFrameTime& InTimeToJumpTo) {}
+
 	/** 
 	* Called when the Movie Graph Pipeline starts before anything has happened, allowing you to 
 	* cache your datasource before making any modifications to it as a result of rendering.
@@ -157,14 +232,54 @@ public:
 	virtual void CacheDataPreJob(const FMovieGraphInitConfig& InInitConfig) {}
 	virtual void RestoreCachedDataPostJob() {}
 	virtual void UpdateShotList() {}
-	virtual void InitializeShot(UMoviePipelineExecutorShot* InShot) {}
+	virtual void InitializeShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) {}
+	virtual void CacheHierarchyForShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) {}
+	virtual void RestoreHierarchyForShot(const TObjectPtr<UMoviePipelineExecutorShot> &InShot) {}
+	virtual void MuteShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) {}
+	virtual void UnmuteShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) {}
+	virtual void ExpandShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot, const int32 InLeftDeltaFrames, const int32 InLeftDeltaFramesUserPoV,
+		const int32 InRightDeltaFrames, const bool bInPrepass) {}
+
 	UMovieGraphPipeline* GetOwningGraph() const;
+};
+
+/** Base class for generating audio while the pipeline is running. */
+UCLASS(BlueprintType, Abstract)
+class MOVIERENDERPIPELINECORE_API UMovieGraphAudioRendererBase : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	/** Tell our submixes to start capturing the data they are generating. Should only be called once output frames are being produced. */
+	virtual void StartAudioRecording() {}
+
+	/** Tell our submixes to stop capturing the data, and then store a copy of it. */
+	virtual void StopAudioRecording() {}
+
+	/** Attempt to process the audio thread work. This is complicated by non-linear time steps. */
+	virtual void ProcessAudioTick() {}
+
+	/** Prepares for audio rendering (ensuring volume is set correctly, the needed cvars are set, etc). */
+	virtual void SetupAudioRendering() {}
+
+	/** Undoes the work done in SetupAudioRendering(). */
+	virtual void TeardownAudioRendering() const {}
+
+	/** Gets the pipeline that owns this audio output instance. */
+	UMovieGraphPipeline* GetOwningGraph() const;
+
+	/** Gets the current state of the audio renderer. This is the main data source that audio-related nodes can reference. */
+	const MoviePipeline::FAudioState& GetAudioState() const;
+
+protected:
+	MoviePipeline::FAudioState AudioState;
 };
 
 // ToDo: Both of these can probably go into the Default Renderer implementation.
 struct FMovieGraphRenderPassLayerData
 {
 	FName BranchName;
+	FString LayerName;
 	FGuid CameraIdentifier;
 	TWeakObjectPtr<class UMovieGraphRenderPassNode> RenderPassNode;
 };
@@ -221,6 +336,9 @@ namespace UE::MovieGraph
 			, bRequiresAccumulator(false)
 			, bFetchFromAccumulator(false)
 			, bCompositeOnOtherRenders(false)
+			, OverscanFraction(0.f)
+			, CompositingSortOrder(0)
+			, bAllowOCIO(true)
 		{}
 
 		/** The traversal context used to read graph values at the time of submission. */
@@ -246,6 +364,41 @@ namespace UE::MovieGraph
 
 		/** Set this to true if this pass should be composited on top of other renders. */
 		bool bCompositeOnOtherRenders;
+
+		/** When using high-res tiling, how many pixels does each tile overlap the adjacent tiles (on each side)? This should be zero if not using tiling. */
+		FIntPoint OverlappedPad;
+
+		/** When using high-res tiling, how many pixels offset into the output image does this accumulation get added to. */
+		FIntPoint OverlappedOffset;
+
+		/** When using spatial jitters, how much do we need to shift the output data during accumulation to counter-act the jitter. */
+		FVector2D OverlappedSubpixelShift;
+
+		/** When using camera overscan, what fraction (0-1) did this render use? Needed so that exrs can take a center-out crop of the data. */
+		float OverscanFraction;
+
+		/**
+		* If multiple passes are composited on top of a render, the sort order determines the order in which they're composited.
+		* Passes with a low sort order will composite on top of passes with a higher sort order.
+		*/
+		int32 CompositingSortOrder;
+
+		/** Allow OpenColorIO transform to be used on this render. */
+		bool bAllowOCIO;
+
+		/** Render scene capture source used for tracking the output color space (without OpenColorIO). */
+		ESceneCaptureSource SceneCaptureSource;
+	};
+
+	/**
+	* A collection of validation information extracted from the FMovieGraphOutputMergerFrame 
+	*/
+	struct FMovieGraphRenderDataValidationInfo
+	{
+		int32 LayerCount = 0;
+		int32 BranchCount = 0;
+		int32 ActiveBranchRendererCount = 0;
+		int32 ActiveRendererSubresourceCount = 0;
 	};
 
 	/**
@@ -277,6 +430,12 @@ namespace UE::MovieGraph
 
 		/** Stores the actual pixel data for each render pass. */
 		TMap<FMovieGraphRenderDataIdentifier, TUniquePtr<FImagePixelData>> ImageOutputData;
+
+		/** Additional metadata to be added to the output (if supported by the output container). */
+		TMap<FString, FString> FileMetadata;
+
+		/** Get filename token validation info from the (expected) render passes. */
+		MOVIERENDERPIPELINECORE_API FMovieGraphRenderDataValidationInfo GetValidationInfo(const FMovieGraphRenderDataIdentifier& InRenderID, bool bInDiscardCompositedRenders = true) const;
 	};
 
 	/**
@@ -288,10 +447,10 @@ namespace UE::MovieGraph
 		virtual ~IMovieGraphOutputMerger() {};
 
 		/** Call once per output frame to generate a struct to hold data. */
-		virtual FMovieGraphOutputMergerFrame& AllocateNewOutputFrame_GameThread(int32 InFrameNumber) = 0;
+		virtual FMovieGraphOutputMergerFrame& AllocateNewOutputFrame_GameThread(const int32 InRenderedFrameNumber) = 0;
 
 		/** Getter for the Output Frame. Make sure you call AllocateNewOutputFrame_GameThread first, otherwise this trips a check. */
-		virtual FMovieGraphOutputMergerFrame& GetOutputFrame_GameThread(int32 InFrameNumber) = 0;
+		virtual FMovieGraphOutputMergerFrame& GetOutputFrame_GameThread(const int32 InRenderedFrameNumber) = 0;
 
 		/** When a final accumulated render pass is available, call this function with the pixel data. */
 		virtual void OnCompleteRenderPassDataAvailable_AnyThread(TUniquePtr<FImagePixelData>&& InData) = 0;

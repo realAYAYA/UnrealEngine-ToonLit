@@ -76,12 +76,10 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
         virtual ConstArrayView<float> getPSDValues() const = 0;
         /**
             @brief Number of rows in the entire, uncompressed joint matrix.
-            @see Joints
         */
         virtual std::uint16_t getJointRowCount() const = 0;
         /**
             @brief Number of columns in the entire, uncompressed joint matrix.
-            @see Joints
         */
         virtual std::uint16_t getJointColumnCount() const = 0;
         /**
@@ -91,7 +89,6 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
         virtual ConstArrayView<std::uint16_t> getJointVariableAttributeIndices(std::uint16_t lod) const = 0;
         /**
             @brief Number of joint groups present in the entire joint matrix.
-            @see Joints
         */
         virtual std::uint16_t getJointGroupCount() const = 0;
         /**
@@ -108,7 +105,6 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
             @warning
                 jointGroupIndex must be less than the value returned by getJointGroupCount.
             @return View over the array of LOD bounds.
-            @see Joints
         */
         virtual ConstArrayView<std::uint16_t> getJointGroupLODs(std::uint16_t jointGroupIndex) const = 0;
         /**
@@ -120,7 +116,6 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
             @warning
                 jointGroupIndex must be less than the value returned by getJointGroupCount.
             @return View over the array of column indices.
-            @see Joints
         */
         virtual ConstArrayView<std::uint16_t> getJointGroupInputIndices(std::uint16_t jointGroupIndex) const = 0;
         /**
@@ -132,7 +127,6 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
             @warning
                 jointGroupIndex must be less than the value returned by getJointGroupCount.
             @return View over the array of row indices.
-            @see Joints
         */
         virtual ConstArrayView<std::uint16_t> getJointGroupOutputIndices(std::uint16_t jointGroupIndex) const = 0;
         /**
@@ -142,7 +136,6 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
             @warning
                 jointGroupIndex must be less than the value returned by getJointGroupCount.
             @return View over the array of values.
-            @see Joints
         */
         virtual ConstArrayView<float> getJointGroupValues(std::uint16_t jointGroupIndex) const = 0;
         /**
@@ -154,7 +147,6 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
             @warning
                 jointGroupIndex must be less than the value returned by getJointGroupCount.
             @return View over the array of joint indices.
-            @see Joints
             @see DefinitionReader
         */
         virtual ConstArrayView<std::uint16_t> getJointGroupJointIndices(std::uint16_t jointGroupIndex) const = 0;
@@ -166,19 +158,16 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
             @warning
                 These LOD values are not interchangeable with the LOD indices from DefinitionReader::getBlendShapeChannelIndicesForLOD.
             @return View over the array of LOD bounds.
-            @see BlendShapes
         */
         virtual ConstArrayView<std::uint16_t> getBlendShapeChannelLODs() const = 0;
         /**
             @brief Input indices used to index into the input vector.
             @return View over the array of input indices.
-            @see BlendShapes
         */
         virtual ConstArrayView<std::uint16_t> getBlendShapeChannelInputIndices() const = 0;
         /**
             @brief Output indices specify the positions of blend shape channel output values.
             @return View over the array of output indices.
-            @see BlendShapes
         */
         virtual ConstArrayView<std::uint16_t> getBlendShapeChannelOutputIndices() const = 0;
         /**
@@ -188,45 +177,38 @@ class DNAAPI BehaviorReader : public virtual DefinitionReader {
                 value 5 is LOD with lowest details), while the value denotes the number of rows (within the conditional table),
                 belonging to that level.
             @return View over the array of LOD bounds.
-            @see AnimatedMaps
         */
         virtual ConstArrayView<std::uint16_t> getAnimatedMapLODs() const = 0;
         /**
             @brief Input indices used to index into the array of input values.
             @return View over the array of input indices.
-            @see AnimatedMaps
         */
         virtual ConstArrayView<std::uint16_t> getAnimatedMapInputIndices() const = 0;
         /**
             @brief Output indices that specify the computed output value's position.
             @return View over the array of output indices.
-            @see AnimatedMaps
         */
         virtual ConstArrayView<std::uint16_t> getAnimatedMapOutputIndices() const = 0;
         /**
             @brief Filter values(lower-bounds) used to decide whether a particular
                 entry should be evaluated or not.
             @return View over the array of filter values.
-            @see AnimatedMaps
         */
         virtual ConstArrayView<float> getAnimatedMapFromValues() const = 0;
         /**
             @brief Filter values(upper-bounds) used to decide whether a particular
                 entry should be evaluated or not.
             @return View over the array of filter values.
-            @see AnimatedMaps
         */
         virtual ConstArrayView<float> getAnimatedMapToValues() const = 0;
         /**
             @brief Computational values(slope/gradient) used for calculating the output value.
             @return View over the array of computational values.
-            @see AnimatedMaps
         */
         virtual ConstArrayView<float> getAnimatedMapSlopeValues() const = 0;
         /**
             @brief Computational values(vertical intercept) used for calculating the output value.
             @return View over the array of computational values.
-            @see AnimatedMaps
         */
         virtual ConstArrayView<float> getAnimatedMapCutValues() const = 0;
 };

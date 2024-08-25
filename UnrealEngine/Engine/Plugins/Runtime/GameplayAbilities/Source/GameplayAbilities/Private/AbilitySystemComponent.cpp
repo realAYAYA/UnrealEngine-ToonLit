@@ -39,6 +39,12 @@ DECLARE_CYCLE_STAT(TEXT("AbilitySystemComp ExecuteGameplayEffect"), STAT_Ability
 static bool bUseReplicationConditionForActiveGameplayEffects = true;
 static FAutoConsoleVariableRef CVarUseReplicationConditionForActiveGameplayEffects(TEXT("AbilitySystem.UseReplicationConditionForActiveGameplayEffects"), bUseReplicationConditionForActiveGameplayEffects, TEXT("Whether to be able to determine the replication condition for AbilitySystemComponent::ActiveGameplayEffects at runtime. Removes the need for executing custom logic in FActiveGameplayEffects::NetDeltaSerialize. Default is true."));
 
+static bool bReplicateAbilitiesToSimulatedProxies = false;
+static FAutoConsoleVariableRef CVarReplicateGameplayAbilitiesToOwnerOnly(TEXT("AbilitySystem.Fix.ReplicateAbilitiesToSimulatedProxies"), bReplicateAbilitiesToSimulatedProxies, TEXT("Default: False.  When false, Gameplay Abilities replicate to AutonomousProxies only, not SimulatedProxies (surmised to be a bug)"));
+
+static bool bForceReplicationAlsoUpdatesReplicatedProxyInterface = true;
+static FAutoConsoleVariableRef CVarForceReplicationAlsoUpdatesReplicatedProxyInterface(TEXT("AbilitySystem.Fix.ForceReplicationAlsoUpdatesReplicatedProxyInterface"), bForceReplicationAlsoUpdatesReplicatedProxyInterface, TEXT("Default: True.  When true, Calling ForceReplication() on the AbilitySystemComponent will also call ForceReplication() on the ReplicationProxy to ensure prompt replication of Cues and Tags"));
+
 UAbilitySystemComponent::UAbilitySystemComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, GameplayTagCountContainer()
@@ -60,6 +66,9 @@ UAbilitySystemComponent::UAbilitySystemComponent(const FObjectInitializer& Objec
 	bSuppressGameplayCues = false;
 	bPendingMontageRep = false;
 	AffectedAnimInstanceTag = NAME_None; 
+
+	AbilityScopeLockCount = 0;
+	bAbilityPendingClearAll = false;
 	AbilityLastActivatedTime = 0.f;
 
 	ReplicationMode = EGameplayEffectReplicationMode::Full;
@@ -142,17 +151,7 @@ void UAbilitySystemComponent::GetAllAttributes(TArray<FGameplayAttribute>& OutAt
 			continue;
 		}
 
-		for (TFieldIterator<FProperty> It(Set->GetClass()); It; ++It)
-		{
-			if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(*It))
-			{
-				OutAttributes.Push(FGameplayAttribute(FloatProperty));
-			}
-			else if (FGameplayAttribute::IsGameplayAttributeDataProperty(*It))
-			{
-				OutAttributes.Push(FGameplayAttribute(*It));
-			}
-		}
+		UAttributeSet::GetAttributesFromSetClass(Set->GetClass(), OutAttributes);
 	}
 }
 
@@ -226,6 +225,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		AbilityActorInfo = TSharedPtr<FGameplayAbilityActorInfo>(UAbilitySystemGlobals::Get().AllocAbilityActorInfo());
 	}
+
+	// Ensure bDestroyActiveStateInitiated is clear in case component is re-entering play 
+	bDestroyActiveStateInitiated = false;
 }
 
 void UAbilitySystemComponent::OnUnregister()
@@ -254,7 +256,8 @@ void UAbilitySystemComponent::ReadyForReplication()
 		{
 			if (ReplicatedAbility)
 			{
-				AddReplicatedSubObject(ReplicatedAbility);
+				const ELifetimeCondition LifetimeCondition = bReplicateAbilitiesToSimulatedProxies ? COND_None : COND_ReplayOrOwner;
+				AddReplicatedSubObject(ReplicatedAbility, LifetimeCondition);
 			}
 		}
 
@@ -277,16 +280,26 @@ void UAbilitySystemComponent::CacheIsNetSimulated()
 
 void UAbilitySystemComponent::InhibitActiveGameplayEffect(FActiveGameplayEffectHandle ActiveGEHandle, bool bInhibit, bool bInvokeGameplayCueEvents)
 {
+	FActiveGameplayEffectHandle ContinuationHandle = SetActiveGameplayEffectInhibit(MoveTemp(ActiveGEHandle), bInhibit, bInvokeGameplayCueEvents);
+	ensureMsgf(ContinuationHandle.IsValid(), TEXT("InhibitActiveGameplayEffect invalidated the incoming ActiveGEHandle. Update your code to SetActiveGameplayEffectInhibit so it's clear the incoming handle can be invalidated."));
+}
+
+FActiveGameplayEffectHandle UAbilitySystemComponent::SetActiveGameplayEffectInhibit(FActiveGameplayEffectHandle&& ActiveGEHandle, bool bInhibit, bool bInvokeGameplayCueEvents)
+{
 	FActiveGameplayEffect* ActiveGE = ActiveGameplayEffects.GetActiveGameplayEffect(ActiveGEHandle);
 	if (!ActiveGE)
 	{
 		ABILITY_LOG(Error, TEXT("%s received bad Active GameplayEffect Handle: %s"), ANSI_TO_TCHAR(__func__), *ActiveGEHandle.ToString());
-		return;
+		return FActiveGameplayEffectHandle();
 	}
 
 	if (ActiveGE->bIsInhibited != bInhibit)
 	{
 		ActiveGE->bIsInhibited = bInhibit;
+
+		// It's possible the adding or removing of the tags can invalidate the ActiveGE.  As such,
+		// let's make sure we hold on to that memory until this function is done.
+		FScopedActiveGameplayEffectLock ScopeLockActiveGameplayEffects(ActiveGameplayEffects);
 
 		// All OnDirty callbacks must be inhibited until we update this entire GameplayEffect.
 		FScopedAggregatorOnDirtyBatch	AggregatorOnDirtyBatcher;
@@ -300,8 +313,21 @@ void UAbilitySystemComponent::InhibitActiveGameplayEffect(FActiveGameplayEffectH
 			ActiveGameplayEffects.AddActiveGameplayEffectGrantedTagsAndModifiers(*ActiveGE, bInvokeGameplayCueEvents);
 		}
 
-		ActiveGE->EventSet.OnInhibitionChanged.Broadcast(ActiveGEHandle, ActiveGE->bIsInhibited);
+		// The act of executing anything on the ActiveGE can invalidate it.  So we need to recheck if we can continue to execute the callbacks.
+		if (!ActiveGE->IsPendingRemove)
+		{
+			ActiveGE->EventSet.OnInhibitionChanged.Broadcast(ActiveGEHandle, ActiveGE->bIsInhibited);
+		}
+
+		// We lost that it was active somewhere along the way, let the caller know
+		if (ActiveGE->IsPendingRemove)
+		{
+			return FActiveGameplayEffectHandle();
+		}
 	}
+
+	// Normal case is the passed-in ActiveGEHandle is still active and thus can continue execution
+	return MoveTemp(ActiveGEHandle);
 }
 
 
@@ -443,10 +469,13 @@ FGameplayEffectSpecHandle UAbilitySystemComponent::MakeOutgoingSpec(TSubclassOf<
 FGameplayEffectContextHandle UAbilitySystemComponent::MakeEffectContext() const
 {
 	FGameplayEffectContextHandle Context = FGameplayEffectContextHandle(UAbilitySystemGlobals::Get().AllocGameplayEffectContext());
-	// By default use the owner and avatar as the instigator and causer
-	check(AbilityActorInfo.IsValid());
 	
-	Context.AddInstigator(AbilityActorInfo->OwnerActor.Get(), AbilityActorInfo->AvatarActor.Get());
+	// By default use the owner and avatar as the instigator and causer
+	if (ensureMsgf(AbilityActorInfo.IsValid(), TEXT("Unable to make effect context because AbilityActorInfo is not valid.")))
+	{
+		Context.AddInstigator(AbilityActorInfo->OwnerActor.Get(), AbilityActorInfo->AvatarActor.Get());
+	}
+	
 	return Context;
 }
 
@@ -595,6 +624,12 @@ FOnActiveGameplayEffectTimeChange* UAbilitySystemComponent::OnGameplayEffectTime
 {
 	FActiveGameplayEffect* ActiveEffect = ActiveGameplayEffects.GetActiveGameplayEffect(Handle);
 	return ActiveEffect ? &ActiveEffect->EventSet.OnTimeChanged : nullptr;
+}
+
+FOnActiveGameplayEffectInhibitionChanged* UAbilitySystemComponent::OnGameplayEffectInhibitionChangedDelegate(FActiveGameplayEffectHandle Handle)
+{
+	FActiveGameplayEffect* ActiveEffect = ActiveGameplayEffects.GetActiveGameplayEffect(Handle);
+	return ActiveEffect ? &ActiveEffect->EventSet.OnInhibitionChanged : nullptr;
 }
 
 FOnGivenActiveGameplayEffectRemoved& UAbilitySystemComponent::OnAnyGameplayEffectRemovedDelegate()
@@ -851,13 +886,13 @@ FActiveGameplayEffectHandle UAbilitySystemComponent::ApplyGameplayEffectSpecToSe
 			// Log results of applied GE spec
 			if (UE_LOG_ACTIVE(VLogAbilitySystem, Log))
 			{
-				ABILITY_VLOG(GetOwnerActor(), Log, TEXT("Applied %s"), *OurCopyOfSpec->Def->GetFName().ToString());
+				UE_VLOG(GetOwnerActor(), VLogAbilitySystem, Log, TEXT("Applied %s"), *OurCopyOfSpec->Def->GetFName().ToString());
 
 				for (const FGameplayModifierInfo& Modifier : Spec.Def->Modifiers)
 				{
 					float Magnitude = 0.f;
 					Modifier.ModifierMagnitude.AttemptCalculateMagnitude(Spec, Magnitude);
-					ABILITY_VLOG(GetOwnerActor(), Log, TEXT("         %s: %s %f"), *Modifier.Attribute.GetName(), *EGameplayModOpToString(Modifier.ModifierOp), Magnitude);
+					UE_VLOG(GetOwnerActor(), VLogAbilitySystem, Log, TEXT("         %s: %s %f"), *Modifier.Attribute.GetName(), *EGameplayModOpToString(Modifier.ModifierOp), Magnitude);
 				}
 			}
 		}
@@ -882,33 +917,23 @@ FActiveGameplayEffectHandle UAbilitySystemComponent::ApplyGameplayEffectSpecToSe
 	// Update (not push) the global spec being applied [we want to switch it to our copy, from the const input copy)
 	UAbilitySystemGlobals::Get().SetCurrentAppliedGE(OurCopyOfSpec);
 
-	// We still probably want to apply tags and stuff even if instant?
-	// If bSuppressStackingCues is set for this GameplayEffect, only add the GameplayCue if this is the first instance of the GameplayEffect
-	if (!bSuppressGameplayCues && bInvokeGameplayCueApplied && AppliedEffect && !AppliedEffect->bIsInhibited && 
-		(!bFoundExistingStackableGE || !Spec.Def->bSuppressStackingCues))
+	// UE5.4: We are following the same previous implementation that there is a special case for Gameplay Cues here (caveat: may not be true):
+	// We are Stacking an existing Gameplay Effect.  That means the GameplayCues should already be Added/WhileActive and we do not have a proper
+	// way to replicate the fact that it's been retriggered, hence the RPC here.  I say this may not be true because any number of things could have
+	// removed the GameplayCue by the time we getting a Stacking GE (e.g. RemoveGameplayCue).
+	if (!bSuppressGameplayCues && !Spec.Def->bSuppressStackingCues && bFoundExistingStackableGE && AppliedEffect && !AppliedEffect->bIsInhibited)
 	{
-		// We both added and activated the GameplayCue here.
-		// On the client, which will invoke the gameplay cue from an OnRep, it will need to look at the StartTime to determine
-		// if the Cue was actually added+activated or just added (due to relevancy)
-
-		// Fixme: what if we wanted to scale Cue magnitude based on damage? E.g, scale an cue effect when the GE is buffed?
-
-		if (OurCopyOfSpec->GetStackCount() > Spec.GetStackCount())
+		ensureMsgf(OurCopyOfSpec, TEXT("OurCopyOfSpec will always be valid if bFoundExistingStackableGE"));
+		if (OurCopyOfSpec && OurCopyOfSpec->GetStackCount() > Spec.GetStackCount())
 		{
 			// Because PostReplicatedChange will get called from modifying the stack count
 			// (and not PostReplicatedAdd) we won't know which GE was modified.
 			// So instead we need to explicitly RPC the client so it knows the GC needs updating
 			UAbilitySystemGlobals::Get().GetGameplayCueManager()->InvokeGameplayCueAddedAndWhileActive_FromSpec(this, *OurCopyOfSpec, PredictionKey);
 		}
-		else
-		{
-			// Otherwise these will get replicated to the client when the GE gets added to the replicated array
-			InvokeGameplayCueEvent(*OurCopyOfSpec, EGameplayCueEvent::OnActive);
-			InvokeGameplayCueEvent(*OurCopyOfSpec, EGameplayCueEvent::WhileActive);
-		}
 	}
 	
-	// Execute the GE at least once (if instant, this will execute once and be done. If persistent, it was added to ActiveGameplayEffects above)
+	// Execute the GE at least once (if instant, this will execute once and be done. If persistent, it was added to ActiveGameplayEffects in ApplyGameplayEffectSpec)
 	
 	// Execute if this is an instant application effect
 	if (bTreatAsInfiniteDuration)
@@ -983,13 +1008,13 @@ void UAbilitySystemComponent::ExecuteGameplayEffect(FGameplayEffectSpec &Spec, F
 
 	if (UE_LOG_ACTIVE(VLogAbilitySystem, Log))
 	{
-		ABILITY_VLOG(GetOwnerActor(), Log, TEXT("Executed %s"), *Spec.Def->GetFName().ToString());
+		UE_VLOG(GetOwnerActor(), VLogAbilitySystem, Log, TEXT("Executed %s"), *Spec.Def->GetFName().ToString());
 		
 		for (const FGameplayModifierInfo& Modifier : Spec.Def->Modifiers)
 		{
 			float Magnitude = 0.f;
 			Modifier.ModifierMagnitude.AttemptCalculateMagnitude(Spec, Magnitude);
-			ABILITY_VLOG(GetOwnerActor(), Log, TEXT("         %s: %s %f"), *Modifier.Attribute.GetName(), *EGameplayModOpToString(Modifier.ModifierOp), Magnitude);
+			UE_VLOG(GetOwnerActor(), VLogAbilitySystem, Log, TEXT("         %s: %s %f"), *Modifier.Attribute.GetName(), *EGameplayModOpToString(Modifier.ModifierOp), Magnitude);
 		}
 	}
 
@@ -1238,11 +1263,14 @@ void UAbilitySystemComponent::InvokeGameplayCueEvent(const FGameplayTag Gameplay
 
 void UAbilitySystemComponent::InvokeGameplayCueEvent(const FGameplayTag GameplayCueTag, EGameplayCueEvent::Type EventType, const FGameplayCueParameters& GameplayCueParameters)
 {
-	AActor* ActorAvatar = AbilityActorInfo->AvatarActor.Get();
-	
-	if (ActorAvatar != nullptr && !bSuppressGameplayCues)
+	if(ensureMsgf(AbilityActorInfo != nullptr, TEXT("AbilityActorInfo is null for %s. Probably OnRegister of the AbilitySystemComponent was not called yet."), *this->GetOwner()->GetName()))
 	{
-		UAbilitySystemGlobals::Get().GetGameplayCueManager()->HandleGameplayCue(ActorAvatar, GameplayCueTag, EventType, GameplayCueParameters);
+		AActor* ActorAvatar = AbilityActorInfo->AvatarActor.Get();
+		
+		if (ActorAvatar != nullptr && !bSuppressGameplayCues)
+		{
+			UAbilitySystemGlobals::Get().GetGameplayCueManager()->HandleGameplayCue(ActorAvatar, GameplayCueTag, EventType, GameplayCueParameters);
+		}
 	}
 }
 
@@ -1289,7 +1317,7 @@ void UAbilitySystemComponent::AddGameplayCue_Internal(const FGameplayTag Gamepla
 {
 	if (IsOwnerActorAuthoritative())
 	{
-		bool bWasInList = HasMatchingGameplayTag(GameplayCueTag);
+		const bool bWasInList = GameplayCueContainer.HasCue(GameplayCueTag);
 
 		ForceReplication();
 		GameplayCueContainer.AddCue(GameplayCueTag, ScopedPredictionKey, GameplayCueParameters);
@@ -1356,26 +1384,7 @@ void UAbilitySystemComponent::RemoveGameplayCue_Internal(const FGameplayTag Game
 {
 	if (IsOwnerActorAuthoritative())
 	{
-		bool bWasInList = HasMatchingGameplayTag(GameplayCueTag);
-
-		// Force replication so GameplayCue removals are properly replicated to all clients during Mixed and Minimal replication modes
-		ForceReplication();
-
-		if (bWasInList)
-		{
-			for (const FActiveGameplayCue& GameplayCue : GameplayCueContainer.GameplayCues)
-			{
-				if (GameplayCue.GameplayCueTag == GameplayCueTag)
-				{
-					// Call on server here, clients get it from repnotify
-					InvokeGameplayCueEvent(GameplayCueTag, EGameplayCueEvent::Removed, GameplayCue.Parameters);
-				}
-			}
-		}
-		
 		GameplayCueContainer.RemoveCue(GameplayCueTag);
-		
-		// Don't need to multicast broadcast this, ActiveGameplayCues replication handles it
 	}
 	else if (ScopedPredictionKey.IsLocalClientKey())
 	{
@@ -1645,6 +1654,15 @@ void UAbilitySystemComponent::ForceReplication()
 	if (OwningActor)
 	{
 		OwningActor->ForceNetUpdate();
+
+		if (ReplicationProxyEnabled && bForceReplicationAlsoUpdatesReplicatedProxyInterface)
+		{
+			IAbilitySystemReplicationProxyInterface* ReplicationProxy = GetReplicationInterface();
+			if (ReplicationProxy && ReplicationProxy != this)
+			{
+				ReplicationProxy->ForceReplication();
+			}
+		}
 	}
 }
 
@@ -1759,7 +1777,7 @@ void UAbilitySystemComponent::ReinvokeActiveGameplayCues()
 {
 	for (const FActiveGameplayEffect& Effect : &ActiveGameplayEffects)
 	{
-		if (Effect.bIsInhibited == false)
+		if (Effect.bIsInhibited == false && Effect.Spec.Def && Effect.Spec.Def->DurationPolicy != EGameplayEffectDurationType::Instant)
 		{
 			InvokeGameplayCueEvent(Effect.Spec, EGameplayCueEvent::WhileActive);
 		}
@@ -1771,6 +1789,100 @@ void UAbilitySystemComponent::PrintAllGameplayEffects() const
 	ABILITY_LOG(Log, TEXT("Owner: %s. Avatar: %s"), *GetOwner()->GetName(), *AbilityActorInfo->AvatarActor->GetName());
 	ActiveGameplayEffects.PrintAllGameplayEffects();
 }
+
+#if ENABLE_VISUAL_LOG
+static FVisualLogStatusCategory GrabDebugSnapshot_GameplayAbilities(const UAbilitySystemComponent* ASC)
+{
+	FVisualLogStatusCategory AllAbilitiesStatus;
+	AllAbilitiesStatus.Category = TEXT("Gameplay Abilities");
+
+	for (const FGameplayAbilitySpec& Spec : ASC->GetActivatableAbilities())
+	{
+		FVisualLogStatusCategory AbilityStatus;
+		const UGameplayAbility* AbilitySource = Spec.GetPrimaryInstance() ? Spec.GetPrimaryInstance() : Spec.Ability.Get();
+		AbilityStatus.Category = FString::Printf(TEXT("%s[%s] %s"), Spec.IsActive() ? TEXT("**") : TEXT(""), *Spec.Handle.ToString(), *GetNameSafe(AbilitySource));
+
+		AbilityStatus.Add(TEXT("ActiveCount"), FString::Printf(TEXT("%d"), Spec.ActiveCount));
+		AbilityStatus.Add(TEXT("Level"), FString::Printf(TEXT("%d"), Spec.Level));
+
+		if (UObject* SourceObject = Spec.SourceObject.Get())
+		{
+			AbilityStatus.Add(TEXT("SourceObject"), *GetNameSafe(SourceObject));
+		}
+
+		FActiveGameplayEffectHandle AGEHandle = ASC->FindActiveGameplayEffectHandle(Spec.Handle);
+		if (AGEHandle.IsValid())
+		{
+			if (const FActiveGameplayEffect* ActiveGE = ASC->GetActiveGameplayEffect(AGEHandle))
+			{
+				AbilityStatus.Add(TEXT("Granting Effect"), FString::Printf(TEXT("[%s] %s"), *AGEHandle.ToString(), *ActiveGE->Spec.ToSimpleString()));
+			}
+			else
+			{
+				AbilityStatus.Add(TEXT("Granting Effect"), FString::Printf(TEXT("[%s] NOT FOUND"), *AGEHandle.ToString()));
+			}
+		}
+
+		if (FGameplayEventData* GameplayEventData = Spec.GameplayEventData.Get())
+		{
+			FVisualLogStatusCategory EventDataStatus;
+			EventDataStatus.Category = TEXT("GameplayEventData");
+
+			EventDataStatus.Add(TEXT("EventTag"), GameplayEventData->EventTag.ToString());
+
+#define EventDataStatus_AddOptional(x) if (GameplayEventData-> x) { EventDataStatus.Add(TEXT("##x"), *GetNameSafe(GameplayEventData-> x)); }
+			EventDataStatus_AddOptional(Instigator);
+			EventDataStatus_AddOptional(Target);
+			EventDataStatus_AddOptional(OptionalObject);
+			EventDataStatus_AddOptional(OptionalObject2);
+#undef EventDataStatus_AddOptional
+
+			EventDataStatus.Add(TEXT("Context"), GameplayEventData->ContextHandle.ToString());
+
+			if (GameplayEventData->InstigatorTags.Num())
+			{
+				EventDataStatus.Add(TEXT("InstigatorTags"), GameplayEventData->InstigatorTags.ToStringSimple());
+			}
+
+			if (GameplayEventData->TargetTags.Num())
+			{
+				EventDataStatus.Add(TEXT("TargetTags"), GameplayEventData->TargetTags.ToStringSimple());
+			}
+
+			if (GameplayEventData->EventMagnitude != 0.0f)
+			{
+				EventDataStatus.Add(TEXT("EventMagnitude"), FString::Printf(TEXT("%.3f"), GameplayEventData->EventMagnitude));
+			}
+
+			for (int32 Index = 0; Index < GameplayEventData->TargetData.Num(); ++Index)
+			{
+				FGameplayAbilityTargetData* TargetData = GameplayEventData->TargetData.Get(Index);
+				EventDataStatus.Add(FString::Printf(TEXT("TargetData[%d]"), Index), TargetData ? *TargetData->ToString() : TEXT("null"));
+			}
+
+			AbilityStatus.AddChild(EventDataStatus);
+		}
+
+		AllAbilitiesStatus.AddChild(AbilityStatus);
+	}
+
+	return AllAbilitiesStatus;
+}
+
+void UAbilitySystemComponent::GrabDebugSnapshot(FVisualLogEntry* Snapshot) const
+{
+	Super::GrabDebugSnapshot(Snapshot);
+
+	if (ActivatableAbilities.Items.Num() > 0)
+	{
+		FVisualLogStatusCategory AbilitiesStatus = GrabDebugSnapshot_GameplayAbilities(this);
+		Snapshot->Status.Add(AbilitiesStatus);
+	}
+
+	ActiveGameplayEffects.DescribeSelfToVisLog(Snapshot);
+}
+#endif
+
 
 bool UAbilitySystemComponent::IsOwnerActorAuthoritative() const
 {
@@ -2374,6 +2486,8 @@ void UAbilitySystemComponent::Debug_Internal(FAbilitySystemComponentDebugInfo& I
 		}
 	}
 
+	DebugLine(Info, TEXT("Tip: Use the GameplayDebugger for enhanced functionality"), 4.0f, 0.0f);
+
 	FGameplayTagContainer OwnerTags;
 	GetOwnedGameplayTags(OwnerTags);
 
@@ -2619,17 +2733,16 @@ void UAbilitySystemComponent::Debug_Internal(FAbilitySystemComponentDebugInfo& I
 				continue;
 			}
 
-			for (TFieldIterator<FProperty> It(Set->GetClass()); It; ++It)
+			TArray<FGameplayAttribute> Attributes;
+			UAttributeSet::GetAttributesFromSetClass(Set->GetClass(), Attributes);
+			for (const FGameplayAttribute& Attribute : Attributes)
 			{
-				FGameplayAttribute	Attribute(*It);
-
 				if (DrawAttributes.Contains(Attribute))
 					continue;
 
 				if (Attribute.IsValid())
 				{
-					float Value = GetNumericAttribute(Attribute);
-
+					const float Value = GetNumericAttribute(Attribute);
 					DebugLine(Info, FString::Printf(TEXT("%s %.2f"), *Attribute.GetName(), Value), 4.f, 0.f);
 				}
 			}
@@ -2653,6 +2766,13 @@ void UAbilitySystemComponent::Debug_Internal(FAbilitySystemComponentDebugInfo& I
 			FGameplayTagContainer FailureTags;
 			const TArray<uint8>& LocalBlockedAbilityBindings = GetBlockedAbilityBindings();
 
+			// We prefer executing on the instanced ability if we're instancing
+			UGameplayAbility* AbilitySource = AbilitySpec.GetPrimaryInstance();
+			if (!AbilitySource)
+			{
+				AbilitySource = AbilitySpec.Ability.Get();
+			}
+
 			if (AbilitySpec.IsActive())
 			{
 				StatusText = FString::Printf(TEXT(" (Active %d)"), AbilitySpec.ActiveCount);
@@ -2663,12 +2783,12 @@ void UAbilitySystemComponent::Debug_Internal(FAbilitySystemComponentDebugInfo& I
 				StatusText = TEXT(" (InputBlocked)");
 				AbilityTextColor = FColor::Red;
 			}
-			else if (AbilitySpec.Ability->AbilityTags.HasAny(BlockedAbilityTags.GetExplicitGameplayTags()))
+			else if (AbilitySource->AbilityTags.HasAny(BlockedAbilityTags.GetExplicitGameplayTags()))
 			{
 				StatusText = TEXT(" (TagBlocked)");
 				AbilityTextColor = FColor::Red;
 			}
-			else if (AbilitySpec.Ability->CanActivateAbility(AbilitySpec.Handle, AbilityActorInfo.Get(), nullptr, nullptr, &FailureTags) == false)
+			else if (AbilitySource->CanActivateAbility(AbilitySpec.Handle, AbilityActorInfo.Get(), nullptr, nullptr, &FailureTags) == false)
 			{
 				StatusText = FString::Printf(TEXT(" (CantActivate %s)"), *FailureTags.ToString());
 				AbilityTextColor = FColor::Red;
@@ -2866,13 +2986,21 @@ void UAbilitySystemComponent::AddSpawnedAttribute(UAttributeSet* Attribute)
 	}
 }
 
-void UAbilitySystemComponent::RemoveSpawnedAttribute(UAttributeSet* Attribute)
+void UAbilitySystemComponent::RemoveSpawnedAttribute(UAttributeSet* AttributeSet)
 {
-	if (SpawnedAttributes.RemoveSingle(Attribute) > 0)
+	if (SpawnedAttributes.RemoveSingle(AttributeSet) > 0)
 	{
 		if (IsUsingRegisteredSubObjectList())
 		{
-			RemoveReplicatedSubObject(Attribute);
+			RemoveReplicatedSubObject(AttributeSet);
+		}
+
+		TArray<FGameplayAttribute> Attributes;
+		UAttributeSet::GetAttributesFromSetClass(AttributeSet->GetClass(), Attributes);
+		for (const FGameplayAttribute& Attribute : Attributes)
+		{
+			ABILITY_LOG(Log, TEXT("Cleaning up aggregator for attribute '%s' due to RemoveSpawnedAttribute removing attribute set '%s'"), *Attribute.GetName(), *AttributeSet->GetName());
+			ActiveGameplayEffects.CleanupAttributeAggregator(Attribute);
 		}
 
 		SetSpawnedAttributesListDirty();
@@ -2939,6 +3067,21 @@ void UAbilitySystemComponent::OnRep_SpawnedAttributes(const TArray<UAttributeSet
 			}
 		}
 	}
+
+	// Find the attribute sets that got removed
+	for (UAttributeSet* PreviousAttributeSet : PreviousSpawnedAttributes)
+	{
+		if (PreviousAttributeSet && SpawnedAttributes.Find(PreviousAttributeSet) == INDEX_NONE)
+		{
+			TArray<FGameplayAttribute> Attributes;
+			UAttributeSet::GetAttributesFromSetClass(PreviousAttributeSet->GetClass(), Attributes);
+			for (const FGameplayAttribute& Attribute : Attributes)
+			{
+				ABILITY_LOG(Log, TEXT("Cleaning up aggregator for attribute '%s' due to OnRep_SpawnedAttributes detecting removal of '%s'"), *Attribute.GetName(), *PreviousAttributeSet->GetName());
+				ActiveGameplayEffects.CleanupAttributeAggregator(Attribute);
+			}
+		}
+	}
 }
 
 void UAbilitySystemComponent::AddReplicatedInstancedAbility(UGameplayAbility* GameplayAbility)
@@ -2950,7 +3093,8 @@ void UAbilitySystemComponent::AddReplicatedInstancedAbility(UGameplayAbility* Ga
 		
 		if (IsUsingRegisteredSubObjectList() && IsReadyForReplication())
 		{
-			AddReplicatedSubObject(GameplayAbility);
+			const ELifetimeCondition LifetimeCondition = bReplicateAbilitiesToSimulatedProxies ? COND_None : COND_ReplayOrOwner;
+			AddReplicatedSubObject(GameplayAbility, LifetimeCondition);
 		}
 	}
 }

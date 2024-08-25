@@ -27,7 +27,10 @@ public:
 		uint8 InGraphSortPriority,
 		FComputeGraphRenderProxy const* InGraphRenderProxy, 
 		TArray<FComputeDataProviderRenderProxy*> InDataProviderRenderProxies,
-		FSimpleDelegate InFallbackDelegate);
+		FSimpleDelegate InFallbackDelegate,
+		const UObject* OwnerPointer = nullptr);
+
+	void Abort(const UObject* OwnerPointer);
 
 	/** Has enqueued compute graph work. */
 	bool HasWork(FName InExecutionGroupName) const override;
@@ -44,6 +47,8 @@ private:
 	{
 		/** Name of owner object that invoked the graph. */
 		FName OwnerName;
+		/** Pointer to an owning UObject. */
+		const UObject* OwnerPointer = nullptr;
 		/** Priority used when sorting work. */
 		uint8 GraphSortPriority = 0;
 		/** Graph render proxy. */

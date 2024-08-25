@@ -125,7 +125,7 @@ public:
 	SIZE_T GetTypeHash() const override;
 
 	FPaperRenderSceneProxy(const UPrimitiveComponent* InComponent);
-	virtual ~FPaperRenderSceneProxy();
+	~FPaperRenderSceneProxy();
 
 	// FPrimitiveSceneProxy interface.
 	virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override;
@@ -133,7 +133,7 @@ public:
 	virtual uint32 GetMemoryFootprint() const override;
 	virtual bool CanBeOccluded() const override;
 	virtual bool IsUsingDistanceCullFade() const override;
-	virtual void CreateRenderThreadResources() override;
+	virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 	// End of FPrimitiveSceneProxy interface.
 
 	void SetBodySetup_RenderThread(UBodySetup* NewSetup);
@@ -145,7 +145,7 @@ public:
 protected:
 	virtual void GetDynamicMeshElementsForView(const FSceneView* View, int32 ViewIndex, FMeshElementCollector& Collector) const;
 
-	bool GetMeshElement(int32 SectionIndex, uint8 DepthPriorityGroup, bool bIsSelected, FMeshBatch& OutMeshBatch) const;
+	bool GetMeshElement(FMeshElementCollector& Collector, int32 SectionIndex, uint8 DepthPriorityGroup, bool bIsSelected, FMeshBatch& OutMeshBatch) const;
 
 	void GetNewBatchMeshes(const FSceneView* View, int32 ViewIndex, FMeshElementCollector& Collector) const;
 	void GetNewBatchMeshesPrebuilt(const FSceneView* View, int32 ViewIndex, FMeshElementCollector& Collector) const;
@@ -158,11 +158,13 @@ protected:
 	// Call this if you modify BatchedSections or Vertices after the proxy has already been created
 	void RecreateCachedRenderData(FRHICommandListBase& RHICmdList);
 
-	FSpriteTextureOverrideRenderProxy* GetCachedMaterialProxyForSection(int32 SectionIndex, FMaterialRenderProxy* ParentMaterialProxy) const;
+	FSpriteTextureOverrideRenderProxy* GetCachedMaterialProxyForSection(FMeshElementCollector& Collector, int32 SectionIndex, FMaterialRenderProxy* ParentMaterialProxy) const;
 
 protected:
 	TArray<FSpriteRenderSection> BatchedSections;
 	TArray<FDynamicMeshVertex> Vertices;
+
+	mutable UE::FMutex MaterialTextureOverrideProxiesMutex;
 	mutable TArray<FSpriteTextureOverrideRenderProxy*> MaterialTextureOverrideProxies;
 
 	FPaperSpriteVertexBuffer VertexBuffer;

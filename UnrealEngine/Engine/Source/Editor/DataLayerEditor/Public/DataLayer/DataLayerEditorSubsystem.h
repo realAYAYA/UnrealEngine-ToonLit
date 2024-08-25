@@ -42,7 +42,10 @@ class ULevel;
 class UObject;
 class UWorld;
 class UWorldPartition;
+class UExternalDataLayerAsset;
+struct FLevelEditorDragDropWorldSurrogateReferencingObject;
 struct FFrame;
+enum class EExternalDataLayerRegistrationState : uint8;
 template<typename TItemType> class IFilter;
 
 USTRUCT(BlueprintType)
@@ -111,8 +114,14 @@ public:
 	virtual TSharedRef<SWidget> GetActorEditorContextWidget(UWorld* InWorld) const override;
 	virtual FOnActorEditorContextClientChanged& GetOnActorEditorContextClientChanged() override { return ActorEditorContextClientChanged; }
 	//~ End IActorEditorContextClient interface
+	UFUNCTION(BlueprintCallable, Category = DataLayers)
 	void AddToActorEditorContext(UDataLayerInstance* InDataLayerInstance);
+	UFUNCTION(BlueprintCallable, Category = DataLayers)
 	void RemoveFromActorEditorContext(UDataLayerInstance* InDataLayerInstance);
+	UFUNCTION(BlueprintCallable, Category = DataLayers)
+	bool SetActorEditorContextCurrentExternalDataLayer(const UExternalDataLayerAsset* InExternalDataLayerAsset);
+	UFUNCTION(BlueprintCallable, Category = DataLayers)
+	const UExternalDataLayerAsset* GetActorEditorContextCurrentExternalDataLayer() const;
 
 	TArray<const UDataLayerInstance*> GetDataLayerInstances(const TArray<const UDataLayerAsset*> DataLayerAssets) const;
 
@@ -148,8 +157,18 @@ public:
 	 *
 	 *	@param	Actor	The actor to validate
 	 */
+	UE_DEPRECATED(5.4, "Use IsActorValidForDataLayerInstances instead.")
 	UFUNCTION(BlueprintCallable, Category = DataLayers)
 	bool IsActorValidForDataLayer(AActor* Actor);
+
+	/**
+	 *	Checks to see if the specified actor is in an appropriate state to interact with DataLayers
+	 *
+	 *	@param	Actor				The actor to validate
+	 *  @param  DataLayerInstances	The data layers used to do the validation
+	 */
+	UFUNCTION(BlueprintCallable, Category = DataLayers)
+	bool IsActorValidForDataLayerInstances(AActor* Actor, const TArray<UDataLayerInstance*>& DataLayerInstances);
 
 	/**
 	 * Adds the actor to the DataLayer.
@@ -709,6 +728,7 @@ private:
 	/** Delegate handler for FEditorDelegates::PostUndoRedo. It internally calls DataLayerChanged.Broadcast and UpdateAllActorsVisibility to refresh the actors of each DataLayer. */
 	void PostUndoRedo();
 
+	void UpdateRegisteredWorldDelegates();
 	void OnWorldPartitionInitialized(UWorldPartition* InWorldPartition);
 	void OnWorldPartitionUninitialized(UWorldPartition* InWorldPartition);
 	void OnLoadedActorAddedToLevel(AActor& InActor);
@@ -727,6 +747,14 @@ private:
 
 	bool UpdateAllActorsVisibility(const bool bNotifySelectionChange, const bool bRedrawViewports, ULevel* InLevel);
 
+	bool IsActorValidForDataLayerForClasses(AActor* Actor, const TSet<TSubclassOf<UDataLayerInstance>>& DataLayerInstanceClasses);
+
+	// External Data Layer methods
+	void OnActorPreSpawnInitialization(AActor* Actor);
+	static const UExternalDataLayerAsset* GetReferencingWorldSurrogateObjectForObject(UWorld* ReferencingWorld, const FSoftObjectPath& ObjectPath);
+	TUniquePtr<FLevelEditorDragDropWorldSurrogateReferencingObject> OnLevelEditorDragDropWorldSurrogateReferencingObject(UWorld* ReferencingWorld, const FSoftObjectPath& Object);
+	void OnExternalDataLayerAssetRegistrationStateChanged(const UExternalDataLayerAsset* ExternalDataLayerAsset, EExternalDataLayerRegistrationState OldState, EExternalDataLayerRegistrationState NewState);
+
 	/** Contains Data Layers that contain actors that are part of the editor selection */
 	mutable TSet<TWeakObjectPtr<const UDataLayerInstance>> SelectedDataLayersFromEditorSelection;
 
@@ -738,6 +766,9 @@ private:
 
 	/** When true, next Tick will call UpdateAllActorsVisibility */
 	bool bAsyncUpdateAllActorsVisibility;
+
+	/** When true, next Tick will force invalid editing viewports */
+	bool bAsyncInvalidateViewports;
 
 	/** Fires whenever one or more DataLayer changes */
 	FOnDataLayerChanged DataLayerChanged;
@@ -756,17 +787,24 @@ private:
 	/** Delegate used to notify changes to ActorEditorContextSubsystem */
 	FOnActorEditorContextClientChanged ActorEditorContextClientChanged;
 
+	/** Last World to have registered world delegates */
+	TWeakObjectPtr<UWorld> LastRegisteredWorldDelegates;
+
+	/** Delegate handle for world's AddOnActorPreSpawnInitialization */
+	FDelegateHandle OnActorPreSpawnInitializationDelegate;
+
 	friend class FDataLayersBroadcast;
+	friend struct FExternalDataLayerWorldSurrogateReferencingObject;
 };
 
-template<class DataLayerType, typename ...Args>
-DataLayerType* UDataLayerEditorSubsystem::CreateDataLayerInstance(AWorldDataLayers* WorldDataLayers, Args&&... InArgs)
+template<class DataLayerInstanceType, typename ...Args>
+DataLayerInstanceType* UDataLayerEditorSubsystem::CreateDataLayerInstance(AWorldDataLayers* WorldDataLayers, Args&&... InArgs)
 {
 	UDataLayerInstance* NewDataLayer = nullptr;
 
 	if (WorldDataLayers)
 	{
-		NewDataLayer = WorldDataLayers->CreateDataLayer<DataLayerType>(Forward<Args>(InArgs)...);
+		NewDataLayer = WorldDataLayers->CreateDataLayer<DataLayerInstanceType>(Forward<Args>(InArgs)...);
 	}
 
 	if (NewDataLayer != nullptr)
@@ -774,5 +812,5 @@ DataLayerType* UDataLayerEditorSubsystem::CreateDataLayerInstance(AWorldDataLaye
 		BroadcastDataLayerChanged(EDataLayerAction::Add, NewDataLayer, NAME_None);
 	}
 
-	return CastChecked<DataLayerType>(NewDataLayer);
+	return CastChecked<DataLayerInstanceType>(NewDataLayer);
 }

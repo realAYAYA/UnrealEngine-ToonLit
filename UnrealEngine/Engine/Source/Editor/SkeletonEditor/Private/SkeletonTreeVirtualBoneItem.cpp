@@ -13,6 +13,7 @@
 #include "Animation/DebugSkelMeshComponent.h"
 #include "Animation/BlendProfile.h"
 #include "UObject/Package.h"
+#include "SocketDragDropOp.h"
 #include "Editor.h"
 #include "ScopedTransaction.h"
 
@@ -242,6 +243,62 @@ FText FSkeletonTreeVirtualBoneItem::GetBoneToolTip()
 void FSkeletonTreeVirtualBoneItem::OnItemDoubleClicked()
 {
 	OnRenameRequested.ExecuteIfBound();
+}
+
+void FSkeletonTreeVirtualBoneItem::HandleDragEnter(const FDragDropEvent& DragDropEvent)
+{
+	TSharedPtr<FSocketDragDropOp> DragConnectionOp = DragDropEvent.GetOperationAs<FSocketDragDropOp>();
+
+	// Is someone dragging a socket onto a bone?
+	if (DragConnectionOp.IsValid())
+	{
+		if (BoneName != DragConnectionOp->GetSocketInfo().Socket->BoneName)
+		{
+			// The socket can be dropped here if we're a bone and NOT the socket's existing parent
+			DragConnectionOp->SetIcon(FAppStyle::GetBrush(TEXT("Graph.ConnectorFeedback.Ok")));
+		}
+		else if (DragConnectionOp->IsAltDrag())
+		{
+			// For Alt-Drag, dropping onto the existing parent is fine, as we're going to copy, not move the socket
+			DragConnectionOp->SetIcon(FAppStyle::GetBrush(TEXT("Graph.ConnectorFeedback.Ok")));
+		}
+	}
+}
+
+void FSkeletonTreeVirtualBoneItem::HandleDragLeave(const FDragDropEvent& DragDropEvent)
+{
+	TSharedPtr<FSocketDragDropOp> DragConnectionOp = DragDropEvent.GetOperationAs<FSocketDragDropOp>();
+	if (DragConnectionOp.IsValid())
+	{
+		// Reset the drag/drop icon when leaving this row
+		DragConnectionOp->SetIcon(FAppStyle::GetBrush(TEXT("Graph.ConnectorFeedback.Error")));
+	}
+}
+
+FReply FSkeletonTreeVirtualBoneItem::HandleDrop(const FDragDropEvent& DragDropEvent)
+{
+	TSharedPtr<FSocketDragDropOp> DragConnectionOp = DragDropEvent.GetOperationAs<FSocketDragDropOp>();
+	if (DragConnectionOp.IsValid())
+	{
+		FSelectedSocketInfo SocketInfo = DragConnectionOp->GetSocketInfo();
+
+		if (DragConnectionOp->IsAltDrag())
+		{
+			// In an alt-drag, the socket can be dropped on any bone
+			// (including its existing parent) to create a uniquely named copy
+			GetSkeletonTree()->DuplicateAndSelectSocket(SocketInfo, BoneName);
+		}
+		else if (BoneName != SocketInfo.Socket->BoneName)
+		{
+			// The socket can be dropped here if we're a bone and NOT the socket's existing parent
+			USkeletalMesh* SkeletalMesh = GetSkeletonTree()->GetPreviewScene().IsValid() ? GetSkeletonTree()->GetPreviewScene()->GetPreviewMeshComponent()->GetSkeletalMeshAsset() : nullptr;
+			GetEditableSkeleton()->SetSocketParent(SocketInfo.Socket->SocketName, BoneName, SkeletalMesh);
+
+			return FReply::Handled();
+		}
+	}
+
+	return FReply::Unhandled();
 }
 
 void FSkeletonTreeVirtualBoneItem::RequestRename()

@@ -7,6 +7,7 @@
 #include "EnvironmentQuery/EnvQueryTest.h"
 #include "VisualLoggerExtension.h"
 #include "EnvironmentQuery/EQSRenderingComponent.h"
+#include "Misc/Compression.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(EnvQueryDebugHelpers)
 
@@ -43,7 +44,7 @@ void UEnvQueryDebugHelpers::DebugDataToBlobArray(EQSDebug::FQueryData& EQSLocalD
 
 		FCompression::CompressMemory(NAME_Zlib, (void*)DestBuffer, CompressedSize, (void*)UncompressedBuffer.GetData(), UncompressedSize, COMPRESS_BiasMemory);
 
-		BlobArray.SetNum(CompressedSize + HeaderSize, false);
+		BlobArray.SetNum(CompressedSize + HeaderSize, EAllowShrinking::No);
 	}
 }
 

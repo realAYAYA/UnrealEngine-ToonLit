@@ -16,7 +16,7 @@ struct FProgram;
 	//---------------------------------------------------------------------------------------------
 	//! Conditional operation.
 	//---------------------------------------------------------------------------------------------
-	class ASTOpConditional : public ASTOp
+	class ASTOpConditional final : public ASTOp
 	{
 	public:
 
@@ -50,6 +50,7 @@ struct FProgram;
 		Ptr<ASTOp> OptimiseSemantic(const FModelOptimizationOptions&, int32 Pass) const override;
 		bool GetNonBlackRect(FImageRect& maskUsage) const override;
 		Ptr<ImageSizeExpression> GetImageSizeExpression() const override;
+		virtual bool IsConditional() const override { return true; }
 	};
 
 

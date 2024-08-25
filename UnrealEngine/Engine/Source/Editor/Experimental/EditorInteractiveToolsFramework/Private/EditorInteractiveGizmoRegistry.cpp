@@ -96,7 +96,7 @@ void UEditorGizmoRegistryCategoryEntry_Primary::GetQualifiedGizmoBuilders(const 
 		}
 	}
 
-	for (TObjectPtr<UInteractiveGizmoBuilder> GizmoBuilder : GizmoTypes)
+	for (const TObjectPtr<UInteractiveGizmoBuilder>& GizmoBuilder : GizmoTypes)
 	{
 		if (IEditorInteractiveGizmoConditionalBuilder* Builder = Cast<IEditorInteractiveGizmoConditionalBuilder>(GizmoBuilder))
 		{
@@ -133,7 +133,7 @@ void UEditorGizmoRegistryCategoryEntry_Accessory::GetQualifiedGizmoBuilders(cons
 		}
 	}
 
-	for (TObjectPtr<UInteractiveGizmoBuilder> GizmoBuilder : GizmoTypes)
+	for (const TObjectPtr<UInteractiveGizmoBuilder>& GizmoBuilder : GizmoTypes)
 	{
 		if (IEditorInteractiveGizmoConditionalBuilder* Builder = Cast<IEditorInteractiveGizmoConditionalBuilder>(GizmoBuilder))
 		{

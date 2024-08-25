@@ -41,3 +41,12 @@ uint16 UTestBTDecorator_DelayedAbort::GetInstanceMemorySize() const
 	return sizeof(FBTDelayedAbortMemory);
 }
 
+void UTestBTDecorator_DelayedAbort::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTDelayedAbortMemory>(NodeMemory, InitType);
+}
+
+void UTestBTDecorator_DelayedAbort::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTDelayedAbortMemory>(NodeMemory, CleanupType);
+}

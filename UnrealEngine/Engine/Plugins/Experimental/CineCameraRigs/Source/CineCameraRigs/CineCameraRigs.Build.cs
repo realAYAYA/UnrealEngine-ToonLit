@@ -27,6 +27,8 @@ public class CineCameraRigs : ModuleRules
 			{
 				"Core",
 				"CinematicCamera",
+				"AnimationCore",
+				"Constraints"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

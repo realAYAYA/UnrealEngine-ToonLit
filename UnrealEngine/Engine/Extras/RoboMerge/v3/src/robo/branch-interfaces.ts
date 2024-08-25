@@ -52,8 +52,30 @@ export interface StompVerification extends OperationResult {
 	nonBinaryFilesResolved?: boolean // Warning to the user that non-binary files are included in changelist, but passed the first resolve
 	svFiles?: StompVerificationFile[] // Array of remaining files
 
-	// Convinence booleans to alert user to problems in verification result
+	// Convenience booleans to alert user to problems in verification result
 	remainingAllBinary?: boolean // Check to see if unresolved non-binary files are remaining -- we shouldn't stomp those!
+}
+
+export interface ExclusiveFile {
+	depotPath: string
+	name: string
+	user: string
+	client: string
+}
+
+export interface ExclusiveLockUser {
+    user: string
+    userEmail: Promise<string | null>
+}
+
+export interface ExclusiveLockInfo {
+	exclusiveLockUsers: ExclusiveLockUser[]
+	lockedFiles: ExclusiveFile[]
+}
+
+export interface UnlockVerification extends OperationResult {
+	validRequest?: boolean
+	lockedFiles?: ExclusiveFile[] // Array of locked files
 }
 
 export interface BranchGraphInterface {

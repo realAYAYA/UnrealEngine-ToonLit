@@ -193,7 +193,7 @@ export function updateBranchList(graphBotName: string | null = null) {
 		}
 		// Fallback to window hash if it exists
 		else if (window.location.hash) {
-			const botlinkhash = `#link-${window.location.hash.substr(1).toUpperCase()}`
+			const botlinkhash = `#link-${window.location.hash.substring(1).toUpperCase()}`
 			//debug(`Using window.location.hash to click ${botlinkhash}`)
 			let bot = $(botlinkhash)
 			if (bot.length !== 0) {

@@ -9,6 +9,7 @@
 #include "DisplayClusterTestsModule.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "ISinglePropertyView.h"
 #include "ObjectTools.h"
 #include "PackageTools.h"
 
@@ -76,7 +77,7 @@ namespace DisplayClusterTestUtils
 		// This must be set to avoid errors about illegal cross-package references
 		NodeTemplate->SetFlags(RF_Transactional);
 
-		UDisplayClusterConfigurationClusterNode* NewNode = FDisplayClusterConfiguratorClusterUtils::AddClusterNodeToCluster(NodeTemplate, RootCluster, Name);
+		UDisplayClusterConfigurationClusterNode* NewNode = UE::DisplayClusterConfiguratorClusterUtils::AddClusterNodeToCluster(NodeTemplate, RootCluster, Name);
 
 		// Node template is no longer needed, leave it to be cleaned up
 		NodeTemplate->MarkAsGarbage();
@@ -97,7 +98,7 @@ namespace DisplayClusterTestUtils
 		// This must be set to avoid errors about illegal cross-package references
 		ViewportTemplate->SetFlags(RF_Transactional);
 
-		UDisplayClusterConfigurationViewport* NewViewport = FDisplayClusterConfiguratorClusterUtils::AddViewportToClusterNode(ViewportTemplate, Node, Name);
+		UDisplayClusterConfigurationViewport* NewViewport = UE::DisplayClusterConfiguratorClusterUtils::AddViewportToClusterNode(ViewportTemplate, Node, Name);
 
 		// Node template is no longer needed, leave it to be cleaned up
 		ViewportTemplate->MarkAsGarbage();
@@ -201,8 +202,13 @@ namespace DisplayClusterTestUtils
 			return false;
 		}
 		
-		// Get the root property view and handle
-		PropertyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(Owner, FieldNames[0]);
+		// Get the root property view and handle -- equivalent to UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView
+		const FSinglePropertyParams InitParams;
+		FPropertyEditorModule& PropertyEditorModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
+		PropertyView = PropertyEditorModule.CreateSingleProperty(
+			Owner,
+			FieldNames[0],
+			InitParams);
 		
 		if (!PropertyView.IsValid())
 		{

@@ -322,17 +322,17 @@ void FInstallBundleSourceBulk::AsyncInit_MakeBundlesForBulkBuild()
 			if (!bDidLoadAllFilesFromMetadata)
 			{
 				// Bundle regex need to be applied in order
-				SectionNames.StableSort([this](const FString& SectionA, const FString& SectionB) -> bool
+				SectionNames.StableSort([InstallBundleConfig](const FString& SectionA, const FString& SectionB) -> bool
 				{
-					int BundleAOrder = INT_MAX;
-					int BundleBOrder = INT_MAX;
+					int32 BundleAOrder = INT_MAX;
+					int32 BundleBOrder = INT_MAX;
 
-					if (!GConfig->GetInt(*SectionA, TEXT("Order"), BundleAOrder, GInstallBundleIni))
+					if (!InstallBundleConfig->GetInt(*SectionA, TEXT("Order"), BundleAOrder))
 					{
 						LOG_SOURCE_BULK(Warning, TEXT("Bundle Section %s doesn't have an order"), *SectionA);
 					}
 
-					if (!GConfig->GetInt(*SectionB, TEXT("Order"), BundleBOrder, GInstallBundleIni))
+					if (!InstallBundleConfig->GetInt(*SectionB, TEXT("Order"), BundleBOrder))
 					{
 						LOG_SOURCE_BULK(Warning, TEXT("Bundle Section %s doesn't have an order"), *SectionB);
 					}

@@ -16,8 +16,7 @@
 	"Installed": false,
 	"EnabledByDefault": false,
 	"SupportedTargetPlatforms": [
-		"Win64",
-		"Linux"
+		"Win64"
 	],
 	"Plugins": [
 		{
@@ -36,8 +35,7 @@
 			"Type": "Runtime",
 			"LoadingPhase": "PostConfigInit",
 			"PlatformAllowList": [
-				"Win64",
-				"Linux"
+				"Win64"
 			]
 		}
 	]

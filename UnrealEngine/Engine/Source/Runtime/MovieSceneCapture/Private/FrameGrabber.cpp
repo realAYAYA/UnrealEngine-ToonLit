@@ -169,14 +169,16 @@ void FViewportSurfaceReader::ResolveRenderTarget(FViewportSurfaceReader* RenderT
 				EDRF_Default);
 		}
 		RHICmdList.EndRenderPass();
+		FGPUFenceRHIRef GPUFence = RHICreateGPUFence(TEXT("FrameGrabberReadbackFence"));
 		TransitionAndCopyTexture(RHICmdList, DestRenderTarget, ReadbackTexture, {});
+		RHICmdList.WriteGPUFence(GPUFence);
 
 		if (RenderToReadback)
 		{
 			void* ColorDataBuffer = nullptr;
 
 			int32 Width = 0, Height = 0;
-			RHICmdList.MapStagingSurface(RenderToReadback->ReadbackTexture, ColorDataBuffer, Width, Height);
+			RHICmdList.MapStagingSurface(RenderToReadback->ReadbackTexture, GPUFence.GetReference(), ColorDataBuffer, Width, Height);
 
 			Callback((FColor*)ColorDataBuffer, Width, Height);
 
@@ -376,7 +378,7 @@ void FFrameGrabber::OnBackBufferReadyToPresentCallback(SWindow& SlateWindow, con
 		}
 
 		Payload = RenderThread_PendingFramePayloads[0];
-		RenderThread_PendingFramePayloads.RemoveAt(0, 1, false);
+		RenderThread_PendingFramePayloads.RemoveAt(0, 1, EAllowShrinking::No);
 	}
 
 	if (FrameGrabLatency != GFrameGrabberFrameLatency)

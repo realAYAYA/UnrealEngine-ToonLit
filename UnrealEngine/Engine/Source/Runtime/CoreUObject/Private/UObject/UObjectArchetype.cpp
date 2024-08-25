@@ -172,11 +172,6 @@ void CacheArchetypeForObject(UObject* Object, UObject* Archetype)
 UObject* UObject::GetArchetypeFromRequiredInfo(const UClass* Class, const UObject* Outer, FName Name, EObjectFlags ObjectFlags)
 {
 	bool bUseUpToDateClass = false;
-#if WITH_EDITOR
-	// While compiling we just want to use whatever is in the object hierarchy,
-	// as some instances within the hierarchy may also be compiling:
-	bUseUpToDateClass = GIsReinstancing && Class->GetAuthoritativeClass() == Class;
-#endif
 	return GetArchetypeFromRequiredInfoImpl(Class, Outer, Name, ObjectFlags, bUseUpToDateClass);
 }
 

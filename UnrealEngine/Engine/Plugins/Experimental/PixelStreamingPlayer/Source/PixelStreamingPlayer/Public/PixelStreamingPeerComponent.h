@@ -4,17 +4,13 @@
 
 #include "PixelStreamingPeerConnection.h"
 #include "PixelStreamingSignallingComponent.h"
+#include "PixelStreamingMediaTexture.h"
 #include "PixelStreamingWebRTCWrappers.h"
-#include "Containers/Queue.h"
 #include "PixelStreamingPeerComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FPixelStreamingOnIceCandidate, UPixelStreamingPeerComponent, OnIceCandidate, FPixelStreamingIceCandidateWrapper, Candidate);
 DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FPixelStreamingOnIceConnection, UPixelStreamingPeerComponent, OnIceConnection, int, Number);
 DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE(FPixelStreamingOnIceDisconnection, UPixelStreamingPeerComponent, OnIceDisconnection);
-
-class ITextureMediaPlayer;
-class UMediaPlayer;
-class FVideoResource;
 
 /**
  * A blueprint representation of a Pixel Streaming Peer Connection. Should communicate with a Pixel Streaming Signalling Connection
@@ -22,7 +18,6 @@ class FVideoResource;
  */
 UCLASS(BlueprintType, Blueprintable, Category = "PixelStreaming", META = (DisplayName = "PixelStreaming Peer Component", BlueprintSpawnableComponent))
 class PIXELSTREAMINGPLAYER_API UPixelStreamingPeerComponent : public UActorComponent
-	, public rtc::VideoSinkInterface<webrtc::VideoFrame>
 {
 	GENERATED_UCLASS_BODY()
 
@@ -84,16 +79,11 @@ public:
 	/**
 	 * A sink for the video data received once this connection has finished negotiating.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Properties", META = (DisplayName = "Pixel Streaming Video Sink Player", AllowPrivateAccess = true))
-	TObjectPtr<UMediaPlayer> VideoSinkPlayer = nullptr;
-
-	// rtc::VideoSinkInterface<webrtc::VideoFrame> interface
-	virtual void OnFrame(const webrtc::VideoFrame& frame) override;
+	UPROPERTY(EditDefaultsOnly, Category = "Properties", META = (DisplayName = "Pixel Streaming Video Sink", AllowPrivateAccess = true))
+	TObjectPtr<UPixelStreamingMediaTexture> VideoSink = nullptr;
 
 private:
 	TUniquePtr<FPixelStreamingPeerConnection> PeerConnection;
-	TSharedPtr<ITextureMediaPlayer, ESPMode::ThreadSafe> TextureMediaPlayer;
-	TQueue<TSharedPtr<FVideoResource, ESPMode::ThreadSafe>> ResourceQueue;
 
 	void OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState);
 };

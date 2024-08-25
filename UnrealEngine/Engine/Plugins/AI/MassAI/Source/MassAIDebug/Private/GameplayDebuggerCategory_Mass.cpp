@@ -28,6 +28,8 @@
 #include "CanvasItem.h"
 #include "Engine/World.h"
 #include "MassDebugger.h"
+#include "MassLODSubsystem.h"
+
 
 namespace UE::Mass::Debug
 {
@@ -46,11 +48,11 @@ namespace UE::Mass::Debug
 		return EntityHandle;
 	};
 
-	FMassEntityHandle GetBestEntity(const FVector ViewLocation, const FVector ViewDirection, const TConstArrayView<FMassEntityHandle> Entities, const TConstArrayView<FVector> Locations, const bool bLimitAngle)
+	FMassEntityHandle GetBestEntity(const FVector ViewLocation, const FVector ViewDirection, const TConstArrayView<FMassEntityHandle> Entities
+		, const TConstArrayView<FVector> Locations, const bool bLimitAngle, const FVector::FReal MaxScanDistance)
 	{
-		// Reusing similar algorithm as UGameplayDebuggerLocalController for now 
-		constexpr FVector::FReal MaxScanDistanceSq = 25000. * 25000.;
-		constexpr FVector::FReal MinViewDirDot = 0.707; // 45 degrees
+		constexpr FVector::FReal MinViewDirDot = 0.707; // 45 degrees		
+		const FVector::FReal MaxScanDistanceSq = MaxScanDistance * MaxScanDistance;
 
 		checkf(Entities.Num() == Locations.Num(), TEXT("Both Entities and Locations lists are expected to be of the same size: %d vs %d"), Entities.Num(), Locations.Num());
 		
@@ -71,8 +73,10 @@ namespace UE::Mass::Debug
 				continue;
 			}
 
-			const FVector DirToEntityNormal = (FMath::IsNearlyZero(DistToEntitySq)) ? ViewDirection : (DirToEntity / FMath::Sqrt(DistToEntitySq));
+			const FVector::FReal Distance = FMath::Sqrt(DistToEntitySq);
+			const FVector DirToEntityNormal = (FMath::IsNearlyZero(DistToEntitySq)) ? ViewDirection : (DirToEntity / Distance);
 			const FVector::FReal ViewDot = FVector::DotProduct(ViewDirection, DirToEntityNormal);
+			const FVector::FReal Score = ViewDot * 0.1 * (1. - Distance / MaxScanDistance);
 			if (ViewDot > BestScore)
 			{
 				BestScore = ViewDot;
@@ -87,6 +91,20 @@ namespace UE::Mass::Debug
 //----------------------------------------------------------------------//
 //  FGameplayDebuggerCategory_Mass
 //----------------------------------------------------------------------//
+TArray<FAutoConsoleCommandWithWorld> FGameplayDebuggerCategory_Mass::ConsoleCommands;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleArchetypesBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleShapesBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleAgentFragmentsBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnPickEntityBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleEntityDetailsBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleNearEntityOverviewBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleNearEntityAvoidanceBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleNearEntityPathBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleDebugLocalEntityManagerBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnTogglePickedActorAsViewerBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnToggleDrawViewersBroadcast;
+FGameplayDebuggerCategory_Mass::FOnConsoleCommandBroadcastDelegate FGameplayDebuggerCategory_Mass::OnClearActorViewersBroadcast;
+
 FGameplayDebuggerCategory_Mass::FGameplayDebuggerCategory_Mass()
 {
 	CachedDebugActor = nullptr;
@@ -103,6 +121,7 @@ FGameplayDebuggerCategory_Mass::FGameplayDebuggerCategory_Mass()
 	bShowNearEntityPath = false;
 	bMarkEntityBeingDebugged = true;
 	bDebugLocalEntityManager = false;
+	bShowViewers = false;
 
 	BindKeyPress(EKeys::A.GetFName(), FGameplayDebuggerInputModifier::Shift, this, &FGameplayDebuggerCategory_Mass::OnToggleArchetypes, EGameplayDebuggerInputMode::Replicated);
 	BindKeyPress(EKeys::S.GetFName(), FGameplayDebuggerInputModifier::Shift, this, &FGameplayDebuggerCategory_Mass::OnToggleShapes, EGameplayDebuggerInputMode::Replicated);
@@ -114,36 +133,106 @@ FGameplayDebuggerCategory_Mass::FGameplayDebuggerCategory_Mass()
 	BindKeyPress(EKeys::C.GetFName(), FGameplayDebuggerInputModifier::Shift, this, &FGameplayDebuggerCategory_Mass::OnToggleNearEntityPath, EGameplayDebuggerInputMode::Replicated);
 	ToggleDebugLocalEntityManagerInputIndex = GetNumInputHandlers();
 	BindKeyPress(EKeys::L.GetFName(), FGameplayDebuggerInputModifier::Shift, this, &FGameplayDebuggerCategory_Mass::OnToggleDebugLocalEntityManager, EGameplayDebuggerInputMode::Local);
+	BindKeyPress(EKeys::Add.GetFName(), FGameplayDebuggerInputModifier::Shift, this, &FGameplayDebuggerCategory_Mass::OnIncreaseSearchRange, EGameplayDebuggerInputMode::Replicated);
+	BindKeyPress(EKeys::Subtract.GetFName(), FGameplayDebuggerInputModifier::Shift, this, &FGameplayDebuggerCategory_Mass::OnDecreaseSearchRange, EGameplayDebuggerInputMode::Replicated);
+	TogglePickedActorAsViewerInputIndex = GetNumInputHandlers();
+	BindKeyPress(EKeys::U.GetFName(), FGameplayDebuggerInputModifier::Ctrl, this, &FGameplayDebuggerCategory_Mass::OnTogglePickedActorAsViewer, EGameplayDebuggerInputMode::Replicated);
+	ToggleDrawViewersInputIndex = GetNumInputHandlers();
+	BindKeyPress(EKeys::U.GetFName(), FGameplayDebuggerInputModifier::Shift, this, &FGameplayDebuggerCategory_Mass::OnToggleDrawViewers, EGameplayDebuggerInputMode::Replicated);
+	ClearViewersInputIndex = GetNumInputHandlers();
+	BindKeyPress(EKeys::U.GetFName(), FGameplayDebuggerInputModifier::Shift + FGameplayDebuggerInputModifier::Ctrl, this, &FGameplayDebuggerCategory_Mass::OnClearActorViewers, EGameplayDebuggerInputMode::Replicated);
 
-	ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleArchetypes"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnToggleArchetypes(); }));
-	ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleShapes"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnToggleShapes(); }));
-	ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleAgentFragments"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnToggleAgentFragments(); }));
-	ConsoleCommands.Emplace(TEXT("gdt.mass.PickEntity"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnPickEntity(); }));
-	ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleEntityDetails"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnToggleEntityDetails(); }));
-	ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleNearEntityOverview"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnToggleNearEntityOverview(); }));
-	ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleNearEntityAvoidance"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnToggleNearEntityAvoidance(); }));
-	ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleNearEntityPath"), TEXT(""), FConsoleCommandDelegate::CreateLambda([this]() { OnToggleNearEntityPath(); }));
+	if (ConsoleCommands.Num() == 0)
+	{
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleArchetypes"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleArchetypesBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleShapes"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleShapesBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleAgentFragments"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleAgentFragmentsBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.PickEntity"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnPickEntityBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleEntityDetails"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleEntityDetailsBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleNearEntityOverview"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleNearEntityOverviewBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleNearEntityAvoidance"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleNearEntityAvoidanceBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleNearEntityPath"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleNearEntityPathBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleDebugLocalEntityManager"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleDebugLocalEntityManagerBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.TogglePickedActorAsViewer"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnTogglePickedActorAsViewerBroadcast.Broadcast(InWorld); }));
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ToggleDrawViewers"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnToggleDrawViewersBroadcast.Broadcast(InWorld); }));	
+		ConsoleCommands.Emplace(TEXT("gdt.mass.ClearActorViewers"), TEXT(""), FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* InWorld) { OnClearActorViewersBroadcast.Broadcast(InWorld); }));
+	}
+
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleArchetypesBroadcast, OnToggleArchetypesBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleArchetypes(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleShapesBroadcast, OnToggleShapesBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleShapes(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleAgentFragmentsBroadcast, OnToggleAgentFragmentsBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleAgentFragments(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnPickEntityBroadcast, OnPickEntityBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnPickEntity(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleEntityDetailsBroadcast, OnToggleEntityDetailsBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleEntityDetails(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleNearEntityOverviewBroadcast, OnToggleNearEntityOverviewBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleNearEntityOverview(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleNearEntityAvoidanceBroadcast, OnToggleNearEntityAvoidanceBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleNearEntityAvoidance(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleNearEntityPathBroadcast, OnToggleNearEntityPathBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleNearEntityPath(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleDebugLocalEntityManagerBroadcast, OnToggleDebugLocalEntityManagerBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleDebugLocalEntityManager(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnTogglePickedActorAsViewerBroadcast, OnTogglePickedActorAsViewerBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnTogglePickedActorAsViewer(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnToggleDrawViewersBroadcast, OnToggleDrawViewersBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnToggleDrawViewers(); }})));
+	ConsoleCommandHandles.Add(FDelegateHandlePair(&OnClearActorViewersBroadcast, OnClearActorViewersBroadcast.AddLambda([this](UWorld* InWorld) { if (InWorld == GetWorldFromReplicator()) { OnClearActorViewers(); }})));
+
+	OnEntitySelectedHandle = FMassDebugger::OnEntitySelectedDelegate.AddRaw(this, &FGameplayDebuggerCategory_Mass::OnEntitySelected);
+}
+
+FGameplayDebuggerCategory_Mass::~FGameplayDebuggerCategory_Mass()
+{
+	FMassDebugger::OnEntitySelectedDelegate.Remove(OnEntitySelectedHandle);
+
+	for (FDelegateHandlePair& Pair : ConsoleCommandHandles)
+	{
+		CA_ASSUME(Pair.Key);
+		Pair.Key->Remove(Pair.Value);
+	}
 }
 
 void FGameplayDebuggerCategory_Mass::SetCachedEntity(const FMassEntityHandle Entity, const FMassEntityManager& EntityManager)
 {
 	if (CachedEntity != Entity)
 	{
-		CachedEntity = Entity;
 		FMassDebugger::SelectEntity(EntityManager, Entity);
 	}
+}
+
+void FGameplayDebuggerCategory_Mass::OnEntitySelected(const FMassEntityManager& EntityManager, const FMassEntityHandle EntityHandle)
+{
+	UWorld* World = EntityManager.GetWorld();
+	if (World != GetWorldFromReplicator())
+	{ 
+		// ignore, this call is for a different world
+		return;
+	}
+
+	AActor* BestActor = nullptr;
+	if (EntityHandle.IsSet() && World)
+	{
+		if (const UMassActorSubsystem* ActorSubsystem = World->GetSubsystem<UMassActorSubsystem>())
+		{
+			BestActor = ActorSubsystem->GetActorFromHandle(EntityHandle);
+		}
+	}
+
+	CachedEntity = EntityHandle;
+	CachedDebugActor = BestActor;
+	check(GetReplicator());
+	GetReplicator()->SetDebugActor(BestActor);
+}
+
+void FGameplayDebuggerCategory_Mass::ClearCachedEntity()
+{
+	CachedEntity = FMassEntityHandle();
 }
 
 void FGameplayDebuggerCategory_Mass::PickEntity(const FVector& ViewLocation, const FVector& ViewDirection, const UWorld& World, FMassEntityManager& EntityManager, const bool bLimitAngle)
 {
 	FMassEntityHandle BestEntity;
-	// entities indicated by UE::Mass::Debug take precedence 
-    if (UE::Mass::Debug::HasDebugEntities())
+	
+	// entities indicated by UE::Mass::Debug take precedence
+    if (UE::Mass::Debug::HasDebugEntities() && !UE::Mass::Debug::IsDebuggingSingleEntity())
     {
 		TArray<FMassEntityHandle> Entities;
 	    TArray<FVector> Locations;
 	    UE::Mass::Debug::GetDebugEntitiesAndLocations(EntityManager, Entities, Locations);
-	    BestEntity = UE::Mass::Debug::GetBestEntity(ViewLocation, ViewDirection, Entities, Locations, bLimitAngle);
+	    BestEntity = UE::Mass::Debug::GetBestEntity(ViewLocation, ViewDirection, Entities, Locations, bLimitAngle, SearchRange);
     }
 	else
 	{
@@ -163,21 +252,10 @@ void FGameplayDebuggerCategory_Mass::PickEntity(const FVector& ViewLocation, con
 			}
 		});
 
-		BestEntity = UE::Mass::Debug::GetBestEntity(ViewLocation, ViewDirection, Entities, Locations, bLimitAngle);
-	}
-
-	AActor* BestActor = nullptr;
-	if (BestEntity.IsSet())
-	{
-		if (const UMassActorSubsystem* ActorSubsystem = World.GetSubsystem<UMassActorSubsystem>())
-		{
-			BestActor = ActorSubsystem->GetActorFromHandle(FMassEntityHandle(BestEntity));
-		}
+		BestEntity = UE::Mass::Debug::GetBestEntity(ViewLocation, ViewDirection, Entities, Locations, bLimitAngle, SearchRange);
 	}
 
 	SetCachedEntity(BestEntity, EntityManager);
-	CachedDebugActor = BestActor;
-	GetReplicator()->SetDebugActor(BestActor);
 }
 
 TSharedRef<FGameplayDebuggerCategory> FGameplayDebuggerCategory_Mass::MakeInstance()
@@ -187,6 +265,9 @@ TSharedRef<FGameplayDebuggerCategory> FGameplayDebuggerCategory_Mass::MakeInstan
 
 void FGameplayDebuggerCategory_Mass::CollectData(APlayerController* OwnerPC, AActor* DebugActor)
 {
+	constexpr float ViewerCylinderMarkLength = 1500.f;
+	constexpr float ViewerCylinderMarkLRadius = 30.f;
+
 	if (bAllowLocalDataCollection)
 	{
 		ResetReplicatedData();
@@ -214,7 +295,7 @@ void FGameplayDebuggerCategory_Mass::CollectData(APlayerController* OwnerPC, AAc
 	
 	if (bAllowLocalDataCollection)
 	{
-		DebugActor = CachedDebugActor;
+		DebugActor = CachedDebugActor.GetEvenIfUnreachable();
 	}
 
 	if (DebugActor)
@@ -223,10 +304,14 @@ void FGameplayDebuggerCategory_Mass::CollectData(APlayerController* OwnerPC, AAc
 		SetCachedEntity(EntityHandle, EntityManager);
 		CachedDebugActor = DebugActor;
 	}
-	else if (CachedDebugActor)
+	else if (CachedDebugActor.Get())
 	{
-		SetCachedEntity(FMassEntityHandle(), EntityManager);
+		ClearCachedEntity();
 		CachedDebugActor = nullptr;
+	}
+	else if (CachedEntity.IsValid() == true && EntityManager.IsEntityValid(CachedEntity) == false)
+	{
+		ClearCachedEntity();
 	}
 
 	FVector ViewLocation = FVector::ZeroVector;
@@ -241,7 +326,8 @@ void FGameplayDebuggerCategory_Mass::CollectData(APlayerController* OwnerPC, AAc
 			bPickEntity = false;
 		}
 		// if we're debugging based on UE::Mass::Debug and the range changed
-		else if (CachedDebugActor == nullptr && UE::Mass::Debug::HasDebugEntities() && UE::Mass::Debug::IsDebuggingEntity(CachedEntity) == false)
+		else if (CachedDebugActor == nullptr && UE::Mass::Debug::HasDebugEntities() && UE::Mass::Debug::IsDebuggingEntity(CachedEntity) == false
+			&& UE::Mass::Debug::IsDebuggingSingleEntity() == false)
 		{
 			// using bLimitAngle = false to not limit the selection to only the things in from of the player
 			PickEntity(ViewLocation, ViewDirection, *World, EntityManager, /*bLimitAngle=*/false);
@@ -250,16 +336,29 @@ void FGameplayDebuggerCategory_Mass::CollectData(APlayerController* OwnerPC, AAc
 
 	AddTextLine(FString::Printf(TEXT("{Green}Entities count active{grey}/all: {white}%d{grey}/%d"), EntityManager.DebugGetEntityCount(), EntityManager.DebugGetEntityCount()));
 	AddTextLine(FString::Printf(TEXT("{Green}Registered Archetypes count: {white}%d {green}data ver: {white}%d"), EntityManager.DebugGetArchetypesCount(), EntityManager.GetArchetypeDataVersion()));
+
+	AddTextLine(FString::Printf(TEXT("{Green}Search range: {White}%.0f"), SearchRange));
+
+	const FTransformFragment* TransformFragment = nullptr;
 	if (CachedEntity.IsValid())
 	{
 		AddTextLine(FString::Printf(TEXT("{Green}Entity: {White}%s"), *CachedEntity.DebugGetDescription()));
+		TransformFragment = EntityManager.GetFragmentDataPtr<FTransformFragment>(CachedEntity);
+		if (TransformFragment)
+		{
+			AddTextLine(FString::Printf(TEXT("{Green}Distance: {White}%.0f"), FVector::Distance(TransformFragment->GetTransform().GetLocation(), ViewLocation)));
+		}
 	}
 
 	if (UE::Mass::Debug::HasDebugEntities())
 	{
 		int32 RangeBegin, RangeEnd;
 		UE::Mass::Debug::GetDebugEntitiesRange(RangeBegin, RangeEnd);
-		AddTextLine(FString::Printf(TEXT("{Green}Debugged entity range: {orange}%d-%d"), RangeBegin, RangeEnd));
+		// not printing single-entity range, since in that case the CachedEntity is already set to the appropriate entity
+		if (RangeBegin != RangeEnd)
+		{
+			AddTextLine(FString::Printf(TEXT("{Green}Debugged entity range: {orange}%d-%d"), RangeBegin, RangeEnd));
+		}
 	}
 
 	if (bShowArchetypes)
@@ -271,14 +370,22 @@ void FGameplayDebuggerCategory_Mass::CollectData(APlayerController* OwnerPC, AAc
 		AddTextLine(Ar);
 	}
 
-	if (CachedEntity.IsSet() && bMarkEntityBeingDebugged)
+	if (bShowViewers)
 	{
-		if (const FTransformFragment* TransformFragment = EntityManager.GetFragmentDataPtr<FTransformFragment>(CachedEntity))
+		if (UMassLODSubsystem* LODSubsystem = World->GetSubsystem<UMassLODSubsystem>())
 		{
-			const FVector Location = TransformFragment->GetTransform().GetLocation();
-			AddShape(FGameplayDebuggerShape::MakeBox(Location, FVector(8,8,500), FColor::Purple,  FString::Printf(TEXT("[%s]"), *CachedEntity.DebugGetDescription())));
-			AddShape(FGameplayDebuggerShape::MakePoint(Location, 10, FColor::Purple));
+			for (const FViewerInfo& Viewer : LODSubsystem->GetViewers())
+			{
+				AddShape(FGameplayDebuggerShape::MakeCylinder(Viewer.Location, ViewerCylinderMarkLRadius, ViewerCylinderMarkLength, FColor::Blue));
+			}
 		}
+	}
+
+	if (CachedEntity.IsSet() && bMarkEntityBeingDebugged && TransformFragment)
+	{
+		const FVector Location = TransformFragment->GetTransform().GetLocation();
+		AddShape(FGameplayDebuggerShape::MakeBox(Location, FVector(8,8,500), FColor::Purple,  FString::Printf(TEXT("[%s]"), *CachedEntity.DebugGetDescription())));
+		AddShape(FGameplayDebuggerShape::MakePoint(Location, 10, FColor::Purple));
 	}
 
 	if (CachedEntity.IsSet() && Debugger)
@@ -371,9 +478,9 @@ void FGameplayDebuggerCategory_Mass::CollectData(APlayerController* OwnerPC, AAc
 					AddTextLine(FString::Printf(TEXT("{Green}Shared Fragments:{White}%s"), *DescriptionBuilder(ItemNames)));
 				}
 
-				const FTransformFragment& TransformFragment = EntityManager.GetFragmentDataChecked<FTransformFragment>(CachedEntity);
+				check(TransformFragment);
 				constexpr float CapsuleRadius = 50.f;
-				AddShape(FGameplayDebuggerShape::MakeCapsule(TransformFragment.GetTransform().GetLocation() + 2.f * CapsuleRadius * FVector::UpVector, CapsuleRadius, CapsuleRadius * 2.f, FColor::Orange));
+				AddShape(FGameplayDebuggerShape::MakeCapsule(TransformFragment->GetTransform().GetLocation() + 2.f * CapsuleRadius * FVector::UpVector, CapsuleRadius, CapsuleRadius * 2.f, FColor::Orange));
 			}
 			else
 			{
@@ -721,6 +828,9 @@ void FGameplayDebuggerCategory_Mass::DrawData(APlayerController* OwnerPC, FGamep
 		CanvasContext.Printf(TEXT("{grey}[%s] Entity details [enable Agent Fragments]{white}"), *GetInputHandlerDescription(4));
 	}
 	CanvasContext.Printf(TEXT("[{yellow}%s{white}] Pick Entity"), *GetInputHandlerDescription(3));
+	CanvasContext.Printf(TEXT("[{yellow}%s{white}] Toggle Picked Actor as viewer"), *GetInputHandlerDescription(TogglePickedActorAsViewerInputIndex));
+	CanvasContext.Printf(TEXT("[{yellow}%s{white}] %s LOD Viewers"), *GetInputHandlerDescription(ToggleDrawViewersInputIndex), bShowViewers ? TEXT("Hide") : TEXT("Show"));
+	CanvasContext.Printf(TEXT("[{yellow}%s{white}] Reset Actor LOD Viewers"), *GetInputHandlerDescription(ClearViewersInputIndex));
 	CanvasContext.Printf(TEXT("[{yellow}%s{white}] %s Entity overview"), *GetInputHandlerDescription(5), bShowNearEntityOverview ? TEXT("Hide") : TEXT("Show"));
 	CanvasContext.Printf(TEXT("[{yellow}%s{white}] %s Entity avoidance"), *GetInputHandlerDescription(6), bShowNearEntityAvoidance ? TEXT("Hide") : TEXT("Show"));
 	CanvasContext.Printf(TEXT("[{yellow}%s{white}] %s Entity path"), *GetInputHandlerDescription(7), bShowNearEntityPath ? TEXT("Hide") : TEXT("Show"));
@@ -833,6 +943,45 @@ void FGameplayDebuggerCategory_Mass::OnToggleDebugLocalEntityManager()
 	}
 
 	CachedEntity.Reset();
+}
+
+void FGameplayDebuggerCategory_Mass::OnIncreaseSearchRange()
+{
+	SearchRange = FMath::Clamp(SearchRange * SearchRangeChangeScale, MinSearchRange, MaxSearchRange);
+}
+
+void FGameplayDebuggerCategory_Mass::OnDecreaseSearchRange()
+{
+	SearchRange = FMath::Clamp(SearchRange / SearchRangeChangeScale, MinSearchRange, MaxSearchRange);
+}
+
+void FGameplayDebuggerCategory_Mass::OnTogglePickedActorAsViewer()
+{
+	if (AActor* DebugActor = CachedDebugActor.Get())
+	{
+		UWorld* World = GetWorldFromReplicator();
+		if (UMassLODSubsystem* LODSubsystem = World->GetSubsystem<UMassLODSubsystem>())
+		{
+			FMassViewerHandle ViewerHandle = LODSubsystem->GetViewerHandleFromActor(*DebugActor);
+			if (ViewerHandle.IsValid() == false)
+			{
+				LODSubsystem->RegisterActorViewer(*DebugActor);
+			}
+			else
+			{
+				LODSubsystem->UnregisterActorViewer(*DebugActor);
+			}
+		}
+	}
+}
+
+void FGameplayDebuggerCategory_Mass::OnClearActorViewers()
+{
+	UWorld* World = GetWorldFromReplicator();
+	if (UMassLODSubsystem* LODSubsystem = World->GetSubsystem<UMassLODSubsystem>())
+	{
+		LODSubsystem->DebugUnregisterActorViewer();
+	}
 }
 
 //-----------------------------------------------------------------------------

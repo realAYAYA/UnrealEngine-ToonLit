@@ -34,6 +34,7 @@ struct FFileStatData;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogPackageResourceManager, Log, All);
 DECLARE_DELEGATE_RetVal(IPackageResourceManager*, FSetPackageResourceManager);
+DECLARE_MULTICAST_DELEGATE(FOnClearPackageResourceManager);
 
 /**
  * Format for a package payload reported by the PackageResourceManager.
@@ -335,6 +336,7 @@ public:
 	COREUOBJECT_API static void Shutdown();
 
 	COREUOBJECT_API static FSetPackageResourceManager& GetSetPackageResourceManagerDelegate();
+	COREUOBJECT_API static FOnClearPackageResourceManager& GetOnClearPackageResourceManagerDelegate();
 
 public:
 	// Internal API used by low-level PackageResourceManager users
@@ -427,9 +429,15 @@ private:
 };
 
 #if WITH_EDITOR
+enum class EEditorDomainEnabled : uint8
+{
+	Disabled,
+	Utilities,
+	PackageResourceManager,
+};
 /**
  * Report whether the EditorDomain is enabled by config, for systems that need to behave differently if editordomain
  * will be enabled and need to know before the PackageResourceManager is constructed.
  */
-COREUOBJECT_API bool IsEditorDomainEnabled();
+COREUOBJECT_API EEditorDomainEnabled IsEditorDomainEnabled();
 #endif

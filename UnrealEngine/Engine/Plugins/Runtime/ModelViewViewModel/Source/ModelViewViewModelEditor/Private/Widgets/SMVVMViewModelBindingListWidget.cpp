@@ -3,6 +3,7 @@
 #include "SMVVMViewModelBindingListWidget.h"
 
 #include "Bindings/MVVMBindingHelper.h"
+#include "Bindings/MVVMFieldPathHelper.h"
 #include "Blueprint/WidgetTree.h"
 #include "BlueprintEditorSettings.h"
 #include "MVVMBlueprintViewModelContext.h"
@@ -26,10 +27,10 @@ namespace UE::MVVM
 
 namespace Private
 {
-	TOptional<FFieldVariant> PassFilter(const FMVVMAvailableBinding& Binding, const FMVVMFieldVariant& FieldVariant, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty);
-	TOptional<FFieldVariant> PassFilter(const FMVVMAvailableBinding& Binding, const UStruct* Struct, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty);
+	TOptional<FFieldVariant> PassFilter(const UBlueprint* Blueprint, const FMVVMAvailableBinding& Binding, const UStruct* Struct, const FMVVMFieldVariant& FieldVariant, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty);
+	TOptional<FFieldVariant> PassFilter(const UBlueprint* Blueprint, const FMVVMAvailableBinding& Binding, const UStruct* Struct, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty);
 
-	TOptional<FFieldVariant> PassFilter(const FMVVMAvailableBinding& Binding, const UStruct* Struct, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty)
+	TOptional<FFieldVariant> PassFilter(const UBlueprint* Blueprint, const FMVVMAvailableBinding& Binding, const UStruct* Struct, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty)
 	{
 		if (EnumHasAllFlags(FieldVisibilityFlags, EFieldVisibility::Readable) && !Binding.IsReadable())
 		{
@@ -42,10 +43,10 @@ namespace Private
 		}
 
 		FMVVMFieldVariant FieldVariant = BindingHelper::FindFieldByName(Struct, Binding.GetBindingName());
-		return PassFilter(Binding, FieldVariant, FieldVisibilityFlags, AssignableTo, bDoObjectProperty);
+		return PassFilter(Blueprint, Binding, Struct, FieldVariant, FieldVisibilityFlags, AssignableTo, bDoObjectProperty);
 	}
 
-	TOptional<FFieldVariant> PassFilter(const FMVVMAvailableBinding& Binding, const FMVVMFieldVariant& FieldVariant, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty)
+	TOptional<FFieldVariant> PassFilter(const UBlueprint* Blueprint, const FMVVMAvailableBinding& Binding, const UStruct* Struct, const FMVVMFieldVariant& FieldVariant, EFieldVisibility FieldVisibilityFlags, const FProperty* AssignableTo, bool bDoObjectProperty)
 	{
 		if (ensure(!FieldVariant.IsEmpty()))
 		{
@@ -93,7 +94,7 @@ namespace Private
 					}
 				}
 
-				if (!GetDefault<UMVVMDeveloperProjectSettings>()->IsFunctionAllowed(Function))
+				if (!GetDefault<UMVVMDeveloperProjectSettings>()->IsFunctionAllowed(Blueprint, Cast<const UClass>(Struct), Function))
 				{
 					return TOptional<FFieldVariant>();
 				}
@@ -144,7 +145,7 @@ namespace Private
 					}
 				}
 
-				if (!GetDefault<UMVVMDeveloperProjectSettings>()->IsPropertyAllowed(Property))
+				if (!GetDefault<UMVVMDeveloperProjectSettings>()->IsPropertyAllowed(Blueprint, Struct, Property))
 				{
 					return TOptional<FFieldVariant>();
 				}
@@ -157,10 +158,11 @@ namespace Private
 	}
 }
 
-FFieldIterator_Bindable::FFieldIterator_Bindable(const UWidgetBlueprint* InWidgetBlueprint, EFieldVisibility InVisibilityFlags, const FProperty* InAssignableTo) :
+FFieldIterator_Bindable::FFieldIterator_Bindable(const UWidgetBlueprint* InWidgetBlueprint, EFieldVisibility InVisibilityFlags, const FProperty* InAssignableTo, const bool InIsBindingToEvent) :
 	WidgetBlueprint(InWidgetBlueprint),
 	FieldVisibilityFlags(InVisibilityFlags),
-	AssignableTo(InAssignableTo)
+	AssignableTo(InAssignableTo),
+	bIsBindingToEvent(InIsBindingToEvent)
 {
 }
 
@@ -187,11 +189,11 @@ TArray<FFieldVariant> FFieldIterator_Bindable::GetFields(const UStruct* Struct) 
 			TOptional<FFieldVariant> PassResult;
 			if (FilterFlags == EFilterFlag::All)
 			{
-				PassResult = Private::PassFilter(Value, Struct, FieldVisibilityFlags, AssignableTo, false);
+				PassResult = Private::PassFilter(WidgetBlueprint.Get(), Value, Struct, FieldVisibilityFlags, AssignableTo, false);
 			}
 			else
 			{
-				PassResult = Private::PassFilter(Value, Struct, EFieldVisibility::None, nullptr, false);
+				PassResult = Private::PassFilter(WidgetBlueprint.Get(), Value, Struct, EFieldVisibility::None, nullptr, false);
 			}
 			if (PassResult.IsSet())
 			{
@@ -204,7 +206,8 @@ TArray<FFieldVariant> FFieldIterator_Bindable::GetFields(const UStruct* Struct) 
 	{
 		const UWidgetBlueprint* WidgetBlueprintPtr = WidgetBlueprint.Get();
 		TSubclassOf<UObject> AccessorClass = WidgetBlueprintPtr ? WidgetBlueprintPtr->GeneratedClass : nullptr;
-		TArray<FMVVMAvailableBinding> Bindings = UMVVMSubsystem::GetAvailableBindings(const_cast<UClass*>(Class), AccessorClass);
+
+		TArray<FMVVMAvailableBinding> Bindings = bIsBindingToEvent ? UMVVMSubsystem::GetAvailableBindingsForEvent(const_cast<UClass*>(Class), AccessorClass) : UMVVMSubsystem::GetAvailableBindings(const_cast<UClass*>(Class), AccessorClass);
 		AddResult(Bindings);
 	}
 	else if (const UScriptStruct* ScriptStruct = Cast<const UScriptStruct>(Struct))
@@ -272,7 +275,8 @@ bool FFieldExpander_Bindable::CanExpandScriptStruct(const FStructProperty* Struc
 {
 	if (UE::PropertyViewer::FFieldExpander_Default::CanExpandScriptStruct(StructProperty))
 	{
-		return GetMutableDefault<UBlueprintEditorSettings>()->GetStructPermissions().PassesFilter(StructProperty->GetFullName());
+		const FPathPermissionList& StructPermissions = GetMutableDefault<UBlueprintEditorSettings>()->GetStructPermissions();
+		return !StructPermissions.HasFiltering() || StructPermissions.PassesFilter(StructProperty->Struct->GetPathName());
 	}
 	return false;
 }
@@ -287,14 +291,21 @@ TOptional<const UStruct*> FFieldExpander_Bindable::GetExpandedFunction(const UFu
 			return ObjectProperty->PropertyClass.Get();
 		}
 	}
+	//else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(ReturnProperty))
+	//{
+	//	if (CanExpandScriptStruct(StructProperty))
+	//	{
+	//		return StructProperty->Struct.Get();
+	//	}
+	//}
 	return TOptional<const UStruct*>();
 }
 
-TSharedRef<SWidget> ConstructFieldPreSlot(const UWidgetBlueprint* WidgetBlueprint, UE::PropertyViewer::SPropertyViewer::FHandle Handle, const FFieldVariant FieldPath)
+TSharedRef<SWidget> ConstructFieldPreSlot(const UWidgetBlueprint* WidgetBlueprint, UE::PropertyViewer::SPropertyViewer::FHandle Handle, const FFieldVariant FieldPath, const bool bIsForEvent)
 {
 	TSharedRef<SWidget> ImageWidget = SNullWidget::NullWidget;
 	TSubclassOf<UObject> AccessorClass = WidgetBlueprint ? WidgetBlueprint->SkeletonGeneratedClass : nullptr;
-	FMVVMAvailableBinding Binding = UMVVMSubsystem::GetAvailableBindingForField(FMVVMConstFieldVariant(FieldPath), AccessorClass);
+	FMVVMAvailableBinding Binding = bIsForEvent ? UMVVMSubsystem::GetAvailableBindingForEvent(FMVVMConstFieldVariant(FieldPath), AccessorClass) : UMVVMSubsystem::GetAvailableBindingForField(FMVVMConstFieldVariant(FieldPath), AccessorClass);
 	if (Binding.IsValid())
 	{
 		const FSlateBrush* Brush = nullptr;
@@ -350,10 +361,10 @@ TSharedRef<SWidget> ConstructFieldPreSlot(const UWidgetBlueprint* WidgetBlueprin
 void SSourceBindingList::Construct(const FArguments& InArgs, const UWidgetBlueprint* InWidgetBlueprint)
 {
 	WidgetBlueprint = InWidgetBlueprint;
-	FieldIterator = MakeUnique<FFieldIterator_Bindable>(InWidgetBlueprint, InArgs._FieldVisibilityFlags, InArgs._AssignableTo);
+	FieldIterator = MakeUnique<FFieldIterator_Bindable>(InWidgetBlueprint, InArgs._FieldVisibilityFlags, InArgs._AssignableTo, InArgs._IsBindingToEvent);
 	FieldExpander = MakeUnique<FFieldExpander_Bindable>();
 
-
+	bIsBindingToEvent = InArgs._IsBindingToEvent;
 	OnDoubleClicked = InArgs._OnDoubleClicked;
 
 	PropertyViewer = SNew(SPropertyViewer)
@@ -385,23 +396,9 @@ void SSourceBindingList::ClearSources()
 	}
 }
 
-void SSourceBindingList::AddSource(UClass* Class, FName Name, FGuid Guid)
+void SSourceBindingList::AddWidgetBlueprint()
 {
-	FBindingSource Source;
-	Source.Class = Class;
-	Source.Name = Name;
-	Source.ViewModelId = Guid;
-
-	AddSources(MakeArrayView(&Source, 1));
-} 
-
-void SSourceBindingList::AddWidgetBlueprint(const UWidgetBlueprint* InWidgetBlueprint)
-{
-	FBindingSource Source;
-	Source.Class = InWidgetBlueprint->GeneratedClass;
-	Source.Name = InWidgetBlueprint->GetFName();
-	Source.DisplayName = FText::FromString(InWidgetBlueprint->GetName());
-
+	FBindingSource Source = FBindingSource::CreateForBlueprint(WidgetBlueprint.Get());
 	AddSources(MakeArrayView(&Source, 1 ));
 }
 
@@ -412,10 +409,7 @@ void SSourceBindingList::AddWidgets(TArrayView<const UWidget*> InWidgets)
 
 	for (const UWidget* Widget : InWidgets)
 	{
-		FBindingSource& Source = NewSources.AddDefaulted_GetRef();
-		Source.Class = Widget->GetClass();
-		Source.Name = Widget->GetFName();
-		Source.DisplayName = Widget->GetLabelText();
+		NewSources.Add(FBindingSource::CreateForWidget(WidgetBlueprint.Get(), Widget));
 	}
 
 	AddSources(NewSources);
@@ -428,9 +422,7 @@ void SSourceBindingList::AddViewModels(TArrayView<const FMVVMBlueprintViewModelC
 
 	for (const FMVVMBlueprintViewModelContext& ViewModelContext : InViewModels)
 	{
-		FBindingSource& Source = NewSources.AddDefaulted_GetRef();
-		Source.Class = ViewModelContext.GetViewModelClass();
-		Source.ViewModelId = ViewModelContext.GetViewModelId();
+		NewSources.Add(FBindingSource::CreateForViewModel(WidgetBlueprint.Get(), ViewModelContext));
 	}
 
 	AddSources(NewSources);
@@ -448,15 +440,15 @@ void SSourceBindingList::AddSources(TArrayView<const FBindingSource> InSources)
 		const UWidgetBlueprint* WidgetBlueprintPtr = WidgetBlueprint.Get();
 		for (const FBindingSource& Source : InSources)
 		{
-			if (const UClass* SourceClass = Source.Class.Get())
+			if (const UClass* SourceClass = Source.GetClass())
 			{
 				SPropertyViewer::FHandle Handle;
-				if (SourceClass && Source.Class->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()))
+				if (SourceClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()))
 				{
 					UWidget* Widget = nullptr;
-					if (WidgetBlueprintPtr && SourceClass->IsChildOf(UWidget::StaticClass()))
+					if (WidgetBlueprintPtr && Source.GetSource() == EMVVMBlueprintFieldPathSource::Widget)
 					{
-						Widget = WidgetBlueprintPtr->WidgetTree->FindWidget(Source.Name);
+						Widget = WidgetBlueprintPtr->WidgetTree->FindWidget(Source.GetWidgetName());
 					}
 
 					if (Widget)
@@ -499,32 +491,32 @@ FMVVMBlueprintPropertyPath SSourceBindingList::CreateBlueprintPropertyPath(SProp
 		return FMVVMBlueprintPropertyPath();
 	}
 
-	TSubclassOf<UObject> AccessorClass = WidgetBlueprintPtr ? WidgetBlueprintPtr->SkeletonGeneratedClass : nullptr;
+	const UClass* AccessorClass = WidgetBlueprintPtr->SkeletonGeneratedClass ? WidgetBlueprintPtr->SkeletonGeneratedClass : WidgetBlueprintPtr->GeneratedClass;
 	FMVVMBlueprintPropertyPath PropertyPath;
 	if (FieldPath.Num() > 0)
 	{
 		// Backward, test if the object can be access.
 		//The last property can be a struct variable, inside a struct, inside..., inside an object. 
 		bool bPassFilter = false;
-		for (int32 Index = FieldPath.Num() - 1; Index >= 0; --Index)
+		const UStruct* CurrentContainer = Source->Key.GetClass();
+		for (const FFieldVariant& FieldVariant : FieldPath)
 		{
-			const FFieldVariant& FieldVariant = FieldPath[Index];
-			const UStruct* OwnerStruct = nullptr;
+			FMVVMConstFieldVariant NewField;
 			FName FieldName;
 			if (const FProperty* Property = FieldVariant.Get<FProperty>())
 			{
-				OwnerStruct = Property->GetOwnerStruct();
+				NewField = FMVVMConstFieldVariant(Property);
 				FieldName = Property->GetFName();
 			}
 			else if (const UFunction* Function = FieldVariant.Get<UFunction>())
 			{
-				OwnerStruct = Function->GetOwnerClass();
+				NewField = FMVVMConstFieldVariant(Function);
 				FieldName = Function->GetFName();
 			}
 
-			if (const UClass* OwnerClass = Cast<const UClass>(OwnerStruct))
+			if (const UClass* OwnerClass = Cast<const UClass>(CurrentContainer))
 			{
-				FMVVMAvailableBinding Binding = UMVVMSubsystem::GetAvailableBinding(OwnerClass, FMVVMBindingName(FieldName), AccessorClass);
+				FMVVMAvailableBinding Binding = bIsBindingToEvent ? UMVVMSubsystem::GetAvailableBindingForEvent(OwnerClass, FMVVMBindingName(FieldName), AccessorClass) : UMVVMSubsystem::GetAvailableBinding(OwnerClass, FMVVMBindingName(FieldName), AccessorClass);
 				if (Binding.IsValid())
 				{
 					EFilterFlag FilterFlags;
@@ -539,28 +531,23 @@ FMVVMBlueprintPropertyPath SSourceBindingList::CreateBlueprintPropertyPath(SProp
 
 					if (FilterFlags == EFilterFlag::All)
 					{
-						bPassFilter = Private::PassFilter(Binding, OwnerClass, FieldIterator->GetFieldVisibilityFlags(), FieldIterator->GetAssignableTo(), true).IsSet();
+						bPassFilter = Private::PassFilter(WidgetBlueprint.Get(), Binding, OwnerClass, FieldIterator->GetFieldVisibilityFlags(), FieldIterator->GetAssignableTo(), true).IsSet();
 					}
 					else
 					{
-						bPassFilter = Private::PassFilter(Binding, OwnerClass, EFieldVisibility::None, nullptr, true).IsSet();
+						bPassFilter = Private::PassFilter(WidgetBlueprint.Get(), Binding, OwnerClass, EFieldVisibility::None, nullptr, true).IsSet();
 					}
 				}
 				break;
 			}
+
+			TValueOrError<const UStruct*, void> NewContainerResult = FieldPathHelper::GetFieldAsContainer(NewField);
+			CurrentContainer = NewContainerResult.HasValue() ? NewContainerResult.GetValue() : nullptr;
 		}
 
 		if (bPassFilter)
 		{
-			if (Source->Key.ViewModelId.IsValid())
-			{
-				PropertyPath.SetViewModelId(Source->Key.ViewModelId);
-			}
-			else
-			{
-				PropertyPath.SetWidgetName(Source->Key.Name);
-			}
-
+			Source->Key.SetSourceTo(PropertyPath);
 			PropertyPath.ResetPropertyPath();
 			for (const FFieldVariant& Field : FieldPath)
 			{
@@ -568,10 +555,10 @@ FMVVMBlueprintPropertyPath SSourceBindingList::CreateBlueprintPropertyPath(SProp
 			}
 		}
 	}
-	else if(AccessorClass.Get())
+	else if(AccessorClass)
 	{
 		FMVVMBindingName BindingName = Source->Key.ToBindingName(WidgetBlueprintPtr);
-		FMVVMAvailableBinding Binding = UMVVMSubsystem::GetAvailableBinding(AccessorClass, BindingName, AccessorClass);
+		FMVVMAvailableBinding Binding = bIsBindingToEvent ? UMVVMSubsystem::GetAvailableBindingForEvent(AccessorClass, BindingName, AccessorClass) : UMVVMSubsystem::GetAvailableBinding(AccessorClass, BindingName, AccessorClass);
 		if (Binding.IsValid())
 		{
 			EFilterFlag FilterFlags;
@@ -587,22 +574,15 @@ FMVVMBlueprintPropertyPath SSourceBindingList::CreateBlueprintPropertyPath(SProp
 
 			if (FilterFlags == EFilterFlag::All)
 			{
-				bPassFilter = Private::PassFilter(Binding, AccessorClass, FieldIterator->GetFieldVisibilityFlags(), FieldIterator->GetAssignableTo(), true).IsSet();
+				bPassFilter = Private::PassFilter(WidgetBlueprint.Get(), Binding, AccessorClass, FieldIterator->GetFieldVisibilityFlags(), FieldIterator->GetAssignableTo(), true).IsSet();
 			}
 			else
 			{
-				bPassFilter = Private::PassFilter(Binding, AccessorClass, EFieldVisibility::None, nullptr, true).IsSet();
+				bPassFilter = Private::PassFilter(WidgetBlueprint.Get(), Binding, AccessorClass, EFieldVisibility::None, nullptr, true).IsSet();
 			}
 			if (bPassFilter)
 			{
-				if (Source->Key.ViewModelId.IsValid())
-				{
-					PropertyPath.SetViewModelId(Source->Key.ViewModelId);
-				}
-				else
-				{
-					PropertyPath.SetWidgetName(Source->Key.Name);
-				}
+				Source->Key.SetSourceTo(PropertyPath);
 				PropertyPath.ResetPropertyPath();
 			}
 		}
@@ -614,7 +594,7 @@ TSharedPtr<SWidget> SSourceBindingList::HandleGetPreSlot(SPropertyViewer::FHandl
 {
 	if (FieldPath.Num() > 0)
 	{
-		return ConstructFieldPreSlot(WidgetBlueprint.Get(), Handle, FieldPath.Last());
+		return ConstructFieldPreSlot(WidgetBlueprint.Get(), Handle, FieldPath.Last(), bIsBindingToEvent);
 	}
 	return TSharedPtr<SWidget>();
 }
@@ -646,7 +626,7 @@ FMVVMBlueprintPropertyPath SSourceBindingList::GetSelectedProperty() const
 	return SelectedPath;
 }
 
-void SSourceBindingList::SetSelectedProperty(const FMVVMBlueprintPropertyPath& Property)
+void SSourceBindingList::SetSelectedProperty(const FMVVMBlueprintPropertyPath& PropertyPath)
 {
 	if (!PropertyViewer.IsValid())
 	{
@@ -662,8 +642,7 @@ void SSourceBindingList::SetSelectedProperty(const FMVVMBlueprintPropertyPath& P
 	SPropertyViewer::FHandle SelectedHandle;
 	for (TPair<FBindingSource, SPropertyViewer::FHandle>& Source : Sources)
 	{
-		if ((Property.IsFromViewModel() && Source.Key.ViewModelId == Property.GetViewModelId()) ||
-			(Property.IsFromWidget() && Source.Key.Name == Property.GetWidgetName()))
+		if (Source.Key.Matches(WidgetBlueprintPtr, PropertyPath))
 		{
 			SelectedHandle = Source.Value;
 			break;
@@ -674,7 +653,7 @@ void SSourceBindingList::SetSelectedProperty(const FMVVMBlueprintPropertyPath& P
 	TArray<FFieldVariant, TMemStackAllocator<>> FieldPath;
 	if (SelectedHandle.IsValid())
 	{
-		TArray<FMVVMConstFieldVariant> FieldVariants = Property.GetFields(WidgetBlueprintPtr->SkeletonGeneratedClass);
+		TArray<FMVVMConstFieldVariant> FieldVariants = PropertyPath.GetFields(WidgetBlueprintPtr->SkeletonGeneratedClass);
 		FieldPath.Reserve(FieldVariants.Num());
 
 		for (const FMVVMConstFieldVariant& Variant : FieldVariants)

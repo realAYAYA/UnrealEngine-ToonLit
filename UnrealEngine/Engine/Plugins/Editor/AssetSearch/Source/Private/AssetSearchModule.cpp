@@ -72,6 +72,8 @@ public:
 			TSharedRef<FUICommandList> CommandList = LevelEditorModule.GetGlobalLevelEditorActions();
 			CommandList->UnmapAction(FAssetSearchCommands::Get().ViewAssetSearch);
 		}
+		
+		SearchManager.Reset();
 	}
 
 	void ExecuteOpenObjectBrowser()

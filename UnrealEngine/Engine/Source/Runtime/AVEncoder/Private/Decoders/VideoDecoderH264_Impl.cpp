@@ -21,7 +21,9 @@ namespace AVEncoder
 #if CODEC_HAVE_NATIVE_H264_DECODER
 
 #if PLATFORM_WINDOWS
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoDecoderH264_Impl::Register(FVideoDecoderFactory& InFactory)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	FVideoDecoderH264_Windows::Register(InFactory);
 }
@@ -29,7 +31,9 @@ void FVideoDecoderH264_Impl::Register(FVideoDecoderFactory& InFactory)
 
 #else
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoDecoderH264_Impl::Register(FVideoDecoderFactory& InFactory)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 }
 

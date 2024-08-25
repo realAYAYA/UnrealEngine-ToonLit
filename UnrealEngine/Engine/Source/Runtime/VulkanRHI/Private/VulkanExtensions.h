@@ -15,6 +15,16 @@
 
 class FVulkanDevice;
 
+enum class EVulkanVariableRateShadingPreference : uint8
+{
+	PreferFSR = 0, // This can be used to prefer FSR over FDM when both are available.
+	UseFSROnlyIfAvailable, // This will only print a message if FSR is not available.
+	RequireFSR, // This will print an error if FSR is not available.
+	PreferFDM, // This can be used to prefer FDM over FSR when both are available.
+	UseFDMOnlyIfAvailable, // This will only print a message if FDM is not available.
+	RequireFDM, // This will print an error if FDM is not available.
+};
+
 class FVulkanExtensionBase
 {
 public:
@@ -158,5 +168,3 @@ protected:
 // Helpers to create simple extensions that set a flag
 #define DEVICE_EXT_FLAG_SETTER(FLAG_NAME) [](FOptionalVulkanDeviceExtensions& ExtensionFlags) { ExtensionFlags.FLAG_NAME = 1; }
 #define INSTANCE_EXT_FLAG_SETTER(FLAG_NAME) [](FOptionalVulkanInstanceExtensions& ExtensionFlags) { ExtensionFlags.FLAG_NAME = 1; }
-
-void ChooseVariableRateShadingMethod(FOptionalVulkanDeviceExtensions& ExtensionFlags, const VkPhysicalDeviceFragmentShadingRateFeaturesKHR& FragmentShadingRateFeatures);

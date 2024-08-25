@@ -21,11 +21,13 @@ public:
 	FTimeValue GetAnchorTime() const override;
 	FTimeRange GetTotalTimeRange() const override;
 	FTimeRange GetSeekableTimeRange() const override;
-	FTimeRange GetPlaybackRange() const override;
+	FTimeRange GetPlaybackRange(EPlaybackRangeType InRangeType) const override;
 	void GetSeekablePositions(TArray<FTimespan>& OutPositions) const override;
 	FTimeValue GetDuration() const override;
 	FTimeValue GetDefaultStartTime() const override;
 	void ClearDefaultStartTime() override;
+	FTimeValue GetDefaultEndTime() const override;
+	void ClearDefaultEndTime() override;
 	FTimeValue GetMinBufferTime() const override;
 	FTimeValue GetDesiredLiveLatency() const override;
 	TRangeSet<double> GetPossiblePlaybackRates(EPlayRateType InForType) const override;

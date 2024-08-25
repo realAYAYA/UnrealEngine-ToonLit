@@ -7,17 +7,24 @@
 #include "Chaos/ImplicitObjectUnion.h"
 #include "Chaos/Particle/ParticleUtilities.h"
 #include "Chaos/ParticleHandle.h"
+#include "Chaos/Framework/ArrayAlgorithm.h"
 #include "Chaos/Framework/PhysicsSolverBase.h"
 
 namespace Chaos
 {
-	extern void UpdateShapesArrayFromGeometry(FShapeInstanceArray& ShapesArray, TSerializablePtr<FImplicitObject> Geometry, const FRigidTransform3& ActorTM);
+	extern void UpdateShapesArrayFromGeometry(FShapeInstanceArray& ShapesArray, const FImplicitObjectPtr& Geometry, const FRigidTransform3& ActorTM);
+
+	namespace Private
+	{
+		// The name shown for particoles that have not had their DebugName set
+		FString EmptyParticleName = TEXT("<NoName>");
+	}
 
 	FShapeOrShapesArray::FShapeOrShapesArray(const FGeometryParticleHandle* Particle)
 	{
 		if (Particle)
 		{
-			const FImplicitObject* Geometry = Particle->Geometry().Get();
+			const FImplicitObjectRef Geometry = Particle->GetGeometry();
 			if (Geometry)
 			{
 				if (Geometry->IsUnderlyingUnion())
@@ -40,9 +47,26 @@ namespace Chaos
 	}
 
 	template <typename T, int d, EGeometryParticlesSimType SimType>
+	void TGeometryParticlesImp<T, d, SimType>::RemoveShapesAtSortedIndices(const int32 ParticleIndex, const TArrayView<const int32>& InIndices)
+	{
+		RemoveArrayItemsAtSortedIndices(MShapesArray[ParticleIndex], InIndices);
+
+		// ShapeIdx need to be be updated 
+		const int32 NumShapes = MShapesArray[ParticleIndex].Num();
+		for (int32 ShapeIndex = 0; ShapeIndex < NumShapes; ++ShapeIndex)
+		{
+			const FShapeInstancePtr& Shape = MShapesArray[ParticleIndex][ShapeIndex];
+			if (Shape)
+			{
+				Shape->ModifyShapeIndex(ShapeIndex);
+			}
+		}
+	}
+
+	template <typename T, int d, EGeometryParticlesSimType SimType>
 	void TGeometryParticlesImp<T, d, SimType>::UpdateShapesArray(const int32 Index)
 	{
-		UpdateShapesArrayFromGeometry(MShapesArray[Index], MGeometry[Index], FRigidTransform3(X(Index), R(Index)));
+		UpdateShapesArrayFromGeometry(MShapesArray[Index], GetGeometry(Index), FRigidTransform3(GetX(Index), GetR(Index)));
 	}
 
 	template <typename T, int d, EGeometryParticlesSimType SimType>

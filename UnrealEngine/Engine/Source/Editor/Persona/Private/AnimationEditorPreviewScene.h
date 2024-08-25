@@ -324,6 +324,16 @@ public:
 		EditableSkeletonPtr = InEditableSkeleton;
 	}
 
+	void SetIsBeingConstructed(bool bInIsBeingConstructed) 
+	{
+		bIsBeingConstructed = bInIsBeingConstructed;
+	}
+
+	bool IsBeingConstructed() const
+	{
+		return bIsBeingConstructed;
+	}
+
 private:
 	/** Set preview mesh internal use only. The mesh should be verified by now. */
 	void SetPreviewMeshInternal(USkeletalMesh* NewPreviewMesh);
@@ -470,4 +480,7 @@ private:
 
 	/** Delegate Remove attach component */
 	FOnRemoveAttachedComponentFilter OnRemoveAttachedComponentFilter;
+
+	/** True during initial creation, so some code can be skipped */
+	bool bIsBeingConstructed = false;
 };

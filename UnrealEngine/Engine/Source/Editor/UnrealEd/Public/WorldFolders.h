@@ -82,7 +82,7 @@ public:
 	UNREALED_API bool SetIsFolderExpanded(const FFolder& InFolder, bool bIsExpanded);
 	UNREALED_API FFolder GetActorEditorContextFolder(bool bMustMatchCurrentLevel) const;
 	UNREALED_API bool SetActorEditorContextFolder(const FFolder& InFolder);
-	UNREALED_API void PushActorEditorContext();
+	UNREALED_API void PushActorEditorContext(bool bDuplicateContext = false);
 	UNREALED_API void PopActorEditorContext();
 	UNREALED_API bool ContainsFolder(const FFolder& InFolder) const;
 	UNREALED_API void ForEachFolder(TFunctionRef<bool(const FFolder&)> Operation);

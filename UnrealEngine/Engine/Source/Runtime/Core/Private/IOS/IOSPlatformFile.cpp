@@ -484,7 +484,7 @@ public:
 			UE_LOG(LogIOS, Warning, TEXT("Failed to map memory %s, error is %d"), *Filename, errno);
 			return nullptr;
 		}
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, AlignedMapPtr, AlignedSize));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, AlignedMapPtr, AlignedSize));
 
 		// create a mapping for this range
 		const uint8* MapPtr = AlignedMapPtr + Offset - AlignedOffset;
@@ -499,7 +499,7 @@ public:
 		check(NumOutstandingRegions > 0);
 		NumOutstandingRegions--;
 		
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, (void*)Region->AlignedPtr));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, (void*)Region->AlignedPtr));
 		int Res = munmap((void*)Region->AlignedPtr, Region->AlignedSize);
 		checkf(Res == 0, TEXT("Failed to unmap, error is %d, errno is %d [params: %x, %d]"), Res, errno, MappedPtr, GetFileSize());
 	}
@@ -648,7 +648,7 @@ bool FIOSPlatformFile::IsReadOnly(const TCHAR* Filename)
 
 	if (access(TCHAR_TO_UTF8(*Filepath), W_OK) == -1)
 	{
-		return errno == EACCES;
+		return errno == EPERM || errno == EACCES;
 	}
 	return false;
 }
@@ -940,7 +940,7 @@ bool FIOSPlatformFile::IterateDirectory(const TCHAR* Directory, FDirectoryVisito
 		const FString NormalizedFilename = UTF8_TO_TCHAR(([[[NSString stringWithUTF8String:InEntry->d_name] precomposedStringWithCanonicalMapping] cStringUsingEncoding:NSUTF8StringEncoding]));
 		const FString FullPath = DirectoryStr / NormalizedFilename;
 
-		return Visitor.Visit(*FullPath, InEntry->d_type == DT_DIR);
+		return Visitor.CallShouldVisitAndVisit(*FullPath, InEntry->d_type == DT_DIR);
 	});
 }
 
@@ -972,7 +972,7 @@ bool FIOSPlatformFile::IterateDirectoryStat(const TCHAR* Directory, FDirectorySt
 			}
 		}
 
-		return Visitor.Visit(*FullPath, IOSStatToUEFileData(FileInfo));
+		return Visitor.CallShouldVisitAndVisit(*FullPath, IOSStatToUEFileData(FileInfo));
 	});
 }
 

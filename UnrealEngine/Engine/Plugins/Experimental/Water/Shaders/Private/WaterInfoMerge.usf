@@ -54,6 +54,7 @@ void Main(
 	out float4 OutColor : SV_Target0
 	)
 {
+	// All input textures MUST be sampled with a point sampler to avoid a driver issue on older Android devices which occurs when using Load instead.
 	float4 ColorSample = ColorTexture.SampleLevel(ColorTextureSampler, Input.UV, 0);
 	float4 DepthSample = DepthTexture.SampleLevel(DepthTextureSampler, Input.UV, 0);
 	float4 DilationSample = DilationTexture.SampleLevel(DilationTextureSampler, Input.UV, 0);

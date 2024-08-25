@@ -35,7 +35,7 @@ public:
 //! All functions must be safe to call from the Mutable thread.
 //! 
 //! \ingroup runtime
-class MUTABLERUNTIME_API ExtensionDataStreamer : public Base
+class MUTABLERUNTIME_API ExtensionDataStreamer
 {
 public:
 

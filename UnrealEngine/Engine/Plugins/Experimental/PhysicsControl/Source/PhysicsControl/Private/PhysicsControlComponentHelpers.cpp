@@ -9,7 +9,7 @@
 
 namespace UE
 {
-namespace PhysicsControlComponent
+namespace PhysicsControl
 {
 
 //======================================================================================================================
@@ -104,18 +104,18 @@ void ConvertConstraintProfileToControlData(
 		GetAngularDriveDamping(InProfileProperties.AngularDrive));
 
 	OutControlData.MaxTorque = float(GetAngularDriveMaxTorque(InProfileProperties.AngularDrive));
+
+	OutControlData.bEnabled = true;
 }
 
 //======================================================================================================================
 FBodyInstance* GetBodyInstance(UMeshComponent* MeshComponent, const FName BoneName)
 {
-	UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(MeshComponent);
-	if (StaticMeshComponent)
+	if (UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(MeshComponent))
 	{
 		return StaticMeshComponent->GetBodyInstance();
 	}
-	USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(MeshComponent);
-	if (SkeletalMeshComponent)
+	if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(MeshComponent))
 	{
 		return SkeletalMeshComponent->GetBodyInstance(BoneName);
 	}
@@ -132,8 +132,7 @@ FName GetPhysicalParentBone(USkeletalMeshComponent* SkeletalMeshComponent, FName
 		{
 			return FName();
 		}
-		const FBodyInstance* ParentBodyInstance = GetBodyInstance(SkeletalMeshComponent, ParentBoneName);
-		if (ParentBodyInstance)
+		if (const FBodyInstance* ParentBodyInstance = GetBodyInstance(SkeletalMeshComponent, ParentBoneName))
 		{
 			return ParentBoneName;
 		}

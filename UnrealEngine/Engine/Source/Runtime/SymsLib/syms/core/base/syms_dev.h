@@ -25,6 +25,7 @@ enum{
   SYMS_LogFeature_DwarfCFIDecode  = (1 << 5),
   SYMS_LogFeature_DwarfCFIApply   = (1 << 6),
   SYMS_LogFeature_PEEpilog        = (1 << 7),
+  SYMS_LogFeature_PeResParser     = (1 << 8),
   
   
   // Dummy flag shouldn't be associated to anything.
@@ -189,18 +190,30 @@ SYMS_API void syms_prof_stringize_basic__dev(SYMS_Arena *arena, SYMS_ProfLock lo
 
 #if SYMS_ENABLE_DEV_PROFILE
 
-# define SYMS_ProfBegin(str) do{ SYMS_U64 t = SYMS_PROF_TIME(); SYMS_U64 *v = syms_prof_push__dev(); \
+# if !defined(SYMS_ProfBegin)
+#  define SYMS_ProfBegin(str) do{ SYMS_U64 t = SYMS_PROF_TIME(); SYMS_U64 *v = syms_prof_push__dev(); \
 v[0] = (SYMS_U64)(SYMS_THIS_SRCLOC ": " str); v[1] = t; }while(0)
+# endif
 
-# define SYMS_ProfEnd() do{ SYMS_U64 *v = syms_prof_push__dev(); \
+# if !defined(SYMS_ProfEnd)
+#  define SYMS_ProfEnd() do{ SYMS_U64 *v = syms_prof_push__dev(); \
 v[0] = 0; v[1] = SYMS_PROF_TIME(); }while(0)
+# endif
 
-# define SYMS_ProfPasteSubChain(s) syms_prof_paste__dev(s)
+# if !defined(SYMS_ProfPasteSubChain)
+#  define SYMS_ProfPasteSubChain(s) syms_prof_paste__dev(s)
+# endif
 
 #else
-# define SYMS_ProfBegin(str) ((void)0)
-# define SYMS_ProfEnd() ((void)0)
-# define SYMS_ProfPasteSubChain(s) ((void)0)
+# if !defined(SYMS_ProfBegin)
+#  define SYMS_ProfBegin(str) ((void)0)
+# endif
+# if !defined(SYMS_ProfEnd)
+#  define SYMS_ProfEnd() ((void)0)
+# endif
+# if !defined(SYMS_ProfPasteSubChain)
+#  define SYMS_ProfPasteSubChain(s) ((void)0)
+# endif
 #endif
 
 

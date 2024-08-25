@@ -22,7 +22,7 @@ class FRayTracingSkinnedGeometryUpdateQueue
 {
 public:
 	/** Add a pending update. This is guaranteed to be processed on the next renderer update. */
-	ENGINE_API void Add(FRayTracingGeometry* InRayTracingGeometry, const FRayTracingAccelerationStructureSize& StructureSize, EAccelerationStructureBuildMode InBuildMode);
+	ENGINE_API void Add(FRayTracingGeometry* InRayTracingGeometry, const FRayTracingAccelerationStructureSize& StructureSize);
 
 	/** Remove a pending update. Passing a memory estimation will allow us to keep track of memory overhead from pending object release. */
 	ENGINE_API void Remove(FRayTracingGeometry* RayTracingGeometry, uint32 EstimatedMemory = 0);
@@ -44,6 +44,7 @@ private:
 		uint32 ScratchSize;
 	};
 
+	FCriticalSection CS;
 	TMap<FRayTracingGeometry*, FRayTracingUpdateInfo> ToUpdate;
 	
 	/** Estimate of current memory overhead from objects awaiting RHI release. */

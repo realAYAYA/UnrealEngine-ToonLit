@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Chaos/Adapters/CacheAdapter.h"
+#include "Chaos/CacheManagerActor.h"
 #include "Features/IModularFeatures.h"
 #include "Components/PrimitiveComponent.h"
 
@@ -17,6 +18,16 @@ DEFINE_LOG_CATEGORY(LogCacheAdapter);
 
 namespace Chaos
 {
+	bool FComponentCacheAdapter::InitializeForRecord(UPrimitiveComponent* InComponent, FObservedComponent& InObserved)
+	{
+		return InitializeForRecord(InComponent, InObserved.Cache);
+	}
+
+	bool FComponentCacheAdapter::InitializeForPlayback(UPrimitiveComponent* InComponent, FObservedComponent& InObserved, float InTime)
+	{
+		return InitializeForPlayback(InComponent, InObserved.Cache, InTime);
+	}
+
 	void RegisterAdapter(FComponentCacheAdapter* InAdapter)
 	{
 		check(InAdapter);

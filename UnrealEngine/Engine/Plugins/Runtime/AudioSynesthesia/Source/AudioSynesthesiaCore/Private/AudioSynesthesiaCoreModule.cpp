@@ -2,6 +2,7 @@
 #include "AudioSynesthesiaCoreModule.h"
 
 #include "AudioSynesthesiaCoreLog.h"
+#include "ConstantQFactory.h"
 #include "ConstantQNRTFactory.h"
 #include "Features/IModularFeatures.h"
 #include "HAL/LowLevelMemTracker.h"
@@ -30,6 +31,7 @@ namespace Audio
 				IModularFeatures::Get().RegisterModularFeature(FOnsetNRTFactory::GetModularFeatureName(), &OnsetNRTFactory);
 
 				IModularFeatures::Get().RegisterModularFeature(FLoudnessFactory::GetModularFeatureName(), &LoudnessFactory);
+				IModularFeatures::Get().RegisterModularFeature(FConstantQFactory::GetModularFeatureName(), &ConstantQFactory);
 				IModularFeatures::Get().RegisterModularFeature(FMeterFactory::GetModularFeatureName(), &MeterFactory);
 				IModularFeatures::Get().RegisterModularFeature(FSynesthesiaSpectrumAnalysisFactory::GetModularFeatureName(), &SpectralAnalysisFactory);
 			}
@@ -43,6 +45,7 @@ namespace Audio
 				IModularFeatures::Get().UnregisterModularFeature(FOnsetNRTFactory::GetModularFeatureName(), &OnsetNRTFactory);
 
 				IModularFeatures::Get().UnregisterModularFeature(FLoudnessFactory::GetModularFeatureName(), &LoudnessFactory);
+				IModularFeatures::Get().UnregisterModularFeature(FConstantQFactory::GetModularFeatureName(), &ConstantQFactory);
 				IModularFeatures::Get().UnregisterModularFeature(FMeterFactory::GetModularFeatureName(), &MeterFactory);
 				IModularFeatures::Get().UnregisterModularFeature(FSynesthesiaSpectrumAnalysisFactory::GetModularFeatureName(), &SpectralAnalysisFactory);
 			}
@@ -53,6 +56,7 @@ namespace Audio
 			FOnsetNRTFactory OnsetNRTFactory;
 
 			FLoudnessFactory LoudnessFactory;
+			FConstantQFactory ConstantQFactory;
 			FMeterFactory MeterFactory; 
 			FSynesthesiaSpectrumAnalysisFactory SpectralAnalysisFactory;
 	};

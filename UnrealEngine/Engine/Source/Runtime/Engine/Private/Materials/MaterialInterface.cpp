@@ -12,6 +12,7 @@
 #include "PrimitiveViewRelevance.h"
 #include "MaterialShared.h"
 #include "Materials/Material.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/PropertyPortFlags.h"
 #include "UObject/UObjectIterator.h"
@@ -23,6 +24,7 @@
 #include "ObjectCacheEventSink.h"
 #include "Engine/SubsurfaceProfile.h"
 #include "Engine/SpecularProfile.h"
+#include "Engine/NeuralProfile.h"
 #include "Interfaces/ITargetPlatform.h"
 #include "Components/PrimitiveComponent.h"
 #include "ContentStreaming.h"
@@ -33,12 +35,14 @@
 #include "MaterialDomain.h"
 #include "MaterialShaderQualitySettings.h"
 #include "Materials/MaterialRenderProxy.h"
+#include "ProfilingDebugging/CookStats.h"
 #include "ShaderPlatformQualitySettings.h"
 #include "ObjectCacheContext.h"
 #include "MaterialCachedData.h"
 #include "Components/DecalComponent.h"
 #include "UObject/ArchiveCookContext.h"
 #include "UObject/Package.h"
+#include "ShaderCompiler.h"
 
 #if WITH_EDITOR
 #include "ObjectCacheEventSink.h"
@@ -183,7 +187,7 @@ void UMaterialInterface::Serialize(FArchive& Ar)
 	{
 		// Mark whether this material is part of the base game. This provides information on whether it is safe to be
 		// used as a parent safely in child modules.
-		bIncludedInBaseGame = Ar.GetCookContext()->GetCookingDLC() == FArchiveCookContext::ECookingDLCNo;
+		bIncludedInBaseGame = Ar.GetCookContext()->GetCookingDLC() == UE::Cook::ECookingDLC::No;
 	}
 
 	Super::Serialize(Ar);
@@ -212,7 +216,7 @@ void UMaterialInterface::Serialize(FArchive& Ar)
 		else
 		{
 #if WITH_EDITOR
-			CachedExpressionData->Validate();
+			CachedExpressionData->Validate(*this);
 #endif
 		}
 
@@ -302,19 +306,19 @@ bool UMaterialInterface::IsUsingNewHLSLGenerator() const
 	return BaseMaterial ? BaseMaterial->bEnableNewHLSLGenerator : false;
 }
 
-const FStrataCompilationConfig& UMaterialInterface::GetStrataCompilationConfig() const
+const FSubstrateCompilationConfig& UMaterialInterface::GetSubstrateCompilationConfig() const
 {
 	const UMaterial* BaseMaterial = GetMaterial_Concurrent();
-	static FStrataCompilationConfig DefaultFStrataCompilationConfig = FStrataCompilationConfig();
-	return BaseMaterial ? BaseMaterial->StrataCompilationConfig : DefaultFStrataCompilationConfig;
+	static FSubstrateCompilationConfig DefaultFSubstrateCompilationConfig = FSubstrateCompilationConfig();
+	return BaseMaterial ? BaseMaterial->SubstrateCompilationConfig : DefaultFSubstrateCompilationConfig;
 }
 
-ENGINE_API void UMaterialInterface::SetStrataCompilationConfig(FStrataCompilationConfig& StrataCompilationConfig)
+ENGINE_API void UMaterialInterface::SetSubstrateCompilationConfig(FSubstrateCompilationConfig& SubstrateCompilationConfig)
 {
 	UMaterial* BaseMaterial = GetMaterial();
 	if (BaseMaterial)
 	{
-		BaseMaterial->StrataCompilationConfig = StrataCompilationConfig;
+		BaseMaterial->SubstrateCompilationConfig = SubstrateCompilationConfig;
 	}
 }
 
@@ -477,11 +481,10 @@ FMaterialRelevance UMaterialInterface::GetRelevance_Internal(const UMaterial* Ma
 		// The modulation buffer can also be used for regular modulation shaders after DoF.
 		const bool bMaterialSeparateModulation = MaterialResource->IsDualBlendingEnabled(GShaderPlatformForFeatureLevel[InFeatureLevel]) || IsModulateBlendMode(BlendMode);
 
-		// Encode Strata BSDF into a mask where each bit correspond to a number of BSDF (1-8)
-		const uint8 StrataBSDFCount = FMath::Max(MaterialResource->MaterialGetStrataBSDFCount_GameThread(), uint8(1u));
-		const uint8 StrataBSDFCountMask = 1u << uint8(FMath::Min(StrataBSDFCount - 1, 8));
-		const uint8 StrataUintPerPixel = FMath::Max(MaterialResource->MaterialGetStrataUintPerPixel_GameThread(), uint8(1u));
-		const uint8 bUsesComplexSpecialRenderPath = MaterialResource->MaterialGetStrataUsesComplexSpecialRenderPath_GameThread();
+		// Encode Substrate BSDF into a mask where each bit correspond to a number of BSDF (1-8)
+		const uint8 SubstrateBSDFCount = FMath::Max(MaterialResource->MaterialGetSubstrateClosureCount_GameThread(), uint8(1u));
+		const uint8 SubstrateBSDFCountMask = 1u << uint8(FMath::Min(SubstrateBSDFCount - 1, 8));
+		const uint8 SubstrateUintPerPixel = FMath::Max(MaterialResource->MaterialGetSubstrateUintPerPixel_GameThread(), uint8(1u));
 
 		MaterialRelevance.bOpaque = !bIsTranslucent;
 		MaterialRelevance.bMasked = IsMasked();
@@ -507,9 +510,9 @@ FMaterialRelevance UMaterialInterface::GetRelevance_Internal(const UMaterial* Ma
 		MaterialRelevance.bUsesSkyMaterial = Material->bIsSky;
 		MaterialRelevance.bUsesSingleLayerWaterMaterial = bUsesSingleLayerWaterMaterial;
 		MaterialRelevance.bUsesAnisotropy = bUsesAnisotropy;
-		MaterialRelevance.StrataBSDFCountMask = StrataBSDFCountMask;
-		MaterialRelevance.StrataUintPerPixel = StrataUintPerPixel;
-		MaterialRelevance.bUsesComplexSpecialRenderPath = bUsesComplexSpecialRenderPath;
+		MaterialRelevance.SubstrateClosureCountMask = SubstrateBSDFCountMask;
+		MaterialRelevance.SubstrateUintPerPixel = SubstrateUintPerPixel;
+		MaterialRelevance.bUsesComplexSpecialRenderPath = MaterialResource->MaterialGetSubstrateUsesComplexSpecialRenderPath_GameThread();
 
 		return MaterialRelevance;
 	}
@@ -618,16 +621,16 @@ void UMaterialInterface::SubmitRemainingJobsForWorld(UWorld* World, EMaterialSha
 	TSet<UMaterialInterface*> MaterialsToCache;
 	FObjectCacheContextScope ObjectCacheScope;
 
-	for (UPrimitiveComponent* PrimitiveComponent : ObjectCacheScope.GetContext().GetPrimitiveComponents())
+	for (IPrimitiveComponent* PrimitiveComponentInterface : ObjectCacheScope.GetContext().GetPrimitiveComponents())
 	{
-		if (World && !World->ContainsActor(PrimitiveComponent->GetOwner()))
+		if (World && PrimitiveComponentInterface->GetWorld() == World)
 		{
 			continue;
 		}
 
-		if (PrimitiveComponent->IsRenderStateCreated())
+		if (PrimitiveComponentInterface->IsRenderStateCreated())
 		{
-			TObjectCacheIterator<UMaterialInterface> UsedMaterials = ObjectCacheScope.GetContext().GetUsedMaterials(PrimitiveComponent);
+			TObjectCacheIterator<UMaterialInterface> UsedMaterials = ObjectCacheScope.GetContext().GetUsedMaterials(PrimitiveComponentInterface);
 			for (UMaterialInterface* MaterialInterface : UsedMaterials)
 			{
 				if (MaterialInterface && !MaterialInterface->IsComplete())
@@ -764,20 +767,27 @@ void UMaterialInterface::PostEditChangeProperty(FPropertyChangedEvent& PropertyC
 
 void UMaterialInterface::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UMaterialInterface::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	if (AssetImportData)
 	{
-		OutTags.Add( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
+		Context.AddTag( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
 	}
 
 	{
 		const FMaterialCachedExpressionData& CachedData = GetCachedExpressionData();
-		OutTags.Add(FAssetRegistryTag("HasSceneColor", CachedData.bHasSceneColor ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
-		OutTags.Add(FAssetRegistryTag("HasPerInstanceRandom", CachedData.bHasPerInstanceRandom ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
-		OutTags.Add(FAssetRegistryTag("HasPerInstanceCustomData", CachedData.bHasPerInstanceCustomData ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
-		OutTags.Add(FAssetRegistryTag("HasVertexInterpolator", CachedData.bHasVertexInterpolator ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(FAssetRegistryTag("HasSceneColor", CachedData.bHasSceneColor ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(FAssetRegistryTag("HasPerInstanceRandom", CachedData.bHasPerInstanceRandom ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(FAssetRegistryTag("HasPerInstanceCustomData", CachedData.bHasPerInstanceCustomData ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(FAssetRegistryTag("HasVertexInterpolator", CachedData.bHasVertexInterpolator ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
 	}
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 #endif // WITH_EDITOR
 
@@ -1210,6 +1220,16 @@ UMaterial* UMaterialInterface::GetBaseMaterial()
 	return GetMaterial();
 }
 
+void UMaterialInterface::OnAssignedAsOverride(const UObject* Owner)
+{
+
+}
+
+void UMaterialInterface::OnRemovedAsOverride(const UObject* Owner)
+{
+
+}
+
 bool DoesMaterialUseTexture(const UMaterialInterface* Material,const UTexture* CheckTexture)
 {
 	//Do not care if we're running dedicated server
@@ -1290,6 +1310,11 @@ bool UMaterialInterface::ShouldAlwaysEvaluateWorldPositionOffset() const
 	return false;
 }
 
+bool UMaterialInterface::HasPixelAnimation() const
+{
+	return false;
+}
+
 bool UMaterialInterface::IsDeferredDecal() const
 {
 	return false;
@@ -1325,6 +1350,12 @@ USpecularProfile* UMaterialInterface::GetSpecularProfile_Internal(uint32 Index) 
 	return nullptr;
 }
 
+UNeuralProfile* UMaterialInterface::GetNeuralProfile_Internal() const
+{
+	return nullptr;
+}
+
+
 uint32 UMaterialInterface::NumSpecularProfile_Internal() const
 {
 	return 0u;
@@ -1333,6 +1364,11 @@ uint32 UMaterialInterface::NumSpecularProfile_Internal() const
 bool UMaterialInterface::CastsRayTracedShadows() const
 {
 	return true;
+}
+
+bool UMaterialInterface::IsTessellationEnabled() const
+{
+	return false;
 }
 
 void UMaterialInterface::SetFeatureLevelToCompile(ERHIFeatureLevel::Type FeatureLevel, bool bShouldCompile)
@@ -1401,7 +1437,41 @@ void UMaterialInterface::UpdateMaterialRenderProxy(FMaterialRenderProxy& Proxy)
 		});
 	}
 
-	if (Strata::IsStrataEnabled())
+	UMaterial* Material = GetMaterial();
+	if (Material && Material->IsPostProcessMaterial())
+	{
+		struct FEntry
+		{
+			UNeuralProfile* Profile = nullptr;
+			FNeuralProfileStruct Setting;
+			FGuid Guid;
+		};
+		
+		UNeuralProfile* LocalNeuralProfile = GetNeuralProfile_Internal();
+		
+		if (LocalNeuralProfile)
+		{
+			FEntry Entry;
+			Entry.Profile = LocalNeuralProfile;
+			Entry.Setting = LocalNeuralProfile->Settings;
+			Entry.Guid = LocalNeuralProfile->Guid;
+
+			FMaterialRenderProxy* InProxy = &Proxy;
+			ENQUEUE_RENDER_COMMAND(UpdateMaterialRenderProxyNNEModelData)(
+				[LocalNeuralProfile, InProxy, Entry, Material](FRHICommandListImmediate& RHICmdList)
+				{
+					
+					const uint32 AllocationId = NeuralProfile::AddOrUpdateProfile(Entry.Profile, Entry.Guid, Entry.Setting);
+					check(AllocationId >= 0 && AllocationId < MAX_NEURAL_PROFILE_COUNT);
+
+					Material->NeuralProfileId = AllocationId;
+					
+					InProxy->SetNeuralProfileRT(LocalNeuralProfile);
+				});
+		}
+	}
+
+	if (Substrate::IsSubstrateEnabled())
 	{
 		struct FEntry
 		{
@@ -1622,7 +1692,7 @@ void UMaterialInterface::PreSave(FObjectPreSaveContext ObjectSaveContext)
 	// the editor running on cooked data.
 	UMaterialInterfaceEditorOnlyData* EditorOnly = GetEditorOnlyData();
 	FString EditorOnlyDataName = MaterialInterface::GetEditorOnlyDataName(*GetName());
-	if (!ObjectSaveContext.IsCooking() && EditorOnly && EditorOnly->GetName() != EditorOnlyDataName)
+	if (!ObjectSaveContext.IsProceduralSave() && EditorOnly && EditorOnly->GetName() != EditorOnlyDataName)
 	{
 		UE_LOG(LogMaterial, Display, TEXT("MaterialInterface %s has a incorrectly name EditorOnlyData '%s'. This may cause issues when running the editor on cooked data. Trying to rename it to the correct name '%s'."), *GetName(), *EditorOnly->GetName(), *EditorOnlyDataName);
 		DisposeInvalidEditorOnlyData(this, EditorOnlyDataName);
@@ -1633,6 +1703,12 @@ void UMaterialInterface::PreSave(FObjectPreSaveContext ObjectSaveContext)
 	}
 #endif // WITH_EDITORONLY_DATA
 
+#if WITH_EDITOR
+	if (ObjectSaveContext.IsCooking())
+	{
+		GShaderCompilerStats->IncrementMaterialCook();
+	}
+#endif // WITH_EDITOR
 }
 
 void UMaterialInterface::AddAssetUserData(UAssetUserData* InUserData)

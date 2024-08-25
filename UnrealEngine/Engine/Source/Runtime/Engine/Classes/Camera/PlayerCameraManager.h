@@ -17,6 +17,7 @@ class UCameraModifier;
 class UCameraShakeBase;
 class UCameraShakeSourceComponent;
 class ICameraLensEffectInterface;
+struct FAddCameraShakeParams;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAudioFadeChangeSignature, bool, bFadeOut, float, FadeTime);
 
@@ -282,6 +283,16 @@ protected:
 	TArray<TObjectPtr<UCameraModifier>> ModifierList;
 
 public:
+	/**
+	* Runs the given function on a local copy of the ModifierList of UCameraModifier, with the possibility of early exit
+	* Most easily used with a lambda as follows:
+	* ForEachCameraModifier([](UCameraModifier* Proxy) -> bool
+	* {
+	*     return continueLoop ? true : false;
+	* });
+	*/
+	ENGINE_API void ForEachCameraModifier(TFunctionRef<bool(UCameraModifier*)> Fn);
+
 	/** List of modifiers to create by default for this camera */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CameraModifier)
 	TArray< TSubclassOf<UCameraModifier> > DefaultModifiers;
@@ -396,6 +407,22 @@ public:
 	/** True when this camera should use an orthographic perspective instead of FOV */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PlayerCameraManager)
 	uint32 bIsOrthographic : 1;
+
+	/** True when this camera should automatically calculated the Near+Far planes */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PlayerCameraManager, meta = (EditCondition = "bIsOrthographic"))
+	uint32 bAutoCalculateOrthoPlanes : 1;
+
+	/** Manually adjusts the planes of this camera, maintaining the distance between them. Positive moves out to the farplane, negative towards the near plane */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PlayerCameraManager, meta = (EditCondition = "bIsOrthographic && bAutoCalculateOrthoPlanes"))
+	float AutoPlaneShift;
+
+	/** Adjusts the near/far planes and the view origin of the current camera automatically to avoid clipping and light artefacting*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PlayerCameraManager, meta = (EditCondition = "bIsOrthographic"))
+	uint32 bUpdateOrthoPlanes : 1;
+
+	/** If UpdateOrthoPlanes is enabled, this setting will use the cameras current height to compensate the distance to the general view (as a pseudo distance to view target when one isn't present) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PlayerCameraManager, meta = (EditCondition = "bIsOrthographic && bUpdateOrthoPlanes"))
+	uint32 bUseCameraHeightAsViewTarget : 1;
 
 	/** True if black bars should be added if the destination view has a different aspect ratio (only used when a view target doesn't specify whether or not to constrain the aspect ratio; most of the time the value from a camera component is used instead) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=PlayerCameraManager)
@@ -594,14 +621,14 @@ public:
 	 * @param ModifierClass - The class of camera modifier to create.
 	 * @return Returns the newly created camera modifier.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Game|Player")
+	UFUNCTION(BlueprintCallable, Category = "Game|Player", meta = (DeterminesOutputType = "ModifierClass"))
 	ENGINE_API virtual UCameraModifier* AddNewCameraModifier(TSubclassOf<UCameraModifier> ModifierClass);
 
 	/** 
 	 * Returns camera modifier for this camera of the given class, if it exists. 
 	 * Exact class match only. If there are multiple modifiers of the same class, the first one is returned.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Game|Player")
+	UFUNCTION(BlueprintCallable, Category = "Game|Player", meta = (DeterminesOutputType = "ModifierClass"))
 	ENGINE_API virtual UCameraModifier* FindCameraModifierByClass(TSubclassOf<UCameraModifier> ModifierClass);
 
 	/** 
@@ -826,6 +853,13 @@ public:
 	/** Stops playing all shakes originating from the given source. */
 	UFUNCTION(BlueprintCallable, Category = "Camera Shakes")
 	ENGINE_API virtual void StopAllCameraShakesFromSource(UCameraShakeSourceComponent* SourceComponent, bool bImmediately = true);
+
+	/**
+	 * Plays a camera shake on this camera.
+	 * @param Shake - The class of camera shake to play.
+	 * @param Params - The parameters to pass to the camera shake camera modifier.
+	 */
+	ENGINE_API virtual UCameraShakeBase* StartCameraShake(TSubclassOf<UCameraShakeBase> ShakeClass, const FAddCameraShakeParams& Params);
 
 	//
 	//  Camera fades.

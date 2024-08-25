@@ -5,22 +5,26 @@ import shutil
 import unrealcmd
 
 #-------------------------------------------------------------------------------
-class _Base(object):
+class _Base(unrealcmd.MultiPlatformCmd):
     def _get_primary_name(self):
-        name = "UE4"
-        try:
-            ue_context = self.get_unreal_context()
-            engine = ue_context.get_engine()
+        if hasattr(self, "_primary_name"):
+            return self._primary_name
 
+        ue_context = self.get_unreal_context()
+        engine = ue_context.get_engine()
+
+        name = "UE" + str(engine.get_version_major())
+        try:
             ppn_path = engine.get_dir() / "Intermediate/ProjectFiles/PrimaryProjectName.txt"
             if not ppn_path.is_file():
                 # Old path, needs to be maintained while projects prior to UE5.1 are supported
-                ppn_path = engine.get_dir() / "Intermediate/ProjectFiles/M"
-                ppn_path += "asterProjectName.txt"
+                ppn_path = engine.get_dir() / ("Intermediate/ProjectFiles/M" + "asterProjectName.txt")
             with ppn_path.open("rb") as ppn_file:
                 name = ppn_file.read().decode().strip()
         except FileNotFoundError:
-            pass
+            self.print_warning("Project files may be ungenerated")
+
+        self._primary_name = name
         return name
 
     def _get_sln_path(self):
@@ -34,29 +38,36 @@ class _Base(object):
             self.print_error("Opening project files is only supported on Windows")
             return False
 
+        self.print_info("Opening project")
         sln_path = self._get_sln_path()
+        print("Path:", sln_path)
+        if not os.path.isfile(sln_path):
+            self.print_error("Project file not found")
+            return False
 
-        self.print_info("Enumerating VS instances")
+        print("Enumerating VS instances")
         import vs.dte
         for i, instance in enumerate(vs.dte.running()):
-            if instance_path := instance.get_sln_path():
-                print(i, instance_path, end="")
-                if sln_path.samefile(instance_path):
-                    if instance.activate():
-                        print(" ...activating")
-                        return True
-                print()
+            print(f" {i} ", end="")
+            if not (instance_path := instance.get_sln_path()):
+                print("no-sln")
+                continue
+            print(instance_path, end="")
+
+            if sln_path.samefile(instance_path):
+                if instance.activate():
+                    print(" ...activating")
+                    return True
+            print()
 
         os.chdir(os.path.dirname(sln_path))
 
         run_args = ("cmd.exe", "/c", "start", sln_path)
         shell_open = self.get_exec_context().create_runnable(*run_args)
-        self.print_info("Opening project")
-        print("Path:", sln_path)
         return shell_open.run()
 
 #-------------------------------------------------------------------------------
-class Generate(unrealcmd.MultiPlatformCmd, _Base):
+class Generate(_Base):
     """ Generates a Visual Studio solution for the active project. To more
     easily distinguish open solutions from one branch to the next, the generated
     .sln file will be suffixed with the current branch name. Use the '--all'
@@ -98,7 +109,7 @@ class Generate(unrealcmd.MultiPlatformCmd, _Base):
             return self._open_sln()
 
 #-------------------------------------------------------------------------------
-class Open(unrealcmd.MultiPlatformCmd, _Base):
+class Open(_Base):
     """ Opens project files in Visual Studio """
 
     def get_exec_context(self):

@@ -25,8 +25,7 @@ void FMinimalReplicationTagCountMapForNetSerializer::ClampTagCount(SIZE_T MaxTag
 	if (static_cast<uint32>(Tags.Num()) > MaxTagCount)
 	{
 		// This struct is only used on stack with a very limited lifetime. Let's not spend CPU time on re-allocating.
-		constexpr bool bShrinkMemory = false;
-		Tags.SetNum(static_cast<int32>(static_cast<SSIZE_T>(MaxTagCount)), bShrinkMemory);
+		Tags.SetNum(static_cast<int32>(static_cast<SSIZE_T>(MaxTagCount)), EAllowShrinking::No);
 	}
 }
 

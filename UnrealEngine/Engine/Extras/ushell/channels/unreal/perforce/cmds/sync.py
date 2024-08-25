@@ -296,26 +296,28 @@ class Sync(_SyncBase):
 
         except KeyboardInterrupt:
             print()
-            self.print_warning(f"Sync interrupted! Writing build.version to CL {version_cl}")
+            if not self.args.dryrun:
+                self.print_warning(f"Sync interrupted! Writing build.version to CL {version_cl}")
             return False
         finally:
-            # Record the synced changelist in Build.version
-            with open(build_ver_path, "r") as x:
-                lines = list(x.readlines())
+            if not self.args.dryrun:
+                # Record the synced changelist in Build.version
+                with open(build_ver_path, "r") as x:
+                    lines = list(x.readlines())
 
-            import stat
-            build_ver_mode = os.stat(build_ver_path).st_mode
-            os.chmod(build_ver_path, build_ver_mode|stat.S_IWRITE)
+                import stat
+                build_ver_mode = os.stat(build_ver_path).st_mode
+                os.chmod(build_ver_path, build_ver_mode|stat.S_IWRITE)
 
-            with open(build_ver_path, "w") as x:
-                for line in lines:
-                    if r'"Changelist"' in line:
-                        line = line.split(":", 2)
-                        line = line[0] + f": {version_cl},\n"
-                    elif r'"BranchName"' in line:
-                        line = "\t\"BranchName\": \"X\"\n"
-                        line = line.replace("X", self._branch_root[:-1].replace("/", "+"))
-                    x.write(line)
+                with open(build_ver_path, "w") as x:
+                    for line in lines:
+                        if r'"Changelist"' in line:
+                            line = line.split(":", 2)
+                            line = line[0] + f": {version_cl},\n"
+                        elif r'"BranchName"' in line:
+                            line = "\t\"BranchName\": \"X\"\n"
+                            line = line.replace("X", self._branch_root[:-1].replace("/", "+"))
+                        x.write(line)
 
     def _apply_p4sync_txt(self, syncer):
         def impl(path):

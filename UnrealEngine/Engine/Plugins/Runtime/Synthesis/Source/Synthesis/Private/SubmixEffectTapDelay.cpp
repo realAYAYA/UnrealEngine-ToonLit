@@ -171,8 +171,8 @@ void FSubmixEffectTapDelay::RemoveTap(int32 TapId)
 	{
 		if (TargetTaps[TapIndex].TapId == TapId)
 		{
-			TargetTaps.RemoveAtSwap(TapIndex, 1, true);
-			CurrentTaps.RemoveAtSwap(TapIndex, 1, true);
+			TargetTaps.RemoveAtSwap(TapIndex, 1, EAllowShrinking::Yes);
+			CurrentTaps.RemoveAtSwap(TapIndex, 1, EAllowShrinking::Yes);
 			bSettingsModified = true;
 		}
 	}
@@ -212,7 +212,6 @@ void FSubmixEffectTapDelay::UpdateParameters()
 		// If we have a new max delay line length, reallocate the delay line
 		if (MaxDelayLineLength != NewSettings.MaximumDelayLength)
 		{
-			DelayLine.Reset();
 			DelayLine.Init(SampleRate, NewSettings.MaximumDelayLength / 1000.0f);
 			MaxDelayLineLength = NewSettings.MaximumDelayLength;
 		}

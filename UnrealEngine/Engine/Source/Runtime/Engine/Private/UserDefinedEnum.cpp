@@ -2,15 +2,16 @@
 
 #include "Engine/UserDefinedEnum.h"
 #include "Templates/SubclassOf.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/EditorObjectVersion.h"
 #include "UObject/ObjectSaveContext.h"
-#include "CookedMetaData.h"
 #include "UObject/Package.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(UserDefinedEnum)
 
 #if WITH_EDITOR
 #include "Kismet2/EnumEditorUtils.h"
+#include "UObject/CookedMetaData.h"
 #include "UObject/MetaData.h"
 #include "UObject/Package.h"
 #endif	// WITH_EDITOR
@@ -129,11 +130,18 @@ void UUserDefinedEnum::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 
 void UUserDefinedEnum::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UUserDefinedEnum::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	FString DescriptionString;
 	FTextStringHelper::WriteToBuffer(/*out*/ DescriptionString, EnumDescription);
-	OutTags.Emplace(GET_MEMBER_NAME_CHECKED(UUserDefinedEnum, EnumDescription), DescriptionString, FAssetRegistryTag::TT_Hidden);
+	Context.AddTag(FAssetRegistryTag(GET_MEMBER_NAME_CHECKED(UUserDefinedEnum, EnumDescription), DescriptionString, FAssetRegistryTag::TT_Hidden));
 }
 
 void UUserDefinedEnum::PreSaveRoot(FObjectPreSaveRootContext ObjectSaveContext)

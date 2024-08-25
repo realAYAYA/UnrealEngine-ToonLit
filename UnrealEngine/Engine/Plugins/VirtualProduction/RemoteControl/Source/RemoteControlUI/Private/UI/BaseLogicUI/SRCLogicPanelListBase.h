@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -42,16 +42,16 @@ public:
 	/** The number of items currently selected in a Logic list panel */
 	virtual int32 NumSelectedLogicItems() const = 0;
 
-	/** Whether the List View currently has focus.*/
+	/** Whether the List View currently has focus. */
 	virtual bool IsListFocused() const = 0;
 
-	/** Deletes currently selected items from the list view*/
-	virtual void DeleteSelectedPanelItem()  = 0;
+	/** Deletes currently selected items from the list view */
+	virtual void DeleteSelectedPanelItems()  = 0;
 
-	/** Returns the UI item currently selected by the user (if any). To be implemented per child panel*/
-	virtual TSharedPtr<FRCLogicModeBase> GetSelectedLogicItem() = 0;
+	/** Returns the UI items currently selected by the user (if any). To be implemented per child panel */
+	virtual TArray<TSharedPtr<FRCLogicModeBase>> GetSelectedLogicItems() = 0;
 
-	/** Provides a common entry point for adding Logic related data objects (UObjects) to their repsective panels*/
+	/** Provides a common entry point for adding Logic related data objects (UObjects) to their respective panels */
 	virtual void AddNewLogicItem(UObject* InLogicItem) {}
 
 	/** Builds the right-click context menu populated with generic actions (based on UI Commands) */
@@ -92,7 +92,7 @@ protected:
 	/** Helper function for handling common Delete Item functionality across all child panels (Actions/Behaviours/Controllers)
 	* Currently invoked from each Panel List child class with appropriate template class*/
 	template<class T>
-	void DeleteItemFromLogicPanel(TArray<TSharedPtr<T>>& ItemsSource, const TArray<TSharedPtr<T>>& SelectedItems)
+	void DeleteItemsFromLogicPanel(TArray<TSharedPtr<T>>& ItemsSource, const TArray<TSharedPtr<T>>& SelectedItems)
 	{
 		bool bIsDeleted = false;
 		for (const TSharedPtr<T> SelectedItem : SelectedItems)

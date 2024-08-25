@@ -22,6 +22,7 @@ UMovieSceneSubTrack::UMovieSceneSubTrack( const FObjectInitializer& ObjectInitia
 {
 #if WITH_EDITORONLY_DATA
 	TrackTint = FColor(180, 0, 40, 65);
+	RowHeight = 50;
 #endif
 
 	BuiltInTreePopulationMode = ETreePopulationMode::Blended;

@@ -20,8 +20,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeSurfaceEdit::Private::s_type =
-            NODE_TYPE( "EditSurface", NodeSurface::GetStaticType() );
+    FNodeType NodeSurfaceEdit::Private::s_type =
+            FNodeType( "EditSurface", NodeSurface::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -29,88 +29,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeSurfaceEdit, EType::Edit, Node, Node::EType::Surface)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeSurfaceEdit::GetInputCount() const
-	{
-		return
-			3 	// Extend mesh, morph, factor
-			+
-			m_pD->m_textures.Num()*2
-			;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeSurfaceEdit::GetInputNode( int i ) const
-	{
-		check( i >=0 && i < GetInputCount() );
-
-		Node* pResult = 0;
-
-		if ( i==0 )
-		{
-			pResult = m_pD->m_pMesh.get();
-		}
-		else if ( i==1 )
-		{
-			pResult = m_pD->m_pMorph.get();
-		}
-		else if (i == 2)
-		{
-			pResult = m_pD->m_pFactor.get();
-		}
-		else
-		{
-			int idx = i - 3;
-
-			if (idx%2 == 0)
-			{
-				pResult = m_pD->m_textures[idx/2].m_pExtend.get();
-			}
-			else
-			{
-				pResult = m_pD->m_textures[idx/2].m_pPatch.get();
-			}
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeSurfaceEdit::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i >=0 && i < GetInputCount());
-
-		if ( i==0 )
-		{
-			m_pD->m_pMesh = dynamic_cast<NodePatchMesh*>( pNode.get() );
-		}
-		else if ( i==1 )
-		{
-			m_pD->m_pMorph = dynamic_cast<NodeMesh*>( pNode.get() );
-		}
-		else if ( i==2 )
-		{
-			m_pD->m_pFactor = dynamic_cast<NodeScalar*>( pNode.get() );
-		}
-		else
-		{
-			int idx = i - 3;
-			if (idx % 2==0)
-			{
-				m_pD->m_textures[idx/2].m_pExtend = dynamic_cast<NodeImage*>( pNode.get() );
-			}
-			else
-			{
-				m_pD->m_textures[idx/2].m_pPatch = dynamic_cast<NodePatchImage*>( pNode.get() );
-			}
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -130,27 +48,9 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    void NodeSurfaceEdit::AddTag(const char* tagName)
+    void NodeSurfaceEdit::AddTag(const FString& tagName)
     {
         m_pD->m_tags.Add(tagName);
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    int NodeSurfaceEdit::GetTagCount() const
-    {
-        return m_pD->m_tags.Num();
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    const char* NodeSurfaceEdit::GetTag( int i ) const
-    {
-        if (i>=0 && i<GetTagCount())
-        {
-            return m_pD->m_tags[i].c_str();
-        }
-        return nullptr;
     }
 
 

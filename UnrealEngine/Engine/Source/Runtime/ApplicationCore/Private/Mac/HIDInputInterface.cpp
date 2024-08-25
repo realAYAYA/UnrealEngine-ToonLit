@@ -464,8 +464,7 @@ void HIDInputInterface::SendControllerEvents()
 
 		IPlatformInputDeviceMapper& DeviceMapper = IPlatformInputDeviceMapper::Get();
 		FPlatformUserId UserId = FGenericPlatformMisc::GetPlatformUserForUserIndex(ControllerState.ControllerId);
-		FInputDeviceId DeviceId = INPUTDEVICEID_NONE;
-		DeviceMapper.RemapControllerIdToPlatformUserAndDevice(ControllerState.ControllerId, OUT UserId, OUT DeviceId);
+        FInputDeviceId DeviceId = DeviceMapper.GetPrimaryInputDeviceForUser(UserId);
 
 		if( ControllerState.Device.DeviceRef )
 		{

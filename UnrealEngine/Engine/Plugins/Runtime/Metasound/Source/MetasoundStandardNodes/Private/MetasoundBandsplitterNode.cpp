@@ -128,7 +128,7 @@ namespace Metasound
 
 			for (uint32 Chan = 0; Chan < NumChannels; ++Chan)
 			{
-				InOutVertexData.BindReadVertex(GetAudioInputName(Chan), AudioInputs[Chan]);
+				InOutVertexData.BindReadVertex(AudioInputNames[Chan], AudioInputs[Chan]);
 			}
 
 			InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InputFilterOrder), FilterOrder);
@@ -136,7 +136,7 @@ namespace Metasound
 
 			for (uint32 BandIndex = 0; BandIndex < NumBands - 1; ++BandIndex)
 			{
-				InOutVertexData.BindReadVertex(GetCrossoverInputName(BandIndex), CrossoverFrequencies[BandIndex]);
+				InOutVertexData.BindReadVertex(CrossoverInputNames[BandIndex], CrossoverFrequencies[BandIndex]);
 			}
 		}
 
@@ -189,7 +189,7 @@ namespace Metasound
 					const FDataVertexMetadata AudioInputMetadata;
 #endif // WITH_EDITOR
 
-					InputInterface.Add(TInputDataVertex<FAudioBuffer>(GetAudioInputName(ChannelIndex), AudioInputMetadata));
+					InputInterface.Add(TInputDataVertex<FAudioBuffer>(AudioInputNames[ChannelIndex], AudioInputMetadata));
 				}
 
 				InputInterface.Add(TInputDataVertex<FEnumBandSplitterFilterOrder>(METASOUND_GET_PARAM_NAME_AND_METADATA(InputFilterOrder)));
@@ -208,7 +208,7 @@ namespace Metasound
 					const FDataVertexMetadata CrossoverInputMetadata;
 #endif // WITH_EDITOR
 
-					InputInterface.Add(TInputDataVertex<float>(GetCrossoverInputName(InputIndex), CrossoverInputMetadata, (1 + InputIndex) * 500.0f));
+					InputInterface.Add(TInputDataVertex<float>(CrossoverInputNames[InputIndex], CrossoverInputMetadata, (1 + InputIndex) * 500.0f));
 				}
 
 				// outputs
@@ -238,27 +238,26 @@ namespace Metasound
 			return DefaultInterface;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace BandSplitterNode;
-
-			const FDataReferenceCollection& Inputs = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			TArray<FAudioBufferReadRef> InputBuffers;
 			TArray<FFloatReadRef> InputCrossovers;
 
-			FEnumBandSplitterFilterOrderReadRef FilterOrderIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<FEnumBandSplitterFilterOrder>(InputInterface, METASOUND_GET_PARAM_NAME(InputFilterOrder), InParams.OperatorSettings);
-			FBoolReadRef bPhaseCompensateIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(InputPhaseCompensate), InParams.OperatorSettings);
+			FEnumBandSplitterFilterOrderReadRef FilterOrderIn = InputData.GetOrCreateDefaultDataReadReference<FEnumBandSplitterFilterOrder>(METASOUND_GET_PARAM_NAME(InputFilterOrder), InParams.OperatorSettings);
+			FBoolReadRef bPhaseCompensateIn = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputPhaseCompensate), InParams.OperatorSettings);
 
 			for (uint32 Chan = 0; Chan < NumChannels; Chan++)
 			{
-				InputBuffers.Add(Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(GetAudioInputName(Chan), InParams.OperatorSettings));
+				InputBuffers.Add(InputData.GetOrConstructDataReadReference<FAudioBuffer>(AudioInputNames[Chan], InParams.OperatorSettings));
 			}
 
 			for (uint32 Band = 0; Band < NumBands - 1; Band++)
 			{
-				InputCrossovers.Add(Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, GetCrossoverInputName(Band), InParams.OperatorSettings));
+				InputCrossovers.Add(InputData.GetOrCreateDefaultDataReadReference<float>(CrossoverInputNames[Band], InParams.OperatorSettings));
 			}
 
 			return MakeUnique<TBandSplitterOperator<NumBands, NumChannels>>(InParams.OperatorSettings, MoveTemp(InputBuffers), MoveTemp(InputCrossovers), FilterOrderIn, bPhaseCompensateIn);
@@ -362,6 +361,72 @@ namespace Metasound
 			return bDidUpdate;
 		}
 
+		
+		static TArray<FVertexName> InitializeAudioInputNames()
+		{
+			TArray<FVertexName> Names;
+			Names.AddUninitialized(NumChannels);
+
+			for (int ChanIndex = 0; ChanIndex < NumChannels; ++ChanIndex)
+			{
+				if (NumChannels == 1)
+				{
+					Names[ChanIndex] = *FString::Printf(TEXT("In"));
+				}
+				else if (NumChannels == 2)
+				{
+					Names[ChanIndex] = *FString::Printf(TEXT("In %s"), (ChanIndex == 0) ? TEXT("L") : TEXT("R"));
+				}
+				else
+				{
+					Names[ChanIndex] = *FString::Printf(TEXT("In %i"), ChanIndex);
+				}
+			}
+
+			return Names;
+		}
+
+		static TArray<FVertexName> InitializeCrossoverInputNames()
+		{
+			TArray<FVertexName> Names;
+			Names.AddUninitialized(NumBands);
+
+			for (int InputIndex = 0; InputIndex < NumBands; ++InputIndex)
+			{
+				Names[InputIndex] = *FString::Printf(TEXT("Crossover %i"), InputIndex);
+			}
+
+			return Names;
+		}
+
+		static TArray<FVertexName> InitializeAudioOutputNames()
+		{
+			TArray<FVertexName> Names;
+			Names.AddUninitialized(NumBands * NumChannels);
+
+			for (int BandIndex = 0; BandIndex < NumBands; ++BandIndex)
+			{
+				for (int ChanIndex = 0; ChanIndex < NumChannels; ++ChanIndex)
+				{
+					if (NumChannels == 1)
+					{
+						Names[BandIndex * NumChannels + ChanIndex] = *FString::Printf(TEXT("Band %i Out"), BandIndex);
+					}
+					else if (NumChannels == 2)
+					{
+						Names[BandIndex * NumChannels + ChanIndex] = *FString::Printf(TEXT("Band %i %s"), BandIndex, (ChanIndex == 0) ? TEXT("L") : TEXT("R"));
+					}
+					else
+					{
+						Names[BandIndex * NumChannels + ChanIndex] = *FString::Printf(TEXT("Band %i Out %i"), BandIndex, ChanIndex);
+					}
+				}
+			}
+
+			return Names;
+		}
+
+
 		TArray<FAudioBufferReadRef> AudioInputs;
 		TArray<FFloatReadRef> CrossoverFrequencies;
 
@@ -377,6 +442,10 @@ namespace Metasound
 
 		TArray<Audio::FLinkwitzRileyBandSplitter> Filters;
 		TArray<Audio::FMultibandBuffer> MultiBandBuffers;
+
+		static const inline TArray<FVertexName> AudioInputNames = InitializeAudioInputNames();
+		static const inline TArray<FVertexName> CrossoverInputNames = InitializeCrossoverInputNames();
+		static const inline TArray<FVertexName> AudioOutputNames = InitializeAudioOutputNames();
 
 		FOperatorSettings Settings;
 
@@ -400,37 +469,9 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static const FVertexName GetAudioInputName(uint32 ChannelIndex)
-		{
-			if (NumChannels == 1)
-			{
-				return *FString::Printf(TEXT("In"));
-			}
-			else if (NumChannels == 2)
-			{
-				return *FString::Printf(TEXT("In %s"), (ChannelIndex == 0) ? TEXT("L") : TEXT("R"));
-			}
-
-			return *FString::Printf(TEXT("In %i"), ChannelIndex);
-		}
-
-		static const FVertexName GetCrossoverInputName(uint32 InputIndex)
-		{
-			return *FString::Printf(TEXT("Crossover %i"), InputIndex);
-		}
-
 		static const FVertexName GetAudioOutputName(uint32 OutputIndex, uint32 ChannelIndex)
 		{
-			if (NumChannels == 1)
-			{
-				return *FString::Printf(TEXT("Band %i Out"), OutputIndex);
-			}
-			else if (NumChannels == 2)
-			{
-				return *FString::Printf(TEXT("Band %i %s"), OutputIndex, (ChannelIndex == 0) ? TEXT("L") : TEXT("R"));
-			}
-
-			return *FString::Printf(TEXT("Band %i Out %i"), OutputIndex, ChannelIndex);
+			return AudioOutputNames[OutputIndex * NumChannels + ChannelIndex];
 		}
 
 #if WITH_EDITOR

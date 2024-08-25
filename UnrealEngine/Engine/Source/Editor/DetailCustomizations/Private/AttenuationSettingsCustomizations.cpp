@@ -21,7 +21,6 @@
 #include "PropertyRestriction.h"
 #include "Sound/AudioSettings.h"
 #include "Sound/SoundAttenuation.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Class.h"
 #include "UObject/NameTypes.h"
 #include "UObject/UObjectGlobals.h"

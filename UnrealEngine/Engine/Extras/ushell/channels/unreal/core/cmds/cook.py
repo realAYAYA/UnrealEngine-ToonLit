@@ -47,8 +47,8 @@ class _Cook(unrealcmd.MultiPlatformCmd):
         cultures = self.args.cultures.replace(",", "+")
 
         commandlet_args = (
-            "-targetplatform=" + cook_form,
-            "-cookcultures=" + cultures if cultures else None,
+            ("-targetplatform=" + cook_form) if cook_form else None,
+            ("-cookcultures=" + cultures) if cultures else None,
             "-unattended",
             "-unversioned",
             "-stdout",

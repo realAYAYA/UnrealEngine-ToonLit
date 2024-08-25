@@ -120,8 +120,6 @@ namespace WaveTable
 							return 1 << static_cast<int32>(InBank.Resolution);
 						}
 					}
-
-					return MaxNumSamples;
 				}
 				break;
 
@@ -158,7 +156,7 @@ void UWaveTableBank::CopyToProxyData()
 	checkf(!ProxyData.IsValid(), TEXT("Cannot overwrite pre-existing proxy when calling UWaveTableBank::CopyToProxyData"));
 
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	ProxyData = MakeShared<FWaveTableBankAssetProxy, ESPMode::ThreadSafe>(GetUniqueID(), SampleMode, SampleRate, GetEntries());
+	ProxyData = MakeShared<FWaveTableBankAssetProxy, ESPMode::ThreadSafe>(GetUniqueID(), SampleMode, SampleRate, GetEntries(), bBipolar);
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
@@ -167,7 +165,7 @@ void UWaveTableBank::MoveToProxyData()
 	checkf(!ProxyData.IsValid(), TEXT("Cannot overwrite pre-existing proxy when calling UWaveTableBank::MoveToProxyData"));
 
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	ProxyData = MakeShared<FWaveTableBankAssetProxy, ESPMode::ThreadSafe>(GetUniqueID(), SampleMode, SampleRate, MoveTemp(Entries));
+	ProxyData = MakeShared<FWaveTableBankAssetProxy, ESPMode::ThreadSafe>(GetUniqueID(), SampleMode, SampleRate, MoveTemp(Entries), bBipolar);
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
@@ -268,28 +266,25 @@ void UWaveTableBank::Serialize(FArchive& Ar)
 #endif // WITH_EDITORONLY_DATA
 }
 
-FWaveTableBankAssetProxy::FWaveTableBankAssetProxy(const FWaveTableBankAssetProxy& InAssetProxy)
-	: ObjectId(InAssetProxy.ObjectId)
-	, SampleRate(InAssetProxy.SampleRate)
-	, SampleMode(InAssetProxy.SampleMode)
-	, WaveTableData(InAssetProxy.WaveTableData)
-{
-}
 
-FWaveTableBankAssetProxy::FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, const TArray<FWaveTableBankEntry>& InBankEntries)
+FWaveTableBankAssetProxy::FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, const TArray<FWaveTableBankEntry>& InBankEntries, bool bInBipolar)
+	: bBipolar(bInBipolar)
+	, ObjectId(InObjectId)
+	, SampleRate(InSampleRate)
+	, SampleMode(InSamplingMode)
 {
-	SampleMode = InSamplingMode;
-	SampleRate = InSampleRate;
 	Algo::Transform(InBankEntries, WaveTableData, [](const FWaveTableBankEntry& Entry)
 	{
 		return Entry.Transform.GetTableData();
 	});
 }
 
-FWaveTableBankAssetProxy::FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, TArray<FWaveTableBankEntry>&& InBankEntries)
+FWaveTableBankAssetProxy::FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTableSamplingMode InSamplingMode, int32 InSampleRate, TArray<FWaveTableBankEntry>&& InBankEntries, bool bInBipolar)
+	: bBipolar(bInBipolar)
+	, ObjectId(InObjectId)
+	, SampleRate(InSampleRate)
+	, SampleMode(InSamplingMode)
 {
-	SampleMode = InSamplingMode;
-	SampleRate = InSampleRate;
 	for (FWaveTableBankEntry& Entry : InBankEntries)
 	{
 		WaveTableData.Add(MoveTemp(Entry.Transform.TableData));
@@ -298,11 +293,11 @@ FWaveTableBankAssetProxy::FWaveTableBankAssetProxy(uint32 InObjectId, EWaveTable
 }
 
 FWaveTableBankAssetProxy::FWaveTableBankAssetProxy(const UWaveTableBank& InWaveTableBank)
+	: bBipolar(InWaveTableBank.bBipolar)
+	, ObjectId(InWaveTableBank.GetUniqueID())
+	, SampleRate(InWaveTableBank.SampleRate)
+	, SampleMode(InWaveTableBank.SampleMode)
 {
-	ObjectId = InWaveTableBank.GetUniqueID();
-	SampleRate = InWaveTableBank.SampleRate;
-	SampleMode = InWaveTableBank.SampleMode;
-
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	Algo::Transform(InWaveTableBank.Entries, WaveTableData, [](const FWaveTableBankEntry& Entry)
 	{

@@ -14,11 +14,12 @@
 #include "NiagaraConstants.h"
 #include "NiagaraEmitterEditorData.h"
 #include "NiagaraNodeAssignment.h"
-#include "SNewEmitterDialog.h"
+#include "NiagaraRecentAndFavoritesManager.h"
 #include "Misc/MessageDialog.h"
 #include "Modules/ModuleManager.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Widgets/AssetBrowser/SNiagaraAssetBrowser.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraEmitterFactoryNew)
 
@@ -40,45 +41,43 @@ bool UNiagaraEmitterFactoryNew::ConfigureProperties()
 	IMainFrameModule& MainFrame = FModuleManager::LoadModuleChecked<IMainFrameModule>("MainFrame");
 	TSharedPtr<SWindow>	ParentWindow = MainFrame.GetParentWindow();
 
-	TSharedRef<SNewEmitterDialog> NewEmitterDialog = SNew(SNewEmitterDialog);
-	FSlateApplication::Get().AddModalWindow(NewEmitterDialog, ParentWindow);
+	SNiagaraAssetBrowser::FArguments AssetBrowserArgs;
+	AssetBrowserArgs.AvailableClasses({UNiagaraEmitter::StaticClass()})
+	.RecentAndFavoritesList(FNiagaraEditorModule::Get().GetRecentsManager()->GetRecentEmitterAndSystemsList())
+	.EmptySelectionMessage(LOCTEXT("EmptyEmitterFactorySelectionMessage", "Select an emitter as a starting point for your new emitter.\n"));
 
-	if (NewEmitterDialog->GetUserConfirmedSelection() == false)
+	SNiagaraAssetBrowserWindow::FArguments AssetBrowserWindowArgs;
+	AssetBrowserWindowArgs.AssetBrowserArgs(AssetBrowserArgs)
+	.WindowTitle(LOCTEXT("EmitterAssetBrowserWindowTitle", "Create Niagara Emitter - Select an emitter as a base"));
+	
+	TSharedRef<SNiagaraCreateAssetWindow> CreateAssetBrowserWindow = SNew(SNiagaraCreateAssetWindow, *UNiagaraEmitter::StaticClass()).AssetBrowserWindowArgs(AssetBrowserWindowArgs);
+	
+	FSlateApplication::Get().AddModalWindow(CreateAssetBrowserWindow, ParentWindow);
+
+	if(CreateAssetBrowserWindow->ShouldProceedWithAction() == false)
 	{
-		// User cancelled or closed the dialog so abort asset creation.
-		return false;
+		return false;	
 	}
 
-	TOptional<FAssetData> SelectedEmitterAsset = NewEmitterDialog->GetSelectedEmitterAsset();
-	if (SelectedEmitterAsset.IsSet())
+	TArray<FAssetData> SelectedAssetData = CreateAssetBrowserWindow->GetSelectedAssets();
+	
+	if(SelectedAssetData.Num() == 1)
 	{
-		EmitterToCopy = Cast<UNiagaraEmitter>(SelectedEmitterAsset->GetAsset());
-		bUseInheritance = NewEmitterDialog->GetUseInheritance();
-		if (EmitterToCopy == nullptr)
-		{
-			EAppReturnType::Type DialogResult = FMessageDialog::Open(EAppMsgType::OkCancel, EAppReturnType::Cancel,
-				LOCTEXT("FailedToLoadMessage", "The selected emitter failed to load\nWould you like to create a default emitter?"),
-				LOCTEXT("FailedToLoadTitle", "Create Default?"));
-			if (DialogResult == EAppReturnType::Cancel)
-			{
-				return false;
-			}
-			else
-			{
-				// The selected emitter couldn't be loaded but the user still wants to create a default emitter so 
-				// well need to create a new empty emitter and add some default modules to it.
-				EmitterToCopy = nullptr;
-				bAddDefaultModulesAndRenderersToEmptyEmitter = true;
-			}
-		}
+		FAssetData SelectedAsset = SelectedAssetData[0];
+		ensure(SelectedAsset.GetClass() == UNiagaraEmitter::StaticClass());
+		
+		UNiagaraEmitter* EmitterAsset = Cast<UNiagaraEmitter>(SelectedAsset.GetAsset());
+			
+		EmitterToCopy = EmitterAsset;
+		bUseInheritance = EmitterAsset->bIsInheritable;
 	}
 	else
 	{
-		// User selected an empty emitter so set the emitter to copy to null, and disable creation of default modules.
 		EmitterToCopy = nullptr;
+		bUseInheritance = true;
 		bAddDefaultModulesAndRenderersToEmptyEmitter = false;
 	}
-
+	
 	return true;
 }
 
@@ -123,7 +122,7 @@ UObject* UNiagaraEmitterFactoryNew::FactoryCreateNew(UClass* Class, UObject* InP
 
 	if (EmitterToCopy != nullptr)
 	{
-		if (bUseInheritance && EmitterToCopy->TemplateSpecification == ENiagaraScriptTemplateSpecification::None)
+		if (bUseInheritance)
 		{
 			NewEmitter = UNiagaraEmitter::CreateWithParentAndOwner(FVersionedNiagaraEmitter(EmitterToCopy, EmitterToCopy->GetExposedVersion().VersionGuid), InParent, Name, Flags);
 		}
@@ -134,8 +133,9 @@ UObject* UNiagaraEmitterFactoryNew::FactoryCreateNew(UClass* Class, UObject* InP
 			NewEmitter->DisableVersioning(EmitterToCopy->GetExposedVersion().VersionGuid);
 		}
 
-		NewEmitter->TemplateSpecification = ENiagaraScriptTemplateSpecification::None;
+		NewEmitter->bIsInheritable = true;
 		NewEmitter->TemplateAssetDescription = FText();
+		NewEmitter->AssetTags.Empty();
 		NewEmitter->Category = FText();
 	}
 	else
@@ -150,7 +150,8 @@ UObject* UNiagaraEmitterFactoryNew::FactoryCreateNew(UClass* Class, UObject* InP
 		UNiagaraEmitterEditorData* EmitterEditorData = CastChecked<UNiagaraEmitterEditorData>(EmitterVersionData.GetEditorData());
 		EmitterEditorData->SetShowSummaryView(EmitterVersionData.AddEmitterDefaultViewState == ENiagaraEmitterDefaultSummaryState::Summary ? true : false);
 	});
-	
+
+	FNiagaraEditorModule::Get().GetRecentsManager()->EmitterUsed(*NewEmitter);
 	return NewEmitter;
 }
 
@@ -228,7 +229,6 @@ void UNiagaraEmitterFactoryNew::InitializeEmitter(UNiagaraEmitter* NewEmitter, b
 		FNiagaraStackGraphUtilities::RelayoutGraph(*Source->NodeGraph);
 		EmitterData->bInterpolatedSpawning = true;
 		EmitterData->bDeterminism = false; // NOTE: Default to non-determinism
-		NewEmitter->TemplateSpecification = ENiagaraScriptTemplateSpecification::None;
 		EmitterData->SpawnScriptProps.Script->SetUsage(ENiagaraScriptUsage::ParticleSpawnScriptInterpolated);
 	}
 }

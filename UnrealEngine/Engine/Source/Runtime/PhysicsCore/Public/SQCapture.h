@@ -70,10 +70,8 @@ struct FSQCapture
 	ChaosInterface::FQueryFilterData QueryFilterData;
 	TUniquePtr<ICollisionQueryFilterCallbackBase> FilterCallback;
 
-	TUniquePtr<Chaos::FImplicitObject> ChaosOwnerObject;	//should be private, do not access directly
-	const Chaos::FImplicitObject* ChaosGeometry;
-	TUniquePtr<Chaos::FImplicitObject> SerializableChaosGeometry;
-
+	Chaos::FImplicitObjectPtr ChaosImplicitGeometry;
+	
 	ChaosInterface::FSQHitBuffer<ChaosInterface::FSweepHit> ChaosSweepBuffer;
 	TArray<ChaosInterface::FSweepHit> ChaosSweepTouches;
 
@@ -82,6 +80,15 @@ struct FSQCapture
 
 	ChaosInterface::FSQHitBuffer<ChaosInterface::FOverlapHit> ChaosOverlapBuffer;
 	TArray<ChaosInterface::FOverlapHit> ChaosOverlapTouches;
+
+	UE_DEPRECATED(5.4, "Please use ChaosImplicitGeometry instead.")
+    TUniquePtr<Chaos::FImplicitObject> ChaosOwnerObject;	//should be private, do not access directly
+    
+    UE_DEPRECATED(5.4, "Please use ChaosImplicitGeometry instead.")
+    const Chaos::FImplicitObject* ChaosGeometry;
+    
+    UE_DEPRECATED(5.4, "Please use ChaosImplicitGeometry instead.")
+    TUniquePtr<Chaos::FImplicitObject> SerializableChaosGeometry;
 
 private:
 	PHYSICSCORE_API FSQCapture(FPhysTestSerializer& OwningPhysSerializer);	//This should be created by PhysTestSerializer

@@ -165,6 +165,11 @@ public:
 			return TProperties::IsClientOnly();
 		}
 
+		if (Feature == ETargetPlatformFeatures::CanCookPackages)
+		{
+			return TProperties::HasEditorOnlyData();
+		}
+
 		if (Feature == ETargetPlatformFeatures::MobileRendering)
 		{
 			static bool bCachedSupportsMobileRendering = false;

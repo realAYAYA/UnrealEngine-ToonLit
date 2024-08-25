@@ -19,7 +19,7 @@ def parse_argv():
 	actions.add_argument('-pull_bench', action='store_true')	# Android only
 
 	target = parser.add_argument_group(title='Target')
-	target.add_argument('-compiler', choices=['vs2015', 'vs2017', 'vs2019', 'vs2019-clang', 'android', 'clang4', 'clang5', 'clang6', 'clang7', 'clang8', 'clang9', 'clang10', 'clang11', 'gcc5', 'gcc6', 'gcc7', 'gcc8', 'gcc9', 'gcc10', 'osx', 'ios', 'emscripten'], help='Defaults to the host system\'s default compiler')
+	target.add_argument('-compiler', choices=['vs2015', 'vs2017', 'vs2019', 'vs2019-clang', 'vs2022', 'vs2022-clang', 'android', 'clang4', 'clang5', 'clang6', 'clang7', 'clang8', 'clang9', 'clang10', 'clang11', 'clang12', 'clang13', 'clang14', 'gcc5', 'gcc6', 'gcc7', 'gcc8', 'gcc9', 'gcc10', 'gcc11', 'osx', 'ios', 'emscripten'], help='Defaults to the host system\'s default compiler')
 	target.add_argument('-config', choices=['Debug', 'Release'], type=str.capitalize)
 	target.add_argument('-cpu', choices=['x86', 'x64', 'armv7', 'arm64', 'wasm'], help='Defaults to the host system\'s architecture')
 
@@ -27,9 +27,11 @@ def parse_argv():
 	misc.add_argument('-avx', dest='use_avx', action='store_true', help='Compile using AVX instructions on Windows, OS X, and Linux')
 	misc.add_argument('-avx2', dest='use_avx2', action='store_true', help='Compile using AVX2 instructions on Windows, OS X, and Linux')
 	misc.add_argument('-nosimd', dest='use_simd', action='store_false', help='Compile without SIMD instructions')
+	misc.add_argument('-simd', dest='use_simd', action='store_true', help='Compile with default SIMD instructions')
 	misc.add_argument('-num_threads', help='No. to use while compiling and regressing')
 	misc.add_argument('-tests_matching', help='Only run tests whose names match this regex')
 	misc.add_argument('-vector_mix_test', action='store_true', help='Enable the vector_mix unit tests')
+	misc.add_argument('-ci', action='store_true', help='Whether or not this is a Continuous Integration build')
 	misc.add_argument('-help', action='help', help='Display this usage information')
 
 	num_threads = multiprocessing.cpu_count()
@@ -43,6 +45,10 @@ def parse_argv():
 		bench=False, run_bench=False, pull_bench=False)
 
 	args = parser.parse_args()
+
+	is_arm64_cpu = False
+	if platform.machine() == 'arm64' or platform.machine() == 'aarch64':
+		is_arm64_cpu = True
 
 	# Sanitize and validate our options
 	if (args.use_avx or args.use_avx2) and not args.use_simd:
@@ -101,11 +107,26 @@ def parse_argv():
 			sys.exit(1)
 	else:
 		if not args.cpu:
-			args.cpu = 'x64'
+			if is_arm64_cpu:
+				args.cpu = 'arm64'
+			else:
+				args.cpu = 'x64'
 
 	if args.cpu == 'arm64':
-		if not args.compiler in ['vs2017', 'vs2019', 'ios', 'android']:
-			print('arm64 is only supported with VS2017, VS2019, Android, and iOS')
+		is_arm_supported = False
+
+		# Cross compilation
+		if args.compiler in ['vs2017', 'vs2019', 'vs2022', 'ios', 'android']:
+			is_arm_supported = True
+
+		# Native compilation
+		if platform.system() == 'Darwin' and is_arm64_cpu:
+			is_arm_supported = True
+		elif platform.system() == 'Linux' and is_arm64_cpu:
+			is_arm_supported = True
+
+		if not is_arm_supported:
+			print('arm64 is only supported with VS2017, VS2019, OS X (M1 processors), Linux, Android, and iOS')
 			sys.exit(1)
 	elif args.cpu == 'armv7':
 		if not args.compiler == 'android':
@@ -145,6 +166,8 @@ def get_generator(compiler, cpu):
 				return 'Visual Studio 15 2017'
 		elif compiler == 'vs2019' or compiler == 'vs2019-clang':
 			return 'Visual Studio 16 2019'
+		elif compiler == 'vs2022' or compiler == 'vs2022-clang':
+			return 'Visual Studio 17 2022'
 		elif compiler == 'android':
 			# For Android, we use the default generator since we don't build with CMake
 			return None
@@ -173,7 +196,14 @@ def get_architecture(compiler, cpu):
 		if compiler == 'vs2017':
 			if cpu == 'arm64':
 				return 'ARM64'
-		elif compiler == 'vs2019' or compiler == 'vs2019-clang':
+
+		is_modern_vs = False
+		if compiler == 'vs2019' or compiler == 'vs2019-clang':
+			is_modern_vs = True
+		elif compiler == 'vs2022' or compiler == 'vs2022-clang':
+			is_modern_vs = True
+
+		if is_modern_vs:
 			if cpu == 'x86':
 				return 'Win32'
 			else:
@@ -193,7 +223,6 @@ def get_toolchain(compiler, cmake_script_dir):
 
 def set_compiler_env(compiler, args):
 	if platform.system() == 'Linux':
-		os.environ['MAKEFLAGS'] = '-j{}'.format(args.num_threads)
 		if compiler == 'clang4':
 			os.environ['CC'] = 'clang-4.0'
 			os.environ['CXX'] = 'clang++-4.0'
@@ -218,6 +247,15 @@ def set_compiler_env(compiler, args):
 		elif compiler == 'clang11':
 			os.environ['CC'] = 'clang-11'
 			os.environ['CXX'] = 'clang++-11'
+		elif compiler == 'clang12':
+			os.environ['CC'] = 'clang-12'
+			os.environ['CXX'] = 'clang++-12'
+		elif compiler == 'clang13':
+			os.environ['CC'] = 'clang-13'
+			os.environ['CXX'] = 'clang++-13'
+		elif compiler == 'clang14':
+			os.environ['CC'] = 'clang-14'
+			os.environ['CXX'] = 'clang++-14'
 		elif compiler == 'gcc5':
 			os.environ['CC'] = 'gcc-5'
 			os.environ['CXX'] = 'g++-5'
@@ -236,6 +274,9 @@ def set_compiler_env(compiler, args):
 		elif compiler == 'gcc10':
 			os.environ['CC'] = 'gcc-10'
 			os.environ['CXX'] = 'g++-10'
+		elif compiler == 'gcc11':
+			os.environ['CC'] = 'gcc-11'
+			os.environ['CXX'] = 'g++-11'
 		elif compiler == 'emscripten':
 			# Nothing to do for Emscripten
 			return
@@ -277,6 +318,11 @@ def do_generate_solution(build_dir, cmake_script_dir, args):
 	if not platform.system() == 'Windows':
 		extra_switches.append('-DCMAKE_BUILD_TYPE={}'.format(config.upper()))
 
+	if platform.system() == 'Darwin' and compiler == 'ios' and args.ci:
+		# Disable code signing for CI iOS builds since we just test compilation
+		extra_switches.append('-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO')
+		extra_switches.append('-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO')
+
 	toolchain = get_toolchain(compiler, cmake_script_dir)
 	if toolchain:
 		extra_switches.append('-DCMAKE_TOOLCHAIN_FILE={}'.format(toolchain))
@@ -291,7 +337,7 @@ def do_generate_solution(build_dir, cmake_script_dir, args):
 			print('Using default generator')
 		else:
 			generator_suffix = ''
-			if compiler == 'vs2019-clang':
+			if compiler == 'vs2019-clang' or compiler == 'vs2022-clang':
 				extra_switches.append('-T ClangCL')
 				generator_suffix = 'Clang CL'
 
@@ -472,6 +518,9 @@ if __name__ == "__main__":
 	if args.compiler:
 		print('Using compiler: {}'.format(args.compiler))
 	print('Using {} threads'.format(args.num_threads))
+
+	# Make sure 'make' runs with all available cores
+	os.environ['MAKEFLAGS'] = '-j{}'.format(args.num_threads)
 
 	do_generate_solution(build_dir, cmake_script_dir, args)
 

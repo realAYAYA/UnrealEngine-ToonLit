@@ -213,6 +213,9 @@ protected:
 	/** Total number of filtered pin type items. This count excludes category items and reference subtypes. */
 	int32 NumFilteredPinTypeItems;
 
+	/** Total number of valid pin type items, that could be filtered. This count excludes category items and reference subtypes. */
+	int32 NumValidPinTypeItems;
+
 	/** Holds a cache of the allowed Object Reference types for the last sub-menu opened. */
 	TArray<FObjectReferenceListItem> AllowedObjectReferenceTypes;
 	TWeakPtr<SListView<FObjectReferenceListItem>> WeakListView;
@@ -259,7 +262,7 @@ protected:
 	void OnFilterTextCommitted(const FText& NewText, ETextCommit::Type CommitInfo);
 
 	/** Helper to generate the filtered list of types, based on the supported types of the schema */
-	bool GetChildrenWithSupportedTypes(const TArray<FPinTypeTreeItem>& UnfilteredList, TArray<FPinTypeTreeItem>& OutFilteredList);
+	void FilterUnsupportedTypes(TArray<FPinTypeTreeItem>& UnfilteredList);
 
 	/** Helper to generate the filtered list of types, based on the search string matching */
 	bool GetChildrenMatchingSearch(const FText& SearchText, const TArray<FPinTypeTreeItem>& UnfilteredList, TArray<FPinTypeTreeItem>& OutFilteredList, FTopLevenshteinResult<FPinTypeTreeItem>& OutTopLevenshteinResult);

@@ -131,8 +131,8 @@ export const getStepETA = (step: StepData, job: JobData): HordeTime => {
 
 export const getStepFinishTime = (step: StepData): HordeTime => {
 
-    let displayFinish = "";    
-    let serverFinish = "";    
+    let displayFinish = "";
+    let serverFinish = "";
 
     const format = dashboard.display24HourClock ? "HH:mm:ss z" : "LT z";
 
@@ -150,8 +150,8 @@ export const getStepFinishTime = (step: StepData): HordeTime => {
 
 export const getStepStartTime = (step: StepData): HordeTime => {
 
-    let displayStart = "";    
-    let serverStart = "";    
+    let displayStart = "";
+    let serverStart = "";
 
     const format = dashboard.display24HourClock ? "HH:mm:ss z" : "LT z";
 
@@ -170,8 +170,8 @@ export const getStepStartTime = (step: StepData): HordeTime => {
 
 export const getLabelFinishTime = (label: JobLabel, job: JobData): HordeTime => {
 
-    let displayFinish = "";    
-    let serverFinish = "";    
+    let displayFinish = "";
+    let serverFinish = "";
 
     const format = dashboard.display24HourClock ? "HH:mm:ss z" : "LT z";
 
@@ -235,7 +235,7 @@ export const getStepPercent = (step: StepData): number | undefined => {
     return percent;
 };
 
-export const getElapsedString = (start: Moment, end: Moment, includeSeconds:boolean = true): string => {
+export const getElapsedString = (start: Moment, end: Moment, includeSeconds: boolean = true): string => {
 
     let duration = "";
     const d = moment.duration(end.diff(start));
@@ -259,7 +259,7 @@ export const getElapsedString = (start: Moment, end: Moment, includeSeconds:bool
         if (d.days()) {
             duration += `${d.days()}d `;
         }
-        
+
         if (d.hours()) {
             duration += `${d.hours()}h `;
         }
@@ -361,7 +361,7 @@ export const getHumanTime = (timeIn: Date | string | undefined): string => {
     const delta = nowDay - timeDay;
 
     if (delta > 2 || now.year() !== time.year()) {
-        return time.format('MMM Do');    
+        return time.format('MMM Do');
     }
 
     if (delta === 1) {
@@ -376,12 +376,12 @@ export const getHumanTime = (timeIn: Date | string | undefined): string => {
         return "Monday";
     }
 
-    return time.format('MMM Do');    
+    return time.format('MMM Do');
 
 };
 
 
-export const getShortNiceTime = (timeIn: Date | string | undefined, relative: boolean = false, includeHour:boolean = false, includeDay: boolean = true): string => {
+export const getShortNiceTime = (timeIn: Date | string | undefined, relative: boolean = false, includeHour: boolean = false, includeDay: boolean = true): string => {
 
     if (!timeIn) {
         return "";
@@ -408,7 +408,7 @@ export const getShortNiceTime = (timeIn: Date | string | undefined, relative: bo
         else
             timeStr = time.format(format);
     }
-    
+
     return timeStr;
 
 };
@@ -440,3 +440,13 @@ export const getNiceTime = (timeIn: Date | string | undefined, relative: boolean
     return timeStr;
 
 };
+
+export const getMongoIdDate = (mongoId: string): Date | undefined => {
+
+    if (!mongoId || mongoId.length < 8) {
+        return undefined;
+    }
+
+    const timestamp = mongoId.substring(0, 8)
+    return new Date(parseInt(timestamp, 16) * 1000);
+}

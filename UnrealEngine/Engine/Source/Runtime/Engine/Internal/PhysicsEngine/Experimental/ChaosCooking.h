@@ -19,10 +19,10 @@ namespace Chaos
 {
 	namespace Cooking
 	{
-		ENGINE_API TUniquePtr<Chaos::FTriangleMeshImplicitObject> BuildSingleTrimesh(const FTriMeshCollisionData& Desc, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap);
+		ENGINE_API Chaos::FTriangleMeshImplicitObjectPtr BuildSingleTrimesh(const FTriMeshCollisionData& Desc, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap);
 
-		void BuildConvexMeshes(TArray<TUniquePtr<Chaos::FImplicitObject>>& OutTriangleMeshes, const FCookBodySetupInfo& InParams);
-		void BuildTriangleMeshes(TArray<TUniquePtr<Chaos::FTriangleMeshImplicitObject>>& OutTriangleMeshes, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap, const FCookBodySetupInfo& InParams);
+		void BuildConvexMeshes(TArray<Chaos::FImplicitObjectPtr>& OutTriangleMeshes, const FCookBodySetupInfo& InParams);
+		void BuildTriangleMeshes(TArray<Chaos::FTriangleMeshImplicitObjectPtr>& OutTriangleMeshes, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap, const FCookBodySetupInfo& InParams);
 	}
 
 	struct FCookHelper
@@ -30,8 +30,8 @@ namespace Chaos
 		FCookHelper() = delete;
 		FCookHelper(UBodySetup* InSetup);
 
-		TArray<TUniquePtr<Chaos::FImplicitObject>> SimpleImplicits;
-		TArray<TUniquePtr<Chaos::FTriangleMeshImplicitObject>> ComplexImplicits;
+		TArray<Chaos::FImplicitObjectPtr> SimpleImplicits;
+		TArray<Chaos::FTriangleMeshImplicitObjectPtr> ComplexImplicits;
 		FBodySetupUVInfo UVInfo;
 		TArray<int32> FaceRemap;
 		TArray<int32> VertexRemap;

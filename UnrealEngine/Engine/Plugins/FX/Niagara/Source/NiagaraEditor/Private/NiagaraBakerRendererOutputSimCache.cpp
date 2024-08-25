@@ -72,15 +72,19 @@ void FNiagaraBakerRendererOutputSimCache::BakeFrame(FNiagaraBakerFeedbackContext
 		return;
 	}
 
-	FNiagaraSimCacheFeedbackContext SimCacheFeedbackContext(false);
-	if ( FrameIndex == 0 )
+	UNiagaraComponent* PreviewComponent = BakerRenderer.GetPreviewComponent();
+	if (PreviewComponent && !PreviewComponent->IsComplete())
 	{
-		BakeSimCache->BeginWrite(BakerOutput->CreateParameters, BakerRenderer.GetPreviewComponent(), SimCacheFeedbackContext);
-	}
-	BakeSimCache->WriteFrame(BakerRenderer.GetPreviewComponent(), SimCacheFeedbackContext);
+		FNiagaraSimCacheFeedbackContext SimCacheFeedbackContext(false);
+		if ( FrameIndex == 0 )
+		{
+			BakeSimCache->BeginWrite(BakerOutput->CreateParameters, BakerRenderer.GetPreviewComponent(), SimCacheFeedbackContext);
+		}
+		BakeSimCache->WriteFrame(BakerRenderer.GetPreviewComponent(), SimCacheFeedbackContext);
 
-	FeedbackContext.Errors.Append(SimCacheFeedbackContext.Errors);
-	FeedbackContext.Warnings.Append(SimCacheFeedbackContext.Warnings);
+		FeedbackContext.Errors.Append(SimCacheFeedbackContext.Errors);
+		FeedbackContext.Warnings.Append(SimCacheFeedbackContext.Warnings);
+	}
 }
 
 void FNiagaraBakerRendererOutputSimCache::EndBake(FNiagaraBakerFeedbackContext& FeedbackContext, UNiagaraBakerOutput* InBakerOutput)
@@ -91,7 +95,7 @@ void FNiagaraBakerRendererOutputSimCache::EndBake(FNiagaraBakerFeedbackContext& 
 		return;
 	}
 
-	BakeSimCache->EndWrite();
+	BakeSimCache->EndWrite(true);
 
 	BakeSimCache->RemoveFromRoot();
 }

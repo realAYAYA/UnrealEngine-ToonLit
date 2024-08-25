@@ -130,7 +130,7 @@ int32 FindGBufferTargetByName(const FGBufferInfo& GBufferInfo, const FString& Na
 	return -1;
 }
 
-FGBufferBinding FindGBufferBindingByName(const FGBufferInfo& GBufferInfo, const FString& Name)
+FGBufferBinding FindGBufferBindingByName(const FGBufferInfo& GBufferInfo, const FString& Name, EShaderPlatform ShaderPlatform)
 {
 	const int32 Index = FindGBufferTargetByName(GBufferInfo, Name);
 
@@ -183,9 +183,14 @@ FGBufferBinding FindGBufferBindingByName(const FGBufferInfo& GBufferInfo, const 
 			Binding.Flags |= TexCreate_SRGB;
 		}
 
-		if (NaniteComputeMaterialsSupported())
+		if (DoesPlatformSupportNanite(ShaderPlatform, true) && NaniteComputeMaterialsSupported())
 		{
-			Binding.Flags |= TexCreate_UAV | TexCreate_DisableDCC;
+			Binding.Flags |= TexCreate_UAV;
+
+			if (UseNaniteFastTileClear())
+			{
+				Binding.Flags |= TexCreate_DisableDCC;
+			}
 		}
 	}
 
@@ -253,8 +258,8 @@ FGBufferInfo RENDERCORE_API FetchLegacyGBufferInfo(const FGBufferParams& Params)
 	int32 TargetVelocity = -1;
 	int32 TargetSeparatedMainDirLight = -1;
 
-	// Strata outputs material data through UAV. Only SceneColor, PrecalcShadow & Velocity data are still emitted through RenderTargets
-	if (Strata::IsStrataEnabled())
+	// Substrate outputs material data through UAV. Only SceneColor, PrecalcShadow & Velocity data are still emitted through RenderTargets
+	if (Substrate::IsSubstrateEnabled())
 	{
 		TargetGBufferA = -1;
 		TargetGBufferB = -1;
@@ -589,4 +594,3 @@ FGBufferInfo RENDERCORE_API FetchFullGBufferInfo(const FGBufferParams& Params)
 		return FetchLegacyGBufferInfo(Params);
 	}
 }
-

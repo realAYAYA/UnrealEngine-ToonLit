@@ -11,8 +11,7 @@
 #include "Widgets/Input/SDirectoryPicker.h"
 #include "Widgets/SScreenComparisonRow.h"
 #include "Widgets/Input/SCheckBox.h"
-#include "Widgets/Input/SEditableTextBox.h"
-#include "Models/ScreenComparisonModel.h"
+#include "Widgets/Input/SSearchBox.h"
 #include "Misc/FeedbackContext.h"
 #include "Styling/AppStyle.h"
 #include "Modules/ModuleManager.h"
@@ -47,7 +46,7 @@ void SScreenShotBrowser::Construct( const FArguments& InArgs,  IScreenShotManage
 	bDisplayingError = true;
 	bDisplayingNew = true;
 	ReportFilterString = FString();
-
+	
 	FModuleManager::Get().LoadModuleChecked(FName("ImageWrapper"));
 
 	ChildSlot
@@ -61,107 +60,104 @@ void SScreenShotBrowser::Construct( const FArguments& InArgs,  IScreenShotManage
 
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
+			.Padding(2.f, 0.f)
+			[
+				SNew(SPositiveActionButton)
+				.Text(LOCTEXT("AddAllNewReports", "Add All New Reports"))
+				.ToolTipText(LOCTEXT("AddAllNewReportsTooltip", "Adds all filtered new screenshots contained in the reports."))
+				.IsEnabled_Lambda([this]() -> bool
+					{
+						return FilteredComparisonList.Num() > 0 && ISourceControlModule::Get().IsEnabled();
+					})
+				.OnClicked_Lambda([this]()
+					{
+						for (int Entry = FilteredComparisonList.Num() - 1; Entry >= 0; --Entry)
+						{
+							TSharedPtr<FScreenComparisonModel> Model = FilteredComparisonList[Entry];
+							const FImageComparisonResult& Comparison = Model->Report.GetComparisonResult();
+
+							if (CanAddNewReportResult(Comparison))
+							{
+								FilteredComparisonList.RemoveAt(Entry);
+								ComparisonList.Remove(Model);
+								Model->AddNew();
+
+								// Avoid thrashing P4
+								const float SleepBetweenOperations = 0.005f;
+								FPlatformProcess::Sleep(SleepBetweenOperations);
+							}
+						}
+
+						return FReply::Handled();
+					})
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(2.f, 0.f)
+			[
+				SNew(SNegativeActionButton)
+				.ActionButtonStyle(EActionButtonStyle::Warning)
+				.Text(LOCTEXT("ReplaceAllReports", "Replace All Reports"))
+				.ToolTipText(LOCTEXT("ReplaceAllReportsTooltip", "Replaces all filtered screenshots containing a different result in the reports."))
+				.IsEnabled_Lambda([this]() -> bool
+					{
+						return FilteredComparisonList.Num() > 0 && ISourceControlModule::Get().IsEnabled();
+					})
+				.OnClicked_Lambda([this]()
+					{
+						for (int Entry = FilteredComparisonList.Num() - 1; Entry >= 0; --Entry)
+						{
+							TSharedPtr<FScreenComparisonModel> Model = FilteredComparisonList[Entry];
+							const FImageComparisonResult& Comparison = Model->Report.GetComparisonResult();
+
+							if (!CanAddNewReportResult(Comparison))
+							{
+								FilteredComparisonList.RemoveAt(Entry);
+								ComparisonList.Remove(Model);
+								Model->Replace();
+
+								// Avoid thrashing P4
+								const float SleepBetweenOperations = 0.005f;
+								FPlatformProcess::Sleep(SleepBetweenOperations);
+							}
+						}
+
+						return FReply::Handled();
+					})
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(2.f, 0.f)
+			[
+				SNew(SNegativeActionButton)
+				.Text(LOCTEXT("DeleteAllReports", "Delete All Reports"))
+				.ToolTipText(LOCTEXT("DeleteAllReportsTooltip", "Deletes all the filtered reports. Reports are not removed unless the user resolves them, \nso if you just want to reset the state of the reports, clear them here and then re-run the tests."))
+				.IsEnabled_Lambda([this]() -> bool
+					{
+						return FilteredComparisonList.Num() > 0;
+					})
+				.OnClicked_Lambda([this]()
+					{
+						while (FilteredComparisonList.Num() > 0)
+						{
+							TSharedPtr<FScreenComparisonModel> Model = FilteredComparisonList.Pop();
+							Model->Complete(true);
+						}
+
+						return FReply::Handled();
+					})
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
 			.Padding(2.0f, 0.0f)
 			[
 				SNew(SDirectoryPicker)
 				.Directory(ComparisonRoot)
 				.OnDirectoryChanged(this, &SScreenShotBrowser::OnDirectoryChanged)
 			]
-
-			+ SHorizontalBox::Slot()
-			.FillWidth(1.0f)
-			.HAlign(HAlign_Left)
-			.Padding(10.0f, 0.0f)
-			[
-				SNew(SHorizontalBox)
-
-				+ SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				.Padding(2.0f, 0.0f)
-				[
-					SNew(SEditableTextBox)
-					.HintText(LOCTEXT("ScreenshotFilterHint", "Filter Reports"))
-					.Text(FText::FromString(ReportFilterString))
-					.OnTextCommitted(this, &SScreenShotBrowser::OnFilterStringCommitted)
-					
-				]
-
-				+SHorizontalBox::Slot()
-				.AutoWidth()
-				.Padding(2.0f, 0.0f)
-				[
-					SNew(SHorizontalBox)
-
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					[
-						SNew(SCheckBox)
-						.HAlign(HAlign_Center)
-					.IsChecked(bDisplayingSuccess ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-					.OnCheckStateChanged(this, &SScreenShotBrowser::DisplaySuccess_OnCheckStateChanged)
-					]
-
-				+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.VAlign(VAlign_Center)
-					[
-						SNew(STextBlock)
-						.AutoWrapText(true)
-					.Text(LOCTEXT("DisplaySuccess", "Show Passed"))
-					]
-				]
-
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.HAlign(HAlign_Right)
-				.Padding(2.0f, 0.0f)
-				[
-					SNew(SHorizontalBox)
-					
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					[
-						SNew(SCheckBox)
-						.HAlign(HAlign_Center)
-						.IsChecked( bDisplayingError ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-						.OnCheckStateChanged(this, &SScreenShotBrowser::DisplayError_OnCheckStateChanged)
-					]
-
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.VAlign(VAlign_Center)
-					[
-						SNew(STextBlock)
-						.AutoWrapText(true)
-						.Text(LOCTEXT("DisplayErrors", "Show Fails"))
-					]
-				]
-
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.Padding(2.0f, 0.0f)
-				[
-					SNew(SHorizontalBox)
-					
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					[
-						SNew(SCheckBox)
-						.HAlign(HAlign_Center)
-						.IsChecked(bDisplayingNew ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-						.OnCheckStateChanged(this, &SScreenShotBrowser::DisplayNew_OnCheckStateChanged)
-					]
-
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.VAlign(VAlign_Center)
-					[
-						SNew(STextBlock)
-						.AutoWrapText(true)
-						.Text(LOCTEXT("DisplayNew", "Show New"))
-					]
-				]
-			]			
 		]
 
 		+ SVerticalBox::Slot()
@@ -175,94 +171,105 @@ void SScreenShotBrowser::Construct( const FArguments& InArgs,  IScreenShotManage
 				SNew(SHorizontalBox)
 
 				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.Padding(2.f, 0.f)
+				.FillWidth(1.0f)
+				.HAlign(HAlign_Fill)
+				.Padding(10.0f, 0.0f)
 				[
-					SNew(SPositiveActionButton)
-					.Text(LOCTEXT("AddAllNewReports", "Add All New Reports"))
-					.ToolTipText(LOCTEXT("AddAllNewReportsTooltip", "Adds all new screenshots contained in the reports."))
-					.IsEnabled_Lambda([this]() -> bool
-						{
-							return ComparisonList.Num() > 0 && ISourceControlModule::Get().IsEnabled();
-						})
-					.OnClicked_Lambda([this]()
-						{
-							for (int Entry = ComparisonList.Num() - 1; Entry >= 0; --Entry)
-							{
-								TSharedPtr<FScreenComparisonModel> Model = ComparisonList[Entry];
-								const FImageComparisonResult& Comparison = Model->Report.GetComparisonResult();
+					SNew(SHorizontalBox)
 
-								if (CanAddNewReportResult(Comparison))
-								{
-									ComparisonList.RemoveAt(Entry);
-									Model->AddNew();
-
-									// Avoid thrashing P4
-									const float SleepBetweenOperations = 0.005f;
-									FPlatformProcess::Sleep(SleepBetweenOperations);
-								}
-							}
-
-							return FReply::Handled();
-						})
-				]
-
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.Padding(2.f, 0.f)
-				[
-					SNew(SNegativeActionButton)
-					.ActionButtonStyle(EActionButtonStyle::Warning)
-					.Text(LOCTEXT("ReplaceAllReports", "Replace All Reports"))
-					.ToolTipText(LOCTEXT("ReplaceAllReportsTooltip", "Replaces all screenshots containing a different result in the reports."))
-					.IsEnabled_Lambda([this]() -> bool
-						{
-							return ComparisonList.Num() > 0 && ISourceControlModule::Get().IsEnabled();
-						})
-					.OnClicked_Lambda([this]()
-						{
-							for (int Entry = ComparisonList.Num() - 1; Entry >= 0; --Entry)
-							{
-								TSharedPtr<FScreenComparisonModel> Model = ComparisonList[Entry];
-								const FImageComparisonResult& Comparison = Model->Report.GetComparisonResult();
-
-								if (!CanAddNewReportResult(Comparison))
-								{
-									ComparisonList.RemoveAt(Entry);
-									Model->Replace();
-
-									// Avoid thrashing P4
-									const float SleepBetweenOperations = 0.005f;
-									FPlatformProcess::Sleep(SleepBetweenOperations);
-								}
-							}
-
-							return FReply::Handled();
-						})
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.0f)
+					.Padding(2.0f, 0.0f)
+					.HAlign(HAlign_Fill)
+					[
+						SNew(SSearchBox)
+						.HintText(LOCTEXT("ScreenshotFilterHint", "Search"))
+						.ToolTipText(LOCTEXT("Search Tests", "Search Tests"))
+						.OnTextChanged(this, &SScreenShotBrowser::OnReportFilterTextChanged)
 					]
 
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.Padding(2.f, 0.f)
-				[
-					SNew(SNegativeActionButton)
-					.Text(LOCTEXT("DeleteAllReports", "Delete All Reports"))
-					.ToolTipText(LOCTEXT("DeleteAllReportsTooltip", "Deletes all the current reports.  Reports are not removed unless the user resolves them, \nso if you just want to reset the state of the reports, clear them here and then re-run the tests."))
-					.IsEnabled_Lambda([this]() -> bool
-						{
-							return ComparisonList.Num() > 0;
-						})
-					.OnClicked_Lambda([this]()
-						{
-							while (ComparisonList.Num() > 0)
-							{
-								TSharedPtr<FScreenComparisonModel> Model = ComparisonList.Pop();
-								Model->Complete(true);
-							}
+					+SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(2.0f, 0.0f)
+					[
+						SNew(SHorizontalBox)
 
-							return FReply::Handled();
-						})
-				]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						[
+							SNew(SCheckBox)
+							.HAlign(HAlign_Center)
+							.IsChecked(bDisplayingSuccess ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+							.OnCheckStateChanged(this, &SScreenShotBrowser::DisplaySuccess_OnCheckStateChanged)
+						]
+
+					+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						[
+							SNew(STextBlock)
+							.AutoWrapText(true)
+						.Text(LOCTEXT("DisplaySuccess", "Show Passed"))
+						]
+					]
+
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.HAlign(HAlign_Right)
+					.Padding(2.0f, 0.0f)
+					[
+						SNew(SHorizontalBox)
+					
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						[
+							SNew(SCheckBox)
+							.HAlign(HAlign_Center)
+							.IsChecked( bDisplayingError ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+							.OnCheckStateChanged(this, &SScreenShotBrowser::DisplayError_OnCheckStateChanged)
+						]
+
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						[
+							SNew(STextBlock)
+							.AutoWrapText(true)
+							.Text(LOCTEXT("DisplayErrors", "Show Fails"))
+						]
+					]
+
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(2.0f, 0.0f)
+					[
+						SNew(SHorizontalBox)
+					
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						[
+							SNew(SCheckBox)
+							.HAlign(HAlign_Center)
+							.IsChecked(bDisplayingNew ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+							.OnCheckStateChanged(this, &SScreenShotBrowser::DisplayNew_OnCheckStateChanged)
+						]
+
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						[
+							SNew(STextBlock)
+							.AutoWrapText(true)
+							.Text(LOCTEXT("DisplayNew", "Show New"))
+						]
+					]
+					
+					// Empty horizontal slot that works as a spacer
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.0f)
+					.Padding(2.0f, 0.0f)
+					.HAlign(HAlign_Fill)
+				]			
 			]
 		]
 		
@@ -270,8 +277,9 @@ void SScreenShotBrowser::Construct( const FArguments& InArgs,  IScreenShotManage
 		.FillHeight( 1.0f )
 		[
 			SAssignNew(ComparisonView, SListView< TSharedPtr<FScreenComparisonModel> >)
-			.ListItemsSource(&ComparisonList)
+			.ListItemsSource(&FilteredComparisonList)
 			.OnGenerateRow(this, &SScreenShotBrowser::OnGenerateWidgetForScreenResults)
+			.Visibility(this, &SScreenShotBrowser::GetReportsVisibility)
 			.SelectionMode(ESelectionMode::None)
 			.HeaderRow
 			(
@@ -314,6 +322,15 @@ void SScreenShotBrowser::Construct( const FArguments& InArgs,  IScreenShotManage
 				.VAlignCell(VAlign_Center)
 			)
 		]
+
+		+ SVerticalBox::Slot()
+		.HAlign(HAlign_Center)
+		.VAlign(VAlign_Center)
+		[
+			SNew(SThrobber)
+			.Visibility(this, &SScreenShotBrowser::GetReportsUpdatingThrobberVisibility)
+		]
+
 	];
 
 	RefreshDirectoryWatcher();
@@ -333,8 +350,11 @@ void SScreenShotBrowser::Tick(const FGeometry& AllottedGeometry, const double In
 {
 	if ( bReportsChanged )
 	{
-		RebuildTree();
+		RequestRebuildTree();
 	}
+
+	ContinueRebuildTreeIfReady();
+	FinishRebuildTreeIfReady();
 }
 
 void SScreenShotBrowser::OnDirectoryChanged(const FString& Directory)
@@ -365,91 +385,186 @@ void SScreenShotBrowser::OnReportsChanged(const TArray<struct FFileChangeData>& 
 
 TSharedRef<ITableRow> SScreenShotBrowser::OnGenerateWidgetForScreenResults(TSharedPtr<FScreenComparisonModel> InItem, const TSharedRef<STableViewBase>& OwnerTable)
 {
-	// Create the row widget.
-	return
-		SNew(SScreenComparisonRow, OwnerTable)
+	check(InItem.IsValid());
+
+	TSharedRef<SScreenComparisonRow> ResultWidget = SNew(SScreenComparisonRow, OwnerTable)
 		.ScreenshotManager(ScreenShotManager)
 		.ComparisonDirectory(ComparisonRoot)
 		.ComparisonResult(InItem);
+
+	return ResultWidget;
 }
 
 void SScreenShotBrowser::DisplaySuccess_OnCheckStateChanged(ECheckBoxState NewRadioState)
 {
 	bDisplayingSuccess = (NewRadioState == ECheckBoxState::Checked);
-	bReportsChanged = true;
+	ApplyReportFilterToWidgets();
 }
 
 void SScreenShotBrowser::DisplayError_OnCheckStateChanged(ECheckBoxState NewRadioState)
 {
 	bDisplayingError = (NewRadioState == ECheckBoxState::Checked);
-	bReportsChanged = true;
+	ApplyReportFilterToWidgets();
 }
 
 void SScreenShotBrowser::DisplayNew_OnCheckStateChanged(ECheckBoxState NewRadioState)
 {
 	bDisplayingNew = (NewRadioState == ECheckBoxState::Checked);
-	bReportsChanged = true;
+	ApplyReportFilterToWidgets();
 }
 
-void SScreenShotBrowser::OnFilterStringCommitted(const FText& InText, ETextCommit::Type InCommitType)
+void SScreenShotBrowser::OnReportFilterTextChanged(const FText& InText)
 {
-	FString InString = InText.ToString();
-	if (ReportFilterString.Compare(InString, ESearchCase::IgnoreCase) != 0)
+	ReportFilterString = InText.ToString();
+	ApplyReportFilterToWidgets();
+}
+
+bool SScreenShotBrowser::MatchesReportFilterCriteria(const FString& ComparisonName, const FImageComparisonResult& ComparisonResult) const
+{
+	if (!ReportFilterString.IsEmpty() && !ComparisonName.Contains(ReportFilterString, ESearchCase::IgnoreCase))
 	{
-		ReportFilterString = InString;
-		bReportsChanged = true;
+		return false;
 	}
+
+	bool bIsNew = ComparisonResult.IsNew();
+	bool bIsFail = !ComparisonResult.AreSimilar();
+	bool bIsPass = !bIsNew && !bIsFail;
+
+	if (bIsPass && !bDisplayingSuccess)
+	{
+		return false;
+	}
+	if (bIsNew && !bDisplayingNew)
+	{
+		return false;
+	}
+	if (bIsFail && !bDisplayingError)
+	{
+		return false;
+	}
+
+	return true;
 }
 
-void SScreenShotBrowser::RebuildTree()
+void SScreenShotBrowser::ApplyReportFilterToWidgets()
 {
-	bReportsChanged = false;
-	ComparisonList.Reset();
-
-	if ( ScreenShotManager->OpenComparisonReports(ComparisonRoot, CurrentReports) )
+	FilteredComparisonList.Reset();
+	for (auto& Item : ComparisonList)
 	{
-		//Sort by what will resolve down to the Screenshots' names
-		CurrentReports.Sort([](const FComparisonReport& LHS, const FComparisonReport& RHS) { return LHS.GetReportPath().Compare(RHS.GetReportPath()) < 0; });
-
-		for ( const FComparisonReport& Report : CurrentReports )
+		if(Item.IsValid() && MatchesReportFilterCriteria(Item->GetName(), Item->Report.GetComparisonResult()))
 		{
-			const FImageComparisonResult& Comparison = Report.GetComparisonResult();
-
-			bool IsNew = Comparison.IsNew();
-			bool IsFail = !Comparison.AreSimilar();
-			bool IsPass = !IsNew && !IsFail;
-
-			if (IsPass && !bDisplayingSuccess)
-			{
-				continue;
-			}
-
-			if (IsNew && !bDisplayingNew)
-			{
-				continue;
-			}
-
-			if (IsFail && !bDisplayingError)
-			{
-				continue;
-			}
-
-			if (ReportFilterString.Len() && !Report.GetReportPath().Contains(ReportFilterString, ESearchCase::IgnoreCase))
-			{
-				continue;
-			}
-
-			TSharedPtr<FScreenComparisonModel> Model = MakeShared<FScreenComparisonModel>(Report);
-			Model->OnComplete.AddLambda([this, Model] () {
-				ComparisonList.Remove(Model);
-				ComparisonView->RequestListRefresh();
-			});
-
-			ComparisonList.Add(Model);
+			FilteredComparisonList.Add(Item);
 		}
 	}
-
 	ComparisonView->RequestListRefresh();
+}
+
+void SScreenShotBrowser::RequestRebuildTree()
+{
+	bReportsChanged = false;
+
+	PendingOpenComparisonReportsResult.Reset();
+	PendingScreenComparisonModelsLoadResult.Reset();
+	ComparisonList.Empty();
+	FilteredComparisonList.Reset();
+	CurrentReports.Reset();
+
+	PendingOpenComparisonReportsResult = ScreenShotManager->OpenComparisonReportsAsync(ComparisonRoot);
+}
+
+void SScreenShotBrowser::ContinueRebuildTreeIfReady()
+{
+	check(IsInGameThread());
+
+	if (PendingOpenComparisonReportsResult.IsValid()
+		&& PendingOpenComparisonReportsResult.IsReady())
+	{
+		CurrentReports = PendingOpenComparisonReportsResult.Get();
+		PendingOpenComparisonReportsResult.Reset();
+
+		if ((!CurrentReports.IsValid()) || CurrentReports->IsEmpty())
+		{
+			return;
+		}
+		//Sort by what will resolve down to the Screenshots' names
+		CurrentReports->Sort([](const FComparisonReport& LHS, const FComparisonReport& RHS) { return LHS.GetReportPath().Compare(RHS.GetReportPath()) < 0; });
+
+		PendingScreenComparisonModelsLoadResult = Async(EAsyncExecution::ThreadPool, [CurrentReportsWPtr = CurrentReports.ToWeakPtr()]() -> TArray<TSharedPtr<FScreenComparisonModel>>
+		{
+			int32 CurrentReportsNum = 0;
+			{
+				TSharedPtr<TArray<FComparisonReport>> CurrentReportsSPtr = CurrentReportsWPtr.Pin();
+				if (CurrentReportsSPtr.IsValid())
+				{
+					CurrentReportsNum = CurrentReportsSPtr->Num();
+				}
+				else
+				{
+					// The current reports list is outdated. Cancel the job.
+					return {};
+				}
+			}
+
+
+			if (CurrentReportsNum <= 0)
+			{
+				return {};
+			}
+
+			TArray<TSharedPtr<FScreenComparisonModel>> Result;
+			Result.Reserve(CurrentReportsNum);
+
+			for (int32 CurrentReportIndex = 0; CurrentReportIndex < CurrentReportsNum; ++CurrentReportIndex)
+			{
+				TSharedPtr<TArray<FComparisonReport>> CurrentReportsSPtr = CurrentReportsWPtr.Pin();
+				if (CurrentReportsSPtr.IsValid())
+				{
+					const FComparisonReport& Report = (*CurrentReportsSPtr)[CurrentReportIndex];
+					Result.Add(MakeShared<FScreenComparisonModel>(Report));
+				}
+				else
+				{
+					// The current reports list is outdated. Cancel the job.
+					return {};
+				}
+			}
+
+			return Result;
+		});
+	}
+}
+
+void SScreenShotBrowser::FinishRebuildTreeIfReady()
+{
+	check(IsInGameThread());
+
+	if (PendingScreenComparisonModelsLoadResult.IsValid()
+		&& PendingScreenComparisonModelsLoadResult.IsReady())
+	{
+		ComparisonList = PendingScreenComparisonModelsLoadResult.Get();
+		PendingScreenComparisonModelsLoadResult.Reset();
+
+		for (auto& Model : ComparisonList)
+		{
+			Model->OnComplete.AddLambda([this, Model]() {
+				ComparisonList.Remove(Model);
+				FilteredComparisonList.Remove(Model);
+				ComparisonView->RequestListRefresh();
+			});
+		}
+
+		ApplyReportFilterToWidgets();
+	}
+}
+
+EVisibility SScreenShotBrowser::GetReportsVisibility() const
+{
+	return (PendingOpenComparisonReportsResult.IsValid() || PendingScreenComparisonModelsLoadResult.IsValid() ? EVisibility::Collapsed : EVisibility::Visible);
+}
+
+EVisibility SScreenShotBrowser::GetReportsUpdatingThrobberVisibility() const
+{
+	return (GetReportsVisibility() == EVisibility::Visible ? EVisibility::Collapsed : EVisibility::Visible);
 }
 
 bool SScreenShotBrowser::CanAddNewReportResult(const FImageComparisonResult& Comparison)

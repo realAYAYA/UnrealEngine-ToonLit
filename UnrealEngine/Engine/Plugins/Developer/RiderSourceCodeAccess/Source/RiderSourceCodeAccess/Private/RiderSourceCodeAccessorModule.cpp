@@ -7,6 +7,7 @@
 
 #include "Modules/ModuleManager.h"
 #include "Features/IModularFeatures.h"
+#include "Style/RiderSourceCodeAccessStyleSet.h"
 
 #define LOCTEXT_NAMESPACE "RiderSourceCodeAccessor"
 
@@ -14,6 +15,8 @@ IMPLEMENT_MODULE(FRiderSourceCodeAccessModule, RiderSourceCodeAccess);
 
 void FRiderSourceCodeAccessModule::StartupModule()
 {
+	FRiderSourceCodeAccessStyleSet::Initialize();
+	
 	TArray<FInstallInfo> InstallInfos = FRiderPathLocator::CollectAllPaths().Array();
 	InstallInfos.Sort();
 	GenerateUprojectAccessors(InstallInfos);
@@ -32,6 +35,8 @@ void FRiderSourceCodeAccessModule::ShutdownModule()
 		// Unbind provider from editor
 		IModularFeatures::Get().UnregisterModularFeature(FRiderSourceCodeAccessor::FeatureType(), &(RiderSourceCodeAccessor.Value.Get()));
 	}
+	
+	FRiderSourceCodeAccessStyleSet::Shutdown();
 }
 
 void FRiderSourceCodeAccessModule::GenerateSlnAccessors(const TArray<FInstallInfo>& InstallInfos)

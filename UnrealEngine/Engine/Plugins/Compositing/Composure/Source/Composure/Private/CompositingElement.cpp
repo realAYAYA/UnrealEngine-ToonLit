@@ -686,13 +686,13 @@ ACameraActor* ACompositingElement::FindTargetCamera() const
 {
 	if (CameraSource == ESceneCameraLinkType::Override)
 	{
-		return TargetCameraActor.Get();
+		return TargetCameraActorPtr.Get();
 	}
 	else if (Parent)
 	{
 		return Parent->FindTargetCamera();
 	}
-	else if (!TargetCameraActor.IsValid())
+	else if (!TargetCameraActorPtr.IsValid())
 	{
 		for (TActorIterator<ACineCameraActor> CamActorIt(GetWorld()); CamActorIt; ++CamActorIt)
 		{
@@ -712,7 +712,7 @@ ACameraActor* ACompositingElement::FindTargetCamera() const
 			}
 		}
 	}
-	return TargetCameraActor.Get();
+	return TargetCameraActorPtr.Get();
 }
 
 void ACompositingElement::SetTargetCamera(ACameraActor* NewCameraActor)
@@ -720,7 +720,7 @@ void ACompositingElement::SetTargetCamera(ACameraActor* NewCameraActor)
 	if (CameraSource == ESceneCameraLinkType::Override)
 	{
 		//Override mode has the highest priority in using the camera. Should check before going to the parent. 
-		TargetCameraActor = NewCameraActor;
+		TargetCameraActorPtr = NewCameraActor;
 	}
 	else if (Parent)
 	{
@@ -729,7 +729,7 @@ void ACompositingElement::SetTargetCamera(ACameraActor* NewCameraActor)
 	else 
 	{
 		//Base case for the recursive calls. Current element does not have parent and is not in override mode.
-		TargetCameraActor = NewCameraActor;
+		TargetCameraActorPtr = NewCameraActor;
 	}
 }
 
@@ -898,6 +898,16 @@ void ACompositingElement::PostLoad()
 
 	const int32 ComposureVer = GetLinkerCustomVersion(FComposureCustomVersion::GUID);
 	PostLoadCompatUpgrade(ComposureVer);
+
+#if WITH_EDITORONLY_DATA
+	// Re-assign the value of deprecated pointer to the new one.
+	// This will continue until user re-saves the level.
+	if (TargetCameraActor_DEPRECATED.IsValid())
+	{
+		TargetCameraActorPtr = TargetCameraActor_DEPRECATED.Get();
+		TargetCameraActor_DEPRECATED = nullptr;
+	}
+#endif
 
 	// Note that RefreshAllInternalPassLists is not called here because the refresh can call Reset, which is not allowed in PostLoad.
 }

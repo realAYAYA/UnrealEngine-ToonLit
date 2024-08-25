@@ -2,6 +2,7 @@
 
 #include "MotoSynthPreset.h"
 #include "AudioDevice.h"
+#include "AudioMixerDevice.h"
 #include "MotoSynthEngine.h"
 #include "MotoSynthSourceAsset.h"
 #include "MotoSynthModule.h"
@@ -155,7 +156,7 @@ void FMotoSynthEnginePreviewer::StartPreviewing()
 			if (FAudioDevice* AudioDevice = AudioDeviceManager->GetMainAudioDeviceRaw())
 			{
 				bRegistered = true;
-				AudioDevice->RegisterSubmixBufferListener(this);
+				AudioDevice->RegisterSubmixBufferListener(AsShared(), AudioDevice->GetMainSubmixObject());
 			}
 		}
 	}
@@ -173,7 +174,7 @@ void FMotoSynthEnginePreviewer::StopPreviewing()
 			{
 				bRegistered = false;
 				bEngineInitialized = false;
-				AudioDevice->UnregisterSubmixBufferListener(this);
+				AudioDevice->UnregisterSubmixBufferListener(AsShared(), AudioDevice->GetMainSubmixObject());
 			}
 		}
 	}
@@ -253,11 +254,15 @@ void FMotoSynthEnginePreviewer::OnNewSubmixBuffer(const USoundSubmix* OwningSubm
 	}
 }
 
+const FString& FMotoSynthEnginePreviewer::GetListenerName() const
+{
+	static const FString ListenerName = TEXT("MotoSynthEnginePreviewer");
+	return ListenerName;
+}
+
 void FMotoSynthEnginePreviewer::Reset()
 {
 	CurrentPreviewCurveStartTime = 0.0f;
 	bEngineInitialized = false;
 }
 #endif // WITH_EDITOR
-
-

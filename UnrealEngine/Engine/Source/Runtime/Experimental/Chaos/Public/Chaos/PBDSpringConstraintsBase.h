@@ -5,6 +5,7 @@
 #include "Chaos/PBDSoftsEvolutionFwd.h"
 #include "Chaos/Utilities.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 #include "Chaos/PBDStiffness.h"
 #include "Containers/Array.h"
 #include "Templates/EnableIf.h"
@@ -15,6 +16,41 @@ namespace Chaos::Softs
 class FPBDSpringConstraintsBase
 {
 public:
+	template<int32 Valence, TEMPLATE_REQUIRES(Valence >= 2 && Valence <= 4)>
+	FPBDSpringConstraintsBase(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVector<int32, Valence>>& InConstraints,
+		const TConstArrayView<FRealSingle>& StiffnessMultipliers,
+		const FSolverVec2& InStiffness,
+		bool bTrimKinematicConstraints = false,
+		FSolverReal MaxStiffness = FPBDStiffness::DefaultPBDMaxStiffness)
+		: Constraints(TrimConstraints(InConstraints,
+			[&Particles, bTrimKinematicConstraints](int32 Index0, int32 Index1)
+			{
+				return bTrimKinematicConstraints && Particles.InvM(Index0) == (FSolverReal)0. && Particles.InvM(Index1) == (FSolverReal)0.;
+			}))
+		, ParticleOffset(0)
+		, ParticleCount(Particles.GetRangeSize())
+		, Stiffness(
+			InStiffness,
+			StiffnessMultipliers,
+			TConstArrayView<TVec2<int32>>(Constraints),
+			ParticleOffset,
+			ParticleCount,
+			FPBDStiffness::DefaultTableSize,
+			FPBDStiffness::DefaultParameterFitBase,
+			MaxStiffness)
+	{
+		// Update distances
+		Dists.Reset(Constraints.Num());
+		for (const TVec2<int32>& Constraint : Constraints)
+		{
+			const FSolverVec3& P0 = Particles.X(Constraint[0]);
+			const FSolverVec3& P1 = Particles.X(Constraint[1]);
+			Dists.Add((P1 - P0).Size());
+		}
+	}
+
 	template<int32 Valence, TEMPLATE_REQUIRES(Valence >= 2 && Valence <= 4)>
 	FPBDSpringConstraintsBase(
 		const FSolverParticles& Particles,
@@ -46,8 +82,8 @@ public:
 		Dists.Reset(Constraints.Num());
 		for (const TVec2<int32>& Constraint : Constraints)
 		{
-			const FSolverVec3& P0 = Particles.X(Constraint[0]);
-			const FSolverVec3& P1 = Particles.X(Constraint[1]);
+			const FSolverVec3& P0 = Particles.GetX(Constraint[0]);
+			const FSolverVec3& P1 = Particles.GetX(Constraint[1]);
 			Dists.Add((P1 - P0).Size());
 		}
 	}
@@ -64,7 +100,8 @@ public:
 	const TArray<TVec2<int32>>& GetConstraints() const { return Constraints; }
 
 protected:
-	FSolverVec3 GetDelta(const FSolverParticles& Particles, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const
+	template<typename SolverParticlesOrRange>
+	FSolverVec3 GetDelta(const SolverParticlesOrRange& Particles, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const
 	{
 		const auto& Constraint = Constraints[ConstraintIndex];
 		const int32 i1 = Constraint[0];

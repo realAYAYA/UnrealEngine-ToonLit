@@ -1,9 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/preferences.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
-
-import '../../utilities/preferences_bundle.dart';
-import '../../utilities/transient_preference.dart';
 
 /// Holds user settings that impact the state of the selected actors.
 class SelectedActorSettings {

@@ -5,7 +5,7 @@ using System.IO;
 
 public class CLI11 : ModuleRules
 {
-	protected readonly string Version = "2.2.0";
+	protected readonly string Version = "git-main";
 
 	public CLI11(ReadOnlyTargetRules Target) : base(Target)
 	{

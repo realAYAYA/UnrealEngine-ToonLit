@@ -11,10 +11,6 @@ class UDMXPixelMappingBaseComponent;
 class UDMXPixelMappingOutputComponent;
 class UTexture;
 
-#if WITH_EDITOR
-DECLARE_DELEGATE_OneParam(FOnEditorRebuildChildrenComponentsDelegate, UDMXPixelMappingBaseComponent*)
-#endif // WITH_EDITOR
-
 
 /**
  * Public container of Pixel Mapping object and it using for asset
@@ -31,6 +27,8 @@ class DMXPIXELMAPPINGRUNTIME_API UDMXPixelMapping
 
 	GENERATED_BODY()
 public:
+	UDMXPixelMapping();
+
 	//~ Begin UObject implementation
 	virtual void PostLoad() override;
 	//~ End UObject implementation
@@ -56,7 +54,8 @@ public:
 
 #if WITH_EDITOR
 	/** Find the component by widget. */
-	UDMXPixelMappingOutputComponent* FindComponent(TSharedPtr<SWidget> InWidget) const;
+	UE_DEPRECATED(5.4, "Component widgets are no longer supported since 5.1. This function will always return nullptr.")
+	UDMXPixelMappingOutputComponent* FindComponent(TSharedPtr<SWidget> InWidget) const { return nullptr;}
 #endif // WITH_EDITOR
 
 	/**
@@ -144,13 +143,44 @@ public:
 	UPROPERTY()
 	TObjectPtr<UDMXPixelMappingRootComponent> RootComponent;
 
-
 #if WITH_EDITORONLY_DATA
-	/** Holds the Thumbnail for asset */
+	////////////////////////////////////
+	// Per Asset Editor User Settings
+
+	/** If true, grid snapping is enabled */
+	UPROPERTY(NonTransactional)
+	bool bGridSnappingEnabled = false;
+
+	/** The number of columns in the grid */
+	UPROPERTY(NonTransactional)
+	int32 SnapGridColumns = 10;
+
+	/** The number of rows in the grid */
+	UPROPERTY(NonTransactional)
+	int32 SnapGridRows = 10;
+
+	/** The color of the grid snapping grid */
+	UPROPERTY(NonTransactional)
+	FLinearColor SnapGridColor;
+
+	/** Font size for the component labels in the designer view */
+	UPROPERTY(NonTransactional)
+	float ComponentLabelFontSize = 8.f;
+
+	/** Exposure of the designer view */
+	UPROPERTY(NonTransactional)
+	float DesignerExposure = 1.f;
+
+	/** If true, new components use the fixture patch color instead of the default pixel mapping color. */
+	UPROPERTY(NonTransactional)
+	bool bNewComponentsUsePatchColor = true;
+
+	/** If true, editor is set to scale children with parent. This is forwarded from the editor module (DMXPixelMappingEditorSettings) to be accessible in the runtime module. */
+	UPROPERTY(Transient, NonTransactional)
+	bool bEditorScaleChildrenWithParent = false;
+
+	/** Holds the Thumbnail image for this asset */
 	UPROPERTY()
 	TObjectPtr<UTexture> ThumbnailImage;
-
-	/** DEPRECATED 4.27. Use FDMXPixelMappingMatrixComponent::GetOnMatrixChanged() instead */
-	FOnEditorRebuildChildrenComponentsDelegate OnEditorRebuildChildrenComponentsDelegate_DEPRECATED;
-#endif
+#endif // WITH_EDITORONLY_DATA
 };

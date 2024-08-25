@@ -19,9 +19,11 @@ struct FAutomationWorkerPerformanceDataResponse;
 struct FAutomationWorkerNextNetworkCommandReply;
 struct FAutomationWorkerPing;
 struct FAutomationWorkerRequestTests;
-struct FAutomationWorkerResetTests;
+struct FAutomationWorkerStartTestSession;
+struct FAutomationWorkerStopTestSession;
 struct FAutomationWorkerRunTests;
 struct FMessageAddress;
+struct FAutomationWorkerMessageBase;
 
 
 /**
@@ -68,6 +70,15 @@ protected:
 	 */
 	void SendTests(const FMessageAddress& ControllerAddress);
 
+	/**
+	 * Send a message in an unified way with passing correct Instance Id into the message we are going to send.
+	 * 
+	 * @param Message The message to be sent.
+	 * @param TypeInfo The type information about the message to be sent.
+	 * @param ControllerAddress The message address of the receiver.
+	 */
+	void SendMessage(FAutomationWorkerMessageBase* Message, UScriptStruct* TypeInfo, const FMessageAddress& ControllerAddress);
+
 private:
 
 	/** Handles FAutomationWorkerFindWorkers messages. */
@@ -85,8 +96,11 @@ private:
 	/** Handles FAutomationWorkerPing messages. */
 	void HandlePingMessage(const FAutomationWorkerPing& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
 
-	/** Handles FAutomationWorkerResetTests messages. */
-	void HandleResetTests(const FAutomationWorkerResetTests& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
+	/** Handles FAutomationWorkerStartTestSession messages. */
+	void HandleStartTestSession(const FAutomationWorkerStartTestSession& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
+
+	/** Handles FAutomationWorkerStopTestSession messages. */
+	void HandleStopTestSession(const FAutomationWorkerStopTestSession& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
 
 	/** Handles FAutomationWorkerRequestTests messages. */
 	void HandleRequestTestsMessage(const FAutomationWorkerRequestTests& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
@@ -121,6 +135,9 @@ private:
 
 	/** Invoked when we have screen shot and frame trace to send. */
 	void HandleScreenShotAndTraceCapturedWithName(const TArray<FColor>& RawImageData, const TArray<uint8>& CapturedFrameTrace, const FAutomationScreenshotData& Data);
+
+	/** Invoked when we have a screenshot comparison result to send. */
+	void HandleScreenShotComparisonReport(const FAutomationScreenshotCompareResults& Results);
 #endif
 
 	/** Dispatches analytics events to the data collector. */
@@ -131,6 +148,9 @@ private:
 
 	/** Checks whether the test is in exclusion list. */
 	bool IsTestExcluded(const FString& InTestToRun, FString* OutReason, bool* OutWarn) const;
+
+	/** Trigger Notifications when entering and leaving section */
+	void TriggerSectionNotifications();
 
 private:
 
@@ -154,6 +174,9 @@ private:
 	/** Beautified name of the test */
 	FString BeautifiedTestName;
 
+	/** Full path of the test */
+	FString FullTestPath;
+
 	/** Whether to send analytics events to the backend - sent from controller */
 	bool bSendAnalytics;
 
@@ -168,4 +191,7 @@ private:
 
 	/** Tag for the device on which the worker is running */
 	FString DeviceTag;
+
+	/** Tracking of active section */
+	FString ActiveSection;
 };

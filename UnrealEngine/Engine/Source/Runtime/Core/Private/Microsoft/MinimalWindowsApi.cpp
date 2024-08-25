@@ -155,6 +155,26 @@ namespace Windows
 		return ::TlsFree(dwTlsIndex);
 	}
 
+	MINIMAL_WINDOWS_API DWORD WINAPI FlsAlloc(PFLS_CALLBACK_FUNCTION lpCallback)
+	{
+		return ::FlsAlloc(lpCallback);
+	}
+
+	MINIMAL_WINDOWS_API LPVOID WINAPI FlsGetValue(DWORD dwFlsIndex)
+	{
+		return ::FlsGetValue(dwFlsIndex);
+	}
+
+	MINIMAL_WINDOWS_API BOOL WINAPI FlsSetValue(DWORD dwFlsIndex, LPVOID lpFlsValue)
+	{
+		return ::FlsSetValue(dwFlsIndex, lpFlsValue);
+	}
+
+	MINIMAL_WINDOWS_API BOOL WINAPI FlsFree(DWORD dwTlsIndex)
+	{
+		return ::FlsFree(dwTlsIndex);
+	}
+
 	MINIMAL_WINDOWS_API BOOL WINAPI IsProcessorFeaturePresent(DWORD ProcessorFeature)
 	{
 		return ::IsProcessorFeaturePresent(ProcessorFeature);

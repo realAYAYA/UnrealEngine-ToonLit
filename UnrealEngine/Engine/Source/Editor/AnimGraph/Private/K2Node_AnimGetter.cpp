@@ -56,6 +56,7 @@ void UK2Node_AnimGetter::PostPasteNode()
 {
 	Super::PostPasteNode();
 
+	SourceAnimBlueprint = Cast<UAnimBlueprint>(GetBlueprint());
 	RestoreStateMachineState();
 	RestoreStateMachineNode();
 	UpdateCachedTitle();
@@ -238,6 +239,21 @@ void UK2Node_AnimGetter::GetMenuActions(FBlueprintActionDatabaseRegistrar& Actio
 	}
 }
 
+void UK2Node_AnimGetter::ValidateNodeDuringCompilation(class FCompilerResultsLog& MessageLog) const
+{
+	const bool bAssetPlayerIndexRequired = GetterRequiresParameter(GetTargetFunction(), TEXT("AssetPlayerIndex"));
+	const bool bMachineIndexRequired = GetterRequiresParameter(GetTargetFunction(), TEXT("MachineIndex"));
+	const bool bTransitionIndexRequired = GetterRequiresParameter(GetTargetFunction(), TEXT("TransitionIndex"));
+	const bool bStateIndexRequired = GetterRequiresParameter(GetTargetFunction(), TEXT("StateIndex"));
+
+	const bool bSourceNodeRequired = bAssetPlayerIndexRequired || bMachineIndexRequired || bTransitionIndexRequired || bStateIndexRequired;
+
+	if (bSourceNodeRequired && SourceNode == nullptr)
+	{
+		MessageLog.Error(TEXT("@@ contains invalid data. Please delete and recreate the node."), this);
+	}
+}
+
 bool UK2Node_AnimGetter::IsActionFilteredOut(FBlueprintActionFilter const& Filter)
 {
 	if(Filter.Context.Graphs.Num() > 0)
@@ -360,7 +376,7 @@ void UK2Node_AnimGetter::RestoreStateMachineState()
 
 void UK2Node_AnimGetter::RestoreStateMachineNode()
 {
-	if(SourceStateNode)
+	if (SourceStateNode)
 	{
 		UAnimationStateMachineGraph* Graph = Cast<UAnimationStateMachineGraph>(SourceStateNode->GetOuter());
 		if (Graph)
@@ -446,8 +462,14 @@ void UK2Node_AnimGetter::UpdateCachedTitle(FNodeSpawnData& SpawnData)
 
 FText UK2Node_AnimGetter::GenerateTitle(UFunction* Getter, UAnimStateNodeBase* SourceStateNode, UAnimGraphNode_Base* SourceNode)
 {
+	static const FText InvalidNodeTitle = LOCTEXT("NodeTitleInvalid", "{0} (Invalid node)");
+
 	if (GetterRequiresParameter(Getter, TEXT("AssetPlayerIndex")))
 	{
+		if (!SourceNode)
+		{
+			return FText::Format(InvalidNodeTitle, Getter->GetDisplayNameText());
+		}
 		// Should always succeed
 		if (UAnimationAsset* NodeAsset = SourceNode->GetAnimationAsset())
 		{
@@ -462,6 +484,10 @@ FText UK2Node_AnimGetter::GenerateTitle(UFunction* Getter, UAnimStateNodeBase* S
 		}
 		else
 		{
+			if (!SourceNode)
+			{
+				return FText::Format(InvalidNodeTitle, Getter->GetDisplayNameText());
+			}
 			// Only requires the state machine
 			return FText::Format(LOCTEXT("NodeTitle", "{0} ({1})"), Getter->GetDisplayNameText(), SourceNode->GetNodeTitle(ENodeTitleType::ListView));
 		}

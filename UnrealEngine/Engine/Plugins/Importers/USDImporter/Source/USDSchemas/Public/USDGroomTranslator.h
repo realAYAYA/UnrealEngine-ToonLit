@@ -5,7 +5,6 @@
 #if USE_USD_SDK && WITH_EDITOR
 
 #include "USDGeometryCacheTranslator.h"
-#include "USDGeomXformableTranslator.h"
 
 class USDSCHEMAS_API FUsdGroomTranslator : public FUsdGeometryCacheTranslator
 {
@@ -27,4 +26,4 @@ private:
 	bool IsGroomPrim() const;
 };
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

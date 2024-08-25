@@ -60,36 +60,30 @@ FViewDebugInfo::FViewDebugInfo()
 	bShouldCaptureSingleFrame = false;
 }
 
-void FViewDebugInfo::ProcessPrimitive(FPrimitiveSceneInfo* PrimitiveSceneInfo, const FViewInfo& View, FScene* Scene, const UPrimitiveComponent* DebugComponent)
+void FViewDebugInfo::ProcessPrimitive(FPrimitiveSceneInfo* PrimitiveSceneInfo, const FViewInfo& View, FScene* Scene, const IPrimitiveComponent* DebugComponentInterface)
 {
-	if (!DebugComponent->IsRegistered())
+	if (!DebugComponentInterface->IsRegistered())
 	{
 		return;
 	}
-	AActor* Actor = DebugComponent->GetOwner();
-	FString FullName = DebugComponent->GetName();
+	UObject* Actor = DebugComponentInterface->GetOwner();
+	FString FullName = DebugComponentInterface->GetName();
 	const uint32 DrawCount = GetDrawCountFromPrimitiveSceneInfo(Scene, PrimitiveSceneInfo);
 
 	TArray<UMaterialInterface*> Materials;
-	DebugComponent->GetUsedMaterials(Materials);
+	DebugComponentInterface->GetUsedMaterials(Materials);
 	const int32 LOD = PrimitiveSceneInfo->Proxy ? PrimitiveSceneInfo->Proxy->GetLOD(&View) : INDEX_NONE;
 	int32 Triangles = 0;
-	if (const UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(DebugComponent))
-	{
-		Triangles = StaticMeshComponent->GetStaticMesh()->GetNumTriangles(LOD);
-	}
-	else if (const USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(DebugComponent))
-	{
-		for (const FSkeletalMeshLODRenderData& RenderData : SkeletalMeshComponent->GetSkeletalMeshRenderData()->LODRenderData)
-		{
-			Triangles += RenderData.MultiSizeIndexContainer.GetIndexBuffer()->Num() / 3;
-		}
-	}
+	
+	const UObject* DebugComponent = DebugComponentInterface->GetUObject();
+
+	FPrimitiveStats Stat(LOD);
+	DebugComponentInterface->GetPrimitiveStats(Stat);
 
 	const FPrimitiveInfo PrimitiveInfo = {
 		Actor,
-		DebugComponent->ComponentId,
-		const_cast<UPrimitiveComponent*>(DebugComponent), // This is probably a bad idea, find alternative
+		PrimitiveSceneInfo->PrimitiveComponentId,
+		const_cast<IPrimitiveComponent*>(DebugComponentInterface), // This is probably a bad idea, find alternative
 		PrimitiveSceneInfo,
 		MoveTemp(Materials),
 		MoveTemp(FullName),
@@ -126,8 +120,9 @@ void FViewDebugInfo::DumpToCSV() const
 			DrawViewer.AddColumn(*Primitive.Name);
 			DrawViewer.AddColumn(Primitive.Owner ? *Primitive.Owner->GetClass()->GetName() : TEXT(""));
 			DrawViewer.AddColumn(Primitive.Owner ? *Primitive.Owner->GetFullName() : TEXT(""));
-			DrawViewer.AddColumn(Primitive.Owner ?
-				*FString::Printf(TEXT("{%s}"), *Primitive.Owner->GetActorLocation().ToString()) : TEXT(""));
+
+			DrawViewer.AddColumn(Primitive.ComponentInterface ?
+				*FString::Printf(TEXT("{%s}"), *Primitive.ComponentInterface->GetTransform().GetLocation().ToString()) : TEXT(""));
 			DrawViewer.AddColumn(*FString::Printf(TEXT("%d"), Primitive.Materials.Num()));
 			FString Materials = "[";
 			for (int i = 0; i < Primitive.Materials.Num(); i++)
@@ -220,14 +215,14 @@ void FViewDebugInfo::ProcessPrimitives(FScene* Scene, const FViewInfo& View, con
 			if (PrimitiveId >= 0 && PrimitiveId < Scene->Primitives.Num())
 			{
 				FPrimitiveSceneInfo* PrimitiveSceneInfo = Scene->Primitives[PrimitiveId];
-				ProcessPrimitive(PrimitiveSceneInfo, View, Scene, PrimitiveSceneInfo->ComponentForDebuggingOnly);
+				ProcessPrimitive(PrimitiveSceneInfo, View, Scene, PrimitiveSceneInfo->GetComponentInterfaceForDebugOnly());
 			}
 		}
 
 		for (const FStaticMeshBatch* StaticMeshBatch : ViewCommands.DynamicMeshCommandBuildRequests[EMeshPass::BasePass])
 		{
 			FPrimitiveSceneInfo* PrimitiveSceneInfo = StaticMeshBatch->PrimitiveSceneInfo;
-			ProcessPrimitive(PrimitiveSceneInfo, View, Scene, PrimitiveSceneInfo->ComponentForDebuggingOnly);
+			ProcessPrimitive(PrimitiveSceneInfo, View, Scene, PrimitiveSceneInfo->GetComponentInterfaceForDebugOnly());
 		}
 
 		bHasEverUpdated = true;
@@ -280,7 +275,7 @@ void FViewDebugInfo::DumpPrimitives(FScene* Scene, const FViewCommands& ViewComm
 			if (PrimitiveId >= 0 && PrimitiveId < Scene->Primitives.Num())
 			{
 				const FPrimitiveSceneInfo* PrimitiveSceneInfo = Scene->Primitives[PrimitiveId];
-				FString FullName = PrimitiveSceneInfo->ComponentForDebuggingOnly->GetFullName();
+				FString FullName = PrimitiveSceneInfo->GetComponentForDebugOnly()->GetFullName();
 
 				uint32 DrawCount = GetDrawCountFromPrimitiveSceneInfo(Scene, PrimitiveSceneInfo);
 
@@ -291,7 +286,7 @@ void FViewDebugInfo::DumpPrimitives(FScene* Scene, const FViewCommands& ViewComm
 		for (const FStaticMeshBatch* StaticMeshBatch : ViewCommands.DynamicMeshCommandBuildRequests[EMeshPass::BasePass])
 		{
 			const FPrimitiveSceneInfo* PrimitiveSceneInfo = StaticMeshBatch->PrimitiveSceneInfo;
-			FString FullName = PrimitiveSceneInfo->ComponentForDebuggingOnly->GetFullName();
+			FString FullName = PrimitiveSceneInfo->GetComponentForDebugOnly()->GetFullName();
 
 			uint32 DrawCount = GetDrawCountFromPrimitiveSceneInfo(Scene, PrimitiveSceneInfo);
 

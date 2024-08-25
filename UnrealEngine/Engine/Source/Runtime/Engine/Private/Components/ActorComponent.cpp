@@ -2,47 +2,53 @@
 // ActorComponent.cpp: Actor component implementation.
 
 #include "Components/ActorComponent.h"
-#include "Engine/LevelStreaming.h"
-#include "EngineStats.h"
-#include "Engine/MemberReference.h"
-#include "Engine/Level.h"
-#include "Components/PrimitiveComponent.h"
+
 #include "AI/NavigationSystemBase.h"
-#include "Engine/BlueprintGeneratedClass.h"
-#include "Elements/Framework/EngineElementsLibrary.h"
-#include "ComponentReregisterContext.h"
-#include "Engine/AssetUserData.h"
-#include "Engine/LevelStreamingPersistent.h"
-#include "Engine/NetDriver.h"
-#include "Engine/ActorChannel.h"
-#include "HAL/LowLevelMemStats.h"
-#include "Misc/ScopeRWLock.h"
-#include "Net/UnrealNetwork.h"
-#include "Logging/MessageLog.h"
-#include "Misc/UObjectToken.h"
-#include "Misc/MapErrors.h"
+#include "Async/ParallelFor.h"
 #include "ComponentRecreateRenderStateContext.h"
-#include "Engine/SimpleConstructionScript.h"
+#include "ComponentReregisterContext.h"
+#include "Components/PrimitiveComponent.h"
 #include "ComponentUtils.h"
+#include "Elements/Framework/EngineElementsLibrary.h"
+#include "Engine/ActorChannel.h"
+#include "Engine/AssetUserData.h"
+#include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/Engine.h"
+#include "Engine/InputDelegateBinding.h"
+#include "Engine/Level.h"
+#include "Engine/LevelStreaming.h"
+#include "Engine/LevelStreamingPersistent.h"
+#include "Engine/MemberReference.h"
+#include "Engine/NetDriver.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "EngineStats.h"
+#include "GameFramework/InputSettings.h"
+#include "HAL/LowLevelMemStats.h"
+#include "Logging/MessageLog.h"
+#include "Misc/MapErrors.h"
+#include "Misc/ScopeRWLock.h"
+#include "Misc/UObjectToken.h"
 #include "Net/Core/PushModel/PushModel.h"
+#include "Net/UnrealNetwork.h"
+#include "ObjectTrace.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
 #include "SceneInterface.h"
-#include "UObject/FrameworkObjectVersion.h"
 #include "UObject/FortniteReleaseBranchCustomObjectVersion.h"
-#include "Async/ParallelFor.h"
-#include "Engine/InputDelegateBinding.h"
-#include "GameFramework/InputSettings.h"
+#include "UObject/FrameworkObjectVersion.h"
+#include "PSOPrecacheMaterial.h"
+#include "Materials/MaterialInterface.h"
 
 #if WITH_EDITOR
 #include "Kismet2/ComponentEditorUtils.h"
 #include "ObjectCacheEventSink.h"
 #include "StaticMeshCompiler.h"
 #endif
-#include "ObjectTrace.h"
 
 #if UE_WITH_IRIS
+#include "Iris/Core/IrisLog.h"
+#include "Iris/ReplicationSystem/ReplicationFragment.h"
 #include "Iris/ReplicationSystem/ReplicationFragmentUtil.h"
 #include "Net/Iris/ReplicationSystem/ReplicationSystemUtil.h"
 #endif // UE_WITH_IRIS
@@ -84,6 +90,10 @@ FAutoConsoleVariableRef GTickComponentLatentActionsWithTheComponentCVar(
 
 /** Static var indicating activity of reregister context */
 int32 FGlobalComponentReregisterContext::ActiveGlobalReregisterContextCount = 0;
+
+/** Static var indicating activity of recreate render state context */
+int32 FGlobalComponentRecreateRenderStateContext::ActiveGlobalRecreateRenderStateContextCount = 0;
+
 
 bool GDefaultUseSubObjectReplicationList = false;
 static FAutoConsoleVariableRef CVarDefaultUseSubObjectReplicationList(
@@ -141,6 +151,24 @@ void FRegisterComponentContext::Process()
 		bSingleThreaded
 	);
 	AddPrimitiveBatches.Empty();
+
+	for (UPrimitiveComponent* Primitive : SendRenderDynamicDataPrimitives)
+	{
+		Primitive->SendRenderDynamicData_Concurrent();
+	}
+	SendRenderDynamicDataPrimitives.Empty();
+}
+
+void FRegisterComponentContext::SendRenderDynamicData(FRegisterComponentContext* Context, UPrimitiveComponent* PrimitiveComponent)
+{
+	if (Context)
+	{
+		Context->AddSendRenderDynamicData(PrimitiveComponent);
+	}
+	else
+	{
+		PrimitiveComponent->SendRenderDynamicData_Concurrent();
+	}
 }
 
 void UpdateAllPrimitiveSceneInfosForSingleComponent(UActorComponent* InComponent, TSet<FSceneInterface*>* InScenesToUpdateAllPrimitiveSceneInfosForBatching /* = nullptr*/)
@@ -149,6 +177,29 @@ void UpdateAllPrimitiveSceneInfosForSingleComponent(UActorComponent* InComponent
 	{
 		if (InScenesToUpdateAllPrimitiveSceneInfosForBatching == nullptr)
 		{
+			UE::RenderCommandPipe::FSyncScope SyncScope;
+
+			// If no batching is available (this ComponentReregisterContext is not created by a FGlobalComponentReregisterContext), issue one update per component
+			ENQUEUE_RENDER_COMMAND(UpdateAllPrimitiveSceneInfosCmd)([Scene](FRHICommandListImmediate& RHICmdList) {
+				Scene->UpdateAllPrimitiveSceneInfos(RHICmdList);
+			});
+		}
+		else
+		{
+			// Try to batch the updates inside FGlobalComponentReregisterContext
+			InScenesToUpdateAllPrimitiveSceneInfosForBatching->Add(Scene);
+		}
+	}
+}
+
+void UpdateAllPrimitiveSceneInfosForSingleComponentInterface (IPrimitiveComponent* InComponentInterface, TSet<FSceneInterface*>* InScenesToUpdateAllPrimitiveSceneInfosForBatching /* = nullptr*/)
+{
+	if (FSceneInterface* Scene = InComponentInterface->GetScene())
+	{
+		if (InScenesToUpdateAllPrimitiveSceneInfosForBatching == nullptr)
+		{
+			UE::RenderCommandPipe::FSyncScope SyncScope;
+
 			// If no batching is available (this ComponentReregisterContext is not created by a FGlobalComponentReregisterContext), issue one update per component
 			ENQUEUE_RENDER_COMMAND(UpdateAllPrimitiveSceneInfosCmd)([Scene](FRHICommandListImmediate& RHICmdList) {
 				Scene->UpdateAllPrimitiveSceneInfos(RHICmdList);
@@ -166,6 +217,8 @@ void UpdateAllPrimitiveSceneInfosForScenes(TSet<FSceneInterface*> ScenesToUpdate
 {
 	if (ScenesToUpdateAllPrimitiveSceneInfos.Num())
 	{
+		UE::RenderCommandPipe::FSyncScope SyncScope;
+
 		ENQUEUE_RENDER_COMMAND(UpdateAllPrimitiveSceneInfosCmd)(
 			[ScenesToUpdateAllPrimitiveSceneInfos](FRHICommandListImmediate& RHICmdList)
 			{
@@ -251,6 +304,8 @@ FGlobalComponentRecreateRenderStateContext::FGlobalComponentRecreateRenderStateC
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(FGlobalComponentRecreateRenderStateContext::FGlobalComponentRecreateRenderStateContext);
 
+		ActiveGlobalRecreateRenderStateContextCount++;
+
 		// wait until resources are released
 		FlushRenderingCommands();
 
@@ -269,7 +324,7 @@ FGlobalComponentRecreateRenderStateContext::FGlobalComponentRecreateRenderStateC
 
 FGlobalComponentRecreateRenderStateContext::FGlobalComponentRecreateRenderStateContext(const TArray<UActorComponent*>& InComponents)
 {
-	if (FApp::CanEverRender())
+	if (FApp::CanEverRender() && ++ActiveGlobalRecreateRenderStateContextCount == 1)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(FGlobalComponentRecreateRenderStateContext::FGlobalComponentRecreateRenderStateContext);
 
@@ -293,9 +348,22 @@ FGlobalComponentRecreateRenderStateContext::~FGlobalComponentRecreateRenderState
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FGlobalComponentRecreateRenderStateContext::~FGlobalComponentRecreateRenderStateContext);
 
-	ComponentContexts.Empty();
+	if (FApp::CanEverRender())
+	{
+		check(ActiveGlobalRecreateRenderStateContextCount > 0);
 
-	UpdateAllPrimitiveSceneInfos();
+		// Check if this is the last active context
+		if (--ActiveGlobalRecreateRenderStateContextCount == 0)
+		{
+			// Clear the PSO material request cache to make sure PSO collection happens again on possible changed data
+			ClearMaterialPSORequests();
+			UMaterialInterface::PrecacheDefaultMaterialPSOs();
+
+			ComponentContexts.Empty();
+
+			UpdateAllPrimitiveSceneInfos();
+		}
+	}
 }
 
 void FGlobalComponentRecreateRenderStateContext::UpdateAllPrimitiveSceneInfos()
@@ -972,6 +1040,13 @@ void UActorComponent::ConsolidatedPostEditChange(const FPropertyChangedEvent& Pr
 			Datum->PostEditChangeOwner();
 		}
 	}
+	for (UAssetUserData* Datum : AssetUserDataEditorOnly)
+	{
+		if (Datum != nullptr)
+		{
+			Datum->PostEditChangeOwner();
+		}
+	}
 }
 
 void UActorComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
@@ -1066,6 +1141,13 @@ void UActorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	TRACE_OBJECT_LIFETIME_END(this);
 
 	check(bHasBegunPlay);
+
+#if UE_WITH_IRIS
+	if (EndPlayReason != EEndPlayReason::EndPlayInEditor && EndPlayReason != EEndPlayReason::Quit)
+	{
+		EndReplication();
+	}
+#endif
 
 	// If we're in the process of being garbage collected it is unsafe to call out to blueprints
 	if (!HasAnyFlags(RF_BeginDestroyed) && !IsUnreachable() && (GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint) || !GetClass()->HasAnyClassFlags(CLASS_Native)))
@@ -1592,7 +1674,8 @@ void UActorComponent::OnDestroyPhysicsState()
 void UActorComponent::CreatePhysicsState(bool bAllowDeferral)
 {
 	LLM_SCOPE(ELLMTag::Chaos);
-	LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(GetOutermost(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(GetPackage(), ELLMTagSet::Assets);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, GetPackage()->GetFName());
 
 	SCOPE_CYCLE_COUNTER(STAT_ComponentCreatePhysicsState);
 
@@ -1678,7 +1761,8 @@ void UActorComponent::ExecuteRegisterEvents(FRegisterComponentContext* Context)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ComponentCreateRenderState);
 		LLM_SCOPE(ELLMTag::SceneRender);
-		LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(GetOutermost(), ELLMTagSet::Assets);
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(GetPackage(), ELLMTagSet::Assets);
+		UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, GetPackage()->GetFName());
 		CreateRenderState_Concurrent(Context);
 		checkf(bRenderStateCreated, TEXT("Failed to route CreateRenderState_Concurrent (%s)"), *GetFullName());
 	}
@@ -1723,16 +1807,26 @@ void UActorComponent::ReregisterComponent()
 
 void UActorComponent::RecreateRenderState_Concurrent()
 {
+	bool bCanRecreate = IsRegistered() && WorldPrivate->Scene;
+
 	if(bRenderStateCreated)
 	{
+		// Only set bRenderStateRecreating if we know for sure we are going to actually re-create it, so components can always count on the
+		// calls happening in sequence if bRenderStateRecreating is set, and don't need to handle edge cases where the latter isn't called.
+		if (bCanRecreate)
+		{
+			check(bRenderStateRecreating == false);
+			bRenderStateRecreating = true;
+		}
 		check(IsRegistered()); // Should never have render state unless registered
 		DestroyRenderState_Concurrent();
 		checkf(!bRenderStateCreated, TEXT("Failed to route DestroyRenderState_Concurrent (%s)"), *GetFullName());
 	}
 
-	if(IsRegistered() && WorldPrivate->Scene)
+	if (bCanRecreate)
 	{
 		CreateRenderState_Concurrent(nullptr);
+		bRenderStateRecreating = false;
 		checkf(bRenderStateCreated, TEXT("Failed to route CreateRenderState_Concurrent (%s)"), *GetFullName());
 	}
 }
@@ -1788,7 +1882,8 @@ void UActorComponent::RemoveTickPrerequisiteComponent(UActorComponent* Prerequis
 void UActorComponent::DoDeferredRenderUpdates_Concurrent()
 {
 	LLM_SCOPE(ELLMTag::SceneRender);
-	LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(GetOutermost(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(GetPackage(), ELLMTagSet::Assets);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, GetPackage()->GetFName());
 
 	checkf(!IsUnreachable(), TEXT("%s"), *GetFullName());
 	checkf(!IsTemplate(), TEXT("%s"), *GetFullName());
@@ -2012,30 +2107,47 @@ bool UActorComponent::IsOwnerRunningUserConstructionScript() const
 	return (MyOwner && MyOwner->IsRunningUserConstructionScript());
 }
 
-void UActorComponent::AddAssetUserData(UAssetUserData* InUserData)
+void UActorComponent::AddAssetUserData( UAssetUserData* InUserData)
 {
 	if (InUserData != NULL)
 	{
-		UAssetUserData* ExistingData = GetAssetUserDataOfClass(InUserData->GetClass());
-		if (ExistingData != NULL)
-		{
-			AssetUserData.Remove(ExistingData);
-		}
+		RemoveUserDataOfClass(InUserData->GetClass());
 		AssetUserData.Add(InUserData);
 	}
 }
 
 UAssetUserData* UActorComponent::GetAssetUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass)
 {
-	for (int32 DataIdx = 0; DataIdx < AssetUserData.Num(); DataIdx++)
+	const TArray<UAssetUserData*>* ArrayPtr = GetAssetUserDataArray();
+	for (int32 DataIdx = 0; DataIdx < ArrayPtr->Num(); DataIdx++)
 	{
-		UAssetUserData* Datum = AssetUserData[DataIdx];
+		UAssetUserData* Datum = (*ArrayPtr)[DataIdx];
 		if (Datum != NULL && Datum->IsA(InUserDataClass))
 		{
 			return Datum;
 		}
 	}
 	return NULL;
+}
+
+const TArray<UAssetUserData*>* UActorComponent::GetAssetUserDataArray() const
+{
+#if WITH_EDITOR
+	if (IsRunningCookCommandlet())
+	{
+		return &ToRawPtrTArrayUnsafe(AssetUserData);
+	}
+	else
+	{
+		static thread_local TArray<TObjectPtr<UAssetUserData>> CachedAssetUserData;
+		CachedAssetUserData.Reset();
+		CachedAssetUserData.Append(AssetUserData);
+		CachedAssetUserData.Append(AssetUserDataEditorOnly);
+		return &ToRawPtrTArrayUnsafe(CachedAssetUserData);
+	}
+#else
+	return &ToRawPtrTArrayUnsafe(AssetUserData);
+#endif
 }
 
 void UActorComponent::RemoveUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass)
@@ -2049,6 +2161,17 @@ void UActorComponent::RemoveUserDataOfClass(TSubclassOf<UAssetUserData> InUserDa
 			return;
 		}
 	}
+#if WITH_EDITOR
+	for (int32 DataIdx = 0; DataIdx < AssetUserDataEditorOnly.Num(); DataIdx++)
+	{
+		UAssetUserData* Datum = AssetUserDataEditorOnly[DataIdx];
+		if (Datum != NULL && Datum->IsA(InUserDataClass))
+		{
+			AssetUserDataEditorOnly.RemoveAt(DataIdx);
+			return;
+		}
+	}
+#endif
 }
 
 void UActorComponent::OnCreatedFromReplication()
@@ -2075,7 +2198,7 @@ bool UActorComponent::IsNameStableForNetworking() const
 	 * Components are net addressable if:
 	 *	-They are Default Subobjects (created in C++ constructor)
 	 *	-They were loaded directly from a package (placed in map actors)
-	 *	-They were explicitly set to bNetAddressable (blueprint components created by SCS)
+	 *	-They were explicitly set to bNetAddressable (blueprint components created by SCS or UCS executed in the ConstructionScript only)
 	 */
 
 	return bNetAddressable || (Super::IsNameStableForNetworking() && (CreationMethod != EComponentCreationMethod::UserConstructionScript));
@@ -2213,6 +2336,15 @@ bool UActorComponent::CanEditChange(const FProperty* InProperty) const
 #if UE_WITH_IRIS
 void UActorComponent::RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags)
 {
+	if (CreationMethod == EComponentCreationMethod::UserConstructionScript)
+	{
+		if (!IsNameStableForNetworking() && GetArchetype() != GetClass()->GetDefaultObject())
+		{
+			RegistrationFlags |= UE::Net::EFragmentRegistrationFlags::InitializeDefaultStateFromClassDefaults;
+			UE_LOG(LogIris, Warning, TEXT("The default state of replicated dynamic component %s::%s will be built using the class CDO instead of the archetype. The non-replicated properties of the component on clients may be initialized wrong."), *GetNameSafe(GetOwner()), *GetName());
+		}
+	}
+	
 	// Build descriptors and allocate PropertyReplicationFragments for this object
 	UE::Net::FReplicationFragmentUtil::CreateAndRegisterFragmentsForObject(this, Context, RegistrationFlags);
 }

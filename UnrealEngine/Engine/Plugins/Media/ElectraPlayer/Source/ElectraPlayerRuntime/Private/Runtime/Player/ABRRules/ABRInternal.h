@@ -45,7 +45,8 @@ namespace Electra
 	{
 	public:
 		virtual ~IABRInfoInterface() = default;
-		virtual FParamDict& GetPlayerOptions() = 0;
+		virtual bool HaveOptionValue(const FName& InOption) = 0;
+		virtual const FVariantValue GetOptionValue(const FName& InOption) = 0;
 
 		virtual TSharedPtrTS<FABRStreamInformation> GetStreamInformation(const Metrics::FSegmentDownloadStats& FromDownloadStats) = 0;
 		virtual const TArray<TSharedPtrTS<FABRStreamInformation>>& GetStreamInformations(EStreamType InForStreamType) = 0;
@@ -71,7 +72,7 @@ namespace Electra
 		virtual void ReportPlaybackEnded() = 0;
 
 		virtual FTimeValue GetMinBufferTimeForPlayback(IAdaptiveStreamSelector::EMinBufferType InBufferingType, FTimeValue InDefaultMBT) = 0;
-		virtual IAdaptiveStreamSelector::FRebufferAction GetRebufferAction(const FParamDict& CurrentPlayerOptions) = 0;
+		virtual IAdaptiveStreamSelector::FRebufferAction GetRebufferAction() = 0;
 		virtual IAdaptiveStreamSelector::EHandlingAction PeriodicHandle() = 0;
 		virtual void DebugPrint(void* pThat, void (*pPrintFN)(void* pThat, const char *pFmt, ...)) = 0;
 

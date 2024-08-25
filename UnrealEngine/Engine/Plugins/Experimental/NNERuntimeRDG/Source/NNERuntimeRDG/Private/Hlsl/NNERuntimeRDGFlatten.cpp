@@ -23,7 +23,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 1);
 			check(OutputTensors.Num() == 1);
@@ -92,8 +92,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
-		//This match version 13 of the Flatten operator
-		//https://github.com/onnx/onnx/blob/main/docs/Operators.md#Flatten
 		FAttributeValidator AttributeValidator;
 		AttributeValidator.AddOptional(TEXT("axis"), ENNEAttributeDataType::Int32);
 		bIsValid &= AttributeValidator.Validate(AttributeMap);
@@ -124,7 +122,11 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterFlattenOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Flatten"), CreateFlattenOperator, ValidateFlattenOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Flatten"), TEXT("Onnx")}, 1}, CreateFlattenOperator, ValidateFlattenOperator);
+		Registry.OpAdd({{TEXT("Flatten"), TEXT("Onnx")}, 9}, CreateFlattenOperator, ValidateFlattenOperator);
+		Registry.OpAdd({{TEXT("Flatten"), TEXT("Onnx")}, 11}, CreateFlattenOperator, ValidateFlattenOperator);
+		Registry.OpAdd({{TEXT("Flatten"), TEXT("Onnx")}, 13}, CreateFlattenOperator, ValidateFlattenOperator);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

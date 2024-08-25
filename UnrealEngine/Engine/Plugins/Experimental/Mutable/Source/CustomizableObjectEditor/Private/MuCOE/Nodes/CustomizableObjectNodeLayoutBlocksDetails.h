@@ -4,6 +4,7 @@
 
 
 #include "IDetailCustomization.h"
+#include "UObject/WeakObjectPtr.h"
 
 enum class ECheckBoxState : uint8;
 namespace ESelectInfo { enum Type : int; }
@@ -12,6 +13,8 @@ class FString;
 class IDetailLayoutBuilder;
 class STextBlock;
 class SWidget;
+class UCustomizableObjectNodeLayoutBlocks;
+struct EVisibility;
 
 class FCustomizableObjectNodeLayoutBlocksDetails : public IDetailCustomization
 {
@@ -25,7 +28,24 @@ public:
 
 private:
 
-	class UCustomizableObjectNodeLayoutBlocks* Node;
+	/** Returns the visibility of the Fixed layout widgets */
+	EVisibility FixedStrategyOptionsVisibility() const;
+
+	/** Fills the combo box arrays sources */
+	void FillComboBoxOptionsArrays(TSharedPtr<FString>& CurrGridSize, TSharedPtr<FString>& CurrStrategy, TSharedPtr<FString>& CurrMaxSize, TSharedPtr<FString>& CurrRedMethod);
+
+	/** Layout Options Callbacks */
+	void OnGridSizeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	void OnMaxGridSizeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	void OnReductionMethodChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	void OnLayoutPackingStrategyChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	void OnIgnoreErrorsCheckStateChanged(ECheckBoxState State);
+	void OnLODBoxValueChanged(int32 Value);
+
+private:
+
+	/** Weak pointer to the node */
+	TWeakObjectPtr<UCustomizableObjectNodeLayoutBlocks> Node;
 
 	// Layout block editor widget
 	TSharedPtr<class SCustomizableObjectNodeLayoutBlocksEditor> LayoutBlocksEditor;
@@ -34,14 +54,13 @@ private:
 	TSharedPtr<SWidget> LODSelectorWidget;
 	TSharedPtr<STextBlock> LODSelectorTextWidget;
 
-	TArray< TSharedPtr<FString> > GridComboOptions;
+	/** List of available layout grid sizes. */
+	TArray< TSharedPtr< FString > > LayoutGridSizes;
 
-	void OnGridComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo);
-	void OnBlockChanged( int BlockIndex, FIntRect Block );
-	void OnIgnoreErrorsCheckStateChanged(ECheckBoxState State);
-	void OnLODBoxValueChanged(int32 Value);
+	/** List of available layout packing strategies. */
+	TArray< TSharedPtr< FString > > LayoutPackingStrategies;
 
-	FIntPoint GetGridSize() const;
-	TArray<FIntRect> GetBlocks() const;
+	/** List of available block reduction methods. */
+	TArray< TSharedPtr< FString > > BlockReductionMethods;
 
 };

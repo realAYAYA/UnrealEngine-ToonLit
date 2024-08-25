@@ -273,27 +273,16 @@ void FLevelSnapshotsEditorResultsRow::GenerateModifiedActorGroupChildren(FProper
 	const UE::LevelSnapshots::FAddedAndRemovedComponentInfo* AddedAndRemovedComponents = PropertySelectionMap.GetObjectSelection(WorldActorLocal).GetComponentSelection();
 
 	TSet<UActorComponent*> WorldComponentsToRemove;
-	if (AddedAndRemovedComponents)
-	{
-		for (TWeakObjectPtr<UActorComponent> ComponentToRemove : AddedAndRemovedComponents->EditorWorldComponentsToRemove)
-		{
-			if (ComponentToRemove.IsValid())
-			{
-				WorldComponentsToRemove.Add(ComponentToRemove.Get());
-			}
-		}
-	}
-
 	TSet<UActorComponent*> SnapshotComponentsToAdd;
 	if (AddedAndRemovedComponents)
 	{
-		for (TWeakObjectPtr<UActorComponent> ComponentToAdd : AddedAndRemovedComponents->SnapshotComponentsToAdd)
-		{
-			if (ComponentToAdd.IsValid())
-			{
-				SnapshotComponentsToAdd.Add(ComponentToAdd.Get());
-			}
-		}
+		WorldComponentsToRemove =
+			FLevelSnapshotsEditorResultsHelpers::FilterOutActorComponentsBasedOnEditorSettings(
+				AddedAndRemovedComponents->EditorWorldComponentsToRemove);
+		
+		SnapshotComponentsToAdd =
+			FLevelSnapshotsEditorResultsHelpers::FilterOutActorComponentsBasedOnEditorSettings(
+				AddedAndRemovedComponents->SnapshotComponentsToAdd);
 	}
 
 	// Iterate over components and subobjects

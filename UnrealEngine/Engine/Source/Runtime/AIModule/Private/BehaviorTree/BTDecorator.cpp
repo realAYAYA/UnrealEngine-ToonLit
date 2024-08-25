@@ -2,6 +2,7 @@
 
 #include "BehaviorTree/BTDecorator.h"
 #include "BehaviorTree/BTCompositeNode.h"
+#include "GameFramework/Actor.h"
 #include "VisualLogger/VisualLogger.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BTDecorator)

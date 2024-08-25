@@ -96,7 +96,7 @@ void SScheduledSyncWindow::Construct(const FArguments& InArgs, UGSTab* InTab)
 		// Buttons
 		+SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(20.0f, 10.0f, 20.0f, 0.0f)
+		.Padding(20.0f, 10.0f, 20.0f, 20.0f)
 		.VAlign(VAlign_Bottom)
 		[
 			SNew(SHorizontalBox)

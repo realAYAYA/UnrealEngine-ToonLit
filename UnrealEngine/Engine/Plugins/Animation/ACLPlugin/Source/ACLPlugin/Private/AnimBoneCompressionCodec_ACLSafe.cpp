@@ -19,9 +19,7 @@ UAnimBoneCompressionCodec_ACLSafe::UAnimBoneCompressionCodec_ACLSafe(const FObje
 }
 
 #if WITH_EDITORONLY_DATA
-// @third party code - Epic Games Begin
-void UAnimBoneCompressionCodec_ACLSafe::GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const
-// @third party code - Epic Games End
+void UAnimBoneCompressionCodec_ACLSafe::GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const
 {
 	OutSettings = acl::get_default_compression_settings();
 
@@ -35,8 +33,7 @@ void UAnimBoneCompressionCodec_ACLSafe::PopulateDDCKey(const UE::Anim::Compressi
 	Super::PopulateDDCKey(KeyArgs, Ar);
 
 	acl::compression_settings Settings;
-	GetCompressionSettings(Settings, KeyArgs.TargetPlatform);
-// @third party code - Epic Games End
+	GetCompressionSettings(KeyArgs.TargetPlatform, Settings);
 
 	uint32 ForceRebuildVersion = 1;
 	uint32 SettingsHash = Settings.get_hash();
@@ -69,4 +66,3 @@ void UAnimBoneCompressionCodec_ACLSafe::DecompressBone(FAnimSequenceDecompressio
 
 	::DecompressBone(DecompContext, ACLContext, TrackIndex, OutAtom);
 }
-

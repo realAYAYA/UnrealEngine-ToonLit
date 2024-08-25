@@ -183,7 +183,11 @@ namespace WorldHierarchy
 	void FLevelModelTreeItem::SetExpansion(bool bExpanded)
 	{
 		IWorldTreeItem::SetExpansion(bExpanded);
-		LevelModel.Pin()->SetLevelExpansionFlag(bExpanded);
+
+		if (LevelModel.IsValid())
+		{
+			LevelModel.Pin()->SetLevelExpansionFlag(bExpanded);
+		}
 	}
 
 	bool FLevelModelTreeItem::HasModel(TSharedPtr<FLevelModel> InLevelModel) const

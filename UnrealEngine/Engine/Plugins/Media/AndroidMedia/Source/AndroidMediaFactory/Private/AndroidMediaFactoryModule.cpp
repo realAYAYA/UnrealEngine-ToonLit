@@ -9,7 +9,7 @@
 #include "IMediaModule.h"
 #include "IMediaPlayerFactory.h"
 
-#include "../../AndroidMedia/Public/IAndroidMediaModule.h"
+#include "IAndroidMediaModule.h"
 
 
 DEFINE_LOG_CATEGORY(LogAndroidMediaFactory);
@@ -119,7 +119,6 @@ public:
 		SupportedFileExtensions.Add(TEXT("aac"));
 		SupportedFileExtensions.Add(TEXT("mp4"));
 		SupportedFileExtensions.Add(TEXT("m3u8"));
-		SupportedFileExtensions.Add(TEXT("mp3"));
 		SupportedFileExtensions.Add(TEXT("webm"));
 
 		// supported platforms

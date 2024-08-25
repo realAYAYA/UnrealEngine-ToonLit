@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { DefaultButton, Slider, Spinner, SpinnerSize, Stack, Text } from "@fluentui/react";
+import { Slider, Spinner, SpinnerSize, Stack, Text } from "@fluentui/react";
 import * as d3 from "d3";
 import { action, makeObservable, observable } from "mobx";
 import { observer } from "mobx-react-lite";
@@ -12,11 +12,11 @@ import { GetJobStepRefResponse, JobStepOutcome } from "../../backend/Api";
 import dashboard, { StatusColor } from "../../backend/Dashboard";
 import { ISideRailLink } from "../../base/components/SideRail";
 import { displayTimeZone, getElapsedString, getHumanTime, msecToElapsed } from "../../base/utilities/timeUtils";
-import { hordeClasses, modeColors } from "../../styles/Styles";
 import { ChangeButton } from "../ChangeButton";
 import { HistoryModal } from "../HistoryModal";
 import { StepRefStatusIcon } from "../StatusIcon";
 import { JobDataView, JobDetailsV2 } from "./JobDetailsViewCommon";
+import { getHordeStyling } from "../../styles/Styles";
 
 const sideRail: ISideRailLink = { text: "Trends", url: "rail_step_trends" };
 
@@ -285,10 +285,12 @@ class StepTrendsRenderer {
 
       svg.attr("viewBox", [0, 0, width, height] as any);
 
+      /*
       svg.append("rect")
          .attr("width", "100%")
          .attr("height", "100%")
          .attr("fill", modeColors.background);
+      */
 
       const clipId = `step_history_clip`;
 
@@ -476,8 +478,8 @@ class StepTrendsRenderer {
 
          svg!.selectAll(".linechart")
             .attr("d", scaledLine(lineI as any));
-         
-            svg!.selectAll(".y-axis").call(yAxis as any);
+
+         svg!.selectAll(".y-axis").call(yAxis as any);
 
       }
 
@@ -583,6 +585,8 @@ class StepTrendsRenderer {
 
 const GraphTooltip: React.FC<{ dataView: StepTrendsDataView }> = observer(({ dataView }) => {
 
+   const { modeColors } = getHordeStyling();
+   
    // subscribe
    if (dataView.tooltip.updated) { }
 
@@ -670,6 +674,8 @@ const StepTrendGraph: React.FC<{ dataView: StepTrendsDataView }> = ({ dataView }
    const [container, setContainer] = useState<HTMLDivElement | null>(null);
    const [state, setState] = useState<{ graph?: StepTrendsRenderer }>({});
 
+   const { hordeClasses, modeColors } = getHordeStyling();
+
    if (!state.graph) {
       setState({ ...state, graph: new StepTrendsRenderer(dataView) })
       return null;
@@ -711,13 +717,23 @@ export const StepTrendsPanelV2: React.FC<{ jobDetails: JobDetailsV2; stepId: str
       };
    }, [dataView]);
 
+   const { hordeClasses } = getHordeStyling();
+
    dataView.subscribe();
 
    if (!jobDetails.jobData) {
       return null;
    }
 
+   if (dataView.initialized && !dataView.history?.length) {
+      return null;
+   }
+
    dataView.set(stepId);
+
+   if (!jobDetails.viewReady(dataView.order)) {
+      return null;
+   }
 
    return (<Stack id={sideRail.url} styles={{ root: { paddingTop: 18, paddingRight: 12 } }}>
       <Stack className={hordeClasses.raised}>

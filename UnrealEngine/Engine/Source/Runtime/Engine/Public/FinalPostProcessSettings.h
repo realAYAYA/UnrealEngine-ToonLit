@@ -78,7 +78,7 @@ public:
 
 			if(Local.AmbientCubemapTintMulScaleValue.IsAlmostBlack())
 			{
-				ContributingCubemaps.RemoveAt(i, 1, /*bAllowShrinking=*/ false);
+				ContributingCubemaps.RemoveAt(i, 1, EAllowShrinking::No);
 				i--; // Maintain same index in the loop after loop increment since we removed an element.
 				continue; // Not strictly necessary but protect against future code using i incorrectly.
 			}

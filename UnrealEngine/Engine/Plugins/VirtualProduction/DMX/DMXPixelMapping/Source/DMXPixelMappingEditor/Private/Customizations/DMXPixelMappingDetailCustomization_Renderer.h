@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "EditorUndoClient.h"
 #include "IDetailCustomization.h"
 #include "UObject/WeakObjectPtr.h"
 
@@ -18,7 +17,6 @@ class UDMXPixelMappingRendererComponent;
 
 class FDMXPixelMappingDetailCustomization_Renderer
 	: public IDetailCustomization
-	, public FSelfRegisteringEditorUndoClient
 {
 public:
 	FDMXPixelMappingDetailCustomization_Renderer(const TWeakPtr<FDMXPixelMappingToolkit> InWeakToolkit);
@@ -30,12 +28,6 @@ public:
 
 	/** IDetailCustomization interface */
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailLayout) override;
-
-protected:
-	//~ Begin FSelfRegisteringEditorUndoClient interface
-	virtual void PostUndo(bool bSuccess) override;
-	virtual void PostRedo(bool bSuccess) override;
-	//~ End FSelfRegisteringEditorUndoClient interface
 
 private:
 	/** Adds a warning if the input texture is not set */

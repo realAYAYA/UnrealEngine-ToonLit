@@ -122,16 +122,24 @@ public:
 	}
 
 	/**
+	 * @returns the color tint to be used for the icon used for this node.
+	 */
+	virtual FLinearColor GetIconColor() const
+	{
+		return GetDefaultColor(IsGroup());
+	}
+
+	/**
 	 * @returns the default color tint for a group/leaf node.
 	 */
 	static FLinearColor GetDefaultColor(bool bIsGroupNode);
 
 	/**
-	 * @returns the color tint to be used for the icon and the name text of this node.
+	 * @returns the color tint to be used for the name text of this node.
 	 */
 	virtual FLinearColor GetColor() const
 	{
-		return GetDefaultColor(IsGroup());
+		return FLinearColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 
 	//////////////////////////////////////////////////

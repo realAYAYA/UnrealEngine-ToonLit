@@ -2,16 +2,16 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.Win32;
+using System.Collections.Specialized;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
-using System.Collections.Specialized;
 using System.Web;
-using System.Linq;
-using System.Diagnostics;
 using System.Windows.Forms;
-using System.IO;
 using Microsoft.Extensions.Logging;
+using Microsoft.Win32;
 
 namespace UnrealGameSync
 {
@@ -32,7 +32,7 @@ namespace UnrealGameSync
 	static class UriHandler
 	{
 		public static UriResult HandleUri(string uriIn)
-		{			
+		{
 			try
 			{
 				Uri uri = new Uri(uriIn);
@@ -48,7 +48,7 @@ namespace UnrealGameSync
 				List<object> parameters = new List<object>();
 
 				foreach (ParameterInfo param in info.GetParameters())
-				{					
+				{
 					string? value = query.Get(param.Name);
 
 					if (value == null)
@@ -101,7 +101,7 @@ namespace UnrealGameSync
 					}
 				}
 
-				return (UriResult)info.Invoke(null, parameters.ToArray())!;					
+				return (UriResult)info.Invoke(null, parameters.ToArray())!;
 			}
 			catch (Exception ex)
 			{
@@ -211,7 +211,7 @@ namespace UnrealGameSync
 		{
 			foreach (Type type in Assembly.GetExecutingAssembly().GetTypes())
 			{
-				List<MethodInfo> handlerMethods = new List<MethodInfo> (type.GetMethods().Where(methodInfo => methodInfo.GetCustomAttribute<UriHandlerAttribute>() != null));
+				List<MethodInfo> handlerMethods = new List<MethodInfo>(type.GetMethods().Where(methodInfo => methodInfo.GetCustomAttribute<UriHandlerAttribute>() != null));
 				foreach (MethodInfo methodInfo in handlerMethods)
 				{
 					if (!methodInfo.IsStatic)
@@ -260,7 +260,7 @@ namespace UnrealGameSync
 
 		public UriHandlerAttribute(bool terminate = false)
 		{
-			Terminate = terminate;			
+			Terminate = terminate;
 		}
 	}
 
@@ -350,7 +350,7 @@ namespace UnrealGameSync
 					}
 				}
 
-				return hasAll? ProtocolHandlerState.Installed : hasAny? ProtocolHandlerState.Unknown : ProtocolHandlerState.NotInstalled;
+				return hasAll ? ProtocolHandlerState.Installed : hasAny ? ProtocolHandlerState.Unknown : ProtocolHandlerState.NotInstalled;
 			}
 			catch
 			{

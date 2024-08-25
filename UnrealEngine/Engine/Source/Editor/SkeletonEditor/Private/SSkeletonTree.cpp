@@ -509,6 +509,9 @@ void SSkeletonTree::BindCommands()
 		MenuActions.DeleteCurrentBlendProfile,
 		FExecuteAction::CreateSP( this, &SSkeletonTree::OnDeleteCurrentBlendProfile));
 
+	CommandList.MapAction(
+		MenuActions.RenameBlendProfile,
+		FExecuteAction::CreateSP(this, &SSkeletonTree::OnRenameBlendProfile));
 
 	PinnedCommands->BindCommandList(UICommandList.ToSharedRef());
 }
@@ -625,7 +628,18 @@ void SSkeletonTree::CreateTreeColumns()
 			})
 			.OnTextCommitted_Lambda([this](const FText& InText, ETextCommit::Type InCommitType)
 			{
-				BlendProfilePicker->OnCreateNewProfileComitted(InText, InCommitType, NewBlendProfileMode);
+				if (bIsCreateNewBlendProfile)
+				{
+					BlendProfilePicker->OnCreateNewProfileComitted(InText, InCommitType, NewBlendProfileMode);
+					bIsCreateNewBlendProfile = false;
+				}
+				else if(BlendProfilePicker->GetSelectedBlendProfileName() != NAME_None)
+				{
+					if (UBlendProfile* Profile = EditableSkeleton.Pin()->RenameBlendProfile(BlendProfilePicker->GetSelectedBlendProfileName(), FName(InText.ToString())))
+					{
+						BlendProfilePicker->SetSelectedProfile(Profile);
+					}
+				}
 			})
 			.OnVerifyTextChanged_Lambda([](const FText& InNewText, FText& OutErrorMessage) -> bool
 			{
@@ -743,12 +757,18 @@ TSharedPtr< SWidget > SSkeletonTree::CreateContextMenu()
 			MenuBuilder.BeginSection("SkeletonTreeBonesAction", LOCTEXT("BoneActions", "Selected Bone Actions"));
 		}
 		
-		if (BoneTreeSelection.HasSelectedOfType<FSkeletonTreeBoneItem>())
+		const bool bHasBoneSelected = BoneTreeSelection.HasSelectedOfType<FSkeletonTreeBoneItem>();
+		const bool bHasVirtualBoneSelected = BoneTreeSelection.HasSelectedOfType<FSkeletonTreeVirtualBoneItem>();
+		if (bHasBoneSelected || bHasVirtualBoneSelected)
 		{
 			MenuBuilder.AddMenuEntry(Actions.CopyBoneNames);
-			MenuBuilder.AddMenuEntry(Actions.ResetBoneTransforms);
 
-			if (BoneTreeSelection.IsSingleOfTypeSelected<FSkeletonTreeBoneItem>() && bAllowSkeletonOperations)
+			if (bHasBoneSelected)
+			{
+				MenuBuilder.AddMenuEntry(Actions.ResetBoneTransforms);
+			}
+
+			if (BoneTreeSelection.IsSingleOfTypesSelected<FSkeletonTreeBoneItem, FSkeletonTreeVirtualBoneItem>() && bAllowSkeletonOperations)
 			{
 				MenuBuilder.AddMenuEntry(Actions.AddSocket);
 				MenuBuilder.AddMenuEntry(Actions.PasteSockets);
@@ -1154,12 +1174,14 @@ void SSkeletonTree::OnCopyBoneNames()
 {
 	TArray<TSharedPtr<ISkeletonTreeItem>> SelectedItems = SkeletonTreeView->GetSelectedItems();
 	FSkeletonTreeSelection TreeSelection(SelectedItems);
-	TArray<TSharedPtr<FSkeletonTreeBoneItem>> SelectedBones = TreeSelection.GetSelectedItems<FSkeletonTreeBoneItem>();
+
+	TArray<TSharedPtr<ISkeletonTreeItem>> SelectedBones = TreeSelection.GetSelectedItemsOfTypes<FSkeletonTreeBoneItem, FSkeletonTreeVirtualBoneItem>();
+
 	if( SelectedBones.Num() > 0 )
 	{
 		bool bFirst = true;
 		FString BoneNames;
-		for (const TSharedPtr<FSkeletonTreeBoneItem>& Item : SelectedBones)
+		for (const TSharedPtr<ISkeletonTreeItem>& Item : SelectedBones)
 		{
 			FName BoneName = Item->GetRowItemName();
 			if (!bFirst)
@@ -1261,7 +1283,7 @@ void SSkeletonTree::OnPasteSockets(bool bPasteToSelectedBone)
 	FSkeletonTreeSelection TreeSelection(SelectedItems);
 
 	// Pasting sockets should only work if there is just one bone selected
-	if ( TreeSelection.IsSingleOfTypeSelected<FSkeletonTreeBoneItem>() )
+	if ( TreeSelection.IsSingleOfTypesSelected<FSkeletonTreeBoneItem, FSkeletonTreeVirtualBoneItem>())
 	{
 		FName DestBoneName = bPasteToSelectedBone ? TreeSelection.GetSingleSelectedItem()->GetRowItemName() : NAME_None;
 		USkeletalMesh* SkeletalMesh = GetPreviewScene().IsValid() ? ToRawPtr(GetPreviewScene()->GetPreviewMeshComponent()->GetSkeletalMeshAsset()) : nullptr;
@@ -1278,7 +1300,7 @@ bool SSkeletonTree::CanPasteSockets() const
 		TArray<TSharedPtr<ISkeletonTreeItem>> SelectedItems = SkeletonTreeView->GetSelectedItems();
 		FSkeletonTreeSelection TreeSelection(SelectedItems);
 
-		return TreeSelection.IsSingleOfTypeSelected<FSkeletonTreeBoneItem>();
+		return TreeSelection.IsSingleOfTypesSelected<FSkeletonTreeBoneItem, FSkeletonTreeVirtualBoneItem>();
 	}
 
 	return false;
@@ -1291,7 +1313,7 @@ void SSkeletonTree::OnAddSocket()
 	FSkeletonTreeSelection TreeSelection(SelectedItems);
 
 	// Can only add a socket to one bone
-	if (TreeSelection.IsSingleOfTypeSelected<FSkeletonTreeBoneItem>())
+	if (TreeSelection.IsSingleOfTypesSelected<FSkeletonTreeBoneItem, FSkeletonTreeVirtualBoneItem>())
 	{
 		FName BoneName = TreeSelection.GetSingleSelectedItem()->GetRowItemName();
 		USkeletalMeshSocket* NewSocket = GetEditableSkeletonInternal()->HandleAddSocket(BoneName);
@@ -1354,8 +1376,8 @@ void SSkeletonTree::FillAttachAssetSubmenu(FMenuBuilder& MenuBuilder, const TSha
 	TArray<UClass*> FilterClasses = FComponentAssetBrokerage::GetSupportedAssets(USceneComponent::StaticClass());
 
 	//Clean up the selection so it is relevant to Persona
-	FilterClasses.RemoveSingleSwap(UBlueprint::StaticClass(), false); //Child actor components broker gives us blueprints which isn't wanted
-	FilterClasses.RemoveSingleSwap(USoundBase::StaticClass(), false); //No sounds wanted
+	FilterClasses.RemoveSingleSwap(UBlueprint::StaticClass(), EAllowShrinking::No); //Child actor components broker gives us blueprints which isn't wanted
+	FilterClasses.RemoveSingleSwap(USoundBase::StaticClass(), EAllowShrinking::No); //No sounds wanted
 
 	FAssetPickerConfig AssetPickerConfig;
 	AssetPickerConfig.Filter.bRecursiveClasses = true;
@@ -1727,6 +1749,11 @@ void SSkeletonTree::CreateBlendProfileMenu(UToolMenu* InMenu)
 			FToolUIActionChoice(FUIAction(FExecuteAction::CreateSP(SkeletonTree->BlendProfilePicker.ToSharedRef(), &SBlendProfilePicker::OnClearSelection))));
 
 		EditSection.AddMenuEntry(
+			Actions.RenameBlendProfile,
+			FText::Format(LOCTEXT("RenameBlendProfileLabel", "Rename {0}"),
+				FText::FromName(SkeletonTree->BlendProfilePicker->GetSelectedBlendProfileName())));
+
+		EditSection.AddMenuEntry(
 			Actions.DeleteCurrentBlendProfile,
 			FText::Format(LOCTEXT("DeleteBlendProfileLabel", "Delete {0}"),
 				FText::FromName(SkeletonTree->BlendProfilePicker->GetSelectedBlendProfileName())));
@@ -1752,12 +1779,20 @@ void SSkeletonTree::OnCreateBlendProfile(const EBlendProfileMode InMode)
 	// Activate the Header Entry Box
 	BlendProfileHeader->SetReadOnly(false);
 	BlendProfileHeader->EnterEditingMode();
+	bIsCreateNewBlendProfile = true;
 }
 
 void SSkeletonTree::OnDeleteCurrentBlendProfile()
 {
 	GetEditableSkeletonInternal()->RemoveBlendProfile(BlendProfilePicker->GetSelectedBlendProfile());
 	BlendProfilePicker->OnClearSelection();
+}
+
+void SSkeletonTree::OnRenameBlendProfile()
+{
+	// Activate the Header Entry Box
+	BlendProfileHeader->SetReadOnly(false);
+	BlendProfileHeader->EnterEditingMode();
 }
 
 bool SSkeletonTree::IsBlendProfileSelected(FName ProfileName) const
@@ -2100,7 +2135,9 @@ bool SSkeletonTree::IsAddingSocketsAllowed() const
 		SocketFilter == ESocketFilter::Active ||
 		SocketFilter == ESocketFilter::All )
 	{
-		return true;
+		TArray<TSharedPtr<ISkeletonTreeItem>> SelectedItems = SkeletonTreeView->GetSelectedItems();
+		FSkeletonTreeSelection TreeSelection(SelectedItems);
+		return TreeSelection.IsSingleOfTypesSelected<FSkeletonTreeBoneItem, FSkeletonTreeVirtualBoneItem>();
 	}
 
 	return false;
@@ -2224,9 +2261,8 @@ void SSkeletonTree::OnBlendProfileSelected(UBlendProfile* NewProfile)
 		SkeletonTreeView->GetHeaderRow()->SetShowGeneratedColumn(ISkeletonTree::Columns::BlendProfile);
 	HandleTreeRefresh();
 
-	// When a new blend profile is created/selected - reaffirm that the header can't be edited.
-	// At this time, there is no re-naming of Blend Profiles
-	BlendProfileHeader->SetReadOnly(true);
+	// When a new blend profile is created/selected - enable edition if name != None.
+	BlendProfileHeader->SetReadOnly(BlendProfilePicker->GetSelectedBlendProfileName() == NAME_None);
 }
 
 void SSkeletonTree::RecursiveSetBlendProfileScales(float InScaleToSet)

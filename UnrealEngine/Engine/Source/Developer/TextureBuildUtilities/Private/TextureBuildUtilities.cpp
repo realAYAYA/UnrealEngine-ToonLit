@@ -255,10 +255,6 @@ FCbObject FTextureBuildMetadata::ToCompactBinaryWithDefaults() const
 
 	FCbWriter Writer;
 	Writer.BeginObject();
-	if (bSourceMipsAlphaDetected != Defaults.bSourceMipsAlphaDetected)
-	{
-		Writer.AddBool("bSourceMipsAlphaDetected", bSourceMipsAlphaDetected);
-	}
 	if (PreEncodeMipsHash != Defaults.PreEncodeMipsHash)
 	{
 		Writer << UTF8TEXTVIEW("PreEncodeMipsHash") << PreEncodeMipsHash;
@@ -269,10 +265,90 @@ FCbObject FTextureBuildMetadata::ToCompactBinaryWithDefaults() const
 
 FTextureBuildMetadata::FTextureBuildMetadata(FCbObject InCbObject)
 {
-	bSourceMipsAlphaDetected = InCbObject["bSourceMipsAlphaDetected"].AsBool(bSourceMipsAlphaDetected);
 	PreEncodeMipsHash = InCbObject["PreEncodeMipsHash"].AsUInt64(PreEncodeMipsHash);
 }
 
+void GetPlaceholderTextureImageInfo(FImageInfo* OutImageInfo)
+{
+	OutImageInfo->SizeX = 4;
+	OutImageInfo->SizeY = 4;
+	OutImageInfo->GammaSpace = EGammaSpace::sRGB;
+	OutImageInfo->Format = ERawImageFormat::BGRA8;
+	OutImageInfo->NumSlices = 1;
+}
+void GetPlaceholderTextureImage(FImage* OutImage)
+{
+	*OutImage = FImage();
+
+	GetPlaceholderTextureImageInfo(OutImage);
+	OutImage->RawData.AddUninitialized(sizeof(FColor) * OutImage->SizeX * OutImage->SizeY);
+	for (FColor& Color : OutImage->AsBGRA8())
+	{
+		Color = FColor::Black;
+	}
+
+}
+
+
+// Returns true if the target texture size is different and padding/stretching is required.
+TEXTUREBUILDUTILITIES_API bool GetPowerOfTwoTargetTextureSize(int32 InMip0SizeX, int32 InMip0SizeY, int32 InMip0NumSlices, bool bInIsVolume, ETexturePowerOfTwoSetting::Type InPow2Setting, int32 InResizeDuringBuildX, int32 InResizeDuringBuildY, int32& OutTargetSizeX, int32& OutTargetSizeY, int32& OutTargetSizeZ)
+{
+	int32 TargetTextureSizeX = InMip0SizeX;
+	int32 TargetTextureSizeY = InMip0SizeY;
+	int32 TargetTextureSizeZ = bInIsVolume ? InMip0NumSlices : 1; // Only used for volume texture.
+
+	const int32 PowerOfTwoTextureSizeX = FMath::RoundUpToPowerOfTwo(TargetTextureSizeX);
+	const int32 PowerOfTwoTextureSizeY = FMath::RoundUpToPowerOfTwo(TargetTextureSizeY);
+	const int32 PowerOfTwoTextureSizeZ = FMath::RoundUpToPowerOfTwo(TargetTextureSizeZ);
+
+	switch (InPow2Setting)
+	{
+	case ETexturePowerOfTwoSetting::None:
+		break;
+
+	case ETexturePowerOfTwoSetting::PadToPowerOfTwo:
+	case ETexturePowerOfTwoSetting::StretchToPowerOfTwo:
+		TargetTextureSizeX = PowerOfTwoTextureSizeX;
+		TargetTextureSizeY = PowerOfTwoTextureSizeY;
+		TargetTextureSizeZ = PowerOfTwoTextureSizeZ;
+		break;
+
+	case ETexturePowerOfTwoSetting::PadToSquarePowerOfTwo:
+	case ETexturePowerOfTwoSetting::StretchToSquarePowerOfTwo:
+		TargetTextureSizeX = TargetTextureSizeY = TargetTextureSizeZ =
+			FMath::Max3<int32>(PowerOfTwoTextureSizeX, PowerOfTwoTextureSizeY, PowerOfTwoTextureSizeZ);
+		break;
+
+	case ETexturePowerOfTwoSetting::ResizeToSpecificResolution:
+		if (InResizeDuringBuildX)
+		{
+			TargetTextureSizeX = InResizeDuringBuildX;
+		}
+		if (InResizeDuringBuildY)
+		{
+			TargetTextureSizeY = InResizeDuringBuildY;
+		}
+		break;
+
+	default:
+		checkf(false, TEXT("Unknown entry in ETexturePowerOfTwoSetting::Type"));
+		break;
+	}
+
+	// Z only matters as a sampling dimension if we are a volume texture.
+	if (bInIsVolume == false)
+	{
+		TargetTextureSizeZ = InMip0NumSlices;
+	}
+
+	OutTargetSizeX = TargetTextureSizeX;
+	OutTargetSizeY = TargetTextureSizeY;
+	OutTargetSizeZ = TargetTextureSizeZ;
+
+	return (TargetTextureSizeX != InMip0SizeX) ||
+		(TargetTextureSizeY != InMip0SizeY) ||
+		(bInIsVolume && TargetTextureSizeZ != InMip0NumSlices);
+}
 
 } // namespace
 }

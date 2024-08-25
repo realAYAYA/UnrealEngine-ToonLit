@@ -3,6 +3,7 @@
 #include "../Common.ush"
 #include "../SceneTexturesCommon.ush"
 #include "../DeferredShadingCommon.ush"
+#include "../Substrate/Substrate.ush"
 #include "HairStrandsVisibilityCommon.ush"
 
 #define OUTPUT_DEPTH 0
@@ -25,6 +26,7 @@ struct FHairSampleData
 {
 	float DeviceZ;
 	uint LightChannelMask;
+	bool CastContactShadow;
 };
 
 FHairSampleData ExtractSampleData(uint3 PixelCoord)
@@ -39,24 +41,29 @@ FHairSampleData ExtractSampleData(uint3 PixelCoord)
 		const FHairSample Sample = UnpackHairSample(HairSampleData[SampleIndex]);
 		Out.DeviceZ = max(Out.DeviceZ, Sample.Depth); // Inverse-Z
 		Out.LightChannelMask |= Sample.LightChannelMask;
+		Out.CastContactShadow |= HasHairFlags(Sample.Flags, HAIR_FLAGS_CAST_CONTACT_SHADOW);
 	}
 	return Out;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Gbuffer patching (+ LightChannel mask)
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 #define OUTPUT_FORMAT uint
 #else
 #define OUTPUT_FORMAT float4
 #endif
 #if PERMUTATION_OUTPUT_TYPE == OUTPUT_MATERIALDATA || PERMUTATION_OUTPUT_TYPE == OUTPUT_MATERIALDATA_LIGHTCHANNEL
 void MainPS(
-	in FScreenVertexOutput Input,
-	out float SvDepth			: SV_DEPTH,
-	out OUTPUT_FORMAT Output0	: SV_Target0,
-	out OUTPUT_FORMAT Output1	: SV_Target1,
-	out float4 OutColor			: SV_Target2)
+	in FScreenVertexOutput Input
+	, out float SvDepth			: SV_DEPTH
+	, out OUTPUT_FORMAT Output0	: SV_Target0
+	, out OUTPUT_FORMAT Output1	: SV_Target1
+	, out float4 OutColor		: SV_Target2
+#if !SUBSTRATE_ENABLED
+	, out OUTPUT_FORMAT Output2	: SV_Target3
+#endif
+)
 {
 	const uint3 PixelCoord = uint3(Input.Position.xy, 0);
 	const float Coverage = CoverageTexture.Load(PixelCoord);
@@ -73,12 +80,21 @@ void MainPS(
 	const float DepthBias = 0.001f; 
 	const FHairSampleData SampleData = ExtractSampleData(PixelCoord);
 	SvDepth = SampleData.DeviceZ - DepthBias;
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	Output0 = 0; // MaterialData
 	Output1 = 0; // TopLayerData
+
+	// Force PerObjectData contact shadow to respect hair settings, in order to have correct screen cast later
+	FSubstratePixelHeader DummyHeader = InitialiseSubstratePixelHeader();
+	DummyHeader.SetCastContactShadow(SampleData.CastContactShadow ? 1 : 0);
+	Output0 = DummyHeader.State;
+
 #else
 	Output0 = float4(0, 0, 0, 0);
 	Output1 = 0;
+
+	// Force PerObjectData contact shadow to respect hair settings, in order to have correct screen cast later
+	Output2 = float4(0,0,0,SampleData.CastContactShadow ? 1 : 0);
 #endif
 	OutColor = 0;
 

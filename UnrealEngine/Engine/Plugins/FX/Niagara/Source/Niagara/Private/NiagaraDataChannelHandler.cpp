@@ -15,7 +15,7 @@ void UNiagaraDataChannelHandler::Init(const UNiagaraDataChannel* InChannel)
 
 void UNiagaraDataChannelHandler::BeginFrame(float DeltaTime, FNiagaraWorldManager* OwningWorld)
 {
-
+	CurrentTG = TG_PrePhysics;
 }
 
 void UNiagaraDataChannelHandler::EndFrame(float DeltaTime, FNiagaraWorldManager* OwningWorld)
@@ -25,6 +25,7 @@ void UNiagaraDataChannelHandler::EndFrame(float DeltaTime, FNiagaraWorldManager*
 
 void UNiagaraDataChannelHandler::Tick(float DeltaTime, ETickingGroup TickGroup, FNiagaraWorldManager* OwningWorld)
 {
+	CurrentTG = TickGroup;
 }
 
 UNiagaraDataChannelWriter* UNiagaraDataChannelHandler::GetDataChannelWriter()

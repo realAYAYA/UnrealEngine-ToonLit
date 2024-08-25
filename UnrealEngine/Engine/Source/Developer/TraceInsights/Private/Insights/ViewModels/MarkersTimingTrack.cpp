@@ -707,7 +707,7 @@ FLinearColor FTimeMarkerTrackBuilder::GetColorByCategory(const TCHAR* const Cate
 	FString CategoryStr(Category);
 	if (CategoryStr.StartsWith(TEXT("Log")))
 	{
-		CategoryStr.RightChopInline(3, false);
+		CategoryStr.RightChopInline(3, EAllowShrinking::No);
 	}
 
 	uint32 Hash = 0;
@@ -780,7 +780,7 @@ void FTimeMarkerTrackBuilder::Flush(float AvailableTextW)
 			FString CategoryStr(LastCategory);
 			if (CategoryStr.StartsWith(TEXT("Log")))
 			{
-				CategoryStr.RightChopInline(3, false);
+				CategoryStr.RightChopInline(3, EAllowShrinking::No);
 			}
 
 			const int32 HorizontalOffset = FMath::RoundToInt((AvailableTextW - 2.0f) * FontScale);

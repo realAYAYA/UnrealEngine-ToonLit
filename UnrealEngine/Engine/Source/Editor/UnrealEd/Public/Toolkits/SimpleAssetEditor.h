@@ -45,11 +45,18 @@ public:
 
 	/** FAssetEditorToolkit interface */
 	UNREALED_API virtual void PostRegenerateMenusAndToolbars() override;
-	
+
 	/** Used to show or hide certain properties */
 	UNREALED_API void SetPropertyVisibilityDelegate(FIsPropertyVisible InVisibilityDelegate);
 	/** Can be used to disable the details view making it read-only */
 	UNREALED_API void SetPropertyEditingEnabledDelegate(FIsPropertyEditingEnabled InPropertyEditingDelegate);
+
+protected:
+	/** Handler for "Find parent class in CB" button */
+	FReply OnFindParentClassInContentBrowserClicked(TObjectPtr<UObject> SyncToClass) const;
+
+	/** Handler for "Edit parent class" button */
+	FReply OnEditParentClassClicked(TObjectPtr<UObject> EditClass) const;
 
 private:
 	/** Create the properties tab and its content */

@@ -62,6 +62,7 @@ public:
 
 	// IDynamicMeshProvider
 	virtual UE::Geometry::FDynamicMesh3 GetDynamicMesh() override;
+	virtual UE::Geometry::FDynamicMesh3 GetDynamicMesh(bool bRequestTangents) override;
 
 	// IDynamicMeshCommitter
 	virtual void CommitDynamicMesh(const UE::Geometry::FDynamicMesh3& Mesh, const FDynamicMeshCommitInfo& CommitInfo) override;
@@ -77,6 +78,17 @@ public:
 	virtual UStaticMesh* GetStaticMesh() const override;
 
 	// Rest provided by parent class
+
+
+	// helper struct to cache mesh descriptions, so we can provide the const ptr GetMeshDescription API while still handling the Build Scale
+	struct FCachedMeshDescription
+	{
+		FMeshDescription* Source;
+		TUniquePtr<FMeshDescription> Copy;
+	};
+	using FMeshDescriptionCache = TMap<int32, FCachedMeshDescription>;
+	// helper to get the mesh description with build scale applied, using/updating the cache as needed
+	static const FMeshDescription* GetMeshDescriptionWithScaleApplied(UStaticMesh* Mesh, int32 UseLOD, FMeshDescriptionCache& Cache);
 
 protected:
 	TWeakObjectPtr<UStaticMesh> StaticMesh = nullptr;
@@ -105,6 +117,11 @@ protected:
 		FComponentMaterialSet& MaterialSetOut, bool bPreferAssetMaterials);
 	static bool CommitMaterialSetUpdate(UStaticMesh* SkeletalMesh, 
 		const FComponentMaterialSet& MaterialSet, bool bApplyToAsset);
+
+private:
+	// In some cases we need to modify the mesh description that we pass to tools, e.g. to account for the BuildScale,
+	// and in those cases we retain the storage here to cover the lifetime of the pointer returned by GetMeshDescription()
+	FMeshDescriptionCache CachedMeshDescriptions;
 };
 
 

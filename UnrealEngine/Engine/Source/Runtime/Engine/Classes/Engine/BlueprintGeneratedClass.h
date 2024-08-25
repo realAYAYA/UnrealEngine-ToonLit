@@ -22,12 +22,10 @@ class UDynamicBlueprintBinding;
 class UInheritableComponentHandler;
 class UTimelineTemplate;
 class UClassCookedMetaData;
+class UEdGraphPin;
 
 DECLARE_MEMORY_STAT_EXTERN(TEXT("Persistent Uber Graph Frame memory"), STAT_PersistentUberGraphFrameMemory, STATGROUP_Memory, );
 DECLARE_MEMORY_STAT_EXTERN(TEXT("BPComp Instancing Fast Path memory"), STAT_BPCompInstancingFastPathMemory, STATGROUP_Memory, );
-
-class UEdGraphPin;
-
 
 USTRUCT()
 struct FNodeToCodeAssociation
@@ -637,12 +635,6 @@ public:
 	UPROPERTY(AssetRegistrySearchable)
 	int32	NumReplicatedProperties;
 
-	// @todo: BP2CPP_remove
-	/** Flag used to indicate if this class has a nativized parent in a cooked build. */
-	UE_DEPRECATED(5.0, "This flag is no longer in use and will be removed.")
-	UPROPERTY()
-	uint8 bHasNativizedParent_DEPRECATED:1;
-
 	/** Flag used to indicate if this class has data to support the component instancing fast path. */
 	UPROPERTY()
 	uint8 bHasCookedComponentInstancingData:1;
@@ -687,9 +679,6 @@ public:
 	/** Stores data to override (in children classes) components (created by SCS) from parent classes */
 	UPROPERTY()
 	TObjectPtr<class UInheritableComponentHandler> InheritableComponentHandler;
-
-	UPROPERTY()
-	TObjectPtr<class UStructProperty> UberGraphFramePointerProperty_DEPRECATED;
 	
 	FStructProperty* UberGraphFramePointerProperty;
 
@@ -783,8 +772,12 @@ public:
 	ENGINE_API virtual void PostLoad() override;
 	ENGINE_API virtual void PostInitProperties() override;
 	ENGINE_API virtual void GetPreloadDependencies(TArray<UObject*>& OutDeps) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 #if WITH_EDITOR
+	ENGINE_API virtual void GetAdditionalAssetDataObjectsForCook(FArchiveCookContext& CookContext, 
+		TArray<UObject*>& OutObjects) const override;
 	ENGINE_API virtual void PostLoadAssetRegistryTags(const FAssetData& InAssetData, TArray<FAssetRegistryTag>& OutTagsAndValuesToUpdate) const;
 #endif //~ WITH_EDITOR
 	ENGINE_API virtual FPrimaryAssetId GetPrimaryAssetId() const override;
@@ -869,11 +862,6 @@ protected:
 	* @return	true if the method was able to copy the property successfully via the sub custom property list
 	*/
 	static ENGINE_API bool InitPropertyFromSubPropertyList(const FProperty* Property, const FCustomPropertyListNode* SubPropertyList, uint8* PropertyValue, const uint8* DefaultPropertyValue);
-
-	// @todo: BP2CPP_remove
-	/** Check for and handle manual application of default value overrides to component subobjects that were inherited from a nativized parent class */
-	UE_DEPRECATED(5.0, "This API is no longer in use and will be removed.")
-	static void CheckAndApplyComponentTemplateOverrides(UObject* InClassDefaultObject) {}
 
 public:
 

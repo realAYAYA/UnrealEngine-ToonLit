@@ -24,17 +24,16 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "acl/core/impl/compiler_utils.h"
+#include "acl/version.h"
 #include "acl/core/error_result.h"
 #include "acl/core/iallocator.h"
-#include "acl/core/interpolation_utils.h"
+#include "acl/core/sample_looping_policy.h"
+#include "acl/core/sample_rounding_policy.h"
+#include "acl/core/time_utils.h"
 #include "acl/core/track_types.h"
 #include "acl/core/track_writer.h"
-#include "acl/core/utils.h"
+#include "acl/core/impl/compiler_utils.h"
 #include "acl/compression/track.h"
-
-#include <rtm/scalarf.h>
-#include <rtm/vector4f.h>
 
 #include <cstdint>
 #include <limits>
@@ -44,6 +43,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// An array of tracks.
 	// Although each track contained within is untyped, each track must have
@@ -84,6 +85,9 @@ namespace acl
 
 		//////////////////////////////////////////////////////////////////////////
 		// Returns the number of samples per track in this array.
+		// This does not account for the repeating first sample when the wrap
+		// looping policy is used.
+		// See `sample_looping_policy` for details.
 		uint32_t get_num_samples_per_track() const { return m_allocator != nullptr && m_num_tracks != 0 ? m_tracks->get_num_samples() : 0; }
 
 		//////////////////////////////////////////////////////////////////////////
@@ -100,11 +104,15 @@ namespace acl
 
 		//////////////////////////////////////////////////////////////////////////
 		// Returns the duration for tracks in this array.
-		float get_duration() const { return m_allocator != nullptr && m_num_tracks != 0 ? calculate_duration(m_tracks->get_num_samples(), m_tracks->get_sample_rate()) : 0.0F; }
+		// Note that the duration depends on the looping policy.
+		// See `sample_looping_policy` for details.
+		float get_duration() const;
 
 		//////////////////////////////////////////////////////////////////////////
 		// Returns the finite duration for tracks in this array.
-		float get_finite_duration() const { return m_allocator != nullptr && m_num_tracks != 0 ? calculate_finite_duration(m_tracks->get_num_samples(), m_tracks->get_sample_rate()) : 0.0F; }
+		// Note that the duration depends on the looping policy.
+		// See `sample_looping_policy` for details.
+		float get_finite_duration() const;
 
 		//////////////////////////////////////////////////////////////////////////
 		// Returns the track name.
@@ -113,6 +121,21 @@ namespace acl
 		//////////////////////////////////////////////////////////////////////////
 		// Sets the track name.
 		void set_name(const string& name) { m_name = name.get_copy(); }
+
+		//////////////////////////////////////////////////////////////////////////
+		// Sets the looping policy.
+		// Note that when wrap policy is used, an extra repeating
+		// first sample is artificially inserted at the end of the clip.
+		// This artificial sample maps to the first sample, it only lives once in memory.
+		// This allows us to interpolate from the last sample back to the first
+		// sample when looping and wrapping during playback.
+		// See `sample_looping_policy` for details.
+		// The `sample_looping_policy::as_compressed` value isn't allowed here.
+		void set_looping_policy(sample_looping_policy policy);
+
+		//////////////////////////////////////////////////////////////////////////
+		// Returns the looping policy.
+		sample_looping_policy get_looping_policy() const { return m_looping_policy; }
 
 		//////////////////////////////////////////////////////////////////////////
 		// Returns the track at the specified index.
@@ -146,12 +169,14 @@ namespace acl
 		//////////////////////////////////////////////////////////////////////////
 		// Sample all tracks within this array at the specified sample time and
 		// desired rounding policy. Track samples are written out using the `track_writer` provided.
+		// The sample_time value must be within [0, clip duration] inclusive otherwise it will be clamped.
 		template<class track_writer_type>
 		void sample_tracks(float sample_time, sample_rounding_policy rounding_policy, track_writer_type& writer) const;
 
 		//////////////////////////////////////////////////////////////////////////
 		// Sample a single track within this array at the specified sample time and
 		// desired rounding policy. The track sample is written out using the `track_writer` provided.
+		// The sample_time value must be within [0, clip duration] inclusive otherwise it will be clamped.
 		template<class track_writer_type>
 		void sample_track(uint32_t track_index, float sample_time, sample_rounding_policy rounding_policy, track_writer_type& writer) const;
 
@@ -167,11 +192,12 @@ namespace acl
 		track_array(const track_array&) = delete;
 		track_array& operator=(const track_array&) = delete;
 
-		iallocator*		m_allocator;		// The allocator used to allocate our tracks
-		track*			m_tracks;			// The track list
-		uint32_t		m_num_tracks;		// The number of tracks
+		iallocator*				m_allocator;		// The allocator used to allocate our tracks
+		track*					m_tracks;			// The track list
+		uint32_t				m_num_tracks;		// The number of tracks
+		sample_looping_policy	m_looping_policy;	// The looping policy
 
-		string			m_name;				// An optional name
+		string					m_name;				// An optional name
 	};
 
 	//////////////////////////////////////////////////////////////////////////
@@ -269,6 +295,8 @@ namespace acl
 	using track_array_float4f	= track_array_typed<track_type8::float4f>;
 	using track_array_vector4f	= track_array_typed<track_type8::vector4f>;
 	using track_array_qvvf		= track_array_typed<track_type8::qvvf>;
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 #include "acl/compression/impl/track_array.impl.h"

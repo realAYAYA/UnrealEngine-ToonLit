@@ -22,6 +22,30 @@ public:
 
 	void SetRelatedBlueprintClass(TSubclassOf<URigVMBlueprint> InClass);
 
+	struct FPinInfo
+	{
+		FName Name;
+		ERigVMPinDirection Direction;
+		FName CPPType;
+		UObject* CPPTypeObject;
+
+		FPinInfo()
+			: Name(NAME_None)
+			, Direction(ERigVMPinDirection::Invalid)
+			, CPPType(NAME_None)
+			, CPPTypeObject(nullptr)
+		{}
+
+		FPinInfo(const FName& InName, ERigVMPinDirection InDirection, const FName& InCPPType, UObject* InCPPTypeObject)
+		: Name(InName)
+		, Direction(InDirection)
+		, CPPType(InCPPType)
+		, CPPTypeObject(InCPPTypeObject)
+		{}
+	};
+	
+	static URigVMEdGraphNode* SpawnTemplateNode(UEdGraph* InParentGraph, const TArray<FPinInfo>& InPins, const FName& InNodeName = NAME_None);
+	
 private:
 
 	TSubclassOf<URigVMBlueprint> RelatedBlueprintClass;

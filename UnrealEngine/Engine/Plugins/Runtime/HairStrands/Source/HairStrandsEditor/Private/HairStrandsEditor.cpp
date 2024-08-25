@@ -29,6 +29,8 @@
 #include "ISettingsModule.h"
 #include "ISettingsSection.h"
 #include "ISequencerModule.h"
+#include "Delegates/DelegateCombinations.h"
+#include "UObject/UObjectIterator.h"
 
 IMPLEMENT_MODULE(FGroomEditor, HairStrandsEditor);
 
@@ -74,6 +76,10 @@ void FGroomEditor::StartupModule()
 	LLM_SCOPE_BYTAG(GroomEditor)
 
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FGroomEditor::RegisterMenus));
+	
+	// Any attempt to use GEditor right now will fail as it hasn't been initialized yet. Waiting for post engine init resolves that.
+	FCoreDelegates::OnPostEngineInit.AddRaw(this, &FGroomEditor::OnPostEngineInit);
+	FCoreDelegates::OnEnginePreExit.AddRaw(this, &FGroomEditor::OnPreExit);
 
 	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
 
@@ -147,6 +153,9 @@ void FGroomEditor::ShutdownModule()
 	UToolMenus::UnRegisterStartupCallback(this);
 	UToolMenus::UnregisterOwner(UE_MODULE_NAME);
 
+	FCoreDelegates::OnPostEngineInit.RemoveAll(this);
+	FCoreDelegates::OnEnginePreExit.RemoveAll(this);
+
 	ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings");
 	if (SettingsModule != nullptr)
 	{
@@ -193,6 +202,66 @@ TArray<TSharedPtr<IGroomTranslator>> FGroomEditor::GetHairTranslators()
 	}
 
 	return Translators;
+}
+
+void FGroomEditor::OnPostEngineInit()
+{
+	// The editor should be valid at this point.. log a warning if not!
+	if (GEditor)
+	{
+		UEditorEngine* EditorEngine = CastChecked<UEditorEngine>(GEngine);
+		PreviewPlatformChangedHandle = EditorEngine->OnPreviewPlatformChanged().AddRaw(this, &FGroomEditor::OnPreviewPlatformChanged);
+		PreviewFeatureLevelChangedHandle = EditorEngine->OnPreviewFeatureLevelChanged().AddRaw(this, &FGroomEditor::OnPreviewFeatureLevelChanged);
+	}
+}
+
+void FGroomEditor::OnPreExit()
+{
+	if (GEditor)
+	{
+		CastChecked<UEditorEngine>(GEngine)->OnPreviewPlatformChanged().Remove(PreviewPlatformChangedHandle);
+		CastChecked<UEditorEngine>(GEngine)->OnPreviewFeatureLevelChanged().Remove(PreviewFeatureLevelChangedHandle);
+	}
+}
+
+void FGroomEditor::OnPreviewPlatformChanged()
+{
+#if WITH_EDITOR
+	UEditorEngine* EditorEngine = CastChecked<UEditorEngine>(GEngine);
+	ERHIFeatureLevel::Type ActiveFeatureLevel = EditorEngine->GetDefaultWorldFeatureLevel();
+	if (EditorEngine->IsFeatureLevelPreviewActive())
+	{
+		ActiveFeatureLevel = EditorEngine->GetActiveFeatureLevelPreviewType();
+	}
+
+	for (TObjectIterator<UGroomComponent> It; It; ++It)
+	{
+		if (UGroomComponent* Component = *It)
+		{
+			Component->HandlePlatformPreviewChanged(ActiveFeatureLevel);
+		}
+	}
+#endif
+}
+
+void FGroomEditor::OnPreviewFeatureLevelChanged(ERHIFeatureLevel::Type InPreviewFeatureLevel)
+{
+#if WITH_EDITOR
+	UEditorEngine* EditorEngine = CastChecked<UEditorEngine>(GEngine);
+	ERHIFeatureLevel::Type ActiveFeatureLevel = EditorEngine->GetDefaultWorldFeatureLevel();
+	if (EditorEngine->IsFeatureLevelPreviewActive())
+	{
+		ActiveFeatureLevel = EditorEngine->GetActiveFeatureLevelPreviewType();
+	}
+
+	for (TObjectIterator<UGroomComponent> It; It; ++It)
+	{
+		if (UGroomComponent* Component = *It)
+		{
+			Component->HandleFeatureLevelChanged(InPreviewFeatureLevel);
+		}
+	}
+#endif
 }
 
 #undef LOCTEXT_NAMESPACE

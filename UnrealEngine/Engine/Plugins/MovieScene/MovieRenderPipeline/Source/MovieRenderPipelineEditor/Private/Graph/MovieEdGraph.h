@@ -20,9 +20,11 @@ class UMoviePipelineEdGraph : public UEdGraph
 	GENERATED_BODY()
 
 public:
-
 	/** Initialize this Editor Graph from a Runtime Graph */
 	void InitFromRuntimeGraph(UMovieGraphConfig* InGraph);
+
+	/** Register delegates that relate to the runtime graph. */
+	void RegisterDelegates(UMovieGraphConfig* InGraph);
 
 	/** Returns the runtime UMovieGraphConfig that contains this editor graph */
 	class UMovieGraphConfig* GetPipelineGraph() const;

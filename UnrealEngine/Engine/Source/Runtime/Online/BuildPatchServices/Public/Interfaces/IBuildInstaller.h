@@ -62,34 +62,6 @@ enum class EBuildPatchInstallError
 };
 
 /**
- * @return the stringified version of the EBuildPatchInstallError enum passed in
- */
-inline const TCHAR* LexToString(EBuildPatchInstallError EnumVal)
-{
-	static_assert((int32)EBuildPatchInstallError::NumInstallErrors == 12, "Please add support for the extra values to the function below.");
-#define CASE_ENUM_SET(State) case State: return TEXT(#State); break;
-	switch (EnumVal)
-	{
-		CASE_ENUM_SET(EBuildPatchInstallError::NoError)
-		CASE_ENUM_SET(EBuildPatchInstallError::DownloadError)
-		CASE_ENUM_SET(EBuildPatchInstallError::FileConstructionFail)
-		CASE_ENUM_SET(EBuildPatchInstallError::MoveFileToInstall)
-		CASE_ENUM_SET(EBuildPatchInstallError::BuildVerifyFail)
-		CASE_ENUM_SET(EBuildPatchInstallError::ApplicationClosing)
-		CASE_ENUM_SET(EBuildPatchInstallError::ApplicationError)
-		CASE_ENUM_SET(EBuildPatchInstallError::UserCanceled)
-		CASE_ENUM_SET(EBuildPatchInstallError::PrerequisiteError)
-		CASE_ENUM_SET(EBuildPatchInstallError::InitializationError)
-		CASE_ENUM_SET(EBuildPatchInstallError::PathLengthExceeded)
-		CASE_ENUM_SET(EBuildPatchInstallError::OutOfDiskSpace)
-			
-		default:
-			return TEXT("EBuildPatchInstallError::Unknown");
-	}
-#undef CASE_ENUM_SET
-};
-
-/**
  * Declares the error code prefixes for each error type enum
  */
 namespace InstallErrorPrefixes
@@ -331,7 +303,6 @@ namespace BuildPatchServices
 	struct FBuildInstallerConfiguration;
 }
 
-
 /**
  * Interface to a Build Installer, exposes installation control, progress, and state information.
  */
@@ -495,3 +466,90 @@ public:
 	virtual const BuildPatchServices::FBuildInstallerConfiguration& GetConfiguration() const = 0;
 };
 
+static_assert((uint32)EBuildPatchInstallError::NumInstallErrors == 12, "Please add support for the extra values to the Lex functions below.");
+
+inline const TCHAR* LexToString(EBuildPatchInstallError Error)
+{
+#define CASE_ENUM_TO_STR(Value) case EBuildPatchInstallError::Value: return TEXT(#Value)
+	switch (Error)
+	{
+		CASE_ENUM_TO_STR(NoError);
+		CASE_ENUM_TO_STR(DownloadError);
+		CASE_ENUM_TO_STR(FileConstructionFail);
+		CASE_ENUM_TO_STR(MoveFileToInstall);
+		CASE_ENUM_TO_STR(BuildVerifyFail);
+		CASE_ENUM_TO_STR(ApplicationClosing);
+		CASE_ENUM_TO_STR(ApplicationError);
+		CASE_ENUM_TO_STR(UserCanceled);
+		CASE_ENUM_TO_STR(PrerequisiteError);
+		CASE_ENUM_TO_STR(InitializationError);
+		CASE_ENUM_TO_STR(PathLengthExceeded);
+		CASE_ENUM_TO_STR(OutOfDiskSpace);
+	default: return TEXT("InvalidOrMax");
+	}
+#undef CASE_ENUM_TO_STR
+}
+
+inline void LexFromString(EBuildPatchInstallError& Error, const TCHAR* Buffer)
+{
+#define RETURN_IF_EQUAL(Value) if (FCString::Stricmp(Buffer, TEXT(#Value)) == 0) { Error = EBuildPatchInstallError::Value; return; }
+	const TCHAR* const Prefix = TEXT("EBuildPatchInstallError::");
+	const SIZE_T PrefixLen = FCString::Strlen(Prefix);
+	if (FCString::Strnicmp(Buffer, Prefix, PrefixLen) == 0)
+	{
+		Buffer += PrefixLen;
+	}
+	RETURN_IF_EQUAL(NoError);
+	RETURN_IF_EQUAL(DownloadError);
+	RETURN_IF_EQUAL(FileConstructionFail);
+	RETURN_IF_EQUAL(MoveFileToInstall);
+	RETURN_IF_EQUAL(BuildVerifyFail);
+	RETURN_IF_EQUAL(ApplicationClosing);
+	RETURN_IF_EQUAL(ApplicationError);
+	RETURN_IF_EQUAL(UserCanceled);
+	RETURN_IF_EQUAL(PrerequisiteError);
+	RETURN_IF_EQUAL(InitializationError);
+	RETURN_IF_EQUAL(PathLengthExceeded);
+	RETURN_IF_EQUAL(OutOfDiskSpace);
+	// Did not match
+	Error = EBuildPatchInstallError::NumInstallErrors;
+	return;
+#undef RETURN_IF_EQUAL
+}
+
+static_assert((uint32)EBuildPatchDownloadHealth::NUM_Values == 5, "Please add support for the extra values to the Lex functions below.");
+
+inline const TCHAR* LexToString(EBuildPatchDownloadHealth Error)
+{
+#define CASE_ENUM_TO_STR(Value) case EBuildPatchDownloadHealth::Value: return TEXT(#Value)
+	switch (Error)
+	{
+		CASE_ENUM_TO_STR(Disconnected);
+		CASE_ENUM_TO_STR(Poor);
+		CASE_ENUM_TO_STR(OK);
+		CASE_ENUM_TO_STR(Good);
+		CASE_ENUM_TO_STR(Excellent);
+	default: return TEXT("InvalidOrMax");
+	}
+#undef CASE_ENUM_TO_STR
+}
+
+inline void LexFromString(EBuildPatchDownloadHealth& Error, const TCHAR* Buffer)
+{
+#define RETURN_IF_EQUAL(Value) if (FCString::Stricmp(Buffer, TEXT(#Value)) == 0) { Error = EBuildPatchDownloadHealth::Value; return; }
+	const TCHAR* const Prefix = TEXT("EBuildPatchDownloadHealth::");
+	const SIZE_T PrefixLen = FCString::Strlen(Prefix);
+	if (FCString::Strnicmp(Buffer, Prefix, PrefixLen) == 0)
+	{
+		Buffer += PrefixLen;
+	}
+	RETURN_IF_EQUAL(Disconnected);
+	RETURN_IF_EQUAL(Poor);
+	RETURN_IF_EQUAL(OK);
+	RETURN_IF_EQUAL(Good);
+	RETURN_IF_EQUAL(Excellent);
+	// Did not match
+	Error = EBuildPatchDownloadHealth::NUM_Values;
+	return;
+#undef RETURN_IF_EQUAL
+}

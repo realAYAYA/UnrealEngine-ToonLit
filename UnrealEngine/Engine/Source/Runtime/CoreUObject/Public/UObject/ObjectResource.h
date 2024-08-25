@@ -266,16 +266,18 @@ struct FObjectExport : public FObjectResource
 	int64         	SerialOffset;
 
 	/**
-	 * The location (into the FLinker's underlying file reader archive) of the beginning of the
-	 * portion of this export's data that is serialized using script serialization.
-	 * Transient
+	 * The location (relative to SerialOffset) of the beginning of the portion of this export's data that is
+	 * serialized using tagged property serialization.
+	 * Serialized into versioned packages as of EUnrealEngineObjectUE5Version::SCRIPT_SERIALIZATION_OFFSET
+	 * Otherwise transient
 	 */
 	int64				ScriptSerializationStartOffset;
 
 	/**
-	 * The location (into the FLinker's underlying file reader archive) of the end of the
-	 * portion of this export's data that is serialized using script serialization.
-	 * Transient
+	 * The location (relative to SerialOffset) of the end of the portion of this export's data that is 
+	 * serialized using tagged property serialization.
+	 * Serialized into versioned packages as of EUnrealEngineObjectUE5Version::SCRIPT_SERIALIZATION_OFFSET
+	 * Otherwise transient
 	 */
 	int64				ScriptSerializationEndOffset;
 

@@ -46,7 +46,11 @@ namespace AutomationScripts
 					{
 						if (Params.Package || (SC.StageTargetPlatform.RequiresPackageToDeploy(Params) && Params.Deploy))
 						{
-							SC.StageTargetPlatform.Package(Params, SC, WorkingCL);
+							if (SC.CustomDeployment == null || !SC.CustomDeployment.PrePackage(Params, SC, WorkingCL))
+							{
+								SC.StageTargetPlatform.Package(Params, SC, WorkingCL);
+							}
+							SC.CustomDeployment?.PostPackage(Params, SC, WorkingCL);
 						}
 					}
 

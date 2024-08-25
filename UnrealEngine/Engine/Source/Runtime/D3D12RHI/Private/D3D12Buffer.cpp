@@ -11,7 +11,7 @@ D3D12Buffer.cpp: D3D Common code for buffers.
 FName GetRHIBufferClassName(const FName& ClassName)
 {
 	const static FLazyName RHIBufferName(TEXT("FRHIBuffer"));
-	return ClassName == NAME_None ? RHIBufferName : ClassName;
+	return (ClassName == NAME_None) ? RHIBufferName : ClassName;
 }
 
 extern int32 GD3D12BindResourceLabels;
@@ -94,7 +94,7 @@ struct FRHICommandRenameUploadBuffer final : public FRHICommand<FRHICommandRenam
 			const uint32 GPUIndex = 0; // @todo mgpu - seems wrong we're only doing this for the 0th GPU
 
 			FD3D12CommandContext& Context = FD3D12CommandContext::Get(RHICmdList, GPUIndex);
-			Context.ConditionalClearShaderResource(ResourceLocation);
+			Context.ConditionalClearShaderResource(ResourceLocation, EShaderParameterTypeMask::SRVMask);
 		});
 
 #if UE_MEMORY_TRACE_ENABLED
@@ -102,7 +102,7 @@ struct FRHICommandRenameUploadBuffer final : public FRHICommand<FRHICommandRenam
 		MemoryTrace_ReallocFree(Resource->ResourceLocation.GetGPUVirtualAddress(), EMemoryTraceRootHeap::VideoMemory);
 		MemoryTrace_ReallocAlloc(NewLocation.GetGPUVirtualAddress(), Resource->ResourceLocation.GetSize(), Resource->BufferAlignment, EMemoryTraceRootHeap::VideoMemory);
 #endif
-		Resource->RenameLDAChain(NewLocation);
+		Resource->RenameLDAChain(CmdList, NewLocation);
 
 		if (PreviousPipeline.IsSet())
 		{
@@ -431,17 +431,17 @@ FD3D12Buffer* FD3D12Adapter::CreateRHIBuffer(
 	return BufferOut;
 }
 
-void FD3D12Buffer::Rename(FD3D12ResourceLocation& NewLocation)
+void FD3D12Buffer::Rename(FRHICommandListBase& RHICmdList, FD3D12ResourceLocation& NewLocation)
 {
 	FD3D12ResourceLocation::TransferOwnership(ResourceLocation, NewLocation);
-	ResourceRenamed();
+	ResourceRenamed(RHICmdList);
 }
 
-void FD3D12Buffer::RenameLDAChain(FD3D12ResourceLocation& NewLocation)
+void FD3D12Buffer::RenameLDAChain(FRHICommandListBase& RHICmdList, FD3D12ResourceLocation& NewLocation)
 {
 	// Dynamic buffers use cross-node resources (with the exception of BUF_MultiGPUAllocate)
 	//ensure(GetUsage() & BUF_AnyDynamic);
-	Rename(NewLocation);
+	Rename(RHICmdList, NewLocation);
 
 	if (GNumExplicitGPUsForRendering > 1)
 	{
@@ -455,7 +455,7 @@ void FD3D12Buffer::RenameLDAChain(FD3D12ResourceLocation& NewLocation)
 			for (auto NextBuffer = ++FLinkedObjectIterator(this); NextBuffer; ++NextBuffer)
 			{
 				FD3D12ResourceLocation::ReferenceNode(NextBuffer->GetParentDevice(), NextBuffer->ResourceLocation, ResourceLocation);
-				NextBuffer->ResourceRenamed();
+				NextBuffer->ResourceRenamed(RHICmdList);
 			}
 		}
 	}
@@ -497,7 +497,7 @@ void FD3D12Buffer::GetResourceDescAndAlignment(uint64 InSize, uint32 InStride, E
 		ResourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 	}
 
-	if (!EnumHasAnyFlags(InUsage, BUF_ShaderResource))
+	if (!EnumHasAnyFlags(InUsage, BUF_ShaderResource | BUF_AccelerationStructure))
 	{
 		ResourceDesc.Flags |= D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
 	}
@@ -512,8 +512,19 @@ void FD3D12Buffer::GetResourceDescAndAlignment(uint64 InSize, uint32 InStride, E
 		ResourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
 	}
 
-	// Structured buffers, non-ByteAddress buffers, need to be aligned to their stride to ensure that they can be addressed correctly with element based offsets.
-	Alignment = (InStride > 0) && (EnumHasAnyFlags(InUsage, BUF_StructuredBuffer) || !EnumHasAnyFlags(InUsage, BUF_ByteAddressBuffer | BUF_DrawIndirect)) ? InStride : 4;
+	if (EnumHasAnyFlags(InUsage, BUF_ReservedResource))
+	{
+		checkf(InStride <= GRHIGlobals.ReservedResources.TileSizeInBytes,
+			TEXT("Reserved buffer stride %d must not be greater than the reserved resource tile size %d"), 
+			InStride, GRHIGlobals.ReservedResources.TileSizeInBytes);
+
+		Alignment = GRHIGlobals.ReservedResources.TileSizeInBytes;
+	}
+	else
+	{
+		// Structured buffers, non-ByteAddress buffers, need to be aligned to their stride to ensure that they can be addressed correctly with element based offsets.
+		Alignment = (InStride > 0) && (EnumHasAnyFlags(InUsage, BUF_StructuredBuffer) || !EnumHasAnyFlags(InUsage, BUF_ByteAddressBuffer | BUF_DrawIndirect)) ? InStride : 4;
+	}
 }
 
 FBufferRHIRef FD3D12DynamicRHI::RHICreateBuffer(FRHICommandListBase& RHICmdList, FRHIBufferDesc const& Desc, ERHIAccess ResourceState, FRHIResourceCreateInfo& CreateInfo)
@@ -546,7 +557,17 @@ FD3D12Buffer* FD3D12DynamicRHI::CreateD3D12Buffer(class FRHICommandListBase* RHI
 		? ED3D12ResourceStateMode::SingleState 
 		: ED3D12ResourceStateMode::Default;
 
+	const bool bHasInitialData = CreateInfo.ResourceArray != nullptr;
+
 	const bool bIsDynamic = EnumHasAnyFlags(BufferDesc.Usage, BUF_AnyDynamic);
+
+	if (EnumHasAnyFlags(BufferDesc.Usage, BUF_ReservedResource))
+	{
+		checkf(!bHasInitialData, TEXT("Reserved resources may not have initial data"));
+		checkf(!bIsDynamic, TEXT("Reserved resources may not be dynamic"));
+		checkf(!ResourceAllocator, TEXT("Reserved resources may not use a custom resource allocator"));
+	}
+
 	D3D12_HEAP_TYPE HeapType = bIsDynamic ? D3D12_HEAP_TYPE_UPLOAD : D3D12_HEAP_TYPE_DEFAULT;
 	const FD3D12Resource::FD3D12ResourceTypeHelper Type(Desc, HeapType);
 
@@ -559,7 +580,6 @@ FD3D12Buffer* FD3D12DynamicRHI::CreateD3D12Buffer(class FRHICommandListBase* RHI
 
 	// Setup the state at which the resource needs to be created - copy dest only supported for placed resources
 	D3D12_RESOURCE_STATES CreateState = (CreateInfo.ResourceArray && bSupportResourceStateTracking) ? D3D12_RESOURCE_STATE_COPY_DEST : DesiredState;
-	bool bHasInitialData = CreateInfo.ResourceArray != nullptr;
 
 	FD3D12Buffer* Buffer = GetAdapter().CreateRHIBuffer(Desc, Alignment, BufferDesc, StateMode, CreateState, bHasInitialData, CreateInfo.GPUMask, ResourceAllocator, CreateInfo.DebugName, CreateInfo.OwnerName, TraceClassName);
 	check(Buffer->ResourceLocation.IsValid());
@@ -598,7 +618,7 @@ void* FD3D12DynamicRHI::LockBuffer(FRHICommandListBase& RHICmdList, FD3D12Buffer
 	{
 		check(LockMode == RLM_WriteOnly || LockMode == RLM_WriteOnly_NoOverwrite);
 
-		if (LockedData.bHasNeverBeenLocked)
+		if (LockedData.bHasNeverBeenLocked || LockMode == RLM_WriteOnly_NoOverwrite)
 		{
 			// Buffers on upload heap are mapped right after creation
 			Data = Buffer->ResourceLocation.GetMappedBaseAddress();
@@ -609,7 +629,7 @@ void* FD3D12DynamicRHI::LockBuffer(FRHICommandListBase& RHICmdList, FD3D12Buffer
 			FD3D12Device* Device = Buffer->GetParentDevice();
 
 			// If on the RenderThread, queue up a command on the RHIThread to rename this buffer at the correct time
-			if (RHICmdList.IsTopOfPipe() && LockMode == RLM_WriteOnly)
+			if (RHICmdList.IsTopOfPipe())
 			{
 				FRHICommandRenameUploadBuffer* Command = ALLOC_COMMAND_CL(RHICmdList, FRHICommandRenameUploadBuffer)(Buffer, Device);
 				Data = Adapter.GetUploadHeapAllocator(Device->GetGPUIndex()).AllocUploadResource(BufferSize, Buffer->BufferAlignment, Command->NewLocation);
@@ -647,7 +667,7 @@ void* FD3D12DynamicRHI::LockBuffer(FRHICommandListBase& RHICmdList, FD3D12Buffer
 				{
 					FD3D12CommandContext& DefaultContext = Device->GetDefaultCommandContext();
 
-					FScopedResourceBarrier ScopeResourceBarrierSource(DefaultContext, pResource, D3D12_RESOURCE_STATE_COPY_SOURCE, 0);
+					FScopedResourceBarrier ScopeResourceBarrierSource(DefaultContext, pResource, &Buffer->ResourceLocation, D3D12_RESOURCE_STATE_COPY_SOURCE, 0);
 					// Don't need to transition upload heaps
 
 					uint64 SubAllocOffset = Buffer->ResourceLocation.GetOffsetFromBaseOfResource();
@@ -690,8 +710,8 @@ void* FD3D12DynamicRHI::LockBuffer(FRHICommandListBase& RHICmdList, FD3D12Buffer
 		}
 	}
 
-	LockedData.LockedOffset = Offset;
-	LockedData.LockedPitch = Size;
+	LockedData.LockOffset = Offset;
+	LockedData.LockSize = Size;
 	LockedData.bLocked = true;
 	LockedData.bHasNeverBeenLocked = false;
 
@@ -734,7 +754,7 @@ void FD3D12DynamicRHI::UnlockBuffer(FRHICommandListBase& RHICmdList, FD3D12Buffe
 					if (CurrentBuffer.Get() == LastBuffer)
 					{
 						// Command associated with last buffer (will be only buffer if single GPU) receives ownership of locked data
-						ALLOC_COMMAND_CL(RHICmdList, FRHICommandUpdateBuffer)(&CurrentBuffer->ResourceLocation, LockedData.ResourceLocation, LockedData.LockedOffset, LockedData.LockedPitch);
+						ALLOC_COMMAND_CL(RHICmdList, FRHICommandUpdateBuffer)(&CurrentBuffer->ResourceLocation, LockedData.ResourceLocation, LockedData.LockOffset, LockedData.LockSize);
 					}
 					else
 					{
@@ -742,12 +762,12 @@ void FD3D12DynamicRHI::UnlockBuffer(FRHICommandListBase& RHICmdList, FD3D12Buffe
 						// last command handling clean up the locked data after it has been propagated to all GPUs.
 						FD3D12ResourceLocation NodeResourceLocation(LockedData.ResourceLocation.GetParentDevice());
 						FD3D12ResourceLocation::ReferenceNode(NodeResourceLocation.GetParentDevice(), NodeResourceLocation, LockedData.ResourceLocation);
-						ALLOC_COMMAND_CL(RHICmdList, FRHICommandUpdateBuffer)(&CurrentBuffer->ResourceLocation, NodeResourceLocation, LockedData.LockedOffset, LockedData.LockedPitch);
+						ALLOC_COMMAND_CL(RHICmdList, FRHICommandUpdateBuffer)(&CurrentBuffer->ResourceLocation, NodeResourceLocation, LockedData.LockOffset, LockedData.LockSize);
 					}
 				}
 				else
 				{
-					FD3D12CommandContextBase::Get(RHICmdList).UpdateBuffer(&CurrentBuffer->ResourceLocation, LockedData.LockedOffset, &LockedData.ResourceLocation, 0, LockedData.LockedPitch);
+					FD3D12CommandContextBase::Get(RHICmdList).UpdateBuffer(&CurrentBuffer->ResourceLocation, LockedData.LockOffset, &LockedData.ResourceLocation, 0, LockedData.LockSize);
 				}
 			}
 		}
@@ -794,7 +814,7 @@ void FD3D12DynamicRHI::RHIUnlockBufferMGPU(FRHICommandListBase& RHICmdList, FRHI
 	UnlockBuffer(RHICmdList, Buffer, Buffer->GetUsage());
 }
 
-void FD3D12DynamicRHI::RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
+void FD3D12DynamicRHI::RHITransferBufferUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
 {
 	FD3D12Buffer* Dst = ResourceCast(DestBuffer);
 	FD3D12Buffer* Src = ResourceCast(SrcBuffer);
@@ -811,7 +831,7 @@ void FD3D12DynamicRHI::RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffe
 		Dst->ReleaseOwnership();
 	}
 
-	Dst->ResourceRenamed();
+	Dst->ResourceRenamed(RHICmdList);
 }
 
 void FD3D12DynamicRHI::RHICopyBuffer(FRHIBuffer* SourceBufferRHI, FRHIBuffer* DestBufferRHI)
@@ -860,7 +880,7 @@ void FD3D12DynamicRHI::RHICopyBuffer(FRHIBuffer* SourceBufferRHI, FRHIBuffer* De
 	}
 }
 
-void FD3D12DynamicRHI::RHIBindDebugLabelName(FRHIBuffer* BufferRHI, const TCHAR* Name)
+void FD3D12DynamicRHI::RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHIBuffer* BufferRHI, const TCHAR* Name)
 {
 	if (BufferRHI == nullptr || !GD3D12BindResourceLabels)
 	{
@@ -935,8 +955,8 @@ void FD3D12CommandContext::RHICopyBufferRegion(FRHIBuffer* DestBufferRHI, uint64
 	check(DstOffset + NumBytes <= DestBufferDesc.Width);
 	check(SrcOffset + NumBytes <= SourceBufferDesc.Width);
 
-	FScopedResourceBarrier ScopeResourceBarrierSrc(*this, pSourceResource, D3D12_RESOURCE_STATE_COPY_SOURCE, 0);
-	FScopedResourceBarrier ScopeResourceBarrierDst(*this, pDestResource  , D3D12_RESOURCE_STATE_COPY_DEST  , 0);
+	FScopedResourceBarrier ScopeResourceBarrierSrc(*this, pSourceResource, &SourceBuffer->ResourceLocation, D3D12_RESOURCE_STATE_COPY_SOURCE, 0);
+	FScopedResourceBarrier ScopeResourceBarrierDst(*this, pDestResource  , &DestBuffer->ResourceLocation, D3D12_RESOURCE_STATE_COPY_DEST  , 0);
 	FlushResourceBarriers();
 
 	GraphicsCommandList()->CopyBufferRegion(pDestResource->GetResource(), DestBuffer->ResourceLocation.GetOffsetFromBaseOfResource() + DstOffset, pSourceResource->GetResource(), SourceBuffer->ResourceLocation.GetOffsetFromBaseOfResource() + SrcOffset, NumBytes);

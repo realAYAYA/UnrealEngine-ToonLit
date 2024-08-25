@@ -21,61 +21,39 @@ class SWidget;
 // Private namespace with utility functionality used by this slate object
 namespace
 {
-	/** Provided a byte count this function proceeds to output that byte value as bytes, kilobytes, megabytes and gigabytes.
+	/** Provided a byte count this function proceeds to output that byte value as text alongside with it's unit of mesure (Bytes, KB...).
 	 * @param SizeInBytes The amount of bytes to convert to a formatted text that represents it.
-	 * @return A text representing the value provided as Bytes, Kilobytes, Megabytes and Gigabytes. It will not return
-	 * size types with value 0.
+	 * @return A text representing the value provided as Bytes, Kilobytes, Megabytes or Gigabytes. 
 	 */
-	FText GetSizeInBytesAsBiggerUnits(const uint64 SizeInBytes)
+	FText GenerateTextForSize(const uint64 SizeInBytes)
 	{
-		FString OutputString = "";
-		
-		uint64 Bytes = SizeInBytes;
-		uint64 KiloBytes = 0;
-		uint64 MegaBytes = 0;
-		uint64 GigaBytes = 0;
+		FString Unit = TEXT("Bytes");
+		double Value = SizeInBytes;
 		
 		// B to KB
-		if (Bytes >= 1024)
+		if (SizeInBytes >= 1024)
 		{
-			KiloBytes = Bytes / 1024;
-			Bytes = Bytes % 1024;
+			Unit = TEXT("KB");
+			Value = SizeInBytes / 1024.0;
 			
 			// KB to MB
-			if (KiloBytes >= 1024)
+			if (Value >= 1024.0)
 			{
-				MegaBytes = KiloBytes / 1024;
-				KiloBytes = KiloBytes % 1024;
+				Unit = TEXT("MB");
+				Value = Value / 1024.0;
 				
 				// MB to GB
-				if (MegaBytes >= 1024)
+				if (Value >= 1024.0)
 				{
-					GigaBytes = MegaBytes / 1024;
-					MegaBytes = MegaBytes % 1024;
+					Unit = TEXT("GB");
+					Value = Value / 1024.0;
 				}
 			}
 		}
 
-		// Compose the string that will be the output of this function 
-		if (GigaBytes)
-		{
-			OutputString.Append(FString::FromInt(GigaBytes) + " GB, ");
-		}
-
-		if (MegaBytes)
-		{
-			OutputString.Append(FString::FromInt(MegaBytes) + " MB, ");
-		}
-
-		if (KiloBytes)
-		{
-			OutputString.Append(FString::FromInt(KiloBytes) + " KB, ");
-		}
-
-		if (Bytes)
-		{
-			OutputString.Append( FString::FromInt(Bytes) + " B ");
-		}
+		FString OutputString = FString::Printf(TEXT("%.2f"), Value);
+		OutputString.Append(" ");
+		OutputString.Append(Unit);
 
 		return FText::FromString(OutputString);
 	}
@@ -118,7 +96,7 @@ public:
 		// Generate the text to be displayed taking in mind the string value held by the constant to be able to "preview"
 		// it for easier navigation
 		const FString MainString = FString::FromInt(InRowElement->IndexOnSourceVector) + FString(TEXT("_STR "));
-		const FString ConstantStringText = FString(InRowElement->MutableString->c_str());
+		const FString ConstantStringText = InRowElement->MutableString;
 		const FString GlimpseConstantText = ConstantStringText.Left(GlimpseCharacterCount);
 		
 		// Compose the FStrings to produce the UI text to be displayed
@@ -1124,18 +1102,18 @@ void SMutableConstantsWidget::LoadConstantStrings()
 	for (int32 StringAddressIndex = 0; StringAddressIndex < ConstantsCount; StringAddressIndex++)
 	{
 		TSharedPtr<FMutableConstantStringElement> ConstantStringElement = MakeShared<FMutableConstantStringElement>();
-		ConstantStringElement->MutableString = &(MutableProgramPtr->m_constantStrings[StringAddressIndex]);
+		ConstantStringElement->MutableString = MutableProgramPtr->m_constantStrings[StringAddressIndex];
 		ConstantStringElement->IndexOnSourceVector = StringAddressIndex;
 		
 		// Cache resource size
 		// in case we change the type of the contents of the mu::string we check its size as if it was a vector<>
-		ConstantStringsAccumulatedSize += ConstantStringElement->MutableString->size() * sizeof (mu::string::value_type);
+		ConstantStringsAccumulatedSize += ConstantStringElement->MutableString.GetAllocatedSize();
 		
 		ConstantStringElements.Add(ConstantStringElement);
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantStringsFormattedSize = GetSizeInBytesAsBiggerUnits(ConstantStringsAccumulatedSize);
+	ConstantStringsFormattedSize = GenerateTextForSize(ConstantStringsAccumulatedSize);
 }
 
 void SMutableConstantsWidget::LoadConstantImages()
@@ -1149,7 +1127,7 @@ void SMutableConstantsWidget::LoadConstantImages()
 
 	for (int32 ImageIndex = 0; ImageIndex < ConstantsCount; ImageIndex++)
 	{
-		TSharedPtr<FMutableConstantImageElement> ConstantImageElement =MakeShared<FMutableConstantImageElement>();
+		TSharedPtr<FMutableConstantImageElement> ConstantImageElement = MakeShared<FMutableConstantImageElement>();
 
 		MutableProgramPtr->GetConstant(ImageIndex, ConstantImageElement->ImagePtr, 0,
 			[this](int32 x, int32 y, int32 m, mu::EImageFormat f, mu::EInitializationType i) { return new mu::Image(x, y, m, f, i); });
@@ -1162,7 +1140,7 @@ void SMutableConstantsWidget::LoadConstantImages()
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantImagesFormattedSize = GetSizeInBytesAsBiggerUnits(ConstantImagesAccumulatedSize);
+	ConstantImagesFormattedSize = GenerateTextForSize(ConstantImagesAccumulatedSize);
 	
 	// Regenerate the array with only a part of the the full images array
 	RegenerateProxyImageArray();
@@ -1182,7 +1160,7 @@ void SMutableConstantsWidget::LoadConstantMeshes()
 {
 	check (MutableProgramPtr);
 	
-	const int32 ConstantsCount = MutableProgramPtr->m_constantMeshes.Num();
+	const int32 ConstantsCount = MutableProgramPtr->ConstantMeshes.Num();
 	ConstantMeshElements.Empty(ConstantsCount);
 	
 	uint64 ConstantMeshesAccumulatedSize = 0;
@@ -1190,7 +1168,7 @@ void SMutableConstantsWidget::LoadConstantMeshes()
 	for (int32 MeshIndex = 0; MeshIndex < ConstantsCount; MeshIndex++)
 	{
 		TSharedPtr< FMutableConstantMeshElement> ConstantMeshElement = MakeShared<FMutableConstantMeshElement>();
-		ConstantMeshElement->MeshPtr = MutableProgramPtr->m_constantMeshes[MeshIndex].Value;
+		ConstantMeshElement->MeshPtr = MutableProgramPtr->ConstantMeshes[MeshIndex].Value;
 		ConstantMeshElement->IndexOnSourceVector = MeshIndex;
 		
 		ConstantMeshesAccumulatedSize += ConstantMeshElement->MeshPtr->GetDataSize();
@@ -1199,7 +1177,7 @@ void SMutableConstantsWidget::LoadConstantMeshes()
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantMeshesFormattedSize = GetSizeInBytesAsBiggerUnits(ConstantMeshesAccumulatedSize);
+	ConstantMeshesFormattedSize = GenerateTextForSize(ConstantMeshesAccumulatedSize);
 }
 
 void SMutableConstantsWidget::LoadConstantLayouts()
@@ -1224,8 +1202,7 @@ void SMutableConstantsWidget::LoadConstantLayouts()
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantLayoutsFormattedSize = GetSizeInBytesAsBiggerUnits(Stream.GetBufferSize());
-
+	ConstantLayoutsFormattedSize = GenerateTextForSize(Stream.GetBufferSize());
 }
 
 void SMutableConstantsWidget::LoadConstantSkeletons()
@@ -1249,7 +1226,7 @@ void SMutableConstantsWidget::LoadConstantSkeletons()
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantSkeletonsFormattedSize = GetSizeInBytesAsBiggerUnits(Stream.GetBufferSize());
+	ConstantSkeletonsFormattedSize = GenerateTextForSize(Stream.GetBufferSize());
 }
 
 void SMutableConstantsWidget::LoadConstantProjectors()
@@ -1273,7 +1250,7 @@ void SMutableConstantsWidget::LoadConstantProjectors()
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantProjectorsFormattedSize = GetSizeInBytesAsBiggerUnits(Stream.GetBufferSize());
+	ConstantProjectorsFormattedSize = GenerateTextForSize(Stream.GetBufferSize());
 }
 
 void SMutableConstantsWidget::LoadConstantMatrices()
@@ -1288,16 +1265,16 @@ void SMutableConstantsWidget::LoadConstantMatrices()
 	for (int32 MatrixIndex = 0; MatrixIndex < ConstantsCount; MatrixIndex++)
 	{
 		TSharedPtr<FMutableConstantMatrixElement> ConstantMatrixElement = MakeShared<FMutableConstantMatrixElement>();
-		ConstantMatrixElement->Matrix = &(MutableProgramPtr->m_constantMatrices[MatrixIndex]);
+		ConstantMatrixElement->Matrix = MutableProgramPtr->m_constantMatrices[MatrixIndex];
 		ConstantMatrixElement->IndexOnSourceVector = MatrixIndex;
 		
-		Archive << *ConstantMatrixElement->Matrix;
+		Archive << ConstantMatrixElement->Matrix;
 		
 		ConstantMatrixElements.Add(ConstantMatrixElement);
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantMatricesFormattedSize = GetSizeInBytesAsBiggerUnits(Stream.GetBufferSize());
+	ConstantMatricesFormattedSize = GenerateTextForSize(Stream.GetBufferSize());
 }
 
 void SMutableConstantsWidget::LoadConstantShapes()
@@ -1321,7 +1298,7 @@ void SMutableConstantsWidget::LoadConstantShapes()
 	}
 	
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantShapesFormattedSize = GetSizeInBytesAsBiggerUnits(Stream.GetBufferSize());
+	ConstantShapesFormattedSize = GenerateTextForSize(Stream.GetBufferSize());
 }
 
 void SMutableConstantsWidget::LoadConstantCurves()
@@ -1345,7 +1322,7 @@ void SMutableConstantsWidget::LoadConstantCurves()
 	}
 
 	// Cache the size in memory of the constants as a formatted text so it is able to be be later used by the UI
-	ConstantCurvesFormattedSize = GetSizeInBytesAsBiggerUnits(Stream.GetBufferSize());
+	ConstantCurvesFormattedSize = GenerateTextForSize(Stream.GetBufferSize());
 }
 
 #pragma  endregion

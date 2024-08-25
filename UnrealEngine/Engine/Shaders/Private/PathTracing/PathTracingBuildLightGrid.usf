@@ -47,6 +47,7 @@ void PathTracingBuildLightGridCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 		uint LightType = SceneLights[LightIndex].Flags & PATHTRACER_FLAG_TYPE_MASK;
 		float3 Center = GetTranslatedPosition(LightIndex);
 		float Radius = 1.0 / GetAttenuation(LightIndex);
+		float3 Normal = GetNormal(LightIndex);
 
 		float3 E = max(Lo - Center, 0) + max(Center - Hi, 0);
 		float D2 = dot(E, E);
@@ -54,12 +55,7 @@ void PathTracingBuildLightGridCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 		// reject against normal
 		if (LightType != PATHTRACING_LIGHT_POINT)
 		{
-			float3 N = GetNormal(LightIndex);
-			float x = N.x > 0 ? Hi.x : Lo.x;
-			float y = N.y > 0 ? Hi.y : Lo.y;
-			float z = N.z > 0 ? Hi.z : Lo.z;
-
-			if (dot(float3(x, y, z) - Center, N) < 0)
+			if (dot(select(Normal > 0, Hi, Lo) - Center, Normal) < 0)
 			{
 				continue;
 			}
@@ -67,8 +63,18 @@ void PathTracingBuildLightGridCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 
 		if (LightType == PATHTRACING_LIGHT_SPOT)
 		{
-			float3 LightBoundLo = SceneLights[LightIndex].TranslatedBoundMin;
-			float3 LightBoundHi = SceneLights[LightIndex].TranslatedBoundMax;
+			float3 Disc = sqrt(saturate(1.0 - Normal * Normal));
+			// box around ray from light center to tip of the cone
+			float3 Tip = Center + Normal * Radius;
+			float3 LightBoundLo = min(Center, Tip);
+			float3 LightBoundHi = max(Center, Tip);
+			// expand by disc around the farthest part of the cone
+
+			float CosOuter = GetCosConeAngles(LightIndex).x;
+			float SinOuter = sqrt(1.0f - CosOuter * CosOuter);
+
+			LightBoundLo = min(LightBoundLo, Center + Radius * (Normal * CosOuter - Disc * SinOuter));
+			LightBoundHi = max(LightBoundHi, Center + Radius * (Normal * CosOuter + Disc * SinOuter));
 
 			if (any(Hi < LightBoundLo) || any(Lo > LightBoundHi))
 			{

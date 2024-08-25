@@ -9,6 +9,7 @@ struct FAnimNextDecoratorSharedData;
 
 namespace UE::AnimNext
 {
+	struct FDecoratorBinding;
 	struct FExecutionContext;
 
 	/**
@@ -24,20 +25,18 @@ namespace UE::AnimNext
 		// Called after the constructor has been called when a new instance is created.
 		// This is called after the default constructor.
 		// You can override this function by adding a new one with the same name on your
-		// derived type. You can also specialize the FAnimNextDecoratorSharedData with the derived
-		// version as long as the reference can coerce to 'const FAnimNextDecoratorSharedData&'.
+		// derived type.
 		// Decorators are constructed from the bottom to the top.
-		void Construct(FExecutionContext& Context, FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc)
+		void Construct(const FExecutionContext& Context, const FDecoratorBinding& Binding) noexcept
 		{
 		}
 
 		// Called before the destructor has been called when an instance is destroyed.
 		// This is called before the default destructor.
 		// You can override this function by adding a new one with the same name on your
-		// derived type. You can also specialize the FAnimNextDecoratorSharedData with the derived
-		// version as long as the reference can coerce to 'const FAnimNextDecoratorSharedData&'.
+		// derived type.
 		// Decorators are destructed from the top to the bottom.
-		void Destruct(FExecutionContext& Context, FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc)
+		void Destruct(const FExecutionContext& Context, const FDecoratorBinding& Binding) noexcept
 		{
 		}
 	};

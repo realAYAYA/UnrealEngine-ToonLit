@@ -6,22 +6,7 @@
 
 #include "IOptimusExecutionDomainProvider.generated.h"
 
-/** A struct to hold onto a single-level domain for controlling a kernel's execution domain. 
-  * The reason it's in a struct is so that we can apply a property panel customization for it
-  * to make it easier to select from a pre-defined list of execution domains.
-*/
-USTRUCT()
-struct OPTIMUSCORE_API FOptimusExecutionDomain
-{
-	GENERATED_BODY()
 
-	FOptimusExecutionDomain() = default;
-	FOptimusExecutionDomain(FName InExecutionDomainName) : Name(InExecutionDomainName) {}
-
-	// The name of the execution domain that this kernel operates on.
-	UPROPERTY(EditAnywhere, Category = Domain)
-	FName Name;
-};
 
 UINTERFACE()
 class OPTIMUSCORE_API UOptimusExecutionDomainProvider :

@@ -43,7 +43,9 @@ void FNetworkPredictionPhysicsState::NetSend(const FNetSerializeParams& P, FBody
 	{
 		npEnsure(Body_External.CanTreatAsKinematic());
 		P.Ar << const_cast<Chaos::FVec3&>(Body_External.X());
-		P.Ar << const_cast<Chaos::FRotation3&>(Body_External.R());
+		Chaos::FRotation3 Rotation = Body_External.R();
+		P.Ar << Rotation;
+		Body_External.SetR(Rotation);
 		Chaos::FVec3 V = Body_External.V();
 		Chaos::FVec3 W = Body_External.W();
 		P.Ar << V;
@@ -54,7 +56,9 @@ void FNetworkPredictionPhysicsState::NetSend(const FNetSerializeParams& P, FBody
 		bool bSuccess = true;
 
 		SerializePackedVector<100, 30>(const_cast<Chaos::FVec3&>(Body_External.X()), P.Ar);
-		const_cast<Chaos::FRotation3&>(Body_External.R()).NetSerialize(P.Ar, nullptr, bSuccess);
+		Chaos::FRotation3 Rotation = Body_External.R();
+		Rotation.NetSerialize(P.Ar, nullptr, bSuccess);
+		Body_External.SetR(Rotation);
 
 		npEnsure(Body_External.CanTreatAsKinematic());
 		Chaos::FVec3 V = Body_External.V();
@@ -98,22 +102,22 @@ bool FNetworkPredictionPhysicsState::ShouldReconcile(int32 PhysicsFrame, Chaos::
 
 	const Chaos::FGeometryParticleState LocalState = RewindData->GetPastStateAtFrame(*Handle->GetHandle_LowLevel(), PhysicsFrame);
 
-	if (CompareVector(LocalState.X(), RecvState->Location, NetworkPredictionPhysicsCvars::ToleranceX(), "X:"))
+	if (CompareVector(LocalState.GetX(), RecvState->Location, NetworkPredictionPhysicsCvars::ToleranceX(), "X:"))
 	{
 		return true;
 	}
 
-	if (CompareVector(LocalState.V(), RecvState->LinearVelocity, NetworkPredictionPhysicsCvars::ToleranceV(), "V:"))
+	if (CompareVector(LocalState.GetV(), RecvState->LinearVelocity, NetworkPredictionPhysicsCvars::ToleranceV(), "V:"))
 	{
 		return true;
 	}
 
-	if (CompareVector(LocalState.W(), RecvState->AngularVelocity, NetworkPredictionPhysicsCvars::ToleranceW(), "W:"))
+	if (CompareVector(LocalState.GetW(), RecvState->AngularVelocity, NetworkPredictionPhysicsCvars::ToleranceW(), "W:"))
 	{
 		return true;
 	}
 
-	if (CompareQuat(LocalState.R(), RecvState->Rotation, NetworkPredictionPhysicsCvars::ToleranceR(), "R:"))
+	if (CompareQuat(LocalState.GetR(), RecvState->Rotation, NetworkPredictionPhysicsCvars::ToleranceR(), "R:"))
 	{
 		return true;
 	}
@@ -146,7 +150,7 @@ void FNetworkPredictionPhysicsState::ToString(int32 PhysicsFrame, Chaos::FRewind
 	FPhysicsActorHandle& Handle = BodyInstance->GetPhysicsActorHandle();
 
 	const Chaos::FGeometryParticleState LocalState = RewindData->GetPastStateAtFrame(*Handle->GetHandle_LowLevel(), PhysicsFrame);
-	ToStringInternal(LocalState.X(), LocalState.R(), LocalState.V(), LocalState.W(), Builder);
+	ToStringInternal(LocalState.GetX(), LocalState.GetR(), LocalState.GetV(), LocalState.GetW(), Builder);
 }
 
 void FNetworkPredictionPhysicsState::ToString(FBodyInstance* BodyInstance, FAnsiStringBuilderBase& Builder)

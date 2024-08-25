@@ -10,6 +10,7 @@
 #include "Editor.h"
 #include "PersonaDelegates.h"
 #include "Factories/FbxImportUI.h"
+#include "SPersonaToolBox.h"
 
 class FBlueprintEditor;
 class IDetailsView;
@@ -333,6 +334,9 @@ public:
 	/** Create a tab factory for editing slot names and groups */
 	virtual TSharedRef<FWorkflowTabFactory> CreateSkeletonSlotNamesTabFactory(const TSharedRef<class FWorkflowCentricApplication>& InHostingApp, const TSharedRef<class IEditableSkeleton>& InEditableSkeleton, FOnObjectSelected InOnObjectSelected) const;
 
+	/** Create a toolbox tab factory */
+	virtual TSharedRef<FWorkflowTabFactory> CreatePersonaToolboxTabFactory(const TSharedRef<class FPersonaAssetEditorToolkit>& InHostingApp) const;
+
 	/** Deprecated */
 	UE_DEPRECATED(5.0, "Please use the overload that takes a FBlendSpacePreviewArgs struct")
 	virtual TSharedRef<SWidget> CreateBlendSpacePreviewWidget(TAttribute<const UBlendSpace*> InBlendSpace, TAttribute<FVector> InBlendPosition, TAttribute<FVector> InFilteredBlendPosition) const;
@@ -348,6 +352,9 @@ public:
 
 	/** Create a tab factory for finding and replacing in anim data */
 	virtual TSharedRef<FWorkflowTabFactory> CreateAnimAssetFindReplaceTabFactory(const TSharedRef<FWorkflowCentricApplication>& InHostingApp, const FAnimAssetFindReplaceConfig& InConfig) const;
+	
+	/** Create a widget for finding and replacing in anim data */
+	virtual TSharedRef<SWidget> CreateFindReplaceWidget(const FAnimAssetFindReplaceConfig& InConfig) const;
 	
 	/** Create a widget that acts as a document for an animation asset */
 	virtual TSharedRef<SWidget> CreateEditorWidgetForAnimDocument(const TSharedRef<IAnimationEditor>& InHostingApp, UObject* InAnimAsset, const FAnimDocumentArgs& InArgs, FString& OutDocumentLink);

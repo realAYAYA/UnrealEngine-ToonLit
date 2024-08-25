@@ -6,7 +6,7 @@
 #include "../SceneTextureParameters.ush"
 #include "../PathTracing/Utilities/PathTracingRandomSequence.ush"
 #include "../SphericalGaussian.ush"
-#include "../Strata/Strata.ush"
+#include "../Substrate/Substrate.ush"
 #include "RayTracingCommon.ush"
 #include "RayTracingDeferredShadingCommon.ush"
 
@@ -26,10 +26,8 @@ RWTexture2D<float> RWAmbientOcclusionHitDistanceUAV;
 /** Returns the radius of a pixel in world space. */
 float ComputeWorldBluringRadiusCausedByPixelSize(float WorldDepth)
 {
-	float WorldDepthToPixelWorldRadius = GetTanHalfFieldOfView().x * View.ViewSizeAndInvSize.z;
-
 	// Should be multiplied 0.5* for the diameter to radius, and by 2.0 because GetTanHalfFieldOfView() cover only half of the pixels.
-	return WorldDepthToPixelWorldRadius * WorldDepth;
+	return GetDepthPixelRadiusForProjectionType(WorldDepth);
 }
 
 void GenerateCosineNormalRay(
@@ -88,10 +86,10 @@ RAY_TRACING_ENTRY_RAYGEN(AmbientOcclusionRGS)
 {
 	const uint2 PixelCoord = DispatchRaysIndex().xy + View.ViewRectMin.xy;
 
-	#if STRATA_ENABLED
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
-	const bool bIsValid = IsStrataMaterial(TopLayerData);
-	const bool bReconstructGeometryNormal = true; // STRATA_TODO: legacy avoids this on foliage, how do we do that?
+	#if SUBSTRATE_ENABLED
+	const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelCoord, 0)));
+	const bool bIsValid = IsSubstrateMaterial(TopLayerData);
+	const bool bReconstructGeometryNormal = true; // SUBSTRATE_TODO: legacy avoids this on foliage, how do we do that?
 	const float3 WorldNormal = TopLayerData.WorldNormal;
 	#else
 	const FGBufferData GBufferData = GetGBufferDataFromSceneTexturesLoad(PixelCoord);

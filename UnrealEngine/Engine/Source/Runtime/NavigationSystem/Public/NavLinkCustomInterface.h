@@ -2,13 +2,18 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/Interface.h"
 #include "NavAreas/NavArea.h"
 #include "AI/Navigation/NavLinkDefinition.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Engine/World.h"
+#endif
+#include "Engine/WorldInitializationValues.h"
 #include "NavLinkCustomInterface.generated.h"
 
 /** 
@@ -76,6 +81,14 @@ class INavLinkCustomInterface
 	/** Notify called when agent finishes using this link for movement */
 	virtual void OnLinkMoveFinished(class UObject* PathComp) {}
 
+	/** Whether or not this link has custom reach conditions that need to override the default reach checks done by the path following component. */
+	virtual bool IsLinkUsingCustomReachCondition(const UObject* PathComp) const { return false; }
+
+	/** Function that replaces the default reach check when IsLinkUsingCustomReachCondition is true. 
+	 *  Returns true if CurrentLocation has reached the start of the link.
+	 */
+	virtual bool HasReachedLinkStart(const UObject* PathComp, const FVector& CurrentLocation, const FNavPathPoint& LinkStart, const FNavPathPoint& LinkEnd) const { return true; }
+
 	UE_DEPRECATED(5.3, "LinkIds are now based on FNavLinkId using FNavLinkId::GenerateUniqueId(). This function will still generate an incremental Id however it does not work well in all circumstances.")
 	static NAVIGATIONSYSTEM_API uint32 GetUniqueId();
 
@@ -92,7 +105,7 @@ class INavLinkCustomInterface
 	UE_DEPRECATED(5.3, "LinkIds are now based on a FNavLinkId Hash. If your project is still using any of the old incremental Ids then this function must be called still (typically by existing engine code), otherwise it is not necessary.")
 	static NAVIGATIONSYSTEM_API void ResetUniqueId();
 
-	static NAVIGATIONSYSTEM_API void OnPreWorldInitialization(UWorld* World, const UWorld::InitializationValues IVS);
+	static NAVIGATIONSYSTEM_API void OnPreWorldInitialization(UWorld* World, const FWorldInitializationValues IVS);
 
 	UE_DEPRECATED(5.3, "LinkIds are now based on FNavLinkId using FNavLinkId::GenerateUniqueId().")
 	static uint32 NextUniqueId;

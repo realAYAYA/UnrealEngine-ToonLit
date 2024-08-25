@@ -173,11 +173,16 @@ namespace Audio
 		// This writes out the InSampleBuffer as a wav file at the path specified by FilePath and FileName.
 		// If FilePath is a relative path, it will be relative to the /Saved/BouncedWavFiles folder, otherwise specified absolute path will be used.
 		// FileName should not contain the extension. This can be used in non-editor builds.
-		ENGINE_API bool BeginWriteToWavFile(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, FString& FilePath, TFunction<void()> OnSuccess = []() {});
+		ENGINE_API bool BeginWriteToWavFile(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, const FString& FilePath, TFunction<void()> OnSuccess = []() {});
 
 		// This is a blocking call that will return the SoundWave generated from InSampleBuffer.
 		// Optionally, if you're using the editor, you can also write the resulting soundwave out to the content browser using the FileName and FilePath parameters.
 		ENGINE_API USoundWave* SynchronouslyWriteSoundWave(const TSampleBuffer<>& InSampleBuffer, const FString* FileName = nullptr, const FString* FilePath = nullptr);
+
+		// This blocking call writes out the InSampleBuffer as a wav file at the path specified by FilePath and FileName.
+		// If FilePath is a relative path, it will be relative to the /Saved/BouncedWavFiles folder, otherwise specified absolute path will be used.
+		// FileName should not contain the extension. This can be used in non-editor builds.
+		ENGINE_API bool SynchronouslyWriteToWavFile(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, const FString& FilePath, FString* OutFilePathName = nullptr);
 
 		// Call this on the game thread to continue the write operation. Optionally provide a pointer
 		// to an ESoundWavePCMWriterState which will be written to with the current state of the write operation.
@@ -241,6 +246,9 @@ namespace Audio
 
 		// This checks to see if a directory exists and, if it does not, recursively adds the directory.
 		ENGINE_API bool CreateDirectoryIfNeeded(FString& DirectoryPath);
+
+		// Do some shared prep steps for WAV file export
+		bool PrepWavFileOutput(const TSampleBuffer<>& InSampleBuffer, const FString& FileName, const FString& FilePath);
 	};
 
 	/************************************************************************/

@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
+using UnrealBuildBase;
 using UnrealBuildTool.Artifacts;
 
 namespace UnrealBuildTool
@@ -62,13 +63,13 @@ namespace UnrealBuildTool
 		/// Whether to show compilation times along with worst offenders or not.
 		/// </summary>
 		[XmlConfigFile]
-		private static bool bShowCompilationTimes = false;
+		private static bool bShowCompilationTimes = Unreal.IsBuildMachine();
 
 		/// <summary>
 		/// Whether to show compilation times for each executed action
 		/// </summary>
 		[XmlConfigFile]
-		private static bool bShowPerActionCompilationTimes = false;
+		private static bool bShowPerActionCompilationTimes = Unreal.IsBuildMachine();
 
 		/// <summary>
 		/// Whether to log command lines for actions being executed
@@ -92,7 +93,7 @@ namespace UnrealBuildTool
 		/// Whether to show CPU utilization after the work is complete.
 		/// </summary>
 		[XmlConfigFile]
-		protected static bool bShowCPUUtilization = false;
+		protected static bool bShowCPUUtilization = Unreal.IsBuildMachine();
 
 		/// <summary>
 		/// Collapse non-error output lines
@@ -184,7 +185,7 @@ namespace UnrealBuildTool
 			{
 				using ImmediateActionQueue queue = CreateActionQueue(ActionsToExecute, actionArtifactCache, Logger);
 				int actionLimit = Math.Min(NumParallelProcesses, queue.TotalActions);
-				queue.CreateAutomaticRunner(action => RunAction(queue, action), bUseActionWeights, actionLimit, actionLimit);
+				queue.CreateAutomaticRunner(action => RunAction(queue, action), bUseActionWeights, actionLimit, NumParallelProcesses);
 				queue.Start();
 				queue.StartManyActions();
 				return await queue.RunTillDone();
@@ -221,7 +222,7 @@ namespace UnrealBuildTool
 
 			CancellationToken.ThrowIfCancellationRequested();
 
-			Process.WaitForExit();
+			await Process.WaitForExitAsync(CancellationToken);
 
 			List<string> LogLines = Console.OutputEncoding.GetString(StdOutStream.GetBuffer(), 0, Convert.ToInt32(StdOutStream.Length)).Split(LineEndingSplit, StringSplitOptions.RemoveEmptyEntries).ToList();
 			int ExitCode = Process.ExitCode;

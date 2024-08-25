@@ -37,6 +37,9 @@ public:
 	/** Fill the view button menu with content */
 	virtual void CreateViewContent(FMenuBuilder& MenuBuilder) {}
 
+	/** Allows extending SceneOutliner View Button MenuBuilder (allows using ExtensionHooks which isn't possible with CreateViewContent override) */
+	virtual void InitializeViewMenuExtender(TSharedPtr<FExtender> Extender) { }
+
 	/** Returns a factory to create a Folder Picker mode which matches this mode */
 	virtual FCreateSceneOutlinerMode CreateFolderPickerMode(const FFolder::FRootObject& InRootObject = FFolder::GetInvalidRootObject()) const { return FCreateSceneOutlinerMode(); }
 public:
@@ -156,6 +159,8 @@ public:
 	virtual bool ReparentItemToFolder(const FFolder& FolderPath, const FSceneOutlinerTreeItemPtr& Item) { return false; }
 	/** Select all descendants of a folder. Optionally select only immediate descendants. */
 	virtual void SelectFoldersDescendants(const TArray<FFolderTreeItem*>& FolderItems, bool bSelectImmediateChildrenOnly) {}
+	/** Returns true if this mode overrides the default folder double click behavior (expanding the subtree) */
+	virtual bool HasCustomFolderDoubleClick() const { return false; }
 public:
 	/** Pins an item list in the outliner */
 	virtual void PinItems(const TArray<FSceneOutlinerTreeItemPtr>& InItems) {}

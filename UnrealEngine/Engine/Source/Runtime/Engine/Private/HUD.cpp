@@ -56,6 +56,13 @@ TAutoConsoleVariable<int32> GMaxDebugTextStringsPerActorCVar(
 	128,
 	TEXT("The maximum number of debug strings that can be attached to a given actor (<=0 : no limit)"));
 
+#if ENABLE_DRAW_DEBUG
+TAutoConsoleVariable<int32> GDrawCurrentDebugTargetBoundingBox(
+	TEXT("r.Debug.DrawCurrentDebugTargetBoundingBox"),
+	1,
+	TEXT("Draw the bounding box of the currently selected debug target (Default: 1)"));
+#endif // ENABLE_DRAW_DEBUG
+
 AHUD::AHUD(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -257,7 +264,7 @@ void AHUD::DrawSafeZoneOverlay()
 #if ENABLE_DRAW_DEBUG
 	const int32 DebugSafeZoneMode = GSafeZoneVisualizationModeCVar.GetValueOnGameThread();
 
-	if ((DebugSafeZoneMode > 0) && (DebugCanvas != nullptr))
+	if ((DebugSafeZoneMode > 0) && (DebugCanvas != nullptr) && (DebugCanvas->Canvas != nullptr))
 	{
 
 		const float Width = DebugCanvas->SizeX;
@@ -420,7 +427,7 @@ bool AHUD::ShouldDisplayDebug(const FName& DebugType) const
 
 void AHUD::ShowDebugInfo(float& YL, float& YPos)
 {
-	if (DebugCanvas != nullptr)
+	if (DebugCanvas != nullptr && DebugCanvas->Canvas != nullptr)
 	{
 		// Darken background, so we can read text better.
 		FLinearColor BackgroundColor(0.f, 0.f, 0.f, 0.2f);
@@ -440,6 +447,7 @@ void AHUD::ShowDebugInfo(float& YL, float& YPos)
 		{
 			// Draw box around Actor being debugged.
 #if ENABLE_DRAW_DEBUG
+			if (GDrawCurrentDebugTargetBoundingBox.GetValueOnGameThread() > 0)
 			{
 				FVector BoundsOrigin, BoundsExtent;
 				ShowDebugTargetActor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
@@ -670,7 +678,7 @@ void AHUD::OnLostFocusPause(bool bEnable)
 
 void AHUD::DrawDebugTextList()
 {
-	if ((DebugTextList.Num() > 0) && (DebugCanvas != nullptr))
+	if ((DebugTextList.Num() > 0) && (DebugCanvas != nullptr) && (DebugCanvas->Canvas != nullptr))
 	{
 		FRotator CameraRot;
 		FVector CameraLoc;

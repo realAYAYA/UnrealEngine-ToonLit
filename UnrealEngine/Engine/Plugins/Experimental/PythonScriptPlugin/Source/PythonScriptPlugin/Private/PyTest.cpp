@@ -107,6 +107,11 @@ int32 UPyTestObject::CallFuncBlueprintImplementable(const int32 InValue) const
 	return FuncBlueprintImplementable(InValue);
 }
 
+bool UPyTestObject::CallFuncBlueprintImplementablePackedGetter(int32& OutValue) const
+{
+	return FuncBlueprintImplementablePackedGetter(OutValue);
+}
+
 int32 UPyTestObject::CallFuncBlueprintNative(const int32 InValue) const
 {
 	return FuncBlueprintNative(InValue);

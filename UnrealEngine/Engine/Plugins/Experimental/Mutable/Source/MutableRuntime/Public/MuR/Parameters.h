@@ -7,6 +7,7 @@
 #include "MuR/RefCounted.h"
 #include "MuR/Types.h"
 #include "Templates/SharedPointer.h"
+#include "VectorTypes.h"
 
 
 namespace mu
@@ -26,6 +27,9 @@ namespace mu
 	using RangeIndexPtrConst = Ptr<const RangeIndex>;
 
 	class Model;
+
+	//! Default parameter values definition
+	static const FVector4f DefaultMutableColorValue(-UE_BIG_NUMBER);
 
 
     //! \brief Model parameter types.
@@ -62,22 +66,6 @@ namespace mu
         T_COUNT
 
     };
-
-
-    //! \brief Additional information about a particular parameter type.
-    //!
-	//! This information is not strictly relevant, but it can provide hints for dynamic user
-	//! interfaces.
-	enum class PARAMETER_DETAILED_TYPE : uint32
-	{
-		//!
-		UNKNOWN,
-
-		//! The parameter belongs to a triangular barycentric set of parameters
-		//! The parameter name can be used to identify which coordinate it is (ending number)
-		TRIANGLE
-
-	};
 
 
     //! \brief Types of projectors.
@@ -122,11 +110,11 @@ namespace mu
 
         //! Return the name of a range.
         //! \param index Index of the range from 0 to GetRangeCount()-1
-        const char* GetRangeName( int index ) const;
+        const FString& GetRangeName( int index ) const;
 
         //! Return the Guid of the parameter, resistant to parameter name changes.
         //! \param index Index of the parameter from 0 to GetRangeCount()-1
-        const char* GetRangeUid( int index ) const;
+        const FString& GetRangeUid( int index ) const;
 
         //! Set the position in one of the dimensions of the index.
         //! \param index Index of the parameter from 0 to GetRangeCount()-1
@@ -185,8 +173,8 @@ namespace mu
         //! - parameters have been removed
         //! - parameter types have changed
         //! - parameter names have changed, and the application is using UIDs
-        static void SerialisePortable( const Parameters*, OutputArchive& );
-        static ParametersPtr UnserialisePortable( InputArchive&, TSharedPtr<const Model> );
+        //static void SerialisePortable( const Parameters*, OutputArchive& );
+        //static ParametersPtr UnserialisePortable( InputArchive&, TSharedPtr<const Model> );
 
 		//! Deep clone this object.
 		ParametersPtr Clone() const;
@@ -200,23 +188,19 @@ namespace mu
 
 		//! Return the name of the parameter.
 		//! \param index Index of the parameter from 0 to GetCount()-1
-		const char* GetName( int index ) const;
+		const FString& GetName( int index ) const;
 
 		//! Return the Guid of the parameter, resistant to parameter name changes.
 		//! \param index Index of the parameter from 0 to GetCount()-1
-		const char* GetUid( int index ) const;
+		const FGuid& GetUid( int index ) const;
 
 		//! Find the parameter index by name.
 		//! It returns -1 if the parameter doesn't exist.
-		int Find( const char* strName ) const;
+		int Find( const FString& Name ) const;
 
 		//! Return the type of the parameter.
 		//! \param index Index of the parameter from 0 to GetCount()-1
 		PARAMETER_TYPE GetType( int index ) const;
-
-		//! Return the additional type data of the parameter.
-		//! \param index Index of the parameter from 0 to GetCount()-1
-		PARAMETER_DETAILED_TYPE GetDetailedType( int index ) const;
 
         //! Create a new RangeIndex object to use to access a multi-dimensional parameter.
         //! It will return nullptr if the parameter is not multidimensional.
@@ -259,11 +243,11 @@ namespace mu
 
         //! Get the name of one of the possible values for this integer.
         //! The paramIndex is in the range of 0 to GetIntPossibleValueCount()-1
-        const char* GetIntPossibleValueName( int paramIndex, int valueIndex ) const;
+        const FString& GetIntPossibleValueName( int paramIndex, int valueIndex ) const;
 
         //! Get the index of the value of one of the possible values for this integer.
         //! The paramIndex is in the range of 0 to GetIntPossibleValueCount()-1
-		int GetIntValueIndex(int paramIndex, const char* valueName) const;
+		int GetIntValueIndex(int paramIndex, const FString& valueName) const;
 
 		//! Get the index of the value of one of the possible values for this integer.
 		//! The paramIndex is in the range of 0 to GetIntPossibleValueCount()-1
@@ -299,14 +283,14 @@ namespace mu
         //! \param index Index of the parameter from 0 to GetCount()-1
         //! \param pR,pG,pB Pointers to values where every resulting colour channel will be stored
         //! \param pos Only for multidimensional parameters: relevant position to get in the ranges
-        void GetColourValue( int index, float* pR, float* pG, float* pB,
+        void GetColourValue( int index, float* pR, float* pG, float* pB, float* pA,
                              const Ptr<const RangeIndex>& pos=nullptr ) const;
 
 		//! If the parameter is of the colour type, set its value.
 		//! \param index Index of the parameter from 0 to GetCount()-1
         //! \param r,g,b new value of the parameter
         //! \param pos Only for multidimensional parameters: relevant position to set in the ranges
-        void SetColourValue( int index, float r, float g, float b,
+        void SetColourValue( int index, float R, float G, float B, float A,
                              const Ptr<const RangeIndex>& pos=nullptr );
 
 		//! Return the value of a projector parameter, as a 4x4 matrix. The matrix is supposed to be
@@ -363,13 +347,13 @@ namespace mu
         //! \pre The parameter specified by index is a T_FLOAT.
         //! \param index Index of the parameter from 0 to GetCount()-1
         //! \param pos Only for multidimensional parameters: relevant position to get in the ranges
-        const char* GetStringValue( int index, const Ptr<const RangeIndex>& pos = nullptr ) const;
+        void GetStringValue( int index, FString& OutValue, const Ptr<const RangeIndex>& pos = nullptr) const;
 
         //! If the parameter is of the float type, set its value.
         //! \param index Index of the parameter from 0 to GetCount()-1
         //! \param value new value of the parameter
         //! \param pos Only for multidimensional parameters: relevant position to set in the ranges
-        void SetStringValue( int index, const char* value, const Ptr<const RangeIndex>& pos = nullptr );
+        void SetStringValue( int index, const FString& Value, const Ptr<const RangeIndex>& pos = nullptr );
 
         //! Utility method to compare the values of a specific parameter with the values of another
         //! Parameters object. It returns false if type or values are different.

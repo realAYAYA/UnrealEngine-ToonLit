@@ -4,8 +4,10 @@
 
 #include "Animation/Skeleton.h"
 #include "Animation/AnimInstance.h"
+#include "Engine/DataTable.h"
 #include "Engine/SkeletalMesh.h"
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectIdentifier.h"
 #include "MuCOE/ExtensionDataCompilerInterface.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMaterialBase.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeObject.h"
@@ -28,7 +30,9 @@ class UCustomizableObjectNodeTable;
 struct FCustomizableObjectClothingAssetData;
 
 class FCustomizableObjectCompiler;
+class UTextureLODSettings;
 class UAnimInstance;
+class UCompositeDataTable;
 class UCustomizableObjectNodeMaterial;
 class UCustomizableObjectNodeMeshMorph;
 class UCustomizableObjectNodeObjectGroup;
@@ -37,15 +41,21 @@ class UMaterialInterface;
 class UObject;
 class UPhysicsAsset;
 class UTexture2D;
-struct FCustomizableObjectIdPair;
+struct FAnimBpOverridePhysicsAssetsInfo;
 struct FMutableGraphGenerationContext;
 struct FParameterUIData;
-
+struct FMutableRefSkeletalMeshData;
+struct FMutableRefSocket;
+struct FMutableSkinWeightProfileInfo;
+struct FMorphTargetVertexData;
 
 struct FGeneratedImageProperties
 {
 	/** Name in the Material. */
 	FString TextureParameterName;
+
+	/** Name in the mu::Surface. */
+	int32 ImagePropertiesIndex;
 
 	TEnumAsByte<TextureCompressionSettings> CompressionSettings = TC_Default;
 
@@ -65,6 +75,11 @@ struct FGeneratedImageProperties
 
 	TEnumAsByte<TextureAddress> AddressX = TA_Clamp;
 	TEnumAsByte<TextureAddress> AddressY = TA_Clamp;
+
+	bool bIsPassThrough = false;
+
+	// ReferenceTexture source size.
+	int32 TextureSize = 0;
 };
 
 
@@ -155,15 +170,23 @@ struct FGeneratedImageKey
 	const UEdGraphPin* Pin;
 };
 
-/** Structure used to store the results of the recursive GenerateMutableSourceSurface calls. */
-struct FMutableGraphSurfaceGenerationData
+
+struct FGeneratedImagePropertiesKey
 {
-	/** Pointer to the NodeMaterial which a pin is connected (directly or indirectly). Used to find the real NodeMaterial on the NodeCopyMaterial case. 
-	 * The NodeMaterial may be behind a export/import nodes, or already generated
-	 */
-	const UCustomizableObjectNodeMaterial* NodeMaterial = nullptr;
-	
-	FGeneratedImageProperties ImageProperties;
+	FGeneratedImagePropertiesKey(const UCustomizableObjectNodeMaterial* InMaterial, uint32 InImageIndex)
+	{
+		MaterialReferenceId = (PTRINT)InMaterial;
+		ImageIndex = InImageIndex;
+	}
+
+	bool operator==(const FGeneratedImagePropertiesKey& Other) const
+	{
+		return MaterialReferenceId == Other.MaterialReferenceId && ImageIndex == Other.ImageIndex;
+	}
+
+
+	PTRINT MaterialReferenceId = 0;
+	uint32 ImageIndex = 0;
 };
 
 // Structure storing results to propagate up when generating mutable mesh node expressions.
@@ -234,36 +257,12 @@ inline uint32 GetTypeHash(const FGeneratedImageKey& Key)
 }
 
 
-/** Struct describing the conversion task for each Unreal texture that needs to be converted to Mutable format */
-struct FTextureUnrealToMutableTask
+inline uint32 GetTypeHash(const FGeneratedImagePropertiesKey& Key)
 {
-	/** Default constructor */
-	FTextureUnrealToMutableTask(mu::NodeImageConstantPtr ImageNodeParameter, UTexture2D* TextureParameter, const UCustomizableObjectNode* NodeParameter, bool bIsNormalCompositeParameter = false)
-		: ImageNode(ImageNodeParameter)
-		, Texture(TextureParameter)
-		, Node(NodeParameter)
-		, bIsNormalComposite(bIsNormalCompositeParameter)
-	{}
+	uint32 GuidHash = HashCombineFast(GetTypeHash(Key.MaterialReferenceId), Key.ImageIndex);
 
-	/** Table Node constructor */
-	FTextureUnrealToMutableTask(mu::TablePtr TableParameter, UTexture2D* TextureParameter, const UCustomizableObjectNode* NodeParameter, int32 ColumnIndex, int32 RowIndex, bool bIsNormalCompositeParameter = false)
-		: TableNode(TableParameter)
-		, Texture(TextureParameter)
-		, Node(NodeParameter)
-		, TableColumn(ColumnIndex)
-		, TableRow(RowIndex)
-		, bIsNormalComposite(bIsNormalCompositeParameter)
-	{}
-
-	mu::NodeImageConstantPtr ImageNode;
-	mu::TablePtr TableNode;
-	UTexture2D* Texture;
-	const UCustomizableObjectNode* Node;
-	int32 TableColumn;
-	int32 TableRow;
-	bool bIsNormalComposite;	
-};
-
+	return GuidHash;
+}
 
 struct FPoseBoneData
 {
@@ -284,6 +283,8 @@ struct FGroupProjectorTempData
 	TArray<FPoseBoneData> PoseBoneDataArray;
 
 	bool bAlternateResStateNameWarningDisplayed = false; // Used to display this warning only once
+
+	int32 TextureSize = 512;
 };
 
 
@@ -503,6 +504,22 @@ struct FMutableGraphGenerationContext
 	FMutableGraphGenerationContext(UCustomizableObject* CustomizableObject, class FCustomizableObjectCompiler* InCompiler, const FCompilationOptions& InOptions);
 	~FMutableGraphGenerationContext();
 
+	/** See FCustomizableObjectPrivateData::ParticipatingObjects. */
+	void AddParticipatingObject(const UObject& Object);
+
+	/** See FCustomizableObjectPrivateData::ParticipatingObjects. */
+	template<typename Type>
+	void AddParticipatingObject(const TArray<Type>& InObjects)
+	{
+		for (Type InObject : InObjects)
+		{
+			if (InObject)
+			{	
+				AddParticipatingObject(*InObject);
+			}
+		}
+	}
+	
 	UCustomizableObject* Object = nullptr;
 
 	// Non-owned reference to the compiler object
@@ -520,12 +537,39 @@ struct FMutableGraphGenerationContext
 	// Cache of generated Node Tables
 	TMap<FString, mu::TablePtr> GeneratedTables;
 
+	struct FGeneratedDataTablesData
+	{
+		UScriptStruct* ParentStruct = nullptr;
+		TArray<FName> FilterPaths;
+		UCompositeDataTable* GeneratedDataTable = nullptr;
+
+		bool operator==(const FGeneratedDataTablesData& Other) const
+		{
+			return ParentStruct == Other.ParentStruct && FilterPaths == Other.FilterPaths;
+		}
+	};
+
+	// Cache of generated Composited Data Tables
+	TArray<FGeneratedDataTablesData> GeneratedCompositeDataTables;
+
 	// Cache of generated images, because sometimes they are reused by LOD, we use this as a second
 	// level cache
-	TMap<FGeneratedImageKey, mu::NodeImageConstantPtr> GeneratedImages;
+	TMap<FGeneratedImageKey, mu::NodeImagePtr> GeneratedImages;
 
-	// Cache of pass-through images and their IDs used in the core to indentify them
-	TMap<TSoftObjectPtr<UTexture>, uint32> PassThroughTextureToIndexMap;
+	/** Data stored per-generated passthrough texture. */
+	struct FGeneratedReferencedTexture
+	{
+		uint32 ID;
+		//mu::FImageDesc ImageDesc;
+	};
+
+	// Cache of runtime pass-through images and their IDs used in the core to indentify them.
+	// These textures will remain as external references even in optimized models.
+	TMap<TSoftObjectPtr<UTexture>, FGeneratedReferencedTexture> RuntimeReferencedTextureMap;
+
+	// Cache of runtime pass-through images and their IDs used in the core to indentify them
+	// These textures will become mutable images in the compiled model.
+	TMap<TSoftObjectPtr<UTexture>, FGeneratedReferencedTexture> CompileTimeTextureMap;
 
     // Global morph selection overrides.
     TArray<FRealTimeMorphSelectionOverride> RealTimeMorphTargetsOverrides;
@@ -566,16 +610,39 @@ struct FMutableGraphGenerationContext
 		FKey Key;
 
 		/** Generated mesh. */
-		mu::MeshPtr Generated;
+		mu::Ptr<mu::Mesh> Generated;
 	};
 	TArray<FGeneratedMeshData> GeneratedMeshes;
+
+	struct FGeneratedTableImageData
+	{
+		FString PinName;
+		FName PinType;
+		const mu::Ptr<mu::Table> Table;
+		const UCustomizableObjectNodeTable* TableNode;
+
+		bool operator==(const FGeneratedTableImageData& Other) const
+		{
+			return PinName == Other.PinName && Table == Other.Table;
+		}
+	};
+	TArray<FGeneratedTableImageData> GeneratedTableImages;
 
 	// Stack of mesh generation flags. The last one is the currently valid.
 	// The value is a bit mask of EMutableMeshConversionFlags
 	TArray<EMutableMeshConversionFlags> MeshGenerationFlags;
 
 	/** Find a mesh if already generated for a given source and flags. */
-	mu::MeshPtr FindGeneratedMesh(const FGeneratedMeshData::FKey& Key);
+	mu::Ptr<mu::Mesh> FindGeneratedMesh(const FGeneratedMeshData::FKey& Key);
+
+	/** Add a resource to the streamed resources array.
+	  * OutStreamedResourceContainer - Container to store the streamed resource.
+	  * Returns resource index in the array of streamed resources. */
+	int32 AddStreamedResource(const uint32 InResourceHash, UCustomizableObjectResourceDataContainer*& OutStreamedResourceContainer);
+
+	/** Adds a streamed resource of type AssetUserData.
+	  * Returns resource index in the array of streamed resources. */
+	int32 AddAssetUserDataToStreamedResources(UAssetUserData* AssetUserData);
 
 	/** Adds to ParameterNamesMap the node Node to the array of elements with name Name */
 	void AddParameterNameUnique(const UCustomizableObjectNode* Node, FString Name);
@@ -587,6 +654,9 @@ struct FMutableGraphGenerationContext
 	* UCustomizableObjectNodeMeshClipWithMesh::CustomizableObjectToClipWith field
 	* @return nothing */
 	void GenerateClippingCOInternalTags();
+
+	/** Generates shared surface IDs for all surface nodes. If one or more nodes are equal, they will use the same SharedSurfaceId */
+	void GenerateSharedSurfacesUniqueIds();
 
 	/** Check if the PhysicsAsset of a given SkeletalMesh has any SkeletalBodySetup with BoneNames not present in the
 	* InSkeletalMesh's RefSkeleton, if so, adds the PhysicsAsset to the DiscartedPhysicsAssetMap to display a warning later on */
@@ -601,8 +671,8 @@ struct FMutableGraphGenerationContext
 	
 	TArray<UMaterialInterface*> ReferencedMaterials;
 	TArray<FName> ReferencedMaterialSlotNames;
-	TArray<FGeneratedImageProperties> ImageProperties;
-	TMap<FString, TArray<const UCustomizableObjectNode*>> ParameterNamesMap;
+	TMap<FGeneratedImagePropertiesKey, FGeneratedImageProperties> ImageProperties;
+	TMap<FString, TArray<const UObject*>> ParameterNamesMap;
 	TArray<const UCustomizableObjectNode*> NoNameNodeObjectArray;
 	TMap<FString, FCustomizableObjectIdPair> GroupNodeMap;
 	TMap<FString, FString> CustomizableObjectPathMap;
@@ -617,7 +687,7 @@ struct FMutableGraphGenerationContext
 	TArray<FName> BoneNames;
 
 	// Used to aviod Nodes with duplicated ids
-	TMap<FGuid, TArray<const UCustomizableObjectNode*>> NodeIdsMap;
+	TMap<FGuid, TArray<const UObject*>> NodeIdsMap;
 	TMultiMap<const UCustomizableObject*, FGroupNodeIdsTempData> DuplicatedGroupNodeIds;
 
 	// For a given material node (the key is node package path + node uid + image index in node) stores images generated for the same node at a higher quality LOD to reuse that image node
@@ -628,11 +698,11 @@ struct FMutableGraphGenerationContext
 	TMap<class UCustomizableObjectNodeMaterial*, TArray<mu::NodeSurfaceNewPtr>> MapMaterialNodeToMutableSurfaceNodeArray;
 
 	// Map with pairs (Unreal Mutable clip mesh node, array with its corresponding Mutable mesh modifier nodes) to add tags
-	TMap<class UCustomizableObjectNodeMeshClipWithMesh*, TArray<mu::NodeModifierMeshClipWithMeshPtr>> MapClipMeshNodeToMutableClipMeshNodeArray;
+	TMap<class UCustomizableObjectNodeMeshClipWithMesh*, TArray<mu::Ptr<mu::NodeModifierMeshClipWithMesh>>> MapClipMeshNodeToMutableClipMeshNodeArray;
 
 	// Data used for MorphTarget reconstruction.
-	TArray<FMorphTargetInfo> ContributingMorphTargetsInfo;
-	TArray<FMorphTargetVertexData> MorphTargetReconstructionData;
+	TArray<FName> RealTimeMorphTargetsNames;
+	TArray<TArray<FMorphTargetVertexData>> RealTimeMorphTargetPerMeshData;
 
 	// Data used for Clothing reconstruction.
 	TArray<FCustomizableObjectMeshToMeshVertData> ClothMeshToMeshVertData;
@@ -650,14 +720,14 @@ struct FMutableGraphGenerationContext
 	};
 	TArray< ObjectParent > ComponentNewNode;
 
-	int32 CurrentLOD = 0;
-	int32 NumLODsInRoot = 0;
+	uint8 FromLOD = 0; // LOD to append to the CurrentLOD when using AutomaticLODs. 
+	uint8 CurrentLOD = 0;
 	int32 CurrentMeshComponent = 0;
-	int32 NumMeshComponentsInRoot = 0;
-	int32 CurrentTextureLODBias = 0;
 
-	int32 FirstLODAvailable = MAX_MESH_LOD_COUNT;
-	int32 NumMaxLODsToStream = MAX_MESH_LOD_COUNT;
+	uint8 NumLODsInRoot = 0;
+	uint8 NumMeshComponentsInRoot = 0;
+	uint8 FirstLODAvailable = MAX_MESH_LOD_COUNT;
+	uint8 NumMaxLODsToStream = MAX_MESH_LOD_COUNT;
 
 	bool bEnableLODStreaming = true;
 
@@ -676,20 +746,11 @@ struct FMutableGraphGenerationContext
 	TMap<FGraphCycleKey, const UCustomizableObject*> VisitedPins;
 	const UCustomizableObject* CustomizableObjectWithCycle = nullptr;
 
-	// Set of all the guids of all the child CustomizableObjects in the compilation
-	TSet<FGuid> CustomizableObjectGuidsInCompilation;
-
-	/** Array with the conversion tasks for each Unreal texture that needs to be converted to Mutable format for a particular Customizable Object.
-	* Multiple tasks for the same texture may be added here when referenced from different LODs or nodes, however when precessing the array it'll
-	* make sure to avoid converting the same texture more than once.
-	*/
-	TArray<FTextureUnrealToMutableTask> ArrayTextureUnrealToMutableTask;
-
 	/** Stores the physics assets gathered from the SkeletalMesh nodes during compilation, to be used in mesh generation in-game */
-	TMap<FString, TSoftObjectPtr<UPhysicsAsset>> PhysicsAssetMap;
+	TArray<TSoftObjectPtr<UPhysicsAsset>> PhysicsAssets;
 
 	/** Stores the anim BP assets gathered from the SkeletalMesh nodes during compilation, to be used in mesh generation in-game */
-	TMap<FString, TSoftClassPtr<UAnimInstance>> AnimBPAssetsMap;
+	TArray<TSoftClassPtr<UAnimInstance>> AnimBPAssets;
 
 	/** Stores the sockets provided by the part skeletal meshes, to be merged in the generated meshes */
 	TArray<FMutableRefSocket> SocketArray;
@@ -698,10 +759,6 @@ struct FMutableGraphGenerationContext
 	* It's a stack because group nodes are recursive
 	*/
 	TArray<int32> SocketPriorityStack;
-
-	// Stores the textures that will be used to mask-out areas in the projection. The cache isn't used for rendering, but for coverage testing
-	TMap<FString, FString> MaskOutMaterialCache; // Maps a UMaterial's asset path to a UTexture's asset path
-	TMap<FString, FMaskOutTexture> MaskOutTextureCache; // Maps a UTexture's asset path to the cached mask-out texture data
 
 	// Stores the only option of an Int Param that should be compiled in a partial compilation
 	TMap<FString, FString> ParamNamesToSelectedOptions;
@@ -727,29 +784,36 @@ struct FMutableGraphGenerationContext
 	// Stores the parameters generated in the node tables
 	TMap<const class UCustomizableObjectNodeTable*, TArray<FGuid>> GeneratedParametersInTables;
 
-	struct FSharedSurfaces
+	struct FSharedSurface
 	{
-		FSharedSurfaces(int32 InSurfaceId, mu::NodeSurfaceNewPtr InNodeSurface)
-		{
-			check(InSurfaceId != INDEX_NONE);
-			check(InNodeSurface);
-			SharedSurfaceId = InSurfaceId;
-			NodeSurface = InNodeSurface;
-		}
+		FSharedSurface(uint8 InLOD, const mu::NodeSurfaceNewPtr& InNodeSurfaceNew);
 
-		int32 SharedSurfaceId = INDEX_NONE;
+		bool operator==(const FSharedSurface& o) const;
 
-		// NodeSurface of the current LOD 
-		mu::NodeSurfaceNewPtr NodeSurface;
+		uint8 LOD = 0;
+		mu::NodeSurfaceNewPtr NodeSurfaceNew;
+
+		bool bMakeUnique = false;
+		TArray<SIZE_T> NodeModifierIDs;
 	};
 
 	// UCustomizableObjectNodeMaterial material to SharedSurfaceId
-	TMap<UCustomizableObjectNodeMaterial*, FSharedSurfaces> SharedSurfaceIds;
+	TMap<UCustomizableObjectNodeMaterial*, TArray<FSharedSurface>> SharedSurfaceIds;
+
+	/** Resource Data constants */
+	TMap<uint32, int32> StreamedResourceIndices;
+	TArray<FCustomizableObjectStreamedResourceData> StreamedResourceData;
 
 	/** Extension Data constants are collected here */
 	FExtensionDataCompilerInterface ExtensionDataCompilerInterface;
-	TArray<FCustomizableObjectExtensionData> AlwaysLoadedExtensionData;
-	TArray<UCustomizableObjectExtensionDataContainer*> StreamedExtensionData;
+	TArray<FCustomizableObjectResourceData> AlwaysLoadedExtensionData;
+	TArray<UCustomizableObjectResourceDataContainer*> StreamedExtensionData;
+
+	/** See FCustomizableObjectPrivateData::ParticipatingObjects. */
+	TMap<FName, FGuid> ParticipatingObjects;
+
+	/** Map to relate a Composite Data Table Row and its original DataTable */
+	TMap<UDataTable*,TMap<FName, TArray<UDataTable*>>> CompositeDataTableRowToOriginalDataTableMap;
 };
 
 /** Pin Data scope wrapper. Pops the pin data on scope exit. */
@@ -788,18 +852,28 @@ mu::NodeMeshApplyPosePtr CreateNodeMeshApplyPose(FMutableGraphGenerationContext&
 /** Adds Tag to MutableMesh uniquely, returns the index were the tag has been inserted or the index where an intance of the tag has been found */
 int32 AddTagToMutableMeshUnique(mu::Mesh& MutableMesh, const FString& Tag);
 
-void AddSocketTagsToMesh(const USkeletalMesh* SourceMesh, mu::MeshPtr MutableMesh, FMutableGraphGenerationContext& GenerationContext);
+void AddSocketTagsToMesh(const USkeletalMesh* SourceMesh, mu::Ptr<mu::Mesh> MutableMesh, FMutableGraphGenerationContext& GenerationContext);
 
 // Generates the tag for an animation instance
-FString GenerateAnimationInstanceTag(const FString& AnimInstance, const FName& SlotIndex);
+FString GenerateAnimationInstanceTag(const int32 AnimInstanceIndex, const FName& SlotIndex);
 
 
 FString GenerateGameplayTag(const FString& GameplayTag);
 
+uint32 GetBaseTextureSize(const FMutableGraphGenerationContext& GenerationContext, const UCustomizableObjectNodeMaterial* Material, uint32 ImageIndex);
+
 // Computes the LOD bias for a texture given the current mesh LOD and automatic LOD settings, the reference texture settings
 // and whether it's being built for a server or not
-int32 ComputeLODBias(const FMutableGraphGenerationContext& GenerationContext, const UTexture2D* ReferenceTexture, int32 MaxTextureSize,
-	const UCustomizableObjectNodeMaterial* MaterialNode, const int32 ImageIndex, bool bUseLODAsBias = true);
+uint32 ComputeLODBiasForTexture(const FMutableGraphGenerationContext& GenerationContext, const UTexture2D& Texture, const UTexture2D* ReferenceTexture = nullptr, int32 MaxTextureSizeInGame = 0);
 
+// Max texture size to set on the ImageProperties
+int32 GetMaxTextureSize(const UTexture2D& ReferenceTexture, const UTextureLODSettings& LODSettings);
 
-int32 GetMaxTextureSize(const UTexture2D* ReferenceTexture, const FMutableGraphGenerationContext& GenerationContext);
+// Max texture size of the texture with per platform MaxTextureSize and LODBias applied.
+int32 GetTextureSizeInGame(const UTexture2D& Texture, const UTextureLODSettings& LODSettings, uint8 SurfaceLODBias = 0);
+
+mu::Ptr<mu::Image> GenerateImageConstant( UTexture*, FMutableGraphGenerationContext&, bool bIsReference);
+
+/** Generates a mutable image descriptor from an unreal engine texture */
+mu::FImageDesc GenerateImageDescriptor(UTexture* Texture);
+

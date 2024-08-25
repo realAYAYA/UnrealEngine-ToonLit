@@ -5,10 +5,13 @@
 #include "Async/TaskGraphInterfaces.h"
 #include "Backends/JsonStructDeserializerBackend.h"
 #include "Backends/CborStructDeserializerBackend.h"
+#include "Misc/AssertionMacros.h"
 #include "StructDeserializer.h"
 #include "Serialization/MemoryReader.h"
 #include "Transport/UdpReassembledMessage.h"
 #include "Shared/UdpMessagingSettings.h"
+#include "UObject/TopLevelAssetPath.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 #include "UdpMessagingTracing.h"
 
 /* FUdpDeserializedMessage structors
@@ -43,6 +46,9 @@ public:
 	static bool DeserializeV11_15(FUdpDeserializedMessage& DeserializedMessage, FMemoryReader& MessageReader, bool bIsLWCBackwardCompatibilityMode);
 	static bool DeserializeV16_17(FUdpDeserializedMessage& DeserializedMessage, FMemoryReader& MessageReader);
 	static bool Deserialize(FUdpDeserializedMessage& DeserializedMessage, const FUdpReassembledMessage& ReassembledMessage);
+
+	template <typename ReturnType>
+	static ReturnType GetMessageType(FMemoryReader& MessageReader);
 };
 
 /* FUdpDeserializedMessage interface
@@ -144,16 +150,28 @@ const FDateTime& FUdpDeserializedMessage::GetTimeSent() const
 /* FUdpDeserializedMessageDetails implementation
 *****************************************************************************/
 
+template <typename ReturnType>
+ReturnType FUdpDeserializedMessageDetails::GetMessageType(FMemoryReader& MessageReader)
+{
+	// This should only be used for TopLevelAssetPath or FName paths
+	static_assert(std::is_same<FName, ReturnType>::value
+				  || std::is_same<FTopLevelAssetPath, ReturnType>::value);
+
+	ReturnType MessageType;
+	MessageReader << MessageType;
+	return MessageType;
+}
 
 bool FUdpDeserializedMessageDetails::DeserializeV10(FUdpDeserializedMessage& DeserializedMessage, FMemoryReader& MessageReader)
 {
 	// message type info
 	{
-		FName MessageType;
-		MessageReader << MessageType;
+		FName MessageType = GetMessageType<FName>(MessageReader);
 
-		// @todo gmp: cache message types for faster lookup
-		DeserializedMessage.TypeInfo = FindFirstObjectSafe<UScriptStruct>(*MessageType.ToString(), EFindFirstObjectOptions::EnsureIfAmbiguous);
+		if (DeserializedMessage.TypeInfo == nullptr)
+		{
+			DeserializedMessage.TypeInfo = FindFirstObjectSafe<UScriptStruct>(*MessageType.ToString(), EFindFirstObjectOptions::EnsureIfAmbiguous);
+		}
 
 		if (!DeserializedMessage.TypeInfo.IsValid(false, true))
 		{
@@ -235,11 +253,12 @@ bool FUdpDeserializedMessageDetails::DeserializeV11_15(FUdpDeserializedMessage& 
 {
 	// message type info
 	{
-		FName MessageType;
-		MessageReader << MessageType;
+		FName MessageType = GetMessageType<FName>(MessageReader);
 
-		// @todo gmp: cache message types for faster lookup
-		DeserializedMessage.TypeInfo = FindFirstObjectSafe<UScriptStruct>(*MessageType.ToString(), EFindFirstObjectOptions::EnsureIfAmbiguous);
+		if (DeserializedMessage.TypeInfo == nullptr)
+		{
+			DeserializedMessage.TypeInfo = FindFirstObjectSafe<UScriptStruct>(*MessageType.ToString(), EFindFirstObjectOptions::EnsureIfAmbiguous);
+		}
 
 		if (!DeserializedMessage.TypeInfo.IsValid(false, true))
 		{
@@ -364,11 +383,12 @@ bool FUdpDeserializedMessageDetails::DeserializeV16_17(FUdpDeserializedMessage& 
 {
 	// message type info
 	{
-		FTopLevelAssetPath MessageType;
-		MessageReader << MessageType;
+		FTopLevelAssetPath MessageType = GetMessageType<FTopLevelAssetPath>(MessageReader);
 
-		// @todo gmp: cache message types for faster lookup
-		DeserializedMessage.TypeInfo = FindObjectSafe<UScriptStruct>(MessageType);
+		if (DeserializedMessage.TypeInfo == nullptr)
+		{
+			DeserializedMessage.TypeInfo = FindObjectSafe<UScriptStruct>(MessageType);
+		}
 
 		if (!DeserializedMessage.TypeInfo.IsValid(false, true))
 		{
@@ -490,6 +510,58 @@ bool FUdpDeserializedMessageDetails::DeserializeV16_17(FUdpDeserializedMessage& 
 	}
 }
 
+FNameOrFTopLevel FUdpDeserializedMessage::PeekMessageTypeInfoName(const FUdpReassembledMessage& PartialMessage)
+{
+	check(PartialMessage.HasFirstSegment());
+	FNameOrFTopLevel Path;
+
+	FMemoryReader MessageReader(PartialMessage.GetData());
+	switch (PartialMessage.GetProtocolVersion())
+	{
+	case 10:
+	case 11:
+	case 12:
+	case 13:
+	case 14:
+	case 15:
+	{
+		FName MessageName = FUdpDeserializedMessageDetails::GetMessageType<FName>(MessageReader);
+		Path.Set<FName>(MessageName);
+		break;
+	}
+	case 16:
+		// fallthrough
+	case 17:
+	{
+		FTopLevelAssetPath AssetPath = FUdpDeserializedMessageDetails::GetMessageType<FTopLevelAssetPath>(MessageReader);
+		Path.Set<FTopLevelAssetPath>(AssetPath);
+		break;
+	}
+	default:
+		UE_LOG(LogUdpMessaging, Error, TEXT("Unsupported Protocol Version message tasked for MessageType query."));
+		break;
+	};
+	return Path;
+}
+
+TWeakObjectPtr<UScriptStruct> FUdpDeserializedMessage::ResolvePath(const FNameOrFTopLevel& Path)
+{
+	TWeakObjectPtr<UScriptStruct> TypeInfo;
+	if (Path.IsType<FName>())
+	{
+		TypeInfo = FindFirstObjectSafe<UScriptStruct>(*Path.Get<FName>().ToString(), EFindFirstObjectOptions::EnsureIfAmbiguous);
+	}
+	else if (Path.IsType<FTopLevelAssetPath>())
+	{
+		TypeInfo = FindObjectSafe<UScriptStruct>(Path.Get<FTopLevelAssetPath>());
+	}
+	else
+	{
+		checkNoEntry();
+	}
+	return TypeInfo;
+}
+
 bool FUdpDeserializedMessageDetails::Deserialize(FUdpDeserializedMessage& DeserializedMessage, const FUdpReassembledMessage& ReassembledMessage)
 {
 	// Note that some complex values are deserialized manually here, so that we
@@ -498,6 +570,10 @@ bool FUdpDeserializedMessageDetails::Deserialize(FUdpDeserializedMessage& Deseri
 	FMemoryReader MessageReader(ReassembledMessage.GetData());
 	MessageReader.ArMaxSerializeSize = NAME_SIZE;
 
+	// We may be able to skip lookup of the type name based on precached data provided by
+	// the reassembler.
+	//
+	DeserializedMessage.TypeInfo = ReassembledMessage.GetMessageTypeInfo();
 	switch (ReassembledMessage.GetProtocolVersion())
 	{
 	case 10:

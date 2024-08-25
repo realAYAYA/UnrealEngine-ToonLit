@@ -24,6 +24,8 @@ public class PluginReferenceViewer : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
+				"AssetManagerEditor",
+				"AssetRegistry",
 				"EditorFramework",
 				"PluginUtils",
 				"Projects",

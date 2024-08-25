@@ -107,15 +107,15 @@ namespace mu
 			case MBF_FLOAT16:
 			{
 				// TODO: Optimise
-				float16* pUV = reinterpret_cast<float16*>( pVertices );
+				FFloat16* pUV = reinterpret_cast<FFloat16*>( pVertices );
 
 				FVector2f uv;
-				uv[0] = halfToFloat( pUV[0] );
-				uv[1] = halfToFloat( pUV[1] );
+				uv[0] = float( pUV[0] );
+				uv[1] = float( pUV[1] );
 				uv = uv * transforms[ relBlock ].size + transforms[ relBlock ].min;
 
-				pUV[0] = floatToHalf( uv[0] );
-				pUV[1] = floatToHalf( uv[1] );
+				pUV[0] = FFloat16( uv[0] );
+				pUV[1] = FFloat16( uv[1] );
 				break;
 			}
 
@@ -195,7 +195,7 @@ namespace mu
 			}
 	
 			// Remove
-			MeshRemoveVerticesWithMap( pApplied, VertexMask.GetData(), VertexMask.Num());
+			MeshRemoveVerticesWithMap( pApplied, VertexMask.GetData(), (uint32)VertexMask.Num());
 		}
 
 		//

@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeLayout.h"
 
 #include "Math/IntPoint.h"
@@ -24,18 +23,19 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeLayoutType = NODE_TYPE( "NodeLayout", Node::GetStaticType() );
+	static FNodeType s_nodeLayoutType = FNodeType( "NodeLayout", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeLayout::Serialise( const NodeLayout* p, OutputArchive& arch )
 	{
-        uint32_t ver = 0;
+        uint32 ver = 0;
 		arch << ver;
 
 	#define SERIALISE_CHILDREN( C, ID ) \
-		( const C* pTyped = dynamic_cast<const C*>(p) )			\
+		( p->GetType()==C::GetStaticType() )					\
 		{ 														\
+			const C* pTyped = static_cast<const C*>(p);			\
             arch << (uint32_t)ID;								\
 			C::Serialise( pTyped, arch );						\
 		}														\
@@ -50,11 +50,11 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	NodeLayoutPtr NodeLayout::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (id)
@@ -68,14 +68,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeLayout::GetType() const
+	const FNodeType* NodeLayout::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeLayout::GetStaticType()
+	const FNodeType* NodeLayout::GetStaticType()
 	{
 		return &s_nodeLayoutType;
 	}
@@ -87,8 +87,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeLayoutBlocks::Private::s_type =
-			NODE_TYPE( "LayoutBlocks", NodeLayout::GetStaticType() );
+	FNodeType NodeLayoutBlocks::Private::s_type =
+			FNodeType( "LayoutBlocks", NodeLayout::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -96,30 +96,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeLayoutBlocks, EType::Blocks, Node, Node::EType::Layout)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeLayoutBlocks::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeLayoutBlocks::GetInputNode( int ) const
-	{
-		check(false);
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeLayoutBlocks::SetInputNode( int, NodePtr )
-	{
-		check(false);
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -183,9 +159,9 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeLayoutBlocks::SetBlockOptions(int index, int priority, bool bUseSymmetry)
+	void NodeLayoutBlocks::SetBlockOptions(int index, int priority, bool bReduceBothAxes, bool bReduceByTwo)
 	{
-		m_pD->m_pLayout->SetBlockOptions(index, priority, bUseSymmetry);
+		m_pD->m_pLayout->SetBlockOptions(index, priority, bReduceBothAxes, bReduceByTwo);
 	}
 
 
@@ -204,7 +180,8 @@ namespace mu
 		if (pMesh && layoutIndex >=0 && gridSizeX+gridSizeY>0)
 		{
 			int indexCount = pMesh->GetIndexCount();
-			vector< vec2f > UVs(indexCount*2);
+			TArray< FVector2f > UVs;
+			UVs.SetNumUninitialized(indexCount * 2);
 
 			UntypedMeshBufferIteratorConst indexIt(pMesh->GetIndexBuffers(), MBS_VERTEXINDEX, 0);
 			UntypedMeshBufferIteratorConst texIt(pMesh->GetVertexBuffers(), MBS_TEXCOORDS, layoutIndex);
@@ -253,12 +230,12 @@ namespace mu
 			layout->SetMaxGridSize(gridSizeX, gridSizeY);
 			layout->SetLayoutPackingStrategy(EPackStrategy::RESIZABLE_LAYOUT);
 			
-			vector<box<vec2<int>>> blocks;
+			TArray<box<FIntVector2>> blocks;
 			
 			//Generating blocks
 			for (int i = 0; i < indexCount; ++i)
 			{
-				vec2<int> a, b;
+				FIntVector2 a, b;
 			
 				a[0] = (int)floor(UVs[i * 2][0] * gridSizeX);
 				a[1] = (int)floor(UVs[i * 2][1] * gridSizeY);
@@ -277,7 +254,7 @@ namespace mu
 				{
 					bool contains = false;
 			
-					for (size_t it = 0; it < blocks.size(); ++it)
+					for (int32 it = 0; it < blocks.Num(); ++it)
 					{
 						if (blocks[it].Contains(a) || blocks[it].Contains(b))
 						{
@@ -288,11 +265,11 @@ namespace mu
 					//There is no block that contains them 
 					if (!contains)
 					{
-						box<vec2<int>> currBlock;
+						box<FIntVector2> currBlock;
 						currBlock.min = a;
-						currBlock.size = vec2<int>(1, 1);
+						currBlock.size = FIntVector2(1, 1);
 			
-						blocks.push_back(currBlock);
+						blocks.Add(currBlock);
 					}
 				}
 				else //they are in different blocks
@@ -301,7 +278,7 @@ namespace mu
 					int idxB = -1;
 					
 					//Getting the blocks that contain them
-					for (size_t it = 0; it < blocks.size(); ++it)
+					for (int32 it = 0; it < blocks.Num(); ++it)
 					{
 						if (blocks[it].Contains(a))
 						{
@@ -316,41 +293,41 @@ namespace mu
 					//The blocks are not the same
 					if (idxA != idxB)
 					{
-						box<vec2<int>> currBlock;
+						box<FIntVector2> currBlock;
 						
 						//One of the blocks doesn't exist
 						if (idxA != -1 && idxB == -1)
 						{
 							currBlock.min = b;
-							currBlock.size = vec2<int>(1, 1);
+							currBlock.size = FIntVector2(1, 1);
 							blocks[idxA].Bound(currBlock);
 						}
 						else if (idxB != -1 && idxA == -1)
 						{
 							currBlock.min = a;
-							currBlock.size = vec2<int>(1, 1);
+							currBlock.size = FIntVector2(1, 1);
 							blocks[idxB].Bound(currBlock);
 						}
 						else //Both exist
 						{
 							blocks[idxA].Bound(blocks[idxB]);
-							blocks.erase(blocks.begin() + idxB);
+							blocks.RemoveAt(idxB);
 						}
 					}
 					else //the blocks doesn't exist
 					{
 						if (idxA == -1)
 						{
-							box<vec2<int>> currBlockA;
-							box<vec2<int>> currBlockB;
+							box<FIntVector2> currBlockA;
+							box<FIntVector2> currBlockB;
 			
 							currBlockA.min = a;
 							currBlockB.min = b;
-							currBlockA.size = vec2<int>(1, 1);
-							currBlockB.size = vec2<int>(1, 1);
+							currBlockA.size = FIntVector2(1, 1);
+							currBlockB.size = FIntVector2(1, 1);
 			
 							currBlockA.Bound(currBlockB);
-							blocks.push_back(currBlockA);
+							blocks.Add(currBlockA);
 						}
 					}
 				}
@@ -363,14 +340,14 @@ namespace mu
 			{
 				intersections = false;
 			
-				for (size_t i = 0; !intersections && i < blocks.size(); ++i)
+				for (int32 i = 0; !intersections && i < blocks.Num(); ++i)
 				{
-					for (size_t j = 0; j < blocks.size(); ++j)
+					for (int32 j = 0; j < blocks.Num(); ++j)
 					{
 						if (i != j && blocks[i].IntersectsExclusive(blocks[j]))
 						{
 							blocks[i].Bound(blocks[j]);
-							blocks.erase(blocks.begin() + j);
+							blocks.RemoveAt(j);
 							intersections = true;
 							break;
 						}
@@ -378,7 +355,7 @@ namespace mu
 				}
 			}
 			
-			int numBlocks = (int)blocks.size();
+			int32 numBlocks = blocks.Num();
 			
 			//Generating layout blocks
 			if (numBlocks > 0)

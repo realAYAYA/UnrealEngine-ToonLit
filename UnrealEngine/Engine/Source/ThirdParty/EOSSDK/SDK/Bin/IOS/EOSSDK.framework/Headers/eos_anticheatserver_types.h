@@ -10,11 +10,17 @@
 EXTERN_C typedef struct EOS_AntiCheatServerHandle* EOS_HAntiCheatServer;
 
 /**
+ * Maximum size of an individual message provided through EOS_AntiCheatServer_OnMessageToClientCallback.
+ */
+#define EOS_ANTICHEATSERVER_ONMESSAGETOCLIENTCALLBACK_MAX_MESSAGE_SIZE 512
+
+/**
  * Callback issued when a new message must be dispatched to a connected client.
  *
- * Messages contain opaque binary data of up to 256 bytes and must be transmitted
- * to the correct client using the game's own networking layer, then delivered
- * to the client anti-cheat instance using the EOS_AntiCheatClient_ReceiveMessageFromServer function.
+ * Messages contain opaque binary data and must be transmitted to the correct client
+ * using the game's own networking layer, then delivered to the client anti-cheat instance
+ * using the EOS_AntiCheatClient_ReceiveMessageFromServer function.
+ * The upper limit of the message size is EOS_ANTICHEATSERVER_ONMESSAGETOCLIENTCALLBACK_MAX_MESSAGE_SIZE.
  *
  * This callback is always issued from within EOS_Platform_Tick on its calling thread.
  */
@@ -66,7 +72,7 @@ EOS_STRUCT(EOS_AntiCheatServer_BeginSessionOptions, (
 	const char* ServerName;
 	/**
 	 * Gameplay data collection APIs such as LogPlayerTick will be enabled if set to true.
-	 * If you do not use these APIs, it is more efficient to set this value to false.
+	 * If you do not use these APIs you should set this value to false to reduce memory use.
 	 */
 	EOS_Bool bEnableGameplayData;
 	/** The Product User ID of the local user who is associated with this session. Dedicated servers should set this to null. */
@@ -91,7 +97,7 @@ EOS_STRUCT(EOS_AntiCheatServer_RegisterClientOptions, (
 	EOS_EAntiCheatCommonClientPlatform ClientPlatform;
 	/**
 	 * DEPRECATED - New code should set this to null and specify UserId instead.
-	 * 
+	 *
 	 * Identifier for the remote user. This is typically a string representation of an
 	 * account ID, but it can be any string which is both unique (two different users will never
 	 * have the same string) and consistent (if the same user connects to this game session

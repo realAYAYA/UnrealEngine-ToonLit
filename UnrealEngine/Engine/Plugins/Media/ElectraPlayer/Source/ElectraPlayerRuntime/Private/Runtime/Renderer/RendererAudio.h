@@ -66,12 +66,14 @@ public:
 	UEMediaError AcquireBuffer(IBuffer*& OutBuffer, int32 TimeoutInMicroseconds, const Electra::FParamDict& InParameters) override;
 
 	// Releases the buffer for rendering and subsequent return to the buffer pool
-	UEMediaError ReturnBuffer(IBuffer* Buffer, bool bRender, const Electra::FParamDict& InSampleProperties) override;
+	UEMediaError ReturnBuffer(IBuffer* Buffer, bool bRender, Electra::FParamDict& InOutSampleProperties) override;
 
 	// Informs that the decoder is done with this pool. NO FREE!!!
 	UEMediaError ReleaseBufferPool() override;
 
 	bool CanReceiveOutputFrames(uint64 NumFrames) const override;
+
+	bool GetEnqueuedFrameInfo(int32& OutNumberOfEnqueuedFrames, Electra::FTimeValue& OutDurationOfEnqueuedFrames) const override;
 
 	// Receives the render clock we need to update with the most recently rendered sample's timestamp.
 	void SetRenderClock(TSharedPtr<Electra::IMediaRenderClock, ESPMode::ThreadSafe> RenderClock) override;

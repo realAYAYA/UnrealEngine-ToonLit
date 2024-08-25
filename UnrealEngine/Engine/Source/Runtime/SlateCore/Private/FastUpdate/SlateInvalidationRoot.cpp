@@ -493,17 +493,17 @@ namespace UE::Slate::Private
 			Heap.HeapPush(Element, FWidgetOrderGreater());
 		}
 
-		UE_NODISCARD FSlateInvalidationWidgetHeapElement HeapPeek()
+		[[nodiscard]] FSlateInvalidationWidgetHeapElement HeapPeek()
 		{
 			return Heap.HeapTop();
 		}
 
 		void HeapPopDiscard()
 		{
-			Heap.HeapPopDiscard(FWidgetOrderGreater(), false);
+			Heap.HeapPopDiscard(FWidgetOrderGreater(), EAllowShrinking::No);
 		}
 
-		UE_NODISCARD bool IsEmpty() const
+		[[nodiscard]] bool IsEmpty() const
 		{
 			return Heap.Num() == 0;
 		}
@@ -641,8 +641,7 @@ void FSlateInvalidationRoot::PaintFastPath_FixupLayerId(UE::Slate::Private::FSla
 bool FSlateInvalidationRoot::PaintFastPath_UpdateNextWidget(const FSlateInvalidationContext& Context, UE::Slate::Private::FSlateInvalidationPaintFastPathContext& FastPaintContext)
 {
 	bool bNeedsPaint = false;
-	const bool bAllowShrinking = false;
-	const FSlateInvalidationWidgetIndex MyIndex = FinalUpdateList.Pop(bAllowShrinking).GetWidgetIndex();
+	const FSlateInvalidationWidgetIndex MyIndex = FinalUpdateList.Pop(EAllowShrinking::No).GetWidgetIndex();
 
 	FSlateInvalidationWidgetList::InvalidationWidgetType& InvalidationWidget = (*FastWidgetPathList)[MyIndex];
 	SWidget* WidgetPtr = InvalidationWidget.GetWidget();
@@ -678,7 +677,7 @@ bool FSlateInvalidationRoot::PaintFastPath_UpdateNextWidget(const FSlateInvalida
 					}
 
 					// It's already been processed by the previous draw
-					FinalUpdateList.RemoveAt(LastIndex, 1, bAllowShrinking);
+					FinalUpdateList.RemoveAt(LastIndex, 1, EAllowShrinking::No);
 				}
 			}
 
@@ -701,7 +700,6 @@ bool FSlateInvalidationRoot::PaintFastPath_UpdateNextWidget(const FSlateInvalida
 bool FSlateInvalidationRoot::PaintFastPath(const FSlateInvalidationContext& Context)
 {
 	SCOPED_NAMED_EVENT(SWidget_FastPathUpdate, FColor::Green);
-	CSV_SCOPED_TIMING_STAT(Slate, FastPathUpdate);
 
 	check(!bNeedsSlowPath);
 
@@ -805,6 +803,7 @@ void FSlateInvalidationRoot::AdjustWidgetsDesktopGeometry(UE::Slate::FDeprecateV
 
 	FastWidgetPathList->ForEachWidget([WindowToDesktopTransform, &WindowToDesktop](SWidget& Widget)
 		{
+			Widget.PersistentState.DesktopGeometry = Widget.PersistentState.AllottedGeometry;
 			Widget.PersistentState.DesktopGeometry.AppendTransform(WindowToDesktop);
 		});
 }
@@ -1205,7 +1204,6 @@ bool FSlateInvalidationRoot::ProcessPostUpdate()
 bool FSlateInvalidationRoot::ProcessInvalidation()
 {
 	SCOPED_NAMED_EVENT(Slate_InvalidationProcessing, FColor::Blue);
-	CSV_SCOPED_TIMING_STAT(Slate, InvalidationProcessing);
 #if WITH_SLATE_DEBUGGING
 	PerformanceStat = FPerformanceStat();
 	FScopedDurationTimer TmpPerformance_ProcessInvalidation(PerformanceStat.InvalidationProcessing);
@@ -1355,6 +1353,11 @@ void FSlateInvalidationRoot::ClearAllFastPathData(bool bClearResourcesImmediatel
 	FastWidgetPathList->Empty();
 	CachedElementData->Empty();
 	FinalUpdateList.Empty();
+}
+
+void FSlateInvalidationRoot::SetNeedsSlowPath(bool InNeedsSlowPath)
+{
+	bNeedsSlowPath = InNeedsSlowPath;
 }
 
 void FSlateInvalidationRoot::HandleInvalidateAllWidgets(bool bClearResourcesImmediately)

@@ -6,11 +6,11 @@ using System.IO;
 public class libOpus : ModuleRules
 {
 	protected virtual string OpusVersion	  { get { return "opus-1.1"; } }
-	protected virtual string IncRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
-	protected virtual string LibRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
+	protected virtual string IncRootDirectory { get { return ModuleDirectory; } }
+	protected virtual string LibRootDirectory { get { return PlatformModuleDirectory; } }
 
-	protected virtual string OpusIncPath { get { return Path.Combine(IncRootDirectory, "libOpus", OpusVersion, "include"); } }
-	protected virtual string OpusLibPath { get { return Path.Combine(LibRootDirectory, "libOpus", OpusVersion); } }
+	protected virtual string OpusIncPath { get { return Path.Combine(IncRootDirectory, OpusVersion, "include"); } }
+	protected virtual string OpusLibPath { get { return Path.Combine(LibRootDirectory, OpusVersion); } }
 
 	public libOpus(ReadOnlyTargetRules Target) : base(Target)
 	{
@@ -18,7 +18,7 @@ public class libOpus : ModuleRules
 
 		string LibraryPath = OpusLibPath + "/";
 		bool IsWinPlatform = Target.IsInPlatformGroup(UnrealPlatformGroup.Windows);
-		string OpusLibraryPath = Path.Combine(LibRootDirectory, "libOpus", "opus-1.3.1-12"); 
+		string OpusLibraryPath = Path.Combine(LibRootDirectory, "opus-1.3.1-12"); 
 
 		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Windows))
 		{
@@ -52,22 +52,17 @@ public class libOpus : ModuleRules
 			PublicAdditionalLibraries.Add(OpusPath);
 			PublicAdditionalLibraries.Add(SpeexPath);
 		}
-        else if (Target.Platform == UnrealTargetPlatform.IOS)
+        else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
         {
-            string OpusPath = LibraryPath + "/IOS/";
-			if (Target.Architecture == UnrealArch.IOSSimulator)
+            string OpusPath = $"{LibraryPath}{PlatformSubdirectoryName}/";
+			if (Target.Architecture == UnrealArch.IOSSimulator || Target.Architecture == UnrealArch.TVOSSimulator)
 			{
 				OpusPath += "libOpus.sim.a";
-			}
+        }
 			else
-			{
+        {
 				OpusPath += "libOpus.a";
 			}
-            PublicAdditionalLibraries.Add(OpusPath);
-        }
-	else if (Target.Platform == UnrealTargetPlatform.TVOS)
-        {
-            string OpusPath = LibraryPath + "/TVOS/libOpus.a";
             PublicAdditionalLibraries.Add(OpusPath);
         }
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))

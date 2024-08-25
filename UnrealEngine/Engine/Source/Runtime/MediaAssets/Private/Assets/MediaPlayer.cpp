@@ -117,7 +117,7 @@ void UMediaPlayer::SetPlaylistInternal(UMediaPlaylist* InPlaylist) const
 {
 	if (Playlist && Playlist != InPlaylist && Playlist->IsRooted())
 	{
-		// To avoid leaking UObjects we need to remove the old playlist from root set 
+		// To avoid leaking UObjects we need to remove the old playlist from root set
 		// (which has been most likely rooted because this MediaPlayer is in disregard for GC set)
 		Playlist->RemoveFromRoot();
 	}
@@ -249,7 +249,7 @@ TMap<FString, FMediaMetadataItemsBPT> UMediaPlayer::GetMediaMetadataItems() cons
 					OutItem.LanguageCode = ItemPtr->GetLanguageCode();
 					OutItem.MimeType = ItemPtr->GetMimeType();
 					FVariant TempItem = ItemPtr->GetValue();
-			
+
 					switch (TempItem.GetType())
 					{
 					case EVariantTypes::String:
@@ -263,7 +263,7 @@ TMap<FString, FMediaMetadataItemsBPT> UMediaPlayer::GetMediaMetadataItems() cons
 							OutItem.BinaryData = TempItem.GetValue<TArray<uint8>>();
 							break;
 						}
-			
+
 					case EVariantTypes::Bool:
 						{
 							OutItem.StringData = TempItem.GetValue<bool>() ? TEXT("true") : TEXT("false");
@@ -602,7 +602,7 @@ bool UMediaPlayer::OpenPlaylistIndex(UMediaPlaylist* InPlaylist, int32 Index)
 	UE_LOG(LogMediaAssets, Verbose, TEXT("%s.OpenSource %s %i"), *GetFName().ToString(), *InPlaylist->GetFName().ToString(), Index);
 
 	SetPlaylistInternal(InPlaylist);
-	
+
 	if (Index == INDEX_NONE)
 	{
 		return true;
@@ -669,10 +669,10 @@ bool UMediaPlayer::OpenSourceInternal(UMediaSource* MediaSource, const FMediaPla
 	{
 		TArray<FAnalyticsEventAttribute> EventAttributes;
 		EventAttributes.Add(FAnalyticsEventAttribute(TEXT("MediaSourceType"), MediaSource->GetClass()->GetName()));
-		FEngineAnalytics::GetProvider().RecordEvent(TEXT("MediaFramework.MediaSourceOpened"), EventAttributes);	
+		FEngineAnalytics::GetProvider().RecordEvent(TEXT("MediaFramework.MediaSourceOpened"), EventAttributes);
 	}
 #endif
-	
+
 	RegisterWithMediaModule();
 	return PlayerFacade->Open(MediaSource->GetUrl(), MediaSource, PlayerOptions);
 }
@@ -722,7 +722,7 @@ void UMediaPlayer::PlayAndSeek()
 	PlayOnNext = false;
 	if (Play())
 	{
-		if (PlayerFacade->ActivePlayerOptions.IsSet() && !PlayerFacade->ActivePlayerOptions->SeekTime.IsZero() && SupportsSeeking())
+		if (PlayerFacade->ActivePlayerOptions.IsSet() && !PlayerFacade->ActivePlayerOptions->SeekTime.IsZero() && SupportsSeeking() && PlayerFacade->ActivePlayerOptions->SeekTimeType == EMediaPlayerOptionSeekTimeType::RelativeToStartTime)
 		{
 			Seek(PlayerFacade->ActivePlayerOptions->SeekTime);
 		}
@@ -826,7 +826,7 @@ bool UMediaPlayer::SetLooping(bool Looping)
 
 	Loop = Looping;
 
-	return PlayerFacade->SetLooping(Looping);
+	return PlayerFacade->SetLooping(Loop && (!Playlist || Playlist->Num() == 1));
 }
 
 
@@ -903,6 +903,38 @@ bool UMediaPlayer::SupportsScrubbing() const
 bool UMediaPlayer::SupportsSeeking() const
 {
 	return PlayerFacade->CanSeek();
+}
+
+bool UMediaPlayer::SupportsPlaybackTimeRange() const
+{
+	return PlayerFacade->SupportsPlaybackTimeRange();
+}
+
+TRange<FTimespan> UMediaPlayer::GetPlaybackTimeRange(EMediaTimeRangeType InRangeToGet)
+{
+	return PlayerFacade->GetPlaybackTimeRange(InRangeToGet);
+}
+
+bool UMediaPlayer::SetPlaybackTimeRange(const TRange<FTimespan>& InTimeRange)
+{
+	return PlayerFacade->SetPlaybackTimeRange(InTimeRange);
+}
+
+FFloatInterval UMediaPlayer::GetPlaybackTimeRange(EMediaTimeRangeBPType InRangeToGet)
+{
+	TRange<FTimespan> r = GetPlaybackTimeRange(static_cast<EMediaTimeRangeType>(InRangeToGet));
+	FDoubleInterval i;
+	i.Min = !r.IsEmpty() ? r.GetLowerBoundValue().GetTotalSeconds() : -1.0;
+	i.Max = !r.IsEmpty() ? r.GetUpperBoundValue().GetTotalSeconds() : -1.0;
+	FFloatInterval Imprecise;
+	Imprecise.Min = (float) i.Min;
+	Imprecise.Max = (float) i.Max;
+	return Imprecise;
+}
+
+bool UMediaPlayer::SetPlaybackTimeRange(FFloatInterval InTimeRange)
+{
+	return SetPlaybackTimeRange(TRange<FTimespan>(FTimespan::FromSeconds(InTimeRange.Min), FTimespan::FromSeconds(InTimeRange.Max)));
 }
 
 
@@ -1299,7 +1331,7 @@ public:
 					{
 						if (Options.SeekTime < FTimespan::FromSeconds(0) || Options.SeekTime > MediaPlayer->GetDuration())
 						{
-							UE_LOG(LogMediaAssets, Warning, TEXT("Open Media Latent: Media player seeking to time out of bounds. Seek: %s, Duration: %s, URL: %s"), 
+							UE_LOG(LogMediaAssets, Warning, TEXT("Open Media Latent: Media player seeking to time out of bounds. Seek: %s, Duration: %s, URL: %s"),
 								*Options.SeekTime.ToString(), *MediaPlayer->GetDuration().ToString(), *URL);
 							FailedOperation(Response);
 							return;

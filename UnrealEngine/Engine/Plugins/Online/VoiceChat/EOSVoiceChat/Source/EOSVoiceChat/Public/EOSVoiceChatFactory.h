@@ -2,9 +2,9 @@
 
 #pragma once
 
-#include "EOSShared.h"
+#include "EOSVoiceChat.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "Features/IModularFeatures.h"
 #include "Misc/CoreMisc.h"
@@ -49,4 +49,4 @@ private:
 	TArray<IVoiceChatWeakPtr> Instances;
 };
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

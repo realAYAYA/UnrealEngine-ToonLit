@@ -3,9 +3,12 @@
 #include "WorldPartition/WorldPartitionRuntimeCell.h"
 #include "UObject/Package.h"
 #include "Engine/Level.h"
+#include "Algo/Transform.h"
+#include "Algo/Count.h"
 #include "Misc/HierarchicalLogArchive.h"
 #include "WorldPartition/WorldPartitionDebugHelper.h"
 #include "WorldPartition/DataLayer/DataLayerManager.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
 #include "WorldPartition/DataLayer/DataLayersID.h"
 #include "WorldPartition/ContentBundle/ContentBundleDescriptor.h"
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
@@ -17,12 +20,14 @@
 UWorldPartitionRuntimeCell::UWorldPartitionRuntimeCell(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, bIsAlwaysLoaded(false)
-	, Priority(0)
 #if !UE_BUILD_SHIPPING
 	, DebugStreamingPriority(-1.f)
 #endif
 	, RuntimeCellData(nullptr)
-{}
+{
+	EffectiveWantedState = EDataLayerRuntimeState::Unloaded;
+	EffectiveWantedStateEpoch = MAX_int32;
+}
 
 UWorld* UWorldPartitionRuntimeCell::GetOwningWorld() const
 {
@@ -78,13 +83,43 @@ bool UWorldPartitionRuntimeCell::NeedsActorToCellRemapping() const
 void UWorldPartitionRuntimeCell::SetDataLayers(const TArray<const UDataLayerInstance*>& InDataLayerInstances)
 {
 	check(DataLayers.IsEmpty());
-	DataLayers.Reserve(InDataLayerInstances.Num());
-	for (const UDataLayerInstance* DataLayerInstance : InDataLayerInstances)
+	check(!ExternalDataLayerAsset);
+
+	if (InDataLayerInstances.IsEmpty())
 	{
-		check(DataLayerInstance->IsRuntime());
-		DataLayers.Add(DataLayerInstance->GetDataLayerFName());
+		return;
 	}
-	DataLayers.Sort([](const FName& A, const FName& B) { return A.ToString() < B.ToString(); });
+
+	// Validate that we have maximum 1 External Data Layer
+	check(Algo::CountIf(InDataLayerInstances, [](const UDataLayerInstance* DataLayerInstance) { return DataLayerInstance->IsA<UExternalDataLayerInstance>(); }) <= 1);
+	// Validate that all Data Layers are Runtime
+	check(Algo::CountIf(InDataLayerInstances, [](const UDataLayerInstance* DataLayerInstance) { return DataLayerInstance->IsRuntime(); }) == InDataLayerInstances.Num());
+
+	// Sort Data Layers by FName except for External Data Layer that will always be the first in the list
+	TArray<const UDataLayerInstance*> SortedDataLayerInstances(InDataLayerInstances);
+	Algo::Sort(SortedDataLayerInstances, [](const UDataLayerInstance* A, const UDataLayerInstance* B)
+	{
+		if (A->IsA<UExternalDataLayerInstance>() && !B->IsA<UExternalDataLayerInstance>())
+		{
+			return true;
+		}
+		else if (!A->IsA<UExternalDataLayerInstance>() && B->IsA<UExternalDataLayerInstance>())
+		{
+			return false;
+		}
+
+		return A->GetDataLayerFName().ToString() < B->GetDataLayerFName().ToString();
+	});
+
+	TArray<FName> SortedDataLayerInstanceNames;
+	bool bIsFirstDataLayerExternal = false;
+	Algo::Transform(SortedDataLayerInstances, SortedDataLayerInstanceNames, [](const UDataLayerInstance* DataLayerInstance) { return DataLayerInstance->GetDataLayerFName(); });
+	if (const UExternalDataLayerInstance* ExternalDataLayerInstance = Cast<UExternalDataLayerInstance>(SortedDataLayerInstances[0]))
+	{
+		bIsFirstDataLayerExternal = true;
+		ExternalDataLayerAsset = ExternalDataLayerInstance->GetExternalDataLayerAsset();
+	}
+	DataLayers = FDataLayerInstanceNames(SortedDataLayerInstanceNames, bIsFirstDataLayerExternal);
 }
 
 void UWorldPartitionRuntimeCell::DumpStateLog(FHierarchicalLogArchive& Ar) const
@@ -93,31 +128,17 @@ void UWorldPartitionRuntimeCell::DumpStateLog(FHierarchicalLogArchive& Ar) const
 }
 #endif
 
-int32 UWorldPartitionRuntimeCell::SortCompare(const UWorldPartitionRuntimeCell* Other, bool bCanUseSortingCache) const
+int32 UWorldPartitionRuntimeCell::SortCompare(const UWorldPartitionRuntimeCell* Other) const
 {
-	const int32 Comparison = RuntimeCellData->SortCompare(Other->RuntimeCellData, bCanUseSortingCache);
-
-	// Cell priority (lower value is higher prio)
-	return (Comparison != 0) ? Comparison : (Priority - Other->Priority);
+	return RuntimeCellData->SortCompare(Other->RuntimeCellData);
 }
 
 bool UWorldPartitionRuntimeCell::IsDebugShown() const
 {
 	return FWorldPartitionDebugHelper::IsDebugStreamingStatusShown(GetStreamingStatus()) &&
-	       FWorldPartitionDebugHelper::AreDebugDataLayersShown(DataLayers) &&
+	       FWorldPartitionDebugHelper::AreDebugDataLayersShown(GetDataLayers()) &&
 		   (FWorldPartitionDebugHelper::CanDrawContentBundles() || !ContentBundleID.IsValid()) &&
 			RuntimeCellData->IsDebugShown();
-}
-
-FLinearColor UWorldPartitionRuntimeCell::GetDebugStreamingPriorityColor() const
-{
-#if !UE_BUILD_SHIPPING
-	if (DebugStreamingPriority >= 0.f && DebugStreamingPriority <= 1.f)
-	{
-		return FWorldPartitionDebugHelper::GetHeatMapColor(1.f - DebugStreamingPriority);
-	}
-#endif
-	return FLinearColor::Transparent;
 }
 
 UDataLayerManager* UWorldPartitionRuntimeCell::GetDataLayerManager() const
@@ -125,10 +146,67 @@ UDataLayerManager* UWorldPartitionRuntimeCell::GetDataLayerManager() const
 	return GetOuterWorld()->GetWorldPartition()->GetDataLayerManager();
 }
 
-bool UWorldPartitionRuntimeCell::HasAnyDataLayerInEffectiveRuntimeState(EDataLayerRuntimeState InState) const
+EDataLayerRuntimeState UWorldPartitionRuntimeCell::GetCellEffectiveWantedState() const
 {
-	const UDataLayerManager* DataLayerManager = HasDataLayers() ? GetDataLayerManager() : nullptr;
-	return DataLayerManager ? DataLayerManager->IsAnyDataLayerInEffectiveRuntimeState(GetDataLayers(), InState) : false;
+	if (!HasDataLayers())
+	{
+		EffectiveWantedState = EDataLayerRuntimeState::Activated;
+	}
+	else
+	{
+		const UWorld* OuterWorld = GetOuterWorld();
+		const AWorldDataLayers* WorldDataLayers = OuterWorld->GetWorldDataLayers();
+		check(WorldDataLayers);
+		if (EffectiveWantedStateEpoch != WorldDataLayers->GetDataLayersStateEpoch())
+		{
+			EffectiveWantedState = EDataLayerRuntimeState::Unloaded;
+
+			UWorldPartition* WorldPartition = OuterWorld->GetWorldPartition();
+			if (const UDataLayerManager* DataLayerManager = WorldPartition->GetDataLayerManager())
+			{
+				if (!DataLayers.HasExternalDataLayer() || DataLayerManager->IsAllDataLayerInEffectiveRuntimeState({ GetExternalDataLayer() }, EDataLayerRuntimeState::Activated))
+				{
+					TArrayView<const FName> NonExternalDataLayers = DataLayers.GetNonExternalDataLayers();
+					if (NonExternalDataLayers.IsEmpty())
+					{
+						EffectiveWantedState = EDataLayerRuntimeState::Activated;
+					}
+					else
+					{
+						switch (WorldPartition->GetDataLayersLogicOperator())
+						{
+						case EWorldPartitionDataLayersLogicOperator::Or:
+							if (DataLayerManager->IsAnyDataLayerInEffectiveRuntimeState(NonExternalDataLayers, EDataLayerRuntimeState::Activated))
+							{
+								EffectiveWantedState = EDataLayerRuntimeState::Activated;
+							}
+							else if (DataLayerManager->IsAnyDataLayerInEffectiveRuntimeState(NonExternalDataLayers, EDataLayerRuntimeState::Loaded))
+							{
+								EffectiveWantedState = EDataLayerRuntimeState::Loaded;
+							}
+							break;
+						case EWorldPartitionDataLayersLogicOperator::And:
+							if (DataLayerManager->IsAllDataLayerInEffectiveRuntimeState(NonExternalDataLayers, EDataLayerRuntimeState::Activated))
+							{
+								EffectiveWantedState = EDataLayerRuntimeState::Activated;
+							}
+							else if (DataLayerManager->IsAllDataLayerInEffectiveRuntimeState(NonExternalDataLayers, EDataLayerRuntimeState::Loaded))
+							{
+								EffectiveWantedState = EDataLayerRuntimeState::Loaded;
+							}
+							break;
+						default:
+							checkNoEntry();
+						}
+					}
+				}
+			}
+
+			EffectiveWantedStateEpoch = WorldDataLayers->GetDataLayersStateEpoch();
+		}
+	}
+
+	return EffectiveWantedState;
 }
 
 TArray<const UDataLayerInstance*> UWorldPartitionRuntimeCell::GetDataLayerInstances() const
@@ -137,11 +215,22 @@ TArray<const UDataLayerInstance*> UWorldPartitionRuntimeCell::GetDataLayerInstan
 	return DataLayerManager ? DataLayerManager->GetDataLayerInstances(GetDataLayers()) : TArray<const UDataLayerInstance*>();
 }
 
+const UExternalDataLayerInstance* UWorldPartitionRuntimeCell::GetExternalDataLayerInstance() const
+{
+	const UDataLayerManager* DataLayerManager = !GetExternalDataLayer().IsNone() ? GetDataLayerManager() : nullptr;
+	return DataLayerManager ? Cast<UExternalDataLayerInstance>(DataLayerManager->GetDataLayerInstance(GetExternalDataLayer())) : nullptr;
+}
+
 bool UWorldPartitionRuntimeCell::ContainsDataLayer(const UDataLayerAsset* DataLayerAsset) const
 {
 	const UDataLayerManager* DataLayerManager = HasDataLayers() ? GetDataLayerManager() : nullptr;
 	const UDataLayerInstance* DataLayerInstance = DataLayerManager ? DataLayerManager->GetDataLayerInstance(DataLayerAsset) : nullptr;
 	return DataLayerInstance ? ContainsDataLayer(DataLayerInstance) : false;
+}
+
+bool UWorldPartitionRuntimeCell::HasContentBundle() const
+{
+	return GetContentBundleID().IsValid();
 }
 
 bool UWorldPartitionRuntimeCell::ContainsDataLayer(const UDataLayerInstance* DataLayerInstance) const

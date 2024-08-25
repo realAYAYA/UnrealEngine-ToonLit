@@ -15,7 +15,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_type = NODE_TYPE("NodeExtensionData", Node::GetStaticType());
+	static FNodeType s_type = FNodeType("NodeExtensionData", Node::GetStaticType());
 
 	//---------------------------------------------------------------------------------------------
 	//!
@@ -55,14 +55,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeExtensionData::GetType() const
+	const FNodeType* NodeExtensionData::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeExtensionData::GetStaticType()
+	const FNodeType* NodeExtensionData::GetStaticType()
 	{
 		return &s_type;
 	}

@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DatasmithMaxWriter.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxSceneExporter.h"
 
 #include "Misc/Paths.h"

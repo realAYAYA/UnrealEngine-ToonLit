@@ -13,192 +13,29 @@ using static AutomationTool.ProcessResult;
 
 namespace Gauntlet
 {
-	class LinuxAppInstance : LocalAppProcess
-	{
-		protected LinuxAppInstall Install;
-
-		public LinuxAppInstance(LinuxAppInstall InInstall, IProcessResult InProcess, string ProcessLogFile = null)
-			: base(InProcess, InInstall.CommandArguments, ProcessLogFile)
-		{
-			Install = InInstall;
-		}
-
-		public override string ArtifactPath
-		{
-			get
-			{
-				return Install.ArtifactPath;
-			}
-		}
-
-		public override ITargetDevice Device
-		{
-			get
-			{
-				return Install.Device;
-			}
-		}
-	}
-
-
-	class LinuxAppInstall : IAppInstall
-	{
-		public string Name { get; private set; }
-
-		public string WorkingDirectory;
-
-		public string ExecutablePath;
-
-		public string CommandArguments;
-
-		public string ArtifactPath;
-
-		public string ProjectName;
-
-		public TargetDeviceLinux LinuxDevice { get; private set; }
-
-		public ITargetDevice Device { get { return LinuxDevice; } }
-
-		public CommandUtils.ERunOptions RunOptions { get; set; }
-
-		public LinuxAppInstall(string InName, string InProjectName, TargetDeviceLinux InDevice)
-		{
-			Name = InName;
-			ProjectName = InProjectName;
-			LinuxDevice = InDevice;
-			CommandArguments = "";
-			this.RunOptions = CommandUtils.ERunOptions.NoWaitForExit;
-		}
-
-		public IAppInstance Run()
-		{
-			return Device.Run(this);
-		}
-
-		public bool ForceCleanDeviceArtifacts()
-		{
-			DirectoryInfo ClientTempDirInfo = new DirectoryInfo(ArtifactPath) { Attributes = FileAttributes.Normal };
-			Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Setting files in device artifacts {0} to have normal attributes (no longer read-only).", ArtifactPath);
-			foreach (FileSystemInfo info in ClientTempDirInfo.GetFileSystemInfos("*", SearchOption.AllDirectories))
-			{
-				info.Attributes = FileAttributes.Normal;
-			}
-			try
-			{
-				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Clearing device artifact path {0} (force)", ArtifactPath);
-				Directory.Delete(ArtifactPath, true);
-			}
-			catch (Exception Ex)
-			{
-				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to force delete artifact path {File}. {Exception}", ArtifactPath, Ex.Message);
-				return false;
-			}
-			return true;
-		}
-
-		public virtual void CleanDeviceArtifacts()
-		{
-			if (!string.IsNullOrEmpty(ArtifactPath) && Directory.Exists(ArtifactPath))
-			{
-				try
-				{
-					Log.Info("Clearing device artifacts path {0} for {1}", ArtifactPath, Device.Name);
-					Directory.Delete(ArtifactPath, true);
-				}
-				catch (Exception Ex)
-				{
-					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "First attempt at clearing artifact path {0} failed - trying again", ArtifactPath);
-					if (!ForceCleanDeviceArtifacts())
-					{
-						Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to delete {File}. {Exception}", ArtifactPath, Ex.Message);
-					}
-				}
-			}
-		}
-	}
-
-	public class LinuxDeviceFactory : IDeviceFactory
-	{
-		public bool CanSupportPlatform(UnrealTargetPlatform? Platform)
-		{
-			return Platform == UnrealTargetPlatform.Linux;
-		}
-
-		public ITargetDevice CreateDevice(string InRef, string InCachePath, string InParam = null)
-		{
-			return new TargetDeviceLinux(InRef, InCachePath);
-		}
-	}
-
 	/// <summary>
 	/// Linux implementation of a device to run applications
 	/// </summary>
-	public class TargetDeviceLinux : ITargetDevice
+	public class TargetDeviceLinux : TargetDeviceDesktopCommon
 	{
-		public string Name { get; protected set; }
-
-		protected string UserDir { get; set; }
-
-		/// <summary>
-		/// Our mappings of Intended directories to where they actually represent on this platform.
-		/// </summary>
-		protected Dictionary<EIntendedBaseCopyDirectory, string> LocalDirectoryMappings { get; set; }
+		public bool IsArm64 { get; set; }
 
 		public TargetDeviceLinux(string InName, string InCacheDir)
+			: base(InName, InCacheDir)
 		{
-			Name = InName;
-			LocalCachePath = InCacheDir;
+			Platform = UnrealTargetPlatform.Linux;
 			RunOptions = CommandUtils.ERunOptions.NoWaitForExit | CommandUtils.ERunOptions.NoLoggingOfRunCommand;
-
-			UserDir = Path.Combine(LocalCachePath, string.Format("{0}_UserDir", Name));
-            LocalDirectoryMappings = new Dictionary<EIntendedBaseCopyDirectory, string>();
 		}
 
-		#region IDisposable Support
-		private bool disposedValue = false; // To detect redundant calls
-
-		protected virtual void Dispose(bool disposing)
+		public TargetDeviceLinux(string InName, string InCacheDir, bool InIsArm64)
+			: base(InName, InCacheDir)
 		{
-			if (!disposedValue)
-			{
-				if (disposing)
-				{
-					// TODO: dispose managed state (managed objects).
-				}
-
-				// TODO: free unmanaged resources (unmanaged objects) and override a finalizer below.
-				// TODO: set large fields to null.
-
-				disposedValue = true;
-			}
+			IsArm64 = InIsArm64;
+			Platform = InIsArm64 ? UnrealTargetPlatform.LinuxArm64 : UnrealTargetPlatform.Linux;
+			RunOptions = CommandUtils.ERunOptions.NoWaitForExit | CommandUtils.ERunOptions.NoLoggingOfRunCommand;
 		}
 
-		// This code added to correctly implement the disposable pattern.
-		public void Dispose()
-		{
-			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(true);
-			// TODO: uncomment the following line if the finalizer is overridden above.
-			// GC.SuppressFinalize(this);
-		}
-		#endregion
-
-		public CommandUtils.ERunOptions RunOptions { get; set; }
-
-        // We care about UserDir in Linux as some of the roles may require files going into user instead of build dir.
-        public void PopulateDirectoryMappings(string BasePath, string UserDir)
-		{
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Build, Path.Combine(BasePath, "Build"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Binaries, Path.Combine(BasePath, "Binaries"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Config, Path.Combine(BasePath, "Saved", "Config"));
-            LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Content, Path.Combine(BasePath, "Content"));
-            LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Demos, Path.Combine(UserDir, "Saved", "Demos"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.PersistentDownloadDir, Path.Combine(BasePath, "Saved", "PersistentDownloadDir"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Profiling, Path.Combine(BasePath, "Saved", "Profiling"));
-            LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Saved, Path.Combine(BasePath, "Saved"));
-		}
-
-        public IAppInstance Run(IAppInstall App)
+		public override IAppInstance Run(IAppInstall App)
 		{
 			LinuxAppInstall LinuxApp = App as LinuxAppInstall;
 
@@ -229,10 +66,20 @@ namespace Gauntlet
 
 				bool bAllowSpew = LinuxApp.RunOptions.HasFlag(CommandUtils.ERunOptions.AllowSpew);
 
-				Result = CommandUtils.Run(LinuxApp.ExecutablePath,
+				bool bAppContainerized = LinuxApp is IContainerized;
+
+				// Forward command to Docker container if running containerized
+				if (bAppContainerized)
+				{
+					ContainerInfo Container = ((IContainerized)LinuxApp).ContainerInfo;
+					string ContainerApp = Container.WorkingDir + "/" + Path.GetRelativePath(Globals.UnrealRootDir, LinuxApp.ExecutablePath).Replace('\\', '/');
+					CmdLine = $"run --name {Container.ContainerName} {Container.ImageName} {Container.RunCommandPrepend} {ContainerApp} {CmdLine}";
+				}
+
+				Result = CommandUtils.Run(bAppContainerized ? "docker" : LinuxApp.ExecutablePath,
 					CmdLine,
 					Options: LinuxApp.RunOptions,
-					SpewFilterCallback: new SpewFilterCallbackType(delegate(string M) { return bAllowSpew ? M : null; }) /* make sure stderr does not spew in the stdout */,
+					SpewFilterCallback: new SpewFilterCallbackType(delegate (string M) { return bAllowSpew ? M : null; }) /* make sure stderr does not spew in the stdout */,
 					WorkingDir: LinuxApp.WorkingDirectory);
 
 				if (Result.HasExited && Result.ExitCode != 0)
@@ -243,56 +90,23 @@ namespace Gauntlet
 				Environment.CurrentDirectory = OldWD;
 			}
 
-			return new LinuxAppInstance(LinuxApp, Result);
+			return new LinuxAppInstance(LinuxApp, Result, LinuxApp.LogFile);
 		}
 
-		private void CopyAdditionalFiles(UnrealAppConfig AppConfig)
+		protected override IAppInstall InstallNativeStagedBuild(UnrealAppConfig AppConfig, NativeStagedBuild InBuild)
 		{
-			if (AppConfig.FilesToCopy != null)
+			LinuxAppInstall LinuxApp;
+			if (AppConfig.ContainerInfo != null)
 			{
-				foreach (UnrealFileToCopy FileToCopy in AppConfig.FilesToCopy)
-				{
-					string PathToCopyTo = Path.Combine(LocalDirectoryMappings[FileToCopy.TargetBaseDirectory], FileToCopy.TargetRelativeLocation);
-					if (File.Exists(FileToCopy.SourceFileLocation))
-					{
-						FileInfo SrcInfo = new FileInfo(FileToCopy.SourceFileLocation);
-						SrcInfo.IsReadOnly = false;
-						string DirectoryToCopyTo = Path.GetDirectoryName(PathToCopyTo);
-						if (!Directory.Exists(DirectoryToCopyTo))
-						{
-							Directory.CreateDirectory(DirectoryToCopyTo);
-						}
-						if (File.Exists(PathToCopyTo))
-						{
-							FileInfo ExistingFile = new FileInfo(PathToCopyTo);
-							ExistingFile.IsReadOnly = false;
-						}
-						SrcInfo.CopyTo(PathToCopyTo, true);
-						Log.Info("Copying {0} to {1}", FileToCopy.SourceFileLocation, PathToCopyTo);
-					}
-					else
-					{
-						Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "File to copy {File} not found", FileToCopy);
-					}
-				}
+				LinuxApp = new LinuxAppContainerInstall(AppConfig.Name, AppConfig.ProjectName, AppConfig.ContainerInfo, this);
 			}
-		}
-
-		protected IAppInstall InstallNativeStagedBuild(UnrealAppConfig AppConfig, NativeStagedBuild InBuild)
-		{
-			LinuxAppInstall LinuxApp = new LinuxAppInstall(AppConfig.Name, AppConfig.ProjectName, this);
-			LinuxApp.RunOptions = RunOptions;
-			if (Log.IsVeryVerbose)
+			else
 			{
-				LinuxApp.RunOptions |= CommandUtils.ERunOptions.AllowSpew;
+				LinuxApp = new LinuxAppInstall(AppConfig.Name, AppConfig.ProjectName, this);
 			}
+			LinuxApp.SetDefaultCommandLineArguments(AppConfig, RunOptions, InBuild.BuildPath);
 
-			LinuxApp.CommandArguments = AppConfig.CommandLine;
-
-			LinuxApp.ArtifactPath = Path.Combine(InBuild.BuildPath, AppConfig.ProjectName, @"Saved");
-			LinuxApp.CleanDeviceArtifacts();
-
-			CopyAdditionalFiles(AppConfig);
+			CopyAdditionalFiles(AppConfig.FilesToCopy);
 
 			LinuxApp.ExecutablePath = Path.Combine(InBuild.BuildPath, InBuild.ExecutablePath);
 			LinuxApp.WorkingDirectory = InBuild.BuildPath;
@@ -300,69 +114,46 @@ namespace Gauntlet
 			return LinuxApp;
 		}
 
-		protected IAppInstall InstallStagedBuild(UnrealAppConfig AppConfig, StagedBuild InBuild)
+		protected override IAppInstall InstallStagedBuild(UnrealAppConfig AppConfig, StagedBuild InBuild)
 		{
-			bool SkipDeploy = Globals.Params.ParseParam("SkipDeploy");
+			string BuildDir = InBuild.BuildPath;
 
-			string BuildPath = InBuild.BuildPath;
-
-			if (CanRunFromPath(BuildPath) == false)
+			if (Utils.SystemHelpers.IsNetworkPath(BuildDir))
 			{
 				string SubDir = string.IsNullOrEmpty(AppConfig.Sandbox) ? AppConfig.ProjectName : AppConfig.Sandbox;
-				string DestPath = Path.Combine(this.LocalCachePath, SubDir, AppConfig.ProcessType.ToString());
+				string InstallDir = Path.Combine(InstallRoot, SubDir, AppConfig.ProcessType.ToString());
 
-				if (!SkipDeploy)
+				if (!AppConfig.SkipInstall)
 				{
-					DestPath = StagedBuild.InstallBuildParallel(AppConfig, InBuild, BuildPath, DestPath, ToString());
+					InstallDir = StagedBuild.InstallBuildParallel(AppConfig, InBuild, BuildDir, InstallDir, ToString());
 				}
 				else
 				{
-					Log.Info("Skipping install of {0} (-skipdeploy)", BuildPath);
+					Log.Info("Skipping install of {0} (-SkipInstall)", BuildDir);
 				}
 
-				Utils.SystemHelpers.MarkDirectoryForCleanup(DestPath);
-
-				BuildPath = DestPath;
+				BuildDir = InstallDir;
+				Utils.SystemHelpers.MarkDirectoryForCleanup(InstallDir);
 			}
 
 			LinuxAppInstall LinuxApp = new LinuxAppInstall(AppConfig.Name, AppConfig.ProjectName, this);
-			LinuxApp.RunOptions = RunOptions;
+			LinuxApp.SetDefaultCommandLineArguments(AppConfig, RunOptions, BuildDir);
 
-			// Set commandline replace any InstallPath arguments with the path we use
-			LinuxApp.CommandArguments = Regex.Replace(AppConfig.CommandLine, @"\$\(InstallPath\)", BuildPath, RegexOptions.IgnoreCase);
-
-			if (string.IsNullOrEmpty(UserDir) == false)
+			if (LocalDirectoryMappings.Count == 0)
 			{
-				LinuxApp.CommandArguments += string.Format(" -userdir=\"{0}\"", UserDir);
-				LinuxApp.ArtifactPath = Path.Combine(UserDir, @"Saved");
-
-				Utils.SystemHelpers.MarkDirectoryForCleanup(UserDir);
-			}
-			else
-			{
-				// e.g d:\Unreal\GameName\Saved
-				LinuxApp.ArtifactPath = Path.Combine(BuildPath, AppConfig.ProjectName, @"Saved");
-
+				PopulateDirectoryMappings(Path.Combine(BuildDir, AppConfig.ProjectName));
 			}
 
-			// clear artifact path
-			LinuxApp.CleanDeviceArtifacts();
+			CopyAdditionalFiles(AppConfig.FilesToCopy);
 
-            if (LocalDirectoryMappings.Count == 0)
-            {
-                PopulateDirectoryMappings(Path.Combine(BuildPath, AppConfig.ProjectName), UserDir);
-            }
-
-			CopyAdditionalFiles(AppConfig);
-
-            if (Path.IsPathRooted(InBuild.ExecutablePath))
+			if (Path.IsPathRooted(InBuild.ExecutablePath))
 			{
 				LinuxApp.ExecutablePath = InBuild.ExecutablePath;
 			}
 			else
 			{
 				// TODO - this check should be at a higher level....
-				string BinaryPath = Path.Combine(BuildPath, InBuild.ExecutablePath);
+				string BinaryPath = Path.Combine(BuildDir, InBuild.ExecutablePath);
 
 				// check for a local newer executable
 				if (Globals.Params.ParseParam("dev") && AppConfig.ProcessType.UsesEditor() == false)
@@ -390,74 +181,76 @@ namespace Gauntlet
 			return LinuxApp;
 		}
 
-
-		public IAppInstall InstallApplication(UnrealAppConfig AppConfig)
+		protected override IAppInstall InstallEditorBuild(UnrealAppConfig AppConfig, EditorBuild Build)
 		{
-			if (AppConfig.Build is NativeStagedBuild)
-			{
-				return InstallNativeStagedBuild(AppConfig, AppConfig.Build as NativeStagedBuild);
-			}
-			else if (AppConfig.Build is StagedBuild)
-			{
-				return InstallStagedBuild(AppConfig, AppConfig.Build as StagedBuild);
-			}
-
-			EditorBuild EditorBuild = AppConfig.Build as EditorBuild;
-
-			if (EditorBuild == null)
-			{
-				throw new AutomationException("Invalid build type!");
-			}
-
 			LinuxAppInstall LinuxApp = new LinuxAppInstall(AppConfig.Name, AppConfig.ProjectName, this);
 
-			LinuxApp.WorkingDirectory = Path.GetDirectoryName(EditorBuild.ExecutablePath);
-			LinuxApp.RunOptions = RunOptions;
-	
-			// Force this to stop logs and other artifacts going to different places
-			LinuxApp.CommandArguments = AppConfig.CommandLine + string.Format(" -userdir=\"{0}\"", UserDir);
-			LinuxApp.ArtifactPath = Path.Combine(UserDir, @"Saved");
-			LinuxApp.ExecutablePath = EditorBuild.ExecutablePath;
+			LinuxApp.WorkingDirectory = Path.GetDirectoryName(Build.ExecutablePath);
+			LinuxApp.SetDefaultCommandLineArguments(AppConfig, RunOptions, LinuxApp.WorkingDirectory);
+			LinuxApp.ExecutablePath = Build.ExecutablePath;
 
 			if (LocalDirectoryMappings.Count == 0)
 			{
-				PopulateDirectoryMappings(AppConfig.ProjectFile.Directory.FullName, AppConfig.ProjectFile.Directory.FullName);
+				PopulateDirectoryMappings(AppConfig.ProjectFile.Directory.FullName);
 			}
 
-			CopyAdditionalFiles(AppConfig);
+			CopyAdditionalFiles(AppConfig.FilesToCopy);
 
 			return LinuxApp;
 		}
-		
-		public bool CanRunFromPath(string InPath)
+	}
+
+	public class LinuxAppInstall : DesktopCommonAppInstall<TargetDeviceLinux>
+	{
+		[Obsolete("Will be removed in a future release. Use 'DesktopDevice' instead.")]
+		public TargetDeviceLinux LinuxDevice { get; private set; }
+
+		public LinuxAppInstall(string InName, string InProjectName, TargetDeviceLinux InDevice)
+			: base(InName, InProjectName, InDevice)
+		{ }
+	}
+
+	public class LinuxAppContainerInstall : LinuxAppInstall, IContainerized
+	{
+		public ContainerInfo ContainerInfo { get; set; }
+
+		public LinuxAppContainerInstall(string InName, string InProjectName, ContainerInfo InContainerInfo, TargetDeviceLinux InDevice)
+			: base(InName, InProjectName, InDevice)
 		{
-			return !Utils.SystemHelpers.IsNetworkPath(InPath);
+			ContainerInfo = InContainerInfo;
+		}
+	}
+
+	public class LinuxAppInstance : DesktopCommonAppInstance<LinuxAppInstall, TargetDeviceLinux>
+	{
+		public LinuxAppInstance(LinuxAppInstall InInstall, IProcessResult InProcess, string InProcessLogFile = null)
+			: base(InInstall, InProcess, InProcessLogFile)
+		{ }
+	}
+
+	public class LinuxDeviceFactory : IDeviceFactory
+	{
+		public bool CanSupportPlatform(UnrealTargetPlatform? Platform)
+		{
+			return Platform == UnrealTargetPlatform.Linux;
 		}
 
-		public UnrealTargetPlatform? Platform { get { return UnrealTargetPlatform.Linux; } }
-
-		public string LocalCachePath { get; private set; }
-		public bool IsAvailable { get { return true; } }
-		public bool IsConnected { get { return true; } }
-		public bool IsOn { get { return true; } }
-		public bool PowerOn() { return true; }
-		public bool PowerOff() { return true; }
-		public bool Reboot() { return true; }
-		public bool Connect() { return true; }
-		public bool Disconnect(bool bForce = false) { return true; }
-
-		public override string ToString()
+		public ITargetDevice CreateDevice(string InRef, string InCachePath, string InParam = null)
 		{
-			return Name;
+			return new TargetDeviceLinux(InRef, InCachePath);
+		}
+	}
+
+	public class LinuxArm64DeviceFactory : IDeviceFactory
+	{
+		public bool CanSupportPlatform(UnrealTargetPlatform? Platform)
+		{
+			return Platform == UnrealTargetPlatform.LinuxArm64;
 		}
 
-		public Dictionary<EIntendedBaseCopyDirectory, string> GetPlatformDirectoryMappings()
+		public ITargetDevice CreateDevice(string InRef, string InCachePath, string InParam = null)
 		{
-			if (LocalDirectoryMappings.Count == 0)
-			{
-				Log.Warning("Platform directory mappings have not been populated for this platform! This should be done within InstallApplication()");
-			}
-			return LocalDirectoryMappings;
+			return new TargetDeviceLinux(InRef, InCachePath, true);
 		}
 	}
 }

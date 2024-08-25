@@ -16,7 +16,7 @@ namespace UE::ChooserEditor
 	
 TSharedRef<SWidget> CreateOutputStructColumnWidget(UChooserTable* Chooser, FChooserColumnBase* Column, int Row)
 {
-	if (Row < 0)
+	if (Row == ColumnWidget_SpecialIndex_Header)
 	{
 		// create column header widget
 		TSharedPtr<SWidget> InputValueWidget = nullptr;
@@ -62,14 +62,7 @@ TSharedRef<SWidget> CreateStructPropertyWidget(bool bReadOnly, UObject* Transact
 
 	return SNew(SPropertyAccessChainWidget).ContextClassOwner(HasContextClass).BindingColor("StructPinTypeColor").TypeFilter("struct")
 		.PropertyBindingValue(&ContextProperty->Binding)
-		.OnAddBinding_Lambda(
-    		[ContextProperty, TransactionObject, ValueChanged](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
-    		{
-    			const FScopedTransaction Transaction(NSLOCTEXT("ContextPropertyWidget", "Change Property Binding", "Change Property Binding"));
-    			TransactionObject->Modify(true);
-    			ContextProperty->SetBinding(TransactionObject, InBindingChain);
-    			ValueChanged.ExecuteIfBound();
-    		});
+		.OnValueChanged(ValueChanged);
 }
 	
 void RegisterStructWidgets()

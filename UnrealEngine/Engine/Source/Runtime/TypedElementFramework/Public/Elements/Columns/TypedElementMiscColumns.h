@@ -20,7 +20,7 @@ struct FTypedElementSyncBackToWorldTag final : public FTypedElementDataStorageTa
 };
 
 /**
- * Tag to signal that data a processor copies out of the world must be synced to the datastorage.
+ * Tag to signal that data a processor copies out of the world must be synced to the data storage.
  * Useful for when an Actor was recently spawned or reloaded in the world.
  * Currently used if any property changes since there is no mechanism to selectively run
  * queries for specific changed properties.
@@ -31,10 +31,27 @@ struct FTypedElementSyncFromWorldTag final : public FTypedElementDataStorageTag
 	GENERATED_BODY()
 };
 
+/**
+ * Tag to signal that data a processor copies out of the world must be synced to the data storage.
+ * Useful for when an Actor was recently spawned or reloaded in the world. This version is not
+ * automatically removed and intended for interactive operations that will take a few frames
+ * to complete such as dragging.
+ * Currently used if any property changes since there is no mechanism to selectively run
+ * queries for specific changed properties.
+ */
+USTRUCT(meta = (DisplayName = "Sync from world (interactive)"))
+struct FTypedElementSyncFromWorldInteractiveTag final : public FTypedElementDataStorageTag
+{
+	GENERATED_BODY()
+};
+
+/**
+ * A general reference to another row. 
+ */
 USTRUCT(meta = (DisplayName = "Row reference"))
 struct FTypedElementRowReferenceColumn final : public FTypedElementDataStorageColumn
 {
 	GENERATED_BODY()
 
-	TypedElementRowHandle Row;
+	TypedElementDataStorage::RowHandle Row;
 };

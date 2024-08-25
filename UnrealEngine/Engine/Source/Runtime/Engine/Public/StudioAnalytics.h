@@ -14,7 +14,7 @@ struct FAnalyticsEventAttribute;
 /**
  * The public interface for the game studio to gather information about internal development metrics.
  */
-class FStudioAnalytics : FNoncopyable
+class UE_DEPRECATED(5.4, "FStudioAnalytics is deprecated, please use FStudioTelemetry instead.") FStudioAnalytics : FNoncopyable
 {
 public:
 	static ENGINE_API void SetProvider(TSharedRef<IAnalyticsProviderET> InAnalytics);
@@ -46,10 +46,6 @@ public:
 	/** General report event function. */
 	static ENGINE_API void RecordEvent(const FString& EventName);
 	static ENGINE_API void RecordEvent(const FString& EventName, const TArray<FAnalyticsEventAttribute>& Attributes);
-
-	/** An event for reporting load time that blocks the editor. */
-	UE_DEPRECATED(5.3, "Functionality no longer used")
-	static ENGINE_API void FireEvent_Loading(const FString& LoadingName, double SecondsSpentLoading, const TArray<FAnalyticsEventAttribute>& Attributes = TArray<FAnalyticsEventAttribute>());
 
 private:
 	static void RunTimer_Concurrent();

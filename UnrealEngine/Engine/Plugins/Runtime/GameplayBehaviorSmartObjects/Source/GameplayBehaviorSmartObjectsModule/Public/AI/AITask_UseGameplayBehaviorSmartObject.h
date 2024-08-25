@@ -29,7 +29,7 @@ public:
 	 * @return The AITask executing the GameplayBehavior.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "AI|Tasks", meta = (DefaultToSelf = "Controller" , BlueprintInternalUseOnly = "true"))
-	static UAITask_UseGameplayBehaviorSmartObject* UseSmartObjectWithGameplayBehavior(AAIController* Controller, FSmartObjectClaimHandle ClaimHandle, bool bLockAILogic = true);
+	static UAITask_UseGameplayBehaviorSmartObject* UseSmartObjectWithGameplayBehavior(AAIController* Controller, FSmartObjectClaimHandle ClaimHandle, bool bLockAILogic = true, ESmartObjectClaimPriority ClaimPriority = ESmartObjectClaimPriority::Normal);
 
 	/**
 	 * Helper function to create an AITask that reaches and interacts with the SmartObject slot using the GameplayBehavior definition.
@@ -39,7 +39,7 @@ public:
 	 * @return The AITask performing the move to slot location and then executing the GameplayBehavior.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "AI|Tasks", meta = (DefaultToSelf = "Controller" , BlueprintInternalUseOnly = "true"))
-	static UAITask_UseGameplayBehaviorSmartObject* MoveToAndUseSmartObjectWithGameplayBehavior(AAIController* Controller, FSmartObjectClaimHandle ClaimHandle, bool bLockAILogic = true);
+	static UAITask_UseGameplayBehaviorSmartObject* MoveToAndUseSmartObjectWithGameplayBehavior(AAIController* Controller, FSmartObjectClaimHandle ClaimHandle, bool bLockAILogic = true, ESmartObjectClaimPriority ClaimPriority = ESmartObjectClaimPriority::Normal);
 
 	UE_DEPRECATED(5.3, "Please use one of the UseSmartObjectWithGameplayBehavior functions using claim handle instead")
 	UFUNCTION(BlueprintCallable, Category = "AI|Tasks", meta = (DefaultToSelf = "Controller" , BlueprintInternalUseOnly = "true"), meta = (DeprecatedFunction, DeprecationMessage = "Use one of the UseSmartObjectWithGameplayBehavior functions using claim handle instead"))
@@ -62,7 +62,7 @@ protected:
 
 	void OnSlotInvalidated(const FSmartObjectClaimHandle& ClaimHandle, const ESmartObjectSlotState State);
 
-	static UAITask_UseGameplayBehaviorSmartObject* UseSmartObjectComponent(AAIController& Controller, const USmartObjectComponent& SmartObjectComponent, bool bLockAILogic);
+	static UAITask_UseGameplayBehaviorSmartObject* UseSmartObjectComponent(AAIController& Controller, const USmartObjectComponent& SmartObjectComponent, bool bLockAILogic, ESmartObjectClaimPriority ClaimPriority = ESmartObjectClaimPriority::Normal);
 	static UAITask_UseGameplayBehaviorSmartObject* UseClaimedSmartObject(AAIController& Controller, FSmartObjectClaimHandle ClaimHandle, bool bLockAILogic);
 
 protected:

@@ -174,6 +174,14 @@ void UPolyEditExtrudeActivity::Setup(UInteractiveTool* ParentToolIn)
 			ActivityContext->Preview->InvalidateResult();
 		}
 	});
+	ExtrudeProperties->WatchProperty(ExtrudeProperties->bShellsToSolids,
+	[this](bool) {
+		if (bIsRunning)
+		{
+			ActivityContext->Preview->InvalidateResult();
+		}
+	});
+
 
 	OffsetProperties = NewObject<UPolyEditOffsetProperties>();
 	OffsetProperties->RestoreProperties(ParentTool.Get());
@@ -217,7 +225,15 @@ void UPolyEditExtrudeActivity::Setup(UInteractiveTool* ParentToolIn)
 	SetToolPropertySourceEnabled(PushPullProperties, false);
 	PushPullProperties->WatchProperty(PushPullProperties->MeasureDirection,
 	[this](EPolyEditExtrudeDirection) {
-		if (bIsRunning)
+		if (bIsRunning && PushPullProperties->DirectionMode != EPolyEditPushPullModeOptions::SingleDirection)
+		{
+			ReinitializeExtrudeHeightMechanic();
+			ActivityContext->Preview->InvalidateResult();
+		}
+	});
+	PushPullProperties->WatchProperty(PushPullProperties->SingleDirection,
+	[this](EPolyEditExtrudeDirection) {
+		if (bIsRunning && PushPullProperties->DirectionMode == EPolyEditPushPullModeOptions::SingleDirection)
 		{
 			ReinitializeExtrudeHeightMechanic();
 			ActivityContext->Preview->InvalidateResult();
@@ -570,7 +586,8 @@ FVector3d UPolyEditExtrudeActivity::GetExtrudeDirection() const
 		DirectionToUse = OffsetProperties->MeasureDirection;
 		break;
 	case EPropertySetToUse::PushPull:
-		DirectionToUse = PushPullProperties->MeasureDirection;
+		DirectionToUse = PushPullProperties->DirectionMode == EPolyEditPushPullModeOptions::SingleDirection ?
+			PushPullProperties->SingleDirection : PushPullProperties->MeasureDirection;
 		break;
 	}
 
@@ -592,7 +609,6 @@ FVector3d UPolyEditExtrudeActivity::GetExtrudeDirection() const
 	case EPolyEditExtrudeDirection::LocalZ:
 		return FTransformSRT3d(ActivityContext->Preview->PreviewMesh->GetTransform()).GetRotation().AxisZ();
 	}
-	return ActiveSelectionFrameWorld.Z();
 }
 
 void UPolyEditExtrudeActivity::Render(IToolsContextRenderAPI* RenderAPI)

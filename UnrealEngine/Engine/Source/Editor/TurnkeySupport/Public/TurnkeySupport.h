@@ -3,6 +3,9 @@
 #pragma once
 
 
+#include "Interfaces/ITurnkeySupportModule.h"
+
+#if UE_WITH_TURNKEY_SUPPORT
 
 /* Public Dependencies
  *****************************************************************************/
@@ -17,7 +20,6 @@
 /* Public Includes
  *****************************************************************************/
 
-#include "Interfaces/ITurnkeySupportModule.h"
 
 
 
@@ -28,3 +30,5 @@ FName ConvertToDDPIPlatform(const FName& Platform);
 FString ConvertToUATPlatform(const FString& Platform);
 FString ConvertToUATDeviceId(const FString& DeviceId);
 FString ConvertToDDPIDeviceId(const FString& DeviceId);
+
+#endif // UE_WITH_TURNKEY_SUPPORT

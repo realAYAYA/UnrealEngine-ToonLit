@@ -29,9 +29,9 @@ void FGLTFBuilder::ResolveProxies(TArray<const UMaterialInterface*>& Materials) 
 	}
 }
 
-FIntPoint FGLTFBuilder::GetBakeSizeForMaterialProperty(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup) const
+FGLTFMaterialBakeSize FGLTFBuilder::GetBakeSizeForMaterialProperty(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup) const
 {
-	EGLTFMaterialBakeSizePOT DefaultValue = ExportOptions->DefaultMaterialBakeSize;
+	FGLTFMaterialBakeSize DefaultValue = ExportOptions->DefaultMaterialBakeSize;
 	if (const FGLTFOverrideMaterialBakeSettings* BakeSettings = ExportOptions->DefaultInputBakeSettings.Find(PropertyGroup))
 	{
 		if (BakeSettings->bOverrideSize)
@@ -41,9 +41,7 @@ FIntPoint FGLTFBuilder::GetBakeSizeForMaterialProperty(const UMaterialInterface*
 	}
 
 	// TODO: add option to ignore override
-	const EGLTFMaterialBakeSizePOT Size = UGLTFMaterialExportOptions::GetBakeSizeForPropertyGroup(Material, PropertyGroup, DefaultValue);
-	const int32 PixelSize = 1 << static_cast<uint8>(Size);
-	return { PixelSize, PixelSize };
+	return UGLTFMaterialExportOptions::GetBakeSizeForPropertyGroup(Material, PropertyGroup, DefaultValue);
 }
 
 TextureFilter FGLTFBuilder::GetBakeFilterForMaterialProperty(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup) const

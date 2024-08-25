@@ -1,9 +1,10 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RCVirtualProperty.h"
 
 #include "IStructDeserializerBackend.h"
 #include "RCVirtualPropertyContainer.h"
+#include "RemoteControlPreset.h"
 #include "StructDeserializer.h"
 #include "StructSerializer.h"
 #include "UObject/TextProperty.h"
@@ -88,7 +89,7 @@ const FPropertyBagPropertyDesc* URCVirtualPropertyBase::GetBagPropertyDesc() con
 const FInstancedPropertyBag* URCVirtualPropertyBase::GetPropertyBagInstance() const
 {
 	// That is should be implemented in child classes
-	check(nullptr);
+	check(false);
 	return nullptr;
 }
 
@@ -187,12 +188,34 @@ bool URCVirtualPropertyBase::IsVectorType() const
 	return false;
 }
 
+bool URCVirtualPropertyBase::IsVector2DType() const
+{
+	const FProperty* Property = GetProperty();
+	if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+	{
+		return StructProperty->Struct == TBaseStructure<FVector2D>::Get();
+	}
+
+	return false;
+}
+
 bool URCVirtualPropertyBase::IsColorType() const
 {
 	const FProperty* Property = GetProperty();
 	if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
 	{
 		return StructProperty->Struct == TBaseStructure<FColor>::Get();
+	}
+
+	return false;
+}
+
+bool URCVirtualPropertyBase::IsLinearColorType() const
+{
+	const FProperty* Property = GetProperty();
+	if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+	{
+		return StructProperty->Struct == TBaseStructure<FLinearColor>::Get();
 	}
 
 	return false;
@@ -252,6 +275,51 @@ bool URCVirtualPropertyBase::CopyCompleteValue(const FProperty* InTargetProperty
 		ensureMsgf(false, TEXT("Invalid property type passed to CopyCompleteValue.\nExpected: %s, Found: %s"), *SourceProperty->GetClass()->GetName(), *InTargetProperty->GetClass()->GetName());
 
 		return false;
+	}
+
+	SourceProperty->CopyCompleteValue(InTargetValuePtr /*Dest*/, GetValuePtr() /*Source*/);
+
+	return true;
+
+}
+
+bool URCVirtualPropertyBase::CopyCompleteValue(const FProperty* InTargetProperty, uint8* InTargetValuePtr, bool bPassByteEnumPropertyComparison)
+{
+	const FProperty* SourceProperty = GetProperty();
+
+	if (SourceProperty == nullptr || InTargetProperty == nullptr || InTargetValuePtr == nullptr)
+	{
+		ensureMsgf(false, TEXT("Invalid input passed to CopyCompleteValue"));
+
+		return false;
+	}
+
+	bool bAreClassDifferent = SourceProperty->GetClass() != InTargetProperty->GetClass();
+
+	//FByteProperties are saved inside RC as FEnumProperty this will cause the original property and the RC property to differ.
+	//If it is the case than check if both has the same enum, and if they have ignore that they are different types.
+	if (bAreClassDifferent)
+	{
+		bool bShouldIgnore = false;
+		if (bPassByteEnumPropertyComparison)
+		{
+			if (const FEnumProperty* SourceEnumProperty = CastField<FEnumProperty>(SourceProperty))
+			{
+				if (const FByteProperty* ByteTargetProperty = CastField<FByteProperty>(InTargetProperty))
+				{
+					if (SourceEnumProperty->GetEnum() && ByteTargetProperty->Enum)
+					{
+						bShouldIgnore = SourceEnumProperty->GetEnum()->GetFName() == ByteTargetProperty->Enum->GetFName();
+					}
+				}
+			}
+		}
+		if (bShouldIgnore == false)
+		{
+			ensureMsgf(false, TEXT("Invalid property type passed to CopyCompleteValue.\nExpected: %s, Found: %s"), *SourceProperty->GetClass()->GetName(), *InTargetProperty->GetClass()->GetName());
+
+			return false;
+		}
 	}
 
 	SourceProperty->CopyCompleteValue(InTargetValuePtr /*Dest*/, GetValuePtr() /*Source*/);
@@ -477,6 +545,11 @@ bool URCVirtualPropertyBase::GetValueVector(FVector& OutVector) const
 	return FRCVirtualPropertyCastHelpers::GetStructValue<FVector>(this, TBaseStructure<FVector>::Get(), &OutVector);
 }
 
+bool URCVirtualPropertyBase::GetValueVector2D(FVector2D& OutVector2D) const
+{
+	return FRCVirtualPropertyCastHelpers::GetStructValue<FVector2D>(this, TBaseStructure<FVector2D>::Get(), &OutVector2D);
+}
+
 bool URCVirtualPropertyBase::GetValueRotator(FRotator& OutRotator) const
 {
 	return FRCVirtualPropertyCastHelpers::GetStructValue<FRotator>(this, TBaseStructure<FRotator>::Get(), &OutRotator);
@@ -485,6 +558,11 @@ bool URCVirtualPropertyBase::GetValueRotator(FRotator& OutRotator) const
 bool URCVirtualPropertyBase::GetValueColor(FColor& OutColor) const
 {
 	return FRCVirtualPropertyCastHelpers::GetStructValue<FColor>(this, TBaseStructure<FColor>::Get(), &OutColor);
+}
+
+bool URCVirtualPropertyBase::GetValueLinearColor(FLinearColor& OutLinearColor) const
+{
+	return FRCVirtualPropertyCastHelpers::GetStructValue<FLinearColor>(this, TBaseStructure<FLinearColor>::Get(), &OutLinearColor);
 }
 
 UObject* URCVirtualPropertyBase::GetValueObject() const
@@ -565,6 +643,13 @@ FString URCVirtualPropertyBase::GetDisplayValueAsString() const
 		GetValueVector(Vector);
 
 		return Vector.ToString();
+	}
+	else if (IsVector2DType())
+	{
+		FVector2D Vector2D;
+		GetValueVector2D(Vector2D);
+
+		return Vector2D.ToString();
 	}
 	else if (IsRotatorType())
 	{
@@ -683,6 +768,11 @@ bool URCVirtualPropertyBase::SetValueVector(const FVector& InVector)
 	return FRCVirtualPropertyCastHelpers::SetStructValue<FVector>(this, TBaseStructure<FVector>::Get(), InVector);
 }
 
+bool URCVirtualPropertyBase::SetValueVector2D(const FVector2D& InVector2D)
+{
+	return FRCVirtualPropertyCastHelpers::SetStructValue<FVector2D>(this, TBaseStructure<FVector2D>::Get(), InVector2D);
+}
+
 bool URCVirtualPropertyBase::SetValueRotator(const FRotator& InRotator)
 {
 	return FRCVirtualPropertyCastHelpers::SetStructValue<FRotator>(this, TBaseStructure<FRotator>::Get(), InRotator);
@@ -691,6 +781,11 @@ bool URCVirtualPropertyBase::SetValueRotator(const FRotator& InRotator)
 bool URCVirtualPropertyBase::SetValueColor(const FColor& InColor)
 {
 	return FRCVirtualPropertyCastHelpers::SetStructValue<FColor>(this, TBaseStructure<FColor>::Get(), InColor);
+}
+
+bool URCVirtualPropertyBase::SetValueLinearColor(const FLinearColor& InLinearColor)
+{
+	return FRCVirtualPropertyCastHelpers::SetStructValue<FLinearColor>(this, TBaseStructure<FLinearColor>::Get(), InLinearColor);
 }
 
 FName URCVirtualPropertyBase::GetPropertyName() const
@@ -807,6 +902,22 @@ bool URCVirtualPropertySelfContainer::DuplicatePropertyWithCopy(URCVirtualProper
 	return false;
 }
 
+bool URCVirtualPropertySelfContainer::UpdateValueWithProperty(const FProperty* InProperty, const void* InPropertyContainer)
+{
+	const EPropertyBagResult Result = Bag.SetValue(PropertyName, InProperty, InPropertyContainer);
+	return Result == EPropertyBagResult::Success;
+}
+
+bool URCVirtualPropertySelfContainer::UpdateValueWithProperty(const URCVirtualPropertyBase* InVirtualProperty)
+{
+	if (InVirtualProperty && InVirtualProperty->GetContainerPtr())
+	{
+		return Bag.SetValue(PropertyName, InVirtualProperty->GetProperty(), InVirtualProperty->GetContainerPtr()) == EPropertyBagResult::Success;	
+	}
+
+	return false;
+}
+
 void URCVirtualPropertySelfContainer::Reset()
 {
 	PropertyName = NAME_None;
@@ -822,5 +933,10 @@ const FInstancedPropertyBag* URCVirtualPropertySelfContainer::GetPropertyBagInst
 
 TSharedPtr<FStructOnScope> URCVirtualPropertySelfContainer::CreateStructOnScope()
 {
-	return MakeShared<FStructOnScope>(Bag.GetPropertyBagStruct(), Bag.GetMutableValue().GetMemory());
+	TSharedRef<FStructOnScope> StructOnScope = MakeShared<FStructOnScope>(Bag.GetPropertyBagStruct(), Bag.GetMutableValue().GetMemory());
+	if (PresetWeakPtr.IsValid() && PresetWeakPtr->GetPackage())
+	{
+		StructOnScope->SetPackage(PresetWeakPtr->GetPackage());
+	}
+	return StructOnScope;
 }

@@ -150,17 +150,6 @@ FText SNiagaraStackIssueIcon::GetIconToolTip() const
 					ToolTipParts.Add(FText::Format(LOCTEXT("InfoFormatMultiple", "{0} infos"), FText::AsNumber(StackEntry->GetTotalNumberOfInfoIssues())));
 				}
 			}
-			if (StackEntry->GetTotalNumberOfCustomNotes() > 0)
-			{
-				if (StackEntry->GetTotalNumberOfCustomNotes() == 1)
-				{
-					ToolTipParts.Add(LOCTEXT("CustomNotesFormatSingle", "1 custom note"));
-				}
-				else
-				{
-					ToolTipParts.Add(FText::Format(LOCTEXT("CustomNotesFormatMultiple", "{0} custom notes"), FText::AsNumber(StackEntry->GetTotalNumberOfCustomNotes())));
-				}
-			}
 
 			if (ToolTipParts.Num() == 4)
 			{
@@ -190,8 +179,6 @@ FText SNiagaraStackIssueIcon::GetIconToolTip() const
 					return LOCTEXT("Warning", "Warning");
 				case EStackIssueSeverity::Info:
 					return LOCTEXT("Issue", "Issue");
-				case EStackIssueSeverity::CustomNote:
-					return LOCTEXT("CustomNote", "Custom Note");
 				default:
 					return FText();
 				}
@@ -225,11 +212,6 @@ FText SNiagaraStackIssueIcon::GetIconToolTip() const
 				{
 					const UNiagaraStackEntry::FStackIssue& Issue = EntryToCheck->GetIssues()[IssueIndex];
 					ToolTipBuilder.AppendLineFormat(IssueLineFormat, GetFullDisplayName(StackViewModel, EntryToCheck), SeverityToText(Issue.GetSeverity()), Issue.GetShortDescription());
-
-					if (Issue.GetSeverity() == EStackIssueSeverity::CustomNote)
-					{
-						ToolTipBuilder.AppendLine(Issue.GetLongDescription());
-					}
 				}
 				TotalIssues += EntryToCheck->GetIssues().Num();
 			}
@@ -279,12 +261,6 @@ void SNiagaraStackIssueIcon::UpdateFromEntry(ENiagaraStructureChangedFlags Flags
 		IconBrush = IconMode == EIconMode::Compact
 			? FNiagaraEditorWidgetsStyle::Get().GetBrush("Niagara.CompactStackIssue.Info")
 			: FAppStyle::Get().GetBrush("Icons.InfoWithColor");
-	}
-	else if (StackEntry->GetTotalNumberOfCustomNotes() > 0)
-	{
-		IconBrush = IconMode == EIconMode::Compact
-			? FNiagaraEditorWidgetsStyle::Get().GetBrush("Niagara.CompactStackIssue.Message")
-			: FNiagaraEditorStyle::Get().GetBrush("NiagaraEditor.Message.CustomNote");
 	}
 
 	IconToolTipCache.Reset();

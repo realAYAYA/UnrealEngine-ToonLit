@@ -73,7 +73,7 @@ public:
 				// Determine the start index in the data block of the next element,
 				// and resize it to that amount
 				int32 DataStartIndex = OldLastChunk.StartIndex[IndexInOldLastChunk - 1] + OldLastChunk.MaxCount[IndexInOldLastChunk - 1];
-				OldLastChunk.Data.SetNum(DataStartIndex, false);
+				OldLastChunk.Data.SetNum(DataStartIndex, EAllowShrinking::No);
 
 				for (; IndexInOldLastChunk < LastIndex; IndexInOldLastChunk++)
 				{

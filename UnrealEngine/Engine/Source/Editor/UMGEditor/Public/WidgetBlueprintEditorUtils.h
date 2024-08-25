@@ -15,6 +15,7 @@ class UWidgetSlotPair;
 class UWidgetTree;
 class SWindow;
 class UWidgetEditingProjectSettings;
+class FWidgetObjectTextFactory;
 
 //////////////////////////////////////////////////////////////////////////
 // FWidgetBlueprintEditorUtils
@@ -49,13 +50,15 @@ public:
 
 	static TArray<UWidget*> DuplicateWidgets(TSharedRef<FWidgetBlueprintEditor> BlueprintEditor, UWidgetBlueprint* BP, TSet<FWidgetReference> Widgets);
 
+	static bool IsAnySelectedWidgetLocked(TSet<FWidgetReference> SelectedWidgets);
+
 	static UWidget* GetWidgetTemplateFromDragDrop(UWidgetBlueprint* Blueprint, UWidgetTree* RootWidgetTree, TSharedPtr<FDragDropOperation>& DragDropOp);
 
-	static bool IsBindWidgetProperty(FProperty* InProperty);
-	static bool IsBindWidgetProperty(FProperty* InProperty, bool& bIsOptional);
+	static bool IsBindWidgetProperty(const FProperty* InProperty);
+	static bool IsBindWidgetProperty(const FProperty* InProperty, bool& bIsOptional);
 
-	static bool IsBindWidgetAnimProperty(FProperty* InProperty);
-	static bool IsBindWidgetAnimProperty(FProperty* InProperty, bool& bIsOptional);
+	static bool IsBindWidgetAnimProperty(const FProperty* InProperty);
+	static bool IsBindWidgetAnimProperty(const FProperty* InProperty, bool& bIsOptional);
 
 	struct FUsableWidgetClassResult
 	{
@@ -80,6 +83,8 @@ public:
 
 	/** Attempts to import any property in the map and apply it to a property with the same name on the object. */
 	static void ImportPropertiesFromText(UObject* Object, const TMap<FName, FString>& ExportedProperties);
+
+	static bool DoesClipboardTextContainWidget(UWidgetBlueprint* BP);
 
 	static TScriptInterface<INamedSlotInterface> FindNamedSlotHostForContent(UWidget* WidgetTemplate, UWidgetTree* WidgetTree);
 
@@ -125,6 +130,8 @@ private:
 
 	static TArray<UWidget*> PasteWidgetsInternal(TSharedRef<FWidgetBlueprintEditor> BlueprintEditor, UWidgetBlueprint* BP, const FString& TextToImport, FWidgetReference ParentWidget, FName SlotName, FVector2D PasteLocation, bool bForceSibling, bool& TransactionSuccesful);
 
+	static bool DisplayPasteWarningAndEarlyExit();
+
 	static void ExecuteOpenSelectedWidgetsForEdit( TSet<FWidgetReference> SelectedWidgets );
 
 	static bool FindAndRemoveNamedSlotContent(UWidget* WidgetTemplate, UWidgetTree* WidgetTree);
@@ -158,4 +165,6 @@ private:
 	static TOptional<FWidgetThumbnailProperties> DrawSWidgetInRenderTargetInternal(UUserWidget* WidgetInstance, FRenderTarget* RenderTarget2D, UTextureRenderTarget2D* TextureRenderTarget,FVector2D ThumbnailSize, bool bIsForThumbnail, TOptional<FVector2D> ThumbnailCustomSize, EThumbnailPreviewSizeMode ThumbnailSizeMode);
 	
 	static bool IsDesiredFocusWiget(TSharedRef<FWidgetBlueprintEditor> BlueprintEditor, UWidget* Widget);
+
+	static FWidgetObjectTextFactory ProcessImportedText(UWidgetBlueprint* BP, const FString& TextToImport, /*out*/ UPackage*& TempPackage);
 };

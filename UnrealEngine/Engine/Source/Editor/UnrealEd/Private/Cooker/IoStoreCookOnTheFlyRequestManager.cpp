@@ -76,9 +76,6 @@ public:
 		ConnectionServer->OnRequest(ECookOnTheFlyMessage::RecookPackages).BindRaw(this, &FIoStoreCookOnTheFlyRequestManager::HandleClientRequest);
 
 		MessageEndpoint = FMessageEndpoint::Builder("FCookOnTheFly");
-		TArray<FAssetData> AllAssets;
-		AssetRegistry->GetAllAssets(AllAssets, true);
-		PackageRegistry.Add(AllAssets);
 	}
 
 private:
@@ -99,10 +96,10 @@ private:
 			FPackageStoreEntryResource Entry;
 		};
 
-		FPlatformContext(FName InPlatformName, IPackageStoreWriter* InPackageWriter, FPackageRegistry& InPackageRegistry)
+		FPlatformContext(FIoStoreCookOnTheFlyRequestManager& InManager, FName InPlatformName, IPackageStoreWriter* InPackageWriter)
 			: PlatformName(InPlatformName)
+			, Manager(InManager)
 			, PackageWriter(InPackageWriter)
-			, PackageRegistry(InPackageRegistry)
 		{
 		}
 
@@ -111,6 +108,18 @@ private:
 			if (PackageCookedEvent)
 			{
 				FPlatformProcess::ReturnSynchEventToPool(PackageCookedEvent);
+			}
+			FScopeLock _(&GetLock());
+			if (bCookSessionRequested)
+			{
+				// The request can only be in progress if there is another thread calling RequestCookSession,
+				// and all threads should have completed before we are allowed to destroy. If we ever destroy
+				// when requests are still in progress, we will need to add a cancel mechanic and wait for the
+				// cancel here.
+				check(!bCookSessionRequestInProgress);
+				Manager.CookOnTheFlyServer.RemovePlatform(PlatformName);
+				bCookSessionRequested = false;
+				CookerReadyForRequests->Reset();
 			}
 		}
 
@@ -135,9 +144,65 @@ private:
 			}
 		}
 
+		void OnSessionStarted()
+		{
+			FScopeLock _(&GetLock());
+			if (bCookSessionRequested)
+			{
+				return;
+			}
+
+			if (bCookSessionRequestInProgress)
+			{
+				bCookSessionRequested = true;
+				bCookSessionRequestInProgress = false;
+			}
+			CookerReadyForRequests->Trigger();
+		}
+
+		void RequestCookSessionAndWait()
+		{
+			bool bCallOnSessionStartedManually = false;
+			{
+				FScopeLock _(&GetLock());
+				if (bCookSessionRequested)
+				{
+					return;
+				}
+				if (!bCookSessionRequestInProgress)
+				{
+					bCookSessionRequestInProgress = true;
+					bool bAlreadyInitialized = false;
+					Manager.CookOnTheFlyServer.AddPlatform(PlatformName, bAlreadyInitialized);
+					if (bAlreadyInitialized)
+					{
+						// The platform has already been initialized by an AddPlatform call from elsewhere
+						// and the cooker will not be sending an OnSessionStarted event. Trigger it now.
+						bCallOnSessionStartedManually = true;
+					}
+				}
+			}
+			if (bCallOnSessionStartedManually)
+			{
+				Manager.OnSessionStarted(PlatformName, false /* bFirstSessionInThisProcess */);
+			}
+
+			if (CookerReadyForRequests->Wait(0))
+			{
+				return;
+			}
+			// AddPlatform always queues the request rather than handling it immediately,
+			// and it handles it later in the tick on the cooker's scheduler thread. So if
+			// we try to wait for the event from the scheduler thread we will deadlock.
+			check(!Manager.CookOnTheFlyServer.IsSchedulerThread());
+			CookerReadyForRequests->Wait();
+		}
+
 		EPackageStoreEntryStatus RequestCook(UE::Cook::ICookOnTheFlyServer& InCookOnTheFlyServer, const FPackageId& PackageId, FPackageStoreEntryResource& OutEntry)
 		{
 			FPackage& Package = GetPackage(PackageId);
+			check(Manager.bCookerGlobalsInitialized); // Caller should have called RequestCookSessionAndWait
+			FName PackageName = Manager.PackageRegistry.Get(PackageId);
 			if (Package.Status == EPackageStatus::Cooked)
 			{
 				UE_LOG(LogCookOnTheFly, Verbose, TEXT("0x%llX was already cooked"), PackageId.ValueForDebugging());
@@ -146,7 +211,7 @@ private:
 			}
 			else if (Package.Status == EPackageStatus::Failed)
 			{
-				UE_LOG(LogCookOnTheFly, Verbose, TEXT("0x%llX was already failed"), PackageId.ValueForDebugging());
+				UE_LOG(LogCookOnTheFly, Warning, TEXT("Failed to cook package 0x%llX '%s'"), PackageId.ValueForDebugging(), *PackageName.ToString());
 				return EPackageStoreEntryStatus::Missing;
 			}
 			else if (Package.Status == EPackageStatus::Cooking)
@@ -154,7 +219,6 @@ private:
 				UE_LOG(LogCookOnTheFly, Verbose, TEXT("0x%llX was already cooking"), PackageId.ValueForDebugging());
 				return EPackageStoreEntryStatus::Pending;
 			}
-			FName PackageName = PackageRegistry.Get(PackageId);
 			if (PackageName.IsNone())
 			{
 				UE_LOG(LogCookOnTheFly, Warning, TEXT("Received cook request for unknown package 0x%llX"), PackageId.ValueForDebugging());
@@ -200,12 +264,12 @@ private:
 			}
 		}
 
-		void MarkAsFailed(FPackageId PackageId, UE::ZenCookOnTheFly::Messaging::FCompletedPackages& OutCompletedPackages)
+		void MarkAsFailed(FPackageId PackageId, FName PackageName, UE::ZenCookOnTheFly::Messaging::FCompletedPackages& OutCompletedPackages)
 		{
-			UE_LOG(LogCookOnTheFly, Warning, TEXT("0x%llX failed"), PackageId.ValueForDebugging());
+			// Unsolicited packages that fail to save because they contain editoronly data will be passed into this function
+			// Mark them as failed, but do not report them to the client and do not give a warning unless the client requests them.
 			FPackage& Package = GetPackage(PackageId);
 			Package.Status = EPackageStatus::Failed;
-			OutCompletedPackages.FailedPackages.Add(PackageId);
 			if (PackageCookedEvent)
 			{
 				PackageCookedEvent->Trigger();
@@ -285,10 +349,13 @@ private:
 		FCriticalSection CriticalSection;
 		FName PlatformName;
 		TMap<FPackageId, TUniquePtr<FPackage>> Packages;
+		FIoStoreCookOnTheFlyRequestManager& Manager;
 		IPackageStoreWriter* PackageWriter = nullptr;
-		FPackageRegistry& PackageRegistry;
 		int32 SingleThreadedClientsCount = 0;
 		FEvent* PackageCookedEvent = nullptr;
+		FEventRef CookerReadyForRequests;
+		bool bCookSessionRequested = false;
+		bool bCookSessionRequestInProgress = false;
 	};
 
 	virtual bool Initialize() override
@@ -306,11 +373,38 @@ private:
 		return true;
 	}
 
+	void InitializeCookSessionGlobals()
+	{
+		// This function is only called from Cooker's scheduler thread via OnSessionStarted, so we do not need
+		// to worry about synchronization within it. Threads reading the information written here must call 
+		// RequestCookSessionAndWait or assert that bCookerGlobalsInitialized is true.
+		if (bCookerGlobalsInitialized)
+		{
+			return;
+		}
+		ON_SCOPE_EXIT{ bCookerGlobalsInitialized = true; };
+
+		TArray<FAssetData> AllAssets;
+		IAssetRegistry* AssetRegistry = IAssetRegistry::Get();
+		AssetRegistry->GetAllAssets(AllAssets, true);
+		PackageRegistry.Add(AllAssets);
+	}
+
+	virtual void OnSessionStarted(FName PlatformName, bool bFirstSessionInThisProcess) override
+	{
+		InitializeCookSessionGlobals();
+		FPlatformContext* Context = FindContext(PlatformName);
+		if (Context)
+		{
+			Context->OnSessionStarted();
+		}
+	}
+
 	virtual void Shutdown() override
 	{
 	}
 
-	virtual void OnPackageGenerated(const FName& PackageName)
+	virtual void OnPackageGenerated(const FName& PackageName) override
 	{
 		FPackageId PackageId = FPackageId::FromName(PackageName);
 		UE_LOG(LogCookOnTheFly, Verbose, TEXT("Package 0x%llX '%s' generated"), PackageId.ValueForDebugging(), *PackageName.ToString());
@@ -329,6 +423,12 @@ private:
 			PackageIds = PackagesToRecook.Array();
 			PackagesToRecook.Empty();
 		}
+
+		// PackageRegistry is not initialized until InitializeCookSessionGlobals, and afterwards is supposed to be immutable
+		// so it can be accessed from multiple threads without a lock. We need to access it in this function, so we have to 
+		// assert it has been initialized. It must be initialized if we have any PackagesToRecook, because all the functions
+		// that add elements to PackagesToRecook call RequestCookSessionAndWait first
+		check(bCookerGlobalsInitialized);
 
 		TArray<FName, TInlineAllocator<128>> PackageNames;
 		PackageNames.Reserve(PackageIds.Num());
@@ -404,7 +504,8 @@ private:
 			FScopeLock _(&ContextsCriticalSection);
 			if (!PlatformContexts.Contains(PlatformName))
 			{
-				TUniquePtr<FPlatformContext>& Context = PlatformContexts.Add(PlatformName, MakeUnique<FPlatformContext>(PlatformName, PackageWriter, PackageRegistry));
+				TUniquePtr<FPlatformContext>& Context = PlatformContexts.Add(PlatformName,
+					MakeUnique<FPlatformContext>(*this, PlatformName, PackageWriter));
 
 				PackageWriter->GetEntries([&Context](TArrayView<const FPackageStoreEntryResource> Entries,
 					TArrayView<const IPackageStoreWriter::FOplogCookInfo> CookInfos)
@@ -507,8 +608,8 @@ private:
 		}
 		else
 		{
-			FScopeLock _(&ContextsCriticalSection);
 			FPlatformContext& Context = GetContext(PlatformName);
+			Context.RequestCookSessionAndWait();
 			FScopeLock __(&Context.GetLock());
 			FCompletedPackages CompletedPackages;
 			Context.GetCompletedPackages(CompletedPackages);
@@ -535,6 +636,8 @@ private:
 		TRACE_CPUPROFILER_EVENT_SCOPE(CookOnTheFly::HandleCookPackageRequest);
 
 		FPlatformContext& Context = GetContext(PlatformName);
+		Context.RequestCookSessionAndWait();
+
 		FCookPackageRequest CookRequest = Request.GetBodyAs<FCookPackageRequest>();
 		FCookPackageResponse CookResponse;
 
@@ -586,6 +689,9 @@ private:
 		using namespace UE::ZenCookOnTheFly::Messaging;
 
 		TRACE_CPUPROFILER_EVENT_SCOPE(CookOnTheFly::HandleRecookPackagesRequest);
+
+		FPlatformContext& Context = GetContext(PlatformName);
+		Context.RequestCookSessionAndWait();
 
 		FRecookPackagesRequest RecookRequest = Request.GetBodyAs<FRecookPackagesRequest>();
 
@@ -641,6 +747,7 @@ private:
 	void OnPackageStoreEntryCreated(const IPackageStoreWriter::FEntryCreatedEventArgs& EventArgs)
 	{
 		FPlatformContext& Context = GetContext(EventArgs.PlatformName);
+		Context.RequestCookSessionAndWait();
 
 		FScopeLock _(&Context.GetLock());
 		for (const FPackageId& ImportedPackageId : EventArgs.Entry.ImportedPackageIds)
@@ -692,7 +799,7 @@ private:
 			}
 			else
 			{
-				Context.MarkAsFailed(FPackageId::FromName(EventArgs.PackageName), NewCompletedPackages);
+				Context.MarkAsFailed(FPackageId::FromName(EventArgs.PackageName), EventArgs.PackageName, NewCompletedPackages);
 			}
 		}
 		BroadcastCompletedPackages(EventArgs.PlatformName, MoveTemp(NewCompletedPackages));
@@ -737,7 +844,19 @@ private:
 		}
 	}
 	
-	FPlatformContext& GetContext(const FName& PlatformName)
+	FPlatformContext* FindContext(FName PlatformName)
+	{
+		FScopeLock _(&ContextsCriticalSection);
+		TUniquePtr<FPlatformContext>* Ctx = PlatformContexts.Find(PlatformName);
+		if (!Ctx)
+		{
+			return nullptr;
+		}
+		check(Ctx->IsValid());
+		return Ctx->Get();
+	}
+
+	FPlatformContext& GetContext(FName PlatformName)
 	{
 		FScopeLock _(&ContextsCriticalSection);
 		TUniquePtr<FPlatformContext>& Ctx = PlatformContexts.FindChecked(PlatformName);
@@ -770,6 +889,7 @@ private:
 	FPackageRegistry PackageRegistry;
 	FCriticalSection PackagesToRecookCritical;
 	TSet<FPackageId> PackagesToRecook;
+	bool bCookerGlobalsInitialized = false;
 };
 
 namespace UE { namespace Cook

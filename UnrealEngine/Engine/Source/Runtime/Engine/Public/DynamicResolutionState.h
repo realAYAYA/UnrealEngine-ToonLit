@@ -9,6 +9,7 @@
 #include "CoreMinimal.h"
 #include "Engine/EngineTypes.h"
 #include "DynamicRenderScaling.h"
+#include "TemporalUpscaler.h"
 
 
 /** Dynamic resolution of the primary ScreenPercentage. */
@@ -50,6 +51,9 @@ public:
 
 	/** Setup a screen percentage driver for a given view family. */
 	virtual void SetupMainViewFamily(class FSceneViewFamily& ViewFamily) = 0;
+
+	/** Apply the minimum/maximum resolution fraction for a third-party temporal upscaler. */
+	virtual void SetTemporalUpscaler(const UE::Renderer::Private::ITemporalUpscaler* InTemporalUpscaler) = 0;
 
 protected:
 

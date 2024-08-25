@@ -1,88 +1,69 @@
 {
-	"dashboard": {
-		"showLandingPage": true,
-		"showCI": true,
-		"showAgents": true,
-		"showPerforceServers": true,
-		"showDeviceManager": true,
-		"showTests": true
-	},
-	"compute": [
+	// Schema version number for the config file. New Horde versions may bump this number and introduce schema changes. Upgrade info
+	// will be printed to the log on startup.
+	"version": 2,
+
+	// Include default settings from the Horde installation folder
+	"include": [
 		{
-			"id": "default",
-			"namespaceId": "horde.compute"
+			"path": "$(HordeDir)/Defaults/default.global.json"
 		}
 	],
-	"storage": {
-		"backends": [
-			{
-				"id": "default-backend",
-				"type": "FileSystem",
-				"baseDir": "Storage" // Default base directory is C:\ProgramData\HordeServer
-			},
-			{
-				"id": "memory-backend", // Used for automated tests
-				"type": "Memory"
-			}
-		],
-		"namespaces": [
-			{
-				"id": "default",
-				"backend": "default-backend"
-			},
-			{
-				"id": "horde-artifacts",
-				"prefix": "Artifacts/",
-				"backend": "default-backend"
-			},
-			{
-				"id": "horde-perforce",
-				"prefix": "Perforce/",
-				"backend": "default-backend"
-			},
-			{
-				"id": "horde-logs",
-				"prefix": "Logs/",
-				"backend": "default-backend"
-			},
-			{
-				"id": "horde-tools",
-				"prefix": "Tools/",
-				"backend": "default-backend"
-			},
-			{
-				"id": "memory",
-				"backend": "memory-backend",
-				"enableAliases": true
-			}
-		]
-	},
-	"pools": [
-		{
-			"id": "any",
-			"name": "Any",
-			"condition": "true"
-		},
-		{
-			"id": "win64",
-			"name": "Win64",
-			"condition": "Platform == 'Win64'"
-		},
-		{
-			"id": "mac",
-			"name": "Mac",
-			"condition": "Platform == 'Mac'"
-		},
-		{
-			"id": "linux",
-			"name": "Linux",
-			"condition": "Platform == 'Linux'"
-		}
+
+	// Definitions for projects in the CI system
+	"projects": [
+		// Uncomment this to enable a default //UE5/Dev-Main-Horde stream with some simple CI jobs.
+//		{
+//			"id": "ue5",
+//			"path": "ue5.project.json"
+//		}
 	],
-	"artifactTypes": [
+
+	// Configuration for different Perforce servers. Horde allows running against multiple 'logical' Perforce servers, each of which may be accessed through different edge servers. Server
+	// selection is performed to evenly distribute load, and servers can expose their health/status via a separate health check service.
+	"perforceClusters": 
+	[
+//		{
+//			// Name for this cluster. Streams can be configured to use a particular cluster using the ClusterName property in the stream config. 
+//			"name": "Default",
+//
+//			// Default account to use inside the Horde Server for querying submitted changes etc..
+//			// If this value is not specified, the first item from the credentials below will be used.
+//			"serviceAccount": null,
+//
+//			// Whether the service account supports generating login tickets for other users, which requires a priviledged account on the server. Impersonating other users
+//			// allows Horde to submit changes on behalf of users.
+//			"canImpersonate": false,
+//
+//			// List of servers to access
+//			"servers": 
+//			[
+//				{
+//					// DNS name and port for the server
+//					"serverAndPort": "perforce:1666"
+//				}
+//			],
+//
+//			// List of credentials for the server. The first credentials will be used by default, but can be overridden by setting the userName property in the workspace.
+//			"credentials": 
+//			[
+//				{
+//					"userName": "test.user",
+//
+//					// Specify either the password or ticket property below (but not both)
+//					"password": "password123",
+//					// "ticket": "ticket if not using password"
+//				}
+//			]
+//		}
+	],
+
+	// Default deployment parameters for other tools bundled with Horde. These can be queried at runtime without auth using the default Horde server.
+	"parameters": {
+		"ugs": 
 		{
-			"name": "step-output",
-			"keepDays": 1
+			// Set the default Perforce server for anyone using UGS.
+//			"defaultPerforceServer": "perforce:1666"
 		}
-	]
+	}
 }

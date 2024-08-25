@@ -64,7 +64,7 @@ TSharedPtr<FTabManager::FLayout> FMaterialEditorApplicationModes::GetDefaultEdit
 					->AddTab( FMaterialStats::GetGridStatsTabName(), ETabState::ClosedTab )
 					->AddTab( FMaterialStats::GetGridOldStatsTabName(), ETabState::ClosedTab )
 					->AddTab( FMaterialEditorTabs::FindTabId, ETabState::ClosedTab )
-					->AddTab( FMaterialEditorTabs::StrataTabId, ETabState::OpenedTab )
+					->AddTab( FMaterialEditorTabs::SubstrateTabId, ETabState::OpenedTab )
 				)
 			)
 			->Split

@@ -8,7 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Storage.Bundles;
+using EpicGames.Horde.Storage.Clients;
 using EpicGames.Horde.Storage.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -30,7 +31,7 @@ namespace UnrealBuildTool.Artifacts
 		/// Collection of output file references.  There should be exactly the same number
 		/// of file references as outputs in the action
 		/// </summary>
-		public readonly NodeRef<ChunkedDataNode>[] OutputRefs;
+		public readonly IBlobRef<ChunkedDataNode>[] OutputRefs;
 
 		/// <summary>
 		/// Construct a new horde artifact number
@@ -40,34 +41,28 @@ namespace UnrealBuildTool.Artifacts
 		public HordeArtifactAction(ArtifactAction artifactAction)
 		{
 			ArtifactAction = artifactAction;
-			OutputRefs = new NodeRef<ChunkedDataNode>[ArtifactAction.Outputs.Length];
+			OutputRefs = new IBlobRef<ChunkedDataNode>[ArtifactAction.Outputs.Length];
 		}
 
 		/// <summary>
 		/// Construct a new artifact action from the reader
 		/// </summary>
 		/// <param name="reader">Source reader</param>
-		public HordeArtifactAction(NodeReader reader)
+		public HordeArtifactAction(IBlobReader reader)
 		{
 			ArtifactAction = reader.ReadArtifactAction();
-			OutputRefs = reader.ReadVariableLengthArray(() => new NodeRef<ChunkedDataNode>(reader));
+			OutputRefs = reader.ReadVariableLengthArray(() => reader.ReadBlobRef<ChunkedDataNode>());
 		}
 
 		/// <summary>
 		/// Serialize the artifact action 
 		/// </summary>
 		/// <param name="writer">Destination writer</param>
-		public void Serialize(NodeWriter writer)
+		public void Serialize(IBlobWriter writer)
 		{
 			writer.WriteArtifactAction(ArtifactAction);
-			writer.WriteVariableLengthArray(OutputRefs, x => x.Serialize(writer));
+			writer.WriteVariableLengthArray(OutputRefs, x => writer.WriteBlobRef(x));
 		}
-
-		/// <summary>
-		/// Return an enumeration of the references
-		/// </summary>
-		/// <returns></returns>
-		public IEnumerable<NodeRef> EnumerateRefs() => OutputRefs;
 
 		/// <summary>
 		/// Write all the files to disk
@@ -75,19 +70,21 @@ namespace UnrealBuildTool.Artifacts
 		/// <param name="writer">Destination writer</param>
 		/// <param name="cancellationToken">Cancellation token</param>
 		/// <returns>Task</returns>
-		public async Task WriteFilesAsync(IStorageWriter writer, CancellationToken cancellationToken)
+		public async Task WriteFilesAsync(IBlobWriter writer, CancellationToken cancellationToken)
 		{
 			LeafChunkedDataNodeOptions leafOptions = new(512 * 1024, 1 * 1024 * 1024, 2 * 1024 * 1024);
 			InteriorChunkedDataNodeOptions interiorOptions = new(1, 10, 20);
 			ChunkingOptions options = new() { LeafOptions = leafOptions, InteriorOptions = interiorOptions };
 
-			ChunkedDataWriter fileWriter = new(writer, options);
+			using LeafChunkedDataWriter fileWriter = new(writer, leafOptions);
 			int index = 0;
 			foreach (ArtifactFile artifact in ArtifactAction.Outputs)
 			{
 				string outputName = artifact.GetFullPath(ArtifactAction.DirectoryMapping);
 				using FileStream stream = new(outputName, FileMode.Open, FileAccess.Read, FileShare.Read);
-				OutputRefs[index++] = new NodeRef<ChunkedDataNode>(await fileWriter.CreateAsync(stream, leafOptions.TargetSize, cancellationToken));
+				LeafChunkedData leafChunkedData = await fileWriter.CreateAsync(stream, leafOptions.TargetSize, cancellationToken);
+				ChunkedData chunkedData = await InteriorChunkedDataNode.CreateTreeAsync(leafChunkedData, interiorOptions, writer, cancellationToken);
+				OutputRefs[index++] = chunkedData.Root.Handle;
 			}
 		}
 	}
@@ -103,7 +100,7 @@ namespace UnrealBuildTool.Artifacts
 		/// </summary>
 		/// <param name="reader">Source reader</param>
 		/// <returns>Created artifact action</returns>
-		public static HordeArtifactAction ReadHordeArtifactAction(this NodeReader reader)
+		public static HordeArtifactAction ReadHordeArtifactAction(this IBlobReader reader)
 		{
 			return new HordeArtifactAction(reader);
 		}
@@ -113,7 +110,7 @@ namespace UnrealBuildTool.Artifacts
 		/// </summary>
 		/// <param name="writer">Destination writer</param>
 		/// <param name="artifactAction">Artifact action to write</param>
-		public static void WriteHordeArtifactAction(this NodeWriter writer, HordeArtifactAction artifactAction)
+		public static void WriteHordeArtifactAction(this IBlobWriter writer, HordeArtifactAction artifactAction)
 		{
 			artifactAction.Serialize(writer);
 		}
@@ -122,10 +119,9 @@ namespace UnrealBuildTool.Artifacts
 	/// <summary>
 	/// Horde node that represents a collection of action nodes 
 	/// </summary>
-	[NodeType("{E8DBCD77-861D-4CAE-B77F-5807D26E2533}")]
-	class ArtifactActionCollectionNode : Node
+	[BlobConverter(typeof(ArtifactActionCollectionNodeConverter))]
+	class ArtifactActionCollectionNode
 	{
-
 		/// <summary>
 		/// Collection of actions
 		/// </summary>
@@ -137,28 +133,23 @@ namespace UnrealBuildTool.Artifacts
 		public ArtifactActionCollectionNode()
 		{
 		}
+	}
 
-		/// <summary>
-		/// Construct a new artifact action collection from the source reader
-		/// </summary>
-		/// <param name="reader">Source reader</param>
-		public ArtifactActionCollectionNode(NodeReader reader)
+	class ArtifactActionCollectionNodeConverter : BlobConverter<ArtifactActionCollectionNode>
+	{
+		static readonly BlobType s_blobType = new BlobType("{E8DBCD77-4CAE-861D-0758-7FB733256ED2}", 1);
+
+		public override ArtifactActionCollectionNode Read(IBlobReader reader, BlobSerializerOptions options)
 		{
-			ArtifactActions = reader.ReadDictionary<IoHash, HordeArtifactAction>(() => reader.ReadIoHash(), () => reader.ReadHordeArtifactAction());
+			ArtifactActionCollectionNode node = new ArtifactActionCollectionNode();
+			node.ArtifactActions = reader.ReadDictionary<IoHash, HordeArtifactAction>(() => reader.ReadIoHash(), () => reader.ReadHordeArtifactAction());
+			return node;
 		}
 
-		/// <inheritdoc/>
-		public override void Serialize(NodeWriter writer)
+		public override BlobType Write(IBlobWriter writer, ArtifactActionCollectionNode value, BlobSerializerOptions options)
 		{
-			writer.WriteDictionary<IoHash, HordeArtifactAction>(ArtifactActions, (x) => writer.WriteIoHash(x), (x) => writer.WriteHordeArtifactAction(x));
-		}
-
-		/// <summary>
-		/// Mark the node as dirty
-		/// </summary>
-		public new void MarkAsDirty()
-		{
-			base.MarkAsDirty();
+			writer.WriteDictionary<IoHash, HordeArtifactAction>(value.ArtifactActions, (x) => writer.WriteIoHash(x), (x) => writer.WriteHordeArtifactAction(x));
+			return s_blobType;
 		}
 	}
 
@@ -222,7 +213,7 @@ namespace UnrealBuildTool.Artifacts
 		/// <returns>Storage client instance</returns>
 		public static IArtifactCache CreateMemoryCache(ILogger logger)
 		{
-			HordeStorageArtifactCache cache = new(new MemoryStorageClient(), logger)
+			HordeStorageArtifactCache cache = new(BundleStorageClient.CreateInMemory(logger), logger)
 			{
 				State = ArtifactCacheState.Available
 			};
@@ -241,11 +232,6 @@ namespace UnrealBuildTool.Artifacts
 			HordeStorageArtifactCache cache = new(null, logger);
 			cache._readyTask = Task.Run(() => cache.InitFileCache(directory, NullLogger.Instance, cleanDirectory));
 			return cache;
-		}
-
-		static HordeStorageArtifactCache()
-		{
-			Node.RegisterType<ArtifactActionCollectionNode>();
 		}
 
 		/// <summary>
@@ -284,7 +270,7 @@ namespace UnrealBuildTool.Artifacts
 					{
 						artifactActions.AddRange(_pendingWrites.Where(x => x.Key == key));
 					}
-					ArtifactActionCollectionNode? node = await _store.TryReadNodeAsync<ArtifactActionCollectionNode>(GetRefName(key), default, cancellationToken);
+					ArtifactActionCollectionNode? node = await _store.TryReadRefTargetAsync<ArtifactActionCollectionNode>(GetRefName(key), default, cancellationToken: cancellationToken);
 					if (node != null)
 					{
 						foreach (HordeArtifactAction artifactAction in node.ArtifactActions.Values)
@@ -316,7 +302,7 @@ namespace UnrealBuildTool.Artifacts
 			{
 				output[index] = false;
 				ArtifactAction artifactAction = artifactActions[index];
-				ArtifactActionCollectionNode? node = await _store.TryReadNodeAsync<ArtifactActionCollectionNode>(GetRefName(artifactAction.Key), default, cancellationToken);
+				ArtifactActionCollectionNode? node = await _store.TryReadRefTargetAsync<ArtifactActionCollectionNode>(GetRefName(artifactAction.Key), default, cancellationToken: cancellationToken);
 				if (node != null)
 				{
 					if (node.ArtifactActions.TryGetValue(artifactAction.ActionKey, out HordeArtifactAction hordeArtifactAction))
@@ -324,9 +310,9 @@ namespace UnrealBuildTool.Artifacts
 						output[index] = true;
 
 						int refIndex = 0;
-						foreach (NodeRef<ChunkedDataNode> artifactRef in hordeArtifactAction.OutputRefs)
+						foreach (IBlobRef<ChunkedDataNode> artifactRef in hordeArtifactAction.OutputRefs)
 						{
-							if (artifactRef.Handle == null)
+							if (artifactRef == null)
 							{
 								output[index] = false;
 								break;
@@ -335,7 +321,7 @@ namespace UnrealBuildTool.Artifacts
 							{
 								string outputName = hordeArtifactAction.ArtifactAction.Outputs[refIndex++].GetFullPath(artifactAction.DirectoryMapping);
 								using FileStream stream = new(outputName, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-								await ChunkedDataNode.CopyToStreamAsync(artifactRef.Handle, stream, cancellationToken);
+								await ChunkedDataNode.CopyToStreamAsync(artifactRef, stream, cancellationToken);
 							}
 							catch (Exception)
 							{
@@ -483,20 +469,21 @@ namespace UnrealBuildTool.Artifacts
 					RefName refName = GetRefName(artifactAction.Key);
 
 					// Locate the destination collection for this key
-					ArtifactActionCollectionNode? node = _store!.TryReadNodeAsync<ArtifactActionCollectionNode>(refName, default, cancellationToken).Result;
+					ArtifactActionCollectionNode? node = _store!.TryReadRefTargetAsync<ArtifactActionCollectionNode>(refName, default, cancellationToken: cancellationToken).Result;
 					node ??= new ArtifactActionCollectionNode();
 
 					// Update the artifact action collection
 					HordeArtifactAction hordeArtifactAction = new(artifactAction);
 					node.ArtifactActions[artifactAction.ActionKey] = hordeArtifactAction;
-					node.MarkAsDirty();
 
 					// Save the artifact action file
-					await using IStorageWriter writer = _store!.CreateWriter();
+					await using IBlobWriter writer = _store!.CreateBlobWriter();
 					await hordeArtifactAction.WriteFilesAsync(writer, cancellationToken);
+					IBlobRef<ArtifactActionCollectionNode> nodeRef = await writer.WriteBlobAsync(node);
+					await writer.FlushAsync();
 
 					// Save the collection
-					BlobHandle _ = await _store.WriteNodeAsync(refName, node, cancellationToken: cancellationToken);
+					await _store.WriteRefAsync(refName, nodeRef, cancellationToken: cancellationToken);
 				}, cancellationToken));
 			}
 			return tasks;
@@ -525,7 +512,7 @@ namespace UnrealBuildTool.Artifacts
 				}
 				Directory.CreateDirectory(directory.FullName);
 
-				_store = new FileStorageClient(directory, logger);
+				_store = BundleStorageClient.CreateFromDirectory(directory, BundleCache.None, logger);
 
 				State = ArtifactCacheState.Available;
 				return State;

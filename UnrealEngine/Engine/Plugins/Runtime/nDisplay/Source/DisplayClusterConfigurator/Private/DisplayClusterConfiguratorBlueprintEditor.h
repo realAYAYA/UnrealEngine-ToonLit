@@ -214,6 +214,8 @@ private:
 
 	bool IsExportOnSaveSet() const;
 	void ToggleExportOnSaveSetting();
+
+	void ImportMPCDI_Clicked();
 	//~ End UI command handlers
 
 	void OnReadOnlyChanged(bool bReadOnly);

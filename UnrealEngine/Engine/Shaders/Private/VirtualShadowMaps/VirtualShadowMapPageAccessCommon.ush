@@ -24,8 +24,8 @@
 // Stored in the physical meta data flags and must be higher than the  VSM_*_FLAG
 // The light was marked to not be cached (even though caching is enabled)
 #define VSM_PHYSICAL_FLAG_VIEW_UNCACHED		(1U << 4) 
-#define VSM_PHYSICAL_FLAG_DIRTY				(1U << 5) 
-#define VSM_PHYSICAL_FLAG_USED_THIS_FRAME	(1U << 6) 
+#define VSM_PHYSICAL_FLAG_DIRTY				(1U << 5)
+#define VSM_PHYSICAL_FLAG_UNREFERENCED		(1U << 6)
 
 
 // bit-offset for storing another set of page flags used to track invalidation in the physical page metadata flags.
@@ -48,9 +48,8 @@ bool IsSinglePageVirtualShadowMap(int VirtualShadowMapId)
 struct FPhysicalPageMetaData
 {
 	uint Flags;	// VSM_*_FLAG, not all relevant to physical pages + VSM_PHYSICAL_FLAG_*
-	uint Age;
+	uint LastRequestedSceneFrameNumber;
 	// Link back to the virtual shadow map & page table slot that references this physical page
-	// Useful to track data on a virtual address space frequency & vice versa
 	uint VirtualShadowMapId;
 	uint MipLevel;
 	uint2 PageAddress;
@@ -215,7 +214,7 @@ struct FShadowPhysicalPage
 	bool bThisLODValid;		// Valid page mapped at this specific level (equivalent to bAnyMipValid && LODOffset == 0)
 };
 
-#define VSM_PHYSICAL_PAGE_ANY_MIP_VALID_FLAG 0x8000000
+#define VSM_PHYSICAL_PAGE_ANY_MIP_VALID_FLAG 0x80000000
 #define VSM_PHYSICAL_PAGE_INVALID 0x00000000
 
 uint ShadowEncodePageTable(uint2 PhysicalAddress)

@@ -43,6 +43,8 @@ class UMaterialExpressionTextureProperty : public UMaterialExpression
 	ENGINE_API virtual void GetCaption(TArray<FString>& OutCaptions) const override;
 	ENGINE_API virtual uint32 GetInputType(int32 InputIndex) override;
 	ENGINE_API virtual bool MatchesSearchQuery(const TCHAR* SearchQuery) override;
+
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
 #endif //WITH_EDITOR
 	//~ End UMaterialExpression Interface
 };

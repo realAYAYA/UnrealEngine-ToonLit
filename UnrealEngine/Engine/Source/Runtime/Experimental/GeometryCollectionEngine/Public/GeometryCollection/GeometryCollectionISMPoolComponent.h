@@ -6,6 +6,7 @@
 #include "Containers/Map.h"
 #include "InstancedStaticMeshDelegates.h"
 #include "Materials/MaterialInterface.h"
+#include "InstanceDataTypes.h"
 
 #include "GeometryCollectionISMPoolComponent.generated.h"
 
@@ -67,7 +68,7 @@ struct FInstanceGroups
 			if (Count == GroupRanges[GroupId].Count)
 			{
 				TotalFreeInstanceCount -= Count;
-				FreeList.RemoveAtSwap(Index, 1, false);
+				FreeList.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				return GroupId;
 			}
 		}
@@ -99,51 +100,55 @@ struct FInstanceGroups
  */
 struct FISMComponentDescription
 {
-	bool bUseHISM = false;
-	bool bReverseCulling = false;
-	bool bIsStaticMobility = false;
-	bool bAffectShadow = true;
-	bool bAffectDistanceFieldLighting = false;
-	bool bAffectDynamicIndirectLighting = false;
+	enum EFlags
+	{
+		UseHISM = 1 << 1,							// HISM is no longer supported. This flag is ignored.
+		GpuLodSelection = 1 << 2,
+		ReverseCulling = 1 << 3,
+		StaticMobility = 1 << 4,
+		WorldPositionOffsetWritesVelocity = 1 << 5,
+		EvaluateWorldPositionOffset = 1 << 6,
+		AffectShadow = 1 << 7,
+		AffectDistanceFieldLighting = 1 << 8,
+		AffectDynamicIndirectLighting = 1 << 9,
+		AffectFarShadow = 1 << 10,
+		DistanceCullPrimitive = 1 << 11,
+	};
+
+	uint32 Flags = WorldPositionOffsetWritesVelocity|EvaluateWorldPositionOffset|AffectShadow;
 	int32 NumCustomDataFloats = 0;
+	FVector Position = FVector::ZeroVector;
 	int32 StartCullDistance = 0;
 	int32 EndCullDistance = 0;
 	int32 MinLod = 0;
 	float LodScale = 1.f;
 	TArray<FName> Tags;
+	FName StatsCategory;
 
 	bool operator==(const FISMComponentDescription& Other) const
 	{
-		return bUseHISM == Other.bUseHISM &&
-			bReverseCulling == Other.bReverseCulling &&
-			bIsStaticMobility == Other.bIsStaticMobility &&
-			bAffectShadow == Other.bAffectShadow &&
-			bAffectDistanceFieldLighting == Other.bAffectDistanceFieldLighting &&
-			bAffectDynamicIndirectLighting == Other.bAffectDistanceFieldLighting &&
+		return Flags == Other.Flags &&
 			NumCustomDataFloats == Other.NumCustomDataFloats &&
-			StartCullDistance == Other.StartCullDistance && 
+			Position == Other.Position &&
+			StartCullDistance == Other.StartCullDistance &&
 			EndCullDistance == Other.EndCullDistance &&
 			MinLod == Other.MinLod &&
 			LodScale == Other.LodScale &&
-			Tags == Other.Tags;
+			Tags == Other.Tags &&
+			StatsCategory == Other.StatsCategory;
 	}
 };
 
 FORCEINLINE uint32 GetTypeHash(const FISMComponentDescription& Desc)
 {
-	const uint32 PackedBools = 
-		(Desc.bUseHISM ? 1 : 0) | 
-		(Desc.bReverseCulling ? 2 : 0) | 
-		(Desc.bIsStaticMobility ? 4 : 0) | 
-		(Desc.bAffectShadow ? 8 : 0) | 
-		(Desc.bAffectDistanceFieldLighting ? 16 : 0) |
-		(Desc.bAffectDynamicIndirectLighting ? 32 : 0);
-	uint32 Hash = HashCombineFast(GetTypeHash(PackedBools), GetTypeHash(Desc.NumCustomDataFloats));
+	uint32 Hash = HashCombineFast(GetTypeHash(Desc.Flags), GetTypeHash(Desc.NumCustomDataFloats));
+	Hash = HashCombineFast(Hash, GetTypeHash(Desc.Position));
 	Hash = HashCombineFast(Hash, GetTypeHash(Desc.StartCullDistance));
 	Hash = HashCombineFast(Hash, GetTypeHash(Desc.EndCullDistance));
 	Hash = HashCombineFast(Hash, GetTypeHash(Desc.MinLod));
 	Hash = HashCombineFast(Hash, GetTypeHash(Desc.LodScale));
-	return HashCombineFast(Hash, GetArrayHash(Desc.Tags.GetData(), Desc.Tags.Num()));
+	Hash = HashCombineFast(Hash, GetArrayHash(Desc.Tags.GetData(), Desc.Tags.Num()));
+	return HashCombineFast(Hash, GetTypeHash(Desc.StatsCategory));
 }
 
 /**
@@ -152,14 +157,18 @@ FORCEINLINE uint32 GetTypeHash(const FISMComponentDescription& Desc)
  */
 struct FGeometryCollectionStaticMeshInstance
 {
-	UStaticMesh* StaticMesh = nullptr;
-	TArray<UMaterialInterface*> MaterialsOverrides;
+	TWeakObjectPtr<UStaticMesh> StaticMesh;
+	TArray<TWeakObjectPtr<UMaterialInterface>> MaterialsOverrides;
 	TArray<float> CustomPrimitiveData;
 	FISMComponentDescription Desc;
 
 	bool operator==(const FGeometryCollectionStaticMeshInstance& Other) const 
 	{
-		if (StaticMesh != Other.StaticMesh || !(Desc == Other.Desc))
+		if (!(Desc == Other.Desc))
+		{
+			return false;
+		}
+		if (!StaticMesh.HasSameIndexAndSerialNumber(Other.StaticMesh))
 		{
 			return false;
 		}
@@ -169,9 +178,7 @@ struct FGeometryCollectionStaticMeshInstance
 		}
 		for (int32 MatIndex = 0; MatIndex < MaterialsOverrides.Num(); MatIndex++)
 		{
-			const FName MatName = MaterialsOverrides[MatIndex] ? MaterialsOverrides[MatIndex]->GetFName() : NAME_None;
-			const FName OtherName = Other.MaterialsOverrides[MatIndex] ? Other.MaterialsOverrides[MatIndex]->GetFName() : NAME_None;
-			if (MatName != OtherName)
+			if (!MaterialsOverrides[MatIndex].HasSameIndexAndSerialNumber(Other.MaterialsOverrides[MatIndex]))
 			{
 				return false;
 			}
@@ -196,7 +203,7 @@ FORCEINLINE uint32 GetTypeHash(const FGeometryCollectionStaticMeshInstance& Mesh
 {
 	uint32 CombinedHash = GetTypeHash(MeshInstance.StaticMesh);
 	CombinedHash = HashCombineFast(CombinedHash, GetTypeHash(MeshInstance.MaterialsOverrides.Num()));
-	for (const UMaterialInterface* Material: MeshInstance.MaterialsOverrides)
+	for (const TWeakObjectPtr<UMaterialInterface> Material: MeshInstance.MaterialsOverrides)
 	{
 		CombinedHash = HashCombineFast(CombinedHash, GetTypeHash(Material));
 	}
@@ -213,6 +220,10 @@ struct FGeometryCollectionMeshInfo
 {
 	int32 ISMIndex;
 	FInstanceGroups::FInstanceGroupId InstanceGroupIndex;
+
+	TArray<float> CustomData;
+	TArrayView<const float> CustomDataSlice(int32 InstanceIndex, int32 NumCustomDataFloatsPerInstance);
+	void ShadowCopyCustomData(int32 InstanceCount, int32 NumCustomDataFloatsPerInstance, TArrayView<const float> CustomDataFloats);
 };
 
 struct FGeometryCollectionISMPool;
@@ -226,25 +237,28 @@ struct FGeometryCollectionMeshGroup
 	using FMeshId = int32;
 
 	/** Adds a new mesh with instance count. We expect to only add a unique mesh instance once to each group. Returns a ID that can be used to update the instances. */
-	FMeshId AddMesh(const FGeometryCollectionStaticMeshInstance& MeshInstance, int32 InstanceCount, const FGeometryCollectionMeshInfo& ISMInstanceInfo);
+	FMeshId AddMesh(const FGeometryCollectionStaticMeshInstance& MeshInstance, int32 InstanceCount, const FGeometryCollectionMeshInfo& ISMInstanceInfo, TArrayView<const float> CustomDataFloats);
 	/** Update instance transforms for a group of instances. */
-	bool BatchUpdateInstancesTransforms(FGeometryCollectionISMPool& ISMPool, FMeshId MeshId, int32 StartInstanceIndex, const TArray<FTransform>& NewInstancesTransforms, bool bWorldSpace, bool bMarkRenderStateDirty, bool bTeleport);
 	bool BatchUpdateInstancesTransforms(FGeometryCollectionISMPool& ISMPool, FMeshId MeshId, int32 StartInstanceIndex, TArrayView<const FTransform> NewInstancesTransforms, bool bWorldSpace, bool bMarkRenderStateDirty, bool bTeleport);
+	void BatchUpdateInstanceCustomData(FGeometryCollectionISMPool& ISMPool, int32 CustomFloatIndex, float CustomFloatValue);
 
 	/** Remove all of our managed meshes and associated instances. */
 	void RemoveAllMeshes(FGeometryCollectionISMPool& ISMPool);
 
 	/** Array of allocated mesh infos. */
 	TArray<FGeometryCollectionMeshInfo> MeshInfos;
-	/** Map from mesh instance description to the its index in the MeshInfo array. */
-	TMap<FGeometryCollectionStaticMeshInstance, FMeshId> Meshes;
+
+	/** Flag for whether we allow removal of instances when transform scale is set to zero. */
+	bool bAllowPerInstanceRemoval = false;
 };
 
 /** Structure containting all info for a single ISM. */
 struct FGeometryCollectionISM
 {
-	FGeometryCollectionISM(AActor* OwmingActor, const FGeometryCollectionStaticMeshInstance& InMeshInstance);
-
+	/** Create the ISMComponent according to settings on the mesh instance. */
+	void CreateISM(AActor* InOwningActor);
+	/** Initialize the ISMComponent according to settings on the mesh instance. */
+	void InitISM(const FGeometryCollectionStaticMeshInstance& InMeshInstance, bool bKeepAlive, bool bOverrideTransformUpdates = false);
 	/** Add a group to the ISM. Returns the group index. */
 	FInstanceGroups::FInstanceGroupId AddInstanceGroup(int32 InstanceCount, TArrayView<const float> CustomDataFloats);
 
@@ -254,10 +268,8 @@ struct FGeometryCollectionISM
 	TObjectPtr<UInstancedStaticMeshComponent> ISMComponent;
 	/** Groups of instances allocated in the ISM. */
 	FInstanceGroups InstanceGroups;
-	/** Mapping from our instance index to the ISM Component index. */
-	TArray<int32> InstanceIndexToRenderIndex;
-	/** Mapping from the ISM Component index to our instance index . */
-	TArray<int32> RenderIndexToInstanceIndex;
+	/** Id of Instance in ISMC */
+	TArray<FPrimitiveInstanceId> InstanceIds;
 };
 
 /** A pool of ISMs. */
@@ -265,21 +277,52 @@ struct FGeometryCollectionISMPool
 {
 	using FISMIndex = int32;
 
-	FISMIndex AddISM(UGeometryCollectionISMPoolComponent* OwningComponent, const FGeometryCollectionStaticMeshInstance& MeshInstance);
-	FGeometryCollectionMeshInfo AddISM(UGeometryCollectionISMPoolComponent* OwningComponent, const FGeometryCollectionStaticMeshInstance& MeshInstance, int32 InstanceCount, TArrayView<const float> CustomDataFloats);
+	FGeometryCollectionISMPool();
 
-	bool BatchUpdateInstancesTransforms(FGeometryCollectionMeshInfo& MeshInfo, int32 StartInstanceIndex, const TArray<FTransform>& NewInstancesTransforms, bool bWorldSpace, bool bMarkRenderStateDirty, bool bTeleport);
+	/** Find or add an ISM and return an ISM index handle. */
+	FISMIndex GetOrAddISM(UGeometryCollectionISMPoolComponent* OwningComponent, const FGeometryCollectionStaticMeshInstance& MeshInstance, bool& bOutISMCreated);
+	/** Remove an ISM. */
+	void RemoveISM(FISMIndex ISMIndex, bool bKeepAlive, bool bRecycle);
+	/** Add instances to ISM and return a mesh info handle. */
+	FGeometryCollectionMeshInfo AddInstancesToISM(UGeometryCollectionISMPoolComponent* OwningComponent, const FGeometryCollectionStaticMeshInstance& MeshInstance, int32 InstanceCount, TArrayView<const float> CustomDataFloats);
+	/** Remove instances from an ISM. */
+	void RemoveInstancesFromISM(const FGeometryCollectionMeshInfo& MeshInfo);
+	/** Update ISM contents. */
+	bool BatchUpdateInstancesTransforms(FGeometryCollectionMeshInfo& MeshInfo, int32 StartInstanceIndex, TArrayView<const FTransform> NewInstancesTransforms, bool bWorldSpace, bool bMarkRenderStateDirty, bool bTeleport, bool bAllowPerInstanceRemoval);
+	void BatchUpdateInstanceCustomData(FGeometryCollectionMeshInfo const& MeshInfo, int32 CustomFloatIndex, float CustomFloatValue);
 
-	bool BatchUpdateInstancesTransforms(FGeometryCollectionMeshInfo& MeshInfo, int32 StartInstanceIndex, TArrayView<const FTransform> NewInstancesTransforms, bool bWorldSpace, bool bMarkRenderStateDirty, bool bTeleport);
-
-	void RemoveISM(const FGeometryCollectionMeshInfo& MeshInfo);
-	
-	/** Clear all ISM components and associated data */
+	/** Clear all ISM components and associated data. */
 	void Clear();
 
-	TMap<FGeometryCollectionStaticMeshInstance, FISMIndex> MeshToISMIndex;
+	/** Tick maintenance of free list and preallocation. */
+	void Tick(UGeometryCollectionISMPoolComponent* OwningComponent);
+
+	/** Add an ISM description to the preallocation queue. */
+	void RequestPreallocateMeshInstance(const FGeometryCollectionStaticMeshInstance& MeshInstances);
+	/** Process the preallocation queue. Processing is timesliced so that only some of the queue will be processed in every call. */
+	void ProcessPreallocationRequests(UGeometryCollectionISMPoolComponent* OwningComponent, int32 MaxPreallocations);
+
+	void UpdateAbsoluteTransforms(const FTransform& BaseTransform, EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport);
+
+	/** Array of ISM objects. */
 	TArray<FGeometryCollectionISM> ISMs;
+	/** Mapping from mesh description to ISMs array slot. */
+	TMap<FGeometryCollectionStaticMeshInstance, FISMIndex> MeshToISMIndex;
+	
+	/** Set of ISM descriptions that we would like to preallocate. */
+	TSet<FGeometryCollectionStaticMeshInstance> PrellocationQueue;
+
+	/** Free list of indices in ISMs that are empty. */
 	TArray<int32> FreeList;
+	/** Free list of indices in ISMs that have registered ISM components. */
+	TArray<int32> FreeListISM;
+
+	// Cached state of lifecycle cvars from the last Tick()
+	bool bCachedKeepAlive = false;
+	bool bCachedRecycle = false;
+
+	// Whether we force ISMs to use parent bounds and disable transform updates
+	bool bDisableBoundsAndTransformUpdate = false;
 };
 
 
@@ -297,7 +340,8 @@ public:
 	using FMeshId = int32;
 
 	//~ Begin UActorComponent Interface
-	GEOMETRYCOLLECTIONENGINE_API virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
+	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
 	//~ End UActorComponent Interface
 
 	/** 
@@ -305,25 +349,34 @@ public:
 	* no resources are created until the meshes are added for this group 
 	* return a mesh group Id used to add and update instances
 	*/
-	GEOMETRYCOLLECTIONENGINE_API FMeshGroupId CreateMeshGroup();
+	GEOMETRYCOLLECTIONENGINE_API FMeshGroupId CreateMeshGroup(bool bAllowPerInstanceRemoval = false);
 
-	/** destroy  a mesh group and its associated resources */
+	/** Destroy  a mesh group and its associated resources */
 	GEOMETRYCOLLECTIONENGINE_API void DestroyMeshGroup(FMeshGroupId MeshGroupId);
 
 	/** Add a static mesh for a mesh group */
 	GEOMETRYCOLLECTIONENGINE_API FMeshId AddMeshToGroup(FMeshGroupId MeshGroupId, const FGeometryCollectionStaticMeshInstance& MeshInstance, int32 InstanceCount, TArrayView<const float> CustomDataFloats);
 
-	/** Add a static mesh for a mesh group */
+	/** Update transforms for a mesh group */
 	GEOMETRYCOLLECTIONENGINE_API bool BatchUpdateInstancesTransforms(FMeshGroupId MeshGroupId, FMeshId MeshId, int32 StartInstanceIndex, TArrayView<const FTransform> NewInstancesTransforms, bool bWorldSpace = false, bool bMarkRenderStateDirty = false, bool bTeleport = false);
 
 	UE_DEPRECATED(5.3, "BatchUpdateInstancesTransforms Array parameter version is deprecated, use the TArrayView version instead")
 	GEOMETRYCOLLECTIONENGINE_API bool BatchUpdateInstancesTransforms(FMeshGroupId MeshGroupId, FMeshId MeshId, int32 StartInstanceIndex, const TArray<FTransform>& NewInstancesTransforms, bool bWorldSpace = false, bool bMarkRenderStateDirty = false, bool bTeleport = false);
+
+	/** Update a single slot of custom instance data for all instances in a mesh group */
+	GEOMETRYCOLLECTIONENGINE_API bool BatchUpdateInstanceCustomData(FMeshGroupId MeshGroupId, int32 CustomFloatIndex, float CustomFloatValue);
 
 	/** 
 	 * Preallocate an ISM in the pool. 
 	 * Doing this early for known mesh instance descriptions can reduce the component registration cost of AddMeshToGroup() for newly discovered mesh descriptions.
 	 */
 	GEOMETRYCOLLECTIONENGINE_API void PreallocateMeshInstance(const FGeometryCollectionStaticMeshInstance& MeshInstance);
+
+	GEOMETRYCOLLECTIONENGINE_API void SetTickablePoolManagement(bool bEnablePoolManagement);
+
+	GEOMETRYCOLLECTIONENGINE_API void SetOverrideTransformUpdates(bool bOverrideUpdates);
+
+	GEOMETRYCOLLECTIONENGINE_API void UpdateAbsoluteTransforms(const FTransform& BaseTransform, EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport);
 
 private:
 	uint32 NextMeshGroupId = 0;

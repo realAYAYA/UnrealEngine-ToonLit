@@ -21,6 +21,11 @@ namespace Chaos
 #endif
 	}
 
+	TRotation<FRealSingle, 3> TRotation<FRealSingle, 3>::Conjugate(const ::Chaos::TRotation<FRealSingle, 3>& InR)
+	{
+		return InR.Inverse();
+	}
+
 	/**
 	 * Negate all values of the quaternion (note: not the inverse rotation. See Conjugate)
 	 */
@@ -97,6 +102,25 @@ namespace Chaos
 		const TRotation<FReal, 3> W = (DRDt * RInv) * 2.0f;
 
 		return TVector<FReal, 3>(W.X, W.Y, W.Z);
+	}
+
+	TVector<FRealSingle, 3> TRotation<FRealSingle, 3>::CalculateAngularVelocity1(const TRotation<FRealSingle, 3>& InR0, const TRotation<FRealSingle, 3>& InR1, const FRealSingle InDt)
+	{
+		if (!ensure(InDt > UE_SMALL_NUMBER))
+		{
+			return TVector<FRealSingle, 3>(0);
+		}
+
+		const TRotation<FRealSingle, 3> R0 = InR0;
+		TRotation<FRealSingle, 3> R1 = InR1;
+		R1.EnforceShortestArcWith(R0);
+
+		// W = 2 * dQ/dT * Qinv
+		const TRotation<FRealSingle, 3> DRDt = (R1 - R0) / InDt;
+		const TRotation<FRealSingle, 3> RInv = Conjugate(R0);
+		const TRotation<FRealSingle, 3> W = (DRDt * RInv) * 2.0f;
+
+		return TVector<FRealSingle, 3>(W.X, W.Y, W.Z);
 	}
 
 	//PRAGMA_ENABLE_OPTIMIZATION

@@ -66,6 +66,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = Navigation, meta = (EditCondition = "bDynamicObstacle"))
 	uint8 bUseSystemDefaultObstacleAreaClass : 1;
 
+	/** Used to control the line thickness when rendering */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category=Shape)
+	float LineThickness;
+	
 	/** If the body setup can be shared (i.e. there have been no alterations compared to the CDO)*/
 	uint8 bUseArchetypeBodySetup : 1;
 
@@ -88,6 +92,9 @@ protected:
 	template <typename ShapeElemType> void CreateShapeBodySetupIfNeeded();
 
 public:
+	// Set the LineThickness
+	UFUNCTION(BlueprintCallable, Category=Shape)
+	ENGINE_API void SetLineThickness(float Thickness);
 
 	//~ Begin UPrimitiveComponent Interface.
 	ENGINE_API virtual FPrimitiveSceneProxy* CreateSceneProxy() override;

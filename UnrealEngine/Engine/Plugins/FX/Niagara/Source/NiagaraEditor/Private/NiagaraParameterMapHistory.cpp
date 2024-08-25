@@ -384,6 +384,27 @@ int32 TNiagaraParameterMapHistory<GraphBridge>::FindVariable(const FName& Variab
 	return FoundIdx;
 }
 
+// because of how we do variable traversal we encounter situations where we are registering variables without having the context
+// of what modules might be relevant when it comes to aliasing.  As an example, when processing a dynamic input for Multiply Float
+// we could be doing a ParamMapSet on Mulitply_Float.A outside of the module where we're not able to provide AddVariable with
+// InVar=Multiply_Float.A and InAliasedVar=Module.A.  As a way around this problem we'll conditionally update the aliased version
+// of the variable as we encounter variables through the rest of the parameter map traversal
+template<typename GraphBridge>
+void TNiagaraParameterMapHistory<GraphBridge>::ConditionalUpdateAliasedVariable(int32 VariableIndex, const FNiagaraVariableBase& InAliasedVariable)
+{
+	if (VariablesWithOriginalAliasesIntact.IsValidIndex(VariableIndex))
+	{
+		FNiagaraVariable& AliasedVariable = VariablesWithOriginalAliasesIntact[VariableIndex];
+
+		if (AliasedVariable.GetName() != InAliasedVariable.GetName()
+			&& !FNiagaraParameterUtilities::IsAliasedModuleParameter(AliasedVariable)
+			&& FNiagaraParameterUtilities::IsAliasedModuleParameter(InAliasedVariable))
+		{
+			AliasedVariable.SetName(InAliasedVariable.GetName());
+		}
+	}
+}
+
 template<typename GraphBridge>
 int32 TNiagaraParameterMapHistory<GraphBridge>::AddVariable(
 	  const FNiagaraVariable& InVar
@@ -395,7 +416,7 @@ int32 TNiagaraParameterMapHistory<GraphBridge>::AddVariable(
 	FNiagaraVariable Var = InVar;
 
 	int32 FoundIdx = FindVariable(Var.GetName(), Var.GetType());
-	if (FoundIdx == -1)
+	if (FoundIdx == INDEX_NONE)
 	{
 		FoundIdx = Variables.Add(Var);
 		VariablesWithOriginalAliasesIntact.Add(InAliasedVar);
@@ -411,9 +432,14 @@ int32 TNiagaraParameterMapHistory<GraphBridge>::AddVariable(
 			check(Variables.Num() == VariableMetaData.Num());
 		}
 	}
-	else if (Variables[FoundIdx].GetType() != Var.GetType())
+	else
 	{
-		PerVariableWarnings[FoundIdx].Append(FString::Printf(TEXT("Type mismatch %s instead of %s in map!"), *Var.GetType().GetName(), *Variables[FoundIdx].GetType().GetName()));
+		if (Variables[FoundIdx].GetType() != Var.GetType())
+		{
+			PerVariableWarnings[FoundIdx].Append(FString::Printf(TEXT("Type mismatch %s instead of %s in map!"), *Var.GetType().GetName(), *Variables[FoundIdx].GetType().GetName()));
+		}
+
+		ConditionalUpdateAliasedVariable(FoundIdx, InAliasedVar);
 	}
 
 	if (InPin != nullptr)
@@ -1876,6 +1902,8 @@ int32 TNiagaraParameterMapHistoryBuilder<GraphBridge>::HandleVariableRead(int32 
 		{
 			History.PerVariableWarnings[FoundIdx].Append(FString::Printf(TEXT("Type mismatch %s instead of %s in map!"), *Var.GetType().GetName(), *History.Variables[FoundIdx].GetType().GetName()));
 		}
+
+		History.ConditionalUpdateAliasedVariable(FoundIdx, AliasedVar);
 	}
 
 	typename FHistory::FReadHistory& ReadEntry = History.PerVariableReadHistory[FoundIdx].AddDefaulted_GetRef();
@@ -2542,6 +2570,15 @@ FCompileConstantResolver FCompileConstantResolver::WithUsage(ENiagaraScriptUsage
 	Copy.Usage = ScriptUsage;
 	return Copy;
 }
+
+FCompileConstantResolver FCompileConstantResolver::AsEmitter(const FVersionedNiagaraEmitter& InEmitter) const
+{
+	FCompileConstantResolver Copy = *this;
+	Copy.Emitter = InEmitter;
+	Copy.System = nullptr;
+	return Copy;
+}
+
 
 uint32 FCompileConstantResolver::BuildTypeHash() const
 {

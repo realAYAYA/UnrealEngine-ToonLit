@@ -50,7 +50,7 @@ namespace UE::RivermaxCore::Private
 		SRD2OffsetLow = Offset & 0xFF;
 	}
 
-	uint8* GetRTPHeaderPointer(uint8* InHeader)
+	const uint8* GetRTPHeaderPointer(const uint8* InHeader)
 	{
 		check(InHeader);
 

@@ -143,6 +143,14 @@ void SSceneOutlinerFilterBar::LoadSettings()
 	this->OnFilterChanged.ExecuteIfBound();
 }
 
+UAssetFilterBarContext* SSceneOutlinerFilterBar::CreateAssetFilterBarContext()
+{
+	UAssetFilterBarContext* AssetFilterBarContext = SFilterBar<const ISceneOutlinerTreeItem&>::CreateAssetFilterBarContext();
+	AssetFilterBarContext->MenuExpansion = CategoryToExpand;
+
+	return AssetFilterBarContext;
+}
+
 void SSceneOutlinerFilterBar::OnCreateCustomTextFilter(const FCustomTextFilterData& InFilterData, bool bApplyFilter)
 {
 	SAssetFilterBar<SceneOutliner::FilterBarType>::OnCreateCustomTextFilter(InFilterData, bApplyFilter);

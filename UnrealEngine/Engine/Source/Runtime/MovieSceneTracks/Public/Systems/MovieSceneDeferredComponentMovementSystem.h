@@ -6,9 +6,6 @@
 #include "Containers/ChunkedArray.h"
 #include "Misc/Optional.h"
 #include "Engine/ScopedMovementUpdate.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Components/SceneComponent.h"
-#endif
 #include "MovieSceneDeferredComponentMovementSystem.generated.h"
 
 class USceneComponent;

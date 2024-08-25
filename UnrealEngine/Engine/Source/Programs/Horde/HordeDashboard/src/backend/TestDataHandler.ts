@@ -34,6 +34,8 @@ export class TestDataWrapper implements TestData {
 
     private jobArtifacts?: ArtifactData[];
     private artifactMap?: Map<string, ArtifactData | undefined>;
+    private artifactV2Map: Map<string, object | undefined> = new Map();
+    private artifactV2Id?: string;
     private jobdata?: JobData;
     private stepName?: string;
 
@@ -90,20 +92,75 @@ export class TestDataWrapper implements TestData {
     }
 
     async getArtifacts() {
-        if (!this.jobArtifacts) {
-            this.jobArtifacts = await backend.getJobArtifacts(this.jobId, this.stepId);
+
+        if (this.jobArtifacts?.length || this.artifactV2Id) {
+            return;
         }
-        return this.jobArtifacts;
+
+        if (!this.jobdata) {
+            this.jobdata = await backend.getJob(this.jobId);
+        }
+
+        if (this.jobdata?.useArtifactsV2) {
+
+            const v = await backend.getJobArtifactsV2(undefined, [`job:${this.jobId}/step:${this.stepId}`]);
+            const av2 = v?.artifacts.find(a => a.type === "step-saved")
+            if (av2?.id) {
+               this.artifactV2Id = av2.id;
+            } else {
+                console.error("Unable to get step-saved artifacts v2 for report");
+            }
+
+        } else {
+
+            this.jobArtifacts = await backend.getJobArtifacts(this.jobId, this.stepId);
+
+        }
+    }
+
+    async getArtifactImageLink(referencePath: string) {
+
+        await this.getArtifacts();
+
+        const artifactName = referencePath.replace(/\\/g, '/');
+
+        if (this.artifactV2Id) {
+           return `${backend.serverUrl}/api/v2/artifacts/${this.artifactV2Id}/file?path=Engine/Programs/AutomationTool/Saved/Logs/RunUnreal/${encodeURIComponent(referencePath)}&inline=true`;
+        }
+
+        const artifact = this.jobArtifacts!.find(a => a.name.indexOf(artifactName) > -1);
+        if (artifact) {
+           return `${backend.serverUrl}/api/v1/artifacts/${artifact.id}/download?Code=${artifact.code}`;
+        }
+        return undefined;
+
     }
 
     async findArtifactData(artifactName: string) {
+
         if (!artifactName) {
             return undefined;
         }
 
-        const jobArtifacts = await this.getArtifacts();
+        await this.getArtifacts();
 
         artifactName = artifactName.replace(/\\/g, '/');
+
+        if (this.artifactV2Id) {
+
+            if (this.artifactV2Id) {
+                const path = `Engine/Programs/AutomationTool/Saved/Logs/RunUnreal/${encodeURIComponent(artifactName)}`;
+                let result = this.artifactV2Map.get(path);
+                if (result) {
+                    return result;
+                }
+                const data = await backend.getArtifactV2(this.artifactV2Id, path);
+                this.artifactV2Map.set(path, result);
+                return data;
+            }
+
+            return undefined;
+        }
 
         if (!this.artifactMap) {
             this.artifactMap = new Map();
@@ -113,10 +170,19 @@ export class TestDataWrapper implements TestData {
             return this.artifactMap.get(artifactName);
         }
 
-        const found = jobArtifacts?.find((value) => value.name.indexOf(artifactName) > -1);
+        const found = this.jobArtifacts?.find((value) => value.name.indexOf(artifactName) > -1);
         this.artifactMap.set(artifactName, found);
 
-        return found;
+
+        if (found?.id) {
+            try {
+                return await backend.getArtifactDataById(found.id);
+            } catch (ex) {
+                console.error(ex);
+            }
+        }
+
+        return undefined;
     }
 
     async getJobStepName() {

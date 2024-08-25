@@ -91,7 +91,7 @@ bool FVirtualTexturingEditorModule::HasStreamedMips(URuntimeVirtualTextureCompon
 
 bool FVirtualTexturingEditorModule::BuildStreamedMips(URuntimeVirtualTextureComponent* InComponent) const
 {
-	return RuntimeVirtualTexture::BuildStreamedMips(EShadingPath::Deferred, InComponent, ERuntimeVirtualTextureDebugType::None);
+	return RuntimeVirtualTexture::BuildStreamedMips(EShadingPath::Deferred, InComponent, FLinearColor::Transparent);
 }
 
 bool FVirtualTexturingEditorModule::HasStreamedMips(EShadingPath ShadingPath, URuntimeVirtualTextureComponent* InComponent) const
@@ -101,7 +101,7 @@ bool FVirtualTexturingEditorModule::HasStreamedMips(EShadingPath ShadingPath, UR
 
 bool FVirtualTexturingEditorModule::BuildStreamedMips(EShadingPath ShadingPath, URuntimeVirtualTextureComponent* InComponent) const
 {
-	return RuntimeVirtualTexture::BuildStreamedMips(ShadingPath, InComponent, ERuntimeVirtualTextureDebugType::None);
+	return RuntimeVirtualTexture::BuildStreamedMips(ShadingPath, InComponent, FLinearColor::Transparent);
 }
 
 void FVirtualTexturingEditorModule::ConvertVirtualTextures(const TArray<UTexture2D *>& Textures, bool bConvertBackToNonVirtual, const TArray<UMaterial *>* RelatedMaterials /* = nullptr */) const

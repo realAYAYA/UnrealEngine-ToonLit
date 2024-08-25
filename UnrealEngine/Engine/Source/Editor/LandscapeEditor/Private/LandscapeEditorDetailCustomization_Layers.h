@@ -73,7 +73,7 @@ protected:
 	TOptional<SDragAndDropVerticalBox::EItemDropZone> HandleCanAcceptDrop(const FDragDropEvent& DragDropEvent, SDragAndDropVerticalBox::EItemDropZone DropZone, SVerticalBox::FSlot* Slot);
 	FReply HandleAcceptDrop(FDragDropEvent const& DragDropEvent, SDragAndDropVerticalBox::EItemDropZone DropZone, int32 SlotIndex, SVerticalBox::FSlot* Slot);
 
-	bool IsLayerSelected(int32 LayerIndex);
+	bool IsLayerSelected(int32 LayerIndex) const;
 	void OnLayerSelectionChanged(int32 LayerIndex);
 	TSharedPtr<SWidget> OnLayerContextMenuOpening(int32 InLayerIndex);
 	void CreateLayer();
@@ -90,6 +90,7 @@ protected:
 	void OnEndNameTextEdit();
 	void SetLayerName(const FText& InText, ETextCommit::Type InCommitType, int32 InLayerIndex);
 	FText GetLayerText(int32 InLayerIndex) const;
+	FSlateColor GetLayerTextColor(int32 InLayerIndex) const;
 	void SetLandscapeSplinesReservedLayer(int32 InLayerIndex);
 	FText GetLayerDisplayName(int32 InLayerIndex) const;
 	bool IsLayerEditionEnabled(int32 InLayerIndex) const;

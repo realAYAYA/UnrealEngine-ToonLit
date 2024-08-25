@@ -121,6 +121,10 @@ private:
 	const FString FullEnginePluginsDir;
 	const FString FullProjectDir;
 	const FString FullProjectPluginsDir;
+	FString FullEngineDirFromExecutable;
+	FString FullEnginePluginsDirFromExecutable;
+	FString FullProjectDirFromExecutable;
+	FString FullProjectPluginsDirFromExecutable;
 
 	IConsoleCommand* EnableCommand;
 	IConsoleCommand* CompileCommand;

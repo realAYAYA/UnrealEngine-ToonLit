@@ -98,16 +98,20 @@ private:
 	{
 	public:
 		/** Constructor */
-		FDeviceResults(const FString& InName)
+		FDeviceResults(const FGuid& InGameInstanceId, const FString& InGameInstanceName)
 		{
-			InstanceName = InName;
+			GameInstanceName = InGameInstanceName;
+			GameInstanceId = InGameInstanceId.ToString();
 			TotalTime = 0.f;
 			TotalTestSkips = 0;
 			TotalTestSuccesses = 0;
 		}
 
-		/** Name of the device instance */
-		FString InstanceName;
+		/** The game instance Name running on the Device */
+		FString GameInstanceName;
+
+		/** The game instance Id running on the Device */
+		FString GameInstanceId;
 
 		/** Total time of all the tests */
 		float TotalTime;

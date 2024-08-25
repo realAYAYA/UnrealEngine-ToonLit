@@ -187,7 +187,7 @@ void FStaticMeshOperations::ComputePolygonTangentsAndNormals(FMeshDescription& M
 }
 
 
-static TTuple<FVector3f, FVector3f, FVector3f> GetTriangleTangentsAndNormals(float ComparisonThreshold, TArrayView<const FVector3f> VertexPositions, TArrayView<const FVector2D> VertexUVs)
+static TTuple<FVector3f, FVector3f, FVector3f> GetTriangleTangentsAndNormalsWithUV(float ComparisonThreshold, TArrayView<const FVector3f> VertexPositions, TArrayView<const FVector2D> VertexUVs)
 {
 	// GetSafeNormal compare the squareSum to the tolerance.
 	const float SquareComparisonThreshold = FMath::Max(ComparisonThreshold * ComparisonThreshold, MIN_flt);
@@ -249,6 +249,49 @@ static TTuple<FVector3f, FVector3f, FVector3f> GetTriangleTangentsAndNormals(flo
 	}
 }
 
+// Create a normal using the triangle plane, but use the Duff & Frisvad algorithm (see Duff 2017 in JCGT) to construct a consistent tangent from a
+// single vector. 
+static TTuple<FVector3f, FVector3f, FVector3f> GetTriangleTangentsAndNormalsWithNoUVs(float ComparisonThreshold, TArrayView<const FVector3f> VertexPositions)
+{
+	// GetSafeNormal compare the squareSum to the tolerance.
+	const float SquareComparisonThreshold = FMath::Max(ComparisonThreshold * ComparisonThreshold, MIN_flt);
+
+	const FVector3f Position0 = VertexPositions[0];
+	// If the positions deltas are too small, we get a zero vector out.
+	const FVector3f DPosition1 = VertexPositions[1] - Position0;
+	const FVector3f DPosition2 = VertexPositions[2] - Position0;
+
+	// We have a left-handed coordinate system, but a counter-clockwise winding order
+	// Hence normal calculation has to take the triangle vectors cross product in reverse.
+	// If we got a zero vector out above, then this is also zero
+	FVector3f Normal = FVector3f::CrossProduct(DPosition2, DPosition1).GetSafeNormal(SquareComparisonThreshold);
+	if (!Normal.Normalize(ComparisonThreshold))
+	{
+		return MakeTuple(FVector3f::ZeroVector, FVector3f::ZeroVector, FVector3f::ZeroVector);
+	}
+
+	FVector3f Tangent, Binormal;
+	if (Normal.Z < 0.0f)
+	{
+		const float A = 1.0f / (1.0f - Normal.Z);
+		const float B = Normal.X * Normal.Y * A;
+
+		Tangent = FVector3f(1.0f - Normal.X * Normal.X * A, -B, Normal.X);
+		Binormal = FVector3f(B, Normal.Y * Normal.Y * A - 1.0f, -Normal.Y);
+	}
+	else
+	{
+		const float A = 1.0f / (1.0f + Normal.Z);
+		const float B = -Normal.X * Normal.Y * A;
+
+		Tangent = FVector3f(1.0f - Normal.X * Normal.X * A, B, -Normal.X);
+		Binormal = FVector3f(B, 1.0f - Normal.Y * Normal.Y * A, -Normal.Y);
+	}
+
+	// The above algorithm guarantees orthogonality and normalization of the tangent & binormal if the normal vector is already normalized.
+	return MakeTuple(Normal, Tangent, Binormal);
+}
+
 
 void FStaticMeshOperations::ComputeTriangleTangentsAndNormals(FMeshDescription& MeshDescription, float ComparisonThreshold, const TCHAR* DebugName)
 {
@@ -273,13 +316,18 @@ void FStaticMeshOperations::ComputeTriangleTangentsAndNormals(FMeshDescription& 
 		[BatchSize, ComparisonThreshold, NumTriangles, &Attributes, DebugName](int32 BatchIndex)
 		{
 			TArrayView<const FVector3f> VertexPositions = Attributes.GetVertexPositions().GetRawArray();
-			TArrayView<const FVector2f> VertexUVs = Attributes.GetVertexInstanceUVs().GetRawArray();
+			TArrayView<const FVector2f> VertexUVs;
 			TArrayView<const FVertexID> TriangleVertexIDs = Attributes.GetTriangleVertexIndices().GetRawArray();
 			TArrayView<const FVertexInstanceID> TriangleVertexInstanceIDs = Attributes.GetTriangleVertexInstanceIndices().GetRawArray();
 
 			TArrayView<FVector3f> TriangleNormals = Attributes.GetTriangleNormals().GetRawArray();
 			TArrayView<FVector3f> TriangleTangents = Attributes.GetTriangleTangents().GetRawArray();
 			TArrayView<FVector3f> TriangleBinormals = Attributes.GetTriangleBinormals().GetRawArray();
+
+			if (Attributes.GetVertexInstanceUVs().GetNumChannels() > 0)
+			{
+				VertexUVs = Attributes.GetVertexInstanceUVs().GetRawArray(0);
+			}
 
 			int32 StartIndex = BatchIndex * BatchSize;
 			int32 TriIndex = StartIndex * 3;
@@ -303,36 +351,44 @@ void FStaticMeshOperations::ComputeTriangleTangentsAndNormals(FMeshDescription& 
 					TriangleVertexPositions[1].ContainsNaN() ||
 					TriangleVertexPositions[2].ContainsNaN())
 				{
-					UE_LOG(LogStaticMeshOperations, Warning, TEXT("Static Mesh %s has NaNs in it's vertex positions! Triangle index %d -- using identity for tangent basis."), DebugName ? DebugName : TEXT("<null>"), StartIndex);
+					UE_CLOG(DebugName != nullptr, LogStaticMeshOperations, Warning, TEXT("Static Mesh %s has NaNs in it's vertex positions! Triangle index %d -- using identity for tangent basis."), DebugName, StartIndex);
 					TriangleNormals[StartIndex] = FVector3f(1, 0, 0);
 					TriangleTangents[StartIndex] = FVector3f(0, 1, 0);
 					TriangleBinormals[StartIndex] = FVector3f(0, 0, 1);
 					continue;
 				}
 
-				FVector2D TriangleUVs[3] =
+				TTuple<FVector3f, FVector3f, FVector3f> Result;
+				if (!VertexUVs.IsEmpty())
 				{
-					FVector2D(VertexUVs[TriangleVertexInstanceIDs[TriIndex]]),
-					FVector2D(VertexUVs[TriangleVertexInstanceIDs[TriIndex + 1]]),
-					FVector2D(VertexUVs[TriangleVertexInstanceIDs[TriIndex + 2]])
-				};
+					FVector2D TriangleUVs[3] =
+					{
+						FVector2D(VertexUVs[TriangleVertexInstanceIDs[TriIndex]]),
+						FVector2D(VertexUVs[TriangleVertexInstanceIDs[TriIndex + 1]]),
+						FVector2D(VertexUVs[TriangleVertexInstanceIDs[TriIndex + 2]])
+					};
 
-				if (TriangleUVs[0].ContainsNaN() ||
-					TriangleUVs[1].ContainsNaN() ||
-					TriangleUVs[2].ContainsNaN())
-				{
-					UE_LOG(LogStaticMeshOperations, Warning, TEXT("Static Mesh %s has NaNs in it's vertex uvs! Triangle index %d -- using identity for tangent basis."), DebugName ? DebugName : TEXT("<null>"), StartIndex);
-					TriangleNormals[StartIndex] = FVector3f(1, 0, 0);
-					TriangleTangents[StartIndex] = FVector3f(0, 1, 0);
-					TriangleBinormals[StartIndex] = FVector3f(0, 0, 1);
-					continue;
+					if (TriangleUVs[0].ContainsNaN() ||
+						TriangleUVs[1].ContainsNaN() ||
+						TriangleUVs[2].ContainsNaN())
+					{
+						UE_CLOG(DebugName != nullptr, LogStaticMeshOperations, Warning, TEXT("Static Mesh %s has NaNs in it's vertex uvs! Triangle index %d -- using identity for tangent basis."), DebugName, StartIndex);
+						TriangleNormals[StartIndex] = FVector3f(1, 0, 0);
+						TriangleTangents[StartIndex] = FVector3f(0, 1, 0);
+						TriangleBinormals[StartIndex] = FVector3f(0, 0, 1);
+						continue;
+					}
+
+					Result = GetTriangleTangentsAndNormalsWithUV(ComparisonThreshold, TriangleVertexPositions, TriangleUVs);
 				}
-
-				TTuple<FVector3f, FVector3f, FVector3f> Result = GetTriangleTangentsAndNormals(ComparisonThreshold, TriangleVertexPositions, TriangleUVs);
+				else
+				{
+					Result = GetTriangleTangentsAndNormalsWithNoUVs(ComparisonThreshold, TriangleVertexPositions);
+				}
 				TriangleNormals[StartIndex] = Result.Get<0>();
 				TriangleTangents[StartIndex] = Result.Get<1>();
 				TriangleBinormals[StartIndex] = Result.Get<2>();
-			}
+		}
 		}
 	);
 }
@@ -482,8 +538,8 @@ void FStaticMeshOperations::ConvertHardEdgesToSmoothGroup(const FMeshDescription
 		while (ConnectedPolygons.Num() > 0)
 		{
 			check(LastConnectedPolygons.Num() == ConnectedPolygons.Num());
-			FPolygonID LastPolygonID = LastConnectedPolygons.Pop(false);
-			FPolygonID CurrentPolygonID = ConnectedPolygons.Pop(false);
+			FPolygonID LastPolygonID = LastConnectedPolygons.Pop(EAllowShrinking::No);
+			FPolygonID CurrentPolygonID = ConnectedPolygons.Pop(EAllowShrinking::No);
 			if (ConsumedPolygons[CurrentPolygonID.GetValue()])
 			{
 				continue;
@@ -598,7 +654,7 @@ void FStaticMeshOperations::ConvertSmoothGroupToHardEdges(const TArray<uint32>& 
 		ConnectedPolygons.Add(PolygonID);
 		while (ConnectedPolygons.Num() > 0)
 		{
-			FPolygonID CurrentPolygonID = ConnectedPolygons.Pop(false);
+			FPolygonID CurrentPolygonID = ConnectedPolygons.Pop(EAllowShrinking::No);
 			int32 CurrentPolygonIDValue = CurrentPolygonID.GetValue();
 			check(FaceSmoothingMasks.IsValidIndex(CurrentPolygonIDValue));
 			const uint32 ReferenceSmoothGroup = FaceSmoothingMasks[CurrentPolygonIDValue];
@@ -1343,10 +1399,6 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 	// Second normal(F to A) = Normalize(F+G+H+A)
 	// We found the connected edge using the triangle that share edges
 
-	// @todo: provide an option to weight each contributing polygon normal according to the size of
-	// the angle it makes with the vertex being calculated. This means that triangulated faces whose
-	// internal edge meets the vertex doesn't get undue extra weight.
-
 	struct FTriangleCornerData
 	{
 		FVertexInstanceID VertexInstanceID;
@@ -1455,7 +1507,7 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 		{
 			FStaticMeshAttributes Attributes(MeshDescription);
 
-			TArrayView<const FVector2f> VertexUVs = Attributes.GetVertexInstanceUVs().GetRawArray(0);	// Use UV0
+			TArrayView<const FVector2f> VertexUVs;
 			TArrayView<const FVector3f> TriangleNormals = Attributes.GetTriangleNormals().GetRawArray();
 			TArrayView<const FVector3f> TriangleTangents = Attributes.GetTriangleTangents().GetRawArray();
 			TArrayView<const FVector3f> TriangleBinormals = Attributes.GetTriangleBinormals().GetRawArray();
@@ -1465,6 +1517,14 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 			TArrayView<FVector3f> VertexTangents = Attributes.GetVertexInstanceTangents().GetRawArray();
 			TArrayView<float> VertexBinormalSigns = Attributes.GetVertexInstanceBinormalSigns().GetRawArray();
 
+			// If the mesh has no UVs, average all tangents/bi-normals for a given vertex, rather than try to maintain
+			// the UV flow.
+			if (Attributes.GetVertexInstanceUVs().GetNumChannels() > 0)
+			{
+				// Use UV0 as the base. Same as with ComputeTriangleTangentsAndNormals 
+				VertexUVs = Attributes.GetVertexInstanceUVs().GetRawArray(0);
+			}
+			
 			check(TriangleNormals.Num() > 0);
 			check(TriangleTangents.Num() > 0);
 			check(TriangleBinormals.Num() > 0);
@@ -1504,7 +1564,10 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 								if (MeshDescription.GetVertexInstanceVertex(VertexInstanceID) == VertexID)
 								{
 									VertexInfo.VertexInstanceID = VertexInstanceID;
-									VertexInfo.UVs = VertexUVs[VertexInstanceID];	// UV0
+									if (!VertexUVs.IsEmpty())
+									{
+										VertexInfo.UVs = VertexUVs[VertexInstanceID];	// UV0
+									}
 									bPointHasAllTangents &= !VertexNormals[VertexInstanceID].IsNearlyZero() && !VertexTangents[VertexInstanceID].IsNearlyZero();
 									if (bPointHasAllTangents)
 									{
@@ -1546,7 +1609,7 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 					PolygonQueue.Add(Kvp.Key); //Use a queue to avoid recursive function
 					while (PolygonQueue.Num() > 0)
 					{
-						FTriangleID CurrentPolygonID = PolygonQueue.Pop(false);
+						FTriangleID CurrentPolygonID = PolygonQueue.Pop(EAllowShrinking::No);
 						FVertexInfo& CurrentVertexInfo = VertexInfoMap.FindOrAdd(CurrentPolygonID);
 						CurrentGroup.AddUnique(CurrentVertexInfo.TriangleID);
 						ConsumedTriangle.AddUnique(CurrentVertexInfo.TriangleID);
@@ -1583,6 +1646,7 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 					VertexInstanceInGroup.Reset();
 
 					FVector3f GroupNormal(FVector3f::ZeroVector);
+					
 					for (const FTriangleID& TriangleID : Group)
 					{
 						FVertexInfo& CurrentVertexInfo = VertexInfoMap.FindOrAdd(TriangleID);
@@ -1630,11 +1694,11 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 					GroupNormal.Normalize();
 					if (!bComputeTangentWithMikkTSpace)
 					{
-						for (auto Kvp : GroupTangent)
+						for (auto& Kvp : GroupTangent)
 						{
 							Kvp.Value.Normalize();
 						}
-						for (auto Kvp : GroupBiNormal)
+						for (auto& Kvp : GroupBiNormal)
 						{
 							Kvp.Value.Normalize();
 						}
@@ -1642,7 +1706,7 @@ void FStaticMeshOperations::ComputeTangentsAndNormals(FMeshDescription& MeshDesc
 					//Apply the average NTB on all Vertex instance
 					for (const FVertexInstanceID& VertexInstanceID : VertexInstanceInGroup)
 					{
-						const FVector2f& VertexUV = VertexUVs[VertexInstanceID];	// UV0
+						const FVector2f& VertexUV = !VertexUVs.IsEmpty() ? VertexUVs[VertexInstanceID] : FVector2f::ZeroVector;
 
 						if (VertexNormals[VertexInstanceID].IsNearlyZero(SMALL_NUMBER))
 						{
@@ -1995,6 +2059,122 @@ bool FStaticMeshOperations::CreateLightMapUVLayout(FMeshDescription& MeshDescrip
 	return bPackSuccess;
 }
 
+static bool GatherUniqueTriangles(const FMeshDescription& InMeshDescription, bool bMergeIdenticalMaterials, TArray<FTriangleID>& OutRemappedTriangles, TArray<FVertexInstanceID>* OutUniqueVerts, TArray<FTriangleID>* OutDuplicateTriangles)
+{
+	FStaticMeshConstAttributes Attributes(InMeshDescription);
+	TVertexInstanceAttributesConstRef<FVector2f> TexCoords = Attributes.GetVertexInstanceUVs();
+	TVertexInstanceAttributesConstRef<FVector4f> VertexColors = Attributes.GetVertexInstanceColors();
+
+	int32 NumVertexInstances = InMeshDescription.VertexInstances().Num();
+	int32 NumTriangles = InMeshDescription.Triangles().Num();
+
+	OutRemappedTriangles.Reserve(NumTriangles);
+
+	TMap<uint32, FTriangleID> UniqueTriangles;
+	if (bMergeIdenticalMaterials)
+	{
+		UniqueTriangles.Reserve(NumTriangles);
+	}
+
+	if (OutUniqueVerts)
+	{
+		OutUniqueVerts->Reserve(NumVertexInstances);
+	}
+
+	if (OutDuplicateTriangles)
+	{
+		OutDuplicateTriangles->Reserve(NumTriangles);
+	}
+
+	// Compute an hash value per triangle, based on its UVs & vertices colors
+	auto HashAttribute = [](FVertexInstanceID InVertexInstanceID, auto InAttributeArrayRef, int32& TriangleHash)
+	{
+		for (int32 Channel = 0; Channel < InAttributeArrayRef.GetNumChannels(); ++Channel)
+		{
+			for (const auto& Element : InAttributeArrayRef.GetArrayView(InVertexInstanceID, Channel))
+			{
+				TriangleHash = HashCombine(TriangleHash, GetTypeHash(Element));
+			}
+		}
+	};
+
+	for (const FTriangleID TriangleID : InMeshDescription.Triangles().GetElementIDs())
+	{
+		const FPolygonGroupID RefPolygonGroupID = InMeshDescription.GetTrianglePolygonGroup(TriangleID);
+		TConstArrayView<const FVertexInstanceID> VertexInstancesIDs = InMeshDescription.GetTriangleVertexInstances(TriangleID);
+		TConstArrayView<const FVertexID> VertexIDs = InMeshDescription.GetTriangleVertices(TriangleID);
+
+		FTriangleID RemapTriangleID = TriangleID;
+
+		bool bUnique = true;
+
+		if (bMergeIdenticalMaterials)
+		{
+			int32 TriangleHash = GetTypeHash(RefPolygonGroupID);
+			for (const FVertexInstanceID& VertexInstanceID : VertexInstancesIDs)
+			{
+				// Compute hash based on UVs & vertices colors
+				HashAttribute(VertexInstanceID, TexCoords, TriangleHash);
+				HashAttribute(VertexInstanceID, VertexColors, TriangleHash);
+			}
+
+			FTriangleID* UniqueTriangleIDPtr = UniqueTriangles.Find(TriangleHash);
+			if (UniqueTriangleIDPtr != nullptr)
+			{
+				RemapTriangleID = *UniqueTriangleIDPtr;
+				bUnique = false;
+
+				if (OutDuplicateTriangles)
+				{
+					OutDuplicateTriangles->Add(TriangleID);
+				}
+			}
+			else
+			{
+				UniqueTriangles.Add(TriangleHash, TriangleID);
+			}
+		}
+
+		if (bUnique && OutUniqueVerts)
+		{
+			OutUniqueVerts->Append(VertexInstancesIDs);
+		}
+
+		OutRemappedTriangles.Add(RemapTriangleID);
+	}
+
+	const bool bPerformedRemapping = bMergeIdenticalMaterials && UniqueTriangles.Num() != OutRemappedTriangles.Num();
+	return bPerformedRemapping;
+}
+
+template <typename TSrcUVs, typename TDstUVs>
+static void CopyRemappedUVs(const FMeshDescription& InMeshDescription, const TArray<FTriangleID>& RemappedTriangles, const FElementIDRemappings* SrcElementIDRemappings, bool bCopyOnlyRemappedTrianglesUVs, const TSrcUVs& SrcUVs, TDstUVs& DstUVs)
+{
+	int32 RemappedTrianglesIdx = 0;
+	for (const FTriangleID TriangleID : InMeshDescription.Triangles().GetElementIDs())
+	{
+		FTriangleID RemappedTriangleID = RemappedTriangles[RemappedTrianglesIdx];
+
+		if (!bCopyOnlyRemappedTrianglesUVs || RemappedTriangleID != TriangleID)
+		{
+			if (SrcElementIDRemappings)
+			{
+				RemappedTriangleID = SrcElementIDRemappings->GetRemappedTriangleID(RemappedTriangleID);
+			}
+
+			TConstArrayView<const FVertexInstanceID> SrcVertexInstancesIDs = InMeshDescription.GetTriangleVertexInstances(RemappedTriangleID);
+			TConstArrayView<const FVertexInstanceID> DstVertexInstancesIDs = InMeshDescription.GetTriangleVertexInstances(TriangleID);
+
+			for (int32 i = 0; i < 3; i++)
+			{
+				DstUVs[DstVertexInstancesIDs[i]] = FVector2D(SrcUVs[SrcVertexInstancesIDs[i]]);
+			}
+		}
+
+		RemappedTrianglesIdx++;
+	}
+}
+
 // Mesh view that will expose only unique UVs if bMergeIdenticalMaterials is provided
 struct FUniqueUVMeshDescriptionView final : FLayoutUV::IMeshView
 {
@@ -2018,73 +2198,9 @@ struct FUniqueUVMeshDescriptionView final : FLayoutUV::IMeshView
 		Normals = Attributes.GetVertexInstanceNormals();
 		TexCoords = Attributes.GetVertexInstanceUVs();
 
-		TVertexInstanceAttributesConstRef<FVector4f> VertexColors = Attributes.GetVertexInstanceColors();
+		OutputTexCoords.SetNumZeroed(MeshDescription.VertexInstances().Num());
 
-		int32 NumVertexInstances = MeshDescription.VertexInstances().Num();
-		int32 NumTriangles = MeshDescription.Triangles().Num();
-
-		OutputTexCoords.SetNumZeroed(NumVertexInstances);
-		UniqueVerts.Reserve(NumVertexInstances);
-		RemapTriangles.Reserve(NumTriangles);
-
-		TMap<uint32, FTriangleID> UniqueTriangles;
-		if (bMergeIdenticalMaterials)
-		{
-			UniqueTriangles.Reserve(NumTriangles);
-		}
-
-		auto HashAttribute = [](FVertexInstanceID InVertexInstanceID, auto InAttributeArrayRef, int32& TriangleHash)
-		{
-			for (int32 Channel = 0; Channel < InAttributeArrayRef.GetNumChannels(); ++Channel)
-			{
-				for (const auto& Element : InAttributeArrayRef.GetArrayView(InVertexInstanceID, Channel))
-				{
-					TriangleHash = HashCombine(TriangleHash, GetTypeHash(Element));
-				}
-			}
-		};
-
-		for (const FTriangleID TriangleID : MeshDescription.Triangles().GetElementIDs())
-		{
-			const FPolygonGroupID RefPolygonGroupID = MeshDescription.GetTrianglePolygonGroup(TriangleID);
-			TConstArrayView<const FVertexInstanceID> VertexInstancesIDs = MeshDescription.GetTriangleVertexInstances(TriangleID);
-			TConstArrayView<const FVertexID> VertexIDs = MeshDescription.GetTriangleVertices(TriangleID);
-
-			FTriangleID RemapTriangleID = TriangleID;
-
-			bool bUnique = true;
-
-			if (bMergeIdenticalMaterials)
-			{
-				int32 TriangleHash = GetTypeHash(RefPolygonGroupID);
-				for (const FVertexInstanceID& VertexInstanceID : VertexInstancesIDs)
-				{
-					// Compute hash based on UVs & vertices colors
-					HashAttribute(VertexInstanceID, TexCoords, TriangleHash);
-					HashAttribute(VertexInstanceID, VertexColors, TriangleHash);
-				}
-
-				FTriangleID* UniqueTriangleIDPtr = UniqueTriangles.Find(TriangleHash);
-				if (UniqueTriangleIDPtr != nullptr)
-				{
-					RemapTriangleID = *UniqueTriangleIDPtr;
-					bUnique = false;
-				}
-				else
-				{
-					UniqueTriangles.Add(TriangleHash, TriangleID);
-				}
-			}
-
-			if (bUnique)
-			{
-				UniqueVerts.Append(VertexInstancesIDs);
-			}
-
-			RemapTriangles.Add(RemapTriangleID);
-		}
-
-		bMustRemap = bMergeIdenticalMaterials && UniqueTriangles.Num() != RemapTriangles.Num();
+		bMustRemap = GatherUniqueTriangles(MeshDescription, bMergeIdenticalMaterials, RemapTriangles, &UniqueVerts, nullptr);
 	}
 
 	uint32 GetNumIndices() const override
@@ -2122,28 +2238,22 @@ struct FUniqueUVMeshDescriptionView final : FLayoutUV::IMeshView
 	{
 		if (bMustRemap)
 		{
-		    int32 RemapTrianglesIdx = 0;
-		    for (const FTriangleID TriangleID : MeshDescription.Triangles().GetElementIDs())
-		    {
-			    FTriangleID RemapTriangleID = RemapTriangles[RemapTrianglesIdx];
-			    if (RemapTriangleID != TriangleID)
-			    {
-				    TConstArrayView<const FVertexInstanceID> SrcVertexInstancesIDs = MeshDescription.GetTriangleVertexInstances(RemapTriangleID);
-				    TConstArrayView<const FVertexInstanceID> DstVertexInstancesIDs = MeshDescription.GetTriangleVertexInstances(TriangleID);
-    
-				    for (int32 i = 0; i < 3; i++)
-				    {
-					    OutputTexCoords[DstVertexInstancesIDs[i]] = OutputTexCoords[SrcVertexInstancesIDs[i]];
-				    }
-			    }
-    
-			    RemapTrianglesIdx++;
-		    }
+			CopyRemappedUVs(MeshDescription, RemapTriangles, nullptr, true, OutputTexCoords, OutputTexCoords);
 		}
 	}
 };
 
 bool FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(const FMeshDescription& MeshDescription, int32 TextureResolution, bool bMergeIdenticalMaterials, TArray<FVector2D>& OutTexCoords)
+{
+	FGenerateUVOptions GenerateUVOptions;
+	GenerateUVOptions.TextureResolution = TextureResolution;
+	GenerateUVOptions.bMergeTrianglesWithIdenticalAttributes = bMergeIdenticalMaterials;
+	GenerateUVOptions.UVMethod = EGenerateUVMethod::Legacy;
+
+	return GenerateUV(MeshDescription, GenerateUVOptions, OutTexCoords);
+}
+
+bool FStaticMeshOperations::GenerateUV(const FMeshDescription& MeshDescription, const FGenerateUVOptions& GenerateUVOptions, TArray<FVector2D>& OutTexCoords)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FStaticMeshOperations::GenerateUniqueUVsForStaticMesh)
 
@@ -2151,10 +2261,12 @@ bool FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(const FMeshDescriptio
 
 	OutTexCoords.Reset();
 
+	const bool bAutoUVAvailable = WITH_EDITOR;
 	const bool bHasUVs = VertexInstanceUVs.GetNumElements() > 0;
-	if (bHasUVs)
+	const bool bUseLegacy = GenerateUVOptions.UVMethod == EGenerateUVMethod::Legacy || !bAutoUVAvailable;
+	if (bHasUVs && bUseLegacy)
 	{
-		FUniqueUVMeshDescriptionView MeshDescriptionView(MeshDescription, bMergeIdenticalMaterials, OutTexCoords);
+		FUniqueUVMeshDescriptionView MeshDescriptionView(MeshDescription, GenerateUVOptions.bMergeTrianglesWithIdenticalAttributes, OutTexCoords);
 
 		// Find overlapping corners for UV generator. Allow some threshold - this should not produce any error in a case if resulting
 		// mesh will not merge these vertices.
@@ -2166,7 +2278,7 @@ bool FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(const FMeshDescriptio
 
 		// Scale down texture resolution to speed up UV generation time
 		// Packing expects at least one texel per chart. This is the absolute minimum to generate valid UVs.
-		const int32 PackingResolution = FMath::Clamp(TextureResolution / 4, 32, 512);
+		const int32 PackingResolution = FMath::Clamp(GenerateUVOptions.TextureResolution / 4, 32, 512);
 		const int32 AbsoluteMinResolution = 1 << FMath::CeilLogTwo(FMath::Sqrt((float)NumCharts));
 		const int32 FinalPackingResolution = FMath::Max(PackingResolution, AbsoluteMinResolution);
 
@@ -2189,11 +2301,43 @@ bool FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(const FMeshDescriptio
 		IGeometryProcessingInterfacesModule* GeomProcInterfaces = FModuleManager::Get().GetModulePtr<IGeometryProcessingInterfacesModule>("GeometryProcessingInterfaces");
 		if (GeomProcInterfaces)
 		{
-		    IGeometryProcessing_MeshAutoUV* MeshAutoUV = GeomProcInterfaces->GetMeshAutoUVImplementation();
-    
 		    FMeshDescription MeshCopy = MeshDescription;
-    
+			TArray<FTriangleID>	RemapTriangles;
+			FElementIDRemappings ElementIDRemappings;
+
+			bool bMustRemap = false;
+
+			// Ensure we have properly setup TriangleUVs on our mesh
+			int32 UVChannelCount = MeshCopy.VertexInstanceAttributes().GetAttributeChannelCount(MeshAttribute::VertexInstance::TextureCoordinate);
+			MeshCopy.SetNumUVChannels(UVChannelCount);
+
+			if (GenerateUVOptions.bMergeTrianglesWithIdenticalAttributes)
+			{
+				TArray<FTriangleID> DuplicateTriangles;
+
+				bMustRemap = GatherUniqueTriangles(MeshDescription, true, RemapTriangles, nullptr, &DuplicateTriangles);
+				if (bMustRemap)
+				{
+					MeshCopy.DeleteTriangles(DuplicateTriangles);
+					MeshCopy.Compact(ElementIDRemappings);
+				}
+			}
+
+			auto GetAutoUVMethod = [](EGenerateUVMethod GenerateUVMethod) -> IGeometryProcessing_MeshAutoUV::EAutoUVMethod
+			{
+				switch (GenerateUVMethod)
+				{
+				case EGenerateUVMethod::UVAtlas:	return IGeometryProcessing_MeshAutoUV::EAutoUVMethod::UVAtlas;
+				case EGenerateUVMethod::XAtlas:		return IGeometryProcessing_MeshAutoUV::EAutoUVMethod::XAtlas;
+				default:							return IGeometryProcessing_MeshAutoUV::EAutoUVMethod::PatchBuilder;
+				}
+			};
+			    
+			IGeometryProcessing_MeshAutoUV* MeshAutoUV = GeomProcInterfaces->GetMeshAutoUVImplementation();
+
 		    IGeometryProcessing_MeshAutoUV::FOptions Options = MeshAutoUV->ConstructDefaultOptions();
+			Options.Method = GetAutoUVMethod(GenerateUVOptions.UVMethod);
+
 		    IGeometryProcessing_MeshAutoUV::FResults Results;
 		    MeshAutoUV->GenerateUVs(MeshCopy, Options, Results);
     
@@ -2202,11 +2346,22 @@ bool FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(const FMeshDescriptio
 			    TVertexInstanceAttributesConstRef<FVector2f> TexCoords;
 			    FStaticMeshConstAttributes AttributesCopy(MeshCopy);
 			    TexCoords = AttributesCopy.GetVertexInstanceUVs();
+
+				OutTexCoords.SetNumUninitialized(MeshDescription.VertexInstances().Num());
     
-			    for (const FVertexInstanceID VertexInstanceID : MeshCopy.VertexInstances().GetElementIDs())
-			    {
-				    OutTexCoords.Add(FVector2D(TexCoords.Get(VertexInstanceID, 0)));
-			    }
+				if (bMustRemap)
+				{
+					CopyRemappedUVs(MeshDescription, RemapTriangles, &ElementIDRemappings, false, TexCoords, OutTexCoords);
+				}
+				else
+				{
+					int32 VertexInstanceIndex = 0;
+					for (const FVertexInstanceID VertexInstanceID : MeshCopy.VertexInstances().GetElementIDs())
+					{
+						OutTexCoords[VertexInstanceIndex] = FVector2D(TexCoords.Get(VertexInstanceID, 0));
+						VertexInstanceIndex++;
+					}
+				}
 		    }
 		}
 	}
@@ -2635,12 +2790,12 @@ void FStaticMeshOperations::FlipPolygons(FMeshDescription& MeshDescription)
 	}
 }
 
-void FStaticMeshOperations::ApplyTransform(FMeshDescription& MeshDescription, const FTransform& Transform)
+void FStaticMeshOperations::ApplyTransform(FMeshDescription& MeshDescription, const FTransform& Transform, bool bApplyCorrectNormalTransform)
 {
-	ApplyTransform(MeshDescription, Transform.ToMatrixWithScale());
+	ApplyTransform(MeshDescription, Transform.ToMatrixWithScale(), bApplyCorrectNormalTransform);
 }
 
-void FStaticMeshOperations::ApplyTransform(FMeshDescription& MeshDescription, const FMatrix& Transform)
+void FStaticMeshOperations::ApplyTransform(FMeshDescription& MeshDescription, const FMatrix& Transform, bool bApplyCorrectNormalTransform)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FStaticMeshOperations::ApplyTransform)
 
@@ -2654,19 +2809,33 @@ void FStaticMeshOperations::ApplyTransform(FMeshDescription& MeshDescription, co
 		VertexPositions[VertexID] = FVector4f(Transform.TransformPosition(FVector3d(VertexPositions[VertexID])));
 	}
 
-	FMatrix TransformInverseTransposeMatrix = Transform.Inverse().GetTransposed();
-	TransformInverseTransposeMatrix.RemoveScaling();
-
 	const bool bIsMirrored = Transform.Determinant() < 0.f;
 	const float MulBy = bIsMirrored ? -1.f : 1.f;
+
+	FMatrix NormalsTransform, TangentsTransform;
+	if (bApplyCorrectNormalTransform)
+	{
+		// Note: Assuming we'll normalize after, transforming by the transpose-adjoint * the sign of the determinant
+		// is equivalent to transforming by the inverse transpose; ref: TMatrix::TransformByUsingAdjointT
+		NormalsTransform = Transform.TransposeAdjoint() * (double)MulBy;
+		// Note: Tangents *do not* transform by the Transform's inverse transpose, just by the Transform
+		TangentsTransform = Transform;
+	}
+	else // match UE renderer
+	{
+		// UE's renderer transforms normals and tangents without scale (as in FTransform::TransformVectorNoScale)
+		NormalsTransform = Transform;
+		NormalsTransform.RemoveScaling();
+		TangentsTransform = NormalsTransform;
+	}
 
 	for (const FVertexInstanceID VertexInstanceID : MeshDescription.VertexInstances().GetElementIDs())
 	{
 		FVector3f Tangent = VertexInstanceTangents[VertexInstanceID];
 		FVector3f Normal = VertexInstanceNormals[VertexInstanceID];
 
-		VertexInstanceTangents[VertexInstanceID] = (FVector3f)FVector(TransformInverseTransposeMatrix.TransformVector((FVector)Tangent).GetSafeNormal());
-		VertexInstanceNormals[VertexInstanceID] = (FVector3f)FVector(TransformInverseTransposeMatrix.TransformVector((FVector)Normal).GetSafeNormal());
+		VertexInstanceTangents[VertexInstanceID] = (FVector3f)FVector(TangentsTransform.TransformVector((FVector)Tangent).GetSafeNormal());
+		VertexInstanceNormals[VertexInstanceID] = (FVector3f)FVector(NormalsTransform.TransformVector((FVector)Normal).GetSafeNormal());
 
 		float BinormalSign = VertexInstanceBinormalSigns[VertexInstanceID];
 		VertexInstanceBinormalSigns[VertexInstanceID] = BinormalSign * MulBy;
@@ -2943,6 +3112,86 @@ void FStaticMeshOperations::ReorderMeshDescriptionPolygonGroups(const FMeshDescr
 		//Remap the polygon group with the correct ID
 		DestinationMeshDescription.RemapPolygonGroups(MatchPolygonGroupsDestSource);
 	}
+}
+
+bool FStaticMeshOperations::ValidateAndFixData(FMeshDescription& MeshDescription, const FString& DebugName)
+{
+	bool bHasInvalidPositions = false;
+	bool bHasInvalidTangentSpaces = false;
+	bool bHasInvalidUVs = false;
+	bool bHasInvalidVertexColors = false;
+
+	FStaticMeshAttributes Attributes(MeshDescription);
+
+	TVertexAttributesRef<FVector3f> VertexPositions = Attributes.GetVertexPositions();
+	for (const FVertexID VertexID : MeshDescription.Vertices().GetElementIDs())
+	{
+		if (VertexPositions[VertexID].ContainsNaN())
+		{
+			bHasInvalidPositions = true;
+			VertexPositions[VertexID] = FVector3f::ZeroVector;
+		}
+	}
+	TVertexInstanceAttributesRef<FVector3f> VertexInstanceNormals = Attributes.GetVertexInstanceNormals();
+	TVertexInstanceAttributesRef<FVector3f> VertexInstanceTangents = Attributes.GetVertexInstanceTangents();
+	TVertexInstanceAttributesRef<float> VertexInstanceBinormalSigns = Attributes.GetVertexInstanceBinormalSigns();
+	TVertexInstanceAttributesRef<FVector2f> VertexInstanceUVs = Attributes.GetVertexInstanceUVs();
+	TVertexInstanceAttributesRef<FVector4f> VertexInstanceColors = Attributes.GetVertexInstanceColors();
+	const int32 NumUVs = VertexInstanceUVs.GetNumChannels();
+	for (const FVertexInstanceID VertexInstanceID : MeshDescription.VertexInstances().GetElementIDs())
+	{
+		if (VertexInstanceNormals[VertexInstanceID].ContainsNaN())
+		{
+			bHasInvalidTangentSpaces = true;
+			VertexInstanceNormals[VertexInstanceID] = FVector3f::Zero();
+		}
+		if (VertexInstanceTangents[VertexInstanceID].ContainsNaN())
+		{
+			bHasInvalidTangentSpaces = true;
+			VertexInstanceTangents[VertexInstanceID] = FVector3f::Zero();
+		}
+		if (FMath::IsNaN(VertexInstanceBinormalSigns[VertexInstanceID]))
+		{
+			bHasInvalidTangentSpaces = true;
+			VertexInstanceBinormalSigns[VertexInstanceID] = 0.0f;
+		}
+
+		for (int32 UVIndex = 0; UVIndex < NumUVs; UVIndex++)
+		{
+			if (VertexInstanceUVs.Get(VertexInstanceID, UVIndex).ContainsNaN())
+			{
+				bHasInvalidUVs = true;
+				VertexInstanceUVs.Set(VertexInstanceID, UVIndex, FVector2f::Zero());
+			}
+		}
+		if (VertexInstanceColors[VertexInstanceID].ContainsNaN())
+		{
+			bHasInvalidVertexColors = true;
+			VertexInstanceColors[VertexInstanceID] = FVector4f::One();
+		}
+	}
+
+	if (!DebugName.IsEmpty())
+	{
+		if (bHasInvalidPositions)
+		{
+			UE_LOG(LogStaticMeshOperations, Display, TEXT("Mesh %s has NaNs in it's vertex positions! Offending positions are set to zero."), *DebugName);
+		}
+		if (bHasInvalidTangentSpaces)
+		{
+			UE_LOG(LogStaticMeshOperations, Display, TEXT("Mesh %s has NaNs in it's vertex instance tangent space! Offending tangents are set to zero."), *DebugName);
+		}
+		if (bHasInvalidUVs)
+		{
+			UE_LOG(LogStaticMeshOperations, Display, TEXT("Mesh %s has NaNs in it's vertex instance uvs! Offending uvs are set to zero."), *DebugName);
+		}
+		if (bHasInvalidVertexColors)
+		{
+			UE_LOG(LogStaticMeshOperations, Display, TEXT("Mesh %s has NaNs in it's vertex instance colors! Offending colors are set to white."), *DebugName);
+		}
+	}
+
+	return !bHasInvalidPositions && !bHasInvalidTangentSpaces && !bHasInvalidUVs && !bHasInvalidVertexColors;
 }
 
 #undef LOCTEXT_NAMESPACE

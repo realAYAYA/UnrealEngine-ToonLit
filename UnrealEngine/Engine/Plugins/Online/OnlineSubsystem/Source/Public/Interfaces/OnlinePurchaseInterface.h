@@ -65,6 +65,9 @@ public:
 
 	/** Optional AccountId to include with the purchase request (if supported) */
 	TOptional<FString> AccountId;
+	
+	/** Key - value pair properties for passing to the checkout. */
+	TMap<FString, FString> AdditionalCheckoutProperties;
 
 };
 

@@ -23,7 +23,7 @@ namespace Horde.Server.Utilities
 		{
 			credentialsFilePath ??= Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aws", "credentials");
 			string[] lines = File.ReadAllLines(credentialsFilePath);
-		    
+
 			static string ReadValue(string line, string expectedKey)
 			{
 				if (line.StartsWith(expectedKey, StringComparison.Ordinal))

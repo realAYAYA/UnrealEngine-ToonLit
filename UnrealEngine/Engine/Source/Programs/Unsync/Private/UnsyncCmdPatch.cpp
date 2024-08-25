@@ -2,14 +2,15 @@
 
 #include "UnsyncCmdPatch.h"
 #include "UnsyncFile.h"
+#include "UnsyncTarget.h"
 
 namespace unsync {
 
 int32  // TODO: return a TResult
 CmdPatch(const FCmdPatchOptions& Options)
 {
-	UNSYNC_VERBOSE(L"Patching base file '%ls' using '%ls'", Options.Base.wstring().c_str(), Options.Patch.wstring().c_str());
-	UNSYNC_VERBOSE(L"Output file '%ls'", Options.Output.wstring().c_str());
+	UNSYNC_LOG(L"Patching base file '%ls' using '%ls'", Options.Base.wstring().c_str(), Options.Patch.wstring().c_str());
+	UNSYNC_LOG(L"Output file '%ls'", Options.Output.wstring().c_str());
 
 	FBuffer BaseFile = ReadFileToBuffer(Options.Base);
 	if (BaseFile.Empty())
@@ -34,7 +35,7 @@ CmdPatch(const FCmdPatchOptions& Options)
 
 	if (!GDryRun)
 	{
-		UNSYNC_VERBOSE(L"Writing output file to '%ls'", Options.Output.wstring().c_str());
+		UNSYNC_LOG(L"Writing output file to '%ls'", Options.Output.wstring().c_str());
 		return WriteBufferToFile(Options.Output, TargetData) ? 0 : 1;
 	}
 

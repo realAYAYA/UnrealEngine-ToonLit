@@ -5,6 +5,7 @@
 #include "Algo/AnyOf.h"
 #include "Misc/LazySingleton.h"
 #include "Misc/ScopeRWLock.h"
+#include "UserManagerEOS.h"
 
 const FUniqueNetIdEOS& FUniqueNetIdEOS::Cast(const FUniqueNetId& NetId)
 {
@@ -76,14 +77,14 @@ FUniqueNetIdEOS::FUniqueNetIdEOS(const uint8* Bytes, int32 Size)
 	const bool bIsEasNonZero = Algo::AnyOf(TArrayView<const uint8>(Bytes, ID_HALF_BYTE_SIZE));
 	if (bIsEasNonZero)
 	{
-		const FString EpicAccountIdStr = BytesToHex(Bytes, ID_HALF_BYTE_SIZE);
+		const FString EpicAccountIdStr = BytesToHexLower(Bytes, ID_HALF_BYTE_SIZE);
 		EpicAccountId = EOS_EpicAccountId_FromString(TCHAR_TO_UTF8(*EpicAccountIdStr));
 	}
 
 	const bool bIsPuidNonZero = Algo::AnyOf(TArrayView<const uint8>(Bytes + ID_HALF_BYTE_SIZE, ID_HALF_BYTE_SIZE));
 	if (bIsPuidNonZero)
 	{
-		const FString ProductUserIdStr = BytesToHex(Bytes + ID_HALF_BYTE_SIZE, ID_HALF_BYTE_SIZE);
+		const FString ProductUserIdStr = BytesToHexLower(Bytes + ID_HALF_BYTE_SIZE, ID_HALF_BYTE_SIZE);
 		ProductUserId = EOS_ProductUserId_FromString(TCHAR_TO_UTF8(*ProductUserIdStr));
 	}
 }
@@ -269,3 +270,11 @@ FUniqueNetIdEOSRef FUniqueNetIdEOSRegistry::FindCheckedImpl(EOS_ProductUserId Pr
 		return FUniqueNetIdEOS::EmptyId();
 	}
 }
+
+namespace OnlineSubsystemEOSTypesPrivate
+{
+FString GetBestDisplayName(const FOnlineSubsystemEOS& EOSSubsystem, const EOS_EpicAccountId TargetUserId, const FStringView Platform)
+{
+	return EOSSubsystem.UserManager->GetBestDisplayName(TargetUserId, Platform);
+}
+} // namespace OnlineSubsystemEOSTypesPrivate

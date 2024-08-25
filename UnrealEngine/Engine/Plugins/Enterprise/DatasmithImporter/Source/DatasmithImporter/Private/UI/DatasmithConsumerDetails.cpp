@@ -180,7 +180,7 @@ namespace DatasmithConsumerDetailsUtil
 					{
 						if(FolderPath[FolderPath.Len() - 1] == L'/')
 						{
-							FolderPath.LeftInline(FolderPath.Len() - 1, false);
+							FolderPath.LeftInline(FolderPath.Len() - 1, EAllowShrinking::No);
 						}
 
 						if(FolderPath != TEXT( "/Game" ))

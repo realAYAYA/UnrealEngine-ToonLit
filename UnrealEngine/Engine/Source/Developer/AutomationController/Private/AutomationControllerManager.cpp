@@ -280,7 +280,10 @@ void FAutomationControllerManager::RequestTests()
 			UE_LOG(LogAutomationController, Log, TEXT("Requesting test list from %s"), *MessageAddress.ToString());
 
 			//issue tests on appropriate platforms
-			MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FAutomationWorkerRequestTests>(bDeveloperDirectoryIncluded, RequestedTestFlags), MessageAddress);
+			SendMessage(
+				FMessageEndpoint::MakeMessage<FAutomationWorkerRequestTests>(bDeveloperDirectoryIncluded, RequestedTestFlags),
+				FAutomationWorkerRequestTests::StaticStruct(),
+				MessageAddress);
 		}
 	}
 }
@@ -345,11 +348,16 @@ void FAutomationControllerManager::RunTests(const bool bInIsLocalSession)
 			//mark the device as idle
 			DeviceClusterManager.SetTest(ClusterIndex, DeviceIndex, NULL);
 
-			// Send command to reset tests (delete local files, etc)
+			// Send command to start test session and reset tests (delete local files, etc)
 			FMessageAddress MessageAddress = DeviceClusterManager.GetDeviceMessageAddress(ClusterIndex, DeviceIndex);
-			UE_LOG(LogAutomationController, Log, TEXT("Sending Reset Tests to %s"), *MessageAddress.ToString());
+			UE_LOG(LogAutomationController, Log, TEXT("Sending StartTestSession to %s"), *MessageAddress.ToString());
 
-			MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FAutomationWorkerResetTests>(), MessageAddress);
+			SendMessage(
+				FMessageEndpoint::MakeMessage<FAutomationWorkerStartTestSession>(),
+				FAutomationWorkerStartTestSession::StaticStruct(),
+				MessageAddress);
+
+			StartedTestSessionWorkerInstanceIdSet.Add(DeviceClusterManager.GetClusterGameInstanceId(ClusterIndex, DeviceIndex));
 
 			// Store devices info into the json report.
 			if (JsonTestPassResults.IsRequired)
@@ -395,7 +403,10 @@ void FAutomationControllerManager::StopTests()
 				FMessageAddress MessageAddress = DeviceClusterManager.GetDeviceMessageAddress(ClusterIndex, DeviceIndex);
 
 				UE_LOG(LogAutomationController, Log, TEXT("Sending StopTests to %s"), *MessageAddress.ToString());
-				MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FAutomationWorkerStopTests>(), MessageAddress);
+				SendMessage(
+					FMessageEndpoint::MakeMessage<FAutomationWorkerStopTests>(), 
+					FAutomationWorkerStopTests::StaticStruct(),
+					MessageAddress);
 			}
 		}
 
@@ -407,6 +418,8 @@ void FAutomationControllerManager::StopTests()
 	}
 
 	TestRunningArray.Empty();
+
+	StopStartedTestSessions();
 
 	// Close play window
 #if WITH_EDITOR
@@ -439,6 +452,48 @@ void FAutomationControllerManager::Tick()
 	ProcessComparisonQueue();
 }
 
+void FAutomationControllerManager::ReportImageComparisonResult(const FAutomationWorkerImageComparisonResults& Result)
+{
+	// Find the game session instance info
+	int32 ClusterIndex;
+	int32 DeviceIndex;
+	verify(DeviceClusterManager.FindDevice(Result.InstanceId, ClusterIndex, DeviceIndex));
+
+	// Get the current test.
+	TSharedPtr<IAutomationReport> Report = DeviceClusterManager.GetTest(ClusterIndex, DeviceIndex);
+	if (Report.IsValid())
+	{
+		// Record the artifacts for the test.
+		TMap<EComparisonFileTypes, FString> LocalFiles;
+
+		FString ScreenshotResultsFolder = FPaths::AutomationReportsDir();
+
+		// Paths in the result are relative to the automation report directory.	
+		LocalFiles.Add(EComparisonFileTypes::Unapproved, FPaths::Combine(ScreenshotResultsFolder, Result.ReportIncomingFilePath));
+
+		// Don't copy reference and delta if the images are similar.
+		if (!Result.bSimilar)
+		{
+			// unapproved should always be valid. but approved/difference may be empty if this is a new screenshot
+			if (Result.ReportIncomingFilePath.Len())
+			{
+				LocalFiles.Add(EComparisonFileTypes::Approved, FPaths::Combine(ScreenshotResultsFolder, Result.ReportApprovedFilePath));
+			}
+
+			if (Result.ReportComparisonFilePath.Len())
+			{
+				LocalFiles.Add(EComparisonFileTypes::Difference, FPaths::Combine(ScreenshotResultsFolder, Result.ReportComparisonFilePath));
+			}
+		}
+
+		Report->AddArtifact(ClusterIndex, CurrentTestPass, FAutomationArtifact(Result.UniqueId, Result.ScreenshotPath, EAutomationArtifactType::Comparison, LocalFiles));
+	}
+	else
+	{
+		UE_LOG(LogAutomationController, Error, TEXT("Cannot generate screenshot report for screenshot %s as report is missing"), *Result.IncomingFilePath);
+	}
+}
+
 void FAutomationControllerManager::ProcessComparisonQueue()
 {
 	TSharedPtr<FComparisonEntry> Entry;
@@ -450,65 +505,36 @@ void FAutomationControllerManager::ProcessComparisonQueue()
 			check(Dequeued);
 
 			FImageComparisonResult Result = Entry->PendingComparison.Get();
-
-			const FGuid UniqueId = FGuid::NewGuid();
+			FAutomationWorkerImageComparisonResults ResultMessage(
+				Entry->InstanceId,
+				Result.bSkipAttachingImages ? FGuid() : FGuid::NewGuid(),
+				Result.ScreenshotPath,
+				Result.IsNew(),
+				Result.AreSimilar(),
+				Result.MaxLocalDifference,
+				Result.GlobalDifference,
+				Result.ErrorMessage.ToString(),
+				Result.IncomingFilePath,
+				Result.ReportComparisonFilePath,
+				Result.ReportApprovedFilePath,
+				Result.ReportIncomingFilePath
+			);
 
 			// Send the message back to the automation worker letting it know the results of the comparison test.
 			{
-				FAutomationWorkerImageComparisonResults* Message = FMessageEndpoint::MakeMessage<FAutomationWorkerImageComparisonResults>(
-					UniqueId,
-					Result.IsNew(),
-					Result.AreSimilar(),
-					Result.MaxLocalDifference,
-					Result.GlobalDifference,
-					Result.ErrorMessage.ToString()
-				);
+				FAutomationWorkerImageComparisonResults* Message = FMessageEndpoint::MakeMessage<FAutomationWorkerImageComparisonResults>(ResultMessage);
 
-				UE_LOG(LogAutomationController, Log, TEXT("Sending ImageComparisonResult to %s (IsNew=%d, AreSimilar=%d)"), 
+				UE_LOG(LogAutomationController, Log, TEXT("Sending ImageComparisonResult to %s (IsNew=%d, AreSimilar=%d)"),
 					*Entry->Sender.ToString()
 					, Result.IsNew()
 					, Result.AreSimilar()
 					);
-				MessageEndpoint->Send(Message, Entry->Sender);
+				SendMessage(Message, Message->StaticStruct(), Entry->Sender);
 			}
 
-			// Find the game session instance info
-			int32 ClusterIndex;
-			int32 DeviceIndex;
-			verify(DeviceClusterManager.FindDevice(Entry->Sender, ClusterIndex, DeviceIndex));
-
-			// Get the current test.
-			TSharedPtr<IAutomationReport> Report = DeviceClusterManager.GetTest(ClusterIndex, DeviceIndex);
-			if (Report.IsValid())
+			if (!Result.bSkipAttachingImages)
 			{
-				// Record the artifacts for the test.
-				TMap<EComparisonFileTypes, FString> LocalFiles;
-
-				FString ScreenshotResultsFolder = FPaths::AutomationReportsDir();
-	
-				// Paths in the result are relative to the automation report directory.	
-				LocalFiles.Add(EComparisonFileTypes::Unapproved, FPaths::Combine(ScreenshotResultsFolder, Result.ReportIncomingFilePath));
-
-				// Don't copy reference and delta if the images are similar.
-				if (!Result.AreSimilar())
-				{
-					// unapproved should always be valid. but approved/difference may be empty if this is a new screenshot
-					if (Result.ReportIncomingFilePath.Len())
-					{
-						LocalFiles.Add(EComparisonFileTypes::Approved, FPaths::Combine(ScreenshotResultsFolder, Result.ReportApprovedFilePath));
-					}
-
-					if (Result.ReportComparisonFilePath.Len())
-					{
-						LocalFiles.Add(EComparisonFileTypes::Difference, FPaths::Combine(ScreenshotResultsFolder, Result.ReportComparisonFilePath));
-					}
-				}
-
-				Report->AddArtifact(ClusterIndex, CurrentTestPass, FAutomationArtifact(UniqueId, Entry->ScreenshotPath, EAutomationArtifactType::Comparison, LocalFiles));
-			}
-			else
-			{
-				UE_LOG(LogAutomationController, Error, TEXT("Cannot generate screenshot report for screenshot %s as report is missing"), *Result.IncomingFilePath);
+				ReportImageComparisonResult(ResultMessage);
 			}
 		}
 	}
@@ -548,6 +574,9 @@ void FAutomationControllerManager::ProcessAvailableTasks()
 					}
 					#endif
 
+					// Notify the workers about stopping the session.
+					StopStartedTestSessions();
+
 					//Notify the graphical layout we are done processing results.
 					TestsCompleteDelegate.Broadcast();
 				}
@@ -580,6 +609,7 @@ void FAutomationControllerManager::CollectTestResults(TSharedPtr<IAutomationRepo
 		TestResult.SetEvents(Results.GetEntries(), Results.GetWarningTotal(), Results.GetErrorTotal());
 		TestResult.SetArtifacts(Results.Artifacts);
 		TestResult.Duration = Results.Duration;
+		
 		if (TestResult.DeviceInstance.IsEmpty())
 		{
 			TestResult.DeviceInstance = { Results.GameInstance };
@@ -780,8 +810,9 @@ void FAutomationControllerManager::ExecuteNextTask( int32 ClusterIndex, OUT bool
 						// Send it to each device
 						for (int32 AddressIndex = 0; AddressIndex < DeviceAddresses.Num(); ++AddressIndex)
 						{
+							const FAutomationDeviceInfo& DeviceInfo = DeviceClusterManager.GetDeviceInfo(ClusterIndex, DeviceIndex);
 							FAutomationTestResults TestResults;
-							TestResults.GameInstance = DeviceClusterManager.GetClusterGameInstance(ClusterIndex, DeviceIndex);
+							TestResults.GameInstance = DeviceInfo.Instance.ToString();
 							TestResults.State = EAutomationState::InProcess;
 							GameInstances.Add(TestResults.GameInstance);
 							NextTest->SetResults(ClusterIndex, CurrentTestPass, TestResults);
@@ -792,10 +823,13 @@ void FAutomationControllerManager::ExecuteNextTask( int32 ClusterIndex, OUT bool
 							// Send the test to the device for execution!
 							UE_LOG(LogAutomationController, Log, TEXT("Sending RunTest %s to %s"), *NextTest->GetDisplayName(), *DeviceAddress.ToString());
 
-							MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FAutomationWorkerRunTests>(ExecutionCount, AddressIndex, NextTest->GetCommand(), NextTest->GetDisplayName(), NextTest->GetFullTestPath(), bSendAnalytics), DeviceAddress);
+							SendMessage(
+								FMessageEndpoint::MakeMessage<FAutomationWorkerRunTests>(ExecutionCount, AddressIndex, NextTest->GetCommand(), NextTest->GetDisplayName(), NextTest->GetFullTestPath(), bSendAnalytics),
+								FAutomationWorkerRunTests::StaticStruct(),
+								DeviceAddress);
 
 							// Add a test so we can check later if the device is still active
-							TestRunningArray.Add(FTestRunningInfo(DeviceAddress));
+							TestRunningArray.Add(FTestRunningInfo(DeviceAddress, DeviceInfo.Instance));
 						}
 
 						UE_LOG(LogAutomationController, Display, AutomationTestStarting, *NextTest->GetDisplayName(), *NextTest->GetFullTestPath());
@@ -860,6 +894,7 @@ void FAutomationControllerManager::Startup()
 		.Handling<FAutomationWorkerRequestTestsReplyComplete>(this, &FAutomationControllerManager::HandleRequestTestsReplyCompleteMessage)
 		.Handling<FAutomationWorkerRunTestsReply>(this, &FAutomationControllerManager::HandleRunTestsReplyMessage)
 		.Handling<FAutomationWorkerScreenImage>(this, &FAutomationControllerManager::HandleReceivedScreenShot)
+		.Handling<FAutomationWorkerImageComparisonResults>(this, &FAutomationControllerManager::HandleReceivedComparisonResult)
 		.Handling<FAutomationWorkerTestDataRequest>(this, &FAutomationControllerManager::HandleTestDataRequest)
 		.Handling<FAutomationWorkerWorkerOffline>(this, &FAutomationControllerManager::HandleWorkerOfflineMessage)
 		.Handling<FAutomationWorkerTelemetryData>(this, &FAutomationControllerManager::HandleReceivedTelemetryData);
@@ -896,13 +931,13 @@ void FAutomationControllerManager::RemoveCallbacks()
 	TestsCompleteDelegate.Clear();
 }
 
-void FAutomationControllerManager::SetTestNames(const FMessageAddress& AutomationWorkerAddress, TArray<FAutomationTestInfo>& TestInfo)
+void FAutomationControllerManager::SetTestNames(const FGuid& AutomationWorkerInstanceId, TArray<FAutomationTestInfo>& TestInfo)
 {
 	int32 DeviceClusterIndex = INDEX_NONE;
 	int32 DeviceIndex = INDEX_NONE;
 
 	// Find the device that requested these tests
-	if ( DeviceClusterManager.FindDevice(AutomationWorkerAddress, DeviceClusterIndex, DeviceIndex) )
+	if ( DeviceClusterManager.FindDevice(AutomationWorkerInstanceId, DeviceClusterIndex, DeviceIndex) )
 	{
 		// Sort tests by display name
 		struct FCompareAutomationTestInfo
@@ -1078,11 +1113,11 @@ void FAutomationControllerManager::SetControllerStatus(EAutomationControllerModu
 	}
 }
 
-void FAutomationControllerManager::RemoveTestRunning(const FMessageAddress& TestAddressToRemove)
+void FAutomationControllerManager::RemoveTestRunning(const FGuid& OwnerInstanceId)
 {
 	for ( int32 Index = 0; Index < TestRunningArray.Num(); Index++ )
 	{
-		if ( TestRunningArray[Index].OwnerMessageAddress == TestAddressToRemove )
+		if ( TestRunningArray[Index].OwnerInstanceId == OwnerInstanceId )
 		{
 			TestRunningArray.RemoveAt(Index);
 			break;
@@ -1090,11 +1125,11 @@ void FAutomationControllerManager::RemoveTestRunning(const FMessageAddress& Test
 	}
 }
 
-void FAutomationControllerManager::AddPingResult(const FMessageAddress& ResponderAddress)
+void FAutomationControllerManager::AddPingResult(const FGuid& ResponderInstanceId)
 {
 	for ( int32 Index = 0; Index < TestRunningArray.Num(); Index++ )
 	{
-		if ( TestRunningArray[Index].OwnerMessageAddress == ResponderAddress )
+		if (TestRunningArray[Index].OwnerInstanceId == ResponderInstanceId)
 		{
 			TestRunningArray[Index].LastPingTime = 0;
 			break;
@@ -1125,7 +1160,7 @@ void FAutomationControllerManager::UpdateTests()
 					// Find the game session instance info
 					int32 ClusterIndex;
 					int32 DeviceIndex;
-					verify(DeviceClusterManager.FindDevice(TestRunningArray[Index].OwnerMessageAddress, ClusterIndex, DeviceIndex));
+					verify(DeviceClusterManager.FindDevice(TestRunningArray[Index].OwnerInstanceId, ClusterIndex, DeviceIndex));
 					//verify this device thought it was busy
 					TSharedPtr <IAutomationReport> Report = DeviceClusterManager.GetTest(ClusterIndex, DeviceIndex);
 					check(Report.IsValid());
@@ -1134,7 +1169,7 @@ void FAutomationControllerManager::UpdateTests()
 
 					FAutomationTestResults TestResults;
 					TestResults.State = EAutomationState::Fail;
-					TestResults.GameInstance = DeviceClusterManager.GetClusterGameInstance(ClusterIndex, DeviceIndex);
+					TestResults.GameInstance = DeviceClusterManager.GetClusterGameInstanceId(ClusterIndex, DeviceIndex).ToString();
 					FString DeviceName = DeviceClusterManager.GetClusterDeviceName(ClusterIndex, DeviceIndex);
 					TestResults.AddEvent(FAutomationEvent(EAutomationEventType::Error, FString::Printf(TEXT("Timeout waiting for device %s"), *DeviceName)));
 
@@ -1181,7 +1216,10 @@ void FAutomationControllerManager::UpdateTests()
 				}
 				else
 				{
-					MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FAutomationWorkerPing>(), TestRunningArray[Index].OwnerMessageAddress);
+					SendMessage(
+						FMessageEndpoint::MakeMessage<FAutomationWorkerPing>(),
+						FAutomationWorkerPing::StaticStruct(),
+						TestRunningArray[Index].OwnerMessageAddress);
 				}
 			}
 			CheckTestTimer = 0.f;
@@ -1191,6 +1229,41 @@ void FAutomationControllerManager::UpdateTests()
 	{
 		UE_LOG(LogAutomationController, Log, TEXT("Ignoring very large delta of %.02f seconds in calls to FAutomationControllerManager::Tick() and not penalizing unresponsive tests"), TickDelta);
 	}
+}
+
+void FAutomationControllerManager::StopStartedTestSessions()
+{
+	int32 ClusterIndex = INDEX_NONE;
+	int32 DeviceIndex = INDEX_NONE;
+
+	// Notify the workers about stopping the session.
+	for (const auto& WorkerInstanceId : StartedTestSessionWorkerInstanceIdSet)
+	{
+		if (DeviceClusterManager.FindDevice(WorkerInstanceId, ClusterIndex, DeviceIndex))
+		{
+			const FMessageAddress MessageAddress = DeviceClusterManager.GetDeviceMessageAddress(ClusterIndex, DeviceIndex);
+			UE_LOG(LogAutomationController, Log, TEXT("Sending StopTestSession to %s"), *MessageAddress.ToString());
+			SendMessage(
+				FMessageEndpoint::MakeMessage<FAutomationWorkerStopTestSession>(),
+				FAutomationWorkerStopTestSession::StaticStruct(),
+				MessageAddress);
+		}
+	}
+}
+
+void FAutomationControllerManager::SendMessage(FAutomationWorkerMessageBase* Message, UScriptStruct* TypeInfo, const FMessageAddress& ControllerAddress)
+{
+	check(nullptr != Message);
+
+	Message->InstanceId = FApp::GetInstanceId();
+	MessageEndpoint->Send(
+		Message,
+		TypeInfo,
+		EMessageFlags::None,
+		nullptr,
+		TArrayBuilder<FMessageAddress>().Add(ControllerAddress),
+		FTimespan::Zero(),
+		FDateTime::MaxValue());
 }
 
 const bool FAutomationControllerManager::ExportReport(uint32 FileExportTypeMask)
@@ -1242,12 +1315,14 @@ void FAutomationControllerManager::HandleFindWorkersResponseMessage(const FAutom
 
 void FAutomationControllerManager::HandlePongMessage( const FAutomationWorkerPong& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context )
 {
-	AddPingResult(Context->GetSender());
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
+	AddPingResult(Message.InstanceId);
 }
 
 void FAutomationControllerManager::HandleReceivedScreenShot(const FAutomationWorkerScreenImage& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
 {
 	UE_LOG(LogAutomationController, Log, TEXT("ReceivedScreenShot for %s (%dx%d) from %s"), *Message.Metadata.TestName, Message.Metadata.Width, Message.Metadata.Height, *Context->GetSender().ToString());
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
 
 	bool bTree = true;
 
@@ -1298,15 +1373,22 @@ void FAutomationControllerManager::HandleReceivedScreenShot(const FAutomationWor
 	// compare the incoming image and throw it away afterwards (note - there will be a copy in the report)
 	TSharedRef<FComparisonEntry> Comparison = MakeShareable(new FComparisonEntry());
 	Comparison->Sender = Context->GetSender();
-	Comparison->ScreenshotPath = Message.Metadata.Context /  Message.Metadata.ScreenShotName;
+	Comparison->InstanceId = Message.InstanceId;
 	Comparison->PendingComparison = ScreenshotManager->CompareScreenshotAsync(IncomingFileName, Message.Metadata, EScreenShotCompareOptions::DiscardImage);
 
 	ComparisonQueue.Enqueue(Comparison);
 }
 
+void FAutomationControllerManager::HandleReceivedComparisonResult(const FAutomationWorkerImageComparisonResults& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
+{
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
+	ReportImageComparisonResult(Message);
+}
+
 void FAutomationControllerManager::HandleTestDataRequest(const FAutomationWorkerTestDataRequest& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
 {
 	UE_LOG(LogAutomationController, Log, TEXT("Received TestDataRequest from %s"), *Context->GetSender().ToString());
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
 
 	const FString TestDataRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Test"));
 	const FString DataFile = Message.DataType / Message.DataPlatform / Message.DataTestName / Message.DataName + TEXT(".json");
@@ -1350,7 +1432,7 @@ void FAutomationControllerManager::HandleTestDataRequest(const FAutomationWorker
 	ResponseMessage->bIsNew = bIsNew;
 	ResponseMessage->JsonData = ResponseJsonData;
 
-	MessageEndpoint->Send(ResponseMessage, Context->GetSender());
+	SendMessage(ResponseMessage, ResponseMessage->StaticStruct(), Context->GetSender());
 }
 
 void FAutomationControllerManager::HandlePerformanceDataRequest(const FAutomationWorkerPerformanceDataRequest& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
@@ -1362,12 +1444,13 @@ void FAutomationControllerManager::HandlePerformanceDataRequest(const FAutomatio
 	ResponseMessage->bSuccess = true;
 	ResponseMessage->ErrorMessage = TEXT("");
 
-	MessageEndpoint->Send(ResponseMessage, Context->GetSender());
+	SendMessage(ResponseMessage, ResponseMessage->StaticStruct(), Context->GetSender());
 }
 
 void FAutomationControllerManager::HandleRequestNextNetworkCommandMessage(const FAutomationWorkerRequestNextNetworkCommand& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
 {
 	UE_LOG(LogAutomationController, Log, TEXT("Received RequestNextNetworkCommandMessage from %s"), *Context->GetSender().ToString());
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
 
 	// Harvest iteration of running the tests this result came from (stops stale results from being committed to subsequent runs)
 	if ( Message.ExecutionCount == ExecutionCount )
@@ -1376,7 +1459,7 @@ void FAutomationControllerManager::HandleRequestNextNetworkCommandMessage(const 
 		int32 ClusterIndex;
 		int32 DeviceIndex;
 
-		verify(DeviceClusterManager.FindDevice(Context->GetSender(), ClusterIndex, DeviceIndex));
+		verify(DeviceClusterManager.FindDevice(Message.InstanceId, ClusterIndex, DeviceIndex));
 
 		// Verify this device thought it was busy
 		TSharedPtr<IAutomationReport> Report = DeviceClusterManager.GetTest(ClusterIndex, DeviceIndex);
@@ -1399,7 +1482,10 @@ void FAutomationControllerManager::HandleRequestNextNetworkCommandMessage(const 
 			for ( int32 AddressIndex = 0; AddressIndex < DeviceAddresses.Num(); ++AddressIndex )
 			{
 				//send "next command message" to worker
-				MessageEndpoint->Send(FMessageEndpoint::MakeMessage<FAutomationWorkerNextNetworkCommandReply>(), DeviceAddresses[AddressIndex]);
+				SendMessage(
+					FMessageEndpoint::MakeMessage<FAutomationWorkerNextNetworkCommandReply>(),
+					FAutomationWorkerNextNetworkCommandReply::StaticStruct(),
+					DeviceAddresses[AddressIndex]	);
 			}
 		}
 	}
@@ -1408,6 +1494,7 @@ void FAutomationControllerManager::HandleRequestNextNetworkCommandMessage(const 
 void FAutomationControllerManager::HandleRequestTestsReplyCompleteMessage(const FAutomationWorkerRequestTestsReplyComplete& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
 {
 	UE_LOG(LogAutomationController, Log, TEXT("Received RequestTestsReplyCompleteMessage from %s"), *Context->GetSender().ToString());
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
 
 	LLM_SCOPE_BYNAME(TEXT("AutomationTest/Controller"));
 	TArray<FAutomationTestInfo> TestInfo;
@@ -1420,11 +1507,12 @@ void FAutomationControllerManager::HandleRequestTestsReplyCompleteMessage(const 
 
 	UE_LOG(LogAutomationController, Log, TEXT("%d tests available on %s"), TestInfo.Num(), *Context->GetSender().ToString());
 
-	SetTestNames(Context->GetSender(), TestInfo);
+	SetTestNames(Message.InstanceId, TestInfo);
 }
 
 void FAutomationControllerManager::HandleReceivedTelemetryData(const FAutomationWorkerTelemetryData& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
 {
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
 	FAutomationTelemetry::HandleAddTelemetry(Message);
 }
 
@@ -1516,6 +1604,8 @@ void FAutomationControllerManager::ReportAutomationResult(const TSharedPtr<IAuto
 
 void FAutomationControllerManager::HandleRunTestsReplyMessage(const FAutomationWorkerRunTestsReply& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context)
 {
+	DeviceClusterManager.UpdateDeviceFromMessage(Context->GetSender(), Message);
+
 	// If we should commit these results
 	if ( Message.ExecutionCount == ExecutionCount )
 	{
@@ -1528,9 +1618,8 @@ void FAutomationControllerManager::HandleRunTestsReplyMessage(const FAutomationW
 		int32 ClusterIndex;
 		int32 DeviceIndex;
 
-		verify(DeviceClusterManager.FindDevice(Context->GetSender(), ClusterIndex, DeviceIndex));
-
-		TestResults.GameInstance = DeviceClusterManager.GetClusterGameInstance(ClusterIndex, DeviceIndex);
+		verify(DeviceClusterManager.FindDevice(Message.InstanceId, ClusterIndex, DeviceIndex));
+		TestResults.GameInstance = DeviceClusterManager.GetClusterGameInstanceId(ClusterIndex, DeviceIndex).ToString();
 		TestResults.SetEvents(Message.Entries, Message.WarningTotal, Message.ErrorTotal);
 
 		// Verify this device thought it was busy
@@ -1552,13 +1641,13 @@ void FAutomationControllerManager::HandleRunTestsReplyMessage(const FAutomationW
 	}
 
 	// Remove the running test
-	RemoveTestRunning(Context->GetSender());
+	RemoveTestRunning(Message.InstanceId);
 }
 
 void FAutomationControllerManager::HandleWorkerOfflineMessage( const FAutomationWorkerWorkerOffline& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context )
 {
-	FMessageAddress DeviceMessageAddress = Context->GetSender();
-	DeviceClusterManager.Remove(DeviceMessageAddress);
+	FGuid DeviceInstanceId = Message.InstanceId;
+	DeviceClusterManager.Remove(DeviceInstanceId);
 }
 
 bool FAutomationControllerManager::IsDeviceGroupFlagSet( EAutomationDeviceGroupTypes::Type InDeviceGroup ) const

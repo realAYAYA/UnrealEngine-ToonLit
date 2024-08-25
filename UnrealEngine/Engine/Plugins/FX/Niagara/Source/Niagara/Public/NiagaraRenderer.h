@@ -19,6 +19,7 @@ NiagaraRenderer.h: Base class for Niagara render modules
 #include "NiagaraBoundsCalculator.h"
 #include "RayTracingGeometry.h"
 
+struct INiagaraComputeDataBufferInterface;
 class FNiagaraDataSet;
 class FNiagaraSceneProxy;
 class FNiagaraGPURendererCount;
@@ -30,13 +31,10 @@ struct FNiagaraDynamicDataBase
 	NIAGARA_API explicit FNiagaraDynamicDataBase(const FNiagaraEmitterInstance* InEmitter);
 	NIAGARA_API virtual ~FNiagaraDynamicDataBase();
 
-	FNiagaraDynamicDataBase() = delete;
-	FNiagaraDynamicDataBase(FNiagaraDynamicDataBase& Other) = delete;
-	FNiagaraDynamicDataBase& operator=(const FNiagaraDynamicDataBase& Other) = delete;
+	UE_NONCOPYABLE(FNiagaraDynamicDataBase);
 
 	NIAGARA_API bool IsGpuLowLatencyTranslucencyEnabled() const;
 	NIAGARA_API FNiagaraDataBuffer* GetParticleDataToRender(bool bIsLowLatencyTranslucent = false) const;
-	FORCEINLINE ENiagaraSimTarget GetSimTarget() const { return SimTarget; }
 	FORCEINLINE FMaterialRelevance GetMaterialRelevance() const { return MaterialRelevance; }
 
 	FORCEINLINE void SetMaterialRelevance(FMaterialRelevance NewRelevance) { MaterialRelevance = NewRelevance; }
@@ -47,11 +45,10 @@ struct FNiagaraDynamicDataBase
 
 protected:
 	FMaterialRelevance MaterialRelevance;
-	ENiagaraSimTarget SimTarget;
 	FNiagaraSystemInstanceID SystemInstanceID;
 
 	FNiagaraDataBufferRef CPUParticleData;
-	FNiagaraComputeExecutionContext* GPUExecContext = nullptr;
+	INiagaraComputeDataBufferInterface* ComputeDataBufferInterface = nullptr;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -72,7 +69,6 @@ struct FParticleRenderData
 class FNiagaraRenderer
 {
 public:
-
 	NIAGARA_API FNiagaraRenderer(ERHIFeatureLevel::Type FeatureLevel, const UNiagaraRendererProperties *InProps, const FNiagaraEmitterInstance* Emitter);
 	NIAGARA_API virtual ~FNiagaraRenderer();
 
@@ -80,7 +76,7 @@ public:
 	FNiagaraRenderer& operator=(const FNiagaraRenderer& Other) = delete;
 
 	NIAGARA_API virtual void Initialize(const UNiagaraRendererProperties *InProps, const FNiagaraEmitterInstance* Emitter, const FNiagaraSystemInstanceController& InComponent);
-	virtual void CreateRenderThreadResources() {}
+	virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) {}
 	virtual void ReleaseRenderThreadResources() {}
 	virtual void DestroyRenderState_Concurrent() {}
 
@@ -92,6 +88,11 @@ public:
 	virtual int32 GetDynamicDataSize()const { return 0; }
 	virtual bool IsMaterialValid(const UMaterialInterface* Mat)const { return Mat != nullptr; }
 
+	// Determine if we are rendering into an opaque only view
+	static NIAGARA_API bool IsViewRenderingOpaqueOnly(const FSceneView* View, bool bCastsVolumetricTranslucentShadow);
+	static NIAGARA_API bool AreViewsRenderingOpaqueOnly(const TArray<const FSceneView*>& Views, int32 ViewVisibilityMask, bool bCastsVolumetricTranslucentShadow);
+
+	UE_DEPRECATED(5.4, "SortIndices method should be replaced with SortAndCullIndices")
 	static NIAGARA_API void SortIndices(const struct FNiagaraGPUSortInfo& SortInfo, const FNiagaraRendererVariableInfo& SortVariable, const FNiagaraDataBuffer& Buffer, FGlobalDynamicReadBuffer::FAllocation& OutIndices);
 	static NIAGARA_API int32 SortAndCullIndices(const FNiagaraGPUSortInfo& SortInfo, const FNiagaraDataBuffer& Buffer, FGlobalDynamicReadBuffer::FAllocation& OutIndices);
 

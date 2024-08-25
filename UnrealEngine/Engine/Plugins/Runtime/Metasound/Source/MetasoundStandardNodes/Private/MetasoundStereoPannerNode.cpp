@@ -50,7 +50,7 @@ namespace Metasound
 
 		static const FNodeClassMetadata& GetNodeInfo();
 		static const FVertexInterface& GetVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		FStereoPannerOperator(const FOperatorSettings& InSettings,
 			const FAudioBufferReadRef& InAudioInput, 
@@ -244,16 +244,15 @@ namespace Metasound
 		return Info;
 	}
 
-	TUniquePtr<IOperator> FStereoPannerOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FStereoPannerOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-		const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		using namespace StereoPannerVertexNames;
 
-		FAudioBufferReadRef AudioIn = InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
-		FFloatReadRef PanningAmount = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputPanAmount), InParams.OperatorSettings);
-		FPanningLawReadRef PanningLaw = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumPanningLaw>(InputInterface, METASOUND_GET_PARAM_NAME(InputPanningLaw), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
+		FFloatReadRef PanningAmount = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputPanAmount), InParams.OperatorSettings);
+		FPanningLawReadRef PanningLaw = InputData.GetOrCreateDefaultDataReadReference<FEnumPanningLaw>(METASOUND_GET_PARAM_NAME(InputPanningLaw), InParams.OperatorSettings);
 
 		return MakeUnique<FStereoPannerOperator>(InParams.OperatorSettings, AudioIn, PanningAmount, PanningLaw);
 	}

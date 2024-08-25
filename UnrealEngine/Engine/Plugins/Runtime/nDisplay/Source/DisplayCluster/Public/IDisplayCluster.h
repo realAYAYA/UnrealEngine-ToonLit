@@ -52,11 +52,15 @@ public:
 
 
 	/**
-	* Checks if the module has been initialized.
+	* [DEPRECATED] Checks if the module has been initialized.
 	*
 	* @return Is initialized
 	*/
-	virtual bool IsModuleInitialized() const = 0;
+	UE_DEPRECATED(5.4, "This function has been deprecated and will be removed soon.")
+	virtual bool IsModuleInitialized() const
+	{
+		return true;
+	}
 
 	/**
 	* Returns current operation mode.

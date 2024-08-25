@@ -37,15 +37,11 @@ public:
 	/** Initialize this level sequence. */
 	LEVELSEQUENCE_API virtual void Initialize();
 
-	/** Convert old-style lazy object ptrs to new-style references using the specified context */
-	LEVELSEQUENCE_API void ConvertPersistentBindingsToDefault(UObject* FixupContext);
-
 public:
 
 	// UMovieSceneSequence interface
 	LEVELSEQUENCE_API virtual void BindPossessableObject(const FGuid& ObjectId, UObject& PossessedObject, UObject* Context) override;
 	LEVELSEQUENCE_API virtual bool CanPossessObject(UObject& Object, UObject* InPlaybackContext) const override;
-	LEVELSEQUENCE_API virtual void LocateBoundObjects(const FGuid& ObjectId, UObject* Context, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const override;
 	LEVELSEQUENCE_API virtual FGuid FindBindingFromObject(UObject* InObject, UObject* Context) const override;
 	LEVELSEQUENCE_API virtual void GatherExpiredObjects(const FMovieSceneObjectCache& InObjectCache, TArray<FGuid>& OutInvalidIDs) const override;
 	LEVELSEQUENCE_API virtual UMovieScene* GetMovieScene() const override;
@@ -57,7 +53,8 @@ public:
 	LEVELSEQUENCE_API virtual bool CanRebindPossessable(const FMovieScenePossessable& InPossessable) const override;
 	LEVELSEQUENCE_API virtual UObject* MakeSpawnableTemplateFromInstance(UObject& InSourceObject, FName ObjectName) override;
 	LEVELSEQUENCE_API virtual bool CanAnimateObject(UObject& InObject) const override;
-	LEVELSEQUENCE_API virtual UObject* CreateDirectorInstance(IMovieScenePlayer& Player, FMovieSceneSequenceID SequenceID) override;
+	LEVELSEQUENCE_API virtual UObject* CreateDirectorInstance(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID SequenceID) override;
+	LEVELSEQUENCE_API virtual const FMovieSceneBindingReferences* GetBindingReferences() const override;
 	LEVELSEQUENCE_API virtual void PostLoad() override;
 #if WITH_EDITORONLY_DATA
 	static LEVELSEQUENCE_API void DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConstructClasses, const UClass* SpecificSubclass);
@@ -78,6 +75,8 @@ public:
 #if WITH_EDITOR
 	LEVELSEQUENCE_API virtual ETrackSupport IsTrackSupported(TSubclassOf<class UMovieSceneTrack> InTrackClass) const override;
 	LEVELSEQUENCE_API virtual void GetAssetRegistryTagMetadata(TMap<FName, FAssetRegistryTagMetadata>& OutMetadata) const override;
+	LEVELSEQUENCE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	LEVELSEQUENCE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	LEVELSEQUENCE_API virtual void PostLoadAssetRegistryTags(const FAssetData& InAssetData, TArray<FAssetRegistryTag>& OutTagsAndValuesToUpdate) const override;
 	
@@ -86,11 +85,15 @@ public:
 #endif
 
 	LEVELSEQUENCE_API virtual void PostDuplicate(bool bDuplicateForPIE) override;
-		
+
+	using UMovieSceneSequence::LocateBoundObjects;
+
 	UE_DEPRECATED(5.3, "Use LocateBoundObjects with FLocateBoundObjectsParams parameter instead")
 	void LocateBoundObjects(const FGuid& ObjectId, UObject* Context, const FTopLevelAssetPath& StreamedLevelAssetPath, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const	{}
 
+	UE_DEPRECATED(5.4, "Use the base class LocateBoundObjects()")
 	LEVELSEQUENCE_API void LocateBoundObjects(const FGuid& ObjectId, UObject* Context, const FLevelSequenceBindingReference::FResolveBindingParams& InResolveBindingParams, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const;
+
 #if WITH_EDITOR
 
 
@@ -123,19 +126,15 @@ protected:
 
 protected:
 
-	/** Legacy object references - should be read-only. Not deprecated because they need to still be saved */
-	UPROPERTY()
-	FLevelSequenceObjectReferenceMap ObjectReferences;
-
 	/** References to bound objects. */
 	UPROPERTY()
-	FLevelSequenceBindingReferences BindingReferences;
-
-	/** Deprecated property housing old possessed object bindings */
-	UPROPERTY()
-	TMap<FString, FLevelSequenceObject> PossessedObjects_DEPRECATED;
+	FUpgradedLevelSequenceBindingReferences BindingReferences;
 
 #if WITH_EDITORONLY_DATA
+
+	/** Legacy object references */
+	UPROPERTY()
+	FLevelSequenceObjectReferenceMap ObjectReferences_DEPRECATED;
 
 	/** A pointer to the director blueprint that generates this sequence's DirectorClass. */
 	UPROPERTY()
@@ -162,8 +161,9 @@ public:
 #if WITH_EDITORONLY_DATA
 		auto const* Found = MetaDataObjects.FindByPredicate([InClass](UObject* In) { return In && In->GetClass() == InClass; });
 		return Found ? CastChecked<UObject>(*Found) : nullptr;
-#endif
+#else
 		return nullptr;
+#endif
 	}
 
 	/**
@@ -182,8 +182,9 @@ public:
 			MetaDataObjects.Add(Found);
 		}
 		return Found;
-#endif
+#else
 		return nullptr;
+#endif
 	}
 
 	/**
@@ -207,8 +208,9 @@ public:
 		MetaDataObjects.Add(NewMetaData);
 
 		return NewMetaData;
-#endif	
+#else
 		return nullptr;
+#endif	
 	}
 
 	/**

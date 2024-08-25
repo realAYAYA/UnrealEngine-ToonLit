@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 float4 SHBasisFunctionFloat(float3 InputVector)
 {
 	float4 Result;

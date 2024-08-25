@@ -16,7 +16,7 @@ class UTransformableHandle;
 class UTransformableComponentHandle;
 class USceneComponent;
 enum class EMovieSceneTransformChannel : uint32;
-
+class UWorld;
 /** 
  * UTickableTransformConstraint
  **/
@@ -44,9 +44,12 @@ public:
 	CONSTRAINTS_API virtual bool HasBoundObjects() const override;
 	
 	/** Resolve the bound objects so that any object it references are resovled and correctly set up*/
-	CONSTRAINTS_API virtual void ResolveBoundObjects(FMovieSceneSequenceID LocalSequenceID, IMovieScenePlayer& Player,UObject* SubObject) override;
+	CONSTRAINTS_API virtual void ResolveBoundObjects(FMovieSceneSequenceID LocalSequenceID, IMovieScenePlayer& Player, UObject* SubObject = nullptr) override;
 
-	/** If Active and the handles and targets are valid*/
+	/** Whether or not it's valid for example it may not be fully loaded*/
+	virtual bool IsValid(const bool bDeepCheck = true) const override;
+
+	/** If Active and the handles and targets are valid, and tick function is registered*/
 	CONSTRAINTS_API virtual bool IsFullyActive() const override;
 
 	/** If that constraint needs to be handled by the compensation system. */
@@ -114,7 +117,7 @@ public:
 	/**
 	* Sets up dependencies with the first primary prerequisite available if the parent does not tick.   
 	*/
-	CONSTRAINTS_API void EnsurePrimaryDependency();
+	CONSTRAINTS_API void EnsurePrimaryDependency(UWorld* InWorld);
 	
 protected:
 
@@ -133,7 +136,7 @@ protected:
 	 * Sets up dependencies between the parent, the constraint and the child using their respective tick functions.
 	 * It creates a dependency graph between them so that they tick in the right order when evaluated.   
 	*/
-	CONSTRAINTS_API void SetupDependencies();
+	CONSTRAINTS_API void SetupDependencies(UWorld* InWorld);
 
 	/** Set the current child's global transform. */
 	CONSTRAINTS_API void SetChildGlobalTransform(const FTransform& InGlobal) const;
@@ -151,8 +154,11 @@ protected:
 	/** Returns the handle's tick function (ensuring it lives in the same world). */
 	CONSTRAINTS_API FTickFunction* GetHandleTickFunction(const TObjectPtr<UTransformableHandle>& InHandle) const;
 
+public:
 	/** (Re-)Registers the constraint function and (re-)binds the required delegates*/
-	CONSTRAINTS_API void InitConstraint();
+	CONSTRAINTS_API virtual void InitConstraint(UWorld * InWorld) override;
+	CONSTRAINTS_API virtual void TeardownConstraint(UWorld * InWorld) override;
+	CONSTRAINTS_API virtual void AddedToWorld(UWorld* InWorld) override;
 
 #if WITH_EDITOR
 public:
@@ -216,9 +222,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Offset", meta=(EditCondition="bMaintainOffset"))
 	FVector OffsetTranslation = FVector::ZeroVector;
 
-protected:
 	/** Defines which translation axis is constrained. */
-	UPROPERTY(BlueprintReadWrite, Category = "Axis Filter")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Axis Filter")
 	FFilterOptionPerAxis AxisFilter;
 
 #if WITH_EDITOR
@@ -265,9 +270,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Offset", meta=(EditCondition="bMaintainOffset"))
 	FQuat OffsetRotation = FQuat::Identity;
 
-protected:
 	/** Defines which rotation axis is constrained. */
-	UPROPERTY(BlueprintReadWrite, Category = "Axis Filter")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Axis Filter")
 	FFilterOptionPerAxis AxisFilter;
 
 #if WITH_EDITOR
@@ -313,9 +317,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Offset", meta=(EditCondition="bMaintainOffset"))
 	FVector OffsetScale = FVector::OneVector;
 
-protected:
 	/** Defines which scale axis is constrained. */
-	UPROPERTY(BlueprintReadWrite, Category = "Axis Filter")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Axis Filter")
 	FFilterOptionPerAxis AxisFilter;
 
 #if WITH_EDITOR
@@ -373,13 +376,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Offset", meta=(EditCondition="bMaintainOffset"))
 	FTransform OffsetTransform = FTransform::Identity;
 
-protected:
 	/** Defines whether we propagate the parent scale. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Properties")
 	bool bScaling = false;
 
 	/** Defines which translation/rotation/scale axis are constrained. */
-	UPROPERTY(BlueprintReadWrite, Category = "Axis Filter") 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Axis Filter") 
 	FTransformFilter TransformFilter;
 
 #if WITH_EDITOR
@@ -441,18 +443,18 @@ struct FTransformConstraintUtils
 	static CONSTRAINTS_API void GetParentConstraints(
 		UWorld* World,
 		const AActor* InChild,
-		TArray< TObjectPtr<UTickableConstraint> >& OutConstraints);
+		TArray< TWeakObjectPtr<UTickableConstraint> >& OutConstraints);
 
 	/** Create a handle for the scene component.*/
 	static CONSTRAINTS_API UTransformableComponentHandle* CreateHandleForSceneComponent(
 		USceneComponent* InSceneComponent,
-		const FName& InSocketName,
-		UObject* Outer);
+		const FName& InSocketName);
 
 	/** Creates a new transform constraint based on the InType. */
 	static CONSTRAINTS_API UTickableTransformConstraint* CreateFromType(
 		UWorld* InWorld,
-		const ETransformConstraintType InType);
+		const ETransformConstraintType InType,
+		const bool bUseDefault = false);
 
 	/** Creates respective handles and creates a new InType transform constraint. */	
 	static CONSTRAINTS_API UTickableTransformConstraint* CreateAndAddFromObjects(
@@ -460,7 +462,8 @@ struct FTransformConstraintUtils
 		UObject* InParent, const FName& InParentSocketName,
 		UObject* InChild, const FName& InChildSocketName,
 		const ETransformConstraintType InType,
-		const bool bMaintainOffset = true);
+		const bool bMaintainOffset = true,
+		const bool bUseDefault = false);
 
 	/** Registers a new transform constraint within the constraints manager. */	
 	static CONSTRAINTS_API bool AddConstraint(
@@ -468,7 +471,8 @@ struct FTransformConstraintUtils
 		UTransformableHandle* InParentHandle,
 		UTransformableHandle* InChildHandle,
 		UTickableTransformConstraint* Constraint,
-		const bool bMaintainOffset = true);
+		const bool bMaintainOffset = true,
+		const bool bUseDefault = false);
 
 	/** Computes the relative transform between both transform based on the constraint's InType. */
 	static CONSTRAINTS_API FTransform ComputeRelativeTransform(
@@ -480,15 +484,54 @@ struct FTransformConstraintUtils
 	/** Computes the current constraint space local transform. */
 	static CONSTRAINTS_API TOptional<FTransform> GetRelativeTransform(UWorld* InWorld, const uint32 InHandleHash);
 	static CONSTRAINTS_API TOptional<FTransform> GetConstraintsRelativeTransform(
-		const TArray< TObjectPtr<UTickableConstraint> >& InConstraints,
+		const TArray< TWeakObjectPtr<UTickableConstraint> >& InConstraints,
 		const FTransform& InChildLocal, const FTransform& InChildWorld);
 
 	/** Get the last active constraint that has dynamic offset. */
-	static CONSTRAINTS_API int32 GetLastActiveConstraintIndex(const TArray< TObjectPtr<UTickableConstraint> >& InConstraints);
+	static CONSTRAINTS_API int32 GetLastActiveConstraintIndex(const TArray< TWeakObjectPtr<UTickableConstraint> >& InConstraints);
 
-	/** Fills a constraint array that InParentHandle is the parent of. */
+	/**
+	 * Fills a constraint array that InConstraint->ChildHandle is the parent of.
+	 * If bIncludeTarget is true, we also get the other constraints that act on the same target.
+	 */
 	static CONSTRAINTS_API void GetChildrenConstraints(
 		UWorld* World,
-		const UTransformableHandle* InParentHandle,
-		TArray< TObjectPtr<UTickableConstraint> >& OutConstraints);
+		const UTickableTransformConstraint* InConstraint,
+		TArray< TWeakObjectPtr<UTickableConstraint> >& OutConstraints,
+		const bool bIncludeTarget = false);
+	
+	/** Adjust the transform on a scene component so it's effected by the constraint*/
+	static CONSTRAINTS_API void UpdateTransformBasedOnConstraint(FTransform& CurrentTransform, USceneComponent* SceneComponent);
+
+	/** Ensure default dependencies between constraints. */
+	static CONSTRAINTS_API bool BuildDependencies(UWorld* InWorld, UTickableTransformConstraint* Constraint);
+};
+
+/**
+ * FConstraintDependencyScope provides a way to build constraint dependencies when the constraint is not valid when added to the subsystem
+ * but after (when resolving sequencer or control rig bindings).
+ * The dependencies will be built on destruction if the constraint's validity changed within the lifetime of that object.
+ */
+
+struct FConstraintDependencyScope
+{
+	FConstraintDependencyScope(UTickableTransformConstraint* InConstraint, UWorld* InWorld = nullptr);
+	~FConstraintDependencyScope();
+private:
+	TWeakObjectPtr<UTickableTransformConstraint> WeakConstraint = nullptr;
+	TWeakObjectPtr<UWorld> WeakWorld = nullptr;
+	bool bPreviousValidity = false;
+};
+
+/**
+ * FHandleDependencyChecker provides a way to check (direct + constraints + tick) dependencies between two UTransformableHandle
+ * HasDependency will return true if InHandle depends on InParentToCheck.
+ */
+
+struct FHandleDependencyChecker
+{
+	FHandleDependencyChecker(UWorld* InWorld = nullptr);
+	bool HasDependency(const UTransformableHandle& InHandle, const UTransformableHandle& InParentToCheck) const;		
+private:
+	TWeakObjectPtr<UWorld> WeakWorld = nullptr;
 };

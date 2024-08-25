@@ -39,9 +39,10 @@ void UDataprepAssetInterface::PostLoad()
 
 		FAssetRegistryModule::AssetCreated( Inputs );
 		Inputs->MarkPackageDirty();
-
-		Inputs->GetOnChanged().AddUObject( this, &UDataprepAssetInterface::OnProducersChanged );
 	}
+
+	ensure(Inputs);
+	Inputs->GetOnChanged().AddUObject(this, &UDataprepAssetInterface::OnProducersChanged);
 
 	if(Output != nullptr)
 	{

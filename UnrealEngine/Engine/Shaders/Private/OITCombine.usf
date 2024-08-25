@@ -19,19 +19,8 @@ uint Method;
 uint PassType;
 uint SupportedPass;
 
-Texture2D<uint>	SampleColorTexture;
-Texture2D<uint>	SampleTransTexture;
-Texture2D<float>SampleDepthTexture;
+Texture2DArray<uint> SampleDataTexture;
 Texture2D<uint>	SampleCountTexture;
-
-FOITSample OITLoadSample(uint2 InPixelCoord)
-{
-	FOITPackedSample Packed = (FOITPackedSample)0;
-	Packed.Depth = SampleDepthTexture.Load(uint3(InPixelCoord, 0));
-	Packed.Color = SampleColorTexture.Load(uint3(InPixelCoord, 0));
-	Packed.Trans = SampleTransTexture.Load(uint3(InPixelCoord, 0));
-	return UnpackOITSample(Packed);
-}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Combine
@@ -61,7 +50,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		const uint2 SampleOffset = uint2(SampleIt % MaxSideSampleCount, SampleIt / MaxSideSampleCount);
 		const uint2 SampleCoord  = SampleBaseCoord + SampleOffset;
 
-		FOITSample Current = OITLoadSample(SampleCoord);
+		FOITSample Current = OITLoadSample(SampleDataTexture, SampleCoord);
 		if (SampleIt > 0)
 		{
 			for (uint j = 0; j <= SampleIt; ++j)
@@ -200,7 +189,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			const uint2 SampleOffset = uint2(SampleIt % MaxSideSampleCount, SampleIt / MaxSideSampleCount);
 			const uint2 SampleCoord = SampleBaseCoord + SampleOffset;
 
-			const FOITSample Sample = OITLoadSample(SampleCoord);
+			const FOITSample Sample = OITLoadSample(SampleDataTexture, SampleCoord);
 
 			Print(Context, TEXT("Depth "), FontYellow);
 			Print(Context, Sample.Depth, FontYellow);

@@ -8,6 +8,50 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AssetManagerTypes)
 
+bool FPrimaryAssetTypeInfo::HasValidConfigData() const
+{
+	if (PrimaryAssetType == NAME_None)
+	{
+		return false;
+	}
+
+	if (AssetBaseClass.IsNull())
+	{
+		return false;
+	}
+
+	// No paths are required
+
+	return true;
+}
+
+bool FPrimaryAssetTypeInfo::CanModifyConfigData() const
+{
+	// Can't modify config data after adding paths
+	return AssetScanPaths.Num() == 0;
+}
+
+bool FPrimaryAssetTypeInfo::HasValidRuntimeData() const
+{
+	if (PrimaryAssetType == NAME_None)
+	{
+		return false;
+	}
+
+	if (AssetBaseClassLoaded == nullptr)
+	{
+		return false;
+	}
+
+	// Invalid if the paths haven't been copied over yet, this is valid if all paths are empty
+	if ((AssetScanPaths.Num() == 0) && (Directories.Num() + SpecificAssets.Num() > 0))
+	{
+		return false;
+	}
+
+	return true;
+}
+
 void FPrimaryAssetTypeInfo::FillRuntimeData(bool& bIsValid, bool& bBaseClassWasLoaded)
 {
 	bBaseClassWasLoaded = false;
@@ -57,7 +101,7 @@ void FPrimaryAssetTypeInfo::FillRuntimeData(bool& bIsValid, bool& bBaseClassWasL
 	}
 
 	// Valid data, it's fine for a type to have no scan directories
-	bIsValid = true;
+	bIsValid = ensureMsgf(HasValidRuntimeData(), TEXT("Failed to FillRuntimeData for Primary Asset Type %s"), *PrimaryAssetType.ToString());
 }
 
 bool FPrimaryAssetRules::IsDefault() const

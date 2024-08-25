@@ -25,7 +25,7 @@ void UMorphTarget::Serialize( FArchive& Ar )
 	Ar.UsingCustomVersion(FEditorObjectVersion::GUID);
 
 	FStripDataFlags StripFlags( Ar );
-	if( !StripFlags.IsDataStrippedForServer() )
+	if( !StripFlags.IsAudioVisualDataStripped() )
 	{
 		Ar << MorphLODModels;
 	}

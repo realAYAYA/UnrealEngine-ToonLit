@@ -6,6 +6,7 @@
 #include "Editor/UnrealEdEngine.h"
 #include "Sections/TransformPropertySection.h"
 #include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "MovieSceneToolHelpers.h"
 #include "Evaluation/MovieScenePropertyTemplate.h"
 
@@ -38,13 +39,7 @@ TSharedPtr<SWidget> FTransformPropertyTrackEditor::BuildOutlinerEditWidget(const
 		return MenuBuilder.MakeWidget();
 	};
 
-	return SNew(SHorizontalBox)
-	+ SHorizontalBox::Slot()
-	.AutoWidth()
-	.VAlign(VAlign_Center)
-	[
-		FSequencerUtilities::MakeAddButton(NSLOCTEXT("FTransformPropertyTrackEditor", "AddSection", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-	];
+	return UE::Sequencer::MakeAddButton(NSLOCTEXT("FTransformPropertyTrackEditor", "AddSection", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.ViewModel);
 }
 
 

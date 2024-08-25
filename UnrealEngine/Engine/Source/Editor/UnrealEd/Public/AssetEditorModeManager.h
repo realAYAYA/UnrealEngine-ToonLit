@@ -6,6 +6,7 @@
 #include "EditorModeManager.h"
 
 class FPreviewScene;
+class UWorld;
 
 //////////////////////////////////////////////////////////////////////////
 // FAssetEditorModeManager
@@ -31,4 +32,5 @@ protected:
 	USelection* ObjectSet = nullptr;
 	USelection* ComponentSet = nullptr;
 	FPreviewScene* PreviewScene = nullptr;
+	TWeakObjectPtr<UWorld> PreviewSceneWorld = nullptr;
 };

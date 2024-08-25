@@ -101,6 +101,43 @@ void FEditToolDragOperation::EndTransaction()
 	Sequencer.NotifyMovieSceneDataChanged( EMovieSceneDataChangeType::TrackValueChanged );
 }
 
+TRange<FFrameNumber> FEditToolDragOperation::GetSectionBoundaries(const UMovieSceneSection* Section)
+{
+	using namespace UE::Sequencer;
+
+	// Find the borders of where you can drag to
+	FFrameNumber LowerBound = TNumericLimits<int32>::Lowest(), UpperBound = TNumericLimits<int32>::Max();
+
+	// Find the track node for this section
+	TSharedPtr<FSectionModel> SectionHandle = Sequencer.GetNodeTree()->GetSectionModel(Section);
+	if (SectionHandle)
+	{
+		// Get the closest borders on either side
+		TViewModelPtr<ITrackAreaExtension> TrackModel = SectionHandle->FindAncestorOfType<ITrackAreaExtension>();
+		for (const TViewModelPtr<FSectionModel>& SectionModel : TrackModel->GetTrackAreaModelListAs<FSectionModel>())
+		{
+			const UMovieSceneSection* TestSection = SectionModel->GetSection();
+			TArray<UMovieSceneSection*> Sections;
+			GetSections(Sections);
+			if (!TestSection || Sections.Contains(TestSection))
+			{
+				continue;
+			}
+
+			if (TestSection->HasEndFrame() && Section->HasStartFrame() && TestSection->GetExclusiveEndFrame() <= Section->GetInclusiveStartFrame() && TestSection->GetExclusiveEndFrame() > LowerBound)
+			{
+				LowerBound = TestSection->GetExclusiveEndFrame();
+			}
+			if (TestSection->HasStartFrame() && Section->HasEndFrame() && TestSection->GetInclusiveStartFrame() >= Section->GetExclusiveEndFrame() && TestSection->GetInclusiveStartFrame() < UpperBound)
+			{
+				UpperBound = TestSection->GetInclusiveStartFrame();
+			}
+		}
+	}
+
+	return TRange<FFrameNumber>(LowerBound, UpperBound);
+}
+
 FResizeSection::FResizeSection( FSequencer& InSequencer, bool bInDraggingByEnd, bool bInIsSlipping )
 	: FEditToolDragOperation( InSequencer )
 	, bDraggingByEnd(bInDraggingByEnd)
@@ -142,6 +179,7 @@ void FResizeSection::OnBeginDrag(const FPointerEvent& MouseEvent, FVector2D Loca
 	FInvalidKeyAndSectionSnappingCandidates SnapCandidates(EmptyKeySet, Sections);
 	SnapField = FSequencerSnapField(Sequencer, SnapCandidates, ESequencerEntity::Section | ESequencerEntity::Key);
 	SnapField.GetValue().SetSnapToInterval(Sequencer.GetSequencerSettings()->GetSnapSectionTimesToInterval());
+	SnapField.GetValue().SetSnapToLikeTypes(Sequencer.GetSequencerSettings()->GetSnapSectionTimesToSections());
 
 	SectionInitTimes.Empty();
 
@@ -279,6 +317,32 @@ void FResizeSection::OnDrag(const FPointerEvent& MouseEvent, FVector2D LocalMous
 			DeltaTime += (SnappedTime->SnappedTime - SnappedTime->OriginalTime).RoundToFrame();
 		}
 	}
+
+
+	auto GetMovementMaximums = [this](const UMovieSceneSection* Section, TOptional<FFrameNumber>& LeftMovementMaximum, TOptional<FFrameNumber>& RightMovementMaximum)
+	{
+		// We'll calculate this section's borders and clamp the possible delta time to be less than that
+
+		if (!Section->GetBlendType().IsValid())
+		{
+			TRange<FFrameNumber> SectionBoundaries = GetSectionBoundaries(Section);
+			LeftMovementMaximum = UE::MovieScene::DiscreteInclusiveLower(SectionBoundaries);
+			RightMovementMaximum = UE::MovieScene::DiscreteExclusiveUpper(SectionBoundaries);
+		}
+
+		if (Settings->GetIsSnapEnabled() && Settings->GetSnapKeysAndSectionsToPlayRange() && !Settings->ShouldKeepPlayRangeInSectionBounds())
+		{
+			if (!LeftMovementMaximum.IsSet() || LeftMovementMaximum.GetValue() < Sequencer.GetPlaybackRange().GetLowerBoundValue())
+			{
+				LeftMovementMaximum = Sequencer.GetPlaybackRange().GetLowerBoundValue();
+			}
+
+			if (!RightMovementMaximum.IsSet() || RightMovementMaximum.GetValue() > Sequencer.GetPlaybackRange().GetUpperBoundValue())
+			{
+				RightMovementMaximum = Sequencer.GetPlaybackRange().GetUpperBoundValue();
+			}
+		}
+	};
 	
 	/********************************************************************/
 	EMovieSceneSectionMovedResult SectionMovedResult(EMovieSceneSectionMovedResult::None);
@@ -288,6 +352,10 @@ void FResizeSection::OnDrag(const FPointerEvent& MouseEvent, FVector2D LocalMous
 		{
 			// It is only valid to dilate a fixed bound. Tracks can have mixed bounds types (ie: infinite upper, closed lower)
 			check(bDraggingByEnd ? Data.InitialRange.GetUpperBound().IsClosed() : Data.InitialRange.GetLowerBound().IsClosed());
+
+			TOptional<FFrameNumber> LeftMovementMaximum;
+			TOptional<FFrameNumber> RightMovementMaximum;
+			GetMovementMaximums(Data.MovieSection, LeftMovementMaximum, RightMovementMaximum);
 
 			FFrameNumber StartPosition  = bDraggingByEnd ? UE::MovieScene::DiscreteExclusiveUpper(Data.InitialRange) : UE::MovieScene::DiscreteInclusiveLower(Data.InitialRange);
 
@@ -325,7 +393,8 @@ void FResizeSection::OnDrag(const FPointerEvent& MouseEvent, FVector2D LocalMous
 			DataRange.SetLowerBound(TRangeBound<FFrameNumber>(DilationOrigin < StartPosition ? DilationOrigin : StartPosition));
 			DataRange.SetUpperBound(TRangeBound<FFrameNumber>(DilationOrigin > StartPosition ? DilationOrigin : StartPosition));
 
-			FFrameNumber NewPosition    = bDraggingByEnd ? FMath::Max(StartPosition + DeltaTime, DilationOrigin) : FMath::Min(StartPosition + DeltaTime, DilationOrigin);
+			FFrameNumber NewPosition    = bDraggingByEnd ? FMath::Clamp(StartPosition + DeltaTime, DilationOrigin, RightMovementMaximum.Get(TNumericLimits<int32>::Max()))
+														 : FMath::Clamp(StartPosition + DeltaTime, LeftMovementMaximum.Get(TNumericLimits<int32>::Lowest()), DilationOrigin);
 
 			float DilationFactor = FMath::Abs(NewPosition.Value - DilationOrigin.Value) / float(UE::MovieScene::DiscreteSize(DataRange));
 
@@ -382,6 +451,10 @@ void FResizeSection::OnDrag(const FPointerEvent& MouseEvent, FVector2D LocalMous
 			continue;
 		}
 
+		TOptional<FFrameNumber> LeftMovementMaximum;
+		TOptional<FFrameNumber> RightMovementMaximum;
+		GetMovementMaximums(Section, LeftMovementMaximum, RightMovementMaximum);
+
 		TSharedPtr<ISequencerSection> SectionInterface = SectionHandle->GetSectionInterface();
 
 		FFrameNumber NewTime = SectionInitTimes[Section] + DeltaTime;
@@ -396,9 +469,11 @@ void FResizeSection::OnDrag(const FPointerEvent& MouseEvent, FVector2D LocalMous
 				MinFrame = MinFrame + IntervalSnapThreshold;
 			}
 
+			FFrameNumber MaxFrame = RightMovementMaximum.Get(TNumericLimits<int32>::Max());
+
 			// Dragging the end of a section
-			// Ensure we aren't shrinking past the start time
-			NewTime = FMath::Max( NewTime, MinFrame );
+			// Ensure we aren't shrinking past the start time or into another section if we can't blend
+			NewTime = FMath::Clamp( NewTime, MinFrame, MaxFrame );
 			if (bIsSlipping)
 			{
 				SectionInterface->SlipSection( NewTime );
@@ -418,9 +493,11 @@ void FResizeSection::OnDrag(const FPointerEvent& MouseEvent, FVector2D LocalMous
 				MaxFrame = MaxFrame - IntervalSnapThreshold;
 			}
 
+			FFrameNumber MinFrame = LeftMovementMaximum.Get(TNumericLimits<int32>::Lowest());
+
 			// Dragging the start of a section
-			// Ensure we arent expanding past the end time
-			NewTime = FMath::Min( NewTime, MaxFrame );
+			// Ensure we arent expanding past the end time or into another section if we can't blend
+			NewTime = FMath::Clamp( NewTime, MinFrame, MaxFrame );
 
 			if (bIsSlipping)
 			{
@@ -931,41 +1008,6 @@ void FMoveKeysAndSections::ModifyNonSelectedSections()
 	}
 }
 
-TRange<FFrameNumber> FMoveKeysAndSections::GetSectionBoundaries(const UMovieSceneSection* Section)
-{
-	using namespace UE::Sequencer;
-
-	// Find the borders of where you can drag to
-	FFrameNumber LowerBound = TNumericLimits<int32>::Lowest(), UpperBound = TNumericLimits<int32>::Max();
-
-	// Find the track node for this section
-	TSharedPtr<FSectionModel> SectionHandle = Sequencer.GetNodeTree()->GetSectionModel(Section);
-	if (SectionHandle)
-	{
-		// Get the closest borders on either side
-		TViewModelPtr<ITrackAreaExtension> TrackModel = SectionHandle->FindAncestorOfType<ITrackAreaExtension>();
-		for (const TViewModelPtr<FSectionModel>& SectionModel : TrackModel->GetTrackAreaModelListAs<FSectionModel>())
-		{
-			const UMovieSceneSection* TestSection = SectionModel->GetSection();
-			if (!TestSection || Sections.Contains(TestSection))
-			{
-				continue;
-			}
-
-			if (TestSection->HasEndFrame() && Section->HasStartFrame() && TestSection->GetExclusiveEndFrame() <= Section->GetInclusiveStartFrame() && TestSection->GetExclusiveEndFrame() > LowerBound)
-			{
-				LowerBound = TestSection->GetExclusiveEndFrame();
-			}
-			if (TestSection->HasStartFrame() && Section->HasEndFrame() && TestSection->GetInclusiveStartFrame() >= Section->GetExclusiveEndFrame() && TestSection->GetInclusiveStartFrame() < UpperBound)
-			{
-				UpperBound = TestSection->GetInclusiveStartFrame();
-			}
-		}
-	}
-
-	return TRange<FFrameNumber>(LowerBound, UpperBound);
-}
-
 TOptional<FFrameNumber> FMoveKeysAndSections::GetMovementDeltaX(FFrameTime MouseTime)
 {
 	TOptional<FFrameNumber> DeltaX;
@@ -1107,10 +1149,6 @@ bool FMoveKeysAndSections::HandleSectionMovement(FFrameTime MouseTime, FVector2D
 		{
 			HighestRowIndex = Section->GetRowIndex();
 		}
-		if (LowestRowIndex.IsSet() && LowestRowIndex.GetValue() != Section->GetRowIndex())
-		{
-			bSectionsAreOnDifferentRows = true;
-		}
 		if (FirstTrack)
 		{
 			if (FirstTrack != Track)
@@ -1122,6 +1160,11 @@ bool FMoveKeysAndSections::HandleSectionMovement(FFrameTime MouseTime, FVector2D
 		{
 			FirstTrack = Track;
 		}
+	}
+
+	if (LowestRowIndex.IsSet() && HighestRowIndex.IsSet() && LowestRowIndex.GetValue() != HighestRowIndex.GetValue())
+	{
+		bSectionsAreOnDifferentRows = true;
 	}
 
 	TArray<TSharedPtr<FViewModel>> Tracks;
@@ -1186,11 +1229,8 @@ bool FMoveKeysAndSections::HandleSectionMovement(FFrameTime MouseTime, FVector2D
 				const float VirtualRowHeight = VirtualSectionHeight / NumRows;
 				const float MouseOffsetWithinRow = VirtualMousePos.Y - (VirtualGeometry.Top + (VirtualRowHeight * TargetRowIndex));
 
-				if (MouseOffsetWithinRow < VirtualRowHeight || MouseOffsetWithinRow > VirtualRowHeight)
-				{
-					const int32 NewIndex = FMath::FloorToInt((VirtualMousePos.Y - VirtualGeometry.Top) / VirtualRowHeight);
-					TargetRowIndex = FMath::Clamp(NewIndex, 0, MaxRowIndex);
-				}
+				const int32 NewIndex = FMath::FloorToInt((VirtualMousePos.Y - VirtualGeometry.Top) / VirtualRowHeight);
+				TargetRowIndex = FMath::Clamp(NewIndex, 0, MaxRowIndex);
 
 				// If close to the top of the row, move else everything down
 				if (VirtualMousePos.Y <= VirtualGeometry.Top || LocalMousePos.Y <= 0)
@@ -1479,8 +1519,9 @@ void FMoveKeysAndSections::HandleMarkedFrameMovement(TOptional<FFrameNumber> Max
 	UMovieScene* FocusedMovieScene = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene();
 	const TArray<FMovieSceneMarkedFrame>& AllMarkedFrames = FocusedMovieScene->GetMarkedFrames();
 
-	for (int32 MarkIndex = 0; MarkIndex < MarkedFrames.Num(); ++MarkIndex)
+	for (TSet<int32>::TConstIterator It = MarkedFrames.CreateConstIterator(); It; ++It)
 	{
+		const int32 MarkIndex = *It;
 		const FMovieSceneMarkedFrame& MarkedFrame = AllMarkedFrames[MarkIndex];
 		const FFrameNumber NewMarkTime = MarkedFrame.FrameNumber + EffectiveDelta;
 		FocusedMovieScene->SetMarkedFrame(MarkIndex, NewMarkTime);

@@ -15,6 +15,7 @@
 #include "ShaderCompilerCore.h"
 #include "Lumen/LumenHardwareRayTracingCommon.h"
 #include "Nanite/NaniteRayTracing.h"
+#include "Lumen/LumenReflections.h"
 
 static TAutoConsoleVariable<float> CVarLumenHardwareRayTracingSkipBackFaceHitDistance(
 	TEXT("r.Lumen.HardwareRayTracing.SkipBackFaceHitDistance"),
@@ -37,7 +38,7 @@ namespace LumenHardwareRayTracing
 	constexpr uint32 NumHitGroups = 2;
 };
 
-IMPLEMENT_RT_PAYLOAD_TYPE(ERayTracingPayloadType::LumenMinimal, 20);
+IMPLEMENT_RT_PAYLOAD_TYPE(ERayTracingPayloadType::LumenMinimal, 16);
 
 IMPLEMENT_UNIFORM_BUFFER_STRUCT(FLumenHardwareRayTracingUniformBufferParameters, "LumenHardwareRayTracingUniformBuffer");
 
@@ -65,12 +66,7 @@ class FLumenHardwareRayTracingMaterialHitGroup : public FGlobalShader
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-
-		FPermutationDomain PermutationVector(Parameters.PermutationId);		
-		if (PermutationVector.Get<FNaniteRayTracing>())
-		{
-			OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
-		}
+		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
 	}
 
 	static ERayTracingPayloadType GetRayTracingPayloadType(const int32 PermutationId)
@@ -121,13 +117,15 @@ void FDeferredShadingSceneRenderer::SetupLumenHardwareRayTracingUniformBuffer(FR
 {
 	FLumenHardwareRayTracingUniformBufferParameters* LumenHardwareRayTracingUniformBufferParameters = GraphBuilder.AllocParameters<FLumenHardwareRayTracingUniformBufferParameters>();
 	LumenHardwareRayTracingUniformBufferParameters->SkipBackFaceHitDistance = CVarLumenHardwareRayTracingSkipBackFaceHitDistance.GetValueOnRenderThread();
-	LumenHardwareRayTracingUniformBufferParameters->SkipTwoSidedHitDistance = CVarLumenHardwareRayTracingSkipTwoSidedHitDistance.GetValueOnRenderThread();;
+	LumenHardwareRayTracingUniformBufferParameters->SkipTwoSidedHitDistance = CVarLumenHardwareRayTracingSkipTwoSidedHitDistance.GetValueOnRenderThread();
+	LumenHardwareRayTracingUniformBufferParameters->SkipTranslucent         = LumenReflections::UseTranslucentRayTracing(View) ? 0.0f : 1.0f;
 	View.LumenHardwareRayTracingUniformBuffer = GraphBuilder.CreateUniformBuffer(LumenHardwareRayTracingUniformBufferParameters);
 }
 
 uint32 CalculateLumenHardwareRayTracingUserData(const FRayTracingMeshCommand& MeshCommand)
 {
-	return (MeshCommand.MaterialShaderIndex & 0x3FFFFFFF)
+	return (MeshCommand.MaterialShaderIndex & LUMEN_MATERIAL_SHADER_INDEX_MASK)
+		| (((MeshCommand.bCastRayTracedShadows != 0) & 0x01) << 29)
 		| (((MeshCommand.bTwoSided != 0) & 0x01) << 30)
 		| (((MeshCommand.bIsTranslucent != 0) & 0x01) << 31);
 }

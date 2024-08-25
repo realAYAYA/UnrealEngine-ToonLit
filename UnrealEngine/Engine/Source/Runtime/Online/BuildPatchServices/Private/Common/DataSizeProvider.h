@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/ContainersFwd.h"
 
 namespace BuildPatchServices
 {
@@ -11,5 +12,6 @@ namespace BuildPatchServices
 		virtual ~IDataSizeProvider() {}
 
 		virtual uint64 GetDownloadSize(const FString& Uri) const = 0;
+		virtual void GetDownloadSize(TConstArrayView<FString> InUris, TArray<uint64>& OutSizes) const = 0;
 	};
 }

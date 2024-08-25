@@ -17,8 +17,8 @@ public:
 		if (FIOSTargetPlatform::IsUsable())
 		{
 			// add Game and Client TPs
-			TargetPlatforms.Add(new FIOSTargetPlatform(true, false));
-			TargetPlatforms.Add(new FIOSTargetPlatform(true, true));
+			TargetPlatforms.Add(new FIOSTargetPlatform(true, false, false));
+			TargetPlatforms.Add(new FIOSTargetPlatform(true, false, true));
 		}
 	}
 

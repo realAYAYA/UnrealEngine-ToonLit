@@ -24,9 +24,11 @@ class ANIMATIONMODIFIERS_API UAnimationModifiersAssetUserData : public UAssetUse
 
 	friend class SAnimationModifiersTab;
 	friend class SAnimationModifierContentBrowserWindow;
+	friend class SRemoveAnimationModifierContentBrowserWindow;
 	friend class FAnimationModifiersModule;
 	friend class UAnimationModifier;
 public:
+	UAnimationModifiersAssetUserData(const FObjectInitializer& ObjectInitializer);
 	const TArray<UAnimationModifier*>& GetAnimationModifierInstances() const;
 protected:	 
 	/** Begin UAssetUserData overrides */

@@ -9,6 +9,7 @@
 #include "Sound/DialogueSoundWaveProxy.h"
 #include "Sound/DialogueVoice.h"
 #include "SubtitleManager.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DialogueWave)
 
@@ -539,7 +540,14 @@ FString UDialogueWave::GetDesc()
 
 void UDialogueWave::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UDialogueWave::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UDialogueWave::PostDuplicate(bool bDuplicateForPIE)

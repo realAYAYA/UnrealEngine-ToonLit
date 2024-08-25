@@ -3,7 +3,7 @@
   <Name>OpenSubdiv</Name>
   <Location>Engine/Source/ThirdParty/OpenSubdiv</Location>
   <Function>OpenSubdiv is a set of open source libraries that implement high-performance subdivision surface (subdiv) evaluation on massively parallel CPU and GPU architectures.</Function>
-  <Eula>https://github.com/PixarAnimationStudios/OpenSubdiv/blob/v3_4_4/LICENSE.txt</Eula>
+  <Eula>https://github.com/PixarAnimationStudios/OpenSubdiv/blob/v3_6_0/LICENSE.txt</Eula>
   <RedistributeTo>
     <EndUserGroup>Licensees</EndUserGroup>
     <EndUserGroup>Git</EndUserGroup>

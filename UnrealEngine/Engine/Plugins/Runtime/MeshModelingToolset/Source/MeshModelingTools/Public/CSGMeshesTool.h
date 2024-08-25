@@ -161,6 +161,23 @@ protected:
 
 	// update the material of ghostly preview meshes (used to show trimming or subtracting surface)
 	void UpdatePreviewsMaterial();
+
+	virtual bool KeepCollisionFrom(int32 TargetIdx) const override
+	{
+		if (bTrimMode)
+		{
+			return static_cast<int32>(TrimProperties->WhichMesh) == TargetIdx;
+		}
+		else if (CSGProperties->Operation == ECSGOperation::DifferenceAB)
+		{
+			return TargetIdx == 0;
+		}
+		else if (CSGProperties->Operation == ECSGOperation::DifferenceBA)
+		{
+			return TargetIdx == 1;
+		}
+		return true;
+	}
 };
 
 

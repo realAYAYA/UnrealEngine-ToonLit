@@ -3,7 +3,9 @@
 #pragma once
 
 #include "IRemoteControlUIModule.h"
+#include "Misc/TextFilter.h"
 #include "RemoteControlPreset.h"
+#include "SRCPanelExposedEntitiesGroup.h"
 #include "SRCPanelTreeNode.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/SCompoundWidget.h"
@@ -20,11 +22,14 @@ struct FRemoteControlProperty;
 struct FRemoteControlPresetGroup;
 struct FRemoteControlFunction;
 class ITableRow;
+class SComboButton;
 class SRCHeaderRow;
+class SRCPanelFilter;
 class SRCPanelGroup;
 struct SRCPanelTreeNode;
 class SRemoteControlTarget;
 struct SRCPanelExposedField;
+class SSearchBox;
 class STableViewBase;
 class URemoteControlPreset;
 struct FRCPanelStyle;
@@ -33,6 +38,14 @@ enum class EEntitiesListMode : uint8
 {
 	Default,
 	Protocols
+};
+
+/** Ordering types while grouping is active */
+enum class ERCGroupOrder
+{
+	None,
+	Ascending,
+	Descending
 };
 
 /** Holds information about a group drag and drop event  */
@@ -80,7 +93,16 @@ public:
 	
 	/** Get the currently selected exposed entity. */
 	TSharedPtr<SRCPanelTreeNode> GetSelectedEntity() const;
-	
+
+	/** Get the currently selected exposed entities. */
+	TArray<TSharedPtr<SRCPanelTreeNode>> GetSelectedEntities() const;
+
+	/** Get the currently selected exposed entities. */
+	int32 GetSelectedEntitiesNum() const;
+
+	/** Return true if the given node is currently selected. */
+	bool IsEntitySelected(const TSharedPtr<SRCPanelTreeNode>& InNode) const;
+
 	/** Set the currently selected group or exposed entity. */
 	void SetSelection(const TSharedPtr<SRCPanelTreeNode>& Node, const bool bForceMouseClick = false);
 
@@ -104,7 +126,13 @@ public:
 
 	/** Returns delegate triggered upon a modification to an exposed entity. */
 	FSimpleDelegate OnEntityListUpdated() { return OnEntityListUpdatedDelegate; }
-	
+
+	/** Return the FilterPtr of this RCPanelEntitiesList*/
+	TSharedPtr<SRCPanelFilter> GetFilterPtr() const { return FilterPtr; }
+
+	/** Update the Search */
+	void UpdateSearch();
+
 private:
 	/** Handles label to be shown in the entity list header.  */
 	FText HandleEntityListHeaderLabel() const;
@@ -124,12 +152,16 @@ private:
 	void OnSelectionChanged(TSharedPtr<SRCPanelTreeNode> Node, ESelectInfo::Type SelectInfo);
 	/** Handlers for drag/drop events. */
 	FReply OnDropOnGroup(const TSharedPtr<FDragDropOperation>& DragDropOperation, const TSharedPtr<SRCPanelTreeNode>& TargetEntity, const TSharedPtr<SRCPanelTreeNode>& DragTargetGroup);
+	/** Handler for when a filter in the filter list has changed */
+	void OnFilterChanged();
 	/** Get the id of the group that holds a particular widget. */
 	FGuid GetGroupId(const FGuid& EntityId);
 	/** Handles creating a new group. */
 	FReply OnCreateGroup();
 	/** Handles group deletion. */
 	void OnDeleteGroup(const FGuid& GroupId);
+	/** Called when an Entity is rebound */
+	void OnEntityRebind(const FGuid& InEntityGuid);
 	/** Select actors in the current level. */
 	void SelectActorsInlevel(const TArray<UObject*>& Objects);
 	//~ Register to engine/editor events in order to correctly update widgets.
@@ -141,11 +173,42 @@ private:
 	float OnGetRightColumnWidth() const { return ColumnWidth; }
 	void OnSetColumnWidth(float InWidth) { ColumnWidth = InWidth; }
 
+	// Exposed Entities filtering. (Filters the Exposed Entities view)
+	void OnSearchTextChanged(const FText& InFilterText);
+	void OnSearchTextCommitted(const FText& InFilterText, ETextCommit::Type InCommitType);
+	void PopulateSearchStrings(const SRCPanelTreeNode& Item, TArray<FString>& OutSearchStrings) const;
+
 	/** Find a group using its id. */
 	TSharedPtr<SRCPanelGroup> FindGroupById(const FGuid& Id);
 
 	/** Handle context menu opening on a row. */
 	TSharedPtr<SWidget> OnContextMenuOpening(SRCPanelTreeNode::ENodeType InType);
+
+	TSharedRef<SWidget> GetGroupMenuContentWidget();
+
+	/**
+	 * Called when the group type changed, if the new group type is the same as the current one it will be set to none
+	 * @param InFieldGroupType New grouping type
+	 */
+	void OnCreateFieldGroup(EFieldGroupType InFieldGroupType);
+
+	/** Group fields based on the current group type (PropertyId/Owner) */
+	void CreateFieldGroup();
+
+	/**
+	 * Called when the order type changed, if the new order type is the same as the current one it will be set to none
+	 * @param InGroupOrder New group order
+	 */
+	void OnGroupOrderChanged(ERCGroupOrder InGroupOrder);
+
+	/** Order the groups based on the current order assigned (Ascending/Descending) */
+	void OrderGroups();
+
+	/** Refresh the fields groups and restore the expansion */
+	void RefreshGroupsAndRestoreExpansions();
+
+	/** Calls both the CreateFieldGroup and the OrderGroups */
+	void CreateGroupsAndSort();
 
 	//~ Register and handle preset delegates.
 	void RegisterPresetDelegates();
@@ -187,6 +250,20 @@ private:
 
 	void ProcessRefresh();
 
+	/**
+	 * If necessary, will perform a refresh of the exposed entities nodes widgets.
+	 */
+	void ExposedEntitiesNodesRefresh();
+
+	/** Executed when a property Id is changed, will set all selected node(s) property id to the new one */
+	void OnPropertyIdRenamed(const FName InNewId, TSharedPtr<SRCPanelTreeNode> InNode);
+
+	/** Executed when a property Name is changed, will set all selected node(s) property Name to the new one */
+	void OnLabelModified(const FName InOldName, const FName InNewName);
+
+	/** Executed when a drag is detected, will create the Drag and Drop widget of the node(s) */
+	FReply OnNodeDragDetected(const FGeometry& InGeometry, const FPointerEvent& InPointerEvent, TSharedPtr<SRCPanelTreeNode> InNode);
+
 private:
 	/** Holds the Groups list view. */
 	TSharedPtr<SListView<TSharedPtr<SRCPanelTreeNode>>> GroupsListView;
@@ -196,6 +273,16 @@ private:
 	TArray<TSharedPtr<SRCPanelGroup>> FieldGroups;
 	/** Holds all the field entities. */
 	TArray<TSharedPtr<SRCPanelTreeNode>> FieldEntities;
+	/** Cached field entities used to store the original Entities when switching groups. */
+	TArray<TSharedPtr<SRCPanelTreeNode>> CachedFieldEntities;
+	/** Holds all the exposed entities groups. */
+	TArray<TSharedPtr<SRCPanelExposedEntitiesGroup>> ExposedEntitiesGroups;
+	/** Holds the current group type */
+	EFieldGroupType CurrentGroupType = EFieldGroupType::None;
+	/** Holds the current sorting type */
+	ERCGroupOrder CurrentGroupSortType = ERCGroupOrder::None;
+	/** Holds all the entities groups currently in the list */
+	TArray<TSharedPtr<SRCPanelExposedEntitiesGroup>> FieldEntitiesGroups;
 	/** Map of field ids to field widgets. */
 	TMap<FGuid, TSharedPtr<SRCPanelTreeNode>> FieldWidgetMap;
 	/** Whether the panel is in live mode. */
@@ -224,12 +311,20 @@ private:
 	bool bFilterApplicationRequested;
 	/** If true, the entity items will be refreshed next frame. */
 	bool bSearchRequested;
-	/** Holds the text that is being searched actively. */
-	TSharedPtr<FText> SearchedText;
 	/** Panel Style reference. */
 	const FRCPanelStyle* RCPanelStyle;
 	/** Holds the header row of entities list. */
 	TSharedPtr<SRCHeaderRow> FieldsHeaderRow;
+	/** The filter list */
+	TSharedPtr<SRCPanelFilter> FilterPtr;
+	/** The text box used to search for tags. */
+	TSharedPtr<SSearchBox> SearchBoxPtr;
+	/** Button giving you the possibilities for grouping. */
+	TSharedPtr<SComboButton> ComboButtonGroupButton;
+	/** Text filter for the search text. */
+    TSharedPtr<TTextFilter<const SRCPanelTreeNode&>> SearchTextFilter;
+    /** Actively searched term. */
+    TSharedPtr<FText> SearchedText;
 	/** Holds the active list mode. */
 	EEntitiesListMode ActiveListMode;
 	/** Holds the active protocol enabled by the mode switcher. */
@@ -240,4 +335,8 @@ private:
 	FGuid CurrentlySelectedGroup;
 
 	bool bRefreshRequested = false;
+	bool bRefreshEntitiesGroups = false;
+
+	/** When true, widgets of the Exposed Entities List will be refreshed on Tick */
+	bool bNodesRefreshRequested = false;
 };

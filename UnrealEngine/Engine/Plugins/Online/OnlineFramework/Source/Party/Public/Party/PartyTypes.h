@@ -501,7 +501,7 @@ protected:
 public:	\
 	/** If the property is a POD or ptr type, we'll work with it by copy. Otherwise, by const ref */	\
 	using Mutable##PropertyName##Type = std::remove_const_t<PropertyType>;	\
-	using PropertyName##ArgType = typename TChooseClass<TOr<TIsPODType<PropertyType>, TIsPointer<PropertyType>>::Value, PropertyType, const Mutable##PropertyName##Type&>::Result;	\
+	using PropertyName##ArgType = std::conditional_t<TOr<TIsPODType<PropertyType>, TIsPointer<PropertyType>>::Value, PropertyType, const Mutable##PropertyName##Type&>;	\
 	\
 private:	\
 	/** Bummer to have two signatures, but cases that want both the old and new values are much rarer, so most don't want to bother with a handler that takes an extra unused param */	\

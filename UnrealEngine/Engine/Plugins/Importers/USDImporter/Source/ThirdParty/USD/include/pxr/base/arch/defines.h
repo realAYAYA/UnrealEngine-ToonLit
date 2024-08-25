@@ -24,10 +24,6 @@
 #ifndef PXR_BASE_ARCH_DEFINES_H
 #define PXR_BASE_ARCH_DEFINES_H
 
-#include "pxr/pxr.h"
-
-PXR_NAMESPACE_OPEN_SCOPE
-
 //
 // OS
 //
@@ -108,27 +104,16 @@ PXR_NAMESPACE_OPEN_SCOPE
 #define ARCH_HAS_MMAP_MAP_POPULATE
 #endif
 
-//
-// Intrinsics
-//
-
-// ARCH_SPIN_PAUSE -- 'pause' on x86, 'yield' on arm.
-#if defined(ARCH_CPU_INTEL)
-#if defined(ARCH_COMPILER_GCC) || defined(ARCH_COMPILER_CLANG)
-#define ARCH_SPIN_PAUSE() __builtin_ia32_pause()
-#elif defined(ARCH_COMPILER_MSVC)
-#define ARCH_SPIN_PAUSE() _mm_pause()
+// When using MSVC, provide an easy way to detect whether the older
+// "traditional" preprocessor is being used as opposed to the newer, more
+// standards-conforming preprocessor. The traditional preprocessor may require
+// custom versions of macros.
+// See here for more detail about MSVC's preprocessors:
+// https://learn.microsoft.com/en-us/cpp/preprocessor/preprocessor-experimental-overview
+#if defined(ARCH_COMPILER_MSVC)
+    #if !defined(_MSVC_TRADITIONAL) || _MSVC_TRADITIONAL
+    #define ARCH_PREPROCESSOR_MSVC_TRADITIONAL
+    #endif
 #endif
-#elif defined(ARCH_CPU_ARM)
-#if defined(ARCH_COMPILER_GCC) || defined(ARCH_COMPILER_CLANG)
-#define ARCH_SPIN_PAUSE() asm volatile ("yield" ::: "memory")
-#elif defined(ARCH_COMPILER_MSVC)
-#define ARCH_SPIN_PAUSE() __yield();
-#endif
-#else
-#define ARCH_SPIN_PAUSE()
-#endif
-
-PXR_NAMESPACE_CLOSE_SCOPE
 
 #endif // PXR_BASE_ARCH_DEFINES_H 

@@ -8,7 +8,7 @@ struct FPackedHairSample
 	uint  ControlPointID_MacroGroupID;
 	uint  Tangent_Coverage8bit;
 	uint  BaseColor_Roughness;
-	uint  Specular_LightChannels_Backlit;
+	uint  Data;
 };
 
 struct FPackedHairVis

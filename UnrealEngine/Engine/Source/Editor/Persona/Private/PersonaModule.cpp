@@ -57,7 +57,7 @@
 #include "Customization/BlendSpaceDetails.h"
 #include "Customization/BlendParameterDetails.h"
 #include "Customization/InterpolationParameterDetails.h"
-#include "EditModes/SkeletonSelectionEditMode.h"
+#include "SkeletonSelectionEditMode.h"
 #include "PersonaEditorModeManager.h"
 #include "PreviewSceneCustomizations.h"
 #include "SSkeletonSlotNames.h"
@@ -94,6 +94,7 @@
 #include "AnimSequenceTimelineCommands.h"
 #include "SAnimCurvePicker.h"
 #include "SAnimMontageSectionsPanel.h"
+#include "SPersonaToolBox.h"
 #include "Animation/AnimSequenceHelpers.h"
 #include "SkeletalMeshReferenceSectionDetails.h"
 #include "PersonaToolMenuContext.h"
@@ -358,6 +359,11 @@ TSharedRef<SWidget> FPersonaModule::CreateBlendSpacePreviewWidget(const FBlendSp
 		.OnGetBlendSpaceSampleName(InArgs.OnGetBlendSpaceSampleName);
 }
 
+TSharedRef<FWorkflowTabFactory> FPersonaModule::CreatePersonaToolboxTabFactory(const TSharedRef<FPersonaAssetEditorToolkit>& InHostingApp) const
+{
+	return MakeShareable(new FToolBoxSummoner(InHostingApp));
+}
+
 TSharedRef<SWidget> FPersonaModule::CreateBlendSpacePreviewWidget(TAttribute<const UBlendSpace*> InBlendSpace, TAttribute<FVector> InPosition, TAttribute<FVector> InFilteredPosition) const
 {
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -378,6 +384,12 @@ TSharedRef<class FWorkflowTabFactory> FPersonaModule::CreateAnimMontageSectionsT
 TSharedRef<FWorkflowTabFactory> FPersonaModule::CreateAnimAssetFindReplaceTabFactory(const TSharedRef<FWorkflowCentricApplication>& InHostingApp, const FAnimAssetFindReplaceConfig& InConfig) const
 {
 	return MakeShared<FAnimAssetFindReplaceSummoner>(InHostingApp, InConfig);
+}
+
+TSharedRef<SWidget> FPersonaModule::CreateFindReplaceWidget(const FAnimAssetFindReplaceConfig& InConfig) const
+{
+	return SNew(SAnimAssetFindReplace)
+		.Config(InConfig);
 }
 
 TSharedRef<SWidget> FPersonaModule::CreateEditorWidgetForAnimDocument(const TSharedRef<IAnimationEditor>& InHostingApp, UObject* InAnimAsset, const FAnimDocumentArgs& InArgs, FString& OutDocumentLink)
@@ -569,7 +581,7 @@ void FPersonaModule::TestSkeletonCurveMetaDataForUse(const TSharedRef<IEditableS
 				const TArray<UMorphTarget*>& MorphTargets = Mesh->GetMorphTargets();
 				for (int32 I = 0; I < MorphTargets.Num(); ++I)
 				{
-					const int32 CurveIndex = UnusedNames.RemoveSingleSwap(MorphTargets[I]->GetFName(), false);
+					const int32 CurveIndex = UnusedNames.RemoveSingleSwap(MorphTargets[I]->GetFName(), EAllowShrinking::No);
 				}
 
 				// Filter material params from curves
@@ -1219,12 +1231,12 @@ void FPersonaModule::AddCommonToolbarExtensions(UToolMenu* InToolMenu, const FCo
 
 	if (InArgs.bReferencePose)
 	{
-		PersonaSection.AddMenuEntry(
+		PersonaSection.AddEntry(FToolMenuEntry::InitToolBarButton(
 			"ReferencePose",
+			FUIAction(FExecuteAction::CreateStatic(&UE::Persona::Private::ShowReferencePose, WeakPersonaToolkit)),
 			LOCTEXT("ShowReferencePose", "Reference Pose"),
 			LOCTEXT("ShowReferencePoseTooltip", "Show the reference pose. Clears all bone modifications. More advanced settings are available in Preview Scene Settings."),
-			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Persona.ToggleReferencePose", "Persona.ToggleReferencePose.Small"),
-			FUIAction(FExecuteAction::CreateStatic(&UE::Persona::Private::ShowReferencePose, WeakPersonaToolkit))
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Persona.ToggleReferencePose", "Persona.ToggleReferencePose.Small"))
 		);
 	}
 

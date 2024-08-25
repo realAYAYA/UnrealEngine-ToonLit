@@ -18,6 +18,7 @@
 #include "DerivedDataRequest.h"
 #include "DerivedDataRequestOwner.h"
 #include "HAL/CriticalSection.h"
+#include "HAL/PlatformAtomics.h"
 #include "Logging/StructuredLog.h"
 #include "MemoryCacheStore.h"
 #include "Misc/EnumClassFlags.h"
@@ -47,6 +48,8 @@ public:
 	void Add(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags) final;
 	void SetFlags(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags) final;
 	void RemoveNotSafe(ILegacyCacheStore* CacheStore) final;
+
+	bool HasAllFlags(ECacheStoreFlags Flags) const final;
 
 	ICacheStoreStats* CreateStats(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags, FStringView Type, FStringView Name, FStringView Path) final;
 	void DestroyStats(ICacheStoreStats* Stats) final;
@@ -120,8 +123,21 @@ private:
 	static uint64 MeasureLogicalRecordSize(const FCacheRecord& Record);
 	static uint64 MeasureLogicalValueSize(const FValue& Value);
 
+	static const FCacheKey& GetKey(const FCachePutRequest& Request) { return Request.Record.GetKey(); }
+	static const FCacheKey& GetKey(const FCachePutValueRequest& Request) { return Request.Key; }
+
 	struct FCacheStoreNode
 	{
+		inline void SetCacheFlags(ECacheStoreFlags NewCacheFlags)
+		{
+			using InternalType = std::make_signed_t<std::underlying_type_t<ECacheStoreFlags>>;
+			FPlatformAtomics::AtomicStore(reinterpret_cast<InternalType*>(&CacheFlags), static_cast<InternalType>(NewCacheFlags));
+		}
+		inline ECacheStoreFlags GetCacheFlags() const 
+		{
+			return (ECacheStoreFlags)static_cast<std::underlying_type_t<ECacheStoreFlags>>(FPlatformAtomics::AtomicRead(reinterpret_cast<const std::make_signed_t<std::underlying_type_t<ECacheStoreFlags>>*>(&CacheFlags)));
+		}
+
 		ILegacyCacheStore* Cache{};
 		ECacheStoreFlags CacheFlags{};
 		ECacheStoreNodeFlags NodeFlags{};
@@ -130,7 +146,7 @@ private:
 	};
 
 	mutable FRWLock NodesLock;
-	ECacheStoreNodeFlags CombinedNodeFlags{};
+	std::atomic<ECacheStoreNodeFlags> CombinedNodeFlags{};
 	TArray<FCacheStoreNode, TInlineAllocator<8>> Nodes;
 	IMemoryCacheStore* MemoryCache;
 	FCacheStats CacheStats;
@@ -265,10 +281,19 @@ FCacheStoreHierarchy::FCacheStoreHierarchy(ICacheStoreOwner*& OutOwner, TFunctio
 FCacheStoreHierarchy::~FCacheStoreHierarchy()
 {
 	// Delete nodes separately before Nodes is destroyed because destroying stats depends on it.
-	for (FCacheStoreNode& Node : ReverseIterate(Nodes))
+	while (!Nodes.IsEmpty())
 	{
+		const int32 NodeIndex = Nodes.Num() - 1;
+		FCacheStoreNode& Node = Nodes[NodeIndex];
+
 		Node.AsyncCache.Reset();
 		delete Node.Cache;
+
+		if (Nodes.Num() <= NodeIndex)
+		{
+			// The node removed itself in its destructor.
+			continue;
+		}
 
 		if (UNLIKELY(!Node.CacheStats.IsEmpty()))
 		{
@@ -277,6 +302,8 @@ FCacheStoreHierarchy::~FCacheStoreHierarchy()
 				"Leaked stats for {Type} cache store '{Name}' with path '{Path}'.",
 				Stats->Type, Stats->Name, Stats->Path);
 		}
+
+		Nodes.Pop(EAllowShrinking::No);
 	}
 }
 
@@ -285,17 +312,19 @@ void FCacheStoreHierarchy::Add(ILegacyCacheStore* CacheStore, ECacheStoreFlags F
 	FWriteScopeLock Lock(NodesLock);
 	checkf(!Algo::FindBy(Nodes, CacheStore, &FCacheStoreNode::Cache),
 		TEXT("Attempting to add a cache store that was previously registered to the hierarchy."));
-	TUniquePtr<ILegacyCacheStore> AsyncCacheStore(CreateCacheStoreAsync(CacheStore, MemoryCache, /*bDeleteInnerCache*/ false));
+	TUniquePtr<ILegacyCacheStore> AsyncCacheStore(CreateCacheStoreAsync(CacheStore, /*MemoryCache*/ nullptr, /*bDeleteInnerCache*/ false));
 	Nodes.Add({CacheStore, Flags, {}, MoveTemp(AsyncCacheStore)});
 	UpdateNodeFlags();
 }
 
 void FCacheStoreHierarchy::SetFlags(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags)
 {
-	FWriteScopeLock Lock(NodesLock);
+	// Doing this as a read lock and relying on atomic access to the Nodes' CacheFlags and the hierarchy's CombinedNodeFlags
+	// to prevent a partial read/write from two concurrent executions.
+	FReadScopeLock Lock(NodesLock);
 	FCacheStoreNode* Node = Algo::FindBy(Nodes, CacheStore, &FCacheStoreNode::Cache);
 	checkf(!!Node, TEXT("Attempting to set flags on a cache store that is not registered to the hierarchy."));
-	Node->CacheFlags = Flags;
+	Node->SetCacheFlags(Flags);
 	UpdateNodeFlags();
 }
 
@@ -304,22 +333,47 @@ void FCacheStoreHierarchy::RemoveNotSafe(ILegacyCacheStore* CacheStore)
 	FWriteScopeLock Lock(NodesLock);
 	FCacheStoreNode* Node = Algo::FindBy(Nodes, CacheStore, &FCacheStoreNode::Cache);
 	checkf(!!Node, TEXT("Attempting to remove a cache store that is not registered to the hierarchy."));
-	Nodes.RemoveAt(UE_PTRDIFF_TO_INT32(Node - Nodes.GetData()));
+	const int32 NodeIndex = UE_PTRDIFF_TO_INT32(Node - Nodes.GetData());
+	if (UNLIKELY(!Nodes[NodeIndex].CacheStats.IsEmpty()))
+	{
+		FCacheStoreStats* Stats = Nodes[NodeIndex].CacheStats[0];
+		UE_LOGFMT(LogDerivedDataCache, Fatal,
+			"Leaked stats for {Type} cache store '{Name}' with path '{Path}'.",
+			Stats->Type, Stats->Name, Stats->Path);
+	}
+	Nodes.RemoveAt(NodeIndex);
 	UpdateNodeFlags();
+}
+
+bool FCacheStoreHierarchy::HasAllFlags(ECacheStoreFlags Flags) const
+{
+	FReadScopeLock Lock(NodesLock);
+	ECacheStoreFlags CombinedFlags = ECacheStoreFlags::None;
+	for (const FCacheStoreNode& Node : Nodes)
+	{
+		if (Node.Cache != MemoryCache)
+		{
+			CombinedFlags |= Node.GetCacheFlags();
+		}
+	}
+	return EnumHasAllFlags(CombinedFlags, Flags);
 }
 
 void FCacheStoreHierarchy::UpdateNodeFlags()
 {
+	ECacheStoreNodeFlags OriginalCombinedFlags = CombinedNodeFlags.load();
+
 	ECacheStoreNodeFlags StoreFlags = ECacheStoreNodeFlags::None;
 	for (int32 Index = 0, Count = Nodes.Num(); Index < Count; ++Index)
 	{
 		FCacheStoreNode& Node = Nodes[Index];
 		Node.NodeFlags = StoreFlags;
-		if (EnumHasAllFlags(Node.CacheFlags, ECacheStoreFlags::Store | ECacheStoreFlags::Local))
+		ECacheStoreFlags CacheFlags = Node.GetCacheFlags();
+		if (EnumHasAllFlags(CacheFlags, ECacheStoreFlags::Store | ECacheStoreFlags::Local))
 		{
 			StoreFlags |= ECacheStoreNodeFlags::HasStoreLocalNode;
 		}
-		if (EnumHasAllFlags(Node.CacheFlags, ECacheStoreFlags::Store | ECacheStoreFlags::Remote))
+		if (EnumHasAllFlags(CacheFlags, ECacheStoreFlags::Store | ECacheStoreFlags::Remote))
 		{
 			StoreFlags |= ECacheStoreNodeFlags::HasStoreRemoteNode;
 		}
@@ -330,17 +384,21 @@ void FCacheStoreHierarchy::UpdateNodeFlags()
 	{
 		FCacheStoreNode& Node = Nodes[Index];
 		Node.NodeFlags |= QueryFlags;
-		if (EnumHasAllFlags(Node.CacheFlags, ECacheStoreFlags::Query | ECacheStoreFlags::Local))
+		ECacheStoreFlags CacheFlags = Node.GetCacheFlags();
+		if (EnumHasAllFlags(CacheFlags, ECacheStoreFlags::Query | ECacheStoreFlags::Local))
 		{
 			QueryFlags |= ECacheStoreNodeFlags::HasQueryLocalNode;
 		}
-		if (EnumHasAllFlags(Node.CacheFlags, ECacheStoreFlags::Query | ECacheStoreFlags::Remote))
+		if (EnumHasAllFlags(CacheFlags, ECacheStoreFlags::Query | ECacheStoreFlags::Remote))
 		{
 			QueryFlags |= ECacheStoreNodeFlags::HasQueryRemoteNode;
 		}
 	}
 
-	CombinedNodeFlags = StoreFlags | QueryFlags;
+	if (!CombinedNodeFlags.compare_exchange_strong(OriginalCombinedFlags, StoreFlags | QueryFlags))
+	{
+		UpdateNodeFlags();
+	}
 }
 
 ICacheStoreStats* FCacheStoreHierarchy::CreateStats(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags, FStringView Type, FStringView Name, FStringView Path)
@@ -580,6 +638,7 @@ private:
 	{
 		bool bOk = false;
 		bool bStop = false;
+		bool bFinished = false;
 	};
 
 	FCacheStoreHierarchy& Hierarchy;
@@ -601,7 +660,7 @@ void FCacheStoreHierarchy::TPutBatch<Params>::Begin(
 	IRequestOwner& InOwner,
 	FOnPutComplete&& InOnComplete)
 {
-	if (InRequests.IsEmpty() || !EnumHasAnyFlags(InHierarchy.CombinedNodeFlags, ECacheStoreNodeFlags::HasStoreNode))
+	if (InRequests.IsEmpty() || !EnumHasAnyFlags(InHierarchy.CombinedNodeFlags.load(), ECacheStoreNodeFlags::HasStoreNode))
 	{
 		return CompleteWithStatus(InRequests, InOnComplete, EStatus::Error);
 	}
@@ -629,9 +688,10 @@ void FCacheStoreHierarchy::TPutBatch<Params>::DispatchRequests()
 	for (const FPutRequest& Request : Requests)
 	{
 		const FRequestState& State = States[RequestIndex];
-		if (!State.bOk && !State.bStop)
+		if (!State.bFinished)
 		{
-			FinishRequest(Request.MakeResponse(BatchOwner.IsCanceled() ? EStatus::Canceled : EStatus::Error), Request);
+			const EStatus Status = BatchOwner.IsCanceled() ? EStatus::Canceled : (State.bOk ? EStatus::Ok : EStatus::Error);
+			FinishRequest(Request.MakeResponse(Status), Request);
 		}
 		++RequestIndex;
 	}
@@ -648,7 +708,8 @@ bool FCacheStoreHierarchy::TPutBatch<Params>::DispatchGetRequests()
 	NodeGetIndex = NodePutIndex;
 
 	const FCacheStoreNode& Node = Hierarchy.Nodes[NodeGetIndex];
-	if (!EnumHasAnyFlags(Node.CacheFlags, ECacheStoreFlags::StopPutStore))
+	ECacheStoreFlags CacheFlags = Node.GetCacheFlags();
+	if (!EnumHasAnyFlags(CacheFlags, ECacheStoreFlags::StopPutStore))
 	{
 		return false;
 	}
@@ -659,7 +720,7 @@ bool FCacheStoreHierarchy::TPutBatch<Params>::DispatchGetRequests()
 	int32 RequestIndex = 0;
 	for (const FPutRequest& Request : Requests)
 	{
-		if (!States[RequestIndex].bStop && CanQuery(GetCombinedPolicy(Request.Policy), Node.CacheFlags))
+		if (!States[RequestIndex].bStop && CanQuery(GetCombinedPolicy(Request.Policy), CacheFlags))
 		{
 			NodeRequests.Add(MakeGetRequest(Request, RequestIndex));
 		}
@@ -689,8 +750,9 @@ void FCacheStoreHierarchy::TPutBatch<Params>::CompleteGetRequest(FGetResponse&& 
 		FRequestState& State = States[RequestIndex];
 		check(!State.bStop);
 		State.bStop = true;
-		if (!State.bOk)
+		if (!State.bFinished)
 		{
+			State.bFinished = true;
 			const FPutRequest& Request = Requests[RequestIndex];
 			FinishRequest(Request.MakeResponse(Response.Status), Request);
 		}
@@ -705,7 +767,8 @@ template <typename Params>
 bool FCacheStoreHierarchy::TPutBatch<Params>::DispatchPutRequests()
 {
 	const FCacheStoreNode& Node = Hierarchy.Nodes[NodePutIndex];
-	if (!EnumHasAnyFlags(Node.CacheFlags, ECacheStoreFlags::Store))
+	ECacheStoreFlags CacheFlags = Node.GetCacheFlags();
+	if (!EnumHasAnyFlags(CacheFlags, ECacheStoreFlags::Store))
 	{
 		return false;
 	}
@@ -721,9 +784,9 @@ bool FCacheStoreHierarchy::TPutBatch<Params>::DispatchPutRequests()
 	for (const FPutRequest& Request : Requests)
 	{
 		const FRequestState& State = States[RequestIndex];
-		if (!State.bStop && CanStore(GetCombinedPolicy(Request.Policy), Node.CacheFlags))
+		if (!State.bStop && CanStore(GetCombinedPolicy(Request.Policy), CacheFlags))
 		{
-			(State.bOk ? AsyncNodeRequests : NodeRequests).Add_GetRef(Request).UserData = uint64(RequestIndex);
+			(State.bFinished ? AsyncNodeRequests : NodeRequests).Add_GetRef(Request).UserData = uint64(RequestIndex);
 		}
 		++RequestIndex;
 	}
@@ -755,11 +818,20 @@ void FCacheStoreHierarchy::TPutBatch<Params>::CompletePutRequest(FPutResponse&& 
 	{
 		const int32 RequestIndex = int32(Response.UserData);
 		FRequestState& State = States[RequestIndex];
-		check(!State.bOk && !State.bStop);
 		State.bOk = true;
-		const FPutRequest& Request = Requests[RequestIndex];
-		Response.UserData = Request.UserData;
-		FinishRequest(MoveTemp(Response), Request);
+		check(!State.bFinished);
+		bool bCanQuery;
+		{
+			FReadScopeLock Lock(Hierarchy.NodesLock);
+			bCanQuery = EnumHasAnyFlags(Hierarchy.Nodes[NodePutIndex].GetCacheFlags(), ECacheStoreFlags::Query);
+		}
+		if (bCanQuery)
+		{
+			State.bFinished = true;
+			const FPutRequest& Request = Requests[RequestIndex];
+			Response.UserData = Request.UserData;
+			FinishRequest(MoveTemp(Response), Request);
+		}
 	}
 	if (RemainingRequestCount.Signal())
 	{
@@ -850,7 +922,7 @@ void FCacheStoreHierarchy::TGetBatch<Params>::Begin(
 	IRequestOwner& InOwner,
 	FOnGetComplete&& InOnComplete)
 {
-	if (InRequests.IsEmpty() || !EnumHasAnyFlags(InHierarchy.CombinedNodeFlags, ECacheStoreNodeFlags::HasQueryNode))
+	if (InRequests.IsEmpty() || !EnumHasAnyFlags(InHierarchy.CombinedNodeFlags.load(), ECacheStoreNodeFlags::HasQueryNode))
 	{
 		return CompleteWithStatus(InRequests, InOnComplete, EStatus::Error);
 	}
@@ -881,6 +953,7 @@ void FCacheStoreHierarchy::TGetBatch<Params>::DispatchRequests()
 		}
 
 		const FCacheStoreNode& Node = Hierarchy.Nodes[NodeIndex];
+		ECacheStoreFlags CacheFlags = Node.GetCacheFlags();
 
 		uint64 StateIndex = 0;
 		for (FState& State : States)
@@ -894,12 +967,12 @@ void FCacheStoreHierarchy::TGetBatch<Params>::DispatchRequests()
 			const FGetResponse& Response = State.Response;
 			if (Response.Status == EStatus::Ok)
 			{
-				if (HasResponseData(Response) && CanStore(GetCombinedPolicy(Request.Policy), Node.CacheFlags))
+				if (HasResponseData(Response) && CanStore(GetCombinedPolicy(Request.Policy), CacheFlags))
 				{
 					AsyncNodeRequests.Add(MakePutRequest(Response, Request));
 					++State.NodeIndex;
 				}
-				else if (EnumHasAnyFlags(Node.CacheFlags, ECacheStoreFlags::StopGetStore) && CanQuery(GetCombinedPolicy(Request.Policy), Node.CacheFlags))
+				else if (EnumHasAnyFlags(CacheFlags, ECacheStoreFlags::StopGetStore) && CanQuery(GetCombinedPolicy(Request.Policy), CacheFlags))
 				{
 					NodeRequests.Add({Request.Name, Request.Key, AddPolicy(Request.Policy, ECachePolicy::SkipData), StateIndex});
 				}
@@ -910,7 +983,7 @@ void FCacheStoreHierarchy::TGetBatch<Params>::DispatchRequests()
 			}
 			else
 			{
-				if (const ECachePolicy CombinedPolicy = GetCombinedPolicy(Request.Policy); CanQuery(CombinedPolicy, Node.CacheFlags))
+				if (const ECachePolicy CombinedPolicy = GetCombinedPolicy(Request.Policy); CanQuery(CombinedPolicy, CacheFlags))
 				{
 					auto Policy = Request.Policy;
 					if (CanStoreIfOk(CombinedPolicy, Node.NodeFlags))
@@ -1002,7 +1075,7 @@ void FCacheStoreHierarchy::TGetBatch<Params>::CompleteRequest(FGetResponse&& Res
 		for (int32 PutNodeIndex = 0; PutNodeIndex < PreviousNodeIndex; ++PutNodeIndex)
 		{
 			const FCacheStoreNode& PutNode = Hierarchy.Nodes[PutNodeIndex];
-			if (CanStore(GetCombinedPolicy(State.Request.Policy), PutNode.CacheFlags))
+			if (CanStore(GetCombinedPolicy(State.Request.Policy), PutNode.GetCacheFlags()))
 			{
 				FRequestBarrier AsyncBarrier(AsyncOwner);
 				Invoke(Put(), PutNode.AsyncCache, MakeArrayView(&PutRequest, 1), AsyncOwner, [](auto&&){});
@@ -1018,7 +1091,7 @@ void FCacheStoreHierarchy::TGetBatch<Params>::CompleteRequest(FGetResponse&& Res
 
 	if (Response.Status == EStatus::Ok)
 	{
-		if (EnumHasAnyFlags(Node.CacheFlags, ECacheStoreFlags::StopGetStore))
+		if (EnumHasAnyFlags(Node.GetCacheFlags(), ECacheStoreFlags::StopGetStore))
 		{
 			// Never store to later nodes.
 			State.Request.Policy = RemovePolicy(State.Request.Policy, ECachePolicy::Default);
@@ -1393,7 +1466,7 @@ void FCacheStoreHierarchy::FGetChunksBatch::Begin(
 	IRequestOwner& InOwner,
 	FOnCacheGetChunkComplete&& InOnComplete)
 {
-	if (InRequests.IsEmpty() || !EnumHasAnyFlags(InHierarchy.CombinedNodeFlags, ECacheStoreNodeFlags::HasQueryNode))
+	if (InRequests.IsEmpty() || !EnumHasAnyFlags(InHierarchy.CombinedNodeFlags.load(), ECacheStoreNodeFlags::HasQueryNode))
 	{
 		return CompleteWithStatus(InRequests, InOnComplete, EStatus::Error);
 	}
@@ -1413,12 +1486,13 @@ void FCacheStoreHierarchy::FGetChunksBatch::DispatchRequests()
 	for (const int32 NodeCount = Hierarchy.Nodes.Num(); NodeIndex < NodeCount && !Owner.IsCanceled(); ++NodeIndex)
 	{
 		const FCacheStoreNode& Node = Hierarchy.Nodes[NodeIndex];
+		ECacheStoreFlags CacheFlags = Node.GetCacheFlags();
 
 		uint64 StateIndex = 0;
 		for (const FState& State : States)
 		{
 			const FCacheGetChunkRequest& Request = State.Request;
-			if (State.Status == EStatus::Error && CanQuery(Request.Policy, Node.CacheFlags))
+			if (State.Status == EStatus::Error && CanQuery(Request.Policy, CacheFlags))
 			{
 				NodeRequests.Add_GetRef(Request).UserData = StateIndex;
 			}
@@ -1524,6 +1598,8 @@ static void ConvertToLegacyStats(FDerivedDataCacheStatsNode& OutNode, FCacheStor
 	OutNode.SpeedStats.LatencyMS = Stats.AverageLatency.GetValue(Now) * 1000.0;
 	OutNode.SpeedStats.ReadSpeedMBs = Stats.AveragePhysicalReadSize.GetRate(Now) / 1024.0 / 1024.0;
 	OutNode.SpeedStats.WriteSpeedMBs = Stats.AveragePhysicalWriteSize.GetRate(Now) / 1024.0 / 1024.0;
+
+	OutNode.SetTotalPhysicalSize(Stats.TotalPhysicalSize);
 }
 
 void FCacheStoreHierarchy::LegacyStats(FDerivedDataCacheStatsNode& OutNode)

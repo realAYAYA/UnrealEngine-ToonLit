@@ -443,20 +443,20 @@ float RayCastBrick_L2( FRay Ray, uint BrickOffset, inout FRayCastCounters Counte
 
 	const uint RootShift = 0;
 
-	Ray.Origin		*= 4 << RootShift;
-	Ray.Direction	*= 4 << RootShift;
+	Ray.Origin		*= 4u << RootShift;
+	Ray.Direction	*= 4u << RootShift;
 
 	FDDA RootDDA;
 
 	FDDA DDA = InitDDA( Ray );
-	StartDDA( DDA, 1 << RootShift, Ray );
+	StartDDA( DDA, 1u << RootShift, Ray );
 
 	const uint MaxTests = 3*16 + 3*4;
 	while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests )
 	{
 		Counters.Tests++;
 
-		uint VoxelMask = 1 << ( DDA.VoxelIndex & 31 );
+		uint VoxelMask = 1u << ( DDA.VoxelIndex & 31 );
 		bool bVoxelExists = ( DDA.VoxelIndex < 32 ? NodeBlock.x : NodeBlock.y ) & VoxelMask;
 
 		if( bVoxelExists )
@@ -494,7 +494,7 @@ float RayCastBrick_L2( FRay Ray, uint BrickOffset, inout FRayCastCounters Counte
 		else
 		{
 			Counters.Steps++;
-			StepDDA( DDA, bRoot ? (1 << RootShift) : 1 );
+			StepDDA( DDA, bRoot ? (1u << RootShift) : 1u );
 		}
 
 		if( DDA.Time[0] >= DDA.Time[1] && !bRoot )
@@ -512,7 +512,7 @@ float RayCastBrick_L2( FRay Ray, uint BrickOffset, inout FRayCastCounters Counte
 			DDA.VoxelIndex	= RootDDA.VoxelIndex;
 			DDA.Next		= RootDDA.Next;
 
-			StepDDA( DDA, 1 << RootShift );
+			StepDDA( DDA, 1u << RootShift );
 #endif
 		}
 	}
@@ -710,7 +710,7 @@ float RayCastBrick_L2_WhileIf( FRay Ray, uint BrickOffset, inout FRayCastCounter
 			//VoxelIndex = uint( DDA.Voxel.x + DDA.Voxel.y * 4 + DDA.Voxel.z * 16 );
 			VoxelMask = uint2(
 				1u << VoxelIndex,
-				1u << VoxelIndex - 32 );
+				1u << (VoxelIndex - 32) );
 
 			bVoxelExists = VoxelIndex < 32 ?
 				NodeBlock.x & VoxelMask.x :

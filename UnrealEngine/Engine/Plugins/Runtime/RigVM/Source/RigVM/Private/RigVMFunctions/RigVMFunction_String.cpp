@@ -252,17 +252,20 @@ FRigVMFunction_StringPadInteger_Execute()
 	}
 }
 
-const TArray<FRigVMTemplateArgument>& FRigDispatch_ToString::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigDispatch_ToString::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
-		FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
-	};
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		FRigVMTemplateArgument(TEXT("Value"), ERigVMPinDirection::Input, ValueCategories),
-		FRigVMTemplateArgument(TEXT("Result"), ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::FString)
-	};
-	return Arguments;
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if(Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
+			FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
+		};
+		
+		Infos.Emplace(TEXT("Value"), ERigVMPinDirection::Input, ValueCategories);
+		Infos.Emplace(TEXT("Result"), ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::FString);
+	}
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigDispatch_ToString::OnNewArgumentType(const FName& InArgumentName,
@@ -318,17 +321,20 @@ void FRigDispatch_ToString::Execute(FRigVMExtendedExecuteContext& InContext, FRi
 	ValueProperty->ExportText_Direct(Result, Value, Value, nullptr, PPF_None, nullptr);
 }
 
-const TArray<FRigVMTemplateArgument>& FRigDispatch_FromString::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigDispatch_FromString::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
-		FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
-	};
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		FRigVMTemplateArgument(TEXT("String"), ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FString),
-		FRigVMTemplateArgument(TEXT("Result"), ERigVMPinDirection::Output, ValueCategories)
-	};
-	return Arguments;
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if(Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
+			FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
+		};
+		
+		Infos.Emplace(TEXT("String"), ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FString);
+		Infos.Emplace(TEXT("Result"), ERigVMPinDirection::Output, ValueCategories);
+	}
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigDispatch_FromString::OnNewArgumentType(const FName& InArgumentName,
@@ -412,7 +418,7 @@ void FRigDispatch_FromString::Execute(FRigVMExtendedExecuteContext& InContext, F
 #if WITH_EDITOR
 			if(ExecuteContext.GetLog() != nullptr)
 			{
-				ExecuteContext.GetLog()->Report(EMessageSeverity::Error, InContext.GetPublicData<>().GetFunctionName(), InContext.GetPublicData<>().GetInstructionIndex(), Error);
+				ExecuteContext.Report(EMessageSeverity::Error, InContext.GetPublicData<>().GetFunctionName(), InContext.GetPublicData<>().GetInstructionIndex(), Error);
 			}
 #endif
 			FString ObjectPath;

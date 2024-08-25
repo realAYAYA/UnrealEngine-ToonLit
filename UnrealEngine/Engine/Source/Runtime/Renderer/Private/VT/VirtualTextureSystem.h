@@ -14,6 +14,7 @@
 #include "VirtualTexturing.h"
 #include "VT/VirtualTextureFeedback.h"
 #include "Tasks/Task.h"
+#include "Async/RecursiveMutex.h"
 
 class FAdaptiveVirtualTexture;
 class FAllocatedVirtualTexture;
@@ -81,6 +82,12 @@ struct FVirtualTextureUpdateSettings
 
 class FVirtualTextureUpdater
 {
+public:
+	UE::Tasks::FTask GetTask() const
+	{
+		return AsyncTask;
+	}
+
 private:
 	FVirtualTextureUpdateSettings Settings;
 	FConcurrentLinearBulkObjectAllocator Allocator;
@@ -114,33 +121,36 @@ public:
 
 	void ReleasePendingResources();
 
-	IAllocatedVirtualTexture* AllocateVirtualTexture(const FAllocatedVTDescription& Desc);
+	IAllocatedVirtualTexture* AllocateVirtualTexture(FRHICommandListBase& RHICmdList, const FAllocatedVTDescription& Desc);
 	void DestroyVirtualTexture(IAllocatedVirtualTexture* AllocatedVT);
 
-	FVirtualTextureProducerHandle RegisterProducer(const FVTProducerDescription& InDesc, IVirtualTexture* InProducer);
+	FVirtualTextureProducerHandle RegisterProducer(FRHICommandListBase& RHICmdList, const FVTProducerDescription& InDesc, IVirtualTexture* InProducer);
 	void ReleaseProducer(const FVirtualTextureProducerHandle& Handle);
 	void AddProducerDestroyedCallback(const FVirtualTextureProducerHandle& Handle, FVTProducerDestroyedFunction* Function, void* Baton);
 	uint32 RemoveAllProducerDestroyedCallbacks(const void* Baton);
-	FVirtualTextureProducer* FindProducer(const FVirtualTextureProducerHandle& Handle);
 
-	IAdaptiveVirtualTexture* AllocateAdaptiveVirtualTexture(const FAdaptiveVTDescription& AdaptiveVTDesc, const FAllocatedVTDescription& AllocatedVTDesc);
+	IAdaptiveVirtualTexture* AllocateAdaptiveVirtualTexture(FRHICommandListBase& RHICmdList, const FAdaptiveVTDescription& AdaptiveVTDesc, const FAllocatedVTDescription& AllocatedVTDesc);
 	void DestroyAdaptiveVirtualTexture(IAdaptiveVirtualTexture* AdaptiveVT);
 
-	FVirtualTextureSpace* AcquireSpace(const FVTSpaceDescription& InDesc, uint8 InForceSpaceID, FAllocatedVirtualTexture* AllocatedVT);
-	void ReleaseSpace(FVirtualTextureSpace* Space);
-
-	FVirtualTexturePhysicalSpace* AcquirePhysicalSpace(const FVTPhysicalSpaceDescription& InDesc);
-
-	FVirtualTextureSpace* GetSpace(uint8 ID) const { check(ID < MaxSpaces); return Spaces[ID].Get(); }
-	FAdaptiveVirtualTexture* GetAdaptiveVirtualTexture(uint8 ID) const { check(ID < MaxSpaces); return AdaptiveVTs[ID]; }
-	FVirtualTexturePhysicalSpace* GetPhysicalSpace(uint16 ID) const { check(PhysicalSpaces[ID]);  return PhysicalSpaces[ID]; }
-
-	void LockTile(const FVirtualTextureLocalTile& Tile);
-	void UnlockTile(const FVirtualTextureLocalTile& Tile, const FVirtualTextureProducer* Producer);
-	void ForceUnlockAllTiles(const FVirtualTextureProducerHandle& ProducerHandle, const FVirtualTextureProducer* Producer);
 	void RequestTiles(const FVector2D& InScreenSpaceSize, int32 InMipLevel = -1);
 	void RequestTiles(const FMaterialRenderProxy* InMaterialRenderProxy, const FVector2D& InScreenSpaceSize, ERHIFeatureLevel::Type InFeatureLevel);
+
+	/**
+	 * Helper function to request loading of tiles for a virtual texture that will be displayed in the UI. 
+	 * It will request only the tiles that will be visible after clipping to the provided viewport.
+	 * @param AllocatedVT			The virtual texture.
+	 * @param InScreenSpaceSize		Size on screen at which the texture is to be displayed.
+	 * @param InViewportPosition	Position in the viewport where the texture will be displayed.
+	 * @param InViewportSize		Size of the viewport.
+	 * @param InUV0					UV coordinate to use for the top left corner of the texture.
+	 * @param InUV1					UV coordinate to use for the bottom right corner of the texture.
+	 * @param InMipLevel [optional] Specific mip level to fetch tiles for.
+	 */
+	void RequestTiles(IAllocatedVirtualTexture* AllocatedVT, const FVector2D& InScreenSpaceSize, const FVector2D& InViewportPosition, const FVector2D& InViewportSize, const FVector2D& InUV0, const FVector2D& InUV1, int32 InMipLevel = -1);
+
+	UE_DEPRECATED(5.4, "Use RequestTiles() overloads that takes similar parameters. Make sure not to negate the InViewportPosition.")
 	void RequestTilesForRegion(IAllocatedVirtualTexture* AllocatedVT, const FVector2D& InScreenSpaceSize, const FVector2D& InViewportPosition, const FVector2D& InViewportSize, const FVector2D& InUV0, const FVector2D& InUV1, int32 InMipLevel = -1);
+
 	void LoadPendingTiles(FRDGBuilder& GraphBuilder, ERHIFeatureLevel::Type FeatureLevel);
 	
 #if WITH_EDITOR
@@ -150,7 +160,7 @@ public:
 	void RequestRecordedTiles(TArray<uint64>&& InPageRequests);
 
 	void FlushCache();
-	void FlushCache(FVirtualTextureProducerHandle const& ProducerHandle, int32 SpaceID, FIntRect const& TextureRegion, uint32 MaxLevel);
+	void FlushCache(FVirtualTextureProducerHandle const& ProducerHandle, int32 SpaceID, FIntRect const& TextureRegion, uint32 MaxLevelToEvict, uint32 MaxAgeToKeepMapped);
 
 	float GetGlobalMipBias() const;
 
@@ -160,9 +170,29 @@ private:
 	friend class FFeedbackAnalysisTask;
 	friend class FAddRequestedTilesTask;
 	friend class FGatherRequestsTask;
+	friend class FAllocatedVirtualTexture;
+	friend class FAdaptiveVirtualTexture;
+	friend class FVirtualTextureProducer;
+	friend class FVirtualTextureProducerCollection;
+	friend class FTexturePageMap;
+	friend class FTexturePagePool;
 
 	FVirtualTextureSystem();
 	~FVirtualTextureSystem();
+
+	FVirtualTextureSpace* AcquireSpace(FRHICommandListBase& RHICmdList, const FVTSpaceDescription& InDesc, uint8 InForceSpaceID, FAllocatedVirtualTexture* AllocatedVT);
+	void ReleaseSpace(FVirtualTextureSpace* Space);
+
+	FVirtualTextureProducer* FindProducer(const FVirtualTextureProducerHandle& Handle);
+	FVirtualTexturePhysicalSpace* AcquirePhysicalSpace(FRHICommandListBase& RHICmdList, const FVTPhysicalSpaceDescription& InDesc);
+
+	FVirtualTextureSpace* GetSpace(uint8 ID) const { check(ID < MaxSpaces); return Spaces[ID].Get(); }
+	FAdaptiveVirtualTexture* GetAdaptiveVirtualTexture(uint8 ID) const { check(ID < MaxSpaces); return AdaptiveVTs[ID]; }
+	FVirtualTexturePhysicalSpace* GetPhysicalSpace(uint16 ID) const { check(PhysicalSpaces[ID]);  return PhysicalSpaces[ID]; }
+
+	void LockTile(const FVirtualTextureLocalTile& Tile);
+	void UnlockTile(const FVirtualTextureLocalTile& Tile, const FVirtualTextureProducer* Producer);
+	void ForceUnlockAllTiles(const FVirtualTextureProducerHandle& ProducerHandle, const FVirtualTextureProducer* Producer);
 
 	void BeginUpdate(FRDGBuilder& GraphBuilder, FVirtualTextureUpdater* Updater);
 
@@ -174,13 +204,13 @@ private:
 	void RequestTilesInternal(const IAllocatedVirtualTexture* AllocatedVT, int32 InMipLevel);
 	void RequestTilesInternal(const IAllocatedVirtualTexture* AllocatedVT, const FVector2D& InScreenSpaceSize, int32 InMipLevel);
 	
-	void SubmitRequestsFromLocalTileList(FRHICommandList& RHICmdList, TArray<FVirtualTextureLocalTile>& OutDeferredTiles, const TSet<FVirtualTextureLocalTile>& LocalTileList, EVTProducePageFlags Flags, ERHIFeatureLevel::Type FeatureLevel);
+	void SubmitRequestsFromLocalTileList(FRHICommandList& RHICmdList, TArray<FVirtualTextureLocalTile>& OutDeferredTiles, const TSet<FVirtualTextureLocalTile>& LocalTileList, EVTProducePageFlags Flags, ERHIFeatureLevel::Type FeatureLevel, uint32 MaxRequestsToProduce);
 
 	void GatherFeedbackRequests(FConcurrentLinearBulkObjectAllocator& Allocator, const FVirtualTextureUpdateSettings& Settings, const FVirtualTextureFeedback::FMapResult& FeedbackResult, FUniqueRequestList* MergedRequestList);
 	void GatherLockedTileRequests(FUniqueRequestList* MergedRequestList);
 	void GatherPackedTileRequests(FConcurrentLinearBulkObjectAllocator& Allocator, const FVirtualTextureUpdateSettings& Settings, FUniqueRequestList* MergedRequestList);
 
-	void SubmitPreMappedRequests(FRHICommandList& RHICmdList, ERHIFeatureLevel::Type FeatureLevel);
+	void SubmitPreMappedRequests(FRHICommandList& RHICmdList, ERHIFeatureLevel::Type FeatureLevel, uint32 MaxMappedTilesToProduce);
 
 	void SubmitThrottledRequests(FRHICommandList& RHICmdList, FVirtualTextureUpdater* Updater, bool bContinuousUpdates);
 	void SubmitRequests(FRHICommandList& RHICmdList, ERHIFeatureLevel::Type FeatureLevel, FConcurrentLinearBulkObjectAllocator& Allocator, FVirtualTextureUpdateSettings const& Settings, FUniqueRequestList* RequestList, bool bAsync);
@@ -197,12 +227,15 @@ private:
 	void GetContinuousUpdatesToProduce(FUniqueRequestList const* RequestList, int32 MaxTilesToProduce, int32 MaxContinuousUpdates);
 
 	void UpdateResidencyTracking() const;
+	void GrowPhysicalPools() const;
 
 #if WITH_EDITOR
 	void RecordPageRequests(FUniquePageList const* UniquePageList, TSet<uint64>& OutPages);
 #endif
 
 	uint32	Frame;
+
+	mutable UE::FRecursiveMutex Mutex;
 
 	static const uint32 MaxNumTasks = 16;
 	static const uint32 MaxSpaces = 16;
@@ -211,7 +244,6 @@ private:
 	TArray<FVirtualTexturePhysicalSpace*> PhysicalSpaces;
 	FVirtualTextureProducerCollection Producers;
 
-	FCriticalSection AllocatedVTLock;
 	TArray<IAllocatedVirtualTexture*> PendingDeleteAllocatedVTs;
 
 	TMap<FAllocatedVTDescription, FAllocatedVirtualTexture*> AllocatedVTs;
@@ -239,7 +271,6 @@ private:
 	FAutoConsoleCommand SaveAllocatorImages;
 #endif
 
-	FCriticalSection RequestedTilesLock;
 	TArray<uint32> RequestedPackedTiles;
 
 	TArray<FVirtualTextureLocalTile> TilesToLock;

@@ -5,6 +5,7 @@
 #include "ClothPaintToolCommands.h"
 #include "ClothPainterCommands.h"
 #include "ClothingPaintEditMode.h"
+#include "EditorModeManager.h"
 #include "Delegates/Delegate.h"
 #include "EditorModeRegistry.h"
 #include "Framework/Commands/UIAction.h"
@@ -130,7 +131,7 @@ TSharedRef<FExtender> FClothPaintingModule::ExtendSkelMeshEditorToolbar(const TS
 	InCommandList->MapAction(FClothPainterCommands::Get().TogglePaintMode,
 		FExecuteAction::CreateRaw(this, &FClothPaintingModule::OnToggleMode, Ptr),
 		FCanExecuteAction(),
-		FIsActionChecked::CreateRaw(this, &FClothPaintingModule::GetIsPaintToolsButtonChecked, Ptr)
+		FIsActionChecked::CreateRaw(this, &FClothPaintingModule::IsPaintModeActive, Ptr)
 	);
 
 	return ToolbarExtender.ToSharedRef();
@@ -161,14 +162,9 @@ void FClothPaintingModule::RegisterMenus()
 
 FText FClothPaintingModule::GetPaintToolsButtonText(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const
 {
-	TSharedPtr<SClothPaintTab> ClothTab = GetActiveClothTab(InSkeletalMeshEditor, false);
-
-	if(ClothTab.IsValid())
+	if(IsPaintModeActive(InSkeletalMeshEditor))
 	{
-		if(ClothTab->IsPaintModeActive())
-		{
-			return LOCTEXT("ToggleButton_Deactivate", "Deactivate Cloth Paint");
-		}
+		return LOCTEXT("ToggleButton_Deactivate", "Deactivate Cloth Paint");
 	}
 
 	return LOCTEXT("ToggleButton_Activate", "Activate Cloth Paint");
@@ -176,38 +172,44 @@ FText FClothPaintingModule::GetPaintToolsButtonText(TWeakPtr<ISkeletalMeshEditor
 
 FText FClothPaintingModule::GetPaintToolsButtonToolTip(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const
 {
-	TSharedPtr<SClothPaintTab> ClothTab = GetActiveClothTab(InSkeletalMeshEditor, false);
-
-	if(ClothTab.IsValid())
+	if(IsPaintModeActive(InSkeletalMeshEditor))
 	{
-		if(ClothTab->IsPaintModeActive())
-		{
-			return LOCTEXT("ToggleButton_Deactivate_ToolTip", "Deactivate the cloth paint tool, and go back to the current selection mode.");
-		}
+		return LOCTEXT("ToggleButton_Deactivate_ToolTip", "Deactivate the cloth paint tool, and go back to the current selection mode.");
 	}
 
 	return LOCTEXT("ToggleButton_Activate_ToolTip", "Activate the cloth paint tool, and open the Clothing window to allow selection of the clothing assets and of their paint targets.");
 }
 
-bool FClothPaintingModule::GetIsPaintToolsButtonChecked(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const
+bool FClothPaintingModule::IsPaintModeActive(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const
 {
-	TSharedPtr<SClothPaintTab> ClothTab = GetActiveClothTab(InSkeletalMeshEditor, false);
-
-	if(ClothTab.IsValid())
+	if (!GetActiveClothTab(InSkeletalMeshEditor, false /* don't invoke tab*/).IsValid())
 	{
-		return ClothTab->IsPaintModeActive();
+		// haven't initialized UI yet
+		return false;
 	}
-
-	return false;
+		
+	TSharedPtr<ISkeletalMeshEditor> SkeletalMeshEditor = InSkeletalMeshEditor.Pin();
+	return SkeletalMeshEditor.IsValid() && SkeletalMeshEditor->GetEditorModeManager().IsModeActive(PaintModeID);
 }
 
-void FClothPaintingModule::OnToggleMode(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor)
+void FClothPaintingModule::OnToggleMode(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const
 {
-	TSharedPtr<SClothPaintTab> ClothTab = GetActiveClothTab(InSkeletalMeshEditor);
+	ISkeletalMeshEditor* SkeletalMeshEditor = InSkeletalMeshEditor.Pin().Get();
+	FEditorModeTools& ModeManager = SkeletalMeshEditor->GetEditorModeManager();
 
-	if(ClothTab.IsValid())
+	if (!IsPaintModeActive(InSkeletalMeshEditor))
 	{
-		ClothTab->TogglePaintMode();
+		ModeManager.ActivateMode(PaintModeID, true);
+		FClothingPaintEditMode* PaintMode = (FClothingPaintEditMode*)SkeletalMeshEditor->GetEditorModeManager().GetActiveMode(PaintModeID);
+		if (PaintMode)
+		{
+			PaintMode->SetPersonaToolKit(SkeletalMeshEditor->GetPersonaToolkit());
+			PaintMode->SetupClothPaintTab(GetActiveClothTab(InSkeletalMeshEditor));
+		}
+	}
+	else
+	{
+		ModeManager.DeactivateMode(PaintModeID);
 	}
 }
 

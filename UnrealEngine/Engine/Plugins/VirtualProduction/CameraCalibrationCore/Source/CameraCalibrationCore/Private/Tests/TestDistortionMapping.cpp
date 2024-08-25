@@ -14,9 +14,6 @@
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTestCameraCalibrationCore, "Plugin.CameraCalibrationCore", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-
 namespace CameraCalibrationTestUtil
 {
 	UWorld* GetFirstWorld()
@@ -426,13 +423,23 @@ namespace CameraCalibrationTestUtil
 	}
 }
 
-
-bool FTestCameraCalibrationCore::RunTest(const FString& Parameters)
+DEFINE_SPEC(FTestCameraCalibrationCore, "Plugins.CameraCalibrationCore", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+void FTestCameraCalibrationCore::Define()
 {
-	CameraCalibrationTestUtil::TestDistortionParameterCurveBlending(*this);
-	CameraCalibrationTestUtil::TestLensFileAddPoints(*this);
-	CameraCalibrationTestUtil::TestLensFileRemovePoints(*this);
-	return true;
+	It("DistortionParameterCurveBlending", [this]()
+		{
+			CameraCalibrationTestUtil::TestDistortionParameterCurveBlending(*this);
+		});
+
+	It("LensFileAddPoints", [this]()
+		{
+			CameraCalibrationTestUtil::TestLensFileAddPoints(*this);
+		});
+
+	It("LensFileRemovePoints", [this]()
+		{
+			CameraCalibrationTestUtil::TestLensFileRemovePoints(*this);
+		});
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

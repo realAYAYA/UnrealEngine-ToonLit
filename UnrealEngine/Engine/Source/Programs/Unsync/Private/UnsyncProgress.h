@@ -42,11 +42,14 @@ struct FLogProgressScope
 {
 	UNSYNC_DISALLOW_COPY_ASSIGN(FLogProgressScope)
 
-	FLogProgressScope(uint64 InTotal, ELogProgressUnits InUnits = ELogProgressUnits::Raw, uint64 InPeriodMilliseconds = 500);
+	FLogProgressScope(uint64 InTotal, ELogProgressUnits InUnits = ELogProgressUnits::Raw, uint64 InPeriodMilliseconds = 500, bool bInVerboseOnly = true);
 
 	void Complete();
 
 	void Add(uint64 X, bool bForceComplete = false);
+
+	const bool	 bParentThreadVerbose;
+	const uint32 ParentThreadIndent;
 
 	std::mutex				Mutex;
 	std::atomic<uint64>		Current;
@@ -55,6 +58,7 @@ struct FLogProgressScope
 	const ELogProgressUnits Units;
 	FTimePoint				NextProgressLogTime;
 	std::atomic<bool>		bEnabled;
+	const bool				bVerboseOnly;
 };
 
 }  // namespace unsync

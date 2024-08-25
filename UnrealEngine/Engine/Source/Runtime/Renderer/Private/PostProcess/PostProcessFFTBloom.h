@@ -29,7 +29,7 @@ struct FFFTBloomOutput
 FFFTBloomOutput AddFFTBloomPass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
-	const FScreenPassTexture& InputSceneColor,
+	const FScreenPassTextureSlice& InputSceneColor,
 	float InputResolutionFraction,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
 	FRDGBufferRef EyeAdaptationBuffer,

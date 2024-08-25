@@ -65,7 +65,7 @@ namespace DataTableUtils
 	/**
 	 * Util to get all property names from a struct.
 	 */
-	ENGINE_API TArray<FName> GetStructPropertyNames(UStruct* InStruct);
+	ENGINE_API TArray<FName> GetStructPropertyNames(const UStruct* InStruct);
 
 	/**
 	 * Util that removes invalid chars and then make an FName.

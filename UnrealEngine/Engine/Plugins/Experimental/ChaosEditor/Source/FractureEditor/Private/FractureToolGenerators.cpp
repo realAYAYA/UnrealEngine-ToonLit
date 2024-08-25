@@ -14,6 +14,8 @@
 #include "Engine/StaticMeshActor.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Misc/Change.h"
+#include "Misc/MessageDialog.h"
+#include "Misc/ScopedSlowTask.h"
 
 #include "FractureModeSettings.h"
 
@@ -26,6 +28,7 @@
 #include "GeometryCollection/GeometryCollectionUtility.h"
 #include "GeometryCollection/GeometryCollectionProximityUtility.h"
 #include "FractureToolContext.h"
+#include "FractureToolBackgroundTask.h"
 
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Input/Reply.h"
@@ -77,12 +80,16 @@ class SCreateGeometryCollectionFromObject : public SCompoundWidget
 public:
 	SLATE_BEGIN_ARGS(SCreateGeometryCollectionFromObject)
 		: _AssetFilenameSuffix()
+		, _AssetFilenamePrefix()
 		, _HeadingText()
 		, _CreateButtonText()
 	{}
 
 	/** The default suffix to use for the asset filename */
 	SLATE_ARGUMENT(FString, AssetFilenameSuffix)
+
+	/** The default suffix to use for the asset filename */
+	SLATE_ARGUMENT(FString, AssetFilenamePrefix)
 
 	/** The text to display at the top of the dialog */
 	SLATE_ARGUMENT(FText, HeadingText)
@@ -142,6 +149,9 @@ private:
 	/** The default suffix to use for the asset filename */
 	FString AssetFilenameSuffix;
 
+	/** The default prefix to use for the asset filename */
+	FString AssetFilenamePrefix;
+
 	/** The text to display as a heading for the dialog */
 	FText HeadingText;
 
@@ -172,6 +182,7 @@ private:
 void SCreateGeometryCollectionFromObject::Construct(const FArguments& InArgs, TSharedPtr<SWindow> InParentWindow)
 {
 	AssetFilenameSuffix = InArgs._AssetFilenameSuffix;
+	AssetFilenamePrefix = InArgs._AssetFilenamePrefix;
 	HeadingText = InArgs._HeadingText;
 	CreateButtonText = InArgs._CreateButtonText;
 	OnCreateAssetAction = InArgs._OnCreateAssetAction;
@@ -210,7 +221,6 @@ void SCreateGeometryCollectionFromObject::Construct(const FArguments& InArgs, TS
 			if (Actor)
 			{
 				ActorInstanceLabel += Actor->GetActorLabel();
-				ActorInstanceLabel += TEXT("_");
 				break;
 			}
 		}
@@ -220,7 +230,16 @@ void SCreateGeometryCollectionFromObject::Construct(const FArguments& InArgs, TS
 		ActorInstanceLabel = InArgs._DefaultNameOverride.ToString();
 	}
 
-	ActorInstanceLabel = UPackageTools::SanitizePackageName(ActorInstanceLabel + AssetFilenameSuffix);
+	if (!AssetFilenamePrefix.IsEmpty())
+	{
+		ActorInstanceLabel = AssetFilenamePrefix + TEXT("_") + ActorInstanceLabel;
+	}
+	if (!AssetFilenameSuffix.IsEmpty())
+	{
+		ActorInstanceLabel = ActorInstanceLabel + TEXT("_") + AssetFilenameSuffix;
+	}
+
+	ActorInstanceLabel = UPackageTools::SanitizePackageName(ActorInstanceLabel);
 
 	FString AssetName = ActorInstanceLabel;
 	FString BasePath = AssetPath / AssetName;
@@ -572,7 +591,7 @@ void UFractureToolGenerateAsset::OpenGenerateAssetDialog(TArray<AActor*>& Actors
 	TSharedPtr<SCreateGeometryCollectionFromObject> CreateAssetDialog;
 	PickAssetPathWindow->SetContent(
 		SAssignNew(CreateAssetDialog, SCreateGeometryCollectionFromObject, PickAssetPathWindow)
-		.AssetFilenameSuffix(TEXT("GeometryCollection"))
+		.AssetFilenamePrefix(TEXT("GC"))
 		.HeadingText(LOCTEXT("CreateGeometryCollection_Heading", "Geometry Collection Name"))
 		.CreateButtonText(LOCTEXT("CreateGeometryCollection_ButtonLabel", "Create Geometry Collection"))
 		.AssetPath(AssetPath)
@@ -606,9 +625,13 @@ void UFractureToolGenerateAsset::OnGenerateAssetPathChosen(const FString& InAsse
 	{
 		AActor* FirstActor = Actors[0];
 
-		AGeometryCollectionActor* GeometryCollectionActor = Cast<AGeometryCollectionActor>(FirstActor);
+		AGeometryCollectionActor* GeometryCollectionActor = nullptr;
 		
 		GeometryCollectionActor = ConvertActorsToGeometryCollection(InAssetPath, false/*bAddInternalMaterials*/, bSplitComponents, Actors, bFromToMeshTool);
+		if (!GeometryCollectionActor)
+		{
+			return;
+		}
 
 		GeometryCollectionComponent = GeometryCollectionActor->GetGeometryCollectionComponent();
 
@@ -662,6 +685,57 @@ AGeometryCollectionActor* UFractureToolGenerateAsset::ConvertActorsToGeometryCol
 	const FString& Name = FirstActor->GetActorLabel();
 	const FVector FirstActorLocation(FirstActor->GetActorLocation());
 
+	using FGeometryCollectionSharedPtr = TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe>;
+
+	// Count the total triangles of all input sources
+	int32 SourceTriCount = 0;
+	{
+		for (AActor* Actor : Actors)
+		{
+			TArray<UStaticMeshComponent*> StaticMeshComponents;
+			Actor->GetComponents(StaticMeshComponents, true);
+			for (int32 ii = 0, ni = StaticMeshComponents.Num(); ii < ni; ++ii)
+			{
+				if (UStaticMeshComponent* StaticMeshComponent = StaticMeshComponents[ii])
+				{
+					if (UStaticMesh* StaticMesh = StaticMeshComponent->GetStaticMesh())
+					{
+						SourceTriCount += StaticMesh->GetNumTriangles(0);
+					}
+				}
+			}
+
+			TArray<UGeometryCollectionComponent*> GeometryCollectionComponents;
+			Actor->GetComponents(GeometryCollectionComponents, true);
+			for (int32 ii = 0, ni = GeometryCollectionComponents.Num(); ii < ni; ++ii)
+			{
+				if (UGeometryCollectionComponent* GeometryCollectionComponent = GeometryCollectionComponents[ii])
+				{
+					if (const UGeometryCollection* RestCollection = GeometryCollectionComponent->GetRestCollection())
+					{
+						if (const FGeometryCollectionSharedPtr Collection = RestCollection->GetGeometryCollection())
+						{
+							SourceTriCount += Collection->Indices.Num();
+						}
+					}
+				}
+			}
+		}
+	}
+	constexpr int32 ThresholdToCautionAboutLargeInput = 1000000;
+	if (SourceTriCount > ThresholdToCautionAboutLargeInput)
+	{
+		EAppReturnType::Type Ret = FMessageDialog::Open(EAppMsgType::YesNo,
+			FText::Format(LOCTEXT("FractureLargeInputQuestion", "Sources with a large number of triangles ({0}) may take time to convert to Geometry Collection. Continue?"), SourceTriCount),
+			LOCTEXT("FractureLargeInputTitle", "Process large input?"));
+		if (Ret == EAppReturnType::No)
+		{
+			return nullptr;
+		}
+	}
+
+	FScopedSlowTask SlowTask(SourceTriCount, LOCTEXT("FractureCreateNewGeometryCollection", "Creating new Geometry Collection"));
+	SlowTask.MakeDialog();
 
 	AGeometryCollectionActor* NewActor = CreateNewGeometryActor(InAssetPath, FTransform(), true);
 
@@ -687,6 +761,7 @@ AGeometryCollectionActor* UFractureToolGenerateAsset::ConvertActorsToGeometryCol
 				{
 					// If any of the static meshes have Nanite enabled, also enable on the new geometry collection asset for convenience.
 					FracturedGeometryCollection->EnableNanite |= ComponentStaticMesh->IsNaniteEnabled();
+					SlowTask.EnterProgressFrame(ComponentStaticMesh->GetNumTriangles(0));
 				}
 
 				FTransform ComponentTransform(StaticMeshComponent->GetComponentTransform());
@@ -715,6 +790,11 @@ AGeometryCollectionActor* UFractureToolGenerateAsset::ConvertActorsToGeometryCol
 				{
 					// If any of the static meshes have Nanite enabled, also enable on the new geometry collection asset for convenience.
 					FracturedGeometryCollection->EnableNanite |= RestCollection->EnableNanite;
+
+					if (const FGeometryCollectionSharedPtr Collection = RestCollection->GetGeometryCollection())
+					{
+						SlowTask.EnterProgressFrame(Collection->Indices.Num());
+					}
 				}
 
 				FTransform ComponentTransform(GeometryCollectionComponent->GetComponentTransform());
@@ -723,8 +803,7 @@ AGeometryCollectionActor* UFractureToolGenerateAsset::ConvertActorsToGeometryCol
 				// Record the contributing source on the asset.
 				FSoftObjectPath SourceSoftObjectPath(RestCollection);
 
-				// We're not interested in recording the final material of the collection since it's inevitably the Selection material.
-				int32 NumMaterials = GeometryCollectionComponent->GetNumMaterials() - 1;
+				int32 NumMaterials = GeometryCollectionComponent->GetNumMaterials();
 				TArray<TObjectPtr<UMaterialInterface>> SourceMaterials;
 				SourceMaterials.SetNum(NumMaterials);
 				for (int32 MaterialIndex = 0; MaterialIndex < NumMaterials; ++MaterialIndex)
@@ -841,6 +920,25 @@ AActor* UFractureToolGenerateAsset::AddActor(ULevel* InLevel, UClass* Class)
 }
 
 
+UFractureToolResetAsset::UFractureToolResetAsset(const FObjectInitializer& ObjInit) : Super(ObjInit)
+{
+	ResetSettings = NewObject<UGeometryCollectionResetSettings>(GetTransientPackage(), UGeometryCollectionResetSettings::StaticClass());
+	ResetSettings->OwnerTool = this;
+}
+
+FText UFractureToolResetAsset::GetApplyText() const
+{ 
+	return FText(NSLOCTEXT("FractureToolReset", "FractureToolResetAction", "Reset")); 
+}
+
+TArray<UObject*> UFractureToolResetAsset::GetSettingsObjects() const
+{
+	TArray<UObject*> Settings;
+	Settings.Add(ResetSettings);
+	return Settings;
+}
+
+
 FText UFractureToolResetAsset::GetDisplayText() const
 {
 	return FText(NSLOCTEXT("Fracture", "FractureToolReset", "Reset"));
@@ -887,7 +985,7 @@ void UFractureToolResetAsset::Execute(TWeakPtr<FFractureEditorModeToolkit> InToo
 			TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe> GeometryCollectionPtr = GeometryCollectionObject->GetGeometryCollection();
 			if (FGeometryCollection* GeometryCollection = GeometryCollectionPtr.Get())
 			{
-				constexpr bool bKeepPreviousMaterials = true; // written as a flag in case we want to make this optional later
+				bool bKeepPreviousMaterials = !ResetSettings->bResetMaterials;
 				TArray<TObjectPtr<UMaterialInterface>> OldMaterials;
 				if (bKeepPreviousMaterials)
 				{
@@ -919,10 +1017,10 @@ void UFractureToolResetAsset::Execute(TWeakPtr<FFractureEditorModeToolkit> InToo
 				constexpr bool bHasInternalMaterials = false;
 				GeometryCollectionObject->InitializeMaterials(bHasInternalMaterials);
 
-				// attempt to keep previously-set materials (as long as the source doesn't have even more materials)
-				int32 NewMatNum = GeometryCollectionObject->Materials.Num(), OldMatNum = OldMaterials.Num();
-				if (bKeepPreviousMaterials && NewMatNum <= OldMatNum)
+				// attempt to keep previously-set materials if requested
+				if (bKeepPreviousMaterials)
 				{
+					int32 NewMatNum = GeometryCollectionObject->Materials.Num(), OldMatNum = OldMaterials.Num();
 					GeometryCollectionObject->Materials.SetNum(OldMatNum);
 					for (int32 MatIdx = 0; MatIdx < OldMatNum; MatIdx++)
 					{

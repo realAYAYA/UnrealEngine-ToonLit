@@ -47,6 +47,8 @@ public:
 	/// Returns all immediately owned node graphs.
 	virtual const TArray<UOptimusNodeGraph*> &GetGraphs() const = 0;
 
+	virtual UOptimusNodeGraph* FindGraphByName(FName InGraphName) const = 0;
+
 	/// Create a new graph of a given type, with an optional name. The name may be changed to 
 	/// fit into the namespace. Only setup and trigger graphs can currently be created directly,
 	/// and only a single setup graph. The setup graph is always the first, and the trigger graphs
@@ -58,7 +60,7 @@ public:
 	/// not be inserted into the list of editable graphs, although it will be owned by this 
 	/// collection.
 	/// @return The newly created graph.
-	virtual UOptimusNodeGraph* CreateGraph(
+	virtual UOptimusNodeGraph* CreateGraphDirect(
 		EOptimusNodeGraphType InType, 
 		FName InName = NAME_None, 
 		TOptional<int32> InInsertBefore = TOptional<int32>(INDEX_NONE)
@@ -70,7 +72,7 @@ public:
 	/// @param InInsertBefore The index at which the insert the graph at. This inserts the given
 	/// graph before the graph already occupying this location.
 	/// @return true if the graph was successfully added to the graph.
-	virtual bool AddGraph(
+	virtual bool AddGraphDirect(
 		UOptimusNodeGraph* InGraph,
 		int32 InInsertBefore = INDEX_NONE
 		) = 0;
@@ -79,7 +81,7 @@ public:
 	/// @param InGraph The graph to remove, owned by this collection. The graph will be unowned 
 	/// by this graph collection and marked for GC.
 	/// @return true if the graph was successfully removed.
-	virtual bool RemoveGraph(
+	virtual bool RemoveGraphDirect(
 		UOptimusNodeGraph* InGraph,
 		bool bDeleteGraph = true
 	) = 0;
@@ -91,10 +93,19 @@ public:
 	/// @param InInsertBefore The order at which the move the graph to. This inserts the given 
 	/// graph before the graph already occupying this location.
 	/// @return true if the graph was successfully moved.
-	virtual bool MoveGraph(
+	virtual bool MoveGraphDirect(
 	    UOptimusNodeGraph* InGraph,
 		int32 InInsertBefore) = 0;
 
+	/// Rename the given graph, subject to validation of the name.
+	/// @param InGraph The graph to rename, owned by this collection.
+	/// @param InNewName The new name to give the graph.
+	/// @return true if the graph was successfully renamed.
+	virtual bool RenameGraphDirect(
+		UOptimusNodeGraph *InGraph,
+		const FString &InNewName
+		) = 0;
+	
 	/// Rename the given graph, subject to validation of the name.
 	/// @param InGraph The graph to rename, owned by this collection.
 	/// @param InNewName The new name to give the graph.

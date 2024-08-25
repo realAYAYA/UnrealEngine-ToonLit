@@ -91,12 +91,12 @@ void SAutomationGraphicalResultBox::PopulateData()
 		ClusterIt->TotalNumTests = EnabledReports.Num();
 		for(int j = 0; j < AutomationController->GetNumDevicesInCluster(i); ++j)
 		{
-			ClusterIt->Devices.Add(FDeviceResults(AutomationController->GetGameInstanceName(i, j)));
+			ClusterIt->Devices.Add(FDeviceResults(AutomationController->GetGameInstanceId(i, j), AutomationController->GetGameInstanceName(i, j)));
 			FDeviceResults* DeviceIt = &ClusterIt->Devices[j];
 			for( int k = 0; k < EnabledReports.Num(); ++k )
 			{
 				FAutomationTestResults TestResults = EnabledReports[k]->GetResults( i, LastPassIndex );
-				if( TestResults.GameInstance == DeviceIt->InstanceName )
+				if (TestResults.GameInstance == DeviceIt->GameInstanceId)
 				{
 					uint32 TestIndex = DeviceIt->Tests.Add(FTestResults(EnabledReports[k]->GetDisplayNameWithDecoration()));
 					FTestResults* TestIt = &DeviceIt->Tests[TestIndex];
@@ -199,7 +199,7 @@ void SAutomationGraphicalResultBox::CreateWidgets()
 					+SVerticalBox::Slot()
 					[
 						SNew(STextBlock)
-						.Text(FText::FromString(DeviceIt->InstanceName))
+						.Text(FText::FromString(DeviceIt->GameInstanceName))
 					]
 					+SVerticalBox::Slot()
 					[

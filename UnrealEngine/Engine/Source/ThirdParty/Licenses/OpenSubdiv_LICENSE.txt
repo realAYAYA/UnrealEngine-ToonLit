@@ -1,3 +1,8 @@
+================================================================================
+Software Name: OpenSubdiv
+Version: v3.6.0
+URL: https://github.com/PixarAnimationStudios/OpenSubdiv/blob/v3_6_0/LICENSE.txt
+================================================================================
 
                                Modified Apache 2.0 License
 

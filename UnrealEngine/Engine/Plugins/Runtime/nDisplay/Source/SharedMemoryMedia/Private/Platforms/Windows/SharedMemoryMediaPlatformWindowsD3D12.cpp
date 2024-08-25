@@ -87,11 +87,11 @@ FSharedMemoryMediaPlatformWindowsD3D12::~FSharedMemoryMediaPlatformWindowsD3D12(
 	// Close shared handles
 	for (int32 BufferIdx = 0; BufferIdx < UE::SharedMemoryMedia::SenderNumBuffers; ++BufferIdx)
 	{
-		ReleaseSharedCrossGpuTexture(BufferIdx);
+		ReleaseSharedTexture(BufferIdx);
 	}
 }
 
-FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::CreateSharedCrossGpuTexture(EPixelFormat Format, bool bSrgb, int32 Width, int32 Height, const FGuid& Guid, uint32 BufferIdx)
+FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::CreateSharedTexture(EPixelFormat Format, bool bSrgb, int32 Width, int32 Height, const FGuid& Guid, uint32 BufferIdx, bool bCrossGpu)
 {
 	using namespace UE::FSharedMemoryMediaPlatformWindowsD3D12;
 
@@ -104,6 +104,15 @@ FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::CreateSharedCrossGpuTextu
 
 	const DXGI_FORMAT DxgiFormat = FindSharedResourceDXGIFormat(DXGI_FORMAT(GPixelFormats[Format].PlatformFormat), bSrgb);
 
+	D3D12_RESOURCE_FLAGS Flags = D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+
+	if (bCrossGpu)
+	{
+		Flags |= D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER;
+	}
+
+	const D3D12_TEXTURE_LAYOUT Layout = bCrossGpu ? D3D12_TEXTURE_LAYOUT_ROW_MAJOR : D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
 	D3D12_RESOURCE_DESC SharedCrossGpuTextureDesc = CD3DX12_RESOURCE_DESC::Tex2D(
 		DxgiFormat,
 		Width,
@@ -112,15 +121,21 @@ FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::CreateSharedCrossGpuTextu
 		1, // mipLevels
 		1, // sampleCount
 		0, // sampleQuality
-		D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS, // flags
-		D3D12_TEXTURE_LAYOUT_ROW_MAJOR // layout
+		Flags, // flags
+		Layout // layout
 	);
 
 	CD3DX12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+	D3D12_HEAP_FLAGS HeapFlags = D3D12_HEAP_FLAG_SHARED;
+
+	if (bCrossGpu)
+	{
+		HeapFlags |= D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER;
+	}
 
 	HRESULT HResult = D3D12Device->CreateCommittedResource(
 		&HeapProperties,
-		D3D12_HEAP_FLAG_SHARED | D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER,
+		HeapFlags,
 		&SharedCrossGpuTextureDesc,
 		D3D12_RESOURCE_STATE_COPY_DEST,
 		nullptr, // pOptimizedClearValue
@@ -131,7 +146,7 @@ FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::CreateSharedCrossGpuTextu
 	{
 		UE_LOG(LogSharedMemoryMedia, Error, TEXT(
 			"D3D12Device->CreateCommittedResource failed when creating a cross GPU texture:\n"
-			"0x%lX - %s. Texture was %dx%d, EPixelFormat %d and DXGI type %d"),
+			"0x%lX - %s. Texture was %dx%d, EPixelFormat %d and DXGI type %d. Use -d3ddebug for more information. "),
 			HResult, *GetD3D12ComErrorDescription(HResult), Width, Height, Format, DxgiFormat);
 
 		return nullptr;
@@ -162,7 +177,7 @@ FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::CreateSharedCrossGpuTextu
 	);
 }
 
-void FSharedMemoryMediaPlatformWindowsD3D12::ReleaseSharedCrossGpuTexture(uint32 BufferIdx)
+void FSharedMemoryMediaPlatformWindowsD3D12::ReleaseSharedTexture(uint32 BufferIdx)
 {
 	check(BufferIdx < UE::SharedMemoryMedia::SenderNumBuffers);
 	if (SharedHandle[BufferIdx] != INVALID_HANDLE_VALUE)
@@ -180,7 +195,7 @@ void FSharedMemoryMediaPlatformWindowsD3D12::ReleaseSharedCrossGpuTexture(uint32
 	}
 }
 
-FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::OpenSharedCrossGpuTextureByGuid(const FGuid& Guid, FSharedMemoryMediaTextureDescription& OutTextureDescription)
+FTextureRHIRef FSharedMemoryMediaPlatformWindowsD3D12::OpenSharedTextureByGuid(const FGuid& Guid, FSharedMemoryMediaTextureDescription& OutTextureDescription)
 {
 	using namespace UE::FSharedMemoryMediaPlatformWindowsD3D12;
 

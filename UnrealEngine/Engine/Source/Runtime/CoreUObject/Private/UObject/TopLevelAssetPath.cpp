@@ -150,7 +150,6 @@ bool FTopLevelAssetPath::TrySetPath(FWideStringView Path)
 		AssetName = FName(AssetNameView);
 		return true;
 	}
-	return false;
 }
 
 bool FTopLevelAssetPath::TrySetPath(FUtf8StringView Path)

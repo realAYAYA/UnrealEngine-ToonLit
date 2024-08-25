@@ -6,6 +6,7 @@
 #include "NiagaraConstants.h"
 #include "NiagaraDataInterface.h"
 #include "NiagaraEmitterInstance.h"
+#include "NiagaraEmitterInstanceImpl.h"
 #include "NiagaraSystemImpl.h"
 #include "NiagaraSystemInstance.h"
 #include "NiagaraSystemSimulation.h"
@@ -26,7 +27,7 @@ void ForEachVMFunctionImpl(class UNiagaraDataInterface* RuntimeResolvedDataInter
 	{
 		if (OverrideDI != nullptr && OverrideDI == RuntimeResolvedDataInterface)
 		{
-			if (const FNiagaraVariableBase* Variable = ParameterStore.FindVariable(OverrideDI))
+			if (const FNiagaraVariableBase* Variable = ParameterStore.FindVariableFromDataInterface(OverrideDI))
 			{
 				DataInterfaceUserVariable = *Variable;
 				break;
@@ -87,7 +88,7 @@ void ForEachGpuFunctionImpl(class UNiagaraDataInterface* RuntimeResolvedDataInte
 	{
 		if (OverrideDI != nullptr && OverrideDI == RuntimeResolvedDataInterface)
 		{
-			if (const FNiagaraVariableBase* Variable = ParameterStore.FindVariable(OverrideDI))
+			if (const FNiagaraVariableBase* Variable = ParameterStore.FindVariableFromDataInterface(OverrideDI))
 			{
 				DataInterfaceUserVariable = *Variable;
 				break;
@@ -243,22 +244,22 @@ void FNiagaraDataInterfaceUtilities::ForEachDataInterface(FNiagaraSystemInstance
 	ForEachDataInterface(SystemSimulation->GetSpawnExecutionContext()->Parameters, Action, SearchOptions);
 	ForEachDataInterface(SystemSimulation->GetUpdateExecutionContext()->Parameters, Action, SearchOptions);
 
-	for (const TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe>& Emitter : SystemInstance->GetEmitters())
+	for (const FNiagaraEmitterInstanceRef& Emitter : SystemInstance->GetEmitters())
 	{
-		if ( Emitter->IsDisabled() )
+		FNiagaraEmitterInstanceImpl* StatefulEmitter = Emitter->AsStateful();
+		if (!StatefulEmitter || Emitter->IsDisabled())
 		{
 			continue;
 		}
 
-		ForEachDataInterface(Emitter->GetSpawnExecutionContext().Parameters, Action, SearchOptions);
-		ForEachDataInterface(Emitter->GetUpdateExecutionContext().Parameters, Action, SearchOptions);
-		for (int32 i=0; i < Emitter->GetEventExecutionContexts().Num(); i++)
+		ForEachDataInterface(StatefulEmitter->GetSpawnExecutionContext().Parameters, Action, SearchOptions);
+		ForEachDataInterface(StatefulEmitter->GetUpdateExecutionContext().Parameters, Action, SearchOptions);
+		for (const FNiagaraScriptExecutionContext& EventExecContext : StatefulEmitter->GetEventExecutionContexts())
 		{
-			ForEachDataInterface(Emitter->GetEventExecutionContexts()[i].Parameters, Action, SearchOptions);
+			ForEachDataInterface(EventExecContext.Parameters, Action, SearchOptions);
 		}
 
-		FVersionedNiagaraEmitterData* EmitterData = Emitter->GetCachedEmitterData();
-		if (EmitterData && EmitterData->SimTarget == ENiagaraSimTarget::GPUComputeSim && Emitter->GetGPUContext())
+		if (Emitter->GetEmitter() && Emitter->GetSimTarget() == ENiagaraSimTarget::GPUComputeSim && Emitter->GetGPUContext())
 		{
 			ForEachDataInterface(Emitter->GetGPUContext()->CombinedParamStore, Action, SearchOptions);
 		}
@@ -285,23 +286,23 @@ void FNiagaraDataInterfaceUtilities::ForEachDataInterface(FNiagaraSystemInstance
 	ForEachDataInterface(UsageContext, SystemSimulation->GetSpawnExecutionContext()->Parameters, Action, SearchOptions);
 	ForEachDataInterface(UsageContext, SystemSimulation->GetUpdateExecutionContext()->Parameters, Action, SearchOptions);
 
-	for (const TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe>& Emitter : SystemInstance->GetEmitters())
+	for (const FNiagaraEmitterInstanceRef& Emitter : SystemInstance->GetEmitters())
 	{
-		if (Emitter->IsDisabled())
+		FNiagaraEmitterInstanceImpl* StatefulEmitter = Emitter->AsStateful();
+		if (!StatefulEmitter || Emitter->IsDisabled())
 		{
 			continue;
 		}
-		UsageContext.OwnerObject = Emitter->GetCachedEmitter().Emitter;
+		UsageContext.OwnerObject = Emitter->GetEmitter();
 
-		ForEachDataInterface(UsageContext, Emitter->GetSpawnExecutionContext().Parameters, Action, SearchOptions);
-		ForEachDataInterface(UsageContext, Emitter->GetUpdateExecutionContext().Parameters, Action, SearchOptions);
-		for (int32 i = 0; i < Emitter->GetEventExecutionContexts().Num(); i++)
+		ForEachDataInterface(UsageContext, StatefulEmitter->GetSpawnExecutionContext().Parameters, Action, SearchOptions);
+		ForEachDataInterface(UsageContext, StatefulEmitter->GetUpdateExecutionContext().Parameters, Action, SearchOptions);
+		for (const FNiagaraScriptExecutionContext& EventExecContext : StatefulEmitter->GetEventExecutionContexts() )
 		{
-			ForEachDataInterface(UsageContext, Emitter->GetEventExecutionContexts()[i].Parameters, Action, SearchOptions);
+			ForEachDataInterface(UsageContext, EventExecContext.Parameters, Action, SearchOptions);
 		}
 
-		FVersionedNiagaraEmitterData* EmitterData = Emitter->GetCachedEmitterData();
-		if (EmitterData && EmitterData->SimTarget == ENiagaraSimTarget::GPUComputeSim && Emitter->GetGPUContext())
+		if (Emitter->GetEmitter() && Emitter->GetSimTarget() == ENiagaraSimTarget::GPUComputeSim && Emitter->GetGPUContext())
 		{
 			ForEachDataInterface(UsageContext, Emitter->GetGPUContext()->CombinedParamStore, Action, SearchOptions);
 		}

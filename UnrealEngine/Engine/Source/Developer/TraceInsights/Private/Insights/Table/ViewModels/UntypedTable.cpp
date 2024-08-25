@@ -288,7 +288,7 @@ void FUntypedTable::CreateColumns(const TraceServices::ITableLayout& TableLayout
 		case TraceServices::TableColumnType_CString:
 			Column.SetDataType(ETableCellDataType::CString);
 			HorizontalAlignment = HAlign_Left;
-			InitialColumnWidth = FMath::Max(120.0f, 6.0f * ColumnNameStr.Len());
+			InitialColumnWidth = FMath::Max(120.0f, 6.0f * static_cast<float>(ColumnNameStr.Len()));
 			FormatterPtr = MakeShared<FCStringValueFormatterAsText>();
 			SorterPtr = MakeShared<FSorterByCStringValue>(ColumnRef);
 			InitialSortMode = EColumnSortMode::Ascending;

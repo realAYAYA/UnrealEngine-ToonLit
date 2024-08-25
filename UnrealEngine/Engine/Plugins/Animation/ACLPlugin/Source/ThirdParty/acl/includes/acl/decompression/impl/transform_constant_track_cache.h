@@ -24,11 +24,13 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/track_formats.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/decompression/impl/track_cache.h"
 #include "acl/decompression/impl/transform_decompression_context.h"
 #include "acl/math/quat_packing.h"
+#include "acl/math/quatf.h"
 
 #include <rtm/quatf.h>
 #include <rtm/vector4f.h>
@@ -62,6 +64,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 #if defined(ACL_IMPL_USE_CONSTANT_PREFETCH)
 #define ACL_IMPL_CONSTANT_PREFETCH(ptr) memory_prefetch(ptr)
 #else
@@ -80,7 +84,7 @@ namespace acl
 			// CMU has 64.41%, Paragon has 47.69%, and Fortnite has 62.84%.
 			// Following these numbers, it is common for clips to have at least 10 constant rotation samples to unpack.
 
-			track_cache_quatf_v0<32> rotations;
+			track_cache_quatf_v0<32, 1> rotations;
 
 			// Points to our packed sub-track data
 			const uint8_t*	constant_data_rotations;
@@ -126,7 +130,7 @@ namespace acl
 				rotations.cache_write_index += num_to_unpack;
 
 				const uint8_t* constant_track_data = constant_data_rotations;
-				rtm::quatf* cache_ptr = &rotations.cached_samples[cache_write_index];
+				rtm::quatf* cache_ptr = &rotations.cached_samples[0][cache_write_index];
 
 				if (rotation_format == rotation_format8::quatf_full && decompression_settings_type::is_rotation_format_supported(rotation_format8::quatf_full))
 				{
@@ -155,19 +159,19 @@ namespace acl
 						// The last group contains no padding so we have to make to align our reads properly
 						const uint32_t load_size = unpack_count * sizeof(float);
 
-						const rtm::vector4f xxxx = rtm::vector_load(reinterpret_cast<const float*>(constant_track_data + load_size * 0));
-						const rtm::vector4f yyyy = rtm::vector_load(reinterpret_cast<const float*>(constant_track_data + load_size * 1));
-						const rtm::vector4f zzzz = rtm::vector_load(reinterpret_cast<const float*>(constant_track_data + load_size * 2));
+						rtm::vector4f xxxx = rtm::vector_load(reinterpret_cast<const float*>(constant_track_data + load_size * 0));
+						rtm::vector4f yyyy = rtm::vector_load(reinterpret_cast<const float*>(constant_track_data + load_size * 1));
+						rtm::vector4f zzzz = rtm::vector_load(reinterpret_cast<const float*>(constant_track_data + load_size * 2));
 
 						// Update our read ptr
 						constant_track_data += load_size * 3;
 
-						// quat_from_positive_w_soa
-						const rtm::vector4f wwww_squared = rtm::vector_sub(rtm::vector_sub(rtm::vector_sub(rtm::vector_set(1.0F), rtm::vector_mul(xxxx, xxxx)), rtm::vector_mul(yyyy, yyyy)), rtm::vector_mul(zzzz, zzzz));
+						rtm::vector4f wwww = quat_from_positive_w4(xxxx, yyyy, zzzz);
 
-						// w_squared can be negative either due to rounding or due to quantization imprecision, we take the absolute value
-						// to ensure the resulting quaternion is always normalized with a positive W component
-						const rtm::vector4f wwww = rtm::vector_sqrt(rtm::vector_abs(wwww_squared));
+						// quat_from_positive_w might not yield an accurate quaternion because the square-root instruction
+						// isn't very accurate on small inputs, we need to normalize
+						if (decompression_settings_type::get_rotation_normalization_policy() == rotation_normalization_policy_t::always)
+							quat_normalize4(xxxx, yyyy, zzzz, wwww);
 
 						rtm::vector4f sample0;
 						rtm::vector4f sample1;
@@ -188,7 +192,7 @@ namespace acl
 				num_to_unpack = std::min<uint32_t>(num_left_to_unpack, 16);
 				for (uint32_t unpack_index = 0; unpack_index < num_to_unpack; ++unpack_index)
 				{
-					const rtm::quatf rotation = rotations.cached_samples[cache_write_index + unpack_index];
+					const rtm::quatf rotation = rotations.cached_samples[0][cache_write_index + unpack_index];
 
 					ACL_ASSERT(rtm::quat_is_finite(rotation), "Rotation is not valid!");
 					ACL_ASSERT(rtm::quat_is_normalized(rotation), "Rotation is not normalized!");
@@ -246,6 +250,11 @@ namespace acl
 					const float z = constant_track_data[group_size * 2];
 					const rtm::vector4f sample_v = rtm::vector_set(x, y, z, 0.0F);
 					sample = rtm::quat_from_positive_w(sample_v);
+
+					// quat_from_positive_w might not yield an accurate quaternion because the square-root instruction
+					// isn't very accurate on small inputs, we need to normalize
+					if (decompression_settings_type::get_rotation_normalization_policy() == rotation_normalization_policy_t::always)
+						sample = rtm::quat_normalize(sample);
 				}
 
 				ACL_ASSERT(rtm::quat_is_finite(sample), "Sample is not valid!");
@@ -257,7 +266,7 @@ namespace acl
 			{
 				ACL_ASSERT(rotations.cache_read_index < rotations.cache_write_index, "Attempting to consume a constant sample that isn't cached");
 				const uint32_t cache_read_index = rotations.cache_read_index++;
-				return rotations.cached_samples[cache_read_index % 32];
+				return rotations.cached_samples[0][cache_read_index % 32];
 			}
 
 			RTM_DISABLE_SECURITY_COOKIE_CHECK void skip_translation_groups(uint32_t num_groups_to_skip)
@@ -323,6 +332,8 @@ namespace acl
 			}
 		};
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 #if defined(RTM_COMPILER_MSVC)

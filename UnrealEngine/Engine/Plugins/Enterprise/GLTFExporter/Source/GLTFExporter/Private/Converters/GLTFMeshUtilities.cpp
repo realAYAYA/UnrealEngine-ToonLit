@@ -10,6 +10,7 @@
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "StaticMeshCompiler.h"
 #include "SkinnedAssetCompiler.h"
+#include "LandscapeComponent.h"
 
 void FGLTFMeshUtilities::FullyLoad(const UStaticMesh* InStaticMesh)
 {
@@ -94,6 +95,16 @@ void FGLTFMeshUtilities::ResolveMaterials(TArray<const UMaterialInterface*>& Mat
 	}
 
 	ResolveMaterials(Materials, GetDefaultMaterial());
+}
+
+void FGLTFMeshUtilities::ResolveMaterials(const UMaterialInterface*& LandscapeMaterial, const ULandscapeComponent* LandscapeComponent)
+{
+	LandscapeMaterial = LandscapeComponent->GetLandscapeMaterial();
+
+	if (LandscapeMaterial == nullptr)
+	{
+		LandscapeMaterial = GetDefaultMaterial();
+	}
 }
 
 template <typename MaterialType>

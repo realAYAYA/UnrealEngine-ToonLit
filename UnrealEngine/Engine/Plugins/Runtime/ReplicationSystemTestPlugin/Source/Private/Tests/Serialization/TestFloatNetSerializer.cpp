@@ -43,7 +43,7 @@ const T FTestFloatNetSerializerBase<T>::Values[] =
 	47.11f,
 	757575.0f,
 	757576.0f,
-	1.26698556E-23,
+	1.26698556E-23f,
 };
 template<typename T>
 const SIZE_T FTestFloatNetSerializerBase<T>::ValueCount = sizeof(Values)/sizeof(Values[0]);

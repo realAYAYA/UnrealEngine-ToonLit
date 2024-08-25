@@ -29,6 +29,9 @@
 #include "Misc/ScopeRWLock.h"
 #include "HAL/CriticalSection.h"
 #include "Widgets/SWidgetUtils.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
+#include "HAL/LowLevelMemStats.h"
+#include "UObject/Package.h"
 
 #include <limits>
 
@@ -687,6 +690,28 @@ void SWidget::SlatePrepass(float InLayoutScaleMultiplier)
 
 	if (!GSlateIsOnFastUpdatePath || bNeedsPrepass)
 	{
+		LLM_SCOPE_BYNAME("UI/Slate/Prepass");
+#if UE_TRACE_ASSET_METADATA_ENABLED
+		FName AssetName = NAME_None;
+		FName ClassName = NAME_None;
+		FName PackageName = NAME_None;
+		if (UE_TRACE_CHANNELEXPR_IS_ENABLED(AssetMetadataChannel))
+		{
+			TSharedPtr<FReflectionMetaData> AssetMetaData = FReflectionMetaData::GetWidgetOrParentMetaData(this);
+			if (AssetMetaData.IsValid())
+			{
+				if (const UObject* AssetPtr = AssetMetaData->Asset.Get())
+				{
+					AssetName = AssetMetaData->Name;
+					ClassName = AssetMetaData->Class.Get()->GetFName();
+					PackageName = AssetPtr->GetPackage()->GetFName();
+				}
+			}
+		}
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(PackageName, ELLMTagSet::Assets);
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(ClassName, ELLMTagSet::AssetClasses);
+		UE_TRACE_METADATA_SCOPE_ASSET_FNAME(AssetName, ClassName, PackageName);
+#endif
 		if (HasRegisteredSlateAttribute() && IsAttributesUpdatesEnabled() && !GSlateIsOnFastProcessInvalidation)
 		{
 			FSlateAttributeMetaData::UpdateAllAttributes(*this, FSlateAttributeMetaData::EInvalidationPermission::AllowInvalidationIfConstructed);
@@ -1569,8 +1594,33 @@ int32 SWidget::Paint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, 
 	}
 #endif
 	
+	int32 NewLayerId = 0;
+	{
+		LLM_SCOPE_BYNAME("UI/Slate/OnPaint");
+#if UE_TRACE_ASSET_METADATA_ENABLED
+		FName AssetName = NAME_None;
+		FName ClassName = NAME_None;
+		FName PackageName = NAME_None;
+		if (UE_TRACE_CHANNELEXPR_IS_ENABLED(AssetMetadataChannel))
+		{
+			TSharedPtr<FReflectionMetaData> AssetMetaData = FReflectionMetaData::GetWidgetOrParentMetaData(this);
+			if (AssetMetaData.IsValid())
+			{
+				if (const UObject* AssetPtr = AssetMetaData->Asset.Get())
+				{
+					AssetName = AssetMetaData->Name;
+					ClassName = AssetMetaData->Class.Get()->GetFName();
+					PackageName = AssetPtr->GetPackage()->GetFName();
+				}
+			}
+		}
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(PackageName, ELLMTagSet::Assets);
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(ClassName, ELLMTagSet::AssetClasses);
+		UE_TRACE_METADATA_SCOPE_ASSET_FNAME(AssetName, ClassName, PackageName);
+#endif
 	// Paint the geometry of this widget.
-	int32 NewLayerId = OnPaint(UpdatedArgs, AllottedGeometry, CullingBounds, OutDrawElements, LayerId, ContentWidgetStyle, bParentEnabled);
+		NewLayerId = OnPaint(UpdatedArgs, AllottedGeometry, CullingBounds, OutDrawElements, LayerId, ContentWidgetStyle, bParentEnabled);
+	}
 
 	// Just repainted
 	MutableThis->RemoveUpdateFlags(EWidgetUpdateFlags::NeedsRepaint);

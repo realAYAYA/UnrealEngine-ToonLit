@@ -129,11 +129,6 @@ FBXImportOptions* GetImportOptions( UnFbx::FFbxImporter* FbxImporter, UFbxImport
 			ImportUI->PhysicsAsset = NULL;
 		}
 
-		if (!FbxImporter->CanCreateClass(UPhysicsAsset::StaticClass()))
-		{
-			ImportUI->bCreatePhysicsAsset = false;
-		}
-
 		if(bForceImportType)
 		{
 			ImportUI->MeshTypeToImport = ImportType;
@@ -281,6 +276,11 @@ FBXImportOptions* GetImportOptions( UnFbx::FFbxImporter* FbxImporter, UFbxImport
 			}
 		}
 
+		if (!FbxImporter->CanImportClass(UPhysicsAsset::StaticClass()))
+		{
+			ImportUI->bCreatePhysicsAsset = false;
+		}
+
 		UFbxImportUI::SaveOptions(ImportUI);
 
 		if( ImportUI->StaticMeshImportData )
@@ -325,10 +325,22 @@ FBXImportOptions* GetImportOptions( UnFbx::FFbxImporter* FbxImporter, UFbxImport
 		//Clean up the options
 		UnFbx::FBXImportOptions::ResetOptions(ImportOptions);
 		ApplyImportUIToImportOptions(ImportUI, *ImportOptions);
+		
+		if (!FbxImporter->CanImportClass(UPhysicsAsset::StaticClass()))
+		{
+			ImportOptions->bCreatePhysicsAsset = false;
+		}
+		
 		return ImportOptions;
 	}
 	else
 	{
+		
+		if (!FbxImporter->CanImportClass(UPhysicsAsset::StaticClass()))
+		{
+			FbxImporter->GetImportOptions()->bCreatePhysicsAsset = false;
+		}
+
 		return FbxImporter->GetImportOptions();
 	}
 
@@ -590,10 +602,16 @@ FFbxImporter::~FFbxImporter()
 //-------------------------------------------------------------------------
 //
 //-------------------------------------------------------------------------
-FFbxImporter* FFbxImporter::GetInstance()
+FFbxImporter* FFbxImporter::GetInstance(bool bDoNotCreate /*= false*/)
 {
 	if (!StaticInstance.IsValid())
 	{
+		//Return nullptr if we cannot create the instance
+		if (bDoNotCreate)
+		{
+			return nullptr;
+		}
+
 		StaticInstance = MakeShareable( new FFbxImporter() );
 	}
 	return StaticInstance.Get();
@@ -1844,9 +1862,8 @@ FString FFbxImporter::MakeName(const ANSICHAR* Name)
 	int32 LastNamespaceTokenIndex = INDEX_NONE;
 	if (TmpName.FindLastChar(TEXT(':'), LastNamespaceTokenIndex))
 	{
-		const bool bAllowShrinking = true;
 		//+1 to remove the ':' character we found
-		TmpName.RightChopInline(LastNamespaceTokenIndex + 1, bAllowShrinking);
+		TmpName.RightChopInline(LastNamespaceTokenIndex + 1, EAllowShrinking::Yes);
 	}
 
 	//Remove the special chars
@@ -2365,7 +2382,7 @@ void FFbxImporter::ConvertLodPrefixToLodGroup()
 
 		//Get a valid name for the LODGroup actor
 		FString FbxNodeName = UTF8_TO_TCHAR(FirstNode->GetName());
-		FbxNodeName.RightChopInline(5, false);
+		FbxNodeName.RightChopInline(5, EAllowShrinking::No);
 		FbxNodeName += TEXT("_LodGroup");
 		//Create a LodGroup and child all fbx node to the Group
 		FbxNode* ActorNode = FbxNode::Create(Scene, TCHAR_TO_UTF8(*FbxNodeName));
@@ -2380,7 +2397,7 @@ void FFbxImporter::ConvertLodPrefixToLodGroup()
 				if (bCanReduce)
 				{
 					FString FbxGeneratedNodeName = UTF8_TO_TCHAR(FirstNode->GetName());
-					FbxGeneratedNodeName.RightChopInline(5, false);
+					FbxGeneratedNodeName.RightChopInline(5, EAllowShrinking::No);
 					FbxGeneratedNodeName += TEXT(GeneratedLODNameSuffix) + FString::FromInt(CurrentLodIndex);
 					//Generated LOD add dummy FbxNode to tell the import to add such a LOD
 					FbxNode* DummyGeneratedLODActorNode = FbxNode::Create(Scene, TCHAR_TO_UTF8(*FbxGeneratedNodeName));

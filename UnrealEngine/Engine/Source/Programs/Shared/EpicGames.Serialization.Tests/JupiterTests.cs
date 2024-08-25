@@ -33,7 +33,7 @@ namespace EpicGames.Serialization.Tests
 			CbWriter writer1 = new CbWriter();
 			writer1.BeginObject();
 			writer1.WriteInteger("a", 1);
-			writer1.WriteUtf8String("b", "hello");
+			writer1.WriteUtf8String("b", new Utf8String("hello"));
 			writer1.EndObject();
 
 			CbObject object1 = writer1.ToObject();
@@ -55,22 +55,22 @@ namespace EpicGames.Serialization.Tests
 			ReadOnlyMemory<byte> memory = new ReadOnlyMemory<byte>(bytes);
 			CbField o = new CbField(memory);
 
-			Assert.AreEqual("BuildAction", o.Name);
+			Assert.AreEqual(new Utf8String("BuildAction"), o.Name);
 			List<CbField> buildActionFields = o.ToList();
 			Assert.AreEqual(3, buildActionFields.Count);
-			Assert.AreEqual("Function", buildActionFields[0].Name);
-			Assert.AreEqual("Constants", buildActionFields[1].Name);
-			Assert.AreEqual("Inputs", buildActionFields[2].Name);
+			Assert.AreEqual(new Utf8String("Function"), buildActionFields[0].Name);
+			Assert.AreEqual(new Utf8String("Constants"), buildActionFields[1].Name);
+			Assert.AreEqual(new Utf8String("Inputs"), buildActionFields[2].Name);
 
 			List<CbField> constantsFields = buildActionFields[1].ToList();
 			Assert.AreEqual(3, constantsFields.Count);
-			Assert.AreEqual("TextureBuildSettings", constantsFields[0].Name);
-			Assert.AreEqual("TextureOutputSettings", constantsFields[1].Name);
-			Assert.AreEqual("TextureSource", constantsFields[2].Name);
+			Assert.AreEqual(new Utf8String("TextureBuildSettings"), constantsFields[0].Name);
+			Assert.AreEqual(new Utf8String("TextureOutputSettings"), constantsFields[1].Name);
+			Assert.AreEqual(new Utf8String("TextureSource"), constantsFields[2].Name);
 
 			List<CbField> inputsFields = buildActionFields[2].ToList();
 			Assert.AreEqual(1, inputsFields.Count);
-			Assert.AreEqual("7587B323422942733DDD048A91709FDE", inputsFields[0].Name);
+			Assert.AreEqual(new Utf8String("7587B323422942733DDD048A91709FDE"), inputsFields[0].Name);
 			Assert.IsTrue(inputsFields[0].IsBinaryAttachment());
 			Assert.IsTrue(inputsFields[0].IsAttachment());
 			Assert.IsFalse(inputsFields[0].IsObjectAttachment());
@@ -85,7 +85,7 @@ namespace EpicGames.Serialization.Tests
 			ReadOnlyMemory<byte> memory = new ReadOnlyMemory<byte>(bytes);
 			CbField o = new CbField(memory);
 
-			Assert.AreEqual("BuildOutput", o.Name);
+			Assert.AreEqual(new Utf8String("BuildOutput"), o.Name);
 			List<CbField> buildActionFields = o.ToList();
 			Assert.AreEqual(1, buildActionFields.Count);
 			CbField payloads = buildActionFields[0];
@@ -103,7 +103,7 @@ namespace EpicGames.Serialization.Tests
 			byte[] bytes = File.ReadAllBytes("CompactBinaryObjects/compact_binary");
 
 			CbObject o = new CbObject(bytes);
-			Assert.AreEqual("", o.AsField().Name);
+			Assert.AreEqual(Utf8String.Empty, o.AsField().Name);
 			List<CbField> buildActionFields = o.ToList();
 			Assert.AreEqual(3, buildActionFields.Count);
 			CbField payloads = buildActionFields[0];
@@ -132,7 +132,7 @@ namespace EpicGames.Serialization.Tests
 			CbField o = new CbField(memory);
 
 			// the top object has no name
-			Assert.AreEqual("", o.Name);
+			Assert.AreEqual(Utf8String.Empty, o.Name);
 			List<CbField> fields = o.ToList();
 			Assert.AreEqual(1, fields.Count);
 			CbField? needs = o["needs"];
@@ -148,7 +148,7 @@ namespace EpicGames.Serialization.Tests
 
 			CbWriter writer = new CbWriter();
 			writer.BeginObject();
-			writer.WriteUtf8String("string", "test");
+			writer.WriteUtf8String("string", new Utf8String("test"));
 			writer.WriteBinaryAttachment("hash", hash1);
 			writer.EndObject();
 
@@ -157,12 +157,12 @@ namespace EpicGames.Serialization.Tests
 			CbField o = new CbField(memory);
 
 			// the object has no name and 2 fields
-			Assert.AreEqual("", o.Name);
+			Assert.AreEqual(Utf8String.Empty, o.Name);
 			List<CbField> fields = o.ToList();
 			Assert.AreEqual(2, fields.Count);
 
 			CbField? stringField = o["string"];
-			Assert.AreEqual("test", stringField!.AsUtf8String());
+			Assert.AreEqual(new Utf8String("test"), stringField!.AsUtf8String());
 
 			CbField? hashField = o["hash"];
 			Assert.AreEqual(hash1, hashField!.AsAttachment());

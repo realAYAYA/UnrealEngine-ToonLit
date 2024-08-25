@@ -9,6 +9,7 @@
 #include "Animation/AnimMetaData.h"
 #include "Animation/AnimSequence.h"
 #include "AnimationUtils.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/LinkerLoad.h"
 #include "Animation/BlendSpace.h"
 #include "Animation/PoseAsset.h"
@@ -179,7 +180,7 @@ void FAnimGroupInstance::Prepare(const FAnimGroupInstance* PreviousGroup)
 						
 						if (!PlayerMarkerNames->Contains(MarkerName))
 						{
-							ValidMarkers.RemoveAtSwap(ValidMarkerIndex, 1, false);
+							ValidMarkers.RemoveAtSwap(ValidMarkerIndex, 1, EAllowShrinking::No);
 						}
 					}
 				}
@@ -488,6 +489,11 @@ bool UAnimationAsset::ReplaceSkeleton(USkeleton* NewSkeleton, bool bConvertSpace
 				}
 				AnimAsset->ConditionalPostLoad();
 
+				if (AnimAsset->GetSkeleton() != GetSkeleton())
+				{
+					UE_LOG(LogAnimation, Warning, TEXT("AnimationAsset referencing asset using different skeleton. This will generate undeterministic builds. Please Fix the Asset : AnimationAsset: [%s] - ReferencedAsset : [%s]"), *GetName(), *AnimAsset->GetName());
+				}
+
 				// This ensure that in subsequent behaviour the RawData GUID is never 'new-ed' but always calculated from the 
 				// raw animation data itself.
 				if (UAnimSequence* Sequence = Cast<UAnimSequence>(AnimAsset))
@@ -767,17 +773,24 @@ void UAnimationAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChan
 
 void UAnimationAsset::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UAnimationAsset::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 	
 	for (const UAssetUserData* UserData : AssetUserData)
 	{
 		if (UserData)
 		{
-			UserData->GetAssetRegistryTags(OutTags);	
+			UserData->GetAssetRegistryTags(Context);
 		}
 	}
 	
-	OutTags.Add( FAssetRegistryTag("HasParentAsset", HasParentAsset() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Hidden) );
+	Context.AddTag( FAssetRegistryTag("HasParentAsset", HasParentAsset() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Hidden) );
 }
 
 EDataValidationResult UAnimationAsset::IsDataValid(FDataValidationContext& Context) const

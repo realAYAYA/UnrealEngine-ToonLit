@@ -48,10 +48,9 @@ struct FSparseVolumeTextureUniforms
 	float3			TileDataTexelSize;
 	int				FrameIndex;
 	int             HighestMipLevel;
-	int				LowestResidentMipLevel;
 };
 
-FSparseVolumeTextureUniforms SparseVolumeTextureUnpackUniforms(const uint4 Packed0, const uint4 Packed1, ByteAddressBuffer StreamingInfoBuffer)
+FSparseVolumeTextureUniforms SparseVolumeTextureUnpackUniforms(const uint4 Packed0, const uint4 Packed1)
 {
 	FSparseVolumeTextureUniforms Result;
 	Result.VolumePageResolution = asfloat(Packed0.xyz);
@@ -61,19 +60,22 @@ FSparseVolumeTextureUniforms SparseVolumeTextureUnpackUniforms(const uint4 Packe
 	Result.TileDataTexelSize = asfloat(Packed1.xyz);
 	Result.FrameIndex = int(Packed1.w & 0xFFFFu);
 	Result.HighestMipLevel = int((Packed1.w >> 16u) & 0xFFFFu);
-	Result.LowestResidentMipLevel = asint(StreamingInfoBuffer.Load(Result.FrameIndex << 2));
 
 	return Result;
 }
 
-float3 SparseVolumeTextureGetVoxelCoord(const uint PackedPhysicalTileCoord, const float3 PageTableCoord)
+float3 SparseVolumeTextureGetVoxelCoord(Texture3D<uint> PageTable, FSparseVolumeTextureUniforms Uniforms, float3 PageTableCoord, int MipLevel)
 {
-	const int3 PhysicalTileCoord = int3(
-		PackedPhysicalTileCoord & 0xFF,
-		(PackedPhysicalTileCoord >> 8) & 0xFF,
-		(PackedPhysicalTileCoord >> 16) & 0xFF);
+	// Load from page table texture
+	const uint PackedPhysicalTileCoord = PageTable.Load(int4(floor(PageTableCoord), MipLevel)).x;
+	const int3 PhysicalTileCoord = int3(PackedPhysicalTileCoord & 0xFFu, (PackedPhysicalTileCoord >> 8u) & 0xFFu, (PackedPhysicalTileCoord >> 16u) & 0xFFu);
+	const uint TileMipLevel = PackedPhysicalTileCoord >> 24u;
 
-	const float3 VoxelCoord = float3(PhysicalTileCoord) * float(SPARSE_VOLUME_TILE_RES_PADDED) + (frac(PageTableCoord) * float(SPARSE_VOLUME_TILE_RES) + float(SPARSE_VOLUME_TILE_BORDER));
+	// Scale TileCoord by 1 / exp2(ActualMipLevel - DesiredMipLevel) to get correct UVs when sampling from a higher mip as fallback
+	const float TileRcpMipLevelFactor = rcp(float(1u << (TileMipLevel - uint(MipLevel))));
+	const float3 FracTileCoord = frac(PageTableCoord * TileRcpMipLevelFactor);
+
+	const float3 VoxelCoord = float3(PhysicalTileCoord) * float(SPARSE_VOLUME_TILE_RES_PADDED) + (FracTileCoord * float(SPARSE_VOLUME_TILE_RES) + float(SPARSE_VOLUME_TILE_BORDER));
 	return VoxelCoord;
 }
 
@@ -81,23 +83,21 @@ float3 SparseVolumeTextureSamplePageTable(Texture3D<uint> PageTable, FSparseVolu
 {
 	// Apply address mode to UVW and clamp mip level to resident levels
 	UVW = SparseVolumeTextureApplyAddressMode(UVW, AddressU, AddressV, AddressW);
-	MipLevel = clamp(MipLevel, Uniforms.LowestResidentMipLevel, Uniforms.HighestMipLevel);
+	MipLevel = clamp(MipLevel, 0, Uniforms.HighestMipLevel);
 
 	const float RcpMipLevelFactor = rcp(float(1u << (uint)MipLevel));
 	const float3 VolumePageCoord = UVW * Uniforms.VolumePageResolution;
 	const float3 MipPageTableOffset = floor(Uniforms.PageTableOffset * RcpMipLevelFactor);
 	const float3 PageTableCoord = VolumePageCoord * RcpMipLevelFactor - MipPageTableOffset;
 
-	const uint PackedPhysicalTileCoord = PageTable.Load(int4(floor(PageTableCoord), MipLevel)).x;
-
-	const float3 VoxelCoord = SparseVolumeTextureGetVoxelCoord(PackedPhysicalTileCoord, PageTableCoord);
+	const float3 VoxelCoord = SparseVolumeTextureGetVoxelCoord(PageTable, Uniforms, PageTableCoord, MipLevel);
 	const float3 VoxelUVW = VoxelCoord * Uniforms.TileDataTexelSize;
 	return VoxelUVW;
 }
 
 int3 SparseVolumeTextureLoadPageTable(Texture3D<uint> PageTable, FSparseVolumeTextureUniforms Uniforms, int3 TexelCoord, int MipLevel = 0)
 {
-	if (MipLevel < Uniforms.LowestResidentMipLevel || MipLevel > Uniforms.HighestMipLevel)
+	if (MipLevel < 0 || MipLevel > Uniforms.HighestMipLevel)
 	{
 		return 0; // Point to null tile
 	}
@@ -106,9 +106,7 @@ int3 SparseVolumeTextureLoadPageTable(Texture3D<uint> PageTable, FSparseVolumeTe
 	const float3 MipPageTableOffset = floor(Uniforms.PageTableOffset * RcpMipLevelFactor);
 	const float3 PageTableCoord = VolumeMipPageCoord - MipPageTableOffset;
 
-	const uint PackedPhysicalTileCoord = PageTable.Load(int4(floor(PageTableCoord), MipLevel)).x;
-
-	const float3 VoxelCoord = SparseVolumeTextureGetVoxelCoord(PackedPhysicalTileCoord, PageTableCoord);
+	const float3 VoxelCoord = SparseVolumeTextureGetVoxelCoord(PageTable, Uniforms, PageTableCoord, MipLevel);
 	return int3(VoxelCoord);
 }
 

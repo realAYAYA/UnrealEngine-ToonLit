@@ -16,12 +16,12 @@
 	},
 	"bot-groups": [
 		{
-			"group": "Robomerge_FTE_Access",
-			"tags": ["fte"]
+			"group": "Robomerge_Admin_Access",
+			"tags": ["admin"]
 		},
 		{
-			"group": "Robomerge_Contractor_Twinmotion_Access",
-			"tags": ["twinmotion"]
+			"group": "Robomerge_FTE_Access",
+			"tags": ["fte"]
 		}
 	]
 }

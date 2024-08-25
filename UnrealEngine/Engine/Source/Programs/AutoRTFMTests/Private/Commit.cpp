@@ -84,6 +84,6 @@ TEST_CASE("Commit.Large")
                 m[i + j].push_back(i + j);
             }
         }
-        AutoRTFM::CheckConsistencyAssumingNoRaces();
+        AutoRTFM::ForTheRuntime::CheckConsistencyAssumingNoRaces();
     });
 }

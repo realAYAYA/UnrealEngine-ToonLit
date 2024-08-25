@@ -56,27 +56,13 @@
 #include "ComponentRecreateRenderStateContext.h"
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
 #include "VT/RuntimeVirtualTexture.h"
+#include "LocalVertexFactory.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialInstance)
 
 DECLARE_CYCLE_STAT(TEXT("MaterialInstance CopyMatInstParams"), STAT_MaterialInstance_CopyMatInstParams, STATGROUP_Shaders);
 DECLARE_CYCLE_STAT(TEXT("MaterialInstance Serialize"), STAT_MaterialInstance_Serialize, STATGROUP_Shaders);
 DECLARE_CYCLE_STAT(TEXT("MaterialInstance CopyUniformParamsInternal"), STAT_MaterialInstance_CopyUniformParamsInternal, STATGROUP_Shaders);
-
-#if ENABLE_COOK_STATS
-#include "ProfilingDebugging/ScopedTimers.h"
-namespace MaterialInstanceCookStats
-{
-	static double MaterialInstancePostLoadSec = 0.0;
-
-	static FCookStatsManager::FAutoRegisterCallback RegisterMaterialInstanceCookStats([](FCookStatsManager::AddStatFuncRef AddStat)
-	{
-		AddStat(TEXT("Material"), FCookStatsManager::CreateKeyValueArray(
-			TEXT("MaterialInstancePostLoadSec"), MaterialInstancePostLoadSec
-		));
-	});
-}
-#endif
 
 // This flag controls whether MaterialInstances parents should be restricted to be either uncooked, to be
 // user defined, part of the engine or part of the base game.
@@ -449,7 +435,7 @@ void GameThread_UpdateMIParameter(const UMaterialInstance* Instance, const Param
 		{
 			EMaterialDomain Domain = Material->MaterialDomain;
 			// check if this material has any relevance to path tracing
-			if (Domain != MD_PostProcess && Domain != MD_UI)
+			if (Domain != MD_PostProcess && Domain != MD_UI && !Material->bUsedWithEditorCompositing)
 			{
 				GetRendererModule().InvalidatePathTracedOutput();
 			}
@@ -461,7 +447,7 @@ void GameThread_UpdateMIParameter(const UMaterialInstance* Instance, const Param
 			[Resource, ParameterInfo, Value](FRHICommandListImmediate& RHICmdList)
 			{
 				Resource->RenderThread_UpdateParameter(ParameterInfo, Value);
-				Resource->CacheUniformExpressions(false);
+				Resource->CacheUniformExpressions(RHICmdList, false);
 			});
 	}
 }
@@ -726,7 +712,7 @@ void UMaterialInstance::PostInitProperties()
 	LLM_SCOPE(ELLMTag::MaterialInstance);
 	Super::PostInitProperties();
 
-	if(!HasAnyFlags(RF_ClassDefaultObject))
+	if(!HasAnyFlags(RF_ClassDefaultObject) && FApp::CanEverRenderOrProduceRenderData())
 	{
 		Resource = new FMaterialInstanceResource(this);
 		UsedByRT |= (uint32)EMaterialInstanceUsedByRTFlag::ResourceCreate;
@@ -738,7 +724,7 @@ void UMaterialInstance::PostInitProperties()
  */
 void GameThread_InitMIParameters(const UMaterialInstance& Instance)
 {
-	if (Instance.HasAnyFlags(RF_ClassDefaultObject))
+	if (Instance.HasAnyFlags(RF_ClassDefaultObject) || !FApp::CanEverRender())
 	{
 		return;
 	}
@@ -1292,7 +1278,7 @@ void UMaterialInstance::ValidateTextureOverrides(ERHIFeatureLevel::Type InFeatur
 
 	const UMaterial* Material = GetMaterial();
 	const FMaterialResource* CurrentResource = Material->GetMaterialResource(InFeatureLevel);
-	const bool bShouldValidateVTUsage = UseVirtualTexturing(GMaxRHIFeatureLevel);
+	const bool bShouldValidateVTUsage = UseVirtualTexturing(GMaxRHIShaderPlatform);
 
 	if (!CurrentResource)
 	{
@@ -1545,7 +1531,7 @@ bool UMaterialInstance::CheckMaterialUsage_Concurrent(const EMaterialUsage Usage
 						Material->CheckMaterialUsage(Usage);
 					}
 				};
-				UE_LOG(LogMaterial, Log, TEXT("Had to pass SMU back to game thread. Please ensure correct material usage flags."));
+				UE_LOG(LogMaterial, Log, TEXT("Had to pass SMU back to game thread. Please fix material usage flag %s on %s"), *Material->GetUsageName(Usage), *GetPathNameSafe(this));
 
 				TSharedRef<FCallSMU, ESPMode::ThreadSafe> CallSMU = MakeShareable(new FCallSMU(const_cast<UMaterialInstance*>(this), Usage));
 				bUsageSetSuccessfully = false;
@@ -1734,6 +1720,11 @@ FDisplacementScaling UMaterialInstanceDynamic::GetDisplacementScaling() const
 float UMaterialInstanceDynamic::GetMaxWorldPositionOffsetDisplacement() const
 {
 	return Parent ? Parent->GetMaxWorldPositionOffsetDisplacement() : 0.0f;
+}
+
+bool UMaterialInstanceDynamic::HasPixelAnimation() const
+{
+	return Parent ? Parent->HasPixelAnimation() : false;
 }
 
 FMaterialShadingModelField UMaterialInstanceDynamic::GetShadingModels() const
@@ -1942,24 +1933,6 @@ void UMaterialInterface::GetStaticParameterValues(FStaticParameterSet& OutStatic
 }
 #endif // WITH_EDITORONLY_DATA
 
-template<typename TArrayType>
-static void RemapLayersForParent(TArrayType& LayerIndexRemap, int32 NumParentLayers, TArrayView<const int32> ParentLayerIndexRemap)
-{
-	TArrayType NewLayerIndexRemap;
-	NewLayerIndexRemap.Init(INDEX_NONE, NumParentLayers);
-
-	check(LayerIndexRemap.Num() == ParentLayerIndexRemap.Num());
-	for (int32 i = 0; i < ParentLayerIndexRemap.Num(); ++i)
-	{
-		const int32 ParentLayerIndex = ParentLayerIndexRemap[i];
-		if (ParentLayerIndex != INDEX_NONE)
-		{
-			NewLayerIndexRemap[ParentLayerIndex] = LayerIndexRemap[i];
-		}
-	}
-	LayerIndexRemap = MoveTemp(NewLayerIndexRemap);
-}
-
 void UMaterialInstance::GetAllParametersOfType(EMaterialParameterType Type, TMap<FMaterialParameterInfo, FMaterialParameterMetadata>& OutParameters) const
 {
 	FMaterialInheritanceChain InstanceChain;
@@ -2061,10 +2034,10 @@ void UMaterialInstance::GetDependentFunctions(TArray<UMaterialFunctionInterface*
 #endif // WITH_EDITORONLY_DATA
 
 #if WITH_EDITOR
-void UMaterialInstance::ForceRecompileForRendering()
+void UMaterialInstance::ForceRecompileForRendering(EMaterialShaderPrecompileMode CompileMode)
 {
 	UpdateCachedData();
-	CacheResourceShadersForRendering();
+	CacheResourceShadersForRendering(CompileMode);
 }
 #endif // WITH_EDITOR
 
@@ -2117,6 +2090,8 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 		DitheredLODTransition = 0;
 		bIsShadingModelFromMaterialExpression = 0;
 		bOutputTranslucentVelocity = false;
+		bHasPixelAnimation = false;
+		bEnableTessellation = false;
 		DisplacementScaling = FDisplacementScaling();
 		MaxWorldPositionOffsetDisplacement = 0.0f;
 
@@ -2182,6 +2157,26 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 		BasePropertyOverrides.bOutputTranslucentVelocity = bOutputTranslucentVelocity;
 	}
 
+	if (BasePropertyOverrides.bOverride_bHasPixelAnimation)
+	{
+		bHasPixelAnimation = BasePropertyOverrides.bHasPixelAnimation;
+	}
+	else
+	{
+		bHasPixelAnimation = Parent->HasPixelAnimation();
+		BasePropertyOverrides.bHasPixelAnimation = bHasPixelAnimation;
+	}
+
+	if (BasePropertyOverrides.bOverride_bEnableTessellation)
+	{
+		bEnableTessellation = BasePropertyOverrides.bEnableTessellation;
+	}
+	else
+	{
+		bEnableTessellation = Parent->IsTessellationEnabled();
+		BasePropertyOverrides.bEnableTessellation = bEnableTessellation;
+	}
+
 	if (BasePropertyOverrides.bOverride_ShadingModel)
 	{
 		if (BasePropertyOverrides.ShadingModel == MSM_FromMaterialExpression)
@@ -2213,7 +2208,7 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 		}
 	}
 
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
 		BasePropertyOverrides.BlendMode = ConvertLegacyBlendMode(BasePropertyOverrides.BlendMode, ShadingModels);
 		BlendMode = ConvertLegacyBlendMode(Parent->GetBlendMode(), ShadingModels);
@@ -2335,6 +2330,29 @@ void UMaterialInstance::CacheResourceShadersForRendering(EMaterialShaderPrecompi
 			// register the loaded shadermap
 			FMaterialResource* CurrentResource = FindOrCreateMaterialResource(StaticPermutationMaterialResources, BaseMaterial, this, FeatureLevel, ActiveQualityLevel);
 			check(CurrentResource);
+
+			if (IsUsingNewHLSLGenerator())
+			{
+				// Release resources from unused qualities. For some reason, FindOrCreateMaterialResource checks material quality usage
+				// but FindMaterialResource doesn't. The two functions can choose differently if unused quality resources aren't removed.
+				// When that happens, stale material resources may be used for rendering and cause troubles
+				TArray<bool, TInlineAllocator<EMaterialQualityLevel::Num>> QualityLevelsUsed;
+				GetQualityLevelUsage(QualityLevelsUsed, ShaderPlatform);
+
+				for (int32 Index = 0; Index < StaticPermutationMaterialResources.Num(); ++Index)
+				{
+					FMaterialResource* MaterialResource = StaticPermutationMaterialResources[Index];
+					if (MaterialResource != CurrentResource
+						&& MaterialResource->GetFeatureLevel() == FeatureLevel
+						&& MaterialResource->GetQualityLevel() != EMaterialQualityLevel::Num
+						&& !QualityLevelsUsed[MaterialResource->GetQualityLevel()])
+					{
+						OutResourcesToFree.Add(MaterialResource);
+						StaticPermutationMaterialResources.RemoveAtSwap(Index);
+						--Index;
+					}
+				}
+			}
 
 #if STORE_ONLY_ACTIVE_SHADERMAPS
 			if (!CurrentResource->GetGameThreadShaderMap())
@@ -2643,6 +2661,32 @@ bool UMaterialInstance::IsComplete() const
 }
 
 #if WITH_EDITOR
+bool UMaterialInstance::IsCompiling() const
+{
+	bool bIsCompiling = false;
+	if (bHasStaticPermutationResource && FApp::CanEverRender())
+	{
+		uint32 FeatureLevelsToCompile = GetFeatureLevelsToCompileForRendering();
+		const EMaterialQualityLevel::Type ActiveQualityLevel = GetCachedScalabilityCVars().MaterialQualityLevel;
+
+		while (FeatureLevelsToCompile != 0)
+		{
+			const ERHIFeatureLevel::Type FeatureLevel = (ERHIFeatureLevel::Type)FBitSet::GetAndClearNextBit(FeatureLevelsToCompile);
+			const EShaderPlatform ShaderPlatform = GShaderPlatformForFeatureLevel[FeatureLevel];
+
+			FMaterialResource* CurrentResource = FindMaterialResource(StaticPermutationMaterialResources, FeatureLevel, ActiveQualityLevel, true);
+			if (CurrentResource && !CurrentResource->IsCompilationFinished())
+			{
+				bIsCompiling = true;
+				break;
+			}
+		}
+	}
+	return bIsCompiling;
+}
+#endif
+
+#if WITH_EDITOR
 bool UMaterialInstance::SetMaterialLayers(const FMaterialLayersFunctions& LayersValue)
 {
 	UMaterialInstanceEditorOnlyData* EditorOnly = GetEditorOnlyData();
@@ -2907,7 +2951,8 @@ void UMaterialInstance::Serialize(FArchive& Ar)
 			SerializeInlineShaderMaps(
 				NULL,
 				Ar,
-				LoadedMaterialResources
+				LoadedMaterialResources,
+				GetFName()
 #if STORE_ONLY_ACTIVE_SHADERMAPS
 				, &OffsetToFirstResource
 #endif
@@ -3003,7 +3048,6 @@ void UMaterialInstance::PostLoad()
 {
 	LLM_SCOPE(ELLMTag::MaterialInstance);
 	SCOPED_LOADTIMER(MaterialInstancePostLoad);
-	COOK_STAT(FScopedDurationTimer BlockingTimer(MaterialInstanceCookStats::MaterialInstancePostLoadSec));
 
 #if WITH_EDITORONLY_DATA // fixup serialization before everything else
 	if (IsEditorOnlyDataValid() && !GetEditorOnlyData()->StaticParameters.StaticSwitchParameters_DEPRECATED.IsEmpty())
@@ -3156,7 +3200,7 @@ void UMaterialInstance::PostLoad()
 	{
 		SCOPE_SECONDS_COUNTER(MaterialLoadTime);
 
-		const bool bSkipCompilationOnPostLoad = IsShaderJobCacheDDCEnabled();
+		const bool bSkipCompilationOnPostLoad = IsMaterialMapDDCEnabled() == false;
 
 		// Make sure static parameters are up to date and shaders are cached for the current platform
 		if (bSkipCompilationOnPostLoad)
@@ -3204,6 +3248,13 @@ void UMaterialInstance::PostLoad()
 
 		LightingGuidFixupMap.Add(GetLightingGuid(), this);
 	}
+
+	if (IsDeferredDecal())
+	{
+		FPSOPrecacheParams PSOPrecacheParams;
+		UMaterialInterface::PrecachePSOs(&FLocalVertexFactory::StaticType, PSOPrecacheParams);
+	}
+
 	//DumpDebugInfo(*GLog);
 }
 
@@ -3291,7 +3342,7 @@ void UMaterialInstance::BeginDestroy()
 		FMaterialRenderProxy* LocalResource = Resource;
 		std::atomic<uint32>* Used = &UsedByRT;
 		ENQUEUE_RENDER_COMMAND(BeginDestroyCommand)(
-		[ResourcesToDestroy = MoveTemp(ResourcesToDestroy), LocalResource, Used](FRHICommandListImmediate& RHICmdList)
+		[ResourcesToDestroy = MoveTemp(ResourcesToDestroy), LocalResource, Used](FRHICommandListImmediate& RHICmdList) mutable
 		{
 			if (LocalResource)
 			{
@@ -3303,6 +3354,9 @@ void UMaterialInstance::BeginDestroy()
 			{
 				CurrentResource->PrepareDestroy_RenderThread();
 			}
+
+			// Clear all references before assigning the atomic state below.
+			ResourcesToDestroy.Empty();
 
 			// Clear flag set when Resource was created
 			*Used &= ~(uint32)EMaterialInstanceUsedByRTFlag::ResourceCreate;
@@ -3328,8 +3382,11 @@ void UMaterialInstance::FinishDestroy()
 {
 	if(!HasAnyFlags(RF_ClassDefaultObject))
 	{
-		Resource->GameThread_Destroy();
-		Resource = nullptr;
+		if (Resource)
+		{
+			Resource->GameThread_Destroy();
+			Resource = nullptr;
+		}
 	}
 
 	for (FMaterialResource* CurrentResource : StaticPermutationMaterialResources)
@@ -3422,6 +3479,12 @@ bool UMaterialInstance::SetParentInternal(UMaterialInterface* NewParent, bool Re
 			InitResources();
 		}
 	}
+
+	if (bSetParent)
+	{
+		OnBaseMaterialSetEvent.Broadcast(this);
+	}
+
 	return bSetParent;
 }
 
@@ -4072,8 +4135,8 @@ void UMaterialInstance::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
 		ValidateStaticPermutationAllowed();
 	}
 
-	// If BLEND_TranslucentColoredTransmittance is selected while Strata is not enabled, force BLEND_Translucent blend mode
-	if (!Strata::IsStrataEnabled())
+	// If BLEND_TranslucentColoredTransmittance is selected while Substrate is not enabled, force BLEND_Translucent blend mode
+	if (!Substrate::IsSubstrateEnabled())
 	{
 		SanitizeBlendMode(BlendMode);
 		SanitizeBlendMode(BasePropertyOverrides.BlendMode);
@@ -4406,98 +4469,41 @@ void UMaterialInstance::GetBasePropertyOverridesHash(FSHAHash& OutHash)const
 
 	FSHA1 Hash;
 	bool bHasOverrides = false;
-
-	float UsedOpacityMaskClipValue = GetOpacityMaskClipValue();
-	if (FMath::Abs(UsedOpacityMaskClipValue - Mat->GetOpacityMaskClipValue()) > UE_SMALL_NUMBER)
-	{
-		const FString HashString = TEXT("bOverride_OpacityMaskClipValue");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((const uint8*)&UsedOpacityMaskClipValue, sizeof(UsedOpacityMaskClipValue));
-		bHasOverrides = true;
-	}
-
-	bool bUsedCastDynamicShadowAsMasked = GetCastDynamicShadowAsMasked();
-	if ( bUsedCastDynamicShadowAsMasked != Mat->GetCastDynamicShadowAsMasked() )
-	{
-		const FString HashString = TEXT("bOverride_CastDynamicShadowAsMasked");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((const uint8*)&bUsedCastDynamicShadowAsMasked, sizeof(bUsedCastDynamicShadowAsMasked));
-		bHasOverrides = true;
-	}
-
-	EBlendMode UsedBlendMode = GetBlendMode();
-	if (UsedBlendMode != Mat->GetBlendMode())
-	{
-		const FString HashString = TEXT("bOverride_BlendMode");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((const uint8*)&UsedBlendMode, sizeof(UsedBlendMode));
-		bHasOverrides = true;
-	}
 	
-	FMaterialShadingModelField UsedShadingModels = GetShadingModels();
-	if (UsedShadingModels != Mat->GetShadingModels())
+	auto GetPropertyOverrideHash = [&](auto InstanceValue, auto MatValue, const FString &HashString)
 	{
-		const FString HashString = TEXT("bOverride_ShadingModel");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((const uint8*)&UsedShadingModels, sizeof(UsedShadingModels));
-		bHasOverrides = true;
-	}
-
-	bool bUsedIsTwoSided = IsTwoSided();
-	if (bUsedIsTwoSided != Mat->IsTwoSided())
-	{
-		const FString HashString = TEXT("bOverride_TwoSided");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&bUsedIsTwoSided, sizeof(bUsedIsTwoSided));
-		bHasOverrides = true;
-	}
-	bool bUsedIsThinSurface = IsThinSurface();
-	if (bUsedIsThinSurface != Mat->IsThinSurface())
-	{
-		const FString HashString = TEXT("bOverride_bIsThinSurface");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&bUsedIsThinSurface, sizeof(bUsedIsThinSurface));
-		bHasOverrides = true;
-	}
-	bool bUsedIsDitheredLODTransition = IsDitheredLODTransition();
-	if (bUsedIsDitheredLODTransition != Mat->IsDitheredLODTransition())
-	{
-		const FString HashString = TEXT("bOverride_DitheredLODTransition");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&bUsedIsDitheredLODTransition, sizeof(bUsedIsDitheredLODTransition));
-		bHasOverrides = true;
-	}
-
-	bool bUsedIsTranslucencyWritingVelocity = IsTranslucencyWritingVelocity();
-	if (bUsedIsTranslucencyWritingVelocity != Mat->IsTranslucencyWritingVelocity())
-	{
-		const FString HashString = TEXT("bOverride_OutputTranslucentVelocity");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&bUsedIsTranslucencyWritingVelocity, sizeof(bUsedIsTranslucencyWritingVelocity));
-		bHasOverrides = true;
-	}
-
-	FDisplacementScaling UsedDisplacementScaling = GetDisplacementScaling();
-	if (UsedDisplacementScaling != Mat->GetDisplacementScaling())
-	{
-		const FString HashString = TEXT("bOverride_DisplacementScaling");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&UsedDisplacementScaling.Magnitude, sizeof(UsedDisplacementScaling.Magnitude));
-		Hash.Update((uint8*)&UsedDisplacementScaling.Center, sizeof(UsedDisplacementScaling.Center));
-		bHasOverrides = true;
-	}
-
-	float UsedMaxWorldPositionOffsetDisplacement = GetMaxWorldPositionOffsetDisplacement();
-	if (FMath::Abs(UsedMaxWorldPositionOffsetDisplacement - Mat->GetMaxWorldPositionOffsetDisplacement()) > UE_SMALL_NUMBER)
-	{
-		const FString HashString = TEXT("bOverride_MaxWorldPositionOffsetDisplacement");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&UsedMaxWorldPositionOffsetDisplacement, sizeof(UsedMaxWorldPositionOffsetDisplacement));
-		bHasOverrides = true;
-	}
-
+		bool bOverridden = false;
+		if constexpr(std::is_floating_point_v<decltype(InstanceValue)>)
+		{
+			bOverridden = !FMath::IsNearlyEqual(InstanceValue, MatValue);
+		}
+		else
+		{
+			bOverridden = InstanceValue != MatValue;
+		}
+		
+		if (bOverridden)
+		{
+			Hash.UpdateWithString(*HashString, HashString.Len());
+			Hash.Update(reinterpret_cast<const uint8*>(&InstanceValue), sizeof(InstanceValue));
+			bHasOverrides = true;
+		}
+	};
+	
+	GetPropertyOverrideHash(GetOpacityMaskClipValue(), Mat->GetOpacityMaskClipValue(), TEXT("bOverride_OpacityMaskClipValue"));
+	GetPropertyOverrideHash(GetBlendMode(), Mat->GetBlendMode(), TEXT("bOverride_BlendMode"));
+	GetPropertyOverrideHash(GetShadingModels(), Mat->GetShadingModels(), TEXT("bOverride_ShadingModel"));
+	GetPropertyOverrideHash(IsTwoSided(), Mat->IsTwoSided(), TEXT("bOverride_TwoSided"));
+	GetPropertyOverrideHash(IsThinSurface(), Mat->IsThinSurface(), TEXT("bOverride_bIsThinSurface"));
+	GetPropertyOverrideHash(IsDitheredLODTransition(), Mat->IsDitheredLODTransition(), TEXT("bOverride_DitheredLODTransition"));
+	GetPropertyOverrideHash(GetCastDynamicShadowAsMasked(), Mat->GetCastDynamicShadowAsMasked(), TEXT("bOverride_CastDynamicShadowAsMasked"));
+	GetPropertyOverrideHash(IsTranslucencyWritingVelocity(), Mat->IsTranslucencyWritingVelocity(), TEXT("bOverride_OutputTranslucentVelocity"));
+	GetPropertyOverrideHash(HasPixelAnimation(), Mat->HasPixelAnimation(), TEXT("bOverride_bHasPixelAnimation"));
+	GetPropertyOverrideHash(IsTessellationEnabled(), Mat->IsTessellationEnabled(), TEXT("bOverride_bEnableTessellation"));
+	GetPropertyOverrideHash(GetDisplacementScaling(), Mat->GetDisplacementScaling(), TEXT("bOverride_DisplacementScaling"));
+	GetPropertyOverrideHash(GetMaxWorldPositionOffsetDisplacement(), Mat->GetMaxWorldPositionOffsetDisplacement(), TEXT("bOverride_MaxWorldPositionOffsetDisplacement"));
+	
 	// Change-begin
-	
 	bool bUsedToonOutline = UseToonOutline();
 	if (bUsedToonOutline != Mat->UseToonOutline())
 	{
@@ -4514,7 +4520,6 @@ void UMaterialInstance::GetBasePropertyOverridesHash(FSHAHash& OutHash)const
 		Hash.Update((uint8*)&NewOutlineMaterial, sizeof(NewOutlineMaterial));
 		bHasOverrides = true;
 	}
-	
 	// Change-end
 
 	if (bHasOverrides)
@@ -4528,7 +4533,7 @@ bool UMaterialInstance::HasOverridenBaseProperties()const
 {
 	const UMaterial* Material = GetMaterial_Concurrent();
 	if (Parent && Material && Material->bUsedAsSpecialEngineMaterial == false &&
-		((FMath::Abs(GetOpacityMaskClipValue() - Parent->GetOpacityMaskClipValue()) > UE_SMALL_NUMBER) ||
+		(!FMath::IsNearlyEqual(GetOpacityMaskClipValue(), Parent->GetOpacityMaskClipValue()) ||
 		(GetBlendMode() != Parent->GetBlendMode()) ||
 		(GetShadingModels() != Parent->GetShadingModels()) ||
 		(IsTwoSided() != Parent->IsTwoSided()) ||
@@ -4536,19 +4541,19 @@ bool UMaterialInstance::HasOverridenBaseProperties()const
 		(IsDitheredLODTransition() != Parent->IsDitheredLODTransition()) ||
 		(GetCastDynamicShadowAsMasked() != Parent->GetCastDynamicShadowAsMasked()) ||
 		(IsTranslucencyWritingVelocity() != Parent->IsTranslucencyWritingVelocity()) ||
+		(HasPixelAnimation() != Parent->HasPixelAnimation()) ||
+		(IsTessellationEnabled() != Parent->IsTessellationEnabled()) ||
 		(GetDisplacementScaling() != Parent->GetDisplacementScaling()) ||
-		(GetMaxWorldPositionOffsetDisplacement() != Parent->GetMaxWorldPositionOffsetDisplacement())
-
-		// Change-begin
-		||
-		(UseToonOutline() != Parent->UseToonOutline()) ||
-		(GetOutlineMaterial() != Parent->GetOutlineMaterial())
-		// Change-end
-		
+		!FMath::IsNearlyEqual(GetMaxWorldPositionOffsetDisplacement(), Parent->GetMaxWorldPositionOffsetDisplacement())
 		))
 	{
 		return true;
 	}
+
+	// Change-begin
+	if (UseToonOutline() != Parent->UseToonOutline() || GetOutlineMaterial() != Parent->GetOutlineMaterial())
+		return true;
+	// Change-end
 
 	return false;
 }
@@ -4567,6 +4572,8 @@ FString UMaterialInstance::GetBasePropertyOverrideString() const
 		BasePropString += FString::Printf(TEXT("bOverride_DitheredLODTransition_%d, "), (IsDitheredLODTransition() != Parent->IsDitheredLODTransition()));
 		BasePropString += FString::Printf(TEXT("bOverride_CastDynamicShadowAsMasked_%d, "), (GetCastDynamicShadowAsMasked() != Parent->GetCastDynamicShadowAsMasked()));
 		BasePropString += FString::Printf(TEXT("bOverride_OutputTranslucentVelocity_%d "), (IsTranslucencyWritingVelocity() != Parent->IsTranslucencyWritingVelocity()));
+		BasePropString += FString::Printf(TEXT("bOverride_bHasPixelAnimation_%d "), (HasPixelAnimation() != Parent->HasPixelAnimation()));
+		BasePropString += FString::Printf(TEXT("bOverride_bEnableTessellation_%d "), (IsTessellationEnabled() != Parent->IsTessellationEnabled()));
 		BasePropString += FString::Printf(TEXT("bOverride_DisplacementScaling_%d "), (GetDisplacementScaling() != Parent->GetDisplacementScaling()));
 		BasePropString += FString::Printf(TEXT("bOverride_MaxWorldPositionOffsetDisplacement_%d "), (GetMaxWorldPositionOffsetDisplacement() != Parent->GetMaxWorldPositionOffsetDisplacement()));
 	}
@@ -4634,6 +4641,16 @@ bool UMaterialInstance::ShouldAlwaysEvaluateWorldPositionOffset() const
 	return Parent ? Parent->ShouldAlwaysEvaluateWorldPositionOffset() : false;
 }
 
+bool UMaterialInstance::IsDeferredDecal() const
+{
+	return Parent ? Parent->IsDeferredDecal() : false;
+}
+
+bool UMaterialInstance::HasPixelAnimation() const
+{
+	return bHasPixelAnimation;
+}
+
 bool UMaterialInstance::IsMasked() const
 {
 	return IsMaskedBlendMode(GetBlendMode()) || (IsTranslucentOnlyBlendMode(GetBlendMode()) && GetCastDynamicShadowAsMasked());
@@ -4655,6 +4672,11 @@ bool UMaterialInstance::CastsRayTracedShadows() const
 {
 	//#dxr_todo: do per material instance override?
 	return Parent ? Parent->CastsRayTracedShadows() : true;
+}
+
+bool UMaterialInstance::IsTessellationEnabled() const
+{
+	return bEnableTessellation;
 }
 
 /** Checks to see if an input property should be active, based on the state of the material */
@@ -4841,7 +4863,8 @@ bool UMaterialInstance::IsRedundant() const
 	|| BasePropertyOverrides.bOverride_DitheredLODTransition 
 	|| BasePropertyOverrides.bOverride_CastDynamicShadowAsMasked
 	|| BasePropertyOverrides.bOverride_TwoSided 
-	|| BasePropertyOverrides.bOutputTranslucentVelocity)
+	|| BasePropertyOverrides.bOutputTranslucentVelocity
+	|| BasePropertyOverrides.bHasPixelAnimation)
 	{
 		return false;
 	}
@@ -5190,7 +5213,7 @@ void UMaterialInstance::OverrideTextureParameterValue(const UTexture* InTextureT
 					(
 						[LocalResource](FRHICommandListImmediate& RHICmdList)
 						{
-							LocalResource->CacheUniformExpressions(false);
+							LocalResource->CacheUniformExpressions(RHICmdList, false);
 						}
 				);
 			}

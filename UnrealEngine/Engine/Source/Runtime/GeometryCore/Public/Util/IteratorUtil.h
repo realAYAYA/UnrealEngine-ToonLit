@@ -427,7 +427,7 @@ public:
 struct FModuloIteration
 {
 	uint64 MaxIndex = 0;
-	uint64 ModuloPrime = 3208642561;		// first elite prime > max_unsigned_int/2
+	uint64 ModuloPrime = 4294967311ull;		// prime > max_unsigned_int
 	uint64 CurIndex = 0;
 	uint64 StartIndex = 0;
 	uint64 Count = 0;

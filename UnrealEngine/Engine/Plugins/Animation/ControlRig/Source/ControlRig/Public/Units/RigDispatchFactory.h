@@ -5,7 +5,6 @@
 #include "ControlRigDefines.h"
 #include "RigVMCore/RigVMDispatchFactory.h"
 #include "RigUnitContext.h"
-#include "ControlRig.h"
 #include "RigDispatchFactory.generated.h"
 
 /** Base class for all rig dispatch factories */

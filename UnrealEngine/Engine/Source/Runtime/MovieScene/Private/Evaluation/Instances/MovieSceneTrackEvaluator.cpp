@@ -7,6 +7,7 @@
 #include "Sections/MovieSceneSubSection.h"
 #include "Compilation/MovieSceneCompiledDataManager.h"
 #include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 #include "Stats/Stats2.h"
 
 #include "IMovieSceneModule.h"
@@ -38,9 +39,17 @@ struct FDelayedPreAnimatedStateRestore
 
 	void RestoreNow()
 	{
-		for (FMovieSceneEvaluationKey Key : KeysToRestore)
+		using namespace UE::MovieScene;
+
+		UMovieSceneEntitySystemLinker* Linker = Player.GetSharedPlaybackState()->GetLinker();
+		FPreAnimatedTemplateCaptureSources* TemplateMetaData = Linker->PreAnimatedState.GetTemplateMetaData();
+		if (TemplateMetaData)
 		{
-			Player.PreAnimatedState.OnFinishedEvaluating(Key);
+			const FRootInstanceHandle RootInstanceHandle = Player.GetEvaluationTemplate().GetRootInstanceHandle();
+			for (FMovieSceneEvaluationKey Key : KeysToRestore)
+			{
+				TemplateMetaData->StopTrackingCaptureSource(Key, RootInstanceHandle);
+			}
 		}
 		KeysToRestore.Reset();
 	}
@@ -323,9 +332,13 @@ void FMovieSceneTrackEvaluator::EvaluateGroup(const FMovieSceneEvaluationGroup& 
 
 void FMovieSceneTrackEvaluator::CallSetupTearDown(IMovieScenePlayer& Player, FDelayedPreAnimatedStateRestore* DelayedRestore)
 {
+	using namespace UE::MovieScene;
+
 	MOVIESCENE_DETAILED_SCOPE_CYCLE_COUNTER(MovieSceneEval_CallSetupTearDown);
 
 	UMovieSceneEntitySystemLinker* Linker = Player.GetEvaluationTemplate().GetEntitySystemLinker();
+	FPreAnimatedTemplateCaptureSources* TemplateMetaData = Linker->PreAnimatedState.GetTemplateMetaData();
+	const FRootInstanceHandle RootInstanceHandle = Player.GetEvaluationTemplate().GetRootInstanceHandle();
 
 	FPersistentEvaluationData PersistentDataProxy(Player);
 
@@ -370,17 +383,17 @@ void FMovieSceneTrackEvaluator::CallSetupTearDown(IMovieScenePlayer& Player, FDe
 			{
 				DelayedRestore->Add(Key);
 			}
-			else
+			else if (TemplateMetaData)
 			{
-				Player.PreAnimatedState.OnFinishedEvaluating(Key);
+				TemplateMetaData->StopTrackingCaptureSource(Key, RootInstanceHandle);
 			}
 		}
-		else
+		else if (TemplateMetaData)
 		{
 			// If the track has been destroyed since it was last evaluated, we can still restore state for anything it made
 			// In particular this is needed for movie renders, where it will enable/disable shots between cuts in order
 			// to render handle frames
-			Player.PreAnimatedState.OnFinishedEvaluating(Key);
+			TemplateMetaData->StopTrackingCaptureSource(Key, RootInstanceHandle);
 		}
 	}
 

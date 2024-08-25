@@ -255,8 +255,8 @@ void FLoadBalanceBuilder::LoadBalance()
 	TArray<FCluster> Buckets;
 	PackClusters(MoveTemp(DisjointSubgraphs), Buckets);
 
-	Assignments.SetNum(NumBuckets, false /* bAllowShrinking */);
-	RootAssignments.SetNum(NumBuckets, false /* bAllowShrinking */);
+	Assignments.SetNum(NumBuckets, EAllowShrinking::No);
+	RootAssignments.SetNum(NumBuckets, EAllowShrinking::No);
 	for (int32 BucketIndex = 0; BucketIndex < NumBuckets; ++BucketIndex)
 	{
 		Assignments[BucketIndex] = MoveTemp(Buckets[BucketIndex].Vertices);
@@ -291,7 +291,7 @@ void FLoadBalanceBuilder::FindDisjointSubgraphs(TArray<FCluster>& OutDisjointSub
 
 		while (!Stack.IsEmpty())
 		{
-			FVertex Vertex = Stack.Pop(false /* bAllowShrinking */);
+			FVertex Vertex = Stack.Pop(EAllowShrinking::No);
 			for (TConstArrayView<FVertex> Edges : { Graph[Vertex], TransposeGraph[Vertex] })
 			{
 				for (FVertex Edge : Edges)
@@ -500,7 +500,7 @@ void FLoadBalanceBuilder::PackClusters(TArray<FCluster>&& InDisjointSubgraphs, T
 
 void FLoadBalanceBuilder::CreateBucketClusters(TConstArrayView<FBucket> Buckets, TConstArrayView<FCluster> Clusters, TArray<FCluster>& OutBuckets)
 {
-	OutBuckets.SetNum(NumBuckets, false /* bAllowShrinking */);
+	OutBuckets.SetNum(NumBuckets, EAllowShrinking::No);
 	for (int32 BucketIndex = 0; BucketIndex < NumBuckets; ++BucketIndex)
 	{
 		const FBucket& Bucket = Buckets[BucketIndex];
@@ -519,9 +519,9 @@ void FLoadBalanceBuilder::CreateBucketClusters(TConstArrayView<FBucket> Buckets,
 			OutBucket.Roots.Append(Cluster.Roots);
 		}
 		Algo::Sort(OutBucket.Vertices);
-		OutBucket.Vertices.SetNum(Algo::Unique(OutBucket.Vertices), false /* bAllowShrinking */);
+		OutBucket.Vertices.SetNum(Algo::Unique(OutBucket.Vertices), EAllowShrinking::No );
 		Algo::Sort(OutBucket.Roots);
-		OutBucket.Roots.SetNum(Algo::Unique(OutBucket.Roots), false /* bAllowShrinking */);
+		OutBucket.Roots.SetNum(Algo::Unique(OutBucket.Roots), EAllowShrinking::No);
 	}
 }
 
@@ -717,12 +717,12 @@ void FLoadBalanceBuilder::UpdateClusterMergeDatas(FMergeCluster& Cluster, TBitAr
 
 	// Pop mergedatas for completed roots off the back of the list as we encounter them
 	// Set BestMergeData to the first mergedata found for a remaining root
-	FRootAndClusterMergeData BestMergeData = MergeDatas.Pop(false /* bAllowShrinking */);
+	FRootAndClusterMergeData BestMergeData = MergeDatas.Pop(EAllowShrinking::No);
 	while (RootAssigned[BestMergeData.Root])
 	{
 		++RemovedMergedDataNum;
 		check(!MergeDatas.IsEmpty()); // We only update when there are remaining roots, so it should never be empty
-		BestMergeData = MergeDatas.Pop(false /* bAllowShrinking */);
+		BestMergeData = MergeDatas.Pop(EAllowShrinking::No);
 	}
 
 	// Update the mergedata to get the exact value; usually this will be less than the upperbound and we need to
@@ -742,7 +742,7 @@ void FLoadBalanceBuilder::UpdateClusterMergeDatas(FMergeCluster& Cluster, TBitAr
 		while (!MergeDatas.IsEmpty() && RootAssigned[MergeDatas.Last().Root])
 		{
 			++RemovedMergedDataNum;
-			MergeDatas.Pop(false /* bAllowShrinking */);
+			MergeDatas.Pop(EAllowShrinking::No);
 		}
 		if (MergeDatas.IsEmpty())
 		{
@@ -779,7 +779,7 @@ void FLoadBalanceBuilder::UpdateClusterMergeDatas(FMergeCluster& Cluster, TBitAr
 		// Sorting the middle at the end is faster than sorting it as we go because it avoids shifts.
 		// NewMergeData doesn't get to count itself as the best unless its estimate has been made exact, but don't
 		// spend time making the estimate exact unless we have to.
-		FRootAndClusterMergeData NewMergeData = MergeDatas.Pop(false /* bAllowShrinking */);
+		FRootAndClusterMergeData NewMergeData = MergeDatas.Pop(EAllowShrinking::No);
 
 		bool bIsNewBest = false;
 		bool bIsNewWorst = false;

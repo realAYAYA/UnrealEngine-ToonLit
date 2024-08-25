@@ -57,6 +57,10 @@ protected:
 	UPROPERTY()
 	EGameplayAbilityActivationPath ActivationPath = EGameplayAbilityActivationPath::Native;
 
+	/** The InstancingPolicy of the GameplayAbility (Instancing Behavior can affect memory, which functions can be called, what data can be used, and replication) */
+	UPROPERTY()
+	TEnumAsByte<EGameplayAbilityInstancingPolicy::Type> InstancingPolicy = EGameplayAbilityInstancingPolicy::Type::NonInstanced;
+
 	/** The NetExecutionPolicy of the GameplayAbility */
 	UPROPERTY()
 	TEnumAsByte<EGameplayAbilityNetExecutionPolicy::Type> NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::Type::LocalPredicted;
@@ -68,6 +72,10 @@ protected:
 	/** The Replication Policy which controls if the instance itself is replicated (and therefore controls variable replication) */
 	UPROPERTY()
 	TEnumAsByte<EGameplayAbilityReplicationPolicy::Type> ReplicationPolicy = EGameplayAbilityReplicationPolicy::Type::ReplicateNo;
+
+	/** Gameplay Tags that the Asset itself has (AbilityTags) */
+	UPROPERTY()
+	TArray<FName>	AssetTags;
 
 	/** If the GameplayAbility has a Cost GameplayEffect, this field will tell us which one it's using. */
 	UPROPERTY()
@@ -96,6 +104,10 @@ protected:
 	/** How does the Blueprint call EndAbility?  If missing, this Ability can be assumed to be a persistent one and removed from Gameplay code (e.g. while tags are active) */
 	UPROPERTY()
 	EGameplayAbilityEndInBlueprints EndAbility = EGameplayAbilityEndInBlueprints::Missing;
+
+	/** All of the known referenced tags (list may be incomplete -- does not take into account Blueprint Tags) */
+	UPROPERTY()
+	TArray<FName>	ReferencedTags;
 
 	/** List of functions the Blueprint calls */
 	UPROPERTY()

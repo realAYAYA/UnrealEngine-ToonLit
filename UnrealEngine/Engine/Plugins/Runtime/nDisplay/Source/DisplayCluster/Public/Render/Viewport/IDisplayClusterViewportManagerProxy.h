@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-
 #include "Render/Viewport/IDisplayClusterViewportProxy.h"
 
 /**
@@ -19,8 +18,8 @@ public:
 	virtual TSharedPtr<IDisplayClusterViewportManagerProxy, ESPMode::ThreadSafe> ToSharedPtr() = 0;
 	virtual TSharedPtr<const IDisplayClusterViewportManagerProxy, ESPMode::ThreadSafe> ToSharedPtr() const = 0;
 
-	/** Return current render mode. */
-	virtual EDisplayClusterRenderFrameMode GetRenderMode() const = 0;
+	/** Get viewport manager proxy configuration interface. */
+	virtual const IDisplayClusterViewportConfigurationProxy& GetConfigurationProxy() const = 0;
 
 	/**
 	* Find viewport render thread proxy object by name
@@ -74,5 +73,14 @@ public:
 	* @return - true if success
 	*/
 	virtual bool ResolveFrameTargetToBackBuffer_RenderThread(FRHICommandListImmediate& RHICmdList, const uint32 InContextNum, const int32 DestArrayIndex, FRHITexture2D* DstBackBuffer, FVector2D WindowSize) const = 0;
+
+	///////////////// UE_DEPRECATED 5.4 ///////////////////
+
+	/** Return current render mode. */
+	UE_DEPRECATED(5.4, "This function has been deprecated. Please use 'GetConfigurationProxy()'.")
+	virtual EDisplayClusterRenderFrameMode GetRenderMode() const
+	{
+		return EDisplayClusterRenderFrameMode::Unknown;
+	}
 };
 

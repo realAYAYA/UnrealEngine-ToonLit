@@ -4,12 +4,24 @@
 
 #include "Containers/Array.h"
 #include "CoreTypes.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
+#include "Math/Color.h"
 #include "Math/UnrealMathUtility.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/FeedbackContext.h"
 #include "Misc/SlowTaskStack.h"
+#include "ProfilingDebugging/MiscTrace.h"
+
+static int32 GSlowTaskMaxTraceRegionDepth = 2;
+static FAutoConsoleVariableRef CVarSlowTaskMaxTraceRegionDepth (
+	TEXT("Trace.SlowTaskMaxRegionDepth"),
+	GSlowTaskMaxTraceRegionDepth,
+	TEXT("Maximum depth of nested slow tasks to create as trace regions in Insights"),
+	ECVF_Default
+);
 
 bool FSlowTask::ShouldCreateThrottledSlowTask()
 {
@@ -88,6 +100,17 @@ void FSlowTask::Initialize()
 	if (bEnabled)
 	{
 		Context.ScopeStack.Push(this);
+		if (Context.ScopeStack.Num() <= GSlowTaskMaxTraceRegionDepth)
+		{
+			if (!DefaultMessage.IsEmpty())
+			{
+				TRACE_BEGIN_REGION(*DefaultMessage.ToString());
+			}
+			else
+			{
+				TRACE_BEGIN_REGION(TEXT("<SlowTask>"));
+			}
+		}
 	}
 }
 
@@ -116,14 +139,26 @@ void FSlowTask::Destroy()
 		FSlowTaskStack& Stack = Context.ScopeStack;
 		if (ensure(Stack.Num() != 0))
 		{
+			if (Context.ScopeStack.Num() <= GSlowTaskMaxTraceRegionDepth)
+			{
+				if (!DefaultMessage.IsEmpty())
+				{
+					TRACE_END_REGION(*DefaultMessage.ToString());
+				}
+				else
+				{
+					TRACE_END_REGION(TEXT("<SlowTask>"));
+				}
+			}
+
 			FSlowTask* Task = Stack.Last();
 			if (ensureMsgf(Task == this, TEXT("Out-of-order slow task construction/destruction: destroying '%s' but '%s' is at the top of the stack"), *DefaultMessage.ToString(), *Task->DefaultMessage.ToString()))
 			{
-				Stack.Pop(false);
+				Stack.Pop(EAllowShrinking::No);
 			}
 			else
 			{
-				Stack.RemoveSingleSwap(this, false);
+				Stack.RemoveSingleSwap(this, EAllowShrinking::No);
 			}
 		}
 
@@ -226,3 +261,40 @@ bool FSlowTask::ShouldCancel() const
 	}
 	return false;
 }
+
+#if WITH_EDITOR
+namespace Private
+{
+	static void SimulateSlowTask(const TArray<FString>& Arguments)
+	{
+		double SecondsToStall = 2.0;
+		if (Arguments.Num() >= 1)
+		{
+			LexFromString(SecondsToStall, *Arguments[0]);
+		}
+		
+		SCOPED_NAMED_EVENT_TEXT(TEXT("Simulated SlowTask"), FColor::Red);
+
+		FSlowTask SlowTask(static_cast<float>(SecondsToStall));
+		SlowTask.Initialize();
+		SlowTask.MakeDialog();
+
+		const double StartTime = FPlatformTime::Seconds();
+		while (FPlatformTime::Seconds() - StartTime < SecondsToStall)
+		{
+			// Busy wait the rest if not slept long enough
+			const float SleepTimeSeconds = 0.1f;
+			SlowTask.EnterProgressFrame(SleepTimeSeconds);
+			FPlatformProcess::SleepNoStats(SleepTimeSeconds);					
+		}
+
+		SlowTask.Destroy();	
+	}
+	
+	static FAutoConsoleCommand CmdEditorSimulateSlowTask(
+		TEXT("Editor.Debug.SlowTask.Simulate"),
+		TEXT("Runs a busy loop for N seconds. Will tick the slow task every 100ms until it is complete"),
+		FConsoleCommandWithArgsDelegate::CreateStatic(&SimulateSlowTask)
+	);
+}
+#endif

@@ -37,6 +37,8 @@ public:
 	virtual FString RemoteEndPoint(bool bAppendPort) override;
 	virtual FString LocalEndPoint(bool bAppendPort) override;
 	virtual struct sockaddr_in* GetRemoteAddr() override { return &RemoteAddr; }
+	virtual TArray<FString> GetUrlArgs() override;
+	virtual FString GetUrlArgByName(const FString& Name) override;
 	//~ End INetworkingWebSocket interface
 
 // this was made public because of cross-platform build issues

@@ -74,6 +74,7 @@ ir_variable::clone(void *mem_ctx, struct hash_table *ht) const
 	var->semantic = this->semantic;
 	var->used = this->used;
 	var->is_interface_block = this->is_interface_block;
+	var->precise = this->precise;
 
 	var->num_state_slots = this->num_state_slots;
 	if (this->state_slots)

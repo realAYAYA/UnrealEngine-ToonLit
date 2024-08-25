@@ -613,6 +613,21 @@ export void ArrayFade(uniform float OutFloatBuffer[],
 	}
 }
 
+export void ArrayFade2(const uniform float InBuffer[],
+							const uniform int NumSamples,
+							const uniform float StartValue,
+							const uniform float EndValue,
+							uniform float OutBuffer[])
+{
+	const uniform float DeltaValue = ((EndValue - StartValue) / NumSamples);
+
+	foreach(i = 0 ... NumSamples)
+	{
+		const varying float Gain = (i * DeltaValue) + StartValue;
+		OutBuffer[i] = InBuffer[i] * Gain;
+	}
+}
+
 export void ArrayMixInWithGain(const uniform float InFloatBuffer[],
 								uniform float BufferToSumTo[],
 								const uniform int NumSamples,

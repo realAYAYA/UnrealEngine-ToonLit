@@ -7,6 +7,7 @@
 #include "ConsoleVariablesEditorCommandInfo.h"
 #include "ConsoleVariablesEditorLog.h"
 #include "ConsoleVariablesEditorModule.h"
+#include "HAL/IConsoleManager.h"
 #include "MultiUser/ConsoleVariableSync.h"
 #include "Views/List/ConsoleVariablesEditorList.h"
 #include "Views/MainPanel/SConsoleVariablesEditorMainPanel.h"
@@ -74,12 +75,6 @@ void FConsoleVariablesEditorMainPanel::AddConsoleObjectToCurrentPreset(
 				ECheckBoxState::Checked
 			}
 		);
-		if (!bHadCommandInAsset)
-		{
-			GetConsoleVariablesModule().SendMultiUserConsoleVariableChange(
-				ERemoteCVarChangeType::Add,
-				TrimmedCommand, InValue);
-		}
 
 		if (GetEditorList().Pin()->GetListMode() == FConsoleVariablesEditorList::EConsoleVariablesEditorListMode::Preset)
 		{
@@ -93,6 +88,14 @@ void FConsoleVariablesEditorMainPanel::UpdateCachedValue(const FString& InConsol
 	if (TSharedPtr<FConsoleVariablesEditorList> TheEditorList = GetEditorList().Pin())
 	{
 		TheEditorList->UpdateCachedValue(InConsoleVariable, InValue);
+	}
+}
+
+void FConsoleVariablesEditorMainPanel::OnRemoteCvarChanged()
+{
+	if (GetEditorListMode() == FConsoleVariablesEditorList::EConsoleVariablesEditorListMode::Preset)
+	{
+		RebuildList();
 	}
 }
 
@@ -328,11 +331,11 @@ void FConsoleVariablesEditorMainPanel::OnConnectionChanged(EConcertConnectionSta
 	}
 }
 
-void FConsoleVariablesEditorMainPanel::OnRemoteCvarChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue)
+void FConsoleVariablesEditorMainPanel::OnRemoteCvarChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue, EConsoleVariableFlags InFlags)
 {
 	FConsoleVariablesEditorModule& ConsoleVariablesEditorModule = FConsoleVariablesEditorModule::Get();
 
-	ConsoleVariablesEditorModule.OnRemoteCvarChanged(InChangeType, MoveTemp(InName), MoveTemp(InValue));
+	ConsoleVariablesEditorModule.OnRemoteCvarChanged(InChangeType, MoveTemp(InName), MoveTemp(InValue), InFlags);
 }
 
 void FConsoleVariablesEditorMainPanel::OnRemoteListItemCheckStateChange(const FString InName, ECheckBoxState InCheckedState)

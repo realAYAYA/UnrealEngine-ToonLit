@@ -24,7 +24,7 @@ public:
 
 	virtual EIconMode GetSupportedIconMode() const override { return EIconMode::Brush; }
 	NIAGARAEDITOR_API virtual const FSlateBrush* GetIconBrush() const override;
-	virtual bool SupportsSecondaryIcon() const override { return true; }
+	virtual bool SupportsSecondaryIcon() const override;
 	NIAGARAEDITOR_API virtual const FSlateBrush* GetSecondaryIconBrush() const override;
 	virtual bool GetCanExpandInOverview() const override { return false; }
 	virtual bool GetShouldShowInStack() const override { return false; }

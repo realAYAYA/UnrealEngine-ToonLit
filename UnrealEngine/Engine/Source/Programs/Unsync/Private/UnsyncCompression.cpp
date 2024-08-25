@@ -5,13 +5,40 @@
 
 namespace unsync {
 
+uint64
+GetMaxCompressedSize(uint64 RawSize)
+{
+	return ZSTD_compressBound(RawSize);
+}
+
+uint64
+CompressInto(FBufferView Input, FMutBufferView Output, int ZstdCompressionLevel)
+{
+	const uint64 ExpectedMaxCompressedSize = GetMaxCompressedSize(Input.Size);
+	if (Output.Size < ExpectedMaxCompressedSize)
+	{
+		UNSYNC_FATAL(L"Compressed output buffer is too small");
+		return 0;
+	}
+
+	uint64 ActualCompressedSize = ZSTD_compress(Output.Data, Output.Size, Input.Data, Input.Size, ZstdCompressionLevel);
+	if (ZSTD_isError(ActualCompressedSize))
+	{
+		const char* ZstdError = ZSTD_getErrorName(ActualCompressedSize);
+		UNSYNC_ERROR(L"ZSTD_compress failed: %hs", ZstdError);
+		return 0;
+	}
+
+	return ActualCompressedSize;
+}
+
 FBuffer
 Compress(const uint8* Data, uint64 DataSize, int ZstdCompressionLevel)
 {
 	FBuffer Result;
 	if (DataSize)
 	{
-		Result.Resize(ZSTD_compressBound(DataSize));
+		Result.Resize(GetMaxCompressedSize(DataSize));
 
 		uint64 CompressedSize = ZSTD_compress(&Result[0], Result.Size(), Data, DataSize, ZstdCompressionLevel);
 		if (ZSTD_isError(CompressedSize))
@@ -54,6 +81,11 @@ FBuffer
 Decompress(const FBuffer& Buffer)
 {
 	return Decompress(Buffer.Data(), Buffer.Size());
+}
+
+bool Decompress(FBufferView Input, FMutBufferView Output)
+{
+	return Decompress(Input.Data, Input.Size, Output.Data, Output.Size);
 }
 
 }  // namespace unsync

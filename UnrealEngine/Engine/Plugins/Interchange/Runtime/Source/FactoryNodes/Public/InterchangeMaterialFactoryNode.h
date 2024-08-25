@@ -20,6 +20,16 @@ class INTERCHANGEFACTORYNODES_API UInterchangeBaseMaterialFactoryNode : public U
 
 public:
 	static FString GetMaterialFactoryNodeUidFromMaterialNodeUid(const FString& TranslatedNodeUid);
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Material")
+	bool GetCustomIsMaterialImportEnabled(bool& AttributeValue) const;
+
+	/** Sets if this shader graph should be rendered two sided or not. Defaults to off. */
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Material")
+	bool SetCustomIsMaterialImportEnabled(const bool& AttributeValue);
+
+private:
+	const UE::Interchange::FAttributeKey Macro_CustomIsMaterialImportEnabledKey = UE::Interchange::FAttributeKey(TEXT("IsMaterialImportEnabled"));
 };
 
 UCLASS(BlueprintType)

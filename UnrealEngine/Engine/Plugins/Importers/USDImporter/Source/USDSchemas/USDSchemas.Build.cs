@@ -14,6 +14,9 @@ namespace UnrealBuildTool.Rules
 			// warning C5103: pasting '"TF_LOG_STACK_TRACE_ON_ERROR"' and '"TF_LOG_STACK_TRACE_ON_WARNING"' does not result in a valid preprocessing token
 			CppStandard = CppStandardVersion.Cpp17;
 
+			// Replace with PCHUsageMode.UseExplicitOrSharedPCHs when this plugin can compile with cpp20
+			PCHUsage = PCHUsageMode.NoPCHs;
+
 			bUseRTTI = true;
 
 			PrivateDependencyModuleNames.AddRange(
@@ -25,6 +28,7 @@ namespace UnrealBuildTool.Rules
 					"CoreUObject",
 					"Engine",
 					"GeometryCache",
+					"GeometryCore", // for FitKDOP
 					"InterchangeCore",
 					"InterchangeEngine",
 					"InterchangeFactoryNodes",
@@ -65,13 +69,22 @@ namespace UnrealBuildTool.Rules
 						"MaterialEditor",
 						"MDLImporter",
 						"MeshUtilities",
-						"PhysicsUtilities", // For generating UPhysicsAssets for SkeletalMeshes
+						"PhysicsUtilities", // For generating UPhysicsAssets for SkeletalMeshes and ConvexDecompTool
 						"PropertyEditor",
+						"SparseVolumeTexture",
 						"UnrealEd",
 					}
 				);
 
-				AddEngineThirdPartyPrivateStaticDependencies(Target, "MaterialX");
+				if (Target.Platform == UnrealTargetPlatform.Win64)
+				{
+					PrivateDependencyModuleNames.AddRange(
+						new string[]
+						{
+							"MaterialX"
+						}
+					);
+				}
 			}
 		}
 	}

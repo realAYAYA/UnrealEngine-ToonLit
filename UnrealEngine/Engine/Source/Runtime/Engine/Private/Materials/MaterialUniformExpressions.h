@@ -68,8 +68,13 @@ public:
 
 	virtual void GetNumberValue(const struct FMaterialRenderContext& Context, FLinearColor& OutValue) const;
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const { return TArrayView<const FMaterialUniformExpression*>(); }
+
 	/** Offset of this uniform, within the shader's uniform buffer array */
 	int32 UniformOffset = INDEX_NONE;
+
+	/** Index of this uniform in the material translator's list of unique expressions */
+	int32 UniformIndex = INDEX_NONE;
 };
 
 /**
@@ -529,6 +534,11 @@ public:
 		return X->IsIdentical(OtherSine->X) && bIsCosine == OtherSine->bIsCosine;
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 	bool bIsCosine;
@@ -602,6 +612,11 @@ public:
 		return X->IsIdentical(OtherTrig->X) && Y->IsIdentical(OtherTrig->Y) && Op == OtherTrig->Op;
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 2);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 	TRefCountPtr<FMaterialUniformExpression> Y;
@@ -640,6 +655,11 @@ public:
 		return X->IsIdentical(OtherSqrt->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -674,6 +694,11 @@ public:
 		}
 		FMaterialUniformExpressionRcp* OtherRcp = (FMaterialUniformExpressionRcp*)OtherExpression;
 		return X->IsIdentical(OtherRcp->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:
@@ -713,6 +738,11 @@ public:
 		return X->IsIdentical(OtherSqrt->X) && ValueType == OtherSqrt->ValueType;
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 	uint32 ValueType;
@@ -747,6 +777,11 @@ public:
 		}
 		FMaterialUniformExpressionNormalize* OtherSqrt = (FMaterialUniformExpressionNormalize*)OtherExpression;
 		return X->IsIdentical(OtherSqrt->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:
@@ -787,6 +822,11 @@ public:
 		return X->IsIdentical(OtherExp->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -823,6 +863,11 @@ public:
 
 		const FMaterialUniformExpressionExponential2* OtherExp2= static_cast<const FMaterialUniformExpressionExponential2*>(OtherExpression);
 		return X->IsIdentical(OtherExp2->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:
@@ -863,6 +908,11 @@ public:
 		return X->IsIdentical(OtherLog->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -900,6 +950,11 @@ public:
 		return X->IsIdentical(OtherLog->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -935,6 +990,11 @@ public:
 
 		auto OtherLog = static_cast<const FMaterialUniformExpressionLogarithm10*>(OtherExpression);
 		return X->IsIdentical(OtherLog->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:
@@ -998,6 +1058,11 @@ public:
 		return A->IsIdentical(OtherMath->A) && B->IsIdentical(OtherMath->B) && Op == OtherMath->Op && ValueType == OtherMath->ValueType;
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&A, 2);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> A;
 	TRefCountPtr<FMaterialUniformExpression> B;
@@ -1038,6 +1103,11 @@ public:
 		return X->IsIdentical(OtherPeriodic->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -1075,6 +1145,11 @@ public:
 		}
 		FMaterialUniformExpressionAppendVector* OtherAppend = (FMaterialUniformExpressionAppendVector*)OtherExpression;
 		return A->IsIdentical(OtherAppend->A) && B->IsIdentical(OtherAppend->B) && NumComponentsA == OtherAppend->NumComponentsA;
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&A, 2);
 	}
 
 private:
@@ -1117,6 +1192,11 @@ public:
 		return A->IsIdentical(OtherMin->A) && B->IsIdentical(OtherMin->B);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&A, 2);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> A;
 	TRefCountPtr<FMaterialUniformExpression> B;
@@ -1154,6 +1234,11 @@ public:
 		}
 		FMaterialUniformExpressionMax* OtherMax = (FMaterialUniformExpressionMax*)OtherExpression;
 		return A->IsIdentical(OtherMax->A) && B->IsIdentical(OtherMax->B);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&A, 2);
 	}
 
 private:
@@ -1197,6 +1282,11 @@ public:
 		return Input->IsIdentical(OtherClamp->Input) && Min->IsIdentical(OtherClamp->Min) && Max->IsIdentical(OtherClamp->Max);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&Input, 3);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> Input;
 	TRefCountPtr<FMaterialUniformExpression> Min;
@@ -1233,6 +1323,11 @@ public:
 		}
 		FMaterialUniformExpressionSaturate* OtherClamp = (FMaterialUniformExpressionSaturate*)OtherExpression;
 		return Input->IsIdentical(OtherClamp->Input);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&Input, 1);
 	}
 
 private:
@@ -1303,6 +1398,11 @@ public:
 			IndexA == OtherSwizzle->IndexA;
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 	int8 IndexR;
@@ -1344,6 +1444,11 @@ public:
 		return X->IsIdentical(OtherFloor->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -1378,6 +1483,11 @@ public:
 		}
 		FMaterialUniformExpressionCeil* OtherCeil = (FMaterialUniformExpressionCeil*)OtherExpression;
 		return X->IsIdentical(OtherCeil->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:
@@ -1416,6 +1526,11 @@ public:
 		return X->IsIdentical(OtherRound->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -1450,6 +1565,11 @@ public:
 		}
 		FMaterialUniformExpressionTruncate* OtherTrunc = (FMaterialUniformExpressionTruncate*)OtherExpression;
 		return X->IsIdentical(OtherTrunc->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:
@@ -1488,6 +1608,11 @@ public:
 		return X->IsIdentical(OtherSign->X);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> X;
 };
@@ -1522,6 +1647,11 @@ public:
 		}
 		FMaterialUniformExpressionFrac* OtherFrac = (FMaterialUniformExpressionFrac*)OtherExpression;
 		return X->IsIdentical(OtherFrac->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:
@@ -1562,6 +1692,11 @@ public:
 		return A->IsIdentical(OtherMax->A) && B->IsIdentical(OtherMax->B);
 	}
 
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&A, 2);
+	}
+
 private:
 	TRefCountPtr<FMaterialUniformExpression> A;
 	TRefCountPtr<FMaterialUniformExpression> B;
@@ -1598,6 +1733,11 @@ public:
 		}
 		FMaterialUniformExpressionAbs* OtherAbs = (FMaterialUniformExpressionAbs*)OtherExpression;
 		return X->IsIdentical(OtherAbs->X);
+	}
+
+	virtual TArrayView<const FMaterialUniformExpression*> GetChildren() const override
+	{
+		return TArrayView<const FMaterialUniformExpression*>((const FMaterialUniformExpression**)&X, 1);
 	}
 
 private:

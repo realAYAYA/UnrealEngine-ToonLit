@@ -259,7 +259,7 @@ void FClientPlacementInfo::RemoveInstancesFromPartitionActor(TArrayView<const FI
 		RemoveFn(InstanceIndex);
 
 		// remove from instances array
-		Instances.RemoveAtSwap(InstanceIndex, 1, false);
+		Instances.RemoveAtSwap(InstanceIndex, 1, EAllowShrinking::No);
 
 		// update hashes for swapped instance
 		if (InstanceIndex != Instances.Num() && Instances.Num() > 0)

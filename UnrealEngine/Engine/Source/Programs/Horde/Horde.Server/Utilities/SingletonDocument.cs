@@ -1,14 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.ComponentModel;
+using System.Threading;
 using System.Threading.Tasks;
-using Horde.Server.Server;
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-using EpicGames.Core;
 using EpicGames.Horde;
-using EpicGames.Serialization;
+using Horde.Server.Server;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace Horde.Server.Utilities
 {
@@ -101,15 +98,17 @@ namespace Horde.Server.Utilities
 		/// <summary>
 		/// Gets the current document
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The current document</returns>
-		Task<T> GetAsync();
+		Task<T> GetAsync(CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Attempts to update the document
 		/// </summary>
 		/// <param name="value">New state of the document</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the document was updated, false otherwise</returns>
-		Task<bool> TryUpdateAsync(T value);
+		Task<bool> TryUpdateAsync(T value, CancellationToken cancellationToken);
 	}
 
 	/// <summary>
@@ -133,15 +132,15 @@ namespace Horde.Server.Utilities
 		}
 
 		/// <inheritdoc/>
-		public async Task<T> GetAsync()
+		public async Task<T> GetAsync(CancellationToken cancellationToken)
 		{
-			return await _mongoService.GetSingletonAsync<T>();
+			return await _mongoService.GetSingletonAsync<T>(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public Task<bool> TryUpdateAsync(T value)
+		public Task<bool> TryUpdateAsync(T value, CancellationToken cancellationToken)
 		{
-			return _mongoService.TryUpdateSingletonAsync<T>(value);
+			return _mongoService.TryUpdateSingletonAsync<T>(value, cancellationToken);
 		}
 	}
 
@@ -156,15 +155,16 @@ namespace Horde.Server.Utilities
 		/// <typeparam name="T"></typeparam>
 		/// <param name="singleton"></param>
 		/// <param name="updateAction"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public static async Task<T> UpdateAsync<T>(this ISingletonDocument<T> singleton, Action<T> updateAction) where T : SingletonBase, new()
+		public static async Task<T> UpdateAsync<T>(this ISingletonDocument<T> singleton, Action<T> updateAction, CancellationToken cancellationToken) where T : SingletonBase, new()
 		{
 			for (; ; )
 			{
-				T value = await singleton.GetAsync();
+				T value = await singleton.GetAsync(cancellationToken);
 				updateAction(value);
 
-				if (await singleton.TryUpdateAsync(value))
+				if (await singleton.TryUpdateAsync(value, cancellationToken))
 				{
 					return value;
 				}

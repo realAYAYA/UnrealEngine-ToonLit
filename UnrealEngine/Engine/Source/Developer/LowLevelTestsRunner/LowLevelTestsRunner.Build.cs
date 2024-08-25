@@ -16,7 +16,7 @@ namespace UnrealBuildTool.Rules
 			PublicIncludePaths.AddRange(
 				new string[]
 				{
-					Path.Combine(Target.UEThirdPartySourceDirectory, "Catch2", "v3.0.1", "src")
+					Path.Combine(Target.UEThirdPartySourceDirectory, "Catch2", "v3.4.0", "src")
 				}
 			);
 
@@ -24,7 +24,24 @@ namespace UnrealBuildTool.Rules
 				new string[] {
 					"Core"
 				}
-			);		
+			);
+
+			if (TestTargetRules.bTestsRequireEditor)
+			{
+				PrivateDependencyModuleNames.Add("UnrealEd");
+			}
+			if (TestTargetRules.bTestsRequireEngine)
+			{
+				PrivateDependencyModuleNames.Add("Engine");
+			}
+			if (TestTargetRules.bTestsRequireApplicationCore)
+			{
+				PrivateDependencyModuleNames.Add("ApplicationCore");
+			}
+			if (TestTargetRules.bTestsRequireCoreUObject)
+			{
+				PrivateDependencyModuleNames.Add("CoreUObject");
+			}
 		}
 	}
 }

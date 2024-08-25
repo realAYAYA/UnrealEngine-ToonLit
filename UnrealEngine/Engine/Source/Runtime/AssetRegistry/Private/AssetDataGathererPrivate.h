@@ -4,6 +4,7 @@
 
 #include "AssetDataGatherer.h"
 
+#include "AssetDataGathererDiscoveryCache.h"
 #include "Containers/Set.h"
 #include "Misc/Optional.h"
 #include "Misc/StringBuilder.h"
@@ -12,11 +13,7 @@
 
 #include <atomic>
 
-namespace UE
-{
-namespace AssetDataGather
-{
-namespace Private
+namespace UE::AssetDataGather::Private
 {
 
 class FMountDir;
@@ -602,9 +599,13 @@ public:
 	void GetAndTrimSearchResults(bool& bOutIsComplete, TArray<FString>& OutDiscoveredPaths,
 		FFilesToSearch& OutFilesToSearch, int32& OutNumPathsToSearch);
 	/** Get diagnostics for telemetry or logging. */
-	void GetDiagnostics(float& OutCumulativeDiscoveryTime);
+	void GetDiagnostics(float& OutCumulativeDiscoveryTime, int32& OutNumCachedDirectories,
+		int32& OutNumUncachedDirectories);
 	/** Wait (joining in on the tick) until all currently monitored paths have been scanned. */
-	void WaitForIdle();
+	void WaitForIdle(double EndTimeSeconds);
+	bool IsIdle() const;
+	void OnInitialSearchCompleted();
+
 	/** Optionally set some scan properties for the given paths and then wait for their scans to finish. */
 	void SetPropertiesAndWait(TArrayView<FPathExistence> QueryPaths, bool bAddToAllowList, bool bForceRescan,
 		bool bIgnoreDenyListScanFilters);
@@ -622,7 +623,7 @@ public:
 	 * Register the given LocalAbsPath/LongPackageName pair that came from FPackageName's list of mount points as
 	 * a mountpoint to track. Will not be scanned until allow listed.
 	 */
-	void AddMountPoint(const FString& LocalAbsPath, FStringView LongPackageName);
+	void AddMountPoint(const FString& LocalAbsPath, FStringView LongPackageName, bool& bOutAlreadyExisted);
 	/** Remove the mountpoint because FPackageName has removed it. */
 	void RemoveMountPoint(const FString& LocalAbsPath);
 	/** Raise the priority until completion of scans of the given path and its subdirs. */
@@ -658,7 +659,7 @@ private:
 	void SetIsIdle(bool bInIdle, double& TickStartTime);
 
 	/** Store the given discovered files and directories in the results. */
-	void AddDiscovered(FStringView DirAbsPath, TConstArrayView<FDiscoveredPathData> SubDirs,
+	void AddDiscovered(FStringView DirAbsPath, FStringView DirPackagePath, TConstArrayView<FDiscoveredPathData> SubDirs,
 		TConstArrayView<FDiscoveredPathData> Files);
 	/** Store the given specially reported single file in the results. */
 	void AddDiscoveredFile(FDiscoveredPathData&& File);
@@ -682,7 +683,7 @@ private:
 		const UE::AssetDataGather::Private::FSetPathProperties& Properties, bool bConfirmedExists);
 
 	/** Add the given path as a MountPoint and update child registrations. */
-	void AddMountPointInternal(const FString& LocalAbsPath, FStringView LongPackageName);
+	void AddMountPointInternal(const FString& LocalAbsPath, FStringView LongPackageName, bool& bOutAlreadyExisted);
 	/** Remove the given path as a MountPoint and update child registrations. */
 	void RemoveMountPointInternal(const FString& LocalAbsPath);
 
@@ -779,6 +780,10 @@ private:
 	int32 CumulativeDiscoveredFiles = 0;
 	/** Cumulative total of time spent in all non-idle periods. */
 	float CumulativeDiscoveryTime = 0.f;
+	/** The total number of directories in the search results that were read from the cache. */
+	int32 NumCachedDirectories = 0;
+	/** The total number of directories in the search results that were not in the cache and were read by iterating the disk. */
+	int32 NumUncachedDirectories = 0;
 
 	// Variable section for variables that are read/writable only within TreeLock.
 
@@ -834,10 +839,47 @@ private:
 	};
 	TArray<FDirToScanBuffer> DirToScanBuffers;
 
+	FAssetDataDiscoveryCache Cache;
+
 	friend class FMountDir;
 	friend class FScanDir;
 };
 
-} // namespace Private
-} // namespace AssetDataGather
-} // namespace UE
+/**
+ * Settings about whether to use cache data for the AssetDataGatherer; these settings are shared by
+ * FPreloader, FAssetDataGatherer, and FAssetDataDiscovery.
+ */
+struct FPreloadSettings
+{
+public:
+	void Initialize();
+	bool IsGatherCacheReadEnabled() const;
+	bool IsGatherCacheWriteEnabled() const;
+	bool IsDiscoveryCacheReadEnabled() const;
+	EFeatureEnabled IsDiscoveryCacheWriteEnabled() const;
+	bool IsDiscoveryCacheInvalidateEnabled() const;
+	bool IsMonolithicCacheActivatedDuringPreload() const;
+	bool IsPreloadMonolithicCache() const;
+	bool IsGatherDependsData() const;
+	bool IsForceDependsGathering() const;
+	FString GetLegacyMonolithicCacheFilename() const;
+	const FString& GetMonolithicCacheBaseFilename() const;
+	const FString& GetAssetRegistryCacheRootFolder() const;
+	TArray<FString> FindShardedMonolithicCacheFiles() const;
+
+private:
+	FString MonolithicCacheBaseFilename;
+	FString AssetRegistryCacheRootFolder;
+	bool bForceDependsGathering = false;
+	bool bGatherDependsData = false;
+	bool bGatherCacheReadEnabled = false;
+	bool bGatherCacheWriteEnabled = false;
+	bool bDiscoveryCacheReadEnabled = false;
+	EFeatureEnabled DiscoveryCacheWriteEnabled = EFeatureEnabled::Never;
+	bool bDiscoveryCacheInvalidateEnabled = false;
+	bool bMonolithicCacheActivatedDuringPreload = false;
+	bool bInitialized = false;
+};
+extern FPreloadSettings GPreloadSettings;
+
+} // namespace UE::AssetDataGather::Private

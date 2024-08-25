@@ -14,21 +14,21 @@ float HairStrandsVF_HairRadius;
 float HairStrandsVF_HairRootScale;
 float HairStrandsVF_HairTipScale;
 
-Buffer<float4>	 PositionOffsetBuffer;
-Buffer<uint4> 	 PositionBuffer;
+uint HairStrandsVF_RegisteredIndex;
+StructuredBuffer<float4> PositionOffsetBuffer;
+ByteAddressBuffer PositionBuffer;
 Buffer<float4> 	 TangentBuffer;
-RWBuffer<float4> OutputPositionBuffer;
+RWBuffer<float4> OutputPositionBuffer;	
 #if PERMUTATION_PROCEDURAL_PRIMITIVE 
 uint             RaytracingProceduralSplits;
 #else
-RWBuffer<uint>   OutputIndexBuffer;
+RWStructuredBuffer<uint> OutputIndexBuffer;
 #endif
 
 uint HairStrandsVF_bCullingEnable;
 #if PERMUTATION_CULLING == 1
 Buffer<uint>	HairStrandsVF_CullingIndirectBuffer;
 Buffer<uint>	HairStrandsVF_CullingIndexBuffer;
-Buffer<float>	HairStrandsVF_CullingRadiusScaleBuffer;
 Buffer<uint>	HairStrandsVF_CullingIndirectBufferArgs;
 #endif
 
@@ -38,9 +38,10 @@ FHairControlPoint GetControlPoint(uint ControlPointId)
 
 	if (ControlPointId < PointCount)
 	{
-		Out = UnpackHairControlPoint(
-			PositionBuffer[ControlPointId],
-			PositionOffsetBuffer[0].xyz,
+		Out = ReadHairControlPoint(
+			PositionBuffer, 
+			ControlPointId,
+			ReadRenPositionOffset(PositionOffsetBuffer, HairStrandsVF_RegisteredIndex),
 			HairStrandsVF_HairRadius,
 			HairStrandsVF_HairRootScale,
 			HairStrandsVF_HairTipScale);
@@ -166,9 +167,6 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	float LodRadiusScale0 = 1;
-	float LodRadiusScale1 = 1;
-
 	uint SourceIndex0 = VertexIndex0;
 	uint SourceIndex1 = VertexIndex1;
 #if PERMUTATION_CULLING == 1
@@ -182,15 +180,7 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 		}
 
 		SourceIndex0 = HairStrandsVF_CullingIndexBuffer[VertexIndex0];
-		LodRadiusScale0 = HairStrandsVF_CullingRadiusScaleBuffer[VertexIndex0];
 		SourceIndex1 = HairStrandsVF_CullingIndexBuffer[VertexIndex1];
-		LodRadiusScale1 = HairStrandsVF_CullingRadiusScaleBuffer[VertexIndex1];
-
-		if (LodRadiusScale0 <= 0.0f)
-		{
-			SetInvalidSegment(VertexIndex0);
-			return;
-		}
 	}
 #endif
 
@@ -211,8 +201,8 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 		}
 		else
 		{
-			float4 A = float4(P0.Position, P0.WorldRadius * LodRadiusScale0);
-			float4 B = float4(P1.Position, P1.WorldRadius * LodRadiusScale1);
+			float4 A = float4(P0.Position, P0.WorldRadius);
+			float4 B = float4(P1.Position, P1.WorldRadius);
 			if ((A.w == 0 && B.w == 0) || length2(B.xyz - A.xyz) == 0 || any(!IsFinite(A)) || any(!IsFinite(B)))
 			{
 				// this segment is degenerate, don't bother adding it
@@ -260,10 +250,10 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 
 	const uint BaseOutIndex = VertexIndex0 * 4;
 	{
-		const float3 Px0 = P0.Position - N * P0.WorldRadius * LodRadiusScale0;
-		const float3 Px1 = P0.Position + N * P0.WorldRadius * LodRadiusScale0;
-		const float3 Py0 = P0.Position - B * P0.WorldRadius * LodRadiusScale0;
-		const float3 Py1 = P0.Position + B * P0.WorldRadius * LodRadiusScale0;
+		const float3 Px0 = P0.Position - N * P0.WorldRadius;
+		const float3 Px1 = P0.Position + N * P0.WorldRadius;
+		const float3 Py0 = P0.Position - B * P0.WorldRadius;
+		const float3 Py1 = P0.Position + B * P0.WorldRadius;
 
 		OutputPositionBuffer[BaseOutIndex    ] = float4(Px0, 1);
 		OutputPositionBuffer[BaseOutIndex + 1] = float4(Py0, 1);
@@ -297,6 +287,7 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 #error GROUP_SIZE has changed, please update the reduction code.
 #endif
 
+uint InstanceResgisteredIndex;
 uint PointCount;
 uint bDrawInvalidElement;
 float PositionThreshold2;
@@ -304,8 +295,8 @@ float PositionThreshold2;
 uint HairStrandsVF_bCullingEnable;
 Buffer<uint> 	 HairStrandsVF_CullingIndirectBuffer;
 Buffer<uint> 	 HairStrandsVF_CullingIndexBuffer;
-Buffer<uint4> 	 CurrPositionBuffer;
-Buffer<uint4> 	 PrevPositionBuffer;
+ByteAddressBuffer CurrPositionBuffer;
+ByteAddressBuffer PrevPositionBuffer;
 Buffer<int> 	 GroupAABBBuffer;
 RWBuffer<uint> 	 InvalidationBuffer;
 RWBuffer<uint> 	 InvalidationPrintCounter;
@@ -338,8 +329,8 @@ void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID, uint LinearIndex : SV_
 		// Position comparison
 		if (bIsValid)
 		{
-			const FHairControlPoint Curr = UnpackHairControlPoint(CurrPositionBuffer[VertexIndex0], float3(0, 0, 0), 1, 1, 1);
-			const FHairControlPoint Prev = UnpackHairControlPoint(PrevPositionBuffer[VertexIndex0], float3(0, 0, 0), 1, 1, 1);
+			const FHairControlPoint Curr = ReadHairControlPoint(CurrPositionBuffer, VertexIndex0, float3(0, 0, 0), 1, 1, 1);
+			const FHairControlPoint Prev = ReadHairControlPoint(PrevPositionBuffer, VertexIndex0, float3(0, 0, 0), 1, 1, 1);
 			const float3 Diff = Curr.Position - Prev.Position;
 			const bool bIsInvalid = dot(Diff, Diff) > PositionThreshold2;
 
@@ -350,7 +341,7 @@ void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID, uint LinearIndex : SV_
 				InterlockedAdd(InvalidationPrintCounter[0], 1, Offset);
 				if (Offset < 2)
 				{
-					const FHairAABB Bound = ReadHairAABB(0, GroupAABBBuffer);
+					const FHairAABB Bound = ReadHairAABB(InstanceResgisteredIndex, GroupAABBBuffer);
 					AddAABBTWS(Bound.Min, Bound.Max, ColorRed);
 				}
 			}

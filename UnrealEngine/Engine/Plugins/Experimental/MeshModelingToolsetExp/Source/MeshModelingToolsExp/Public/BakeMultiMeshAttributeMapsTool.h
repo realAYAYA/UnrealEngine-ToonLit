@@ -46,7 +46,7 @@ public:
 
 	/** The map type index to preview */
 	UPROPERTY(EditAnywhere, Category = BakeOutput, meta=(DisplayName="Preview Output Type", TransientToolProperty, GetOptions = GetMapPreviewNamesFunc,
-		EditCondition = "MapTypes != 0"))
+		EditCondition = "MapTypes != 0", NoResetToDefault))
 	FString MapPreview;
 
 	/** The pixel resolution of the generated map */

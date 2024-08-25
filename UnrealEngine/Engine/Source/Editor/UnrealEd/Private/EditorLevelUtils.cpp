@@ -336,7 +336,7 @@ ULevel* UEditorLevelUtils::AddLevelsToWorld(UWorld* InWorld, TArray<FString> Pac
 	{
 		SlowTask.EnterProgressFrame();
 
-		if (ULevelStreaming* NewStreamingLevel = AddLevelToWorld_Internal(InWorld, *PackageName, LevelStreamingClass))
+		if (ULevelStreaming* NewStreamingLevel = AddLevelToWorld_Internal(InWorld, FAddLevelToWorldParams(LevelStreamingClass, *PackageName)))
 		{
 			NewLevel = NewStreamingLevel->GetLoadedLevel();
 			if (NewLevel)
@@ -379,6 +379,13 @@ ULevel* UEditorLevelUtils::AddLevelsToWorld(UWorld* InWorld, TArray<FString> Pac
 
 ULevelStreaming* UEditorLevelUtils::AddLevelToWorld(UWorld* InWorld, const TCHAR* LevelPackageName, TSubclassOf<ULevelStreaming> LevelStreamingClass, const FTransform& LevelTransform)
 {
+	FAddLevelToWorldParams Params(LevelStreamingClass, LevelPackageName);
+	Params.Transform = LevelTransform;
+	return AddLevelToWorld(InWorld, Params);
+}
+
+ULevelStreaming* UEditorLevelUtils::AddLevelToWorld(UWorld* InWorld, const FAddLevelToWorldParams& InParams)
+{
 	if (!ensure(InWorld))
 	{
 		return nullptr;
@@ -393,7 +400,7 @@ ULevelStreaming* UEditorLevelUtils::AddLevelToWorld(UWorld* InWorld, const TCHAR
 	// Try to add the levels that were specified in the dialog.
 	ULevel* NewLevel = nullptr;
 
-	ULevelStreaming* NewStreamingLevel = AddLevelToWorld_Internal(InWorld, LevelPackageName, LevelStreamingClass, LevelTransform);
+	ULevelStreaming* NewStreamingLevel = AddLevelToWorld_Internal(InWorld, InParams);
 
 	// Broadcast the levels have changed (new style)
 	InWorld->BroadcastLevelsChanged();
@@ -432,17 +439,16 @@ ULevelStreaming* UEditorLevelUtils::AddLevelToWorld(UWorld* InWorld, const TCHAR
 	return NewStreamingLevel;
 }
 
-ULevelStreaming* UEditorLevelUtils::AddLevelToWorld_Internal(UWorld* InWorld, const TCHAR* LevelPackageName, TSubclassOf<ULevelStreaming> LevelStreamingClass, const FTransform& LevelTransform)
+ULevelStreaming* UEditorLevelUtils::AddLevelToWorld_Internal(UWorld* InWorld, const FAddLevelToWorldParams& InParams)
 {
 	ULevel* NewLevel = nullptr;
 	ULevelStreaming* StreamingLevel = nullptr;
-	bool bIsPersistentLevel = (InWorld->PersistentLevel->GetOutermost()->GetName() == FString(LevelPackageName));
+	bool bIsPersistentLevel = (InWorld->PersistentLevel->GetOutermost()->GetFName() == InParams.PackageName);
 
-	if (bIsPersistentLevel || FLevelUtils::FindStreamingLevel(InWorld, LevelPackageName))
+	if (bIsPersistentLevel || FLevelUtils::FindStreamingLevel(InWorld, InParams.PackageName))
 	{
 		// Do nothing if the level already exists in the world.
-		const FString LevelName(LevelPackageName);
-		const FText MessageText = FText::Format(NSLOCTEXT("UnrealEd", "LevelAlreadyExistsInWorld", "A level with that name ({0}) already exists in the world."), FText::FromString(LevelName));
+		const FText MessageText = FText::Format(NSLOCTEXT("UnrealEd", "LevelAlreadyExistsInWorld", "A level with that name ({0}) already exists in the world."), FText::FromString(InParams.PackageName.ToString()));
 
 		FSuppressableWarningDialog::FSetupInfo Info(MessageText, LOCTEXT("AddLevelToWorld_Title", "Add Level"), "LevelAlreadyExistsInWorldWarning");
 		Info.ConfirmText = LOCTEXT("AlreadyExist_Ok", "Ok");
@@ -452,22 +458,28 @@ ULevelStreaming* UEditorLevelUtils::AddLevelToWorld_Internal(UWorld* InWorld, co
 	else
 	{
 		// If the selected class is still NULL or the selected class is abstract, abort the operation.
-		if (LevelStreamingClass == nullptr || LevelStreamingClass->HasAnyClassFlags(CLASS_Abstract))
+		if (InParams.LevelStreamingClass == nullptr || InParams.LevelStreamingClass->HasAnyClassFlags(CLASS_Abstract))
 		{
 			return nullptr;
 		}
 
 		const FScopedBusyCursor BusyCursor;
 
-		StreamingLevel = NewObject<ULevelStreaming>(InWorld, LevelStreamingClass, NAME_None, RF_NoFlags, NULL);
+		StreamingLevel = NewObject<ULevelStreaming>(InWorld, InParams.LevelStreamingClass, NAME_None, RF_NoFlags, NULL);
 
 		// Associate a package name.
-		StreamingLevel->SetWorldAssetByPackageName(LevelPackageName);
+		StreamingLevel->SetWorldAssetByPackageName(InParams.PackageName);
 
-		StreamingLevel->LevelTransform = LevelTransform;
+		StreamingLevel->LevelTransform = InParams.Transform;
 
 		// Seed the level's draw color.
 		StreamingLevel->LevelColor = FLinearColor::MakeRandomColor();
+
+		// Callback to allow initialization
+		if (InParams.LevelStreamingCreatedCallback)
+		{
+			InParams.LevelStreamingCreatedCallback(StreamingLevel);
+		}
 
 		// Add the new level to world.
 		InWorld->AddStreamingLevel(StreamingLevel);
@@ -612,7 +624,7 @@ bool UEditorLevelUtils::PrivateRemoveInvalidLevelFromWorld(ULevelStreaming* InLe
 		{
 			if (LevelStreamingVolume)
 			{
-				LevelStreamingVolume->Modify();
+				LevelStreamingVolume->Modify(true);
 				LevelStreamingVolume->StreamingLevelNames.Remove(InLevelStreaming->GetWorldAssetPackageFName());
 			}
 		}
@@ -676,13 +688,14 @@ ULevel* GetPersistentLevelForNewStreamingLevel(UWorld* NewLevelWorld, UWorld* In
 	return NewLevelWorld ? NewLevelWorld->PersistentLevel : InTemplateWorld->PersistentLevel;
 }
 
-UWorld* GetWorldForNewStreamingLevel(UWorld* InTemplateWorld, bool bIsPartitioned = false)
+UWorld* GetWorldForNewStreamingLevel(UWorld* InTemplateWorld, bool bCreateWorldPartition, bool bEnableWorldPartitionStreaming)
 {
 	if (!InTemplateWorld)
 	{
 		// Create a new world
 		UWorldFactory* Factory = NewObject<UWorldFactory>();
-		Factory->bCreateWorldPartition = bIsPartitioned;
+		Factory->bCreateWorldPartition = bCreateWorldPartition;
+		Factory->bEnableWorldPartitionStreaming = bEnableWorldPartitionStreaming;
 		Factory->WorldType = EWorldType::Inactive;
 		UPackage* Pkg = CreatePackage( NULL);
 		FName WorldName(TEXT("Untitled"));
@@ -718,6 +731,19 @@ ULevelStreaming* UEditorLevelUtils::CreateNewStreamingLevelForWorld(UWorld& InWo
 
 ULevelStreaming* UEditorLevelUtils::CreateNewStreamingLevelForWorld(UWorld& InWorld, TSubclassOf<ULevelStreaming> LevelStreamingClass, bool bUseExternalActors, const FString& DefaultFilename /* = TEXT("") */, const TArray<AActor*>* ActorsToMove /* = nullptr */, UWorld* InTemplateWorld /* = nullptr */, bool bInUseSaveAs /*= true*/, bool bIsPartitioned /*= false*/, TFunction<void(ULevel*)> InPreSaveLevelOperation /* = TFunction<void(ULevel*)>()*/, const FTransform& InTransform /* = FTransform::Identity */)
 {
+	FCreateNewStreamingLevelForWorldParams CreateParams(LevelStreamingClass, DefaultFilename);
+	CreateParams.bUseExternalActors = bUseExternalActors;
+	CreateParams.ActorsToMove = ActorsToMove;
+	CreateParams.TemplateWorld = InTemplateWorld;
+	CreateParams.bUseSaveAs = bInUseSaveAs;
+	CreateParams.bCreateWorldPartition = bIsPartitioned;
+	CreateParams.PreSaveLevelCallback = InPreSaveLevelOperation;
+	CreateParams.Transform = InTransform;
+	return CreateNewStreamingLevelForWorld(InWorld, CreateParams);
+}
+
+ULevelStreaming* UEditorLevelUtils::CreateNewStreamingLevelForWorld(UWorld& InWorld,  const FCreateNewStreamingLevelForWorldParams& InCreateParams)
+{
 	// Editor modes cannot be active when any level saving occurs.
 	if (!IsRunningCommandlet())
 	{
@@ -738,44 +764,43 @@ ULevelStreaming* UEditorLevelUtils::CreateNewStreamingLevelForWorld(UWorld& InWo
 	UWorld* WorldToAddLevelTo = &InWorld;
 
 	// This is the new streaming level's world not the persistent level world
-	UWorld* NewLevelWorld = GetWorldForNewStreamingLevel(InTemplateWorld, bIsPartitioned);
-	ULevel* PersistentLevel = GetPersistentLevelForNewStreamingLevel(NewLevelWorld, InTemplateWorld);
+	UWorld* NewLevelWorld = GetWorldForNewStreamingLevel(InCreateParams.TemplateWorld, InCreateParams.bCreateWorldPartition, InCreateParams.bEnableWorldPartitionStreaming);
+	ULevel* PersistentLevel = GetPersistentLevelForNewStreamingLevel(NewLevelWorld, InCreateParams.TemplateWorld);
 	// No need to convert actors in partitioned worlds as they are already external
-	if (bUseExternalActors && !bIsPartitioned)
+	if (InCreateParams.bUseExternalActors && !InCreateParams.bCreateWorldPartition)
 	{
 		PersistentLevel->ConvertAllActorsToPackaging(true);
 		PersistentLevel->bUseExternalActors = true;
 	}
-	check(bIsPartitioned == PersistentLevel->bIsPartitioned);
+	check(InCreateParams.bCreateWorldPartition == PersistentLevel->bIsPartitioned);
 
-	if (InPreSaveLevelOperation)
+	if (InCreateParams.PreSaveLevelCallback)
 	{
 		// Call lambda before saving level
-		InPreSaveLevelOperation(PersistentLevel);
+		InCreateParams.PreSaveLevelCallback(PersistentLevel);
 	}
 
 	bool bNewWorldSaved = false;
-	FString NewPackageName = DefaultFilename;
+	FString NewPackageName = InCreateParams.DefaultFilename;
 
-	if (bInUseSaveAs)
+	if (InCreateParams.bUseSaveAs)
 	{
 		bNewWorldSaved = FEditorFileUtils::SaveLevelAs(PersistentLevel, &NewPackageName);
 	}
 	else
 	{
-		bNewWorldSaved = FEditorFileUtils::SaveLevel(PersistentLevel, DefaultFilename, &NewPackageName);
+		bNewWorldSaved = FEditorFileUtils::SaveLevel(PersistentLevel, InCreateParams.DefaultFilename, &NewPackageName);
 	}
 	
 	if (bNewWorldSaved && !NewPackageName.IsEmpty())
 	{
 		NewPackageName = FPackageName::FilenameToLongPackageName(NewPackageName);
-		if (!NewLevelWorld)
+
+		// Find or Load package and re-assign NewLevelWorld in case it was duplicated by Save
+		UPackage* NewPackage = LoadPackage(nullptr, *NewPackageName, LOAD_None);
+		if (NewPackage)
 		{
-			UPackage* NewPackage = LoadPackage(nullptr, *NewPackageName, LOAD_None);
-			if (NewPackage)
-			{
-				NewLevelWorld = UWorld::FindWorldInPackage(NewPackage);
-			}
+			NewLevelWorld = UWorld::FindWorldInPackage(NewPackage);
 		}
 	}
 
@@ -792,14 +817,18 @@ ULevelStreaming* UEditorLevelUtils::CreateNewStreamingLevelForWorld(UWorld& InWo
 			NewLevelWorld->CleanupWorld();
 		}
 
-		NewStreamingLevel = AddLevelToWorld(WorldToAddLevelTo, *NewPackageName, LevelStreamingClass, InTransform);
+		FAddLevelToWorldParams AddLevelToWorldParams(InCreateParams.LevelStreamingClass, *NewPackageName);
+		AddLevelToWorldParams.Transform = InCreateParams.Transform;
+		AddLevelToWorldParams.LevelStreamingCreatedCallback = InCreateParams.LevelStreamingCreatedCallback;
+
+		NewStreamingLevel = AddLevelToWorld(WorldToAddLevelTo, AddLevelToWorldParams);
 		if (NewStreamingLevel != nullptr)
 		{
 			NewLevel = NewStreamingLevel->GetLoadedLevel();
 			// If we are moving the selected actors to the new level move them now
-			if (ActorsToMove)
+			if (InCreateParams.ActorsToMove)
 			{
-				MoveActorsToLevel(*ActorsToMove, NewLevel);
+				MoveActorsToLevel(*InCreateParams.ActorsToMove, NewLevel);
 			}
 
 			// Finally make the new level the current one
@@ -932,7 +961,7 @@ bool UEditorLevelUtils::RemoveLevelsFromWorld(TArray<ULevel*> InLevels, bool bCl
 	EPrintStaleReferencesOptions PrintStaleReferencesOptions = EPrintStaleReferencesOptions::Log;
 	if (bResetTransBuffer)
 	{
-		PrintStaleReferencesOptions = UObjectBaseUtility::IsPendingKillEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure);
+		PrintStaleReferencesOptions = UObjectBaseUtility::IsGarbageEliminationEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure);
 	}
 	bool bFailed = !CheckPackage(PackageNames, PrintStaleReferencesOptions);
 	if (bFailed && ((PrintStaleReferencesOptions & EPrintStaleReferencesOptions::Fatal) != EPrintStaleReferencesOptions::Fatal))
@@ -977,7 +1006,16 @@ void UEditorLevelUtils::PrivateRemoveLevelFromWorld(ULevel* InLevel)
 
 	IStreamingManager::Get().RemoveLevel(InLevel);
 	UWorld* World = InLevel->OwningWorld;
-	World->RemoveLevel(InLevel);
+	if (World->ContainsLevel(InLevel))
+	{
+		// Manually call level removal world delegates PreLevelRemovedFromWorld/LevelRemovedFromWorld to simulate what UWorld::RemoveFromWorld does.
+		FWorldDelegates::PreLevelRemovedFromWorld.Broadcast(InLevel, World);
+		if (World->RemoveLevel(InLevel))
+		{
+			FWorldDelegates::LevelRemovedFromWorld.Broadcast(InLevel, World);
+		}
+	}
+
 	if (InLevel->bIsLightingScenario)
 	{
 		World->PropagateLightingScenarioChange();
@@ -1156,7 +1194,7 @@ void SetLevelVisibilityNoGlobalUpdateInternal(ULevel* Level, const bool bShouldB
 		{
 			if (ModifyMode == ELevelVisibilityDirtyMode::ModifyOnChange)
 			{
-				CurLevelModel->Modify();
+				CurLevelModel->Modify(false);
 			}
 
 			for (TArray<FBspSurf>::TIterator SurfaceIterator(CurLevelModel->Surfs); SurfaceIterator; ++SurfaceIterator)

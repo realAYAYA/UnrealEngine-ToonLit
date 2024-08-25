@@ -28,7 +28,7 @@ protected:
 	//////////////////////////////////////////////////////////////////////////
 	// Interchange actor factory interface begin
 
-	virtual UObject* ProcessActor(class AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer) override;
+	virtual UObject* ProcessActor(class AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer, const FImportSceneObjectsParams& Params) override;
 
 	// Interchange actor factory interface end
 	//////////////////////////////////////////////////////////////////////////

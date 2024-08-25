@@ -3,7 +3,9 @@
 
 #include "NiagaraAsyncCompile.h"
 
+#include "Algo/Copy.h"
 #include "Modules/ModuleManager.h"
+#include "NiagaraConstants.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraModule.h"
@@ -110,11 +112,46 @@ TSharedPtr<FNiagaraCompileRequestDuplicateDataBase, ESPMode::ThreadSafe> FNiagar
 	return PrecompileDuplicateData;
 }
 
+bool FNiagaraLazyPrecompileReference::IsValidForPrecompile() const
+{
+	if (System)
+	{
+		const TArray<FNiagaraEmitterHandle>& EmitterHandles = System->GetEmitterHandles();
+		for (TMap<UNiagaraScript*, int32>::TConstIterator It = EmitterScriptIndex.CreateConstIterator(); It; ++It)
+		{
+			if (EmitterHandles.IsValidIndex(It.Value()))
+			{
+				const FNiagaraEmitterHandle& EmitterHandle = EmitterHandles[It.Value()];
+				const FVersionedNiagaraEmitterData* EmitterData = EmitterHandle.GetEmitterData();
+				if (!EmitterHandle.GetIsEnabled() || !EmitterData)
+				{
+					return false;
+				}
+				TArray<UNiagaraScript*> EmitterScripts;
+				EmitterData->GetScripts(EmitterScripts, false, true);
+
+				if (!EmitterScripts.Contains(It.Key()))
+				{
+					return false;
+				}
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
 FNiagaraAsyncCompileTask::FNiagaraAsyncCompileTask(UNiagaraSystem* InOwningSystem, FString InAssetPath, const FEmitterCompiledScriptPair& InScriptPair)
 {
 	OwningSystem = InOwningSystem;
 	AssetPath = InAssetPath;
 	ScriptPair = InScriptPair;
+
+	bCompilableScript = InScriptPair.CompiledScript ? InScriptPair.CompiledScript->IsCompilable() : false;
 
 	CurrentState = ENiagaraCompilationState::CheckDDC;
 }
@@ -146,8 +183,16 @@ void FNiagaraAsyncCompileTask::ProcessCurrentState()
 	else if (CurrentState == ENiagaraCompilationState::StartCompileJob)
 	{
 		// start the async compile job
-		StartCompileJob();
-		MoveToState(ENiagaraCompilationState::AwaitResult);
+		if (bCompilableScript)
+		{
+			StartCompileJob();
+			MoveToState(ENiagaraCompilationState::AwaitResult);
+		}
+		else
+		{
+			ProcessNonCompilableScript();
+			MoveToState(ENiagaraCompilationState::PutToDDC);
+		}
 	}
 	else if (CurrentState == ENiagaraCompilationState::AwaitResult)
 	{
@@ -211,7 +256,7 @@ void FNiagaraAsyncCompileTask::MoveToState(ENiagaraCompilationState NewState)
 	}
 	if (NewState == ENiagaraCompilationState::PutToDDC)
 	{
-		check(CurrentState == ENiagaraCompilationState::ProcessResult);
+		check(CurrentState == ENiagaraCompilationState::ProcessResult || CurrentState == ENiagaraCompilationState::StartCompileJob);
 	}
 	if (NewState == ENiagaraCompilationState::Finished)
 	{
@@ -262,6 +307,14 @@ void FNiagaraAsyncCompileTask::PrecompileData()
 	// we do one more check here to see if the source data has been changed out from under us, if it has then we abort the compilation attempt
 	if (!CompilationIdMatchesRequest())
 	{
+		AbortTask();
+		return;
+	}
+
+	// destructive changes (like emitters being deleted) can disrupt the precompile so we need to validate that we can continue.
+	if (!PrecompileReference->IsValidForPrecompile())
+	{
+		UE_LOG(LogNiagara, Warning, TEXT("Unable to proceed with compilation due to changes to asset %s.  Aborting."), *AssetPath);
 		AbortTask();
 		return;
 	}
@@ -367,7 +420,11 @@ void FNiagaraAsyncCompileTask::OptimizeByteCode()
 
 		FVectorVMOptimizeContext OptimizeContext;
 		FMemory::Memzero(&OptimizeContext, sizeof(OptimizeContext));
-		OptimizeVectorVMScript(ByteCode, ExeData->ByteCode.GetLength(), ExtFnTable.GetData(), ExtFnTable.Num(), &OptimizeContext, VVMFlag_OptOmitStats);
+		uint64 AssetPathHash = CityHash64((char *)AssetPath.GetCharArray().GetData(), AssetPath.GetCharArray().Num());
+		OptimizeVectorVMScript(ByteCode, ExeData->ByteCode.GetLength(), ExtFnTable.GetData(), ExtFnTable.Num(), &OptimizeContext, AssetPathHash, VVMFlag_OptOmitStats | VVMFlag_OptSaveIntermediateState);
+
+		// extract a human readable version of the script
+		GenerateHumanReadableVectorVMScript(OptimizeContext, ExeData->LastExperimentalAssemblyScript);
 
 		// freeze the OptimizeContext
 		FreezeVectorVMOptimizeContext(OptimizeContext, ExeData->ExperimentalContextData);
@@ -377,6 +434,15 @@ void FNiagaraAsyncCompileTask::OptimizeByteCode()
 		CompileMetrics.ByteCodeOptimizeTime = (float) (FPlatformTime::Seconds() - OptimizeStartTime);
 	}
 #endif // VECTORVM_SUPPORTS_EXPERIMENTAL
+}
+
+void FNiagaraAsyncCompileTask::ProcessNonCompilableScript()
+{
+	ExeData = MakeShared<FNiagaraVMExecutableData>();
+	ScriptPair.CompileResults = ExeData;
+	ScriptPair.bResultsReady = true;
+	ExeData->BakedRapidIterationParameters = BakedRapidIterationParameters;
+	ScriptPair.CompiledScript->ExecToBinaryData(ScriptPair.CompiledScript, DDCOutData, *ExeData);
 }
 
 void FNiagaraAsyncCompileTask::ProcessResult()
@@ -426,6 +492,7 @@ void FNiagaraAsyncCompileTask::CheckDDCResult()
 			{
 				ScriptPair.CompileResults = ExeData;
 				ScriptPair.bResultsReady = true;
+				bResultsFromDDC = true;
 				MoveToState(ENiagaraCompilationState::Finished);
 				UE_LOG(LogNiagara, Verbose, TEXT("Compilation data for %s could be pulled from the ddc."), *AssetPath);
 			}
@@ -753,11 +820,49 @@ bool FNiagaraActiveCompilationDefault::QueryCompileComplete(const FNiagaraQueryC
 
 void FNiagaraActiveCompilationDefault::Apply(const FNiagaraQueryCompilationOptions& Options)
 {
+	auto ShouldApplyTask = [](const FAsyncTaskPtr& AsyncTask) -> bool
+	{
+		if (AsyncTask->CurrentState == ENiagaraCompilationState::Aborted || !AsyncTask->ScriptPair.bResultsReady)
+		{
+			return false;
+		}
+
+		// for now also check some common failure points (the ComputedPrecompileDuplicateData being cleaned up/incomplete)
+		if (AsyncTask->ComputedPrecompileDuplicateData.IsValid())
+		{
+			if (AsyncTask->ComputedPrecompileDuplicateData->GetScriptSource() == nullptr)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	};
+
+	if (bEvaluateParametersPending)
+	{
+		// run a first pass to apply the rapid iteration parameters across all of the tasks with results
+		for (FAsyncTaskPtr& AsyncTask : Tasks)
+		{
+			if (ShouldApplyTask(AsyncTask))
+			{
+				FEmitterCompiledScriptPair& EmitterCompiledScriptPair = AsyncTask->ScriptPair;
+				if (TSharedPtr<FNiagaraVMExecutableData> ExeData = EmitterCompiledScriptPair.CompileResults)
+				{
+					if (UNiagaraScript* CompiledScript = EmitterCompiledScriptPair.CompiledScript)
+					{
+						CompiledScript->AssignRapidIterationParameters(*ExeData);
+					}
+				}
+			}
+		}
+	}
+
 	for (FAsyncTaskPtr& AsyncTask : Tasks)
 	{
-		FEmitterCompiledScriptPair& EmitterCompiledScriptPair = AsyncTask->ScriptPair;
-		if (EmitterCompiledScriptPair.bResultsReady)
+		if (ShouldApplyTask(AsyncTask))
 		{
+			FEmitterCompiledScriptPair& EmitterCompiledScriptPair = AsyncTask->ScriptPair;
 			TSharedPtr<FNiagaraVMExecutableData> ExeData = EmitterCompiledScriptPair.CompileResults;
 			UNiagaraScript* CompiledScript = EmitterCompiledScriptPair.CompiledScript;
 
@@ -799,16 +904,73 @@ void FNiagaraActiveCompilationDefault::Apply(const FNiagaraQueryCompilationOptio
 			// Synchronize the variables that we actually encountered during precompile so that we can expose them to the end user.
 			FNiagaraUserRedirectionParameterStore& ExposedParameters = Options.System->GetExposedParameters();
 
-			TArray<FNiagaraVariable> OriginalExposedParams;
-			ExposedParameters.GetParameters(OriginalExposedParams);
-			TArray<FNiagaraVariable>& EncounteredExposedVars = AsyncTask->EncounteredExposedVars;
-			for (int32 i = 0; i < EncounteredExposedVars.Num(); i++)
+			auto AddUniqueExposedVariables = [&ExposedParameters](TConstArrayView<FNiagaraVariable> InVariables) -> void
 			{
-				if (OriginalExposedParams.Contains(EncounteredExposedVars[i]) == false)
+				for (const FNiagaraVariable& InVariable : InVariables)
 				{
-					// Just in case it wasn't added previously..
-					ExposedParameters.AddParameter(EncounteredExposedVars[i], true, false);
+					if (!ExposedParameters.ReadParameterVariables().Contains(InVariable))
+					{
+						// Just in case it wasn't added previously..
+						ExposedParameters.AddParameter(InVariable, true, false);
+					}
 				}
+			};
+
+			AddUniqueExposedVariables(AsyncTask->EncounteredExposedVars);
+
+			// we also grab from the data contained in the ExeData, since that might be all we have if grabbed results from the DDC rather
+			// than actually issuing a precompile
+			if (AsyncTask->bResultsFromDDC)
+			{
+				auto IsValidUserVariable = [](const FNiagaraVariableBase& InVariable) -> bool
+				{
+					if (!InVariable.IsInNameSpace(FStringView(PARAM_MAP_USER_STR)))
+					{
+						return false;
+					}
+
+					// check if this is a struct type, if it is make sure that we ignore the SWC version
+					if (const UStruct* Struct = InVariable.GetType().GetStruct())
+					{
+						if (FNiagaraTypeHelper::IsConvertedSWCStructure(Struct))
+						{
+							return false;
+						}
+					}
+					return true;
+				};
+
+				TArray<FNiagaraVariable> ScriptExposedVariables;
+				for (const FNiagaraVariable& Parameter : ExeData->Parameters.Parameters)
+				{
+					if (!Parameter.IsInNameSpace(FStringView(PARAM_MAP_USER_STR)))
+					{
+						continue;
+					}
+
+					// we need to also deal with SWC -> LWC conversions
+					if (const UStruct* Struct = Parameter.GetType().GetStruct())
+					{
+						if (FNiagaraTypeHelper::IsConvertedSWCStructure(Struct))
+						{
+							FNiagaraVariable ConvertedVariable(FNiagaraTypeHelper::GetLWCType(Parameter.GetType()), Parameter.GetName());
+							ConvertedVariable.AllocateData();
+
+							if (Parameter.IsDataAllocated())
+							{
+								FNiagaraLwcStructConverter DataConverter = FNiagaraTypeRegistry::GetStructConverter(ConvertedVariable.GetType());
+								DataConverter.ConvertDataFromSimulation(ConvertedVariable.GetData(), Parameter.GetData());
+							}
+							AddUniqueExposedVariables({ConvertedVariable});
+						}
+					}
+					else
+					{
+						AddUniqueExposedVariables({Parameter});
+					}
+				}
+
+				AddUniqueExposedVariables(ScriptExposedVariables);
 			}
 		}
 	}
@@ -867,7 +1029,7 @@ bool FNiagaraActiveCompilationDefault::Launch(const FNiagaraCompilationOptions& 
 					Pair.CompiledScript = EmitterScript;
 
 					TSharedPtr<FNiagaraAsyncCompileTask, ESPMode::ThreadSafe> AsyncTask = MakeShared<FNiagaraAsyncCompileTask, ESPMode::ThreadSafe>(Options.System, EmitterScript->GetPathName(), Pair);
-					if (EmitterScript->IsCompilable() && !EmitterScript->AreScriptAndSourceSynchronized())
+					if (!EmitterScript->AreScriptAndSourceSynchronized())
 					{
 						// we need to compute the vmID here to check later in the ddc task before doing the precompile if anything has changed in the meantime.
 						// the compilation id was just calculated during AreScriptAndSourceSynchronized() so we reuse it here

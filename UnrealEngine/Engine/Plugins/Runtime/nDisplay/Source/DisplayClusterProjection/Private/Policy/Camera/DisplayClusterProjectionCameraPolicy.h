@@ -29,9 +29,9 @@ public:
 
 	virtual bool CalculateView(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FVector& InOutViewLocation, FRotator& InOutViewRotation, const FVector& ViewOffset, const float WorldToMeters, const float NCP, const float FCP) override;
 	virtual bool GetProjectionMatrix(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FMatrix& OutPrjMatrix) override;
+	virtual void SetupProjectionViewPoint(IDisplayClusterViewport* InViewport, const float InDeltaTime, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane = nullptr) override;
 
-	virtual bool GetViewPoint(IDisplayClusterViewport* InViewport, FRotator& InOutViewRotation, FVector& InOutViewLocation) override;
-	virtual bool GetStereoEyeOffsetDistance(IDisplayClusterViewport* InViewport, const uint32 InContextNum, float& InOutStereoEyeOffsetDistance) override;
+	virtual void UpdatePostProcessSettings(IDisplayClusterViewport* InViewport) override;
 
 	virtual bool ShouldUseSourceTextureWithMips() const override
 	{
@@ -42,18 +42,25 @@ public:
 	void SetCamera(UCameraComponent* const NewCamera, const FDisplayClusterProjectionCameraPolicySettings& InCameraSettings);
 
 private:
-	bool ImplGetProjectionMatrix(const float CameraFOV, const float CameraAspectRatio, IDisplayClusterViewport* InViewport, const uint32 InContextNum, FMatrix& OutPrjMatrix);
+	bool ImplSetupProjectionViewPoint(IDisplayClusterViewport* InViewport, const float InDeltaTime, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane = nullptr) const;
 
 protected:
-	UCameraComponent* GetCameraComponent();
+	UCameraComponent* GetCameraComponent() const;
 
 private:
 	// Camera to use for rendering
 	FDisplayClusterSceneComponentRef CameraRef;
+
+	// Camera settings
 	FDisplayClusterProjectionCameraPolicySettings CameraSettings;
+
+	// Values of the clipping planes (saved from CalculateView())
 	float ZNear = 1.f;
 	float ZFar = 1.f;
 
-	// A value less than zero means that the variable is not used.
-	float CustomNearClippingPlane = -1;
+	// camera FOV value in degrees (saved from the SetupProjectionViewPoint() function)
+	float CameraFOVDegrees = 90;
+
+	// camera aspect ratio value (saved from the SetupProjectionViewPoint() function)
+	float CameraAspectRatio = 1;
 };

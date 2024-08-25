@@ -96,6 +96,7 @@ FDisplayClusterRender_TextureResource::FDisplayClusterRender_TextureResource(con
 	PixelFormat = DestPixelFormat;
 	Width = InWidth;
 	Height = InHeight;
+	ComponentDepth = InComponentDepth;
 }
 
 FDisplayClusterRender_TextureResource::~FDisplayClusterRender_TextureResource()

@@ -5,6 +5,7 @@
 
 #if WITH_EDITOR
 
+#include "AssetCompilingManager.h"
 #include "Misc/DelayedAutoRegister.h"
 #include "Misc/ScopedSlowTask.h"
 #include "Misc/QueuedThreadPool.h"
@@ -93,7 +94,6 @@ namespace AsyncCompilationHelpers
 		TFunctionRef<void(ICompilable*)> PostCompileSingle
 	)
 	{
-		SCOPE_STALL_REPORTER(AsyncCompilationHelpers::FinishCompilation, 10.0);
 		if (Num <= 0)
 		{
 			return;
@@ -114,7 +114,7 @@ namespace AsyncCompilationHelpers
 			Args.Add(TEXT("AssetType"), AssetType.ToLower());
 
 			SlowTask.Emplace((float)Num, FText::Format(LOCTEXT("WaitingOnFinishCompilation", "Waiting on {AssetType} preparation"), Args), true);
-			SlowTask->MakeDialogDelayed(1.0f, false /*bShowCancelButton*/, true /*bAllowInPIE*/);
+			SlowTask->MakeDialogDelayed(1.0f, false /*bShowCancelButton*/, false /*bAllowInPIE*/);
 		}
 
 		// Reschedule everything to be executed at blocking priority, it bypasses the pause mechanism to ensure forward progress since we're waiting.
@@ -137,44 +137,78 @@ namespace AsyncCompilationHelpers
 		};
 
 		int32 NumDone = 0;
-		for (int32 Index = 0; Index < Num; ++Index)
+		TBitArray<> JobsToFinish(true, Num);
+		TBitArray<> LoggedSlowTask(false, Num);
+		for(;;)
 		{
-			ICompilable& Job = Getter(Index);
-
-			FText Progress = FormatProgress(NumDone++, Num, Job.GetName());
-
-			// Be nice with the game thread and tick the progress to keep application responsive even when no progress is being made...
-			bool bLogSlowProgress = true;
-			while (!Job.WaitCompletionWithTimeout(0.016))
+			for (TBitArray<>::FWordIterator It(JobsToFinish); It; ++It)
 			{
-				if (SlowTask.IsSet())
+				const uint32_t BaseIndex = It.GetIndex();
+				uint32_t Word = It.GetWord();
+				uint32_t WordJobState = Word;
+				while (Word)
 				{
-					SlowTask->EnterProgressFrame(0.0f, Progress);
-				}
+					const uint32_t BitIndex = FBitSet::GetAndClearNextBit(Word);
+					const uint32_t JobIndex = (BaseIndex * FBitSet::BitsPerWord) + BitIndex;
 
-				if (bLogSlowProgress)
-				{
-					UE_LOG_REF(LogCategory, Display, TEXT("%s"), *Progress.ToString());
-					bLogSlowProgress = false;
-				}
+					ICompilable& Job = Getter(JobIndex);
 
-				// SN-DBS jobs (which make use of the http service) needs to be ticked
-				// from the game-thread to avoid starvation while we wait for other
-				// async tasks to finish.
-				if (GShaderCompilingManager && GShaderCompilingManager->IsCompiling())
-				{
-					const bool bLimitExecutionTime = true;
-					const bool bBlockOnGlobalShaderCompletion = false;
-					GShaderCompilingManager->ProcessAsyncResults(bLimitExecutionTime, bBlockOnGlobalShaderCompletion);
+					// If the job isn't complete, poll for completion
+					if (Job.WaitCompletionWithTimeout(0.0f))
+					{
+						// Job is complete, mark the bit as done
+						// and call our completion callback
+						WordJobState &= ~(1u << BitIndex);
+						PostCompileSingle(&Job);
+						NumDone++;
+
+						if (SlowTask.IsSet())
+						{
+							FText Progress = FormatProgress(NumDone, Num, Job.GetName());
+							SlowTask->EnterProgressFrame(1.0f, Progress);
+						}
+
+						continue;
+					}
 				}
+				It.SetWord(WordJobState);
+			}
+
+			// SN-DBS jobs (which make use of the http service) needs to be ticked
+			// from the game-thread to avoid starvation while we wait for other
+			// async tasks to finish.
+			if (GShaderCompilingManager && GShaderCompilingManager->IsCompiling())
+			{
+				const bool bLimitExecutionTime = true;
+				const bool bBlockOnGlobalShaderCompletion = false;
+				GShaderCompilingManager->ProcessAsyncResults(bLimitExecutionTime, bBlockOnGlobalShaderCompletion);
+			}
+
+			if(NumDone >= Num)
+			{
+				break;
 			}
 
 			if (SlowTask.IsSet())
 			{
-				SlowTask->EnterProgressFrame(1.0f, Progress);
+				int IncompleteJobIndex = JobsToFinish.Find(true);
+				check(IncompleteJobIndex != INDEX_NONE);
+
+				ICompilable& IncompleteJob = Getter(IncompleteJobIndex);
+				FText Progress = FormatProgress(NumDone, Num, IncompleteJob.GetName());
+
+				// Avoid spamming task progress while waiting
+				if (!LoggedSlowTask[IncompleteJobIndex])
+				{
+					UE_LOG_REF(LogCategory, Display, TEXT("%s"), *Progress.ToString());
+					LoggedSlowTask[IncompleteJobIndex] = true;
+				}
+
+				SlowTask->EnterProgressFrame(0.0f, Progress);
 			}
 
-			PostCompileSingle(&Job);
+			// Jobs are still in flight so give them some time to complete
+			FPlatformProcess::Sleep(0.016);
 		}
 
 		SaveStallStack(FPlatformTime::Cycles64() - StartTime);

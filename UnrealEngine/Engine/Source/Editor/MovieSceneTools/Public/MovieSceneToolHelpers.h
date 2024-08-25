@@ -69,7 +69,7 @@ struct FFBXInOutParameters
 
 DECLARE_DELEGATE(FInitAnimationCB);
 DECLARE_DELEGATE(FStartAnimationCB);
-DECLARE_DELEGATE_OneParam(FTickAnimationCB, float);
+DECLARE_DELEGATE_TwoParams(FTickAnimationCB, float, FFrameNumber);
 DECLARE_DELEGATE(FEndAnimationCB);
 
 //Skel Mesh Recorder to set up and restore various parameters on the skelmesh

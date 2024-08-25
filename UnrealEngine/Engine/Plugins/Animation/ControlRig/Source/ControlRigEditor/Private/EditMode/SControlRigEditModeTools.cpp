@@ -34,8 +34,10 @@
 #include "ControlRigSpaceChannelEditors.h"
 #include "IKeyArea.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "Widgets/Input/SComboButton.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "ScopedTransaction.h"
+#include "TransformConstraint.h"
 #include "EditMode/ControlRigEditModeToolkit.h"
 #include "EditMode/SControlRigDetails.h"
 #include "Editor/Constraints/SConstraintsWidget.h"
@@ -86,7 +88,7 @@ const URigHierarchy* SControlRigEditModeTools::GetHierarchy() const
 	return nullptr;
 }
 
-void SControlRigEditModeTools::Construct(const FArguments& InArgs, TSharedPtr<FControlRigEditModeToolkit> InOwningToolkit, FControlRigEditMode& InEditMode,UWorld* InWorld)
+void SControlRigEditModeTools::Construct(const FArguments& InArgs, TSharedPtr<FControlRigEditModeToolkit> InOwningToolkit, FControlRigEditMode& InEditMode)
 {
 	bIsChangingRigHierarchy = false;
 	OwningToolkit = InOwningToolkit;
@@ -178,6 +180,7 @@ void SControlRigEditModeTools::Construct(const FArguments& InArgs, TSharedPtr<FC
 	DisplaySettings.bShowControls = true;
 	DisplaySettings.bShowNulls = false;
 	DisplaySettings.bShowReferences = false;
+	DisplaySettings.bShowSockets = false;
 	DisplaySettings.bShowRigidBodies = false;
 	DisplaySettings.bHideParentsOnFilter = true;
 	DisplaySettings.bFlattenHierarchyOnFilter = true;
@@ -188,6 +191,7 @@ void SControlRigEditModeTools::Construct(const FArguments& InArgs, TSharedPtr<FC
 	RigTreeDelegates.OnGetDisplaySettings = FOnGetRigTreeDisplaySettings::CreateSP(this, &SControlRigEditModeTools::GetDisplaySettings);
 	RigTreeDelegates.OnSelectionChanged = FOnRigTreeSelectionChanged::CreateSP(this, &SControlRigEditModeTools::HandleSelectionChanged);
 #endif
+
 
 	ChildSlot
 	[
@@ -362,7 +366,51 @@ void SControlRigEditModeTools::Construct(const FArguments& InArgs, TSharedPtr<FC
 					[
 						SNew(SSpacer)
 					]
+					// "Selected" button
+					+SHorizontalBox::Slot()
+					.AutoWidth()
+					.HAlign(HAlign_Right)
+					.VAlign(VAlign_Center)
+					.Padding(0.f, 2.f, 8.f, 2.f)
+					[
+						// Combo Button to swap what constraints we show  
+						SNew(SComboButton)
+						.OnGetMenuContent_Lambda([this]()
+						{
+							FMenuBuilder MenuBuilder(true, NULL);
+							MenuBuilder.BeginSection("Constraints");
+							if (ConstraintsEditionWidget.IsValid())
+							{
+								for (int32 Index = 0; Index < 4; ++Index)
+								{
+									FUIAction ItemAction(FExecuteAction::CreateSP(this, &SControlRigEditModeTools::OnSelectShowConstraints, Index));
+									const TAttribute<FText> Text = ConstraintsEditionWidget->GetShowConstraintsText((FBaseConstraintListWidget::EShowConstraints)(Index));
+									const TAttribute<FText> Tooltip = ConstraintsEditionWidget->GetShowConstraintsTooltip((FBaseConstraintListWidget::EShowConstraints)(Index));
+									MenuBuilder.AddMenuEntry(Text, Tooltip, FSlateIcon(), ItemAction);
+								}
+							}
+							MenuBuilder.EndSection();
 
+							return MenuBuilder.MakeWidget();
+						})
+						.ButtonContent()
+						[
+							SNew(SHorizontalBox)
+			
+							+SHorizontalBox::Slot()
+							[
+								SNew(STextBlock)
+								.Text_Lambda([this]()
+									{
+										return GetShowConstraintsName();
+									})
+								.ToolTipText_Lambda([this]()
+								{
+									return GetShowConstraintsTooltip();
+								})
+							]
+						]
+					]
 					// "Plus" icon
 					+SHorizontalBox::Slot()
 					.AutoWidth()
@@ -373,13 +421,17 @@ void SControlRigEditModeTools::Construct(const FArguments& InArgs, TSharedPtr<FC
 						SNew(SButton)
 						.ContentPadding(0.0f)
 						.ButtonStyle(FAppStyle::Get(), "NoBorder")
-						.IsEnabled_Lambda([InWorld]()
+						.IsEnabled_Lambda([this]()
 						{
-							const ULevel* CurrentLevel = InWorld->GetCurrentLevel();
-							const TArray<AActor*> SelectedActors = ObjectPtrDecay(CurrentLevel->Actors).FilterByPredicate( [](const AActor* Actor)
+							TArray<AActor*> SelectedActors;
+							if (FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(ModeTools->GetActiveMode(FControlRigEditMode::ModeName)))
 							{
-								return Actor && Actor->IsSelected();
-							});
+								const ULevel* CurrentLevel = EditMode->GetWorld()->GetCurrentLevel();
+								SelectedActors = ObjectPtrDecay(CurrentLevel->Actors).FilterByPredicate([](const AActor* Actor)
+								{
+									return Actor && Actor->IsSelected();
+								});
+							}
 							return !SelectedActors.IsEmpty();
 						})
 						.OnClicked(this, &SControlRigEditModeTools::HandleAddConstraintClicked)
@@ -432,9 +484,38 @@ void SControlRigEditModeTools::SetSettingsDetailsObject(const TWeakObjectPtr<>& 
 		TArray<TWeakObjectPtr<>> Objects;
 		Objects.Add(InObject);
 		SettingsDetailsView->SetObjects(Objects);
-
 	}
 }
+
+void SControlRigEditModeTools::OnSelectShowConstraints(int32 Index)
+{
+	if (ConstraintsEditionWidget.IsValid())
+	{
+		SConstraintsEditionWidget::EShowConstraints ShowConstraint = (SConstraintsEditionWidget::EShowConstraints)(Index);
+		ConstraintsEditionWidget->SetShowConstraints(ShowConstraint);
+	}
+}
+
+FText SControlRigEditModeTools::GetShowConstraintsName() const
+{
+	FText Text = FText::GetEmpty();
+	if (ConstraintsEditionWidget.IsValid())
+	{
+		Text = ConstraintsEditionWidget->GetShowConstraintsText(FBaseConstraintListWidget::ShowConstraints);
+	}
+	return Text;
+}
+
+FText SControlRigEditModeTools::GetShowConstraintsTooltip() const
+{
+	FText Text = FText::GetEmpty();
+	if (ConstraintsEditionWidget.IsValid())
+	{
+		Text = ConstraintsEditionWidget->GetShowConstraintsTooltip(FBaseConstraintListWidget::ShowConstraints);
+	}
+	return Text;
+}
+
 #if USE_LOCAL_DETAILS
 
 void SControlRigEditModeTools::SetEulerTransformDetailsObjects(const TArray<TWeakObjectPtr<>>& InObjects)
@@ -511,15 +592,26 @@ void SControlRigEditModeTools::SetVector2DDetailsObjects(const TArray<TWeakObjec
 void SControlRigEditModeTools::SetSequencer(TWeakPtr<ISequencer> InSequencer)
 {
 	WeakSequencer = InSequencer.Pin();
+	if (ConstraintsEditionWidget)
+	{
+		ConstraintsEditionWidget->SequencerChanged(InSequencer);
+	}
 }
 
 bool SControlRigEditModeTools::IsPropertyKeyable(const UClass* InObjectClass, const IPropertyHandle& InPropertyHandle) const
 {
-	if (InObjectClass && InObjectClass->IsChildOf(UControlRigTransformNoScaleControlProxy::StaticClass()) && InObjectClass->IsChildOf(UControlRigEulerTransformControlProxy::StaticClass()) && InPropertyHandle.GetProperty()
-		&& InPropertyHandle.GetProperty()->GetFName() == GET_MEMBER_NAME_CHECKED(UControlRigTransformControlProxy, Transform)) 
+	if (InObjectClass && InObjectClass->IsChildOf(UAnimDetailControlsProxyTransform::StaticClass()))
 	{
 		return true;
 	}
+	if (InObjectClass && InObjectClass->IsChildOf(UAnimDetailControlsProxyTransform::StaticClass()) && InPropertyHandle.GetProperty()
+		&& (InPropertyHandle.GetProperty()->GetFName() == GET_MEMBER_NAME_CHECKED(UAnimDetailControlsProxyTransform, Location) ||
+		InPropertyHandle.GetProperty()->GetFName() == GET_MEMBER_NAME_CHECKED(UAnimDetailControlsProxyTransform, Rotation) ||
+		InPropertyHandle.GetProperty()->GetFName() == GET_MEMBER_NAME_CHECKED(UAnimDetailControlsProxyTransform, Scale)))
+	{
+		return true;
+	}
+
 	FCanKeyPropertyParams CanKeyPropertyParams(InObjectClass, InPropertyHandle);
 	TSharedPtr<ISequencer> Sequencer = WeakSequencer.Pin();
 	if (Sequencer.IsValid() && Sequencer->CanKeyProperty(CanKeyPropertyParams))
@@ -571,12 +663,14 @@ void SControlRigEditModeTools::OnKeyPropertyClicked(const IPropertyHandle& Keyed
 
 	TArray<UObject*> Objects;
 	KeyedPropertyHandle.GetOuterObjects(Objects);
+	TSharedPtr<ISequencer> SequencerPtr = WeakSequencer.Pin();
+
 	for (UObject *Object : Objects)
 	{
 		UControlRigControlsProxy* Proxy = Cast< UControlRigControlsProxy>(Object);
 		if (Proxy)
 	{
-			Proxy->SetKey(KeyedPropertyHandle);
+			Proxy->SetKey(SequencerPtr,KeyedPropertyHandle);
 		}
 	}
 }
@@ -595,16 +689,6 @@ bool SControlRigEditModeTools::ShouldShowPropertyOnDetailCustomization(const FPr
 		// Always show settings properties
 		const UClass* OwnerClass = InProperty.GetOwner<UClass>();
 		bShow |= OwnerClass == UControlRigEditModeSettings::StaticClass();
-		bShow |= OwnerClass == UControlRigTransformControlProxy::StaticClass();		
-		bShow |= OwnerClass == UControlRigTransformNoScaleControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigEulerTransformControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigFloatControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigVectorControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigVector2DControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigBoolControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigEnumControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigIntegerControlProxy::StaticClass();
-
 		return bShow;
 	};
 
@@ -634,17 +718,6 @@ bool SControlRigEditModeTools::IsReadOnlyPropertyOnDetailCustomization(const FPr
 		// Always show settings properties
 		const UClass* OwnerClass = InProperty.GetOwner<UClass>();
 		bShow |= OwnerClass == UControlRigEditModeSettings::StaticClass();
-		bShow |= OwnerClass == UControlRigTransformControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigTransformNoScaleControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigEulerTransformControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigFloatControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigVectorControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigVector2DControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigBoolControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigEnumControlProxy::StaticClass();
-		bShow |= OwnerClass == UControlRigIntegerControlProxy::StaticClass();
-
-
 		return bShow;
 	};
 
@@ -836,10 +909,13 @@ void SControlRigEditModeTools::HandleActiveSpaceChanged(URigHierarchy* InHierarc
 void SControlRigEditModeTools::HandleSpaceListChanged(URigHierarchy* InHierarchy, const FRigElementKey& InControlKey,
 	const TArray<FRigElementKey>& InSpaceList)
 {
+	FScopedTransaction Transaction(LOCTEXT("ChangeControlRigSpace", "Change Control Rig Space"));
+
 	for (TWeakObjectPtr<UControlRig>& ControlRig : ControlRigs)
 	{
 		if (ControlRig.IsValid() && ControlRig->GetHierarchy() == InHierarchy)
 		{
+			ControlRig->Modify();
 
 			if (const FRigControlElement* ControlElement = InHierarchy->Find<FRigControlElement>(InControlKey))
 			{
@@ -984,29 +1060,35 @@ FReply SControlRigEditModeTools::OnBakeControlsToNewSpaceButtonClicked()
 
 FReply SControlRigEditModeTools::HandleAddConstraintClicked()
 {
-	// magic number to auto expand the widget when creating a new constraint. We keep that number below a reasonable
-	// threshold to avoid automatically creating a large number of items (this can be style done by the user) 
-	static constexpr int32 NumAutoExpand = 20;
+	FMenuBuilder MenuBuilder(true, nullptr);
 
-	const TSharedPtr<SConstraintsCreationWidget> Widget =
-		SNew(SConstraintsCreationWidget)
-		.OnConstraintCreated_Lambda( [this]()
+	auto AddConstraintWidget = [&](ETransformConstraintType InConstraintType)
+	{
+		const TSharedRef<SConstraintMenuEntry> Entry =
+			SNew(SConstraintMenuEntry, InConstraintType)
+		.OnConstraintCreated_Lambda([this]()
 		{
-			const int32 NumItems = ConstraintsEditionWidget ? ConstraintsEditionWidget->RefreshConstraintList() : 0;
-			
+			// magic number to auto expand the widget when creating a new constraint. We keep that number below a reasonable
+			// threshold to avoid automatically creating a large number of items (this can be style done by the user) 
+			static constexpr int32 NumAutoExpand = 20;
+			const int32 NumItems = ConstraintsEditionWidget ? ConstraintsEditionWidget->RefreshConstraintList() : 0;	
 			if (ConstraintPickerExpander && NumItems < NumAutoExpand)
 			{
 				ConstraintPickerExpander->SetExpanded(true);
 			}
 		});
+		MenuBuilder.AddWidget(Entry, FText::GetEmpty(), true);
+	};
 	
-	FMenuBuilder MenuBuilder(true, nullptr);
 	MenuBuilder.BeginSection("CreateConstraint", LOCTEXT("CreateConstraintHeader", "Create New..."));
 	{
-		MenuBuilder.AddWidget(Widget.ToSharedRef(), FText::GetEmpty(), true);
+		AddConstraintWidget(ETransformConstraintType::Translation);
+		AddConstraintWidget(ETransformConstraintType::Rotation);
+		AddConstraintWidget(ETransformConstraintType::Scale);
+		AddConstraintWidget(ETransformConstraintType::Parent);
+		AddConstraintWidget(ETransformConstraintType::LookAt);
 	}
 	MenuBuilder.EndSection();
-	
 	
 	FSlateApplication::Get().PushMenu(
 		AsShared(),
@@ -1126,14 +1208,12 @@ void SControlRigEditModeTools::CustomizeToolBarPalette(FToolBarBuilder& ToolBarB
 		FUIAction(
 		FExecuteAction::CreateSP(this, &SControlRigEditModeTools::ToggleEditPivotMode),
 		FCanExecuteAction(),
-		FIsActionChecked::CreateLambda([] {
-				if (FLevelEditorModule* LevelEditorModule = FModuleManager::GetModulePtr<FLevelEditorModule>(TEXT("LevelEditor")))
+		FIsActionChecked::CreateLambda([this] {
+				if (TSharedPtr<IToolkit> Toolkit = OwningToolkit.Pin())
 				{
-					TSharedPtr<ILevelEditor> LevelEditorPtr = LevelEditorModule->GetLevelEditorInstance().Pin();
-
-					if (LevelEditorPtr.IsValid())
+					if (Toolkit.IsValid())
 					{
-						FString ActiveToolName = LevelEditorPtr->GetEditorModeManager().GetInteractiveToolsContext()->ToolManager->GetActiveToolName(EToolSide::Left);
+						const FString ActiveToolName = Toolkit->GetToolkitHost()->GetEditorModeManager().GetInteractiveToolsContext()->ToolManager->GetActiveToolName(EToolSide::Left);
 						if (ActiveToolName == TEXT("SequencerPivotTool"))
 						{
 							return true;
@@ -1155,25 +1235,20 @@ void SControlRigEditModeTools::CustomizeToolBarPalette(FToolBarBuilder& ToolBarB
 void SControlRigEditModeTools::ToggleEditPivotMode()
 {
 	FEditorModeID ModeID = TEXT("SequencerToolsEditMode");
-	if (GLevelEditorModeTools().IsModeActive(ModeID))
+	if (const TSharedPtr<IToolkit> Toolkit = OwningToolkit.Pin())
 	{
-		if (FLevelEditorModule* LevelEditorModule = FModuleManager::GetModulePtr<FLevelEditorModule>(TEXT("LevelEditor")))
+		if (Toolkit.IsValid())
 		{
-			TSharedPtr<ILevelEditor> LevelEditorPtr = LevelEditorModule->GetLevelEditorInstance().Pin();
-
-			if (LevelEditorPtr.IsValid())
+			const FEditorModeTools& Tools =Toolkit->GetToolkitHost()->GetEditorModeManager();
+			const FString ActiveToolName = Tools.GetInteractiveToolsContext()->ToolManager->GetActiveToolName(EToolSide::Left);
+			if (ActiveToolName == TEXT("SequencerPivotTool"))
 			{
-				FString ActiveToolName = LevelEditorPtr->GetEditorModeManager().GetInteractiveToolsContext()->ToolManager->GetActiveToolName(EToolSide::Left);
-				if (ActiveToolName == TEXT("SequencerPivotTool"))
-				{
-					LevelEditorPtr->GetEditorModeManager().GetInteractiveToolsContext()->ToolManager->DeactivateTool(EToolSide::Left, EToolShutdownType::Completed);
-				}
-				else
-				{
-					LevelEditorPtr->GetEditorModeManager().GetInteractiveToolsContext()->ToolManager->SelectActiveToolType(EToolSide::Left, TEXT("SequencerPivotTool"));
-					LevelEditorPtr->GetEditorModeManager().GetInteractiveToolsContext()->ToolManager->ActivateTool(EToolSide::Left);
-
-				}
+				Tools.GetInteractiveToolsContext()->ToolManager->DeactivateTool(EToolSide::Left, EToolShutdownType::Completed);
+			}
+			else
+			{
+				Tools.GetInteractiveToolsContext()->ToolManager->SelectActiveToolType(EToolSide::Left, TEXT("SequencerPivotTool"));
+				Tools.GetInteractiveToolsContext()->ToolManager->ActivateTool(EToolSide::Left);
 			}
 		}
 	}
@@ -1221,7 +1296,7 @@ void SControlRigEditModeTools::MakeSelectionSetDialog()
 */
 FText SControlRigEditModeTools::GetActiveToolName() const
 {
-	return  FText();
+	return FText::FromString(TEXT("Control Rig Editing"));
 }
 
 FText SControlRigEditModeTools::GetActiveToolMessage() const

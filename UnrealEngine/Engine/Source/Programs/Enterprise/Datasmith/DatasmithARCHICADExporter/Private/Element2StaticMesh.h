@@ -61,7 +61,7 @@ class FElement2StaticMesh
 	TSharedPtr< IDatasmithMeshElement > CreateMesh();
 
 	// Collect geometry of the element
-	void AddElementGeometry(const ModelerAPI::Element& InModelElement, const Geometry::Transformation3D& InWorld2Local);
+	void AddElementGeometry(const ModelerAPI::Element& InModelElement, const Geometry::Vector3D& InGeometryShift);
 
 	// Return the numbers of bugs detected during conversion
 	unsigned int GetBugsCount() const { return BugsCount; }
@@ -126,9 +126,8 @@ class FElement2StaticMesh
 	// Current context
 	const FSyncContext& SyncContext;
 
-	Geometry::Transformation3D World2Local;
-	Geometry::Matrix33		   Matrix;
-	bool					   bIsIdentity = true;
+	// Trasform to 'shift' original mesh vertices in local space
+	Geometry::Vector3D GeometryShift;
 
 	// Working variables
 	bool				 bSomeHasTextures; // True if at least one triangles need uv

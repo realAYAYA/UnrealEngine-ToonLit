@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Analytics.h"
+#include "AnalyticsTracer.h"
 #include "Misc/CommandLine.h"
 #include "Interfaces/IAnalyticsProviderModule.h"
 
@@ -38,6 +39,11 @@ TSharedPtr<IAnalyticsProvider> FAnalytics::CreateAnalyticsProvider( const FName&
 		UE_LOG(LogAnalytics, Warning, TEXT("CreateAnalyticsProvider called with a module name of None."));
 	}
 	return NULL;
+}
+
+TSharedPtr<IAnalyticsTracer> FAnalytics::CreateAnalyticsTracer()
+{
+	return MakeShared<FAnalyticsTracer>();
 }
 
 FString FAnalytics::GetConfigValueFromIni( const FString& IniName, const FString& SectionName, const FString& KeyName, bool bIsRequired )

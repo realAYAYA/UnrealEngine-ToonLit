@@ -6,120 +6,72 @@
 #include "NeuralMorphModel.h"
 #include "NeuralMorphNetwork.generated.h"
 
+class UNNEModelData;
+
+namespace UE::NNE
+{
+	class IModelCPU;
+	class IModelInstanceCPU;
+}
+
 class UNeuralMorphNetworkInstance;
 
-
-/** A fully connected layer, which contains the weights and biases for those connections. */ 
 UCLASS()
-class NEURALMORPHMODEL_API UNeuralMorphMLPLayer
+class UE_DEPRECATED(5.4, "Neural Morph MLP no longer used for inference.") NEURALMORPHMODEL_API UNeuralMorphMLPLayer
 	: public UObject
 {
 	GENERATED_BODY()
 
 public:
-	/** The weight matrix number of inputs (rows). */
+	
 	UPROPERTY()
 	int32 NumInputs = 0;
 
-	/** The weight matrix number of outputs (columns). */
 	UPROPERTY()
 	int32 NumOutputs = 0;
 
-	/** The number of instances of inputs and outputs. */
 	UPROPERTY()
 	int32 Depth = 1;
 
-	/** A 2D array of weights. The number of weights equals NumRows x NumColumns x Depth. */
 	UPROPERTY()
 	TArray<float> Weights;
 
-	/** The biases. The number of biases will be the same as the number of columns multiplied by the depth. */
 	UPROPERTY()
 	TArray<float> Biases;
 };
 
 
-/**
- * An MLP neural network.
- */
 UCLASS()
-class NEURALMORPHMODEL_API UNeuralMorphMLP
+class UE_DEPRECATED(5.4, "Neural Morph MLP longer used for inference.") NEURALMORPHMODEL_API UNeuralMorphMLP
 	: public UObject
 {
 	GENERATED_BODY()
 
 public:
-	/** Clear the network, getting rid of all weights and biases. */
+	
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
 	void Empty();
-
-	/** 
-	 * Check if the network is empty or not.
-	 * If it is empty, it means it hasn't been loaded, and cannot do anything.
-	 * Empty means it has no layers.
-	 * @return Returns true if empty, otherwise false is returned.
-	 */
 	bool IsEmpty() const;
-
-	/**
-	 * Load the network from a file on disk.
-	 * When loading fails, the network will be emptied.
-	 * @param Archive The archive to load from.
-	 * @return Returns true when successfully loaded this model, otherwise false is returned.
-	 */
 	bool Load(FArchive& FileReader);
-
-	/**
-	 * Get the number of inputs, which is the number of floats the network takes as input.
-	 * @result The number of input floats to the network.
-	 */
 	int32 GetNumInputs() const;
-
-	/**
-	 * Get the number of outputs, which is the number of floats the network will output.
-	 * @return The number of floats that the network outputs.
-	 */
 	int32 GetNumOutputs() const;
-
-	/**
-	 * Get the number of network layers.
-	 * This equals to the number of hidden layers plus one.
-	 * @return The number of network layers.
-	 */
 	int32 GetNumLayers() const;
-
-	/**
-	 * Get a given network layer.
-	 * @return A reference to the layer, which will contain the weights and biases.
-	 */
 	UNeuralMorphMLPLayer& GetLayer(int32 Index) const;
-
-	/**
-	 * Get the maximum number of inputs for all layers in the network.
-	 * This is used to pre-allocate a temp buffer used to pass the data through the layers.
-	 * @return The maximum number of inputs of all layers.
-	 */
 	int32 GetMaxNumLayerInputs() const;
-
-	/**
-	 * Get the maximum number of outputs for all layers in the network.
-	 * This is used to pre-allocate a temp buffer used to pass the data through the layers.
-	 * @return The maximum number of outputs of all layers.
-	 */
 	int32 GetMaxNumLayerOutputs() const;
 
 private:
-	/**
-	 * Load an MLP fully connected layer from a given archive.
-	 * @param Archive The archive to read from.
-	 */
+	
 	UNeuralMorphMLPLayer* LoadNetworkLayer(FArchive& Archive);
 
 private:
-	/** The network weights and biases of the main network. */
+
 	UPROPERTY()
 	TArray<TObjectPtr<UNeuralMorphMLPLayer>> Layers;
-};
 
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+};
 
 /**
  * The specialized neural network for the Neural Morph Model.
@@ -135,6 +87,16 @@ class NEURALMORPHMODEL_API UNeuralMorphNetwork
 	GENERATED_BODY()
 
 public:
+
+	// These are required because of the use of TSharedPtr
+	UNeuralMorphNetwork();
+	UNeuralMorphNetwork(const FObjectInitializer& ObjectInitializer);
+	UNeuralMorphNetwork(FVTableHelper& Helper);
+	virtual ~UNeuralMorphNetwork();
+
+	/** Used to convert the legacy neural network format to the NNE format */
+	virtual void PostLoad() override;
+
 	/** Clear the network, getting rid of all weights and biases. */
 	void Empty();
 
@@ -161,8 +123,32 @@ public:
 	UNeuralMorphNetworkInstance* CreateInstance();
 
 	/**
+	 * Get the number of network inputs for the main network.
+	 * @return The number of inputs.
+	 */
+	int32 GetNumMainInputs() const;
+
+	/**
+	 * Get the number of network outputs for the main network.
+	 * @return The number of outputs.
+	 */
+	int32 GetNumMainOutputs() const;
+
+	/**
+	 * Get the number of network inputs for the group network.
+	 * @return The number of inputs.
+	 */
+	int32 GetNumGroupInputs() const;
+
+	/**
+	 * Get the number of network outputs for the group network.
+	 * @return The number of outputs.
+	 */
+	int32 GetNumGroupOutputs() const;
+
+	/**
 	 * Get the number of network inputs.
-	 * This is the sum of the number of main network inputs and group network inputs.
+	 * This is the number of main network inputs.
 	 * @return The number of inputs.
 	 */
 	int32 GetNumInputs() const;
@@ -233,38 +219,59 @@ public:
 	 */
 	int32 GetNumFloatsPerCurve() const;
 
-	/**
-	 * Get the main MLP.
-	 * This is the MLP (or actually a Multi-MLP) that contains a small network for every bone or curve.
-	 * Each small network will output a set of morph target weights.
-	 * @return A pointer to the main MLP.
-	 */
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+	UE_DEPRECATED(5.4, "MLP Object no longer available. Please use GetMainNeuralNetwork instead.")
 	UNeuralMorphMLP* GetMainMLP() const;
 
-	/**
-	 * Get the MLP used for group of bones and curves.
-	 * This MLP (or actually a Multi-MLP) contains small networks for the bone or curve groups.
-	 * Each group will generate a set of morph target weights.
-	 * @return A pointer to the MLP used for the bone and curve groups.
-	 */
+	UE_DEPRECATED(5.4, "MLP Object no longer available. Please use GetGroupNeuralNetwork instead.")
 	UNeuralMorphMLP* GetGroupMLP() const;
 
-private:
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 	/**
-	 * Load an MLP network from the currently already opened archive.
-	 * @param Archive The archive to load from.
-	 * @return Returns a pointer to the loaded MLP, or a nullptr in case of a failure.
+	 * Get the main Model.
+	 * This is the Model (or actually a Multi-Model) that contains a small network for every bone or curve.
+	 * Each small network will output a set of morph target weights.
+	 * @return A pointer to the main Model.
 	 */
-	UNeuralMorphMLP* LoadMLP(FArchive& FileReader);
+	UE::NNE::IModelCPU* GetMainModel() const;
+
+	/**
+	 * Get the Model used for group of bones and curves.
+	 * This Model (or actually a Multi-Model) contains small networks for the bone or curve groups.
+	 * Each group will generate a set of morph target weights.
+	 * @return A pointer to the Model used for the bone and curve groups.
+	 */
+	UE::NNE::IModelCPU* GetGroupModel() const;
 
 private:
-	/** The MLP that acts as main network. */
-	UPROPERTY()
-	TObjectPtr<UNeuralMorphMLP> MainMLP;
 
-	/** The MLP for the bone and curve groups, when in local mode. */
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+	UE_DEPRECATED(5.4, "MLP Object no longer available. Please use MainModel instead.")
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Network format changed. Please use MainModel instead."))
+	TObjectPtr<UNeuralMorphMLP> MainMLP_DEPRECATED;
+
+	UE_DEPRECATED(5.4, "MLP Object no longer available. Please use GroupModel instead.")
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Network format changed. Please use GroupModel instead."))
+	TObjectPtr<UNeuralMorphMLP> GroupMLP_DEPRECATED;
+
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	/** The Model Data for the Main Network */
 	UPROPERTY()
-	TObjectPtr<UNeuralMorphMLP> GroupMLP;
+	TObjectPtr<UNNEModelData> MainModelData;
+
+	/** The Neural Network that acts as main network. */
+	TSharedPtr<UE::NNE::IModelCPU> MainModel;
+
+	/** The Model Data for the Group Network */
+	UPROPERTY()
+	TObjectPtr<UNNEModelData> GroupModelData;
+
+	/** The Neural Network for the bone and curve groups, when in local mode. */
+	TSharedPtr<UE::NNE::IModelCPU> GroupModel;
 
 	/** The means of the input values, used to normalize inputs. */
 	UPROPERTY()
@@ -277,6 +284,10 @@ private:
 	/** The mode of the network, either local or global. */
 	UPROPERTY()
 	ENeuralMorphMode Mode = ENeuralMorphMode::Global;
+
+	/** The total number of morph targets, if set Mode == Global, otherwise ignored. */
+	UPROPERTY()
+	int32 NumMorphs = 0;
 
 	/** The number of morph targets per bone, if set Mode == Local, otherwise ignored. */
 	UPROPERTY()
@@ -317,6 +328,13 @@ class NEURALMORPHMODEL_API UNeuralMorphNetworkInstance
 	GENERATED_BODY()
 
 public:
+
+	// These are required because of the use of TSharedPtr
+	UNeuralMorphNetworkInstance();
+	UNeuralMorphNetworkInstance(const FObjectInitializer& ObjectInitializer);
+	UNeuralMorphNetworkInstance(FVTableHelper& Helper);
+	virtual ~UNeuralMorphNetworkInstance();
+
 	/**
 	 * Get the network input buffer.
 	 * @return The array view of floats that represents the main network inputs.
@@ -352,26 +370,6 @@ public:
 	void Run();
 
 private:
-	struct FRunSettings
-	{
-		float* TempInputBuffer = nullptr;
-		float* TempOutputBuffer = nullptr;
-		const float* InputBuffer = nullptr;
-		float* OutputBuffer = nullptr;
-	};
-
-	/**
- 	 * Run inference using the global model mode, which is one fully connected MLP.
-	 * @param RunSettings The settings used to run the model. This specifies a set of buffers.
-	 */
-	void RunGlobalModel(const FRunSettings& RunSettings);
-
-	/**
- 	 * Run a local mlp, which internally is acting like a multi-mlp (one mlp per bone or curve).
-	 * @param MLP The MLP to run.
-	 * @param RunSettings The settings used to run the model. This specifies a set of buffers.
-	 */
-	void RunLocalMLP(UNeuralMorphMLP& MLP, const FRunSettings& RunSettings);
 
 	/**
  	 * Initialize this instance using a given network object.
@@ -381,20 +379,20 @@ private:
 	void Init(UNeuralMorphNetwork* InNeuralNetwork);
 
 private:
-	/** The input values for the main MLP. */
+	/** The input values for the main network. */
 	TArray<float> Inputs;
 
-	/** The input values for the group MLP. */
+	/** The input values for the group network. */
 	TArray<float> GroupInputs;
-
+	
 	/** The output values. */
 	TArray<float> Outputs;
 
-	/** A pre-allocated temp buffer for inputs. */
-	TArray<float> TempInputArray;
+	/** The inference instance data for the main Neural Network */
+	TSharedPtr<UE::NNE::IModelInstanceCPU> MainInstance;
 
-	/** A pre-allocated temp buffer for outputs. */
-	TArray<float> TempOutputArray;
+	/** The inference instance data for the group Neural Network */
+	TSharedPtr<UE::NNE::IModelInstanceCPU> GroupInstance;
 
 	/** The neural network this is an instance of. */
 	UPROPERTY(Transient)

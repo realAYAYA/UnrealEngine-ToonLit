@@ -40,7 +40,7 @@ FString FormatTimeValue(const double Duration, const int32 NumDigits)
 	++Index;
 	if (Index < Str.Len())
 	{
-		Str.LeftInline(Index, false);
+		Str.LeftInline(Index, EAllowShrinking::No);
 	}
 
 	return Str;

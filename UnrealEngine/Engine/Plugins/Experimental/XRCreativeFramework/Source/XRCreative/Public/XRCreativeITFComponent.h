@@ -18,6 +18,13 @@ class UXRCreativeTransformInteraction;
 class UXRCreativeITFRenderComponent;
 class UXRCreativePointerComponent;
 
+#if WITH_EDITOR
+struct FTransactionContext;
+#endif
+
+
+DECLARE_DYNAMIC_DELEGATE_RetVal_OneParam(bool, FCanSelectActorPredicate, AActor*, SelectionCandidate);
+
 
 UCLASS()
 class XRCREATIVE_API UXRCreativeITFComponent : public UActorComponent
@@ -48,6 +55,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="XR Creative|Tools")
 	void Redo();
 
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnUndoRedo);
+
+	UPROPERTY(BlueprintAssignable, Category="XR Creative|Tools")
+	FOnUndoRedo OnUndo;
+
+	UPROPERTY(BlueprintAssignable, Category="XR Creative|Tools")
+	FOnUndoRedo OnRedo;
+
 
 	UFUNCTION(BlueprintCallable, Category="XR Creative|Tools")
 	void LeftMousePressed();
@@ -70,9 +85,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category="XR Creative|Tools")
 	void SetCurrentCoordinateSystem(EToolContextCoordinateSystem CoordSystem);
 
+
+	UFUNCTION(BlueprintCallable, Category="XR Creative|Tools")
+	EToolContextTransformGizmoMode GetCurrentTransformGizmoMode() const { return CurrentTransformGizmoMode; }
+
+	UFUNCTION(BlueprintCallable, Category="XR Creative|Tools")
+	void SetCurrentTransformGizmoMode(EToolContextTransformGizmoMode GizmoMode);
+
 protected:
 	UPROPERTY(EditAnywhere, Category="XR Creative")
 	TSubclassOf<AXRCreativeBaseTransformGizmoActor> FullTRSGizmoActorClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="XR Creative")
+	TArray<TSubclassOf<AActor>> UnselectableActorClasses;
+
+	UPROPERTY(BlueprintReadWrite, Category="XR Creative|Tools")
+	FCanSelectActorPredicate CanSelectPredicate;
 
 	UPROPERTY()
 	TObjectPtr<UXRCreativePointerComponent> PointerComponent;
@@ -95,11 +123,17 @@ protected:
 	UPROPERTY()
 	EToolContextCoordinateSystem CurrentCoordinateSystem = EToolContextCoordinateSystem::World;
 
+	UPROPERTY()
+	EToolContextTransformGizmoMode CurrentTransformGizmoMode = EToolContextTransformGizmoMode::Combined;
+
 protected:
 	void ToolsTick(float InDeltaTime);
 
 #if WITH_EDITOR
 	void EditorToolsTick(float InDeltaTime);
+
+	void HandleTransactorUndo(const FTransactionContext& TransactionContext, bool Succeeded);
+	void HandleTransactorRedo(const FTransactionContext& TransactionContext, bool Succeeded);
 #endif
 
 protected:

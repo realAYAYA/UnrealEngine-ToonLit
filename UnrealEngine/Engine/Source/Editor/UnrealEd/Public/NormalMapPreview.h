@@ -11,7 +11,10 @@
 
 /**
  * Batched element parameters for previewing normal maps.
+ *
+ * Deprecated, do not use.  Use FBatchedElementTexture2DPreviewParameters instead with normal map flag. 
  */
+//UE_DEPRECATED(5.5, "Use FBatchedElementTexture2DPreviewParameters instead with normal map flag")
 class FNormalMapBatchedElementParameters : public FBatchedElementParameters
 {
 	/** Binds vertex and pixel shaders for this element */

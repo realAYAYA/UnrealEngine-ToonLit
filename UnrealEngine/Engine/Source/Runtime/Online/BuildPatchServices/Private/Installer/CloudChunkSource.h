@@ -8,6 +8,7 @@
 #include "Interfaces/IBuildInstaller.h"
 
 enum class EBuildPatchDownloadHealth;
+class IBuildInstallerSharedContext;
 
 namespace BuildPatchServices
 {
@@ -48,11 +49,11 @@ namespace BuildPatchServices
 		TArray<FString> CloudRoots;
 		// The maximum number of times that a single chunk should retry, before registering a fatal error.
 		// Infinite can be specified as < 0.
-		int32 MaxRetryCount;
+		int32 MaxRetryCount = 6;
 		// The minimum number of chunks to request ahead of what is required, depending on store slack.
-		int32 PreFetchMinimum;
+		int32 PreFetchMinimum  = 16;
 		// The maximum number of chunks to request ahead of what is required, depending on store slack.
-		int32 PreFetchMaximum;
+		int32 PreFetchMaximum = 256;
 		// Array of times in seconds, representing the time between each retry upon failure. The last entry will be used
 		// indefinitely once it is reached.
 		TArray<float> RetryDelayTimes;
@@ -60,14 +61,16 @@ namespace BuildPatchServices
 		// EBuildPatchDownloadHealth::NUM_Values entries in this array.
 		TArray<float> HealthPercentages;
 		// When all requests are failing, how many seconds before a success until we determine the state as disconnected.
-		float DisconnectedDelay;
+		float DisconnectedDelay = 5.0f;
 		// If true, the downloads will not begin until the first Get request is made. It is fairly fundamental to stop downloads of chunks until resume
 		// data is processed, but can be special case disabled.
-		bool bBeginDownloadsOnFirstGet;
+		bool bBeginDownloadsOnFirstGet = true;
 		// The minimum time to allow a http download before assessing it as affected by TCP zero window issue.
-		float TcpZeroWindowMinimumSeconds;
-		// Whether cloud source should run its own thread.
-		bool bRunOwnThread;
+		float TcpZeroWindowMinimumSeconds = 20.0f;
+		// The context for allocating shared resources.
+		IBuildInstallerSharedContext* SharedContext = nullptr;
+		// Whether cloud source should run its own thread. If true, SharedContext is required.
+		bool bRunOwnThread = true;
 
 		/**
 		 * Constructor which sets usual defaults, and takes params for values that cannot use a default.
@@ -75,13 +78,6 @@ namespace BuildPatchServices
 		 */
 		FCloudSourceConfig(TArray<FString> InCloudRoots)
 			: CloudRoots(MoveTemp(InCloudRoots))
-			, MaxRetryCount(6)
-			, PreFetchMinimum(16)
-			, PreFetchMaximum(256)
-			, DisconnectedDelay(5.0f)
-			, bBeginDownloadsOnFirstGet(true)
-			, TcpZeroWindowMinimumSeconds(20.0f)
-			, bRunOwnThread(true)
 		{
 			const float RetryFloats[] = {0.5f, 1.0f, 1.0f, 3.0f, 3.0f, 10.0f, 10.0f, 20.0f, 20.0f, 30.0f};
 			RetryDelayTimes.Empty(UE_ARRAY_COUNT(RetryFloats));
@@ -118,7 +114,18 @@ namespace BuildPatchServices
 		 * @param InitialDownloadSet        The initial set of chunks to be sourced from cloud.
 		 * @return the new ICloudChunkSource instance created.
 		 */
-		static ICloudChunkSource* Create(FCloudSourceConfig Configuration, IPlatform* Platform, IChunkStore* ChunkStore, IDownloadService* DownloadService, IChunkReferenceTracker* ChunkReferenceTracker, IChunkDataSerialization* ChunkDataSerialization, IMessagePump* MessagePump, IInstallerError* InstallerError, IDownloadConnectionCount* InConnectionCount, ICloudChunkSourceStat* CloudChunkSourceStat, IBuildManifestSet* ManifestSet, TSet<FGuid> InitialDownloadSet);
+		static ICloudChunkSource* Create(FCloudSourceConfig Configuration, 
+			IPlatform* Platform, 
+			IChunkStore* ChunkStore, 
+			IDownloadService* DownloadService, 
+			IChunkReferenceTracker* ChunkReferenceTracker, 
+			IChunkDataSerialization* ChunkDataSerialization, 
+			IMessagePump* MessagePump, 
+			IInstallerError* InstallerError, 
+			IDownloadConnectionCount* InConnectionCount, 
+			ICloudChunkSourceStat* CloudChunkSourceStat, 
+			IBuildManifestSet* ManifestSet, 
+			TSet<FGuid> InitialDownloadSet);
 	};
 
 	/**

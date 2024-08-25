@@ -68,6 +68,30 @@ void ANavModifierVolume::BeginDestroy()
 }
 
 #if WITH_EDITOR
+
+void ANavModifierVolume::PostRegisterAllComponents()
+{
+	Super::PostRegisterAllComponents();
+
+	if (RootComponent)
+	{
+		RootComponent->TransformUpdated.AddLambda([this](USceneComponent*, EUpdateTransformFlags, ETeleportType)
+			{
+				FNavigationSystem::UpdateActorData(*this);
+			});
+	}
+}
+
+void ANavModifierVolume::PostUnregisterAllComponents()
+{
+	if (RootComponent)
+	{
+		RootComponent->TransformUpdated.RemoveAll(this);
+	}
+
+	Super::PostUnregisterAllComponents();
+}
+
 // This function is only called if GIsEditor == true
 void ANavModifierVolume::OnNavAreaRegistered(const UWorld& World, const UClass* NavAreaClass)
 {
@@ -100,10 +124,7 @@ void ANavModifierVolume::GetNavigationData(FNavigationRelevantData& Data) const
 
 		if (NavMeshResolution != ENavigationDataResolution::Invalid)
 		{
-			const FBox& Box = GetBrushComponent()->Brush->Bounds.GetBox();
-			const FAreaNavModifier AreaMod(Box, GetBrushComponent()->GetComponentTransform(), AreaClass);
 			Data.Modifiers.SetNavMeshResolution(NavMeshResolution);
-			Data.Modifiers.Add(AreaMod);
 		}
 	}
 }

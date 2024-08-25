@@ -2,17 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Text.RegularExpressions;
-using EpicGames.Core;
-using Horde.Server.Acls;
-using Horde.Server.Agents;
-using Horde.Server.Jobs;
-using Horde.Server.Perforce;
-using Horde.Server.Projects;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 
 namespace Horde.Server.Streams
 {
@@ -61,7 +55,7 @@ namespace Horde.Server.Streams
 		/// Stream is paused for builds until specified time
 		/// </summary>
 		DateTime? PausedUntil { get; }
-		
+
 		/// <summary>
 		/// Comment/reason for why the stream was paused
 		/// </summary>

@@ -72,10 +72,12 @@ public:
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 	virtual void ReleaseRHI() override;
 
+	static const uint32 Stride = sizeof(FVector4f);
+
 private:
 
-	/** SRV in to the buffer as an array of FVector2D values. */
-	FShaderResourceViewRHIRef VertexBufferSRV_G32R32F;
+	/** SRV in to the buffer as an array of FVector4f values. */
+	FShaderResourceViewRHIRef VertexBufferSRV_A32B32G32R32F;
 };
 
 /** The global scratch vertex buffer. */

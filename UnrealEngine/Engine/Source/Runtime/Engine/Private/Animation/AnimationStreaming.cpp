@@ -110,7 +110,7 @@ bool FStreamingAnimationData::UpdateStreamingStatus()
 			FreeLoadedChunk(LoadedChunk);
 			
 			FScopeLock LoadedChunksLock(&LoadedChunksCritcalSection);
-			LoadedChunks.RemoveAtSwap(LoadedChunkIndex, 1, false);
+			LoadedChunks.RemoveAtSwap(LoadedChunkIndex, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -189,7 +189,7 @@ void FStreamingAnimationData::BeginPendingRequests(const TArray<uint32>& Indices
 					FreeLoadedChunk(LoadedChunks[ChunkIndex]);
 
 					FScopeLock LoadedChunksLock(&LoadedChunksCritcalSection);
-					LoadedChunks.RemoveAtSwap(ChunkIndex,1,false);
+					LoadedChunks.RemoveAtSwap(ChunkIndex,1,EAllowShrinking::No);
 					break;
 				}
 			}
@@ -245,12 +245,12 @@ bool FStreamingAnimationData::BlockTillAllRequestsFinished(float TimeLimit)
 	}
 	else
 	{
-		double EndTime = FPlatformTime::Seconds() + TimeLimit;
+		const double EndTime = FPlatformTime::Seconds() + TimeLimit;
 		for (FLoadedAnimationChunk& LoadedChunk : LoadedChunks)
 		{
 			if (LoadedChunk.IORequest)
 			{
-				float ThisTimeLimit = EndTime - FPlatformTime::Seconds();
+				const float ThisTimeLimit = static_cast<float>(EndTime - FPlatformTime::Seconds());
 				if (ThisTimeLimit < .001f || // one ms is the granularity of the platform event system
 					!LoadedChunk.IORequest->WaitCompletion(ThisTimeLimit))
 				{
@@ -347,7 +347,7 @@ void FAnimationStreamingManager::OnAsyncFileCallback(FStreamingAnimationData* St
 
 		FCompressedAnimSequence* NewCompressedData = new FCompressedAnimSequence();
 
-		TArrayView<const uint8> MemView(Mem, ReadSize);
+		FMemoryView MemView(Mem, ReadSize);
 		FMemoryReaderView Reader(MemView);
 
 		UAnimStreamable* Anim = StreamingAnimData->StreamableAnim;
@@ -420,10 +420,10 @@ int32 FAnimationStreamingManager::BlockTillAllRequestsFinished(float TimeLimit, 
 		}
 		else
 		{
-			double EndTime = FPlatformTime::Seconds() + TimeLimit;
+			const double EndTime = FPlatformTime::Seconds() + TimeLimit;
 			for (TPair<UAnimStreamable*, FStreamingAnimationData*>& AnimPair : StreamingAnimations)
 			{
-				float ThisTimeLimit = EndTime - FPlatformTime::Seconds();
+				const float ThisTimeLimit = static_cast<float>(EndTime - FPlatformTime::Seconds());
 				if (ThisTimeLimit < .001f || // one ms is the granularity of the platform event system
 					!AnimPair.Value->BlockTillAllRequestsFinished(ThisTimeLimit))
 				{
@@ -435,9 +435,6 @@ int32 FAnimationStreamingManager::BlockTillAllRequestsFinished(float TimeLimit, 
 
 		return Result;
 	}
-
-	// Not sure yet whether this will work the same as textures - aside from just before destroying
-	return 0;
 }
 
 void FAnimationStreamingManager::CancelForcedResources()

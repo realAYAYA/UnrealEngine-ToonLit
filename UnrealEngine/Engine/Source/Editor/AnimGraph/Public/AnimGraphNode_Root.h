@@ -18,24 +18,28 @@ class UAnimGraphNode_Root : public UAnimGraphNode_Base
 	UPROPERTY(EditAnywhere, Category=Settings)
 	FAnimNode_Root Node;
 
+	//~ Begin UObject interface
+	ANIMGRAPH_API virtual void Serialize(FArchive& Ar) override;
+	//~ End of UObject interface
+
 	//~ Begin UEdGraphNode Interface.
-	virtual FLinearColor GetNodeTitleColor() const override;
-	virtual FText GetTooltipText() const override;
-	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
-	virtual bool CanUserDeleteNode() const override { return false; }
-	virtual bool CanDuplicateNode() const override { return false; }
-	virtual void GetMenuActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const override;
-	virtual bool IsNodeRootSet() const override { return true; }
+	ANIMGRAPH_API virtual FLinearColor GetNodeTitleColor() const override;
+	ANIMGRAPH_API virtual FText GetTooltipText() const override;
+	ANIMGRAPH_API virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+	ANIMGRAPH_API virtual bool CanUserDeleteNode() const override { return false; }
+	ANIMGRAPH_API virtual bool CanDuplicateNode() const override { return false; }
+	ANIMGRAPH_API virtual void GetMenuActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const override;
+	ANIMGRAPH_API virtual bool IsNodeRootSet() const override { return true; }
 	//~ End UEdGraphNode Interface.
 
 	//~ Begin UAnimGraphNode_Base Interface
-	virtual bool IsPoseWatchable() const override;
-	virtual bool IsSinkNode() const override;
-	virtual void OnProcessDuringCompilation(IAnimBlueprintCompilationContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData) override;
-	virtual void OnCopyTermDefaultsToDefaultObject(IAnimBlueprintCopyTermDefaultsContext& InCompilationContext, IAnimBlueprintNodeCopyTermDefaultsContext& InPerNodeContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData) override;
+	ANIMGRAPH_API virtual bool IsPoseWatchable() const override;
+	ANIMGRAPH_API virtual bool IsSinkNode() const override;
+	ANIMGRAPH_API virtual void OnProcessDuringCompilation(IAnimBlueprintCompilationContext& InCompilationContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData) override;
+	ANIMGRAPH_API virtual void OnCopyTermDefaultsToDefaultObject(IAnimBlueprintCopyTermDefaultsContext& InCompilationContext, IAnimBlueprintNodeCopyTermDefaultsContext& InPerNodeContext, IAnimBlueprintGeneratedClassCompiledData& OutCompiledData) override;
 
 	// Get the link to the documentation
-	virtual FString GetDocumentationLink() const override;
+	ANIMGRAPH_API virtual FString GetDocumentationLink() const override;
 
 	//~ End UAnimGraphNode_Base Interface
 };

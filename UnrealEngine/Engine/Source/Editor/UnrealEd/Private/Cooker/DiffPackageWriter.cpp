@@ -30,6 +30,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogDiff, Log, All);
 FDiffPackageWriter::FDiffPackageWriter(TUniquePtr<ICookedPackageWriter>&& InInner)
 	: Inner(MoveTemp(InInner))
 {
+	AccumulatorGlobals.Reset(new UE::DiffWriter::FAccumulatorGlobals(Inner.Get()));
+
 	GConfig->GetInt(TEXT("CookSettings"), TEXT("MaxDiffsToLog"), MaxDiffsToLog, GEditorIni);
 	// Command line override for MaxDiffsToLog
 	FParse::Value(FCommandLine::Get(), TEXT("MaxDiffstoLog="), MaxDiffsToLog);
@@ -122,10 +124,10 @@ void FDiffPackageWriter::RemoveParam(FString& InOutParams, const TCHAR* InParamT
 void FDiffPackageWriter::BeginPackage(const FBeginPackageInfo& Info)
 {
 	bIsDifferent = false;
-	bDiffCallstack = false;
+	bNewPackage = false;
 	bHasStartedSecondSave = false;
-	DiffMap[0].Reset();
-	DiffMap[1].Reset();
+	Accumulators[0].SafeRelease();
+	Accumulators[1].SafeRelease();
 
 	BeginInfo = Info;
 	ConditionallyDumpObjList();
@@ -135,7 +137,7 @@ void FDiffPackageWriter::BeginPackage(const FBeginPackageInfo& Info)
 
 void FDiffPackageWriter::CommitPackage(FCommitPackageInfo&& Info)
 {
-	if (bDiffCallstack && bSaveForDiff)
+	if (bHasStartedSecondSave && bSaveForDiff)
 	{
 		// Write the package to _ForDiff, but do not write any sidecars
 		EnumRemoveFlags(Info.WriteOptions, EWriteOptions::WriteSidecars);
@@ -151,54 +153,53 @@ void FDiffPackageWriter::CommitPackage(FCommitPackageInfo&& Info)
 void FDiffPackageWriter::WritePackageData(const FPackageInfo& Info, FLargeMemoryWriter& ExportsArchive,
 	const TArray<FFileRegion>& FileRegions)
 {
+	check(Info.MultiOutputIndex < 2);
+	check(Accumulators[Info.MultiOutputIndex].IsValid()); // Should have been constructed by CreateLinkerArchive
+	UE::DiffWriter::FAccumulator& Accumulator = *Accumulators[Info.MultiOutputIndex];
+	UE::DiffWriter::FDiffArchive& ExportsArchiveInternal =static_cast<UE::DiffWriter::FDiffArchive&>(ExportsArchive);
+	check(&ExportsArchiveInternal.GetAccumulator() == &Accumulator);
+
 	FPackageInfo LocalInfo(Info);
 	Inner->CompleteExportsArchiveForDiff(LocalInfo, ExportsArchive);
 
-	FDiffWriterArchive& Writer = static_cast<FDiffWriterArchive&>(ExportsArchive);
-	ICookedPackageWriter::FPreviousCookedBytesData PreviousInnerData;
-	if (!Inner->GetPreviousCookedBytes(LocalInfo, PreviousInnerData))
+	if (!bHasStartedSecondSave)
 	{
-		PreviousInnerData.Data.Reset();
-		PreviousInnerData.HeaderSize = 0;
-		PreviousInnerData.Size = 0;
-	}
-	check(PreviousInnerData.Data.Get() != nullptr || (PreviousInnerData.Size == 0 && PreviousInnerData.HeaderSize == 0));
+		ICookedPackageWriter::FPreviousCookedBytesData PreviousInnerData;
+		if (!Inner->GetPreviousCookedBytes(LocalInfo, PreviousInnerData))
+		{
+			PreviousInnerData.Data.Reset();
+			PreviousInnerData.HeaderSize = 0;
+			PreviousInnerData.Size = 0;
+		}
+		check(PreviousInnerData.Data.Get() != nullptr || (PreviousInnerData.Size == 0 && PreviousInnerData.HeaderSize == 0));
 
-	FDiffWriterArchive::FPackageData PreviousPackageData;
-	PreviousPackageData.Data = PreviousInnerData.Data.Get();
-	PreviousPackageData.Size = PreviousInnerData.Size;
-	PreviousPackageData.HeaderSize = PreviousInnerData.HeaderSize;
-	PreviousPackageData.StartOffset = PreviousInnerData.StartOffset;
-
-	check(ExportsCallstacks.IsValid());
-
-	if (bDiffCallstack)
-	{
-		Writer.GetCallstacks().Append(*ExportsCallstacks);
-
-		TMap<FName, FArchiveDiffStats> PackageDiffStats;
-		const TCHAR* CutoffString = TEXT("UEditorEngine::Save()");
-		Writer.CompareWith(PreviousPackageData, *LocalInfo.LooseFilePath, LocalInfo.HeaderSize, CutoffString,
-			MaxDiffsToLog, PackageDiffStats, Inner->GetCookCapabilities().HeaderFormat);
-
-		//COOK_STAT(FSavePackageStats::NumberOfDifferentPackages++);
-		//COOK_STAT(FSavePackageStats::MergeStats(PackageDiffStats));
+		bNewPackage = PreviousInnerData.Size == 0;
+		Accumulator.OnFirstSaveComplete(LocalInfo.LooseFilePath, LocalInfo.HeaderSize, Info.HeaderSize,
+			MoveTemp(PreviousInnerData));
+		bIsDifferent = Accumulator.HasDifferences();
 	}
 	else
 	{
-		Writer.GetCallstacks().Append(*ExportsCallstacks, LocalInfo.HeaderSize);
-		check(LocalInfo.MultiOutputIndex < 2);
-		ExportsDiffMapOffset[LocalInfo.MultiOutputIndex] = LocalInfo.HeaderSize;
+		// Avoid an assert when calling StaticFindObject during save, which we do to list the "exports" from a package.
+		// We are not writing the discovered objects into the saved package, so the call to StaticFindObject is legal.
+		TGuardValue<bool> GIsSavingPackageGuard(GIsSavingPackage, false);
 
-		bIsDifferent = !Writer.GenerateDiffMap(PreviousPackageData, LocalInfo.HeaderSize, MaxDiffsToLog, DiffMap[LocalInfo.MultiOutputIndex]);
+		Accumulator.OnSecondSaveComplete(LocalInfo.HeaderSize);
+
+		TMap<FName, FArchiveDiffStats> PackageDiffStats;
+		const TCHAR* CutoffString = TEXT("UEditorEngine::Save()");
+		Accumulator.CompareWithPrevious(CutoffString, PackageDiffStats);
+
+		//COOK_STAT(FSavePackageStats::NumberOfDifferentPackages++);
+		//COOK_STAT(FSavePackageStats::MergeStats(PackageDiffStats));
 	}
 
 	Inner->WritePackageData(LocalInfo, ExportsArchive, FileRegions);
 }
 
-UE::DiffWriterArchive::FMessageCallback FDiffPackageWriter::GetDiffWriterMessageCallback()
+UE::DiffWriter::FMessageCallback FDiffPackageWriter::GetDiffWriterMessageCallback()
 {
-	return UE::DiffWriterArchive::FMessageCallback([this](ELogVerbosity::Type Verbosity, FStringView Message)
+	return UE::DiffWriter::FMessageCallback([this](ELogVerbosity::Type Verbosity, FStringView Message)
 		{
 			this->OnDiffWriterMessage(Verbosity, Message);
 		});
@@ -206,67 +207,44 @@ UE::DiffWriterArchive::FMessageCallback FDiffPackageWriter::GetDiffWriterMessage
 
 void FDiffPackageWriter::OnDiffWriterMessage(ELogVerbosity::Type Verbosity, FStringView Message)
 {
+	FMsg::Logf(__FILE__, __LINE__, LogDiff.GetCategoryName(), Verbosity, TEXT("%s"), *ResolveText(Message));
+}
+
+FString FDiffPackageWriter::ResolveText(FStringView Message)
+{
 	FString ResolvedText(Message);
 	check(this->Indent && this->NewLine);
-	ResolvedText.ReplaceInline(UE::DiffWriterArchive::IndentToken, this->Indent);
-	ResolvedText.ReplaceInline(UE::DiffWriterArchive::NewLineToken, this->NewLine);
-
-	FMsg::Logf(__FILE__, __LINE__, LogDiff.GetCategoryName(), Verbosity, TEXT("%s"), *ResolvedText);
+	ResolvedText.ReplaceInline(UE::DiffWriter::IndentToken, this->Indent);
+	ResolvedText.ReplaceInline(UE::DiffWriter::NewLineToken, this->NewLine);
+	return ResolvedText;
 }
 
-TUniquePtr<FLargeMemoryWriter> FDiffPackageWriter::CreateLinkerArchive(FName PackageName, UObject* Asset, uint16 MultiOutputIndex)
+UE::DiffWriter::FAccumulator& FDiffPackageWriter::ConstructAccumulator(FName PackageName, UObject* Asset,
+	uint16 MultiOutputIndex)
 {
-	// The entire package will be serialized to memory and then compared against package on disk.
-	if (bDiffCallstack)
-	{
-		check(MultiOutputIndex < 2);
-		// Each difference will be logged with its Serialize call stack trace
-		return TUniquePtr<FLargeMemoryWriter>(new FDiffWriterArchive(Asset, *PackageName.ToString(),
-			GetDiffWriterMessageCallback(), true /* bInCollectCallstacks */, &DiffMap[MultiOutputIndex]));
-	}
-	else
-	{
-		return TUniquePtr<FLargeMemoryWriter>(new FDiffWriterArchive(Asset, *PackageName.ToString(),
-			GetDiffWriterMessageCallback(), false /* bInCollectCallstacks */));
-	}
-}
-
-TUniquePtr<FLargeMemoryWriter> FDiffPackageWriter::CreateLinkerExportsArchive(FName PackageName, UObject* Asset, uint16 MultiOutputIndex)
-{
-	// When cooking, exports are serialized into a separate archive. The serialization callstack offsets
-	// and stack traces are collected into a separate callstack collection and appended to the overall
-	// callstacks for the entire package. DiffOnly cooks saves a package twice. The first pass collects
-	// the serialization offsets without the stack traces and then creates a FDiffWriterDiffMap. In the second
-	// pass, the diff map is used to collect offsets AND the entire stack trace for mismatching package data.
-	// In the first pass, callstack offsets will be relative to the export archive and adjusted when appending
-	// the callstacks to the overall package callstacks. In the second pass, the offset (ExportsDiffMapOffset) is
-	// known and the callstack will be relative to the beginning of the package.
-	
-	ExportsCallstacks = MakeUnique<FDiffWriterCallstacks>(Asset);
-	const int64 PreAllocateBytes = 0;
-	const bool bIsPersistent = true;
-
 	check(MultiOutputIndex < 2);
-	if (bDiffCallstack)
+	TRefCountPtr<UE::DiffWriter::FAccumulator>& Accumulator = Accumulators[MultiOutputIndex];
+	if (!Accumulator.IsValid())
 	{
-		return MakeUnique<FDiffWriterArchiveMemoryWriter>(
-			*ExportsCallstacks,
-			&DiffMap[MultiOutputIndex],
-			ExportsDiffMapOffset[MultiOutputIndex],
-			PreAllocateBytes,
-			bIsPersistent,
-			*PackageName.ToString());
+		check(!bHasStartedSecondSave); // Accumulator should already exist from CreateLinkerArchive in the first save
+		Accumulator = new UE::DiffWriter::FAccumulator(*AccumulatorGlobals, Asset, *PackageName.ToString(), MaxDiffsToLog,
+			bIgnoreHeaderDiffs, GetDiffWriterMessageCallback(), Inner->GetCookCapabilities().HeaderFormat);
 	}
-	else
-	{
-		return MakeUnique<FDiffWriterArchiveMemoryWriter>(
-			*ExportsCallstacks,
-			nullptr,
-			0,
-			PreAllocateBytes, 
-			bIsPersistent, 
-			*PackageName.ToString());
-	}
+	return *Accumulator;
+}
+
+TUniquePtr<FLargeMemoryWriter> FDiffPackageWriter::CreateLinkerArchive(FName PackageName,
+	UObject* Asset, uint16 MultiOutputIndex)
+{
+	UE::DiffWriter::FAccumulator& Accumulator = ConstructAccumulator(PackageName, Asset, MultiOutputIndex);
+	return TUniquePtr<FLargeMemoryWriter>(new UE::DiffWriter::FDiffArchiveForLinker(Accumulator));
+}
+
+TUniquePtr<FLargeMemoryWriter> FDiffPackageWriter::CreateLinkerExportsArchive(FName PackageName,
+	UObject* Asset, uint16 MultiOutputIndex)
+{
+	UE::DiffWriter::FAccumulator& Accumulator = ConstructAccumulator(PackageName, Asset, MultiOutputIndex);
+	return TUniquePtr<FLargeMemoryWriter>(new UE::DiffWriter::FDiffArchiveForExports(Accumulator));
 }
 
 void FDiffPackageWriter::UpdateSaveArguments(FSavePackageArgs& SaveArgs)
@@ -299,10 +277,8 @@ bool FDiffPackageWriter::IsAnotherSaveNeeded(FSavePackageResultStruct& PreviousR
 	if (!bHasStartedSecondSave)
 	{
 		bHasStartedSecondSave = true;
-		if (PreviousResult.Result == ESavePackageResult::Success && bIsDifferent)
+		if (PreviousResult.Result == ESavePackageResult::Success && bIsDifferent && !bNewPackage)
 		{
-			bDiffCallstack = true;
-
 			// The contract with the Inner is that Begin is paired with a single commit;
 			// send the old commit and the new begin
 			FCommitPackageInfo CommitInfo;

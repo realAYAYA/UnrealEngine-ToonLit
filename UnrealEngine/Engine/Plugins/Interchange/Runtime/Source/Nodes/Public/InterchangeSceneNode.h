@@ -30,10 +30,10 @@ namespace UE
 }//ns UE
 
 /**
- * The scene node represent a transform node in the scene
- * Scene node can have user defined attribute. Use UInterchangeUserDefinedAttributesAPI to get\set user define attribute data
+ * The scene node represents a transform node in the scene.
+ * Scene nodes can have user-defined attributes. Use UInterchangeUserDefinedAttributesAPI to get and set user-defined attribute data.
  */
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeSceneNode : public UInterchangeBaseNode
 {
 	GENERATED_BODY()
@@ -42,7 +42,7 @@ public:
 	UInterchangeSceneNode();
 
 	/**
-	 * Override serialize to restore SlotMaterialDependencies on load.
+	 * Override Serialize() to restore SlotMaterialDependencies on load.
 	 */
 	virtual void Serialize(FArchive& Ar) override
 	{
@@ -55,23 +55,24 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override;
 
+#if WITH_EDITOR
 	virtual FString GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
 
 	virtual FString GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
-
+#endif //WITH_EDITOR
 	/**
-	 * Icon name are simply create by adding "InterchangeIcon_" in front of the specialized type. If there is no special type the function will return NAME_None which will use the default icon.
+	 * Icon names are created by adding "InterchangeIcon_" in front of the specialized type. If there is no special type, the function will return NAME_None, which will use the default icon.
 	 */
 	virtual FName GetIconName() const override;
 
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool IsSpecializedTypeContains(const FString& SpecializedType) const;
 
-	/** Get the Specialized type this scene node represent (Joint, LODGroup, ...).*/
+	/** Get the specialized type this scene node represents (for example, Joint or LODGroup). */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	int32 GetSpecializedTypeCount() const;
 
@@ -91,35 +92,35 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool GetCustomAssetInstanceUid(FString& AttributeValue) const;
 
-	/** Add asset this scene node is instantiating */
+	/** Add an asset for this scene node to instantiate. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool SetCustomAssetInstanceUid(const FString& AttributeValue);
 
 
 	/**
 	 * Get the default scene node local transform.
-	 * Default transform is the local transform we have in the node(no bind pose, no time evaluation).
+	 * The default transform is the local transform of the node (no bind pose, no time evaluation).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool GetCustomLocalTransform(FTransform& AttributeValue) const;
 
 	/**
 	 * Set the default scene node local transform.
-	 * Default transform is the local transform we have in the node(no bind pose, no time evaluation).
+	 * The default transform is the local transform of the node (no bind pose, no time evaluation).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool SetCustomLocalTransform(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FTransform& AttributeValue, bool bResetCache = true);
 
-	/** Get the default scene node global transform. This value is computed with all parent local transform. */
+	/** Get the default scene node global transform. This value is computed from the local transforms of all parent scene nodes. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool GetCustomGlobalTransform(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FTransform& GlobalOffsetTransform, FTransform& AttributeValue, bool bForceRecache = false) const;
 
 
-	/** Get the geometric offset. Any mesh attach to this scene node will be offset using this transform. */
+	/** Get the geometric offset. Any mesh attached to this scene node will be offset using this transform. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool GetCustomGeometricTransform(FTransform& AttributeValue) const;
 
-	/** Set the geometric offset. Any mesh attach to this scene node will be offset using this transform. */
+	/** Set the geometric offset. Any mesh attached to this scene node will be offset using this transform. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Scene")
 	bool SetCustomGeometricTransform(const FTransform& AttributeValue);
 
@@ -129,36 +130,36 @@ public:
 	* Bind pose transform is the transform of the joint when the binding with the mesh was done.
 	* This attribute should be set only if this scene node represent a joint.
 	* 
-	* Time zero transform is the transform of the node at time zero.
-	* Pipeline often have the option to evaluate the joint at time zero to create the bind pose.
-	* Time zero bind pose is also use if the translator did not find any bind pose or if we import
-	* unskinned mesh has a skeletalmesh (rigid mesh)
+	* Time-zero transform is the transform of the node at time zero.
+	* Pipelines often have the option to evaluate the joint at time zero to create the bind pose.
+	* Time-zero bind pose is also used if the translator did not find any bind pose, or if we import
+	* an unskinned mesh as a skeletal smesh (rigid mesh).
 	*/
 
-	/** Get the bind pose scene node local transform. */
+	/** Get the local transform of the bind pose scene node. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Joint")
 	bool GetCustomBindPoseLocalTransform(FTransform& AttributeValue) const;
 
-	/** Set the bind pose scene node local transform. */
+	/** Set the local transform of the bind pose scene node. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Joint")
 	bool SetCustomBindPoseLocalTransform(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FTransform& AttributeValue, bool bResetCache = true);
 
-	/** Get the bind pose scene node global transform. This value is computed with all parent bind pose local transform. */
+	/** Get the global transform of the bind pose scene node. This value is computed from the local transforms of all parent bind poses. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Joint")
 	bool GetCustomBindPoseGlobalTransform(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FTransform& GlobalOffsetTransform, FTransform& AttributeValue, bool bForceRecache = false) const;
 
 	//Time zero transform is the transform of the node at time zero.
 	//This is useful when there is no bind pose or when we import rigid mesh.
 
-	/** Get the time zero scene node local transform. */
+	/** Get the local transform of the time-zero scene node. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Joint")
 	bool GetCustomTimeZeroLocalTransform(FTransform& AttributeValue) const;
 
-	/** Set the time zero scene node local transform. */
+	/** Set the local transform of the time-zero scene node. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Joint")
 	bool SetCustomTimeZeroLocalTransform(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FTransform& AttributeValue, bool bResetCache = true);
 
-	/** Get the time zero scene node global transform. This value is computed with all parent timezero local transform. */
+	/** Get the global transform of the time-zero scene node. This value is computed from the local transforms of all parent time-zero scene nodes. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Joint")
 	bool GetCustomTimeZeroGlobalTransform(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FTransform& GlobalOffsetTransform, FTransform& AttributeValue, bool bForceRecache = false) const;
 
@@ -166,26 +167,26 @@ public:
 	* Skeleton bone API End
 	***********************************************************************************************/
 
-	/** This static function make sure all the global transform caches are reset for all the UInterchangeSceneNode nodes in the UInterchangeBaseNodeContainer */
+	/** This static function ensures all the global transform caches are reset for all the UInterchangeSceneNode nodes in the UInterchangeBaseNodeContainer. */
 	static void ResetAllGlobalTransformCaches(const UInterchangeBaseNodeContainer* BaseNodeContainer);
 
-	/** This static function make sure all the global transform caches are reset for all the UInterchangeSceneNode nodes children in the UInterchangeBaseNodeContainer */
+	/** This static function ensures all the global transform caches are reset for all the UInterchangeSceneNode nodes children in the UInterchangeBaseNodeContainer. */
 	static void ResetGlobalTransformCachesOfNodeAndAllChildren(const UInterchangeBaseNodeContainer* BaseNodeContainer, const UInterchangeBaseNode* ParentNode);
 
 	/**
-	 * Allow to retrieve the correspondence table between slot names and assigned materials for this object.
+	 * Retrieve the correspondence table between slot names and assigned materials for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Meshes")
 	void GetSlotMaterialDependencies(TMap<FString, FString>& OutMaterialDependencies) const;
 
 	/**
-	 * Allow to retrieve one Material dependency for a given slot of this object.
+	 * Retrieve the Material dependency for a given slot of this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Meshes")
 	bool GetSlotMaterialDependencyUid(const FString& SlotName, FString& OutMaterialDependency) const;
 
 	/**
-	 * Add one Material dependency to a specific slot name of this object.
+	 * Add the specified Material dependency to a specific slot name of this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Meshes")
 	bool SetSlotMaterialDependencyUid(const FString& SlotName, const FString& MaterialDependencyUid);
@@ -205,7 +206,7 @@ public:
 	void GetMorphTargetCurveWeights(TMap<FString, float>& OutMorphTargetCurveWeights) const;
 
 
-	/** Set the Animation Asset To Play by this Scene Node. (only relevant for SkeletalMeshActors (SceneNodes that are instantiating Skeletal Meshes)) */
+	/** Set the Animation Asset To Play by this Scene Node. Only relevant for SkeletalMeshActors (that is, SceneNodes that are instantiating Skeletal Meshes). */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SkeletalMesh")
 	bool SetCustomAnimationAssetUidToPlay(const FString& AttributeValue);
 	/** Get the Animation Asset To Play by this Scene Node. */

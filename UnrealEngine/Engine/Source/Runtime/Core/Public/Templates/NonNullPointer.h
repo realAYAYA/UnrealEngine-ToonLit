@@ -5,45 +5,12 @@
 #include "CoreTypes.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/OptionalFwd.h"
-#include "Templates/EnableIf.h"
-#include "Templates/PointerIsConvertibleFromTo.h"
+#include "Templates/UnrealTypeTraits.h"
+
+#include <type_traits>
 
 class FArchive;
 enum class EDefaultConstructNonNullPtr { UnsafeDoNotUse }; // So we can construct TNonNullPtrs
-
-namespace UE::Core::Private::NonNullPtr {
-template <typename...>
-using TVoid = void;
-
-/**
- * Version of `::TPointerIsConvertibleFromTo` that produces an incomplete type
- * when either `From` or `To` are incomplete types
- */
-template <typename, typename, typename = void>
-struct TPointerIsConvertibleFromTo;
-
-/**
- * Specialization of
- * `UE::Core::Private::NonNullPtr::TPointerIsConvertibleFromTo` for complete
- * non-function types
- */
-template <typename From, typename To>
-struct TPointerIsConvertibleFromTo<From, To, TVoid<decltype(sizeof(From)), decltype(sizeof(To))>>
-	: ::TPointerIsConvertibleFromTo<From, To>
-{
-};
-
-/**
- * Specialization of
- * `UE::Core::Private::NonNullPtr::TPointerIsConvertibleFromTo` for function
- * types, which are always complete types
- */
-template <typename Result1, typename... Args1, typename Result2, typename... Args2>
-struct TPointerIsConvertibleFromTo<Result1(Args1...), Result2(Args2...)>
-	: ::TPointerIsConvertibleFromTo<Result1(Args1...), Result2(Args2...)>
-{
-};
-}
 
 /**
  * TNonNullPtr is a non-nullable, non-owning, raw/naked/unsafe pointer.
@@ -84,7 +51,7 @@ public:
 	 */
 	template <
 		typename OtherObjectType,
-		typename = typename TEnableIf<UE::Core::Private::NonNullPtr::TPointerIsConvertibleFromTo<OtherObjectType, ObjectType>::Value>::Type
+		decltype(ImplicitConv<ObjectType*>((OtherObjectType*)nullptr))* = nullptr
 	>
 	FORCEINLINE TNonNullPtr(const TNonNullPtr<OtherObjectType>& Other)
 		: Object(Other.Object)
@@ -98,6 +65,7 @@ public:
 	{
 		// Essentially static_assert(false), but this way prevents GCC/Clang from crying wolf by merely inspecting the function body
 		static_assert(sizeof(ObjectType) == 0, "Tried to assign a null pointer to a TNonNullPtr!");
+		return *this;
 	}
 
 	/**
@@ -113,8 +81,11 @@ public:
 	/**
 	 * Assignment operator taking another TNonNullPtr
 	 */
-	template <typename OtherObjectType>
-	FORCEINLINE typename TEnableIf<UE::Core::Private::NonNullPtr::TPointerIsConvertibleFromTo<OtherObjectType, ObjectType>::Value, TNonNullPtr&>::Type operator=(const TNonNullPtr<OtherObjectType>& Other)
+	template <
+		typename OtherObjectType,
+		decltype(ImplicitConv<ObjectType*>((OtherObjectType*)nullptr))* = nullptr
+	>
+	FORCEINLINE TNonNullPtr& operator=(const TNonNullPtr<OtherObjectType>& Other)
 	{
 		Object = Other.Object;
 		return *this;
@@ -154,6 +125,16 @@ public:
 	{
 		ensureMsgf(Object, TEXT("Tried to access null pointer!"));
 		return Object;
+	}
+
+	/*
+	 * WARNING: Hack that can be used under extraordinary circumstances. Pointers here 
+	 * should always be valid but might be in the EDefaultConstructNonNullPtr state 
+	 * during initialization.
+	 */
+	FORCEINLINE bool IsInitialized() const
+	{
+		return Object != nullptr;
 	}
 
 private:
@@ -239,3 +220,8 @@ public:
 private:
 	OptionalType* Pointer;
 };
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/EnableIf.h"
+#include "Templates/PointerIsConvertibleFromTo.h"
+#endif

@@ -24,10 +24,37 @@ namespace UE::Net::Private
 class FReliableNetBlobQueue
 {
 public:
-	typedef uint32 ReplicationRecord;
+	struct FReplicationRecord
+	{
+		FReplicationRecord() = default;
+		explicit FReplicationRecord(uint64 Value)
+		{
+			for (unsigned Index : {3U, 2U, 1U, 0U})
+			{
+				Counts[Index] = Value & 255U;
+				Sequences[Index] = (Value >> 8U) & 255U;
+				Value >>= 16U;
+			}
+		}
+
+		uint64 ToUint64() const
+		{
+			uint64 Value = 0;
+			for (unsigned Index : {0U, 1U, 2U, 3U})
+			{
+				Value = (Value << 16U) | (uint64(Sequences[Index]) << 8U) | Counts[Index];
+			}
+
+			return Value;
+		}
+
+		bool IsValid() const { return Counts[0] | Counts[1] | Counts[2] | Counts[3]; }
+
+		uint8 Sequences[4] = {};
+		uint8 Counts[4] = {};
+	};
 
 	/** This represents a ReplicationRecord where nothing was serialized. */
-	static constexpr uint32 InvalidReplicationRecord = 0U;
 
 	/** How many blobs can be sent before an ACK/NAK is required to continue sending. */
 	static constexpr uint32 MaxUnackedBlobCount = 256U;
@@ -44,6 +71,9 @@ public:
 	/** Returns whether all blobs have been sent and acknowledged as received. */
 	bool IsAllSentAndAcked() const { return FirstSeq == LastSeq && GetUnsentBlobCount() == 0; }
 
+	/** Returns whether the send window is full or not. */
+	bool IsSendWindowFull() const;
+
 	/** Returns true if it's safe to destroy this queue. */
 	IRISCORE_API bool IsSafeToDestroy() const;
 
@@ -51,21 +81,24 @@ public:
 	IRISCORE_API bool Enqueue(const TRefCountPtr<FNetBlob>& Blob);
 
 	/** On the receiving end this will return a pointer to the next blob that can be processed. */
-	IRISCORE_API const TRefCountPtr<FNetBlob>* Peek() const;
+	IRISCORE_API const TRefCountPtr<FNetBlob>* Peek();
 
 	/** On the receiving end this will remove the next blob to be processed from the queue. Call after processing the blob returned from Peek(). */
 	IRISCORE_API void Pop();
 
+	/** On the receiving end this will move all received unreliable NetBlobs to the array and release them from the queue. This breaks the ordering guarantees provided by using Peek and Pop. Reliable NetBlobs are unaffected by this operation. */
+	IRISCORE_API void DequeueUnreliable(TArray<TRefCountPtr<FNetBlob>>& Unreliable);
+
 	/**
 	 * Serializes as many blobs as possible using their respective SerializeWithObject() method. It is assumed the NetRefHandle will be 
 	 * reconstructed somehow on the receiving end and passed to DeserializeWithObject().
-	 * This provides an opportunity fot FNetObjectAttachments, such as FNetRPCs, to avoid serializing the same NetRefHandle redundantly.
+	 * This provides an opportunity for FNetObjectAttachments, such as FNetRPCs, to avoid serializing the same NetRefHandle redundantly.
 	 * @param Context A FNetSerializationContext.
 	 * @param RefHandle The handle for the blobs' target object.
 	 * @param OutRecord The record to pass to CommitReplicationRecord() if a packet containing the serialized data was sent.
 	 * @return The number of blobs that were serialized.
 	 */
-	IRISCORE_API uint32 SerializeWithObject(FNetSerializationContext& Context, FNetRefHandle RefHandle, ReplicationRecord& OutRecord);
+	IRISCORE_API uint32 SerializeWithObject(FNetSerializationContext& Context, FNetRefHandle RefHandle, FReplicationRecord& OutRecord);
 
 	/**
 	 * Deserializes blobs with object using their respective DeserializeWithObject() method.
@@ -80,7 +113,7 @@ public:
 	 * @param OutRecord The record to pass to CommitReplicationRecord() if a packet containing the serialized data was sent.
 	 * @return The number of blobs that were serialized.
 	 */
-	IRISCORE_API uint32 Serialize(FNetSerializationContext& Context, ReplicationRecord& OutRecord);
+	IRISCORE_API uint32 Serialize(FNetSerializationContext& Context, FReplicationRecord& OutRecord);
 
 	/**
 	 * Deserializes blobs with object using their respective Deserialize() method.
@@ -93,7 +126,7 @@ public:
 	 * Call after a packet containing serialized data was sent.
 	 * @see SerializeWithObject, Serialize
 	 */
-	IRISCORE_API void CommitReplicationRecord(ReplicationRecord Record);
+	IRISCORE_API void CommitReplicationRecord(const FReplicationRecord& Record);
 
 	/**
 	 * For each packet for which CommitReplicationRecord() was called ProcessPacketDeliveryStatus() needs
@@ -102,15 +135,14 @@ public:
 	 * @param Record The record that was obtained via a Serialize/SerializeWithObject call and passed to CommitReplicationRecord.
 	 * @see CommitReplicationRecord
 	 */
-	IRISCORE_API void ProcessPacketDeliveryStatus(EPacketDeliveryStatus Status, ReplicationRecord Record);
+	IRISCORE_API void ProcessPacketDeliveryStatus(EPacketDeliveryStatus Status, const FReplicationRecord& Record);
 
 private:
 	enum Constants : uint32
 	{
 		IndexBitCount = 8U,
+		MaxWriteSequenceCount = UE_ARRAY_COUNT(FReplicationRecord::Sequences),
 	};
-
-	bool IsFull() const;
 
 	uint32 SequenceToIndex(uint32 Seq) const;
 
@@ -129,11 +161,11 @@ private:
 
 	bool IsValidReceiveSequence(uint32 Seq) const;
 
-	uint32 SerializeInternal(FNetSerializationContext& Context, FNetRefHandle RefHandle, FReliableNetBlobQueue::ReplicationRecord& OutRecord, const bool bSerializeWithObject);
+	uint32 SerializeInternal(FNetSerializationContext& Context, FNetRefHandle RefHandle, FReliableNetBlobQueue::FReplicationRecord& OutRecord, const bool bSerializeWithObject);
 	uint32 DeserializeInternal(FNetSerializationContext& Context, FNetRefHandle RefHandle, const bool bSerializeWithObject);
 
-	void OnPacketDelivered(ReplicationRecord Record);
-	void OnPacketDropped(ReplicationRecord Record);
+	void OnPacketDelivered(const FReplicationRecord& Record);
+	void OnPacketDropped(const FReplicationRecord& Record);
 
 	void PopInOrderAckedBlobs();
 
@@ -146,7 +178,7 @@ private:
 };
 
 //
-inline bool FReliableNetBlobQueue::IsFull() const
+inline bool FReliableNetBlobQueue::IsSendWindowFull() const
 {
 	return (LastSeq - FirstSeq) >= MaxUnackedBlobCount;
 }

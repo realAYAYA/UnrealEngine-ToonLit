@@ -138,7 +138,7 @@ void RayTraceSingleMeshSDF(
 	inout FTraceMeshSDFResult TraceResult)
 {
 	FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
-	float4x4 WorldToVolume = LWCHackToFloat(DFObjectData.WorldToVolume);
+	float4x4 WorldToVolume = DFHackToFloat(DFObjectData.WorldToVolume);
 
 	if (!bDitheredTransparency || !DFObjectData.bMostlyTwoSided)
 	{
@@ -262,8 +262,8 @@ void RayTraceSingleMeshSDF(
 float3 GetPrevWorldPositionFromGPUSceneInstanceIndex(float3 WorldPosition, uint GPUSceneInstanceIndex)
 {
 	FInstanceSceneData InstanceSceneData = GetInstanceSceneData(GPUSceneInstanceIndex, Scene.GPUScene.InstanceDataSOAStride);
-	float4 LocalPosition = mul(float4(WorldPosition, 1), LWCHackToFloat(InstanceSceneData.WorldToLocal));
-	float3 PrevWorldPosition = mul(LocalPosition, LWCHackToFloat(InstanceSceneData.PrevLocalToWorld)).xyz;
+	float4 LocalPosition = mul(float4(WorldPosition, 1), DFHackToFloat(InstanceSceneData.WorldToLocal));
+	float3 PrevWorldPosition = mul(LocalPosition, DFHackToFloat(InstanceSceneData.PrevLocalToWorld)).xyz;
 	return PrevWorldPosition;
 }
 
@@ -286,7 +286,7 @@ FTraceMeshSDFDerivedData CalculateMeshSDFDerivedData(
 
 	uint DFObjectIndex = TraceMeshSDFResult.HitObject;
 	FDFObjectData DFObjectData = LoadDFObjectData(DFObjectIndex);
-	float4x4 WorldToVolume = LWCHackToFloat(DFObjectData.WorldToVolume);
+	float4x4 WorldToVolume = DFHackToFloat(DFObjectData.WorldToVolume);
 
 	float3 HitPosition = WorldRayStart + WorldRayDirection * TraceMeshSDFResult.HitDistance;
 	float3 SampleVolumePosition = mul(float4(HitPosition, 1), WorldToVolume).xyz;

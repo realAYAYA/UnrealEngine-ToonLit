@@ -1,7 +1,7 @@
 # Copyright Epic Games, Inc. All Rights Reserved.
 
-from PySide2 import QtCore
-from PySide2 import QtWidgets
+from PySide6 import QtCore
+from PySide6 import QtWidgets
 
 
 class HorizontalTabBar(QtWidgets.QTabBar):

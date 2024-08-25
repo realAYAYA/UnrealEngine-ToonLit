@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AudioWidgetsSlateTypes.h"
+
 #include "Brushes/SlateNoResource.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "Styling/AppStyle.h"
@@ -11,7 +12,6 @@
 namespace AudioWidgetStylesSharedParams
 {
 	const FLazyName BackgroundBrushName = "WhiteBrush";
-	const FLazyName PlayheadHandleBrushName = "Sequencer.Timeline.VanillaScrubHandleDown";
 	const FLinearColor PlayheadColor = FLinearColor(255.f, 0.1f, 0.2f, 1.f);
 	const FLinearColor RulerTicksColor = FLinearColor(1.f, 1.f, 1.f, 0.9f);
 	const float DefaultHeight = 720.f;
@@ -132,7 +132,7 @@ const FName FFixedSampleSequenceRulerStyle::TypeName("FFixedSampleSequenceRulerS
 FFixedSampleSequenceRulerStyle::FFixedSampleSequenceRulerStyle()
 	: HandleWidth(15.f)
 	, HandleColor(AudioWidgetStylesSharedParams::PlayheadColor)
-	, HandleBrush(*FAppStyle::GetBrush(AudioWidgetStylesSharedParams::PlayheadHandleBrushName))
+	, HandleBrush()
 	, TicksColor(AudioWidgetStylesSharedParams::RulerTicksColor)
 	, TicksTextColor(AudioWidgetStylesSharedParams::RulerTicksColor)
 	, TicksTextFont(FAppStyle::GetFontStyle("Regular"))

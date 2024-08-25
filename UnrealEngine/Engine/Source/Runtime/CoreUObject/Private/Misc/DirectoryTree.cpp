@@ -3,6 +3,7 @@
 #include "Containers/DirectoryTree.h"
 
 #include "Algo/BinarySearch.h"
+#include "Algo/Sort.h"
 #include "Misc/AutomationTest.h"
 
 namespace UE::DirectoryTree
@@ -213,6 +214,42 @@ bool FDirectoryTreeTest::RunTest(const FString& Parameters)
 			InTestName.Len(), InTestName.GetData(),
 			PathType, Permutation, EditPermutationIndex, OtherPermutationIndex);
 	};
+
+	TArray<const TCHAR*> ScratchA;
+	TArray<const TCHAR*> ScratchB;
+	auto UnorderedEquals = [&ScratchA, &ScratchB](const TArray<FString>& A, TConstArrayView<const TCHAR*> B)
+		{
+			if (A.Num() != B.Num())
+			{
+				return false;
+			}
+			ScratchA.Reset(A.Num());
+			ScratchB.Reset(B.Num());
+			for (const FString& AStr : A)
+			{
+				ScratchA.Add(*AStr);
+			}
+			for (const TCHAR* BStr : B)
+			{
+				ScratchB.Add(BStr);
+			}
+			Algo::Sort(ScratchA, [](const TCHAR* StrA, const TCHAR* StrB)
+				{
+					return FCString::Stricmp(StrA, StrB) < 0;
+				});
+			Algo::Sort(ScratchB, [](const TCHAR* StrA, const TCHAR* StrB)
+				{
+					return FCString::Stricmp(StrA, StrB) < 0;
+				});
+			for (int32 Index = 0; Index < A.Num(); ++Index)
+			{
+				if (FCString::Stricmp(ScratchA[Index], ScratchB[Index]) != 0)
+				{
+					return false;
+				}
+			}
+			return true;
+		};
 
 	for (int32 PathType = 0; PathType < NumPathTypes; ++PathType)
 	{
@@ -473,6 +510,449 @@ bool FDirectoryTreeTest::RunTest(const FString& Parameters)
 		Value = Tree.Find(TEXTVIEW("/Root/PathZ"));
 		TestTrue(TEXT("MoveConstructOnlyValueZ correct"), Value && Value->Value == 437);
 	}
+
+	// Handling special case of drive specifiers without a path
+	{
+		TStringBuilder<16> FoundPath;
+		TArray<FString> ChildNames;
+		int* FoundValue = nullptr;
+		auto Reset = [&FoundPath, &ChildNames, &FoundValue]()
+			{
+				FoundPath.Reset();
+				ChildNames.Reset();
+				FoundValue = nullptr;
+			};
+
+		{
+			TDirectoryTree<int32> Tree;
+			Tree.FindOrAdd(TEXTVIEW("D:")) = 1;
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifier: Before PathSep: Without PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:")));
+			TestTrue(TEXT("DriveSpecifier: Before PathSep: Without PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: Before PathSep: Without PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:")));
+			TestTrue(TEXT("DriveSpecifier: Before PathSep: Without PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: Before PathSep: Without PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifier: Before PathSep: Without PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:"), ChildNames));
+
+			Tree.FindOrAdd(TEXTVIEW("D:/root")) = 1;
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): Without PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): Without PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): Without PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): Without PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): Without PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): Without PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:"), ChildNames));
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): With PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:/")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): With PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:/")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): With PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:/")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): With PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:/")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): With PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:/"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('/'): With PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:/"), ChildNames));
+		}
+		{
+			TDirectoryTree<int32> Tree;
+			Tree.FindOrAdd(TEXTVIEW("D:")) = 1;
+			Tree.FindOrAdd(TEXTVIEW("D:\\root")) = 1;
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): Without PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): Without PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): Without PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): Without PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): Without PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): Without PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:"), ChildNames));
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): With PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:\\")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): With PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:\\")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): With PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:\\")));
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): With PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:\\")) != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): With PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:\\"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifier: After PathSep('\\'): With PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:\\"), ChildNames));
+		}
+		{
+			TDirectoryTree<int32> Tree;
+			Tree.FindOrAdd(TEXTVIEW("D:root")) = 1;
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifierLong: Before PathSep: Without PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:root")));
+			TestTrue(TEXT("DriveSpecifierLong: Before PathSep: Without PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:root")) != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: Before PathSep: Without PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:root")));
+			TestTrue(TEXT("DriveSpecifierLong: Before PathSep: Without PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:root")) != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: Before PathSep: Without PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:root"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: Before PathSep: Without PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:root"), ChildNames));
+
+			Tree.FindOrAdd(TEXTVIEW("D:\\root\\path")) = 1;
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): Without PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:root")));
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): Without PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:root")) != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): Without PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:root")));
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): Without PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:root")) != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): Without PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:root"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): Without PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:root"), ChildNames));
+
+			Reset();
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): With PathSep: Tree.Contains"), Tree.Contains(TEXTVIEW("D:\\root")));
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): With PathSep: Tree.Find"), Tree.Find(TEXTVIEW("D:\\root")) != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): With PathSep: Tree.ContainsPathOrParent"), Tree.ContainsPathOrParent(TEXTVIEW("D:\\root")));
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): With PathSep: Tree.FindClosestValue"), Tree.FindClosestValue(TEXTVIEW("D:\\root")) != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): With PathSep: Tree.TryFindClosestPath"),
+				Tree.TryFindClosestPath(TEXTVIEW("D:root"), FoundPath, &FoundValue) && FoundPath.Len() > 0 && FoundValue != nullptr);
+			TestTrue(TEXT("DriveSpecifierLong: After PathSep('\\'): With PathSep: Tree.TryGetChildren"), Tree.TryGetChildren(TEXTVIEW("D:\\root"), ChildNames));
+		}
+	}
+
+	// Testing accessors
+	{
+		// GetChildren
+		TDirectoryTree<FMoveConstructOnly> Tree;
+		bool bExists;
+		TArray<FString> Children;
+
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::None);
+		TestTrue(TEXT("GetChildrenEmpty, Root, !ImpliedParent"),
+			bExists == false && Children.IsEmpty());
+
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenEmpty, Root, ImpliedParent"),
+			bExists == true && Children.IsEmpty());
+
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/SomePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenEmpty, Non-root"),
+			bExists == false && Children.IsEmpty());
+
+		Tree.FindOrAdd(TEXTVIEW("")).Value = 1;
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::None);
+		TestTrue(TEXT("GetChildrenRoot, !ImpliedParent, !ImpliedChildren"),
+			bExists == true && Children.IsEmpty());
+
+		Tree.Empty();
+		Tree.FindOrAdd(TEXTVIEW("/")).Value = 1;
+
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenRoot, !ImpliedParent, ImpliedChildren"),
+			bExists == false && Children.IsEmpty());
+
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenRoot, ImpliedParent, ImpliedChildren"),
+			bExists == true && UnorderedEquals(Children, { TEXT("/") }));
+
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildren appends to the outdir rather than resetting"),
+			bExists == true && Children.Num() == 2);
+
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenRoot, ImpliedParent, !ImpliedChildren"),
+			bExists == true && UnorderedEquals(Children, { TEXT("/") }));
+
+		Tree.Empty();
+		Tree.FindOrAdd(TEXTVIEW("/Root/Child")).Value = 1;
+
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenRootImpliedChild, ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("/") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent);
+		TestTrue(TEXT("GetChildrenRootImpliedChild, ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("/Root/Child") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenRootImpliedChild, ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("/"), TEXT("/Root"), TEXT("/Root/Child") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW(""), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenRootImpliedChild, ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("/Root/Child") }));
+
+		Tree.FindOrAdd(TEXTVIEW("/Root/Child2")).Value = 1;
+
+		Tree.Empty();
+		Tree.FindOrAdd(TEXTVIEW("/Stem/A_OtherChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/B_ImpliedRoot/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/B_ImpliedRoot/AddedChild/Child")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/B_ImpliedRoot/ImpliedChild/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/B_ImpliedRoot/ImpliedChild/AddedChild/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/B_ImpliedRoot/ImpliedChild/AddedChild/ImpliedChild/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath/ImpliedChild/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath/ImpliedChild/AddedChild/Child")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath/AddedChild/Child")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/E_AddedRoot")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/E_AddedRoot/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/E_AddedRoot/ImpliedChild/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/E_AddedRoot/ImpliedChild/AddedChild/ImpliedChild/AddedChild")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/F_AddedRoot")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Stem/F_AddedRoot/ImpliedChild/AddedChild")).Value = 1;
+
+
+		// Case: Requested path is an implied path that is a stored child in the tree.
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::None);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, !ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, !ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, !ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, !ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("ImpliedChild/AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("AddedChild/Child"),
+				TEXT("ImpliedChild/AddedChild"), TEXT("ImpliedChild/AddedChild/AddedChild"),
+				TEXT("ImpliedChild/AddedChild/ImpliedChild/AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("ImpliedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/B_ImpliedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA B_ImpliedRoot, ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("AddedChild/Child"),
+				TEXT("ImpliedChild"), TEXT("ImpliedChild/AddedChild"), TEXT("ImpliedChild/AddedChild/AddedChild"),
+				TEXT("ImpliedChild/AddedChild/ImpliedChild"), TEXT("ImpliedChild/AddedChild/ImpliedChild/AddedChild") }));
+
+		// Case: Requested path is an implied path that is not a stored child in the tree - it is an in-between dir in a
+		// relpath - and it has an implied child
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::None);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, !ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, !ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, !ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, !ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild/AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild/AddedChild"),
+				TEXT("ImpliedChild/AddedChild/Child") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA C_MiddleRoot, ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild"), TEXT("ImpliedChild/AddedChild"),
+				TEXT("ImpliedChild/AddedChild/Child") }));
+
+		// Case: Requested path is a non-existent sibling path of an implied path that is not a stored
+		// path.
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/C_MiddleRoot/MiddlePathExceptItDoesNotExist"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA MiddlePathExceptItDoesNotExist, ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == false && Children.IsEmpty());
+
+		// Case: Requested path is an implied path that is not a stored child in the tree - it is an in-between dir in a
+		// relpath - and it has an added child
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::None);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, !ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, !ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, !ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, !ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == false && Children.IsEmpty());
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("AddedChild/Child") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/D_MiddleRoot/MiddlePath"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent |
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA D_MiddleRoot, ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("AddedChild/Child") }));
+
+		// Case: Requested path is an added path and it has an added child and an implied child
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/E_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::None);
+		TestTrue(TEXT("GetChildrenComplexA E_AddedRoot, !ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("ImpliedChild/AddedChild")}));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/E_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA E_AddedRoot, !ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("ImpliedChild/AddedChild"),
+				TEXT("ImpliedChild/AddedChild/ImpliedChild/AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/E_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA E_AddedRoot, !ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("ImpliedChild")}));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/E_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA E_MiddleRoot, !ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("AddedChild"), TEXT("ImpliedChild"),
+				TEXT("ImpliedChild/AddedChild"), TEXT("ImpliedChild/AddedChild/ImpliedChild"),
+				TEXT("ImpliedChild/AddedChild/ImpliedChild/AddedChild") }));
+
+		// Case: Requested path is an added path and it has only an implied child
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/F_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::None);
+		TestTrue(TEXT("GetChildrenComplexA F_AddedRoot, !ImpliedParent, !ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild/AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/F_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA F_AddedRoot, !ImpliedParent, !ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild/AddedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/F_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren);
+		TestTrue(TEXT("GetChildrenComplexA F_AddedRoot, !ImpliedParent, ImpliedChildren, !Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild") }));
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Stem/F_AddedRoot"), Children,
+			EDirectoryTreeGetFlags::ImpliedChildren |
+			EDirectoryTreeGetFlags::Recursive);
+		TestTrue(TEXT("GetChildrenComplexA F_AddedRoot, !ImpliedParent, ImpliedChildren, Recursive"),
+			bExists == true && UnorderedEquals(Children, { TEXT("ImpliedChild"),
+				TEXT("ImpliedChild/AddedChild") }));
+
+		// Case: Requesting !ImpliedChildren and !Recursive on a path with an implied child, should report
+		// the added path children of the Implied child
+		Tree.Empty();
+		Tree.FindOrAdd(TEXTVIEW("/Root/Implied1/Added1")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Root/Implied1/Added2")).Value = 1;
+		Tree.FindOrAdd(TEXTVIEW("/Root/Implied2/Added")).Value = 1;
+
+		Children.Reset();
+		bExists = Tree.TryGetChildren(TEXTVIEW("/Root"), Children,
+			EDirectoryTreeGetFlags::ImpliedParent);
+		TestTrue(TEXT("!ImpliedChildren, !Recursive, and direct child is implied."),
+			bExists = true && UnorderedEquals(Children, { TEXT("Implied1/Added1"), TEXT("Implied1/Added2"), TEXT("Implied2/Added") }));
+	}
+
 	return true;
 }
 

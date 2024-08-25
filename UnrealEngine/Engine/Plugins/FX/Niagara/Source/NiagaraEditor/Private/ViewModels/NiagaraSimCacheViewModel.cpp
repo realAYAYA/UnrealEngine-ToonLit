@@ -7,7 +7,6 @@
 #include "NiagaraDebuggerCommon.h"
 #include "Serialization/MemoryReader.h"
 #include "Widgets/SNiagaraSimCacheTreeView.h"
-#include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "UObject/Package.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraSimCacheViewModel"
@@ -45,26 +44,12 @@ void FNiagaraSimCacheViewModel::Initialize(TWeakObjectPtr<UNiagaraSimCache> InSi
 	OnViewDataChangedDelegate.Broadcast(true);
 }
 
-void FNiagaraSimCacheViewModel::UpdateSimCache(const FNiagaraSystemSimCacheCaptureReply& Reply)
+void FNiagaraSimCacheViewModel::SetComponentFilters(const TArray<FString>& NewComponentFilterArray)
 {
-	UNiagaraSimCache* TempSimCache = nullptr;
-	
-	if (Reply.SimCacheData.Num() > 0)
-	{
-		TempSimCache = NewObject<UNiagaraSimCache>();
-
-		FMemoryReader ArReader(Reply.SimCacheData);
-		FObjectAndNameAsStringProxyArchive ProxyArReader(ArReader, false);
-		TempSimCache->Serialize(ProxyArReader);
-		bComponentFilterActive = false;
-		UpdateComponentInfos();
-		
-	}
-	else
-	{
-		UE_LOG(LogNiagaraEditor, Warning, TEXT("Debug Spreadsheet received empty sim cache data."));
-	}
-	Initialize(TempSimCache);
+	bComponentFilterActive = true;
+	ComponentFilterArray.Empty();
+	ComponentFilterArray.Append(NewComponentFilterArray);
+	OnViewDataChangedDelegate.Broadcast(true);
 }
 
 void FNiagaraSimCacheViewModel::SetupPreviewComponentAndInstance()
@@ -165,14 +150,25 @@ void FNiagaraSimCacheViewModel::SetFrameIndex(const int32 InFrameIndex)
 		const float NormalizedFrame = FMath::Clamp( NumFrames == 0 ? 0.0f : float(InFrameIndex) / float(NumFrames - 1), 0.0f, 1.0f );
 		const float DesiredAge = FMath::Clamp(StartSeconds + (Duration * NormalizedFrame), StartSeconds, StartSeconds + Duration);
 		
+		PreviewComponent->Activate();
 		PreviewComponent->SetDesiredAge(DesiredAge);
 	}
 	OnViewDataChangedDelegate.Broadcast(false);
 }
 
-void FNiagaraSimCacheViewModel::SetEmitterIndex(const int32 InEmitterIndex)
+UObject* FNiagaraSimCacheViewModel::GetActiveDataInterfaceStorage() const
+{
+	if (SimCache)
+	{
+		return SimCache->GetDataInterfaceStorageObject(GetActiveDataInterface());
+	}
+	return nullptr;
+}
+
+void FNiagaraSimCacheViewModel::SetEmitterIndex(const int32 InEmitterIndex, FNiagaraVariableBase InActiveDataInterface)
 {
 	EmitterIndex = InEmitterIndex;
+	ActiveDataInterface = InActiveDataInterface;
 	UpdateCachedFrame();
 	UpdateCurrentEntries();
 	bComponentFilterActive = false;
@@ -438,7 +434,7 @@ void FNiagaraSimCacheViewModel::BuildEntries(TWeakPtr<SNiagaraSimCacheTreeView> 
 	}
 		
 	BuildTreeItemChildren(SharedSystemTreeItem, OwningTreeView);
-		
+	
 	for(int32 i = 0; i < GetNumEmitterLayouts(); i++)
 	{
 		const TSharedRef<FNiagaraSimCacheEmitterTreeItem> CurrentEmitterItem = MakeShared<FNiagaraSimCacheEmitterTreeItem>(OwningTreeView);
@@ -454,6 +450,32 @@ void FNiagaraSimCacheViewModel::BuildEntries(TWeakPtr<SNiagaraSimCacheTreeView> 
 		BufferEntries.Add(CurrentEmitterBufferItem);
 
 		BuildTreeItemChildren(CurrentEmitterItem, OwningTreeView);
+	}
+	if (SimCache)
+	{
+		for (const FNiagaraVariableBase& Var : SimCache->GetStoredDataInterfaces())
+		{
+			const TSharedRef<FNiagaraSimCacheDataInterfaceTreeItem> CurrentDataInterfaceItem = MakeShared<FNiagaraSimCacheDataInterfaceTreeItem>(OwningTreeView);
+			const TSharedRef<FNiagaraSimCacheOverviewDataInterfaceItem> CurrentDataInterfaceBufferItem = MakeShared<FNiagaraSimCacheOverviewDataInterfaceItem>();
+		
+			CurrentDataInterfaceItem->SetDisplayName(FText::FromName(Var.GetName()));
+			CurrentDataInterfaceItem->DataInterfaceReference = Var;
+			CurrentDataInterfaceBufferItem->SetDisplayName(FText::FromName(Var.GetName()));
+			CurrentDataInterfaceBufferItem->DataInterfaceReference = Var;
+
+			for(int32 i = 0; i < GetNumEmitterLayouts(); i++)
+			{
+				if (Var.GetName().ToString().StartsWith(GetEmitterLayoutName(i).ToString() + "."))
+				{
+					CurrentDataInterfaceItem->SetBufferIndex(i);
+					CurrentDataInterfaceBufferItem->SetBufferIndex(i);
+					break;
+				}
+			}
+		
+			RootEntries.Add(CurrentDataInterfaceItem);
+			BufferEntries.Add(CurrentDataInterfaceBufferItem);
+		}
 	}
 
 	UpdateCurrentEntries();

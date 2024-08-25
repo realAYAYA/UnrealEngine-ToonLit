@@ -8,6 +8,7 @@
 #define ESlateShader::GrayscaleFont	2
 #define ESlateShader::ColorFont		3
 #define ESlateShader::LineSegment	4
+#define ESlateShader::Custom		5
 #define ESlateShader::RoundedBox    7
 
 #define USE_LEGACY_DISABLED_EFFECT 0
@@ -200,7 +201,7 @@ float4 Main( VertexOut InVertex ) : SV_Target
 {
 	float4 OutColor;
 
-	if( ShaderType == ESlateShader::Default )
+	if( ShaderType == ESlateShader::Default || ShaderType == ESlateShader::Custom )
 	{
 		OutColor = GetDefaultElementColor( InVertex );
 	}

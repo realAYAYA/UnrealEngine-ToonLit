@@ -24,7 +24,7 @@ using namespace UE::Geometry;
 
 void ToolSelectionUtil::SetNewActorSelection(UInteractiveToolManager* ToolManager, AActor* Actor)
 {
-	FSelectedOjectsChangeList NewSelection;
+	FSelectedObjectsChangeList NewSelection;
 	NewSelection.ModificationType = ESelectedObjectsModificationType::Replace;
 	NewSelection.Actors.Add(Actor);
 	ToolManager->RequestSelectionChange(NewSelection);
@@ -33,7 +33,7 @@ void ToolSelectionUtil::SetNewActorSelection(UInteractiveToolManager* ToolManage
 
 void ToolSelectionUtil::SetNewActorSelection(UInteractiveToolManager* ToolManager, const TArray<AActor*>& Actors)
 {
-	FSelectedOjectsChangeList NewSelection;
+	FSelectedObjectsChangeList NewSelection;
 	NewSelection.ModificationType = ESelectedObjectsModificationType::Replace;
 	for (AActor* Actor : Actors)
 	{
@@ -75,7 +75,30 @@ void ToolSelectionUtil::DebugRenderGeometrySelectionElements(
 	IToolsContextRenderAPI* RenderAPI,
 	const FGeometrySelectionElements& Elements,
 	bool bIsPreview)
+{	
+	DebugRender(
+		RenderAPI,
+		Elements,
+		bIsPreview ? 1.f : 3.f,
+		bIsPreview ? FLinearColor(1, 1, 0, 1) : FLinearColor(0, 0.3f, 0.95f, 1),
+		bIsPreview ? 5.f : 10.f,
+		bIsPreview ? FLinearColor(1, 1, 0, 1) : FLinearColor(0, 0.3f, 0.95f, 1));
+}
+
+void ToolSelectionUtil::DebugRender(
+	IToolsContextRenderAPI* RenderAPI,
+	const UE::Geometry::FGeometrySelectionElements& Elements,
+	float LineThickness,
+	FLinearColor LineColor,
+	float PointSize,
+	FLinearColor PointColor,
+	float DepthBias)
 {
+	if (RenderAPI == nullptr)
+	{
+		return;
+	}
+	
 	FPrimitiveDrawInterface* CurrentPDI = RenderAPI->GetPrimitiveDrawInterface();
 
 	// batch render all the triangles, vastly more efficient than drawing one by one!
@@ -95,22 +118,13 @@ void ToolSelectionUtil::DebugRenderGeometrySelectionElements(
 	FMaterialRenderProxy* MaterialRenderProxy = GEngine->ConstraintLimitMaterialX->GetRenderProxy();
 	MeshBuilder.Draw(CurrentPDI, FMatrix::Identity, MaterialRenderProxy, DepthPriority, false, false);
 
-
 	FToolDataVisualizer Visualizer;
-	Visualizer.bDepthTested = false;
+	Visualizer.DepthBias = DepthBias;
 	Visualizer.BeginFrame(RenderAPI);
 
-	if (bIsPreview)
-	{
-		Visualizer.SetLineParameters(FLinearColor(1, 1, 0, 1), 1.0f);
-		Visualizer.SetPointParameters(FLinearColor(1, 1, 0, 1), 5.0f);
-	}
-	else
-	{
-		Visualizer.SetLineParameters(FLinearColor(0,0.3f,0.95f,1), 3.0f);
-		Visualizer.SetPointParameters(FLinearColor(0,0.3f,0.95f,1), 10.0f);
-	}
-
+	Visualizer.SetLineParameters(LineColor, LineThickness);
+	Visualizer.SetPointParameters(PointColor, PointSize);
+	
 	for (const FSegment3d& Segment : Elements.Segments)
 	{
 		Visualizer.DrawLine(Segment.StartPoint(), Segment.EndPoint());

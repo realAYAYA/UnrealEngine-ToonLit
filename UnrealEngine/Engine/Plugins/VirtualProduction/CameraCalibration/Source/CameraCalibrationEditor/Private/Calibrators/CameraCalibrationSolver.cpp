@@ -15,25 +15,51 @@
 
 #endif	// WITH_OPENCV
 
+#define LOCTEXT_NAMESPACE "CameraCalibrationSolver"
+
 static TAutoConsoleVariable<int> CVarUseLegacySphericalSolver(TEXT("CameraCalibration.UseLegacySphericalSolver"), 0, TEXT("If set, the legacy OpenCV spherical solver will be used"));
+static TAutoConsoleVariable<float> CVarRotationStepValue(TEXT("CameraCalibration.RotationStepValue"), 0.05, TEXT("The value of the initial step size to use when finding an optimal nodal offset rotation that minimizes reprojection error."));
+static TAutoConsoleVariable<float> CVarLocationStepValue(TEXT("CameraCalibration.LocationStepValue"), 0.5, TEXT("The value of the initial step size to use when finding an optimal nodal offset location that minimizes reprojection error."));
 
 DEFINE_LOG_CATEGORY_STATIC(LogCameraCalibrationSolver, Log, All);
 
-#if WITH_OPENCV
+bool ULensDistortionSolver::GetStatusText(FText& OutStatusText) 
+{ 
+	OutStatusText = StatusText;
+	if (bHasStatusChanged)
+	{
+		bHasStatusChanged = false;
+		return true;
+	}
+	return false;
+}
 
-double FCameraCalibrationSolver::CalibrateCamera(
-	const TSubclassOf<ULensModel> LensModel,
-	const TArray<TArray<FVector>>& InObjectPoints,
-	const TArray<TArray<FVector2D>>& InImagePoints,
+void ULensDistortionSolver::SetStatusText(FText InStatusText) 
+{ 
+	StatusText = MoveTemp(InStatusText);
+	bHasStatusChanged = true;
+}
+
+FText ULensDistortionSolverOpenCV::GetDisplayName_Implementation() const
+{
+	return LOCTEXT("OpenCVSolverDisplayName", "OpenCV Solver");
+}
+
+FDistortionCalibrationResult ULensDistortionSolverOpenCV::Solve_Implementation(
+	const TArray<FObjectPoints>& ObjectPointArray,
+	const TArray<FImagePoints>& ImagePointArray,
 	const FIntPoint ImageSize,
-	FVector2f& InOutFocalLength,
-	FVector2f& InOutImageCenter,
-	TArray<float>& OutDistCoeffs,
-	TArray<FTransform>& InOutCameraPoses,
+	const FVector2D& FocalLength,
+	const FVector2D& ImageCenter,
+	const TArray<FTransform>& CameraPoses,
+	TSubclassOf<ULensModel> LensModel,
 	double PixelAspect,
 	ECalibrationFlags SolverFlags)
 {
-	const int NumImages = InObjectPoints.Num();
+	FDistortionCalibrationResult Result;
+
+#if WITH_OPENCV
+	const int NumImages = ObjectPointArray.Num();
 
 	// Create an array to store the number of points in each image
 	cv::Mat NumPointsMat = cv::Mat(1, NumImages, CV_32S);
@@ -42,7 +68,7 @@ double FCameraCalibrationSolver::CalibrateCamera(
 	int MaxPoints = 0;
 	for (int ImageIndex = 0; ImageIndex < NumImages; ++ImageIndex)
 	{
-		const int NumPointsInImage = InObjectPoints[ImageIndex].Num();
+		const int NumPointsInImage = ObjectPointArray[ImageIndex].Points.Num();
 
 		NumPointsMat.at<int>(ImageIndex) = NumPointsInImage;
 		NumTotalPoints += NumPointsInImage;
@@ -54,18 +80,16 @@ double FCameraCalibrationSolver::CalibrateCamera(
 	cv::Mat ImagePointsMat = cv::Mat(1, NumTotalPoints, CV_64FC2);
 
 	// Reorganize the 3D and 2D points from the input arrays or arrays to be laid out linearly in memory in two cv::Mat objects
-	GatherPoints(InObjectPoints, InImagePoints, ObjectPointsMat, ImagePointsMat);
+	GatherPoints(ObjectPointArray, ImagePointArray, ObjectPointsMat, ImagePointsMat);
 
 	double RMSE = 0.0;
 
 	cv::Mat CameraMatrix = cv::Mat::eye(3, 3, CV_64F);
 
-	CameraMatrix.at<double>(0, 0) = InOutFocalLength.X;
-	CameraMatrix.at<double>(1, 1) = InOutFocalLength.Y;
-	CameraMatrix.at<double>(0, 2) = InOutImageCenter.X;
-	CameraMatrix.at<double>(1, 2) = InOutImageCenter.Y;
-
-	OutDistCoeffs.Empty();
+	CameraMatrix.at<double>(0, 0) = FocalLength.X;
+	CameraMatrix.at<double>(1, 1) = FocalLength.Y;
+	CameraMatrix.at<double>(0, 2) = ImageCenter.X;
+	CameraMatrix.at<double>(1, 2) = ImageCenter.Y;
 
 	const int NumDistortionCoefficients = LensModel->GetDefaultObject<ULensModel>()->GetNumParameters();
 	cv::Mat DistCoeffs = cv::Mat(1, NumDistortionCoefficients, CV_64F);
@@ -95,28 +119,29 @@ double FCameraCalibrationSolver::CalibrateCamera(
 		std::vector<std::vector<cv::Point2f>> Samples2d;
 		std::vector<std::vector<cv::Point3f>> Samples3d;
 
-		Samples2d.reserve(InImagePoints.Num());
-		Samples3d.reserve(InObjectPoints.Num());
+		Samples2d.reserve(ImagePointArray.Num());
+		Samples3d.reserve(ObjectPointArray.Num());
 
-		for (const TArray<FVector>& Image : InObjectPoints)
+		for (const FObjectPoints& PointsInImage : ObjectPointArray)
 		{
 			std::vector<cv::Point3f> Points3d;
-			Points3d.reserve(Image.Num());
+			Points3d.reserve(PointsInImage.Points.Num());
 
-			for (const FVector& Point3d : Image)
+			for (const FVector& Point3d : PointsInImage.Points)
 			{
-				Points3d.push_back(cv::Point3f(Point3d.X, Point3d.Y, Point3d.Z));
+				const FVector Point3dCV = FOpenCVHelper::ConvertUnrealToOpenCV(Point3d);
+				Points3d.push_back(cv::Point3f(Point3dCV.X, Point3dCV.Y, Point3dCV.Z));
 			}
 
 			Samples3d.push_back(Points3d);
 		}
 
-		for (const TArray<FVector2D>& Image : InImagePoints)
+		for (const FImagePoints& PointsInImage : ImagePointArray)
 		{
 			std::vector<cv::Point2f> Points2d;
-			Points2d.reserve(Image.Num());
+			Points2d.reserve(PointsInImage.Points.Num());
 
-			for (const FVector2D& Point2d : Image)
+			for (const FVector2D& Point2d : PointsInImage.Points)
 			{
 				Points2d.push_back(cv::Point2f(Point2d.X, Point2d.Y));
 			}
@@ -153,19 +178,21 @@ double FCameraCalibrationSolver::CalibrateCamera(
 		);
 
 		// Set the output intrinsics and distortion parameters to the final values calculated by the solver
-		InOutFocalLength.X = CameraMatrix.at<double>(0, 0);
-		InOutFocalLength.Y = CameraMatrix.at<double>(1, 1);
-		InOutImageCenter.X = CameraMatrix.at<double>(0, 2);
-		InOutImageCenter.Y = CameraMatrix.at<double>(1, 2);
+		Result.FocalLength.FxFy.X = CameraMatrix.at<double>(0, 0);
+		Result.FocalLength.FxFy.Y = CameraMatrix.at<double>(1, 1);
+		Result.ImageCenter.PrincipalPoint.X = CameraMatrix.at<double>(0, 2);
+		Result.ImageCenter.PrincipalPoint.Y = CameraMatrix.at<double>(1, 2);
 
 		// The spherical distortion coefficients in our model are in a different order than they appear in the solver, so the results need to be rearranged
-		OutDistCoeffs.Add(DistCoeffs.at<double>(0));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(1));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(4));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(2));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(3));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(0));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(1));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(4));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(2));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(3));
 
-		return RMSE;
+		Result.ReprojectionError = RMSE;
+
+		return Result;
 	}
 
 	// If the flag to use a starting guess for the camera intrinsics is not set, calculate some initial values for the intrinsic parameters
@@ -177,7 +204,20 @@ double FCameraCalibrationSolver::CalibrateCamera(
 	// Initialize the solver with the number of parameters to solve, and the maximum number of iterations to run
 	const int NumIntrinsics = NumDistortionCoefficients + 4; // Includes Fx, Fy, Cx, and Cy
 	const int NumExtrinsics = 6; // 3 for rotation vector, 3 for translation vector
-	const int NumParamsToSolve = NumIntrinsics + (NumImages * NumExtrinsics);
+
+	// If using a guess for the extrinsic parameters, then the solver will be constrained to solve only one camera pose, and needs only one set of extrinsic parameters.
+	// Otherwise, the solver needs one set of extrinsic parameters per image.
+	int NumPosesToSolve = 0;
+	if ((EnumHasAnyFlags(SolverFlags, ECalibrationFlags::UseExtrinsicGuess)))
+	{
+		NumPosesToSolve = 1;
+	}
+	else
+	{
+		NumPosesToSolve = NumImages;
+	}
+
+	const int NumParamsToSolve = NumIntrinsics + (NumPosesToSolve * NumExtrinsics);
 
 	constexpr int NumErrors = 0;
 	constexpr int MaxIterations = 30;
@@ -225,30 +265,50 @@ double FCameraCalibrationSolver::CalibrateCamera(
 		Mask[4] = 0; // We do not want to solve for pixel aspect
 	}
 
-	// Initialize the starting guess for the camera's extrinsic parameters in each image
-	int ObjectPointsIndex = 0;
-	for (int ImageIndex = 0; ImageIndex < NumImages; ImageIndex++)
+	// Initialize the starting guess for the camera's extrinsic parameters. 
+	// If using a guess for the extrinsic parameters, then the initial guess is just the first input camera pose
+	// Otherwise, a starting pose will need to be computed for each image
+	if ((EnumHasAnyFlags(SolverFlags, ECalibrationFlags::UseExtrinsicGuess)))
 	{
-		const int NumImagePoints = NumPointsMat.at<int>(ImageIndex);
+		cv::Mat Rotation = Solver.Params.rowRange(NumIntrinsics, NumIntrinsics + 3);
+		cv::Mat Translation = Solver.Params.rowRange(NumIntrinsics + 3, NumIntrinsics + 6);
 
-		// Get the object and image points for this image
-		cv::Mat ObjectPointsInImage = ObjectPointsMat.colRange(ObjectPointsIndex, ObjectPointsIndex + NumImagePoints);
-		cv::Mat ImagePointsInImage = ImagePointsMat.colRange(ObjectPointsIndex, ObjectPointsIndex + NumImagePoints);
-
-		ObjectPointsIndex += NumImagePoints;
-
-		// Get a view to parameters used by the solver for the rotation and translation vectors for this image
-		const int ExtrinsicOffset = NumIntrinsics + (ImageIndex * NumExtrinsics);
-		cv::Mat Rotation = Solver.Params.rowRange(ExtrinsicOffset, ExtrinsicOffset + 3);
-		cv::Mat Translation = Solver.Params.rowRange(ExtrinsicOffset + 3, ExtrinsicOffset + 6);
-
-		if (!(EnumHasAnyFlags(SolverFlags, ECalibrationFlags::UseExtrinsicGuess)))
+		FOpenCVHelper::MakeObjectVectorsFromCameraPose(CameraPoses[0], Rotation, Translation);
+	}
+	else
+	{
+		int ObjectPointsIndex = 0;
+		for (int ImageIndex = 0; ImageIndex < NumImages; ImageIndex++)
 		{
+			const int NumImagePoints = NumPointsMat.at<int>(ImageIndex);
+
+			// Get the object and image points for this image
+			cv::Mat ObjectPointsInImage = ObjectPointsMat.colRange(ObjectPointsIndex, ObjectPointsIndex + NumImagePoints);
+			cv::Mat ImagePointsInImage = ImagePointsMat.colRange(ObjectPointsIndex, ObjectPointsIndex + NumImagePoints);
+
+			ObjectPointsIndex += NumImagePoints;
+
+			// Get a view to parameters used by the solver for the rotation and translation vectors for this image
+			const int ExtrinsicOffset = NumIntrinsics + (ImageIndex * NumExtrinsics);
+			cv::Mat Rotation = Solver.Params.rowRange(ExtrinsicOffset, ExtrinsicOffset + 3);
+			cv::Mat Translation = Solver.Params.rowRange(ExtrinsicOffset + 3, ExtrinsicOffset + 6);
+
 			InitCameraExtrinsics(LensModel, ObjectPointsInImage, ImagePointsInImage, CameraMatrix, DistCoeffs, CvImageSize, Rotation, Translation, SolverFlags);
 		}
-		else
+	}
+
+	// If using a guess for the extrinsic parameters, compute the transformation from the first camera pose to each subsequent pose
+	// which represents how the camera moved between each image. The constrained solver, which only solves one camera pose, will use 
+	// this transformation to offset the pose used in the projection of points for each image. 
+	TArray<FTransform> CameraMovements;
+	if ((EnumHasAnyFlags(SolverFlags, ECalibrationFlags::UseExtrinsicGuess)))
+	{
+		CameraMovements.Reserve(CameraPoses.Num());
+
+		for (const FTransform& Pose : CameraPoses)
 		{
-			FOpenCVHelper::ConvertTransformToVectors(InOutCameraPoses[ImageIndex], Rotation, Translation);
+			const FTransform CameraMovement = CameraPoses[0].Inverse() * Pose;
+			CameraMovements.Add(CameraMovement);
 		}
 	}
 
@@ -257,10 +317,11 @@ double FCameraCalibrationSolver::CalibrateCamera(
 	cv::Mat Jacobian(MaxPoints * 2, NumExtrinsics + NumIntrinsics, CV_64FC1, cv::Scalar(0));
 	cv::Mat Diffs(MaxPoints * 2, 1, CV_64FC1);
 
+	int32 LoopCounter = 0;
 	while (true)
 	{
 		// Update the solver
-		bool bShouldProceed = Solver.UpdateAlt();
+		bool bShouldProceed = Solver.UpdateAlt() && IsRunning();
 		bool bComputeJacobian = Solver.State == FLevMarqSolver::ESolverState::ComputeJacobian;
 
 		// Update the camera matrix and distortion parameters with the latest values of the parameters from the solver
@@ -277,9 +338,19 @@ double FCameraCalibrationSolver::CalibrateCamera(
 			break;
 		}
 
+		// If using a guess for the extrinsic parameters, cache the current solver pose as a FTransform to more easily offset the camera pose for each image
+		FTransform CurrentSolverPose;
+		if ((EnumHasAnyFlags(SolverFlags, ECalibrationFlags::UseExtrinsicGuess)))
+		{
+			cv::Mat Rotation = Solver.Params.rowRange(NumIntrinsics, NumIntrinsics + 3);
+			cv::Mat Translation = Solver.Params.rowRange(NumIntrinsics + 3, NumIntrinsics + 6);
+
+			FOpenCVHelper::MakeCameraPoseFromObjectVectors(Rotation, Translation, CurrentSolverPose);
+		}
+
 		ReprojectionError = 0;
 
-		ObjectPointsIndex = 0;
+		int ObjectPointsIndex = 0;
 		for (int ImageIndex = 0; ImageIndex < NumImages; ImageIndex++)
 		{
 			int NumImagePoints = NumPointsMat.at<int>(ImageIndex);
@@ -290,10 +361,30 @@ double FCameraCalibrationSolver::CalibrateCamera(
 
 			ObjectPointsIndex += NumImagePoints;
 
-			// Get the rotation and translation vectors for this image
-			const int ExtrinsicOffset = NumIntrinsics + (ImageIndex * NumExtrinsics);
-			cv::Mat Rotation = Solver.Params.rowRange(ExtrinsicOffset, ExtrinsicOffset + 3);
-			cv::Mat Translation = Solver.Params.rowRange(ExtrinsicOffset + 3, ExtrinsicOffset + 6);
+			int ExtrinsicOffset = 0;
+			if ((EnumHasAnyFlags(SolverFlags, ECalibrationFlags::UseExtrinsicGuess)))
+			{
+				ExtrinsicOffset = NumIntrinsics;
+			}
+			else
+			{
+				ExtrinsicOffset = NumIntrinsics + (ImageIndex * NumExtrinsics);
+			}
+
+			cv::Mat Rotation;
+			cv::Mat Translation;
+			if ((EnumHasAnyFlags(SolverFlags, ECalibrationFlags::UseExtrinsicGuess)))
+			{
+				// Transform the solver's current camera pose by the camera movement to get the pose for this image
+				FTransform ImagePose = CurrentSolverPose * CameraMovements[ImageIndex];
+				FOpenCVHelper::MakeObjectVectorsFromCameraPose(ImagePose, Rotation, Translation);
+			}
+			else
+			{
+				// Get the rotation and translation vectors for this image
+				Rotation = Solver.Params.rowRange(ExtrinsicOffset, ExtrinsicOffset + 3);
+				Translation = Solver.Params.rowRange(ExtrinsicOffset + 3, ExtrinsicOffset + 6);
+			}
 
 			Jacobian.resize(NumImagePoints * 2);
 			Diffs.resize(NumImagePoints * 2);
@@ -334,46 +425,125 @@ double FCameraCalibrationSolver::CalibrateCamera(
 
 		// Update the solver's error with the latest reprojection error
 		Solver.ErrorNorm = ReprojectionError;
+
+		const double CurrentRMSE = FMath::Sqrt(ReprojectionError / NumTotalPoints);
+		SetStatusText(FText::Format(LOCTEXT("ReprojectionError", "Reprojection Error: {0} pixels for loop {1}"), CurrentRMSE, LoopCounter));
+
+		++LoopCounter;
 	}
 
 	RMSE = FMath::Sqrt(ReprojectionError / NumTotalPoints);
 
 	// Set the output intrinsics and distortion parameters to the final values calculated by the solver
-	InOutFocalLength.X = CameraMatrix.at<double>(0, 0);
-	InOutFocalLength.Y = CameraMatrix.at<double>(1, 1);
-	InOutImageCenter.X = CameraMatrix.at<double>(0, 2);
-	InOutImageCenter.Y = CameraMatrix.at<double>(1, 2);
+	Result.FocalLength.FxFy.X = CameraMatrix.at<double>(0, 0);
+	Result.FocalLength.FxFy.Y = CameraMatrix.at<double>(1, 1);
+	Result.ImageCenter.PrincipalPoint.X = CameraMatrix.at<double>(0, 2);
+	Result.ImageCenter.PrincipalPoint.Y = CameraMatrix.at<double>(1, 2);
 
 	if (LensModel == UAnamorphicLensModel::StaticClass())
 	{
 		for (int CoeffIndex = 0; CoeffIndex < NumDistortionCoefficients; ++CoeffIndex)
 		{
-			OutDistCoeffs.Add(DistCoeffs.at<double>(CoeffIndex));
+			Result.Parameters.Parameters.Add(DistCoeffs.at<double>(CoeffIndex));
 		}
 	}
 	else
 	{
 		// The spherical distortion coefficients in our model are in a different order than they appear in the solver, so the results need to be rearranged
-		OutDistCoeffs.Add(DistCoeffs.at<double>(0));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(1));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(4));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(2));
-		OutDistCoeffs.Add(DistCoeffs.at<double>(3));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(0));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(1));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(4));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(2));
+		Result.Parameters.Parameters.Add(DistCoeffs.at<double>(3));
 	}
 
-	for (int ImageIndex = 0; ImageIndex < NumImages; ImageIndex++)
-	{
-		const int ExtrinsicOffset = NumIntrinsics + (ImageIndex * NumExtrinsics);
-		cv::Mat Rotation = Solver.Params.rowRange(ExtrinsicOffset, ExtrinsicOffset + 3);
-		cv::Mat Translation = Solver.Params.rowRange(ExtrinsicOffset + 3, ExtrinsicOffset + 6);
+	Result.ReprojectionError = RMSE;
 
-		FOpenCVHelper::ConvertVectorsToTransform(Rotation, Translation, InOutCameraPoses[ImageIndex]);
-	}
-
-	return RMSE;
+	return Result;
+#else
+	Result.ErrorMessage = LOCTEXT("OpenCVNotSupportedError", "OpenCV is not supported");
+	return Result;
+#endif // WITH_OPENCV
 }
 
-void FCameraCalibrationSolver::InitCameraIntrinsics(
+double FCameraCalibrationSolver::OptimizeNodalOffset(
+	const TArray<TArray<FVector>>& InObjectPoints,
+	const TArray<TArray<FVector2f>>& InImagePoints,
+	const FVector2D& InFocalLength,
+	const FVector2D& InImageCenter,
+	const TArray<FTransform>& InCameraPoses,
+	FTransform& InOutNodalOffset)
+{
+#if WITH_OPENCV
+	const int32 NumViews = InObjectPoints.Num();
+	if (NumViews < 1)
+	{
+		return -1.0;
+	}
+
+	cv::Ptr<cv::DownhillSolver> Solver = cv::DownhillSolver::create();
+
+	const FQuat InitialRotation = InOutNodalOffset.GetRotation();
+	const FVector InitialLocation = InOutNodalOffset.GetLocation();
+
+	constexpr int32 NumRotationParameters = 4; // FQuat
+	constexpr int32 NumLocationParameters = 3; // FVector
+	cv::Mat WorkingSolution = cv::Mat(1, NumRotationParameters + NumLocationParameters, CV_64FC1);
+	WorkingSolution.at<double>(0, 0) = InitialRotation.X;
+	WorkingSolution.at<double>(0, 1) = InitialRotation.Y;
+	WorkingSolution.at<double>(0, 2) = InitialRotation.Z;
+	WorkingSolution.at<double>(0, 3) = InitialRotation.W;
+	WorkingSolution.at<double>(0, 4) = InitialLocation.X;
+	WorkingSolution.at<double>(0, 5) = InitialLocation.Y;
+	WorkingSolution.at<double>(0, 6) = InitialLocation.Z;
+
+	// NOTE: These step sizes may need further testing and refinement, but tests so far have shown them to be decent
+	const double RotationStep = CVarRotationStepValue.GetValueOnGameThread();
+	const double LocationStep = CVarLocationStepValue.GetValueOnGameThread();
+	cv::Mat Step = cv::Mat(1, NumRotationParameters + NumLocationParameters, CV_64FC1);
+	Step.at<double>(0, 0) = RotationStep;
+	Step.at<double>(0, 1) = RotationStep;
+	Step.at<double>(0, 2) = RotationStep;
+	Step.at<double>(0, 3) = RotationStep;
+	Step.at<double>(0, 4) = LocationStep;
+	Step.at<double>(0, 5) = LocationStep;
+	Step.at<double>(0, 6) = LocationStep;
+
+	Solver->setInitStep(Step);
+
+	cv::Ptr<FOptimizeNodalOffsetSolver> SolverFunction = cv::makePtr<FOptimizeNodalOffsetSolver>();
+	Solver->setFunction(SolverFunction);
+
+	SolverFunction->FocalLength = InFocalLength;
+	SolverFunction->ImageCenter = InImageCenter;
+
+	SolverFunction->CameraPoses.Reserve(NumViews);
+	SolverFunction->Points3d.Reserve(NumViews);
+	SolverFunction->Points2d.Reserve(NumViews);
+
+	for (int32 ViewIndex = 0; ViewIndex < NumViews; ++ViewIndex)
+	{
+		SolverFunction->CameraPoses.Add(InCameraPoses[ViewIndex]);
+		SolverFunction->Points3d.Add(InObjectPoints[ViewIndex]);
+		SolverFunction->Points2d.Add(InImagePoints[ViewIndex]);
+	}
+
+	const double Error = Solver->minimize(WorkingSolution);
+
+	const FQuat FinalRotation = FQuat(WorkingSolution.at<double>(0, 0), WorkingSolution.at<double>(0, 1), WorkingSolution.at<double>(0, 2), WorkingSolution.at<double>(0, 3)).GetNormalized();
+	const FVector FinalLocation = FVector(WorkingSolution.at<double>(0, 4), WorkingSolution.at<double>(0, 5), WorkingSolution.at<double>(0, 6));
+
+	InOutNodalOffset.SetRotation(FinalRotation);
+	InOutNodalOffset.SetLocation(FinalLocation);
+
+	return Error;
+#else
+	return -1.0;
+#endif // WITH_OPENCV
+}
+
+#if WITH_OPENCV
+void ULensDistortionSolverOpenCV::InitCameraIntrinsics(
 	const cv::Mat& ObjectPoints,
 	const cv::Mat& ImagePoints,
 	const cv::Mat& NumPoints,
@@ -473,7 +643,7 @@ void FCameraCalibrationSolver::InitCameraIntrinsics(
 	CameraMatrix.at<double>(1, 2) = Cy;
 }
 
-void FCameraCalibrationSolver::InitCameraExtrinsics(
+void ULensDistortionSolverOpenCV::InitCameraExtrinsics(
 	const TSubclassOf<ULensModel> LensModel,
 	const cv::Mat& ObjectPoints,
 	const cv::Mat& ImagePoints,
@@ -631,7 +801,7 @@ void FCameraCalibrationSolver::InitCameraExtrinsics(
 	}
 }
 
-void FCameraCalibrationSolver::ProjectPoints(
+void ULensDistortionSolverOpenCV::ProjectPoints(
 	const TSubclassOf<ULensModel> LensModel,
 	const cv::Mat& ObjectPoints,
 	const cv::Mat& Rotation,
@@ -646,7 +816,7 @@ void FCameraCalibrationSolver::ProjectPoints(
 	ProjectPoints(LensModel, ObjectPoints, Rotation, Translation, CameraMatrix, DistCoeffs, ImageSize, ProjectedPoints, Jacobian, SolverFlags);
 }
 
-void FCameraCalibrationSolver::ProjectPoints(
+void ULensDistortionSolverOpenCV::ProjectPoints(
 	const TSubclassOf<ULensModel> LensModel,
 	const cv::Mat& ObjectPoints,
 	const cv::Mat& Rotation,
@@ -686,7 +856,7 @@ void FCameraCalibrationSolver::ProjectPoints(
 	}
 }
 
-void FCameraCalibrationSolver::ProjectPointsAnamorphic(
+void ULensDistortionSolverOpenCV::ProjectPointsAnamorphic(
 	const cv::Mat& ObjectPoints,
 	const cv::Mat& Rotation,
 	const cv::Mat& Translation,
@@ -1009,7 +1179,7 @@ void FCameraCalibrationSolver::ProjectPointsAnamorphic(
 	}
 }
 
-void FCameraCalibrationSolver::ProjectPointsSpherical(
+void ULensDistortionSolverOpenCV::ProjectPointsSpherical(
 	const cv::Mat& ObjectPoints,
 	const cv::Mat& Rotation,
 	const cv::Mat& Translation,
@@ -1224,9 +1394,9 @@ void FCameraCalibrationSolver::ProjectPointsSpherical(
 	}
 }
 
-void FCameraCalibrationSolver::GatherPoints(
-	const TArray<TArray<FVector>>& ObjectPoints,
-	const TArray<TArray<FVector2D>>& ImagePoints,
+void ULensDistortionSolverOpenCV::GatherPoints(
+	const TArray<FObjectPoints>& InObjectPointsArray,
+	const TArray<FImagePoints>& InImagePointsArray,
 	cv::Mat& ObjectPointsMat,
 	cv::Mat& ImagePointsMat)
 {
@@ -1235,26 +1405,28 @@ void FCameraCalibrationSolver::GatherPoints(
 
 	int TotalPointIndex = 0;
 
-	const int NumImages = ObjectPoints.Num();
+	const int NumImages = InObjectPointsArray.Num();
 
 	for (int ImageIndex = 0; ImageIndex < NumImages; ++ImageIndex)
 	{
-		const TArray<FVector>& CurrentObjectPoints = ObjectPoints[ImageIndex];
-		const TArray<FVector2D>& CurrentImagePoints = ImagePoints[ImageIndex];
+		const FObjectPoints& CurrentObjectPoints = InObjectPointsArray[ImageIndex];
+		const FImagePoints& CurrentImagePoints = InImagePointsArray[ImageIndex];
 
-		const int NumPointsInImage = CurrentObjectPoints.Num();
+		const int NumPointsInImage = CurrentObjectPoints.Points.Num();
 
 		for (int PointIndex = 0; PointIndex < NumPointsInImage; ++PointIndex)
 		{
-			ObjectPointsMatData[TotalPointIndex + PointIndex] = cv::Point3d(CurrentObjectPoints[PointIndex].X, CurrentObjectPoints[PointIndex].Y, CurrentObjectPoints[PointIndex].Z);
-			ImagePointsMatData[TotalPointIndex + PointIndex] = cv::Point2d(CurrentImagePoints[PointIndex].X, CurrentImagePoints[PointIndex].Y);
+			const FVector ObjectPointCV = FOpenCVHelper::ConvertUnrealToOpenCV(CurrentObjectPoints.Points[PointIndex]);
+			ObjectPointsMatData[TotalPointIndex + PointIndex] = cv::Point3d(ObjectPointCV.X, ObjectPointCV.Y, ObjectPointCV.Z);
+
+			ImagePointsMatData[TotalPointIndex + PointIndex] = cv::Point2d(CurrentImagePoints.Points[PointIndex].X, CurrentImagePoints.Points[PointIndex].Y);
 		}
 
 		TotalPointIndex += NumPointsInImage;
 	}
 }
 
-void FCameraCalibrationSolver::SubdivideJacobian(
+void ULensDistortionSolverOpenCV::SubdivideJacobian(
 	const cv::Mat& Jacobian,
 	cv::Mat& JacRotation,
 	cv::Mat& JacTranslation,
@@ -1478,4 +1650,54 @@ void FLevMarqSolver::Step()
 	}
 }
 
+int FOptimizeNodalOffsetSolver::getDims() const
+{
+	constexpr int32 NumRotationParameters = 4; // FQuat
+	constexpr int32 NumLocationParameters = 3; // FVector
+	return NumRotationParameters + NumLocationParameters;
+}
+
+double FOptimizeNodalOffsetSolver::calc(const double* x) const
+{
+	// Convert the input data (7 doubles) to an FQuat and FVector
+	const FQuat Rotation = FQuat(x[0], x[1], x[2], x[3]).GetNormalized();
+	const FVector Location = FVector(x[4], x[5], x[6]);
+
+	UE_LOG(LogCameraCalibrationSolver, VeryVerbose, TEXT("Nodal Offset Candidate:  Rotation: (%lf, %lf, %lf, %lf)  Location: (%lf, %lf, %lf)"),
+		Rotation.X, Rotation.Y, Rotation.Z, Rotation.W, Location.X, Location.Y, Location.Z);
+
+	FTransform NodalOffsetCandidate;
+
+	// As a result of the way that the downhill solver nudges the input data on each iteration, it is important to normalize the rotation
+	NodalOffsetCandidate.SetRotation(Rotation);
+	NodalOffsetCandidate.SetLocation(Location);
+
+	double ReprojectionErrorTotal = 0.0;
+	int32 NumTotalPoints = 0;
+
+	const int32 NumCameraViews = CameraPoses.Num();
+	for (int32 ViewIndex = 0; ViewIndex < NumCameraViews; ++ViewIndex)
+	{
+		const FTransform& CameraPose = CameraPoses[ViewIndex];
+		const TArray<FVector>& ObjectPoints = Points3d[ViewIndex];
+		const TArray<FVector2f>& ImagePoints = Points2d[ViewIndex];
+
+		// Compute the optimal camera pose using the nodal offset candidate for this iteration and the tracked camera pose 
+		const FTransform OptimalCameraPose = NodalOffsetCandidate * CameraPose;
+
+		// Compute the reprojection error for this view and add it to the running total
+		double ViewError = FOpenCVHelper::ComputeReprojectionError(ObjectPoints, ImagePoints, FocalLength, ImageCenter, OptimalCameraPose);
+		ReprojectionErrorTotal += ViewError;
+
+		NumTotalPoints += ImagePoints.Num();
+	}
+
+	const double RootMeanSquareError = FMath::Sqrt(ReprojectionErrorTotal / NumTotalPoints);
+
+	UE_LOG(LogCameraCalibrationSolver, VeryVerbose, TEXT("Reprojection Error: %lf"), RootMeanSquareError);
+
+	return RootMeanSquareError;
+}
 #endif // WITH_OPENCV
+
+#undef LOCTEXT_NAMESPACE

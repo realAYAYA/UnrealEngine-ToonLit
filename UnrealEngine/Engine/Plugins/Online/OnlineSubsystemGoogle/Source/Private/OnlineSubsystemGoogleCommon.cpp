@@ -13,6 +13,9 @@
 
 FOnlineSubsystemGoogleCommon::FOnlineSubsystemGoogleCommon(FName InInstanceName)
 	: FOnlineSubsystemImpl(GOOGLE_SUBSYSTEM, InInstanceName)
+	, bPlatformRequiresClientId(false)
+	, bPlatformAllowsClientIdOverride(false)
+	, bPlatformRequiresServerClientId(false)
 {
 }
 
@@ -23,16 +26,22 @@ FOnlineSubsystemGoogleCommon::~FOnlineSubsystemGoogleCommon()
 bool FOnlineSubsystemGoogleCommon::Init()
 {
 	static FString ConfigSection(TEXT("OnlineSubsystemGoogle"));
-	if (!GConfig->GetString(*ConfigSection, GOOGLE_CLIENTAUTH_ID, ClientId, GEngineIni))
+	if (bPlatformRequiresClientId)
 	{
-		UE_LOG_ONLINE(Warning, TEXT("Missing ClientId= in [%s] of DefaultEngine.ini"), *ConfigSection);
+		if (!GConfig->GetString(*ConfigSection, GOOGLE_CLIENTAUTH_ID, ClientId, GEngineIni))
+		{
+			UE_LOG_ONLINE(Warning, TEXT("Missing ClientId= in [%s] of DefaultEngine.ini"), *ConfigSection);
+		}
 	}
-
-	if (!GConfig->GetString(*ConfigSection, GOOGLE_SERVERAUTH_ID, ServerClientId, GEngineIni))
+	
+	if (bPlatformRequiresServerClientId)
 	{
-		UE_LOG_ONLINE(Warning, TEXT("Missing ServerClientId= in [%s] of DefaultEngine.ini"), *ConfigSection);
+		if (!GConfig->GetString(*ConfigSection, GOOGLE_SERVERAUTH_ID, ServerClientId, GEngineIni))
+		{
+			UE_LOG_ONLINE(Warning, TEXT("Missing ServerClientId= in [%s] of DefaultEngine.ini"), *ConfigSection);
+		}
 	}
-
+	
 	FString ConfigOverride;
 	FGoogleAuthConfig NewConfig;
 	if (GetConfigurationDelegate().ExecuteIfBound(ConfigOverride, NewConfig))
@@ -45,15 +54,29 @@ bool FOnlineSubsystemGoogleCommon::Init()
 			FString NewClientAuthId;
 			if (GConfig->GetString(*IniSection, GOOGLE_CLIENTAUTH_ID, NewClientAuthId, GEngineIni) && !NewClientAuthId.IsEmpty())
 			{
-				FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FOnlineSubsystemGoogleCommon::Init ClientId:%s"), *NewClientAuthId);
-				ClientId = NewClientAuthId;
+				if (bPlatformRequiresClientId && bPlatformAllowsClientIdOverride)
+				{
+					FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FOnlineSubsystemGoogleCommon::Init ClientId:%s"), *NewClientAuthId);
+					ClientId = NewClientAuthId;
+				}
+				else
+				{
+					FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FOnlineSubsystemGoogleCommon::Init Platform does not support ClientId override"), *NewClientAuthId);
+				}
 			}
 
 			FString NewServerAuthId;
 			if (GConfig->GetString(*IniSection, GOOGLE_SERVERAUTH_ID, NewServerAuthId, GEngineIni) && !NewServerAuthId.IsEmpty())
 			{
-				FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FOnlineSubsystemGoogleCommon::Init ServerClientId:%s"), *NewServerAuthId);
-				ServerClientId = NewServerAuthId;
+				if (bPlatformRequiresServerClientId)
+				{
+					FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FOnlineSubsystemGoogleCommon::Init ServerClientId:%s"), *NewServerAuthId);
+					ServerClientId = NewServerAuthId;
+				}
+				else
+				{
+					FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FOnlineSubsystemGoogleCommon::Init Platform does not support ServerClientId override"), *NewServerAuthId);
+				}
 			}
 		}
 	}

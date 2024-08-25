@@ -20,7 +20,7 @@ struct FLoadTimeProfilerTracePrivate
 	static void OutputDestroyLinker(const void* Linker);
 	static void OutputBeginRequest(uint64 RequestId);
 	static void OutputEndRequest(uint64 RequestId);
-	static void OutputPackageSummary(const void* AsyncPackage, const FName& PackageName, uint32 TotalHeaderSize, uint32 ImportCount, uint32 ExportCount);
+	static void OutputPackageSummary(const void* AsyncPackage, const FName& PackageName, uint32 TotalHeaderSize, uint32 ImportCount, uint32 ExportCount, int32 Priority);
 	static void OutputAsyncPackageImportDependency(const void* Package, const void* ImportedPackage);
 	static void OutputAsyncPackageRequestAssociation(const void* AsyncPackage, uint64 RequestId);
 	static void OutputAsyncPackageLinkerAssociation(const void* AsyncPackage, const void* Linker);
@@ -90,13 +90,13 @@ struct FLoadTimeProfilerTracePrivate
 #define TRACE_LOADTIME_DESTROY_LINKER(Linker) \
 	FLoadTimeProfilerTracePrivate::OutputDestroyLinker(Linker);
 
-#define TRACE_LOADTIME_PACKAGE_SUMMARY(AsyncPackage, PackageName, TotalHeaderSize, ImportCount, ExportCount) \
-	FLoadTimeProfilerTracePrivate::OutputPackageSummary(AsyncPackage, PackageName, TotalHeaderSize, ImportCount, ExportCount);
+#define TRACE_LOADTIME_PACKAGE_SUMMARY(AsyncPackage, PackageName, TotalHeaderSize, ImportCount, ExportCount, Priority) \
+	FLoadTimeProfilerTracePrivate::OutputPackageSummary(AsyncPackage, PackageName, TotalHeaderSize, ImportCount, ExportCount, Priority);
 
 #define TRACE_LOADTIME_ASYNC_PACKAGE_REQUEST_ASSOCIATION(AsyncPackage, RequestId) \
 	FLoadTimeProfilerTracePrivate::OutputAsyncPackageRequestAssociation(AsyncPackage, RequestId);
 
-#define TRACE_LOADTIME_ASYNC_PACKAGE_LINKER_ASSOCIATION(AsyncPackage, LinkerLinker) \
+#define TRACE_LOADTIME_ASYNC_PACKAGE_LINKER_ASSOCIATION(AsyncPackage, Linker) \
 	FLoadTimeProfilerTracePrivate::OutputAsyncPackageLinkerAssociation(AsyncPackage, Linker);
 
 #define TRACE_LOADTIME_ASYNC_PACKAGE_IMPORT_DEPENDENCY(AsyncPackage, ImportedAsyncPackage) \

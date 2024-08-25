@@ -341,7 +341,7 @@ protected:
 #endif
 
 	/** Indicates this light card should be considered a flag */
-	UPROPERTY(Getter = IsLightCardFlag, Setter = SetIsLightCardFlag, meta = (AllowPrivateAccess))
+	UPROPERTY(Getter = IsLightCardFlag, Setter = SetIsLightCardFlag, meta = (AllowPrivateAccess = "true"))
 	bool bIsLightCardFlag = false;
 
 private:

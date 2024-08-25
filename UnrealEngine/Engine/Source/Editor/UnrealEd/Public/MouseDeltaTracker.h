@@ -111,7 +111,7 @@ public:
 	/**
 	 * Marks that something caused the equivalent of mouse dragging, but with other means (keyboard short cut, mouse wheel).  Allows suppression of context menus with flight camera, etc
 	 */
-	void SetExternalMovement (void)			{ bExternalMovement = true;};
+	void SetExternalMovement (bool InExternalMovement = true)			{ bExternalMovement = InExternalMovement;};
 	/**
 	 * @return		true if something caused external movement of the mouse (keyboard, mouse wheel)
 	 */

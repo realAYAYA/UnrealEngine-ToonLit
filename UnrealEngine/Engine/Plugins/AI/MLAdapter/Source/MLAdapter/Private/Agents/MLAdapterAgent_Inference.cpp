@@ -25,7 +25,7 @@ void UMLAdapterAgent_Inference::PostInitProperties()
 		return;
 	}
 
-	Brain = Runtime->CreateModel(ModelData)->CreateModelInstance();
+	Brain = Runtime->CreateModelCPU(ModelData)->CreateModelInstanceCPU();
 
 	TConstArrayView<UE::NNE::FTensorDesc> InputTensorDescs = Brain->GetInputTensorDescs();
 	if (InputTensorDescs.Num() != 1)
@@ -57,14 +57,14 @@ void UMLAdapterAgent_Inference::PostInitProperties()
 		return;
 	}
 
-	InputTensorSizeInBytes = InputTensorDescs[0].GetElemByteSize() * InputTensorShape.Volume();
+	InputTensorSizeInBytes = InputTensorDescs[0].GetElementByteSize() * InputTensorShape.Volume();
 	if (InputTensorSizeInBytes == 0)
 	{
 		UE_LOG(LogMLAdapter, Warning, TEXT("Input tensor should be of non-zero size."));
 		return;
 	}
 
-	OutputTensorSizeInBytes = OutputTensorDescs[0].GetElemByteSize() * OutputTensorShapes[0].Volume();
+	OutputTensorSizeInBytes = OutputTensorDescs[0].GetElementByteSize() * OutputTensorShapes[0].Volume();
 	if (OutputTensorSizeInBytes == 0)
 	{
 		UE_LOG(LogMLAdapter, Warning, TEXT("Output tensor should be of non-zero size."));

@@ -32,9 +32,11 @@ ENGINE_API bool ShouldUseIrisReplication(const UObject* Actor);
 /** Parameters passed to UActorReplicationBridge::BeginReplication. */
 struct FActorBeginReplicationParams
 {
-	FActorBeginReplicationParams() : bIncludeInLevelGroupFilter(1U) {}
+	/** When true we ignore the configured dynamic filter for this actor type and use the explicit filter instead */
+	bool bOverrideDynamicFilterConfig = false;
 
-	uint32 bIncludeInLevelGroupFilter : 1U;
+	/** Only used when bOverrideDynamicFilterConfig is true. The name of the dynamic filter to assign to this actor. Can be NAME_None if no filters should be set. */
+	FName ExplicitDynamicFilterName;
 };
 
 #endif // UE_WITH_IRIS
@@ -72,34 +74,49 @@ public:
 
 	/** Stop replicating an ActorComponent and its associated SubObjects. */
 	ENGINE_API void EndReplicationForActorComponent(UActorComponent* ActorComponent, EEndReplicationFlags EndReplicationFlags = EEndReplicationFlags::None);
-	
+
 	/** Get object reference packagemap. Used in special cases where serialization hasn't been converted to use NetSerializers.  */
 	UIrisObjectReferencePackageMap* GetObjectReferencePackageMap() const { return ObjectReferencePackageMap; }
+
+	/** Tell the remote connection that we detected a reading error with a specific replicated object */
+	ENGINE_API virtual void ReportErrorWithNetRefHandle(uint32 ErrorType, FNetRefHandle RefHandle, uint32 ConnectionId) override;
 	
+	/** Updates the level group for an actor that changed levels */
+	void ActorChangedLevel(const AActor* Actor, const ULevel* PreviousLevel);
+
 	using UObjectReplicationBridge::EndReplication;
 
 protected:
 
 	// UObjectReplicationBridge
 	virtual void Initialize(UReplicationSystem* ReplicationSystem) override;
+	virtual void Deinitialize() override;
 	virtual bool WriteCreationHeader(UE::Net::FNetSerializationContext& Context, FNetRefHandle Handle) override;
 	virtual FCreationHeader* ReadCreationHeader(UE::Net::FNetSerializationContext& Context) override;
-	virtual FObjectReplicationBridgeInstantiateResult BeginInstantiateFromRemote(FNetRefHandle SubObjectOwnerNetHandle, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* InHeader) override;
+	virtual FObjectReplicationBridgeInstantiateResult BeginInstantiateFromRemote(FNetRefHandle RootObjectOfSubObject, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* InHeader) override;
 	virtual bool OnInstantiatedFromRemote(UObject* Instance, const FCreationHeader* InHeader, uint32 ConnectionId) const override;
+	virtual void OnSubObjectCreatedFromReplication(FNetRefHandle SubObjectHandle) override;
 	virtual void EndInstantiateFromRemote(FNetRefHandle Handle) override;
-	virtual void DestroyInstanceFromRemote(UObject* Instance, EReplicationBridgeDestroyInstanceReason DestroyReason, EReplicationBridgeDestroyInstanceFlags DestroyFlags) override;
+	virtual void DestroyInstanceFromRemote(const FDestroyInstanceParams& Params) override;
 	virtual void GetInitialDependencies(FNetRefHandle Handle, FNetDependencyInfoArray& OutDependencies) const override;
 	virtual bool RemapPathForPIE(uint32 ConnectionId, FString& Path, bool bReading) const override;
 	virtual bool ObjectLevelHasFinishedLoading(UObject* Object) const override;
 	virtual bool IsAllowedToDestroyInstance(const UObject* Instance) const override;
+	virtual void OnProtocolMismatchDetected(FNetRefHandle ObjectHandle) override;
+	virtual void OnProtocolMismatchReported(FNetRefHandle RefHandle, uint32 ConnectionId) override;
 
 	virtual float GetPollFrequencyOfRootObject(const UObject* ReplicatedObject) const override;
 
+	[[nodiscard]] virtual FString PrintConnectionInfo(uint32 ConnectionId) const override;
+
 private:
 	void GetActorCreationHeader(const AActor* Actor, UE::Net::Private::FActorCreationHeader& Header) const;
-	void GetSubObjectCreationHeader(const UObject* Object, UE::Net::Private::FSubObjectCreationHeader& Header) const;
+	void GetSubObjectCreationHeader(const UObject* Object, const UObject* RootObject, UE::Net::Private::FSubObjectCreationHeader& Header) const;
 
 	void OnMaxTickRateChanged(UNetDriver* InNetDriver, int32 NewMaxTickRate, int32 OldMaxTickRate);
+
+	void WakeUpObjectInstantiatedFromRemote(AActor* Actor) const;
+	void AddActorToLevelGroup(const AActor* Actor);
 
 private:
 	UNetDriver* NetDriver;

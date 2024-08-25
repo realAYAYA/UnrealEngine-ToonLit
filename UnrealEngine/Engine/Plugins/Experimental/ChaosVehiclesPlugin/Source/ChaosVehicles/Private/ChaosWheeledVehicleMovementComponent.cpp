@@ -7,8 +7,9 @@
 
 #include "DrawDebugHelpers.h"
 #include "DisplayDebugHelpers.h"
-#include "DisplayDebugHelpers.h"
 #include "Engine/Engine.h"
+#include "Engine/HitResult.h"
+#include "Engine/OverlapResult.h"
 #include "GameFramework/Pawn.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "PhysicsEngine/PhysicsAsset.h"
@@ -33,7 +34,7 @@
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 DECLARE_STATS_GROUP(TEXT("ChaosVehicle"), STATGROUP_ChaosVehicle, STATGROUP_Advanced);
@@ -1080,6 +1081,15 @@ void UChaosWheeledVehicleSimulation::FillOutputState(FChaosVehicleAsyncOutput& O
 		Output.VehicleSimOutput.Wheels.Add(WheelsOut);
 	}
 
+}
+
+UChaosWheeledVehicleSimulation::UChaosWheeledVehicleSimulation(): bOverlapHit(false)
+{
+	QueryBox.Init();
+}
+
+UChaosWheeledVehicleSimulation::~UChaosWheeledVehicleSimulation()
+{
 }
 
 void UChaosWheeledVehicleSimulation::UpdateConstraintHandles(TArray<FPhysicsConstraintHandle>& ConstraintHandlesIn)
@@ -2915,8 +2925,48 @@ FChaosWheelSetup::FChaosWheelSetup()
 
 }
 
+FWheelState::FWheelState()
+{
+}
+
+FWheelState::~FWheelState()
+{
+}
+
+FWheelState::FWheelState(const FWheelState& Other): WheelLocalLocation(Other.WheelLocalLocation),
+                                                    WheelWorldLocation(Other.WheelWorldLocation),
+                                                    WorldWheelVelocity(Other.WorldWheelVelocity),
+                                                    LocalWheelVelocity(Other.LocalWheelVelocity),
+                                                    Trace(Other.Trace),
+                                                    TraceResult(Other.TraceResult)
+{
+}
+
+FWheelState& FWheelState::operator=(const FWheelState& Other)
+{
+	if (this == &Other)
+		return *this;
+	WheelLocalLocation = Other.WheelLocalLocation;
+	WheelWorldLocation = Other.WheelWorldLocation;
+	WorldWheelVelocity = Other.WorldWheelVelocity;
+	LocalWheelVelocity = Other.LocalWheelVelocity;
+	Trace = Other.Trace;
+	TraceResult = Other.TraceResult;
+	return *this;
+}
+
+void FWheelState::Init(int NumWheels)
+{
+	WheelLocalLocation.Init(FVector::ZeroVector, NumWheels);
+	WheelWorldLocation.Init(FVector::ZeroVector, NumWheels);
+	WorldWheelVelocity.Init(FVector::ZeroVector, NumWheels);
+	LocalWheelVelocity.Init(FVector::ZeroVector, NumWheels);
+	Trace.SetNum(NumWheels);
+	TraceResult.SetNum(NumWheels);
+}
+
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif
 
 

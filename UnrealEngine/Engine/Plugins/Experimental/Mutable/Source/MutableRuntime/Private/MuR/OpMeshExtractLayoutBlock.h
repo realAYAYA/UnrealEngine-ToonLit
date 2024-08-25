@@ -124,9 +124,6 @@ namespace mu
 		// TODO: Optimise
 		Result->CopyFrom(*pSource);
 
-        // TODO
-        Result->SetFaceGroupCount( 0 );
-
 		UntypedMeshBufferIteratorConst itBlocks( pSource->GetVertexBuffers(),
 												 MBS_LAYOUTBLOCK, layout );
 
@@ -173,50 +170,5 @@ namespace mu
         Result->m_surfaces.Empty();
         Result->EnsureSurfaceData();
 	}
-
-
-    //---------------------------------------------------------------------------------------------
-    inline void MeshExtractFaceGroup(Mesh* Result, const Mesh* pSource, int group, bool& bOutSuccess)
-    {
-		check(pSource);
-		bOutSuccess = true;
-
-        if (group < 0 || group >= pSource->GetFaceGroupCount())
-        {
-			bOutSuccess = true; // use empty mesh as retun value.
-            return;
-        }
-
-        // TODO: Optimise
-		Result->CopyFrom(*pSource);
-
-        int resultVertices = 0;
-		TArray<int> oldToNew;
-		oldToNew.Init(-1,pSource->GetVertexCount());
-		TArray<int> newToOld;
-        newToOld.Reserve( pSource->GetVertexCount() );
-
-        UntypedMeshBufferIteratorConst itIndex( pSource->GetIndexBuffers(), MBS_VERTEXINDEX );
-        for ( int32 f=0; f<pSource->m_faceGroups[group].m_faces.Num(); ++f )
-        {
-            int32 face = pSource->m_faceGroups[group].m_faces[f];
-
-            for (int i=0; i<3; i++)
-            {
-                uint32_t vertexIndex = (itIndex+face*3+i).GetAsUINT32();
-                if ( oldToNew[vertexIndex]<0 )
-                {
-                    oldToNew[vertexIndex] = resultVertices++;
-                    newToOld.Add( vertexIndex );
-                }
-            }
-        }
-
-        MeshExtractFromVertices(pSource, Result, oldToNew, newToOld);
-
-        Result->m_surfaces.Empty();
-        Result->EnsureSurfaceData();
-
-    }
 
 }

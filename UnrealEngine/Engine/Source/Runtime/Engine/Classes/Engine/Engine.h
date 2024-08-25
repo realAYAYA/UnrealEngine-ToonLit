@@ -28,6 +28,7 @@
 #include "Templates/UniqueObj.h"
 #include "Containers/Ticker.h"
 #include "DynamicRenderScaling.h"
+#include "Misc/StatusLog.h"
 #include "Engine.generated.h"
 
 #define WITH_DYNAMIC_RESOLUTION (!UE_SERVER)
@@ -1406,9 +1407,15 @@ public:
 	UPROPERTY()
 	TObjectPtr<class UTexture> WeightMapPlaceholderTexture;
 
+	UPROPERTY()
+	TObjectPtr<class UTexture> WeightMapArrayPlaceholderTexture;
+	
 	/** Path of the texture used as a placeholder for terrain weight-maps to give the material the correct texture format. */
 	UPROPERTY(globalconfig)
 	FSoftObjectPath WeightMapPlaceholderTextureName;
+
+	UPROPERTY(globalconfig)
+	FSoftObjectPath WeightMapArrayPlaceholderTextureName;
 
 	/** Texture used to display LightMapDensity */
 	UPROPERTY()
@@ -2176,6 +2183,7 @@ public:
 	/** Called by internal engine systems after a travel failure has occurred */
 	void BroadcastTravelFailure(UWorld* InWorld, ETravelFailure::Type FailureType, const FString& ErrorString = TEXT(""))
 	{
+		UE_LOGSTATUS(Warning, TEXT("Travel failed, type: %s, reason: \"%s\""), *UEnum::GetValueAsString(FailureType), *ErrorString);
 		TravelFailureEvent.Broadcast(InWorld, FailureType, ErrorString);
 	}
 
@@ -2265,6 +2273,10 @@ public:
 	ENGINE_API bool HandleDumpGPUCommand( const TCHAR* Cmd, FOutputDevice& Ar );
 #endif
 
+#if WITH_GPUDEBUGCRASH
+	ENGINE_API bool HandleGPUDebugCrashCommand( const TCHAR* Cmd, FOutputDevice& Ar );
+#endif
+
 	// Compile in Debug or Development
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST) && WITH_HOT_RELOAD
 	ENGINE_API bool HandleHotReloadCommand( const TCHAR* Cmd, FOutputDevice& Ar );
@@ -2330,6 +2342,7 @@ public:
 	ENGINE_API bool HandleConfigHashCommand( const TCHAR* Cmd, FOutputDevice& Ar );						
 	ENGINE_API bool HandleConfigMemCommand( const TCHAR* Cmd, FOutputDevice& Ar );	
 	ENGINE_API bool HandleGetIniCommand(const TCHAR* Cmd, FOutputDevice& Ar);
+	ENGINE_API bool HandleRedirectOutputCommand(const TCHAR* Cmd, FOutputDevice& Ar, UWorld* InWorld);
 #endif // !UE_BUILD_SHIPPING
 
 	/** Update everything. */
@@ -2448,6 +2461,11 @@ public:
 	 */
 	ENGINE_API virtual bool ShouldThrottleCPUUsage() const;
 
+	/**
+	 * @return true if all windows are minimized or hidden (Per OS definition)
+	 */
+	ENGINE_API bool AreAllWindowsHidden() const;
+
 public:
 	/** 
 	 * Return a reference to the GamePlayers array. 
@@ -2542,20 +2560,6 @@ public:
 		// Intentionally empty.
 	}
 
-	/**
-	 * @return true if property coloration color has a valid implementation
-	 */
-	virtual bool IsPropertyColorationColorFeatureActivated() const { return false; }
-
-	/**
-	 * Computes a color to use for property coloration for the given object.
-	 *
-	 * @param	Object		The object for which to compute a property color.
-	 * @param	OutColor	[out] The returned color.
-	 * @return				true if a color was successfully set on OutColor, false otherwise.
-	 */
-	ENGINE_API virtual bool GetPropertyColorationColor(class UObject* Object, FColor& OutColor);
-
 	/** Uses StatColorMappings to find a color for this stat's value. */
 	ENGINE_API bool GetStatValueColoration(const FString& StatName, float Value, FColor& OutColor);
 
@@ -2600,12 +2604,6 @@ public:
 		// The editor may override this to handle sprite categories as necessary
 		return INDEX_NONE;
 	}
-
-	/** Looks up the GUID of a package on disk. The package must NOT be in the auto-download cache.
-	 * This may require loading the header of the package in question and is therefore slow.
-	 */
-	UE_DEPRECATED(4.27, "UPackage::Guid has not been used by the engine for a long time and UEngine::GetPackageGuid will be removed.")
-	static ENGINE_API FGuid GetPackageGuid(FName PackageName, bool bForPIE);
 
 	static ENGINE_API void PreGarbageCollect();
 
@@ -2945,16 +2943,20 @@ public:
 		bool bCopyDeprecatedProperties;
 		bool bPreserveRootComponent;
 		bool bPerformDuplication;
+		bool bOnlyHandleDirectSubObjects;
 
 		/** Skips copying properties with BlueprintCompilerGeneratedDefaults metadata */
 		bool bSkipCompilerGeneratedDefaults;
 		bool bNotifyObjectReplacement;
 		bool bClearReferences;
+		UE_DEPRECATED(5.4, "This isn't used anymore by the code.")
 		bool bDontClearReferenceIfNewerClassExists;
+		bool bReplaceInternalReferenceUponRead; // While reading back object ptr, immediately replace them if they are in the replacement map.
 
 		// In cases where the SourceObject will no longer be able to look up its correct Archetype, it can be supplied
 		UObject* SourceObjectArchetype;
 		TMap<UObject*, UObject*>* OptionalReplacementMappings;
+		const TMap<UClass*, UClass*>* OptionalOldToNewClassMappings; // Will be used along with the bReplaceInternalReferenceUponRead;
 
 		ENGINE_API FCopyPropertiesForUnrelatedObjectsParams();
 		ENGINE_API FCopyPropertiesForUnrelatedObjectsParams(const FCopyPropertiesForUnrelatedObjectsParams&);

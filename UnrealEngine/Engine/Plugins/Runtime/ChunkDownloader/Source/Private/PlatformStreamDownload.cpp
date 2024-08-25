@@ -63,7 +63,7 @@ FDownloadCancel PlatformStreamDownload(const FString& Url, const FString& Target
 	// bind the progress delegate
 	if (Progress)
 	{
-		Request->OnRequestProgress().BindLambda([Progress](FHttpRequestPtr HttpRequest, int32 BytesSent, int32 BytesReceived) {
+		Request->OnRequestProgress64().BindLambda([Progress](FHttpRequestPtr HttpRequest, uint64 BytesSent, uint64 BytesReceived) {
 			Progress(BytesReceived);
 		});
 	}

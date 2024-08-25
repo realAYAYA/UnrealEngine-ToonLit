@@ -13,4 +13,9 @@ namespace Gauntlet
 
 		public override string PlatformFolderPrefix { get { return "Windows"; } }
 	}
+
+	public interface IWindowsSelfInstallingBuild
+	{
+		WindowsAppInstall Install(TargetDeviceWindows TargetDevice, UnrealAppConfig AppConfig, out string BasePath);
+	}
 }

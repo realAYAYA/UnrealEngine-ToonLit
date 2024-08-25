@@ -2,7 +2,9 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "Modules/ModuleManager.h"
 //#include "AI/NavigationSystemBase.h"
 #if WITH_EDITOR

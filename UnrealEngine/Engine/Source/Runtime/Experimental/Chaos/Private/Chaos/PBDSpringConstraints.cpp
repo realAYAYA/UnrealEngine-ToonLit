@@ -30,14 +30,15 @@ static int32 Chaos_Spring_ParallelConstraintCount = 100;
 FAutoConsoleVariableRef CVarChaosSpringParallelConstraintCount(TEXT("p.Chaos.Spring.ParallelConstraintCount"), Chaos_Spring_ParallelConstraintCount, TEXT("If we have more constraints than this, use parallel-for in Apply."));
 #endif
 
-void FPBDSpringConstraints::InitColor(const FSolverParticles& Particles)
+template<typename SolverParticlesOrRange>
+void FPBDSpringConstraints::InitColor(const SolverParticlesOrRange& Particles)
 {
 	// In dev builds we always color so we can tune the system without restarting. See Apply()
 #if UE_BUILD_SHIPPING || UE_BUILD_TEST
 	if (Constraints.Num() > Chaos_Spring_ParallelConstraintCount)
 #endif
 	{
-		const TArray<TArray<int32>> ConstraintsPerColor = FGraphColoring::ComputeGraphColoring(Constraints, Particles, ParticleOffset, ParticleOffset + ParticleCount);
+		const TArray<TArray<int32>> ConstraintsPerColor = FGraphColoring::ComputeGraphColoringParticlesOrRange(Constraints, Particles, ParticleOffset, ParticleOffset + ParticleCount);
 		
 		// Reorder constraints based on color so each array in ConstraintsPerColor contains contiguous elements.
 		TArray<TVec2<int32>> ReorderedConstraints;
@@ -70,8 +71,11 @@ void FPBDSpringConstraints::InitColor(const FSolverParticles& Particles)
 		Stiffness.ReorderIndices(OrigToReorderedIndices);
 	}
 }
+template CHAOS_API void FPBDSpringConstraints::InitColor(const FSolverParticles& Particles);
+template CHAOS_API void FPBDSpringConstraints::InitColor(const FSolverParticlesRange& Particles);
 
-void FPBDSpringConstraints::ApplyHelper(FSolverParticles& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const
+template<typename SolverParticlesOrRange>
+void FPBDSpringConstraints::ApplyHelper(SolverParticlesOrRange& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const
 {
 	const TVec2<int32>& Constraint = Constraints[ConstraintIndex];
 	const int32 i1 = Constraint[0];
@@ -87,7 +91,8 @@ void FPBDSpringConstraints::ApplyHelper(FSolverParticles& Particles, const FSolv
 	}
 }
 
-void FPBDSpringConstraints::Apply(FSolverParticles& Particles, const FSolverReal Dt) const
+template<typename SolverParticlesOrRange>
+void FPBDSpringConstraints::Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FPBDSpringConstraints_Apply);
 	SCOPE_CYCLE_COUNTER(STAT_PBD_Spring);
@@ -183,6 +188,8 @@ void FPBDSpringConstraints::Apply(FSolverParticles& Particles, const FSolverReal
 		}
 	}
 }
+template CHAOS_API void FPBDSpringConstraints::Apply(FSolverParticles& Particles, const FSolverReal Dt) const;
+template CHAOS_API void FPBDSpringConstraints::Apply(FSolverParticlesRange& Particles, const FSolverReal Dt) const;
 
 void FPBDEdgeSpringConstraints::SetProperties(
 	const FCollectionPropertyConstFacade& PropertyCollection,

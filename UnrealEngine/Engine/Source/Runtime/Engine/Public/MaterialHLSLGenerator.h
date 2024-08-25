@@ -75,10 +75,10 @@ public:
 	const FMaterialLayersFunctions* GetLayerOverrides() const { return LayerOverrides; }
 
 	const UMaterial* GetTargetMaterial() const;
-	UE::HLSLTree::FTree& GetTree() const;
+	ENGINE_API UE::HLSLTree::FTree& GetTree() const;
 	UE::Shader::FStructTypeRegistry& GetTypeRegistry() const;
 	const UE::Shader::FStructType* GetMaterialAttributesType() const;
-	const UE::Shader::FValue& GetMaterialAttributesDefaultValue() const;
+	const UE::HLSLTree::FExpression* GetMaterialAttributesDefaultExpression() const;
 
 	UMaterialExpression* GetCurrentExpression() const;
 
@@ -105,19 +105,19 @@ public:
 
 	UE::HLSLTree::FScope* NewJoinedScope(UE::HLSLTree::FScope& Scope);
 
-	const UE::HLSLTree::FExpression* NewConstant(const UE::Shader::FValue& Value);
-	const UE::HLSLTree::FExpression* NewTexCoord(int32 Index);
+	ENGINE_API const UE::HLSLTree::FExpression* NewConstant(const UE::Shader::FValue& Value);
+	ENGINE_API const UE::HLSLTree::FExpression* NewTexCoord(int32 Index);
 	const UE::HLSLTree::FExpression* NewExternalInput(UE::HLSLTree::Material::EExternalInput Input);
 	const UE::HLSLTree::FExpression* NewSwizzle(const UE::HLSLTree::FSwizzleParameters& Params, const UE::HLSLTree::FExpression* Input);
 
 	template<typename StringType>
-	inline const UE::HLSLTree::FExpression* NewErrorExpression(const StringType& InError)
+	[[nodiscard]] inline const UE::HLSLTree::FExpression* NewErrorExpression(const StringType& InError)
 	{
 		return InternalNewErrorExpression(FStringView(InError));
 	}
 
 	template<typename FormatType, typename... Types>
-	const UE::HLSLTree::FExpression* NewErrorExpressionf(const FormatType& Format, Types... Args)
+	[[nodiscard]] const UE::HLSLTree::FExpression* NewErrorExpressionf(const FormatType& Format, Types... Args)
 	{
 		TStringBuilder<1024> String;
 		String.Appendf(Format, Forward<Types>(Args)...);
@@ -128,6 +128,7 @@ public:
 
 	const UE::HLSLTree::FExpression* NewDefaultInputConstant(int32 InputIndex, const UE::Shader::FValue& Value);
 	const UE::HLSLTree::FExpression* NewDefaultInputExternal(int32 InputIndex, UE::HLSLTree::Material::EExternalInput Input);
+	const UE::HLSLTree::FExpression* NewDefaultInputExpression(int32 InputIndex, const UE::HLSLTree::FExpression* Expression);
 
 	/**
 	 * Returns the appropriate HLSLNode representing the given UMaterialExpression.
@@ -144,19 +145,38 @@ public:
 
 	bool GenerateStatements(UE::HLSLTree::FScope& Scope, UMaterialExpression* MaterialExpression);
 
-	const UE::HLSLTree::FExpression* GenerateMaterialParameter(FName InParameterName,
+	ENGINE_API const UE::HLSLTree::FExpression* GenerateMaterialParameter(FName InParameterName,
 		const FMaterialParameterMetadata& InParameterMeta,
 		EMaterialSamplerType InSamplerType = SAMPLERTYPE_Color,
 		const FGuid& InExternalTextureGuid = FGuid());
+
+	struct FConnectedInput
+	{
+		const UE::HLSLTree::FExpression* Expression;
+		const FExpressionInput* Input;
+		UE::HLSLTree::FScope* Scope;
+
+		explicit FConnectedInput(const UE::HLSLTree::FExpression* InExpression)
+			: Expression(InExpression)
+			, Input(nullptr)
+			, Scope(nullptr)
+		{}
+
+		FConnectedInput(const FExpressionInput* InInput, UE::HLSLTree::FScope* InScope)
+			: Expression(nullptr)
+			, Input(InInput)
+			, Scope(InScope)
+		{}
+	};
 
 	const UE::HLSLTree::FExpression* GenerateFunctionCall(UE::HLSLTree::FScope& Scope,
 		UMaterialFunctionInterface* Function,
 		EMaterialParameterAssociation ParameterAssociation,
 		int32 ParameterIndex,
-		TArrayView<const UE::HLSLTree::FExpression*> ConnectedInputs,
+		TArrayView<FConnectedInput> ConnectedInputs,
 		int32 OutputIndex);
 
-	const UE::HLSLTree::FExpression* GenerateBranch(UE::HLSLTree::FScope& Scope,
+	ENGINE_API const UE::HLSLTree::FExpression* GenerateBranch(UE::HLSLTree::FScope& Scope,
 		const UE::HLSLTree::FExpression* ConditionExpression,
 		const UE::HLSLTree::FExpression* TrueExpression,
 		const UE::HLSLTree::FExpression* FalseExpression);
@@ -191,8 +211,6 @@ public:
 	FMaterialParameterInfo GetParameterInfo(const FName& ParameterName) const;
 
 	int32 FindOrAddCustomExpressionOutputStructId(TArrayView<UE::Shader::FStructFieldInitializer> StructFields);
-	
-	int32 FindOrAddParameterCollection(UMaterialParameterCollection* ParameterCollection);
 
 private:
 	static constexpr int32 MaxNumPreviousScopes = UE::HLSLTree::MaxNumPreviousScopes;
@@ -217,7 +235,7 @@ private:
 
 	using FFunctionInputArray = TArray<const UMaterialExpressionFunctionInput*, TInlineAllocator<4>>;
 	using FFunctionOutputArray = TArray<UMaterialExpressionFunctionOutput*, TInlineAllocator<4>>;
-	using FConnectedInputArray = TArray<const UE::HLSLTree::FExpression*, TInlineAllocator<4>>;
+	using FConnectedInputArray = TArray<FConnectedInput, TInlineAllocator<4>>;
 
 	struct FFunctionCallEntry
 	{
@@ -226,9 +244,46 @@ private:
 		FFunctionInputArray FunctionInputs;
 		FFunctionOutputArray FunctionOutputs;
 		FConnectedInputArray ConnectedInputs;
+		uint64 GeneratingOutputMask = 0; // Do we need to support more than 64 outputs?
 		EMaterialParameterAssociation ParameterAssociation = GlobalParameter;
 		int32 ParameterIndex = INDEX_NONE;
 		bool bGeneratedResult = false;
+
+		void BeginGeneratingOutput(int32 OutputIndex)
+		{
+			check(OutputIndex < 64);
+			GeneratingOutputMask |= (1llu << OutputIndex);
+		}
+
+		void EndGeneratingOutput(int32 OutputIndex)
+		{
+			check(IsGeneratingOutput(OutputIndex));
+			GeneratingOutputMask ^= (1llu << OutputIndex);
+		}
+
+		bool IsGeneratingOutput(int32 OutputIndex) const
+		{
+			return GeneratingOutputMask & (1llu << OutputIndex);
+		}
+	};
+
+	struct FScopedGenerateFunctionOutput
+	{
+		FScopedGenerateFunctionOutput(FFunctionCallEntry* InFunctionCall, int32 InOutputIndex)
+			: FunctionCall(InFunctionCall)
+			, OutputIndex(InOutputIndex)
+		{
+			FunctionCall->BeginGeneratingOutput(OutputIndex);
+		}
+
+		~FScopedGenerateFunctionOutput()
+		{
+			FunctionCall->EndGeneratingOutput(OutputIndex);
+		}
+
+	private:
+		FFunctionCallEntry* FunctionCall;
+		int32 OutputIndex;
 	};
 
 	struct FStatementEntry
@@ -240,7 +295,7 @@ private:
 	bool InternalGenerate();
 
 	const UE::HLSLTree::FExpression* InternalNewErrorExpression(FStringView Error);
-	bool InternalError(FStringView ErrorMessage);
+	ENGINE_API bool InternalError(FStringView ErrorMessage);
 
 	void InternalRegisterExpressionData(const FName& Type, const UMaterialExpression* MaterialExpression, void* Data);
 	void* InternalFindExpressionData(const FName& Type, const UMaterialExpression* MaterialExpression);
@@ -277,5 +332,19 @@ private:
 	TMap<FXxHash64, const UE::HLSLTree::FExpression*> GeneratedExpressionMap;
 	TMap<FXxHash64, int32> CustomExpressionOutputStructIdMap;
 };
+
+ENGINE_API bool GenerateStaticTerrainLayerWeightExpression(
+	FName LayerName,
+	float PreviewWeight,
+	bool bUseTextureArray, 
+	FMaterialHLSLGenerator& Generator,
+	const UE::HLSLTree::FExpression*& OutExpression);
+
+UE_DEPRECATED(5.4, "GenerateStaticTerrainLayerWeightExpression(FName, float, FMaterialHLSLGenerator&, const UE::HLSLTree::FExpression*&) use version above")
+ENGINE_API bool GenerateStaticTerrainLayerWeightExpression(
+	FName LayerName,
+	float PreviewWeight,
+	FMaterialHLSLGenerator& Generator,
+	const UE::HLSLTree::FExpression*& OutExpression);
 
 #endif // WITH_EDITOR

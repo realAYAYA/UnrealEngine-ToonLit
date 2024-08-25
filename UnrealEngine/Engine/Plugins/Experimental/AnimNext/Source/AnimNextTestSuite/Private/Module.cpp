@@ -4,7 +4,7 @@
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
 
-namespace UE::AnimNext
+namespace UE::AnimNext::Tests
 {
 
 class FModule : public IModuleInterface
@@ -14,4 +14,4 @@ public:
 
 }
 
-IMPLEMENT_MODULE(UE::AnimNext::FModule, AnimNextTestSuite)
+IMPLEMENT_MODULE(UE::AnimNext::Tests::FModule, AnimNextTestSuite)

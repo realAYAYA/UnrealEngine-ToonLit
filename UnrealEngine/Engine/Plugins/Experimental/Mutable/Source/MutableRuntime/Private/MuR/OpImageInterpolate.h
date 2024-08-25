@@ -5,76 +5,70 @@
 #include "MuR/ImagePrivate.h"
 #include "MuR/Platform.h"
 
+#include "Async/ParallelFor.h"
+
 namespace mu
 {
 
-	//---------------------------------------------------------------------------------------------
-	//!
-	//---------------------------------------------------------------------------------------------
-    inline void ImageInterpolate( Image* pDest,
-                                  const Image* pB,
-                                  float factor )
+    inline void ImageInterpolate(Image* DestImage, const Image* BImage, float Factor)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(ImageInterpolate)
 
-		check(pDest && pB);
-        check(pDest->GetSizeX() == pB->GetSizeX() );
-        check(pDest->GetSizeY() == pB->GetSizeY() );
-        check(pDest->GetFormat() == pB->GetFormat() );
+		check(DestImage && BImage);
+        check(DestImage->GetSizeX() == BImage->GetSizeX());
+        check(DestImage->GetSizeY() == BImage->GetSizeY());
+        check(DestImage->GetFormat() == BImage->GetFormat());
 
 		// Clamp the factor
-		factor = FMath::Max( 0.0f, FMath::Min( 1.0f, factor ) );
+		Factor = FMath::Clamp(Factor, 0.0f, 1.0f);
+		const uint16 FactorUNorm = static_cast<uint16>(Factor * 255.0f);
 
-        uint8* pDestBuf = pDest->GetData();
-        const uint8* pBBuf = pB->GetData();
+		const int32 BytesPerElem = GetImageFormatData(DestImage->GetFormat()).BytesPerBlock;
 
-		// Generic implementation
-		int32 PixelCount = (int32)pDest->CalculatePixelCount();
+		constexpr int32 NumBatchElems = 1 << 14;
 
-		switch ( pDest->GetFormat() )
+		const int32 NumBatches = DestImage->DataStorage.GetNumBatches(NumBatchElems, BytesPerElem);
+		check(BImage->DataStorage.GetNumBatches(NumBatchElems, BytesPerElem) == NumBatches);
+
+		// Generic implementation	
+		auto ProcessBatch = [DestImage, BImage, NumBatchElems, BytesPerElem, FactorUNorm](int32 BatchId)
 		{
-		case EImageFormat::IF_L_UBYTE:
+			TArrayView<uint8> DestView = DestImage->DataStorage.GetBatch(BatchId, NumBatchElems, BytesPerElem);
+			TArrayView<const uint8> BView = BImage->DataStorage.GetBatch(BatchId, NumBatchElems, BytesPerElem);
+
+			const uint8* BBuf = BView.GetData();
+			uint8* DestBuf = DestView.GetData();
+
+			const int32 NumBytes = DestView.Num();
+			check(BView.Num() == NumBytes);
+
+			switch (DestImage->GetFormat())
+			{
+			case EImageFormat::IF_L_UBYTE:
+			case EImageFormat::IF_RGB_UBYTE:
+			case EImageFormat::IF_BGRA_UBYTE:
+			case EImageFormat::IF_RGBA_UBYTE:
+			{
+				for (int32 I = 0; I < NumBytes; ++I)
+				{
+					uint16 AValue = DestBuf[I];
+					uint16 BValue = BBuf[I];
+					DestBuf[I] = static_cast<uint8>((AValue * (255 - FactorUNorm) + BValue*FactorUNorm) / 255);
+				}
+				break;
+			}
+			default:
+				check(false);
+			}
+		};
+
+		if (NumBatches == 1)
 		{
-            uint32 w_8 = (uint32)(factor*255);
-			for ( int i=0; i< PixelCount; ++i )
-			{
-                uint32 a_8 = *pDestBuf;
-                uint32 b_8 = *pBBuf++;
-                uint32 i_16 = a_8 * (255-w_8) + b_8 * w_8;
-                *pDestBuf++ = (uint8) ( i_16>>8 );
-			}
-			break;
+			ProcessBatch(0);
 		}
-
-		case EImageFormat::IF_RGB_UBYTE:
+		else if (NumBatches > 1)
 		{
-            uint32 w_8 = (uint32)(factor*255);
-			for ( int i=0; i< PixelCount *3; ++i )
-			{
-                uint32 a_8 = *pDestBuf;
-                uint32 b_8 = *pBBuf++;
-                uint32 i_16 = a_8 * (255-w_8) + b_8 * w_8;
-                *pDestBuf++ = (uint8) ( i_16>>8 );
-			}
-			break;
-		}
-
-        case EImageFormat::IF_BGRA_UBYTE:
-        case EImageFormat::IF_RGBA_UBYTE:
-        {
-            uint32 w_8 = (uint32)(factor*255);
-			for ( int i=0; i< PixelCount *4; ++i )
-			{
-                uint32 a_8 = *pDestBuf;
-                uint32 b_8 = *pBBuf++;
-                uint32 i_16 = a_8 * (255-w_8) + b_8 * w_8;
-                *pDestBuf++ = (uint8)(i_16>>8);
-			}
-			break;
-		}
-
-		default:
-			check(false);
+			ParallelFor(NumBatches, ProcessBatch);
 		}
 
 	}

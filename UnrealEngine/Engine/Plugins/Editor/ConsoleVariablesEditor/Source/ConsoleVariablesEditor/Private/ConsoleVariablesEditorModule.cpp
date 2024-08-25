@@ -8,6 +8,7 @@
 #include "ConsoleVariablesEditorLog.h"
 #include "ConsoleVariablesEditorProjectSettings.h"
 #include "ConsoleVariablesEditorStyle.h"
+#include "HAL/IConsoleManager.h"
 #include "MultiUser/ConsoleVariableSync.h"
 #include "MultiUser/ConsoleVariableSyncData.h"
 #include "Views/MainPanel/ConsoleVariablesEditorMainPanel.h"
@@ -23,11 +24,33 @@
 
 #define LOCTEXT_NAMESPACE "FConsoleVariablesEditorModule"
 
+namespace UE::ConsoleVariablesEditor::ModuleUtils::Private
+{
+	/**
+	 * Warn the user once if attempting to sync Cvars in multi-user if in PIE.
+	 * @return Whether the user is in PIE.
+	 */
+	static bool CheckIsRunningPieAndWarnSyncDisabledInPie()
+	{
+		/* Have we warned the user about PIE in the Console Variables Editor? */
+		static bool bHaveWarnedAboutPIE = false;
+	
+		const bool bRunningInPIE =  GEditor && GEditor->IsPlaySessionInProgress();
+		if (bRunningInPIE && !bHaveWarnedAboutPIE)
+		{
+			UE_LOG(LogConsoleVariablesEditor, Display, TEXT("Play In Editor is about to start or has started; Multi-User Cvar sync is suspended during PIE."));
+			bHaveWarnedAboutPIE = bRunningInPIE;
+		}
+		return bRunningInPIE;
+	}
+}
+
 const FName FConsoleVariablesEditorModule::ConsoleVariablesToolkitPanelTabId(TEXT("ConsoleVariablesToolkitPanel"));
 
 FConsoleVariablesEditorModule& FConsoleVariablesEditorModule::Get()
 {
-	return FModuleManager::GetModuleChecked<FConsoleVariablesEditorModule>("ConsoleVariablesEditor");
+	static const FName ConsoleVariablesEditorModuleName("ConsoleVariablesEditor");
+	return FModuleManager::GetModuleChecked<FConsoleVariablesEditorModule>(ConsoleVariablesEditorModuleName);
 }
 
 void FConsoleVariablesEditorModule::StartupModule()
@@ -39,6 +62,15 @@ void FConsoleVariablesEditorModule::StartupModule()
 	FConsoleVariablesEditorStyle::Initialize();
 
 	FCoreDelegates::OnFEngineLoopInitComplete.AddRaw(this, &FConsoleVariablesEditorModule::OnFEngineLoopInitComplete);
+}
+
+void FConsoleVariablesEditorModule::PreUnloadCallback()
+{
+	if (OnConsoleObjectUnregisteredHandle.IsValid())
+	{
+		IConsoleManager::Get().OnConsoleObjectUnregistered().Remove(OnConsoleObjectUnregisteredHandle);
+		OnConsoleObjectUnregisteredHandle.Reset();
+	}
 }
 
 void FConsoleVariablesEditorModule::ShutdownModule()
@@ -132,29 +164,30 @@ void FConsoleVariablesEditorModule::QueryAndBeginTrackingConsoleVariables()
 				MakeShared<FConsoleVariablesEditorCommandInfo>(Key);
 			
 			Info->StartupSource = Info->GetSource();
-			Info->OnDetectConsoleObjectUnregisteredHandle = Info->OnDetectConsoleObjectUnregistered.AddRaw(
-				this, &FConsoleVariablesEditorModule::OnDetectConsoleObjectUnregistered);
+			Info->ConsoleObjectPtr = ConsoleObject;
+			Info->bHasAttemptedFind = true;
 
 			if (IConsoleVariable* AsVariable = ConsoleObject->AsVariable())
 			{
-				Info->OnVariableChangedCallbackHandle = AsVariable->OnChangedDelegate().AddRaw(
-					this, &FConsoleVariablesEditorModule::OnConsoleVariableChanged);
+				Info->OnVariableChangedCallbackHandle = AsVariable->OnChangedDelegate().AddSP(
+					Info, &FConsoleVariablesEditorCommandInfo::OnConsoleVariableChanged);
 			}
 			
 			AddConsoleObjectCommandInfoToMainReference(Info);
 		}),
 		TEXT(""));
+
+	OnConsoleObjectUnregisteredHandle = IConsoleManager::Get().OnConsoleObjectUnregistered().AddRaw(this, &FConsoleVariablesEditorModule::OnConsoleObjectUnregistered);
+}
+
+void FConsoleVariablesEditorModule::AddConsoleObjectCommandInfoToMainReference(TSharedRef<FConsoleVariablesEditorCommandInfo> InCommandInfo)
+{
+	ConsoleObjectsMainReference.Add(InCommandInfo->Command, InCommandInfo);
 }
 
 TWeakPtr<FConsoleVariablesEditorCommandInfo> FConsoleVariablesEditorModule::FindCommandInfoByName(const FString& NameToSearch, ESearchCase::Type InSearchCase)
 {
-	TSharedPtr<FConsoleVariablesEditorCommandInfo>* Match = Algo::FindByPredicate(
-		ConsoleObjectsMainReference,
-		[&NameToSearch, InSearchCase](const TSharedPtr<FConsoleVariablesEditorCommandInfo> Comparator)
-		{
-			return Comparator->Command.Equals(NameToSearch, InSearchCase);
-		});
-
+	TSharedPtr<FConsoleVariablesEditorCommandInfo>* Match = ConsoleObjectsMainReference.Find(NameToSearch);
 	return Match ? *Match : nullptr;
 }
 
@@ -163,8 +196,9 @@ TArray<TWeakPtr<FConsoleVariablesEditorCommandInfo>> FConsoleVariablesEditorModu
 {
 	TArray<TWeakPtr<FConsoleVariablesEditorCommandInfo>> ReturnValue;
 	
-	for (const TSharedPtr<FConsoleVariablesEditorCommandInfo>& CommandInfo : ConsoleObjectsMainReference)
+	for (const TPair<FString, TSharedPtr<FConsoleVariablesEditorCommandInfo>>& It : ConsoleObjectsMainReference)
 	{
+		const TSharedPtr<FConsoleVariablesEditorCommandInfo>& CommandInfo = It.Value;
 		FString CommandSearchableText = CommandInfo->Command + " " + CommandInfo->GetHelpText() + " " + CommandInfo->GetSourceAsText().ToString();
 		// Match any
 		for (const FString& Token : InTokens)
@@ -194,19 +228,6 @@ TArray<TWeakPtr<FConsoleVariablesEditorCommandInfo>> FConsoleVariablesEditorModu
 	}
 
 	return ReturnValue;
-}
-
-TWeakPtr<FConsoleVariablesEditorCommandInfo> FConsoleVariablesEditorModule::FindCommandInfoByConsoleObjectReference(
-	IConsoleObject* InConsoleObjectReference)
-{
-	TSharedPtr<FConsoleVariablesEditorCommandInfo>* Match = Algo::FindByPredicate(
-	ConsoleObjectsMainReference,
-	[InConsoleObjectReference](const TSharedPtr<FConsoleVariablesEditorCommandInfo> Comparator)
-	{
-		return Comparator->GetConsoleObjectPtr() == InConsoleObjectReference;
-	});
-
-	return Match ? *Match : nullptr;
 }
 
 TObjectPtr<UConsoleVariablesAsset> FConsoleVariablesEditorModule::GetPresetAsset() const
@@ -260,37 +281,34 @@ bool FConsoleVariablesEditorModule::PopulateGlobalSearchAssetWithVariablesMatchi
 	return EditingGlobalSearchAsset->GetSavedCommandsCount() > 0;
 }
 
-void FConsoleVariablesEditorModule::SendMultiUserConsoleVariableChange(ERemoteCVarChangeType InChangeType, const FString& InVariableName, const FString& InValueAsString)
+void FConsoleVariablesEditorModule::SendMultiUserConsoleVariableChange(ERemoteCVarChangeType InChangeType, const FString& InVariableName, const FString& InValueAsString, EConsoleVariableFlags InFlags)
 {
-	if (GEditor && GEditor->IsPlaySessionInProgress() && !bHaveWarnedAboutPIE)
+	using namespace UE::ConsoleVariablesEditor::ModuleUtils::Private; 
+	if (MainPanel->GetMultiUserManager().IsLocalUserInMultiUserSession() && !CheckIsRunningPieAndWarnSyncDisabledInPie())
 	{
-		UE_LOG(LogConsoleVariablesEditor, Display, TEXT("%hs: Play In Editor is about to start or has started; Multi-User Cvar sync is suspended during PIE."), __FUNCTION__);
-		bHaveWarnedAboutPIE = true;
-		return;
+		MainPanel->GetMultiUserManager().SendConsoleVariableChange(InChangeType, InVariableName, InValueAsString, InFlags);
 	}
-
-	bHaveWarnedAboutPIE = false;
-	MainPanel->GetMultiUserManager().SendConsoleVariableChange(InChangeType, InVariableName, InValueAsString);
 }
 
-void FConsoleVariablesEditorModule::OnRemoteCvarChanged(ERemoteCVarChangeType InChangeType, const FString InName, const FString InValue)
+void FConsoleVariablesEditorModule::OnRemoteCvarChanged(ERemoteCVarChangeType InChangeType, const FString InName, const FString InValue, EConsoleVariableFlags InFlags)
 {
-	if (GEditor && GEditor->IsPlaySessionInProgress() && !bHaveWarnedAboutPIE)
-	{
-		UE_LOG(LogConsoleVariablesEditor, Warning, TEXT("%hs: Play In Editor is about to start or has started; Multi-User Cvar sync is suspended during PIE."), __FUNCTION__);
-		bHaveWarnedAboutPIE = true;
-		return;
-	}
-
-	bHaveWarnedAboutPIE = false;
-	UE_LOG(LogConsoleVariablesEditor, VeryVerbose, TEXT("Remote set console variable %s = %s"), *InName, *InValue);
-
-	if (GetDefault<UConcertCVarSynchronization>()->bSyncCVarTransactions)
+	using namespace UE::ConsoleVariablesEditor::ModuleUtils::Private; 
+	if (MainPanel->GetMultiUserManager().IsLocalUserInMultiUserSession() &&
+		!CheckIsRunningPieAndWarnSyncDisabledInPie() &&
+		GetDefault<UConcertCVarSynchronization>()->bSyncCVarTransactions)
 	{
 		FScopeMultiUserReceiveCVar CVarChange(*InName, CommandsReceivedFromMultiUser);
 
-		GEngine->Exec(FConsoleVariablesEditorCommandInfo::GetCurrentWorld(),
+		FConsoleVariablesEditorCommandInfo Info(InName);
+		if (IConsoleVariable* AsVariable = Info.GetConsoleVariablePtr())
+		{
+			AsVariable->Set(*InValue, InFlags);
+		}
+		else
+		{
+			GEngine->Exec(FConsoleVariablesEditorCommandInfo::GetCurrentWorld(),
 					  *FString::Printf(TEXT("%s %s"), *InName, *InValue));
+		}
 
 		if (InChangeType == ERemoteCVarChangeType::Remove)
 		{
@@ -307,10 +325,7 @@ void FConsoleVariablesEditorModule::OnRemoteCvarChanged(ERemoteCVarChangeType In
 			);
 		}
 
-		if (MainPanel->GetEditorListMode() == FConsoleVariablesEditorList::EConsoleVariablesEditorListMode::Preset)
-		{
-			MainPanel->RebuildList();
-		}
+		MainPanel->OnRemoteCvarChanged();
 	}
 }
 
@@ -350,7 +365,7 @@ void FConsoleVariablesEditorModule::RegisterProjectSettings() const
 	}
 }
 
-void FConsoleVariablesEditorModule::OnConsoleVariableChanged(IConsoleVariable* ChangedVariable)
+void FConsoleVariablesEditorModule::OnConsoleVariableChanged(FConsoleVariablesEditorCommandInfo& CommandInfo, IConsoleVariable* ChangedVariable)
 {
 	// Note: We disable tracking during automation tests to prevent FindConsoleObject() related performance warnings.
 	if (IsEngineExitRequested() || GIsAutomationTesting)
@@ -360,11 +375,8 @@ void FConsoleVariablesEditorModule::OnConsoleVariableChanged(IConsoleVariable* C
 
 	check(EditingPresetAsset);
 
-	if (const TWeakPtr<FConsoleVariablesEditorCommandInfo> CommandInfo =
-		FindCommandInfoByConsoleObjectReference(ChangedVariable); CommandInfo.IsValid())
 	{
-		const TSharedPtr<FConsoleVariablesEditorCommandInfo>& PinnedCommand = CommandInfo.Pin();
-		const FString& Key = PinnedCommand->Command;
+		const FString& Key = CommandInfo.Command;
 
 		FConsoleVariablesEditorAssetSaveData FoundData;
 		bool bIsVariableCurrentlyTracked = EditingPresetAsset->FindSavedDataByCommandString(Key, FoundData, ESearchCase::IgnoreCase);
@@ -378,7 +390,7 @@ void FConsoleVariablesEditorModule::OnConsoleVariableChanged(IConsoleVariable* C
 			// Check if the changed value differs from the startup value before tracking it
 			if (Settings->bAddAllChangedConsoleVariablesToCurrentPreset &&
 				!Settings->ChangedConsoleVariableSkipList.Contains(Key) &&
-				PinnedCommand->IsCurrentValueDifferentFromInputValue(PinnedCommand->StartupValueAsString))
+				CommandInfo.IsCurrentValueDifferentFromInputValue(CommandInfo.StartupValueAsString))
 			{
 				if (MainPanel.IsValid())
 				{
@@ -418,27 +430,42 @@ void FConsoleVariablesEditorModule::OnConsoleVariableChanged(IConsoleVariable* C
 			 */
 			if (!CommandsReceivedFromMultiUser.Find(Key))
 			{
-				SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Update, Key, ChangedVariable->GetString());
+				SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Update, Key, ChangedVariable->GetString(), ChangedVariable->GetFlags());
 			}
 		}
 	}
 }
 
-void FConsoleVariablesEditorModule::OnDetectConsoleObjectUnregistered(FString CommandName)
+void FConsoleVariablesEditorModule::OnConsoleObjectUnregistered(const TCHAR* InName, IConsoleObject* InConsoleObject)
 {
-	check(EditingPresetAsset);
-
-	EditingPresetAsset->RemoveConsoleVariable(CommandName);
-
-	if (MainPanel.IsValid())
+	// Note: EditingPresetAsset is not being nulled out when destroyed so accessing EditingPresetAsset on shutdown is crashing
+	if (IsEngineExitRequested())
 	{
-		MainPanel->RefreshList();
+		return;
 	}
 
-	if (const TWeakPtr<FConsoleVariablesEditorCommandInfo> CommandInfo =
-		FindCommandInfoByName(CommandName); CommandInfo.IsValid())
+	if (ensure(InName))
 	{
-		ConsoleObjectsMainReference.Remove(CommandInfo.Pin());
+		if (ensure(EditingPresetAsset))
+		{
+			EditingPresetAsset->RemoveConsoleVariable(InName);
+		}
+	}
+
+	TSharedPtr<FConsoleVariablesEditorCommandInfo> Found;
+	if (ConsoleObjectsMainReference.RemoveAndCopyValue(InName, Found))
+	{
+		if (Found.IsValid())
+		{
+			// Null out deleted ConsoleObjectPtr for anything still holding reference to TSharedPtr
+			Found->ConsoleObjectPtr = nullptr;
+		}
+
+		if (MainPanel.IsValid())
+		{
+			// TODO: Request list refresh, don't force it now as many objects could be unregistered in one frame during reloadconfig
+			MainPanel->RefreshList();
+		}
 	}
 }
 

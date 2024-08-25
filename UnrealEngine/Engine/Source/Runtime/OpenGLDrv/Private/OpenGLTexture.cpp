@@ -328,7 +328,7 @@ FOpenGLTexture::FOpenGLTexture(FOpenGLTextureCreateDesc const& CreateDesc, GLuin
 {}
 
 // Standard constructor.
-FOpenGLTexture::FOpenGLTexture(FOpenGLTextureCreateDesc const& CreateDesc)
+FOpenGLTexture::FOpenGLTexture(FRHICommandListBase& RHICmdList, FOpenGLTextureCreateDesc const& CreateDesc)
 	: FRHITexture        (CreateDesc)
 	, Target             (CreateDesc.Target)
 	, Attachment         (CreateDesc.Attachment)
@@ -342,9 +342,6 @@ FOpenGLTexture::FOpenGLTexture(FOpenGLTextureCreateDesc const& CreateDesc)
 	, bAlias             (false)
 	, bMultisampleRenderbuffer(CreateDesc.bMultisampleRenderbuffer)
 {
-	check(IsInRenderingThread());
-	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
-
 	SCOPE_CYCLE_COUNTER(STAT_OpenGLCreateTextureTime);
 
 	if (bCanCreateAsEvicted)
@@ -358,7 +355,9 @@ FOpenGLTexture::FOpenGLTexture(FOpenGLTextureCreateDesc const& CreateDesc)
 
 	if (CreateDesc.BulkData)
 	{
+// FORT-672412: speculative and temporary fix for create texture/lock happening out of order.
 		if (!ShouldRunGLRenderContextOpOnThisThread(RHICmdList))
+// 		if (RHICmdList.IsTopOfPipe())
 		{
 			// If bulk data is provided, and texture initialization is done by the RHI thread, it needs to be copied out of the FResourceBulkDataInterface.
 			// It is not safe to pass this pointer to the RHI thread, as the interface may have been stack allocated in the renderer.
@@ -377,8 +376,9 @@ FOpenGLTexture::FOpenGLTexture(FOpenGLTextureCreateDesc const& CreateDesc)
 			BulkDataPtr = const_cast<void*>(CreateDesc.BulkData->GetResourceBulkData());
 		}
 	}
-
+// 	FORT-672412: speculative and temporary fix for create texture/lock happening out of order.
 	RunOnGLRenderContextThread([this, BulkDataPtr, BulkDataSize, bFreeBulkData]()
+// 	RHICmdList.EnqueueLambda([this, BulkDataPtr, BulkDataSize, bFreeBulkData](FRHICommandListBase&)
 	{
 		FOpenGLDynamicRHI::Get().InitializeGLTexture(this, BulkDataPtr, BulkDataSize);
 		if (bFreeBulkData)
@@ -595,12 +595,6 @@ void FOpenGLDynamicRHI::InitializeGLTextureInternal(FOpenGLTexture* Texture, voi
 
 		glTexParameteri(Target, GL_TEXTURE_BASE_LEVEL, 0);
 
-		// Do not use GL_TEXTURE_MAX_LEVEL if external texture
-		if (Target != GL_TEXTURE_EXTERNAL_OES)
-		{
-			glTexParameteri(Target, GL_TEXTURE_MAX_LEVEL, Desc.NumMips - 1);
-		}
-
 		TextureMipLimits.Add(TextureID, TPair<GLenum, GLenum>(0, Desc.NumMips - 1));
 
 		if (FOpenGL::SupportsASTCDecodeMode())
@@ -673,9 +667,10 @@ void FOpenGLDynamicRHI::InitializeGLTextureInternal(FOpenGLTexture* Texture, voi
 			case GL_RENDERBUFFER:
 			case GL_TEXTURE_2D:
 			case GL_TEXTURE_CUBE_MAP:
-				// Try to create the texture using immutable storage
-				if (FOpenGL::TexStorage2D(Target, Desc.NumMips, GLFormat.InternalFormat[bSRGB], Desc.Extent.X, Desc.Extent.Y, GLFormat.Format, GLFormat.Type, Desc.Flags))
 				{
+					// Try to create the texture using immutable storage
+					FOpenGL::TexStorage2D(Target, Desc.NumMips, GLFormat.InternalFormat[bSRGB], Desc.Extent.X, Desc.Extent.Y, GLFormat.Format, GLFormat.Type, Desc.Flags);
+
 					// Texture created with immutable storage. Now fill in the bulk data.
 					bAllocatedStorage = true;
 
@@ -713,45 +708,6 @@ void FOpenGLDynamicRHI::InitializeGLTextureInternal(FOpenGLTexture* Texture, voi
 							return true;
 						});
 					}
-				}
-				else if (GLFormat.bCompressed && !BulkDataPtr)
-				{
-					// Compressed textures created without using the TexStorage functions cannot be allocated via TexImage without bulk data.
-					// Do nothing here. Texture memory will be allocated when the renderer locks/unlocks the mips for writing.
-				}
-				else
-				{
-					// Failed to create immutable storage. Fall back to the standard TexImage functions.
-					// This both allocates the memory and fills in the bulk data simultaneously.
-					EnumerateSubresources(BulkDataPtr, [&](GLenum CurrentTarget, uint32 MipSizeX, uint32 MipSizeY, uint32 MipSizeZ, uint32 MipIndex, uint32 ArraySlice, void const* MipSliceData, uint32 MipSliceSize)
-					{
-						if (GLFormat.bCompressed)
-						{
-							glCompressedTexImage2D(
-								CurrentTarget,
-								MipIndex,
-								GLFormat.InternalFormat[bSRGB],
-								MipSizeX, MipSizeY, 
-								0,
-								MipSliceSize,
-								MipSliceData);
-						}
-						else
-						{
-							glTexImage2D(
-								CurrentTarget,
-								MipIndex,
-								GLFormat.InternalFormat[bSRGB],
-								MipSizeX, MipSizeY,
-								0,
-								GLFormat.Format,
-								GLFormat.Type,
-								MipSliceData);
-						}
-
-						// Always continue iterating to allocate all mips/slices.
-						return true;
-					});
 				}
 				break;
 
@@ -813,14 +769,8 @@ void FOpenGLDynamicRHI::InitializeGLTextureInternal(FOpenGLTexture* Texture, voi
 					// Try to create an immutable storage texture and fallback if it fails
 					const int32 NumSamples = Texture->GetDesc().NumSamples;
 					const bool FixedSampleLocations = true;
-					if (FOpenGL::TexStorage2DMultisample(Target, NumSamples, GLFormat.InternalFormat[bSRGB], Desc.Extent.X, Desc.Extent.Y, FixedSampleLocations))
-					{
-						bAllocatedStorage = true;
-					}
-					else
-					{
-						FOpenGL::TexImage2DMultisample(Target, NumSamples, GLFormat.InternalFormat[bSRGB], Desc.Extent.X, Desc.Extent.Y, FixedSampleLocations);
-					}
+					FOpenGL::TexStorage2DMultisample(Target, NumSamples, GLFormat.InternalFormat[bSRGB], Desc.Extent.X, Desc.Extent.Y, FixedSampleLocations);
+					bAllocatedStorage = true;
 				}
 				break;
 			}
@@ -1431,12 +1381,12 @@ void FOpenGLTexture::CloneViaCopyImage(FOpenGLTexture* Src, uint32 InNumMips, in
 	2D texture support.
 -----------------------------------------------------------------------------*/
 
-FTextureRHIRef FOpenGLDynamicRHI::RHICreateTexture(const FRHITextureCreateDesc& CreateDesc)
+FTextureRHIRef FOpenGLDynamicRHI::RHICreateTexture(FRHICommandListBase& RHICmdList, const FRHITextureCreateDesc& CreateDesc)
 {
-	return new FOpenGLTexture(CreateDesc);
+	return new FOpenGLTexture(RHICmdList, CreateDesc);
 }
 
-FTextureRHIRef FOpenGLDynamicRHI::RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, FGraphEventRef& OutCompletionEvent)
+FTextureRHIRef FOpenGLDynamicRHI::RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, const TCHAR* DebugName, FGraphEventRef& OutCompletionEvent)
 {
 	check(0);
 	return FTexture2DRHIRef();
@@ -1509,7 +1459,7 @@ FTexture2DRHIRef FOpenGLDynamicRHI::RHIAsyncReallocateTexture2D(FRHITexture2D* T
 		TEXT("RHIAsyncReallocateTexture2D")
 	);
 
-	FOpenGLTexture* NewTexture = new FOpenGLTexture(CreateDesc);
+	FOpenGLTexture* NewTexture = new FOpenGLTexture(RHICmdList, CreateDesc);
 
 	RHICmdList.EnqueueLambda([OldTexture, NewTexture, SourceMipCount, NewMipCount, RequestStatus](FRHICommandListImmediate& RHICmdList)
 	{
@@ -1581,45 +1531,89 @@ void FOpenGLDynamicRHI::RHIUnlockTexture2DArray(FRHITexture2DArray* TextureRHI, 
 	ResourceCast(TextureRHI)->Unlock(MipIndex, TextureIndex);
 }
 
-void FOpenGLDynamicRHI::RHIUpdateTexture2D(FRHICommandListBase& RHICmdList, FRHITexture2D* TextureRHI, uint32 MipIndex, const FUpdateTextureRegion2D& UpdateRegionIn, uint32 SourcePitch, const uint8* SourceDataIn)
+void FOpenGLDynamicRHI::RHIUpdateTexture2D(FRHICommandListBase& RHICmdList, FRHITexture2D* TextureRHI, uint32 MipIndex, const FUpdateTextureRegion2D& UpdateRegion, uint32 SourcePitch, const uint8* SourceData)
 {
-	const FUpdateTextureRegion2D UpdateRegion = UpdateRegionIn;
+	const FPixelFormatInfo& FormatInfo = GPixelFormats[TextureRHI->GetFormat()];
 
-	uint8* RHITSourceData = nullptr;
-	if (!ShouldRunGLRenderContextOpOnThisThread(RHICmdList))
+	check(UpdateRegion.Width  % FormatInfo.BlockSizeX == 0);
+	check(UpdateRegion.Height % FormatInfo.BlockSizeY == 0);
+	check(UpdateRegion.DestX  % FormatInfo.BlockSizeX == 0);
+	check(UpdateRegion.DestY  % FormatInfo.BlockSizeY == 0);
+	check(UpdateRegion.SrcX   % FormatInfo.BlockSizeX == 0);
+	check(UpdateRegion.SrcY   % FormatInfo.BlockSizeY == 0);
+
+	const uint32 SrcXInBlocks   = FMath::DivideAndRoundUp<uint32>(UpdateRegion.SrcX,   FormatInfo.BlockSizeX);
+	const uint32 SrcYInBlocks   = FMath::DivideAndRoundUp<uint32>(UpdateRegion.SrcY,   FormatInfo.BlockSizeY);
+	const uint32 WidthInBlocks  = FMath::DivideAndRoundUp<uint32>(UpdateRegion.Width,  FormatInfo.BlockSizeX);
+	const uint32 HeightInBlocks = FMath::DivideAndRoundUp<uint32>(UpdateRegion.Height, FormatInfo.BlockSizeY);
+
+	const void* UpdateMemory = SourceData + FormatInfo.BlockBytes * SrcXInBlocks + SourcePitch * SrcYInBlocks * FormatInfo.BlockSizeY;
+	uint32 UpdatePitch = SourcePitch;
+
+	const bool bNeedStagingMemory = !ShouldRunGLRenderContextOpOnThisThread(RHICmdList);
+	if (bNeedStagingMemory)
 	{
-		const FPixelFormatInfo& FormatInfo = GPixelFormats[TextureRHI->GetFormat()];
-		const size_t UpdateHeightInTiles = FMath::DivideAndRoundUp(UpdateRegion.Height, (uint32)FormatInfo.BlockSizeY);
-		const size_t DataSize = static_cast<size_t>(SourcePitch) * UpdateHeightInTiles;
-		RHITSourceData = (uint8*)FMemory::Malloc(DataSize, 16);
-		FMemory::Memcpy(RHITSourceData, SourceDataIn, DataSize);
+		const size_t SourceDataSizeInBlocks = static_cast<size_t>(WidthInBlocks) * static_cast<size_t>(HeightInBlocks);
+		const size_t SourceDataSize = SourceDataSizeInBlocks * FormatInfo.BlockBytes;
+
+		uint8* const StagingMemory = (uint8*)FMemory::Malloc(SourceDataSize);
+		const size_t StagingPitch = static_cast<size_t>(WidthInBlocks) * FormatInfo.BlockBytes;
+
+		const uint8* CopySrc = (const uint8*)UpdateMemory;
+		uint8* CopyDst = (uint8*)StagingMemory;
+		for (uint32 BlockRow = 0; BlockRow < HeightInBlocks; BlockRow++)
+		{
+			FMemory::Memcpy(CopyDst, CopySrc, WidthInBlocks * FormatInfo.BlockBytes);
+			CopySrc += SourcePitch;
+			CopyDst += StagingPitch;
+		}
+
+		UpdateMemory = StagingMemory;
+		UpdatePitch = StagingPitch;
 	}
-	const uint8* SourceData = RHITSourceData ? RHITSourceData : SourceDataIn;
-	RHICmdList.EnqueueLambda([this, TextureRHI, MipIndex, UpdateRegion, SourcePitch, SourceData, RHITSourceData](FRHICommandListBase&)
+
+	RHICmdList.EnqueueLambda([this, TextureRHI, MipIndex, UpdateRegion, UpdatePitch, UpdateMemory, bNeedStagingMemory](FRHICommandListBase&)
 	{
 		VERIFY_GL_SCOPE();
 
 		FOpenGLTexture* Texture = ResourceCast(TextureRHI);
+		const EPixelFormat PixelFormat = TextureRHI->GetFormat();
+
+		const FPixelFormatInfo& FormatInfo = GPixelFormats[PixelFormat];
+		const FOpenGLTextureFormat& GLFormat = GOpenGLTextureFormats[PixelFormat];
 
 		// Use a texture stage that's not likely to be used for draws, to avoid waiting
 		FOpenGLContextState& ContextState = GetContextStateForCurrentContext();
 		CachedSetupTextureStage(ContextState, FOpenGL::GetMaxCombinedTextureImageUnits() - 1, Texture->Target, Texture->GetResource(), 0, Texture->GetNumMips());
 		CachedBindPixelUnpackBuffer(ContextState, 0);
 
-		EPixelFormat PixelFormat = Texture->GetFormat();
-		check(GPixelFormats[PixelFormat].BlockSizeX == 1);
-		check(GPixelFormats[PixelFormat].BlockSizeY == 1);
-		const FOpenGLTextureFormat& GLFormat = GOpenGLTextureFormats[PixelFormat];
-		const uint32 FormatBPP = GPixelFormats[PixelFormat].BlockBytes;
-		checkf(!GLFormat.bCompressed, TEXT("RHIUpdateTexture2D not currently supported for compressed (%s) textures by the OpenGL RHI"), GPixelFormats[PixelFormat].Name);
-
-		glPixelStorei(GL_UNPACK_ROW_LENGTH, SourcePitch / FormatBPP);
-
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, UpdatePitch / FormatInfo.BlockBytes);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexSubImage2D(Texture->Target, MipIndex, UpdateRegion.DestX, UpdateRegion.DestY, UpdateRegion.Width, UpdateRegion.Height,
-			GLFormat.Format, GLFormat.Type, SourceData);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
+		if (GLFormat.bCompressed)
+		{
+			glCompressedTexSubImage2D(
+				Texture->Target,
+				MipIndex,
+				UpdateRegion.DestX, UpdateRegion.DestY,
+				UpdateRegion.Width, UpdateRegion.Height,
+				GLFormat.Format,
+				UpdatePitch * FMath::DivideAndRoundUp<uint32>(UpdateRegion.Height, FormatInfo.BlockSizeY),
+				UpdateMemory);
+		}
+		else
+		{
+			glTexSubImage2D(
+				Texture->Target,
+				MipIndex,
+				UpdateRegion.DestX, UpdateRegion.DestY,
+				UpdateRegion.Width, UpdateRegion.Height,
+				GLFormat.Format,
+				GLFormat.Type,
+				UpdateMemory);
+		}
+
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
 		// No need to restore texture stage; leave it like this,
@@ -1627,9 +1621,9 @@ void FOpenGLDynamicRHI::RHIUpdateTexture2D(FRHICommandListBase& RHICmdList, FRHI
 		// next operation that needs the stage will switch something else in on it.
 
 		// free source data if we're on RHIT
-		if (RHITSourceData)
+		if (bNeedStagingMemory)
 		{
-			FMemory::Free(RHITSourceData);
+			FMemory::Free(const_cast<void*>(UpdateMemory));
 		}
 	});
 }
@@ -1772,42 +1766,24 @@ void FOpenGLDynamicRHI::RHIUnlockTextureCubeFace(FRHITextureCube* TextureCubeRHI
 	ResourceCast(TextureCubeRHI)->Unlock(MipIndex, FaceIndex + ArrayIndex * 6);
 }
 
-void FOpenGLDynamicRHI::RHIBindDebugLabelName(FRHITexture* TextureRHI, const TCHAR* Name)
+void FOpenGLDynamicRHI::RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHITexture* TextureRHI, const TCHAR* Name)
 {
 #if GLDEBUG_LABELS_ENABLED
-	FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
-	if (ShouldRunGLRenderContextOpOnThisThread(RHICmdList))
+	FAnsiCharArray TextureDebugName;
+	TextureDebugName.Append(TCHAR_TO_ANSI(Name), FCString::Strlen(Name) + 1);
+	RHICmdList.EnqueueLambda([TextureRHI, TextureDebugName = MoveTemp(TextureDebugName)] (FRHICommandListBase& RHICmdList)
 	{
 		VERIFY_GL_SCOPE();
 		FOpenGLTexture* Texture = ResourceCast(TextureRHI);
 		if (Texture->IsEvicted())
 		{
-			Texture->EvictionParamsPtr->SetDebugLabelName(TCHAR_TO_ANSI(Name));
+			Texture->EvictionParamsPtr->SetDebugLabelName(TextureDebugName);
 		}
 		else
 		{
-			FOpenGL::LabelObject(GL_TEXTURE, Texture->GetResource(), TCHAR_TO_ANSI(Name));
+			FOpenGL::LabelObject(GL_TEXTURE, Texture->GetResource(), TextureDebugName.GetData());
 		}
-	}
-	else
-	{
-		// copy string name for RHIT version.
-		FAnsiCharArray TextureDebugName;
-		TextureDebugName.Append(TCHAR_TO_ANSI(Name), FCString::Strlen(Name) + 1);
-		RunOnGLRenderContextThread([TextureRHI, TextureDebugName = MoveTemp(TextureDebugName)]()
-		{
-			VERIFY_GL_SCOPE();
-			FOpenGLTexture* Texture = ResourceCast(TextureRHI);
-			if (Texture->IsEvicted())
-			{
-				Texture->EvictionParamsPtr->SetDebugLabelName(TextureDebugName);
-			}
-			else
-			{
-				FOpenGL::LabelObject(GL_TEXTURE, Texture->GetResource(), TextureDebugName.GetData());
-			}
-		});
-	}
+	});
 #endif
 }
 

@@ -7,63 +7,76 @@ using EpicGames.Horde.Storage;
 
 namespace Jupiter.Implementation
 {
-    public interface IReferencesStore
-    {
-        Task<ObjectRecord> Get(NamespaceId ns, BucketId bucket, IoHashKey key, FieldFlags flags);
+	public interface IReferencesStore
+	{
+		Task<RefRecord> GetAsync(NamespaceId ns, BucketId bucket, RefId key, FieldFlags fieldFlags, OperationFlags opFlags );
 
-        [Flags]
-        public enum FieldFlags
-        {
-            None = 0,
-            IncludePayload = 1,
-            All = IncludePayload
-        }
+		[Flags]
+		public enum FieldFlags
+		{
+			None = 0,
+			IncludePayload = 1,
+			All = IncludePayload
+		}
 
-        Task Put(NamespaceId ns, BucketId bucket, IoHashKey key, BlobIdentifier blobHash, byte[] blob, bool isFinalized);
-        Task Finalize(NamespaceId ns, BucketId bucket, IoHashKey key, BlobIdentifier blobIdentifier);
+		[Flags]
+		public enum OperationFlags
+		{
+			None = 0,
+			BypassCache = 1
+		}
 
-        Task UpdateLastAccessTime(NamespaceId ns, BucketId bucket, IoHashKey key, DateTime newLastAccessTime);
-        IAsyncEnumerable<(NamespaceId, BucketId, IoHashKey, DateTime)> GetRecords();
+		Task PutAsync(NamespaceId ns, BucketId bucket, RefId key, BlobId blobHash, byte[] blob, bool isFinalized);
+		Task FinalizeAsync(NamespaceId ns, BucketId bucket, RefId key, BlobId blobIdentifier);
 
-        IAsyncEnumerable<NamespaceId> GetNamespaces();
-        Task<bool> Delete(NamespaceId ns, BucketId bucket, IoHashKey key);
-        Task<long> DropNamespace(NamespaceId ns);
-        Task<long> DeleteBucket(NamespaceId ns, BucketId bucket);
-    }
+		Task<DateTime?> GetLastAccessTimeAsync(NamespaceId ns, BucketId bucket, RefId key);
+		Task UpdateLastAccessTimeAsync(NamespaceId ns, BucketId bucket, RefId key, DateTime newLastAccessTime);
+		IAsyncEnumerable<(NamespaceId, BucketId, RefId, DateTime)> GetRecordsAsync();
 
-    public class ObjectRecord
-    {
-        public ObjectRecord(NamespaceId ns, BucketId bucket, IoHashKey name, DateTime lastAccess, byte[]? inlinePayload, BlobIdentifier blobIdentifier, bool isFinalized)
-        {
-            Namespace = ns;
-            Bucket = bucket;
-            Name = name;
-            LastAccess = lastAccess;
-            InlinePayload = inlinePayload;
-            BlobIdentifier = blobIdentifier;
-            IsFinalized = isFinalized;
-        }
+		IAsyncEnumerable<(NamespaceId, BucketId, RefId)> GetRecordsWithoutAccessTimeAsync();
 
-        public NamespaceId Namespace { get; }
-        public BucketId Bucket { get; }
-        public IoHashKey Name { get; }
-        public DateTime LastAccess { get; }
-        public byte[]? InlinePayload { get; set; }
-        public BlobIdentifier BlobIdentifier { get; set; }
-        public bool IsFinalized {get;}
-    }
+		IAsyncEnumerable<(RefId, BlobId)> GetRecordsInBucketAsync(NamespaceId ns, BucketId bucket);
 
-    public class ObjectNotFoundException : Exception
-    {
-        public ObjectNotFoundException(NamespaceId ns, BucketId bucket, IoHashKey key) : base($"Object not found {key} in bucket {bucket} namespace {ns}")
-        {
-            Namespace = ns;
-            Bucket = bucket;
-            Key = key;
-        }
+		IAsyncEnumerable<NamespaceId> GetNamespacesAsync();
+		IAsyncEnumerable<BucketId> GetBuckets(NamespaceId ns);
+		Task<bool> DeleteAsync(NamespaceId ns, BucketId bucket, RefId key);
+		Task<long> DropNamespaceAsync(NamespaceId ns);
+		Task<long> DeleteBucketAsync(NamespaceId ns, BucketId bucket);
+	}
 
-        public NamespaceId Namespace { get; }
-        public BucketId Bucket { get; }
-        public IoHashKey Key { get; }
-    }
+	public class RefRecord
+	{
+		public RefRecord(NamespaceId ns, BucketId bucket, RefId name, DateTime lastAccess, byte[]? inlinePayload, BlobId blobIdentifier, bool isFinalized)
+		{
+			Namespace = ns;
+			Bucket = bucket;
+			Name = name;
+			LastAccess = lastAccess;
+			InlinePayload = inlinePayload;
+			BlobIdentifier = blobIdentifier;
+			IsFinalized = isFinalized;
+		}
+
+		public NamespaceId Namespace { get; }
+		public BucketId Bucket { get; }
+		public RefId Name { get; }
+		public DateTime LastAccess { get; }
+		public byte[]? InlinePayload { get; set; }
+		public BlobId BlobIdentifier { get; set; }
+		public bool IsFinalized {get;}
+	}
+
+	public class RefNotFoundException : Exception
+	{
+		public RefNotFoundException(NamespaceId ns, BucketId bucket, RefId key) : base($"Object not found {key} in bucket {bucket} namespace {ns}")
+		{
+			Namespace = ns;
+			Bucket = bucket;
+			Key = key;
+		}
+
+		public NamespaceId Namespace { get; }
+		public BucketId Bucket { get; }
+		public RefId Key { get; }
+	}
 }

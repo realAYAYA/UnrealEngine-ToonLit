@@ -78,7 +78,6 @@ void UOptimusEditorGraph::Reset()
 	SelectedNodes.Reset();
 	NodeGraph = nullptr;
 
-	Modify();
 	TArray<UEdGraphNode*> NodesToRemove(Nodes);
 	for (UEdGraphNode* GraphNode : NodesToRemove)
 	{
@@ -111,11 +110,15 @@ const FSlateBrush* UOptimusEditorGraph::GetGraphTypeIcon(
 	switch(InModelGraph->GetGraphType())
 	{
 	case EOptimusNodeGraphType::Setup:
-			return FOptimusEditorStyle::Get().GetBrush(TEXT("GraphType.Setup"));
+		return FOptimusEditorStyle::Get().GetBrush(TEXT("GraphType.Setup"));
 	case EOptimusNodeGraphType::Update:
-			return FOptimusEditorStyle::Get().GetBrush(TEXT("GraphType.Trigger"));
+		return FOptimusEditorStyle::Get().GetBrush(TEXT("GraphType.Update"));
 	case EOptimusNodeGraphType::ExternalTrigger:
-			return FOptimusEditorStyle::Get().GetBrush(TEXT("GraphType.Update"));
+		return FOptimusEditorStyle::Get().GetBrush(TEXT("GraphType.Trigger"));	
+	case EOptimusNodeGraphType::SubGraph:
+		return FOptimusEditorStyle::Get().GetBrush(TEXT("GraphType.SubGraph"));
+	case EOptimusNodeGraphType::Function:
+		return FAppStyle::Get().GetBrush(TEXT("GraphEditor.Function_16x"));
 	default:
 		checkNoEntry();
 		break;
@@ -172,8 +175,6 @@ void UOptimusEditorGraph::HandleNodeGraphModified(EOptimusGraphNotifyType InNoti
 
 			if (ensure(ModelNode))
 			{
-				Modify();
-
 				AddGraphNodeFromModelNode(ModelNode);
 			}
 		    break;
@@ -187,7 +188,6 @@ void UOptimusEditorGraph::HandleNodeGraphModified(EOptimusGraphNotifyType InNoti
 
 			if (ensure(GraphNode))
 			{
-				Modify();
 				RemoveNode(GraphNode, true);
 
 				GraphNode->ModelNode = nullptr;
@@ -209,7 +209,6 @@ void UOptimusEditorGraph::HandleNodeGraphModified(EOptimusGraphNotifyType InNoti
 
 				if (ensure(OutputGraphPin) && ensure(InputGraphPin))
 				{
-					Modify();
 					if (InNotifyType == EOptimusGraphNotifyType::LinkAdded)
 					{
 						OutputGraphPin->MakeLinkTo(InputGraphPin);

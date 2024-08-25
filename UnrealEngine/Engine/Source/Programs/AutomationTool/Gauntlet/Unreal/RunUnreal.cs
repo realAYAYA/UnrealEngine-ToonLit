@@ -180,6 +180,8 @@ namespace Gauntlet
 
 				UnrealTargetPlatform PlatformType = UnrealTargetPlatform.Parse(PlatformString);
 
+				SetupPlatformConfigurationProfiles(PlatformType, ContextOptions);
+
 				if (!InitializedDevices)
 				{
 					// Setup the devices and assign them to the executor
@@ -450,7 +452,6 @@ namespace Gauntlet
 
 		protected void SetupDevices(UnrealTargetPlatform DefaultPlatform, UnrealTestOptions Options)
 		{
-
 			Reservation.ReservationDetails = Options.JobDetails;
 
 			DevicePool.Instance.SetLocalOptions(Options.TempDir, Options.Parallel > 1, Options.DeviceURL);
@@ -472,6 +473,15 @@ namespace Gauntlet
 
 				DevicePool.Instance.AddDevices(Platform, DeviceWithParams.Argument);
 			}
+		}
+
+		protected void SetupPlatformConfigurationProfiles(UnrealTargetPlatform PlatformType, UnrealTestOptions Options)
+		{
+			string EngineDeviceConfigDir = Path.Combine(Globals.UnrealRootDir, "Engine", "Build", "DeviceConfigProfiles");
+			string ProjectDeviceConfigDir = Path.Combine(Options.ProjectPath.Directory.FullName, "Build", "DeviceConfigProfiles");
+
+			DeviceConfigurationCache.Instance.DiscoverConfigurationProfiles(PlatformType, "Engine", EngineDeviceConfigDir);
+			DeviceConfigurationCache.Instance.DiscoverConfigurationProfiles(PlatformType, Options.Project, ProjectDeviceConfigDir);
 		}
 	}
 }

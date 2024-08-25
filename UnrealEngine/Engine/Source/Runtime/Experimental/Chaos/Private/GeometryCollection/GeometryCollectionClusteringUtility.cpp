@@ -24,7 +24,7 @@ int32 FGeometryCollectionClusteringUtility::ClusterBonesUnderNewNodeWithParent(F
 	check(GeometryCollection);
 
 
-	TManagedArray<FTransform>& Transforms = GeometryCollection->Transform;
+	TManagedArray<FTransform3f>& Transforms = GeometryCollection->Transform;
 	TManagedArray<FString>& BoneNames = GeometryCollection->BoneName;
 	TManagedArray<int32>& Parents = GeometryCollection->Parent;
 	TManagedArray<TSet<int32>>& Children = GeometryCollection->Children;
@@ -38,7 +38,7 @@ int32 FGeometryCollectionClusteringUtility::ClusterBonesUnderNewNodeWithParent(F
 	Children[NewBoneIndex] = TSet<int32>(SelectedBones);
 	SimType[NewBoneIndex] = FGeometryCollection::ESimulationTypes::FST_Clustered;
 
-	Transforms[NewBoneIndex] = FTransform::Identity;
+	Transforms[NewBoneIndex] = FTransform3f::Identity;
 
 	// re-parent all the geometry nodes under the new shared bone
 	GeometryCollectionAlgo::ParentTransforms(GeometryCollection, NewBoneIndex, SelectedBones);
@@ -68,7 +68,7 @@ void FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(FGeometry
 	check(GeometryCollection);
 	bool CalcNewLocalTransform = true;
 
-	TManagedArray<FTransform>& Transforms = GeometryCollection->Transform;
+	TManagedArray<FTransform3f>& Transforms = GeometryCollection->Transform;
 	TManagedArray<FString>& BoneNames = GeometryCollection->BoneName;
 	TManagedArray<int32>& Parents = GeometryCollection->Parent;
 	TManagedArray<TSet<int32>>& Children = GeometryCollection->Children;
@@ -114,11 +114,11 @@ void FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(FGeometry
 		FVector3f SumOfOffsets(0, 0, 0);
 		for (int32 ChildBoneIndex : ChildBones)
 		{
-			ExplodedVectors[ChildBoneIndex] = FVector3f(Transforms[ChildBoneIndex].GetLocation());	//LWC_TODO: Precision loss
-			ExplodedTransforms[ChildBoneIndex] = Transforms[ChildBoneIndex];
+			ExplodedVectors[ChildBoneIndex] = FVector3f(Transforms[ChildBoneIndex].GetLocation());
+			ExplodedTransforms[ChildBoneIndex] = FTransform(Transforms[ChildBoneIndex]);
 			SumOfOffsets += ExplodedVectors[ChildBoneIndex];
 		}
-		ExplodedTransforms[RootNoneIndex] = Transforms[RootNoneIndex];
+		ExplodedTransforms[RootNoneIndex] = FTransform(Transforms[RootNoneIndex]);
 		// This bones offset is the average of all the selected bones
 		ExplodedVectors[RootNoneIndex] = SumOfOffsets / static_cast<float>(ChildBones.Num());
 	}
@@ -129,7 +129,7 @@ void FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(FGeometry
 		Parents[ChildBoneIndex] = RootNoneIndex;
 	}
 
-	Transforms[RootNoneIndex] = FTransform::Identity;
+	Transforms[RootNoneIndex] = FTransform3f::Identity;
 
 
 	RecursivelyUpdateChildBoneNames(RootNoneIndex, Children, BoneNames);
@@ -145,7 +145,6 @@ void FGeometryCollectionClusteringUtility::ClusterBonesUnderExistingRoot(FGeomet
 
 	TManagedArray<int32>& Levels = GeometryCollection->ModifyAttribute<int32>("Level", FGeometryCollection::TransformGroup);
 
-	TManagedArray<FTransform>& Transforms = GeometryCollection->Transform;
 	TManagedArray<FString>& BoneNames = GeometryCollection->BoneName;
 	TManagedArray<int32>& Parents = GeometryCollection->Parent;
 	TManagedArray<TSet<int32>>& Children = GeometryCollection->Children;
@@ -212,7 +211,6 @@ void FGeometryCollectionClusteringUtility::ClusterBonesUnderExistingNode(FGeomet
 
 	TManagedArray<int32>& Parents = GeometryCollection->Parent;
 	TManagedArray<TSet<int32>>& Children = GeometryCollection->Children;
-	TManagedArray<FTransform>& Transforms = GeometryCollection->Transform;
 	TManagedArray<FString>& BoneNames = GeometryCollection->BoneName;
 
 	// These attributes are apparently deprecated?
@@ -244,7 +242,7 @@ void FGeometryCollectionClusteringUtility::ClusterBonesUnderExistingNode(FGeomet
 		if (!IllegalOperation)
 		{
 			TArray<int32> ParentsToUpdateNames;
-			// determine original parents of moved nodes so we can update their childrens names
+			// determine original parents of moved nodes so we can update their children's names
 			for (int32 SourceElement : SourceElementsIn)
 			{
 				int32 Parent = Parents[SourceElement];
@@ -310,7 +308,6 @@ void FGeometryCollectionClusteringUtility::CollapseHierarchyOneLevel(FGeometryCo
 
 	TManagedArray<int32>& Parents = GeometryCollection->Parent;
 	TManagedArray<TSet<int32>>& Children = GeometryCollection->Children;
-	TManagedArray<FTransform>& Transforms = GeometryCollection->Transform;
 	TManagedArray<FString>& BoneNames = GeometryCollection->BoneName;
 	TManagedArray<int32>& Levels = GeometryCollection->ModifyAttribute<int32>("Level", FGeometryCollection::TransformGroup);
 
@@ -647,16 +644,16 @@ void FGeometryCollectionClusteringUtility::RecursivelyUpdateChildBoneNames(int32
 				if (ParentHasNumbers && FoundNumberIndex > 0)
 				{
 					FString ParentNumbers = ParentName.Right(ParentName.Len() - FoundNumberIndex);
-					NewName = CurrentName + ParentNumbers + ChunkNumberStr;
+					NewName = CurrentName + ParentNumbers + "_" + ChunkNumberStr;
 				}
 				else
 				{
-					NewName = CurrentName + ChunkNumberStr;
+					NewName = CurrentName + "_" + ChunkNumberStr;
 				}
 			}
 			else
 			{
-				NewName = ParentName + ChunkNumberStr;
+				NewName = ParentName + "_" + ChunkNumberStr;
 			}
 			BoneNames[ChildIndex] = NewName;
 			RecursivelyUpdateChildBoneNames(ChildIndex, Children, BoneNames, OverrideBoneNames);
@@ -851,7 +848,6 @@ void FGeometryCollectionClusteringUtility::MoveUpOneHierarchyLevel(FGeometryColl
 
 	TManagedArray<int32>& Parents = GeometryCollection->Parent;
 	TManagedArray<TSet<int32>>& Children = GeometryCollection->Children;
-	TManagedArray<FTransform>& Transforms = GeometryCollection->Transform;
 	TManagedArray<FString>& BoneNames = GeometryCollection->BoneName;
 
 	for (int32 BoneIndex : SelectedBones)
@@ -971,10 +967,9 @@ bool FGeometryCollectionClusteringUtility::RemoveDanglingClusters(FGeometryColle
 {
 	check(GeometryCollection);
 
-	const TManagedArray<FTransform>& Transforms = GeometryCollection->Transform;
 	const TManagedArray<int32>& SimulationType = GeometryCollection->SimulationType;
 
-	const int32 TransformCount = Transforms.Num();
+	const int32 TransformCount = GeometryCollection->Transform.Num();
 	TArray<int32> DeletionList;
 	for (int32 Idx = 0; Idx < TransformCount; ++Idx)
 	{

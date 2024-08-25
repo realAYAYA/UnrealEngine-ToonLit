@@ -6,9 +6,8 @@
 #include "Framework/Application/SlateApplication.h"
 #include "GenericPlatform/GenericPlatformMath.h"
 
-FFixedSampledSequenceGridData::FFixedSampledSequenceGridData(const uint32 InTotalFrames, const uint32 InSampleRateHz, const float InGridSizePixels /*= 1.f*/, const FSlateFontInfo* InTicksTimeFont /*= nullptr*/)
-	: TotalFrames(InTotalFrames)
-	, DisplayRange(TRange<uint32>::Inclusive(0, InTotalFrames))
+FFixedSampledSequenceGridData::FFixedSampledSequenceGridData(const uint32 InTotalFrames, const uint32 InSampleRateHz, const FSlateFontInfo& InTicksTimeFont, const float InGridSizePixels)
+	: DisplayRange(TRange<uint32>::Inclusive(0, InTotalFrames))
 	, GridSizePixels(InGridSizePixels)
 	, TicksTimeFont(InTicksTimeFont)
 	, GridFrameRate(InSampleRateHz, 1)
@@ -16,9 +15,29 @@ FFixedSampledSequenceGridData::FFixedSampledSequenceGridData(const uint32 InTota
 	UpdateGridMetrics(GridSizePixels);
 }
 
+FFixedSampledSequenceGridData::FFixedSampledSequenceGridData(const uint32 InTotalFrames, const uint32 InSampleRateHz, const float InGridSizePixels /*= 1.f*/, const FSlateFontInfo* InTicksTimeFont /*= nullptr*/)
+	: TotalFrames(InTotalFrames)
+	, DisplayRange(TRange<uint32>::Inclusive(0, InTotalFrames))
+	, GridSizePixels(InGridSizePixels)
+	, GridFrameRate(InSampleRateHz, 1)
+{
+	if (InTicksTimeFont)
+	{
+		TicksTimeFont = *InTicksTimeFont;
+	}
+
+	UpdateGridMetrics(GridSizePixels);
+}
+
 void FFixedSampledSequenceGridData::UpdateDisplayRange(const TRange<uint32> InDisplayRange)
 {
 	check(DisplayRange.Size<uint32>() >= 2)
+
+	if (InDisplayRange == DisplayRange)
+	{
+		return;
+	}
+
 	DisplayRange = InDisplayRange;
 	UpdateGridMetrics(GridSizePixels);
 }
@@ -37,13 +56,12 @@ bool FFixedSampledSequenceGridData::UpdateGridMetrics(const float InGridSizePixe
 	double MajorGridStepSeconds = 0.0;
 	float MinTicksPixelSpacing = 30.0f;
 
-	if (TicksTimeFont)
-	{
-		TSharedRef<FSlateFontMeasure> FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
-		FString LongestDisplayedTimeString = FString::Printf(TEXT("%.3f"), WaveformDurationSeconds * DisplayRange.GetUpperBoundValue());
-		FVector2D MaxTextSize = FontMeasureService->Measure(LongestDisplayedTimeString, *TicksTimeFont);
-		MinTicksPixelSpacing = MaxTextSize.X;
-	}
+
+	TSharedRef<FSlateFontMeasure> FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+	FString LongestDisplayedTimeString = FString::Printf(TEXT("%.3f"), WaveformDurationSeconds * DisplayRange.GetUpperBoundValue());
+	FVector2D MaxTextSize = FontMeasureService->Measure(LongestDisplayedTimeString, TicksTimeFont);
+	MinTicksPixelSpacing = MaxTextSize.X;
+
 
 
 	if (!GridFrameRate.ComputeGridSpacing(PixelsPerSecond, MajorGridStepSeconds, GridMetrics.NumMinorGridDivisions, MinTicksPixelSpacing + 5.f))
@@ -72,9 +90,18 @@ const FFixedSampledSequenceGridMetrics FFixedSampledSequenceGridData::GetGridMet
 	return GridMetrics;
 }
 
-void FFixedSampledSequenceGridData::SetTicksTimeFont(const FSlateFontInfo* InNewFont)
+void FFixedSampledSequenceGridData::SetTicksTimeFont(const FSlateFontInfo& InNewFont)
 {
 	TicksTimeFont = InNewFont;
+	UpdateGridMetrics(GridSizePixels);	
+}
+
+void FFixedSampledSequenceGridData::SetTicksTimeFont(const FSlateFontInfo * InNewFont)
+{
+	if (InNewFont)
+	{
+		TicksTimeFont = *InNewFont;
+	}
 }
 
 const float FFixedSampledSequenceGridData::SnapPositionToClosestFrame(const float InPixelPosition) const

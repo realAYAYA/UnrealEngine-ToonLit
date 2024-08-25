@@ -16,6 +16,8 @@
 #include "Containers/UnrealString.h"
 #include "Containers/StringConv.h"
 #include "Templates/SharedPointer.h"
+#include "Templates/Function.h"
+
 
 /**
  *
@@ -40,6 +42,10 @@ public:
 		uint32				StackSize;
 		int32				CoreAffinity;
 	};
+
+	static void Startup();
+	static void Shutdown();
+	static void EnqueueAsyncTask(TFunction<void()>&& InFunctionToExecuteOnAsyncThread);
 
 	static FMediaRunnable* Create(int32 CoreAffinityMask, EThreadPriority Priority, uint32 StackSize, const FString& InThreadName);
 	static void Destroy(FMediaRunnable* Thread);
@@ -71,17 +77,17 @@ public:
 
 	static void SleepSeconds(uint32 Seconds)
 	{
-		FPlatformProcess::SleepNoStats((float)Seconds);
+		FPlatformProcess::Sleep((float)Seconds);
 	}
 
 	static void SleepMilliseconds(uint32 Milliseconds)
 	{
-		FPlatformProcess::SleepNoStats(Milliseconds / 1000.0f);
+		FPlatformProcess::Sleep(Milliseconds / 1000.0f);
 	}
 
 	static void SleepMicroseconds(uint32 Microseconds)
 	{
-		FPlatformProcess::SleepNoStats(Microseconds / 1000000.0f);
+		FPlatformProcess::Sleep(Microseconds / 1000000.0f);
 	}
 
 private:

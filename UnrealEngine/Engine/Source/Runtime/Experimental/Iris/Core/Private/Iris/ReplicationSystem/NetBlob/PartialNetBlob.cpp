@@ -7,6 +7,18 @@
 #include "Iris/Serialization/InternalNetSerializationContext.h"
 #include "Iris/Serialization/NetSerializationContext.h"
 #include "Net/Core/Trace/NetTrace.h"
+#include <atomic>
+
+namespace UE::Net::Private
+{
+	/*
+	 * We need a unique sequence number per split blob to detect out of order sequences. In theory this requirement is only needed for split blobs sent via the same queue or whatever mechanism is used.
+	 * As the overhead of large sequence numbers should be relatively low compared to the split payload size and sharing a global sequence number avoids bloating the splitting API we have this one shared atomic.
+	 * Each split NetBlob will reserve unique sequence numbers for all of its parts. If there are multiple ReplicationSystems sharing the atomic adds relatively little growing of the sequence numbers.
+	 * Splitting blobs is a special case mainly used to enable replicating very large objects.
+	 */
+	static std::atomic<uint32> PartialNetBlobGlobalSequenceNumber;
+}
 
 namespace UE::Net
 {
@@ -14,9 +26,6 @@ namespace UE::Net
 FPartialNetBlob::FPartialNetBlob(const FNetBlobCreationInfo& CreationInfo)
 : FNetBlob(CreationInfo)
 , OriginalCreationInfo({})
-, PartIndex(0)
-, PartCount(0)
-, PayloadBitCount(0)
 {
 }
 
@@ -63,25 +72,25 @@ void FPartialNetBlob::InternalSerialize(FNetSerializationContext& Context) const
 		UE_NET_TRACE_EXIT_NAMED_SCOPE(UserProvidedScope);
 	}
 	UE_NET_TRACE_SCOPE(PartialNetBlob, *Writer, Context.GetTraceCollector(), ENetTraceVerbosity::Trace);
-	UE_NET_TRACE_NAMED_DYNAMIC_NAME_SCOPE(PartIndexScope, static_cast<const TCHAR*>(nullptr), *Writer, Context.GetTraceCollector(), ENetTraceVerbosity::VeryVerbose);
+	UE_NET_TRACE_NAMED_DYNAMIC_NAME_SCOPE(SequenceScope, static_cast<const TCHAR*>(nullptr), *Writer, Context.GetTraceCollector(), ENetTraceVerbosity::VeryVerbose);
 #if UE_NET_TRACE_ENABLED
 	if (FNetTrace::GetNetTraceVerbosityEnabled(ENetTraceVerbosity::VeryVerbose))
 	{
-		TStringBuilder<32> Builder;
+		TStringBuilder<64> Builder;
 		if (IsFirstPart())
 		{
-			Builder.Appendf(TEXT("PartIndex %u/%u"), PartIndex, PartCount);
+			Builder.Appendf(TEXT("Seq %u First part of %u"), SequenceNumber, PartCount);
 		}
 		else
 		{
-			Builder.Appendf(TEXT("PartIndex %u"), PartIndex);
+			Builder.Appendf(TEXT("Seq %u"), SequenceNumber);
 		}
-		UE_NET_TRACE_SET_SCOPE_NAME(PartIndexScope, Builder.ToString());
+		UE_NET_TRACE_SET_SCOPE_NAME(SequenceScope, Builder.ToString());
 	}
 #endif // UE_NET_TRACE_ENABLED
 
-	WritePackedUint16(Writer, PartIndex);
-	if (IsFirstPart())
+	WritePackedUint32(Writer, SequenceNumber);
+	if (Writer->WriteBool(IsFirstPart()))
 	{
 		WritePackedUint16(Writer, PartCount - 1U);
 
@@ -96,11 +105,13 @@ void FPartialNetBlob::InternalDeserialize(FNetSerializationContext& Context)
 {
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 	UE_NET_TRACE_SCOPE(PartialNetBlob, *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::Trace);
-	UE_NET_TRACE_NAMED_DYNAMIC_NAME_SCOPE(PartIndexScope, static_cast<const TCHAR*>(nullptr), *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::VeryVerbose);
+	UE_NET_TRACE_NAMED_DYNAMIC_NAME_SCOPE(SequenceScope, static_cast<const TCHAR*>(nullptr), *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::VeryVerbose);
 
-	PartIndex = ReadPackedUint16(Reader);
-	if (IsFirstPart())
+	SequenceNumber = ReadPackedUint32(Reader);
+	SequenceFlags = ESequenceFlags::None;
+	if (Reader->ReadBool())
 	{
+		SequenceFlags = ESequenceFlags::IsFirstPart;
 		PartCount = ReadPackedUint16(Reader) + 1U;
 
 		UE_NET_TRACE_SCOPE(OriginalCreationInfo, *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::Trace);
@@ -112,16 +123,16 @@ void FPartialNetBlob::InternalDeserialize(FNetSerializationContext& Context)
 #if UE_NET_TRACE_ENABLED
 	if (FNetTrace::GetNetTraceVerbosityEnabled(ENetTraceVerbosity::VeryVerbose))
 	{
-		TStringBuilder<32> Builder;
+		TStringBuilder<64> Builder;
 		if (IsFirstPart())
 		{
-			Builder.Appendf(TEXT("PartIndex %u/%u"), PartIndex, PartCount);
+			Builder.Appendf(TEXT("Seq %u First part of %u"), SequenceNumber, PartCount);
 		}
 		else
 		{
-			Builder.Appendf(TEXT("PartIndex %u"), PartIndex);
+			Builder.Appendf(TEXT("Seq %u"), SequenceNumber);
 		}
-		UE_NET_TRACE_SET_SCOPE_NAME(PartIndexScope, Builder.ToString());
+		UE_NET_TRACE_SET_SCOPE_NAME(SequenceScope, Builder.ToString());
 	}
 #endif // UE_NET_TRACE_ENABLED
 }
@@ -253,6 +264,9 @@ void FPartialNetBlob::SplitPayload(const FPartialNetBlob::FPayloadSplitParams& S
 {
 	const uint32 PartialBlobCount = (SplitParams.PayloadBitCount + SplitParams.PartBitCount - 1U)/SplitParams.PartBitCount;
 	OutPartialBlobs.Reserve(OutPartialBlobs.Num() + int32(PartialBlobCount));
+	
+	// Reserve sequence numbers for all parts. 
+	uint32 SequenceNumber = Private::PartialNetBlobGlobalSequenceNumber.fetch_add(PartialBlobCount, std::memory_order_relaxed);
 
 	uint32 PayloadBitOffset = 0U;
 	for (uint32 PartIt = 0, PartEndIt = PartialBlobCount; PartIt != PartEndIt; ++PartIt)
@@ -262,8 +276,9 @@ void FPartialNetBlob::SplitPayload(const FPartialNetBlob::FPayloadSplitParams& S
 		FPartialNetBlob* PartialBlob = new FPartialNetBlob(SplitParams.CreationInfo);
 		PartialBlob->SetDebugName(SplitParams.DebugName);
 		PartialBlob->OriginalCreationInfo = SplitParams.OriginalCreationInfo;
-		PartialBlob->PartIndex = static_cast<uint16>(PartIt);
 		PartialBlob->PartCount = static_cast<uint16>(PartialBlobCount);
+		PartialBlob->SequenceFlags = (bIsFirstPart ? ESequenceFlags::IsFirstPart : ESequenceFlags::None);
+		PartialBlob->SequenceNumber = SequenceNumber++;
 		if (bIsFirstPart && EnumHasAnyFlags(SplitParams.OriginalCreationInfo.Flags, ENetBlobFlags::HasExports))
 		{
 			PartialBlob->OriginalBlob = SplitParams.OriginalBlob;

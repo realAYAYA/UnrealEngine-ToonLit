@@ -159,8 +159,9 @@ namespace MeshRepresentation
 	void SetupEmbreeScene(FString MeshName,
 		const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 		const FStaticMeshLODResources& LODModel,
-		const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
+		const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
 		bool bGenerateAsIfTwoSided,
+		bool bIncludeTranslucentTriangles,
 		FEmbreeScene& EmbreeScene);
 
 	void DeleteEmbreeScene(FEmbreeScene& EmbreeScene);

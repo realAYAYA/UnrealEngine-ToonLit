@@ -122,7 +122,7 @@ public:
 	/** Create Kismet assignment statement with proper object <-> interface cast */
 	static void CreateObjectAssignmentStatement(FKismetFunctionContext& Context, UEdGraphNode* Node, FBPTerminal* SrcTerm, FBPTerminal* DstTerm, UEdGraphPin* DstPin = nullptr);
 
-	/** Checks if each execution path ends with a Return node */
+	UE_DEPRECATED(5.4, "ValidateProperEndExecutionPath is deprecated.")
 	static void ValidateProperEndExecutionPath(FKismetFunctionContext& Context);
 
 	/** Generate an error for non-const output parameters */

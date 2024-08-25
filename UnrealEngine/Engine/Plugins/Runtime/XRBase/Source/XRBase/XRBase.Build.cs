@@ -34,7 +34,8 @@ namespace UnrealBuildTool.Rules
 					new string[]
 					{
 						"EditorFramework",
-						"UnrealEd"
+						"UnrealEd",
+						"VREditor",
 					});
 			}
         }

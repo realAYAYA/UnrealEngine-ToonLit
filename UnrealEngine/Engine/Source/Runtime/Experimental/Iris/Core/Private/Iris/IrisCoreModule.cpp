@@ -4,13 +4,16 @@
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/CoreDelegates.h"
+#include "Misc/CommandLine.h"
+
+#include "Net/Core/Connection/NetEnums.h"
+
 #include "Iris/ReplicationState/DefaultPropertyNetSerializerInfos.h"
 #include "Iris/ReplicationState/PropertyNetSerializerInfoRegistry.h"
 #include "Iris/ReplicationSystem/LegacyPushModel.h"
 #include "Iris/Serialization/InternalNetSerializerDelegates.h"
 #include "Iris/IrisConfigInternal.h"
 
-#include "Misc/CommandLine.h"
 
 class FIrisCoreModule : public IModuleInterface
 {
@@ -38,10 +41,11 @@ private:
 		FCoreDelegates::OnAllModuleLoadingPhasesComplete.AddRaw(this, &FIrisCoreModule::OnAllModuleLoadingPhasesComplete);
 
 		// Check command line for whether we should override the net.Iris.UseIrisReplication cvar, as we need to do that early
-		int32 UseIrisReplication;
-		if(FParse::Value(FCommandLine::Get(), TEXT("UseIrisReplication="), UseIrisReplication))
+		const EReplicationSystem CmdlineRepSystem = UE::Net::GetUseIrisReplicationCmdlineValue();
+		if (CmdlineRepSystem != EReplicationSystem::Default)
 		{
-			UE::Net::SetUseIrisReplication(UseIrisReplication > 0);
+			const bool bEnableIris = CmdlineRepSystem == EReplicationSystem::Iris;
+			UE::Net::SetUseIrisReplication(bEnableIris);
 		}
 
 		RegisterPropertyNetSerializerSelectorTypes();

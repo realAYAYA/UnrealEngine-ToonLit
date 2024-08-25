@@ -2,11 +2,8 @@
 
 #pragma once
 
-#if defined(_MSC_VER) 
-#include <atomic>
-#else
+#include "DMXPixelMappingTripleBufferedData.h"
 #include "HAL/CriticalSection.h"
-#endif
 #include "Math/Color.h"
 #include "Math/Vector2D.h"
 
@@ -34,14 +31,23 @@ namespace UE::DMXPixelMapping::Rendering
 {
 	struct DMXPIXELMAPPINGRENDERER_API FPixelMapRenderElementParameters
 	{
-		/** Position in texels of the top left corner of the quad's UV's */
+		/** Position in texels of the center of the quad's UV's */
 		FVector2D UV;
 
-		/** Size in texels of the quad's total UV space */
+		/** Size in texels of UV. May match UVSize */
 		FVector2D UVSize;
 
-		/** Size in texels of UV.May match UVSize */
-		FVector2D UVCellSize;
+		/** Position in texels of the top left corner of the quad's UV's, in rotated space */
+		FVector2D UVTopLeftRotated;
+
+		/** Position in texels of the top right corner of the quad's UV's, in rotate space */
+		FVector2D UVTopRightRotated;
+
+		/** Rotation in degrees. Useful to paint these elements in the preview view. */
+		double Rotation;
+
+		/** DERPECATED 5.4 - Size in texels of the quad's total UV space */
+		FVector2D UVCellSize_DEPRECATED;
 
 		/** The quality of color samples in the pixel shader(number of samples) */
 		EDMXPixelBlendingQuality CellBlendingQuality;
@@ -74,26 +80,19 @@ namespace UE::DMXPixelMapping::Rendering
 		FLinearColor GetColor() const;
 
 	private:
-		// 5.3: Significantly better performance with atomics on MSVC. 
-		// However not all compilers currently support non-lockfree atomics.
-#if defined(_MSC_VER) 
-		/** The current parameters */
-		std::atomic<FPixelMapRenderElementParameters> Parameters;
+		/** The current color, readable from the game thread */
+		mutable FLinearColor ColorGameThread;
 
-		/** The current pixel color */
-		std::atomic<FLinearColor> Color;
-#else
+		/** Triple buffered color data, useful to copy data to game thread without locking. */
+		mutable UE::DMX::Internal::TDMXPixelMappingTripleBufferedData<FLinearColor> ColorTipleBuffer;
+
+		/** Pointer to the color data that is currently safe to write for the producer */
+		FLinearColor* ProducerColorPtr = nullptr;
+
 		/** The current parameters */
 		FPixelMapRenderElementParameters Parameters;
 
-		/** The current pixel color */
-		FLinearColor Color;
-
 		/** Mutex acccess to parameters */
 		mutable FCriticalSection AccessParametersMutex;
-
-		/** Mutex acccess to parameters */
-		mutable FCriticalSection AccessColorMutex;
-#endif
 	};
 }

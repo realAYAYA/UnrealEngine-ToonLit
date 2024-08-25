@@ -8,6 +8,7 @@
 #include "MuR/Types.h"
 #include "MuT/ASTOpConditional.h"
 #include "MuT/ASTOpMeshRemoveMask.h"
+#include "MuT/ASTOpMeshAddTags.h"
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/StreamsPrivate.h"
 
@@ -37,8 +38,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpMeshMaskClipMesh::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpMeshMaskClipMesh* other = dynamic_cast<const ASTOpMeshMaskClipMesh*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpMeshMaskClipMesh* other = static_cast<const ASTOpMeshMaskClipMesh*>(&otherUntyped);
 			return source == other->source && clip == other->clip;
 		}
 		return false;
@@ -152,7 +154,7 @@ namespace mu
 				// This cannot be sunk since the result is different. Since the clipping is now correctly
 				// generated at the end of the chain when really necessary, this wrong optimisation is no 
 				// longer needed.
-				//case OP_TYPE::ME_MORPH2:
+				//case OP_TYPE::ME_MORPH:
 		        //{
 		        //    break;
 		        //}
@@ -164,8 +166,16 @@ namespace mu
 					// faces removed by the ignored removemask, but it is ok
 
 					// TODO: Swap instead of ignore, and implement removemask on a mask?
-					const ASTOpMeshRemoveMask* typedAt = dynamic_cast<const ASTOpMeshRemoveMask*>(at.get());
+					const ASTOpMeshRemoveMask* typedAt = static_cast<const ASTOpMeshRemoveMask*>(at.get());
 					newAt = Visit(typedAt->source.child());
+					break;
+				}
+
+				case OP_TYPE::ME_ADDTAGS:
+				{
+					Ptr<ASTOpMeshAddTags> newOp = mu::Clone<ASTOpMeshAddTags>(at);
+					newOp->Source = Visit(newOp->Source.child());
+					newAt = newOp;
 					break;
 				}
 
@@ -304,6 +314,13 @@ namespace mu
 					break;
 				}
 
+				case OP_TYPE::ME_ADDTAGS:
+				{
+					// Ignore tags in the clip mesh branch
+					const ASTOpMeshAddTags* AddOp = static_cast<const ASTOpMeshAddTags*>(at.get());
+					newAt = Visit(AddOp->Source.child());
+					break;
+				}
 
 				default:
 				{

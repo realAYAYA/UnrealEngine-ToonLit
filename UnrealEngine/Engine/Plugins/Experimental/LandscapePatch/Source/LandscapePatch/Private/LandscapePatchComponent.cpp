@@ -2,12 +2,19 @@
 
 #include "LandscapePatchComponent.h"
 
+#include "CoreGlobals.h" // GIsReconstructingBlueprintInstances
 #include "EngineUtils.h"
+#include "HAL/IConsoleManager.h" // FAutoConsoleVariableRef
 #include "Landscape.h"
 #include "LandscapePatchLogging.h"
 #include "LandscapePatchManager.h"
+#include "Logging/MessageLog.h"
+#include "Misc/UObjectToken.h"
 #include "PropertyPairsMap.h"
+#include "UObject/ObjectSaveContext.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectBaseUtility.h" // GetNameSafe
+#include "UObject/UObjectIterator.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(LandscapePatchComponent)
 
@@ -56,6 +63,70 @@ namespace LandscapePatchComponentLocals
 		return PatchManager;
 	}
 
+	bool bAllowAutoFindOfManagerInConstructionScript = true;
+	static FAutoConsoleVariableRef CVarReAddToPatchManagerOnConstructionIfLost(
+		TEXT("LandscapePatch.AllowAutoFindOfManagerInConstructionScript"),
+		bAllowAutoFindOfManagerInConstructionScript,
+		TEXT("If a blueprint-contained patch does not have a patch manager when its construction script is rerun, "
+			"allows for a patch manager to be found automatically. This is more safe to have turned off because "
+			"it can hide potential issues when patches or manager were not properly saved, and as a result, patch "
+			"order could change depending on load order of actors. It is on by default for now for legacy support."));
+
+
+	// A way to fix patch manager pointers. More aggressive than the map check, because it allows auto-finding
+	// of a new manager.
+	FAutoConsoleCommand CCmdFixPatchManagerPointers(
+		TEXT("LandscapePatch.FixPatchManagerPointers"),
+		TEXT("For all patches, make sure that patch manager pointers exist, contain this patch, and patches "
+			"and managers are dirtied if they changed. Patches without a manager get one auto-assigned."),
+		FConsoleCommandDelegate::CreateLambda([]() 
+	{
+		// Iterate through all patches
+		for (TObjectIterator<ULandscapePatchComponent> It(
+			/*AdditionalExclusionFlags = */RF_ClassDefaultObject,
+			/*bIncludeDerivedClasses = */true,
+			/*InInternalExclusionFlags = */EInternalObjectFlags::Garbage); It; ++It)
+		{
+			ULandscapePatchComponent* Patch = *It;
+			if (!IsValid(Patch))
+			{
+				continue;
+			}
+
+			UWorld* World = Patch->GetWorld();
+			if (Patch->IsTemplate() || !IsValid(World) || World->WorldType != EWorldType::Editor)
+			{
+				continue;
+			}
+
+			Patch->SetUpPatchManagerData();
+			Patch->MarkDirtyIfModifiedInConstructionScript();
+		}
+
+		for (TObjectIterator<ALandscapePatchManager> It(
+			/*AdditionalExclusionFlags = */RF_ClassDefaultObject,
+			/*bIncludeDerivedClasses = */true,
+			/*InInternalExclusionFlags = */EInternalObjectFlags::Garbage); It; ++It)
+		{
+			ALandscapePatchManager* Manager = *It;
+			if (!IsValid(Manager))
+			{
+				continue;
+			}
+
+			UWorld* World = Manager->GetWorld();
+			if (Manager->IsTemplate() || !IsValid(World) || World->WorldType != EWorldType::Editor)
+			{
+				continue;
+			}
+
+			if (Manager)
+			{
+				Manager->MarkDirtyIfModifiedInConstructionScript();
+			}
+		}
+	}));
+
 #endif
 }
 
@@ -83,6 +154,82 @@ void ULandscapePatchComponent::SetIsEnabled(bool bEnabledIn)
 }
 
 #if WITH_EDITOR
+void ULandscapePatchComponent::CheckForErrors()
+{
+	Super::CheckForErrors();
+
+	using namespace LandscapePatchComponentLocals;
+	
+	if (!IsRealPatch())
+	{
+		return;
+	}
+
+	auto GetPackageAndActorArgs = [this]()
+	{
+		FFormatNamedArguments Arguments;
+		Arguments.Add(TEXT("Package"), FText::FromString(*GetNameSafe(GetPackage())));
+		Arguments.Add(TEXT("Actor"), FText::FromString(*GetNameSafe(GetAttachmentRootActor())));
+		return Arguments;
+	};
+
+	if (PatchManager.IsValid() != Landscape.IsValid())
+	{
+		FMessageLog("MapCheck").Warning()
+			->AddToken(FUObjectToken::Create(this))
+			->AddToken(FTextToken::Create(FText::Format(LOCTEXT("PatchManagerAndLandscapeDisagree", "Patch has inconsistent "
+				"manager and landscape pointers. (Package: {Package}, Actor: {Actor}). "
+				"Fix individually or run LandscapePatch.FixPatchManagerPointers."), GetPackageAndActorArgs())))
+			->AddToken(FActionToken::Create(LOCTEXT("FixInconsistentPointersButton", "Fix inconsistent pointers"), FText(),
+				FOnActionTokenExecuted::CreateWeakLambda(this, [this]() 
+		{
+			if (PatchManager.IsValid())
+			{
+				SetPatchManager(PatchManager.Get());
+			}
+			else if (Landscape.IsValid())
+			{
+				SetLandscape(Landscape.Get());
+			}
+		})));
+	}
+
+	if (PatchManager.IsValid() && !PatchManager->ContainsPatch(this))
+	{
+		FMessageLog("MapCheck").Warning()
+			->AddToken(FUObjectToken::Create(this))
+			->AddToken(FTextToken::Create(FText::Format(LOCTEXT("PatchNotInManager", "Patch was not found in its patch manager. "
+				"(Package: {Package}, Actor: {Actor}). "
+				"Fix individually or run LandscapePatch.FixPatchManagerPointers."), GetPackageAndActorArgs())))
+			->AddToken(FActionToken::Create(LOCTEXT("AddToManagerButton", "Add to manager"), FText(),
+				FOnActionTokenExecuted::CreateWeakLambda(this, [this]() 
+		{
+			if (PatchManager.IsValid())
+			{
+				SetPatchManager(PatchManager.Get());
+			}
+		})));
+	}
+
+	if (bDirtiedByConstructionScript && !(GetPackage() && GetPackage()->IsDirty()))
+	{
+		FMessageLog("MapCheck").Warning()
+			->AddToken(FUObjectToken::Create(this))
+			->AddToken(FTextToken::Create(FText::Format(LOCTEXT("PatchNeedsSaving", "Patch got modified in a construction "
+				"script rerun but has not been marked dirty. (Package: {Package}, Actor: {Actor}). "
+				"Fix individually or run LandscapePatch.FixPatchManagerPointers."), GetPackageAndActorArgs())))
+			->AddToken(FActionToken::Create(LOCTEXT("MarkDirtyButton", "Mark dirty"), FText(),
+				FOnActionTokenExecuted::CreateWeakLambda(this, [this]() 
+		{
+			MarkPackageDirty();
+			if (PatchManager.IsValid())
+			{
+				PatchManager->MarkDirtyIfModifiedInConstructionScript();
+			}
+		})));
+	}
+}
+
 void ULandscapePatchComponent::OnComponentCreated()
 {
 	using namespace LandscapePatchComponentLocals;
@@ -93,53 +240,104 @@ void ULandscapePatchComponent::OnComponentCreated()
 	bWasCopy = bPropertiesCopiedIndicator;
 	bPropertiesCopiedIndicator = true;
 
-	UWorld* World = GetWorld();
-	if (IsTemplate() || World->WorldType != EWorldType::Editor)
+	if (!IsRealPatch())
+	{
+		return;
+	}
+
+	// Doing stuff during construction script reruns is a huge pain, and ideally we would always exit right here.
+	// However we preserve legacy behavior where patches added themselves to the manager from OnComponentCreated
+	// even in the construction script, if bAllowAutoFindOfManagerInConstructionScript is true.
+	// See ApplyComponentInstanceData to see how we try to detect that patch got modified in the construction
+	// script and therefore needs dirtying.
+	if (GIsReconstructingBlueprintInstances && !bAllowAutoFindOfManagerInConstructionScript)
+	{
+		return;
+	}
+
+	SetUpPatchManagerData();
+}
+
+void ULandscapePatchComponent::SetUpPatchManagerData()
+{
+	using namespace LandscapePatchComponentLocals;
+
+	if (!IsRealPatch())
 	{
 		return;
 	}
 
 	if (PatchManager.IsValid())
 	{
-		// If we copied over a patch manager, presumably Landscape should be
-		// copied over as well, but might as well do this to be safe.
-		Landscape = PatchManager->GetOwningLandscape();
+		if (Landscape != PatchManager->GetOwningLandscape())
+		{
+			Modify();
+			Landscape = PatchManager->GetOwningLandscape();
+		}
 
+		// The patch manager might legitimately not contain the set patch manager if we're copying a patch. 
 		if (!PatchManager->ContainsPatch(this))
 		{
-			SetPatchManager(PatchManager.Get());
+			// Note: in blueprint-contained patches, this can actually fix a case where our patch manager was
+			// saved incorrectly, but we need the patch manager to be dirtied if we're failing to dirty due to
+			// a load.
+			if (GIsReconstructingBlueprintInstances)
+			{
+				UE_LOG(LogLandscapePatch, Warning, TEXT("Patch was not in the set Patch Manager and was added in a construction script rerun. "
+					"The patch manager should be saved to avoid potential reorderings depending on loading order. (Package: %s, Manager: %s"),
+					*GetNameSafe(PatchManager->GetPackage()), *GetNameSafe(PatchManager.Get()));
+			}
+
+			PatchManager->AddPatch(this);
 		}
+
+		// No more adjustments needed
+		return;
 	}
-	else if (Landscape.IsValid())
+
+	// If we got here, we don't have a patch manager. See if we have a landscape to get it from.
+	if (Landscape.IsValid())
 	{
-		// If we copied over a patch with a landscape but no manager.
 		SetLandscape(Landscape.Get());
+		return;
+	}
+
+	// See if the level has a height patch manager to which we can add ourselves
+	UWorld* World = GetWorld();
+	if (!ensure(World))
+	{
+		return;
+	}
+	TActorIterator<ALandscapePatchManager> ManagerIterator(World);
+	if (!!ManagerIterator)
+	{
+		SetPatchManager(*ManagerIterator);
 	}
 	else
 	{
-		// See if the level has a height patch manager to which we can add ourselves
-		TActorIterator<ALandscapePatchManager> ManagerIterator(World);
-		if (!!ManagerIterator)
+		// If no existing manager, find some landscape and add a new one.
+		for (TActorIterator<ALandscape> LandscapeIterator(World); LandscapeIterator; ++LandscapeIterator)
 		{
-			SetPatchManager(*ManagerIterator);
-		}
-		else
-		{
-			// If no existing manager, find some landscape and add a new one.
-			for (TActorIterator<ALandscape> LandscapeIterator(World); LandscapeIterator; ++LandscapeIterator)
+			if (LandscapeIterator->CanHaveLayersContent())
 			{
-				if (LandscapeIterator->CanHaveLayersContent())
-				{
-					Landscape = *LandscapeIterator;
-					SetPatchManager(CreateNewPatchManagerForLandscape(Landscape.Get()));
-					break;
-				}
-			}
-			if (!PatchManager.IsValid())
-			{
-				UE_LOG(LogLandscapePatch, Warning, TEXT("Unable to find a landscape with edit layers enabled. Unable to create patch manager."));
+				Modify();
+				Landscape = *LandscapeIterator;
+				SetPatchManager(CreateNewPatchManagerForLandscape(Landscape.Get()));
+				break;
 			}
 		}
+	}
+	if (!PatchManager.IsValid())
+	{
+		UE_LOG(LogLandscapePatch, Warning, TEXT("Unable to find a landscape with edit layers enabled. Unable to create patch manager."));
+	}
+}
+
+void ULandscapePatchComponent::MarkDirtyIfModifiedInConstructionScript()
+{
+	if (IsRealPatch() && bDirtiedByConstructionScript)
+	{
+		MarkPackageDirty();
 	}
 }
 
@@ -151,9 +349,17 @@ void ULandscapePatchComponent::PostLoad()
 	bLoadedButNotYetRegistered = true;
 }
 
+void ULandscapePatchComponent::PreSave(FObjectPreSaveContext SaveContext)
+{
+	Super::PreSave(SaveContext);
+
+	// If we're ssaving, then we no longer have to worry about our dirtiness.
+	bDirtiedByConstructionScript = false;
+}
+
 void ULandscapePatchComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
 {
-	if (PatchManager.IsValid())
+	if (PatchManager.IsValid() && !GIsReconstructingBlueprintInstances)
 	{
 		PatchManager->RemovePatch(this);
 	}
@@ -198,22 +404,6 @@ TStructOnScope<FActorComponentInstanceData> ULandscapePatchComponent::GetCompone
 	return MakeStructOnScope<FActorComponentInstanceData, FLandscapePatchComponentInstanceData>(this);
 }
 
-FLandscapePatchComponentInstanceData::FLandscapePatchComponentInstanceData(const ULandscapePatchComponent* Patch)
-: FSceneComponentInstanceData(Patch)
-{
-	ALandscapePatchManager* PatchManager = Patch->GetPatchManager();
-	if (PatchManager)
-	{
-		IndexInManager = PatchManager->GetIndexOfPatch(Patch);
-
-#if WITH_EDITOR
-		bGaveMissingPatchManagerWarning = Patch->bGaveMissingPatchManagerWarning;
-		bGaveNotInPatchManagerWarning = Patch->bGaveNotInPatchManagerWarning;
-		bGaveMissingLandscapeWarning = Patch->bGaveMissingLandscapeWarning;
-#endif
-	}
-}
-
 void ULandscapePatchComponent::OnUpdateTransform(EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport)
 {
 	Super::OnUpdateTransform(UpdateTransformFlags, Teleport);
@@ -229,8 +419,7 @@ void ULandscapePatchComponent::PostEditChangeProperty(FPropertyChangedEvent& Pro
 	using namespace LandscapePatchComponentLocals;
 
 	// Do a bunch of checks to make sure that we don't try to do anything when the editing is happening inside the blueprint editor.
-	UWorld* World = GetWorld();
-	if (IsTemplate() || !IsValid(this) || !IsValid(World) || World->WorldType != EWorldType::Editor)
+	if (!IsRealPatch())
 	{
 		return;
 	}
@@ -260,25 +449,120 @@ void ULandscapePatchComponent::PostEditChangeProperty(FPropertyChangedEvent& Pro
 	// the update, etc).
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 }
-#endif
+#endif // WITH_EDITOR
 
-// Called after rerunning construction scripts (when patch is part of a blueprint) to make sure that the newly created 
-// instance of the patch is placed in the same order in the patch  manager as the destroyed instance.
+FLandscapePatchComponentInstanceData::FLandscapePatchComponentInstanceData(const ULandscapePatchComponent* Patch)
+: FSceneComponentInstanceData(Patch)
+{
+#if WITH_EDITOR
+	using namespace LandscapePatchComponentLocals;
+
+	if (!ensure(Patch))
+	{
+		return;
+	}
+
+	bGaveMissingPatchManagerWarning = Patch->bGaveMissingPatchManagerWarning;
+	bGaveNotInPatchManagerWarning = Patch->bGaveNotInPatchManagerWarning;
+	bGaveMissingLandscapeWarning = Patch->bGaveMissingLandscapeWarning;
+
+	bDirtiedByConstructionScript = Patch->bDirtiedByConstructionScript;
+
+	PatchManager = Patch->GetPatchManager();
+	if (PatchManager)
+	{
+		IndexInManager = PatchManager->GetIndexOfPatch(Patch);
+	}
+#endif
+}
+
+// Called after rerunning construction scripts (when patch is part of a blueprint) to carry over extra data.
 void ULandscapePatchComponent::ApplyComponentInstanceData(FLandscapePatchComponentInstanceData* ComponentInstanceData)
 {
-	if (ComponentInstanceData)
-	{
-		if (ComponentInstanceData->IndexInManager >= 0 && PatchManager.IsValid())
-		{
-			PatchManager->MovePatchToIndex(this, ComponentInstanceData->IndexInManager);
-		}
-
 #if WITH_EDITOR
-		bGaveMissingPatchManagerWarning = ComponentInstanceData->bGaveMissingPatchManagerWarning;
-		bGaveNotInPatchManagerWarning = ComponentInstanceData->bGaveNotInPatchManagerWarning;
-		bGaveMissingLandscapeWarning = ComponentInstanceData->bGaveMissingLandscapeWarning;
-#endif
+	using namespace LandscapePatchComponentLocals;
+
+	if (!ComponentInstanceData || !IsRealPatch())
+	{
+		return;
 	}
+
+	bGaveMissingPatchManagerWarning = ComponentInstanceData->bGaveMissingPatchManagerWarning;
+	bGaveNotInPatchManagerWarning = ComponentInstanceData->bGaveNotInPatchManagerWarning;
+	bGaveMissingLandscapeWarning = ComponentInstanceData->bGaveMissingLandscapeWarning;
+
+	bDirtiedByConstructionScript = ComponentInstanceData->bDirtiedByConstructionScript;
+
+	if (!bAllowAutoFindOfManagerInConstructionScript)
+	{
+		// This is the ideal case where we don't have to worry about auto acquired manager and we
+		// don't expect to have to modify the previous one in any way.
+		PatchManager = ComponentInstanceData->PatchManager;
+		PreviousPatchManager = PatchManager;
+		Landscape = PatchManager.IsValid() ? PatchManager->GetOwningLandscape() : nullptr;
+
+		if (PatchManager.IsValid() && ComponentInstanceData->IndexInManager >= 0)
+		{
+			int32 CurrentIndexInManager = PatchManager->GetIndexOfPatch(this);
+			if (!ensure(CurrentIndexInManager >= 0))
+			{
+				PatchManager->AddPatch(this);
+				PatchManager->MarkModifiedInConstructionScript();
+			}
+			if (!ensure(CurrentIndexInManager == ComponentInstanceData->IndexInManager))
+			{
+				PatchManager->MovePatchToIndex(this, ComponentInstanceData->IndexInManager);
+				PatchManager->MarkModifiedInConstructionScript();
+			}
+		}
+		return;
+	}
+
+	// If we got here, then we're going down a legacy path where we auto acquire patch manager
+	// in construction script.
+
+	if (ComponentInstanceData->PatchManager.IsValid())
+	{
+		// We had an existing patch manager so use that. This is mostly like the above except that we
+		// have to remove ourselves from an acquired manager if there is one, and we automatically
+		// add ourselves to our patch manager if it was saved without this patch. Calling SetPatchManager
+		// does all of that for us, except we need to track whether we modified the patch manager we keep.
+
+		bool bModifiedPatchManager = !ComponentInstanceData->PatchManager->ContainsPatch(this) 
+			|| ComponentInstanceData->PatchManager->GetIndexOfPatch(this) != ComponentInstanceData->IndexInManager;
+
+		SetPatchManager(ComponentInstanceData->PatchManager.Get());
+
+		PatchManager->MovePatchToIndex(this, ComponentInstanceData->IndexInManager);
+
+		if (bModifiedPatchManager)
+		{
+			ComponentInstanceData->PatchManager->MarkModifiedInConstructionScript();
+
+			// This might get double logged because InstanceDataCache->ApplyToActor gets run twice (see AActor::ExecuteConstruction),
+			// but that's ok. Also we could check for current dirtyness to avoid the "might not have" wording,
+			// but we want to log a warning either way, so probably not worth it.
+			UE_LOG(LogLandscapePatch, Warning, TEXT("Patch was missing from expected patch manager and was added in a "
+				"construction script rerun but manager might not have been marked dirty. Save the manager to avoid "
+				"potential reorderings depending on loading order. (Package: %s, Actor: %s"),
+				*GetNameSafe(GetPackage()), *GetNameSafe(GetAttachmentRootActor()));
+		}
+		return;
+	}
+
+	// If we got to here, then we're keeping the patch manager we auto acquired.
+	if (PatchManager.IsValid())
+	{
+		bDirtiedByConstructionScript = true;
+		PatchManager->MarkModifiedInConstructionScript();
+
+		// See comment on the other log statement above
+		UE_LOG(LogLandscapePatch, Warning, TEXT("Patch acquired a patch manager in a construction script rerun but might not have been "
+			"marked dirty. Save the patch and its manager to avoid potential reorderings depending on loading order. (Package: %s, Actor: %s"),
+			*GetNameSafe(GetPackage()), *GetNameSafe(GetAttachmentRootActor()));
+	}
+	
+#endif // WITH_EDITOR
 }
 
 void ULandscapePatchComponent::SetLandscape(ALandscape* NewLandscape)
@@ -295,6 +579,8 @@ void ULandscapePatchComponent::SetLandscape(ALandscape* NewLandscape)
 		return;
 	}
 
+	Modify();
+
 	Landscape = NewLandscape;
 
 	if (!NewLandscape)
@@ -303,8 +589,7 @@ void ULandscapePatchComponent::SetLandscape(ALandscape* NewLandscape)
 		return;
 	}
 
-	UWorld* World = GetWorld();
-	if (IsTemplate() || !IsValid(World) || World->WorldType != EWorldType::Editor)
+	if (!IsRealPatch())
 	{
 		return;
 	}
@@ -336,10 +621,13 @@ void ULandscapePatchComponent::SetPatchManager(ALandscapePatchManager* NewPatchM
 	// surround everything since nothing is currently expected to work for a patch manager at runtime.
 #if WITH_EDITOR
 
-	if (PreviousPatchManager == NewPatchManager && NewPatchManager && NewPatchManager->ContainsPatch(this))
+	if (PreviousPatchManager == NewPatchManager 
+		&& PatchManager == NewPatchManager
+		&& !(NewPatchManager && !NewPatchManager->ContainsPatch(this)))
 	{
 		return;
 	}
+
 	ResetWarnings();
 
 	if (PreviousPatchManager.IsValid())
@@ -347,11 +635,11 @@ void ULandscapePatchComponent::SetPatchManager(ALandscapePatchManager* NewPatchM
 		PreviousPatchManager->RemovePatch(this);
 	}
 
+	Modify();
 	PatchManager = NewPatchManager;
 	if (NewPatchManager)
 	{
-		UWorld* World = GetWorld();
-		if (!IsTemplate() && IsValid(World) && World->WorldType == EWorldType::Editor)
+		if (IsRealPatch())
 		{
 			PatchManager->AddPatch(this);
 		}
@@ -388,26 +676,17 @@ void ULandscapePatchComponent::MoveToTop()
 
 void ULandscapePatchComponent::RequestLandscapeUpdate(bool bInUserTriggeredUpdate)
 {
+	using namespace LandscapePatchComponentLocals;
+
 #if WITH_EDITOR
-	UWorld* World = GetWorld();
 	// Note that aside from the usual guard against doing things in the blueprint editor, the check of WorldType
-	// here also prevents us from doing the request while cooking, where WorldType is set to Inactive. Otherwise
+	// inside this call also prevents us from doing the request while cooking, where WorldType is set to Inactive. Otherwise
 	// we would issue a warning below while cooking when PatchManager is not saved (and not reset in the construction
 	// script).
-	if (IsTemplate() || World->WorldType != EWorldType::Editor)
+	if (!IsRealPatch())
 	{
 		return;
 	}
-
-	// Helper for getting name strings in the warning messages below.
-	auto GetNameString = [](UObject* PotentiallyNullObject) {
-		FString ToReturn;
-		if (PotentiallyNullObject)
-		{
-			PotentiallyNullObject->GetName(ToReturn);
-		}
-		return ToReturn;
-	};
 
 	if (!PatchManager.IsValid())
 	{
@@ -415,7 +694,7 @@ void ULandscapePatchComponent::RequestLandscapeUpdate(bool bInUserTriggeredUpdat
 		{
 			UE_LOG(LogLandscapePatch, Warning, TEXT("Patch does not have a valid patch manager. "
 				"Set the landscape or patch manager on the patch. (Package: %s, Actor: %s"), 
-				*GetNameString(GetPackage()), *GetNameString(GetAttachmentRootActor()));
+				*GetNameSafe(GetPackage()), *GetNameSafe(GetAttachmentRootActor()));
 			bGaveMissingPatchManagerWarning = true;
 		}
 		return;
@@ -428,7 +707,7 @@ void ULandscapePatchComponent::RequestLandscapeUpdate(bool bInUserTriggeredUpdat
 		{
 			UE_LOG(LogLandscapePatch, Warning, TEXT("Patch's patch manager does not contain this patch. "
 				"Perhaps the manager was not saved? Reset the patch manager on the patch. (Package: %s, Actor: %s)"), 
-				*GetNameString(GetPackage()), *GetNameString(GetAttachmentRootActor()));
+				*GetNameSafe(GetPackage()), *GetNameSafe(GetAttachmentRootActor()));
 			bGaveNotInPatchManagerWarning = true;
 		}
 		bRequestUpdate = false;
@@ -439,7 +718,7 @@ void ULandscapePatchComponent::RequestLandscapeUpdate(bool bInUserTriggeredUpdat
 		{
 			UE_LOG(LogLandscapePatch, Warning, TEXT("Patch's patch manager does not have a valid owning "
 				"landscape. Perhaps the landscape was not saved? Reset the landscape on the manager. (Package: %s, Manager: %s)"), 
-				*GetNameString(GetPackage()), *GetNameString(PatchManager.Get()));
+				*GetNameSafe(GetPackage()), *GetNameSafe(PatchManager.Get()));
 			bGaveMissingLandscapeWarning = true;
 		}
 		bRequestUpdate = false;
@@ -461,6 +740,12 @@ void ULandscapePatchComponent::ResetWarnings()
 	bGaveMissingLandscapeWarning = false;
 }
 #endif
+
+bool ULandscapePatchComponent::IsRealPatch()
+{
+	UWorld* World = GetWorld();
+	return !IsTemplate() && IsValid(this) && IsValid(World) && World->WorldType == EWorldType::Editor;
+}
 
 FTransform ULandscapePatchComponent::GetLandscapeHeightmapCoordsToWorld() const
 {

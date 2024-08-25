@@ -8,26 +8,45 @@ through a single struct, allowing for a more readable code
 
 COMPILER_ALLOW_CS_DERIVATIVES
 
+#if IS_NANITE_PASS
+MAX_OCCUPANCY
+#endif
+
 #include "ShaderOutputCommon.ush"
 #include "GammaCorrectionCommon.ush"
 #include "VariableRateShading/VRSShadingRateCommon.ush"
 #include "Nanite/NaniteShadeCommon.ush"
 
-// .xy = min, .zw = max
-uint4 ViewRect;
+#if PLATFORM_SUPPORTS_SHADER_ROOT_CONSTANTS
 
-// .x = shading bin, y = VRS tile size, .z = Quad Binning Flag, .w = unused
+#include "/Engine/Shared/HLSLReservedSpaces.h"
+
+struct FUERootConstants
+{
+	uint  RecordIndex;
+	uint3 PassData;
+};
+
+// RecordIndex = ShadingBin
+// PassData .x = Quad Binning Flag, .y = DataByteOffset, .z = Unused
+ConstantBuffer<FUERootConstants> UERootConstants : UE_HLSL_REGISTER(b, 0, UE_HLSL_SPACE_SHADER_ROOT_CONSTANTS);
+
+#else
+
+// .x = shading bin, .y = Quad Binning Flag, .z = DataByteOffset, .w = Unused
 uint4 PassData; 
+
+#endif
 
 // TODO: Is this ever used? (see bHighPrecisionGBuffers)
 #define HIGH_PRECISION_GBUFFERS 0
 
-#if STRATA_OPAQUE_DEFERRED
-	#if STRATA_BASE_PASS_MRT_OUTPUT_COUNT != 3
-		#error Strata STRATA_BASE_PASS_MRT_OUTPUT_COUNT has been updated but not the uint MRTs
+#if SUBSTRATE_OPAQUE_DEFERRED
+	#if SUBSTRATE_BASE_PASS_MRT_OUTPUT_COUNT != 3
+		#error Substrate SUBSTRATE_BASE_PASS_MRT_OUTPUT_COUNT has been updated but not the uint MRTs
 	#endif
 	#if PIXELSHADEROUTPUT_MRT4
-		#error Strata cannot map to such a case
+		#error Substrate cannot map to such a case
 	#endif
 #endif
 
@@ -51,24 +70,28 @@ uint4 PassData;
 	RWTexture2D<float4> OutTarget2;
 #endif
 
-#if STRATA_OPAQUE_DEFERRED
+#if PIXELSHADEROUTPUT_MRT3
+	RWTexture2D<float4> OutTarget3;
+#endif
+
+#if SUBSTRATE_OPAQUE_DEFERRED
 	RWTexture2DArray<uint> OutTargets;
 
-	#if PIXELSHADEROUTPUT_MRT3
-		RWTexture2D<STRATA_TOP_LAYER_TYPE> OutTarget4;
-	#elif PIXELSHADEROUTPUT_MRT2
-		RWTexture2D<STRATA_TOP_LAYER_TYPE> OutTarget3;
-	#elif PIXELSHADEROUTPUT_MRT1
-		RWTexture2D<STRATA_TOP_LAYER_TYPE> OutTarget2;
-	#else
-		RWTexture2D<STRATA_TOP_LAYER_TYPE> OutTarget1;
-	#endif
+#if SUBSTRATE_FIRST_MRT_INDEX > 4
+	#error Substrate doesn't currently handle more than 4 base GBuffer MRTs
+#endif
+#if SUBSTRATE_FIRST_MRT_INDEX == 4
+	#define SUBSTRATE_TOP_LAYER_NAME OutTarget4
+#elif SUBSTRATE_FIRST_MRT_INDEX == 3
+	#define SUBSTRATE_TOP_LAYER_NAME OutTarget3
+#elif SUBSTRATE_FIRST_MRT_INDEX == 2
+	#define SUBSTRATE_TOP_LAYER_NAME OutTarget2
+#else
+	#define SUBSTRATE_TOP_LAYER_NAME OutTarget1
+#endif
+	RWTexture2D<SUBSTRATE_TOP_LAYER_TYPE> SUBSTRATE_TOP_LAYER_NAME;
 
-#else // STRATA_OPAQUE_DEFERRED
-
-	#if PIXELSHADEROUTPUT_MRT3
-		RWTexture2D<float4> OutTarget3;
-	#endif
+#else // SUBSTRATE_OPAQUE_DEFERRED
 
 	#if PIXELSHADEROUTPUT_MRT4
 		RWTexture2D<float4> OutTarget4;
@@ -86,9 +109,9 @@ uint4 PassData;
 		RWTexture2D<float4> OutTarget7;
 	#endif
 
-#endif // STRATA_OPAQUE_DEFERRED
+#endif // SUBSTRATE_OPAQUE_DEFERRED
 
-FPixelShaderOut ShadePixel(const uint2 PixelPos, uint QuadIndex)
+FPixelShaderOut ShadePixel(const float2 SVPositionXY, uint QuadIndex)
 {
 #if PIXELSHADEROUTPUT_INTERPOLANTS || PIXELSHADEROUTPUT_BASEPASS
 #if IS_NANITE_PASS
@@ -99,8 +122,7 @@ FPixelShaderOut ShadePixel(const uint2 PixelPos, uint QuadIndex)
 #endif
 #endif
 
-	const float2 HalfPixelOffset = float2(0.5f, 0.5f);
-	const float4 SvPosition = float4(float2(PixelPos) + HalfPixelOffset, 0.0f, 1.0f);
+	const float4 SvPosition = float4(SVPositionXY, 0.0f, 1.0f);
 
 #if IS_NANITE_PASS && (PIXELSHADEROUTPUT_INTERPOLANTS || PIXELSHADEROUTPUT_BASEPASS)
 	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
@@ -134,24 +156,24 @@ FPixelShaderOut ShadePixel(const uint2 PixelPos, uint QuadIndex)
 
 #define CONDITIONAL_EXPORT 1
 
-#if STRATA_OPAQUE_DEFERRED
+#if SUBSTRATE_OPAQUE_DEFERRED
 
 void ConditionalExport(bool Forced, uint2 PixelPos, FPixelShaderOut ShadedPixel, uint Index)
 {
 #if CONDITIONAL_EXPORT
 	BRANCH
-	if (Forced || ShadedPixel.StrataOutput[Index] != 0)
+	if (Forced || ShadedPixel.SubstrateOutput[Index] != 0)
 #endif
 	{
-		OutTargets[uint3(PixelPos, Index)] = ShadedPixel.StrataOutput[Index];
+		OutTargets[uint3(PixelPos, Index)] = ShadedPixel.SubstrateOutput[Index];
 	}
 }
 
-void ConditionalExport(bool Forced, RWTexture2D<STRATA_TOP_LAYER_TYPE> OutTarget, uint2 PixelPos, STRATA_TOP_LAYER_TYPE TopLayerData)
+void ConditionalExport(bool Forced, RWTexture2D<SUBSTRATE_TOP_LAYER_TYPE> OutTarget, uint2 PixelPos, SUBSTRATE_TOP_LAYER_TYPE TopLayerData)
 {
 #if CONDITIONAL_EXPORT
 	BRANCH
-	if (Forced || TopLayerData != 0)
+	if (Forced || any(TopLayerData != 0))
 #endif
 	{
 		OutTarget[PixelPos] = TopLayerData;
@@ -186,7 +208,7 @@ void ExportPixel(const uint2 PixelPos, FPixelShaderOut ShadedPixel)
 	OutTarget3[PixelPos] = ShadedPixel.MRT[3];
 #endif
 
-#if STRATA_OPAQUE_DEFERRED
+#if SUBSTRATE_OPAQUE_DEFERRED
 
 	// In this case, here is the gbuffer pattern
 	// MRT0 is pixel color
@@ -197,18 +219,9 @@ void ExportPixel(const uint2 PixelPos, FPixelShaderOut ShadedPixel)
 	ConditionalExport(true,  PixelPos, ShadedPixel, 0);
 	ConditionalExport(false, PixelPos, ShadedPixel, 1);
 	ConditionalExport(false, PixelPos, ShadedPixel, 2);
+	ConditionalExport(true, SUBSTRATE_TOP_LAYER_NAME, PixelPos, ShadedPixel.SubstrateTopLayerData);
 
-#if PIXELSHADEROUTPUT_MRT3
-	ConditionalExport(true, OutTarget4, PixelPos, ShadedPixel.StrataTopLayerData);
-#elif PIXELSHADEROUTPUT_MRT2
-	ConditionalExport(true, OutTarget3, PixelPos, ShadedPixel.StrataTopLayerData);
-#elif PIXELSHADEROUTPUT_MRT1
-	ConditionalExport(true, OutTarget2, PixelPos, ShadedPixel.StrataTopLayerData);
-#else
-	ConditionalExport(true, OutTarget1, PixelPos, ShadedPixel.StrataTopLayerData);
-#endif
-
-#else // STRATA_OPAQUE_DEFERRED
+#else // SUBSTRATE_OPAQUE_DEFERRED
 
 #if PIXELSHADEROUTPUT_MRT4
 	OutTarget4[PixelPos] = ShadedPixel.MRT[4];
@@ -226,15 +239,15 @@ void ExportPixel(const uint2 PixelPos, FPixelShaderOut ShadedPixel)
 	OutTarget7[PixelPos] = ShadedPixel.MRT[7];
 #endif
 
-#endif // STRATA_OPAQUE_DEFERRED
+#endif // SUBSTRATE_OPAQUE_DEFERRED
 }
 
 #define VIS_HELPER_LANES 0
 
-void ProcessPixel(uint ShadingBin, const uint2 PixelPos, uint QuadIndex, uint DispatchIndex, uint PixelWriteMask, uint HelperLaneCount)
+void ProcessPixel(uint ShadingBin, const uint2 PixelPos, const float2 SVPositionXY, uint QuadIndex, uint DispatchIndex, uint PixelWriteMask, uint HelperLaneCount)
 {
 	// All lanes shade (regardless of export - so ddx/ddy are valid)
-	FPixelShaderOut ShadedPixel = ShadePixel(PixelPos, QuadIndex);
+	FPixelShaderOut ShadedPixel = ShadePixel(SVPositionXY, QuadIndex);
 
 #if VIS_HELPER_LANES
 	ShadedPixel.MRT[3].rgb = ColorMapTurbo(float(HelperLaneCount) / 4.0f);
@@ -259,37 +272,44 @@ void ProcessPixel(uint ShadingBin, const uint2 PixelPos, uint QuadIndex, uint Di
 	if (PixelWriteMask & 1u)
 	{
 		ExportPixel(PixelPos, ShadedPixel);
+	}
 
-		BRANCH
-		if (PixelWriteMask & 2u) // Copy H
-		{
-			ExportPixel(PixelPos + uint2(1, 0), ShadedPixel);
-		}
+	BRANCH
+	if (PixelWriteMask & 2u) // Copy H
+	{
+		ExportPixel(PixelPos + uint2(1, 0), ShadedPixel);
+	}
 
-		BRANCH
-		if (PixelWriteMask & 4u) // Copy V
-		{
-			ExportPixel(PixelPos + uint2(0, 1), ShadedPixel);
-		}
+	BRANCH
+	if (PixelWriteMask & 4u) // Copy V
+	{
+		ExportPixel(PixelPos + uint2(0, 1), ShadedPixel);
+	}
 
-		BRANCH
-		if (PixelWriteMask & 8u) // Copy D
-		{
-			ExportPixel(PixelPos + uint2(1, 1), ShadedPixel);
-		}
+	BRANCH
+	if (PixelWriteMask & 8u) // Copy D
+	{
+		ExportPixel(PixelPos + uint2(1, 1), ShadedPixel);
 	}
 }
 
-[numthreads(64, 1, 1)]
+[numthreads(COMPUTE_MATERIAL_GROUP_SIZE, 1, 1)]
 void MainCS(uint ThreadIndex : SV_GroupIndex, uint GroupID : SV_GroupID)
 {
-	const uint ShadingBin = PassData.x;
-	const bool bQuadBinning = PassData.z != 0u;
+#if PLATFORM_SUPPORTS_SHADER_ROOT_CONSTANTS
+	const uint ShadingBin		= UERootConstants.RecordIndex;
+	const bool bQuadBinning		= UERootConstants.PassData.x != 0u;
+	const uint DataByteOffset	= UERootConstants.PassData.y;
+#else
+	const uint ShadingBin		= PassData.x;
+	const bool bQuadBinning		= PassData.y != 0u;
+	const uint DataByteOffset	= PassData.z;
+#endif
 
-	const uint PixelIndex = (GroupID * 64u) + ThreadIndex;
+	const uint PixelIndex = (GroupID * COMPUTE_MATERIAL_GROUP_SIZE) + ThreadIndex;
 
-	const uint3 ShadingBinMeta = Nanite.ShadingBinMeta[ShadingBin].xyz;
-	const uint ElementCount = bQuadBinning ? ShadingBinMeta.x : ShadingBinMeta.y;
+	const uint3 ShadingBinMeta = Nanite.ShadingBinData.Load3(ShadingBin * NANITE_SHADING_BIN_META_BYTES);
+	const uint ElementCount = ShadingBinMeta.x;
 	const uint ElementIndex = bQuadBinning ? (PixelIndex >> 2) : PixelIndex;
 
 	BRANCH
@@ -298,18 +318,34 @@ void MainCS(uint ThreadIndex : SV_GroupIndex, uint GroupID : SV_GroupID)
 		return;
 	}
 
-	const uint PackedElement = Nanite.ShadingBinData[ShadingBinMeta.z + ElementIndex];
-	const FShadingElement Element = UnpackShadingElement(PackedElement);
+	uint2 PixelPos;
+	uint2 VRSShift;
+	uint PixelWriteMask;
+	uint HelperLaneCount;
+	
+	BRANCH
+	if (bQuadBinning)
+	{
+		const uint2 PackedElement = Nanite.ShadingBinData.Load2(DataByteOffset + (ShadingBinMeta.z * 4 + ElementIndex * 8));
 
-	const uint CornerIndex = bQuadBinning ? (ThreadIndex & 3u) : 0u;
+		const uint CornerIndex = (ThreadIndex & 3u);
 
-	const uint2 PixelPos = Element.TopLeft + uint2(CornerIndex & 1u, CornerIndex >> 1u);
+		const uint2 TopLeft = uint2(BitFieldExtractU32(PackedElement.x, 14, 0), BitFieldExtractU32(PackedElement.x, 14, 14));
+		VRSShift			= uint2(BitFieldExtractU32(PackedElement.x, 1, 28), BitFieldExtractU32(PackedElement.x, 1, 29));
+		PixelWriteMask		= BitFieldExtractU32(PackedElement.y, 4, CornerIndex * 4u);
 
-	const uint PixelWriteMask = bQuadBinning ? BitFieldExtractU32(Element.Mask, 1, CornerIndex) :	// Set TL bit based on coverage mask
-												Element.Mask;										// Take write mask directly from pixel
+		PixelPos			= TopLeft + (uint2(CornerIndex & 1u, CornerIndex >> 1u) << VRSShift);
 
-	const uint HelperLaneCount = (VIS_HELPER_LANES && bQuadBinning) ? (4u - countbits(Element.Mask)) : 0u;
+		HelperLaneCount		= (VIS_HELPER_LANES && bQuadBinning) ? (4u - countbits(PixelWriteMask)) : 0u;
+	}
+	else
+	{
+		const uint PackedElement= Nanite.ShadingBinData.Load(DataByteOffset + (ShadingBinMeta.z * 4 + ElementIndex * 4));
+		PixelPos				= uint2(BitFieldExtractU32(PackedElement, 13, 0), BitFieldExtractU32(PackedElement, 13, 13));
+		VRSShift				= uint2(BitFieldExtractU32(PackedElement, 1, 26), BitFieldExtractU32(PackedElement, 1, 27));
+		PixelWriteMask			= PackedElement >> 28;
+	}
 
-	// Shade and export quad
-	ProcessPixel(ShadingBin, PixelPos, ElementIndex, PixelIndex, PixelWriteMask, HelperLaneCount);
+	const float2 SVPositionXY = PixelPos + ((1u << VRSShift) * 0.5f);
+	ProcessPixel(ShadingBin, PixelPos, SVPositionXY, ElementIndex, PixelIndex, PixelWriteMask, HelperLaneCount);
 }

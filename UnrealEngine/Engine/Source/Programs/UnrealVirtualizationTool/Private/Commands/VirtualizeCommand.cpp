@@ -174,6 +174,13 @@ bool FVirtualizeCommand::ProcessProject(const FProject& Project, TUniquePtr<FCom
 		UE::Virtualization::Shutdown();
 	};
 
+	if (!UE::Virtualization::IVirtualizationSystem::Get().IsEnabled())
+	{
+		UE_LOG(LogVirtualizationTool, Display, TEXT("\tVirtualization is not enabled for this project"));
+		Output = MakeUnique<FVirtualizeCommandOutput>(Project.GetProjectName(), TArray<FText>());
+		return true;
+	}
+
 	TArray<FString> ProjectPackages = Project.GetAllPackages();
 
 	EVirtualizationOptions Options = EVirtualizationOptions::None;

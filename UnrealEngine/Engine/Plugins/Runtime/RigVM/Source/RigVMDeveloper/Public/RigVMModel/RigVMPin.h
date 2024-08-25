@@ -294,13 +294,20 @@ public:
 	FString GetDefaultValue() const;
 
 	// Returns the default value with an additional override ma
-	FString GetDefaultValue(const FPinOverride& InOverride) const;
+	FString GetDefaultValue(const FPinOverride& InOverride, bool bAdaptValueForPinType = true) const;
+
+	// Returns the default value as stored by the user.
+	FString GetDefaultValueStoredByUserInterface() const;
 
 	// Returns true if the default value provided is valid
 	bool IsValidDefaultValue(const FString& InDefaultValue) const;
 
 	// Returns the default value clamped with the limit meta values defined by the UPROPERTY in URigVMUnitNodes 
 	FString ClampDefaultValueFromMetaData(const FString& InDefaultValue) const;
+
+	// Returns the keyed metadata associated with this pin, if any
+	UFUNCTION(BlueprintCallable, Category = RigVMPin)
+	FString GetMetaData(FName InKey) const;
 
 	// Returns the name of a custom widget to be used
 	// for editing the Pin.
@@ -466,6 +473,9 @@ public:
 	// Returns the decorator backing up this pin
 	TSharedPtr<FStructOnScope> GetDecoratorInstance(bool bUseDefaultValueFromPin = true) const;
 
+	// Returns the struct of the decorator backing up this pin
+	UScriptStruct* GetDecoratorScriptStruct() const;
+
 private:
 
 	void UpdateTypeInformationIfRequired() const;
@@ -505,6 +515,9 @@ private:
 
 	UPROPERTY()
 	bool bIsDynamicArray;
+
+	UPROPERTY()
+	bool bIsLazy;
 
 	UPROPERTY()
 	FString CPPType;

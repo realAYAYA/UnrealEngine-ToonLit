@@ -2,6 +2,7 @@
 
 #include "MuCOE/CustomizableObjectEditorViewportClient.h"
 
+#include "MuCOE/CustomizableObjectInstanceBakingUtils.h"
 #include "Animation/DebugSkelMeshComponent.h"
 #include "Animation/PoseAsset.h"
 #include "Animation/AnimSingleNodeInstance.h"
@@ -12,6 +13,7 @@
 #include "Components/SpotLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "ContentBrowserModule.h"
+#include "CustomizableObjectEditor.h"
 #include "DynamicMeshBuilder.h"
 #include "Editor/EditorPerProjectUserSettings.h"
 #include "Editor/UnrealEdTypes.h"
@@ -19,27 +21,29 @@
 #include "FileHelpers.h"
 #include "IContentBrowserSingleton.h"
 #include "InputKeyEventArgs.h"
-#include "Materials/MaterialExpressionTextureBase.h"
+#include "ObjectTools.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/MessageDialog.h"
 #include "Misc/PackageName.h"
 #include "MuCO/CustomizableObjectInstance.h"
 #include "MuCO/CustomizableObjectSystem.h"
-#include "MuCO/CustomizableObjectMipDataProvider.h"
-#include "MuCO/UnrealBakeHelpers.h"
 #include "MuCOE/CustomizableObjectPreviewScene.h"
-#include "MuCOE/CustomizableObjectWidget.h"
 #include "MuCOE/ICustomizableObjectInstanceEditor.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipMorph.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipWithMesh.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeProjectorConstant.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeProjectorParameter.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
-#include "ObjectTools.h"
+#include "MuT/UnrealPixelFormatOverride.h"
 #include "Preferences/PersonaOptions.h"
 #include "ScopedTransaction.h"
 #include "SkeletalDebugRendering.h"
 #include "UnrealWidget.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "MuCO/CustomizableObjectMipDataProvider.h"
+#include "MuCOE/CustomizableObjectEditorLogger.h"
+#include "MuCOE/UnrealBakeHelpers.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
@@ -53,360 +57,18 @@ class UTextureMipDataProviderFactory;
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor" 
 
 
-GizmoRTSProxy::GizmoRTSProxy() :
-	AnyGizmoSelected(false)
-	, DataOriginParameter(nullptr)
-	, DataOriginConstant(nullptr)
-	, HasAssignedData(false)
-	, AssignedDataIsFromNode(false)
-	, ProjectorParameterIndex(-1)
-	, ProjectorGizmoEdited(false)
-	, CallUpdateSkeletalMesh(true)
-	, bManipulatingGizmo(false)
-	, ProjectionType(ECustomizableObjectProjectorType::Planar)
-{
-
-}
-
-
-void GizmoRTSProxy::CopyTransformFromOriginData()
-{
-    if (const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = CustomizableObjectEditorPtr.Pin())
-    {
-	    if (const UCustomizableObjectInstance* Instance = Editor->GetPreviewInstance())
-        {
-			Value = Instance->GetProjector(ProjectorParameterName, ProjectorRangeIndex);
-        }
-    }
-}
-
-
-bool GizmoRTSProxy::UpdateOriginData()
-{
-	if (!HasAssignedData)
-	{
-		return false;
-	}
-
-	if (DataOriginParameter != nullptr)
-	{
-		DataOriginParameter->DefaultValue = Value;
-		return true;
-	}
-	else if (DataOriginConstant != nullptr)
-	{
-		DataOriginConstant->Value = Value;
-		return true;
-	}
-	else
-	{
-		if (CustomizableObjectEditorPtr.IsValid())
-		{
-			if (UCustomizableObjectInstance* Instance = CustomizableObjectEditorPtr.Pin()->GetPreviewInstance())
-			{
-				TArray<FCustomizableObjectProjectorParameterValue>& ProjectorParameters = Instance->GetProjectorParameters();
-				int32 Index = Instance->FindProjectorParameterNameIndex(ProjectorParameterName);
-				
-				for (int32 i = 0; i < Instance->GetProjectorParameters().Num(); ++i)
-				{
-					if (ProjectorParameters[i].ParameterName == ProjectorParameterName)
-					{
-						if (ProjectorRangeIndex >= 0 && !ProjectorParameters[i].RangeValues.IsValidIndex(ProjectorRangeIndex))
-						{
-							return false;
-						}
-					}
-				}
-				
-				if (!Instance->RemovedProjectorParameterNameWithIndex.IsEmpty() && Instance->RemovedProjectorParameterNameWithIndex == ProjectorParameterNameWithIndex) // If the projector has been removed, do not update
-				{
-					Index = -1;
-				}
-				Instance->RemovedProjectorParameterNameWithIndex = FString(""); // Consume the projector removed tag
-
-				if (Index != -1)
-				{
-					if (!ProjectorGizmoEdited)
-					{
-						Instance->PreEditChange(NULL);
-					}
-
-					Instance->SetProjectorValue(ProjectorParameterName,
-						(FVector)Value.Position,
-						(FVector)Value.Direction,
-						(FVector)Value.Up,
-						(FVector)Value.Scale,
-						Value.Angle,
-						ProjectorRangeIndex);
-
-					if (!ProjectorGizmoEdited)
-					{
-						Instance->PostEditChange(); // Avoid unnecessary updates
-					}
-
-					if (CallUpdateSkeletalMesh)
-					{
-						Instance->UpdateSkeletalMeshAsync(true);
-					}
-					return true;
-				}
-			}
-		}
-	}
-
-	return false;
-}
-
-
-bool GizmoRTSProxy::Modify()
-{
-	if (DataOriginParameter != nullptr)
-	{
-		DataOriginParameter->Modify();
-		return true;
-	}
-	else if (DataOriginConstant != nullptr)
-	{
-		DataOriginConstant->Modify();
-		return true;
-	}
-
-	return false;
-}
-
-
-bool GizmoRTSProxy::ModifyGraph()
-{
-	if ((DataOriginParameter == nullptr) && (DataOriginConstant == nullptr))
-	{
-		return false;
-	}
-
-	if (DataOriginParameter != nullptr)
-	{
-		DataOriginParameter->GetGraph()->Modify();
-		return true;
-	}
-	else if (DataOriginConstant != nullptr)
-	{
-		DataOriginConstant->GetGraph()->Modify();
-		return true;
-	}
-
-	return false;
-}
-
-
-void GizmoRTSProxy::CleanOriginData()
-{
-	HasAssignedData = false;
-	AssignedDataIsFromNode = false;
-	AnyGizmoSelected = false;
-	DataOriginParameter = nullptr;
-	DataOriginConstant = nullptr;
-	ProjectorParameterName = FString("");
-	ProjectorParameterNameWithIndex = FString("");
-	ProjectorRangeIndex = -1;
-	ProjectorParameterIndex = -1;
-}
-
-
-bool GizmoRTSProxy::ProjectorHasInitialValues(FCustomizableObjectProjector& Parameter)
-{
-	if ((Parameter.Position == FVector3f(0, 0, 0)) &&
-		(Parameter.Direction == FVector3f(1, 0, 0)) &&
-		(Parameter.Up == FVector3f(0, 1, 0)) &&
-		(Parameter.Scale == FVector3f(10, 10, 100)) &&
-		(Parameter.ProjectionType == ECustomizableObjectProjectorType::Planar) &&
-		(Parameter.Angle == 2.0f * PI))
-	{
-		return true;
-	}
-
-	return false;
-}
-
-
-FCustomizableObjectProjector GizmoRTSProxy::SetProjectorInitialValue(TArray<TWeakObjectPtr<UDebugSkelMeshComponent>>& SkeletalMeshComponents, float TotalLength)
-{
-	FBoxSphereBounds::Builder BoundsBuilder;
-	for (TWeakObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent : SkeletalMeshComponents)
-	{
-		BoundsBuilder += SkeletalMeshComponent->Bounds;
-	}
-
-	FCustomizableObjectProjector Result;
-
-	if (BoundsBuilder.IsValid())
-	{
-		FBoxSphereBounds Bounds(BoundsBuilder);
-		Result.Position = FVector3f(Bounds.Origin + FVector(0.0f, 1.0f, 0.0f) * TotalLength * 0.5f);	// LWC_TODO: Precision Loss
-		Result.Scale = FVector3f(40.0f, 40.0f, 40.0f);
-		Result.Up = FVector3f(0.0f, 0.0f, 1.0f);
-		Result.Direction = FVector3f(0.0f, -1.0f, 0.0f);
-		Result.ProjectionType = ECustomizableObjectProjectorType::Planar;
-		Result.Angle = 2.0f * PI;
-	}
-
-	return Result;
-}
-
-
-bool GizmoRTSProxy::IsProjectorParameterSelected()
-{
-	if (AnyGizmoSelected && HasAssignedData && !AssignedDataIsFromNode && (DataOriginParameter == nullptr) && (DataOriginConstant == nullptr))
-	{
-		return true;
-	}
-
-	return false;
-}
-
-
-void GizmoRTSProxy::ProjectorParameterChanged(UCustomizableObjectNodeProjectorParameter* Node)
-{
-	if (AnyGizmoSelected && AssignedDataIsFromNode && (Node == DataOriginParameter))
-	{
-		switch (Node->ParameterSetModified)
-		{
-			case 0:
-			{
-				ProjectionType = Node->ProjectionType;
-				Value.ProjectionType = Node->ProjectionType;
-				break;
-			}
-			case 1:
-			{
-				Value.Angle = Node->DefaultValue.Angle;
-				break;
-			}
-			case 2:
-			{
-				Value.Position = Node->DefaultValue.Position;
-				Value.Direction = Node->DefaultValue.Direction;
-				Value.Scale = Node->DefaultValue.Scale;
-				Value.Up = Node->DefaultValue.Up;
-				Node->ParameterSetModified = -1;
-				break;
-			}
-			default:
-			{
-				UE_LOG(LogMutable, Warning, TEXT("ERROR: wrong parameter set modified value %d"), Node->ParameterSetModified);
-				break;
-			}
-		}
-	}
-}
-
-
-void GizmoRTSProxy::ProjectorParameterChanged(UCustomizableObjectNodeProjectorConstant* Node)
-{
-	if (AnyGizmoSelected && AssignedDataIsFromNode && (Node == DataOriginConstant))
-	{
-		switch (Node->ParameterSetModified)
-		{
-			case 0:
-			{
-				ProjectionType = Node->ProjectionType;
-				Value.ProjectionType = Node->ProjectionType;
-				break;
-			}
-			case 1:
-			{
-				Value.Angle = Node->Value.Angle;
-				break;
-			}
-			case 2:
-			{
-				Value.Position = Node->Value.Position;
-				Value.Direction = Node->Value.Direction;
-				Value.Up = Node->Value.Up;
-				break;
-			}
-			default:
-			{
-				UE_LOG(LogMutable, Warning, TEXT("ERROR: wrong parameter set modified value %d"), Node->ParameterSetModified);
-				break;
-			}
-		}
-	}
-}
-
-
-void GizmoRTSProxy::SetCallUpdateSkeletalMesh(bool InValue)
-{
-	CallUpdateSkeletalMesh = InValue;
-}
-
-
-void GizmoRTSProxy::SetProjectorUpdatedInViewport(bool InValue)
-{
-	if (!AnyGizmoSelected || DataOriginParameter || DataOriginConstant)
-	{
-		return;
-	}
-
-	if(InValue != bManipulatingGizmo)
-	{
-		bManipulatingGizmo = InValue;
-
-		if (CustomizableObjectEditorPtr.IsValid())
-		{
-			UCustomizableObjectInstance* Inst = CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
-
-			if (Inst)
-			{
-				Inst->ProjectorUpdatedInViewport = InValue;
-			}
-		}
-	}
-}
-
-
-FString GizmoRTSProxy::GetProjectorParameterName()
-{
-	return ProjectorParameterName;
-}
-
-
-FString GizmoRTSProxy::GetProjectorParameterNameWithIndex()
-{
-	return ProjectorParameterNameWithIndex;
-}
-
-
-bool GizmoRTSProxy::GetHasAssignedData()
-{
-	return HasAssignedData;
-}
-
-
-bool GizmoRTSProxy::GetAssignedDataIsFromNode()
-{
-	return AssignedDataIsFromNode;
-}
-
-
-FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient(TWeakPtr<ICustomizableObjectInstanceEditor> InCustomizableObjectEditor, FPreviewScene* InPreviewScene)
-	: FEditorViewportClient(&GLevelEditorModeTools(), InPreviewScene)
+FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient(TWeakPtr<ICustomizableObjectInstanceEditor> InCustomizableObjectEditor, FPreviewScene* InPreviewScene, const TSharedPtr<SEditorViewport>& EditorViewportWidget)
+	: FEditorViewportClient(&GLevelEditorModeTools(), InPreviewScene, EditorViewportWidget)
 	, CustomizableObjectEditorPtr(InCustomizableObjectEditor)
 	, CustomizableObject(nullptr)
-	, BakingOverwritePermission(false)
-	, AssetRegistryLoaded(false)
 {
 	// load config
 	ConfigOption = UPersonaOptions::StaticClass()->GetDefaultObject<UPersonaOptions>();
 	check (ConfigOption);
 
-	bCameraMove = false;
 	bUsingOrbitCamera = true;
 
-	bShowSockets = true;
 	bDrawUVs = false;
-	bDrawNormals = false;
-	bDrawTangents = false;
-	bDrawBinormals = false;
-	bShowPivot = false;
 	Widget->SetDefaultVisibility(false);
 	bCameraLock = true;
 	bDrawSky = true;
@@ -419,15 +81,6 @@ FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient
 
 	bShowBones = false;
 
-	MaterialToDrawInUVs = 0;
-	MaterialToDrawInUVsLOD = 0;
-	MaterialToDrawInUVsIndex = 0;
-	UVChannelToDrawInUVs = 0;
-	MaterialToDrawInUVsComponent = 0;
-
-	bManipulating = false;
-	LastHitProxyWidget = 0;
-
 	bReferenceMeshMissingWarningMessageVisible = false;
 
 	DrawHelper.bDrawPivot = false;
@@ -439,7 +92,8 @@ FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient
 	DrawHelper.GridColorMinor = FColor(128, 128, 128);
 	DrawHelper.PerspectiveGridSize = 2048.0f;
 	DrawHelper.NumCells = DrawHelper.PerspectiveGridSize / (32);
-	SetShowGrid();
+	UpdateShowGrid(true);
+	UpdateShowSky(true);
 
 	SetViewMode(VMI_Lit);
 
@@ -454,17 +108,9 @@ FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient
 	OverrideNearClipPlane(1.0f);
 
 	SetPreviewComponent(nullptr);
-
-	// add capture component for reflection
-	USphereReflectionCaptureComponent* CaptureComponent = NewObject<USphereReflectionCaptureComponent>();
-
-	const FTransform CaptureTransform(FRotator(0, 0, 0), FVector(0.f, 0.f, 100.f), FVector(1.f));
-	PreviewScene->AddComponent(CaptureComponent, CaptureTransform);
-	CaptureComponent->UpdateReflectionCaptureContents(PreviewScene->GetWorld());
-
+	
 	// now add the ClipMorph plane
 	ClipMorphNode = nullptr;
-	bClipMorphVisible = false;
 	bClipMorphLocalStartOffset = true;
 	ClipMorphMaterial = LoadObject<UMaterial>(NULL, TEXT("Material'/Engine/EditorMaterials/LevelGridMaterial.LevelGridMaterial'"), NULL, LOAD_None, NULL);
 	check(ClipMorphMaterial);
@@ -475,7 +121,6 @@ FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient
 	PreviewScene->AddComponent(ClipMeshComp, FTransform());
 	ClipMeshComp->SetVisibility(false);
 
-	WidgetMode = UE::Widget::WM_Translate;
 	BoundSphere.W = 100.f;
 
 	const float FOVMin = 5.f;
@@ -488,16 +133,12 @@ FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient
 		AddRealtimeOverride(false, LOCTEXT("RealtimeOverrideMessage_InstanceViewport", "Instance Viewport")); // We are PIE, don't start in realtime mode
 	}
 
-	GizmoProxy.CustomizableObjectEditorPtr = InCustomizableObjectEditor;
-	WidgetVisibility = false;
-
 	IsPlayingAnimation = false;
 	AnimationBeingPlayed = nullptr;
 
 	// Lighting 
 	SelectedLightComponent = nullptr;
-	bIsEditingLightEnabled = false;
-
+	
 	StateChangeShowGeometryDataFlag = false;
 
 	// Register delegate to update the show flags when the post processing is turned on or off
@@ -519,8 +160,19 @@ FCustomizableObjectEditorViewportClient::FCustomizableObjectEditorViewportClient
 
 void FCustomizableObjectEditorViewportClient::UpdateCameraSetup()
 {
+	// Look for any Skeletal Mesh Component that we can focus to.
+	bool bWasValidComponentFound = false;
+	for	(TWeakObjectPtr<UDebugSkelMeshComponent> SkeletalMeshComponent : SkeletalMeshComponents)
+	{
+		if (SkeletalMeshComponent.IsValid() && UE_MUTABLE_GETSKINNEDASSET(SkeletalMeshComponent))
+		{
+			bWasValidComponentFound = true;
+			break;
+		}
+	}
+	
 	static FRotator CustomOrbitRotation(-33.75, -135, 0);
-	if ( (SkeletalMeshComponents.Num() && SkeletalMeshComponents[0].IsValid() && UE_MUTABLE_GETSKINNEDASSET(SkeletalMeshComponents[0]))
+	if ( bWasValidComponentFound
 		||
 		(StaticMeshComponent.IsValid() && StaticMeshComponent->GetStaticMesh()) )
 	{
@@ -542,17 +194,15 @@ void FCustomizableObjectEditorViewportClient::UpdateCameraSetup()
 void FCustomizableObjectEditorViewportClient::UpdateFloor()
 {
 	// Move the floor to the bottom of the bounding box of the mesh, rather than on the origin
-	FVector Bottom(0.0f);
 	bool bFoundSkelMesh = false;
 
 	for (TWeakObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent : SkeletalMeshComponents)
 	{
-		if (SkeletalMeshComponent.IsValid())
+		if (SkeletalMeshComponent.IsValid() )
 		{
 			SkeletalMeshComponent->bComponentUseFixedSkelBounds = true;
 			SkeletalMeshComponent->UpdateBounds();
 
-			Bottom = SkeletalMeshComponent->Bounds.GetBoxExtrema(0);
 			bFoundSkelMesh = true;
 		}
 	}
@@ -565,8 +215,6 @@ void FCustomizableObjectEditorViewportClient::UpdateFloor()
 	else if (StaticMeshComponent.IsValid())
 	{
 		StaticMeshComponent->UpdateBounds();
-
-		Bottom = StaticMeshComponent->Bounds.GetBoxExtrema(0);
 	}
 
 	FAdvancedPreviewScene* AdvancedScene = static_cast<FAdvancedPreviewScene*>(PreviewScene);
@@ -593,8 +241,6 @@ void FCustomizableObjectEditorViewportClient::Tick(float DeltaSeconds)
 	FEditorViewportClient::Tick(DeltaSeconds);
 
 	UpdateFloor();
-
-	//PreviewScene->GetWorld()->Tick(LEVELTICK_All, DeltaSeconds);
 }
 
 
@@ -615,210 +261,169 @@ void DrawEllipse(FPrimitiveDrawInterface* PDI, const FVector& Base, const FVecto
 void FCustomizableObjectEditorViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterface* PDI)
 {
 	FEditorViewportClient::Draw(View, PDI);
-
-	//DrawHelper.Draw( View, PDI );	
-	if( StaticMeshComponent.IsValid() && StaticMeshComponent->GetStaticMesh() && (bDrawNormals || bDrawTangents || bDrawBinormals ) )
+	
+	switch (WidgetType)
 	{
-		/* TODO
-		FStaticMeshRenderData* RenderData = &StaticMeshComponent->StaticMesh->LODModels[CustomizableObjectEditorPtr.Pin()->GetCurrentLODIndex()];
-		uint16* Indices = (uint16*)RenderData->IndexBuffer.Indices.GetData();
-		uint32 NumIndices = RenderData->IndexBuffer.Indices.Num();
-
-		FMatrix LocalToWorldInverseTranspose = StaticMeshComponent->ComponentToWorld.ToMatrixWithScale().Inverse().GetTransposed();
-		for (uint32 i = 0; i < NumIndices; i++)
+	case EWidgetType::Light:
 		{
-			const FVector& VertexPos = RenderData->PositionVertexBuffer.VertexPosition( Indices[i] );
+			check(SelectedLightComponent);
 
-			const FVector WorldPos = StaticMeshComponent->ComponentToWorld.TransformPosition( VertexPos );
-			const FVector& Normal = RenderData->VertexBuffer.VertexTangentZ( Indices[i] ); 
-			const FVector& Binormal = RenderData->VertexBuffer.VertexTangentY( Indices[i] ); 
-			const FVector& Tangent = RenderData->VertexBuffer.VertexTangentX( Indices[i] ); 
-
-			const float Len = 5.0f;
-
-			if( bDrawNormals )
+			if (USpotLightComponent* SpotLightComp = Cast<USpotLightComponent>(SelectedLightComponent))
 			{
-				PDI->DrawLine( WorldPos, WorldPos+LocalToWorldInverseTranspose.TransformVector( Normal ).SafeNormal() * Len, FLinearColor( 0.0f, 1.0f, 0.0f), SDPG_World );
+				FTransform TransformNoScale = SpotLightComp->GetComponentToWorld();
+				TransformNoScale.RemoveScaling();
+
+				// Draw point light source shape
+				DrawWireCapsule(PDI, TransformNoScale.GetTranslation(), -TransformNoScale.GetUnitAxis(EAxis::Z), TransformNoScale.GetUnitAxis(EAxis::Y), TransformNoScale.GetUnitAxis(EAxis::X),
+					FColor(231, 239, 0, 255), SpotLightComp->SourceRadius, 0.5f * SpotLightComp->SourceLength + SpotLightComp->SourceRadius, 25, SDPG_World);
+
+				// Draw outer light cone
+				DrawWireSphereCappedCone(PDI, TransformNoScale, SpotLightComp->AttenuationRadius, SpotLightComp->OuterConeAngle, 32, 8, 10, FColor(200, 255, 255), SDPG_World);
+
+				// Draw inner light cone (if non zero)
+				if (SpotLightComp->InnerConeAngle > UE_KINDA_SMALL_NUMBER)
+				{
+					DrawWireSphereCappedCone(PDI, TransformNoScale, SpotLightComp->AttenuationRadius, SpotLightComp->InnerConeAngle, 32, 8, 10, FColor(150, 200, 255), SDPG_World);
+				}
+			}
+			else if (UPointLightComponent* PointLightComp = Cast<UPointLightComponent>(SelectedLightComponent))
+			{
+				FTransform LightTM = PointLightComp->GetComponentToWorld();
+
+				// Draw light radius
+				DrawWireSphereAutoSides(PDI, FTransform(LightTM.GetTranslation()), FColor(200, 255, 255), PointLightComp->AttenuationRadius, SDPG_World);
+
+				// Draw point light source shape
+				DrawWireCapsule(PDI, LightTM.GetTranslation(), -LightTM.GetUnitAxis(EAxis::Z), LightTM.GetUnitAxis(EAxis::Y), LightTM.GetUnitAxis(EAxis::X),
+					FColor(231, 239, 0, 255), PointLightComp->SourceRadius, 0.5f * PointLightComp->SourceLength + PointLightComp->SourceRadius, 25, SDPG_World);
+			}
+			
+			break;
+		}
+	case EWidgetType::ClipMorph:
+		{
+			float MaxSphereRadius = 0.f;
+
+			for (TWeakObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent : SkeletalMeshComponents)
+			{
+				if (SkeletalMeshComponent.IsValid())
+				{
+					MaxSphereRadius = FMath::Max(MaxSphereRadius, SkeletalMeshComponent->Bounds.SphereRadius);
+				}
 			}
 
-			if( bDrawTangents )
+			if (MaxSphereRadius <= 0.f)
 			{
-				PDI->DrawLine( WorldPos, WorldPos+LocalToWorldInverseTranspose.TransformVector( Tangent ).SafeNormal() * Len, FLinearColor( 1.0f, 0.0f, 0.0f), SDPG_World );
+				MaxSphereRadius = 1.f;
 			}
 
-			if( bDrawBinormals )
+			float PlaneRadius1 = MaxSphereRadius * 0.1f;
+			float PlaneRadius2 = PlaneRadius1 * 0.5f;
+
+			FMatrix PlaneMatrix = FMatrix(ClipMorphNormal, ClipMorphYAxis, ClipMorphXAxis, ClipMorphOrigin + ClipMorphOffset);
+
+			// Start Plane
+			DrawDirectionalArrow(PDI, PlaneMatrix, FColor::Red, MorphLength, MorphLength * 0.1f, 0, 0.1f);
+			DrawBox(PDI, PlaneMatrix, FVector(0.01f, PlaneRadius1, PlaneRadius1), ClipMorphMaterial->GetRenderProxy(), 0);
+
+			// End Plane + Ellipse
+			PlaneMatrix.SetOrigin(ClipMorphOrigin + ClipMorphOffset + ClipMorphNormal * MorphLength);
+			DrawBox(PDI, PlaneMatrix, FVector(0.01f, PlaneRadius2, PlaneRadius2), ClipMorphMaterial->GetRenderProxy(), 0);
+			DrawEllipse(PDI, ClipMorphOrigin + ClipMorphOffset + ClipMorphNormal * MorphLength, ClipMorphXAxis, ClipMorphYAxis, FColor::Red, Radius1, Radius2, 15, 1, 0.f, 0, false);
+			
+			break;
+		}
+
+	case EWidgetType::Projector:
+		{
+			const FColor Color = WidgetColorDelegate.IsBound() ?
+			WidgetColorDelegate.Execute() :
+			FColor::Green;
+
+			const ECustomizableObjectProjectorType ProjectorType = ProjectorTypeDelegate.IsBound() ?
+				ProjectorTypeDelegate.Execute() :
+				ECustomizableObjectProjectorType::Planar;
+
+			const FVector WidgetScale = WidgetScaleDelegate.IsBound() ?
+				WidgetScaleDelegate.Execute() :
+				FVector::OneVector;
+
+			const float CylindricalAngle = WidgetAngleDelegate.IsBound() ? 
+				FMath::DegreesToRadians<float>(WidgetAngleDelegate.Execute()) :
+				0.0f;
+
+			const FVector CorrectedWidgetScale = FVector(WidgetScale.Z, WidgetScale.X, WidgetScale.Y);
+
+			switch (ProjectorType)
 			{
-				PDI->DrawLine( WorldPos, WorldPos+LocalToWorldInverseTranspose.TransformVector( Binormal ).SafeNormal() * Len, FLinearColor( 0.0f, 0.0f, 1.0f), SDPG_World );
+				case ECustomizableObjectProjectorType::Planar:
+				{
+					FVector Min = FVector(0.f, -0.5f, -0.5f);
+					FVector Max = FVector(1.0f, 0.5f, 0.5f);
+					FBox Box = FBox(Min * CorrectedWidgetScale, Max * CorrectedWidgetScale);
+					FMatrix Mat = GetWidgetCoordSystem();
+					Mat.SetOrigin(GetWidgetLocation());
+					DrawWireBox(PDI, Mat, Box, Color, 1, 0.f);
+					break;
+				}
+				case ECustomizableObjectProjectorType::Cylindrical:
+				{
+					// Draw the cylinder
+					FMatrix Mat = GetWidgetCoordSystem();
+					FVector Location = GetWidgetLocation();
+					Mat.SetOrigin(Location);
+					FVector TransformedX = Mat.TransformVector(FVector(1, 0, 0));
+					FVector TransformedY = Mat.TransformVector(FVector(0, 1, 0));
+					FVector TransformedZ = Mat.TransformVector(FVector(0, 0, 1));
+
+					FVector Min = FVector(0.f, -0.5f, -0.5f);
+					FVector Max = FVector(1.0f, 0.5f, 0.5f);
+					FBox Box = FBox(Min * CorrectedWidgetScale, Max * CorrectedWidgetScale);
+					FVector BoxExtent = Box.GetExtent();
+					float CylinderHalfHeight = BoxExtent.X;
+					//float CylinderRadius = (BoxExtent.Y + BoxExtent.Z) * 0.5f;
+					float CylinderRadius = FMath::Abs(BoxExtent.Y);
+
+					DrawWireCylinder(PDI, Location + TransformedX * CylinderHalfHeight, TransformedY, TransformedZ, TransformedX, Color, CylinderRadius, CylinderHalfHeight, 16, SDPG_World, 0.1f, 0, false);
+
+					// Draw the arcs: the locations are Location with an offset towards the local forward direction
+					FVector Location0 = Location - TransformedX * CylinderHalfHeight * 0.8f + TransformedX * CylinderHalfHeight;
+					FVector Location1 = Location + TransformedX * CylinderHalfHeight * 0.8f + TransformedX * CylinderHalfHeight;
+					FMatrix Mat0 = Mat;
+					FMatrix Mat1 = Mat;
+					Mat0.SetOrigin(Location0);
+					Mat1.SetOrigin(Location1);
+					DrawCylinderArc(PDI, Mat0, FVector(0.0f, 0.0f, 0.0f), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 0),  CylinderRadius, CylinderHalfHeight * 0.1f, 16, TransparentPlaneMaterialXY->GetRenderProxy(), SDPG_World, FColor(255, 85, 0, 192), CylindricalAngle);
+					DrawCylinderArc(PDI, Mat1, FVector(0.0f, 0.0f, 0.0f), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 0), CylinderRadius, CylinderHalfHeight * 0.1f, 16, TransparentPlaneMaterialXY->GetRenderProxy(), SDPG_World, FColor(255, 85, 0, 192), CylindricalAngle);
+					break;
+				}
+				case ECustomizableObjectProjectorType::Wrapping:
+		        {
+		            FVector Min = FVector(0.f, -0.5f, -0.5f);
+		            FVector Max = FVector(1.0f, 0.5f, 0.5f);
+		            FBox Box = FBox(Min * CorrectedWidgetScale, Max * CorrectedWidgetScale);
+		            FMatrix Mat = GetWidgetCoordSystem();
+		            Mat.SetOrigin(GetWidgetLocation());
+		            DrawWireBox(PDI, Mat, Box, Color, 1, 0.f);
+					break;
+				}
+				default:
+				{
+					check(false);
+					break;
+				}
 			}
-		}	
-		*/
-	}
+			break;
+		}
 
+	case EWidgetType::ClipMesh:
+	case EWidgetType::Hidden:
+		break;
 
-	//if( bShowPivot )
-	//{
-	//	FMatrix Transform;
-	//	if (StaticMeshComponent.IsValid())
-	//	{
-	//		Transform = StaticMeshComponent->ComponentToWorld.ToMatrixWithScale();
-	//	}
-	//	else if (SkeletalMeshComponent.IsValid())
-	//	{
-	//		Transform = SkeletalMeshComponent->ComponentToWorld.ToMatrixWithScale();
-	//	}
-
-	//	FUnrealEdUtils::DrawWidget(View, PDI, Transform, 0, 0, EAxisList::All, EWidgetMovementMode::WMM_Translate, false);
-	//}
-
-	// Draw the widgets
-	for ( TMap< int, TSharedPtr<FCustomizableObjectWidget> >::TIterator it(ProjectorWidgets); it; ++it )
-	{
-		it.Value()->Render( View, PDI );
+	default:
+		unimplemented(); // Case not implemented	
 	}
 	
-	// Draw Selected light Visualizer
-	if (bIsEditingLightEnabled && SelectedLightComponent)
-	{
-		if (USpotLightComponent* SpotLightComp = Cast<USpotLightComponent>(SelectedLightComponent))
-		{
-			FTransform TransformNoScale = SpotLightComp->GetComponentToWorld();
-			TransformNoScale.RemoveScaling();
-
-			// Draw point light source shape
-			DrawWireCapsule(PDI, TransformNoScale.GetTranslation(), -TransformNoScale.GetUnitAxis(EAxis::Z), TransformNoScale.GetUnitAxis(EAxis::Y), TransformNoScale.GetUnitAxis(EAxis::X),
-				FColor(231, 239, 0, 255), SpotLightComp->SourceRadius, 0.5f * SpotLightComp->SourceLength + SpotLightComp->SourceRadius, 25, SDPG_World);
-
-			// Draw outer light cone
-			DrawWireSphereCappedCone(PDI, TransformNoScale, SpotLightComp->AttenuationRadius, SpotLightComp->OuterConeAngle, 32, 8, 10, FColor(200, 255, 255), SDPG_World);
-
-			// Draw inner light cone (if non zero)
-			if (SpotLightComp->InnerConeAngle > UE_KINDA_SMALL_NUMBER)
-			{
-				DrawWireSphereCappedCone(PDI, TransformNoScale, SpotLightComp->AttenuationRadius, SpotLightComp->InnerConeAngle, 32, 8, 10, FColor(150, 200, 255), SDPG_World);
-			}
-		}
-		else if (UPointLightComponent* PointLightComp = Cast<UPointLightComponent>(SelectedLightComponent))
-		{
-			FTransform LightTM = PointLightComp->GetComponentToWorld();
-
-			// Draw light radius
-			DrawWireSphereAutoSides(PDI, FTransform(LightTM.GetTranslation()), FColor(200, 255, 255), PointLightComp->AttenuationRadius, SDPG_World);
-
-			// Draw point light source shape
-			DrawWireCapsule(PDI, LightTM.GetTranslation(), -LightTM.GetUnitAxis(EAxis::Z), LightTM.GetUnitAxis(EAxis::Y), LightTM.GetUnitAxis(EAxis::X),
-				FColor(231, 239, 0, 255), PointLightComp->SourceRadius, 0.5f * PointLightComp->SourceLength + PointLightComp->SourceRadius, 25, SDPG_World);
-		}
-	}
-
-	
-	// Draw the clip morph axis, planes and bounds if necessary
-	if (bClipMorphVisible && SkeletalMeshComponents.Num())
-	{
-		float MaxSphereRadius = 0.f;
-
-		for (TWeakObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent : SkeletalMeshComponents)
-		{
-			if (SkeletalMeshComponent.IsValid())
-			{
-				MaxSphereRadius = FMath::Max(MaxSphereRadius, SkeletalMeshComponent->Bounds.SphereRadius);
-			}
-		}
-
-		if (MaxSphereRadius <= 0.f)
-		{
-			MaxSphereRadius = 1.f;
-		}
-
-		float PlaneRadius1 = MaxSphereRadius * 0.1f;
-		float PlaneRadius2 = PlaneRadius1 * 0.5f;
-
-		FMatrix PlaneMatrix = FMatrix(ClipMorphNormal, ClipMorphYAxis, ClipMorphXAxis, ClipMorphOrigin + ClipMorphOffset);
-
-		// Start Plane
-		DrawDirectionalArrow(PDI, PlaneMatrix, FColor::Red, MorphLength, MorphLength * 0.1f, 0, 0.1f);
-		DrawBox(PDI, PlaneMatrix, FVector(0.01f, PlaneRadius1, PlaneRadius1), ClipMorphMaterial->GetRenderProxy(), 0);
-
-		// End Plane + Ellipse
-		PlaneMatrix.SetOrigin(ClipMorphOrigin + ClipMorphOffset + ClipMorphNormal * MorphLength);
-		DrawBox(PDI, PlaneMatrix, FVector(0.01f, PlaneRadius2, PlaneRadius2), ClipMorphMaterial->GetRenderProxy(), 0);
-		DrawEllipse(PDI, ClipMorphOrigin + ClipMorphOffset + ClipMorphNormal * MorphLength, ClipMorphXAxis, ClipMorphYAxis, FColor::Red, Radius1, Radius2, 15, 1, 0.f, 0, false);
-	}
-
-	if (GizmoProxy.AnyGizmoSelected)
-	{
-		FColor Color;
-		if (GizmoProxy.AssignedDataIsFromNode)
-		{
-			Color = FColor::Red;
-		}
-		else
-		{
-			Color = FColor::Emerald;
-		}
-
-		switch (GizmoProxy.ProjectionType)
-		{
-			case ECustomizableObjectProjectorType::Planar:
-			{
-				FVector Scale = FVector(GizmoProxy.Value.Scale.Z, GizmoProxy.Value.Scale.X, GizmoProxy.Value.Scale.Y);
-				FVector Min = FVector(0.f, -0.5f, -0.5f);
-				FVector Max = FVector(1.0f, 0.5f, 0.5f);
-				FBox Box = FBox(Min * Scale, Max * Scale);
-				FMatrix Mat = GetWidgetCoordSystem();
-				Mat.SetOrigin(GetWidgetLocation());
-				DrawWireBox(PDI, Mat, Box, Color, 1, 0.f);
-				break;
-			}
-			case ECustomizableObjectProjectorType::Cylindrical:
-			{
-				// Draw the cylinder
-				FVector Scale = FVector(GizmoProxy.Value.Scale.Z, GizmoProxy.Value.Scale.X, GizmoProxy.Value.Scale.Y);
-				FMatrix Mat = GetWidgetCoordSystem();
-				FVector Location = GetWidgetLocation();
-				Mat.SetOrigin(Location);
-				FVector TransformedX = Mat.TransformVector(FVector(1, 0, 0));
-				FVector TransformedY = Mat.TransformVector(FVector(0, 1, 0));
-				FVector TransformedZ = Mat.TransformVector(FVector(0, 0, 1));
-
-				FVector Min = FVector(0.f, -0.5f, -0.5f);
-				FVector Max = FVector(1.0f, 0.5f, 0.5f);
-				FBox Box = FBox(Min * Scale, Max * Scale);
-				FVector BoxExtent = Box.GetExtent();
-				float CylinderHalfHeight = BoxExtent.X;
-				//float CylinderRadius = (BoxExtent.Y + BoxExtent.Z) * 0.5f;
-				float CylinderRadius = FMath::Abs(BoxExtent.Y);
-
-				DrawWireCylinder(PDI, Location + TransformedX * CylinderHalfHeight, TransformedY, TransformedZ, TransformedX, Color, CylinderRadius, CylinderHalfHeight, 16, SDPG_World, 0.1f, 0, false);
-
-				// Draw the arcs: the locations are Location with an offset towards the local forward direction
-				FVector Location0 = Location - TransformedX * CylinderHalfHeight * 0.8f + TransformedX * CylinderHalfHeight;
-				FVector Location1 = Location + TransformedX * CylinderHalfHeight * 0.8f + TransformedX * CylinderHalfHeight;
-				FMatrix Mat0 = Mat;
-				FMatrix Mat1 = Mat;
-				Mat0.SetOrigin(Location0);
-				Mat1.SetOrigin(Location1);
-				DrawCylinderArc(PDI, Mat0, FVector(0.0f, 0.0f, 0.0f), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 0),  CylinderRadius, CylinderHalfHeight * 0.1f, 16, TransparentPlaneMaterialXY->GetRenderProxy(), SDPG_World, FColor(255, 85, 0, 192), GizmoProxy.Value.Angle);
-				DrawCylinderArc(PDI, Mat1, FVector(0.0f, 0.0f, 0.0f), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 0), CylinderRadius, CylinderHalfHeight * 0.1f, 16, TransparentPlaneMaterialXY->GetRenderProxy(), SDPG_World, FColor(255, 85, 0, 192), GizmoProxy.Value.Angle);
-				break;
-			}
-			case ECustomizableObjectProjectorType::Wrapping:
-            {
-                FVector Scale = FVector(GizmoProxy.Value.Scale.Z, GizmoProxy.Value.Scale.X, GizmoProxy.Value.Scale.Y);
-                FVector Min = FVector(0.f, -0.5f, -0.5f);
-                FVector Max = FVector(1.0f, 0.5f, 0.5f);
-                FBox Box = FBox(Min * Scale, Max * Scale);
-                FMatrix Mat = GetWidgetCoordSystem();
-                Mat.SetOrigin(GetWidgetLocation());
-                DrawWireBox(PDI, Mat, Box, Color, 1, 0.f);
-				break;
-			}
-			default:
-			{
-				UE_LOG(LogMutable, Warning, TEXT("ERROR: wrong projector type for projector %d"), *GizmoProxy.ProjectorParameterName);
-				break;
-			}
-		}
-	}
 
 	if (bShowBones)
 	{
@@ -847,80 +452,11 @@ void FCustomizableObjectEditorViewportClient::Draw(FViewport* InViewport, FCanva
 	FEditorViewportClient::Draw(InViewport, Canvas);
 
 	FSceneViewFamilyContext ViewFamily( FSceneViewFamily::ConstructionValues( InViewport, GetScene(), EngineShowFlags ));
-	FSceneView* View = CalcSceneView(&ViewFamily);
-
-	const int32 HalfX = InViewport->GetSizeXY().X/2;
-	const int32 HalfY = InViewport->GetSizeXY().Y/2;
-
-	//int32 CurrentLODLevel = CustomizableObjectEditorPtr.Pin()->GetCurrentLODIndex();
-
-	int32 YPos = 6;
-	//if ( StaticMeshComponent.IsValid() || SkeletalMeshComponent.IsValid() )
-	//{
-		/* TODO
-		int32 NumVertices = 0;
-		int32 NumTriangles = 0;
-		int32 NumUVChannels = 0;
-		FBoxSphereBounds Bounds(ForceInit);
-		if (StaticMeshComponent && StaticMeshComponent->StaticMesh)
-		{
-			Bounds = StaticMeshComponent->StaticMesh->Bounds;
-			NumTriangles = StaticMeshComponent->StaticMesh->LODModels[CurrentLODLevel].IndexBuffer.Indices.Num()/3;
-			NumVertices = StaticMeshComponent->StaticMesh->LODModels[CurrentLODLevel].VertexBuffer.GetNumVertices();
-			NumUVChannels = StaticMeshComponent->StaticMesh->LODModels[CurrentLODLevel].VertexBuffer.GetNumTexCoords();
-		}
-		else if (SkeletalMeshComponent && SkeletalMeshComponent->SkeletalMesh)
-		{
-			Bounds = SkeletalMeshComponent->SkeletalMesh->Bounds;
-			NumVertices = SkeletalMeshComponent->SkeletalMesh->LODModels[CurrentLODLevel].NumVertices;
-			NumTriangles = SkeletalMeshComponent->SkeletalMesh->LODModels[CurrentLODLevel].MultiSizeIndexContainer.GetIndexBuffer()->Num()/3;
-			NumUVChannels = SkeletalMeshComponent->SkeletalMesh->LODModels[CurrentLODLevel].NumTexCoords;
-		}
-
-		DrawShadowedString(Canvas,
-			6,
-			YPos,
-			*FString::Printf(LocalizeSecure(LocalizeUnrealEd("Triangles_F"), NumTriangles )),
-			GEngine->GetSmallFont(),
-			FLinearColor::White
-			);
-		YPos += 18;
-
-		DrawShadowedString(Canvas,
-			6,
-			YPos,
-			*FString::Printf(LocalizeSecure(LocalizeUnrealEd("Vertices_F"), NumVertices )),
-			GEngine->GetSmallFont(),
-			FLinearColor::White
-			);
-		YPos += 18;
-
-		DrawShadowedString(Canvas,
-			6,
-			YPos,
-			*FString::Printf(LocalizeSecure(LocalizeUnrealEd("UVChannels_F"), NumUVChannels )),
-			GEngine->GetSmallFont(),
-			FLinearColor::White
-			);
-		YPos += 18;
-
-
-		DrawShadowedString(Canvas,
-			6,
-			YPos,
-			*FString::Printf( LocalizeSecure( LocalizeUnrealEd("ApproxSize_F"), int32(Bounds.BoxExtent.X * 2.0f),
-			int32(Bounds.BoxExtent.Y * 2.0f),
-			int32(Bounds.BoxExtent.Z * 2.0f) ) ),
-			GEngine->GetSmallFont(),
-			FLinearColor::White
-			);
-			*/
-	//}
-	YPos += 18;
 
 	if(bDrawUVs)
 	{
-		DrawUVs(InViewport, Canvas, YPos, MaterialToDrawInUVs);
+		constexpr int32 YPos = 24;
+		DrawUVs(InViewport, Canvas, YPos);
 	}
 
 	if (bReferenceMeshMissingWarningMessageVisible)
@@ -949,16 +485,12 @@ namespace
 	}
 }
 
-void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCanvas* InCanvas, int32 InTextYPos, const FString& MaterialName )
+void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCanvas* InCanvas, int32 InTextYPos)
 {
-	//use the overriden LOD level
-	// TODO
-	const uint32 LODLevel = MaterialToDrawInUVsLOD; //FMath::Clamp(StaticMeshComponent->ForcedLodModel - 1, 0, StaticMesh->RenderData->LODResources.Num() - 1);
-
-	// TODO
-	int32 UVChannel = UVChannelToDrawInUVs; //StaticMeshEditorPtr.Pin()->GetCurrentUVChannel();
-
-	const uint32 ComponentIndex = MaterialToDrawInUVsComponent;
+	const uint32 ComponentIndex = UVDrawComponentIndex;
+	const uint32 LODLevel = UVDrawLODIndex; 	// TODO use the overriden LOD level
+	const int32 SectionIndex = UVDrawSectionIndex;
+	const int32 UVChannel = UVDrawUVIndex;
 
 	//draw a string showing what UV channel and LOD is being displayed
 	InCanvas->DrawShadowedString( 
@@ -984,9 +516,7 @@ void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCa
 		BoxOrigin + FVector2D( BoxSize, BoxSize ),	// bottomright
 		BoxOrigin + FVector2D( 0, BoxSize ),		// bottomleft
 	};
-
-	const FVector Color(1.0f, 1.0f, 1.0f);
-
+	
 	//draw texture border
 	FLinearColor BorderColor = FLinearColor::White;
 	FBatchedElements* BatchedElements = InCanvas->GetBatchedElements(FCanvas::ET_Line);
@@ -1001,11 +531,14 @@ void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCa
 	BatchedElements->AddLine( FVector( Box[ 2 ], 0.0f ), FVector( Box[ 3 ], 0.0f ), BorderColor, HitProxyId );
 	BatchedElements->AddLine( FVector( Box[ 3 ], 0.0f ), FVector( Box[ 0 ], 0.0f ), BorderColor, HitProxyId );
 
-	if ( StaticMeshComponent.IsValid() && StaticMeshComponent->GetStaticMesh() && StaticMeshComponent->GetStaticMesh()->GetRenderData() )
+	if (StaticMeshComponent.IsValid() &&
+		StaticMeshComponent->GetStaticMesh() &&
+		StaticMeshComponent->GetStaticMesh()->GetRenderData() &&
+		StaticMeshComponent->GetStaticMesh()->GetRenderData()->LODResources.IsValidIndex(LODLevel))
 	{
 		FStaticMeshLODResources* RenderData = &StaticMeshComponent->GetStaticMesh()->GetRenderData()->LODResources[LODLevel];
 		
-		if( RenderData && ( ( uint32 )UVChannel < RenderData->VertexBuffers.StaticMeshVertexBuffer.GetNumTexCoords() ) )
+		if (RenderData && UVChannel >= 0 && UVChannel < static_cast<int32>(RenderData->VertexBuffers.StaticMeshVertexBuffer.GetNumTexCoords()))
 		{
 			//draw triangles
 			FIndexArrayView Indices = RenderData->IndexBuffer.GetArrayView();
@@ -1023,36 +556,9 @@ void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCa
 				// UVs, we'll draw the line segment in red
 				
 				// If we are supporting a version lower than LWC get the right real type. 
-				using Vector2DRealType = TDecay<decltype( DeclVal<FVector2D>().X )>::Type; 
-
-				constexpr Vector2DRealType Epsilon = static_cast<Vector2DRealType>(1e-4);
-				constexpr Vector2DRealType One     = static_cast<Vector2DRealType>(1);
-				constexpr Vector2DRealType Zero    = static_cast<Vector2DRealType>(0);
-
-				FLinearColor UV12LineColor = FLinearColor::Black;
-				if (UV1.X < -Epsilon || UV1.X > One + Epsilon ||
-					UV2.X < -Epsilon || UV2.X > One + Epsilon ||
-					UV1.Y < -Epsilon || UV1.Y > One + Epsilon ||
-					UV2.Y < -Epsilon || UV2.Y > One + Epsilon)
-				{
-					UV12LineColor = FLinearColor(0.6f, 0.0f, 0.0f);
-				}
-				FLinearColor UV23LineColor = FLinearColor::Black;
-				if (UV3.X < -Epsilon || UV3.X > One + Epsilon ||
-					UV2.X < -Epsilon || UV2.X > One + Epsilon ||
-					UV3.Y < -Epsilon || UV3.Y > One + Epsilon ||
-					UV2.Y < -Epsilon || UV2.Y > One + Epsilon)
-				{
-					UV23LineColor = FLinearColor(0.6f, 0.0f, 0.0f);
-				}
-				FLinearColor UV31LineColor = FLinearColor::Black;
-				if (UV3.X < -Epsilon || UV3.X > One + Epsilon ||
-					UV1.X < -Epsilon || UV1.X > One + Epsilon ||
-					UV3.Y < -Epsilon || UV3.Y > One + Epsilon ||
-					UV1.Y < -Epsilon || UV1.Y > One + Epsilon)
-				{
-					UV31LineColor = FLinearColor(0.6f, 0.0f, 0.0f);
-				}
+				using Vector2DRealType = TDecay<decltype( DeclVal<FVector2D>().X )>::Type;
+				
+				constexpr Vector2DRealType Zero = static_cast<Vector2DRealType>(0);
 
 				UV1 = ClampUVRange(UV1.X, UV1.Y) * UVBoxScale + UVBoxOrigin;
 				UV2 = ClampUVRange(UV2.X, UV2.Y) * UVBoxScale + UVBoxOrigin;
@@ -1064,57 +570,31 @@ void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCa
 			}
 		}
 	}
-
 	else if (SkeletalMeshComponents.Num())
 	{
-		int32 CurrentComponentIndex = 0;
-
-		for (TWeakObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent : SkeletalMeshComponents)
+		if (SkeletalMeshComponents.IsValidIndex(ComponentIndex))
 		{
-			if (!SkeletalMeshComponent.IsValid() || !UE_MUTABLE_GETSKINNEDASSET(SkeletalMeshComponent) || CurrentComponentIndex != ComponentIndex)
+			TWeakObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent = SkeletalMeshComponents[ComponentIndex];
+
+			if (!SkeletalMeshComponent.IsValid() || !UE_MUTABLE_GETSKINNEDASSET(SkeletalMeshComponent))
 			{
-				CurrentComponentIndex++;
-				continue;
+				return;
 			}
 
-			bool bFoundMaterial = false;
-
 			const FSkeletalMeshRenderData* MeshRes = UE_MUTABLE_GETSKINNEDASSET(SkeletalMeshComponent)->GetResourceForRendering();
-			if (UVChannel < (int32)MeshRes->LODRenderData[LODLevel].GetNumTexCoords())
+			if (!MeshRes->LODRenderData.IsValidIndex(LODLevel))
+			{
+				return;
+			}
+			
+			if (UVChannel >= 0 && UVChannel < static_cast<int32>(MeshRes->LODRenderData[LODLevel].GetNumTexCoords()))
 			{
 				// Find material index from name
 				const FSkeletalMeshLODRenderData& lodModel = MeshRes->LODRenderData[LODLevel];
-				int MaterialIndex = 0;
-				int MaterialIndexCount = 0;
+
+				if (!lodModel.RenderSections.IsValidIndex(SectionIndex))
 				{
-					for (int s = 0; s < lodModel.RenderSections.Num(); ++s)
-					{
-						int SectionMaterial = lodModel.RenderSections[s].MaterialIndex;
-						UMaterialInterface* Material = SkeletalMeshComponent->GetMaterial(SectionMaterial);
-
-						if (!Material)
-						{
-							continue;
-						}
-
-						const UMaterial* BaseMaterial = Material->GetBaseMaterial();
-						if (BaseMaterial && BaseMaterial->GetName() == MaterialName)
-						{
-							MaterialIndex = s;
-
-							if (MaterialIndexCount == MaterialToDrawInUVsIndex)
-							{
-								bFoundMaterial = true;
-								break;
-							}
-							MaterialIndexCount++;
-						}
-					}
-				}
-
-				if (!bFoundMaterial)
-				{
-					continue;
+					return;
 				}
 
 				const FStaticMeshVertexBuffer& Vertices = lodModel.StaticVertexBuffers.StaticMeshVertexBuffer;
@@ -1122,8 +602,8 @@ void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCa
 				TArray<uint32> Indices;
 				lodModel.MultiSizeIndexContainer.GetIndexBuffer(Indices);
 
-				uint32 NumTriangles = lodModel.RenderSections[MaterialIndex].NumTriangles;
-				int IndexIndex = lodModel.RenderSections[MaterialIndex].BaseIndex;
+				uint32 NumTriangles = lodModel.RenderSections[SectionIndex].NumTriangles;
+				int IndexIndex = lodModel.RenderSections[SectionIndex].BaseIndex;
 
 				BatchedElements->AddReserveLines(NumTriangles * 3);
 
@@ -1141,34 +621,7 @@ void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCa
 					// If we are supporting a version lower than LWC get the right real type. 
 					using Vector2DRealType = TDecay<decltype(DeclVal<FVector2D>().X)>::Type;
 
-					constexpr Vector2DRealType Epsilon = static_cast<Vector2DRealType>(1e-4);
-					constexpr Vector2DRealType One = static_cast<Vector2DRealType>(1);
 					constexpr Vector2DRealType Zero = static_cast<Vector2DRealType>(0);
-
-					FLinearColor UV12LineColor = FLinearColor::Black;
-					if (UV1.X < -Epsilon || UV1.X > One + Epsilon ||
-						UV2.X < -Epsilon || UV2.X > One + Epsilon ||
-						UV1.Y < -Epsilon || UV1.Y > One + Epsilon ||
-						UV2.Y < -Epsilon || UV2.Y > One + Epsilon)
-					{
-						UV12LineColor = FLinearColor(0.6f, 0.0f, 0.0f);
-					}
-					FLinearColor UV23LineColor = FLinearColor::Black;
-					if (UV3.X < -Epsilon || UV3.X > One + Epsilon ||
-						UV2.X < -Epsilon || UV2.X > One + Epsilon ||
-						UV3.Y < -Epsilon || UV3.Y > One + Epsilon ||
-						UV2.Y < -Epsilon || UV2.Y > One + Epsilon)
-					{
-						UV23LineColor = FLinearColor(0.6f, 0.0f, 0.0f);
-					}
-					FLinearColor UV31LineColor = FLinearColor::Black;
-					if (UV3.X < -Epsilon || UV3.X > One + Epsilon ||
-						UV1.X < -Epsilon || UV1.X > One + Epsilon ||
-						UV3.Y < -Epsilon || UV3.Y > One + Epsilon ||
-						UV1.Y < -Epsilon || UV1.Y > One + Epsilon)
-					{
-						UV31LineColor = FLinearColor(0.6f, 0.0f, 0.0f);
-					}
 
 					UV1 = ClampUVRange(UV1.X, UV1.Y) * UVBoxScale + UVBoxOrigin;
 					UV2 = ClampUVRange(UV2.X, UV2.Y) * UVBoxScale + UVBoxOrigin;
@@ -1178,11 +631,6 @@ void FCustomizableObjectEditorViewportClient::DrawUVs(FViewport* InViewport, FCa
 					BatchedElements->AddLine( FVector(UV2, Zero), FVector(UV3, Zero), BorderColor, HitProxyId );
 					BatchedElements->AddLine( FVector(UV3, Zero), FVector(UV1, Zero), BorderColor, HitProxyId );
 				}
-			}
-
-			if (bFoundMaterial)
-			{
-				break;
 			}
 		}
 	}
@@ -1205,247 +653,117 @@ float FCustomizableObjectEditorViewportClient::GetFloorOffset() const
 }
 
 
-void FCustomizableObjectEditorViewportClient::SetClipMorphPlaneVisibility(bool bVisible, const FVector& Origin, const FVector& Normal, float InMorphLength, const FBoxSphereBounds& Bounds, float InRadius1, float InRadius2, float InRotationAngle)
+void FCustomizableObjectEditorViewportClient::ShowGizmoClipMorph(UCustomizableObjectNodeMeshClipMorph& NodeMeshClipMorph)
 {
-	/*
-	//EditorClipMorphPlaneComp->SetVisibility(bVisible);
-	bClipMorphVisible = bVisible;
-	//EditorClipMorphPlaneComp->SetWorldLocationAndRotation(Origin, Normal.Rotation());
-	ClipMorphOrigin = Origin;
-	ClipMorphNormal = Normal;
-	MorphLength = InMorphLength;
-	MorphBounds = Bounds;
-	Radius1 = InRadius1;
-	Radius2 = InRadius2;
-	RotationAngle = InRotationAngle;
-	*/
-}
+	SetWidgetType(EWidgetType::ClipMorph);
 
+	ClipMorphNode = &NodeMeshClipMorph;
 
-void FCustomizableObjectEditorViewportClient::SetClipMorphPlaneVisibility(bool bVisible, UCustomizableObjectNodeMeshClipMorph* NodeMeshClipMorph)
-{
-	if (!bClipMorphVisible && !bVisible)
+	bClipMorphLocalStartOffset = NodeMeshClipMorph.bLocalStartOffset;
+	MorphLength = NodeMeshClipMorph.B;
+	Radius1 = NodeMeshClipMorph.Radius;
+	Radius2 = NodeMeshClipMorph.Radius2;
+	RotationAngle = NodeMeshClipMorph.RotationAngle;
+	ClipMorphOrigin = NodeMeshClipMorph.Origin;
+	ClipMorphLocalOffset = NodeMeshClipMorph.StartOffset;
+
+	NodeMeshClipMorph.FindLocalAxes(ClipMorphXAxis, ClipMorphYAxis, ClipMorphNormal);
+
+	if (bClipMorphLocalStartOffset)
 	{
-		return;
-	}
-
-	bClipMorphVisible = bVisible;
-
-	if (NodeMeshClipMorph && (ClipMorphNode != NodeMeshClipMorph || NodeMeshClipMorph->bUpdateViewportWidget))
-	{
-		NodeMeshClipMorph->bUpdateViewportWidget = false;
-
-		bClipMorphLocalStartOffset = NodeMeshClipMorph->bLocalStartOffset;
-		MorphLength = NodeMeshClipMorph->B;
-		Radius1 = NodeMeshClipMorph->Radius;
-		Radius2 = NodeMeshClipMorph->Radius2;
-		RotationAngle = NodeMeshClipMorph->RotationAngle;
-		ClipMorphOrigin = NodeMeshClipMorph->Origin;
-		ClipMorphLocalOffset = NodeMeshClipMorph->StartOffset;
-
-		NodeMeshClipMorph->FindLocalAxes(ClipMorphXAxis, ClipMorphYAxis, ClipMorphNormal);
-
-		if (bClipMorphLocalStartOffset)
-		{
-			ClipMorphOffset = ClipMorphLocalOffset.X * ClipMorphXAxis
-				+ ClipMorphLocalOffset.Y * ClipMorphYAxis
-				+ ClipMorphLocalOffset.Z * ClipMorphNormal;
-		}
-		else
-		{
-			ClipMorphOffset = ClipMorphLocalOffset;
-		}
-	}
-
-	ClipMorphNode = NodeMeshClipMorph;
-
-	if (WidgetVisibility != bClipMorphVisible)
-	{
-		Widget->SetDefaultVisibility(bClipMorphVisible);
-		WidgetVisibility = bClipMorphVisible;
-	}
-}
-
-
-void FCustomizableObjectEditorViewportClient::SetClipMeshVisibility(bool bVisible, UStaticMesh* ClipMesh, UCustomizableObjectNodeMeshClipWithMesh* MeshNode)
-{
-	if (!ClipMeshNode && !MeshNode)
-	{
-		return;
-	}
-
-	ClipMeshComp->SetStaticMesh(ClipMesh);
-	ClipMeshComp->SetVisibility(bVisible);
-	ClipMeshNode = bVisible ? MeshNode : nullptr;
-
-	if (ClipMeshNode)
-	{
-		ClipMeshComp->SetWorldTransform(ClipMeshNode->Transform);
-	}
-
-	if (WidgetVisibility != bVisible)
-	{
-		Widget->SetDefaultVisibility(bVisible);
-		WidgetVisibility = bVisible;
-	}
-}
-
-
-void FCustomizableObjectEditorViewportClient::SetProjectorVisibility(bool bVisible, FString ProjectorParameterName, FString ProjectorParameterNameWithIndex, int32 ProjectorRangeIndex, const FCustomizableObjectProjector& Data, int32 ProjectorParameterIndex)
-{
-	if (GizmoProxy.ProjectorParameterIndex == ProjectorParameterIndex && GizmoProxy.ProjectorRangeIndex == ProjectorRangeIndex)
-	{
-		return;
-	}
-
-	if (GizmoProxy.HasAssignedData)
-	{
-		GizmoProxy.UpdateOriginData();
-		GizmoProxy.CleanOriginData();
-	}
-	GizmoProxy.ProjectorParameterName = ProjectorParameterName;
-	GizmoProxy.ProjectorParameterNameWithIndex = ProjectorParameterNameWithIndex;
-	GizmoProxy.ProjectorRangeIndex = ProjectorRangeIndex;
-	GizmoProxy.Value = Data;
-	GizmoProxy.ProjectionType = Data.ProjectionType;
-
-	if (GizmoProxy.ProjectorHasInitialValues(GizmoProxy.Value))
-	{
-		GizmoProxy.Value = GizmoProxy.SetProjectorInitialValue(SkeletalMeshComponents, BoundSphere.W * 2.0f);
-	}
-
-	GizmoProxy.ProjectorParameterIndex = ProjectorParameterIndex;
-	GizmoProxy.AnyGizmoSelected = true;
-	GizmoProxy.HasAssignedData = true;
-
-	if (!WidgetVisibility)
-	{
-		Widget->SetDefaultVisibility(true);
-		WidgetVisibility = true;
-	}
-}
-
-
-void FCustomizableObjectEditorViewportClient::SetProjectorType(bool bVisible, FString ProjectorParameterName, FString ProjectorParameterNameWithIndex, int32 ProjectorRangeIndex, const FCustomizableObjectProjector& Data, int32 ProjectorParameterIndex)
-{
-	GizmoProxy.ProjectorParameterName = ProjectorParameterName;
-	GizmoProxy.ProjectorParameterNameWithIndex = ProjectorParameterNameWithIndex;
-	GizmoProxy.ProjectorRangeIndex = ProjectorRangeIndex;
-	GizmoProxy.Value = Data;
-	GizmoProxy.ProjectionType = Data.ProjectionType;
-
-	GizmoProxy.ProjectorParameterIndex = ProjectorParameterIndex;
-	GizmoProxy.AnyGizmoSelected = true;
-	GizmoProxy.HasAssignedData = true;
-}
-
-
-void FCustomizableObjectEditorViewportClient::SetProjectorVisibility(bool bVisible, UCustomizableObjectNodeProjectorConstant* InProjector)
-{
-	if (InProjector == nullptr)
-	{
-		if ((GizmoProxy.HasAssignedData) && (GizmoProxy.DataOriginConstant != nullptr))
-		{
-			GizmoProxy.UpdateOriginData();
-			GizmoProxy.CleanOriginData();
-		}
-
-		if (WidgetVisibility)
-		{
-			Widget->SetDefaultVisibility(false);
-			WidgetVisibility = false;
-		}
+		ClipMorphOffset = ClipMorphLocalOffset.X * ClipMorphXAxis
+			+ ClipMorphLocalOffset.Y * ClipMorphYAxis
+			+ ClipMorphLocalOffset.Z * ClipMorphNormal;
 	}
 	else
 	{
-		if (!GizmoProxy.HasAssignedData ||
-		   (GizmoProxy.HasAssignedData && (GizmoProxy.DataOriginConstant != InProjector)))
-		{
-			GizmoProxy.UpdateOriginData();
-			GizmoProxy.CleanOriginData();
-			GizmoProxy.DataOriginConstant = InProjector;
-			GizmoProxy.Value = InProjector->Value;
-
-			if (GizmoProxy.ProjectorHasInitialValues(GizmoProxy.Value))
-			{
-				GizmoProxy.Value = GizmoProxy.SetProjectorInitialValue(SkeletalMeshComponents, BoundSphere.W * 2.0f);
-			}
-
-			GizmoProxy.AnyGizmoSelected = true;
-			GizmoProxy.HasAssignedData = true;
-			GizmoProxy.AssignedDataIsFromNode = true;
-			GizmoProxy.ProjectionType = InProjector->ProjectionType;
-
-			if (!WidgetVisibility)
-			{
-				Widget->SetDefaultVisibility(true);
-				WidgetVisibility = true;
-			}
-		}
+		ClipMorphOffset = ClipMorphLocalOffset;
 	}
 }
 
 
-void FCustomizableObjectEditorViewportClient::SetProjectorParameterVisibility(bool bVisible, UCustomizableObjectNodeProjectorParameter* InProjectorParameter)
+void FCustomizableObjectEditorViewportClient::HideGizmoClipMorph()
 {
-	if (InProjectorParameter == nullptr)
+	if (WidgetType == EWidgetType::ClipMorph)
 	{
-		if ((GizmoProxy.HasAssignedData) && (GizmoProxy.DataOriginParameter != nullptr))
-		{
-			GizmoProxy.UpdateOriginData();
-			GizmoProxy.CleanOriginData();
-
-			if (WidgetVisibility)
-			{
-				Widget->SetDefaultVisibility(false);
-				WidgetVisibility = false;
-			}
-		}
-	}
-	else
-	{
-		if (!GizmoProxy.HasAssignedData ||
-			(GizmoProxy.HasAssignedData && (GizmoProxy.DataOriginParameter != InProjectorParameter)))
-		{
-			GizmoProxy.UpdateOriginData();
-			GizmoProxy.CleanOriginData();
-			GizmoProxy.DataOriginParameter = InProjectorParameter;
-			GizmoProxy.Value = InProjectorParameter->DefaultValue;
-
-			if (GizmoProxy.ProjectorHasInitialValues(GizmoProxy.Value))
-			{
-				GizmoProxy.Value = GizmoProxy.SetProjectorInitialValue(SkeletalMeshComponents, BoundSphere.W * 2.0f);
-			}
-
-			GizmoProxy.AnyGizmoSelected = true;
-			GizmoProxy.HasAssignedData = true;
-			GizmoProxy.AssignedDataIsFromNode = true;
-			GizmoProxy.ProjectionType = InProjectorParameter->ProjectionType;
-
-			if (!WidgetVisibility)
-			{
-				Widget->SetDefaultVisibility(true);
-				WidgetVisibility = true;
-			}
-		}
+		SetWidgetType(EWidgetType::Hidden);
 	}
 }
 
 
-void FCustomizableObjectEditorViewportClient::ResetProjectorVisibility()
+void FCustomizableObjectEditorViewportClient::ShowGizmoClipMesh(UCustomizableObjectNodeMeshClipWithMesh& InClipMeshNode, UStaticMesh& ClipMesh)
 {
-	if (bManipulating || !GizmoProxy.AnyGizmoSelected)
+	SetWidgetType(EWidgetType::ClipMesh);
+
+	ClipMeshNode = &InClipMeshNode;
+
+	ClipMeshComp->SetStaticMesh(&ClipMesh);
+	ClipMeshComp->SetVisibility(true);
+	ClipMeshComp->SetWorldTransform(InClipMeshNode.Transform);
+}
+
+
+void FCustomizableObjectEditorViewportClient::HideGizmoClipMesh()
+{
+	if (WidgetType == EWidgetType::ClipMesh)
 	{
-		return;
+		ClipMeshComp->SetVisibility(false);
+		
+		SetWidgetType(EWidgetType::Hidden);
 	}
+}
 
-	GizmoProxy.UpdateOriginData();
-	GizmoProxy.CleanOriginData();
 
-	if (WidgetVisibility)
+void FCustomizableObjectEditorViewportClient::ShowGizmoProjector(
+	const FWidgetLocationDelegate& InWidgetLocationDelegate,
+	const FOnWidgetLocationChangedDelegate& InOnWidgetLocationChangedDelegate,
+	const FWidgetDirectionDelegate& InWidgetDirectionDelegate,
+	const FOnWidgetDirectionChangedDelegate& InOnWidgetDirectionChangedDelegate,
+	const FWidgetUpDelegate& InWidgetUpDelegate, const FOnWidgetUpChangedDelegate& InOnWidgetUpChangedDelegate,
+	const FWidgetScaleDelegate& InWidgetScaleDelegate, const FOnWidgetScaleChangedDelegate& InOnWidgetScaleChangedDelegate,
+	const FWidgetAngleDelegate& InWidgetAngleDelegate, const FProjectorTypeDelegate& InProjectorTypeDelegate,
+	const FWidgetColorDelegate& InWidgetColorDelegate,
+	const FWidgetTrackingStartedDelegate& InWidgetTrackingStartedDelegate)
+{
+	SetWidgetType(EWidgetType::Projector);
+
+	WidgetLocationDelegate = InWidgetLocationDelegate;
+	OnWidgetLocationChangedDelegate = InOnWidgetLocationChangedDelegate;
+	WidgetDirectionDelegate = InWidgetDirectionDelegate;
+	OnWidgetDirectionChangedDelegate = InOnWidgetDirectionChangedDelegate;
+	WidgetUpDelegate = InWidgetUpDelegate;
+	OnWidgetUpChangedDelegate = InOnWidgetUpChangedDelegate;
+	WidgetScaleDelegate = InWidgetScaleDelegate;
+	OnWidgetScaleChangedDelegate = InOnWidgetScaleChangedDelegate;
+	WidgetAngleDelegate = InWidgetAngleDelegate;
+	ProjectorTypeDelegate = InProjectorTypeDelegate;
+	WidgetColorDelegate = InWidgetColorDelegate;
+	WidgetTrackingStartedDelegate = InWidgetTrackingStartedDelegate;
+}
+
+
+void FCustomizableObjectEditorViewportClient::HideGizmoProjector()
+{
+	if (WidgetType == EWidgetType::Projector)
 	{
-		Widget->SetDefaultVisibility(false);
-		WidgetVisibility = false;
+		SetWidgetType(EWidgetType::Hidden);
+	}
+}
+
+
+void FCustomizableObjectEditorViewportClient::ShowGizmoLight(ULightComponent& Light)
+{
+	SelectedLightComponent = &Light;
+	
+	SetWidgetType(EWidgetType::Light);
+}
+
+
+void FCustomizableObjectEditorViewportClient::HideGizmoLight()
+{
+	if (WidgetType == EWidgetType::Light)
+	{
+		SetWidgetType(EWidgetType::Hidden);
 	}
 }
 
@@ -1465,9 +783,6 @@ FSphere FCustomizableObjectEditorViewportClient::GetCameraTarget()
 	{
 		if (SkeletalMeshComponent.IsValid())
 		{
-			FTransform ComponentToWorld = SkeletalMeshComponent->GetComponentTransform();
-			SkeletalMeshComponent.Get()->CalcBounds(ComponentToWorld);
-
 			FBoxSphereBounds Bounds = SkeletalMeshComponent.Get()->CalcBounds(FTransform::Identity);
 
 			if (!bFoundTarget)
@@ -1485,9 +800,6 @@ FSphere FCustomizableObjectEditorViewportClient::GetCameraTarget()
 
 	if(!bFoundTarget && StaticMeshComponent.IsValid())
 	{
-		FTransform ComponentToWorld = StaticMeshComponent->GetComponentTransform();
-		StaticMeshComponent.Get()->CalcBounds(ComponentToWorld);
-
 		if( !bFoundTarget )
 		{
 			FBoxSphereBounds Bounds = StaticMeshComponent.Get()->CalcBounds(FTransform::Identity);
@@ -1527,13 +839,8 @@ void FCustomizableObjectEditorViewportClient::SetPreviewComponent(UStaticMeshCom
 void FCustomizableObjectEditorViewportClient::SetPreviewComponents(const TArray<UDebugSkelMeshComponent*>& InSkeletalMeshComponents)
 {
 	SkeletalMeshComponents.Reset(InSkeletalMeshComponents.Num());
+	SkeletalMeshComponents.Append(InSkeletalMeshComponents);
 	
-	for (UDebugSkelMeshComponent* SkeletalMeshComponent : InSkeletalMeshComponents)
-	{
-		SkeletalMeshComponents.Add(SkeletalMeshComponent);
-
-	}
-
 	StaticMeshComponent = nullptr;
 }
 
@@ -1568,46 +875,48 @@ void FCustomizableObjectEditorViewportClient::SetDrawUVOverlay()
 }
 
 
-void FCustomizableObjectEditorViewportClient::SetDrawUVOverlayMaterial(const FString& MaterialName, FString UVChannel)
+void FCustomizableObjectEditorViewportClient::SetDrawUV(const int32 ComponentIndex, const int32 LODIndex, const int32 SectionIndex, const int32 UVIndex)
 {
-	// Get LOD Index
-	FString NameWithLOD, ComponentString;
-	MaterialName.Split(FString("_Component_"), &NameWithLOD, &ComponentString);
-	check(ComponentString.IsNumeric());
-	MaterialToDrawInUVsComponent = FCString::Atoi(*ComponentString);
-
-	FString Name, LODIndex;
-	bool bSplit = NameWithLOD.Split(FString(" LOD_"), &Name, &LODIndex);
-	check(bSplit && LODIndex.IsNumeric());
-
-	MaterialToDrawInUVsLOD = FCString::Atoi(*LODIndex);
-	UVChannelToDrawInUVs = FCString::Atoi(*UVChannel);
-
-	// Get Material Index, added if the name of the material already exists within the skeletal mesh.
-	FString DuplicatedMaterialIndex;
-	bSplit = Name.Split(FString("__"), &MaterialToDrawInUVs, &DuplicatedMaterialIndex);
-
-	if (bSplit && DuplicatedMaterialIndex.IsNumeric())
-	{
-		MaterialToDrawInUVsIndex = FCString::Atoi(*DuplicatedMaterialIndex);
-	}
-	else
-	{
-		MaterialToDrawInUVs = Name;
-		MaterialToDrawInUVsIndex = 0;
-	}
+	UVDrawComponentIndex = ComponentIndex;
+	UVDrawLODIndex = LODIndex;
+	UVDrawSectionIndex = SectionIndex;
+	UVDrawUVIndex = UVIndex;
 
 	Invalidate();
 }
+
 
 bool FCustomizableObjectEditorViewportClient::IsSetDrawUVOverlayChecked() const
 {
 	return bDrawUVs;
 }
 
-void FCustomizableObjectEditorViewportClient::SetShowGrid()
+void FCustomizableObjectEditorViewportClient::UpdateShowGrid(bool bKeepOldValue)
 {
-	DrawHelper.bDrawGrid = !DrawHelper.bDrawGrid;
+	UAssetViewerSettings* Settings = UAssetViewerSettings::Get();
+	int32 ProfileIndex = GetMutableDefault<UEditorPerProjectUserSettings>()->AssetViewerProfileIndex;
+
+	bool bNewShowGridValue = true;
+
+	if (Settings->Profiles.IsValidIndex(ProfileIndex))
+	{
+		bool bOldShowGridValue = Settings->Profiles[ProfileIndex].bShowFloor;
+
+		if (bKeepOldValue)
+		{
+			// Do not toggle the value when the viewport is being constructed
+			bNewShowGridValue = bOldShowGridValue;
+		}
+		else
+		{
+			// Toggle it when actually changing the option
+			bNewShowGridValue = !bOldShowGridValue;
+		}
+
+		Settings->Profiles[ProfileIndex].bShowFloor = bNewShowGridValue;
+	}
+	
+	DrawHelper.bDrawGrid = bNewShowGridValue;
 
 	FAdvancedPreviewScene* AdvancedScene = static_cast<FAdvancedPreviewScene*>(PreviewScene);
 	if (AdvancedScene != nullptr)
@@ -1620,20 +929,49 @@ void FCustomizableObjectEditorViewportClient::SetShowGrid()
 	Invalidate();
 }
 
-bool FCustomizableObjectEditorViewportClient::IsSetShowGridChecked() const
+void FCustomizableObjectEditorViewportClient::UpdateShowGridFromButton()
+{
+	UpdateShowGrid(false);
+}
+
+bool FCustomizableObjectEditorViewportClient::IsShowGridChecked() const
 {
 	return DrawHelper.bDrawGrid;
 }
 
-void FCustomizableObjectEditorViewportClient::SetShowSky()
+void FCustomizableObjectEditorViewportClient::UpdateShowSky(bool bKeepOldValue)
 {
-	bDrawSky = !bDrawSky;
+	UAssetViewerSettings* Settings = UAssetViewerSettings::Get();
+	int32 ProfileIndex = GetMutableDefault<UEditorPerProjectUserSettings>()->AssetViewerProfileIndex;
+
+	if (Settings->Profiles.IsValidIndex(ProfileIndex))
+	{
+		bool bOldDrawSky = Settings->Profiles[ProfileIndex].bShowEnvironment;
+
+		if (bKeepOldValue)
+		{
+			bDrawSky = bOldDrawSky;
+		}
+		else
+		{
+			bDrawSky = !bOldDrawSky;
+		}
+
+		Settings->Profiles[ProfileIndex].bShowEnvironment = bDrawSky;
+	}
+
 	FAdvancedPreviewScene* PreviewSceneCasted = static_cast<FAdvancedPreviewScene*>(PreviewScene);
 	PreviewSceneCasted->SetEnvironmentVisibility(bDrawSky, true);
+
 	Invalidate();
 }
 
-bool FCustomizableObjectEditorViewportClient::IsSetShowSkyChecked() const
+void FCustomizableObjectEditorViewportClient::UpdateShowSkyFromButton()
+{
+	UpdateShowSky(false);
+}
+
+bool FCustomizableObjectEditorViewportClient::IsShowSkyChecked() const
 {
 	return bDrawSky;
 }
@@ -1644,152 +982,133 @@ void FCustomizableObjectEditorViewportClient::SetShowBounds()
 	Invalidate();
 }
 
-bool FCustomizableObjectEditorViewportClient::IsSetShowBoundsChecked() const
-{
-	return EngineShowFlags.Bounds ? true : false;
-}
-
-void FCustomizableObjectEditorViewportClient::SetShowCollision()
-{
-	EngineShowFlags.Collision = 1 - EngineShowFlags.Collision;
-	Invalidate();
-}
-
-bool FCustomizableObjectEditorViewportClient::IsSetShowCollisionChecked() const
-{
-	return EngineShowFlags.Collision ? true : false;
-}
-
-void FCustomizableObjectEditorViewportClient::SetShowPivot()
-{
-	bShowPivot = !bShowPivot;
-	Widget->SetDefaultVisibility(bShowPivot);
-	WidgetVisibility = bShowPivot;
-	Invalidate();
-}
-
-bool FCustomizableObjectEditorViewportClient::IsSetShowPivotChecked() const
-{
-	return bShowPivot;
-}
-
 
 bool FCustomizableObjectEditorViewportClient::InputKey(const FInputKeyEventArgs& EventArgs)
 {
-	const int32 HitX = EventArgs.Viewport->GetMouseX();
-	const int32 HitY = EventArgs.Viewport->GetMouseY();
-
 	const bool bMouseButtonDown = EventArgs.Viewport->KeyState(EKeys::LeftMouseButton) || EventArgs.Viewport->KeyState(EKeys::MiddleMouseButton) || EventArgs.Viewport->KeyState(EKeys::RightMouseButton);
 
-	bool bHandled = false;
-
-	if (EventArgs.Event == IE_Pressed && !bManipulating && !bMouseButtonDown)
+	if (EventArgs.Event == IE_Pressed && !bMouseButtonDown)
 	{
 		if (EventArgs.Key == EKeys::F)
 		{
-			bHandled = true;
 			UpdateCameraSetup();
+			return true;
 		}
-		else if (EventArgs.Key == EKeys::W)
+		else if (WidgetType != EWidgetType::Hidden) // Do not change the type when hidden.
 		{
-			bHandled = true;
-			WidgetMode = UE::Widget::WM_Translate;
+			if (EventArgs.Key == EKeys::W)
+			{
+				SetWidgetMode(UE::Widget::WM_Translate);
+				return true;
+			}
+			else if (EventArgs.Key == EKeys::E)
+			{
+				SetWidgetMode(UE::Widget::WM_Rotate);
+				return true;
+			}
+			else if (EventArgs.Key == EKeys::R)
+			{
+				SetWidgetMode(UE::Widget::WM_Scale);
+				return true;
+			}	
 		}
-		else if (EventArgs.Key == EKeys::E)
+		else if (EventArgs.Key == EKeys::Q) // Not sure why, pressing Q the super class hides the widget.
 		{
-			bHandled = true;
-			WidgetMode = UE::Widget::WM_Rotate;
+			SetWidgetType(EWidgetType::Hidden);
+			return true;
 		}
-		else if (EventArgs.Key == EKeys::R)
-		{
-			bHandled = true;
-			WidgetMode = UE::Widget::WM_Scale;
-		}
-	}
-
-	if (EventArgs.Event == IE_Released && bManipulating)
-	{
-		GizmoProxy.SetProjectorUpdatedInViewport(false);
 	}
 
 	// Pass keys to standard controls, if we didn't consume input
-	return (bHandled)
-		? true
-		: FEditorViewportClient::InputKey(EventArgs);
+	return FEditorViewportClient::InputKey(EventArgs);
 }
 
 
 bool FCustomizableObjectEditorViewportClient::InputWidgetDelta(FViewport* InViewport, EAxisList::Type CurrentAxis, FVector& Drag, FRotator& Rot, FVector& Scale)
 {
-	if (!GizmoProxy.AnyGizmoSelected && !bClipMorphVisible && !ClipMeshNode && !bIsEditingLightEnabled)
+	if (CurrentAxis == EAxisList::None)
 	{
 		return false;
 	}
 
-	// Get some useful info about buttons being held down
-	const bool bCtrlDown = InViewport->KeyState(EKeys::LeftControl) || InViewport->KeyState(EKeys::RightControl);
-	const bool bShiftDown = InViewport->KeyState(EKeys::LeftShift) || InViewport->KeyState(EKeys::RightShift);
-	const bool bMouseButtonDown = InViewport->KeyState(EKeys::LeftMouseButton) || InViewport->KeyState(EKeys::MiddleMouseButton) || InViewport->KeyState(EKeys::RightMouseButton);
-
-	bool bHandled = false;
-
-	if (bManipulating && CurrentAxis != EAxisList::None)
+	const UE::Widget::EWidgetMode WidgetMode = GetWidgetMode();
+	
+	switch (WidgetType)
 	{
-		bHandled = true;
-
-		if (GizmoProxy.AnyGizmoSelected)
+	case EWidgetType::Projector:
 		{
-			if (WidgetMode == UE::Widget::WM_Translate)
+			if (WidgetLocationDelegate.IsBound() && OnWidgetLocationChangedDelegate.IsBound())
 			{
-				GizmoProxy.Value.Position += (FVector3f)Drag;
-				GizmoProxy.ProjectorGizmoEdited = true;
-			}
-			else if (WidgetMode == UE::Widget::WM_Rotate)
-			{
-				GizmoProxy.Value.Direction = (FVector3f)Rot.RotateVector((FVector)GizmoProxy.Value.Direction);
-				GizmoProxy.Value.Up = (FVector3f)Rot.RotateVector((FVector)GizmoProxy.Value.Up);
-				GizmoProxy.ProjectorGizmoEdited = true;
-			}
-			else if (WidgetMode == UE::Widget::WM_Scale)
-			{
-				GizmoProxy.Value.Scale.X += Scale.Y;
-				GizmoProxy.Value.Scale.Y += Scale.Z;
-				GizmoProxy.Value.Scale.Z += Scale.X;
-				GizmoProxy.ProjectorGizmoEdited = true;
-			}
-
-			InViewport->Invalidate();
-
-			if (GizmoProxy.ProjectorGizmoEdited)
-			{
-				GizmoProxy.SetProjectorUpdatedInViewport(true);
-				GizmoProxy.UpdateOriginData();
-				GizmoProxy.ProjectorGizmoEdited = false;
-			}
-		}
-
-		else if (bClipMorphVisible && ClipMorphNode)
-		{
-			if (WidgetMode == UE::Widget::WM_Translate)
-			{
-				if (CurrentAxis == EAxisList::Z)
+				if (Drag != FVector::ZeroVector)
 				{
-					float dragZ = bClipMorphLocalStartOffset ? FVector::DotProduct(Drag, ClipMorphNormal) : Drag.Z;
+					OnWidgetLocationChangedDelegate.Execute(WidgetLocationDelegate.Execute() + Drag);				
+				}
+			}
+
+			if (WidgetDirectionDelegate.IsBound() && OnWidgetDirectionChangedDelegate.IsBound())
+			{
+				const FVector WidgetDirection = WidgetDirectionDelegate.Execute();
+				const FVector NewWidgetDirection = Rot.RotateVector(WidgetDirection);
+
+				if (WidgetDirection != NewWidgetDirection)
+				{
+					OnWidgetDirectionChangedDelegate.Execute(NewWidgetDirection);				
+				}
+			}
+
+			if (WidgetUpDelegate.IsBound() && OnWidgetUpChangedDelegate.IsBound())
+			{
+				const FVector WidgetUp = WidgetUpDelegate.Execute();
+				const FVector NewWidgetUp = Rot.RotateVector(WidgetUp);
+
+				if (WidgetUp != NewWidgetUp)
+				{
+					OnWidgetUpChangedDelegate.Execute(NewWidgetUp);				
+				}
+			}
+
+			if (WidgetScaleDelegate.IsBound() && OnWidgetScaleChangedDelegate.IsBound())
+			{
+				const FVector CorrectedScale(Scale.Y, Scale.Z, Scale.X);
+				if (CorrectedScale != FVector::ZeroVector)
+				{
+					OnWidgetScaleChangedDelegate.Execute(WidgetScaleDelegate.Execute() + CorrectedScale);
+				}
+			}
+		
+			return true;
+		}
+		
+	case EWidgetType::ClipMorph:
+		{
+			if (WidgetMode == UE::Widget::WM_Translate)
+			{
+				if (CurrentAxis == EAxisList::Screen) // true when selecting the widget center
+				{
+					CurrentAxis = EAxisList::XYZ;
+				}
+				
+				if (CurrentAxis & EAxisList::Z)
+				{
+					const float dragZ = bClipMorphLocalStartOffset ? FVector::DotProduct(Drag, ClipMorphNormal) : Drag.Z;
 					ClipMorphLocalOffset.Z += dragZ;
 					ClipMorphOffset += (bClipMorphLocalStartOffset) ? dragZ * ClipMorphNormal : FVector(0,0,dragZ);
 				}
-				else if(CurrentAxis == EAxisList::X)
+
+				if(CurrentAxis & EAxisList::X)
 				{
-					float dragX = bClipMorphLocalStartOffset ? FVector::DotProduct(Drag, ClipMorphXAxis) : Drag.X;
+					const float dragX = bClipMorphLocalStartOffset ? FVector::DotProduct(Drag, ClipMorphXAxis) : Drag.X;
 					ClipMorphLocalOffset.X += dragX;
 					ClipMorphOffset += (bClipMorphLocalStartOffset) ? dragX * ClipMorphXAxis : FVector(dragX, 0, 0);
 				}
-				else if (CurrentAxis == EAxisList::Y)
+
+				if (CurrentAxis & EAxisList::Y)
 				{
-					float dragY = bClipMorphLocalStartOffset ? FVector::DotProduct(Drag, ClipMorphYAxis) : Drag.Y;
+					const float dragY = bClipMorphLocalStartOffset ? FVector::DotProduct(Drag, ClipMorphYAxis) : Drag.Y;
 					ClipMorphLocalOffset.Y += dragY;
 					ClipMorphOffset += (bClipMorphLocalStartOffset) ? dragY * ClipMorphYAxis : FVector(0, dragY, 0);
 				}
+				
 				ClipMorphNode->StartOffset = ClipMorphLocalOffset;
 			}
 			else if (WidgetMode == UE::Widget::WM_Rotate)
@@ -1825,9 +1144,10 @@ bool FCustomizableObjectEditorViewportClient::InputWidgetDelta(FViewport* InView
 					ClipMorphNode->StartOffset = ClipMorphLocalOffset;
 				}
 			}
-		}
 
-		else if (ClipMeshNode)
+			return true;
+		}
+	case EWidgetType::ClipMesh:
 		{
 			if (WidgetMode == UE::Widget::WM_Translate)
 			{
@@ -1843,134 +1163,228 @@ bool FCustomizableObjectEditorViewportClient::InputWidgetDelta(FViewport* InView
 			}
 
 			ClipMeshComp->SetWorldTransform(ClipMeshNode->Transform);
-		}
 
-		else if (bIsEditingLightEnabled && SelectedLightComponent)
+			return true;
+		}
+		
+	case EWidgetType::Light:
 		{
 			if (WidgetMode == UE::Widget::WM_Translate)
 			{
 				SelectedLightComponent->AddWorldOffset(Drag);
 				SelectedLightComponent->MarkForNeededEndOfFrameRecreate();
 			}
-
 			else if (WidgetMode == UE::Widget::WM_Rotate)
 			{
 				SelectedLightComponent->AddWorldRotation(Rot.Quaternion());
 				SelectedLightComponent->MarkForNeededEndOfFrameRecreate();
 			}
-		}
-	}
 
-	return bHandled;
+			return true;
+		}
+		
+	case EWidgetType::Hidden:
+		{
+			return false;
+		}
+		
+	default:
+		{
+			unimplemented()
+			return false;
+		}
+	}	
 }
 
 
-void FCustomizableObjectEditorViewportClient::TrackingStarted(const struct FInputEventState& InInputState, bool bIsDraggingWidget, bool bNudge)
+void FCustomizableObjectEditorViewportClient::TrackingStarted(const FInputEventState& InInputState, bool bIsDraggingWidget, bool bNudge)
 {
-	if (bIsDraggingWidget)
+	if (!bIsDraggingWidget || !InInputState.IsLeftMouseButtonPressed() || (Widget->GetCurrentAxis() & EAxisList::All) == 0)
 	{
-		if (InInputState.IsLeftMouseButtonPressed() && (Widget->GetCurrentAxis() & EAxisList::XYZ) != 0)
-		{
-			bManipulating = true;
-
-			if (WidgetMode == UE::Widget::WM_Translate)
-			{
-				GEditor->BeginTransaction(LOCTEXT("CustomizableObjectEditor_TranslateProjector", "Translate Projector"));
-			}
-			else if (WidgetMode == UE::Widget::WM_Rotate)
-			{
-				GEditor->BeginTransaction(LOCTEXT("CustomizableObjectEditor_RotateProjector", "Rotate Projector"));
-			}
-			else if (WidgetMode == UE::Widget::WM_Scale)
-			{
-				GEditor->BeginTransaction(LOCTEXT("CustomizableObjectEditor_ScaleProjector", "Scale Projector"));
-			}
-
-			if (GizmoProxy.AnyGizmoSelected)
-			{
-				GizmoProxy.Modify();
-				GizmoProxy.ModifyGraph();
-			}
-		}
+		return;
 	}
+	
+	(void)HandleBeginTransform();
 }
 
 
 void FCustomizableObjectEditorViewportClient::TrackingStopped()
 {
-	if (bManipulating)
-	{
-		bManipulating = false;
-		GEditor->EndTransaction();
-	}
-
-	Invalidate();
+	(void)HandleEndTransform();
 }
 
-
-UE::Widget::EWidgetMode FCustomizableObjectEditorViewportClient::GetWidgetMode() const
+bool FCustomizableObjectEditorViewportClient::BeginTransform(const FGizmoState& InState)
 {
-	return WidgetMode;
+	return HandleBeginTransform();
 }
 
+bool FCustomizableObjectEditorViewportClient::EndTransform(const FGizmoState& InState)
+{
+	return HandleEndTransform();
+}
+
+bool FCustomizableObjectEditorViewportClient::HandleBeginTransform()
+{
+	switch (WidgetType)
+	{
+	case EWidgetType::Projector:
+	case EWidgetType::ClipMorph:
+	case EWidgetType::ClipMesh:
+	case EWidgetType::Light:
+		{
+			bManipulating = true;
+
+			const UE::Widget::EWidgetMode WidgetMode = GetWidgetMode();
+				
+			if (WidgetMode == UE::Widget::WM_Translate)
+			{
+				GEditor->BeginTransaction(LOCTEXT("CustomizableObjectEditor_Translate", "Translate"));
+			}
+			else if (WidgetMode == UE::Widget::WM_Rotate)
+			{
+				GEditor->BeginTransaction(LOCTEXT("CustomizableObjectEditor_Rotate", "Rotate"));
+			}
+			else if (WidgetMode == UE::Widget::WM_Scale)
+			{
+				GEditor->BeginTransaction(LOCTEXT("CustomizableObjectEditor_Scale", "Scale"));
+			}
+
+			break;
+		}
+		
+	case EWidgetType::Hidden:
+		break;
+	default:
+		unimplemented();
+	}
+	
+	switch (WidgetType)
+	{
+	case EWidgetType::Projector:
+		WidgetTrackingStartedDelegate.ExecuteIfBound();
+		break;
+	case EWidgetType::ClipMorph:
+		ClipMorphNode->Modify();
+		break;
+	case EWidgetType::ClipMesh:
+		ClipMeshNode->Modify();
+		break;
+	case EWidgetType::Light:
+		SelectedLightComponent->Modify();
+		break;
+	case EWidgetType::Hidden:
+		return true;
+		break;
+	default:
+		unimplemented();
+	}
+	return false;
+}
+
+bool FCustomizableObjectEditorViewportClient::HandleEndTransform()
+{
+	switch (WidgetType)
+	{
+	case EWidgetType::Projector:
+	case EWidgetType::ClipMorph:
+	case EWidgetType::ClipMesh:
+	case EWidgetType::Light:
+		if (bManipulating)
+		{
+			bManipulating = false;
+			GEditor->EndTransaction();
+			return true;
+		}
+		
+		break;
+		
+	case EWidgetType::Hidden:
+		return true;
+		break;
+	default:
+		unimplemented();
+	}
+	return false;
+}
 
 FVector FCustomizableObjectEditorViewportClient::GetWidgetLocation() const
 {
-	if (GizmoProxy.AnyGizmoSelected)
+	switch (WidgetType)
 	{
-		return (FVector)GizmoProxy.Value.Position;
-	}
-
-	if (bClipMorphVisible)
-	{
+	case EWidgetType::Projector:
+		return WidgetLocationDelegate.IsBound() ?WidgetLocationDelegate.Execute() : FVector::ZeroVector;
+		
+	case EWidgetType::ClipMorph:
 		return ClipMorphOrigin + ClipMorphOffset;
-	}
 
-	if (ClipMeshNode)
-	{
+	case EWidgetType::ClipMesh:
 		return ClipMeshNode->Transform.GetTranslation();
-	}
 
-	if (bIsEditingLightEnabled && SelectedLightComponent)
-	{
+	case EWidgetType::Light:
 		return SelectedLightComponent->GetComponentLocation();
-	}
 
-	return FVector::ZeroVector;
+	case EWidgetType::Hidden:
+		return FVector::ZeroVector;
+
+	default:
+		unimplemented()
+		return FVector::ZeroVector;
+	}
 }
 
 
 FMatrix FCustomizableObjectEditorViewportClient::GetWidgetCoordSystem() const
 {
-	if (GizmoProxy.AnyGizmoSelected)
+	switch (WidgetType)
 	{
-		FVector3f YVector = FVector3f::CrossProduct(GizmoProxy.Value.Direction, GizmoProxy.Value.Up);
-		return FMatrix((FVector)GizmoProxy.Value.Direction, (FVector)YVector, (FVector)GizmoProxy.Value.Up, FVector::ZeroVector);
-	}
-
-	if (bClipMorphVisible)
-	{
-		if (bClipMorphLocalStartOffset)
+	case EWidgetType::Projector:
 		{
-			return FMatrix(-ClipMorphXAxis, -ClipMorphYAxis, -ClipMorphNormal, FVector::ZeroVector);
+			const FVector WidgetDirection = WidgetDirectionDelegate.IsBound() ?
+				WidgetDirectionDelegate.Execute() :
+				FVector::ForwardVector;
+
+			const FVector WidgetUp = WidgetUpDelegate.IsBound() ?
+				WidgetUpDelegate.Execute() :
+				FVector::UpVector;
+	
+			const FVector YVector = FVector::CrossProduct(WidgetDirection, WidgetUp);
+			return FMatrix(WidgetDirection, YVector, WidgetUp, FVector::ZeroVector);
+		}		
+	case EWidgetType::ClipMorph:
+		{
+			if (bClipMorphLocalStartOffset)
+			{
+				return FMatrix(-ClipMorphXAxis, -ClipMorphYAxis, -ClipMorphNormal, FVector::ZeroVector);
+			}
+			else
+			{			
+				return FMatrix(FVector(1, 0, 0), FVector(0,1,0), FVector(0,0,1), FVector::ZeroVector);
+			}
+		}
+		
+	case EWidgetType::ClipMesh:
+		{
+			return ClipMeshNode->Transform.ToMatrixNoScale().RemoveTranslation();			
+		}
+		
+	case EWidgetType::Light:
+		{
+			FMatrix Rotation = SelectedLightComponent->GetComponentTransform().ToMatrixNoScale();
+			Rotation.SetOrigin(FVector::ZeroVector);
+			return Rotation;
+		}
+		
+	case EWidgetType::Hidden:
+		{
+			return FMatrix::Identity;
 		}
 
-		return FMatrix(FVector(1, 0, 0), FVector(0,1,0), FVector(0,0,1), FVector::ZeroVector);
+	default:
+		{
+			unimplemented()
+			return FMatrix::Identity;
+		}
 	}
-
-	if (ClipMeshNode)
-	{
-		return ClipMeshNode->Transform.ToMatrixNoScale().RemoveTranslation();
-	}
-
-	if (bIsEditingLightEnabled && SelectedLightComponent)
-	{
-		FMatrix Rotation = SelectedLightComponent->GetComponentTransform().ToMatrixNoScale();
-		Rotation.SetOrigin(FVector::ZeroVector);
-		return Rotation;
-	}
-
-	return FMatrix::Identity;
 }
 
 
@@ -2087,58 +1501,36 @@ void FCustomizableObjectEditorViewportClient::ReSetAnimation()
 
 void FCustomizableObjectEditorViewportClient::AddLightToScene(ULightComponent* AddedLight)
 {
-	if (AddedLight)
-	{
-		PreviewScene->AddComponent(AddedLight, AddedLight->GetComponentTransform());
-	}
-
-	if (WidgetVisibility && !bIsEditingLightEnabled)
+	if (!AddedLight)
 	{
 		return;
 	}
 
-	SelectedLightComponent = AddedLight;
-	bIsEditingLightEnabled = AddedLight != nullptr;
-
-	if (!WidgetVisibility)
-	{
-		Widget->SetDefaultVisibility(true);
-		WidgetVisibility = true;
-	}
+	LightComponents.Add(AddedLight);
+	PreviewScene->AddComponent(AddedLight, AddedLight->GetComponentTransform());
 }
 
 
 void FCustomizableObjectEditorViewportClient::RemoveLightFromScene(ULightComponent* RemovedLight)
 {
-	PreviewScene->RemoveComponent(RemovedLight);
-
-	if (RemovedLight == SelectedLightComponent)
-	{
-		SelectedLightComponent = nullptr;
-		bIsEditingLightEnabled = false;
-
-		Widget->SetDefaultVisibility(false);
-		WidgetVisibility = false;
-	}
-}
-
-
-void FCustomizableObjectEditorViewportClient::SetSelectedLight(ULightComponent* SelectedLight)
-{
-	if (WidgetVisibility && !bIsEditingLightEnabled)
+	if (!RemovedLight)
 	{
 		return;
 	}
 
-	SelectedLightComponent = SelectedLight;
-	bIsEditingLightEnabled = SelectedLight != nullptr;
+	LightComponents.Remove(RemovedLight);
+	PreviewScene->RemoveComponent(RemovedLight);
+}
 
-	// Activate Gizmo and Set Light Transform or disable lights if !bIsEditingLightEnabled
-	if (WidgetVisibility != bIsEditingLightEnabled)
+
+void FCustomizableObjectEditorViewportClient::RemoveAllLightsFromScene()
+{
+	for (ULightComponent* Light : LightComponents)
 	{
-		Widget->SetDefaultVisibility(bIsEditingLightEnabled);
-		WidgetVisibility = bIsEditingLightEnabled;
+		PreviewScene->RemoveComponent(Light);
 	}
+
+	LightComponents.Empty();
 }
 
 
@@ -2187,664 +1579,85 @@ public:
 	/** FileName getter */
 	FString GetFileName();
 
-	bool GetExportAllResources();
+	bool GetExportAllResources() const;
+	bool GetGenerateConstantMaterialInstances() const;
 
 protected:
 	void OnPathChange(const FString& NewPath);
 	FReply OnButtonClick(EAppReturnType::Type ButtonID);
 	void OnNameChange(const FText& NewName, ETextCommit::Type CommitInfo);
 	void OnBoolParameterChanged(ECheckBoxState InCheckboxState);
+	void OnConstantMaterialInstancesBoolParameterChanged(ECheckBoxState InCheckboxState);
 
 	EAppReturnType::Type UserResponse = EAppReturnType::Cancel; 
 	FText AssetPath;
 	FText FileName;
 	bool bExportAllResources = false;
+	bool bGenerateConstantMaterialInstances = false;
 };
 
 
 //-------------------------------------------------------------------------------------------------
 
-void RemoveRestrictedChars(FString& String)
-{
-	// Remove restricted chars, according to FPaths::ValidatePath, RestrictedChars = "/?:&\\*\"<>|%#@^ ";
 
-	String = String.Replace(TEXT("/"), TEXT(""));
-	String = String.Replace(TEXT("?"), TEXT(""));
-	String = String.Replace(TEXT(":"), TEXT(""));
-	String = String.Replace(TEXT("&"), TEXT(""));
-	String = String.Replace(TEXT("\\"), TEXT(""));
-	String = String.Replace(TEXT("*"), TEXT(""));
-	String = String.Replace(TEXT("\""), TEXT(""));
-	String = String.Replace(TEXT("<"), TEXT(""));
-	String = String.Replace(TEXT(">"), TEXT(""));
-	String = String.Replace(TEXT("|"), TEXT(""));
-	String = String.Replace(TEXT("%"), TEXT(""));
-	String = String.Replace(TEXT("#"), TEXT(""));
-	String = String.Replace(TEXT("@"), TEXT(""));
-	String = String.Replace(TEXT("^"), TEXT(""));
-	String = String.Replace(TEXT(" "), TEXT(""));
-}
-
-
-//-------------------------------------------------------------------------------------------------
 void FCustomizableObjectEditorViewportClient::BakeInstance()
 {
-	BakeInstance(nullptr);
+	// Early exit if no instance is set in the editor 
+	UCustomizableObjectInstance* Instance = CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
+	if (!Instance)
+	{
+		UE_LOG(LogMutable, Error, TEXT("No Mutable Customizable Object Instnace was found in the current editor."));
+		return;
+	}
+	
+	BakeTempInstance = Instance->Clone();
+
+	// Call the instance update async method
+	FInstanceUpdateNativeDelegate UpdateDelegate;
+	UpdateDelegate.AddRaw(this, &FCustomizableObjectEditorViewportClient::OnInstanceForBakingUpdate);
+	UpdateInstanceForBaking(*BakeTempInstance, UpdateDelegate);
 }
 
-//-------------------------------------------------------------------------------------------------
-void FCustomizableObjectEditorViewportClient::BakeInstance(UCustomizableObjectInstance* InInstance)
+
+void FCustomizableObjectEditorViewportClient::OnInstanceForBakingUpdate(const FUpdateContext& Result)
 {
-	if (!AssetRegistryLoaded)
+	// Early exit if no instance was provided
+	if (!BakeTempInstance)
 	{
-		FNotificationInfo Info(NSLOCTEXT("CustomizableObjectEditor", "CustomizableObjectCompileTryLater", "Please wait until asset registry loads all assets"));
-		Info.bFireAndForget = true;
-		Info.bUseThrobber = true;
-		Info.FadeOutDuration = 1.0f;
-		Info.ExpireDuration = 2.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
+		UE_LOG(LogMutable, Error, TEXT("No Mutable Customizable Object Instnace was provided for the baking."));
 		return;
 	}
 
-	UCustomizableObjectInstance* Instance = InInstance ? InInstance : CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
-
-	bool bHasSkeletalMesh = false;
-	int32 NumComponents = Instance->SkeletalMeshes.Num();
-
-	for (int32 ComponentIndex = 0; ComponentIndex < NumComponents; ++ComponentIndex)
+	// Early exit if update result is not success
+	if ( !UCustomizableObjectSystem::IsUpdateResultValid(Result.UpdateResult) )
 	{
-		if (Instance->SkeletalMeshes.IsValidIndex(ComponentIndex) && Instance->SkeletalMeshes[ComponentIndex])
-		{
-			bHasSkeletalMesh = true;
-		}
-	}
-		
-	if (!bHasSkeletalMesh)
-	{
+		UE_LOG(LogMutable, Warning ,TEXT("Instance finished update with an error state : %s. Skipping instance baking"), *UEnum::GetValueAsString(Result.UpdateResult));
+		BakeTempInstance = nullptr;
 		return;
 	}
-
-	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
-	check(System);
-
-	if (System->IsProgressiveMipStreamingEnabled())
-	{
-		// The instance in the editor viewport does not have high quality mips in the platform data because streaming is enabled.
-		// Disable streaming and retry with a newly generated temp instance.
-		System->SetProgressiveMipStreamingEnabled(false);
-		// Disable requested LOD generation as it will prevent the new instance from having all the LODs
-		System->SetOnlyGenerateRequestedLODsEnabled(false);
-
-		BakeTempInstance = Instance->Clone();
-		BakeTempInstance->SkeletalMeshes.Empty();
-		BakeTempInstance->UpdatedNativeDelegate.AddSP(this, &FCustomizableObjectEditorViewportClient::BakeInstance);
-		BakeTempInstance->UpdateSkeletalMeshAsync(true, true);
-
-		return;
-	}
-
-	FString ObjectName = Instance->GetCustomizableObject()->GetName();
-	FText DefaultFileName = FText::Format(LOCTEXT("DefaultFileNameForBakeInstance", "{0}"), FText::AsCultureInvariant(ObjectName));
-	bool bExportAllResources = false;
-
+	
+	const UCustomizableObject* CO = BakeTempInstance->GetCustomizableObject();
+	check (CO);
+	
+	// Let the user set some configurations at the editor level
+	const FText DefaultFileName = FText::Format(LOCTEXT("DefaultFileNameForBakeInstance", "{0}"), FText::AsCultureInvariant(CO->GetName()));
+	
 	TSharedRef<SMutableSelectFolderDlg> FolderDlg =
 		SNew(SMutableSelectFolderDlg)
 		.DefaultAssetPath(FText())
 		.DefaultFileName(DefaultFileName);
-
+	
 	if (FolderDlg->ShowModal() != EAppReturnType::Cancel)
 	{
-		// Make sure we can create the asset without conflicts
-		//IAssetTools& AssetTools = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools").Get();
-		//if (!AssetTools.CanCreateAsset(ObjName, PkgName, LOCTEXT("BakeMutableInstance", "Baking a Mutable instance")))
-		//{
-		//	return;
-		//}
-
-		FString FileName = FolderDlg->GetFileName();
-		ObjectName = FileName;
-
-		TCHAR InvalidCharacter = '0';
-		FString InvalidCharacters = FPaths::GetInvalidFileSystemChars();
-
-		for (int32 i = 0; i < InvalidCharacters.Len(); ++i)
-		{
-			TCHAR Char = InvalidCharacters[i];
-			FString SearchedChar = FString::Chr(Char);
-			if (ObjectName.Contains(SearchedChar))
-			{
-				InvalidCharacter = InvalidCharacters[i];
-				break;
-			}
-		}
-
-		bExportAllResources = FolderDlg->GetExportAllResources();
-
-		BakingOverwritePermission = false;
-		FString CustomObjectPath = Instance->GetCustomizableObject()->GetPathName();
-		FString AssetPath = FolderDlg->GetAssetPath();
-		FString FullAssetPath = AssetPath + FString("/") + ObjectName + FString(".") + ObjectName;
-
-		if (InvalidCharacter != '0')
-		{
-			FText ErrorString = FText::FromString(FString::Chr(InvalidCharacter));
-			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("FCustomizableObjectEditorViewportClient_BakeInstance_InvalidCharacter", "The selected contains an invalid character ({0})."), ErrorString));
-		}
-		else if (CustomObjectPath == FullAssetPath)
-		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("FCustomizableObjectEditorViewportClient_BakeInstance_OverwriteCO", "The selected path would overwrite the instance's parent Customizable Object."));
-		}
-		else
-		{
-			TArray<UPackage*> PackagesToSave;
-
-			for (int32 ComponentIndex = 0; ComponentIndex < NumComponents; ++ComponentIndex)
-			{
-				USkeletalMesh* Mesh = Instance->SkeletalMeshes.IsValidIndex(ComponentIndex) && Instance->SkeletalMeshes[ComponentIndex] ?
-					Cast<USkeletalMesh>(Instance->SkeletalMeshes[ComponentIndex]) : nullptr;
-				
-				if (!Mesh)
-				{
-					continue;
-				}
-
-				if (NumComponents > 1)
-				{
-					ObjectName = FileName + "_Component_" + FString::FromInt(ComponentIndex);
-				}
-
-				TMap<UObject*, UObject*> ReplacementMap;
-				TArray<FString> ArrayCachedElement;
-				TArray<UObject*> ArrayCachedObject;
-
-				if (bExportAllResources)
-				{
-					UMaterialInstance* Inst;
-					UMaterial* Material;
-					UTexture* Texture;
-					FString MaterialName;
-					FString ResourceName;
-					FString PackageName;
-					UObject* DuplicatedObject;
-					TArray<TMap<int, UTexture*>> TextureReplacementMaps;
-
-					// Duplicate Mutable generated textures
-					for (int32 m = 0; m < Mesh->GetMaterials().Num(); ++m)
-					{
-						UMaterialInterface* Interface = Mesh->GetMaterials()[m].MaterialInterface;
-						Material = Interface->GetMaterial();
-						MaterialName = Material ? Material->GetName() : "Material";
-						Inst = Cast<UMaterialInstance>(Mesh->GetMaterials()[m].MaterialInterface);
-
-						TMap<int, UTexture*> ReplacementTextures;
-						TextureReplacementMaps.Add(ReplacementTextures);
-
-						// The material will only have Mutable generated textures if it's actually a UMaterialInstance
-						if (Material != nullptr && Inst != nullptr)
-						{
-							TArray<FName> ParameterNames = GetTextureParameterNames(Material);
-
-							for (int32 i = 0; i < ParameterNames.Num(); i++)
-							{
-								if (Inst->GetTextureParameterValue(ParameterNames[i], Texture))
-								{
-									UTexture2D* SrcTex = Cast<UTexture2D>(Texture);
-									if (!SrcTex) continue;
-
-									bool bIsMutableTexture = false;
-
-									for (UAssetUserData* UserData : *SrcTex->GetAssetUserDataArray())
-									{
-										UTextureMipDataProviderFactory* CustomMipDataProviderFactory = Cast<UMutableTextureMipDataProviderFactory>(UserData);
-										if (CustomMipDataProviderFactory)
-										{
-											bIsMutableTexture = true;
-										}
-									}
-
-									if ((SrcTex->GetPlatformData() != nullptr) &&
-										(SrcTex->GetPlatformData()->Mips.Num() > 0) &&
-										bIsMutableTexture)
-									{
-										FString ParameterSanitized = ParameterNames[i].GetPlainNameString();
-										RemoveRestrictedChars(ParameterSanitized);
-										ResourceName = ObjectName + "_" + MaterialName + "_" + ParameterSanitized;
-
-										if (!GetUniqueResourceName(SrcTex, ResourceName, ArrayCachedObject, ArrayCachedElement))
-										{
-											continue;
-										}
-
-										if (!ManageBakingAction(AssetPath, ResourceName))
-										{
-											return;
-										}
-
-										// Recover original name of the texture parameter value, now substituted by the generated Mutable texture
-										UTexture* OriginalTexture = nullptr;
-										UMaterialInstanceDynamic* InstDynamic = Cast<UMaterialInstanceDynamic>(Mesh->GetMaterials()[m].MaterialInterface);
-										if (InstDynamic != nullptr)
-										{
-											InstDynamic->Parent->GetTextureParameterValue(FName(*ParameterNames[i].GetPlainNameString()), OriginalTexture);
-										}
-
-										PackageName = FolderDlg->GetAssetPath() + FString("/") + ResourceName;
-										TMap<UObject*, UObject*> FakeReplacementMap;
-										UTexture2D* DupTex = FUnrealBakeHelpers::BakeHelper_CreateAssetTexture(SrcTex, ResourceName, PackageName, OriginalTexture, true, FakeReplacementMap, BakingOverwritePermission);
-										ArrayCachedElement.Add(ResourceName);
-										ArrayCachedObject.Add(DupTex);
-										PackagesToSave.Add(DupTex->GetPackage());
-
-										if (OriginalTexture != nullptr)
-										{
-											TextureReplacementMaps[m].Add(i, DupTex);
-										}
-									}
-								}
-							}
-						}
-					}
-
-					// Duplicate non-Mutable material textures
-					for (int32 m = 0; m < Mesh->GetMaterials().Num(); ++m)
-					{
-						UMaterialInterface* Interface = Mesh->GetMaterials()[m].MaterialInterface;
-						Material = Interface->GetMaterial();
-						MaterialName = Material ? Material->GetName() : "Material";
-
-						if (Material != nullptr)
-						{
-							TArray<FName> ParameterNames = GetTextureParameterNames(Material);
-
-							for (int32 i = 0; i < ParameterNames.Num(); i++)
-							{
-								TArray<FMaterialParameterInfo> InfoArray;
-								TArray<FGuid> GuidArray;
-								Material->GetAllTextureParameterInfo(InfoArray, GuidArray);
-								
-								if (Material->GetTextureParameterValue(InfoArray[i], Texture))
-								{
-									FString ParameterSanitized = ParameterNames[i].GetPlainNameString();
-									RemoveRestrictedChars(ParameterSanitized);
-									ResourceName = ObjectName + "_" + MaterialName + "_" + ParameterSanitized;
-
-									if (ArrayCachedElement.Find(ResourceName) == INDEX_NONE)
-									{
-										if (!ManageBakingAction(AssetPath, ResourceName))
-										{
-											return;
-										}
-
-										PackageName = FolderDlg->GetAssetPath() + FString("/") + ResourceName;
-										TMap<UObject*, UObject*> FakeReplacementMap;
-										DuplicatedObject = FUnrealBakeHelpers::BakeHelper_DuplicateAsset(Texture, ResourceName, PackageName, true, FakeReplacementMap, BakingOverwritePermission);
-										ArrayCachedElement.Add(ResourceName);
-										ArrayCachedObject.Add(DuplicatedObject);
-										PackagesToSave.Add(DuplicatedObject->GetPackage());
-
-										UTexture* DupTexture = Cast<UTexture>(DuplicatedObject);
-										TextureReplacementMaps[m].Add(i, DupTexture);
-									}
-								}
-							}
-						}
-					}
-
-
-					// Duplicate the materials used by each material instance so that the replacement map has proper information 
-					// when duplicating the material instances
-					for (int32 m = 0; m < Mesh->GetMaterials().Num(); ++m)
-					{
-						UMaterialInterface* Interface = Mesh->GetMaterials()[m].MaterialInterface;
-						Material = Interface ? Interface->GetMaterial() : nullptr;
-
-						if (Material)
-						{
-							ResourceName = ObjectName + "_Material_" + Material->GetName();
-
-							if (!GetUniqueResourceName(Material, ResourceName, ArrayCachedObject, ArrayCachedElement))
-							{
-								continue;
-							}
-
-							if (!ManageBakingAction(AssetPath, ResourceName))
-							{
-								return;
-							}
-
-							PackageName = FolderDlg->GetAssetPath() + FString("/") + ResourceName;
-							TMap<UObject*, UObject*> FakeReplacementMap;
-							DuplicatedObject = FUnrealBakeHelpers::BakeHelper_DuplicateAsset(Material, ResourceName, PackageName, false, FakeReplacementMap, BakingOverwritePermission);
-							ArrayCachedElement.Add(ResourceName);
-							ArrayCachedObject.Add(DuplicatedObject);
-							ReplacementMap.Add(Interface, DuplicatedObject);
-							PackagesToSave.Add(DuplicatedObject->GetPackage());
-
-							if (UMaterial* DupMaterial = Cast<UMaterial>(DuplicatedObject))
-							{
-								TArray<FMaterialParameterInfo> parametersInfo;
-								TArray<FGuid> parametersGuids;
-
-								// copy scalar parameters
-								TArray<FMaterialParameterInfo> ScalarParameterInfoArray;
-								TArray<FGuid> GuidArray;
-								Interface->GetAllScalarParameterInfo(ScalarParameterInfoArray, GuidArray);
-								for (const FMaterialParameterInfo& Param : ScalarParameterInfoArray)
-								{
-									float Value = 0.f;
-									if (Interface->GetScalarParameterValue(Param, Value))
-									{
-										DupMaterial->SetScalarParameterValueEditorOnly(Param.Name, Value);
-									}
-								}
-
-								// copy vector parameters
-								TArray<FMaterialParameterInfo> VectorParameterInfoArray;
-								Interface->GetAllVectorParameterInfo(VectorParameterInfoArray, GuidArray);
-								for (const FMaterialParameterInfo& Param : VectorParameterInfoArray)
-								{
-									FLinearColor Value;
-									if (Interface->GetVectorParameterValue(Param, Value))
-									{
-										DupMaterial->SetVectorParameterValueEditorOnly(Param.Name, Value);
-									}
-								}
-
-								// copy switch parameters								
-								TArray<FMaterialParameterInfo> StaticSwitchParameterInfoArray;
-								Interface->GetAllStaticSwitchParameterInfo(StaticSwitchParameterInfoArray, GuidArray);
-								for (int i = 0; i < StaticSwitchParameterInfoArray.Num(); ++i)
-								{
-									bool Value = false;
-									if (Interface->GetStaticSwitchParameterValue(StaticSwitchParameterInfoArray[i].Name, Value, GuidArray[i]))
-									{
-										DupMaterial->SetStaticSwitchParameterValueEditorOnly(StaticSwitchParameterInfoArray[i].Name, Value, GuidArray[i]);
-									}
-								}
-
-								// Replace Textures
-								TArray<FName> ParameterNames = GetTextureParameterNames(Material);
-								for (const TPair<int, UTexture*>& it : TextureReplacementMaps[m])
-								{
-									if (ParameterNames.IsValidIndex(it.Key))
-									{
-										DupMaterial->SetTextureParameterValueEditorOnly(ParameterNames[it.Key], it.Value);
-									}
-								}
-
-								// Fix potential errors compiling materials due to Sampler Types
-								for (TObjectPtr<UMaterialExpression> Expression : DupMaterial->GetExpressions())
-								{
-									if (UMaterialExpressionTextureBase* MatExpressionTexBase = Cast<UMaterialExpressionTextureBase>(Expression))
-									{
-										MatExpressionTexBase->AutoSetSampleType();
-									}
-								}
-
-								DuplicatedObject->PreEditChange(NULL);
-								DuplicatedObject->PostEditChange();
-							}
-						}
-					}
-				}
-				else
-				{
-					// Duplicate the material instances
-					for (int m = 0; m < Mesh->GetMaterials().Num(); ++m)
-					{
-						UMaterialInterface* Interface = Mesh->GetMaterials()[m].MaterialInterface;
-						UMaterial* ParentMaterial = Interface->GetMaterial();
-						FString MaterialName = ParentMaterial ? ParentMaterial->GetName() : "Material";
-
-						// Material
-						FString MatObjName = ObjectName + "_" + MaterialName;
-
-						if (!GetUniqueResourceName(Interface, MatObjName, ArrayCachedObject, ArrayCachedElement))
-						{
-							continue;
-						}
-
-						if (!ManageBakingAction(AssetPath, MatObjName))
-						{
-							return;
-						}
-
-						FString MatPkgName = FolderDlg->GetAssetPath() + FString("/") + MatObjName;
-						UObject* DupMat = FUnrealBakeHelpers::BakeHelper_DuplicateAsset(Interface, MatObjName, MatPkgName, false, ReplacementMap, BakingOverwritePermission);
-						ArrayCachedObject.Add(DupMat);
-						ArrayCachedElement.Add(MatObjName);
-						PackagesToSave.Add(DupMat->GetPackage());
-
-						UMaterialInstance* Inst = Cast<UMaterialInstance>(Interface);
-
-						// Only need to duplicate the generate textures if the original material is a dynamic instance
-						// If the material has Mutable textures, then it will be a dynamic material instance for sure
-						if (Inst)
-						{
-							// Duplicate generated textures
-							if (UMaterialInstanceDynamic* InstDynamic = Cast<UMaterialInstanceDynamic>(DupMat))
-							{
-								for (int t = 0; t < Inst->TextureParameterValues.Num(); ++t)
-								{
-									if (Inst->TextureParameterValues[t].ParameterValue)
-									{
-										UTexture2D* SrcTex = Cast<UTexture2D>(Inst->TextureParameterValues[t].ParameterValue);
-										FString ParameterSanitized = Inst->TextureParameterValues[t].ParameterInfo.Name.ToString();
-										RemoveRestrictedChars(ParameterSanitized);
-
-										FString TexObjName = ObjectName + "_" + MaterialName + "_" + ParameterSanitized;
-
-										if (!GetUniqueResourceName(SrcTex, TexObjName, ArrayCachedObject, ArrayCachedElement))
-										{
-											UTexture* PrevTexture = Cast<UTexture>(ArrayCachedObject[ArrayCachedElement.Find(TexObjName)]);
-											InstDynamic->SetTextureParameterValue(Inst->TextureParameterValues[t].ParameterInfo.Name, PrevTexture);
-											continue;
-										}
-
-										if (!ManageBakingAction(AssetPath, TexObjName))
-										{
-											return;
-										}
-
-										FString TexPkgName = FolderDlg->GetAssetPath() + FString("/") + TexObjName;
-										TMap<UObject*, UObject*> FakeReplacementMap;
-										UTexture2D* DupTex = FUnrealBakeHelpers::BakeHelper_CreateAssetTexture(SrcTex, TexObjName, TexPkgName, nullptr, false, FakeReplacementMap, BakingOverwritePermission);
-										ArrayCachedObject.Add(DupTex);
-										ArrayCachedElement.Add(TexObjName);
-										PackagesToSave.Add(DupTex->GetPackage());
-
-										InstDynamic->SetTextureParameterValue(Inst->TextureParameterValues[t].ParameterInfo.Name, DupTex);
-									}
-								}
-							}
-						}
-					}
-				}
-				
-				// Skeletal Mesh's Skeleton
-				if (Mesh->GetSkeleton())
-				{
-					const bool bTransient = Mesh->GetSkeleton()->GetPackage() == GetTransientPackage();
-
-					// Don't duplicate if not transient or export all assets.
-					if (bTransient || bExportAllResources)
-					{
-						FString SkeletonName = ObjectName + "_Skeleton";
-						if (!ManageBakingAction(AssetPath, SkeletonName))
-						{
-							return;
-						}
-
-						FString SkeletonPkgName = FolderDlg->GetAssetPath() + FString("/") + SkeletonName;
-						UObject* DuplicatedSkeleton = FUnrealBakeHelpers::BakeHelper_DuplicateAsset(Mesh->GetSkeleton(), SkeletonName, SkeletonPkgName, false, ReplacementMap, BakingOverwritePermission);
-
-						ArrayCachedObject.Add(DuplicatedSkeleton);
-						PackagesToSave.Add(DuplicatedSkeleton->GetPackage());
-						ReplacementMap.Add(Mesh->GetSkeleton(), DuplicatedSkeleton);
-					}
-				}
-
-				// Make sure source data is present in the mesh before we duplicate:
-				FUnrealBakeHelpers::BakeHelper_RegenerateImportedModel(Mesh);
-
-				// Skeletal Mesh
-				if (!ManageBakingAction(AssetPath, ObjectName))
-				{
-					return;
-				}
-
-				FString PkgName = FolderDlg->GetAssetPath() + FString("/") + ObjectName;
-				UObject* DupObject = FUnrealBakeHelpers::BakeHelper_DuplicateAsset(Mesh, ObjectName, PkgName, false, ReplacementMap, BakingOverwritePermission);
-				ArrayCachedObject.Add(DupObject);
-				PackagesToSave.Add(DupObject->GetPackage());
-
-				Mesh->Build();
-
-				USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(DupObject);
-				if (SkeletalMesh)
-				{
-					SkeletalMesh->GetLODInfoArray() = Mesh->GetLODInfoArray();
-
-					SkeletalMesh->GetImportedModel()->SkeletalMeshModelGUID = FGuid::NewGuid();
-
-					// Duplicate AssetUserData
-					{
-						const TArray<UAssetUserData*>* AssetUserDataArray = Mesh->GetAssetUserDataArray();
-						for (const UAssetUserData* AssetUserData : *AssetUserDataArray)
-						{
-							if (AssetUserData)
-							{
-								// Duplicate to change ownership
-								UAssetUserData* NewAssetUserData = Cast<UAssetUserData>(StaticDuplicateObject(AssetUserData, SkeletalMesh));
-								SkeletalMesh->AddAssetUserData(NewAssetUserData);
-							}
-						}
-					}
-
-					// Generate render data
-					SkeletalMesh->Build();
-				}
-
-				// Remove duplicated UObjects from Root (previously added to avoid objects from beeing GC in the middle of the bake process)
-				for (UObject* Obj : ArrayCachedObject)
-				{
-					Obj->RemoveFromRoot();
-				}
-			}
-
-			if (PackagesToSave.Num())
-			{
-				FEditorFileUtils::PromptForCheckoutAndSave(PackagesToSave, false, true);
-			}
-		}
+		BakeCustomizableObjectInstance(
+			*BakeTempInstance,
+			FolderDlg->GetFileName(),
+			FolderDlg->GetAssetPath(),
+			FolderDlg->GetExportAllResources(),
+			FolderDlg->GetGenerateConstantMaterialInstances());
 	}
-
-	if (InInstance)
-	{
-		// Reenable Mutable texture streaming and requested LOD generation as they had been disabled to bake the textures
-		System->SetProgressiveMipStreamingEnabled(true);
-		System->SetOnlyGenerateRequestedLODsEnabled(true);
-		BakeTempInstance = nullptr;
-	}
-}
-
-
-bool FCustomizableObjectEditorViewportClient::GetUniqueResourceName(UObject* Resource, FString& ResourceName, TArray<UObject*>& InCachedResources, TArray<FString>& InCachedResourceNames)
-{
-	int32 FindResult = InCachedResourceNames.Find(ResourceName);
-	if (FindResult != INDEX_NONE)
-	{
-		if (Resource == InCachedResources[FindResult])
-		{
-			return false;
-		}
-
-		uint32 Count = 0;
-		while (FindResult != INDEX_NONE)
-		{
-			FindResult = InCachedResourceNames.Find(ResourceName + "_" + FString::FromInt(Count));
-			Count++;
-		}
-
-		ResourceName += "_" + FString::FromInt(--Count);
-	}
-
-	return true;
-}
-
-
-bool FCustomizableObjectEditorViewportClient::ManageBakingAction(const FString& Path, const FString& ObjName)
-{
-	FString PackagePath = Path + "/" + ObjName;
-	UPackage* ExistingPackage = FindPackage(NULL, *PackagePath);
-
-	if (!ExistingPackage)
-	{
-		FString PackageFilePath = PackagePath + "." + ObjName;
-
-		FString PackageFileName;
-		if (FPackageName::DoesPackageExist(PackageFilePath, &PackageFileName))
-		{
-			ExistingPackage = LoadPackage(nullptr, *PackageFileName, LOAD_EditorOnly);
-		}
-		else
-		{
-			// if package does not exists
-			BakingOverwritePermission = false;
-			return true;
-		}
-	}
-
-	if (ExistingPackage)
-	{
-		// Checking if the asset is open in an editor
-		TArray<IAssetEditorInstance*> ObjectEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorsForAssetAndSubObjects(ExistingPackage);
-		if (ObjectEditors.Num())
-		{
-			for (IAssetEditorInstance* ObjectEditorInstance : ObjectEditors)
-			{
-				// Close the editors that contains this asset
-				if (!ObjectEditorInstance->CloseWindow(EAssetEditorCloseReason::AssetEditorHostClosed))
-				{
-					FText Caption = LOCTEXT("OpenExisitngFile", "Open File");
-					FText Message = FText::Format(LOCTEXT("CantCloseAsset", "This Obejct \"{0}\" is open in an editor and can't be closed automatically. Please close the editor and try to bake it again"), FText::FromString(ObjName));
-
-					FMessageDialog::Open(EAppMsgType::Ok, Message, Caption);
-
-					return false;
-				}
-			}
-		}
-
-		if (!BakingOverwritePermission)
-		{
-			FText Caption = LOCTEXT("Already existing baked files", "Already existing baked files");
-			FText Message = FText::Format(LOCTEXT("OverwriteBakedInstance", "Instance baked files already exist in selected destination \"{0}\", this action will overwrite them."), FText::AsCultureInvariant(Path));
-			
-			if (FMessageDialog::Open(EAppMsgType::OkCancel, Message, Caption) == EAppReturnType::Cancel)
-			{
-				return false;
-			}
-
-			BakingOverwritePermission = true;
-		}
-
-		UObject* ExistingObject = StaticFindObject(UObject::StaticClass(), ExistingPackage, *ObjName);
-		if (ExistingObject)
-		{
-			ExistingPackage->FullyLoad();
-
-			TArray<UObject*> ObjectsToDelete;
-			ObjectsToDelete.Add(ExistingObject);
-
-			// Delete objects in the package with the same name as the one we want to create
-			const uint32 NumObjectsDeleted = ObjectTools::ForceDeleteObjects(ObjectsToDelete, false);
-
-			return NumObjectsDeleted == ObjectsToDelete.Num();
-		}
-	}
-
-	return true;
+	
+	BakeTempInstance = nullptr;
 }
 
 
@@ -2855,57 +1668,8 @@ void FCustomizableObjectEditorViewportClient::StateChangeShowGeometryData()
 }
 
 
-void FCustomizableObjectEditorViewportClient::SetProjectorWidgetMode(UE::Widget::EWidgetMode InMode)
-{
-	WidgetMode = InMode;
-}
-
-
-const GizmoRTSProxy& FCustomizableObjectEditorViewportClient::GetGizmoProxy()
-{
-	return GizmoProxy;
-}
-
-
-bool FCustomizableObjectEditorViewportClient::GetGizmoIsProjectorParameterSelected()
-{
-	return GizmoProxy.IsProjectorParameterSelected();
-}
-
-
-bool FCustomizableObjectEditorViewportClient::GetIsManipulating()
-{
-	return bManipulating;
-}
-
-
-bool FCustomizableObjectEditorViewportClient::GetWidgetVisibility()
-{
-	return WidgetVisibility;
-}
-
-
-void FCustomizableObjectEditorViewportClient::UpdateGizmoDataToOrigin()
-{
-	GizmoProxy.UpdateOriginData();
-}
-
-
-void FCustomizableObjectEditorViewportClient::CopyTransformFromOriginData()
-{
-    GizmoProxy.CopyTransformFromOriginData();
-}
-
-
-bool FCustomizableObjectEditorViewportClient::AnyProjectorNodeSelected()
-{
-	return (GizmoProxy.HasAssignedData && GizmoProxy.AssignedDataIsFromNode);
-}
-
-
 void FCustomizableObjectEditorViewportClient::ShowInstanceGeometryInformation(FCanvas* InCanvas)
 {
-	UCustomizableObjectInstance* Instance = CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
 	float YOffset = 50.0f;
 	int32 ComponentIndex = 0;
 
@@ -2950,74 +1714,6 @@ void FCustomizableObjectEditorViewportClient::ShowInstanceGeometryInformation(FC
 }
 
 
-void FCustomizableObjectEditorViewportClient::BuildMeanTimesBoxSize(const float MinValue, const float MaxValue, const float MeanValue, const float MaxWidth, const float Data, float& BoxSize, FLinearColor& BoxColor) const
-{
-	const float GreenLimit = MeanValue * 0.75f;
-	const float YellowLimit = MeanValue * 0.99;
-
-	if (Data < GreenLimit)
-	{
-		BoxColor = FLinearColor::Green;
-	}
-	else if (Data < YellowLimit)
-	{
-		BoxColor = FLinearColor::Yellow;
-	}
-	else
-	{
-		BoxColor = FLinearColor::Red;
-	}
-
-	BoxSize = (Data / MaxValue) * MaxWidth;
-}
-
-
-void FCustomizableObjectEditorViewportClient::BuildMeanTimesBoxSizes(float MaxWidth, TArray<float>& ArrayData, TArray<float>& ArrayBoxSize, TArray<FLinearColor>& ArrayBoxColor)
-{
-	const int32 NumElement = ArrayData.Num();
-	ArrayBoxSize.AddUninitialized(NumElement);
-	ArrayBoxColor.AddUninitialized(NumElement);
-
-	float MinValue = FLT_MAX;
-	float MaxValue = -1.0f * FLT_MAX;
-	float MeanValue = 0.0f;
-	for (int32 i = 0; i < ArrayData.Num(); ++i)
-	{
-		MeanValue += ArrayData[i];
-		MinValue = FMath::Min(MinValue, ArrayData[i]);
-		MaxValue = FMath::Max(MaxValue, ArrayData[i]);
-	}
-
-	float MaxMinRatio = 1.0f;
-	if (MinValue > 0.0f)
-	{
-		MaxMinRatio = MaxValue / MinValue;
-	}
-
-	MeanValue /= float(ArrayData.Num());
-	float GreenLimit = MeanValue + (MaxValue - MeanValue) * 0.1f;
-	float YellowLimit = MeanValue + (MaxValue - MeanValue) * 0.5f;
-
-	for (int32 i = 0; i < ArrayData.Num(); ++i)
-	{
-		if (ArrayData[i] < GreenLimit)
-		{
-			ArrayBoxColor[i] = FLinearColor::Green;
-		}
-		else if (ArrayData[i] < YellowLimit)
-		{
-			ArrayBoxColor[i] = FLinearColor::Yellow;
-		}
-		else
-		{
-			ArrayBoxColor[i] = FLinearColor::Red;
-		}
-
-		ArrayBoxSize[i] = (ArrayData[i] / MaxValue) * MaxWidth;
-	}
-}
-
-
 void FCustomizableObjectEditorViewportClient::SetCustomizableObject(UCustomizableObject* CustomizableObjectParameter)
 {
 	CustomizableObject = CustomizableObjectParameter;
@@ -3058,12 +1754,6 @@ void FCustomizableObjectEditorViewportClient::AddReferencedObjects(FReferenceCol
 }
 
 
-void FCustomizableObjectEditorViewportClient::SetAssetRegistryLoaded(bool Value)
-{
-	AssetRegistryLoaded = Value;
-}
-
-
 void FCustomizableObjectEditorViewportClient::SetAdvancedShowFlagsForScene(const bool bAdvancedShowFlags)
 {
 	if (bAdvancedShowFlags)
@@ -3079,64 +1769,46 @@ void FCustomizableObjectEditorViewportClient::SetAdvancedShowFlagsForScene(const
 
 void FCustomizableObjectEditorViewportClient::OnAssetViewerSettingsChanged(const FName& InPropertyName)
 {
+	UAssetViewerSettings* Settings = UAssetViewerSettings::Get();
+	int32 ProfileIndex = GetMutableDefault<UEditorPerProjectUserSettings>()->AssetViewerProfileIndex;
+
 	if (InPropertyName == GET_MEMBER_NAME_CHECKED(FPreviewSceneProfile, bPostProcessingEnabled) || InPropertyName == NAME_None)
 	{
-		UAssetViewerSettings* Settings = UAssetViewerSettings::Get();
-		int32 ProfileIndex = GetMutableDefault<UEditorPerProjectUserSettings>()->AssetViewerProfileIndex;
 		if (Settings->Profiles.IsValidIndex(ProfileIndex))
 		{
 			SetAdvancedShowFlagsForScene(Settings->Profiles[ProfileIndex].bPostProcessingEnabled);
 		}
 	}
+
+	else if (InPropertyName == GET_MEMBER_NAME_CHECKED(FPreviewSceneProfile, bShowEnvironment))
+	{
+		if (Settings->Profiles.IsValidIndex(ProfileIndex))
+		{
+			bDrawSky = Settings->Profiles[ProfileIndex].bShowEnvironment;
+		}
+		else
+		{
+			bDrawSky = !bDrawSky;
+		}
+	}
+
+	else if (InPropertyName == GET_MEMBER_NAME_CHECKED(FPreviewSceneProfile, bShowFloor))
+	{
+		if (Settings->Profiles.IsValidIndex(ProfileIndex))
+		{
+			DrawHelper.bDrawGrid = Settings->Profiles[ProfileIndex].bShowFloor;
+		}
+		else
+		{
+			DrawHelper.bDrawGrid = !DrawHelper.bDrawGrid;
+		}
+
+		EngineShowFlags.Grid = DrawHelper.bDrawGrid;
+
+		Invalidate();
+	}
 }
 
-
-void FCustomizableObjectEditorViewportClient::ProjectorParameterChanged(UCustomizableObjectNodeProjectorParameter* Node)
-{
-	GizmoProxy.ProjectorParameterChanged(Node);
-}
-
-
-void FCustomizableObjectEditorViewportClient::ProjectorParameterChanged(UCustomizableObjectNodeProjectorConstant* Node)
-{
-	GizmoProxy.ProjectorParameterChanged(Node);
-}
-
-
-void FCustomizableObjectEditorViewportClient::SetGizmoCallUpdateSkeletalMesh(bool Value)
-{
-	GizmoProxy.SetCallUpdateSkeletalMesh(Value);
-}
-
-
-FString FCustomizableObjectEditorViewportClient::GetGizmoProjectorParameterName()
-{
-	return GizmoProxy.ProjectorParameterName;
-}
-
-
-FString FCustomizableObjectEditorViewportClient::GetGizmoProjectorParameterNameWithIndex()
-{
-	return GizmoProxy.ProjectorParameterNameWithIndex;
-}
-
-
-bool FCustomizableObjectEditorViewportClient::GetGizmoHasAssignedData()
-{
-	return GizmoProxy.HasAssignedData;
-}
-
-
-bool FCustomizableObjectEditorViewportClient::GetGizmoAssignedDataIsFromNode()
-{
-	return GizmoProxy.AssignedDataIsFromNode;
-}
-
-
-bool FCustomizableObjectEditorViewportClient::IsNodeMeshClipMorphSelected()
-{
-	return bClipMorphVisible;
-}
 
 void FCustomizableObjectEditorViewportClient::DrawCylinderArc(FPrimitiveDrawInterface* PDI, const FMatrix& CylToWorld, const FVector& Base, const FVector& XAxis, const FVector& YAxis, const FVector& ZAxis, float Radius, float HalfHeight, uint32 Sides, const FMaterialRenderProxy* MaterialRenderProxy, uint8 DepthPriority, FColor Color, float MaxAngle)
 {
@@ -3268,26 +1940,6 @@ void FCustomizableObjectEditorViewportClient::SetEnvironmentMeshVisibility(uint3
 	Invalidate();
 }
 
-
-TArray<FName> FCustomizableObjectEditorViewportClient::GetTextureParameterNames(UMaterial* Material)
-{
-	TArray<FGuid> Guids;
-	TArray<FName> ParameterNames;
-
-	TArray<FMaterialParameterInfo> OutParameterInfo;
-	Material->GetAllTextureParameterInfo(OutParameterInfo, Guids);
-
-	const int32 MaxIndex = OutParameterInfo.Num();
-	ParameterNames.SetNum(MaxIndex);
-
-	for (int32 i = 0; i < MaxIndex; i++)
-	{
-		ParameterNames[i] = OutParameterInfo[i].Name;
-	}
-
-	return ParameterNames;
-}
-
 bool FCustomizableObjectEditorViewportClient::IsOrbitalCameraActive() const
 {
 	return bActivateOrbitalCamera;
@@ -3309,6 +1961,12 @@ void FCustomizableObjectEditorViewportClient::SetShowBones()
 bool FCustomizableObjectEditorViewportClient::IsShowingBones() const
 {
 	return bShowBones;
+}
+
+
+const TArray<ULightComponent*>& FCustomizableObjectEditorViewportClient::GetLightComponents() const
+{
+	return LightComponents;
 }
 
 
@@ -3375,6 +2033,15 @@ void FCustomizableObjectEditorViewportClient::DrawMeshBones(UDebugSkelMeshCompon
 		DrawConfig
 	);
 }
+
+
+void FCustomizableObjectEditorViewportClient::SetWidgetType(EWidgetType Type)
+{
+	WidgetType = Type;
+	
+	SetWidgetMode(UE::Widget::WM_Translate);
+	Widget->SetDefaultVisibility(Type != EWidgetType::Hidden);
+}	
 
 
 /////////////////////////////////////////////////
@@ -3461,7 +2128,7 @@ void SMutableSelectFolderDlg::Construct(const FArguments& InArgs)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("ExportAllUsedResources", "Export all used resources  "))
-				.Font(FSlateFontInfo(FPaths::EngineContentDir() / TEXT("Slate/Fonts/Roboto-Regular.ttf"), 14))
+				.Font(FSlateFontInfo(FPaths::EngineContentDir() / TEXT("Slate/Fonts/Roboto-Regular.ttf"), 12))
 				.ToolTipText(LOCTEXT("Export all used Resources", "All the resources used by the object will be baked/stored in the target folder. Otherwise, only the assets that Mutable modifies will be baked/stored."))
 			]
 			+ SHorizontalBox::Slot()
@@ -3473,6 +2140,31 @@ void SMutableSelectFolderDlg::Construct(const FArguments& InArgs)
 				.HAlign(HAlign_Right)
 				.IsChecked(bExportAllResources ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
 				.OnCheckStateChanged(this, &SMutableSelectFolderDlg::OnBoolParameterChanged)
+			]
+		]
+
+	+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.HAlign(HAlign_Left)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("GenerateConstantMaterialInstances", "Generate Constant Material Instances  "))
+				.Font(FSlateFontInfo(FPaths::EngineContentDir() / TEXT("Slate/Fonts/Roboto-Regular.ttf"), 12))
+				.ToolTipText(LOCTEXT("Generate Constant Material Instances", "All the material instances in the baked skeletal meshes will be constant instead of dynamic. They cannot be changed at runtime but they are lighter and required for UEFN."))
+			]
+			+ SHorizontalBox::Slot()
+			.HAlign(HAlign_Left)
+			.AutoWidth()
+			[
+				SNew(SCheckBox)
+				.ToolTipText(LOCTEXT("GenerateConstantMaterialInstances_Checkbox", "Generate Constant Material Instances"))
+				.HAlign(HAlign_Right)
+				.IsChecked(bGenerateConstantMaterialInstances ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+				.OnCheckStateChanged(this, &SMutableSelectFolderDlg::OnConstantMaterialInstancesBoolParameterChanged)
 			]
 		]
 
@@ -3532,6 +2224,12 @@ void SMutableSelectFolderDlg::OnBoolParameterChanged(ECheckBoxState InCheckboxSt
 }
 
 
+void SMutableSelectFolderDlg::OnConstantMaterialInstancesBoolParameterChanged(ECheckBoxState InCheckboxState)
+{
+	bGenerateConstantMaterialInstances = InCheckboxState == ECheckBoxState::Checked;
+}
+
+
 EAppReturnType::Type SMutableSelectFolderDlg::ShowModal()
 {
 	GEditor->EditorAddModalWindow(SharedThis(this));
@@ -3550,9 +2248,16 @@ FString SMutableSelectFolderDlg::GetFileName()
 }
 
 
-bool SMutableSelectFolderDlg::GetExportAllResources()
+bool SMutableSelectFolderDlg::GetExportAllResources() const
 {
 	return bExportAllResources;
 }
 
+
+bool SMutableSelectFolderDlg::GetGenerateConstantMaterialInstances() const
+{
+	return bGenerateConstantMaterialInstances;
+}
+
 #undef LOCTEXT_NAMESPACE 
+

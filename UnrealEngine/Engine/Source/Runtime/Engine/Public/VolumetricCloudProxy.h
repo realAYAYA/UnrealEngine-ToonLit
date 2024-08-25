@@ -33,12 +33,15 @@ public:
 	float LayerHeightKm;
 
 	float TracingStartMaxDistance;
+	float TracingStartDistanceFromCamera;
 	uint8 TracingMaxDistanceMode;
 	float TracingMaxDistance;
 
 	float PlanetRadiusKm;
 	FColor GroundAlbedo;
 	bool bUsePerSampleAtmosphericLightTransmittance;
+	bool bHoldout;
+	bool bRenderInMainPass;
 	float SkyLightCloudBottomOcclusion;
 	
 	float ViewSampleCountScale;

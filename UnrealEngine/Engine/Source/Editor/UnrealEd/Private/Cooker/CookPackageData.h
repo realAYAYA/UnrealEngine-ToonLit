@@ -13,6 +13,7 @@
 #include "Containers/UnrealString.h"
 #include "HAL/CriticalSection.h"
 #include "HAL/Platform.h"
+#include "IO/IoHash.h"
 #include "Misc/EnumClassFlags.h"
 #include "Misc/Optional.h"
 #include "Misc/ScopeRWLock.h"
@@ -228,8 +229,8 @@ struct FPackagePlatformData
 	void MarkCookableForWorker(FCookWorkerClient& CookWorkerClient);
 
 	/** The package was found to be unmodified in the current iterative cook. */
-	bool IsIterativelySkipped() const { return bIterativelySkipped != 0; }
-	void SetIterativelySkipped(bool bValue) { bIterativelySkipped = (uint32)bValue; }
+	bool IsIterativelyUnmodified() const { return bIterativelyUnmodified != 0; }
+	void SetIterativelyUnmodified(bool bValue) { bIterativelyUnmodified = (uint32)bValue; }
 
 	ECookResult GetCookResults() const { return (ECookResult)CookResults; }
 	bool IsCookAttempted() const { return CookResults != (uint32)ECookResult::NotAttempted; }
@@ -259,7 +260,7 @@ private:
 	uint32 bCookable : 1;
 	uint32 bExplorable : 1;
 	uint32 bExplorableOverride : 1;
-	uint32 bIterativelySkipped : 1;
+	uint32 bIterativelyUnmodified : 1;
 	uint32 bRegisteredForCachedObjectsInOuter : 1;
 	uint32 bReportedToDirector : 1;
 	uint32 CookResults : (int)ECookResult::NumBits;
@@ -382,6 +383,7 @@ public:
 	 * Move it to front of its current container if bAllowUpdateState.
 	 */
 	void AddUrgency(bool bUrgent, bool bAllowUpdateState);
+	void ClearCookLastUrgency();
 
 	/** Accessor for RequestClusters to add reachable platforms directly without modifying dependent data. */
 	void AddReachablePlatforms(FRequestCluster& RequestCluster, TConstArrayView<const ITargetPlatform*> Platforms,
@@ -468,8 +470,9 @@ public:
 	 *                  the new and old states. Callers may want to manage queue membership directly for better
 	 *                  performance; removing from the middle is more expensive than popping from the front.
 	 *                  See definition of ESendFlags for a description of the behavior controlled by SendFlags.
+	 * @param ReleaseSaveReason Explanation for why the state is changing, used for debugging.
 	 */
-	void SendToState(EPackageState NextState, ESendFlags SendFlags);
+	void SendToState(EPackageState NextState, ESendFlags SendFlags, EStateChangeReason ReleaseSaveReason);
 	/* Debug-only code to assert that this PackageData is contained by the container matching its current state. */
 	void CheckInContainer() const;
 	/**
@@ -494,6 +497,10 @@ public:
 	 */
 	void AddCompletionCallback(TConstArrayView<const ITargetPlatform*> TargetPlatforms,
 		FCompletionCallback&& InCompletionCallback);
+
+	/** Get/Set whether the package has been marked for cooking after all other packages, via -cooklast */
+	void SetIsCookLast(bool bValue);
+	bool GetIsCookLast() const { return bIsCookLast != 0;}
 
 	/**
 	 * Get/Set a visited flag used when searching graphs of PackageData. User of the graph is responsible for 
@@ -730,7 +737,7 @@ private:
 	void OnEnterLoadReady();
 	void OnExitLoadReady();
 	void OnEnterSave();
-	void OnExitSave();
+	void OnExitSave(EStateChangeReason ReleaseSaveReason);
 	/* Entry/Exit gates for Properties shared between multiple states */
 	void OnExitInProgress();
 	void OnEnterInProgress();
@@ -785,6 +792,7 @@ private:
 	FWorkerId WorkerAssignmentConstraint = FWorkerId::Invalid();
 	uint32 State : int32(EPackageState::BitCount);
 	uint32 bIsUrgent : 1;
+	uint32 bIsCookLast : 1;
 	uint32 bIsVisited : 1;
 	uint32 bIsPreloadAttempted : 1;
 	uint32 bIsPreloaded : 1;
@@ -871,8 +879,8 @@ public:
 		KeepReferencedPackages.Append(InKeepReferencedPackages);
 	}
 
-	/** Create the Guid for this generated package, based on dependencies and GenerationHash. */
-	void CreateGuid();
+	/** Create the hash for this generated package, based on dependencies and GenerationHash. */
+	void CreatePackageHash();
 
 	/**
 	 * If the package has iterative results from a previous cook that were not invalidated by dependency changes,
@@ -880,12 +888,13 @@ public:
 	 * incremental cooks handle invalidation by querying the TargetDomainDigest during the RequestCluster.
 	 */
 	void IterativeCookValidateOrClear(FGeneratorPackage& Generator,
-		TConstArrayView<const ITargetPlatform*> RequestedPlatforms, const FGuid& PreviousGuid, bool& bOutIdentical);
+		TConstArrayView<const ITargetPlatform*> RequestedPlatforms, const FIoHash& PreviousHash,
+		bool& bOutIterativelyUnmodified);
 
 	TConstArrayView<FAssetDependency> GetDependencies() const { return PackageDependencies; }
 
 public:
-	FGuid Guid;
+	FIoHash PackageHash;
 	FString RelativePath;
 	FString GeneratedRootPath;
 	FBlake3Hash GenerationHash;
@@ -915,7 +924,7 @@ public:
 		ICookPackageSplitter* InCookPackageSplitterInstance);
 	~FGeneratorPackage();
 	void InitializeSave(const UObject* InSplitDataObject, ICookPackageSplitter* InCookPackageSplitterInstance);
-	bool IsInitialized() const { return CookPackageSplitterInstance.IsValid(); }
+	bool IsInitialized() const { return bInitialized; }
 	/** Clear references to owned generated packages, and mark those packages as orphaned */
 	void ClearGeneratedPackages();
 
@@ -935,16 +944,19 @@ public:
 	const UE::Cook::FCookGenerationInfo* FindInfo(const FPackageData& PackageData) const;
 
 	/** Return CookPackageSplitter. */
-	ICookPackageSplitter* GetCookPackageSplitterInstance() const { return CookPackageSplitterInstance.Get(); }
+	ICookPackageSplitter* GetCookPackageSplitterInstance() const;
 	/** Return the SplitDataObject's FullObjectPath. */
 	const FName GetSplitDataObjectName() const { check(IsInitialized()); return SplitDataObjectName; }
+	/** Return the Splitter's value for virtual bool UseInternalReferenceToAvoidGarbageCollect() */
+	bool IsUseInternalReferenceToAvoidGarbageCollect() const { return bUseInternalReferenceToAvoidGarbageCollect; }
+
 	/**
 	 * Find again the split object from its name, or return null if no longer in memory.
 	 * It may have been GC'd and reloaded since the last time we used it.
 	 */
 	UObject* FindSplitDataObject() const;
 
-	void ResetSaveState(FCookGenerationInfo& Info, UPackage* Package, UE::Cook::EReleaseSaveReason ReleaseSaveReason);
+	void ResetSaveState(FCookGenerationInfo& Info, UPackage* Package, UE::Cook::EStateChangeReason ReleaseSaveReason);
 
 	int32& GetNextPopulateIndex() { check(IsInitialized()); return NextPopulateIndex; }
 
@@ -965,7 +977,7 @@ public:
 
 	UPackage* GetOwnerPackage() const { return OwnerPackage.Get(); };
 	void SetOwnerPackage(UPackage* InPackage) { OwnerPackage = InPackage; }
-	void SetPreviousGeneratedPackages(TMap<FName, FGuid>&& Packages) { PreviousGeneratedPackages = MoveTemp(Packages); }
+	void SetPreviousGeneratedPackages(TMap<FName, FIoHash>&& Packages) { PreviousGeneratedPackages = MoveTemp(Packages); }
 
 	TConstArrayView<FName> GetExternalActorDependencies() { check(IsInitialized()); return ExternalActorDependencies; }
 	TArray<FName> ReleaseExternalActorDependencies() { TArray<FName> Result = MoveTemp(ExternalActorDependencies); return Result; }
@@ -982,13 +994,15 @@ private:
 	/** Recorded list of packages to generate from the splitter, and data we need about them */
 	TArray<FCookGenerationInfo> PackagesToGenerate;
 	TWeakObjectPtr<UPackage> OwnerPackage;
-	TMap<FName, FGuid> PreviousGeneratedPackages;
+	TMap<FName, FIoHash> PreviousGeneratedPackages;
 	TArray<FName> ExternalActorDependencies;
 
 	int32 NextPopulateIndex = 0;
 	int32 RemainingToPopulate = 0;
 
+	bool bInitialized = false;
 	bool bNotifiedCompletion = false;
+	bool bUseInternalReferenceToAvoidGarbageCollect = false;
 };
 
 
@@ -1097,6 +1111,10 @@ public:
 	 * Used to prioritize scheduler actions.
 	 */
 	int32 GetNumUrgent(EPackageState InState) const;
+	/** Report the number of CookLast packages. */
+	int32 GetNumCookLast() const;
+	/** Report the number of CookLast packages in the given state. */
+	int32 GetNumCookLast(EPackageState InState) const;
 
 	/** Callback called from FPackageData when it transitions to or from inprogress. */
 	void OnInProgressChanged(FPackageData& PackageData, bool bInProgress);
@@ -1107,17 +1125,27 @@ public:
 	void OnLastCookedPlatformRemoved(FPackageData& PackageData);
 	/** Callback called from FPackageData when it has changed its urgency. */
 	void OnUrgencyChanged(FPackageData& PackageData);
+	/** Callback called from FPackageData when it has changed its value of IsCookLast. */
+	void OnCookLastChanged(FPackageData& PackageData);
 	/** Callback called from FPackageData when it has changed its state. */
 	void OnStateChanged(FPackageData& PackageData, EPackageState OldState);
+
+	int32 GetMPCookAssignedFenceMarker() const;
+	int32 GetMPCookRetiredFenceMarker() const;
 
 private:
 	/** Increment or decrement the NumUrgent counter for the given state. */
 	void TrackUrgentRequests(EPackageState State, int32 Delta);
+	/** Increment or decrement the NumCookLast counter for the given state. */
+	void TrackCookLastRequests(EPackageState State, int32 Delta);
 
 	int32 NumInProgress = 0;
 	int32 NumCooked[(uint8)ECookResult::Count]{};
 	int32 NumPreloadAllocated = 0;
 	int32 NumUrgentInState[static_cast<uint32>(EPackageState::Count)];
+	int32 NumCookLastInState[static_cast<uint32>(EPackageState::Count)];
+	int32 MPCookAssignedFenceMarker = 0;
+	int32 MPCookRetiredFenceMarker = 0;
 };
 
 struct FDiscoveryQueueElement
@@ -1404,6 +1432,8 @@ public:
 	void Clear();
 	/** Set all platforms to not cooked in all PackageDatas. Used to e.g. invalidate previous cooks. */
 	void ClearCookedPlatforms();
+	/** Set all platforms to not cooked in all PackageDatas that are in the given set */
+	void ClearCookResultsForPackages(const TSet<FName>& InPackages);
 	/** Remove all data about the given platform from all PackageDatas and other memory used by *this. */
 	void OnRemoveSessionPlatform(const ITargetPlatform* TargetPlatform);
 

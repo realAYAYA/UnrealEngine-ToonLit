@@ -31,7 +31,7 @@ float UTileView::GetTotalEntryHeight() const
 	}
 	else
 	{
-		return EntryHeight + GetVerticalEntrySpacing() * 0.5;
+		return EntryHeight + GetVerticalEntrySpacing() * 0.5f;
 	}
 }
 
@@ -43,7 +43,7 @@ float UTileView::GetTotalEntryWidth() const
 	}
 	else
 	{
-		return EntryWidth + GetHorizontalEntrySpacing() * 0.5;
+		return EntryWidth + GetHorizontalEntrySpacing() * 0.5f;
 	}
 }
 

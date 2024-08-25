@@ -13,10 +13,10 @@
 
 #define LOCTEXT_NAMESPACE "SmartObjects"
 
-namespace UE::SmartObjects
+namespace UE::SmartObject
 {
 	TCustomShowFlag<> ShowSmartObjects(TEXT("SmartObjects"), false /*DefaultEnabled*/, SFG_Developer, LOCTEXT("ShowSmartObjects", "Smart Objects"));
-} // UE::SmartObjects
+} // UE::SmartObject
 
 class FSmartObjectsModule : public ISmartObjectsModule
 {

@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /**
 Flakes texture access based on light angular direction, uses a pseduo(i.e. in atlas format) 2D texture array
 to access flakes slices and finally applies bilinear interpolation.

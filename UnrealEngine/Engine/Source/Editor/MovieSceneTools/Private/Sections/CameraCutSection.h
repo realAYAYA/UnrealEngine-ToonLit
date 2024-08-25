@@ -31,7 +31,7 @@ public:
 	virtual void Tick(const FGeometry& AllottedGeometry, const FGeometry& ClippedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 	virtual void BuildSectionContextMenu(FMenuBuilder& MenuBuilder, const FGuid& ObjectBinding) override;
 	virtual FText GetSectionTitle() const override;
-	virtual float GetSectionHeight() const override;
+	virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const override;
 	virtual int32 OnPaintSection(FSequencerSectionPainter& InPainter) const override;
 	virtual FMargin GetContentPadding() const override;
 	// FThumbnail interface

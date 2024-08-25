@@ -25,6 +25,7 @@ namespace Metasound
 		class IDynamicOperatorTransform;
 		class FDynamicOperator;
 		enum class EAudioFadeType : uint8;
+		enum class EExecutionOrderInsertLocation : uint8;
 
 		using FLiteralAssignmentFunction = void(*)(const FOperatorSettings& InOperatorSettings, const FLiteral& InLiteral, const FAnyDataReference& OutDataRef);
 		using FReferenceCreationFunction = TOptional<FAnyDataReference>(*)(const FOperatorSettings& InSettings, FName DataType, const FLiteral& InLiteral, EDataReferenceAccessType InAccessType);
@@ -114,22 +115,22 @@ namespace Metasound
 		private:
 			using FOperatorID = uintptr_t;
 
-			void EnqueueAddOperatorTransform(const INode& InNode);
+			void EnqueueAddOperatorTransform(const INode& InNode, EExecutionOrderInsertLocation InLocation);
 			void EnqueueFadeAndRemoveOperatorTransform(const INode& InNode, TArrayView<const FVertexName> InOutputsToFade);
 			void EnqueueRemoveOperatorTransform(const INode& InNode);
 			void EnqueueBeginFadeOperatorTransform(const INode& InNode, EAudioFadeType InFadeType, TArrayView<const FVertexName> InInputsToFade, TArrayView<const FVertexName> InOutputsToFade);
 			void EnqueueEndFadeOperatorTransform(const INode& InNode);
 
-			void EnqueueRemoveEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode& InReplacementLiteralNode, const TArray<FOperatorID>& InNewOperatorOrder);
-			void EnqueueFadeAndRemoveEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode& InReplacementLiteralNode, const TArray<FOperatorID>& InNewOperatorOrder);
-			void EnqueueAddEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode* InPriorLiteralNode, const TArray<FOperatorID>& InNewOperatorOrder);
-			void EnqueueFadeAndAddEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode* InPriorLiteralNode, const TArray<FOperatorID>& InNewOperatorOrder);
+			void EnqueueRemoveEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode& InReplacementLiteralNode);
+			void EnqueueFadeAndRemoveEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode& InReplacementLiteralNode);
+			void EnqueueAddEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode* InPriorLiteralNode);
+			void EnqueueFadeAndAddEdgeOperatorTransform(const INode& InFromNode, const FVertexName& InFromVertex, const INode& InToNode, const FVertexName& InToVertex, const INode* InPriorLiteralNode);
 
 			void AddDataEdgeInternal(const INode& InFromNode, const FVertexName& InFromVertex, const FGuid& InToNodeID, const INode& InToNode, const FVertexName& InToVertex);
 
 			using FCreateTransformFunctionRef = TFunctionRef<TUniquePtr<IDynamicOperatorTransform>(const FOperatorSettings& InOperatorSettings, const FMetasoundEnvironment& InEnvironment)>;
 
-			TUniquePtr<IDynamicOperatorTransform> CreateAddOperatorTransform(const INode& InNode, const FOperatorSettings& InOperatorSettings, const FMetasoundEnvironment& InEnvironment) const;
+			TUniquePtr<IDynamicOperatorTransform> CreateAddOperatorTransform(const INode& InNode, EExecutionOrderInsertLocation InLocation, const FOperatorSettings& InOperatorSettings, const FMetasoundEnvironment& InEnvironment) const;
 
 			void EnqueueTransformOnOperatorQueues(FCreateTransformFunctionRef InFunc);
 
@@ -144,6 +145,7 @@ namespace Metasound
 			};
 
 			TArray<FDynamicOperatorInfo> OperatorInfos;
+			TArray<FOperatorID> CurrentOperatorOrder;
 
 			struct FLiteralNodeID
 			{

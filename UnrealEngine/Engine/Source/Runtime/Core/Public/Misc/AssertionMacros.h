@@ -6,13 +6,16 @@
 #include "HAL/Platform.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PreprocessorHelpers.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsArrayOrRefOfTypeByPredicate.h"
 #include "Templates/IsValidVariadicFunctionArg.h"
 #include "Traits/IsCharEncodingCompatibleWith.h"
 #include "Misc/VarArgs.h"
+#include "String/FormatStringSan.h"
 
+#include <atomic>
+
+#ifndef UE_DEBUG_SECTION
 #if (DO_CHECK || DO_GUARD_SLOW || DO_ENSURE) && !PLATFORM_CPU_ARM_FAMILY
 	// We'll put all assert implementation code into a separate section in the linked
 	// executable. This code should never execute so using a separate section keeps
@@ -26,6 +29,7 @@
 	// is present it will generate code that it cannot link.
 	#define UE_DEBUG_SECTION
 #endif // DO_CHECK || DO_GUARD_SLOW
+#endif
 
 namespace ELogVerbosity
 {
@@ -86,6 +90,7 @@ struct FDebug
 #if DO_CHECK || DO_GUARD_SLOW || DO_ENSURE
 public:
 	static CORE_API bool VARARGS CheckVerifyFailedImpl(const ANSICHAR* Expr, const ANSICHAR* File, int32 Line, void* ProgramCounter, const TCHAR* Format, ...);
+	static CORE_API bool VARARGS CheckVerifyFailedImpl2(const ANSICHAR* Expr, const ANSICHAR* File, int32 Line, const TCHAR* Format, ...);
 private:
 	static CORE_API void VARARGS LogAssertFailedMessageImpl(const ANSICHAR* Expr, const ANSICHAR* File, int32 Line, void* ProgramCounter, const TCHAR* Fmt, ...);
 	static CORE_API void LogAssertFailedMessageImplV(const ANSICHAR* Expr, const ANSICHAR* File, int32 Line, void* ProgramCounter, const TCHAR* Fmt, va_list Args);
@@ -134,7 +139,7 @@ public:
 	static FORCEINLINE bool OptionallyLogFormattedEnsureMessageReturningFalse(bool bLog, const ANSICHAR* Expr, const ANSICHAR* File, int32 Line, void* ProgramCounter, const FmtType& FormattedMsg, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to ensureMsgf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to ensureMsgf");
 
 		return OptionallyLogFormattedEnsureMessageReturningFalseImpl(bLog, Expr, File, Line, ProgramCounter, (const TCHAR*)FormattedMsg, Args...);
 	}
@@ -180,7 +185,7 @@ public:
 //		Types... Args)
 //	{
 //		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-//		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to CheckVerifyFailed()");
+//		static_assert(TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to CheckVerifyFailed()");
 //		return CheckVerifyFailedImpl(Expr, File, Line, ProgramCounter, (const TCHAR*)Format, Args...);
 //	}
 //#endif
@@ -231,7 +236,7 @@ RetType FORCENOINLINE UE_DEBUG_SECTION DispatchCheckVerify(InnerType&& Inner, Ar
 		{ \
 			if(UNLIKELY(!(expr))) \
 			{ \
-				if (FDebug::CheckVerifyFailedImpl(#expr, __FILE__, __LINE__, PLATFORM_RETURN_ADDRESS(), TEXT(""))) \
+				if (FDebug::CheckVerifyFailedImpl2(#expr, __FILE__, __LINE__, TEXT(""))) \
 				{ \
 					PLATFORM_BREAK(); \
 				} \
@@ -254,7 +259,8 @@ RetType FORCENOINLINE UE_DEBUG_SECTION DispatchCheckVerify(InnerType&& Inner, Ar
 		{ \
 			if(UNLIKELY(!(expr))) \
 			{ \
-				if (FDebug::CheckVerifyFailedImpl(#expr, __FILE__, __LINE__, PLATFORM_RETURN_ADDRESS(), format, ##__VA_ARGS__)) \
+				UE_VALIDATE_FORMAT_STRING(format, ##__VA_ARGS__); \
+				if (FDebug::CheckVerifyFailedImpl2(#expr, __FILE__, __LINE__, format, ##__VA_ARGS__)) \
 				{ \
 					PLATFORM_BREAK(); \
 				} \
@@ -352,43 +358,80 @@ RetType FORCENOINLINE UE_DEBUG_SECTION DispatchCheckVerify(InnerType&& Inner, Ar
  */
 
 #if DO_ENSURE && !USING_CODE_ANALYSIS // The Visual Studio 2013 analyzer doesn't understand these complex conditionals
-	struct FValidateArgsInternal
+
+	namespace UE::Assert::Private
+	{
+	
+	/** Data about an ensure that is constant for every occurrence. */
+	struct FStaticEnsureRecord
+	{
+		const TCHAR* Format = nullptr;
+		const ANSICHAR* Expression = nullptr;
+		const ANSICHAR* File = nullptr;
+		int32 Line = 0;
+		bool bAlways = false;
+
+		// Workaround for https://developercommunity.visualstudio.com/t/Incorrect-warning-C4700-with-unrelated-s/10285950
+		constexpr FStaticEnsureRecord(
+			const TCHAR* InFormat,
+			const ANSICHAR* InExpression,
+			const ANSICHAR* InFile,
+			int32 InLine,
+			bool bInAlways)
+			: Format(InFormat)
+			, Expression(InExpression)
+			, File(InFile)
+			, Line(InLine)
+			, bAlways(bInAlways)
+		{
+		}
+	};
+
+	CORE_API bool UE_DEBUG_SECTION VARARGS EnsureFailed(std::atomic<bool>& bExecuted, const FStaticEnsureRecord* Ensure, ...);
+	
+	CORE_API bool UE_DEBUG_SECTION ExecCheckImplInternal(std::atomic<bool>& bExecuted, bool bAlways, const ANSICHAR* File, int32 Line, const ANSICHAR* Expr);
+
+	} // UE::Assert::Private
+
+	struct UE_DEPRECATED(5.4, "Do not use directly. This internal type is being removed.") FValidateArgsInternal
 	{
 		template <typename... Types>
 		FValidateArgsInternal(Types... Args)
 		{
-			static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to ensureMsgf");
+			static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to ensureMsgf");
 		}
 	};
 
-	CORE_API bool UE_DEBUG_SECTION VARARGS CheckVerifyImpl(bool& InOutExecuted, bool Always, const ANSICHAR* File, int32 Line, void* ProgramCounter, const ANSICHAR* Expr, const TCHAR* Format, ...);
+	#define UE_ENSURE_IMPL(Always, InExpression) \
+		(LIKELY(!!(InExpression)) \
+			|| (::UE::Assert::Private::ExecCheckImplInternal([]() UE_DEBUG_SECTION -> std::atomic<bool>& { static std::atomic<bool> bExecuted = false; return bExecuted; } (), Always, __FILE__, __LINE__, #InExpression) \
+			&& [] () { PLATFORM_BREAK(); return false; } ()))
 
-	#define UE_ENSURE_IMPL(Capture, Always, InExpression, InFormat) \
-		(LIKELY(!!(InExpression)) || (DispatchCheckVerify<bool>([Capture] () UE_DEBUG_SECTION \
+	#define UE_ENSURE_IMPL2(Capture, Always, InExpression, InFormat, ...) \
+		(LIKELY(!!(InExpression)) || ([Capture] () UE_DEBUG_SECTION \
 		{ \
-			static bool bExecuted = false; \
-			return CheckVerifyImpl(bExecuted, Always, __FILE__, __LINE__, PLATFORM_RETURN_ADDRESS(), #InExpression, InFormat); \
-		}) && [] () { PLATFORM_BREAK(); return false; } ()))
+			UE_VALIDATE_FORMAT_STRING(InFormat, ##__VA_ARGS__); \
+			static std::atomic<bool> bExecuted = false; \
+			static constexpr ::UE::Assert::Private::FStaticEnsureRecord ENSURE_Static(InFormat, #InExpression, __builtin_FILE(), __builtin_LINE(), Always); \
+			if ((Always || !bExecuted.load(std::memory_order_relaxed)) && FPlatformMisc::IsEnsureAllowed() && ::UE::Assert::Private::EnsureFailed(bExecuted, &ENSURE_Static, ##__VA_ARGS__)) \
+			{ \
+				PLATFORM_BREAK(); \
+			} \
+			return false; \
+		} ()))
 
-	#define UE_ENSURE_IMPL2(Capture, Always, InExpression, ...) \
-		(LIKELY(!!(InExpression)) || (DispatchCheckVerify<bool>([Capture] () UE_DEBUG_SECTION \
-		{ \
-			static bool bExecuted = false; \
-			FValidateArgsInternal(__VA_ARGS__); \
-			return CheckVerifyImpl(bExecuted, Always, __FILE__, __LINE__, PLATFORM_RETURN_ADDRESS(), #InExpression, ##__VA_ARGS__); \
-		}) && [] () { PLATFORM_BREAK(); return false; } ()))
-
-	#define ensure(           InExpression                ) UE_ENSURE_IMPL ( , false, InExpression, TEXT(""))
+	#define ensure(           InExpression                ) UE_ENSURE_IMPL (   false, InExpression)
 	#define ensureMsgf(       InExpression, InFormat, ... ) UE_ENSURE_IMPL2(&, false, InExpression, InFormat, ##__VA_ARGS__)
-	#define ensureAlways(     InExpression                ) UE_ENSURE_IMPL ( , true,  InExpression, TEXT(""))
+	#define ensureAlways(     InExpression                ) UE_ENSURE_IMPL (   true,  InExpression)
 	#define ensureAlwaysMsgf( InExpression, InFormat, ... ) UE_ENSURE_IMPL2(&, true,  InExpression, InFormat, ##__VA_ARGS__)
+
 
 #else	// DO_ENSURE
 
 	#define ensure(           InExpression                ) (LIKELY(!!(InExpression)))
 	#define ensureMsgf(       InExpression, InFormat, ... ) (LIKELY(!!(InExpression)))
 	#define ensureAlways(     InExpression                ) (LIKELY(!!(InExpression)))
-	#define ensureAlwaysMsgf( InExpression, InFormat, ... ) (LIKELY(!!(InExpression)))
+#define ensureAlwaysMsgf( InExpression, InFormat, ... ) (LIKELY(!!(InExpression)))
 
 #endif	// DO_CHECK
 
@@ -407,6 +450,12 @@ namespace UEAsserts_Private
 #define GET_ENUMERATOR_NAME_CHECKED(EnumName, EnumeratorName) \
 	((void)sizeof(UEAsserts_Private::GetMemberNameCheckedJunk(EnumName::EnumeratorName)), FName(TEXT(#EnumeratorName)))
 
+#define GET_ENUMERATOR_NAME_STRING_CHECKED(EnumName, EnumeratorName) \
+	((void)sizeof(UEAsserts_Private::GetMemberNameCheckedJunk(EnumName::EnumeratorName)), TEXT(#EnumeratorName))
+
+#define GET_ENUMERATOR_NAME_STRING_VIEW_CHECKED(EnumName, EnumeratorName) \
+	((void)sizeof(UEAsserts_Private::GetMemberNameCheckedJunk(EnumName::EnumeratorName)), TEXTVIEW(#EnumeratorName))
+
 // Returns FName(TEXT("MemberName")), while statically verifying that the member exists in ClassName
 #define GET_MEMBER_NAME_CHECKED(ClassName, MemberName) \
 	((void)sizeof(UEAsserts_Private::GetMemberNameCheckedJunk(((ClassName*)0)->MemberName)), FName(TEXT(#MemberName)))
@@ -414,12 +463,18 @@ namespace UEAsserts_Private
 #define GET_MEMBER_NAME_STRING_CHECKED(ClassName, MemberName) \
 	((void)sizeof(UEAsserts_Private::GetMemberNameCheckedJunk(((ClassName*)0)->MemberName)), TEXT(#MemberName))
 
+#define GET_MEMBER_NAME_STRING_VIEW_CHECKED(ClassName, MemberName) \
+	((void)sizeof(UEAsserts_Private::GetMemberNameCheckedJunk(((ClassName*)0)->MemberName)), TEXTVIEW(#MemberName))
+
 // Returns FName(TEXT("FunctionName")), while statically verifying that the function exists in ClassName
 #define GET_FUNCTION_NAME_CHECKED(ClassName, FunctionName) \
 	((void)sizeof(&ClassName::FunctionName), FName(TEXT(#FunctionName)))
 
 #define GET_FUNCTION_NAME_STRING_CHECKED(ClassName, FunctionName) \
 	((void)sizeof(&ClassName::FunctionName), TEXT(#FunctionName))
+
+#define GET_FUNCTION_NAME_STRING_VIEW_CHECKED(ClassName, FunctionName) \
+	((void)sizeof(&ClassName::FunctionName), TEXTVIEW(#FunctionName))
 
 // Returns FName(TEXT("FunctionName")), while statically verifying that the function exists in ClassName
 // Handles overloaded functions by specifying the argument of the overload to use
@@ -452,11 +507,11 @@ namespace UEAsserts_Private
 ----------------------------------------------------------------------------*/
 
 /** low level fatal error handler. */
-CORE_API void UE_DEBUG_SECTION VARARGS LowLevelFatalErrorHandler(const ANSICHAR* File, int32 Line, void* ProgramCounter, const TCHAR* Format=TEXT(""), ... );
+CORE_API void UE_DEBUG_SECTION VARARGS LowLevelFatalErrorHandler(const ANSICHAR* File, int32 Line, const TCHAR* Format=TEXT(""), ... );
 
 #define LowLevelFatalError(Format, ...) \
 	{ \
 		static_assert(TIsArrayOrRefOfTypeByPredicate<decltype(Format), TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array."); \
-		LowLevelFatalErrorHandler(__FILE__, __LINE__, PLATFORM_RETURN_ADDRESS(), (const TCHAR*)Format, ##__VA_ARGS__); \
+		LowLevelFatalErrorHandler(__FILE__, __LINE__, (const TCHAR*)Format, ##__VA_ARGS__); \
 	}
 

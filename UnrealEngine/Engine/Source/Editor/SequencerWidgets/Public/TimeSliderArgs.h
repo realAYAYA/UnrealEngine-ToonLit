@@ -33,7 +33,7 @@ enum class ENearestKeyOption : uint8
 	NKO_SearchMarkers = 0x04,
 
 	/** Search all tracks */
-	NKO_SearchAllTracks = 0x08
+	NKO_SearchAllTracks UE_DEPRECATED(5.4, "Search all tracks has been deprecated")  = 0x08
 };
 ENUM_CLASS_FLAGS(ENearestKeyOption);
 
@@ -90,6 +90,9 @@ struct FTimeSliderArgs
 
 	/** Attribute defining the playback range for this controller */
 	TAttribute<TRange<FFrameNumber>> PlaybackRange;
+
+	/** Attribute defining the time bounds for this controller. The time bounds should be a subset of the playback range. */
+	TAttribute<TRange<FFrameNumber>> TimeBounds;
 
 	/** Attribute for the current sequence's display rate */
 	TAttribute<FFrameRate> DisplayRate;

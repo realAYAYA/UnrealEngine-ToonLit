@@ -6,7 +6,7 @@
 #include "Engine/World.h"
 #include "WorldPartitionBuilder.generated.h"
 
-typedef UE::Math::TIntVector3<int64> FWorldBuilderCellCoord;
+typedef FInt64Vector3 FWorldBuilderCellCoord;
 
 /**
  * Structure containing information about a World Partition Builder cell
@@ -93,6 +93,11 @@ protected:
 	 * Some builders may have the ability to process non partitioned worlds.
 	 */
 	virtual bool CanProcessNonPartitionedWorlds() const { return false; }
+
+	/**
+	 * Some builders may decide to skip processing some worlds before initializing them.
+	 */
+	virtual bool ShouldProcessWorld(UWorld* World) const { return true; }
 
 	UNREALED_API bool OnFilesModified(const TArray<FString>& InModifiedFiles, const FString& InChangelistDescription) const;
 	UNREALED_API bool OnPackagesModified(const TArray<UPackage*>& InModifiedPackages, const FString& InChangelistDescription) const;

@@ -63,7 +63,7 @@ public:
 		int32 N = InParticles.Size();
 
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosMPMTransferInitialBinning"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosMPMTransferInitialBinning);
 			Indices.SetNum(N);
 			Weights.SetNum(N);
 
@@ -75,7 +75,7 @@ public:
 			//use physics parallel for:
 			for (int32 p = 0; p < N; p++)
 			{
-				Grid.BaseNodeIndex(InParticles.X(p), Indices[p], Weights[p]);
+				Grid.BaseNodeIndex(InParticles.GetX(p), Indices[p], Weights[p]);
 			}
 
 		}
@@ -83,7 +83,7 @@ public:
 		// Computes which particles in the same cell
 		/////////////////////
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosMPMTransferCellMetaCalc"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosMPMTransferCellMetaCalc);
 			NumCells = Grid.Size();
 			CellData.SetNum(NumCells);
 			for (int32 c = 0; c < NumCells; c++)
@@ -100,7 +100,7 @@ public:
 		// splat data to cells
 		/////////////////////
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosMPMTransferSplatData"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosMPMTransferSplatData);
 			GridData.Init((T)0., CellData.Num() * (NTransfer + 1));
 
 			TVector<int32, 3> GridCells = Grid.GetCells();
@@ -173,7 +173,7 @@ public:
 
 	void APICP2G(const int32 p, const int32 GlobIndex, const T mip, const TDynamicParticles<T, 3>& Particles, TArray<T>& GridData)
 	{
-		TVector<T, 3> xi_minus_xp = Grid.Node(GlobIndex) - Particles.X(p);
+		TVector<T, 3> xi_minus_xp = Grid.Node(GlobIndex) - Particles.GetX(p);
 		for (int32 l = 0; l < 3; ++l) 
 		{
 			T vl = T(0);
@@ -337,7 +337,7 @@ public:
 								}
 								else
 								{
-									TVector<T, 3> rip = Grid.Node(GlobIndexFlat) - Particles.X(p);
+									TVector<T, 3> rip = Grid.Node(GlobIndexFlat) - Particles.GetX(p);
 									T NiProdbInv = (T(4) * Ni[0] * Ni[1] * Ni[2]) / (Grid.GetDx()[0] * Grid.GetDx()[0]);
 									for (int32 l = 0; l < 3; l++)
 									{

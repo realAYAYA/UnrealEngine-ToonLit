@@ -52,19 +52,19 @@ void BuildVisualizeProbesCS(
 
 		if (RadiosityTexel00.bValid)
 		{
-			ProbeTranslatedWorldPositon += (RadiosityTexel00.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+			ProbeTranslatedWorldPositon += (RadiosityTexel00.WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
 		}
 		if (RadiosityTexel01.bValid)
 		{
-			ProbeTranslatedWorldPositon += (RadiosityTexel01.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+			ProbeTranslatedWorldPositon += (RadiosityTexel01.WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
 		}
 		if (RadiosityTexel10.bValid)
 		{
-			ProbeTranslatedWorldPositon += (RadiosityTexel10.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+			ProbeTranslatedWorldPositon += (RadiosityTexel10.WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
 		}
 		if (RadiosityTexel11.bValid)
 		{
-			ProbeTranslatedWorldPositon += (RadiosityTexel11.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+			ProbeTranslatedWorldPositon += (RadiosityTexel11.WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
 		}
 
 		if (NumValidTexels > 0)
@@ -154,7 +154,7 @@ void VisualizeRadiosityProbesPS(
 	out float4 OutColor : SV_Target0
 )
 {
-	const float3 TranslatedWorldViewOrigin = LWCToFloat(LWCAdd(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation));
+	const float3 TranslatedWorldViewOrigin = DFFastAddDemote(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation);
 
 	float3 RayDirection = normalize(Input.PositionTWS - TranslatedWorldViewOrigin);
 	float2 SphereIntersections = RayIntersectSphere(TranslatedWorldViewOrigin, RayDirection, Input.CellTranslatedSphere);

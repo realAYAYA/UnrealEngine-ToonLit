@@ -204,7 +204,7 @@ TOptional<FInstallInfo> FRiderPathLocator::GetInstallInfoFromRiderPath(const FSt
 
 	const FString RiderDir = RiderPathMatcher.GetCaptureGroup(1);
 	const FString RiderCppPluginPath = FPaths::Combine(RiderDir, TEXT("plugins"), TEXT("rider-cpp"));
-	if (!FPaths::DirectoryExists(RiderCppPluginPath))
+	if (!DirectoryExistsAndNonEmpty(RiderCppPluginPath))
 	{
 		return {};
 	}

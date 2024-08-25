@@ -15,11 +15,11 @@ namespace AutoRTFM
         FMemoryLocation OriginalAndSize;
         void* Copy;
 
-        FWriteLogEntry() = default;
-        FWriteLogEntry(FWriteLogEntry&) = default;
-        FWriteLogEntry& operator=(FWriteLogEntry&) = default;
+        UE_AUTORTFM_FORCEINLINE FWriteLogEntry() = default;
+        UE_AUTORTFM_FORCEINLINE FWriteLogEntry(FWriteLogEntry&) = default;
+        UE_AUTORTFM_FORCEINLINE FWriteLogEntry& operator=(FWriteLogEntry&) = default;
 
-        explicit FWriteLogEntry(void* Original, size_t Size, void* Copy) :
+        UE_AUTORTFM_FORCEINLINE explicit FWriteLogEntry(void* Original, size_t Size, void* Copy) :
             OriginalAndSize(Original), Copy(Copy)
         {
             OriginalAndSize.SetTopTag(static_cast<uint16_t>(Size));

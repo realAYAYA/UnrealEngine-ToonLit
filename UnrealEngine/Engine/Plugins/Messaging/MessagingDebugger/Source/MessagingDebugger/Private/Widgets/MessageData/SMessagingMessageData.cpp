@@ -53,6 +53,7 @@ void SMessagingMessageData::Construct(const FArguments& InArgs, const TSharedRef
 		DetailsViewArgs.NotifyHook = this;
 		DetailsViewArgs.bShowOptions = false;
 		DetailsViewArgs.bShowModifiedPropertiesOption = false;
+		DetailsViewArgs.bForceHiddenPropertyVisibility = true;
 	}
 
 	FStructureDetailsViewArgs StructureViewArgs;

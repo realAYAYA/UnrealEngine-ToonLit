@@ -56,5 +56,7 @@ public class OnlineSubsystemUtils : ModuleRules
 		);
 
 		PublicDependencyModuleNames.Add("OnlineSubsystem");
+
+		bAllowAutoRTFMInstrumentation = true;
 	}
 }

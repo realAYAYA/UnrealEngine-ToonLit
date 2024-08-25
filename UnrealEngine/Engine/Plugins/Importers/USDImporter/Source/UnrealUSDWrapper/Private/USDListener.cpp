@@ -14,7 +14,6 @@
 #if USE_USD_SDK
 
 #include "USDIncludesStart.h"
-
 #include "pxr/base/tf/weakBase.h"
 #include "pxr/usd/sdf/changeList.h"
 #include "pxr/usd/sdf/notice.h"
@@ -23,10 +22,9 @@
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/tokens.h"
-
 #include "USDIncludesEnd.h"
 
-#endif // USE_USD_SDK
+#endif	  // USE_USD_SDK
 
 namespace UsdToUnreal
 {
@@ -41,44 +39,44 @@ namespace UsdToUnreal
 
 		// For most changes we'll only get one of these, but sometimes multiple changes are fired in sequence
 		// (e.g. if you change framesPerSecond, it will send a notice for it but also for the matching, updated timeCodesPerSecond)
-		for ( const std::pair<TfToken, std::pair<VtValue, VtValue>>& AttributeChange : Entry.infoChanged ) // Note: infoChanged here is just a naming conflict, there's no "resyncChanged"
+		for (const std::pair<TfToken, std::pair<VtValue, VtValue>>& AttributeChange : Entry.infoChanged)	// Note: infoChanged here is just a naming
+																											// conflict, there's no "resyncChanged"
 		{
 			UsdUtils::FAttributeChange& ConvertedAttributeChange = OutConverted.AttributeChanges.Emplace_GetRef();
 
-			const FString FieldToken = ANSI_TO_TCHAR( AttributeChange.first.GetString().c_str() );
+			const FString FieldToken = ANSI_TO_TCHAR(AttributeChange.first.GetString().c_str());
 
-			// For regular properties (most common case) FullFieldPath will already carry the property and FieldToken will be "default", "timeSamples", "variability", etc.
-			if ( ChangedObject.IsPropertyPath() )
+			// For regular properties (most common case) FullFieldPath will already carry the property and FieldToken will be "default",
+			// "timeSamples", "variability", etc.
+			if (ChangedObject.IsPropertyPath())
 			{
-				ConvertedAttributeChange.PropertyName = ANSI_TO_TCHAR( ChangedObject.GetName().c_str() );
+				ConvertedAttributeChange.PropertyName = ANSI_TO_TCHAR(ChangedObject.GetName().c_str());
 				ConvertedAttributeChange.Field = FieldToken;
 			}
-			// For stage properties it seems like USD likes to send just "/" as the FullFieldPath, and the actual property name in FieldToken (e.g. "metersPerUnit", "timeCodesPerSecond", etc.)
-			// We send "default" here for consistency
-			else if ( ChangedObject.IsAbsoluteRootPath() || FieldToken == FString( TEXT( "kind" ) ) )
+			// For stage properties it seems like USD likes to send just "/" as the FullFieldPath, and the actual property name in FieldToken (e.g.
+			// "metersPerUnit", "timeCodesPerSecond", etc.) We send "default" here for consistency
+			else if (ChangedObject.IsAbsoluteRootPath() || FieldToken == FString(TEXT("kind")))
 			{
 				ConvertedAttributeChange.PropertyName = FieldToken;
-				ConvertedAttributeChange.Field = TEXT( "default" );
+				ConvertedAttributeChange.Field = TEXT("default");
 			}
 
-			ConvertedAttributeChange.OldValue = UE::FVtValue{ AttributeChange.second.first };
-			ConvertedAttributeChange.NewValue = UE::FVtValue{ AttributeChange.second.second };
+			ConvertedAttributeChange.OldValue = UE::FVtValue{AttributeChange.second.first};
+			ConvertedAttributeChange.NewValue = UE::FVtValue{AttributeChange.second.second};
 		}
 
-		// Some notices (like creating/removing a property) don't have any actual infoChanged entries, so we need to create a fake one in here in order to convey the PropertyName, if applicable
-		if ( Entry.infoChanged.size() == 0 &&
-			( Entry.flags.didAddProperty ||
-				Entry.flags.didAddPropertyWithOnlyRequiredFields ||
-				Entry.flags.didRemoveProperty ||
-				Entry.flags.didRemovePropertyWithOnlyRequiredFields ||
-				Entry.flags.didChangeAttributeTimeSamples ) )
+		// Some notices (like creating/removing a property) don't have any actual infoChanged entries, so we need to create a fake one in here in
+		// order to convey the PropertyName, if applicable
+		if (Entry.infoChanged.size() == 0
+			&& (Entry.flags.didAddProperty || Entry.flags.didAddPropertyWithOnlyRequiredFields || Entry.flags.didRemoveProperty
+				|| Entry.flags.didRemovePropertyWithOnlyRequiredFields || Entry.flags.didChangeAttributeTimeSamples))
 		{
 			UsdUtils::FAttributeChange& ConvertedAttributeChange = OutConverted.AttributeChanges.Emplace_GetRef();
-			ConvertedAttributeChange.Field = Entry.flags.didChangeAttributeTimeSamples ? TEXT( "timeSamples" ) : TEXT( "default" );
+			ConvertedAttributeChange.Field = Entry.flags.didChangeAttributeTimeSamples ? TEXT("timeSamples") : TEXT("default");
 
-			if ( ChangedObject.IsPropertyPath() )
+			if (ChangedObject.IsPropertyPath())
 			{
-				ConvertedAttributeChange.PropertyName = ANSI_TO_TCHAR( ChangedObject.GetName().c_str() );
+				ConvertedAttributeChange.PropertyName = ANSI_TO_TCHAR(ChangedObject.GetName().c_str());
 			}
 		}
 
@@ -109,24 +107,33 @@ namespace UsdToUnreal
 		ConvertedFlags.bDidRemovePropertyWithOnlyRequiredFields = Entry.flags.didRemovePropertyWithOnlyRequiredFields;
 		ConvertedFlags.bDidRemoveProperty = Entry.flags.didRemoveProperty;
 
-		static_assert( static_cast< int >( UsdUtils::ESubLayerChangeType::SubLayerAdded ) == static_cast< int >( pxr::SdfChangeList::SubLayerChangeType::SubLayerAdded ), "Enum values changed!" );
-		static_assert( static_cast< int >( UsdUtils::ESubLayerChangeType::SubLayerOffset ) == static_cast< int >( pxr::SdfChangeList::SubLayerChangeType::SubLayerOffset ), "Enum values changed!" );
-		static_assert( static_cast< int >( UsdUtils::ESubLayerChangeType::SubLayerRemoved ) == static_cast< int >( pxr::SdfChangeList::SubLayerChangeType::SubLayerRemoved ), "Enum values changed!" );
-		for ( const std::pair<std::string, pxr::SdfChangeList::SubLayerChangeType>& SubLayerChange : Entry.subLayerChanges )
+		static_assert(
+			static_cast<int>(UsdUtils::ESubLayerChangeType::SubLayerAdded) == static_cast<int>(pxr::SdfChangeList::SubLayerChangeType::SubLayerAdded),
+			"Enum values changed!"
+		);
+		static_assert(
+			static_cast<int>(UsdUtils::ESubLayerChangeType::SubLayerOffset)
+				== static_cast<int>(pxr::SdfChangeList::SubLayerChangeType::SubLayerOffset),
+			"Enum values changed!"
+		);
+		static_assert(
+			static_cast<int>(UsdUtils::ESubLayerChangeType::SubLayerRemoved)
+				== static_cast<int>(pxr::SdfChangeList::SubLayerChangeType::SubLayerRemoved),
+			"Enum values changed!"
+		);
+		for (const std::pair<std::string, pxr::SdfChangeList::SubLayerChangeType>& SubLayerChange : Entry.subLayerChanges)
 		{
-			OutConverted.SubLayerChanges.Add(
-				TPair<FString, UsdUtils::ESubLayerChangeType>(
-					ANSI_TO_TCHAR( SubLayerChange.first.c_str() ),
-					static_cast< UsdUtils::ESubLayerChangeType >( SubLayerChange.second )
-				)
-			);
+			OutConverted.SubLayerChanges.Add(TPair<FString, UsdUtils::ESubLayerChangeType>(
+				ANSI_TO_TCHAR(SubLayerChange.first.c_str()),
+				static_cast<UsdUtils::ESubLayerChangeType>(SubLayerChange.second)
+			));
 		}
 
-		OutConverted.OldPath = ANSI_TO_TCHAR( Entry.oldPath.GetString().c_str() );
-		OutConverted.OldIdentifier = ANSI_TO_TCHAR( Entry.oldIdentifier.c_str() );
+		OutConverted.OldPath = ANSI_TO_TCHAR(Entry.oldPath.GetString().c_str());
+		OutConverted.OldIdentifier = ANSI_TO_TCHAR(Entry.oldIdentifier.c_str());
 	}
 
-	bool ConvertPathRange( const pxr::UsdNotice::ObjectsChanged::PathRange& PathRange, UsdUtils::FObjectChangesByPath& OutChanges )
+	bool ConvertPathRange(const pxr::UsdNotice::ObjectsChanged::PathRange& PathRange, UsdUtils::FObjectChangesByPath& OutChanges)
 	{
 		using namespace pxr;
 
@@ -164,22 +171,26 @@ namespace UsdToUnreal
 		return true;
 	}
 
-	bool ConvertObjectsChangedNotice( const pxr::UsdNotice::ObjectsChanged& InNotice, UsdUtils::FObjectChangesByPath& OutInfoChanges, UsdUtils::FObjectChangesByPath& OutResyncChanges)
+	bool ConvertObjectsChangedNotice(
+		const pxr::UsdNotice::ObjectsChanged& InNotice,
+		UsdUtils::FObjectChangesByPath& OutInfoChanges,
+		UsdUtils::FObjectChangesByPath& OutResyncChanges
+	)
 	{
-		ConvertPathRange( InNotice.GetChangedInfoOnlyPaths(), OutInfoChanges );
-		ConvertPathRange( InNotice.GetResyncedPaths(), OutResyncChanges );
+		ConvertPathRange(InNotice.GetChangedInfoOnlyPaths(), OutInfoChanges);
+		ConvertPathRange(InNotice.GetResyncedPaths(), OutResyncChanges);
 
-		for ( TPair< FString, TArray<UsdUtils::FSdfChangeListEntry> >& InfoPair : OutInfoChanges )
+		for (TPair<FString, TArray<UsdUtils::FSdfChangeListEntry>>& InfoPair : OutInfoChanges)
 		{
 			const FString& PrimPath = InfoPair.Key;
-			TArray< UsdUtils::FSdfChangeListEntry >* AnalogueResyncChanges = nullptr;
+			TArray<UsdUtils::FSdfChangeListEntry>* AnalogueResyncChanges = nullptr;
 
-			for ( TArray<UsdUtils::FSdfChangeListEntry>::TIterator ChangeIt = InfoPair.Value.CreateIterator(); ChangeIt; ++ChangeIt )
+			for (TArray<UsdUtils::FSdfChangeListEntry>::TIterator ChangeIt = InfoPair.Value.CreateIterator(); ChangeIt; ++ChangeIt)
 			{
 				bool bUpgrade = false;
 
 				// Upgrade info changes with content reloads into resync changes
-				if ( ChangeIt->Flags.bDidReloadContent )
+				if (ChangeIt->Flags.bDidReloadContent)
 				{
 					bUpgrade = true;
 				}
@@ -187,11 +198,11 @@ namespace UsdToUnreal
 				// Upgrade visibility changes to resyncs because in case of mesh collapsing having one of the collapsed meshes go visible/invisible
 				// should cause the regeneration of the collapsed asset. This is a bit expensive, but the asset cache will be used so its not as if
 				// the mesh will be completely regenerated however
-				if ( !bUpgrade )
+				if (!bUpgrade)
 				{
-					for ( UsdUtils::FAttributeChange& Change : ChangeIt->AttributeChanges )
+					for (UsdUtils::FAttributeChange& Change : ChangeIt->AttributeChanges)
 					{
-						if ( Change.PropertyName == ANSI_TO_TCHAR( pxr::UsdGeomTokens->visibility.GetString().c_str() ) )
+						if (Change.PropertyName == ANSI_TO_TCHAR(pxr::UsdGeomTokens->visibility.GetString().c_str()))
 						{
 							bUpgrade = true;
 							break;
@@ -199,14 +210,14 @@ namespace UsdToUnreal
 					}
 				}
 
-				if ( bUpgrade )
+				if (bUpgrade)
 				{
-					if ( !AnalogueResyncChanges )
+					if (!AnalogueResyncChanges)
 					{
-						AnalogueResyncChanges = &OutResyncChanges.FindOrAdd( PrimPath );
+						AnalogueResyncChanges = &OutResyncChanges.FindOrAdd(PrimPath);
 					}
 
-					AnalogueResyncChanges->Add( *ChangeIt );
+					AnalogueResyncChanges->Add(*ChangeIt);
 					ChangeIt.RemoveCurrent();
 				}
 			}
@@ -214,13 +225,13 @@ namespace UsdToUnreal
 
 		return true;
 	}
-#endif // USE_USD_SDK
-}
+#endif	  // USE_USD_SDK
+}	 // namespace UsdToUnreal
 
 class FUsdListenerImpl
 #if USE_USD_SDK
 	: public pxr::TfWeakBase
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 {
 public:
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -240,9 +251,9 @@ public:
 	FThreadSafeCounter IsBlocked;
 
 #if USE_USD_SDK
-	FUsdListenerImpl( const pxr::UsdStageRefPtr& Stage );
+	FUsdListenerImpl(const pxr::UsdStageRefPtr& Stage);
 
-	void Register( const pxr::UsdStageRefPtr& Stage );
+	void Register(const pxr::UsdStageRefPtr& Stage);
 
 protected:
 	void HandleObjectsChangedNotice(const pxr::UsdNotice::ObjectsChanged& Notice, const pxr::UsdStageWeakPtr& Sender);
@@ -255,27 +266,27 @@ private:
 	pxr::TfNotice::Key RegisteredStageEditTargetChangedKey;
 	pxr::TfNotice::Key RegisteredSdfLayersChangedKey;
 	pxr::TfNotice::Key RegisteredSdfLayerDirtinessChangedKey;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 };
 
 FUsdListener::FUsdListener()
-	: Impl( MakeUnique< FUsdListenerImpl >() )
+	: Impl(MakeUnique<FUsdListenerImpl>())
 {
 }
 
-FUsdListener::FUsdListener( const UE::FUsdStage& Stage )
+FUsdListener::FUsdListener(const UE::FUsdStage& Stage)
 	: FUsdListener()
 {
-	Register( Stage );
+	Register(Stage);
 }
 
 FUsdListener::~FUsdListener() = default;
 
-void FUsdListener::Register( const UE::FUsdStage& Stage )
+void FUsdListener::Register(const UE::FUsdStage& Stage)
 {
 #if USE_USD_SDK
-	Impl->Register( Stage );
-#endif // #if USE_USD_SDK
+	Impl->Register(Stage);
+#endif	  // #if USE_USD_SDK
 }
 
 void FUsdListener::Block()
@@ -303,6 +314,7 @@ FUsdListener::FOnLayersChanged& FUsdListener::GetOnLayersChanged()
 {
 	return Impl->OnLayersChanged;
 }
+
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 FUsdListener::FOnSdfLayersChanged& FUsdListener::GetOnSdfLayersChanged()
@@ -321,81 +333,93 @@ FUsdListener::FOnObjectsChanged& FUsdListener::GetOnObjectsChanged()
 }
 
 #if USE_USD_SDK
-void FUsdListenerImpl::Register( const pxr::UsdStageRefPtr& Stage )
+void FUsdListenerImpl::Register(const pxr::UsdStageRefPtr& Stage)
 {
 	FScopedUsdAllocs UsdAllocs;
 
-	if ( RegisteredObjectsChangedKey.IsValid() )
+	if (RegisteredObjectsChangedKey.IsValid())
 	{
-		pxr::TfNotice::Revoke( RegisteredObjectsChangedKey );
+		pxr::TfNotice::Revoke(RegisteredObjectsChangedKey);
 	}
-	RegisteredObjectsChangedKey = pxr::TfNotice::Register( pxr::TfWeakPtr< FUsdListenerImpl >( this ), &FUsdListenerImpl::HandleObjectsChangedNotice, Stage );
+	RegisteredObjectsChangedKey = pxr::TfNotice::Register(
+		pxr::TfWeakPtr<FUsdListenerImpl>(this),
+		&FUsdListenerImpl::HandleObjectsChangedNotice,
+		Stage
+	);
 
-	if ( RegisteredStageEditTargetChangedKey.IsValid() )
+	if (RegisteredStageEditTargetChangedKey.IsValid())
 	{
-		pxr::TfNotice::Revoke( RegisteredStageEditTargetChangedKey );
+		pxr::TfNotice::Revoke(RegisteredStageEditTargetChangedKey);
 	}
-	RegisteredStageEditTargetChangedKey = pxr::TfNotice::Register( pxr::TfWeakPtr< FUsdListenerImpl >( this ), &FUsdListenerImpl::HandleStageEditTargetChangedNotice, Stage );
+	RegisteredStageEditTargetChangedKey = pxr::TfNotice::Register(
+		pxr::TfWeakPtr<FUsdListenerImpl>(this),
+		&FUsdListenerImpl::HandleStageEditTargetChangedNotice,
+		Stage
+	);
 
 	if (RegisteredSdfLayersChangedKey.IsValid())
 	{
 		pxr::TfNotice::Revoke(RegisteredSdfLayersChangedKey);
 	}
-	RegisteredSdfLayersChangedKey = pxr::TfNotice::Register( pxr::TfWeakPtr< FUsdListenerImpl >( this ), &FUsdListenerImpl::HandleLayersChangedNotice );
+	RegisteredSdfLayersChangedKey = pxr::TfNotice::Register(pxr::TfWeakPtr<FUsdListenerImpl>(this), &FUsdListenerImpl::HandleLayersChangedNotice);
 
 	if (RegisteredSdfLayerDirtinessChangedKey.IsValid())
 	{
 		pxr::TfNotice::Revoke(RegisteredSdfLayerDirtinessChangedKey);
 	}
-	RegisteredSdfLayerDirtinessChangedKey = pxr::TfNotice::Register( pxr::TfWeakPtr< FUsdListenerImpl >( this ), &FUsdListenerImpl::HandleLayerDirtinessChangedNotice );
+	RegisteredSdfLayerDirtinessChangedKey = pxr::TfNotice::Register(
+		pxr::TfWeakPtr<FUsdListenerImpl>(this),
+		&FUsdListenerImpl::HandleLayerDirtinessChangedNotice
+	);
 }
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FUsdListenerImpl::~FUsdListenerImpl()
 {
 #if USE_USD_SDK
 	FScopedUsdAllocs UsdAllocs;
-	pxr::TfNotice::Revoke( RegisteredObjectsChangedKey );
-	pxr::TfNotice::Revoke( RegisteredStageEditTargetChangedKey );
-	pxr::TfNotice::Revoke( RegisteredSdfLayersChangedKey );
-	pxr::TfNotice::Revoke( RegisteredSdfLayerDirtinessChangedKey );
-#endif // #if USE_USD_SDK
+	pxr::TfNotice::Revoke(RegisteredObjectsChangedKey);
+	pxr::TfNotice::Revoke(RegisteredStageEditTargetChangedKey);
+	pxr::TfNotice::Revoke(RegisteredSdfLayersChangedKey);
+	pxr::TfNotice::Revoke(RegisteredSdfLayerDirtinessChangedKey);
+#endif	  // #if USE_USD_SDK
 }
+
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 #if USE_USD_SDK
-void FUsdListenerImpl::HandleObjectsChangedNotice( const pxr::UsdNotice::ObjectsChanged& Notice, const pxr::UsdStageWeakPtr& Sender )
+void FUsdListenerImpl::HandleObjectsChangedNotice(const pxr::UsdNotice::ObjectsChanged& Notice, const pxr::UsdStageWeakPtr& Sender)
 {
-	if ( !OnObjectsChanged.IsBound() )
+	if (!OnObjectsChanged.IsBound())
 	{
 		return;
 	}
 
-	if ( IsBlocked.GetValue() > 0 )
+	if (IsBlocked.GetValue() > 0)
 	{
 		return;
 	}
 
 	UsdUtils::FObjectChangesByPath InfoChanges;
 	UsdUtils::FObjectChangesByPath ResyncChanges;
-	UsdToUnreal::ConvertObjectsChangedNotice( Notice, InfoChanges, ResyncChanges );
-	if ( InfoChanges.Num() > 0 || ResyncChanges.Num() > 0 )
+	UsdToUnreal::ConvertObjectsChangedNotice(Notice, InfoChanges, ResyncChanges);
+	if (InfoChanges.Num() > 0 || ResyncChanges.Num() > 0)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		OnObjectsChanged.Broadcast( InfoChanges, ResyncChanges );
+		OnObjectsChanged.Broadcast(InfoChanges, ResyncChanges);
 	}
 }
 
-void FUsdListenerImpl::HandleStageEditTargetChangedNotice( const pxr::UsdNotice::StageEditTargetChanged& Notice, const pxr::UsdStageWeakPtr& Sender )
+void FUsdListenerImpl::HandleStageEditTargetChangedNotice(const pxr::UsdNotice::StageEditTargetChanged& Notice, const pxr::UsdStageWeakPtr& Sender)
 {
 	FScopedUnrealAllocs UnrealAllocs;
 	OnStageEditTargetChanged.Broadcast();
 }
 
-void FUsdListenerImpl::HandleLayersChangedNotice( const pxr::SdfNotice::LayersDidChange& Notice )
+void FUsdListenerImpl::HandleLayersChangedNotice(const pxr::SdfNotice::LayersDidChange& Notice)
 {
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	if ((!OnLayersChanged.IsBound() && !OnSdfLayersChanged.IsBound()) || IsBlocked.GetValue() > 0)
 	{
 		return;
@@ -434,9 +458,9 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	}
 
 	FScopedUnrealAllocs UnrealAllocs;
-	OnLayersChanged.Broadcast( LayersNames );
+	OnLayersChanged.Broadcast(LayersNames);
 	OnSdfLayersChanged.Broadcast(ConvertedLayerToChangeList);
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void FUsdListenerImpl::HandleLayerDirtinessChangedNotice(const pxr::SdfNotice::LayerDirtinessChanged& Notice)
@@ -450,10 +474,10 @@ void FUsdListenerImpl::HandleLayerDirtinessChangedNotice(const pxr::SdfNotice::L
 
 	OnSdfLayerDirtinessChanged.Broadcast();
 }
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-FScopedBlockNotices::FScopedBlockNotices( FUsdListener& InListener )
-	: Listener( InListener )
+FScopedBlockNotices::FScopedBlockNotices(FUsdListener& InListener)
+	: Listener(InListener)
 {
 	Listener.Block();
 }

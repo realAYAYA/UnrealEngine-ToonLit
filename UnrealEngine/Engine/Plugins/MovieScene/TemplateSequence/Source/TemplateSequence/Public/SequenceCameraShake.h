@@ -63,14 +63,14 @@ private:
 
 	// UCameraShakeBase interface
 	virtual void GetShakePatternInfoImpl(FCameraShakeInfo& OutInfo) const override;
-	virtual void StartShakePatternImpl(const FCameraShakeStartParams& Params) override;
-	virtual void UpdateShakePatternImpl(const FCameraShakeUpdateParams& Params, FCameraShakeUpdateResult& OutResult) override;
-	virtual void ScrubShakePatternImpl(const FCameraShakeScrubParams& Params, FCameraShakeUpdateResult& OutResult) override;
+	virtual void StartShakePatternImpl(const FCameraShakePatternStartParams& Params) override;
+	virtual void UpdateShakePatternImpl(const FCameraShakePatternUpdateParams& Params, FCameraShakePatternUpdateResult& OutResult) override;
+	virtual void ScrubShakePatternImpl(const FCameraShakePatternScrubParams& Params, FCameraShakePatternUpdateResult& OutResult) override;
 	virtual bool IsFinishedImpl() const override;
-	virtual void StopShakePatternImpl(const FCameraShakeStopParams& Params) override;
+	virtual void StopShakePatternImpl(const FCameraShakePatternStopParams& Params) override;
 	virtual void TeardownShakePatternImpl() override;
 
-	void UpdateCamera(FFrameTime NewPosition, const FMinimalViewInfo& InPOV, FCameraShakeUpdateResult& OutResult);
+	void UpdateCamera(FFrameTime NewPosition, const FMinimalViewInfo& InPOV, FCameraShakePatternUpdateResult& OutResult);
 
 private:
 

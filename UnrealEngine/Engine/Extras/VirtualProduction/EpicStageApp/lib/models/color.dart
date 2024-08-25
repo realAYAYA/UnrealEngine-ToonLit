@@ -2,7 +2,7 @@
 
 import 'dart:math';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math.dart';
 
 /// A color represented as floating-point values as opposed to Dart's native, int-based [Color].

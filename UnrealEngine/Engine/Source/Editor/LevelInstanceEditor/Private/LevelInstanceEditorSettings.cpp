@@ -7,6 +7,7 @@ ULevelInstanceEditorSettings::ULevelInstanceEditorSettings()
 {
 	LevelInstanceClassName = ALevelInstance::StaticClass()->GetPathName();
 	bEnableStreaming = false;
+	bIsEditInPlaceStreamingEnabled = false;
 }
 
 ULevelInstanceEditorPerProjectUserSettings::ULevelInstanceEditorPerProjectUserSettings()

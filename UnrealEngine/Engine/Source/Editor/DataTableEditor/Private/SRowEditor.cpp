@@ -231,7 +231,10 @@ void SRowEditor::Restore()
 	if (StructureDetailsView.IsValid())
 	{
 		StructureDetailsView->SetCustomName(FText::FromName(FinalName));
-		StructureDetailsView->SetStructureData(CurrentRow);
+		if (!FinalName.IsNone())
+		{
+			StructureDetailsView->SetStructureData(CurrentRow);
+		}
 	}
 
 	RowSelectedCallback.ExecuteIfBound(FinalName);

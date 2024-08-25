@@ -6,6 +6,7 @@
 #include "TextureResource.h"
 #include "Engine/Texture.h"
 #include "StereoRendering.h"
+#include "StereoLayerAdditionalFlagsManager.h"
 #if WITH_EDITOR
 #include "SceneManagement.h"
 #else
@@ -35,6 +36,14 @@ UStereoLayerComponent::UStereoLayerComponent(const FObjectInitializer& ObjectIni
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 	// The following somehow overrides subobjects read through serialization.
 	//Shape = ObjectInitializer.CreateDefaultSubobject<UStereoLayerShapeQuad>(this, TEXT("Shape"));
+}
+
+void UStereoLayerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (EndPlayReason == EEndPlayReason::EndPlayInEditor || EndPlayReason == EEndPlayReason::Quit)
+	{
+		FStereoLayerAdditionalFlagsManager::Destroy();
+	}
 }
 
 void UStereoLayerComponent::OnUnregister()
@@ -161,6 +170,12 @@ void UStereoLayerComponent::TickComponent(float DeltaTime, enum ELevelTick TickT
 		LayerDesc.Flags |= (bQuadPreserveTextureRatio) ? IStereoLayers::LAYER_FLAG_QUAD_PRESERVE_TEX_RATIO : 0;
 		LayerDesc.Flags |= (bSupportsDepth) ? IStereoLayers::LAYER_FLAG_SUPPORT_DEPTH : 0;
 		LayerDesc.Flags |= (!bCurrVisible) ? IStereoLayers::LAYER_FLAG_HIDDEN : 0;
+
+		TSharedPtr<FStereoLayerAdditionalFlagsManager> FlagsManager = FStereoLayerAdditionalFlagsManager::Get();
+		for (FName& Flag : AdditionalFlags)
+		{
+			LayerDesc.Flags |= FlagsManager->GetFlagValue(Flag);
+		}
 
 		switch (StereoLayerType)
 		{
@@ -418,4 +433,11 @@ bool FEquirectProps::operator==(const class UStereoLayerShapeEquirect& Other) co
 bool FEquirectProps::operator==(const FEquirectProps& Other) const
 {
 	return (LeftUVRect == Other.LeftUVRect) && (RightUVRect == Other.RightUVRect) && (LeftScale == Other.LeftScale) && (RightScale == Other.RightScale) && (LeftBias == Other.LeftBias) && (RightBias == Other.RightBias) && (Radius == Other.Radius);
+}
+
+TArray<FName> UEditorFlagCollector::GetFlagNames()
+{
+	TSet<FName> UniqueFlags;
+	FStereoLayerAdditionalFlagsManager::CollectFlags(UniqueFlags);
+	return UniqueFlags.Array();
 }

@@ -5,7 +5,7 @@ import moment from 'moment';
 import React, { useState } from 'react';
 import dashboard from '../backend/Dashboard';
 import { displayTimeZone } from '../base/utilities/timeUtils';
-import { hordeClasses } from '../styles/Styles';
+import { getHordeStyling } from '../styles/Styles';
 
 function getDefaultHour() {
    return dashboard.displayUTC ? moment.utc().hour() : moment().hour()
@@ -85,6 +85,8 @@ export const DateTimeRange: React.FC<{ onChange: (minDate: Date, maxDate: Date) 
    const [endDate, setEndDate] = useState(getDefaultDate());
    const [startHour, setStartHour] = useState(getDefaultHour());
    const [endHour, setEndHour] = useState(getDefaultHour() + 1);
+
+   const { hordeClasses } = getHordeStyling();
 
    return <Modal isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 24, width: 448, hasBeenOpened: false, top: "80px", position: "absolute" } }} className={hordeClasses.modal}>
       <Stack tokens={{ childrenGap: 12 }} >

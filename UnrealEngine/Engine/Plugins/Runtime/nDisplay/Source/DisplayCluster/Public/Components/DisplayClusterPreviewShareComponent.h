@@ -52,6 +52,7 @@ enum class EDisplayClusterPreviewShareIcvfxSync
 	PushActor,
 };
 
+class IDisplayClusterViewportManager;
 
 /**
  * nDisplay Viewport preview share component
@@ -74,14 +75,10 @@ public:
 	/** Constructor */
 	UDisplayClusterPreviewShareComponent(const FObjectInitializer& ObjectInitializer);
 
-#if WITH_EDITOR // Bulk wrap with WITH_EDITOR until preview is supported in other modes.
-
 	//~ UActorComponent interface begin
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
 	//~ UActorComponent interface end
-
-#endif // WITH_EDITOR
 
 	//~ UObject interface begin
 
@@ -104,19 +101,17 @@ public:
 
 
 protected:
-
-#if WITH_EDITOR // Bulk wrap with WITH_EDITOR until preview is supported in other modes.
+	/**
+	* Creates or updates a custom rendering for the specified RootActor.
+	* Returns nullptr if rendering is not possible, or a reference to a custom viewport manager storing rendered resources.
+	*/
+	bool UpdateCustomViewportManager(const ADisplayClusterRootActor* InSrcRootActor);
 
 	//~ UActorComponent interface begin
 	virtual void OnRegister() override;
 	//~ UActorComponent interface end
 
-#endif // WITH_EDITOR
-
 public:
-
-#if WITH_EDITORONLY_DATA
-
 	/** Current sharing mode of this component */
 	UPROPERTY(EditAnywhere, Setter=SetMode, BlueprintSetter=SetMode, Category=Sharing)
 	EDisplayClusterPreviewShareMode Mode = EDisplayClusterPreviewShareMode::None;
@@ -133,11 +128,13 @@ public:
 	UPROPERTY(EditAnywhere, Category = Sharing, meta = (EditCondition = "Mode == EDisplayClusterPreviewShareMode::PullActor"))
 	EDisplayClusterPreviewShareIcvfxSync IcvfxCamerasSyncType = EDisplayClusterPreviewShareIcvfxSync::PullActor;
 
-#endif // WITH_EDITORONLY_DATA
-
 private:
+	// DC ViewportManager instance for this component
+	// Used to perform rendering with custom settings from an external DCRA
+	TSharedPtr<IDisplayClusterViewportManager, ESPMode::ThreadSafe> CustomViewportManager;
 
-#if WITH_EDITOR
+	/** Disabling all special preview renderers and reverting to the default view. */
+	void RestoreDefaultPreviewSettings();
 
 	/** Closes all media related objects (i.e. media captures and media players) */
 	void CloseAllMedia();
@@ -160,11 +157,11 @@ private:
 	/** Logic that should run every tick when in Receive mode */
 	void TickReceive();
 
-	/** Logic that should run every tick when in Pull Actor mode */
-	void TickPullActor();
-
-	/** Retrieves preview textures from given source nDisplay actor and uses them to drive the preview textures of the owning actor */
-	void PullPreviewFromSourceActor(const ADisplayClusterRootActor* SourceRootActor);
+	/** Logic that should run every tick when in Pull Actor mode
+	* 
+	* @param bUseSourceActorSettings - Get preview settings from Source nDisplay Actor
+	*/
+	void TickPullActor(const bool bUseSourceActorSettings);
 
 	/** Syncs the Icvfx cameras from the given source nDisplay actor to the given destination nDisplay actor */
 	void SyncIcvxCamerasFromSourceActor(const ADisplayClusterRootActor* SrcRootActor, const ADisplayClusterRootActor* DstRootActor);
@@ -175,24 +172,24 @@ private:
 	/** Enables/Disables component ticking */
 	void SetTickEnable(const bool bEnable);
 
+#if WITH_EDITOR
 	/** Called when the editor map is changed. Used to remove unwanted references to external maps. */
-	void HandleMapChanged(UWorld* InWorld, EMapChangeType InMapChangeType);
+	void HandleMapChanged_Editor(UWorld* InWorld, EMapChangeType InMapChangeType);
+#endif
 
 	/** Unsubcribe from preview of all root actors */
-	void UnsubscribeFromAllPreviews();
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void UnsubscribeFromAllPreviews() { };
 
 	/** Subscribe for preview of given root actor */
-	void SubscribeToPreview(ADisplayClusterRootActor* RootActor);
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void SubscribeToPreview(ADisplayClusterRootActor* RootActor) { };
 
 	/** Unsubscribe from preview of given root actor */
-	void UnsubscribeFromPreview(ADisplayClusterRootActor* RootActor);
-
-#endif // WITH_EDITOR
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void UnsubscribeFromPreview(ADisplayClusterRootActor* RootActor) { };
 
 private:
-
-#if WITH_EDITORONLY_DATA
-
 	/** Media Outputs associated with the given viewport unique names */
 	UPROPERTY(Transient)
 	TMap<FString, TObjectPtr<UMediaOutput>> MediaOutputs;
@@ -220,7 +217,4 @@ private:
 	/** Cache of original Texture Replace enable boolean associated with the given viewport unique names. Used when restoring the original state */
 	UPROPERTY(Transient)
 	TMap<FString, bool> OriginalTextureReplaces;
-
-#endif // WITH_EDITORONLY_DATA
-
 };

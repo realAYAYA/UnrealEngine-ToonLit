@@ -374,12 +374,8 @@ void UOptimusAnimAttributeDataInterface::GetStructDeclarations(TSet<FString>& Ou
 
 void UOptimusAnimAttributeDataInterface::GetShaderHash(FString& InOutKey) const
 {
-// 	FSHA1 HashState;
-// 	FString HLSL;
-// 	GetHLSL(HLSL);
-// 	
-// 	HashState.UpdateWithString(*HLSL, HLSL.Len());
-// 	HashState.Finalize().AppendString(InOutKey);
+	// UComputeGraph::BuildKernelSource hashes the result of GetHLSL()
+	// Only append additional hashes here if the HLSL contains any additional includes
 }
 
 UComputeDataProvider* UOptimusAnimAttributeDataInterface::CreateDataProvider(TObjectPtr<UObject> InBinding, uint64 InInputMask, uint64 InOutputMask) const

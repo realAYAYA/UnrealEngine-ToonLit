@@ -5,6 +5,7 @@
 
 #include "h264/H264_VideoDecoder_Android.h"
 #include "h265/H265_VideoDecoder_Android.h"
+#include "vpx/VPx_VideoDecoder_Android.h"
 #include "aac/AAC_AudioDecoder_Android.h"
 
 namespace PlatformElectraDecodersAndroid
@@ -40,6 +41,8 @@ void FPlatformElectraDecodersAndroid::RegisterWithCodecFactory(IElectraCodecRegi
 		RegisterFactory(FH264VideoDecoderAndroid::CreateFactory());
 		// H.265 video decoder
 		RegisterFactory(FH265VideoDecoderAndroid::CreateFactory());
+		// VP8/VP9 video decoder
+		RegisterFactory(FVPxVideoDecoderAndroid::CreateFactory());
 		// AAC audio decoder
 		RegisterFactory(FAACAudioDecoderAndroid::CreateFactory());
 

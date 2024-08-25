@@ -21,7 +21,7 @@ _Pragma("clang diagnostic ignored \"-Wimplicit-int-conversion\"")
 _Pragma("clang diagnostic ignored \"-Wdeprecated-pragma\"")
 #endif
 
-#include "ThirdParty/mimalloc/src/static.c"
+#include <static.c>
 
 #if defined(__clang__)
 _Pragma("clang diagnostic pop")

@@ -11,7 +11,8 @@
 	"MarketplaceURL": "",
 	"EnabledByDefault" : false,
 	"CanContainContent": true,
-	"IsExperimentalVersion": true,
+	"IsExperimentalVersion": false,
+	"IsBetaVersion": true,
 	"Installed": false,
 	"Modules": [
 		{
@@ -22,12 +23,9 @@
 	],
 	"Plugins": [
 		{
-			"Name": "MeshModelingToolsetExp",
-			"Enabled": true
-		},
-		{
 			"Name": "ModelingToolsEditorMode",
-			"Enabled": true
+			"Enabled": true,
+			"TargetAllowList": [ "Editor" ]
 		}
 	]
 }

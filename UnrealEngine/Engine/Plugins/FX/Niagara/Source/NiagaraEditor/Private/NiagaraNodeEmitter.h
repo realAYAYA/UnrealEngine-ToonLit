@@ -55,14 +55,15 @@ public:
 	ENiagaraScriptUsage GetUsage() const { return ScriptType; }
 	void SetUsage(ENiagaraScriptUsage InUsage) { ScriptType = InUsage; }
 
+	FNiagaraEmitterID GetEmitterID()const;
 	FString GetEmitterUniqueName() const;
 	UNiagaraScriptSource* GetScriptSource() const;
 	UNiagaraGraph* GetCalledGraph() const;
 	
 	virtual void Compile(FTranslator* Translator, TArray<int32>& Outputs) const override;
-	virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const override;
+	virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const override;
 
-	void SetCachedVariablesForCompilation(const FName& InUniqueName, UNiagaraGraph* InGraph, UNiagaraScriptSourceBase* InSource);
+	void SetCachedVariablesForCompilation(const FName& InUniqueName, FNiagaraEmitterID InEmitterID, UNiagaraGraph* InGraph, UNiagaraScriptSourceBase* InSource);
 
 protected:
 	UEdGraphPin* PinPendingRename;
@@ -92,6 +93,7 @@ private:
 	ENiagaraScriptUsage ScriptType;
 
 	FName CachedUniqueName;
+	FNiagaraEmitterID CachedEmitterID = INDEX_NONE;
 	TWeakObjectPtr<UNiagaraGraph> CachedGraphWeakPtr;
 	TWeakObjectPtr<UNiagaraScriptSourceBase> CachedScriptSourceWeakPtr;
 };

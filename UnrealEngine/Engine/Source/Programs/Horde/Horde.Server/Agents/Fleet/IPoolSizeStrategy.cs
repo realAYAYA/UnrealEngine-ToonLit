@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Horde.Server.Agents.Pools;
 
@@ -16,26 +17,32 @@ namespace Horde.Server.Agents.Fleet
 		/// <see cref="LeaseUtilizationStrategy"/>
 		/// </summary>
 		LeaseUtilization,
-		
+
 		/// <summary>
 		/// Strategy based on size of job build queue
 		/// <see cref="JobQueueStrategy"/> 
 		/// </summary>
 		JobQueue,
-		
+
 		/// <summary>
 		/// No-op strategy used as fallback/default behavior
 		/// <see cref="NoOpPoolSizeStrategy"/> 
 		/// </summary>
 		NoOp,
-		
+
 		/// <summary>
 		/// A no-op strategy that reports metrics to let an external AWS auto-scaling policy scale the fleet
 		/// <see cref="ComputeQueueAwsMetric"/> 
 		/// </summary>
-		ComputeQueueAwsMetric
+		ComputeQueueAwsMetric,
+
+		/// <summary>
+		/// A no-op strategy that reports metrics to let an external AWS auto-scaling policy scale the fleet
+		/// <see cref="LeaseUtilizationAwsMetric"/> 
+		/// </summary>
+		LeaseUtilizationAwsMetric
 	}
-	
+
 	/// <summary>
 	/// Extensions for pool size strategy
 	/// </summary>
@@ -70,7 +77,7 @@ namespace Horde.Server.Agents.Fleet
 		/// The desired agent count as calculated by pool sizing strategy
 		/// </summary>
 		public int DesiredAgentCount { get; }
-		
+
 		/// <summary>
 		/// Log-friendly metadata object describing the output of the size calculation through key/values
 		/// </summary>
@@ -89,7 +96,7 @@ namespace Horde.Server.Agents.Fleet
 			Status = status;
 		}
 	}
-	
+
 	/// <summary>
 	/// Interface for different agent pool sizing strategies
 	/// </summary>
@@ -100,15 +107,16 @@ namespace Horde.Server.Agents.Fleet
 		/// </summary>
 		/// <param name="pool">Pool to calculate size for</param>
 		/// <param name="agents">Available agents</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>A result containing the desired agent count</returns>
-		Task<PoolSizeResult> CalculatePoolSizeAsync(IPool pool, List<IAgent> agents);
-		
+		Task<PoolSizeResult> CalculatePoolSizeAsync(IPoolConfig pool, List<IAgent> agents, CancellationToken cancellationToken = default);
+
 		/// <summary>
 		/// Name of the strategy
 		/// </summary>
 		string Name { get; }
 	}
-	
+
 	/// <summary>
 	/// No-operation strategy that won't resize pools, just return the existing count.
 	/// Used to ensure there's always a strategy available for dependency injection, even if it does nothing.
@@ -116,7 +124,7 @@ namespace Horde.Server.Agents.Fleet
 	public class NoOpPoolSizeStrategy : IPoolSizeStrategy
 	{
 		/// <inheritdoc/>
-		public Task<PoolSizeResult> CalculatePoolSizeAsync(IPool pool, List<IAgent> agents)
+		public Task<PoolSizeResult> CalculatePoolSizeAsync(IPoolConfig pool, List<IAgent> agents, CancellationToken cancellationToken)
 		{
 			return Task.FromResult(new PoolSizeResult(agents.Count, agents.Count));
 		}
@@ -124,7 +132,7 @@ namespace Horde.Server.Agents.Fleet
 		/// <inheritdoc/>
 		public string Name { get; } = "NoOp";
 	}
-	
+
 	/// <summary>
 	/// Pool size strategy wrapping a normal strategy and
 	/// applies an extra agent count to the desired agent count.
@@ -146,9 +154,9 @@ namespace Horde.Server.Agents.Fleet
 		}
 
 		/// <inheritdoc/>
-		public async Task<PoolSizeResult> CalculatePoolSizeAsync(IPool pool, List<IAgent> agents)
+		public async Task<PoolSizeResult> CalculatePoolSizeAsync(IPoolConfig pool, List<IAgent> agents, CancellationToken cancellationToken)
 		{
-			PoolSizeResult result = await _backingStrategy.CalculatePoolSizeAsync(pool, agents);
+			PoolSizeResult result = await _backingStrategy.CalculatePoolSizeAsync(pool, agents, cancellationToken);
 			return new PoolSizeResult(result.CurrentAgentCount, result.DesiredAgentCount + _extraAgentCount, result.Status);
 		}
 

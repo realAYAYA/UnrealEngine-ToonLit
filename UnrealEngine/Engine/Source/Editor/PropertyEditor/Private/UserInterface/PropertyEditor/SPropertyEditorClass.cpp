@@ -9,6 +9,7 @@
 #include "DragAndDrop/AssetDragDropOp.h"
 #include "ClassViewerModule.h"
 #include "ClassViewerFilter.h"
+#include "PropertyEditorUtils.h"
 #include "UObject/UObjectIterator.h"
 #include "PropertyNode.h"
 #include "PropertyRestriction.h"
@@ -70,6 +71,9 @@ private:
 	}
 };
 
+namespace UE::PropertyEditor::Class::Private
+{
+
 static UClass* FindOrLoadClass(const FString& ClassName)
 {
 	UClass* Class = UClass::TryFindTypeSlow<UClass>(ClassName, EFindFirstObjectOptions::EnsureIfAmbiguous);
@@ -81,6 +85,8 @@ static UClass* FindOrLoadClass(const FString& ClassName)
 
 	return Class;
 }
+
+} // namespace UE::PropertyEditor::Class::Private
 
 void SPropertyEditorClass::GetDesiredWidth(float& OutMinDesiredWidth, float& OutMaxDesiredWidth)
 {
@@ -112,7 +118,9 @@ bool SPropertyEditorClass::CanEdit() const
 void SPropertyEditorClass::Construct(const FArguments& InArgs, const TSharedPtr< FPropertyEditor >& InPropertyEditor)
 {
 	PropertyEditor = InPropertyEditor;
-	
+
+	TArray<TSharedRef<class IClassViewerFilter>> ClassViewerFilters = InArgs._ClassViewerFilters;
+
 	if (PropertyEditor.IsValid())
 	{
 		const TSharedRef<FPropertyNode> PropertyNode = PropertyEditor->GetPropertyNode();
@@ -141,9 +149,29 @@ void SPropertyEditorClass::Construct(const FArguments& InArgs, const TSharedPtr<
 		bShowTree = Property->GetOwnerProperty()->HasMetaData(TEXT("ShowTreeView"));
 		bShowDisplayNames = Property->GetOwnerProperty()->HasMetaData(TEXT("ShowDisplayNames"));
 
+		if (RequiredInterface != nullptr)
+		{
+			if (!RequiredInterface->HasAnyClassFlags(CLASS_Interface))
+			{
+				UE_LOG(LogPropertyNode, Warning, TEXT("Property (%s) specifies a MustImplement class which isn't an interface (%s), clearing filter."), *Property->GetFullName(), *RequiredInterface->GetPathName());
+				RequiredInterface = nullptr;
+			}
+			else if (RequiredInterface == UInterface::StaticClass())
+			{
+				UE_LOG(LogPropertyNode, Warning, TEXT("Property (%s) specifies a MustImplement class which isn't valid (UInterface), clearing filter."), *Property->GetFullName());
+				RequiredInterface = nullptr;
+			}
+		}
+
 		// Filter based on UPROPERTY meta data
-		AllowedClassFilters = PropertyCustomizationHelpers::GetClassesFromMetadataString(Property->GetOwnerProperty()->GetMetaData("AllowedClasses"));
-		DisallowedClassFilters = PropertyCustomizationHelpers::GetClassesFromMetadataString(Property->GetOwnerProperty()->GetMetaData("DisallowedClasses"));
+		TArray<UObject*> ObjectList;
+		if (PropertyEditor->GetPropertyHandle()->IsValidHandle())
+		{
+			PropertyEditor->GetPropertyHandle()->GetOuterObjects(ObjectList);
+		}
+		PropertyEditorUtils::GetAllowedAndDisallowedClasses(ObjectList, *Property, AllowedClassFilters, DisallowedClassFilters, false);
+
+		using namespace UE::PropertyEditor::Class::Private;
 
 		// Filter based on restrictions
 		for (const TSharedRef<const FPropertyRestriction>& ClassRestriction : PropertyNode->GetRestrictions())
@@ -162,6 +190,11 @@ void SPropertyEditorClass::Construct(const FArguments& InArgs, const TSharedPtr<
 				{
 					DisallowedClassFilters.Add(DisabledClass);
 				}
+			}
+
+			for (TArray<TSharedRef<IClassViewerFilter>>::TConstIterator Iter = ClassRestriction.Get().GeClassViewFilterIterator(); Iter; ++Iter)
+			{
+				ClassViewerFilters.Add(*Iter);
 			}
 		}
 	}
@@ -186,7 +219,7 @@ void SPropertyEditorClass::Construct(const FArguments& InArgs, const TSharedPtr<
 		OnSetClass = InArgs._OnSetClass;
 	}
 
-	CreateClassFilter(InArgs._ClassViewerFilters);
+	CreateClassFilter(ClassViewerFilters);
 
 	SAssignNew(ComboButton, SComboButton)
 		.OnGetMenuContent(this, &SPropertyEditorClass::GenerateClassPicker)
@@ -292,12 +325,12 @@ TSharedRef<SWidget> SPropertyEditorClass::GenerateClassPicker()
 	FOnClassPicked OnPicked(FOnClassPicked::CreateSP(this, &SPropertyEditorClass::OnClassPicked));
 
 	return SNew(SBox)
-		.WidthOverride(280)
+		.WidthOverride(280.0f)
 		[
 			SNew(SVerticalBox)
 			+SVerticalBox::Slot()
 			.AutoHeight()
-			.MaxHeight(500)
+			.MaxHeight(500.0f)
 			[
 				FModuleManager::LoadModuleChecked<FClassViewerModule>("ClassViewer").CreateClassViewer(ClassViewerOptions, OnPicked)
 			]			
@@ -327,7 +360,7 @@ void SPropertyEditorClass::SendToObjects(const FString& NewValue)
 	}
 	else if (!NewValue.IsEmpty() && NewValue != TEXT("None"))
 	{
-		const UClass* NewClass = FindOrLoadClass(NewValue);
+		const UClass* NewClass = UE::PropertyEditor::Class::Private::FindOrLoadClass(NewValue);
 		OnSetClass.Execute(NewClass);
 	}
 	else
@@ -423,8 +456,6 @@ FReply SPropertyEditorClass::OnDrop(const FGeometry& MyGeometry, const FDragDrop
 	TSharedPtr<FAssetDragDropOp> UnloadedClassOp = DragDropEvent.GetOperationAs<FAssetDragDropOp>();
 	if (UnloadedClassOp.IsValid())
 	{
-		bool bAllAssetWereLoaded = true;
-
 		FString AssetPath;
 
 		// Find the class/blueprint path

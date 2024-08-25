@@ -99,7 +99,9 @@ public:
 		const int32 GridY = 2,
 		const int32 GridZ = 2,
 		const float MinimumClusterSize = 0,
-		const int32 KMeansIterations = 500);
+		const int32 KMeansIterations = 500,
+		const bool bPreferConvexity = false,
+		const float ConcavityErrorTolerance = 0);
 
 	static void AutoCluster(FGeometryCollection& GeometryCollection,
 		const int32 ClusterIndex,
@@ -114,7 +116,17 @@ public:
 		const int32 GridY = 2,
 		const int32 GridZ = 2,
 		const float MinimumClusterSize = 0,
-		const int32 KMeansIterations = 500);
+		const int32 KMeansIterations = 500,
+		const bool bPreferConvexity = false,
+		const float ConcavityErrorTolerance = 0);
+
+	// Autoclustering that favors convex-shaped clusters
+	static void ConvexityBasedCluster(FGeometryCollection& GeometryCollection,
+		int32 ClusterIndex,
+		uint32 SiteCount,
+		bool bEnforceConnectivity,
+		bool bAvoidIsolated,
+		float ConcavityErrorTolerance);
 
 	static TArray<FVector> GenerateGridSites(
 		const FGeometryCollection& GeometryCollection,
@@ -143,6 +155,13 @@ public:
 	static bool MergeSelectedClusters(
 		FGeometryCollection& GeometryCollection,
 		TArray<int32>& InOutSelection
+	);
+
+	// Merge neighbors, and neighbors of neighbors (out to the Iterations number) to the selected clusters.
+	static bool ClusterMagnet(
+		FGeometryCollection& GeometryCollection,
+		TArray<int32>& InOutSelection,
+		int32 Iterations
 	);
 };
 

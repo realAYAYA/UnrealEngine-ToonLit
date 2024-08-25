@@ -110,7 +110,7 @@ bool FInterchangeProjectSettingsUtils::ShouldShowPipelineStacksConfigurationDial
 {
 	const FInterchangeImportSettings& ImportSettings = GetDefaultImportSettings(bIsSceneImport);
 
-	bool bShowPipelineStacksConfigurationDialog = ImportSettings.bShowPipelineStacksConfigurationDialog;
+	bool bShowImportDialog = ImportSettings.bShowImportDialog;
 
 	if (!bIsSceneImport)
 	{
@@ -119,18 +119,41 @@ bool FInterchangeProjectSettingsUtils::ShouldShowPipelineStacksConfigurationDial
 		if (UInterchangeTranslatorBase* Translator = ScopedTranslator.GetTranslator())
 		{
 			EInterchangeTranslatorAssetType SupportedAssetTypes = Translator->GetSupportedAssetTypes();
+			const UClass* TranslatorClass = Translator->GetClass();
 
+			//Iterate all override, if there is at least one override that show the imnport dialog we will show it.
+			bool bFoundOverride = false;
+			bool bShowFromOverrideStack = false;
 			const FInterchangeContentImportSettings& ContentImportSettings = GetDefault<UInterchangeProjectSettings>()->ContentImportSettings;
-			for (TMap<EInterchangeTranslatorAssetType, bool>::TConstIterator StackOverridesIt = ContentImportSettings.ShowPipelineStacksConfigurationDialogOverride.CreateConstIterator(); StackOverridesIt; ++StackOverridesIt)
+			for (const TPair<EInterchangeTranslatorAssetType, FInterchangeDialogOverride>& ShowImportDialog : ContentImportSettings.ShowImportDialogOverride)
 			{
-				if ((SupportedAssetTypes ^ StackOverridesIt->Key) < StackOverridesIt->Key)
+				if ((ShowImportDialog.Key == EInterchangeTranslatorAssetType::None && SupportedAssetTypes == EInterchangeTranslatorAssetType::None)
+					|| (static_cast<uint8>(ShowImportDialog.Key & SupportedAssetTypes) > 0))
 				{
-					bShowPipelineStacksConfigurationDialog = StackOverridesIt->Value;
-					break;
+					//Look if there is a per translator override
+					const FInterchangeDialogOverride& InterchangeDialogOverride = ShowImportDialog.Value;
+					const FInterchangePerTranslatorDialogOverride* FindPerTranslatorOverride = InterchangeDialogOverride.PerTranslatorImportDialogOverride.FindByPredicate([&TranslatorClass](const FInterchangePerTranslatorDialogOverride& InterchangePerTranslatorDialogOverride)
+						{
+							return (InterchangePerTranslatorDialogOverride.Translator.Get() == TranslatorClass);
+						});
+					if (FindPerTranslatorOverride)
+					{
+						bShowFromOverrideStack |= FindPerTranslatorOverride->bShowImportDialog;
+					}
+					else
+					{
+						//Simple override
+						bShowFromOverrideStack |= InterchangeDialogOverride.bShowImportDialog;
+					}
+					bFoundOverride = true;
 				}
+			}
+			if (bFoundOverride)
+			{
+				bShowImportDialog = bShowFromOverrideStack;
 			}
 		}
 	}
 
-	return bShowPipelineStacksConfigurationDialog;
+	return bShowImportDialog;
 }

@@ -17,6 +17,7 @@ public class CustomizableSequencerTracksEditor : ModuleRules
 				"CustomizableSequencerTracks",
 				"EditorFramework",
 				"MovieScene",
+				"SequencerCore",
 				"Sequencer",
 				"SlateCore",
 				"Slate",

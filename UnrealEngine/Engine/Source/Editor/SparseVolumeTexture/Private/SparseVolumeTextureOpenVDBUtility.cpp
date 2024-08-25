@@ -91,7 +91,6 @@ static FOpenVDBGridInfo GetOpenVDBGridInfo(openvdb::GridBase::Ptr Grid, uint32 G
 {
 	openvdb::CoordBBox VolumeActiveAABB = Grid->evalActiveVoxelBoundingBox();
 	openvdb::Coord VolumeActiveDim = Grid->evalActiveVoxelDim();
-	openvdb::Vec3d VolumeVoxelSize = Grid->voxelSize();
 	openvdb::math::MapBase::ConstPtr MapBase = Grid->constTransform().baseMap();
 	openvdb::Vec3d VoxelSize = MapBase->voxelSize();
 	openvdb::Mat4d GridTransformVDB = MapBase->getAffineMap()->getConstMat4();
@@ -103,17 +102,17 @@ static FOpenVDBGridInfo GetOpenVDBGridInfo(openvdb::GridBase::Ptr Grid, uint32 G
 	GridInfo.VolumeActiveAABBMin = FIntVector3(VolumeActiveAABB.min().x(), VolumeActiveAABB.min().y(), VolumeActiveAABB.min().z());
 	GridInfo.VolumeActiveAABBMax = FIntVector3(VolumeActiveAABB.max().x() + 1, VolumeActiveAABB.max().y() + 1, VolumeActiveAABB.max().z() + 1); // +1 because CoordBBox::Max is inclusive, but we want exclusive
 	GridInfo.VolumeActiveDim = FIntVector3(VolumeActiveDim.x(), VolumeActiveDim.y(), VolumeActiveDim.z());
-	GridInfo.VolumeVoxelSize = FVector(VolumeVoxelSize.x(), VolumeVoxelSize.y(), VolumeVoxelSize.z());
 	GridInfo.bIsInWorldSpace = Grid->isInWorldSpace();
-	GridInfo.bHasUniformVoxels = Grid->hasUniformVoxels();
 
+	FMatrix TransformMatrix;
 	for (int i = 0; i < 4; ++i)
 	{
 		for (int j = 0; j < 4; ++j)
 		{
-			GridInfo.Transform.M[i][j] = static_cast<float>(GridTransformVDB[i][j]);
+			TransformMatrix.M[i][j] = GridTransformVDB[i][j];
 		}
 	}
+	GridInfo.Transform = FTransform(TransformMatrix);
 
 	// Figure out the type/format of the grid
 	if (Grid->isType<FOpenVDBHalf1Grid>())
@@ -196,11 +195,6 @@ static FOpenVDBGridInfo GetOpenVDBGridInfo(openvdb::GridBase::Ptr Grid, uint32 G
 
 bool IsOpenVDBGridValid(const FOpenVDBGridInfo& GridInfo, const FString& Filename)
 {
-	if (!GridInfo.bHasUniformVoxels)
-	{
-		UE_LOG(LogSparseVolumeTextureOpenVDBUtility, Warning, TEXT("OpenVDB importer cannot handle non uniform voxels: %s"), *Filename);
-		return false;
-	}
 	return true;
 }
 
@@ -285,11 +279,10 @@ class FSparseVolumeTextureDataProviderOpenVDB : public UE::SVT::ITextureDataProv
 {
 public:
 
-	bool Initialize(TArray64<uint8>& SourceFile, const FOpenVDBImportOptions& ImportOptions, const FIntVector3& InVolumeBoundsMin, bool bInBakeTranslation)
+	bool Initialize(TArray64<uint8>& SourceFile, const FOpenVDBImportOptions& ImportOptions, const FIntVector3& InVolumeBoundsMin)
 	{
 		Attributes = ImportOptions.Attributes;
 		VolumeBoundsMin = InVolumeBoundsMin;
-		Translation = FIntVector3::ZeroValue;
 
 		// Compute some basic info about the number of components and which format to use
 		EPixelFormat MultiCompFormat[NumAttributesDescs] = {};
@@ -367,10 +360,7 @@ public:
 
 		FIntVector3 SmallestAABBMin = FIntVector3(INT32_MAX);
 		FIntVector3 LargestAABBMax = FIntVector3(INT32_MIN);
-		FVector3f ScaleMin = FVector3f(FLT_MAX);
-		FVector3f ScaleMax = FVector3f(-FLT_MAX);
-		FVector3f TranslationMin = FVector3f(FLT_MAX);
-		FVector3f TranslationMax = FVector3f(-FLT_MAX);
+		const FTransform* LastGridTransformPtr = nullptr;
 
 		// Compute per source grid data of up to 4 different grids (one per component)
 		UniqueGridAdapters.SetNum((int32)NumSourceGrids);
@@ -412,12 +402,11 @@ public:
 				LargestAABBMax.Y = FMath::Max(LargestAABBMax.Y, GridInfo.VolumeActiveAABBMax.Y);
 				LargestAABBMax.Z = FMath::Max(LargestAABBMax.Z, GridInfo.VolumeActiveAABBMax.Z);
 
-				const FVector3f GridScale = GridInfo.Transform.GetScaleVector();
-				const FVector3f GridTranslation = GridInfo.Transform.GetOrigin();
-				ScaleMin = FVector3f::Min(ScaleMin, GridScale);
-				ScaleMax = FVector3f::Max(ScaleMax, GridScale);
-				TranslationMin = FVector3f::Min(TranslationMin, GridTranslation);
-				TranslationMax = FVector3f::Max(TranslationMax, GridTranslation);
+				if (LastGridTransformPtr && !LastGridTransformPtr->Equals(GridInfo.Transform))
+				{
+					UE_LOG(LogSparseVolumeTextureOpenVDBUtility, Warning, TEXT("Frame has multiple grids with different transforms in the same frame! Data will likely not be imported/displayed correctly!"));
+				}
+				LastGridTransformPtr = &GridInfo.Transform;
 
 				SVTCreateInfo.FallbackValues[AttributesIdx][CompIdx] = UniqueGridAdapters[SourceGridIndex]->GetBackgroundValue(SourceComponentIndex);
 
@@ -429,25 +418,12 @@ public:
 			}
 		}
 
-		const float ScaleDiffAbs = FVector3f(ScaleMax - ScaleMin).GetAbsMax();
-		const float TransDiffAbs = FVector3f(TranslationMax - TranslationMin).GetAbsMax();
-		if (bInBakeTranslation && ((ScaleDiffAbs > UE_SMALL_NUMBER) || (TransDiffAbs > UE_SMALL_NUMBER)))
-		{
-			UE_LOG(LogSparseVolumeTextureOpenVDBUtility, Warning, TEXT("Frame has multiple grids with different transforms!"));
-		}
-
 		const bool bEmptyBounds = SmallestAABBMin.X >= LargestAABBMax.X || SmallestAABBMin.Y >= LargestAABBMax.Y || SmallestAABBMin.Z >= LargestAABBMax.Z;
-
-		if (bInBakeTranslation && !bEmptyBounds)
-		{
-			FVector3f OffsetF = TranslationMin / ScaleMin;
-			Translation = FIntVector3(FMath::Floor(OffsetF.X), FMath::Floor(OffsetF.Y), FMath::Floor(OffsetF.Z));
-			SmallestAABBMin += Translation;
-			LargestAABBMax += Translation;
-		}
-
 		SVTCreateInfo.VirtualVolumeAABBMin = bEmptyBounds ? FIntVector3(INT32_MAX) : (SmallestAABBMin - VolumeBoundsMin);
 		SVTCreateInfo.VirtualVolumeAABBMax = bEmptyBounds ? FIntVector3(INT32_MIN) : (LargestAABBMax - VolumeBoundsMin);
+		
+		FrameTransform = LastGridTransformPtr ? *LastGridTransformPtr : FTransform::Identity;
+		FrameTransform.AddToTranslation(FVector(VolumeBoundsMin) * FrameTransform.GetScale3D()); // We made the volume relative to VolumeBoundsMin, so we need to undo this translation when using the frame transform
 
 		return true;
 	}
@@ -469,7 +445,7 @@ public:
 			UniqueGridAdapters[GridIdx]->IteratePhysical(
 				[&](const FIntVector3& Coord, uint32 NumVoxelComponents, float* VoxelValues)
 				{
-					FIntVector3 RemappedCoord = Coord + Translation - VolumeBoundsMin;
+					FIntVector3 RemappedCoord = Coord - VolumeBoundsMin;
 					for (const FSingleGridToComponentMapping& Mapping : GridToComponentMappings[GridIdx])
 					{
 						OnVisit(RemappedCoord, Mapping.AttributesIdx, Mapping.ComponentIdx, VoxelValues[Mapping.GridComponentIdx]);
@@ -477,6 +453,8 @@ public:
 				});
 		}
 	}
+
+	FTransform GetFrameTransform() const { return FrameTransform; }
 
 private:
 
@@ -494,16 +472,16 @@ private:
 	TStaticArray<uint32, NumAttributesDescs> NumComponents;
 	UE::SVT::FTextureDataCreateInfo SVTCreateInfo;
 	FIntVector3 VolumeBoundsMin;
-	FIntVector3 Translation;
+	FTransform FrameTransform;
 };
 
 #endif // OPENVDB_AVAILABLE
 
-bool ConvertOpenVDBToSparseVolumeTexture(TArray64<uint8>& SourceFile, const FOpenVDBImportOptions& ImportOptions, const FIntVector3& VolumeBoundsMin, bool bBakeTranslation, UE::SVT::FTextureData& OutResult)
+bool ConvertOpenVDBToSparseVolumeTexture(TArray64<uint8>& SourceFile, const FOpenVDBImportOptions& ImportOptions, const FIntVector3& VolumeBoundsMin, UE::SVT::FTextureData& OutResult, FTransform& OutFrameTransform)
 {
 #if OPENVDB_AVAILABLE
 	FSparseVolumeTextureDataProviderOpenVDB DataProvider;
-	if (!DataProvider.Initialize(SourceFile, ImportOptions, VolumeBoundsMin, bBakeTranslation))
+	if (!DataProvider.Initialize(SourceFile, ImportOptions, VolumeBoundsMin))
 	{
 		return false;
 	}
@@ -511,6 +489,7 @@ bool ConvertOpenVDBToSparseVolumeTexture(TArray64<uint8>& SourceFile, const FOpe
 	{
 		return false;
 	}
+	OutFrameTransform = DataProvider.GetFrameTransform();
 	return true;
 #else
 	return false;

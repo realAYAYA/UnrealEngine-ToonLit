@@ -197,10 +197,28 @@ bool FMeshApproximationTool::RunMerge(const FString& PackageName, const TArray<T
 	FString PackagePath = FPackageName::GetLongPackagePath(PackageName);
 	FString AssetName = FPackageName::GetLongPackageAssetName(PackageName);
 	Options.BasePackagePath = PackagePath / NewAssetNamePrefix + AssetName;
+
+	// Extracting static mesh components from the selected mesh components in the dialog
+	IGeometryProcessing_ApproximateActors::FInput Input;
+
+	for (const TSharedPtr<FMergeComponentData>& SelectedComponent : SelectedComponents)
+	{
+		// Determine whether or not this component should be incorporated according the user settings
+		if (SelectedComponent->bShouldIncorporate && SelectedComponent->PrimComponent.IsValid())
+		{
+			if (UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(SelectedComponent->PrimComponent.Get()))
+			{
+				if (StaticMeshComponent->GetStaticMesh() != nullptr)
+				{
+					Input.Components.Add(StaticMeshComponent);
+				}
+			}
+		}
+	}
 	
 	// Run actor approximation computation
 	IGeometryProcessing_ApproximateActors::FResults Results;
-	ApproxActorsAPI->ApproximateActors(Actors, Options, Results);
+	ApproxActorsAPI->ApproximateActors(Input, Options, Results);
 
 	auto ProcessNewAsset = [&PackagePath, &NewAssetNamePrefix](UObject* NewAsset)
 	{

@@ -1,6 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionSplitLeftRight.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "MaterialHLSLTree.h"
+#include "HLSLTree/HLSLTree.h"
+#include "HLSLTree/HLSLTreeCommon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionSplitLeftRight)
 
@@ -53,6 +57,42 @@ int32 UMaterialExpressionMaterialXSplitLeftRight::Compile(FMaterialCompiler* Com
 void UMaterialExpressionMaterialXSplitLeftRight::GetCaption(TArray<FString>& OutCaptions) const
 {
 	OutCaptions.Add(TEXT("MaterialX SplitLR"));
+}
+
+bool UMaterialExpressionMaterialXSplitLeftRight::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionA = A.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionB = B.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionCenter = Center.AcquireHLSLExpressionOrConstant(Generator, Scope, ConstCenter);
+	const FExpression* ExpressionCoordinates = Coordinates.AcquireHLSLExpressionOrExternalInput(Generator, Scope, Material::MakeInputTexCoord(ConstCoordinate));
+
+	if(!ExpressionA || !ExpressionB || !ExpressionCenter || !ExpressionCoordinates)
+	{
+		return false;
+	}
+
+	FTree& Tree = Generator.GetTree();
+
+	const FExpression* ExpressionTexCoordU = Tree.NewSwizzle(FSwizzleParameters(0), ExpressionCoordinates);
+
+	const FExpression* ExpressionAFWidth =
+		Tree.NewMul(
+			Tree.NewLength(
+				Tree.NewExpression<FExpressionAppend>(
+					Tree.NewExpression<FExpressionDerivative>(EDerivativeCoordinate::Ddx, ExpressionTexCoordU),
+					Tree.NewExpression<FExpressionDerivative>(EDerivativeCoordinate::Ddy, ExpressionTexCoordU))),
+			Tree.NewConstant(0.70710678118654757f));
+
+	OutExpression = Tree.NewLerp(ExpressionA,
+								 ExpressionB,
+								 Tree.NewSmoothStep(
+									 Tree.NewSub(ExpressionCenter, ExpressionAFWidth),
+									 Tree.NewAdd(ExpressionCenter, ExpressionAFWidth),
+									 ExpressionTexCoordU));
+
+	return true;
 }
 #endif
 

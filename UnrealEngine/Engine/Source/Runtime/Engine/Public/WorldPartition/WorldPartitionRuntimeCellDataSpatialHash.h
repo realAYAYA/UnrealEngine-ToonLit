@@ -17,13 +17,11 @@ class UWorldPartitionRuntimeCellDataSpatialHash : public UWorldPartitionRuntimeC
 	ENGINE_API virtual void ResetStreamingSourceInfo() const override;
 	ENGINE_API virtual void AppendStreamingSourceInfo(const FWorldPartitionStreamingSource& Source, const FSphericalSector& SourceShape) const override;
 	ENGINE_API virtual void MergeStreamingSourceInfo() const override;
-	ENGINE_API virtual int32 SortCompare(const UWorldPartitionRuntimeCellData* InOther, bool bCanUseSortingCache = true) const override;
+	ENGINE_API virtual int32 SortCompare(const UWorldPartitionRuntimeCellData* InOther) const override;
 	ENGINE_API virtual FBox GetCellBounds() const override;
+	ENGINE_API virtual FBox GetStreamingBounds() const override;
 	ENGINE_API virtual bool IsDebugShown() const override;
 	//~End UWorldPartitionRuntimeCellData
-
-	bool IsBlockingSource() const { return bCachedIsBlockingSource; }
-	double GetMinSquareDistanceToBlockingSource() const { return CachedMinSquareDistanceToBlockingSource; }
 
 	UPROPERTY()
 	FVector Position;
@@ -31,20 +29,8 @@ class UWorldPartitionRuntimeCellDataSpatialHash : public UWorldPartitionRuntimeC
 	UPROPERTY()
 	float Extent;
 
-	UPROPERTY()
-	int32 Level;
-
-	UPROPERTY()
-	FName GridName;
-
 private:
 	ENGINE_API float ComputeSourceToCellAngleFactor(const FSphericalSector& SourceShape) const;
-
-	// Used to determine if cell was requested by blocking source
-	mutable bool bCachedIsBlockingSource;
-
-	// Square distance from the cell to the closest blocking streaming source
-	mutable double CachedMinSquareDistanceToBlockingSource;
 
 	// Square distance from the cell to the closest streaming source
 	mutable double CachedMinSquareDistanceToSource;
@@ -57,9 +43,18 @@ private:
 	// - The angle between the cell and each source orientation
 	mutable double CachedSourceSortingDistance;
 
+	// Source Priorities
+	mutable TArray<float> CachedSourcePriorityWeights;
+
 	// Square distance from the cell to  the intersecting streaming sources
 	mutable TArray<double> CachedSourceSquaredDistances;
 
 	// Intersecting streaming source shapes
 	mutable TArray<FSphericalSector> CachedInstersectingShapes;
+
+	// 2D version of CachedMinBlockOnSlowStreamingRatio
+	mutable double CachedMinBlockOnSlowStreamingRatio2D;
+
+	// 2D version of CachedMinSquareDistanceToBlockingSource
+	mutable double CachedMinSquareDistanceToBlockingSource2D;
 };

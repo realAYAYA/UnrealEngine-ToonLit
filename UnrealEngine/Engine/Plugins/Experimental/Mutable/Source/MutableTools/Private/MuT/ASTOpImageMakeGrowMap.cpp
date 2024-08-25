@@ -18,9 +18,6 @@
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -40,8 +37,9 @@ namespace mu
 
 	bool ASTOpImageMakeGrowMap::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpImageMakeGrowMap* other = dynamic_cast<const ASTOpImageMakeGrowMap*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpImageMakeGrowMap* other = static_cast<const ASTOpImageMakeGrowMap*>(&otherUntyped);
 			return Mask == other->Mask &&
 				Border == other->Border;
 		}

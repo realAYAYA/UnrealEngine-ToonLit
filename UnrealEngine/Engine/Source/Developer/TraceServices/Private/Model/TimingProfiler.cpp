@@ -568,8 +568,8 @@ ITimingProfilerButterfly* FTimingProfilerProvider::CreateButterfly(double Interv
 				StackEntry.Node->ExclusiveTime += StackEntry.ExclusiveTime;
 				++StackEntry.Node->Count;
 
-				CurrentCallstack.Pop(false);
-				CurrentCallstackKey.TimerStack.Pop(false);
+				CurrentCallstack.Pop(EAllowShrinking::No);
+				CurrentCallstackKey.TimerStack.Pop(EAllowShrinking::No);
 			}
 
 			return EEventEnumerate::Continue;

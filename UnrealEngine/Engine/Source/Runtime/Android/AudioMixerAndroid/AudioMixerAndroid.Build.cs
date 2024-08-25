@@ -14,7 +14,6 @@ public class AudioMixerAndroid : ModuleRules
 			new string[] {
 				"Core",
 				"AudioMixerCore",
-				"BinkAudioDecoder"
 			}
 			);
 			

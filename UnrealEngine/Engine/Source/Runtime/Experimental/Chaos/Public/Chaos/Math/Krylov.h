@@ -69,7 +69,7 @@ template <class T, typename Func, int32 d=3>
 void LanczosCG(
 	Func multiplyA, 
 	TArray<TVector<T, d>>& x,
-	TArray<TVector<T, d>>& b,
+	const TArray<TVector<T, d>>& b,
 	const int max_it, 
 	const T res = 1e-4, 
 	const TArray<int32>* use_list = nullptr)

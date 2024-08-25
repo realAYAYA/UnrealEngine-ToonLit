@@ -3,11 +3,14 @@
 #pragma once
 
 #include "IDetailCustomization.h"
+#include "Input/Reply.h"
 
+struct EVisibility;
 class FDMXPixelMappingToolkit;
-class UDMXPixelMappingLayoutViewModel;
-
+class IPropertyHandle;
 class IPropertyUtilities;
+class STextBlock;
+class UDMXPixelMappingLayoutViewModel;
 
 
 /** Details customization for the Layout View Model */
@@ -27,7 +30,19 @@ public:
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailLayout) override;
 	//~ End IDetailCustomization interface 
 
-protected:
+private:
+	/** Returns the visibility for the bAutoApply property */
+	EVisibility GetAutoApplyPropertyVisiblity() const;
+
+	/** Returns the visibility for the 'Apply Layout Script' button */
+	EVisibility GetApplyLayoutScriptButtonVisibility() const;
+
+	/** Called when the apply layout script button was clicked */
+	FReply OnApplyLayoutScriptClicked();
+
+	/** Updates the info text */
+	void UpdateInfoText();
+
 	/** Retuns the object that is being customized */
 	UDMXPixelMappingLayoutViewModel* GetLayoutViewModel() const;
 
@@ -39,6 +54,12 @@ protected:
 
 	/** If true, shows an info why the Layout Script Class property is hidden */
 	bool bShowLayoutScriptClassHiddenInfo = true;
+
+	/** Text block displaying info about what's being arranged */
+	TSharedPtr<STextBlock> InfoTextBlock;
+
+	/** Property handle for the bAutoApply property */
+	TSharedPtr<IPropertyHandle> AutoApplyHandle;
 
 	/** Property utilities for this customization */
 	TSharedPtr<IPropertyUtilities> PropertyUtilities;

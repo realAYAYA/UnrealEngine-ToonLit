@@ -973,6 +973,8 @@ struct RIGVM_API FRigVMFunction_MathVectorMakeBezierFourPoint : public FRigVMFun
 
 /**
  * Clamps a position using a plane collision, cylindric collision or spherical collision.
+ * The collision happens both towards an inner envelope (minimum) and towards an outer envelope (maximum).
+ * You can disable the inner / outer envelope / collision by setting the minimum / maximum to 0.0.
  */
 USTRUCT(meta = (DisplayName = "Clamp Spatially", TemplateName="ClampSpatially", Keywords="Collide,Collision"))
 struct RIGVM_API FRigVMFunction_MathVectorClampSpatially: public FRigVMFunction_MathVectorBase
@@ -1004,9 +1006,16 @@ struct RIGVM_API FRigVMFunction_MathVectorClampSpatially: public FRigVMFunction_
 	UPROPERTY(meta = (Input))
 	TEnumAsByte<ERigVMClampSpatialMode::Type> Type;
 
+	// The minimum allowed distance at which a collision occurs.
+	// Note: For capsule this represents the radius.
+	// Disable by setting to 0.0.
 	UPROPERTY(meta = (Input))
 	float Minimum;
 
+	// This maximum allowed distance.
+	// A collision will occur towards the center at this wall.
+	// Note: For capsule this represents the length.
+	// Disable by setting to 0.0.
 	UPROPERTY(meta = (Input))
 	float Maximum;
 

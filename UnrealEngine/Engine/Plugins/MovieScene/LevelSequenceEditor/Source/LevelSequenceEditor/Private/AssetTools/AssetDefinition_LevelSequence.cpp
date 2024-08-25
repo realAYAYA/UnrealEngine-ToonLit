@@ -30,9 +30,6 @@ EAssetCommandResult UAssetDefinition_LevelSequence::OpenAssets(const FAssetOpenA
 
 	for (ULevelSequence* LevelSequence : OpenArgs.LoadObjects<ULevelSequence>())
 	{
-		// Legacy upgrade
-		LevelSequence->ConvertPersistentBindingsToDefault(WorldContext);
-
 		TSharedRef<FLevelSequenceEditorToolkit> Toolkit = MakeShareable(new FLevelSequenceEditorToolkit(FLevelSequenceEditorStyle::Get()));
 		Toolkit->Initialize(OpenArgs.GetToolkitMode(), OpenArgs.ToolkitHost, LevelSequence);
 	}

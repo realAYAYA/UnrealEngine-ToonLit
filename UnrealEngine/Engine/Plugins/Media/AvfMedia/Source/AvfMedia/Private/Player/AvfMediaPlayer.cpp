@@ -107,6 +107,7 @@
 	@public TSharedPtr<FArchive, ESPMode::ThreadSafe> FileAReader;
 	@public FCriticalSection CriticalSection;
 	@public bool bInitialized;
+	@public TFuture<void> AsyncLoadingTask;
 }
 @end
 
@@ -144,7 +145,7 @@
 	[loadingRequest retain];
 	
 	// Allow this function to return quickly so the resource loader knows the data is probabky coming and doesn't error
-	Async(EAsyncExecution::ThreadPool, [self, loadingRequest]()
+	AsyncLoadingTask = Async(EAsyncExecution::ThreadPool, [self, loadingRequest]()
 	{
 		FScopeLock ScopeLock(&CriticalSection);
 		
@@ -522,6 +523,14 @@ void FAvfMediaPlayer::Close()
 			[PlayerItem removeObserver:MediaHelper forKeyPath:@"status"];
 		}
 
+		// Cancel the pending seeks before releasing the MediaPlayer
+		[PlayerItem cancelPendingSeeks];
+		[PlayerItem.asset cancelLoading];
+		// Override the completionHandler in case it hasn't been invoked before releasing PlayerItem.
+		[PlayerItem.asset loadValuesAsynchronouslyForKeys:@[@"tracks"] completionHandler:^
+		{
+		}];
+
 		[PlayerItem release];
 		PlayerItem = nil;
 	}
@@ -542,6 +551,8 @@ void FAvfMediaPlayer::Close()
 	
 	if(MediaResourceLoader != nil)
 	{
+		// Wait the loading task to finish before releasing the loader.
+		MediaResourceLoader->AsyncLoadingTask.Wait();
 		[MediaResourceLoader release];
 		MediaResourceLoader = nil;
 	}

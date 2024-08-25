@@ -89,6 +89,9 @@ private:
 	void HandleAddTrackSubMenu(FMenuBuilder& MenuBuilder, TArray<FGuid> ObjectBindings, UMovieSceneTrack* Track);
 	void HandleAddControlRigSubMenu(FMenuBuilder& MenuBuilder, TArray<FGuid> ObjectBindings, UMovieSceneTrack* Track);
 
+	void ToggleIsAdditiveControlRig();
+	bool IsToggleIsAdditiveControlRig();
+	
 	void ToggleFilterAssetBySkeleton();
 	bool IsToggleFilterAssetBySkeleton();
 
@@ -98,9 +101,8 @@ private:
 
 	/** Control Rig Picked */
 	void AddControlRig(UClass* InClass, UObject* BoundActor, FGuid ObjectBinding);
-	void AddControlRig(UClass* InClass, UObject* BoundActor, FGuid ObjectBinding, UControlRig* InExistingControlRig);
+	void AddControlRig(const UClass* InClass, UObject* BoundActor, FGuid ObjectBinding, UControlRig* InExistingControlRig);
 	void AddControlRigFromComponent(FGuid InGuid);
-	void AddFKControlRig(TArray<FGuid> ObjectBindings);
 	
 	/** Delegate for Selection Changed Event */
 	void OnSelectionChanged(TArray<UMovieSceneTrack*> InTracks);
@@ -127,7 +129,7 @@ private:
 	void HandleControlModified(UControlRig* Subject, FRigControlElement* ControlElement, const FRigControlModifiedContext& Context);
 	void HandleControlSelected(UControlRig* Subject, FRigControlElement* ControlElement, bool bSelected);
 	void HandleControlUndoBracket(UControlRig* Subject, bool bOpenUndoBracket);
-	void HandleOnInitialized(URigVMHost* Subject, const FName& InEventName);
+	void HandleOnPostConstructed(UControlRig* Subject, const FName& InEventName);
 	void HandleOnControlRigBound(UControlRig* InControlRig);
 	void HandleOnObjectBoundToControlRig(UObject* InObject);
 
@@ -166,8 +168,8 @@ private:
 	/** Select control rig if not selected, select controls from key areas */
 	void SelectRigsAndControls(UControlRig* Subject, const TArray<const IKeyArea*>& KeyAreas);
 
-	/** Handle Creation for SkelMeshComp or Actor Owner, either may have a binding, use optional control rig to pick one*/
-	FMovieSceneTrackEditor::FFindOrCreateHandleResult FindOrCreateHandleToSceneCompOrOwner(USceneComponent* InComp, UControlRig* InControlRig = nullptr);
+	/** Handle Creation for Skeleton, SkelMeshComp or Actor Owner, they may or may not have a binding, use optional control rig to pick one */
+	FMovieSceneTrackEditor::FFindOrCreateHandleResult FindOrCreateHandleToObject(UObject* InObj, UControlRig* InControlRig = nullptr);
 
 	/** Handle Creation for control rig track given the object binding and the control rig */	
 	FMovieSceneTrackEditor::FFindOrCreateTrackResult FindOrCreateControlRigTrackForObject(FGuid ObjectBinding, UControlRig* ControlRig, FName PropertyName = NAME_None, bool bCreateTrackIfMissing = true);
@@ -185,39 +187,44 @@ private:
 	/** Select Bones to Animate on FK Rig*/
 	void SelectFKBonesToAnimate(UFKControlRig* FKControlRig, UMovieSceneControlRigParameterTrack* Track);
 
-	/** Toggle FK Control Rig*/
-	void ToggleFKControlRig(UMovieSceneControlRigParameterTrack* Track, UFKControlRig* FKControlRig);
-
-	/** Convert to FK Control Rig*/
-	void ConvertToFKControlRig(FGuid ObjectBinding, UObject* BoundObject, USkeletalMeshComponent* SkelMeshComp, USkeleton* Skeleton);
-
 	/** Bake To Control Rig Sub Menu*/
 	void BakeToControlRigSubMenu(FMenuBuilder& MenuBuilder, FGuid ObjectBinding, UObject* BoundObject, USkeletalMeshComponent* SkelMeshComp,USkeleton* Skeleton);
 	
 	/** Bake To Control Rig Sub Menu*/
 	void BakeToControlRig(UClass* InClass, FGuid ObjectBinding,UObject* BoundObject, USkeletalMeshComponent* SkelMeshComp, USkeleton* Skeleton);
 
+	/** Bake Inersion of Additive Control Rig to Rest Pose*/
+	void BakeInvertedPose(UControlRig* InControlRig, UMovieSceneControlRigParameterTrack* Track);
+
+	/** Return true if the control rig is in layered mode */
+	bool IsLayered(UMovieSceneControlRigParameterTrack* Track) const;
+
+	/** Convert an absolute control rit to a layered control rig */
+	void ConvertIsLayered(UMovieSceneControlRigParameterTrack* Track);
+
 	/** Set Up EditMode for Specified Control Rig*/
 	void SetUpEditModeIfNeeded(UControlRig* ControlRig);
 
+	/** Helper functions to iterate over UMovieSceneControlRigParameterTracks in the currently focussed MovieScene*/
+	void IterateTracks(TFunctionRef<bool(UMovieSceneControlRigParameterTrack*)> Callback) const;
+	void IterateTracksInMovieScene(UMovieScene& MovieScene, TFunctionRef<bool(UMovieSceneControlRigParameterTrack*)> Callback) const; 
 private:
-
 	/** Command Bindings added by the Transform Track Editor to Sequencer and curve editor. */
 	TSharedPtr<FUICommandList> CommandBindings;
 	FAcquiredResources AcquiredResources;
 
 public:
 
-	void AddControlKeys(USceneComponent *InSceneComp, UControlRig* InControlRig, FName PropertyName,
+	void AddControlKeys(UObject* InObject, UControlRig* InControlRig, FName PropertyName,
 		FName ParameterName, EControlRigContextChannelToKey ChannelsToKey, ESequencerKeyMode KeyMode,
 		float InLocalTime, const bool bInConstraintSpace = false);
 	void GetControlRigKeys(UControlRig* InControlRig, FName ParameterName, EControlRigContextChannelToKey ChannelsToKey,
 		ESequencerKeyMode KeyMode, UMovieSceneControlRigParameterSection* SectionToKey,	FGeneratedTrackKeys& OutGeneratedKeys,
 		const bool bInConstraintSpace = false);
 	FKeyPropertyResult AddKeysToControlRig(
-		USceneComponent *InSceneComp, UControlRig* InControlRig, FFrameNumber KeyTime, FFrameNumber EvaluateTime, FGeneratedTrackKeys& GeneratedKeys,
+		UObject* InObject, UControlRig* InControlRig, FFrameNumber KeyTime, FFrameNumber EvaluateTime, FGeneratedTrackKeys& GeneratedKeys,
 		ESequencerKeyMode KeyMode, TSubclassOf<UMovieSceneTrack> TrackClass, FName ControlRigName, FName RigControlName);
-	FKeyPropertyResult AddKeysToControlRigHandle(USceneComponent *InSceneComp, UControlRig* InControlRig,
+	FKeyPropertyResult AddKeysToControlRigHandle(UObject* InObject, UControlRig* InControlRig,
 		FGuid ObjectHandle, FFrameNumber KeyTime, FFrameNumber EvaluateTime, FGeneratedTrackKeys& GeneratedKeys,
 		ESequencerKeyMode KeyMode, TSubclassOf<UMovieSceneTrack> TrackClass, FName ControlRigName, FName RigControlName);
 	/**
@@ -263,6 +270,9 @@ private:
 	/** A flag to determine if the next update coming from the timer should be skipped */
 	bool bSkipNextSelectionFromTimer;
 
+	/** Whether or not this rig will be used as an layered control rig */
+	bool bIsLayeredControlRig;
+
 	/** Whether or not we should check Skeleton when filtering*/
 	bool bFilterAssetBySkeleton;
 
@@ -278,6 +288,9 @@ private:
 	/** An index counter for the opened undo brackets */
 	int32 ControlUndoBracket;
 
+	/** A counter for occurred control changes during a control undo bracket */
+	int32 ControlChangedDuringUndoBracket;
+
 	/** Lock to avoid registering multiple transactions from different tracks at the same time */
 	static FCriticalSection ControlUndoTransactionMutex;
 
@@ -291,6 +304,11 @@ private:
 	TSet<FDelegateHandle> ConstraintHandlesToClear;
 
 	friend class FControlRigBlueprintActions;
+
+	/** Whether or not animation/control rig edit mode was open when we closed*/
+	static bool bControlRigEditModeWasOpen;
+	/** Previous selection if open*/
+	static TArray <TPair<UClass*, TArray<FName>>> PreviousSelectedControlRigs;
 };
 
 

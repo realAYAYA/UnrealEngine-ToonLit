@@ -89,7 +89,7 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 			this.botLogger.error(`Problem starting up bot ${botname}: ${error}`);
 		}
 
-		this.settings = new Settings(botname, this.branchGraph, this.botLogger)
+		this.settings = new Settings(botname, this.branchGraph, this.botLogger, this.p4)
 
 		this.externalUrl = externalUrl
 	}
@@ -99,7 +99,7 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 		return branch && branch.bot ? branch.bot as NodeBot : undefined
 	}
 
-	initBots(ubergraph: GraphAPI) {
+	initBots(ubergraph: GraphAPI, previewMode: boolean) {
 		this.eventTriggers = new BotEventTriggers(this.branchGraph.botname, this.branchGraph.config)
 		this.eventTriggers.registerHandler(this)
 		const blockageUrlGenerator: NodeOpUrlGenerator = (blockage : Blockage | null) => { 
@@ -131,7 +131,7 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 		for (const branch of this.branchGraph.branches) {
 			if (branch.enabled) {
 				const persistence = this.settings.getContext(branch.upperName)
-				branch.bot = new NodeBot(branch, this.mailer, this.slackMessages, this.externalUrl, this.eventTriggers, persistence, ubergraph,
+				branch.bot = new NodeBot(branch, previewMode, this.mailer, this.slackMessages, this.externalUrl, this.eventTriggers, persistence, ubergraph,
 					async () => {
 						const errPair = await this.handleRequestedIntegrationsForAllNodes()
 						if (errPair) {
@@ -163,11 +163,7 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 				this.botlist.push(branch.bot)
 		}
 
-		if (this.autoUpdater) {
-			this.botlist = [this.autoUpdater, ...this.botlist]
-		}
-
-		this.waitTime = Math.ceil(1000 * this.branchGraph.config.checkIntervalSecs) / this.botlist.length
+		this.waitTime = 1000 * this.branchGraph.config.checkIntervalSecs
 		this.startBotsAsync()
 	}
 
@@ -216,7 +212,9 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 					break
 				}
 				try {
+					node.isActive = true
 					await node.processQueuedChange(request)
+					node.isActive = false
 				}
 				catch(err) {
 					return [node, err]
@@ -233,7 +231,7 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 
 		let errStr = err.toString()
 		if (errStr.length > MAX_ERROR_LENGTH_TO_REPORT) {
-			errStr = errStr.substr(0, MAX_ERROR_LENGTH_TO_REPORT) + ` ... (error length ${errStr.length})`
+			errStr = errStr.substring(0, MAX_ERROR_LENGTH_TO_REPORT) + ` ... (error length ${errStr.length})`
 		}
 		else {
 			errStr += err.stack
@@ -262,6 +260,13 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 
 		this._runningBots = true
 
+		if (this.autoUpdater) {
+			if (!this.autoUpdater.isRunning) {
+				this.botLogger.debug(`Starting bot ${this.autoUpdater.fullNameForLogging}`)
+				this.autoUpdater.start()
+			}
+		}
+
 		for (const bot of this.botlist) {
 			if (!bot.isRunning) {
 				this.botLogger.debug(`Starting bot ${bot.fullNameForLogging}`)
@@ -272,22 +277,21 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 		while (true) {
 			const activity = new Map<string, TickJournal>()
 
-			for (const bot of this.botlist) {
+			const startTime = Date.now()
+
+			let tickBot = async function(bot: Bot, crashRequested: string|null): Promise<[Bot,boolean|Error]> {		
 				bot.isActive = true
 				let ticked = false
 				try {
 					// crashMe API support - simulate a bot crashing and stopping the GraphBot instance
-					if (this.crashRequested) {
-						const errMsg = this.crashRequested
-						this.crashRequested = null
-						throw new Error(errMsg)
+					if (crashRequested) {
+						throw new Error(crashRequested)
 					}
 
 					ticked = await bot.tick()
 				}
 				catch (err) {
-					this.handleNodebotError(bot, err)
-					return
+					return [bot,err]
 				}
 				bot.isActive = false
 
@@ -296,10 +300,18 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 					if (bot.tickJournal) {
 						const nodeBot = bot as NodeBot
 						bot.tickJournal.monitored = nodeBot.branch.isMonitored
-						activity.set(nodeBot.branch.upperName, bot.tickJournal)
 					}
 				}
+				return [bot,ticked]
+			}
 
+			// The autoupdater needs to fully run before we parallelize the remaining bots
+			if (this.autoUpdater) {
+				const [_, autoUpdateResult] = await tickBot(this.autoUpdater, null)
+				if (typeof autoUpdateResult !== 'boolean') {
+					this.handleNodebotError(this.autoUpdater, autoUpdateResult)
+					return
+				}
 				if (this._shutdownCb) {
 					this._shutdownCb()
 					this._runningBots = false
@@ -307,8 +319,36 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 					this._shutdownCb = null
 					return
 				}
+			}
 
-				await new Promise(done => setTimeout(done, this.waitTime!))
+			const tickResults = await Promise.all(this.botlist.map(async (bot, index) => tickBot(bot, index == 0 ? this.crashRequested : null)));
+
+			this.crashRequested = null
+			
+			let botCrashed = false
+			for (const [bot, result] of tickResults)
+			{
+				if (typeof result === 'boolean') {
+					if (result && bot.tickJournal) {
+						const nodeBot = bot as NodeBot
+						activity.set(nodeBot.branch.upperName, bot.tickJournal)
+					}
+				}
+				else {
+					botCrashed = true
+					this.handleNodebotError(bot, result)
+				}
+			}
+			if (botCrashed) {
+				return
+			}
+
+			if (this._shutdownCb) {
+				this._shutdownCb()
+				this._runningBots = false
+				delete this.eventTriggers
+				this._shutdownCb = null
+				return
 			}
 
 			const errPair = await this.handleRequestedIntegrationsForAllNodes()
@@ -320,6 +360,12 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 
 			roboAnalytics!.reportActivity(this.branchGraph.botname, activity)
 			roboAnalytics!.reportMemoryUsage('main', process.memoryUsage().heapUsed)
+
+			const duration = Date.now() - startTime;
+			if (duration < this.waitTime!)
+			{
+				await new Promise(done => setTimeout(done, this.waitTime!-duration))
+			}
 
 			// reset tick journals to start counting all events, some of which may happen outside of the bot's tick
 			for (const bot of this.botlist) {
@@ -388,7 +434,8 @@ export class GraphBot implements GraphInterface, BotEventHandler {
 				acknowledgeUrl: OperationUrlHelper.createAcknowledgeUrl(this.externalUrl, 'botname', 'sourcebranch', '0'),
 				createShelfUrl: OperationUrlHelper.createCreateShelfUrl(this.externalUrl, 'botname', 'sourcebranch', '0', 'targetbranch', 'targetstream'),
 				skipUrl: OperationUrlHelper.createSkipUrl(this.externalUrl, 'botname', 'sourcebranch', '0', 'targetbranch'),
-				stompUrl: OperationUrlHelper.createStompUrl(this.externalUrl, 'botname', 'sourcebranch', '0', 'targetbranch')
+				stompUrl: OperationUrlHelper.createStompUrl(this.externalUrl, 'botname', 'sourcebranch', '0', 'targetbranch'),
+				unlockUrl: OperationUrlHelper.createUnlockUrl(this.externalUrl, 'botname', 'sourcebranch', '0', 'targetbranch')
 			}
 			return urls
 		}

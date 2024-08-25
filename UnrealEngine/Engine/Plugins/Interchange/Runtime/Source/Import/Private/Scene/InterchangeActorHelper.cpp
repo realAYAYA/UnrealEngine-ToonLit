@@ -17,6 +17,7 @@
 #include "Engine/World.h"
 #include "MaterialDomain.h"
 #include "Materials/Material.h"
+#include "Misc/SecureHash.h"
 
 #if WITH_EDITOR
 #include "Editor/EditorEngine.h"
@@ -38,7 +39,7 @@ AActor* UE::Interchange::ActorHelper::GetSpawnedParentActor(const UInterchangeBa
 
 AActor* UE::Interchange::ActorHelper::SpawnFactoryActor(const UInterchangeFactoryBase::FImportSceneObjectsParams& CreateSceneObjectsParams)
 {
-	const UInterchangeActorFactoryNode* FactoryNode = Cast<UInterchangeActorFactoryNode>(CreateSceneObjectsParams.FactoryNode);
+	UInterchangeActorFactoryNode* FactoryNode = Cast<UInterchangeActorFactoryNode>(CreateSceneObjectsParams.FactoryNode);
 	const UInterchangeBaseNodeContainer* NodeContainer = CreateSceneObjectsParams.NodeContainer;
 
 	if (!FactoryNode || !NodeContainer)
@@ -47,7 +48,7 @@ AActor* UE::Interchange::ActorHelper::SpawnFactoryActor(const UInterchangeFactor
 	}
 
 	FActorSpawnParameters SpawnParameters;
-	SpawnParameters.Name = FName(*CreateSceneObjectsParams.ObjectName);
+	SpawnParameters.Name = FName(CreateSceneObjectsParams.ObjectName);
 	SpawnParameters.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Requested;
 	SpawnParameters.OverrideLevel = CreateSceneObjectsParams.Level;
 	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -112,7 +113,7 @@ AActor* UE::Interchange::ActorHelper::SpawnFactoryActor(const UInterchangeFactor
 	if (SpawnedActor)
 	{
 #if WITH_EDITOR
-		SpawnedActor->SetActorLabel(SpawnParameters.Name.ToString());
+		SpawnedActor->SetActorLabel(FactoryNode->GetDisplayLabel());
 #endif
 		if (!SpawnedActor->GetRootComponent())
 		{

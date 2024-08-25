@@ -168,13 +168,41 @@ private:
 	TRefCountPtr<IPooledRenderTarget> DistantSkyLightLutTexture;
 };
 
+/** Pending RDG resource to commit after the pre-pass / nanite rasterization so that RenderSkyAtmosphereLookUpTables() can overlap them on async compute. */
+class FSkyAtmospherePendingRDGResources
+{
+public:
+	// Sky env map capture uses the view UB, which contains the LUTs computed above. We need to transition them to readable now.
+	void CommitToSceneAndViewUniformBuffers(FRDGBuilder& GraphBuilder, FRDGExternalAccessQueue& ExternalAccessQueue) const;
+
+private:
+	struct FViewRDGResources
+	{
+		FRDGTextureRef SkyAtmosphereViewLutTexture = nullptr;
+		FRDGTextureRef SkyAtmosphereCameraAerialPerspectiveVolume = nullptr;
+	};
+
+	FSceneRenderer* SceneRenderer = nullptr;
+	TArray<FViewRDGResources, TInlineAllocator<4>> ViewResources;
+
+	FRDGTextureRef DistantSkyLightLut = nullptr;
+	FRDGTextureRef RealTimeReflectionCaptureSkyAtmosphereViewLutTexture = nullptr;
+	FRDGTextureRef RealTimeReflectionCaptureCamera360APLutTexture = nullptr;
+	FRDGTextureRef TransmittanceLut = nullptr;
+
+	friend class FSceneRenderer;
+};
+
 enum class ESkyAtmospherePassLocation : uint32
 {
 	// Renders just before the Occlusion queries. Good for wave occuppency when SkyAtmosphere is async
 	BeforeOcclusion,
 
 	// Renders just before the BasePass.
-	BeforeBasePass
+	BeforeBasePass,
+
+	// Renders just before prepass but can overlap on async compute with it too.
+	BeforePrePass,
 };
 
 // Returns the location in the frame where SkyAtmosphere is rendered.

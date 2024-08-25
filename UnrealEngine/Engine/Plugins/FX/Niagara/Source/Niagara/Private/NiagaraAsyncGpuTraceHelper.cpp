@@ -289,9 +289,9 @@ ENDICollisionQuery_AsyncGpuTraceProvider::Type FNiagaraAsyncGpuTraceHelper::Reso
 	return FNiagaraAsyncGpuTraceProvider::ResolveSupportedType(InType, GetDefault<UNiagaraSettings>()->NDICollisionQuery_AsyncGpuTraceProviderOrder);
 }
 
-bool FNiagaraAsyncGpuTraceHelper::RequiresDistanceFieldData(ENDICollisionQuery_AsyncGpuTraceProvider::Type InType)
+bool FNiagaraAsyncGpuTraceHelper::RequiresGlobalDistanceField(ENDICollisionQuery_AsyncGpuTraceProvider::Type InType)
 {
-	return FNiagaraAsyncGpuTraceProvider::RequiresDistanceFieldData(InType, GetDefault<UNiagaraSettings>()->NDICollisionQuery_AsyncGpuTraceProviderOrder);
+	return FNiagaraAsyncGpuTraceProvider::RequiresGlobalDistanceField(InType, GetDefault<UNiagaraSettings>()->NDICollisionQuery_AsyncGpuTraceProviderOrder);
 }
 
 bool FNiagaraAsyncGpuTraceHelper::RequiresRayTracingScene(ENDICollisionQuery_AsyncGpuTraceProvider::Type InType)

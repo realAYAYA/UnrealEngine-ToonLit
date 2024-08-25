@@ -5,7 +5,9 @@
 #include "../Common.ush"
 #include "../BitPacking.ush"
 #include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
 #include "/Engine/Shared/NaniteDefinitions.h"
+#include "/Engine/Shared/HLSLStaticAssert.h"
 #include "NanitePackedNaniteView.ush"
 
 #ifndef DEBUG_FLAGS
@@ -71,7 +73,7 @@ struct FCluster
 	bool	bHasTangents;
 	uint	NumUVs;
 	uint	ColorMode;
-	uint	UV_Prec;
+	uint	UVBitOffsets;
 
 	uint	ColorMin;
 	uint	ColorBits;
@@ -125,37 +127,39 @@ struct FNaniteView
 	float4x4	TranslatedWorldToView;
 	float4x4	TranslatedWorldToClip;
 	float4x4	ViewToClip;
-	FLWCMatrix	ClipToWorld;
+	FDFMatrix	ClipToWorld;
 	
 	float4x4	PrevTranslatedWorldToView;
 	float4x4	PrevTranslatedWorldToClip;
 	float4x4	PrevViewToClip;
-	FLWCMatrix	PrevClipToWorld;
+	FDFMatrix	PrevClipToWorld;
 
 	float4		TranslatedGlobalClipPlane;
 
 	int4		ViewRect;
 	float4		ViewSizeAndInvSize;
 	float4		ClipSpaceScaleOffset;
-	FLWCVector3	PreViewTranslation;
-	FLWCVector3	PrevPreViewTranslation;
-	FLWCVector3	WorldCameraOrigin;
-	float3		DrawDistanceOriginTranslatedWorld;
+	FDFVector3	PreViewTranslation;
+	FDFVector3	PrevPreViewTranslation;
+	FDFVector3	WorldCameraOrigin;
+	float3		CullingViewOriginTranslatedWorld;
 	float3		ViewForward;
-	float3		ViewTilePosition;
-	float3		MatrixTilePosition;
+	float3		ViewOriginHigh;
 	float		NearPlane;
 	float		LODScale;
 	float		LODScaleHW;
 	float		MinBoundsRadiusSq;
 	uint		StreamingPriorityCategory;
-    uint		Flags;
+	uint		Flags;
 	int			TargetLayerIndex;
 	int			TargetMipLevel;
 	int			TargetNumMipLevels;
 	int			TargetPrevLayerIndex;
 	float		RangeBasedCullingDistance;
 	int4		HZBTestViewRect;
+	float		CullingViewScreenMultiple;
+	uint		InstanceOcclusionQueryMask;
+	uint		LightingChannelMask;
 };
 
 struct FInstanceDraw
@@ -210,15 +214,63 @@ struct FNaniteFullscreenVSToPS
 	StructuredBuffer<uint>			RayTracingDataBuffer;
 #endif
 
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM6 || PLATFORM_SUPPORTS_SM6_0_WAVE_OPERATIONS	// TODO: This header can be included from SM5 from BuildInstanceDrawCommands.usf. Refactor it.
+HLSL_STATIC_ASSERT(sizeof(FInstanceDynamicData) == 132, "Unexpected size of FInstanceDynamicData. Update WaveReadLaneAt to reflect changes.");
+FInstanceDynamicData WaveReadLaneAt(FInstanceDynamicData In, uint SrcIndex)
+{
+	FInstanceDynamicData Result;
+
+	Result.LocalToTranslatedWorld		= WaveReadLaneAtMatrix(In.LocalToTranslatedWorld, SrcIndex);
+	Result.PrevLocalToTranslatedWorld	= WaveReadLaneAtMatrix(In.PrevLocalToTranslatedWorld, SrcIndex);
+	Result.bHasMoved					= WaveReadLaneAt(In.bHasMoved, SrcIndex);
+
+	return Result;
+}
+#endif
+
+float ClipZFromLinearZ(FNaniteView NaniteView, float LinearZ)
+{
+	return LinearZ * NaniteView.ViewToClip[2][2] + NaniteView.ViewToClip[3][2]; // TODO: Pack coefficients into single load?
+}
+
+// Packs a (PageIndex, ClusterIndex) pair into a flat index based on max clusters per page.
+uint PackPoolClusterRef(uint PageIndex, uint ClusterIndex)
+{
+	const uint MaxStreamingPages = PageConstants.y;
+	return	(min(PageIndex, MaxStreamingPages) << NANITE_STREAMING_PAGE_MAX_CLUSTERS_BITS) +
+			((uint)max((int)PageIndex - (int)MaxStreamingPages, 0) << NANITE_ROOT_PAGE_MAX_CLUSTERS_BITS) +
+			ClusterIndex;
+}
+
+void UnpackPoolClusterRef(uint PackedClusterRef, inout uint PageIndex, inout uint ClusterIndex)
+{
+	const uint MaxStreamingPages = PageConstants.y;
+	const uint MaxStreamingClusters = MaxStreamingPages << NANITE_STREAMING_PAGE_MAX_CLUSTERS_BITS;
+	if (PackedClusterRef < MaxStreamingClusters)
+	{
+		PageIndex		= PackedClusterRef >> NANITE_STREAMING_PAGE_MAX_CLUSTERS_BITS;
+		ClusterIndex	= PackedClusterRef & ((1u << NANITE_STREAMING_PAGE_MAX_CLUSTERS_BITS) - 1u);
+	}
+	else
+	{
+		PackedClusterRef -= MaxStreamingClusters;
+		PageIndex		= MaxStreamingPages + (PackedClusterRef >> NANITE_ROOT_PAGE_MAX_CLUSTERS_BITS);
+		ClusterIndex	= PackedClusterRef & ((1u << NANITE_ROOT_PAGE_MAX_CLUSTERS_BITS) - 1u);
+	}
+}
+
 uint4 PackVisibleCluster(FVisibleCluster VisibleCluster, bool bHasPageData)
 {
 	uint4 RawData = 0;
 	uint BitPos = 0;
+
+	const uint PackedClusterRef = PackPoolClusterRef(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+
 	WriteBits(RawData, BitPos, VisibleCluster.Flags,		NANITE_NUM_CULLING_FLAG_BITS);
 	WriteBits(RawData, BitPos, VisibleCluster.ViewId,		NANITE_MAX_VIEWS_PER_CULL_RASTERIZE_PASS_BITS);
-	WriteBits(RawData, BitPos, VisibleCluster.PageIndex,	NANITE_MAX_GPU_PAGES_BITS);
 	WriteBits(RawData, BitPos, VisibleCluster.InstanceId,	NANITE_MAX_INSTANCES_BITS);
-	WriteBits(RawData, BitPos, VisibleCluster.ClusterIndex, NANITE_MAX_CLUSTERS_PER_PAGE_BITS);
+	WriteBits(RawData, BitPos, PackedClusterRef,			NANITE_POOL_CLUSTER_REF_BITS);
+
 	if (bHasPageData)
 	{
 		WriteBits(RawData, BitPos, VisibleCluster.vPage.x, 13);
@@ -236,16 +288,17 @@ FVisibleCluster UnpackVisibleCluster(uint4 RawData, bool bHasPageData = false)
 	FVisibleCluster VisibleCluster;
 	VisibleCluster.Flags		= ReadBits( RawData, BitPos, NANITE_NUM_CULLING_FLAG_BITS );
 	VisibleCluster.ViewId		= ReadBits( RawData, BitPos, NANITE_MAX_VIEWS_PER_CULL_RASTERIZE_PASS_BITS );
-	VisibleCluster.PageIndex	= ReadBits( RawData, BitPos, NANITE_MAX_GPU_PAGES_BITS );
 	VisibleCluster.InstanceId	= ReadBits( RawData, BitPos, NANITE_MAX_INSTANCES_BITS );
-	VisibleCluster.ClusterIndex	= ReadBits( RawData, BitPos, NANITE_MAX_CLUSTERS_PER_PAGE_BITS );
+	const uint PackedClusterRef = ReadBits( RawData, BitPos, NANITE_POOL_CLUSTER_REF_BITS );
+	UnpackPoolClusterRef( PackedClusterRef, VisibleCluster.PageIndex, VisibleCluster.ClusterIndex );
+
 	if( bHasPageData )
 	{
-		VisibleCluster.vPage.x	= ReadBits( RawData, BitPos, 13 );
-		VisibleCluster.vPage.y	= ReadBits( RawData, BitPos, 13 );
+		VisibleCluster.vPage.x		= ReadBits( RawData, BitPos, 13 );
+		VisibleCluster.vPage.y		= ReadBits( RawData, BitPos, 13 );
 		VisibleCluster.vPageEnd.x	= ReadBits( RawData, BitPos, 3 );
 		VisibleCluster.vPageEnd.y	= ReadBits( RawData, BitPos, 3 );
-		VisibleCluster.vPageEnd += VisibleCluster.vPage;
+		VisibleCluster.vPageEnd		+= VisibleCluster.vPage;
 	}
 	else
 	{
@@ -325,8 +378,8 @@ FInstanceSceneData GetInstanceSceneData( inout FVisibleCluster VisibleCluster, b
 
 FInstanceDynamicData CalculateInstanceDynamicData( FNaniteView NaniteView, FInstanceSceneData InstanceData )
 {
-	float4x4 LocalToTranslatedWorld = LWCMultiplyTranslation(InstanceData.LocalToWorld, NaniteView.PreViewTranslation);
-	float4x4 PrevLocalToTranslatedWorld = LWCMultiplyTranslation(InstanceData.PrevLocalToWorld, NaniteView.PrevPreViewTranslation);
+	float4x4 LocalToTranslatedWorld = DFFastToTranslatedWorld(InstanceData.LocalToWorld, NaniteView.PreViewTranslation);
+	float4x4 PrevLocalToTranslatedWorld = DFFastToTranslatedWorld(InstanceData.PrevLocalToWorld, NaniteView.PrevPreViewTranslation);
 
 	FInstanceDynamicData DynamicData;
 	DynamicData.LocalToTranslatedWorld = LocalToTranslatedWorld;
@@ -356,8 +409,8 @@ FCluster UnpackCluster(uint4 ClusterData[NANITE_NUM_PACKED_CLUSTER_FLOAT4S])
 	Cluster.GroupIndex			= BitFieldExtractU32(ClusterData[0].w, 16, 16);			// Debug only
 
 	Cluster.PosStart			= ClusterData[1].xyz;
-	Cluster.BitsPerIndex		= BitFieldExtractU32(ClusterData[1].w, 4, 0);
-	Cluster.PosPrecision		= (int)BitFieldExtractU32(ClusterData[1].w, 5, 4) + NANITE_MIN_POSITION_PRECISION;
+	Cluster.BitsPerIndex		= BitFieldExtractU32(ClusterData[1].w, 3, 0) + 1;
+	Cluster.PosPrecision		= (int)BitFieldExtractU32(ClusterData[1].w, 6, 3) + NANITE_MIN_POSITION_PRECISION;
 	Cluster.PosBits.x			= BitFieldExtractU32(ClusterData[1].w, 5, 9);
 	Cluster.PosBits.y			= BitFieldExtractU32(ClusterData[1].w, 5, 14);
 	Cluster.PosBits.z			= BitFieldExtractU32(ClusterData[1].w, 5, 19);
@@ -378,8 +431,8 @@ FCluster UnpackCluster(uint4 ClusterData[NANITE_NUM_PACKED_CLUSTER_FLOAT4S])
 	Cluster.DecodeInfoOffset	= BitFieldExtractU32(ClusterData[5].y, 22,  0);
 	Cluster.bHasTangents		= BitFieldExtractU32(ClusterData[5].y,  1, 22);
 	Cluster.NumUVs				= BitFieldExtractU32(ClusterData[5].y,  3, 23);
-	Cluster.ColorMode			= BitFieldExtractU32(ClusterData[5].y,  2, 26);
-	Cluster.UV_Prec				= ClusterData[5].z;
+	Cluster.ColorMode			= BitFieldExtractU32(ClusterData[5].y,  1, 26);
+	Cluster.UVBitOffsets		= ClusterData[5].z;
 	const uint MaterialEncoding = ClusterData[5].w;
 
 	// Material Table Range Encoding (32 bits)
@@ -673,44 +726,44 @@ float3 DecodePosition(uint VertIndex, FCluster Cluster)
 
 FNaniteView UnpackNaniteView(FPackedNaniteView PackedView)
 {
-	const float3 ViewTilePosition =
+	const float3 ViewOriginHigh =
 	{
-		PackedView.ViewTilePositionX,
-		PackedView.ViewTilePositionY,
-		PackedView.ViewTilePositionZ
+		PackedView.ViewOriginHighX,
+		PackedView.ViewOriginHighY,
+		PackedView.ViewOriginHighZ
 	};
 
 	FNaniteView NaniteView;
 
 	NaniteView.SVPositionToTranslatedWorld	= PackedView.SVPositionToTranslatedWorld;
 	NaniteView.ViewToTranslatedWorld		= PackedView.ViewToTranslatedWorld;
-	NaniteView.ViewTilePosition				= ViewTilePosition;
-	NaniteView.MatrixTilePosition			= PackedView.MatrixTilePosition;
+	NaniteView.ViewOriginHigh				= ViewOriginHigh;
 
 	NaniteView.TranslatedWorldToView		= PackedView.TranslatedWorldToView;
 	NaniteView.TranslatedWorldToClip		= PackedView.TranslatedWorldToClip;
 	NaniteView.ViewToClip					= PackedView.ViewToClip;
-	NaniteView.ClipToWorld					= MakeLWCMatrix(PackedView.MatrixTilePosition, PackedView.ClipToRelativeWorld);
+	NaniteView.ClipToWorld					= MakeDFMatrix(ViewOriginHigh, PackedView.ClipToRelativeWorld);
 	
 	NaniteView.PrevTranslatedWorldToView	= PackedView.PrevTranslatedWorldToView;
 	NaniteView.PrevTranslatedWorldToClip	= PackedView.PrevTranslatedWorldToClip;
 	NaniteView.PrevViewToClip				= PackedView.PrevViewToClip;
-	NaniteView.PrevClipToWorld				= MakeLWCMatrix(PackedView.MatrixTilePosition, PackedView.PrevClipToRelativeWorld);
+	NaniteView.PrevClipToWorld				= MakeDFMatrix(ViewOriginHigh, PackedView.PrevClipToRelativeWorld);
 
 	NaniteView.TranslatedGlobalClipPlane	= PackedView.TranslatedGlobalClipPlane;
 
 	NaniteView.ViewRect						= PackedView.ViewRect;
 	NaniteView.ViewSizeAndInvSize			= PackedView.ViewSizeAndInvSize;
 	NaniteView.ClipSpaceScaleOffset			= PackedView.ClipSpaceScaleOffset;
-	NaniteView.PreViewTranslation			= MakeLWCVector3(-ViewTilePosition, PackedView.RelativePreViewTranslation);
-	NaniteView.PrevPreViewTranslation		= MakeLWCVector3(-ViewTilePosition, PackedView.RelativePrevPreViewTranslation);
-	NaniteView.WorldCameraOrigin			= MakeLWCVector3(ViewTilePosition, PackedView.RelativeWorldCameraOrigin);
-	NaniteView.DrawDistanceOriginTranslatedWorld = PackedView.DrawDistanceOriginTranslatedWorld;
+	NaniteView.PreViewTranslation			= MakeDFVector3(PackedView.PreViewTranslationHigh, PackedView.PreViewTranslationLow);
+	NaniteView.PrevPreViewTranslation		= MakeDFVector3(PackedView.PrevPreViewTranslationHigh, PackedView.PrevPreViewTranslationLow);
+	NaniteView.WorldCameraOrigin			= MakeDFVector3(ViewOriginHigh, PackedView.ViewOriginLow);
+	NaniteView.CullingViewOriginTranslatedWorld = PackedView.CullingViewOriginTranslatedWorld;
 	NaniteView.ViewForward					= PackedView.ViewForward;
 	NaniteView.NearPlane					= PackedView.NearPlane;
 	NaniteView.LODScale						= PackedView.LODScales.x;
 	NaniteView.LODScaleHW					= PackedView.LODScales.y;
 	NaniteView.MinBoundsRadiusSq			= PackedView.MinBoundsRadiusSq;
+	NaniteView.CullingViewScreenMultiple	= PackedView.CullingViewScreenMultiple;
 	NaniteView.StreamingPriorityCategory	= PackedView.StreamingPriorityCategory_AndFlags & NANITE_STREAMING_PRIORITY_CATEGORY_MASK;
 	NaniteView.Flags						= PackedView.StreamingPriorityCategory_AndFlags >> NANITE_NUM_STREAMING_PRIORITY_CATEGORY_BITS;
 	
@@ -721,6 +774,8 @@ FNaniteView UnpackNaniteView(FPackedNaniteView PackedView)
 	NaniteView.RangeBasedCullingDistance	= PackedView.RangeBasedCullingDistance;
 
 	NaniteView.HZBTestViewRect				= PackedView.HZBTestViewRect;
+	NaniteView.InstanceOcclusionQueryMask	= PackedView.InstanceOcclusionQueryMask;
+	NaniteView.LightingChannelMask	= PackedView.LightingChannelMask;
 
 	return NaniteView;
 }
@@ -739,8 +794,7 @@ FNaniteView GetNaniteView( uint ViewIndex )
 
 	NaniteView.SVPositionToTranslatedWorld  = LocalView.SVPositionToTranslatedWorld;
 	NaniteView.ViewToTranslatedWorld		= LocalView.ViewToTranslatedWorld;
-	NaniteView.ViewTilePosition				= LocalView.ViewTilePosition;
-	NaniteView.MatrixTilePosition			= LocalView.MatrixTilePosition;
+	NaniteView.ViewOriginHigh				= LocalView.ViewOriginHigh;
 
 	NaniteView.TranslatedWorldToView		= LocalView.TranslatedWorldToView;
 	NaniteView.TranslatedWorldToClip		= LocalView.TranslatedWorldToClip;
@@ -767,13 +821,18 @@ FNaniteView GetNaniteView( uint ViewIndex )
 	NaniteView.StreamingPriorityCategory	= 3;
 	NaniteView.Flags						= NANITE_VIEW_FLAG_HZBTEST | NANITE_VIEW_FLAG_NEAR_CLIP;
 	
-	NaniteView.TargetLayerIndex = 0;
+	NaniteView.TargetLayerIndex = -1;		// INDEX_NONE
 	NaniteView.TargetMipLevel = 0;
 	NaniteView.TargetNumMipLevels = 0;
-	NaniteView.TargetPrevLayerIndex	= 0;
+	NaniteView.TargetPrevLayerIndex	= -1;	// INDEX_NONE
 	NaniteView.RangeBasedCullingDistance = 0.0f;
 
 	NaniteView.HZBTestViewRect				= NaniteView.ViewRect;
+	NaniteView.InstanceOcclusionQueryMask	= 0;
+	
+	//This path isn't used for the shadow passes but initializing to same value as in GetDefaultLightingChannelMask() for consistency
+	NaniteView.LightingChannelMask	= 0x1;
+
 
 #else // !NANITE_USE_VIEW_UNIFORM_BUFFER
 
@@ -794,8 +853,7 @@ void PatchViewState(FNaniteView NaniteView, inout ViewState InOutView)
 {
 	InOutView.SVPositionToTranslatedWorld	= NaniteView.SVPositionToTranslatedWorld;
 	InOutView.ViewToTranslatedWorld			= NaniteView.ViewToTranslatedWorld;
-	InOutView.ViewTilePosition				= NaniteView.ViewTilePosition;
-	InOutView.MatrixTilePosition			= NaniteView.MatrixTilePosition;
+	InOutView.ViewOriginHigh				= NaniteView.ViewOriginHigh;
 
 	InOutView.TranslatedWorldToView			= NaniteView.TranslatedWorldToView;
 	InOutView.TranslatedWorldToClip			= NaniteView.TranslatedWorldToClip;
@@ -814,6 +872,15 @@ void PatchViewState(FNaniteView NaniteView, inout ViewState InOutView)
 	InOutView.WorldCameraOrigin				= NaniteView.WorldCameraOrigin;
 	InOutView.ViewForward					= NaniteView.ViewForward;
 	InOutView.NearPlane						= NaniteView.NearPlane;
+
+#if VIEW_HAS_TILEOFFSET_DATA
+	InOutView.TileOffset.PreViewTranslation = DFToTileOffset(InOutView.PreViewTranslation); //DF_TODO: should we upload TO data?
+	InOutView.TileOffset.PrevPreViewTranslation = DFToTileOffset(InOutView.PrevPreViewTranslation);
+	//InOutView.TileOffset.WorldViewOrigin = DFToTileOffset(InOutView.WorldViewOrigin);
+	//InOutView.TileOffset.PrevWorldViewOrigin = DFToTileOffset(InOutView.PrevWorldViewOrigin);
+	InOutView.TileOffset.WorldCameraOrigin = DFToTileOffset(InOutView.WorldCameraOrigin);
+	//InOutView.TileOffset.PrevWorldCameraOrigin = DFToTileOffset(InOutView.PrevWorldCameraOrigin);
+#endif
 }
 
 void WriteDispatchArgsSWHW(RWBuffer<uint> RasterizerArgsSWHW, uint ArgsOffset, uint NumClustersSW, uint NumClustersHW)

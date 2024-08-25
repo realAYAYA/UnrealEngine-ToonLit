@@ -108,7 +108,7 @@ void UClientUnitTest::NotifyControlMessage(FInBunch& Bunch, uint8 MessageType)
 		if (!Bunch.IsError() && Bunch.GetBitsLeft() > 0)
 		{
 			UNIT_LOG_BEGIN(this, ELogType::StatusDebug | ELogType::StyleMonospace);
-			NUTDebug::LogHexDump(Bunch.GetDataPosChecked(), Bunch.GetBytesLeft(), true, true);
+			NUTDebug::LogHexDump(Bunch.GetDataPosChecked(), IntCastChecked<int32, int64>(Bunch.GetBytesLeft()), true, true);
 			UNIT_LOG_END();
 		}
 	}

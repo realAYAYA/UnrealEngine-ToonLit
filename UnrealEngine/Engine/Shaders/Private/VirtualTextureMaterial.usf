@@ -56,9 +56,9 @@ float3 PackNormal( in float3 N )
 
 // Prepare for VirtualTextureUnpackHeight() in VirtualTextureCommon.ush
 // LWC_TODO: LWC scale/bias?
-float PackWorldHeight( in FLWCScalar Height, in float2 PackHeightScaleBias )
+float PackWorldHeight( in FDFScalar Height, in float2 PackHeightScaleBias )
 {
-	return LWCSaturate(LWCAdd(LWCMultiply(Height, PackHeightScaleBias.x), PackHeightScaleBias.y));
+	return saturate(DFFastAddDemote(DFMultiply(Height, PackHeightScaleBias.x), PackHeightScaleBias.y));
 }
 
 void FPixelShaderInOut_MainPS(
@@ -94,22 +94,25 @@ void FPixelShaderInOut_MainPS(
 	half Specular = GetVirtualTextureOutput1(MaterialParameters);
 	half Roughness = GetVirtualTextureOutput2(MaterialParameters);
 	half3 Normal = GetVirtualTextureOutput3(MaterialParameters);
-	FLWCScalar WorldHeight = GetVirtualTextureOutput4_LWC(MaterialParameters);
+	FDFScalar WorldHeight = WSToDF(GetVirtualTextureOutput4_LWC(MaterialParameters));
 	float Opacity = GetVirtualTextureOutput5(MaterialParameters);
 	float Mask = GetVirtualTextureOutput6(MaterialParameters);
+	float Displacement = GetVirtualTextureOutput7(MaterialParameters);
 #else
 	// Output is from standard material output attribute node
 	half3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
 	half Specular = GetMaterialSpecular(PixelMaterialInputs);
 	half Roughness = GetMaterialRoughness(PixelMaterialInputs);
 	half3 Normal = MaterialParameters.WorldNormal;
-	FLWCScalar WorldHeight = LWCGetZ(MaterialParameters.AbsoluteWorldPosition);
+	FDFScalar WorldHeight = WSToDF(WSGetZ(GetWorldPosition(MaterialParameters)));
 	float Opacity = GetMaterialOpacity(PixelMaterialInputs);
 	float Mask = 0.f;
+	float Displacement = 0.f;
 #endif
 
-	// Apply debug shading
-	BaseColor = lerp(BaseColor, half3(In.SvPosition.xy * ResolvedView.ViewSizeAndInvSize.zw, 0), ResolvedView.RuntimeVirtualTextureDebugParams.x * 0.25);
+	// Apply any fixed color.
+	BaseColor = lerp(BaseColor, ResolvedView.RuntimeVirtualTextureDebugParams.xyz, ResolvedView.RuntimeVirtualTextureDebugParams.w);
+	Displacement = lerp(Displacement, ResolvedView.RuntimeVirtualTextureDebugParams.x, ResolvedView.RuntimeVirtualTextureDebugParams.w);
 
 #if defined(OUT_BASECOLOR)
 	Out.MRT[0] = float4(BaseColor, 1.f) * Opacity;
@@ -127,6 +130,8 @@ void FPixelShaderInOut_MainPS(
 #elif defined(OUT_WORLDHEIGHT)
 	float PackedHeight = PackWorldHeight(WorldHeight, ResolvedView.RuntimeVirtualTexturePackHeight);
 	Out.MRT[0] = float4(PackedHeight, 0, 0, 1);
+#elif defined(OUT_DISPLACEMENT)
+	Out.MRT[0] = float4(Displacement, 0, 0, 1);
 #endif
 }
 
@@ -139,6 +144,8 @@ void FPixelShaderInOut_MainPS(
 //#define PIXELSHADEROUTPUT_MRT1 1
 //#define PIXELSHADEROUTPUT_MRT2 1
 //#elif defined(OUT_WORLDHEIGHT)
+//#define PIXELSHADEROUTPUT_MRT0 1
+//#elif defined(OUT_DISPLACEMENT)
 //#define PIXELSHADEROUTPUT_MRT0 1
 //#endif
 

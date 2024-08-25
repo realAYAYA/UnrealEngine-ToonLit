@@ -147,6 +147,8 @@ extern ENGINE_API float GLevelStreamingUnregisterComponentsTimeLimit;
 extern ENGINE_API int32 GLevelStreamingForceGCAfterLevelStreamedOut;
 /** Whether to kick off incremental GC when there are over the specified amount of levels still waiting to be purged. */
 extern ENGINE_API int32 GLevelStreamingContinuouslyIncrementalGCWhileLevelsPendingPurge;
+/** Whether to override GLevelStreamingContinuouslyIncrementalGCWhileLevelsPendingPurge temporarily until at least one level needs to be purged.  */
+extern ENGINE_API int32 GLevelStreamingContinuouslyIncrementalGCWhileLevelsPendingPurgeOverride;
 /** Enables level streaming requests while async loading (of anything) while the match is already in progress and no loading screen is up. */
 extern ENGINE_API int32 GLevelStreamingAllowLevelRequestsWhileAsyncLoadingInMatch;
 /** When we're already loading this many levels and actively in match, don't allow any more requests until one of those completes.  Set to zero to disable. */
@@ -223,9 +225,9 @@ protected:
 	uint32 VerifyUObjectsAreNotFGCObjects : 1;
 
 	UPROPERTY(EditAnywhere, config, Category = Optimization, meta = (
-		ConsoleVariable = "gc.PendingKillEnabled", DisplayName = "Pending Kill Enabled",
-		ToolTip = "If true, objects marked as PendingKill will be automatically nulled and destroyed by Garbage Collector."))
-	uint32 PendingKillEnabled : 1;
+		ConsoleVariable = "gc.GarbageEliminationEnabled", DisplayName = "Garbage Elimination Enabled",
+		ToolTip = "If true, objects marked as Garbage will be automatically nulled and destroyed by Garbage Collector."))
+	uint32 GarbageEliminationEnabled : 1;
 
 	UPROPERTY(EditAnywhere, config, Category = Optimization, meta = (
 		ConsoleVariable = "gc.DumpObjectCountsToLogWhenMaxObjectLimitExceeded", DisplayName = "Log UObject counts when UObject limit has been exceeded",

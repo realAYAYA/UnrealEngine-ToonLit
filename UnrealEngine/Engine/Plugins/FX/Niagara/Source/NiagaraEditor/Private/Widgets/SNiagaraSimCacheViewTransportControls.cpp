@@ -81,6 +81,7 @@ TSharedRef<SWidget> SNiagaraSimCacheViewTransportControls::CreateFrameWidget()
 		.Padding(0.5f)
 		[
 			SNew(SNumericEntryBox<int32>)
+			.MinDesiredValueWidth(25)
 			.AllowSpin(false)
 			.MinValue(0)
 			.MaxValue(this, &SNiagaraSimCacheViewTransportControls::GetMaxFrameIndex)

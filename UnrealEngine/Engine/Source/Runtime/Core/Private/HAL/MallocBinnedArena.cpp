@@ -1151,11 +1151,11 @@ void FMallocBinnedArena::SetupTLSCachesOnCurrentThread()
 	{
 		return;
 	}
-	if (!BinnedArenaTlsSlot)
+	if (!FPlatformTLS::IsValidTlsSlot(BinnedArenaTlsSlot))
 	{
 		BinnedArenaTlsSlot = FPlatformTLS::AllocTlsSlot();
 	}
-	check(BinnedArenaTlsSlot);
+	check(FPlatformTLS::IsValidTlsSlot(BinnedArenaTlsSlot));
 	FPerThreadFreeBlockLists::SetTLS(*this);
 }
 
@@ -1231,7 +1231,7 @@ FMallocBinnedArena::FBundleNode* FMallocBinnedArena::FFreeBlockList::PopBundles(
 void FMallocBinnedArena::FPerThreadFreeBlockLists::SetTLS(FMallocBinnedArena& Allocator)
 {
 	uint32 BinnedArenaTlsSlot = Allocator.BinnedArenaTlsSlot;
-	check(BinnedArenaTlsSlot);
+	check(FPlatformTLS::IsValidTlsSlot(BinnedArenaTlsSlot));
 	FPerThreadFreeBlockLists* ThreadSingleton = (FPerThreadFreeBlockLists*)FPlatformTLS::GetTlsValue(BinnedArenaTlsSlot);
 	if (!ThreadSingleton)
 	{
@@ -1247,7 +1247,7 @@ void FMallocBinnedArena::FPerThreadFreeBlockLists::SetTLS(FMallocBinnedArena& Al
 int64 FMallocBinnedArena::FPerThreadFreeBlockLists::ClearTLS(FMallocBinnedArena& Allocator)
 {
 	uint32 BinnedArenaTlsSlot = Allocator.BinnedArenaTlsSlot;
-	check(BinnedArenaTlsSlot);
+	check(FPlatformTLS::IsValidTlsSlot(BinnedArenaTlsSlot));
 	int64 Result = 0;
 	FPerThreadFreeBlockLists* ThreadSingleton = (FPerThreadFreeBlockLists*)FPlatformTLS::GetTlsValue(BinnedArenaTlsSlot);
 	if (ThreadSingleton)

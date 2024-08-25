@@ -204,7 +204,7 @@ bool SNiagaraStackItemGroupAddMenu::OnCompareCategoriesForEquality(const FString
 
 bool SNiagaraStackItemGroupAddMenu::OnCompareCategoriesForSorting(const FString& CategoryA, const FString& CategoryB)
 {
-	return CategoryA.Compare(CategoryB) == -1;
+	return CategoryA.Compare(CategoryB) < 0;
 }
 
 bool SNiagaraStackItemGroupAddMenu::OnCompareItemsForEquality(const TSharedPtr<FNiagaraMenuAction_Generic>& ItemA,

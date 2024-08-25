@@ -64,4 +64,7 @@ public:
 
 	/** Create a new source from a ConnectionString */
 	LIVELINKINTERFACE_API virtual TSharedPtr<ILiveLinkSource> CreateSource(const FString& ConnectionString) const PURE_VIRTUAL(ULiveLinkSourceFactory::CreateSource, return TSharedPtr<ILiveLinkSource>(); );
+
+	/** Whether this factory is enabled. Can be overriden to disable it in certain configurations. */
+	LIVELINKINTERFACE_API virtual bool IsEnabled() const { return true; }
 };

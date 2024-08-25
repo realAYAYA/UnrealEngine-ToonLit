@@ -22,6 +22,7 @@
 class AStaticMeshActor;
 class FEdMode;
 class UFactory;
+struct FGuid;
 
 /** The shorthand identifier used for editor modes */
 typedef FName FEditorModeID;
@@ -135,6 +136,8 @@ struct FEditorDelegates
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnAssetsAddExtraObjectsToDelete, TArray<UObject*>&);
 	/** delegate type for when a user requests to delete certain assets... DOES NOT mean the asset(s) will be deleted (the user could cancel) */
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnAssetsPreDelete, const TArray<UObject*>&);
+	/** delegate type for when a user requested force deleting objects. The objects(s) will be deleted (no possibility to cancel), so implementations should delete references */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnPreForceDeleteObjects, const TArray<UObject*>&);
 	/** delegate type for when one or more assets have been deleted */
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnAssetsDeleted, const TArray<UClass*>& /*DeletedAssetClasses*/);
 	/** delegate type for when a user starts dragging something out of content browser (can be multiple assets) */
@@ -173,6 +176,8 @@ struct FEditorDelegates
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnEditorBoot, double Duration);
 	/** delegate for when the editor has fully initialized */
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnEditorInitialized, double Duration);
+	/** delegate when external content resolves and can replace placeholder data */
+	DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnExternalContentResolved, const FGuid&, const FAssetData& /*PlaceholderAsset*/, const FAssetData& /*ResolvedAsset*/);
 
 	/** Called when the CurrentLevel is switched to a new level.  Note that this event won't be fired for temporary
 		changes to the current level, such as when copying/pasting actors. */
@@ -220,6 +225,8 @@ struct FEditorDelegates
 	/** Called when an editor mode ID is being exited */
 	UE_DEPRECATED(5.0, "Use the asset editor's mode manager to scope mode exit notifications.")
 	static UNREALED_API FOnEditorModeIDTransitioned EditorModeIDExit;
+	/** Sent when a PIE session has been requested to Start */
+	static UNREALED_API FOnPIEEvent StartPIE;
 	/** Sent when a PIE session is beginning (before we decide if PIE can run - allows clients to avoid blocking PIE) */
 	static UNREALED_API FOnPIEEvent PreBeginPIE;
 	/** Sent when a PIE session is beginning (but hasn't actually started yet) */
@@ -230,6 +237,8 @@ struct FEditorDelegates
 	static UNREALED_API FOnPIEEvent PrePIEEnded;
 	/** Sent when a PIE session is ending */
 	static UNREALED_API FOnPIEEvent EndPIE;
+	/** Sent when a PIE session has completely shutdown */
+	static UNREALED_API FOnPIEEvent ShutdownPIE;
 	/** Sent when a PIE session is paused */
 	static UNREALED_API FOnPIEEvent PausePIE;
 	/** Sent when a PIE session is resumed */
@@ -317,6 +326,8 @@ struct FEditorDelegates
 	static UNREALED_API FOnAssetsDeleted OnAssetsDeleted;
 	/** Called when a user starts dragging something out of content browser (can be multiple assets) */
 	static UNREALED_API FOnAssetDragStarted OnAssetDragStarted;
+	/** Called when the user requests objects to be force deleted.  There is no possibility to cancel once this callback is made */
+    static UNREALED_API FOnPreForceDeleteObjects OnPreForceDeleteObjects;
 	/** Called when a user changes the UInputSettings::bEnableGestureRecognizer setting to refresh the available actions. */
 	static UNREALED_API FSimpleMulticastDelegate OnEnableGestureRecognizerChanged;
 	/** Called when Action or Axis mappings have been changed */
@@ -357,6 +368,8 @@ struct FEditorDelegates
 	static UNREALED_API FOnEditorBoot OnEditorBoot;
 	/** Called when the editor has initialized */
 	static UNREALED_API FOnEditorInitialized OnEditorInitialized;
+	/** Called when external content gets resolved */
+	static UNREALED_API FOnExternalContentResolved OnExternalContentResolved;
 };
 
 /**

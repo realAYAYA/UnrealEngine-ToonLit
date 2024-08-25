@@ -357,8 +357,6 @@ void FStreamReaderMKV::HandleRequest()
 	ReadBuffer.SetCurrentOffset(0);
 	ReadBuffer.SetEndOffset(Request->FileEndOffset);
 
-	const FParamDict& Options = PlayerSessionServices->GetOptions();
-
 	HTTPRequest = MakeSharedTS<IElectraHttpManager::FRequest>();
 	HTTPRequest->Parameters.URL = TimelineAsset->GetMediaURL();
 	HTTPRequest->Parameters.Range.Start = Request->FileStartOffset;
@@ -366,8 +364,8 @@ void FStreamReaderMKV::HandleRequest()
 	// No compression as this would not yield much with already compressed video/audio data.
 	HTTPRequest->Parameters.AcceptEncoding.Set(TEXT("identity"));
 	// Timeouts
-	HTTPRequest->Parameters.ConnectTimeout = Options.GetValue(MKV::OptionKeyMKVLoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
-	HTTPRequest->Parameters.NoDataTimeout = Options.GetValue(MKV::OptionKeyMKVLoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
+	HTTPRequest->Parameters.ConnectTimeout = PlayerSessionServices->GetOptionValue(MKV::OptionKeyMKVLoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
+	HTTPRequest->Parameters.NoDataTimeout = PlayerSessionServices->GetOptionValue(MKV::OptionKeyMKVLoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
 
 	// Explicit range?
 	int64 NumRequestedBytes = HTTPRequest->Parameters.Range.GetNumberOfBytes();
@@ -395,7 +393,7 @@ void FStreamReaderMKV::HandleRequest()
 				TSharedPtrTS<FAccessUnit::CodecData> CSD(new FAccessUnit::CodecData);
 				CSD->ParsedInfo = SelectedTrackMetadata->CodecInfo;
 				CSD->CodecSpecificData = SelectedTrackMetadata->CodecInfo.GetCodecSpecificData();
-				FVariantValue dcr = SelectedTrackMetadata->CodecInfo.GetExtras().GetValue(TEXT("dcr"));
+				FVariantValue dcr = SelectedTrackMetadata->CodecInfo.GetExtras().GetValue(StreamCodecInformationOptions::DecoderConfigurationRecord);
 				if (dcr.IsValid() && dcr.IsType(FVariantValue::EDataType::TypeU8Array))
 				{
 					CSD->RawCSD = dcr.GetArray();

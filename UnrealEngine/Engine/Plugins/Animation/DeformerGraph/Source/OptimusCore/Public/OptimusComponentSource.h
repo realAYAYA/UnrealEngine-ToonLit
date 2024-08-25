@@ -71,6 +71,9 @@ public:
 	/** Returns all registered component source objects */
 	static TArray<const UOptimusComponentSource*> GetAllSources();
 
+	/** Returns all execution domains from all available sources */
+	static TSet<FName> GetAllExecutionDomains();
+
 	/** Returns a component source that matches a data interface, or nullptr if nothing does */
 	static const UOptimusComponentSource* GetSourceFromDataInterface(
 		const UOptimusComputeDataInterface* InDataInterface

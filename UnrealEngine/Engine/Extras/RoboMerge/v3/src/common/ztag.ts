@@ -169,7 +169,7 @@ function removeTrailingNewline(rec: Record, field: string) {
 		if (!lastVal.endsWith('\n')) {
 			throw new Error('expected break!')
 		}
-		rec.values.set(field, lastVal.substr(0, lastVal.length - 1))
+		rec.values.set(field, lastVal.substring(0, lastVal.length - 1))
 	}
 }
 
@@ -245,7 +245,7 @@ export function parseZtagOutput(ztagOutput: string, logger: ContextualLogger, op
 	}
 
 	if (ztagOutput.endsWith('\n\n')) {
-		ztagOutput = ztagOutput.substr(0, ztagOutput.length - 1)
+		ztagOutput = ztagOutput.substring(0, ztagOutput.length - 1)
 	}
 	else if (ztagOutput.endsWith('\n')) {
 		console.log('No empty line')

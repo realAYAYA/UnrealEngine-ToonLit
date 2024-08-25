@@ -12,8 +12,12 @@ namespace Audio
 		, NumBufferOffsetSamples(0)
 		, NumInternalBufferSamples(InNumInternalBufferSamples)
 	{
+
 		// Allocate and prepare delay line for maximum delay.
-		DelayLine = MakeUnique<FAlignedBlockBuffer>((2 * MaxNumDelaySamples) + NumInternalBufferSamples, MaxNumDelaySamples + NumInternalBufferSamples);
+		const int32 SampleCapacity = (2 * MaxNumDelaySamples) + NumInternalBufferSamples;
+		const int32 MaxNumInspectSamples = MaxNumDelaySamples + NumInternalBufferSamples;
+		const uint32 ByteAlignment = sizeof(float); // No need for byte alignment
+		DelayLine = MakeUnique<FAlignedBlockBuffer>(SampleCapacity, MaxNumInspectSamples, ByteAlignment);
 		DelayLine->AddZeros(MaxNumDelaySamples);
 
 		// Set current delay.
@@ -67,12 +71,20 @@ namespace Audio
 
 	void FIntegerDelay::ProcessAudio(const Audio::FAlignedFloatBuffer& InSamples, Audio::FAlignedFloatBuffer& OutSamples)
 	{
-		const float* InSampleData = InSamples.GetData();
-		const int32 InNum = InSamples.Num();
-
 		// Prepare output buffer
-		OutSamples.Reset(InNum);
-		OutSamples.AddUninitialized(InNum);
+		const int32 Num = InSamples.Num();
+		OutSamples.Reset(Num);
+		OutSamples.AddUninitialized(Num);
+
+		ProcessAudio(TArrayView<const float>(InSamples.GetData(), InSamples.Num()), TArrayView<float>(OutSamples.GetData(), OutSamples.Num()));
+	}
+
+	void FIntegerDelay::ProcessAudio(TArrayView<const float> InSamples, TArrayView<float> OutSamples)
+	{
+		check(InSamples.Num() == OutSamples.Num());
+
+		const int32 InNum = InSamples.Num();
+		const float* InSampleData = InSamples.GetData();
 		float* OutSampleData = OutSamples.GetData();
 
 		// Process audio one block at a time.
@@ -89,7 +101,6 @@ namespace Audio
 
 	void FIntegerDelay::ProcessAudioBlock(const float* InSamples, const int32 InNum, float* OutSamples)
 	{
-		
 		// Update delay line.	
 		DelayLine->AddSamples(InSamples, InNum);
 

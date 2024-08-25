@@ -165,13 +165,13 @@ void SVisualLoggerStatusView::GenerateStatusData(const FVisualLogDevice::FVisual
 	if (bAddHeader)
 	{
 		FLogStatusItem* HeaderItem = new FLogStatusItem();
-		HeaderItem->HeaderText = FString::Printf(TEXT("%s at Time: %.2fs"), *LogEntry.OwnerName.ToString(), LogEntry.Entry.TimeStamp);;
+		HeaderItem->HeaderText = FString::Printf(TEXT("%s at WorldTime: %.2lfs"), *LogEntry.OwnerName.ToString(), LogEntry.Entry.WorldTimeStamp);
 		StatusItems.Add(MakeShareable(HeaderItem));
 	}
 	else
 	{
-		FString TimestampDesc = FString::Printf(TEXT("%.2fs"), LogEntry.Entry.TimeStamp);
-		StatusItems.Add(MakeShareable(new FLogStatusItem(LOCTEXT("VisLogTimestamp", "Time").ToString(), TimestampDesc)));
+		FString TimestampDesc = FString::Printf(TEXT("%.2lfs"), LogEntry.Entry.WorldTimeStamp);
+		StatusItems.Add(MakeShareable(new FLogStatusItem(LOCTEXT("VisLogTimestamp", "WorldTime").ToString(), TimestampDesc)));
 	}
 
 	for (int32 CategoryIndex = 0; CategoryIndex < LogEntry.Entry.Status.Num(); CategoryIndex++)

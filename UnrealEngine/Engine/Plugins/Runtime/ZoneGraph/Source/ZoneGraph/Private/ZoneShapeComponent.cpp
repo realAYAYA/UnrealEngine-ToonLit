@@ -570,6 +570,18 @@ void UZoneShapeComponent::ClearPerPointLaneProfiles()
 	}
 }
 
+const FZoneShapeConnector* UZoneShapeComponent::GetShapeConnectorByPointIndex(int32 PointIndex) const
+{
+	for (const FZoneShapeConnector& ShapeConnector : ShapeConnectors)
+	{
+		if (ShapeConnector.PointIndex == PointIndex)
+		{
+			return &ShapeConnector;
+		}
+	}
+	return nullptr;
+}
+
 #if WITH_EDITOR
 uint32 UZoneShapeComponent::GetShapeHash() const
 {

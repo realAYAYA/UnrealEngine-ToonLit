@@ -143,12 +143,75 @@ void UTextBlock::SetStrikeBrush(FSlateBrush InStrikeBrush)
 	}
 }
 
-void UTextBlock::SetJustification(ETextJustify::Type InJustification)
+void UTextBlock::OnShapedTextOptionsChanged(FShapedTextOptions InShapedTextOptions)
 {
-	Super::SetJustification(InJustification);
+	Super::OnShapedTextOptionsChanged(InShapedTextOptions);
+	if (MyTextBlock.IsValid())
+	{
+		InShapedTextOptions.SynchronizeShapedTextProperties(*MyTextBlock);
+	}
+}
+
+void UTextBlock::OnJustificationChanged(ETextJustify::Type InJustification)
+{
+	Super::OnJustificationChanged(InJustification);
 	if (MyTextBlock.IsValid())
 	{
 		MyTextBlock->SetJustification(InJustification);
+	}
+}
+
+void UTextBlock::OnWrappingPolicyChanged(ETextWrappingPolicy InWrappingPolicy)
+{
+	Super::OnWrappingPolicyChanged(InWrappingPolicy);
+	if (MyTextBlock.IsValid())
+	{
+		MyTextBlock->SetWrappingPolicy(InWrappingPolicy);
+	}
+}
+
+void UTextBlock::OnAutoWrapTextChanged(bool InAutoWrapText)
+{
+	Super::OnAutoWrapTextChanged(InAutoWrapText);
+	if (MyTextBlock.IsValid())
+	{
+		MyTextBlock->SetAutoWrapText(InAutoWrapText);
+	}
+}
+
+void UTextBlock::OnWrapTextAtChanged(float InWrapTextAt)
+{
+	Super::OnWrapTextAtChanged(InWrapTextAt);
+	if (MyTextBlock.IsValid())
+	{
+		MyTextBlock->SetWrapTextAt(InWrapTextAt);
+	}
+}
+
+void UTextBlock::OnLineHeightPercentageChanged(float InLineHeightPercentage)
+{
+	Super::OnLineHeightPercentageChanged(InLineHeightPercentage);
+	if (MyTextBlock.IsValid())
+	{
+		MyTextBlock->SetLineHeightPercentage(InLineHeightPercentage);
+	}
+}
+
+void UTextBlock::OnApplyLineHeightToBottomLineChanged(bool InApplyLineHeightToBottomLine)
+{
+	Super::OnApplyLineHeightToBottomLineChanged(InApplyLineHeightToBottomLine);
+	if (MyTextBlock.IsValid())
+	{
+		MyTextBlock->SetApplyLineHeightToBottomLine(InApplyLineHeightToBottomLine);
+	}
+}
+
+void UTextBlock::OnMarginChanged(const FMargin& InMargin)
+{
+	Super::OnMarginChanged(InMargin);
+	if (MyTextBlock.IsValid())
+	{
+		MyTextBlock->SetMargin(InMargin);
 	}
 }
 

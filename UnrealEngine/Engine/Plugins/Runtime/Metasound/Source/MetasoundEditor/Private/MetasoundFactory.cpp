@@ -61,9 +61,7 @@ void UMetaSoundBaseFactory::InitAsset(UObject& InNewMetaSound, UObject* InRefere
 		
 		// Initialize preset with referenced Metasound 
 		TScriptInterface<IMetaSoundDocumentInterface> ReferencedDocInterface = InReferencedMetaSound;
-		const IMetaSoundDocumentInterface* ReferencedInterface = ReferencedDocInterface.GetInterface();
-		check(ReferencedInterface);
-		Builder.ConvertToPreset(ReferencedInterface->GetDocument());
+		Builder.ConvertToPreset(ReferencedDocInterface->GetConstDocument());
 		
 		// Update asset object data from interfaces 
 		FMetasoundAssetBase* PresetAsset = IMetasoundUObjectRegistry::Get().GetObjectAsAssetBase(&InNewMetaSound);

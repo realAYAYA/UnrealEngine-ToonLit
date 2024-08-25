@@ -123,29 +123,6 @@ TSharedPtr<SGraphNode> FNodeFactory::CreateNodeWidget(UEdGraphNode* InNode)
 		}
 	}
 
-	if (UMaterialGraphNode_Base* BaseMaterialNode = Cast<UMaterialGraphNode_Base>(InNode))
-	{
-		if (UMaterialGraphNode_Root* RootMaterialNode = Cast<UMaterialGraphNode_Root>(InNode))
-		{
-			return SNew(SGraphNodeMaterialResult, RootMaterialNode);
-		}
-		else if (UMaterialGraphNode_Knot* MaterialKnot = Cast<UMaterialGraphNode_Knot>(InNode))
-		{
-			return SNew(SGraphNodeKnot, MaterialKnot);
-		}
-		else if (UMaterialGraphNode* MaterialNode = Cast<UMaterialGraphNode>(InNode))
-		{
-			if (UMaterialGraphNode_Composite* MaterialComposite = Cast<UMaterialGraphNode_Composite>(InNode))
-			{
-				return SNew(SGraphNodeMaterialComposite, MaterialComposite);
-			}
-			else
-			{
-				return SNew(SGraphNodeMaterialBase, MaterialNode);
-			}
-		}
-	}
-
 	if (UK2Node* K2Node = Cast<UK2Node>(InNode))
 	{
 		if (UK2Node_Composite* CompositeNode = Cast<UK2Node_Composite>(InNode))

@@ -82,17 +82,17 @@ namespace Horde.Server.Logs
 			List<Node> nodes = new List<Node>();
 			nodes.Add(_root);
 
-			for(int bits = 0; bits < (sizeof(ulong) * 8); bits += 4)
+			for (int bits = 0; bits < (sizeof(ulong) * 8); bits += 4)
 			{
 				List<Node> nextNodes = new List<Node>();
-				foreach(Node node in nodes)
+				foreach (Node node in nodes)
 				{
 					ushort value = 0;
 					if (node._children != null)
 					{
 						for (int idx = 0; idx < node._children.Length; idx++)
 						{
-							if(node._children[idx] != null)
+							if (node._children[idx] != null)
 							{
 								value |= (ushort)(1 << idx);
 								nextNodes.Add(node._children[idx]!);

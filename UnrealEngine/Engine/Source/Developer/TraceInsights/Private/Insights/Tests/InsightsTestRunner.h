@@ -34,12 +34,11 @@ public:
 
 	void SetInitAutomationModules(bool InInitAutomationModules) { bInitAutomationModules = InInitAutomationModules; }
 	bool GetInitAutomationModules() const { return bInitAutomationModules; }
-
-private:
 	void RunTests();
 
-	void OnSessionAnalysisCompleted();
+private:
 	TSharedRef<SDockTab> SpawnAutomationWindowTab(const FSpawnTabArgs& Args);
+	void OnSessionAnalysisCompleted();
 
 private:
 	/** The delegate to be invoked when this manager ticks. */

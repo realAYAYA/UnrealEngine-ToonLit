@@ -28,10 +28,13 @@ public:
 	// UMLDeformerModel overrides.
 	virtual bool IsNeuralNetworkOnGPU() const override				{ return false; }	// CPU based neural network.
 	virtual bool DoesSupportQualityLevels() const override			{ return true; }	// We can disable morph targets based on the Deformer LOD float value.
+	virtual bool DoesSupportLOD() const override					{ return true; }	// We support deformations in different LOD levels.
 	virtual void Serialize(FArchive& Archive) override;
 	virtual UMLDeformerModelInstance* CreateModelInstance(UMLDeformerComponent* Component) override;
 #if WITH_EDITOR
 	virtual void UpdateMemoryUsage() override;
+	virtual void FinalizeMorphTargets();
+	bool HasRawMorph() const;
 #endif
 	// ~END UMLDeformerModel overrides.
 
@@ -39,9 +42,14 @@ public:
 	virtual void BeginDestroy() override;
 	virtual bool IsReadyForFinishDestroy() override;
 	virtual void PostLoad() override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	// ~END UObject overrides.
 
-	int32 GetNumMorphTargets() const								{ return NumMorphTargets; }
+	UE_DEPRECATED(5.4, "Please use the GetNumMorphTargets(LOD) instead.")
+	int32 GetNumMorphTargets() const								{ return GetNumMorphTargets(0); }
+	int32 GetNumMorphTargets(int32 LOD) const;
 	uint64 GetCompressedMorphDataSizeInBytes() const				{ return CompressedMorphDataSizeInBytes; }
 	uint64 GetUncompressedMorphDataSizeInBytes() const				{ return UncompressedMorphDataSizeInBytes; }
 
@@ -52,6 +60,7 @@ public:
 	EMLDeformerMaskChannel GetMaskChannel() const					{ return MaskChannel; }
 	bool GetInvertMaskChannel() const								{ return bInvertMaskChannel; }
 
+	UFUNCTION(BlueprintPure, Category = "MLDeformerMorphModel")
 	bool CanDynamicallyUpdateMorphTargets() const;
 
 	void SetMorphDeltaZeroThreshold(float Threshold)				{ MorphDeltaZeroThreshold = Threshold; }
@@ -59,6 +68,7 @@ public:
 	void SetIncludeMorphTargetNormals(bool bInclude)				{ bIncludeNormals = bInclude; }
 	void SetMaskChannel(EMLDeformerMaskChannel Channel)				{ MaskChannel = Channel; }
 	void SetInvertMaskChannel(bool bInvert)							{ bInvertMaskChannel = bInvert; }
+	void SetClampMorphTargetsWeights(bool bEnabled)					{ bClampMorphWeights = bEnabled; }
 
 	UE_DEPRECATED(5.3, "Use SetMaskChannel instead.")
 	void SetWeightMask(EMLDeformerMaskChannel Channel)				{ MaskChannel = Channel; }
@@ -81,10 +91,15 @@ public:
 	static FName GetIncludeMorphTargetNormalsPropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, bIncludeNormals); }
 	static FName GetMaskChannelPropertyName()						{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, MaskChannel); }
 	static FName GetInvertMaskChannelPropertyName()					{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, bInvertMaskChannel); }
-	static FName GetNumMorphTargetsPropertyName()					{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, NumMorphTargets); }
 	static FName GetCompressedMorphDataSizeInBytesPropertyName()	{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, CompressedMorphDataSizeInBytes); }
 	static FName GetUncompressedMorphDataSizeInBytesPropertyName()	{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, UncompressedMorphDataSizeInBytes); }
-	static FName GetQualityLevelsPropertyName()						{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, QualityLevels); }
+	static FName GetClampMorphTargetWeightsPropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, bClampMorphWeights); }
+
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	static FName GetQualityLevelsPropertyName()						{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, QualityLevels_DEPRECATED); }
+
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	static FName GetNumMorphTargetsPropertyName()					{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, NumMorphTargets_DEPRECATED); }
 
 	UE_DEPRECATED(5.2, "Please use GetMorphDeltaZeroThresholdPropertyName instead.")
 	static FName GetMorphTargetDeltaThresholdPropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerMorphModel, MorphDeltaZeroThreshold); }
@@ -137,27 +152,80 @@ public:
 	 * Training python scripts mostly will call this function to set the values.
 	 * @param MaxWeights The maximum of the absolute weight values.
 	 */
+	UE_DEPRECATED(5.4, "This method will be removed.")
 	UFUNCTION(BlueprintCallable, Category = "MLDeformerMorphModel")
-	void SetMorphTargetsMaxWeights(const TArray<float>& MaxWeights);
+	void SetMorphTargetsMaxWeights(const TArray<float>& MaxWeights) {}
+
+	/** 
+	 * Set the minimum and maximum values that the morph targets weights have seen during training.
+	 * We can clamp the network output weights within these ranges to try to make sure that the output doesn't go wild
+	 * when we give inputs that are far outside of the range we have seen during training.
+	 * The size of the array must equal the number of morph targets, or empty. In case it is empty, clamping will be ignored, even when enabled.
+	 * @param MinValues The minimum weigth values, one for each morph target.
+	 * @param MaxValues The maximum weight values, one for each morph target.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MLDeformerMorphModel")
+	void SetMorphTargetsMinMaxWeights(const TArray<float>& MinValues, const TArray<float>& MaxValues);
+
+	/**
+	 * Set the minimum and maximum values that the morph targets weights have seen during training.
+	 * We can clamp the network output weights within these ranges to try to make sure that the output doesn't go wild
+	 * when we give inputs that are far outside of the range we have seen during training.
+	 * The size of the array must equal the number of morph targets, or empty. In case it is empty, clamping will be ignored, even when enabled.
+	 * @param MinMaxValues The array of float intervals that contain the min and max values, one for each morph target.
+	 */
+	void SetMorphTargetsMinMaxWeights(const TArray<FFloatInterval>& MinMaxValues);
 
 	/**
 	 * Get the estimated maximum weight values that the morph targets will ever have. It is not guaranteed that the weights will never be larger than these values though.
 	 * These values are used to estimate the importance levels of the morph targets.
 	 * @see SetMorphTargetsMaxWeights.
 	 */
-	TArrayView<const float> GetMorphTargetMaxWeights() const;
+	UE_DEPRECATED(5.4, "This method will be removed, use GetMorphTargetsMinMaxWeights instead, and take the max of the absolute value of both min and max.")
+	TArrayView<const float> GetMorphTargetMaxWeights() const { return TArrayView<const float>(); }
+
+	/**
+	 * Get the min and max morph target weight values that we seen on the output of the training data set.
+	 * These min and max values can be used to clamp the morph targets within this range.
+	 * This can be used to prevent weights from getting very different values on unseen input data, and thus can prevent visually 'exploding' correctives.
+	 */
+	const TArray<FFloatInterval>& GetMorphTargetsMinMaxWeights() const	{ return MorphTargetsMinMaxWeights; }
+
+	/**
+	 * Check whether clamping of morph target weights is enabled.
+	 * If enabled, the weights that are output will be clamped to the minimum and maximum values that are defined in the values returned by
+	 * GetMorphTargetsMinMaxWeights().
+	 * It is up to the model to actually call the ClampMorphTargetWeights method though.
+	 * You can check if a model supports weight clamping by calling FMLDeformerMorphModelEditorModel::IsMorphWeightClampingSupported().
+	 * If that would return false, even enabling clamping using SetClampMorphTargetsWeights(true) will not do anything.
+	 * @return Returns true when clamping is enabled, otherwise false is returned.
+	 */
+	bool IsMorphWeightClampingEnabled() const							{ return bClampMorphWeights; }
+
+	/**
+	 * Perform the actual weight clamping to the values as set inside the MorphTargetsMinMaxWeights member.
+	 * @param WeightsArray The array of input weights, that will be clamped. This method will modify the array values.
+	 */
+	void ClampMorphTargetWeights(TArrayView<float> WeightsArray);
 
 	/**
 	 * Get the morph target delta vectors array.
 	 * The layout of this array is [morphdeltas_target0, morphdeltas_target1, ..., morphdeltas_targetN].
 	 * So the total number of items in the array returned equals (NumMorphTargets * NumBaseMeshVerts).
 	 */
-	const TArray<FVector3f>& GetMorphTargetDeltas() const		{ return MorphTargetDeltas; }
+	const TArray<FVector3f>& GetMorphTargetDeltas() const				{ return MorphTargetDeltas; }
 
 	/**
 	 * Get the morph target set.
 	 */
-	TSharedPtr<FExternalMorphSet> GetMorphTargetSet() const		{ return MorphTargetSet; }
+	UE_DEPRECATED(5.4, "This method has been deprecated, please use the GetMorphTargetSet that takes a LOD level parameter.")
+	TSharedPtr<FExternalMorphSet> GetMorphTargetSet() const				{ return MorphTargetSet_DEPRECATED; }
+	TSharedPtr<FExternalMorphSet> GetMorphTargetSet(int32 LOD) const	{ return MorphTargetSets.IsValidIndex(LOD) ? MorphTargetSets[LOD] : TSharedPtr<FExternalMorphSet>(); }
+
+	/** Get the number of LOD levels that we have deltas for. */
+	int32 GetNumLODs() const											{ return MorphTargetSets.Num(); }
+	void ClearMorphTargetSets();
+	void AddMorphSets(int32 NumToAdd);
 
 	/**
 	 * Get the start index into the array of deltas (vectors3's), for a given morph target.
@@ -187,12 +255,14 @@ public:
 	 * Get the quality levels.
 	 * @return An array view of the quality levels.
 	 */
+	UE_DEPRECATED(5.4, "This method will be removed.")
 	TArrayView<const FMLDeformerMorphModelQualityLevel> GetQualityLevels() const;
 
 	/**
 	 * Get the quality levels, with access to modify the quality levels.
 	 * @return The array containing the quality levels.
 	 */
+	UE_DEPRECATED(5.4, "This method will be removed.")
 	TArray<FMLDeformerMorphModelQualityLevel>& GetQualityLevelsArray();
 	
 	/**
@@ -211,19 +281,25 @@ public:
 	 */
 	void SetMorphTargetError(int32 MorphIndex, float Error);
 
-	/** 
-	 * Get the number of active morph targets for a given quality level.
-	 * If no morph error data is available, or if no quality levels have been setup, the total number of morph targets is returned.
-	 * If there is such data, the quality level will be clamped to be within a valid range.
-	 * Finally, if the number of active morph targets specified by the quality level will be clamped within a valid range as well.
-	 * So basically this method will always return a valid number of morph targets, whatever the input is.
-	 * @param QualityLevel The quality level to get the number of active morph targets for.
-	 */
+	UE_DEPRECATED(5.4, "Please use the GetNumActiveMorphsForLOD.")
 	int32 GetNumActiveMorphs(int32 QualityLevel) const;
 
 private:
 	/** The compressed morph target data, ready for the GPU. */
-	TSharedPtr<FExternalMorphSet> MorphTargetSet;
+	TSharedPtr<FExternalMorphSet> MorphTargetSet_DEPRECATED;
+
+	/** A morph target set for each LOD. The number of LODs that have a morph target set can be smaller than the number of LOD levels in the Skeletal Mesh, but should never be larger. */
+	TArray<TSharedPtr<FExternalMorphSet>> MorphTargetSets;
+
+	/** 
+	 * Should we enable morph target weight clamping?
+	 * The minimum and maximum values that it will be clamped against will be the min/max morph target weight values
+	 * that have been seen when running the training dataset through the network.
+	 * The advantage of clamping is that it can make deformations more stable when we have input poses that have not been seen during training.
+	 * We basically prevent the weights from 'exploding' and getting very large values, which could make the mesh look very bad.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Morph Targets")
+	bool bClampMorphWeights = true;
 
 	/**
 	 * The entire set of uncompressed morph target deltas, 3 per vertex, for each morph target, as one flattened buffer.
@@ -234,7 +310,7 @@ private:
 
 	/** The number of morph targets. */
 	UPROPERTY()
-	int32 NumMorphTargets = 0;
+	int32 NumMorphTargets_DEPRECATED = 0;
 
 	/** The compressed memory usage of the morph targets. This is approximately what this MLD asset will use in your packaged project. */
 	UPROPERTY()
@@ -257,22 +333,32 @@ private:
 
 	/** The maximum absolute weight values of the morph targets, during training. One value for each morph target. */
 	UPROPERTY()
-	TArray<float> MaxMorphWeights;
+	TArray<float> MaxMorphWeights_DEPRECATED;
+
+	/** 
+	 * The minimum and maximum weight values that the morph targets weights have seen during training.
+	 * We can clamp the network output weights within these ranges to try to make sure that the output doesn't go wild
+	 * when we give inputs that are far outside of the range we have seen during training.
+	 * It is possible that this array is empty, in which case this clamping isn't supported.
+	 * The size of the array equals the number of morph targets.
+	 */
+	UPROPERTY()
+	TArray<FFloatInterval> MorphTargetsMinMaxWeights;
 
 	/** 
 	 * The list of quality levels, where the first item represents the highest quality and the last element the lowest quality level.
 	 * The number in each quality level represents the number of active morph targets for that quality level.
 	 * These numbers will be clamped internally to be within valid ranges in case they go beyond the amount of morphs that exist.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Deformer Quality", meta = (ClampMin = "1"))
-	TArray<FMLDeformerMorphModelQualityLevel> QualityLevels;
+	UPROPERTY()
+	TArray<FMLDeformerMorphModelQualityLevel> QualityLevels_DEPRECATED;
 
 	/**
 	 * Include vertex normals in the morph targets?
 	 * The advantage of this can be that it is higher performance than recomputing the normals.
 	 * The disadvantage is it can result in lower quality and uses more memory for the stored morph targets.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Morph Targets")
+	UPROPERTY(EditAnywhere, Category = "Morph Targets", meta = (EditCondition = "CanDynamicallyUpdateMorphTargets()"))
 	bool bIncludeNormals = false;
 
 	/**
@@ -280,14 +366,14 @@ private:
 	 * This essentially removes small deltas from morph targets, which will lower the memory usage at runtime, however when set too high it can also introduce visual artifacts.
 	 * A value of 0 will result in the highest quality morph targets, at the cost of higher runtime memory usage.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Morph Targets", DisplayName = "Delta Zero Threshold", meta = (ClampMin = "0.0", ClampMax = "1.0", ForceUnits="cm"))
+	UPROPERTY(EditAnywhere, Category = "Morph Targets", DisplayName = "Delta Zero Threshold", meta = (ClampMin = "0.0", ClampMax = "1.0", ForceUnits="cm", EditCondition = "CanDynamicallyUpdateMorphTargets()"))
 	float MorphDeltaZeroThreshold = 0.0025f;
 
 	/** 
 	 * The morph target compression level. Higher values result in larger compression, but could result in visual artifacts.
 	 * Most of the times this is a value between 20 and 200.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Morph Targets", DisplayName = "Compression Level", meta = (ClampMin = "0.01", ClampMax = "1000"))
+	UPROPERTY(EditAnywhere, Category = "Morph Targets", DisplayName = "Compression Level", meta = (ClampMin = "0.01", ClampMax = "1000", EditCondition = "CanDynamicallyUpdateMorphTargets()"))
 	float MorphCompressionLevel = 20.0f;
 
 	/**
@@ -295,14 +381,14 @@ private:
 	 * You can use this feather out influence of the ML Deformer in specific areas, such as neck line seams, where the head mesh connects with the body.
 	 * The painted vertex color values will be like a weight multiplier on the ML deformer deltas applied to that vertex. You can invert the mask as well.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Morph Targets")
+	UPROPERTY(EditAnywhere, Category = "Morph Targets", meta = (EditCondition = "CanDynamicallyUpdateMorphTargets()"))
 	EMLDeformerMaskChannel MaskChannel = EMLDeformerMaskChannel::Disabled;
 
 	/** 
 	 * Enable this if you want to invert the mask channel values. For example if you painted the neck seam vertices in red, and you wish the vertices that got painted to NOT move, you have to invert the mask.
 	 * On default you paint areas where the deformer should be active. If you enable the invert option, you paint areas where the deformer will not be active.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Morph Targets", meta = (EditCondition = "MaskChannel != EMLDeformerMaskChannel::Disabled"))
+	UPROPERTY(EditAnywhere, Category = "Morph Targets", meta = (EditCondition = "CanDynamicallyUpdateMorphTargets() && MaskChannel != EMLDeformerMaskChannel::Disabled"))
 	bool bInvertMaskChannel = false;
 
 	/** The fence that let's us wait for all render commands to finish, before this instance is destroyed. */

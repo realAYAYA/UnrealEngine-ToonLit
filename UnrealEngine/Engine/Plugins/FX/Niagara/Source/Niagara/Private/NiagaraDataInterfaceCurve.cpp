@@ -94,7 +94,8 @@ void UNiagaraDataInterfaceCurve::GetCurveData(TArray<FCurveData>& OutCurveData)
 	OutCurveData.Add(FCurveData(&Curve, NAME_None, FLinearColor(1.0f, 0.05f, 0.05f)));
 }
 
-void UNiagaraDataInterfaceCurve::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceCurve::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature Sig;
 	Sig.Name = SampleCurveName;
@@ -107,6 +108,7 @@ void UNiagaraDataInterfaceCurve::GetFunctions(TArray<FNiagaraFunctionSignature>&
 
 	OutFunctions.Add(Sig);
 }
+#endif
 
 void UNiagaraDataInterfaceCurve::UpdateTimeRanges()
 {

@@ -98,9 +98,9 @@ public:
 	FQuantizer(float Range, int32 NumBits)
 	{		
 		int32 BinCount = (int)FMath::Pow(2.0f, NumBits);
-		BinSize = Range / BinCount;
-		HalfBinSize = Range / BinCount / 2.0f;
-		OneOverBinSize = BinCount / Range;
+		BinSize = Range / static_cast<float>(BinCount);
+		HalfBinSize = Range / static_cast<float>(BinCount) / 2.0f;
+		OneOverBinSize = static_cast<float>(BinCount) / Range;
 	}
 #if WITH_EDITOR
 	/** Quantize a value */
@@ -108,7 +108,7 @@ public:
 	{
 		// We compensate for energy loss around zero, e.g., Given a bin size 1, we map [-0.5,0.5[ -> 0, [-1.5,-0.5[ -> -1, [0.5,1.5[ -> 1, 
 		int32 Negative = (int)(Value >= 0.0f) * 2 - 1; // Positive: 1, negative: -1
-		int32 IntValue = (FMath::Abs(Value) + HalfBinSize) * OneOverBinSize;
+		int32 IntValue = static_cast<int32>((FMath::Abs(Value) + HalfBinSize) * OneOverBinSize);
 		return IntValue * Negative;
 	}
 #endif // WITH_EDITOR
@@ -378,10 +378,10 @@ void FCodecV1Encoder::EncodeNormalStream(const FPackedNormal* Stream, uint64 Ele
 		// Load data
 		FPackedNormal& NormalValue = *(FPackedNormal*)RawElementData;		
 		
-		int8 dx = NormalValue.Vector.X - x;
-		int8 dy = NormalValue.Vector.Y - y;
-		int8 dz = NormalValue.Vector.Z - z;
-		int8 dw = NormalValue.Vector.W - w;
+		int8 dx = static_cast<int8>(NormalValue.Vector.X - x);
+		int8 dy = static_cast<int8>(NormalValue.Vector.Y - y);
+		int8 dz = static_cast<int8>(NormalValue.Vector.Z - z);
+		int8 dw = static_cast<int8>(NormalValue.Vector.W - w);
 
 		// Write residual	
 		WriteSymbol(Table, (uint8)dx);
@@ -549,7 +549,7 @@ bool FCodecV1Encoder::EncodeFrameData(FMemoryWriter& Writer, const FGeometryCach
 	}
 
 	// Additional stats
-	Statistics.DurationMs = CodingTime.Get();
+	Statistics.DurationMs = static_cast<float>(CodingTime.Get());
 	Statistics.All.Quality = 0.0f;	
 	Statistics.NumVertices = MeshData.Positions.Num();
 	UE_LOG(LogGeoCaStreamingCodecV1, Log, TEXT("Compressed %u vertices, %u bytes to %u bytes in %.2f milliseconds (%.2f ratio), quantizer precision: %.2f units."), 
@@ -932,10 +932,10 @@ void FCodecV1Decoder::DecodeNormalStream(FHuffmanBitStreamReader& Reader, FPacke
 	{
 		// Read coded residual
 		Reader.Refill();
-		x += Table.DecodeNoRefill(Reader);	
-		y += Table.DecodeNoRefill(Reader);
-		z += Table.DecodeNoRefill(Reader);
-		w += Table.DecodeNoRefill(Reader);
+		x += static_cast<uint8>(Table.DecodeNoRefill(Reader));	
+		y += static_cast<uint8>(Table.DecodeNoRefill(Reader));
+		z += static_cast<uint8>(Table.DecodeNoRefill(Reader));
+		w += static_cast<uint8>(Table.DecodeNoRefill(Reader));
 		
 		FPackedNormal* Value = (FPackedNormal*)RawElementData;
 		Value->Vector.X = x;
@@ -970,10 +970,10 @@ void FCodecV1Decoder::DecodeColorStream(FHuffmanBitStreamReader& Reader, FColor*
 		}
 																			
 		FColor* Value = (FColor*)RawElementData; // Save result to our list
-		Value->R = QuantizedValue.X;
-		Value->G = QuantizedValue.Y;
-		Value->B = QuantizedValue.Z;
-		Value->A = QuantizedValue.W;
+		Value->R = static_cast<uint8>(QuantizedValue.X);
+		Value->G = static_cast<uint8>(QuantizedValue.Y);
+		Value->B = static_cast<uint8>(QuantizedValue.Z);
+		Value->A = static_cast<uint8>(QuantizedValue.W);
 	}
 }
 
@@ -1295,7 +1295,7 @@ bool FCodecV1Decoder::DecodeFrameData(FBufferReader& Reader, FGeometryCacheMeshD
 
 	if (CVarCodecDebug.GetValueOnAnyThread() == 1)
 	{
-		const float TimeFloat = DecodingTime.Get();
+		const float TimeFloat = static_cast<float>(DecodingTime.Get());
 		UE_LOG(LogGeoCaStreamingCodecV1, Log, TEXT("Decoded frame with %i vertices in %.2f milliseconds."), NumVertices, TimeFloat);
 	}
 	

@@ -132,7 +132,7 @@ protected:
 
 			if (ExistingIndex >= RefCounts.Num())
 			{
-				RefCounts.SetNumZeroed(ExistingIndex+1, false);
+				RefCounts.SetNumZeroed(ExistingIndex+1, EAllowShrinking::No);
 			}
 
 			return &RefCounts[ExistingIndex];

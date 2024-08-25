@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using EpicGames.Horde.Agents.Leases;
 using Horde.Agent.Services;
-using HordeCommon;
 
 namespace Horde.Agent.Leases
 {

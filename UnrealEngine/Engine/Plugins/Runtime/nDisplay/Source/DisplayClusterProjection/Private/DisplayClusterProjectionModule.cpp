@@ -139,13 +139,13 @@ TSharedPtr<IDisplayClusterProjectionPolicyFactory> FDisplayClusterProjectionModu
 	return nullptr;
 }
 
-bool FDisplayClusterProjectionModule::CameraPolicySetCamera(const TSharedPtr<IDisplayClusterProjectionPolicy, ESPMode::ThreadSafe>& InPolicy, UCameraComponent* const NewCamera, const FDisplayClusterProjectionCameraPolicySettings& CamersSettings)
+bool FDisplayClusterProjectionModule::CameraPolicySetCamera(const TSharedPtr<IDisplayClusterProjectionPolicy, ESPMode::ThreadSafe>& InPolicy, UCameraComponent* const NewCamera, const FDisplayClusterProjectionCameraPolicySettings& CameraSettings)
 {
 	if (InPolicy.IsValid())
 	{
 		if (FDisplayClusterProjectionCameraPolicy* CameraPolicyInstance = static_cast<FDisplayClusterProjectionCameraPolicy*>(InPolicy.Get()))
 		{
-			CameraPolicyInstance->SetCamera(NewCamera, CamersSettings);
+			CameraPolicyInstance->SetCamera(NewCamera, CameraSettings);
 			return true;
 		}
 	}

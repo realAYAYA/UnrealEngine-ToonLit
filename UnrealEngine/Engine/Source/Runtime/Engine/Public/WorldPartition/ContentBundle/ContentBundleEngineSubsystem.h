@@ -43,6 +43,10 @@ public:
 
 	static ENGINE_API UContentBundleEngineSubsystem* Get();
 
+#if WITH_EDITOR
+	void SetEditingContentBundleGuid(FGuid InGuid) { EditingContentBundleGuid = InGuid; }
+	FGuid GetEditingContentBundleGuid() { return EditingContentBundleGuid; }
+#endif
 private:
 	ENGINE_API void OnPreWorldInitialization(UWorld* World, const UWorld::InitializationValues IVS);
 	ENGINE_API void OnWorldPostCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
@@ -57,4 +61,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UContentBundleTypeFactory> ContentBundleTypeFactory;
+
+#if WITH_EDITOR
+	// @todo_ow: This will no longer be needed once we move ContentBundles to External Data Layers but currently the ActorPartitionSubsystem needs to get the current ContentBundleGuid to build a proper actor name
+	FGuid EditingContentBundleGuid;
+#endif
 };

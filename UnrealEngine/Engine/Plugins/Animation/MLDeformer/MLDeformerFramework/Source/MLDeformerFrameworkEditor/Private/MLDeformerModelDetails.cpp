@@ -9,6 +9,7 @@
 #include "MLDeformerEditorModel.h"
 #include "MLDeformerEditorModule.h"
 #include "MLDeformerGeomCacheHelpers.h"
+#include "MLDeformerTrainingInputAnim.h"
 #include "GeometryCache.h"
 #include "GeometryCacheTrack.h"
 #include "Animation/AnimSequence.h"
@@ -55,9 +56,10 @@ namespace UE::MLDeformer
 	void FMLDeformerModelDetails::CreateCategories()
 	{
 		BaseMeshCategoryBuilder = &DetailLayoutBuilder->EditCategory("Base Mesh", FText::GetEmpty(), ECategoryPriority::Important);
-		TargetMeshCategoryBuilder = &DetailLayoutBuilder->EditCategory("Target Mesh", FText::GetEmpty(), ECategoryPriority::Important);
 		InputOutputCategoryBuilder = &DetailLayoutBuilder->EditCategory("Inputs", FText::GetEmpty(), ECategoryPriority::Important);
 		TrainingSettingsCategoryBuilder = &DetailLayoutBuilder->EditCategory("Training Settings", FText::GetEmpty(), ECategoryPriority::Important);
+		LODSettingsCategoryBuilder = &DetailLayoutBuilder->EditCategory("LOD Generation Settings", FText::GetEmpty(), ECategoryPriority::Important);
+		LODSettingsCategoryBuilder->SetCategoryVisibility(Model->DoesSupportLOD());
 	}
 
 	void FMLDeformerModelDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
@@ -124,47 +126,9 @@ namespace UE::MLDeformer
 				]
 			];
 
-		// Animation sequence.
-		IDetailPropertyRow& AnimRow = BaseMeshCategoryBuilder->AddProperty(UMLDeformerModel::GetAnimSequencePropertyName(), UMLDeformerModel::StaticClass());
-		AnimRow.CustomWidget()
-		.NameContent()
-		[
-			AnimRow.GetPropertyHandle()->CreatePropertyNameWidget()
-		]
-		.ValueContent()
-		[
-			SNew(SObjectPropertyEntryBox)
-			.PropertyHandle(AnimRow.GetPropertyHandle())
-			.AllowedClass(UAnimSequence::StaticClass())
-			.ObjectPath( (Model && Model->GetAnimSequence()) ? Model->GetAnimSequence()->GetPathName() : FString())
-			.ThumbnailPool(DetailBuilder.GetThumbnailPool())
-			.OnShouldFilterAsset(
-				this, 
-				&FMLDeformerModelDetails::FilterAnimSequences, 
-				Model->GetSkeletalMesh() ? Model->GetSkeletalMesh()->GetSkeleton() : nullptr
-			)
-		];
+		AddTrainingInputAnims();
 
-		AddAnimSequenceErrors();
-
-		const FText AnimErrorText = EditorModel->GetIncompatibleSkeletonErrorText(Model->GetSkeletalMesh(), Model->GetAnimSequence());
-		FDetailWidgetRow& AnimErrorRow = BaseMeshCategoryBuilder->AddCustomRow(FText::FromString("AnimSkeletonMisMatchError"))
-			.Visibility(!AnimErrorText.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed)
-			.WholeRowContent()
-			[
-				SNew(SBox)
-				.Padding(FMargin(0.0f, 4.0f))
-				[
-					SNew(SWarningOrErrorBox)
-					.MessageStyle(EMessageStyle::Warning)
-					.Message(AnimErrorText)
-				]
-			];
-
-
-		AddTargetMesh();
-
-		TargetMeshCategoryBuilder->AddProperty(UMLDeformerModel::GetAlignmentTransformPropertyName(), UMLDeformerModel::StaticClass());
+		InputOutputCategoryBuilder->AddProperty(UMLDeformerModel::GetAlignmentTransformPropertyName(), UMLDeformerModel::StaticClass());
 
 		AddTrainingInputFlags();
 		AddTrainingInputErrors();
@@ -189,13 +153,11 @@ namespace UE::MLDeformer
 		// Create the inputs widget.
 		TSharedPtr<SMLDeformerInputWidget> InputWidget = EditorModel->CreateInputWidget();
 		EditorModel->SetInputWidget(InputWidget);
-		InputOutputCategoryBuilder->AddCustomRow(FText::FromString("Inputs")).WholeRowContent().Widget = InputWidget.ToSharedRef();
+		IDetailGroup& NetworkInputsGroup = InputOutputCategoryBuilder->AddGroup("NetworkInputs", LOCTEXT("NetworkInputs", "Network Inputs"), false, true);
+		NetworkInputsGroup.AddWidgetRow().WholeRowContent().Widget = InputWidget.ToSharedRef();
 
 		AddBoneInputErrors();
 		AddCurveInputErrors();
-
-		InputOutputCategoryBuilder->AddProperty(UMLDeformerModel::GetMaxTrainingFramesPropertyName(), UMLDeformerModel::StaticClass());
-		InputOutputCategoryBuilder->AddProperty(UMLDeformerModel::GetDeltaCutoffLengthPropertyName(), UMLDeformerModel::StaticClass());
 
 		// Show a warning when no neural network has been set.
 		{		
@@ -230,7 +192,11 @@ namespace UE::MLDeformer
 			}
 		}
 
+		TrainingSettingsCategoryBuilder->AddProperty(UMLDeformerModel::GetMaxTrainingFramesPropertyName(), UMLDeformerModel::StaticClass());
+		TrainingSettingsCategoryBuilder->AddProperty(UMLDeformerModel::GetDeltaCutoffLengthPropertyName(), UMLDeformerModel::StaticClass());
 		AddTrainingSettingsErrors();
+
+		LODSettingsCategoryBuilder->AddProperty(UMLDeformerModel::GetMaxNumLODsPropertyName(), UMLDeformerModel::StaticClass());
 	}
 
 	bool FMLDeformerModelDetails::FilterAnimSequences(const FAssetData& AssetData, USkeleton* Skeleton)
@@ -243,30 +209,9 @@ namespace UE::MLDeformer
 		return true;
 	}
 
-	FReply FMLDeformerModelDetails::OnFilterAnimatedBonesOnly() const
+	void FMLDeformerModelDetails::AddTrainingInputAnims()
 	{
-		EditorModel->InitBoneIncludeListToAnimatedBonesOnly();
-		EditorModel->SetResamplingInputOutputsNeeded(true);
-		DetailLayoutBuilder->ForceRefreshDetails();
-		return FReply::Handled();
-	}
-
-	FReply FMLDeformerModelDetails::OnFilterAnimatedCurvesOnly() const
-	{
-		EditorModel->InitCurveIncludeListToAnimatedCurvesOnly();
-		EditorModel->SetResamplingInputOutputsNeeded(true);
-		DetailLayoutBuilder->ForceRefreshDetails();
-		return FReply::Handled();
-	}
-
-	bool FMLDeformerModelDetails::IsBonesFlagVisible() const
-	{
-		return (Model->DoesSupportBones() && Model->DoesSupportCurves());
-	}
-
-	bool FMLDeformerModelDetails::IsCurvesFlagVisible() const
-	{
-		return (Model->DoesSupportBones() && Model->DoesSupportCurves() && EditorModel->GetNumCurvesOnSkeletalMesh(Model->GetSkeletalMesh()) > 0);
+		UE_LOG(LogMLDeformer, Warning, TEXT("Please implement the AddTrainingInputAnims method in your model details class."));
 	}
 }	// namespace UE::MLDeformer
 

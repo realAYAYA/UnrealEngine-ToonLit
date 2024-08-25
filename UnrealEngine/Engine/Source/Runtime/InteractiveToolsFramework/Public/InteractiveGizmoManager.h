@@ -130,7 +130,7 @@ public:
 	 * @param Identifier the InstanceIdentifier that was passed to CreateGizmo()
 	 * @return the found Gizmo, or null
 	 */
-	INTERACTIVETOOLSFRAMEWORK_API virtual UInteractiveGizmo* FindGizmoByInstanceIdentifier(const FString& Identifier);
+	INTERACTIVETOOLSFRAMEWORK_API virtual UInteractiveGizmo* FindGizmoByInstanceIdentifier(const FString& Identifier) const;
 
 
 

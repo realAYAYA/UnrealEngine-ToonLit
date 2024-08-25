@@ -48,7 +48,7 @@ namespace UsdUtils
 
 		FPrimChangeFlags()
 		{
-			FMemory::Memset( this, 0, sizeof( *this ) );
+			FMemory::Memset(this, 0, sizeof(*this));
 		}
 	};
 
@@ -58,10 +58,10 @@ namespace UsdUtils
 	 */
 	struct FAttributeChange
 	{
-		FString PropertyName;	// metersPerUnit, kind, upAxis, etc.
-		FString Field;			// default, variability, timeSamples, etc.
-		UE::FVtValue OldValue;	// Can be empty when we create a new attribute opinion
-		UE::FVtValue NewValue;	// Can be empty when we clear an existing attribute opinion
+		FString PropertyName;	  // metersPerUnit, kind, upAxis, etc.
+		FString Field;			  // default, variability, timeSamples, etc.
+		UE::FVtValue OldValue;	  // Can be empty when we create a new attribute opinion
+		UE::FVtValue NewValue;	  // Can be empty when we clear an existing attribute opinion
 	};
 
 	/** Analogous to pxr::SdfChangeList::SubLayerChangeType, describes a change to a sublayer */
@@ -77,11 +77,12 @@ namespace UsdUtils
 	{
 		TArray<FAttributeChange> AttributeChanges;
 		FPrimChangeFlags Flags;
-		FString OldPath;							// Empty if Flags.bDidRename is not set
-		FString OldIdentifier;						// Empty if Flags.bDIdChangeIdentifier is not set
+		FString OldPath;		  // Empty if Flags.bDidRename is not set
+		FString OldIdentifier;	  // Empty if Flags.bDIdChangeIdentifier is not set
 		TArray<TPair<FString, ESubLayerChangeType>> SubLayerChanges;
 	};
-	using FObjectChangeNotice = FSdfChangeListEntry; // Renamed in 5.3 as it is used for layer changes now too
+
+	using FObjectChangeNotice = FSdfChangeListEntry;	// Renamed in 5.3 as it is used for layer changes now too
 
 	using FSdfChangeList = TArray<TPair<UE::FSdfPath, FSdfChangeListEntry>>;
 	using FLayerToSdfChangeList = TArray<TPair<UE::FSdfLayerWeak, FSdfChangeList>>;
@@ -92,7 +93,7 @@ namespace UsdUtils
 	 * the key can be "/" to signify a stage change, or something like "/MyRoot/SomePrim" to indicate a particular prim change
 	 */
 	using FObjectChangesByPath = TMap<FString, TArray<FSdfChangeListEntry>>;
-}
+}	 // namespace UsdUtils
 
 /**
  * Registers to Usd Notices and emits events when the Usd Stage has changed
@@ -101,17 +102,17 @@ class UNREALUSDWRAPPER_API FUsdListener
 {
 public:
 	FUsdListener();
-	FUsdListener( const UE::FUsdStage& Stage );
+	FUsdListener(const UE::FUsdStage& Stage);
 
-	FUsdListener( const FUsdListener& Other ) = delete;
-	FUsdListener( FUsdListener&& Other ) = delete;
+	FUsdListener(const FUsdListener& Other) = delete;
+	FUsdListener(FUsdListener&& Other) = delete;
 
 	virtual ~FUsdListener();
 
-	FUsdListener& operator=( const FUsdListener& Other ) = delete;
-	FUsdListener& operator=( FUsdListener&& Other ) = delete;
+	FUsdListener& operator=(const FUsdListener& Other) = delete;
+	FUsdListener& operator=(FUsdListener&& Other) = delete;
 
-	void Register( const UE::FUsdStage& Stage );
+	void Register(const UE::FUsdStage& Stage);
 
 	// Increment/decrement the block counter
 	void Block();
@@ -142,20 +143,20 @@ public:
 	FOnObjectsChanged& GetOnObjectsChanged();
 
 private:
-	TUniquePtr< FUsdListenerImpl > Impl;
+	TUniquePtr<FUsdListenerImpl> Impl;
 };
 
 class UNREALUSDWRAPPER_API FScopedBlockNotices final
 {
 public:
-	explicit FScopedBlockNotices( FUsdListener& InListener );
+	explicit FScopedBlockNotices(FUsdListener& InListener);
 	~FScopedBlockNotices();
 
 	FScopedBlockNotices() = delete;
-	FScopedBlockNotices( const FScopedBlockNotices& ) = delete;
-	FScopedBlockNotices( FScopedBlockNotices&& ) = delete;
-	FScopedBlockNotices& operator=( const FScopedBlockNotices& ) = delete;
-	FScopedBlockNotices& operator=( FScopedBlockNotices&& ) = delete;
+	FScopedBlockNotices(const FScopedBlockNotices&) = delete;
+	FScopedBlockNotices(FScopedBlockNotices&&) = delete;
+	FScopedBlockNotices& operator=(const FScopedBlockNotices&) = delete;
+	FScopedBlockNotices& operator=(FScopedBlockNotices&&) = delete;
 
 private:
 	FUsdListener& Listener;

@@ -107,7 +107,6 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FDebugViewModeShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const;
 

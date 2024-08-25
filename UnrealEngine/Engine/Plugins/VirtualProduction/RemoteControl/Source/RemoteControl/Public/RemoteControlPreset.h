@@ -1,14 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
-#include "CoreTypes.h"
-
 #include "Algo/Transform.h"
+#include "CoreTypes.h"
 #include "RemoteControlField.h"
 #include "RemoteControlEntity.h"
-#include "UObject/SoftObjectPtr.h"
+#include "RemoteControlPropertyIdRegistry.h"
 #include "Templates/PimplPtr.h"
 #include "Templates/UnrealTypeTraits.h"
+#include "UObject/SoftObjectPtr.h"
 
 #include "RemoteControlPreset.generated.h"
 
@@ -27,6 +27,7 @@ class UBlueprint;
 class URCVirtualPropertyBase;
 class URCVirtualPropertyContainerBase;
 class URCVirtualPropertyInContainer;
+class URCVirtualPropertySelfContainer;
 class URemoteControlExposeRegistry;
 class URemoteControlBinding;
 class URemoteControlPreset;
@@ -45,6 +46,40 @@ struct REMOTECONTROL_API FRemoteControlPresetExposeArgs
 	FGuid GroupId;
 	/** Whether to automatically enable the edit condition for the exposed property. */
 	bool bEnableEditCondition;
+};
+
+/** Arguments used to expose an entity (Actor, property, function, etc.) */
+struct REMOTECONTROL_API FRemoteControlPropertyIdArgs
+{
+	FRemoteControlPropertyIdArgs() = default;
+
+	bool IsValid() const
+	{
+		return VirtualProperty && (SourceObject || SourceClass)
+			&& (!SuperType.IsNone() || !SubType.IsNone());
+	}
+
+public:
+	/** PropertyId */
+	FName PropertyId;
+
+	/** SuperType of the Property */
+	FName SuperType;
+
+	/** SubType of the Property */
+	FName SubType;
+
+	/** (Optional) The source object to use for special cases. */
+	TObjectPtr<UObject> SourceObject;
+
+	/** (Optional) The class of the source object to use for special cases. */
+	UClass* SourceClass;
+
+	/** (Optional) The virtual property to use for all the cases. */
+	TObjectPtr<URCVirtualPropertySelfContainer> VirtualProperty;
+
+	/** Map with the Guid of the RCField and as its value the real PropContainer of the real property */
+	TMap<FGuid, TObjectPtr<URCVirtualPropertySelfContainer>> RealProperties;
 };
 
 /**
@@ -93,6 +128,20 @@ struct REMOTECONTROL_API FExposedFunction
 	UFunction* Function;
 	TSharedPtr<class FStructOnScope> DefaultParameters;
 	TArray<UObject*> OwnerObjects;
+};
+
+/**
+ * Temporarily prevent Remote Control Presets from renewing it's guids during duplicate operation.
+ */
+struct REMOTECONTROL_API FRCPresetGuidRenewGuard
+{
+	FRCPresetGuidRenewGuard();
+	~FRCPresetGuidRenewGuard();
+
+	static bool IsAllowingPresetGuidRenewal();
+
+private:
+	bool bPreviousValue;
 };
 
 /**
@@ -166,7 +215,7 @@ struct REMOTECONTROL_API FRemoteControlPresetLayout
 	{
 		FGuid OriginGroupId;
 		FGuid TargetGroupId;
-		FGuid DraggedFieldId;
+		TArray<FGuid> DraggedFieldsIds;
 		FGuid TargetFieldId;
 	};
 
@@ -175,7 +224,10 @@ struct REMOTECONTROL_API FRemoteControlPresetLayout
 
 	/** Get or create the default group. */
 	FRemoteControlPresetGroup& GetDefaultGroup();
-
+	/** Return the DefaultGroupOrder */
+	TArray<FGuid>& GetDefaultGroupOrder() { return DefaultGroupOrder; }
+	/** Set the All group order */
+	void SetDefaultGroupOrder(const TArray<FGuid>& InNewDefaultGroupOrder) { DefaultGroupOrder = InNewDefaultGroupOrder; }
 	/** Returns true when the given group id is a default one. */
 	bool IsDefaultGroup(FGuid GroupId) const;
 	
@@ -212,19 +264,14 @@ struct REMOTECONTROL_API FRemoteControlPresetLayout
 	 */
 	FRemoteControlPresetGroup* FindGroupFromField(FGuid FieldId);
 
-	/**
-	 * Move field to a group.
-	 * @param FieldId the field to move.
-	 * @param TargetGroupId the group to move the field in.
-	 * @return whether the operation was successful.
-	 */
-	bool MoveField(FGuid FieldId, FGuid TargetGroupId);
-
 	/** Swap two groups. */
 	void SwapGroups(FGuid OriginGroupId, FGuid TargetGroupId);
 
 	/** Swap fields across groups or in the same one. */
-	void SwapFields(const FFieldSwapArgs& FieldSwapArgs);
+	void SwapFields(const FFieldSwapArgs& InFieldSwapArgs);
+
+	/** Swap fields across groups or in the same one for the default group. */
+	void SwapFieldsDefaultGroup(const FFieldSwapArgs& FieldSwapArgs, const FGuid InFieldRealGroup, TArray<FGuid> InEntities);
 
 	/** Delete a group from the layout. */
 	void DeleteGroup(FGuid GroupId);
@@ -256,6 +303,12 @@ struct REMOTECONTROL_API FRemoteControlPresetLayout
 	/** Get the preset that owns this layout. */
 	URemoteControlPreset* GetOwner();
 
+	/**
+	 * @brief Called internally when entity Ids are renewed.
+	 * @param InEntityIdMap Map of old Id to new Id.
+	 */
+	void UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap);
+	
 	// Layout operation delegates
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnGroupAdded, const FRemoteControlPresetGroup& /*NewGroup*/);
 	FOnGroupAdded& OnGroupAdded() { return OnGroupAddedDelegate; }
@@ -281,6 +334,10 @@ struct REMOTECONTROL_API FRemoteControlPresetLayout
 private:
 	/** Create a group by providing a name and ID. */
 	FRemoteControlPresetGroup& CreateGroupInternal(FName GroupName, FGuid GroupId);
+
+	/** Keep the ALL group order since its not saved in the normal workflow */
+	UPROPERTY()
+	TArray<FGuid> DefaultGroupOrder;
 
 	/** The list of groups under this layout. */
 	UPROPERTY()
@@ -537,6 +594,9 @@ public:
 	/** Cache this preset's layout data. */
 	void CacheLayoutData();
 
+	/** Cache this preset's controllers labels. */
+	void CacheControllersLabels() const;
+
 	/** Resolves exposed property/function bounded objects */
 	UE_DEPRECATED(4.27, "ResolvedBoundObjects is deprecated, you can now resolve bound objects using FRemoteControlEntity.")
 	TArray<UObject*> ResolvedBoundObjects(FName FieldLabel);
@@ -550,6 +610,24 @@ public:
 	 * Given a RC Entity, rebind all entities with the same owner to a new actor.
 	 */
 	void RebindAllEntitiesUnderSameActor(const FGuid& EntityId, AActor* NewActor, bool bUseRebindingContext = true);
+
+	/**
+	 * Renews all exposed entity guids. Necessary when duplicating.
+	 */
+	void RenewEntityIds();
+
+	/**
+	 * Renews all controller guids. Necessary when duplicating.
+	 */
+	void RenewControllerIds();
+
+	/**
+	 * Rename the given controller with the new name if the name is unique
+	 * @param InControllerGuid Id of the controller to rename
+	 * @param InNewName New name for the controller
+	 * @return New name of the controller
+	 */
+	FName SetControllerDisplayName(FGuid InControllerGuid, const FName& InNewName) const;
 
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnPresetEntityEvent, URemoteControlPreset* /*Preset*/, const FGuid& /*EntityId*/);
 	FOnPresetEntityEvent& OnEntityExposed() { return OnEntityExposedDelegate; }
@@ -566,7 +644,10 @@ public:
 	 * Delegate called when the exposed entity wrapper itself is updated (ie. binding change, rename)  
 	 */
 	FOnPresetEntitiesUpdatedEvent& OnEntitiesUpdated() { return OnEntitiesUpdatedDelegate; }
-	
+
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnEntityRebind, const FGuid&)
+	FOnEntityRebind& OnEntityRebind() { return OnEntityRebindDelegate; }
+
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnPresetPropertyExposed, URemoteControlPreset* /*Preset*/, FName /*ExposedLabel*/);
 	UE_DEPRECATED(4.27, "This delegate is deprecated, use OnEntityExposed instead.")
 	FOnPresetPropertyExposed& OnPropertyExposed() { return OnPropertyExposedDelegate; }
@@ -574,7 +655,12 @@ public:
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnPresetPropertyUnexposed, URemoteControlPreset* /*Preset*/, FName /*ExposedLabel*/);
 	UE_DEPRECATED(4.27, "This delegate is deprecated, use OnEntityUnexposed instead.")
 	FOnPresetPropertyUnexposed& OnPropertyUnexposed() { return OnPropertyUnexposedDelegate; }
-
+	
+	using FGuidToGuidMap = TMap<FGuid, FGuid>;	// Workaround for delegate macro.
+	
+	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnPropertyIdsRenewed, URemoteControlPreset* /*Preset*/, const FGuidToGuidMap& /*OldToNewEntityIds*/);
+	FOnPropertyIdsRenewed& OnPropertyIdsRenewed() { return OnPropertyIdsRenewedDelegate;}
+	
 	DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnPresetFieldRenamed, URemoteControlPreset* /*Preset*/, FName /*OldExposedLabel*/, FName /**NewExposedLabel*/);
 	FOnPresetFieldRenamed& OnFieldRenamed() { return OnPresetFieldRenamed; }
 
@@ -595,6 +681,9 @@ public:
 
 	DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnControllerRenamed, URemoteControlPreset* /*Preset*/, const FName /*OldLabel*/, const FName /*NewLabel*/);
 	FOnControllerRenamed& OnControllerRenamed() { return OnControllerRenamedDelegate; }
+
+	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnControllerIdsRenewed, URemoteControlPreset* /*Preset*/, const FGuidToGuidMap& /*OldToNewControllerIds*/);
+	FOnControllerIdsRenewed& OnControllerIdsRenewed() { return OnControllerIdsRenewedDelegate; }
 	
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnControllerModified, URemoteControlPreset* /*Preset*/, const TSet<FGuid>& /*ModifiedControllerIds*/);
 	FOnControllerModified& OnControllerModified() { return OnControllerModifiedDelegate; }
@@ -726,6 +815,9 @@ private:
 	void OnPreObjectPropertyChanged(UObject* Object, const class FEditPropertyChain& PropertyChain);
 	void OnObjectTransacted(UObject* InObject, const FTransactionObjectEvent& InTransactionEvent);
 
+	/** Fix controllers labels for older presets. */
+	void FixAndCacheControllersLabels() const;
+
 #if WITH_EDITOR	
 	//~ Handle events that can incur bindings to be modified.
 	void OnActorDeleted(AActor* Actor);
@@ -761,9 +853,27 @@ public:
 	/** Expose an entity in the registry. */
 	TSharedPtr<FRemoteControlEntity> Expose(FRemoteControlEntity&& Entity, UScriptStruct* EntityType, const FGuid& GroupId);
 
+	/**
+	 * Calls to the PropertyIdRegistry PerformChainReaction to update the value(s) of the property(ies) that are bound to a PropertyIdAction.
+	 * @param InArgs Argument used to update the property(ies) value.
+	 */
+	void PerformChainReaction(const FRemoteControlPropertyIdArgs& InArgs) const;
+
+	/**
+	 * Calls to the PropertyIdRegistry UpdateIdentifiedField to updates a field from the set of identified fields.
+	 * @param InFieldToIdentify the entity to identify.
+	 */
+	void UpdateIdentifiedField(const TSharedRef<FRemoteControlField>& InFieldToIdentify) const;
 
 	/** Try to get a binding and creates a new one if it doesn't exist. */
 	URemoteControlBinding* FindOrAddBinding(const TSoftObjectPtr<UObject>& Object);
+
+	/**
+	 * Get the PropertyIdRegistry.
+	 * @return The PropertyIdRegistry of this Preset.
+	 */
+	TObjectPtr<URemoteControlPropertyIdRegistry> GetPropertyIdRegistry() const { return PropertyIdRegistry; }
+
 private:
 
 	/** Find a binding that has the same boundobjectmap but that currently points to the object passed as argument. */
@@ -822,18 +932,26 @@ private:
 	/** Holds exposed entities on the preset. */
 	TObjectPtr<URemoteControlExposeRegistry> Registry = nullptr;
 
+	/** Holds identities of exposed entities on the preset. */
+	UPROPERTY(Transient)
+	TObjectPtr<URemoteControlPropertyIdRegistry> PropertyIdRegistry = nullptr;
+
 	/** Delegate triggered when an entity is exposed. */
 	FOnPresetEntityEvent OnEntityExposedDelegate;
 	/** Delegate triggered when an entity is unexposed from the preset. */
 	FOnPresetEntityEvent OnEntityUnexposedDelegate;
 	/** Delegate triggered when entities are modified and may need to be re-resolved. */
 	FOnPresetEntitiesUpdatedEvent OnEntitiesUpdatedDelegate;
+	/** Delegate triggered when an Entity is rebound */
+	FOnEntityRebind OnEntityRebindDelegate;
 	/** Delegate triggered when an exposed property value has changed. */
 	FOnPresetExposedPropertiesModified OnPropertyChangedDelegate;
 	/** Delegate triggered when a new property has been exposed. */
 	FOnPresetPropertyExposed OnPropertyExposedDelegate;
 	/** Delegate triggered when a property has been unexposed. */
 	FOnPresetPropertyUnexposed OnPropertyUnexposedDelegate;
+	/** Delegate triggered when the property guids are renewed. */
+	FOnPropertyIdsRenewed OnPropertyIdsRenewedDelegate;
 	/** Delegate triggered when a field has been renamed. */
 	FOnPresetFieldRenamed OnPresetFieldRenamed;
 	/** Delegate triggered when the preset's metadata has been modified. */
@@ -848,6 +966,8 @@ private:
 	FOnControllerRemoved OnControllerRemovedDelegate;
 	/** Delegate triggered when a Controller is renamed */
 	FOnControllerRenamed OnControllerRenamedDelegate;
+	/** Delegate triggered when a Controller guids are renewed. */
+	FOnControllerIdsRenewed OnControllerIdsRenewedDelegate;
 	/** Delegate triggered when a Controller has been changed */
 	FOnControllerModified OnControllerModifiedDelegate;
 
@@ -880,6 +1000,9 @@ private:
 
 	/** Whether there is an ongoing remote modification happening. */
 	bool bOngoingRemoteModification = false;
+
+	/** Used for OnObjectPropertyChanged to avoid being called by itself. */
+	bool bReentryGuard = false;
 
 	/** Holds manager that handles rebinding unbound entities upon load or map change. */
 	TPimplPtr<FRemoteControlPresetRebindingManager> RebindingManager;

@@ -41,7 +41,7 @@ FText UConversationGraphNode_Choice::GetNodeTitle(ENodeTitleType::Type TitleType
 			Args.Add(TEXT("ChoiceClassName"), FText::FromName(RuntimeNode->GetClass()->GetDisplayNameText()));
 #endif
 
-			const FText FormatString = bIsDerivedType ?
+			const FText FormatString = (bIsDerivedType && !RuntimeNode->GetHideChoiceClassName()) ?
 				LOCTEXT("UConversationGraphNode_Choice_GetNodeTitle_WithClass", "Choice \"{ChoiceName}\" ({ChoiceClassName})") :
 				LOCTEXT("UConversationGraphNode_Choice_GetNodeTitle", "Choice \"{ChoiceName}\"");
 

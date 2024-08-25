@@ -70,6 +70,13 @@ namespace ENetworkFailure
 	}
 }
 
+UENUM(BlueprintType)
+enum class EReplicationSystem : uint8
+{
+	Default,
+	Generic,
+	Iris,
+};
 
 // (DEPRECATED) Security event types used for UE_SECURITY_LOG
 namespace ESecurityEvent

@@ -14,6 +14,16 @@ void FBoundObjectPreAnimatedStateTraits::Initialize(FPreAnimatedStorageID InStor
 	ObjectGroupManager = InParentExtension->GetOrCreateGroupManager<FPreAnimatedObjectGroupManager>();
 }
 
+FPreAnimatedStorageGroupHandle FBoundObjectPreAnimatedStateTraits::FindGroupImpl(UObject* BoundObject)
+{
+	return ObjectGroupManager->FindGroupForKey(BoundObject);
+}
+
+FPreAnimatedStorageGroupHandle FBoundObjectPreAnimatedStateTraits::FindGroupImpl(const FObjectComponent& BoundObject)
+{
+	return ObjectGroupManager->FindGroupForKey(BoundObject.GetObject());
+}
+
 FPreAnimatedStorageGroupHandle FBoundObjectPreAnimatedStateTraits::MakeGroupImpl(UObject* BoundObject)
 {
 	return ObjectGroupManager->MakeGroupForKey(BoundObject);

@@ -2,7 +2,9 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif //UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "UObject/Class.h"
@@ -137,6 +139,8 @@ public:
 	UE_DEPRECATED(5.1, "Class names are now represented by path names. Please use GetRowStructPathName.")
 	ENGINE_API FName GetRowStructName() const;
 	ENGINE_API FTopLevelAssetPath GetRowStructPathName() const;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	ENGINE_API virtual void PostInitProperties() override;
 	ENGINE_API virtual void PostLoad() override;

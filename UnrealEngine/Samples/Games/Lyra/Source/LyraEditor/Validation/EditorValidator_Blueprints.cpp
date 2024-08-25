@@ -19,12 +19,12 @@ UEditorValidator_Blueprints::UEditorValidator_Blueprints()
 {
 }
 
-bool UEditorValidator_Blueprints::CanValidateAsset_Implementation(UObject* InAsset) const
+bool UEditorValidator_Blueprints::CanValidateAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
 	return Super::CanValidateAsset_Implementation(InAsset) && (InAsset ? InAsset->IsA(UBlueprint::StaticClass()) : false);
 }
 
-EDataValidationResult UEditorValidator_Blueprints::ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors)
+EDataValidationResult UEditorValidator_Blueprints::ValidateLoadedAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& Context)
 {
 	UBlueprint* Blueprint = Cast<UBlueprint>(InAsset);
 	check(Blueprint);
@@ -94,7 +94,7 @@ EDataValidationResult UEditorValidator_Blueprints::ValidateLoadedAsset_Implement
 									{
 										for (const FString& WarningOrError : WarningsAndErrors)
 										{
-											AssetFails(InAsset, FText::FromString(WarningOrError), ValidationErrors);
+											AssetFails(InAsset, FText::FromString(WarningOrError));
 										}
 									}
 									break;

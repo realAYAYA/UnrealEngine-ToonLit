@@ -22,7 +22,7 @@ public class DepotFileFixture
 	public int Revision { get; }
 	public string Digest { get; }
 	public string Content { get; }
-	
+
 	public DepotFileFixture(string depotFile, string clientFile, string content, int revision)
 	{
 		DepotFile = depotFile;
@@ -32,16 +32,21 @@ public class DepotFileFixture
 		Digest = PerforceFixture.CalcMd5(content).ToUpperInvariant();
 		Content = content;
 	}
+
+	public override string ToString()
+	{
+		return $"DepotFile={DepotFile}, Size={Size}, Revision={Revision}, Digest={Digest}, Content={Content}";
+	}
 }
 
 public class ChangelistFixture
 {
 	public const string Placeholder = "<placeholder>";
-	
+
 	public int Number { get; }
 	public string Description { get; }
 	public bool IsShelved { get; }
-	
+
 	/// <summary>
 	/// List of files in stream as how they would appear locally on disk, when synced to this changelist
 	/// (after any view maps have been applied)
@@ -68,16 +73,16 @@ public class ChangelistFixture
 		{
 			List<(string clientFile, long size, string digest)> expectedList = new(expected);
 			List<(string clientFile, long size, string digest)> actualList = new(actual);
-			
+
 			expectedList.Sort();
 			actualList.Sort();
-			
+
 			Console.WriteLine("Expected ------------------------------------------------------");
 			foreach ((string clientFile, long size, string digest) in expectedList)
 			{
 				Console.WriteLine($"{clientFile,-20} | {size,5} | {digest}");
 			}
-			
+
 			Console.WriteLine("");
 			Console.WriteLine("Actual --------------------------------------------------------");
 			foreach ((string clientFile, long size, string digest) in actualList)
@@ -88,7 +93,7 @@ public class ChangelistFixture
 			Assert.Fail("Files on disk does not match files in stream at given CL");
 		}
 	}
-	
+
 	/// <summary>
 	/// Assert files in stream for this changelist matches the client's have table
 	/// </summary>
@@ -104,21 +109,21 @@ public class ChangelistFixture
 		{
 			expected.Clear();
 		}
-		
+
 		if (!expected.SetEquals(actual))
 		{
 			List<(string depotFile, int rev)> expectedList = new(expected);
 			List<(string depotFile, int rev)> actualList = new(actual);
-			
+
 			expectedList.Sort();
 			actualList.Sort();
-			
+
 			Console.WriteLine("Expected ------------------------------------------------------");
 			foreach ((string depotFile, int rev) in expectedList)
 			{
 				Console.WriteLine($"{depotFile,-30} | {rev,5}");
 			}
-			
+
 			Console.WriteLine("");
 			Console.WriteLine("Actual --------------------------------------------------------");
 			foreach ((string depotFile, int rev) in actualList)
@@ -129,12 +134,18 @@ public class ChangelistFixture
 			Assert.Fail("Files in stream does not match files in client's have table");
 		}
 	}
-	
+
 	private (FileSet localFiles, FileSet streamFiles) GetFileSets(string clientRoot)
 	{
-		EnumerationOptions options = new () { RecurseSubdirectories = true };
-
 		FileSet streamFiles = new(StreamFiles.Select(x => (x.ClientFile, x.Size, x.Digest)));
+		FileSet localFiles = GetLocalFileSet(clientRoot);
+		return (localFiles, streamFiles);
+	}
+
+	public static FileSet GetLocalFileSet(string clientRoot)
+	{
+		EnumerationOptions options = new() { RecurseSubdirectories = true };
+
 		FileSet localFiles = new(Directory.EnumerateFiles(clientRoot, "*", options)
 			.Select(x => Path.GetRelativePath(clientRoot, x))
 			.Select(x => x.Replace("\\", "/", StringComparison.Ordinal))
@@ -142,29 +153,29 @@ public class ChangelistFixture
 			{
 				string absPath = Path.Join(clientRoot, clientFile);
 				string content = File.ReadAllText(absPath);
-				
+
 				// Since content of files in fixture are only single lines, the trick below works to workaround
 				// differences in line endings after sync (client vs server).
 				content = content.Replace("\r\n", "\n", StringComparison.Ordinal);
 				long size = content.Length;
 				return (clientFile, size, PerforceFixture.CalcMd5(content).ToUpperInvariant());
 			}));
-		
-		return (localFiles, streamFiles);
+
+		return localFiles;
 	}
 
 	public (List<string> localFiles, List<string> streamFiles) GetFiles(string clientRoot)
 	{
-		EnumerationOptions options = new () { RecurseSubdirectories = true };
+		EnumerationOptions options = new() { RecurseSubdirectories = true };
 		List<string> localFiles = Directory.EnumerateFiles(clientRoot, "*", options)
 			.Select(x => Path.GetRelativePath(clientRoot, x))
 			.Select(x => x.Replace("\\", "/", StringComparison.Ordinal))
 			.ToList();
 		List<string> streamFiles = new(StreamFiles.Select(x => x.ClientFile));
-		
+
 		localFiles.Sort();
 		streamFiles.Sort();
-		
+
 		return (localFiles, streamFiles);
 	}
 
@@ -205,7 +216,7 @@ public class StreamFixture
 
 public class PerforceFixture
 {
-	public StreamFixture StreamFooMain { get; } = new ("//Foo/Main",
+	public StreamFixture StreamFooMain { get; } = new("//Foo/Main",
 		new List<ChangelistFixture>
 		{
 			new(0, ChangelistFixture.Placeholder, new List<DepotFileFixture>()),
@@ -277,7 +288,7 @@ public class PerforceFixture
 		byte[] data = Encoding.ASCII.GetBytes(content);
 		return Md5Hash.Compute(data).ToString();
 	}
-	
+
 	/// <summary>
 	/// Assert cache contains exactly the provided digests
 	/// </summary>
@@ -287,37 +298,37 @@ public class PerforceFixture
 	{
 		HashSet<(string cacheId, string digest, long fileSize)> cachedFiles = GetCachedFiles(cacheDir);
 
-		HashSet<string> actual = new (cachedFiles.Select(x => x.digest));
-		HashSet<string> expected = new (digests);
+		HashSet<string> actual = new(cachedFiles.Select(x => x.digest));
+		HashSet<string> expected = new(digests);
 
 		if (!expected.SetEquals(actual))
 		{
 			List<string> expectedList = new(expected);
 			List<string> actualList = new(actual);
-			
+
 			expectedList.Sort();
 			actualList.Sort();
-			
+
 			Console.WriteLine("Expected ------------------------------------------------------");
 			foreach (string digest in expectedList)
 			{
 				Console.WriteLine($"{digest}");
 			}
-			
+
 			Console.WriteLine("");
 			Console.WriteLine("Actual --------------------------------------------------------");
 			foreach (string digest in actual)
 			{
 				Console.WriteLine($"{digest}");
 			}
-		
+
 			Assert.Fail("Digests in cache does not match given list");
 		}
 	}
-	
+
 	private static HashSet<(string cacheId, string digest, long fileSize)> GetCachedFiles(string cacheDir)
 	{
-		EnumerationOptions options = new () { RecurseSubdirectories = true };
+		EnumerationOptions options = new() { RecurseSubdirectories = true };
 
 		return new(Directory.EnumerateFiles(cacheDir, "*", options)
 			.Select(x => Path.GetRelativePath(cacheDir, x))
@@ -325,14 +336,14 @@ public class PerforceFixture
 			{
 				string absPath = Path.Join(cacheDir, clientFile);
 				string content = File.ReadAllText(absPath);
-				
+
 				// Since content of files in fixture are only single lines, the trick below works to workaround
 				// differences in line endings after sync (client vs server).
 				content = content.Replace("\r\n", "\n", StringComparison.Ordinal);
 				long size = content.Length;
 				string fileName = Path.GetFileName(clientFile);
 				string digest = CalcMd5(content).ToUpperInvariant();
-				
+
 				// This is a simplification. The fileName/cache ID can theoretically differ if they collide.
 				// See cache ID implementation in ManagedWorkspace
 				Assert.AreEqual(fileName, digest[..16]);

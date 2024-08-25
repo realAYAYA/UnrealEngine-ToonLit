@@ -29,6 +29,7 @@ public class AndroidRuntimeSettings : ModuleRules
             );
 
             PrivateIncludePathModuleNames.Add("AndroidTargetPlatform");
+            PrivateIncludePathModuleNames.Add("AndroidTargetPlatformControls");
         }
 	}
 }

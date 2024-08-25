@@ -1,0 +1,188 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define SUPPORT_CONTACT_SHADOWS 0
+#define MAX_UINT 4294967295
+
+#if !COMPUTE_SHADER
+#include "Common.ush"
+#include "SceneTextureParameters.ush"
+#include "DeferredLightingCommon.ush"
+#define MERGED_LOCAL_LIGHTS_MOBILE 1
+#include "MobileLightingCommon.ush"
+#endif
+
+#if LIGHT_FUNCTION
+#include "/Engine/Generated/Material.ush"
+#include "LightDataUniforms.ush"
+#include "LightFunctionCommon.ush"
+#else
+#include "LightGridCommon.ush"
+#endif
+
+#if COMPUTE_SHADER
+
+uint2 GroupSize;
+RWBuffer<uint> RWTileInfo;
+[numthreads(THREADGROUP_SIZEX, 1, 1)]
+void MainCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	if(DispatchThreadId.x > (GroupSize.x * GroupSize.y))
+	{
+		return;
+	}
+
+	const uint GridX = DispatchThreadId.x % GroupSize.x;
+	const uint GridY = DispatchThreadId.x / GroupSize.x;
+	const uint EyeIndex = 0;
+	const FLightGridData GridData = GetLightGridData(EyeIndex);
+	uint NumLightsInGridCell = 0;
+	LOOP
+	for (int SliceIt = 0; SliceIt < GridData.CulledGridSize.z; SliceIt++)
+	{
+		const uint GridIndex = ComputeLightGridCellIndex(uint3(GridX, GridY, SliceIt), EyeIndex);
+		const FCulledLightsGridData CulledLightsGrid = GetCulledLightsGrid(GridIndex, EyeIndex);
+		
+		NumLightsInGridCell = CulledLightsGrid.NumLights;
+
+		if(NumLightsInGridCell > 0)
+		{
+			break;
+		}
+	}
+
+	if(NumLightsInGridCell > 0)
+	{
+		RWTileInfo[2 * DispatchThreadId.x] = GridX;
+		RWTileInfo[2 * DispatchThreadId.x + 1] = GridY;
+	}
+	else
+	{
+		RWTileInfo[2 * DispatchThreadId.x] = MAX_UINT;
+		RWTileInfo[2 * DispatchThreadId.x + 1] = MAX_UINT;
+	}
+}
+
+#else // COMPUTE_SHADER
+
+#if !LIGHT_FUNCTION
+
+int LightGridPixelSize;
+Buffer<uint> TileInfo;
+void MainVS(
+	float2 TexCoord : ATTRIBUTE0,
+	uint VertexId : SV_VertexID,
+	uint InstanceId : SV_InstanceID,
+	out float4 OutPosition : SV_POSITION)
+{
+	float YPos = TileInfo[2 * InstanceId + 1] + TexCoord.y;
+	float XPos = TileInfo[2 * InstanceId] + TexCoord.x;
+
+	float2 ScreenUV = float2(XPos, YPos) * LightGridPixelSize * View.BufferSizeAndInvSize.zw;
+	float2 ScreenPosition = (ScreenUV.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	OutPosition = float4(ScreenPosition, 0, 1);
+
+	if(TileInfo[2 * InstanceId] == MAX_UINT)
+	{
+		OutPosition.xy = 0;
+	}
+}
+
+void Main(float4 SvPosition : SV_POSITION
+	, out float3 OutColorA : SV_Target0
+	, out float4 OutColorB : SV_Target1
+)
+{
+	const uint2 PixelPos = SvPosition.xy;
+	const float2 ScreenPosition = SvPositionToScreenPosition(SvPosition).xy;
+	const uint EyeIndex = 0;
+
+	float2 ScreenUV = ScreenPosition * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
+	float DeviceZ = LookupDeviceZ(ScreenUV);
+	float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+
+	float3 TranslatedWorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	float3 CameraVector = normalize(TranslatedWorldPosition);
+
+	uint GridIndex = ComputeLightGridCellIndex(uint2(PixelPos.x, PixelPos.y), SceneDepth);
+	const FCulledLightsGridData CulledLightGridData = GetCulledLightsGrid(GridIndex, EyeIndex);
+
+	float3 MergedLightColor = uint3(0.f, 0.f , 0.f);
+	float3 MergedLightL = float3(0,0,0);
+	float MergedSpecularScale = 0.f;
+	float MergedTotalWeight = 0;
+	MergeLocalLights(CulledLightGridData, TranslatedWorldPosition, EyeIndex, true, MergedLightColor, MergedLightL, MergedSpecularScale, MergedTotalWeight);
+
+	if (MergedTotalWeight > 0)
+	{
+		MergedLightL = (MergedLightL / MergedTotalWeight);
+		OutColorA = float3(MergedLightColor.x, MergedLightColor.y, MergedLightColor.z);
+		OutColorB.rgb = Pack1212To888(UnitVectorToOctahedron(MergedLightL) * 0.5 + 0.5);
+		OutColorB.a = MergedSpecularScale / MergedTotalWeight;
+	}
+	else
+	{
+		OutColorA = float3(0, 0, 0);
+		OutColorB = float4(0.5f, 0.5f, 0.5f, 0.f);
+		#if GENERATE_LIGHT_FUNCTION_DEPTH_STENCIL
+			// Clip to avoid writing to stencil
+			clip(-1);
+		#endif
+	}
+}
+
+#else // !LIGHT_FUNCTION
+
+float4x4 SvPositionToLight;
+/** Fade distance in x, disabled brightness in y */
+float2 LightFunctionParameters2;
+
+void MainLightFunction(
+	float4 InScreenPosition : TEXCOORD0,
+	float4 SvPosition : SV_POSITION, 
+	out float3 OutColorA : SV_Target0
+)
+{
+	float2 ScreenUV = SvPositionToBufferUV(SvPosition);
+	SvPosition.z = LookupDeviceZ(ScreenUV);
+	float3 TranslatedWorldPosition = SvPositionToTranslatedWorld(SvPosition);
+
+	FDeferredLightData LightData = InitDeferredLightFromUniforms();
+	float3 L = LightData.Direction;	// Already normalized
+	float3 ToLight = LightData.TranslatedWorldPosition - TranslatedWorldPosition;
+	float LightMask = 1;
+	// At the moment directional lights are not supported
+	// if (LightData.bRadialLight)
+	{
+		LightMask = GetLocalLightAttenuation( TranslatedWorldPosition, LightData, ToLight, L );
+	}
+
+	if (LightMask <= 0)
+	{
+		OutColorA = float3(0, 0, 0);
+		return;
+	}
+
+	float EncodedLightAttenuation;
+	{
+		float ViewDistance = length(GetPrimaryView().TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+		float4 Hom = mul(float4(SvPosition.xyz, 1), SvPositionToLight);
+		float3 LightVector = Hom.xyz / Hom.w;
+		float3 Color = GetLightFunctionColor(LightVector, TranslatedWorldPosition);
+		float GreyScale = dot(Color, .3333f);
+
+		float DistanceFadeAlpha = saturate((LightFunctionParameters2.x - ViewDistance) / (LightFunctionParameters2.x * .2f));
+		GreyScale = lerp(LightFunctionParameters2.y, GreyScale, DistanceFadeAlpha);
+		GreyScale = lerp(LightFunctionParameters2.y, GreyScale, LightFunctionParameters.y); 
+		EncodedLightAttenuation = EncodeLightAttenuation(GreyScale);
+	}
+
+	float3 Color = LightData.Color * LightMask * EncodedLightAttenuation;
+
+	OutColorA = Color;
+}
+#endif // !LIGHT_FUNCTION
+
+#endif // COMPUTE_SHADER

@@ -27,8 +27,6 @@ enum class EUpdateState : uint8
 	UpdatePending,
 	/** Checking for an available patch */
 	CheckingForPatch,
-	/** Detect the console environment via an auth request */
-	DetectingPlatformEnvironment,
 	/** Checking with hotfix for available updates */
 	CheckingForHotfix,
 	/** Waiting for the async loading / preloading to complete */
@@ -125,9 +123,6 @@ public:
 	/** Whether to check for patches during the update process. */
 	UPROPERTY(Config)
 	bool bPatchCheckEnabled = true;
-	/** Whether to attempt detection of the platforms environment. */
-	UPROPERTY(Config)
-	bool bPlatformEnvironmentDetectionEnabled = true;
 	/** Additional tags for extensibility. */
 	UPROPERTY(Config)
 	TSet<FString> AdditionalTags;
@@ -334,31 +329,6 @@ protected:
 	virtual void HotfixAvailabilityCheckComplete(EHotfixResult Result);
 
 	/**
-	 * Query for platform environment before continuing with hotfixing
-	 * This configures the Mcp backend correctly
-	 */
-	virtual void StartPlatformEnvironmentCheck();
-
-#if UPDATEMANAGER_PLATFORM_ENVIRONMENT_DETECTION
-	/**
-	 * Platform specific implementation of platform environment detection
-	 * @return true if the detection began.  false if the detection did not begin and we should continue the checks.
-	 */
-	bool DetectPlatformEnvironment();
-
-	/**
-	 * Platform specific callback for logging in on console which is needed for the platform environment detection
-	 */
-	virtual void DetectPlatformEnvironment_OnLoginConsoleComplete(int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& UserId, const FString& Error);
-#endif
-
-	/**
-	 * Callback when detecting platform environment completes
-	 */
-	void OnDetectPlatformEnvironmentComplete(const FOnlineError& Result);
-
-
-	/**
 	 * Preload game assets after patch/hotfix check is complete but before game is alerted
 	 */
 	virtual void StartInitialPreload();
@@ -397,10 +367,6 @@ protected:
 	virtual void OnApplicationHasReactivated();
 
 protected:
-	/** true if we've already detected the backend environment */
-	UPROPERTY()
-	bool bPlatformEnvironmentDetected = !UPDATEMANAGER_PLATFORM_ENVIRONMENT_DETECTION; // Default to true if we do not need to detect
-
 	/** Has the first update completed */
 	UPROPERTY()
 	bool bInitialUpdateFinished;
@@ -427,9 +393,6 @@ protected:
 	FDelegateHandle HotfixCompleteDelegateHandle;
 	FDelegateHandle HotfixProgressDelegateHandle;
 	FDelegateHandle HotfixProcessedFileDelegateHandle;
-#if UPDATEMANAGER_PLATFORM_ENVIRONMENT_DETECTION
-	FDelegateHandle OnLoginConsoleCompleteHandle;
-#endif
 
 	/** The time at which we started the initial load after updates completed */
 	double LoadStartTime;
@@ -478,7 +441,6 @@ private:
 	TMap<FString, FUpdateContextDefinition> ProcessedUpdateContextDefinitions;
 
 	bool bCurrentUpdatePatchCheckEnabled = true;
-	bool bCurrentUpdatePlatformEnvironmentDetectionEnabled = true;
 protected:
 
 	/** @return a pointer to the hotfix manager */

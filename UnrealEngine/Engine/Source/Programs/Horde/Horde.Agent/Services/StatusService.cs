@@ -1,17 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Horde.Agent.Services
 {
@@ -23,7 +20,9 @@ namespace Horde.Agent.Services
 		const int NumPipes = 10;
 
 		private AgentStatusMessage _current;
+		private bool _isBusy;
 
+		readonly IOptionsMonitor<AgentSettings> _settings;
 		readonly BackgroundTask _task;
 		readonly ILogger _logger;
 
@@ -33,12 +32,34 @@ namespace Horde.Agent.Services
 		public AgentStatusMessage Current => _current;
 
 		/// <summary>
+		/// Whether the agent is busy performing other work.
+		/// </summary>
+		public bool IsBusy
+		{
+			get => _isBusy;
+			set
+			{
+				if (_isBusy != value)
+				{
+					_isBusy = value;
+					StatusChangedEvent.Set();
+				}
+			}
+		}
+
+		/// <summary>
+		/// Status was updated
+		/// </summary>
+		public readonly AsyncEvent StatusChangedEvent = new();
+
+		/// <summary>
 		/// Constructor
 		/// </summary>
-		public StatusService(ILogger<StatusService> logger)
+		public StatusService(IOptionsMonitor<AgentSettings> settings, ILogger<StatusService> logger)
 		{
 			_current = AgentStatusMessage.Starting;
-			_task = new BackgroundTask(RunPipeServer);
+			_settings = settings;
+			_task = new BackgroundTask(RunPipeServerAsync);
 			_logger = logger;
 		}
 
@@ -58,7 +79,7 @@ namespace Horde.Agent.Services
 		/// <inheritdoc/>
 		public async Task StopAsync(CancellationToken cancellationToken)
 		{
-			await _task.StopAsync();
+			await _task.StopAsync(cancellationToken);
 		}
 
 		/// <summary>
@@ -81,7 +102,7 @@ namespace Horde.Agent.Services
 		public void SetDescription(string description) => Update(status => new AgentStatusMessage(status.Healthy, status.NumLeases, description));
 
 		/// <summary>
-		/// Updates the status using a custom funciton
+		/// Updates the status using a custom function
 		/// </summary>
 		/// <param name="updateFunc">Function to take the existing status and create an updated version</param>
 		public void Update(Func<AgentStatusMessage, AgentStatusMessage> updateFunc)
@@ -96,21 +117,21 @@ namespace Horde.Agent.Services
 			}
 		}
 
-		private async Task RunPipeServer(CancellationToken cancellationToken)
+		private async Task RunPipeServerAsync(CancellationToken cancellationToken)
 		{
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 			{
 				List<Task> tasks = new List<Task>();
 				for (int idx = 0; idx < NumPipes; idx++)
 				{
-					tasks.Add(RunSinglePipeServer(cancellationToken));
+					tasks.Add(RunSinglePipeServerAsync(cancellationToken));
 				}
 				await Task.WhenAll(tasks);
 			}
 		}
 
 		[SupportedOSPlatform("windows")]
-		private async Task RunSinglePipeServer(CancellationToken cancellationToken)
+		private async Task RunSinglePipeServerAsync(CancellationToken cancellationToken)
 		{
 			while (!cancellationToken.IsCancellationRequested)
 			{
@@ -131,6 +152,13 @@ namespace Horde.Agent.Services
 			}
 		}
 
+		AgentSettingsMessage GetSettingsMessage()
+		{
+			AgentSettings settings = _settings.CurrentValue;
+			ServerProfile profile = settings.GetCurrentServerProfile();
+			return new AgentSettingsMessage(profile.Url);
+		}
+
 		[SupportedOSPlatform("windows")]
 		private async Task RunPipeServerInternalAsync(CancellationToken cancellationToken)
 		{
@@ -141,7 +169,11 @@ namespace Horde.Agent.Services
 
 			PipeSecurity pipeSecurity = new PipeSecurity();
 			pipeSecurity.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().Name, PipeAccessRights.FullControl, AccessControlType.Allow));
-			pipeSecurity.AddAccessRule(new PipeAccessRule("Users", PipeAccessRights.ReadWrite, AccessControlType.Allow));
+
+			IdentityReference usersReference = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null).Translate(typeof(NTAccount));
+			string users = usersReference.ToString().Replace(@"builtin\", "", StringComparison.InvariantCultureIgnoreCase);
+
+			pipeSecurity.AddAccessRule(new PipeAccessRule(users, PipeAccessRights.ReadWrite, AccessControlType.Allow));
 
 			using (NamedPipeServerStream pipeServer = NamedPipeServerStreamAcl.Create(AgentMessagePipe.PipeName, PipeDirection.InOut, NumPipes, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, pipeSecurity))
 			{
@@ -152,14 +184,22 @@ namespace Horde.Agent.Services
 				{
 					switch (request.Type)
 					{
+						case AgentMessageType.SetEnabledRequest:
+							IsBusy = !request.Parse<AgentEnabledMessage>().IsEnabled;
+							break;
 						case AgentMessageType.GetStatusRequest:
 							response.Set(AgentMessageType.GetStatusResponse, Current);
+							await response.SendAsync(pipeServer, cancellationToken);
+							break;
+						case AgentMessageType.GetSettingsRequest:
+							response.Set(AgentMessageType.GetSettingsResponse, GetSettingsMessage());
+							await response.SendAsync(pipeServer, cancellationToken);
 							break;
 						default:
 							response.Set(AgentMessageType.InvalidResponse);
+							await response.SendAsync(pipeServer, cancellationToken);
 							break;
 					}
-					await response.SendAsync(pipeServer, cancellationToken);
 				}
 			}
 		}

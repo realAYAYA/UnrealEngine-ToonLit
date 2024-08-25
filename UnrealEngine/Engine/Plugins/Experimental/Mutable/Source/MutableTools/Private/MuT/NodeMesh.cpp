@@ -23,7 +23,6 @@
 #include "MuT/NodeMeshTransform.h"
 #include "MuT/NodeMeshVariation.h"
 
-#include <stdint.h>
 
 namespace mu
 {
@@ -31,16 +30,16 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeMeshType = NODE_TYPE( "NodeMesh", Node::GetStaticType() );
+	static FNodeType s_nodeMeshType = FNodeType( "NodeMesh", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeMesh::Serialise( const NodeMesh* p, OutputArchive& arch )
 	{
-        uint32_t ver = 0;
+        uint32 ver = 0;
 		arch << ver;
 
-		arch << uint32_t(p->Type);
+		arch << uint32(p->Type);
 		p->SerialiseWrapper( arch );
     }
 
@@ -48,11 +47,11 @@ namespace mu
     //---------------------------------------------------------------------------------------------
 	NodeMeshPtr NodeMesh::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (EType(id))
@@ -82,14 +81,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeMesh::GetType() const
+	const FNodeType* NodeMesh::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeMesh::GetStaticType()
+	const FNodeType* NodeMesh::GetStaticType()
 	{
 		return &s_nodeMeshType;
 	}

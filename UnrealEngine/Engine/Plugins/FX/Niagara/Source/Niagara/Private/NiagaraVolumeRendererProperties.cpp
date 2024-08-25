@@ -98,6 +98,7 @@ void UNiagaraVolumeRendererProperties::PostLoad()
 	ChangeToPositionBinding(PositionBinding);
 #endif
 	PostLoadBindings(ENiagaraRendererSourceDataMode::Particles);
+	MaterialParameters.ConditionalPostLoad();
 }
 
 void UNiagaraVolumeRendererProperties::PostInitProperties()
@@ -255,7 +256,6 @@ void UNiagaraVolumeRendererProperties::CacheFromCompiledData(const FNiagaraDataS
 	RendererVisibilityTagAccessor.Init(CompiledData, RendererVisibilityTagBinding.GetDataSetBindableVariable().GetName());
 	VolumeResolutionMaxAxisAccessor.Init(CompiledData, VolumeResolutionMaxAxisBinding.GetDataSetBindableVariable().GetName());
 	VolumeWorldSpaceSizeAccessor.Init(CompiledData, VolumeWorldSpaceSizeBinding.GetDataSetBindableVariable().GetName());
-	RendererVisibilityTagAccessor.Init(CompiledData, RendererVisibilityTagBinding.GetDataSetBindableVariable().GetName());
 }
 
 void UNiagaraVolumeRendererProperties::UpdateSourceModeDerivates(ENiagaraRendererSourceDataMode InSourceMode, bool bFromPropertyEdit)

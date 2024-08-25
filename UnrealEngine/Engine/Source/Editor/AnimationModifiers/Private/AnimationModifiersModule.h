@@ -42,6 +42,7 @@ public:
 
 	/** Begin IAnimationModifiersModule overrides */
 	virtual void ShowAddAnimationModifierWindow(const TArray<UAnimSequence*>& InSequences) override;
+	virtual void ShowRemoveAnimationModifierWindow(const TArray<UAnimSequence*>& InSequences) override;
 	virtual void ApplyAnimationModifiers(const TArray<UAnimSequence*>& InSequences, bool bForceApply = true) override;
 	/** End IAnimationModifiersModule overrides */
 
@@ -61,6 +62,7 @@ protected:
 	/** Callbacks used to add and apply default animation modifier classes */
 	void OnAssetPostImport(UFactory* ImportFactory, UObject* ImportedObject);
 	void OnAssetPostReimport(UObject* ReimportedObject);
+	void OnInMemoryAssetCreated(UObject* Object);
 	
 	TSharedPtr<FAssetTypeActions_AnimationModifier> AssetAction;
 	FDelegateHandle DelegateHandle;

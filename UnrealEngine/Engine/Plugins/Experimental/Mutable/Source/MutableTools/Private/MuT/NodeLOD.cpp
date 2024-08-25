@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeLOD.h"
 
 #include "Misc/AssertionMacros.h"
@@ -18,64 +17,14 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeLOD::Private::s_type =
-			NODE_TYPE( "LOD", NodeLOD::GetStaticType() );
+	FNodeType NodeLOD::Private::s_type = FNodeType( "LOD", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
 
-	MUTABLE_IMPLEMENT_NODE( NodeLOD, EType::LOD, Node, Node::EType::LOD);
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeLOD::GetInputCount() const
-	{
-		return m_pD->m_components.Num()+m_pD->m_modifiers.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeLOD::GetInputNode( int i ) const
-	{
-        check(i >= 0 && i < GetInputCount());
-
-        if (i < int(m_pD->m_components.Num()))
-        {
-            return m_pD->m_components[i].get();
-		}
-
-        i -= int(m_pD->m_components.Num());
-
-        if (i < int(m_pD->m_modifiers.Num()))
-        {
-            return m_pD->m_modifiers[i].get();
-        }
-
-        return nullptr;
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-	void NodeLOD::SetInputNode( int i, NodePtr pNode )
-	{
-        check(i >= 0 && i < GetInputCount());
-
-        if (i<int(m_pD->m_components.Num()))
-		{
-            m_pD->m_components[i] = dynamic_cast<NodeComponent*>(pNode.get());
-            return;
-        }
-
-        i -= int(m_pD->m_components.Num());
-        if (i < int(m_pD->m_modifiers.Num()))
-        {
-            m_pD->m_modifiers[i] = dynamic_cast<NodeModifier*>(pNode.get());
-        }
-    }
+	MUTABLE_IMPLEMENT_NODE( NodeLOD, EType::LOD, Node, Node::EType::None);
 
 
 	//---------------------------------------------------------------------------------------------

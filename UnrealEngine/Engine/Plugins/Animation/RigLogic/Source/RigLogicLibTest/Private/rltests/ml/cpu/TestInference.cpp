@@ -11,6 +11,7 @@
 #include "riglogic/TypeDefs.h"
 #include "riglogic/ml/cpu/Factory.h"
 #include "riglogic/system/simd/Detect.h"
+#include "riglogic/system/simd/SIMD.h"
 
 #include <tuple>
 

@@ -4,11 +4,9 @@
 
 #if DVP_SUPPORTED_PLATFORM
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 
 #include "dvpapi_d3d11.h"
 
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 
 namespace UE::GPUTextureTransfer::Private

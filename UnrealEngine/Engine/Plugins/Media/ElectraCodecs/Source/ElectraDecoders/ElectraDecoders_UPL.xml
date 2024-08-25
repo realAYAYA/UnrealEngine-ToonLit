@@ -56,6 +56,21 @@
 -keep class com.epicgames.unreal.ElectraDecoderVideoH265$FOutputBufferInfo {
 	public *;
 }
+-keep class com.epicgames.unreal.ElectraDecoderVideoVPx {
+	public *;
+}
+-keep class com.epicgames.unreal.ElectraDecoderVideoVPx$FCreateParameters {
+	public *;
+}
+-keep class com.epicgames.unreal.ElectraDecoderVideoVPx$FDecoderInformation {
+	public *;
+}
+-keep class com.epicgames.unreal.ElectraDecoderVideoVPx$FOutputFormatInfo {
+	public *;
+}
+-keep class com.epicgames.unreal.ElectraDecoderVideoVPx$FOutputBufferInfo {
+	public *;
+}
 -keep class com.epicgames.unreal.ElectraDecoderAudioAAC {
 	public *;
 }

@@ -285,25 +285,28 @@ bool FVertexFactory::AddPrimitiveIdStreamElement(EVertexInputStreamType InputStr
 {
 	if (GetType()->SupportsPrimitiveIdStream() && UseGPUScene(GMaxRHIShaderPlatform, GMaxRHIFeatureLevel))
 	{
-		// In the editor add streams for both configurations - mobile and desktop
-		if (AttributeIndex_Mobile != 0xff && (GIsEditor || GMaxRHIFeatureLevel == ERHIFeatureLevel::ES3_1))
+		// mobile PrimitiveId stream should either disabled or same as desktop
+		check(AttributeIndex_Mobile == 0xff || AttributeIndex == AttributeIndex_Mobile);
+
+		if (GIsEditor || GMaxRHIFeatureLevel > ERHIFeatureLevel::ES3_1 || AttributeIndex_Mobile != 0xff)
 		{
-			constexpr uint32 BufferStride = FPrimitiveIdDummyBufferMobile::BufferStride;
-			// instance transform stream
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&GPrimitiveIdDummyMobile, 0, 16*0, BufferStride, VET_Float4, EVertexStreamUsage::Instancing), AttributeIndex_Mobile+0, InputStreamType));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&GPrimitiveIdDummyMobile, 0, 16*1, BufferStride, VET_Float4, EVertexStreamUsage::Instancing), AttributeIndex_Mobile+1, InputStreamType));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&GPrimitiveIdDummyMobile, 0, 16*2, BufferStride, VET_Float4, EVertexStreamUsage::Instancing), AttributeIndex_Mobile+2, InputStreamType));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&GPrimitiveIdDummyMobile, 0, 16*3, BufferStride, VET_Float4, EVertexStreamUsage::Instancing), AttributeIndex_Mobile+3, InputStreamType));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&GPrimitiveIdDummyMobile, 0, 16*4, BufferStride, VET_Float4, EVertexStreamUsage::Instancing), AttributeIndex_Mobile+4, InputStreamType));
-			SetPrimitiveIdStreamIndex(ERHIFeatureLevel::ES3_1, InputStreamType, Elements.Last().StreamIndex);
+			// UniformView path does not use PrimitiveId stream, we still need to set it to a non-negative index
+			int32 AddedStreamIndex = 0;
+			if (!PlatformGPUSceneUsesUniformBufferView(GMaxRHIShaderPlatform))
+			{
+				// When the VF is used for rendering in normal mesh passes, this vertex buffer and offset will be overridden
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&GPrimitiveIdDummy, 0, 0, 0u, VET_UInt, EVertexStreamUsage::Instancing), AttributeIndex, InputStreamType));
+				AddedStreamIndex = Elements.Last().StreamIndex;
+			}
+			
+			SetPrimitiveIdStreamIndex(GMaxRHIFeatureLevel, InputStreamType, AddedStreamIndex);
+			
+			if (GIsEditor && (AttributeIndex_Mobile != 0xff && GMaxRHIFeatureLevel != ERHIFeatureLevel::ES3_1))
+			{
+				SetPrimitiveIdStreamIndex(ERHIFeatureLevel::ES3_1, InputStreamType, AddedStreamIndex);
+			}
 		}
-		
-		if (GIsEditor || GMaxRHIFeatureLevel > ERHIFeatureLevel::ES3_1)
-		{
-			// When the VF is used for rendering in normal mesh passes, this vertex buffer and offset will be overridden
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&GPrimitiveIdDummy, 0, 0, PrimitiveIdStreamStride, VET_UInt, EVertexStreamUsage::Instancing), AttributeIndex, InputStreamType));
-			SetPrimitiveIdStreamIndex(GMaxRHIFeatureLevel, InputStreamType, Elements.Last().StreamIndex);
-		}
+
 		return true;
 	}
 
@@ -357,21 +360,3 @@ void FPrimitiveIdDummyBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 }
 
 TGlobalResource<FPrimitiveIdDummyBuffer> GPrimitiveIdDummy;
-
-void FPrimitiveIdDummyBufferMobile::InitRHI(FRHICommandListBase& RHICmdList) 
-{
-	// create a static vertex buffer
-	FRHIResourceCreateInfo CreateInfo(TEXT("FPrimitiveIdDummyBufferMobile"));
-
-	VertexBufferRHI = RHICmdList.CreateBuffer(BufferStride, BUF_Static | BUF_VertexBuffer | BUF_ShaderResource, 0, ERHIAccess::VertexOrIndexBuffer | ERHIAccess::SRVMask, CreateInfo);
-	FVector4f* Vertices = (FVector4f*)RHICmdList.LockBuffer(VertexBufferRHI, 0, BufferStride, RLM_WriteOnly);
-	Vertices[0] = FVector4f(0, 0, 0, 0);
-	Vertices[1] = FVector4f(1, 0, 0, 0);
-	Vertices[2] = FVector4f(0, 1, 0, 0);
-	Vertices[3] = FVector4f(0, 0, 1, 0);
-	Vertices[4] = FVector4f(0, 0, 0, 0);
-	RHICmdList.UnlockBuffer(VertexBufferRHI);
-	VertexBufferSRV = RHICmdList.CreateShaderResourceView(VertexBufferRHI, sizeof(FVector4f), PF_A32B32G32R32F);
-}
-
-TGlobalResource<FPrimitiveIdDummyBufferMobile> GPrimitiveIdDummyMobile;

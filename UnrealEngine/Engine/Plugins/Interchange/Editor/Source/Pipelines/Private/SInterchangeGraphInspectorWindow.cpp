@@ -10,6 +10,7 @@
 #include "IDocumentation.h"
 #include "Nodes/InterchangeBaseNodeContainer.h"
 #include "Nodes/InterchangeFactoryBaseNode.h"
+#include "PropertyEditorDelegates.h"
 #include "PropertyEditorModule.h"
 #include "Styling/SlateIconFinder.h"
 #include "Styling/StyleColors.h"
@@ -32,6 +33,7 @@ SInterchangeGraphInspectorTreeView::~SInterchangeGraphInspectorTreeView()
 void SInterchangeGraphInspectorTreeView::Construct(const FArguments& InArgs)
 {
 	InterchangeBaseNodeContainer = InArgs._InterchangeBaseNodeContainer;
+	bPreview = InArgs._bPreview;
 	OnSelectionChangedDelegate = InArgs._OnSelectionChangedDelegate;
 	//Build the FbxNodeInfoPtr tree data
 	check(InterchangeBaseNodeContainer != nullptr);
@@ -41,6 +43,14 @@ void SInterchangeGraphInspectorTreeView::Construct(const FArguments& InArgs)
 	for (FString RootID : Roots)
 	{
 		const UInterchangeBaseNode* RootNode = InterchangeBaseNodeContainer->GetNode(RootID);
+		if (bPreview)
+		{
+			const UInterchangeFactoryBaseNode* FactoryNode = Cast<UInterchangeFactoryBaseNode>(RootNode);
+			if (!FactoryNode || !FactoryNode->GetObjectClass())
+			{
+				continue;
+			}
+		}
 		RootNodeArray.Add(const_cast<UInterchangeBaseNode*>(RootNode));
 	}
 
@@ -64,11 +74,13 @@ public:
 	SLATE_BEGIN_ARGS(SInterchangeGraphInspectorTreeViewItem)
 		: _InterchangeNode(nullptr)
 		, _InterchangeBaseNodeContainer(nullptr)
+		, _bPreview(false)
 	{}
 
 	/** The item content. */
 	SLATE_ARGUMENT(UInterchangeBaseNode*, InterchangeNode)
 	SLATE_ARGUMENT(UInterchangeBaseNodeContainer*, InterchangeBaseNodeContainer)
+	SLATE_ARGUMENT(bool, bPreview)
 	SLATE_END_ARGS()
 
 	/**
@@ -79,6 +91,7 @@ public:
 	void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView)
 	{
 		InterchangeNode = InArgs._InterchangeNode;
+		bPreview = InArgs._bPreview;
 		InterchangeBaseNodeContainer = InArgs._InterchangeBaseNodeContainer;
 
 		// This is supposed to always be valid
@@ -110,23 +123,38 @@ public:
 			TypeIcon = FSlateIconFinder::FindIconBrushForClass(AActor::StaticClass());
 		}
 
-		FSlateColor TypeIconColor;
+		TSharedPtr<SImage> IconWidget = nullptr;
 
-		switch(InterchangeNode->GetNodeContainerType())
+		if (!bPreview)
 		{
-		case EInterchangeNodeContainerType::TranslatedAsset:
-			TypeIconColor = FStyleColors::AccentBlue;
-			break;
-		case EInterchangeNodeContainerType::TranslatedScene:
-			TypeIconColor = FStyleColors::AccentGreen;
-			break;
-		case EInterchangeNodeContainerType::FactoryData:
-			TypeIconColor = FStyleColors::AccentPurple;
-			break;
-		case EInterchangeNodeContainerType::None:
-		default:
-			TypeIconColor = FStyleColors::AccentRed;
-			break;
+			FSlateColor TypeIconColor;
+			switch (InterchangeNode->GetNodeContainerType())
+			{
+			case EInterchangeNodeContainerType::TranslatedAsset:
+				TypeIconColor = FStyleColors::AccentBlue;
+				break;
+			case EInterchangeNodeContainerType::TranslatedScene:
+				TypeIconColor = FStyleColors::AccentGreen;
+				break;
+			case EInterchangeNodeContainerType::FactoryData:
+				TypeIconColor = FStyleColors::AccentPurple;
+				break;
+			case EInterchangeNodeContainerType::None:
+			default:
+				TypeIconColor = FStyleColors::AccentRed;
+				break;
+			}
+			
+			IconWidget = SNew(SImage)
+				.Image(TypeIcon)
+				.ColorAndOpacity(TypeIconColor)
+				.Visibility(TypeIcon != FAppStyle::GetDefaultBrush() ? EVisibility::Visible : EVisibility::Collapsed);
+		}
+		else
+		{
+			IconWidget = SNew(SImage)
+				.Image(TypeIcon)
+				.Visibility(TypeIcon != FAppStyle::GetDefaultBrush() ? EVisibility::Visible : EVisibility::Collapsed);
 		}
 
 		this->ChildSlot
@@ -139,6 +167,7 @@ public:
 				SNew(SCheckBox)
 				.OnCheckStateChanged(this, &SInterchangeGraphInspectorTreeViewItem::OnItemCheckChanged)
 				.IsChecked(this, &SInterchangeGraphInspectorTreeViewItem::IsItemChecked)
+				.IsEnabled(!bPreview)
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -149,10 +178,7 @@ public:
 			.AutoWidth()
 			.Padding(0.0f, 2.0f, 6.0f, 2.0f)
 			[
-				SNew(SImage)
-				.Image(TypeIcon)
-				.ColorAndOpacity(TypeIconColor)
-				.Visibility(TypeIcon != FAppStyle::GetDefaultBrush() ? EVisibility::Visible : EVisibility::Collapsed)
+				IconWidget.ToSharedRef()
 			]
 			+ SHorizontalBox::Slot()
 			.FillWidth(1.0f)
@@ -205,12 +231,14 @@ private:
 	/** The node to build the tree view row from. */
 	UInterchangeBaseNode* InterchangeNode = nullptr;
 	UInterchangeBaseNodeContainer* InterchangeBaseNodeContainer = nullptr;
+	bool bPreview = false;
 };
 
 TSharedRef< ITableRow > SInterchangeGraphInspectorTreeView::OnGenerateRowGraphInspectorTreeView(UInterchangeBaseNode* Item, const TSharedRef< STableViewBase >& OwnerTable)
 {
 	TSharedRef< SInterchangeGraphInspectorTreeViewItem > ReturnRow = SNew(SInterchangeGraphInspectorTreeViewItem, OwnerTable)
 		.InterchangeNode(Item)
+		.bPreview(bPreview)
 		.InterchangeBaseNodeContainer(InterchangeBaseNodeContainer);
 	return ReturnRow;
 }
@@ -220,7 +248,7 @@ void SInterchangeGraphInspectorTreeView::OnGetChildrenGraphInspectorTreeView(UIn
 	for (const FString& ChildID : Childrens)
 	{
 		const UInterchangeBaseNode* ChildNode = InterchangeBaseNodeContainer->GetNode(ChildID);
-		if (!ChildNode)
+		if (!ChildNode || (bPreview && !ChildNode->IsA<UInterchangeFactoryBaseNode>()))
 			continue;
 		OutChildren.Add(const_cast<UInterchangeBaseNode*>(ChildNode));
 	}
@@ -292,6 +320,10 @@ FReply SInterchangeGraphInspectorTreeView::OnCollapseAll()
 
 TSharedPtr<SWidget> SInterchangeGraphInspectorTreeView::OnOpenContextMenu()
 {
+	if (bPreview)
+	{
+		return SNullWidget::NullWidget;
+	}
 	// Build up the menu for a selection
 	const bool bCloseAfterSelection = true;
 	FMenuBuilder MenuBuilder(bCloseAfterSelection, TSharedPtr<FUICommandList>());
@@ -371,6 +403,7 @@ TSharedRef<SBox> SInterchangeGraphInspectorWindow::SpawnGraphInspector()
 	//Create the treeview
 	GraphInspectorTreeview = SNew(SInterchangeGraphInspectorTreeView)
 		.InterchangeBaseNodeContainer(InterchangeBaseNodeContainer)
+		.bPreview(bPreview)
 		.OnSelectionChangedDelegate(this, &SInterchangeGraphInspectorWindow::OnSelectionChanged);
 
 	TSharedPtr<SBox> InspectorBox;
@@ -397,6 +430,7 @@ TSharedRef<SBox> SInterchangeGraphInspectorWindow::SpawnGraphInspector()
 						SNew(SCheckBox)
 						.HAlign(HAlign_Center)
 						.OnCheckStateChanged(GraphInspectorTreeview.Get(), &SInterchangeGraphInspectorTreeView::OnToggleSelectAll)
+						.Visibility(bPreview ? EVisibility::Collapsed : EVisibility::All)
 					]
 					+ SHorizontalBox::Slot()
 					.FillWidth(1.0f)
@@ -405,6 +439,7 @@ TSharedRef<SBox> SInterchangeGraphInspectorWindow::SpawnGraphInspector()
 					[
 						SNew(STextBlock)
 						.Text(LOCTEXT("GraphInspectorWindow_Scene_All", "All"))
+						.Visibility(bPreview ? EVisibility::Collapsed : EVisibility::All)
 					]
 				]
 				+ SUniformGridPanel::Slot(1, 0)
@@ -440,11 +475,13 @@ TSharedRef<SBox> SInterchangeGraphInspectorWindow::SpawnGraphInspector()
 
 	FPropertyEditorModule& PropertyEditorModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	FDetailsViewArgs DetailsViewArgs;
-	DetailsViewArgs.bAllowSearch = false;
+	DetailsViewArgs.bAllowSearch = bPreview;
 	DetailsViewArgs.NameAreaSettings = FDetailsViewArgs::HideNameArea;
 	GraphInspectorDetailsView = PropertyEditorModule.CreateDetailView(DetailsViewArgs);
 	InspectorBox->SetContent(GraphInspectorDetailsView->AsShared());
 	GraphInspectorDetailsView->SetObject(nullptr);
+//	GraphInspectorDetailsView->SetIsPropertyReadOnlyDelegate(FIsPropertyReadOnly::CreateLambda([this](const FPropertyAndParent&) { return bPreview; }));
+//	GraphInspectorDetailsView->SetIsCustomRowReadOnlyDelegate(FIsCustomRowReadOnly::CreateLambda([this](FName InRowName, FName InParentName) { return bPreview; }));
 	return GraphInspectorPanelBox;
 }
 
@@ -452,6 +489,7 @@ TSharedRef<SBox> SInterchangeGraphInspectorWindow::SpawnGraphInspector()
 void SInterchangeGraphInspectorWindow::Construct(const FArguments& InArgs)
 {
 	InterchangeBaseNodeContainer = InArgs._InterchangeBaseNodeContainer;
+	bPreview = InArgs._bPreview;
 	OwnerWindow = InArgs._OwnerWindow;
 
 	check(InterchangeBaseNodeContainer != nullptr);
@@ -475,19 +513,10 @@ void SInterchangeGraphInspectorWindow::Construct(const FArguments& InArgs)
 			.HAlign(HAlign_Right)
 			.Padding(2)
 			[
-				SNew(SUniformGridPanel)
-				.SlotPadding(2)
-				+ SUniformGridPanel::Slot(0, 0)
-				[
-					IDocumentation::Get()->CreateAnchor(FString("Engine/Content/Interchange/GraphInspector"))
-				]
-				+ SUniformGridPanel::Slot(1, 0)
-				[
-					SNew(SButton)
-					.HAlign(HAlign_Center)
-					.Text(LOCTEXT("InspectorGraphWindow_Close", "Ok"))
-					.OnClicked(this, &SInterchangeGraphInspectorWindow::OnCloseDialog)
-				]
+				SNew(SButton)
+				.HAlign(HAlign_Center)
+				.Text(LOCTEXT("InspectorGraphWindow_Close", "Ok"))
+				.OnClicked(this, &SInterchangeGraphInspectorWindow::OnCloseDialog)
 			]
 		]
 	];

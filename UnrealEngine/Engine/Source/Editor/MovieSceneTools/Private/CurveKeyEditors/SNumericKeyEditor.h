@@ -113,7 +113,7 @@ private:
 
 	void OnValueCommitted(NumericType Value, ETextCommit::Type CommitInfo)
 	{
-		if (CommitInfo == ETextCommit::OnEnter || CommitInfo == ETextCommit::OnUserMovedFocus)
+		if (CommitInfo == ETextCommit::OnEnter)
 		{
 			const FScopedTransaction Transaction( LOCTEXT("SetNumericKey", "Set Key Value") );
 			KeyEditor.SetValueWithNotify(Value, EMovieSceneDataChangeType::TrackValueChangedRefreshImmediately);

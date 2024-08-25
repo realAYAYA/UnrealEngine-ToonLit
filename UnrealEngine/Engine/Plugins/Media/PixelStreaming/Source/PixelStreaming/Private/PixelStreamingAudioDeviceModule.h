@@ -26,7 +26,7 @@ namespace UE::PixelStreaming
 
 	private:
 		FThreadSafeBool bInitialized; // True when we setup capturer/playout requester.
-		TUniquePtr<UE::PixelStreaming::FAudioSubmixCapturer> Capturer;
+		TSharedPtr<UE::PixelStreaming::FAudioSubmixCapturer, ESPMode::ThreadSafe> Capturer;
 		TUniquePtr<UE::PixelStreaming::FAudioPlayoutRequester> Requester;
 		TSharedPtr<UE::PixelStreaming::FAudioInputMixer> InputMixer;
 

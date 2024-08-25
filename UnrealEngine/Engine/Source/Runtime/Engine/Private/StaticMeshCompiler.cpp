@@ -4,6 +4,8 @@
 
 #if WITH_EDITOR
 
+#include "AsyncCompilationHelpers.h"
+#include "AssetCompilingManager.h"
 #include "Algo/NoneOf.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -76,7 +78,7 @@ namespace StaticMeshCompilingManagerImpl
 }
 
 FStaticMeshCompilingManager::FStaticMeshCompilingManager()
-	: Notification(GetAssetNameFormat())
+	: Notification(MakeUnique<FAsyncCompilationNotification>(GetAssetNameFormat()))
 {
 	StaticMeshCompilingManagerImpl::EnsureInitializedCVars();
 
@@ -208,7 +210,7 @@ TRACE_DECLARE_INT_COUNTER(QueuedStaticMeshCompilation, TEXT("AsyncCompilation/Qu
 void FStaticMeshCompilingManager::UpdateCompilationNotification()
 {
 	TRACE_COUNTER_SET(QueuedStaticMeshCompilation, GetNumRemainingMeshes());
-	Notification.Update(GetNumRemainingMeshes());
+	Notification->Update(GetNumRemainingMeshes());
 }
 
 void FStaticMeshCompilingManager::PostCompilation(TArrayView<UStaticMesh* const> InStaticMeshes)
@@ -282,8 +284,8 @@ void FStaticMeshCompilingManager::PostCompilation(UStaticMesh* StaticMesh)
 			{
 				IsEditorLoadingPackageGuard.Reset(new TGuardValue<bool>(GIsEditorLoadingPackage, LocalAsyncTask->GetTask().BuildContext->bIsEditorLoadingPackage));
 
-				TArray<UStaticMeshComponent*> ComponentsToUpdate;
-				for (UStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
+				TArray<IStaticMeshComponent*> ComponentsToUpdate;
+				for (IStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
 				{
 					ComponentsToUpdate.Add(Component);
 				}
@@ -298,7 +300,7 @@ void FStaticMeshCompilingManager::PostCompilation(UStaticMesh* StaticMesh)
 			}
 		}
 
-		for (UStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
+		for (IStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
 		{
 			Component->PostStaticMeshCompilation();
 		}
@@ -476,15 +478,19 @@ void FStaticMeshCompilingManager::FinishCompilationsForGame()
 			{
 				if (UStaticMesh* StaticMesh = StaticMeshPtr.Get())
 				{
-					for (const UStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
-					{
-						if (PIEWorlds.Contains(Component->GetWorld()) &&
-							(PlayInEditorMode == 0 || Component->GetCollisionEnabled() != ECollisionEnabled::NoCollision || Component->IsNavigationRelevant() || Component->bAlwaysCreatePhysicsState || Component->CanCharacterStepUpOn != ECB_No))
+					for (const IStaticMeshComponent* ComponentInterface : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
+					{							
+						const IPrimitiveComponent* PrimComponentInterface = ComponentInterface->GetPrimitiveComponentInterface();
+						const UPrimitiveComponent* PrimComponent = PrimComponentInterface->GetUObject<UPrimitiveComponent>();
+						bool bHasRelevantCollision = !PrimComponent || (PrimComponent->GetCollisionEnabled() != ECollisionEnabled::NoCollision || PrimComponent->IsNavigationRelevant() || PrimComponent->bAlwaysCreatePhysicsState || PrimComponent->CanCharacterStepUpOn != ECB_No);
+
+						if (PIEWorlds.Contains(PrimComponentInterface->GetWorld()) &&
+							(PlayInEditorMode == 0 || bHasRelevantCollision))
 						{
 							if (PlayInEditorMode == 2)
 							{
-								const FBoxSphereBounds ComponentBounds = Component->Bounds.GetBox();
-								const UWorld* ComponentWorld = Component->GetWorld();
+								const FBoxSphereBounds ComponentBounds = PrimComponentInterface->GetBounds().GetBox();
+								const UWorld* ComponentWorld = PrimComponentInterface->GetWorld();
 
 								ActorsBounds.Reset();
 								WorldActors.MultiFind(ComponentWorld, ActorsBounds);
@@ -502,14 +508,14 @@ void FStaticMeshCompilingManager::FinishCompilationsForGame()
 											}
 								
 											bool bIsAlreadyInSet = false;
-											StaticMeshToCompile.Add(Component->GetStaticMesh(), &bIsAlreadyInSet);
+											StaticMeshToCompile.Add(ComponentInterface->GetStaticMesh(), &bIsAlreadyInSet);
 											if (!bIsAlreadyInSet)
 											{
 												UE_LOG(
 													LogStaticMesh,
 													Display,
 													TEXT("Waiting on static mesh %s being ready because it affects collision/navigation and is near a player/bot"),
-													*Component->GetStaticMesh()->GetFullName()
+													*ComponentInterface->GetStaticMesh()->GetFullName()
 												);
 											}
 											bStaticMeshComponentCollided = true;
@@ -647,11 +653,12 @@ void FStaticMeshCompilingManager::Reschedule()
 					for (UStaticMesh* StaticMesh : StaticMeshesToProcess)
 					{
 						float NearestStaticMeshDistance = FLT_MAX;
-						for (const UStaticMeshComponent* StaticMeshComponent : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
+						for (const IStaticMeshComponent* StaticMeshComponent : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
 						{
-							if (StaticMeshComponent->IsRegistered())
+							const IPrimitiveComponent* PrimitiveComponent = StaticMeshComponent->GetPrimitiveComponentInterface();
+							if (PrimitiveComponent->IsRegistered())
 							{
-								FVector ComponentLocation = StaticMeshComponent->GetComponentLocation();
+								FVector ComponentLocation = PrimitiveComponent->GetTransform().GetLocation();
 								float ComponentDistance = Location.Dist(ComponentLocation, Location);
 								if (ComponentDistance < NearestStaticMeshDistance)
 								{

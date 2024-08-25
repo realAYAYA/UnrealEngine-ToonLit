@@ -10,13 +10,13 @@
 #include "Widgets/SWidget.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Misc/FrameNumber.h"
-#include "ControlRig.h"
 #include "Editor/SRigSpacePickerWidget.h"
 
 
 class ISequencer;
 class SExpandableArea;
 class SSearchableRigHierarchyTreeView;
+class UControlRig;
 
 class SControlRigSpacePicker : public SCompoundWidget, public FControlRigBaseDockableView
 {

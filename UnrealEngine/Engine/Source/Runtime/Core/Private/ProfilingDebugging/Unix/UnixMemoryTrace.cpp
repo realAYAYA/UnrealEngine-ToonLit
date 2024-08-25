@@ -6,6 +6,7 @@
 
 #include "CoreTypes.h"
 #include "HAL/Platform.h"
+#include <stdio.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 FMalloc* MemoryTrace_CreateInternal(FMalloc*, int, const ANSICHAR* const*);

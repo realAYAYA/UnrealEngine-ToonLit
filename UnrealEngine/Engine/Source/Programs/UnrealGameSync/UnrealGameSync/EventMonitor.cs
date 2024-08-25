@@ -4,15 +4,15 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
-using EpicGames.Core;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
+using EpicGames.Core;
 using Microsoft.Extensions.DependencyInjection;
-using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -26,7 +26,7 @@ namespace UnrealGameSync
 		Good,
 		Bad,
 		Unknown,
-		
+
 		// Starred builds
 		Starred,
 		Unstarred,
@@ -106,7 +106,7 @@ namespace UnrealGameSync
 				}
 
 				int idx = BuildType.IndexOf(':', StringComparison.Ordinal);
-				if(idx == -1)
+				if (idx == -1)
 				{
 					return BuildType;
 				}
@@ -127,7 +127,7 @@ namespace UnrealGameSync
 				}
 
 				int idx = BuildType.IndexOf(':', StringComparison.Ordinal);
-				if(idx == -1)
+				if (idx == -1)
 				{
 					return BuildType;
 				}
@@ -280,7 +280,7 @@ namespace UnrealGameSync
 				}
 			}
 
-			if(_apiUrl == null)
+			if (_apiUrl == null)
 			{
 				LastStatusMessage = "Database functionality disabled due to empty ApiUrl.";
 			}
@@ -299,7 +299,7 @@ namespace UnrealGameSync
 		{
 			OnUpdatesReady = null;
 
-			if(_workerTask != null)
+			if (_workerTask != null)
 			{
 				_cancellationSource.Cancel();
 				_asyncDisposer.Add(_workerTask.ContinueWith(_ => _cancellationSource.Dispose(), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default));
@@ -339,15 +339,15 @@ namespace UnrealGameSync
 
 			// Clear out the list of active users for each review we have
 			_userNameToLastSyncEvent.Clear();
-			foreach(EventSummary summary in _changeNumberToSummary.Values)
+			foreach (EventSummary summary in _changeNumberToSummary.Values)
 			{
 				summary.CurrentUsers.Clear();
 			}
 
 			// Add all the user reviews back in again
-			foreach(EventSummary summary in _changeNumberToSummary.Values)
+			foreach (EventSummary summary in _changeNumberToSummary.Values)
 			{
-				foreach(EventData syncEvent in summary.SyncEvents)
+				foreach (EventData syncEvent in summary.SyncEvents)
 				{
 					ApplyFilteredUpdate(syncEvent);
 				}
@@ -366,7 +366,7 @@ namespace UnrealGameSync
 		protected EventSummary FindOrAddSummary(int changeNumber)
 		{
 			EventSummary? summary;
-			if(!_changeNumberToSummary.TryGetValue(changeNumber, out summary))
+			if (!_changeNumberToSummary.TryGetValue(changeNumber, out summary))
 			{
 				summary = new EventSummary();
 				summary.ChangeNumber = changeNumber;
@@ -390,19 +390,19 @@ namespace UnrealGameSync
 			}
 
 			EventData? evt;
-			while(_incomingEvents.TryDequeue(out evt))
+			while (_incomingEvents.TryDequeue(out evt))
 			{
 				ApplyEventUpdate(evt);
 			}
 
 			BadgeData? badge;
-			while(_incomingBadges.TryDequeue(out badge))
+			while (_incomingBadges.TryDequeue(out badge))
 			{
 				ApplyBadgeUpdate(badge);
 			}
 
 			CommentData? comment;
-			while(_incomingComments.TryDequeue(out comment))
+			while (_incomingComments.TryDequeue(out comment))
 			{
 				ApplyCommentUpdate(comment);
 			}
@@ -411,41 +411,41 @@ namespace UnrealGameSync
 		void ApplyEventUpdate(EventData evt)
 		{
 			EventSummary summary = FindOrAddSummary(evt.Change);
-			if(evt.Type == EventType.Starred || evt.Type == EventType.Unstarred)
+			if (evt.Type == EventType.Starred || evt.Type == EventType.Unstarred)
 			{
 				// If it's a star or un-star review, process that separately
-				if(summary.LastStarReview == null || evt.Id > summary.LastStarReview.Id)
+				if (summary.LastStarReview == null || evt.Id > summary.LastStarReview.Id)
 				{
 					summary.LastStarReview = evt;
 				}
 			}
-			else if(evt.Type == EventType.Investigating || evt.Type == EventType.Resolved)
+			else if (evt.Type == EventType.Investigating || evt.Type == EventType.Resolved)
 			{
 				// Insert it sorted in the investigation list
 				int insertIdx = 0;
-				while(insertIdx < _investigationEvents.Count && _investigationEvents[insertIdx].Id < evt.Id)
+				while (insertIdx < _investigationEvents.Count && _investigationEvents[insertIdx].Id < evt.Id)
 				{
 					insertIdx++;
 				}
-				if(insertIdx == _investigationEvents.Count || _investigationEvents[insertIdx].Id != evt.Id)
+				if (insertIdx == _investigationEvents.Count || _investigationEvents[insertIdx].Id != evt.Id)
 				{
 					_investigationEvents.Insert(insertIdx, evt);
 				}
 				_activeInvestigations = null;
 			}
-			else if(evt.Type == EventType.Syncing)
+			else if (evt.Type == EventType.Syncing)
 			{
 				summary.SyncEvents.RemoveAll(x => String.Equals(x.UserName, evt.UserName, StringComparison.OrdinalIgnoreCase));
 				summary.SyncEvents.Add(evt);
 				ApplyFilteredUpdate(evt);
 			}
-			else if(IsReview(evt.Type))
+			else if (IsReview(evt.Type))
 			{
 				// Try to find an existing review by this user. If we already have a newer review, ignore this one. Otherwise remove it.
 				EventData? existingReview = summary.Reviews.Find(x => String.Equals(x.UserName, evt.UserName, StringComparison.OrdinalIgnoreCase));
-				if(existingReview != null)
+				if (existingReview != null)
 				{
-					if(existingReview.Id <= evt.Id)
+					if (existingReview.Id <= evt.Id)
 					{
 						summary.Reviews.Remove(existingReview);
 					}
@@ -470,9 +470,9 @@ namespace UnrealGameSync
 			EventSummary summary = FindOrAddSummary(badge.ChangeNumber);
 
 			BadgeData? existingBadge = summary.Badges.Find(x => x.ChangeNumber == badge.ChangeNumber && x.BuildType == badge.BuildType);
-			if(existingBadge != null)
+			if (existingBadge != null)
 			{
-				if(existingBadge.Id <= badge.Id)
+				if (existingBadge.Id <= badge.Id)
 				{
 					summary.Badges.Remove(existingBadge);
 				}
@@ -486,7 +486,7 @@ namespace UnrealGameSync
 			summary.Verdict = GetVerdict(summary.Reviews, summary.Badges);
 
 			BadgeData? latestBadge;
-			if(!_badgeNameToLatestData.TryGetValue(badge.BadgeName, out latestBadge) || badge.ChangeNumber > latestBadge.ChangeNumber || (badge.ChangeNumber == latestBadge.ChangeNumber && badge.Id > latestBadge.Id))
+			if (!_badgeNameToLatestData.TryGetValue(badge.BadgeName, out latestBadge) || badge.ChangeNumber > latestBadge.ChangeNumber || (badge.ChangeNumber == latestBadge.ChangeNumber && badge.Id > latestBadge.Id))
 			{
 				_badgeNameToLatestData[badge.BadgeName] = badge;
 			}
@@ -495,7 +495,7 @@ namespace UnrealGameSync
 		void ApplyCommentUpdate(CommentData comment)
 		{
 			EventSummary summary = FindOrAddSummary(comment.ChangeNumber);
-			if(String.Equals(comment.UserName, _currentUserName, StringComparison.OrdinalIgnoreCase) && summary.Comments.Count > 0 && summary.Comments.Last().Id == Int64.MaxValue)
+			if (String.Equals(comment.UserName, _currentUserName, StringComparison.OrdinalIgnoreCase) && summary.Comments.Count > 0 && summary.Comments.Last().Id == Int64.MaxValue)
 			{
 				// This comment was added by PostComment(), to mask the latency of a round trip to the server. Remove it now we have the sorted comment.
 				summary.Comments.RemoveAt(summary.Comments.Count - 1);
@@ -507,9 +507,9 @@ namespace UnrealGameSync
 		{
 			int insertIdx = items.Count;
 
-			for(; insertIdx > 0 && idSelector(items[insertIdx - 1]) >= idSelector(newItem); insertIdx--)
+			for (; insertIdx > 0 && idSelector(items[insertIdx - 1]) >= idSelector(newItem); insertIdx--)
 			{
-				if(String.Equals(userSelector(items[insertIdx - 1]), userSelector(newItem), StringComparison.OrdinalIgnoreCase))
+				if (String.Equals(userSelector(items[insertIdx - 1]), userSelector(newItem), StringComparison.OrdinalIgnoreCase))
 				{
 					return false;
 				}
@@ -517,9 +517,9 @@ namespace UnrealGameSync
 
 			items.Insert(insertIdx, newItem);
 
-			for(; insertIdx > 0; insertIdx--)
+			for (; insertIdx > 0; insertIdx--)
 			{
-				if(String.Equals(userSelector(items[insertIdx - 1]), userSelector(newItem), StringComparison.OrdinalIgnoreCase))
+				if (String.Equals(userSelector(items[insertIdx - 1]), userSelector(newItem), StringComparison.OrdinalIgnoreCase))
 				{
 					items.RemoveAt(insertIdx - 1);
 				}
@@ -647,21 +647,21 @@ namespace UnrealGameSync
 		{
 			int numPositiveReviews = events.Count(x => x.Type == EventType.Good);
 			int numNegativeReviews = events.Count(x => x.Type == EventType.Bad);
-			if(numPositiveReviews > 0 || numNegativeReviews > 0)
+			if (numPositiveReviews > 0 || numNegativeReviews > 0)
 			{
 				return GetVerdict(numPositiveReviews, numNegativeReviews);
 			}
 
 			int numCompiles = events.Count(x => x.Type == EventType.Compiles);
 			int numFailedCompiles = events.Count(x => x.Type == EventType.DoesNotCompile);
-			if(numCompiles > 0 || numFailedCompiles > 0)
+			if (numCompiles > 0 || numFailedCompiles > 0)
 			{
 				return GetVerdict(numCompiles, numFailedCompiles);
 			}
 
 			int numBadges = badges.Count(x => x.BuildType == "Editor" && x.IsSuccess);
 			int numFailedBadges = badges.Count(x => x.BuildType == "Editor" && x.IsFailure);
-			if(numBadges > 0 || numFailedBadges > 0)
+			if (numBadges > 0 || numFailedBadges > 0)
 			{
 				return GetVerdict(numBadges, numFailedBadges);
 			}
@@ -671,11 +671,11 @@ namespace UnrealGameSync
 
 		static ReviewVerdict GetVerdict(int numPositive, int numNegative)
 		{
-			if(numPositive > (int)(numNegative * 1.5))
+			if (numPositive > (int)(numNegative * 1.5))
 			{
 				return ReviewVerdict.Good;
 			}
-			else if(numPositive >= numNegative)
+			else if (numPositive >= numNegative)
 			{
 				return ReviewVerdict.Mixed;
 			}
@@ -687,13 +687,13 @@ namespace UnrealGameSync
 
 		void ApplyFilteredUpdate(EventData evt)
 		{
-			if(evt.Type == EventType.Syncing && _filterChangeNumbers.Contains(evt.Change) && !String.IsNullOrEmpty(evt.UserName))
+			if (evt.Type == EventType.Syncing && _filterChangeNumbers.Contains(evt.Change) && !String.IsNullOrEmpty(evt.UserName))
 			{
 				// Update the active users list for this change
 				EventData? lastSync;
-				if(_userNameToLastSyncEvent.TryGetValue(evt.UserName, out lastSync))
+				if (_userNameToLastSyncEvent.TryGetValue(evt.UserName, out lastSync))
 				{
-					if(evt.Id > lastSync.Id)
+					if (evt.Id > lastSync.Id)
 					{
 						_changeNumberToSummary[lastSync.Change].CurrentUsers.RemoveAll(x => String.Equals(x, evt.UserName, StringComparison.OrdinalIgnoreCase));
 						FindOrAddSummary(evt.Change).CurrentUsers.Add(evt.UserName);
@@ -723,20 +723,20 @@ namespace UnrealGameSync
 				if (_apiUrl != null)
 				{
 					// Post all the reviews to the database. We don't send them out of order, so keep the review outside the queue until the next update if it fails
-					while(evt != null || _outgoingEvents.TryDequeue(out evt))
+					while (evt != null || _outgoingEvents.TryDequeue(out evt))
 					{
 						await SendEventToBackendAsync(evt, cancellationToken);
 						evt = null;
 					}
 
 					// Post all the comments to the database.
-					while(comment != null || _outgoingComments.TryDequeue(out comment))
+					while (comment != null || _outgoingComments.TryDequeue(out comment))
 					{
 						await SendCommentToBackendAsync(comment, cancellationToken);
 						comment = null;
 					}
 
-					if(timer.Elapsed > TimeSpan.FromSeconds(requestThrottle))
+					if (timer.Elapsed > TimeSpan.FromSeconds(requestThrottle))
 					{
 						updateThrottledRequests = true;
 						timer.Restart();
@@ -746,7 +746,7 @@ namespace UnrealGameSync
 					await ReadEventsFromBackendAsync(updateThrottledRequests, cancellationToken);
 
 					// Send a notification that we're ready to update
-					if(!_incomingMetadata.IsEmpty || !_incomingEvents.IsEmpty || !_incomingBadges.IsEmpty || !_incomingComments.IsEmpty)
+					if (!_incomingMetadata.IsEmpty || !_incomingEvents.IsEmpty || !_incomingBadges.IsEmpty || !_incomingComments.IsEmpty)
 					{
 						_synchronizationContext.Post(_ => OnUpdatesReady?.Invoke(), null);
 					}
@@ -793,7 +793,7 @@ namespace UnrealGameSync
 				}
 				return true;
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Failed with exception.");
 				return false;
@@ -817,7 +817,7 @@ namespace UnrealGameSync
 				_logger.LogInformation("Done in {Time}ms.", timer.ElapsedMilliseconds);
 				return true;
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Failed with exception.");
 				return false;
@@ -881,12 +881,12 @@ namespace UnrealGameSync
 				_logger.LogInformation("Polling for events...");
 
 				//////////////
-				/// Initial Ids 
+				// Initial Ids 
 				//////////////
 				if (_apiVersion == 0)
 				{
 					LatestData initialIds = await RestApi.GetAsync<LatestData>($"{_apiUrl}/api/latest?project={_project}", cancellationToken);
-					_apiVersion = (initialIds.Version == 0)? 1 : initialIds.Version;
+					_apiVersion = (initialIds.Version == 0) ? 1 : initialIds.Version;
 					_latestIds.LastBuildId = initialIds.LastBuildId;
 					_latestIds.LastCommentId = initialIds.LastCommentId;
 					_latestIds.LastEventId = initialIds.LastEventId;
@@ -933,7 +933,7 @@ namespace UnrealGameSync
 				else
 				{
 					//////////////
-					/// Builds
+					// Builds
 					//////////////
 					List<BadgeData> builds = await RestApi.GetAsync<List<BadgeData>>($"{_apiUrl}/api/build?project={_project}&lastbuildid={_latestIds.LastBuildId}", cancellationToken);
 					foreach (BadgeData build in builds)
@@ -943,12 +943,12 @@ namespace UnrealGameSync
 					}
 
 					//////////////////////////
-					/// Throttled Requests
+					// Throttled Requests
 					//////////////////////////
 					if (fireThrottledRequests)
 					{
 						//////////////
-						/// Reviews 
+						// Reviews 
 						//////////////
 						List<EventData> events = await RestApi.GetAsync<List<EventData>>($"{_apiUrl}/api/event?project={_project}&lasteventid={_latestIds.LastEventId}", cancellationToken);
 						foreach (EventData review in events)
@@ -958,7 +958,7 @@ namespace UnrealGameSync
 						}
 
 						//////////////
-						/// Comments 
+						// Comments 
 						//////////////
 						List<CommentData> comments = await RestApi.GetAsync<List<CommentData>>($"{_apiUrl}/api/comment?project={_project}&lastcommentid={_latestIds.LastCommentId}", cancellationToken);
 						foreach (CommentData comment in comments)
@@ -973,7 +973,7 @@ namespace UnrealGameSync
 				_logger.LogInformation("Done in {Time}ms.", timer.ElapsedMilliseconds);
 				return true;
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Failed with exception.");
 				LastStatusMessage = String.Format("Last update failed: ({0})", ex.ToString());
@@ -983,7 +983,7 @@ namespace UnrealGameSync
 
 		public void PostEvent(int changeNumber, EventType type)
 		{
-			if(_apiUrl != null)
+			if (_apiUrl != null)
 			{
 				EventData evt = new EventData();
 				evt.Id = ++_latestIds.LastEventId;
@@ -1001,7 +1001,7 @@ namespace UnrealGameSync
 
 		public void PostComment(int changeNumber, string text)
 		{
-			if(_apiUrl != null)
+			if (_apiUrl != null)
 			{
 				CommentData comment = new CommentData();
 				comment.Id = Int64.MaxValue;
@@ -1020,14 +1020,14 @@ namespace UnrealGameSync
 		public bool GetCommentByCurrentUser(int changeNumber, [NotNullWhen(true)] out string? commentText)
 		{
 			EventSummary? summary = GetSummaryForChange(changeNumber);
-			if(summary == null)
+			if (summary == null)
 			{
 				commentText = null;
 				return false;
 			}
 
 			CommentData? comment = summary.Comments.Find(x => String.Equals(x.UserName, _currentUserName, StringComparison.OrdinalIgnoreCase));
-			if(comment == null || String.IsNullOrWhiteSpace(comment.Text))
+			if (comment == null || String.IsNullOrWhiteSpace(comment.Text))
 			{
 				commentText = null;
 				return false;
@@ -1040,13 +1040,13 @@ namespace UnrealGameSync
 		public EventData? GetReviewByCurrentUser(int changeNumber)
 		{
 			EventSummary? summary = GetSummaryForChange(changeNumber);
-			if(summary == null)
+			if (summary == null)
 			{
 				return null;
 			}
 
 			EventData? evt = summary.Reviews.FirstOrDefault(x => String.Equals(x.UserName, _currentUserName, StringComparison.OrdinalIgnoreCase));
-			if(evt == null || evt.Type == EventType.Unknown)
+			if (evt == null || evt.Type == EventType.Unknown)
 			{
 				return null;
 			}
@@ -1099,18 +1099,18 @@ namespace UnrealGameSync
 
 		protected void UpdateActiveInvestigations()
 		{
-			if(_activeInvestigations == null)
+			if (_activeInvestigations == null)
 			{
 				// Insert investigation events into the active list, sorted by change number.
 				_activeInvestigations = new List<EventData>();
-				foreach(EventData investigationEvent in _investigationEvents)
+				foreach (EventData investigationEvent in _investigationEvents)
 				{
-					if(_filterChangeNumbers.Contains(investigationEvent.Change))
+					if (_filterChangeNumbers.Contains(investigationEvent.Change))
 					{
-						if(investigationEvent.Type == EventType.Investigating)
+						if (investigationEvent.Type == EventType.Investigating)
 						{
 							int insertIdx = 0;
-							while(insertIdx < _activeInvestigations.Count && _activeInvestigations[insertIdx].Change > investigationEvent.Change)
+							while (insertIdx < _activeInvestigations.Count && _activeInvestigations[insertIdx].Change > investigationEvent.Change)
 							{
 								insertIdx++;
 							}
@@ -1124,11 +1124,11 @@ namespace UnrealGameSync
 				}
 
 				// Remove any duplicate users
-				for(int idx = 0; idx < _activeInvestigations.Count; idx++)
+				for (int idx = 0; idx < _activeInvestigations.Count; idx++)
 				{
-					for(int otherIdx = 0; otherIdx < idx; otherIdx++)
+					for (int otherIdx = 0; otherIdx < idx; otherIdx++)
 					{
-						if(String.Equals(_activeInvestigations[idx].UserName, _activeInvestigations[otherIdx].UserName, StringComparison.OrdinalIgnoreCase))
+						if (String.Equals(_activeInvestigations[idx].UserName, _activeInvestigations[otherIdx].UserName, StringComparison.OrdinalIgnoreCase))
 						{
 							_activeInvestigations.RemoveAt(idx--);
 							break;

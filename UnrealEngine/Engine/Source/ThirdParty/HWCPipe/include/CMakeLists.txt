@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.13)
 
 include(GenerateExportHeader)
 
@@ -75,3 +75,6 @@ target_link_libraries( # Specifies the target library.
                        ${log-lib} )
 
 generate_export_header(${PROJECT_NAME} EXPORT_FILE_NAME ${CMAKE_CURRENT_SOURCE_DIR}/${PROJECT_NAME}_export.h)
+
+# Enable support for non-4k virtual page sizes
+target_link_options(hwcpipe PRIVATE -z max-page-size=65536)

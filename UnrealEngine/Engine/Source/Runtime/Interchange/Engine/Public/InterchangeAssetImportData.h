@@ -4,8 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "EditorFramework/AssetImportData.h"
+#include "InterchangeTranslatorBase.h"
 #include "Nodes/InterchangeBaseNode.h"
 #include "Nodes/InterchangeBaseNodeContainer.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Class.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectMacros.h"
@@ -26,7 +28,7 @@ public:
 
 
 	/**
-	 * Return the first filename stored in this data. The resulting filename will be absolute (ie, not relative to the asset).
+	 * Return the first filename stored in this data. The resulting filename will be absolute (that is, not relative to the asset).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | AssetImportData")
 	FString ScriptGetFirstFilename() const
@@ -69,10 +71,18 @@ public:
 
 #if WITH_EDITORONLY_DATA
 #if WITH_EDITOR
-	/**
-	 * This function add tags to the asset registry.
-	 */
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void AppendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) override
+	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+		Super::AppendAssetRegistryTags(OutTags);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+	}
+
+	/**
+	 * This function adds tags to the asset registry.
+	 */
+	virtual void AppendAssetRegistryTags(FAssetRegistryTagsContext Context) override
 	{
 		if(const UInterchangeBaseNodeContainer* NodeContainerTmp = GetNodeContainer())
 		{
@@ -80,20 +90,28 @@ public:
 			{
 				if (const UInterchangeBaseNode* Node = GetStoredNode(NodeUniqueID))
 				{
-					Node->AppendAssetRegistryTags(OutTags);
+					PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+					TArray<UObject::FAssetRegistryTag> DeprecatedFunctionTags;
+					Node->AppendAssetRegistryTags(DeprecatedFunctionTags);
+					for (UObject::FAssetRegistryTag& Tag : DeprecatedFunctionTags)
+					{
+						Context.AddTag(MoveTemp(Tag));
+					}
+					PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+					Node->AppendAssetRegistryTags(Context);
 				}
 			}
 		}
-		Super::AppendAssetRegistryTags(OutTags);
+		Super::AppendAssetRegistryTags(Context);
 	}
 #endif
 #endif
 
-	/** On a level import, set to the UInterchangeSceneImportAsset created during the import */
+	/** On a level import, set to the UInterchangeSceneImportAsset created during the import. */
 	UPROPERTY(EditAnywhere, Category = "Interchange | AssetImportData")
 	FSoftObjectPath SceneImportAsset;
 
-	/** Returns a pointer to the UInterchangeAssetImportData referred by the input object if applicable */
+	/** Returns a pointer to the UInterchangeAssetImportData referred to by the input object, if applicable. */
 	static UInterchangeAssetImportData* GetFromObject(UObject* Object)
 	{
 		if (Object)
@@ -112,7 +130,7 @@ public:
 		return nullptr;
 	}
 
-	/** The Node UID pass to the factory that exist in the graph that was use to create this asset */
+	/** The Node UID passed to the factory that existed in the graph that was used to create this asset. */
 	UPROPERTY(VisibleAnywhere, Category = "Interchange | AssetImportData")
 	FString NodeUniqueID;
 
@@ -142,6 +160,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | AssetImportData")
 	INTERCHANGEENGINE_API UInterchangeFactoryBaseNode* GetStoredFactoryNode(const FString& InNodeUniqueId) const;
 
+	UFUNCTION(BlueprintCallable, Category = "Interchange | AssetImportData")
+	INTERCHANGEENGINE_API const UInterchangeTranslatorSettings* GetTranslatorSettings() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | AssetImportData")
+	INTERCHANGEENGINE_API void SetTranslatorSettings(UInterchangeTranslatorSettings* TranslatorSettings) const;
+
+
 private:
 	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Use GetNodeContainer/SetNodeContainer instead."))
 	TObjectPtr<UInterchangeBaseNodeContainer> NodeContainer_DEPRECATED;
@@ -154,9 +179,46 @@ private:
 	UPROPERTY(Transient)
 	mutable TArray<TObjectPtr<UObject>> TransientPipelines;
 
+	UPROPERTY(Transient)
+	mutable TObjectPtr<UInterchangeTranslatorSettings> TransientTranslatorSettings;
+
 	void ProcessContainerCache() const;
 	void ProcessPipelinesCache() const;
 	void ProcessDeprecatedData() const;
+	void ProcessTranslatorCache() const;
 	mutable TArray64<uint8> CachedNodeContainer;
 	mutable TArray<TPair<FString, FString>> CachedPipelines; //Class, Data(serialized JSON) pair
+	mutable TPair<FString, FString> CachedTranslatorSettings;
+};
+
+/**
+ * Base class to create an asset import data converter.
+ */
+UCLASS(Abstract, MinimalAPI)
+class UInterchangeAssetImportDataConverterBase : public UObject
+{
+	GENERATED_BODY()
+public:
+	/**
+	 * Convert the asset import data from the one that is in the Object to
+	 * one that supports the target extension (for example, legacy FBX to Interchange or vice-versa)
+	 * The function should return true only if it has converted the asset import data, or false otherwise.
+	 * 
+	 * The system will call all objects that derive from this class until one converts the data.
+	 */
+	virtual bool ConvertImportData(UObject* Object, const FString& TargetExtension) const
+	{
+		return false;
+	}
+
+	/**
+	 * Convert the asset import data from the source to the destination.
+	 * The function should return true only if it has convert the asset import data, false otherwise.
+	 *
+	 * The system will call all object deriving from this class until one convert the data.
+	 */
+	virtual bool ConvertImportData(const UObject* SourceImportData, UObject** DestinationImportDataClass) const
+	{
+		return false;
+	}
 };

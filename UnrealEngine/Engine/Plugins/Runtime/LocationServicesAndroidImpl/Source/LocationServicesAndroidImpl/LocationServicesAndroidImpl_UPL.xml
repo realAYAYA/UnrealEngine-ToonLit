@@ -157,14 +157,14 @@
 			};
 		  
 			//requestLocationUpdates must run on main thread
-			_activity.runOnUiThread(new Runnable()
+			activityContext.runOnUiThread(new Runnable()
 			{
 				@Override
 				public void run()
 				{
 					try
 					{
-						LocationManager locationManager = (LocationManager) _activity.getSystemService(Context.LOCATION_SERVICE);
+						LocationManager locationManager = (LocationManager) activityContext.getSystemService(Context.LOCATION_SERVICE);
 
 						String providerName = GetBestLocationProvider();
 
@@ -189,7 +189,7 @@
 	
 	private String GetBestLocationProvider()
 	{
-		LocationManager locationManager = (LocationManager) _activity.getSystemService(Context.LOCATION_SERVICE);
+		LocationManager locationManager = (LocationManager) activityContext.getSystemService(Context.LOCATION_SERVICE);
 
 		Criteria providerCriteria = new Criteria();
 		providerCriteria.setPowerRequirement(LocationServicesPower);

@@ -36,6 +36,18 @@ TArray<const UOptimusComponentSource*> UOptimusComponentSource::GetAllSources()
 	return ComponentSources;
 }
 
+TSet<FName> UOptimusComponentSource::GetAllExecutionDomains()
+{
+	TSet<FName> Domains;
+
+	for (const UOptimusComponentSource* Source : GetAllSources())
+	{
+		Domains.Append(Source->GetExecutionDomains());
+	}
+
+	return Domains;
+}
+
 const UOptimusComponentSource* UOptimusComponentSource::GetSourceFromDataInterface(
 	const UOptimusComputeDataInterface* InDataInterface
 	)

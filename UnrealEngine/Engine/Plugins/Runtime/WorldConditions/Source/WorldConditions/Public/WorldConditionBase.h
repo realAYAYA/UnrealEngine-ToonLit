@@ -128,7 +128,7 @@ struct WORLDCONDITIONS_API FWorldConditionBase
 	virtual TObjectPtr<const UStruct>* GetRuntimeStateType() const { return nullptr; }
 
 #if WITH_EDITOR
-	/** @retrun Description to be shown in the UI. */
+	/** @return Description to be shown in the UI. */
 	virtual FText GetDescription() const;
 #endif
 

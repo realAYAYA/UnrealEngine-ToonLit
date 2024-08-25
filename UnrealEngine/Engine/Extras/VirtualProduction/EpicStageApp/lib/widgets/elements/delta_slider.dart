@@ -2,20 +2,18 @@
 
 import 'dart:math' as math;
 
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/utilities/drawing_utils.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
-import '../../models/navigator_keys.dart';
 import '../../models/property_modify_operations.dart';
 import '../../models/settings/delta_widget_settings.dart';
 import '../../utilities/math_utilities.dart';
-import '../../utilities/transient_preference.dart';
-import '../../utilities/unreal_colors.dart';
 import 'delta_widget_base.dart';
-import 'epic_icon_button.dart';
-import 'modal.dart';
 import 'unreal_widget_base.dart';
 
 const double _dotSize = 17.0;
@@ -234,19 +232,42 @@ class _DrivenDeltaSliderState extends State<DrivenDeltaSlider> with DeltaWidgetS
     return maxValue;
   }
 
+  /// Difference between the slider's min and max values.
   double get _valueSpan => _max - _min;
 
+  /// Opacity to use for the slider's labels.
   double get _labelOpacity => widget.bIsEnabled ? 1.0 : 0.4;
 
-  TextStyle get minMaxLabelStyle => Theme.of(context).textTheme.labelMedium!.copyWith(
+  /// Style to use for the min/max labels
+  TextStyle get _minMaxLabelStyle => Theme.of(context).textTheme.labelMedium!.copyWith(
         fontSize: 10,
         color: UnrealColors.gray42.withOpacity(_labelOpacity),
       );
 
+  /// The string used to indicate the slider's current value(s).
+  String? get _singleSharedValueString {
+    if (widget.values.isEmpty) {
+      return null;
+    }
+
+    final double? firstValue = widget.values[0]?.value;
+    if (firstValue == null) {
+      return null;
+    }
+
+    // If we have any values that differ, indicate it
+    for (int propertyIndex = 0; propertyIndex < widget.values.length; ++propertyIndex) {
+      if (widget.values[propertyIndex]?.value != firstValue) {
+        return AppLocalizations.of(context)!.mismatchedValuesLabel;
+      }
+    }
+
+    return _getStringForValue(firstValue);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final String? valueString =
-        (widget.values.length == 1 && widget.values[0] != null) ? _getStringForValue(widget.values[0]!.value) : null;
+    final String? valueString = _singleSharedValueString;
 
     // Build the list of slider values to pass to the slider widget
     final List<_DeltaSliderUIValue> uiValues = [];
@@ -320,8 +341,8 @@ class _DrivenDeltaSliderState extends State<DrivenDeltaSlider> with DeltaWidgetS
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(_getStringForValue(_min), style: minMaxLabelStyle),
-                                  Text(_getStringForValue(_max), style: minMaxLabelStyle),
+                                  Text(_getStringForValue(_min), style: _minMaxLabelStyle),
+                                  Text(_getStringForValue(_max), style: _minMaxLabelStyle),
                                 ],
                               ),
                             ),
@@ -421,22 +442,33 @@ class _DrivenDeltaSliderState extends State<DrivenDeltaSlider> with DeltaWidgetS
   }
 
   /// Show the modal dialog to directly enter a value via keyboard.
-  void _showDirectEntryModal() {
+  void _showDirectEntryModal() async {
     if (widget.values.isEmpty || widget.values[0] == null) {
       return;
     }
 
-    final route = GenericModalDialogRoute(
-      bResizeToAvoidBottomInset: true,
-      builder: (_) => _DeltaSliderDirectInputDialog(
-        label: widget.label,
+    final TextInputModalDialogResult<double>? result = await GenericModalDialogRoute.showDialog(
+      context: context,
+      builder: (context) => DoubleTextInputModalDialog(
+        title: AppLocalizations.of(context)!.sliderKeyboardInputModalTitle(widget.label),
         initialValue: widget.values[0]!.value,
-        onValueSet: _setAllValues,
-        onReset: widget.onReset,
+        bShowResetButton: true,
       ),
     );
 
-    Navigator.of(rootNavigatorKey.currentContext!, rootNavigator: true).push(route);
+    switch (result?.action) {
+      case TextInputModalDialogAction.apply:
+        _setAllValues(result!.value!);
+        break;
+
+      case TextInputModalDialogAction.reset:
+        widget.onReset?.call();
+        break;
+
+      case TextInputModalDialogAction.cancel:
+      case null:
+        break;
+    }
   }
 
   /// Change every value to a single, new value.
@@ -518,6 +550,8 @@ class _DeltaSliderSliderPainter extends CustomPainter {
     const double ringThickness = 2.8;
     const double disabledOpacity = 0.4;
 
+    pixelAlignCanvas(canvas);
+
     final Rect canvasRect = Offset.zero & size;
     canvas.saveLayer(canvasRect, Paint());
 
@@ -571,7 +605,6 @@ class _DeltaSliderSliderPainter extends CustomPainter {
     // Erase the mask around the rings
     final Paint ringMaskPaint = Paint()
       ..style = PaintingStyle.fill
-      ..color = Colors.transparent
       ..blendMode = BlendMode.clear;
 
     const double trackRingPadding = 5.5;
@@ -591,8 +624,7 @@ class _DeltaSliderSliderPainter extends CustomPainter {
 
     final Paint ringFillPaint = Paint()
       ..style = PaintingStyle.fill
-      ..color = Colors.white
-      ..blendMode = BlendMode.dstOut;
+      ..blendMode = BlendMode.clear;
 
     for (final Rect ringRect in ringRects) {
       canvas.drawArc(ringRect, 0, math.pi * 2, false, ringFillPaint);
@@ -618,167 +650,4 @@ class _DeltaSliderUIValue {
 
   /// The value of the dot normalized to the slider's range.
   final double normalizedValue;
-}
-
-/// Modal dialog to directly enter the value of a delta slider.
-class _DeltaSliderDirectInputDialog extends StatefulWidget {
-  const _DeltaSliderDirectInputDialog({
-    Key? key,
-    required this.label,
-    required this.initialValue,
-    required this.onValueSet,
-    this.onReset,
-  }) : super(key: key);
-
-  /// The label of the property to modify.
-  final String label;
-
-  /// The property's initial value before editing.
-  final double initialValue;
-
-  /// Called when a new value is set.
-  final Function(double) onValueSet;
-
-  /// Function called when the reset button is pressed.
-  final void Function()? onReset;
-
-  @override
-  State<StatefulWidget> createState() => _DeltaSliderDirectInputDialogState();
-}
-
-class _DeltaSliderDirectInputDialogState extends State<_DeltaSliderDirectInputDialog> {
-  final _textController = TextEditingController();
-  double? _value;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _textController.text = widget.initialValue.toStringAsFixed(6);
-    _textController.selection = TextSelection(baseOffset: 0, extentOffset: _textController.text.length);
-
-    _value = widget.initialValue;
-  }
-
-  @override
-  void dispose() {
-    _textController.dispose();
-
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const double buttonWidth = 110;
-
-    final localizations = AppLocalizations.of(context)!;
-
-    return Form(
-      autovalidateMode: AutovalidateMode.onUserInteraction,
-      child: ModalDialogCard(
-        child: IntrinsicHeight(
-          child: IntrinsicWidth(
-            child: Column(
-              children: [
-                ModalDialogTitle(title: localizations.sliderKeyboardInputModalTitle(widget.label)),
-                ModalDialogSection(
-                  child: Row(children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: 36,
-                        child: TextField(
-                          autofocus: true,
-                          maxLines: 1,
-                          cursorWidth: 1,
-                          controller: _textController,
-                          keyboardAppearance: Brightness.dark,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                          decoration: InputDecoration(hintText: '0'),
-                          keyboardType: TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [TextInputFormatter.withFunction(_allowDouble)],
-                          onEditingComplete: _applyValue,
-                          onChanged: (text) => _value = _parseToDouble(text),
-                        ),
-                      ),
-                    ),
-                    if (widget.onReset != null)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: ResetValueButton(onPressed: _resetValues),
-                      ),
-                  ]),
-                ),
-                ModalDialogSection(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      EpicLozengeButton(
-                        label: localizations.menuButtonCancel,
-                        width: buttonWidth,
-                        color: Colors.transparent,
-                        onPressed: _closeModal,
-                      ),
-                      EpicLozengeButton(
-                        label: localizations.menuButtonOK,
-                        width: buttonWidth,
-                        onPressed: _applyValue,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Close the modal.
-  void _closeModal() {
-    Navigator.of(context).pop();
-  }
-
-  /// Apply the newly entered value.
-  void _applyValue() {
-    if (_value != null) {
-      widget.onValueSet(_value!);
-      _closeModal();
-    }
-  }
-
-  /// Reset the values.
-  void _resetValues() {
-    if (widget.onReset == null) {
-      return;
-    }
-
-    widget.onReset!();
-    _closeModal();
-  }
-
-  /// Text editing function to only allow text that can be parsed to a double or an empty string.
-  TextEditingValue _allowDouble(TextEditingValue oldValue, TextEditingValue newValue) {
-    if (newValue.text.length == 0) {
-      return newValue;
-    }
-
-    if (_parseToDouble(newValue.text) == null) {
-      return oldValue;
-    }
-
-    return newValue;
-  }
-
-  /// Try to convert the text value to a double.
-  double? _parseToDouble(String text) {
-    double? result = double.tryParse(text);
-
-    if (result == null) {
-      // Try prepending a 0 so that an empty string or fractional shorthand work
-      result = double.tryParse('0$text');
-    }
-
-    return result;
-  }
 }

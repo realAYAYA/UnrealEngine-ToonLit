@@ -440,13 +440,13 @@ public:
 
 	virtual void FinishRequest() override
 	{
-		if (CompletionCallback)
-		{
-			CompletionCallback(Storage);
-		}
-
 		if (!bCancelled && this->Streamer.IsValid())
 		{
+			if (CompletionCallback)
+			{
+				CompletionCallback(Storage);
+			}
+
 			this->Streamer->OnFileRequestComplete(this->AsShared());
 		}
 	}

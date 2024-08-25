@@ -24,19 +24,20 @@ void FDataDrivenConsoleVariable::Register()
 		{
 			if (Type == FDataDrivenCVarType::CVarInt)
 			{
-				CVarToAdd = IConsoleManager::Get().RegisterConsoleVariable(*Name, DefaultValueInt, TEXT("RuntimeConsoleVariables"), ECVF_Default | ECVF_Scalability);
+				CVarToAdd = IConsoleManager::Get().RegisterConsoleVariable(*Name, DefaultValueInt, *ToolTip, ECVF_Default | ECVF_Scalability);
 			}
 			else if (Type == FDataDrivenCVarType::CVarBool)
 			{
-				CVarToAdd = IConsoleManager::Get().RegisterConsoleVariable(*Name, DefaultValueBool, TEXT("RuntimeConsoleVariables"), ECVF_Default | ECVF_Scalability);
+				CVarToAdd = IConsoleManager::Get().RegisterConsoleVariable(*Name, DefaultValueBool, *ToolTip, ECVF_Default | ECVF_Scalability);
 			}
 			else
 			{
-				CVarToAdd = IConsoleManager::Get().RegisterConsoleVariable(*Name, DefaultValueFloat, TEXT("RuntimeConsoleVariables"), ECVF_Default | ECVF_Scalability);
+				CVarToAdd = IConsoleManager::Get().RegisterConsoleVariable(*Name, DefaultValueFloat, *ToolTip, ECVF_Default | ECVF_Scalability);
 			}
 		}
 		CVarToAdd->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(UDataDrivenConsoleVariableSettings::OnDataDrivenChange));
 		ShadowName = Name;
+		ShadowToolTip = ToolTip;
 		ShadowType = Type;
 	}
 }
@@ -67,6 +68,11 @@ void FDataDrivenConsoleVariable::Refresh()
 			UnRegister(true);
 		}
 		ShadowName = Name;
+	}
+	else if (ShadowToolTip != ToolTip)
+	{
+		UnRegister(true);
+		ShadowToolTip = ToolTip;
 	}
 	else if (ShadowType != Type)
 	{

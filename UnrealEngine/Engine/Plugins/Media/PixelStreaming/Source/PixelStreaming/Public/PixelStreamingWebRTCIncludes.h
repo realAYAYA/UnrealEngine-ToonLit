@@ -8,7 +8,6 @@ THIRD_PARTY_INCLUDES_START
 
 #if PLATFORM_WINDOWS
 	#include "Windows/AllowWindowsPlatformTypes.h"
-	#include "Windows/PreWindowsApi.h"
 
 	// C4582: constructor is not implicitly called in "api/rtcerror.h", treated as an error by UnrealEngine
 	// C6319: Use of the comma-operator in a tested expression causes the left argument to be ignored when it has no side-effects.
@@ -36,7 +35,6 @@ THIRD_PARTY_INCLUDES_START
 #if PLATFORM_WINDOWS
 	#pragma warning(pop)
 
-	#include "Windows/PostWindowsApi.h"
 	#include "Windows/HideWindowsPlatformTypes.h"
 #else
 	#ifdef PF_MAX

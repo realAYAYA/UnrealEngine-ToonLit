@@ -97,7 +97,7 @@ struct FObservedComponent
 	FComponentReference ComponentRef;
 
 	/** The component observed by this object for either playback or recording */
-	UPROPERTY(EditAnywhere, Category = "Caching", meta = (UseComponentPicker, AllowAnyActor))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Caching", meta = (UseComponentPicker, AllowAnyActor))
 	FSoftComponentReference SoftComponentRef;
 
 	/** Capture of the initial state of the component before cache manager takes control. */
@@ -107,6 +107,10 @@ struct FObservedComponent
 	/** Whether this component is enabled for playback, this allow a cache to hold many component but only replay some of them. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Caching")
 	bool bPlaybackEnabled;
+
+	/** USD cache directory, if supported for this simulated structure type. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Caching", meta=(ContentDir))
+	FDirectoryPath USDCacheDirectory;
 
 	/** 
 	* Capture the state of bNotifyBreaks of the component before cache manager takes control. 
@@ -134,6 +138,7 @@ struct FObservedComponent
 
 private:
 	friend class AChaosCacheManager;
+	friend class Chaos::FComponentCacheAdapter;
 
 	bool         bTriggered;          // Whether the observed component is active
 	Chaos::FReal AbsoluteTime;        // Time since BeginPlay
@@ -207,6 +212,11 @@ public:
 #endif
 
 #if WITH_EDITOR
+	bool ContainsProperty(const UStruct* Struct, const void* InProperty) const;
+	CHAOSCACHING_API virtual bool CanEditChange(const FProperty* InProperty) const override;
+#endif
+
+#if WITH_EDITOR
 	CHAOSCACHING_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	/** end UObject interface */
@@ -214,6 +224,9 @@ public:
 	/** Expose StartTime property to Sequencer. GetStartTime will be called on keys. */
 	UFUNCTION(CallInEditor)
 	CHAOSCACHING_API void SetStartTime(float InStartTime);
+
+	UFUNCTION(BlueprintCallable, Category = "Caching")
+	void SetCurrentTime(float CurrentTime);
 
 	/** 
 	 * Resets all components back to the world space transform they had when the cache for them was originally recorded

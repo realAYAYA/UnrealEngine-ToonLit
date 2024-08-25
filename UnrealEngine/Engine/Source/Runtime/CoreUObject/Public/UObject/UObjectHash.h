@@ -274,6 +274,13 @@ COREUOBJECT_API void ShrinkUObjectHashTables();
 COREUOBJECT_API uint64 GetRegisteredClassesVersionNumber();
 
 /**
+* Get a version number representing the current state of registered native classes.
+*
+* Can be stored and then compared to invalidate external caching of native classes hierarchy whenever it changes.
+*/
+COREUOBJECT_API uint64 GetRegisteredNativeClassesVersionNumber();
+
+/**
  * Logs out information about the object hash for debug purposes
  *
  * @param Ar the archive to write the log data to

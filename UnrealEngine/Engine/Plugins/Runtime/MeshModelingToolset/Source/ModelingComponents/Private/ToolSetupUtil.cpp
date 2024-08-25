@@ -211,7 +211,7 @@ UMaterialInterface* ToolSetupUtil::GetSelectionMaterial(UInteractiveToolManager*
 }
 
 
-UMaterialInterface* ToolSetupUtil::GetSelectionMaterial(const FLinearColor& UseColor, UInteractiveToolManager* ToolManager, float PercentDepthOffset)
+UMaterialInterface* ToolSetupUtil::GetSelectionMaterial(const FLinearColor& UseColor, UInteractiveToolManager* ToolManager, float DepthBias)
 {
 	UMaterialInterface* Material = LoadObject<UMaterial>(nullptr, TEXT("/MeshModelingToolsetExp/Materials/SelectionMaterial"));
 	if (Material == nullptr && ToolManager != nullptr)
@@ -222,9 +222,9 @@ UMaterialInterface* ToolSetupUtil::GetSelectionMaterial(const FLinearColor& UseC
 	{
 		UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(Material, ToolManager);
 		MatInstance->SetVectorParameterValue(TEXT("ConstantColor"), UseColor);
-		if (PercentDepthOffset != 0)
+		if (DepthBias != 0)
 		{
-			MatInstance->SetScalarParameterValue(TEXT("PercentDepthOffset"), PercentDepthOffset);
+			MatInstance->SetScalarParameterValue(TEXT("DepthBias"), DepthBias);
 		}
 		return MatInstance;
 	}
@@ -257,55 +257,55 @@ MODELINGCOMPONENTS_API UMaterialInstanceDynamic* ToolSetupUtil::GetSimpleCustomM
 	return nullptr;
 }
 
-UMaterialInstanceDynamic* ToolSetupUtil::GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset, float Opacity)
+UMaterialInstanceDynamic* ToolSetupUtil::GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias, float Opacity)
 {
 	UMaterialInterface* Material = LoadObject<UMaterial>(nullptr, TEXT("/MeshModelingToolsetExp/Materials/SimpleTwoSidedOffsetMaterial_Transparent"));
 	if (Material != nullptr)
 	{
 		UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(Material, ToolManager);
 		MatInstance->SetVectorParameterValue(TEXT("Color"), Color);
-		MatInstance->SetScalarParameterValue(TEXT("PercentDepthOffset"), PercentDepthOffset);
+		MatInstance->SetScalarParameterValue(TEXT("DepthBias"), DepthBias);
 		MatInstance->SetScalarParameterValue(TEXT("Opacity"), Opacity);
 		return MatInstance;
 	}
 	return nullptr;
 }
 
-MODELINGCOMPONENTS_API UMaterialInstanceDynamic* ToolSetupUtil::GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset)
+MODELINGCOMPONENTS_API UMaterialInstanceDynamic* ToolSetupUtil::GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias)
 {
 	UMaterialInterface* Material = LoadObject<UMaterial>(nullptr, TEXT("/MeshModelingToolsetExp/Materials/SimpleTwoSidedOffsetMaterial"));
 	if (Material != nullptr)
 	{
 		UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(Material, ToolManager);
 		MatInstance->SetVectorParameterValue(TEXT("Color"), Color);
-		MatInstance->SetScalarParameterValue(TEXT("PercentDepthOffset"), PercentDepthOffset);
+		MatInstance->SetScalarParameterValue(TEXT("DepthBias"), DepthBias);
 		return MatInstance;
 	}
 	return nullptr;
 }
 
-UMaterialInstanceDynamic* ToolSetupUtil::GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset, float Opacity)
+UMaterialInstanceDynamic* ToolSetupUtil::GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias, float Opacity)
 {
 	UMaterialInterface* Material = LoadObject<UMaterial>(nullptr, TEXT("/MeshModelingToolsetExp/Materials/SimpleOffsetMaterial_Transparent"));
 	if (Material != nullptr)
 	{
 		UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(Material, ToolManager);
 		MatInstance->SetVectorParameterValue(TEXT("Color"), Color);
-		MatInstance->SetScalarParameterValue(TEXT("PercentDepthOffset"), PercentDepthOffset);
+		MatInstance->SetScalarParameterValue(TEXT("DepthBias"), DepthBias);
 		MatInstance->SetScalarParameterValue(TEXT("Opacity"), Opacity);
 		return MatInstance;
 	}
 	return nullptr;
 }
 
-MODELINGCOMPONENTS_API UMaterialInstanceDynamic* ToolSetupUtil::GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset)
+MODELINGCOMPONENTS_API UMaterialInstanceDynamic* ToolSetupUtil::GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias)
 {
 	UMaterialInterface* Material = LoadObject<UMaterial>(nullptr, TEXT("/MeshModelingToolsetExp/Materials/SimpleOffsetMaterial"));
 	if (Material != nullptr)
 	{
 		UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(Material, ToolManager);
 		MatInstance->SetVectorParameterValue(TEXT("Color"), Color);
-		MatInstance->SetScalarParameterValue(TEXT("PercentDepthOffset"), PercentDepthOffset);
+		MatInstance->SetScalarParameterValue(TEXT("DepthBias"), DepthBias);
 		return MatInstance;
 	}
 	return nullptr;

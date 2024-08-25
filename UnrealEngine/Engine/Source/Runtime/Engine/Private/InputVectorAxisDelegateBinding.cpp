@@ -31,7 +31,7 @@ void UInputVectorAxisDelegateBinding::BindToInputComponent(UInputComponent* Inpu
 				const FInputVectorAxisBinding& ExistingBind = InputComponent->VectorAxisBindings[ExistingIndex];
 				if (ExistingBind.AxisKey == VAB.AxisKey)
 				{
-					InputComponent->AxisKeyBindings.RemoveAt(ExistingIndex);
+					InputComponent->VectorAxisBindings.RemoveAt(ExistingIndex);
 				}
 			}
 		}

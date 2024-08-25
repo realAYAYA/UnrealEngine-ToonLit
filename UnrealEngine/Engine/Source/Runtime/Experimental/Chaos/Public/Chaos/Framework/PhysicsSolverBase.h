@@ -19,6 +19,7 @@
 #endif
 
 class FChaosSolversModule;
+class FPhysicsReplicationAsync;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FSolverPreAdvance, Chaos::FReal);
 DECLARE_MULTICAST_DELEGATE_OneParam(FSolverPreBuffer, Chaos::FReal);
@@ -84,6 +85,14 @@ namespace Chaos
 		int32 Step;
 		int32 NumSteps;
 		bool bSolverSubstepped;
+	};
+
+
+	enum EAsyncBlockMode
+	{
+		BlockOnlyPastFrames = 0,
+		BlockForBestInterpolation = 1,
+		DoNoBlock = 2
 	};
 
 	/**
@@ -159,6 +168,7 @@ namespace Chaos
 #endif
 	};
 
+	// Container for all steps required to fully update a solver
 	struct FAllSolverTasks
 	{
 		FAllSolverTasks(FPhysicsSolverBase& InSolver, FPushPhysicsData* PushData)
@@ -171,6 +181,30 @@ namespace Chaos
 
 		FPhysicsSolverProcessPushDataTask ProcessPushData;
 		FPhysicsSolverFrozenGTPreSimCallbacks GTPreSimCallbacks;
+		FPhysicsSolverAdvanceTask AdvanceTask;
+
+		CHAOS_API void AdvanceSolver();
+
+		FPhysicsSolverBase& Solver;
+	};
+
+	// Container for all physics-thread steps required to update a solver
+	// This leaves out the game thread callbacks for situations that require and update only in a physics-thread context
+	struct FSolverTasksPTOnly
+	{
+		FSolverTasksPTOnly() = delete;
+		FSolverTasksPTOnly(const FSolverTasksPTOnly&) = delete;
+		FSolverTasksPTOnly(FSolverTasksPTOnly&&) = delete;
+		FSolverTasksPTOnly& operator=(const FSolverTasksPTOnly&) = delete;
+		FSolverTasksPTOnly& operator=(FSolverTasksPTOnly&&) = delete;
+
+		FSolverTasksPTOnly(FPhysicsSolverBase& InSolver, FPushPhysicsData* InPushData)
+			: ProcessPushData(InSolver, InPushData)
+			, AdvanceTask(InSolver, InPushData)
+			, Solver(InSolver)
+		{}
+
+		FPhysicsSolverProcessPushDataTask ProcessPushData;
 		FPhysicsSolverAdvanceTask AdvanceTask;
 
 		CHAOS_API void AdvanceSolver();
@@ -398,6 +432,21 @@ namespace Chaos
 			return MRewindCallback.Get();
 		}
 
+		bool ShouldApplyRewindCallbacks()
+		{
+			return MRewindCallback.IsValid() && MRewindData.IsValid();
+		}
+
+		void SetPhysicsReplication(FPhysicsReplicationAsync* InPhysicsReplication)
+		{
+			PhysicsReplication = InPhysicsReplication;
+		}
+
+		FPhysicsReplicationAsync* GetPhysicsReplication()
+		{
+			return PhysicsReplication;
+		}
+
 		//Used as helper for GT to go from unique idx back to gt particle
 		//If GT deletes a particle, this function will return null (that's a good thing when consuming async outputs as GT may have already deleted the particle we care about)
 		//Note: if the physics solver has been advanced after the particle was freed on GT, the index may have been freed and reused.
@@ -423,6 +472,10 @@ namespace Chaos
 			{
 				FTaskGraphInterface::Get().WaitUntilTaskCompletes(PendingTasks);
 			}
+		}
+
+		virtual void KillSafeAsyncTasks()
+		{
 		}
 
 		virtual bool AreAnyTasksPending() const
@@ -491,16 +544,10 @@ namespace Chaos
 		CHAOS_API FGraphEventRef AdvanceAndDispatch_External(FReal InDt);
 
 #if CHAOS_DEBUG_NAME
-		void SetDebugName(const FName& Name)
-		{
-			DebugName = Name;
-		}
-
-		const FName& GetDebugName() const
-		{
-			return DebugName;
-		}
+		CHAOS_API void SetDebugName(const FName& Name);
 #endif
+		CHAOS_API FName GetDebugName() const;
+
 
 		//Tells us if we're on the frozen game thread. This is needed for knowing which data to read/write to
 		//The IsInGameThread check is so that other threads (e.g audio thread) which might be running queries in parallel will continue to use the correct interpolated GT data
@@ -508,6 +555,7 @@ namespace Chaos
 
 		void SetGameThreadFrozen(bool InGameThreadFrozen)
 		{
+			check(IsInGameThread());
 			bGameThreadFrozen = InGameThreadFrozen;
 		}
 
@@ -628,13 +676,15 @@ namespace Chaos
 			if (IsUsingFixedDt())
 			{
 				//fixed dt uses interpolation and looks into the past
-				return ExternalTime - AsyncDt * AsyncInterpolationMultiplier;
+				return ExternalTime - AsyncDt * AsyncMultiplier;
 			}
 			else
 			{
 				return ExternalTime;
 			}
 		}
+
+		virtual void FlipEventManagerBuffer() {}
 
 		/**/
 		void SetSolverTime(const FReal InTime) { MTime = InTime; }
@@ -643,6 +693,22 @@ namespace Chaos
 
 		/**/
 		FReal GetLastDt() const { return MLastDt; }
+
+		/** 
+		  Set the Async Block Mode, valid mode can be 0, 1, or 2
+		  0 blocks on any physics steps generated from past GT Frames, and blocks on none of the tasks from current frame.
+		  1 blocks on everything except the single most recent task (including tasks from current frame)
+		  1 should guarantee we will always have a future output for interpolation from 2 frames in the past
+		  2 doesn't block the game thread. Physics steps could be eventually be dropped if taking too much time.
+		*/
+		void SetAsyncPhysicsBlockMode(EAsyncBlockMode InAsyncBlockMode) { AsyncBlockMode = InAsyncBlockMode; }
+
+		/** 
+		* Set the async interpolation multiplier which is how many multiples of the fixed dt should we look behind for interpolation.
+		*/
+		void SetAsyncInterpolationMultiplier(FRealSingle InAsyncInterpolationMultiplier) { AsyncMultiplier = InAsyncInterpolationMultiplier; }
+
+		float GetAsyncInterpolationMultiplier() const { return AsyncMultiplier; }
 
 		/** Check if we can enable debugging informations for network physics */
 		static bool CanDebugNetworkPhysicsPrediction()
@@ -660,11 +726,11 @@ namespace Chaos
 			return NetworkPhysicsEnabled;
 		}
 
-		/** Check if resim is enabled for network physics */
-		static bool IsPhysicsResimulationEnabled()
+		/** Get the number of physics history frames to cache */
+		static int32 GetPhysicsHistoryCount()
 		{
-			const bool PhysicsResimulationEnabled = FChaosSolversModule::GetModule()->GetSettingsProvider().GetPhysicsResimulationEnabled();
-			return PhysicsResimulationEnabled;
+			const int32 PhysicsHistoryCount = FChaosSolversModule::GetModule()->GetSettingsProvider().GetPhysicsHistoryCount();
+			return PhysicsHistoryCount;
 		}
 
 		static float ResimulationErrorThreshold()
@@ -682,7 +748,6 @@ namespace Chaos
 
 			return NetworkPhysicsPredictionInterpLerp;
 		}
-
 
 	protected:
 		/** Mode that the results buffers should be set to (single, double, triple) */
@@ -711,34 +776,38 @@ namespace Chaos
 		virtual void SetExternalTimestampConsumed_Internal(const int32 Timestamp) = 0;
 
 #if CHAOS_DEBUG_NAME
+		virtual void OnDebugNameChanged() {}
+
 		FName DebugName;
 #endif
 
-	FChaosMarshallingManager MarshallingManager;
-	TUniquePtr<FChaosResultsManager> PullResultsManager;	//must come after MarshallingManager since it knows about MarshallingManager
+		FChaosMarshallingManager MarshallingManager;
+		TUniquePtr<FChaosResultsManager> PullResultsManager;	//must come after MarshallingManager since it knows about MarshallingManager
 
-	// The spatial operations not yet consumed by the internal sim. Use this to ensure any GT operations are seen immediately
-	TUniquePtr<FPendingSpatialDataQueue> PendingSpatialOperations_External;
+		// The spatial operations not yet consumed by the internal sim. Use this to ensure any GT operations are seen immediately
+		TUniquePtr<FPendingSpatialDataQueue> PendingSpatialOperations_External;
 
-	TArray<ISimCallbackObject*> SimCallbackObjects;
-	TArray<ISimCallbackObject*> MidPhaseModifiers;
-	TArray<ISimCallbackObject*> CCDModifiers;
-	TArray<ISimCallbackObject*> StrainModifiers;
-	TArray<ISimCallbackObject*> ContactModifiers;
-	TArray<ISimCallbackObject*> RegistrationWatchers;
-	TArray<ISimCallbackObject*> UnregistrationWatchers;
+		TArray<ISimCallbackObject*> SimCallbackObjects;
+		TArray<ISimCallbackObject*> MidPhaseModifiers;
+		TArray<ISimCallbackObject*> CCDModifiers;
+		TArray<ISimCallbackObject*> StrainModifiers;
+		TArray<ISimCallbackObject*> ContactModifiers;
+		TArray<ISimCallbackObject*> RegistrationWatchers;
+		TArray<ISimCallbackObject*> UnregistrationWatchers;
+		TArray<ISimCallbackObject*> PhysicsObjectUnregistrationWatchers;
 
-	TUniquePtr<FRewindData> MRewindData;
-	TUniquePtr<IRewindCallback> MRewindCallback;
+		TUniquePtr<FRewindData> MRewindData;
+		TUniquePtr<IRewindCallback> MRewindCallback;
+		FPhysicsReplicationAsync* PhysicsReplication;
 
-	bool bUseCollisionResimCache;
+		bool bUseCollisionResimCache;
 
-	FGraphEventRef PendingTasks;
+		FGraphEventRef PendingTasks;
 
-	bool bSolverHasFrozenGameThreadCallbacks = false;
-	bool bGameThreadFrozen = false;
-	FReal MLastDt = FReal(0);
-	FReal MTime = FReal(0);
+		bool bSolverHasFrozenGameThreadCallbacks = false;
+		bool bGameThreadFrozen = false;
+		FReal MLastDt = FReal(0);
+		FReal MTime = FReal(0);
 
 	private:
 
@@ -750,6 +819,9 @@ namespace Chaos
 			SimCallbackObject->SetSolver_External(this);
 			MarshallingManager.RegisterSimCallbackObject_External(SimCallbackObject);
 		}
+
+		// Number of ending solver task that has not been executed or that are still being executed
+		TAtomic<int32> NumPendingSolverAdvanceTasks;
 
 		/** 
 		 * Whether this solver is paused. Paused solvers will still 'tick' however they will receive a Dt of zero so they can still
@@ -787,6 +859,8 @@ namespace Chaos
 		int32 MMaxSubSteps;
 		int32 ExternalSteps;
 		TArray<FGeometryParticle*> UniqueIdxToGTParticles;
+		EAsyncBlockMode AsyncBlockMode;
+		float AsyncMultiplier;
 
 	public:
 

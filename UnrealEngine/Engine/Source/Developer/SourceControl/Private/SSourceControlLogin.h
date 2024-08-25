@@ -89,6 +89,9 @@ private:
 	/** Delegate to determine visibility of the disabled text widget */
 	EVisibility GetDisabledTextVisibility() const;
 
+	/** Requests confirmation of disabling source control */
+	bool ConfirmDisableSourceControl() const;
+
 private:
 	/** The frequency at which to tick to scc module when inside a modal window */
 	static const float RefreshFrequency;

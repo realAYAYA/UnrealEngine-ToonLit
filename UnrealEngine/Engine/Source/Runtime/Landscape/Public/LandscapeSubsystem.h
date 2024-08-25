@@ -8,14 +8,29 @@
 #include "LandscapeSubsystem.generated.h"
 
 class ALandscapeProxy;
+class ALandscape;
 class AWorldSettings;
 class IConsoleVariable;
 class ULandscapeInfo;
 class FLandscapeNotificationManager;
+class ULandscapeComponent;
+class FLandscapeGrassMapsBuilder;
+class FLandscapeTextureStreamingManager;
+struct FActionableMessage;
 struct FDateTime;
+struct FScopedSlowTask;
+
 namespace UE::Landscape
 {
 	enum class EOutdatedDataFlags : uint8;
+
+#if WITH_EDITOR
+	void LANDSCAPE_API MarkModifiedLandscapesAsDirty();
+	void LANDSCAPE_API BuildGrassMaps();
+	void LANDSCAPE_API BuildPhysicalMaterial();
+	void LANDSCAPE_API BuildNanite();
+	void LANDSCAPE_API BuildAll();
+#endif // WITH_EDITOR
 } // end of namespace UE::Landscape
 
 #if WITH_EDITOR
@@ -57,8 +72,11 @@ public:
 	virtual TStatId GetStatId() const override;
 	// End FTickableGameObject overrides
 
+	// setting this to true causes grass instance generation to go wider (multiplies the limits by GGrassCreationPrioritizedMultipler)
 	void PrioritizeGrassCreation(bool bPrioritizeGrassCreation) { bIsGrassCreationPrioritized = bPrioritizeGrassCreation; }
 	bool IsGrassCreationPrioritized() const { return bIsGrassCreationPrioritized; }
+	FLandscapeGrassMapsBuilder* GetGrassMapBuilder() { return GrassMapsBuilder; }
+	FLandscapeTextureStreamingManager* GetTextureStreamingManager() { return TextureStreamingManager; }
 
 	/**
 	 * Can be called at runtime : (optionally) flushes grass on all landscape components and updates them
@@ -67,9 +85,18 @@ public:
 	 * @param InOptionalCameraLocations : (optional) camera locations that should be used when updating the grass. If not specified, the usual (streaming manager-based) view locations will be used
 	 */
 	LANDSCAPE_API void RegenerateGrass(bool bInFlushGrass, bool bInForceSync, TOptional<TArrayView<FVector>> InOptionalCameraLocations = TOptional<TArrayView<FVector>>());
+	
+	// Remove all grass instances from the specified components.  If passed null, removes all grass instances from all proxies.
+	void RemoveGrassInstances(const TSet<ULandscapeComponent*>* ComponentsToRemoveGrassInstances = nullptr);
+
+	// called when components are registered to the world	
+	void RegisterComponent(ULandscapeComponent* Component);
+	void UnregisterComponent(ULandscapeComponent* Component);
 
 #if WITH_EDITOR
 	LANDSCAPE_API void BuildAll();
+
+	// Synchronously build grass maps for all components
 	LANDSCAPE_API void BuildGrassMaps();
 	LANDSCAPE_API void BuildPhysicalMaterial();
 
@@ -95,7 +122,11 @@ public:
 	LANDSCAPE_API bool IsGridBased() const;
 	LANDSCAPE_API void ChangeGridSize(ULandscapeInfo* LandscapeInfo, uint32 NewGridSizeInComponents);
 	LANDSCAPE_API ALandscapeProxy* FindOrAddLandscapeProxy(ULandscapeInfo* LandscapeInfo, const FIntPoint& SectionBase);
+
+	UE_DEPRECATED(5.5, "DisplayMessages is now deprecated.")
 	LANDSCAPE_API void DisplayMessages(class FCanvas* Canvas, float& XPos, float& YPos);
+
+	LANDSCAPE_API bool GetActionableMessage(FActionableMessage& OutActionableMessage);
 	LANDSCAPE_API void MarkModifiedLandscapesAsDirty();
 	LANDSCAPE_API void SaveModifiedLandscapes();
 	LANDSCAPE_API bool HasModifiedLandscapes() const;
@@ -108,7 +139,6 @@ public:
 	FDateTime GetAppCurrentDateTime();
 	LANDSCAPE_API void AddAsyncEvent(FGraphEventRef GraphEventRef);
 
-
 	// Returns true if we should build nanite meshes in parallel asynchronously. 
 	bool IsMultithreadedNaniteBuildEnabled();
 
@@ -118,6 +148,9 @@ public:
 	bool AreNaniteBuildsInProgress() const;
 	void IncNaniteBuild();
 	void DecNaniteBuild();
+
+	// Wait unit we're able to continue a landscape export task (Max concurrent nanite mesh builds is defined by  landscape.Nanite.MaxSimultaneousMultithreadBuilds and landscape.Nanite.MultithreadBuild CVars)
+	void WaitLaunchNaniteBuild(); 
 #endif // WITH_EDITOR
 
 private:
@@ -131,12 +164,17 @@ private:
 	void OnNaniteWorldSettingsChanged(AWorldSettings* WorldSettings) { RegenerateGrass(true, true); }
 	void OnNaniteEnabledChanged(IConsoleVariable*);
 
+	void HandlePostGarbageCollect();
+
 	bool bIsGrassCreationPrioritized = false;
+	TArray<TWeakObjectPtr<ALandscape>> LandscapeActors;
 	TArray<TWeakObjectPtr<ALandscapeProxy>> Proxies;
 	FDelegateHandle OnNaniteWorldSettingsChangedHandle;
 
+	FLandscapeTextureStreamingManager* TextureStreamingManager = nullptr;
+	FLandscapeGrassMapsBuilder* GrassMapsBuilder = nullptr;
+
 #if WITH_EDITOR
-	class FLandscapeGrassMapsBuilder* GrassMapsBuilder = nullptr;
 	class FLandscapePhysicalMaterialBuilder* PhysicalMaterialBuilder = nullptr;
 	
 	FLandscapeNotificationManager* NotificationManager = nullptr;
@@ -149,5 +187,9 @@ private:
 	float NumNaniteMeshUpdatesAvailable = 0.0f;
 
 	std::atomic<int32> NaniteBuildsInFlight;
+	std::atomic<int32> NaniteStaticMeshesInFlight;
+
 #endif // WITH_EDITOR
+	
+	FDelegateHandle OnScalabilityChangedHandle;
 };

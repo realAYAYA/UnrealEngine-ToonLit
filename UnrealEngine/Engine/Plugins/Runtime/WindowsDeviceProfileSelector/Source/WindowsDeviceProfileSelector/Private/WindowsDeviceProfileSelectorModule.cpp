@@ -5,6 +5,7 @@
 #include "RHI.h"
 #include "RHICommandList.h"
 #include "DynamicRHI.h"
+#include "Misc/App.h"
 #include "Misc/ConfigCacheIni.h"
 
 IMPLEMENT_MODULE(FWindowsDeviceProfileSelectorModule, WindowsDeviceProfileSelector);

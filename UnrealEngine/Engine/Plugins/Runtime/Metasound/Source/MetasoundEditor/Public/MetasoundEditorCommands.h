@@ -58,6 +58,9 @@ namespace Metasound
 			// Delete selected items. 
 			TSharedPtr<FUICommandInfo> Delete;
 
+			// Show the Find in MetaSound window. 
+			TSharedPtr<FUICommandInfo> FindInMetaSound;
+
 			/** Initialize commands */
 			virtual void RegisterCommands() override;
 		};

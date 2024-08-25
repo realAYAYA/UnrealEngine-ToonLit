@@ -3,7 +3,6 @@
 
 #include "Tools/BakingHelper.h"
 
-#include "ControlRig.h"
 #include "ILevelSequenceEditorToolkit.h"
 #include "ISequencer.h"
 #include "LevelSequence.h"

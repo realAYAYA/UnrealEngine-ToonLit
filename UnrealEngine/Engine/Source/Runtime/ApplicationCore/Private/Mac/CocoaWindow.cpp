@@ -47,14 +47,7 @@ NSString* NSPerformDragOperation = @"NSPerformDragOperation";
 - (NSRect)openGLFrame
 {
 	SCOPED_AUTORELEASE_POOL;
-	if ([self styleMask] & NSWindowStyleMaskTexturedBackground)
-	{
-		return [self frame];
-	}
-	else
-	{
-		return [[self contentView] frame];
-	}
+	return [[self contentView] frame];
 }
 
 - (NSView*)openGLView

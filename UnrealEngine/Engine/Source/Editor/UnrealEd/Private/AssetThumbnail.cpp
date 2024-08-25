@@ -617,6 +617,13 @@ private:
 			}
 		}
 		
+		// Always render thumbnails with custom thumbnails
+		FString CustomThumbnailTagValue;
+		if (AssetData.GetTagValue(FAssetThumbnailPool::CustomThumbnailTagName, CustomThumbnailTagValue))
+		{
+			return true;
+		}
+		
 		// Unloaded blueprint or asset that may have a custom thumbnail, check to see if there is a thumbnail in the package to render
 		FString PackageFilename;
 		if ( FPackageName::DoesPackageExist(AssetData.PackageName.ToString(), &PackageFilename) )
@@ -635,13 +642,6 @@ private:
 				const FObjectThumbnail& ObjectThumbnail = *ThumbnailPtr;
 				return ObjectThumbnail.GetImageWidth() > 0 && ObjectThumbnail.GetImageHeight() > 0 && ObjectThumbnail.GetCompressedDataSize() > 0;
 			}
-		}
-
-		// Always render thumbnails with custom thumbnails
-		FString CustomThumbnailTagValue;
-		if (AssetData.GetTagValue(FAssetThumbnailPool::CustomThumbnailTagName, CustomThumbnailTagValue))
-		{
-			return true;
 		}
 
 		return false;

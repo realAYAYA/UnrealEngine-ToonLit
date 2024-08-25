@@ -18,8 +18,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeMeshTransform::Private::s_type =
-            NODE_TYPE( "MeshTransform", NodeMesh::GetStaticType() );
+    FNodeType NodeMeshTransform::Private::s_type =
+            FNodeType( "MeshTransform", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -30,61 +30,32 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeMeshTransform::GetInputCount() const
-	{
-		return 1;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeMeshTransform::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-        (void)i;
-        return m_pD->m_pSource.get();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeMeshTransform::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-		if (i==0)
-		{
-			m_pD->m_pSource = dynamic_cast<NodeMesh*>( pNode.get() );
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
     NodeMeshPtr NodeMeshTransform::GetSource() const
 	{
-		return m_pD->m_pSource;
+		return m_pD->Source;
 	}
 
 
     //---------------------------------------------------------------------------------------------
     void NodeMeshTransform::SetSource( NodeMesh* p )
     {
-        m_pD->m_pSource = p;
+        m_pD->Source = p;
     }
 
 
     //---------------------------------------------------------------------------------------------
-    void NodeMeshTransform::SetTransform( const float* mat )
+    void NodeMeshTransform::SetTransform( const FMatrix44f& Value )
     {
-        memcpy( &m_pD->m_transform[0][0], mat, 16*sizeof(float) );
+        m_pD->Transform = Value;
     }
 
 
     //---------------------------------------------------------------------------------------------
-    void NodeMeshTransform::GetTransform( float* mat ) const
+	const FMatrix44f& NodeMeshTransform::GetTransform() const
     {
-        memcpy( mat, &m_pD->m_transform[0][0], 16*sizeof(float) );
+        return m_pD->Transform;
     }
 
 
@@ -93,11 +64,9 @@ namespace mu
 	{
 		NodeLayoutPtr pResult;
 
-		if ( m_pSource )
+		if ( Source )
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>( m_pSource->GetBasePrivate() );
-
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>( Source->GetBasePrivate() );
 			pResult = pPrivate->GetLayout( index );
 		}
 

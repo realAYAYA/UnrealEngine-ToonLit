@@ -6,7 +6,7 @@ LIBRARY_NAME="OpenSubdiv"
 REPOSITORY_NAME="OpenSubdiv"
 
 # Informational, for the usage message.
-CURRENT_LIBRARY_VERSION=3.4.4
+CURRENT_LIBRARY_VERSION=3.6.0
 
 BUILD_SCRIPT_NAME="$(basename $BASH_SOURCE)"
 BUILD_SCRIPT_DIR=`cd $(dirname "$BASH_SOURCE"); pwd`
@@ -61,7 +61,8 @@ CMAKE_ARGS=(
     -DCMAKE_INSTALL_PREFIX="$INSTALL_LOCATION"
     -DCMAKE_BINDIR_BASE="$INSTALL_BIN_DIR"
     -DCMAKE_LIBDIR_BASE="$INSTALL_LIB_DIR"
-    -DCMAKE_OSX_DEPLOYMENT_TARGET="10.9"
+    -DCMAKE_INSTALL_LIBDIR="$INSTALL_LIB_DIR"
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0"
     -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
     -DCMAKE_XCODE_ATTRIBUTE_OTHER_CODE_SIGN_FLAGS="-o linker-signed"
     -DCMAKE_DEBUG_POSTFIX=_d
@@ -78,6 +79,7 @@ CMAKE_ARGS=(
     -DNO_DX=ON
     -DNO_GLEW=ON
     -DNO_GLFW=ON
+    -DBUILD_SHARED_LIBS=OFF
     -DNO_MACOS_FRAMEWORK=ON
 )
 
@@ -107,15 +109,5 @@ if [ -d "$INSTALL_LOCATION/$INSTALL_BIN_DIR" ]
 then
     rm -rf "$INSTALL_LOCATION/$INSTALL_BIN_DIR"
 fi
-
-echo Converting installed $LIBRARY_NAME library symlinks to files...
-pushd "$INSTALL_MAC_LOCATION/lib" > /dev/null
-for SYMLINKED_LIB in `find . -type l`
-do
-    SOURCE_LIB=$(readlink "$SYMLINKED_LIB")
-    rm -f "$SYMLINKED_LIB"
-    cp -a "$SOURCE_LIB" "$SYMLINKED_LIB"
-done
-popd > /dev/null
 
 echo Done.

@@ -45,7 +45,7 @@ public:
 	DECLARE_DELEGATE_RetVal_FiveParams(CompileRequestDuplicatePtr, FOnPrecompileDuplicate, const FNiagaraCompileRequestDataBase* /*OwningSystemRequestData*/, UNiagaraSystem* /*OwningSystem*/, UNiagaraEmitter* /*OwningEmitter*/, UNiagaraScript* /*TargetScript*/, FGuid /*Version*/);
 	DECLARE_DELEGATE_RetVal_TwoParams(GraphCachedDataPtr, FOnCacheGraphTraversal, const UObject*, FGuid);
 
-	DECLARE_DELEGATE_RetVal_TwoParams(FNiagaraCompilationTaskHandle, FOnRequestCompileSystem, UNiagaraSystem*, bool);
+	DECLARE_DELEGATE_RetVal_ThreeParams(FNiagaraCompilationTaskHandle, FOnRequestCompileSystem, UNiagaraSystem*, bool, const ITargetPlatform*);
 	DECLARE_DELEGATE_RetVal_FourParams(bool, FOnPollSystemCompile, FNiagaraCompilationTaskHandle, FNiagaraSystemAsyncCompileResults&, bool /*bWait*/, bool /*bPeek*/);
 	DECLARE_DELEGATE_OneParam(FOnAbortSystemCompile, FNiagaraCompilationTaskHandle);
 
@@ -55,6 +55,10 @@ public:
 public:
 	NIAGARA_API virtual void StartupModule()override;
 	NIAGARA_API virtual void ShutdownModule()override;
+	
+	/** Get the instance of this module. */
+	NIAGARA_API static INiagaraModule& Get();
+	
 	NIAGARA_API void ShutdownRenderingResources();
 	
 	NIAGARA_API void OnPostEngineInit();
@@ -111,7 +115,7 @@ public:
 	NIAGARA_API FDelegateHandle RegisterGraphTraversalCacher(FOnCacheGraphTraversal PreCompiler);
 	NIAGARA_API void UnregisterGraphTraversalCacher(FDelegateHandle DelegateHandle);
 
-	NIAGARA_API FNiagaraCompilationTaskHandle RequestCompileSystem(UNiagaraSystem* System, bool bForce);
+	NIAGARA_API FNiagaraCompilationTaskHandle RequestCompileSystem(UNiagaraSystem* System, bool bForce, const ITargetPlatform* TargetPlatform);
 	NIAGARA_API FDelegateHandle RegisterRequestCompileSystem(FOnRequestCompileSystem RequestCompileSystemCallback);
 	NIAGARA_API void UnregisterRequestCompileSystem(FDelegateHandle DelegateHandle);
 
@@ -129,6 +133,9 @@ public:
 	static NIAGARA_API void RequestRefreshDataChannels() { bDataChannelRefreshRequested = true; }
 	static NIAGARA_API void RefreshDataChannels();
 
+	const TArray<const FNiagaraAssetTagDefinition*>& GetInternalAssetTagDefinitions() { return InternalAssetTagDefinitions; }
+	void RegisterInternalAssetTagDefinitions();
+	
 #if NIAGARA_PERF_BASELINES
 	NIAGARA_API void GeneratePerfBaselines(TArray<UNiagaraEffectType*>& BaselinesToGenerate);
 
@@ -163,6 +170,7 @@ public:
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Owner_Scale() { return Engine_Owner_Scale; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Owner_Rotation() { return Engine_Owner_Rotation; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Owner_LWC_Tile() { return Engine_Owner_LWC_Tile; }
+	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_ExecIndex() { return Engine_ExecIndex; }
 
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Owner_SystemLocalToWorld() { return Engine_Owner_SystemLocalToWorld; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Owner_SystemWorldToLocal() { return Engine_Owner_SystemWorldToLocal; }
@@ -183,6 +191,7 @@ public:
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Emitter_TotalSpawnedParticles() { return Engine_Emitter_TotalSpawnedParticles; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Emitter_SpawnCountScale() { return Engine_Emitter_SpawnCountScale; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Emitter_InstanceSeed() { return Engine_Emitter_InstanceSeed; }
+	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_Emitter_ID() { return Engine_Emitter_ID; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_System_TickCount() { return Engine_System_TickCount; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_System_NumEmittersAlive() { return Engine_System_NumEmittersAlive; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Engine_System_SignificanceIndex() { return Engine_System_SignificanceIndex; }
@@ -241,6 +250,7 @@ public:
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Particles_LightExponent() { return Particles_LightExponent; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Particles_LightEnabled() { return Particles_LightEnabled; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Particles_LightVolumetricScattering() { return Particles_LightVolumetricScattering; }
+	FORCEINLINE static const FNiagaraVariable&  GetVar_Particles_LightSpecularScale() { return Particles_LightSpecularScale; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Particles_RibbonID() { return Particles_RibbonID; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Particles_RibbonWidth() { return Particles_RibbonWidth; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_Particles_RibbonTwist() { return Particles_RibbonTwist; }
@@ -258,9 +268,9 @@ public:
 	FORCEINLINE static const FNiagaraVariable&  GetVar_DataInstance_Alive() { return DataInstance_Alive; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_BeginDefaults() { return Translator_BeginDefaults; }
 	FORCEINLINE static const FNiagaraVariable&  GetVar_CallID() { return Translator_CallID; }
-
+	
 	FOnProcessQueue OnProcessQueue;
-
+	
 #if WITH_EDITORONLY_DATA
 	TSharedPtr<INiagaraMergeManager> MergeManager;
 	TSharedPtr<INiagaraEditorOnlyDataUtilities> EditorOnlyDataUtilities;
@@ -280,6 +290,9 @@ public:
 	static NIAGARA_API bool bUseGlobalFXBudget;
 	static NIAGARA_API bool bDataChannelsEnabled;
 
+	static const FNiagaraAssetTagDefinition TemplateTagDefinition;
+	static const FNiagaraAssetTagDefinition LearningContentTagDefinition;
+	TArray<const FNiagaraAssetTagDefinition*> InternalAssetTagDefinitions;
 private:
 	static NIAGARA_API FNiagaraVariable Engine_WorldDeltaTime;
 	static NIAGARA_API FNiagaraVariable Engine_DeltaTime;
@@ -296,6 +309,7 @@ private:
 	static NIAGARA_API FNiagaraVariable Engine_Owner_Scale;
 	static NIAGARA_API FNiagaraVariable Engine_Owner_Rotation;
 	static NIAGARA_API FNiagaraVariable Engine_Owner_LWC_Tile;
+	static NIAGARA_API FNiagaraVariable Engine_ExecIndex;
 
 	static NIAGARA_API FNiagaraVariable Engine_Owner_SystemLocalToWorld;
 	static NIAGARA_API FNiagaraVariable Engine_Owner_SystemWorldToLocal;
@@ -340,6 +354,7 @@ private:
 	static NIAGARA_API FNiagaraVariable Emitter_SimulationTarget;
 	static NIAGARA_API FNiagaraVariable Emitter_RandomSeed;
 	static NIAGARA_API FNiagaraVariable Engine_Emitter_InstanceSeed;
+	static NIAGARA_API FNiagaraVariable Engine_Emitter_ID;
 	static NIAGARA_API FNiagaraVariable Emitter_SpawnRate;
 	static NIAGARA_API FNiagaraVariable Emitter_SpawnInterval;
 	static NIAGARA_API FNiagaraVariable Emitter_InterpSpawnStartDt;
@@ -373,6 +388,7 @@ private:
 	static NIAGARA_API FNiagaraVariable Particles_LightExponent;
 	static NIAGARA_API FNiagaraVariable Particles_LightEnabled;
 	static NIAGARA_API FNiagaraVariable Particles_LightVolumetricScattering;
+	static NIAGARA_API FNiagaraVariable Particles_LightSpecularScale;
 	static NIAGARA_API FNiagaraVariable Particles_RibbonID;
 	static NIAGARA_API FNiagaraVariable Particles_RibbonWidth;
 	static NIAGARA_API FNiagaraVariable Particles_RibbonTwist;

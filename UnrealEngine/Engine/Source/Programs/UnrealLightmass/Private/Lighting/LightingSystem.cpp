@@ -17,7 +17,6 @@
 #endif
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 	#include <psapi.h>
 #include "Windows/HideWindowsPlatformTypes.h"

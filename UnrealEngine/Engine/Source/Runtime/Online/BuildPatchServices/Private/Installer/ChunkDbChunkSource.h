@@ -6,6 +6,8 @@
 #include "Containers/Set.h"
 #include "Common/SpeedRecorder.h"
 
+class IBuildInstallerSharedContext;
+
 namespace BuildPatchServices
 {
 	class IPlatform;
@@ -42,14 +44,16 @@ namespace BuildPatchServices
 		// An array of chunkdb full file paths.
 		TArray<FString> ChunkDbFiles;
 		// The minimum number of chunks to load ahead of what is required, depending on store slack.
-		int32 PreFetchMinimum;
+		int32 PreFetchMinimum = 10;
 		// The maximum number of chunks to load ahead of what is required, depending on store slack.
-		int32 PreFetchMaximum;
+		int32 PreFetchMaximum = 40;
 		// The time in seconds to wait until trying to open a chunkdb file again after we lost the file handle (e.g. due to device eject or network error).
-		float ChunkDbOpenRetryTime;
+		float ChunkDbOpenRetryTime = 5.0f;
 		// If true, the loading will not begin until the first Get request is made. It is fairly fundamental to stop loading of chunks until resume
 		// data is processed, but can be special case disabled.
-		bool bBeginLoadsOnFirstGet;
+		bool bBeginLoadsOnFirstGet = true;
+		// The context for allocating shared resources.
+		IBuildInstallerSharedContext* SharedContext = nullptr;
 
 		/**
 		 * Constructor which sets usual defaults, and takes params for values that cannot use a default.
@@ -57,12 +61,7 @@ namespace BuildPatchServices
 		 */
 		FChunkDbSourceConfig(TArray<FString> InChunkDbFiles)
 			: ChunkDbFiles(MoveTemp(InChunkDbFiles))
-			, PreFetchMinimum(10)
-			, PreFetchMaximum(40)
-			, ChunkDbOpenRetryTime(5.0f)
-			, bBeginLoadsOnFirstGet(true)
-		{
-		}
+		{}
 	};
 
 	/**

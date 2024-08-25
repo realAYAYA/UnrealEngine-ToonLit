@@ -5,6 +5,7 @@
 #include "TimeSynchronizableMediaSource.h"
 
 #include "MediaIOCoreDefinitions.h"
+#include "RivermaxTypes.h"
 
 #include "RivermaxMediaSource.generated.h"
 
@@ -87,7 +88,7 @@ public:
 
 	/** IP address where incoming stream is coming from */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Options")
-	FString StreamAddress = TEXT("224.1.1.1");
+	FString StreamAddress = UE::RivermaxCore::DefaultStreamAddress;
 
 	/** Port used by the sender to send its stream */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Options")

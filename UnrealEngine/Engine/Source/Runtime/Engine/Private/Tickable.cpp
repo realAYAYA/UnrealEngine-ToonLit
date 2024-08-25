@@ -136,9 +136,9 @@ void FTickableGameObject::TickObjects(UWorld* World, const int32 InTickType, con
 			if (FTickableGameObject* TickableObject = static_cast<FTickableGameObject*>(TickableEntry.TickableObject))
 			{
 				// If it is tickable and in this world
-				if (((TickableEntry.TickType == ETickableTickType::Always) || TickableObject->IsTickable()) 
-					&& (TickableObject->GetTickableGameObjectWorld() == World)
-					&& TickableObject->IsAllowedToTick())
+				if (TickableObject->IsAllowedToTick()
+					&& ((TickableEntry.TickType == ETickableTickType::Always) || TickableObject->IsTickable())
+					&& (TickableObject->GetTickableGameObjectWorld() == World))
 				{
 					const bool bIsGameWorld = InTickType == LEVELTICK_All || (World && World->IsGameWorld());
 					// If we are in editor and it is editor tickable, always tick

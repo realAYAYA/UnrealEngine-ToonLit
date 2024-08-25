@@ -8,6 +8,7 @@
 #include "ConcertLogGlobal.h"
 #include "ConcertClientPackageBridge.h"
 #include "ConcertClientTransactionBridge.h"
+#include "Replication/ConcertClientReplicationBridge.h"
 
 #include "Framework/Notifications/NotificationManager.h"
 
@@ -27,6 +28,7 @@ public:
 		LLM_SCOPE_BYTAG(Concert_ConcertSyncClient);
 		PackageBridge = MakeUnique<FConcertClientPackageBridge>();
 		TransactionBridge = MakeUnique<FConcertClientTransactionBridge>();
+		ReplicationBridge = MakeUnique<UE::ConcertSyncClient::Replication::FConcertClientReplicationBridge>();
 	}
 
 	virtual void ShutdownModule() override
@@ -34,6 +36,7 @@ public:
 		LLM_SCOPE_BYTAG(Concert_ConcertSyncClient);
 		PackageBridge.Reset();
 		TransactionBridge.Reset();
+		ReplicationBridge.Reset();
 	}
 
 	virtual UConcertClientConfig* ParseClientSettings(const TCHAR* CommandLine) override
@@ -116,7 +119,12 @@ public:
 		// Remove dead clients.
 		Clients.RemoveAll([](TWeakPtr<IConcertSyncClient> WeakClient) { return !WeakClient.IsValid(); });
 
-		TSharedRef<IConcertSyncClient> NewClient = MakeShared<FConcertSyncClient>(InRole, PackageBridge.Get(), TransactionBridge.Get());
+		const TSharedRef<IConcertSyncClient> NewClient = MakeShared<FConcertSyncClient>(
+			InRole,
+			UE::ConcertSyncClient::FConcertBridges{ PackageBridge.Get(),
+			TransactionBridge.Get(),
+			ReplicationBridge.Get() }
+			);
 		Clients.Add(NewClient);
 		OnClientCreated().Broadcast(NewClient);
 
@@ -131,6 +139,11 @@ public:
 	virtual IConcertClientTransactionBridge& GetTransactionBridge() override
 	{
 		return *TransactionBridge;
+	}
+
+	virtual IConcertClientReplicationBridge& GetReplicationBridge() override
+	{
+		return *ReplicationBridge;
 	}
 
 	virtual TArray<TSharedRef<IConcertSyncClient>> GetClients() const override
@@ -173,6 +186,7 @@ public:
 private:
 	TUniquePtr<FConcertClientPackageBridge> PackageBridge;
 	TUniquePtr<FConcertClientTransactionBridge> TransactionBridge;
+	TUniquePtr<UE::ConcertSyncClient::Replication::FConcertClientReplicationBridge> ReplicationBridge;
 	TArray<TWeakPtr<IConcertSyncClient>> Clients;
 	FOnConcertClientCreated OnClientCreatedDelegate;
 };

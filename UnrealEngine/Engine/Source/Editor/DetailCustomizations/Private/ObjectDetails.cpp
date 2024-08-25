@@ -9,18 +9,22 @@
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
 #include "EdGraphSchema_K2.h"
+#include "Editor/EditorEngine.h"
 #include "Engine/Blueprint.h"
 #include "Framework/SlateDelegates.h"
 #include "HAL/Platform.h"
 #include "HAL/PlatformCrt.h"
 #include "Internationalization/Internationalization.h"
 #include "Internationalization/Text.h"
+#include "K2Node_CallFunction.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Layout/Margin.h"
 #include "Math/NumericLimits.h"
 #include "Misc/Attribute.h"
 #include "Misc/CString.h"
 #include "ObjectEditorUtils.h"
+#include "Reflection/FunctionUtils.h"
+#include "Settings/BlueprintEditorProjectSettings.h"
 #include "SWarningOrErrorBox.h"
 #include "ScopedTransaction.h"
 #include "SlotBase.h"
@@ -30,6 +34,7 @@
 #include "UObject/Object.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/Script.h"
+#include "UObject/StrongObjectPtr.h"
 #include "UObject/UnrealNames.h"
 #include "UObject/UnrealType.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
@@ -81,10 +86,34 @@ void FObjectDetails::AddExperimentalWarningCategory(IDetailLayoutBuilder& Detail
 	}
 }
 
+static bool CanCallFunctionBasedOnParams(const UFunction* TestFunction)
+{
+	bool bCanCall = TestFunction->GetBoolMetaData(FBlueprintMetadata::MD_CallInEditor) && (TestFunction->ParmsSize == 0); // no params required, we can call it!
+
+	// else - if the function only takes a world context object we can use the editor's
+	// world context - but only if the blueprint is editor only:
+	if (UClass* TestFunctionOwnerClass = TestFunction->GetOwnerClass())
+	{
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(TestFunctionOwnerClass->ClassGeneratedBy))
+		{
+			if (FBlueprintEditorUtils::IsEditorUtilityBlueprint(Blueprint) && Blueprint->BlueprintType == BPTYPE_FunctionLibrary)
+			{
+				using namespace UE::Reflection;
+				return TestFunction->HasMetaData(FBlueprintMetadata::MD_WorldContext) &&
+					DoesStaticFunctionSignatureMatch<void(TObjectPtr<UObject>)>(TestFunction);
+			}
+		}
+	}
+
+	return bCanCall;
+}
+
 void FObjectDetails::AddCallInEditorMethods(IDetailLayoutBuilder& DetailBuilder)
 {
 	// metadata tag for defining sort order of function buttons within a Category
 	static const FName NAME_DisplayPriority("DisplayPriority");
+
+	const bool bDisallowEditorUtilityBlueprintFunctions = GetDefault<UBlueprintEditorProjectSettings>()->bDisallowEditorUtilityBlueprintFunctionsInDetailsView;
 
 	// Get all of the functions we need to display (done ahead of time so we can sort them)
 	TArray<UFunction*, TInlineAllocator<8>> CallInEditorFunctions;
@@ -92,24 +121,28 @@ void FObjectDetails::AddCallInEditorMethods(IDetailLayoutBuilder& DetailBuilder)
 	{
 		UFunction* TestFunction = *FunctionIter;
 
-		if (TestFunction->GetBoolMetaData(FBlueprintMetadata::MD_CallInEditor) && (TestFunction->ParmsSize == 0))
+		if (CanCallFunctionBasedOnParams(TestFunction))
 		{
+			bool bAllowFunction = true;
 			if (UClass* TestFunctionOwnerClass = TestFunction->GetOwnerClass())
 			{
 				if (UBlueprint* Blueprint = Cast<UBlueprint>(TestFunctionOwnerClass->ClassGeneratedBy))
 				{
 					if (FBlueprintEditorUtils::IsEditorUtilityBlueprint(Blueprint))
 					{
-						// Skip Blutilities as these are handled by FEditorUtilityInstanceDetails
-						continue;
+						// Skip Blutilities if disabled via project settings
+						bAllowFunction = !bDisallowEditorUtilityBlueprintFunctions;
 					}
 				}
 			}
 
-			const FName FunctionName = TestFunction->GetFName();
-			if (!CallInEditorFunctions.FindByPredicate([&FunctionName](const UFunction* Func) { return Func->GetFName() == FunctionName; }))
+			if (bAllowFunction)
 			{
-				CallInEditorFunctions.Add(*FunctionIter);
+				const FName FunctionName = TestFunction->GetFName();
+				if (!CallInEditorFunctions.FindByPredicate([&FunctionName](const UFunction* Func) { return Func->GetFName() == FunctionName; }))
+				{
+					CallInEditorFunctions.Add(*FunctionIter);
+				}
 			}
 		}
 	}
@@ -119,9 +152,16 @@ void FObjectDetails::AddCallInEditorMethods(IDetailLayoutBuilder& DetailBuilder)
 		// Copy off the objects being customized so we can invoke a function on them later, removing any that are a CDO
 		DetailBuilder.GetObjectsBeingCustomized(/*out*/ SelectedObjectsList);
 		SelectedObjectsList.RemoveAllSwap([](TWeakObjectPtr<UObject> ObjPtr) { UObject* Obj = ObjPtr.Get(); return (Obj == nullptr) || Obj->HasAnyFlags(RF_ArchetypeObject); });
+
 		if (SelectedObjectsList.Num() == 0)
 		{
-			return;
+			// remove all non-static functions - no objects to call them on
+			CallInEditorFunctions.RemoveAllSwap([](const UFunction* Function) { return !Function->HasAnyFunctionFlags(FUNC_Static);});
+
+			if (CallInEditorFunctions.Num() == 0)
+			{
+				return;
+			}
 		}
 
 		// Sort the functions by category and then by DisplayPriority meta tag, and then by name
@@ -193,14 +233,12 @@ void FObjectDetails::AddCallInEditorMethods(IDetailLayoutBuilder& DetailBuilder)
 			}
 			FCategoryEntry& CategoryEntry = CategoryList.Last();
 
-			//@TODO: Expose the code in UK2Node_CallFunction::GetUserFacingFunctionName / etc...
-			const FText ButtonCaption = FText::FromString(FName::NameToDisplayString(*Function->GetName(), false));
+			const FText ButtonCaption = UK2Node_CallFunction::GetUserFacingFunctionName(Function);
 			FText FunctionTooltip = Function->GetToolTipText();
 			if (FunctionTooltip.IsEmpty())
 			{
-				FunctionTooltip = FText::FromString(Function->GetName());
+				FunctionTooltip = ButtonCaption;
 			}
-			
 
 			TWeakObjectPtr<UFunction> WeakFunctionPtr(Function);
 			CategoryEntry.WrapBox->AddSlot()
@@ -215,6 +253,11 @@ void FObjectDetails::AddCallInEditorMethods(IDetailLayoutBuilder& DetailBuilder)
 			CategoryEntry.RowTag = Function->GetFName();
 			CategoryEntry.FunctionSearchText.AppendLine(ButtonCaption);
 			CategoryEntry.FunctionSearchText.AppendLine(FunctionTooltip);
+
+			if (ButtonCaption.ToString() != Function->GetName())
+			{
+				CategoryEntry.FunctionSearchText.AppendLine(FText::FromString(Function->GetName()));
+			}
 		}
 		
 		// Now edit the categories, adding the button strips to the details panel
@@ -232,19 +275,37 @@ void FObjectDetails::AddCallInEditorMethods(IDetailLayoutBuilder& DetailBuilder)
 
 FReply FObjectDetails::OnExecuteCallInEditorFunction(TWeakObjectPtr<UFunction> WeakFunctionPtr)
 {
+	using namespace UE::Reflection;
 	if (UFunction* Function = WeakFunctionPtr.Get())
 	{
 		//@TODO: Consider naming the transaction scope after the fully qualified function name for better UX
 		FScopedTransaction Transaction(LOCTEXT("ExecuteCallInEditorMethod", "Call In Editor Action"));
+		TStrongObjectPtr<UFunction> CallingFunction(Function);
 
-		FEditorScriptExecutionGuard ScriptGuard;
-		for (TWeakObjectPtr<UObject> SelectedObjectPtr : SelectedObjectsList)
+		if (Function->HasMetaData(FBlueprintMetadata::MD_WorldContext) &&
+			DoesStaticFunctionSignatureMatch<void(TObjectPtr<UObject>)>(Function))
 		{
-			if (UObject* Object = SelectedObjectPtr.Get())
+			FEditorScriptExecutionGuard ScriptGuard;
+			extern ENGINE_API class UEngine* GEngine;
+			UEditorEngine* EditorEngine = Cast<UEditorEngine>(GEngine);
+			UObject* WorldContextObject = EditorEngine->GetEditorWorldContext().World();
+			TStrongObjectPtr<UObject> CDO(Function->GetOwnerClass()->ClassDefaultObject);
+			CDO->ProcessEvent(Function, &WorldContextObject);
+		}
+		else
+		{
+			FEditorScriptExecutionGuard ScriptGuard;
+			for (TWeakObjectPtr<UObject> SelectedObjectPtr : SelectedObjectsList)
 			{
-				Object->ProcessEvent(Function, nullptr);
+				if (UObject* Object = SelectedObjectPtr.Get())
+				{
+					ensure(Function->ParmsSize == 0);
+					TStrongObjectPtr<UObject> ObjectStrong(Object);
+					Object->ProcessEvent(Function, nullptr);
+				}
 			}
 		}
+
 	}
 
 	return FReply::Handled();

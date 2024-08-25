@@ -3,12 +3,12 @@
 #include "WorldPartition/WorldPartitionActorDescViewProxy.h"
 #include "GameFramework/Actor.h"
 #include "UObject/Package.h"
-#include "UObject/Package.h"
-#include "WorldPartition/WorldPartitionActorDescView.h"
 
 #if WITH_EDITOR
 #include "WorldPartition/WorldPartitionActorDesc.h"
+#include "WorldPartition/WorldPartitionActorDescView.h"
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FWorldPartitionActorViewProxy::FWorldPartitionActorViewProxy(const FWorldPartitionActorDesc* InActorDesc)
 	: FWorldPartitionActorDescView(InActorDesc)
 {
@@ -21,4 +21,5 @@ FWorldPartitionActorViewProxy::FWorldPartitionActorViewProxy(const FWorldPartiti
 		}
 	}
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif

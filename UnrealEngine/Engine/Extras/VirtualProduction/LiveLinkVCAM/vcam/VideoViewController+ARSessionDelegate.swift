@@ -38,7 +38,12 @@ extension VideoViewController : ARSessionDelegate {
     }
     
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        self.streamingConnection?.sendTransform(frame.camera.transform, atTime: Timecode.create().toTimeInterval())
+        
+        // We should only send tracking information if the tracking info is from a "normal" tracking state
+        // - otherwise we can get some crazy transforms when tracking is lost
+        if case .normal = frame.camera.trackingState {
+            self.streamingConnection?.sendTransform(frame.camera.transform, atTime: Timecode.create().toTimeInterval())
+        }
         
         // update controller
         self.sendControllerThumbstickUpdate()

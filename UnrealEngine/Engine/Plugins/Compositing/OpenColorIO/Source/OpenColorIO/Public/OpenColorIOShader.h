@@ -7,7 +7,9 @@
 #pragma once
 
 #include "Containers/ContainersFwd.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "GlobalShader.h"
+#endif
 #include "OpenColorIOShaderType.h"
 #include "OpenColorIOShared.h"
 #include "ShaderParameters.h"
@@ -20,8 +22,6 @@ class FRHITexture;
 BEGIN_SHADER_PARAMETER_STRUCT(FOpenColorIOPixelShaderParameters, )
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, InputTextureSampler)
-	SHADER_PARAMETER(FMatrix44f, WorkingColorSpaceToInterchange)
-	SHADER_PARAMETER(FMatrix44f, InterchangeToWorkingColorSpace)
 	SHADER_PARAMETER(float, Gamma)
 	SHADER_PARAMETER(uint32, TransformAlpha)
 	
@@ -105,6 +105,6 @@ public:
 	using FParameters = FOpenColorIOInvalidShaderParameters;
 };
 
-OPENCOLORIO_API void OpenColorIOBindTextureResources(FOpenColorIOPixelShaderParameters* Parameters, const TSortedMap<int32, FTextureResource*>& InTextureResources);
+OPENCOLORIO_API bool OpenColorIOBindTextureResources(FOpenColorIOPixelShaderParameters* Parameters, const TSortedMap<int32, FTextureResource*>& InTextureResources);
 
 FRHITexture* OpenColorIOGetMiniFontTexture();

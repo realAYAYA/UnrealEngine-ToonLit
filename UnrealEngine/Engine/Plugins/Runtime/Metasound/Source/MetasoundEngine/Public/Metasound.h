@@ -127,11 +127,11 @@ public:
 	{
 		Graph = CastChecked<UMetasoundEditorGraphBase>(InGraph);
 	}
-
 #endif // #if WITH_EDITORONLY_DATA
 
+	virtual FTopLevelAssetPath GetAssetPathChecked() const override;
 	virtual const UClass& GetBaseMetaSoundUClass() const final override;
-	virtual const FMetasoundFrontendDocument& GetDocument() const override;
+	virtual const FMetasoundFrontendDocument& GetConstDocument() const override;
 
 #if WITH_EDITOR
 	virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
@@ -142,9 +142,6 @@ public:
 	virtual void PreSave(FObjectPreSaveContext InSaveContext) override;
 	virtual void Serialize(FArchive& InArchive) override;
 	virtual void PostLoad() override;
-
-	// Returns Asset Metadata associated with this MetaSound
-	virtual Metasound::Frontend::FNodeClassInfo GetAssetClassInfo() const override;
 
 	virtual bool ConformObjectDataToInterfaces() override { return false; }
 
@@ -171,25 +168,18 @@ protected:
 	virtual void SetReferencedAssetClasses(TSet<Metasound::Frontend::IMetaSoundAssetManager::FAssetInfo>&& InAssetClasses) override;
 #endif // #if WITH_EDITOR
 
-	Metasound::Frontend::FDocumentAccessPtr GetDocumentAccessPtr() override
-	{
-		using namespace Metasound::Frontend;
-		// Return document using FAccessPoint to inform the TAccessPtr when the 
-		// object is no longer valid.
-		return MakeAccessPtr<FDocumentAccessPtr>(RootMetaSoundDocument.AccessPoint, RootMetaSoundDocument);
-	}
-
-	Metasound::Frontend::FConstDocumentAccessPtr GetDocumentConstAccessPtr() const override
-	{
-		using namespace Metasound::Frontend;
-		// Return document using FAccessPoint to inform the TAccessPtr when the 
-		// object is no longer valid.
-		return MakeAccessPtr<FConstDocumentAccessPtr>(RootMetaSoundDocument.AccessPoint, RootMetaSoundDocument);
-	}
+	Metasound::Frontend::FDocumentAccessPtr GetDocumentAccessPtr() override;
+	Metasound::Frontend::FConstDocumentAccessPtr GetDocumentConstAccessPtr() const override;
 
 private:
 	virtual FMetasoundFrontendDocument& GetDocument() override
 	{
 		return RootMetaSoundDocument;
 	}
+
+	virtual bool IsBuilderActive() const override;
+	virtual void OnBeginActiveBuilder() override;
+	virtual void OnFinishActiveBuilder() override;
+
+	bool bIsBuilderActive = false;
 };

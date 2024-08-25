@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
+#include "EdGraphSchema_Niagara.h"
 #include "MaterialTypes.h"
 #include "IDetailChildrenBuilder.h"
 #include "IDetailGroup.h"
@@ -12,7 +13,6 @@
 #include "PropertyHandle.h"
 #include "ScopedTransaction.h"
 #include "SGraphActionMenu.h"
-#include "DeviceProfiles/DeviceProfileManager.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Materials/MaterialInterface.h"
@@ -27,6 +27,7 @@
 #include "Widgets/Text/STextBlock.h"
 
 #include "NiagaraConstants.h"
+#include "NiagaraDataChannelPublic.h"
 #include "NiagaraDataInterfaceRW.h"
 #include "NiagaraEditorModule.h"
 #include "NiagaraEditorUtilities.h"
@@ -41,10 +42,14 @@
 #include "NiagaraSimulationStageBase.h"
 #include "NiagaraSystem.h"
 #include "NiagaraTypes.h"
+#include "NiagaraVariableMetaData.h"
 #include "ViewModels/NiagaraEmitterHandleViewModel.h"
 
+//-TODO:stateless:Remove and unify emitter
+#include "Stateless/NiagaraStatelessEmitter.h"
+//-TODO:stateless:Remove and unify emitter
+
 #include "Widgets/SNiagaraParameterMenu.h"
-#include "Widgets/Input/SSuggestionTextBox.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraTypeCustomizations)
 
@@ -130,12 +135,11 @@ void FNiagaraMatrixCustomization::CustomizeChildren(TSharedRef<IPropertyHandle> 
 	}
 }
 
-TArray<FNiagaraVariableBase> FNiagaraStackAssetAction_VarBind::FindVariables(const FVersionedNiagaraEmitter& InEmitter, bool bSystem, bool bEmitter, bool bParticles, bool bUser, bool bAllowStatic)
+TArray<FNiagaraVariableBase> FNiagaraStackAssetAction_VarBind::FindVariables(UNiagaraSystem* NiagaraSystem, const FVersionedNiagaraEmitter& InEmitter, bool bSystem, bool bEmitter, bool bParticles, bool bUser, bool bAllowStatic)
 {
 	TArray<FNiagaraVariableBase> Bindings;
 	TArray<FNiagaraParameterMapHistory> Histories;
 
-	UNiagaraEmitter* Emitter = InEmitter.Emitter;
 	if (FVersionedNiagaraEmitterData* EmitterData = InEmitter.GetEmitterData())
 	{
 		if ( UNiagaraScriptSource* Source = Cast<UNiagaraScriptSource>(EmitterData->GraphSource) )
@@ -144,17 +148,16 @@ TArray<FNiagaraVariableBase> FNiagaraStackAssetAction_VarBind::FindVariables(con
 		}
 	}
 
-	if (bSystem || bEmitter)
+	if (NiagaraSystem && (bSystem || bEmitter))
 	{
-		if (UNiagaraSystem* Sys = Emitter->GetTypedOuter<UNiagaraSystem>())
+		if ( UNiagaraScriptSource* Source = Cast<UNiagaraScriptSource>(NiagaraSystem->GetSystemUpdateScript()->GetLatestSource()) )
 		{
-			if ( UNiagaraScriptSource* Source = Cast<UNiagaraScriptSource>(Sys->GetSystemUpdateScript()->GetLatestSource()) )
-			{
-				Histories.Append(UNiagaraNodeParameterMapBase::GetParameterMaps(Source->NodeGraph));
-			}
+			Histories.Append(UNiagaraNodeParameterMapBase::GetParameterMaps(Source->NodeGraph));
 		}
 	}
-	
+
+	UNiagaraEmitter* NiagaraEmitter = InEmitter.Emitter;
+	bEmitter &= NiagaraEmitter != nullptr;
 	for (const FNiagaraParameterMapHistory& History : Histories)
 	{
 		for (const FNiagaraVariable& Var : History.Variables)
@@ -162,42 +165,40 @@ TArray<FNiagaraVariableBase> FNiagaraStackAssetAction_VarBind::FindVariables(con
 			if (Var.GetType().IsStatic() && !bAllowStatic)
 				continue;
 
-			if (FNiagaraParameterUtilities::IsAttribute(Var) && bParticles)
+			if (bParticles && FNiagaraParameterUtilities::IsAttribute(Var))
 			{
 				Bindings.AddUnique(Var);
 			}
-			else if (FNiagaraParameterUtilities::IsSystemParameter(Var) && bSystem)
+			else if (bSystem && FNiagaraParameterUtilities::IsSystemParameter(Var))
 			{
 				Bindings.AddUnique(Var);
 			}
-			else if (Var.IsInNameSpace(Emitter->GetUniqueEmitterName()) && bEmitter)
+			else if (bEmitter && NiagaraEmitter && Var.IsInNameSpace(NiagaraEmitter->GetUniqueEmitterName()))
 			{
-				Bindings.AddUnique(FNiagaraUtilities::ResolveAliases(Var, FNiagaraAliasContext()
-					.ChangeEmitterNameToEmitter(Emitter->GetUniqueEmitterName())));
+				Bindings.AddUnique(
+					FNiagaraUtilities::ResolveAliases(Var, FNiagaraAliasContext().ChangeEmitterNameToEmitter(NiagaraEmitter->GetUniqueEmitterName()))
+				);
 			}
-			else if (FNiagaraParameterUtilities::IsAliasedEmitterParameter(Var) && bEmitter)
-			{
-				Bindings.AddUnique(Var);
-			}
-			else if (Var.IsInNameSpace(FNiagaraConstants::EmitterNamespaceString) && bEmitter)
+			else if (bEmitter && FNiagaraParameterUtilities::IsAliasedEmitterParameter(Var))
 			{
 				Bindings.AddUnique(Var);
 			}
-			else if (FNiagaraParameterUtilities::IsUserParameter(Var) && bUser)
+			else if (bEmitter && Var.IsInNameSpace(FNiagaraConstants::EmitterNamespaceString))
+			{
+				Bindings.AddUnique(Var);
+			}
+			else if (bUser && FNiagaraParameterUtilities::IsUserParameter(Var))
 			{
 				Bindings.AddUnique(Var);
 			}
 		}
 	}
 
-	if (bUser)
+	if (NiagaraSystem && bUser)
 	{
-		if (UNiagaraSystem* Sys = Emitter->GetTypedOuter<UNiagaraSystem>())
+		for (const FNiagaraVariable Var : NiagaraSystem->GetExposedParameters().ReadParameterVariables())
 		{
-			for (const FNiagaraVariable Var : Sys->GetExposedParameters().ReadParameterVariables())
-			{
-				Bindings.AddUnique(Var);
-			}
+			Bindings.AddUnique(Var);
 		}
 	}
 	return Bindings;
@@ -341,10 +342,23 @@ TArray<FName> FNiagaraVariableAttributeBindingCustomization::GetNames(const FVer
 		else if ( SimulationStage )
 		{
 			// Unless we have an explicit "particles." binding we are not in the particle namespace
-			const bool IsParticleNamespace = !TargetVariableBinding->GetName().IsNone() && TargetVariableBinding->IsParticleBinding();
-			if ( IsParticleNamespace == Var.IsInNameSpace(FNiagaraConstants::ParticleAttributeNamespace) )
+			if (!TargetVariableBinding->GetName().IsNone() && TargetVariableBinding->IsParticleBinding())
 			{
-				Names.AddUnique(Var.GetName());
+				const bool bParticleAttribute = Var.IsInNameSpace(FNiagaraConstants::ParticleAttributeNamespaceString);
+				if (bParticleAttribute)
+				{
+					Names.AddUnique(Var.GetName());
+				}
+			}
+			else
+			{
+				const bool bUserAttribute = Var.IsInNameSpace(FNiagaraConstants::UserNamespaceString);
+				const bool bSystemAttribute = Var.IsInNameSpace(FNiagaraConstants::SystemNamespaceString);
+				const bool bEmitterAttribute = Var.IsInNameSpace(FNiagaraConstants::EmitterNamespaceString);
+				if (bUserAttribute || bSystemAttribute || bEmitterAttribute)
+				{
+					Names.AddUnique(Var.GetName());
+				}
 			}
 		}
 	}
@@ -768,7 +782,6 @@ void FNiagaraUserParameterBindingCustomization::CustomizeHeader(TSharedRef<IProp
 					.ToolTipText(this, &FNiagaraUserParameterBindingCustomization::GetTooltipText)
 					.ButtonContent()
 					[
-
 						SNew(SNiagaraParameterName)
 						.ParameterName(this, &FNiagaraUserParameterBindingCustomization::GetVariableName)
 						.IsReadOnly(true)
@@ -968,14 +981,18 @@ TArray<TPair<FNiagaraVariableBase, FNiagaraVariableBase> > FNiagaraMaterialAttri
 	TArray<TPair<FNiagaraVariableBase, FNiagaraVariableBase>> Names;
 	TArray<FNiagaraVariableBase> BaseVars;
 
-	if (BaseSystem && BaseEmitter.Emitter && TargetParameterBinding)
+	//-TODO:stateless:Remove and unify emitter
+	if (BaseSystem && (BaseEmitter.Emitter || StatelessEmitter) && TargetParameterBinding)
+	//-TODO:stateless:Remove and unify emitter
 	{
-		bool bSystem = true;
-		bool bEmitter = true;
-		bool bParticles = false;
-		bool bUser = true;
-		bool bStatic = false;
-		BaseVars = FNiagaraStackAssetAction_VarBind::FindVariables(BaseEmitter, bSystem, bEmitter, bParticles, bUser, bStatic);
+		const bool bSystem = true;
+		//-TODO:stateless:Remove and unify emitter
+		const bool bEmitter = true;
+		//-TODO:stateless:Remove and unify emitter
+		const bool bParticles = false;
+		const bool bUser = true;
+		const bool bStatic = false;
+		BaseVars = FNiagaraStackAssetAction_VarBind::FindVariables(BaseSystem, BaseEmitter, bSystem, bEmitter, bParticles, bUser, bStatic);
 
 		TArray<UNiagaraScript*> Scripts;
 		Scripts.Add(BaseSystem->GetSystemUpdateScript());
@@ -986,7 +1003,12 @@ TArray<TPair<FNiagaraVariableBase, FNiagaraVariableBase> > FNiagaraMaterialAttri
 		}
 
 		TMap<FString, FString> EmitterAlias;
-		EmitterAlias.Emplace(FNiagaraConstants::EmitterNamespace.ToString(), BaseEmitter.Emitter->GetUniqueEmitterName());
+		//-TODO:stateless:Remove and unify emitter
+		if (BaseEmitter.Emitter)
+		//-TODO:stateless:Remove and unify emitter
+		{
+			EmitterAlias.Emplace(FNiagaraConstants::EmitterNamespace.ToString(), BaseEmitter.Emitter->GetUniqueEmitterName());
+		}
 
 		auto FindCachedDI = 
 			[&](const FNiagaraVariableBase& BaseVariable) -> UNiagaraDataInterface*
@@ -994,6 +1016,9 @@ TArray<TPair<FNiagaraVariableBase, FNiagaraVariableBase> > FNiagaraMaterialAttri
 				FName VariableName = BaseVariable.GetName();
 				if (BaseVariable.IsInNameSpace(FNiagaraConstants::EmitterNamespaceString))
 				{
+					//-TODO:stateless:Remove and unify emitter
+					check(BaseEmitter.Emitter);
+					//-TODO:stateless:Remove and unify emitter
 					VariableName = FNiagaraUtilities::ResolveAliases(BaseVariable, FNiagaraAliasContext()
 						.ChangeEmitterToEmitterName(BaseEmitter.Emitter->GetUniqueEmitterName())).GetName();
 				}
@@ -1371,6 +1396,9 @@ void FNiagaraMaterialAttributeBindingCustomization::CustomizeChildren(TSharedRef
 		if (RenderProps)
 		{
 			BaseEmitter = RenderProps->GetOuterEmitter();
+			//-TODO:stateless:Remove and unify emitter
+			StatelessEmitter = RenderProps->GetTypedOuter<UNiagaraStatelessEmitter>();
+			//-TODO:stateless:Remove and unify emitter
 		}
 		if (BaseSystem)
 		{
@@ -2249,6 +2277,16 @@ FText FNiagaraRendererMaterialParameterCustomization::GetBindingNameText(TShared
 	return FText::FromName(BindingName);
 }
 
+FName FNiagaraRendererMaterialParameterCustomization::GetBindingName(TSharedPtr<IPropertyHandle> PropertyHandle) const
+{
+	FName BindingName;
+	if (PropertyHandle.IsValid())
+	{
+		PropertyHandle->GetValue(BindingName);
+	}
+	return BindingName;
+}
+
 FText FNiagaraRendererMaterialParameterCustomization::GetMaterialBindingTooltip(FName ParameterName, const FString& ParameterDesc)
 {
 	if (ParameterDesc.Len() > 0)
@@ -2354,9 +2392,9 @@ bool FNiagaraRendererMaterialStaticBoolParameterCustomization::CustomizeChildPro
 			.ForegroundColor(FAppStyle::GetColor("PropertyEditor.AssetName.ColorAndOpacity"))
 			.ButtonContent()
 			[
-				SNew(STextBlock)
-				.Text(this, &FNiagaraRendererMaterialParameterCustomization::GetBindingNameText, PropertyHandle)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
+				SNew(SNiagaraParameterName)
+				.ParameterName(this, &FNiagaraRendererMaterialParameterCustomization::GetBindingName, PropertyHandle)
+				.IsReadOnly(true)
 			]
 		];
 
@@ -2384,54 +2422,54 @@ TSharedRef<SWidget> FNiagaraRendererMaterialStaticBoolParameterCustomization::On
 	{
 		const FVersionedNiagaraEmitter NiagaraEmitter = RenderProperties->GetOuterEmitter();
 		const FNiagaraTypeDefinition StaticBoolDef = FNiagaraTypeDefinition::GetBoolDef().ToStaticDef();
+		FNiagaraAliasContext AliasContext;
 
+		auto AddStaticVariables =
+			[&](UNiagaraScript* NiagaraScript)
+			{
+				if (NiagaraScript == nullptr)
+				{
+					return;
+				}
+				for ( const FNiagaraVariable& StaticVariable : NiagaraScript->GetVMExecutableData().StaticVariablesWritten )
+				{
+					if ( StaticVariable.GetType() != StaticBoolDef)
+					{
+						continue;
+					}
+					const FNiagaraVariableBase ResolvedVariable = FNiagaraUtilities::ResolveAliases(StaticVariable, AliasContext);
+					const bool bSystemAttribute = ResolvedVariable.IsInNameSpace(FNiagaraConstants::SystemNamespaceString);
+					const bool bEmitterAttribute = ResolvedVariable.IsInNameSpace(FNiagaraConstants::EmitterNamespaceString);
+					const bool bParticleAttribute = ResolvedVariable.IsInNameSpace(FNiagaraConstants::ParticleAttributeNamespaceString);
+					if (!bSystemAttribute && !bEmitterAttribute && !bParticleAttribute)
+					{
+						continue;
+					}
+
+					MenuBuilder.AddMenuEntry(
+						FText::FromName(ResolvedVariable.GetName()),
+						TAttribute<FText>(),
+						FSlateIcon(),
+						FUIAction(
+							FExecuteAction::CreateLambda(
+								[ValidBinding= ResolvedVariable.GetName(), PropertyHandle]()
+								{
+									PropertyHandle->SetValue(ValidBinding);
+								}
+							)
+						)
+					);
+				}
+			};
+
+		if (UNiagaraSystem* NiagaraSystem = RenderProperties->GetTypedOuter<UNiagaraSystem>())
+		{
+			AddStaticVariables(NiagaraSystem->GetSystemSpawnScript());
+			AddStaticVariables(NiagaraSystem->GetSystemUpdateScript());
+		}
 		if (FVersionedNiagaraEmitterData* EmitterData = NiagaraEmitter.GetEmitterData())
 		{
-			const FNiagaraAliasContext AliasContext = FNiagaraAliasContext().ChangeEmitterNameToEmitter(NiagaraEmitter.Emitter->GetUniqueEmitterName());
-
-			auto AddStaticVariables =
-				[&](UNiagaraScript* NiagaraScript)
-				{
-					if (NiagaraScript == nullptr)
-					{
-						return;
-					}
-					for ( const FNiagaraVariable& StaticVariable : NiagaraScript->GetVMExecutableData().StaticVariablesWritten )
-					{
-						if ( StaticVariable.GetType() != StaticBoolDef)
-						{
-							continue;
-						}
-						const FNiagaraVariableBase ResolvedVariable = FNiagaraUtilities::ResolveAliases(StaticVariable, AliasContext);
-						const bool bSystemAttribute = ResolvedVariable.IsInNameSpace(FNiagaraConstants::SystemNamespaceString);
-						const bool bEmitterAttribute = ResolvedVariable.IsInNameSpace(FNiagaraConstants::EmitterNamespaceString);
-						const bool bParticleAttribute = ResolvedVariable.IsInNameSpace(FNiagaraConstants::ParticleAttributeNamespaceString);
-						if (!bSystemAttribute && !bEmitterAttribute && !bParticleAttribute)
-						{
-							continue;
-						}
-
-						MenuBuilder.AddMenuEntry(
-							FText::FromName(ResolvedVariable.GetName()),
-							TAttribute<FText>(),
-							FSlateIcon(),
-							FUIAction(
-								FExecuteAction::CreateLambda(
-									[ValidBinding= ResolvedVariable.GetName(), PropertyHandle]()
-									{
-										PropertyHandle->SetValue(ValidBinding);
-									}
-								)
-							)
-						);
-					}
-				};
-
-			if (UNiagaraSystem* NiagaraSystem = RenderProperties->GetTypedOuter<UNiagaraSystem>())
-			{
-				AddStaticVariables(NiagaraSystem->GetSystemSpawnScript());
-				AddStaticVariables(NiagaraSystem->GetSystemUpdateScript());
-			}
+			AliasContext.ChangeEmitterNameToEmitter(NiagaraEmitter.Emitter->GetUniqueEmitterName());
 			EmitterData->ForEachScript(AddStaticVariables);
 		}
 	}
@@ -2598,85 +2636,144 @@ void FNiagaraVariableDetailsCustomization::CustomizeChildren(TSharedRef<IPropert
 			[
 				PropertyHandle->CreatePropertyValueWidget()
 			];
-
 	}
 	else
 	{
 		void* VarPtr = nullptr;
 		if (PropertyHandle->GetValueData(VarPtr) == FPropertyAccess::Success)
 		{
-			FNiagaraVariable* Var = (FNiagaraVariable*)VarPtr;
+			bool bEnforceUniqueName = PropertyHandle->HasMetaData(TEXT("EnforceUniqueNames"));
+			FNiagaraVariable* Variable = static_cast<FNiagaraVariable*>(VarPtr);
 
 			Row.NameContent()
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
 				[
-					//PropertyHandle->CreatePropertyNameWidget()
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.Padding(4.0f, 4.0f, 4.0f, 4.0f)
+					SNew(STextBlock)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+					.Text(LOCTEXT("DataChannelVarNameText", "Name: "))
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(4.0f, 4.0f, 4.0f, 4.0f)
+				[
+					SNew(SNiagaraConstrainedBox)
+					.MinWidth(150.0f)
 					[
-						SNew(SComboButton)
-						.ButtonStyle(FAppStyle::Get(), "RoundButton")
-						.ForegroundColor(FAppStyle::GetSlateColor("DefaultForeground"))
-						.ContentPadding(FMargin(0, 0))
-						.OnGetMenuContent(this, &FNiagaraVariableDetailsCustomization::GetTypeMenu, TypeDefHandleHandle, Var)
-						//.IsEnabled(this, &SNiagaraParameterPanel::GetCanAddParametersToCategory, Category)
-						.HAlign(HAlign_Center)
-						.VAlign(VAlign_Center)
-						.HasDownArrow(false)
-						.ButtonContent()
-						[
-							SNew(SHorizontalBox)
-							+ SHorizontalBox::Slot()
-							.AutoWidth()
-							.Padding(FMargin(0, 1))
-							[
-								SNew(SImage)
-								.Image(FAppStyle::GetBrush("Icons.Edit"))
-							]
-						]
+						SNew( SEditableTextBox )
+						.Text_Lambda([NameHandle]() -> FText { FText OutText; NameHandle->GetValueAsDisplayText(OutText); return OutText; })
+						.Font(IDetailLayoutBuilder::GetDetailFont())
+						.SelectAllTextWhenFocused(true)
+						.ClearKeyboardFocusOnCommit(false)
+						.OnTextCommitted_Lambda([NameHandle](const FText& NewName, ETextCommit::Type)
+						{
+							FScopedTransaction Transaction(LOCTEXT("ChangeVarName", "Change variable name"));
+							TArray<UObject*> OuterObjects;
+							NameHandle->GetOuterObjects(OuterObjects);
+							for (UObject* OuterObj : OuterObjects)
+							{
+								OuterObj->Modify();
+							}
+							NameHandle->SetValue(FName(NewName.ToString()));
+						} )
+						.OnVerifyTextChanged_Lambda([bEnforceUniqueName, PropertyHandle](const FText& InNewText, FText& OutErrorMessage) -> bool
+						{
+							// if necessary, validate that the entered name is unique among all entries of the variable array
+							if (!bEnforceUniqueName)
+							{
+								return true;
+							}
+							FName NewName = FName(InNewText.ToString());
+							if (TSharedPtr<IPropertyHandle> Handle = PropertyHandle->GetParentHandle())
+							{
+								if (TSharedPtr<IPropertyHandleArray> PropertyHandleArray = Handle->AsArray())
+								{
+									uint32 NumElements;
+									PropertyHandleArray->GetNumElements(NumElements);
+									bool bNewNameValid = true;
+									for (uint32 i = 0; i < NumElements; i++)
+									{
+										TSharedRef<IPropertyHandle> ElementHandle = PropertyHandleArray->GetElement(i);
+										void* VarPtr = nullptr;
+										if (!ElementHandle->IsSamePropertyNode(PropertyHandle) && ElementHandle->GetValueData(VarPtr) == FPropertyAccess::Success)
+										{
+											if (NewName == static_cast<FNiagaraVariable*>(VarPtr)->GetName())
+											{
+												bNewNameValid = false;
+												break;
+											}
+										}
+									}
+									if (!bNewNameValid)
+									{
+										OutErrorMessage = LOCTEXT("DuplicateNameError", "Variable name has to be unique!");
+										return false;
+									}
+								}
+							}
+							return true;
+						})
+						.SelectAllTextOnCommit( true )
 					]
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.HAlign(HAlign_Center)
-					.VAlign(VAlign_Center)
-					.Padding(4.0f, 4.0f, 4.0f, 4.0f)
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(4.0f, 2.0f, 4.0f, 2.0f)
+				[
+					SNew(SNiagaraConstrainedBox)
+					.MinWidth(150.0f)
 					[
-						SNew(SNiagaraConstrainedBox)
-						.MinWidth(75.0f)
+						PropertyHandle->CreateDefaultPropertyButtonWidgets()
+					]
+				]
+			];
+			
+			Row.ValueContent()
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 2.0f, 0)
+				[
+					SNew(STextBlock)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+					.Text(LOCTEXT("DataChannelVarTypeText", "Type: "))
+				]
+				+ SHorizontalBox::Slot()
+				.VAlign(VAlign_Center)
+				.Padding(2.0f)
+				[
+					SNew(SComboButton)
+					.HasDownArrow(true)
+					.ContentPadding(0)
+					.OnGetMenuContent(this, &FNiagaraVariableDetailsCustomization::GetTypeMenu, TypeDefHandleHandle, Variable)
+					.ButtonContent()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.VAlign(VAlign_Center)
+						.HAlign(HAlign_Center)
+						.AutoWidth()
+						[
+							SNew(SImage)
+							.ColorAndOpacity_Lambda([Variable]() {return UEdGraphSchema_Niagara::GetTypeColor(Variable->GetType());})
+							.Image(FNiagaraEditorStyle::Get().GetBrush("NiagaraEditor.Module.TypeIconPill"))
+						]
+						+ SHorizontalBox::Slot()
+						.Padding(4, 2, 2, 2)
 						[
 							SNew(STextBlock)
-							.Text_Lambda([Var] {return Var ? Var->GetType().GetNameText() : FText::GetEmpty(); })
+							.MinDesiredWidth(150)
+							.Text_Lambda([Variable] {return Variable ? Variable->GetType().GetNameText() : FText::GetEmpty(); })
+							.Font(IDetailLayoutBuilder::GetDetailFont())
 						]
 					]
-				];
-
-			Row.ValueContent()
-				[
-					SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.HAlign(HAlign_Center)
-				.VAlign(VAlign_Center)
-				.Padding(4.0f, 4.0f, 4.0f, 4.0f)
-				[
-					SNew(SNiagaraConstrainedBox)
-					.MinWidth(150.0f)
-				[
-					NameHandle->CreatePropertyValueWidget()
-				]
-				]
-			+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.HAlign(HAlign_Center)
-				.VAlign(VAlign_Center)
-				.Padding(4.0f, 4.0f, 4.0f, 4.0f)
-				[
-					SNew(SNiagaraConstrainedBox)
-					.MinWidth(150.0f)
-				[
-					PropertyHandle->CreateDefaultPropertyButtonWidgets()
-				]
 				]
 			];
 		}
@@ -2688,6 +2785,267 @@ TSharedRef<SWidget> FNiagaraVariableDetailsCustomization::GetTypeMenu(TSharedPtr
 	return SNew(SNiagaraRawVariableTypeSelectMenu)
 	.PropertyHandle(InPropertyHandle)
 	.VarToModify(Var);
+}
+
+void FNiagaraDataChannelVariableDetailsCustomization::CustomizeHeader(TSharedRef<IPropertyHandle> PropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& CustomizationUtils)
+{
+}
+
+void FNiagaraDataChannelVariableDetailsCustomization::CustomizeChildren(TSharedRef<IPropertyHandle> PropertyHandle, IDetailChildrenBuilder& ChildBuilder, IPropertyTypeCustomizationUtils& CustomizationUtils)
+{
+	TSharedPtr<IPropertyHandle> NameHandle = PropertyHandle->GetChildHandle(TEXT("Name"));
+	TSharedPtr<IPropertyHandle> TypeDefHandleHandle = PropertyHandle->GetChildHandle(TEXT("TypeDefHandle"));
+
+	FDetailWidgetRow& Row = ChildBuilder.AddCustomRow(FText::GetEmpty());
+
+	TArray<UObject*> Objects;
+	PropertyHandle->GetOuterObjects(Objects);
+	if (Objects.Num() > 1)
+	{
+		Row.NameContent()
+			[
+				PropertyHandle->CreatePropertyNameWidget()
+			];
+		Row.ValueContent()
+			[
+				PropertyHandle->CreatePropertyValueWidget()
+			];
+	}
+	else
+	{
+		void* VarPtr = nullptr;
+		if (PropertyHandle->GetValueData(VarPtr) == FPropertyAccess::Success)
+		{
+			bool bEnforceUniqueName = PropertyHandle->HasMetaData(TEXT("EnforceUniqueNames"));
+			FNiagaraDataChannelVariable* Variable = static_cast<FNiagaraDataChannelVariable*>(VarPtr);
+
+			Row.NameContent()
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				[
+					SNew(STextBlock)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+					.Text(LOCTEXT("DataChannelVarNameText", "Name: "))
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(4.0f, 4.0f, 4.0f, 4.0f)
+				[
+					SNew(SNiagaraConstrainedBox)
+					.MinWidth(150.0f)
+					[
+						SNew( SEditableTextBox )
+						.Text_Lambda([NameHandle]() -> FText { FText OutText; NameHandle->GetValueAsDisplayText(OutText); return OutText; })
+						.Font(IDetailLayoutBuilder::GetDetailFont())
+						.SelectAllTextWhenFocused(true)
+						.ClearKeyboardFocusOnCommit(false)
+						.OnTextCommitted_Lambda([NameHandle](const FText& NewName, ETextCommit::Type)
+						{
+							FScopedTransaction Transaction(LOCTEXT("ChangeVarName", "Change variable name"));
+							TArray<UObject*> OuterObjects;
+							NameHandle->GetOuterObjects(OuterObjects);
+							for (UObject* OuterObj : OuterObjects)
+							{
+								OuterObj->Modify();
+							}
+							NameHandle->SetValue(FName(NewName.ToString()));
+						} )
+						.OnVerifyTextChanged_Lambda([bEnforceUniqueName, PropertyHandle](const FText& InNewText, FText& OutErrorMessage) -> bool
+						{
+							// if necessary, validate that the entered name is unique among all entries of the variable array
+							if (!bEnforceUniqueName)
+							{
+								return true;
+							}
+							FName NewName = FName(InNewText.ToString());
+							if (TSharedPtr<IPropertyHandle> Handle = PropertyHandle->GetParentHandle())
+							{
+								if (TSharedPtr<IPropertyHandleArray> PropertyHandleArray = Handle->AsArray())
+								{
+									uint32 NumElements;
+									PropertyHandleArray->GetNumElements(NumElements);
+									bool bNewNameValid = true;
+									for (uint32 i = 0; i < NumElements; i++)
+									{
+										TSharedRef<IPropertyHandle> ElementHandle = PropertyHandleArray->GetElement(i);
+										void* VarPtr = nullptr;
+										if (!ElementHandle->IsSamePropertyNode(PropertyHandle) && ElementHandle->GetValueData(VarPtr) == FPropertyAccess::Success)
+										{
+											if (NewName == static_cast<FNiagaraVariable*>(VarPtr)->GetName())
+											{
+												bNewNameValid = false;
+												break;
+											}
+										}
+									}
+									if (!bNewNameValid)
+									{
+										OutErrorMessage = LOCTEXT("DuplicateNameError", "Variable name has to be unique!");
+										return false;
+									}
+								}
+							}
+							return true;
+						})
+						.SelectAllTextOnCommit( true )
+					]
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(4.0f, 2.0f, 4.0f, 2.0f)
+				[
+					SNew(SNiagaraConstrainedBox)
+					.MinWidth(150.0f)
+					[
+						PropertyHandle->CreateDefaultPropertyButtonWidgets()
+					]
+				]
+			];
+			
+			Row.ValueContent()
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 2.0f, 0)
+				[
+					SNew(STextBlock)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+					.Text(LOCTEXT("DataChannelVarTypeText", "Type: "))
+				]
+				+ SHorizontalBox::Slot()
+				.VAlign(VAlign_Center)
+				.Padding(2.0f)
+				[
+					SAssignNew(ChangeTypeButton, SComboButton)
+					.HasDownArrow(true)
+					.ContentPadding(0)
+					.OnGetMenuContent(this, &FNiagaraDataChannelVariableDetailsCustomization::GetTypeMenu, TypeDefHandleHandle, Variable)
+					.ButtonContent()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.VAlign(VAlign_Center)
+						.HAlign(HAlign_Center)
+						.AutoWidth()
+						[
+							SNew(SImage)
+							.ColorAndOpacity_Lambda([Variable]() {return UEdGraphSchema_Niagara::GetTypeColor(Variable->GetType());})
+							.Image(FNiagaraEditorStyle::Get().GetBrush("NiagaraEditor.Module.TypeIconPill"))
+						]
+						+ SHorizontalBox::Slot()
+						.Padding(4, 2, 2, 2)
+						[
+							SNew(STextBlock)
+							.MinDesiredWidth(150)
+							.Text_Lambda([Variable] {return Variable ? Variable->GetType().GetNameText() : FText::GetEmpty(); })
+							.Font(IDetailLayoutBuilder::GetDetailFont())
+						]
+					]
+				]
+			];
+		}
+	}
+}
+
+class SNiagaraDataChannelTypeSelectMenu : public SNiagaraParameterMenu
+{
+public:
+	//DECLARE_DELEGATE_RetVal_OneParam(bool, FOnAllowMakeType, const FNiagaraTypeDefinition&);
+
+	SLATE_BEGIN_ARGS(SNiagaraDataChannelTypeSelectMenu)
+		: _AutoExpandMenu(false)
+	{}
+	//~ Begin Required Args
+	SLATE_ARGUMENT(TSharedPtr<IPropertyHandle>, PropertyHandle)
+	SLATE_ARGUMENT(FNiagaraDataChannelVariable*, VarToModify)
+	//~ End Required Args
+	SLATE_ARGUMENT(bool, AutoExpandMenu)
+	SLATE_END_ARGS();
+
+	void Construct(const FArguments& InArgs);
+
+protected:
+	virtual void CollectAllActions(FGraphActionListBuilderBase& OutAllActions) override;
+
+private:
+	TSharedPtr<IPropertyHandle> PropertyHandle;
+	FNiagaraDataChannelVariable* VarToModify = nullptr;
+};
+
+
+void SNiagaraDataChannelTypeSelectMenu::Construct(const FArguments& InArgs)
+{
+	checkf(InArgs._VarToModify != nullptr, TEXT("Tried to construct change var type menu without valid var ptr!"));
+	this->PropertyHandle = InArgs._PropertyHandle;
+	this->VarToModify = InArgs._VarToModify;
+
+	SNiagaraParameterMenu::FArguments SuperArgs;
+	SuperArgs._AutoExpandMenu = InArgs._AutoExpandMenu;
+	SNiagaraParameterMenu::Construct(SuperArgs);
+}
+
+void SNiagaraDataChannelTypeSelectMenu::CollectAllActions(FGraphActionListBuilderBase& OutAllActions)
+{
+	FNiagaraMenuActionCollector Collector;
+
+	TArray<FNiagaraTypeDefinition> Types;
+	FNiagaraEditorUtilities::GetAllowedUserVariableTypes(Types);
+	for (FNiagaraTypeDefinition& Type : Types)
+	{
+		if (!FNiagaraDataChannelVariable::IsAllowedType(Type))
+		{
+			continue;
+		}
+		Type = FNiagaraDataChannelVariable::ToDataChannelType(Type);
+
+		FText Category = FNiagaraEditorUtilities::GetTypeDefinitionCategory(Type);
+		const FText DisplayName = Type.GetNameText();
+		const FText Tooltip = Type.GetNameText();
+		TSharedPtr<FNiagaraMenuAction> Action(new FNiagaraMenuAction(
+			Category, DisplayName, Tooltip, 0, FText::GetEmpty(),
+			FNiagaraMenuAction::FOnExecuteStackAction::CreateLambda(
+			[Var=VarToModify, PropHandle=PropertyHandle, Type]()
+			{
+				FScopedTransaction Transaction(LOCTEXT("Set Raw Niagara Variable Type", "Set Variable Type"));
+				check(Var);
+				check(PropHandle.IsValid());
+				TArray<UObject*> Objects;
+				PropHandle->GetOuterObjects(Objects);
+				for (UObject* Obj : Objects)
+				{
+					Obj->Modify();
+				}
+
+				PropHandle->NotifyPreChange();
+				Var->SetType(Type);
+				Var->Version = FGuid::NewGuid();
+				PropHandle->NotifyPostChange(EPropertyChangeType::ValueSet);
+				PropHandle->NotifyFinishedChangingProperties();
+			}
+		)));
+
+		Collector.AddAction(Action, 0);
+	}
+
+	Collector.AddAllActionsTo(OutAllActions);
+}
+
+TSharedRef<SWidget> FNiagaraDataChannelVariableDetailsCustomization::GetTypeMenu(TSharedPtr<IPropertyHandle> InPropertyHandle, FNiagaraDataChannelVariable* Var)
+{
+	TSharedRef<SNiagaraDataChannelTypeSelectMenu> TypeSelectMenu = SNew(SNiagaraDataChannelTypeSelectMenu)
+	.PropertyHandle(InPropertyHandle)
+	.VarToModify(Var);
+
+	ChangeTypeButton->SetMenuContentWidgetToFocus(TypeSelectMenu->GetSearchBox());
+	
+	return TypeSelectMenu;
 }
 
 

@@ -50,6 +50,7 @@ void SDetailsDiff::Construct( const FArguments& InArgs)
 
 		AssetEditorCloseDelegate = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OnAssetEditorRequestClose().AddSP(this, &SDetailsDiff::OnCloseAssetEditor);
 	}
+	FCoreUObjectDelegates::OnObjectsReplaced.AddSP(this, &SDetailsDiff::OnObjectReplaced);
 
 	FToolBarBuilder NavToolBarBuilder(TSharedPtr< const FUICommandList >(), FMultiBoxCustomization::None);
 	NavToolBarBuilder.AddToolBarButton(
@@ -204,6 +205,40 @@ void SDetailsDiff::OnCloseAssetEditor(UObject* Asset, EAssetEditorCloseReason Cl
 	}
 }
 
+void SDetailsDiff::OnObjectReplaced(const FCoreUObjectDelegates::FReplacementObjectMap& Replacements)
+{
+	bool bNeedsRegenerate = false;
+
+	auto Refresh = [](const UObject* Obj, const UObject* From, const UObject* To)
+	{
+		bool bNeedsRegenerate = false;
+		if (Obj == From)
+		{
+			Obj = To;
+			bNeedsRegenerate = true;
+		}
+		if (Obj == From->GetClass()->ClassGeneratedBy)
+		{
+			bNeedsRegenerate = true;
+		}
+		return bNeedsRegenerate;
+	};
+	
+	// if any of the objects being displayed were reinstanced, refresh them
+	for (const auto &[From, To] : Replacements)
+	{
+		bNeedsRegenerate |= Refresh(OutputObject, From, To);
+		bNeedsRegenerate |= Refresh(PanelNew.Object, From, To);
+		bNeedsRegenerate |= Refresh(PanelOld.Object, From, To);
+	}
+	
+	if (bNeedsRegenerate)
+	{
+		GenerateDifferencesList();
+		RefreshCurrentModePanel();
+	}
+}
+
 TSharedRef<SWidget> SDetailsDiff::DefaultEmptyPanel()
 {
 	return SNew(SHorizontalBox)
@@ -280,32 +315,25 @@ TSharedRef<SDetailsDiff> SDetailsDiff::CreateDiffWindow(const UObject* OldObject
 	return CreateDiffWindow(WindowTitle, OldObject, NewObject, OldRevision, NewRevision);
 }
 
-void SDetailsDiff::SetOutputObject(const UObject* InOutputObject)
+void SDetailsDiff::SetOutputObject(UObject* InOutputObject)
 {
-	OutputObjectUnmodified = InOutputObject;
-	OutputObjectModified = InOutputObject ? DuplicateObject(InOutputObject, nullptr) : nullptr;
+	OutputObject = InOutputObject;
 	OnOutputObjectSetEvent.Broadcast();
 }
 
-void SDetailsDiff::GetModifications(FArchive& Archive) const
+UObject* SDetailsDiff::GetOutputObject() const
 {
-	OutputObjectModified->GetClass()->SerializeTaggedProperties(
-		Archive, reinterpret_cast<uint8*>(OutputObjectModified),
-		OutputObjectUnmodified->GetClass(), (uint8*)OutputObjectUnmodified
-	);
-}
-
-void SDetailsDiff::RequestModifications(FArchive& Archive) const
-{
-	OutputObjectModified->GetClass()->SerializeTaggedProperties(
-		Archive, reinterpret_cast<uint8*>(OutputObjectModified),
-		OutputObjectModified->GetClass(), reinterpret_cast<uint8*>(OutputObjectModified->GetClass()->ClassDefaultObject.Get())
-	);
+	return OutputObject;
 }
 
 bool SDetailsDiff::IsOutputEnabled() const
 {
-	return OutputObjectUnmodified && OutputObjectModified;
+	return OutputObject != nullptr;
+}
+
+void SDetailsDiff::ReportMergeConflicts(const TMap<FString, TMap<FPropertySoftPath, ETreeDiffResult>>& Conflicts)
+{
+	MergeConflicts = Conflicts;
 }
 
 void SDetailsDiff::NextDiff()
@@ -343,72 +371,117 @@ void SDetailsDiff::GenerateDifferencesList()
 
 	// Now that we have done the diffs, create the panel widgets
 	// (we're currently only generating the details panel but we can add more as needed)
-	ModePanels.Add(DetailsMode, GenerateDetailsPanel());
+
+	const auto GetBlueprintCDO = [](const UObject* Object)->const UObject*
+	{
+		return CastChecked<UBlueprint>(Object)->GeneratedClass->GetDefaultObject();
+	};
+	
+	TFunction<const UObject*(const UObject*)> Redirector;
+	if ((!PanelOld.Object || PanelOld.Object->IsA<UBlueprint>()) && (!PanelNew.Object || PanelNew.Object->IsA<UBlueprint>()))
+	{
+		// Blueprints diff their GeneratedClass CDO in the details panel instead
+		Redirector = GetBlueprintCDO;
+	}
+	
+	ModePanels.Add(DetailsMode, GenerateDetailsPanel(Redirector));
 
 	DifferencesTreeView->RebuildList();
 }
 
-SDetailsDiff::FDiffControl SDetailsDiff::GenerateDetailsPanel()
+
+SDetailsDiff::FDiffControl SDetailsDiff::GenerateDetailsPanel(const TFunction<const UObject*(const UObject*)>& Redirector)
 {
-	const TSharedPtr<FDetailsDiffControl> NewDiffControl = MakeShared<FDetailsDiffControl>(PanelOld.Object, PanelNew.Object, FOnDiffEntryFocused::CreateRaw(this, &SDetailsDiff::SetCurrentMode, DetailsMode), true);
+	const UObject* OldObject = Redirector ? Redirector(PanelOld.Object) : PanelOld.Object;
+	const UObject* NewObject = Redirector ? Redirector(PanelNew.Object) : PanelNew.Object;
+	
+	const TSharedPtr<FDetailsDiffControl> NewDiffControl = MakeShared<FDetailsDiffControl>(OldObject, NewObject, FOnDiffEntryFocused::CreateRaw(this, &SDetailsDiff::SetCurrentMode, DetailsMode), true);
 	NewDiffControl->EnableComments(DifferencesTreeView.ToWeakPtr());
 	NewDiffControl->GenerateTreeEntries(PrimaryDifferencesList, RealDifferences);
 	
 	const TSharedRef<SDetailsSplitter> Splitter = SNew(SDetailsSplitter);
-	if (PanelOld.Object)
+	if (OldObject)
 	{
 		Splitter->AddSlot(
 			SDetailsSplitter::Slot()
 			.Value(0.5f)
-			.DetailsView(NewDiffControl->GetDetailsWidget(PanelOld.Object))
-			.DifferencesWithRightPanel(NewDiffControl.ToSharedRef(), &FDetailsDiffControl::GetDifferencesWithRight, Cast<UObject>(PanelOld.Object))
+			.DetailsView(NewDiffControl->GetDetailsWidget(OldObject))
+			.DifferencesWithRightPanel(NewDiffControl.ToSharedRef(), &FDetailsDiffControl::GetDifferencesWithRight, Cast<UObject>(OldObject))
 		);
 	}
-	if (PanelNew.Object)
+	if (NewObject)
 	{
 		Splitter->AddSlot(
 			SDetailsSplitter::Slot()
 			.Value(0.5f)
-			.DetailsView(NewDiffControl->GetDetailsWidget(PanelNew.Object))
-			.DifferencesWithRightPanel(NewDiffControl.ToSharedRef(), &FDetailsDiffControl::GetDifferencesWithRight, Cast<UObject>(PanelNew.Object))
+			.DetailsView(NewDiffControl->GetDetailsWidget(NewObject))
+			.DifferencesWithRightPanel(NewDiffControl.ToSharedRef(), &FDetailsDiffControl::GetDifferencesWithRight, Cast<UObject>(NewObject))
 		);
 	}
 
 	
 	const TWeakPtr<SDetailsSplitter> WeakSplitter = Splitter;
 	const TWeakPtr<FDetailsDiffControl> WeakDiffControl = NewDiffControl;
-	OnOutputObjectSetEvent.AddLambda([WeakSplitter, WeakDiffControl, this]()
+	OnOutputObjectSetEvent.AddLambda([WeakSplitter, WeakDiffControl, this, Redirector]()
 	{
+		const UObject* OutputDetailObject = Redirector ? Redirector(OutputObject) : OutputObject;
+		
 		const TSharedPtr<SDetailsSplitter> Splitter = WeakSplitter.Pin();
 		const TSharedPtr<FDetailsDiffControl> DiffControl = WeakDiffControl.Pin();
 		if (Splitter && DiffControl)
 		{
 			// if output object is already in panel, don't insert a new one
-			TSharedPtr<IDetailsView> DetailsView = DiffControl->TryGetDetailsWidget(OutputObjectUnmodified);
+			TSharedPtr<IDetailsView> DetailsView = DiffControl->TryGetDetailsWidget(OutputDetailObject);
 			if (DetailsView)
 			{
 				// update readonly status in splitter so that property merge buttons appear
-				const int32 Index = DiffControl->IndexOfObject(OutputObjectUnmodified);
+				const int32 Index = DiffControl->IndexOfObject(OutputDetailObject);
 				Splitter->GetPanel(Index).IsReadonly = false;
 			}
 			else
 			{
-				DetailsView = DiffControl->InsertObject(OutputObjectModified, false, 1);
+				DetailsView = DiffControl->InsertObject(OutputDetailObject, false, 1);
 				// insert the output object as a central panel
 				Splitter->AddSlot(
 					SDetailsSplitter::Slot()
 						.DetailsView(DetailsView)
 						.Value(0.5f)
 						.IsReadonly(false)
-						.DifferencesWithRightPanel(DiffControl.ToSharedRef(), &FDetailsDiffControl::GetDifferencesWithRight, (const UObject*)OutputObjectModified),
+						.DifferencesWithRightPanel(DiffControl.ToSharedRef(), &FDetailsDiffControl::GetDifferencesWithRight, (const UObject*)OutputDetailObject),
 					1 // insert between left and right panel (index 1)
 				);
 			}
 
 			// allow user to edit the output panel
 			DetailsView->SetIsPropertyEditingEnabledDelegate(FIsPropertyEditingEnabled::CreateStatic([]{return true; }));
+			
+			// highlight merge conflicts
+			TMap<FString, TMap<FPropertySoftPath, FLinearColor>> Highlights;
+			for (auto& [ObjectPath, Properties] : MergeConflicts)
+			{
+				for (auto& [propertyPath, Diff] : Properties)
+				{
+					switch(Diff)
+					{
+					case ETreeDiffResult::MissingFromTree1: // fall through
+					case ETreeDiffResult::MissingFromTree2: // fall through
+					case ETreeDiffResult::DifferentValues:
+						// color is intentionally using values greater than 1 so that it stays very saturated
+						Highlights.FindOrAdd(ObjectPath).Add(propertyPath, FLinearColor(1.5f, 0.3f, 0.3f));
+						break;
+					
+					default:; // ignore identical and invalid
+					}
+				}
+			}
+
+			Splitter->HighlightFromMergeResults(MergeConflicts);
 		}
 	});
+	if (OutputObject)
+	{
+		OnOutputObjectSetEvent.Broadcast();
+	}
 
 	SDetailsDiff::FDiffControl Ret;
 	Ret.DiffControl = NewDiffControl;
@@ -452,6 +525,23 @@ void SDetailsDiff::SetCurrentMode(FName NewMode)
 	}
 
 	OnModeChanged(NewMode);
+}
+
+void SDetailsDiff::RefreshCurrentModePanel()
+{
+
+	FDiffControl* FoundControl = ModePanels.Find(CurrentMode);
+
+	if (FoundControl)
+	{
+		ModeContents->SetContent(FoundControl->Widget.ToSharedRef());
+	}
+	else
+	{
+		ensureMsgf(false, TEXT("Diff panel does not support mode %s"), *CurrentMode.ToString() );
+	}
+
+	OnModeChanged(CurrentMode);
 }
 
 void SDetailsDiff::UpdateTopSectionVisibility(const FName& InNewViewMode) const

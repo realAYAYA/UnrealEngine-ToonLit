@@ -18,6 +18,14 @@ struct FMutBufferView
 {
 	uint8* Data = nullptr;
 	uint64 Size = 0;
+
+	operator FBufferView() const
+	{ 
+		FBufferView Result;
+		Result.Data = Data;
+		Result.Size = Size;
+		return Result;
+	}
 };
 
 class FBuffer
@@ -49,6 +57,7 @@ public:
 
 	void Append(const uint8* AppendData, uint64 AppendSize);
 	void Append(const FBuffer& Other);
+	void Append(const FBufferView& Other);
 	void PushBack(uint8 Value) { Append(&Value, 1); }
 	void Resize(uint64 NewSize);
 	void Clear() { Resize(0); }
@@ -82,6 +91,7 @@ public:
 	}
 
 	operator FBufferView() const { return View(); }
+	operator FMutBufferView() { return MutView(); }
 
 private:
 	void EnsureCapacity(uint64 RequiredCapacity);
@@ -90,6 +100,14 @@ private:
 	uint64 BufferSize	  = 0;
 	uint64 BufferCapacity = 0;
 };
+
+template<typename T>
+TArrayView<T>
+ReinterpretView(FBufferView BufferView)
+{
+	const uint64 Count = BufferView.Size / sizeof(T);
+	return MakeView(reinterpret_cast<const T*>(BufferView.Data), Count);
+}
 
 struct FBufferPool
 {

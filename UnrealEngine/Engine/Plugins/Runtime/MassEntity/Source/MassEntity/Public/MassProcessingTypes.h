@@ -76,7 +76,13 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<UMassProcessor>> Processors;
 
+	EProcessorExecutionFlags ExecutionFlags = EProcessorExecutionFlags::None;
+
 public:
+	explicit FMassRuntimePipeline(EProcessorExecutionFlags WorldExecutionFlags = EProcessorExecutionFlags::None)
+		: ExecutionFlags(WorldExecutionFlags)
+	{}
+
 	void Reset();
 	void Initialize(UObject& Owner);
 	

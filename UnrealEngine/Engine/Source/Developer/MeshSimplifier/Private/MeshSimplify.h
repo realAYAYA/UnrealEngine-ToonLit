@@ -50,6 +50,7 @@ public:
 
 	void		SetAttributeWeights( const float* Weights )			{ AttributeWeights = Weights; }
 	void		SetEdgeWeight( float Weight )						{ EdgeWeight = Weight; }
+	void		SetMaxEdgeLengthFactor( float Factor )				{ MaxEdgeLengthFactor = Factor; }
 	void		SetCorrectAttributes( void (*Function)( float* ) )	{ CorrectAttributes = Function; }
 	void		SetLimitErrorToSurfaceArea( bool Value )			{ bLimitErrorToSurfaceArea = Value; }
 
@@ -85,8 +86,10 @@ protected:
 
 	const float*	AttributeWeights = nullptr;
 	float			EdgeWeight = 8.0f;
+	float			MaxEdgeLengthFactor = 0.0f;
 	void			(*CorrectAttributes)( float* ) = nullptr;
 	bool			bLimitErrorToSurfaceArea = true;
+	bool			bZeroWeights = false;
 
 	FHashTable		VertHash;
 	FHashTable		CornerHash;
@@ -148,7 +151,6 @@ protected:
 	template< typename FuncType >
 	void	ForAllPairs( const FVector3f& Position, FuncType&& Function ) const;
 
-	void	GatherAdjTris( const FVector3f& Position, uint32 Flag, TArray< uint32, TInlineAllocator<16> >& AdjTris, int32& VertDegree, uint32& FlagUnion );
 	bool	AddUniquePair( FPair& Pair, uint32 PairIndex );
 
 	void	CalcTriQuadric( uint32 TriIndex );

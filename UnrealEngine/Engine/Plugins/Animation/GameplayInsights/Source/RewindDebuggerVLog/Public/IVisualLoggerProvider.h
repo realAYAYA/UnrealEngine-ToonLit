@@ -13,5 +13,6 @@ public:
 	typedef TraceServices::ITimeline<FVisualLogEntry> VisualLogEntryTimeline;
 
 	virtual bool ReadVisualLogEntryTimeline(uint64 InObjectId, TFunctionRef<void(const VisualLogEntryTimeline&)> Callback) const = 0;
+	virtual void EnumerateCategories(TFunctionRef<void(const FName&)> Callback) const = 0;
 };
 

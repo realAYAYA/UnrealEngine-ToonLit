@@ -802,7 +802,7 @@ const unsigned char RawV23::geometry[] = {
     0x00, 0x00, 0x00, 0x00,  // Vertex position: 0
     0x00, 0x00, 0x00, 0x01,  // Vertex position: 1
     0x00, 0x00, 0x00, 0x02,  // Vertex position: 2
-    0x00, 0x06,  // Blend shape index in Definition
+    0x00, 0x02,  // Blend shape index in Definition
     // Mesh-1
     0x00, 0x00, 0x01, 0x52,  // Mesh-1 size
     0x00, 0x00, 0x00, 0x03,  // Vertex positions X values length
@@ -893,7 +893,7 @@ const unsigned char RawV23::geometry[] = {
     0x00, 0x00, 0x00, 0x00,  // Vertex position: 0
     0x00, 0x00, 0x00, 0x01,  // Vertex position: 1
     0x00, 0x00, 0x00, 0x02,  // Vertex position: 2
-    0x00, 0x06,  // Blend shape index in Definition
+    0x00, 0x02,  // Blend shape index in Definition
     // Mesh-2
     0x00, 0x00, 0x01, 0x84,  // Mesh-2 size
     0x00, 0x00, 0x00, 0x03,  // Vertex positions X values length
@@ -984,7 +984,7 @@ const unsigned char RawV23::geometry[] = {
     0x00, 0x00, 0x00, 0x00,  // Vertex position: 0
     0x00, 0x00, 0x00, 0x01,  // Vertex position: 1
     0x00, 0x00, 0x00, 0x02,  // Vertex position: 2
-    0x00, 0x06,  // Blend shape index in Definition
+    0x00, 0x02,  // Blend shape index in Definition
     0x00, 0x00, 0x00, 0x02,  // Blend shape deltas X values length
     0x40, 0x80, 0x00, 0x00,  // 4.0f
     0x40, 0xa0, 0x00, 0x00,  // 5.0f
@@ -997,7 +997,7 @@ const unsigned char RawV23::geometry[] = {
     0x00, 0x00, 0x00, 0x02,  // Vertex position indices length (for each delta)
     0x00, 0x00, 0x00, 0x00,  // Vertex position: 0
     0x00, 0x00, 0x00, 0x02,  // Vertex position: 2
-    0x00, 0x07  // Blend shape index in Definition
+    0x00, 0x03  // Blend shape index in Definition
 };
 
 const unsigned char RawV23::machineLearnedBehavior[] = {
@@ -2172,26 +2172,26 @@ const pma::Matrix<pma::Matrix<std::uint16_t> > DecodedV23::skinWeightsJointIndic
 const pma::Vector<pma::Matrix<std::uint16_t> > DecodedV23::correctiveBlendShapeIndices = {
     {  // MaxLOD-0 - MaxLOD-1
         {  // Mesh-0
-            6
+            2
         },
         {  // Mesh-1
-            6
+            2
         },
         {  // Mesh-2
-            6, 7
+            2, 3
         }
     },
     {  // MaxLOD-1 - MinLOD-1
         {  // Mesh-0 (Mesh-2 under MaxLOD-0)
-            7
+            2
         }
     },
     {  // MaxLOD-0 - MinLOD-0
         {  // Mesh-0
-            6
+            2
         },
         {  // Mesh-1
-            6
+            2
         }
     }
 };
@@ -2225,9 +2225,10 @@ const pma::Matrix<pma::Matrix<Vector3> > DecodedV23::correctiveBlendShapeDeltas 
     },
     {  // MaxLOD-1 - MinLOD-1
         {  // Mesh-0 (Mesh-2 under MaxLOD-0)
-            {  // Blendshape-1
-                {4.0f, 4.0f, 4.0f},
-                {5.0f, 5.0f, 5.0f}
+            {  // Blendshape-0
+                {1.0f, 1.0f, 1.0f},
+                {2.0f, 2.0f, 2.0f},
+                {3.0f, 3.0f, 3.0f}
             }
         }
     },
@@ -2263,7 +2264,7 @@ const pma::Matrix<pma::Matrix<std::uint32_t> > DecodedV23::correctiveBlendShapeV
     },
     {  // MaxLOD-1 - MinLOD-1
         {  // Mesh-0 (Mesh-2 under MaxLOD-0)
-            {0, 2}  // Blendshape-1
+            {0, 1, 2}  // Blendshape-0
         }
     },
     {  // MaxLOD-0 - MinLOD-0

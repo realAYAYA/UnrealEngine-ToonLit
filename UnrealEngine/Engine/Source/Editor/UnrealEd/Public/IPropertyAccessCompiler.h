@@ -11,6 +11,7 @@
 
 class UObject;
 struct FPropertyAccessLibrary;
+enum class EPropertyAccessCopyType : uint8;
 
 // DEPRECATED - The various batching of property copy
 UENUM()
@@ -23,6 +24,13 @@ enum class EPropertyAccessBatchType : uint8
 	Batched,
 };
 
+enum class EPropertyAccessHandleType : int32
+{
+	Copy,
+
+	Access,
+};
+
 // Handle used to track property accesses that are being compiled
 struct FPropertyAccessHandle
 {
@@ -33,10 +41,14 @@ public:
 	// Check this handle for validity
 	bool IsValid() const { return Id != INDEX_NONE; }
 
+	// Get the type
+	EPropertyAccessHandleType GetType() const { return Type; }
+
 	FPropertyAccessHandle() = default;
 	
-	FPropertyAccessHandle(int32 InId)
+	FPropertyAccessHandle(int32 InId, EPropertyAccessHandleType InType)
 		: Id(InId)
+		, Type(InType)
 	{
 	}
 
@@ -48,11 +60,14 @@ public:
 private:
 	// Index used to track accesses by external systems
 	int32 Id = INDEX_NONE;
+
+	// The type of this access
+	EPropertyAccessHandleType Type = EPropertyAccessHandleType::Copy;
 };
 
 inline uint32 GetTypeHash(const FPropertyAccessHandle& Value)
 {
-	return GetTypeHash(Value.GetId());
+	return HashCombine(GetTypeHash(Value.GetId()), GetTypeHash(Value.GetType()));
 }
 
 // Handle used to describe property accesses that have been compiled
@@ -68,14 +83,15 @@ public:
 	int32 GetBatchId() const { return BatchId; }
 
 	// Check this handle for validity
-	bool IsValid() const { return Id != INDEX_NONE && BatchId != INDEX_NONE; }
+	bool IsValid() const { return Id != INDEX_NONE; }
 
 private:
 	friend class FPropertyAccessLibraryCompiler;
 
-	FCompiledPropertyAccessHandle(int32 InId, int32 InBatchId)
+	FCompiledPropertyAccessHandle(int32 InId, int32 InBatchId, EPropertyAccessHandleType InType)
 		: Id(InId)
 		, BatchId(InBatchId)
+		, Type(InType)
 	{
 	}
 
@@ -84,6 +100,9 @@ private:
 
 	// Index of the batch
 	int32 BatchId = INDEX_NONE;
+
+	// The type of this access
+	EPropertyAccessHandleType Type = EPropertyAccessHandleType::Copy;
 };
 
 // A helper used to compile a property access library
@@ -99,7 +118,7 @@ public:
 	virtual void BeginCompilation(const UClass* InClass) {}
 
 	// Add a copy to the property access library we are compiling
-	// @return an integer handle to the pending copy. This can be resolved to a true copy index by calling MapCopyIndex
+	// @return a handle to the pending copy. This can be resolved to a true copy index by calling GetCompiledHandle
 	virtual FPropertyAccessHandle AddCopy(TArrayView<FString> InSourcePath, TArrayView<FString> InDestPath, const FName& InContextId, UObject* InAssociatedObject = nullptr) = 0;
 	
 	UE_DEPRECATED(5.0, "Please use AddCopy with a context ID that returns a handle")
@@ -108,6 +127,10 @@ public:
 		FPropertyAccessHandle Handle = AddCopy(InSourcePath, InDestPath, FName(NAME_None), InAssociatedObject); 
 		return Handle.GetId();
 	}
+
+	// Add an access to the property access library we are compiling
+	// @return a handle to the pending access. This can be resolved to a true access index by calling GetCompiledHandle
+	virtual FPropertyAccessHandle AddAccess(TArrayView<FString> InPath, UObject* InAssociatedObject = nullptr) = 0;
 
 	// Post-process the library to finish compilation. @return true if compilation succeeded.
 	virtual bool FinishCompilation() = 0;
@@ -118,10 +141,6 @@ public:
 	// Maps the initial copy handle to a true handle, post compilation
 	virtual FCompiledPropertyAccessHandle GetCompiledHandle(FPropertyAccessHandle InHandle) const = 0;
 
-	UE_DEPRECATED(5.0, "Please use GetCompiledHandle")
-	virtual int32 MapCopyIndex(int32 InIndex) const
-	{
-		FCompiledPropertyAccessHandle CompiledHandle = GetCompiledHandle(FPropertyAccessHandle(InIndex));
-		return CompiledHandle.GetId();
-	}
+	// Get the access type for the specified handle
+	virtual EPropertyAccessCopyType GetCompiledHandleAccessType(FPropertyAccessHandle InHandle) const = 0;
 };

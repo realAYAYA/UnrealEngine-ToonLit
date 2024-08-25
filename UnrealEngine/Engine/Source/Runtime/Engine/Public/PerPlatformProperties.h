@@ -207,7 +207,7 @@ ENGINE_API void operator<<(FStructuredArchive::FSlot Slot, TPerPlatformProperty<
 struct FFreezablePerPlatformInt;
 
 /** FPerPlatformInt - int32 property with per-platform overrides */
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FPerPlatformInt
 #if CPP
 :	public TPerPlatformProperty<FPerPlatformInt, int32, NAME_IntProperty>
@@ -215,7 +215,7 @@ struct FPerPlatformInt
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(EditAnywhere, Category = PerPlatform)
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = PerPlatform)
 	int32 Default;
 
 #if WITH_EDITORONLY_DATA
@@ -301,7 +301,7 @@ struct TStructOpsTypeTraits<FPerPlatformInt>
 struct FFreezablePerPlatformFloat;
 
 /** FPerPlatformFloat - float property with per-platform overrides */
-USTRUCT(meta = (CanFlattenStruct))
+USTRUCT(BlueprintType, meta = (CanFlattenStruct))
 struct FPerPlatformFloat
 #if CPP
 :	public TPerPlatformProperty<FPerPlatformFloat, float, NAME_FloatProperty>
@@ -309,7 +309,7 @@ struct FPerPlatformFloat
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(EditAnywhere, Category = PerPlatform)
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = PerPlatform)
 	float Default;
 
 #if WITH_EDITORONLY_DATA

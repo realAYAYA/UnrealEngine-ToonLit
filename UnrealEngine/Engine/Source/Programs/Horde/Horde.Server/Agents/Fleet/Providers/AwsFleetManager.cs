@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Amazon.EC2;
 using Amazon.EC2.Model;
+using EpicGames.Horde.Agents;
 using Horde.Server.Agents.Pools;
 using Horde.Server.Auditing;
 using Horde.Server.Utilities;
@@ -24,43 +25,43 @@ namespace Horde.Server.Agents.Fleet.Providers
 		/// AWS region (e.g us-east-1)
 		/// </summary>
 		public string Region { get; }
-		
+
 		/// <summary>
 		/// Amazon Machine Image (AMI) to use (e.g ami-0c2e245e4936a2ab2)
 		/// </summary>
 		public string ImageId { get; }
-		
+
 		/// <summary>
 		/// An EC2 instance type (see https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-types.html for full list)
 		/// </summary>
 		public string InstanceType { get; }
-		
+
 		/// <summary>
 		/// IAM	instance profile 
 		/// </summary>
 		public string? IamInstanceProfile { get; }
-		
+
 		/// <summary>
 		/// Key/value tags for the instance
 		/// </summary>
 		public IReadOnlyDictionary<string, string> Tags { get; }
-		
+
 		/// <summary>
 		/// List of subnet IDs this instance can run in. Will implicitly pick the VPC.
 		/// A random subnet ID will be picked during instance creation.
 		/// </summary>
 		public List<string> SubnetIds { get; }
-		
+
 		/// <summary>
 		/// Security group IDs to apply. Must exist in the same VPC as the subnets.
 		/// </summary>
 		public List<string> SecurityGroupIds { get; }
-		
+
 		/// <summary>
 		/// User data to pass to the instance. Commonly used for cloud-init scripts that configures the instance during boot up. 
 		/// </summary>
 		public string? UserData { get; }
-		
+
 		/// <summary>
 		/// Key name for the instance (optional).
 		/// If skipped, alternative ways to administer the instance must be enabled, such as the AWS SSM Agent. 
@@ -114,12 +115,12 @@ namespace Horde.Server.Agents.Fleet.Providers
 			{
 				return UserData;
 			}
-			
+
 			byte[] plainTextBytes = System.Text.Encoding.UTF8.GetBytes(UserData);
 			return Convert.ToBase64String(plainTextBytes);
 		}
 	}
-	
+
 	/// <summary>
 	/// Fleet manager for handling AWS EC2 instances
 	/// Will create and/or terminate instances from scratch.
@@ -136,7 +137,7 @@ namespace Horde.Server.Agents.Fleet.Providers
 		/// Settings for fleet manager
 		/// </summary>
 		public AwsFleetManagerSettings Settings { get; }
-		
+
 		private readonly IAmazonEC2 _ec2;
 		private readonly IAgentCollection _agentCollection;
 		private readonly Tracer _tracer;
@@ -165,8 +166,8 @@ namespace Horde.Server.Agents.Fleet.Providers
 			List<Tag> tags = Settings.Tags.Select(x => new Tag(x.Key, x.Value)).ToList();
 			tags.Add(new Tag("Horde:RequestedPools", pool.Name));
 			tags.Add(new Tag("Horde:Timestamp:Ec2InstanceLaunchRequested", Convert.ToString(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
-			
-			RunInstancesRequest request = new ()
+
+			RunInstancesRequest request = new()
 			{
 				ImageId = Settings.ImageId,
 				InstanceType = InstanceType.FindValue(Settings.InstanceType),
@@ -191,7 +192,7 @@ namespace Horde.Server.Agents.Fleet.Providers
 						? new IamInstanceProfileSpecification { Arn = Settings.IamInstanceProfile }
 						: new IamInstanceProfileSpecification { Name = Settings.IamInstanceProfile };
 			}
-			
+
 			if (tags.Count > 0)
 			{
 				request.TagSpecifications = new() { new() { ResourceType = ResourceType.Instance, Tags = tags } };
@@ -211,12 +212,12 @@ namespace Horde.Server.Agents.Fleet.Providers
 			{
 				return new ScaleResult(FleetManagerOutcome.Success, numStartedInstances, 0);
 			}
-			
+
 			if (numStartedInstances != count)
 			{
 				_logger.LogWarning("Unable to create all the requested instances for pool {PoolId}. RequestedCount={RequestedCount} ActualCount={ActualCount}", pool.Id, count, numStartedInstances);
 			}
-			
+
 			return new ScaleResult(numStartedInstances == 0 ? FleetManagerOutcome.Failure : FleetManagerOutcome.Success, numStartedInstances, 0);
 		}
 
@@ -226,7 +227,7 @@ namespace Horde.Server.Agents.Fleet.Providers
 			await ShrinkPoolViaAgentShutdownRequestAsync(_agentCollection, pool, agents, count, cancellationToken);
 			return new ScaleResult(FleetManagerOutcome.Success, 0, count);
 		}
-		
+
 		/// <summary>
 		/// Shrink pool by gracefully requesting a shutdown for the agent
 		/// Allowing the agent to terminate at next best possible moment (usually when all the leases have finished).
@@ -244,14 +245,14 @@ namespace Horde.Server.Agents.Fleet.Providers
 			span.SetAttribute("poolName", pool.Name);
 			span.SetAttribute("numAgents", agents.Count);
 			span.SetAttribute("count", count);
-			
+
 			string awsTagProperty = $"{AwsTagPropertyName}={PoolTagName}:{pool.Name}";
-			
+
 			// Sort the agents by number of active leases. It's better to shutdown agents currently doing nothing.
 			List<IAgent> filteredAgents = agents.OrderBy(x => x.Leases.Count).ToList();
-			List<IAgent> agentsWithAwsTags = filteredAgents.Where(x => x.HasProperty(awsTagProperty)).ToList(); 
+			List<IAgent> agentsWithAwsTags = filteredAgents.Where(x => x.HasProperty(awsTagProperty)).ToList();
 			List<IAgent> agentsLimitedByCount = agentsWithAwsTags.Take(count).ToList();
-			
+
 			span.SetAttribute("agents.num", agents.Count);
 			span.SetAttribute("agents.filtered.num", filteredAgents.Count);
 			span.SetAttribute("agents.withAwsTags.num", agentsWithAwsTags.Count);
@@ -259,24 +260,24 @@ namespace Horde.Server.Agents.Fleet.Providers
 
 			foreach (IAgent agent in agentsLimitedByCount)
 			{
-				await TryRequestShutdown(agentCollection, pool, agent);
+				await TryRequestShutdownAsync(agentCollection, pool, agent, cancellationToken);
 			}
 		}
 
-		private static async Task<bool> TryRequestShutdown(IAgentCollection agentCollection, IPool pool, IAgent agent)
+		private static async Task<bool> TryRequestShutdownAsync(IAgentCollection agentCollection, IPool pool, IAgent agent, CancellationToken cancellationToken)
 		{
 			IAuditLogChannel<AgentId> agentLogger = agentCollection.GetLogger(agent.Id);
 
 			const int MaxRetries = 5;
 			for (int retryCount = 0; retryCount < MaxRetries; retryCount++)
 			{
-				if (await agentCollection.TryUpdateSettingsAsync(agent, requestShutdown: true, shutdownReason: "Autoscaler") != null)
+				if (await agentCollection.TryUpdateSettingsAsync(agent, requestShutdown: true, shutdownReason: "Autoscaler", cancellationToken: cancellationToken) != null)
 				{
 					agentLogger.LogInformation("Marked {AgentId} in pool {PoolName} for shutdown due to autoscaling (currently {NumLeases} leases outstanding, {NumRetries} retries)", agent.Id, pool.Name, agent.Leases.Count, retryCount);
 					return true;
 				}
 
-				IAgent? updatedAgent = await agentCollection.GetAsync(agent.Id);
+				IAgent? updatedAgent = await agentCollection.GetAsync(agent.Id, cancellationToken);
 				if (updatedAgent == null)
 				{
 					agentLogger.LogError("Unable to mark agent {AgentId} in pool {PoolName} for shutdown due to autoscaling. Agent no longer exists", agent.Id, pool.Name);
@@ -291,10 +292,10 @@ namespace Horde.Server.Agents.Fleet.Providers
 		}
 
 		/// <inheritdoc/>
-		public async Task<int> GetNumStoppedInstancesAsync(IPool pool, CancellationToken cancellationToken)
+		public async Task<int> GetNumStoppedInstancesAsync(IPoolConfig pool, CancellationToken cancellationToken)
 		{
 			// Find all instances in the pool
-			DescribeInstancesRequest describeRequest = new ();
+			DescribeInstancesRequest describeRequest = new();
 			describeRequest.Filters = new List<Filter>();
 			describeRequest.Filters.Add(new Filter("instance-state-name", new List<string> { InstanceStateName.Stopped.Value }));
 			describeRequest.Filters.Add(new Filter("tag:" + PoolTagName, new List<string> { pool.Name }));

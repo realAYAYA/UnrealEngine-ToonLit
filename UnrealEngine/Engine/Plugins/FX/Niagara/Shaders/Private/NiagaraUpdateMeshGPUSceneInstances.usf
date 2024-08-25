@@ -57,6 +57,7 @@ int VisibilityTagDataOffset;
 
 float3 LocalBoundingCenter;
 float2 DistanceCullRangeSquared;
+float4 LODScreenSize;
 
 int bNeedsPrevTransform;
 
@@ -73,8 +74,7 @@ uint GetPayloadDataFlags()
 void CullInstance(uint InstanceId)
 {
 	// This will minimally initialize the instance data such that it will be ignored and culled
-	// NOTE: Must use flags (instead of zero) to prevent the element getting flushed to zero when it happens to be denormal
-	WriteInstancePrimitiveIdAndFlags(InstanceId, INVALID_PRIMITIVE_ID, GetPayloadDataFlags());
+	WriteInstancePrimitiveIdAndFlags(InstanceId, PrimitiveId, INSTANCE_SCENE_DATA_FLAG_HIDDEN);
 }
 
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
@@ -122,11 +122,11 @@ void UpdateMeshInstancesCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_Grou
 	Params.ParticleIndex				= ParticleIndex;
 	Params.SystemLWCTile				= SystemLWCTile;
 	Params.bLocalSpace					= bLocalSpace;
-	#if ENABLE_PRECISE_MOTION_VECTORS
-		Params.bPreciseMotionVectors 	= true;
-	#else
-		Params.bPreciseMotionVectors 	= false;		
-	#endif
+#if ENABLE_PRECISE_MOTION_VECTORS
+	Params.bPreciseMotionVectors 		= true;
+#else
+	Params.bPreciseMotionVectors 		= false;
+#endif
 	Params.FacingMode					= FacingMode;
 	Params.DeltaSeconds					= DeltaSeconds;
 	Params.MeshScale 					= MeshScale;
@@ -154,27 +154,34 @@ void UpdateMeshInstancesCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_Grou
 	Params.DefaultPrevCameraOffset 		= DefaultPrevCameraOffset;
 	Params.VelocityDirMag				= NiagaraGetVelocityDirMag(VelocityDataOffset, DefaultVelocity, ParticleIndex);
 	Params.PrevVelocityDirMag			= NiagaraGetVelocityDirMag(PrevVelocityDataOffset, DefaultPrevVelocity, ParticleIndex);
-	Params.CameraOrigin 				= PrimaryView.WorldCameraOrigin;
+	Params.CameraOrigin 				= PrimaryView.TileOffset.WorldCameraOrigin;
 	Params.CameraForwardDir				= View.ViewForward;
 	Params.CameraUpDir					= View.ViewUp;
-	Params.PrevCameraOrigin 			= PrimaryView.PrevWorldCameraOrigin;
+	Params.PrevCameraOrigin 			= PrimaryView.TileOffset.PrevWorldCameraOrigin;
 	Params.PrevCameraForwardDir			= View.PrevViewToTranslatedWorld[2].xyz;
 	Params.PrevCameraUpDir				= View.PrevViewToTranslatedWorld[1].xyz;
-	Params.PrimitiveLocalToWorld		= PrimitiveData.LocalToWorld;
-	Params.PrimitiveWorldToLocal 		= PrimitiveData.WorldToLocal;
-	Params.PrimitivePrevLocalToWorld 	= PrimitiveData.PreviousLocalToWorld;
+	Params.PrimitiveLocalToWorld		= DFToTileOffset(PrimitiveData.LocalToWorld);
+	Params.PrimitiveWorldToLocal 		= DFToTileOffset(PrimitiveData.WorldToLocal);
+	Params.PrimitivePrevLocalToWorld 	= DFToTileOffset(PrimitiveData.PreviousLocalToWorld);
 	Params.PrimitiveInvNonUniformScale	= PrimitiveData.InvNonUniformScale;
 
 	NiagaraMeshParticleTransforms Transforms = NiagaraCalculateMeshParticleTransforms(Params);
 
 	// Transform the bounding center to world-space and distance cull
 	{
-		FLWCVector3 BCenter = LWCMultiply(LocalBoundingCenter, Transforms.LocalToWorld);
-		float3 CamVec = LWCToFloat(LWCSubtract(BCenter, PrimaryView.WorldCameraOrigin));
-		float CamDistSq = dot(CamVec, CamVec);
+		const FLWCVector3 BCenter = LWCMultiply(LocalBoundingCenter, Transforms.LocalToWorld);
+		const float3 CamVec = LWCToFloat(LWCSubtract(BCenter, PrimaryView.TileOffset.WorldCameraOrigin));
+		const float CamDistSq = length2(CamVec);
 		if (CamDistSq < DistanceCullRangeSquared.x  || CamDistSq > DistanceCullRangeSquared.y)
 		{
 			// We are outside the distance ranges required
+			CullInstance(InstanceId);
+			return;
+		}
+		
+		const float ScreenRadius = saturate(LODScreenSize.z / max(1.0f, CamDistSq * LODScreenSize.w));
+		if ( ScreenRadius < LODScreenSize.x || ScreenRadius >= LODScreenSize.y )
+		{
 			CullInstance(InstanceId);
 			return;
 		}
@@ -188,10 +195,10 @@ void UpdateMeshInstancesCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_Grou
  		PayloadDataFlags,
  		1,
  		0.0f,
-		Transforms.LocalToWorld
+		DFFromTileOffset(Transforms.LocalToWorld)
 	);
 	
 	FInstancePayloadDataOffsets PayloadOffsets = GetInstancePayloadDataOffsets(PrimitiveId, PayloadDataFlags, LocalInstanceId);
-	WriteInstanceDynamicDataWS(PayloadOffsets, PrimitiveId, Transforms.PrevLocalToWorld);
+	WriteInstanceDynamicDataWS(PayloadOffsets, PrimitiveId, DFFromTileOffset(Transforms.PrevLocalToWorld));
 	WriteInstanceCustomData(PayloadOffsets, 0, float4(asfloat(ParticleIndex), 0.0f, 0.0f, 0.0f));
 }

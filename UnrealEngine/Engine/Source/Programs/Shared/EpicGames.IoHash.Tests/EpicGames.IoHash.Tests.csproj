@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
+	<TargetFramework Condition="'$(UE_DOTNET_VERSION)' != ''">$(UE_DOTNET_VERSION)</TargetFramework>
     <Configurations>Debug;Release;Development</Configurations>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

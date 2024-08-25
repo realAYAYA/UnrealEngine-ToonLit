@@ -2,11 +2,14 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
 #include "EngineDefines.h"
 #include "AI/Navigation/NavigationTypes.h"
+#include "AI/Navigation/NavigationDataResolution.h"
 #include "NavigationSystemTypes.h"
 #include "NavigationData.h"
 #include "NavMesh/NavMeshPath.h"
@@ -57,6 +60,7 @@ class dtQueryFilter;
 class FRecastNavMeshGenerator;
 struct dtMeshTile;
 class UNavigationSystemV1;
+class UNavigationSystemBase;
 
 UENUM()
 namespace ERecastPartitioning
@@ -70,6 +74,14 @@ namespace ERecastPartitioning
 		ChunkyMonotone,
 	};
 }
+
+UENUM()
+enum class ENavigationLedgeSlopeFilterMode : uint8
+{
+	Recast,							// Use walkableClimb value to filter
+	None,							// Skip slope filtering
+	UseStepHeightFromAgentMaxSlope	// Use maximum step height computed from AgentMaxSlope
+};
 
 struct FDetourTileSizeInfo
 {
@@ -245,10 +257,10 @@ struct FRecastDebugGeometry
 	TArray<FIntPoint> TilesToDisplayInternalData;
 #endif
 
-	int32 bGatherPolyEdges : 1;
-	int32 bGatherNavMeshEdges : 1;
-	int32 bMarkForbiddenPolys : 1;
-	int32 bGatherTileBuildTimesHeatMap : 1;
+	uint32 bGatherPolyEdges : 1;
+	uint32 bGatherNavMeshEdges : 1;
+	uint32 bMarkForbiddenPolys : 1;
+	uint32 bGatherTileBuildTimesHeatMap : 1;
 
 	double MinTileBuildTime = DBL_MAX;
 	double MaxTileBuildTime = 0.;
@@ -496,6 +508,10 @@ struct FRecastNavMeshTileGenerationDebug
 	UPROPERTY(EditAnywhere, Category = Debug)
 	uint32 bTileCacheLayerRegions : 1;
 
+	/** If set, the contour simplification step will be skipped. Beware that enabling this changes the way navmesh will generate when Tile Generation Debug is enabled. */
+	UPROPERTY(EditAnywhere, Category = Debug)
+	uint32 bSkipContourSimplification : 1;
+	
 	UPROPERTY(EditAnywhere, Category = Debug)
 	uint32 bTileCacheContours : 1;
 
@@ -786,9 +802,20 @@ class ARecastNavMesh : public ANavigationData
 	UPROPERTY(EditAnywhere, Category=Generation, config, meta=(ClampMin = "0.0"))
 	float MergeRegionSize;
 
+	/** Maximum vertical deviation between raw contour points to allowing merging (in voxel).
+	 * Use a low value (2-5) depending on CellHeight, AgentMaxStepHeight and AgentMaxSlope, to allow more precise contours (also see SimplificationElevationRatio).
+	 * Use very high value to deactivate (Recast behavior). */
+	UPROPERTY(EditAnywhere, Category = Generation, config, meta = (ClampMin = "0"))
+	int MaxVerticalMergeError;
+	
 	/** How much navigable shapes can get simplified - the higher the value the more freedom */
 	UPROPERTY(EditAnywhere, Category = Generation, config, meta = (ClampMin = "0.0"))
 	float MaxSimplificationError;
+
+	/** When simplifying contours, how much is the vertical error taken into account when comparing with MaxSimplificationError.
+	 * Use 0 to deactivate (Recast behavior), use 1 as a typical value. */
+	UPROPERTY(EditAnywhere, Category = Generation, config, meta = (ClampMin = "0.0"))
+	float SimplificationElevationRatio;
 
 	/** Sets the limit for number of asynchronous tile generators running at one time, also used for some synchronous tasks */
 	UPROPERTY(EditAnywhere, Category = Generation, config, meta = (ClampMin = "0", UIMin = "0"), AdvancedDisplay)
@@ -818,15 +845,19 @@ class ARecastNavMesh : public ANavigationData
 	UPROPERTY(config)
 	float DefaultDrawDistance;
 
-	/** specifes default limit to A* nodes used when performing navigation queries. 
+	/** specifies default limit to A* nodes used when performing navigation queries. 
 	 *	Can be overridden by passing custom FNavigationQueryFilter */
 	UPROPERTY(config)
 	float DefaultMaxSearchNodes;
 
-	/** specifes default limit to A* nodes used when performing hierarchical navigation queries. */
+	/** specifies default limit to A* nodes used when performing hierarchical navigation queries. */
 	UPROPERTY(config)
 	float DefaultMaxHierarchicalSearchNodes;
 
+	/** filtering methode used for filtering ledge slopes */
+	UPROPERTY(EditAnywhere, Category=Generation, config, AdvancedDisplay)
+	ENavigationLedgeSlopeFilterMode LedgeSlopeFilterMode;
+	
 	/** partitioning method for creating navmesh polys */
 	UPROPERTY(EditAnywhere, Category=Generation, config, AdvancedDisplay)
 	TEnumAsByte<ERecastPartitioning::Type> RegionPartitioning;
@@ -1078,9 +1109,14 @@ public:
 	NAVIGATIONSYSTEM_API virtual void AttachNavMeshDataChunk(URecastNavMeshDataChunk& NavDataChunk);
 	NAVIGATIONSYSTEM_API virtual void DetachNavMeshDataChunk(URecastNavMeshDataChunk& NavDataChunk);
 
+	UE_DEPRECATED(5.4, "Use GetActiveTileSet instead.")
 	NAVIGATIONSYSTEM_API const TArray<FIntPoint>& GetActiveTiles() const;
+	UE_DEPRECATED(5.4, "Use GetActiveTileSet instead.")
 	NAVIGATIONSYSTEM_API TArray<FIntPoint>& GetActiveTiles(); 
 
+	NAVIGATIONSYSTEM_API const TSet<FIntPoint>& GetActiveTileSet() const;
+	NAVIGATIONSYSTEM_API TSet<FIntPoint>& GetActiveTileSet(); 
+	
 	NAVIGATIONSYSTEM_API void LogRecastTile(const TCHAR* Caller, const FName& Prefix, const FName& OperationName, const dtNavMesh& DetourMesh, const int32 TileX, const int32 TileY, const int32 LayerIndex, const uint64 TileRef) const;
 	
 protected:
@@ -1493,6 +1529,15 @@ protected:
 	FPImplRecastNavMesh* GetRecastNavMeshImpl() { return RecastNavMeshImpl; }
 	const FPImplRecastNavMesh* GetRecastNavMeshImpl() const { return RecastNavMeshImpl; }
 
+	struct FUpdateActiveTilesWorkingMem
+	{
+		TSet<FIntPoint> OldActiveSet;
+		TArray<FNavMeshDirtyTileElement> TilesInMinDistance;
+		TSet<FIntPoint> TilesInMaxDistance;
+		TArray<FIntPoint> TileToAppend;
+	};
+	FUpdateActiveTilesWorkingMem UpdateActiveTilesWorkingMem;
+	
 private:
 	/** @return Navmesh data chunk that belongs to this actor */
 	NAVIGATIONSYSTEM_API URecastNavMeshDataChunk* GetNavigationDataChunk(const TArray<UNavigationDataChunk*>& InChunks) const;
@@ -1516,6 +1561,23 @@ private:
 
 private:
 	static NAVIGATIONSYSTEM_API const FRecastQueryFilter* NamedFilters[ERecastNamedFilter::NamedFiltersCount];
+#else
+	virtual bool IsNodeRefValid(NavNodeRef NodeRef) const override { return true; }
+	virtual FBox GetBounds() const override { return FBox(); }
+	virtual void BatchRaycast(TArray<FNavigationRaycastWork>& Workload, FSharedConstNavQueryFilter QueryFilter, const UObject* Querier = nullptr) const override {}
+	virtual bool FindMoveAlongSurface(const FNavLocation& StartLocation, const FVector& TargetPosition, FNavLocation& OutLocation, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override { return false; }
+	virtual bool FindOverlappingEdges(const FNavLocation& StartLocation, TConstArrayView<FVector> ConvexPolygon, TArray<FVector>& OutEdges, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override { return false; }
+	virtual bool GetPathSegmentBoundaryEdges(const FNavigationPath& Path, const FNavPathPoint& StartPoint, const FNavPathPoint& EndPoint, const TConstArrayView<FVector> SearchArea, TArray<FVector>& OutEdges, const float MaxAreaEnterCost, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override { return false; }
+	virtual FNavLocation GetRandomPoint(FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override { return FNavLocation(); }
+	virtual bool GetRandomReachablePointInRadius(const FVector& Origin, float Radius, FNavLocation& OutResult, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override { return false; }
+	virtual bool GetRandomPointInNavigableRadius(const FVector& Origin, float Radius, FNavLocation& OutResult, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override { return false; }
+	virtual bool ProjectPoint(const FVector& Point, FNavLocation& OutLocation, const FVector& Extent, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override { return false; }
+	virtual void BatchProjectPoints(TArray<FNavigationProjectionWork>& Workload, const FVector& Extent, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override {}
+	virtual void BatchProjectPoints(TArray<FNavigationProjectionWork>& Workload, FSharedConstNavQueryFilter Filter = nullptr, const UObject* Querier = nullptr) const override {}
+	virtual ENavigationQueryResult::Type CalcPathCost(const FVector& PathStart, const FVector& PathEnd, FVector::FReal& OutPathCost, FSharedConstNavQueryFilter QueryFilter = nullptr, const UObject* Querier = nullptr) const override { return ENavigationQueryResult::Invalid; }
+	virtual ENavigationQueryResult::Type CalcPathLength(const FVector& PathStart, const FVector& PathEnd, FVector::FReal& OutPathLength, FSharedConstNavQueryFilter QueryFilter = nullptr, const UObject* Querier = nullptr) const override { return ENavigationQueryResult::Invalid; }
+	virtual ENavigationQueryResult::Type CalcPathLengthAndCost(const FVector& PathStart, const FVector& PathEnd, FVector::FReal& OutPathLength, FVector::FReal& OutPathCost, FSharedConstNavQueryFilter QueryFilter = nullptr, const UObject* Querier = nullptr) const override { return ENavigationQueryResult::Invalid; }
+	virtual bool DoesNodeContainLocation(NavNodeRef NodeRef, const FVector& WorldSpaceLocation) const override { return false; }
 #endif // WITH_RECAST
 
 public:

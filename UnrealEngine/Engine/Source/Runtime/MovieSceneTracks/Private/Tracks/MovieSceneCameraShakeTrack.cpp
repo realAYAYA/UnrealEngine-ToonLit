@@ -2,10 +2,6 @@
 
 #include "Tracks/MovieSceneCameraShakeTrack.h"
 #include "Sections/MovieSceneCameraShakeSection.h"
-#include "Evaluation/PersistentEvaluationData.h"
-#include "Evaluation/MovieSceneCameraShakeTemplate.h"
-#include "Evaluation/MovieSceneEvaluationTrack.h"
-#include "Evaluation/MovieSceneEvaluationTemplate.h"
 #include "Compilation/MovieSceneSegmentCompiler.h"
 #include "Compilation/MovieSceneCompilerRules.h"
 #include "MovieScene.h"
@@ -39,15 +35,6 @@ FText UMovieSceneCameraShakeTrack::GetDisplayName() const
 }
 #endif
 
-FMovieSceneEvalTemplatePtr UMovieSceneCameraShakeTrack::CreateTemplateForSection(const UMovieSceneSection& InSection) const
-{
-	const UMovieSceneCameraShakeSection* CameraShakeSection = CastChecked<const UMovieSceneCameraShakeSection>(&InSection);
-	if (*CameraShakeSection->ShakeData.ShakeClass)
-	{
-		return FMovieSceneCameraShakeSectionTemplate(*CameraShakeSection);
-	}
-	return FMovieSceneEvalTemplatePtr();
-}
 
 /* UMovieSceneTrack interface
 *****************************************************************************/

@@ -22,6 +22,8 @@
 #include "DebugProbeRendering.h"
 #include "AnisotropyRendering.h"
 #include "Nanite/NaniteVisualize.h"
+#include "Nanite/NaniteMaterials.h"
+#include "Nanite/NaniteShading.h"
 #include "RenderCore.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "VolumetricFog.h"
@@ -94,10 +96,10 @@ static TAutoConsoleVariable<int32> CVarClearGBufferDBeforeBasePass(
 
 static TAutoConsoleVariable<int32> CVarPSOPrecacheLightMapPolicyMode(
 	TEXT("r.PSOPrecache.LightMapPolicyMode"),
-	0,
+	1,
 	TEXT("Defines which light map policies should be checked during PSO precaching of the base pass.\n") \
-	TEXT(" 0: All possible LMP will be checked (default).\n") \
-	TEXT(" 1: Only LMP_NO_LIGHTMAP will be precached.\n"),
+	TEXT(" 0: All possible LMP will be checked.\n") \
+	TEXT(" 1: Only LMP_NO_LIGHTMAP will be precached (default).\n"),
 	ECVF_ReadOnly
 );
 
@@ -107,6 +109,13 @@ static TAutoConsoleVariable<int32> CVarPSOPrecacheTranslucencyAllPass(
 	TEXT("Precache PSOs for TranslucencyAll pass.\n") \
 	TEXT(" 0: No PSOs are compiled for this pass (default).\n") \
 	TEXT(" 1: PSOs are compiled for all primitives which render to a translucency pass.\n"),
+	ECVF_ReadOnly
+);
+
+static TAutoConsoleVariable<int32> CVarPSOPrecacheAlphaColorChannel(
+	TEXT("r.PSOPrecache.PrecacheAlphaColorChannel"),
+	1,
+	TEXT("Also Precache PSOs with scene color alpha channel enabled. Planar reflections and scene captures use this for compositing into a different scene later."),
 	ECVF_ReadOnly
 );
 
@@ -126,9 +135,9 @@ IMPLEMENT_STATIC_UNIFORM_BUFFER_STRUCT(FTranslucentBasePassUniformParameters, "T
 	typedef TBasePassPS<LightMapPolicyType, bEnableSkyLight, GBufferLayout> TBasePassPS##LightMapPolicyName##SkyLightName##LayoutName; \
 	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>,TBasePassPS##LightMapPolicyName##SkyLightName##LayoutName,TEXT("/Engine/Private/BasePassPixelShader.usf"),TEXT("MainPS"),SF_Pixel);
 
-#define IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,bEnableSkyLight,SkyLightName,GBufferLayout,LayoutName) \
-	typedef TBasePassCS<LightMapPolicyType, bEnableSkyLight, GBufferLayout> TBasePassCS##LightMapPolicyName##SkyLightName##LayoutName; \
-	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>,TBasePassCS##LightMapPolicyName##SkyLightName##LayoutName,TEXT("/Engine/Private/BasePassPixelShader.usf"),TEXT("MainCS"),SF_Compute);
+#define IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,bEnableSkyLight,SkyLightName) \
+	typedef TBasePassCS<LightMapPolicyType, bEnableSkyLight> TBasePassCS##LightMapPolicyName##SkyLightName; \
+	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>,TBasePassCS##LightMapPolicyName##SkyLightName,TEXT("/Engine/Private/BasePassPixelShader.usf"),TEXT("MainCS"),SF_Compute);
 
 // Implement a pixel and compute shader type for skylights and one without, and one vertex shader that will be shared between them
 #define IMPLEMENT_BASEPASS_LIGHTMAPPED_SHADER_TYPE(LightMapPolicyType,LightMapPolicyName) \
@@ -137,10 +146,8 @@ IMPLEMENT_STATIC_UNIFORM_BUFFER_STRUCT(FTranslucentBasePassUniformParameters, "T
 	IMPLEMENT_BASEPASS_PIXELSHADER_TYPE(LightMapPolicyType,LightMapPolicyName,false,,GBL_Default,) \
 	IMPLEMENT_BASEPASS_PIXELSHADER_TYPE(LightMapPolicyType,LightMapPolicyName,true,Skylight,GBL_ForceVelocity,ForceVelocity) \
 	IMPLEMENT_BASEPASS_PIXELSHADER_TYPE(LightMapPolicyType,LightMapPolicyName,false,,GBL_ForceVelocity,ForceVelocity) \
-	IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,true,Skylight,GBL_Default,) \
-	IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,false,,GBL_Default,) \
-	IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,true,Skylight,GBL_ForceVelocity,ForceVelocity) \
-	IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,false,,GBL_ForceVelocity,ForceVelocity)
+	IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,true,Skylight) \
+	IMPLEMENT_BASEPASS_COMPUTESHADER_TYPE(LightMapPolicyType,LightMapPolicyName,false,)
 
 // Implement shader types per lightmap policy
 // If renaming or refactoring these, remember to update FMaterialResource::GetRepresentativeInstructionCounts and FPreviewMaterial::ShouldCache().
@@ -222,7 +229,7 @@ template<uint32 StencilRef> void SetTranslucentPassDepthStencilState(FMeshPassPr
 
 void SetTranslucentRenderState(FMeshPassProcessorRenderState& DrawRenderState, const FMaterial& Material, const EShaderPlatform Platform, ETranslucencyPass::Type InTranslucencyPassType)
 {
-	if (Material.IsStrataMaterial())
+	if (Material.IsSubstrateMaterial())
 	{
 		if (Material.IsDualBlendingEnabled(Platform))
 		{
@@ -324,7 +331,7 @@ void SetTranslucentRenderState(FMeshPassProcessorRenderState& DrawRenderState, c
 			// Masked materials are rendered together in the base pass, where the blend state is set at a higher level
 			break;
 		case BLEND_Translucent:
-		case BLEND_TranslucentColoredTransmittance:	// When Strata is disabled, this falls back to simple Translucency.
+		case BLEND_TranslucentColoredTransmittance:	// When Substrate is disabled, this falls back to simple Translucency.
 			// Note: alpha channel used by separate translucency, storing how much of the background should be added when doing the final composite
 			// The Alpha channel is also used by non-separate translucency when rendering to scene captures, which store the final opacity
 			DrawRenderState.SetBlendState(TStaticBlendState<CW_RGBA, BO_Add, BF_SourceAlpha, BF_InverseSourceAlpha, BO_Add, BF_Zero, BF_InverseSourceAlpha>::GetRHI());
@@ -428,10 +435,10 @@ void SetDepthStencilStateForBasePass_Internal(FMeshPassProcessorRenderState& InD
 template<bool bDepthTest, ECompareFunction CompareFunction>
 void SetDepthStencilStateForBasePass_Internal(FMeshPassProcessorRenderState& InDrawRenderState, ERHIFeatureLevel::Type FeatureLevel)
 {	
-	const static bool bStrataDufferPassEnabled = Strata::IsStrataEnabled() && Strata::IsDBufferPassEnabled(GShaderPlatformForFeatureLevel[FeatureLevel]);
-	if (bStrataDufferPassEnabled)
+	const static bool bSubstrateDufferPassEnabled = Substrate::IsSubstrateEnabled() && Substrate::IsDBufferPassEnabled(GShaderPlatformForFeatureLevel[FeatureLevel]);
+	if (bSubstrateDufferPassEnabled)
 	{
-		SetDepthStencilStateForBasePass_Internal<bDepthTest, CompareFunction, GET_STENCIL_BIT_MASK(STRATA_RECEIVE_DBUFFER_NORMAL, 1) | GET_STENCIL_BIT_MASK(STRATA_RECEIVE_DBUFFER_DIFFUSE, 1) | GET_STENCIL_BIT_MASK(STRATA_RECEIVE_DBUFFER_ROUGHNESS, 1) | GET_STENCIL_BIT_MASK(DISTANCE_FIELD_REPRESENTATION, 1) | STENCIL_LIGHTING_CHANNELS_MASK(0x7)>(InDrawRenderState);
+		SetDepthStencilStateForBasePass_Internal<bDepthTest, CompareFunction, GET_STENCIL_BIT_MASK(SUBSTRATE_RECEIVE_DBUFFER_NORMAL, 1) | GET_STENCIL_BIT_MASK(SUBSTRATE_RECEIVE_DBUFFER_DIFFUSE, 1) | GET_STENCIL_BIT_MASK(SUBSTRATE_RECEIVE_DBUFFER_ROUGHNESS, 1) | GET_STENCIL_BIT_MASK(DISTANCE_FIELD_REPRESENTATION, 1) | STENCIL_LIGHTING_CHANNELS_MASK(0x7)>(InDrawRenderState);
 	}
 	else
 	{
@@ -510,21 +517,31 @@ void SetupBasePassState(FExclusiveDepthStencil::Type BasePassDepthStencilAccess,
 }
 
 template <ELightMapPolicyType Policy, EGBufferLayout GBufferLayout>
-void AddUniformBasePassPixelShader(bool bEnableSkyLight, bool bUse128bitRT, FMaterialShaderTypes& OutShaderTypes)
+void AddUniformBasePassPixelShader(bool bEnableSkyLight, bool bUse128bitRT, FMaterialShaderTypes& OutShaderTypes, bool bIsForOITPass = false)
 {
+	int32 PermutationId = 0;
+
+	if (bIsForOITPass)
+	{
+		using FMyShader = TBasePassPS<TUniformLightMapPolicy<Policy>, true, GBufferLayout>;
+		typename FMyShader::FPermutationDomain PermutationVector;
+		PermutationVector.template Set<typename FMyShader::FSupportOITDim>(true);
+		PermutationId = PermutationVector.ToDimensionValueId();
+	}
+
 	if (bEnableSkyLight)
 	{
-		OutShaderTypes.AddShaderType<TBasePassPS<TUniformLightMapPolicy<Policy>, true, GBufferLayout>>();
+		OutShaderTypes.AddShaderType<TBasePassPS<TUniformLightMapPolicy<Policy>, true, GBufferLayout>>(PermutationId);
 	}
 	else
 	{
 		if (bUse128bitRT && (Policy == LMP_NO_LIGHTMAP) && (GBufferLayout == GBL_Default))
 		{
-			OutShaderTypes.AddShaderType<F128BitRTBasePassPS>();
+			OutShaderTypes.AddShaderType<F128BitRTBasePassPS>(PermutationId);
 		}
 		else
 		{
-			OutShaderTypes.AddShaderType<TBasePassPS<TUniformLightMapPolicy<Policy>, false, GBufferLayout>>();
+			OutShaderTypes.AddShaderType<TBasePassPS<TUniformLightMapPolicy<Policy>, false, GBufferLayout>>(PermutationId);
 		}
 	}
 }
@@ -542,7 +559,8 @@ bool GetUniformBasePassShaders(
 	bool bUse128bitRT,
 	EGBufferLayout GBufferLayout,
 	TShaderRef<TBasePassVertexShaderPolicyParamType<FUniformLightMapPolicy>>* VertexShader,
-	TShaderRef<TBasePassPixelShaderPolicyParamType<FUniformLightMapPolicy>>* PixelShader
+	TShaderRef<TBasePassPixelShaderPolicyParamType<FUniformLightMapPolicy>>* PixelShader,
+	bool bIsForOITPass = false
 )
 {
 	FMaterialShaderTypes ShaderTypes;
@@ -556,10 +574,10 @@ bool GetUniformBasePassShaders(
 		switch (GBufferLayout)
 		{
 		case GBL_Default:
-			AddUniformBasePassPixelShader<Policy, GBL_Default>(bEnableSkyLight, bUse128bitRT, ShaderTypes);
+			AddUniformBasePassPixelShader<Policy, GBL_Default>(bEnableSkyLight, bUse128bitRT, ShaderTypes, bIsForOITPass);
 			break;
 		case GBL_ForceVelocity:
-			AddUniformBasePassPixelShader<Policy, GBL_ForceVelocity>(bEnableSkyLight, bUse128bitRT, ShaderTypes);
+			AddUniformBasePassPixelShader<Policy, GBL_ForceVelocity>(bEnableSkyLight, bUse128bitRT, ShaderTypes, bIsForOITPass);
 			break;
 		default:
 			check(false);
@@ -588,51 +606,51 @@ bool GetBasePassShaders<FUniformLightMapPolicy>(
     bool bUse128bitRT,
 	EGBufferLayout GBufferLayout,
 	TShaderRef<TBasePassVertexShaderPolicyParamType<FUniformLightMapPolicy>>* VertexShader,
-	TShaderRef<TBasePassPixelShaderPolicyParamType<FUniformLightMapPolicy>>* PixelShader
+	TShaderRef<TBasePassPixelShaderPolicyParamType<FUniformLightMapPolicy>>* PixelShader,
+	bool bIsForOITPass
 	)
 {
 	switch (LightMapPolicy.GetIndirectPolicy())
 	{
 	case LMP_PRECOMPUTED_IRRADIANCE_VOLUME_INDIRECT_LIGHTING:
-		return GetUniformBasePassShaders<LMP_PRECOMPUTED_IRRADIANCE_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader);
+		return GetUniformBasePassShaders<LMP_PRECOMPUTED_IRRADIANCE_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader, bIsForOITPass);
 	case LMP_CACHED_VOLUME_INDIRECT_LIGHTING:
-		return GetUniformBasePassShaders<LMP_CACHED_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader);
+		return GetUniformBasePassShaders<LMP_CACHED_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader, bIsForOITPass);
 	case LMP_CACHED_POINT_INDIRECT_LIGHTING:
-		return GetUniformBasePassShaders<LMP_CACHED_POINT_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader);
+		return GetUniformBasePassShaders<LMP_CACHED_POINT_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader, bIsForOITPass);
 	case LMP_LQ_LIGHTMAP:
-		return GetUniformBasePassShaders<LMP_LQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader);
+		return GetUniformBasePassShaders<LMP_LQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader, bIsForOITPass);
 	case LMP_HQ_LIGHTMAP:
-		return GetUniformBasePassShaders<LMP_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader);
+		return GetUniformBasePassShaders<LMP_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader, bIsForOITPass);
 	case LMP_DISTANCE_FIELD_SHADOWS_AND_HQ_LIGHTMAP:
-		return GetUniformBasePassShaders<LMP_DISTANCE_FIELD_SHADOWS_AND_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader);
+		return GetUniformBasePassShaders<LMP_DISTANCE_FIELD_SHADOWS_AND_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader, bIsForOITPass);
 	case LMP_NO_LIGHTMAP:
-		return GetUniformBasePassShaders<LMP_NO_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader);
+		return GetUniformBasePassShaders<LMP_NO_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, bUse128bitRT, GBufferLayout, VertexShader, PixelShader, bIsForOITPass);
 	default:
 		check(false);
 		return false;
 	}
 }
 
-template <ELightMapPolicyType Policy, EGBufferLayout GBufferLayout>
+template <ELightMapPolicyType Policy>
 void AddUniformBasePassComputeShader(bool bEnableSkyLight, FMaterialShaderTypes& OutShaderTypes)
 {
 	if (bEnableSkyLight)
 	{
-		OutShaderTypes.AddShaderType<TBasePassCS<TUniformLightMapPolicy<Policy>, true, GBufferLayout>>();
+		OutShaderTypes.AddShaderType<TBasePassCS<TUniformLightMapPolicy<Policy>, true>>();
 	}
 	else
 	{
-		OutShaderTypes.AddShaderType<TBasePassCS<TUniformLightMapPolicy<Policy>, false, GBufferLayout>>();
+		OutShaderTypes.AddShaderType<TBasePassCS<TUniformLightMapPolicy<Policy>, false>>();
 	}
 }
 
 template <ELightMapPolicyType Policy>
 bool GetUniformBasePassShader(
 	const FMaterial& Material,
-	FVertexFactoryType* VertexFactoryType, 
+	const FVertexFactoryType* VertexFactoryType,
 	ERHIFeatureLevel::Type FeatureLevel,
 	bool bEnableSkyLight,
-	EGBufferLayout GBufferLayout,
 	TShaderRef<TBasePassComputeShaderPolicyParamType<FUniformLightMapPolicy>>* ComputeShader
 )
 {
@@ -640,18 +658,7 @@ bool GetUniformBasePassShader(
 
 	if (ComputeShader)
 	{
-		switch (GBufferLayout)
-		{
-		case GBL_Default:
-			AddUniformBasePassComputeShader<Policy, GBL_Default>(bEnableSkyLight, ShaderTypes);
-			break;
-		case GBL_ForceVelocity:
-			AddUniformBasePassComputeShader<Policy, GBL_ForceVelocity>(bEnableSkyLight, ShaderTypes);
-			break;
-		default:
-			check(false);
-			break;
-		}
+		AddUniformBasePassComputeShader<Policy>(bEnableSkyLight, ShaderTypes);
 	}
 
 	FMaterialShaders Shaders;
@@ -667,43 +674,52 @@ bool GetUniformBasePassShader(
 template <>
 bool GetBasePassShader<FUniformLightMapPolicy>(
 	const FMaterial& Material, 
-	FVertexFactoryType* VertexFactoryType, 
-	FUniformLightMapPolicy LightMapPolicy, 
+	const FVertexFactoryType* VertexFactoryType,
+	FUniformLightMapPolicy LightMapPolicy,
 	ERHIFeatureLevel::Type FeatureLevel,
 	bool bEnableSkyLight,
-	EGBufferLayout GBufferLayout,
 	TShaderRef<TBasePassComputeShaderPolicyParamType<FUniformLightMapPolicy>>* ComputeShader
 	)
 {
 	switch (LightMapPolicy.GetIndirectPolicy())
 	{
 	case LMP_PRECOMPUTED_IRRADIANCE_VOLUME_INDIRECT_LIGHTING:
-		return GetUniformBasePassShader<LMP_PRECOMPUTED_IRRADIANCE_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, GBufferLayout, ComputeShader);
+		return GetUniformBasePassShader<LMP_PRECOMPUTED_IRRADIANCE_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, ComputeShader);
 	case LMP_CACHED_VOLUME_INDIRECT_LIGHTING:
-		return GetUniformBasePassShader<LMP_CACHED_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, GBufferLayout, ComputeShader);
+		return GetUniformBasePassShader<LMP_CACHED_VOLUME_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, ComputeShader);
 	case LMP_CACHED_POINT_INDIRECT_LIGHTING:
-		return GetUniformBasePassShader<LMP_CACHED_POINT_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, GBufferLayout, ComputeShader);
+		return GetUniformBasePassShader<LMP_CACHED_POINT_INDIRECT_LIGHTING>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, ComputeShader);
 	case LMP_LQ_LIGHTMAP:
-		return GetUniformBasePassShader<LMP_LQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, GBufferLayout, ComputeShader);
+		return GetUniformBasePassShader<LMP_LQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, ComputeShader);
 	case LMP_HQ_LIGHTMAP:
-		return GetUniformBasePassShader<LMP_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, GBufferLayout, ComputeShader);
+		return GetUniformBasePassShader<LMP_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, ComputeShader);
 	case LMP_DISTANCE_FIELD_SHADOWS_AND_HQ_LIGHTMAP:
-		return GetUniformBasePassShader<LMP_DISTANCE_FIELD_SHADOWS_AND_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, GBufferLayout, ComputeShader);
+		return GetUniformBasePassShader<LMP_DISTANCE_FIELD_SHADOWS_AND_HQ_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, ComputeShader);
 	case LMP_NO_LIGHTMAP:
-		return GetUniformBasePassShader<LMP_NO_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, GBufferLayout, ComputeShader);
+		return GetUniformBasePassShader<LMP_NO_LIGHTMAP>(Material, VertexFactoryType, FeatureLevel, bEnableSkyLight, ComputeShader);
 	default:
 		check(false);
 		return false;
 	}
 }
 
+extern void SetupDummyForwardLightUniformParameters(FRDGBuilder& GraphBuilder, FForwardLightData& ForwardLightData, EShaderPlatform ShaderPlatform);
+
 void SetupSharedBasePassParameters(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
+	const int32 ViewIndex,
 	bool bLumenGIEnabled,
 	FSharedBasePassUniformParameters& SharedParameters)
 {
-	SharedParameters.Forward = *View.ForwardLightingResources.ForwardLightData;
+	if (View.ForwardLightingResources.ForwardLightData)
+	{
+		SharedParameters.Forward = *View.ForwardLightingResources.ForwardLightData;
+	}
+	else
+	{
+		SetupDummyForwardLightUniformParameters(GraphBuilder, SharedParameters.Forward, View.GetShaderPlatform());
+	}
 
 	SetupFogUniformParameters(GraphBuilder, View, SharedParameters.Fog);
 
@@ -715,9 +731,20 @@ void SetupSharedBasePassParameters(
 	}
 	else
 	{
-		SharedParameters.ForwardISR = *View.ForwardLightingResources.ForwardLightData;
+		if (View.ForwardLightingResources.ForwardLightData)
+		{
+			SharedParameters.ForwardISR = *View.ForwardLightingResources.ForwardLightData;
+		}
+		else
+		{
+			SharedParameters.ForwardISR = SharedParameters.Forward;
+		}
 		SharedParameters.FogISR = SharedParameters.Fog;
 	}
+
+	SharedParameters.LFV = View.LocalFogVolumeViewData.UniformParametersStruct;
+
+	SharedParameters.LightFunctionAtlas = *LightFunctionAtlas::GetGlobalParametersStruct(GraphBuilder, View);
 
 	const FScene* Scene = View.Family->Scene ? View.Family->Scene->GetRenderScene() : nullptr;
 	const FPlanarReflectionSceneProxy* ReflectionSceneProxy = Scene ? Scene->GetForwardPassGlobalPlanarReflection() : nullptr;
@@ -739,7 +766,7 @@ TRDGUniformBufferRef<FOpaqueBasePassUniformParameters> CreateOpaqueBasePassUnifo
 	bool bLumenGIEnabled)
 {
 	FOpaqueBasePassUniformParameters& BasePassParameters = *GraphBuilder.AllocParameters<FOpaqueBasePassUniformParameters>();
-	SetupSharedBasePassParameters(GraphBuilder, View, bLumenGIEnabled, BasePassParameters.Shared);
+	SetupSharedBasePassParameters(GraphBuilder, View, ViewIndex, bLumenGIEnabled, BasePassParameters.Shared);
 
 	const FRDGSystemTextures& SystemTextures = FRDGSystemTextures::Get(GraphBuilder);
 
@@ -771,8 +798,8 @@ TRDGUniformBufferRef<FOpaqueBasePassUniformParameters> CreateOpaqueBasePassUnifo
 	// DBuffer Decals
 	BasePassParameters.DBuffer = GetDBufferParameters(GraphBuilder, DBufferTextures, View.GetShaderPlatform());
 
-	// Strata
-	Strata::BindStrataBasePassUniformParameters(GraphBuilder, View, BasePassParameters.Strata);
+	// Substrate
+	Substrate::BindSubstrateBasePassUniformParameters(GraphBuilder, View, BasePassParameters.Substrate);
 
 	// Misc
 	BasePassParameters.PreIntegratedGFTexture = GSystemTextures.PreintegratedGF->GetRHI();
@@ -903,15 +930,15 @@ void ModifyBasePassCSPSCompilationEnvironment(const FMeshMaterialShaderPermutati
 		OutEnvironment.SetDefine(TEXT("VIRTUAL_SHADOW_MAP"), 1);
 	}
 
-	OutEnvironment.SetDefine(TEXT("STRATA_INLINE_SHADING"), 1);
-	Strata::SetBasePassRenderTargetOutputFormat(Parameters.Platform, Parameters.MaterialParameters, OutEnvironment, GBufferLayout);
+	OutEnvironment.SetDefine(TEXT("SUBSTRATE_INLINE_SHADING"), 1);
+	Substrate::SetBasePassRenderTargetOutputFormat(Parameters.Platform, Parameters.MaterialParameters, OutEnvironment, GBufferLayout);
 
 	const bool bOutputVelocity = (GBufferLayout == GBL_ForceVelocity) ||
 		FVelocityRendering::BasePassCanOutputVelocity(Parameters.Platform);
 	if (bOutputVelocity)
 	{
-		// As defined in BasePassPixelShader.usf. Also account for Strata setting velocity in slot 1 as described in FetchLegacyGBufferInfo.
-		const int32 VelocityIndex = Strata::IsStrataEnabled() ? 1 : (IsForwardShadingEnabled(Parameters.Platform) ? 1 : 4);
+		// As defined in BasePassPixelShader.usf. Also account for Substrate setting velocity in slot 1 as described in FetchLegacyGBufferInfo.
+		const int32 VelocityIndex = Substrate::IsSubstrateEnabled() ? 1 : (IsForwardShadingEnabled(Parameters.Platform) ? 1 : 4);
 		OutEnvironment.SetRenderTargetOutputFormat(VelocityIndex, PF_G16R16);
 	}
 
@@ -920,8 +947,7 @@ void ModifyBasePassCSPSCompilationEnvironment(const FMeshMaterialShaderPermutati
 	{
 		// See FShaderCompileUtilities::FetchGBufferParamsRuntime for the details
 		const bool bHasTangent = false;
-		static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		bool bHasPrecShadowFactor = (CVar ? (CVar->GetValueOnAnyThread() != 0) : 1);
+		bool bHasPrecShadowFactor = IsStaticLightingAllowed();
 
 		uint32 TargetSeparatedMainDirLight = 5;
 		if (bOutputVelocity == false && bHasTangent == false)
@@ -949,17 +975,19 @@ void ModifyBasePassCSPSCompilationEnvironment(const FMeshMaterialShaderPermutati
 			}
 		}
 		OutEnvironment.SetRenderTargetOutputFormat(TargetSeparatedMainDirLight, PF_FloatR11G11B10);
-	}	
+	}
 }
 
 void FDeferredShadingSceneRenderer::RenderBasePass(
 	FRDGBuilder& GraphBuilder,
+	TArrayView<FViewInfo> InViews,
 	FSceneTextures& SceneTextures,
 	const FDBufferTextures& DBufferTextures,
 	FExclusiveDepthStencil::Type BasePassDepthStencilAccess,
 	FRDGTextureRef ForwardShadowMaskTexture,
 	FInstanceCullingManager& InstanceCullingManager,
 	bool bNaniteEnabled,
+	FNaniteShadingCommands& NaniteBasePassShadingCommands,
 	const TArrayView<Nanite::FRasterResults>& NaniteRasterResults)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FDeferredShadingSceneRenderer::RenderBasePass);
@@ -1006,7 +1034,7 @@ void FDeferredShadingSceneRenderer::RenderBasePass(
 		bRequiresFarZQuadClear = false;
 	}
 
-	const bool bIsWireframeRenderpass = ViewFamily.EngineShowFlags.Wireframe && FSceneRenderer::ShouldCompositeEditorPrimitives(Views[0]);
+	const bool bIsWireframeRenderpass = ViewFamily.EngineShowFlags.Wireframe && FSceneRenderer::ShouldCompositeEditorPrimitives(InViews[0]);
 	const bool bDebugViewMode = ViewFamily.UseDebugViewPS();
 	const bool bRenderLightmapDensity = ViewFamily.EngineShowFlags.LightMapDensity && AllowDebugViewmodes();
 	const bool bRenderSkyAtmosphereEditorNotifications = ShouldRenderSkyAtmosphereEditorNotifications();
@@ -1027,7 +1055,7 @@ void FDeferredShadingSceneRenderer::RenderBasePass(
 
 	TStaticArray<FTextureRenderTargetBinding, MaxSimultaneousRenderTargets> BasePassTextures;
 	uint32 BasePassTextureCount = SceneTextures.GetGBufferRenderTargets(BasePassTextures);
-	Strata::AppendStrataMRTs(*this, BasePassTextureCount, BasePassTextures);
+	Substrate::AppendSubstrateMRTs(*this, BasePassTextureCount, BasePassTextures);
 	TArrayView<FTextureRenderTargetBinding> BasePassTexturesView = MakeArrayView(BasePassTextures.GetData(), BasePassTextureCount);
 	FRDGTextureRef BasePassDepthTexture = SceneTextures.Depth.Target;
 	FLinearColor SceneColorClearValue;
@@ -1045,7 +1073,7 @@ void FDeferredShadingSceneRenderer::RenderBasePass(
 		}
 		else
 		{
-			SceneColorClearValue = FLinearColor(Views[0].BackgroundColor.R, Views[0].BackgroundColor.G, Views[0].BackgroundColor.B, kSceneColorClearAlpha);
+			SceneColorClearValue = FLinearColor(InViews[0].BackgroundColor.R, InViews[0].BackgroundColor.G, InViews[0].BackgroundColor.B, kSceneColorClearAlpha);
 		}
 
 		ERenderTargetLoadAction ColorLoadAction = ERenderTargetLoadAction::ELoad;
@@ -1139,12 +1167,12 @@ void FDeferredShadingSceneRenderer::RenderBasePass(
 	ForwardBasePassTextures.bIs24BitUnormDepthStencil = ForwardBasePassTextures.SceneDepthIfResolved ? GPixelFormats[ForwardBasePassTextures.SceneDepthIfResolved->Desc.Format].bIs24BitUnormDepthStencil : 1;
 
 	GraphBuilder.SetCommandListStat(GET_STATID(STAT_CLM_BasePass));
-	RenderBasePassInternal(GraphBuilder, SceneTextures, BasePassRenderTargets, BasePassDepthStencilAccess, ForwardBasePassTextures, DBufferTextures, bDoParallelBasePass, bRenderLightmapDensity, InstanceCullingManager, bNaniteEnabled, NaniteRasterResults);
+	RenderBasePassInternal(GraphBuilder, InViews, SceneTextures, BasePassRenderTargets, BasePassDepthStencilAccess, ForwardBasePassTextures, DBufferTextures, bDoParallelBasePass, bRenderLightmapDensity, InstanceCullingManager, bNaniteEnabled, NaniteBasePassShadingCommands, NaniteRasterResults);
 	GraphBuilder.SetCommandListStat(GET_STATID(STAT_CLM_AfterBasePass));
 
 	for (const TSharedRef<ISceneViewExtension>& ViewExtension : ViewFamily.ViewExtensions)
 	{
-		for (FViewInfo& View : Views)
+		for (FViewInfo& View : InViews)
 		{
 			ViewExtension->PostRenderBasePassDeferred_RenderThread(GraphBuilder, View, BasePassRenderTargets, SceneTextures.UniformBuffer);
 		}
@@ -1152,10 +1180,10 @@ void FDeferredShadingSceneRenderer::RenderBasePass(
 
 	if (bRequiresFarZQuadClear)
 	{
-		ClearGBufferAtMaxZ(GraphBuilder, Views, BasePassRenderTargets, SceneColorClearValue);
+		ClearGBufferAtMaxZ(GraphBuilder, InViews, BasePassRenderTargets, SceneColorClearValue);
 	}
 
-	if (ShouldRenderAnisotropyPass(Views))
+	if (ShouldRenderAnisotropyPass(InViews))
 	{
 		GraphBuilder.SetCommandListStat(GET_STATID(STAT_CLM_AnisotropyPass));
 		RenderAnisotropyPass(GraphBuilder, SceneTextures, bEnableParallelBasePasses);
@@ -1165,7 +1193,7 @@ void FDeferredShadingSceneRenderer::RenderBasePass(
 #if !(UE_BUILD_SHIPPING)
 	if (!bForwardShadingEnabled)
 	{
-		StampDeferredDebugProbeMaterialPS(GraphBuilder, Views, BasePassRenderTargets, SceneTextures);
+		StampDeferredDebugProbeMaterialPS(GraphBuilder, InViews, BasePassRenderTargets, SceneTextures);
 	}
 #endif
 }
@@ -1298,6 +1326,7 @@ static void RenderEditorPrimitives(
 
 void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 	FRDGBuilder& GraphBuilder,
+	TArrayView<FViewInfo> InViews,
 	const FSceneTextures& SceneTextures,
 	const FRenderTargetBindingSlots& BasePassRenderTargets,
 	FExclusiveDepthStencil::Type BasePassDepthStencilAccess,
@@ -1307,6 +1336,7 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 	bool bRenderLightmapDensity,
 	FInstanceCullingManager& InstanceCullingManager,
 	bool bNaniteEnabled,
+	FNaniteShadingCommands& NaniteBasePassShadingCommands,
 	const TArrayView<Nanite::FRasterResults>& NaniteRasterResults)
 {
 	RDG_CSV_STAT_EXCLUSIVE_SCOPE(GraphBuilder, RenderBasePass);
@@ -1321,6 +1351,10 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 	else if (bRenderLightmapDensity)
 	{
 		NaniteDebugViewMode = Nanite::EDebugViewMode::LightmapDensity;
+	}
+	else if (ViewFamily.EngineShowFlags.ActorColoration)
+	{
+		NaniteDebugViewMode = Nanite::EDebugViewMode::PrimitiveColor;
 	}
 	else if (ViewFamily.UseDebugViewPS())
 	{
@@ -1372,17 +1406,36 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 		{
 			RDG_GPU_STAT_SCOPE(GraphBuilder, NaniteBasePass);
 
-			Nanite::DrawBasePass(
-				GraphBuilder,
-				View.NaniteMaterialPassCommands,
-				*this,
-				SceneTextures,
-				BasePassRenderTargets,
-				DBufferTextures,
-				*Scene,
-				View,
-				RasterResults
-			);
+			if (UseNaniteComputeMaterials())
+			{
+				Nanite::DispatchBasePass(
+					GraphBuilder,
+					NaniteBasePassShadingCommands,
+					*this,
+					SceneTextures,
+					BasePassRenderTargets,
+					DBufferTextures,
+					*Scene,
+					View,
+					uint32(ViewIndex),
+					RasterResults
+				);
+			}
+			else
+			{
+				checkf(NaniteLegacyMaterialsSupported(), TEXT("Must have either compute or legacy materials enabled in Nanite!"));
+				Nanite::DrawBasePass(
+					GraphBuilder,
+					View.NaniteMaterialPassCommands,
+					*this,
+					SceneTextures,
+					BasePassRenderTargets,
+					DBufferTextures,
+					*Scene,
+					View,
+					RasterResults
+				);
+			}
 		}
 	};
 
@@ -1394,11 +1447,11 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 			// Should always have a full Z prepass with Nanite
 			check(ShouldRenderPrePass());
 
-			for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+			for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ++ViewIndex)
 			{
-				FViewInfo& View = Views[ViewIndex];
+				FViewInfo& View = InViews[ViewIndex];
 				RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
-				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1, "View%d", ViewIndex);
+				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, InViews.Num() > 1, "View%d", ViewIndex);
 
 				RenderNaniteBasePass(View, ViewIndex);
 			}
@@ -1407,12 +1460,12 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 		if (bRenderLightmapDensity)
 		{
 			// Override the base pass with the lightmap density pass if the viewmode is enabled.
-			RenderLightMapDensities(GraphBuilder, Views, BasePassRenderTargets);
+			RenderLightMapDensities(GraphBuilder, InViews, BasePassRenderTargets);
 		}
 		else if (ViewFamily.UseDebugViewPS())
 		{
 			// Override the base pass with one of the debug view shader mode (see EDebugViewShaderMode) if required.
-			RenderDebugViewMode(GraphBuilder, Views, SceneTextures.QuadOverdraw, BasePassRenderTargets);
+			RenderDebugViewMode(GraphBuilder, InViews, SceneTextures.QuadOverdraw, BasePassRenderTargets);
 		}
 	}
 	else
@@ -1421,16 +1474,16 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 		RDG_EVENT_SCOPE(GraphBuilder, "BasePass");
 		RDG_GPU_STAT_SCOPE(GraphBuilder, Basepass);
 
-		const bool bDrawSceneViewsInOneNanitePass = Views.Num() > 1 && Nanite::ShouldDrawSceneViewsInOneNanitePass(Views[0]);
+		const bool bDrawSceneViewsInOneNanitePass = InViews.Num() > 1 && Nanite::ShouldDrawSceneViewsInOneNanitePass(InViews[0]);
 		if (bParallelBasePass)
 		{
 			RDG_WAIT_FOR_TASKS_CONDITIONAL(GraphBuilder, IsBasePassWaitForTasksEnabled());
 
-			for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+			for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ++ViewIndex)
 			{
-				FViewInfo& View = Views[ViewIndex];
+				FViewInfo& View = InViews[ViewIndex];
 				RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
-				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1, "View%d", ViewIndex);
+				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, InViews.Num() > 1, "View%d", ViewIndex);
 				View.BeginRenderView();
 
 				const bool bLumenGIEnabled = GetViewPipelineState(View).DiffuseIndirectMethod == EDiffuseIndirectMethod::Lumen;
@@ -1461,7 +1514,9 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 					});
 				}
 
-				const bool bShouldRenderViewForNanite = bNaniteEnabled && (!bDrawSceneViewsInOneNanitePass || ViewIndex == 0); // when bDrawSceneViewsInOneNanitePass, the first view should cover all the other atlased ones
+				const bool bShouldRenderViewForNanite = bNaniteEnabled
+					&& !View.bHasNoVisiblePrimitive
+					&& (!bDrawSceneViewsInOneNanitePass || ViewIndex == 0); // when bDrawSceneViewsInOneNanitePass, the first view should cover all the other atlased ones
 				if (bShouldRenderViewForNanite)
 				{
 					// Should always have a full Z prepass with Nanite
@@ -1496,11 +1551,11 @@ void FDeferredShadingSceneRenderer::RenderBasePassInternal(
 		}
 		else
 		{
-			for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+			for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ++ViewIndex)
 			{
-				FViewInfo& View = Views[ViewIndex];
+				FViewInfo& View = InViews[ViewIndex];
 				RDG_GPU_MASK_SCOPE(GraphBuilder, View.GPUMask);
-				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Views.Num() > 1, "View%d", ViewIndex);
+				RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, InViews.Num() > 1, "View%d", ViewIndex);
 				View.BeginRenderView();
 
 				const bool bLumenGIEnabled = GetViewPipelineState(View).DiffuseIndirectMethod == EDiffuseIndirectMethod::Lumen;
@@ -1573,6 +1628,7 @@ template<typename LightMapPolicyType>
 void FBasePassMeshProcessor::CollectPSOInitializersForLMPolicy(
 	const FSceneTexturesConfig& SceneTexturesConfig,
 	const FPSOPrecacheVertexFactoryData& VertexFactoryData,
+	const FPSOPrecacheParams& PreCacheParams,
 	const FMaterial& RESTRICT MaterialResource,
 	FMaterialShadingModelField ShadingModels,
 	const bool bRenderSkylight,
@@ -1596,7 +1652,8 @@ void FBasePassMeshProcessor::CollectPSOInitializersForLMPolicy(
 		Get128BitRequirement(),
 		GBL_Default, // Currently only Nanite supports non-default layout
 		&BasePassShaders.VertexShader,
-		&BasePassShaders.PixelShader
+		&BasePassShaders.PixelShader,
+		bOITBasePass
 		))
 	{
 		return;
@@ -1637,17 +1694,10 @@ void FBasePassMeshProcessor::CollectPSOInitializersForLMPolicy(
 		const bool bDepthTest = TranslucencyPassType != ETranslucencyPass::TPT_TranslucencyAfterMotionBlur;
 		const bool bRenderInSeparateTranslucency = IsSeparateTranslucencyEnabled(TranslucencyPassType, SeparateTranslucencyDimensions.Scale);
 
-		if (bRenderInSeparateTranslucency)
-		{
-			const FRDGTextureDesc TextureDesc = GetPostDOFTranslucentTextureDesc(TranslucencyPassType, SeparateTranslucencyDimensions, bIsModulate, ShaderPlatform);
-			AddRenderTargetInfo(TextureDesc.Format, TextureDesc.Flags, RenderTargetsInfo);
-		}
-		else
-		{
-			EPixelFormat SceneColorFormat = SceneTexturesConfig.ColorFormat;
-			ETextureCreateFlags SceneColorCreateFlags = SceneTexturesConfig.ColorCreateFlags;
-			AddRenderTargetInfo(SceneColorFormat, SceneColorCreateFlags, RenderTargetsInfo);
-		}
+		// Always create PSO without separate translucency (could be used when under water for all translucent passes)
+		EPixelFormat SceneColorFormat = SceneTexturesConfig.ColorFormat;
+		ETextureCreateFlags SceneColorCreateFlags = SceneTexturesConfig.ColorCreateFlags;
+		AddRenderTargetInfo(SceneColorFormat, SceneColorCreateFlags, RenderTargetsInfo);
 
 		if (bDepthTest)
 		{
@@ -1655,25 +1705,69 @@ void FBasePassMeshProcessor::CollectPSOInitializersForLMPolicy(
 			SetupDepthStencilInfo(PF_DepthStencil, DepthStencilCreateFlags, ERenderTargetLoadAction::ELoad,
 				ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthRead_StencilWrite, RenderTargetsInfo);
 		}
+
+		AddGraphicsPipelineStateInitializer(
+			VertexFactoryData,
+			MaterialResource,
+			DrawRenderState,
+			RenderTargetsInfo,
+			BasePassShaders,
+			MeshFillMode,
+			MeshCullMode,
+			PrimitiveType,
+			EMeshPassFeatures::Default,
+			true /*bRequired*/,
+			PSOInitializers);
+
+		// Add another PSO when render in separate translucency because render target format could have changed
+		if (bRenderInSeparateTranslucency)
+		{
+			const FRDGTextureDesc TextureDesc = GetPostDOFTranslucentTextureDesc(TranslucencyPassType, SeparateTranslucencyDimensions, bIsModulate, ShaderPlatform);
+			RenderTargetsInfo.RenderTargetFormats[0] = TextureDesc.Format;
+			RenderTargetsInfo.RenderTargetFlags[0] = TextureDesc.Flags;
+
+			AddGraphicsPipelineStateInitializer(
+				VertexFactoryData,
+				MaterialResource,
+				DrawRenderState,
+				RenderTargetsInfo,
+				BasePassShaders,
+				MeshFillMode,
+				MeshCullMode,
+				PrimitiveType,
+				EMeshPassFeatures::Default,
+				true /*bRequired*/,
+				PSOInitializers);
+		}
 	}
 	else
 	{
-		// Regular base pass with gbuffer bindings
-		SetupGBufferRenderTargetInfo(SceneTexturesConfig, RenderTargetsInfo, true /*bSetupDepthStencil*/);
-	}
-		
-	AddGraphicsPipelineStateInitializer(
-		VertexFactoryData,
-		MaterialResource,
-		DrawRenderState,
-		RenderTargetsInfo,
-		BasePassShaders,
-		MeshFillMode,
-		MeshCullMode,
-		PrimitiveType,
-		EMeshPassFeatures::Default,
-		true /*bRequired*/,
-		PSOInitializers);
+		if (PreCacheParams.bCanvasMaterial)
+		{
+			DrawRenderState.SetDepthStencilState(TStaticDepthStencilState<false, CF_Always>::GetRHI());
+			SetTranslucentRenderState(DrawRenderState, MaterialResource, GShaderPlatformForFeatureLevel[FeatureLevel], ETranslucencyPass::TPT_AllTranslucency);
+			AddRenderTargetInfo(PreCacheParams.GetBassPixelFormat() != PF_Unknown ? PreCacheParams.GetBassPixelFormat() : PF_B8G8R8A8, TexCreate_RenderTargetable | TexCreate_ShaderResource, RenderTargetsInfo);
+		}
+		else
+		{
+			// Regular base pass with gbuffer bindings
+			SetupGBufferRenderTargetInfo(SceneTexturesConfig, RenderTargetsInfo, true /*bSetupDepthStencil*/);
+		}
+
+		AddBasePassGraphicsPipelineStateInitializer(
+			FeatureLevel,
+			VertexFactoryData,
+			MaterialResource,
+			DrawRenderState,
+			RenderTargetsInfo,
+			BasePassShaders,
+			MeshFillMode,
+			MeshCullMode,
+			PrimitiveType,
+			true /*bPrecacheAlphaColorChannel*/,
+			PSOCollectorIndex,
+			PSOInitializers);
+	}	
 }
 
 template<typename LightMapPolicyType>
@@ -1709,7 +1803,8 @@ bool FBasePassMeshProcessor::Process(
 		Get128BitRequirement(),
 		GBL_Default, // Currently only Nanite uses non-default layout
 		&BasePassShaders.VertexShader,
-		&BasePassShaders.PixelShader
+		&BasePassShaders.PixelShader,
+		bOITBasePass
 		))
 	{
 		return false;
@@ -1742,27 +1837,27 @@ bool FBasePassMeshProcessor::Process(
 	
 	if (bEnableReceiveDecalOutput)
 	{
-		static const bool bStrataDufferPassEnabled = Strata::IsStrataEnabled() && Strata::IsDBufferPassEnabled(GShaderPlatformForFeatureLevel[FeatureLevel]);
+		static const bool bSubstrateDufferPassEnabled = Substrate::IsSubstrateEnabled() && Substrate::IsDBufferPassEnabled(GShaderPlatformForFeatureLevel[FeatureLevel]);
 
 		// Set stencil value for this draw call
 		// This is effectively extending the GBuffer using the stencil bits
 		uint8 StencilValue = 0;
-		if (bStrataDufferPassEnabled)
+		if (bSubstrateDufferPassEnabled)
 		{
-			// Set material's decal responsness through stencil bit. This is only used when Strata DBuffer pass is enabled.
-			// This 'stencil marking' allows Strata's DBuffer pass to blend decal appropriately. It is only used for Simple 
+			// Set material's decal responsness through stencil bit. This is only used when Substrate DBuffer pass is enabled.
+			// This 'stencil marking' allows Substrate's DBuffer pass to blend decal appropriately. It is only used for Simple 
 			// and Single materials, as other materials (Complex, ...) get decal applied during the base pass.
-			const uint8 StrataMaterialType	= MaterialResource.MaterialGetStrataMaterialType_RenderThread();
+			const uint8 SubstrateMaterialType	= MaterialResource.MaterialGetSubstrateMaterialType_RenderThread();
 			const uint32 DecalResponse		= MaterialResource.GetMaterialDecalResponse();
-			const bool bSupportDBufferPass	= StrataMaterialType == 0 || StrataMaterialType == 1; // Simple or single
+			const bool bSupportDBufferPass	= SubstrateMaterialType == SUBSTRATE_MATERIAL_TYPE_SIMPLE || SubstrateMaterialType == SUBSTRATE_MATERIAL_TYPE_SINGLE;
 			const bool bRoughnessResponse	= bSupportDBufferPass && (DecalResponse == MDR_ColorNormalRoughness || DecalResponse == MDR_ColorRoughness	|| DecalResponse == MDR_NormalRoughness || DecalResponse == MDR_Roughness);
 			const bool bColorResponse		= bSupportDBufferPass && (DecalResponse == MDR_ColorNormalRoughness || DecalResponse == MDR_ColorNormal		|| DecalResponse == MDR_ColorRoughness	|| DecalResponse == MDR_Color);
 			const bool bNormalResponse		= bSupportDBufferPass && (DecalResponse == MDR_ColorNormalRoughness || DecalResponse == MDR_ColorNormal		|| DecalResponse == MDR_NormalRoughness || DecalResponse == MDR_Normal);
 
 			StencilValue =
-			  GET_STENCIL_BIT_MASK(STRATA_RECEIVE_DBUFFER_NORMAL, bNormalResponse ? 0x1 : 0x0)
-			| GET_STENCIL_BIT_MASK(STRATA_RECEIVE_DBUFFER_DIFFUSE, bColorResponse ? 0x1 : 0x0)
-			| GET_STENCIL_BIT_MASK(STRATA_RECEIVE_DBUFFER_ROUGHNESS, bRoughnessResponse ? 0x1 : 0x0)
+			  GET_STENCIL_BIT_MASK(SUBSTRATE_RECEIVE_DBUFFER_NORMAL, bNormalResponse ? 0x1 : 0x0)
+			| GET_STENCIL_BIT_MASK(SUBSTRATE_RECEIVE_DBUFFER_DIFFUSE, bColorResponse ? 0x1 : 0x0)
+			| GET_STENCIL_BIT_MASK(SUBSTRATE_RECEIVE_DBUFFER_ROUGHNESS, bRoughnessResponse ? 0x1 : 0x0)
 			| GET_STENCIL_BIT_MASK(DISTANCE_FIELD_REPRESENTATION, PrimitiveSceneProxy ? PrimitiveSceneProxy->HasDistanceFieldRepresentation() : 0x00)
 			| STENCIL_LIGHTING_CHANNELS_MASK(PrimitiveSceneProxy ? PrimitiveSceneProxy->GetLightingChannelStencilValue() : 0x00);
 		}
@@ -1832,12 +1927,6 @@ void FBasePassMeshProcessor::AddMeshBatch(const FMeshBatch& RESTRICT MeshBatch, 
 			MaterialRenderProxy = MaterialRenderProxy->GetFallback(FeatureLevel);
 		}
 	}
-}
-
-bool AllowStaticLighting()
-{
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	return (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnAnyThread() != 0);
 }
 
 bool FBasePassMeshProcessor::ShouldDraw(const FMaterial& Material)
@@ -1965,7 +2054,7 @@ bool FBasePassMeshProcessor::TryAddMeshBatch(const FMeshBatch& RESTRICT MeshBatc
 	{
 		// Check for a cached light-map.
 		const bool bIsLitMaterial = ShadingModels.IsLit();
-		const bool bAllowStaticLighting = AllowStaticLighting();
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 		const FLightMapInteraction LightMapInteraction = (bAllowStaticLighting && MeshBatch.LCI && bIsLitMaterial)
 			? MeshBatch.LCI->GetLightMapInteraction(FeatureLevel)
@@ -2054,7 +2143,7 @@ bool FBasePassMeshProcessor::TryAddMeshBatch(const FMeshBatch& RESTRICT MeshBatc
 		}
 		else
 		{
-			ELightMapPolicyType UniformLightMapPolicyType = GetUniformLightMapPolicyType(FeatureLevel, Scene, MeshBatch, PrimitiveSceneProxy, Material);
+			ELightMapPolicyType UniformLightMapPolicyType = GetUniformLightMapPolicyType(FeatureLevel, Scene, MeshBatch.LCI, PrimitiveSceneProxy, Material);
 			bResult = Process< FUniformLightMapPolicy >(
 				MeshBatch,
 				BatchElementMask,
@@ -2075,16 +2164,16 @@ bool FBasePassMeshProcessor::TryAddMeshBatch(const FMeshBatch& RESTRICT MeshBatc
 	return bResult;
 }
 
-ELightMapPolicyType FBasePassMeshProcessor::GetUniformLightMapPolicyType(ERHIFeatureLevel::Type FeatureLevel, const FScene* Scene, const FMeshBatch& RESTRICT MeshBatch, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, const FMaterial& Material)
+ELightMapPolicyType FBasePassMeshProcessor::GetUniformLightMapPolicyType(ERHIFeatureLevel::Type FeatureLevel, const FScene* Scene, const FLightCacheInterface* LCI, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, const FMaterial& Material)
 {
 	// Check for a cached light-map.
 	const bool bIsTranslucent = IsTranslucentBlendMode(Material);
 	const FMaterialShadingModelField ShadingModels = Material.GetShadingModels();
 	const bool bIsLitMaterial = ShadingModels.IsLit();
-	const bool bAllowStaticLighting = AllowStaticLighting();
+	const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
-	const FLightMapInteraction LightMapInteraction = (bAllowStaticLighting && MeshBatch.LCI && bIsLitMaterial)
-		? MeshBatch.LCI->GetLightMapInteraction(FeatureLevel)
+	const FLightMapInteraction LightMapInteraction = (bAllowStaticLighting && LCI && bIsLitMaterial)
+		? LCI->GetLightMapInteraction(FeatureLevel)
 		: FLightMapInteraction();
 
 	// force LQ lightmaps based on system settings
@@ -2103,8 +2192,8 @@ ELightMapPolicyType FBasePassMeshProcessor::GetUniformLightMapPolicyType(ERHIFea
 	case LMIT_Texture:
 		if (bAllowHighQualityLightMaps)
 		{
-			const FShadowMapInteraction ShadowMapInteraction = (bAllowStaticLighting && MeshBatch.LCI && bIsLitMaterial)
-				? MeshBatch.LCI->GetShadowMapInteraction(FeatureLevel)
+			const FShadowMapInteraction ShadowMapInteraction = (bAllowStaticLighting && LCI && bIsLitMaterial)
+				? LCI->GetShadowMapInteraction(FeatureLevel)
 				: FShadowMapInteraction();
 
 			if (ShadowMapInteraction.GetType() == SMIT_Texture)
@@ -2192,7 +2281,7 @@ TArray<ELightMapPolicyType, TInlineAllocator<2>> FBasePassMeshProcessor::GetUnif
 
 	const bool bIsTranslucent = IsTranslucentBlendMode(Material);
 	const bool bIsLitMaterial = ShadingModels.IsLit();
-	const bool bAllowStaticLighting = AllowStaticLighting();
+	const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 	const bool bPlatformAllowsHighQualityLightMaps = AllowHighQualityLightmaps(FeatureLevel);
 	static const auto CVarSupportLowQualityLightmap = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.SupportLowQualityLightmaps"));
@@ -2265,6 +2354,7 @@ void FBasePassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig& 
 	bool bShouldDraw = ShouldDraw(Material)
 		&& ShouldIncludeDomainInMeshPass(Material.GetMaterialDomain())
 		&& ShouldIncludeMaterialInDefaultOpaquePass(Material);
+	bShouldDraw = bShouldDraw || (PreCacheParams.bCanvasMaterial && MeshPassType == EMeshPass::BasePass);
 	if (!bShouldDraw || !PreCacheParams.bRenderInMainPass)
 	{
 		return;
@@ -2286,15 +2376,16 @@ void FBasePassMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig& 
 
 	{
 		bool bRenderSkyLight = true; // generate for both skylight enabled/disabled? Or can this be known already at this point?
-		CollectPSOInitializersForSkyLight(SceneTexturesConfig, VertexFactoryData, Material, bRenderSkyLight, bDitheredLODTransition, MeshFillMode, MeshCullMode, (EPrimitiveType)PreCacheParams.PrimitiveType, PSOInitializers);
+		CollectPSOInitializersForSkyLight(SceneTexturesConfig, VertexFactoryData, PreCacheParams, Material, bRenderSkyLight, bDitheredLODTransition, MeshFillMode, MeshCullMode, (EPrimitiveType)PreCacheParams.PrimitiveType, PSOInitializers);
 		bRenderSkyLight = false;
-		CollectPSOInitializersForSkyLight(SceneTexturesConfig, VertexFactoryData, Material, bRenderSkyLight, bDitheredLODTransition, MeshFillMode, MeshCullMode, (EPrimitiveType)PreCacheParams.PrimitiveType, PSOInitializers);
+		CollectPSOInitializersForSkyLight(SceneTexturesConfig, VertexFactoryData, PreCacheParams, Material, bRenderSkyLight, bDitheredLODTransition, MeshFillMode, MeshCullMode, (EPrimitiveType)PreCacheParams.PrimitiveType, PSOInitializers);
 	}
 }
 
 void FBasePassMeshProcessor::CollectPSOInitializersForSkyLight(
 	const FSceneTexturesConfig& SceneTexturesConfig,
 	const FPSOPrecacheVertexFactoryData& VertexFactoryData,
+	const FPSOPrecacheParams& PreCacheParams,
 	const FMaterial& RESTRICT Material,
 	const bool bRenderSkyLight,
 	const bool bDitheredLODTransition,
@@ -2313,7 +2404,7 @@ void FBasePassMeshProcessor::CollectPSOInitializersForSkyLight(
 
 	if (!bNoLightMapOnlyMode && bIsLitMaterial && bIsTranslucent)
 	{
-		const bool bAllowStaticLighting = AllowStaticLighting();
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 		// Retrieve those values or have as global precache params (if not known then we have to assume they can be used for now)
 		const bool bAllowIndirectLightingCache = true;// Scene&& Scene->PrecomputedLightVolumes.Num() > 0;
@@ -2322,19 +2413,19 @@ void FBasePassMeshProcessor::CollectPSOInitializersForSkyLight(
 		if (bAllowStaticLighting && bUseVolumetricLightmap)
 		{
 			CollectPSOInitializersForLMPolicy< FSelfShadowedVolumetricLightmapPolicy >(
-				SceneTexturesConfig, VertexFactoryData, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
+				SceneTexturesConfig, VertexFactoryData, PreCacheParams, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
 				FSelfShadowedVolumetricLightmapPolicy(), MeshFillMode, MeshCullMode, PrimitiveType, PSOInitializers);
 		}
 
 		if (IsIndirectLightingCacheAllowed(FeatureLevel) && bAllowIndirectLightingCache)
 		{
 			CollectPSOInitializersForLMPolicy< FSelfShadowedCachedPointIndirectLightingPolicy >(
-				SceneTexturesConfig, VertexFactoryData, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
+				SceneTexturesConfig, VertexFactoryData, PreCacheParams, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
 				FSelfShadowedCachedPointIndirectLightingPolicy(), MeshFillMode, MeshCullMode, PrimitiveType, PSOInitializers);
 		}
 
 		CollectPSOInitializersForLMPolicy< FSelfShadowedTranslucencyPolicy >(
-			SceneTexturesConfig, VertexFactoryData, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
+			SceneTexturesConfig, VertexFactoryData, PreCacheParams, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
 			FSelfShadowedTranslucencyPolicy(), MeshFillMode, MeshCullMode, PrimitiveType, PSOInitializers);
 	}
 
@@ -2342,7 +2433,7 @@ void FBasePassMeshProcessor::CollectPSOInitializersForSkyLight(
 	for (ELightMapPolicyType LightMapPolicyType : UniformLightMapPolicyTypes)
 	{
 		CollectPSOInitializersForLMPolicy< FUniformLightMapPolicy >(
-			SceneTexturesConfig, VertexFactoryData, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
+			SceneTexturesConfig, VertexFactoryData, PreCacheParams, Material, ShadingModels, bRenderSkyLight, bDitheredLODTransition,
 			FUniformLightMapPolicy(LightMapPolicyType), MeshFillMode, MeshCullMode, PrimitiveType, PSOInitializers);
 	}
 }
@@ -2360,6 +2451,7 @@ FBasePassMeshProcessor::FBasePassMeshProcessor(
 	, PassDrawRenderState(InDrawRenderState)
 	, TranslucencyPassType(InTranslucencyPassType)
 	, bTranslucentBasePass(InTranslucencyPassType != ETranslucencyPass::TPT_MAX)
+	, bOITBasePass(InTranslucencyPassType != ETranslucencyPass::TPT_MAX && OIT::IsSortedPixelsEnabled(GetFeatureLevelShaderPlatform(InFeatureLevel)))
 	, bEnableReceiveDecalOutput((Flags & EFlags::CanUseDepthStencil) == EFlags::CanUseDepthStencil)
 	, EarlyZPassMode(Scene ? Scene->EarlyZPassMode : DDM_None)
 	, bRequiresExplicit128bitRT((Flags & EFlags::bRequires128bitRT) == EFlags::bRequires128bitRT)

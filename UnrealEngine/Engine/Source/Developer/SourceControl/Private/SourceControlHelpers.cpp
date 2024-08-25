@@ -915,7 +915,7 @@ bool USourceControlHelpers::ApplyOperationAndReloadPackages(const TArray<FString
 
 	TArray<FString> PackageNames;
 	TArray<FString> PackageFilenames;
-	TArray<FString> FilteredActorPackages;
+	TArray<FString> FilteredPackages;
 	TArray<FString> NotFoundPackages;
 	/** 
 	 * This is necessary to cover an edge case where the user reverts a deleted Level file.
@@ -957,42 +957,45 @@ bool USourceControlHelpers::ApplyOperationAndReloadPackages(const TArray<FString
 		}
 	}
 
-	// If bReloadWorld=false, remove packages if they are loaded actors or world
+	// If bReloadWorld=false, remove packages if they are loaded external packages or world
 	// If bReloadWorld=true, include world packages to reload
 	TSet<UPackage*> UniqueLoadedPackages;
-	PackageNames.RemoveAll([&FilteredActorPackages, &UniqueLoadedPackages, &NotFoundPackages, bReloadWorld, &DetachLinker](const FString& PackageName) -> bool
+	PackageNames.RemoveAll([&FilteredPackages, &UniqueLoadedPackages, &NotFoundPackages, bReloadWorld, &DetachLinker](const FString& PackageName) -> bool
 	{
 		UPackage* Package = FindPackage(NULL, *PackageName);
 		
 		if (Package != nullptr)
 		{
-			if (UWorld* World = UWorld::FindWorldInPackage(Package); World)
+			if (UWorld* World = UWorld::FindWorldInPackage(Package))
 			{
 				if (!bReloadWorld)
 				{
-					FilteredActorPackages.Emplace(PackageName);
+					FilteredPackages.Emplace(PackageName);
 					return true; // remove the package
 				}
 			}
-			else if (AActor* Actor = AActor::FindActorInPackage(Package))
+			else if (UObject* Asset = Package->FindAssetInPackage())
 			{
-				if (bReloadWorld)
+				if (Asset->IsPackageExternal())
 				{
-					// detach linker on the actor
-					DetachLinker(Package);
-
-					// but track its world for reloading - not the actor package itself
-					if (Actor->GetWorld() && Actor->GetWorld()->GetPackage())
+					if (bReloadWorld)
 					{
-						UniqueLoadedPackages.Add(Actor->GetWorld()->GetPackage());
-					}
+						// detach linker on the object
+						DetachLinker(Package);
 
-					return false;
-				}
-				else if (Actor->IsPackageExternal())
-				{
-					FilteredActorPackages.Emplace(PackageName);
-					return true; // remove the package
+						// but track its world for reloading - not the object package itself
+						if (Asset->GetWorld() && Asset->GetWorld()->GetPackage())
+						{
+							UniqueLoadedPackages.Add(Asset->GetWorld()->GetPackage());
+						}
+
+						return false;
+					}
+					else
+					{
+						FilteredPackages.Emplace(PackageName);
+						return true; // remove the package
+					}
 				}
 			}
 
@@ -1006,10 +1009,10 @@ bool USourceControlHelpers::ApplyOperationAndReloadPackages(const TArray<FString
 		return false; // do not remove the package
 	});
 
-	if (!FilteredActorPackages.IsEmpty())
+	if (!FilteredPackages.IsEmpty())
 	{
 		TStringBuilder<2048> Builder;
-		Builder.Join(FilteredActorPackages, TEXT(", "));
+		Builder.Join(FilteredPackages, TEXT(", "));
 		const FString Packages = Builder.ToString();
 
 		UE_LOG(LogSourceControl, Warning, TEXT("This operation could not complete on the following map or external packages, please unload them before retrying : %s"), *Packages);
@@ -1020,24 +1023,32 @@ bool USourceControlHelpers::ApplyOperationAndReloadPackages(const TArray<FString
 	if (!NotFoundPackages.IsEmpty() && bReloadWorld)
 	{
 		const FString& ExternalActorsFolderName = FPackagePath::GetExternalActorsFolderName();
+		const FString& ExternalObjectsFolderName = FPackagePath::GetExternalObjectsFolderName();
 
-		// Gather the ExternalActorPaths in which we're reintroducing packages...
+		TArray<FString> ExternalFolderNames;
+		ExternalFolderNames.Add(ExternalActorsFolderName);
+		ExternalFolderNames.Add(ExternalObjectsFolderName);
+
+		// Gather the ExternalPaths in which we're reintroducing packages...
 		TSet<FString> NotFoundExternalPaths;
-		for (const FString& PackageName : NotFoundPackages)
+		for (const FString& ExternalFolderName : ExternalFolderNames)
 		{
-			int32 Index = PackageName.Find(ExternalActorsFolderName);
-			if (Index != INDEX_NONE)
+			for (const FString& PackageName : NotFoundPackages)
 			{
-				// Format: /<MountPoint>/__ExternalActors__/<Level>/0/AB/CDEFGHIJKLMNOPQRSTUVWX
-				// Result: /<MountPoint>/__ExternalActors__/<Level>
-
-				Index += ExternalActorsFolderName.Len();
-				Index += 1;
-
-				Index = PackageName.Find("/", ESearchCase::IgnoreCase, ESearchDir::FromStart, Index);
+				int32 Index = PackageName.Find(ExternalFolderName);
 				if (Index != INDEX_NONE)
 				{
-					NotFoundExternalPaths.Add(PackageName.Left(Index));
+					// Format: /<MountPoint>/__External<xxxxx>__/<Level>/0/AB/CDEFGHIJKLMNOPQRSTUVWX
+					// Result: /<MountPoint>/__External<xxxxx>__/<Level>
+
+					Index += ExternalFolderName.Len();
+					Index += 1;
+
+					Index = PackageName.Find("/", ESearchCase::IgnoreCase, ESearchDir::FromStart, Index);
+					if (Index != INDEX_NONE)
+					{
+						NotFoundExternalPaths.Add(PackageName.Left(Index));
+					}
 				}
 			}
 		}
@@ -1052,6 +1063,17 @@ bool USourceControlHelpers::ApplyOperationAndReloadPackages(const TArray<FString
 				if (NotFoundExternalPaths.Contains(ExternalActorPath))
 				{
 					UniqueLoadedPackages.Add(Level->GetWorld()->GetPackage());
+				}
+			}
+			if (Level->IsUsingExternalObjects())
+			{
+				const TArray<FString> ExternalObjectPaths = ULevel::GetExternalObjectsPaths(Level->GetPackage()->GetName());
+				for (const FString& ExternalObjectPath : ExternalObjectPaths)
+				{
+					if (NotFoundExternalPaths.Contains(ExternalObjectPath))
+					{
+						UniqueLoadedPackages.Add(Level->GetWorld()->GetPackage());
+					}
 				}
 			}
 		}
@@ -1082,40 +1104,92 @@ bool USourceControlHelpers::ApplyOperationAndReloadPackages(const TArray<FString
 
 	// Reverting may have deleted some packages, so we need to delete those and unload them rather than re-load them...
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	TArray<UObject*> ObjectsToDelete;
+	TArray<TWeakObjectPtr<UObject>> ObjectsMissingOnDisk;
 	LoadedPackages.RemoveAll([&](UPackage* InPackage) -> bool
-	{
-		const FString PackageExtension = InPackage->ContainsMap() ? FPackageName::GetMapPackageExtension() : FPackageName::GetAssetPackageExtension();
-		const FString PackageFilename = FPackageName::LongPackageNameToFilename(InPackage->GetName(), PackageExtension);
-		if (!FPaths::FileExists(PackageFilename))
 		{
-			TArray<FAssetData> Assets;
-			AssetRegistryModule.Get().GetAssetsByPackageName(*InPackage->GetName(), Assets);
-
-			for (const FAssetData& Asset : Assets)
+			const FString PackageExtension = InPackage->ContainsMap() ? FPackageName::GetMapPackageExtension() : FPackageName::GetAssetPackageExtension();
+			const FString PackageFilename = FPackageName::LongPackageNameToFilename(InPackage->GetName(), PackageExtension);
+			if (!FPaths::FileExists(PackageFilename))
 			{
-				if (UObject* ObjectToDelete = Asset.FastGetAsset())
+				TArray<FAssetData> Assets;
+				AssetRegistryModule.Get().GetAssetsByPackageName(*InPackage->GetName(), Assets);
+
+				for (const FAssetData& Asset : Assets)
 				{
-					ObjectsToDelete.Add(ObjectToDelete);
+					if (UObject* ObjectToDelete = Asset.FastGetAsset())
+					{
+						ObjectsMissingOnDisk.Add(ObjectToDelete);
+					}
 				}
+				return true; // remove package
 			}
-			return true; // remove package
-		}
-		return false; // keep package
-	});
+			return false; // keep package
+		});
 
 	// Hot-reload the new packages...
-	FText OutReloadErrorMsg;
-	UPackageTools::ReloadPackages(LoadedPackages, OutReloadErrorMsg, bInteractive ? EReloadPackagesInteractionMode::Interactive : EReloadPackagesInteractionMode::AssumePositive);
-	if (!OutReloadErrorMsg.IsEmpty())
+	if (LoadedPackages.Num() > 0)
 	{
-		UE_LOG(LogSourceControl, Warning, TEXT("%s"), *OutReloadErrorMsg.ToString());
+		// Split into world and non-world packages and reload them separately.
+		TArray<UPackage*> LoadedWorldPackages;
+		TArray<UPackage*> LoadedNonWorldPackages;
+		LoadedWorldPackages.Reserve(LoadedPackages.Num());
+		LoadedNonWorldPackages.Reserve(LoadedPackages.Num());
+
+		for (UPackage* Package : LoadedPackages)
+		{
+			if (UWorld::FindWorldInPackage(Package))
+			{
+				LoadedWorldPackages.Add(Package);
+			}
+			else
+			{
+				LoadedNonWorldPackages.Add(Package);
+			}
+		}
+
+		// Reload non world package(s).
+		if (LoadedNonWorldPackages.Num() > 0)
+		{
+			FText OutReloadErrorMsg;
+			UPackageTools::ReloadPackages(LoadedNonWorldPackages, OutReloadErrorMsg, bInteractive ? EReloadPackagesInteractionMode::Interactive : EReloadPackagesInteractionMode::AssumePositive);
+			if (!OutReloadErrorMsg.IsEmpty())
+			{
+				UE_LOG(LogSourceControl, Warning, TEXT("%s"), *OutReloadErrorMsg.ToString());
+			}
+		}
+
+		// Reload world package(s).
+		if (LoadedWorldPackages.Num() > 0)
+		{
+			FText OutReloadErrorMsg;
+			UPackageTools::ReloadPackages(LoadedWorldPackages, OutReloadErrorMsg, bInteractive ? EReloadPackagesInteractionMode::Interactive : EReloadPackagesInteractionMode::AssumePositive);
+			if (!OutReloadErrorMsg.IsEmpty())
+			{
+				UE_LOG(LogSourceControl, Warning, TEXT("%s"), *OutReloadErrorMsg.ToString());
+			}
+		}
+	}
+
+	// A world reload might have already deleted some objects, so check which missing ones are still valid.
+	TArray<UObject*> ObjectsToDelete;
+	if (ObjectsMissingOnDisk.Num() > 0)
+	{
+		for (TWeakObjectPtr<UObject> Object : ObjectsMissingOnDisk)
+		{
+			if (UObject* ObjectToDelete = Object.Get())
+			{
+				ObjectsToDelete.Add(ObjectToDelete);
+			}
+		}
 	}
 
 	// Delete and Unload assets...
-	if (ObjectTools::DeleteObjectsUnchecked(ObjectsToDelete) != ObjectsToDelete.Num())
-	{ 
-		UE_LOG(LogSourceControl, Warning, TEXT("Failed to unload some assets."));
+	if (ObjectsToDelete.Num() > 0)
+	{
+		if (ObjectTools::DeleteObjectsUnchecked(ObjectsToDelete) != ObjectsToDelete.Num())
+		{
+			UE_LOG(LogSourceControl, Warning, TEXT("Failed to unload some assets."));
+		}
 	}
 	
 	// Re-cache the SCC state...
@@ -1187,7 +1261,7 @@ bool USourceControlHelpers::ListRevertablePackages(TArray<FString>& OutRevertabl
 		return false;
 	}
 
-	// Get a list of all the revertable packages	
+	// Get a list of all the revertable packages
 	TMap<FString, FSourceControlStatePtr> PackageStates;
 	FEditorFileUtils::FindAllSubmittablePackageFiles(PackageStates, true);
 
@@ -1201,19 +1275,23 @@ bool USourceControlHelpers::ListRevertablePackages(TArray<FString>& OutRevertabl
 		{
 			const FString& Filename = State->GetFilename();
 
-			FString PackageName;
-			FString FailureReason;
-			if (!FPackageName::TryConvertFilenameToLongPackageName(Filename, PackageName, &FailureReason))
+			if (FPackageName::IsPackageFilename(Filename))
 			{
-				UE_LOG(LogSourceControl, Warning, TEXT("%s"), *FailureReason);
-				return false;
+				FString PackageName;
+				FString FailureReason;
+				if (!FPackageName::TryConvertFilenameToLongPackageName(Filename, PackageName, &FailureReason))
+				{
+					UE_LOG(LogSourceControl, Warning, TEXT("%s"), *FailureReason);
+					return false;
+				}
+
+				if (State->IsDeleted() && !PackageNames.Contains(PackageName))
+				{
+					FileNamesToPackageNames.Add(Filename, PackageName);
+					return true;
+				}
 			}
 
-			if (State->IsDeleted() && !PackageNames.Contains(PackageName))
-			{
-				FileNamesToPackageNames.Add(Filename, PackageName);
-				return true;
-			}
 			return false;
 		}
 	);
@@ -1242,9 +1320,7 @@ bool USourceControlHelpers::RevertAllChangesAndReloadWorld()
 	TArray<FString> PackagesToReload;
 	ListRevertablePackages(PackagesToReload);
 
-	RevertAndReloadPackages(PackagesToReload, /*bRevertAll=*/true, /*bReloadWorld=*/true);
-
-	return true;
+	return RevertAndReloadPackages(PackagesToReload, /*bRevertAll=*/true, /*bReloadWorld=*/true);
 }
 
 bool USourceControlHelpers::RevertAndReloadPackages(const TArray<FString>& InPackagesToRevert, bool bRevertAll, bool bReloadWorld)

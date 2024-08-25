@@ -10,6 +10,25 @@
 #include "Misc/CommandLine.h"
 #include "Misc/CoreDelegates.h"
 
+#if !UE_BUILD_SHIPPING
+#include "HAL/IConsoleManager.h"
+#endif
+
+#if !UE_BUILD_SHIPPING
+TAutoConsoleVariable<bool> CVarHttpInsecureProtocolEnabled(
+	TEXT("Http.InsecureProtocolEnabled"),
+	false,
+	TEXT("Enable insecure http protocol")
+);
+#endif
+
+TAutoConsoleVariable<int32> CVarHttpEventLoopEnableChance(
+	TEXT("http.CurlEventLoopEnableChance"),
+	UE_HTTP_EVENT_LOOP_ENABLE_CHANCE_BY_DEFAULT,
+	TEXT("Enable chance of event loop, from 0 to 100"),
+	ECVF_SaveForNextBoot
+);
+
 DEFINE_LOG_CATEGORY(LogHttp);
 
 // FHttpModule
@@ -32,8 +51,10 @@ static bool ShouldLaunchUrl(const TCHAR* Url)
 
 void FHttpModule::UpdateConfigs()
 {
-	GConfig->GetFloat(TEXT("HTTP"), TEXT("HttpTimeout"), HttpTimeout, GEngineIni);
+	GConfig->GetFloat(TEXT("HTTP"), TEXT("HttpTimeout"), HttpActivityTimeout, GEngineIni);
+	GConfig->GetFloat(TEXT("HTTP"), TEXT("HttpTotalTimeout"), HttpTotalTimeout, GEngineIni);
 	GConfig->GetFloat(TEXT("HTTP"), TEXT("HttpConnectionTimeout"), HttpConnectionTimeout, GEngineIni);
+	GConfig->GetFloat(TEXT("HTTP"), TEXT("HttpActivityTimeout"), HttpActivityTimeout, GEngineIni);
 	GConfig->GetFloat(TEXT("HTTP"), TEXT("HttpReceiveTimeout"), HttpReceiveTimeout, GEngineIni);
 	GConfig->GetFloat(TEXT("HTTP"), TEXT("HttpSendTimeout"), HttpSendTimeout, GEngineIni);
 	GConfig->GetInt(TEXT("HTTP"), TEXT("HttpMaxConnectionsPerServer"), HttpMaxConnectionsPerServer, GEngineIni);
@@ -65,8 +86,9 @@ void FHttpModule::StartupModule()
 	Singleton = this;
 
 	MaxReadBufferSize = 256 * 1024;
-	HttpTimeout = 300.0f;
-	HttpConnectionTimeout = -1;
+	HttpTotalTimeout = 0.0f;
+	HttpConnectionTimeout = 30.0f;
+	HttpActivityTimeout = 30.0f;
 	HttpReceiveTimeout = HttpConnectionTimeout;
 	HttpSendTimeout = HttpConnectionTimeout;
 	HttpMaxConnectionsPerServer = 16;

@@ -165,12 +165,12 @@ struct FChangelistTreeItem : public IChangelistTreeItem
 
 	int32 GetFileCount() const
 	{
-		return ChangelistState->GetFilesStates().Num();
+		return ChangelistState->GetFilesStatesNum();
 	}
 
 	int32 GetShelvedFileCount() const
 	{
-		return ChangelistState->GetShelvedFilesStates().Num();
+		return ChangelistState->GetShelvedFilesStatesNum();
 	}
 
 	TSharedRef<ISourceControlChangelistState> ChangelistState;
@@ -377,15 +377,23 @@ private:
 namespace SSourceControlCommon
 {
 	TSharedRef<SWidget> GetSCCFileWidget(FSourceControlStateRef InFileState, bool bIsShelvedFile = false);
+	TSharedRef<SWidget> GetSCCFileWidget();
 	FText GetDefaultAssetName();
 	FText GetDefaultAssetType();
 	FText GetDefaultUnknownAssetType();
 	FText GetDefaultMultipleAsset();
 
+	enum ESingleLineFlags
+	{
+		NewlineTerminates		=0x0,
+		NewlineConvertToSpace	=0x1,
+		Mask_NewlineBehavior	=0x1,
+	};
+	ENUM_CLASS_FLAGS(ESingleLineFlags);
 	/**
 	 * returns the first non-whitespace line, or an empty FText if InFullDescription is empty or only whitespace
 	 */
-	FText GetSingleLineChangelistDescription(const FText& InFullDescription);
+	FText GetSingleLineChangelistDescription(const FText& InFullDescription, ESingleLineFlags Flags = ESingleLineFlags::NewlineTerminates);
 
 	void ExecuteChangelistOperationWithSlowTaskWrapper(const FText& Message, const TFunction<void()>& ChangelistTask);
 	void ExecuteUncontrolledChangelistOperationWithSlowTaskWrapper(const FText& Message, const TFunction<void()>& UncontrolledChangelistTask);
@@ -403,12 +411,19 @@ struct FSCCFileDragDropOp : public FDragDropOperation
 
 	virtual TSharedPtr<SWidget> GetDefaultDecorator() const override
 	{
+		// Offline files won't coexist with Files
+		if (!OfflineFiles.IsEmpty())
+		{
+			return SSourceControlCommon::GetSCCFileWidget();
+		}
+
 		FSourceControlStateRef FileState = Files.IsEmpty() ? UncontrolledFiles[0] : Files[0];
 		return SSourceControlCommon::GetSCCFileWidget(MoveTemp(FileState));
 	}
 
 	TArray<FSourceControlStateRef> Files;
 	TArray<FSourceControlStateRef> UncontrolledFiles;
+	TArray<FString> OfflineFiles;
 };
 
 

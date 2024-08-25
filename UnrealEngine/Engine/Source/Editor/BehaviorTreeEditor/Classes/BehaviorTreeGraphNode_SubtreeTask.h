@@ -13,7 +13,7 @@
 
 class UObject;
 
-UCLASS()
+UCLASS(MinimalAPI)
 class UBehaviorTreeGraphNode_SubtreeTask : public UBehaviorTreeGraphNode_Task
 {
 	GENERATED_UCLASS_BODY()
@@ -26,4 +26,6 @@ class UBehaviorTreeGraphNode_SubtreeTask : public UBehaviorTreeGraphNode_Task
 
 	/** updates nodes injected from subtree's root */
 	bool UpdateInjectedNodes();
+
+	virtual FLinearColor GetBackgroundColor(bool bIsActiveForDebugger) const override;
 };

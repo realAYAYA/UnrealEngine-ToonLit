@@ -37,8 +37,8 @@ public:
 	CORE_API void SetData( uint8* Src, int64 CountBits );
 	CORE_API void SetData( TArray<uint8>&& Src, int64 CountBits );
 
-	/** Equivalent to SetData (reset position, copy from Src into internal buffer), but uses Reset not Empty to avoid a realloc if possible. */
-	CORE_API void ResetData(FBitReader& Src, int64 CountBits);
+	/** Equivalent to SetData (reset position, copy from Src into internal buffer), but uses Reset not Empty to avoid a realloc if possible. The internal buffer wiill be able to hold at least the maximum of CountBits and CountBitsWithSlack */
+	CORE_API void ResetData(FBitReader& Src, int64 CountBits, int64 CountBitsWithSlack=0);
 
 // Disable false positive buffer overrun warning during pgoprofile linking step
 PRAGMA_DISABLE_BUFFER_OVERRUN_WARNING

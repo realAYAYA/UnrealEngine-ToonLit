@@ -35,6 +35,7 @@ public:
 
 	COREUOBJECT_API UGCObjectReferencer(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 	COREUOBJECT_API UGCObjectReferencer(FVTableHelper& Helper);
+	COREUOBJECT_API ~UGCObjectReferencer();
 
 	/**
 	 * Adds an object to the referencer list

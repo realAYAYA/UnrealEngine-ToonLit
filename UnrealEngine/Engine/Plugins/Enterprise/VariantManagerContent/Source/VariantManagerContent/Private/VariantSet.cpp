@@ -129,7 +129,7 @@ FString UVariantSet::GetUniqueVariantName(const FString& InPrefix) const
 	FString LastChar = VarName.Right(1);
 	while (LastChar.IsNumeric())
 	{
-		VarName.LeftChopInline(1, false);
+		VarName.LeftChopInline(1, EAllowShrinking::No);
 		LastChar = VarName.Right(1);
 	}
 

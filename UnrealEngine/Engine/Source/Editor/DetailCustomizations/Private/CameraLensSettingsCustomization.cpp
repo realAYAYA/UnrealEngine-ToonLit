@@ -17,7 +17,6 @@
 #include "PropertyEditorModule.h"
 #include "PropertyHandle.h"
 #include "ScopedTransaction.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/NameTypes.h"
 #include "UObject/UnrealType.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"

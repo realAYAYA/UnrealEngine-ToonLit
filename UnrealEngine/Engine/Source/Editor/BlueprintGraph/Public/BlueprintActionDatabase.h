@@ -242,6 +242,9 @@ private:
 	 * This exists only because we need a pointer to associate our delegates with
 	 */
 	void OnBlueprintChanged( UBlueprint* );
+
+	/** Refresh other systems before a full or partial refresh */
+	void PreRefresh(bool bRefreshAll);
 private:
 	/** 
 	 * A map of associated node-spawners for each class/asset. A spawner that 

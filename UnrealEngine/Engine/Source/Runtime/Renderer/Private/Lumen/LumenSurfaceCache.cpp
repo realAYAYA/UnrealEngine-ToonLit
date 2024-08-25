@@ -8,6 +8,7 @@
 #include "PixelShaderUtils.h"
 #include "LumenSceneLighting.h"
 #include "LumenSceneCardCapture.h"
+#include "LumenRadiosity.h"
 
 int32 GLumenSurfaceCacheCompress = 1;
 FAutoConsoleVariableRef CVarLumenSurfaceCacheCompress(
@@ -80,6 +81,20 @@ class FLumenCardCopyPS : public FGlobalShader
 	{
 		return DoesPlatformSupportLumenGI(Parameters.Platform);
 	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
+		FPermutationDomain PermutationVector(Parameters.PermutationId);
+
+		if (!PermutationVector.Get<FCompress>())
+		{
+			const FLumenSurfaceLayerConfig& LumenSurfaceLayerConfig = GetSurfaceLayerConfig(PermutationVector.Get<FSurfaceCacheLayer>());
+			OutEnvironment.SetRenderTargetOutputFormat(0, LumenSurfaceLayerConfig.UncompressedFormat);
+		}
+	}
+
 };
 
 IMPLEMENT_GLOBAL_SHADER(FLumenCardCopyPS, "/Engine/Private/Lumen/SurfaceCache/LumenSurfaceCache.usf", "LumenCardCopyPS", SF_Pixel);
@@ -402,11 +417,11 @@ void FDeferredShadingSceneRenderer::UpdateLumenSurfaceCacheAtlas(
 	// Fill lighting for newly captured cards
 	{
 		// Downsampled radiosity atlas copy not implemented yet
-		check(Lumen::GetRadiosityAtlasDownsampleFactor() == 1);
+		check(LumenRadiosity::GetAtlasDownsampleFactor() == 1);
 
 		extern int32 GLumenSceneSurfaceCacheResampleLighting;
 		const bool bResample = GLumenSceneSurfaceCacheResampleLighting != 0 && ResampledCardCaptureAtlas.DirectLighting != nullptr;
-		const bool bRadiosityEnabled = Lumen::IsRadiosityEnabled(ViewFamily);
+		const bool bRadiosityEnabled = LumenRadiosity::IsEnabled(ViewFamily);
 
 		FCopyCardCaptureLightingToAtlasParameters* PassParameters = GraphBuilder.AllocParameters<FCopyCardCaptureLightingToAtlasParameters>();
 

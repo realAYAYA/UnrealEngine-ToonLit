@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.Extensions.Logging;
 using System;
 using System.Windows.Forms;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {

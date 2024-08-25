@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*=============================================================================
 	DistortionCommon.ush
 =============================================================================*/
@@ -19,7 +21,7 @@ float2 ComputeBufferUVDistortion(
 #elif REFRACTION_USE_INDEX_OF_REFRACTION
 	// we assume the camera is in air
 	float AirIOR = 1.0f;
-#if REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT || STRATA_OPTIMIZED_UNLIT
+#if REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT || SUBSTRATE_OPTIMIZED_UNLIT
 	float MaterialIOR = GetMaterialRefractionIOR(RefractionData);
 #else
 	float MaterialIOR = InMaterialIOR;

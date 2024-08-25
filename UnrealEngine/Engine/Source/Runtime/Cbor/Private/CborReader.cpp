@@ -6,6 +6,7 @@ FCborReader::FCborReader(FArchive* InStream, ECborEndianness InReaderEndianness)
 	: Stream(InStream)
 	, Endianness(InReaderEndianness)
 {
+	check(InStream != nullptr);
 	ContextStack.Emplace();
 }
 
@@ -69,6 +70,7 @@ bool FCborReader::ReadNext(FCborContext& OutContext)
 		// Report parent context container type
 		OutContext.RawTextValue.Add((char)ParentContext.MajorType());
 		// Done with parent context
+		check(ContextStack.Num() > 1);
 		ContextStack.Pop();
 		return true;
 	}
@@ -104,6 +106,7 @@ bool FCborReader::ReadNext(FCborContext& OutContext)
 		// Report parent context container type
 		OutContext.RawTextValue.Add((char)ParentContext.MajorType());
 		// Done with parent context
+		check(ContextStack.Num() > 1);
 		ContextStack.Pop();
 		return true;
 	}
@@ -185,6 +188,12 @@ bool FCborReader::ReadNext(FCborContext& OutContext)
 
 bool FCborReader::SkipContainer(ECborCode ContainerType)
 {
+	// Invalid stream error
+	if (Stream == nullptr)
+	{
+		return false;
+	}
+
 	if (GetContext().MajorType() != ContainerType)
 	{
 		return false;

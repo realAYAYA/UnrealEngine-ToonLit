@@ -1,0 +1,443 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+#define SUPPORT_CONTACT_SHADOWS 0
+
+#define DYNAMICALLY_SHADOWED 1
+#define TREAT_MAXDEPTH_UNSHADOWED 1
+
+#define SHADOW_QUALITY 2
+#define NO_TRANSLUCENCY_AVAILABLE
+
+#include "/Engine/Generated/Material.ush"
+#include "HeterogeneousVolumesLiveShadingUtils.ush"
+#include "HeterogeneousVolumesTracingUtils.ush"
+#include "HeterogeneousVolumesAdaptiveVolumetricShadowMapUtils.ush"
+#include "../BlueNoise.ush"
+
+#ifndef THREADGROUP_SIZE_1D
+#define THREADGROUP_SIZE_1D 1
+#endif // THREADGROUP_SIZE_1D
+
+#ifndef THREADGROUP_SIZE_2D
+#define THREADGROUP_SIZE_2D 1
+#endif // THREADGROUP_SIZE_2D
+
+#ifndef THREADGROUP_SIZE_3D
+#define THREADGROUP_SIZE_3D 1
+#endif // THREADGROUP_SIZE_3D
+
+// Object data
+float4x4 LocalToWorld;
+float4x4 WorldToLocal;
+float3 LocalBoundsOrigin;
+float3 LocalBoundsExtent;
+int PrimitiveId;
+
+// Volume data
+int3 VoxelResolution;
+
+// Ray data
+float MaxTraceDistance;
+float MaxShadowTraceDistance;
+float StepSize;
+float StepFactor;
+float ShadowStepSize;
+float ShadowStepFactor;
+int MaxStepCount;
+int bJitter;
+
+// Shadow data
+int NumShadowMatrices;
+float4x4 TranslatedWorldToShadow[6];
+float4x4 ShadowToTranslatedWorld[6];
+float3 TranslatedWorldOrigin;
+
+int2 ShadowResolution;
+int MaxSampleCount;
+float AbsoluteErrorThreshold;
+float RelativeErrorThreshold;
+
+// Dispatch data
+int3 GroupCount;
+
+// Debug data
+int ShadowDebugTweak;
+
+// Output
+RWBuffer<int> RWVolumetricShadowLinkedListAllocatorBuffer;
+RWStructuredBuffer<uint2> RWVolumetricShadowLinkedListBuffer;
+RWTexture2D<float4> RWBeerShadowMapTexture;
+
+FPrimitiveSceneData GetPrimitiveData(FMaterialVertexParameters Parameters)
+{
+	return GetPrimitiveData(Parameters, LocalToWorld, WorldToLocal, LocalBoundsOrigin, LocalBoundsExtent);
+}
+
+FPrimitiveSceneData GetPrimitiveData(FMaterialPixelParameters Parameters)
+{
+	return GetPrimitiveData(Parameters, LocalToWorld, WorldToLocal, LocalBoundsOrigin, LocalBoundsExtent);
+}
+
+float4x4 GetLocalToWorld()
+{
+	return LocalToWorld;
+}
+
+float4x4 GetWorldToLocal()
+{
+	return WorldToLocal;
+}
+
+float3 GetLocalBoundsOrigin()
+{
+	return LocalBoundsOrigin;
+}
+
+float3 GetLocalBoundsExtent()
+{
+	return LocalBoundsExtent;
+}
+
+int3 GetVolumeResolution()
+{
+	return VoxelResolution;
+}
+
+float GetShadowStepSize()
+{
+	return ShadowStepSize;
+}
+
+float GetShadowStepFactor()
+{
+	return ShadowStepFactor;
+}
+
+float GetStepSize()
+{
+	return GetShadowStepSize();
+}
+
+float GetStepFactor()
+{
+	return GetShadowStepFactor();
+}
+
+float GetMaxTraceDistance()
+{
+	return MaxTraceDistance;
+}
+
+float GetMaxShadowTraceDistance()
+{
+	return MaxShadowTraceDistance;
+}
+
+struct FVolumeSampleContext
+{
+	FMaterialPixelParameters MaterialParameters;
+	FPixelMaterialInputs PixelMaterialInputs;
+};
+
+FVolumeSampleContext CreateVolumeSampleContext(float3 LocalPosition, float3 WorldPosition, float MipLevel)
+{
+	FVolumeSampleContext VolumeSampleContext;
+	VolumeSampleContext.MaterialParameters = MakeInitializedMaterialPixelParameters();
+	//VolumeSampleContext.MaterialParameters.PrimitiveId = PrimitiveId;
+	VolumeSampleContext.MaterialParameters.AbsoluteWorldPosition = DFPromote(WorldPosition);
+	VolumeSampleContext.MaterialParameters.LWCData.AbsoluteWorldPosition = WSPromote(WorldPosition);
+	// TODO: Add object centroid to LWC.ObjectWorldPosition
+	VolumeSampleContext.MaterialParameters.LWCData.LocalToWorld = WSPromote(GetLocalToWorld());
+	VolumeSampleContext.MaterialParameters.LWCData.WorldToLocal = WSPromoteInverse(GetWorldToLocal());
+
+	// Evaluate Material graph
+	CalcPixelMaterialInputs(VolumeSampleContext.MaterialParameters, VolumeSampleContext.PixelMaterialInputs);
+
+	return VolumeSampleContext;
+}
+
+float3 SampleExtinction(inout FVolumeSampleContext Context)
+{
+	float3 Extinction = SampleExtinctionCoefficients(Context.PixelMaterialInputs);
+	return Extinction;
+}
+
+uint GetLinearIndex(uint Face, uint2 PixelCoord)
+{
+	uint LinearIndex = Face * ShadowResolution.x * ShadowResolution.y + PixelCoord.y * ShadowResolution.x + PixelCoord.x;
+	return LinearIndex;
+}
+
+#include "HeterogeneousVolumesRayMarchingUtils.ush"
+
+int FindSampleIndexWithLowestError(
+	int PixelIndex
+)
+{
+	// Find sample, whose removal would mark the lowest overall geometric error
+	int LowestErrorIndex = 0;
+	float LowestError = 1.0e6;
+	for (int Index = 1; Index < MaxSampleCount - 1; ++Index)
+	{
+		int PrevIndex = AVSM_GetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + Index]);
+		int NextIndex = AVSM_GetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + Index]);
+
+		FAVSMSampleData Data[3] = {
+			AVSM_UnpackSampleData(RWVolumetricShadowLinkedListBuffer[PixelIndex + PrevIndex]),
+			AVSM_UnpackSampleData(RWVolumetricShadowLinkedListBuffer[PixelIndex + Index]),
+			AVSM_UnpackSampleData(RWVolumetricShadowLinkedListBuffer[PixelIndex + NextIndex])
+		};
+
+		float Error = abs(
+			(Data[2].X - Data[0].X) * (Data[2].Tau - Data[1].Tau) -
+			(Data[2].X - Data[1].X) * (Data[2].Tau - Data[0].Tau)
+		);
+
+		if (Error < LowestError)
+		{
+			LowestError = Error;
+			LowestErrorIndex = Index;
+		}
+	}
+
+	return LowestErrorIndex;
+}
+
+void AddSample(FAVSMSampleData Data, int PixelIndex, inout int PrevSampleIndex, inout int SampleIndex)
+{
+	RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex].x = AVSM_PackSampleData(Data);
+	AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex], PrevSampleIndex);
+	AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex], SampleIndex + 1);
+
+	PrevSampleIndex = SampleIndex;
+	SampleIndex = SampleIndex + 1;
+}
+
+void ReplaceSample(
+	int PixelIndex,
+	int SampleIndex,
+	FAVSMSampleData SampleData,
+	int PrevPtrIndex,
+	int NextPtrIndex
+)
+{
+	// Remove 
+	{
+		int PrevIndex = AVSM_GetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex]);
+		int NextIndex = AVSM_GetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex]);
+
+		AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + PrevIndex], NextIndex);
+		AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + NextIndex], PrevIndex);
+	}
+
+	// Replace
+	RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex].x = AVSM_PackSampleData(SampleData);
+	AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex], PrevPtrIndex);
+	AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + SampleIndex], NextPtrIndex);
+
+	// Update neighborhood
+	AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + NextPtrIndex], SampleIndex);
+	AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + PrevPtrIndex], SampleIndex);
+}
+
+void AddOrReplaceSample(FAVSMSampleData Data, int PixelIndex, inout int PrevSampleIndex, inout int SampleIndex)
+{
+	// Add
+	if (SampleIndex < MaxSampleCount - 1)
+	{
+		AddSample(Data, PixelIndex, PrevSampleIndex, SampleIndex);
+	}
+	// Or replace
+	else
+	{
+#if USE_AVSM_COMPRESSION
+		// Insert fictious sample at MaxSampleCount - 1 to compute error
+		RWVolumetricShadowLinkedListBuffer[PixelIndex + MaxSampleCount - 1].x = AVSM_PackSampleData(Data);
+		AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + PrevSampleIndex], MaxSampleCount - 1);
+		AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + MaxSampleCount - 1], PrevSampleIndex);
+
+		int LowestErrorIndex = FindSampleIndexWithLowestError(PixelIndex);
+		if (LowestErrorIndex > 0)
+		{
+			if (LowestErrorIndex == PrevSampleIndex)
+			{
+				RWVolumetricShadowLinkedListBuffer[PixelIndex + PrevSampleIndex].x = AVSM_PackSampleData(Data);
+			}
+			else
+			{
+				ReplaceSample(PixelIndex, LowestErrorIndex, Data, PrevSampleIndex, MaxSampleCount - 1);
+			}
+
+			PrevSampleIndex = LowestErrorIndex;
+		}
+#else
+		RWVolumetricShadowLinkedListBuffer[PixelIndex + MaxSampleCount - 1].x = AVSM_PackSampleData(Data);
+		AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + MaxSampleCount - 1], PrevSampleIndex);
+
+		PrevSampleIndex = MaxSampleCount - 1;
+#endif
+	}
+}
+
+[numthreads(THREADGROUP_SIZE_2D, THREADGROUP_SIZE_2D, 1)]
+void RenderVolumetricShadowMapForLightWithLiveShadingCS(
+	uint2 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID
+)
+{
+	// Create screen ray
+	if (any(DispatchThreadId.xy >= ShadowResolution))
+	{
+		return;
+	}
+
+	uint Face = DispatchThreadId.z;
+	uint2 PixelCoord = DispatchThreadId.xy;
+	uint LinearIndex = GetLinearIndex(Face, PixelCoord);
+	//int PixelIndex = LinearIndex * MaxSampleCount;
+	int PixelIndex = LinearIndex * MaxSampleCount;
+
+	// Generate a light ray
+	float2 ShadowUV = float2(PixelCoord + 0.5f) / float2(ShadowResolution);
+	const float NearScreenZ = 1.0;
+	const float FarScreenZ = 0.0;
+
+	float4 LightRayStartAsFloat4 = mul(float4(ShadowUV, NearScreenZ, 1), ShadowToTranslatedWorld[Face]);
+	float4 LightRayEndAsFloat4 = mul(float4(ShadowUV, FarScreenZ, 1), ShadowToTranslatedWorld[Face]);
+	float3 LightRayStart = LightRayStartAsFloat4.xyz * rcp(LightRayStartAsFloat4.w);
+	float3 LightRayEnd = LightRayEndAsFloat4.xyz * rcp(LightRayEndAsFloat4.w);
+
+	// Intersect ray with bounding volume
+	// TODO: LWC integration..
+	float3 WorldRayOrigin = DFFastSubtractDemote(LightRayStart, PrimaryView.PreViewTranslation);
+	float3 WorldRayEnd = DFFastSubtractDemote(LightRayEnd, PrimaryView.PreViewTranslation);
+
+	float3 WorldRayDirection = WorldRayEnd - WorldRayOrigin;
+	float WorldRayLength = length(WorldRayDirection);
+	WorldRayDirection /= WorldRayLength;
+
+	float3 LocalRayOrigin = mul(float4(WorldRayOrigin, 1.0), WorldToLocal).xyz;
+	float3 LocalRayEnd = mul(float4(WorldRayEnd, 1.0), WorldToLocal).xyz;
+	float3 LocalRayDirection = LocalRayEnd - LocalRayOrigin;
+	float LocalRayLength = length(LocalRayDirection);
+	LocalRayDirection /= LocalRayLength;
+
+	float3 LocalBoundsMin = LocalBoundsOrigin - LocalBoundsExtent;
+	float3 LocalBoundsMax = LocalBoundsOrigin + LocalBoundsExtent;
+
+	float3 Transmittance = 1;
+
+	// Intersect bounding volume
+	float2 HitT = IntersectAABB(LocalRayOrigin, LocalRayDirection, 0.0, LocalRayLength, LocalBoundsMin, LocalBoundsMax);
+	float HitSpan = HitT.y - HitT.x;
+	if (HitSpan > 0.0)
+	{
+		float Jitter = bJitter ? BlueNoiseScalar(PixelCoord, View.StateFrameIndexMod8) : 0.0;
+		int bApplyEmissionAndTransmittance = 0;
+		int bApplyDirectLighting = 0;
+		int bApplyShadowTransmittance = 0;
+
+		FRayMarchingContext RayMarchingContext = CreateRayMarchingContext(
+			// Local-space
+			LocalRayOrigin,
+			LocalRayDirection,
+			HitT.x,
+			HitT.y,
+			// World-space
+			WorldRayOrigin,
+			WorldRayDirection,
+			// Ray-step attributes
+			Jitter,
+			CalcShadowStepSize(WorldRayDirection),
+			MaxStepCount,
+			//MaxSampleCount, // Replace max-steps with max-samples..
+			bApplyEmissionAndTransmittance,
+			bApplyDirectLighting,
+			bApplyShadowTransmittance
+		);
+
+		RandomSequence RandSequence;
+		RandomSequence_Initialize(RandSequence, LinearIndex, View.StateFrameIndex);
+		RayMarchingContext.RandSequence = RandSequence;
+		uint StepCount = CalcStepCount(RayMarchingContext);
+
+		float3 ExpectedExtinction = 0.0;
+		float3 ExpectedTransmittance = 1.0;
+		int PrevElementIndex = AVSM_NULL_PTR;
+		int ElementIndex = 0;
+
+		float LocalHitT = HitT.x;
+		float WorldHitT = LocalHitT * RayMarchingContext.LocalToWorldScale;
+		for (uint StepIndex = 0; StepIndex < StepCount; ++StepIndex)
+		{
+			LocalHitT = min(RayMarchingContext.LocalRayTMin + RayMarchingContext.StepSize * (RayMarchingContext.Jitter + StepIndex), RayMarchingContext.LocalRayTMax);
+			WorldHitT = LocalHitT * RayMarchingContext.LocalToWorldScale;
+			float3 LocalPosition = RayMarchingContext.LocalRayOrigin + RayMarchingContext.LocalRayDirection * LocalHitT;
+			float3 WorldPosition = RayMarchingContext.WorldRayOrigin + RayMarchingContext.WorldRayDirection * WorldHitT;
+
+			FVolumeSampleContext SampleContext = CreateVolumeSampleContext(LocalPosition, WorldPosition, RayMarchingContext.MipLevel);
+			float3 Extinction = SampleExtinction(SampleContext);
+			Transmittance *= exp(-Extinction * RayMarchingContext.StepSize);
+
+			bool bFirstEntry = (ElementIndex == 0);
+			if (bFirstEntry && any(Extinction > 0.0))
+			{
+				FAVSMSampleData SampleData = AVSM_CreateSampleData(WorldHitT, Transmittance);
+				AddSample(SampleData, PixelIndex, PrevElementIndex, ElementIndex);
+
+				// Set expected values
+				ExpectedExtinction = Extinction;
+				ExpectedTransmittance = Transmittance;
+			}
+			else if (ElementIndex > 0 && any(Extinction > 0.0))
+			{
+				// If extrapolated transmittance is beyond relative error tolerance
+				ExpectedTransmittance *= exp(-ExpectedExtinction * RayMarchingContext.StepSize);
+				float AbsoluteError = length(Transmittance - ExpectedTransmittance);
+				float RelativeError = length((Transmittance - ExpectedTransmittance) / ExpectedTransmittance);
+				if ((AbsoluteError > AbsoluteErrorThreshold) && (RelativeError > RelativeErrorThreshold))
+				{
+					FAVSMSampleData SampleData = AVSM_CreateSampleData(WorldHitT, Transmittance);
+					AddOrReplaceSample(SampleData, PixelIndex, PrevElementIndex, ElementIndex);
+
+					// Reset expected values
+					ExpectedExtinction = Extinction;
+					ExpectedTransmittance = Transmittance;
+				}
+			}
+
+			// Early termination
+			float Epsilon = 1.0e-7;
+			if (all(Transmittance < Epsilon))
+			{
+				Transmittance = 0.0;
+				break;
+			}
+		}
+
+		// Stitch up the previous entry
+		if (PrevElementIndex != AVSM_NULL_PTR)
+		{
+			AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + PrevElementIndex], ElementIndex);
+
+		}
+
+		// Last Entry
+		RWVolumetricShadowLinkedListBuffer[PixelIndex + ElementIndex].x = AVSM_PackSampleData(WorldHitT, Transmittance);
+		AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + ElementIndex], PrevElementIndex);
+		AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex + ElementIndex], AVSM_NULL_PTR);
+	}
+	else
+	{
+		RWVolumetricShadowLinkedListBuffer[PixelIndex].x = AVSM_PackSampleData(0.0, Transmittance);
+		AVSM_SetPrevPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex], AVSM_NULL_PTR);
+		AVSM_SetNextPtr(RWVolumetricShadowLinkedListBuffer[PixelIndex], AVSM_NULL_PTR);
+	}
+
+	if (Face == ShadowDebugTweak)
+	{
+		RWBeerShadowMapTexture[PixelCoord] = float4(Transmittance, 1);
+	}
+}

@@ -144,9 +144,13 @@ FText UEditableText::GetText() const
 
 void UEditableText::SetText(FText InText)
 {
-	if (SetTextInternal(InText) && MyEditableText.IsValid() )
+	if (SetTextInternal(InText))
 	{
-		MyEditableText->SetText(Text);
+		if (MyEditableText.IsValid())
+		{
+			MyEditableText->SetText(Text);
+		}
+		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
 	}
 }
 
@@ -155,7 +159,6 @@ bool UEditableText::SetTextInternal(const FText& InText)
 	if (!Text.IdenticalTo(InText, ETextIdenticalModeFlags::DeepCompare | ETextIdenticalModeFlags::LexicalCompareInvariants))
 	{
 		Text = InText;
-		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
 		return true;
 	}
 
@@ -377,13 +380,17 @@ void UEditableText::HandleOnTextChanged(const FText& InText)
 {
 	if (SetTextInternal(InText))
 	{
+		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
 		OnTextChanged.Broadcast(InText);
 	}
 }
 
 void UEditableText::HandleOnTextCommitted(const FText& InText, ETextCommit::Type CommitMethod)
 {
-	SetTextInternal(InText);
+	if (SetTextInternal(InText))
+	{
+		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
+	}
 	OnTextCommitted.Broadcast(InText, CommitMethod);
 }
 

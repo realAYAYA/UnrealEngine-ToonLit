@@ -25,10 +25,12 @@ FRCSetAssetByPathBehaviourModel::FRCSetAssetByPathBehaviourModel(URCSetAssetByPa
 	: FRCBehaviourModel(SetAssetByPathBehaviour)
 	, SetAssetByPathBehaviourWeakPtr(SetAssetByPathBehaviour)
 {
-	FPropertyRowGeneratorArgs Args;
-	Args.bShouldShowHiddenProperties = true;
-	PropertyRowGenerator = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor").CreatePropertyRowGenerator(Args);
-	PropertyRowGeneratorArray = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor").CreatePropertyRowGenerator(Args);
+	FPropertyRowGeneratorArgs ArgsRowGenerator;
+	ArgsRowGenerator.bShouldShowHiddenProperties = true;
+	PropertyRowGenerator = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor").CreatePropertyRowGenerator(ArgsRowGenerator);
+
+	const FPropertyRowGeneratorArgs ArgsRowGeneratorArray;
+	PropertyRowGeneratorArray = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor").CreatePropertyRowGenerator(ArgsRowGeneratorArray);
 
 	if (SetAssetByPathBehaviour)
 	{
@@ -48,12 +50,15 @@ FRCSetAssetByPathBehaviourModel::FRCSetAssetByPathBehaviourModel(URCSetAssetByPa
 		PropertyRowGeneratorArray->SetStructure(MakeShareable(new FStructOnScope(FRCSetAssetPath::StaticStruct(), (uint8*) &SetAssetByPathBehaviour->PathStruct)));
 		PropertyRowGeneratorArray->OnFinishedChangingProperties().AddLambda([this](const FPropertyChangedEvent& InEvent)
 		{
-			if (InEvent.ChangeType != EPropertyChangeType::ValueSet)
+			if (InEvent.ChangeType == EPropertyChangeType::ValueSet)
 			{
-				return;
+				// Just refresh the preview without reconstructing the widget if we just set values
+				RefreshPreview();
 			}
-
-			RefreshPathAndPreview();
+			else
+			{
+				RefreshPathAndPreview();
+			}
 		});
 		PropertyRowGeneratorArray->OnRowsRefreshed().AddLambda([this]()
 		{
@@ -80,6 +85,11 @@ FRCSetAssetByPathBehaviourModel::FRCSetAssetByPathBehaviourModel(URCSetAssetByPa
 	
 	RefreshPathAndPreview();
 	SelectorBox = GetSelectorWidget(InitialSelected);
+}
+
+bool FRCSetAssetByPathBehaviourModel::HasBehaviourDetailsWidget()
+{
+	return true;
 }
 
 TSharedRef<SWidget> FRCSetAssetByPathBehaviourModel::GetBehaviourDetailsWidget()
@@ -235,71 +245,31 @@ void FRCSetAssetByPathBehaviourModel::RefreshPathAndPreview()
 		
 		for (uint8 Counter = 0; Counter < Children.Num(); Counter++)
 		{
-			TSharedPtr<SWidget> Button = SNullWidget::NullWidget;
-			if (Counter == 0)
-			{
-				Button = SNew(SBox)
-					.HAlign(HAlign_Center)
-					.VAlign(VAlign_Center)
-					.WidthOverride(22)
-					.HeightOverride(22)
-					[
-						SNew(SButton)
-						.ButtonStyle( FAppStyle::Get(), "SimpleButton" )
-						.OnClicked_Lambda([this]()
-						{
-							if (URCSetAssetByPathBehaviour* Behaviour = Cast<URCSetAssetByPathBehaviour>(GetBehaviour()))
-							{
-								Behaviour->Modify();
-								CreateAssetPathFromSelection();
-								RefreshPathAndPreview();
-							}
-
-							return FReply::Handled();
-						})
-						.IsFocusable(false)
-						.ContentPadding(0)
-						.Visibility_Lambda([this]()
-						{
-							URCSetAssetByPathBehaviour* Behaviour = Cast<URCSetAssetByPathBehaviour>(GetBehaviour());
-							if (!Behaviour)
-							{
-								return EVisibility::Collapsed;
-							}
-
-							return Behaviour->bInternal ? EVisibility::Visible : EVisibility::Collapsed;
-						})
-						.Content()
-						[
-							SNew(SImage)
-							.Image( FAppStyle::GetBrush("Icons.Use") )
-							.ColorAndOpacity( FSlateColor::UseForeground() )
-						]
-					];
-			}
-			
 			const FNodeWidgets NodeWidgets = Children[Counter]->CreateNodeWidgets();
 			if (NodeWidgets.ValueWidget)
 			{
-				FieldArrayWidget->AddSlot()
-					.Padding(FMargin(3.0f, 2.0f))
-					.AutoHeight()
+				TSharedPtr<SHorizontalBox> CurrentHorizontalBox = SNew(SHorizontalBox);
+				if (Counter == 0)
+				{
+					// Add NameWidget only for the ArrayProperty not for its entries
+					CurrentHorizontalBox->AddSlot()
 					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot()
-						[
-							NodeWidgets.NameWidget.ToSharedRef()
-						]
-						+ SHorizontalBox::Slot()
-						[
-							NodeWidgets.ValueWidget.ToSharedRef()
-						]
-						+ SHorizontalBox::Slot()
-						.AutoWidth()
-						[
-							Button.ToSharedRef()
-						]
+						NodeWidgets.NameWidget.ToSharedRef()
 					];
+				}
+				CurrentHorizontalBox->AddSlot()
+				.FillWidth(1.f)
+				[
+					NodeWidgets.ValueWidget.ToSharedRef()
+				];
+
+				FieldArrayWidget->AddSlot()
+				.Padding(FMargin(3.0f, 2.0f))
+				.AutoHeight()
+				.VAlign(VAlign_Center)
+				[
+					CurrentHorizontalBox.ToSharedRef()
+				];
 			}
 			else if (NodeWidgets.WholeRowWidget)
 			{
@@ -313,13 +283,17 @@ void FRCSetAssetByPathBehaviourModel::RefreshPathAndPreview()
 		}
 	}
 
+	RefreshPreview();
+	PathArrayWidget->SetContent(FieldArrayWidget.ToSharedRef());
+}
+
+void FRCSetAssetByPathBehaviourModel::RefreshPreview() const
+{
 	FString PreviewText = TEXT("Path is invalid!");
 	if (URCSetAssetByPathBehaviour* SetAssetByPathBehaviour = SetAssetByPathBehaviourWeakPtr.Get())
 	{
 		PreviewText = SetAssetByPathBehaviour->GetCurrentPath();
 	}
-	
-	PathArrayWidget->SetContent(FieldArrayWidget.ToSharedRef());
 	PreviewPathWidget->SetText(FText::FromString(PreviewText));
 }
 
@@ -390,41 +364,5 @@ FText FRCSetAssetByPathBehaviourModel::GetSelectedEntityText() const
 	}
 	return ReturnText;
 }
-
-
-void FRCSetAssetByPathBehaviourModel::CreateAssetPathFromSelection() const
-{
-	URCSetAssetByPathBehaviour* SetAssetByPathBehaviour = Cast<URCSetAssetByPathBehaviour>(GetBehaviour());
-	if (!SetAssetByPathBehaviour)
-	{
-		return;
-	}
-	
-	TArray<FAssetData> AssetData;
-	GEditor->GetContentBrowserSelections(AssetData);
-	if (AssetData.Num() != 1)
-	{
-		// Only works with one selected Content
-		return;
-	}
-	
-	// Clear it, in case it is an already used one.
-	TArray<FString>& PathArray = SetAssetByPathBehaviour->PathStruct.PathArray;
-	PathArray.Empty();
-
-	int32 IndexOfLast;
-	const UObject* SelectedAsset = AssetData[0].GetAsset();
-	FString PathString = SelectedAsset->GetPathName();
-
-	// Remove the initial Game
-	PathString.RemoveFromStart("/Game/");
-
-	// Remove anything after the last /
-	PathString.FindLastChar('/', IndexOfLast);
-	PathString.RemoveAt(IndexOfLast, PathString.Len() - IndexOfLast);
-
-	PathArray.Add(PathString);
-}
-
 
 #undef LOCTEXT_NAMESPACE

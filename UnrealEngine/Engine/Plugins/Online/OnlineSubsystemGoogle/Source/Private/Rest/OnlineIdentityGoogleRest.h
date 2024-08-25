@@ -57,17 +57,15 @@ struct FGoogleLoginURL
 	/** The redirect url for Google to redirect to upon completion */
 	FString LoginRedirectUrl;
 	/** Port to append to the LoginRedirectURL when communicating with Google auth services */
-	int32 RedirectPort;
+	int32 RedirectPort = 9000;
 	/** The client id given to us by Google */
 	FString ClientId;
 	/** Config based list of permission scopes to use when logging in */
 	TArray<FString> ScopeFields;
 	/** A value used to verify our response came from our server */
 	FString State;
-
-	FGoogleLoginURL() 
-		: RedirectPort(9000)
-	{ }
+	/** Should request Offline Access. Refresh token is only received on first authorization */
+	bool bRequestOfflineAccess = false;
 
 	bool IsValid() const
 	{
@@ -98,8 +96,8 @@ struct FGoogleLoginURL
 			*Redirect, *FPlatformHttp::UrlEncode(Scopes), *ClientId, *State);
 
 		// auth url to spawn in browser
-		const FString URLString = FString::Printf(TEXT("%s?%s"),
-			*LoginUrl, *ParamsString);
+		const FString URLString = FString::Printf(TEXT("%s?%s%s"),
+			*LoginUrl, *ParamsString, bRequestOfflineAccess?TEXT("&access_type=offline"):TEXT(""));
 		
 		return URLString;
 	}
@@ -111,6 +109,8 @@ struct FGoogleLoginURL
 class FOnlineIdentityGoogle :
 	public FOnlineIdentityGoogleCommon
 {
+	/** Client secret retrieved from Google Dashboard */
+	FString ClientSecret;
 	/** Const details about communicating with Google API */
 	FGoogleLoginURL LoginURLDetails;
 	/** Whether we have a registration in flight or not */
@@ -137,6 +137,8 @@ public:
 	}
 
 PACKAGE_SCOPE:
+
+	void UpdateLoginURLWithEndpointData() { LoginURLDetails.LoginUrl = Endpoints.AuthEndpoint; };
 
 	/**
 	 * Login with an existing token

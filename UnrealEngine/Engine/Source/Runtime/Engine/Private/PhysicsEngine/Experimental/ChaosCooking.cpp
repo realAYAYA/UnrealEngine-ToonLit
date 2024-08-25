@@ -21,7 +21,7 @@ namespace Chaos
 			}
 		}
 
-		TUniquePtr<Chaos::FTriangleMeshImplicitObject> BuildSingleTrimesh(const FTriMeshCollisionData& Desc, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap)
+		Chaos::FTriangleMeshImplicitObjectPtr BuildSingleTrimesh(const FTriMeshCollisionData& Desc, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap)
 		{
 			if(Desc.Vertices.Num() == 0)
 			{
@@ -55,11 +55,11 @@ namespace Chaos
 			const int32 NumVerts = FinalVerts.Num();
 			for(int32 VertIndex = 0; VertIndex < NumVerts; ++VertIndex)
 			{
-				TriMeshParticles.X(VertIndex) = FinalVerts[VertIndex];
+				TriMeshParticles.SetX(VertIndex, FinalVerts[VertIndex]);
 			}
 
 			// Build chaos triangle list. #BGTODO Just make the clean function take these types instead of double copying
-			auto LambdaHelper = [&Desc, &FinalVerts, &FinalIndices, &TriMeshParticles, &OutFaceRemap, &OutVertexRemap](auto& Triangles) -> TUniquePtr<Chaos::FTriangleMeshImplicitObject>
+			auto LambdaHelper = [&Desc, &FinalVerts, &FinalIndices, &TriMeshParticles, &OutFaceRemap, &OutVertexRemap](auto& Triangles) -> Chaos::FTriangleMeshImplicitObjectPtr
 			{
 				const int32 NumTriangles = FinalIndices.Num() / 3;
 				bool bHasMaterials = Desc.MaterialIndices.Num() > 0;
@@ -137,10 +137,10 @@ namespace Chaos
 
 				TUniquePtr<TArray<int32>> OutFaceRemapPtr = MakeUnique<TArray<int32>>(OutFaceRemap);
 				TUniquePtr<TArray<int32>> OutVertexRemapPtr = Chaos::TriMeshPerPolySupport ? MakeUnique<TArray<int32>>(OutVertexRemap) : nullptr;
-				TUniquePtr<Chaos::FTriangleMeshImplicitObject> TriangleMesh = MakeUnique<Chaos::FTriangleMeshImplicitObject>(MoveTemp(TriMeshParticles), MoveTemp(Triangles), MoveTemp(MaterialIndices), MoveTemp(OutFaceRemapPtr), MoveTemp(OutVertexRemapPtr));
+				Chaos::FTriangleMeshImplicitObjectPtr TriangleMesh( new Chaos::FTriangleMeshImplicitObject(MoveTemp(TriMeshParticles), MoveTemp(Triangles), MoveTemp(MaterialIndices), MoveTemp(OutFaceRemapPtr), MoveTemp(OutVertexRemapPtr)));
 
 				// Propagate remapped indices from the FTriangleMeshImplicitObject back to the remap array
-				CopyUpdatedFaceRemapFromTriangleMesh(*TriangleMesh.Get(), OutFaceRemap);
+				CopyUpdatedFaceRemapFromTriangleMesh(*TriangleMesh.GetReference(), OutFaceRemap);
 
 				return TriangleMesh;
 			};
@@ -155,14 +155,12 @@ namespace Chaos
 				TArray<Chaos::TVector<int32, 3>> TrianglesLargeIdx;
 				return LambdaHelper(TrianglesLargeIdx);
 			}
-
-			return nullptr;
 		}
 
-		void BuildConvexMeshes(TArray<TUniquePtr<Chaos::FImplicitObject>>& OutConvexMeshes, const FCookBodySetupInfo& InParams)
+		void BuildConvexMeshes(TArray<Chaos::FImplicitObjectPtr>& OutConvexMeshes, const FCookBodySetupInfo& InParams)
 		{
 			using namespace Chaos;
-			auto BuildConvexFromVerts = [](TArray<TUniquePtr<Chaos::FImplicitObject>>& OutConvexes, const TArray<TArray<FVector>>& InMeshVerts, const bool bMirrored)
+			auto BuildConvexFromVerts = [](TArray<Chaos::FImplicitObjectPtr>& OutConvexes, const TArray<TArray<FVector>>& InMeshVerts, const bool bMirrored)
 			{
 				for(const TArray<FVector>& HullVerts : InMeshVerts)
 				{
@@ -206,7 +204,7 @@ namespace Chaos
 			}
 		}
 
-		void BuildTriangleMeshes(TArray<TUniquePtr<Chaos::FTriangleMeshImplicitObject>>& OutTriangleMeshes, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap, const FCookBodySetupInfo& InParams)
+		void BuildTriangleMeshes(TArray<Chaos::FTriangleMeshImplicitObjectPtr>& OutTriangleMeshes, TArray<int32>& OutFaceRemap, TArray<int32>& OutVertexRemap, const FCookBodySetupInfo& InParams)
 		{
 			if(!InParams.bCookTriMesh)
 			{
@@ -240,7 +238,7 @@ namespace Chaos
 			const int32 NumVerts = FinalVerts.Num();
 			for(int32 VertIndex = 0; VertIndex < NumVerts; ++VertIndex)
 			{
-				TriMeshParticles.X(VertIndex) = FinalVerts[VertIndex];
+				TriMeshParticles.SetX(VertIndex, FinalVerts[VertIndex]);
 			}
 
 			// Build chaos triangle list. #BGTODO Just make the clean function take these types instead of double copying

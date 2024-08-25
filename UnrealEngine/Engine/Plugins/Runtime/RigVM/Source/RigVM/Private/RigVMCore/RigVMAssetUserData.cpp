@@ -2,6 +2,7 @@
 
 #include "RigVMCore/RigVMAssetUserData.h"
 #include "Engine/UserDefinedStruct.h"
+#include "Misc/PackageName.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMAssetUserData)
 
@@ -372,12 +373,13 @@ bool UNameSpacedUserData::IsPropertySupported(const FProperty* InProperty, const
 	return true;
 }
 
-void UDataAssetLink::SetDataAsset(UDataAsset* InDataAsset)
+void UDataAssetLink::SetDataAsset(TSoftObjectPtr<UDataAsset> InDataAsset)
 {
 	InvalidateCache();
 	DataAsset = InDataAsset;
+	DataAssetCached = InDataAsset.Get();
 
-	if(NameSpace.IsEmpty() && DataAsset)
+	if(NameSpace.IsEmpty() && DataAssetCached)
 	{
 		NameSpace = DataAsset->GetName();
 	}
@@ -391,10 +393,10 @@ const UNameSpacedUserData::FUserData* UDataAssetLink::GetUserData(const FString&
 		return ResultFromSuper;
 	}
 
-	if(DataAsset)
+	if(DataAssetCached)
 	{
 		// this method caches as well - so the next time around Super::GetUserData should return the cache 
-		return GetUserDataWithinStruct(DataAsset->GetClass(), (const uint8*)DataAsset, InPath, FString(), OutErrorMessage);
+		return GetUserDataWithinStruct(DataAssetCached->GetClass(), static_cast<const uint8*>(DataAssetCached), InPath, FString(), OutErrorMessage);
 	}
 
 	if(OutErrorMessage && OutErrorMessage->IsEmpty())
@@ -413,13 +415,13 @@ const TArray<const UNameSpacedUserData::FUserData*>& UDataAssetLink::GetUserData
 		return ResultFromSuper;
 	}
 
-	if(DataAsset)
+	if(DataAssetCached)
 	{
 		// we should only get here if we haven't cached this user data array before.
 		if(InParentPath.IsEmpty())
 		{
 			// this method caches as well - so the next time around Super::GetUserDataArray should return the cache 
-			return GetUserDataArrayWithinStruct(DataAsset->GetClass(), (const uint8*)DataAsset, InParentPath, OutErrorMessage);
+			return GetUserDataArrayWithinStruct(DataAssetCached->GetClass(), static_cast<const uint8*>(DataAssetCached), InParentPath, OutErrorMessage);
 		}
 
 		if(const FUserData* ParentUserData = GetUserData(InParentPath, OutErrorMessage))
@@ -455,7 +457,48 @@ const TArray<const UNameSpacedUserData::FUserData*>& UDataAssetLink::GetUserData
 	return EmptyUserDatas;
 }
 
+void UDataAssetLink::Serialize(FArchive& Ar)
+{
+	// Treat the cached ptr as transient unless we're cooking this out.
+	const bool bIsSavingAssetToStorage = Ar.IsSaving() && Ar.IsPersistent() && !Ar.IsCooking(); 
+	UDataAsset* SavedDataAsset = DataAssetCached; 
+	if (bIsSavingAssetToStorage)
+	{
+		DataAssetCached = nullptr;
+	}
+
+	Super::Serialize(Ar);
+	
+	if (bIsSavingAssetToStorage)
+	{
+		DataAssetCached = SavedDataAsset;
+	}
+}
+
 #if WITH_EDITOR
+
+void UDataAssetLink::PostLoad()
+{
+	Super::PostLoad();
+
+	DataAssetCached = DataAsset.Get();
+	if(DataAssetCached == nullptr && !DataAsset.IsNull())
+	{
+		// We need to check if the mount point exists - since the data asset library link may
+		// refer to an editor-only asset in a runtime game.
+		const FString PackagePath = DataAsset.GetLongPackageName();
+		const FName PluginMountPoint = FPackageName::GetPackageMountPoint(PackagePath, false);
+		if (FPackageName::MountPointExists(PluginMountPoint.ToString()))
+		{
+			const FString ObjectPath = DataAsset.ToString();
+
+			// load without throwing additional warnings / errors
+			DataAssetCached = LoadObject<UDataAsset>(nullptr, *ObjectPath, nullptr, LOAD_Quiet | LOAD_NoWarn);
+			SetDataAsset(DataAsset);
+		}
+	}
+}
+
 
 void UDataAssetLink::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {

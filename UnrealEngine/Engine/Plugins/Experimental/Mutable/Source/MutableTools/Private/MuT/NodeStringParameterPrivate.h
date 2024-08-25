@@ -18,16 +18,11 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		string m_defaultValue;
-		string m_name;
-		string m_uid;
-		PARAMETER_DETAILED_TYPE m_detailedType = PARAMETER_DETAILED_TYPE::UNKNOWN;
+		FString m_defaultValue;
+		FString m_name;
+		FString m_uid;
 
         TArray<Ptr<NodeImage>> m_additionalImages;
 
@@ -36,14 +31,13 @@ namespace mu
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 4;
+            uint32_t ver = 6;
 			arch << ver;
 
 			arch << m_defaultValue;
 			arch << m_name;
 			arch << m_uid;
 			arch << m_additionalImages;
-			arch << m_detailedType;
             arch << m_ranges;
         }
 
@@ -52,13 +46,31 @@ namespace mu
 		{
             uint32_t ver;
 			arch >> ver;
-            check(ver==4);
+            check(ver>=4 && ver<=6);
 
-			arch >> m_defaultValue;
-			arch >> m_name;
-            arch >> m_uid;
+			if (ver <= 5)
+			{
+				std::string Temp;
+				arch >> Temp;
+				m_defaultValue = Temp.c_str();
+				arch >> Temp;
+				m_name = Temp.c_str();
+				arch >> Temp;
+				m_uid = Temp.c_str();
+			}
+			else
+			{
+				arch >> m_defaultValue;
+				arch >> m_name;
+				arch >> m_uid;
+			}
+
 			arch >> m_additionalImages;
-            arch >> m_detailedType;
+			if (ver <= 4)
+			{
+				int32 Dummy=0;
+				arch >> Dummy;
+			}
             arch >> m_ranges;
         }
 	};

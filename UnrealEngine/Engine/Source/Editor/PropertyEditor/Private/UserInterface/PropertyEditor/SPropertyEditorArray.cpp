@@ -6,6 +6,7 @@
 #include "PropertyEditorHelpers.h"
 #include "SDropTarget.h"
 #include "Widgets/Text/STextBlock.h"
+#include "PropertyEditorConstants.h"
 
 #define LOCTEXT_NAMESPACE "PropertyEditor"
 
@@ -63,7 +64,7 @@ FText SPropertyEditorArray::GetArrayTextValue() const
 
 	if (GetValResult == FPropertyAccess::MultipleValues)
 	{
-		return LOCTEXT("MultipleValues", "Multiple Values");
+		return PropertyEditorConstants::DefaultUndeterminedText;
 	}
 
 	const int32 NumChildNodes = PropertyEditor->GetPropertyNode()->GetNumChildNodes();

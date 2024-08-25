@@ -2,21 +2,16 @@
 
 #pragma once
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "CoreMinimal.h"
-#include "Stats/Stats.h"
-#include "UObject/UObjectGlobals.h"
-#include "UObject/WeakObjectPtr.h"
-#include "AI/Navigation/NavigationDirtyElement.h"
-#endif //UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "UObject/Class.h"
 #include "Templates/SubclassOf.h"
 #include "Misc/CoreStats.h"
 #include "UObject/SoftObjectPath.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "GameFramework/Actor.h"
+#include "AI/Navigation/NavDataGatheringMode.h"
+#endif
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "AI/Navigation/NavAgentSelector.h"
 #include "AI/Navigation/NavigationBounds.h"
@@ -106,7 +101,7 @@ struct FNavigationDirtyArea
 	TWeakObjectPtr<UObject> OptionalSourceObject;
 	
 	FNavigationDirtyArea() : Flags(0) {}
-	FNavigationDirtyArea(const FBox& InBounds, int32 InFlags, UObject* const InOptionalSourceObject = nullptr) : Bounds(InBounds), Flags(InFlags), OptionalSourceObject(InOptionalSourceObject) {}
+	ENGINE_API FNavigationDirtyArea(const FBox& InBounds, int32 InFlags, UObject* const InOptionalSourceObject = nullptr);
 	FORCEINLINE bool HasFlag(ENavigationDirtyFlag::Type Flag) const { return (Flags & Flag) != 0; }
 
 	bool operator==(const FNavigationDirtyArea& Other) const 
@@ -118,14 +113,6 @@ struct FNavigationDirtyArea
 	{
 		return !(*this == Other);
 	}
-};
-
-UENUM()
-enum class ENavDataGatheringMode : uint8
-{
-	Default,
-	Instant,
-	Lazy
 };
 
 UENUM()
@@ -170,10 +157,14 @@ struct FNavLinkAuxiliaryId
 	bool operator==(const FNavLinkAuxiliaryId& Other) const { return Id == Other.Id; }
 	bool operator!=(const FNavLinkAuxiliaryId& Other) const { return !this->operator==(Other); }
 
+
+	UE_DEPRECATED(5.4, "This function is not deterministic in all instances during cooking. Use the version which takes PathName.")
+	static ENGINE_API FNavLinkAuxiliaryId GenerateUniqueAuxiliaryId();
+
 	/**
 	 * Helper function: returns unique Auxiliary ID for custom links.
 	 **/
-	static ENGINE_API FNavLinkAuxiliaryId GenerateUniqueAuxiliaryId();
+	static ENGINE_API FNavLinkAuxiliaryId GenerateUniqueAuxiliaryId(FStringView PathName);
 
 private:
 	FNavLinkAuxiliaryId(uint64 InId)
@@ -558,11 +549,7 @@ public:
 	ENGINE_API FNavDataConfig(const FNavDataConfig& Other);
 	ENGINE_API FNavDataConfig& operator=(const FNavDataConfig& Other);
 
-	bool IsValid() const 
-	{
-		return FNavAgentProperties::IsValid() && NavDataClass.IsValid();
-	}
-
+	ENGINE_API bool IsValid() const; 
 	ENGINE_API void Invalidate();
 
 	ENGINE_API void SetNavDataClass(UClass* InNavDataClass);

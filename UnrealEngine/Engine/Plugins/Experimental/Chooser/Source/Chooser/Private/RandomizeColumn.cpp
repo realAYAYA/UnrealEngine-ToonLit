@@ -1,23 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "RandomizeColumn.h"
+#include "ChooserIndexArray.h"
 #include "ChooserPropertyAccess.h"
+#if WITH_EDITOR
+#include "PropertyBag.h"
+#endif
 
 bool FRandomizeContextProperty::GetValue(FChooserEvaluationContext& Context, const FChooserRandomizationContext*& OutResult) const
 {
-	
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-	
-	if (UE::Chooser::ResolvePropertyChain(Context, Binding, Container, StructType))
-	{
-		if (FStructProperty* Property = FindFProperty<FStructProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			OutResult = Property->ContainerPtrToValuePtr<FChooserRandomizationContext>(Container);
-			return true;
-		}
-	}
-
-	return false;
+	return Binding.GetValuePtr(Context,OutResult);
 }
 
 FRandomizeColumn::FRandomizeColumn()
@@ -25,7 +16,7 @@ FRandomizeColumn::FRandomizeColumn()
 	InputValue.InitializeAs(FRandomizeContextProperty::StaticStruct());
 }
 
-void FRandomizeColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const
+void FRandomizeColumn::Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const
 {
 	int Count = IndexListIn.Num();
 	int Selection = 0;
@@ -95,13 +86,13 @@ void FRandomizeColumn::Filter(FChooserEvaluationContext& Context, const TArray<u
 
 	if (Selection < Count)
 	{
-		IndexListOut.Add(IndexListIn[Selection]);
+		IndexListOut.Push(IndexListIn[Selection]);
 	}
 }
 
 void FRandomizeColumn::SetOutputs(FChooserEvaluationContext& Context, int RowIndex) const
 {
-	if (InputValue.IsValid())
+	if (InputValue.IsValid() && RowValues.IsValidIndex((RowIndex)))
 	{
 		const FChooserRandomizationContext* ConstRandomizationContext = nullptr;
 		InputValue.Get<FChooserParameterRandomizeBase>().GetValue(Context,ConstRandomizationContext);
@@ -113,3 +104,26 @@ void FRandomizeColumn::SetOutputs(FChooserEvaluationContext& Context, int RowInd
 		}
 	}
 }
+	#if WITH_EDITOR
+
+	void FRandomizeColumn::AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FName PropertyName("RowData",ColumnIndex);
+		FPropertyBagPropertyDesc PropertyDesc(PropertyName, EPropertyBagPropertyType::Float);
+		PropertyDesc.MetaData.Add(FPropertyBagPropertyDescMetaData("DisplayName", "Randomize"));
+		PropertyBag.AddProperties({PropertyDesc});
+		PropertyBag.SetValueFloat(PropertyName, RowValues[RowIndex]);
+	}
+
+	void FRandomizeColumn::SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FName PropertyName("RowData", ColumnIndex);
+		
+		TValueOrError<float, EPropertyBagResult> Result = PropertyBag.GetValueFloat(PropertyName);
+		if (float* Value = Result.TryGetValue())
+		{
+			RowValues[RowIndex] = *Value;
+		}
+	}
+
+    #endif

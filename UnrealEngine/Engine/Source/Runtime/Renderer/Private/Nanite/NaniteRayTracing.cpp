@@ -91,6 +91,16 @@ static FAutoConsoleVariableRef CVarNaniteRayTracingMaxStagingBufferSizeMB(
 	ECVF_RenderThreadSafe
 );
 
+static int32 GNaniteRayTracingBLASScratchSizeMultipleMB = 64;
+static FAutoConsoleVariableRef CVarNaniteRayTracingBLASScratchSizeMultipleMBMB(
+	TEXT("r.RayTracing.Nanite.BLASScratchSizeMultipleMB"),
+	GNaniteRayTracingBLASScratchSizeMultipleMB,
+	TEXT("Round the size of the BLAS build scratch buffer to be a multiple of this value.\n")
+	TEXT("This helps maintain consistent memory usage and prevent memory usage spikes.\n")
+	TEXT("Default = 64 MB."),
+	ECVF_RenderThreadSafe
+);
+
 static bool GNaniteRayTracingProfileStreamOut = false;
 static FAutoConsoleVariableRef CVarNaniteRayTracingProfileStreamOut(
 	TEXT("r.RayTracing.Nanite.ProfileStreamOut"),
@@ -116,7 +126,7 @@ static const uint32 MinAuxiliaryBufferEntries = 4 * 1024 * 1024; // buffer size 
 
 namespace Nanite
 {
-	static FRDGBufferRef ResizeBufferIfNeeded(FRDGBuilder& GraphBuilder, TRefCountPtr<FRDGPooledBuffer>& ExternalBuffer, uint32 BytesPerElement, uint32 NumElements, const TCHAR* Name, bool bCopy, bool bAllowShrinking)
+	static FRDGBufferRef ResizeBufferIfNeeded(FRDGBuilder& GraphBuilder, TRefCountPtr<FRDGPooledBuffer>& ExternalBuffer, uint32 BytesPerElement, uint32 NumElements, const TCHAR* Name, bool bCopy, EAllowShrinking AllowShrinking)
 	{
 		FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateStructuredDesc(BytesPerElement, NumElements);
 
@@ -133,7 +143,7 @@ namespace Nanite
 				AddCopyBufferPass(GraphBuilder, BufferRDG, SrcBufferRDG);
 			}
 		}
-		else if (bAllowShrinking && BufferDesc.GetSize() / 2 < BufferRDG->GetSize()) // shrink
+		else if (AllowShrinking == EAllowShrinking::Yes && BufferDesc.GetSize() / 2 < BufferRDG->GetSize()) // shrink
 		{
 			FRDGBufferRef SrcBufferRDG = BufferRDG;
 
@@ -353,7 +363,7 @@ namespace Nanite
 		check(Id != INDEX_NONE);
 
 		FInternalData* Data = Geometries[Id];
-		Data->PrimitiveId = SceneInfo->GetIndex(); // TODO: Update this when index changes?
+		Data->PrimitiveId = SceneInfo->GetPersistentIndex().Index;
 
 		VisibleGeometries.Add(Id);
 	}
@@ -489,21 +499,8 @@ namespace Nanite
 		FRDGBufferDesc MeshDataBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), FMath::Max(NumMeshDataEntries, 32U));
 		MeshDataBufferDesc.Usage |= BUF_SourceCopy;
 
-#if USE_NON_TRANSIENT_MESH_DATA_BUFFER
-		FRDGBufferRef MeshDataBuffer;
-		if (!MeshDataBufferPooled || MeshDataBufferDesc.GetSize() > MeshDataBufferPooled->GetSize())
-		{
-			MeshDataBuffer = GraphBuilder.CreateBuffer(MeshDataBufferDesc, TEXT("NaniteRayTracing.MeshDataBuffer"));
-
-			MeshDataBufferPooled = GraphBuilder.ConvertToExternalBuffer(MeshDataBuffer);
-		}
-		else
-		{
-			MeshDataBuffer = GraphBuilder.RegisterExternalBuffer(MeshDataBufferPooled);
-		}
-#else
 		FRDGBufferRef MeshDataBuffer = GraphBuilder.CreateBuffer(MeshDataBufferDesc, TEXT("NaniteRayTracing.MeshDataBuffer"));
-#endif
+
 		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(MeshDataBuffer), 0);
 
 		FRDGBufferRef StagingAuxiliaryDataBufferRDG;
@@ -511,8 +508,7 @@ namespace Nanite
 		{
 			const uint32 BufferNumAuxiliaryDataEntries = FMath::Max(NumAuxiliaryDataEntries, MinAuxiliaryBufferEntries);
 			const bool bCopy = false;
-			const bool bAllowShrinking = true;
-			StagingAuxiliaryDataBufferRDG = ResizeBufferIfNeeded(GraphBuilder, StagingAuxiliaryDataBuffer, sizeof(uint32), BufferNumAuxiliaryDataEntries, TEXT("NaniteRayTracing.StagingAuxiliaryDataBuffer"), bCopy, bAllowShrinking);
+			StagingAuxiliaryDataBufferRDG = ResizeBufferIfNeeded(GraphBuilder, StagingAuxiliaryDataBuffer, sizeof(uint32), BufferNumAuxiliaryDataEntries, TEXT("NaniteRayTracing.StagingAuxiliaryDataBuffer"), bCopy, EAllowShrinking::Yes);
 			StagingAuxiliaryDataBuffer = GraphBuilder.ConvertToExternalBuffer(StagingAuxiliaryDataBufferRDG);
 
 			SET_MEMORY_STAT(STAT_NaniteRayTracingStagingAuxiliaryDataBuffer, StagingAuxiliaryDataBufferRDG->GetSize());
@@ -654,7 +650,7 @@ namespace Nanite
 					auto NaniteProxy = static_cast<Nanite::FSceneProxyBase*>(Primitive->Proxy);
 					NaniteProxy->SetRayTracingDataOffset(Data.AuxiliaryDataOffset);
 
-					Primitive->Scene->GPUScene.AddPrimitiveToUpdate(Primitive->GetIndex(), EPrimitiveDirtyState::ChangedOther);
+					Primitive->Scene->GPUScene.AddPrimitiveToUpdate(Primitive->GetPersistentIndex(), EPrimitiveDirtyState::ChangedOther);
 				}
 
 				ScheduledBuilds.Add(PendingBuild.GeometryId);
@@ -762,7 +758,7 @@ namespace Nanite
 							auto NaniteProxy = static_cast<Nanite::FSceneProxyBase*>(Primitive->Proxy);
 							NaniteProxy->SetRayTracingDataOffset(Data.AuxiliaryDataOffset);
 
-							Primitive->Scene->GPUScene.AddPrimitiveToUpdate(Primitive->GetIndex(), EPrimitiveDirtyState::ChangedOther);
+							Primitive->Scene->GPUScene.AddPrimitiveToUpdate(Primitive->GetPersistentIndex(), EPrimitiveDirtyState::ChangedOther);
 						}
 
 						ScheduledBuilds.Add(GeometryId);
@@ -802,8 +798,7 @@ namespace Nanite
 		{
 			const uint32 NumAuxiliaryDataEntries = FMath::Max((uint32)AuxiliaryDataAllocator.GetMaxSize(), MinAuxiliaryBufferEntries);
 			const bool bCopy = true;
-			const bool bAllowShrinking = false;
-			AuxiliaryDataBufferRDG = ResizeBufferIfNeeded(GraphBuilder, AuxiliaryDataBuffer, sizeof(uint32), NumAuxiliaryDataEntries, TEXT("NaniteRayTracing.AuxiliaryDataBuffer"), bCopy, bAllowShrinking);
+			AuxiliaryDataBufferRDG = ResizeBufferIfNeeded(GraphBuilder, AuxiliaryDataBuffer, sizeof(uint32), NumAuxiliaryDataEntries, TEXT("NaniteRayTracing.AuxiliaryDataBuffer"), bCopy, EAllowShrinking::No);
 			AuxiliaryDataBuffer = GraphBuilder.ConvertToExternalBuffer(AuxiliaryDataBufferRDG);
 
 			SET_MEMORY_STAT(STAT_NaniteRayTracingAuxiliaryDataBuffer, AuxiliaryDataBufferRDG->GetSize());
@@ -826,7 +821,7 @@ namespace Nanite
 
 			BuildParams.Add(Params);
 
-			FRayTracingAccelerationStructureSize SizeInfo = RHICalcRayTracingGeometrySize(Initializer);
+			FRayTracingAccelerationStructureSize SizeInfo = GraphBuilder.RHICmdList.CalcRayTracingGeometrySize(Initializer);
 			BLASScratchSize = Align(BLASScratchSize + SizeInfo.BuildScratchSize, GRHIRayTracingScratchBufferAlignment);
 
 			Data.bUpdating = false;
@@ -838,6 +833,9 @@ namespace Nanite
 			AddCopyBufferPass(GraphBuilder, AuxiliaryDataBufferRDG, Data.AuxiliaryDataOffset * sizeof(uint32), StagingAuxiliaryDataBufferRDG, Data.StagingAuxiliaryDataOffset * sizeof(uint32), Data.AuxiliaryDataSize * sizeof(uint32));
 			Data.StagingAuxiliaryDataOffset = INDEX_NONE;
 		}
+
+		const uint32 BLASScratchSizeMultiple = FMath::Max(GNaniteRayTracingBLASScratchSizeMultipleMB, 1) * 1024 * 1024;
+		BLASScratchSize = FMath::DivideAndRoundUp(BLASScratchSize, BLASScratchSizeMultiple) * BLASScratchSizeMultiple;
 
 		INC_DWORD_STAT_BY(STAT_NaniteRayTracingScheduledBuilds, ScheduledBuilds.Num());
 

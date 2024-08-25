@@ -37,6 +37,8 @@ class MESHMODELINGTOOLSEXP_API UMeshVertexSculptToolBuilder : public UMeshSurfac
 
 public:
 	virtual UMeshSurfacePointTool* CreateNewTool(const FToolBuilderState& SceneState) const override;
+protected:
+	virtual const FToolTargetTypeRequirements& GetTargetRequirements() const override;
 };
 
 
@@ -197,7 +199,7 @@ public:
  * Mesh Vertex Sculpt Tool Class
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UMeshVertexSculptTool : public UMeshSculptToolBase
+class MESHMODELINGTOOLSEXP_API UMeshVertexSculptTool : public UMeshSculptToolBase, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 public:
@@ -213,6 +215,12 @@ public:
 	virtual bool OnUpdateHover(const FInputDeviceRay& DevicePos) override;
 
 	virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 public:
 
@@ -267,6 +275,7 @@ protected:
 
 	virtual void OnBeginStroke(const FRay& WorldRay) override;
 	virtual void OnEndStroke() override;
+	virtual void OnCancelStroke() override;
 	// end UMeshSculptToolBase API
 
 protected:

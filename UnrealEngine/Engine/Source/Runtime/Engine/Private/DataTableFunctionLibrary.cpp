@@ -9,6 +9,7 @@
 #include "EditorFramework/AssetImportData.h"
 #include "Factories/CSVImportFactory.h"
 #include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
 #endif //WITH_EDITOR
 
 UDataTableFunctionLibrary::UDataTableFunctionLibrary(const FObjectInitializer& ObjectInitializer)
@@ -34,7 +35,14 @@ void UDataTableFunctionLibrary::EvaluateCurveTableRow(UCurveTable* CurveTable, F
 	}
 }
 
-bool UDataTableFunctionLibrary::DoesDataTableRowExist(UDataTable* Table, FName RowName)
+const UScriptStruct* UDataTableFunctionLibrary::GetDataTableRowStruct(const UDataTable* Table)
+{
+	return Table
+		? Table->GetRowStruct()
+		: nullptr;
+}
+
+bool UDataTableFunctionLibrary::DoesDataTableRowExist(const UDataTable* Table, FName RowName)
 {
 	if (!Table)
 	{
@@ -87,7 +95,7 @@ bool UDataTableFunctionLibrary::GetDataTableRowFromName(UDataTable* Table, FName
 	return false;
 }
 
-void UDataTableFunctionLibrary::GetDataTableRowNames(UDataTable* Table, TArray<FName>& OutRowNames)
+void UDataTableFunctionLibrary::GetDataTableRowNames(const UDataTable* Table, TArray<FName>& OutRowNames)
 {
 	if (Table)
 	{
@@ -99,9 +107,52 @@ void UDataTableFunctionLibrary::GetDataTableRowNames(UDataTable* Table, TArray<F
 	}
 }
 
+void UDataTableFunctionLibrary::GetDataTableColumnNames(const UDataTable* Table, TArray<FName>& OutColumnNames)
+{
+	if (Table && Table->GetRowStruct())
+	{
+		OutColumnNames = DataTableUtils::GetStructPropertyNames(Table->GetRowStruct());
+	}
+	else
+	{
+		OutColumnNames.Empty();
+	}
+}
+
+void UDataTableFunctionLibrary::GetDataTableColumnExportNames(const UDataTable* Table, TArray<FString>& OutExportColumnNames)
+{
+	OutExportColumnNames.Empty();
+
+	if (Table && Table->GetRowStruct())
+	{
+		for (TFieldIterator<const FProperty> It(Table->GetRowStruct()); It; ++It)
+		{
+			OutExportColumnNames.Add(DataTableUtils::GetPropertyExportName(*It));
+		}
+	}
+}
+
+bool UDataTableFunctionLibrary::GetDataTableColumnNameFromExportName(const UDataTable* Table, const FString& ColumnExportName, FName& OutColumnName)
+{
+	if (Table && Table->GetRowStruct())
+	{
+		for (TFieldIterator<const FProperty> It(Table->GetRowStruct()); It; ++It)
+		{
+			const FString PropertyExportName = DataTableUtils::GetPropertyExportName(*It);
+			if (PropertyExportName == ColumnExportName)
+			{
+				OutColumnName = It->GetFName();
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 
 #if WITH_EDITOR
-bool UDataTableFunctionLibrary::FillDataTableFromCSVString(UDataTable* DataTable, const FString& InString)
+bool UDataTableFunctionLibrary::FillDataTableFromCSVString(UDataTable* DataTable, const FString& InString, UScriptStruct* ImportRowStruct)
 {
 	if (!DataTable)
 	{
@@ -110,6 +161,8 @@ bool UDataTableFunctionLibrary::FillDataTableFromCSVString(UDataTable* DataTable
 	}
 
 	UCSVImportFactory* ImportFactory = NewObject<UCSVImportFactory>();
+	ImportFactory->AutomatedImportSettings.bForceAutomatedImport = ImportRowStruct != nullptr;
+	ImportFactory->AutomatedImportSettings.ImportRowStruct = ImportRowStruct;
 
 	bool bWasCancelled = false;
 	const TCHAR* Buffer = *InString;
@@ -127,7 +180,7 @@ bool UDataTableFunctionLibrary::FillDataTableFromCSVString(UDataTable* DataTable
 	return Result != nullptr && !bWasCancelled;
 }
 
-bool UDataTableFunctionLibrary::FillDataTableFromCSVFile(UDataTable* DataTable, const FString& InFilePath)
+bool UDataTableFunctionLibrary::FillDataTableFromCSVFile(UDataTable* DataTable, const FString& InFilePath, UScriptStruct* ImportRowStruct)
 {
 	if (!DataTable)
 	{
@@ -142,11 +195,15 @@ bool UDataTableFunctionLibrary::FillDataTableFromCSVFile(UDataTable* DataTable, 
 	}
 
 	DataTable->AssetImportData->Update(InFilePath);
+
 	UCSVImportFactory* ImportFactory = NewObject<UCSVImportFactory>();
+	ImportFactory->AutomatedImportSettings.bForceAutomatedImport = ImportRowStruct != nullptr;
+	ImportFactory->AutomatedImportSettings.ImportRowStruct = ImportRowStruct;
+	
 	return ImportFactory->ReimportCSV(DataTable) == EReimportResult::Succeeded;
 }
 
-bool UDataTableFunctionLibrary::FillDataTableFromJSONString(UDataTable* DataTable, const FString& InString)
+bool UDataTableFunctionLibrary::FillDataTableFromJSONString(UDataTable* DataTable, const FString& InString, UScriptStruct* ImportRowStruct)
 {
 	if (!DataTable)
 	{
@@ -155,6 +212,8 @@ bool UDataTableFunctionLibrary::FillDataTableFromJSONString(UDataTable* DataTabl
 	}
 
 	UCSVImportFactory* ImportFactory = NewObject<UCSVImportFactory>();
+	ImportFactory->AutomatedImportSettings.bForceAutomatedImport = ImportRowStruct != nullptr;
+	ImportFactory->AutomatedImportSettings.ImportRowStruct = ImportRowStruct;
 
 	bool bWasCancelled = false;
 	const TCHAR* Buffer = *InString;
@@ -188,14 +247,75 @@ bool UDataTableFunctionLibrary::FillDataTableFromJSONFile(UDataTable* DataTable,
 
 	if (!InFilePath.EndsWith(TEXT(".json")))
 	{
-		UE_LOG(LogDataTable, Error, TEXT("FillDataTableFromJSONFile - The file is not a json."));
+		UE_LOG(LogDataTable, Error, TEXT("FillDataTableFromJSONFile - The file is not a JSON file."));
 		return false;
 	}
 
 	DataTable->AssetImportData->Update(InFilePath);
+
 	UCSVImportFactory* ImportFactory = NewObject<UCSVImportFactory>();
+	ImportFactory->AutomatedImportSettings.bForceAutomatedImport = ImportRowStruct != nullptr;
 	ImportFactory->AutomatedImportSettings.ImportRowStruct = ImportRowStruct;
+	
 	return ImportFactory->ReimportCSV(DataTable) == EReimportResult::Succeeded;
+}
+
+bool UDataTableFunctionLibrary::ExportDataTableToCSVString(const UDataTable* DataTable, FString& OutCSVString)
+{
+	if (!DataTable || !DataTable->GetRowStruct())
+	{
+		UE_LOG(LogDataTable, Error, TEXT("ExportDataTableToCSVString - The DataTable is invalid."));
+		return false;
+	}
+
+	OutCSVString = DataTable->GetTableAsCSV();
+	return true;
+}
+
+bool UDataTableFunctionLibrary::ExportDataTableToCSVFile(const UDataTable* DataTable, const FString& CSVFilePath)
+{
+	if (!DataTable || !DataTable->GetRowStruct())
+	{
+		UE_LOG(LogDataTable, Error, TEXT("ExportDataTableToCSVFile - The DataTable is invalid."));
+		return false;
+	}
+
+	if (!FFileHelper::SaveStringToFile(DataTable->GetTableAsCSV(), *CSVFilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		UE_LOG(LogDataTable, Error, TEXT("ExportDataTableToCSVFile - Failed to write file '%s'."), *CSVFilePath);
+		return false;
+	}
+
+	return true;
+}
+
+bool UDataTableFunctionLibrary::ExportDataTableToJSONString(const UDataTable* DataTable, FString& OutJSONString)
+{
+	if (!DataTable || !DataTable->GetRowStruct())
+	{
+		UE_LOG(LogDataTable, Error, TEXT("ExportDataTableToJSONString - The DataTable is invalid."));
+		return false;
+	}
+
+	OutJSONString = DataTable->GetTableAsJSON();
+	return true;
+}
+
+bool UDataTableFunctionLibrary::ExportDataTableToJSONFile(const UDataTable* DataTable, const FString& JSONFilePath)
+{
+	if (!DataTable || !DataTable->GetRowStruct())
+	{
+		UE_LOG(LogDataTable, Error, TEXT("ExportDataTableToJSONFile - The DataTable is invalid."));
+		return false;
+	}
+
+	if (!FFileHelper::SaveStringToFile(DataTable->GetTableAsJSON(), *JSONFilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		UE_LOG(LogDataTable, Error, TEXT("ExportDataTableToJSONFile - Failed to write file '%s'."), *JSONFilePath);
+		return false;
+	}
+
+	return true;
 }
 
 void UDataTableFunctionLibrary::AddDataTableRow(UDataTable* const DataTable, const FName& RowName, const FTableRowBase& RowData)

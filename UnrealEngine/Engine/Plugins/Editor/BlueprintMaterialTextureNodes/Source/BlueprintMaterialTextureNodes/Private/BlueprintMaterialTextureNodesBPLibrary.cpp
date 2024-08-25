@@ -46,7 +46,7 @@ FLinearColor UBlueprintMaterialTextureNodesBPLibrary::Texture2D_SampleUV_EditorO
 		int32 MipWidth = CurMip->SizeX;
 		int32 MipHeight = CurMip->SizeY;
 		int32 X = FMath::Clamp(int(UV.X * MipWidth), 0, MipWidth - 1);
-		int32 Y = FMath::Clamp(int(UV.Y * MipHeight), 0, MipWidth - 1);
+		int32 Y = FMath::Clamp(int(UV.Y * MipHeight), 0, MipHeight - 1);
 
 		//Retrieve from BulkData if available and if uncompressed format
 		if ( (ImageData->IsBulkDataLoaded() && ImageData->GetBulkDataSize() > 0) && (Texture->GetPixelFormat() == PF_B8G8R8A8 || Texture->GetPixelFormat() == PF_FloatRGBA) )

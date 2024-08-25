@@ -429,7 +429,7 @@ void DumpEventsHistoryIfThreadValid( TArray<FEventData>& EventsHistoryForFrame, 
 			UE_LOG( LogStats, Log, TEXT( " Wait   : %s" ), *GetHumanReadableCallstack( EventStats.WaitStackStats ) );
 			UE_LOG( LogStats, Log, TEXT( " Trigger: %s" ), *GetHumanReadableCallstack( EventStats.TriggerStackStats ) );
 
-			EventsHistoryForFrame.RemoveAt( Index--, 1, false );
+			EventsHistoryForFrame.RemoveAt( Index--, 1, EAllowShrinking::No);
 		}	
 	}
 }
@@ -2145,7 +2145,7 @@ static void StatCmd(FString InCmd, bool bStatCommand, FOutputDevice* Ar /*= null
 				const bool bHierarchy = MaybeGroup[MaybeGroup.Len() - 1] == TEXT('+');
 				if (bHierarchy)
 				{
-					MaybeGroup.RemoveAt(PlusPos, 1, false);
+					MaybeGroup.RemoveAt(PlusPos, 1, EAllowShrinking::No);
 				}
 
 				const FName MaybeGroupFName = FName(*MaybeGroup);
@@ -2316,7 +2316,7 @@ bool DirectStatsCommand(const TCHAR* Cmd, bool bBlockForCompletion /*= false*/, 
 					const bool bHierarchy = MaybeGroup[MaybeGroup.Len() - 1] == TEXT('+');
 					if (bHierarchy)
 					{
-						MaybeGroup.RemoveAt(PlusPos, 1, false);
+						MaybeGroup.RemoveAt(PlusPos, 1, EAllowShrinking::No);
 					}
 
 					const FName MaybeGroupFName = FName(*(FString(TEXT("STATGROUP_")) + MaybeGroup));

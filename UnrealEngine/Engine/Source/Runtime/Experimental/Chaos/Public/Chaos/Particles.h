@@ -4,6 +4,7 @@
 #include "Chaos/ArrayCollection.h"
 #include "Chaos/ArrayCollectionArray.h"
 #include "Chaos/Core.h"
+#include "Chaos/Particle/ObjectState.h"
 #include "Chaos/Vector.h"
 #include "ChaosArchive.h"
 #include "HAL/LowLevelMemTracker.h"
@@ -96,7 +97,7 @@ namespace Chaos
 
 		void Resize(const int32 Num)
 		{
-			AddParticles(Num - Size());
+			ResizeHelper(Num);
 			IncrementDirtyValidation();
 		}
 
@@ -134,20 +135,37 @@ namespace Chaos
 		{
 			return MX;
 		}
+
+		TArrayCollectionArray<TVector<T, d>>& XArray()
+		{
+			return MX;
+		}
 		
+		UE_DEPRECATED(5.4, "Use GetX instead")
 		const TVector<T, d>& X(const int32 Index) const
 		{
 			return MX[Index];
 		}
 
+		UE_DEPRECATED(5.4, "Use GetX or SetX instead")
 		TVector<T, d>& X(const int32 Index)
 		{
 			return MX[Index];
 		}
 
+		const TVector<T, d>& GetX(const int32 Index) const
+		{
+			return MX[Index];
+		}
+
+		void SetX(const int32 Index, const TVector<T, d>& InX)
+		{
+			MX[Index] = InX;
+		}
+
 		FString ToString(int32 index) const
 		{
-			return FString::Printf(TEXT("MX:%s"), *X(index).ToString());
+			return FString::Printf(TEXT("MX:%s"), *GetX(index).ToString());
 		}
 
 		uint32 GetTypeHash() const
@@ -209,17 +227,6 @@ namespace Chaos
 		return InParticles.GetTypeHash();
 	}
 	
-	enum class EObjectStateType: int8
-	{
-		Uninitialized = 0,
-		Sleeping = 1,
-		Kinematic = 2,
-		Static = 3,
-		Dynamic = 4,
-
-		Count
-	};
-
 	enum class EChaosCollisionTraceFlag : int8
 	{
 		/** Use project physics settings (DefaultShapeComplexity) */

@@ -6,6 +6,9 @@
 #include "ARTrackable.h"
 #include "ILiveLinkSource.h"
 
+#include "AppleARKitLiveLinkSourceFactory.generated.h"
+
+struct FAppleARKitLiveLinkConnectionSettings;
 class UTimecodeProvider;
 
 /** Interface that publishes face ar blend shape information */
@@ -30,12 +33,29 @@ public:
 	/** Creates a face mesh source that will autobind to the tracked face mesh */
 	static TSharedPtr<ILiveLinkSourceARKit> CreateLiveLinkSource();
 
-	/** Creates the singleton listener that will receive remote events and publish them locally */
-	static void CreateLiveLinkRemoteListener();
+	/** Creates a AppleARKit source that holds a livelink remote listener. */
+	static TSharedPtr<ILiveLinkSourceARKit> CreateLiveLinkSource(const FAppleARKitLiveLinkConnectionSettings& ConnectionSettings);
 
 	/** Creates the publisher that will send remote events to a specified IP */
 	static TSharedPtr<IARKitBlendShapePublisher, ESPMode::ThreadSafe> CreateLiveLinkRemotePublisher(const FString& RemoteAddr = FString());
 
 	/** Creates the publisher that will write the curve data to disk */
 	static TSharedPtr<IARKitBlendShapePublisher, ESPMode::ThreadSafe> CreateLiveLinkLocalFileWriter();
+};
+
+UCLASS()
+class APPLEARKITFACESUPPORT_API UAppleARKitLiveLinkSourceFactory : public ULiveLinkSourceFactory
+{
+public:
+	GENERATED_BODY()
+
+	virtual FText GetSourceDisplayName() const override;
+	virtual FText GetSourceTooltip() const override;
+
+	virtual EMenuType GetMenuType() const override { return EMenuType::SubPanel; }
+	virtual TSharedPtr<SWidget> BuildCreationPanel(FOnLiveLinkSourceCreated OnLiveLinkSourceCreated) const override;
+	virtual TSharedPtr<ILiveLinkSource> CreateSource(const FString& ConnectionString) const override;
+
+private:
+	void CreateSourceFromSettings(const FAppleARKitLiveLinkConnectionSettings& ConnectionSettings, FOnLiveLinkSourceCreated OnSourceCreated) const;
 };

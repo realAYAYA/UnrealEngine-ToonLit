@@ -13,12 +13,12 @@
 #include "MaterialEditorActions.h"
 #include "Materials/MaterialInstance.h"
 #include "IMaterialEditor.h"
-#include "Preferences/MaterialStatsOptions.h"
 #include "MaterialEditorSettings.h"
 #include "ShaderCompiler.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "Modules/ModuleManager.h"
 #include "MessageLogModule.h"
+#include "Interfaces/IShaderFormat.h"
 
 #define LOCTEXT_NAMESPACE "MaterialStats"
 
@@ -35,14 +35,16 @@ FShaderPlatformSettings::FShaderPlatformSettings(
 	const FName _Name,
 	const bool _bAllowPresenceInGrid,
 	const bool _bAllowCodeView,
-	const FString& _Description)
-	:
-	PlatformType(_PlatformType),
-	PlatformShaderID(_ShaderPlatformID),
-	PlatformName(_Name),
-	PlatformDescription(_Description),
-	bAllowCodeView(_bAllowCodeView),
-	bAllowPresenceInGrid(_bAllowPresenceInGrid)
+	const FString& _Description,
+	const bool bAlwaysOn
+	)
+	: PlatformType(_PlatformType)
+	, PlatformShaderID(_ShaderPlatformID)
+	, PlatformName(_Name)
+	, PlatformDescription(_Description)
+	, bAlwaysOn(bAlwaysOn)
+	, bAllowCodeView(_bAllowCodeView)
+	, bAllowPresenceInGrid(_bAllowPresenceInGrid)
 {
 	PlatformNameID = *FMaterialStatsUtils::ShaderPlatformTypeName(PlatformShaderID);
 }
@@ -54,59 +56,64 @@ void FShaderPlatformSettings::ClearResources()
 	// free material resources
 	for (int32 i = 0; i < EMaterialQualityLevel::Num; ++i)
 	{
-		FMaterialResourceStats* Resource = PlatformData[i].MaterialResourcesStats;
-		if (Resource != nullptr)
+		for (int32 InstanceIndex = 0; InstanceIndex < PlatformData[i].Instances.Num(); ++InstanceIndex)
 		{
-			if (Resource->PrepareDestroy_GameThread())
+			auto& Instance = PlatformData[i].Instances[InstanceIndex];
+			FMaterialResourceStats* Resource = Instance.MaterialResourcesStats;
+			if (Resource != nullptr)
 			{
-				MaterialsToDeleteOnRenderThread.Add(Resource);
+				if (Resource->PrepareDestroy_GameThread())
+				{
+					MaterialsToDeleteOnRenderThread.Add(Resource);
+				}
+				else
+				{
+					delete Resource;
+				}
 			}
-			else
-			{
-				delete Resource;
-			}
-			PlatformData[i].MaterialResourcesStats = nullptr;
+
+			Instance.ArrShaderEntries.Empty();
 		}
 
-		PlatformData[i].ArrShaderEntries.Empty();
-
-		PlatformData[i].bCompilingShaders = false;
-		PlatformData[i].bNeedShaderRecompilation = true;
+		PlatformData[i].Instances.Empty();
 	}
 
 	FMaterial::DeleteMaterialsOnRenderThread(MaterialsToDeleteOnRenderThread);
 }
 
-FText FShaderPlatformSettings::GetSelectedShaderViewComboText(EMaterialQualityLevel::Type QualityLevel) const
+FText FShaderPlatformSettings::GetSelectedShaderViewComboText(EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex) const
 {
-	if (PlatformData[QualityLevel].ArrShaderEntries.Num() == 0)
+	const auto& Instance = PlatformData[QualityLevel].Instances[InstanceIndex];
+	if (Instance.ArrShaderEntries.Num() == 0)
 	{
 		return FText::FromString(TEXT("-Compiling-Shaders-"));
 	}
 
-	return FText::FromString(PlatformData[QualityLevel].ComboBoxSelectedEntry.Text);
+	return FText::FromString(Instance.ComboBoxSelectedEntry.Text);
 }
 
-void FShaderPlatformSettings::OnShaderViewComboSelectionChanged(TSharedPtr<FMaterialShaderEntry> Item, EMaterialQualityLevel::Type QualityType)
+void FShaderPlatformSettings::OnShaderViewComboSelectionChanged(TSharedPtr<FMaterialShaderEntry> Item, EMaterialQualityLevel::Type QualityType, const int32 InstanceIndex)
 {
 	if (Item.IsValid())
 	{
-		PlatformData[QualityType].ComboBoxSelectedEntry = *Item.Get();
-		PlatformData[QualityType].bUpdateShaderCode = true;
+		auto& Instance = PlatformData[QualityType].Instances[InstanceIndex];
+		Instance.ComboBoxSelectedEntry = *Item.Get();
+		Instance.bUpdateShaderCode = true;
 	}
 }
 
-FText FShaderPlatformSettings::GetShaderCode(const EMaterialQualityLevel::Type QualityType)
+FText FShaderPlatformSettings::GetShaderCode(const EMaterialQualityLevel::Type QualityType, const int32 InstanceIndex)
 {
+	auto& Instance = PlatformData[QualityType].Instances[InstanceIndex];
 	// if there were no change to the material return the cached shader code
-	if (!PlatformData[QualityType].bUpdateShaderCode)
+	if (!Instance.bUpdateShaderCode)
 	{
-		return PlatformData[QualityType].ShaderCode;
+		return Instance.ShaderCode;
 	}
 
-	PlatformData[QualityType].ShaderCode = LOCTEXT("ShaderCodeMsg", "Shader code compiling or not available!");
+	Instance.ShaderCode = LOCTEXT("ShaderCodeMsg", "Shader code compiling or not available!");
 
-	FMaterialResource *Resource = PlatformData[QualityType].MaterialResourcesStats;
+	FMaterialResource *Resource = Instance.MaterialResourcesStats;
 	const FMaterialShaderMap* MaterialShaderMap = Resource->GetGameThreadShaderMap();
 
 	const bool bCompilationFinished = Resource->IsCompilationFinished() && (MaterialShaderMap != nullptr);
@@ -117,7 +124,7 @@ FText FShaderPlatformSettings::GetShaderCode(const EMaterialQualityLevel::Type Q
 		TMap<FShaderId, TShaderRef<FShader>> ShaderMap;
 		MaterialShaderMap->GetShaderList(ShaderMap);
 
-		const FShaderId& ShaderId = PlatformData[QualityType].ComboBoxSelectedEntry.ShaderId;
+		const FShaderId& ShaderId = Instance.ComboBoxSelectedEntry.ShaderId;
 
 		const auto Entry = ShaderMap.Find(ShaderId);
 		if (Entry != nullptr)
@@ -126,13 +133,13 @@ FText FShaderPlatformSettings::GetShaderCode(const EMaterialQualityLevel::Type Q
 			const FMemoryImageString* ShaderSource = MaterialShaderMap->GetShaderSource(Shader.GetVertexFactoryType(), Shader.GetType(), ShaderId.PermutationId);
 			if (ShaderSource != nullptr)
 			{
-				PlatformData[QualityType].bUpdateShaderCode = false;
-				PlatformData[QualityType].ShaderCode = FText::FromString(*ShaderSource);
+				Instance.bUpdateShaderCode = false;
+				Instance.ShaderCode = FText::FromString(*ShaderSource);
 			}
 		}
 	}
 
-	return PlatformData[QualityType].ShaderCode;
+	return Instance.ShaderCode;
 }
 
 void FShaderPlatformSettings::AllocateMaterialResources()
@@ -143,162 +150,260 @@ void FShaderPlatformSettings::AllocateMaterialResources()
 
 	for (int32 QualityLevelIndex = 0; QualityLevelIndex < EMaterialQualityLevel::Num; QualityLevelIndex++)
 	{
-		PlatformData[QualityLevelIndex].MaterialResourcesStats = new FMaterialResourceStats();
-		PlatformData[QualityLevelIndex].MaterialResourcesStats->SetMaterial(Material, MaterialInstance, (ERHIFeatureLevel::Type)TargetFeatureLevel, (EMaterialQualityLevel::Type)QualityLevelIndex);
-	}
-}
+		auto& Data = PlatformData[QualityLevelIndex].Instances.AddDefaulted_GetRef();
 
-void FShaderPlatformSettings::SetMaterial(UMaterial* InMaterial)
-{
-	// if this is a different material, clear away the old one's resources and compile new shaders
-	if (Material != InMaterial)
-	{
-		Material = InMaterial;
-		MaterialInstance = nullptr;
+		Data.MaterialResourcesStats = new FMaterialResourceStats();
+		Data.MaterialResourcesStats->SetMaterial(Material, MaterialInstance, TargetFeatureLevel, (EMaterialQualityLevel::Type)QualityLevelIndex);
 
-		AllocateMaterialResources();
-	}
-}
+		Data.ShaderStatsInfo.Reset();
 
-void FShaderPlatformSettings::SetMaterial(UMaterialInstance* InMaterialInstance)
-{
-	if (MaterialInstance != InMaterialInstance)
-	{
-		MaterialInstance = InMaterialInstance;
-		Material = MaterialInstance->GetMaterial();
+		Data.bNeedShaderRecompilation = true;
 
-		AllocateMaterialResources();
-	}
-}
-
-bool FShaderPlatformSettings::CheckShaders()
-{
-	bool bRetValue = false;
-
-	// prevent stats 
-	const double kMinimumTimeBetweenCompilationsSeconds = 5.0;
-
-	if (Material != nullptr)
-	{
-		// check and triggers shader recompilation if needed
-		for (int32 QualityLevelIndex = 0; QualityLevelIndex < EMaterialQualityLevel::Num; QualityLevelIndex++)
+		for (int32 i = 0; i < DerivedMaterialInstances.Num(); ++i)
 		{
-			auto &Data = PlatformData[QualityLevelIndex];
-			const bool bNeedsShaders = (bPresentInGrid && Data.bExtractStats) || Data.bExtractCode;
-			const double CurrentTime = FPlatformTime::Seconds();
-			if (Data.bNeedShaderRecompilation && bNeedsShaders && (CurrentTime - Data.LastTimeCompilationRequested) > kMinimumTimeBetweenCompilationsSeconds)
+			auto& Data2 = PlatformData[QualityLevelIndex].Instances.AddDefaulted_GetRef();
+
+			Data2.MaterialResourcesStats = new FMaterialResourceStats();
+			Data2.MaterialResourcesStats->SetMaterial(DerivedMaterialInstances[i]->GetBaseMaterial(), DerivedMaterialInstances[i], TargetFeatureLevel, (EMaterialQualityLevel::Type)QualityLevelIndex);
+
+			Data2.ShaderStatsInfo.Reset();
+
+			Data2.bNeedShaderRecompilation = true;
+		}
+
+		// ensure we start compiling shaders soon due to bNeedShaderRecompilation being set above
+		PlatformData[QualityLevelIndex].LastTimeCompilationRequested = 0.0;
+	}
+}
+
+void FShaderPlatformSettings::SetMaterial(UMaterial *InBaseMaterial, UMaterialInstance *InBaseMaterialInstance, const TArray<TObjectPtr<UMaterialInstance>>& InDerivedMaterialInstances)
+{
+	bool bReallocate = false;
+
+	if (InBaseMaterial != nullptr && InBaseMaterialInstance == nullptr && Material != InBaseMaterial)
+	{
+		Material = InBaseMaterial;
+		MaterialInstance = nullptr;
+		bReallocate = true;
+	}
+
+	if (InBaseMaterial == nullptr && InBaseMaterialInstance != nullptr && MaterialInstance != InBaseMaterialInstance)
+	{
+		Material = InBaseMaterialInstance->GetMaterial();
+		MaterialInstance = InBaseMaterialInstance;
+		bReallocate = true;
+	}
+
+	if (DerivedMaterialInstances != InDerivedMaterialInstances)
+	{
+		// TODO avoid copy
+		DerivedMaterialInstances = InDerivedMaterialInstances;
+		bReallocate = true;
+	}
+
+	if (bReallocate)
+	{
+		AllocateMaterialResources();
+	}
+}
+
+bool FShaderPlatformSettings::CheckShaders(bool bIgnoreCooldown)
+{
+	if (Material == nullptr)
+	{
+		return false;
+	}
+
+	bool bRefreshStatUI = false;
+
+	// don't refresh stats too often
+	const double kMinimumTimeBetweenCompilationsSeconds = 1.5;
+
+	const double CurrentTime = FPlatformTime::Seconds();
+
+	// check and triggers shader recompilation if needed
+	for (int32 QualityLevelIndex = 0; QualityLevelIndex < EMaterialQualityLevel::Num; QualityLevelIndex++)
+	{
+		auto &Data = PlatformData[QualityLevelIndex];
+
+		const bool bNeedsShaders = (bPresentInGrid && Data.bExtractStats) || Data.bExtractCode;
+		const bool bCooledDown = bIgnoreCooldown || (CurrentTime - Data.LastTimeCompilationRequested) > kMinimumTimeBetweenCompilationsSeconds;
+
+		bool bTriggeredCompilation = false;
+
+		for (int32 InstanceIndex = 0; InstanceIndex < Data.Instances.Num(); ++InstanceIndex)
+		{
+			auto& Instance = Data.Instances[InstanceIndex]; 
+
+			if (Instance.bNeedShaderRecompilation && bNeedsShaders)
 			{
-				Data.MaterialResourcesStats->CancelCompilation();
+				bRefreshStatUI = true;
 
-				Material->UpdateCachedExpressionData();
+				// reset even if we don't immediately recompile to improve UI feedback time
+				Instance.ShaderStatsInfo.Reset();
 
-				if (MaterialInstance != nullptr)
+				if (bCooledDown)
 				{
-					MaterialInstance->UpdateCachedData();
-				}
+					Instance.MaterialResourcesStats->CancelCompilation();
 
-				Data.LastTimeCompilationRequested = CurrentTime;
+					Material->UpdateCachedExpressionData();
 
-				TMap<FName, TArray<FMaterialStatsUtils::FRepresentativeShaderInfo>> ShaderTypeNamesAndDescriptions;
-				FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(ShaderTypeNamesAndDescriptions, Data.MaterialResourcesStats);
-
-				TArray<const FVertexFactoryType*> VFTypes;
-				TArray<const FShaderPipelineType*> PipelineTypes;
-				TArray<const FShaderType*> ShaderTypes;
-				for (auto& DescriptionPair : ShaderTypeNamesAndDescriptions)
-				{
-					const FVertexFactoryType* VFType = FindVertexFactoryType(DescriptionPair.Key);
-					check(VFType);
-
-					auto& DescriptionArray = DescriptionPair.Value;
-					for (const FMaterialStatsUtils::FRepresentativeShaderInfo& ShaderInfo : DescriptionArray)
+					if (MaterialInstance != nullptr)
 					{
-						const FShaderType* ShaderType = FindShaderTypeByName(ShaderInfo.ShaderName);
-						if (ShaderType && VFType)
+						MaterialInstance->UpdateCachedData();
+					}
+
+					TMap<FName, TArray<FMaterialStatsUtils::FRepresentativeShaderInfo>> ShaderTypeNamesAndDescriptions;
+					FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(ShaderTypeNamesAndDescriptions, Instance.MaterialResourcesStats);
+
+					TArray<const FVertexFactoryType*> VFTypes;
+					TArray<const FShaderPipelineType*> PipelineTypes;
+					TArray<const FShaderType*> ShaderTypes;
+
+					for (auto& DescriptionPair : ShaderTypeNamesAndDescriptions)
+					{
+						const FVertexFactoryType* VFType = FindVertexFactoryType(DescriptionPair.Key);
+						check(VFType);
+
+						auto& DescriptionArray = DescriptionPair.Value;
+						for (const FMaterialStatsUtils::FRepresentativeShaderInfo& ShaderInfo : DescriptionArray)
 						{
-							VFTypes.Add(VFType);
-							ShaderTypes.Add(ShaderType);
-							PipelineTypes.Add(nullptr);
+							const FShaderType* ShaderType = FindShaderTypeByName(ShaderInfo.ShaderName);
+
+							// in compile only setting we only care if derived MI's are compiling at all
+							// so we only take one shader combination not to slow down material stats window too much
+							// it's likely sufficient to treat first shader as most complex, otherwise we need to refactor FindShaderTypeByName
+							if (Instance.bOnlyCompileMostComplexShader && VFTypes.Num() >= 1)
+							{
+								break;
+							}
+
+							if (ShaderType && VFType)
+							{
+								VFTypes.Add(VFType);
+								ShaderTypes.Add(ShaderType);
+								PipelineTypes.Add(nullptr);
+							}
 						}
 					}
+
+					// Prepare the resource for compilation, but don't compile the completed shader map.
+					const bool bSuccess = Instance.MaterialResourcesStats->CacheShaders(PlatformShaderID, EMaterialShaderPrecompileMode::None);
+
+					if (bSuccess)
+					{
+						// Compile just the types we want.
+						Instance.MaterialResourcesStats->CacheGivenTypes(PlatformShaderID, VFTypes, PipelineTypes, ShaderTypes);
+					}
+
+					Instance.bCompilingShaders = true;
+					Instance.bUpdateShaderCode = true;
+					Instance.bNeedShaderRecompilation = false;
+
+					bTriggeredCompilation = true;
 				}
-
-				// Prepare the resource for compilation, but don't compile the completed shader map.
-				const bool bSuccess = Data.MaterialResourcesStats->CacheShaders(PlatformShaderID, EMaterialShaderPrecompileMode::None);
-
-				if (bSuccess)
-				{
-					// Compile just the types we want.
-					Data.MaterialResourcesStats->CacheGivenTypes(PlatformShaderID, VFTypes, PipelineTypes, ShaderTypes);
-				}
-
-				Data.bCompilingShaders = true;
-				Data.bUpdateShaderCode = true;
-				Data.bNeedShaderRecompilation = false;
-
-				Data.ShaderStatsInfo.Reset();
-
-				bRetValue = true;
 			}
+		}
+
+		if (bTriggeredCompilation)
+		{
+			Data.LastTimeCompilationRequested = CurrentTime;
 		}
 	}
 
-	return bRetValue;
+	return bRefreshStatUI;
 }
 
 bool FShaderPlatformSettings::Update()
 {
-	bool bRetValue = CheckShaders();
+	bool bRetValue = CheckShaders(false);
 
 	// if a shader compilation has been requested check if completed and extract shader names needed by code viewer combo-box
-	for (int32 i = 0; i < EMaterialQualityLevel::Num; ++i)
+	for (int32 QualityLevelIndex = 0; QualityLevelIndex < EMaterialQualityLevel::Num; ++QualityLevelIndex)
 	{
-		auto& QualityItem = PlatformData[i];
-		if (QualityItem.bCompilingShaders)
+		auto &Data = PlatformData[QualityLevelIndex];
+
+		for (int32 InstanceIndex = 0; InstanceIndex < Data.Instances.Num(); ++InstanceIndex)
 		{
-			FMaterialResource* Resource = QualityItem.MaterialResourcesStats;
+			auto& Instance = Data.Instances[InstanceIndex]; 
 
-			// if compilation is complete extract the list of compiled shader names
-			const bool bCompilationFinished = Resource->IsCompilationFinished();
-			if (bCompilationFinished)
+			if (Instance.bCompilingShaders)
 			{
-				QualityItem.bCompilingShaders = false;
-				QualityItem.bUpdateShaderCode = true;
+				FMaterialResource* Resource = Instance.MaterialResourcesStats;
 
-				const FMaterialShaderMap* MaterialShaderMap = Resource->GetGameThreadShaderMap();
-				if (MaterialShaderMap != nullptr)
+				// if compilation is complete extract the list of compiled shader names
+				const bool bCompilationFinished = Resource->IsCompilationFinished();
+				if (bCompilationFinished)
 				{
-					TMap<FShaderId, TShaderRef<FShader>> ShaderMap;
-					MaterialShaderMap->GetShaderList(ShaderMap);
+					Instance.bCompilingShaders = false;
+					Instance.bUpdateShaderCode = true;
 
-					QualityItem.ArrShaderEntries.Empty();
-					for (const auto& Entry : ShaderMap)
+					const FMaterialShaderMap* MaterialShaderMap = Resource->GetGameThreadShaderMap();
+					if (MaterialShaderMap != nullptr)
 					{
-						FShaderType* EntryShader = Entry.Value.GetType();
-						FVertexFactoryType* VertexFactory = Entry.Value.GetVertexFactoryType();
-						FString ShaderName = FString::Printf(TEXT("%s/%s"), VertexFactory ? VertexFactory->GetName() : TEXT("NullVF"), EntryShader->GetName());
-						QualityItem.ArrShaderEntries.Add(MakeShareable(new FMaterialShaderEntry{ Entry.Key, ShaderName }));
+						TMap<FShaderId, TShaderRef<FShader>> ShaderMap;
+						MaterialShaderMap->GetShaderList(ShaderMap);
+
+						Instance.ArrShaderEntries.Empty();
+						for (const auto& Entry : ShaderMap)
+						{
+							FShaderType* EntryShader = Entry.Value.GetType();
+							FVertexFactoryType* VertexFactory = Entry.Value.GetVertexFactoryType();
+							FString ShaderName = FString::Printf(TEXT("%s/%s"), VertexFactory ? VertexFactory->GetName() : TEXT("NullVF"), EntryShader->GetName());
+							Instance.ArrShaderEntries.Add(MakeShareable(new FMaterialShaderEntry{ Entry.Key, ShaderName }));
+						}
+
+						if (Instance.ArrShaderEntries.Num() > 0)
+						{
+							Instance.ArrShaderEntries.Sort([](const TSharedPtr<FMaterialShaderEntry>& First, const TSharedPtr<FMaterialShaderEntry>& Second)
+								{
+									return First->Text < Second->Text;
+								});
+
+							Instance.ComboBoxSelectedEntry = *Instance.ArrShaderEntries[0];
+						}
 					}
 
-					if (QualityItem.ArrShaderEntries.Num() > 0)
-					{
-						QualityItem.ArrShaderEntries.Sort([](const TSharedPtr<FMaterialShaderEntry>& First, const TSharedPtr<FMaterialShaderEntry>& Second)
-							{
-								return First->Text < Second->Text;
-							});
+					FMaterialStatsUtils::ExtractMatertialStatsInfo(PlatformShaderID, Instance.ShaderStatsInfo, Resource);
 
-						QualityItem.ComboBoxSelectedEntry = *QualityItem.ArrShaderEntries[0];
-					}
+					Instance.bNeedToWarnAboutCompilationErrors = Resource->GetCompileErrors().Num() > 0;
+
+					bRetValue = true;
 				}
-
-				FMaterialStatsUtils::ExtractMatertialStatsInfo(PlatformShaderID, QualityItem.ShaderStatsInfo, Resource);
-
-				bRetValue = true;
 			}
 		}
 	}
 
 	return bRetValue;
+}
+
+bool FShaderPlatformSettings::CachePendingShaders()
+{
+	const bool bNeedsGridRefresh = CheckShaders(true);
+
+	FString MaterialName;
+	TArray<FMaterial*> MaterialsToCompile;
+	for (int32 QualityLevelIndex = 0; QualityLevelIndex < EMaterialQualityLevel::Num; QualityLevelIndex++)
+	{
+		for (int32 InstanceIndex = 0; InstanceIndex < PlatformData[QualityLevelIndex].Instances.Num(); ++InstanceIndex)
+		{
+			auto& Instance = PlatformData[QualityLevelIndex].Instances[InstanceIndex]; 
+
+			if (Instance.bCompilingShaders)
+			{
+				if (MaterialName.IsEmpty())
+				{
+					MaterialName = Instance.MaterialResourcesStats->GetFriendlyName(); 
+				}
+
+				MaterialsToCompile.Add(Instance.MaterialResourcesStats);
+			}
+		}
+	}
+
+	FMaterial::FinishCompilation(*MaterialName, MaterialsToCompile);
+
+	return bNeedsGridRefresh;
 }
 
 /*end FShaderPlatformSettings functions*/
@@ -312,20 +417,22 @@ FMaterialStats::~FMaterialStats()
 	SaveSettings();
 }
 
-void FMaterialStats::Initialize(IMaterialEditor* InMaterialEditor)
+void FMaterialStats::Initialize(IMaterialEditor* InMaterialEditor, const bool bShowMaterialInstancesMenu, const bool bAllowIgnoringCompilationErrors)
 {
 	MaterialEditor = InMaterialEditor;
 
 	StatsGrid = MakeShareable(new FMaterialStatsGrid(AsShared()));
 
-	BuildShaderPlatformDB();
+	BuildShaderPlatformDB(bAllowIgnoringCompilationErrors);
 
-	LoadSettings();
+	LoadSettings(bAllowIgnoringCompilationErrors);
 
 	StatsGrid->BuildGrid();
 
 	GridStatsWidget = SNew(SMaterialEditorStatsWidget)
-		.MaterialStatsWPtr(SharedThis(this));
+		.MaterialStatsWPtr(SharedThis(this))
+		.ShowMaterialInstancesMenu(bShowMaterialInstancesMenu)
+		.AllowIgnoringCompilationErrors(bAllowIgnoringCompilationErrors);
 
 	FMessageLogModule& MessageLogModule = FModuleManager::LoadModuleChecked<FMessageLogModule>("MessageLog");
 	FMessageLogInitializationOptions LogOptions;
@@ -353,7 +460,7 @@ void FMaterialStats::Initialize(IMaterialEditor* InMaterialEditor)
 		FIsActionChecked::CreateSP(this, &FMaterialStats::IsShowingOldStats));
 }
 
-void FMaterialStats::LoadSettings()
+void FMaterialStats::LoadSettings(const bool bAllowIgnoringCompilationErrors)
 {
 	Options = NewObject<UMaterialStatsOptions>();
 
@@ -369,16 +476,24 @@ void FMaterialStats::LoadSettings()
 	for (int32 i = 0; i < EMaterialQualityLevel::Num; ++i)
 	{
 		const bool bUsed = !!Options->bMaterialQualityUsed[i];
-		bArrStatsQualitySelector[(EMaterialQualityLevel::Type)i] = bUsed;
+		bArrStatsQualitySelector[(EMaterialQualityLevel::Type)i] = bUsed || bArrStatsQualitySelectorAlwaysOn[(EMaterialQualityLevel::Type)i];
 
 		for (const auto& PlatformEntry : ShaderPlatformStatsDB)
 		{
 			TSharedPtr<FShaderPlatformSettings> SomePlatform = PlatformEntry.Value;
 			if (SomePlatform.IsValid())
 			{
-				SomePlatform->SetExtractStatsQualityLevel((EMaterialQualityLevel::Type)i, bUsed);
+				SomePlatform->SetExtractStatsFlag((EMaterialQualityLevel::Type)i, bUsed);
 			}
 		}
+	}
+
+	MaterialStatsDerivedMIOption = Options->MaterialStatsDerivedMIOption;
+
+	// force compilation of derived instances if we're not allowed to ignore compilation errors
+	if (!bAllowIgnoringCompilationErrors && (MaterialStatsDerivedMIOption == EMaterialStatsDerivedMIOption::Ignore || MaterialStatsDerivedMIOption == EMaterialStatsDerivedMIOption::InvalidOrMax))
+	{
+		MaterialStatsDerivedMIOption = EMaterialStatsDerivedMIOption::CompileOnly;
 	}
 }
 
@@ -399,6 +514,8 @@ void FMaterialStats::SaveSettings()
 
 		Options->bMaterialQualityUsed[i] = bQualityPresent ? 1 : 0;
 	}
+
+	Options->MaterialStatsDerivedMIOption = MaterialStatsDerivedMIOption;
 
 	Options->SaveConfig();
 }
@@ -462,34 +579,44 @@ void FMaterialStats::RefreshStatsGrid()
 	GetGridStatsWidget()->RequestRefresh();
 }
 
-void FMaterialStats::BuildShaderPlatformDB()
+void FMaterialStats::BuildShaderPlatformDB(const bool bAllowIgnoringCompilationErrors)
 {
-	bool bCanCompileMacDesktopSPs = (PLATFORM_MAC != 0);
-	bool bCanCompileMacMobileSPs = (PLATFORM_MAC != 0) || (PLATFORM_WINDOWS != 0);
+	// set High quality level as always on if we're not allowed to ignore compilation errors in UI
+	// this will not allow to disable this particular quality level 
+	if (!bAllowIgnoringCompilationErrors)
+	{
+		bArrStatsQualitySelectorAlwaysOn[EMaterialQualityLevel::High] = true;
+		bArrStatsQualitySelector[EMaterialQualityLevel::High] = true;
+	}
 
 #if PLATFORM_WINDOWS
 	// DirectX
-	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_PCD3D_SM5, TEXT("DirectX SM5"), true, true, TEXT("Desktop, DirectX, Shader Model 5"));
-	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_PCD3D_SM6, TEXT("DirectX SM6"), true, true, TEXT("Desktop, DirectX, Shader Model 6"));
-	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_PCD3D_ES3_1, TEXT("DirectX  Mobile"), true, true, TEXT("Desktop, DirectX, Mobile"));
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_PCD3D_SM5, TEXT("DirectX SM5"), true, TEXT("Desktop, DirectX, Shader Model 5"));
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_PCD3D_SM6, TEXT("DirectX SM6"), true, TEXT("Desktop, DirectX, Shader Model 6"), !bAllowIgnoringCompilationErrors);
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_PCD3D_ES3_1, TEXT("DirectX  Mobile"), true, TEXT("Desktop, DirectX, Mobile"), !bAllowIgnoringCompilationErrors);
 #endif
 
 	// Vulkan
-	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_VULKAN_SM5, TEXT("Vulkan SM5"), true, true, TEXT("Desktop, Vulkan, Shader Model 5"));
-	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_VULKAN_SM6, TEXT("Vulkan SM6"), true, true, TEXT("Desktop, Vulkan, Shader Model 6"));
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_VULKAN_SM5, TEXT("Vulkan SM5"), true, TEXT("Desktop, Vulkan, Shader Model 5"));
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_VULKAN_SM6, TEXT("Vulkan SM6"), true, TEXT("Desktop, Vulkan, Shader Model 6"));
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_VULKAN_PCES3_1, TEXT("Vulkan Mobile"), true, TEXT("Desktop, Vulkan, Mobile"));
 
 	// Android
-	AddShaderPlatform(EPlatformCategoryType::Android, SP_OPENGL_ES3_1_ANDROID, TEXT("Android GLES Mobile"), true, true, TEXT("Android, OpenGLES Mobile"));
-	AddShaderPlatform(EPlatformCategoryType::Android, SP_VULKAN_ES3_1_ANDROID, TEXT("Android Vulkan Mobile"), true, true, TEXT("Android, Vulkan Mobile"));
-	AddShaderPlatform(EPlatformCategoryType::Android, SP_VULKAN_SM5_ANDROID, TEXT("Android Vulkan SM5"), true, true, TEXT("Android, Vulkan SM5"));
+	AddShaderPlatform(EPlatformCategoryType::Android, SP_OPENGL_ES3_1_ANDROID, TEXT("Android GLES Mobile"), true, TEXT("Android, OpenGLES Mobile"));
+	AddShaderPlatform(EPlatformCategoryType::Android, SP_VULKAN_ES3_1_ANDROID, TEXT("Android Vulkan Mobile"), true, TEXT("Android, Vulkan Mobile"));
+	AddShaderPlatform(EPlatformCategoryType::Android, SP_VULKAN_SM5_ANDROID, TEXT("Android Vulkan SM5"), true, TEXT("Android, Vulkan SM5"));
 
-	// Apple
-	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_METAL_SM5, TEXT("Metal SM5"), bCanCompileMacDesktopSPs, true, TEXT("macOS, Metal, Shader Model 5"));
-    AddShaderPlatform(EPlatformCategoryType::Desktop, SP_METAL_SM6, TEXT("Metal SM6"), bCanCompileMacDesktopSPs, true, TEXT("macOS, Metal, Shader Model 6"));
-	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_METAL_MRT_MAC, TEXT("Metal SM5 (MRT)"), bCanCompileMacDesktopSPs, true, TEXT("macOS, Metal, Shader Model 5"));
-	AddShaderPlatform(EPlatformCategoryType::IOS, SP_METAL, TEXT("Metal"), bCanCompileMacMobileSPs, true, TEXT("iOS, Metal, Mobile"));
-	AddShaderPlatform(EPlatformCategoryType::IOS, SP_METAL_MRT, TEXT("Metal MRT"), bCanCompileMacMobileSPs, true, TEXT("iOS, Metal, Shader Model 5"));
-	AddShaderPlatform(EPlatformCategoryType::IOS, SP_METAL_SIM, TEXT("Metal Simulator"), bCanCompileMacMobileSPs, true, TEXT("iOS, Metal, Mobile"));
+#if PLATFORM_MAC
+	// macOS
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_METAL_SM5, TEXT("Metal SM5"), true, TEXT("macOS, Metal, Shader Model 5"));
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_METAL_SM6, TEXT("Metal SM6"), true, TEXT("macOS, Metal, Shader Model 6"), !bAllowIgnoringCompilationErrors);
+	AddShaderPlatform(EPlatformCategoryType::Desktop, SP_METAL_MRT_MAC, TEXT("Metal SM5 (MRT)"), true, TEXT("macOS, Metal, Shader Model 5"));
+#endif
+
+	// iOS
+	AddShaderPlatform(EPlatformCategoryType::IOS, SP_METAL, TEXT("Metal"), true, TEXT("iOS, Metal, Mobile"));
+	AddShaderPlatform(EPlatformCategoryType::IOS, SP_METAL_MRT, TEXT("Metal MRT"), true, TEXT("iOS, Metal, Shader Model 5"));
+	AddShaderPlatform(EPlatformCategoryType::IOS, SP_METAL_SIM, TEXT("Metal Simulator"), true, TEXT("iOS, Metal, Mobile"));
 
 	ITargetPlatformManagerModule& TPM = GetTargetPlatformManagerRef();
 
@@ -505,22 +632,25 @@ void FMaterialStats::BuildShaderPlatformDB()
 			if (TPM.FindShaderFormat(ShaderFormat) != nullptr)
 			{
 				const FName PlatformName = ShaderPlatformToPlatformName(ShaderPlatform);
-				AddShaderPlatform(bIsConsole ? EPlatformCategoryType::Console : EPlatformCategoryType::Desktop, ShaderPlatform, PlatformName, true, true, PlatformName.ToString());
+				AddShaderPlatform(bIsConsole ? EPlatformCategoryType::Console : EPlatformCategoryType::Desktop, ShaderPlatform, PlatformName, true, PlatformName.ToString());
 			}
 		}
 	}
 
 }
 
-TSharedPtr<FShaderPlatformSettings> FMaterialStats::AddShaderPlatform(const EPlatformCategoryType PlatformType, const EShaderPlatform PlatformID, const FName PlatformName,
-	const bool bAllowPresenceInGrid, const bool bAllowCodeView, const FString& Description)
+TSharedPtr<FShaderPlatformSettings> FMaterialStats::AddShaderPlatform(const EPlatformCategoryType PlatformType, const EShaderPlatform PlatformID, const FName PlatformName, const bool bAllowCodeView, const FString& Description, const bool bAlwaysOn)
 {
 	if (!FDataDrivenShaderPlatformInfo::IsValid(PlatformID))
 	{
 		return TSharedPtr<FShaderPlatformSettings>();
 	}
 
-	TSharedPtr<FShaderPlatformSettings> PlatformPtr = MakeShareable(new FShaderPlatformSettings(PlatformType, PlatformID, PlatformName, bAllowPresenceInGrid, bAllowCodeView, Description));
+	ITargetPlatformManagerModule& TPM = GetTargetPlatformManagerRef();
+	const IShaderFormat* ShaderFormat = TPM.FindShaderFormat(LegacyShaderPlatformToShaderFormat(PlatformID));
+	const bool bAllowPresenceInGrid = ShaderFormat ? ShaderFormat->CanCompileBinaryShaders() : false;
+
+	TSharedPtr<FShaderPlatformSettings> PlatformPtr = MakeShareable(new FShaderPlatformSettings(PlatformType, PlatformID, PlatformName, bAllowPresenceInGrid, bAllowCodeView, Description, bAlwaysOn));
 	ShaderPlatformStatsDB.Add(PlatformID, PlatformPtr);
 
 	auto& ArrayPlatforms = PlatformTypeDB.FindOrAdd(PlatformType);
@@ -528,7 +658,7 @@ TSharedPtr<FShaderPlatformSettings> FMaterialStats::AddShaderPlatform(const EPla
 
 	for (int32 i = 0; i < EMaterialQualityLevel::Num; ++i)
 	{
-		PlatformPtr->SetExtractStatsFlag((EMaterialQualityLevel::Type)i, bArrStatsQualitySelector[i]);
+		PlatformPtr->SetExtractStatsFlag((EMaterialQualityLevel::Type)i, bAlwaysOn && bArrStatsQualitySelectorAlwaysOn[i]);
 	}
 
 	return PlatformPtr;
@@ -541,7 +671,7 @@ void FMaterialStats::SignalMaterialChanged()
 	for (auto Entry : ShaderPlatformStatsDB)
 	{
 		for (int32 i = 0; i < EMaterialQualityLevel::Num; ++i)
-			Entry.Value->SetNeedShaderCompilation((EMaterialQualityLevel::Type)i, true);
+			Entry.Value->SetNeedShaderCompilation((EMaterialQualityLevel::Type)i, true, MaterialStatsDerivedMIOption == EMaterialStatsDerivedMIOption::CompileOnly);
 	}
 }
 
@@ -565,14 +695,14 @@ void FMaterialStats::SetStatusQualityFlag(const EMaterialQualityLevel::Type Qual
 {
 	check(QualityLevel < EMaterialQualityLevel::Num);
 
-	bArrStatsQualitySelector[QualityLevel] = bValue;
+	bArrStatsQualitySelector[QualityLevel] = bValue || bArrStatsQualitySelectorAlwaysOn[QualityLevel];
 
 	for (const auto& PlatformEntry : ShaderPlatformStatsDB)
 	{
 		TSharedPtr<FShaderPlatformSettings> SomePlatform = PlatformEntry.Value;
 		if (SomePlatform.IsValid())
 		{
-			SomePlatform->SetExtractStatsQualityLevel(QualityLevel, bValue);
+			SomePlatform->SetExtractStatsFlag(QualityLevel, bValue);
 		}
 	}
 
@@ -587,6 +717,18 @@ bool FMaterialStats::SwitchStatsQualityFlag(EMaterialQualityLevel::Type Quality)
 	SetStatusQualityFlag(Quality, bValue);
 
 	return bValue;
+}
+
+void FMaterialStats::SetMaterialStatsDerivedMIOption(const EMaterialStatsDerivedMIOption value)
+{
+	MaterialStatsDerivedMIOption = value;
+
+	if (MaterialEditor != nullptr)
+	{
+		MaterialEditor->RefreshStatsMaterials();
+	}
+
+	SaveSettings();
 }
 
 void FMaterialStats::SetShaderPlatformUseCodeView(const EShaderPlatform PlatformID, const EMaterialQualityLevel::Type Quality, const bool bValue)
@@ -642,7 +784,7 @@ TSharedPtr<FShaderPlatformSettings> FMaterialStats::GetPlatformSettings(const FN
 	return GetPlatformSettings(PlatformID);
 }
 
-FText FMaterialStats::GetShaderCode(const EShaderPlatform PlatformID, const EMaterialQualityLevel::Type QualityType)
+FText FMaterialStats::GetShaderCode(const EShaderPlatform PlatformID, const EMaterialQualityLevel::Type QualityType, const int32 InstanceIndex)
 {
 	auto* Entry = ShaderPlatformStatsDB.Find(PlatformID);
 	if (Entry == nullptr)
@@ -650,31 +792,136 @@ FText FMaterialStats::GetShaderCode(const EShaderPlatform PlatformID, const EMat
 		return FText::FromString(TEXT("Shader code compiling or not available!"));
 	}
 
-	return (*Entry)->GetShaderCode(QualityType);
+	return (*Entry)->GetShaderCode(QualityType, InstanceIndex);
 }
 
 void FMaterialStats::Update()
 {
 	const bool bNeedsUpdate = IsShowingStats() || IsCodeViewWindowActive();
+
+	// don't update materials if we don't need to verify derived MI's
+	// this is to preserve old behaviour of speeding up material editor by hiding platform stats
+	if (!bNeedsUpdate && !GetProvideDerivedMIFlag())
+	{
+		return;
+	}
+	
+	// otherwise always update material compilation info so we can check if shaders are compiling at material editor save
+	for (const auto& Entry : ShaderPlatformStatsDB)
+	{
+		auto PlatformStats = Entry.Value;
+		bNeedsGridRefresh |= PlatformStats->Update();
+	}
+
 	if (!bNeedsUpdate)
 	{
 		return;
 	}
 
-	bool bInfoChanged = false;
-
-	for (const auto& Entry : ShaderPlatformStatsDB)
+	if (bNeedsGridRefresh)
 	{
-		auto PlatformStats = Entry.Value;
-		bInfoChanged |= PlatformStats->Update();
-	}
+		// in compile only mode the amount of columns might change if some of MI's fail to compile 
+		if (GetMaterialStatsDerivedMIOption() == EMaterialStatsDerivedMIOption::CompileOnly)
+		{
+			auto GridPtr = GetGridStatsWidget();
+			if (GridPtr.IsValid())
+			{
+				GridPtr->OnColumnNumChanged();
+			}
+		}
+		else
+		{
+			GetStatsGrid()->OnShaderChanged();
+		}
 
-	if (bInfoChanged)
-	{
-		GetStatsGrid()->OnShaderChanged();
+		// update any dependent tabs
+		RefreshDependentTabs.Broadcast();
+
+		bNeedsGridRefresh = false;
 	}
 
 	ComputeGridWarnings();
+}
+
+void FMaterialStats::CacheAndCompilePendingShaders()
+{
+	for (const auto& Entry : ShaderPlatformStatsDB)
+	{
+		auto PlatformStats = Entry.Value;
+		bNeedsGridRefresh |= PlatformStats->CachePendingShaders();
+	}
+}
+
+void FMaterialStats::SetMaterial(UMaterial *InMaterial, const TArray<TObjectPtr<UMaterialInstance>>& InDerivedMaterialInstances)
+{
+	if (MaterialInterface != InMaterial || DerivedMaterialInstances != InDerivedMaterialInstances)
+	{
+		MaterialInterface = InMaterial;
+		DerivedMaterialInstances = InDerivedMaterialInstances;
+
+		for (const auto& Entry : ShaderPlatformStatsDB)
+		{
+			auto& Platform = Entry.Value;
+			if (Platform.IsValid())
+			{
+				Platform->SetMaterial(InMaterial, nullptr, DerivedMaterialInstances);
+			}
+		}
+
+		auto GridPtr = GetGridStatsWidget();
+		if (GridPtr.IsValid())
+		{
+			GridPtr->OnColumnNumChanged();
+		}
+	}
+}
+
+void FMaterialStats::SetMaterial(UMaterialInstance *InMaterialInstance)
+{
+	if (MaterialInterface != InMaterialInstance || DerivedMaterialInstances.Num() > 0)
+	{
+		MaterialInterface = InMaterialInstance;
+		DerivedMaterialInstances.Empty();
+
+		for (const auto& Entry : ShaderPlatformStatsDB)
+		{
+			auto& Platform = Entry.Value;
+			if (Platform.IsValid())
+			{
+				Platform->SetMaterial(nullptr, InMaterialInstance, DerivedMaterialInstances);
+			}
+		}
+
+		auto GridPtr = GetGridStatsWidget();
+		if (GridPtr.IsValid())
+		{
+			GridPtr->OnColumnNumChanged();
+		}
+	}
+}
+
+bool FMaterialStats::AnyNewCompilationErrors(const int32 StartingFromInstanceIndex)
+{
+	bool bNewCompilationErrors = false;
+
+	for (const auto& Entry : ShaderPlatformStatsDB)
+	{
+		auto& Platform = Entry.Value;
+		if (Platform.IsValid())
+		{
+			for (int32 QualityLevel = 0; QualityLevel < EMaterialQualityLevel::Num; ++QualityLevel)
+			{
+				for (int32 InstanceIndex = StartingFromInstanceIndex; InstanceIndex < Platform->GetPlatformData(static_cast<EMaterialQualityLevel::Type>(QualityLevel)).Instances.Num(); ++InstanceIndex)
+				{
+					auto &Data = Platform->GetInstanceData(static_cast<EMaterialQualityLevel::Type>(QualityLevel), InstanceIndex);
+					bNewCompilationErrors |= Data.bNeedToWarnAboutCompilationErrors;
+					Data.bNeedToWarnAboutCompilationErrors = false;
+				}
+			}
+		}
+	}
+
+	return bNewCompilationErrors;
 }
 
 TSharedRef<class SDockTab> FMaterialStats::SpawnTab_HLSLCode(const class FSpawnTabArgs& Args)
@@ -745,7 +992,7 @@ TSharedRef<class SDockTab> FMaterialStats::SpawnTab_HLSLCode(const class FSpawnT
 	return SpawnedTab;
 }
 
-TSharedRef<SDockTab> FMaterialStats::SpawnTab_ShaderCode(const FSpawnTabArgs& Args, const EShaderPlatform PlatformID, const EMaterialQualityLevel::Type QualityLevel)
+TSharedRef<SDockTab> FMaterialStats::SpawnTab_ShaderCode(const FSpawnTabArgs& Args, const EShaderPlatform PlatformID, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	SetShaderPlatformUseCodeView(PlatformID, QualityLevel, true);
 
@@ -755,16 +1002,45 @@ TSharedRef<SDockTab> FMaterialStats::SpawnTab_ShaderCode(const FSpawnTabArgs& Ar
 	TSharedPtr<FShaderPlatformSettings> PlatformPtr = GetPlatformSettings(PlatformID);
 	check(PlatformPtr.IsValid());
 
+	const TArray<TSharedPtr<FMaterialShaderEntry>> *ShaderEntriesPtr = PlatformPtr->GetShaderEntries(QualityLevel, InstanceIndex);
+
+	if (ShaderEntriesPtr == nullptr)
+	{
+		// SComboBox needs a valid pointer otherwise follow up SetItemsSource will fail.
+		static TArray<TSharedPtr<FMaterialShaderEntry>> EmptyShaderEntriesArray = {};
+		ShaderEntriesPtr = &EmptyShaderEntriesArray;
+	}
+
+	ensure(ShaderEntriesPtr != nullptr);
 	TSharedRef<SComboBox<TSharedPtr<FMaterialShaderEntry>>> ShaderBox = SNew(SComboBox<TSharedPtr<FMaterialShaderEntry>>)
-		.OptionsSource(PlatformPtr->GetShaderEntries(QualityLevel))
+		.OptionsSource(ShaderEntriesPtr)
 		.OnGenerateWidget_Lambda([](TSharedPtr<FMaterialShaderEntry> Value) { return SNew(STextBlock).Text(FText::FromString(Value->Text)); })
-		.OnSelectionChanged_Lambda([PlatformPtr, QualityLevel](TSharedPtr<FMaterialShaderEntry> Item, ESelectInfo::Type SelectInfo) { PlatformPtr->OnShaderViewComboSelectionChanged(Item, QualityLevel); })
+		.OnSelectionChanged_Lambda([PlatformPtr, QualityLevel, InstanceIndex](TSharedPtr<FMaterialShaderEntry> Item, ESelectInfo::Type SelectInfo) { PlatformPtr->OnShaderViewComboSelectionChanged(Item, QualityLevel, InstanceIndex); })
 		[
 			SNew(STextBlock)
-			.Text_Lambda([PlatformPtr, QualityLevel]() { return PlatformPtr->GetSelectedShaderViewComboText(QualityLevel); })
+			.Text_Lambda([PlatformPtr, QualityLevel, InstanceIndex]() { return PlatformPtr->GetSelectedShaderViewComboText(QualityLevel, InstanceIndex); })
 		];
 
+	// Refresh ShaderBox when shaders are updated
+	FDelegateHandle ShaderBoxUpdater = RefreshDependentTabs.AddLambda([PlatformPtrWeakPtr = PlatformPtr.ToWeakPtr(), ShaderBoxWeakPtr = ShaderBox.ToWeakPtr(), QualityLevel, InstanceIndex]()
+	{
+		TSharedPtr<FShaderPlatformSettings> PlatformPtr = PlatformPtrWeakPtr.Pin();
+		TSharedPtr<SComboBox<TSharedPtr<FMaterialShaderEntry>>> ShaderBox = ShaderBoxWeakPtr.Pin();
+		if (PlatformPtr.IsValid() && ShaderBox.IsValid())
+		{
+			ShaderBox->SetItemsSource(PlatformPtr->GetShaderEntries(QualityLevel, InstanceIndex));
+		}
+	});
+
 	TSharedRef<SDockTab> SpawnedTab = SNew(SDockTab)
+		.OnTabClosed_Lambda([MaterialStatsWeakPtr = this->AsWeak(), ShaderBoxUpdater](TSharedRef<SDockTab> Tab)
+		{
+			TSharedPtr<FMaterialStats> MaterialStats = MaterialStatsWeakPtr.Pin();
+			if (MaterialStats.IsValid() && ShaderBoxUpdater.IsValid())
+			{
+				MaterialStats->RefreshDependentTabs.Remove(ShaderBoxUpdater);
+			}
+		})
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot()
@@ -788,12 +1064,12 @@ TSharedRef<SDockTab> FMaterialStats::SpawnTab_ShaderCode(const FSpawnTabArgs& Ar
 						.ContentPadding(3)
 						.OnClicked_Lambda
 						(
-							[MaterialStats = TWeakPtr<FMaterialStats>(SharedThis(this)), PlatformID, QualityLevel]()
+							[MaterialStats = TWeakPtr<FMaterialStats>(SharedThis(this)), PlatformID, QualityLevel, InstanceIndex]()
 							{
 								auto StatsPtr = MaterialStats.Pin();
 								if (StatsPtr.IsValid())
 								{
-									FText ShaderCode = StatsPtr->GetShaderCode(PlatformID, QualityLevel);
+									FText ShaderCode = StatsPtr->GetShaderCode(PlatformID, QualityLevel, InstanceIndex);
 									FPlatformApplicationMisc::ClipboardCopy(*ShaderCode.ToString());
 									return FReply::Handled();
 								}
@@ -838,9 +1114,9 @@ TSharedRef<SDockTab> FMaterialStats::SpawnTab_ShaderCode(const FSpawnTabArgs& Ar
 	return SpawnedTab;
 }
 
-FName FMaterialStats::MakeTabName(const EPlatformCategoryType PlatformType, const EShaderPlatform ShaderPlatformType, const EMaterialQualityLevel::Type QualityLevel)
+FName FMaterialStats::MakeTabName(const EPlatformCategoryType PlatformType, const EShaderPlatform ShaderPlatformType, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
-	const FString TabName = FMaterialStatsUtils::GetPlatformTypeName(PlatformType) + FMaterialStatsUtils::ShaderPlatformTypeName(ShaderPlatformType) + FMaterialStatsUtils::MaterialQualityToString(QualityLevel);
+	const FString TabName = FMaterialStatsUtils::GetPlatformTypeName(PlatformType) + FMaterialStatsUtils::ShaderPlatformTypeName(ShaderPlatformType) + FMaterialStatsUtils::MaterialQualityToString(QualityLevel) + FString::FromInt(InstanceIndex);
 
 	return FName(*TabName);
 }
@@ -859,6 +1135,8 @@ void FMaterialStats::BuildViewShaderCodeMenus()
 		.SetGroup( PlatformGroupMenuItem.ToSharedRef() )
 		.SetIcon( FSlateIcon(FAppStyle::GetAppStyleSetName(), "MaterialEditor.Tabs.HLSLCode") );
 
+	const int32 InstanceIndex = 0; // only work on base material
+
 	for (auto MapEntry : PlatformTypeDB)
 	{
 		const EPlatformCategoryType PlatformType = MapEntry.Key;
@@ -866,11 +1144,11 @@ void FMaterialStats::BuildViewShaderCodeMenus()
 		const FString PlatformName = FMaterialStatsUtils::GetPlatformTypeName(PlatformType);
 		TSharedPtr<FWorkspaceItem> PlatformMenuItem = PlatformGroupMenuItem->AddGroup(FText::FromString(PlatformName), FSlateIcon(FAppStyle::GetAppStyleSetName(), "MaterialEditor.Tabs.HLSLCode"));
 
-		TArray<TSharedPtr<FShaderPlatformSettings>>& ArrShaderPlatforms = MapEntry.Value;
+		const auto& ArrShaderPlatforms = MapEntry.Value;
 
 		for (int32 i = 0; i < ArrShaderPlatforms.Num(); ++i)
 		{
-			TSharedPtr<FShaderPlatformSettings> PlatformPtr = ArrShaderPlatforms[i];
+			const auto& PlatformPtr = ArrShaderPlatforms[i];
 
 			if (!PlatformPtr.IsValid())
 			{
@@ -892,9 +1170,9 @@ void FMaterialStats::BuildViewShaderCodeMenus()
 				const EMaterialQualityLevel::Type QualityLevel = (EMaterialQualityLevel::Type)q;
 
 				const FString MaterialQualityName = FMaterialStatsUtils::MaterialQualityToString(QualityLevel);
-				const FName TabName = MakeTabName(PlatformType, PlatformID, QualityLevel);
+				const FName TabName = MakeTabName(PlatformType, PlatformID, QualityLevel, InstanceIndex);
 
-				TabManager->RegisterTabSpawner(TabName, FOnSpawnTab::CreateSP(this, &FMaterialStats::SpawnTab_ShaderCode, PlatformID, QualityLevel))
+				TabManager->RegisterTabSpawner(TabName, FOnSpawnTab::CreateSP(this, &FMaterialStats::SpawnTab_ShaderCode, PlatformID, QualityLevel, InstanceIndex))
 					.SetGroup(ShaderPlatformMenuItem.ToSharedRef())
 					.SetDisplayName(FText::FromString(MaterialQualityName));
 
@@ -907,7 +1185,7 @@ void FMaterialStats::BuildViewShaderCodeMenus()
 							auto StatsPtr = MaterialStats.Pin();
 							if (StatsPtr.IsValid())
 							{
-								return StatsPtr->GetShaderCode(PlatformID, QualityLevel);
+								return StatsPtr->GetShaderCode(PlatformID, QualityLevel, InstanceIndex);
 							}
 
 							return FText::FromString(TEXT("Error reading shader code!"));
@@ -941,8 +1219,6 @@ bool FMaterialStats::IsCodeViewWindowActive() const
 TSharedRef<SDockTab> FMaterialStats::SpawnTab_Stats(const FSpawnTabArgs& Args)
 {
 	check(Args.GetTabId() == StatsTabId);
-
-	FString TabName = FString::Printf(TEXT(""), *GetMaterialName().ToString());
 
 	TSharedRef<SDockTab> SpawnedTab = SNew(SDockTab)
 		.Label(LOCTEXT("Platform Stats", "Platform Stats"))
@@ -1018,6 +1294,8 @@ void FMaterialStats::RegisterTabs()
 void FMaterialStats::UnregisterTabs()
 {
 	auto TabManager = MaterialEditor->GetTabManager();
+	
+	const int32 InstanceIndex = 0;
 
 	for (auto MapEntry : PlatformTypeDB)
 	{
@@ -1037,7 +1315,7 @@ void FMaterialStats::UnregisterTabs()
 
 			for (int32 q = 0; q < EMaterialQualityLevel::Num; ++q)
 			{
-				const FName TabName = MakeTabName(PlatformType, ShaderPlatformID, (EMaterialQualityLevel::Type)q);
+				const FName TabName = MakeTabName(PlatformType, ShaderPlatformID, (EMaterialQualityLevel::Type)q, InstanceIndex);
 
 				TabManager->UnregisterTabSpawner(TabName);
 			}
@@ -1062,22 +1340,58 @@ void FMaterialStats::ComputeGridWarnings()
 		return;
 	}
 
-	int32 Warnings = 0;
-	TArray<EShaderPlatform> CompilerWarnings;
-	TArray<FString> WarningMessages;
+	// no need to update warnings that often
+	const double kMinimumTimeBetweenWarningsRefreshSeconds = 0.1;
+	const double CurrentTime = FPlatformTime::Seconds();
+	const bool bCooledDown = (CurrentTime - LastGridMessagesUpdate) > kMinimumTimeBetweenWarningsRefreshSeconds;
+
+	if (!bCooledDown)
+	{
+		return;
+	}
+
+	LastGridMessagesUpdate = CurrentTime;
+
+	TArray<FString> Messages;
+	TArray<bool> IsErrorMessage;
 
 	bool bAnyQualityPresent = false;
 	for (int32 q = 0; q < EMaterialQualityLevel::Num; ++q)
 	{
 		auto Quality = static_cast<EMaterialQualityLevel::Type>(q);
-
 		bAnyQualityPresent |= GetStatsQualityFlag(Quality);
 	}
 
 	if (!bAnyQualityPresent)
 	{
-		Warnings |= WarningNoQuality;
-		WarningMessages.Emplace("No material quality selected. Please use the 'Settings' button and choose the desired quality level to be analyzed.");
+		Messages.Emplace("No material quality selected. Please use the 'Settings' button and choose the desired quality level to be analyzed.");
+		IsErrorMessage.Add(false);
+	}
+
+	for (const auto& Entry : ShaderPlatformStatsDB)
+	{
+		auto& Platform = Entry.Value;
+		if (Platform.IsValid())
+		{
+			for (int32 QualityLevel = 0; QualityLevel < EMaterialQualityLevel::Num; ++QualityLevel)
+			{
+				for (int32 InstanceIndex = 0; InstanceIndex < Platform->GetPlatformData(static_cast<EMaterialQualityLevel::Type>(QualityLevel)).Instances.Num(); ++InstanceIndex)
+				{
+					auto& Data = Platform->GetInstanceData(static_cast<EMaterialQualityLevel::Type>(QualityLevel), InstanceIndex);
+					auto& Errors = Data.MaterialResourcesStats->GetCompileErrors();
+					for (int32 ErrorIndex = 0; ErrorIndex < Errors.Num(); ++ErrorIndex)
+					{
+						const auto& PlatformName = Platform->GetPlatformName().ToString();
+						const auto& AssetName = GetMaterialName(InstanceIndex);
+						const FString QualityName = FMaterialStatsUtils::MaterialQualityToShortString((EMaterialQualityLevel::Type)QualityLevel);
+
+						FString Message = FString::Printf(TEXT("[%s/%s:%s] %s"), *AssetName, *PlatformName, *QualityName, *Errors[ErrorIndex]);
+						Messages.Add(Message);
+						IsErrorMessage.Add(true);
+					}
+				}
+			}
+		}
 	}
 
 	bool bAnyPlatformPresent = false;
@@ -1100,9 +1414,9 @@ void FMaterialStats::ComputeGridWarnings()
 
 				if (!bCompilerAvailable)
 				{
-					CompilerWarnings.Add(ShaderPlatformType);
 					auto WarningString = FString::Printf(TEXT("Platform %s needs an offline shader compiler to extract instruction count. Please check 'Editor Preferences' -> 'Content Editors' -> 'Material Editor' for additional settings."), *PlatformPtr->GetPlatformName().ToString());
-					WarningMessages.Add(MoveTemp(WarningString));
+					Messages.Add(MoveTemp(WarningString));
+					IsErrorMessage.Add(false);
 				}
 			}
 		}
@@ -1110,33 +1424,20 @@ void FMaterialStats::ComputeGridWarnings()
 
 	if (!bAnyPlatformPresent)
 	{
-		Warnings |= WarningNoPlatform;
-		WarningMessages.Emplace("No platform selected. Please use the 'Settings' button and choose desired platform to be analyzed.");
+		Messages.Emplace("No platform selected. Please use the 'Settings' button and choose desired platform to be analyzed.");
+		IsErrorMessage.Add(false);
 	}
 
-	bool bRefreshWarnings = (Warnings != LastGenericWarning) || (CompilerWarnings.Num() != LastMissingCompilerWarnings.Num());
-	if (!bRefreshWarnings)
+	if (Messages != LastGridMessages)
 	{
-		for (int32 i = 0; i < CompilerWarnings.Num(); ++i)
+		LastGridMessages = Messages;
+
+		GridPtr->ClearMessages();
+
+		check(Messages.Num() == IsErrorMessage.Num());
+		for (int32 i = 0; i < Messages.Num(); ++i)
 		{
-			if (CompilerWarnings[i] != LastMissingCompilerWarnings[i])
-			{
-				bRefreshWarnings = true;
-				break;
-			}
-		}
-	}
-
-	if (bRefreshWarnings)
-	{
-		LastGenericWarning = Warnings;
-		LastMissingCompilerWarnings = CompilerWarnings;
-
-		GridPtr->ClearWarningMessages();
-
-		for (int32 i = 0; i < WarningMessages.Num(); ++i)
-		{
-			GridPtr->AddWarningMessage(WarningMessages[i]);
+			GridPtr->AddMessage(Messages[i], IsErrorMessage[i]);
 		}
 	}
 }

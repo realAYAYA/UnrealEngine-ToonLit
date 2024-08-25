@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Security.Cryptography;
 using EpicGames.Core;
 
 namespace EpicGames.Horde.Storage.Git
@@ -44,7 +43,7 @@ namespace EpicGames.Horde.Storage.Git
 		/// Properties for the commit
 		/// </summary>
 		public List<KeyValuePair<Utf8String, Utf8String>> Properties { get; } = new List<KeyValuePair<Utf8String, Utf8String>>();
-			
+
 		/// <summary>
 		/// Commit messages
 		/// </summary>

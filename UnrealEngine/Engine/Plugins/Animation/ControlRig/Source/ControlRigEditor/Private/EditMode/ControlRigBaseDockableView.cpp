@@ -73,6 +73,13 @@ void FControlRigBaseDockableView::HandlElementSelected(UControlRig* ControlRig, 
 	}
 }
 
+
+FControlRigEditMode* FControlRigBaseDockableView::GetEditMode() const
+{
+	FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(ModeTools->GetActiveMode(FControlRigEditMode::ModeName));
+	return EditMode;
+}
+
 ISequencer* FControlRigBaseDockableView::GetSequencer() const
 {
 	if (FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(ModeTools->GetActiveMode(FControlRigEditMode::ModeName)))

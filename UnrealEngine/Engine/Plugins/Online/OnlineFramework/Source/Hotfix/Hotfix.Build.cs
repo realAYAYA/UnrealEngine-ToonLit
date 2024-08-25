@@ -26,9 +26,5 @@ public class Hotfix : ModuleRules
 				"OnlineSubsystem",
 			}
 			);
-
-		PublicDefinitions.Add("UPDATEMANAGER_PLATFORM_ENVIRONMENT_DETECTION=" + (bPlatformEnvironmentDetection ? "1" : "0"));
 	}
-
-	protected virtual bool bPlatformEnvironmentDetection { get { return false; } }
 }

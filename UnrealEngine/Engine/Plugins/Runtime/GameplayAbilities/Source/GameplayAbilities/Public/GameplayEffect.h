@@ -20,6 +20,8 @@
 #include "GameplayAbilitySpec.h"
 #include "ActiveGameplayEffectIterator.h"
 #include "UObject/ObjectKey.h"
+#include "VisualLogger/VisualLoggerDebugSnapshotInterface.h"
+#include "VisualLogger/VisualLoggerTypes.h"
 #include "GameplayEffect.generated.h"
 
 /**
@@ -612,16 +614,16 @@ struct GAMEPLAYABILITIES_API FInheritedTagContainer
 {
 	GENERATED_USTRUCT_BODY()
 
-	/** Tags that I inherited and tags that I added minus tags that I removed*/
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Application)
+	/** Tags that I inherited and tags that I added minus tags that I removed */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Application, meta=(Tooltip="CombinedTags = Inherited - Removed + Added"))
 	FGameplayTagContainer CombinedTags;
 
-	/** Tags that I have in addition to my parent's tags */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Application)
+	/** Tags that I have (in addition to my parent's tags) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Application, meta=(DisplayName="Add to Inherited"))
 	FGameplayTagContainer Added;
 
-	/** Tags that should be removed if my parent had them */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Application)
+	/** Tags that should be removed (only if my parent had them).  Note: we cannot use this to remove a tag that exists on a target. It only modifies the result of CombinedTags. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Application, meta=(DisplayName="Remove from Inherited"))
 	FGameplayTagContainer Removed;
 
 	void UpdateInheritedTagProperties(const FInheritedTagContainer* Parent);
@@ -629,7 +631,10 @@ struct GAMEPLAYABILITIES_API FInheritedTagContainer
 	/** Apply the Added and Removed tags to the passed-in container (does not have to be the previously configured Parent!) */
 	void ApplyTo(FGameplayTagContainer& ApplyToContainer) const;
 
+	/** Add a tag that will appear in addition to any inherited tags */
 	void AddTag(const FGameplayTag& TagToAdd);
+
+	/** Remove a tag that will be omitted from any inherited tags */
 	void RemoveTag(const FGameplayTag& TagToRemove);
 
 	bool operator==(const FInheritedTagContainer& Other) const;
@@ -1120,6 +1125,10 @@ struct GAMEPLAYABILITIES_API FGameplayEffectSpec
 	/** Simple const accessor to the dynamic asset tags */
 	const FGameplayTagContainer& GetDynamicAssetTags() const;
 
+#if ENABLE_VISUAL_LOG
+	FVisualLogStatusCategory GrabVisLogStatus() const;
+#endif
+
 private:
 
 	void CaptureDataFromSource(bool bSkipRecaptureSourceActorTags = false);
@@ -1286,16 +1295,13 @@ struct GAMEPLAYABILITIES_API FActiveGameplayEffect : public FFastArraySerializer
 	//  IMPORTANT: Any new state added to FActiveGameplayEffect must be handled in the copy/move constructor/operator
 	// ---------------------------------------------------------------------------------------------------------------------------------
 
-	FActiveGameplayEffect();
+	FActiveGameplayEffect() = default;
+	FActiveGameplayEffect(FActiveGameplayEffectHandle InHandle, const FGameplayEffectSpec& InSpec, float CurrentWorldTime, float InStartServerWorldTime, FPredictionKey InPredictionKey);
 
+	// These need to be defined because we need to omit PendingNext from move operations and the base class isn't trivially copyable
 	FActiveGameplayEffect(const FActiveGameplayEffect& Other);
-
-	FActiveGameplayEffect(FActiveGameplayEffectHandle InHandle, const FGameplayEffectSpec &InSpec, float CurrentWorldTime, float InStartServerWorldTime, FPredictionKey InPredictionKey);
-	
 	FActiveGameplayEffect(FActiveGameplayEffect&& Other);
-
 	FActiveGameplayEffect& operator=(FActiveGameplayEffect&& other);
-
 	FActiveGameplayEffect& operator=(const FActiveGameplayEffect& other);
 
 	float GetTimeRemaining(float WorldTime) const
@@ -1365,32 +1371,33 @@ struct GAMEPLAYABILITIES_API FActiveGameplayEffect : public FFastArraySerializer
 
 	/** Server time this started */
 	UPROPERTY()
-	float StartServerWorldTime;
+	float StartServerWorldTime = 0.0f;
 
 	/** Used for handling duration modifications being replicated */
 	UPROPERTY(NotReplicated)
-	float CachedStartServerWorldTime;
+	float CachedStartServerWorldTime = 0.0f;
 
 	UPROPERTY(NotReplicated)
-	float StartWorldTime;
+	float StartWorldTime = 0.0f;
 
 	// Not sure if this should replicate or not. If replicated, we may have trouble where IsInhibited doesn't appear to change when we do tag checks (because it was previously inhibited, but replication made it inhibited).
 	UPROPERTY(NotReplicated)
-	bool bIsInhibited;
+	bool bIsInhibited = true;
 
 	/** When replicated down, we cue the GC events until the entire list of active gameplay effects has been received */
-	mutable bool bPendingRepOnActiveGC;
-	mutable bool bPendingRepWhileActiveGC;
+	mutable bool bPendingRepOnActiveGC = false;
+	mutable bool bPendingRepWhileActiveGC = false;
 
-	bool IsPendingRemove;
+	bool IsPendingRemove = false;
 
 	/** Last StackCount that the client had. Used to tell if the stackcount has changed in PostReplicatedChange */
-	int32 ClientCachedStackCount;
+	int32 ClientCachedStackCount = 0;
 
 	FTimerHandle PeriodHandle;
 	FTimerHandle DurationHandle;
 
-	FActiveGameplayEffect* PendingNext;
+	/** Cached pointer.  Since these ActiveGE's can be reused in-place, this should *not* be copied during copy/move operations */
+	FActiveGameplayEffect* PendingNext = nullptr;
 	
 	/** All the bindable events for this active effect (bundled to allow easier non-const access to these events via the ASC) */
 	FActiveGameplayEffectEvents EventSet;
@@ -1618,7 +1625,8 @@ struct GAMEPLAYABILITIES_API FActiveGameplayEffectsContainer : public FFastArray
 	/** Stores a record of gameplay effects that have executed and their results. Useful for debugging */
 	TArray<DebugExecutedGameplayEffectData> DebugExecutedGameplayEffects;
 
-	void GrabDebugSnapshot(FVisualLogEntry* Snapshot) const;
+	/** Report our current state to the VisLog */
+	void DescribeSelfToVisLog(FVisualLogEntry* Snapshot) const;
 #endif // ENABLE_VISUAL_LOG
 
 	void GetActiveGameplayEffectDataByAttribute(TMultiMap<FGameplayAttribute, FActiveGameplayEffectsContainer::DebugExecutedGameplayEffectData>& EffectMap) const;
@@ -1873,7 +1881,7 @@ private:
 	bool InternalRemoveActiveGameplayEffect(int32 Idx, int32 StacksToRemove, bool bPrematureRemoval);
 	
 	/** Called both in server side creation and replication creation/deletion */
-	void InternalOnActiveGameplayEffectAdded(FActiveGameplayEffect& Effect);
+	void InternalOnActiveGameplayEffectAdded(FActiveGameplayEffect& Effect, bool bInvokeGameplayCueEvents);
 	void InternalOnActiveGameplayEffectRemoved(FActiveGameplayEffect& Effect, bool bInvokeGameplayCueEvents, const FGameplayEffectRemovalInfo& GameplayEffectRemovalInfo);
 
 	void RemoveActiveGameplayEffectGrantedTagsAndModifiers(const FActiveGameplayEffect& Effect, bool bInvokeGameplayCueEvents);
@@ -1908,8 +1916,9 @@ private:
 	/** A map to manage stacking while we are the source */
 	TMap<TWeakObjectPtr<UGameplayEffect>, TArray<FActiveGameplayEffectHandle> >	SourceStackingMap;
 	
+	FAggregatorRef& FindOrCreateAttributeAggregator(const FGameplayAttribute& Attribute);
 
-	FAggregatorRef& FindOrCreateAttributeAggregator(FGameplayAttribute Attribute);
+	void CleanupAttributeAggregator(const FGameplayAttribute& Attribute);
 
 	void OnAttributeAggregatorDirty(FAggregator* Aggregator, FGameplayAttribute Attribute, bool FromRecursiveCall=false);
 
@@ -1933,6 +1942,7 @@ private:
 
 	mutable int32 ScopedLockCount;
 	int32 PendingRemoves;
+	uint32 NumConsecutiveUnmappedReferencesDebug = 0;
 
 	FActiveGameplayEffect*	PendingGameplayEffectHead;	// Head of pending GE linked list
 	FActiveGameplayEffect** PendingGameplayEffectNext;	// Points to the where to store the next pending GE (starts pointing at head, as more are added, points further down the list).
@@ -2158,6 +2168,9 @@ protected:
 
 	/** Sets the Version of the class to denote it's been upgraded */
 	void SetVersion(EGameplayEffectVersion Version);
+
+	/** We should intercept the Save call and revalidate all of our deprecated values to avoid hanging onto stale data */
+	virtual void PreSave(FObjectPreSaveContext SaveContext) override;
 
 private:
 	// Helper functions for converting data to use components

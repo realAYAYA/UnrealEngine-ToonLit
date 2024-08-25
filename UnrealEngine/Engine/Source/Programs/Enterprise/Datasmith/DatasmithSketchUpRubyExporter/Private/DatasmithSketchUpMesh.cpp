@@ -751,7 +751,7 @@ void ScanSketchUpEntitiesFaces(FExportContext& Context, SUEntitiesRef EntitiesRe
 		// Collect all connected faces
 		while (FacesToScan.Num() > 0)
 		{
-			SUFaceRef SScannedFaceRef = FacesToScan.Pop(/*bAllowShrinking*/ false);
+			SUFaceRef SScannedFaceRef = FacesToScan.Pop(EAllowShrinking::No);
 
 			// int64 SFacePID = 0;
 			// SUEntityGetPersistentID(SUFaceToEntity(SScannedFaceRef), &SFacePID);

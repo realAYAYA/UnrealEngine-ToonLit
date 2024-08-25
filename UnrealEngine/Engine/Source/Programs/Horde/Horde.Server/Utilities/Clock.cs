@@ -10,6 +10,7 @@ using Horde.Server;
 using Horde.Server.Server;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Trace;
 using StackExchange.Redis;
 using TimeZoneConverter;
 
@@ -18,7 +19,7 @@ namespace HordeCommon
 	/// <summary>
 	/// Base interface for a scheduled event
 	/// </summary>
-	public interface ITicker : IDisposable
+	public interface ITicker : IAsyncDisposable
 	{
 		/// <summary>
 		/// Start the ticker
@@ -37,7 +38,7 @@ namespace HordeCommon
 	public sealed class NullTicker : ITicker
 	{
 		/// <inheritdoc/>
-		public void Dispose() { }
+		public ValueTask DisposeAsync() => new ValueTask();
 
 		/// <inheritdoc/>
 		public Task StartAsync() => Task.CompletedTask;
@@ -156,9 +157,9 @@ namespace HordeCommon
 	/// <summary>
 	/// Implementation of <see cref="IClock"/> which returns the current time
 	/// </summary>
-	public class Clock : IClock
+	public sealed class Clock : IClock, IAsyncDisposable
 	{
-		sealed class TickerImpl : ITicker, IDisposable
+		sealed class TickerImpl : ITicker, IAsyncDisposable
 		{
 			readonly string _name;
 			readonly CancellationTokenSource _cancellationSource;
@@ -169,7 +170,7 @@ namespace HordeCommon
 			{
 				_name = name;
 				_cancellationSource = new CancellationTokenSource();
-				_tickFunc = () => Run(delay, triggerAsync, logger);
+				_tickFunc = () => RunAsync(delay, triggerAsync, logger);
 			}
 
 			public async Task StartAsync()
@@ -183,17 +184,19 @@ namespace HordeCommon
 			{
 				if (_backgroundTask != null)
 				{
-					_cancellationSource.Cancel();
+					await _cancellationSource.CancelAsync();
 					await _backgroundTask;
+					_backgroundTask = null;
 				}
 			}
 
-			public void Dispose()
+			public async ValueTask DisposeAsync()
 			{
+				await StopAsync();
 				_cancellationSource.Dispose();
 			}
 
-			public async Task Run(TimeSpan delay, Func<CancellationToken, ValueTask<TimeSpan?>> triggerAsync, ILogger logger)
+			public async Task RunAsync(TimeSpan delay, Func<CancellationToken, ValueTask<TimeSpan?>> triggerAsync, ILogger logger)
 			{
 				while (!_cancellationSource!.IsCancellationRequested)
 				{
@@ -205,7 +208,7 @@ namespace HordeCommon
 						}
 
 						TimeSpan? nextDelay = await triggerAsync(_cancellationSource.Token);
-						if(nextDelay == null)
+						if (nextDelay == null)
 						{
 							break;
 						}
@@ -231,7 +234,9 @@ namespace HordeCommon
 		}
 
 		readonly RedisService _redis;
+		readonly Tracer _tracer;
 		readonly TimeZoneInfo _timeZone;
+		readonly List<TickerImpl> _tickers = new List<TickerImpl>();
 
 		/// <inheritdoc/>
 		public DateTime UtcNow => DateTime.UtcNow;
@@ -242,33 +247,51 @@ namespace HordeCommon
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public Clock(RedisService redis, IOptions<ServerSettings> settings)
+		public Clock(RedisService redis, Tracer tracer, IOptions<ServerSettings> settings)
 		{
 			_redis = redis;
+			_tracer = tracer;
 
 			string? timeZoneName = settings.Value.ScheduleTimeZone;
 			_timeZone = (timeZoneName == null) ? TimeZoneInfo.Local : TZConvert.GetTimeZoneInfo(timeZoneName);
 		}
 
 		/// <inheritdoc/>
+		public async ValueTask DisposeAsync()
+		{
+			foreach (TickerImpl ticker in _tickers)
+			{
+				await ticker.DisposeAsync();
+			}
+		}
+
+		/// <inheritdoc/>
 		public ITicker AddTicker(string name, TimeSpan delay, Func<CancellationToken, ValueTask<TimeSpan?>> tickAsync, ILogger logger)
 		{
-			return new TickerImpl(name, delay, tickAsync, logger);
+			TickerImpl ticker = new TickerImpl(name, delay, tickAsync, logger);
+			lock (_tickers)
+			{
+				_tickers.Add(ticker);
+			}
+			return ticker;
 		}
 
 		/// <inheritdoc/>
 		public ITicker AddSharedTicker(string name, TimeSpan delay, Func<CancellationToken, ValueTask> tickAsync, ILogger logger)
 		{
 			RedisKey key = new RedisKey($"tick/{name}");
-			return ClockExtensions.AddTicker(this, name, delay / 4, token => TriggerSharedAsync(key, delay, tickAsync, token), logger);
+			return ClockExtensions.AddTicker(this, name, delay / 4, token => TriggerSharedAsync(name, key, delay, tickAsync, token), logger);
 		}
 
-		async ValueTask TriggerSharedAsync(RedisKey key, TimeSpan interval, Func<CancellationToken, ValueTask> tickAsync, CancellationToken cancellationToken)
+		async ValueTask TriggerSharedAsync(string name, RedisKey key, TimeSpan interval, Func<CancellationToken, ValueTask> tickAsync, CancellationToken cancellationToken)
 		{
-			using (RedisLock sharedLock = new (_redis.GetDatabase(), key))
+			using (RedisLock sharedLock = new(_redis.GetDatabase(), key))
 			{
 				if (await sharedLock.AcquireAsync(interval, false))
 				{
+					using TelemetrySpan span = _tracer.StartActiveSpan(name);
+					span.SetAttribute("interval", interval.TotalSeconds);
+
 					await tickAsync(cancellationToken);
 				}
 			}
@@ -312,11 +335,6 @@ namespace HordeCommon
 			{
 				NextTime = null;
 				return Task.CompletedTask;
-			}
-
-			public void Dispose()
-			{
-				DisposeAsync().AsTask().Wait();
 			}
 
 			public ValueTask DisposeAsync()
@@ -380,9 +398,9 @@ namespace HordeCommon
 
 		/// <inheritdoc/>
 		public DateTime UtcNow
-		{ 
+		{
 			get => _utcNowPrivate;
-			set => _utcNowPrivate = value.ToUniversalTime(); 
+			set => _utcNowPrivate = value.ToUniversalTime();
 		}
 
 		/// <inheritdoc/>

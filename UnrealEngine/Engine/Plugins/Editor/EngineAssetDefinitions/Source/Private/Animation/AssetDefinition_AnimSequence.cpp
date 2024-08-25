@@ -69,7 +69,7 @@ namespace MenuExtension_AnimSequence
 		const UContentBrowserAssetContextMenuContext* CBContext = UContentBrowserAssetContextMenuContext::FindContextWithAssets(InContext);
 
 		IAssetTools::Get().CreateAssetsFrom<UAnimSequence>(
-			CBContext->LoadSelectedObjects<UAnimSequence>(), UAnimMontage::StaticClass(), TEXT("_Streamable"), [](UAnimSequence* SourceObject)
+			CBContext->LoadSelectedObjects<UAnimSequence>(), UAnimStreamable::StaticClass(), TEXT("_Streamable"), [](UAnimSequence* SourceObject)
 			{
 				UAnimStreamableFactory* Factory = NewObject<UAnimStreamableFactory>();
 				Factory->SourceAnimation = SourceObject;

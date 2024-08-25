@@ -23,7 +23,8 @@
 #include "Widgets/Text/STextBlock.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
-#include "WorldPartition/ActorDescContainer.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 
 #define LOCTEXT_NAMESPACE "FActorFolders"
 
@@ -134,45 +135,33 @@ void FActorFolders::BroadcastOnActorFolderMoved(UWorld& InWorld, const FFolder& 
 	BroadcastOnActorEditorContextClientChanged(InWorld);
 }
 
+static bool IsRunningGameOrPIE()
+{
+	return (GIsEditor && GEditor && GEditor->GetPIEWorldContext()) || IsRunningGame();
+}
+
 void FActorFolders::OnLevelActorListChanged()
 {
-	bAnyLevelsChanged = true;
+	if (!IsRunningGameOrPIE())
+	{
+		bAnyLevelsChanged = true;
+	}
 }
 
 void FActorFolders::OnAllLevelsChanged()
 {
-	if (!bAnyLevelsChanged)
-	{
-		return;
-	}
-	QUICK_SCOPE_CYCLE_COUNTER(FActorFolders_OnAllLevelsChanged);
-	bAnyLevelsChanged = false;
-	Housekeeping();
+	TRACE_CPUPROFILER_EVENT_SCOPE(FActorFolders::OnAllLevelsChanged);
 
-	check(GEngine);
-
-	UWorld* World = nullptr;
-	for (const FWorldContext& Context : GEngine->GetWorldContexts())
+	if (bAnyLevelsChanged && !IsRunningGameOrPIE())
 	{
-		UWorld* ThisWorld = Context.World();
-		if (!ThisWorld)
-		{
-			continue;
-		}
-		else if (Context.WorldType == EWorldType::PIE)
-		{
-			World = ThisWorld;
-			break;
-		}
-		else if (Context.WorldType == EWorldType::Editor)
-		{
-			World = ThisWorld;
-		}
-	}
+		QUICK_SCOPE_CYCLE_COUNTER(FActorFolders_OnAllLevelsChanged);
+		bAnyLevelsChanged = false;
+		Housekeeping();
 
-	if (World)
-	{
-		RebuildFolderListForWorld(*World);
+		if (UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr)
+		{
+			RebuildFolderListForWorld(*World);
+		}
 	}
 }
 
@@ -226,6 +215,8 @@ void FActorFolders::OnActorFolderChanged(const AActor* InActor, FName OldPath)
 
 void FActorFolders::RebuildFolderListForWorld(UWorld& InWorld)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FActorFolders::RebuildFolderListForWorld);
+
 	if (auto* Folders = WorldFolders.Find(&InWorld))
 	{
 		// For world folders, we don't empty the existing folders so that we keep empty ones.
@@ -600,16 +591,17 @@ void FActorFolders::OnExecuteActorEditorContextAction(UWorld* InWorld, const EAc
 			SetActorEditorContextFolder(*InWorld, FFolder::GetWorldRootFolder(InWorld));
 			break;
 		case EActorEditorContextAction::PushContext:
-			if (UWorldFolders** Folders = (UWorldFolders**)WorldFolders.Find(InWorld))
-			{
-				(*Folders)->PushActorEditorContext();
-			}
+		case EActorEditorContextAction::PushDuplicateContext:
+			GetOrCreateWorldFolders(*InWorld).PushActorEditorContext(InType == EActorEditorContextAction::PushDuplicateContext);
 			break;
 		case EActorEditorContextAction::PopContext:
 			if (UWorldFolders** Folders = (UWorldFolders**)WorldFolders.Find(InWorld))
 			{
 				(*Folders)->PopActorEditorContext();
 			}
+			break;
+		case EActorEditorContextAction::InitializeContextFromActor:
+			SetActorEditorContextFolder(*(InActor->GetWorld()), InActor->GetFolder());
 			break;
 	}
 }
@@ -657,34 +649,34 @@ void FActorFolders::ForEachFolderWithRootObject(UWorld& InWorld, const FFolder::
 	GetOrCreateWorldFolders(InWorld).ForEachFolderWithRootObject(FolderRootObject, Operation);
 }
 
-FFolder FActorFolders::GetActorDescFolder(UWorld& InWorld, const FWorldPartitionActorDesc* InActorDesc)
+FFolder FActorFolders::GetActorDescInstanceFolder(UWorld& InWorld, const FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	if (InActorDesc)
+	if (InActorDescInstance)
 	{
-		UWorld& OuterWorld = InActorDesc->GetContainer() ? *InActorDesc->GetContainer()->GetTypedOuter<UWorld>() : InWorld;
+		UWorld& OuterWorld = InActorDescInstance->GetContainerInstance() ? *InActorDescInstance->GetContainerInstance()->GetTypedOuter<UWorld>() : InWorld;
 		{
 			ULevel* OuterLevel = OuterWorld.PersistentLevel;
 			if (OuterLevel->IsUsingActorFolders())
 			{
-				if (UActorFolder* ActorFolder = OuterLevel->GetActorFolder(InActorDesc->GetFolderGuid()))
+				if (UActorFolder* ActorFolder = OuterLevel->GetActorFolder(InActorDescInstance->GetFolderGuid()))
 				{
 					return ActorFolder->GetFolder();
 				}
 				return FFolder::GetWorldRootFolder(&OuterWorld).GetRootObject();
 			}
-			return FFolder(FFolder::GetWorldRootFolder(&OuterWorld).GetRootObject(), InActorDesc->GetFolderPath());
+			return FFolder(FFolder::GetWorldRootFolder(&OuterWorld).GetRootObject(), InActorDescInstance->GetFolderPath());
 		}
 	}
 	return FFolder::GetInvalidFolder();
 }
 
-void FActorFolders::ForEachActorDescInFolders(UWorld& InWorld, const TSet<FName>& InPaths, TFunctionRef<bool(const FWorldPartitionActorDesc*)> Operation, const FFolder::FRootObject& InFolderRootObject /*= FFolder::GetInvalidRootObject()*/)
+void FActorFolders::ForEachActorDescInstanceInFolders(UWorld& InWorld, const TSet<FName>& InPaths, TFunctionRef<bool(const FWorldPartitionActorDescInstance*)> Operation, const FFolder::FRootObject& InFolderRootObject /*= FFolder::GetInvalidRootObject()*/)
 {
 	if (UWorldPartition* WorldPartition = InWorld.GetWorldPartition())
 	{
-		FWorldPartitionHelpers::ForEachActorDesc(WorldPartition, [&](const FWorldPartitionActorDesc* ActorDesc)
+		FWorldPartitionHelpers::ForEachActorDescInstance(WorldPartition, [&](const FWorldPartitionActorDescInstance* ActorDescInstance)
 		{
-			FFolder ActorDescFolder = GetActorDescFolder(InWorld, ActorDesc);
+			FFolder ActorDescFolder = GetActorDescInstanceFolder(InWorld, ActorDescInstance);
 			if (ActorDescFolder == FFolder::GetInvalidFolder())
 			{
 				return true;
@@ -696,7 +688,7 @@ void FActorFolders::ForEachActorDescInFolders(UWorld& InWorld, const TSet<FName>
 				return true;
 			}
 
-			return Operation(ActorDesc);
+			return Operation(ActorDescInstance);
 		});
 	}
 }

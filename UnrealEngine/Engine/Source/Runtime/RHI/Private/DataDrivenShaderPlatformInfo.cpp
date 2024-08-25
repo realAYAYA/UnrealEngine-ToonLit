@@ -48,7 +48,8 @@ EShaderPlatform ParseShaderPlatform(const TCHAR* String)
 // Gets a string from a section, or empty string if it didn't exist
 static inline FString GetSectionString(const FConfigSection& Section, FName Key)
 {
-	return Section.FindRef(Key).GetValue();
+	const FConfigValue* Value = Section.Find(Key);
+	return Value ? Value->GetValue() : FString();
 }
 
 // Gets a bool from a section.  It returns the original value if the setting does not exist
@@ -142,10 +143,12 @@ void FGenericDataDrivenShaderPlatformInfo::SetDefaultValues()
 	bSupportsHZBOcclusion = true;
 	bSupportsWaterIndirectDraw = true;
 	bSupportsAsyncPipelineCompilation = true;
+	bSupportsVertexShaderSRVs = true; // Explicitly overriden to false for ES 3.1 platforms via DDPI ini
 	bSupportsManualVertexFetch = true;
 	bSupportsVolumeTextureAtomics = true;
 	bSupportsClipDistance = true;
 	bSupportsShaderPipelines = true;
+	MaxSamplers = 16;
 }
 
 void FGenericDataDrivenShaderPlatformInfo::ParseDataDrivenShaderInfo(const FConfigSection& Section, uint32 Index)
@@ -213,6 +216,8 @@ void FGenericDataDrivenShaderPlatformInfo::ParseDataDrivenShaderInfo(const FConf
 	GET_SECTION_SUPPORT_HELPER(SupportsMultiViewport);
 	GET_SECTION_BOOL_HELPER(bSupportsMSAA);
 	GET_SECTION_BOOL_HELPER(bSupports4ComponentUAVReadWrite);
+	GET_SECTION_BOOL_HELPER(bSupportsShaderRootConstants);
+	GET_SECTION_BOOL_HELPER(bSupportsShaderBundleDispatch);
 	GET_SECTION_BOOL_HELPER(bSupportsRenderTargetWriteMask);
 	GET_SECTION_BOOL_HELPER(bSupportsRayTracing);
 	GET_SECTION_BOOL_HELPER(bSupportsRayTracingShaders);
@@ -222,7 +227,7 @@ void FGenericDataDrivenShaderPlatformInfo::ParseDataDrivenShaderInfo(const FConf
 	GET_SECTION_BOOL_HELPER(bSupportsRayTracingTraversalStatistics);
 	GET_SECTION_BOOL_HELPER(bSupportsRayTracingIndirectInstanceData);
 	GET_SECTION_BOOL_HELPER(bSupportsPathTracing);
-	GET_SECTION_BOOL_HELPER(bSupportsHighEndRayTracingReflections);
+	GET_SECTION_BOOL_HELPER(bSupportsHighEndRayTracingEffects);
 	GET_SECTION_BOOL_HELPER(bSupportsByteBufferComputeShaders);
 	GET_SECTION_BOOL_HELPER(bSupportsGPUScene);
 	GET_SECTION_BOOL_HELPER(bSupportsPrimitiveShaders);
@@ -254,6 +259,7 @@ void FGenericDataDrivenShaderPlatformInfo::ParseDataDrivenShaderInfo(const FConf
 	GET_SECTION_BOOL_HELPER(bSupportsMeshShadersTier1);
 	GET_SECTION_BOOL_HELPER(bSupportsMeshShadersWithClipDistance);
 	GET_SECTION_INT_HELPER(MaxMeshShaderThreadGroupSize);
+	GET_SECTION_BOOL_HELPER(bRequiresUnwrappedMeshShaderArgs);
 	GET_SECTION_BOOL_HELPER(bSupportsPerPixelDBufferMask);
 	GET_SECTION_BOOL_HELPER(bIsHlslcc);
 	GET_SECTION_BOOL_HELPER(bSupportsDxc);
@@ -268,6 +274,7 @@ void FGenericDataDrivenShaderPlatformInfo::ParseDataDrivenShaderInfo(const FConf
 	GET_SECTION_BOOL_HELPER(bSupportsHZBOcclusion);
 	GET_SECTION_BOOL_HELPER(bSupportsWaterIndirectDraw);
 	GET_SECTION_BOOL_HELPER(bSupportsAsyncPipelineCompilation);
+	GET_SECTION_BOOL_HELPER(bSupportsVertexShaderSRVs);
 	GET_SECTION_BOOL_HELPER(bSupportsManualVertexFetch);
 	GET_SECTION_BOOL_HELPER(bRequiresReverseCullingOnMobile);
 	GET_SECTION_BOOL_HELPER(bOverrideFMaterial_NeedsGBufferEnabled);
@@ -284,6 +291,12 @@ void FGenericDataDrivenShaderPlatformInfo::ParseDataDrivenShaderInfo(const FConf
 	GET_SECTION_BOOL_HELPER(bSupportsClipDistance);
 	GET_SECTION_BOOL_HELPER(bSupportsNNEShaders);
 	GET_SECTION_BOOL_HELPER(bSupportsShaderPipelines);
+	GET_SECTION_BOOL_HELPER(bSupportsUniformBufferObjects);
+	GET_SECTION_BOOL_HELPER(bRequiresBindfulUtilityShaders);
+	GET_SECTION_INT_HELPER(MaxSamplers);
+	GET_SECTION_BOOL_HELPER(SupportsBarycentricsIntrinsics);
+	GET_SECTION_SUPPORT_HELPER(SupportsBarycentricsSemantic);
+	GET_SECTION_BOOL_HELPER(bSupportsWave64);
 #undef GET_SECTION_BOOL_HELPER
 #undef GET_SECTION_INT_HELPER
 #undef GET_SECTION_SUPPORT_HELPER
@@ -325,11 +338,12 @@ void FGenericDataDrivenShaderPlatformInfo::Initialize()
 		FDataDrivenPlatformInfoRegistry::LoadDataDrivenIniFile(Index, IniFile, PlatformName);
 
 		// now walk over the file, looking for ShaderPlatformInfo sections
-		for (auto Section : IniFile)
+		for (const TPair<FString, FConfigSection>& Section : AsConst(IniFile))
 		{
 			if (Section.Key.StartsWith(TEXT("ShaderPlatform ")))
 			{
 				const FString& SectionName = Section.Key;
+				const FConfigSection& SectionSettings = Section.Value;
 
 				// get enum value for the string name
 				const EShaderPlatform ShaderPlatform = ParseShaderPlatform(*SectionName.Mid(15));
@@ -347,22 +361,22 @@ void FGenericDataDrivenShaderPlatformInfo::Initialize()
 				// at this point, we can start pulling information out
 				Infos[ShaderPlatform].Name = *SectionName.Mid(15);
 				PlatformNameToShaderPlatformMap.FindOrAdd(Infos[ShaderPlatform].Name) = ShaderPlatform;
-				ParseDataDrivenShaderInfo(Section.Value, ShaderPlatform);
+				ParseDataDrivenShaderInfo(SectionSettings, ShaderPlatform);
 				Infos[ShaderPlatform].bContainsValidPlatformInfo = true;
 
 #if WITH_EDITOR
 				if (!FParse::Param(FCommandLine::Get(), TEXT("NoPreviewPlatforms")))
 				{
+					const FName& CurrentPlatformName = Infos[ShaderPlatform].Name;
+
 					for (const FPreviewPlatformMenuItem& Item : FDataDrivenPlatformInfoRegistry::GetAllPreviewPlatformMenuItems())
 					{
-						const FName PreviewPlatformName = *(Infos[ShaderPlatform].Name).ToString();
-						if (Item.ShaderPlatformToPreview == PreviewPlatformName)
+						if (Item.ShaderPlatformToPreview == CurrentPlatformName)
 						{
 							const EShaderPlatform PreviewShaderPlatform = EShaderPlatform(CustomShaderPlatform++);
-							ParseDataDrivenShaderInfo(Section.Value, PreviewShaderPlatform);
-
 							FGenericDataDrivenShaderPlatformInfo& PreviewInfo = Infos[PreviewShaderPlatform];
 							PreviewInfo.Name = Item.PreviewShaderPlatformName;
+							ParseDataDrivenShaderInfo(SectionSettings, PreviewShaderPlatform);
 							PreviewInfo.bIsPreviewPlatform = true;
 							PreviewInfo.bContainsValidPlatformInfo = true;
 
@@ -371,6 +385,12 @@ void FGenericDataDrivenShaderPlatformInfo::Initialize()
 							if (!Item.OptionalFriendlyNameOverride.IsEmpty())
 							{
 								PreviewEditorInfo.FriendlyName = Item.OptionalFriendlyNameOverride;
+							}
+
+							ERHIFeatureLevel::Type PreviewFeatureLevel = ERHIFeatureLevel::Num;
+							if (GetFeatureLevelFromName(Item.PreviewFeatureLevelName, PreviewFeatureLevel))
+							{
+								PreviewInfo.MaxFeatureLevel = PreviewFeatureLevel;
 							}
 
 							PlatformNameToShaderPlatformMap.FindOrAdd(PreviewInfo.Name) = PreviewShaderPlatform;
@@ -384,61 +404,103 @@ void FGenericDataDrivenShaderPlatformInfo::Initialize()
 	bInitialized = true;
 }
 
+#if WITH_EDITOR
 void FGenericDataDrivenShaderPlatformInfo::UpdatePreviewPlatforms()
 {
-	for (int i = 0; i < EShaderPlatform::SP_NumPlatforms; ++i)
+	for (int32 PlatformIndex=0; PlatformIndex < SP_NumPlatforms; PlatformIndex++)
 	{
-		EShaderPlatform ShaderPlatform = EShaderPlatform(i);
-		if (IsValid(ShaderPlatform))
+		const EShaderPlatform PreviewPlatform = EShaderPlatform(PlatformIndex);
+		if (IsValid(PreviewPlatform) && GetIsPreviewPlatform(PreviewPlatform))
 		{
-			ERHIFeatureLevel::Type PreviewSPMaxFeatureLevel = Infos[ShaderPlatform].MaxFeatureLevel;
-			EShaderPlatform EditorSPForPreviewMaxFeatureLevel = GShaderPlatformForFeatureLevel[PreviewSPMaxFeatureLevel];
-			if (Infos[ShaderPlatform].bIsPreviewPlatform && EditorSPForPreviewMaxFeatureLevel < EShaderPlatform::SP_NumPlatforms)
+			const ERHIFeatureLevel::Type PreviewFeatureLevel = Infos[PreviewPlatform].MaxFeatureLevel;
+			const EShaderPlatform RuntimePlatform = GRHIGlobals.ShaderPlatformForFeatureLevel[PreviewFeatureLevel];
+
+			if (RuntimePlatform < SP_NumPlatforms)
 			{
-				Infos[ShaderPlatform].ShaderFormat = Infos[EditorSPForPreviewMaxFeatureLevel].ShaderFormat;
-				Infos[ShaderPlatform].Language = Infos[EditorSPForPreviewMaxFeatureLevel].Language;
-				Infos[ShaderPlatform].bIsHlslcc = Infos[EditorSPForPreviewMaxFeatureLevel].bIsHlslcc;
-				Infos[ShaderPlatform].bSupportsDxc = Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsDxc;
-				Infos[ShaderPlatform].bSupportsGPUScene = Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsGPUScene;
-				Infos[ShaderPlatform].bIsPC = true;
-				Infos[ShaderPlatform].bSupportsDebugViewShaders = true;
-				Infos[ShaderPlatform].bIsConsole = false;
-				Infos[ShaderPlatform].bSupportsSceneDataCompressedTransforms = Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsSceneDataCompressedTransforms;
-				Infos[ShaderPlatform].bSupportsNanite &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsNanite;
-				Infos[ShaderPlatform].bSupportsLumenGI &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsLumenGI;
-				Infos[ShaderPlatform].bSupportsPrimitiveShaders &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsPrimitiveShaders;
-				Infos[ShaderPlatform].bSupportsUInt64ImageAtomics &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsUInt64ImageAtomics;
-				Infos[ShaderPlatform].bSupportsGen5TemporalAA &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsGen5TemporalAA;
-				Infos[ShaderPlatform].bSupportsInlineRayTracing &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsInlineRayTracing;
-				Infos[ShaderPlatform].bSupportsRayTracingShaders &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsRayTracingShaders;
-				Infos[ShaderPlatform].bSupportsMeshShadersTier0 &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsMeshShadersTier0;
-				Infos[ShaderPlatform].bSupportsMeshShadersTier1 &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsMeshShadersTier1;
+				FGenericDataDrivenShaderPlatformInfo& PreviewInfo = Infos[PreviewPlatform];
+				const FGenericDataDrivenShaderPlatformInfo& RuntimeInfo = Infos[RuntimePlatform];
+
+#define PREVIEW_USE_RUNTIME_VALUE(SettingName) \
+	PreviewInfo.SettingName = RuntimeInfo.SettingName
+
+#define PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(SettingName) \
+	PreviewInfo.SettingName &= RuntimeInfo.SettingName
+
+#define PREVIEW_FORCE_SETTING(SettingName, Value) \
+	PreviewInfo.SettingName = (Value)
+
+#define PREVIEW_FORCE_DISABLE(SettingName) \
+	PREVIEW_FORCE_SETTING(SettingName, false)
+
+				// Always inherit these core settings from the preview
+				PREVIEW_USE_RUNTIME_VALUE(ShaderFormat);
+				PREVIEW_USE_RUNTIME_VALUE(Language);
+				PREVIEW_USE_RUNTIME_VALUE(bIsHlslcc);
+				PREVIEW_USE_RUNTIME_VALUE(bSupportsDxc);
+
+				// Editor is always PC, never console and always supports debug view shaders
+				PREVIEW_FORCE_SETTING(bIsPC, true);
+				PREVIEW_FORCE_SETTING(bSupportsDebugViewShaders, true);
+				PREVIEW_FORCE_SETTING(bIsConsole, false);
 
 				// Support for stereo features requires extra consideration. The editor may not use the same technique as the preview platform,
 				// particularly MobileMultiView may be substituted by a fallback path. In order to avoid inundating real mobile platforms
 				// with the properties needed for the desktop MMV fallback path, override them here with the editor ones to make MMV preview possible
-				if (Infos[ShaderPlatform].bSupportsMobileMultiView && !Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsMobileMultiView)
+				if (PreviewInfo.bSupportsMobileMultiView && !RuntimeInfo.bSupportsMobileMultiView)
 				{
-					Infos[ShaderPlatform].bSupportsInstancedStereo = Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsInstancedStereo;
-					Infos[ShaderPlatform].bSupportsVertexShaderLayer = Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsVertexShaderLayer;
+					PREVIEW_USE_RUNTIME_VALUE(bSupportsInstancedStereo);
+					PREVIEW_USE_RUNTIME_VALUE(bSupportsVertexShaderLayer);
 				}
 				else
 				{
-					Infos[ShaderPlatform].bSupportsInstancedStereo &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsInstancedStereo;
+					PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsInstancedStereo);
 				}
-				Infos[ShaderPlatform].bSupportsMobileMultiView &= Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsMobileMultiView;
-				Infos[ShaderPlatform].bSupportsManualVertexFetch = Infos[EditorSPForPreviewMaxFeatureLevel].bSupportsManualVertexFetch;
-				Infos[ShaderPlatform].bSupportsRenderTargetWriteMask = false;
-				Infos[ShaderPlatform].bSupportsIntrinsicWaveOnce = false;
-				Infos[ShaderPlatform].bSupportsDOFHybridScattering = false;
-				Infos[ShaderPlatform].bSupports4ComponentUAVReadWrite = false;
-				Infos[ShaderPlatform].bContainsValidPlatformInfo = true;
+
+				// Settings that should be kept true if the runtime also supports it.
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsNanite);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsLumenGI);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsPrimitiveShaders);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsUInt64ImageAtomics);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsGen5TemporalAA);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsInlineRayTracing);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsRayTracingShaders);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsMeshShadersTier0);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsMeshShadersTier1);
+				PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED(bSupportsMobileMultiView);
+
+				// Settings that need to match the runtime
+				PREVIEW_USE_RUNTIME_VALUE(bSupportsGPUScene);
+				PREVIEW_USE_RUNTIME_VALUE(MaxMeshShaderThreadGroupSize);
+				PREVIEW_USE_RUNTIME_VALUE(bSupportsSceneDataCompressedTransforms);
+				PREVIEW_USE_RUNTIME_VALUE(bSupportsVertexShaderSRVs);
+				PREVIEW_USE_RUNTIME_VALUE(bSupportsManualVertexFetch);
+				PREVIEW_USE_RUNTIME_VALUE(bSupportsRealTypes);
+				PREVIEW_USE_RUNTIME_VALUE(bSupportsUniformBufferObjects);
+
+				// Settings that will never be supported in preview
+				PREVIEW_FORCE_DISABLE(bSupportsShaderRootConstants);
+				PREVIEW_FORCE_DISABLE(bSupportsShaderBundleDispatch);
+				PREVIEW_FORCE_DISABLE(bSupportsRenderTargetWriteMask);
+				PREVIEW_FORCE_DISABLE(bSupportsIntrinsicWaveOnce);
+				PREVIEW_FORCE_DISABLE(bSupportsDOFHybridScattering);
+				PREVIEW_FORCE_DISABLE(bSupports4ComponentUAVReadWrite);
+
+				// Make sure we're marked valid
+				PreviewInfo.bContainsValidPlatformInfo = true;
+
+				// Seeing as we are merging the two shader platforms merge the hash key as well, this way
+				// any changes in the editor feature level shader platform will dirty the preview key.
+				PreviewInfo.ShaderPropertiesHash = HashCombine(PreviewInfo.ShaderPropertiesHash, RuntimeInfo.ShaderPropertiesHash);
+
+#undef PREVIEW_FORCE_DISABLE
+#undef PREVIEW_FORCE_SETTING
+#undef PREVIEW_DISABLE_IF_RUNTIME_UNSUPPORTED
+#undef PREVIEW_USE_RUNTIME_VALUE
 			}
 		}
 	}
 }
 
-#if WITH_EDITOR
 FText FGenericDataDrivenShaderPlatformInfo::GetFriendlyName(const FStaticShaderPlatform Platform)
 {
 	if (IsRunningCommandlet() || GUsingNullRHI)
@@ -454,7 +516,7 @@ const EShaderPlatform FGenericDataDrivenShaderPlatformInfo::GetPreviewShaderPlat
 	check(IsValid(Platform));
 	return DataDrivenShaderPlatformInfoEditorOnlyInfos[Platform].PreviewShaderPlatformParent;
 }
-#endif
+#endif  // WITH_EDITOR
 
 const EShaderPlatform FGenericDataDrivenShaderPlatformInfo::GetShaderPlatformFromName(const FName ShaderPlatformName)
 {

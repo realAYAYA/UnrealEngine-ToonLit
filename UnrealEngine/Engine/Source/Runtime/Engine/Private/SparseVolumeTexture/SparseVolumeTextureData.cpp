@@ -40,21 +40,6 @@ namespace UE
 namespace SVT
 {
 
-static bool IsInBounds(const FIntVector3& Point, const FIntVector3& Min, const FIntVector3& Max)
-{
-	return Point.X >= Min.X && Point.Y >= Min.Y && Point.Z >= Min.Z
-		&& Point.X < Max.X && Point.Y < Max.Y && Point.Z < Max.Z;
-}
-
-static FIntVector3 ShiftRightAndMax(const FIntVector3& Value, uint32 ShiftBy, int32 MinValue)
-{
-	FIntVector3 Result = FIntVector3(
-		FMath::Max(Value.X >> ShiftBy, MinValue),
-		FMath::Max(Value.Y >> ShiftBy, MinValue),
-		FMath::Max(Value.Z >> ShiftBy, MinValue));
-	return Result;
-}
-
 bool FTextureData::Create(const ITextureDataProvider& DataProvider)
 {
 	const FTextureDataCreateInfo CreateInfo = DataProvider.GetCreateInfo();
@@ -621,142 +606,40 @@ bool FTextureData::GenerateBorderVoxels(const FTextureDataAddressingInfo& Addres
 	return true;
 }
 
-bool FTextureData::DeduplicateTiles()
+bool FTextureData::BuildDerivedData(const FTextureDataAddressingInfo& AddressingInfo, int32 NumMipLevelsGlobal, bool bMoveMip0FromThis, FDerivedTextureData& OutDerivedData)
 {
-	const int32 NumMipLevels = MipMaps.Num();
-	const int32 FormatSize[] = { GPixelFormats[Header.AttributesFormats[0]].BlockBytes, GPixelFormats[Header.AttributesFormats[1]].BlockBytes };
-	const int32 TileByteSize[] = { SVT::NumVoxelsPerPaddedTile * FormatSize[0], SVT::NumVoxelsPerPaddedTile * FormatSize[1] };
-
-	int32 NumProcessedTiles = 0;
-	int32 NumSurvivingTiles = 0;
-
-	TArray<uint64> TileHashes; // Reused between mip level iterations
-	TArray<uint32> TileRemap; // Reused between mip level iterations
-
-	// Deduplicate each mip level individually
-	for (int32 MipLevel = 0; MipLevel < NumMipLevels; ++MipLevel)
-	{
-		TileHashes.Reset(MipMaps[MipLevel].NumPhysicalTiles);
-		TileRemap.Reset(MipMaps[MipLevel].NumPhysicalTiles);
-		uint8* PhysicalTileData[] = { MipMaps[MipLevel].PhysicalTileDataA.GetData(), MipMaps[MipLevel].PhysicalTileDataB.GetData() };
-		int32 TileWritePos = 0;
-
-		// Compute a hash per tile and compare against previous hashes.
-		for (int32 TileIdx = 0; TileIdx < MipMaps[MipLevel].NumPhysicalTiles; ++TileIdx)
-		{
-			uint64 Hash = 0;
-			if (FormatSize[0])
-			{
-				Hash = CityHash64((const char*)PhysicalTileData[0] + (SIZE_T)TileIdx * (SIZE_T)TileByteSize[0], (uint32)TileByteSize[0]);
-			}
-			if (FormatSize[1])
-			{
-				Hash = CityHash64WithSeed((const char*)PhysicalTileData[1] + (SIZE_T)TileIdx * (SIZE_T)TileByteSize[1], (uint32)TileByteSize[1], Hash);
-			}
-
-			const int32 OldNumUniqueTiles = TileHashes.Num();
-			const uint32 RemapIndex = TileHashes.AddUnique(Hash) + 1; // +1 because of implicit null tile at 0
-			TileRemap.Add(RemapIndex);
-			
-			const bool bAddedNewUniqueTile = TileHashes.Num() > OldNumUniqueTiles;
-			
-			// Move tile to compacted position
-			if (bAddedNewUniqueTile)
-			{
-				if (TileWritePos < TileIdx)
-				{
-					if (FormatSize[0])
-					{
-						FMemory::Memcpy(PhysicalTileData[0] + (SIZE_T)TileWritePos * (SIZE_T)TileByteSize[0], PhysicalTileData[0] + (SIZE_T)TileIdx * (SIZE_T)TileByteSize[0], (SIZE_T)TileByteSize[0]);
-					}
-					if (FormatSize[1])
-					{
-						FMemory::Memcpy(PhysicalTileData[1] + (SIZE_T)TileWritePos * (SIZE_T)TileByteSize[1], PhysicalTileData[1] + (SIZE_T)TileIdx * (SIZE_T)TileByteSize[1], (SIZE_T)TileByteSize[1]);
-					}
-				}
-				else
-				{
-					check(TileWritePos == TileIdx);
-				}
-				++TileWritePos;
-				++NumSurvivingTiles;
-			}
-
-			++NumProcessedTiles;
-		}
-
-		// Update mip info
-		MipMaps[MipLevel].NumPhysicalTiles = TileWritePos;
-
-		// Fix up page table
-		for (uint32& PageTableEntry : MipMaps[MipLevel].PageTable)
-		{
-			if (PageTableEntry != 0)
-			{
-				PageTableEntry = TileRemap[PageTableEntry - 1]; // -1 because of implicit null tile at 0
-			}
-		}
-
-		const int64 DeduplicatedTileSizeBytes[] = { (int64)TileWritePos * (int64)TileByteSize[0], (int64)TileWritePos * (int64)TileByteSize[1] };
-		if (DeduplicatedTileSizeBytes[0] > SVT::MaxResourceSize || DeduplicatedTileSizeBytes[1] > SVT::MaxResourceSize)
-		{
-			UE_LOG(LogSparseVolumeTextureData, Warning, TEXT("SparseVolumeTexture still requires too much memory (> 2048MB) after tile deduplication! The full mip chain will not fit in memory, so only lower resolution mip levels can be streamed in. Physical tile data A: %ll bytes. Physical tile data B: %ll bytes"),
-				(long long)DeduplicatedTileSizeBytes[0], (long long)DeduplicatedTileSizeBytes[1]);
-		}
-
-		if (!MipMaps[MipLevel].PhysicalTileDataA.IsEmpty())
-		{
-			MipMaps[MipLevel].PhysicalTileDataA.SetNum(TileWritePos * TileByteSize[0]);
-		}
-		if (!MipMaps[MipLevel].PhysicalTileDataB.IsEmpty())
-		{
-			MipMaps[MipLevel].PhysicalTileDataB.SetNum(TileWritePos * TileByteSize[1]);
-		}
-	}
-
-#if 0 // Disabled in order to not spam the log when importing long sequences
-	const int32 NumRemovedTiles = NumProcessedTiles - NumSurvivingTiles;
-	const float RemovedTilesPercentage = ((float)NumRemovedTiles / (float)NumProcessedTiles) * 100.0f;
-	UE_LOG(LogSparseVolumeTextureData, Display, TEXT("SparseVolumeTexture tile deduplication removed %i tiles out of %i (%f%%)"), NumRemovedTiles, NumProcessedTiles, RemovedTilesPercentage);
-#endif
-
-	return true;
-}
-
-bool FTextureData::BuildDerivedData(const FTextureDataAddressingInfo& AddressingInfo, int32 NumMipLevelsGlobal, bool bMoveMip0FromThis, FTextureData& OutDerivedData)
-{
-	OutDerivedData = FTextureData{};
-	OutDerivedData.Header = Header;
-	OutDerivedData.Header.UpdatePageTableFromGlobalNumMipLevels(NumMipLevelsGlobal);
-	if (!OutDerivedData.Header.Validate(true /*bPrintToLog*/))
+	FTextureData MippedTextureData{};
+	MippedTextureData.Header = Header;
+	MippedTextureData.Header.UpdatePageTableFromGlobalNumMipLevels(NumMipLevelsGlobal);
+	if (!MippedTextureData.Header.Validate(true /*bPrintToLog*/))
 	{
 		return false;
 	}
-	OutDerivedData.MipMaps.SetNum(1);
+	MippedTextureData.MipMaps.SetNum(1);
 	if (bMoveMip0FromThis)
 	{
-		OutDerivedData.MipMaps[0] = MoveTemp(MipMaps[0]);
+		MippedTextureData.MipMaps[0] = MoveTemp(MipMaps[0]);
 		MipMaps[0] = {};
 	}
 	else
 	{
-		OutDerivedData.MipMaps[0] = MipMaps[0];
+		MippedTextureData.MipMaps[0] = MipMaps[0];
 	}
 
 	// Page table changed due to UpdatePageTableFromGlobalNumMipLevels(), so we need to recreate it based on the old one
-	if (OutDerivedData.Header.PageTableVolumeAABBMin != Header.PageTableVolumeAABBMin
-		|| OutDerivedData.Header.PageTableVolumeAABBMax != Header.PageTableVolumeAABBMax
-		|| OutDerivedData.Header.PageTableVolumeResolution != Header.PageTableVolumeResolution)
+	if (MippedTextureData.Header.PageTableVolumeAABBMin != Header.PageTableVolumeAABBMin
+		|| MippedTextureData.Header.PageTableVolumeAABBMax != Header.PageTableVolumeAABBMax
+		|| MippedTextureData.Header.PageTableVolumeResolution != Header.PageTableVolumeResolution)
 	{
 		TArray<uint32> PageTableNew;
-		PageTableNew.SetNumZeroed(OutDerivedData.Header.PageTableVolumeResolution.X * OutDerivedData.Header.PageTableVolumeResolution.Y * OutDerivedData.Header.PageTableVolumeResolution.Z);
+		PageTableNew.SetNumZeroed(MippedTextureData.Header.PageTableVolumeResolution.X * MippedTextureData.Header.PageTableVolumeResolution.Y * MippedTextureData.Header.PageTableVolumeResolution.Z);
 
 		// Iterate over new page table and copy entries from old one
-		for (int32 Z = OutDerivedData.Header.PageTableVolumeAABBMin.Z; Z < OutDerivedData.Header.PageTableVolumeAABBMax.Z; ++Z)
+		for (int32 Z = MippedTextureData.Header.PageTableVolumeAABBMin.Z; Z < MippedTextureData.Header.PageTableVolumeAABBMax.Z; ++Z)
 		{
-			for (int32 Y = OutDerivedData.Header.PageTableVolumeAABBMin.Y; Y < OutDerivedData.Header.PageTableVolumeAABBMax.Y; ++Y)
+			for (int32 Y = MippedTextureData.Header.PageTableVolumeAABBMin.Y; Y < MippedTextureData.Header.PageTableVolumeAABBMax.Y; ++Y)
 			{
-				for (int32 X = OutDerivedData.Header.PageTableVolumeAABBMin.X; X < OutDerivedData.Header.PageTableVolumeAABBMax.X; ++X)
+				for (int32 X = MippedTextureData.Header.PageTableVolumeAABBMin.X; X < MippedTextureData.Header.PageTableVolumeAABBMax.X; ++X)
 				{
 					FIntVector3 GlobalPageTableCoord(X, Y, Z);
 					if (IsInBounds(GlobalPageTableCoord, Header.PageTableVolumeAABBMin, Header.PageTableVolumeAABBMax))
@@ -765,35 +648,35 @@ bool FTextureData::BuildDerivedData(const FTextureDataAddressingInfo& Addressing
 						const int32 PageTableIndexOld = (LocalPageTableCoordOld.Z * Header.PageTableVolumeResolution.Y * Header.PageTableVolumeResolution.X) 
 							+ (LocalPageTableCoordOld.Y * Header.PageTableVolumeResolution.X) 
 							+ LocalPageTableCoordOld.X;
-						check(OutDerivedData.MipMaps[0].PageTable.IsValidIndex(PageTableIndexOld));
+						check(MippedTextureData.MipMaps[0].PageTable.IsValidIndex(PageTableIndexOld));
 
-						const FIntVector3 LocalPageTableCoordNew = GlobalPageTableCoord - OutDerivedData.Header.PageTableVolumeAABBMin;
-						const int32 PageTableIndexNew = (LocalPageTableCoordNew.Z * OutDerivedData.Header.PageTableVolumeResolution.Y * OutDerivedData.Header.PageTableVolumeResolution.X) 
-							+ (LocalPageTableCoordNew.Y * OutDerivedData.Header.PageTableVolumeResolution.X) 
+						const FIntVector3 LocalPageTableCoordNew = GlobalPageTableCoord - MippedTextureData.Header.PageTableVolumeAABBMin;
+						const int32 PageTableIndexNew = (LocalPageTableCoordNew.Z * MippedTextureData.Header.PageTableVolumeResolution.Y * MippedTextureData.Header.PageTableVolumeResolution.X) 
+							+ (LocalPageTableCoordNew.Y * MippedTextureData.Header.PageTableVolumeResolution.X) 
 							+ LocalPageTableCoordNew.X;
 						check(PageTableNew.IsValidIndex(PageTableIndexNew));
 
-						PageTableNew[PageTableIndexNew] = OutDerivedData.MipMaps[0].PageTable[PageTableIndexOld];
+						PageTableNew[PageTableIndexNew] = MippedTextureData.MipMaps[0].PageTable[PageTableIndexOld];
 					}
 				}
 			}
 		}
 
-		OutDerivedData.MipMaps[0].PageTable = MoveTemp(PageTableNew);
+		MippedTextureData.MipMaps[0].PageTable = MoveTemp(PageTableNew);
 	}
 
 	// Generate border voxels of mip0
 	{
 		// Collect the page table coordinates of all non-zero pages
 		TArray<FIntVector3> PageCoords;
-		for (int32 PageZ = 0; PageZ < OutDerivedData.Header.PageTableVolumeResolution.Z; ++PageZ)
+		for (int32 PageZ = 0; PageZ < MippedTextureData.Header.PageTableVolumeResolution.Z; ++PageZ)
 		{
-			for (int32 PageY = 0; PageY < OutDerivedData.Header.PageTableVolumeResolution.Y; ++PageY)
+			for (int32 PageY = 0; PageY < MippedTextureData.Header.PageTableVolumeResolution.Y; ++PageY)
 			{
-				for (int32 PageX = 0; PageX < OutDerivedData.Header.PageTableVolumeResolution.X; ++PageX)
+				for (int32 PageX = 0; PageX < MippedTextureData.Header.PageTableVolumeResolution.X; ++PageX)
 				{
-					const int32 PageIndex = PageZ * (OutDerivedData.Header.PageTableVolumeResolution.Y * OutDerivedData.Header.PageTableVolumeResolution.X) + PageY * OutDerivedData.Header.PageTableVolumeResolution.X + PageX;
-					const uint32 PageTableEntry = OutDerivedData.MipMaps[0].PageTable[PageIndex];
+					const int32 PageIndex = PageZ * (MippedTextureData.Header.PageTableVolumeResolution.Y * MippedTextureData.Header.PageTableVolumeResolution.X) + PageY * MippedTextureData.Header.PageTableVolumeResolution.X + PageX;
+					const uint32 PageTableEntry = MippedTextureData.MipMaps[0].PageTable[PageIndex];
 					if (PageTableEntry != 0)
 					{
 						PageCoords.Add(FIntVector3(PageX, PageY, PageZ));
@@ -802,25 +685,188 @@ bool FTextureData::BuildDerivedData(const FTextureDataAddressingInfo& Addressing
 			}
 		}
 
-		if (!OutDerivedData.GenerateBorderVoxels(AddressingInfo, 0, PageCoords))
+		if (!MippedTextureData.GenerateBorderVoxels(AddressingInfo, 0, PageCoords))
 		{
 			return false;
 		}
 	}
 
 	// Generate all remaining mips. Also generates border voxels.
-	if (!OutDerivedData.GenerateMipMaps(AddressingInfo))
+	if (!MippedTextureData.GenerateMipMaps(AddressingInfo))
 	{
 		return false;
 	}
 
-	// Deduplicate tiles by potentially having multiple pages point to the same physical tile
-	if (!OutDerivedData.DeduplicateTiles())
-	{
-		return false;
-	}
+	OutDerivedData.Reset();
+	OutDerivedData.Build(MippedTextureData);
 
 	return true;
+}
+
+void FDerivedTextureData::Reset()
+{
+	NumPhysicalTiles = 0;
+	MipPageRanges.Reset();
+	PageTableCoords.Reset();
+	PageTableTileIndices.Reset();
+	PageTableParentIndices.Reset();
+	PhysicalTileDataA.Reset();
+	PhysicalTileDataB.Reset();
+}
+
+void FDerivedTextureData::Build(const FTextureData& MippedTextureData)
+{
+	Header = MippedTextureData.Header;
+
+	const int32 NumMipLevels = MippedTextureData.MipMaps.Num();
+	const SIZE_T FormatSize[] = { GPixelFormats[Header.AttributesFormats[0]].BlockBytes, GPixelFormats[Header.AttributesFormats[1]].BlockBytes };
+	const SIZE_T TileByteSize[] = { SVT::NumVoxelsPerPaddedTile * FormatSize[0], SVT::NumVoxelsPerPaddedTile * FormatSize[1] };
+
+	// Compute number of total tiles and pages, as well as the number and offset of pages per mip level
+	MipPageRanges.SetNum(NumMipLevels);
+	uint32 SrcNumPhysicalTilesTotal = 0;
+	uint32 NumPagesTotal = 0;
+	for (int32 MipLevel = NumMipLevels - 1; MipLevel >= 0; --MipLevel)
+	{
+		SrcNumPhysicalTilesTotal += MippedTextureData.MipMaps[MipLevel].NumPhysicalTiles;
+		
+		uint32 NumPagesMip = 0;
+		for (uint32 Entry : MippedTextureData.MipMaps[MipLevel].PageTable)
+		{
+			NumPagesMip += (Entry != 0) ? 1 : 0;
+		}
+		MipPageRanges[MipLevel].PageOffset = NumPagesTotal;
+		MipPageRanges[MipLevel].PageCount = NumPagesMip;
+		NumPagesTotal += NumPagesMip;
+	}
+
+	// Reserve memory
+	PageTableCoords.Reserve(NumPagesTotal);
+	PageTableTileIndices.Reserve(NumPagesTotal);
+	PageTableParentIndices.Reserve(NumPagesTotal);
+	PhysicalTileDataA.SetNumUninitialized(SrcNumPhysicalTilesTotal * TileByteSize[0]);
+	PhysicalTileDataB.SetNumUninitialized(SrcNumPhysicalTilesTotal * TileByteSize[1]);
+	
+	// Maps to help with deduplication and finding the parent index of a given page
+	TMap<uint64, uint32> PhysicalTileDataRemap;
+	TArray<TMap<uint32, uint32>> PageCoordToPageIndex;
+	PageCoordToPageIndex.SetNum(NumMipLevels);
+
+	uint32 NumWrittenTiles = 0;
+	uint8* DstPhysicalTileDataA = PhysicalTileDataA.GetData();
+	uint8* DstPhysicalTileDataB = PhysicalTileDataB.GetData();
+
+	for (int32 MipLevel = NumMipLevels - 1; MipLevel >= 0; --MipLevel)
+	{
+		const uint8* SrcPhysicalTileDataA = MippedTextureData.MipMaps[MipLevel].PhysicalTileDataA.GetData();
+		const uint8* SrcPhysicalTileDataB = MippedTextureData.MipMaps[MipLevel].PhysicalTileDataB.GetData();
+
+		// Iterate over dense page table of this mip
+		const FIntVector3 MipPageTableResolution = ShiftRightAndMax(MippedTextureData.Header.PageTableVolumeResolution, MipLevel, 1);
+		for (int32 PageZ = 0; PageZ < MipPageTableResolution.Z; ++PageZ)
+		{
+			for (int32 PageY = 0; PageY < MipPageTableResolution.Y; ++PageY)
+			{
+				for (int32 PageX = 0; PageX < MipPageTableResolution.X; ++PageX)
+				{
+					const int32 LinearPageTableIndex = (PageZ * MipPageTableResolution.Y * MipPageTableResolution.X) + (PageY * MipPageTableResolution.X) + PageX;
+					const uint32 Entry = MippedTextureData.MipMaps[MipLevel].PageTable[LinearPageTableIndex];
+
+					if (Entry)
+					{
+						const SIZE_T SrcTileIdx = Entry - 1; // 0 encodes the null tile, but we don't store that tile explicitely
+						
+						// Hash the tile voxel data
+						uint64 Hash = 0;
+						if (FormatSize[0])
+						{
+							Hash = CityHash64((const char*)SrcPhysicalTileDataA + SrcTileIdx * TileByteSize[0], (uint32)TileByteSize[0]);
+						}
+						if (FormatSize[1])
+						{
+							Hash = CityHash64WithSeed((const char*)SrcPhysicalTileDataB + SrcTileIdx * TileByteSize[1], (uint32)TileByteSize[1], Hash);
+						}
+
+						// Have we processed an identical tile before?
+						uint32 RemappedTileIndex = INDEX_NONE;
+						if (uint32* RemappedTileIndexPtr = PhysicalTileDataRemap.Find(Hash))
+						{
+							// If so, we can simply reuse that tile
+							RemappedTileIndex = *RemappedTileIndexPtr;
+						}
+						else
+						{
+							// Tile is unique, so copy it from the source data to the new compacted array
+							RemappedTileIndex = NumWrittenTiles++;
+							PhysicalTileDataRemap.Add(Hash, RemappedTileIndex);
+
+							if (FormatSize[0])
+							{
+								FMemory::Memcpy(DstPhysicalTileDataA + RemappedTileIndex * TileByteSize[0], SrcPhysicalTileDataA +SrcTileIdx * TileByteSize[0], TileByteSize[0]);
+							}
+							if (FormatSize[1])
+							{
+								FMemory::Memcpy(DstPhysicalTileDataB + RemappedTileIndex * TileByteSize[1], SrcPhysicalTileDataB + SrcTileIdx * TileByteSize[1], TileByteSize[1]);
+							}
+						}
+
+						// Insert page into hash map so child pages can look up its index
+						const uint32 PackedPageCoord = SVT::PackX11Y11Z10(FIntVector3(PageX, PageY, PageZ));
+						PageCoordToPageIndex[MipLevel].Add(PackedPageCoord, PageTableCoords.Num());
+						
+						PageTableCoords.Add(PackedPageCoord);
+						PageTableTileIndices.Add(RemappedTileIndex);
+						if (PageCoordToPageIndex.IsValidIndex(MipLevel + 1))
+						{
+							// Look up parent index based on mip level and parent page coord
+							const uint32 ParentPageCoord = SVT::PackX11Y11Z10(FIntVector3(PageX / 2, PageY / 2, PageZ / 2));
+							const uint32 ParentIndex = PageCoordToPageIndex[MipLevel + 1][ParentPageCoord];
+							PageTableParentIndices.Add(ParentIndex);
+						}
+						else
+						{
+							// Root mip has no parent
+							PageTableParentIndices.Add(INDEX_NONE);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Resize the arrays but don't bother shrinking; the gains are probably not massive and this object is expected to have a fairly short lifetime anyways.
+	PhysicalTileDataA.SetNum(static_cast<int64>(NumWrittenTiles * TileByteSize[0]), EAllowShrinking::No);
+	PhysicalTileDataB.SetNum(static_cast<int64>(NumWrittenTiles * TileByteSize[1]), EAllowShrinking::No);
+	NumPhysicalTiles = NumWrittenTiles;
+
+	// Validate
+	{
+#if DO_CHECK
+		uint32 TotalPageCount = 0;
+		for (int32 MipLevel = NumMipLevels - 1; MipLevel >= 0; --MipLevel)
+		{
+			check(MipPageRanges[MipLevel].PageOffset == TotalPageCount);
+			const int32 NumPageTableEntries = MipPageRanges[MipLevel].PageCount;
+			TotalPageCount += NumPageTableEntries;
+			const bool bIsHighestMipLevel = MipLevel == (NumMipLevels - 1);
+			check(!bIsHighestMipLevel || NumPageTableEntries <= 1); // Highest mip has a maximum of 1 page
+			const FIntVector3 PageTableRes = ShiftRightAndMax(Header.PageTableVolumeResolution, MipLevel, 1);
+
+			for (int32 i = 0; i < NumPageTableEntries; ++i)
+			{
+				const int32 PageIndex = MipPageRanges[MipLevel].PageOffset + i;
+				const int32 PageX = (PageTableCoords[PageIndex] >> 0u) & 0x7FFu;
+				const int32 PageY = (PageTableCoords[PageIndex] >> 11u) & 0x7FFu;
+				const int32 PageZ = (PageTableCoords[PageIndex] >> 22u) & 0x3FFu;
+				const int32 LinearPageIndex = (PageZ * (PageTableRes.X * PageTableRes.Y)) + (PageY * PageTableRes.X) + PageX;
+				check(MippedTextureData.MipMaps[MipLevel].PageTable.IsValidIndex(LinearPageIndex));
+				const uint32 PageTableEntry = MippedTextureData.MipMaps[MipLevel].PageTable[LinearPageIndex];
+				check(PageTableEntry != 0 && PageTableEntry != INDEX_NONE); // Unpacked page coord must map to a valid entry in the dense page table
+			}
+		}
+		check(TotalPageCount == PageTableCoords.Num());
+#endif // DO_CHECK
+	}
 }
 
 }

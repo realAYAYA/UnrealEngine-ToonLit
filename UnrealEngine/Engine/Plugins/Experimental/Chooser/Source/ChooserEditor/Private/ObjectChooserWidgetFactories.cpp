@@ -63,7 +63,7 @@ TSharedPtr<SWidget> FObjectChooserWidgetFactories::CreateWidget(bool bReadOnly, 
 	return nullptr;
 }
 
-TSharedPtr<SWidget> FObjectChooserWidgetFactories::CreateWidget(bool bReadOnly, UObject* TransactionObject, const UScriptStruct* BaseType, void* Value, const UStruct* ValueType, UClass* ResultBaseClass, const FOnStructPicked& CreateClassCallback, TSharedPtr<SBorder>* InnerWidget, FChooserWidgetValueChanged ValueChanged)
+TSharedPtr<SWidget> FObjectChooserWidgetFactories::CreateWidget(bool bReadOnly, UObject* TransactionObject, const UScriptStruct* BaseType, void* Value, const UStruct* ValueType, UClass* ResultBaseClass, const FOnStructPicked& CreateClassCallback, TSharedPtr<SBorder>* InnerWidget, FChooserWidgetValueChanged ValueChanged, FText NullValueDisplayText)
 {
 	TSharedPtr<SWidget> LeftWidget = CreateWidget(bReadOnly, TransactionObject, Value, ValueType, ResultBaseClass, ValueChanged);
 	if (bReadOnly)
@@ -74,7 +74,10 @@ TSharedPtr<SWidget> FObjectChooserWidgetFactories::CreateWidget(bool bReadOnly, 
 	
 	if (!LeftWidget.IsValid())
 	{
-		LeftWidget = SNew(STextBlock).Text(LOCTEXT("SelectDataType", "Select Data Type..."));
+		LeftWidget = SNew(STextBlock)
+			.Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+			.Margin(2)
+			.Text(NullValueDisplayText.IsEmpty() ? LOCTEXT("SelectDataType", "Select Data Type..." ) : NullValueDisplayText);
 	}
 
 	// button for replacing data with a different Data Interface class
@@ -86,6 +89,7 @@ TSharedPtr<SWidget> FObjectChooserWidgetFactories::CreateWidget(bool bReadOnly, 
 		FStructViewerInitializationOptions Options;
 		Options.StructFilter = MakeShared<FStructFilter>(BaseType);
 		Options.NameTypeToDisplay = EStructViewerNameTypeToDisplay::DisplayName;
+		Options.bShowNoneOption = true;
 		
 		TSharedRef<SWidget> Widget = FModuleManager::LoadModuleChecked<FStructViewerModule>("StructViewer").CreateStructViewer(Options, FOnStructPicked::CreateLambda(
 			[Button, CreateClassCallback](const UScriptStruct* ChosenStruct)

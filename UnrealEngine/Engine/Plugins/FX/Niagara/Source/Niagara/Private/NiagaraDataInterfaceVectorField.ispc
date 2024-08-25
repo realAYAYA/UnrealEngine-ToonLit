@@ -21,6 +21,7 @@ inline varying FVector ReadHalfVector(const uniform FHalfVector Data[], int Data
 export void SampleVectorField(const uniform float XParam[], const uniform float YParam[], const uniform float ZParam[],
 							const uniform bool bXParamConst, const uniform bool bYParamConst, const uniform bool bZParamConst,
 							uniform float OutSampleX[], uniform float OutSampleY[], uniform float OutSampleZ[],
+							const uniform bool bOutputXConst, const uniform bool bOutputYConst, const uniform bool bOutputZConst,
 							const uniform FHalfVector Data[], const uniform int DataSize, const uniform FVector &MinBounds, const uniform FVector &OneOverBoundSize,
 							const uniform FVector &Size, const uniform FVector &TilingAxes, const uniform int NumInstances)
 {
@@ -84,8 +85,19 @@ export void SampleVectorField(const uniform float XParam[], const uniform float 
 		const FVector V = VectorLerp(V0, V1, Fraction.V[2]);
 
 		// Write final output...
-		OutSampleX[InstanceIdx] = V.V[0];
-		OutSampleY[InstanceIdx] = V.V[1];
-		OutSampleZ[InstanceIdx] = V.V[2];
+		if (bOutputXConst)
+		{
+			OutSampleX[InstanceIdx] = V.V[0];
+		}
+
+		if (bOutputYConst)
+		{
+			OutSampleY[InstanceIdx] = V.V[1];
+		}
+
+		if (bOutputZConst)
+		{
+			OutSampleZ[InstanceIdx] = V.V[2];
+		}
 	}
 }

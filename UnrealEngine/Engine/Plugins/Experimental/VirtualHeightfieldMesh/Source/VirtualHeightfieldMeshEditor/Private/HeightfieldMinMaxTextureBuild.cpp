@@ -206,7 +206,7 @@ namespace VirtualHeightfieldMesh
 					Desc.MaxLevel = MaxLevel;
 					Desc.bClearTextures = true;
 					Desc.bIsThumbnails = false;
-					Desc.DebugType = ERuntimeVirtualTextureDebugType::None;
+					Desc.FixedColor = FLinearColor::Transparent;
 					Desc.NumPageDescs = 1;
 					Desc.Targets[0].Texture = RenderTileResources.GetTileRenderTarget()->GetRHI();
 					Desc.Targets[1].Texture = nullptr;

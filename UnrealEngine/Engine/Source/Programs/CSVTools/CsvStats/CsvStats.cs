@@ -554,6 +554,10 @@ namespace CSVStats
 
 			// Detect unicode
 			string line = reader.ReadLine();
+			if (line == null)
+			{
+				throw new Exception(filename + " is empty. Aborting further processing to avoid unexpected results.");
+			}
 
 			bool bIsUnicode = false;
 			for (int i = 0; i < line.Length - 1; i++)
@@ -942,8 +946,17 @@ namespace CSVStats
 					{
 						using (DeflateStream decompressionStream = new DeflateStream(memoryStream, CompressionMode.Decompress))
 						{
-							int bytesRead=decompressionStream.Read(uncompressedValuesBuffer, 0, uncompressedValuesBuffer.Length);
-							if (bytesRead != uncompressedBufferLength)
+							int offset = 0;
+							while(offset<uncompressedBufferLength)
+							{
+								int bytesRead = decompressionStream.Read(uncompressedValuesBuffer, offset, uncompressedBufferLength - offset);
+								if (bytesRead == 0)
+								{
+									throw new Exception("Decompression error!");
+								}
+								offset += bytesRead;
+							}
+							if (offset != uncompressedBufferLength)
 							{
 								throw new Exception("Decompression error!");
 							}
@@ -1690,7 +1703,7 @@ namespace CSVStats
             }
 
 			// First line is headings, last line contains build info 
-			int numSamples = lines.Count - (bHasMetaData ? 2 : 1);
+			int numSamples = Math.Max(lines.Count - (bHasMetaData ? 2 : 1), 0);
 			if (fileInfo != null)
 			{
 				fileInfo.bIsCsvBin = false;

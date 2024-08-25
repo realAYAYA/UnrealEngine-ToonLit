@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using EpicGames.Core;
+using EpicGames.Horde.Issues;
 using Horde.Server.Issues;
 using Horde.Server.Users;
 

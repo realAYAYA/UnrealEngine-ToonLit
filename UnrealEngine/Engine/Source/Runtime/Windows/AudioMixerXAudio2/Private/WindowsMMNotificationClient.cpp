@@ -6,8 +6,6 @@
 
 #include "Windows/AllowWindowsPlatformTypes.h"
 
-#include "Windows/MinWindows.h"
-
 THIRD_PARTY_INCLUDES_START
 #include <Functiondiscoverykeys_devpkey.h>
 THIRD_PARTY_INCLUDES_END

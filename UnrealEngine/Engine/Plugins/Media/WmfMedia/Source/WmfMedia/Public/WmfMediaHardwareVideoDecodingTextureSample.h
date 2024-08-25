@@ -50,7 +50,7 @@ public:
 	 * @param InCreateFlags texture create flag
 	 * @return The texture resource object that will hold the sample data.
 	 */
-	ID3D11Texture2D* InitializeSourceTexture(const TRefCountPtr<ID3D11Device>& InD3D11Device, FTimespan InTime, FTimespan InDuration, const FIntPoint& InDim, EPixelFormat InFormat, EMediaTextureSampleFormat InMediaTextureSampleFormat);
+	ID3D11Texture2D* InitializeSourceTexture(const TRefCountPtr<ID3D11Device>& InD3D11Device, FMediaTimeStamp InTime, FTimespan InDuration, const FIntPoint& InDim, EPixelFormat InFormat, EMediaTextureSampleFormat InMediaTextureSampleFormat);
 
 	/**
 	 * Call this to set the pixel format.

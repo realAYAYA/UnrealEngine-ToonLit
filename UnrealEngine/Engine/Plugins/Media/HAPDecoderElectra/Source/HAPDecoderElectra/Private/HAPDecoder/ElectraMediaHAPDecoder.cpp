@@ -14,6 +14,7 @@
 #include "IElectraDecoderOutputVideo.h"
 #include "IElectraDecoderResourceDelegate.h"
 #include "ElectraDecodersUtils.h"
+#include COMPILED_PLATFORM_HEADER(ElectraDecoderGPUBufferHelpers.h)
 
 #include "hap.h"
 
@@ -127,27 +128,54 @@ public:
 	{
 		if (InBufferIndex == 0)
 		{
-			return ColorBuffer;
+			return Buffer[Buffer_Color].Buffer;
 		}
 		else if (InBufferIndex == 1)
 		{
-			return AlphaBuffer;
+			return Buffer[Buffer_Alpha].Buffer;
 		}
 		return nullptr;
 	}
 	void* GetBufferTextureByIndex(int32 InBufferIndex) const override
 	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			return Buffer[Buffer_Color].GPUBuffer.Resource.GetReference();
+		}
+		if (InBufferIndex == 1)
+		{
+			return Buffer[Buffer_Alpha].GPUBuffer.Resource.GetReference();
+		}
+#endif
 		return nullptr;
 	}
+	virtual bool GetBufferTextureSyncByIndex(int32 InBufferIndex, FElectraDecoderOutputSync& SyncObject) const override
+	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			SyncObject = { Buffer[Buffer_Color].GPUBuffer.Fence.GetReference(), Buffer[Buffer_Color].GPUBuffer.FenceValue, nullptr, Buffer_TaskSync };
+			return true;
+		}
+		if (InBufferIndex == 1)
+		{
+			SyncObject = { Buffer[Buffer_Alpha].GPUBuffer.Fence.GetReference(), Buffer[Buffer_Alpha].GPUBuffer.FenceValue, nullptr, Buffer_TaskSync };
+			return true;
+		}
+#endif
+		return false;
+	}
+
 	EElectraDecoderPlatformPixelFormat GetBufferFormatByIndex(int32 InBufferIndex) const override
 	{
 		if (InBufferIndex == 0)
 		{
-			return ColorBufferFormat;
+			return Buffer[Buffer_Color].BufferFormat;
 		}
 		else if (InBufferIndex == 1)
 		{
-			return AlphaBufferFormat;
+			return Buffer[Buffer_Alpha].BufferFormat;
 		}
 	return EElectraDecoderPlatformPixelFormat::INVALID;
 	}
@@ -155,11 +183,11 @@ public:
 	{
 		if (InBufferIndex == 0)
 		{
-			return ColorBufferEncoding;
+			return Buffer[Buffer_Color].BufferEncoding;
 		}
 		else if (InBufferIndex == 1)
 		{
-			return AlphaBufferEncoding;
+			return Buffer[Buffer_Alpha].BufferEncoding;
 		}
 		return EElectraDecoderPlatformPixelEncoding::Native;
 	}
@@ -167,11 +195,11 @@ public:
 	{
 		if (InBufferIndex == 0)
 		{
-			return ColorPitch;
+			return Buffer[Buffer_Color].Pitch;
 		}
 		else if (InBufferIndex == 1)
 		{
-			return AlphaPitch;
+			return Buffer[Buffer_Alpha].Pitch;
 		}
 		return 0;
 	}
@@ -183,8 +211,6 @@ public:
 	FElectraVideoDecoderOutputCropValues Crop;
 	int32 Width = 0;
 	int32 Height = 0;
-	int32 ColorPitch = 0;
-	int32 AlphaPitch = 0;
 	int32 NumBits = 0;
 	int32 AspectW = 1;
 	int32 AspectH = 1;
@@ -195,12 +221,26 @@ public:
 
 	uint32 Codec4CC = 0;
 	int32 NumBuffers = 0;
-	TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> ColorBuffer;
-	TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> AlphaBuffer;
-	EElectraDecoderPlatformPixelFormat ColorBufferFormat;
-	EElectraDecoderPlatformPixelEncoding ColorBufferEncoding;
-	EElectraDecoderPlatformPixelFormat AlphaBufferFormat;
-	EElectraDecoderPlatformPixelEncoding AlphaBufferEncoding;
+
+	enum {
+		Buffer_Color = 0,
+		Buffer_Alpha,
+
+		Buffer_Max
+	};
+
+	struct FBufferInfo {
+		TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> Buffer;
+		EElectraDecoderPlatformPixelFormat BufferFormat;
+		EElectraDecoderPlatformPixelEncoding BufferEncoding;
+		int32 Pitch = 0;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		FElectraMediaDecoderOutputBufferPool_DX12::FOutputData GPUBuffer;
+#endif
+	} Buffer[Buffer_Max];
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync> Buffer_TaskSync;
+#endif
 };
 
 
@@ -266,13 +306,24 @@ private:
 	int32 AspectW = 0;
 	int32 AspectH = 0;
 	uint32 Codec4CC = 0;
-	uint32 AllocSizeColor = 0;
-	uint32 AllocSizeAlpha = 0;
 
 	IElectraDecoder::FError LastError;
 
 	TSharedPtr<FVideoDecoderOutputHAPElectra, ESPMode::ThreadSafe> CurrentOutput;
 	bool bFlushPending = false;
+
+	TWeakPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> ResourceDelegate;
+
+	uint32 MaxOutputBuffers;
+	struct FBufferInstanceInfo
+	{
+		uint32 AllocSize = 0;
+		uint32 AllocBlockSize = 0;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		mutable TSharedPtr<FElectraMediaDecoderOutputBufferPool_DX12> D3D12ResourcePool;
+#endif
+	} InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Max];
+	mutable TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync> TaskSync;
 };
 
 
@@ -341,6 +392,8 @@ void FElectraMediaHAPDecoder::Shutdown()
 
 FVideoDecoderHAPElectra::FVideoDecoderHAPElectra(const TMap<FString, FVariant>& InOptions, TSharedPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> InResourceDelegate)
 {
+	ResourceDelegate = InResourceDelegate;
+
 	DisplayWidth = (int32)ElectraDecodersUtil::GetVariantValueSafeI64(InOptions, TEXT("width"), 0);
 	DisplayHeight = (int32)ElectraDecodersUtil::GetVariantValueSafeI64(InOptions, TEXT("height"), 0);
 	// All HAP formats have 4x4 pixel blocks.
@@ -355,24 +408,33 @@ FVideoDecoderHAPElectra::FVideoDecoderHAPElectra(const TMap<FString, FVariant>& 
 		case Make4CC('H','a','p','1'):
 		case Make4CC('H','a','p','A'):
 		{
-			AllocSizeColor = DecodedWidth * DecodedHeight / 2;
-			AllocSizeAlpha = DecodedWidth * DecodedHeight / 2;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Color].AllocSize = DecodedWidth * DecodedHeight / 2;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Alpha].AllocSize = DecodedWidth * DecodedHeight / 2;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Color].AllocBlockSize = 8;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Alpha].AllocBlockSize = 8;
 			break;
 		}
 		case Make4CC('H','a','p','Y'):
 		case Make4CC('H','a','p','5'):
 		{
-			AllocSizeColor = DecodedWidth * DecodedHeight;
-			AllocSizeAlpha = DecodedWidth * DecodedHeight;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Color].AllocSize = DecodedWidth * DecodedHeight;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Alpha].AllocSize = DecodedWidth * DecodedHeight;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Color].AllocBlockSize = 16;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Alpha].AllocBlockSize = 16;
 			break;
 		}
 		default:
 		{
-			AllocSizeColor = DecodedWidth * DecodedHeight * 4;
-			AllocSizeAlpha = DecodedWidth * DecodedHeight * 4;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Color].AllocSize = DecodedWidth * DecodedHeight * 4;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Alpha].AllocSize = DecodedWidth * DecodedHeight * 4;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Color].AllocBlockSize = 0;
+			InstanceBufferData[FVideoDecoderOutputHAPElectra::Buffer_Alpha].AllocBlockSize = 0;
 			break;
 		}
 	}
+
+	MaxOutputBuffers = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_output_buffers"), 5);
+	MaxOutputBuffers += kElectraDecoderPipelineExtraFrames;
 }
 
 FVideoDecoderHAPElectra::~FVideoDecoderHAPElectra()
@@ -499,6 +561,17 @@ IElectraDecoder::EDecoderError FVideoDecoderHAPElectra::DecodeAccessUnit(const F
 		return IElectraDecoder::EDecoderError::NoBuffer;
 	}
 
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	// If we will create a new resource pool or we have still buffers in an existing one, we can proceed, else we'd have no resources to output the data
+	for (uint32 BufIdx = 0; BufIdx < FVideoDecoderOutputHAPElectra::Buffer_Max; ++BufIdx)
+	{
+		if (InstanceBufferData[BufIdx].D3D12ResourcePool.IsValid() && !InstanceBufferData[BufIdx].D3D12ResourcePool->BufferAvailable())
+		{
+			return IElectraDecoder::EDecoderError::NoBuffer;
+		}
+	}
+#endif
+
 	// Decode data. This immediately produces a new output frame.
 	if (InInputAccessUnit.Data && InInputAccessUnit.DataSize)
 	{
@@ -509,6 +582,18 @@ IElectraDecoder::EDecoderError FVideoDecoderHAPElectra::DecodeAccessUnit(const F
 			PostError(Result, TEXT("HapGetFrameTextureCount() failed"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
 			return IElectraDecoder::EDecoderError::Error;
 		}
+
+		void* PlatformDevice = nullptr;
+		int32 PlatformDeviceVersion = 0;
+		bool bUseGPUBuffers = false;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		auto PinnedResourceDelegate = ResourceDelegate.Pin();
+		if (PinnedResourceDelegate.IsValid())
+		{
+			PinnedResourceDelegate->GetD3DDevice(&PlatformDevice, &PlatformDeviceVersion);
+			bUseGPUBuffers = (PlatformDevice && PlatformDeviceVersion >= 12000);
+		}
+#endif
 
 		TSharedPtr<FVideoDecoderOutputHAPElectra, ESPMode::ThreadSafe> NewOutput = MakeShared<FVideoDecoderOutputHAPElectra>();
 		NewOutput->PTS = InInputAccessUnit.PTS;
@@ -523,54 +608,140 @@ IElectraDecoder::EDecoderError FVideoDecoderHAPElectra::DecodeAccessUnit(const F
 			NewOutput->AspectW = AspectW;
 			NewOutput->AspectH = AspectH;
 		}
-	// These actually depend on the format, but we don't support the latest HAP formats at the moment.
+// These actually depend on the format, but we don't support the latest HAP formats at the moment.
 		NewOutput->NumBits = 8;
 		NewOutput->PixelFormat = 0;
 
 		NewOutput->ExtraValues.Emplace(TEXT("codec"), FVariant(TEXT("hap")));
 		NewOutput->ExtraValues.Emplace(TEXT("codec_4cc"), FVariant(Codec4CC));
 
-		NewOutput->ColorBuffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
-		NewOutput->ColorBuffer->AddUninitialized(AllocSizeColor);
-
-		unsigned long ColorBufferBytesUsed = 0;
-		unsigned int ColorBufferTextureFormat = 0;
-
-		Result = static_cast<HapResult>(HapDecode(InInputAccessUnit.Data, static_cast<unsigned long>(InInputAccessUnit.DataSize), 0, HapDecodeCallback, nullptr,
-			NewOutput->ColorBuffer->GetData(), AllocSizeColor, &ColorBufferBytesUsed, &ColorBufferTextureFormat));
-		if (Result != HapResult_No_Error)
+		// Setup all buffers / textures (we clamp to what out max number is)
+		uint32 NumBuffers = FMath::Min(TextureCount, (uint32)FVideoDecoderOutputHAPElectra::Buffer_Max);
+		for (uint32 BufIdx = 0; BufIdx < NumBuffers; ++BufIdx)
 		{
-			PostError(Result, TEXT("HapDecode() failed"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
-			return IElectraDecoder::EDecoderError::Error;
-		}
-		NewOutput->ColorBuffer->SetNumUnsafeInternal((int32) ColorBufferBytesUsed);
-		ConvertHapTextureFormat(static_cast<HapTextureFormat>(ColorBufferTextureFormat), NewOutput->ColorBufferFormat, NewOutput->ColorBufferEncoding);
+			auto& BufferInfo = NewOutput->Buffer[BufIdx];
 
-		NewOutput->ColorPitch = GetImageBufferPitch(static_cast<HapTextureFormat>(ColorBufferTextureFormat), NewOutput->Width);
+			uint8* BufferAddr;
+			uint32 BufferPitch = 0;
+			uint32 ResourcePitch = 0;
+			uint32 BlockSizeX = InstanceBufferData[BufIdx].AllocBlockSize ? 4 : 1;
+			uint32 BlockSizeY = InstanceBufferData[BufIdx].AllocBlockSize ? 4 : 1;
+			uint32 BlockBytes = InstanceBufferData[BufIdx].AllocBlockSize ? InstanceBufferData[BufIdx].AllocBlockSize : 4;
 
-		NewOutput->NumBuffers = (int32)TextureCount;
-		NewOutput->Codec4CC = Codec4CC;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+			TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> TempBuffer;
+			if (bUseGPUBuffers)
+			{
+				TRefCountPtr D3D12Device(static_cast<ID3D12Device*>(PlatformDevice));
 
-		// Alpha?
-		if (TextureCount == 2)
-		{
-			NewOutput->AlphaBuffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
-			NewOutput->AlphaBuffer->AddUninitialized(AllocSizeAlpha);
+				// Create the resource pool as needed...
+				if (!InstanceBufferData[BufIdx].D3D12ResourcePool.IsValid())
+				{
+					// We always expect to get BCx style data here, but allow for a default RGBA8 setup (as does the initialization code)
+					InstanceBufferData[BufIdx].D3D12ResourcePool = MakeShared<FElectraMediaDecoderOutputBufferPool_DX12, ESPMode::ThreadSafe>(D3D12Device, MaxOutputBuffers, DecodedWidth / BlockSizeX, DecodedHeight / BlockSizeY, BlockBytes);
+				}
 
-			unsigned long AlphaBufferBytesUsed = 0;
-			unsigned int AlphaBufferTextureFormat = 0;
+				// Create a tasksync instance so we can have our own async jobs run in consecutive order
+				if (!TaskSync.IsValid())
+				{
+					TaskSync = PinnedResourceDelegate->CreateAsyncConsecutiveTaskSync();
+				}
 
-			Result = static_cast<HapResult>(HapDecode(InInputAccessUnit.Data, static_cast<unsigned long>(InInputAccessUnit.DataSize), 1, HapDecodeCallback, nullptr,
-				NewOutput->ColorBuffer->GetData(), AllocSizeAlpha, &AlphaBufferBytesUsed, &AlphaBufferTextureFormat));
+				InstanceBufferData[BufIdx].D3D12ResourcePool->AllocateOutputDataAsBuffer(BufferInfo.GPUBuffer, ResourcePitch);
+
+				// Make the decoder write to a cached, temp buffer (otherwise performance is quite bad)
+				TempBuffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
+				if (!TempBuffer.IsValid())
+				{
+					PostError(Result, TEXT("Could not allocate HAP decoder output buffer"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
+					return IElectraDecoder::EDecoderError::Error;
+				}
+				TempBuffer->AddUninitialized(InstanceBufferData[BufIdx].AllocSize);
+				BufferAddr = TempBuffer->GetData();
+				if (BufferAddr == nullptr)
+				{
+					PostError(Result, TEXT("Could not allocate HAP decoder output buffer"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
+					return IElectraDecoder::EDecoderError::Error;
+				}
+				BufferPitch = (DecodedWidth / BlockSizeX) * BlockBytes;
+			}
+			else
+#endif
+			{
+				BufferInfo.Buffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
+				BufferInfo.Buffer->AddUninitialized(InstanceBufferData[BufIdx].AllocSize);
+				BufferAddr = BufferInfo.Buffer->GetData();
+				if (BufferAddr == nullptr)
+				{
+					PostError(Result, TEXT("Could not allocate HAP decoder output buffer"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
+					return IElectraDecoder::EDecoderError::Error;
+				}
+			}
+
+			unsigned long BufferBytesUsed = 0;
+			unsigned int BufferTextureFormat = 0;
+
+			Result = static_cast<HapResult>(HapDecode(InInputAccessUnit.Data, static_cast<unsigned long>(InInputAccessUnit.DataSize), 0, HapDecodeCallback, nullptr,
+													  BufferAddr, InstanceBufferData[BufIdx].AllocSize, &BufferBytesUsed, &BufferTextureFormat));
+
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+			if (bUseGPUBuffers)
+			{
+				if (Result == HapResult_No_Error)
+				{
+					if (PinnedResourceDelegate->RunCodeAsync([BufferResource = BufferInfo.GPUBuffer.Resource, BufferFence = BufferInfo.GPUBuffer.Fence, BufferFenceValue = BufferInfo.GPUBuffer.FenceValue, ResourcePitch, BufferAddr, BufferPitch, DecodedPitch = DecodedHeight / BlockSizeY, TempBuffer]()
+						{
+							uint8* DX12BufferAddr;
+							HRESULT Res = BufferResource->Map(0, nullptr, (void**)&DX12BufferAddr);
+							check(SUCCEEDED(Res));
+
+							FElectraMediaDecoderOutputBufferPool_DX12::CopyWithPitchAdjust(DX12BufferAddr, ResourcePitch, BufferAddr, BufferPitch, DecodedPitch);
+
+							BufferResource->Unmap(0, nullptr);
+
+							BufferFence->Signal(BufferFenceValue);
+						}, TaskSync.Get()))
+					{
+						// note: we share one task sync for all buffers -> this will lead any external task to be executed after ALL tasks we trigger have been done (aka: after the "last" buffer is ready)
+						NewOutput->Buffer_TaskSync = TaskSync;
+					}
+					else	
+					{
+						uint8* DX12BufferAddr;
+						HRESULT Res = BufferInfo.GPUBuffer.Resource->Map(0, nullptr, (void**)&DX12BufferAddr);
+						check(SUCCEEDED(Res));
+
+						FElectraMediaDecoderOutputBufferPool_DX12::CopyWithPitchAdjust(DX12BufferAddr, ResourcePitch, BufferAddr, BufferPitch, DecodedHeight / BlockSizeY);
+
+						BufferInfo.GPUBuffer.Resource->Unmap(0, nullptr);
+
+						BufferInfo.GPUBuffer.Fence->Signal(BufferInfo.GPUBuffer.FenceValue);
+					}
+
+					BufferInfo.Pitch = ResourcePitch;
+				}
+				TempBuffer.Reset();
+			}
+			else
+#endif
+			{
+				if (Result == HapResult_No_Error)
+				{
+					BufferInfo.Buffer->SetNumUnsafeInternal((int32)BufferBytesUsed);
+					BufferInfo.Pitch = GetImageBufferPitch(static_cast<HapTextureFormat>(BufferTextureFormat), NewOutput->Width);
+				}
+			}
+
 			if (Result != HapResult_No_Error)
 			{
 				PostError(Result, TEXT("HapDecode() failed"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
 				return IElectraDecoder::EDecoderError::Error;
 			}
-			NewOutput->AlphaBuffer->SetNumUnsafeInternal((int32) AlphaBufferBytesUsed);
-			ConvertHapTextureFormat(static_cast<HapTextureFormat>(AlphaBufferTextureFormat), NewOutput->AlphaBufferFormat, NewOutput->AlphaBufferEncoding);
 
-			NewOutput->AlphaPitch = GetImageBufferPitch(static_cast<HapTextureFormat>(AlphaBufferTextureFormat), NewOutput->Width);
+			ConvertHapTextureFormat(static_cast<HapTextureFormat>(BufferTextureFormat), BufferInfo.BufferFormat, BufferInfo.BufferEncoding);
+
+			NewOutput->NumBuffers = (int32)TextureCount;
+			NewOutput->Codec4CC = Codec4CC;
 		}
 
 		CurrentOutput = MoveTemp(NewOutput);

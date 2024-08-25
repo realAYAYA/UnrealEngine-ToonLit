@@ -15,7 +15,7 @@
 #include "RHISurfaceDataConversion.h"
 #include "CommonRenderResources.h"
 
-static uint32 ComputeBytesPerPixel(DXGI_FORMAT Format)
+static uint32 D3D12RT_ComputeBytesPerPixel(DXGI_FORMAT Format)
 {
 	uint32 BytesPerPixel = 0;
 
@@ -100,16 +100,23 @@ static uint32 ComputeBytesPerPixel(DXGI_FORMAT Format)
 	case DXGI_FORMAT_R32G32B32A32_SINT:
 		BytesPerPixel = 16;
 		break;
+	default:
+		// format not supported yet
+		check(0);
+		break;
 	}
 
-	// format not supported yet
-	check(BytesPerPixel);
+	// @@ DXGIUtilities supercedes; remove this function ??
+	check(BytesPerPixel == UE::DXGIUtilities::GetFormatSizeInBytes(Format) );
 
 	return BytesPerPixel;
 }
 
 static inline DXGI_FORMAT ConvertTypelessToUnorm(DXGI_FORMAT Format)
 {
+	// prefer DXGIUtilities::FindSharedResourceFormat ?
+	//	or something? lots of these mappers in DXGIUtilities already
+
 	// required to prevent 
 	// D3D11: ERROR: ID3D11DeviceContext::ResolveSubresource: The Format (0x1b, R8G8B8A8_TYPELESS) is never able to resolve multisampled resources. [ RESOURCE_MANIPULATION ERROR #294: DEVICE_RESOLVESUBRESOURCE_FORMAT_INVALID ]
 	// D3D11: **BREAK** enabled for the previous D3D11 message, which was: [ RESOURCE_MANIPULATION ERROR #294: DEVICE_RESOLVESUBRESOURCE_FORMAT_INVALID ]
@@ -161,7 +168,7 @@ void FD3D12CommandContext::ResolveTextureUsingShader(
 	GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
 
 	// Make sure the destination is not bound as a shader resource.
-	ClearShaderResources(DestTexture);
+	ClearShaderResources(DestTexture, EShaderParameterTypeMask::SRVMask | EShaderParameterTypeMask::UAVMask);
 
 	// Determine if the entire destination surface is being resolved to.
 	// If the entire surface is being resolved to, then it means we can clear it and signal the driver that it can discard
@@ -272,7 +279,7 @@ void FD3D12CommandContext::ResolveTextureUsingShader(
 		})(RHICmdList);
 	}
 
-	ClearShaderResources(SourceTexture);
+	ClearShaderResources(SourceTexture, EShaderParameterTypeMask::SRVMask | EShaderParameterTypeMask::UAVMask);
 
 	// Reset saved viewport
 	{
@@ -282,6 +289,8 @@ void FD3D12CommandContext::ResolveTextureUsingShader(
 
 static DXGI_FORMAT GetPlaneFormat(DXGI_FORMAT InFormat, uint32 InPlaneSlice)
 {
+	// in D3D12 mixed formats are in split planes not interleaved (change from D3D11)
+	//	?? but these look wrong ??
 	if (InFormat == DXGI_FORMAT_R32G8X24_TYPELESS || InFormat == DXGI_FORMAT_R24G8_TYPELESS)
 	{
 		if (InPlaneSlice == 0)
@@ -345,8 +354,8 @@ void FD3D12CommandContext::ResolveTexture(UE::RHICore::FResolveTextureInfo Info)
 			int32 DestSubresource   = CalcSubresource(Info.MipLevel, ArraySlice, DestDesc.NumMips);
 			int32 SourceSubresource = CalcSubresource(Info.MipLevel, ArraySlice, SourceDesc.NumMips);
 
-			FScopedResourceBarrier ConditionalScopeResourceBarrierDst(*this, DestTexture->GetResource()  , D3D12_RESOURCE_STATE_RESOLVE_DEST  , DestSubresource  );
-			FScopedResourceBarrier ConditionalScopeResourceBarrierSrc(*this, SourceTexture->GetResource(), D3D12_RESOURCE_STATE_RESOLVE_SOURCE, SourceSubresource);
+			FScopedResourceBarrier ConditionalScopeResourceBarrierDst(*this, DestTexture->GetResource(),   &DestTexture->ResourceLocation,   D3D12_RESOURCE_STATE_RESOLVE_DEST,   DestSubresource);
+			FScopedResourceBarrier ConditionalScopeResourceBarrierSrc(*this, SourceTexture->GetResource(), &SourceTexture->ResourceLocation, D3D12_RESOURCE_STATE_RESOLVE_SOURCE, SourceSubresource);
 
 			FlushResourceBarriers();
 			GraphicsCommandList()->ResolveSubresource(DestResource->GetResource(), DestSubresource, SourceTexture->GetResource()->GetResource(), SourceSubresource, DestFormatTypeless);
@@ -371,9 +380,6 @@ TRefCountPtr<FD3D12Resource> FD3D12DynamicRHI::GetStagingTexture(FRHITexture* Te
 
 	FD3D12Texture* Texture = GetD3D12TextureFromRHITexture(TextureRHI, GPUIndex);
 	D3D12_RESOURCE_DESC const& SourceDesc = Texture->GetResource()->GetDesc();
-
-	// Ensure we're dealing with a Texture2D, which the rest of this function already assumes
-	check(TextureRHI->GetTexture2D());
 
 	bool bRequiresTempStagingTexture = Texture->GetResource()->GetHeapType() != D3D12_HEAP_TYPE_READBACK;
 	if (bRequiresTempStagingTexture == false)
@@ -408,7 +414,7 @@ TRefCountPtr<FD3D12Resource> FD3D12DynamicRHI::GetStagingTexture(FRHITexture* Te
 	const uint32 PlaneSlice = 0;
 	const DXGI_FORMAT DestFormat = GetPlaneFormat(SourceDesc.Format, PlaneSlice);
 
-	const uint32 BlockBytes = ComputeBytesPerPixel(DestFormat);
+	const uint32 BlockBytes = D3D12RT_ComputeBytesPerPixel(DestFormat);
 	const uint32 XBytesAligned = Align((uint32)SourceDesc.Width * BlockBytes, FD3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
 	const uint32 MipBytesAligned = XBytesAligned * SourceDesc.Height;
 	VERIFYD3D12RESULT(Adapter->CreateBuffer(D3D12_HEAP_TYPE_READBACK, Node, Node, MipBytesAligned, TempTexture2D.GetInitReference(), nullptr));
@@ -422,11 +428,12 @@ TRefCountPtr<FD3D12Resource> FD3D12DynamicRHI::GetStagingTexture(FRHITexture* Te
 	if (Texture->GetDesc().IsTextureCube())
 	{
 		uint32 D3DFace = GetD3D12CubeFace(InFlags.GetCubeFace());
-		Subresource = CalcSubresource(InFlags.GetMip(), D3DFace, TextureRHI->GetNumMips());
+		Subresource = CalcSubresource(InFlags.GetMip(), InFlags.GetArrayIndex() * 6 + D3DFace, TextureRHI->GetNumMips());
 	}
 	else
 	{
-		Subresource = CalcSubresource(InFlags.GetMip(), 0, TextureRHI->GetNumMips());
+		const bool bIsTextureArray = Texture->GetDesc().IsTextureArray();
+		Subresource = CalcSubresource(InFlags.GetMip(), bIsTextureArray ? InFlags.GetArrayIndex() : 0, TextureRHI->GetNumMips());
 	}
 
 	D3D12_BOX* RectPtr = nullptr; // API prefers NULL for entire texture.
@@ -447,7 +454,7 @@ TRefCountPtr<FD3D12Resource> FD3D12DynamicRHI::GetStagingTexture(FRHITexture* Te
 	CD3DX12_TEXTURE_COPY_LOCATION DestCopyLocation(TempTexture2D->GetResource(), DestFootprint);
 	CD3DX12_TEXTURE_COPY_LOCATION SourceCopyLocation(Texture->GetResource()->GetResource(), Subresource);
 
-	FScopedResourceBarrier ScopeResourceBarrierSource(Context, Texture->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
+	FScopedResourceBarrier ScopeResourceBarrierSource(Context, Texture->GetResource(), &Texture->ResourceLocation, D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
 	Context.FlushResourceBarriers();
 	// Upload heap doesn't need to transition
 
@@ -507,377 +514,6 @@ void FD3D12DynamicRHI::ReadSurfaceDataNoMSAARaw(FRHITexture* TextureRHI, FIntRec
 	TempTexture2D->GetResource()->Unmap(0, nullptr);
 }
 
-/** Helper for accessing R10G10B10A2 colors. */
-struct FD3DR10G10B10A2
-{
-	uint32 R : 10;
-	uint32 G : 10;
-	uint32 B : 10;
-	uint32 A : 2;
-};
-
-/** Helper for accessing R16G16 colors. */
-struct FD3DRG16
-{
-	uint16 R;
-	uint16 G;
-};
-
-/** Helper for accessing R16G16B16A16 colors. */
-struct FD3DRGBA16
-{
-	uint16 R;
-	uint16 G;
-	uint16 B;
-	uint16 A;
-};
-
-/** Convert D3D format type to general pixel format type*/
-static void ConvertDXGIToFColor(DXGI_FORMAT Format, uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FColor* Out, FReadSurfaceDataFlags InFlags)
-{
-	bool bLinearToGamma = InFlags.GetLinearToGamma();
-	switch (Format)
-	{
-	case DXGI_FORMAT_R16_TYPELESS:
-		ConvertRawR16DataToFColor(Width, Height, In, SrcPitch, Out);
-		break;
-	case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-	case DXGI_FORMAT_R8G8B8A8_UNORM:
-	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-		ConvertRawR8G8B8A8DataToFColor(Width, Height, In, SrcPitch, Out);
-		break;
-	case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-	case DXGI_FORMAT_B8G8R8A8_UNORM:
-	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-		ConvertRawB8G8R8A8DataToFColor(Width, Height, In, SrcPitch, Out);
-		break;
-	case DXGI_FORMAT_R10G10B10A2_UNORM:
-		ConvertRawR10G10B10A2DataToFColor(Width, Height, In, SrcPitch, Out);
-		break;
-	case DXGI_FORMAT_R16G16B16A16_FLOAT:
-		ConvertRawR16G16B16A16FDataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
-		break;
-	case DXGI_FORMAT_R11G11B10_FLOAT:
-		ConvertRawR11G11B10DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
-		break;
-	case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
-		ConvertRawR9G9B9E5DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
-		break;
-	case DXGI_FORMAT_R32G32B32A32_FLOAT:
-		ConvertRawR32G32B32A32DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
-		break;
-	case DXGI_FORMAT_R24G8_TYPELESS:
-		ConvertRawR24G8DataToFColor(Width, Height, In, SrcPitch, Out, InFlags);
-		break;
-	case DXGI_FORMAT_R32G8X24_TYPELESS:
-		ConvertRawR32DataToFColor(Width, Height, In, SrcPitch, Out, InFlags);
-		break;
-	case DXGI_FORMAT_R16G16B16A16_UNORM:
-		ConvertRawR16G16B16A16DataToFColor(Width, Height, In, SrcPitch, Out);
-		break;
-	case DXGI_FORMAT_R16G16_UNORM:
-		ConvertRawR16G16DataToFColor(Width, Height, In, SrcPitch, Out);
-		break;
-	case DXGI_FORMAT_R8_UNORM:
-		ConvertRawR8DataToFColor(Width, Height, In, SrcPitch, Out);
-		break;
-	default:
-		checkf(0, TEXT("Unknown surface format!"));
-		break;
-	}
-}
-
-
-
-static void ConvertRAWSurfaceDataToFLinearColor(EPixelFormat Format, uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out, FReadSurfaceDataFlags InFlags)
-{
-	if (Format == PF_R16F || Format == PF_R16F_FILTER)
-	{
-		// e.g. shadow maps
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			uint16* SrcPtr = (uint16*)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-
-			for (uint32 X = 0; X < Width; X++)
-			{
-				uint16 Value16 = *SrcPtr;
-				float Value = Value16 / (float)(0xffff);
-
-				*DestPtr = FLinearColor(Value, Value, Value);
-				++SrcPtr;
-				++DestPtr;
-			}
-		}
-	}
-	else if (Format == PF_R8G8B8A8)
-	{
-		// Read the data out of the buffer, converting it from ABGR to ARGB.
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			FColor* SrcPtr = (FColor*)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-			for (uint32 X = 0; X < Width; X++)
-			{
-				FColor sRGBColor = FColor(SrcPtr->B, SrcPtr->G, SrcPtr->R, SrcPtr->A);
-				*DestPtr = FLinearColor(sRGBColor);
-				++SrcPtr;
-				++DestPtr;
-			}
-		}
-	}
-	else if (Format == PF_B8G8R8A8)
-	{
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			FColor* SrcPtr = (FColor*)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-			for (uint32 X = 0; X < Width; X++)
-			{
-				FColor sRGBColor = FColor(SrcPtr->R, SrcPtr->G, SrcPtr->B, SrcPtr->A);
-				*DestPtr = FLinearColor(sRGBColor);
-				++SrcPtr;
-				++DestPtr;
-			}
-		}
-	}
-	else if (Format == PF_A2B10G10R10)
-	{
-		// Read the data out of the buffer, converting it from R10G10B10A2 to FLinearColor.
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			FD3DR10G10B10A2* SrcPtr = (FD3DR10G10B10A2*)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-			for (uint32 X = 0; X < Width; X++)
-			{
-				*DestPtr = FLinearColor(
-					(float)SrcPtr->R / 1023.0f,
-					(float)SrcPtr->G / 1023.0f,
-					(float)SrcPtr->B / 1023.0f,
-					(float)SrcPtr->A / 3.0f
-				);
-				++SrcPtr;
-				++DestPtr;
-			}
-		}
-	}
-	else if (Format == PF_FloatRGBA)
-	{
-		if (InFlags.GetCompressionMode() == RCM_MinMax)
-		{
-			for (uint32 Y = 0; Y < Height; Y++)
-			{
-				FFloat16* SrcPtr = (FFloat16*)(In + Y * SrcPitch);
-				FLinearColor* DestPtr = Out + Y * Width;
-
-				for (uint32 X = 0; X < Width; X++)
-				{
-					*DestPtr = FLinearColor((float)SrcPtr[0], (float)SrcPtr[1], (float)SrcPtr[2], (float)SrcPtr[3]);
-					++DestPtr;
-					SrcPtr += 4;
-				}
-			}
-		}
-		else
-		{
-			FPlane	MinValue(0.0f, 0.0f, 0.0f, 0.0f);
-			FPlane	MaxValue(1.0f, 1.0f, 1.0f, 1.0f);
-
-			check(sizeof(FFloat16) == sizeof(uint16));
-
-			for (uint32 Y = 0; Y < Height; Y++)
-			{
-				FFloat16* SrcPtr = (FFloat16*)(In + Y * SrcPitch);
-
-				for (uint32 X = 0; X < Width; X++)
-				{
-					MinValue.X = FMath::Min<float>(SrcPtr[0], MinValue.X);
-					MinValue.Y = FMath::Min<float>(SrcPtr[1], MinValue.Y);
-					MinValue.Z = FMath::Min<float>(SrcPtr[2], MinValue.Z);
-					MinValue.W = FMath::Min<float>(SrcPtr[3], MinValue.W);
-					MaxValue.X = FMath::Max<float>(SrcPtr[0], MaxValue.X);
-					MaxValue.Y = FMath::Max<float>(SrcPtr[1], MaxValue.Y);
-					MaxValue.Z = FMath::Max<float>(SrcPtr[2], MaxValue.Z);
-					MaxValue.W = FMath::Max<float>(SrcPtr[3], MaxValue.W);
-					SrcPtr += 4;
-				}
-			}
-
-			for (uint32 Y = 0; Y < Height; Y++)
-			{
-				FFloat16* SrcPtr = (FFloat16*)(In + Y * SrcPitch);
-				FLinearColor* DestPtr = Out + Y * Width;
-
-				for (uint32 X = 0; X < Width; X++)
-				{
-					*DestPtr = FLinearColor(
-						(SrcPtr[0] - MinValue.X) / (MaxValue.X - MinValue.X),
-						(SrcPtr[1] - MinValue.Y) / (MaxValue.Y - MinValue.Y),
-						(SrcPtr[2] - MinValue.Z) / (MaxValue.Z - MinValue.Z),
-						(SrcPtr[3] - MinValue.W) / (MaxValue.W - MinValue.W)
-					);
-					++DestPtr;
-					SrcPtr += 4;
-				}
-			}
-		}
-	}
-	else if (Format == PF_FloatRGB || Format == PF_FloatR11G11B10)
-	{
-		check(sizeof(FFloat3Packed) == sizeof(uint32));
-
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			FFloat3Packed* SrcPtr = (FFloat3Packed*)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-
-			for (uint32 X = 0; X < Width; X++)
-			{
-				*DestPtr = (*SrcPtr).ToLinearColor();
-				++DestPtr;
-				++SrcPtr;
-			}
-		}
-	}
-	else if (Format == PF_A32B32G32R32F)
-	{
-		if (InFlags.GetCompressionMode() == RCM_MinMax)
-		{
-			// Copy data directly, respecting existing min-max values
-			FLinearColor* SrcPtr = (FLinearColor*)In;
-			FLinearColor* DestPtr = (FLinearColor*)Out;
-			const int32 ImageSize = sizeof(FLinearColor) * Height * Width;
-
-			FMemory::Memcpy(DestPtr, SrcPtr, ImageSize);
-		}
-		else
-		{
-			// Normalize data
-			FPlane MinValue(0.0f, 0.0f, 0.0f, 0.0f);
-			FPlane MaxValue(1.0f, 1.0f, 1.0f, 1.0f);
-
-			for (uint32 Y = 0; Y < Height; Y++)
-			{
-				float* SrcPtr = (float*)(In + Y * SrcPitch);
-
-				for (uint32 X = 0; X < Width; X++)
-				{
-					MinValue.X = FMath::Min<float>(SrcPtr[0], MinValue.X);
-					MinValue.Y = FMath::Min<float>(SrcPtr[1], MinValue.Y);
-					MinValue.Z = FMath::Min<float>(SrcPtr[2], MinValue.Z);
-					MinValue.W = FMath::Min<float>(SrcPtr[3], MinValue.W);
-					MaxValue.X = FMath::Max<float>(SrcPtr[0], MaxValue.X);
-					MaxValue.Y = FMath::Max<float>(SrcPtr[1], MaxValue.Y);
-					MaxValue.Z = FMath::Max<float>(SrcPtr[2], MaxValue.Z);
-					MaxValue.W = FMath::Max<float>(SrcPtr[3], MaxValue.W);
-					SrcPtr += 4;
-				}
-			}
-
-			float* SrcPtr = (float*)In;
-
-			for (uint32 Y = 0; Y < Height; Y++)
-			{
-				FLinearColor* DestPtr = Out + Y * Width;
-
-				for (uint32 X = 0; X < Width; X++)
-				{
-					*DestPtr = FLinearColor(
-						(SrcPtr[0] - MinValue.X) / (MaxValue.X - MinValue.X),
-						(SrcPtr[1] - MinValue.Y) / (MaxValue.Y - MinValue.Y),
-						(SrcPtr[2] - MinValue.Z) / (MaxValue.Z - MinValue.Z),
-						(SrcPtr[3] - MinValue.W) / (MaxValue.W - MinValue.W)
-					);
-					++DestPtr;
-					SrcPtr += 4;
-				}
-			}
-		}
-	}
-	else if (Format == PF_DepthStencil || Format == PF_D24)
-	{
-		// Depth stencil
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			uint32* SrcPtr = (uint32 *)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-
-			for (uint32 X = 0; X < Width; X++)
-			{
-				float DeviceStencil = 0.0f;
-				DeviceStencil = (float)((*SrcPtr & 0xFF000000) >> 24) / 255.0f;
-				float DeviceZ = (*SrcPtr & 0xffffff) / (float)(1 << 24);
-				float LinearValue = FMath::Min(InFlags.ComputeNormalizedDepth(DeviceZ), 1.0f);
-				*DestPtr = FLinearColor(LinearValue, DeviceStencil, 0.0f, 0.0f);
-				++DestPtr;
-				++SrcPtr;
-			}
-		}
-	}
-	else if (Format == PF_DepthStencil)
-	{
-		// Depth stencil
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			uint8* SrcStart = (uint8 *)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-
-			for (uint32 X = 0; X < Width; X++)
-			{
-				float DeviceZ = *((float *)(SrcStart));
-				float LinearValue = FMath::Min(InFlags.ComputeNormalizedDepth(DeviceZ), 1.0f);
-				float DeviceStencil = (float)(*(SrcStart + 4)) / 255.0f;
-				*DestPtr = FLinearColor(LinearValue, DeviceStencil, 0.0f, 0.0f);
-				SrcStart += 8; //64 bit format with the last 24 bit ignore
-			}
-		}
-	}
-	else if (Format == PF_A16B16G16R16)
-	{
-		// Read the data out of the buffer, converting it to FLinearColor.
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			FD3DRGBA16* SrcPtr = (FD3DRGBA16*)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-			for (uint32 X = 0; X < Width; X++)
-			{
-				*DestPtr = FLinearColor(
-					(float)SrcPtr->R / 65535.0f,
-					(float)SrcPtr->G / 65535.0f,
-					(float)SrcPtr->B / 65535.0f,
-					(float)SrcPtr->A / 65535.0f
-				);
-				++SrcPtr;
-				++DestPtr;
-			}
-		}
-	}
-	else if (Format == PF_G16R16)
-	{
-		// Read the data out of the buffer, converting it to FLinearColor.
-		for (uint32 Y = 0; Y < Height; Y++)
-		{
-			FD3DRG16* SrcPtr = (FD3DRG16*)(In + Y * SrcPitch);
-			FLinearColor* DestPtr = Out + Y * Width;
-			for (uint32 X = 0; X < Width; X++)
-			{
-				*DestPtr = FLinearColor(
-					(float)SrcPtr->R / 65535.0f,
-					(float)SrcPtr->G / 65535.0f,
-					0);
-				++SrcPtr;
-				++DestPtr;
-			}
-		}
-	}
-	else
-	{
-		// not supported yet
-		check(0);
-	}
-}
-
-
 void FD3D12DynamicRHI::RHIReadSurfaceData(FRHITexture* TextureRHI, FIntRect InRect, TArray<FLinearColor>& OutData, FReadSurfaceDataFlags InFlags)
 {
 	TArray<uint8> OutDataRaw;
@@ -904,16 +540,31 @@ void FD3D12DynamicRHI::RHIReadSurfaceData(FRHITexture* TextureRHI, FIntRect InRe
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY);
 
-	uint32 BytesPerPixel = ComputeBytesPerPixel(TextureDesc.Format);
+	uint32 BytesPerPixel = D3D12RT_ComputeBytesPerPixel(TextureDesc.Format);
 	uint32 SrcPitch = SizeX * BytesPerPixel;
+
+	// switching on the EPixelFormat is risky if the mapping is not what you expect
+	//	verify against TextureDesc.Format
+
 	EPixelFormat Format = TextureRHI->GetFormat();
-	if (Format != PF_Unknown)
+	check( GPixelFormats[Format].PlatformFormat == TextureDesc.Format );
+	check( GPixelFormats[Format].BlockBytes == D3D12RT_ComputeBytesPerPixel(TextureDesc.Format) );
+
+	if ( ! ConvertRAWSurfaceDataToFLinearColor(Format, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags) )
 	{
-		ConvertRAWSurfaceDataToFLinearColor(Format, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags);
+		checkf(0, TEXT("Unsupported surface format!"));
+		OutData.Empty();
 	}
 }
+
 void FD3D12DynamicRHI::RHIReadSurfaceData(FRHITexture* InRHITexture, FIntRect InRect, TArray<FColor>& OutData, FReadSurfaceDataFlags InFlags)
 {
+	if ( InRect.Width() == 0 || InRect.Height() == 0 )
+	{
+		OutData.Empty();
+		return;
+	}
+
 	if (!ensure(InRHITexture))
 	{
 		OutData.SetNumUninitialized(InRect.Width() * InRect.Height());
@@ -942,7 +593,7 @@ void FD3D12DynamicRHI::RHIReadSurfaceData(FRHITexture* InRHITexture, FIntRect In
 	FD3D12Texture* DestTexture2D = CommandContext.RetrieveTexture(InRHITexture);
 
 	// Check the format of the surface
-	D3D12_RESOURCE_DESC const& TextureDesc = DestTexture2D->GetResource()->GetDesc();
+	FD3D12ResourceDesc const& TextureDesc = DestTexture2D->GetResource()->GetDesc();
 
 	check(TextureDesc.SampleDesc.Count >= 1);
 
@@ -960,12 +611,43 @@ void FD3D12DynamicRHI::RHIReadSurfaceData(FRHITexture* InRHITexture, FIntRect In
 
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY);
+	
+	// dest format :
+	EPixelFormat PixelFormat = DestTexture2D->GetFormat();
 
-	FPixelFormatInfo FormatInfo = GPixelFormats[DestTexture2D->GetFormat()];
+	check( PixelFormat != PF_Unknown );
+	check( PixelFormat == TextureDesc.PixelFormat || TextureDesc.PixelFormat == PF_Unknown );
+
+	const FPixelFormatInfo & FormatInfo = GPixelFormats[PixelFormat];
+
 	uint32 BytesPerPixel = FormatInfo.BlockBytes;
 	uint32 SrcPitch = SizeX * BytesPerPixel;
+	
+	// switching on the EPixelFormat is risky if the mapping is not what you expect
+	//	verify against TextureDesc.Format
+	
+	DXGI_FORMAT DXGIFormat = TextureDesc.Format;
 
-	ConvertDXGIToFColor((DXGI_FORMAT)FormatInfo.PlatformFormat, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags);
+	if ( DXGIFormat == DXGI_FORMAT_UNKNOWN )
+	{
+		// when called on actual textures, DXGIFormat is valid
+		// but this is also called on untyped buffers, in which case we only know the type from dest PixelFormat
+		DXGIFormat = (DXGI_FORMAT) FormatInfo.PlatformFormat;
+	}
+	else
+	{
+		// source and dest format must match, except for _TYPELESS vs _UNORM
+		check( ConvertTypelessToUnorm((DXGI_FORMAT)FormatInfo.PlatformFormat) == ConvertTypelessToUnorm(DXGIFormat) );
+		check( FormatInfo.BlockBytes == D3D12RT_ComputeBytesPerPixel(DXGIFormat) );
+	}
+
+	// ConvertDXGIToFColor switches on the hardware format, not the EPixelFormat :
+
+	if ( ! ConvertDXGIToFColor(DXGIFormat, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags) )
+	{
+		checkf(0, TEXT("Unsupported surface format!"));
+		OutData.Empty();
+	}
 }
 
 void FD3D12DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI, FIntRect InRect, TArray<uint8>& OutData, FReadSurfaceDataFlags InFlags)
@@ -985,7 +667,7 @@ void FD3D12DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI, FIntRect 
 	// Check the format of the surface
 	D3D12_RESOURCE_DESC const& TextureDesc = Texture->GetResource()->GetDesc();
 
-	uint32 BytesPerPixel = ComputeBytesPerPixel(TextureDesc.Format);
+	uint32 BytesPerPixel = D3D12RT_ComputeBytesPerPixel(TextureDesc.Format);
 
 	const uint32 NumSamples = TextureDesc.SampleDesc.Count;
 
@@ -1035,24 +717,22 @@ void FD3D12DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI, FIntRect 
 	const uint32 PlaneSlice = 0;
 	const DXGI_FORMAT DestFormat = GetPlaneFormat(TextureDesc.Format, PlaneSlice);
 
-	const uint32 BlockBytes = ComputeBytesPerPixel(DestFormat);
+	const uint32 BlockBytes = D3D12RT_ComputeBytesPerPixel(DestFormat);
 	const uint32 XBytesAligned = Align(SizeX * BlockBytes, FD3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
 	const uint32 MipBytesAligned = XBytesAligned * SizeY;
 	VERIFYD3D12RESULT(Adapter->CreateBuffer(D3D12_HEAP_TYPE_READBACK, NodeMask, NodeMask, MipBytesAligned, StagingTexture2D.GetInitReference(), nullptr));
-
-	// Ensure we're dealing with a Texture2D, which the rest of this function already assumes
-	check(TextureRHI->GetTexture2D());
 
 	// Determine the subresource index for cubemaps.
 	uint32 Subresource = 0;
 	if (Texture->GetDesc().IsTextureCube())
 	{
 		uint32 D3DFace = GetD3D12CubeFace(InFlags.GetCubeFace());
-		Subresource = CalcSubresource(InFlags.GetMip(), D3DFace, TextureRHI->GetNumMips());
+		Subresource = CalcSubresource(InFlags.GetMip(), InFlags.GetArrayIndex() * 6 + D3DFace, TextureRHI->GetNumMips());
 	}
 	else
 	{
-		Subresource = CalcSubresource(InFlags.GetMip(), 0, TextureRHI->GetNumMips());
+		const bool bIsTextureArray = Texture->GetDesc().IsTextureArray();
+		Subresource = CalcSubresource(InFlags.GetMip(), bIsTextureArray ? InFlags.GetArrayIndex() : 0, TextureRHI->GetNumMips());
 	}
 
 	// Setup the descriptions for the copy to the readback heap.
@@ -1069,8 +749,7 @@ void FD3D12DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI, FIntRect 
 	CD3DX12_TEXTURE_COPY_LOCATION SourceCopyLocation(NonMSAATexture2D->GetResource(), Subresource);
 
 	// Allocate the output buffer.
-	OutData.Empty();
-	OutData.AddUninitialized(SizeX * SizeY * NumSamples * BytesPerPixel);
+	OutData.SetNumUninitialized(SizeX * SizeY * NumSamples * BytesPerPixel);
 
 	// Can be optimized by doing all subsamples into a large enough rendertarget in one pass (multiple draw calls)
 	for (uint32 SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
@@ -1087,7 +766,7 @@ void FD3D12DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI, FIntRect 
 			SampleIndex
 			);
 
-		FScopedResourceBarrier ScopeResourceBarrierSource(DefaultContext, NonMSAATexture2D, D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
+		FScopedResourceBarrier ScopeResourceBarrierSource(DefaultContext, NonMSAATexture2D, nullptr, D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
 		// Upload heap doesn't need to transition
 
 		// Copy the resolved sample data to the staging texture.
@@ -1137,7 +816,7 @@ void FD3D12DynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFenc
 
 	DXGI_FORMAT Format = (DXGI_FORMAT)GPixelFormats[DestTexture->GetFormat()].PlatformFormat;
 
-	uint32 BytesPerPixel = ComputeBytesPerPixel(Format);
+	uint32 BytesPerPixel = D3D12RT_ComputeBytesPerPixel(Format);
 
 	if (FenceRHI && !FenceRHI->Poll())
 	{
@@ -1202,7 +881,11 @@ void FD3D12DynamicRHI::RHIReadSurfaceFloatData(FRHITexture* TextureRHI, FIntRect
 	// Check the format of the surface
 	D3D12_RESOURCE_DESC const& TextureDesc = Texture->GetResource()->GetDesc();
 
-	check(TextureDesc.Format == GPixelFormats[PF_FloatRGBA].PlatformFormat);
+	if ( ! ensure(TextureDesc.Format == GPixelFormats[PF_FloatRGBA].PlatformFormat) )
+	{
+		OutData.Empty();
+		return;
+	}
 
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY);
@@ -1222,7 +905,7 @@ void FD3D12DynamicRHI::RHIReadSurfaceFloatData(FRHITexture* TextureRHI, FIntRect
 	const uint32 PlaneSlice = 0;
 	const DXGI_FORMAT DestFormat = GetPlaneFormat(TextureDesc.Format, PlaneSlice);
 
-	const uint32 BlockBytes = ComputeBytesPerPixel(DestFormat);
+	const uint32 BlockBytes = D3D12RT_ComputeBytesPerPixel(DestFormat);
 	const uint32 XBytesAligned = Align((uint32)TextureDesc.Width * BlockBytes, FD3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
 	const uint32 MipBytesAligned = XBytesAligned * TextureDesc.Height;
 	VERIFYD3D12RESULT(Adapter->CreateBuffer(D3D12_HEAP_TYPE_READBACK, Node, Node, MipBytesAligned, TempTexture2D.GetInitReference(), nullptr));
@@ -1255,7 +938,7 @@ void FD3D12DynamicRHI::RHIReadSurfaceFloatData(FRHITexture* TextureRHI, FIntRect
 	CD3DX12_TEXTURE_COPY_LOCATION SourceCopyLocation(Texture->GetResource()->GetResource(), Subresource);
 
 	{
-		FScopedResourceBarrier ConditionalScopeResourceBarrier(DefaultContext, Texture->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
+		FScopedResourceBarrier ConditionalScopeResourceBarrier(DefaultContext, Texture->GetResource(), &Texture->ResourceLocation, D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
 		// Don't need to transition upload heaps
 
 		DefaultContext.FlushResourceBarriers();
@@ -1319,7 +1002,11 @@ void FD3D12DynamicRHI::RHIRead3DSurfaceFloatData(FRHITexture* TextureRHI, FIntRe
 	bool bIsRGBAFmt = TextureDesc.Format == GPixelFormats[PF_FloatRGBA].PlatformFormat;
 	bool bIsR16FFmt = TextureDesc.Format == GPixelFormats[PF_R16F].PlatformFormat;
 	bool bIsR32FFmt = TextureDesc.Format == GPixelFormats[PF_R32_FLOAT].PlatformFormat;
-	check(bIsRGBAFmt || bIsR16FFmt || bIsR32FFmt);
+	if ( ! ensure(bIsRGBAFmt || bIsR16FFmt || bIsR32FFmt) )
+	{
+		OutData.Empty();
+		return;
+	}
 
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY * SizeZ);
@@ -1343,7 +1030,7 @@ void FD3D12DynamicRHI::RHIRead3DSurfaceFloatData(FRHITexture* TextureRHI, FIntRe
 
 	// Copy the data to a staging resource.
 	uint32 Subresource = 0;
-	uint32 BytesPerPixel = ComputeBytesPerPixel(TextureDesc.Format);
+	uint32 BytesPerPixel = D3D12RT_ComputeBytesPerPixel(TextureDesc.Format);
 	D3D12_SUBRESOURCE_FOOTPRINT DestSubresource;
 	DestSubresource.Depth = TextureDesc.DepthOrArraySize;
 	DestSubresource.Height = TextureDesc.Height;
@@ -1360,7 +1047,7 @@ void FD3D12DynamicRHI::RHIRead3DSurfaceFloatData(FRHITexture* TextureRHI, FIntRe
 	CD3DX12_TEXTURE_COPY_LOCATION SourceCopyLocation(Texture->GetResource()->GetResource(), Subresource);
 
 	{
-		FScopedResourceBarrier ConditionalScopeResourceBarrier(DefaultContext, Texture->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
+		FScopedResourceBarrier ConditionalScopeResourceBarrier(DefaultContext, Texture->GetResource(), &Texture->ResourceLocation, D3D12_RESOURCE_STATE_COPY_SOURCE, SourceCopyLocation.SubresourceIndex);
 		// Don't need to transition upload heaps
 
 		DefaultContext.FlushResourceBarriers();
@@ -1416,7 +1103,7 @@ void FD3D12DynamicRHI::RHIRead3DSurfaceFloatData(FRHITexture* TextureRHI, FIntRe
 	}
 	else if (bIsR32FFmt)
 	{
-		// Texture is R16F format
+		// Texture is PF_R32_FLOAT format
 		for (int32 Z = ZMinMax.X; Z < ZMinMax.Y; ++Z)
 		{
 			for (int32 Y = InRect.Min.Y; Y < InRect.Max.Y; ++Y)
@@ -1431,6 +1118,11 @@ void FD3D12DynamicRHI::RHIRead3DSurfaceFloatData(FRHITexture* TextureRHI, FIntRe
 				}
 			}
 		}
+	}
+	else
+	{
+		// unsupported format; checked for this earlier
+		check(0);
 	}
 
 	TempTexture3D->GetResource()->Unmap(0, nullptr);

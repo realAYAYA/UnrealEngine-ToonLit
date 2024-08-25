@@ -7,6 +7,7 @@
 #include "Net/DataBunch.h"
 #include "ProfilingDebugging/CsvProfiler.h"
 #include "Templates/Greater.h"
+#include "UObject/Package.h"
 #include "ReplicationGraphTypes.generated.h"
 
 class AActor;
@@ -67,7 +68,119 @@ LLM_DECLARE_TAG_API(NetRepGraph, REPLICATIONGRAPH_API);
 // fast into arrays etc. (Currently we are using TMaps for associative data, static arrays would be faster but introduce constraints and headaches)
 // So for now, using a typedef and some helper functions to call out the interface/usage of FActorRepListType.
 
+// This define embeds an extra FObjectKey for a validity check
+#ifndef UE_ENABLE_ACTOR_REPLIST_TRACKING
+	#define UE_ENABLE_ACTOR_REPLIST_TRACKING 0
+#endif
+
+#define UE_ACTOR_REPLIST_TYPE_EXTRA_SAFETY			(UE_SERVER && UE_ENABLE_ACTOR_REPLIST_TRACKING)
+
+#if !UE_ACTOR_REPLIST_TYPE_EXTRA_SAFETY
 typedef AActor* FActorRepListType;
+FORCEINLINE bool DoesActorPointerLookValid(const AActor* In)
+{
+	return ((uint64)(In) & 0x0F) == 0;
+}
+#else
+struct FActorRepListType
+{
+	/** Actual load-bearing payload */
+	AActor* ActorRaw;
+	/** Validity test */
+	FObjectKey ActorKey;
+
+	/** More info for debugging - ActorRaw's name */
+	FName ActorName;
+	/** More info for debugging - ActorRaw's Owner name */
+	FName OwnerName;
+	/** More info for debugging - ActorRaw's Outer's package name */
+	FName OuterPackageName;
+
+	inline void SetDebugInfo()
+	{
+		ActorName = OwnerName = OuterPackageName = NAME_None;
+		if (LIKELY(ActorRaw))
+		{
+			ActorName = ActorRaw->GetFName();
+			OwnerName = ActorRaw->GetOwner() ? ActorRaw->GetOwner()->GetFName() : NAME_None;
+			if (LIKELY(ActorRaw->GetOuter()))
+			{
+				// judging by the implementation GetPackage() cannot return nullptr, but play it safe
+				UPackage* Pkg = ActorRaw->GetOuter()->GetPackage();
+				if (LIKELY(Pkg))
+				{
+					OuterPackageName = Pkg->GetFName();
+				}
+			}
+		}
+	}
+
+	FActorRepListType() = default;
+
+	FActorRepListType(AActor* InActor)
+		: ActorRaw(InActor)
+		, ActorKey(InActor)
+	{
+		SetDebugInfo();
+	}
+
+	// to support conversion from TObjectPtr<ASubclassOfActor>
+	template <
+		typename T,
+		decltype(ImplicitConv<AActor*>(std::declval<const T&>())) = nullptr
+	>
+	FActorRepListType(const T& InActor)
+		: ActorRaw(InActor)
+		, ActorKey(InActor)
+	{
+		SetDebugInfo();
+	}
+
+	operator AActor*() { return ActorRaw; }
+	operator AActor*() const { return ActorRaw; }
+	AActor* operator->() { return ActorRaw; }
+	AActor* operator->() const { return ActorRaw; }
+	operator uint64() const { return reinterpret_cast<uint64>(ActorRaw); }
+	FActorRepListType& operator=(FActorRepListType const& InActor) = default;
+	FActorRepListType& operator=(AActor* InActor)
+	{
+		ActorRaw = InActor;
+		ActorKey = InActor;
+		SetDebugInfo();
+		return *this;
+	}
+	FActorRepListType& operator=(TObjectPtr<AActor> InActor)
+	{
+		ActorRaw = InActor;
+		ActorKey = InActor;
+		SetDebugInfo();
+		return *this;
+	}
+	bool operator==(FActorRepListType const& Other) const
+	{
+		return ActorRaw == Other.ActorRaw;
+	}
+	bool operator==(AActor* Other) const
+	{
+		return ActorRaw == Other;
+	}
+	bool IsValid() const
+	{
+		UObject const* Object = ActorKey.ResolveObjectPtr();
+		return Object && Object == static_cast<UObject const*>(ActorRaw);
+	}
+};
+template< class T > FORCEINLINE T* Cast(const FActorRepListType& Src) { return Cast<T>(Src.ActorRaw); }
+template< class T > FORCEINLINE T* ExactCast(const FActorRepListType& Src) { return ExactCast<T>(Src.ActorRaw); }
+template< class T > FORCEINLINE T* CastChecked(const FActorRepListType& Src, ECastCheckedType::Type CheckType = ECastCheckedType::NullChecked) { return CastChecked<T>(Src.ActorRaw, CheckType); }
+
+
+FORCEINLINE bool DoesActorPointerLookValid(const FActorRepListType& In)
+{
+	return In.IsValid();
+}
+#endif
+
 FORCEINLINE FString GetActorRepListTypeDebugString(const FActorRepListType& In) { return GetNameSafe(In); }
 FORCEINLINE UClass* GetActorRepListTypeClass(const FActorRepListType& In) { return In->GetClass(); }
 
@@ -80,7 +193,21 @@ enum class EActorRepListTypeFlags : uint8
 };
 
 // Tests if an actor is valid for replication: not pending kill, etc. Says nothing about wanting to replicate or should replicate, etc.
-FORCEINLINE bool IsActorValidForReplication(const FActorRepListType& In) { return !In->IsActorBeingDestroyed() && IsValidChecked(In) && !In->IsUnreachable(); }
+FORCEINLINE bool IsActorValidForReplication(const FActorRepListType& In)
+{ 
+	return DoesActorPointerLookValid(In) && !In->IsActorBeingDestroyed() && IsValidChecked(In) && !In->IsUnreachable(); 
+}
+REPLICATIONGRAPH_API void LogMoreInfoOnIsActorValidFailure(const FActorRepListType& In);
+FORCEINLINE bool IsActorValidForReplication_LogMoreInfo(const FActorRepListType& In)
+{ 
+	if (LIKELY(IsActorValidForReplication(In)))
+	{
+		return true;
+	}
+
+	LogMoreInfoOnIsActorValidFailure(In);
+	return false;
+}
 
 // Tests if an actor is valid for replication gathering. Meaning, it can be gathered from the replication graph and considered for replication.
 FORCEINLINE bool IsActorValidForReplicationGather(const FActorRepListType& In)
@@ -259,9 +386,14 @@ struct REPLICATIONGRAPH_API FActorRepListRefView
 	}
 
 	/** Removes the element quickly but changes the list order */
-	bool RemoveFast(const FActorRepListType& ElementToRemove, bool bAllowShrink = true)
+	bool RemoveFast(const FActorRepListType& ElementToRemove, EAllowShrinking AllowShrink = EAllowShrinking::Yes)
 	{
-		return RepList.RemoveSingleSwap(ElementToRemove, bAllowShrink) > 0;
+		return RepList.RemoveSingleSwap(ElementToRemove, AllowShrink) > 0;
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveFast")
+	FORCEINLINE bool RemoveFast(const FActorRepListType& ElementToRemove, bool bAllowShrink)
+	{
+		return RemoveFast(ElementToRemove, bAllowShrink ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	/** Removes the element but keeps the order intact. Generally not recommended for large lists. */
@@ -450,6 +582,13 @@ struct FNewReplicatedActorInfo
 		StreamingLevelName = GetStreamingLevelNameOfActor(Actor);
 	}
 
+	explicit FNewReplicatedActorInfo(const FActorRepListType& InActor, FName OverrideLevelName)
+		: Actor(InActor)
+		, StreamingLevelName(OverrideLevelName)
+		, Class(InActor->GetClass())
+	{
+	}
+
 	AActor* GetActor() const { return Actor; }
 
 	REPLICATIONGRAPH_API static FName GetStreamingLevelNameOfActor(const AActor* Actor);
@@ -457,6 +596,28 @@ struct FNewReplicatedActorInfo
 	FActorRepListType Actor;
 	FName StreamingLevelName;
 	UClass* Class;
+};
+
+// --------------------------------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------------------------------------------------------
+// RenamedReplicatedActorInfo
+// --------------------------------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------------------------------------------------------
+
+/** Used to update renamed (changed outer/level) actors in the graph. */
+struct FRenamedReplicatedActorInfo
+{
+	explicit FRenamedReplicatedActorInfo(const FActorRepListType& InActor, FName InPreviousStreamingLevelName)
+		: NewActorInfo(InActor)
+		, OldActorInfo(InActor, InPreviousStreamingLevelName)
+	{
+	}
+
+	/** Info that stores the actor's new level name */
+	FNewReplicatedActorInfo NewActorInfo;
+
+	/** Info that stores the actor's old level name */
+	FNewReplicatedActorInfo OldActorInfo;
 };
 
 // --------------------------------------------------------------------------------------------------------------------------------------------
@@ -488,6 +649,12 @@ struct REPLICATIONGRAPH_API FStreamingLevelActorListCollection
 	* @param Outer Optional pointer to the owner of the list if you want to output the owner name in any log messages
 	*/
 	bool RemoveActorFast(const FNewReplicatedActorInfo& ActorInfo, UObject* Outer=nullptr);
+
+	/**
+ 	* Attempts to remove the actor from the level explicitly provided. Can be used to update the list
+	* if the actor's level changes (by providing the actor's previous level).
+	*/
+	bool RemoveActorFromLevelFast(AActor* Actor, FName LevelName);
 
 	void Reset();
 
@@ -566,6 +733,9 @@ struct REPLICATIONGRAPH_API FLevelBasedActorList
 	void GetAllActors(TArray<AActor*>& OutAllActors) const;
 
 	void CountBytes(FArchive& Ar) const;
+
+	/** Update actor to new level */
+	void UpdateActorLevel(AActor* NetActor, FName PreviousLevelName);
 
 private:
 
@@ -756,6 +926,9 @@ struct FGlobalActorReplicationInfo
 		DependentActorList.Gather(ConnectionManager, OutGatheredList);
 	}
 
+	/** Update actor to new level */
+	void NotifyActorRenamed(AActor* Actor, FName PreviousLevelName);
+
 	typedef TArray<FActorRepListType> FDependantListType;
 
 	UE_DEPRECATED(5.2, "The dependent actors are exposed via GatherDependentActorLists now.")
@@ -916,7 +1089,7 @@ struct FGlobalActorReplicationInfoMap
 			return *Ptr->Get();
 		}
 
-		ensureMsgf(IsActorValidForReplication(Actor), TEXT("This obj %s is pending to kill, storing this data will generate stale data in the map."), *GetPathNameSafe(Actor));
+		ensureMsgf(IsActorValidForReplication_LogMoreInfo(Actor), TEXT("An invalid actor pointer is passed to FGlobalActorReplicationInfo::Get(), storing this data will generate stale data in the map."));
 
 		// We need to add data for this actor
 		FClassReplicationInfo& ClassInfo = GetClassInfo( GetActorRepListTypeClass(Actor) );
@@ -936,7 +1109,7 @@ struct FGlobalActorReplicationInfoMap
 			return *Ptr->Get();
 		}
 
-		ensureMsgf(IsActorValidForReplication(Actor), TEXT("This obj %s is pending to kill, storing this data will generate stale data in the map."), *GetPathNameSafe(Actor));
+		ensureMsgf(IsActorValidForReplication_LogMoreInfo(Actor), TEXT("An invalid actor pointer is passed to FGlobalActorReplicationInfo::Get(), storing this data will generate stale data in the map."));
 
 		bWasCreated = true;
 
@@ -968,6 +1141,9 @@ struct FGlobalActorReplicationInfoMap
 	/** Removes actor data from map */
 	REPLICATIONGRAPH_API int32 Remove(const FActorRepListType& RemovedActor);
 
+	/** Update actor to new level */
+	void NotifyActorRenamed(AActor* Actor, FName PreviousStreamingLevelName);
+	
 	/** Returns ClassInfo for a given class. */
 	FORCEINLINE FClassReplicationInfo& GetClassInfo(UClass* Class) { return ClassMap.GetChecked(Class); }
 
@@ -1479,6 +1655,18 @@ private:
 struct FRPCSendPolicyInfo
 {
 	FRPCSendPolicyInfo(const bool bInSendImmediately) : bSendImmediately(bInSendImmediately) { }
+
+	/** 
+	 * When true this will modify the send behavior of an RPC.
+	 * If the RPC is called from inside NetDriver::TickDispatch (aka during packet reception and remote RPC execution) then the RPC will get immediately 
+	 * sent to remote clients at the end of TickDispatch before the regular game tick.
+	 * This reduces latency since normally RPCs are sent alongside normal replicated data at the end of the frame during NetDriver::TickFlush.
+	 * The drawbacks are extra bandwidth cost and higher CPU usage.
+	 * 
+	 * Note that with Unreliable Multicasts, this flag changes their order when executed on the remote client.
+	 * By default only Unreliable Multicasts are executed after replicated properties have been applied on the simulated actor.
+	 * With this flag they get executed before any replicated properties are applied.
+	 */
 	uint8 bSendImmediately:1;
 
 	// Suspect that this will grow over time. Possibly things like "min distance to send immediately" etc
@@ -1511,7 +1699,7 @@ struct FReplicationGraphDebugInfo
 	void Log(const FString& Str) { Ar.Logf(TEXT("%s%s"), *CurrentIndentString, *Str); }
 
 	void PushIndent() { CurrentIndentString += IndentString; }
-	void PopIndent() { CurrentIndentString.LeftChopInline(IndentString.Len(), false); }
+	void PopIndent() { CurrentIndentString.LeftChopInline(IndentString.Len(), EAllowShrinking::No); }
 };
 
 REPLICATIONGRAPH_API void LogActorRepList(FReplicationGraphDebugInfo& DebugInfo, FString Prefix, const FActorRepListRefView& List);
@@ -1666,8 +1854,9 @@ struct FReplicationGraphCSVTracker
 			VisibleLevelConnectionTracker.Add(VisibleLevelData);
 			return true;
 		}
-#endif
+#else
 		return false;
+#endif
 	}
 
 	void VisibleLevelConnectionRemoved(FName LevelName)

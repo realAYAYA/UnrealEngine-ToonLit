@@ -1,0 +1,49 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+  <Property Name="TestNames" Value="$(TestNames);EventLoop" />
+  <Property Name="EventLoopDisabled" Value="False" />
+  <Property Name="EventLoopShort" Value="EventLoop" />
+  <Property Name="EventLoopStagesWithProjectFile" Value="False" />
+  <Property Name="EventLoopTarget" Value="EventLoopUnitTests" />
+  <Property Name="EventLoopBinariesRelative" Value="Engine\Binaries" />
+  <Property Name="EventLoopReportType" Value="console" />
+  <Property Name="EventLoopGauntletArgs" Value="" />
+  <Property Name="EventLoopExtraArgs" />
+  <Property Name="EventLoopInitialExtraArgs" />
+  <Property Name="EventLoopHasAfterSteps" Value="False" />
+  <Property Name="EventLoopUsesCatch2" Value="True" />
+  <Option Name="RunEventLoopTests" DefaultValue="False" Description="Run EventLoop Tests" />
+  <Property Name="EventLoopSupportedPlatforms" Value="Win64" />
+  <Property Name="Win64EventLoopTags" Value="" />
+  <Property Name="Win64EventLoopExtraCompilationArgs" Value="" />
+  <Property Name="Win64EventLoopRunSupported" Value="True" />
+  <Property Name="MacEventLoopTags" Value="" />
+  <Property Name="MacEventLoopExtraCompilationArgs" Value="" />
+  <Property Name="MacEventLoopRunSupported" Value="True" />
+  <Property Name="IOSEventLoopTags" Value="" />
+  <Property Name="IOSEventLoopExtraCompilationArgs" Value="" />
+  <Property Name="IOSEventLoopRunSupported" Value="False" />
+  <Property Name="AndroidEventLoopTags" Value="" />
+  <Property Name="AndroidEventLoopExtraCompilationArgs" Value="" />
+  <Property Name="AndroidEventLoopRunSupported" Value="False" />
+  <Property Name="LinuxEventLoopTags" Value="" />
+  <Property Name="LinuxEventLoopExtraCompilationArgs" Value="" />
+  <Property Name="LinuxEventLoopRunSupported" Value="True" />
+  <Property Name="LinuxArm64EventLoopTags" Value="" />
+  <Property Name="LinuxArm64EventLoopExtraCompilationArgs" Value="" />
+  <Property Name="LinuxArm64EventLoopRunSupported" Value="True" />
+  <Property Name="TVOSEventLoopTags" Value="" />
+  <Property Name="TVOSEventLoopExtraCompilationArgs" Value="" />
+  <Property Name="TVOSEventLoopRunSupported" Value="False" />
+  <Property Name="VisionOSEventLoopTags" Value="" />
+  <Property Name="VisionOSEventLoopExtraCompilationArgs" Value="" />
+  <Property Name="VisionOSEventLoopRunSupported" Value="False" />
+  <Property Name="Win64EventLoopRunContainerized" Value="False" />
+  <Property Name="MacEventLoopRunContainerized" Value="False" />
+  <Property Name="IOSEventLoopRunContainerized" Value="False" />
+  <Property Name="AndroidEventLoopRunContainerized" Value="False" />
+  <Property Name="LinuxEventLoopRunContainerized" Value="False" />
+  <Property Name="LinuxArm64EventLoopRunContainerized" Value="False" />
+  <Property Name="TVOSEventLoopRunContainerized" Value="False" />
+  <Property Name="VisionOSEventLoopRunContainerized" Value="False" />
+</BuildGraph>

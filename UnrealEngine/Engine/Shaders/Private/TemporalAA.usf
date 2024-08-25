@@ -58,6 +58,7 @@
 	#define TAA_QUALITY_LOW 0
 	#define TAA_QUALITY_MEDIUM 1
 	#define TAA_QUALITY_HIGH 2
+	#define TAA_QUALITY_MEDIUM_HIGH 3
 
 //------------------------------------------------------- CONFIGS
 
@@ -88,6 +89,10 @@
 		#define AA_DYNAMIC_ANTIGHOST 0
 
 	#elif TAA_QUALITY == TAA_QUALITY_HIGH
+		#define AA_FILTERED 1
+		#define AA_DYNAMIC_ANTIGHOST 1
+
+	#elif TAA_QUALITY == TAA_QUALITY_MEDIUM_HIGH
 		#define AA_FILTERED 1
 		#define AA_DYNAMIC_ANTIGHOST 1
 
@@ -167,6 +172,15 @@
 		#define AA_DYNAMIC_ANTIGHOST 1
 		#define AA_SAMPLES 9
 
+	#elif TAA_QUALITY == TAA_QUALITY_MEDIUM_HIGH
+		#define AA_FILTERED 1
+		#if AA_MOBILE_CONFIG
+			#define AA_SAMPLES 5
+		#else
+			#define AA_SAMPLES 6
+		#endif
+		#define AA_DYNAMIC_ANTIGHOST 1
+
 	#else
 		#error Unknown TAA quality
 	#endif
@@ -215,6 +229,12 @@
 		#define AA_BICUBIC 1
 		#define AA_FILTERED 1
 		#define AA_YCOCG 1
+
+	#elif TAA_QUALITY == TAA_QUALITY_MEDIUM_HIGH
+		#if AA_UPSAMPLE
+			#define AA_BICUBIC 1
+			#define AA_FILTERED 1
+		#endif
 
 	#else
 		#error Unknown TAA quality
@@ -846,8 +866,9 @@ float4 TransformSceneColor(float4 RawLinearSceneColorRGBA)
 {
 	#if AA_YCOCG
 		return float4(RGBToYCoCg(RawLinearSceneColorRGBA.rgb), RawLinearSceneColorRGBA.a);
+	#else
+		return RawLinearSceneColorRGBA;
 	#endif
-	return RawLinearSceneColorRGBA;
 }
 
 // Reciprocal of TransformSceneColor().
@@ -855,8 +876,9 @@ float4 TransformBackToRawLinearSceneColor(float4 SceneColor)
 {
 	#if AA_YCOCG
 		return float4(YCoCgToRGB(SceneColor.xyz), SceneColor.a);
+	#else
+		return SceneColor;
 	#endif
-	return SceneColor;
 }
 
 // Transform current frame's RAW scene color RGB to TAA's working color space.
@@ -870,8 +892,9 @@ float GetSceneColorLuma4(float4 SceneColor)
 {
 	#if AA_YCOCG
 		return SceneColor.x;
+	#else
+		return Luma4(SceneColor.rgb);
 	#endif
-	return Luma4(SceneColor.rgb);
 }
 
 // Get the HDR weight of the transform scene color.
@@ -881,8 +904,9 @@ float GetSceneColorHdrWeight(
 {
 	#if AA_YCOCG
 		return HdrWeightY(SceneColor.x, InputParams.FrameExposureScale);
+	#else
+		return HdrWeight4(SceneColor.rgb, InputParams.FrameExposureScale);
 	#endif
-	return HdrWeight4(SceneColor.rgb, InputParams.FrameExposureScale);
 }
 
 

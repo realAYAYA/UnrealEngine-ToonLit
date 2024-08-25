@@ -25,7 +25,7 @@ struct FDeepShadowAccumulateVSToPS
 
 #if VERTEXSHADER 
 
-/** transform mesh as normal */
+/** transform mesh as normal */ 
 void Main(
 	FVertexFactoryInput Input,
 	out VS_OUTPUT_TYPE Output

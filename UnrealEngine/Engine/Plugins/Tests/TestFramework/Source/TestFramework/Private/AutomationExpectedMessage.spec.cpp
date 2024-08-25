@@ -37,15 +37,12 @@ void FAutomationExpectedErrorTest::Define()
 
 		It("will not duplicate an existing expected error using the same matcher", [this]()
 		{
-			// Suppress warning logged when adding duplicate value
-			AddExpectedError(TEXT("cannot add duplicate entries"), EAutomationExpectedErrorFlags::Contains, 1);
-			
 			AddExpectedError(TEXT("Expected Error"), EAutomationExpectedErrorFlags::Contains, 1);
 			AddExpectedError(TEXT("Expected Error"), EAutomationExpectedErrorFlags::Contains, 1);
 
 			TArray<FAutomationExpectedMessage> Errors;
 			GetExpectedMessages(Errors, ELogVerbosity::Warning);
-			TestEqual("Expected Errors Count", Errors.Num(), 2);
+			TestEqual("Expected Errors Count", Errors.Num(), 1);
 
 			// Add the expected error to ensure all test conditions pass
 			AddError(TEXT("Expected Error"));
@@ -53,9 +50,6 @@ void FAutomationExpectedErrorTest::Define()
 
 		It("will not duplicate an expected error using a different matcher", [this]()
 		{
-			// Suppress warning logged when adding duplicate value
-			AddExpectedError(TEXT("cannot add duplicate entries"), EAutomationExpectedErrorFlags::Contains, 2);
-
 			AddExpectedError(TEXT("Expected Exact Error"), EAutomationExpectedErrorFlags::Exact, 1);
 			AddExpectedError(TEXT("Expected Exact Error"), EAutomationExpectedErrorFlags::Contains, 1);
 
@@ -64,7 +58,7 @@ void FAutomationExpectedErrorTest::Define()
 
 			TArray<FAutomationExpectedMessage> Errors;
 			GetExpectedMessages(Errors, ELogVerbosity::Warning);
-			TestEqual("Expected Errors Count", Errors.Num(), 3);
+			TestEqual("Expected Errors Count", Errors.Num(), 2);
 
 			// Add the expected errors to ensure all test conditions pass
 			AddError(TEXT("Expected Exact Error"));
@@ -112,6 +106,29 @@ void FAutomationExpectedErrorTest::Define()
 			AddError(FString::Printf(TEXT("Response (%d)"), MAX_uint64));
 		});
 
+		It("will match a regex pattern as case insensitive", [this]()
+		{
+			AddExpectedError(TEXT("Expecte. Error"), EAutomationExpectedErrorFlags::Contains, 0);
+			AddError(TEXT("EXPECTED ERROR"));
+		});
+
+		It("will match a message that contains the plain string pattern", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("Expected Error"), EAutomationExpectedErrorFlags::Contains, 1);
+			AddError(TEXT("Some Expected Error not catched"));
+		});
+
+		It("will match a message as case insensitive", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("Expected Error"), EAutomationExpectedErrorFlags::Contains, 1);
+			AddError(TEXT("Some EXPECTED ERROR not catched"));
+		});
+
+		It("will match a message that is the exact match of the plain string pattern", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("Expected Error not catched"), EAutomationExpectedErrorFlags::Exact, 1);
+			AddError(TEXT("Expected Error not catched"));
+		});
 	});
 
 }
@@ -166,6 +183,18 @@ void FAutomationExpectedErrorFailureTest::Define()
 		{
 			AddExpectedError(TEXT("Expected"), EAutomationExpectedErrorFlags::Exact, 1);
 			AddError(TEXT("Expected error"));
+		});
+
+		It("will occur if a message that is not the exact match of the plain string pattern is encountered", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("Expected Error"), EAutomationExpectedErrorFlags::Exact, 0);
+			AddError(TEXT("Some Expected Error not catched"));
+		});
+
+		It("will occur if a message that is a regex match pattern is encountered", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("Expecte. Error"), EAutomationExpectedErrorFlags::Contains, 0);
+			AddError(TEXT("Some Expected Error not catched"));
 		});
 	});
 }

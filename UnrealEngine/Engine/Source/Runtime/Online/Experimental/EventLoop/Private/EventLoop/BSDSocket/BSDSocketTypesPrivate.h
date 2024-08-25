@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "CoreTypes.h"
+#include "Containers/UnrealString.h"
 #include "Containers/StringConv.h"
 #include "Containers/UnrealString.h"
 #include "EventLoop/BSDSocket/BSDSocketTypes.h"
@@ -10,7 +10,6 @@
 #if PLATFORM_HAS_BSD_SOCKETS
 
 #if PLATFORM_HAS_BSD_SOCKET_FEATURE_WINSOCKETS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 #include <winsock2.h>

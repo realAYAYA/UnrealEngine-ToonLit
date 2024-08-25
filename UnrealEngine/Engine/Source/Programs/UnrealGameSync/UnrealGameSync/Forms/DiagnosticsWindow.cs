@@ -1,13 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Windows.Forms;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
+using System.Windows.Forms;
+using EpicGames.Core;
 
 namespace UnrealGameSync
 {
@@ -45,14 +45,14 @@ namespace UnrealGameSync
 			dialog.Filter = "Zip Files (*.zip)|*.zip|AllFiles (*.*)|*.*";
 			dialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
 			dialog.FileName = Path.Combine(dialog.InitialDirectory, "UGS-Diagnostics.zip");
-			if(dialog.ShowDialog() == DialogResult.OK)
+			if (dialog.ShowDialog() == DialogResult.OK)
 			{
 				FileReference diagnosticsFileName = FileReference.Combine(_appDataFolder, "Diagnostics.txt");
 				try
 				{
 					FileReference.WriteAllLines(diagnosticsFileName, DiagnosticsTextBox.Lines);
 				}
-				catch(Exception ex)
+				catch (Exception ex)
 				{
 					MessageBox.Show(String.Format("Couldn't write to '{0}'\n\n{1}", diagnosticsFileName, ex.ToString()));
 					return;
@@ -68,7 +68,7 @@ namespace UnrealGameSync
 
 						foreach (FileReference extraFile in _extraFiles)
 						{
-							if(FileReference.Exists(extraFile))
+							if (FileReference.Exists(extraFile))
 							{
 								using (FileStream inputStream = FileReference.Open(extraFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
 								{
@@ -82,7 +82,7 @@ namespace UnrealGameSync
 						}
 					}
 				}
-				catch(Exception ex)
+				catch (Exception ex)
 				{
 					MessageBox.Show(String.Format("Couldn't save '{0}'\n\n{1}", zipFileName, ex.ToString()));
 					return;

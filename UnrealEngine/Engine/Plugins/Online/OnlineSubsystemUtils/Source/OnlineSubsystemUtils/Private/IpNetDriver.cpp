@@ -449,7 +449,7 @@ private:
 		bool bReceivedPacketOrError = false;
 
 		CurrentPacket.bRecvSuccess = false;
-		CurrentPacket.Data.SetNumUninitialized(0, false);
+		CurrentPacket.Data.SetNumUninitialized(0, EAllowShrinking::No);
 
 		if (CurrentPacket.Address.IsValid())
 		{
@@ -505,7 +505,7 @@ private:
 
 							if (IncomingPacket.PacketBytes.Num() <= MAX_PACKET_SIZE)
 							{
-								CurrentPacket.Data.SetNumUninitialized(BytesRead, false);
+								CurrentPacket.Data.SetNumUninitialized(BytesRead, EAllowShrinking::No);
 
 								FMemory::Memcpy(CurrentPacket.Data.GetData(), IncomingPacket.PacketBytes.GetData(), BytesRead);
 							}
@@ -538,14 +538,14 @@ private:
 				if (bReceivedPacket)
 				{
 					// Fixed allocator, so no risk of realloc from copy-then-resize
-					CurrentPacket.Data.SetNumUninitialized(BytesRead, false);
+					CurrentPacket.Data.SetNumUninitialized(BytesRead, EAllowShrinking::No);
 				}
 				else
 				{
 					ESocketErrors CurError = SocketSubsystem->GetLastErrorCode();
 
 					CurrentPacket.Error = CurError;
-					CurrentPacket.Data.SetNumUninitialized(0, false);
+					CurrentPacket.Data.SetNumUninitialized(0, EAllowShrinking::No);
 
 					// Received an error
 					if (!UIpNetDriver::IsRecvFailBlocking(CurError))
@@ -1800,7 +1800,7 @@ void UIpNetDriver::RemoveFromNewIPTracking(const FInternetAddr& InAddr)
 
 			if (AggIdx != INDEX_NONE)
 			{
-				AggregatedIPsToLog.RemoveAtSwap(AggIdx, 1, false);
+				AggregatedIPsToLog.RemoveAtSwap(AggIdx, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -1811,8 +1811,8 @@ void UIpNetDriver::RemoveFromNewIPTracking(const FInternetAddr& InAddr)
 		}
 		else if (HashIdx == NewIPHashes.Num()-1)
 		{
-			NewIPHashes.RemoveAt(HashIdx, 1, false);
-			NewIPHitCount.RemoveAt(HashIdx, 1, false);
+			NewIPHashes.RemoveAt(HashIdx, 1, EAllowShrinking::No);
+			NewIPHitCount.RemoveAt(HashIdx, 1, EAllowShrinking::No);
 		}
 		else
 		{
@@ -2014,7 +2014,7 @@ UIpNetDriver::FReceiveThreadRunnable::FReceiveThreadRunnable(UIpNetDriver* InOwn
 
 bool UIpNetDriver::FReceiveThreadRunnable::DispatchPacket(FReceivedPacket&& IncomingPacket, int32 NbBytesRead)
 {
-	IncomingPacket.PacketBytes.SetNum(FMath::Max(NbBytesRead, 0), false);
+	IncomingPacket.PacketBytes.SetNum(FMath::Max(NbBytesRead, 0), EAllowShrinking::No);
 	IncomingPacket.PlatformTimeSeconds = FPlatformTime::Seconds();
 
 	// Add packet to queue. Since ReceiveQueue is a TCircularQueue, if the queue is full, this will simply return false without adding anything.

@@ -38,7 +38,7 @@ namespace EpicGames.UHT.Types
 		public UhtSetProperty(UhtPropertySettings propertySettings, UhtProperty value) : base(propertySettings, value)
 		{
 			// If the creation of the value property set more flags, then copy those flags to ourselves
-			PropertyFlags |= ValueProperty.PropertyFlags & EPropertyFlags.UObjectWrapper;
+			PropertyFlags |= ValueProperty.PropertyFlags & (EPropertyFlags.UObjectWrapper | EPropertyFlags.TObjectPtr);
 
 			PropertyCaps |= UhtPropertyCaps.PassCppArgsByRef;
 			PropertyCaps &= ~(UhtPropertyCaps.CanBeContainerValue | UhtPropertyCaps.CanBeContainerKey);
@@ -127,6 +127,13 @@ namespace EpicGames.UHT.Types
 		}
 
 		/// <inheritdoc/>
+		public override StringBuilder AppendMetaDataDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
+		{
+			builder.AppendMetaDataDecl(ValueProperty, context, name, GetNameSuffix(nameSuffix, "_ElementProp"), tabs);
+			return base.AppendMetaDataDecl(builder, context, name, nameSuffix, tabs);
+		}
+
+		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
 		{
 			builder.AppendMemberDecl(ValueProperty, context, name, GetNameSuffix(nameSuffix, "_ElementProp"), tabs);
@@ -137,7 +144,6 @@ namespace EpicGames.UHT.Types
 		public override StringBuilder AppendMemberDef(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, string? offset, int tabs)
 		{
 			builder.AppendMemberDef(ValueProperty, context, name, GetNameSuffix(nameSuffix, "_ElementProp"), "0", tabs);
-			builder.AppendMetaDataDef(this, context, name, nameSuffix, tabs);
 
 			if (ValueProperty is UhtStructProperty structProperty)
 			{
@@ -150,7 +156,7 @@ namespace EpicGames.UHT.Types
 					.Append("' is used in a TSet but does not have a GetValueTypeHash defined\");\r\n");
 			}
 
-			AppendMemberDefStart(builder, context, name, nameSuffix, offset, tabs, "FSetPropertyParams", "UECodeGen_Private::EPropertyGenFlags::Set", false);
+			AppendMemberDefStart(builder, context, name, nameSuffix, offset, tabs, "FSetPropertyParams", "UECodeGen_Private::EPropertyGenFlags::Set");
 			AppendMemberDefEnd(builder, context, name, nameSuffix);
 			return builder;
 		}

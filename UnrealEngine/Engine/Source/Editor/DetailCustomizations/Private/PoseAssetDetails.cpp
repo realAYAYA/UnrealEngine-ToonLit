@@ -26,7 +26,6 @@
 #include "ScopedTransaction.h"
 #include "SlotBase.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectPtr.h"
 #include "UObject/SoftObjectPtr.h"

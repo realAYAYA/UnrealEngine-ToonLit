@@ -6,6 +6,7 @@
 
 #include "MVVMDeveloperProjectSettings.generated.h"
 
+class UK2Node;
 enum class EMVVMBlueprintViewModelContextCreationType : uint8;
 enum class EMVVMExecutionMode : uint8;
 
@@ -69,9 +70,12 @@ public:
 	virtual FName GetCategoryName() const override;
 	virtual FText GetSectionText() const override;
 
-	bool IsPropertyAllowed(const FProperty* Property) const;
-	bool IsFunctionAllowed(const UFunction* Function) const;
-	bool IsConversionFunctionAllowed(const UFunction* Function) const;
+
+	bool PropertyHasFiltering(const UStruct* ObjectStruct, const FProperty* Property) const;
+	bool IsPropertyAllowed(const UBlueprint* Context, const UStruct* ObjectStruct, const FProperty* Property) const;
+	bool IsFunctionAllowed(const UBlueprint* Context, const UClass* ObjectClass, const UFunction* Function) const;
+	bool IsConversionFunctionAllowed(const UBlueprint* Context, const UFunction* Function) const;
+	bool IsConversionFunctionAllowed(const UBlueprint* Context, const TSubclassOf<UK2Node> Function) const;
 
 	bool IsExecutionModeAllowed(EMVVMExecutionMode ExecutionMode) const
 	{
@@ -124,9 +128,28 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "Viewmodel")
 	bool bShowViewSettings = true;
 
+	/** For the binding list widget, allow the user to generate a copy of the binding/event graph. */
+	UPROPERTY(EditAnywhere, config, Category = "Viewmodel")
+	bool bShowDeveloperGenerateGraphSettings = true;
+
 	/** When a conversion function requires a wrapper graph, add and save the generated graph to the blueprint. */
 	UPROPERTY(EditAnywhere, config, Category = "Viewmodel")
-	bool bAllowConversionFunctionGeneratedGraphInEditor = true;
+	bool bAllowConversionFunctionGeneratedGraphInEditor = false;
+
+	/** When binding to a multicast delegate property, allow to create an event. */
+	UPROPERTY(EditAnywhere, config, Category = "Viewmodel")
+	bool bAllowBindingEvent = true;
+	
+	/** Allow to create an instanced viewmodel directly in the view editor. */
+	UPROPERTY(EditAnywhere, config, Category = "Viewmodel")
+	bool bCanCreateViewModelInView = false;
+
+	/** 
+	 * When a viewmodel is set to Create Instance, allow modifying the viewmodel instance in the editor on all instances of the owning widget.
+	 * The per-viewmodel setting "Expose Instance In Editor" overrides this.
+	 */
+	UPROPERTY(EditAnywhere, config, Category = "Viewmodel")
+	bool bExposeViewModelInstanceInEditor = false;
 
 	/** Permission list for filtering which execution mode is allowed. */
 	UPROPERTY(EditAnywhere, config, Category = "Viewmodel")

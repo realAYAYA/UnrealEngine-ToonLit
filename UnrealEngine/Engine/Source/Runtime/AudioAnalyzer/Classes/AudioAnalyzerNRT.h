@@ -77,7 +77,7 @@ class UAudioAnalyzerNRT : public UAudioAnalyzerAssetBase
 		/**
 		 * The USoundWave which is analyzed.
 		 */
-		UPROPERTY(EditAnywhere, BlueprintReadOnly, Category=AudioAnalyzer)
+		UPROPERTY(EditAnywhere, BlueprintReadOnly, Category=AudioAnalyzer, meta=(DisallowedClasses="/Script/MetasoundEngine.MetaSoundSource, /Script/Engine.SoundSourceBus"))
 		TObjectPtr<USoundWave> Sound;
 
 		/** The duration of the analyzed audio in seconds. */

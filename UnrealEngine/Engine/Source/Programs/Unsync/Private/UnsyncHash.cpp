@@ -65,21 +65,6 @@ HashBytes(const uint8* Data, uint64 Size, EHashType HashType)
 	return Result;
 }
 
-FHash128
-compute_hash_128(const uint8* Data, uint64 Size, EStrongHashAlgorithmID Algorithm)
-{
-	switch (Algorithm)
-	{
-		case EStrongHashAlgorithmID::MD5:
-			return HashMd5Bytes(Data, Size);
-		case EStrongHashAlgorithmID::Blake3_128:
-			return HashBlake3Bytes<FHash128>(Data, Size);
-		default:
-			UNSYNC_ERROR(L"Unexpected hash algorithm id");
-			return FHash128{};
-	}
-}
-
 FGenericHash
 ComputeHash(const uint8* Data, uint64 Size, EStrongHashAlgorithmID Algorithm)
 {

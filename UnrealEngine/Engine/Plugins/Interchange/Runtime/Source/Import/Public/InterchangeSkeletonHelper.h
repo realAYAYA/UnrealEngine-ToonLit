@@ -11,6 +11,7 @@
 struct FReferenceSkeleton;
 class UInterchangeBaseNode;
 class UInterchangeBaseNodeContainer;
+class UInterchangeResultsContainer;
 class USkeleton;
 struct FMeshBoneInfo;
 
@@ -27,16 +28,37 @@ namespace UE::Interchange::Private
 	struct INTERCHANGEIMPORT_API FSkeletonHelper
 	{
 	public:
-		static bool ProcessImportMeshSkeleton(const USkeleton* SkeletonAsset, FReferenceSkeleton& RefSkeleton, int32& SkeletalDepth, const UInterchangeBaseNodeContainer* NodeContainer, const FString& RootJointNodeId, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary, const bool bUseTimeZeroAsBindPose, bool& bOutDiffPose);
+		static bool ProcessImportMeshSkeleton(TObjectPtr<UInterchangeResultsContainer> Results
+			, const USkeleton* SkeletonAsset
+			, FReferenceSkeleton& RefSkeleton
+			, const UInterchangeBaseNodeContainer* NodeContainer
+			, const FString& RootJointNodeId
+			, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary
+			, const bool bUseTimeZeroAsBindPose
+			, bool& bOutDiffPose);
+
 		static bool IsCompatibleSkeleton(const USkeleton* Skeleton, const FString RootJoinUid, const UInterchangeBaseNodeContainer* BaseNodeContainer, bool bConvertStaticToSkeletalActive);
 		static void RecursiveAddSkeletonMetaDataValues(UInterchangeBaseNodeContainer* NodeContainer, UInterchangeBaseNode* DestinationNode, const FString& JointUid);
 	private:
-		static void RecursiveAddBones(const UInterchangeBaseNodeContainer* NodeContainer, const FString& JointNodeId, TArray <FJointInfo>& JointInfos, int32 ParentIndex, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary, const bool bUseTimeZeroAsBindPose, bool& bOutDiffPose);
+		static void RecursiveAddBones(const UInterchangeBaseNodeContainer* NodeContainer
+			, const FString& JointNodeId
+			, TArray <FJointInfo>& JointInfos
+			, int32 ParentIndex
+			, TArray<SkeletalMeshImportData::FBone>& RefBonesBinary
+			, const bool bUseTimeZeroAsBindPose
+			, bool& bOutDiffPose
+			, TArray<FString>& OutBoneNotBindNames);
+
 		static FName SkeletalLodGetBoneName(const TArray<FMeshBoneInfo>& SkeletalLodRawInfos, int32 BoneIndex);
 		static int32 SkeletalLodFindBoneIndex(const TArray<FMeshBoneInfo>& SkeletalLodRawInfos, FName BoneName);
 		static int32 SkeletalLodGetParentIndex(const TArray<FMeshBoneInfo>& SkeletalLodRawInfos, int32 BoneIndex);
 		static bool DoesParentChainMatch(int32 StartBoneIndex, const FReferenceSkeleton& SkeletonRef, const TArray<FMeshBoneInfo>& SkeletalLodRawInfos);
-		static void RecursiveBuildSkeletalSkeleton(const FString JoinToAddUid, const int32 ParentIndex, const UInterchangeBaseNodeContainer* BaseNodeContainer, TArray<FMeshBoneInfo>& SkeletalLodRawInfos, bool bConvertStaticToSkeletalActive = false);
+
+		static void RecursiveBuildSkeletalSkeleton(const FString JoinToAddUid
+			, const int32 ParentIndex
+			, const UInterchangeBaseNodeContainer* BaseNodeContainer
+			, TArray<FMeshBoneInfo>& SkeletalLodRawInfos
+			, bool bConvertStaticToSkeletalActive = false);
 	};
 } //namespace UE::Interchange::Private
 

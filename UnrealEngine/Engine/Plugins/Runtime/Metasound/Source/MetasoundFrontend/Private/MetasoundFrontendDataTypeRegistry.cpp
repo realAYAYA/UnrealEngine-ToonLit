@@ -142,7 +142,7 @@ namespace Metasound
 					return nullptr;
 				}
 
-				virtual TSet<FMetasoundFrontendVersion>* GetImplementedInterfaces() const override
+				virtual const TSet<FMetasoundFrontendVersion>* GetImplementedInterfaces() const override
 				{
 					return nullptr;
 				}
@@ -855,6 +855,8 @@ namespace Metasound
 
 			TSharedPtr<Audio::IProxyData> FDataTypeRegistry::CreateProxyFromUObject(const FName& InDataType, UObject* InObject) const
 			{
+				METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Metasound::FDataTypeRegistry::CreateProxyFromUObject Type:%s"), *InDataType.ToString()));
+
 				TSharedPtr<Audio::IProxyData> ProxyPtr;
 
 				if (const IDataTypeRegistryEntry* Entry = FindDataTypeEntry(InDataType))
@@ -930,6 +932,8 @@ namespace Metasound
 
 			FLiteral FDataTypeRegistry::CreateLiteralFromUObjectArray(const FName& InDataType, const TArray<UObject*>& InObjectArray) const
 			{
+				METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Metasound::FDataTypeRegistry::CreateLiteralFromUObjectArray Type:%s"), *InDataType.ToString()));
+
 				TArray<TSharedPtr<Audio::IProxyData>> ProxyArray;
 				const IDataTypeRegistryEntry* DataTypeEntry = FindDataTypeEntry(InDataType);
 				if (!DataTypeEntry)

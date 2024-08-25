@@ -33,6 +33,14 @@ namespace UE::MLDeformer
 		/** Get a pointer to the detail layout builder. */
 		IDetailLayoutBuilder* GetDetailLayoutBuilder() const { return DetailLayoutBuilder; }
 
+		// UE_DEPRECATED(5.4, Remove these constructors when StatsMainMemUsageGroup is removed and there is no longer warnings in the implicit functions)
+		FMLDeformerVizSettingsDetails() = default;
+		FMLDeformerVizSettingsDetails(const FMLDeformerVizSettingsDetails&);
+		FMLDeformerVizSettingsDetails(FMLDeformerVizSettingsDetails&&);
+		FMLDeformerVizSettingsDetails& operator=(const FMLDeformerVizSettingsDetails&);
+		FMLDeformerVizSettingsDetails& operator=(FMLDeformerVizSettingsDetails&&);
+		// END UE_DEPRECATED(5.4)
+
 	protected:
 		/** The filter that only shows anim sequences that are compatible with the given skeleton. */
 		bool FilterAnimSequences(const FAssetData& AssetData, USkeleton* Skeleton);
@@ -109,8 +117,11 @@ namespace UE::MLDeformer
 		/** The memory usage group inside the statistics category. */
 		IDetailGroup* StatsMemUsageGroup = nullptr;
 
+		/** The memory usage group inside the statistics category. */
+		IDetailGroup* StatsAssetSizeGroup = nullptr;
+
 		/** Main memory usage subgroup. */
-		IDetailGroup* StatsMainMemUsageGroup = nullptr;
+		IDetailGroup* StatsMainMemUsageGroup_DEPRECATED = nullptr;
 
 		/** GPU memory usage subgroup. */
 		IDetailGroup* StatsGPUMemUsageGroup = nullptr;

@@ -266,7 +266,8 @@ void FObjectPropertyBase::ExportText_Internal( FString& ValueStr, const void* Pr
 				 // be that it's inside the package we are currently in, which means the Temp pointer should be resolved 
 				 // already.  So don't move forward with the check unless it's resolved, we don't want to force a deferred
 				 // loaded asset if we don't have to with this check.
-				 && Temp.IsResolved() && Temp && Temp->IsDefaultSubobject()
+		         // We also want to make sure the object is actually inside the package we are currently in
+				 && Temp.IsResolved() && Temp && Temp->IsDefaultSubobject() && Temp->IsIn(Parent->GetOutermostObject())
 				)
 		{
 			if (PortFlags & PPF_Delimited)
@@ -383,9 +384,8 @@ const TCHAR* FObjectPropertyBase::ImportText_Internal( const TCHAR* InBuffer, vo
 {
 	const TCHAR* Buffer = InBuffer;
 	TObjectPtr<UObject> Result = nullptr;
-	FLinkerLoad* Linker = GetLinker();
 
-	bool bOk = ParseObjectPropertyValue(this, Parent, PropertyClass, PortFlags, Buffer, Result, Linker ? Linker->GetSerializeContext() : nullptr);
+	bool bOk = ParseObjectPropertyValue(this, Parent, PropertyClass, PortFlags, Buffer, Result, FUObjectThreadContext::Get().GetSerializeContext());
 
 	if (Result && (PortFlags & PPF_InstanceSubobjects) != 0 && HasAnyPropertyFlags(CPF_InstancedReference))
 	{
@@ -644,15 +644,15 @@ UObject* FObjectPropertyBase::ConstructDefaultObjectValueIfNecessary(UObject* Ex
 		// Sanity check to make sure the existing value class matches the property class
 		if (ExistingValueClass && (ExistingValueClass->IsChildOf(PropertyClass) || ExistingValueClass->GetAuthoritativeClass()->IsChildOf(PropertyClass)))
 		{
-			if (ExistingValue->IsTemplate())
+			if (ExistingValue->IsTemplate() && 	// Existing value is a template so we can construct a new value with it as the archetype
+				ExistingValue->GetOuter() != Outer) // Unless the template's Outer is the same as the new Outer in which case the template (ExistingValue) IS the object we can reuse
 			{
-				// Existing value is a template so we can construct a new value with it as the archetype
 				// We probably got here because an object value failed to load (missing import class) and the property is left with a template of default subobject
 				NewDefaultObjectValue = NewObject<UObject>(Outer, ExistingValue->GetClass(), ExistingValue->GetFName(), RF_NoFlags, ExistingValue);
 			}
 			else
 			{
-				// Existing value is not a template so we can use it directly
+				// Existing value is not a template or a template is what this property was pointing to so we can use it directly
 				// Similar to the above condition but the property was not referencing an instanced value in which case it's ok to leave the CDO default here
 				NewDefaultObjectValue = ExistingValue;
 			}
@@ -718,11 +718,6 @@ void FObjectPropertyBase::CheckValidObject(void* ValueAddress, TObjectPtr<UObjec
 		bool bIsReplacingClassRefs = PropertyClass && PropertyClass->HasAnyClassFlags(CLASS_NewerVersionExists) != ObjectClass->HasAnyClassFlags(CLASS_NewerVersionExists);
 		if (!bIsReplacingClassRefs && !IsDeferringValueLoad())
 		{
-			if (UPackage* ObjectPackage = Object->GetPackage())
-			{
-				ObjectPackage->SetDirtyFlag(true);
-			}
-
 			if (!HasAnyPropertyFlags(CPF_NonNullable))
 			{
 				UE_LOG(LogProperty, Warning,
@@ -736,7 +731,6 @@ void FObjectPropertyBase::CheckValidObject(void* ValueAddress, TObjectPtr<UObjec
 			}
 			else
 			{
-				Object->Rename(nullptr, GetTransientPackage(), REN_ForceNoResetLoaders | REN_DoNotDirty | REN_DontCreateRedirectors);
 				UObject* DefaultValue = ConstructDefaultObjectValueIfNecessary(OldValue);
 
 				UE_LOG(LogProperty, Warning,

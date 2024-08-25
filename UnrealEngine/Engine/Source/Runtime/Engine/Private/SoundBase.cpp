@@ -2,6 +2,7 @@
 #include "Sound/SoundBase.h"
 
 #include "AudioDevice.h"
+#include "AudioPropertiesSheetAssetBase.h"
 #include "Engine/AssetUserData.h"
 #include "IAudioParameterTransmitter.h"
 #include "Sound/SoundSubmix.h"
@@ -188,7 +189,28 @@ bool USoundBase::GetSoundWavesWithCookedAnalysisData(TArray<USoundWave*>& OutSou
 	return false;
 }
 
+#if WITH_EDITOR
+void USoundBase::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName AudioPropertiesSheetFName = GET_MEMBER_NAME_CHECKED(USoundBase, AudioPropertiesSheet);
+	const FName AudioPropertiesBindingsFName = GET_MEMBER_NAME_CHECKED(USoundBase, AudioPropertiesBindings);
+
+	if (FProperty* PropertyThatChanged = PropertyChangedEvent.Property)
+	{
+		const FName& Name = PropertyThatChanged->GetFName();
+		if (Name == AudioPropertiesSheetFName || Name == AudioPropertiesBindingsFName)
+		{
+			InjectPropertySheet();
+		}
+	}
+}
+#endif
+
 #if WITH_EDITORONLY_DATA
+
+
 void USoundBase::PostLoad()
 {
 	Super::PostLoad();
@@ -236,6 +258,8 @@ void USoundBase::Serialize(FArchive& Ar)
 			SoundConcurrencySettings_DEPRECATED = nullptr;
 		}
 	}
+
+	InjectPropertySheet();
 #endif // WITH_EDITORONLY_DATA
 }
 
@@ -294,7 +318,7 @@ void USoundBase::InitParameters(TArray<FAudioParameter>& ParametersToInit, FName
 	{
 		if (!IsParameterValid(ParametersToInit[i]))
 		{
-			ParametersToInit.RemoveAtSwap(i, 1, false /* bAllowShrinking */);
+			ParametersToInit.RemoveAtSwap(i, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -324,6 +348,14 @@ TOptional<FSoundTimecodeOffset> USoundBase::GetTimecodeOffset() const
 		return {};
 	}
 	return TimecodeOffset;
+}
+
+void USoundBase::InjectPropertySheet()
+{
+	if (AudioPropertiesSheet && AudioPropertiesBindings)
+	{
+		AudioPropertiesSheet->CopyToObjectProperties(this, AudioPropertiesBindings);
+	}
 }
 
 #endif //WITH_EDITORONLY_DATA

@@ -104,32 +104,32 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace WaveTable;
 
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FWaveTableBankAssetReadRef InWaveTableBankReadRef = InputCollection.GetDataReadReferenceOrConstruct<FWaveTableBankAsset>("WaveTableBank");
-			FInt32ReadRef InIndexReadRef = InputCollection.GetDataReadReferenceOrConstruct<int32>("Index");
-			FTriggerReadRef InPlayReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, "Play", InParams.OperatorSettings);
-			FTriggerReadRef InStopReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, "Stop", InParams.OperatorSettings);
-			FTriggerReadRef InSyncReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, "Sync", InParams.OperatorSettings);
-			FFloatReadRef InPitchShiftReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, "PitchShift", InParams.OperatorSettings);
-			FBoolReadRef InLoopReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, "Loop", InParams.OperatorSettings);
+			FWaveTableBankAssetReadRef InWaveTableBankReadRef = InputData.GetOrConstructDataReadReference<FWaveTableBankAsset>("WaveTableBank");
+			FInt32ReadRef InIndexReadRef = InputData.GetOrConstructDataReadReference<int32>("Index");
+			FTriggerReadRef InPlayReadRef = InputData.GetOrCreateDefaultDataReadReference<FTrigger>("Play", InParams.OperatorSettings);
+			FTriggerReadRef InStopReadRef = InputData.GetOrCreateDefaultDataReadReference<FTrigger>("Stop", InParams.OperatorSettings);
+			FTriggerReadRef InSyncReadRef = InputData.GetOrCreateDefaultDataReadReference<FTrigger>("Sync", InParams.OperatorSettings);
+			FFloatReadRef InPitchShiftReadRef = InputData.GetOrCreateDefaultDataReadReference<float>("PitchShift", InParams.OperatorSettings);
+			FBoolReadRef InLoopReadRef = InputData.GetOrCreateDefaultDataReadReference<bool>("Loop", InParams.OperatorSettings);
 
 			TOptional<FAudioBufferReadRef> InPhaseModReadRef;
-			if (InputCollection.ContainsDataReadReference<FAudioBuffer>("PhaseMod"))
+			if (const FAnyDataReference* DataRef = InputData.FindDataReference("PhaseMod"))
 			{
-				InPhaseModReadRef = InputCollection.GetDataReadReference<FAudioBuffer>("PhaseMod");
+				InPhaseModReadRef = InputData.GetDataReadReference<FAudioBuffer>("PhaseMod");
 			}
 
 			return MakeUnique<FMetaSoundWaveTablePlayerNodeOperator>(InParams, InWaveTableBankReadRef, InIndexReadRef, InPlayReadRef, InStopReadRef, InSyncReadRef, InPitchShiftReadRef, InLoopReadRef, MoveTemp(InPhaseModReadRef));
 		}
 
 		FMetaSoundWaveTablePlayerNodeOperator(
-			const FCreateOperatorParams& InParams,
+			const FBuildOperatorParams& InParams,
 			const FWaveTableBankAssetReadRef& InWaveTableBankReadRef,
 			const FInt32ReadRef& InIndexReadRef,
 			const FTriggerReadRef& InPlayReadRef,

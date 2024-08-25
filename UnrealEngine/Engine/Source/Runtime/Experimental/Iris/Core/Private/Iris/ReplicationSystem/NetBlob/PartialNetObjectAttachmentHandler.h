@@ -12,11 +12,21 @@ class UPartialNetObjectAttachmentHandlerConfig : public USequentialPartialNetBlo
 
 public:
 	uint32 GetBitCountSplitThreshold() const { return BitCountSplitThreshold; }
+	uint32 GetClientUnreliableBitCountSplitThreshold() const { return ClientUnreliableBitCountSplitThreshold; }
+	uint32 GetServerUnreliableBitCountSplitThreshold() const { return ServerUnreliableBitCountSplitThreshold; }
 
 private:
 	/** How many bits a payload should have to recommend a split. Should be higher than MaxPartBitCount as splitting adds overhead. */
 	UPROPERTY(Config)
 	uint32 BitCountSplitThreshold = (128 + 64)*8;
+
+	/** How many bits a unreliable payload should have to recommend a split on the client. Should be higher than MaxPartBitCount as splitting adds overhead. */
+	UPROPERTY(Config)
+	uint32 ClientUnreliableBitCountSplitThreshold = (850)*8;
+
+	/** How many bits a unreliable payload should have to recommend a split on the server. Should be higher than MaxPartBitCount as splitting adds overhead. */
+	UPROPERTY(Config)
+	uint32 ServerUnreliableBitCountSplitThreshold = (256)*8;
 };
 
 struct FPartialNetObjectAttachmentHandlerInitParams

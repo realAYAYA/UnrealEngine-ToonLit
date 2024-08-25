@@ -5,10 +5,11 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SCompoundWidget.h"
 
+class IPropertyHandle;
 class URCVirtualPropertyBase;
 class UTexture2D;
 
-class REMOTECONTROLUI_API SCustomTextureControllerWidget : public SCompoundWidget
+class SCustomTextureControllerWidget : public SCompoundWidget
 {
 public:
 	SLATE_BEGIN_ARGS(SCustomTextureControllerWidget)
@@ -19,14 +20,11 @@ public:
 	
 	/**
 	 * Constructs this widget with InArgs
-	 * @param InController: the controller handled by this widget
+	 * @param InOriginalPropertyHandle Original PropertyHandle of this CustomWidget
 	 */
-	void Construct(const FArguments& InArgs, URCVirtualPropertyBase* InController);
+	void Construct(const FArguments& InArgs, const TSharedPtr<IPropertyHandle>& InOriginalPropertyHandle);
 
 private:
-	/** Returns the handled controller as URCVirtualPropertyBase */
-	URCVirtualPropertyBase* GetVirtualProperty() const;
-
 	/** Handle toggling Texture Controller type change: External vs. Internal */
 	void OnControllerTypeChanged(TSharedPtr<FString, ESPMode::ThreadSafe> InString, ESelectInfo::Type InArg);
 
@@ -64,9 +62,6 @@ private:
 	TSharedRef<SWidget> GetExternalTextureValueWidget();
 	TSharedRef<SWidget> GetAssetTextureValueWidget();
 
-	/** The controller handled by this widget */
-	TWeakObjectPtr<URCVirtualPropertyBase> ControllerWeakPtr;
-
 	/** The texture selected by the user via the asset or external file path */
 	TObjectPtr<UTexture2D> Texture;
 
@@ -87,4 +82,7 @@ private:
 
 	/** List of available Texture Controller types, used by combo box selection. Supports Asset and External*/
 	TArray<TSharedPtr<FString>> ControllerTypes;
+
+	/** Original PropertyHandle, used to update correctly the Widget and the Controller */
+	TSharedPtr<IPropertyHandle> OriginalPropertyHandle;
 };

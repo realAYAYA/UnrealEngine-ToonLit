@@ -6,6 +6,7 @@
 #include "Fonts/FontCache.h"
 #include "Templates/IsIntegral.h"
 #include "Templates/IsFloatingPoint.h"
+#include "Misc/Optional.h"
 
 #ifndef WITH_FREETYPE
 	#define WITH_FREETYPE	0
@@ -36,6 +37,7 @@
 	#include FT_BITMAP_H
 	#include FT_ADVANCES_H
 	#include FT_STROKER_H
+	#include FT_SIZES_H
 	THIRD_PARTY_INCLUDES_END
 #endif // WITH_FREETYPE
 
@@ -48,6 +50,48 @@ namespace FreeTypeUtils
 {
 
 #if WITH_FREETYPE
+
+/**
+ * Get the eligibility of this face to generate SDF fonts
+ */
+bool IsFaceEligibleForSdf(FT_Face InFace);
+
+/**
+ * Get the eligibility of this glyph to generate SDF fonts
+ */
+bool IsGlyphEligibleForSdf(FT_GlyphSlot InGlyph);
+
+/** Rounds towards -INF the given value in 26.6 space to the previous multiple of 64.
+*/
+FT_F26Dot6 Floor26Dot6(const FT_F26Dot6 InValue);
+
+/** Rounds towards +INF the given value in 26.6 space to the next multiple of 64
+*/
+FT_F26Dot6 Ceil26Dot6(const FT_F26Dot6 InValue);
+
+/** Round up to the nearest integer if the fractional part of the 26.6 value
+*	is greater or equal to the half interval of 64th otherwise round down.
+*/
+FT_F26Dot6 Round26Dot6(const FT_F26Dot6 InValue);
+
+/**
+ * Determine the (optionally rounded) pixel size (the number of pixels per em square dimensions) 
+ * from a font size in points (72 points per inch) and an arbitrary ui scaling at a resolution of 96 dpi.
+ */
+FT_F26Dot6 Determine26Dot6Ppem(const float InFontSize, const float InFontScale, const bool InRoundPpem);
+
+/**
+ * The EmScale maps design space distances relative to the em square (with resolution of InEmSize units),
+ * to absolute 1/64th pixels distances in the device pixel plane (with a resolution of 96 dpi) with 
+ * a character size of InPpem.
+ */
+FT_Fixed DetermineEmScale(const uint16 InEmSize, const FT_F26Dot6 InPpem);
+
+/**
+* Determine the (optionally rounded) Ppem and then from it determine the EmScale, in one call.
+*/
+FT_Fixed DeterminePpemAndEmScale(const uint16 InEmSize, const float InFontSize, const float InFontScale, const bool InRoundPpem);
+
 
 /**
  * Compute the actual size that will be used by Freetype to render or do any process on glyphs.
@@ -212,9 +256,21 @@ public:
 #endif // WITH_FREETYPE
 	}
 
+	FORCEINLINE bool SupportsSdf() const
+	{
+#if WITH_FREETYPE
+		return FreeTypeUtils::IsFaceEligibleForSdf(FTFace);
+#else
+		return false;
+#endif // WITH_FREETYPE
+	}
+
 #if WITH_FREETYPE
 	FORCEINLINE FT_Face GetFace() const
 	{
+#if WITH_ATLAS_DEBUGGING
+		check(OwnerThread == GetCurrentSlateTextureAtlasThreadId());
+#endif
 		return FTFace;
 	}
 
@@ -223,28 +279,28 @@ public:
 		return FreeTypeUtils::GetHeight(FTFace, LayoutMethod);
 	}
 
-	FORCEINLINE FT_Pos GetScaledHeight() const
+	FORCEINLINE FT_Pos GetScaledHeight(bool bAllowOverride) const
 	{
-		if (IsAscendOverridden || IsDescendOverridden)
-			return GetAscender() - GetDescender();
+		if (bAllowOverride && (IsAscentOverridden || IsDescentOverridden))
+			return GetAscender(true) - GetDescender(true);
 		return FreeTypeUtils::GetScaledHeight(FTFace, LayoutMethod);
 	}
 
-	FORCEINLINE FT_Pos GetAscender() const
+	FORCEINLINE FT_Pos GetAscender(bool bAllowOverride) const
 	{
-		if (IsAscendOverridden)
+		if (bAllowOverride && IsAscentOverridden)
 		{
-			FT_F26Dot6 ScaledAscender = FT_MulFix(AscendOverrideValue, FTFace->size->metrics.y_scale);
+			FT_F26Dot6 ScaledAscender = FT_MulFix(AscentOverrideValue, FTFace->size->metrics.y_scale);
 			return (ScaledAscender + 0b111111) & ~0b111111; //(26.6 fixed point ceil). Using ceiling of scaled ascend, as recommended by Freetype, to avoid grid fitting/hinting issues.
 		}
 		return FreeTypeUtils::GetAscender(FTFace, LayoutMethod);
 	}
 
-	FORCEINLINE FT_Pos GetDescender() const
+	FORCEINLINE FT_Pos GetDescender(bool bAllowOverride) const
 	{
-		if (IsDescendOverridden)
+		if (bAllowOverride && IsDescentOverridden)
 		{
-			FT_F26Dot6 ScaledDescender =  FT_MulFix(DescendOverrideValue, FTFace->size->metrics.y_scale);
+			FT_F26Dot6 ScaledDescender =  FT_MulFix(DescentOverrideValue, FTFace->size->metrics.y_scale);
 			return ScaledDescender & ~0b111111; //(26.6 fixed point floor). Using floor of scaled descend, as recommended by Freetype, to avoid grid fitting/hinting issues.
 		}
 		return FreeTypeUtils::GetDescender(FTFace, LayoutMethod);
@@ -283,19 +339,19 @@ public:
 #endif
 	}
 
-	void OverrideAscend(bool InOverride, int32 Value = 0)
+	void OverrideAscent(bool InOverride, int32 Value = 0)
 	{
 #if WITH_FREETYPE
-		IsAscendOverridden = InOverride;
-		AscendOverrideValue = FreeTypeUtils::ConvertPixelTo26Dot6<FT_F26Dot6>(Value);
+		IsAscentOverridden = InOverride;
+		AscentOverrideValue = FreeTypeUtils::ConvertPixelTo26Dot6<FT_F26Dot6>(Value);
 #endif //WITH_FREETYPE
 	}
 
-	void OverrideDescend(bool InOverride, int32 Value = 0)
+	void OverrideDescent(bool InOverride, int32 Value = 0)
 	{
 #if WITH_FREETYPE
-		IsDescendOverridden = InOverride;
-		DescendOverrideValue = FreeTypeUtils::ConvertPixelTo26Dot6<FT_F26Dot6>(Value);
+		IsDescentOverridden = InOverride;
+		DescentOverrideValue = FreeTypeUtils::ConvertPixelTo26Dot6<FT_F26Dot6>(Value);
 #endif //WITH_FREETYPE
 	}
 
@@ -343,10 +399,14 @@ private:
 	FT_StreamRec FTStream;
 	FT_Open_Args FTFaceOpenArgs;
 
-	bool IsAscendOverridden = false;
-	bool IsDescendOverridden = false;
-	FT_F26Dot6 AscendOverrideValue = 0;
-	FT_F26Dot6 DescendOverrideValue = 0;
+	bool IsAscentOverridden = false;
+	bool IsDescentOverridden = false;
+	FT_F26Dot6 AscentOverrideValue = 0;
+	FT_F26Dot6 DescentOverrideValue = 0;
+
+#if WITH_ATLAS_DEBUGGING
+	ESlateTextureAtlasThreadId OwnerThread;
+#endif
 #endif // WITH_FREETYPE
 
 	TSet<FName> Attributes;
@@ -395,6 +455,7 @@ class FFreeTypeAdvanceCache
 {
 public:
 #if WITH_FREETYPE
+	FFreeTypeAdvanceCache();
 	FFreeTypeAdvanceCache(FT_Face InFace, const int32 InLoadFlags, const float InFontSize, const float InFontScale);
 
 	bool FindOrCache(const uint32 InGlyphIndex, FT_Fixed& OutCachedAdvance);
@@ -478,6 +539,7 @@ private:
 class FFreeTypeCacheDirectory
 {
 public:
+	FFreeTypeCacheDirectory();
 #if WITH_FREETYPE
 	/**
 	 * Retrieve the glyph cache for a given set of font parameters.
@@ -544,5 +606,6 @@ private:
 	TMap<FFontKey, TSharedPtr<FFreeTypeGlyphCache>> GlyphCacheMap;
 	TMap<FFontKey, TSharedPtr<FFreeTypeAdvanceCache>> AdvanceCacheMap;
 	TMap<FFontKey, TSharedPtr<FFreeTypeKerningCache>> KerningCacheMap;
+	TSharedPtr<FFreeTypeAdvanceCache> InvalidAdvanceCache;
 #endif // WITH_FREETYPE
 };

@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/error.h"
 #include "acl/core/impl/compiler_utils.h"
 
@@ -35,26 +36,32 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Describes the format used by the additive clip.
 	enum class additive_clip_format8 : uint8_t
 	{
 		//////////////////////////////////////////////////////////////////////////
 		// Clip is not additive
+		// Default scale value is 1.0
 		none				= 0,
 
 		//////////////////////////////////////////////////////////////////////////
 		// Clip is in relative space, transform_mul or equivalent is used to combine them.
+		// Default scale value is 1.0
 		// transform = transform_mul(additive_transform, base_transform)
 		relative			= 1,
 
 		//////////////////////////////////////////////////////////////////////////
 		// Clip is in additive space where scale is combined with: base_scale * additive_scale
+		// Default scale value is 1.0
 		// transform = transform_add0(additive_transform, base_transform)
 		additive0			= 2,
 
 		//////////////////////////////////////////////////////////////////////////
 		// Clip is in additive space where scale is combined with: base_scale * (1.0 + additive_scale)
+		// Default scale value is 0.0
 		// transform = transform_add1(additive_transform, base_transform)
 		additive1			= 3,
 	};
@@ -117,11 +124,6 @@ namespace acl
 		}
 
 		return false;
-	}
-
-	inline rtm::vector4f RTM_SIMD_CALL get_default_scale(additive_clip_format8 additive_format)
-	{
-		return additive_format == additive_clip_format8::additive1 ? rtm::vector_zero() : rtm::vector_set(1.0F);
 	}
 
 	inline rtm::qvvf RTM_SIMD_CALL transform_add0(rtm::qvvf_arg0 base, rtm::qvvf_arg1 additive)
@@ -191,6 +193,8 @@ namespace acl
 		const rtm::vector4f scale = rtm::vector_sub(rtm::vector_mul(transform.scale, rtm::vector_reciprocal(base.scale)), rtm::vector_set(1.0F));
 		return rtm::qvv_set(rotation, translation, scale);
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

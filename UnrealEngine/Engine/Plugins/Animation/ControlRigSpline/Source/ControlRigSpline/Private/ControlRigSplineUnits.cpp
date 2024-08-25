@@ -4,6 +4,7 @@
 #include "Units/RigUnitContext.h"
 #include "Features/IModularFeatures.h"
 #include "Algo/BinarySearch.h"
+#include "ControlRig.h"
 #include "Units/Highlevel/Hierarchy/RigUnit_FitChainToCurve.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigSplineUnits)
@@ -179,17 +180,6 @@ FRigUnit_TransformFromControlRigSpline_Execute()
 
 	Transform.SetFromMatrix(RotationMatrix);
 	Transform.SetTranslation(Spline.PositionAtParam(U));
-}
-
-FRigVMStructUpgradeInfo FRigUnit_TransformFromControlRigSpline::GetUpgradeInfo() const
-{
-	FRigUnit_TransformFromControlRigSpline2 NewNode;
-	NewNode.Spline = Spline; 
-	NewNode.U = U; 
-	NewNode.SecondaryAxis = UpVector; 
-	NewNode.Transform = Transform; 
-
-	return FRigVMStructUpgradeInfo(*this, NewNode);
 }
 
 FRigUnit_TransformFromControlRigSpline2_Execute()

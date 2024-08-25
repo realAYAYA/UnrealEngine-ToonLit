@@ -1,0 +1,1 @@
+https://ftp.perforce.com/perforce/r23.2/bin.ntx64/p4api_vs2022_dyn_vsdebug_openssl1.1.1.zip

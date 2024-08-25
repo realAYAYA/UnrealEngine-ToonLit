@@ -15,6 +15,7 @@
 #include "PrimitiveDirtyState.h"
 #include "RendererInterface.h"
 #include "ShaderParameterMacros.h"
+#include "MeshPassProcessor.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "Engine/Scene.h"
@@ -36,6 +37,13 @@ class FReflectionCaptureProxy;
 class FScene;
 class FViewInfo;
 class UPrimitiveComponent;
+class IPrimitiveComponent;
+struct FPrimitiveSceneInfoAdapter;
+struct FPrimitiveSceneDesc;
+struct FPrimitiveSceneInfoData;
+struct FInstanceDataBufferHeader;
+class FInstanceSceneDataBuffers;
+class FInstanceDataUpdateTaskInfo;
 
 struct FNaniteMaterialSlot;
 struct FNaniteRasterBin;
@@ -180,6 +188,9 @@ struct FPrimitiveFlagsCompact
 	/** True if the primitive is a Nanite mesh. */
 	uint8 bIsNaniteMesh : 1;
 
+	/** True if the primitive is always visible. */
+	uint8 bIsAlwaysVisible : 1;
+
 	/** True if the primitive draws only meshes that support GPU-Scene. */
 	uint8 bSupportsGPUScene : 1;
 
@@ -262,20 +273,6 @@ enum class EUpdateStaticMeshFlags : uint8
 ENUM_CLASS_FLAGS(EUpdateStaticMeshFlags);
 
 /**
- * Wrapper to make it harder to confuse the packed and persistent index when used as arguments etc.
- */
-struct FPersistentPrimitiveIndex
-{
-	bool IsValid() const { return Index != INDEX_NONE; }
-	int32 Index = INDEX_NONE;
-};
-
-inline bool operator == (FPersistentPrimitiveIndex A, FPersistentPrimitiveIndex B)
-{
-	return A.Index == B.Index;
-}
-
-/**
  * The renderer's internal state for a single UPrimitiveComponent.  This has a one to one mapping with FPrimitiveSceneProxy, which is in the engine module.
  */
 class FPrimitiveSceneInfo : public FDeferredCleanupInterface
@@ -288,7 +285,7 @@ public:
 	FPrimitiveSceneProxy* Proxy;
 
 	/** 
-	 * Id for the component this primitive belongs to.  
+	 * Id for the component this primitive belongs to.
 	 * This will stay the same for the lifetime of the component, so it can be used to identify the component across re-registers.
 	 */
 	FPrimitiveComponentId PrimitiveComponentId;
@@ -296,21 +293,8 @@ public:
 	/**
 	 * Number assigned to this component when it was registered with the world.
 	 * This will only ever be updated if the object is re-registered.
-	 * Used by FPrimitiveArraySortKey for deterministic ordering.
 	 */
 	int32 RegistrationSerialNumber;
-
-	/** 
-	 * Pointer to the last render time variable on the primitive's owning actor (if owned), which is written to by the RT and read by the GT.
-	 * The value of LastRenderTime will therefore not be deterministic due to race conditions, but the GT uses it in a way that allows this.
-	 * Storing a pointer to the UObject member variable only works because:
-	 *	UPrimitiveComponent's outer is its owning AActor, so it prevents the owner from being garbage collected while the component lives.
-	 *  If the UPrimitiveComponent is GC'd during the Actor's lifetime, OwnerLastRenderTime is still valid so there is no issue.
-	 *	If the UPrimitiveComponent and the Actor are GC'd together, neither will be deleted until FinishDestroy has been executed on both.
-	 *	UPrimitiveComponent's FinishDestroy will not execute until the primitive has been detached from the Scene through it's DetachFence.
-	 * In general feedback from the renderer to the game thread like this should be avoided.
-	 */
-	float* OwnerLastRenderTime;
 
 	/** 
 	 * The root attachment component id for use with lighting, if valid.
@@ -336,10 +320,6 @@ public:
 	TArray<FNaniteShadingBin> NaniteShadingBins[ENaniteMeshPass::Num];
 	TArray<FNaniteCommandInfo> NaniteCommandInfos[ENaniteMeshPass::Num];
 	TArray<FNaniteMaterialSlot> NaniteMaterialSlots[ENaniteMeshPass::Num];
-
-#if WITH_EDITOR
-	TArray<uint32> NaniteHitProxyIds;
-#endif
 
 	/** The identifier for the primitive in Scene->PrimitiveOctree. */
 	FOctreeElementId2 OctreeId;
@@ -397,8 +377,12 @@ public:
 	/** The number of local lights with dynamic lighting for mobile */
 	int32 NumMobileDynamicLocalLights;
 
+	/** The sphere radius to use for per instance GPU Lodding. Will be 0.f if GPU LOD isn't enabled on this primitive. */
+	float GpuLodInstanceRadius;
+
 	/** Initialization constructor. */
 	FPrimitiveSceneInfo(UPrimitiveComponent* InPrimitive,FScene* InScene);
+	FPrimitiveSceneInfo(FPrimitiveSceneDesc* InPrimitiveSceneDesc, FScene* InScene);
 
 	/** Destructor. */
 	~FPrimitiveSceneInfo();
@@ -432,7 +416,7 @@ public:
 	RENDERER_API bool RequestUniformBufferUpdate();
 
 	/** Adds the primitive's static meshes to the scene. */
-	static void AddStaticMeshes(FScene* Scene, TArrayView<FPrimitiveSceneInfo*> SceneInfos, bool bCacheMeshDrawCommands = true);
+	static void AddStaticMeshes(FRHICommandListBase& RHICmdList, FScene* Scene, TArrayView<FPrimitiveSceneInfo*> SceneInfos, bool bCacheMeshDrawCommands = true);
 
 	/** Removes the primitive's static meshes from the scene. */
 	void RemoveStaticMeshes();
@@ -510,7 +494,7 @@ public:
 	 * Called on world origin changes
 	 * @param InOffset - The delta to shift by
 	 */
-	void ApplyWorldOffset(FVector InOffset);
+	void ApplyWorldOffset(FRHICommandListBase& RHICmdList, FVector InOffset);
 
 	FORCEINLINE void MarkIndirectLightingCacheBufferDirty()
 	{
@@ -568,7 +552,7 @@ public:
 
 	RENDERER_API FRHIRayTracingGeometry* GetStaticRayTracingGeometryInstance(int LodLevel) const;
 
-	int GetRayTracingGeometryNum() const { return RayTracingGeometries.Num(); }
+	int GetStaticRayTracingGeometryNum() const { return StaticRayTracingGeometries.Num(); }
 #endif
 
 	/** Return primitive fullname (for debugging only). */
@@ -580,7 +564,10 @@ public:
 		return bCacheShadowAsStatic;
 	}
 
-	void SetCacheShadowAsStatic(bool bStatic);
+	inline FMeshDrawCommandPrimitiveIdInfo GetMDCIdInfo() const { return FMeshDrawCommandPrimitiveIdInfo(PackedIndex, PersistentIndex, InstanceSceneDataOffset);}
+
+	const UPrimitiveComponent* GetComponentForDebugOnly() const;
+	const IPrimitiveComponent* GetComponentInterfaceForDebugOnly() const;
 
 	UE_DEPRECATED(5.3, "NeedsUpdateStaticMeshes has been deprecated.")
 	bool NeedsUpdateStaticMeshes() { return false; }
@@ -603,7 +590,25 @@ public:
 	UE_DEPRECATED(5.3, "SetNeedsUniformBufferUpdate is deprecated. Use RequestUniformBufferUpdate instead.")
 	void SetNeedsUniformBufferUpdate(bool bInNeedsUniformBufferUpdate) { RequestUniformBufferUpdate(); }
 
+	bool HasInstanceDataBuffers() const { return InstanceSceneDataBuffersInternal != nullptr; }
+	
+	/**
+	 * Waits for (potential) instance update to produce the data, to avoid a sync, use GetInstanceDataHeader().
+	 */
+	const FInstanceSceneDataBuffers *GetInstanceSceneDataBuffers() const;
+
+	/**
+	 * Returns the updated header data in the InstanceDataUpdateTaskInfo without blocking. 
+	 * For a primitive without instances, it returns a header with an instance count of one.
+	 */
+	FInstanceDataBufferHeader GetInstanceDataHeader() const;
+
+	/** Returns the primitive scene data for this proxy. */
+	const FPrimitiveSceneInfoData* GetSceneData() const { return SceneData; }
+
 private:
+	
+	FPrimitiveSceneInfo(const FPrimitiveSceneInfoAdapter& InAdapter, FScene* InScene);
 
 	/** Let FScene have direct access to the Id. */
 	friend class FScene;
@@ -620,11 +625,17 @@ private:
 	FPersistentPrimitiveIndex PersistentIndex;
 
 	/** 
-	 * The UPrimitiveComponent this scene info is for, useful for quickly inspecting properties on the corresponding component while debugging.
+	 * The IPrimitiveComponentInterface this scene info is for, useful for quickly inspecting properties on the corresponding component while debugging.
 	 * This should not be dereferenced on the rendering thread.  The game thread can be modifying UObject members at any time.
 	 * Use PrimitiveComponentId instead when a component identifier is needed.
+	 * 	
+	 */	
+	const IPrimitiveComponent*  PrimitiveComponentInterfaceForDebuggingOnly;  
+
+	/** 
+	 * Ptr to the FPrimitiveSceneInfoData for this prim, this is used for shared data between the primitive and the component that created the primitive. 
 	 */
-	const UPrimitiveComponent* ComponentForDebuggingOnly;
+	FPrimitiveSceneInfoData* SceneData;
 
 	/** These flags carry information about which runtime virtual textures are bound to this primitive. */
 	FPrimitiveVirtualTextureFlags RuntimeVirtualTextureFlags;
@@ -675,6 +686,7 @@ public:
 	bool bIsRayTracingStaticRelevant : 1;
 	bool bIsVisibleInRayTracing : 1;
 	bool bCachedRaytracingDataDirty : 1;
+	bool bCachedRayTracingInstanceMaskAndFlagsDirty : 1;
 	bool bCachedRayTracingInstanceAnySegmentsDecal : 1;
 	bool bCachedRayTracingInstanceAllSegmentsDecal : 1;
 	Nanite::CoarseMeshStreamingHandle CoarseMeshStreamingHandle;
@@ -684,11 +696,13 @@ public:
 	TArray<uint64> CachedRayTracingMeshCommandsHashPerLOD;
 	// TODO: this should be placed in FRayTracingScene and we have a pointer/handle here. It's here for now for PoC
 	FRayTracingGeometryInstance CachedRayTracingInstance;
-	TArray<FBoxSphereBounds> CachedRayTracingInstanceWorldBounds;
-	int32 SmallestRayTracingInstanceWorldBoundsIndex;
 #endif
 
 private:
+	// Don't access this directly, even internally unless you are sure what you're up to. Use GetInstanceSceneDataBuffers() which handles thread safety.
+	const FInstanceSceneDataBuffers *InstanceSceneDataBuffersInternal = nullptr;
+	FInstanceDataUpdateTaskInfo *InstanceDataUpdateTaskInfo = nullptr;
+
 	/** Index into the scene's PrimitivesNeedingLevelUpdateNotification array for this primitive scene info level. */
 	int32 LevelUpdateNotificationIndex;
 
@@ -727,17 +741,17 @@ private:
 	/** Removes cached mesh draw commands for all meshes. */
 	void RemoveCachedMeshDrawCommands();
 
-	/** Creates or add ref's cached draw commands for each unique material instance found within the scene. */
-	static void CacheNaniteDrawCommands(FScene* Scene, const TArrayView<FPrimitiveSceneInfo*>& SceneInfos);
+	/** Constructs Nanite raster and shading bin information for unique material instances found within the scene. */
+	static void CacheNaniteMaterialBins(FScene* Scene, const TArrayView<FPrimitiveSceneInfo*>& SceneInfos);
 
-	/** Removes or remove ref's cached draw commands */
-	void RemoveCachedNaniteDrawCommands();
+	/** Removes Nanite raster and shading bin information from the scene. */
+	void RemoveCachedNaniteMaterialBins();
 
 #if RHI_RAYTRACING
-	TArray<FRayTracingGeometry*> RayTracingGeometries;
+	TArray<FRayTracingGeometry*> StaticRayTracingGeometries;
 
 	// Cache pointer to FRayTracingGeometry used by cached ray tracing instance
-	// since primitives using ERayTracingPrimitiveFlags::CacheInstances don't fill the RayTracingGeometries array above
+	// since primitives using ERayTracingPrimitiveFlags::CacheInstances don't fill the StaticRayTracingGeometries array above
 	const FRayTracingGeometry* CachedRayTracingGeometry;
 
 	/** Creates cached ray tracing representations for all meshes. */
@@ -747,7 +761,8 @@ private:
 	void RemoveCachedRayTracingPrimitives();
 
 	/** Updates cached world bounds in CachedRayTracingInstance */
-	void UpdateCachedRayTracingInstanceWorldBounds(const FMatrix& NewPrimitiveLocalToWorld);
+	UE_DEPRECATED(5.4, "UpdateCachedRayTracingInstanceWorldBounds has been deprecated.")
+	void UpdateCachedRayTracingInstanceWorldBounds(const FMatrix& NewPrimitiveLocalToWorld) {};
 
 	/** Updates cached ray tracing instances. Utility closely mirrors CacheRayTracingPrimitives(..) */
 	static void UpdateCachedRayTracingInstances(FScene* Scene, const TArrayView<FPrimitiveSceneInfo*>& SceneInfos);

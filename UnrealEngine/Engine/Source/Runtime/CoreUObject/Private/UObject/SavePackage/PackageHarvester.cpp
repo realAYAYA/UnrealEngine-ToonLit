@@ -3,7 +3,9 @@
 
 #include "UObject/SavePackage/PackageHarvester.h"
 
+#include "InstancedReferenceSubobjectHelper.h"
 #include "Interfaces/ITargetPlatform.h"
+#include "UObject/OverridableManager.h"
 #include "UObject/SavePackage/SaveContext.h"
 #include "UObject/SavePackage/SavePackageUtilities.h"
 #include "UObject/UObjectGlobals.h"
@@ -83,6 +85,10 @@ bool ConditionallyExcludeObjectForRealm(FSaveContext& SaveContext, TObjectPtr<UO
 	{
 		return false;
 	}
+	if (RealmBeingChecked.IsNotExcluded(Obj))
+	{
+		return false;
+	}
 
 	const EObjectMark ExcludedObjectMarks = SaveContext.GetExcludedObjectMarks(HarvestingContext);
 	const ITargetPlatform* TargetPlatform = SaveContext.GetTargetPlatform();
@@ -132,6 +138,7 @@ bool ConditionallyExcludeObjectForRealm(FSaveContext& SaveContext, TObjectPtr<UO
 		}
 	}
 
+	RealmBeingChecked.AddNotExcluded(Obj);
 	return false;
 }
 
@@ -236,6 +243,13 @@ FPackageHarvester::FHarvestScope FPackageHarvester::EnterRootReferencesScope()
 	return Scope;
 }
 
+FPackageHarvester::FHarvestScope FPackageHarvester::EnterRealmsArrayScope(FExportingRealmsArray& Array)
+{
+	FHarvestScope Scope(*this);
+	CurrentExportHarvestingRealms = Array;
+	return Scope;
+}
+
 FPackageHarvester::FHarvestScope FPackageHarvester::EnterConditionalEditorOnlyScope(bool bIsEditorOnly)
 {
 	FHarvestScope Scope(*this);
@@ -249,7 +263,7 @@ FPackageHarvester::FHarvestScope FPackageHarvester::EnterConditionalEditorOnlySc
 		// editor-only objects to be added to the game realm.
 		if (!SaveContext.GetTargetPlatform() || !SaveContext.GetTargetPlatform()->AllowsEditorObjects())
 		{
-			CurrentExportHarvestingRealms.RemoveSwap(ESaveRealm::Game, false /* bAllowShrinking */);
+			CurrentExportHarvestingRealms.RemoveSwap(ESaveRealm::Game, EAllowShrinking::No);
 		}
 	}
 	return Scope;
@@ -298,7 +312,7 @@ FPackageHarvester::FHarvestScope FPackageHarvester::EnterNewExportOnlyScope(UObj
 	CurrentExportHarvestingRealms.RemoveAllSwap([this, Export](ESaveRealm HarvestingRealm)
 		{
 			return SaveContext.GetHarvestedRealm(HarvestingRealm).IsExport(Export);
-		}, false /* bAllowShrinking */);
+		}, EAllowShrinking::No);
 	return Scope;
 }
 
@@ -308,7 +322,7 @@ FPackageHarvester::FHarvestScope FPackageHarvester::EnterNotExcludedScope(TObjec
 	CurrentExportHarvestingRealms.RemoveAllSwap([this, Object](ESaveRealm HarvestingRealm)
 		{
 			return ConditionallyExcludeObjectForRealm(SaveContext, Object, HarvestingRealm);
-		}, false /* bAllowShrinking */);
+		}, EAllowShrinking::No);
 	return Scope;
 }
 
@@ -318,7 +332,7 @@ FPackageHarvester::FHarvestScope FPackageHarvester::EnterNotPreviouslyExcludedSc
 	CurrentExportHarvestingRealms.RemoveAllSwap([this, Object](ESaveRealm HarvestingRealm)
 		{
 			return SaveContext.GetHarvestedRealm(HarvestingRealm).IsExcluded(Object); 
-		}, false /* bAllowShrinking */);
+		}, EAllowShrinking::No);
 	return Scope;
 }
 
@@ -328,8 +342,26 @@ FPackageHarvester::FHarvestScope FPackageHarvester::EnterIncludedScope(TObjectPt
 	CurrentExportHarvestingRealms.RemoveAllSwap([this, Object](ESaveRealm HarvestingRealm)
 		{
 			return !SaveContext.GetHarvestedRealm(HarvestingRealm).IsIncluded(Object);
-		}, false /* bAllowShrinking */);
+		}, EAllowShrinking::No);
 	return Scope;
+}
+
+void FPackageHarvester::GetPreviouslyIncludedRealms(TObjectPtr<UObject> Object,
+	FExportingRealmsArray& OutAlreadyIncluded, FExportingRealmsArray& OutNotAlreadyIncluded)
+{
+	OutAlreadyIncluded.Reset();
+	OutNotAlreadyIncluded.Reset();
+	for (ESaveRealm Realm : CurrentExportHarvestingRealms)
+	{
+		if (SaveContext.GetHarvestedRealm(Realm).IsIncluded(Object))
+		{
+			OutAlreadyIncluded.Add(Realm);
+		}
+		else
+		{
+			OutNotAlreadyIncluded.Add(Realm);
+		}
+	}
 }
 
 bool FPackageHarvester::IsObjNative(TObjectPtr<UObject> InObj)
@@ -595,6 +627,23 @@ void FPackageHarvester::TryHarvestExportInternal(UObject* InObject)
 	}
 
 	HarvestExport(InObject);
+
+	// Objects that has overridable serialization enabled, needs to separately export their subobject independently of the property serializing it.
+	// This is because it needs to make a difference between the pointer that is overridden vs some properties inside the instanced sub object that are overridden.
+	if (FOverridableManager::Get().IsEnabled(*InObject))
+	{
+		TSet<UObject*> InstancedSubObjects;
+		FFindInstancedReferenceSubobjectHelper::GetInstancedSubObjects(InObject, InstancedSubObjects);
+		for (UObject* InstancedSubObject : InstancedSubObjects)
+		{
+			checkf(InstancedSubObject, TEXT("Expecting valid subobject"));
+
+			if (InstancedSubObject->IsInPackage(SaveContext.GetPackage()))
+			{
+				TryHarvestExportInternal(InstancedSubObject);
+			}
+		}
+	}
 }
 
 void FPackageHarvester::TryHarvestImport(TObjectPtr<UObject> InObject)
@@ -621,7 +670,7 @@ void FPackageHarvester::TryHarvestImport(TObjectPtr<UObject> InObject)
 		}
 	}
 
-	// Filter out any realms in which the export is excluded
+	// Filter out any realms in which the import is excluded
 	FHarvestScope NotExcludedScope = EnterNotExcludedScope(InObject);
 	if (NotExcludedScope.IsEmpty())
 	{
@@ -634,13 +683,16 @@ void FPackageHarvester::TryHarvestImport(TObjectPtr<UObject> InObject)
 
 void FPackageHarvester::ProcessImport(TObjectPtr<UObject> InObject)
 {
+	++CurrentExportDependencies.ProcessImportDepth;
+	ON_SCOPE_EXIT{ --CurrentExportDependencies.ProcessImportDepth; };
+
 	bool bIsNative = IsObjNative(InObject);
 	TObjectPtr<UObject> ObjOuter = InObject.GetOuter();
 	UClass* ObjClass = InObject.GetClass();
 	FName ObjName = InObject.GetFName();
 	if (SaveContext.IsCooking())
 	{
-		// The ignore dependencies check is is necessary not to have infinite recursive calls
+		// The ignore dependencies check is necessary not to have infinite recursive calls
 		if (!bIsNative && !CurrentExportDependencies.bIgnoreDependencies)
 		{
 			UClass* ClassObj = Cast<UClass>(InObject);
@@ -656,7 +708,18 @@ void FPackageHarvester::ProcessImport(TObjectPtr<UObject> InObject)
 				for (UObject* ObjTemplate : ObjectTemplates)
 				{
 					// Recurse into templates
-					*this << ObjTemplate;
+					if (ObjTemplate->HasAnyFlags(RF_Public))
+					{
+						*this << ObjTemplate;
+					}
+					else
+					{
+						// CDO Subobjects are supposed to be public; we rely on that because otherwise they could be garbage collected by
+						// SoftGC during cooking and then not saved out, causing a missing export.
+						UE_LOG(LogSavePackage, Warning,
+							TEXT("Invalid subobject on a CDO; we will skip importing it. Found when saving package %s which imported the CDO containing subobject %s."),
+							*SaveContext.GetPackage()->GetName(), *ObjTemplate->GetPathName());
+					}
 				}
 			}
 		}
@@ -705,9 +768,6 @@ void FPackageHarvester::ProcessImport(TObjectPtr<UObject> InObject)
 		HarvestPackageHeaderName(ObjClass->GetFName());
 		HarvestPackageHeaderName(ObjClass->GetOuter()->GetFName());
 	}
-
-	// If we have an illegal reference to an optional object, record it
-	EnterConditionalOptionalObjectScope(InObject);
 }
 
 FString FPackageHarvester::GetArchiveName() const
@@ -755,22 +815,39 @@ FArchive& FPackageHarvester::operator<<(UObject*& Obj)
 		return *this;
 	}
 
-	// if the object is in the save context package, try to tag it as export
-	if (Obj->IsInPackage(SaveContext.GetPackage()))
+	// For realms in which the object has already been included as an import or export,
+	// do reduced work - just the work that needs to be done per referencer that references it.
+	// This is important for performance, because a full harvest of the object can be expensive.
+	// For new realms that have not previously included the object, do a full harvest.
+	FExportingRealmsArray PreviouslyIncludedRealms;
+	FExportingRealmsArray NewRealms;
+	GetPreviouslyIncludedRealms(Obj, PreviouslyIncludedRealms, NewRealms);
+
+	if (!NewRealms.IsEmpty())
 	{
-		TryHarvestExportInternal(Obj);
-	}
-	// Otherwise visit the import
-	else
-	{
-		TryHarvestImport(Obj);
+		// if the object is in the save context package, try to tag it as export for the new realms.
+		// Otherwise visit the import for the new realms.
+		FHarvestScope NewRealmsScope = EnterRealmsArrayScope(NewRealms);
+		if (Obj->IsInPackage(SaveContext.GetPackage()))
+		{
+			TryHarvestExportInternal(Obj);
+		}
+		else
+		{
+			TryHarvestImport(Obj);
+		}
 	}
 
-	// Add a dependency from the current export to Obj if Obj was added as an import or export in any realm
+	// Work that needs to be done per referencing export. This work only needs to be done if Obj is an import or
+	// export in any realm.
 	FHarvestScope ObjIncludedScope = EnterIncludedScope(Obj);
 	if (!ObjIncludedScope.IsEmpty())
 	{
+		// Add a dependency from the current referencing export to Obj
 		HarvestDependency(Obj, IsObjNative(Obj));
+
+		// Validate the reference is allowed (this validation is a side-effect of EnterConditionalOptionalObjectScope)
+		EnterConditionalOptionalObjectScope(Obj);
 	}
 
 	return *this;
@@ -871,29 +948,26 @@ void FPackageHarvester::ResolveOverrides()
 			if (FProperty* Prop = Override.bMarkTransient ? CastField<FProperty>(Override.PropertyPath.GetTyped(FProperty::StaticClass())) : nullptr)
 			{
 				FProperty* InnerProp = Prop;
-				if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Prop))
+				if (const FArrayProperty* ArrayProp = CastField<FArrayProperty>(Prop))
 				{
 					InnerProp = ArrayProp->Inner;
+					checkf(InnerProp, TEXT("Missing InnerProp for ArrayProperty.Name: %s, Type: %s. Package: %s"), *Prop->GetName(), *Prop->GetClass()->GetName(), *GetNameSafe(SaveContext.GetPackage()));
 				}
 
-				// We currently only support object property
-				if (ensureAlwaysMsgf(InnerProp && InnerProp->IsA<FObjectProperty>(), TEXT("Save Overrides supports only object properties at the moment. Name: %s, Type: %s"), *Prop->GetName(), *Prop->GetClass()->GetName()))
+				// Harvest the name of the property, since it is only made transient for the purpose of the package harvest, it will be needed for the LinkerSave
+				HarvestExportDataName(Prop->GetFName());
+
+				Props.Add(Prop);
+
+				if (Prop != InnerProp)
 				{
-					// Harvest the name of the property, since it is only made transient for the purpose of the package harvest, it will be needed for the LinkerSave
-					HarvestExportDataName(Prop->GetFName());
-
-					Props.Add(Prop);
-
-					if (Prop != InnerProp)
+					if (Prop->GetFName() != InnerProp->GetFName())
 					{
-						if (Prop->GetFName() != InnerProp->GetFName())
-						{
-							// Harvest the name of the inner property as well, since it is only made transient for the purpose of the package harvest, it will be needed for the LinkerSave
-							HarvestExportDataName(InnerProp->GetFName());
-						}
-
-						Props.Add(InnerProp);
+						// Harvest the name of the inner property as well, since it is only made transient for the purpose of the package harvest, it will be needed for the LinkerSave
+						HarvestExportDataName(InnerProp->GetFName());
 					}
+
+					Props.Add(InnerProp);
 				}
 			}
 		}
@@ -912,9 +986,10 @@ TMap<UObject*, TSet<FProperty*>> FPackageHarvester::ReleaseTransientPropertyOver
 void FPackageHarvester::HarvestDependency(TObjectPtr<UObject> InObj, bool bIsNative)
 {
 	// if we aren't currently processing an export or the referenced object is a package, do not harvest the dependency
-	if (CurrentExportDependencies.bIgnoreDependencies ||
-		CurrentExportDependencies.CurrentExport == nullptr ||
-		(InObj.GetOuter() == nullptr && InObj.GetClass()->GetFName() == NAME_Package))
+	if (CurrentExportDependencies.ProcessImportDepth > 0 || // Skip if we are processing a transitive import found inside ProcessImport
+		CurrentExportDependencies.bIgnoreDependencies || // Skip in stack-specific cases that put FIgnoreDependenciesScope on the stack
+		CurrentExportDependencies.CurrentExport == nullptr || // Skip if we are not currently processing an export
+		(InObj.GetOuter() == nullptr && InObj.GetClass()->GetFName() == NAME_Package)) // Skip if object is a package
 	{
 		return;
 	}
@@ -992,6 +1067,10 @@ void FPackageHarvester::HarvestImport(TObjectPtr<UObject> InObject)
 	ForEachExportHarvestingRealm([this, InObject](ESaveRealm HarvestingRealm)
 		{
 			SaveContext.GetHarvestedRealm(HarvestingRealm).AddImport(InObject);
+			if (CurrentExportDependencies.ProcessImportDepth == 0)
+			{
+				SaveContext.GetHarvestedRealm(HarvestingRealm).AddDirectImport(InObject);
+			}
 		});
 }
 

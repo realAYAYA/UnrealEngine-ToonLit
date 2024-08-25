@@ -245,7 +245,8 @@ bool UAnimationStateMachineSchema::CreateAutomaticConversionNodeAndConnections(U
 		&& (NodeA->GetInputPin() != NULL) && (NodeA->GetOutputPin() != NULL)
 		&& (NodeB->GetInputPin() != NULL) && (NodeB->GetOutputPin() != NULL))
 	{
-		UAnimStateTransitionNode* TransitionNode = FEdGraphSchemaAction_NewStateNode::SpawnNodeFromTemplate<UAnimStateTransitionNode>(NodeA->GetGraph(), NewObject<UAnimStateTransitionNode>(), FVector2D(0.0f, 0.0f), false);
+		FVector2D Location = (FVector2D(NodeA->NodePosX, NodeA->NodePosY) + FVector2D(NodeB->NodePosX, NodeB->NodePosY)) * 0.5f;
+		UAnimStateTransitionNode* TransitionNode = FEdGraphSchemaAction_NewStateNode::SpawnNodeFromTemplate<UAnimStateTransitionNode>(NodeA->GetGraph(), NewObject<UAnimStateTransitionNode>(), Location, false);
 
 		if (PinA->Direction == EGPD_Output)
 		{

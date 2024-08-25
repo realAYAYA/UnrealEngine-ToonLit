@@ -4,6 +4,7 @@
 
 #include "Subsystems/EngineSubsystem.h"
 #include "Layout/Margin.h"
+#include "UObject/ObjectKey.h"
 #include "Widgets/Layout/Anchors.h"
 #include "Widgets/Layout/SConstraintCanvas.h"
 #include "GameViewportSubsystem.generated.h"
@@ -34,6 +35,13 @@ struct FGameViewportWidgetSlot
 	/** The higher the number, the more on top this widget will be. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Interface")
 	int32 ZOrder = 0;
+
+	/**
+	 * Remove the widget when the Widget's World is removed.
+	 * @note The Widget is added to the GameViewportClient of the Widget's World. The GameViewportClient can migrate from World to World. The widget can stay visible if the owner of the widget also migrate.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "User Interface")
+	bool bAutoRemoveOnWorldRemoved = true;
 };
 
 
@@ -121,11 +129,12 @@ private:
 	void RemoveWidgetInternal(UWidget* Widget, const TWeakPtr<SConstraintCanvas>& FullScreenWidget, const TWeakObjectPtr<ULocalPlayer>& LocalPlayer);
 	void HandleWorldCleanup(UWorld* InWorld, bool bSessionEnded, bool bCleanupResoures);
 	void HandleRemoveWorld(UWorld* InWorld);
+	void HandleLevelRemovedFromWorld(ULevel* InLevel, UWorld* InWorld);
 
 	FMargin GetFullScreenOffsetForWidget(UWidget* Widget) const;
 	TPair<FMargin, bool> GetOffsetAttribute(UWidget* Widget, const FGameViewportWidgetSlot& Slot) const;
 
 private:
-	using FViewportWidgetList = TMap<TWeakObjectPtr<UWidget>, FSlotInfo>;
+	using FViewportWidgetList = TMap<TObjectKey<UWidget>, FSlotInfo>;
 	FViewportWidgetList ViewportWidgets;
 };

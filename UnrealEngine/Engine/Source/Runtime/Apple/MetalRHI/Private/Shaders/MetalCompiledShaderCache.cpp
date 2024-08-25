@@ -7,7 +7,7 @@
 #include "CoreMinimal.h"
 
 THIRD_PARTY_INCLUDES_START
-#include "mtlpp.hpp"
+#include "MetalInclude.h"
 THIRD_PARTY_INCLUDES_END
 
 #include "MetalCompiledShaderKey.h"

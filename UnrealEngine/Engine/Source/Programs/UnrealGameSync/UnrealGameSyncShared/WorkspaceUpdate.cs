@@ -1,13 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Perforce;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -15,7 +13,9 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Runtime.InteropServices;
+using EpicGames.Core;
+using EpicGames.Perforce;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -57,7 +57,7 @@ namespace UnrealGameSync
 	public class PerforceSyncOptions
 	{
 		public const int DefaultNumRetries = 0;
-		public const int DefaultNumThreads = 2;
+		public const int DefaultNumThreads = 4;
 		public const int DefaultTcpBufferSize = 0;
 		public const int DefaultFileBufferSize = 0;
 
@@ -69,7 +69,7 @@ namespace UnrealGameSync
 
 		public int? MaxCommandsPerBatch { get; set; }
 		public int? MaxSizePerBatch { get; set; }
-		
+
 		public int? NumSyncErrorRetries { get; set; }
 
 		public PerforceSyncOptions Clone()
@@ -86,7 +86,7 @@ namespace UnrealGameSync
 		public WorkspaceUpdateOptions Options { get; set; }
 		public BuildConfig EditorConfig { get; set; }
 		public List<string> SyncFilter { get; } = new List<string>();
-		public Dictionary<string, Tuple<IArchiveInfo, string>?> ArchiveTypeToArchive { get; } = new Dictionary<string, Tuple<IArchiveInfo, string>?>();
+		public Dictionary<string, IArchive?> ArchiveTypeToArchive { get; } = new Dictionary<string, IArchive?>();
 		public Dictionary<string, bool> DeleteFiles { get; } = new Dictionary<string, bool>();
 		public Dictionary<string, bool> ClobberFiles { get; } = new Dictionary<string, bool>();
 		public List<ConfigObject> UserBuildStepObjects { get; } = new List<ConfigObject>();
@@ -176,7 +176,7 @@ namespace UnrealGameSync
 
 		public static void ApplyDelta(Dictionary<Guid, bool> categories, Dictionary<Guid, bool> delta)
 		{
-			foreach(KeyValuePair<Guid, bool> pair in delta)
+			foreach (KeyValuePair<Guid, bool> pair in delta)
 			{
 				categories[pair.Key] = pair.Value;
 			}
@@ -207,7 +207,7 @@ namespace UnrealGameSync
 		public string ClientFileName => $"//{ClientName}{BranchPath}{ProjectPath}";
 		public string TelemetryProjectIdentifier => PerforceUtils.GetClientOrDepotDirectoryName(ProjectIdentifier);
 		public DirectoryReference EngineDir => DirectoryReference.Combine(LocalRootPath, "Engine");
-		public DirectoryReference? ProjectDir => ProjectPath.EndsWith(".uproject", StringComparison.OrdinalIgnoreCase)? LocalFileName.Directory : null;
+		public DirectoryReference? ProjectDir => ProjectPath.EndsWith(".uproject", StringComparison.OrdinalIgnoreCase) ? LocalFileName.Directory : null;
 		public DirectoryReference DataFolder => GetDataFolder(LocalRootPath);
 		public DirectoryReference CacheFolder => GetCacheFolder(LocalRootPath);
 
@@ -281,7 +281,7 @@ namespace UnrealGameSync
 				string text;
 				if (FileReference.Exists(settings.LocalProjectPath))
 				{
-					text = FileReference.ReadAllText(settings.LocalProjectPath);
+					text = await FileReference.ReadAllTextAsync(settings.LocalProjectPath, cancellationToken);
 				}
 				else
 				{
@@ -565,11 +565,11 @@ namespace UnrealGameSync
 			public void Dispose() => Release();
 		}
 
-		public static string ShellScriptExt { get; }= RuntimeInformation.IsOSPlatform(OSPlatform.Windows)? "bat" : "sh";
+		public static string ShellScriptExt { get; } = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "bat" : "sh";
 
 		public static Task<int> ExecuteShellCommandAsync(string commandLine, Action<string> processOutput, CancellationToken cancellationToken)
 		{
-			if(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 			{
 				string cmdExe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
 				return Utility.ExecuteProcessAsync(cmdExe, null, $"/C \"{commandLine}\"", processOutput, cancellationToken);
@@ -583,7 +583,7 @@ namespace UnrealGameSync
 
 		public async Task<(WorkspaceUpdateResult, string)> ExecuteAsync(IPerforceSettings perforceSettings, ProjectInfo project, WorkspaceStateWrapper stateMgr, ILogger logger, CancellationToken cancellationToken)
 		{
-			using IPerforceConnection perforce = await PerforceConnection.CreateAsync(perforceSettings, logger);
+			using IPerforceConnection perforce = await PerforceConnection.CreateAsync(new PerforceSettings(perforceSettings) { EnableHangMonitor = false }, logger);
 
 			ReadOnlyWorkspaceState state = stateMgr.Current;
 
@@ -594,7 +594,7 @@ namespace UnrealGameSync
 			{
 				using (TelemetryStopwatch syncTelemetryStopwatch = new TelemetryStopwatch("Workspace_Sync", project.TelemetryProjectIdentifier))
 				{
-					logger.LogInformation("Syncing to {Change}...", Context.ChangeNumber);
+					logger.LogInformation("Syncing to {Change} on {ServerAndPort} as {UserName}...", Context.ChangeNumber, perforceSettings.ServerAndPort, perforceSettings.UserName);
 
 					// Make sure we're logged in
 					PerforceResponse<LoginRecord> loginResponse = await perforce.TryGetLoginStateAsync(cancellationToken);
@@ -666,6 +666,7 @@ namespace UnrealGameSync
 							}
 
 							// Remove all the files that are not included by the filter
+							const int MaxLogFiles = 1000;
 							List<string> removeDepotPaths = new List<string>();
 							foreach (HaveRecord haveFile in haveFiles)
 							{
@@ -674,7 +675,10 @@ namespace UnrealGameSync
 									FileReference fullPath = new FileReference(haveFile.Path);
 									if (MatchFilter(project, fullPath, syncPathsFilter) && !MatchFilter(project, fullPath, userFilter))
 									{
-										logger.LogInformation("  {DepotFile}", haveFile.DepotFile);
+										if (removeDepotPaths.Count <= MaxLogFiles)
+										{
+											logger.LogInformation("  {DepotFile}", haveFile.DepotFile);
+										}
 										removeDepotPaths.Add(haveFile.DepotFile);
 									}
 								}
@@ -682,6 +686,10 @@ namespace UnrealGameSync
 								{
 									// We don't actually care about this when looking for files to remove. Perforce may think that it's synced the path, and silently failed. Just ignore it.
 								}
+							}
+							if (removeDepotPaths.Count > MaxLogFiles)
+							{
+								logger.LogInformation("  ...and {NumFiles} others.", removeDepotPaths.Count - MaxLogFiles);
 							}
 
 							// Check if there are any paths outside the regular sync paths
@@ -781,7 +789,7 @@ namespace UnrealGameSync
 							string syncFilter = Context.Options.HasFlag(WorkspaceUpdateOptions.Sync) ? $"{Context.ChangeNumber}" : $"={Context.ChangeNumber}";
 
 							List<SyncFile> syncFiles = new List<SyncFile>();
-							await foreach (PerforceResponse<SyncRecord> response in perforce.TrySyncAsync(SyncOptions.PreviewOnly, -1, $"{syncPath}@{syncFilter}", cancellationToken))
+							await foreach (PerforceResponse<SyncRecord> response in perforce.TrySyncAsync(SyncOptions.PreviewOnly, -1, 0, -1, -1, -1, -1, $"{syncPath}@{syncFilter}", cancellationToken))
 							{
 								if (!response.Succeeded)
 								{
@@ -823,10 +831,13 @@ namespace UnrealGameSync
 								}
 
 								OpenedRecord record = response.Data;
-								if (record.Action != FileAction.Add || record.Action != FileAction.Branch || record.Action != FileAction.MoveAdd)
+								if (!String.IsNullOrEmpty(record.DepotFile) && !String.IsNullOrEmpty(record.ClientFile))
 								{
-									string relativePath = PerforceUtils.GetClientRelativePath(record.ClientFile);
-									syncFiles.Add(new SyncFile(record.DepotFile, relativePath, 0));
+									if (record.Action != FileAction.Add || record.Action != FileAction.Branch || record.Action != FileAction.MoveAdd)
+									{
+										string relativePath = PerforceUtils.GetClientRelativePath(record.ClientFile);
+										syncFiles.Add(new SyncFile(record.DepotFile, relativePath, 0));
+									}
 								}
 							}
 
@@ -887,7 +898,7 @@ namespace UnrealGameSync
 
 					using (TelemetryStopwatch transferStopwatch = new TelemetryStopwatch("Workspace_Sync_TransferFiles", project.TelemetryProjectIdentifier))
 					{
-						transferStopwatch.AddData(new { MachineName = Environment.MachineName, DomainName = Environment.UserDomainName, ServerAndPort = perforce.Settings.ServerAndPort, UserName = perforce.Settings.UserName, IncludedFiles = syncTree.TotalIncludedFiles, ExcludedFiles = syncTree.TotalExcludedFiles, Size = syncTree.TotalSize, NumThreads = Context.PerforceSyncOptions?.NumThreads ?? PerforceSyncOptions.DefaultNumThreads });
+						transferStopwatch.AddData(new { MachineName = System.Net.Dns.GetHostName(), DomainName = Environment.UserDomainName, ServerAndPort = perforce.Settings.ServerAndPort, UserName = perforce.Settings.UserName, IncludedFiles = syncTree.TotalIncludedFiles, ExcludedFiles = syncTree.TotalExcludedFiles, Size = syncTree.TotalSize, NumThreads = Context.PerforceSyncOptions?.NumThreads ?? PerforceSyncOptions.DefaultNumThreads });
 
 						(WorkspaceUpdateResult, string) syncResult = await SyncFileRevisions(perforce, "Syncing files...", Context, batchBuilder.Batches, remainingDepotPaths, Progress, logger, cancellationToken);
 						if (syncResult.Item1 != WorkspaceUpdateResult.Success)
@@ -912,7 +923,8 @@ namespace UnrealGameSync
 						if (branchOrStreamName != null)
 						{
 							// If it's a virtual stream, take the concrete parent stream instead
-							for (; ; )
+							HashSet<string> versionStreams = new HashSet<string>(Context.ProjectConfigFile.GetValues("Perforce.VersionStreams", Array.Empty<string>()), StringComparer.OrdinalIgnoreCase);
+							while (!versionStreams.Contains(branchOrStreamName))
 							{
 								StreamRecord streamSpec = await perforce.GetStreamAsync(branchOrStreamName, false, cancellationToken);
 								if (streamSpec.Type != "virtual" || streamSpec.Parent == "none" || streamSpec.Parent == null)
@@ -933,43 +945,55 @@ namespace UnrealGameSync
 							branchOrStreamName = PerforceUtils.GetClientOrDepotDirectoryName(files[0].DepotFile);
 						}
 
+						logger.LogInformation("");
+
 						// Get the last code change
 						int codeChangeNumber = Context.CodeChangeNumber ?? 0;
 						if (codeChangeNumber == 0)
 						{
-							string range = $"<={Context.ChangeNumber}";
+							logger.LogInformation("Finding last code change for CL {Number}...", Context.ChangeNumber);
 
-							// First, check the most recent changes for a limited subset of file types (this is a much cheaper query because of revcx optimization in the Perforce server.)
-							int optimisticRangeStart = Context.ChangeNumber - 1000;
-							if (optimisticRangeStart >= 1)
+							// If we are syncing to a newer change than the last code change we found (and it is not the first sync in a workspace)
+							// go head and use the last code change we found as the minimum change in our query
+							int? minChangeNumber = null;
+							if ((Context.ChangeNumber >= state.CurrentCodeChangeNumber) && (state.CurrentCodeChangeNumber > 0))
 							{
-								string[] optimisticFileTypes = { ".cpp" };
+								minChangeNumber = state.CurrentCodeChangeNumber;
+							}
 
-								string[] optimisticCodeFilter = optimisticFileTypes.SelectMany(x => syncPaths.Where(x => x.EndsWith("...", StringComparison.Ordinal)).Select(y => $"{y}{x}@{optimisticRangeStart},{Context.ChangeNumber}")).ToArray();
-								PerforceResponseList<ChangesRecord> optimisticChanges = await perforce.TryGetChangesAsync(ChangesOptions.None, 1, ChangeStatus.Submitted, optimisticCodeFilter, cancellationToken);
+							string[] codeRules = Utility.GetCodeFilter(Context.ProjectConfigFile);
 
-								if (optimisticChanges.Succeeded && optimisticChanges.Count > 0)
+							try
+							{
+								await foreach (PerforceChangeDetails details in Utility.EnumerateChangeDetails(perforce, minChangeNumber, maxChangeNumber: Context.ChangeNumber, syncPaths, codeRules, cancellationToken))
 								{
-									int maxChange = optimisticChanges.Max(x => x.Data.Number);
-									range = $"{maxChange},{Context.ChangeNumber}";
+									if (details.ContainsCode)
+									{
+										codeChangeNumber = details.Number;
+										break;
+									}
+								}
+							}
+							catch (EpicGames.Perforce.PerforceException)
+							{
+								logger.LogInformation("Falling back to the slow way of finding last code change for CL {Number}...", Context.ChangeNumber);
+
+								await foreach (PerforceChangeDetails details in Utility.EnumerateChangeDetails(perforce, null, maxChangeNumber: Context.ChangeNumber, syncPaths, codeRules, cancellationToken))
+								{
+									if (details.ContainsCode)
+									{
+										codeChangeNumber = details.Number;
+										break;
+									}
 								}
 							}
 
-							// If no change found in recent changes, do the full and expensive check.
-							string[] codeFilter = PerforceUtils.CodeExtensions.SelectMany(x => syncPaths.Select(y => $"{y}{x}@{range}")).ToArray();
-							PerforceResponseList<ChangesRecord> codeChanges = await perforce.TryGetChangesAsync(ChangesOptions.None, 1, ChangeStatus.Submitted, codeFilter, cancellationToken);
-
-							if (!codeChanges.Succeeded)
-							{
-								return (WorkspaceUpdateResult.FailedToSync, $"Couldn't determine last code changelist before CL {Context.ChangeNumber}.");
-							}
-							if (codeChanges.Count == 0)
+							if (codeChangeNumber == 0)
 							{
 								return (WorkspaceUpdateResult.FailedToSync, $"Could not find any code changes before CL {Context.ChangeNumber}.");
 							}
 
-							// Get the last code change number
-							codeChangeNumber = codeChanges.Max(x => x.Data.Number);
+							logger.LogInformation("Using code CL {Number}", codeChangeNumber);
 						}
 
 						// Set the version change
@@ -1100,15 +1124,15 @@ namespace UnrealGameSync
 					// Update the current state
 					state = stateMgr.Modify(x =>
 					{
-					if (Context.Options.HasFlag(WorkspaceUpdateOptions.SyncSingleChange))
-					{
+						if (Context.Options.HasFlag(WorkspaceUpdateOptions.SyncSingleChange))
+						{
 							x.AdditionalChangeNumbers.Add(Context.ChangeNumber);
-					}
-					else
-					{
+						}
+						else
+						{
 							x.CurrentChangeNumber = Context.ChangeNumber;
 							x.CurrentCodeChangeNumber = versionChangeNumber;
-					}
+						}
 					});
 
 					// Update the timing info
@@ -1138,32 +1162,47 @@ namespace UnrealGameSync
 					DirectoryReference.CreateDirectory(manifestDirectoryName);
 
 					// Sync and extract (or just remove) the given archives
-					foreach (KeyValuePair<string, Tuple<IArchiveInfo, string>?> archiveTypeAndArchive in Context.ArchiveTypeToArchive)
+					foreach ((string archiveType, IArchive? archive) in Context.ArchiveTypeToArchive)
 					{
-						string archiveType = archiveTypeAndArchive.Key;
-
 						// Remove any existing binaries
 						FileReference manifestFileName = FileReference.Combine(manifestDirectoryName, String.Format("{0}.zipmanifest", archiveType));
 						if (FileReference.Exists(manifestFileName))
 						{
-							logger.LogInformation("Removing {ArchiveType} binaries...", archiveType);
-							Progress.Set(String.Format("Removing {0} binaries...", archiveType), 0.0f);
-							ArchiveUtils.RemoveExtractedFiles(project.LocalRootPath, manifestFileName, Progress, logger);
-							FileReference.Delete(manifestFileName);
-							logger.LogInformation("");
+							bool isNotLastSyncedEditorArchive = archiveType != IArchiveChannel.EditorArchiveType || (archive != null && archive.Key != state.LastSyncEditorArchive);
+							if (isNotLastSyncedEditorArchive)
+							{
+								logger.LogInformation("Removing {ArchiveType} binaries...", archiveType);
+								Progress.Set(String.Format("Removing {0} binaries...", archiveType), 0.0f);
+								ArchiveUtils.RemoveExtractedFiles(project.LocalRootPath, manifestFileName, Progress, logger);
+								FileReference.Delete(manifestFileName);
+								logger.LogInformation("");
+							}
 						}
 
 						// If we have a new depot path, sync it down and extract it
-						if (archiveTypeAndArchive.Value != null)
+						if (archive != null)
 						{
-							IArchiveInfo archiveInfo = archiveTypeAndArchive.Value.Item1;
-							string archiveKey = archiveTypeAndArchive.Value.Item2;
-
-							logger.LogInformation("Syncing {ArchiveType} binaries...", archiveType);
-							Progress.Set(String.Format("Syncing {0} binaries...", archiveType), 0.0f);
-							if (!await archiveInfo.DownloadArchive(perforce, archiveKey, project.LocalRootPath, manifestFileName, logger, Progress, CancellationToken.None))
+							string archiveKey = archive.Key;
+							if (archiveType != IArchiveChannel.EditorArchiveType || archiveKey != state.LastSyncEditorArchive)
 							{
-								return (WorkspaceUpdateResult.FailedToSync, $"Couldn't read {archiveKey}");
+								logger.LogInformation("Syncing {ArchiveType} binaries...", archiveType);
+								Progress.Set(String.Format("Syncing {0} binaries...", archiveType), 0.0f);
+								if (!await archive.DownloadAsync(perforce, project.LocalRootPath, manifestFileName, logger, Progress, CancellationToken.None))
+								{
+									return (WorkspaceUpdateResult.FailedToSync, $"Couldn't read {archiveKey}");
+								}
+								// Update last synced editor archive
+								if (archiveType == IArchiveChannel.EditorArchiveType)
+								{
+									state = stateMgr.Modify(x =>
+									{
+										x.LastSyncEditorArchive = archiveKey;
+									});
+								}
+							}
+							else
+							{
+								logger.LogInformation("Skipping {ArchiveType} binaries download, already downloaded", IArchiveChannel.EditorArchiveType);
 							}
 						}
 					}
@@ -1235,7 +1274,7 @@ namespace UnrealGameSync
 				FileReference editorReceiptFile = ConfigUtils.GetReceiptFile(project, Context.ProjectConfigFile, editorTargetFile, Context.EditorConfig.ToString());
 
 				// Get the build steps
-				bool usingPrecompiledEditor = Context.ArchiveTypeToArchive.TryGetValue(IArchiveInfo.EditorArchiveType, out Tuple<IArchiveInfo, string>? archiveInfo) && archiveInfo != null;
+				bool usingPrecompiledEditor = Context.ArchiveTypeToArchive.TryGetValue(IArchiveChannel.EditorArchiveType, out IArchive? archive) && archive != null;
 				Dictionary<Guid, ConfigObject> buildStepObjects = ConfigUtils.GetDefaultBuildStepObjects(project, editorTargetName, Context.EditorConfig, Context.ProjectConfigFile, usingPrecompiledEditor);
 				BuildStep.MergeBuildStepObjects(buildStepObjects, Context.ProjectConfigFile.GetValues("Build.Step", Array.Empty<string>()).Select(x => new ConfigObject(x)));
 				BuildStep.MergeBuildStepObjects(buildStepObjects, Context.UserBuildStepObjects);
@@ -1292,11 +1331,11 @@ namespace UnrealGameSync
 						logger.LogInformation("{Status}", step.StatusText);
 
 						DirectoryReference batchFilesDir = DirectoryReference.Combine(project.LocalRootPath, "Engine", "Build", "BatchFiles");
-						if(RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+						if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
 						{
 							batchFilesDir = DirectoryReference.Combine(batchFilesDir, "Mac");
 						}
-						else if(RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+						else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
 						{
 							batchFilesDir = DirectoryReference.Combine(batchFilesDir, "Linux");
 						}
@@ -1569,7 +1608,10 @@ namespace UnrealGameSync
 		static Task<(WorkspaceUpdateResult, string)> SyncFileRevisions(IPerforceConnection perforce, string prefix, WorkspaceUpdateContext context, List<string> syncCommands, HashSet<string> remainingDepotPaths, ProgressValue progress, ILogger logger, CancellationToken cancellationToken)
 		{
 			Queue<List<string>> syncCommandLists = new Queue<List<string>>();
-			syncCommandLists.Enqueue(syncCommands);
+			foreach (IReadOnlyList<string> batch in syncCommands.Batch(2000))
+			{
+				syncCommandLists.Enqueue(batch.ToList());
+			}
 			return SyncFileRevisions(perforce, prefix, context, syncCommandLists, remainingDepotPaths, progress, logger, cancellationToken);
 		}
 
@@ -1638,7 +1680,7 @@ namespace UnrealGameSync
 		{
 			lock (state)
 			{
-				string message = String.Format("{0} ({1}/{2})", prefix, state.TotalDepotPaths - state.RemainingDepotPaths.Count, state.TotalDepotPaths);
+				string message = String.Format("{0} ({1:n0}/{2:n0})", prefix, state.TotalDepotPaths - state.RemainingDepotPaths.Count, state.TotalDepotPaths);
 				float fraction = Math.Min((float)(state.TotalDepotPaths - state.RemainingDepotPaths.Count) / (float)state.TotalDepotPaths, 1.0f);
 				progress.Set(message, fraction);
 			}
@@ -1650,7 +1692,7 @@ namespace UnrealGameSync
 			{
 				state.RemainingDepotPaths.Remove(record.DepotFile.ToString());
 
-				string message = String.Format("{0} ({1}/{2})", prefix, state.TotalDepotPaths - state.RemainingDepotPaths.Count, state.TotalDepotPaths);
+				string message = String.Format("{0} ({1:n0}/{2:n0})", prefix, state.TotalDepotPaths - state.RemainingDepotPaths.Count, state.TotalDepotPaths);
 				float fraction = Math.Min((float)(state.TotalDepotPaths - state.RemainingDepotPaths.Count) / (float)state.TotalDepotPaths, 1.0f);
 				progress.Set(message, fraction);
 
@@ -1680,17 +1722,17 @@ namespace UnrealGameSync
 				WorkspaceUpdateResult result = WorkspaceUpdateResult.FailedToSync;
 				string statusMessage = "";
 
-				int retries = context.PerforceSyncOptions!.NumSyncErrorRetries ?? PerforceSyncOptions.DefaultNumSyncErrorRetries;
-
-				while (retries >= 0 && WorkspaceUpdateResult.FailedToSync == result)
+				int maxRetries = context.PerforceSyncOptions?.NumSyncErrorRetries ?? PerforceSyncOptions.DefaultNumSyncErrorRetries;
+				for (int attempt = 0; ; attempt++)
 				{
 					// Sync the files
-					(result, statusMessage) = await StaticSyncFileRevisions(perforce, context, syncCommands, record => syncOutput(record, threadLog), cancellationToken);
-
-					if (WorkspaceUpdateResult.FailedToSync == result && --retries >= 0)
+					string? errorMessage;
+					(result, statusMessage, errorMessage) = await StaticSyncFileRevisions(perforce, context, syncCommands, record => syncOutput(record, threadLog), cancellationToken);
+					if (result != WorkspaceUpdateResult.FailedToSync || attempt >= maxRetries)
 					{
-						threadLog.LogWarning("Sync Errors occurred.  Retrying: Remaining retries {Count}", retries);
+						break;
 					}
+					threadLog.LogWarning("Sync error ({Message}); retrying... ({Count}/{MaxCount})", errorMessage ?? "unknown", attempt + 1, maxRetries);
 				}
 
 				// If it failed, try to set it on the state if nothing else has failed first
@@ -1709,10 +1751,10 @@ namespace UnrealGameSync
 			}
 		}
 
-		static async Task<(WorkspaceUpdateResult, string)> StaticSyncFileRevisions(IPerforceConnection perforce, WorkspaceUpdateContext context, List<string> syncCommands, Action<SyncRecord> syncOutput, CancellationToken cancellationToken)
+		static async Task<(WorkspaceUpdateResult, string, string?)> StaticSyncFileRevisions(IPerforceConnection perforce, WorkspaceUpdateContext context, List<string> syncCommands, Action<SyncRecord> syncOutput, CancellationToken cancellationToken)
 		{
-			// Sync them all
-			List<PerforceResponse<SyncRecord>> responses = await perforce.TrySyncAsync(SyncOptions.None, -1, syncCommands, cancellationToken).ToListAsync(cancellationToken);
+			// Sync them all. Explicitly disable parallel syncing here to avoid shelling out to p4.exe.
+			List<PerforceResponse<SyncRecord>> responses = await perforce.TrySyncAsync(SyncOptions.None, -1, 0, -1, -1, -1, -1, syncCommands, cancellationToken).ToListAsync(cancellationToken);
 
 			List<string> tamperedFiles = new List<string>();
 			foreach (PerforceResponse<SyncRecord> response in responses)
@@ -1732,9 +1774,7 @@ namespace UnrealGameSync
 				}
 				else
 				{
-					return (WorkspaceUpdateResult.FailedToSync, "Aborted sync due to errors.. Currently retries on sync error is set at " +
-						((null != context.PerforceSyncOptions) ? context.PerforceSyncOptions!.NumSyncErrorRetries : 0).ToString() +
-						" in Options->Application Settings...->Advanced.  You might want to set it higher if you are on a bad connection.");
+					return (WorkspaceUpdateResult.FailedToSync, $"Aborted sync due to error ({response}). If you are on an unreliable connection, you may wish to increase the number of retries from Options > Application Settings... > Advanced.", response.ToString());
 				}
 			}
 
@@ -1759,7 +1799,7 @@ namespace UnrealGameSync
 					}
 					if (numNewFilesToClobber > 0)
 					{
-						return (WorkspaceUpdateResult.FilesToClobber, $"Cancelled sync after checking files to clobber ({numNewFilesToClobber} new files).");
+						return (WorkspaceUpdateResult.FilesToClobber, $"Cancelled sync after checking files to clobber ({numNewFilesToClobber} new files).", null);
 					}
 				}
 				foreach (string tamperedFile in tamperedFiles)
@@ -1767,17 +1807,17 @@ namespace UnrealGameSync
 					bool shouldClobber = (context.Options & WorkspaceUpdateOptions.Clobber) != 0 || context.ClobberFiles[tamperedFile];
 					if (shouldClobber)
 					{
-						List<PerforceResponse<SyncRecord>> response = await perforce.TrySyncAsync(SyncOptions.Force, -1, tamperedFile, cancellationToken).ToListAsync(cancellationToken);
+						List<PerforceResponse<SyncRecord>> response = await perforce.TrySyncAsync(SyncOptions.Force, -1, 0, -1, -1, -1, -1, tamperedFile, cancellationToken).ToListAsync(cancellationToken);
 						if (!response.Succeeded())
 						{
-							return (WorkspaceUpdateResult.FailedToSync, $"Couldn't sync {tamperedFile}.");
+							return (WorkspaceUpdateResult.FailedToSync, $"Couldn't sync {tamperedFile}.", response.ToString());
 						}
 					}
 				}
 			}
 
 			// All succeeded
-			return (WorkspaceUpdateResult.Success, "Succeeded.");
+			return (WorkspaceUpdateResult.Success, "Succeeded.", null);
 		}
 
 		public static async Task<ConfigFile> ReadProjectConfigFile(DirectoryReference localRootPath, FileReference selectedLocalFileName, ILogger logger)
@@ -1836,7 +1876,7 @@ namespace UnrealGameSync
 		static async Task<bool> HasModifiedSourceFiles(IPerforceConnection perforce, ProjectInfo project, CancellationToken cancellationToken)
 		{
 			List<OpenedRecord> openFiles = await perforce.OpenedAsync(OpenedOptions.None, project.ClientRootPath + "/...", cancellationToken).ToListAsync(cancellationToken);
-			if (openFiles.Any(x => x.DepotFile.IndexOf("/Source/", StringComparison.OrdinalIgnoreCase) != -1))
+			if (openFiles.Any(x => x.DepotFile.Contains("/Source/", StringComparison.OrdinalIgnoreCase)))
 			{
 				return true;
 			}
@@ -1981,7 +2021,7 @@ namespace UnrealGameSync
 		{
 			try
 			{
-				if (File.Exists(localPath) && File.ReadAllText(localPath) == newText)
+				if (File.Exists(localPath) && await File.ReadAllTextAsync(localPath, cancellationToken) == newText)
 				{
 					logger.LogInformation("Ignored {FileName}; contents haven't changed", localPath);
 				}
@@ -1993,7 +2033,7 @@ namespace UnrealGameSync
 					{
 						await perforce.SyncAsync(depotPath + "#0", cancellationToken).ToListAsync(cancellationToken);
 					}
-					File.WriteAllText(localPath, newText);
+					await File.WriteAllTextAsync(localPath, newText, cancellationToken);
 					logger.LogInformation("Written {FileName}", localPath);
 				}
 				return true;

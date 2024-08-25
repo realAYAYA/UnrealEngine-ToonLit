@@ -23,7 +23,7 @@
 #include "MuCOE/CustomizableObjectCustomSettings.h"
 #include "MuCOE/CustomizableObjectEditorActions.h"
 #include "MuCOE/CustomizableObjectEditorLogger.h"
-#include "MuCOE/CustomizableObjectEditorModule.h"
+#include "MuCO/ICustomizableObjectEditorModule.h"
 #include "MuCOE/CustomizableObjectEditorNodeContextCommands.h"
 #include "MuCOE/CustomizableObjectEditorStyle.h"
 #include "MuCOE/CustomizableObjectEditorViewportClient.h"
@@ -51,12 +51,15 @@
 #include "MuCOE/SCustomizableObjectEditorViewport.h"
 #include "PropertyEditorModule.h"
 #include "ScopedTransaction.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "UObject/EnumProperty.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Input/STextComboBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "SMutableObjectViewer.h"
 
 class FAdvancedPreviewScene;
 class FWorkspaceItem;
@@ -145,14 +148,6 @@ void FCustomizableObjectEditor::UnregisterTabSpawners(const TSharedRef<class FTa
 }
 
 
-TSharedRef<FCustomizableObjectEditor> FCustomizableObjectEditor::Create(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, UCustomizableObject* ObjectToEdit)
-{
-	TSharedRef<FCustomizableObjectEditor> Editor = MakeShareable(new FCustomizableObjectEditor(*ObjectToEdit));
-	Editor->InitCustomizableObjectEditor(Mode, InitToolkitHost);
-	return Editor;
-}
-
-
 FCustomizableObjectEditor::~FCustomizableObjectEditor()
 {
 	if (PreviewInstance && HelperCallback)
@@ -163,9 +158,9 @@ FCustomizableObjectEditor::~FCustomizableObjectEditor()
 
 	if (PreviewInstance)
 	{
-		if (PreviewInstance->bSelectedProfileDirty && PreviewInstance->SelectedProfileIndex != INDEX_NONE)
+		if (PreviewInstance->GetPrivate()->bSelectedProfileDirty && PreviewInstance->GetPrivate()->SelectedProfileIndex != INDEX_NONE)
 		{
-			PreviewInstance->SaveParametersToProfile(PreviewInstance->SelectedProfileIndex);
+			PreviewInstance->GetPrivate()->SaveParametersToProfile(PreviewInstance->GetPrivate()->SelectedProfileIndex);
 		}
 	}
 	
@@ -185,7 +180,9 @@ FCustomizableObjectEditor::~FCustomizableObjectEditor()
 		Compiler.ForceFinishBeforeStartCompilation(CustomizableObject);
 	}
 
-	FCoreUObjectDelegates::OnObjectModified.Remove(OnObjectModifiedHandle);
+	FCoreUObjectDelegates::OnObjectModified.RemoveAll(this);
+
+	CustomizableObject->GetPrivate()->Status.GetOnStateChangedDelegate().RemoveAll(this);
 
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 	AssetRegistryModule.Get().OnFilesLoaded().RemoveAll(this);
@@ -198,15 +195,10 @@ FCustomizableObjectEditor::~FCustomizableObjectEditor()
 
 void FCustomizableObjectEditor::InitCustomizableObjectEditor(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost)
 {
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	if (AssetRegistryModule.Get().IsLoadingAssets())
-	{
-		AssetRegistryModule.Get().OnFilesLoaded().AddRaw(this, &FCustomizableObjectEditor::OnAssetRegistryLoadComplete);
-	}
-	else
-	{
-		AssetRegistryLoaded = true;
-	}
+	ProjectorParameter = NewObject<UProjectorParameter>();
+
+	CustomSettings = NewObject<UCustomSettings>();
+	CustomSettings->SetEditor(SharedThis(this));
 
 	HelperCallback = nullptr;
 
@@ -228,13 +220,12 @@ void FCustomizableObjectEditor::InitCustomizableObjectEditor(const EToolkitMode:
 	FDetailsViewArgs DetailsViewArgs;
 	DetailsViewArgs.NotifyHook = this;
 	DetailsViewArgs.NameAreaSettings = FDetailsViewArgs::ENameAreaSettings::HideNameArea;
-	DetailsViewArgs.bAllowSearch = false;
+	DetailsViewArgs.bAllowSearch = true;
 	//DetailsViewArgs.bShowActorLabel = false;
 	DetailsViewArgs.bShowObjectLabel = false;
 	DetailsViewArgs.bShowScrollBar = false;
 
 	CustomizableObjectDetailsView = PropPlugin.CreateDetailView( DetailsViewArgs );
-	CustomizableObjectDetailsView->SetObject(CustomizableObject);
 
 	CustomizableInstanceDetailsView = PropPlugin.CreateDetailView( DetailsViewArgs );
 	GraphNodeDetailsView = PropPlugin.CreateDetailView(DetailsViewArgs);
@@ -243,7 +234,6 @@ void FCustomizableObjectEditor::InitCustomizableObjectEditor(const EToolkitMode:
 		.CustomizableObjectEditor(SharedThis(this));
 
 	Viewport->SetCustomizableObject(CustomizableObject);
-	Viewport->SetAssetRegistryLoaded(AssetRegistryLoaded);
 	ViewportClient = Viewport->GetViewportClient();
 
 	// \TODO: Create only when needed?
@@ -252,20 +242,13 @@ void FCustomizableObjectEditor::InitCustomizableObjectEditor(const EToolkitMode:
 	// \TODO: Create only when needed?
 	TagExplorer = SNew(SCustomizableObjectEditorTagExplorer).CustomizableObjectEditor(this);
 	
-	AdditionalSettings = NewObject<UCustomizableObjectEmptyClassForSettings>();
-	if(AdditionalSettings != nullptr)
-		{
-		AdditionalSettings->Viewport = Viewport;
-		AdditionalSettings->PreviewSkeletalMeshComp = !PreviewSkeletalMeshComponents.IsEmpty() ? &PreviewSkeletalMeshComponents[0] : nullptr;
-	}
-
 	FAdvancedPreviewSceneModule& AdvancedPreviewSceneModule = FModuleManager::LoadModuleChecked<FAdvancedPreviewSceneModule>("AdvancedPreviewScene");
 
 	TSharedPtr<FAdvancedPreviewScene> AdvancedPreviewScene = StaticCastSharedPtr<FAdvancedPreviewScene>(Viewport->GetPreviewScene());
 
 	CustomizableObjectEditorAdvancedPreviewSettings =
 		SNew(SCustomizableObjectEditorAdvancedPreviewSettings, AdvancedPreviewScene.ToSharedRef())
-		.AdditionalSettings(AdditionalSettings)
+		.CustomSettings(CustomSettings)
 		.CustomizableObjectEditor(this);
 	CustomizableObjectEditorAdvancedPreviewSettings->LoadProfileEnvironment();
 	AdvancedPreviewSettingsWidget = CustomizableObjectEditorAdvancedPreviewSettings;
@@ -325,12 +308,14 @@ void FCustomizableObjectEditor::InitCustomizableObjectEditor(const EToolkitMode:
 					->SetHideTabWell(true)
 				)
 			)
-		)
+		)	
 	);
 
 	const bool bCreateDefaultStandaloneMenu = true;
 	const bool bCreateDefaultToolbar = true;
 	FAssetEditorToolkit::InitAssetEditor( Mode, InitToolkitHost, CustomizableObjectEditorAppIdentifier, StandaloneDefaultLayout, bCreateDefaultStandaloneMenu, bCreateDefaultToolbar, CustomizableObject);
+	
+	CustomizableObjectDetailsView->SetObject(CustomizableObject); // Can only be called after initializing the Asset Editor
 
 	ExtendToolbar();
 	RegenerateMenusAndToolbars();
@@ -338,19 +323,13 @@ void FCustomizableObjectEditor::InitCustomizableObjectEditor(const EToolkitMode:
 	// Clears selection highlight.
 	OnObjectPropertySelectionChanged(NULL);
 	OnInstancePropertySelectionChanged(NULL);
-	OnObjectModifiedHandle = FCoreUObjectDelegates::OnObjectModified.AddRaw(this, &FCustomizableObjectEditor::OnObjectModified);
+	FCoreUObjectDelegates::OnObjectModified.AddRaw(this, &FCustomizableObjectEditor::OnObjectModified);
 
-	FCoreUObjectDelegates::OnObjectPropertyChanged.AddSP(this, &FCustomizableObjectEditor::OnObjectPropertyChanged);
+	UCustomizableObjectPrivate* CustomizableObjectPrivate = CustomizableObject->GetPrivate();
 
-	// Compile for the first time if necessary
-	if (!CustomizableObject->IsCompiled())
-	{
-		CompileObject();
-	}
-	else
-	{
-		CreatePreviewInstance();
-	}
+	CustomizableObjectPrivate->Status.GetOnStateChangedDelegate().AddRaw(this, &FCustomizableObjectEditor::OnCustomizableObjectStatusChanged);
+	const FCustomizableObjectStatusTypes::EState CurrentStatus = CustomizableObjectPrivate->Status.Get();
+	OnCustomizableObjectStatusChanged(CurrentStatus, CurrentStatus);
 }
 
 
@@ -366,7 +345,7 @@ FText FCustomizableObjectEditor::GetBaseToolkitName() const
 }
 
 
-void FCustomizableObjectEditor::SelectNode(const UCustomizableObjectNode* Node)
+void FCustomizableObjectEditor::SelectNode(const UEdGraphNode* Node)
 {
 	GraphEditor->JumpToNode(Node);
 }
@@ -421,8 +400,6 @@ void FCustomizableObjectEditor::CreatePreviewInstance()
 	HelperCallback = NewObject<UUpdateClassWrapper>(GetTransientPackage());
 	PreviewInstance->UpdatedDelegate.AddDynamic(HelperCallback, &UUpdateClassWrapper::DelegatedCallback);
 
-	PreviewStaticMeshComponent = nullptr;
-
 	if (CustomizableObject->ReferenceSkeletalMeshes.Num())
 	{
 		CreatePreviewComponents();
@@ -431,24 +408,8 @@ void FCustomizableObjectEditor::CreatePreviewInstance()
 		{
 			HelperCallback->Delegate.BindSP(this, &FCustomizableObjectEditor::OnUpdatePreviewInstance);
 
-			if (AssetRegistryLoaded)
-			{
-				// Asset loading works in the Main Thread, there's a risk the sync loading could put to sleep the thread while
-				// waiting for the asset registry to load the content (that never gets executed)
-				Viewport->SetAssetRegistryLoaded(true);
-				PreviewInstance->SetBuildParameterRelevancy(true);
-				PreviewInstance->UpdateSkeletalMeshAsync(true, true);
-			}
-			else
-			{
-				FNotificationInfo Info(NSLOCTEXT("CustomizableObject", "CustomizableObjectCompileTryLater", "Please wait until asset registry loads all assets"));
-				Info.bFireAndForget = true;
-				Info.bUseThrobber = true;
-				Info.FadeOutDuration = 1.0f;
-				Info.ExpireDuration = 2.0f;
-				FSlateNotificationManager::Get().AddNotification(Info);
-				UpdateSkeletalMeshAfterAssetLoaded = true;
-			}
+			PreviewInstance->SetBuildParameterRelevancy(true);
+			PreviewInstance->UpdateSkeletalMeshAsync(true, true);
 		}
 		else
 		{
@@ -472,21 +433,15 @@ void FCustomizableObjectEditor::CreatePreviewInstance()
 }
 
 
-void FCustomizableObjectEditor::OnPreviewInstanceUpdated()
-{
-	RefreshViewport();
-}
-
-
 void FCustomizableObjectEditor::AddReferencedObjects( FReferenceCollector& Collector )
 {
 	Collector.AddReferencedObject( CustomizableObject );
 	Collector.AddReferencedObject( PreviewInstance );
 	Collector.AddReferencedObjects( PreviewCustomizableSkeletalComponents );
-	Collector.AddReferencedObject( PreviewStaticMeshComponent );
 	Collector.AddReferencedObjects( PreviewSkeletalMeshComponents );
 	Collector.AddReferencedObject( HelperCallback );
-	Collector.AddReferencedObject( AdditionalSettings );
+	Collector.AddReferencedObject( ProjectorParameter );
+	Collector.AddReferencedObject( CustomSettings );
 }
 
 
@@ -572,7 +527,7 @@ void FCustomizableObjectEditor::CreateGraphEditorWidget(UEdGraph* InGraph)
 	// Check whether the graph has a base node and create one if it doesn't since it is required
 	bool bGraphHasBase = false;
 
-	for (TObjectPtr<UEdGraphNode> AuxNode : InGraph->Nodes)
+	for (const TObjectPtr<UEdGraphNode>& AuxNode : InGraph->Nodes)
 	{
 		UCustomizableObjectNodeObject* CustomizableObjectNodeObject = Cast<UCustomizableObjectNodeObject>(AuxNode);
 
@@ -747,28 +702,13 @@ UCustomizableObjectInstance* FCustomizableObjectEditor::GetPreviewInstance()
 
 void FCustomizableObjectEditor::CompileObjectUserPressedButton()
 {
-	if (UCustomizableObjectSystem::GetInstance()->IsCompilationDisabled())
-	{
-		UE_LOG(LogMutable, Warning, TEXT("Mutable compile is disabled in Editor. To enable it, go to Project Settings -> Plugins -> Mutable and unmark the option Disable Mutable Compile In Editor"));
-		return;
-	}
-
 	Compiler.ClearAllCompileOnlySelectedOption();
-
-	CustomizableObject->CompileOptions.bCheckChildrenGuids = true;
 	CompileObject();
-	CustomizableObject->CompileOptions.bCheckChildrenGuids = false;
 }
 
 
 void FCustomizableObjectEditor::CompileOnlySelectedObjectUserPressedButton()
 {
-	if (UCustomizableObjectSystem::GetInstance()->IsCompilationDisabled())
-	{
-		UE_LOG(LogMutable, Warning, TEXT("Mutable compile is disabled in Editor. To enable it, go to Project Settings -> Plugins -> Mutable and unmark the option Disable Mutable Compile In Editor"));
-		return;
-	}
-
 	if (PreviewInstance)
 	{
 		Compiler.ClearAllCompileOnlySelectedOption();
@@ -792,13 +732,13 @@ void FCustomizableObjectEditor::BindCommands()
 	ToolkitCommands->MapAction(
 		Commands.Compile,
 		FExecuteAction::CreateSP(this, &FCustomizableObjectEditor::CompileObjectUserPressedButton),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateStatic(&UCustomizableObjectSystem::IsActive),
 		FIsActionChecked());
 
 	ToolkitCommands->MapAction(
 		Commands.CompileOnlySelected,
 		FExecuteAction::CreateSP(this, &FCustomizableObjectEditor::CompileOnlySelectedObjectUserPressedButton),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateStatic(&UCustomizableObjectSystem::IsActive),
 		FIsActionChecked());
 
 	// Compile and options
@@ -807,12 +747,6 @@ void FCustomizableObjectEditor::BindCommands()
 		FExecuteAction::CreateSP(this, &FCustomizableObjectEditor::ResetCompileOptions),
 		FCanExecuteAction(),
 		FIsActionChecked());
-
-	ToolkitCommands->MapAction(
-		Commands.CompileOptions_EnableTextureCompression,
-		FExecuteAction::CreateSP(this, &FCustomizableObjectEditor::CompileOptions_TextureCompression_Toggled),
-		FCanExecuteAction(),
-		FIsActionChecked::CreateSP(this, &FCustomizableObjectEditor::CompileOptions_TextureCompression_IsChecked));
 
 	ToolkitCommands->MapAction(
 		Commands.CompileOptions_UseDiskCompilation,
@@ -932,6 +866,374 @@ void FCustomizableObjectEditor::ReconstructAllChildNodes(UCustomizableObjectNode
 }
 
 
+UProjectorParameter* FCustomizableObjectEditor::GetProjectorParameter()
+{
+	return ProjectorParameter;
+}
+
+
+UCustomSettings* FCustomizableObjectEditor::GetCustomSettings()
+{
+	return CustomSettings;
+}
+
+
+void FCustomizableObjectEditor::SelectSingleNode(UCustomizableObjectNode& Node)
+{
+	FGraphPanelSelectionSet SelectedNodes = GraphEditor->GetSelectedNodes();
+	if (SelectedNodes.Num() != 1 || Cast<UCustomizableObjectNode>(*SelectedNodes.CreateIterator()) != &Node)
+	{
+		GraphEditor->ClearSelectionSet();
+		GraphEditor->SetNodeSelection(&Node, true);
+	}
+}
+
+
+void FCustomizableObjectEditor::HideGizmo()
+{
+	HideGizmoProjectorNodeProjectorConstant();
+	HideGizmoProjectorNodeProjectorParameter();
+	HideGizmoProjectorParameter();
+	HideGizmoClipMorph();
+	HideGizmoClipMesh();
+	HideGizmoLight();
+}
+
+
+void FCustomizableObjectEditor::ShowGizmoProjectorNodeProjectorConstant(UCustomizableObjectNodeProjectorConstant& Node)
+{
+	if (GizmoType != EGizmoType::NodeProjectorConstant)
+	{
+		HideGizmo();
+	}
+
+	GizmoType = EGizmoType::NodeProjectorConstant;
+
+	SelectSingleNode(Node);
+	
+	FProjectorTypeDelegate ProjectorTypeDelegate;
+	ProjectorTypeDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::GetProjectorType);		
+
+	FWidgetColorDelegate WidgetColorDelegate;
+	WidgetColorDelegate.BindLambda([]() { return FColor::Red; });
+
+	FWidgetLocationDelegate WidgetLocationDelegate;
+	WidgetLocationDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::GetProjectorPosition);
+
+	FOnWidgetLocationChangedDelegate OnWidgetLocationChangedDelegate;
+	OnWidgetLocationChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::SetProjectorPosition);
+
+	FWidgetDirectionDelegate WidgetDirectionDelegate;
+	WidgetDirectionDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::GetProjectorDirection);
+
+	FOnWidgetDirectionChangedDelegate OnWidgetDirectionChangedDelegate;
+	OnWidgetDirectionChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::SetProjectorDirection);
+
+	FWidgetUpDelegate WidgetUpDelegate;
+	WidgetUpDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::GetProjectorUp);
+
+	FOnWidgetUpChangedDelegate OnWidgetUpChangedDelegate;
+	OnWidgetUpChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::SetProjectorUp);
+
+	FWidgetScaleDelegate WidgetScaleDelegate;
+	WidgetScaleDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::GetProjectorScale);
+
+	FOnWidgetScaleChangedDelegate OnWidgetScaleChangedDelegate;
+	OnWidgetScaleChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::SetProjectorScale);
+
+	FWidgetAngleDelegate WidgetAngleDelegate;
+	WidgetAngleDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorConstant::GetProjectorAngle);
+
+	FWidgetTrackingStartedDelegate WidgetTrackingStartedDelegate;
+	WidgetTrackingStartedDelegate.BindLambda([WeakNode = MakeWeakObjectPtr(&Node)]()
+	{
+		if (UCustomizableObjectNodeProjectorConstant* Node = WeakNode.Get())
+		{
+			Node->Modify();
+		}
+	});
+	
+	Viewport->ShowGizmoProjector(WidgetLocationDelegate, OnWidgetLocationChangedDelegate,
+		WidgetDirectionDelegate, OnWidgetDirectionChangedDelegate,
+		WidgetUpDelegate, OnWidgetUpChangedDelegate,
+		WidgetScaleDelegate, OnWidgetScaleChangedDelegate,
+		WidgetAngleDelegate,
+		ProjectorTypeDelegate,
+		WidgetColorDelegate,
+		WidgetTrackingStartedDelegate);
+}
+
+
+void FCustomizableObjectEditor::HideGizmoProjectorNodeProjectorConstant()
+{
+	if (GizmoType != EGizmoType::NodeProjectorConstant)
+	{
+		return;
+	}
+
+	GizmoType = EGizmoType::Hidden;
+	
+	Viewport->HideGizmoProjector();
+
+	const FGraphPanelSelectionSet SelectedNodes = GraphEditor->GetSelectedNodes();
+	for (FGraphPanelSelectionSet::TConstIterator NodeIt( SelectedNodes ); NodeIt; ++NodeIt)
+	{
+		const UObject* Node = *NodeIt;
+		if (Node->IsA<UCustomizableObjectNodeProjectorConstant>())
+		{
+			GraphEditor->ClearSelectionSet();
+			break;
+		}
+	}			
+}
+
+
+void FCustomizableObjectEditor::ShowGizmoProjectorNodeProjectorParameter(UCustomizableObjectNodeProjectorParameter& Node)
+{
+	if (GizmoType != EGizmoType::NodeProjectorParameter)
+	{
+		HideGizmo();
+		GizmoType = EGizmoType::NodeProjectorParameter;
+	}
+
+	SelectSingleNode(Node);
+	
+	FProjectorTypeDelegate ProjectorTypeDelegate;
+	ProjectorTypeDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::GetProjectorType);		
+
+	FWidgetColorDelegate WidgetColorDelegate;
+	WidgetColorDelegate.BindLambda([]() { return FColor::Red; });
+	
+	FWidgetLocationDelegate WidgetLocationDelegate;
+	WidgetLocationDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::GetProjectorDefaultPosition);
+
+	FOnWidgetLocationChangedDelegate OnWidgetLocationChangedDelegate;
+	OnWidgetLocationChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::SetProjectorDefaultPosition);
+
+	FWidgetDirectionDelegate WidgetDirectionDelegate;
+	WidgetDirectionDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::GetProjectorDefaultDirection);
+
+	FOnWidgetDirectionChangedDelegate OnWidgetDirectionChangedDelegate;
+	OnWidgetDirectionChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::SetProjectorDefaultDirection);
+
+	FWidgetUpDelegate WidgetUpDelegate;
+	WidgetUpDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::GetProjectorDefaultUp);
+
+	FOnWidgetUpChangedDelegate OnWidgetUpChangedDelegate;
+	OnWidgetUpChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::SetProjectorDefaultUp);
+
+	FWidgetScaleDelegate WidgetScaleDelegate;
+	WidgetScaleDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::GetProjectorDefaultScale);
+
+	FOnWidgetScaleChangedDelegate OnWidgetScaleChangedDelegate;
+	OnWidgetScaleChangedDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::SetProjectorDefaultScale);
+
+	FWidgetAngleDelegate WidgetAngleDelegate;
+	WidgetAngleDelegate.BindUObject(&Node, &UCustomizableObjectNodeProjectorParameter::GetProjectorDefaultAngle);
+	
+	FWidgetTrackingStartedDelegate WidgetTrackingStartedDelegate;
+	WidgetTrackingStartedDelegate.BindLambda([WeakNode = MakeWeakObjectPtr(&Node)]()
+	{
+		if (UCustomizableObjectNodeProjectorParameter* Node = WeakNode.Get())
+		{
+			Node->Modify();
+		}
+	});
+	
+	Viewport->ShowGizmoProjector(WidgetLocationDelegate, OnWidgetLocationChangedDelegate,
+		WidgetDirectionDelegate, OnWidgetDirectionChangedDelegate,
+		WidgetUpDelegate, OnWidgetUpChangedDelegate,
+		WidgetScaleDelegate, OnWidgetScaleChangedDelegate,
+		WidgetAngleDelegate,
+		ProjectorTypeDelegate,
+		WidgetColorDelegate,
+		WidgetTrackingStartedDelegate);
+}
+
+
+void FCustomizableObjectEditor::HideGizmoProjectorNodeProjectorParameter()
+{
+	if (GizmoType != EGizmoType::NodeProjectorParameter)
+	{
+		return;
+	}
+
+	GizmoType = EGizmoType::Hidden;
+
+	Viewport->HideGizmoProjector();
+
+	const FGraphPanelSelectionSet SelectedNodes = GraphEditor->GetSelectedNodes();
+	for (FGraphPanelSelectionSet::TConstIterator NodeIt( SelectedNodes ); NodeIt; ++NodeIt)
+	{
+		const UObject* Node = *NodeIt;
+		if (Node->IsA<UCustomizableObjectNodeProjectorParameter>())
+		{
+			GraphEditor->ClearSelectionSet();
+			break;
+		}
+	}	
+}
+
+
+void FCustomizableObjectEditor::ShowGizmoProjectorParameter(const FString& ParamName, int32 RangeIndex)
+{
+	if (GizmoType != EGizmoType::ProjectorParameter)
+	{
+		HideGizmo();		
+		GizmoType = EGizmoType::ProjectorParameter;
+	}
+	
+	FCustomizableObjectInstanceEditor::ShowGizmoProjectorParameter(ParamName, RangeIndex, SharedThis(this), Viewport, CustomizableInstanceDetailsView, ProjectorParameter, PreviewInstance);
+}
+
+
+void FCustomizableObjectEditor::HideGizmoProjectorParameter()
+{
+	if (GizmoType != EGizmoType::ProjectorParameter)
+	{
+		return;	
+	}
+
+	GizmoType = EGizmoType::Hidden;
+
+	FCustomizableObjectInstanceEditor::HideGizmoProjectorParameter(SharedThis(this), Viewport, CustomizableInstanceDetailsView);
+}
+
+
+void FCustomizableObjectEditor::ShowGizmoClipMorph(UCustomizableObjectNodeMeshClipMorph& Node)
+{
+	if (Node.BoneName == FName())
+	{	
+		return;
+	}
+
+	if (GizmoType != EGizmoType::ClipMorph)
+	{
+		HideGizmo();		
+		GizmoType = EGizmoType::ClipMorph;
+	}
+	
+	SelectSingleNode(Node);
+
+	Viewport->ShowGizmoClipMorph(Node);
+}
+
+
+void FCustomizableObjectEditor::HideGizmoClipMorph()
+{
+	if (GizmoType != EGizmoType::ClipMorph)
+	{
+		return;	
+	}
+	
+	GizmoType = EGizmoType::Hidden;
+
+	Viewport->HideGizmoClipMorph();
+
+	const FGraphPanelSelectionSet SelectedNodes = GraphEditor->GetSelectedNodes();
+	for (FGraphPanelSelectionSet::TConstIterator NodeIt( SelectedNodes ); NodeIt; ++NodeIt)
+	{
+		const UObject* Node = *NodeIt;
+		if (Node->IsA<UCustomizableObjectNodeMeshClipMorph>())
+		{
+			GraphEditor->ClearSelectionSet();
+			break;
+		}
+	}	
+}
+
+
+void FCustomizableObjectEditor::ShowGizmoClipMesh(UCustomizableObjectNodeMeshClipWithMesh& Node)
+{
+	UStaticMesh* ClipMesh = nullptr;
+
+	if (const UEdGraphPin* ConnectedPin = FollowInputPin(*Node.ClipMeshPin()))
+	{
+		if (const UEdGraphNode* ConnectedNode = ConnectedPin->GetOwningNode())
+		{
+			if (const UCustomizableObjectNodeStaticMesh* TypedNode = Cast<UCustomizableObjectNodeStaticMesh>(ConnectedNode))
+			{
+				ClipMesh = TypedNode->StaticMesh;
+			}
+			else if (const UCustomizableObjectNodeTable* TableNode = Cast<UCustomizableObjectNodeTable>(ConnectedNode))
+			{
+				ClipMesh = TableNode->GetColumnDefaultAssetByType<UStaticMesh>(ConnectedPin);
+			}
+		}
+	}
+
+	if (ClipMesh)
+	{
+		if (GizmoType != EGizmoType::ClipMesh)
+		{
+			HideGizmo();
+			GizmoType = EGizmoType::ClipMesh;
+		}
+
+		SelectSingleNode(Node);
+
+		Viewport->ShowGizmoClipMesh(Node, *ClipMesh);
+	}
+}
+
+
+void FCustomizableObjectEditor::HideGizmoClipMesh()
+{
+	if (GizmoType != EGizmoType::ClipMesh)
+	{
+		return;	
+	}
+
+	GizmoType = EGizmoType::Hidden;
+
+	Viewport->HideGizmoClipMesh();
+
+	const FGraphPanelSelectionSet SelectedNodes = GraphEditor->GetSelectedNodes();
+	for (FGraphPanelSelectionSet::TConstIterator NodeIt( SelectedNodes ); NodeIt; ++NodeIt)
+	{
+		const UObject* Node = *NodeIt;
+		if (Node->IsA<UCustomizableObjectNodeMeshClipWithMesh>())
+		{
+			GraphEditor->ClearSelectionSet();
+			break;
+		}
+	}	
+}
+
+
+void FCustomizableObjectEditor::ShowGizmoLight(ULightComponent& InSelectedLight)
+{
+	if (GizmoType != EGizmoType::Light)
+	{
+		HideGizmo();
+		GizmoType = EGizmoType::Light;
+	}
+	
+	CustomSettings->SetSelectedLight(&InSelectedLight);
+
+	Viewport->ShowGizmoLight(InSelectedLight);
+	
+	CustomizableObjectEditorAdvancedPreviewSettings->Refresh();
+}
+
+
+void FCustomizableObjectEditor::HideGizmoLight()
+{
+	if (GizmoType != EGizmoType::Light)
+	{
+		return;	
+	}
+	
+	GizmoType = EGizmoType::Hidden;
+
+	CustomSettings->SetSelectedLight(nullptr);
+
+	Viewport->HideGizmoLight();
+
+	CustomizableObjectEditorAdvancedPreviewSettings->Refresh();
+}
+
+
 void FCustomizableObjectEditor::PostUndo(bool bSuccess)
 {
 	if (bSuccess)
@@ -970,12 +1272,6 @@ void FCustomizableObjectEditor::ExtendToolbar()
 				true);
 
 			ToolbarBuilder.EndSection();
-
-			
-			ToolbarBuilder.BeginSection("Debug");
-			ToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorCommands::Get().Debug);
-			ToolbarBuilder.EndSection();
-
 			
 			ToolbarBuilder.BeginSection("Information");
 			ToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorCommands::Get().TextureAnalyzer);
@@ -1020,10 +1316,10 @@ TSharedRef<SWidget> FCustomizableObjectEditor::GenerateCompileOptionsMenuContent
 	{
 		// Level
 		CompileOptimizationStrings.Empty();
-		CompileOptimizationStrings.Add(MakeShareable(new FString(NSLOCTEXT("UnrealEd", "OptimizationNone", "None").ToString())));
-		CompileOptimizationStrings.Add(MakeShareable(new FString(NSLOCTEXT("UnrealEd", "OptimizationMin", "Minimal").ToString())));
-		CompileOptimizationStrings.Add(MakeShareable(new FString(NSLOCTEXT("UnrealEd", "OptimizationMed", "Medium").ToString())));
-		CompileOptimizationStrings.Add(MakeShareable(new FString(NSLOCTEXT("UnrealEd", "OptimizationMax", "Maximum").ToString())));
+		CompileOptimizationStrings.Add(MakeShareable(new FString(LOCTEXT("OptimizationNone", "None (Disable texture streaming)").ToString())));
+		CompileOptimizationStrings.Add(MakeShareable(new FString(LOCTEXT("OptimizationMin", "Minimal").ToString())));
+		CompileOptimizationStrings.Add(MakeShareable(new FString(LOCTEXT("OptimizationMax", "Maximum").ToString())));
+		check(CompileOptimizationStrings.Num() == UE_MUTABLE_MAX_OPTIMIZATION + 1);
 
 		if (CustomizableObject)
 		{
@@ -1036,6 +1332,23 @@ TSharedRef<SWidget> FCustomizableObjectEditor::GenerateCompileOptionsMenuContent
 				;
 
 			MenuBuilder.AddWidget(CompileOptimizationCombo.ToSharedRef(), LOCTEXT("MutableCompileOptimizationLevel", "Optimization Level"));
+		}
+
+		{
+			CompileTextureCompressionStrings.Empty();
+			CompileTextureCompressionStrings.Add(MakeShareable(new FString(LOCTEXT("MutableTextureCompressionNone", "None").ToString())));
+			CompileTextureCompressionStrings.Add(MakeShareable(new FString(LOCTEXT("MutableTextureCompressionFast", "Fast").ToString())));
+			CompileTextureCompressionStrings.Add(MakeShareable(new FString(LOCTEXT("MutableTextureCompressionHighQuality", "High Quality").ToString())));
+
+			int32 SelectedCompression = FMath::Clamp(int32(CustomizableObject->CompileOptions.TextureCompression), 0, CompileTextureCompressionStrings.Num() - 1);
+			CompileTextureCompressionCombo =
+				SNew(STextComboBox)
+				.OptionsSource(&CompileTextureCompressionStrings)
+				.InitiallySelectedItem(CompileTextureCompressionStrings[SelectedCompression])
+				.OnSelectionChanged(this, &FCustomizableObjectEditor::OnChangeCompileTextureCompressionType)
+				;
+
+			MenuBuilder.AddWidget(CompileTextureCompressionCombo.ToSharedRef(), LOCTEXT("MutableCompileTextureCompressionType", "Texture Compression"));
 		}
 
 		// Image tiling
@@ -1064,7 +1377,69 @@ TSharedRef<SWidget> FCustomizableObjectEditor::GenerateCompileOptionsMenuContent
 		MenuBuilder.AddWidget(CompileTilingCombo.ToSharedRef(), LOCTEXT("MutableCompileImageTiling", "Image Tiling"));
 
 		MenuBuilder.AddMenuEntry(FCustomizableObjectEditorCommands::Get().CompileOptions_UseDiskCompilation);
-		MenuBuilder.AddMenuEntry(FCustomizableObjectEditorCommands::Get().CompileOptions_EnableTextureCompression);
+	}
+	MenuBuilder.EndSection();
+
+	MenuBuilder.BeginSection("Packaging", LOCTEXT("MutableCompilePackagingHeading", "Packaging"));
+	{
+		// Unfortunately SNumericDropDown doesn't work with integers at the time of writing.
+		TArray<SNumericDropDown<float>::FNamedValue> EmbeddedOptions;
+		EmbeddedOptions.Add(SNumericDropDown<float>::FNamedValue(0, FText::FromString(TEXT("0")), FText::FromString(TEXT("Disabled"))));
+		EmbeddedOptions.Add(SNumericDropDown<float>::FNamedValue(16, FText::FromString(TEXT("16")), FText::FromString(TEXT("16"))));
+		EmbeddedOptions.Add(SNumericDropDown<float>::FNamedValue(64, FText::FromString(TEXT("64")), FText::FromString(TEXT("64"))));
+		EmbeddedOptions.Add(SNumericDropDown<float>::FNamedValue(256, FText::FromString(TEXT("256")), FText::FromString(TEXT("256"))));
+		EmbeddedOptions.Add(SNumericDropDown<float>::FNamedValue(512, FText::FromString(TEXT("512")), FText::FromString(TEXT("512"))));
+		EmbeddedOptions.Add(SNumericDropDown<float>::FNamedValue(1024, FText::FromString(TEXT("1024")), FText::FromString(TEXT("1024"))));
+		EmbeddedOptions.Add(SNumericDropDown<float>::FNamedValue(4096, FText::FromString(TEXT("4096")), FText::FromString(TEXT("4096"))));
+
+		EmbeddedDataLimitCombo = SNew(SNumericDropDown<float>)
+			.DropDownValues(EmbeddedOptions)
+			.Value_Lambda([this]()
+				{
+					return CustomizableObject ? float(CustomizableObject->CompileOptions.EmbeddedDataBytesLimit) : 0.0f;
+				})
+			.OnValueChanged_Lambda([this](float Value)
+				{
+					if (CustomizableObject)
+					{
+						CustomizableObject->CompileOptions.EmbeddedDataBytesLimit = uint64(Value);
+						CustomizableObject->Modify();
+					}
+				});
+			MenuBuilder.AddWidget(EmbeddedDataLimitCombo.ToSharedRef(), LOCTEXT("MutableCompileEmbeddedLimit", "Embedded Data Limit (Bytes)"));
+
+		// Packaging file size control.
+		TArray<SNumericDropDown<float>::FNamedValue> PackagedOptions;
+		PackagedOptions.Add(SNumericDropDown<float>::FNamedValue(0, FText::FromString(TEXT("0")), FText::FromString(TEXT("Split All"))));
+		PackagedOptions.Add(SNumericDropDown<float>::FNamedValue(16   * 1024, FText::FromString(TEXT("16 KB")), FText::FromString(TEXT("16 KB"))));
+		PackagedOptions.Add(SNumericDropDown<float>::FNamedValue(64   * 1024, FText::FromString(TEXT("64 KB")), FText::FromString(TEXT("64 KB"))));
+		PackagedOptions.Add(SNumericDropDown<float>::FNamedValue(1024 * 1024, FText::FromString(TEXT("1 MB")), FText::FromString(TEXT("1 MB"))));
+		PackagedOptions.Add(SNumericDropDown<float>::FNamedValue(64   * 1024 * 1024, FText::FromString(TEXT("64 MB")), FText::FromString(TEXT("64 MB"))));
+		PackagedOptions.Add(SNumericDropDown<float>::FNamedValue(256  * 1024 * 1024, FText::FromString(TEXT("256 MB")), FText::FromString(TEXT("256 MB"))));
+		PackagedOptions.Add(SNumericDropDown<float>::FNamedValue(1024 * 1024 * 1024, FText::FromString(TEXT("1 GB")), FText::FromString(TEXT("1 GB"))));
+
+		PackagedDataLimitCombo = SNew(SNumericDropDown<float>)
+			.DropDownValues(PackagedOptions)
+			.Value_Lambda([this]()
+				{
+					return CustomizableObject ? float(CustomizableObject->CompileOptions.PackagedDataBytesLimit) : 0.0f;
+				})
+			.OnValueChanged_Lambda([this](float Value)
+				{
+					if (CustomizableObject)
+					{
+						CustomizableObject->CompileOptions.PackagedDataBytesLimit = uint64(Value);
+						CustomizableObject->Modify();
+					}
+				});
+			MenuBuilder.AddWidget(PackagedDataLimitCombo.ToSharedRef(), LOCTEXT("MutableCompilePackagedLimit", "Packaged Data File Max Limit (Bytes)"));
+	}
+	MenuBuilder.EndSection();
+
+	// Debugging options
+	MenuBuilder.BeginSection("Debugger", LOCTEXT("MutableDebugger", "Debugger"));
+	{
+		MenuBuilder.AddMenuEntry(FCustomizableObjectEditorCommands::Get().Debug);
 	}
 	MenuBuilder.EndSection();
 
@@ -1101,11 +1476,31 @@ UCustomizableObject* FCustomizableObjectEditor::GetCustomizableObject()
 
 void FCustomizableObjectEditor::RefreshTool()
 {
-	RefreshViewport();
+	if (ViewportClient)
+	{
+		ViewportClient->Invalidate();
+	}
 }
 
 
-void FCustomizableObjectEditor::RefreshViewport()
+TSharedPtr<SCustomizableObjectEditorViewportTabBody> FCustomizableObjectEditor::GetViewport()
+{
+	return Viewport;
+}
+
+
+void FCustomizableObjectEditor::OnObjectPropertySelectionChanged(FProperty* InProperty)
+{
+	CustomizableObject->PostEditChange();
+
+	if (ViewportClient)
+	{
+		ViewportClient->Invalidate();
+	}
+}
+
+
+void FCustomizableObjectEditor::OnInstancePropertySelectionChanged(FProperty* InProperty)
 {
 	if (ViewportClient)
 	{
@@ -1114,147 +1509,14 @@ void FCustomizableObjectEditor::RefreshViewport()
 }
 
 
-void FCustomizableObjectEditor::OnObjectPropertySelectionChanged(FProperty* InProperty)
-{
-	CustomizableObject->PostEditChange();
-	RefreshViewport();
-}
-
-
-void FCustomizableObjectEditor::OnInstancePropertySelectionChanged(FProperty* InProperty)
-{
-	RefreshViewport();
-}
-
-
 void FCustomizableObjectEditor::OnObjectModified(UObject* Object)
 {
-	UCustomizableObjectInstance* Instance = Cast<UCustomizableObjectInstance>(Object);
-
-	if ((Instance != nullptr) && (Instance == PreviewInstance))
-	{
-		if (ManagingProjector)
-		{
-			return;
-		}
-
-		if(Instance->ProjectorLayerChange)
-		{
-			// Don't make any changes in the projector if only a projector layer has changed
-			Instance->ProjectorLayerChange = false;
-			return;
-		}
-
-		if (Viewport->GetGizmoHasAssignedData() && !Viewport->GetGizmoAssignedDataIsFromNode())
-		{
-			Instance->LastSelectedProjectorParameter = Viewport->GetGizmoProjectorParameterName();
-			Instance->LastSelectedProjectorParameterWithIndex = Viewport->GetGizmoProjectorParameterNameWithIndex();
-		}
-
-		//UE_LOG(LogMutable, Warning, TEXT("LastSelectedProjectorParameter=%s, LastSelectedProjectorParameterWithIndex=%s"), *(PreviewInstance->LastSelectedProjectorParameter), *(PreviewInstance->LastSelectedProjectorParameterWithIndex));
-
-		// Update projector parameter information (not projector parameter node information,
-		// this is the case where a projector parameter in the object details is selected)
-		const TArray<FCustomizableObjectProjectorParameterValue>& Parameters = PreviewInstance->GetProjectorParameters();
-		const int32 MaxIndex = Parameters.Num();
-		bool AnySelected = false;
-
-		for (int32 i = 0; (!AnySelected && (i < MaxIndex)); ++i)
-		{
-			int32 RangeIndex = Parameters[i].RangeValues.Num() > 0 ? 0 : -1;
-
-			for (; RangeIndex < Parameters[i].RangeValues.Num(); ++RangeIndex)
-			{
-				const FCustomizableObjectProjector& Value = (RangeIndex == -1) ? Parameters[i].Value : Parameters[i].RangeValues[RangeIndex];
-
-				FString ParameterNameWithIndex = Parameters[i].ParameterName;
-
-				if (RangeIndex != -1)
-				{
-					ParameterNameWithIndex += FString::Printf(TEXT("__%d"), RangeIndex);
-				}
-
-				if ((PreviewInstance->GetProjectorState(Parameters[i].ParameterName, RangeIndex) == EProjectorState::Selected) ||
-					((PreviewInstance->GetProjectorState(Parameters[i].ParameterName, RangeIndex) == EProjectorState::TypeChanged) &&
-					(ParameterNameWithIndex != Instance->LastSelectedProjectorParameterWithIndex)))
-				{
-					AnySelected = true;
-					SetProjectorVisibilityForParameter = true;
-					ProjectorParameterName = Parameters[i].ParameterName;
-					ProjectorParameterNameWithIndex = Parameters[i].ParameterName;
-					if (RangeIndex != -1)
-					{
-						ProjectorParameterNameWithIndex += FString::Printf(TEXT("__%d"), RangeIndex);
-					}
-					ProjectorRangeIndex = RangeIndex;
-					ProjectorParameterIndex = i;
-					ProjectorParameterPosition = Value.Position;
-					ProjectorParameterDirection = Value.Direction;
-					ProjectorParameterUp = Value.Up;
-					ProjectorParameterScale = Value.Scale;
-					ProjectorParameterProjectionType = Value.ProjectionType;
-					ProjectionAngle = Value.Angle;
-				}
-				else if ((PreviewInstance->GetProjectorState(Parameters[i].ParameterName, RangeIndex) == EProjectorState::TypeChanged) &&
-					(Parameters[i].ParameterName == Instance->LastSelectedProjectorParameter))
-				{
-					AnySelected = true;
-					SetProjectorTypeForParameter = true;
-					ProjectorParameterName = Parameters[i].ParameterName;
-					ProjectorParameterNameWithIndex = Parameters[i].ParameterName;
-					if (RangeIndex != -1)
-					{
-						ProjectorParameterNameWithIndex += FString::Printf(TEXT("__%d"), RangeIndex);
-					}
-					ProjectorRangeIndex = RangeIndex;
-					ProjectorParameterIndex = i;
-					ProjectorParameterPosition = Value.Position;
-					ProjectorParameterDirection = Value.Direction;
-					ProjectorParameterUp = Value.Up;
-					ProjectorParameterScale = Value.Scale;
-					ProjectorParameterProjectionType = Value.ProjectionType;
-					ProjectionAngle = Value.Angle;
-				}
-			}
-		}
-
-		// Another projector parameter is being selected, and there already a projector parameter selected pending to be hidden,
-		// update its information before selecting the new one
-		bool ResetPendingDone = false;
-		if (AnySelected && SetProjectorVisibilityForParameter && !Instance->LastSelectedProjectorParameter.IsEmpty())
-		{
-			ResetProjectorVisibilityNoUpdate();
-			Instance->LastSelectedProjectorParameter = "";
-			Instance->LastSelectedProjectorParameterWithIndex = "";
-			ResetPendingDone = true;
-		}
-
-		if (!ProjectorConstantNodeSelected && !ProjectorParameterNodeSelected && !ResetPendingDone && !AnySelected && !Viewport->GetIsManipulatingGizmo())
-		{
-			ResetProjectorVisibilityForNonNode = true;
-		}
-		else if (ProjectorParameterNodeSelected)
-		{
-			SelectedProjectorParameterNotNode = true;
-		}
-
-		if (Instance->UnselectProjector)
-		{
-			Instance->UnselectProjector = false;
-
-			ResetProjectorVisibilityNoUpdate();
-			
-			Instance->LastSelectedProjectorParameter = "";
-			Instance->LastSelectedProjectorParameterWithIndex = "";
-		}
-	}
-
-	if (!Instance)
+	if (const UCustomizableObjectInstance* Instance = Cast<UCustomizableObjectInstance>(Object); !Instance)
 	{
 		// Sometimes when another CO is open in another editor window/tab, it triggers this callback, so prevent the modification of this object by a callback triggered by another one
-		if(UCustomizableObject* AuxCustomizableObject = Cast<UCustomizableObject>(Object))
+		if (UCustomizableObject* AuxCustomizableObject = Cast<UCustomizableObject>(Object))
 		{
-			AuxCustomizableObject->UpdateVersionId();
+			AuxCustomizableObject->GetPrivate()->UpdateVersionId();
 		}
 		else if (UCustomizableObjectNode* Node = Cast<UCustomizableObjectNode>(Object))
 		{
@@ -1262,7 +1524,7 @@ void FCustomizableObjectEditor::OnObjectModified(UObject* Object)
 			{
 				if (UCustomizableObject* AuxOuterCustomizableObject = Cast<UCustomizableObject>(Graph->GetOuter()))
 				{
-					AuxOuterCustomizableObject->UpdateVersionId();
+					AuxOuterCustomizableObject->GetPrivate()->UpdateVersionId();
 				}
 			}
 		}
@@ -1270,7 +1532,7 @@ void FCustomizableObjectEditor::OnObjectModified(UObject* Object)
 		{
 			if (UCustomizableObject* AuxOuterCustomizableObject = Cast<UCustomizableObject>(Graph->GetOuter()))
 			{
-				AuxOuterCustomizableObject->UpdateVersionId();
+				AuxOuterCustomizableObject->GetPrivate()->UpdateVersionId();
 			}
 		}
 	}
@@ -1279,19 +1541,15 @@ void FCustomizableObjectEditor::OnObjectModified(UObject* Object)
 
 void FCustomizableObjectEditor::CompileObject()
 {
-	// If any projector selected, unselect it in case the projector node is removed with this CO compile
-	ResetProjectorVisibilityNoUpdate();
-
 	// Resetting viewport parameters
-	Viewport->SetClipMorphPlaneVisibility(false, nullptr);
-	Viewport->SetDrawDefaultUVMaterial(true);
+	Viewport->SetDrawDefaultUVMaterial();
 
 	UE_LOG(LogMutable, Verbose, TEXT("PROFILE: -----------------------------------------------------------"));
 	UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] FCustomizableObjectEditor::CompileObject start."), FPlatformTime::Seconds());
 
-	if (!AssetRegistryLoaded)
+	if (CustomizableObject->GetPrivate()->Status.Get() == FCustomizableObjectStatus::EState::Loading)
 	{
-		FNotificationInfo Info(NSLOCTEXT("CustomizableObject", "CustomizableObjectCompileTryLater", "Please wait until asset registry loads all assets"));
+		FNotificationInfo Info(LOCTEXT("CustomizableObjectCompileTryLater", "Please wait until Customizable Object is loaded"));
 		Info.bFireAndForget = true;
 		Info.bUseThrobber = true;
 		Info.FadeOutDuration = 1.0f;
@@ -1299,8 +1557,6 @@ void FCustomizableObjectEditor::CompileObject()
 		FSlateNotificationManager::Get().AddNotification(Info);
 		return;
 	}
-
-	Viewport->UpdateGizmoDataToOrigin();
 
 	if (CustomizableObject->Source)
 	{
@@ -1313,18 +1569,16 @@ void FCustomizableObjectEditor::CompileObject()
 }
 
 
-void FCustomizableObjectEditor::DebugObject()
+void FCustomizableObjectEditor::DebugObject() const
 {
-	if (!CustomizableObject)
-	{
-		return;
-	}
-
-	// Open a mutable debugger as a standalone window
-	ICustomizableObjectEditorModule* CustomizableObjectEditorModule = &FModuleManager::LoadModuleChecked<ICustomizableObjectEditorModule>("CustomizableObjectEditor");
-	if (!CustomizableObjectEditorModule) return;
-
-	CustomizableObjectEditorModule->CreateCustomizableObjectDebugger(EToolkitMode::Standalone, nullptr, CustomizableObject);
+	const TSharedPtr<SDockTab> NewMutableObjectTab = SNew(SDockTab)
+	.Label(FText::FromString(TEXT("Debugger")))
+	[
+		SNew(SMutableObjectViewer, CustomizableObject)
+	];
+	
+	// Spawn the debugger tab alongside the Graph Tab 
+	TabManager->InsertNewDocumentTab(GraphTabId, FTabManager::ESearchPreference::PreferLiveTab, NewMutableObjectTab.ToSharedRef());
 }
 
 
@@ -1357,16 +1611,11 @@ bool FCustomizableObjectEditor::CompileOptions_UseDiskCompilation_IsChecked()
 }
 
 
-void FCustomizableObjectEditor::CompileOptions_TextureCompression_Toggled()
+void FCustomizableObjectEditor::OnChangeCompileTextureCompressionType(TSharedPtr<FString> NewSelection, ESelectInfo::Type)
 {
-	CustomizableObject->CompileOptions.bTextureCompression = !CustomizableObject->CompileOptions.bTextureCompression;
+	const FScopedTransaction Transaction(LOCTEXT("ChangedTextureCompressionTransaction", "Changed Texture Compression Type"));
 	CustomizableObject->Modify();
-}
-
-
-bool FCustomizableObjectEditor::CompileOptions_TextureCompression_IsChecked()
-{
-	return CustomizableObject->CompileOptions.bTextureCompression;
+	CustomizableObject->CompileOptions.TextureCompression = ECustomizableObjectTextureCompression(CompileTextureCompressionStrings.Find(NewSelection));
 }
 
 
@@ -1374,9 +1623,9 @@ void FCustomizableObjectEditor::SaveAsset_Execute()
 {
 	if (PreviewInstance)
 	{
-		if (PreviewInstance->IsSelectedParameterProfileDirty())
+		if (PreviewInstance->GetPrivate()->IsSelectedParameterProfileDirty())
 		{
-			PreviewInstance->SaveParametersToProfile(PreviewInstance->SelectedProfileIndex);
+			PreviewInstance->GetPrivate()->SaveParametersToProfile(PreviewInstance->GetPrivate()->SelectedProfileIndex);
 		}
 	}
 
@@ -1399,7 +1648,7 @@ void FCustomizableObjectEditor::DeleteSelectedNodes()
 		return;
 	}
 
-	const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "UEdGraphSchema_CustomizableObject", "Delete Nodes"));
+	const FScopedTransaction Transaction(LOCTEXT("UEdGraphSchema_CustomizableObject", "Delete Nodes"));
 
 	const FGraphPanelSelectionSet SelectedNodes = GraphEditor->GetSelectedNodes();
 	GraphEditor->ClearSelectionSet();
@@ -1462,57 +1711,59 @@ bool FCustomizableObjectEditor::CanDuplicateSelectedNodes() const
 void FCustomizableObjectEditor::OnSelectedGraphNodesChanged(const FGraphPanelSelectionSet& NewSelection)
 {
 	TArray<UObject*> Objects;
-	for ( FGraphPanelSelectionSet::TConstIterator It(NewSelection); It; ++It)
+	for (FGraphPanelSelectionSet::TConstIterator It(NewSelection); It; ++It)
 	{
 		Objects.Add(*It);
 	}
 
 	// Standard details
-	if ( GraphNodeDetailsView.IsValid() )
+	if (GraphNodeDetailsView.IsValid())
 	{
-		GraphNodeDetailsView->SetObjects( Objects );
-	}
-
-	if (Objects.Num())
+		GraphNodeDetailsView->SetObjects(Objects);
+	}		
+	
+	if (!bRecursionGuard) // Calling the following functions will unselect some nodes causing OnSelectedGraphNodesChanged to be called again
 	{
-		UObject* FirstNode = nullptr;
-		FirstNode = Objects[0];
-		SelectedMeshClipMorphNode = Cast<UCustomizableObjectNodeMeshClipMorph>(FirstNode);
+		TGuardValue<bool> RecursionGuard(bRecursionGuard, true);
 
-		if (!SelectedMeshClipMorphNode)
+		if (Objects.Num() != 1)
 		{
-			SelectedMeshClipWithMeshNode = Cast<UCustomizableObjectNodeMeshClipWithMesh>(FirstNode);
+			HideGizmoClipMorph();
+			HideGizmoClipMesh();
+			HideGizmoProjectorNodeProjectorConstant();
+			HideGizmoProjectorNodeProjectorParameter();
 
-			if (!SelectedProjectorNode || (SelectedProjectorNode && FirstNode && (SelectedProjectorNode != FirstNode)))
+			for (UObject* Object : Objects) // Reselect the multiple selection. Clearly showing gizmos when selecting a node is a really bad idea. Remove on MTBL-1684
 			{
-				SelectedProjectorNode = Cast<UCustomizableObjectNodeProjectorConstant>(FirstNode);
-				if (SelectedProjectorNode != nullptr)
-				{
-					ProjectorConstantNodeSelected = true;
-				}
+				GraphEditor->SetNodeSelection(Cast<UEdGraphNode>(Object), true);
 			}
-
-			if (!SelectedProjectorParameterNode || (SelectedProjectorParameterNode && FirstNode && (SelectedProjectorParameterNode != FirstNode)))
-			{
-				SelectedProjectorParameterNode = Cast<UCustomizableObjectNodeProjectorParameter>(FirstNode);
-				if (SelectedProjectorParameterNode != nullptr)
-				{
-					ProjectorParameterNodeSelected = true;
-				}
-			}
+			
+			return;
 		}
-	}
-	else 
-	{
-		SelectedMeshClipMorphNode = nullptr;
-		SelectedMeshClipWithMeshNode = nullptr;
-		SelectedProjectorNode = nullptr;
-		SelectedProjectorParameterNode = nullptr;
-	}
 
-	if (!ManagingProjector)
-	{
-		SelectedGraphNodesChanged = true;
+		if (UCustomizableObjectNodeMeshClipMorph* NodeMeshClipMorph = Cast<UCustomizableObjectNodeMeshClipMorph>(Objects[0]))
+		{		
+			ShowGizmoClipMorph(*NodeMeshClipMorph);			
+		}
+		else if (UCustomizableObjectNodeMeshClipWithMesh* NodeMeshClipWithMesh = Cast<UCustomizableObjectNodeMeshClipWithMesh>(Objects[0]))
+		{
+			ShowGizmoClipMesh(*NodeMeshClipWithMesh);			
+		}
+		else if (UCustomizableObjectNodeProjectorConstant* NodeProjectorConstant = Cast<UCustomizableObjectNodeProjectorConstant>(Objects[0]))
+		{
+			ShowGizmoProjectorNodeProjectorConstant(*NodeProjectorConstant);
+		}
+		else if (UCustomizableObjectNodeProjectorParameter* NodeProjectorParameter = Cast<UCustomizableObjectNodeProjectorParameter>(Objects[0]))
+		{
+			ShowGizmoProjectorNodeProjectorParameter(*NodeProjectorParameter);		
+		}
+		else
+		{
+			HideGizmoClipMorph();	
+			HideGizmoClipMesh();
+			HideGizmoProjectorNodeProjectorParameter();
+			HideGizmoProjectorNodeProjectorConstant();
+		}
 	}
 }
 
@@ -1542,7 +1793,7 @@ bool FCustomizableObjectEditor::IsTickable() const
 }
 
 
-void FCustomizableObjectEditor::Tick( float InDeltaTime )
+void FCustomizableObjectEditor::Tick(float InDeltaTime)
 {
 	const bool bUpdated = Compiler.Tick();
 	
@@ -1558,143 +1809,6 @@ void FCustomizableObjectEditor::Tick( float InDeltaTime )
 		{
 			CreatePreviewInstance();
 		}
-	}
-
-	if (SelectedMeshClipMorphNode)
-	{
-		bool bVisible = SelectedMeshClipMorphNode->BoneName != FName();
-
-		Viewport->SetClipMorphPlaneVisibility(bVisible, SelectedMeshClipMorphNode);
-	}
-	else if (SelectedMeshClipWithMeshNode)
-	{
-		UStaticMesh* ClipMesh = nullptr;
-
-		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*SelectedMeshClipWithMeshNode->ClipMeshPin()))
-		{
-			if (const UEdGraphNode* Node = ConnectedPin->GetOwningNode())
-			{
-				if (const UCustomizableObjectNodeStaticMesh* TypedNode = Cast<UCustomizableObjectNodeStaticMesh>(Node))
-				{
-					ClipMesh = TypedNode->StaticMesh;
-				}
-				else if (const UCustomizableObjectNodeTable* TableNode = Cast<UCustomizableObjectNodeTable>(Node))
-				{
-					ClipMesh = TableNode->GetColumnDefaultAssetByType<UStaticMesh>(ConnectedPin);
-				}
-			}
-		}
-
-		bool bVisible = ClipMesh != nullptr;
-		Viewport->SetClipMeshVisibility(bVisible, ClipMesh, SelectedMeshClipWithMeshNode);
-	}
-	else if (ProjectorConstantNodeSelected)
-	{
-		ManagingProjector = true;
-		Viewport->SetProjectorVisibility(true, SelectedProjectorNode);
-		Viewport->ProjectorParameterChanged(SelectedProjectorNode);
-		ManagingProjector = false;
-		ProjectorConstantNodeSelected = false;
-	}
-	else if (ProjectorParameterNodeSelected)
-	{
-		ManagingProjector = true;
-		Viewport->SetProjectorParameterVisibility(true, SelectedProjectorParameterNode);
-		Viewport->ProjectorParameterChanged(SelectedProjectorParameterNode);
-		ManagingProjector = false;
-		ProjectorParameterNodeSelected = false;
-	}
-	else
-	{
-		if (SetProjectorVisibilityForParameter)
-		{
-			ManagingProjector = true;
-			if (Viewport->AnyProjectorNodeSelected())
-			{
-				GraphEditor->ClearSelectionSet();
-			}
-			FCustomizableObjectProjector ProjectorParameterValue;
-			ProjectorParameterValue.Position = (FVector3f)ProjectorParameterPosition;
-			ProjectorParameterValue.Direction = (FVector3f)ProjectorParameterDirection;
-			ProjectorParameterValue.Up = (FVector3f)ProjectorParameterUp;
-			ProjectorParameterValue.Scale = (FVector3f)ProjectorParameterScale;
-			ProjectorParameterValue.ProjectionType = ProjectorParameterProjectionType;
-			ProjectorParameterValue.Angle = ProjectionAngle;
-			Viewport->SetProjectorVisibility(true, ProjectorParameterName, ProjectorParameterNameWithIndex, ProjectorRangeIndex, ProjectorParameterValue, ProjectorParameterIndex);
-			ManagingProjector = false;
-			SetProjectorVisibilityForParameter = false;
-		}
-
-		if (SetProjectorTypeForParameter)
-		{
-			ManagingProjector = true;
-			if (Viewport->AnyProjectorNodeSelected())
-			{
-				GraphEditor->ClearSelectionSet();
-			}
-			FCustomizableObjectProjector ProjectorParameterValue;
-			ProjectorParameterValue.Position = (FVector3f)ProjectorParameterPosition;
-			ProjectorParameterValue.Direction = (FVector3f)ProjectorParameterDirection;
-			ProjectorParameterValue.Up = (FVector3f)ProjectorParameterUp;
-			ProjectorParameterValue.Scale = (FVector3f)ProjectorParameterScale;
-			ProjectorParameterValue.ProjectionType = ProjectorParameterProjectionType;
-			ProjectorParameterValue.Angle = ProjectionAngle;
-			Viewport->SetProjectorType(true, ProjectorParameterName, ProjectorParameterNameWithIndex, ProjectorRangeIndex, ProjectorParameterValue, ProjectorParameterIndex);
-			ManagingProjector = false;
-			SetProjectorTypeForParameter = false;
-		}
-
-		if (ResetProjectorVisibilityForNonNode && PreviewInstance && !PreviewInstance->AvoidResetProjectorVisibilityForNonNode)
-		{
-			ResetProjectorVisibilityNoUpdate();
-		}
-
-		if ((SelectedGraphNodesChanged && !SelectedProjectorParameterNotNode) || (PreviewInstance && PreviewInstance->TempUpdateGizmoInViewport))
-		{
-			ManagingProjector = true;
-			Viewport->ResetProjectorVisibility(false);
-			ManagingProjector = false;
-		}
-		Viewport->SetClipMorphPlaneVisibility(false, nullptr);
-		Viewport->SetClipMeshVisibility(false, nullptr, nullptr);
-	}
-
-	if (SelectedGraphNodesChanged)
-	{
-		SelectedGraphNodesChanged = false;
-	}
-
-	if (SelectedProjectorParameterNotNode)
-	{
-		SelectedProjectorParameterNotNode = false;
-	}
-
-	if (ResetProjectorVisibilityForNonNode)
-	{
-		ResetProjectorVisibilityForNonNode = false;
-    }
-
-	if (PreviewInstance != nullptr)
-	{
-		PreviewInstance->AvoidResetProjectorVisibilityForNonNode = false;
-	}
-
-    // TEMP CODE
-    if ((PreviewInstance != nullptr) && PreviewInstance->TempUpdateGizmoInViewport)
-    {
-        PreviewInstance->TempUpdateGizmoInViewport = false;
-		PreviewInstance->AvoidResetProjectorVisibilityForNonNode = true;
-        Viewport->CopyTransformFromOriginData();
-        PreviewInstance->UpdateSkeletalMeshAsync(true);
-
-        EProjectorState::Type ProjectorState = PreviewInstance->GetProjectorState(PreviewInstance->TempProjectorParameterName, PreviewInstance->TempProjectorParameterRangeIndex);
-        if (ProjectorState != EProjectorState::Selected)
-        {
-            //ResetProjectorVisibilityForNonNode = false;
-			PreviewInstance->ResetProjectorStates();
-			PreviewInstance->SetProjectorState(PreviewInstance->TempProjectorParameterName, PreviewInstance->TempProjectorParameterRangeIndex, EProjectorState::Selected);
-            FCoreUObjectDelegates::BroadcastOnObjectModified(PreviewInstance);
-        }
 	}
 }
 
@@ -1764,7 +1878,7 @@ void FCustomizableObjectEditor::PasteNodes()
 void FCustomizableObjectEditor::PasteNodesHere(const FVector2D& Location)
 {
 	// Undo/Redo support
-	const FScopedTransaction Transaction( NSLOCTEXT("UnrealEd", "CustomizableObjectEditorPaste", "Customizable Object Editor Editor: Paste") );
+	const FScopedTransaction Transaction( LOCTEXT("CustomizableObjectEditorPaste", "Customizable Object Editor Editor: Paste") );
 	CustomizableObject->Source->Modify();
 	CustomizableObject->Modify();
 
@@ -1901,7 +2015,7 @@ void FCustomizableObjectEditor::CreateCommentBoxFromKey()
 
 UEdGraphNode* FCustomizableObjectEditor::CreateCommentBox(const FVector2D& InTargetPosition)
 {
-	//const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "UEdGraphSchema_CustomizableObject", "Add Comment Box"));
+	//const FScopedTransaction Transaction(LOCTEXT("UEdGraphSchema_CustomizableObject", "Add Comment Box"));
 
 	UEdGraphNode_Comment* CommentTemplate = NewObject<UEdGraphNode_Comment>();
 
@@ -1943,509 +2057,176 @@ UEdGraphNode* FCustomizableObjectEditor::CreateCommentBox(const FVector2D& InTar
 }
 
 
-void FCustomizableObjectEditor::OnAssetRegistryLoadComplete()
-{
-	AssetRegistryLoaded = true;
-
-	Viewport->SetAssetRegistryLoaded(true);
-
-	if (UpdateSkeletalMeshAfterAssetLoaded)
-	{
-		UpdateSkeletalMeshAfterAssetLoaded = false;
-
-		PreviewInstance->UpdateSkeletalMeshAsync(true, true);		
-	}
-
-	if (!CustomizableObject->IsCompiled())
-	{
-		CompileObject();
-	}
-}
-
-
-void FCustomizableObjectEditor::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& PropertyChangedEvent)
-{
-	if (Object->IsA(UCustomizableObjectGraph::StaticClass()) && PropertyChangedEvent.Property)
-	{
-		UClass* OuterClass = PropertyChangedEvent.Property->GetOwnerClass();
-		if (OuterClass->IsChildOf(UCustomizableObjectNodeProjectorConstant::StaticClass()))
-		{
-			if (Viewport.IsValid() && SelectedProjectorNode)
-			{
-				Viewport->ProjectorParameterChanged(SelectedProjectorNode);
-			}
-		}
-		else if (OuterClass->IsChildOf(UCustomizableObjectNodeProjectorParameter::StaticClass()))
-		{
-			if (Viewport.IsValid() && SelectedProjectorParameterNode)
-			{
-				Viewport->ProjectorParameterChanged(SelectedProjectorParameterNode);
-			}
-		}
-	}
-}
-
-
 TSharedPtr<SCustomizableObjectEditorAdvancedPreviewSettings> FCustomizableObjectEditor::GetCustomizableObjectEditorAdvancedPreviewSettings()
 {
 	return CustomizableObjectEditorAdvancedPreviewSettings;
 }
 
 
-void FCustomizableObjectEditor::ResetProjectorVisibilityNoUpdate()
+void FCustomizableObjectEditor::FindProperty(const FProperty* Property, const void* InContainer, const FString& FindString, const UObject& Context, bool& bFound)
 {
-	ManagingProjector = true;
-	Viewport->SetGizmoCallUpdateSkeletalMesh(false);
-	Viewport->ResetProjectorVisibility(true);
-	Viewport->SetGizmoCallUpdateSkeletalMesh(true);
-	ManagingProjector = false;
-}
-
-
-void FCustomizableObjectEditor::OnEnterText(const FText & NewText, ETextCommit::Type TextType)
-{
-	bool found = false;
-
-	if (TextType == ETextCommit::OnEnter)
+	if (!Property || !InContainer)
 	{
-		if (!GraphEditor.IsValid() || !GraphEditor->GetCurrentGraph())
+		return;
+	}
+
+	const FString PropertyName = Property->GetDisplayNameText().ToString();
+	if (PropertyName.Contains(FindString))
+	{
+		LogSearchResult(Context, "Property Name", bFound, *PropertyName);
+		bFound = true;
+	}
+	
+	for (int32 Index = 0; Index < Property->ArrayDim; ++Index)
+	{
+		const uint8* ValuePtr = Property->ContainerPtrToValuePtr<uint8>(InContainer, Index);
+
+		if (const FStrProperty* StringProperty = CastField<FStrProperty>(Property))
 		{
-			return;
+			const FString* StringResult = StringProperty->GetPropertyValuePtr(ValuePtr);
+			if (StringResult->Contains(FindString))
+			{
+				LogSearchResult(Context, "Property Value", bFound, *StringResult);
+				bFound = true;
+			}
 		}
-
-		UEdGraph* Graph = GraphEditor->GetCurrentGraph();
-		
-		for (int i = 0; i < Graph->Nodes.Num(); ++i)
+		else if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
 		{
-			UObject* Node = Graph->Nodes[i];
+			const UEnum* EnumResult = EnumProperty->GetEnum();
 
-			// Ensure we are working with a Customizable object Node
-			UCustomizableObjectNode* CustomizableObjectNode = Cast<UCustomizableObjectNode>(Node);
-			if (!CustomizableObjectNode)
+			const FString StringResult = EnumResult->GetDisplayNameTextByIndex(*ValuePtr).ToString();
+			if (StringResult.Contains(FindString))
 			{
-				continue;
+				LogSearchResult(Context, "Property Value", bFound, StringResult);
+				bFound = true;
 			}
-
-			//Find Node Coincidence 
-			FString NodeName = Graph->Nodes[i]->GetNodeTitle(ENodeTitleType::ListView).ToString();
-			int32 cPos = NodeName.Find("\n");
+		}
+		else if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(Property))
+		{
+			const FString ObjectPath = SoftObjectProperty->GetPropertyValuePtr(ValuePtr)->ToString();
+			if (ObjectPath.Contains(FindString))
+			{
+				LogSearchResult(Context, "Property Value", bFound, ObjectPath);
+				bFound = true;
+			}
+		}
+		else if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property))
+		{
+			if (const UObject* ObjectValue = ObjectProperty->GetObjectPropertyValue(ValuePtr))
+			{
+				const FString Name = ObjectValue->GetName();
 			
-			if (cPos >= 0)
-			{
-				NodeName.RemoveAt(cPos);
-				NodeName.InsertAt(cPos, " ");
-			}
-
-			if (NodeName.Contains(NewText.ToString(), ESearchCase::IgnoreCase))
-			{
-				LogSearchResult(CustomizableObjectNode, "Node", found, NodeName);
-				found = true;
-			}
-
-			//Find Variable method 1 (using contains of string)
-			FString VariableName = NewText.ToString();
-			VariableName.RemoveSpacesInline();
-
-			for (TFieldIterator<FProperty> It(Node->GetClass()); It; ++It)
-			{
-				FProperty* Property = *It;
-				FString ResultName = Property->GetName();
-				
-				//Find Variable name
-				if (ResultName.Contains(VariableName))
+				if (ObjectValue->GetName().Contains(FindString))
 				{
-					LogSearchResult(CustomizableObjectNode, "Variable", found, ResultName);
-					found = true;
-				}
-
-				//Find Variable String Content
-				if (FStrProperty *StringProperty = CastField<FStrProperty>(Property))
-				{
-					FString* StringResult = Property->ContainerPtrToValuePtr<FString>(Node);
-
-					if (StringResult->Contains(NewText.ToString()))
-					{
-						LogSearchResult(CustomizableObjectNode, "Value", found, *StringResult);
-						found = true;
-					}
-				}
-
-				//Find Variable Enum Content (Hard coded)
-				//TODO: improve using full Reflection
-				if (FEnumProperty *EnumProperty = CastField<FEnumProperty>(Property))
-				{
-					UEnum* EnumResult = EnumProperty->GetEnum();
-					FString EnumType = EnumResult->CppType;
-					FString StringResult;
-
-					FFieldClass* SourceObjectClass = Property->GetClass();
-
-					if (EnumType == "ECustomizableObjectGroupType")
-					{
-						ECustomizableObjectGroupType* value = EnumProperty->ContainerPtrToValuePtr<ECustomizableObjectGroupType>(Node);
-						StringResult = EnumResult->GetDisplayNameTextByIndex((int32)*value).ToString();
-					}
-					else if (EnumType == "ENodeEnabledState")
-					{
-						ENodeEnabledState* value = EnumProperty->ContainerPtrToValuePtr<ENodeEnabledState>(Node);
-						StringResult = EnumResult->GetDisplayNameTextByIndex((int32)*value).ToString();
-					}
-					else if (EnumType == "ECustomizableObjectAutomaticLODStrategy")
-					{
-						ECustomizableObjectAutomaticLODStrategy* value = EnumProperty->ContainerPtrToValuePtr<ECustomizableObjectAutomaticLODStrategy>(Node);
-						StringResult = EnumResult->GetDisplayNameTextByIndex((int32)*value).ToString();
-					}
-					else if (EnumType == "ECustomizableObjectProjectorType")
-					{
-						ECustomizableObjectProjectorType* value = EnumProperty->ContainerPtrToValuePtr<ECustomizableObjectProjectorType>(Node);
-						StringResult = EnumResult->GetDisplayNameTextByIndex((int32)*value).ToString();
-					}
-					else if (EnumType == "EColorArithmeticOperation")
-					{
-						EColorArithmeticOperation* value = EnumProperty->ContainerPtrToValuePtr<EColorArithmeticOperation>(Node);
-						StringResult = EnumResult->GetDisplayNameTextByIndex((int32)*value).ToString();
-					}
-					else if (EnumType == "ECustomizableObjectNodeMaterialVariationType")
-					{
-						ECustomizableObjectNodeMaterialVariationType* value = EnumProperty->ContainerPtrToValuePtr<ECustomizableObjectNodeMaterialVariationType>(Node);
-						StringResult = EnumResult->GetDisplayNameTextByIndex((int32)*value).ToString();
-					}
-
-					if (StringResult.Contains(NewText.ToString()))
-					{
-						LogSearchResult(CustomizableObjectNode, "Value", found, StringResult);
-						found = true;
-					}
-				}
-
-				//Find Variable Array Content (Hard coded)
-				//TODO: improve using full Reflection
-				if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
-				{
-					FProperty* AProperty = ArrayProperty->Inner;
-					FString ArrayType = AProperty->GetCPPType();
-
-					if (ArrayType == "FGroupProjectorParameterImage")
-					{
-						TArray<FGroupProjectorParameterImage>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FGroupProjectorParameterImage>>(Node);
-
-						//Class vars
-						FString OptionName = "OptionName";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (OptionName.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, OptionName);
-								found = true;
-							}
-
-							FString OptionNameContent = Array[a].OptionName;
-
-							if (OptionNameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].OptionName);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FGroupProjectorParameterPose")
-					{
-						TArray<FGroupProjectorParameterPose>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FGroupProjectorParameterPose>>(Node);
-
-						//Class vars
-						FString PoseName = "PoseName";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (PoseName.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, PoseName);
-								found = true;
-							}
-
-							FString OptionNameContent = Array[a].PoseName;
-
-							if (OptionNameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].PoseName);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectNodeFloatDescription")
-					{
-						TArray<FCustomizableObjectNodeFloatDescription>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectNodeFloatDescription>>(Node);
-						//Class vars
-						FString Name = "Name";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Name.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							FString OptionNameContent = Array[a].Name;
-
-							if (OptionNameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Name);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectNodeEnumValue")
-					{
-						TArray<FCustomizableObjectNodeEnumValue>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectNodeEnumValue>>(Node);
-						//Class vars
-						FString Name = "Name";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Name.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							FString OptionNameContent = Array[a].Name;
-
-							if (OptionNameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Name);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectNodeExtendMaterialImage")
-					{
-						TArray<FCustomizableObjectNodeExtendMaterialImage>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectNodeExtendMaterialImage>>(Node);
-						//Class vars
-						FString Name = "Name";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Name.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							FString OptionNameContent = Array[a].Name;
-
-							if (OptionNameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Name);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectNodeMaterialImage")
-					{
-						TArray<FCustomizableObjectNodeMaterialImage>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectNodeMaterialImage>>(Node);
-						//Class vars
-						FString Name = "Name";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Name.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							FString OptionNameContent = Array[a].Name;
-
-							if (OptionNameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Name);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectNodeMaterialVector")
-					{
-						TArray<FCustomizableObjectNodeMaterialVector>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectNodeMaterialVector>>(Node);
-						//Class vars
-						FString Name = "Name";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Name.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							FString NameContent = Array[a].Name;
-
-							if (NameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Name);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectNodeMaterialScalar")
-					{
-						TArray<FCustomizableObjectNodeMaterialScalar>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectNodeMaterialScalar>>(Node);
-						//Class vars
-						FString Name = "Name";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Name.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							FString NameContent = Array[a].Name;
-
-							if (NameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Name);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectMaterialVariation")
-					{
-						TArray<FCustomizableObjectMaterialVariation>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectMaterialVariation>>(Node);
-						//Class vars
-						FString Tag = "Tag";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Tag.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Tag);
-								found = true;
-							}
-
-							FString OptionNameContent = Array[a].Tag;
-
-							if (OptionNameContent.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Tag);
-								found = true;
-							}
-						}
-					}
-					else if (ArrayType == "FString")
-					{
-						TArray<FString>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FString>>(Node);
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Array[a].Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a]);
-								found = true;
-							}
-						}
-
-					}
-					else if (ArrayType == "FCustomizableObjectState")
-					{
-						TArray<FCustomizableObjectState>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectState>>(Node);
-						//Class vars
-						FString Name = "Name";
-						FString RuntimeParameters = "RuntimeParameters";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (Name.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							if (Array[a].Name.Contains(NewText.ToString()))
-							{
-								LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Name);
-								found = true;
-							}
-
-							if (RuntimeParameters.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-								found = true;
-							}
-
-							for (int s = 0; s < Array[a].RuntimeParameters.Num(); ++s)
-							{
-								if (Array[a].RuntimeParameters[s].Contains(NewText.ToString()))
-								{
-									LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].RuntimeParameters[s]);
-									found = true;
-								}
-							}
-						}
-					}
-					else if (ArrayType == "FCustomizableObjectNodeStaticMeshLOD")
-					{
-						TArray<FCustomizableObjectNodeStaticMeshLOD>  Array =
-							*ArrayProperty->ContainerPtrToValuePtr<TArray<FCustomizableObjectNodeStaticMeshLOD>>(Node);
-
-						FString LODs = "LODs";
-
-						for (int a = 0; a < Array.Num(); ++a)
-						{
-							if (LODs.Contains(VariableName))
-							{
-								LogSearchResult(CustomizableObjectNode, "Variable", found, LODs);
-								found = true;
-							}
-
-							for (int s = 0; s < Array[a].Materials.Num(); ++s)
-							{
-								FString Name = "Name";
-
-								if (Name.Contains(VariableName))
-								{
-									LogSearchResult(CustomizableObjectNode, "Variable", found, Name);
-									found = true;
-								}
-
-								if (Array[a].Materials[s].Name.Contains(NewText.ToString()))
-								{
-									LogSearchResult(CustomizableObjectNode, "Value", found, Array[a].Materials[s].Name);
-									found = true;
-								}
-							}
-						}
-					}
+					LogSearchResult(Context, "Property Value", bFound, Name);
+					bFound = true;
 				}				
 			}
 		}
-
-		const FText Text = found ?
-			LOCTEXT("SearchCompleted", "Search completed") :
-			FText::FromString("No Results for: " + NewText.ToString());
-
-		FCustomizableObjectEditorLogger::CreateLog(Text)
-			.Category(ELoggerCategory::GraphSearch)
-			.CustomNotification()
-			.Log();
+		else if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+		{
+			for (TFieldIterator<FProperty> It(StructProperty->Struct); It; ++It)
+			{
+				FindProperty(*It, ValuePtr, FindString, Context, bFound);
+			}
+		}
+		else if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+		{
+			FScriptArrayHelper ArrayHelper(ArrayProperty, ValuePtr);
+			for (int32 ValueIdx = 0; ValueIdx < ArrayHelper.Num(); ++ValueIdx)
+			{
+				FindProperty(ArrayProperty->Inner, ArrayHelper.GetRawPtr(ValueIdx), FindString, Context, bFound);
+			}
+		}
+		else if (const FSetProperty* SetProperty = CastField<FSetProperty>(Property))
+		{
+			FScriptSetHelper SetHelper(SetProperty, ValuePtr);
+			for (FScriptSetHelper::FIterator SetIt = SetHelper.CreateIterator(); SetIt; ++SetIt)
+			{
+				FindProperty(SetProperty->ElementProp, SetHelper.GetElementPtr(SetIt), FindString, Context, bFound);
+			}
+		}
+		else if (const FMapProperty* MapProperty = CastField<FMapProperty>(Property))
+		{
+			FScriptMapHelper MapHelper(MapProperty, ValuePtr);
+			for (FScriptMapHelper::FIterator MapIt = MapHelper.CreateIterator(); MapIt; ++MapIt)
+			{
+				const uint8* MapValuePtr = MapHelper.GetPairPtr(MapIt);
+				FindProperty(MapProperty->KeyProp, MapValuePtr, FindString, Context, bFound);
+				FindProperty(MapProperty->ValueProp, MapValuePtr, FindString, Context, bFound);
+			}
+		}
 	}
 }
 
 
-void FCustomizableObjectEditor::LogSearchResult(UCustomizableObjectNode* Node, FString Type, bool bIsFirst, FString Result) const
+void FCustomizableObjectEditor::OnEnterText(const FText& NewText, ETextCommit::Type TextType)
+{
+	if (TextType != ETextCommit::OnEnter)
+	{
+		return;
+	}
+	
+	if (!GraphEditor)
+	{
+		return;
+	}
+
+	const UEdGraph* Graph = GraphEditor->GetCurrentGraph();
+	if (!Graph)
+	{
+		return;
+	}
+
+	bool bFound = false;
+
+	const FString FindString = NewText.ToString();
+
+	for (TObjectPtr<UEdGraphNode> Node : Graph->Nodes)
+	{
+		if (!Node)
+		{
+			continue;
+		}
+
+		// Node names are not in the reflection system
+		const FString NodeName = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString().Replace(TEXT("\n"), TEXT(" "));
+		if (NodeName.Contains(NewText.ToString(), ESearchCase::IgnoreCase))
+		{
+			LogSearchResult(*Node, "Node", bFound, NodeName);
+			bFound = true;
+		}
+
+		// Pins are not in the reflection system
+		for (const UEdGraphPin* Pin : Node->GetAllPins())
+		{
+			const FString PinFriendlyName = Pin->PinFriendlyName.ToString();
+			if (PinFriendlyName.Contains(FindString))
+			{
+				LogSearchResult(*Node, "Pin", bFound, PinFriendlyName);
+				bFound = true;
+			}
+		}
+
+		// Find anything marked as a UPROPERTY
+		for (TFieldIterator<FProperty> It(Node->GetClass()); It; ++It)
+		{
+			FindProperty(*It, Node, FindString, *Node, bFound);
+		}
+	}
+
+	const FText Text = bFound ?
+		LOCTEXT("SearchCompleted", "Search completed") :
+		FText::FromString("No Results for: " + NewText.ToString());
+
+	FCustomizableObjectEditorLogger::CreateLog(Text)
+		.Category(ELoggerCategory::GraphSearch)
+		.CustomNotification()
+		.Log();
+}
+
+
+void FCustomizableObjectEditor::LogSearchResult(const UObject& Context, const FString& Type, bool bIsFirst, const FString& Result) const
 {
 	if (!bIsFirst)
 	{
@@ -2455,7 +2236,7 @@ void FCustomizableObjectEditor::LogSearchResult(UCustomizableObjectNode* Node, F
 	}
 	
 	FCustomizableObjectEditorLogger::CreateLog(FText::FromString(Type + ": " + Result))
-	.Node(*Node)
+	.Context(Context)
 	.BaseObject()
 	.Notification(false)
 	.Log();
@@ -2468,7 +2249,7 @@ void FCustomizableObjectEditor::UpdatePreviewVisibility()
 	{
 		if (PreviewSkeletalMeshComponent)
 		{
-			if (PreviewInstance->SkeletalMeshStatus != ESkeletalMeshState::UpdateError)
+			if (PreviewInstance->GetPrivate()->SkeletalMeshStatus == ESkeletalMeshStatus::Success)
 			{
 				PreviewSkeletalMeshComponent->SetVisibility(true, true);
 			}
@@ -2493,39 +2274,10 @@ void FCustomizableObjectEditor::OnUpdatePreviewInstance()
 	}
 	
 	Viewport->SetPreviewComponents(PreviewSkeletalMeshComponents);
-	Viewport->SetDrawDefaultUVMaterial(false);
+	Viewport->SetDrawDefaultUVMaterial();
 	ViewportClient->Invalidate();
 	ViewportClient->ReSetAnimation();
 	ViewportClient->SetReferenceMeshMissingWarningMessage(false);
-
-	if (AssetRegistryLoaded)
-	{
-		// If the instance is updated due to a change in a parameter projector, set again the LastSelectedProjectorParameter variable with the
-		// current projector the viewport gizmo has to continue having it as selected when rebuilding the parameter details widget.
-		// Otherwise, reset the value.
-
-		if (Viewport->GetGizmoHasAssignedData() && !Viewport->GetGizmoAssignedDataIsFromNode())
-		{
-			PreviewInstance->LastSelectedProjectorParameter = Viewport->GetGizmoProjectorParameterName();
-			PreviewInstance->LastSelectedProjectorParameterWithIndex = Viewport->GetGizmoProjectorParameterNameWithIndex();
-
-			if (!PreviewInstance->ProjectorAlphaChange && !Viewport->GetIsManipulatingGizmo())
-			{
-				TArray<UObject*> instances;
-				instances.Add(PreviewInstance);
-				CustomizableInstanceDetailsView->SetObjects(instances, true);
-			}
-
-			PreviewInstance->ProjectorAlphaChange = false;
-		}
-		else
-		{
-			PreviewInstance->LastSelectedProjectorParameter = "";
-			PreviewInstance->LastSelectedProjectorParameterWithIndex = "";
-		}
-
-		//UE_LOG(LogMutable, Warning, TEXT("LastSelectedProjectorParameter=%s, LastSelectedProjectorParameterWithIndex=%s"), *(PreviewInstance->LastSelectedProjectorParameter), *(PreviewInstance->LastSelectedProjectorParameterWithIndex));
-	}
 
 	if (TextureAnalyzer.IsValid())
 	{
@@ -2565,12 +2317,6 @@ void FCustomizableObjectEditor::UpdateGraphNodeProperties()
 {
 	OnSelectedGraphNodesChanged(FGraphPanelSelectionSet());
 	OnSelectedGraphNodesChanged(GraphEditor->GetSelectedNodes());
-}
-
-
-bool FCustomizableObjectEditor::GetAssetRegistryLoaded()
-{
-	return AssetRegistryLoaded;
 }
 
 
@@ -2635,18 +2381,16 @@ UCustomizableObject* FCustomizableObjectEditor::GetAbsoluteCOParent(const UCusto
 		//Get all the NodeObjects
 		TArray<UCustomizableObjectNodeObject*> ObjectNodes;
 		Root->ParentObject->Source->GetNodesOfClass<UCustomizableObjectNodeObject>(ObjectNodes);
-
-		for (int i = 0; i < ObjectNodes.Num(); ++i)
+		if (!ObjectNodes.IsEmpty())
 		{
 			//Getting the parent of the root
-			if (ObjectNodes[i]->ParentObject == nullptr)
+			UCustomizableObjectNodeObject* FirstObjectNode = ObjectNodes[0];
+			if (FirstObjectNode->ParentObject == nullptr)
 			{
 				return Root->ParentObject;
 			}
-			else
-			{
-				return GetAbsoluteCOParent(ObjectNodes[0]);
-			}
+
+			return GetAbsoluteCOParent(FirstObjectNode);
 		}
 	}
 
@@ -2781,8 +2525,8 @@ void FCustomizableObjectEditor::CreatePreviewComponents()
 		}
 		else
 		{
-			PreviewSkeletalMeshComponents.SetNumZeroed(NumMeshComponents, false);
-			PreviewCustomizableSkeletalComponents.SetNumZeroed(NumMeshComponents, false);
+			PreviewSkeletalMeshComponents.SetNumZeroed(NumMeshComponents, EAllowShrinking::No);
+			PreviewCustomizableSkeletalComponents.SetNumZeroed(NumMeshComponents, EAllowShrinking::No);
 		}
 
 		for (int32 ComponentIndex = 0; ComponentIndex < PreviewSkeletalMeshComponents.Num(); ++ComponentIndex)
@@ -2797,6 +2541,48 @@ void FCustomizableObjectEditor::CreatePreviewComponents()
 				}
 			}
 		}
+	}
+}
+
+void RemoveRestrictedChars(FString& String)
+{
+	// Remove restricted chars, according to FPaths::ValidatePath, RestrictedChars = "/?:&\\*\"<>|%#@^ ";
+
+	String = String.Replace(TEXT("/"), TEXT(""));
+	String = String.Replace(TEXT("?"), TEXT(""));
+	String = String.Replace(TEXT(":"), TEXT(""));
+	String = String.Replace(TEXT("&"), TEXT(""));
+	String = String.Replace(TEXT("\\"), TEXT(""));
+	String = String.Replace(TEXT("*"), TEXT(""));
+	String = String.Replace(TEXT("\""), TEXT(""));
+	String = String.Replace(TEXT("<"), TEXT(""));
+	String = String.Replace(TEXT(">"), TEXT(""));
+	String = String.Replace(TEXT("|"), TEXT(""));
+	String = String.Replace(TEXT("%"), TEXT(""));
+	String = String.Replace(TEXT("#"), TEXT(""));
+	String = String.Replace(TEXT("@"), TEXT(""));
+	String = String.Replace(TEXT("^"), TEXT(""));
+	String = String.Replace(TEXT(" "), TEXT(""));
+}
+
+
+void FCustomizableObjectEditor::OnCustomizableObjectStatusChanged(FCustomizableObjectStatus::EState, const FCustomizableObjectStatus::EState CurrentState)
+{
+	switch (CurrentState)
+	{
+	case FCustomizableObjectStatus::EState::ModelLoaded:
+		if (!PreviewInstance)
+		{
+			CreatePreviewInstance();
+		}
+		break;
+		
+	case FCustomizableObjectStatus::EState::NoModel:
+		CustomizableObject->ConditionalAutoCompile();
+		break;
+
+	default:
+		break;
 	}
 }
 

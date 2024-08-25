@@ -102,7 +102,8 @@ bool UNiagaraDataInterfaceCubeTexture::Equals(const UNiagaraDataInterface* Other
 		OtherTexture->TextureUserParameter == TextureUserParameter;
 }
 
-void UNiagaraDataInterfaceCubeTexture::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceCubeTexture::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature& Sig = OutFunctions.AddDefaulted_GetRef();
@@ -129,6 +130,7 @@ void UNiagaraDataInterfaceCubeTexture::GetFunctions(TArray<FNiagaraFunctionSigna
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Height")));
 	}
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceCubeTexture, SampleCubeTexture)
 void UNiagaraDataInterfaceCubeTexture::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)

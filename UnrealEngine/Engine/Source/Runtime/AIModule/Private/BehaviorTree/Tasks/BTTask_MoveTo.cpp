@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "AISystem.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Object.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Vector.h"
 #include "VisualLogger/VisualLogger.h"
@@ -335,6 +336,16 @@ void UBTTask_MoveTo::DescribeRuntimeValues(const UBehaviorTreeComponent& OwnerCo
 uint16 UBTTask_MoveTo::GetInstanceMemorySize() const
 {
 	return sizeof(FBTMoveToTaskMemory);
+}
+
+void UBTTask_MoveTo::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTMoveToTaskMemory>(NodeMemory, InitType);
+}
+
+void UBTTask_MoveTo::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTMoveToTaskMemory>(NodeMemory, CleanupType);
 }
 
 void UBTTask_MoveTo::PostLoad()

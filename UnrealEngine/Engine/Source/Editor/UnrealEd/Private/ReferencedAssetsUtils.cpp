@@ -143,7 +143,7 @@ void FFindReferencedAssets::BuildAssetList(UObject *Object, const TArray<UClass*
 	TArray<FReferencedAssets> LocalReferencers;
 
 	// Create a new entry for this actor.
-	new( LocalReferencers ) FReferencedAssets( Object );
+	LocalReferencers.Emplace( Object );
 
 	for (FThreadSafeObjectIterator It; It; ++It)
 	{

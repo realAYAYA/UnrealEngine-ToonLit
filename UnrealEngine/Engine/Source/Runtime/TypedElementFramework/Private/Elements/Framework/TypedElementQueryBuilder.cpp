@@ -2,6 +2,10 @@
 
 #include "Elements/Framework/TypedElementQueryBuilder.h"
 
+#include "Algo/BinarySearch.h"
+#include "Elements/Framework/TypedElementMetaData.h"
+#include "GenericPlatform/GenericPlatformMath.h"
+
 namespace TypedElementQueryBuilder
 {
 	const UScriptStruct* Type(FTopLevelAssetPath Name)
@@ -27,9 +31,11 @@ namespace TypedElementQueryBuilder
 		return TypeOptional(FTopLevelAssetPath{ FAnsiStringView{ Name, IntCastChecked<int32>(NameSize) } });
 	}
 
-	/**
-	 * DependsOn
-	 */
+
+
+	//
+	// DependsOn
+	//
 
 	FDependency::FDependency(ITypedElementDataStorageInterface::FQueryDescription* Query)
 		: Query(Query)
@@ -190,12 +196,18 @@ namespace TypedElementQueryBuilder
 		Query->Callback.AfterGroups.Shrink();
 		Query->SelectionTypes.Shrink();
 		Query->SelectionAccessTypes.Shrink();
+		for (TypedElementDataStorage::FColumnMetaData& Metadata : Query->SelectionMetaData)
+		{
+			Metadata.Shrink();
+		}
+		Query->SelectionMetaData.Shrink();
 		Query->ConditionTypes.Shrink();
 		Query->ConditionOperators.Shrink();
 		Query->DependencyTypes.Shrink();
 		Query->DependencyFlags.Shrink();
 		Query->CachedDependencies.Shrink();
 		Query->Subqueries.Shrink();
+		Query->MetaData.Shrink();
 		return MoveTemp(*Query);
 	}
 
@@ -309,11 +321,18 @@ namespace TypedElementQueryBuilder
 		checkf(Target, TEXT("The Select section in the Typed Elements query builder doesn't support nullptrs as Read-Only input."));
 		Query.SelectionTypes.Emplace(Target);
 		Query.SelectionAccessTypes.Emplace(ITypedElementDataStorageInterface::EQueryAccessType::ReadOnly);
+		Query.SelectionMetaData.Emplace(Target, TypedElementDataStorage::FColumnMetaData::EFlags::None);
+		
 		return *this;
 	}
 
-	Select& Select::ReadOnly(std::initializer_list<const UScriptStruct*> Targets)
+	Select& Select::ReadOnly(TConstArrayView<const UScriptStruct*> Targets)
 	{
+		int32 NewCount = Query.SelectionTypes.Num() + Targets.Num();
+		Query.SelectionTypes.Reserve(NewCount);
+		Query.SelectionAccessTypes.Reserve(NewCount);
+		Query.SelectionMetaData.Reserve(NewCount);
+
 		for (const UScriptStruct* Target : Targets)
 		{
 			ReadOnly(Target);
@@ -326,11 +345,17 @@ namespace TypedElementQueryBuilder
 		checkf(Target, TEXT("The Select section in the Typed Elements query builder doesn't support nullptrs as Read/Write input."));
 		Query.SelectionTypes.Emplace(Target);
 		Query.SelectionAccessTypes.Emplace(ITypedElementDataStorageInterface::EQueryAccessType::ReadWrite);
+		Query.SelectionMetaData.Emplace(Target, TypedElementDataStorage::FColumnMetaData::EFlags::IsMutable);
 		return *this;
 	}
 
-	Select& Select::ReadWrite(std::initializer_list<const UScriptStruct*> Targets)
+	Select& Select::ReadWrite(TConstArrayView<const UScriptStruct*> Targets)
 	{
+		int32 NewCount = Query.SelectionTypes.Num() + Targets.Num();
+		Query.SelectionTypes.Reserve(NewCount);
+		Query.SelectionAccessTypes.Reserve(NewCount);
+		Query.SelectionMetaData.Reserve(NewCount);
+
 		for (const UScriptStruct* Target : Targets)
 		{
 			ReadWrite(Target);

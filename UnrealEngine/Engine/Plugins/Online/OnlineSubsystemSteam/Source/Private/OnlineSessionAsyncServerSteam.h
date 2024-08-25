@@ -257,7 +257,7 @@ PACKAGE_SCOPE:
 	TIndirectArray<FPendingSearchResultSteam> PendingSearchResults;
 	/** Search settings specified for the query */
 	TSharedPtr<class FOnlineSessionSearch> SearchSettings;
-	/** Master server request handle */
+	/** Server list request handle */
 	HServerListRequest ServerListRequestHandle;
 
 public:
@@ -274,7 +274,7 @@ public:
 	}
 
 	/**
-     *  Create the proper query for the master server based on the given search settings
+     *  Create the proper query for the server list based on the given search settings
      *
      * @param OutFilter Steam structure containing the proper filters
      * @param NumFilters number of filters contained in the array above
@@ -412,7 +412,7 @@ public:
 };
 
 /**
- *	Turns a friends accepted invite request into a valid search result (master server version)
+ *	Turns a friends accepted invite request into a valid search result (server list version)
  */
 class FOnlineAsyncEventSteamInviteAccepted : public FOnlineAsyncEvent<FOnlineSubsystemSteam>
 {

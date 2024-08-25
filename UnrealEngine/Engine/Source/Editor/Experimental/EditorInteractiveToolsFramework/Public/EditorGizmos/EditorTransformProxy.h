@@ -14,6 +14,8 @@
 
 #include "EditorTransformProxy.generated.h"
 
+class UEditorTransformGizmoContextObject;
+class FEditorViewportClient;
 class UObject;
 
 /**
@@ -21,9 +23,7 @@ class UObject;
  * returns the transform that defines the current space of the default
  * Editor transform gizmo for a given mode manager / viewport.
  * 
- * @todo Currently this defaults internally to GLevelEditorModeManager()
- * but eventually it should be possible to set and use a different mode
- * manager.
+ * This defaults internally to GLevelEditorModeManager() if none provided when constructing the proxy.
  */
 UCLASS(Transient)
 class EDITORINTERACTIVETOOLSFRAMEWORK_API UEditorTransformProxy : public UTransformProxy
@@ -52,5 +52,16 @@ public:
 
 	/** Input scale delta to be applied in local space of the current transform. */
 	virtual void InputScaleDelta(const FVector& InDeltaScale, EAxisList::Type InAxisList);
+
+	/** Set legacy widget axis temporarily because FEditorViewportClient overrides may expect it */
+	void SetCurrentAxis(const EAxisList::Type InAxisList) const;
+
+	static UEditorTransformProxy* CreateNew(const UEditorTransformGizmoContextObject* InContext = nullptr);
+	
+private:
+	
+	FEditorViewportClient* GetViewportClient() const;
+
+	TWeakObjectPtr<const UEditorTransformGizmoContextObject> WeakContext;
 };
 

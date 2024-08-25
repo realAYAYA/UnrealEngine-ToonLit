@@ -35,7 +35,6 @@ public:
 	SLATE_ARGUMENT(FColor, SquareColor)
 	SLATE_ARGUMENT(TArray<FConstraintRanges>*, Ranges)
 	SLATE_ARGUMENT(bool, bDiscrete)
-	SLATE_ARGUMENT(UTexture*, Texture)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
@@ -71,8 +70,6 @@ private:
 
 	/** Brush to draw the decorations of a parameter option */
 	FSlateBrush Brush;
-
-	UTexture* Texture;
 };
 
 

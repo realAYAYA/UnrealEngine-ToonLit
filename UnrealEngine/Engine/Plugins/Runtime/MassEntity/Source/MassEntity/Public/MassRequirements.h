@@ -58,8 +58,6 @@ public:
 		, Presence(InPresence)
 	{
 		check(InStruct);
-		checkf((Presence != EMassFragmentPresence::Any && Presence != EMassFragmentPresence::Optional)
-			|| AccessMode == EMassFragmentAccess::ReadOnly || AccessMode == EMassFragmentAccess::ReadWrite, TEXT("Only ReadOnly and ReadWrite modes are suppored for optional requirements"));
 	}
 
 	bool RequiresBinding() const { return (AccessMode != EMassFragmentAccess::None); }
@@ -88,11 +86,14 @@ struct MASSENTITY_API FMassSubsystemRequirements
 	friend FMassDebugger;
 	friend FMassRequirementAccessDetector;
 
-public:
 	template<typename T>
 	FMassSubsystemRequirements& AddSubsystemRequirement(const EMassFragmentAccess AccessMode)
 	{
 		check(AccessMode != EMassFragmentAccess::None && AccessMode != EMassFragmentAccess::MAX);
+
+		// Compilation errors here like: 'GameThreadOnly': is not a member of 'TMassExternalSubsystemTraits<USmartObjectSubsystem>
+		// indicate that there is a missing header that defines the subsystem's trait or that you need to define one for that subsystem type.
+		// @see "MassExternalSubsystemTraits.h" for details
 
 		switch (AccessMode)
 		{
@@ -365,9 +366,12 @@ public:
 
 	void Reset();
 
-	/** The function validates requirements we make for queries. See the FMassFragmentRequirements struct description for details.
-	 *  Note that this function is non-trivial and end users are not expected to need to use it. 
-	 *  @return whether this query's requirements follow the rules. */
+	/** 
+	 * The function validates requirements we make for queries. See the FMassFragmentRequirements struct description for details.
+	 * Even though the code of the function is non trivial the consecutive calls will be essentially free due to the result 
+	 * being cached (note that the caching gets invalidated if the composition changes).
+	 * @return whether this query's requirements follow the rules.
+	 */
 	bool CheckValidity() const;
 
 	TConstArrayView<FMassFragmentRequirementDescription> GetFragmentRequirements() const { return FragmentRequirements; }
@@ -398,6 +402,8 @@ protected:
 	void SortRequirements();
 
 	FORCEINLINE void IncrementChangeCounter() { ++IncrementalChangesCount; }
+	void ConsumeIncrementalChangesCount() { IncrementalChangesCount = 0; }
+	bool HasIncrementalChanges() const{ return IncrementalChangesCount > 0; }
 
 protected:
 	friend FMassRequirementAccessDetector;
@@ -420,9 +426,14 @@ protected:
 	FMassSharedFragmentBitSet RequiredOptionalSharedFragments;
 	FMassSharedFragmentBitSet RequiredNoneSharedFragments;
 
-	uint32 IncrementalChangesCount = 0;
-
 private:
+	mutable uint16 bValidityIsCached : 1 = false;
+	mutable uint16 bAreRequirementsValid : 1 = false;
+	mutable uint16 bEmptynessIsCached : 1 = false;
+	mutable uint16 bAreRequirementsEmpty: 1 = false;
+
+	uint16 IncrementalChangesCount = 0;
+
 	bool bRequiresGameThreadExecution = false;
 };
 

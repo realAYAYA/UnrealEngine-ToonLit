@@ -83,9 +83,33 @@
 #include "ISMPartition/ISMComponentBatcher.h"
 #include "ISMPartition/ISMComponentDescriptor.h"
 
+#include "UObject/GCObjectScopeGuard.h"
+
 #define LOCTEXT_NAMESPACE "MeshMergeUtils"
 
 DEFINE_LOG_CATEGORY(LogMeshMerging);
+
+static TAutoConsoleVariable<int32> CVarMeshMergeUtilitiesUVGenerationMethod(
+	TEXT("MeshMergeUtilities.UVGenerationMethod"),
+	0,
+	TEXT("UV generation method when creating merged or proxy meshes\n"
+		 "0 - Engine default - (currently Patch Builder)\n"
+		 "1 - Legacy\n"
+		 "2 - UVAtlas\n"
+		 "3 - XAtlas\n"
+		 "4 - Patch Builder\n"));
+
+static FStaticMeshOperations::EGenerateUVMethod GetUVGenerationMethodToUse()
+{
+	switch (CVarMeshMergeUtilitiesUVGenerationMethod.GetValueOnAnyThread())
+	{
+	case 1:  return FStaticMeshOperations::EGenerateUVMethod::Legacy;
+	case 2:  return FStaticMeshOperations::EGenerateUVMethod::UVAtlas;
+	case 3:  return FStaticMeshOperations::EGenerateUVMethod::XAtlas;
+	case 4:  return FStaticMeshOperations::EGenerateUVMethod::PatchBuilder;
+	default: return FStaticMeshOperations::EGenerateUVMethod::Default;
+	}
+}
 
 FMeshMergeUtilities::FMeshMergeUtilities()
 {
@@ -134,7 +158,7 @@ void FMeshMergeUtilities::BakeMaterialsForComponent(TArray<TWeakObjectPtr<UObjec
 	for (int32 LODIndex = 0; LODIndex < NumLODs; ++LODIndex)
 	{
 		// Reset section for reuse
-		Sections.SetNum(0, false);
+		Sections.SetNum(0, EAllowShrinking::No);
 
 		// Extract raw mesh data 
 		const bool bProcessedLOD = MaterialOptions->LODIndices.Contains(LODIndex);
@@ -333,7 +357,7 @@ void FMeshMergeUtilities::BakeMaterialsForComponent(TArray<TWeakObjectPtr<UObjec
 	{
 		if (Entry.bUseConstantValue && Entry.Property != MP_MAX)
 		{
-			ConstantData.SetNum(1, false);
+			ConstantData.SetNum(1, EAllowShrinking::No);
 			ConstantData[0] = FColor(Entry.ConstantValue * 255.0f, Entry.ConstantValue * 255.0f, Entry.ConstantValue * 255.0f);
 			for (FBakeOutput& Ouput : BakeOutputs)
 			{
@@ -1109,10 +1133,15 @@ static TArray<FVector2D> GetCustomTextureCoordinates(const FMeshDescription& InM
 	}
 	else
 	{
-		bool bSuccess = FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(InMeshDescription, InMeshProxySettings.MaterialSettings.TextureSize.GetMax(), false, CustomTextureCoordinates);
+		FStaticMeshOperations::FGenerateUVOptions GenerateUVOptions;
+		GenerateUVOptions.TextureResolution = InMeshProxySettings.MaterialSettings.TextureSize.GetMax();
+		GenerateUVOptions.bMergeTrianglesWithIdenticalAttributes = false;
+		GenerateUVOptions.UVMethod = GetUVGenerationMethodToUse();
+
+		bool bSuccess = FStaticMeshOperations::GenerateUV(InMeshDescription, GenerateUVOptions, CustomTextureCoordinates);
 		if (!bSuccess)
 		{
-			UE_LOG(LogMeshMerging, Warning, TEXT("GenerateUniqueUVsForStaticMesh: Failed to pack UVs for static mesh \"%s\" (num triangles = %d, texture resolution = %d)."), *InStaticMesh->GetName(), InMeshDescription.Triangles().Num(), InMeshProxySettings.MaterialSettings.TextureSize.GetMax());
+			UE_LOG(LogMeshMerging, Warning, TEXT("GenerateUV: Failed to pack UVs for static mesh \"%s\" (num triangles = %d, texture resolution = %d)."), *InStaticMesh->GetName(), InMeshDescription.Triangles().Num(), InMeshProxySettings.MaterialSettings.TextureSize.GetMax());
 			CustomTextureCoordinates.Empty();
 		}
 	}
@@ -1648,6 +1677,8 @@ void FMeshMergeUtilities::CreateProxyMesh(const TArray<UStaticMeshComponent*>& I
 	}
 
 	UMaterialOptions* Options = PopulateMaterialOptions(MaterialProxySettings);
+	TGCObjectScopeGuard<UMaterialOptions> MaterialOptionsGCScopeGuard(Options);
+
 	TArray<EMaterialProperty> MaterialProperties;
 	for (const FPropertyEntry& Entry : Options->Properties)
 	{
@@ -1780,7 +1811,7 @@ void FMeshMergeUtilities::CreateProxyMesh(const TArray<UStaticMeshComponent*>& I
 			{
 				if (Entry.bUseConstantValue && Entry.Property != MP_MAX)
 				{
-					ConstantData.SetNum(1, false);
+					ConstantData.SetNum(1, EAllowShrinking::No);
 					ConstantData[0] = FColor(Entry.ConstantValue * 255.0f, Entry.ConstantValue * 255.0f, Entry.ConstantValue * 255.0f);
 					for (FBakeOutput& Output : BakeOutputs)
 					{
@@ -1975,22 +2006,6 @@ void FMeshMergeUtilities::CreateProxyMesh(const TArray<UStaticMeshComponent*>& I
 	);
 }
 
-bool FMeshMergeUtilities::IsValidBaseMaterial(const UMaterialInterface* InBaseMaterial, bool bShowToaster) const
-{
-	bool bIsValid = FMaterialUtilities::IsValidFlattenMaterial(InBaseMaterial);
-	if (!bIsValid && bShowToaster)
-	{
-		FFormatNamedArguments Arguments;
-		Arguments.Add(TEXT("MaterialName"), FText::FromString(InBaseMaterial->GetName()));
-		FText ErrorMessage = FText::Format(LOCTEXT("UHierarchicalLODSettings_PostEditChangeProperty", "Material {MaterialName} is missing required Material Parameters (check log for details)"), Arguments);
-		FNotificationInfo Info(ErrorMessage);
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-	}
-
-	return bIsValid;
-}
-
 void FMeshMergeUtilities::RetrieveMeshDescription(const UStaticMeshComponent* InStaticMeshComponent, int32 LODIndex, FMeshDescription& InOutMeshDescription, bool bPropagateMeshData) const
 {
 	FMeshMergeHelpers::RetrieveMesh(InStaticMeshComponent, LODIndex, InOutMeshDescription, bPropagateMeshData);
@@ -2031,7 +2046,7 @@ bool RetrieveRawMeshData(FMeshMergeDataTracker& DataTracker
 	Adapter.RetrieveRawMeshData(LODIndex, RawMesh, bPropagateMeshData);
 
 	// Reset section for reuse
-	Sections.SetNum(0, false);
+	Sections.SetNum(0, EAllowShrinking::No);
 
 	// Extract sections for given LOD index from the mesh 
 	Adapter.RetrieveMeshSections(LODIndex, Sections);
@@ -2420,7 +2435,7 @@ void FMeshMergeUtilities::MergeComponentsToStaticMesh(const TArray<UPrimitiveCom
 				FMeshSectionInfo SectionInfo;
 				SectionInfo.bCastShadow = StoredSectionInfo.EnabledProperties.Contains(GET_MEMBER_NAME_CHECKED(FMeshSectionInfo, bCastShadow));
 				SectionInfo.bEnableCollision = StoredSectionInfo.EnabledProperties.Contains(GET_MEMBER_NAME_CHECKED(FMeshSectionInfo, bEnableCollision));
-				SectionInfo.MaterialIndex = UniqueMaterials.IndexOfByKey(StoredSectionInfo.Material);
+				SectionInfo.MaterialIndex = UniqueMaterials.Num() == 1 ? 0 : UniqueMaterials.IndexOfByKey(CollapsedMaterialMap[StoredSectionInfo.Material]);
 				SectionInfoMap.Set(LODIndex, Index, SectionInfo);
 			}
 		}
@@ -2462,12 +2477,12 @@ void FMeshMergeUtilities::MergeComponentsToStaticMesh(const TArray<UPrimitiveCom
 		if (InBasePackageName.IsEmpty())
 		{
 			AssetName = TEXT("SM_MERGED_") + FPackageName::GetShortName(MergedAssetPackageName);
-			PackageName = FPackageName::GetLongPackagePath(MergedAssetPackageName) + TEXT("/") + AssetName;
+			PackageName = FPackageName::GetLongPackagePath(MergedAssetPackageName) / AssetName;
 		}
 		else
 		{
-			AssetName = FPackageName::GetShortName(InBasePackageName);
-			PackageName = InBasePackageName;
+			AssetName = TEXT("SM_") + FPackageName::GetShortName(InBasePackageName);
+			PackageName = FPackageName::GetLongPackagePath(InBasePackageName) / AssetName;
 		}
 
 		UPackage* Package = InOuter;
@@ -2702,6 +2717,7 @@ void FMeshMergeUtilities::CreateMergedMaterial(FMeshMergeDataTracker& InDataTrac
 	}
 
 	UMaterialOptions* MaterialOptions = PopulateMaterialOptions(MaterialProxySettings);
+	TGCObjectScopeGuard<UMaterialOptions> MaterialOptionsGCScopeGuard(MaterialOptions);
 
 	// Check each material to see if the shader actually uses vertex data and collect flags
 	TArray<TOptional<bool>> bMaterialUsesVertexData;
@@ -2788,6 +2804,11 @@ void FMeshMergeUtilities::CreateMergedMaterial(FMeshMergeDataTracker& InDataTrac
 				NewMeshData.VertexColorHash = Key.GetVertexColorHash();
 				NewMeshData.bMirrored = Component->GetComponentTransform().GetDeterminant() < 0.0f;
 				NewMeshData.MaterialIndices = SectionIndices;
+				if (!Component->GetCustomPrimitiveData().Data.IsEmpty())
+				{
+					NewMeshData.PrimitiveData = FPrimitiveData();
+					NewMeshData.PrimitiveData->CustomPrimitiveData = &Component->GetCustomPrimitiveData();
+				}
 			}
 
 			auto CompareMaterialData = [&InSettings](const FMaterialData& LHS, const FMaterialData& RHS)
@@ -2795,9 +2816,21 @@ void FMeshMergeUtilities::CreateMergedMaterial(FMeshMergeDataTracker& InDataTrac
 				return InSettings.bMergeEquivalentMaterials ? FMaterialKey(LHS.Material) == FMaterialKey(RHS.Material) : LHS.Material == RHS.Material;
 			};
 
-			auto CompareMeshData = [](const FMeshData& LHS, const FMeshData& RHS)
+			auto CompareCustomPrimitiveData = [](const FCustomPrimitiveData* LHS, const FCustomPrimitiveData* RHS)
 			{
-				return (LHS.Mesh == RHS.Mesh) && (LHS.MaterialIndices == RHS.MaterialIndices) && (LHS.bMirrored == RHS.bMirrored) && (LHS.VertexColorHash == RHS.VertexColorHash);
+				// Return true if both are null, false if one of them is null - otherwise, compare content
+				return (!LHS && !RHS) ? true : (!LHS || !RHS) ? false : (*LHS == *RHS);
+			};
+
+			auto ComparePrimitiveData = [&CompareCustomPrimitiveData](const TOptional<FPrimitiveData>& LHS, const TOptional<FPrimitiveData>& RHS)
+			{
+				// Return true if both are null, false if one of them is null - otherwise, compare content
+				return (!LHS && !RHS) ? true : (!LHS || !RHS) ? false : CompareCustomPrimitiveData(LHS->CustomPrimitiveData, RHS->CustomPrimitiveData);
+			};
+
+			auto CompareMeshData = [&ComparePrimitiveData](const FMeshData& LHS, const FMeshData& RHS)
+			{
+				return (LHS.Mesh == RHS.Mesh) && (LHS.MaterialIndices == RHS.MaterialIndices) && (LHS.bMirrored == RHS.bMirrored) && (LHS.VertexColorHash == RHS.VertexColorHash) && ComparePrimitiveData(LHS.PrimitiveData, RHS.PrimitiveData);
 			};
 
 			// Find material & mesh pair
@@ -2844,12 +2877,22 @@ void FMeshMergeUtilities::CreateMergedMaterial(FMeshMergeDataTracker& InDataTrac
 							{
 								// No job found yet, fire an async task
 								MeshLODsTextureCoordinates.Add(Tuple, Async(EAsyncExecution::Thread, [MeshDescription, MaterialOptions, this]()
+								{
+									FStaticMeshOperations::FGenerateUVOptions GenerateUVOptions;
+									GenerateUVOptions.TextureResolution = MaterialOptions->TextureSize.GetMax();
+									GenerateUVOptions.bMergeTrianglesWithIdenticalAttributes = false;
+									GenerateUVOptions.UVMethod = GetUVGenerationMethodToUse();
+
+									TArray<FVector2D> UniqueTextureCoordinates;
+									FStaticMeshOperations::GenerateUV(*MeshDescription, GenerateUVOptions, UniqueTextureCoordinates);
+
+									if (GenerateUVOptions.UVMethod == FStaticMeshOperations::EGenerateUVMethod::Legacy)
 									{
-										TArray<FVector2D> UniqueTextureCoordinates;
-										FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(*MeshDescription, MaterialOptions->TextureSize.GetMax(), false, UniqueTextureCoordinates);
 										ScaleTextureCoordinatesToBox(FBox2D(FVector2D::ZeroVector, FVector2D(1, 1)), UniqueTextureCoordinates);
-										return UniqueTextureCoordinates;
-									}));
+									}
+
+									return UniqueTextureCoordinates;
+								}));
 							}
 							// Keep track of the fact that this mesh is waiting for the UV computation to finish
 							MeshDataAwaitingResults.Add(MeshDataIndex, Tuple);
@@ -2895,11 +2938,19 @@ void FMeshMergeUtilities::CreateMergedMaterial(FMeshMergeDataTracker& InDataTrac
 		CreateMergedRawMeshes(InDataTracker, RemapUVMergeSettings, InStaticMeshComponentsToMerge, InUniqueMaterials, InCollapsedMaterialMap, InOutputMaterialsMap, false, false, InMergedAssetPivot, MergedRawMeshes);
 
 		// Create texture coords for the merged mesh
+		FStaticMeshOperations::FGenerateUVOptions GenerateUVOptions;
+		GenerateUVOptions.TextureResolution = MaterialOptions->TextureSize.GetMax();
+		GenerateUVOptions.bMergeTrianglesWithIdenticalAttributes = true;
+		GenerateUVOptions.UVMethod = GetUVGenerationMethodToUse();
+
 		TArray<FVector2D> GlobalTextureCoordinates;
-		bool bSuccess = FStaticMeshOperations::GenerateUniqueUVsForStaticMesh(MergedRawMeshes[0], MaterialOptions->TextureSize.GetMax(), true, GlobalTextureCoordinates);
+		bool bSuccess = FStaticMeshOperations::GenerateUV(MergedRawMeshes[0], GenerateUVOptions, GlobalTextureCoordinates);
 		if (bSuccess)
 		{
-			ScaleTextureCoordinatesToBox(FBox2D(FVector2D::ZeroVector, FVector2D(1, 1)), GlobalTextureCoordinates);
+			if (GenerateUVOptions.UVMethod == FStaticMeshOperations::EGenerateUVMethod::Legacy)
+			{
+				ScaleTextureCoordinatesToBox(FBox2D(FVector2D::ZeroVector, FVector2D(1, 1)), GlobalTextureCoordinates);
+			}
 
 			// copy UVs back to the un-merged mesh's custom texture coords
 			// iterate the raw meshes in the same way as when we combined the mesh above in CreateMergedRawMeshes()
@@ -2935,7 +2986,7 @@ void FMeshMergeUtilities::CreateMergedMaterial(FMeshMergeDataTracker& InDataTrac
 		}
 		else
 		{
-			UE_LOG(LogMeshMerging, Warning, TEXT("GenerateUniqueUVsForStaticMesh: Failed to pack UVs for static mesh"));
+			UE_LOG(LogMeshMerging, Warning, TEXT("GenerateUV: Failed to pack UVs for static mesh"));
 		}
 	}
 
@@ -2964,7 +3015,7 @@ void FMeshMergeUtilities::CreateMergedMaterial(FMeshMergeDataTracker& InDataTrac
 		{
 			if (Entry.bUseConstantValue && Entry.Property != MP_MAX)
 			{
-				ConstantData.SetNum(1, false);
+				ConstantData.SetNum(1, EAllowShrinking::No);
 				ConstantData[0] = FLinearColor(Entry.ConstantValue, Entry.ConstantValue, Entry.ConstantValue).ToFColor(true);
 				for (FBakeOutput& Output : BakeOutputs)
 				{
@@ -3639,9 +3690,7 @@ UMaterialInterface* FMeshMergeUtilities::CreateProxyMaterial(const FString &InBa
 
 	UMaterialInstanceConstant* MergedMaterial = FMaterialUtilities::CreateFlattenMaterialInstance(MaterialPackage, InSettings.MaterialSettings, InBaseMaterial, OutMaterial, MaterialPackageName, MaterialAssetName, OutAssetsToSync, InMaterialUpdateContext);
 	// Set material static lighting usage flag if project has static lighting enabled
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
-	if (bAllowStaticLighting)
+	if (IsStaticLightingAllowed())
 	{
 		MergedMaterial->CheckMaterialUsage(MATUSAGE_StaticLighting);
 	}

@@ -77,7 +77,7 @@ public:
 					// Confirm that the payload tint calculated in OnPaint matches the color we set in the test.
 					if (TSharedPtr<FJsonObject> JsonObject = GetSubjectWidget()->GetTestJSONObject())
 					{
-						FString PayloadTint = JsonObject->GetObjectField("ShapedTextPayload")->GetStringField("Tint");
+						FString PayloadTint = JsonObject->GetObjectField(TEXT("ShapedTextPayload"))->GetStringField(TEXT("Tint"));
 						TestObj->AddErrorIfFalse(PayloadTint == FLinearColor(0.5, 0.4, 0.3, 0.9).ToString(), FString::Printf(TEXT("In %s: The tint of the payload does not match the passed color. Expected: %s, Actual: %s"), GetGeneratedTypeName<STextBlock>(), *FLinearColor(0.5, 0.4, 0.3, 0.9).ToString(), *PayloadTint));
 					}
 				}

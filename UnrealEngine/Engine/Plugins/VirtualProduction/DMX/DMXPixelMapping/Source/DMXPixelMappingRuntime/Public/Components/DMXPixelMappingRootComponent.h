@@ -29,7 +29,7 @@ public:
 	virtual const FName& GetNamePrefix() override;
 	virtual void AddChild(UDMXPixelMappingBaseComponent* InComponent) override;
 	virtual void RemoveChild(UDMXPixelMappingBaseComponent* InComponent) override;
-	virtual void ResetDMX() override;
+	virtual void ResetDMX(EDMXPixelMappingResetDMXMode ResetMode = EDMXPixelMappingResetDMXMode::SendDefaultValues) override;
 	virtual void SendDMX() override;
 	virtual void Render() override;
 	virtual void RenderAndSendDMX() override;

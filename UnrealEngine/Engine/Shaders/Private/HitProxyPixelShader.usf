@@ -31,7 +31,11 @@ void Main(
 	,out float4 OutColor		: SV_Target0
 	)
 {
-	ResolvedView = ResolveView();
+	#if INSTANCED_STEREO
+		ResolvedView = ResolveView(Interpolants.EyeIndex);
+	#else
+		ResolvedView = ResolveView();
+	#endif
 
 	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
 	FPixelMaterialInputs PixelMaterialInputs;

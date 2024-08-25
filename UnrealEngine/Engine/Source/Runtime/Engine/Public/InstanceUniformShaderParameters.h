@@ -10,6 +10,7 @@
 #include "ShaderParameters.h"
 #include "UniformBuffer.h"
 #include "Containers/StaticArray.h"
+#include "SceneDefinitions.h"
 
 #define INVALID_LAST_UPDATE_FRAME 0xFFFFFFFFu
 
@@ -74,6 +75,7 @@ private:
 	static constexpr uint32 UnCompressedTransformDataStrideInFloat4s = 4;
 
 public:
+	static ENGINE_API bool SupportsCompressedTransforms();
 
 	static ENGINE_API uint32 GetDataStrideInFloat4s();
 
@@ -93,7 +95,8 @@ public:
 		uint32 InstanceFlags,
 		uint32 LastUpdateFrame,
 		uint32 CustomDataCount,
-		float RandomID
+		float RandomID,
+		bool bIsVisible = true
 	);
 
 	ENGINE_API void Build
@@ -105,10 +108,11 @@ public:
 		uint32 CustomDataCount,
 		float RandomID,
 		const FRenderTransform& LocalToPrimitive,
-		const FRenderTransform& PrimitiveToWorld
+		const FRenderTransform& PrimitiveToWorld,
+		bool bIsVisible = true
 	);
 
-	ENGINE_API void BuildInternal
+	FORCEINLINE void BuildInternal
 	(
 		uint32 PrimitiveId,
 		uint32 RelativeId,
@@ -116,8 +120,54 @@ public:
 		uint32 LastUpdateFrame,
 		uint32 CustomDataCount,
 		float RandomID,
-		const FRenderTransform& LocalToWorld
-	);
+		const FRenderTransform& LocalToWorld,
+		bool bIsVisible,
+		bool bSupportsCompressedTransforms
+	)
+	{
+		// Note: layout must match GetInstanceData in SceneData.ush and InitializeInstanceSceneData in GPUSceneWriter.ush
+
+		const float RotDeterminant = LocalToWorld.RotDeterminant();
+		if (RotDeterminant < 0.0f)
+		{
+			InstanceFlags |= INSTANCE_SCENE_DATA_FLAG_DETERMINANT_SIGN;
+		}
+		else
+		{
+			InstanceFlags &= ~INSTANCE_SCENE_DATA_FLAG_DETERMINANT_SIGN;
+		}
+
+		// Mark zero scaled instances as hidden.
+		if (!bIsVisible || RotDeterminant == 0.0f)
+		{
+			InstanceFlags |= INSTANCE_SCENE_DATA_FLAG_HIDDEN;
+		}
+
+		checkSlow((PrimitiveId		& 0x000FFFFF) == PrimitiveId);
+		checkSlow((InstanceFlags	& 0x00000FFF) == InstanceFlags);
+		checkSlow((RelativeId		& 0x00FFFFFF) == RelativeId);
+		checkSlow((CustomDataCount	& 0x000000FF) == CustomDataCount);
+
+		const uint32 Packed0 = (InstanceFlags   << 20u) | PrimitiveId;
+		const uint32 Packed1 = (CustomDataCount << 24u) | RelativeId;
+
+		Data[0].X  = *(const float*)&Packed0;
+		Data[0].Y  = *(const float*)&Packed1;
+		Data[0].Z  = *(const float*)&LastUpdateFrame;
+		Data[0].W  = *(const float*)&RandomID;
+
+		if (bSupportsCompressedTransforms)
+		{
+			FCompressedTransform CompressedLocalToWorld(LocalToWorld);
+			Data[1] = *(const FVector4f*)&CompressedLocalToWorld.Rotation[0];
+			Data[2] = *(const FVector3f*)&CompressedLocalToWorld.Translation;
+		}
+		else
+		{
+			// Note: writes 3x float4s
+			LocalToWorld.To3x4MatrixTranspose((float*)&Data[1]);
+		}
+	}
 
 	TStaticArray<FVector4f, UnCompressedTransformDataStrideInFloat4s> Data;
 };

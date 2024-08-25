@@ -149,6 +149,7 @@ void USelfUnionMeshesTool::ConvertInputsAndSetPreviewMaterials(bool bSetPreviewM
 	if (bSetPreviewMesh)
 	{
 		Preview->PreviewMesh->UpdatePreview(CombinedSourceMeshes.Get());
+		Preview->PreviewMesh->SetTransform(FTransform(CombinedCenter));
 	}
 }
 

@@ -505,7 +505,7 @@ UWorld* NUTNet::CreateUnitTestWorld(bool bHookTick/*=true*/)
 
 
 		// Hack-mark the world as having begun play (when it has not)
-		ReturnVal->bBegunPlay = true;
+		ReturnVal->SetBegunPlay(true);
 
 		// Hack-mark the world as having initialized actors (to allow RPC hooks)
 		ReturnVal->bActorsInitialized = true;

@@ -552,7 +552,7 @@ protected:
 		const int32 NumSkinWeightAttributes = MeshIn.NumSkinWeightAttributes();
 		
 		// first, attach all the skinning weight attributes (this also allocates memory to store skinning weights for each attribute)
-		for (int AttributeIndex = 0; AttributeIndex < NumSkinWeightAttributes; ++AttributeIndex) 
+		for (int AttributeIndex = 0; AttributeIndex < NumSkinWeightAttributes; ++AttributeIndex) //-V621 //-V654
 		{
 			UE::Geometry::FDynamicMeshVertexSkinWeightsAttribute* Attribute = new UE::Geometry::FDynamicMeshVertexSkinWeightsAttribute(&MeshOut);
 			const FName AttribName = MeshIn.GetSkinWeightAttributeName(AttributeIndex);
@@ -561,7 +561,7 @@ protected:
 		}
 
 		// now set all of the skin weight data
-		for (int AttributeIndex = 0; AttributeIndex < NumSkinWeightAttributes; ++AttributeIndex)
+		for (int AttributeIndex = 0; AttributeIndex < NumSkinWeightAttributes; ++AttributeIndex) //-V621
 		{
 			auto SkinAttributeFeature = Async(EAsyncExecution::ThreadPool, [this, &MeshIn, &MeshOut, AttributeIndex]()
 			{

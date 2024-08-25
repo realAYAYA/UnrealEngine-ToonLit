@@ -43,6 +43,11 @@ public:
 		return NewOutput;
 	}
 
+	const TMap<InputTupleType, OutputType>& GetOutputs() const
+	{
+		return CachedOutputs;
+	}
+
 protected:
 
 	virtual void Sanitize(InputTypes&... Inputs) { }

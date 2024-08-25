@@ -46,7 +46,7 @@ namespace Metasound
 		// node interface
 		static const FNodeClassMetadata& GetNodeInfo();
 		static FVertexInterface DeclareVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
 		virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override;
 		virtual FDataReferenceCollection GetInputs() const override;
@@ -118,14 +118,13 @@ namespace Metasound
 	}
 
 
-	TUniquePtr<IOperator> FWaveInfoNodeOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FWaveInfoNodeOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
 		using namespace WaveInfoNodeParameterNames;
 		
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 		// inputs
-		FWaveAssetReadRef WaveAssetIn = InputDataRefs.GetDataReadReferenceOrConstruct<FWaveAsset>(METASOUND_GET_PARAM_NAME(ParamWaveAsset));
+		FWaveAssetReadRef WaveAssetIn = InputData.GetOrConstructDataReadReference<FWaveAsset>(METASOUND_GET_PARAM_NAME(ParamWaveAsset));
 
 		return MakeUnique < FWaveInfoNodeOperator >(InParams.OperatorSettings, WaveAssetIn);
 	}

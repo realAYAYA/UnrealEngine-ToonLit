@@ -4,8 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "SceneViewExtension.h"
-
-class IDisplayClusterViewportManager;
+#include "Render/Viewport/IDisplayClusterViewportConfiguration.h"
 
 /**
  * Contains information about the context in which this scene view extension will be used.
@@ -27,34 +26,22 @@ public:
 		: FSceneViewExtensionContext()
 	{ }
 
-	FDisplayClusterSceneViewExtensionContext(FViewport* InViewport, const TSharedPtr<IDisplayClusterViewportManager, ESPMode::ThreadSafe>& InViewportManager, const FString& InViewportId)
+	FDisplayClusterSceneViewExtensionContext(FViewport* InViewport, const TSharedRef<IDisplayClusterViewportConfiguration, ESPMode::ThreadSafe>& InConfiguration, const FString& InViewportId)
 		: FSceneViewExtensionContext(InViewport)
 		, ViewportId(InViewportId)
-		, ViewportManagerWeakPtr(InViewportManager)
+		, Configuration(InConfiguration)
 	{ }
 
-	FDisplayClusterSceneViewExtensionContext(FSceneInterface* InScene, const TSharedPtr<IDisplayClusterViewportManager, ESPMode::ThreadSafe>& InViewportManager, const FString& InViewportId)
+	FDisplayClusterSceneViewExtensionContext(FSceneInterface* InScene, const TSharedRef<IDisplayClusterViewportConfiguration, ESPMode::ThreadSafe>& InConfiguration, const FString& InViewportId)
 		: FSceneViewExtensionContext(InScene)
 		, ViewportId(InViewportId)
-		, ViewportManagerWeakPtr(InViewportManager)
+		, Configuration(InConfiguration)
 	{ }
 
-	/** Returns a pointer to the DC ViewportManager used for this VE context. */
-	IDisplayClusterViewportManager* GetViewportManager() const
-	{
-		return ViewportManagerWeakPtr.IsValid() ? ViewportManagerWeakPtr.Pin().Get() : nullptr;
-	}
-
-	/** Returns the name of the DC viewport used for this VE context. */
-	const FString& GetViewportId() const
-	{
-		return ViewportId;
-	}
-
-private:
+public:
 	// The id of the nDisplay viewport being rendered.
 	const FString ViewportId;
 
 	// Reference to viewport manager
-	const TWeakPtr<IDisplayClusterViewportManager, ESPMode::ThreadSafe> ViewportManagerWeakPtr;
+	const TSharedPtr<IDisplayClusterViewportConfiguration, ESPMode::ThreadSafe> Configuration;
 };

@@ -13,6 +13,8 @@ const FStateTreeStateHandle FStateTreeStateHandle::Failed = FStateTreeStateHandl
 const FStateTreeStateHandle FStateTreeStateHandle::Stopped = FStateTreeStateHandle(StoppedIndex);
 const FStateTreeStateHandle FStateTreeStateHandle::Root = FStateTreeStateHandle(0);
 
+const FStateTreeDataHandle FStateTreeDataHandle::Invalid = FStateTreeDataHandle();
+
 const FStateTreeIndex16 FStateTreeIndex16::Invalid = FStateTreeIndex16();
 const FStateTreeIndex8 FStateTreeIndex8::Invalid = FStateTreeIndex8();
 

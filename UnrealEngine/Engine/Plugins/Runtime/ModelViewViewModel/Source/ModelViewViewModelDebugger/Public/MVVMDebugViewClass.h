@@ -18,9 +18,6 @@ struct FMVVMViewBindingDebugEntry
 
 	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
 	FGuid BlueprintViewBindingId;
-
-	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
-	FName FieldId;
 	
 	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
 	FString SourceFieldPath;

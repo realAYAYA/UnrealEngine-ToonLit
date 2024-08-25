@@ -8,6 +8,7 @@
 #include "Widgets/Views/STableViewBase.h"
 #include "Widgets/Views/STableRow.h"
 #include "MaterialStats.h"
+#include "MaterialStatsGrid.h"
 
 //////////////////////////////////////////////////////////////////////////
 // SMaterialEditorStatsWidget
@@ -18,9 +19,13 @@ class SMaterialEditorStatsWidget : public SCompoundWidget
 public:
 	SLATE_BEGIN_ARGS(SMaterialEditorStatsWidget)
 		: _MaterialStatsWPtr(nullptr)
+		, _ShowMaterialInstancesMenu(true)
+		, _AllowIgnoringCompilationErrors(true)
 	{}
 
 		SLATE_ARGUMENT(TWeakPtr<FMaterialStats>, MaterialStatsWPtr)
+		SLATE_ARGUMENT(bool, ShowMaterialInstancesMenu)
+		SLATE_ARGUMENT(bool, AllowIgnoringCompilationErrors)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
@@ -31,13 +36,15 @@ public:
 	/** Request a refresh of the list view */
 	void RequestRefresh();
 
-	void AddWarningMessage(const FString& Message);
-	void ClearWarningMessages();
+	void AddMessage(const FString& Message, const bool bIsError);
+	void ClearMessages();
 
 	void FillWarningMessages();
 
-	static FName GetRegulatFontStyleName();
+	static FName GetRegularFontStyleName();
 	static FName GetBoldFontStyleName();
+
+	void OnColumnNumChanged();
 
 private:
 	void RebuildColumns();
@@ -55,7 +62,10 @@ private:
 	void CreatePlatformMenus(class FMenuBuilder& Builder, EPlatformCategoryType Category);
 	void CreatePlatformCategoryMenus(class FMenuBuilder& Builder);
 
+	static FText MaterialStatsDerivedMIOptionToDescription(const EMaterialStatsDerivedMIOption Option);
+
 	void CreateQualityMenus(class FMenuBuilder& Builder);
+	void CreateDerivedMaterialsMenu(class FMenuBuilder& Builder);
 	void CreateGlobalQualityMenu(class FMenuBuilder& Builder);
 
 	void OnFlipQualityState(const ECheckBoxState NewState, const EMaterialQualityLevel::Type QualitySetting);
@@ -74,8 +84,12 @@ protected:
 	TSharedPtr<SVerticalBox> MessageBoxWidget;
 
 	TWeakPtr<FMaterialStats> MaterialStatsWPtr;
+	bool bShowMaterialInstancesMenu;
+	bool bAllowIgnoringCompilationErrors;
 
 	TSharedPtr<SListView<TSharedPtr<int32>>> MaterialInfoList;
 
 	TSharedPtr<SHeaderRow> PlatformColumnHeader;
+
+	TArray<TSharedPtr<EMaterialStatsDerivedMIOption>> DerivedMaterialInstancesComboBoxItems;
 };

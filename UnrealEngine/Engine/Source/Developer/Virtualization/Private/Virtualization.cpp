@@ -3,8 +3,11 @@
 #include "Modules/ModuleManager.h"
 
 #include "Features/IModularFeatures.h"
-#include "MessageLogModule.h"
 #include "VirtualizationSourceControlUtilities.h"
+
+#if UE_VA_WITH_SLATE
+#include "MessageLogModule.h"
+#endif //UE_VA_WITH_SLATE
 
 #define LOCTEXT_NAMESPACE "Virtualization"
 
@@ -18,18 +21,22 @@ public:
 	{
 		IModularFeatures::Get().RegisterModularFeature(FName("VirtualizationSourceControlUtilities"), &SourceControlutility);
 
+#if UE_VA_WITH_SLATE
 		FMessageLogModule& MessageLogModule = FModuleManager::LoadModuleChecked<FMessageLogModule>("MessageLog");
 		MessageLogModule.RegisterLogListing("LogVirtualization", LOCTEXT("AssetVirtualizationLogLabel", "Asset Virtualization"));
+#endif //UE_VA_WITH_SLATE
 	}
 
 	virtual void ShutdownModule() override
 	{
+#if UE_VA_WITH_SLATE
 		if (FModuleManager::Get().IsModuleLoaded("MessageLog"))
 		{
 			FMessageLogModule& MessageLogModule = FModuleManager::GetModuleChecked<FMessageLogModule>("MessageLog");
 			MessageLogModule.UnregisterLogListing("LogVirtualization&");
 		}
-		
+#endif //UE_VA_WITH_SLATE	
+
 		IModularFeatures::Get().UnregisterModularFeature(FName("VirtualizationSourceControlUtilities"), &SourceControlutility);
 	}
 

@@ -310,6 +310,23 @@ FORCEINLINE bool IsAllowCommandletAudio()
 #endif
 }
 
+namespace UE
+{
+/**
+ * If multiple copies of the process are running and communicating together, the director process has MultiprocessId 0
+ * and the worker processes have MultiprocessId > 0.
+ * When only a single process is running, GetMultiprocessId returns 0.
+ * Based on commandline. Primary example is cookworkers in multiprocess cook.
+ * Systems that need to write a separate file per running process should use this id as part of their file descriptor.
+ */
+CORE_API int32 GetMultiprocessId();
+}
+
+namespace UE::Private
+{
+CORE_API void SetMultiprocessId(int32 MultiprocessId);
+}
+
 class FIsDuplicatingClassForReinstancing
 {
 public:
@@ -351,6 +368,13 @@ extern CORE_API bool GIsGuarded;
 #ifndef UE_SET_REQUEST_EXIT_ON_TICK_ONLY
 	#define UE_SET_REQUEST_EXIT_ON_TICK_ONLY 0
 #endif
+
+/**
+ * Returns true after all initial modules have finished all of their loading phases during Engine startup:
+ * Corresponds to the event FCoreDelegates::OnAllModuleLoadingPhasesComplete
+ */
+extern CORE_API bool IsEngineStartupModuleLoadingComplete();
+extern CORE_API void SetEngineStartupModuleLoadingComplete();
 
 UE_DEPRECATED(4.24, "Please use IsEngineExitRequested()/RequestEngineExit(const FString&)")
 extern CORE_API bool GIsRequestingExit;
@@ -435,6 +459,19 @@ extern CORE_API bool (*IsAsyncLoadingSuspended)();
 
 /** Returns true if async loading is using the async loading thread */
 extern CORE_API bool(*IsAsyncLoadingMultithreaded)();
+
+enum class ELoaderType : uint8
+{
+	NotInitialized,
+	LegacyLoader,
+	EditorPackageLoader,
+	ZenLoader
+};
+
+CORE_API const TCHAR* LexToString(ELoaderType Type);
+
+/** Returns the type of the currently active loader, if any. */
+extern CORE_API ELoaderType(*GetLoaderType)();
 
 /** Suspends texture updates caused by completed async IOs. */
 extern CORE_API void (*SuspendTextureStreamingRenderTasks)();

@@ -13,102 +13,12 @@
 #include "RayTracingCapsuleLight.ush"
 #include "RayTracingSkyLightEvaluation.ush"
 #include "RayTracingLightCullingCommon.ush"
+#include "/Engine/Shared/LightDefinitions.h"
+#include "/Engine/Shared/RayTracingTypes.h"
 
 #ifndef ENABLE_FAR_FIELD_TRACING
 #define ENABLE_FAR_FIELD_TRACING 0
 #endif // ENABLE_FAR_FIELD_TRACING
-
-// Light types: should match SceneTypes.h until there is a common header
-#define LIGHT_TYPE_DIRECTIONAL		0 
-#define LIGHT_TYPE_POINT			1 
-#define LIGHT_TYPE_SPOT				2 
-#define LIGHT_TYPE_RECT				3 
-#define LIGHT_TYPE_MAX				4 
-
-//Must match definition in RayTracingLighting.h and decoding in GetRayTracingLightData
-struct FRTLightingData
-{
-	uint Type;
-	float IESAtlasIndex;
-	float RectLightAtlasMaxLevel;
-	uint LightMissShaderIndex;
-	float3 TranslatedLightPosition;
-	float InvRadius;
-	float3 Direction;
-	float FalloffExponent;
-	float3 LightColor;
-	float SpecularScale;
-	float3 Tangent;
-	float SourceRadius;
-	float2 SpotAngles;
-	float SourceLength;
-	float SoftSourceRadius;
-	float2 DistanceFadeMAD;
-	float RectLightBarnCosAngle;
-	float RectLightBarnLength;
-	float2 RectLightAtlasUVOffset;
-	float2 RectLightAtlasUVScale;
-}; // 128 bytes total
-
-// Decode RTLightingData from a StructuredBuffer<uint4>
-// #dxr_todo: This function is required because it's currently not possible to declare a
-// structured buffer with a custom type in a uniform buffer.
-// #dxr_todo: Potentially could use a byte address buffer with templated load syntax instead.
-
-FRTLightingData GetRayTracingLightData(int LightIndex)
-{
-	StructuredBuffer<uint4> LightDataBuffer = RaytracingLightsDataPacked.LightDataBuffer;
-
-	FRTLightingData Data;
-	uint4 Element;
-
-	LightIndex *= 8; // sizeof(FRTLightingData)/sizeof(uint4)
-
-	Element = LightDataBuffer[LightIndex++];
-
-	Data.Type = Element.x;
-	Data.IESAtlasIndex = asfloat(Element.y);
-	Data.RectLightAtlasMaxLevel = asfloat(Element.z);
-	Data.LightMissShaderIndex = Element.w;
-
-	Element = LightDataBuffer[LightIndex++];
-
-	Data.TranslatedLightPosition = asfloat(Element.xyz);
-	Data.InvRadius = asfloat(Element.w);
-
-	Element = LightDataBuffer[LightIndex++];
-
-	Data.Direction = asfloat(Element.xyz);
-	Data.FalloffExponent = asfloat(Element.w);
-
-	Element = LightDataBuffer[LightIndex++];
-
-	Data.LightColor = asfloat(Element.xyz);
-	Data.SpecularScale = asfloat(Element.w);
-
-	Element = LightDataBuffer[LightIndex++];
-
-	Data.Tangent = asfloat(Element.xyz);
-	Data.SourceRadius = asfloat(Element.w);
-
-	Element = LightDataBuffer[LightIndex++];
-
-	Data.SpotAngles = asfloat(Element.xy);
-	Data.SourceLength = asfloat(Element.z);
-	Data.SoftSourceRadius = asfloat(Element.w);
-
-	Element = LightDataBuffer[LightIndex++];
-
-	Data.DistanceFadeMAD = asfloat(Element.xy);
-	Data.RectLightBarnCosAngle = asfloat(Element.z);
-	Data.RectLightBarnLength = asfloat(Element.w);
-
-	Element = LightDataBuffer[LightIndex++];
-	Data.RectLightAtlasUVOffset = asfloat(Element.xy);
-	Data.RectLightAtlasUVScale = asfloat(Element.zw);
-
-	return Data;
-}
 
 FDeferredLightData GetRayTracingDeferredLightData(
 	int LightIndex,
@@ -116,7 +26,7 @@ FDeferredLightData GetRayTracingDeferredLightData(
 	inout uint OutLightMissShaderIndex)
 {
 	FDeferredLightData LightData = (FDeferredLightData)0;
-	FRTLightingData RayTracingLightData = GetRayTracingLightData(LightIndex);
+	FRTLightingData RayTracingLightData = RaytracingLightGridData.SceneLights[LightIndex];
 
 	const uint LightType = RayTracingLightData.Type;
 
@@ -271,7 +181,6 @@ float4 SampleAreaLightDirection(
 	else if (LightType == LIGHT_TYPE_POINT || LightType == LIGHT_TYPE_SPOT)
 	{
 		// NOTE: Spot cone is being checked before calling this function, so we know we are inside the cone
-		float RayPdf;
 		if (LightParameters.SourceLength > 0.0)
 		{
 			GenerateCapsuleLightOcclusionRayWithSolidAngleSampling(
@@ -299,6 +208,9 @@ float4 SampleAreaLightDirection(
 	}
 	else if (LightType == LIGHT_TYPE_RECT)
 	{
+		// fill in extra parameters used only for rect lights
+		LightParameters.RectLightBarnLength = LightData.RectLightData.BarnLength;
+		LightParameters.RectLightBarnCosAngle = LightData.RectLightData.BarnCosAngle;
 		GenerateRectLightOcclusionRay(
 			LightParameters,
 			TranslatedWorldPosition, WorldNormal,
@@ -321,9 +233,9 @@ float3 ComputeIndirectLighting(
 	in FPackedMaterialClosestHitPayload Payload,
 	in bool bRayTraceSkyLightContribution,
 	in bool bDecoupleSampleGeneration)
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 {
-	// STRATA_TODO
+	// SUBSTRATE_TODO
 	return 0;
 }
 #else
@@ -378,12 +290,12 @@ float3 ComputeIndirectLighting(
 
 bool HasBackfaceDiffuse(FPackedMaterialClosestHitPayload Payload)
 {
-	#if STRATA_ENABLED
+	#if SUBSTRATE_ENABLED
 	{
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(0,0,0);
-		FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Payload.StrataData, StrataAddressing, Payload.StrataData);
-		const uint BSDFType = StrataPixelHeader.StrataGetBSDFType();
-		return BSDFType == STRATA_BSDF_TYPE_SLAB && StrataPixelHeader.HasSubsurface();
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(0,0,0);
+		FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Payload.SubstrateData, SubstrateAddressing, Payload.SubstrateData);
+		const uint BSDFType = SubstratePixelHeader.SubstrateGetBSDFType();
+		return BSDFType == SUBSTRATE_BSDF_TYPE_SLAB && SubstratePixelHeader.HasSubsurface();
 	}
 	#else
 	{
@@ -413,7 +325,7 @@ float3 ComputeDirectLighting(
 	Payload.SetRayDirection(ViewDirection);
 
 	FCulledLightList CullData = FCulledLightList::Create(TranslatedWorldPosition);
-	const uint LightCount = CullData.NumLights();
+	const uint LightCount = CullData.GetNumLights();
 
 	for (uint Index = 0; WaveActiveAnyTrue(Index < LightCount); Index++)
 	{
@@ -485,8 +397,12 @@ float3 ComputeDirectLighting(
 		// Always bias towards the light
 		ApplyPositionBias(ShadowRay, bBackFace ? -Payload.GetWorldNormal() : Payload.GetWorldNormal(), ShadowMaxNormalBias);
 
-		uint RayFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER;
+		uint RayFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH	// Terminate immediatly after detecting a hit
+						| RAY_FLAG_SKIP_CLOSEST_HIT_SHADER;			// Skip Closest Hit shader, only run Any Hit shader
 		const uint InstanceInclusionMask = (ApplyShadow) ? RAY_TRACING_MASK_SHADOW : 0;
+
+		// Do not include any translucent when tracing for shadow, since we do not handle coverage & transmittance yet.
+		Payload.SetIgnoreTranslucentMaterials();
 
 #if !ENABLE_TWO_SIDED_GEOMETRY
 		RayFlags |= RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
@@ -599,6 +515,7 @@ FMaterialClosestHitPayload TraceRayAndAccumulateResults(
 	in uint ShouldDoEmissiveAndIndirectLighting,
 	in bool bRayTraceSkyLightContribution,
 	in bool bDecoupleSampleGeneration,
+	in bool bIsCameraRay,
 	inout FRayCone RayCone,
 	in bool bEnableSkyLightContribution,
 	inout float3 Radiance)
@@ -617,7 +534,8 @@ FMaterialClosestHitPayload TraceRayAndAccumulateResults(
 		InstanceInclusionMask,
 		Ray,
 		RayCone,
-		bEnableSkyLightContribution);
+		bEnableSkyLightContribution,
+		bIsCameraRay);
 
 	float3 TranslatedWorldPosition = Ray.Origin + Ray.Direction * Payload.HitT;
 	float3 ViewDirection = Ray.Direction;
@@ -656,6 +574,7 @@ FMaterialClosestHitPayload TraceRayAndAccumulateBottomLayerResults(
 	in bool bDecoupleSampleGeneration,
 	inout FRayCone RayCone,
 	in bool bEnableSkyLightContribution,
+	in bool bIsCameraRay,
 	inout float3 Radiance)
 {
 	if (bRayTraceSkyLightContribution)
@@ -673,7 +592,8 @@ FMaterialClosestHitPayload TraceRayAndAccumulateBottomLayerResults(
 		Ray,
 		RayCone,
 		bEnableSkyLightContribution,
-		bIgnoreTranslucentMaterials);
+		bIgnoreTranslucentMaterials,
+		bIsCameraRay);
 
 	ComputeBottomLayerMaterialProperties(Ray, BottomLayerPayload);
 

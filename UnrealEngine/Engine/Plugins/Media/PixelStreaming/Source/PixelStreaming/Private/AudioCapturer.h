@@ -9,13 +9,29 @@
 
 namespace UE::PixelStreaming 
 {
+	class FAudioCapturer;
+
+	struct FAudioCapturerListener : public ISubmixBufferListener
+	{
+		FAudioCapturerListener(FAudioCapturer& InParent);
+
+		// ISubmixBufferListener interface
+		virtual void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 NumChannels, const int32 SampleRate, double AudioClock) override;
+
+		FAudioCapturer* Parent = nullptr;
+	};
+
 	// This class is only used if -PixelStreamingWebRTCUseLegacyAudioDevice or related CVar are used.
 	// This class will likely be removed in the future once the new ADM is confirmed stable.
-	class FAudioCapturer : public webrtc::AudioDeviceModule, public ISubmixBufferListener
+	class FAudioCapturer : public webrtc::AudioDeviceModule
 	{
+	public:
+		FAudioCapturer();
+
 	private:
-		// ISubmixBufferListener interface
-		void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 NumChannels, const int32 SampleRate, double AudioClock) override;
+		friend struct FAudioCapturerListener;
+
+		void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 NumChannels, const int32 SampleRate, double AudioClock);
 
 		//
 		// webrtc::AudioDeviceModule interface
@@ -192,5 +208,6 @@ namespace UE::PixelStreaming
 		bool bFormatChecked = false;
 
 		std::unique_ptr<webrtc::TaskQueueFactory> m_taskQueueFactory;
+		TSharedPtr<FAudioCapturerListener, ESPMode::ThreadSafe> Listener;
 	};
 } // namespace UE::PixelStreaming

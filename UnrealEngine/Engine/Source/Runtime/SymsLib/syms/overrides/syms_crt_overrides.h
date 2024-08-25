@@ -57,7 +57,8 @@ typedef uint64_t SYMS_U64;
 #include <assert.h>
 #define SYMS_ASSERT_BREAK(m) assert(!(#m))
 
-// NOTE(allen): memory helpers
+////////////////////////////////
+//~ allen: memory helpers
 #include <stdlib.h>
 #include <string.h>
 
@@ -65,8 +66,10 @@ typedef uint64_t SYMS_U64;
 #define syms_memset memset
 #define syms_memcmp memcmp
 #define syms_strlen strlen
+#define syms_memisnull(ptr,sz) (memchr(ptr,0,sz)!=NULL)
 
-// NOTE(allen): memory
+////////////////////////////////
+//~ allen: memory
 #define syms_mem_reserve(s)    malloc(s)
 #define syms_mem_commit(p,s)   (1)
 #define syms_mem_decommit(p,s) ((void)0)
@@ -80,10 +83,12 @@ typedef uint64_t SYMS_U64;
 #define SYMS_ARENA_RESERVE_SIZE (1 << 20)
 #define SYMS_ARENA_COMMIT_SIZE  (1 << 20)
 
-// NOTE(allen): use default arena
+////////////////////////////////
+//~ allen: use default arena
 #include "syms_default_arena.h"
 
-// NOTE(allen): use default scrtach
+////////////////////////////////
+//~ allen: use default scrtach
 #include "syms_default_scratch.h"
 
 #endif // SYMS_CRT_DEFAULT_OVERRIDES_H

@@ -26,7 +26,7 @@ namespace ContentBrowserAliasDataSource
 		FConsoleCommandWithArgsDelegate::CreateLambda(
 			[](const TArray<FString>& /*Args*/)
 			{
-				if (UContentBrowserAliasDataSource* AliasDataSource = FModuleManager::Get().LoadModuleChecked<FContentBrowserAliasDataSourceModule>("ContentBrowserAliasDataSource").GetAliasDataSource().Get())
+				if (UContentBrowserAliasDataSource* AliasDataSource = FModuleManager::Get().LoadModuleChecked<FContentBrowserAliasDataSourceModule>("ContentBrowserAliasDataSource").TryGetAliasDataSource())
 				{
 					AliasDataSource->LogAliases();
 				}
@@ -463,6 +463,19 @@ void UContentBrowserAliasDataSource::RemoveAlias(const FSoftObjectPath& ObjectPa
 		AliasStringView.FindLastChar(TEXT('/'), LastSlash);
 		RemoveFoldersRecursively(AliasStringView.Left(LastSlash));
 	}
+}
+
+void UContentBrowserAliasDataSource::RebuildAliases()
+{
+	PathTree = FPathTree();
+	AllAliases.Reset();
+	AliasesForObjectPath.Reset();
+	AliasesInPackagePath.Reset();
+	AlreadyAddedOriginalAssets.Reset();
+	FilterCache.Reset();
+	RootPathVirtualTree.Reset();
+
+	OnRebuildAliases().Broadcast();
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS

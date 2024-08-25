@@ -385,7 +385,9 @@ USTRUCT(Blueprintable)
 struct MODELINGCOMPONENTS_API FCreateActorParams
 {
 	GENERATED_BODY()
+	
 
+	
 	//
 	// Base data
 	//
@@ -408,9 +410,12 @@ struct MODELINGCOMPONENTS_API FCreateActorParams
 	// input data
 	//
 
-	/** A template Actor the new Actor is based on */
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "TemplateActor is being deprecated. Please use TemplateAsset instead."))
+	TObjectPtr<AActor> TemplateActor_DEPRECATED;
+
+	/** A template Asset used to determine the type of Actor to spawn. */
 	UPROPERTY(Category = "CreateActorParams", EditAnywhere)
-	TObjectPtr<AActor> TemplateActor = nullptr;
+	TObjectPtr<UObject> TemplateAsset = nullptr;
 };
 
 

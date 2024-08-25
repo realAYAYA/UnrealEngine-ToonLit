@@ -102,6 +102,18 @@ void UMaterialInstanceThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y,
 	}
 }
 
+bool UMaterialInstanceThumbnailRenderer::CanVisualizeAsset(UObject* Object)
+{
+	if (UMaterialInterface* MatInst = Cast<UMaterialInterface>(Object))
+	{
+		if (MatInst->IsCompiling())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 void UMaterialInstanceThumbnailRenderer::BeginDestroy()
 {
 	if (ThumbnailScene != nullptr)

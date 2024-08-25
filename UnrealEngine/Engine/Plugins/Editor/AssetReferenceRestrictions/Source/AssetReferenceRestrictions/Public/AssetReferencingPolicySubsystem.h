@@ -25,6 +25,8 @@ public:
 
 	TSharedPtr<FDomainDatabase> GetDomainDB() const;
 private:
+	void UpdateDBIfNecessary() const;
+
 	TSharedPtr<IAssetReferenceFilter> HandleMakeAssetReferenceFilter(const FAssetReferenceFilterContext& Context);
 
 	TSharedPtr<FDomainDatabase> DomainDB;

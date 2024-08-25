@@ -1,12 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Logs;
 using Horde.Agent.Execution;
-using Horde.Agent.Parser;
 using Horde.Agent.Services;
 using Horde.Agent.Utility;
 using HordeCommon.Rpc;
@@ -32,54 +28,63 @@ namespace Horde.Agent.Leases.Handlers
 		}
 
 		/// <inheritdoc/>
-		public override async Task<LeaseResult> ExecuteAsync(ISession session, string leaseId, ConformTask conformTask, CancellationToken cancellationToken)
+		public override async Task<LeaseResult> ExecuteAsync(ISession session, LeaseId leaseId, ConformTask conformTask, ILogger localLogger, CancellationToken cancellationToken)
 		{
-			await using IServerLogger conformLogger = _serverLoggerFactory.CreateLogger(session, conformTask.LogId, null, null);
+			await using IServerLogger serverLogger = _serverLoggerFactory.CreateLogger(session, LogId.Parse(conformTask.LogId), localLogger, null);
 			try
 			{
-				LeaseResult result = await ExecuteInternalAsync(session, leaseId, conformTask, conformLogger, cancellationToken);
+				LeaseResult result = await ExecuteInternalAsync(session, leaseId, conformTask, serverLogger, cancellationToken);
 				return result;
 			}
 			catch (Exception ex)
 			{
-				conformLogger.LogError(ex, "Unhandled exception while running conform: {Message}", ex.Message);
+				serverLogger.LogError(ex, "Unhandled exception while running conform: {Message}", ex.Message);
 				throw;
 			}
 		}
 
-		async Task<LeaseResult> ExecuteInternalAsync(ISession session, string leaseId, ConformTask conformTask, IServerLogger conformLogger, CancellationToken cancellationToken)
+		async Task<LeaseResult> ExecuteInternalAsync(ISession session, LeaseId leaseId, ConformTask conformTask, ILogger logger, CancellationToken cancellationToken)
 		{
-			conformLogger.LogInformation("Conforming, lease {LeaseId}", leaseId);
-			await session.TerminateProcessesAsync(TerminateCondition.BeforeConform, conformLogger, cancellationToken);
+			logger.LogInformation("Conforming, lease {LeaseId}", leaseId);
+			await session.TerminateProcessesAsync(TerminateCondition.BeforeConform, logger, cancellationToken);
 
 			bool removeUntrackedFiles = conformTask.RemoveUntrackedFiles;
 			IList<AgentWorkspace> pendingWorkspaces = conformTask.Workspaces;
 			for (; ; )
 			{
+				bool isPerforceExecutor = _settings.Executor.Equals(PerforceExecutor.Name, StringComparison.OrdinalIgnoreCase);
+				bool isWorkspaceExecutor = _settings.Executor.Equals(WorkspaceExecutor.Name, StringComparison.OrdinalIgnoreCase);
+
+				// When using WorkspaceExecutor, only job options can override exact materializer to use
+				// It will default to ManagedWorkspaceMaterializer, which is compatible with the conform call below
+				// Therefore, compatibility is assumed for now. Exact materializer to use should be changed to a per workspace setting.
+				// See WorkspaceExecutorFactory.CreateExecutor
+				bool isExecutorConformCompatible = isPerforceExecutor || isWorkspaceExecutor;
+
 				// Run the conform task
-				if (_settings.Executor.Equals(PerforceExecutor.Name, StringComparison.OrdinalIgnoreCase) && _settings.PerforceExecutor.RunConform)
+				if (isExecutorConformCompatible && _settings.PerforceExecutor.RunConform)
 				{
-					await PerforceExecutor.ConformAsync(session.WorkingDir, pendingWorkspaces, removeUntrackedFiles, conformLogger, cancellationToken);
+					await PerforceExecutor.ConformAsync(session.WorkingDir, pendingWorkspaces, removeUntrackedFiles, logger, cancellationToken);
 				}
 				else
 				{
-					conformLogger.LogInformation("Skipping due to Settings.RunConform flag");
+					logger.LogInformation("Skipping conform. Executor={Executor} RunConform={RunConform}", _settings.Executor, _settings.PerforceExecutor.RunConform);
 				}
 
 				// Update the new set of workspaces
 				UpdateAgentWorkspacesRequest request = new UpdateAgentWorkspacesRequest();
-				request.AgentId = session.AgentId;
+				request.AgentId = session.AgentId.ToString();
 				request.Workspaces.AddRange(pendingWorkspaces);
 				request.RemoveUntrackedFiles = removeUntrackedFiles;
 
 				UpdateAgentWorkspacesResponse response = await session.RpcConnection.InvokeAsync((HordeRpc.HordeRpcClient x) => x.UpdateAgentWorkspacesAsync(request, null, null, cancellationToken), cancellationToken);
 				if (!response.Retry)
 				{
-					conformLogger.LogInformation("Conform finished");
+					logger.LogInformation("Conform finished");
 					break;
 				}
 
-				conformLogger.LogInformation("Pending workspaces have changed - running conform again...");
+				logger.LogInformation("Pending workspaces have changed - running conform again...");
 				pendingWorkspaces = response.PendingWorkspaces;
 				removeUntrackedFiles = response.RemoveUntrackedFiles;
 			}

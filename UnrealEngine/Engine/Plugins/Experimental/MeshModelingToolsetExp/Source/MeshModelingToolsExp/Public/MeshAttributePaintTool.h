@@ -201,7 +201,7 @@ public:
  * 
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UMeshAttributePaintTool : public UDynamicMeshBrushTool
+class MESHMODELINGTOOLSEXP_API UMeshAttributePaintTool : public UDynamicMeshBrushTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -225,6 +225,12 @@ public:
 	virtual void RequestAction(EMeshAttributePaintToolActions ActionType);
 
 	virtual void SetColorMap(TUniquePtr<FFloatAttributeColorMapper> ColorMap);
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 	virtual void ApplyStamp(const FBrushStampData& Stamp);

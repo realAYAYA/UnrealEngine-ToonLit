@@ -231,24 +231,11 @@ void FGenerateTetrahedralCollectionDataflowNodes::Evaluate(Dataflow::FContext& C
 			else if (InSkeletalMesh)
 			{
 				// Check first if we have bulk data available and non-empty.
-				const int32 LODIndex = 0;
+				constexpr int32 LODIndex = 0;
 				FMeshDescription SourceMesh;
-				if (InSkeletalMesh->IsLODImportedDataBuildAvailable(LODIndex) && !InSkeletalMesh->IsLODImportedDataEmpty(LODIndex))
+				if (InSkeletalMesh->HasMeshDescription(LODIndex))
 				{
-					FSkeletalMeshImportData SkeletalMeshImportData;
-					InSkeletalMesh->LoadLODImportedData(LODIndex, SkeletalMeshImportData);
-					SkeletalMeshImportData.GetMeshDescription(SourceMesh);
-				}
-				else
-				{
-					// Fall back on the LOD model directly if no bulk data exists. When we commit
-					// the mesh description, we override using the bulk data. This can happen for older
-					// skeletal meshes, from UE 4.24 and earlier.
-					const FSkeletalMeshModel* SkeletalMeshModel = InSkeletalMesh->GetImportedModel();
-					if (SkeletalMeshModel && SkeletalMeshModel->LODModels.IsValidIndex(LODIndex))
-					{
-						SkeletalMeshModel->LODModels[LODIndex].GetMeshDescription(SourceMesh, InSkeletalMesh);
-					}
+					InSkeletalMesh->CloneMeshDescription(LODIndex, SourceMesh);
 				}
 				FMeshDescriptionToDynamicMesh Converter;
 				Converter.Convert(&SourceMesh, DynamicMesh);

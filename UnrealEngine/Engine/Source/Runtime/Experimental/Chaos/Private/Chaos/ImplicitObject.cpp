@@ -75,13 +75,13 @@ namespace Chaos
 		return true;
 	}
 
-	TUniquePtr<FImplicitObject> FImplicitObject::Copy() const
+	Chaos::FImplicitObjectPtr FImplicitObject::CopyGeometry() const
 	{
 		check(false);
 		return nullptr;
 	}
 
-	TUniquePtr<FImplicitObject> FImplicitObject::CopyWithScale(const FVec3& Scale) const
+	Chaos::FImplicitObjectPtr FImplicitObject::CopyGeometryWithScale(const FVec3& Scale) const
 	{
 		check(false);
 		return nullptr;
@@ -90,6 +90,12 @@ namespace Chaos
 	bool FImplicitObject::IsUnderlyingUnion() const
 	{
 		return (Type == ImplicitObjectType::Union) || (Type == ImplicitObjectType::UnionClustered);
+	}
+
+	bool FImplicitObject::IsUnderlyingMesh() const
+	{
+		const EImplicitObjectType InnerType = GetInnerType(Type);
+		return (InnerType == ImplicitObjectType::TriangleMesh) || (InnerType == ImplicitObjectType::HeightField);
 	}
 
 	FReal FImplicitObject::SignedDistance(const FVec3& x) const
@@ -130,12 +136,12 @@ namespace Chaos
 			TArray<int32> PotentialParticles = Particles->FindAllIntersections(ImplicitBox);
 			for(int32 i : PotentialParticles)
 			{
-				FVec3 LocalPoint = OtherToLocalTransform.TransformPosition(Particles->X(i));
+				FVec3 LocalPoint = OtherToLocalTransform.TransformPosition(Particles->GetX(i));
 				FReal LocalPhi = SignedDistance(LocalPoint);
 				if(LocalPhi < Phi)
 				{
 					Phi = LocalPhi;
-					Point = Particles->X(i);
+					Point = Particles->GetX(i);
 				}
 			}
 		}
@@ -159,12 +165,12 @@ namespace Chaos
 		int32 NumParticles = Particles->Size();
 		for(int32 i = 0; i < NumParticles; ++i)
 		{
-			FVec3 LocalPoint = OtherToLocalTransform.TransformPosition(Particles->X(i));
+			FVec3 LocalPoint = OtherToLocalTransform.TransformPosition(Particles->GetX(i));
 			FReal LocalPhi = SignedDistance(LocalPoint);
 			if(LocalPhi < Phi)
 			{
 				Phi = LocalPhi;
-				Point = Particles->X(i);
+				Point = Particles->GetX(i);
 			}
 		}
 		return MakePair(Point, Phi < Thickness);
@@ -371,6 +377,7 @@ namespace Chaos
 		static const FName TriangleMeshName = TEXT("TriangleMesh");
 		static const FName HeightFieldName = TEXT("HeightField");
 		static const FName TaperedCapsuleName = TEXT("TaperedCapsule");
+		static const FName UnionClusteredName = TEXT("UnionClustered");
 
 		switch(GetInnerType(InType))
 		{
@@ -388,6 +395,7 @@ namespace Chaos
 		case ImplicitObjectType::TriangleMesh: return TriangleMeshName;
 		case ImplicitObjectType::HeightField: return HeightFieldName;
 		case ImplicitObjectType::TaperedCapsule: return TaperedCapsuleName;
+		case ImplicitObjectType::UnionClustered: return UnionClusteredName;
 		}
 		return NAME_None;
 	}

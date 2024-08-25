@@ -49,11 +49,12 @@ UNiagaraDataInterfacePressureGrid::UNiagaraDataInterfacePressureGrid(FObjectInit
 	NumAttributes = 18;
 }
 
-void UNiagaraDataInterfacePressureGrid::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfacePressureGrid::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIPressureGridLocal;
 
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 	{
 		FNiagaraFunctionSignature Sig;
 		Sig.Name = GetNodePositionName;
@@ -195,6 +196,7 @@ void UNiagaraDataInterfacePressureGrid::GetFunctions(TArray<FNiagaraFunctionSign
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfacePressureGrid, BuildDistanceField);
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfacePressureGrid, BuildDensityField);

@@ -77,7 +77,7 @@ namespace BuildPatchServices
 
 		void GetFileData(const FString& BuildFilename, const FBlockRange& BlockRange, TArray<uint8>& OutData, bool bUseOther = false)
 		{
-			TestBuffer.SetNumUninitialized(BlockRange.GetSize(), false);
+			TestBuffer.SetNumUninitialized(BlockRange.GetSize(), EAllowShrinking::No);
 			FArchive* BuildFile = LoadFile(BuildFilename, bUseOther);
 			BuildFile->Seek(BlockRange.GetFirst());
 			BuildFile->Serialize(TestBuffer.GetData(), BlockRange.GetSize());
@@ -105,7 +105,7 @@ namespace BuildPatchServices
 							const FBlockRange BuildBytesRange = FBlockRange::FromIntersection(BlockRange, ChunkPartRange);
 							const int64 FileSeek = BuildBytesRange.GetFirst() - FileRange.GetFirst();
 							const int64 DataIndex = BuildBytesRange.GetFirst() - BlockRange.GetFirst();
-							TestBuffer.SetNumUninitialized(BuildBytesRange.GetSize(), false);
+							TestBuffer.SetNumUninitialized(BuildBytesRange.GetSize(), EAllowShrinking::No);
 							FArchive* BuildFile = LoadFile(BuildFilename, bUseOther);
 							BuildFile->Seek(FileSeek);
 							BuildFile->Serialize(TestBuffer.GetData(), BuildBytesRange.GetSize());
@@ -206,8 +206,8 @@ namespace BuildPatchServices
 					check(ChunkWriterSummaries == nullptr || ChunkPart.Guid.IsValid());
 					if (ChunkPart.Guid.IsValid())
 					{
-						BuildBuffer.SetNumUninitialized(0, false);
-						ChunkBuffer.SetNumUninitialized(0, false);
+						BuildBuffer.SetNumUninitialized(0, EAllowShrinking::No);
+						ChunkBuffer.SetNumUninitialized(0, EAllowShrinking::No);
 						FBlockRange ChunkPartRange = FBlockRange::FromFirstAndSize(ChunkPartStart, ChunkPart.Size);
 						GetBuildData(ChunkPartRange, BuildBuffer);
 						GetChunkData(ChunkPart, ChunkBuffer, ChunkWriterSummaries);
@@ -250,8 +250,8 @@ namespace BuildPatchServices
 			FChunkSearcher::FChunkDListNode* ChunkNode = ChunkDList.GetHead();
 			while (ChunkNode)
 			{
-				BuildData.SetNumUninitialized(0, false);
-				ChunkData.SetNumUninitialized(0, false);
+				BuildData.SetNumUninitialized(0, EAllowShrinking::No);
+				ChunkData.SetNumUninitialized(0, EAllowShrinking::No);
 				GetBuildData(ChunkNode->GetValue().BuildRange, BuildData, bUseOther);
 				if (ChunkNode->GetValue().ChunkPart.Guid.IsValid())
 				{

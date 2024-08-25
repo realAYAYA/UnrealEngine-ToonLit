@@ -16,6 +16,8 @@
 #include "Misc/ScopeTryLock.h"
 #include "ProfilingDebugging/CsvProfiler.h"
 #include "AudioLinkLog.h"
+#include "DSP/BufferDiagnostics.h"
+#include "Algo/Accumulate.h"
 
 // Link to "Audio" profiling category
 CSV_DECLARE_CATEGORY_MODULE_EXTERN(AUDIOMIXERCORE_API, Audio);
@@ -45,8 +47,8 @@ FAutoConsoleVariableRef CVarLogSubmixEnablement(
 	ECVF_Default);
 
 // Define profiling categories for submixes. 
-DEFINE_STAT(STAT_AudioMixerSubmixes);
 DEFINE_STAT(STAT_AudioMixerEndpointSubmixes);
+DEFINE_STAT(STAT_AudioMixerSubmixes);
 DEFINE_STAT(STAT_AudioMixerSubmixChildren);
 DEFINE_STAT(STAT_AudioMixerSubmixSource);
 DEFINE_STAT(STAT_AudioMixerSubmixEffectProcessing);
@@ -495,6 +497,32 @@ namespace Audio
 			AUDIO_MIXER_CHECK_AUDIO_PLAT_THREAD(MixerDevice);
 
 			ChildSubmixes.Remove(OldIdToRemove);
+		});
+	}
+
+	void FMixerSubmix::RegisterAudioBus(const Audio::FAudioBusKey& InAudioBusKey, Audio::FPatchInput&& InPatchInput)
+	{
+		check(IsInAudioThread());
+
+		SubmixCommand([this, InAudioBusKey, InPatchInput = MoveTemp(InPatchInput)]()
+		{
+			if (!AudioBuses.Contains(InAudioBusKey))
+			{
+				AudioBuses.Emplace(InAudioBusKey, InPatchInput);
+			}
+		});
+	}
+
+	void FMixerSubmix::UnregisterAudioBus(const Audio::FAudioBusKey& InAudioBusKey)
+	{
+		check(IsInAudioThread());
+
+		SubmixCommand([this, InAudioBusKey]()
+		{
+			if (AudioBuses.Contains(InAudioBusKey))
+			{
+				AudioBuses.Remove(InAudioBusKey);
+			}
 		});
 	}
 
@@ -1090,9 +1118,21 @@ namespace Audio
 		{
 			// query the SubmixBufferListeners to see if they plan to render audio into this buffer
 			FScopeLock Lock(&BufferListenerCriticalSection);
-			for (const ISubmixBufferListener* BufferListener : BufferListeners)
+			for (const TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe>& BufferListener : BufferListeners)
 			{
-				if (BufferListener && BufferListener->IsRenderingAudio())
+				if (BufferListener->IsRenderingAudio())
+				{
+					return true;
+				}
+			}
+		}
+
+		// Query Modulation; if any of the submix's Modulation Destinations are being modulated they need to be processed,
+		// because binaural sources still use these Destinations when the submix is set
+		{
+			if (MixerDevice->IsModulationPluginEnabled() && MixerDevice->ModulationInterface.IsValid())
+			{
+				if (DryLevelMod.IsActive() || VolumeMod.IsActive())
 				{
 					return true;
 				}
@@ -1230,6 +1270,7 @@ namespace Audio
 
 			// Even though we're silent, broadcast the buffer to any listeners (will be a silent buffer)
 			SendAudioToSubmixBufferListeners(InputBuffer);
+			SendAudioToRegisteredAudioBuses(InputBuffer);
 			return;
 		}
 
@@ -1257,6 +1298,9 @@ namespace Audio
 					if (ChildSubmix->IsRenderingAudio())
 					{
 						ChildSubmix->ProcessAudio(InputBuffer);
+
+						// Check the buffer after processing to catch any bad values.
+						AUDIO_CHECK_BUFFER_NAMED_MSG(InputBuffer, TEXT("Submix Chidren"), TEXT("Submix: %s"), *ChildSubmix->GetName());
 					}
 				}
 				else
@@ -1283,6 +1327,9 @@ namespace Audio
 				const EMixerSourceSubmixSendStage SubmixSendStage = MixerSourceVoiceIter.Value.SubmixSendStage;
 
 				MixerSourceVoice->MixOutputBuffers(NumChannels, SendLevel, SubmixSendStage, InputBuffer);
+				
+				// Check the buffer after each voice mix to catch any bad values.
+				AUDIO_CHECK_BUFFER_NAMED_MSG(InputBuffer, TEXT("Submix SourceMix"), TEXT("Submix: %s"), *GetName());
 			}
 		}
 
@@ -1351,7 +1398,7 @@ namespace Audio
 						// only remove effect chain if it's not the base effect chain
 						if (!FadeInfo.bIsBaseEffect)
 						{
-							EffectChains.RemoveAtSwap(EffectChainIndex, 1, true);
+							EffectChains.RemoveAtSwap(EffectChainIndex, 1, EAllowShrinking::Yes);
 						}
 						continue;
 					}
@@ -1360,7 +1407,9 @@ namespace Audio
 					EffectChainOutputBuffer.Reset();
 					EffectChainOutputBuffer.AddZeroed(NumSamples);
 
-					bProcessedAnEffect |= GenerateEffectChainAudio(InputData, InputBuffer, FadeInfo.EffectChain, EffectChainOutputBuffer);
+					const bool bResult = GenerateEffectChainAudio(InputData, InputBuffer, FadeInfo.EffectChain, EffectChainOutputBuffer);
+					bProcessedAnEffect |= bResult;
+					const FAlignedFloatBuffer* OutBuffer = bResult ? &EffectChainOutputBuffer : &InputBuffer;
 
 					// Mix effect chain output into SubmixChainMixBuffer
 					float StartFadeVolume = FadeInfo.FadeVolume.GetValue();
@@ -1368,7 +1417,7 @@ namespace Audio
 					float EndFadeVolume = FadeInfo.FadeVolume.GetValue();
 
 					// Mix this effect chain with other effect chains.
-					ArrayMixIn(EffectChainOutputBuffer, SubmixChainMixBuffer, StartFadeVolume, EndFadeVolume);
+					ArrayMixIn(*OutBuffer, SubmixChainMixBuffer, StartFadeVolume, EndFadeVolume);
 				}
 
 				// If we processed any effects, write over the old input buffer vs mixing into it. This is basically the "wet channel" audio in a submix.
@@ -1512,6 +1561,7 @@ namespace Audio
 		}
 
 		SendAudioToSubmixBufferListeners(InputBuffer);
+		SendAudioToRegisteredAudioBuses(InputBuffer);
 
 		// Mix the audio buffer of this submix with the audio buffer of the output buffer (i.e. with other submixes)
 		Audio::ArrayMixIn(InputBuffer, OutAudioBuffer);
@@ -1521,10 +1571,29 @@ namespace Audio
 		{
 			// Extremely cheap silent buffer detection: as soon as we hit a sample which isn't silent, we flag we're not silent
 			bool bIsNowSilent = true;
-			for (float& SampleValue : OutAudioBuffer)
+			int i = 0;
+#if PLATFORM_ENABLE_VECTORINTRINSICS
+			int SimdNum = OutAudioBuffer.Num() & 0xFFFFFFF0;
+			for (; i < SimdNum; i += 16)
+			{
+				VectorRegister4x4Float Samples = VectorLoad16(&OutAudioBuffer[i]);
+				if (   VectorAnyGreaterThan(VectorAbs(Samples.val[0]), GlobalVectorConstants::SmallNumber)
+					|| VectorAnyGreaterThan(VectorAbs(Samples.val[1]), GlobalVectorConstants::SmallNumber)
+					|| VectorAnyGreaterThan(VectorAbs(Samples.val[2]), GlobalVectorConstants::SmallNumber)
+					|| VectorAnyGreaterThan(VectorAbs(Samples.val[3]), GlobalVectorConstants::SmallNumber))
+				{
+					bIsNowSilent = false;
+					i = INT_MAX;
+					break;
+				}
+			}
+#endif
+
+			// Finish to the end of the buffer or check each sample if vector intrinsics are disabled
+			for (; i < OutAudioBuffer.Num(); ++i)
 			{
 				// As soon as we hit a non-silent sample, we're not silent
-				if (SampleValue > SMALL_NUMBER)
+				if (FMath::Abs(OutAudioBuffer[i]) > SMALL_NUMBER)
 				{
 					bIsNowSilent = false;
 					break;
@@ -1557,13 +1626,22 @@ namespace Audio
 			double AudioClock = MixerDevice->GetAudioTime();
 			float SampleRate = MixerDevice->GetSampleRate();
 			FScopeLock Lock(&BufferListenerCriticalSection);
-			for (ISubmixBufferListener* BufferListener : BufferListeners)
+			for (TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe>& BufferListener : BufferListeners)
 			{
-				check(BufferListener);
 				BufferListener->OnNewSubmixBuffer(SoundSubmix, OutAudioBuffer.GetData(), OutAudioBuffer.Num(), NumChannels, SampleRate, AudioClock);
 			}
 
 			PatchSplitter.PushAudio(OutAudioBuffer.GetData(), OutAudioBuffer.Num());
+		}
+	}
+
+	void FMixerSubmix::SendAudioToRegisteredAudioBuses(FAlignedFloatBuffer& OutAudioBuffer)
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(FMixerSubmix::SendAudioToRegisteredAudioBuses);
+
+		for (auto& [AudioBusKey, PatchInput] : AudioBuses)
+		{
+			PatchInput.PushAudio(OutAudioBuffer.GetData(), OutAudioBuffer.Num());
 		}
 	}
 
@@ -1591,8 +1669,6 @@ namespace Audio
 
 			// Check to see if we need to down-mix our audio before sending to the submix effect
 			const uint32 ChannelCountOverride = SubmixEffect->GetDesiredInputChannelCountOverride();
-			bool bCurrentEffectProcessedAudio = false;
-
 			if (ChannelCountOverride != INDEX_NONE && ChannelCountOverride != NumChannels)
 			{
 				// Perform the down-mix operation with the down-mixed scratch buffer
@@ -1601,18 +1677,19 @@ namespace Audio
 
 				InputData.NumChannels = ChannelCountOverride;
 				InputData.AudioBuffer = &DownmixedBuffer;
-				bCurrentEffectProcessedAudio = SubmixEffect->ProcessAudio(InputData, OutputData);
 			}
 			else
 			{
 				// If we're not down-mixing, then just pass in the current wet buffer and our channel count is the same as the output channel count
 				InputData.NumChannels = NumChannels;
 				InputData.AudioBuffer = &ScratchBuffer;
-				bCurrentEffectProcessedAudio = SubmixEffect->ProcessAudio(InputData, OutputData);
 			}
 
-			if (bCurrentEffectProcessedAudio)
+			if (SubmixEffect->ProcessAudio(InputData, OutputData))
 			{
+				AUDIO_CHECK_BUFFER_NAMED_MSG(*OutputData.AudioBuffer,TEXT("Submix Effects"), TEXT("FxPreset=%s, Submix=%s"), 
+					*GetNameSafe(SubmixEffect->GetPreset()), *GetName());
+				
 				// Mix in the dry signal directly
 				const float DryLevel = SubmixEffect->GetDryLevel();
 				if (DryLevel > 0.0f)
@@ -1624,12 +1701,6 @@ namespace Audio
 
 				bProcessedAnEffect = true;
 			}
-		}
-
-		if (!bProcessedAnEffect)
-		{
-			// If no effects were processed pass through the input audio to the output buffer.
-			OutBuffer = InAudioBuffer;
 		}
 
 		return bProcessedAnEffect;
@@ -2081,6 +2152,12 @@ namespace Audio
 	{
 		FScopeLock Lock(&BufferListenerCriticalSection);
 		check(BufferListener);
+		BufferListeners.AddUnique(BufferListener->AsShared());
+	}
+
+	void FMixerSubmix::RegisterBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> BufferListener)
+	{
+		FScopeLock Lock(&BufferListenerCriticalSection);
 		BufferListeners.AddUnique(BufferListener);
 	}
 
@@ -2088,6 +2165,12 @@ namespace Audio
 	{
 		FScopeLock Lock(&BufferListenerCriticalSection);
 		check(BufferListener);
+		BufferListeners.Remove(BufferListener->AsShared());
+	}
+
+	void FMixerSubmix::UnregisterBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> BufferListener)
+	{
+		FScopeLock Lock(&BufferListenerCriticalSection);
 		BufferListeners.Remove(BufferListener);
 	}
 
@@ -2348,6 +2431,16 @@ namespace Audio
 		VolumeModBaseDb = InVolumeModBaseDb;
 		WetModBaseDb = InWetModBaseDb;
 		DryModBaseDb = InDryModBaseDb;
+	}
+
+	FModulationDestination* FMixerSubmix::GetOutputVolumeDestination()
+	{
+		return &VolumeMod;
+	}
+
+	FModulationDestination* FMixerSubmix::GetWetVolumeDestination()
+	{
+		return &WetLevelMod;
 	}
 
 	void FMixerSubmix::BroadcastDelegates()

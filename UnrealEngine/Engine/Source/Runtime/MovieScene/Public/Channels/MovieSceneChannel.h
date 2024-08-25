@@ -10,6 +10,7 @@
 #include "Misc/CoreDefines.h"
 #include "Misc/FrameNumber.h"
 #include "Misc/FrameRate.h"
+#include "Curves/KeyHandle.h"
 #include "UObject/ObjectMacros.h"
 
 #include "MovieSceneChannel.generated.h"
@@ -17,7 +18,6 @@
 struct FFrameNumber;
 struct FFrameRate;
 struct FKeyDataOptimizationParams;
-struct FKeyHandle;
 struct FMovieSceneChannel;
 
 /*
@@ -44,7 +44,55 @@ struct FKeyMoveEventItem
 	int32 NewIndex;
 	FFrameNumber NewFrame;
 };
+/*
+*  Class to help with pre/post cycling of values
+*/
+namespace UE
+{
+namespace MovieScene
+{
+struct FCycleParams
+{
+	double ValueOffset;
+	FFrameTime Time;
+	int32 CycleCount;
+	int32 Duration;
+	bool bMirrorCurve;
 
+	FCycleParams(FFrameTime InTime, int32 InDuration)
+		: ValueOffset(0.0)
+		, Time(InTime)
+		, CycleCount(0)
+		, Duration(InDuration)
+		, bMirrorCurve(false)
+	{}
+
+	FORCEINLINE void ComputePreValueOffset(double FirstValue, double LastValue)
+	{
+		// CycleCount is negative for pre-extrap
+		ValueOffset = (LastValue - FirstValue) * CycleCount;
+	}
+	FORCEINLINE void ComputePostValueOffset(double FirstValue, double LastValue)
+	{
+		ValueOffset = (LastValue - FirstValue) * CycleCount;
+	}
+	FORCEINLINE bool ShouldMirrorCurve() const
+	{
+		return bMirrorCurve;
+	}
+	FORCEINLINE void Oscillate(int32 MinFrame, int32 MaxFrame)
+	{
+		if (FMath::Abs(CycleCount) % 2 == 1)
+		{
+			bMirrorCurve = true;
+			Time = MinFrame + (FFrameTime(MaxFrame) - Time);
+		}
+	}
+};
+MOVIESCENE_API  FCycleParams CycleTime(FFrameNumber MinFrame, FFrameNumber MaxFrame, FFrameTime InTime);
+
+} // namespace MovieScene
+} // namespace UE
 /*
 * Note if any Channel uses these delegate's they need a custom serializer to make sure they stick around on undo/redo. Dynamic delegates are too heavy.
 */
@@ -192,6 +240,28 @@ struct FMovieSceneChannel
 	 *
 	 */
 	virtual void PostEditChange() {}
+
+	/**
+	* Retrieve a key handle for the specified key time index
+	*
+	* @param Index          The index to retrieve
+	* @return A key handle that identifies the key at the specified index, regardless of re-ordering
+	*/
+	virtual FKeyHandle GetHandle(int32 Index)
+	{
+		return FKeyHandle();
+	}
+
+	/**
+	 * Attempt to retrieve the index of key from its handle
+	 *
+	 * @param Handle         The handle to retrieve
+	 * @return The index of the key, or INDEX_NONE
+	 */
+	virtual int32 GetIndex(FKeyHandle Handle)
+	{
+		return INDEX_NONE;
+	}
 
 public:
 

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Xml.Serialization;
 using EpicGames.Core;
 using UnrealBuildBase;
@@ -327,6 +328,11 @@ namespace UnrealBuildTool
 		public Dictionary<string, bool> PluginNameToEnabledState = new Dictionary<string, bool>();
 
 		/// <summary>
+		/// All plugins that were built via the target rules.
+		/// </summary>
+		public List<string> BuildPlugins = new List<string>();
+
+		/// <summary>
 		/// Additional build properties passed through from the module rules
 		/// </summary>
 		public List<ReceiptProperty> AdditionalProperties = new List<ReceiptProperty>();
@@ -390,6 +396,13 @@ namespace UnrealBuildTool
 				if (!PluginNameToEnabledState.ContainsKey(Pair.Key))
 				{
 					PluginNameToEnabledState.Add(Pair.Key, Pair.Value);
+				}
+			}
+			foreach (string PluginName in Other.BuildPlugins)
+			{
+				if (!BuildPlugins.Contains(PluginName))
+				{
+					BuildPlugins.Add(PluginName);
 				}
 			}
 		}
@@ -534,7 +547,7 @@ namespace UnrealBuildTool
 			BuildVersion? Version;
 			if (!BuildVersion.TryParse(RawObject.GetObjectField("Version"), out Version))
 			{
-				throw new JsonParseException("Invalid 'Version' field");
+				throw new JsonException("Invalid 'Version' field");
 			}
 
 			// Read the project path
@@ -648,6 +661,13 @@ namespace UnrealBuildTool
 						}
 					}
 				}
+			}
+
+			// Read the build plugins
+			string[]? BuildPlugins;
+			if (RawObject.TryGetStringArrayField("BuildPlugins", out BuildPlugins))
+			{
+				Receipt.BuildPlugins.AddAll(BuildPlugins);
 			}
 
 			// Read the additional properties
@@ -785,6 +805,11 @@ namespace UnrealBuildTool
 						Writer.WriteObjectEnd();
 					}
 					Writer.WriteArrayEnd();
+				}
+
+				if (BuildPlugins.Count > 0)
+				{
+					Writer.WriteStringArrayField("BuildPlugins", BuildPlugins.OrderBy(x => x));
 				}
 
 				if (AdditionalProperties.Count > 0)

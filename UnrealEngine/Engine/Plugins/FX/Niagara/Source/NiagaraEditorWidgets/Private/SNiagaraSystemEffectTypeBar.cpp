@@ -167,12 +167,12 @@ TSharedPtr<SWidget> SNiagaraSystemEffectTypeBar::CreatePropertyValueWidget(FProp
 			ValueTextBlock->SetText(BoolValue ? FText::FromString("True") : FText::FromString("False"));
 		}
 				
-		if(FObjectPtrProperty* ObjectProperty = CastField<FObjectPtrProperty>(Property))
+		if(FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
 		{
-			FObjectPtr& ObjectPtr = (FObjectPtr&) ObjectProperty->GetPropertyValue_InContainer(EffectType.Get());
+			const TObjectPtr<UObject>& ObjectPtr = ObjectProperty->GetPropertyValue_InContainer(EffectType.Get());
 			
 			if(ObjectPtr)
-			{				
+			{
 				if(ObjectProperty->HasMetaData("DisplayClassDisplayName"))
 				{
 					ValueTextBlock->SetText(GetClassDisplayName(ObjectPtr.Get()));
@@ -180,7 +180,7 @@ TSharedPtr<SWidget> SNiagaraSystemEffectTypeBar::CreatePropertyValueWidget(FProp
 				else
 				{
 					ValueTextBlock->SetText(GetObjectName(ObjectPtr.Get()));
-				}						
+				}
 			}
 			else
 			{

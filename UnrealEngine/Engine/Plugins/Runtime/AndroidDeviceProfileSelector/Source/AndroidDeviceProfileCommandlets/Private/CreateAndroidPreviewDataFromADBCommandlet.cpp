@@ -52,8 +52,8 @@ void UpdateJSONWithConfigrules(const FConfigRules& HardwareToGPUName, const FStr
 	// Write the updated JSon object back
 	TSharedPtr<FJsonObject> JsonObject = FJsonObjectConverter::UStructToJsonObject<FPIEPreviewDeviceSpecifications>(DeviceSpecs);
 	// remove IOS field
-	JsonObject->RemoveField("IOSProperties");
-	JsonObject->RemoveField("switchProperties");
+	JsonObject->RemoveField(TEXT("IOSProperties"));
+	JsonObject->RemoveField(TEXT("switchProperties"));
 
 	// serialize the JSon object to string
 	FString OutputString;

@@ -28,16 +28,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 // FDisplayClusterViewportPostProcessOutputRemap
 //////////////////////////////////////////////////////////////////////////////////////////////
-FDisplayClusterViewportPostProcessOutputRemap::FDisplayClusterViewportPostProcessOutputRemap()
-	: ShadersAPI(IDisplayClusterShaders::Get())
-{
-}
-
-FDisplayClusterViewportPostProcessOutputRemap::~FDisplayClusterViewportPostProcessOutputRemap()
-{
-}
-
-bool FDisplayClusterViewportPostProcessOutputRemap::ImplInitializeConfiguration()
+bool FDisplayClusterViewportPostProcessOutputRemap::ImplInitializeOutputRemap()
 {
 	if (!OutputRemapMesh.IsValid())
 	{
@@ -92,7 +83,7 @@ bool FDisplayClusterViewportPostProcessOutputRemap::UpdateConfiguration_External
 		// Store input filename for next update
 		ExternalFile = FullPathFileName;
 	}
-	else if (ImplInitializeConfiguration())
+	else if (ImplInitializeOutputRemap())
 	{
 		// Assign loaded geometry
 		OutputRemapMesh->SetGeometryFunc(EDisplayClusterRender_MeshComponentProxyDataFunc::OutputRemapScreenSpace);
@@ -129,7 +120,7 @@ bool FDisplayClusterViewportPostProcessOutputRemap::UpdateConfiguration_StaticMe
 		}
 	}
 
-	if (ImplInitializeConfiguration())
+	if (ImplInitializeOutputRemap())
 	{
 		OutputRemapMesh->SetGeometryFunc(EDisplayClusterRender_MeshComponentProxyDataFunc::OutputRemapScreenSpace);
 		OutputRemapMesh->AssignStaticMesh(InStaticMesh, FDisplayClusterMeshUVs());
@@ -163,7 +154,7 @@ bool FDisplayClusterViewportPostProcessOutputRemap::UpdateConfiguration_StaticMe
 	}
 
 	// Begin new configuration:
-	if (ImplInitializeConfiguration())
+	if (ImplInitializeOutputRemap())
 	{
 		OutputRemapMesh->SetGeometryFunc(EDisplayClusterRender_MeshComponentProxyDataFunc::OutputRemapScreenSpace);
 		OutputRemapMesh->AssignStaticMeshComponentRefs(InStaticMeshComponent, FDisplayClusterMeshUVs());
@@ -197,7 +188,7 @@ bool FDisplayClusterViewportPostProcessOutputRemap::UpdateConfiguration_Procedur
 	}
 
 	// Begin new configuration:
-	if (ImplInitializeConfiguration())
+	if (ImplInitializeOutputRemap())
 	{
 		OutputRemapMesh->SetGeometryFunc(EDisplayClusterRender_MeshComponentProxyDataFunc::OutputRemapScreenSpace);
 		OutputRemapMesh->AssignProceduralMeshComponentRefs(InProceduralMeshComponent, FDisplayClusterMeshUVs());
@@ -245,6 +236,7 @@ void FDisplayClusterViewportPostProcessOutputRemap::PerformPostProcessFrame_Rend
 				FRHITexture2D* InOutTexture = (*InFrameTargets)[Index];
 				FRHITexture2D* TempTargetableTexture = (*InAdditionalFrameTargets)[Index];
 
+				static IDisplayClusterShaders& ShadersAPI = IDisplayClusterShaders::Get();
 				if (ShadersAPI.RenderPostprocess_OutputRemap(RHICmdList, InOutTexture, TempTargetableTexture, *MeshProxy))
 				{
 					TransitionAndCopyTexture(RHICmdList, TempTargetableTexture, InOutTexture, {});

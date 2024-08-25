@@ -14,7 +14,7 @@ void UMovieSceneMaterialTrackExtensions::SetMaterialIndex(UMovieSceneComponentMa
 	}
 
 	Track->Modify();
-	Track->SetMaterialIndex(MaterialIndex);
+	Track->SetMaterialInfo(FComponentMaterialInfo{FName(), MaterialIndex, EComponentMaterialType::IndexedMaterial});
 }
 
 int32 UMovieSceneMaterialTrackExtensions::GetMaterialIndex(UMovieSceneComponentMaterialTrack* Track)
@@ -25,8 +25,33 @@ int32 UMovieSceneMaterialTrackExtensions::GetMaterialIndex(UMovieSceneComponentM
 		return -1;
 	}
 
-	return Track->GetMaterialIndex();
+	return Track->GetMaterialInfo().MaterialSlotIndex;
 }
+
+void UMovieSceneMaterialTrackExtensions::SetMaterialInfo(UMovieSceneComponentMaterialTrack* Track, const FComponentMaterialInfo& MaterialInfo)
+{
+	if (!Track)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Cannot call SetMaterialInfo on a null track"), ELogVerbosity::Error);
+		return;
+	}
+
+	Track->Modify();
+	Track->SetMaterialInfo(MaterialInfo);
+}
+
+FComponentMaterialInfo UMovieSceneMaterialTrackExtensions::GetMaterialInfo(UMovieSceneComponentMaterialTrack* Track)
+{
+	if (!Track)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Cannot call GetMaterialInfo on a null track"), ELogVerbosity::Error);
+		return FComponentMaterialInfo();
+	}
+
+	return Track->GetMaterialInfo();
+}
+
+
 
 
 

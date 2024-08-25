@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using EpicGames.Horde.Logs;
-using Horde.Server.Logs.Data;
 
 namespace Horde.Server.Logs
 {
@@ -50,15 +49,25 @@ namespace Horde.Server.Logs
 	/// </summary>
 	public class GetLogFileResponse
 	{
-        /// <summary>
+		/// <summary>
 		/// Unique id of the log file
 		/// </summary>
 		public string Id { get; set; }
 
-        /// <summary>
-        /// Unique id of the job for this log file
+		/// <summary>
+		/// Unique id of the job for this log file
 		/// </summary>
-        public string JobId { get; set; }
+		public string JobId { get; set; }
+
+		/// <summary>
+		/// The lease allowed to write to this log
+		/// </summary>
+		public string? LeaseId { get; }
+
+		/// <summary>
+		/// The session allowed to write to this log
+		/// </summary>
+		public string? SessionId { get; }
 
 		/// <summary>
 		/// Type of events stored in this log
@@ -66,9 +75,9 @@ namespace Horde.Server.Logs
 		public LogType Type { get; set; }
 
 		/// <summary>
-        /// Number of lines in the file
-        /// </summary>
-        public int LineCount { get; set; }
+		/// Number of lines in the file
+		/// </summary>
+		public int LineCount { get; set; }
 
 		/// <summary>
 		/// Constructor
@@ -77,10 +86,12 @@ namespace Horde.Server.Logs
 		/// <param name="metadata">Metadata about the log file</param>
 		public GetLogFileResponse(ILogFile logFile, LogMetadata metadata)
 		{
-            Id = logFile.Id.ToString();
-            JobId = logFile.JobId.ToString();
+			Id = logFile.Id.ToString();
+			JobId = logFile.JobId.ToString();
+			LeaseId = logFile.LeaseId.ToString();
+			SessionId = logFile.SessionId.ToString();
 			Type = logFile.Type;
-            LineCount = metadata.MaxLineIndex;
+			LineCount = metadata.MaxLineIndex;
 		}
 	}
 

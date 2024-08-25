@@ -49,23 +49,26 @@ void FRigVMBlueprintCompilerContext::MarkCompilationFailed(const FString& Messag
 	}
 }
 
-void FRigVMBlueprintCompilerContext::PostCompile()
+void FRigVMBlueprintCompilerContext::OnPostCDOCompiled(const UObject::FPostCDOCompiledContext& Context)
 {
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
 
-	URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(Blueprint);
-	if (RigVMBlueprint)
+	if (!Context.bIsSkeletonOnly)
 	{
-		if (!RigVMBlueprint->bIsRegeneratingOnLoad)
+		URigVMBlueprint* RigVMBlueprint = Cast<URigVMBlueprint>(Blueprint);
+		if (RigVMBlueprint)
 		{
-			// todo: can we find out somehow if we are cooking?
-			RigVMBlueprint->RecompileVM();
+			if (!RigVMBlueprint->bIsRegeneratingOnLoad)
+			{
+				// todo: can we find out somehow if we are cooking?
+				RigVMBlueprint->RecompileVM();
+			}
 		}
 	}
 
 	{
-		DECLARE_SCOPE_HIERARCHICAL_COUNTER(FKismetCompilerContext::PostCompile)
-		FKismetCompilerContext::PostCompile();
+		DECLARE_SCOPE_HIERARCHICAL_COUNTER(FKismetCompilerContext::OnPostCDOCompiled)
+		FKismetCompilerContext::OnPostCDOCompiled(Context);
 	}
 }
 

@@ -11,6 +11,7 @@
 #include "ISkeletalMeshEditor.h"
 #include "SkeletalMeshNotifier.h"
 #include "Containers/ArrayView.h"
+#include "Async/Future.h"
 
 class IDetailLayoutBuilder;
 class IDetailsView;
@@ -45,7 +46,6 @@ namespace SkeletalMeshEditorTabs
 	extern const FName MorphTargetsTab;
 	extern const FName MeshDetailsTab;
 	extern const FName AnimationMappingTab;
-	extern const FName ToolboxDetailsTab;
 	extern const FName CurveMetadataTab;
 	extern const FName FindReplaceTab;
 }
@@ -71,9 +71,6 @@ public:
 	virtual FString GetWorldCentricTabPrefix() const override;
 	virtual FLinearColor GetWorldCentricTabColorScale() const override;
 	virtual void InitToolMenuContext(FToolMenuContext& MenuContext) override;
-	// IToolkitHost Interface
-	virtual void OnToolkitHostingStarted(const TSharedRef<class IToolkit>& Toolkit) override;
-	virtual void OnToolkitHostingFinished(const TSharedRef<class IToolkit>& Toolkit) override;
 
 	virtual void AddViewportOverlayWidget(TSharedRef<SWidget> InOverlaidWidget) override;
 	virtual void RemoveViewportOverlayWidget(TSharedRef<SWidget> InOverlaidWidget) override;
@@ -132,10 +129,11 @@ private:
 
 	void HandleReimportMesh(int32 SourceFileIndex = INDEX_NONE);
 	void HandleReimportMeshWithNewFile(int32 SourceFileIndex = INDEX_NONE);
-	
-	bool HandleReimportMeshInternal(int32 SourceFileIndex = INDEX_NONE, bool bWithNewFile = false);
+	TFuture<bool> HandleReimportMeshInternal(int32 SourceFileIndex = INDEX_NONE, bool bWithNewFile = false);
+
 	void HandleReimportAllMesh(int32 SourceFileIndex = INDEX_NONE);
 	void HandleReimportAllMeshWithNewFile(int32 SourceFileIndex = INDEX_NONE);
+	void HandleReimportAllMeshInternal(int32 SourceFileIndex, bool bWithNewFile);
 
 	void HandleOnPreviewSceneSettingsCustomized(IDetailLayoutBuilder& DetailBuilder);
 
@@ -168,12 +166,6 @@ private:
 	void RegisterReimportContextMenu(const FName InBaseMenuName);
 
 	static TSharedPtr<FSkeletalMeshEditor> GetSkeletalMeshEditor(const FToolMenuContext& InMenuContext);
-
-	void OnEditorModeIdChanged(const FEditorModeID& ModeChangedID, bool bIsEnteringMode);
-
-	bool CanSpawnToolboxTab(const FSpawnTabArgs& InArgs) const;
-	TSharedRef<SDockTab> SpawnToolboxTab(const FSpawnTabArgs& InArgs);
-	void OnToolboxTabClosed(TSharedRef<SDockTab> InClosedTab);
 
 private:
 	void ExtendMenu();

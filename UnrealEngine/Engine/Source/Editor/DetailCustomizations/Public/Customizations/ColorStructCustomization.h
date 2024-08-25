@@ -51,15 +51,42 @@ protected:
 
 protected:
 
-	/** Creates the color widget that when clicked spawns the color picker window. */
-	TSharedRef<SWidget> CreateColorWidget(TWeakPtr<IPropertyHandle>);
+	struct FLinearOrSrgbColor;
 
 	/**
 	 * Get the color used by this struct as a linear color value
-	 * @param InColor To be filled with the color value used by this struct, or white if this struct is being used to edit multiple values  
+	 * @param InColor To be filled with the color value used by this struct, or white if this struct is being used to edit multiple values
 	 * @return The result of trying to get the color value
 	 */
-	FPropertyAccess::Result GetColorAsLinear(FLinearColor& InColor) const;
+	virtual FPropertyAccess::Result GetColorAsLinear(FLinearColor& InColor) const;
+
+	/**
+	 * Does the type have Alpha Support
+	 * @return true if it does
+	*/
+	virtual bool TypeSupportsAlpha() const { return true; }
+
+	/**
+	 * Stores the colors from the property into SavedPreColorPickerColors
+	*/
+	virtual void GatherSavedPreColorPickerColors();
+
+	/**
+	 * Stores the color as a string in LastPickerColorString
+	*/
+	virtual void SetLastPickerColorString(const FLinearColor NewColor);
+
+	/**
+	 * Converts Colors into strings
+	 * @param Colors Array of colors to convert
+	 * @return Array of colors converted to string
+	*/
+	virtual TArray<FString> ConvertToPerObjectColors(const TArray<FLinearOrSrgbColor>& Colors) const;
+
+protected:
+
+	/** Creates the color widget that when clicked spawns the color picker window. */
+	TSharedRef<SWidget> CreateColorWidget(TWeakPtr<IPropertyHandle>);
 
 	/**
 	 * Does this struct have multiple values?
@@ -195,6 +222,5 @@ protected:
 	/** The value won;t be updated while editing */
 	bool bDontUpdateWhileEditing;
 
-
-	
+	TOptional<int32> TransactionIndex;	
 };

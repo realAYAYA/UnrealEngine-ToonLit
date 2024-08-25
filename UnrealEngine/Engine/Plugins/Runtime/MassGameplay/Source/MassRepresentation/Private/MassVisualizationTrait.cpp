@@ -10,6 +10,8 @@
 #include "MassLODFragments.h"
 #include "MassActorSubsystem.h"
 #include "MassEntityUtils.h"
+#include "MassVisualizationLODProcessor.h"
+#include "MassRepresentationProcessor.h"
 
 
 UMassVisualizationTrait::UMassVisualizationTrait()
@@ -81,7 +83,10 @@ void UMassVisualizationTrait::BuildTemplate(FMassEntityTemplateBuildContext& Bui
 	BuildContext.AddConstSharedFragment(ParamsFragment);
 
 	FMassRepresentationFragment& RepresentationFragment = BuildContext.AddFragment_GetRef<FMassRepresentationFragment>();
-	RepresentationFragment.StaticMeshDescIndex = RepresentationSubsystem->FindOrAddStaticMeshDesc(StaticMeshInstanceDesc);
+	if (bRegisterStaticMeshDesc)
+	{
+		RepresentationFragment.StaticMeshDescHandle = RepresentationSubsystem->FindOrAddStaticMeshDesc(StaticMeshInstanceDesc);
+	}
 	RepresentationFragment.HighResTemplateActorIndex = HighResTemplateActor.Get() ? RepresentationSubsystem->FindOrAddTemplateActor(HighResTemplateActor.Get()) : INDEX_NONE;
 	RepresentationFragment.LowResTemplateActorIndex = LowResTemplateActor.Get() ? RepresentationSubsystem->FindOrAddTemplateActor(LowResTemplateActor.Get()) : INDEX_NONE;
 
@@ -95,6 +100,9 @@ void UMassVisualizationTrait::BuildTemplate(FMassEntityTemplateBuildContext& Bui
 	BuildContext.AddFragment<FMassRepresentationLODFragment>();
 	BuildContext.AddTag<FMassVisibilityCulledByDistanceTag>();
 	BuildContext.AddChunkFragment<FMassVisualizationChunkFragment>();
+
+	BuildContext.AddTag<FMassVisualizationLODProcessorTag>();
+	BuildContext.AddTag<FMassVisualizationProcessorTag>();
 }
 
 

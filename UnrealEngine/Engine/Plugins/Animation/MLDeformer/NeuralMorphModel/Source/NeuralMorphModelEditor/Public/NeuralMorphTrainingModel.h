@@ -4,7 +4,7 @@
 
 #include "CoreTypes.h"
 #include "Containers/Array.h"
-#include "MLDeformerTrainingModel.h"
+#include "MLDeformerGeomCacheTrainingModel.h"
 #include "NeuralMorphTrainingModel.generated.h"
 
 /**
@@ -13,7 +13,7 @@
  */
 UCLASS(Blueprintable)
 class NEURALMORPHMODELEDITOR_API UNeuralMorphTrainingModel
-	: public UMLDeformerTrainingModel
+	: public UMLDeformerGeomCacheTrainingModel
 {
 	GENERATED_BODY()
 

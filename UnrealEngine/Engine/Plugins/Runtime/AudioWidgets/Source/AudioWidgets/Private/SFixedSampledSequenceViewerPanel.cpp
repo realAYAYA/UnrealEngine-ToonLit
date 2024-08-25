@@ -147,7 +147,7 @@ void SFixedSampledSequenceViewerPanel::CreateGridData(const FFixedSampleSequence
 {
 	check(RulerStyle)
 
-	SamplesGridData = MakeShared<FFixedSampledSequenceGridData>(DataView.SampleData.Num() / DataView.NumDimensions, DataView.SampleRate, RulerStyle->DesiredWidth, &RulerStyle->TicksTextFont);
+	SamplesGridData = MakeShared<FFixedSampledSequenceGridData>(DataView.SampleData.Num() / DataView.NumDimensions, DataView.SampleRate, RulerStyle->TicksTextFont, RulerStyle->DesiredWidth);
 }
 
 void SFixedSampledSequenceViewerPanel::ReceiveSequenceView(const FFixedSampledSequenceView InData, const uint32 FirstSampleIndex)

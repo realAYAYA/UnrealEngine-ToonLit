@@ -2,7 +2,9 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "Misc/Guid.h"
@@ -50,6 +52,8 @@ class UNavCollision : public UNavCollisionBase
 
 	TNavStatArray<int32> ConvexShapeIndices;
 
+	FBox Bounds;
+
 	/** list of nav collision cylinders */
 	UPROPERTY(EditAnywhere, Category=Navigation)
 	TArray<FNavCollisionCylinder> CylinderCollision;
@@ -95,6 +99,8 @@ class UNavCollision : public UNavCollisionBase
 	/** Tries to read data from DDC, and if that fails gathers navigation
 	 *	collision data, stores it and uploads to DDC */
 	NAVIGATIONSYSTEM_API virtual void Setup(class UBodySetup* BodySetup) override;
+
+	NAVIGATIONSYSTEM_API virtual FBox GetBounds() const override;
 
 	/** copy user settings from other nav collision data */
 	NAVIGATIONSYSTEM_API void CopyUserSettings(const UNavCollision& OtherData);

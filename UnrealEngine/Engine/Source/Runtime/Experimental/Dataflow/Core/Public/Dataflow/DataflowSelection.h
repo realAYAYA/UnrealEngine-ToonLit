@@ -33,6 +33,8 @@ struct FDataflowSelection
 	DATAFLOWCORE_API void AND(const FDataflowSelection& Other, FDataflowSelection& Result) const;
 	DATAFLOWCORE_API void OR(const FDataflowSelection& Other, FDataflowSelection& Result) const;
 	DATAFLOWCORE_API void XOR(const FDataflowSelection& Other, FDataflowSelection& Result) const;
+	// subtract the selected elements of 'Other' from this selection
+	DATAFLOWCORE_API void Subtract(const FDataflowSelection& Other, FDataflowSelection& Result) const;
 	void Invert() { SelectionArray.BitwiseNOT(); }
 	DATAFLOWCORE_API void SetWithMask(const bool Value, const FDataflowSelection& Mask);
 	const TBitArray<>& GetBitArray() const { return SelectionArray; };

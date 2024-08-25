@@ -10,7 +10,6 @@ THIRD_PARTY_INCLUDES_START
 #if PLATFORM_WINDOWS
 
 	#include "Windows/AllowWindowsPlatformTypes.h"
-	#include "Windows/PreWindowsApi.h"
 
 	// C4582: constructor is not implicitly called in "api/rtcerror.h", treated as an error by UnrealEngine
 	// C6319: Use of the comma-operator in a tested expression causes the left argument to be ignored when it has no side-effects.
@@ -70,9 +69,7 @@ THIRD_PARTY_INCLUDES_START
 #include "modules/video_coding/codecs/vp8/include/vp8.h"
 #include "modules/video_coding/codecs/vp9/include/vp9.h"
 
-#include "common_video/h264/h264_bitstream_parser.h"
 #include "common_video/h264/h264_common.h"
-#include "common_video/h265/h265_common.h"
 
 #include "media/base/video_broadcaster.h"
 
@@ -89,7 +86,6 @@ THIRD_PARTY_INCLUDES_START
 #if PLATFORM_WINDOWS
 	#pragma warning(pop)
 
-	#include "Windows/PostWindowsApi.h"
 	#include "Windows/HideWindowsPlatformTypes.h"
 #endif // PLATFORM_WINDOWS
 

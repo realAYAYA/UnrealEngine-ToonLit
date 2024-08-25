@@ -20,6 +20,7 @@
 #include "MuR/ParametersPrivate.h"
 #include "MuR/Platform.h"
 #include "MuR/Serialisation.h"
+#include "MuR/MutableRuntimeModule.h"
 #include "MuR/System.h"
 #include "MuT/AST.h"
 #include "MuT/ASTOpParameter.h"
@@ -33,9 +34,8 @@
 #include "MuT/Table.h"
 #include "Trace/Detail/Channel.h"
 
-#include <algorithm>
-#include <memory>
-#include <utility>
+#include <string>		// Required for deserialisation of old data
+#include <inttypes.h>	// Required for 64-bit printf macros
 
 
 namespace mu
@@ -103,15 +103,22 @@ namespace mu
     }
 
 
-    //---------------------------------------------------------------------------------------------
-    void CompilerOptions::SetUseDiskCache( bool enabled )
-    {
-        m_pD->OptimisationOptions.bUseDiskCache = enabled;
-    }
+	//---------------------------------------------------------------------------------------------
+	void CompilerOptions::SetUseDiskCache(bool bEnabled)
+	{
+		m_pD->OptimisationOptions.DiskCacheContext = bEnabled ? &m_pD->DiskCacheContext : nullptr;
+	}
+
+
+	//---------------------------------------------------------------------------------------------
+	void CompilerOptions::SetUseConcurrency(bool bEnabled)
+	{
+		m_pD->bUseConcurrency = bEnabled;
+	}
 
 
     //---------------------------------------------------------------------------------------------
-    void CompilerOptions::SetOptimisationMaxIteration( int maxIterations )
+    void CompilerOptions::SetOptimisationMaxIteration( int32 maxIterations )
     {
         m_pD->OptimisationOptions.MaxOptimisationLoopCount = maxIterations;
     }
@@ -139,9 +146,10 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void CompilerOptions::SetDataPackingStrategy(int32 MinRomSize, int32 MinTextureResidentMipCount)
+	void CompilerOptions::SetDataPackingStrategy(int32 MinTextureResidentMipCount, uint64 EmbeddedDataBytesLimit, uint64 PackagedDataBytesLimit)
 	{
-		m_pD->MinRomSize = MinRomSize;
+		m_pD->EmbeddedDataBytesLimit = EmbeddedDataBytesLimit;
+		m_pD->PackagedDataBytesLimit = PackagedDataBytesLimit;
 		m_pD->MinTextureResidentMipCount = MinTextureResidentMipCount;
 	}
 
@@ -153,10 +161,80 @@ namespace mu
 	}
 
 
+	//---------------------------------------------------------------------------------------------
+	void CompilerOptions::SetImagePixelFormatOverride(const FImageOperator::FImagePixelFormatFunc& InFunc)
+	{
+		m_pD->ImageFormatFunc = InFunc;
+	}
+
+
+	//---------------------------------------------------------------------------------------------
+	void CompilerOptions::SetReferencedResourceCallback(const FReferencedResourceFunc& Provider, const FReferencedResourceGameThreadTickFunc& ProviderGameThreadTick)
+	{
+		m_pD->OptimisationOptions.ReferencedResourceProvider = Provider;
+		m_pD->OptimisationOptions.ReferencedResourceProviderTick = ProviderGameThreadTick;
+	}
+
+
+	void CompilerOptions::LogStats() const
+	{
+		UE_LOG(LogMutableCore, Log, TEXT("   Cache Files Written : %" PRIu64), m_pD->DiskCacheContext.FilesWritten.load());
+		UE_LOG(LogMutableCore, Log, TEXT("   Cache Files Read    : %" PRIu64), m_pD->DiskCacheContext.FilesRead.load());
+		UE_LOG(LogMutableCore, Log, TEXT("   Cache MB Written    : %" PRIu64), m_pD->DiskCacheContext.BytesWritten.load() >> 20);
+		UE_LOG(LogMutableCore, Log, TEXT("   Cache MB Read       : %" PRIu64), m_pD->DiskCacheContext.BytesRead.load()>>20);
+	}
+
+
+	void FObjectState::Serialise(OutputArchive& arch) const
+    {
+    	const int32 ver = 6;
+    	arch << ver;
+
+    	arch << m_name;
+    	arch << m_optimisation;
+    	arch << m_runtimeParams;
+    }
+
+
+	void FObjectState::Unserialise(InputArchive& arch)
+    {
+    	int32 ver = 0;
+    	arch >> ver;
+    	check( ver>=5 && ver<=6 );
+
+    	if (ver <= 5)
+    	{
+    		std::string Temp;
+    		arch >> Temp;
+    		m_name = Temp.c_str();
+    	}
+    	else
+    	{
+    		arch >> m_name;
+    	}
+    	arch >> m_optimisation;
+
+    	if (ver <= 5)
+    	{
+    		TArray<std::string> Temp;
+    		arch >> Temp;
+    		m_runtimeParams.SetNum(Temp.Num());
+    		for ( int32 i=0; i<Temp.Num(); ++i)
+    		{
+    			m_runtimeParams[i] = Temp[i].c_str();
+    		}
+    	}
+    	else
+    	{
+    		arch >> m_runtimeParams;
+    	}
+    }
+	
+	
+	//---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
-    //---------------------------------------------------------------------------------------------
-    Compiler::Compiler( CompilerOptionsPtr options )
+    Compiler::Compiler( Ptr<CompilerOptions> options )
     {
         m_pD = new Private();
         m_pD->m_options = options;
@@ -181,8 +259,9 @@ namespace mu
     {
         MUTABLE_CPUPROFILER_SCOPE(Compile);
 
-        vector< STATE_COMPILATION_DATA > states;
+        TArray< FStateCompilationData > states;
         Ptr<ErrorLog> genErrorLog;
+		TArray<FParameterDesc> Parameters;
         {
             CodeGenerator gen( m_pD->m_options->GetPrivate() );
 
@@ -192,23 +271,47 @@ namespace mu
 
             for ( const auto& s: gen.m_states )
             {
-                STATE_COMPILATION_DATA data;
-                data.nodeState = s.first;
-                data.root = s.second;
-                data.state.m_name = s.first.m_name;
-                states.push_back( data );
+                FStateCompilationData data;
+                data.nodeState = s.Key;
+                data.root = s.Value;
+                data.state.Name = s.Key.m_name;
+                states.Add( data );
             }
 
             genErrorLog = gen.m_pErrorLog;
-        }
 
-        vector<Ptr<ASTOp>> roots;
-        for( const STATE_COMPILATION_DATA& s: states)
-        {
-            roots.push_back(s.root);
-        }
+			// Set the parameter list from the non-optimized data, so that we have them all even if they are optimized out
+			int32 ParameterCount = gen.m_firstPass.ParameterNodes.Num();
+			Parameters.SetNum(ParameterCount);
+			int32 ParameterIndex = 0;
+			for ( const TPair<Ptr<const Node>, Ptr<ASTOpParameter>>& Entry : gen.m_firstPass.ParameterNodes )
+			{
+				Parameters[ParameterIndex] = Entry.Value->parameter;
+				++ParameterIndex;
+			}
+
+			// Sort the parameters as deterministically as possible.
+			struct FParameterSortPredicate
+			{
+				bool operator()(const FParameterDesc& A, const FParameterDesc& B) const
+				{
+					if (A.m_name < B.m_name) return true;
+					if (A.m_name > B.m_name) return false;
+					return A.m_uid < B.m_uid;
+				}
+			};
+			
+			FParameterSortPredicate SortPredicate;
+			Parameters.Sort(SortPredicate);
+		}
+
 
         // Slow AST code verification for debugging.
+        //TArray<Ptr<ASTOp>> roots;
+        //for( const FStateCompilationData& s: states)
+        //{
+        //    roots.Add(s.root);
+        //}
         //ASTOp::FullAssert(roots);
 
         // Optimize the generated code
@@ -217,10 +320,12 @@ namespace mu
             optimiser.OptimiseAST( );
         }
 
-
         // Link the program and generate state data.
 		TSharedPtr<Model> pResult = MakeShared<Model>();
         FProgram& program = pResult->GetPrivate()->m_program;
+
+		check(program.m_parameters.IsEmpty());
+		program.m_parameters = Parameters;
 
 		// Preallocate ample memory
 		program.m_byteCode.Reserve(16 * 1024 * 1024);
@@ -228,16 +333,16 @@ namespace mu
 
 		// Keep the link options outside the scope because it is also used to cache constant data that has already been 
 		// added and could be reused across states.
-		FLinkerOptions LinkerOptions;
+		FImageOperator ImOp = FImageOperator::GetDefault(m_pD->m_options->GetPrivate()->ImageFormatFunc);
+		FLinkerOptions LinkerOptions(ImOp);
 
-		for( STATE_COMPILATION_DATA& s: states )
+		for(FStateCompilationData& s: states )
         {
 			LinkerOptions.MinTextureResidentMipCount = m_pD->m_options->GetPrivate()->MinTextureResidentMipCount;
 
-            ASTOp::FullLink(s.root,program, &LinkerOptions);
             if (s.root)
             {
-                s.state.m_root = s.root->linkedAddress;
+				s.state.m_root = ASTOp::FullLink(s.root, program, &LinkerOptions);
             }
             else
             {
@@ -249,7 +354,7 @@ namespace mu
 		program.m_opAddress.Shrink();
 
         // Set the runtime parameter indices.
-        for( STATE_COMPILATION_DATA& s: states )
+        for(FStateCompilationData& s: states )
         {
             for ( int32 p=0; p<s.nodeState.m_runtimeParams.Num(); ++p )
             {
@@ -271,11 +376,10 @@ namespace mu
                 else
                 {
 					FString Temp = FString::Printf(TEXT(
-						"The state [%s] refers to a parameter [%s] "
-						"that has not been found in the model. This error can be "
+						"The state [%s] refers to a parameter [%s]  that has not been found in the model. This error can be "
 						"safely dismissed in case of partial compilation."), 
-						StringCast<TCHAR>(s.nodeState.m_name.c_str()).Get(),
-						StringCast<TCHAR>(s.nodeState.m_runtimeParams[p].c_str()).Get());
+						*s.nodeState.m_name,
+						*s.nodeState.m_runtimeParams[p]);
                     m_pD->m_pErrorLog->GetPrivate()->Add(Temp, ELMT_WARNING, pNode->GetBasePrivate()->m_errorContext );
                 }
             }
@@ -338,8 +442,8 @@ namespace mu
         m_pD->m_pErrorLog = genErrorLog.get();
 
 		// Pack data
-		int32 MinimumBytesPerRom = 1024; // \TODO: compilation parameter
-		m_pD->GenerateRoms(pResult.Get(),MinimumBytesPerRom);
+		uint64 EmbeddedDataFileBytesLimit = m_pD->m_options->GetPrivate()->EmbeddedDataBytesLimit;
+		m_pD->GenerateRoms(pResult.Get(), EmbeddedDataFileBytesLimit);
 
 		UE_LOG(LogMutableCore, Verbose, TEXT("(int) %s : %ld"), TEXT("program size"), int64(program.m_opAddress.Num()));
 
@@ -385,7 +489,7 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void Compiler::Private::GenerateRoms(Model* p, int32 MinRomSize)
+	void Compiler::Private::GenerateRoms(Model* p, int32 EmbeddedDataBytesLimit)
 	{
 		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
 		MUTABLE_CPUPROFILER_SCOPE(Mutable_GenerateRoms);
@@ -395,78 +499,74 @@ namespace mu
 		int32 NumRoms = 0;
 		int32 NumEmbedded = 0;
 
-		// Serialise roms in a separate files if possible
-		if (MinRomSize >= 0)
+		// Save images and unload from memory
+		for (int32 ResourceIndex = 0; ResourceIndex < program.ConstantImageLODs.Num(); ++ResourceIndex)
 		{
-			// Save images and unload from memory
-			for (int32 ResourceIndex = 0; ResourceIndex < program.m_constantImageLODs.Num(); ++ResourceIndex)
+			TPair<int32, mu::ImagePtrConst>& ResData = program.ConstantImageLODs[ResourceIndex];
+
+			// This shouldn't have been serialised with rom support before.
+			check(ResData.Key < 0);
+
+			// Serialize to memory, to find out final size of this rom
+			OutputMemoryStream MemStream(1024 * 1024);
+			OutputArchive MemoryArch(&MemStream);
+			Image::Serialise(ResData.Value.get(), MemoryArch);
+
+			// If the resource uses less memory than the threshold, don't save it in a separate rom.
+			if (MemStream.GetBufferSize() <= EmbeddedDataBytesLimit)
 			{
-				TPair<int32, mu::ImagePtrConst>& ResData = program.m_constantImageLODs[ResourceIndex];
-
-				// This shouldn't have been serialised with rom support before.
-				check(ResData.Key < 0);
-
-				// Serialize to memory, to find out final size of this rom
-				OutputMemoryStream MemStream(1024 * 1024);
-				OutputArchive MemoryArch(&MemStream);
-				Image::Serialise(ResData.Value.get(), MemoryArch);
-
-				// If the resource uses less memory than the threshold, don't save it in a separate rom.
-				if (MemStream.GetBufferSize() < MinRomSize)
-				{
-					NumEmbedded++;
-					continue;
-				}
-
-				NumRoms++;
-
-				FRomData RomData;
-				RomData.ResourceType = DT_IMAGE;
-				RomData.ResourceIndex = ResourceIndex;
-				RomData.Size = MemStream.GetBufferSize();
-
-				// Ensure that the Id is unique
-				RomData.Id = CityHash32(static_cast<const char*>(MemStream.GetBuffer()), MemStream.GetBufferSize());
-				EnsureUniqueRomId(RomData.Id, program);
-
-				int32 RomIndex = program.m_roms.Add(RomData);
-				ResData.Key = RomIndex;
+				NumEmbedded++;
+				continue;
 			}
 
-			// Save meshes and unload from memory
-			for (int32 ResourceIndex = 0; ResourceIndex < program.m_constantMeshes.Num(); ++ResourceIndex)
+			NumRoms++;
+
+			FRomData RomData;
+			RomData.ResourceType = DT_IMAGE;
+			RomData.ResourceIndex = ResourceIndex;
+			RomData.Size = MemStream.GetBufferSize();
+
+			// Ensure that the Id is unique
+			RomData.Id = CityHash32(static_cast<const char*>(MemStream.GetBuffer()), MemStream.GetBufferSize());
+			EnsureUniqueRomId(RomData.Id, program);
+
+			int32 RomIndex = program.m_roms.Add(RomData);
+			ResData.Key = RomIndex;
+		}
+
+		// Save meshes and unload from memory
+		for (int32 ResourceIndex = 0; ResourceIndex < program.ConstantMeshes.Num(); ++ResourceIndex)
+		{
+			TPair<int32, mu::MeshPtrConst>& ResData = program.ConstantMeshes[ResourceIndex];
+
+			// This shouldn't have been serialised with rom support before.
+			check(ResData.Key < 0);
+
+			// Serialize to memory, to find out final size of this rom
+			OutputMemoryStream MemStream(1024 * 1024);
+			OutputArchive MemoryArch(&MemStream);
+			Mesh::Serialise(ResData.Value.get(), MemoryArch);
+
+			// If the resource uses less memory than the threshold, don't save it in a separate rom.
+			if (MemStream.GetBufferSize() <= EmbeddedDataBytesLimit)
 			{
-				TPair<int32, mu::MeshPtrConst>& ResData = program.m_constantMeshes[ResourceIndex];
-
-				// This shouldn't have been serialised with rom support before.
-				check(ResData.Key < 0);
-
-				// Serialize to memory, to find out final size of this rom
-				OutputMemoryStream MemStream(1024 * 1024);
-				OutputArchive MemoryArch(&MemStream);
-				Mesh::Serialise(ResData.Value.get(), MemoryArch);
-
-				// If the resource uses less memory than the threshold, don't save it in a separate rom.
-				if (MemStream.GetBufferSize() < MinRomSize)
-				{
-					NumEmbedded++;
-					continue;
-				}
-
-				NumRoms++;
-
-				FRomData RomData;
-				RomData.ResourceType = DT_MESH;
-				RomData.ResourceIndex = ResourceIndex;
-				RomData.Size = MemStream.GetBufferSize();
-
-				// Ensure that the Id is unique
-				RomData.Id = CityHash32(static_cast<const char*>(MemStream.GetBuffer()), MemStream.GetBufferSize());
-				EnsureUniqueRomId(RomData.Id, program);
-
-				int32 RomIndex = program.m_roms.Add(RomData);
-				ResData.Key = RomIndex;
+				NumEmbedded++;
+				continue;
 			}
+
+			NumRoms++;
+
+			FRomData RomData;
+			RomData.ResourceType = DT_MESH;
+			RomData.ResourceIndex = ResourceIndex;
+			RomData.Size = MemStream.GetBufferSize();
+
+			// Ensure that the Id is unique
+			RomData.Id = CityHash32(static_cast<const char*>(MemStream.GetBuffer()), MemStream.GetBufferSize());
+			EnsureUniqueRomId(RomData.Id, program);
+
+			int32 RomIndex = program.m_roms.Add(RomData);
+			ResData.Key = RomIndex;
 		}
 
 		UE_LOG(LogMutableCore, Log, TEXT("Generated roms for model with %d embedded constants and %d in roms."), NumEmbedded, NumRoms);

@@ -3,14 +3,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DecoratorBase/NodeID.h"
 #include "DecoratorBase/NodeTemplateRegistryHandle.h"
-
-#include <limits>
 
 class FArchive;
 
 namespace UE::AnimNext
 {
+	class FDecoratorReader;
+
 	/**
 	 * Node Description
 	 * A node description represents a unique instance in the authored static graph.
@@ -26,33 +27,62 @@ namespace UE::AnimNext
 	 */
 	struct alignas(alignof(uint32)) FNodeDescription
 	{
-		// Largest allowed size for a node description
-		// Graphs are currently limited to 64 KB because we use 16 bit offsets within our node/decorator handles
-		// We have no particular limit on the node size besides the graph limit (for now)
-		static constexpr uint32 MAXIMUM_SIZE = 64 * 1024;
+		// Largest allowed size for a node description and the shared data of its decorators
+		// We use unsigned 16 bit offsets within the NodeTemplate/DecoratorTemplate
+		static constexpr uint32 MAXIMUM_NODE_SHARED_DATA_SIZE = 64 * 1024;
 
-		// The maximum number of nodes allowed within a single graph
-		// We use 16 bits to represent node UIDs
-		static constexpr uint32 MAXIMUM_COUNT = std::numeric_limits<uint16>::max();
-
-		FNodeDescription(uint16 UID_, FNodeTemplateRegistryHandle TemplateHandle_)
-			: UID(UID_)
-			, TemplateHandle(TemplateHandle_)
+		FNodeDescription(FNodeID InNodeID, FNodeTemplateRegistryHandle InTemplateHandle)
+			: NodeID(InNodeID)
+			, TemplateHandle(InTemplateHandle)
+			, NodeInstanceDataSize(0)
+			, Padding0(0)
 		{}
 
 		// Returns the node UID, unique to the owning sub-graph
-		uint32 GetUID() const { return UID; }
+		FNodeID GetUID() const { return NodeID; }
 
 		// Returns the handle of the node's template in the node template registry
 		FNodeTemplateRegistryHandle GetTemplateHandle() const { return TemplateHandle; }
+
+		// Returns the node instance data size factoring in any cached latent properties
+		uint32 GetNodeInstanceDataSize() const { return NodeInstanceDataSize; }
 
 		// Serializes this node description instance and the shared data of each decorator that follows
 		ANIMNEXT_API void Serialize(FArchive& Ar);
 
 	private:
-		uint16							UID;				// assigned during export/cook, unique to current sub-graph
-		FNodeTemplateRegistryHandle		TemplateHandle;		// offset of the node template within the global list
+		// Assigned during export/cook, unique to current sub-graph (16 bits)
+		FNodeID							NodeID;
 
-		// Followed by a list of [FAnimNextDecoratorSharedData] instances and optional padding
+		// Offset of the node template within the global list (16 bits)
+		FNodeTemplateRegistryHandle		TemplateHandle;
+
+		// The node instance data size, includes latent properties (not serialized, @see FNodeTemplate::Finalize)
+		uint16	NodeInstanceDataSize;
+
+		uint16	Padding0;	// Unused
+
+		friend FDecoratorReader;
+
+		// This structures is the header for a node's shared data. The memory layout is as follows:
+		// 
+		// [FNodeDescription] for the header
+		// [FAnimNextDecoratorSharedData] for decorator 1 (base)
+		// [FLatentPropertiesHeader][FLatentPropertyHandle][...] for the latent properties of decorator 1
+		// [FAnimNextDecoratorSharedData] for decorator 2 (additive)
+		// [FAnimNextDecoratorSharedData] for decorator 3 (base)
+		// [FLatentPropertiesHeader][FLatentPropertyHandle][...] for the latent properties of decorator 2
+		// [...]
+		// 
+		// Each node is thus followed by the decorator shared data contiguously.
+		// After each base decorator's shared data, an optional list of latent property handles follows
+		// before the next decorator's shared data begins. This list contains all latent property handles
+		// of the whole sub-stack (including the additive decorators on top of the base).
+		// 
+		// Each decorator contains a shared data structure that derives from FAnimNextDecoratorSharedData.
+		// That derived structure is what is contained in the actual buffer. As such, sizes and offsets
+		// vary as required. The [FDecoratorTemplate] contains the offsets that map here.
+		// 
+		// Optional padding is inserted as required by alignment constraints.
 	};
 }

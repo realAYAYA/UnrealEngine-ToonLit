@@ -255,6 +255,8 @@ DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Pending Outer NetGuids"),STAT_Pendin
 DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Unmapped Replicators"),STAT_UnmappedReplicators,STATGROUP_Net, );
 DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Replicated Actors Sent"),STAT_NumReplicatedActors,STATGROUP_Net, );
 DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Num Replicated Actor Bytes Sent"),STAT_NumReplicatedActorBytes,STATGROUP_Net, );
+DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Largest Reliable Outgoing Queue Size"),STAT_OutgoingReliableMessageQueueMaxSize,STATGROUP_Net, );
+DECLARE_DWORD_ACCUMULATOR_STAT_EXTERN(TEXT("Largest Reliable Incoming Queue Size"),STAT_IncomingReliableMessageQueueMaxSize,STATGROUP_Net, );
 
 #if !UE_BUILD_SHIPPING
 /**

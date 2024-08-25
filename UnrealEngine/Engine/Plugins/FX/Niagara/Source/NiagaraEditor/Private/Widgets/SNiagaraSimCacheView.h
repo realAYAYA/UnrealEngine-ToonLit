@@ -9,6 +9,8 @@ class FNiagaraSimCacheViewModel;
 class ITableRow;
 class STableViewBase;
 class SHeaderRow;
+class SWidgetSwitcher;
+class SScrollBar;
 
 class SNiagaraSimCacheView : public SCompoundWidget
 {
@@ -19,7 +21,6 @@ public:
 
 	using FBufferSelectionInfo = TPair<int32, FText>;
 
-	bool IsStringFilterEnabled() const;
 	void Construct(const FArguments& InArgs);
 
 	TSharedRef<ITableRow> MakeRowWidget(const TSharedPtr<int32> RowIndexPtr, const TSharedRef<STableViewBase>& OwnerTable) const;
@@ -38,10 +39,14 @@ public:
 private:
 	bool GetShouldGenerateWidget(FName Name);
 	void GenerateColumns();
+	void UpdateDIWidget();
 
 	TArray<TSharedPtr<int32>>					RowItems;
 	TSharedPtr<FNiagaraSimCacheViewModel>		SimCacheViewModel;
 	
 	TSharedPtr<SHeaderRow>						HeaderRowWidget;
 	TSharedPtr<SListView<TSharedPtr<int32>>>	ListViewWidget;
+	TSharedPtr<SWidgetSwitcher>					SwitchWidget;
+	TArray<TSharedPtr<SWidget>>					DIVisualizerWidgets;
+	TSharedPtr<SScrollBar>						DataInterfaceScrollBar;
 };

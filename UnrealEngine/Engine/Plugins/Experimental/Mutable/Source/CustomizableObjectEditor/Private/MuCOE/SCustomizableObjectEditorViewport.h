@@ -3,6 +3,7 @@
 #pragma once
 
 #include "SEditorViewport.h"
+#include "MuCOE/CustomizableObjectEditorViewportClient.h"
 #include "UObject/GCObject.h"
 
 enum ERotationGridMode : int;
@@ -22,35 +23,27 @@ class UCustomizableObjectNodeProjectorConstant;
 class UCustomizableObjectNodeProjectorParameter;
 class UDebugSkelMeshComponent;
 class UStaticMesh;
+class SCustomizableObjectEditorToolBar;
+class SCustomizableObjectViewportToolBar;
+class FCustomizableObjectEditorViewportClient;
 struct FCustomizableObjectProjector;
 struct FGeometry;
+enum class ECustomizableObjectProjectorType : uint8;
 
 
 struct FCustomizableObjectEditorViewportRequiredArgs
 {
 	FCustomizableObjectEditorViewportRequiredArgs(
-		//const TSharedRef<class ISkeletonTree>& InSkeletonTree, 
 		const TSharedRef<class FCustomizableObjectPreviewScene>& InPreviewScene,
 		TSharedRef<class SCustomizableObjectEditorViewportTabBody> InTabBody 
-		//TSharedRef<class FAssetEditorToolkit> InAssetEditorToolkit, 
-		//FSimpleMulticastDelegate& InOnPostUndo
 	)
-//		: SkeletonTree(InSkeletonTree)
 		: PreviewScene(InPreviewScene)
 		, TabBody(InTabBody)
-//		, AssetEditorToolkit(InAssetEditorToolkit)
-//		, OnPostUndo(InOnPostUndo)
 	{}
 
-	//TSharedRef<class ISkeletonTree> SkeletonTree;
+	TSharedRef<FCustomizableObjectPreviewScene> PreviewScene;
 
-	TSharedRef<class FCustomizableObjectPreviewScene> PreviewScene;
-
-	TSharedRef<class SCustomizableObjectEditorViewportTabBody> TabBody;
-
-	//TSharedRef<class FAssetEditorToolkit> AssetEditorToolkit;
-
-	//FSimpleMulticastDelegate& OnPostUndo;
+	TSharedRef<SCustomizableObjectEditorViewportTabBody> TabBody;
 };
 
 
@@ -60,12 +53,7 @@ struct FCustomizableObjectEditorViewportRequiredArgs
 class SCustomizableObjectEditorViewport : public SEditorViewport
 {
 public:
-	SLATE_BEGIN_ARGS(SCustomizableObjectEditorViewport)
-		: _ShowStats(true)
-	{}
-
-		SLATE_ARGUMENT(bool, ShowStats)
-
+	SLATE_BEGIN_ARGS(SCustomizableObjectEditorViewport)	{}
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs, const FCustomizableObjectEditorViewportRequiredArgs& InRequiredArgs);
@@ -81,31 +69,21 @@ protected:
 	/**  Handle undo/redo by refreshing the viewport */
 	void OnUndoRedo();
 
-protected:
 	// Viewport client
-	TSharedPtr<class FCustomizableObjectEditorViewportClient> LevelViewportClient;
+	TSharedPtr<FCustomizableObjectEditorViewportClient> LevelViewportClient;
 
 	// Pointer to the compound widget that owns this viewport widget
-	TWeakPtr<class SCustomizableObjectEditorViewportTabBody> TabBodyPtr;
+	TWeakPtr<SCustomizableObjectEditorViewportTabBody> TabBodyPtr;
 
 	// The preview scene that we are viewing
-	TWeakPtr<class FCustomizableObjectPreviewScene> PreviewScenePtr;
+	TWeakPtr<FCustomizableObjectPreviewScene> PreviewScenePtr;
 
-	TWeakPtr<class SCustomizableObjectViewportToolBar> ToolbarPtr;
-
-	// The skeleton tree we are editing
-	//TWeakPtr<class ISkeletonTree> SkeletonTreePtr;
-
-	// The asset editor we are embedded in
-	//TWeakPtr<class FAssetEditorToolkit> AssetEditorToolkitPtr;
-
-	/** Whether we should show stats for this viewport */
-	bool bShowStats;
+	TWeakPtr<SCustomizableObjectViewportToolBar> ToolbarPtr;
 };
 
 
 /**
- * CustomizableObject Editor Preview viewport widget wwith toolbars, etc.
+ * CustomizableObject Editor Preview viewport widget with toolbars, etc.
  */
 class SCustomizableObjectEditorViewportTabBody : public SCompoundWidget, public FGCObject
 {
@@ -115,7 +93,7 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
-	virtual ~SCustomizableObjectEditorViewportTabBody();
+	virtual ~SCustomizableObjectEditorViewportTabBody() override;
 
 	void SetAnimation(class UAnimationAsset* Animation, EAnimationMode::Type AnimationType);
 
@@ -138,23 +116,45 @@ public:
 	*/
 	const TSharedPtr<FUICommandList>& GetCommandList() const { return UICommandList; }
 
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void ShowGizmoClipMorph(UCustomizableObjectNodeMeshClipMorph& ClipPlainNode) const;
 
-	void SetClipMorphPlaneVisibility(bool bVisible, const FVector& Origin = FVector::ZeroVector, const FVector& Normal = FVector::ZeroVector, float MorphLength = 0.f, const FBoxSphereBounds& Bounds = FBoxSphereBounds(), float Radius1 = 3.f, float Radius2 = 2.f, float RotationAngle = 0.f);
-	void SetClipMorphPlaneVisibility(bool bVisible, class UCustomizableObjectNodeMeshClipMorph* NodeMorphClipMesh);
-	void SetClipMeshVisibility(bool bVisible, UStaticMesh* ClipMesh, class UCustomizableObjectNodeMeshClipWithMesh* ClipMeshNode);
-	void SetProjectorVisibility(bool bVisible, FString ProjectorParameterName, FString ProjectorParameterNameWithIndex, int32 RangeIndex, const FCustomizableObjectProjector& Data, int32 ProjectorParameterIndex);
-	void SetProjectorVisibility(bool bVisible, class UCustomizableObjectNodeProjectorConstant* Projector = nullptr);
-	void SetProjectorParameterVisibility(bool bVisible, class UCustomizableObjectNodeProjectorParameter* ProjectorParameter = nullptr);
-	void ResetProjectorVisibility(bool OnlyNonNodeProjector);
-	void SetProjectorType(bool bVisible, FString ProjectorParameterName, FString ProjectorParameterNameWithIndex, int32 RangeIndex, const FCustomizableObjectProjector& Data, int32 ProjectorParameterIndex);
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void HideGizmoClipMorph() const;
 
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void ShowGizmoClipMesh(UCustomizableObjectNodeMeshClipWithMesh& ClipMeshNode, UStaticMesh& ClipMesh) const;
+
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void HideGizmoClipMesh() const;
+
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void ShowGizmoProjector(
+		const FWidgetLocationDelegate& WidgetLocationDelegate, const FOnWidgetLocationChangedDelegate& OnWidgetLocationChangedDelegate,
+		const FWidgetDirectionDelegate& WidgetDirectionDelegate, const FOnWidgetDirectionChangedDelegate& OnWidgetDirectionChangedDelegate,
+		const FWidgetUpDelegate& WidgetUpDelegate, const FOnWidgetUpChangedDelegate& OnWidgetUpChangedDelegate,
+		const FWidgetScaleDelegate& WidgetScaleDelegate, const FOnWidgetScaleChangedDelegate& OnWidgetScaleChangedDelegate,
+		const FWidgetAngleDelegate& WidgetAngleDelegate,
+	    const FProjectorTypeDelegate& ProjectorTypeDelegate,
+	    const FWidgetColorDelegate& WidgetColorDelegate,
+	    const FWidgetTrackingStartedDelegate& WidgetTrackingStartedDelegate) const;
+
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void HideGizmoProjector() const;
+
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void ShowGizmoLight(ULightComponent& SelectedLight) const;
+
+	/** Do not call directly. Use ICustomizableObjectEditor functions instead. */
+	void HideGizmoLight() const;
+	
 	/** Binds commands associated with the viewport client. */
 	void BindCommands();
 	TSharedRef<SWidget> BuildToolBar();
 
 	TSharedRef<SWidget> GenerateUVMaterialOptionsMenuContent();
 
-	/** Callback to show / hide the state and rutime parameter test in the viewport */
+	/** Callback to show / hide the state and runtime parameter test in the viewport */
 	TSharedRef<SWidget> ShowStateTestData();
 
 	/** Retrieves the skeletal mesh component. */
@@ -173,8 +173,10 @@ public:
 	int32 GetLODSelection() const { return LODSelection; };
 
 	/** Callback for when the projector checkbox changes */
-	void ProjectorCheckboxStateChanged(UE::Widget::EWidgetMode InNewMode);
+	void ProjectorCheckboxStateChanged(UE::Widget::EWidgetMode Mode);
 
+	bool IsProjectorCheckboxState(UE::Widget::EWidgetMode Mode) const;
+	
 	/** Called when the rotation grid snap is toggled off and on */
 	void RotationGridSnapClicked();
 
@@ -191,59 +193,21 @@ public:
 	void OnSetLODModel(int32 LODSelectionType);
 
 	// Getter of PreviewScenePtr
-	TSharedPtr<class FCustomizableObjectPreviewScene> GetPreviewScene() { return PreviewScenePtr; }
+	TSharedPtr<FCustomizableObjectPreviewScene> GetPreviewScene() const;
 
-	//
-	TSharedPtr<class FCustomizableObjectEditorViewportClient> GetViewportClient() { return LevelViewportClient; }
+	TSharedPtr<FCustomizableObjectEditorViewportClient> GetViewportClient() const;
 
 	// Pointer back to the editor tool that owns us.
-	TWeakPtr<class ICustomizableObjectInstanceEditor> CustomizableObjectEditorPtr;
+	TWeakPtr<ICustomizableObjectInstanceEditor> CustomizableObjectEditorPtr;
 
 	//void SetEditorTransformViewportToolbar(TWeakPtr<class SCustomizableObjectEditorTransformViewportToolbar> EditorTransformViewportToolbarParam);
 	void SetViewportToolbarTransformWidget(TWeakPtr<class SWidget> TransformWidget);
 
-	/** Update the current gizmo data to its corresponding data origin */
-	void UpdateGizmoDataToOrigin();
-
-	/** Setter for LevelViewportClient::GizmoProxy::CallUpdateSkeletalMesh */
-	void SetGizmoCallUpdateSkeletalMesh(bool Value);
-
-	/** Getter for LevelViewportClient::GizmoProxy::ProjectorParameterName */
-	FString GetGizmoProjectorParameterName();
-
-	/** Getter for LevelViewportClient::GizmoProxy::ProjectorParameterNameWithIndex */
-	FString GetGizmoProjectorParameterNameWithIndex();
-
-	/** Getter for LevelViewportClient::GizmoProxy::HasAssignedData */
-	bool GetGizmoHasAssignedData();
-
-	/** Getter for LevelViewportClient::GizmoProxy::AssignedDataIsFromNode */
-	bool GetGizmoAssignedDataIsFromNode();
-
-	void CopyTransformFromOriginData();
-
-	/** Returns true if any projector node is currently selected (in the case of the Customizable Object Editor) */
-	bool AnyProjectorNodeSelected();
-
-	/** To notify of changes in any parameter projector node property in case is the one being used, currently
-	* just the projector type parameter is taken into account */
-	void ProjectorParameterChanged(UCustomizableObjectNodeProjectorParameter* Node);
-
-	/** To notify of changes in any parameter projector node property in case is the one being used, currently
-	* just the projector type parameter is taken into account */
-	void ProjectorParameterChanged(UCustomizableObjectNodeProjectorConstant* Node);
-	
 	/** Setter of CustomizableObject */
 	void SetCustomizableObject(UCustomizableObject* CustomizableObjectParameter);
 
-	/** Setter of AssetRegistryLoaded and LevelViewportClient::AssetRegistryLoaded */
-	void SetAssetRegistryLoaded(bool Value);
-
 	/** Called to bring up the screenshot UI */
 	void OnTakeHighResScreenshot();
-
-	/** Getter for LevelViewportClient::bManipulating */
-	bool GetIsManipulatingGizmo();
 
 	/** Sets camera mode of the LevelViewportClient::bActivateOrbitalCamera */
 	void SetCameraMode(bool Value);
@@ -253,7 +217,7 @@ public:
 
 	/** Sets the first material of the instance as the default section to draw in the UVs Overlay (when there is no material selected in the combobox)
 		Param bIsCompilation: true if this function is called during a CO compilation, false when is called from an instance update	*/
-	void SetDrawDefaultUVMaterial(bool bIsCompilation);
+	void SetDrawDefaultUVMaterial();
 
 	/** Sets the bones visibility */
 	void SetShowBones();
@@ -270,49 +234,55 @@ public:
 private:
 	/** Determines the visibility of the viewport. */
 	bool IsVisible() const;
-
-	EActiveTimerReturnType HandleActiveTimer(double InCurrentTime, float InDeltaTime);
-
 	
 	// Components for the preview mesh.
 	TArray<TObjectPtr<UDebugSkelMeshComponent>> PreviewSkeletalMeshComponents;
 
 	// The scene for this viewport.
-	TSharedPtr<class FCustomizableObjectPreviewScene> PreviewScenePtr;
+	TSharedPtr<FCustomizableObjectPreviewScene> PreviewScenePtr;
 
 	// Level viewport client
-	TSharedPtr<class FCustomizableObjectEditorViewportClient> LevelViewportClient;
+	TSharedPtr<FCustomizableObjectEditorViewportClient> LevelViewportClient;
 
 	// Viewport widget
-	TSharedPtr<class SCustomizableObjectEditorViewport> ViewportWidget;
-	TSharedPtr<class SCustomizableObjectEditorToolBar> ViewportToolbar;
+	TSharedPtr<SCustomizableObjectEditorViewport> ViewportWidget;
+	TSharedPtr<SCustomizableObjectEditorToolBar> ViewportToolbar;
 
 	/** Commands that are bound to delegates*/
 	TSharedPtr<FUICommandList> UICommandList;
 
 	// The currently selected view mode.
-	EViewModeIndex CurrentViewMode;
+	EViewModeIndex CurrentViewMode = VMI_Lit;
 
-	// Selection for the material to filter when showing UVs
-	TArray<TSharedPtr<FString>> ArrayUVMaterialOptionString;
+	/** Section identifier. */
+	struct FSection
+	{
+		int32 ComponentIndex = -1;
+		int32 LODIndex = -1;
+		int32 SectionIndex = -1;
+	};
+	
+	// Selection for the section to filter when showing UVs
+	TArray<TSharedPtr<FString>> UVSectionOptionString;
+	TArray<FSection> UVSectionOption;
 
-	// Combo box for UV material selection
-	TSharedPtr< STextComboBox> UVMaterialOptionCombo;
+	// Combo box for UV section selection
+	TSharedPtr<STextComboBox> UVSectionOptionCombo;
 
 	// Selection for the channel to filter when showing UVs
-	TArray<TSharedPtr<FString>> ArrayUVChannelOptionString;
+	TArray<TSharedPtr<FString>> UVChannelOptionString;
 
 	// Combo box for UV channel selection
-	TSharedPtr< STextComboBox> UVChannelOptionCombo;
+	TSharedPtr<STextComboBox> UVChannelOptionCombo;
 
 	// Generates the Combobox options for each UV Channel
-	void GenerateUVMaterialOptions();
+	void GenerateUVSectionOptions();
 
 	// Generates the Combobox options for each UV Channel
 	void GenerateUVChannelOptions();
 
 	// Selected option of the UV Material ComboBox
-	TSharedPtr<FString> SelectedUVMaterial;
+	TSharedPtr<FString> SelectedUVSection;
 	
 	// Selected option of the UV Channel ComboBox
 	TSharedPtr<FString> SelectedUVChannel;
@@ -321,31 +291,18 @@ private:
 	TArray< TSharedPtr< FString > > MaterialNames;
 
 	// Slate callbacks to manage the material combo
-	bool IsMaterialsComboEnabled() const;
-	void OnMaterialChanged(TSharedPtr<FString> Selected, ESelectInfo::Type SelectInfo);
+	void OnSectionChanged(TSharedPtr<FString> Selected, ESelectInfo::Type SelectInfo);
 	void OnUVChannelChanged(TSharedPtr<FString> Selected, ESelectInfo::Type SelectInfo);
 
 	/** Current LOD selection*/
-	int32 LODSelection;
+	int32 LODSelection = 0;
 
 	/** To be able to show and hide the constant projector RTS controls */
-	//TWeakPtr<class SCustomizableObjectEditorTransformViewportToolbar> EditorTransformViewportToolbar;
-	TWeakPtr<class SWidget> ViewportToolbarTransformWidget;
-
-	union ViewportToolbarTransformWidgetVisibility
-	{
-		uint32 Value;
-		struct 
-		{
-			uint32 bProjectorVisible      : 1;
-			uint32 bClipMeshVisible       : 1;
-			uint32 bClipMorphPlaneVisible : 1;
-		} State;
-	} TransformWidgetVisibility {0};
+	TWeakPtr<SWidget> ViewportToolbarTransformWidget;
 
 	/** Flag to know when the asset registry initial loading has completed, value set by the Customizable Object / Customizable Object Instance editor */
-	bool AssetRegistryLoaded;
+	bool AssetRegistryLoaded = false;
 
-	/** Weak pointer to the highres screenshot dialog if it's open. Will become invalid if UI is closed whilst the viewport is open */
-	TWeakPtr<class SWindow> CustomizableObjectHighresScreenshot;
+	/** Weak pointer to the high resolution screenshot dialog if it's open. Will become invalid if UI is closed whilst the viewport is open */
+	TWeakPtr<SWindow> CustomizableObjectHighresScreenshot;
 };

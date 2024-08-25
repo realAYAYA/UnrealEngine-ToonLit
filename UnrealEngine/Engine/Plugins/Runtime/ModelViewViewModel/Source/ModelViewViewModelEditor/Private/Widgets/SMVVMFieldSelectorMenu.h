@@ -2,11 +2,12 @@
 
 #pragma once
 
-#include "MVVMPropertyPath.h"
-#include "Styling/CoreStyle.h"
-#include "Styling/SlateTypes.h"
 #include "Types/MVVMBindingMode.h"
 #include "Types/MVVMBindingSource.h"
+#include "Types/MVVMLinkedPinValue.h"
+
+#include "Styling/CoreStyle.h"
+#include "Styling/SlateTypes.h"
 #include "Widgets/SCompoundWidget.h"
 
 namespace ESelectInfo { enum Type : int; }
@@ -35,22 +36,19 @@ struct FFieldSelectionContext
 	bool bWritable = true;
 };
 
-DECLARE_DELEGATE_TwoParams(FOnFieldSelectionChanged, FMVVMBlueprintPropertyPath, const UFunction*);
+DECLARE_DELEGATE_OneParam(FOnLinkedValueSelectionChanged, FMVVMLinkedPinValue);
 
 class SFieldSelectorMenu : public SCompoundWidget
 {
 public:
 	DECLARE_DELEGATE_RetVal(FFieldSelectionContext, FOnGetFieldSelectionContext);
 
-	SLATE_BEGIN_ARGS(SFieldSelectorMenu)
-	{
-	}
-		SLATE_EVENT(FOnFieldSelectionChanged, OnFieldSelectionChanged)
+	SLATE_BEGIN_ARGS(SFieldSelectorMenu){}
+		SLATE_ARGUMENT(TOptional<FMVVMLinkedPinValue>, CurrentSelected)
+		SLATE_EVENT(FOnLinkedValueSelectionChanged, OnSelectionChanged)
 		SLATE_EVENT(FSimpleDelegate, OnMenuCloseRequested)
-
 		SLATE_ARGUMENT(FFieldSelectionContext, SelectionContext)
-		SLATE_ARGUMENT(TOptional<FMVVMBlueprintPropertyPath>, CurrentPropertyPathSelected)
-		SLATE_ARGUMENT_DEFAULT(const UFunction*, CurrentFunctionSelected) = nullptr;
+		SLATE_ARGUMENT_DEFAULT(bool, IsBindingToEvent) { false };
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs, const UWidgetBlueprint* InWidgetBlueprint);
@@ -111,7 +109,7 @@ private:
 
 private:
 	TWeakObjectPtr<const UWidgetBlueprint> WidgetBlueprint;
-	FOnFieldSelectionChanged OnFieldSelectionChanged;
+	FOnLinkedValueSelectionChanged OnSelectionChanged;
 	FSimpleDelegate OnMenuCloseRequested;
 	FFieldSelectionContext SelectionContext;
 

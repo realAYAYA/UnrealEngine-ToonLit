@@ -23,14 +23,16 @@
 #include "ISequencerChannelInterface.h"
 #include "ISequencerModule.h"
 #include "Modules/ModuleManager.h"
+#include "MVVM/ViewModels/ViewDensity.h"
 
 struct FMovieSceneChannel;
 
 /** Data pertaining to a group of channels */
 struct FGroupData
 {
-	FGroupData(FText InGroupText)
+	FGroupData(FText InGroupText, FGetMovieSceneTooltipText InGetGroupTooltipTextDelegate)
 		: GroupText(InGroupText)
+		, GetGroupTooltipTextDelegate(InGetGroupTooltipTextDelegate)
 		, SortOrder(-1)
 	{}
 
@@ -46,6 +48,9 @@ struct FGroupData
 
 	/** Text to display for the group */
 	FText GroupText;
+	
+	/** Getter for text to display for the group tooltip */
+	FGetMovieSceneTooltipText GetGroupTooltipTextDelegate;
 
 	/** Sort order of the group */
 	uint32 SortOrder;
@@ -88,7 +93,12 @@ void ISequencerSection::GenerateSectionLayout( ISectionLayoutBuilder& LayoutBuil
 				FGroupData* ExistingGroup = GroupToChannelsMap.Find(GroupName);
 				if (!ExistingGroup)
 				{
-					ExistingGroup = &GroupToChannelsMap.Add(GroupName, FGroupData(MetaData.Group));
+					FText GroupDisplayName = FText::FromString(MetaData.GetPropertyMetaData(FCommonChannelData::GroupDisplayName));
+					if (GroupDisplayName.IsEmpty())
+					{
+						GroupDisplayName = FText::FromName(GroupName);
+					}
+					ExistingGroup = &GroupToChannelsMap.Add(GroupName, FGroupData(GroupDisplayName, MetaData.GetGroupTooltipTextDelegate));
 				}
 
 				ExistingGroup->AddChannel(FChannelData{ Channel, MetaData });
@@ -176,7 +186,7 @@ void ISequencerSection::GenerateSectionLayout( ISectionLayoutBuilder& LayoutBuil
 				return this->ConstructCategoryModel(InCategoryName, InDisplayText, ChannelData.Channels);
 			};
 
-			LayoutBuilder.PushCategory(GroupName, ChannelData.GroupText, Factory);
+			LayoutBuilder.PushCategory(GroupName, ChannelData.GroupText, ChannelData.GetGroupTooltipTextDelegate, Factory);
 		}
 
 		for (const FChannelData& ChannelAndData : ChannelData.Channels)
@@ -190,6 +200,25 @@ void ISequencerSection::GenerateSectionLayout( ISectionLayoutBuilder& LayoutBuil
 		}
 	}
 }
+
+float ISequencerSection::GetSectionHeight() const
+{
+	return SequencerSectionConstants::DefaultSectionHeight;
+}
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+float ISequencerSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
+{
+	// Call the deprecated method
+	float Height = GetSectionHeight();
+	if (Height != SequencerSectionConstants::DefaultSectionHeight)
+	{
+		// Override the uniform height for some sections
+		return Height;
+	}
+	return ViewDensity.UniformHeight.Get(Height);
+}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void ISequencerSection::ResizeSection(ESequencerSectionResizeMode ResizeMode, FFrameNumber ResizeFrameNumber)
 {

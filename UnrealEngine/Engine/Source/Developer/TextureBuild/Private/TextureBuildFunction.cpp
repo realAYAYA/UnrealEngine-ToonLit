@@ -36,9 +36,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogTextureBuildFunction, Log, All);
 //
 static const FGuid TextureBuildFunctionVersion(TEXT("B20676CE-A786-43EE-96F0-2620A4C38ACA"));
 
-// This is mirrored in TextureDerivedData.cpp
-static const FGuid TextureMetadataDerivedDataVer(0xB9106D68, 0xA61B4F2A, 0x8105E16F, 0x48799976);
-
 static void ReadCbField(FCbFieldView Field, bool& OutValue) { OutValue = Field.AsBool(OutValue); }
 static void ReadCbField(FCbFieldView Field, int32& OutValue) { OutValue = Field.AsInt32(OutValue); }
 static void ReadCbField(FCbFieldView Field, uint8& OutValue) { OutValue = Field.AsUInt8(OutValue); }
@@ -138,6 +135,7 @@ static FTextureBuildSettings ReadBuildSettingsFromCompactBinary(const FCbObjectV
 	BuildSettings.bApplyYCoCgBlockScale = Object["bApplyYCoCgBlockScale"].AsBool(BuildSettings.bApplyYCoCgBlockScale);
 	BuildSettings.bApplyKernelToTopMip = Object["bApplyKernelToTopMip"].AsBool(BuildSettings.bApplyKernelToTopMip);
 	BuildSettings.bRenormalizeTopMip = Object["bRenormalizeTopMip"].AsBool(BuildSettings.bRenormalizeTopMip);
+	BuildSettings.bCPUAccessible = Object["bCPUAccessible"].AsBool(BuildSettings.bCPUAccessible);
 	ReadCbField(Object["CompositeTextureMode"], BuildSettings.CompositeTextureMode);
 	ReadCbField(Object["CompositePower"], BuildSettings.CompositePower);
 	ReadCbField(Object["LODBias"], BuildSettings.LODBias);
@@ -147,6 +145,9 @@ static FTextureBuildSettings ReadBuildSettingsFromCompactBinary(const FCbObjectV
 	BuildSettings.bChromaKeyTexture = Object["bChromaKeyTexture"].AsBool(BuildSettings.bChromaKeyTexture);
 	ReadCbField(Object["PowerOfTwoMode"], BuildSettings.PowerOfTwoMode);
 	ReadCbField(Object["PaddingColor"], BuildSettings.PaddingColor);
+	BuildSettings.bPadWithBorderColor = Object["bPadWithBorderColor"].AsBool(BuildSettings.bPadWithBorderColor);
+	ReadCbField(Object["ResizeDuringBuildX"], BuildSettings.ResizeDuringBuildX);
+	ReadCbField(Object["ResizeDuringBuildY"], BuildSettings.ResizeDuringBuildY);
 	ReadCbField(Object["ChromaKeyColor"], BuildSettings.ChromaKeyColor);
 	ReadCbField(Object["ChromaKeyThreshold"], BuildSettings.ChromaKeyThreshold);
 	ReadCbField(Object["CompressionQuality"], BuildSettings.CompressionQuality);
@@ -161,6 +162,7 @@ static FTextureBuildSettings ReadBuildSettingsFromCompactBinary(const FCbObjectV
 	BuildSettings.OodleUniversalTiling = Object["OodleUniversalTiling"].AsUInt8(BuildSettings.OodleUniversalTiling);
 	BuildSettings.bOodleUsesRDO = Object["bOodleUsesRDO"].AsBool(BuildSettings.bOodleUsesRDO);
 	BuildSettings.OodleRDO = Object["OodleRDO"].AsUInt8(BuildSettings.OodleRDO);
+	BuildSettings.bOodlePreserveExtremes = Object["bOodlePreserveExtremes"].AsBool(BuildSettings.bOodlePreserveExtremes);
 	ReadCbField(Object["OodleTextureSdkVersion"], BuildSettings.OodleTextureSdkVersion);
 	ReadCbField(Object["TextureAddressModeX"], BuildSettings.TextureAddressModeX);
 	ReadCbField(Object["TextureAddressModeY"], BuildSettings.TextureAddressModeY);
@@ -212,6 +214,13 @@ static bool TryReadTextureSourceFromCompactBinary(FCbFieldView Source, UE::Deriv
 		case TSCF_JPEG:
 		{
 			TSharedPtr<IImageWrapper> ImageWrapper = FModuleManager::GetModuleChecked<IImageWrapperModule>(FName("ImageWrapper")).CreateImageWrapper(EImageFormat::JPEG);
+			ImageWrapper->SetCompressed((const uint8*)InputBuffer.GetData(), InputBuffer.GetSize());
+			ImageWrapper->GetRaw(SourceFormat == TSF_G8 ? ERGBFormat::Gray : ERGBFormat::BGRA, 8, IntermediateDecompressedData);
+		}
+		break;
+		case TSCF_UEJPEG:
+		{
+			TSharedPtr<IImageWrapper> ImageWrapper = FModuleManager::GetModuleChecked<IImageWrapperModule>(FName("ImageWrapper")).CreateImageWrapper(EImageFormat::UEJPEG);
 			ImageWrapper->SetCompressed((const uint8*)InputBuffer.GetData(), InputBuffer.GetSize());
 			ImageWrapper->GetRaw(SourceFormat == TSF_G8 ? ERGBFormat::Gray : ERGBFormat::BGRA, 8, IntermediateDecompressedData);
 		}
@@ -283,7 +292,6 @@ FGuid FTextureBuildFunction::GetVersion() const
 {
 	UE::DerivedData::FBuildVersionBuilder Builder;
 	Builder << TextureBuildFunctionVersion;
-	Builder << TextureMetadataDerivedDataVer;
 	ITextureFormat* TextureFormat = nullptr;
 	GetVersion(Builder, TextureFormat);
 	if (TextureFormat)
@@ -356,6 +364,18 @@ void FTextureBuildFunction::Build(UE::DerivedData::FBuildContext& Context) const
 		return;
 	}
 
+	FSharedImageRef CPUCopy;
+	if (BuildSettings.bCPUAccessible)
+	{
+		CPUCopy = new FSharedImage();
+		SourceMips[0].CopyTo(*CPUCopy);
+	
+		// We just use a placeholder texture rather than the source.
+		SourceMips.Empty();
+		FImage& Placeholder = SourceMips.AddDefaulted_GetRef();
+		UE::TextureBuildUtilities::GetPlaceholderTextureImage(&Placeholder);
+	}
+
 	TArray<FImage> AssociatedNormalSourceMips;
 	if (FCbFieldView CompositeSource = Settings["CompositeSource"];
 		CompositeSource && !TryReadTextureSourceFromCompactBinary(CompositeSource, Context,BuildSettings, AssociatedNormalSourceMips))
@@ -363,7 +383,13 @@ void FTextureBuildFunction::Build(UE::DerivedData::FBuildContext& Context) const
 		return;
 	}
 
-	UE_LOG(LogTextureBuildFunction, Display, TEXT("Compressing %s -> %d source mip(s) (%dx%d) to %s..."), *Context.GetName(), SourceMips.Num(), SourceMips[0].SizeX, SourceMips[0].SizeY, *BuildSettings.TextureFormatName.ToString());
+	// SourceMips will be cleared by BuildTexture.  Store info from it for use later.
+	const int32 SourceMipsNum = SourceMips.Num();
+	const int32 SourceMipsNumSlices = SourceMips[0].NumSlices;
+	const int32 SourceMip0SizeX = SourceMips[0].SizeX;
+	const int32 SourceMip0SizeY = SourceMips[0].SizeY;
+
+	UE_LOG(LogTextureBuildFunction, Display, TEXT("Compressing %s -> %d source mip(s) (%dx%d) to %s..."), *Context.GetName(), SourceMipsNum, SourceMip0SizeX, SourceMip0SizeY, *BuildSettings.TextureFormatName.ToString());
 
 	ITextureCompressorModule& TextureCompressorModule = FModuleManager::GetModuleChecked<ITextureCompressorModule>(TEXTURE_COMPRESSOR_MODULENAME);
 	
@@ -392,7 +418,7 @@ void FTextureBuildFunction::Build(UE::DerivedData::FBuildContext& Context) const
 
 	{
 		int32 CalculatedMip0SizeX = 0, CalculatedMip0SizeY = 0, CalculatedMip0NumSlices = 0;
-		int32 CalculatedMipCount = TextureCompressorModule.GetMipCountForBuildSettings(SourceMips[0].SizeX, SourceMips[0].SizeY, SourceMips[0].NumSlices, SourceMips.Num(), BuildSettings, CalculatedMip0SizeX, CalculatedMip0SizeY, CalculatedMip0NumSlices);
+		int32 CalculatedMipCount = TextureCompressorModule.GetMipCountForBuildSettings(SourceMip0SizeX, SourceMip0SizeY, SourceMipsNumSlices, SourceMipsNum, BuildSettings, CalculatedMip0SizeX, CalculatedMip0SizeY, CalculatedMip0NumSlices);
 		BuildSettings.GetEncodedTextureDescriptionWithPixelFormat(&TextureDescription, (EPixelFormat)CompressedMips[0].PixelFormat, CalculatedMip0SizeX, CalculatedMip0SizeY, CalculatedMip0NumSlices, CalculatedMipCount);
 	}
 
@@ -419,7 +445,18 @@ void FTextureBuildFunction::Build(UE::DerivedData::FBuildContext& Context) const
 	int32 NumStreamingMips = TextureDescription.GetNumStreamingMips(&ExtendedData, EngineParameters);
 	
 	{
-		Context.AddValue(UE::DerivedData::FValueId::FromName(ANSITEXTVIEW("TextureBuildMetadata")), BuildMetadata.ToCompactBinaryWithDefaults());
+		if (CPUCopy.IsValid())
+		{
+			FCbObject ImageInfoMetadata;
+			CPUCopy->ImageInfoToCompactBinary(ImageInfoMetadata);
+			Context.AddValue(UE::DerivedData::FValueId::FromName(ANSITEXTVIEW("CPUCopyImageInfo")), ImageInfoMetadata);
+
+			FSharedBuffer CPUCopyData = MakeSharedBufferFromArray(MoveTemp(CPUCopy->RawData));
+			Context.AddValue(UE::DerivedData::FValueId::FromName(ANSITEXTVIEW("CPUCopyRawData")), CPUCopyData);
+		}
+
+		// This will get added to the build metadata in a later cl.
+		// Context.AddValue(UE::DerivedData::FValueId::FromName(ANSITEXTVIEW("TextureBuildMetadata")), BuildMetadata.ToCompactBinaryWithDefaults());
 		Context.AddValue(UE::DerivedData::FValueId::FromName(ANSITEXTVIEW("EncodedTextureDescription")), UE::TextureBuildUtilities::EncodedTextureDescription::ToCompactBinary(TextureDescription));
 		Context.AddValue(UE::DerivedData::FValueId::FromName(ANSITEXTVIEW("EncodedTextureExtendedData")), UE::TextureBuildUtilities::EncodedTextureExtendedData::ToCompactBinary(ExtendedData));
 
@@ -489,9 +526,10 @@ void GenericTextureTilingBuildFunction(UE::DerivedData::FBuildContext& Context, 
 		UE::TextureBuildUtilities::TextureEngineParameters::FromCompactBinary(EngineParameters, EngineParametersCb);
 	}
 
-	UE::TextureBuildUtilities::FTextureBuildMetadata BuildMetadata(FCbObject(Context.FindInput(ANSITEXTVIEW("TextureBuildMetadata"))));
+	// This will get added to the build metadata in a later cl.
+	//UE::TextureBuildUtilities::FTextureBuildMetadata BuildMetadata(FCbObject(Context.FindInput(ANSITEXTVIEW("TextureBuildMetadata"))));
 
-	UE_LOG(LogTextureBuildFunction, Display, TEXT("Tiling %s with %hs -> %d source mip(s) with a tail of %d..."), *Context.GetName(), *BuildFunctionName, TextureDescription.NumMips, TextureExtendedData.NumMipsInTail);
+	UE_LOG(LogTextureBuildFunction, Display, TEXT("Tiling %s with %s -> %d source mip(s) with a tail of %d..."), *Context.GetName(), StringCast<TCHAR>(*BuildFunctionName).Get(), TextureDescription.NumMips, TextureExtendedData.NumMipsInTail);
 
 	//
 	// Careful - the linear build might have a different streaming mip count than we output due to mip tail
@@ -583,5 +621,6 @@ void GenericTextureTilingBuildFunction(UE::DerivedData::FBuildContext& Context, 
 
 	Context.AddValue(UE::DerivedData::FValueId::FromName(UTF8TEXTVIEW("EncodedTextureDescription")), UE::TextureBuildUtilities::EncodedTextureDescription::ToCompactBinary(TextureDescription));
 	Context.AddValue(UE::DerivedData::FValueId::FromName(UTF8TEXTVIEW("EncodedTextureExtendedData")), UE::TextureBuildUtilities::EncodedTextureExtendedData::ToCompactBinary(TextureExtendedData));
-	Context.AddValue(UE::DerivedData::FValueId::FromName(UTF8TEXTVIEW("TextureBuildMetadata")), BuildMetadata.ToCompactBinaryWithDefaults());
+	// This will get added to the build metadata in a later cl.
+	//Context.AddValue(UE::DerivedData::FValueId::FromName(UTF8TEXTVIEW("TextureBuildMetadata")), BuildMetadata.ToCompactBinaryWithDefaults());
 }

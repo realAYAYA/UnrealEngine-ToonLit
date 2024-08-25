@@ -66,12 +66,6 @@ void FLandscapeUIDetails::CustomizeDetails( IDetailLayoutBuilder& DetailBuilder 
 			return;
 		}
 
-		if (Landscape->NumSubsections == 1)
-		{
-			TSharedRef<IPropertyHandle> ComponentScreenSizeToUseSubSectionsProp = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(ALandscapeProxy, ComponentScreenSizeToUseSubSections));
-			DetailBuilder.HideProperty(ComponentScreenSizeToUseSubSectionsProp);
-		}
-
 		TSharedRef<IPropertyHandle> CanHaveLayersPropertyHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(ALandscape, bCanHaveLayersContent));
 		DetailBuilder.HideProperty(CanHaveLayersPropertyHandle);
 		const FText DisplayAndFilterText(LOCTEXT("LandscapeToggleLayerName", "Enable Edit Layers"));

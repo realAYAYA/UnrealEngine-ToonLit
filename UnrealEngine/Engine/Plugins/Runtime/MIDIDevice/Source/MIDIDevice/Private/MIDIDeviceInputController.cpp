@@ -97,7 +97,7 @@ void UMIDIDeviceInputController::ProcessIncomingMIDIEvents()
 	{
 		// Static that we'll copy event data to every time.  This stuff isn't multi-threaded right now, so this is fine.
 		static TArray<PmEvent> PMMIDIEvents;
-		PMMIDIEvents.SetNum(MIDIBufferSize, false);
+		PMMIDIEvents.SetNum(MIDIBufferSize, EAllowShrinking::No);
 
 		const int32 PMEventCount = Pm_Read(this->PMMIDIStream, PMMIDIEvents.GetData(), PMMIDIEvents.Num());
 

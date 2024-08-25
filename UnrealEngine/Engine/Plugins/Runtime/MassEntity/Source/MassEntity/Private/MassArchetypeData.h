@@ -5,6 +5,7 @@
 #include "MassEntityManager.h"
 #include "MassArchetypeTypes.h"
 
+
 struct FMassEntityQuery;
 struct FMassExecutionContext;
 class FOutputDevice;
@@ -12,7 +13,7 @@ struct FMassArchetypeEntityCollection;
 
 namespace UE::Mass
 {
-	constexpr int32 ChunkSize = 128*1024;
+	int32 SanitizeChunkMemorySize(const int32 InChunkMemorySize, const bool bLogMismatch = true);
 }
 
 // This is one chunk within an archetype
@@ -20,14 +21,14 @@ struct FMassArchetypeChunk
 {
 private:
 	uint8* RawMemory = nullptr;
-	int32 AllocSize = 0;
+	SIZE_T AllocSize = 0;
 	int32 NumInstances = 0;
 	int32 SerialModificationNumber = 0;
 	TArray<FInstancedStruct> ChunkFragmentData;
 	FMassArchetypeSharedFragmentValues SharedFragmentValues;
 
 public:
-	explicit FMassArchetypeChunk(int32 InAllocSize, TConstArrayView<FInstancedStruct> InChunkFragmentTemplates, FMassArchetypeSharedFragmentValues InSharedFragmentValues)
+	explicit FMassArchetypeChunk(const SIZE_T InAllocSize, TConstArrayView<FInstancedStruct> InChunkFragmentTemplates, FMassArchetypeSharedFragmentValues InSharedFragmentValues)
 		: AllocSize(InAllocSize)
 		, ChunkFragmentData(InChunkFragmentTemplates)
 		, SharedFragmentValues(InSharedFragmentValues)
@@ -169,20 +170,27 @@ private:
 	TMap<const UScriptStruct*, int32> FragmentIndexMap;
 
 	int32 NumEntitiesPerChunk;
-	int32 TotalBytesPerEntity;
+	SIZE_T TotalBytesPerEntity = 0;
 	int32 EntityListOffsetWithinChunk;
 
 	// Archetype version at which this archetype was created, useful for query to do incremental archetype matching
-	uint32 CreatedArchetypeDataVersion;
+	uint32 CreatedArchetypeDataVersion = 0;
 
+#if WITH_MASSENTITY_DEBUG
 	// Arrays of names the archetype is referred as.
 	TArray<FName> DebugNames;
+#endif // WITH_MASSENTITY_DEBUG
+
+	// Defaults to UMassEntitySettings.ChunkMemorySize. In near future will support being set via constructor.
+	const SIZE_T ChunkMemorySize = 0;
 	
 	friend FMassEntityQuery;
 	friend FMassArchetypeEntityCollection;
 	friend FMassDebugger;
 
 public:
+	explicit FMassArchetypeData(const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
+
 	TConstArrayView<FMassArchetypeFragmentConfig> GetFragmentConfigs() const { return FragmentConfigs; }
 	const FMassFragmentBitSet& GetFragmentBitSet() const { return CompositionDescriptor.Fragments; }
 	const FMassTagBitSet& GetTagBitSet() const { return CompositionDescriptor.Tags; }
@@ -227,26 +235,33 @@ public:
 	void* GetFragmentDataForEntityChecked(const UScriptStruct* FragmentType, int32 EntityIndex) const;
 	void* GetFragmentDataForEntity(const UScriptStruct* FragmentType, int32 EntityIndex) const;
 
-	FORCEINLINE int32 GetInternalIndexForEntity(const int32 EntityIndex) const { return EntityMap.FindChecked(EntityIndex); }
+	FORCEINLINE const int32* GetInternalIndexForEntity(const int32 EntityIndex) const { return EntityMap.Find(EntityIndex); }
+	FORCEINLINE int32 GetInternalIndexForEntityChecked(const int32 EntityIndex) const { return EntityMap.FindChecked(EntityIndex); }
 	int32 GetNumEntitiesPerChunk() const { return NumEntitiesPerChunk; }
+	SIZE_T GetBytesPerEntity() const { return TotalBytesPerEntity; }
 
 	int32 GetNumEntities() const { return EntityMap.Num(); }
 
-	int32 GetChunkAllocSize() const { return UE::Mass::ChunkSize; }
+	SIZE_T GetChunkAllocSize() const { return ChunkMemorySize; }
 
 	int32 GetChunkCount() const { return Chunks.Num(); }
+	int32 GetNonEmptyChunkCount() const;
 
 	uint32 GetCreatedArchetypeDataVersion() const { return CreatedArchetypeDataVersion; }
 
-	void ExecuteFunction(FMassExecutionContext& RunContext, const FMassExecuteFunction& Function, const FMassQueryRequirementIndicesMapping& RequirementMapping, FMassArchetypeEntityCollection::FConstEntityRangeArrayView EntityRangeContainer, const FMassChunkConditionFunction& ChunkCondition);
-	void ExecuteFunction(FMassExecutionContext& RunContext, const FMassExecuteFunction& Function, const FMassQueryRequirementIndicesMapping& RequirementMapping, const FMassChunkConditionFunction& ChunkCondition);
+	void ExecuteFunction(FMassExecutionContext& RunContext, const FMassExecuteFunction& Function, const FMassQueryRequirementIndicesMapping& RequirementMapping
+		, FMassArchetypeEntityCollection::FConstEntityRangeArrayView EntityRangeContainer, const FMassChunkConditionFunction& ChunkCondition);
+	void ExecuteFunction(FMassExecutionContext& RunContext, const FMassExecuteFunction& Function, const FMassQueryRequirementIndicesMapping& RequirementMapping
+		, const FMassChunkConditionFunction& ChunkCondition);
 
-	void ExecutionFunctionForChunk(FMassExecutionContext RunContext, const FMassExecuteFunction& Function, const FMassQueryRequirementIndicesMapping& RequirementMapping, const FMassArchetypeEntityCollection::FArchetypeEntityRange& EntityRange, const FMassChunkConditionFunction& ChunkCondition = FMassChunkConditionFunction());
+	void ExecutionFunctionForChunk(FMassExecutionContext& RunContext, const FMassExecuteFunction& Function, const FMassQueryRequirementIndicesMapping& RequirementMapping
+		, const FMassArchetypeEntityCollection::FArchetypeEntityRange& EntityRange, const FMassChunkConditionFunction& ChunkCondition = FMassChunkConditionFunction());
 
 	/**
 	 * Compacts entities to fill up chunks as much as possible
+	 * @return number of entities moved around
 	 */
-	void CompactEntities(const double TimeAllowed);
+	int32 CompactEntities(const double TimeAllowed);
 
 	/**
 	 * Moves the entity from this archetype to another, will only copy all matching fragment types
@@ -283,19 +298,27 @@ public:
 	// Converts the list of fragments into a user-readable debug string
 	FString DebugGetDescription() const;
 
+	/** Copies debug names from another archetype data. */
+	void CopyDebugNamesFrom(const FMassArchetypeData& Other)
+	{ 
+#if WITH_MASSENTITY_DEBUG
+		DebugNames = Other.DebugNames; 
+#endif // WITH_MASSENTITY_DEBUG
+	}
+
+#if WITH_MASSENTITY_DEBUG
+	/** Fetches how much memory is allocated for active chunks, and how much of that memory is actually occupied */
+	void DebugGetEntityMemoryNumbers(SIZE_T& OutActiveChunksMemorySize, SIZE_T& OutActiveEntitiesMemorySize) const;
+
 	/** Adds new debug name associated with the archetype. */
 	void AddUniqueDebugName(const FName& Name) { DebugNames.AddUnique(Name); }
 	
 	/** @return array of debug names associated with this archetype. */
 	const TConstArrayView<FName> GetDebugNames() const { return DebugNames; }
 	
-	/** Copies debug names from another archetype data. */
-	void CopyDebugNamesFrom(const FMassArchetypeData& Other) { DebugNames = Other.DebugNames; }
-	
 	/** @return string of all debug names combined */
 	FString GetCombinedDebugNamesAsString() const;
 
-#if WITH_MASSENTITY_DEBUG
 	/**
 	 * Prints out debug information about the archetype
 	 */
@@ -341,7 +364,7 @@ public:
 	// batched api
 	void BatchDestroyEntityChunks(FMassArchetypeEntityCollection::FConstEntityRangeArrayView EntityRangeContainer, TArray<FMassEntityHandle>& OutEntitiesRemoved);
 	void BatchAddEntities(TConstArrayView<FMassEntityHandle> Entities, const FMassArchetypeSharedFragmentValues& SharedFragmentValues, TArray<FMassArchetypeEntityCollection::FArchetypeEntityRange>& OutNewRanges);
-	void BatchMoveEntitiesToAnotherArchetype(const FMassArchetypeEntityCollection& EntityCollection, FMassArchetypeData& NewArchetype, TArray<FMassEntityHandle>& OutEntitesBeingMoved, TArray<FMassArchetypeEntityCollection::FArchetypeEntityRange>* OutNewChunks = nullptr);
+	void BatchMoveEntitiesToAnotherArchetype(const FMassArchetypeEntityCollection& EntityCollection, FMassArchetypeData& NewArchetype, TArray<FMassEntityHandle>& OutEntitiesBeingMoved, TArray<FMassArchetypeEntityCollection::FArchetypeEntityRange>* OutNewChunks = nullptr);
 	void BatchSetFragmentValues(TConstArrayView<FMassArchetypeEntityCollection::FArchetypeEntityRange> EntityCollection, const FMassGenericPayloadViewSlice& Payload);
 
 protected:

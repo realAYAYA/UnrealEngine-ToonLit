@@ -106,7 +106,7 @@ inline void ConvertToGraph(const RangeType& UniqueKeys, GetKeyEdgesType GetKeyEd
 
 		// Normalize Step 3: Remove duplicates
 		VertexEdges = VertexEdges.Left(Algo::Unique(VertexEdges));
-		OutGraphBuffer.SetNum(InitialOffset + VertexEdges.Num(), false /* bAllowShrinking */);
+		OutGraphBuffer.SetNum(InitialOffset + VertexEdges.Num(), EAllowShrinking::No);
 
 		// Store the vertex's offset into GraphBuffer, for later conversion to TArrayView
 		EdgeOffsets.Emplace_GetRef(InitialOffset, VertexEdges.Num());

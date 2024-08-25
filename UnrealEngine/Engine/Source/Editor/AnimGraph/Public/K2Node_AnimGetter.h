@@ -37,7 +37,7 @@ struct FNodeSpawnData
 	UPROPERTY()
 	FText CachedTitle;
 
-	// The node the spawned getter accesses
+	// The node the spawned getter accesses, if any
 	UPROPERTY()
 	TObjectPtr<UAnimGraphNode_Base> SourceNode;
 
@@ -82,6 +82,7 @@ public:
 
 	// UK2Node interface
 	virtual void GetMenuActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const override;
+	virtual void ValidateNodeDuringCompilation(class FCompilerResultsLog& MessageLog) const override;
 	// end of UK2Node interface
 
 	// The node that is required for the getter

@@ -32,10 +32,11 @@ FImgMediaLoaderWork::FImgMediaLoaderWork(const TSharedRef<FImgMediaLoader, ESPMo
 /* FImgMediaLoaderWork interface
  *****************************************************************************/
 
-void FImgMediaLoaderWork::Initialize(int32 InFrameNumber,
+void FImgMediaLoaderWork::Initialize(int32 InJobID, int32 InFrameNumber,
 	TMap<int32, FImgMediaTileSelection> InMipTiles,
 	TSharedPtr<FImgMediaFrame, ESPMode::ThreadSafe> InExistingFrame)
 {
+	JobID = InJobID;
 	FrameNumber = InFrameNumber;
 	MipTiles = MoveTemp(InMipTiles);
 	ExistingFrame = InExistingFrame;
@@ -114,7 +115,7 @@ void FImgMediaLoaderWork::Finalize(TSharedPtr<FImgMediaFrame, ESPMode::ThreadSaf
 
 	if (Owner.IsValid())
 	{
-		Owner->NotifyWorkComplete(*this, FrameNumber, Frame, WorkTime);
+		Owner->NotifyWorkComplete(*this, JobID, FrameNumber, Frame, WorkTime);
 	}
 	else
 	{

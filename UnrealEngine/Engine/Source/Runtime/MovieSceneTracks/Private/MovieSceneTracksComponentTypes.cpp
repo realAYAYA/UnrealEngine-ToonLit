@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MovieSceneTracksComponentTypes.h"
+#include "Camera/CameraShakeBase.h"
+#include "Camera/CameraShakeSourceComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "MovieSceneTracksCustomAccessors.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
@@ -165,6 +167,16 @@ void ConvertOperationalProperty(float In, double& Out)
 void ConvertOperationalProperty(double In, float& Out)
 {
 	Out = static_cast<float>(In);
+}
+
+void ConvertOperationalProperty(const FObjectComponent& In, UObject*& Out)
+{
+	Out = In.GetObject();
+}
+
+void ConvertOperationalProperty(UObject* In, FObjectComponent& Out)
+{
+	Out = FObjectComponent::Strong(In);
 }
 
 uint8 GetSkeletalMeshAnimationMode(const UObject* Object)
@@ -496,6 +508,30 @@ struct FComponentTransformHandler : TPropertyComponentHandler<FComponentTransfor
 	}
 };
 
+struct FObjectHandler : TPropertyComponentHandler<FObjectPropertyTraits, FObjectComponent>
+{
+	virtual void DispatchInitializePropertyMetaDataTasks(const FPropertyDefinition& Definition, FSystemTaskPrerequisites& InPrerequisites, FSystemSubsequentTasks& Subsequents, UMovieSceneEntitySystemLinker* Linker) override
+	{
+		FBuiltInComponentTypes* BuiltInComponents = FBuiltInComponentTypes::Get();
+		FMovieSceneTracksComponentTypes* TrackComponents = FMovieSceneTracksComponentTypes::Get();
+
+		FEntityTaskBuilder()
+			.Read(BuiltInComponents->BoundObject)
+			.Read(BuiltInComponents->PropertyBinding)
+			.Write(TrackComponents->Object.MetaDataComponents.GetType<0>())
+			.FilterAll({ BuiltInComponents->Tags.NeedsLink })
+			.Iterate_PerEntity(&Linker->EntityManager, [](UObject* Object, const FMovieScenePropertyBinding& Binding, FObjectPropertyTraits::FObjectMetadata& OutMetaData)
+				{
+					FObjectPropertyBase* BoundProperty = CastField<FObjectPropertyBase>(FTrackInstancePropertyBindings::FindProperty(Object, Binding.PropertyPath.ToString()));
+					if (ensure(BoundProperty))
+					{
+						OutMetaData.ObjectClass = BoundProperty->PropertyClass;
+						OutMetaData.bAllowsClear = !BoundProperty->HasAnyPropertyFlags(CPF_NoClear);
+					}
+				});
+	}
+};
+
 FMovieSceneTracksComponentTypes::FMovieSceneTracksComponentTypes()
 {
 	FComponentRegistry* ComponentRegistry = UMovieSceneEntitySystemLinker::GetComponents();
@@ -510,6 +546,7 @@ FMovieSceneTracksComponentTypes::FMovieSceneTracksComponentTypes()
 	ComponentRegistry->NewPropertyType(FloatVector, TEXT("float vector"));
 	ComponentRegistry->NewPropertyType(DoubleVector, TEXT("double vector"));
 	ComponentRegistry->NewPropertyType(String, TEXT("FString"));
+	ComponentRegistry->NewPropertyType(Object, TEXT("Object"));
 
 	ComponentRegistry->NewPropertyType(Transform, TEXT("FTransform"));
 	ComponentRegistry->NewPropertyType(EulerTransform, TEXT("FEulerTransform"));
@@ -522,6 +559,7 @@ FMovieSceneTracksComponentTypes::FMovieSceneTracksComponentTypes()
 	Color.MetaDataComponents.Initialize(ComponentRegistry, TEXT("Color Type"));
 	FloatVector.MetaDataComponents.Initialize(ComponentRegistry, TEXT("Num Float Vector Channels"));
 	DoubleVector.MetaDataComponents.Initialize(ComponentRegistry, TEXT("Num Double Vector Channels"));
+	Object.MetaDataComponents.Initialize(ComponentRegistry, TEXT("Object Class"));
 
 	ComponentRegistry->NewComponentType(&QuaternionRotationChannel[0], TEXT("Quaternion Rotation Channel 0"));
 	ComponentRegistry->NewComponentType(&QuaternionRotationChannel[1], TEXT("Quaternion Rotation Channel 1"));
@@ -540,9 +578,9 @@ FMovieSceneTracksComponentTypes::FMovieSceneTracksComponentTypes()
 	ComponentRegistry->NewComponentType(&LevelVisibility, TEXT("Level Visibility"));
 	ComponentRegistry->NewComponentType(&DataLayer, TEXT("Data Layer"));
 
-	ComponentRegistry->NewComponentType(&ComponentMaterialIndex, TEXT("Component Material Index"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
-	ComponentRegistry->NewComponentType(&BoundMaterial,          TEXT("Bound Material"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
-	ComponentRegistry->NewComponentType(&MPC,                    TEXT("Material Parameter Collection"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
+	ComponentRegistry->NewComponentType(&ComponentMaterialInfo,		TEXT("Component Material Info"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
+	ComponentRegistry->NewComponentType(&BoundMaterial,				TEXT("Bound Material"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
+	ComponentRegistry->NewComponentType(&MPC,						TEXT("Material Parameter Collection"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
 
 	ComponentRegistry->NewComponentType(&BoolParameterName,      TEXT("Bool Parameter Name"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
 	ComponentRegistry->NewComponentType(&ScalarParameterName,    TEXT("Scalar Parameter Name"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
@@ -551,14 +589,31 @@ FMovieSceneTracksComponentTypes::FMovieSceneTracksComponentTypes()
 	ComponentRegistry->NewComponentType(&ColorParameterName,     TEXT("Color Parameter Name"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
 	ComponentRegistry->NewComponentType(&TransformParameterName, TEXT("Transform Parameter Name"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
 
+	ComponentRegistry->NewComponentType(&ScalarMaterialParameterInfo, TEXT("Scalar Material Parameter Info"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
+	ComponentRegistry->NewComponentType(&ColorMaterialParameterInfo, TEXT("Color Material Parameter Info"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
+	ComponentRegistry->NewComponentType(&VectorMaterialParameterInfo, TEXT("Vector Material Parameter Info"), EComponentTypeFlags::CopyToChildren | EComponentTypeFlags::CopyToOutput);
+
 	ComponentRegistry->NewComponentType(&Fade,                   TEXT("Fade"), EComponentTypeFlags::CopyToChildren);
 
 	ComponentRegistry->NewComponentType(&Audio,                  TEXT("Audio"), EComponentTypeFlags::CopyToChildren);
 	ComponentRegistry->NewComponentType(&AudioInputs,            TEXT("Audio Inputs"), EComponentTypeFlags::CopyToChildren);
 	ComponentRegistry->NewComponentType(&AudioTriggerName,       TEXT("Audio Trigger Name"), EComponentTypeFlags::CopyToChildren);
 
+	ComponentRegistry->NewComponentType(&CameraShake,            TEXT("Camera Shake"), EComponentTypeFlags::CopyToChildren);
+	ComponentRegistry->NewComponentType(&CameraShakeInstance,    TEXT("Camera Shake Instance"), EComponentTypeFlags::Preserved);
+
 	Tags.BoundMaterialChanged = ComponentRegistry->NewTag(TEXT("Bound Material Changed"));
 	FBuiltInComponentTypes::Get()->RequiresInstantiationMask.Set(Tags.BoundMaterialChanged);
+
+	Tags.Slomo = ComponentRegistry->NewTag(TEXT("Slomo"));
+	ComponentRegistry->Factories.DefineChildComponent(Tags.Slomo, Tags.Slomo);
+
+	Tags.Visibility = ComponentRegistry->NewTag(TEXT("Visibility"));
+	ComponentRegistry->Factories.DefineChildComponent(Tags.Visibility, Tags.Visibility);
+
+	// Used to indicate the ParameterName component for certain parameter types (scalar, vector2d, vector, color)
+	// should be interpreted as an index for custom primitive data.
+	Tags.CustomPrimitiveData = ComponentRegistry->NewTag(TEXT("Custom Primitive Data"));
 
 	FBuiltInComponentTypes* BuiltInComponents = FBuiltInComponentTypes::Get();
 
@@ -640,6 +695,13 @@ FMovieSceneTracksComponentTypes::FMovieSceneTracksComponentTypes()
 	BuiltInComponents->PropertyRegistry.DefineProperty(String, TEXT("Apply String Properties"))
 	.AddSoleChannel(BuiltInComponents->StringResult)
 	.Commit();
+
+	// --------------------------------------------------------------------------------------------
+	// Set up Object properties
+	BuiltInComponents->PropertyRegistry.DefineProperty(Object, TEXT("Apply Object Properties"))
+	.AddSoleChannel(BuiltInComponents->ObjectResult)
+	.SetCustomAccessors(&Accessors.Object)
+	.Commit(FObjectHandler());
 
 	// --------------------------------------------------------------------------------------------
 	// Set up float parameters
@@ -750,6 +812,14 @@ FMovieSceneTracksComponentTypes::FMovieSceneTracksComponentTypes()
 	// --------------------------------------------------------------------------------------------
 	// Set up SkeletalAnimation components
 	ComponentRegistry->Factories.DuplicateChildComponent(SkeletalAnimation);
+
+	// --------------------------------------------------------------------------------------------
+	// Set up custom primitive data components
+	ComponentRegistry->Factories.DefineChildComponent(Tags.CustomPrimitiveData, Tags.CustomPrimitiveData);
+
+	// --------------------------------------------------------------------------------------------
+	// Set up camera shake components
+	ComponentRegistry->Factories.DefineMutuallyInclusiveComponent(CameraShake, CameraShakeInstance);
 
 	InitializeMovieSceneTracksAccessors(this);
 }

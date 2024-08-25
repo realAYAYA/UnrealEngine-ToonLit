@@ -356,9 +356,10 @@ struct FACESTonemapParams
 {
 	TsParams AcesParams;
 	float SceneColorMultiplier;
+	float GamutCompression;
 };
 
-FACESTonemapParams ComputeACESTonemapParams(float4 InACESMinMaxData, float4 InACESMidData, float4 InACESCoefsLow_0, float4 InACESCoefsHigh_0, float InACESCoefsLow_4, float InACESCoefsHigh_4, float SceneColorMultiplier)
+FACESTonemapParams ComputeACESTonemapParams(float4 InACESMinMaxData, float4 InACESMidData, float4 InACESCoefsLow_0, float4 InACESCoefsHigh_0, float InACESCoefsLow_4, float InACESCoefsHigh_4, float SceneColorMultiplier, float GamutCompression)
 {
 	FACESTonemapParams OutACESTonemapParams;
 	OutACESTonemapParams.AcesParams.Min.x = InACESMinMaxData.x;
@@ -388,6 +389,7 @@ FACESTonemapParams ComputeACESTonemapParams(float4 InACESMinMaxData, float4 InAC
 	OutACESTonemapParams.AcesParams.coefsHigh[5] = InACESCoefsHigh_4;
 
 	OutACESTonemapParams.SceneColorMultiplier = SceneColorMultiplier;
+	OutACESTonemapParams.GamutCompression = GamutCompression;
 
 	return OutACESTonemapParams;
 
@@ -401,6 +403,9 @@ FACESTonemapParams ComputeACESTonemapParams(float4 InACESMinMaxData, float4 InAC
 float3 ACESOutputTransforms1000( float3 SceneReferredLinearColor, const float3x3 WCS_2_AP0, FACESTonemapParams InACESTonemapParams)
 {
 	float3 aces = mul( WCS_2_AP0, SceneReferredLinearColor * InACESTonemapParams.SceneColorMultiplier);
+	float3 AcesCompressed = compressColor(aces);
+	aces = lerp(aces, AcesCompressed, InACESTonemapParams.GamutCompression);
+
 	const FColorSpace UE_ACES_AP1_DISPLAY_PRI = GetColorSpace(TONEMAPPER_GAMUT_ACEScg_D60);
 	const FColorSpace UE_ACES_AP1_LIMITING_PRI = GetColorSpace(TONEMAPPER_GAMUT_ACEScg_D60);
 	float3 OutputReferredLinearAP1Color = outputTransform(aces, InACESTonemapParams.AcesParams, UE_ACES_AP1_DISPLAY_PRI, UE_ACES_AP1_LIMITING_PRI, UE_ACES_EOTF,
@@ -424,6 +429,9 @@ float3 ACESOutputTransforms1000( float3 SceneReferredLinearsRGBColor, FACESTonem
 float3 ACESOutputTransforms2000( float3 SceneReferredLinearColor, const float3x3 WCS_2_AP0, FACESTonemapParams InACESTonemapParams)
 {
 	float3 aces = mul( WCS_2_AP0, SceneReferredLinearColor * InACESTonemapParams.SceneColorMultiplier);
+	float3 AcesCompressed = compressColor(aces);
+	aces = lerp(aces, AcesCompressed, InACESTonemapParams.GamutCompression);
+
 	const FColorSpace UE_ACES_AP1_DISPLAY_PRI = GetColorSpace(TONEMAPPER_GAMUT_ACEScg_D60);
 	const FColorSpace UE_ACES_AP1_LIMITING_PRI = GetColorSpace(TONEMAPPER_GAMUT_ACEScg_D60);
 	float3 OutputReferredLinearAP1Color = outputTransform(aces, InACESTonemapParams.AcesParams, UE_ACES_AP1_DISPLAY_PRI, UE_ACES_AP1_LIMITING_PRI, UE_ACES_EOTF,

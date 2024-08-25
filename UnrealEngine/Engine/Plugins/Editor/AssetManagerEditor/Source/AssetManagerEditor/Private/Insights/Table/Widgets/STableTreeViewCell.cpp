@@ -183,8 +183,8 @@ FSlateColor STableTreeViewCell::GetIconColorAndOpacity() const
 	bool bIsHoveredOrSelected = IsHovered() || IsSelected();
 
 	return bIsHoveredOrSelected ?
-		TableTreeNodePtr->GetColor() :
-		TableTreeNodePtr->GetColor().CopyWithNewOpacity(0.5f);
+		TableTreeNodePtr->GetIconColor() :
+		TableTreeNodePtr->GetIconColor().CopyWithNewOpacity(0.8f);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

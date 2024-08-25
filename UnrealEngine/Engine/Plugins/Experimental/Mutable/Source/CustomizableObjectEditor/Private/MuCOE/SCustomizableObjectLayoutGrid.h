@@ -36,6 +36,13 @@ struct FBlockWidgetData
 	FRect2D HandleRect;
 };
 
+
+enum EFixedReductionOptions
+{
+	EFRO_Symmetry,
+	EFRO_RedyceByTwo
+};
+
 /** */
 class SCustomizableObjectLayoutGrid : public SCompoundWidget
 {
@@ -47,6 +54,7 @@ public:
 	DECLARE_DELEGATE_TwoParams(FAddBlockAtDelegate, FIntPoint, FIntPoint);
 	DECLARE_DELEGATE_OneParam(FSetBlockPriority, int32);
 	DECLARE_DELEGATE_OneParam(FSetReduceBlockSymmetrically, bool);
+	DECLARE_DELEGATE_OneParam(FSetReduceBlockByTwo, bool);
 
 	SLATE_BEGIN_ARGS( SCustomizableObjectLayoutGrid ){}
 
@@ -62,6 +70,7 @@ public:
 		SLATE_EVENT(FAddBlockAtDelegate, OnAddBlockAt)
 		SLATE_EVENT(FSetBlockPriority, OnSetBlockPriority)
 		SLATE_EVENT(FSetReduceBlockSymmetrically, OnSetReduceBlockSymmetrically)
+		SLATE_EVENT(FSetReduceBlockByTwo, OnSetReduceBlockByTwo)
 
 	SLATE_END_ARGS()
 
@@ -117,11 +126,14 @@ public:
 	/** Callback when the priority of a block changes */
 	void OnBlockPriorityChanged(int32 InValue);
 
-	/** Callback when a block reduction method changes */
+	/** Callback when symmetry block reduction option changes */
 	void OnReduceBlockSymmetricallyChanged(ECheckBoxState InCheckboxState);
 
+	/** Callback when ReduceByTwo block reduction option changes */
+	void OnReduceBlockByTwoChanged(ECheckBoxState InCheckboxState);
+
 	/** Gets block reduction value of the selected blocks */
-	ECheckBoxState GetReductionMethodValue() const;
+	ECheckBoxState GetReductionMethodBoolValue(EFixedReductionOptions Option) const;
 
 private:
 
@@ -136,6 +148,7 @@ private:
 	FAddBlockAtDelegate AddBlockAtDelegate;
 	FSetBlockPriority OnSetBlockPriority;
 	FSetReduceBlockSymmetrically OnSetReduceBlockSymmetrically;
+	FSetReduceBlockByTwo OnSetReduceBlockByTwo;
 
 	/** Size of the grid in blocks */
 	TAttribute<FIntPoint> GridSize;

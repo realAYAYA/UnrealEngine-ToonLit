@@ -455,7 +455,7 @@ public:
 		{
 			TickTasks[StartTickGroup][EndTickGroup].Add(Task);
 		}
-		new (TickCompletionEvents[EndTickGroup]) FGraphEventRef(Task->GetCompletionEvent());
+		TickCompletionEvents[EndTickGroup].Add(Task->GetCompletionEvent());
 	}
 	/** Add a completion handle to a tick group, parallel version **/
 	FORCEINLINE void AddTickTaskCompletionParallel(ETickingGroup StartTickGroup, ETickingGroup EndTickGroup, TGraphTask<FTickFunctionTask>* Task, bool bHiPri)
@@ -2244,7 +2244,7 @@ static void AddTestTickFunctions(const TArray<FString>& Args, UWorld* InWorld)
 	TestTickFunctions.Reserve(NumTestTickFunctions);
 	for (int32 Index = 0; Index < NumTestTickFunctions; Index++)
 	{
-		(new (TestTickFunctions) FTestTickFunction())->RegisterTickFunction(Level);
+		TestTickFunctions.AddDefaulted_GetRef().RegisterTickFunction(Level);
 	}
 }
 

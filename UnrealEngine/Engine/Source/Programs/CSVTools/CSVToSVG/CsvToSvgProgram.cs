@@ -71,6 +71,7 @@ namespace CSVTools
 			"       -legend <list> \n" +
 			"       -maxHierarchyDepth <depth>\n" +
 			"       -minX <value> -maxX <value> -minY <value> -maxY <value>\n" +
+			"       -maxAutoMaxY <value> - clamp automatic maxY to this\n" +
 			"       -noMetadata\n" +
 			"       -noSnap\n" +
 			"       -recurse\n" +
@@ -373,6 +374,7 @@ namespace CSVTools
 			graphParams.maxX = GetFloatArg("maxx", graphParams.maxX);
 			graphParams.minY = GetFloatArg("miny", graphParams.minY);
 			graphParams.maxY = GetFloatArg("maxy", graphParams.maxY);
+			graphParams.maxAutoMaxY = GetFloatArg("maxAutoMaxY", graphParams.maxAutoMaxY);
 
 			graphParams.budget = GetFloatArg("budget", graphParams.budget);
 			graphParams.lineThickness = GetFloatArg("thickness", graphParams.lineThickness);
@@ -480,7 +482,7 @@ namespace CSVTools
 					Console.WriteLine("[ERROR] " + e.Message);
 					if (Debugger.IsAttached)
 					{
-						throw e;
+						throw;
 					}
 				}
 			}

@@ -174,7 +174,6 @@ UGroomBindingAsset* FHairStrandsCore::CreateGroomBindingAsset(const FString& InP
 
 UGroomBindingAsset* FHairStrandsCore::CreateGroomBindingAsset(EGroomBindingMeshType BindingType, const FString& InPackageName, UObject* InParent, UGroomAsset* GroomAsset, UObject* Source, UObject* Target, const int32 NumInterpolationPoints, const int32 MatchingSection)
 {
-#if WITH_EDITOR
 	if (!GroomAsset ||
 		!((BindingType == EGroomBindingMeshType::SkeletalMesh && Cast<USkeletalMesh>(Target)) || 
 		 (BindingType == EGroomBindingMeshType::GeometryCache && Cast<UGeometryCache>(Target)))
@@ -238,7 +237,6 @@ UGroomBindingAsset* FHairStrandsCore::CreateGroomBindingAsset(EGroomBindingMeshT
 		AssetHelper().RegisterAsset(Out);
 		return Out;
 	}
-#endif
 	return nullptr;
 }
 
@@ -261,4 +259,4 @@ void FHairStrandsCore::SaveAsset(UObject* Object)
 
 	AssetHelper().SaveAsset(Object);
 }
-#endif
+#endif // WITH_EDITOR

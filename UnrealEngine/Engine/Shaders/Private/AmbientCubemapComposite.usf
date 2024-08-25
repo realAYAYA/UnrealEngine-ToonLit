@@ -19,7 +19,7 @@
 Texture2D AmbientOcclusionTexture;
 SamplerState AmbientOcclusionSampler;
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
 // Override the default lighting input used for the env. lighting to sample the 'custom composite env. lighting'
 float3 GetEnvDiffuseLighting(float3 InBentNormal)
@@ -45,17 +45,17 @@ float3 GetEnvSpecularLighting(
 
 #define APPLY_SKY_SHADOWING 0
 #define USE_DEFAULT_ENV_LIGHTING_INPUT 0
-#define USE_STRATA_ENV_LIGHTING_COMMON 1
+#define USE_SUBSTRATE_ENV_LIGHTING_COMMON 1
 
 #include "ReflectionEnvironmentShared.ush"
-#include "Strata/Strata.ush"
-#include "Strata/StrataEvaluation.ush"
-#include "Strata/StrataEnvironmentLighting.ush"
+#include "Substrate/Substrate.ush"
+#include "Substrate/SubstrateEvaluation.ush"
+#include "Substrate/SubstrateLightingCommon.ush"
 
 void MainPS(
 	float4 SvPosition : SV_POSITION, 
 	out float4 OutColor : SV_Target0
-	#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
+	#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
 	, out float3 OutOpaqueRoughRefractionSceneColor : SV_Target1
 	, out float3 OutSubSurfaceSceneColor : SV_Target2
 	#endif
@@ -66,71 +66,74 @@ void MainPS(
 	const float2 ScreenPosition = SvPositionToScreenPosition(SvPosition).xy;
 
 	OutColor = 0;
-#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
+#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
 	OutOpaqueRoughRefractionSceneColor = 0.0f;
 	OutSubSurfaceSceneColor = 0.0f;
 #endif
 
-	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-	FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
 	BRANCH
-	if (StrataPixelHeader.BSDFCount > 0) // This test is also enough to exclude sky pixels
+	if (SubstratePixelHeader.ClosureCount > 0) // This test is also enough to exclude sky pixels
 	{
 		float DeviceZ = SampleDeviceZFromSceneTextures(BufferUV);
 		float SceneDepth = ConvertFromDeviceZ(DeviceZ);
 
-		float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+		float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), DFHackToFloat(PrimaryView.ScreenToWorld)).xyz;
 		float3 TranslatedWorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-		float3 CameraToPixel = normalize(WorldPosition - LWCHackToFloat(PrimaryView.WorldCameraOrigin));
+		float3 CameraToPixel = normalize(WorldPosition - DFHackToFloat(PrimaryView.WorldCameraOrigin));
 		float3 V = -CameraToPixel;
 
 		// Sample the ambient occlusion that is dynamically generated every frame.
 		const float AmbientOcclusion = AmbientOcclusionTexture.SampleLevel(AmbientOcclusionSampler, BufferUV, 0).r;
 
-		const float4 SSR = 0.f; //Texture2DSample(ScreenSpaceReflectionsTexture, ScreenSpaceReflectionsSampler, BufferUV);
+		const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, Substrate.bRoughDiffuse, Substrate.PeelLayersAboveDepth, Substrate.bRoughnessTracking);
+		FSubstrateDeferredLighting SubstrateLighting = GetInitialisedSubstrateDeferredLighting();
 
-		// SSR is computed for the top level by averaging BSDF components.
-		// This is the top level specular contribution factor according to areas.
-		const float TopLayerSpecularContributionFactor = 1.0f - SSR.a;
+		const float CombinedScreenAndMaterialAO = SubstrateGetAO(SubstratePixelHeader) * AmbientOcclusion;
 
-		// A reduction of SSR contribution is needed when there is haziness because we only consider SSR for the sharpest lobe.
-		float SSRReductionFactor = 1.0f;
-		float3 SSRTopLayerEnvBRDF = 0.0f;
+		Substrate_for (uint ClosureIndex = 0, ClosureIndex < SubstratePixelHeader.ClosureCount, ++ClosureIndex)
+		{
+			FSubstrateBSDF BSDF = UnpackSubstrateBSDF(Substrate.MaterialTextureArray, SubstrateAddressing, SubstratePixelHeader);
+			FSubstrateBSDFContext SubstrateBSDFContext = SubstrateCreateBSDFContext(SubstratePixelHeader, BSDF, SubstrateAddressing, V);
+			const float3 BSDFThroughput = LuminanceWeight(SubstrateBSDFContext, BSDF); // Use the reflected direction
 
-		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, Strata.bRoughDiffuse, Strata.PeelLayersAboveDepth, Strata.bRoughnessTracking);
+			// Evaluate environment lighting
+			FSubstrateEnvLightResult SubstrateEnvLight = SubstrateEvaluateForEnvLight(SubstrateBSDFContext, true /*bEnableSpecular*/, Settings);
 
-		FStrataDeferredLighting StrataLighting = StrataEnvironmentLighting(
-			SvPosition,
-			BufferUV,
-			SceneDepth,
-			WorldPosition,
-			TranslatedWorldPosition,
-			CameraToPixel,
-			V,
-			AmbientOcclusion,
-			TopLayerSpecularContributionFactor,
-			true /*bEnableSpecular*/,
-			Settings,
-			Strata.MaterialTextureArray,
-			StrataAddressing,
-			StrataPixelHeader,
-			1.0f /*CloudVolumetricAOShadow*/,
-			SSRReductionFactor,
-			SSRTopLayerEnvBRDF);
+			float3 DiffuseLighting = 0;
+			float3 SpecularLighting = 0;
+			SubstrateEnvLightingCommon(
+				SubstrateEnvLight,
+				SubstratePixelHeader,
+				SubstrateBSDFContext,
+				BSDF,
+				SubstrateEnvLight.DiffuseNormal,
+				BSDFThroughput,
+				0 /*CaptureDataStartIndex*/,
+				0 /*NumCulledReflectionCaptures*/,
+				AmbientOcclusion,
+				1.0f /*CloudVolumetricAOShadow*/,
+				1.0f /*TopLayerSpecularContributionFactor*/,
+				TranslatedWorldPosition,
+				CombinedScreenAndMaterialAO,
+				DiffuseLighting,
+				SpecularLighting);
 
-		// Screen space reflections added on top of environment lighting.
-		// Alpha is 0 to not affect the subsurface diffuse luma information.
-		const float4 SSRColor = float4(SSR.rgb * SSRTopLayerEnvBRDF * SSRReductionFactor, 0.0);
+			FLightAccumulator Out = (FLightAccumulator)0;
+			LightAccumulator_AddSplit(Out, DiffuseLighting, SpecularLighting, DiffuseLighting, View.PreExposure, SubstrateEnvLight.bPostProcessSubsurface);
+			AccumulateSubstrateDeferredLighting(SubstrateLighting, Out, SubstrateEnvLight.bPostProcessSubsurface, BSDF_GETISTOPLAYER(BSDF));
+		}
 
-		OutColor += StrataLighting.SceneColor + SSRColor;
-#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
-		OutOpaqueRoughRefractionSceneColor += StrataLighting.OpaqueRoughRefractionSceneColor;
-		OutSubSurfaceSceneColor += StrataLighting.SubSurfaceSceneColor;
+		OutColor += SubstrateLighting.SceneColor;
+#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
+		OutOpaqueRoughRefractionSceneColor += SubstrateLighting.OpaqueRoughRefractionSceneColor;
+		OutSubSurfaceSceneColor += SubstrateLighting.SubSurfaceSceneColor;
 #endif
 	}
 }
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 float3 DiffuseIBL( uint2 Random, float3 DiffuseColor, float Roughness, float3 N, float3 V )
 {
@@ -448,7 +451,7 @@ void MainPS(in noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPositio
 	float AbsoluteDiffuseMip = AmbientCubemapMipAdjust.z;
 
 
-	float3 ScreenVector = normalize(mul(float3(ScreenSpacePos, 1), LWCToFloat3x3(PrimaryView.ScreenToWorld)).xyz);
+	float3 ScreenVector = normalize(mul(float3(ScreenSpacePos, 1), DFToFloat3x3(PrimaryView.ScreenToWorld)).xyz);
 
 	float3 N = GBuffer.WorldNormal;
 	float3 V = -ScreenVector;
@@ -590,4 +593,4 @@ void MainPS(in noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPositio
 
 	OutColor *= AmbientOcclusion;
 }
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED

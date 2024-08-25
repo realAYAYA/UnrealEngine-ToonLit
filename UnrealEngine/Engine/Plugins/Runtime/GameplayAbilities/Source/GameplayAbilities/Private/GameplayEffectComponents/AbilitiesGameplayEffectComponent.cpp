@@ -104,7 +104,8 @@ void UAbilitiesGameplayEffectComponent::RemoveAbilities(FActiveGameplayEffectHan
 		return;
 	}
 
-	const TArray<FGameplayAbilitySpec>& AllAbilities = ASC->GetActivatableAbilities();
+	FScopedAbilityListLock ScopedAbilityListLock(*ASC);
+	const TArray<const FGameplayAbilitySpec*> GrantedAbilities = ASC->FindAbilitySpecsFromGEHandle(ScopedAbilityListLock, ActiveGEHandle, EConsiderPending::All);
 	for (const FGameplayAbilitySpecConfig& AbilityConfig : GrantAbilityConfigs)
 	{
 		// Check that we're configured
@@ -115,22 +116,23 @@ void UAbilitiesGameplayEffectComponent::RemoveAbilities(FActiveGameplayEffectHan
 		}
 
 		// See if we were granted, and if so we can remove it
-		const FGameplayAbilitySpec* AbilitySpecDef = AllAbilities.FindByPredicate([AbilityCDO, &ActiveGEHandle](FGameplayAbilitySpec& Spec) { return Spec.Ability == AbilityCDO && Spec.GameplayEffectHandle == ActiveGEHandle; });
-		if (!AbilitySpecDef)
+		const FGameplayAbilitySpec* const* AbilitySpecItem = GrantedAbilities.FindByPredicate([AbilityCDO](const FGameplayAbilitySpec* Spec) { return Spec->Ability == AbilityCDO; });
+		if (!AbilitySpecItem || !(*AbilitySpecItem))
 		{
 			continue;
 		}
+		const FGameplayAbilitySpec& AbilitySpecDef = (**AbilitySpecItem);
 
 		switch (AbilityConfig.RemovalPolicy)
 		{
 			case EGameplayEffectGrantedAbilityRemovePolicy::CancelAbilityImmediately:
 			{
-				ASC->ClearAbility(AbilitySpecDef->Handle);
+				ASC->ClearAbility(AbilitySpecDef.Handle);
 				break;
 			}
 			case EGameplayEffectGrantedAbilityRemovePolicy::RemoveAbilityOnEnd:
 			{
-				ASC->SetRemoveAbilityOnEnd(AbilitySpecDef->Handle);
+				ASC->SetRemoveAbilityOnEnd(AbilitySpecDef.Handle);
 				break;
 			}
 			default:

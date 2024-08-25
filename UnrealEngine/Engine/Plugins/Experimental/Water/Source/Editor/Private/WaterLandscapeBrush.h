@@ -148,5 +148,5 @@ private:
 #endif // WITH_EDITOR
 
 	UPROPERTY(Transient, DuplicateTransient, VisibleAnywhere, AdvancedDisplay, meta = (Category = "Debug"))
-	TMap<TWeakObjectPtr<AActor>, TObjectPtr<UObject>> Cache;
+	TMap<TSoftObjectPtr<AActor>, TObjectPtr<UObject>> Cache;
 };

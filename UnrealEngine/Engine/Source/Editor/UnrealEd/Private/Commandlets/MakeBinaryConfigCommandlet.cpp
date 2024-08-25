@@ -82,12 +82,11 @@ int32 UMakeBinaryConfigCommandlet::Main(const FString& Params)
 		}
 
 		// now go over any remaining sections and remove keys
-		for (TPair<FString, FConfigSection>& SectionPair : *File)
+		for (const TPair<FString, FConfigSection>& SectionPair : AsConst(*File))
 		{
-			FConfigSection& Section = SectionPair.Value;
 			for (FName Key : KeysDenyList)
 			{
-				Section.Remove(Key);
+				File->RemoveKeyFromSection(*SectionPair.Key, Key);
 			}
 		}
 	}

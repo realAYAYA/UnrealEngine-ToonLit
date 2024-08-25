@@ -36,10 +36,12 @@
 #include "Widgets/Images/SThrobber.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SBox.h"
+#include "Application/ThrottleManager.h"
 
 // LevelEditor includes
 #include "IAssetViewport.h"
 #include "LevelEditor.h"
+#include "SequencerSettings.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CacheTrackRecorder)
@@ -306,10 +308,11 @@ void UCacheTrackRecorder::RecordCacheTrack(IMovieSceneCachedTrack* Track, TShare
 
 void UCacheTrackRecorder::RecordCacheTracks(const TArray<IMovieSceneCachedTrack*>& CacheTracks, TSharedPtr<ISequencer> Sequencer, FCacheRecorderParameters Parameters)
 {
-	ULevelSequence* LevelSequence = Sequencer ? Cast<ULevelSequence>(Sequencer->GetFocusedMovieSceneSequence()) : nullptr;	
-	if (LevelSequence && CacheTracks.Num() > 0)
+	ULevelSequence* RootSequence = Sequencer ? Cast<ULevelSequence>(Sequencer->GetRootMovieSceneSequence()) : nullptr;	
+	ULevelSequence* FocusedSequence = Sequencer ? Cast<ULevelSequence>(Sequencer->GetFocusedMovieSceneSequence()) : nullptr;	
+	if (RootSequence && FocusedSequence && CacheTracks.Num() > 0)
 	{
-		Parameters.StartFrame = LevelSequence->GetMovieScene()->GetPlaybackRange().GetLowerBoundValue();
+		Parameters.StartFrame = FocusedSequence->GetMovieScene()->GetPlaybackRange().GetLowerBoundValue();
 		Parameters.Project.bStartAtCurrentTimecode = false;
 
 		// If not resetting the playhead, store the current time as the start frame for recording. 
@@ -320,14 +323,14 @@ void UCacheTrackRecorder::RecordCacheTracks(const TArray<IMovieSceneCachedTrack*
 		}
 
 		UCacheTrackRecorder* NewRecorder = NewObject<UCacheTrackRecorder>(GetTransientPackage(), NAME_None, RF_Transient);
-		UTakeMetaData* TakeMetaData = LevelSequence->FindOrAddMetaData<UTakeMetaData>();
+		UTakeMetaData* TakeMetaData = FocusedSequence->FindOrAddMetaData<UTakeMetaData>();
 		if (TakeMetaData->GetSlate().IsEmpty())
 		{
-			TakeMetaData->SetSlate(LevelSequence->GetName());
+			TakeMetaData->SetSlate(FocusedSequence->GetName());
 		}
 
 		FText ErrorText = LOCTEXT("UnknownError", "An unknown error occurred when trying to start recording");
-		if (!NewRecorder->Initialize(LevelSequence, CacheTracks, TakeMetaData->GetSlate(), Parameters, &ErrorText))
+		if (!NewRecorder->Initialize(RootSequence, CacheTracks, TakeMetaData->GetSlate(), Parameters, &ErrorText))
 		{
 			if (ensure(!ErrorText.IsEmpty()))
 			{
@@ -350,7 +353,10 @@ void UCacheTrackRecorder::RecordSelectedTracks(TSharedPtr<ISequencer> Sequencer,
 	{
 		if (IMovieSceneCachedTrack* CacheTrack = Cast<IMovieSceneCachedTrack>(SelectedTrack))
 		{
-			CacheTracks.Add(CacheTrack);
+			if (CacheTrack->IsCacheRecordingAllowed())
+			{
+				CacheTracks.Add(CacheTrack);
+			}
 		}
 	}
 
@@ -371,7 +377,7 @@ bool UCacheTrackRecorder::SetActiveRecorder(UCacheTrackRecorder* NewActiveRecord
 
 // Non-static api for UCacheTrackRecorder
 
-bool UCacheTrackRecorder::Initialize(ULevelSequence* LevelSequence, const TArray<IMovieSceneCachedTrack*>& InCacheTracks, const FString& Slate, const FCacheRecorderParameters& InParameters, FText* OutError)
+bool UCacheTrackRecorder::Initialize(ULevelSequence* RootLevelSequence, const TArray<IMovieSceneCachedTrack*>& InCacheTracks, const FString& Slate, const FCacheRecorderParameters& InParameters, FText* OutError)
 {
 	FGCObjectScopeGuard GCGuard(this);
 
@@ -405,7 +411,7 @@ bool UCacheTrackRecorder::Initialize(ULevelSequence* LevelSequence, const TArray
 	}
 
 	FCacheRecorderParameters FinalParameters = InParameters;
-	WeakSequencer = TakesUtils::OpenSequencer(LevelSequence, OutError);
+	WeakSequencer = TakesUtils::OpenSequencer(RootLevelSequence, OutError);
 	if (!WeakSequencer.IsValid())
 	{
 		return false;
@@ -462,6 +468,16 @@ bool UCacheTrackRecorder::Initialize(ULevelSequence* LevelSequence, const TArray
 		TRange<double> NewRange(ViewRangeStartSeconds - 0.5f, ViewRangeStartSeconds + (Range.GetUpperBoundValue() - Range.GetLowerBoundValue()) + 0.5f);
 		Sequencer->SetViewRange(NewRange, EViewRangeInterpolation::Immediate);
 		Sequencer->SetClampRange(TRange(Sequencer->GetViewRange()));
+		if (Sequencer->GetPlaybackSpeed() <= 0)
+		{
+			Sequencer->SetPlaybackSpeed(1);
+		}
+		ESequencerLoopMode LoopMode = Sequencer->GetSequencerSettings()->GetLoopMode();
+		if (LoopMode != SLM_NoLoop)
+		{
+			Sequencer->GetSequencerSettings()->SetLoopMode(SLM_NoLoop);
+			OnStopCleanup.Add([LoopMode, this] { WeakSequencer.Pin()->GetSequencerSettings()->SetLoopMode(LoopMode); });
+		}
 	}
 
 	return true;
@@ -509,6 +525,20 @@ void UCacheTrackRecorder::InitializeFromParameters()
 			};
 			OnStopCleanup.Add(RestoreImmersiveMode);
 		}
+	}
+
+	int32 MinScalability = -1;
+	for (FCachedTrackSource& CacheTrack : CacheTracks)
+	{
+		MinScalability = FMath::Max(MinScalability, CacheTrack.Track->GetMinimumEngineScalabilitySetting());
+	}
+	if (MinScalability >= 0)
+	{
+		Scalability::FQualityLevels CurrentQualityLevels = Scalability::GetQualityLevels();
+		Scalability::FQualityLevels NewQualityLevels = CurrentQualityLevels;
+		NewQualityLevels.SetFromSingleQualityLevel(MinScalability);
+		SetQualityLevels(NewQualityLevels, true);
+		OnStopCleanup.Add([CurrentQualityLevels] { SetQualityLevels(CurrentQualityLevels, true); });
 	}
 }
 
@@ -593,7 +623,12 @@ void UCacheTrackRecorder::Tick(float DeltaTime)
 
 FQualifiedFrameTime UCacheTrackRecorder::GetRecordTime() const
 {
-	return TakesUtils::GetRecordTime(WeakSequencer.Pin(), SequenceAsset, TimecodeAtStart, Parameters.Project.bStartAtCurrentTimecode);
+	TSharedPtr<ISequencer> Sequencer = WeakSequencer.Pin();
+	if (Sequencer.IsValid())
+	{
+		return Sequencer->GetLocalTime();
+	}
+	return TakesUtils::GetRecordTime(Sequencer, SequenceAsset, TimecodeAtStart, Parameters.Project.bStartAtCurrentTimecode);
 }
 
 void UCacheTrackRecorder::InternalTick(float DeltaTime)
@@ -632,7 +667,7 @@ void UCacheTrackRecorder::InternalTick(float DeltaTime)
 		}
 	}
 
-	if (StopRecordingFrame.IsSet() && CurrentFrameTime.FrameNumber >= StopRecordingFrame.GetValue())
+	if ((StopRecordingFrame.IsSet() && CurrentFrameTime.FrameNumber >= StopRecordingFrame.GetValue()) || Sequencer->GetPlaybackStatus() == EMovieScenePlayerStatus::Stopped)
 	{
 		Stop();
 	}
@@ -692,6 +727,14 @@ void UCacheTrackRecorder::PreRecord()
 		}
 	}
 
+	// we set this global variable to prevent things like auto-save to trigger during a recording
+	GIsSlowTask = true;
+	OnStopCleanup.Add([]() { GIsSlowTask = false; });
+
+	// prevent dropped frames from slate throttling
+	FSlateThrottleManager::Get().DisableThrottle(true);
+	OnStopCleanup.Add([]() { FSlateThrottleManager::Get().DisableThrottle(false); });
+
 	if (Parameters.Project.bCacheTrackRecorderControlsClockTime)
 	{
 		ModifyEditorTickState();
@@ -736,7 +779,7 @@ void UCacheTrackRecorder::PreRecord()
 		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(PlaybackStartFrame, TNumericLimits<int32>::Max() - 1), false);
 		if (Sequencer.IsValid())
 		{
-			Sequencer->SetGlobalTime(PlaybackStartFrame);
+			Sequencer->SetLocalTimeDirectly(PlaybackStartFrame);
 			Sequencer->SetPlaybackStatus(EMovieScenePlayerStatus::Paused);
 		}
 	}

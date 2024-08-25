@@ -101,6 +101,10 @@ FZipArchiveWriter::~FZipArchiveWriter()
 
 void FZipArchiveWriter::AddFile(const FString& Filename, TConstArrayView<uint8> Data, const FDateTime& Timestamp)
 {
+	if (!ensureMsgf(!Filename.IsEmpty(), TEXT("Failed to write data to zip file; filename is empty.")))
+	{
+		return;
+	}
 	uint32 Crc = FCrc::MemCrc32(Data.GetData(), Data.Num());
 
 	// Convert the date-time to a zip file timestamp (2-second resolution).

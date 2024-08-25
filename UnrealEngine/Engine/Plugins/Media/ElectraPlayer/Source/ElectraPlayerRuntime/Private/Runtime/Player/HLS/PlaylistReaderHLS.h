@@ -21,15 +21,15 @@ public:
 
 	virtual ~IPlaylistReaderHLS() = default;
 
-	static const FString OptionKeyLiveSeekableStartOffset;				//!< (FTimeValue) value specifying how many seconds away from the Live media timeline the seekable range should start.
-	static const FString OptionKeyLiveSeekableEndOffsetAudioOnly;		//!< (FTimeValue) value specifying how many seconds away from the Live media timeline the seekable range should end for audio-only playlists.
-	static const FString OptionKeyLiveSeekableEndOffsetBeConservative;	//!< (bool) true to use a larger Live edge distance, false to go with the smaller absolute difference
-	static const FString OptionKeyMasterPlaylistLoadConnectTimeout;		//!< (FTimeValue) value specifying connection timeout fetching the master playlist
-	static const FString OptionKeyMasterPlaylistLoadNoDataTimeout;		//!< (FTimeValue) value specifying no-data timeout fetching the master playlist
-	static const FString OptionKeyVariantPlaylistLoadConnectTimeout;	//!< (FTimeValue) value specifying connection timeout fetching a variant playlist the first time
-	static const FString OptionKeyVariantPlaylistLoadNoDataTimeout;		//!< (FTimeValue) value specifying no-data timeout fetching a variant playlist the first time
-	static const FString OptionKeyUpdatePlaylistLoadConnectTimeout;		//!< (FTimeValue) value specifying connection timeout fetching a variant playlist repeatedly
-	static const FString OptionKeyUpdatePlaylistLoadNoDataTimeout;		//!< (FTimeValue) value specifying no-data timeout fetching a variant playlist repeatedly
+	static const FName OptionKeyLiveSeekableStartOffset;				//!< (FTimeValue) value specifying how many seconds away from the Live media timeline the seekable range should start.
+	static const FName OptionKeyLiveSeekableEndOffsetAudioOnly;		//!< (FTimeValue) value specifying how many seconds away from the Live media timeline the seekable range should end for audio-only playlists.
+	static const FName OptionKeyLiveSeekableEndOffsetBeConservative;	//!< (bool) true to use a larger Live edge distance, false to go with the smaller absolute difference
+	static const FName OptionKeyMasterPlaylistLoadConnectTimeout;		//!< (FTimeValue) value specifying connection timeout fetching the master playlist
+	static const FName OptionKeyMasterPlaylistLoadNoDataTimeout;		//!< (FTimeValue) value specifying no-data timeout fetching the master playlist
+	static const FName OptionKeyVariantPlaylistLoadConnectTimeout;	//!< (FTimeValue) value specifying connection timeout fetching a variant playlist the first time
+	static const FName OptionKeyVariantPlaylistLoadNoDataTimeout;		//!< (FTimeValue) value specifying no-data timeout fetching a variant playlist the first time
+	static const FName OptionKeyUpdatePlaylistLoadConnectTimeout;		//!< (FTimeValue) value specifying connection timeout fetching a variant playlist repeatedly
+	static const FName OptionKeyUpdatePlaylistLoadNoDataTimeout;		//!< (FTimeValue) value specifying no-data timeout fetching a variant playlist repeatedly
 
 	/**
 	 * Loads and parses the playlist.

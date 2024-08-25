@@ -53,7 +53,7 @@ void FLumenHeightfieldGPUData::FillData(const FLumenHeightfield& RESTRICT Height
 {
 	// Note: layout must match GetLumenHeightfieldData in usf
 
-	FLargeWorldRenderPosition BoundsCenter(FVector3f::ZeroVector);
+	FDFVector3 BoundsCenter{};
 	FVector3f BoundsExtent = FVector3f::ZeroVector;
 	uint32 MeshCardsIndex = UINT32_MAX;
 
@@ -61,12 +61,12 @@ void FLumenHeightfieldGPUData::FillData(const FLumenHeightfield& RESTRICT Height
 	{
 		MeshCardsIndex = Heightfield.MeshCardsIndex;
 		const FBox WorldSpaceBounds = MeshCards[Heightfield.MeshCardsIndex].GetWorldSpaceBounds();
-		BoundsCenter = FLargeWorldRenderPosition(WorldSpaceBounds.GetCenter());
+		BoundsCenter = FDFVector3(WorldSpaceBounds.GetCenter());
 		BoundsExtent = (FVector3f)WorldSpaceBounds.GetExtent();
 	}
 
-	OutData[0] = BoundsCenter.GetTile();
-	OutData[1] = BoundsCenter.GetOffset();
+	OutData[0] = BoundsCenter.High;
+	OutData[1] = BoundsCenter.Low;
 	OutData[2] = BoundsExtent;
 	OutData[0].W = *((float*)&MeshCardsIndex);
 

@@ -277,8 +277,6 @@ bool FPackageResourceIoBackend::DoesChunkExist(const FIoChunkId& ChunkId) const
 	}
 	
 	return ResourceMgr.DoesPackageExist(Path, Segment);
-
-	return false;
 }
 
 TIoStatusOr<uint64> FPackageResourceIoBackend::GetSizeForChunk(const FIoChunkId& ChunkId) const

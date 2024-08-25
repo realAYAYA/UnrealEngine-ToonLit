@@ -33,7 +33,7 @@ namespace UE::MVVM
 	class FFieldIterator_Bindable : public UE::PropertyViewer::FFieldIterator_BlueprintVisible
 	{
 	public:
-		FFieldIterator_Bindable(const UWidgetBlueprint* WidgetBlueprint, EFieldVisibility InVisibilityFlags, const FProperty* InAssignableTo = nullptr);
+		FFieldIterator_Bindable(const UWidgetBlueprint* WidgetBlueprint, EFieldVisibility InVisibilityFlags, const FProperty* InAssignableTo = nullptr, const bool InIsBindingToEvent = false);
 		virtual TArray<FFieldVariant> GetFields(const UStruct*) const override;
 		EFieldVisibility GetFieldVisibilityFlags() const
 		{
@@ -48,6 +48,7 @@ namespace UE::MVVM
 		TWeakObjectPtr<const UWidgetBlueprint> WidgetBlueprint; 
 		EFieldVisibility FieldVisibilityFlags = EFieldVisibility::All;
 		const FProperty* AssignableTo = nullptr;
+		bool bIsBindingToEvent = false;
 	};
 
 	/**
@@ -63,7 +64,7 @@ namespace UE::MVVM
 	};
 
 	/** Genereate the icon for the binding type. */
-	TSharedRef<SWidget> ConstructFieldPreSlot(const UWidgetBlueprint* WidgetBlueprint, UE::PropertyViewer::SPropertyViewer::FHandle Handle, const FFieldVariant FieldPath);
+	TSharedRef<SWidget> ConstructFieldPreSlot(const UWidgetBlueprint* WidgetBlueprint, UE::PropertyViewer::SPropertyViewer::FHandle Handle, const FFieldVariant FieldPath, const bool bIsForEvent = false);
 
 	/** 
 	 * 
@@ -77,6 +78,7 @@ namespace UE::MVVM
 			SLATE_ARGUMENT_DEFAULT(bool, ShowSearchBox) = false;
 			SLATE_ARGUMENT_DEFAULT(EFieldVisibility, FieldVisibilityFlags) = EFieldVisibility::All;
 			SLATE_ARGUMENT_DEFAULT(bool, EnableSelection) = true;
+			SLATE_ARGUMENT_DEFAULT(bool, IsBindingToEvent) = false;
 
 			/** 
 			 * Show only properties that are assignable to the given property. 
@@ -92,11 +94,10 @@ namespace UE::MVVM
 
 		void ClearSources();
 
-		void AddSource(UClass* Class, FName Name, FGuid Guid);
 		void AddSource(const FBindingSource& InSource);
 		void AddSources(TArrayView<const FBindingSource> InSources);
 
-		void AddWidgetBlueprint(const UWidgetBlueprint* WidgetBlueprint);
+		void AddWidgetBlueprint();
 		void AddWidgets(TArrayView<const UWidget*> Widgets);
 		void AddViewModels(TArrayView<const FMVVMBlueprintViewModelContext> ViewModels);
 
@@ -123,6 +124,7 @@ namespace UE::MVVM
 		FMVVMBlueprintPropertyPath SelectedPath;
 		TSharedPtr<SPropertyViewer> PropertyViewer;
 		TWeakObjectPtr<const UWidgetBlueprint> WidgetBlueprint;
+		bool bIsBindingToEvent = false;
 	};
 
 } //namespace UE::MVVM

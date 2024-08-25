@@ -207,6 +207,16 @@ namespace UE
 			return CompletedTaskCount == TaskPool.Num();
 		}
 
+		bool FInterchangeDispatcher::IsInterchangeWorkerRunning()
+		{
+			if (IsHandlerAlive())
+			{
+				WaitAllTaskToCompleteExecution();
+				return GetInterchangeWorkerFatalError().IsEmpty();
+			}
+			return false;
+		}
+
 		//this is a static function
 		bool FInterchangeDispatcher::IsInterchangeWorkerAvailable()
 		{

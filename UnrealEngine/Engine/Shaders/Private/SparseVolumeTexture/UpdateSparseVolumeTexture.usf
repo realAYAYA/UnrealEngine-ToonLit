@@ -23,56 +23,25 @@ uint3 UnflattenCoord(uint Index, uint3 VolumeSize)
 	return Result;
 }
 
-#ifdef UPDATE_TILE_TEXTURE_FROM_BUFFER
-
-RWTexture3D<float4> DstPhysicalTileTextureA;
-RWTexture3D<float4> DstPhysicalTileTextureB;
-ByteAddressBuffer DstTileCoords;
-Buffer<float4> SrcPhysicalTileBufferA;
-Buffer<float4> SrcPhysicalTileBufferB;
-uint TileCoordsBufferOffset;
-uint TileDataBufferOffsetInTiles;
-uint NumTilesToCopy;
-uint NumDispatchedGroups;
-uint PaddedTileSize;
-uint bCopyTexureAOnlyUI;
-
-[numthreads(64, 1, 1)]
-void SparseVolumeTextureUpdateFromBufferCS(uint3 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex)
-{
-	const uint GroupIdx = GroupId.x;
-	const bool bCopyTextureAOnly = (bCopyTexureAOnlyUI != 0);
-	const uint NumVoxelsPerPaddedTile = PaddedTileSize * PaddedTileSize * PaddedTileSize;
-
-	// Process one tile per workgroup
-	for (uint TileIdx = GroupIdx; TileIdx < NumTilesToCopy; TileIdx += NumDispatchedGroups)
-	{
-		const uint PackedDstCoord = DstTileCoords.Load((TileIdx + TileCoordsBufferOffset) << 2u);
-		const uint3 DstBaseCoord = uint3(PackedDstCoord & 0xFFu, (PackedDstCoord >> 8u) & 0xFFu, (PackedDstCoord >> 16u) & 0xFFu) * PaddedTileSize;
-		const uint TileDataBufferBaseIndex = (TileIdx + TileDataBufferOffsetInTiles) * NumVoxelsPerPaddedTile;
-
-		// Iterate over all texels in the tile and copy them
-		for (uint VoxelIdx = GroupThreadIndex; VoxelIdx < NumVoxelsPerPaddedTile; VoxelIdx += 64)
-		{
-			const uint LoadIdx = TileDataBufferBaseIndex + VoxelIdx;
-			const uint3 DstCoord = DstBaseCoord + UnflattenCoord(VoxelIdx, PaddedTileSize);
-			DstPhysicalTileTextureA[DstCoord] = SrcPhysicalTileBufferA.Load(LoadIdx);
-			if (!bCopyTextureAOnly)
-			{
-				DstPhysicalTileTextureB[DstCoord] = SrcPhysicalTileBufferB.Load(LoadIdx);
-			}
-		}
-	}
-}
-
-#endif // UPDATE_TILE_TEXTURE_FROM_BUFFER
-
 #ifdef UPDATE_TILE_TEXTURE_FROM_SPARSE_BUFFER
 
+#ifndef TEXTURE_UPDATE_MASK
+#define TEXTURE_UPDATE_MASK 0
+#endif // TEXTURE_UPDATE_MASK
+
+#define UPDATE_TEXTURE_A ((TEXTURE_UPDATE_MASK & 1) != 0)
+#define UPDATE_TEXTURE_B ((TEXTURE_UPDATE_MASK & 2) != 0)
+
+#if UPDATE_TEXTURE_A
 RWTexture3D<float4> DstPhysicalTileTextureA;
-RWTexture3D<float4> DstPhysicalTileTextureB;
 Buffer<float4> SrcPhysicalTileBufferA;
+#endif // UPDATE_TEXTURE_A
+
+#if UPDATE_TEXTURE_B
+RWTexture3D<float4> DstPhysicalTileTextureB;
 Buffer<float4> SrcPhysicalTileBufferB;
+#endif // UPDATE_TEXTURE_B
+
 ByteAddressBuffer OccupancyBitsBuffer;
 ByteAddressBuffer TileDataOffsetsBuffer;
 ByteAddressBuffer DstTileCoordsBuffer;
@@ -85,7 +54,6 @@ uint NumTilesToCopy;
 uint BufferTileStep;
 uint NumDispatchedGroups;
 uint PaddedTileSize;
-uint CopyTexureMask;
 
 uint ComputeLocalVoxelDataLoadIndex(uint VoxelIndex, uint2 OccupancyBits, out bool bValidVoxel)
 {
@@ -106,14 +74,43 @@ uint ComputeLocalVoxelDataLoadIndex(uint VoxelIndex, uint2 OccupancyBits, out bo
 	return PrefixSum;
 }
 
+void CopyToTileDataTexture(RWTexture3D<float4> DstTileTexture, Buffer<float4> SrcBuffer, uint SrcVoxelDataOffset, uint TileIdx, uint TextureTileOffset, uint3 DstBaseCoord, float4 FallbackValue, uint GroupThreadIndex)
+{
+	const uint NumVoxelsPerPaddedTile = PaddedTileSize * PaddedTileSize * PaddedTileSize;
+	const uint NumOccupancyWordsPerPaddedTile = (NumVoxelsPerPaddedTile + 31u) / 32u;
+
+	// The offset in the source buffer at which the tile data for this tile starts.
+	const uint TileDataOffset = TileDataOffsetsBuffer.Load((TileIdx + TextureTileOffset) << 2u);
+	uint OccupancyLoadIdx = (TileIdx + TextureTileOffset) * NumOccupancyWordsPerPaddedTile;
+	// Keep track of the number of voxels read from the source buffer (for this tile only).
+	uint NumReadVoxels = 0;
+
+	// Iterate over all voxels in the tile and copy them.
+	for (uint VoxelIdx = GroupThreadIndex; VoxelIdx < NumVoxelsPerPaddedTile; VoxelIdx += 64)
+	{
+		const uint2 OccupancyBits = OccupancyBitsBuffer.Load2(OccupancyLoadIdx << 2u);
+
+		bool bValidVoxel = false;
+		const uint LocalLoadIndex = ComputeLocalVoxelDataLoadIndex(VoxelIdx, OccupancyBits, bValidVoxel);
+		const uint VoxelLoadIndex = TileDataOffset + NumReadVoxels + LocalLoadIndex;
+		const uint3 DstCoord = DstBaseCoord + UnflattenCoord(VoxelIdx, PaddedTileSize);
+
+		float4 Voxel = FallbackValue;
+		BRANCH if (bValidVoxel)
+		{
+			Voxel = SrcBuffer.Load(VoxelLoadIndex - SrcVoxelDataOffset);
+		}
+		DstTileTexture[DstCoord] = Voxel;
+
+		OccupancyLoadIdx += 2; // We just consumed 64 bits (2 uints)
+		NumReadVoxels += countbits(OccupancyBits.x) + countbits(OccupancyBits.y);
+	}
+}
+
 [numthreads(64, 1, 1)]
 void SparseVolumeTextureUpdateFromSparseBufferCS(uint3 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex)
 {
-	const bool bCopyTextureA = CopyTexureMask & 1u;
-	const bool bCopyTextureB = CopyTexureMask & 2u;
 	const uint GroupIdx = GroupId.x;
-	const uint NumVoxelsPerPaddedTile = PaddedTileSize * PaddedTileSize * PaddedTileSize;
-	const uint NumOccupancyWordsPerPaddedTile = (NumVoxelsPerPaddedTile + 31u) / 32u;
 
 	// Process one tile per workgroup
 	for (uint TileIdx = (GroupIdx + TileIndexOffset); TileIdx < (NumTilesToCopy + TileIndexOffset); TileIdx += NumDispatchedGroups)
@@ -125,53 +122,14 @@ void SparseVolumeTextureUpdateFromSparseBufferCS(uint3 GroupId : SV_GroupID, uin
 		// This offset is used to jump to the offset for the current texture.
 		uint TextureTileOffset = 0;
 
-		// Iterate over both possible textures.
-		UNROLL for (uint TextureIdx = 0; TextureIdx < 2; ++TextureIdx)
-		{
-			BRANCH if ((TextureIdx == 0 && bCopyTextureA) || (TextureIdx == 1 && bCopyTextureB))
-			{
-				// The offset in the source buffer at which the tile data for this tile starts.
-				const uint TileDataOffset = TileDataOffsetsBuffer.Load((TileIdx + TextureTileOffset) << 2u);
-				uint OccupancyLoadIdx = (TileIdx + TextureTileOffset) * NumOccupancyWordsPerPaddedTile;
-				// Keep track of the number of voxels read from the source buffer (for this tile only).
-				uint NumReadVoxels = 0;
+#if UPDATE_TEXTURE_A
+		CopyToTileDataTexture(DstPhysicalTileTextureA, SrcPhysicalTileBufferA, SrcVoxelDataOffsetA, TileIdx, TextureTileOffset, DstBaseCoord, FallbackValueA, GroupThreadIndex);
+		TextureTileOffset += BufferTileStep;
+#endif // UPDATE_TEXTURE_A
 
-				// Iterate over all voxels in the tile and copy them.
-				for (uint VoxelIdx = GroupThreadIndex; VoxelIdx < NumVoxelsPerPaddedTile; VoxelIdx += 64)
-				{
-					const uint2 OccupancyBits = OccupancyBitsBuffer.Load2(OccupancyLoadIdx << 2u);
-
-					bool bValidVoxel = false;
-					const uint LocalLoadIndex = ComputeLocalVoxelDataLoadIndex(VoxelIdx, OccupancyBits, bValidVoxel);
-					const uint VoxelLoadIndex = TileDataOffset + NumReadVoxels + LocalLoadIndex;
-					const uint3 DstCoord = DstBaseCoord + UnflattenCoord(VoxelIdx, PaddedTileSize);
-
-					BRANCH if (TextureIdx == 0)
-					{
-						float4 Voxel = FallbackValueA;
-						BRANCH if (bValidVoxel)
-						{
-							Voxel = SrcPhysicalTileBufferA.Load(VoxelLoadIndex - SrcVoxelDataOffsetA);
-						}
-						DstPhysicalTileTextureA[DstCoord] = Voxel;
-					}
-					else
-					{
-						float4 Voxel = FallbackValueB;
-						BRANCH if (bValidVoxel)
-						{
-							Voxel = SrcPhysicalTileBufferB.Load(VoxelLoadIndex - SrcVoxelDataOffsetB);
-						}
-						DstPhysicalTileTextureB[DstCoord] = Voxel;
-					}
-					
-					OccupancyLoadIdx += 2; // We just consumed 64 bits (2 uints)
-					NumReadVoxels += countbits(OccupancyBits.x) + countbits(OccupancyBits.y);
-				}
-
-				TextureTileOffset += BufferTileStep;
-			}
-		}
+#if UPDATE_TEXTURE_B
+		CopyToTileDataTexture(DstPhysicalTileTextureB, SrcPhysicalTileBufferB, SrcVoxelDataOffsetB, TileIdx, TextureTileOffset, DstBaseCoord, FallbackValueB, GroupThreadIndex);
+#endif // UPDATE_TEXTURE_B
 	}
 }
 
@@ -205,22 +163,3 @@ void SparseVolumeTextureUpdatePageTableCS(uint3 DispatchThreadID : SV_DispatchTh
 }
 
 #endif // UPDATE_PAGE_TABLE
-
-#ifdef UPDATE_STREAMING_INFO_BUFFER
-
-RWByteAddressBuffer StreamingInfoBuffer;
-ByteAddressBuffer StreamingInfoBufferUpdates;
-uint UpdateOffset;
-uint NumUpdates;
-
-[numthreads(64, 1, 1)]
-void SparseVolumeTextureUpdateStreamingInfoBufferCS(uint3 DispatchThreadID : SV_DispatchThreadID)
-{
-	if (DispatchThreadID.x < NumUpdates)
-	{
-		uint2 Update = StreamingInfoBufferUpdates.Load2(((DispatchThreadID.x + UpdateOffset) * 2) << 2);
-		StreamingInfoBuffer.Store(Update.x << 2, Update.y);
-	}
-}
-
-#endif // UPDATE_STREAMING_INFO_BUFFER

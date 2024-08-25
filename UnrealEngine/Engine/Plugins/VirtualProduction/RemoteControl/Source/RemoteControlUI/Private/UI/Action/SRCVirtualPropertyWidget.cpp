@@ -20,7 +20,8 @@ void SRCVirtualPropertyWidget::Construct(const FArguments& InArgs, URCVirtualPro
 		return;
 	}
 
-	this->OnGenerateWidget = InArgs._OnGenerateWidget;
+	OnGenerateWidget = InArgs._OnGenerateWidget;
+	OnExitingEditModeDelegate = InArgs._OnExitingEditMode;
 
 	VirtualPropertyWeakPtr = InVirtualProperty;
 
@@ -38,6 +39,7 @@ void SRCVirtualPropertyWidget::Construct(const FArguments& InArgs, URCVirtualPro
 			.OnMouseDoubleClick(this, &SRCVirtualPropertyWidget::OnMouseDoubleClick)
 			[
 				SAssignNew(VirtualPropertyWidgetBox, SBox)
+				.VAlign(VAlign_Center)
 				.Padding(FMargin(6.f))
 				[
 					VirtualPropertyDisplayWidget
@@ -93,6 +95,9 @@ void SRCVirtualPropertyWidget::ExitEditMode()
 	if (ensure(OnGenerateWidget.IsBound()))
 	{
 		TSharedRef<SWidget> VirtualPropertyDisplayWidget = OnGenerateWidget.Execute(VirtualPropertyWeakPtr.Get());
+
+		// Used to update other selected actions for Conditional and Range behaviour
+		OnExitingEditModeDelegate.ExecuteIfBound();
 
 		// Restore the readonly view of the virtual property widget
 		VirtualPropertyWidgetBox->SetContent(VirtualPropertyDisplayWidget);

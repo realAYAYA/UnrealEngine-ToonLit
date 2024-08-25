@@ -90,7 +90,7 @@ public:
 
 	FString GetName() const
 	{
-		return FString::Printf(TEXT("%s (%s)"), *Device->GetName(), *Device->GetTargetPlatform().PlatformName());
+		return FString::Printf(TEXT("%s (%s)"), *Device->GetName(), *Device->GetPlatformControls().PlatformName());
 	}
 
 	ITargetDevicePtr GetDevice() const

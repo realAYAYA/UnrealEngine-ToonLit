@@ -159,6 +159,12 @@ struct FNotificationInfo
 		bAllowThrottleWhenFrameRateIsLow(true)
 	{ };
 
+	/**
+	 * Shows a "Copy to Clipboard" hyperlink that when clicked copies the text and sub-text to the operating system clipboard
+	 * @note Text and SubText must be set prior to calling this method for them to be included
+	 */
+	SLATE_API void ShowCopyToClipboadHyperlink();
+
 	/** If set, overrides the entire content of the notification with this widget */
 	TSharedPtr<INotificationWidget> ContentWidget;
 

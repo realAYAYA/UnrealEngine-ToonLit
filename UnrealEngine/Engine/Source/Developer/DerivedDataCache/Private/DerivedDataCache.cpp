@@ -600,7 +600,7 @@ public:
 		UE_LOG(LogDerivedDataCache, VeryVerbose, TEXT("GetSynchronous %s from '%s'"), *CacheKey, *DataDeriver->GetDebugContextString());
 		FAsyncTask<FBuildAsyncWorker> PendingTask(Backend, DataDeriver, *CacheKey, DataDeriver->GetDebugContextString(), true);
 		AddToAsyncCompletionCounter(1);
-		PendingTask.StartSynchronousTask();
+		PendingTask.StartSynchronousTask(EQueuedWorkPriority::Normal, EQueuedWorkFlags::DoNotRunInsideBusyWait);
 		OutData = TArray<uint8>(MoveTemp(PendingTask.GetTask().Data));
 		if (bDataWasBuilt)
 		{
@@ -623,11 +623,11 @@ public:
 		AddToAsyncCompletionCounter(1);
 		if (!bSync)
 		{
-			AsyncTask->StartBackgroundTask(DataDeriver->GetCustomThreadPool());
+			AsyncTask->StartBackgroundTask(DataDeriver->GetCustomThreadPool(), EQueuedWorkPriority::Normal, EQueuedWorkFlags::DoNotRunInsideBusyWait);
 		}
 		else
 		{
-			AsyncTask->StartSynchronousTask();
+			AsyncTask->StartSynchronousTask(EQueuedWorkPriority::Normal, EQueuedWorkFlags::DoNotRunInsideBusyWait);
 		}
 		// Must return a valid handle
 		check(Handle != 0);
@@ -710,7 +710,7 @@ public:
 		UE_LOG(LogDerivedDataCache, VeryVerbose, TEXT("GetSynchronous %s from '%.*s'"), CacheKey, DebugContext.Len(), DebugContext.GetData());
 		FAsyncTask<FBuildAsyncWorker> PendingTask(Backend, nullptr, CacheKey, DebugContext, true);
 		AddToAsyncCompletionCounter(1);
-		PendingTask.StartSynchronousTask();
+		PendingTask.StartSynchronousTask(EQueuedWorkPriority::Normal, EQueuedWorkFlags::DoNotRunInsideBusyWait);
 		OutData = DataType(MoveTemp(PendingTask.GetTask().Data));
 		return PendingTask.GetTask().bSuccess;
 	}
@@ -736,7 +736,7 @@ public:
 		PendingTasks.Add(Handle, AsyncTask);
 		AddToAsyncCompletionCounter(1);
 		// This request is I/O only, doesn't do any processing, send it to the I/O only thread-pool to avoid wasting worker threads on long I/O waits.
-		AsyncTask->StartBackgroundTask(GCacheThreadPool);
+		AsyncTask->StartBackgroundTask(GCacheThreadPool, EQueuedWorkPriority::Normal, EQueuedWorkFlags::DoNotRunInsideBusyWait);
 		return Handle;
 	}
 
@@ -950,16 +950,6 @@ public:
 
 		GatherResourceStats(ResourceStats);
 
-		FDerivedDataCacheResourceStat ResourceStatsTotal(TEXT("Total"));
-
-		// Accumulate Totals
-		for (const FDerivedDataCacheResourceStat& Stat : ResourceStats)
-		{
-			ResourceStatsTotal += Stat;
-		}
-
-		ResourceStats.Emplace(ResourceStatsTotal);
-
 		// Append to the attributes
 		for (const FDerivedDataCacheResourceStat& Stat : ResourceStats)
 		{
@@ -1018,12 +1008,15 @@ public:
 			}
 		}
 
+		// Gather the backend stats
 		TSharedRef<FDerivedDataCacheStatsNode> RootNode = Backend->GatherUsageStats();
 		RootNode->ForEachDescendant([&Attributes](TSharedRef<const FDerivedDataCacheStatsNode> Node)
 			{
+				const FString& CacheName = Node->GetCacheName();
+
 				for (const FCookStatsManager::StringKeyValue& Stat : Node->CustomStats)
 				{
-					FString FormattedAttrName = Stat.Key.Replace(TEXT("."), TEXT("_"));
+					FString FormattedAttrName = CacheName + TEXT("_") + Stat.Key.Replace(TEXT("."), TEXT("_"));
 
 					if (Stat.Value.IsNumeric())
 					{
@@ -1033,8 +1026,6 @@ public:
 					{
 						Attributes.Emplace(FormattedAttrName, Stat.Value);
 					}
-
-
 				}
 			});
 #endif

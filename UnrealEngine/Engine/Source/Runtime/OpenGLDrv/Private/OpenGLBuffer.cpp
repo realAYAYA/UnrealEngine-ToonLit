@@ -264,7 +264,7 @@ void FOpenGLDynamicRHI::RHICopyBufferRegion(FRHIBuffer* DestBufferRHI, uint64 Ds
 	glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
 }
 
-void FOpenGLDynamicRHI::RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
+void FOpenGLDynamicRHI::RHITransferBufferUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
 {
 	VERIFY_GL_SCOPE();
 	FOpenGLBuffer* Dst = ResourceCast(DestBuffer);

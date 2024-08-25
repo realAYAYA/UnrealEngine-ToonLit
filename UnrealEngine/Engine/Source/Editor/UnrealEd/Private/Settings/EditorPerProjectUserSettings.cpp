@@ -9,6 +9,12 @@
 
 #define LOCTEXT_NAMESPACE "EditorPerProjectUserSettings"
 
+static TAutoConsoleVariable<int32> CVarNeverStartInPreviewMode(
+	TEXT("r.Editor.NeverStartInPreviewMode"),
+	0,
+	TEXT("0: Editor can start in preview mode, 1: Editor never starts in preview mode"),
+	ECVF_Default);
+
 /// @cond DOXYGEN_WARNINGS
 
 UEditorPerProjectUserSettings::UEditorPerProjectUserSettings(const FObjectInitializer& ObjectInitializer)
@@ -41,9 +47,9 @@ void UEditorPerProjectUserSettings::PostInitProperties()
 {
 	Super::PostInitProperties();
 
-	// if we last saved as the default or we somehow are loading a preview feature level higher than we can support,
+	// if we last saved as the default or we somehow are loading a preview feature level higher than we can support or we explictly disabled it with r.Editor.NeverStartInPreviewMode,
 	// fall back to the current session's maximum feature level
-	if (bPreviewFeatureLevelWasDefault || PreviewFeatureLevel > GMaxRHIFeatureLevel)
+	if (bPreviewFeatureLevelWasDefault || PreviewFeatureLevel > GMaxRHIFeatureLevel || (CVarNeverStartInPreviewMode.GetValueOnAnyThread() != 0))
 	{
 		PreviewFeatureLevel = GMaxRHIFeatureLevel;
 		PreviewShaderPlatformName = NAME_None;

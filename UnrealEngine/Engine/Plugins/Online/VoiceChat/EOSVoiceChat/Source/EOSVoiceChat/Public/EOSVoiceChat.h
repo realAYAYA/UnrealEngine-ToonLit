@@ -4,7 +4,11 @@
 
 #include "EOSShared.h"
 
-#if WITH_EOS_RTC
+#ifndef WITH_EOSVOICECHAT
+#define WITH_EOSVOICECHAT WITH_EOS_RTC
+#endif
+
+#if WITH_EOSVOICECHAT
 
 #include "Misc/CoreMisc.h"
 #include "VoiceChat.h"
@@ -105,7 +109,7 @@ public:
 	virtual FOnVoiceChatChannelJoinedDelegate& OnVoiceChatChannelJoined() override;
 	virtual FOnVoiceChatChannelExitedDelegate& OnVoiceChatChannelExited() override;
 	virtual FOnVoiceChatCallStatsUpdatedDelegate& OnVoiceChatCallStatsUpdated() override;
-	virtual void Set3DPosition(const FString& ChannelName, const FVector& SpeakerPosition, const FVector& ListenerPosition, const FVector& ListenerForwardDirection, const FVector& ListenerUpDirection) override;
+	virtual void Set3DPosition(const FString& ChannelName, const FVector& Position) override;
 	virtual TArray<FString> GetChannels() const override;
 	virtual TArray<FString> GetPlayersInChannel(const FString& ChannelName) const override;
 	virtual EVoiceChatChannelType GetChannelType(const FString& ChannelName) const override;
@@ -228,4 +232,4 @@ protected:
 	friend const TCHAR* LexToString(FEOSVoiceChat::EConnectionState State);
 };
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

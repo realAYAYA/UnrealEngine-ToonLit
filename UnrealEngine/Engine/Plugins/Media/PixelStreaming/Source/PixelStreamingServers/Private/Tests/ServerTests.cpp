@@ -61,9 +61,12 @@ namespace UE::PixelStreamingServers
 		ServerPath = ServerPath / TEXT("cirrus.exe");
 #elif PLATFORM_LINUX
 		ServerPath = ServerPath / TEXT("cirrus");
+#elif PLATFORM_MAC
+        UE_LOG(LogPixelStreamingServers, Error, TEXT("No cirrus binaries exist for Mac!"));
+        return "";
 #else
-		UE_LOG(LogPixelStreaming, Error, TEXT("Unsupported platform for Pixel Streaming."));
-		return false
+		UE_LOG(LogPixelStreamingServers, Error, TEXT("Unsupported platform for Pixel Streaming."));
+		return "";
 #endif
 
 		ServerPath = FPaths::ConvertRelativePathToFull(ServerPath);

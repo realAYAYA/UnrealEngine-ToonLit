@@ -21,6 +21,7 @@ public:
 	virtual uint32 GetWidth() const;
 	virtual uint32 GetHeight() const;
 	virtual ESlateShaderResource::Type GetType() const;
+	virtual ESlatePostRT GetUsedSlatePostBuffers() const override;
 
 	/** Gets the RHI resource used for rendering and updates the last render time for texture streaming */
 	FTextureRHIRef AccessRHIResource()
@@ -56,6 +57,9 @@ protected:
 	TWeakObjectPtr<UTexture> ObjectWeakPtr;
 	FName DebugName;
 #endif
+
+	/** Cached slate SlatePostRT assets / buffers in use */
+	ESlatePostRT CachedSlatePostBuffers;
 };
 
 

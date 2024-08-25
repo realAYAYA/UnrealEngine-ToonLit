@@ -2,8 +2,11 @@
 
 #include "SSourceControlChangelistRows.h"
 
+#include "ComponentReregisterContext.h"
+#include "FileHelpers.h"
 #include "ISourceControlModule.h"
 #include "PackageTools.h"
+#include "PackageSourceControlHelper.h"
 #include "SourceControlHelpers.h"
 #include "UncontrolledChangelistsModule.h"
 #include "SourceControlOperations.h"
@@ -13,7 +16,7 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Algo/Transform.h"
-#include "Async/Async.h"
+#include "Containers/Ticker.h"
 #include "RevisionControlStyle/RevisionControlStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "Styling/StarshipCoreStyle.h"
@@ -22,6 +25,36 @@
 #include "Widgets/Layout/SWidgetSwitcher.h"
 
 #define LOCTEXT_NAMESPACE "SourceControlChangelistRow"
+
+namespace
+{
+	bool CheckoutAndSavePackages(const TArray<FString>& Files)
+	{
+		FPackageSourceControlHelper PackageHelper;
+		TArray<FString> PackageNames;
+		PackageNames.Reserve(Files.Num());
+		for (const FString& Filename : Files)
+		{
+			PackageNames.Add(UPackageTools::FilenameToPackageName(Filename));
+		}
+
+		if (PackageHelper.Checkout(PackageNames))
+		{
+			TArray<UPackage*> Packages;
+			Packages.Reserve(PackageNames.Num());
+			{
+				FGlobalComponentReregisterContext ReregisterContext;
+				for (const FString& PackageName : PackageNames)
+				{
+					Packages.Add(UPackageTools::LoadPackage(PackageName));
+				}
+			}
+			constexpr bool bOnlyDirty = false;
+			return UEditorLoadingAndSavingUtils::SavePackages(Packages, bOnlyDirty);
+		}
+		return false;
+	}
+}
 
 FName SourceControlFileViewColumn::Icon::Id() { return TEXT("Icon"); }
 FText SourceControlFileViewColumn::Icon::GetDisplayText() {return LOCTEXT("Name_Icon", "Revision Control Status"); }
@@ -136,7 +169,8 @@ FText SChangelistTableRow::GetChangelistDescriptionText() const
 
 FText SChangelistTableRow::GetChangelistDescriptionSingleLineText() const
 {
-	return SSourceControlCommon::GetSingleLineChangelistDescription(TreeItem->GetDescriptionText());
+	using namespace SSourceControlCommon;
+	return GetSingleLineChangelistDescription(TreeItem->GetDescriptionText(), ESingleLineFlags::NewlineConvertToSpace);
 }
 
 FReply SChangelistTableRow::OnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent)
@@ -182,6 +216,32 @@ FReply SChangelistTableRow::OnDrop(const FGeometry& InGeometry, const FDragDropE
 			});
 
 			OnPostDrop.ExecuteIfBound();
+		}
+		else if (!DropOperation->OfflineFiles.IsEmpty())
+		{
+			const TArray<FString>& Files = DropOperation->OfflineFiles;
+			SSourceControlCommon::ExecuteChangelistOperationWithSlowTaskWrapper(LOCTEXT("Dropping_Files_On_Changelist", "Moving file(s) to the selected changelist..."), [&]()
+				{
+					ISourceControlProvider& SourceControlProvider = ISourceControlModule::Get().GetProvider();
+
+					if (!CheckoutAndSavePackages(Files))
+					{
+						return;
+					}
+
+					SourceControlProvider.Execute(ISourceControlOperation::Create<FMoveToChangelist>(), DestChangelist, Files, EConcurrency::Synchronous, FSourceControlOperationComplete::CreateLambda(
+						[](const TSharedRef<ISourceControlOperation>& Operation, ECommandResult::Type InResult)
+						{
+							if (InResult == ECommandResult::Succeeded)
+							{
+								SSourceControlCommon::DisplaySourceControlOperationNotification(LOCTEXT("Drop_Files_On_Changelist_Succeeded", "File(s) successfully moved to the selected changelist."), SNotificationItem::CS_Success);
+							}
+							else if (InResult == ECommandResult::Failed)
+							{
+								SSourceControlCommon::DisplaySourceControlOperationNotification(LOCTEXT("Drop_Files_On_Changelist_Failed", "Failed to move the file(s) to the selected changelist."), SNotificationItem::CS_Fail);
+							}
+						}));
+				});
 		}
 	}
 
@@ -252,11 +312,29 @@ FReply SUncontrolledChangelistTableRow::OnDrop(const FGeometry& InGeometry, cons
 
 	if (Operation.IsValid())
 	{
-		SSourceControlCommon::ExecuteUncontrolledChangelistOperationWithSlowTaskWrapper(LOCTEXT("Drag_File_To_Uncontrolled_Changelist", "Moving file(s) to the selected uncontrolled changelists..."),
-			[this, &Operation]()
+		if (Operation->OfflineFiles.IsEmpty())
 		{
-			FUncontrolledChangelistsModule::Get().MoveFilesToUncontrolledChangelist(Operation->Files, Operation->UncontrolledFiles, TreeItem->UncontrolledChangelistState->Changelist);
-		});
+			SSourceControlCommon::ExecuteUncontrolledChangelistOperationWithSlowTaskWrapper(LOCTEXT("Drag_File_To_Uncontrolled_Changelist", "Moving file(s) to the selected uncontrolled changelists..."),
+				[this, &Operation]()
+				{
+					FUncontrolledChangelistsModule::Get().MoveFilesToUncontrolledChangelist(Operation->Files, Operation->UncontrolledFiles, TreeItem->UncontrolledChangelistState->Changelist);
+				});
+		}
+		// Drop unsaved assets (offline files)
+		else
+		{
+			const TArray<FString>& Files = Operation->OfflineFiles;
+			if (!CheckoutAndSavePackages(Files))
+			{
+				return FReply::Unhandled();
+			}
+
+			SSourceControlCommon::ExecuteUncontrolledChangelistOperationWithSlowTaskWrapper(LOCTEXT("Drag_File_To_Uncontrolled_Changelist", "Moving file(s) to the selected uncontrolled changelists..."),
+				[this, &Files]()
+				{
+					FUncontrolledChangelistsModule::Get().MoveFilesToUncontrolledChangelist(Files, TreeItem->UncontrolledChangelistState->Changelist);
+				});
+		}
 
 		OnPostDrop.ExecuteIfBound();
 	}
@@ -469,7 +547,9 @@ void SOfflineFileTableRow::Construct(const FArguments& InArgs, const TSharedRef<
 	TreeItem = static_cast<FOfflineFileTreeItem*>(InArgs._TreeItemToVisualize.Get());
 	HighlightText = InArgs._HighlightText;
 
-	FSuperRowType::FArguments Args = FSuperRowType::FArguments().ShowSelection(true);
+	FSuperRowType::FArguments Args = FSuperRowType::FArguments()
+		.OnDragDetected(InArgs._OnDragDetected)
+		.ShowSelection(true);
 	FSuperRowType::Construct(Args, InOwner);
 }
 
@@ -574,7 +654,7 @@ TSharedRef<SWidget> SOfflineFileTableRow::GenerateWidgetForColumn(const FName& C
 					}
 					
 					DiscardSwitcher->SetActiveWidgetIndex(1);
-					Async(EAsyncExecution::TaskGraphMainThread,
+					ExecuteOnGameThread(UE_SOURCE_LOCATION,
 						[this]
 						{
 							TArray<FString> PackageToReload { TreeItem->GetPackageName().ToString() };
@@ -586,8 +666,7 @@ TSharedRef<SWidget> SOfflineFileTableRow::GenerateWidgetForColumn(const FName& C
 								bAllowReloadWorld,
 								bInteractive
 							);
-						},
-						[] {  });
+						});
 					
 					return FReply::Handled();
 				});
@@ -651,6 +730,18 @@ FSlateColor SOfflineFileTableRow::GetDisplayColor() const
 FText SOfflineFileTableRow::GetLastModifiedTimestamp() const
 {
 	return TreeItem->GetLastModifiedTimestamp();
+}
+
+void SOfflineFileTableRow::OnDragEnter(FGeometry const& InGeometry, FDragDropEvent const& InDragDropEvent)
+{
+	TSharedPtr<FDragDropOperation> DragOperation = InDragDropEvent.GetOperation();
+	DragOperation->SetCursorOverride(EMouseCursor::SlashedCircle);
+}
+
+void SOfflineFileTableRow::OnDragLeave(FDragDropEvent const& InDragDropEvent)
+{
+	TSharedPtr<FDragDropOperation> DragOperation = InDragDropEvent.GetOperation();
+	DragOperation->SetCursorOverride(EMouseCursor::None);
 }
 
 

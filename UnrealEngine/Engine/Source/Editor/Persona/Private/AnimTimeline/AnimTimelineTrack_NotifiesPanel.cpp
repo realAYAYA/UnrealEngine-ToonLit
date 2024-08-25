@@ -208,34 +208,31 @@ void FAnimTimelineTrack_NotifiesPanel::RemoveTrack(int32 InTrackIndexToRemove)
 
 	if (AnimSequence->AnimNotifyTracks.IsValidIndex(InTrackIndexToRemove))
 	{
-		if (AnimSequence->AnimNotifyTracks[InTrackIndexToRemove].Notifies.Num() == 0)
+		FScopedTransaction Transaction(LOCTEXT("RemoveNotifyTrack", "Remove Notify Track"));
+		AnimSequence->Modify();
+
+		// before insert, make sure everything behind is fixed
+		for (int32 TrackIndex = InTrackIndexToRemove; TrackIndex < AnimSequence->AnimNotifyTracks.Num(); ++TrackIndex)
 		{
-			FScopedTransaction Transaction(LOCTEXT("RemoveNotifyTrack", "Remove Notify Track"));
-			AnimSequence->Modify();
+			FAnimNotifyTrack& Track = AnimSequence->AnimNotifyTracks[TrackIndex];
+			const int32 NewTrackIndex = FMath::Max(0, TrackIndex - 1);
 
-			// before insert, make sure everything behind is fixed
-			for (int32 TrackIndex = InTrackIndexToRemove; TrackIndex < AnimSequence->AnimNotifyTracks.Num() && TrackIndex > 0; ++TrackIndex)
+			for (FAnimNotifyEvent* Notify : Track.Notifies)
 			{
-				FAnimNotifyTrack& Track = AnimSequence->AnimNotifyTracks[TrackIndex];
-				const int32 NewTrackIndex = TrackIndex - 1;
-
-				for (FAnimNotifyEvent* Notify : Track.Notifies)
-				{
-					// fix notifies indices
-					Notify->TrackIndex = NewTrackIndex;
-				}
-
-				for (FAnimSyncMarker* SyncMarker : Track.SyncMarkers)
-				{
-					// fix notifies indices
-					SyncMarker->TrackIndex = NewTrackIndex;
-				}
+				// fix notifies indices
+				Notify->TrackIndex = NewTrackIndex;
 			}
 
-			AnimSequence->AnimNotifyTracks.RemoveAt(InTrackIndexToRemove);
-
-			Update();
+			for (FAnimSyncMarker* SyncMarker : Track.SyncMarkers)
+			{
+				// fix notifies indices
+				SyncMarker->TrackIndex = NewTrackIndex;
+			}
 		}
+
+		AnimSequence->AnimNotifyTracks.RemoveAt(InTrackIndexToRemove);
+
+		Update();
 	}
 }
 

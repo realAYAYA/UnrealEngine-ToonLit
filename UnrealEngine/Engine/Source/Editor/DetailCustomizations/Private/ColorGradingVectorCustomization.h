@@ -77,7 +77,7 @@ protected:
 	bool IsInRGBMode() const;
 	EColorGradingModes GetColorGradingMode() const;
 
-	TSharedRef<SNumericEntryBox<float>> MakeNumericEntryBox(int32 ColorIndex, TOptional<float>& MinValue, TOptional<float>& MaxValue, TOptional<float>& SliderMinValue, TOptional<float>& SliderMaxValue, float& SliderExponent, float& Delta, int32 &ShiftMouseMovePixelPerDelta, bool& SupportDynamicSliderMaxValue, bool& SupportDynamicSliderMinValue);
+	TSharedRef<SNumericEntryBox<float>> MakeNumericEntryBox(int32 ColorIndex, TOptional<float>& MinValue, TOptional<float>& MaxValue, TOptional<float>& SliderMinValue, TOptional<float>& SliderMaxValue, float& SliderExponent, float& Delta, float& ShiftMultiplier, float &CtrlMultiplier, bool& SupportDynamicSliderMaxValue, bool& SupportDynamicSliderMinValue);
 
 	/** Callback returning the color label text to display for a specified color index */
 	FText OnGetColorLabelText(FText DefaultText, int32 ColorIndex) const;

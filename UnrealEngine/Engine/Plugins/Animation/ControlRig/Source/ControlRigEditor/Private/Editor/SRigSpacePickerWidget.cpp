@@ -244,6 +244,7 @@ void SRigSpacePickerWidget::SetControls(
 			}
 			if (ControlElement->Settings.ControlType == ERigControlType::Bool ||
 				ControlElement->Settings.ControlType == ERigControlType::Float ||
+				ControlElement->Settings.ControlType == ERigControlType::ScaleFloat ||
 				ControlElement->Settings.ControlType == ERigControlType::Integer)
 			{
 				//if it has a channel and has a parent bail
@@ -1201,7 +1202,7 @@ void SRigSpacePickerBakeWidget::Construct(const FArguments& InArgs)
 
 			+SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.f, 16.f, 0.f, 0.f)
+			.Padding(0.f, 16.f, 0.f, 16.f)
 			[
 				SNew(SHorizontalBox)
 

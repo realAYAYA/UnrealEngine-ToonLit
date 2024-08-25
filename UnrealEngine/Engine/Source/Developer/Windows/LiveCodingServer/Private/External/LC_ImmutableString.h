@@ -8,7 +8,7 @@
 #include "LC_Memory.h"
 // BEGIN EPIC MOD
 #include "LC_Platform.h"
-#include LC_PLATFORM_INCLUDE(LC_Foundation)
+#include "LC_Foundation_Windows.h"
 #include <string>
 // END EPIC MOD
 

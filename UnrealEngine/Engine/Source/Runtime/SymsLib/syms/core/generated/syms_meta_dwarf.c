@@ -8,7 +8,7 @@ syms_dw_base_language_from_dw_language(SYMS_DwLanguage v){
 SYMS_Language result = SYMS_Language_Null;
 switch (v){
 default: break;
-case SYMS_DwLanguage_INVALID: result = SYMS_Language_Null; break;
+case SYMS_DwLanguage_NULL: result = SYMS_Language_Null; break;
 case SYMS_DwLanguage_C89: result = SYMS_Language_C89; break;
 case SYMS_DwLanguage_C: result = SYMS_Language_C; break;
 case SYMS_DwLanguage_Ada83: result = SYMS_Language_Ada83; break;
@@ -46,6 +46,10 @@ case SYMS_DwLanguage_Fortran03: result = SYMS_Language_Fortran03; break;
 case SYMS_DwLanguage_Fortran08: result = SYMS_Language_Fortran08; break;
 case SYMS_DwLanguage_RenderScript: result = SYMS_Language_RenderScript; break;
 case SYMS_DwLanguage_BLISS: result = SYMS_Language_BLISS; break;
+case SYMS_DwLanguage_MIPS_ASSEMBLER: result = SYMS_Language_MipsAssembler; break;
+case SYMS_DwLanguage_GOOGLE_RENDER_SCRIPT: result = SYMS_Language_GoogleRenderScript; break;
+case SYMS_DwLanguage_SUN_ASSEMBLER: result = SYMS_Language_SunAssembler; break;
+case SYMS_DwLanguage_BORLAND_DELPHI: result = SYMS_Language_BorlandDelphi; break;
 }
 return(result);
 }
@@ -335,6 +339,23 @@ case SYMS_DwAttribKind_APPLE_OBJC_COMPLETE_TYPE: result = SYMS_DwVersion_V3; bre
 case SYMS_DwAttribKind_APPLE_PROPERTY: result = SYMS_DwVersion_V3; break;
 case SYMS_DwAttribKind_APPLE_OBJ_DIRECT: result = SYMS_DwVersion_V3; break;
 case SYMS_DwAttribKind_APPLE_SDK: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_FDE: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_LOOP_BEGIN: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_TAIL_LOOP_BEGIN: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_EPILOG_BEGIN: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_LOOP_UNROLL_FACTOR: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_SOFTWARE_PIPELINE_DEPTH: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_LINKAGE_NAME: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_STRIDE: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_ABSTRACT_NAME: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_CLONE_ORIGIN: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_HAS_INLINES: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_STRIDE_BYTE: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_STRIDE_ELEM: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_PTR_DOPETYPE: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_ALLOCATABLE_DOPETYPE: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_ASSUMED_SHAPE_DOPETYPE: result = SYMS_DwVersion_V3; break;
+case SYMS_DwAttribKind_MIPS_ASSUMED_SIZE: result = SYMS_DwVersion_V3; break;
 }
 return(result);
 }
@@ -523,6 +544,23 @@ case SYMS_DwAttribKind_APPLE_OBJC_COMPLETE_TYPE: result = SYMS_DwAttribClass_UND
 case SYMS_DwAttribKind_APPLE_PROPERTY: result = SYMS_DwAttribClass_UNDEFINED; break;
 case SYMS_DwAttribKind_APPLE_OBJ_DIRECT: result = SYMS_DwAttribClass_UNDEFINED; break;
 case SYMS_DwAttribKind_APPLE_SDK: result = SYMS_DwAttribClass_STRING; break;
+case SYMS_DwAttribKind_MIPS_FDE: result = SYMS_DwAttribClass_BLOCK; break;
+case SYMS_DwAttribKind_MIPS_LOOP_BEGIN: result = SYMS_DwAttribClass_BLOCK; break;
+case SYMS_DwAttribKind_MIPS_TAIL_LOOP_BEGIN: result = SYMS_DwAttribClass_BLOCK; break;
+case SYMS_DwAttribKind_MIPS_EPILOG_BEGIN: result = SYMS_DwAttribClass_BLOCK; break;
+case SYMS_DwAttribKind_MIPS_LOOP_UNROLL_FACTOR: result = SYMS_DwAttribClass_BLOCK; break;
+case SYMS_DwAttribKind_MIPS_SOFTWARE_PIPELINE_DEPTH: result = SYMS_DwAttribClass_BLOCK; break;
+case SYMS_DwAttribKind_MIPS_LINKAGE_NAME: result = SYMS_DwAttribClass_STRING; break;
+case SYMS_DwAttribKind_MIPS_STRIDE: result = SYMS_DwAttribClass_BLOCK; break;
+case SYMS_DwAttribKind_MIPS_ABSTRACT_NAME: result = SYMS_DwAttribClass_STRING; break;
+case SYMS_DwAttribKind_MIPS_CLONE_ORIGIN: result = SYMS_DwAttribClass_STRING; break;
+case SYMS_DwAttribKind_MIPS_HAS_INLINES: result = SYMS_DwAttribClass_REFERENCE; break;
+case SYMS_DwAttribKind_MIPS_STRIDE_BYTE: result = SYMS_DwAttribClass_REFERENCE; break;
+case SYMS_DwAttribKind_MIPS_STRIDE_ELEM: result = SYMS_DwAttribClass_REFERENCE; break;
+case SYMS_DwAttribKind_MIPS_PTR_DOPETYPE: result = SYMS_DwAttribClass_REFERENCE; break;
+case SYMS_DwAttribKind_MIPS_ALLOCATABLE_DOPETYPE: result = SYMS_DwAttribClass_REFERENCE; break;
+case SYMS_DwAttribKind_MIPS_ASSUMED_SHAPE_DOPETYPE: result = SYMS_DwAttribClass_REFERENCE; break;
+case SYMS_DwAttribKind_MIPS_ASSUMED_SIZE: result = SYMS_DwAttribClass_REFERENCE; break;
 }
 return(result);
 }

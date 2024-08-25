@@ -96,3 +96,12 @@ uint16 UBTTask_GameplayTaskBase::GetInstanceMemorySize() const
 	return sizeof(FBTGameplayTaskMemory);
 }
 
+void UBTTask_GameplayTaskBase::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTGameplayTaskMemory>(NodeMemory, InitType);
+}
+
+void UBTTask_GameplayTaskBase::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTGameplayTaskMemory>(NodeMemory, CleanupType);
+}

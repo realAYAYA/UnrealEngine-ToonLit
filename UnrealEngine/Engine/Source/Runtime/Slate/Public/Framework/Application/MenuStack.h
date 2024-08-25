@@ -246,8 +246,9 @@ private:
 	 * @param	InContent			The unwrapped content.
 	 * @param	OptionalMinWidth	Optional minimum width for the wrapped content.
 	 * @param	OptionalMinHeight	Optional minimum height for the wrapped content.
+	 * @param	bShouldShowBackground	Whether the menu wrapper should put a background behind the content.
 	 */
-	TSharedRef<SWidget> WrapContent(TSharedRef<SWidget> InContent, FOptionalSize OptionalMinWidth = FOptionalSize(), FOptionalSize OptionalMinHeight = FOptionalSize());
+	TSharedRef<SWidget> WrapContent(TSharedRef<SWidget> InContent, FOptionalSize OptionalMinWidth = FOptionalSize(), FOptionalSize OptionalMinHeight = FOptionalSize(), bool bShouldShowBackground = true);
 
 	/** Contains all the options passed to the pre-push stage of the menu creation process */
 	struct FPrePushArgs

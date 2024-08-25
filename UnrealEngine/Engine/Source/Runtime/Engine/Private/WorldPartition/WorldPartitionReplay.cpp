@@ -2,6 +2,7 @@
 
 #include "WorldPartition/WorldPartitionReplay.h"
 #include "Engine/GameInstance.h"
+#include "UObject/Package.h"
 #include "WorldPartition/WorldPartition.h"
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
@@ -237,7 +238,7 @@ bool AWorldPartitionReplay::GetReplayStreamingSources(TArray<FWorldPartitionStre
 
 						const FVector Location = FMath::Lerp(Source1.Location, Source2.Location, LerpPercent);
 						const FQuat Rotation = FQuat::FastLerp(FQuat(Source1.Rotation), FQuat(Source2.Rotation), LerpPercent).GetNormalized();
-						const float Velocity = FMath::Lerp(Source1.Velocity, Source2.Velocity, LerpPercent);
+						const FVector Velocity = FMath::Lerp(Source1.Velocity, Source2.Velocity, LerpPercent);
 						OutStreamingSources.Add(FWorldPartitionReplayStreamingSource(Source1.Name, Location, Rotation.Rotator(), Source1.TargetState, Source1.bBlockOnSlowLoading, Source1.Priority, Velocity));
 					}
 					else

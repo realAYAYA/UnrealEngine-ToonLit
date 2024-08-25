@@ -11,6 +11,8 @@ namespace Metasound
 	const FText PluginNodeMissingPrompt = FText::GetEmpty();
 #endif // WITH_EDITOR
 
+	const FNodeClassName FNodeClassName::InvalidNodeClassName;
+
 	FNodeClassName::FNodeClassName()
 	{
 	}
@@ -71,6 +73,11 @@ namespace Metasound
 	FName FNodeClassName::FormatScopedName(const FName& InNamespace, const FName& InName)
 	{
 		return FName(*FString::Printf(TEXT("%s.%s"), *InNamespace.ToString(), *InName.ToString()));
+	}
+
+	bool FNodeClassName::IsValid() const
+	{
+		return *this != InvalidNodeClassName;
 	}
 
 	bool operator==(const FOutputDataSource& InLeft, const FOutputDataSource& InRight)

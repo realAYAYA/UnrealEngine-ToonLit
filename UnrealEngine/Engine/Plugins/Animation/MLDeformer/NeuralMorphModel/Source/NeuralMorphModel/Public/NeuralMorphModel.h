@@ -17,15 +17,6 @@ class UMLDeformerModelInstance;
 class USkeleton;
 struct FExternalMorphSet;
 
-/** 
- * Specify whether we want to use ISPC if available.
- * You can comment out this line, to force disable the use of ISPC in this plugin.
- */
-#define NEURALMORPHMODEL_USE_ISPC INTEL_ISPC
-#if !defined(NEURALMORPHMODEL_USE_ISPC)
-	#define NEURALMORPHMODEL_USE_ISPC 0
-#endif
-
 // Declare our log category.
 NEURALMORPHMODEL_API DECLARE_LOG_CATEGORY_EXTERN(LogNeuralMorphModel, Log, All);
 
@@ -51,6 +42,9 @@ public:
 	// UObject overrides.
 	virtual void Serialize(FArchive& Archive) override;
 	virtual void PostLoad() override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	// ~END UObject overrides.
 
 	// UMLDeformerModel overrides.
@@ -58,6 +52,7 @@ public:
 	virtual UMLDeformerModelInstance* CreateModelInstance(UMLDeformerComponent* Component) override;
 	virtual UMLDeformerInputInfo* CreateInputInfo() override;
 	virtual int32 GetNumFloatsPerCurve() const override;
+	virtual bool IsTrained() const override;
 	// ~END UMLDeformerModel overrides.
 
 	const TArray<FNeuralMorphBoneGroup>& GetBoneGroups() const		{ return BoneGroups; }
@@ -80,7 +75,6 @@ public:
 
 	void UpdateMissingGroupNames();
 	void SetNeuralMorphNetwork(UNeuralMorphNetwork* Net);
-
 	void SetNumIterations(int32 InNumIterations)					{ check(InNumIterations > 0); NumIterations = InNumIterations; }
 
 public:

@@ -57,17 +57,12 @@ public:
 	virtual bool Open(const FString& Url, const IMediaOptions* Options) override;
 	virtual bool Open(const FString& Url, const IMediaOptions* Options, const FMediaPlayerOptions* PlayerOptions) override;
 	virtual bool Open(const TSharedRef<FArchive, ESPMode::ThreadSafe>& Archive, const FString& OriginalUrl, const IMediaOptions* Options) override;
-#if WMFMEDIA_PLAYER_VERSION == 1
-	virtual void TickFetch(FTimespan DeltaTime, FTimespan Timecode) override;
-#endif // WMFMEDIA_PLAYER_VERSION == 1
 
 	virtual void TickInput(FTimespan DeltaTime, FTimespan Timecode) override;
 	
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	virtual bool FlushOnSeekStarted() const override;
 	virtual bool FlushOnSeekCompleted() const override;
 	virtual bool GetPlayerFeatureFlag(EFeatureFlag flag) const override;
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
 protected:
 
@@ -82,10 +77,8 @@ protected:
 	bool InitializePlayer(const TSharedPtr<FArchive, ESPMode::ThreadSafe>& Archive, const FString& Url, bool Precache, const FMediaPlayerOptions* PlayerOptions);
 
 private:
-#if WMFMEDIA_PLAYER_VERSION >= 2
 	/** Tick the player. */
 	void Tick();
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
 
 	/** The duration of the currently loaded media. */
 	FTimespan Duration;

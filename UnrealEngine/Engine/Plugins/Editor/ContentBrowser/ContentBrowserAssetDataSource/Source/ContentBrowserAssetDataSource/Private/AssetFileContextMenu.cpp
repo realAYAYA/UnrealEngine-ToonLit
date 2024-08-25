@@ -1338,19 +1338,19 @@ void FAssetFileContextMenu::ExecuteCreateBlueprintUsing()
 
 void FAssetFileContextMenu::GetSelectedAssets(TArray<UObject*>& Assets, bool SkipRedirectors) const
 {
-	TArray<FString> SelectedAssetPaths;
-	for (const FAssetData& SelectedAsset : SelectedAssets)
+	AssetViewUtils::FLoadAssetsSettings Settings{
+		// Default settings
+	};
+	if (SkipRedirectors)
 	{
-		if (SkipRedirectors && (SelectedAsset.AssetClassPath == UObjectRedirector::StaticClass()->GetClassPathName()))
-		{
-			// Don't operate on Redirectors
-			continue;
-		}
-
-		SelectedAssetPaths.Add(SelectedAsset.GetObjectPathString());
+		TArray<FAssetData> FilteredAssets;
+		Algo::CopyIf(SelectedAssets, FilteredAssets, [](const FAssetData& Asset) { return !Asset.IsRedirector(); });
+		AssetViewUtils::LoadAssetsIfNeeded(FilteredAssets, Assets, Settings);
 	}
-
-	AssetViewUtils::LoadAssetsIfNeeded(SelectedAssetPaths, Assets);
+	else
+	{
+		AssetViewUtils::LoadAssetsIfNeeded(SelectedAssets, Assets, Settings);
+	}
 }
 
 void FAssetFileContextMenu::GetSelectedAssetData(TArray<FAssetData>& AssetDataList, bool SkipRedirectors) const

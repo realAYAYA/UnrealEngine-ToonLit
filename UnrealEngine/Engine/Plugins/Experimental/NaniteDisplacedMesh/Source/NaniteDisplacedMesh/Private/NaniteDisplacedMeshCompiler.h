@@ -3,10 +3,11 @@
 
 #if WITH_EDITOR
 
-#include "AssetCompilingManager.h"
-#include "AsyncCompilationHelpers.h"
+#include "IAssetCompilingManager.h"
 #include "UObject/GCObject.h"
+#include "UObject/WeakObjectPtr.h"
 
+class FAsyncCompilationNotification;
 class UNaniteDisplacedMesh;
 class FQueuedThreadPool;
 struct FAssetCompileContext;
@@ -75,7 +76,7 @@ private:
 	// Refer the transient displaced meshes to the GC so that they are not GCed while compiling. Without this a pie session can hitches a lot when the ddc is not primed.
 	TSet<TObjectPtr<UNaniteDisplacedMesh>> GCReferedNaniteDisplacedMesh;
 
-	FAsyncCompilationNotification Notification;
+	TUniquePtr<FAsyncCompilationNotification> Notification;
 
 	void FinishCompilationsForGame();
 	void Reschedule();

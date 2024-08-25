@@ -61,6 +61,8 @@ private:
 	bool StartPlayer();
 	void OnPlayerClosed();
 
+	void OverrideTextureRegions_RenderThread(FRHITexture* const SrcTexture, FRHITexture* const DstTexture, FIntRect& InOutSrcRect, FIntRect& InOutDstRect) const;
+
 private:
 	//~ Begin GC by AddReferencedObjects
 	TObjectPtr<UMediaSource>  MediaSource = nullptr;
@@ -73,4 +75,7 @@ private:
 
 	// Used to control the rate at which we try to restart the player
 	double LastRestartTimestamp = 0;
+
+	// [Temp workaround] Whether current media is Rivermax
+	bool bRunningRivermaxMedia = false;
 };

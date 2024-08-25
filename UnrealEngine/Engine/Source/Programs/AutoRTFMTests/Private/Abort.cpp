@@ -56,25 +56,147 @@ TEST_CASE("Abort.NestedAbortOrder")
 	unsigned Orderer = 0;
 
 	AutoRTFM::Commit([&]
-		{
-			InnerResult = AutoRTFM::Transact([&]
-				{
-					AutoRTFM::OpenAbort([&]
-						{
-							REQUIRE(1 == Orderer);
-							Orderer += 1;
-						});
+	{
+		InnerResult = AutoRTFM::Transact([&]
+			{
+				AutoRTFM::OnAbort([&]
+					{
+						REQUIRE(1 == Orderer);
+						Orderer += 1;
+					});
 
-					AutoRTFM::OpenAbort([&]
-						{
-							REQUIRE(0 == Orderer);
-							Orderer += 1;
-						});
+				AutoRTFM::OnAbort([&]
+					{
+						REQUIRE(0 == Orderer);
+						Orderer += 1;
+					});
 
-					AutoRTFM::AbortTransaction();
-				});
-		});
+				AutoRTFM::AbortTransaction();
+			});
+	});
 
 	REQUIRE(AutoRTFM::ETransactionResult::AbortedByRequest == InnerResult);
 	REQUIRE(2 == Orderer);
+}
+
+TEST_CASE("Abort.TransactionInOpenCommit")
+{
+	AutoRTFM::ETransactionResult InnerResult;
+
+	AutoRTFM::Commit([&]
+	{
+		AutoRTFM::OnCommit([&]
+		{
+			bool bDidSomething = false;
+
+			InnerResult = AutoRTFM::Transact([&]
+			{
+				bDidSomething = true;
+			});
+
+			REQUIRE(false == bDidSomething);
+		});
+	});
+
+	REQUIRE(AutoRTFM::ETransactionResult::AbortedByTransactInOnCommit == InnerResult);
+}
+
+TEST_CASE("Abort.TransactionInOpenAbort")
+{
+	AutoRTFM::ETransactionResult Result;
+	AutoRTFM::ETransactionResult InnerResult;
+
+	Result = AutoRTFM::Transact([&]
+	{
+		AutoRTFM::OnAbort([&]
+		{
+			bool bDidSomething = false;
+
+			InnerResult = AutoRTFM::Transact([&]
+			{
+				bDidSomething = true;
+			});
+
+			REQUIRE(false == bDidSomething);
+		});
+
+		AutoRTFM::AbortTransaction();
+	});
+
+	REQUIRE(AutoRTFM::ETransactionResult::AbortedByTransactInOnAbort == InnerResult);
+	REQUIRE(AutoRTFM::ETransactionResult::AbortedByRequest == Result);
+}
+
+TEST_CASE("Abort.Cascade")
+{
+	bool bTouched = false;
+
+	const AutoRTFM::ETransactionResult Result = AutoRTFM::Transact([&]
+	{
+		bTouched = true;
+		AutoRTFM::Transact([&]
+		{
+			AutoRTFM::CascadingAbortTransaction();
+		});
+	});
+
+	REQUIRE(AutoRTFM::ETransactionResult::AbortedByCascade == Result);
+	REQUIRE(false == bTouched);
+}
+
+TEST_CASE("Abort.CascadeThroughOpen")
+{
+	bool bTouched = false;
+
+	const AutoRTFM::ETransactionResult Result = AutoRTFM::Transact([&]
+	{
+		bTouched = true;
+
+		AutoRTFM::Open([&]
+		{
+			const AutoRTFM::EContextStatus Status = AutoRTFM::Close([&]
+			{
+				AutoRTFM::Transact([&]
+				{
+					AutoRTFM::CascadingAbortTransaction();
+				});
+			});
+
+			REQUIRE(AutoRTFM::EContextStatus::AbortedByCascade == Status);
+		});
+	});
+
+	REQUIRE(AutoRTFM::ETransactionResult::AbortedByCascade == Result);
+	REQUIRE(false == bTouched);
+}
+
+TEST_CASE("Abort.CascadeThroughManualTransaction")
+{
+	bool bTouched = false;
+
+	const AutoRTFM::ETransactionResult Result = AutoRTFM::Transact([&]
+	{
+		bTouched = true;
+
+		AutoRTFM::Open([&]
+		{
+			REQUIRE(true == AutoRTFM::ForTheRuntime::StartTransaction());
+
+			const AutoRTFM::EContextStatus Status = AutoRTFM::Close([&]
+			{
+				AutoRTFM::CascadingAbortTransaction();
+			});
+
+			REQUIRE(AutoRTFM::EContextStatus::AbortedByCascade == Status);
+
+			// We need to clear the status ourselves.
+			AutoRTFM::ForTheRuntime::ClearTransactionStatus();
+
+			// Before manually starting the cascade again.
+			AutoRTFM::CascadingAbortTransaction();
+		});
+	});
+
+	REQUIRE(AutoRTFM::ETransactionResult::AbortedByCascade == Result);
+	REQUIRE(false == bTouched);
 }

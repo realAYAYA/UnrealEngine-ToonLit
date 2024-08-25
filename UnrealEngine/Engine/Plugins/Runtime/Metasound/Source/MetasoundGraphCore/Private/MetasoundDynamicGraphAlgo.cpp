@@ -7,6 +7,7 @@
 #include "MetasoundDataReference.h"
 #include "MetasoundGraphAlgoPrivate.h"
 #include "MetasoundLog.h"
+#include "MetasoundTrace.h"
 #include "MetasoundVertex.h"
 #include "MetasoundVertexData.h"
 
@@ -66,6 +67,7 @@ namespace Metasound
 		void UpdateGraphRuntimeTableEntries(const FOperatorID& InOperatorID, IOperator* InOperator, FDynamicGraphOperatorData& InOutGraphOperatorData)
 		{
 			using namespace DynamicGraphAlgoPrivate;
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::DynamicGraphAlgo::UpdateOperatorRuntimeTableEntries)
 
 			UpdateTableEntry(InOutGraphOperatorData.OperatorOrder, InOperatorID, InOperator, InOutGraphOperatorData.ExecuteTable, InOperator ? InOperator->GetExecuteFunction() : nullptr);
 			UpdateTableEntry(InOutGraphOperatorData.OperatorOrder, InOperatorID, InOperator, InOutGraphOperatorData.PostExecuteTable, InOperator ? InOperator->GetPostExecuteFunction() : nullptr);
@@ -77,6 +79,8 @@ namespace Metasound
 		{
 			using namespace DirectedGraphAlgo;
 			using namespace DynamicGraphAlgoPrivate;
+
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::DynamicGraphAlgo::PropagateBindUpdate)
 
 			struct FInputToUpdate
 			{
@@ -92,6 +96,7 @@ namespace Metasound
 			TSortedVertexNameMap<FAnyDataReference> OutputUpdates;
 			while (PropagateStack.Num())
 			{
+				METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::DynamicGraphAlgo::PropagateBindUpdate_Iteration)
 				FInputToUpdate Current = PropagateStack.Pop();
 				if (FOperatorInfo* OpInfo = InOutGraphOperatorData.OperatorMap.Find(Current.OperatorID))
 				{
@@ -206,6 +211,7 @@ namespace Metasound
 		void UpdateOutputVertexData(FDynamicGraphOperatorData& InOutGraphOperatorData)
 		{
 			using namespace DirectedGraphAlgo;
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::DynamicGraphAlgo::UpdateOutputVertexData)
 
 			// Iterate through the output operators and force their output data references
 			// to be reflected in the graph's FOutputVertexInterfaceData
@@ -243,6 +249,7 @@ namespace Metasound
 			using namespace DynamicGraphAlgoPrivate;
 
 			check(InOperatorInfo.Operator);
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::DynamicGraphAlgo::RebindWrappedOperator)
 
 			/* Bind and diff the graph's interface to determine if there is an update to any vertices */
 
@@ -289,6 +296,7 @@ namespace Metasound
 		void RebindGraphInputs(FInputVertexInterfaceData& InOutVertexData, FDynamicGraphOperatorData& InOutGraphOperatorData)
 		{
 			using namespace DirectedGraphAlgo;
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::DynamicGraphAlgo::RebindGraphInputs)
 
 			// Bind and diff the graph's interface to determine if there is an update to any vertices
 			FInputVertexInterfaceData& InputVertexData = InOutGraphOperatorData.VertexData.GetInputs();
@@ -329,6 +337,7 @@ namespace Metasound
 
 		void RebindGraphOutputs(FOutputVertexInterfaceData& InOutVertexData, FDynamicGraphOperatorData& InOutGraphOperatorData)
 		{
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::DynamicGraphAlgo::RebindGraphOutputs)
 			// Output rebinding does not alter data references in an operator. Here we can get away with
 			// simply reading the latest values.
 			InOutVertexData.Bind(InOutGraphOperatorData.VertexData.GetOutputs());

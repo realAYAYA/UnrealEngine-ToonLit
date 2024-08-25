@@ -23,6 +23,8 @@ FMeshShapeGenerator& FRectangleMeshGenerator::Generate()
 	check(IndicesMap.A >= 0 && IndicesMap.A <= 2);
 	check(IndicesMap.B >= 0 && IndicesMap.B <= 2);
 
+	TRACE_CPUPROFILER_EVENT_SCOPE(RectangleMeshGenerator_Generate);
+
 	int WidthNV = (WidthVertexCount > 1) ? WidthVertexCount : 2;
 	int HeightNV = (HeightVertexCount > 1) ? HeightVertexCount : 2;
 

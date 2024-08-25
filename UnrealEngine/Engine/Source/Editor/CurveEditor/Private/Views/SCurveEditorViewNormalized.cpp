@@ -23,7 +23,6 @@
 #include "SCurveEditorView.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/ISlateStyle.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Tuple.h"
 #include "Templates/UniquePtr.h"
 #include "Types/SlateEnums.h"

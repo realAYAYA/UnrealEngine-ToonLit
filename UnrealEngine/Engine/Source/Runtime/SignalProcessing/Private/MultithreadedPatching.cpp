@@ -114,7 +114,7 @@ namespace Audio
 			return INDEX_NONE;
 		}
 
-		MixingBuffer.SetNumUninitialized(NumSamples, false);
+		MixingBuffer.SetNumUninitialized(NumSamples, EAllowShrinking::No);
 		int32 PopResult = 0;
 		
 		if (bUseLatestAudio && InternalBuffer.Num() > (uint32)NumSamples)
@@ -296,6 +296,17 @@ namespace Audio
 		}
 
 		return SamplesPushed;
+	}
+
+	/** Returns the current number of samples buffered in this input. */
+	int32 FPatchInput::GetNumSamplesAvailable() const
+	{
+		if (!OutputHandle.IsValid())
+		{
+			return 0;
+		}
+
+		return OutputHandle->GetNumSamplesAvailable();
 	}
 
 	void FPatchInput::SetGain(float InGain)
@@ -612,7 +623,7 @@ namespace Audio
 			const int32 NumSamplesPushed = ConnectedOutput.PushAudio(InBuffer, InNumSamples);
 			if (NumSamplesPushed == INDEX_NONE)
 			{
-				ConnectedOutputs.RemoveAtSwap(Index, 1, false /* bAllowShrinking */);
+				ConnectedOutputs.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 			else
 			{

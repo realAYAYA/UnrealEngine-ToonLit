@@ -66,7 +66,6 @@ namespace UE::TextureShare::SceneViewExtension
 
 		OutViewFamily.FrameNumber = InViewFamily.FrameNumber;
 		OutViewFamily.bIsHDR = InViewFamily.bIsHDR;
-		OutViewFamily.GammaCorrection = InViewFamily.GammaCorrection;
 		OutViewFamily.SecondaryViewFraction = InViewFamily.SecondaryViewFraction;
 	}
 };
@@ -134,17 +133,20 @@ void FTextureShareSceneViewExtension::GetSceneViewData_RenderThread(const FTextu
 
 void FTextureShareSceneViewExtension::ShareSceneViewColors_RenderThread(FRDGBuilder& GraphBuilder, const FSceneTextures& SceneTextures, const FTextureShareSceneView& InView)
 {
-	const auto AddShareTexturePass = [&](const TCHAR* InTextureName, const FRDGTextureRef& InTextureRef)
+	const auto AddShareTexturePass = [&](const TCHAR* InTextureName, const FRDGTextureRef& InTextureRef, const FIntRect* CustomSrcRect = nullptr)
 	{
 		// Send resource
 		ObjectProxy->ShareResource_RenderThread(GraphBuilder, FTextureShareCoreResourceDesc(InTextureName, InView.ViewInfo.ViewDesc, ETextureShareTextureOp::Read),
-			InTextureRef, InView.GPUIndex, &InView.UnconstrainedViewRect);
+			InTextureRef, InView.GPUIndex, CustomSrcRect  ? CustomSrcRect : &InView.UnconstrainedViewRect);
 	};
 
 	AddShareTexturePass(UE::TextureShareStrings::SceneTextures::SceneColor, SceneTextures.Color.Resolve);
 
 	AddShareTexturePass(UE::TextureShareStrings::SceneTextures::SceneDepth, SceneTextures.Depth.Resolve);
-	AddShareTexturePass(UE::TextureShareStrings::SceneTextures::SmallDepthZ, SceneTextures.SmallDepth);
+	
+	// Small depth use downscale size
+	const FIntRect SmallDepthRect = GetDownscaledRect(InView.UnconstrainedViewRect, SceneTextures.Config.SmallDepthDownsampleFactor);
+	AddShareTexturePass(UE::TextureShareStrings::SceneTextures::SmallDepthZ, SceneTextures.SmallDepth, &SmallDepthRect);
 
 	AddShareTexturePass(UE::TextureShareStrings::SceneTextures::GBufferA, SceneTextures.GBufferA);
 	AddShareTexturePass(UE::TextureShareStrings::SceneTextures::GBufferB, SceneTextures.GBufferB);

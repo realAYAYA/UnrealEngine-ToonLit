@@ -48,17 +48,6 @@ UObject* UActorFactoryLidarPointCloud::GetAssetFromActorInstance(AActor* Instanc
 	return PCA->GetPointCloudComponent()->GetPointCloud();
 }
 
-void UActorFactoryLidarPointCloud::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		ULidarPointCloud* PointCloud = CastChecked<ULidarPointCloud>(Asset);
-		ALidarPointCloudActor* PointCloudActor = CastChecked<ALidarPointCloudActor>(CDO);
-
-		PointCloudActor->GetPointCloudComponent()->SetPointCloud(PointCloud);
-	}
-}
-
 FQuat UActorFactoryLidarPointCloud::AlignObjectToSurfaceNormal(const FVector& InSurfaceNormal, const FQuat& ActorRotation) const
 {
 	// Meshes align the Z (up) axis with the surface normal

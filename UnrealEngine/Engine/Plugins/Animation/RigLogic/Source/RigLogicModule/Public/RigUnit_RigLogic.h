@@ -5,7 +5,6 @@
 #include "RigInstance.h"
 #include "RigLogic.h"
 
-#include "ControlRig.h"
 #include "DNAAsset.h"
 #include "Materials/Material.h"
 #include "Units/RigUnit.h"

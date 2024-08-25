@@ -65,6 +65,7 @@
 #include "RenderTargetPool.h"
 #include "RenderGraphBuilder.h"
 #include "CustomResourcePool.h"
+#include "ComponentRecreateRenderStateContext.h"
 
 #if WITH_EDITOR
 #include "PIEPreviewDeviceProfileSelectorModule.h"
@@ -98,6 +99,13 @@ static FAutoConsoleVariableRef CVarDoAsyncEndOfFrameTasks(
 	GDoAsyncEndOfFrameTasks,
 	TEXT("Experimental option to run various things concurrently with the HUD render.")
 	);
+
+static int32 GMinimizedSyncDrawToGPU = 1;
+static FAutoConsoleVariableRef CVarMinimizedSyncDrawToGPU(
+	TEXT("tick.MinimizedSyncDrawToGPU"),
+	GMinimizedSyncDrawToGPU,
+	TEXT("True means we will wait for GPU idle when minimized. Prevents mem leaks due to CPU issuing draws faster than GPU processes when minimized.")
+);
 
 bool ParseResolution(const TCHAR* InResolution, uint32& OutX, uint32& OutY, int32& WindowMode);
 
@@ -1119,6 +1127,10 @@ void UGameEngine::Init(IEngineLoop* InEngineLoop)
 	// Load and apply user game settings
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(InitGameUserSettings);
+
+		// Push recreate render state context to force single recreate instead of multiple recreates for each changed cvar
+		FGlobalComponentRecreateRenderStateContext Context;
+
 		GetGameUserSettings()->LoadSettings();
 		GetGameUserSettings()->ApplyNonResolutionSettings();
 	}
@@ -1236,6 +1248,13 @@ void UGameEngine::PreExit()
 			// Shut down any existing game connections
 			ShutdownWorldNetDriver(World);
 
+			// Force mark all streaming levels for stream out
+			World->bIsLevelStreamingFrozen = false;
+			World->SetShouldForceUnloadStreamingLevels(true);
+
+			// Make sure there are no pending visibility requests.
+			World->FlushLevelStreaming(EFlushLevelStreamingType::Visibility);
+						
 			for (FActorIterator ActorIt(World); ActorIt; ++ActorIt)
 			{
 				ActorIt->RouteEndPlay(EEndPlayReason::Quit);
@@ -1246,7 +1265,6 @@ void UGameEngine::PreExit()
 				World->GetGameInstance()->Shutdown();
 			}
 
-			World->FlushLevelStreaming(EFlushLevelStreamingType::Visibility);
 			World->CleanupWorld();
 		}
 	}
@@ -1724,11 +1742,6 @@ void UGameEngine::Tick( float DeltaSeconds, bool bIdleMode )
 		FEngineAnalytics::Tick(DeltaSeconds);
 	}
 
-	{
-		SCOPE_TIME_GUARD(TEXT("UGameEngine::Tick - Studio Analytics"));
-		FStudioAnalytics::Tick(DeltaSeconds);
-	}
-
 	// -----------------------------------------------------
 	// Begin ticking worlds
 	// -----------------------------------------------------
@@ -1888,8 +1901,21 @@ void UGameEngine::Tick( float DeltaSeconds, bool bIdleMode )
 			// Render everything.
 			RedrawViewports();
 
-			// Some tasks can only be done once we finish all scenes/viewports
-			GetRendererModule().PostRenderAllViewports();
+			// CPU/GPU synchronization is achieved by calling EndDrawingViewport. If no viewports are updated (because the game is hidden),
+			// we need to explicitly wait for the GPU to finish here, to prevent the CPU from submitting work faster than the GPU
+			// can process it, which leads to an unbounded accumulation of resources.
+			if (GMinimizedSyncDrawToGPU && AreAllWindowsHidden())
+			{
+				ENQUEUE_RENDER_COMMAND(SubmitAndBlockUntilGPUIdle_MinimizedRealtime)([](FRHICommandListImmediate& RHICmdList)
+				{
+					RHICmdList.BlockUntilGPUIdle();
+				});
+			}
+			else
+			{
+				// Some tasks can only be done once we finish all scenes/viewports
+				GetRendererModule().PostRenderAllViewports();
+			}
 		}
 		else
 		{
@@ -1942,11 +1968,6 @@ void UGameEngine::Tick( float DeltaSeconds, bool bIdleMode )
 		if (bRenderingSuspended)
 		{
 			GetRendererModule().PerFrameCleanupIfSkipRenderer();
-			ENQUEUE_RENDER_COMMAND(UGameEngine_Tick_FlushRHIResources)(
-				[](FRHICommandListImmediate& RHICmdList)
-				{
-					RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThreadFlushResources);
-				});
 		}
 	}
 

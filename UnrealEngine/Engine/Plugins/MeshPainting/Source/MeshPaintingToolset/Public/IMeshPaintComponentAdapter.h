@@ -7,6 +7,8 @@
 class FReferenceCollector;
 class UMeshComponent;
 class UTexture;
+class UMaterialInterface;
+
 namespace UE
 {
 	namespace Geometry
@@ -14,6 +16,8 @@ namespace UE
 		struct FIndex3i;
 	}
 }
+
+namespace ERHIFeatureLevel { enum Type : int; }
 
 /**
  * Interface for a class to provide mesh painting support for a subclass of UMeshComponent
@@ -82,6 +86,7 @@ public:
 	virtual void PostEdit() = 0;
 
 	/** Default functionality for applying or remove a texture override */
+	UE_DEPRECATED(5.4, "This method will be removed because its implementation is not able to handle an material instance being edited. Please inherit from or use an UE::MeshPaintingToolset::FDefaultTextureOverride object and use it function ApplyOrRemoveTextureOverride.")
 	static void DefaultApplyOrRemoveTextureOverride(UMeshComponent* InMeshComponent, UTexture* SourceTexture, UTexture* OverrideTexture);
 
 	/** Default functionality for querying textures from a mesh component which are suitable for texture painting */
@@ -103,6 +108,29 @@ public:
 	virtual bool RayIntersectAdapter(UE::Geometry::FIndex3i& HitTriangle, FVector& HitPosition, const FVector Start, const FVector End) const = 0;
 
 };
+
+namespace UE::MeshPaintingToolset
+{
+	/*
+	 * Provide a default implementation for the texture override(s) needed when painting a mesh component
+	 * This object will keep track of the overridden material resources and remove the override when they are no longer referred by an default texture override
+	 */
+	class MESHPAINTINGTOOLSET_API FDefaultTextureOverride final
+	{
+	public:
+		void ApplyOrRemoveTextureOverride(const UMeshComponent* InMeshComponent, const UTexture* SourceTexture, UTexture* OverrideTexture) const;
+
+		~FDefaultTextureOverride();
+
+		FDefaultTextureOverride() = default;
+
+		FDefaultTextureOverride(const FDefaultTextureOverride& InOther);
+		FDefaultTextureOverride(FDefaultTextureOverride&& InOther);
+
+		FDefaultTextureOverride& operator=(const FDefaultTextureOverride& InOther);
+		FDefaultTextureOverride& operator=(FDefaultTextureOverride&& InOther);
+	};
+}
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"

@@ -318,7 +318,7 @@ bool FMovieSceneSubSectionCoreSequenceTransformsTest::RunTest(const FString& Par
 			AddError(FString::Printf(TEXT("Accumulated transform does not have the same effect as separate transformations (%i+%.5f != %i+%.5f)"), AccumValue.FrameNumber.Value, AccumValue.GetSubFrame(), SeedValue.FrameNumber.Value, SeedValue.GetSubFrame()));
 		}
 
-		FMovieSceneSequenceTransform InverseTransform = AccumulatedTransform.InverseLinearOnly();
+		FMovieSceneSequenceTransform InverseTransform = AccumulatedTransform.InverseNoLooping();
 
 		FFrameTime InverseValue = AccumValue * InverseTransform;
 		if (InverseValue != 10)
@@ -343,9 +343,9 @@ bool FMovieSceneSubSectionCoreWarpingAndScalingTransformsTest::RunTest(const FSt
 		TestEqual("Transform time 1", FFrameNumber(10) * Transform, FFrameTime(20));
 		TestEqual("Transform time 2", FFrameNumber(18) * Transform, FFrameTime(6));
 
-		FMovieSceneTimeTransform Inv = Transform.InverseFromWarp(TArray<uint32> { 0 });
+		FMovieSceneSequenceTransform Inv = Transform.InverseFromLoop(TArray<uint32> { 0 });
 		TestEqual("Inverse time 3", FFrameNumber(20) * Inv, FFrameTime(10));
-		Inv = Transform.InverseFromWarp(TArray<uint32> { 1 });
+		Inv = Transform.InverseFromLoop(TArray<uint32> { 1 });
 		TestEqual("Inverse time 4", FFrameNumber(20) * Inv, FFrameTime(25));
 	}
 
@@ -356,9 +356,9 @@ bool FMovieSceneSubSectionCoreWarpingAndScalingTransformsTest::RunTest(const FSt
 		TestEqual("Transform time 5", FFrameNumber(10) * Transform, FFrameTime(40));
 		TestEqual("Transform time 6", FFrameNumber(18) * Transform, FFrameTime(26));
 
-		FMovieSceneTimeTransform Inv = Transform.InverseFromWarp(TArray<uint32> { 0 });
+		FMovieSceneSequenceTransform Inv = Transform.InverseFromLoop(TArray<uint32> { 0 });
 		TestEqual("Inverse time 7", FFrameNumber(40) * Inv, FFrameTime(10));
-		Inv = Transform.InverseFromWarp(TArray<uint32> { 1 });
+		Inv = Transform.InverseFromLoop(TArray<uint32> { 1 });
 		TestEqual("Inverse time 8", FFrameNumber(40) * Inv, FFrameTime(25));
 	}
 
@@ -369,9 +369,9 @@ bool FMovieSceneSubSectionCoreWarpingAndScalingTransformsTest::RunTest(const FSt
 		TestEqual("Transform time 9", FFrameNumber(13) * Transform, FFrameTime(20));
 		TestEqual("Transform time 10", FFrameNumber(21) * Transform, FFrameTime(6));
 
-		FMovieSceneTimeTransform Inv = Transform.InverseFromWarp(TArray<uint32> { 0 });
+		FMovieSceneSequenceTransform Inv = Transform.InverseFromLoop(TArray<uint32> { 0 });
 		TestEqual("Inverse time 11", FFrameNumber(20) * Inv, FFrameTime(13));
-		Inv = Transform.InverseFromWarp(TArray<uint32> { 1 });
+		Inv = Transform.InverseFromLoop(TArray<uint32> { 1 });
 		TestEqual("Inverse time 12", FFrameNumber(20) * Inv, FFrameTime(28));
 	}
 
@@ -382,9 +382,9 @@ bool FMovieSceneSubSectionCoreWarpingAndScalingTransformsTest::RunTest(const FSt
 		TestEqual("Transform time 13", FFrameNumber(13) * Transform, FFrameTime(40));
 		TestEqual("Transform time 14", FFrameNumber(21) * Transform, FFrameTime(26));
 
-		FMovieSceneTimeTransform Inv = Transform.InverseFromWarp(TArray<uint32> { 0 });
+		FMovieSceneSequenceTransform Inv = Transform.InverseFromLoop(TArray<uint32> { 0 });
 		TestEqual("Inverse time 15", FFrameNumber(40) * Inv, FFrameTime(13));
-		Inv = Transform.InverseFromWarp(TArray<uint32> { 1 });
+		Inv = Transform.InverseFromLoop(TArray<uint32> { 1 });
 		TestEqual("Inverse time 16", FFrameNumber(40) * Inv, FFrameTime(28));
 	}
 
@@ -396,9 +396,9 @@ bool FMovieSceneSubSectionCoreWarpingAndScalingTransformsTest::RunTest(const FSt
 		TestEqual("Transform time 17", FFrameNumber(18) * Transform, FFrameTime(4));
 		TestEqual("Transform time 18", FFrameNumber(55) * Transform, FFrameTime(18));
 
-		FMovieSceneTimeTransform Inv = Transform.InverseFromWarp(TArray<uint32> { 0, FMovieSceneTimeWarping::InvalidWarpCount });
+		FMovieSceneSequenceTransform Inv = Transform.InverseFromLoop(TArray<uint32> { 0, FMovieSceneTimeWarping::InvalidWarpCount });
 		TestEqual("Inverse time 17", FFrameNumber(4) * Inv, FFrameTime(18));
-		Inv = Transform.InverseFromWarp(TArray<uint32> { 1, FMovieSceneTimeWarping::InvalidWarpCount });
+		Inv = Transform.InverseFromLoop(TArray<uint32> { 1, FMovieSceneTimeWarping::InvalidWarpCount });
 		TestEqual("Inverse time 18", FFrameNumber(18) * Inv, FFrameTime(55));
 	}
 
@@ -410,9 +410,9 @@ bool FMovieSceneSubSectionCoreWarpingAndScalingTransformsTest::RunTest(const FSt
 		TestEqual("Transform time 17", FFrameNumber(19) * Transform, FFrameTime(6));
 		TestEqual("Transform time 18", FFrameNumber(32) * Transform, FFrameTime(4));
 
-		FMovieSceneTimeTransform Inv = Transform.InverseFromWarp(TArray<uint32> { FMovieSceneTimeWarping::InvalidWarpCount, 0 });
+		FMovieSceneSequenceTransform Inv = Transform.InverseFromLoop(TArray<uint32> { FMovieSceneTimeWarping::InvalidWarpCount, 0 });
 		TestEqual("Inverse time 17", FFrameNumber(6) * Inv, FFrameTime(19));
-		Inv = Transform.InverseFromWarp(TArray<uint32> { FMovieSceneTimeWarping::InvalidWarpCount, 2 });
+		Inv = Transform.InverseFromLoop(TArray<uint32> { FMovieSceneTimeWarping::InvalidWarpCount, 2 });
 		TestEqual("Inverse time 18", FFrameNumber(4) * Inv, FFrameTime(32));
 	}
 
@@ -424,10 +424,72 @@ bool FMovieSceneSubSectionCoreWarpingAndScalingTransformsTest::RunTest(const FSt
 		TestEqual("Transform time 19", FFrameNumber(113) * Transform, FFrameTime(40));
 		TestEqual("Transform time 20", FFrameNumber(121) * Transform, FFrameTime(26));
 
-		FMovieSceneTimeTransform Inv = Transform.InverseFromWarp(TArray<uint32> { 0 });
+		FMovieSceneSequenceTransform Inv = Transform.InverseFromLoop(TArray<uint32> { 0 });
 		TestEqual("Inverse time 21", FFrameNumber(40) * Inv, FFrameTime(113));
-		Inv = Transform.InverseFromWarp(TArray<uint32> { 1 });
+		Inv = Transform.InverseFromLoop(TArray<uint32> { 1 });
 		TestEqual("Inverse time 22", FFrameNumber(40) * Inv, FFrameTime(128));
+	}
+
+	{
+		// Zero-timescale transform on a sub-sequence. Any frame numbers transformed in should be equal to the frame offset
+		FMovieSceneSequenceTransform Transform;
+		Transform.NestedTransforms.Add(FMovieSceneTimeTransform(0)); // no outer offset
+		Transform.NestedTransforms.Add(FMovieSceneTimeTransform(0, 0)); // 0 timescale
+		Transform.NestedTransforms.Add(FMovieSceneTimeTransform(30)); // 30 inner frame offset
+
+		TestEqual("Outer time 40 through 0 timescale with 30 offset", FFrameNumber(40) * Transform, FFrameTime(30));
+		TestEqual("Outer time 0 through 0 timescale with 30 offset", FFrameNumber(0) * Transform, FFrameTime(30));
+		TestEqual("Outer time 173 through 0 timescale with 30 offset", FFrameNumber(173) * Transform, FFrameTime(30));
+	}
+
+	{
+		// Zero-timescale transform on a sub-sequence. Same as previous, but we also will invert this transform and ensure timescale is correctly infinite
+		// and any transforms by that infinite transform. Anything transformed out should just be equal to the outer offset
+		FMovieSceneSequenceTransform Transform;
+		Transform.NestedTransforms.Add(FMovieSceneTimeTransform(-10)); // 10 outer offset
+		Transform.NestedTransforms.Add(FMovieSceneTimeTransform(0, 0)); // 0 timescale
+		Transform.NestedTransforms.Add(FMovieSceneTimeTransform(30)); // 30 inner frame offset
+
+		FMovieSceneSequenceTransform Inv = Transform.InverseNoLooping();
+		if (FMath::IsFinite(Inv.GetTimeScale()))
+		{
+			AddError(FString::Printf(TEXT("Inverse of a transform with zero timescale is not correctly infinite")));
+		}
+
+		TestEqual("Inner time 40 through inf timescale with 10 outer offset", FFrameNumber(40) * Inv, FFrameTime(10));
+		TestEqual("Inner time 0 through inf timescale with 10 outer offset", FFrameNumber(0)* Inv, FFrameTime(10));
+		TestEqual("Inner time 173 through inf timescale with 10 outer offset", FFrameNumber(173)* Inv, FFrameTime(10));
+
+		// Re-invert the inverse transform. This should be equivalent to the original transform and we shouldn't have lost anything.
+		FMovieSceneSequenceTransform InvInv = Inv.InverseNoLooping();
+		TestEqual("Doubly inverted zero-timescale transform should be equal to original", InvInv, Transform);
+	}
+
+	{
+		// Multiple levels of sub sequences with zero-timescale thrown in
+		FMovieSceneSequenceTransform OuterTransform;
+		OuterTransform.NestedTransforms.Add(FMovieSceneTimeTransform(-10)); // 10 outer offset
+		OuterTransform.NestedTransforms.Add(FMovieSceneTimeTransform(0, 0)); // 0 timescale
+		OuterTransform.NestedTransforms.Add(FMovieSceneTimeTransform(30)); // 30 inner frame offset
+
+		FMovieSceneSequenceTransform InnerTransform;
+		InnerTransform.LinearTransform.Offset = FFrameNumber(5); // An inner frame offset of 5
+
+		FMovieSceneSequenceTransform CompleteTransform = InnerTransform * OuterTransform;
+
+		TestEqual("Subsequence frame through zero timescale transform", FFrameNumber(40)* CompleteTransform, FFrameTime(35));
+		TestEqual("Subsequence frame through zero timescale transform", FFrameNumber(0)* CompleteTransform, FFrameTime(35));
+		TestEqual("Subsequence frame through zero timescale transform", FFrameNumber(173)* CompleteTransform, FFrameTime(35));
+
+		FMovieSceneSequenceTransform InvCompleteTransform = CompleteTransform.InverseNoLooping();
+
+		TestEqual("Inner time 40 through inf timescale with 10 outer offset", FFrameNumber(40)* InvCompleteTransform, FFrameTime(10));
+		TestEqual("Inner time 0 through inf timescale with 10 outer offset", FFrameNumber(0)* InvCompleteTransform, FFrameTime(10));
+		TestEqual("Inner time 173 through inf timescale with 10 outer offset", FFrameNumber(173)* InvCompleteTransform, FFrameTime(10));
+
+		// Re-invert the inverse transform. This should be equivalent to the original transform and we shouldn't have lost anything.
+		FMovieSceneSequenceTransform InvInv = InvCompleteTransform.InverseNoLooping();
+		TestEqual("Doubly inverted zero-timescale transform should be equal to original", InvInv, CompleteTransform);
 	}
 
 	return true;

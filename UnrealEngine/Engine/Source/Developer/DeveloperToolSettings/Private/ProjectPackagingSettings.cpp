@@ -12,6 +12,7 @@
 
 #define LOCTEXT_NAMESPACE "SettingsClasses"
 
+DEFINE_LOG_CATEGORY_STATIC(LogProjectPackagingSettings, Log, Log);
 
 /* UProjectPackagingSettings interface
  *****************************************************************************/
@@ -39,6 +40,15 @@ void UProjectPackagingSettings::PostInitProperties()
 	FixCookingPaths();
 
 	Super::PostInitProperties();
+
+	if (bUseZenStore && !bUseIoStore)
+	{
+		UE_LOG(LogProjectPackagingSettings, Warning, TEXT("bUseZenStore is enabled in your project packaging settings while bUseIoStore is disabled. "
+															"This is not a supported combination.  bUseZenStore is being treated as disabled. "
+															"To prevent this warning, either (preferred) set bUseIoStore=True or set bUseZenStore=False"
+															"in your project packaging settings in your DefaultGame.ini"));
+		bUseZenStore = false;
+	}
 }
 
 void UProjectPackagingSettings::FixCookingPaths()
@@ -77,6 +87,15 @@ void UProjectPackagingSettings::PostEditChangeProperty(FPropertyChangedEvent& Pr
 	const FName Name = (PropertyChangedEvent.MemberProperty != nullptr)
 		? PropertyChangedEvent.MemberProperty->GetFName()
 		: NAME_None;
+
+	// there is an issue where the default BuildConfig doesn't get propagated to the per-platform packaging settings instances
+	// because their ConfigSystem doesn't get updated - so we do the nuclear option here and wipe them all - they will get re-loaded
+	// when queried next. we just do it for all properties because any one of these could need the per-platform version to update
+	// this code runs before the ReloadConfig is called on each instance
+	if (Name != NAME_None)
+	{
+		FConfigCacheIni::ClearOtherPlatformConfigs();
+	}
 
 	if (Name == FName(TEXT("DirectoriesToAlwaysCook")) || Name == FName(TEXT("DirectoriesToNeverCook")) || Name == FName(TEXT("TestDirectoriesToNotSearch")) || Name == NAME_None)
 	{

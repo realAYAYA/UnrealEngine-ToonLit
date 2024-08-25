@@ -3,14 +3,16 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
 using Horde.Agent.Execution;
+using Microsoft.Extensions.Logging;
 
 namespace Horde.Agent.Tests.Execution;
 
-public class FakeWorkspaceMaterializer : IWorkspaceMaterializer
+class FakeWorkspaceMaterializer : IWorkspaceMaterializer
 {
 	private bool _isInitialized;
 	private DirectoryReference? _rootDir;
@@ -18,8 +20,14 @@ public class FakeWorkspaceMaterializer : IWorkspaceMaterializer
 
 	public void SetFile(int changeNum, string path, string content)
 	{
-		if (path.Contains("..", StringComparison.Ordinal)) throw new ArgumentException("Cannot contain '..'");
-		if (path.Contains(':', StringComparison.Ordinal)) throw new ArgumentException("Cannot contain ':'");
+		if (path.Contains("..", StringComparison.Ordinal))
+		{
+			throw new ArgumentException("Cannot contain '..'");
+		}
+		if (path.Contains(':', StringComparison.Ordinal))
+		{
+			throw new ArgumentException("Cannot contain ':'");
+		}
 		path = path.Replace("\\", "/", StringComparison.Ordinal);
 
 		if (!_changeToFiles.TryGetValue(changeNum, out Dictionary<string, string>? pathToContent))
@@ -30,15 +38,20 @@ public class FakeWorkspaceMaterializer : IWorkspaceMaterializer
 
 		pathToContent[path] = content;
 	}
-	
+
 	/// <inheritdoc/>
-	public Task<WorkspaceMaterializerSettings> InitializeAsync(CancellationToken cancellationToken)
+	public void Dispose()
+	{
+	}
+
+	/// <inheritdoc/>
+	public Task<WorkspaceMaterializerSettings> InitializeAsync(ILogger logger, CancellationToken cancellationToken)
 	{
 		if (_isInitialized)
 		{
 			throw new WorkspaceMaterializationException("Already initialized");
 		}
-		
+
 		_rootDir = new DirectoryReference(Path.Join(Path.GetTempPath(), "horde-fakeworkspace-" + Guid.NewGuid().ToString()[..8]));
 		Directory.CreateDirectory(_rootDir.FullName);
 		_isInitialized = true;
@@ -53,12 +66,12 @@ public class FakeWorkspaceMaterializer : IWorkspaceMaterializer
 		{
 			throw new WorkspaceMaterializationException("Cannot finalize before initialization");
 		}
-		
+
 		if (Directory.Exists(_rootDir.FullName))
 		{
 			Directory.Delete(_rootDir.FullName, true);
 		}
-		
+
 		return Task.CompletedTask;
 	}
 
@@ -69,16 +82,21 @@ public class FakeWorkspaceMaterializer : IWorkspaceMaterializer
 		{
 			throw new WorkspaceMaterializationException("Cannot get settings before initialization");
 		}
-		
-		return Task.FromResult(new WorkspaceMaterializerSettings(_rootDir, "fakeWorkspaceIdentifier", "fakeWorkspaceStreamRoot"));
+
+		return Task.FromResult(new WorkspaceMaterializerSettings(_rootDir, "fakeWorkspaceIdentifier", "fakeWorkspaceStreamRoot", new Dictionary<string, string>(), false));
 	}
 
 	/// <inheritdoc/>
-	public Task SyncAsync(int changeNum, SyncOptions options, CancellationToken cancellationToken)
+	public Task SyncAsync(int changeNum, int preflightChangeNum, SyncOptions options, CancellationToken cancellationToken)
 	{
 		if (!_isInitialized || _rootDir == null)
 		{
 			throw new Exception("Cannot sync before initialization");
+		}
+
+		if (changeNum == IWorkspaceMaterializer.LatestChangeNumber)
+		{
+			changeNum = _changeToFiles.Keys.Max();
 		}
 
 		if (!_changeToFiles.ContainsKey(changeNum))
@@ -92,13 +110,12 @@ public class FakeWorkspaceMaterializer : IWorkspaceMaterializer
 		}
 
 		WriteChangesToDisk(changeNum);
-		return Task.CompletedTask;
-	}
 
-	/// <inheritdoc/>
-	public Task UnshelveAsync(int changeNum, CancellationToken cancellationToken)
-	{
-		WriteChangesToDisk(changeNum);
+		if (preflightChangeNum > 0)
+		{
+			WriteChangesToDisk(preflightChangeNum);
+		}
+
 		return Task.CompletedTask;
 	}
 
@@ -115,15 +132,15 @@ public class FakeWorkspaceMaterializer : IWorkspaceMaterializer
 
 	private static void DeleteAllFiles(string dirPath)
 	{
-		DirectoryInfo di = new (dirPath);
-		
+		DirectoryInfo di = new(dirPath);
+
 		foreach (FileInfo file in di.EnumerateFiles())
 		{
 			file.Delete();
 		}
 		foreach (DirectoryInfo dir in di.EnumerateDirectories())
 		{
-			dir.Delete(true); 
+			dir.Delete(true);
 		}
 	}
 }

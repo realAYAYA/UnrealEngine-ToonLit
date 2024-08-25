@@ -86,7 +86,7 @@ namespace GLTF
 			return FBase64::GetDecodedDataSize(EncodedData);
 		}
 
-		FAccessor& AccessorAtIndex(TArray<FValidAccessor>& Accessors, int32 Index)
+		FAccessor& AccessorAtIndex(TArray<FAccessor>& Accessors, int32 Index)
 		{
 			if (Accessors.IsValidIndex(Index))
 			{
@@ -94,12 +94,12 @@ namespace GLTF
 			}
 			else
 			{
-				static FVoidAccessor Void;
-				return Void;
+				static FAccessor EmptyAccessor;
+				return EmptyAccessor;
 			}
 		}
 
-		const FAccessor& AccessorAtIndex(const TArray<FValidAccessor>& Accessors, int32 Index)
+		const FAccessor& AccessorAtIndex(const TArray<FAccessor>& Accessors, int32 Index)
 		{
 			if (Accessors.IsValidIndex(Index))
 			{
@@ -107,8 +107,8 @@ namespace GLTF
 			}
 			else
 			{
-				static const FVoidAccessor Void;
-				return Void;
+				static const FAccessor EmptyAccessor;
+				return EmptyAccessor;
 			}
 		}
 
@@ -254,17 +254,19 @@ namespace GLTF
 
 	void FFileReader::SetupAccessor(const FJsonObject& Object) const
 	{
+		uint32 AccessorIndex = Asset->Accessors.Num();
+
 		const uint32 BufferViewIdx = GetUnsignedInt(Object, TEXT("bufferView"), BufferViewCount);
 		if (BufferViewIdx < BufferViewCount)  // must be true
 		{
 			const uint64                    ByteOffset = GetUnsignedInt64(Object, TEXT("byteOffset"), 0);
 			const FAccessor::EComponentType CompType   = ComponentTypeFromNumber(GetUnsignedInt(Object, TEXT("componentType"), 0));
 			const uint32                    Count      = GetUnsignedInt(Object, TEXT("count"), 0);
-			const FAccessor::EType          Type       = AccessorTypeFromString(Object.GetStringField("type"));
+			const FAccessor::EType          Type       = AccessorTypeFromString(Object.GetStringField(TEXT("type")));
 			const bool                      Normalized = GetBool(Object, TEXT("normalized"));
 
 			//Sparse:
-			if (Object.HasField("sparse"))
+			if (Object.HasField(TEXT("sparse")))
 			{
 				const FJsonObject& SparseObject = *Object.GetObjectField(TEXT("sparse"));
 
@@ -279,23 +281,72 @@ namespace GLTF
 				const uint32 ValuesBufferViewIdx = GetUnsignedInt(ValuesObject, TEXT("bufferView"), BufferViewCount);
 				const uint64 ValuesByteOffset = GetUnsignedInt64(ValuesObject, TEXT("byteOffset"), 0);
 
-				Asset->Accessors.Emplace(Asset->BufferViews[BufferViewIdx], ByteOffset, Count, Type, CompType, Normalized, 
+				Asset->Accessors.Emplace(AccessorIndex,
+					Asset->BufferViews[BufferViewIdx], ByteOffset, 
+					Count, Type, CompType, Normalized,
 					FAccessor::FSparse(SparseCount, 
 						Asset->BufferViews[IndicesBufferViewIdx], IndicesByteOffset, IndicesCompType,
 						Asset->BufferViews[ValuesBufferViewIdx], ValuesByteOffset));
 			}
 			else
 			{
-				Asset->Accessors.Emplace(Asset->BufferViews[BufferViewIdx], ByteOffset, Count, Type, CompType, Normalized, FAccessor::FSparse());
+				Asset->Accessors.Emplace(AccessorIndex,
+					Asset->BufferViews[BufferViewIdx], ByteOffset, 
+					Count, Type, CompType, Normalized, 
+					FAccessor::FSparse());
 			}
-
-			ExtensionsHandler->SetupAccessorExtensions(Object, Asset->Accessors.Last());
 		}
+		else
+		{
+			if (!Object.HasTypedField<EJson::Number>(TEXT("bufferView")))
+			{
+				//if bufferView does not exist in the Object, then the presumption is that it is a (Draco) CompressedAccessor:
+				const uint32                    Count = GetUnsignedInt(Object, TEXT("count"), 0);
+				const FAccessor::EType          Type = AccessorTypeFromString(Object.GetStringField(TEXT("type")));
+				const FAccessor::EComponentType CompType = ComponentTypeFromNumber(GetUnsignedInt(Object, TEXT("componentType"), 0));
+				const bool                      Normalized = GetBool(Object, TEXT("normalized"));
+
+				//Sparse:
+				if (Object.HasField(TEXT("sparse")))
+				{
+					const FJsonObject& SparseObject = *Object.GetObjectField(TEXT("sparse"));
+
+					const uint32 SparseCount = GetUnsignedInt(SparseObject, TEXT("count"), 0);
+
+					const FJsonObject& IndicesObject = *SparseObject.GetObjectField(TEXT("indices"));
+					const uint32 IndicesBufferViewIdx = GetUnsignedInt(IndicesObject, TEXT("bufferView"), BufferViewCount);
+					const uint64 IndicesByteOffset = GetUnsignedInt64(IndicesObject, TEXT("byteOffset"), 0);
+					const FAccessor::EComponentType IndicesCompType = ComponentTypeFromNumber(GetUnsignedInt(IndicesObject, TEXT("componentType"), 0));
+
+					const FJsonObject& ValuesObject = *SparseObject.GetObjectField(TEXT("values"));
+					const uint32 ValuesBufferViewIdx = GetUnsignedInt(ValuesObject, TEXT("bufferView"), BufferViewCount);
+					const uint64 ValuesByteOffset = GetUnsignedInt64(ValuesObject, TEXT("byteOffset"), 0);
+
+					Asset->Accessors.Emplace(AccessorIndex,
+						Count, Type, CompType, Normalized,
+						FAccessor::FSparse(SparseCount,
+							Asset->BufferViews[IndicesBufferViewIdx], IndicesByteOffset, IndicesCompType,
+							Asset->BufferViews[ValuesBufferViewIdx], ValuesByteOffset));
+				}
+				else
+				{
+					Asset->Accessors.Emplace(AccessorIndex,
+						Count, Type, CompType, Normalized, 
+						FAccessor::FSparse());
+				}
+			}
+			else
+			{
+				Asset->Accessors.AddDefaulted();
+			}
+		}
+		
+		ExtensionsHandler->SetupAccessorExtensions(Object, Asset->Accessors.Last());
 	}
 
 	void FFileReader::SetupMorphTarget(const FJsonObject& Object, GLTF::FPrimitive& Primitive, const bool bMeshQuantized) const
 	{
-		const TArray<FValidAccessor>& A = Asset->Accessors;
+		const TArray<FAccessor>& A = Asset->Accessors;
 		FAccessor& Position = AccessorAtIndex(Asset->Accessors, GetIndex(Object, TEXT("POSITION")));
 		FAccessor& Normal = AccessorAtIndex(Asset->Accessors, GetIndex(Object, TEXT("NORMAL")));
 		FAccessor& Tangent = AccessorAtIndex(Asset->Accessors, GetIndex(Object, TEXT("TANGENT")));
@@ -312,7 +363,7 @@ namespace GLTF
 		Primitive.MorphTargets.Emplace(Position, Normal, Tangent, TexCoord0, TexCoord1, Color0);
 	}
 
-	void FFileReader::SetupPrimitive(const FJsonObject& Object, FMesh& Mesh, const bool bMeshQuantized) const
+	void FFileReader::SetupPrimitive(const FJsonObject& Object, FMesh& Mesh, const bool bMeshQuantized, const uint32& PrimitiveIndex) const
 	{
 		const FPrimitive::EMode       Mode = PrimitiveModeFromNumber(GetUnsignedInt(Object, TEXT("mode"), (uint32)FPrimitive::EMode::Triangles));
 		if (Mode == FPrimitive::EMode::Unknown)
@@ -320,13 +371,18 @@ namespace GLTF
 			return;
 		}
 
+		if (!FPrimitive::SupportedModes.Contains(Mode))
+		{
+			Messages.Emplace(EMessageSeverity::Warning, FString::Printf(TEXT("Primitive Mode[%s] in Primitive[%i] (in Mesh[%s]) is currently not supported. Geometry won't be imported."), *FPrimitive::ToString(Mode), PrimitiveIndex, *Mesh.Name));
+		}
+
 		const int32                   MaterialIndex = GetIndex(Object, TEXT("material"));
-		const TArray<FValidAccessor>& A             = Asset->Accessors;
+		const TArray<FAccessor>& A             = Asset->Accessors;
 
 		const FAccessor& Indices = AccessorAtIndex(A, GetIndex(Object, TEXT("indices")));
 
 		// the only required attribute is POSITION
-		const FJsonObject& Attributes = *Object.GetObjectField("attributes");
+		const FJsonObject& Attributes = *Object.GetObjectField(TEXT("attributes"));
 		FAccessor&   Position   = AccessorAtIndex(Asset->Accessors, GetIndex(Attributes, TEXT("POSITION")));
 		FAccessor&   Normal     = AccessorAtIndex(Asset->Accessors, GetIndex(Attributes, TEXT("NORMAL")));
 		FAccessor&   Tangent    = AccessorAtIndex(Asset->Accessors, GetIndex(Attributes, TEXT("TANGENT")));
@@ -355,7 +411,7 @@ namespace GLTF
 			}
 		}
 
-		ExtensionsHandler->SetupPrimitiveExtensions(Object, Mesh.Primitives.Last());
+		ExtensionsHandler->SetupPrimitiveExtensions(Object, Mesh.Primitives.Last(), Mesh.Primitives.Num()-1, Mesh.UniqueId);
 	}
 
 	void FFileReader::SetupMesh(const FJsonObject& Object, const bool bMeshQuantized) const
@@ -369,10 +425,11 @@ namespace GLTF
 		Mesh.Primitives.Reserve(PrimArray.Num());
 
 		int32 NumberOfMorphTargets = -1;
+		uint32 PrimitiveIndex = 0;
 		for (TSharedPtr<FJsonValue> Value : PrimArray)
 		{
 			const FJsonObject& PrimObject = *Value->AsObject();
-			SetupPrimitive(PrimObject, Mesh, bMeshQuantized);
+			SetupPrimitive(PrimObject, Mesh, bMeshQuantized, PrimitiveIndex);
 
 			if (NumberOfMorphTargets == -1)
 			{
@@ -386,6 +443,8 @@ namespace GLTF
 					Messages.Emplace(EMessageSeverity::Error, TEXT("Number of Primitive.Targets is not consistent across the Mesh."));
 				}
 			}
+
+			PrimitiveIndex++;
 		}
 
 		// Morph Target Weights:
@@ -442,6 +501,8 @@ namespace GLTF
 	void FFileReader::SetupNode(const FJsonObject& Object) const
 	{
 		FNode& Node = Asset->Nodes.Emplace_GetRef();
+
+		Node.Index = Asset->Nodes.Num() - 1;
 
 		Node.Name = GetString(Object, TEXT("name"));
 
@@ -863,7 +924,7 @@ namespace GLTF
 				}
 			}
 		}
-		OutAsset.GenerateNames(OutAsset.Name);
+		OutAsset.GenerateNames();
 
 		if (OutAsset.ValidationCheck() != FAsset::Valid)
 		{
@@ -1039,23 +1100,21 @@ namespace GLTF
 			}
 		}
 
-		SetupObjects(BufferCount, TEXT("buffers"), [this, InResourcesPath](const FJsonObject& Object) { SetupBuffer(Object, InResourcesPath); });
-		SetupObjects(BufferViewCount, TEXT("bufferViews"), [this](const FJsonObject& Object) { SetupBufferView(Object); });
-		SetupObjects(AccessorCount, TEXT("accessors"), [this](const FJsonObject& Object) { SetupAccessor(Object); });
+		if (!SetupObjects(BufferCount, TEXT("buffers"), [this, InResourcesPath](const FJsonObject& Object) { SetupBuffer(Object, InResourcesPath); })) { return; }
+		if (!SetupObjects(BufferViewCount, TEXT("bufferViews"), [this](const FJsonObject& Object) { SetupBufferView(Object); })) { return; }
+		if (!SetupObjects(AccessorCount, TEXT("accessors"), [this](const FJsonObject& Object) { SetupAccessor(Object); })) { return; }
 
-		SetupObjects(MeshCount, TEXT("meshes"), [this, &bMeshQuantized](const FJsonObject& Object) { SetupMesh(Object, bMeshQuantized); });
-		SetupObjects(NodeCount, TEXT("nodes"), [this](const FJsonObject& Object) { SetupNode(Object); });
-		SetupObjects(SceneCount, TEXT("scenes"), [this](const FJsonObject& Object) { SetupScene(Object); });
-		SetupObjects(CameraCount, TEXT("cameras"), [this](const FJsonObject& Object) { SetupCamera(Object); });
-		SetupObjects(SkinCount, TEXT("skins"), [this](const FJsonObject& Object) { SetupSkin(Object); });
-		SetupObjects(AnimationsCount, TEXT("animations"), [this](const FJsonObject& Object) { SetupAnimation(Object); });
+		if (!SetupObjects(MeshCount, TEXT("meshes"), [this, &bMeshQuantized](const FJsonObject& Object) { SetupMesh(Object, bMeshQuantized); })) { return; }
+		if (!SetupObjects(NodeCount, TEXT("nodes"), [this](const FJsonObject& Object) { SetupNode(Object); })) { return; }
+		if (!SetupObjects(SceneCount, TEXT("scenes"), [this](const FJsonObject& Object) { SetupScene(Object); })) { return; }
+		if (!SetupObjects(CameraCount, TEXT("cameras"), [this](const FJsonObject& Object) { SetupCamera(Object); })) { return; }
+		if (!SetupObjects(SkinCount, TEXT("skins"), [this](const FJsonObject& Object) { SetupSkin(Object); })) { return; }
+		if (!SetupObjects(AnimationsCount, TEXT("animations"), [this](const FJsonObject& Object) { SetupAnimation(Object); })) { return; }
 
-		SetupObjects(ImageCount, TEXT("images"), [this, InResourcesPath, bInLoadImageData](const FJsonObject& Object) {
-			SetupImage(Object, InResourcesPath, bInLoadImageData);
-		});
-		SetupObjects(SamplerCount, TEXT("samplers"), [this](const FJsonObject& Object) { SetupSampler(Object); });
-		SetupObjects(TextureCount, TEXT("textures"), [this](const FJsonObject& Object) { SetupTexture(Object); });
-		SetupObjects(MaterialCount, TEXT("materials"), [this](const FJsonObject& Object) { SetupMaterial(Object); });
+		if (!SetupObjects(ImageCount, TEXT("images"), [this, InResourcesPath, bInLoadImageData](const FJsonObject& Object) { SetupImage(Object, InResourcesPath, bInLoadImageData); })) { return; }
+		if (!SetupObjects(SamplerCount, TEXT("samplers"), [this](const FJsonObject& Object) { SetupSampler(Object); })) { return; }
+		if (!SetupObjects(TextureCount, TEXT("textures"), [this](const FJsonObject& Object) { SetupTexture(Object); })) { return; }
+		if (!SetupObjects(MaterialCount, TEXT("materials"), [this](const FJsonObject& Object) { SetupMaterial(Object); })) { return; }
 
 
 		const TArray<TSharedPtr<FJsonValue>>* ExtensionsUsed;
@@ -1078,9 +1137,24 @@ namespace GLTF
 		BuildRootJoints();
 	}
 
-	template <typename SetupFunc>
-	void FFileReader::SetupObjects(uint32 ObjectCount, const TCHAR* FieldName, SetupFunc Func) const
+	bool FFileReader::CheckForErrors(int32 StartIndex) const
 	{
+		for (size_t Index = StartIndex; Index < Messages.Num(); Index++)
+		{
+			if (Messages[Index].Key == EMessageSeverity::Error)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	template <typename SetupFunc>
+	bool FFileReader::SetupObjects(uint32 ObjectCount, const TCHAR* FieldName, SetupFunc Func) const
+	{
+		int32 StartIndex = Messages.Num();
+		
 		if (ObjectCount > 0)
 		{
 			for (const TSharedPtr<FJsonValue>& Value : JsonRoot->GetArrayField(FieldName))
@@ -1089,6 +1163,14 @@ namespace GLTF
 				Func(Object);
 			}
 		}
+
+		if (CheckForErrors(StartIndex))
+		{
+			//Any error found should automatically halt the import.
+			return false;
+		}
+
+		return true;
 	}
 
 	void FFileReader::SetupNodesType() const
@@ -1135,7 +1217,8 @@ namespace GLTF
 		for (size_t SkinIndex = 0; SkinIndex < Asset->Skins.Num(); SkinIndex++)
 		{
 			const FSkinInfo& Skin = Asset->Skins[SkinIndex];
-			if (Skin.InverseBindMatrices.Count == Skin.Joints.Num())
+			if (Skin.InverseBindMatrices.Count == Skin.Joints.Num() &&
+				Skin.InverseBindMatrices.IsValid())
 			{
 				for (size_t JointCounter = 0; JointCounter < Skin.Joints.Num(); JointCounter++)
 				{
@@ -1153,50 +1236,122 @@ namespace GLTF
 			}
 		}
 	}
+
+	void GenerateGlobalTransform(const TArray<FNode>& Nodes, int32 CurrentIndex, FTransform& GlobalTransform, const int32& SkeletonCommonRootIndex/*PivotPoint*/)
+	{
+		if (Nodes.IsValidIndex(CurrentIndex))
+		{
+			const FNode& CurrentNode = Nodes[CurrentIndex];
+
+			if (CurrentIndex != SkeletonCommonRootIndex)
+			{
+				GenerateGlobalTransform(Nodes, CurrentNode.ParentIndex, GlobalTransform, SkeletonCommonRootIndex);
+			}
+
+			GlobalTransform = CurrentNode.Transform * GlobalTransform;
+		}
+	}
+
 	void FFileReader::GenerateLocalBindPosesPerSkinIndices() const
 	{
 		for (size_t SkinIndex = 0; SkinIndex < Asset->Skins.Num(); SkinIndex++)
 		{
 			const FSkinInfo& Skin = Asset->Skins[SkinIndex];
-			if (Skin.InverseBindMatrices.Count == Skin.Joints.Num())
+			if (Skin.InverseBindMatrices.Count == Skin.Joints.Num() &&
+				Skin.InverseBindMatrices.IsValid())
 			{
 				for (size_t JointCounter = 0; JointCounter < Skin.Joints.Num(); JointCounter++)
 				{
 					FNode& CurrentNode = Asset->Nodes[Skin.Joints[JointCounter]];
-					if (CurrentNode.ParentIndex != INDEX_NONE)
-					{
-						if (Asset->Nodes[CurrentNode.ParentIndex].Type == FNode::EType::Joint
-							&& Asset->Nodes[CurrentNode.ParentIndex].SkinIndexToGlobalInverseBindTransform.Contains(SkinIndex))
-						{
-							//LocalBindPose; //bind pose would be CurrentNode.GlobalInverseBindTransform.Inverse() * ParentNode.GlobalInverseBindTransform
-							FTransform ParentGlobalInverseBindTransform = Asset->Nodes[CurrentNode.ParentIndex].SkinIndexToGlobalInverseBindTransform[SkinIndex];
-							FTransform LocalBindPose = CurrentNode.SkinIndexToGlobalInverseBindTransform[SkinIndex].Inverse() * ParentGlobalInverseBindTransform;
 
-							CurrentNode.SkinIndexToLocalBindPose.Add(SkinIndex, LocalBindPose);
+					if (CurrentNode.ParentIndex != INDEX_NONE &&
+						Asset->Nodes.IsValidIndex(CurrentNode.ParentIndex) &&
+						Asset->Nodes[CurrentNode.ParentIndex].Type == FNode::EType::Joint &&
+						(Asset->Nodes[CurrentNode.ParentIndex].SkinIndexToGlobalInverseBindTransform.Contains(SkinIndex) || Asset->Nodes[CurrentNode.ParentIndex].SkinIndexToGlobalInverseBindTransform.Num() > 0)
+						)
+					{
+						FNode& ParentNode = Asset->Nodes[CurrentNode.ParentIndex];
+
+						//LocalBindPose; //bind pose would be CurrentNode.GlobalInverseBindTransform.Inverse() * ParentNode.GlobalInverseBindTransform
+						FTransform ParentGlobalInverseBindTransform;
+						if (ParentNode.SkinIndexToGlobalInverseBindTransform.Contains(SkinIndex))
+						{
+							ParentGlobalInverseBindTransform = ParentNode.SkinIndexToGlobalInverseBindTransform[SkinIndex];
 						}
+						else
+						{
+							//Scenario is that the a Skin is instantiated at the end of another skin
+							//(Prime example is the RecursiveSkeleton gltf sample file.)
+							ParentGlobalInverseBindTransform = ParentNode.SkinIndexToGlobalInverseBindTransform.begin().Value();
+						}
+
+						FTransform LocalBindPose = CurrentNode.SkinIndexToGlobalInverseBindTransform[SkinIndex].Inverse() * ParentGlobalInverseBindTransform;
+
+						CurrentNode.SkinIndexToLocalBindPose.Add(SkinIndex, LocalBindPose);
+					}
+					else
+					{
+						FTransform ParentGlobalTransform;
+						if (Skin.Skeleton != INDEX_NONE && Skin.Skeleton != CurrentNode.Index)
+						{
+							GenerateGlobalTransform(Asset->Nodes, CurrentNode.ParentIndex, ParentGlobalTransform, Skin.Skeleton);
+						}
+						FTransform LocalBindPose = CurrentNode.SkinIndexToGlobalInverseBindTransform[SkinIndex].Inverse() * ParentGlobalTransform.Inverse();
+						CurrentNode.SkinIndexToLocalBindPose.Add(SkinIndex, LocalBindPose);
 					}
 				}
 			}
 		}
 	}
+
 	void FFileReader::SetLocalBindPosesForJoints() const
 	{
+		//Validate generated SkinIndexToLocalBindPose values, before setting.
+		TArray<FString> OffendingJointsNames;
+
+		for (const FNode& CurrentNode : Asset->Nodes)
+		{
+			TMap<int, FTransform>::TRangedForConstIterator Iter(CurrentNode.SkinIndexToLocalBindPose.begin());
+			FTransform ToCompareAgainst = Iter ? Iter.Value() : FTransform();
+			++Iter;
+			for (; Iter; ++Iter)
+			{
+				if (!ToCompareAgainst.Equals(Iter.Value()))
+				{
+					OffendingJointsNames.Add(CurrentNode.Name);
+					break;
+				}
+			}
+		}
+		
+		if (OffendingJointsNames.Num() > 0)
+		{
+			FString OffendingJointsNamesString;
+			for (const FString& OffendingJointName : OffendingJointsNames)
+			{
+				if (OffendingJointsNamesString.Len() > 0)
+				{
+					OffendingJointsNamesString += TEXT(", ");
+				}
+				OffendingJointsNamesString += OffendingJointName;
+			}
+			
+			Messages.Emplace(EMessageSeverity::Warning, FString::Printf(TEXT("The same Joint(s) are used in multiple Skins with multiple different InverseBindMatrix values, which is not supported. Ignoring InverseBindMatrices for the entire Import. Offending Joints' Names: %s."), *OffendingJointsNamesString));
+			
+			Asset->HasAbnormalInverseBindMatrices = true;
+
+			return;
+		}
+
 		for (size_t SkinIndex = 0; SkinIndex < Asset->Skins.Num(); SkinIndex++)
 		{
 			const FSkinInfo& Skin = Asset->Skins[SkinIndex];
-			if (Skin.InverseBindMatrices.Count == Skin.Joints.Num())
+			if (Skin.InverseBindMatrices.Count == Skin.Joints.Num() &&
+				Skin.InverseBindMatrices.IsValid())
 			{
 				for (size_t JointCounter = 0; JointCounter < Skin.Joints.Num(); JointCounter++)
 				{
 					FNode& CurrentNode = Asset->Nodes[Skin.Joints[JointCounter]];
-
-					if (CurrentNode.bHasLocalBindPose && CurrentNode.SkinIndexToLocalBindPose.Contains(SkinIndex))
-					{
-						if (!CurrentNode.LocalBindPose.Equals(CurrentNode.SkinIndexToLocalBindPose[SkinIndex]))
-						{
-							Messages.Emplace(EMessageSeverity::Error, FString::Printf(TEXT("The same Joint [%s] is used in multiple Skins with multiple different InverseBindMatrix values, which is currently not supported."), *CurrentNode.Name));
-						}
-					}
 
 					if (!CurrentNode.bHasLocalBindPose
 						&& CurrentNode.SkinIndexToLocalBindPose.Contains(SkinIndex))

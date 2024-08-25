@@ -169,8 +169,13 @@ class UNiagaraDataInterfaceSpline : public UNiagaraDataInterface
 
 public:
 	/** The source actor from which to sample.  Note that this can only be set when used as a user variable on a component in the world.*/
-	UPROPERTY(EditAnywhere, Category = "Spline")
-	TObjectPtr<AActor> Source;
+	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (DisplayName = "Source Actor"))
+	TSoftObjectPtr<AActor> SoftSourceActor;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	TObjectPtr<AActor> Source_DEPRECATED;
+#endif
 
 	/** Reference to a user parameter if we're reading one. This should  be an Object user parameter that is either a USplineComponent or an AActor containing a USplineComponent. */
 	UPROPERTY(EditAnywhere, Category = "Spline")
@@ -183,7 +188,8 @@ public:
 	int32 NumLUTSteps;
 	
 	//UObject Interface
-	NIAGARA_API virtual void PostInitProperties()override;
+	NIAGARA_API virtual void PostInitProperties() override;
+	NIAGARA_API virtual void PostLoad() override;
 	//UObject Interface End
 
 	//UNiagaraDataInterface Interface
@@ -191,7 +197,6 @@ public:
 	NIAGARA_API virtual void DestroyPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance)override;
 	NIAGARA_API virtual bool PerInstanceTick(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance, float DeltaSeconds) override;
 	NIAGARA_API virtual int32 PerInstanceDataSize()const override;
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	NIAGARA_API virtual bool Equals(const UNiagaraDataInterface* Other) const override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target)const override { return true; }
@@ -224,6 +229,9 @@ public:
 	}
 
 protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 
 #if WITH_EDITORONLY_DATA

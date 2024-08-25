@@ -3,10 +3,7 @@
 #pragma once
 
 #include "SolverEventFilters.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Chaos/PBDRigidsEvolutionGBF.h"
-#include "PBDRigidsSolver.h"
-#endif
+
 #include "ChaosSolverConfiguration.generated.h"
 
 UENUM()
@@ -65,6 +62,15 @@ struct FChaosSolverConfiguration
 	// ensure the bodies are depenetrated in a single frame without explosive behaviour.
 	UPROPERTY(EditAnywhere, Category = "SolverConfiguration|Collision", meta = (ClampMin = "0.0"))
 	float CollisionMaxPushOutVelocity;
+
+	// If two bodies start off in overlapping each other, they will depentrate at this speed when they wake.
+	// If set to a large value, initially-overlapping objects will tend to "explode" apart at a speed that depends on the
+	// overlap amount and the timestep (this is the original, previously untunable behaviour). If set to zero, 
+	// initially-overlapping objects will remain stationary and go to sleep until acted on by some other object or force.
+	// A negative value (-1) disables the feature and is equivalent to infinity.
+	// This property can be overridden per Body (see FBodyInstance::MaxDepenetrationVelocity)
+	UPROPERTY(EditAnywhere, Category = "SolverConfiguration|Collision")
+	float CollisionInitialOverlapDepenetrationVelocity;
 
 	UPROPERTY(EditAnywhere, Category = "SolverConfiguration|Clustering")
 	float ClusterConnectionFactor;

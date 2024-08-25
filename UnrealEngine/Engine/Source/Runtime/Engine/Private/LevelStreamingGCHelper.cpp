@@ -183,7 +183,7 @@ void FLevelStreamingGCHelper::PrepareStreamedOutLevelForGC(ULevel* InLevel)
 			}
 		}, true, RF_NoFlags, EInternalObjectFlags::Garbage);
 
-		if (!UObjectBaseUtility::IsPendingKillEnabled())
+		if (!UObjectBaseUtility::IsGarbageEliminationEnabled())
 		{
 			// Rename the packages that we are streaming out so that we can possibly reload another copy of them
 			for (UPackage* Package : Packages)

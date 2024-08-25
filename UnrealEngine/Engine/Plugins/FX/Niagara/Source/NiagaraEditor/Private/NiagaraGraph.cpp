@@ -37,7 +37,6 @@
 #include "Modules/ModuleManager.h"
 #include "String/ParseTokens.h"
 #include "ViewModels/NiagaraScriptViewModel.h"
-#include "ViewModels/TNiagaraViewModelManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraGraph)
 
@@ -136,7 +135,7 @@ void FindReferencedVariables(const UNiagaraGraph* Graph, TConstArrayView<UNiagar
 
 	while (!VariablesToProcess.IsEmpty())
 	{
-		UNiagaraScriptVariable* Variable = VariablesToProcess.Pop(false);
+		UNiagaraScriptVariable* Variable = VariablesToProcess.Pop(EAllowShrinking::No);
 
 		FNiagaraTypeDefinition LinkedType = Variable->Variable.GetType();
 		FName BindingName = Variable->DefaultBinding.GetName();
@@ -675,7 +674,10 @@ void UNiagaraGraph::PostLoad()
 		for (UEdGraphNode* Node : Nodes)
 		{
 			Node->ConditionalPostLoad();
-
+		}
+		
+		for (UEdGraphNode* Node : Nodes)
+		{
 			if (UNiagaraNode* NiagaraNode = Cast<UNiagaraNode>(Node))
 			{
 				// Assume that all externally referenced assets have changed, so update to match. They will return true if they have changed.
@@ -684,7 +686,7 @@ void UNiagaraGraph::PostLoad()
 					ReferencedAsset->ConditionalPostLoad();
 					NiagaraNode->RefreshFromExternalChanges();
 				}
-
+				
 				if (UNiagaraNodeInput* InputNode = Cast<UNiagaraNodeInput>(NiagaraNode))
 				{
 					InputNodes.Add(InputNode);
@@ -1469,7 +1471,7 @@ void UNiagaraGraph::StandardizeParameterNames()
 	{
 		FNiagaraVariable Variable = VariableScriptVariablePair.Key;
 		UNiagaraScriptVariable* ScriptVariable = VariableScriptVariablePair.Value;
-		ScriptVariable->PostLoad();
+		ScriptVariable->ConditionalPostLoad();
 		
 		if (ScriptVariable->GetIsStaticSwitch() == false)
 		{
@@ -3763,7 +3765,7 @@ void UNiagaraGraph::ForceGraphToRecompileOnNextCheck()
 	MarkGraphRequiresSynchronization(__FUNCTION__);
 }
 
-void UNiagaraGraph::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs)
+void UNiagaraGraph::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector)
 {
 	RebuildCachedCompileIds();
 	
@@ -3774,7 +3776,7 @@ void UNiagaraGraph::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, co
 		{
 			for (UNiagaraNode* Node : CachedUsageInfo[i].Traversal)
 			{
-				Node->GatherExternalDependencyData(InUsage, InUsageId, InReferencedCompileHashes, InReferencedObjs);
+				Node->GatherExternalDependencyData(InUsage, InUsageId, HashCollector);
 			}
 		}
 		// Now add any other dependency chains that we might have...
@@ -3782,17 +3784,16 @@ void UNiagaraGraph::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, co
 		{
 			if (GNiagaraUseGraphHash == 1)
 			{
-				InReferencedCompileHashes.AddUnique(CachedUsageInfo[i].CompileHashFromGraph);
+				HashCollector.AddHash(CachedUsageInfo[i].CompileHashFromGraph, CachedUsageInfo[i].Traversal.Last()->GetPathName());
 			}
 			else
 			{
-				InReferencedCompileHashes.AddUnique(CachedUsageInfo[i].CompileHash);
+				HashCollector.AddHash(CachedUsageInfo[i].CompileHash, CachedUsageInfo[i].Traversal.Last()->GetPathName());
 			}
-			InReferencedObjs.Add(CachedUsageInfo[i].Traversal.Last()->GetPathName());
 
 			for (UNiagaraNode* Node : CachedUsageInfo[i].Traversal)
 			{
-				Node->GatherExternalDependencyData(InUsage, InUsageId, InReferencedCompileHashes, InReferencedObjs);
+				Node->GatherExternalDependencyData(InUsage, InUsageId, HashCollector);
 			}
 		}
 	}

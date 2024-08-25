@@ -14,6 +14,12 @@ class AWaterBodyExclusionVolume;
 class ALandscapeProxy;
 class UMaterialInstanceDynamic;
 
+class UWaterBodyComponent;
+class UWaterBodyRiverComponent;
+class UWaterBodyLakeComponent;
+class UWaterBodyOceanComponent;
+class UWaterBodyCustomComponent;
+
 // ----------------------------------------------------------------------------------
 
 // For internal use.
@@ -25,8 +31,17 @@ class WATER_API UDEPRECATED_WaterBodyGenerator : public UObject
 
 // ----------------------------------------------------------------------------------
 
-//@todo_water: Remove Blueprintable
-UCLASS(Blueprintable, Abstract, HideCategories = (Tags, Activation, Cooking, Replication, Input, Actor, AssetUserData))
+/**
+ * Base class for all water body actors.
+ *
+ * WaterBodyActors provide a spline-based workflow to create lakes, rivers, and oceans which automatically create meshes,
+ * carve landscapes, and support physics interactions.
+ *
+ * To create a new water body this class must be derived (native or blueprint) and have the `WaterBodyType` property changed to the specific water type.
+ * The new class will automatically have a corresponding UWaterBodyComponent specific to that water body type.
+ * The component class for each water body type can be defined in the Editor Settings.
+ */
+UCLASS(Blueprintable, config = Engine, Abstract, HideCategories = (Tags, Activation, Cooking, Replication, Input, Actor, AssetUserData))
 class WATER_API AWaterBody : public AActor, public IWaterBrushActorInterface
 {
 	GENERATED_UCLASS_BODY()
@@ -68,6 +83,11 @@ public:
 	virtual void PostActorCreated() override;
 
 	virtual void PopulatePIEDuplicationSeed(AActor::FDuplicationSeedInterface& DuplicationSeed) override;
+
+	virtual void PostEditMove(bool bFinished) override;
+	virtual void PreEditChange(FProperty* PropertyThatWillChange) override;
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual void PostDuplicate(bool bDuplicateForPIE) override;
 #endif // WITH_EDITOR
 	
 	/** Returns the type of body */
@@ -126,13 +146,6 @@ protected:
 	UPROPERTY(TextExportTransient, NonPIEDuplicateTransient)
 	TArray<TObjectPtr<UWaterBodyStaticMeshComponent>> WaterBodyStaticMeshComponents;
 
-#if WITH_EDITOR
-	virtual void PostEditMove(bool bFinished) override;
-	virtual void PreEditChange(FProperty* PropertyThatWillChange) override;
-	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-	virtual void PostDuplicate(bool bDuplicateForPIE) override;
-#endif // WITH_EDITOR
-
 	void SetWaterWavesInternal(UWaterWavesBase* InWaterWaves);
 
 	const TArray<TObjectPtr<UWaterBodyStaticMeshComponent>>& GetWaterBodyStaticMeshComponents() const { return WaterBodyStaticMeshComponents; }
@@ -142,6 +155,18 @@ protected:
 
 	/** Sets up a new list of water body static mesh components. */
 	void SetWaterBodyStaticMeshComponents(TArrayView<TObjectPtr<UWaterBodyStaticMeshComponent>> NewComponentList, TConstArrayView<TObjectPtr<UWaterBodyStaticMeshComponent>> ComponentsToUnregister = {});
+
+	UPROPERTY(EditDefaultsOnly, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyRiverComponent"))
+	TSubclassOf<UWaterBodyRiverComponent> WaterBodyRiverComponentClass;
+
+	UPROPERTY(EditDefaultsOnly, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyLakeComponent"))
+	TSubclassOf<UWaterBodyLakeComponent> WaterBodyLakeComponentClass;
+
+	UPROPERTY(EditDefaultsOnly, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyOceanComponent"))
+	TSubclassOf<UWaterBodyOceanComponent> WaterBodyOceanComponentClass;
+
+	UPROPERTY(EditDefaultsOnly, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyCustomComponent"))
+	TSubclassOf<UWaterBodyCustomComponent> WaterBodyCustomComponentClass;
 
 // ----------------------------------------------------------------------------------
 // Deprecated

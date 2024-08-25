@@ -306,3 +306,27 @@ inline void TBaseTest<AsserterType>::AddCommand(TSharedPtr<IAutomationLatentComm
 {
 	TestCommandBuilder.CommandQueue.Add(Cmd);
 }
+
+template <typename AsserterType>
+inline void TBaseTest<AsserterType>::AddError(const FString& InError) const
+{
+	TestRunner.AddError(InError, 0);
+}
+
+template <typename AsserterType>
+inline bool TBaseTest<AsserterType>::AddErrorIfFalse(bool bCondition, const FString& InError) const
+{
+	return TestRunner.AddErrorIfFalse(bCondition, InError, 0);
+}
+
+template <typename AsserterType>
+inline void TBaseTest<AsserterType>::AddWarning(const FString& InWarning) const
+{
+	TestRunner.AddWarning(InWarning, 0);
+}
+
+template <typename AsserterType>
+inline void TBaseTest<AsserterType>::AddInfo(const FString& InLogItem) const
+{
+	TestRunner.AddInfo(InLogItem, 0, false);
+}

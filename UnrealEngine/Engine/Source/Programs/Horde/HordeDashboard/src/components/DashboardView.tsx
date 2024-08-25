@@ -1,16 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { ColorPicker, DefaultButton, DetailsList, DetailsListLayoutMode, DialogFooter, IColorPickerStyles, IColumn, Label, List, Modal, PrimaryButton, SelectionMode, Stack, Text, Toggle } from '@fluentui/react';
+import { ColorPicker, DefaultButton, DialogFooter, IColorPickerStyles, Label, MessageBar, MessageBarType, Modal, Pivot, PivotItem, PrimaryButton, Spinner, SpinnerSize, Stack, Text, TextField, Toggle } from '@fluentui/react';
 import { observer } from 'mobx-react-lite';
 import React, { useState } from 'react';
-import { DashboardPreference } from '../backend/Api';
+import backend from '../backend';
+import { AuthMethod, DashboardPreference, UpdateCurrentAccountRequest } from '../backend/Api';
 import dashboard, { StatusColor, WebBrowser } from '../backend/Dashboard';
 import { useWindowSize } from '../base/utilities/hooks';
-import { hordeClasses, modeColors } from '../styles/Styles';
+import { getHordeStyling } from '../styles/Styles';
 import { Breadcrumbs } from './Breadcrumbs';
 import { TopNav } from './TopNav';
-
-
+import { UserAccountPanel } from './accounts/UserAccountPanel';
 
 const colorBlind1 = new Map<StatusColor, string>([
    [StatusColor.Success, "#37A862"],
@@ -57,6 +57,8 @@ const statusPrefs = new Map<StatusColor, DashboardPreference>([
 const ColorPreferenceDialog: React.FC<{ shown: boolean, statusIn: StatusColor, onClose: () => void }> = ({ shown, statusIn, onClose }) => {
 
    let [state, setState] = useState<{ status: StatusColor, colors: Map<StatusColor, string> }>({ status: statusIn, colors: new Map<StatusColor, string>() });
+
+   const { hordeClasses } = getHordeStyling();
 
    if (!shown) {
       return null;
@@ -231,43 +233,114 @@ const ColorPreferenceDialog: React.FC<{ shown: boolean, statusIn: StatusColor, o
 
 }
 
+const ChangePasswordModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+
+   const [submitting, setSubmitting] = useState(false);
+   const { hordeClasses } = getHordeStyling();
+   const [error, setError] = useState("");
+   const [secrets, setSecrets] = useState<{ currentPassword?: string, newPassword?: string, confirmPassword?: string }>({});
+
+
+   const onValidate = () => {
+
+
+      if (!secrets.newPassword) {
+         return "Please enter a password";
+      }
+
+      if (secrets.newPassword !== secrets.confirmPassword) {
+         return "New and confirm passwords don't match";
+      }
+
+      return undefined;
+   }
+
+   const onSave = async () => {
+
+      const nerror = onValidate();
+
+      if (nerror) {
+         setError(nerror);
+         return;
+      }
+
+      setError("");
+
+      try {
+
+         setSubmitting(true);
+         const uaccount: UpdateCurrentAccountRequest = { newPassword: secrets.newPassword, oldPassword: secrets.currentPassword ?? "" };
+         await backend.updateCurrentAccount(uaccount);
+         setSubmitting(false);
+         onClose();
+
+      } catch (reason) {
+         console.error(reason);
+         setError("Error updating password, please make sure the current password matches");
+         setSubmitting(false);
+      }
+
+   }
+
+   if (submitting) {
+      return <Modal isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 400, hasBeenOpened: false, top: "120px", position: "absolute" } }} >
+         <Stack style={{ paddingTop: 32 }}>
+            <Stack tokens={{ childrenGap: 24 }} styles={{ root: { padding: 8 } }}>
+               <Stack horizontalAlign="center">
+                  <Text variant="mediumPlus">Please wait...</Text>
+               </Stack>
+               <Stack verticalAlign="center" style={{ paddingBottom: 32 }}>
+                  <Spinner size={SpinnerSize.large} />
+               </Stack>
+            </Stack>
+         </Stack>
+      </Modal>
+   }
+
+   return <Modal className={hordeClasses.modal} isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 512, hasBeenOpened: false, top: "120px", position: "absolute" } }} >
+      <Stack style={{ padding: 8 }}>
+         <Stack style={{ paddingBottom: 16 }}>
+            <Text variant="mediumPlus" style={{ fontFamily: "Horde Open Sans SemiBold" }}>Change Password</Text>
+         </Stack>
+         {!!error && <Stack>
+            <MessageBar key={`validation_error`} messageBarType={MessageBarType.error} isMultiline={false}>{error}</MessageBar>
+         </Stack>}
+
+         <Stack style={{ padding: 8 }}>
+            <TextField label={"Current Password"} autoComplete="off" defaultValue={ secrets.currentPassword} spellCheck={false} type="password" canRevealPassword onChange={(ev, value) => { setSecrets({ ...secrets, currentPassword: value ?? "" }) }} />
+         </Stack>
+
+         <Stack style={{ padding: 8 }}>
+            <TextField label={"New Password"} autoComplete="new-password" spellCheck={false} type="password" defaultValue={ secrets.newPassword} canRevealPassword onChange={(ev, value) => { setSecrets({ ...secrets, newPassword: value ?? "" }) }} />
+         </Stack>
+
+         <Stack style={{ padding: 8 }}>
+            <TextField label={"Confirm Password"} autoComplete="new-password" spellCheck={false} type="password" defaultValue={ secrets.confirmPassword} canRevealPassword onChange={(ev, value) => { setSecrets({ ...secrets, confirmPassword: value ?? "" }) }} />
+         </Stack>
+         
+         <Stack horizontal style={{ paddingTop: 64 }}>
+            <Stack grow />
+            <Stack horizontal tokens={{ childrenGap: 28 }}>
+               <PrimaryButton onClick={() => onSave()} text="Save" />
+               <DefaultButton onClick={() => onClose()} text="Cancel" />
+            </Stack>
+         </Stack>
+      </Stack>
+   </Modal>
+}
+
+
 const GeneralPanel: React.FC = observer(() => {
 
+   const [pivotKey, setPivotKey] = useState("Settings");
    let [colorState, setColorState] = useState<{ status?: StatusColor }>({});
+   let [changePassword, setChangePassword] = useState(false);
+   const { hordeClasses, modeColors } = getHordeStyling();
 
    const defaultStatusColors = dashboard.getDefaultStatusColors();
 
-   type GeneralItem = {
-      name: string;
-      value?: string;
-   }
-
    // subscribe
    if (dashboard.updated) { }
-
-   const columns = [
-      { key: 'column1', name: 'Name', fieldName: 'name', minWidth: 100, maxWidth: 100 },
-      { key: 'column2', name: 'Value', fieldName: 'value', minWidth: 100, maxWidth: 200 },
-   ];
-
-
-   const items: GeneralItem[] = [];
-
-   items.push({
-      name: "Roles"
-   });
-
-
-   const p4user = dashboard.p4user;
-
-   if (p4user) {
-
-      items.push({
-         name: "Perforce",
-         value: p4user
-      });
-
-   }
 
    const BadgeColors: React.FC = () => {
 
@@ -285,120 +358,88 @@ const GeneralPanel: React.FC = observer(() => {
 
    }
 
+   let name = dashboard.username;
 
-   const onRenderItemColumn = (item: GeneralItem, index?: number, columnIn?: IColumn) => {
-
-      const column = columnIn!;
-
-      // simple cases
-      switch (column.name) {
-         case 'Name':
-            return <Text styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>{item.name}:</Text>
-         case 'Value':
-            if (item.value)
-               return <Text >{item.value}</Text>
-            break;
-      }
-
-      // roles list
-      if (item.name === "Roles") {
-         const roles = dashboard.roles.map(c => { return { name: c.value } });
-
-         return <Stack styles={{
-            root: {
-               selectors: {
-                  '.ms-List-cell': {
-                     color: modeColors.text,
-                     height: 12,
-                     lineHeight: 12,
-                     paddingTop: 2,
-                     paddingBottom: 12,
-                     minHeight: "unset",
-                     fontFamily: "Horde Open Sans SemiBold"
-                  }
-               }
-            }
-         }}><List items={roles} /></Stack>;
-      }
-
-      return null;
-   }
+   const pivotItems = ["Settings", "Claims", "Entitlements"].map(tab => {
+      return <PivotItem headerText={tab} itemKey={tab} key={tab} style={{ color: modeColors.text }} />;
+   });
 
    return (<Stack>
       {colorState.status !== undefined && <ColorPreferenceDialog shown={true} statusIn={colorState.status} onClose={() => setColorState({})} />}
+      {changePassword && <ChangePasswordModal onClose={() => setChangePassword(false)} />}
       <Stack styles={{ root: { paddingTop: 18, paddingLeft: 12, paddingRight: 12, width: "100%" } }} >
          <Stack tokens={{ childrenGap: 12 }} style={{ height: 'calc(100vh - 200px)' }}>
-            <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>{dashboard.email}</Text>
-
-            <Stack style={{ padding: 12 }}>
-               <Stack horizontal tokens={{ childrenGap: 96 }}>
-                  <Stack style={{ minWidth: 600 }}>
-                     <Stack style={{ paddingBottom: 12 }}>
-                        <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Account</Text>
-                     </Stack>
-                     <DetailsList
-                        items={items}
-                        columns={columns}
-                        setKey="set"
-                        layoutMode={DetailsListLayoutMode.justified}
-                        isHeaderVisible={false}
-                        selectionMode={SelectionMode.none}
-                        onRenderItemColumn={onRenderItemColumn}
-                     />
-                  </Stack>
-                  <Stack style={{ paddingLeft: 12 }} tokens={{ childrenGap: 12 }}>
-                     <Stack style={{ paddingBottom: 4 }}>
-                        <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Settings</Text>
-                     </Stack>
-                     <Stack style={{ paddingLeft: 12 }}>
-                        <Toggle label="Dark Mode" inlineLabel={true} defaultChecked={dashboard.darktheme} onChange={(ev, checked) => {
-                           dashboard.setDarkTheme(checked ? true : false);
-                           setColorState({ ...colorState });
-                        }} />
-                        <Toggle label="Display UTC Times" inlineLabel={true} defaultChecked={dashboard.displayUTC} onChange={(ev, checked) => {
-                           dashboard.setDisplayUTC(checked ? true : false);
-                        }} />
-                        <Toggle label="24 Hour Clock" inlineLabel={true} defaultChecked={dashboard.display24HourClock} onChange={(ev, checked) => {
-                           dashboard.setDisplay24HourClock(checked ? true : false);
-                        }} />
-                        <Toggle label="Show All Preflights" inlineLabel={true} defaultChecked={dashboard.showPreflights} onChange={(ev, checked) => {
-                           dashboard.setShowPreflights(checked ? true : false);
-                        }} />
-                        <Toggle label="Prefer Compact Views" inlineLabel={true} defaultChecked={dashboard.compactViews} onChange={(ev, checked) => {
-                           dashboard.setCompactViews(checked ? true : false);
-                        }} />
-                        <Toggle label="Left Align Log View" inlineLabel={true} defaultChecked={dashboard.leftAlignLog} onChange={(ev, checked) => {
-                           dashboard.setLeftAlignLog(checked ? true : false);
-                        }} />
-                     </Stack>
-
-                     <Stack className="horde-no-darktheme" tokens={{ childrenGap: 12 }}>
-                        <Label>Status Colors</Label>
-                        <BadgeColors />
-                     </Stack>
-
-                     <Stack style={{ paddingBottom: 4, paddingTop: 12 }}>
-                        <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Experimental</Text>
-                     </Stack>
-
-                     <Stack style={{ paddingLeft: 12 }}>
-
-                        <Toggle label="General Features" inlineLabel={true} defaultChecked={dashboard.experimentalFeatures} onChange={(ev, checked) => {
-                           dashboard.experimentalFeatures = checked ? true : false;
-                        }} />
-                        {dashboard.browser !== WebBrowser.Chromium && <Toggle label="Data Caching (Page Reload Required)" inlineLabel={true} defaultChecked={dashboard.localCache} onChange={(ev, checked) => {
-                           dashboard.setLocalCache(checked ? true : false);
-                        }} />}
-                     </Stack>
-
-
-                  </Stack>
+            <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>{name}</Text>
+            <Stack style={{ paddingBottom: 12 }}>
+               <Pivot className={hordeClasses.pivot}
+                  overflowBehavior='menu'
+                  selectedKey={pivotKey}
+                  linkSize="normal"
+                  linkFormat="links"
+                  onLinkClick={(item) => {
+                     setPivotKey(item?.props.itemKey ?? "Settings")
+                  }}>
+                  {pivotItems}
+               </Pivot>
+            </Stack>
+            {pivotKey === "Claims" && <UserAccountPanel mode={pivotKey} />}
+            {pivotKey === "Entitlements" && <UserAccountPanel mode={pivotKey}/>}
+            {pivotKey === "Settings" && <Stack style={{ paddingLeft: 12 }} tokens={{ childrenGap: 12 }}>
+               <Stack style={{ paddingLeft: 8 }}>
+                  <Toggle label="Dark Mode" inlineLabel={true} defaultChecked={dashboard.darktheme} onChange={(ev, checked) => {
+                     dashboard.setDarkTheme(checked ? true : false);
+                     setColorState({ ...colorState });
+                  }} />
+                  <Toggle label="Display UTC Times" inlineLabel={true} defaultChecked={dashboard.displayUTC} onChange={(ev, checked) => {
+                     dashboard.setDisplayUTC(checked ? true : false);
+                  }} />
+                  <Toggle label="24 Hour Clock" inlineLabel={true} defaultChecked={dashboard.display24HourClock} onChange={(ev, checked) => {
+                     dashboard.setDisplay24HourClock(checked ? true : false);
+                  }} />
+                  <Toggle label="Show All Preflights" inlineLabel={true} defaultChecked={dashboard.showPreflights} onChange={(ev, checked) => {
+                     dashboard.setShowPreflights(checked ? true : false);
+                  }} />
+                  <Toggle label="Always Tag Preflight Changelists" inlineLabel={true} defaultChecked={dashboard.alwaysTagPreflightCL} onChange={(ev, checked) => {
+                     dashboard.alwaysTagPreflightCL = checked ? true : false;
+                  }} />
+                  <Toggle label="Prefer Compact Views" inlineLabel={true} defaultChecked={dashboard.compactViews} onChange={(ev, checked) => {
+                     dashboard.setCompactViews(checked ? true : false);
+                  }} />
+                  <Toggle label="Left Align Log View" inlineLabel={true} defaultChecked={dashboard.leftAlignLog} onChange={(ev, checked) => {
+                     dashboard.setLeftAlignLog(checked ? true : false);
+                  }} />
                </Stack>
 
-            </Stack>
+               <Stack className="horde-no-darktheme" style={{paddingLeft: 8}} tokens={{ childrenGap: 12 }}>
+                  <Label>Status Colors</Label>
+                  <BadgeColors />
+               </Stack>
+
+               {dashboard.authMethod === AuthMethod.Horde && <Stack style={{ paddingTop: 24, paddingLeft: 8 }}>
+                  <PrimaryButton style={{ width: 180 }} text="Change Password" onClick={() => setChangePassword(true)} />
+               </Stack>}
+
+
+               {false && <Stack style={{ paddingBottom: 4, paddingTop: 12 }}>
+                  <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Experimental</Text>
+               </Stack>}
+
+               {false && <Stack style={{ paddingLeft: 12 }}>
+
+                  <Toggle label="General Features" inlineLabel={true} defaultChecked={dashboard.experimentalFeatures} onChange={(ev, checked) => {
+                     dashboard.experimentalFeatures = checked ? true : false;
+                  }} />
+                  {dashboard.browser !== WebBrowser.Chromium && <Toggle label="Data Caching (Page Reload Required)" inlineLabel={true} defaultChecked={dashboard.localCache} onChange={(ev, checked) => {
+                     dashboard.setLocalCache(checked ? true : false);
+                  }} />}
+               </Stack>}
+
+
+            </Stack>}
          </Stack>
       </Stack>
-   </Stack>);
+   </Stack>
+   );
 });
 
 export const DashboardView: React.FC = () => {
@@ -406,11 +447,13 @@ export const DashboardView: React.FC = () => {
    const windowSize = useWindowSize();
    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
 
+   const { hordeClasses, modeColors } = getHordeStyling();
+
    return <Stack className={hordeClasses.horde}>
       <TopNav />
       <Breadcrumbs items={[{ text: 'Preferences' }]} />
       <Stack horizontal>
-         <div key={`windowsize_streamview_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2), flexShrink: 0, backgroundColor: modeColors.background }} />
+         <div key={`windowsize_streamview_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440 / 2), flexShrink: 0, backgroundColor: modeColors.background }} />
          <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: modeColors.background, width: "100%" } }}>
             <Stack style={{ maxWidth: 1440, paddingTop: 16, marginLeft: 4 }}>
                <Stack horizontal className={hordeClasses.raised}>

@@ -43,7 +43,7 @@ namespace Audio
 	{
 	}
 
-	TUniquePtr<IAnalyzerResult> FAnalyzerFacade::AnalyzeAudioBuffer(const TArray<float>& InAudioBuffer, int32 InNumChannels, float InSampleRate)
+	TUniquePtr<IAnalyzerResult> FAnalyzerFacade::AnalyzeAudioBuffer(const TArray<float>& InAudioBuffer, int32 InNumChannels, float InSampleRate, TSharedPtr<IAnalyzerControls> InControls)
 	{
 		LLM_SCOPE_BYTAG(Audio_Analysis);
 
@@ -80,6 +80,7 @@ namespace Audio
 		}
 
 		// Perform and finalize audio analysis.
+		Worker->SetControls(InControls);
 		Worker->Analyze(MakeArrayView(InAudioBuffer), Result.Get());
 
 		return Result;

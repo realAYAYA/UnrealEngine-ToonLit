@@ -11,27 +11,25 @@ UENUM()
 enum class ENDIStaticMesh_SourceMode : uint8
 {
 	/**
-	Default behavior.
+	Default behavior follows the order of.
 	- Use "Source" when specified (either set explicitly or via blueprint with Set Niagara Static Mesh Component).
-	- When no source is specified, attempt to find a Static Mesh Component on an attached actor or component.
-	- If no source actor/component specified and no attached component found, fall back to the "Default Mesh" specified.
+	- Use Mesh Parameter Binding if valid
+	- Find Static Mesh Component, Attached Actor, Attached Component
+	- Falls back to 'Default Mesh' specified on the data interface
 	*/
 	Default,
 
-	/**
-	Only use "Source" (either set explicitly or via blueprint with Set Niagara Static Mesh Component).
-	*/
+	/**	Only use "Source" (either set explicitly or via blueprint with Set Niagara Static Mesh Component). */
 	Source,
 
-	/**
-	Only use the parent actor or component the system is attached to.
-	*/
+	/**	Only use the parent actor or component the system is attached to. */
 	AttachParent,
 
-	/**
-	Only use the "Default Mesh" specified.
-	*/
+	/** Only use the "Default Mesh" specified. */
 	DefaultMeshOnly,
+
+	/** Only use the mesh parameter binding. */
+	MeshParameterBinding,
 };
 
 USTRUCT()
@@ -60,7 +58,7 @@ public:
 	/** Controls how to retrieve the Static Mesh Component to attach to. */
 	UPROPERTY(EditAnywhere, Category = "Mesh")
 	ENDIStaticMesh_SourceMode SourceMode = ENDIStaticMesh_SourceMode::Default;
-	
+
 #if WITH_EDITORONLY_DATA
 	/** Mesh used to sample from when not overridden by a source actor from the scene. Only available in editor for previewing. This is removed in cooked builds. */
 	UPROPERTY(EditAnywhere, Category = "Mesh")
@@ -114,6 +112,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "LOD")
 	FNiagaraUserParameterBinding LODIndexUserParameter;
 
+	/** Mesh parameter binding can be either an Actor (in which case we find the component), static mesh component or a static mesh. */
+	UPROPERTY(EditAnywhere, Category = "Mesh")
+	FNiagaraUserParameterBinding MeshParameterBinding;
+
 	/** When attached to an Instanced Static Mesh, which instance should be read from. */
 	UPROPERTY(EditAnywhere, Category = "Mesh")
 	int32 InstanceIndex = INDEX_NONE;
@@ -143,15 +145,6 @@ public:
 
 	NIAGARA_API virtual void ProvidePerInstanceDataForRenderThread(void* DataForRenderThread, void* PerInstanceData, const FNiagaraSystemInstanceID& SystemInstance) override;
 
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
-	NIAGARA_API void GetVertexSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
-	NIAGARA_API void GetTriangleSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
-	NIAGARA_API void GetSocketSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
-	NIAGARA_API void GetSectionFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
-	NIAGARA_API void GetMiscFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
-	NIAGARA_API void GetUVMappingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
-	NIAGARA_API void GetDistanceFieldFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
-	NIAGARA_API void GetDeprecatedFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
 	static NIAGARA_API bool FunctionNeedsCpuAccess(FName InName);
 
 #if WITH_EDITORONLY_DATA
@@ -160,7 +153,7 @@ public:
 #endif
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return true; }
-	NIAGARA_API virtual bool RequiresDistanceFieldData() const override;
+	virtual bool RequiresEarlyViewData() const override;
 	virtual bool HasPreSimulateTick() const override { return true; }
 
 #if WITH_EDITORONLY_DATA
@@ -174,6 +167,17 @@ public:
 
 	NIAGARA_API virtual bool Equals(const UNiagaraDataInterface* Other) const override;
 protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+	NIAGARA_API void GetVertexSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+	NIAGARA_API void GetTriangleSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+	NIAGARA_API void GetSocketSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+	NIAGARA_API void GetSectionFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+	NIAGARA_API void GetMiscFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+	NIAGARA_API void GetUVMappingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+	NIAGARA_API void GetDistanceFieldFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+	NIAGARA_API void GetDeprecatedFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions, const FNiagaraFunctionSignature& BaseSignature) const;
+#endif
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 public:
 #if WITH_NIAGARA_DEBUGGER
@@ -185,7 +189,7 @@ public:
 #endif
 	//~ UNiagaraDataInterface interface
 
-	NIAGARA_API UStaticMesh* GetStaticMesh(USceneComponent*& OutComponent, class FNiagaraSystemInstance* SystemInstance = nullptr);
+	NIAGARA_API UStaticMesh* GetStaticMesh(USceneComponent*& OutComponent, class FNiagaraSystemInstance* SystemInstance = nullptr, UObject* ParameterBindingValue = nullptr);
 	NIAGARA_API void SetSourceComponentFromBlueprints(UStaticMeshComponent* ComponentToUse);
 	NIAGARA_API void SetDefaultMeshFromBlueprints(UStaticMesh* MeshToUse);
 

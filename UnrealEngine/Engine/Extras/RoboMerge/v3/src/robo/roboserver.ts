@@ -34,6 +34,30 @@ let ENVIRONMENT: {[param: string]: any}
 			match: /^-devModeUser=(.+)$/,
 			env: 'ROBO_DEV_MODE_USER',
 			dflt: ''
+		},
+		previewOnly: {
+			match: /^(-previewOnly)$/,
+			parse: str => str === "false" ? false : true,
+			env: 'ROBO_PREVIEW_ONLY',
+			dflt: false
+		},
+		useAuthInDev: {
+			match: /^(-useAuthInDev)$/,
+			parse: str => str === "false" ? false : true,
+			env: 'ROBO_USE_AUTH_IN_DEV',
+			dflt: false
+		},
+		oktaSignIn: {
+			match: /^(-oktaSignIn)$/,
+			parse: str => str === "false" ? false : true,
+			env: 'OKTA_SIGN_IN',
+			dflt: false
+		},
+		ldapSignIn: {
+			match: /^(-ldapSignIn)$/,
+			parse: str => str === "false" ? false : true,
+			env: 'LDAP_SIGN_IN',
+			dflt: true
 		}
 	}
 
@@ -46,6 +70,9 @@ let ENVIRONMENT: {[param: string]: any}
 
 if (ENVIRONMENT.devMode) {
 	roboserverStartupLogger.warn('Running in DEV_MODE')
+}
+if (ENVIRONMENT.previewMode) {
+	roboserverStartupLogger.warn('Running in PREVIEW_MODE')
 }
 
 function readUtf8File(path: string) {
@@ -102,7 +129,13 @@ export class RoboServer {
 		}
 
 		//this.server.addFileMapping('/', 'index.html')
-		this.server.addFileMapping('/login', 'login.html', {secureOnly: true})
+		if (ENVIRONMENT.devMode && ENVIRONMENT.useAuthInDev) {
+			this.server.addFileMapping('/login', 'login.html', {secureOnly: false})
+		}
+		else {
+			this.server.addFileMapping('/login', 'login.html', {secureOnly: true})
+		}
+
 		this.server.addFileMapping('/allbots', 'allbots.html')
 		this.server.addFileMapping('/js/*.wasm', 'bin/$1.wasm.gz', {
 			filetype: "application/wasm", 
@@ -166,6 +199,49 @@ class RoboWebApp implements AppInterface {
 	indexPage() {
 		return readUtf8File('public/index.html')
 	}
+
+	@SecureHandler('GET', '/trackchange/*', {filetype: 'text/html'}) 
+	async trackChange(clStr: string) {
+		if (!this.authData) {
+			throw new Error('Secure call but no auth data?')
+		}
+
+		const cl = parseInt(clStr)
+		if (isNaN(cl)) {
+			throw new Error(`Failed to parse alleged CL '${clStr}'`)
+		}
+
+		let query = "/trackchange"
+		if (this.request.url.search.length > 0) {
+			query += `${this.request.url.search}&`
+		} else {
+			query += "?"
+		}
+		query += `cl=${clStr}`
+
+		const template = await readUtf8File('public/trackchange.html')
+		return Mustache.render(template, {cl, query})
+	}
+
+	@SecureHandler('GET', '/trackchange') 
+	getTrackedChanges() {
+		if (!this.authData) {
+			throw new Error('Secure call but no auth data?')
+		}
+
+		const queryObj: {[key: string]: string} = {}
+		for (const [key, val] of this.request.url.searchParams) {
+			queryObj[key] = val
+		}
+
+		const tagsObj: {[key: string]: boolean} = {}
+		for (const tag of this.authData.tags) {
+			tagsObj[tag] = true
+		}
+
+		return this.sendMessage('trackChange', [queryObj, tagsObj])
+	}
+
 
 	@Handler('GET', '/preview/*', {filetype: 'text/html'}) 
 	previewNoBot(clStr: string) {
@@ -316,6 +392,34 @@ class RoboWebApp implements AppInterface {
 		return token || {statusCode: 401, message: 'invalid credentials'};
 	}
 
+	@Handler('POST', '/oktaLogin')
+	async oktaLogin() {
+		if (!this.request.reqData) {
+			return {statusCode: 400, message: 'no log-in data received'}
+		}
+		
+		const creds = querystring.parse(this.request.reqData);
+		if (!creds.user || Array.isArray(creds.user) || !creds.displayName || Array.isArray(creds.displayName) || !creds.groups || Array.isArray(creds.groups)) {
+			return {statusCode: 400, message: 'invalid log-in data'}
+		}
+		const token = Session.oktaLogin(creds.user, creds.displayName, creds.groups);
+		return token || {statusCode: 401, message: 'invalid credentials'};
+	}
+
+	@Handler('GET', '/oktaConfig')
+	async oktaConfig() {
+		return fs.readFileSync('config/okta.cfg.json', 'utf8');
+	}
+
+	@Handler('GET', '/signInMethod')
+	async signInMethod() {
+		const signIn = {
+			okta: ENVIRONMENT.oktaSignIn,
+			ldap: ENVIRONMENT.ldapSignIn
+		};
+		return signIn;
+	}
+
 	@SecureHandler('PUT', '/api/control/verbose/*')
 	async setVerbose(onOff: string): Promise<OperationReturnType> {
 		if (!this.authData) {
@@ -455,7 +559,7 @@ class RoboWebApp implements AppInterface {
 		return await this.sendMessage('doNodeOp', [botname, nodeName, nodeOp, this.getQueryFromSecure()])
 	}
 
-	@SecureHandler('GET', '/api/p4tasks')
+	@SecureHandler('GET', '/api/p4tasks', {requiredTags: ['fte']})
 	async getP4Tasks() {
 		return (await this.sendMessage('getp4tasks')).data || []
 	}
@@ -515,13 +619,23 @@ class RoboWebApp implements AppInterface {
 		return result.data
 	}
 
-	@Handler('GET', '/api/trace-route')
+	@SecureHandler('GET', '/api/trace-route')
 	async traceRoute() {
-		const query = this.getQuery()
+		if (!this.authData) {
+			throw new Error('Secure call but no auth data?')
+		}
+
+		const query = this.getQueryFromSecure()
 		if (!query.cl || !query.from || !query.to) {
 			return {statusCode: 400, message: '"cl", "from" and "to" query arguments required'}
 		}
-		const result = await this.sendMessage('traceRoute', [query])
+
+		const tagsObj: {[key: string]: boolean} = {}
+		for (const tag of this.authData.tags) {
+			tagsObj[tag] = true
+		}
+
+		const result = await this.sendMessage('traceRoute', [query, tagsObj])
 		return result.data ? {...result, success: true, route: result.data} :
 			{...result, success: false, code: result.message}
 			
@@ -529,7 +643,16 @@ class RoboWebApp implements AppInterface {
 
 	@SecureHandler('GET', '/debug/dump-graph')
 	async dumpGraph() {
-		return (await this.sendMessage('dumpGraph')).data
+		if (!this.authData) {
+			throw new Error('Secure call but no auth data?')
+		}
+
+		const tagsObj: {[key: string]: boolean} = {}
+		for (const tag of this.authData.tags) {
+			tagsObj[tag] = true
+		}
+
+		return (await this.sendMessage('dumpGraph', [tagsObj])).data
 	}
 
 	// https://localhost:4433/op/acknowledge?bot=TEST&branch=Main&cl=1237983421
@@ -561,6 +684,9 @@ class RoboWebApp implements AppInterface {
 			case "stomp":
 				return await readUtf8File('public/stomp.html')
 
+			case "unlock":
+				return await readUtf8File('public/unlock.html')
+
 			default:
 				return {statusCode: 404, message: `Unknown node operation requested: "${operation}"`}
 		}
@@ -585,11 +711,30 @@ class RoboWebApp implements AppInterface {
 			}
 		}
 		else if (ENVIRONMENT.devMode) {
-			const user = ENVIRONMENT.devModeUser || 'dev'
-			this.authData = {
-				user,
-				displayName: `${user} (dev mode)`,
-				tags: new Set(['fte', 'admin'])
+			if (ENVIRONMENT.useAuthInDev) {
+				const authToken = getCookie(this.getCookies(), 'auth')
+				if (authToken) {
+					this.authData = Session.tokenToAuthData(authToken)
+				}
+
+				if (!this.authData) {
+					let redirectString = this.request.url.pathname
+					if (this.request.url.search) {
+						redirectString = `${redirectString}${this.request.url.search}`
+					}
+
+					return {statusCode: 302, message: 'Must log in', headers: [
+						['Location', `/login?redirect=${encodeURIComponent(redirectString)}`]
+					]}
+				}
+			}
+			else {
+				const user = ENVIRONMENT.devModeUser || 'dev'
+				this.authData = {
+					user,
+					displayName: `${user} (dev mode)`,
+					tags: new Set(['fte', 'admin'])
+				}
 			}
 		}
 		else {
@@ -666,7 +811,7 @@ class RoboWebApp implements AppInterface {
 		return queryObj
 	}
 
-	private getQuery() : {[key: string]: string} {
+	/*private getQuery() : {[key: string]: string} {
 		if (this.authData) {
 			throw new Error('do not use getQuery for secure calls')
 		}
@@ -676,7 +821,7 @@ class RoboWebApp implements AppInterface {
 			queryObj[key] = val
 		}
 		return queryObj
-	}
+	}*/
 
 	getSentryUser() : Sentry.User {
 		if (!this.authData) {
@@ -692,6 +837,7 @@ export interface BlockageNodeOpUrls {
 	createShelfUrl?: string
 	skipUrl?: string
 	stompUrl?: string
+	unlockUrl?: string
 }
 export class OperationUrlHelper {
 	static createAcknowledgeUrl(externalRobomergeUrl: string, botname: string, branchname: string, changelistNum: string, edge?: string) {
@@ -730,4 +876,12 @@ export class OperationUrlHelper {
 			`&target=${encodeURIComponent(target)}`
 	}
 	
+	static createUnlockUrl(externalRobomergeUrl: string, botname: string, branchname: string, changelistNum: string, target: string) {
+		return `${externalRobomergeUrl}/op/unlock?` +
+			`bot=${encodeURIComponent(botname)}`+ 
+			`&branch=${encodeURIComponent(branchname)}` +
+			`&cl=${encodeURIComponent(changelistNum)}` +
+			`&target=${encodeURIComponent(target)}`
+	}
+
 }

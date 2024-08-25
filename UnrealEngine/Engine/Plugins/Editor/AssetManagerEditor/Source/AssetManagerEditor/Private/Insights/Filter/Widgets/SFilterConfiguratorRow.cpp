@@ -227,8 +227,8 @@ TSharedRef<SWidget> SFilterConfiguratorRow::GenerateWidgetForColumn(const FName&
 					.VAlign(VAlign_Center)
 					[
 						SNew(SImage)
-						//TODO: .Image(FInsightsStyle::GetBrush("Icons.FilterAddGroup"))
-						.Image(FAppStyle::Get().GetBrush("Icons.PlusCircle"))
+						.Image(FInsightsStyle::GetBrush("Icons.FilterAddGroup"))
+						//.Image(FAppStyle::Get().GetBrush("Icons.PlusCircle"))
 					]
 
 					+ SHorizontalBox::Slot()

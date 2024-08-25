@@ -241,7 +241,7 @@ void UMeshToVolumeTool::OnShutdown(EToolShutdownType ShutdownType)
 		{
 			TargetVolume = Settings->TargetVolume.Get();
 			SetTransform = TargetVolume->GetActorTransform();
-			TargetVolume->Modify();
+			TargetVolume->Modify(true);
 			TargetVolume->GetBrushComponent()->Modify();
 		}
 

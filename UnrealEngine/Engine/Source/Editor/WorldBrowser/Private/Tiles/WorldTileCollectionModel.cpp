@@ -1612,7 +1612,7 @@ void FWorldTileCollectionModel::ImportTiledLandscape_Executed()
 		// Extract tile prefix
 		FString FolderName = FPaths::GetBaseFilename(ImportSettings.HeightmapFileList[0]);
 		int32 PrefixEnd = FolderName.Find(TEXT("_x"), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
-		FolderName.LeftInline(PrefixEnd, false);
+		FolderName.LeftInline(PrefixEnd, EAllowShrinking::No);
 		WorldRootPath+= FolderName;
 		WorldRootPath+= TEXT("/");
 

@@ -2,6 +2,8 @@
 
 #include "Components/DisplayClusterSceneComponentSync.h"
 
+#include "DisplayClusterEnums.h"
+
 #include "GameFramework/Actor.h"
 
 #include "Cluster/IPDisplayClusterClusterManager.h"
@@ -21,7 +23,8 @@ void UDisplayClusterSceneComponentSync::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (!GDisplayCluster->IsModuleInitialized())
+	const EDisplayClusterOperationMode OpMode = GDisplayCluster->GetOperationMode();
+	if (OpMode != EDisplayClusterOperationMode::Cluster)
 	{
 		return;
 	}
@@ -48,7 +51,8 @@ void UDisplayClusterSceneComponentSync::BeginPlay()
 
 void UDisplayClusterSceneComponentSync::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (GDisplayCluster->IsModuleInitialized())
+	const EDisplayClusterOperationMode OpMode = GDisplayCluster->GetOperationMode();
+	if (OpMode == EDisplayClusterOperationMode::Cluster)
 	{
 		if (GameMgr && GameMgr->IsDisplayClusterActive())
 		{

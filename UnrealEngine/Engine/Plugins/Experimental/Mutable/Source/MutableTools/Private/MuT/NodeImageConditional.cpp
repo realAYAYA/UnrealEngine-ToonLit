@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeImageConditional::Private::s_type =
-            NODE_TYPE( "ImageConditional", NodeImage::GetStaticType() );
+    FNodeType NodeImageConditional::Private::s_type =
+            FNodeType( "ImageConditional", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,69 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeImageConditional, EType::Conditional, Node, Node::EType::Image)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeImageConditional::GetInputCount() const
-	{
-        return 3;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeImageConditional::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-        switch (i)
-		{
-        case 0:
-            pResult = m_pD->m_parameter.get();
-            break;
-
-        case 1:
-            pResult = m_pD->m_true.get();
-            break;
-
-        case 2:
-            pResult = m_pD->m_false.get();
-            break;
-
-        default:
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeImageConditional::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-        switch (i)
-		{
-        case 0:
-            m_pD->m_parameter = dynamic_cast<NodeBool*>(pNode.get());
-            break;
-
-        case 1:
-            m_pD->m_true = dynamic_cast<NodeImage*>(pNode.get());
-            break;
-
-        case 2:
-            m_pD->m_false = dynamic_cast<NodeImage*>(pNode.get());
-            break;
-
-        default:
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

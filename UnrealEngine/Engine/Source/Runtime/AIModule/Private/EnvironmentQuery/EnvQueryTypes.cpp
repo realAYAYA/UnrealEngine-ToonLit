@@ -3,6 +3,7 @@
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "UObject/Package.h"
 #include "AI/Navigation/NavAgentInterface.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "NavigationSystem.h"
 #include "NavMesh/RecastNavMesh.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_VectorBase.h"
@@ -108,7 +109,7 @@ FText UEnvQueryTypes::GetShortTypeName(const UObject* Ob)
 	const int32 ShortNameIdx = TypeDesc.Find(TEXT("_"), ESearchCase::CaseSensitive);
 	if (ShortNameIdx != INDEX_NONE)
 	{
-		TypeDesc.MidInline(ShortNameIdx + 1, MAX_int32, false);
+		TypeDesc.MidInline(ShortNameIdx + 1, MAX_int32, EAllowShrinking::No);
 	}
 
 	return FText::FromString(TypeDesc);
@@ -136,6 +137,16 @@ FText FEnvDirection::ToText() const
 
 		return FText::Format(LOCTEXT("DescribeRotation", "[{Rotation} rotation]"), Args);
 	}
+}
+
+FEnvTraceData::FEnvTraceData() :
+	VersionNum(0), 
+	ProjectDown(1024.0f), ProjectUp(1024.0f), ExtentX(10.0f), ExtentY(10.0f), ExtentZ(10.0f),
+	PostProjectionVerticalOffset(0.0f),	TraceChannel(TraceTypeQuery1), SerializedChannel(ECC_WorldStatic), TraceProfileName(NAME_None),
+	TraceShape(EEnvTraceShape::Line), TraceMode(EEnvQueryTrace::None),
+	bTraceComplex(false), bOnlyBlockingHits(true),
+	bCanTraceOnNavMesh(true), bCanTraceOnGeometry(true), bCanDisableTrace(true), bCanProjectDown(false)
+{
 }
 
 FText FEnvTraceData::ToText(FEnvTraceData::EDescriptionMode DescMode) const

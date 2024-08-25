@@ -88,16 +88,22 @@ public:
 
 	/** Constructs the widget, and adds it to the tree. */
 	template <typename WidgetT>
-	FORCEINLINE_DEBUGGABLE WidgetT* ConstructWidget(TSubclassOf<UWidget> WidgetClass = WidgetT::StaticClass(), FName WidgetName = NAME_None)
+	[[nodiscard]] FORCEINLINE_DEBUGGABLE WidgetT* ConstructWidget(TSubclassOf<WidgetT> WidgetClass = WidgetT::StaticClass(), FName WidgetName = NAME_None)
 	{
-		static_assert(TIsDerivedFrom<WidgetT, UWidget>::IsDerived, "WidgetTree::ConstructWidget can only create UWidget objects.");
-
-		if (WidgetClass->IsChildOf<UUserWidget>())
+		if(WidgetClass != nullptr)
 		{
-			return Cast<WidgetT>(CreateWidget(this, *WidgetClass, WidgetName));
+			if constexpr(std::is_base_of_v<UUserWidget, WidgetT>)
+			{
+				return CreateWidget<WidgetT>(this, *WidgetClass, WidgetName);
+			}
+			else
+			{
+				static_assert(std::is_base_of_v<UWidget, WidgetT>, "WidgetTree::ConstructWidget can only create UWidget objects.");
+				return NewObject<WidgetT>(this, WidgetClass, WidgetName, RF_Transactional);
+			}
 		}
 
-		return NewObject<WidgetT>(this, WidgetClass, WidgetName, RF_Transactional);
+		return nullptr;
 	}
 
 	// INamedSlotInterface

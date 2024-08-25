@@ -79,6 +79,7 @@ class FMontagesTrackCreator : public IRewindDebuggerTrackCreator
 public:
 	virtual FName GetTargetTypeNameInternal() const;
 	virtual FName GetNameInternal() const override;
+	virtual void GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const override;
 	virtual TSharedPtr<FRewindDebuggerTrack> CreateTrackInternal(uint64 ObjectId) const override;
 	virtual bool HasDebugInfoInternal(uint64 ObjectId) const override;
 };

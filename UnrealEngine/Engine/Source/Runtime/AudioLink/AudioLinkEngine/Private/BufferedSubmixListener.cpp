@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "BufferedSubmixListener.h"
+#include "AudioMixerDevice.h"
 
 namespace BufferedSubmixListenerPrivate
 {
@@ -8,11 +9,15 @@ namespace BufferedSubmixListenerPrivate
 }
 
 /** Buffered Submix Listener. */
-FBufferedSubmixListener::FBufferedSubmixListener(int32 InDefaultCircularBufferSize, bool bInZeroInputBuffer)
+FBufferedSubmixListener::FBufferedSubmixListener(int32 InDefaultCircularBufferSize, bool bInZeroInputBuffer, const FString* InName)
 	: FBufferedListenerBase{ InDefaultCircularBufferSize }
 	, DeviceId{ BufferedSubmixListenerPrivate::InvalidAudioDeviceId }
 	, bZeroInputBuffer{ bInZeroInputBuffer }
 {
+	if (InName)
+	{
+		Name = *InName;
+	}
 }
 
 FBufferedSubmixListener::~FBufferedSubmixListener()
@@ -22,18 +27,27 @@ FBufferedSubmixListener::~FBufferedSubmixListener()
 	check(!IsStartedNonAtomic());
 }
 
+const FString& FBufferedSubmixListener::GetListenerName() const
+{
+	return Name;
+}
+
 void FBufferedSubmixListener::RegisterWithAudioDevice(FAudioDevice* InDevice)
 {
+	check(InDevice);
+
 	DeviceId = InDevice->DeviceID;
-	InDevice->RegisterSubmixBufferListener(this);
+	InDevice->RegisterSubmixBufferListener(AsShared(), InDevice->GetMainSubmixObject());
 }
 
 void FBufferedSubmixListener::UnregsiterWithAudioDevice(FAudioDevice* InDevice)
 {
+	check(InDevice);
+
 	if (ensure(DeviceId != BufferedSubmixListenerPrivate::InvalidAudioDeviceId))
 	{
 		DeviceId = BufferedSubmixListenerPrivate::InvalidAudioDeviceId;
-		InDevice->UnregisterSubmixBufferListener(this);
+		InDevice->UnregisterSubmixBufferListener(AsShared(), InDevice->GetMainSubmixObject());
 	}
 }
 

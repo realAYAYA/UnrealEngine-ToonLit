@@ -157,3 +157,48 @@ UPythonResourceOwner::UPythonResourceOwner(const FObjectInitializer& ObjectIniti
 {
 }
 
+#if WITH_PYTHON
+
+UPythonObjectHandle* UPythonObjectHandle::Create(PyObject* PyObjPtr)
+{
+	UPythonObjectHandle* Handle = nullptr;
+	if (PyObjPtr && PyObjPtr != Py_None)
+	{
+		Handle = NewObject<UPythonObjectHandle>();
+		{
+			FPyScopedGIL GIL;
+			Handle->PyObj = FPyObjectPtr::NewReference(PyObjPtr);
+		}
+	}
+	return Handle;
+}
+
+PyObject* UPythonObjectHandle::Resolve() const
+{
+	FPyScopedGIL GIL;
+	PyObject* PyObjPtr = PyObj.GetPtr();
+	return PyObjPtr ? PyObjPtr : Py_None;
+}
+
+void UPythonObjectHandle::BeginDestroy()
+{
+	ReleasePythonResources();
+	Super::BeginDestroy();
+}
+
+void UPythonObjectHandle::ReleasePythonResources()
+{
+	// This may be called after Python has already shut down
+	if (Py_IsInitialized())
+	{
+		FPyScopedGIL GIL;
+		PyObj.Reset();
+	}
+	else
+	{
+		// Release ownership if Python has been shut down to avoid attempting to delete the objects (which are already dead)
+		PyObj.Release();
+	}
+}
+
+#endif // WITH_PYTHON

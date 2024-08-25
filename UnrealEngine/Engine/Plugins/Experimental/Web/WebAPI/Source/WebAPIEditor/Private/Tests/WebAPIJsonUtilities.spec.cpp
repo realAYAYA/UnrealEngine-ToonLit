@@ -8,7 +8,7 @@
 #include "Tests/WebAPIJsonTestData.h"
 
 BEGIN_DEFINE_SPEC(FWebAPIEditorJsonSpec,
-	TEXT("Plugin.WebAPI.Editor.Json"),
+	TEXT("Plugins.WebAPI.Editor.Json"),
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter | EAutomationTestFlags::ApplicationContextMask)
 
 	TSharedPtr<FJsonObject> JsonObject;

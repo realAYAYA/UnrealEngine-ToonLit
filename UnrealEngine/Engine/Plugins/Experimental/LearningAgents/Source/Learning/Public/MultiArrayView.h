@@ -4,14 +4,12 @@
 
 #include "CoreTypes.h"
 #include "Containers/ArrayView.h"
-#include "Templates/IsConst.h"
-#include "Templates/IsSigned.h"
-#include "Templates/PointerIsConvertibleFromTo.h"
 #include "Misc/AssertionMacros.h"
 #include "Templates/Invoke.h"
 #include "Templates/UnrealTypeTraits.h"
 #include "Traits/ElementType.h"
 #include "Math/UnrealMathUtility.h"
+#include <type_traits>
 
 namespace UE::MultiArrayView::Private
 {
@@ -19,17 +17,12 @@ namespace UE::MultiArrayView::Private
 	 * Copied from Core/Public/Containers/ArrayView.h
 	 *
 	 * Trait testing whether a type is compatible with the view type
+	 *
+	 * The extra stars here are *IMPORTANT*
+	 * They prevent TMultiArrayView<Base>(TArray<Derived>&) from compiling!
 	 */
 	template <typename T, typename ElementType>
-	struct TIsCompatibleElementType
-	{
-	public:
-		/** NOTE:
-		 * The stars in the TPointerIsConvertibleFromTo test are *IMPORTANT*
-		 * They prevent TArrayView<Base>(TArray<Derived>&) from compiling!
-		 */
-		enum { Value = TPointerIsConvertibleFromTo<T*, ElementType* const>::Value };
-	};
+	constexpr bool TIsCompatibleElementType_V = std::is_convertible_v<T**, ElementType* const*>;
 
 	// Copied from Core/Public/Containers/ArrayView.h
 	//
@@ -48,7 +41,7 @@ namespace UE::MultiArrayView::Private
 	FORCEINLINE decltype(auto) GetReinterpretedDataHelper(T&& Arg)
 	{
 		auto NaturalPtr = GetData(Forward<T>(Arg));
-		using NaturalElementType = typename TRemovePointer<decltype(NaturalPtr)>::Type;
+		using NaturalElementType = std::remove_pointer_t<decltype(NaturalPtr)>;
 
 		auto EndPtr = NaturalPtr + GetNum(Arg);
 		TContainerElementTypeCompatibility<NaturalElementType>::ReinterpretRange(NaturalPtr, EndPtr);
@@ -64,7 +57,7 @@ namespace UE::MultiArrayView::Private
 	template <typename RangeType, typename ElementType>
 	struct TIsCompatibleRangeType
 	{
-		static constexpr bool Value = TIsCompatibleElementType<typename TRemovePointer<decltype(GetData(DeclVal<RangeType&>()))>::Type, ElementType>::Value;
+		static constexpr bool Value = TIsCompatibleElementType_V<std::remove_pointer_t<decltype(GetData(DeclVal<RangeType&>()))>, ElementType>;
 
 		template <typename T>
 		static decltype(auto) GetData(T&& Arg)
@@ -82,13 +75,13 @@ namespace UE::MultiArrayView::Private
 	struct TIsReinterpretableRangeType
 	{
 	private:
-		using NaturalElementType = typename TRemovePointer<decltype(GetData(DeclVal<RangeType&>()))>::Type;
+		using NaturalElementType = std::remove_pointer_t<decltype(GetData(DeclVal<RangeType&>()))>;
 
 	public:
 		static constexpr bool Value =
 			!std::is_same_v<typename TContainerElementTypeCompatibility<NaturalElementType>::ReinterpretType, NaturalElementType>
 			&&
-			TIsCompatibleElementType<typename TContainerElementTypeCompatibility<NaturalElementType>::ReinterpretType, ElementType>::Value;
+			TIsCompatibleElementType_V<typename TContainerElementTypeCompatibility<NaturalElementType>::ReinterpretType, ElementType>;
 
 		template <typename T>
 		static decltype(auto) GetData(T&& Arg)
@@ -106,7 +99,7 @@ public:
 	using SizeType = InSizeType;
 
 	static_assert(DimNum >= 1, "TMultiArrayShape requires a positive, non-zero number of dimensions");
-	static_assert(TIsSigned<SizeType>::Value, "TMultiArrayShape only supports signed index types");
+	static_assert(std::is_signed_v<SizeType>, "TMultiArrayShape only supports signed index types");
 
 public:
 
@@ -180,13 +173,13 @@ public:
 	static constexpr bool bIsRestrict = bInIsRestrict;
 	using SizeType = InSizeType;
 
-	using PointerType = typename TChooseClass<
+	using PointerType = std::conditional_t<
 		bIsRestrict,
 		ElementType* RESTRICT,
-		ElementType*>::Result;
+		ElementType*>;
 
 	static_assert(DimNum > 1, "TMultiArrayView requires a positive, non-zero number of dimensions");
-	static_assert(TIsSigned<SizeType>::Value, "TMultiArrayView only supports signed index types");
+	static_assert(std::is_signed_v<SizeType>, "TMultiArrayView only supports signed index types");
 
 public:
 
@@ -612,12 +605,12 @@ public:
 	static constexpr bool bIsRestrict = bInIsRestrict;
 	using SizeType = InSizeType;
 
-	using PointerType = typename TChooseClass<
+	using PointerType = std::conditional_t<
 		bIsRestrict,
 		ElementType* RESTRICT,
-		ElementType*>::Result;
+		ElementType*>;
 
-	static_assert(TIsSigned<SizeType>::Value, "TMultiArrayView only supports signed index types");
+	static_assert(std::is_signed_v<SizeType>, "TMultiArrayView only supports signed index types");
 
 	/**
 	 * Constructor.
@@ -625,9 +618,6 @@ public:
 	TMultiArrayView() : DataPtr(nullptr) { }
 
 private:
-	template <typename T>
-	using TIsCompatibleElementType = UE::MultiArrayView::Private::TIsCompatibleElementType<T, ElementType>;
-
 	template <typename T>
 	using TIsCompatibleRangeType = UE::MultiArrayView::Private::TIsCompatibleRangeType<T, ElementType>;
 
@@ -642,8 +632,8 @@ public:
 	 */
 	template <
 		typename OtherRangeType,
-		typename CVUnqualifiedOtherRangeType = std::remove_cv_t<typename TRemoveReference<OtherRangeType>::Type>,
-		typename = typename TEnableIf<
+		typename CVUnqualifiedOtherRangeType = std::remove_cv_t<std::remove_reference_t<OtherRangeType>>
+		UE_REQUIRES(
 			TAnd<
 				TIsContiguousContainer<CVUnqualifiedOtherRangeType>,
 				TOr<
@@ -651,14 +641,14 @@ public:
 					TIsReinterpretableRangeType<OtherRangeType>
 				>
 			>::Value
-		>::Type
+		)
 	>
-		FORCEINLINE TMultiArrayView(OtherRangeType&& Other)
-		: DataPtr(TChooseClass<
+	FORCEINLINE TMultiArrayView(OtherRangeType&& Other)
+		: DataPtr(std::conditional_t<
 			TIsCompatibleRangeType<OtherRangeType>::Value,
 			TIsCompatibleRangeType<OtherRangeType>,
 			TIsReinterpretableRangeType<OtherRangeType>
-		>::Result::GetData(Forward<OtherRangeType>(Other)))
+		>::GetData(Forward<OtherRangeType>(Other)))
 	{
 		const auto InCount = GetNum(Forward<OtherRangeType>(Other));
 		check((InCount >= 0) && ((sizeof(InCount) < sizeof(SizeType)) || (InCount <= static_cast<decltype(InCount)>(TNumericLimits<SizeType>::Max()))));
@@ -684,9 +674,11 @@ public:
 	 * @param InData	The data to view
 	 * @param InNum	The number of elements
 	 */
-	template <typename OtherElementType,
-		typename = typename TEnableIf<TIsCompatibleElementType<OtherElementType>::Value>::Type>
-		FORCEINLINE TMultiArrayView(OtherElementType* InData, SizeType InNum)
+	template <
+		typename OtherElementType
+		UE_REQUIRES(UE::MultiArrayView::Private::TIsCompatibleElementType_V<OtherElementType, ElementType>)
+	>
+	FORCEINLINE TMultiArrayView(OtherElementType* InData, SizeType InNum)
 		: DataPtr(InData)
 	{
 		ArrayShape[0] = InNum;
@@ -1024,3 +1016,9 @@ private:
 
 template<uint8 InDimNum, typename InElementType, bool bInIsChecked = true, bool bInIsRestrict = false, typename InSizeType = FDefaultAllocator::SizeType>
 using TConstMultiArrayView = TMultiArrayView<InDimNum, const InElementType, bInIsChecked, bInIsRestrict, InSizeType>;
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/IsConst.h"
+#include "Templates/IsSigned.h"
+#include "Templates/PointerIsConvertibleFromTo.h"
+#endif

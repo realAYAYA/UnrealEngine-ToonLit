@@ -5,6 +5,7 @@
 #include "CoreTypes.h"
 #include "Iris/Core/NetObjectReference.h"
 #include "Iris/ReplicationSystem/NetRefHandle.h"
+#include "Iris/ReplicationSystem/ReplicationSystemTypes.h"
 #include "UObject/WeakObjectPtr.h"
 #include "Containers/Map.h"
 #include "ObjectReferenceCacheFwd.h"
@@ -19,6 +20,8 @@ namespace UE::Net
 	{
 		class FNetRefHandleManager;
 		class FNetExportContext;
+		struct FPendingBatches;
+		typedef uint32 FInternalNetRefIndex;
 	}
 }
 
@@ -46,7 +49,7 @@ public:
 	FNetRefHandle CreateObjectReferenceHandle(const UObject* Object);
 
 	// Get existing handle for object
-	FNetRefHandle GetObjectReferenceHandleFromObject(const UObject* Object) const;
+	FNetRefHandle GetObjectReferenceHandleFromObject(const UObject* Object, EGetRefHandleFlags GetRefHandleFlags = EGetRefHandleFlags::None) const;
 
 	// Get object from handle, only if the object is in the cache.
 	UObject* GetObjectFromReferenceHandle(FNetRefHandle RefHandle);
@@ -59,6 +62,9 @@ public:
 
 	// Returns true of this NetRefHandle is marked as broken
 	bool IsNetRefHandleBroken(FNetRefHandle Handle, bool bMustBeRegistered) const;
+
+	// Returns true of the provided NetRefHandle or one of its outers is pending async loading.
+	bool IsNetRefHandlePending(FNetRefHandle NetRefHandle, const FPendingBatches& PendingBatches) const;
 
 	// Find replicated outer
 	FNetObjectReference GetReplicatedOuter(const FNetObjectReference& Reference) const;
@@ -107,7 +113,7 @@ public:
 
 	// Exports are expected to be part of the written state, so if the result is a BitStreamOverflow
 	// it is up to the caller to roll back written data and pending exports
-	EWriteExportsResult WritePendingExports(FNetSerializationContext& Context);
+	EWriteExportsResult WritePendingExports(FNetSerializationContext& Context, FInternalNetRefIndex ObjectIndex);
 
 	bool ReadExports(FNetSerializationContext& Context, TArray<FNetRefHandle>* MustBeMappedExports);
 
@@ -130,6 +136,8 @@ public:
 	void AddTrackedQueuedBatchObjectReference(const FNetRefHandle InHandle, const UObject* InObject);
 	void UpdateTrackedQueuedBatchObjectReference(const FNetRefHandle InHandle, const UObject* NewObject);
 	void RemoveTrackedQueuedBatchObjectReference(const FNetRefHandle InHandle);
+
+	FString DescribeObjectReference(const FNetObjectReference Ref, const FNetObjectResolveContext& ResolveContext);
 
 private:
 
@@ -199,7 +207,7 @@ private:
 
 	// Must be mapped exports are written for each batch that serializes object references, if async loading is enabled the client
 	// will defer application of data contained in the batch until the must be mapped exports are resolvable.
-	bool WriteMustBeMappedExports(FNetSerializationContext& Context, TArrayView<const FNetObjectReference> ExportsView) const;
+	bool WriteMustBeMappedExports(FNetSerializationContext& Context, FInternalNetRefIndex ObjectIndex, TArrayView<const FNetObjectReference> ExportsView) const;
 	void ReadMustBeMappedExports(FNetSerializationContext& Context, TArray<FNetRefHandle>* MustBeMappedExports);
 
 	void StartAsyncLoadingPackage(FCachedNetObjectReference& Object, FName PackagePath, const FNetRefHandle RefHandle, const bool bWasAlreadyAsyncLoading);

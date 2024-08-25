@@ -62,7 +62,7 @@ public:
 };
 
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeMeshNode : public UInterchangeBaseNode
 {
 	GENERATED_BODY()
@@ -70,22 +70,24 @@ class INTERCHANGENODES_API UInterchangeMeshNode : public UInterchangeBaseNode
 public:
 	UInterchangeMeshNode();
 
+#if WITH_EDITOR
 	virtual FString GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
 
 	virtual FString GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
+#endif //WITH_EDITOR
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override;
 
 	/**
-	 * Icon name are simply create by adding "InterchangeIcon_" in front of the specialized type. If there is no special type the function will return NAME_None which will use the default icon.
+	 * Icon names are created by adding "InterchangeIcon_" in front of the specialized type. If there is no special type, the function will return NAME_None, which will use the default icon.
 	 */
 	virtual FName GetIconName() const override;
 	
 	/**
-	 * Override serialize to restore SlotMaterialDependencies on load.
+	 * Override Serialize() to restore SlotMaterialDependencies on load.
 	 */
 	virtual void Serialize(FArchive& Ar) override
 	{
@@ -98,224 +100,223 @@ public:
 	}
 
 	/**
-	 * Return true if this node represent a skinned mesh
+	 * Return true if this node represents a skinned mesh.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool IsSkinnedMesh() const;
 
 	/**
-	 * Set the IsSkinnedMesh attribute to determine if this node represent a skinned mesh.
+	 * Set the IsSkinnedMesh attribute to determine whether this node represents a skinned mesh.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetSkinnedMesh(const bool bIsSkinnedMesh);
 
 	/**
-	 * Return true if this node represent a morph target
+	 * Return true if this node represents a morph target.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool IsMorphTarget() const;
 
 	/**
-	 * Set the IsMorphTarget attribute to determine if this node represent a morph target.
+	 * Set the IsMorphTarget attribute to determine whether this node represents a morph target.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetMorphTarget(const bool bIsMorphTarget);
 
 	/**
 	 * Get the morph target name.
-	 * Return true if we successfully query the MorphTargetName attribute
+	 * Return true if we successfully retrieved the MorphTargetName attribute.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetMorphTargetName(FString& OutMorphTargetName) const;
 
 	/**
-	 * Set the MorphTargetName attribute to determine if this node represent a morph target.
+	 * Set the MorphTargetName attribute to determine the name of the morph target.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetMorphTargetName(const FString& MorphTargetName);
 
-	/** Mesh node Interface Begin */
 	virtual const TOptional<FInterchangeMeshPayLoadKey> GetPayLoadKey() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	virtual void SetPayLoadKey(const FString& PayLoadKey, const EInterchangeMeshPayLoadType& PayLoadType);
 	
-	/** Query this mesh vertices count. Return false if the attribute was not set.*/
+	/** Query the vertex count of this mesh. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomVertexCount(int32& AttributeValue) const;
 
-	/** Set this mesh vertices count. Return false if the attribute cannot be set.*/
+	/** Set the vertex count of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomVertexCount(const int32& AttributeValue);
 
-	/** Query this mesh polygon count. Return false if the attribute was not set.*/
+	/** Query the polygon count of this mesh. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomPolygonCount(int32& AttributeValue) const;
 
-	/** Set this mesh polygon count. Return false if the attribute cannot be set.*/
+	/** Set the polygon count of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomPolygonCount(const int32& AttributeValue);
 
-	/** Query this mesh bounding box. Return false if the attribute was not set.*/
+	/** Query the bounding box of this mesh. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomBoundingBox(FBox& AttributeValue) const;
 
-	/** Set this mesh bounding box. Return false if the attribute cannot be set.*/
+	/** Set the bounding box of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomBoundingBox(const FBox& AttributeValue);
 
-	/** Query if this mesh has vertex normal. Return false if the attribute was not set.*/
+	/** Query whether this mesh has vertex normals. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomHasVertexNormal(bool& AttributeValue) const;
 
-	/** Set this mesh has vertex normal attribute. Return false if the attribute cannot be set.*/
+	/** Set the vertex normal attribute of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomHasVertexNormal(const bool& AttributeValue);
 
-	/** Query if this mesh has vertex bi-normal. Return false if the attribute was not set.*/
+	/** Query whether this mesh has vertex bi-normals. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomHasVertexBinormal(bool& AttributeValue) const;
 
-	/** Set this mesh has vertex bi-normal attribute. Return false if the attribute cannot be set.*/
+	/** Set the vertex bi-normal attribute of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomHasVertexBinormal(const bool& AttributeValue);
 
-	/** Query if this mesh has vertex tangent. Return false if the attribute was not set.*/
+	/** Query whether this mesh has vertex tangents. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomHasVertexTangent(bool& AttributeValue) const;
 
-	/** Set this mesh has vertex tangent attribute. Return false if the attribute cannot be set.*/
+	/** Set the vertex tangent attribute of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomHasVertexTangent(const bool& AttributeValue);
 
-	/** Query if this mesh has smooth group. Return false if the attribute was not set.*/
+	/** Query whether this mesh has smoothing groups. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomHasSmoothGroup(bool& AttributeValue) const;
 
-	/** Set this mesh has smooth group attribute. Return false if the attribute cannot be set.*/
+	/** Set the smoothing group attribute of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomHasSmoothGroup(const bool& AttributeValue);
 
-	/** Query if this mesh has vertex color. Return false if the attribute was not set.*/
+	/** Query whether this mesh has vertex colors. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomHasVertexColor(bool& AttributeValue) const;
 
-	/** Set this mesh has vertex color attribute. Return false if the attribute cannot be set.*/
+	/** Set the vertex color attribute of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomHasVertexColor(const bool& AttributeValue);
 
-	/** Query this mesh UV count. Return false if the attribute was not set.*/
+	/** Query the UV count of this mesh. Return false if the attribute was not set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool GetCustomUVCount(int32& AttributeValue) const;
 
-	/** Set this mesh UV count attribute. Return false if the attribute cannot be set.*/
+	/** Set the UV count attribute of this mesh. Return false if the attribute could not be set.*/
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetCustomUVCount(const int32& AttributeValue);
 
 	/**
-	 * This function allow to retrieve the number of skeleton dependencies for this object.
+	 * Retrieve the number of skeleton dependencies for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	int32 GetSkeletonDependeciesCount() const;
 
 	/**
-	 * This function allow to retrieve the skeleton dependency for this object.
+	 * Retrieve the skeleton dependency for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	void GetSkeletonDependencies(TArray<FString>& OutDependencies) const;
 
 	/**
-	 * This function allow to retrieve one skeleton dependency for this object.
+	 * Retrieve the specified skeleton dependency for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	void GetSkeletonDependency(const int32 Index, FString& OutDependency) const;
 
 	/**
-	 * Add one skeleton dependency to this object.
+	 * Add the specified skeleton dependency to this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetSkeletonDependencyUid(const FString& DependencyUid);
 
 	/**
-	 * Remove one skeleton dependency from this object.
+	 * Remove the specified skeleton dependency from this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool RemoveSkeletonDependencyUid(const FString& DependencyUid);
 
 	/**
-	 * This function allow to retrieve the number of morph target dependencies for this object.
+	 * Retrieve the number of morph target dependencies for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	int32 GetMorphTargetDependeciesCount() const;
 
 	/**
-	 * This function allow to retrieve the morph target dependency for this object.
+	 * Retrieve all morph target dependencies for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	void GetMorphTargetDependencies(TArray<FString>& OutDependencies) const;
 
 	/**
-	 * This function allow to retrieve one morph target dependency for this object.
+	 * Retrieve the specified morph target dependency for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	void GetMorphTargetDependency(const int32 Index, FString& OutDependency) const;
 
 	/**
-	 * Add one morph target dependency to this object.
+	 * Add the specified morph target dependency to this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetMorphTargetDependencyUid(const FString& DependencyUid);
 
 	/**
-	 * Remove one morph target dependency from this object.
+	 * Remove the specified morph target dependency from this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool RemoveMorphTargetDependencyUid(const FString& DependencyUid);
 
 	/**
-	 * This function allow to retrieve the number of scene node instancing this mesh.
+	 * Retrieve the number of scene nodes instancing this mesh.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	int32 GetSceneInstanceUidsCount() const;
 
 	/**
-	 * This function allow to retrieve the asset instances this scene node is refering.
+	 * Retrieve the asset instances this scene node refers to.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	void GetSceneInstanceUids(TArray<FString>& OutDependencies) const;
 
 	/**
-	 * This function allow to retrieve an asset instance this scene node is refering.
+	 * Retrieve the asset instance this scene node refers to.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	void GetSceneInstanceUid(const int32 Index, FString& OutDependency) const;
 
 	/**
-	 * Add one asset instance this scene node is refering.
+	 * Add the specified asset instance this scene node refers to.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool SetSceneInstanceUid(const FString& DependencyUid);
 
 	/**
-	 * Remove one asset instance this scene node is refering.
+	 * Remove the specified asset instance this scene node refers to.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Mesh")
 	bool RemoveSceneInstanceUid(const FString& DependencyUid);
 
 	/**
-	 * Allow to retrieve the correspondence table between slot names and assigned materials for this object.
+	 * Retrieve the correspondence table between slot names and assigned materials for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	void GetSlotMaterialDependencies(TMap<FString, FString>& OutMaterialDependencies) const;
 
 	/**
-	 * Allow to retrieve one Material dependency for a given slot of this object.
+	 * Retrieve the specified Material dependency for a given slot of this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetSlotMaterialDependencyUid(const FString& SlotName, FString& OutMaterialDependency) const;
 
 	/**
-	 * Add one Material dependency to a specific slot name of this object.
+	 * Add the specified Material dependency to a specific slot name of this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetSlotMaterialDependencyUid(const FString& SlotName, const FString& MaterialDependencyUid);

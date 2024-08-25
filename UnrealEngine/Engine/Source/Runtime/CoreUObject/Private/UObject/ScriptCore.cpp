@@ -28,6 +28,7 @@
 #include "UObject/Stack.h"
 #include "UObject/Reload.h"
 #include "Blueprint/BlueprintSupport.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 #include "UObject/ScriptMacros.h"
 #include "UObject/UObjectThreadContext.h"
 #include "HAL/IConsoleManager.h"
@@ -924,12 +925,11 @@ void ProcessScriptFunction(UObject* Context, UFunction* Function, FFrame& Stack,
 
 	// Allocate any temporary memory the script may need via AllocA. This AllocA dependency, along with
 	// the desire to inline calls to our Execution function are the reason for this template function:
-	uint8* FrameMemory = nullptr;
 	FFrame NewStack(Context, Function, nullptr, &Stack, Function->ChildProperties);
 	UE_VSTACK_MAKE_FRAME(ProcessScriptFunctionBookmark, NewStack.CachedThreadVirtualStackAllocator);
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
-	FrameMemory = Function->GetOuterUClassUnchecked()->GetPersistentUberGraphFrame(Context, Function);
-#endif
+
+	uint8* FrameMemory = Function->GetOuterUClassUnchecked()->GetPersistentUberGraphFrame(Context, Function);
+
 	bool bUsePersistentFrame = (nullptr != FrameMemory);
 	if (!bUsePersistentFrame)
 	{
@@ -1158,10 +1158,7 @@ void ClearReturnValue(FProperty* ReturnProp, RESULT_DECL)
 		uint8* Data = (uint8*)RESULT_PARAM;
 		for (int32 ArrayIdx = 0; ArrayIdx < ReturnProp->ArrayDim; ArrayIdx++, Data += ReturnProp->ElementSize)
 		{
-			// destroy old value if necessary
-			ReturnProp->DestroyValue(Data);
-
-			// copy zero value for return property into Result, or default construct as necessary
+			// Clear the property. This assumes that it has already been initialized, and that the caller will destroy it.
 			ReturnProp->ClearValue(Data);
 		}
 	}
@@ -1973,7 +1970,10 @@ thread_local int32 ProcessEventCounter = 0;
 
 void UObject::ProcessEvent( UFunction* Function, void* Parms )
 {
-	checkf(!IsUnreachable(),TEXT("%s  Function: '%s'"), *GetFullName(), *Function->GetPathName());
+	// Unreachable objects are either about to be destroyed by garbage collection or temporarily marked as unreachable during GC reachability analysis on the GameThread.
+	// UObject functions are unsafe to call off-GameThread unless precautions are taken not to coincide with garbage collection (analysis) on the GameThread.
+	checkf(!IsUnreachable(), TEXT("Function '%s' called on Object '%s' that was marked unreachable. Object is possibly about to be garbage collected due to not being referenced. %s"),
+		*Function->GetPathName(), *GetFullName(), !IsInGameThread() ? TEXT("Alternatively, this function was called from a non-GameThread which is unsafe.") : TEXT(""));
 	checkf(!FUObjectThreadContext::Get().IsRoutingPostLoad, TEXT("Cannot call UnrealScript (%s - %s) while PostLoading objects"), *GetFullName(), *Function->GetFullName());
 
 #if TOTAL_OVERHEAD_SCRIPT_STATS
@@ -2057,16 +2057,15 @@ void UObject::ProcessEvent( UFunction* Function, void* Parms )
 
 	// Scope required for scoped script stats.
 	{
-		uint8* Frame = NULL;
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
+		uint8* Frame = nullptr;
 		if (Function->HasAnyFunctionFlags(FUNC_UbergraphFunction))
 		{
 			Frame = Function->GetOuterUClassUnchecked()->GetPersistentUberGraphFrame(this, Function);
 		}
-#endif
+
 		FVirtualStackAllocator* VirtualStackAllocator = FBlueprintContext::GetThreadSingleton()->GetVirtualStackAllocator();
 		UE_VSTACK_MAKE_FRAME(ProcessEventBookmark, VirtualStackAllocator);
-		const bool bUsePersistentFrame = (NULL != Frame);
+		const bool bUsePersistentFrame = (nullptr != Frame);
 		if (!bUsePersistentFrame)
 		{
 			Frame = (uint8*)UE_VSTACK_ALLOC_ALIGNED(VirtualStackAllocator, Function->PropertiesSize, Function->GetMinAlignment());
@@ -2209,8 +2208,7 @@ IMPLEMENT_VM_FUNCTION( EX_LocalVariable, execLocalVariable );
 
 DEFINE_FUNCTION(UObject::execInstanceVariable)
 {
-	FProperty* VarProperty = (FProperty*)Stack.ReadObject();
-	Stack.MostRecentProperty = VarProperty;
+	FProperty* VarProperty = (FProperty*)Stack.ReadPropertyUnchecked();
 
 	if (VarProperty == nullptr || !P_THIS->IsA((UClass*)VarProperty->InternalGetOwnerAsUObjectUnsafe()))
 	{
@@ -2236,8 +2234,7 @@ IMPLEMENT_VM_FUNCTION( EX_InstanceVariable, execInstanceVariable );
 
 DEFINE_FUNCTION(UObject::execClassSparseDataVariable)
 {
-	FProperty* VarProperty = (FProperty*)Stack.ReadObject();
-	Stack.MostRecentProperty = VarProperty;
+	FProperty* VarProperty = (FProperty*)Stack.ReadPropertyUnchecked();
 
 	if (VarProperty == nullptr || P_THIS->GetSparseClassDataStruct() == nullptr)
 	{
@@ -2263,8 +2260,7 @@ IMPLEMENT_VM_FUNCTION(EX_ClassSparseDataVariable, execClassSparseDataVariable);
 
 DEFINE_FUNCTION(UObject::execDefaultVariable)
 {
-	FProperty* VarProperty = (FProperty*)Stack.ReadObject();
-	Stack.MostRecentProperty = VarProperty;
+	FProperty* VarProperty = (FProperty*)Stack.ReadPropertyUnchecked();
 	Stack.MostRecentPropertyAddress = nullptr;
 	Stack.MostRecentPropertyContainer = nullptr;
 
@@ -2596,7 +2592,7 @@ DEFINE_FUNCTION(UObject::execPopExecutionFlow)
 	// Try to pop an entry off the stack and go there
 	if (Stack.FlowStack.Num())
 	{
-		CodeSkipSizeType Offset = Stack.FlowStack.Pop(/*bAllowShrinking=*/ false);
+		CodeSkipSizeType Offset = Stack.FlowStack.Pop(EAllowShrinking::No);
 		Stack.Code = &Stack.Node->Script[ Offset ];
 	}
 	else
@@ -2621,7 +2617,7 @@ DEFINE_FUNCTION(UObject::execPopExecutionFlowIfNot)
 		// Try to pop an entry off the stack and go there
 		if (Stack.FlowStack.Num())
 		{
-			CodeSkipSizeType Offset = Stack.FlowStack.Pop(/*bAllowShrinking=*/ false);
+			CodeSkipSizeType Offset = Stack.FlowStack.Pop(EAllowShrinking::No);
 			Stack.Code = &Stack.Node->Script[ Offset ];
 		}
 		else
@@ -2635,7 +2631,6 @@ IMPLEMENT_VM_FUNCTION( EX_PopExecutionFlowIfNot, execPopExecutionFlowIfNot );
 
 DEFINE_FUNCTION(UObject::execLetValueOnPersistentFrame)
 {
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
 	Stack.MostRecentProperty = nullptr;
 	Stack.MostRecentPropertyAddress = nullptr;
 	Stack.MostRecentPropertyContainer = nullptr;
@@ -2649,9 +2644,6 @@ DEFINE_FUNCTION(UObject::execLetValueOnPersistentFrame)
 	uint8* DestAddress = DestProperty->ContainerPtrToValuePtr<uint8>(FrameBase);
 
 	Stack.Step(Stack.Object, DestAddress);
-#else
-	checkf(false, TEXT("execLetValueOnPersistentFrame: UberGraphPersistentFrame is not supported by current build!"));
-#endif
 }
 IMPLEMENT_VM_FUNCTION(EX_LetValueOnPersistentFrame, execLetValueOnPersistentFrame);
 
@@ -2835,9 +2827,9 @@ DEFINE_FUNCTION(UObject::execLet)
 
 	if (LocallyKnownProperty)
 	{
-		if (LocallyKnownProperty->HasSetter())
+		// LocalPropertyContainer will be nullptr if we raised LetAccessNone above
+		if (LocallyKnownProperty->HasSetter() && LocalPropertyContainer)
 		{
-			check(LocalPropertyContainer != nullptr);
 			LocallyKnownProperty->SetValue_InContainer(LocalPropertyContainer, LocalTempResult);
 			Stack.MostRecentPropertyAddress = PreviousPropertyAddress;
 		}
@@ -3101,41 +3093,44 @@ void UObject::ProcessContextOpcode( FFrame& Stack, RESULT_DECL, bool bCanFailSil
 
 		if (!bCanFailSilently)
 		{
-			if (NewContext && !IsValid(NewContext))
+			UE_AUTORTFM_OPEN(
 			{
-				FBlueprintExceptionInfo ExceptionInfo(
-					EBlueprintExceptionType::AccessViolation, 
-					FText::Format(
-						LOCTEXT("AccessPendingKill", "Attempted to access {0} via property {1}, but {0} is not valid (pending kill or garbage)"),
-						FText::FromString( GetNameSafe(NewContext) ), 
-						FText::FromString( GetNameSafe(Stack.MostRecentProperty) )
-					)
-				);
-				FBlueprintCoreDelegates::ThrowScriptException(this, Stack, ExceptionInfo);
-			}
-			else if (Stack.MostRecentProperty != NULL)
-			{
-				FBlueprintExceptionInfo ExceptionInfo(
-					EBlueprintExceptionType::AccessViolation, 
-					FText::Format( 
-						LOCTEXT("AccessNoneContext", "Accessed None trying to read property {0}"), 
-						FText::FromString( Stack.MostRecentProperty->GetName() )
-					)
-				);
-				FBlueprintCoreDelegates::ThrowScriptException(this, Stack, ExceptionInfo);
-			}
-			else
-			{
-				// Stack.MostRecentProperty will be NULL under the following conditions:
-				//   1. the context expression was a function call which returned an object
-				//   2. the context expression was a literal object reference
-				//   3. the context expression was an instance variable that no longer exists (it was editor-only, etc.)
-				FBlueprintExceptionInfo ExceptionInfo(
-					EBlueprintExceptionType::AccessViolation, 
-					LOCTEXT("AccessNoneNoContext", "Accessed None")
-				);
-				FBlueprintCoreDelegates::ThrowScriptException(this, Stack, ExceptionInfo);
-			}
+				if (NewContext && !IsValid(NewContext))
+				{
+					FBlueprintExceptionInfo ExceptionInfo(
+						EBlueprintExceptionType::AccessViolation,
+						FText::Format(
+							LOCTEXT("AccessPendingKill", "Attempted to access {0} via property {1}, but {0} is not valid (pending kill or garbage)"),
+							FText::FromString(GetNameSafe(NewContext)),
+							FText::FromString(GetNameSafe(Stack.MostRecentProperty))
+						)
+					);
+					FBlueprintCoreDelegates::ThrowScriptException(this, Stack, ExceptionInfo);
+				}
+				else if (Stack.MostRecentProperty != NULL)
+				{
+					FBlueprintExceptionInfo ExceptionInfo(
+						EBlueprintExceptionType::AccessViolation,
+						FText::Format(
+							LOCTEXT("AccessNoneContext", "Accessed None trying to read property {0}"),
+							FText::FromString(Stack.MostRecentProperty->GetName())
+						)
+					);
+					FBlueprintCoreDelegates::ThrowScriptException(this, Stack, ExceptionInfo);
+				}
+				else
+				{
+					// Stack.MostRecentProperty will be NULL under the following conditions:
+					//   1. the context expression was a function call which returned an object
+					//   2. the context expression was a literal object reference
+					//   3. the context expression was an instance variable that no longer exists (it was editor-only, etc.)
+					FBlueprintExceptionInfo ExceptionInfo(
+						EBlueprintExceptionType::AccessViolation,
+						LOCTEXT("AccessNoneNoContext", "Accessed None")
+					);
+					FBlueprintCoreDelegates::ThrowScriptException(this, Stack, ExceptionInfo);
+				}
+			});
 		}
 
 		const CodeSkipSizeType wSkip = Stack.ReadCodeSkipCount(); // Code offset for NULL expressions. Code += sizeof(CodeSkipSizeType)
@@ -3480,7 +3475,7 @@ IMPLEMENT_VM_FUNCTION( EX_TextConst, execTextConst );
 
 DEFINE_FUNCTION(UObject::execPropertyConst)
 {
-	*(FProperty**)RESULT_PARAM = (FProperty*)Stack.ReadObject();
+	*(FProperty**)RESULT_PARAM = (FProperty*)Stack.ReadPropertyUnchecked();
 }
 IMPLEMENT_VM_FUNCTION(EX_PropertyConst, execPropertyConst);
 
@@ -3726,7 +3721,7 @@ IMPLEMENT_VM_FUNCTION( EX_SetMap, execSetMap );
 
 DEFINE_FUNCTION(UObject::execArrayConst)
 {
-	FProperty* InnerProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadObject());
+	FProperty* InnerProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadPropertyUnchecked());
 	int32 Num = Stack.ReadInt<int32>();
 	check(RESULT_PARAM);
 	FScriptArrayHelper ArrayHelper = FScriptArrayHelper::CreateHelperFormInnerProperty(InnerProperty, RESULT_PARAM);
@@ -3746,7 +3741,7 @@ IMPLEMENT_VM_FUNCTION(EX_ArrayConst, execArrayConst);
 
 DEFINE_FUNCTION(UObject::execSetConst)
 {
-	FProperty* InnerProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadObject());
+	FProperty* InnerProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadPropertyUnchecked());
 	int32 Num = Stack.ReadInt<int32>();
 	check(RESULT_PARAM);
 
@@ -3766,8 +3761,8 @@ IMPLEMENT_VM_FUNCTION(EX_SetConst, execSetConst);
 
 DEFINE_FUNCTION(UObject::execMapConst)
 {
-	FProperty* KeyProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadObject());
-	FProperty* ValProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadObject());
+	FProperty* KeyProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadPropertyUnchecked());
+	FProperty* ValProperty = CastFieldChecked<FProperty>((FField*)Stack.ReadPropertyUnchecked());
 	int32 Num = Stack.ReadInt<int32>();
 	check(RESULT_PARAM);
 
@@ -3788,7 +3783,7 @@ IMPLEMENT_VM_FUNCTION(EX_MapConst, execMapConst);
 
 DEFINE_FUNCTION(UObject::execBitFieldConst)
 {
-	FBoolProperty* BitProperty = CastFieldChecked<FBoolProperty>((FField*)Stack.ReadObject());
+	FBoolProperty* BitProperty = CastFieldChecked<FBoolProperty>((FField*)Stack.ReadPropertyUnchecked());
 	uint8 ByteValue = Stack.Read<uint8>();
 	// we could pack the bit into the lower bits of the FProperty pointer, but this instruction is rarely used
 	// and it's likely that a simple implementation will be appreciated by readers, debuggers, and even optimizers:

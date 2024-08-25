@@ -61,7 +61,7 @@ public:
 
 	//! @brief Get Asset Registry tags for applied modifiers from _skeleton_
 	//! @param[out] OutTags AnimationModifiers = %PATH%=%REVISION%;...
-	static void GetAssetRegistryTagsForAppliedModifiersFromSkeleton(const UObject* Object, TArray<UObject::FAssetRegistryTag>& OutTags);
+	static void GetAssetRegistryTagsForAppliedModifiersFromSkeleton(FAssetRegistryTagsContext Context);
 
 	static const FName AnimationModifiersTag;
 	static constexpr TCHAR AnimationModifiersDelimiter = ';';

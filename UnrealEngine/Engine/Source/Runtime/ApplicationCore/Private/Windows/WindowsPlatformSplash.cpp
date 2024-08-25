@@ -21,7 +21,6 @@
 #include "Misc/EngineVersion.h"
 #include "Misc/ScopeExit.h"
 #include "Windows/WindowsApplication.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "Misc/EngineBuildSettings.h"
 
@@ -34,6 +33,12 @@ THIRD_PARTY_INCLUDES_START
 THIRD_PARTY_INCLUDES_END
 
 #pragma comment( lib, "windowscodecs.lib" )
+
+#define UE_WINDOWS_SPLASH_USE_TEXT_OUTLINE (1)
+
+#if !defined(UE_WINDOWS_SPLASH_ENABLE_DRAG)
+#define UE_WINDOWS_SPLASH_ENABLE_DRAG WITH_EDITOR
+#endif
 
 /**
  * Splash screen functions and static globals
@@ -66,6 +71,12 @@ LRESULT CALLBACK SplashScreenWindowProc(HWND hWnd, uint32 message, WPARAM wParam
 	{
 		case WM_PAINT:
 			{
+				// We can continue to receive messages for a period after we've torn down the bitmap resource
+				if (!GSplashScreenBitmap)
+				{
+					return 0;
+				}
+
 				hdc = BeginPaint(hWnd, &ps);
 
 				// Draw splash bitmap
@@ -97,9 +108,7 @@ LRESULT CALLBACK SplashScreenWindowProc(HWND hWnd, uint32 message, WPARAM wParam
 							}
 
 							// Alignment
-							{
-								SetTextAlign( hdc, TA_LEFT | TA_TOP | TA_NOUPDATECP );
-							}
+							SetTextAlign( hdc, TA_LEFT | TA_TOP | TA_NOUPDATECP );
 
 							SetBkColor( hdc, 0x00000000 );
 							SetBkMode( hdc, TRANSPARENT );
@@ -107,8 +116,9 @@ LRESULT CALLBACK SplashScreenWindowProc(HWND hWnd, uint32 message, WPARAM wParam
 							RECT ClientRect;
 							GetClientRect( hWnd, &ClientRect );
 
+#if UE_WINDOWS_SPLASH_USE_TEXT_OUTLINE
 							// Draw background text passes
-					/*		const int32 NumBGPasses = 1;
+							const int32 NumBGPasses = 8;
 							for( int32 CurBGPass = 0; CurBGPass < NumBGPasses; ++CurBGPass )
 							{
 								int32 BGXOffset, BGYOffset;
@@ -116,13 +126,13 @@ LRESULT CALLBACK SplashScreenWindowProc(HWND hWnd, uint32 message, WPARAM wParam
 								{
 									default:
 									case 0:	BGXOffset = -1; BGYOffset =  0; break;
-									case 2:	BGXOffset = -1; BGYOffset = -1; break;
-									case 3:	BGXOffset =  0; BGYOffset = -1; break;
-									case 4:	BGXOffset =  1; BGYOffset = -1; break;
-									case 5:	BGXOffset =  1; BGYOffset =  0; break;
-									case 6:	BGXOffset =  1; BGYOffset =  1; break;
-									case 7:	BGXOffset =  0; BGYOffset =  1; break;
-									case 8:	BGXOffset = -1; BGYOffset =  1; break;
+									case 1:	BGXOffset = -1; BGYOffset = -1; break;
+									case 2:	BGXOffset =  0; BGYOffset = -1; break;
+									case 3:	BGXOffset =  1; BGYOffset = -1; break;
+									case 4:	BGXOffset =  1; BGYOffset =  0; break;
+									case 5:	BGXOffset =  1; BGYOffset =  1; break;
+									case 6:	BGXOffset =  0; BGYOffset =  1; break;
+									case 7:	BGXOffset = -1; BGYOffset =  1; break;
 								}
 
 								SetTextColor( hdc, 0x00000000 );
@@ -132,7 +142,8 @@ LRESULT CALLBACK SplashScreenWindowProc(HWND hWnd, uint32 message, WPARAM wParam
 									TextRect.top + BGYOffset,
 									*SplashText.ToString(),
 									SplashText.ToString().Len() );
-							}*/
+							}
+#endif // UE_WINDOWS_SPLASH_USE_TEXT_OUTLINE
 							
 							// Draw foreground text pass
 							if( CurTypeIndex == SplashTextType::StartupProgress )
@@ -169,6 +180,19 @@ LRESULT CALLBACK SplashScreenWindowProc(HWND hWnd, uint32 message, WPARAM wParam
 		case WM_DESTROY:
 			PostQuitMessage(0);
 			break;
+
+#if UE_WINDOWS_SPLASH_ENABLE_DRAG
+		case WM_NCHITTEST:
+			{
+				// Report client area as non-client area to allow dragging the splashscreen around.
+				LRESULT Result = DefWindowProc(hWnd, message, wParam, lParam);
+				if (Result == HTCLIENT)
+				{
+					Result = HTCAPTION;
+				}
+				return Result;
+			}
+#endif
 
 		default:
 			return DefWindowProc(hWnd, message, wParam, lParam);

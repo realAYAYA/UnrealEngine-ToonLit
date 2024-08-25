@@ -98,11 +98,11 @@ void UConversationParticipantComponent::ServerNotifyConversationEnded(UConversat
 	}
 }
 
-void UConversationParticipantComponent::ServerNotifyExecuteTaskAndSideEffects(const FConversationNodeHandle& Handle)
+void UConversationParticipantComponent::ServerNotifyExecuteTaskAndSideEffects(const FConversationNodeHandle& Handle, const UConversationDatabase* Graph)
 {
 	if (GetOwner()->GetLocalRole() == ROLE_Authority)
 	{
-		ClientExecuteTaskAndSideEffects(Handle);
+		ClientExecuteTaskAndSideEffects(Handle, Graph);
 	}
 }
 
@@ -321,9 +321,9 @@ void UConversationParticipantComponent::ClientUpdateParticipants_Implementation(
 	LastMessage.Participants = InParticipants;
 }
 
-void UConversationParticipantComponent::ClientExecuteTaskAndSideEffects_Implementation(FConversationNodeHandle Handle)
+void UConversationParticipantComponent::ClientExecuteTaskAndSideEffects_Implementation(FConversationNodeHandle Handle, const UConversationDatabase* Graph)
 {
-	if (const UConversationTaskNode* TaskNode = Cast<UConversationTaskNode>(Handle.TryToResolve_Slow(GetWorld())))
+	if (const UConversationTaskNode* TaskNode = Cast<UConversationTaskNode>(Handle.TryToResolve_Slow(GetWorld(), Graph)))
 	{
 		FConversationContext ClientContext = FConversationContext::CreateClientContext(this, TaskNode);
 		TaskNode->ExecuteTaskNodeWithSideEffects(ClientContext);
@@ -349,7 +349,7 @@ void UConversationParticipantComponent::OnRep_ConversationsActive(int32 OldConve
 
 void UConversationParticipantComponent::OnEnterConversationState()
 {
-
+	UE_LOG(LogCommonConversationRuntime, Verbose, TEXT("[%s]: %s has entered the conversation state."), ANSI_TO_TCHAR(__FUNCTION__), *GetNameSafe(GetOwner()));
 }
 
 #if WITH_SERVER_CODE
@@ -368,7 +368,7 @@ void UConversationParticipantComponent::OnServerConversationEnded(UConversationI
 
 void UConversationParticipantComponent::OnLeaveConversationState()
 {
-
+	UE_LOG(LogCommonConversationRuntime, Verbose, TEXT("[%s]: %s has exited the conversation state."), ANSI_TO_TCHAR(__FUNCTION__), *GetNameSafe(GetOwner()));
 }
 
 void UConversationParticipantComponent::OnConversationUpdated(const FClientConversationMessagePayload& Message)

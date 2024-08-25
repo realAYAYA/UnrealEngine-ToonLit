@@ -144,6 +144,8 @@ struct FNiagaraParameterBindingWithValue : public FNiagaraParameterBinding
 		return Value;
 	}
 
+	TConstArrayView<uint8> GetDefaultValueArray() const { return DefaultValue; }
+
 	bool operator==(const FNiagaraParameterBindingWithValue& Other) const
 	{
 		return

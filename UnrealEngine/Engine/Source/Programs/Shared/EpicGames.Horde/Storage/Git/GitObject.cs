@@ -17,17 +17,17 @@ namespace EpicGames.Horde.Storage.Git
 		/// <summary>
 		/// Blob objects
 		/// </summary>
-		public static Utf8String Blob { get; } = "blob";
+		public static Utf8String Blob { get; } = new Utf8String("blob");
 
 		/// <summary>
 		/// Tree objects
 		/// </summary>
-		public static Utf8String Tree { get; } = "tree";
+		public static Utf8String Tree { get; } = new Utf8String("tree");
 
 		/// <summary>
 		/// Commit objects
 		/// </summary>
-		public static Utf8String Commit { get; } = "commit";
+		public static Utf8String Commit { get; } = new Utf8String("commit");
 	}
 
 	/// <summary>

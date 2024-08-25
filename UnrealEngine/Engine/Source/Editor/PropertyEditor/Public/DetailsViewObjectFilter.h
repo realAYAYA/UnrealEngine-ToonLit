@@ -3,6 +3,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DetailsViewStyleKey.h"
+#include "Widgets/SWidget.h"
+#include "Templates/SharedPointer.h"
+#include "DetailsDisplayManager.h"
+
+DECLARE_DELEGATE(FOnUpdateFilteredObjects)
 
 /**
  * An object root is a collection of UObjects that represent a top level set of properties in a details panel
@@ -20,26 +26,61 @@ struct FDetailsViewObjectRoot
 		Objects.Add(InObject);
 	}
 
-	FDetailsViewObjectRoot(const TArray<UObject*>& InObjects)
-	{
-		Objects.Reserve(InObjects.Num());
-		for (UObject* Object : InObjects)
-		{
-			Objects.Add(Object);
-		}
-	}
+	FDetailsViewObjectRoot(TArray<UObject*> InObjects)
+		: Objects(MoveTemp(InObjects))
+	{}
 
 	TArray<UObject*> Objects;
 };
 
 /**
- * An object filter determines the root objects that should be displayed from a set of given source objects passed to the details panel
+ * An object filter determines the root objects that should be displayed from a set of given source objects passed to the details panel.
+ * It can also be used to convey characteristics of a details view which may alter depending upon the type of objects
+ * that have been filtered.
  */
 class FDetailsViewObjectFilter
 {
 public:
-	virtual ~FDetailsViewObjectFilter() {}
 
+	explicit FDetailsViewObjectFilter()
+	{
+		DisplayManager = MakeShared<FDetailsDisplayManager>();
+	}
+
+	virtual ~FDetailsViewObjectFilter()
+	{
+	}
+
+	/**
+	 * Given a const TArray<UObject*>& SourceObjects, it fills a TArray<FDetailsViewObjectRoot> with the objects
+	 * that we need as details objects roots. This may be the same as the original SourceObjects, or it may be
+	 * some subset of them, or some of their Sub-objects
+	 *
+	 * @param SourceObjects the array of objects acting as the Source of the root objects for the details view
+	 * @return the TArray<FDetailsViewObjectRoot> with the objects that will act as root objects for the details view 
+	 */
 	virtual TArray<FDetailsViewObjectRoot> FilterObjects(const TArray<UObject*>& SourceObjects) = 0;
 
+	/** Updates the view of anything being filtered by this filter */
+	virtual void UpdateFilterView() const
+	{
+	}
+
+	/**
+	* Returns a @code TSharedPtr @endcode to the @code FDetailsDisplayManager @endcode
+	*/
+	virtual TSharedPtr<FDetailsDisplayManager> GetDisplayManager()
+	{
+		return DisplayManager;
+	}
+
+
+protected:
+	/**
+	 * The @code DetailsDisplayManager @endcode which provides an API to manage some of the characteristics of the
+	 * details display
+	 */
+	TSharedPtr<FDetailsDisplayManager> DisplayManager;
+	
 };
+ 

@@ -3,8 +3,8 @@
 #include "PostProcess/PostProcessBokehDOF.h"
 #include "PostProcess/PostProcessDOF.h"
 #include "CanvasTypes.h"
-#include "RenderTargetTemp.h"
 #include "PostProcess/DiaphragmDOF.h"
+#include "SceneRendering.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "UnrealEngine.h"
 
@@ -117,13 +117,18 @@ FScreenPassTexture AddVisualizeDOFPass(FRDGBuilder& GraphBuilder, const FViewInf
 
 		const FVector2D Fov = View.ViewMatrices.ComputeHalfFieldOfViewPerAxis();
 
-		const float FocalLength = DiaphragmDOF::ComputeFocalLengthFromFov(View);
+		DiaphragmDOF::FPhysicalCocModel CocModel;
+		CocModel.Compile(View);
 
-		Line = FString::Printf(TEXT("Field Of View in deg. (computed): %.1f x %.1f"), FMath::RadiansToDegrees(Fov.X) * 2.0f, FMath::RadiansToDegrees(Fov.Y) * 2.0f);
+		const float UUToMM = 10.0f;
+
+		Line = FString::Printf(TEXT("Field Of View in deg.: %.1f x %.1f"), FMath::RadiansToDegrees(Fov.X) * 2.0f, FMath::RadiansToDegrees(Fov.Y) * 2.0f);
 		Canvas.DrawShadowedString(X, Y += YStep, *Line, GetStatsFont(), FLinearColor(0.5, 0.5, 1));
-		Line = FString::Printf(TEXT("Focal Length (computed): %.1f"), FocalLength);
-		Canvas.DrawShadowedString(X, Y += YStep, *Line, GetStatsFont(), FLinearColor(0.5, 0.5, 10));
-		Line = FString::Printf(TEXT("Sensor: APS-C 24.576 mm sensor, crop-factor 1.61x"));
+		Line = FString::Printf(TEXT("Focal Length: %.1f mm"), UUToMM * CocModel.VerticalFocalLength);
+		Canvas.DrawShadowedString(X, Y += YStep, *Line, GetStatsFont(), FLinearColor(0.5, 0.5, 1));
+		Line = FString::Printf(TEXT("Squeeze Factor: %.1f"), CocModel.Squeeze);
+		Canvas.DrawShadowedString(X, Y += YStep, *Line, GetStatsFont(), FLinearColor(0.5, 0.5, 1));
+		Line = FString::Printf(TEXT("Sensor: %.1f x %.1f mm"), UUToMM * CocModel.SensorWidth, UUToMM * CocModel.SensorHeight);
 		Canvas.DrawShadowedString(X, Y += YStep, *Line, GetStatsFont(), FLinearColor(0.5, 0.5, 1));
 	});
 

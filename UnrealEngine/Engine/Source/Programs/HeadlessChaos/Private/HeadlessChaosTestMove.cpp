@@ -26,23 +26,23 @@ namespace ChaosTest
 		// Drop the box on the ground and wait until it sleeps
 		Test.TickUntilSleep();
 		EXPECT_TRUE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().Z, 0.5 * BoxSize.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, 0.5 * BoxSize.Z, DistanceTolerance);
 
 		// Move the box horizontally and up into the air
-		const FVec3 NewBoxPos = Box->X() + FVec3(100, 0, 100);
+		const FVec3 NewBoxPos = Box->GetX() + FVec3(100, 0, 100);
 		Test.GetEvolution().SetParticleTransformSwept(Box, NewBoxPos, BoxRot, false);
 
 		// The box should be at its new location and awake
 		EXPECT_FALSE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().X, NewBoxPos.X, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Y, NewBoxPos.Y, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Z, NewBoxPos.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().X, NewBoxPos.X, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Y, NewBoxPos.Y, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, NewBoxPos.Z, DistanceTolerance);
 
 		// The box should fall to the ground again
 		Test.TickUntilSleep();
 		EXPECT_TRUE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().X, NewBoxPos.X, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Z, 0.5 * BoxSize.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().X, NewBoxPos.X, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, 0.5 * BoxSize.Z, DistanceTolerance);
 	}
 
 	GTEST_TEST(MoveTests, TestMoveWithSweepNoHit)
@@ -65,23 +65,23 @@ namespace ChaosTest
 		// Drop the box on the ground and wait until it sleeps
 		Test.TickUntilSleep();
 		EXPECT_TRUE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().Z, 0.5 * BoxSize.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, 0.5 * BoxSize.Z, DistanceTolerance);
 
 		// Move the box horizontally and up into the air
-		const FVec3 NewBoxPos = Box->X() + FVec3(100, 0, 100);
+		const FVec3 NewBoxPos = Box->GetX() + FVec3(100, 0, 100);
 		Test.GetEvolution().SetParticleTransformSwept(Box, NewBoxPos, BoxRot, false);
 
 		// The box should be at its new location and awake
 		EXPECT_FALSE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().X, NewBoxPos.X, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Y, NewBoxPos.Y, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Z, NewBoxPos.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().X, NewBoxPos.X, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Y, NewBoxPos.Y, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, NewBoxPos.Z, DistanceTolerance);
 
 		// The box should fall to the ground again
 		Test.TickUntilSleep();
 		EXPECT_TRUE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().X, NewBoxPos.X, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Z, 0.5 * BoxSize.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().X, NewBoxPos.X, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, 0.5 * BoxSize.Z, DistanceTolerance);
 	}
 
 	GTEST_TEST(MoveTests, TestMoveWithSweepBlockingHit)
@@ -107,22 +107,22 @@ namespace ChaosTest
 		// Drop the box on the ground and wait until it sleeps
 		Test.TickUntilSleep();
 		EXPECT_TRUE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().Z, 0.5 * BoxSize.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, 0.5 * BoxSize.Z, DistanceTolerance);
 
 		// Move the box horizontally and up into the air
 		Test.GetEvolution().SetParticleTransformSwept(Box, BoxTargetPos, BoxRot, false);
 
 		// The box should have been stopped on its way to its new location
 		EXPECT_FALSE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().X, 50, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Y, 0, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Z, 50 + 0.5 * BoxSize.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().X, 50, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Y, 0, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, 50 + 0.5 * BoxSize.Z, DistanceTolerance);
 
 		// The box should fall to the ground again
 		Test.TickUntilSleep();
 		EXPECT_TRUE(Box->IsSleeping());
-		EXPECT_NEAR(Box->X().X, 50, DistanceTolerance);
-		EXPECT_NEAR(Box->X().Z, 0.5 * BoxSize.Z, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().X, 50, DistanceTolerance);
+		EXPECT_NEAR(Box->GetX().Z, 0.5 * BoxSize.Z, DistanceTolerance);
 	}
 
 }

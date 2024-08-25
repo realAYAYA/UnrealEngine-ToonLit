@@ -9,18 +9,17 @@
 #include "UsdWrappers/UsdPayloads.h"
 #include "UsdWrappers/UsdReferences.h"
 #include "UsdWrappers/UsdStage.h"
+#include "UsdWrappers/UsdRelationship.h"
 #include "UsdWrappers/UsdVariantSets.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/sdf/schema.h"
-	#include "pxr/usd/usd/attribute.h"
-	#include "pxr/usd/usd/prim.h"
-	#include "pxr/usd/usd/schemaBase.h"
+#include "pxr/usd/sdf/schema.h"
+#include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/relationship.h"
 #include "USDIncludesEnd.h"
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -36,42 +35,42 @@ namespace UE
 #if ENABLE_USD_DEBUG_PATH
 			FSdfPath DebugPath;
 #endif
-			explicit FUsdPrimImpl( const pxr::UsdPrim& InUsdPrim )
-				: PxrUsdPrim( InUsdPrim )
+			explicit FUsdPrimImpl(const pxr::UsdPrim& InUsdPrim)
+				: PxrUsdPrim(InUsdPrim)
 			{
 #if ENABLE_USD_DEBUG_PATH
 				DebugPath = PxrUsdPrim.Get().GetPrimPath();
 #endif
 			}
 
-			explicit FUsdPrimImpl( pxr::UsdPrim&& InUsdPrim )
-				: PxrUsdPrim( MoveTemp( InUsdPrim ) )
+			explicit FUsdPrimImpl(pxr::UsdPrim&& InUsdPrim)
+				: PxrUsdPrim(MoveTemp(InUsdPrim))
 			{
 #if ENABLE_USD_DEBUG_PATH
 				DebugPath = PxrUsdPrim.Get().GetPrimPath();
 #endif
 			}
 
-			TUsdStore< pxr::UsdPrim > PxrUsdPrim;
-#endif // #if USE_USD_SDK
+			TUsdStore<pxr::UsdPrim> PxrUsdPrim;
+#endif	  // #if USE_USD_SDK
 		};
-	}
+	}	  // namespace Internal
 
 	FUsdPrim::FUsdPrim()
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdPrimImpl >();
+		Impl = MakeUnique<Internal::FUsdPrimImpl>();
 	}
 
-	FUsdPrim::FUsdPrim( const FUsdPrim& Other )
+	FUsdPrim::FUsdPrim(const FUsdPrim& Other)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdPrimImpl >( Other.Impl->PxrUsdPrim.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdPrimImpl>(Other.Impl->PxrUsdPrim.Get());
+#endif	  // #if USE_USD_SDK
 	}
 
-	FUsdPrim::FUsdPrim( FUsdPrim&& Other ) = default;
+	FUsdPrim::FUsdPrim(FUsdPrim&& Other) = default;
 
 	FUsdPrim::~FUsdPrim()
 	{
@@ -79,19 +78,19 @@ namespace UE
 		Impl.Reset();
 	}
 
-	FUsdPrim& FUsdPrim::operator=( const FUsdPrim& Other )
+	FUsdPrim& FUsdPrim::operator=(const FUsdPrim& Other)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdPrimImpl >(  Other.Impl->PxrUsdPrim.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdPrimImpl>(Other.Impl->PxrUsdPrim.Get());
+#endif	  // #if USE_USD_SDK
 		return *this;
 	}
 
-	FUsdPrim& FUsdPrim::operator=( FUsdPrim&& Other )
+	FUsdPrim& FUsdPrim::operator=(FUsdPrim&& Other)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MoveTemp(  Other.Impl );
+		Impl = MoveTemp(Other.Impl);
 
 		return *this;
 	}
@@ -102,47 +101,47 @@ namespace UE
 		return (bool)Impl->PxrUsdPrim.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::operator==( const FUsdPrim& Other ) const
+	bool FUsdPrim::operator==(const FUsdPrim& Other) const
 	{
 #if USE_USD_SDK
 		return Impl->PxrUsdPrim.Get() == Other.Impl->PxrUsdPrim.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::operator!=( const FUsdPrim& Other ) const
+	bool FUsdPrim::operator!=(const FUsdPrim& Other) const
 	{
-		return !( *this == Other );
+		return !(*this == Other);
 	}
 
 #if USE_USD_SDK
-	FUsdPrim::FUsdPrim( const pxr::UsdPrim& InUsdPrim )
+	FUsdPrim::FUsdPrim(const pxr::UsdPrim& InUsdPrim)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl =  MakeUnique< Internal::FUsdPrimImpl >( InUsdPrim );
+		Impl = MakeUnique<Internal::FUsdPrimImpl>(InUsdPrim);
 	}
 
-	FUsdPrim::FUsdPrim( pxr::UsdPrim&& InUsdPrim )
+	FUsdPrim::FUsdPrim(pxr::UsdPrim&& InUsdPrim)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdPrimImpl >( MoveTemp( InUsdPrim ) );
+		Impl = MakeUnique<Internal::FUsdPrimImpl>(MoveTemp(InUsdPrim));
 	}
 
-	FUsdPrim& FUsdPrim::operator=( const pxr::UsdPrim& InUsdPrim )
+	FUsdPrim& FUsdPrim::operator=(const pxr::UsdPrim& InUsdPrim)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdPrimImpl >( InUsdPrim );
+		Impl = MakeUnique<Internal::FUsdPrimImpl>(InUsdPrim);
 		return *this;
 	}
 
-	FUsdPrim& FUsdPrim::operator=( pxr::UsdPrim&& InUsdPrim )
+	FUsdPrim& FUsdPrim::operator=(pxr::UsdPrim&& InUsdPrim)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdPrimImpl >( MoveTemp( InUsdPrim ) );
+		Impl = MakeUnique<Internal::FUsdPrimImpl>(MoveTemp(InUsdPrim));
 		return *this;
 	}
 
@@ -155,20 +154,20 @@ namespace UE
 	{
 		return Impl->PxrUsdPrim.Get();
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-	bool FUsdPrim::SetSpecifier( ESdfSpecifier Specifier )
+	bool FUsdPrim::SetSpecifier(ESdfSpecifier Specifier)
 	{
 #if USE_USD_SDK
-		static_assert( ( int32 ) ESdfSpecifier::Def == ( int32 ) pxr::SdfSpecifierDef, "ESdfSpecifier enum doesn't match USD!" );
-		static_assert( ( int32 ) ESdfSpecifier::Over == ( int32 ) pxr::SdfSpecifierOver, "ESdfSpecifier enum doesn't match USD!" );
-		static_assert( ( int32 ) ESdfSpecifier::Class == ( int32 ) pxr::SdfSpecifierClass, "ESdfSpecifier enum doesn't match USD!" );
-		static_assert( ( int32 ) ESdfSpecifier::Num == ( int32 ) pxr::SdfNumSpecifiers, "ESdfSpecifier enum doesn't match USD!" );
+		static_assert((int32)ESdfSpecifier::Def == (int32)pxr::SdfSpecifierDef, "ESdfSpecifier enum doesn't match USD!");
+		static_assert((int32)ESdfSpecifier::Over == (int32)pxr::SdfSpecifierOver, "ESdfSpecifier enum doesn't match USD!");
+		static_assert((int32)ESdfSpecifier::Class == (int32)pxr::SdfSpecifierClass, "ESdfSpecifier enum doesn't match USD!");
+		static_assert((int32)ESdfSpecifier::Num == (int32)pxr::SdfNumSpecifiers, "ESdfSpecifier enum doesn't match USD!");
 
-		return Impl->PxrUsdPrim.Get().SetSpecifier( static_cast< pxr::SdfSpecifier > ( Specifier ) );
+		return Impl->PxrUsdPrim.Get().SetSpecifier(static_cast<pxr::SdfSpecifier>(Specifier));
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::IsActive() const
@@ -177,16 +176,16 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().IsActive();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::SetActive( bool bActive )
+	bool FUsdPrim::SetActive(bool bActive)
 	{
 #if USE_USD_SDK
-		return Impl->PxrUsdPrim.Get().SetActive( bActive );
+		return Impl->PxrUsdPrim.Get().SetActive(bActive);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::IsValid() const
@@ -195,7 +194,7 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().IsValid();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::IsPseudoRoot() const
@@ -204,7 +203,7 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().IsPseudoRoot();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::IsModel() const
@@ -213,7 +212,7 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().IsModel();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::IsGroup() const
@@ -222,7 +221,7 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().IsGroup();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	TArray<FName> FUsdPrim::GetAppliedSchemas() const
@@ -235,252 +234,284 @@ namespace UE
 		std::vector<pxr::TfToken> UsdAppliedSchemas = Impl->PxrUsdPrim.Get().GetAppliedSchemas();
 		AppliedSchemas.Reserve(UsdAppliedSchemas.size());
 
-		for ( const pxr::TfToken& UsdSchema : UsdAppliedSchemas )
+		for (const pxr::TfToken& UsdSchema : UsdAppliedSchemas)
 		{
-			AppliedSchemas.Add( ANSI_TO_TCHAR( UsdSchema.GetString().c_str() ) );
+			AppliedSchemas.Add(ANSI_TO_TCHAR(UsdSchema.GetString().c_str()));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return AppliedSchemas;
 	}
 
-	bool FUsdPrim::IsA( FName SchemaIdentifier ) const
+	bool FUsdPrim::IsA(FName SchemaIdentifier) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
 
-		return Impl->PxrUsdPrim.Get().IsA( UsdSchemaIdentifier );
+		return Impl->PxrUsdPrim.Get().IsA(UsdSchemaIdentifier);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::HasAPI( FName SchemaIdentifier ) const
+	bool FUsdPrim::HasAPI(FName SchemaIdentifier) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
 
-		return Impl->PxrUsdPrim.Get().HasAPI( UsdSchemaIdentifier );
+		return Impl->PxrUsdPrim.Get().HasAPI(UsdSchemaIdentifier);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::HasAPI( FName SchemaIdentifier, FName InstanceName ) const
+	bool FUsdPrim::HasAPI(FName SchemaIdentifier, FName InstanceName) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
-		const pxr::TfToken UsdInstanceName( TCHAR_TO_ANSI( *InstanceName.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
+		const pxr::TfToken UsdInstanceName(TCHAR_TO_ANSI(*InstanceName.ToString()));
 
-		return Impl->PxrUsdPrim.Get().HasAPI( UsdSchemaIdentifier, UsdInstanceName );
+		return Impl->PxrUsdPrim.Get().HasAPI(UsdSchemaIdentifier, UsdInstanceName);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	// Deprecated in 5.3
-	bool FUsdPrim::HasAPI( FName SchemaType, TOptional<FName> InstanceName ) const
+	bool FUsdPrim::HasAPI(FName SchemaType, TOptional<FName> InstanceName) const
 	{
-		if ( InstanceName.IsSet() )
+		if (InstanceName.IsSet())
 		{
-			return HasAPI( SchemaType, InstanceName.GetValue() );
+			return HasAPI(SchemaType, InstanceName.GetValue());
 		}
 
-		return HasAPI( SchemaType );
+		return HasAPI(SchemaType);
 	}
 
-	bool FUsdPrim::CanApplyAPI( FName SchemaIdentifier, FString* OutWhyNot ) const
+	bool FUsdPrim::CanApplyAPI(FName SchemaIdentifier, FString* OutWhyNot) const
 	{
 		bool bResult = false;
 
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
 
 		std::string WhyNot;
-		bResult = Impl->PxrUsdPrim.Get().CanApplyAPI(
-			UsdSchemaIdentifier,
-			OutWhyNot != nullptr ? &WhyNot : nullptr );
+		bResult = Impl->PxrUsdPrim.Get().CanApplyAPI(UsdSchemaIdentifier, OutWhyNot != nullptr ? &WhyNot : nullptr);
 
-		if ( !bResult && OutWhyNot != nullptr )
+		if (!bResult && OutWhyNot != nullptr)
 		{
-			*OutWhyNot = ANSI_TO_TCHAR( WhyNot.c_str() );
+			*OutWhyNot = ANSI_TO_TCHAR(WhyNot.c_str());
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return bResult;
 	}
 
-	bool FUsdPrim::CanApplyAPI( FName SchemaIdentifier, FName InstanceName, FString* OutWhyNot ) const
+	bool FUsdPrim::CanApplyAPI(FName SchemaIdentifier, FName InstanceName, FString* OutWhyNot) const
 	{
 		bool bResult = false;
 
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
-		const pxr::TfToken UsdInstanceName( TCHAR_TO_ANSI( *InstanceName.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
+		const pxr::TfToken UsdInstanceName(TCHAR_TO_ANSI(*InstanceName.ToString()));
 
 		std::string WhyNot;
-		bResult = Impl->PxrUsdPrim.Get().CanApplyAPI(
-			UsdSchemaIdentifier,
-			UsdInstanceName,
-			OutWhyNot != nullptr ? &WhyNot : nullptr);
+		bResult = Impl->PxrUsdPrim.Get().CanApplyAPI(UsdSchemaIdentifier, UsdInstanceName, OutWhyNot != nullptr ? &WhyNot : nullptr);
 
-		if ( !bResult && OutWhyNot != nullptr )
+		if (!bResult && OutWhyNot != nullptr)
 		{
-			*OutWhyNot = ANSI_TO_TCHAR( WhyNot.c_str() );
+			*OutWhyNot = ANSI_TO_TCHAR(WhyNot.c_str());
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return bResult;
 	}
 
-	bool FUsdPrim::ApplyAPI( FName SchemaIdentifier ) const
+	bool FUsdPrim::ApplyAPI(FName SchemaIdentifier) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
 
-		return Impl->PxrUsdPrim.Get().ApplyAPI( UsdSchemaIdentifier );
+		return Impl->PxrUsdPrim.Get().ApplyAPI(UsdSchemaIdentifier);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::ApplyAPI( FName SchemaIdentifier, FName InstanceName ) const
+	bool FUsdPrim::ApplyAPI(FName SchemaIdentifier, FName InstanceName) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
-		const pxr::TfToken UsdInstanceName( TCHAR_TO_ANSI( *InstanceName.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
+		const pxr::TfToken UsdInstanceName(TCHAR_TO_ANSI(*InstanceName.ToString()));
 
-		return Impl->PxrUsdPrim.Get().ApplyAPI( UsdSchemaIdentifier, UsdInstanceName );
+		return Impl->PxrUsdPrim.Get().ApplyAPI(UsdSchemaIdentifier, UsdInstanceName);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::RemoveAPI( FName SchemaIdentifier ) const
+	bool FUsdPrim::RemoveAPI(FName SchemaIdentifier) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
 
-		return Impl->PxrUsdPrim.Get().RemoveAPI( UsdSchemaIdentifier );
+		return Impl->PxrUsdPrim.Get().RemoveAPI(UsdSchemaIdentifier);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::RemoveAPI( FName SchemaIdentifier, FName InstanceName ) const
+	bool FUsdPrim::RemoveAPI(FName SchemaIdentifier, FName InstanceName) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs Allocs;
 
-		const pxr::TfToken UsdSchemaIdentifier( TCHAR_TO_ANSI( *SchemaIdentifier.ToString() ) );
-		const pxr::TfToken UsdInstanceName( TCHAR_TO_ANSI( *InstanceName.ToString() ) );
+		const pxr::TfToken UsdSchemaIdentifier(TCHAR_TO_ANSI(*SchemaIdentifier.ToString()));
+		const pxr::TfToken UsdInstanceName(TCHAR_TO_ANSI(*InstanceName.ToString()));
 
-		return Impl->PxrUsdPrim.Get().RemoveAPI( UsdSchemaIdentifier, UsdInstanceName );
+		return Impl->PxrUsdPrim.Get().RemoveAPI(UsdSchemaIdentifier, UsdInstanceName);
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	const FSdfPath FUsdPrim::GetPrimPath() const
 	{
 #if USE_USD_SDK
-		return FSdfPath( Impl->PxrUsdPrim.Get().GetPrimPath() );
+		return FSdfPath(Impl->PxrUsdPrim.Get().GetPrimPath());
 #else
 		return FSdfPath();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdStage FUsdPrim::GetStage() const
 	{
 #if USE_USD_SDK
-		return FUsdStage( Impl->PxrUsdPrim.Get().GetStage() );
+		return FUsdStage(Impl->PxrUsdPrim.Get().GetStage());
 #else
 		return FUsdStage();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
+	}
+
+	FUsdRelationship FUsdPrim::GetRelationship(const TCHAR* RelationshipName) const
+	{
+#if USE_USD_SDK
+		return FUsdRelationship(Impl->PxrUsdPrim.Get().GetRelationship(pxr::TfToken(TCHAR_TO_ANSI(RelationshipName))));
+#else
+		return FUsdRelationship();
+#endif	  // #if USE_USD_SDK
 	}
 
 	FName FUsdPrim::GetName() const
 	{
 #if USE_USD_SDK
-		return FName( ANSI_TO_TCHAR( Impl->PxrUsdPrim.Get().GetName().GetString().c_str() ) );
+		return FName(ANSI_TO_TCHAR(Impl->PxrUsdPrim.Get().GetName().GetString().c_str()));
 #else
 		return FName();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FName FUsdPrim::GetTypeName() const
 	{
 #if USE_USD_SDK
-		return FName( ANSI_TO_TCHAR( Impl->PxrUsdPrim.Get().GetTypeName().GetString().c_str() ) );
+		return FName(ANSI_TO_TCHAR(Impl->PxrUsdPrim.Get().GetTypeName().GetString().c_str()));
 #else
 		return FName();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
+	}
+
+	bool FUsdPrim::SetTypeName(FName TypeName) const
+	{
+#if USE_USD_SDK
+		FScopedUsdAllocs UsdAllocs;
+		return Impl->PxrUsdPrim.Get().SetTypeName(pxr::TfToken(TCHAR_TO_ANSI(*TypeName.ToString())));
+#else
+		return false;
+#endif	  // #if USE_USD_SDK
+	}
+
+	bool FUsdPrim::ClearTypeName() const
+	{
+#if USE_USD_SDK
+		return Impl->PxrUsdPrim.Get().ClearTypeName();
+#else
+		return false;
+#endif	  // #if USE_USD_SDK
+	}
+
+	bool FUsdPrim::HasAuthoredTypeName() const
+	{
+#if USE_USD_SDK
+		return Impl->PxrUsdPrim.Get().HasAuthoredTypeName();
+#else
+		return false;
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdPrim FUsdPrim::GetParent() const
 	{
 #if USE_USD_SDK
-		return FUsdPrim( Impl->PxrUsdPrim.Get().GetParent() );
+		return FUsdPrim(Impl->PxrUsdPrim.Get().GetParent());
 #else
 		return FUsdPrim();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	TArray< FUsdPrim > FUsdPrim::GetChildren() const
+	TArray<FUsdPrim> FUsdPrim::GetChildren() const
 	{
-		TArray< FUsdPrim > Children;
+		TArray<FUsdPrim> Children;
 
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
 
 		pxr::UsdPrimSiblingRange PrimChildren = Impl->PxrUsdPrim.Get().GetChildren();
 
-		for ( const pxr::UsdPrim& Child : PrimChildren )
+		for (const pxr::UsdPrim& Child : PrimChildren)
 		{
-			Children.Emplace( Child );
+			Children.Emplace(Child);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return Children;
 	}
 
-	TArray< FUsdPrim > FUsdPrim::GetFilteredChildren( bool bTraverseInstanceProxies ) const
+	TArray<FUsdPrim> FUsdPrim::GetFilteredChildren(bool bTraverseInstanceProxies) const
 	{
-		TArray< FUsdPrim > Children;
+		TArray<FUsdPrim> Children;
 
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
 
 		pxr::Usd_PrimFlagsPredicate Predicate = pxr::UsdPrimDefaultPredicate;
 
-		if ( bTraverseInstanceProxies )
+		if (bTraverseInstanceProxies)
 		{
-			Predicate = pxr::UsdTraverseInstanceProxies( Predicate ) ;
+			Predicate = pxr::UsdTraverseInstanceProxies(Predicate);
 		}
 
-		pxr::UsdPrimSiblingRange PrimChildren = Impl->PxrUsdPrim.Get().GetFilteredChildren( Predicate );
+		pxr::UsdPrimSiblingRange PrimChildren = Impl->PxrUsdPrim.Get().GetFilteredChildren(Predicate);
 
-		for ( const pxr::UsdPrim& Child : PrimChildren )
+		for (const pxr::UsdPrim& Child : PrimChildren)
 		{
-			Children.Emplace( Child );
+			Children.Emplace(Child);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return Children;
 	}
@@ -491,7 +522,7 @@ namespace UE
 		return FUsdVariantSets(Impl->PxrUsdPrim.Get());
 #else
 		return FUsdVariantSets{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdVariantSet FUsdPrim::GetVariantSet(const FString& VariantSetName) const
@@ -504,7 +535,7 @@ namespace UE
 		return FUsdVariantSet(Impl->PxrUsdPrim.Get(), UsdVariantSetName);
 #else
 		return FUsdVariantSet{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::HasVariantSets() const
@@ -513,7 +544,7 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().HasVariantSets();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdPayloads FUsdPrim::GetPayloads() const
@@ -522,7 +553,7 @@ namespace UE
 		return FUsdPayloads(Impl->PxrUsdPrim.Get());
 #else
 		return FUsdPayloads{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::HasAuthoredPayloads() const
@@ -531,7 +562,7 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().HasAuthoredPayloads();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	// Deprecated in 5.3
@@ -546,38 +577,41 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().IsLoaded();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	void FUsdPrim::Load( EUsdLoadPolicy Policy )
+	void FUsdPrim::Load(EUsdLoadPolicy Policy)
 	{
 #if USE_USD_SDK
-		static_assert( ( int32 ) EUsdLoadPolicy::UsdLoadWithDescendants == ( int32 ) pxr::UsdLoadWithDescendants, "EUsdLoadPolicy enum doesn't match USD!" );
-		static_assert( ( int32 ) EUsdLoadPolicy::UsdLoadWithoutDescendants == ( int32 ) pxr::UsdLoadWithoutDescendants, "EUsdLoadPolicy enum doesn't match USD!" );
+		static_assert((int32)EUsdLoadPolicy::UsdLoadWithDescendants == (int32)pxr::UsdLoadWithDescendants, "EUsdLoadPolicy enum doesn't match USD!");
+		static_assert(
+			(int32)EUsdLoadPolicy::UsdLoadWithoutDescendants == (int32)pxr::UsdLoadWithoutDescendants,
+			"EUsdLoadPolicy enum doesn't match USD!"
+		);
 
-		Impl->PxrUsdPrim.Get().Load( static_cast< pxr::UsdLoadPolicy > ( Policy ) );
-#endif // #if USE_USD_SDK
+		Impl->PxrUsdPrim.Get().Load(static_cast<pxr::UsdLoadPolicy>(Policy));
+#endif	  // #if USE_USD_SDK
 	}
 
 	void FUsdPrim::Unload()
 	{
 #if USE_USD_SDK
 		Impl->PxrUsdPrim.Get().Unload();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	TArray< FUsdAttribute > FUsdPrim::GetAttributes() const
+	TArray<FUsdAttribute> FUsdPrim::GetAttributes() const
 	{
-		TArray< FUsdAttribute > Attributes;
+		TArray<FUsdAttribute> Attributes;
 
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
 
-		for ( const pxr::UsdAttribute& Attribute : Impl->PxrUsdPrim.Get().GetAttributes() )
+		for (const pxr::UsdAttribute& Attribute : Impl->PxrUsdPrim.Get().GetAttributes())
 		{
-			Attributes.Emplace( Attribute );
+			Attributes.Emplace(Attribute);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return Attributes;
 	}
@@ -585,10 +619,10 @@ namespace UE
 	FUsdReferences FUsdPrim::GetReferences() const
 	{
 #if USE_USD_SDK
-		return FUsdReferences( Impl->PxrUsdPrim.Get() );
+		return FUsdReferences(Impl->PxrUsdPrim.Get());
 #else
 		return FUsdReferences{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::HasAuthoredReferences() const
@@ -597,7 +631,7 @@ namespace UE
 		return Impl->PxrUsdPrim.Get().HasAuthoredReferences();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdAttribute FUsdPrim::GetAttribute(const TCHAR* AttrName) const
@@ -605,45 +639,43 @@ namespace UE
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
 
-		return FUsdAttribute( Impl->PxrUsdPrim.Get().GetAttribute( pxr::TfToken( TCHAR_TO_ANSI( AttrName ) ) ) );
+		return FUsdAttribute(Impl->PxrUsdPrim.Get().GetAttribute(pxr::TfToken(TCHAR_TO_ANSI(AttrName))));
 #else
 		return FUsdAttribute{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::HasAttribute( const TCHAR* AttrName ) const
+	bool FUsdPrim::HasAttribute(const TCHAR* AttrName) const
 	{
 #if USE_USD_SDK
-		return Impl->PxrUsdPrim.Get().HasAttribute( pxr::TfToken( TCHAR_TO_ANSI( AttrName ) ) );
+		return Impl->PxrUsdPrim.Get().HasAttribute(pxr::TfToken(TCHAR_TO_ANSI(AttrName)));
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	FUsdAttribute FUsdPrim::CreateAttribute( const TCHAR* AttrName, FName TypeName ) const
+	FUsdAttribute FUsdPrim::CreateAttribute(const TCHAR* AttrName, FName TypeName) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
 
-		return FUsdAttribute(
-			Impl->PxrUsdPrim.Get().CreateAttribute(
-				pxr::TfToken( TCHAR_TO_ANSI( AttrName ) ),
-				pxr::SdfSchema::GetInstance().FindType( TCHAR_TO_ANSI( *TypeName.ToString() ) )
-			)
-		);
+		return FUsdAttribute(Impl->PxrUsdPrim.Get().CreateAttribute(
+			pxr::TfToken(TCHAR_TO_ANSI(AttrName)),
+			pxr::SdfSchema::GetInstance().FindType(TCHAR_TO_ANSI(*TypeName.ToString()))
+		));
 #else
 		return FUsdAttribute{};
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
-	bool FUsdPrim::RemoveProperty( FName PropName ) const
+	bool FUsdPrim::RemoveProperty(FName PropName) const
 	{
 #if USE_USD_SDK
 		FScopedUsdAllocs UsdAllocs;
-		return Impl->PxrUsdPrim.Get().RemoveProperty( pxr::TfToken( TCHAR_TO_ANSI( *PropName.ToString() ) ) );
+		return Impl->PxrUsdPrim.Get().RemoveProperty(pxr::TfToken(TCHAR_TO_ANSI(*PropName.ToString())));
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	bool FUsdPrim::IsInstanceable() const

@@ -2,6 +2,7 @@
 
 #include "BaseMediaSource.h"
 
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/SequencerObjectVersion.h"
 #include "UObject/MediaFrameWorkObjectVersion.h"
@@ -21,16 +22,23 @@
 
 void UBaseMediaSource::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UBaseMediaSource::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	FString Url = GetUrl();
 
 	if (!Url.IsEmpty())
 	{
-		OutTags.Add(FAssetRegistryTag("Url", Url, FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(FAssetRegistryTag("Url", Url, FAssetRegistryTag::TT_Alphabetical));
 	}
 	
-	OutTags.Add(FAssetRegistryTag("Validate", Validate() ? TEXT("True") : TEXT("False"),
+	Context.AddTag(FAssetRegistryTag("Validate", Validate() ? TEXT("True") : TEXT("False"),
 		FAssetRegistryTag::TT_Alphabetical));
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UBaseMediaSource::PreSave(const class ITargetPlatform* TargetPlatform)

@@ -6,8 +6,6 @@ public class GeometryCache : ModuleRules
 {
 	public GeometryCache(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PrivateIncludePaths.Add("../../../../Shaders/Shared");
-
         PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
@@ -24,13 +22,16 @@ public class GeometryCache : ModuleRules
 		);
 
         PublicIncludePathModuleNames.Add("TargetPlatform");
+		PrivateIncludePathModuleNames.Add("Shaders");
 
-        if (Target.bBuildEditor)
+		if (Target.bBuildEditor)
         {
             PublicIncludePathModuleNames.Add("GeometryCacheEd");
             DynamicallyLoadedModuleNames.Add("GeometryCacheEd");
             PrivateDependencyModuleNames.Add("MeshUtilitiesCommon");
             PrivateDependencyModuleNames.Add("UnrealEd");
-        }        
+        }
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 	}
 }

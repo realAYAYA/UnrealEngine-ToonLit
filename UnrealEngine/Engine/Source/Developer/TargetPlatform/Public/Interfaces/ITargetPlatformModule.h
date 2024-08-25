@@ -5,7 +5,12 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleInterface.h"
 #include "Interfaces/ITargetPlatform.h"
+#include "Interfaces/ITargetPlatformSettings.h"
 
+
+class ITargetPlatformControlsModule;
+class ITargetPlatformSettingsModule;
+class ITargetPlatformControls;
 /**
  * Interface for target platform modules.
  */
@@ -35,11 +40,14 @@ public:
 	{
 		if (AllTargetPlatforms.Num() == 0)
 		{
-			GetTargetPlatforms(AllTargetPlatforms);
+			GetTargetPlatforms(AllTargetPlatforms, PlatformSettings, PlatformControls);
 		}
 
 		return AllTargetPlatforms;
 	}
+
+	TArray<ITargetPlatformSettings*> PlatformSettings;
+	TArray<ITargetPlatformControls*> PlatformControls;
 
 protected:
 
@@ -47,7 +55,10 @@ protected:
 	 * This is where each platform module will fill out an array
 	*/
 	virtual void GetTargetPlatforms(TArray<ITargetPlatform*>& TargetPlatforms) = 0;
-
+	virtual void GetTargetPlatforms(TArray<ITargetPlatform*>& TargetPlatforms, TArray<ITargetPlatformSettings*> TargetPlatformSettings, TArray<ITargetPlatformControls*> TargetPlatformControls)
+	{
+		GetTargetPlatforms(TargetPlatforms);
+	}
 private:
 	/** Holds the target platforms. */
 	TArray<ITargetPlatform*> AllTargetPlatforms;

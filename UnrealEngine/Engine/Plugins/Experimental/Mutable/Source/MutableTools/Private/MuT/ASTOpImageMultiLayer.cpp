@@ -9,9 +9,6 @@
 #include "MuR/Types.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -21,7 +18,7 @@ namespace mu
 		: base(this)
 		, blend(this)
 		, mask(this)
-		, range(this, nullptr, string(), string())
+		, range(this, nullptr, FString(), FString())
 	{
 	}
 
@@ -37,8 +34,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpImageMultiLayer::IsEqual(const ASTOp& InOtherUntyped) const
 	{
-		if (const ASTOpImageMultiLayer* Other = dynamic_cast<const ASTOpImageMultiLayer*>(&InOtherUntyped))
+		if (InOtherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpImageMultiLayer* Other = static_cast<const ASTOpImageMultiLayer*>(&InOtherUntyped);
 			return base == Other->base &&
 				blend == Other->blend &&
 				mask == Other->mask &&

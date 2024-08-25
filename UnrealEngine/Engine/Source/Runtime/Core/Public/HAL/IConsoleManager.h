@@ -124,6 +124,9 @@ enum EConsoleVariableFlags
 
 	// Use to set a cvar without calling all cvar sinks. Much faster, but potentially unsafe. Use only if you know the particular cvar/setting does not require a sink call
 	ECVF_Set_NoSinkCall_Unsafe =	0x00010000,
+	
+	// Similar to ECVF_Set_NoSinkCall_Unsafe, but this will do nothing but set the cvar, and push updates to render thread, no changing flags, no sinks, etc
+	ECVF_Set_SetOnly_Unsafe = 		0x00020000,
 
 	// ------------------------------------------------
 
@@ -142,27 +145,54 @@ enum EConsoleVariableFlags
 	ECVF_SetByProjectSetting =		0x03000000,
 	// Used by the [ConsoleVariables] section of Engine.ini as well as FSystemSettings
 	ECVF_SetBySystemSettingsIni =	0x04000000,
+	// Dyanmically loaded/unloaded plugins, used with the History concept to restore cvars on plugin unload. THIS IS AN ARRAY TYPE meaning multiple vales with this SetBy are stored in the history.
+	ECVF_SetByPluginLowPriority =	0x05000000,
 	// Per device settings using the DeviceProfiles.ini hierarchy (e.g. specific iOS device, higher priority than per project to do device specific settings)
-	ECVF_SetByDeviceProfile =		0x05000000,
+	ECVF_SetByDeviceProfile =		0x06000000,
+	// Dyanmically loaded/unloaded plugins, used with the History concept to restore cvars on plugin unload. THIS IS AN ARRAY TYPE meaning multiple vales with this SetBy are stored in the history.
+	ECVF_SetByPluginHighPriority =	0x07000000,
 	// User settable game overrides, used for GameUserSettings fields that need to override device specific settings
-	ECVF_SetByGameOverride =		0x06000000,
+	ECVF_SetByGameOverride =		0x08000000,
 	// Set by local consolevariables.ini, mostly used for testing multiple projects
-	ECVF_SetByConsoleVariablesIni = 0x07000000,
-	// Set by hotfix
-	ECVF_SetByHotfix =				0x08000000,
+	ECVF_SetByConsoleVariablesIni = 0x09000000,
+	// Set by hotfix. THIS IS AN ARRAY TYPE meaning multiple vales with this SetBy are stored in the history
+	ECVF_SetByHotfix =				0x0A000000,
+	// Set for previewing in editor. THIS IS AN ARRAY TYPE meaning multiple vales with this SetBy are stored in the history
+	ECVF_SetByPreview =				0x0B000000,
 	// Used by some command line parameters, others use the Console priority instead
-	ECVF_SetByCommandline =			0x09000000,
-	// Used for high priority temporary debugging or operation modes 
-	ECVF_SetByCode =				0x0A000000,
+	ECVF_SetByCommandline =			0x0C000000,
+	// Used for high priority temporary debugging or operation modes
+	ECVF_SetByCode =				0x0D000000,
 	// Highest priority used via editor UI or or game/editor interactive console
-	ECVF_SetByConsole =				0x0B000000,
+	ECVF_SetByConsole =				0x0E000000,
 
 
 	// ------------------------------------------------
 };
 
+
+#define ENUMERATE_SET_BY(op) \
+	op(Constructor) \
+	op(Scalability) \
+	op(GameSetting) \
+	op(ProjectSetting) \
+	op(SystemSettingsIni) \
+	op(PluginLowPriority) \
+	op(DeviceProfile) \
+	op(PluginHighPriority) \
+	op(ConsoleVariablesIni) \
+	op(Hotfix) \
+	op(Preview) \
+	op(Commandline) \
+	op(Code) \
+	op(Console)
+
+
 /** Returns human readable ECVF_SetByMask bits of the console variable flags. */
 extern CORE_API const TCHAR* GetConsoleVariableSetByName(EConsoleVariableFlags ConsoleVariableFlags);
+
+/** Inverse of GetConsoleVariableSetByName() */
+extern CORE_API EConsoleVariableFlags GetConsoleVariableSetByValue(const TCHAR* SetByName);
 
 
 class IConsoleVariable;
@@ -174,6 +204,9 @@ DECLARE_DELEGATE_OneParam( FConsoleVariableDelegate, IConsoleVariable* );
 
 /** Console variable multicast delegate type. */
 DECLARE_MULTICAST_DELEGATE_OneParam(FConsoleVariableMulticastDelegate, IConsoleVariable*);
+
+/** Console object with name multicast delegate type. */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FConsoleObjectWithNameMulticastDelegate, const TCHAR*, IConsoleObject*);
 
 /** Console command delegate type (takes no arguments.)  This is a void callback function. */
 DECLARE_DELEGATE( FConsoleCommandDelegate );
@@ -377,6 +410,14 @@ public:
 	}
 
 	/**
+	 * If the object has a parent (for instance the main cvar that owns an other-platform cvar), return it
+	 */
+	virtual IConsoleObject* GetParentObject() const
+	{
+		return nullptr;
+	}
+	
+	/**
 	 * Casts this object to an IConsoleVariable, returns 0 if it's not
 	 */
 	virtual class IConsoleVariable* AsVariable()
@@ -447,8 +488,17 @@ public:
 	/**
 	 * Set the internal value from the specified string. 
 	 * @param SetBy anything in ECVF_LastSetMask e.g. ECVF_SetByScalability
+	 * @param Tag optional Tag to set with the value - only useful when UE_ALLOW_CVAR_HISTORY is set, and when setting in an ARRAY type SetBy
 	 **/
-	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode) = 0;
+	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode, FName Tag = NAME_None) = 0;
+
+	/**
+	 * Unsets the value at a certain SetBy priority (this is only useful when UE_ALLOW_CVAR_HISTORY is set). The value of the CVar
+	 * will be recalculated based on remaining History levels
+	 * @param SetBy anything in ECVF_LastSetMask e.g. ECVF_SetByScalability
+	 * @param Tag tag used to remove a setting from an ARRAY type SetBy
+	 **/
+	virtual void Unset(EConsoleVariableFlags SetBy, FName Tag = NAME_None) = 0;
 
 	/**
 	 * Get the internal value as a bool, works on bools, ints and floats.
@@ -499,22 +549,29 @@ public:
 	/**
 	 * Get the saved off default value, in a cvar variable, if one was created
 	 */
+	UE_DEPRECATED(5.4, "Use GetDefaultValue() instead")
 	virtual IConsoleVariable* GetDefaultValueVariable()
 	{
 		return nullptr;
 	}
 
+	/**
+	 * Get the value this CVar was constructed with
+	 */
+	virtual FString GetDefaultValue() = 0;
+
 #if ALLOW_OTHER_PLATFORM_CONFIG
 
 	/**
-	 * Get a CVar opject that matches this cvar, but contains the value of the platform given.
+	 * Get a CVar opject that matches this cvar, but contains the value of the platform given. This will trigger a lof of all cvars for this platform/DP if it doesn't exist
+	 * Note: If this causes a compile error due to pure virtual, make sure your IConsoleVariable subclass inherits from FConsoleVariableExtendedData
 	 */
-	virtual TSharedPtr<IConsoleVariable> GetPlatformValueVariable(FName PlatformName)
-	{
-		// this could be called for some special subclass like FConsoleVariableBitRef that don't implement this (yet)
-		unimplemented();
-		return TSharedPtr<IConsoleVariable>();
-	}
+	virtual TSharedPtr<IConsoleVariable> GetPlatformValueVariable(FName PlatformName, const FString& DeviceProfileName=FString()) = 0;
+
+	/**
+	 * Checks if the CVar has a cached value for the given platform
+	 */
+	virtual bool HasPlatformValueVariable(FName PlatformName, const FString& DeviceProfileName=FString()) = 0;
 
 	/**
 	 * Used only for debugging/iterating, this will clear all of the other platform's cvar objects, which will 
@@ -523,51 +580,52 @@ public:
 	virtual void ClearPlatformVariables(FName PlatformName=NAME_None)
 	{
 	}
+	
 #endif
 
 	// convenience methods
 
 	/** Set the internal value from the specified bool. */
-	void Set(bool InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode)
+	void Set(bool InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode, FName Tag=NAME_None)
 	{
 		// NOTE: Bool needs to use 1 and 0 here rather than true/false, as this may be a int32 or something
 		// and eventually this code calls, TTypeFromString<T>::FromString which won't handle the true/false,
 		// but 1 and 0 will work for whatever.
 		// inefficient but no common code path
-		Set(InValue ? TEXT("1") : TEXT("0"), SetBy);
+		Set(InValue ? TEXT("1") : TEXT("0"), SetBy, Tag);
 	}
 	/** Set the internal value from the specified int. */
-	void Set(int32 InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode)
+	void Set(int32 InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode, FName Tag=NAME_None)
 	{
 		// inefficient but no common code path
-		Set(*FString::Printf(TEXT("%d"), InValue), SetBy);
+		Set(*FString::Printf(TEXT("%d"), InValue), SetBy, Tag);
 	}
 	/** Set the internal value from the specified float. */
-	void Set(float InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode)
+	void Set(float InValue, EConsoleVariableFlags SetBy = ECVF_SetByCode, FName Tag=NAME_None)
 	{
 		// inefficient but no common code path
-		Set(*FString::Printf(TEXT("%g"), InValue), SetBy);
+		Set(*FString::Printf(TEXT("%g"), InValue), SetBy, Tag);
 	}
 
-	void SetWithCurrentPriority(bool InValue)
+	void SetWithCurrentPriority(bool InValue, FName Tag=NAME_None)
 	{
 		EConsoleVariableFlags CurFlags = (EConsoleVariableFlags)(GetFlags() & ECVF_SetByMask);
-		Set(InValue, CurFlags);
+		Set(InValue, CurFlags, Tag);
 	}
-	void SetWithCurrentPriority(int32 InValue)
+	void SetWithCurrentPriority(int32 InValue, FName Tag=NAME_None)
 	{
 		EConsoleVariableFlags CurFlags = (EConsoleVariableFlags)(GetFlags() & ECVF_SetByMask);
-		Set(InValue, CurFlags);
+		Set(InValue, CurFlags, Tag);
 	}
-	void SetWithCurrentPriority(float InValue)
+	void SetWithCurrentPriority(float InValue, FName Tag=NAME_None)
 	{
 		EConsoleVariableFlags CurFlags = (EConsoleVariableFlags)(GetFlags() & ECVF_SetByMask);
-		Set(InValue, CurFlags);
+		Set(InValue, CurFlags, Tag);
 	}
-	void SetWithCurrentPriority(const TCHAR* InValue)
+	void SetWithCurrentPriority(const TCHAR* InValue, FName Tag=NAME_None)
 	{
 		EConsoleVariableFlags CurFlags = (EConsoleVariableFlags)(GetFlags() & ECVF_SetByMask);
-		Set(InValue, CurFlags);
+		Set(InValue, CurFlags, Tag);
 	}
 
 
@@ -1036,18 +1094,44 @@ struct IConsoleManager
 #if ALLOW_OTHER_PLATFORM_CONFIG
 	/**
 	 * Walks over the best set of ini sections for another platform that can be used to emulate cvars as the platform
-	 * will have set - WITH THE NOTABLE EXCEPTION OF specific DeviceProfiles. Use the DeviceProfileManager code to get a DP
-	 * for a platform, as this code cannot easily access DeviceProfile logic.
-	 * It also won't include any UserSettings or ConsoleVariables.ini settings.
-	 * 
+	 * will have set
+	 * It also won't include any UserSettings
+	 *
 	 * @param PlatformName The platform name (the ini name, so Windows, not Win64)
 	 * @param DeviceProfileName If this is non-empty, the given deviceprofile will be loaded from the platform's inis and inserted into the CVars
 	 * @param Visit the callback to run for each CVar found
 	 */
 	static CORE_API bool VisitPlatformCVarsForEmulation(FName PlatformName, const FString& DeviceProfileName, TFunctionRef<void(const FString& CVarName, const FString& CVarValue, EConsoleVariableFlags SetBy)> Visit);
+	
+	/**
+	 * Loads all platform cvars, which can be retrieved with IConsoleVariable::GetPlatformValueVariable. If DeviceProfileName is empty, it will use the
+	 *  DevicePlatform named the same as the Platform
+	 */
+	virtual void LoadAllPlatformCVars(FName PlatformName, const FString& DeviceProfileName=FString()) = 0;
+	
+	/**
+	 * Applies the cvars from the platform/DeviceProfile pair (can be blank to use the platform's named DP) and sets into the SetByPreview  priority, with the PreviewModeTag
+	 * to be unset later
+	 */
+	virtual void PreviewPlatformCVars(FName PlatformName, const FString& DeviceProfileName, FName PreviewModeTag) = 0;
+
+	/**
+	 * Empties the cache for the given Platform/DP for all CVars. If using NAME_None for Platofrm, this will wipe every cached platform/DP value. If DeviceProfileName
+	 * is empty, it will use the PlatfomName as the DeviceProfile name
+	 */
+	virtual void ClearAllPlatformCVars(FName PlatformName=NAME_None, const FString& DeviceProfileName=FString()) = 0;
+
 #endif
 
+	/**
+	  * When a plugin is unmounted, it needs to unset cvars that it had set when it was mounted. This will unset and fixup all
+	  * variables with the given Tag
+	  * @param Priority If set, then the internal search for CVars is restricted to this SetBy. This is an optimization, only to be used if you _know_ that all CVars set with this tag were set at this priority. Any other priorites cannot be unset
+	 */
+	virtual void UnsetAllConsoleVariablesWithTag(FName Tag, EConsoleVariableFlags Priority=ECVF_SetByMask) = 0;
+	
 	virtual FConsoleVariableMulticastDelegate& OnCVarUnregistered() = 0;
+	virtual FConsoleObjectWithNameMulticastDelegate& OnConsoleObjectUnregistered() = 0;
 
 protected:
 	virtual ~IConsoleManager() { }
@@ -1519,7 +1603,30 @@ public:
 	 * @param Help must not be 0
 	 * @param Flags bitmask combined from EConsoleVariableFlags
 	 */
-	TAutoConsoleVariable(const TCHAR* Name, const T& DefaultValue, const TCHAR* Help, uint32 Flags = ECVF_Default);
+	TAutoConsoleVariable(const TCHAR* Name, const T& DefaultValue, const TCHAR* Help, uint32 Flags = ECVF_Default)
+		: FAutoConsoleObject(IConsoleManager::Get().RegisterConsoleVariable(Name, DefaultValue, Help, Flags)) 
+	{
+		if constexpr (std::is_same_v<T, bool>)
+		{
+			Ref = AsVariable()->AsVariableBool();
+		}
+		else if constexpr (std::is_same_v<T, int32>)
+		{
+			Ref = AsVariable()->AsVariableInt();
+		}
+		else if constexpr (std::is_same_v<T, float>)
+		{
+			Ref = AsVariable()->AsVariableFloat();
+		}
+		else if constexpr (std::is_same_v<T, FString>)
+		{
+			Ref = AsVariable()->AsVariableString();
+		}
+		else
+		{
+			static_assert(sizeof(T) == 0, "Not supported");
+		}
+	}
 
 	/**
 	 * Create a float, int or string console variable
@@ -1571,33 +1678,6 @@ private:
 	TConsoleVariableData<T>* Ref;
 };
 
-template <>
-inline TAutoConsoleVariable<bool>::TAutoConsoleVariable(const TCHAR* Name, const bool& DefaultValue, const TCHAR* Help, uint32 Flags)
-	: FAutoConsoleObject(IConsoleManager::Get().RegisterConsoleVariable(Name, DefaultValue, Help, Flags))
-{
-	Ref = AsVariable()->AsVariableBool();
-}
-
-template <>
-inline TAutoConsoleVariable<int32>::TAutoConsoleVariable(const TCHAR* Name, const int32& DefaultValue, const TCHAR* Help, uint32 Flags)
-	: FAutoConsoleObject(IConsoleManager::Get().RegisterConsoleVariable(Name, DefaultValue, Help, Flags))
-{
-	Ref = AsVariable()->AsVariableInt();
-}
-
-template <>
-inline TAutoConsoleVariable<float>::TAutoConsoleVariable(const TCHAR* Name, const float& DefaultValue, const TCHAR* Help, uint32 Flags)
-	: FAutoConsoleObject(IConsoleManager::Get().RegisterConsoleVariable(Name, DefaultValue, Help, Flags))
-{
-	Ref = AsVariable()->AsVariableFloat();
-}
-
-template <>
-inline TAutoConsoleVariable<FString>::TAutoConsoleVariable(const TCHAR* Name, const FString& DefaultValue, const TCHAR* Help, uint32 Flags)
-	: FAutoConsoleObject(IConsoleManager::Get().RegisterConsoleVariable(Name, DefaultValue, Help, Flags))
-{
-	Ref = AsVariable()->AsVariableString();
-}
 #else
 template <class T>
 class TAutoConsoleVariable : public IConsoleVariable

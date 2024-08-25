@@ -235,14 +235,14 @@ void FRawProfilerSession::PrepareLoading()
 				}
 
 				const int64 CurrentPos = FileReader->Tell();
-				const int32 PctPos = int32(100.0f*CurrentPos/FileSize);
+				const int32 PctPos = int32(100.0f * (float)CurrentPos / (float)FileSize);
 
 				UE_LOG( LogStats, Log, TEXT( "%3i Processing FStatPacket: Frame %5i for thread %5i with %6i messages (%.1f MB)" ), 
 					PctPos, 
 					StatPacket->Frame, 
 					StatPacket->ThreadId, 
 					StatPacket->StatMessages.Num(), 
-					StatPacket->StatMessages.GetAllocatedSize()/1024.0f/1024.0f );
+					(double)StatPacket->StatMessages.GetAllocatedSize()/1024.0/1024.0 );
 
 				const int64 PacketSize = StatPacket->StatMessages.GetAllocatedSize();
 				TotalPacketSize += PacketSize;
@@ -251,8 +251,8 @@ void FRawProfilerSession::PrepareLoading()
 		}
 
 		UE_LOG( LogStats, Log, TEXT( "TotalPacketSize: %.1f MB, Max: %1f MB" ), 
-			TotalPacketSize/1024.0f/1024.0f, 
-			MaximumPacketSize/1024.0f/1024.0f );
+			(double)TotalPacketSize/1024.0/1024.0, 
+			(double)MaximumPacketSize/1024.0/1024.0 );
 
 		TArray<int64> Frames;
 		CombinedHistory.GenerateKeyArray(Frames);

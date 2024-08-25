@@ -694,13 +694,13 @@ void UMixedRealityCaptureComponent::RefreshTrackingOriginOffset()
 				{
 					switch (RelativeOriginType)
 					{
-					case EHMDTrackingOrigin::Floor:
+					case EHMDTrackingOrigin::LocalFloor:
 						{
 							TrackingOriginOffset->SetRelativeTransform(FloorToEyeTransform);
 							break;
 						}
 
-					case EHMDTrackingOrigin::Eye:
+					case EHMDTrackingOrigin::Local:
 						{
 							TrackingOriginOffset->SetRelativeTransform(FloorToEyeTransform.Inverse());
 							break;
@@ -1065,7 +1065,7 @@ void UMixedRealityCaptureComponent::FillOutCalibrationData(UMrcCalibrationData* 
 			
 			if (RelativeOriginType == MRCaptureComponent_Impl::InvalidOriginType)
 			{
-				Dst->AlignmentData.TrackingOrigin = (GEngine && GEngine->XRSystem.IsValid()) ? GEngine->XRSystem->GetTrackingOrigin() : EHMDTrackingOrigin::Floor;
+				Dst->AlignmentData.TrackingOrigin = (GEngine && GEngine->XRSystem.IsValid()) ? GEngine->XRSystem->GetTrackingOrigin() : EHMDTrackingOrigin::LocalFloor;
 			}
 			else
 			{

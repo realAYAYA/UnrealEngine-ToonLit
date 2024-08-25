@@ -56,6 +56,17 @@ public:
 		GetProxyOnGameThread<FLiveLinkInstanceProxy>().PoseNode.RetargetAsset = RetargetAsset;
 	}
 
+	UFUNCTION(BlueprintCallable, Category = "Animation|Live Link")
+	void EnableLiveLinkEvaluation(bool bDoEnable)
+	{
+		GetProxyOnGameThread<FLiveLinkInstanceProxy>().PoseNode.bDoLiveLinkEvaluation = bDoEnable;
+	}
+
+	bool GetEnableLiveLinkEvaluation()
+	{
+		return GetProxyOnGameThread<FLiveLinkInstanceProxy>().PoseNode.bDoLiveLinkEvaluation;
+	}
+
 protected:
 	LIVELINKANIMATIONCORE_API virtual FAnimInstanceProxy* CreateAnimInstanceProxy() override;
 	LIVELINKANIMATIONCORE_API virtual void DestroyAnimInstanceProxy(FAnimInstanceProxy* InProxy) override;

@@ -11,13 +11,21 @@ bool FOpenXRRenderBridge::Present(int32& InOutSyncInterval)
 
 	if (OpenXRHMD)
 	{
-		OpenXRHMD->OnFinishRendering_RHIThread();
+		HMDOnFinishRendering_RHIThread();
 		bNeedsNativePresent = !OpenXRHMD->IsStandaloneStereoOnlyDevice();
 	}
 
 	InOutSyncInterval = 0; // VSync off
 
 	return bNeedsNativePresent;
+}
+
+void FOpenXRRenderBridge::HMDOnFinishRendering_RHIThread()
+{
+	if (OpenXRHMD)
+	{
+		OpenXRHMD->OnFinishRendering_RHIThread();
+	}
 }
 
 #ifdef XR_USE_GRAPHICS_API_D3D11
@@ -161,8 +169,9 @@ public:
 		Binding.hDC = wglGetCurrentDC();
 		Binding.hGLRC = wglGetCurrentContext();
 		return &Binding;
-#endif
+#else
 		return nullptr;
+#endif
 	}
 
 	virtual FXRSwapChainPtr CreateSwapchain(XrSession InSession, uint8 Format, uint8& OutActualFormat, uint32 SizeX, uint32 SizeY, uint32 ArraySize, uint32 NumMips, uint32 NumSamples, ETextureCreateFlags CreateFlags, const FClearValueBinding& ClearValueBinding, ETextureCreateFlags AuxiliaryCreateFlags) override final

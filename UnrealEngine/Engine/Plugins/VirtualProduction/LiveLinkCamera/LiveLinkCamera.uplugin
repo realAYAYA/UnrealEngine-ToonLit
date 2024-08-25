@@ -14,6 +14,7 @@
 	"IsBetaVersion": true,
 	"IsExperimentalVersion": false,
 	"Installed": false,
+	"SupportedPrograms":  ["LiveLinkHub"],
 	"Plugins": [
 		{
 			"Name": "LiveLink",
@@ -22,21 +23,28 @@
 		{
 			"Name": "CameraCalibrationCore",
 			"Enabled": true
+		},
+		{
+			"Name": "LensComponent",
+			"Enabled": true
 		}
 	],
 	"Modules": [
 		{
 			"Name": "LiveLinkCamera",
 			"Type": "Runtime",
+			"ProgramAllowlist": [ "LiveLinkHub" ],
 			"LoadingPhase": "PreDefault"
 		},
 		{
 			"Name": "LiveLinkCameraEditor",
+			"ProgramAllowlist": [ "LiveLinkHub" ],
 			"Type": "Editor",
 			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "LiveLinkCameraRecording",
+			"ProgramAllowlist": [ "LiveLinkHub" ],
 			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
 		}

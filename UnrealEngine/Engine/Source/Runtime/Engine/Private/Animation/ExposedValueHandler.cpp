@@ -7,20 +7,47 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ExposedValueHandler)
 
+// Deprecation support
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+TArray<FExposedValueCopyRecord> FExposedValueHandler::CopyRecords;
+TObjectPtr<UFunction> FExposedValueHandler::Function;
+const FPropertyAccessLibrary* FExposedValueHandler::PropertyAccessLibrary;
+FName FExposedValueHandler::BoundFunction;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 void FExposedValueHandler::ClassInitialization(TArray<FExposedValueHandler>& InHandlers, UClass* InClass)
 {
 	if(const FAnimSubsystem_PropertyAccess* Subsystem = IAnimClassInterface::GetFromClass(InClass)->FindSubsystem<FAnimSubsystem_PropertyAccess>())
 	{
-		const FPropertyAccessLibrary& PropertyAccessLibrary = Subsystem->GetLibrary();
+		const FPropertyAccessLibrary& Library = Subsystem->GetLibrary();
 
 		for(FExposedValueHandler& Handler : InHandlers)
 		{
-			Handler.Initialize(InClass, PropertyAccessLibrary);
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			Handler.Initialize(InClass, Library);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 }
 
 void FExposedValueHandler::Initialize(UClass* InClass, const FPropertyAccessLibrary& InPropertyAccessLibrary)
+{
+	if(Handler)
+	{
+		Handler->Initialize(InClass);
+	}
+}
+
+// Don't inline this function to keep the stack usage down
+FORCENOINLINE void FExposedValueHandler::Execute(const FAnimationBaseContext& Context) const
+{
+	if (Handler)
+	{
+		Handler->Execute(Context);
+	}
+}
+
+void FAnimNodeExposedValueHandler_Base::Initialize(const UClass* InClass)
 {
 	if (BoundFunction != NAME_None)
 	{
@@ -39,34 +66,49 @@ void FExposedValueHandler::Initialize(UClass* InClass, const FPropertyAccessLibr
 	{
 		Function = nullptr;
 	}
-
-	// Cache property access library
-	PropertyAccessLibrary = &InPropertyAccessLibrary;
 }
 
-void FExposedValueHandler::Execute(const FAnimationBaseContext& Context) const
+void FAnimNodeExposedValueHandler_Base::Execute(const FAnimationBaseContext& InContext) const
 {
 	if (Function != nullptr)
 	{
-		Context.AnimInstanceProxy->GetAnimInstanceObject()->ProcessEvent(Function, nullptr);
+		InContext.AnimInstanceProxy->GetAnimInstanceObject()->ProcessEvent(Function, nullptr);
 	}
+}
 
-	if(CopyRecords.Num() > 0)
+void FAnimNodeExposedValueHandler_PropertyAccess::Initialize(const UClass* InClass)
+{
+	Super::Initialize(InClass);
+
+	if (const FAnimSubsystem_PropertyAccess* Subsystem = IAnimClassInterface::GetFromClass(InClass)->FindSubsystem<FAnimSubsystem_PropertyAccess>())
 	{
-		if(PropertyAccessLibrary != nullptr)
+		PropertyAccessLibrary = &Subsystem->GetLibrary();
+	}
+}
+
+void FAnimNodeExposedValueHandler_PropertyAccess::Execute(const FAnimationBaseContext& InContext) const
+{
+	Super::Execute(InContext);
+
+	if (CopyRecords.Num() > 0)
+	{
+		if (PropertyAccessLibrary != nullptr)
 		{
-			UObject* AnimInstanceObject = Context.AnimInstanceProxy->GetAnimInstanceObject();
+			UObject* AnimInstanceObject = InContext.AnimInstanceProxy->GetAnimInstanceObject();
 			PropertyAccess::FCopyBatchId CopyBatch((int32)EAnimPropertyAccessCallSite::WorkerThread_Unbatched);
-			for(const FExposedValueCopyRecord& CopyRecord : CopyRecords)
+			for (const FExposedValueCopyRecord& CopyRecord : CopyRecords)
 			{
-				PropertyAccess::ProcessCopy(AnimInstanceObject, *PropertyAccessLibrary, CopyBatch, CopyRecord.CopyIndex, [&CopyRecord](const FProperty* InProperty, void* InAddress)
+				if (!CopyRecord.bOnlyUpdateWhenActive || InContext.IsActive())
 				{
-					if(CopyRecord.PostCopyOperation == EPostCopyOperation::LogicalNegateBool)
+					PropertyAccess::ProcessCopy(AnimInstanceObject, *PropertyAccessLibrary, CopyBatch, CopyRecord.CopyIndex, [&CopyRecord](const FProperty* InProperty, void* InAddress)
 					{
-						bool bValue = static_cast<const FBoolProperty*>(InProperty)->GetPropertyValue(InAddress);
-						static_cast<const FBoolProperty*>(InProperty)->SetPropertyValue(InAddress, !bValue);
-					}
-				});
+						if (CopyRecord.PostCopyOperation == EPostCopyOperation::LogicalNegateBool)
+						{
+							bool bValue = static_cast<const FBoolProperty*>(InProperty)->GetPropertyValue(InAddress);
+							static_cast<const FBoolProperty*>(InProperty)->SetPropertyValue(InAddress, !bValue);
+						}
+					});
+				}
 			}
 		}
 	}

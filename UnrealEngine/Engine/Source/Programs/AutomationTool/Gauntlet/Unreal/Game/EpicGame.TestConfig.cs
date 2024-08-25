@@ -237,17 +237,11 @@ namespace EpicGame
 				// select an account
 				if (!NoMCP)
 				{
-					VerifyLogin = Globals.Params.ParseParam("VerifyLogin");
-
 					if (!bNoAccountOverride && PreAssignAccount)
 					{
 						Account UserAccount = AccountPool.Instance.ReserveAccount();
 						UserAccount.ApplyToConfig(AppConfig);
 					}
-				}
-				else
-				{
-					VerifyLogin = false;
 				}
 			}
 

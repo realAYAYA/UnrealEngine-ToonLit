@@ -3,6 +3,7 @@
 #include "AnimNotifyState_TimedNiagaraEffect.h"
 
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimSequenceBase.h"
 #include "Components/SkeletalMeshComponent.h"
 
 #include "NiagaraComponent.h"
@@ -24,7 +25,14 @@ UFXSystemComponent* UAnimNotifyState_TimedNiagaraEffect::SpawnEffect(USkeletalMe
 	// Only spawn if we've got valid params
 	if (ValidateParameters(MeshComp))
 	{
-		return UNiagaraFunctionLibrary::SpawnSystemAttached(Template, MeshComp, SocketName, LocationOffset, RotationOffset, EAttachLocation::KeepRelativeOffset, !bDestroyAtEnd);
+		if (UNiagaraComponent* NewComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(Template, MeshComp, SocketName, LocationOffset, RotationOffset, EAttachLocation::KeepRelativeOffset, !bDestroyAtEnd))
+		{
+			if (bApplyRateScaleAsTimeDilation)
+			{
+				NewComponent->SetCustomTimeDilation(Animation->RateScale);
+			}
+			return NewComponent;
+		}
 	}
 	return nullptr;
 }
@@ -129,6 +137,21 @@ UAnimNotifyState_TimedNiagaraEffectAdvanced::UAnimNotifyState_TimedNiagaraEffect
 	NotifyProgressUserParameter = FName("NormalizedNotifyProgress");
 }
 
+void UAnimNotifyState_TimedNiagaraEffectAdvanced::Serialize(FArchive& Ar)
+{
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
+
+	Super::Serialize(Ar);
+
+	if (Ar.IsLoading())
+	{
+		if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::AnimNotifyAddRateScale)
+		{
+			bApplyRateScaleToProgress = false;
+		}
+	}
+}
+
 void UAnimNotifyState_TimedNiagaraEffectAdvanced::NotifyBegin(USkeletalMeshComponent* MeshComp, class UAnimSequenceBase* Animation, float TotalDuration)
 {
 }
@@ -164,7 +187,8 @@ void UAnimNotifyState_TimedNiagaraEffectAdvanced::NotifyTick(USkeletalMeshCompon
 	//TODO: There must be some way to avoid this map and lookup. The information about the current elapsed time and a mapping onto the notify range should be available somewhere in the mesh comp and notify.
 	if (FInstanceProgressInfo* ProgressInfo = ProgressInfoMap.Find(MeshComp))
 	{
-		ProgressInfo->Elapsed += FrameDeltaTime;
+		const float RateScale = bApplyRateScaleToProgress ? Animation->RateScale : 1.0f;
+		ProgressInfo->Elapsed += FrameDeltaTime * RateScale;
 	}
 
 	if (UFXSystemComponent* FXComponent = GetSpawnedEffect(MeshComp))

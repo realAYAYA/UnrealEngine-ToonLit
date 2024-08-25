@@ -185,4 +185,26 @@ private:
 	TIndirectArray<FComponentReregisterContext> ComponentReregisterContexts;
 };
 
+//Helper to scope the component register context.
+class FScopedSkeletalMeshReregisterContexts
+{
+public:
+	/*
+	 * This constructor will enregister all skeletal mesh component from the world. The component will also release there rendering resources.
+	 * Parameters:
+	 */
+	ENGINE_API FScopedSkeletalMeshReregisterContexts(USkeletalMesh* InSkeletalMesh);
+
+	/*
+	 * This destructor will Reregister all unregistered component to the world and there render data resources will be rebuild.
+	 */
+	ENGINE_API ~FScopedSkeletalMeshReregisterContexts();
+
+
+private:
+	USkeletalMesh* SkeletalMesh;
+	FSkinnedMeshComponentRecreateRenderStateContext* RecreateExistingRenderStateContext = nullptr;
+	TIndirectArray<FComponentReregisterContext> ComponentReregisterContexts;
+};
+
 #endif

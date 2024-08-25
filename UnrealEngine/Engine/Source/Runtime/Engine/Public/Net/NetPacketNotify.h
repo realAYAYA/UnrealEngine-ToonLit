@@ -27,6 +27,11 @@
 struct FBitWriter;
 struct FBitReader;
 
+namespace UE::Net::Private
+{
+	struct FNetPacketNotifyTestUtil;
+}
+
 /** 
 	FNetPacketNotify - Drives delivery of sequence numbers, acknowledgments and notifications of delivery sequence numbers
 */
@@ -95,6 +100,7 @@ public:
 	*/
 	template<class Functor>
 	SequenceNumberT::DifferenceT Update(const FNotificationHeader& NotificationData, Functor&& InFunc);
+
 	/** Get the current SequenceHistory */
 	const SequenceHistoryT& GetInSeqHistory() const { return InSeqHistory; }
 
@@ -113,8 +119,17 @@ public:
 	/** If we do have more unacknowledged sequence numbers in-flight than our maximum sendwindow we should not send more as the receiving end will not be able to detect if the sequence number has wrapped around */
 	bool CanSend() const { SequenceNumberT NextOutSeq = OutSeq; ++NextOutSeq; return NextOutSeq >= OutAckSeq; }
 
-	/** Get the current sequenceHistory length in bits */
-	SIZE_T GetCurrentSequenceHistoryLength() const;
+	/**
+	 * Return whether we can send packets without exhausting the packet sequence history window, as it could cause packets to be NAKed even when they've been received by the remote peer. 
+	 * @param SafetyMargin A small number representing how many packets you would like to keep as a safety margin for heart beats or other important packets.
+	 */
+	bool IsSequenceWindowFull(uint32 SafetyMargin=0U) const;
+
+	/** Get the current sequenceHistory length in bits, clamped to the maximum history length */
+	SequenceNumberT::DifferenceT GetCurrentSequenceHistoryLength() const;
+
+	/** Returns true if we are currently waiting for a flush of the sequence window */
+	bool IsWaitingForSequenceHistoryFlush() const { return WaitingForFlushSeqAck > OutAckSeq; }
 
 private:
 	struct FSentAckData
@@ -133,22 +148,40 @@ private:
 	SequenceNumberT InSeq;				// Last sequence number received and accepted from remote
 	SequenceNumberT InAckSeq;			// Last sequence number received from remote that we have acknowledged, this is needed since we support accepting a packet but explicitly not acknowledge it as received.
 	SequenceNumberT InAckSeqAck;		// Last sequence number received from remote that we have acknowledged and also knows that the remote has received the ack, used to calculate how big our history must be
+	SequenceNumberT WaitingForFlushSeqAck;
 
 	// Track outgoing sequence data
 	SequenceNumberT OutSeq;				// Outgoing sequence number
 	SequenceNumberT OutAckSeq;			// Last sequence number that we know that the remote side have received.
 
 private:
+
 	SequenceNumberT UpdateInAckSeqAck(SequenceNumberT::DifferenceT AckCount, SequenceNumberT AckedSeq);
+	SequenceNumberT::DifferenceT InternalUpdate(const FNotificationHeader& NotificationData, SequenceNumberT::DifferenceT InSeqDelta);
+
+	// Returns true if sequence history contains any packets marked as received for which we have not yet received an ack
+	bool GetHasUnacknowledgedAcks() const;
+
+	// Returns true if we can acknowledge the Seq without overshooting the sequence history
+	bool WillSequenceFitInSequenceHistory(SequenceNumberT Seq) const;
+
+	// Initiates a wait for a flush of the sequence history
+	void SetWaitForSequenceHistoryFlush();
 
 	template<class Functor>
 	inline void ProcessReceivedAcks(const FNotificationHeader& NotificationData, Functor&& InFunc);
 	void AckSeq(SequenceNumberT AckedSeq, bool IsAck);
 
-#if WITH_DEV_AUTOMATION_TESTS
-	friend struct FNetPacketNotifyTestUtil;
+#if WITH_AUTOMATION_WORKER
+	friend UE::Net::Private::FNetPacketNotifyTestUtil;
 #endif
 };
+
+inline bool FNetPacketNotify::IsSequenceWindowFull(uint32 SafetyMargin) const
+{
+	const SequenceNumberT SequenceLength = OutSeq - OutAckSeq;
+	return SequenceLength > MaxSequenceHistoryLength || (SafetyMargin >= MaxSequenceHistoryLength) || (SequenceLength.Get() > (MaxSequenceHistoryLength - SafetyMargin));
+}
 
 template<class Functor>
 FNetPacketNotify::SequenceNumberT::DifferenceT FNetPacketNotify::Update(const FNotificationHeader& NotificationData, Functor&& InFunc)
@@ -161,10 +194,7 @@ FNetPacketNotify::SequenceNumberT::DifferenceT FNetPacketNotify::Update(const FN
 	
 		ProcessReceivedAcks(NotificationData, InFunc);
 
-		// accept sequence
-		InSeq = NotificationData.Seq;
-
-		return InSeqDelta;
+		return InternalUpdate(NotificationData, InSeqDelta);
 	}
 	else
 	{
@@ -177,25 +207,36 @@ void FNetPacketNotify::ProcessReceivedAcks(const FNotificationHeader& Notificati
 {
 	if (NotificationData.AckedSeq > OutAckSeq)
 	{
-		UE_LOG_PACKET_NOTIFY(TEXT("Notification::ProcessReceivedAcks - AckedSeq: %u, OutAckSeq: %u"), NotificationData.AckedSeq.Get(), OutAckSeq.Get());
-
 		SequenceNumberT::DifferenceT AckCount = SequenceNumberT::Diff(NotificationData.AckedSeq, OutAckSeq);
 
-		// Update InAckSeqAck used to track the needed number of bits to transmit our ack history
-		InAckSeqAck = UpdateInAckSeqAck(AckCount, NotificationData.AckedSeq);
+		UE_LOG_PACKET_NOTIFY(TEXT("Notification::ProcessReceivedAcks - AckedSeq: %u, OutAckSeq: %u AckCount: %u"), NotificationData.AckedSeq.Get(), OutAckSeq.Get(), AckCount);
 
+		// Update InAckSeqAck used to track the needed number of bits to transmit our ack history
+		// Note: As we might reset sequence history we need to check if we already have advanced the InAckSeqAck
+		const SequenceNumberT NewInAckSeqAck = UpdateInAckSeqAck(AckCount, NotificationData.AckedSeq);
+		if (NewInAckSeqAck > InAckSeqAck)
+		{
+			InAckSeqAck = NewInAckSeqAck;
+		}
+		
 		// ExpectedAck = OutAckSeq + 1
 		SequenceNumberT CurrentAck(OutAckSeq);
 		++CurrentAck;
 
-		// Warn if the received sequence number is greater than our history buffer, since if that is the case we have to treat the data as lost.
+		// Make sure that we only look at the sequence history bit included in the notification data as the sequence history might have been reset, 
+		// in which case we might not receive the max size history even though the ack-count is bigger than the history
+		const SequenceNumberT::DifferenceT HistoryBits = NotificationData.HistoryWordCount * SequenceHistoryT::BitsPerWord;
+
+		// Warn if the received sequence number is greater than our history buffer, since if that is the case we have to treat the data as lost
+		// Note: This should normally not be a problem since we try to flush the sequence history before allowing an overshoot of the sequence history window on the sending side.
+		// If this occurs with no hitches on server or client, there might be reason to investigate if too much data is being sent in which case the the size sequence history might have to be increased.
 		if (AckCount > (SequenceNumberT::DifferenceT)(SequenceHistoryT::Size))
 		{
-			UE_LOG_PACKET_NOTIFY_WARNING(TEXT("Notification::ProcessReceivedAcks - Missed Acks: AckedSeq: %u, OutAckSeq: %u, FirstMissingSeq: %u Count: %u"), NotificationData.AckedSeq.Get(), OutAckSeq.Get(), CurrentAck.Get(), AckCount - (SequenceNumberT::DifferenceT)(SequenceHistoryT::Size));
+			UE_LOG_PACKET_NOTIFY_WARNING(TEXT("FNetPacketNotify::ProcessReceivedAcks - Missed Acks: AckedSeq: %u, OutAckSeq: %u, FirstMissingSeq: %u Count: %u"), NotificationData.AckedSeq.Get(), OutAckSeq.Get(), CurrentAck.Get(), AckCount - (SequenceNumberT::DifferenceT)(SequenceHistoryT::Size));
 		}
 
 		// Everything not found in the history buffer is treated as lost
-		while (AckCount > (SequenceNumberT::DifferenceT)(SequenceHistoryT::Size))
+		while (AckCount > HistoryBits)
 		{
 			--AckCount;
 			InFunc(CurrentAck, false);
@@ -211,6 +252,12 @@ void FNetPacketNotify::ProcessReceivedAcks(const FNotificationHeader& Notificati
 			++CurrentAck;
 		}
 		OutAckSeq = NotificationData.AckedSeq;
+
+		// Are we done waiting for an reset of the ack history?
+		if (OutAckSeq > WaitingForFlushSeqAck)
+		{
+			WaitingForFlushSeqAck = OutAckSeq;
+		}
 	}
 }
 

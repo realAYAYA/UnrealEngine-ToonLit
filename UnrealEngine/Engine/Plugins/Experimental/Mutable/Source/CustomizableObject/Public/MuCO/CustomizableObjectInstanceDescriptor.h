@@ -4,6 +4,7 @@
 
 #include "MuCO/MultilayerProjector.h"
 #include "MuCO/CustomizableObjectParameterTypeDefinitions.h"
+#include "Math/RandomStream.h"
 
 #include "CustomizableObjectInstanceDescriptor.generated.h"
 
@@ -11,11 +12,10 @@ class UTexture2D;
 enum class ECustomizableObjectProjectorType : uint8;
 
 class FArchive;
-class UCustomizableInstancePrivateData;
+class UCustomizableInstancePrivate;
 class UCustomizableObject;
 class UCustomizableObjectInstance;
 class FDescriptorHash;
-class FDescriptorRuntimeHash;
 class FMutableUpdateCandidate;
 
 typedef TMap<const UCustomizableObjectInstance*, FMutableUpdateCandidate> FMutableInstanceUpdateMap;
@@ -73,9 +73,9 @@ struct CUSTOMIZABLEOBJECT_API FCustomizableObjectInstanceDescriptor
 
 	void SetMinLod(int32 InMinLOD);
 
-	int32 GetMaxLod() const;
+	int32 GetMaxLod() const { return MAX_int32; }; // DEPRECATED
 
-	void SetMaxLod(int32 InMaxLOD);
+	void SetMaxLod(int32 InMaxLOD) {}; // DEPRECATED
 
 	void SetRequestedLODLevels(const TArray<uint16>& InRequestedLODLevels);
 
@@ -132,9 +132,6 @@ struct CUSTOMIZABLEOBJECT_API FCustomizableObjectInstanceDescriptor
 
 	/** Sets the texture value "TextureValue" of a texture parameter with index "TextureParamIndex". */
 	void SetTextureParameterSelectedOption(const FString& TextureParamName, const FString& TextureValue, int32 RangeIndex);
-
-	/** @deprecated Use SetTextureParameterSelectedOption instead. */
-	void SetTextureParameterSelectedOptionT(const FString& TextureParamName, UTexture2D* TextureValue, int32 RangeIndex);
 	
 	/** Gets the value of a color parameter with name "ColorParamName". */
 	FLinearColor GetColorParameterSelectedOption(const FString& ColorParamName) const;
@@ -158,8 +155,20 @@ struct CUSTOMIZABLEOBJECT_API FCustomizableObjectInstanceDescriptor
 		int32 RangeIndex = -1);
 
 	/** Set only the projector position. */
-	void SetProjectorPosition(const FString& ProjectorParamName, const FVector3f& Pos, int32 RangeIndex = -1);
+	void SetProjectorPosition(const FString& ProjectorParamName, const FVector& Pos, int32 RangeIndex = -1);
 
+	/** Set only the projector direction. */
+	void SetProjectorDirection(const FString& ProjectorParamName, const FVector& Direction, int32 RangeIndex = -1);
+	
+	/** Set only the projector up vector. */
+	void SetProjectorUp(const FString& ProjectorParamName, const FVector& Up, int32 RangeIndex = -1);
+
+	/** Set only the projector scale. */
+	void SetProjectorScale(const FString& ProjectorParamName, const FVector& Scale, int32 RangeIndex = -1);
+
+	/** Set only the cylindrical projector angle. */
+	void SetProjectorAngle(const FString& ProjectorParamName, float Angle, int32 RangeIndex = -1);
+	
 	/** Get the projector values of a projector parameter with index "ProjectorParamIndex". */
 	void GetProjectorValue(const FString& ProjectorParamName,
 		FVector& OutPos, FVector& OutDirection, FVector& OutUp, FVector& OutScale,
@@ -282,8 +291,10 @@ struct CUSTOMIZABLEOBJECT_API FCustomizableObjectInstanceDescriptor
 	void SetCurrentState(const FString& StateName);
 
 	// ------------------------------------------------------------
+
+	void SetRandomValues();
 	
-	void SetRandomValues(const int32& InRandomizationSeed);
+	void SetRandomValuesFromStream(const FRandomStream& InStream);
 
 	// ------------------------------------------------------------
 	// Multilayer Projectors
@@ -338,6 +349,8 @@ struct CUSTOMIZABLEOBJECT_API FCustomizableObjectInstanceDescriptor
 	/** Return a Mutable Core object containing all parameters. */
 	mu::Ptr<mu::Parameters> GetParameters() const;
 
+	FString ToString() const;
+	
 private:
 
 	UPROPERTY()
@@ -364,12 +377,11 @@ private:
 	/** Mutable parameters optimization state. */
 	int32 State = 0;
 	
-	/** If this is set to true, when updating the instance an additional step will be performed to calculate the list of instance parameters that are relevant for the current parameter vaules. */
+	/** If this is set to true, when updating the instance an additional step will be performed to calculate the list of instance parameters that are relevant for the current parameter values. */
 	bool bBuildParameterRelevancy = false;
 
 	/** These are the LODs Mutable can generate, they MUST NOT be used in an update (Mutable thread). */
 	int32 MinLOD = 0;
-	int32 MaxLOD = INT32_MAX;
 
 	/** Array of RequestedLODs per component to generate, they MUST NOT be used in an update (Mutable thread). */
 	TArray<uint16> RequestedLODLevels;
@@ -385,63 +397,12 @@ private:
 	
 	// Friends
 	friend FDescriptorHash;
-	friend FDescriptorRuntimeHash;
 	friend UCustomizableObjectInstance;
-	friend UCustomizableInstancePrivateData;
+	friend UCustomizableInstancePrivate;
 	friend FMultilayerProjector;
 	friend FMutableUpdateCandidate;
 };
 
-
-/** Hash of the Descriptor. Hashes everything except runtime information. */
-class CUSTOMIZABLEOBJECT_API FDescriptorHash
-{
-public:
-	FDescriptorHash() = default;
-
-	explicit FDescriptorHash(const FCustomizableObjectInstanceDescriptor& Descriptor);
-
-	bool operator==(const FDescriptorHash& Other) const;
-
-	bool operator!=(const FDescriptorHash& Other) const;
-
-	bool operator<(const FDescriptorHash& Other) const;
-
-	FString ToString() const;
-	
-private:
-	uint32 Hash = 0;
-};
-
-
-/** Hash of the Descriptor. Hashes everything including runtime information. */
-class CUSTOMIZABLEOBJECT_API FDescriptorRuntimeHash : public FDescriptorHash
-{
-public:
-	FDescriptorRuntimeHash() = default;
-
-	explicit FDescriptorRuntimeHash(const FCustomizableObjectInstanceDescriptor& Descriptor);
-
-	/** Return true if this Hash is a subset of the other Hash (i.e., this Descriptor is a subset of the other Descriptor). */
-	bool IsSubset(const FDescriptorRuntimeHash& Other) const;
-
-	void UpdateMinMaxLOD(int32 InMinLOD, int32 InMaxLOD);
-
-	int32 GetMinLOD() const;
-
-	int32 GetMaxLOD() const;
-
-	void UpdateRequestedLODs(const TArray<uint16>& InRequestedLODs);
-
-	const TArray<uint16>& GetRequestedLODs() const;
-
-private:
-	int32 MinLOD = 0;
-	int32 MaxLOD = INT32_MAX;
-
-	// Array of bitmasks that indicate which LODs of each component have been requested
-	TArray<uint16> RequestedLODsPerComponent;
-};
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "MuCO/CustomizableObject.h"

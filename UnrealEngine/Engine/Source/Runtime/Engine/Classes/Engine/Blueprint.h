@@ -88,8 +88,7 @@ namespace EKismetCompileType
 		Full,
 		StubAfterFailure, 
 		BytecodeOnly,
-		// @todo: BP2CPP_remove
-		Cpp UE_DEPRECATED(5.0, "Cpp is no longer a supported compile type and will be removed."),
+		// Cpp type was removed with BP nativization
 	};
 };
 
@@ -110,42 +109,6 @@ enum class EBlueprintCompileMode : uint8
 	FinalRelease UMETA(ToolTip="Always compile in final release mode.")
 };
 
-// @todo: BP2CPP_remove
-USTRUCT()
-struct UE_DEPRECATED(5.0, "This type is no longer in use and will be removed.") FCompilerNativizationOptions
-{
-	GENERATED_USTRUCT_BODY()
-
-	UPROPERTY()
-	FName PlatformName;
-
-	UPROPERTY()
-	bool ServerOnlyPlatform;
-
-	UPROPERTY()
-	bool ClientOnlyPlatform;
-
-	UPROPERTY()
-	bool bExcludeMonolithicHeaders;
-
-	UPROPERTY()
-	TArray<FName> ExcludedModules;
-
-	// Individually excluded assets
-	UPROPERTY()
-	TSet<FSoftObjectPath> ExcludedAssets;
-
-	// Excluded folders. It excludes only BPGCs, enums and structures are still converted.
-	UPROPERTY()
-	TArray<FString> ExcludedFolderPaths;
-
-	FCompilerNativizationOptions()
-		: ServerOnlyPlatform(false)
-		, ClientOnlyPlatform(false)
-		, bExcludeMonolithicHeaders(false)
-	{}
-};
-
 /** Cached 'cosmetic' information about a macro graph (this is transient and is computed at load) */
 USTRUCT()
 struct FBlueprintMacroCosmeticInfo
@@ -161,8 +124,7 @@ struct FBlueprintMacroCosmeticInfo
 	}
 };
 
-// @todo: BP2CPP_remove - remove disable/enable deprecation warning once NativizationOptions is removed
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
+/** Options used for a specific invication of the blueprint compiler */
 struct FKismetCompilerOptions
 {
 public:
@@ -196,17 +158,6 @@ public:
 	TSharedPtr<FString> OutHeaderSourceCode;
 	TSharedPtr<FString> OutCppSourceCode;
 
-	// @todo: BP2CPP_remove
-	UE_DEPRECATED(5.0, "This member is no longer in use and will be removed.")
-	FCompilerNativizationOptions NativizationOptions;
-
-	// @todo: BP2CPP_remove
-	UE_DEPRECATED(5.0, "This API is no longer in use and will be removed.")
-	bool DoesRequireCppCodeGeneration() const
-	{
-		return false;
-	}
-
 	bool DoesRequireBytecodeGeneration() const
 	{
 		return (CompileType == EKismetCompileType::Full) 
@@ -224,7 +175,6 @@ public:
 	{
 	};
 };
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 /** One metadata entry for a variable */
 USTRUCT()
@@ -835,21 +785,6 @@ public:
 	UPROPERTY(transient, duplicatetransient)
 	TSet<TWeakObjectPtr<UStruct>> CachedUDSDependencies;
 
-	// @todo: BP2CPP_remove
-	enum class UE_DEPRECATED(5.1, "Blueprint Nativization has been removed as a supported feature. This type will eventually be removed.") EIsBPNonReducible : uint8
-	{
-		Unkown,
-		Yes,
-		No,
-	};
-
-	// @todo: BP2CPP_remove
-	// Cached information if the BP contains any non-reducible functions (that can benefit from nativization).
-	UE_DEPRECATED(5.1, "Blueprint Nativization has been removed as a supported feature. This member will eventually be removed.")
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	EIsBPNonReducible bHasAnyNonReducibleFunction;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 	// If this BP is just a duplicate created for a specific compilation, the reference to original GeneratedClass is needed
 	UPROPERTY(transient, duplicatetransient)
 	TObjectPtr<UClass> OriginalClass;
@@ -992,10 +927,9 @@ public:
 	static ENGINE_API void DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConstructClasses, const UClass* SpecificSubclass);
 #endif
 	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = true) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
-#if WITH_EDITOR
-	ENGINE_API virtual void GetExtendedAssetRegistryTagsForSave(const ITargetPlatform* TargetPlatform, TArray<FAssetRegistryTag>& OutTags) const override;
-#endif
 	ENGINE_API virtual void PostLoadAssetRegistryTags(const FAssetData& InAssetData, TArray<FAssetRegistryTag>& OutTagsAndValuesToUpdate) const;
 	static ENGINE_API void PostLoadBlueprintAssetRegistryTags(const FAssetData& InAssetData, TArray<FAssetRegistryTag>& OutTagsAndValuesToUpdate);
 	ENGINE_API virtual FPrimaryAssetId GetPrimaryAssetId() const override;

@@ -142,6 +142,7 @@ struct FNiagaraCompilationGraphBridge
 	static FNode* GetMutableOwningNode(const FPin* Pin);
 	static const FGraph* GetOwningGraph(const FNode* Node);
 	static bool CustomHlslReferencesTokens(const FCustomHlslNode* CustomNode, TConstArrayView<FStringView> TokenStrings);
+	static void CustomHlslReferencesTokens(const FCustomHlslNode* CustomNode, TConstArrayView<FName> TokenStrings, TArrayView<bool> Results);
 	static ENiagaraScriptUsage GetCustomHlslUsage(const FCustomHlslNode* CustomNode);
 	static FString GetCustomHlslString(const FCustomHlslNode* CustomNode);
 	static void GetCustomHlslIncludePaths(const FCustomHlslNode* CustomNode, TArray<FNiagaraCustomHlslInclude>& Includes);
@@ -161,6 +162,7 @@ struct FNiagaraCompilationGraphBridge
 	static void BuildTraversal(const FGraph* Graph, const FNode* OutputNode, TArray<const FNode*>& TraversedNodes);
 	static const FGraph* GetEmitterGraph(const FEmitterNode* EmitterNode);
 	static FString GetEmitterUniqueName(const FEmitterNode* EmitterNode);
+	static FNiagaraEmitterID GetEmitterID(const FEmitterNode* EmitterNode);
 	static ENiagaraScriptUsage GetEmitterUsage(const FEmitterNode* EmitterNode);
 	static FString GetEmitterName(const FEmitterNode* EmitterNode);
 	static FString GetEmitterPathName(const FEmitterNode* EmitterNode);
@@ -215,6 +217,8 @@ struct FNiagaraCompilationGraphBridge
 	static bool IsParameterMapPin(const FPin* Pin);
 	static bool GetGraphReferencesStaticVariables(const FGraph* Graph, FNiagaraStaticVariableSearchContext& StaticVariableContext);
 	static const FEmitterNode* GetNodeAsEmitter(const FNode* Node);
+
+	static bool GetCustomNodeUsesImpureFunctions(const FCustomHlslNode* CustomNode);
 };
 
 struct FNiagaraCompilationDigestBridge
@@ -268,6 +272,7 @@ struct FNiagaraCompilationDigestBridge
 	static FNode* GetMutableOwningNode(const FPin* Pin);
 	static const FGraph* GetOwningGraph(const FNode* Node);
 	static bool CustomHlslReferencesTokens(const FCustomHlslNode* CustomNode, TConstArrayView<FStringView> TokenStrings);
+	static void CustomHlslReferencesTokens(const FCustomHlslNode* CustomNode, TConstArrayView<FName> TokenStrings, TArrayView<bool> Results);
 	static ENiagaraScriptUsage GetCustomHlslUsage(const FCustomHlslNode* CustomNode);
 	static FString GetCustomHlslString(const FCustomHlslNode* CustomNode);
 	static void GetCustomHlslIncludePaths(const FCustomHlslNode* CustomNode, TArray<FNiagaraCustomHlslInclude>& Includes);
@@ -286,6 +291,7 @@ struct FNiagaraCompilationDigestBridge
 	static void FindOutputNodes(const FGraph* Graph, TArray<const FOutputNode*>& OutputNodes);
 	static void BuildTraversal(const FGraph* Graph, const FNode* OutputNode, TArray<const FNode*>& TraversedNodes);
 	static const FGraph* GetEmitterGraph(const FEmitterNode* EmitterNode);
+	static FNiagaraEmitterID GetEmitterID(const FEmitterNode* EmitterNode);
 	static FString GetEmitterUniqueName(const FEmitterNode* EmitterNode);
 	static ENiagaraScriptUsage GetEmitterUsage(const FEmitterNode* EmitterNode);
 	static FString GetEmitterName(const FEmitterNode* EmitterNode);
@@ -342,4 +348,6 @@ struct FNiagaraCompilationDigestBridge
 	static bool IsParameterMapPin(const FPin* Pin);
 	static bool GetGraphReferencesStaticVariables(const FGraph* Graph, FNiagaraStaticVariableSearchContext& StaticVariableContext);
 	static const FEmitterNode* GetNodeAsEmitter(const FNode* Node);
+
+	static bool GetCustomNodeUsesImpureFunctions(const FCustomHlslNode* CustomNode);
 };

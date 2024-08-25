@@ -3,6 +3,8 @@
 
 #include "Installer/ChunkStore.h"
 
+class IBuildInstallerSharedContext;
+
 namespace BuildPatchServices
 {
 	class IFileSystem;
@@ -26,19 +28,18 @@ namespace BuildPatchServices
 		// The directory path for where to store chunk files.
 		FString StoreRootPath;
 		// The number of requests to allow to queue up before blocking Put/Get calls.
-		int32 QueueSize;
+		int32 QueueSize = 50;
 		// The max time in seconds to wait before retrying file handle for dump file.
-		double MaxRetryTime;
+		double MaxRetryTime = 2.0;
+		// The context for allocating shared resources.
+		IBuildInstallerSharedContext* SharedContext = nullptr;
 
 		/**
 		 * Constructor which sets usual defaults.
 		 */
 		FDiskChunkStoreConfig(FString InStoreRootPath)
 			: StoreRootPath(MoveTemp(InStoreRootPath))
-			, QueueSize(50)
-			, MaxRetryTime(2.0)
-		{
-		}
+		{}
 	};
 
 	/**

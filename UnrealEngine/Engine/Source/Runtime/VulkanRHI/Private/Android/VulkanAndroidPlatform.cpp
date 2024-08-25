@@ -15,13 +15,36 @@
 #include "Misc/ConfigCacheIni.h"
 #include "GenericPlatform/GenericPlatformCrashContext.h"
 #include "../VulkanExtensions.h"
-
+#include <android/sharedmem_jni.h>
+#include <sys/mman.h>
+#include "ProfilingDebugging/ScopedTimers.h"
 
 #if USE_ANDROID_SWAPPY
 #undef VK_NO_PROTOTYPES
 #include "Android/AndroidJNI.h"
 #include "Android/AndroidApplication.h"
 #include "swappy/swappyVk.h"
+#include "EngineGlobals.h"
+
+namespace AndroidVulkan
+{
+	void VKSwappyPostWaitCallback(void*, int64_t cpu_time_ns, int64_t gpu_time_ns)
+	{
+		const double Frequency = 1.0;// FGPUTiming::GetTimingFrequency();
+		const double CyclesPerSecond = 1.0 / (Frequency * FPlatformTime::GetSecondsPerCycle64());
+		const double GPUTimeInSeconds = (double)gpu_time_ns / 1000000000.0;
+
+		GGPUFrameTime = CyclesPerSecond * GPUTimeInSeconds;
+	}
+
+	void SetSwappyPostWaitCallback()
+	{
+		SwappyTracer Tracer = { 0 };
+		Tracer.postWait = VKSwappyPostWaitCallback;
+		SwappyVk_injectTracer(&Tracer);
+	}
+};
+
 #endif
 
 // From VulklanSwapChain.cpp
@@ -341,6 +364,13 @@ void FVulkanAndroidPlatform::FreeVulkanLibrary()
 
 #undef CHECK_VK_ENTRYPOINTS
 
+bool FVulkanAndroidPlatform::HasCustomFrameTiming()
+{
+#if USE_ANDROID_SWAPPY
+	return FAndroidPlatformRHIFramePacer::CVarUseSwappyForFramePacing.GetValueOnAnyThread() != 0;
+#endif
+	return false;
+}
 
 void FVulkanAndroidPlatform::InitDevice(FVulkanDevice* InDevice)
 {
@@ -671,7 +701,7 @@ VkResult FVulkanAndroidPlatform::CreateSwapchainKHR(void* WindowHandle, VkPhysic
 				SwappyVk_initAndGetRefreshCycleDuration(Env, FJavaWrapper::GameActivityThis, PhysicalDevice, Device, *Swapchain, &RefreshDuration);
 				SwappyVk_setWindow(Device, *Swapchain, (ANativeWindow*)WindowHandle);	
 				SwappyVk_setAutoSwapInterval(false);
-				
+				AndroidVulkan::SetSwappyPostWaitCallback();
 				UE_LOG(LogVulkanRHI, Log, TEXT("SwappyVk_initAndGetRefreshCycleDuration: %ull"), RefreshDuration);
 			}
 
@@ -716,7 +746,7 @@ bool FAndroidVulkanFramePacer::SupportsFramePaceInternal(int32 QueryFramePace, i
 	TArray<int32> RefreshRates = FAndroidMisc::GetSupportedNativeDisplayRefreshRates();
 	RefreshRates.Sort();
 
-	FString DebugString = TEXT("Supported Refresh Rates:");
+	FString DebugString = TEXT("FAndroidVulkanFramePacer -> Supported Refresh Rates:");
 	for (int32 RefreshRate : RefreshRates)
 	{
 		DebugString += FString::Printf(TEXT(" %d"), RefreshRate);
@@ -1324,11 +1354,13 @@ struct FVKRemoteProgramCompileJNI
 {
 	jclass PSOServiceAccessor = 0;
 	jmethodID DispatchPSOCompile = 0;
+	jmethodID DispatchPSOCompileShm = 0;
 	jmethodID StartRemoteProgramLink = 0;
 	jmethodID StopRemoteProgramLink = 0;
 	jclass ProgramResponseClass = 0;
 	jfieldID ProgramResponse_SuccessField = 0;
 	jfieldID ProgramResponse_ErrorField = 0;
+	jfieldID ProgramResponse_SHMOutputHandleField = 0;
 	jfieldID ProgramResponse_CompiledBinaryField = 0;
 	bool bAllFound = false;
 
@@ -1352,9 +1384,11 @@ struct FVKRemoteProgramCompileJNI
 		CHECK_JNI_EXCEPTIONS(Env);
 		if (PSOServiceAccessor)
 		{
-			DispatchPSOCompile = FJavaWrapper::FindStaticMethod(Env, PSOServiceAccessor, "AndroidThunkJava_VKPSOGFXCompile", "([B[B[B[B)Lcom/epicgames/unreal/psoservices/PSOProgramServiceAccessor$JNIProgramLinkResponse;", false);
+			DispatchPSOCompile = FJavaWrapper::FindStaticMethod(Env, PSOServiceAccessor, "AndroidThunkJava_VKPSOGFXCompile", "([B[B[B[B[BZ)Lcom/epicgames/unreal/psoservices/PSOProgramServiceAccessor$JNIProgramLinkResponse;", false);
 			CHECK_JNI_EXCEPTIONS(Env);
-			StartRemoteProgramLink = FJavaWrapper::FindStaticMethod(Env, PSOServiceAccessor, "AndroidThunkJava_StartRemoteProgramLink", "(IZ)Z", false);
+			DispatchPSOCompileShm = FJavaWrapper::FindStaticMethod(Env, PSOServiceAccessor, "AndroidThunkJava_VKPSOGFXCompileShm", "([BIJJJJZ)Lcom/epicgames/unreal/psoservices/PSOProgramServiceAccessor$JNIProgramLinkResponse;", false);
+			CHECK_JNI_EXCEPTIONS(Env);
+			StartRemoteProgramLink = FJavaWrapper::FindStaticMethod(Env, PSOServiceAccessor, "AndroidThunkJava_StartRemoteProgramLink", "(IZZ)Z", false);
 			CHECK_JNI_EXCEPTIONS(Env);
 			StopRemoteProgramLink = FJavaWrapper::FindStaticMethod(Env, PSOServiceAccessor, "AndroidThunkJava_StopRemoteProgramLink", "()V", false);
 			CHECK_JNI_EXCEPTIONS(Env);
@@ -1366,9 +1400,11 @@ struct FVKRemoteProgramCompileJNI
 			CHECK_JNI_EXCEPTIONS(Env);
 			ProgramResponse_ErrorField = FJavaWrapper::FindField(Env, ProgramResponseClass, "ErrorMessage", "Ljava/lang/String;", true);
 			CHECK_JNI_EXCEPTIONS(Env);
+			ProgramResponse_SHMOutputHandleField = FJavaWrapper::FindField(Env, ProgramResponseClass, "SHMOutputHandle", "I", true);
+			CHECK_JNI_EXCEPTIONS(Env);
 		}
 
-		bAllFound = PSOServiceAccessor && DispatchPSOCompile && StartRemoteProgramLink && StopRemoteProgramLink && ProgramResponseClass && ProgramResponse_SuccessField && ProgramResponse_CompiledBinaryField && ProgramResponse_ErrorField;
+		bAllFound = PSOServiceAccessor && DispatchPSOCompile && DispatchPSOCompileShm && StartRemoteProgramLink && StopRemoteProgramLink && ProgramResponseClass && ProgramResponse_SuccessField && ProgramResponse_CompiledBinaryField && ProgramResponse_ErrorField && ProgramResponse_SHMOutputHandleField;
 		UE_CLOG(!bAllFound, LogRHI, Fatal, TEXT("Failed to find JNI Vulkan remote program compiler."));
 	}
 }VKRemoteProgramCompileJNI;
@@ -1383,10 +1419,10 @@ static bool AreAndroidVulkanRemoteCompileServicesAvailable()
 		static const auto CVarProgramLRU = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Vulkan.EnablePipelineLRUCache"));
 		static const auto CVarNumRemoteProgramCompileServices = IConsoleManager::Get().FindConsoleVariable(TEXT("Android.Vulkan.NumRemoteProgramCompileServices"));
 
-		// TODO
-		//RemoteCompileService = !bConfigRulesDisableProgramCompileServices && VKRemoteProgramCompileJNI.bAllFound
 		RemoteCompileService = !bConfigRulesDisableProgramCompileServices && VKRemoteProgramCompileJNI.bAllFound && (CVarProgramLRU->GetInt() != 0) && (CVarNumRemoteProgramCompileServices->GetInt() > 0);
 		FGenericCrashContext::SetEngineData(TEXT("Android.PSOService"), RemoteCompileService == 0 ? TEXT("disabled") : TEXT("enabled"));
+
+		UE_LOG(LogRHI, Log, TEXT("External PSO compilers = %s"), RemoteCompileService == 0 ? TEXT("disabled") : TEXT("enabled"));
 	}
 	return RemoteCompileService;
 }
@@ -1410,7 +1446,7 @@ bool FVulkanAndroidPlatform::StartAndWaitForRemoteCompileServices(int NumService
 
 	if (Env && AreAndroidVulkanRemoteCompileServicesAvailable())
 	{
-		bResult = (bool)Env->CallStaticBooleanMethod(VKRemoteProgramCompileJNI.PSOServiceAccessor, VKRemoteProgramCompileJNI.StartRemoteProgramLink, (jint)NumServices, (jboolean)true);
+		bResult = (bool)Env->CallStaticBooleanMethod(VKRemoteProgramCompileJNI.PSOServiceAccessor, VKRemoteProgramCompileJNI.StartRemoteProgramLink, (jint)NumServices, /*bUseRobustEGLContext*/(jboolean)false, /*bUseVulkan*/(jboolean)true);
 		GRemoteCompileServicesActive = bResult;
 	}
 
@@ -1433,7 +1469,7 @@ namespace AndroidVulkanService
 	std::atomic<bool> bOneTimeErrorEncountered = false;
 }
 
-VkPipelineCache FVulkanAndroidPlatform::PrecompilePSO(FVulkanDevice* Device, const VkGraphicsPipelineCreateInfo* PipelineInfo, FGfxPipelineDesc* GfxEntry, const FVulkanRenderTargetLayout* RTLayout, TArrayView<uint32_t> VS, TArrayView<uint32_t> PS, size_t& AfterSize)
+VkPipelineCache FVulkanAndroidPlatform::PrecompilePSO(FVulkanDevice* Device, const TArrayView<uint8> OptionalPSOCacheData, const VkGraphicsPipelineCreateInfo* PipelineInfo, FGfxPipelineDesc* GfxEntry, const FVulkanRenderTargetLayout* RTLayout, TArrayView<uint32_t> VS, TArrayView<uint32_t> PS, size_t& AfterSize)
 {
 	FString FailureMessageOUT;
 	
@@ -1441,62 +1477,128 @@ VkPipelineCache FVulkanAndroidPlatform::PrecompilePSO(FVulkanDevice* Device, con
 	{
 		return VK_NULL_HANDLE;
 	}
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_VulkanAndroid_PrecompilePSO);
+
+// 	FScopedDurationTimeLogger Timer(TEXT("FVulkanAndroidPlatform::PrecompilePSO"));
 
 	TArray<char> MemoryStream;
 	PipelineToBinary(Device, PipelineInfo, GfxEntry, RTLayout, MemoryStream);
 
 	bool bResult = false;
 	JNIEnv* Env = FAndroidApplication::GetJavaEnv();
-	TArray<uint8> CompiledProgramBinary;
 	FString ErrorMessage;
 
 	if (Env && ensure(VKRemoteProgramCompileJNI.bAllFound))
 	{
-		// get VS code
-		// PipelineInfo
-		// todo: double conversion :(
-		uint32_t VSSize = VS.Num() * sizeof(uint32_t);
-		auto jVS = NewScopedJavaObject(Env, Env->NewByteArray(VSSize));
-		Env->SetByteArrayRegion(*jVS, 0, VSSize, reinterpret_cast<const jbyte*>(VS.GetData()));
+		// In this version we pass all data via shared buffer, offsets are still supplied via args
+		auto ArrayByteSize = [](const auto& ArrayToSize) {return ArrayToSize.GetTypeSize() * ArrayToSize.Num(); };
 
-		uint32_t PSSize = PS.Num() * sizeof(uint32_t);
-		auto jPS = NewScopedJavaObject(Env, Env->NewByteArray(PSSize));
-		Env->SetByteArrayRegion(*jPS, 0, PSSize, reinterpret_cast<const jbyte*>(PS.GetData()));
-
-		auto jPSOData = NewScopedJavaObject(Env, Env->NewByteArray(MemoryStream.Num()));
-		Env->SetByteArrayRegion(*jPSOData, 0, MemoryStream.Num(), reinterpret_cast<const jbyte*>(MemoryStream.GetData()));
+		const uint64 VSSize = ArrayByteSize(VS);
+		const uint64 PSSize = ArrayByteSize(PS);
+		const uint64 PSOParamsSize = ArrayByteSize(MemoryStream);
+		const uint64 PreSuppliedCacheSize = ArrayByteSize(OptionalPSOCacheData);
+		const uint64 TotalOutputSize = VSSize + PSSize + PSOParamsSize + PreSuppliedCacheSize;
 
 		auto ProgramKeyBuffer = NewScopedJavaObject(Env, Env->NewByteArray(4));
 		Env->SetByteArrayRegion(*ProgramKeyBuffer, 0, 4, reinterpret_cast<const jbyte*>("Test"));
 
-		auto ProgramResponseObj = NewScopedJavaObject(Env, Env->CallStaticObjectMethod(VKRemoteProgramCompileJNI.PSOServiceAccessor, VKRemoteProgramCompileJNI.DispatchPSOCompile, *ProgramKeyBuffer, *jVS, *jPS, *jPSOData));
-		CHECK_JNI_EXCEPTIONS(Env);
-
-		if (*ProgramResponseObj)
+		// create a shared mem region for external process to access.
+		FScopedJavaObject<_jobject*> ProgramResponseObj;
 		{
-			bool bSucceeded = (bool)Env->GetBooleanField(*ProgramResponseObj, VKRemoteProgramCompileJNI.ProgramResponse_SuccessField);
+			QUICK_SCOPE_CYCLE_COUNTER(STAT_VulkanAndroid_PrecompilePSO1);
+
+			const uint64 TotalSHMSize = TotalOutputSize;
+			const uint64 TotalSHMSizeAligned = Align(TotalSHMSize, FPlatformMemory::GetConstants().PageSize);
+			int SharedMemFD = ASharedMemory_create("", TotalSHMSizeAligned);
+			if (ensure(SharedMemFD > -1))
+			{
+				// By default it has PROT_READ | PROT_WRITE | PROT_EXEC.
+				size_t memSize = ASharedMemory_getSize(SharedMemFD);
+				char* SharedBuffer = (char*)mmap(NULL, memSize, PROT_READ | PROT_WRITE, MAP_SHARED, SharedMemFD, 0);
+				if (ensure(SharedBuffer))
+				{
+					char* AppendPtr = SharedBuffer;
+					auto AppendBuffer = [&AppendPtr,&SharedBuffer,&TotalSHMSize](const auto& AppendMe)
+					{
+						const size_t NumBytes = AppendMe.Num() * AppendMe.GetTypeSize();
+						if( ensure(AppendPtr>=SharedBuffer && ((AppendPtr+NumBytes) <= (SharedBuffer+TotalSHMSize))) )
+						{
+							FMemory::Memcpy(AppendPtr, (const char*)AppendMe.GetData(), NumBytes);
+							AppendPtr += NumBytes;
+						}
+					};
+
+					AppendBuffer(VS);
+					AppendBuffer(PS);
+					AppendBuffer(MemoryStream);
+					AppendBuffer(OptionalPSOCacheData);
+
+					// limit access to read only
+					ASharedMemory_setProt(SharedMemFD, PROT_READ);
+
+					// dont time out if the debugger is attached.
+					bool bEnableTimeOuts = !FPlatformMisc::IsDebuggerPresent();
+					{
+						QUICK_SCOPE_CYCLE_COUNTER(STAT_VulkanAndroid_PrecompilePSOJAVA);
+						ProgramResponseObj = NewScopedJavaObject(Env, Env->CallStaticObjectMethod(VKRemoteProgramCompileJNI.PSOServiceAccessor, VKRemoteProgramCompileJNI.DispatchPSOCompileShm, *ProgramKeyBuffer, SharedMemFD, VSSize, PSSize, PSOParamsSize, PreSuppliedCacheSize, bEnableTimeOuts));
+					}
+					CHECK_JNI_EXCEPTIONS(Env);
+					munmap(SharedBuffer, memSize);
+				}
+				else
+				{
+					UE_LOG(LogRHI, Error, TEXT("Failed to alloc %d bytes for external PSO compile: %d"),
+						TotalSHMSizeAligned,
+						errno
+						);
+				}
+				close(SharedMemFD);
+			}
+			else
+			{
+				UE_LOG(LogRHI, Error, TEXT("Failed to alloc %d bytes for external PSO compile: %d (%s)"),
+					TotalSHMSizeAligned,
+					errno,
+					(errno == EMFILE) ? TEXT("too many open file descriptors") : TEXT("unknown")
+				);
+			}
+		}
+
+		if (ProgramResponseObj)
+		{
+			const bool bSucceeded = (bool)Env->GetBooleanField(*ProgramResponseObj, VKRemoteProgramCompileJNI.ProgramResponse_SuccessField);
 			if (bSucceeded)
 			{
-				auto ProgramResult = NewScopedJavaObject(Env, (jbyteArray)Env->GetObjectField(*ProgramResponseObj, VKRemoteProgramCompileJNI.ProgramResponse_CompiledBinaryField));
-				int len = Env->GetArrayLength(*ProgramResult);
-
-				if (len > 0)
+				const int ProgramResultSharedHandle = Env->GetIntField(*ProgramResponseObj, VKRemoteProgramCompileJNI.ProgramResponse_SHMOutputHandleField);
+				if(ensure(ProgramResultSharedHandle > -1))
 				{
-					CompiledProgramBinary.SetNumUninitialized(len);
-					Env->GetByteArrayRegion(*ProgramResult, 0, len, reinterpret_cast<jbyte*>(CompiledProgramBinary.GetData()));
-					VkPipelineCacheCreateInfo PipelineCacheCreateInfo;
-					VkPipelineCache PipelineCache;
-					memset(&PipelineCacheCreateInfo, 0, sizeof(VkPipelineCacheCreateInfo));
-					PipelineCacheCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-					PipelineCacheCreateInfo.flags = 0;
-					PipelineCacheCreateInfo.pInitialData = CompiledProgramBinary.GetData();
-					PipelineCacheCreateInfo.initialDataSize = CompiledProgramBinary.Num();
-					VERIFYVULKANRESULT(VulkanRHI::vkCreatePipelineCache(Device->GetInstanceHandle(), &PipelineCacheCreateInfo, VULKAN_CPU_ALLOCATOR, &PipelineCache));
-					AfterSize = CompiledProgramBinary.Num();
-					return PipelineCache;
+					const uint32 ResultMemSize = (uint32)ASharedMemory_getSize(ProgramResultSharedHandle);
+					char* ResultSharedBuffer = (char*)mmap(NULL, ResultMemSize, PROT_READ, MAP_SHARED, ProgramResultSharedHandle, 0);
+					ON_SCOPE_EXIT{ if (ResultSharedBuffer) { munmap(ResultSharedBuffer, ResultMemSize); } close(ProgramResultSharedHandle); };
+					if (ensure(ResultSharedBuffer))
+					{
+						// Actual size of data is in the first 4 bytes.
+						const uint32 ResultSize = *(uint32*)ResultSharedBuffer;
+
+						if (ensure(ResultMemSize > 0))
+						{
+							QUICK_SCOPE_CYCLE_COUNTER(STAT_VulkanAndroid_PrecompilePSOCreateCache);
+							VkPipelineCacheCreateInfo PipelineCacheCreateInfo;
+							VkPipelineCache PipelineCache;
+							memset(&PipelineCacheCreateInfo, 0, sizeof(VkPipelineCacheCreateInfo));
+							PipelineCacheCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+							PipelineCacheCreateInfo.flags = 0;
+							PipelineCacheCreateInfo.pInitialData = ResultSharedBuffer + sizeof(ResultMemSize);
+							PipelineCacheCreateInfo.initialDataSize = ResultSize;
+							VERIFYVULKANRESULT(VulkanRHI::vkCreatePipelineCache(Device->GetInstanceHandle(), &PipelineCacheCreateInfo, VULKAN_CPU_ALLOCATOR, &PipelineCache));
+							AfterSize = ResultSize - OptionalPSOCacheData.Num();
+
+							return PipelineCache;
+						}
+					}
 				}
 
-				return VK_NULL_HANDLE;
+ 				return VK_NULL_HANDLE;
 			}
 			else
 			{
@@ -1527,6 +1629,21 @@ bool FAndroidVulkanFramePacer::SupportsFramePace(int32 QueryFramePace)
 {
 	int32 TempRefreshRate, TempSyncInterval;
 	return SupportsFramePaceInternal(QueryFramePace, TempRefreshRate, TempSyncInterval);
+}
+
+void FVulkanAndroidPlatform::PostInitGPU(const FVulkanDevice& InDevice)
+{
+	SetupImageMemoryRequirementWorkaround(InDevice);
+
+	// start external compilers if precaching is specified.	
+	static const auto CVarChunkedPSOCache = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Vulkan.UseChunkedPSOCache"));
+	static const auto CVarNumRemoteProgramCompileServices = IConsoleManager::Get().FindConsoleVariable(TEXT("Android.Vulkan.NumRemoteProgramCompileServices"));
+	static const auto CVarPSOPrecaching = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PSOPrecaching"));
+	static const auto CVarVulkanPSOPrecaching = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Vulkan.AllowPSOPrecaching"));	
+	if (CVarNumRemoteProgramCompileServices->GetInt() && CVarChunkedPSOCache->GetInt() && CVarPSOPrecaching->GetInt() && CVarVulkanPSOPrecaching->GetInt())
+	{
+		FVulkanAndroidPlatform::StartAndWaitForRemoteCompileServices(CVarNumRemoteProgramCompileServices->GetInt());
+	}
 }
 
 //
@@ -1607,6 +1724,9 @@ void FVulkanAndroidPlatform::SetupImageMemoryRequirementWorkaround(const FVulkan
 	}
 
 	// ASTC workarounds
+	VkFormatProperties formatProperties{};
+	VulkanRHI::vkGetPhysicalDeviceFormatProperties(InDevice.GetPhysicalHandle(), VK_FORMAT_ASTC_8x8_UNORM_BLOCK, &formatProperties);
+	if ((formatProperties.linearTilingFeatures & (VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT)) == (VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
 	{
 		ImageCreateInfo.flags = 0;
 		ImageCreateInfo.format = VK_FORMAT_ASTC_8x8_UNORM_BLOCK;

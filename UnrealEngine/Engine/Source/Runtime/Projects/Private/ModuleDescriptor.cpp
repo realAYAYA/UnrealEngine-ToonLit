@@ -703,6 +703,41 @@ void FModuleDescriptor::LoadModulesForPhase(ELoadingPhase::Type LoadingPhase, co
 	}
 }
 
+void FModuleDescriptor::UnloadModulesForPhase(ELoadingPhase::Type LoadingPhase, const TArray<FModuleDescriptor>& Modules, TMap<FName, EModuleUnloadResult>& OutErrors, bool bSkipUnload /*= false*/, bool bAllowUnloadCode /*= true*/)
+{
+	FScopedSlowTask SlowTask((float)Modules.Num());
+	for (const FModuleDescriptor& Descriptor : Modules)
+	{
+		SlowTask.EnterProgressFrame();
+
+		if (LoadingPhase != Descriptor.LoadingPhase)
+		{
+			continue;
+		}
+
+		IModuleInterface* Module = FModuleManager::Get().GetModule(Descriptor.Name);
+		if (!Module)
+		{
+			continue;
+		}
+
+		if (!Module->SupportsDynamicReloading())
+		{
+			OutErrors.Add(Descriptor.Name, EModuleUnloadResult::UnloadNotSupported);
+			continue;
+		}
+
+		if (bSkipUnload)
+		{
+			// Useful to gather errors without actually unloading
+			continue;
+		}
+
+		Module->PreUnloadCallback();
+		verify(FModuleManager::Get().UnloadModule(Descriptor.Name, false, bAllowUnloadCode));
+	}
+}
+
 #if !IS_MONOLITHIC
 bool FModuleDescriptor::CheckModuleCompatibility(const TArray<FModuleDescriptor>& Modules, TArray<FString>& OutIncompatibleFiles)
 {

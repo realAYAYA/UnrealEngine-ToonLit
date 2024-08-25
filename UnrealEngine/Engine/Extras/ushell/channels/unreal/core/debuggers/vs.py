@@ -1,28 +1,28 @@
 # Copyright Epic Games, Inc. All Rights Reserved.
 
 import os
-import unreal
 import subprocess
 from pathlib import Path
 
 #-------------------------------------------------------------------------------
-class Debugger(unreal.Debugger):
-    name = "Visual Studio"
+class Debugger(object):
+    def __init__(self, ue_context):
+        self._ue_context = ue_context
 
-    def _debug(self, exec_context, cmd, *args):
+    def debug(self, exec_context, cmd, *args):
         cmd = exec_context.create_runnable(cmd, *args)
         cmd.launch(suspended=True, new_term=True)
         pid = cmd.get_pid()
 
         try:
-            if not self._attach(pid):
+            if not self.attach(pid):
                 cmd.kill()
         except:
             cmd.kill()
             raise
 
-    def _attach(self, pid, transport=None, host_ip=None):
-        engine = self.get_unreal_context().get_engine()
+    def attach(self, pid, transport=None, host_ip=None):
+        engine = self._ue_context.get_engine()
         engine_dir = engine.get_dir()
 
         import vs.dte

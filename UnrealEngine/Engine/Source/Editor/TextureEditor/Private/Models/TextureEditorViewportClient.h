@@ -69,4 +69,7 @@ private:
 
 	/** Checkerboard texture */
 	TObjectPtr<UTexture2D> CheckerboardTexture;
+
+	/** Output device to monitor the output log for anything relevant to us.*/
+	TUniquePtr<struct FTextureErrorLogger> TextureConsoleCapture;
 };

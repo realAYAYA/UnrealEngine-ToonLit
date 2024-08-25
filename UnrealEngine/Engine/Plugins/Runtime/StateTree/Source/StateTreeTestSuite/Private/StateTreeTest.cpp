@@ -32,6 +32,19 @@ namespace UE::StateTree::Tests
 		return *StateTree;
 	}
 
+	FStateTreePropertyPathBinding MakeBinding(const FGuid& SourceID, const FString& Source, const FGuid& TargetID, const FString& Target)
+	{
+		FStateTreePropertyPath SourcePath;
+		SourcePath.FromString(Source);
+		SourcePath.SetStructID(SourceID);
+
+		FStateTreePropertyPath TargetPath;
+		TargetPath.FromString(Target);
+		TargetPath.SetStructID(TargetID);
+
+		return FStateTreePropertyPathBinding(SourcePath, TargetPath);
+	}
+
 	// Helper struct to define some test tags
 	struct FNativeGameplayTags : public FGameplayTagNativeAdder
 	{
@@ -96,12 +109,48 @@ struct FStateTreeTest_MakeAndBakeStateTree : FAITestBase
 		const bool bResult = Compiler.Compile(StateTree);
 
 		AITEST_TRUE("StateTree should get compiled", bResult);
+		AITEST_TRUE("StateTree should be ready to run", StateTree.IsReadyToRun());
 
 		return true;
 	}
 };
 IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_MakeAndBakeStateTree, "System.StateTree.MakeAndBakeStateTree");
 
+
+struct FStateTreeTest_EmptyStateTree : FAITestBase
+{
+	virtual bool InstantTest() override
+	{
+		UStateTree& StateTree = UE::StateTree::Tests::NewStateTree(&GetWorld());
+		UStateTreeEditorData& EditorData = *Cast<UStateTreeEditorData>(StateTree.EditorData);
+		
+		UStateTreeState& Root = EditorData.AddSubTree(FName(TEXT("Root")));
+		Root.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::Succeeded);
+
+		FStateTreeCompilerLog Log;
+		FStateTreeCompiler Compiler(Log);
+		const bool bResult = Compiler.Compile(StateTree);
+
+		AITEST_TRUE("StateTree should get compiled", bResult);
+
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+		FStateTreeInstanceData InstanceData;
+		FTestStateTreeExecutionContext Exec(StateTree, StateTree, InstanceData);
+		const bool bInitSucceeded = Exec.IsValid();
+		AITEST_TRUE("StateTree should init", bInitSucceeded);
+
+		Status = Exec.Start();
+		AITEST_TRUE("StateTree should be running", Status == EStateTreeRunStatus::Running);
+		Exec.LogClear();
+
+		Status = Exec.Tick(0.1f);
+		AITEST_TRUE("StateTree should be completed", Status == EStateTreeRunStatus::Succeeded);
+		Exec.LogClear();
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_EmptyStateTree, "System.StateTree.Empty");
 
 struct FStateTreeTest_Sequence : FAITestBase
 {
@@ -210,7 +259,7 @@ struct FStateTreeTest_Select : FAITestBase
 		AITEST_TRUE("StateTree should be running", Status == EStateTreeRunStatus::Running);
 		Exec.LogClear();
 
-		// Regular tick
+		// Regular tick, no state selection at all.
 		Status = Exec.Tick(0.1f);
 		AITEST_TRUE("StateTree tasks should update in order", Exec.Expect(TaskRoot.GetName(), TickStr).Then(Task1.GetName(), TickStr).Then(Task1A.GetName(), TickStr));
 		AITEST_FALSE("StateTree TaskRoot should not EnterState", Exec.Expect(TaskRoot.GetName(), EnterStateStr));
@@ -427,6 +476,86 @@ struct FStateTreeTest_SubTree : FAITestBase
 };
 IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_SubTree, "System.StateTree.SubTree");
 
+struct FStateTreeTest_SubTreeCondition : FAITestBase
+{
+	virtual bool InstantTest() override
+	{
+		/*
+		- Root
+			- Linked : Subtree -> Root
+		- SubTree : Task1
+			- ? State1 : Task2 -> Succeeded // condition linked to Task1
+			- State2 : Task3
+		*/
+		
+		UStateTree& StateTree = UE::StateTree::Tests::NewStateTree(&GetWorld());
+		UStateTreeEditorData& EditorData = *Cast<UStateTreeEditorData>(StateTree.EditorData);
+		
+		UStateTreeState& Root = EditorData.AddSubTree(FName(TEXT("Root")));
+		UStateTreeState& Linked = Root.AddChildState(FName(TEXT("Linked")), EStateTreeStateType::Linked);
+		
+		UStateTreeState& SubTree = Root.AddChildState(FName(TEXT("SubTree")), EStateTreeStateType::Subtree);
+		UStateTreeState& State1 = SubTree.AddChildState(FName(TEXT("State1")));
+		UStateTreeState& State2 = SubTree.AddChildState(FName(TEXT("State2")));
+
+		Linked.LinkedSubtree = SubTree.GetLinkToState();
+
+		Linked.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Root);
+
+		// SubTask should not complete during the test.
+		TStateTreeEditorNode<FTestTask_Stand>& SubTask = SubTree.AddTask<FTestTask_Stand>(FName(TEXT("SubTask")));
+		SubTask.GetNode().TicksToCompletion = 100;
+
+		TStateTreeEditorNode<FTestTask_Stand>& Task1 = State1.AddTask<FTestTask_Stand>(FName(TEXT("Task1")));
+		Task1.GetNode().TicksToCompletion = 1;
+
+		TStateTreeEditorNode<FTestTask_Stand>& Task2 = State2.AddTask<FTestTask_Stand>(FName(TEXT("Task2")));
+		Task2.GetNode().TicksToCompletion = 1;
+		
+		// Allow to enter State1 if Task1 instance data TicksToCompletion > 0.
+		TStateTreeEditorNode<FStateTreeCompareIntCondition>& IntCond1 = State1.AddEnterCondition<FStateTreeCompareIntCondition>(EGenericAICheck::Greater);
+		EditorData.AddPropertyBinding(SubTask, TEXT("CurrentTick"), IntCond1, TEXT("Left"));
+		IntCond1.GetInstanceData().Right = 0;
+
+		FStateTreeCompilerLog Log;
+		FStateTreeCompiler Compiler(Log);
+		const bool bResult = Compiler.Compile(StateTree);
+		AITEST_TRUE("StateTree should get compiled", bResult);
+
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+		FStateTreeInstanceData InstanceData;
+		FTestStateTreeExecutionContext Exec(StateTree, StateTree, InstanceData);
+		const bool bInitSucceeded = Exec.IsValid();
+		AITEST_TRUE("StateTree should init", bInitSucceeded);
+
+		const FString TickStr(TEXT("Tick"));
+		const FString EnterStateStr(TEXT("EnterState"));
+		const FString ExitStateStr(TEXT("ExitState"));
+		const FString StateCompletedStr(TEXT("StateCompleted"));
+
+		// Start and enter state
+		Status = Exec.Start();
+
+		AITEST_TRUE("StateTree Active States should be in Root/Linked/SubTree/State2", Exec.ExpectInActiveStates(Root.Name, Linked.Name, SubTree.Name, State2.Name));
+		AITEST_FALSE("StateTree State1 should not be active", Exec.ExpectInActiveStates(State1.Name)); // Enter condition should prevent to enter State1
+		AITEST_TRUE("StateTree SubTask should enter state", Exec.Expect(SubTask.GetName(), EnterStateStr));
+		AITEST_TRUE("StateTree Task2 should enter state", Exec.Expect(Task2.GetName(), EnterStateStr));
+		AITEST_TRUE("StateTree should be running", Status == EStateTreeRunStatus::Running);
+		Exec.LogClear();
+
+		// Task1 completes, and we should enter State1 since the enter condition now passes.
+		Status = Exec.Tick(0.1f);
+		AITEST_TRUE("StateTree Active States should be in Root/Linked/SubTree/State1", Exec.ExpectInActiveStates(Root.Name, Linked.Name, SubTree.Name, State1.Name));
+		AITEST_FALSE("StateTree State2 should not be active", Exec.ExpectInActiveStates(State2.Name));
+		AITEST_TRUE("StateTree Task1 should enter state", Exec.Expect(Task1.GetName(), EnterStateStr));
+		AITEST_TRUE("StateTree should be running", Status == EStateTreeRunStatus::Running);
+		Exec.LogClear();
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_SubTreeCondition, "System.StateTree.SubTreeCondition");
+
 struct FStateTreeTest_SubTree_CascadedSucceeded : FAITestBase
 {
 	virtual bool InstantTest() override
@@ -603,6 +732,17 @@ struct FStateTreeTest_TransitionPriority : FAITestBase
 	{
 		UStateTree& StateTree = UE::StateTree::Tests::NewStateTree(&GetWorld());
 		UStateTreeEditorData& EditorData = *Cast<UStateTreeEditorData>(StateTree.EditorData);
+
+		/*
+			- Root
+				- State1 : Task1 -> Succeeded
+					- State1A : Task1A -> Next
+					- State1B : Task1B -> Next
+					- State1C : Task1C
+		
+			Task1A completed first, transitioning to State1B.
+			Task1, Task1B, and Task1C complete at the same time, we should take the transition on the first completed state (State1).
+		*/
 		
 		UStateTreeState& Root = EditorData.AddSubTree(FName(TEXT("Root")));
 		UStateTreeState& State1 = Root.AddChildState(FName(TEXT("State1")));
@@ -727,6 +867,133 @@ struct FStateTreeTest_TransitionPriorityEnterState : FAITestBase
 	}
 };
 IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_TransitionPriorityEnterState, "System.StateTree.Transition.PriorityEnterState");
+
+struct FStateTreeTest_TransitionNextSelectableState : FAITestBase
+{
+	virtual bool InstantTest() override
+	{
+		UStateTree& StateTree = UE::StateTree::Tests::NewStateTree(&GetWorld());
+		UStateTreeEditorData& EditorData = *Cast<UStateTreeEditorData>(StateTree.EditorData);
+
+		UStateTreeState& Root =	EditorData.AddSubTree(FName(TEXT("Root")));
+		UStateTreeState& State0 = Root.AddChildState(FName(TEXT("State0")));
+		UStateTreeState& State1 = Root.AddChildState(FName(TEXT("State1")));
+		UStateTreeState& State2 = Root.AddChildState(FName(TEXT("State2")));
+
+		auto& EvalA = EditorData.AddEvaluator<FTestEval_A>();
+		EvalA.GetInstanceData().bBoolA = true;
+
+		auto& Task0 = State0.AddTask<FTestTask_Stand>(FName(TEXT("Task0")));
+		State0.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::NextSelectableState);
+
+		// Add Task 1 with Condition that will always fail
+		auto& Task1 = State1.AddTask<FTestTask_Stand>(FName(TEXT("Task1")));
+		auto& BoolCond1 = State1.AddEnterCondition<FStateTreeCompareBoolCondition>();
+
+		EditorData.AddPropertyBinding(EvalA, TEXT("bBoolA"), BoolCond1, TEXT("bLeft"));
+		BoolCond1.GetInstanceData().bRight = !EvalA.GetInstanceData().bBoolA;
+
+		// Add Task 2 with Condition that will always succeed
+		auto& Task2 = State2.AddTask<FTestTask_Stand>(FName(TEXT("Task2")));
+		auto& BoolCond2 = State2.AddEnterCondition<FStateTreeCompareBoolCondition>();
+		State2.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::Succeeded);
+
+		EditorData.AddPropertyBinding(EvalA, TEXT("bBoolA"), BoolCond2, TEXT("bLeft"));
+		BoolCond2.GetInstanceData().bRight = EvalA.GetInstanceData().bBoolA;
+
+		FStateTreeCompilerLog Log;
+		FStateTreeCompiler Compiler(Log);
+		const bool bResult = Compiler.Compile(StateTree);
+		AITEST_TRUE("StateTree should get compiled", bResult);
+
+		FStateTreeInstanceData InstanceData;
+		FTestStateTreeExecutionContext Exec(StateTree, StateTree, InstanceData);
+		const bool bInitSucceeded = Exec.IsValid();
+		AITEST_TRUE("StateTree should init", bInitSucceeded);
+
+		const FString TickStr(TEXT("Tick"));
+		const FString EnterStateStr(TEXT("EnterState"));
+		const FString ExitStateStr(TEXT("ExitState"));
+		const FString StateCompletedStr(TEXT("StateCompleted"));
+
+		// Start and enter state
+		Exec.Start();
+		AITEST_TRUE("StateTree Task0 should enter state", Exec.Expect(Task0.GetName(), EnterStateStr));
+		Exec.LogClear();
+
+		// Transition from State0 and tries to select State1. It should fail (Task1) and because transition is set to "Next Selectable", it should now select Task 2 and Enter State
+		Exec.Tick(0.1f);
+		AITEST_TRUE("StateTree Task0 should complete", Exec.Expect(Task0.GetName(), StateCompletedStr));
+		AITEST_FALSE("StateTree Task1 should not enter state", Exec.Expect(Task1.GetName(), EnterStateStr));
+		AITEST_TRUE("StateTree Task2 should enter state", Exec.Expect(Task2.GetName(), EnterStateStr));
+		Exec.LogClear();
+
+		// Complete Task2
+		Exec.Tick(0.1f);
+		AITEST_TRUE("StateTree Task2 should complete", Exec.Expect(Task2.GetName(), StateCompletedStr));
+		Exec.LogClear();
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_TransitionNextSelectableState, "System.StateTree.Transition.NextSelectableState");
+
+
+struct FStateTreeTest_TransitionNextWithParentData : FAITestBase
+{
+	virtual bool InstantTest() override
+	{
+		UStateTree& StateTree = UE::StateTree::Tests::NewStateTree(&GetWorld());
+		UStateTreeEditorData& EditorData = *Cast<UStateTreeEditorData>(StateTree.EditorData);
+
+		UStateTreeState& Root =	EditorData.AddSubTree(FName(TEXT("Root")));
+		UStateTreeState& State0 = Root.AddChildState(FName(TEXT("State0")));
+		UStateTreeState& State1 = Root.AddChildState(FName(TEXT("State1")));
+		UStateTreeState& State1A = State1.AddChildState(FName(TEXT("State1A")));
+
+		auto& RootTask = Root.AddTask<FTestTask_B>(FName(TEXT("RootTask")));
+		RootTask.GetInstanceData().bBoolB = true;
+
+		auto& Task0 = State0.AddTask<FTestTask_Stand>(FName(TEXT("Task0")));
+		State0.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::NextState);
+
+		auto& Task1A = State1A.AddTask<FTestTask_Stand>(FName(TEXT("Task1A")));
+		auto& BoolCond1 = State1A.AddEnterCondition<FStateTreeCompareBoolCondition>();
+
+		EditorData.AddPropertyBinding(RootTask, TEXT("bBoolB"), BoolCond1, TEXT("bLeft"));
+		BoolCond1.GetInstanceData().bRight = true;
+
+		FStateTreeCompilerLog Log;
+		FStateTreeCompiler Compiler(Log);
+		const bool bResult = Compiler.Compile(StateTree);
+		AITEST_TRUE("StateTree should get compiled", bResult);
+
+		FStateTreeInstanceData InstanceData;
+		FTestStateTreeExecutionContext Exec(StateTree, StateTree, InstanceData);
+		const bool bInitSucceeded = Exec.IsValid();
+		AITEST_TRUE("StateTree should init", bInitSucceeded);
+
+		const FString TickStr(TEXT("Tick"));
+		const FString EnterStateStr(TEXT("EnterState"));
+		const FString ExitStateStr(TEXT("ExitState"));
+		const FString StateCompletedStr(TEXT("StateCompleted"));
+
+		// Start and enter state
+		Exec.Start();
+		AITEST_TRUE("StateTree Task0 should enter state", Exec.Expect(Task0.GetName(), EnterStateStr));
+		Exec.LogClear();
+
+		// Transition from State0 and tries to select State1.
+		// This tests that data from current shared active states (Root) is available during state selection.
+		Exec.Tick(0.1f);
+		AITEST_TRUE("StateTree Task0 should complete", Exec.Expect(Task0.GetName(), StateCompletedStr));
+		AITEST_TRUE("StateTree Task1A should enter state", Exec.Expect(Task1A.GetName(), EnterStateStr));
+		Exec.LogClear();
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_TransitionNextWithParentData, "System.StateTree.Transition.NextWithParentData");
 
 struct FStateTreeTest_LastConditionWithIndent : FAITestBase
 {
@@ -895,8 +1162,11 @@ struct FStateTreeTest_TransitionDelay : FAITestBase
 		AITEST_TRUE("StateTree Task0 should tick", Exec.Expect(Task0.GetName(), TickStr));
 		Exec.LogClear();
 
+		// Should have execution frames
+		AITEST_TRUE("Should have active frames", InstanceData.GetExecutionState()->ActiveFrames.Num() > 0);
+
 		// Should have delayed transitions
-		const int32 NumDelayedTransitions0 = InstanceData.GetStruct(0).Get<const FStateTreeExecutionState>().DelayedTransitions.Num();
+		const int32 NumDelayedTransitions0 = InstanceData.GetExecutionState()->DelayedTransitions.Num();
 		AITEST_EQUAL("Should have a delayed transition", NumDelayedTransitions0, 1);
 
 		// Tick and expect a delayed transition. 
@@ -904,7 +1174,7 @@ struct FStateTreeTest_TransitionDelay : FAITestBase
 		AITEST_TRUE("StateTree Task0 should tick", Exec.Expect(Task0.GetName(), TickStr));
 		Exec.LogClear();
 
-		const int32 NumDelayedTransitions1 = InstanceData.GetStruct(0).Get<const FStateTreeExecutionState>().DelayedTransitions.Num();
+		const int32 NumDelayedTransitions1 = InstanceData.GetExecutionState()->DelayedTransitions.Num();
 		AITEST_EQUAL("Should have a delayed transition", NumDelayedTransitions1, 1);
 
 		// Should complete delayed transition.
@@ -1311,12 +1581,14 @@ struct FStateTreeTest_BindingsCompiler : FAITestBase
 		SourceADesc.Name = FName(TEXT("SourceA"));
 		SourceADesc.Struct = TBaseStructure<FStateTreeTest_PropertyCopy>::Get();
 		SourceADesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		SourceADesc.DataHandle = FStateTreeDataHandle(EStateTreeDataSourceType::ContextData, 0); // Used as index to SourceViews below.
 		SourceADesc.ID = FGuid::NewGuid();
 
 		FStateTreeBindableStructDesc SourceBDesc;
 		SourceBDesc.Name = FName(TEXT("SourceB"));
 		SourceBDesc.Struct = TBaseStructure<FStateTreeTest_PropertyCopy>::Get();
 		SourceBDesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		SourceBDesc.DataHandle = FStateTreeDataHandle(EStateTreeDataSourceType::ContextData, 1); // Used as index to SourceViews below.
 		SourceBDesc.ID = FGuid::NewGuid();
 
 		FStateTreeBindableStructDesc TargetDesc;
@@ -1328,23 +1600,10 @@ struct FStateTreeTest_BindingsCompiler : FAITestBase
 		const int32 SourceAIndex = BindingCompiler.AddSourceStruct(SourceADesc);
 		const int32 SourceBIndex = BindingCompiler.AddSourceStruct(SourceBDesc);
 
-		auto MakeBinding = [](const FGuid& SourceID, const FString& Source, const FGuid& TargetID, const FString& Target)
-		{
-			FStateTreePropertyPath SourcePath;
-			SourcePath.FromString(Source);
-			SourcePath.SetStructID(SourceID);
-
-			FStateTreePropertyPath TargetPath;
-			TargetPath.FromString(Target);
-			TargetPath.SetStructID(TargetID);
-
-			return FStateTreePropertyPathBinding(SourcePath, TargetPath);
-		};
-
 		TArray<FStateTreePropertyPathBinding> PropertyBindings;
-		PropertyBindings.Add(MakeBinding(SourceBDesc.ID, TEXT("Item"), TargetDesc.ID, TEXT("Array[1]")));
-		PropertyBindings.Add(MakeBinding(SourceADesc.ID, TEXT("Item.B"), TargetDesc.ID, TEXT("Array[1].B")));
-		PropertyBindings.Add(MakeBinding(SourceADesc.ID, TEXT("Array"), TargetDesc.ID, TEXT("Array")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceBDesc.ID, TEXT("Item"), TargetDesc.ID, TEXT("Array[1]")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceADesc.ID, TEXT("Item.B"), TargetDesc.ID, TEXT("Array[1].B")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceADesc.ID, TEXT("Array"), TargetDesc.ID, TEXT("Array")));
 
 		int32 CopyBatchIndex = INDEX_NONE;
 		const bool bCompileBatchResult = BindingCompiler.CompileBatch(TargetDesc, PropertyBindings, CopyBatchIndex);
@@ -1372,11 +1631,15 @@ struct FStateTreeTest_BindingsCompiler : FAITestBase
 
 		TArray<FStateTreeDataView> SourceViews;
 		SourceViews.SetNum(Bindings.GetSourceStructNum());
-		SourceViews[SourceAIndex] = FStateTreeDataView(TBaseStructure<FStateTreeTest_PropertyCopy>::Get(), (uint8*)&SourceA);
-		SourceViews[SourceBIndex] = FStateTreeDataView(TBaseStructure<FStateTreeTest_PropertyCopy>::Get(), (uint8*)&SourceB);
-		FStateTreeDataView TargetView(TBaseStructure<FStateTreeTest_PropertyCopy>::Get(), (uint8*)&Target);
-		
-		const bool bCopyResult = Bindings.CopyTo(SourceViews, FStateTreeIndex16(CopyBatchIndex), TargetView);
+		SourceViews[SourceAIndex] = FStateTreeDataView(FStructView::Make(SourceA));
+		SourceViews[SourceBIndex] = FStateTreeDataView(FStructView::Make(SourceB));
+		FStateTreeDataView TargetView(FStructView::Make(Target));
+
+		bool bCopyResult = true;
+		for (const FStateTreePropertyCopy& Copy : Bindings.GetBatchCopies(FStateTreeIndex16(CopyBatchIndex)))
+		{
+			bCopyResult &= Bindings.CopyProperty(Copy, SourceViews[Copy.SourceDataHandle.GetIndex()], TargetView);
+		}
 		AITEST_TRUE("CopyTo should succeed", bCopyResult);
 
 		// Due to binding sorting, we expect them to executed in this order (sorted based on target access, earliest to latest)
@@ -1394,6 +1657,274 @@ struct FStateTreeTest_BindingsCompiler : FAITestBase
 	}
 };
 IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_BindingsCompiler, "System.StateTree.BindingsCompiler");
+
+struct FStateTreeTest_CopyObjects : FAITestBase
+{
+	virtual bool InstantTest() override
+	{
+		FStateTreeCompilerLog Log;
+		FStateTreePropertyBindings Bindings;
+		FStateTreePropertyBindingCompiler BindingCompiler;
+
+		const bool bInitResult = BindingCompiler.Init(Bindings, Log);
+		AITEST_TRUE("Expect init to succeed", bInitResult);
+
+		FStateTreeBindableStructDesc SourceDesc;
+		SourceDesc.Name = FName(TEXT("Source"));
+		SourceDesc.Struct = TBaseStructure<FStateTreeTest_PropertyCopyObjects>::Get();
+		SourceDesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		SourceDesc.DataHandle = FStateTreeDataHandle(EStateTreeDataSourceType::ContextData, 0); // Used as index to SourceViews below.
+		SourceDesc.ID = FGuid::NewGuid();
+
+		FStateTreeBindableStructDesc TargetADesc;
+		TargetADesc.Name = FName(TEXT("TargetA"));
+		TargetADesc.Struct = TBaseStructure<FStateTreeTest_PropertyCopyObjects>::Get();
+		TargetADesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		TargetADesc.ID = FGuid::NewGuid();
+
+		FStateTreeBindableStructDesc TargetBDesc;
+		TargetBDesc.Name = FName(TEXT("TargetB"));
+		TargetBDesc.Struct = TBaseStructure<FStateTreeTest_PropertyCopyObjects>::Get();
+		TargetBDesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		TargetBDesc.ID = FGuid::NewGuid();
+
+		const int32 SourceIndex = BindingCompiler.AddSourceStruct(SourceDesc);
+
+		TArray<FStateTreePropertyPathBinding> PropertyBindings;
+		// One-to-one copy from source to target A
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("Object"), TargetADesc.ID, TEXT("Object")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("SoftObject"), TargetADesc.ID, TEXT("SoftObject")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("Class"), TargetADesc.ID, TEXT("Class")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("SoftClass"), TargetADesc.ID, TEXT("SoftClass")));
+
+		// Cross copy from source to target B
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("SoftObject"), TargetBDesc.ID, TEXT("Object")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("Object"), TargetBDesc.ID, TEXT("SoftObject")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("SoftClass"), TargetBDesc.ID, TEXT("Class")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("Class"), TargetBDesc.ID, TEXT("SoftClass")));
+		
+		int32 TargetACopyBatchIndex = INDEX_NONE;
+		const bool bCompileBatchResultA = BindingCompiler.CompileBatch(TargetADesc, PropertyBindings, TargetACopyBatchIndex);
+		AITEST_TRUE("CompileBatchResultA should succeed", bCompileBatchResultA);
+		AITEST_NOT_EQUAL("TargetACopyBatchIndex should not be INDEX_NONE", TargetACopyBatchIndex, (int32)INDEX_NONE);
+
+		int32 TargetBCopyBatchIndex = INDEX_NONE;
+		const bool bCompileBatchResultB = BindingCompiler.CompileBatch(TargetBDesc, PropertyBindings, TargetBCopyBatchIndex);
+		AITEST_TRUE("CompileBatchResultB should succeed", bCompileBatchResultB);
+		AITEST_NOT_EQUAL("TargetBCopyBatchIndex should not be INDEX_NONE", TargetBCopyBatchIndex, (int32)INDEX_NONE);
+
+		BindingCompiler.Finalize();
+
+		const bool bResolveResult = Bindings.ResolvePaths();
+		AITEST_TRUE("ResolvePaths should succeed", bResolveResult);
+
+		UStateTreeTest_PropertyObject* ObjectA = NewObject<UStateTreeTest_PropertyObject>();
+		UStateTreeTest_PropertyObject2* ObjectB = NewObject<UStateTreeTest_PropertyObject2>();
+		
+		FStateTreeTest_PropertyCopyObjects Source;
+		Source.Object = ObjectA;
+		Source.SoftObject = ObjectB;
+		Source.Class = UStateTreeTest_PropertyObject::StaticClass();
+		Source.SoftClass = UStateTreeTest_PropertyObject::StaticClass();
+
+		AITEST_TRUE("SourceIndex should be less than max number of source structs.", SourceIndex < Bindings.GetSourceStructNum());
+
+		TArray<FStateTreeDataView> SourceViews;
+		SourceViews.SetNum(Bindings.GetSourceStructNum());
+		SourceViews[SourceIndex] = FStateTreeDataView(FStructView::Make(Source));
+
+		FStateTreeTest_PropertyCopyObjects TargetA;
+		bool bCopyResultA = true;
+		for (const FStateTreePropertyCopy& Copy : Bindings.GetBatchCopies(FStateTreeIndex16(TargetACopyBatchIndex)))
+		{
+			bCopyResultA &= Bindings.CopyProperty(Copy, SourceViews[Copy.SourceDataHandle.GetIndex()], FStructView::Make(TargetA));
+		}
+		AITEST_TRUE("CopyTo should succeed", bCopyResultA);
+
+		AITEST_TRUE("Expect TargetA.Object == Source.Object", TargetA.Object == Source.Object);
+		AITEST_TRUE("Expect TargetA.SoftObject == Source.SoftObject", TargetA.SoftObject == Source.SoftObject);
+		AITEST_TRUE("Expect TargetA.Class == Source.Class", TargetA.Class == Source.Class);
+		AITEST_TRUE("Expect TargetA.SoftClass == Source.SoftClass", TargetA.SoftClass == Source.SoftClass);
+
+		// Copying to TargetB should not affect TargetA
+		TargetA.Object = nullptr;
+		
+		FStateTreeTest_PropertyCopyObjects TargetB;
+		bool bCopyResultB = true;
+		for (const FStateTreePropertyCopy& Copy : Bindings.GetBatchCopies(FStateTreeIndex16(TargetBCopyBatchIndex)))
+		{
+			bCopyResultB &= Bindings.CopyProperty(Copy, SourceViews[Copy.SourceDataHandle.GetIndex()], FStructView::Make(TargetB));
+		}
+		AITEST_TRUE("CopyTo should succeed", bCopyResultB);
+
+		AITEST_TRUE("Expect TargetB.Object == Source.SoftObject", TSoftObjectPtr<UObject>(TargetB.Object) == Source.SoftObject);
+		AITEST_TRUE("Expect TargetB.SoftObject == Source.Object", TargetB.SoftObject == TSoftObjectPtr<UObject>(Source.Object));
+		AITEST_TRUE("Expect TargetB.Class == Source.SoftClass", TSoftClassPtr<UObject>(TargetB.Class) == Source.SoftClass);
+		AITEST_TRUE("Expect TargetB.SoftClass == Source.Class", TargetB.SoftClass == TSoftClassPtr<UObject>(Source.Class));
+
+		AITEST_TRUE("Expect TargetA.Object == nullptr after copy of TargetB", TargetA.Object == nullptr);
+
+		// Collect ObjectA and ObjectB, soft object paths should still copy ok.
+		ObjectA = nullptr;
+		ObjectB = nullptr;
+		Source.Object = nullptr;
+		CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+
+		FStateTreeTest_PropertyCopyObjects TargetC;
+		bool bCopyResultC = true;
+		for (const FStateTreePropertyCopy& Copy : Bindings.GetBatchCopies(FStateTreeIndex16(TargetACopyBatchIndex)))
+		{
+			bCopyResultB &= Bindings.CopyProperty(Copy, SourceViews[Copy.SourceDataHandle.GetIndex()], FStructView::Make(TargetC));
+		}
+
+		
+		AITEST_TRUE("CopyTo should succeed", bCopyResultC);
+		AITEST_TRUE("Expect TargetC.SoftObject == Source.SoftObject after GC", TargetC.SoftObject == Source.SoftObject);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_CopyObjects, "System.StateTree.CopyObjects");
+
+struct FStateTreeTest_References : FAITestBase
+{
+	virtual bool InstantTest() override
+	{
+		FStateTreeCompilerLog Log;
+		FStateTreePropertyBindings Bindings;
+		FStateTreePropertyBindingCompiler BindingCompiler;
+
+		const bool bInitResult = BindingCompiler.Init(Bindings, Log);
+		AITEST_TRUE("Expect init to succeed", bInitResult);
+
+		FStateTreeBindableStructDesc SourceDesc;
+		SourceDesc.Name = FName(TEXT("Source"));
+		SourceDesc.Struct = TBaseStructure<FStateTreeTest_PropertyRefSourceStruct>::Get();
+		SourceDesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		SourceDesc.DataHandle = FStateTreeDataHandle(EStateTreeDataSourceType::ContextData, 0);
+		SourceDesc.ID = FGuid::NewGuid();
+		BindingCompiler.AddSourceStruct(SourceDesc);
+
+		FStateTreeBindableStructDesc TargetDesc;
+		TargetDesc.Name = FName(TEXT("Target"));
+		TargetDesc.Struct = TBaseStructure<FStateTreeTest_PropertyRefTargetStruct>::Get();
+		TargetDesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		TargetDesc.ID = FGuid::NewGuid();
+		
+		TArray<FStateTreePropertyPathBinding> PropertyBindings;
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("Item"), TargetDesc.ID, TEXT("RefToStruct")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("Item.A"), TargetDesc.ID, TEXT("RefToInt")));
+		PropertyBindings.Add(UE::StateTree::Tests::MakeBinding(SourceDesc.ID, TEXT("Array"), TargetDesc.ID, TEXT("RefToStructArray")));
+
+		FStateTreeTest_PropertyRefTargetStruct Target;
+		FStateTreeDataView TargetView(FStructView::Make(Target));
+		const bool bCompileReferencesResult = BindingCompiler.CompileReferences(TargetDesc, PropertyBindings, TargetView);
+		AITEST_TRUE("CompileReferences should succeed", bCompileReferencesResult);	
+
+		BindingCompiler.Finalize();
+
+		const bool bResolveResult = Bindings.ResolvePaths();
+		AITEST_TRUE("ResolvePaths should succeed", bResolveResult);
+
+		FStateTreeTest_PropertyRefSourceStruct Source;
+
+		FStateTreeDataView SourceView = FStateTreeDataView(FStructView::Make(Source));
+
+		{
+			const FStateTreePropertyAccess* PropertyAccess = Bindings.GetPropertyAccess(Target.RefToStruct);
+			AITEST_NOT_NULL("GetPropertyAccess should succeed", PropertyAccess);
+			
+			FStateTreeTest_PropertyStruct* Reference = Bindings.GetMutablePropertyPtr<FStateTreeTest_PropertyStruct>(SourceView, *PropertyAccess);
+			AITEST_EQUAL("Expect RefToStruct to point to SourceA.Item", Reference, &Source.Item);
+		}
+
+		{
+			const FStateTreePropertyAccess* PropertyAccess = Bindings.GetPropertyAccess(Target.RefToInt);
+			AITEST_NOT_NULL("GetPropertyAccess should succeed", PropertyAccess);
+
+			int32* Reference = Bindings.GetMutablePropertyPtr<int32>(SourceView, *PropertyAccess);
+			AITEST_EQUAL("Expect RefToInt to point to SourceA.Item.A", Reference, &Source.Item);
+		}
+
+		{
+			const FStateTreePropertyAccess* PropertyAccess = Bindings.GetPropertyAccess(Target.RefToStructArray);
+			AITEST_NOT_NULL("GetPropertyAccess should succeed", PropertyAccess);
+
+			TArray<FStateTreeTest_PropertyStruct>* Reference = Bindings.GetMutablePropertyPtr<TArray<FStateTreeTest_PropertyStruct>>(SourceView, *PropertyAccess);
+			AITEST_EQUAL("Expect RefToStructArray to point to SourceA.Array", Reference, &Source.Array);
+		}
+		
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_References, "System.StateTree.References");
+
+struct FStateTreeTest_ReferencesConstness : FAITestBase
+{
+	virtual bool InstantTest() override
+	{
+		FStateTreeCompilerLog Log;
+		FStateTreePropertyBindings Bindings;
+		FStateTreePropertyBindingCompiler BindingCompiler;
+
+		const bool bInitResult = BindingCompiler.Init(Bindings, Log);
+		AITEST_TRUE("Expect init to succeed", bInitResult);
+
+		FStateTreeBindableStructDesc SourceAsTaskDesc;
+		SourceAsTaskDesc.Name = FName(TEXT("SourceTask"));
+		SourceAsTaskDesc.Struct = TBaseStructure<FStateTreeTest_PropertyRefSourceStruct>::Get();
+		SourceAsTaskDesc.DataSource = EStateTreeBindableStructSource::Task;
+		SourceAsTaskDesc.DataHandle = FStateTreeDataHandle(EStateTreeDataSourceType::ContextData, 0);
+		SourceAsTaskDesc.ID = FGuid::NewGuid();
+		BindingCompiler.AddSourceStruct(SourceAsTaskDesc);
+
+		FStateTreeBindableStructDesc SourceAsContextDesc;
+		SourceAsContextDesc.Name = FName(TEXT("SourceContext"));
+		SourceAsContextDesc.Struct = TBaseStructure<FStateTreeTest_PropertyRefSourceStruct>::Get();
+		SourceAsContextDesc.DataSource = EStateTreeBindableStructSource::Context;
+		SourceAsContextDesc.DataHandle = FStateTreeDataHandle(EStateTreeDataSourceType::ContextData, 0);
+		SourceAsContextDesc.ID = FGuid::NewGuid();
+		BindingCompiler.AddSourceStruct(SourceAsContextDesc);
+
+		FStateTreeBindableStructDesc TargetDesc;
+		TargetDesc.Name = FName(TEXT("Target"));
+		TargetDesc.Struct = TBaseStructure<FStateTreeTest_PropertyRefTargetStruct>::Get();
+		TargetDesc.DataSource = EStateTreeBindableStructSource::Parameter;
+		TargetDesc.ID = FGuid::NewGuid();
+		
+		FStateTreePropertyPathBinding TaskPropertyBinding = UE::StateTree::Tests::MakeBinding(SourceAsTaskDesc.ID, TEXT("Item"), TargetDesc.ID, TEXT("RefToStruct"));
+		FStateTreePropertyPathBinding TaskOutputPropertyBinding = UE::StateTree::Tests::MakeBinding(SourceAsTaskDesc.ID, TEXT("OutputItem"), TargetDesc.ID, TEXT("RefToStruct"));
+
+		FStateTreePropertyPathBinding ContextPropertyBinding = UE::StateTree::Tests::MakeBinding(SourceAsTaskDesc.ID, TEXT("Item"), TargetDesc.ID, TEXT("RefToStruct"));
+		FStateTreePropertyPathBinding ContextOutputPropertyBinding = UE::StateTree::Tests::MakeBinding(SourceAsTaskDesc.ID, TEXT("Item"), TargetDesc.ID, TEXT("RefToStruct"));
+
+		FStateTreeTest_PropertyRefTargetStruct Target;
+		FStateTreeDataView TargetView(FStructView::Make(Target));
+
+		{
+			const bool bCompileReferenceResult = BindingCompiler.CompileReferences(TargetDesc, {TaskPropertyBinding}, TargetView);
+			AITEST_FALSE("CompileReferences should fail", bCompileReferenceResult);
+		}
+
+		{
+			const bool bCompileReferenceResult = BindingCompiler.CompileReferences(TargetDesc, {TaskOutputPropertyBinding}, TargetView);
+			AITEST_TRUE("CompileReferences should succeed", bCompileReferenceResult);
+		}
+
+		{
+			const bool bCompileReferenceResult = BindingCompiler.CompileReferences(TargetDesc, {ContextPropertyBinding}, TargetView);
+			AITEST_FALSE("CompileReferences should fail", bCompileReferenceResult);
+		}
+
+		{	
+			const bool bCompileReferenceResult = BindingCompiler.CompileReferences(TargetDesc, {ContextOutputPropertyBinding}, TargetView);
+			AITEST_FALSE("CompileReferences should fail", bCompileReferenceResult);
+		}
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_ReferencesConstness, "System.StateTree.ReferencesConstness");
 
 struct FStateTreeTest_FollowTransitions : FAITestBase
 {
@@ -1546,7 +2077,7 @@ struct FStateTreeTest_InfiniteLoop : FAITestBase
 
 		GetTestRunner().AddExpectedError(TEXT("Loop detected when trying to select state"), EAutomationExpectedErrorFlags::Contains, 1);
 		GetTestRunner().AddExpectedError(TEXT("Failed to select initial state"), EAutomationExpectedErrorFlags::Contains, 1);
-
+		
 		Status = Exec.Start();
 		AITEST_EQUAL("Start should fail", Status, EStateTreeRunStatus::Failed);
 		Exec.LogClear();
@@ -1998,6 +2529,164 @@ struct FStateTreeTest_Stop_AlreadyStopped : FStateTreeTest_Stop_ExternalStop
 	}
 };
 IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_Stop_AlreadyStopped, "System.StateTree.Stop.AlreadyStopped");
+
+//
+// The deferred stop tests validates that the tree can be properly stopped if requested in the main entry points (Start, Tick, Stop).  
+//
+struct FStateTreeTest_DeferredStop : FAITestBase
+{
+	UStateTree& SetupTree() const
+	{
+		UStateTree& StateTree = UE::StateTree::Tests::NewStateTree(&GetWorld());
+		UStateTreeEditorData& EditorData = *Cast<UStateTreeEditorData>(StateTree.EditorData);
+
+		UStateTreeState& Root = EditorData.AddSubTree(FName(TEXT("Root")));
+		UStateTreeState& StateA = Root.AddChildState(FName(TEXT("A")));
+		TStateTreeEditorNode<FTestTask_StopTree>& TaskA = StateA.AddTask<FTestTask_StopTree>(TEXT("Task"));
+		TStateTreeEditorNode<FTestTask_StopTree>& GlobalTask = EditorData.AddGlobalTask<FTestTask_StopTree>(TEXT("GlobalTask"));
+
+		StateA.AddTransition(EStateTreeTransitionTrigger::OnStateSucceeded, EStateTreeTransitionType::Succeeded);
+		StateA.AddTransition(EStateTreeTransitionTrigger::OnStateFailed, EStateTreeTransitionType::Failed);
+
+		GlobalTask.GetNode().Phase = GlobalTaskPhase;
+		TaskA.GetNode().Phase = TaskPhase;
+
+		return StateTree;
+	}
+
+	virtual bool RunDerivedTest(FTestStateTreeExecutionContext& Exec) = 0;
+
+	virtual bool InstantTest() override
+	{
+		UStateTree& StateTree = SetupTree();
+
+		FStateTreeCompilerLog Log;
+		FStateTreeCompiler Compiler(Log);
+		const bool bResult = Compiler.Compile(StateTree);
+
+		AITEST_TRUE("StateTree should get compiled", bResult);
+
+		FStateTreeInstanceData InstanceData;
+		FTestStateTreeExecutionContext Exec(StateTree, StateTree, InstanceData);
+		const bool bInitSucceeded = Exec.IsValid();
+		AITEST_TRUE("StateTree should init", bInitSucceeded);
+
+		return RunDerivedTest(Exec);
+	}
+
+protected:
+
+	EStateTreeUpdatePhase GlobalTaskPhase = EStateTreeUpdatePhase::Unset;
+	EStateTreeUpdatePhase TaskPhase = EStateTreeUpdatePhase::Unset;
+};
+
+struct FStateTreeTest_DeferredStop_EnterGlobalTask : FStateTreeTest_DeferredStop
+{
+	FStateTreeTest_DeferredStop_EnterGlobalTask() { GlobalTaskPhase = EStateTreeUpdatePhase::EnterStates; }
+	virtual bool RunDerivedTest(FTestStateTreeExecutionContext& Exec) override
+	{
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+
+		Status = Exec.Start();
+		AITEST_EQUAL("Tree should be stopped", Status, EStateTreeRunStatus::Stopped);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_DeferredStop_EnterGlobalTask, "System.StateTree.DeferredStop.EnterGlobalTask");
+
+struct FStateTreeTest_DeferredStop_TickGlobalTask : FStateTreeTest_DeferredStop
+{
+	FStateTreeTest_DeferredStop_TickGlobalTask() { GlobalTaskPhase = EStateTreeUpdatePhase::TickStateTree; }
+	virtual bool RunDerivedTest(FTestStateTreeExecutionContext& Exec) override
+	{
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+
+		Status = Exec.Start();
+		AITEST_EQUAL("Tree should be running", Status, EStateTreeRunStatus::Running);
+
+		Status = Exec.Tick(0.1f);
+		AITEST_EQUAL("Tree should be stopped", Status, EStateTreeRunStatus::Stopped);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_DeferredStop_TickGlobalTask, "System.StateTree.DeferredStop.TickGlobalTask");
+
+struct FStateTreeTest_DeferredStop_ExitGlobalTask : FStateTreeTest_DeferredStop
+{
+	FStateTreeTest_DeferredStop_ExitGlobalTask() { GlobalTaskPhase = EStateTreeUpdatePhase::ExitStates; }
+	virtual bool RunDerivedTest(FTestStateTreeExecutionContext& Exec) override
+	{
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+
+		Status = Exec.Start();
+		AITEST_EQUAL("Tree should be running", Status, EStateTreeRunStatus::Running);
+
+		Status = Exec.Tick(0.1f);
+		AITEST_EQUAL("Tree should be running", Status, EStateTreeRunStatus::Running);
+
+		Status = Exec.Stop();
+		AITEST_EQUAL("Tree should be stopped", Status, EStateTreeRunStatus::Stopped);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_DeferredStop_ExitGlobalTask, "System.StateTree.DeferredStop.ExitGlobalTask");
+
+struct FStateTreeTest_DeferredStop_EnterTask : FStateTreeTest_DeferredStop
+{
+	FStateTreeTest_DeferredStop_EnterTask() { TaskPhase = EStateTreeUpdatePhase::EnterStates; }
+	virtual bool RunDerivedTest(FTestStateTreeExecutionContext& Exec) override
+	{
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+
+		Status = Exec.Start();
+		AITEST_EQUAL("Tree should be running", Status, EStateTreeRunStatus::Stopped);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_DeferredStop_EnterTask, "System.StateTree.DeferredStop.EnterTask");
+
+struct FStateTreeTest_DeferredStop_TickTask : FStateTreeTest_DeferredStop
+{
+	FStateTreeTest_DeferredStop_TickTask() { TaskPhase = EStateTreeUpdatePhase::TickStateTree; }
+	virtual bool RunDerivedTest(FTestStateTreeExecutionContext& Exec) override
+	{
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+
+		Status = Exec.Start();
+		AITEST_EQUAL("Tree should be running", Status, EStateTreeRunStatus::Running);
+
+		Status = Exec.Tick(0.1f);
+		AITEST_EQUAL("Tree should be stopped", Status, EStateTreeRunStatus::Stopped);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_DeferredStop_TickTask, "System.StateTree.DeferredStop.TickTask");
+
+struct FStateTreeTest_DeferredStop_ExitTask : FStateTreeTest_DeferredStop
+{
+	FStateTreeTest_DeferredStop_ExitTask() { TaskPhase = EStateTreeUpdatePhase::ExitStates; }
+	virtual bool RunDerivedTest(FTestStateTreeExecutionContext& Exec) override
+	{
+		EStateTreeRunStatus Status = EStateTreeRunStatus::Unset;
+
+		Status = Exec.Start();
+		AITEST_EQUAL("Tree should be running", Status, EStateTreeRunStatus::Running);
+
+		Status = Exec.Tick(0.1f);
+		AITEST_EQUAL("Tree should be running", Status, EStateTreeRunStatus::Running);
+
+		Status = Exec.Stop();
+		AITEST_EQUAL("Tree should be stopped", Status, EStateTreeRunStatus::Stopped);
+		
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FStateTreeTest_DeferredStop_ExitTask, "System.StateTree.DeferredStop.ExitTask");
 
 
 UE_ENABLE_OPTIMIZATION_SHIP

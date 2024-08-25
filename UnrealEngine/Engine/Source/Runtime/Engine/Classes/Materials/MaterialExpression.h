@@ -20,8 +20,8 @@ class UTexture;
 struct FPropertyChangedEvent;
 struct FMaterialParameterMetadata;
 struct FMaterialShadingModelField;
-struct FStrataMaterialInfo;
-struct FStrataOperator;
+struct FSubstrateMaterialInfo;
+struct FSubstrateOperator;
 
 class UMaterialExpression;
 class UMaterialExpressionComment;
@@ -167,7 +167,7 @@ struct FMaterialExpressionCollection
 	/** Array of material expressions, excluding Comments.  Used by the material editor. */
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialExpression>> Expressions;
-
+	
 	/** Array of comments associated with this material; viewed in the material editor. */
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialExpressionComment>> EditorComments;
@@ -330,13 +330,18 @@ class UMaterialExpression : public UObject
 	*/
 	virtual void GetTexturesForceMaterialRecompile(TArray<UTexture *> &Textures) const { }
 
+
 	/** 
-	 * Callback to get any texture reference this expression emits.
+	 * To get any texture references this expression emits.
 	 * This is used to link the compiled uniform expressions with their default texture values. 
 	 * Any UMaterialExpression whose compilation creates a texture uniform expression (eg Compiler->Texture, Compiler->TextureParameter) must implement this.
 	 */
 	virtual UObject* GetReferencedTexture() const { return nullptr; }
-	/** Returns true if GetReferencedTexture() can ever return a valid pointer. */
+
+	using ReferencedTextureArray = TArray<UObject*, TInlineAllocator<4>>; 
+	virtual ReferencedTextureArray GetReferencedTextures() const { return { GetReferencedTexture() }; }
+	
+	/** Returns true if GetReferencedTexture() / GetReferencedTextures() can ever return a valid pointer(s). */
 	virtual bool CanReferenceTexture() const { return false; }
 
 #if WITH_EDITOR
@@ -366,6 +371,8 @@ class UMaterialExpression : public UObject
 	ENGINE_API virtual FName GetInputPinSubCategory(int32 PinIndex);
 	ENGINE_API virtual UObject* GetInputPinSubCategoryObject(int32 PinIndex);
 	ENGINE_API virtual void PinDefaultValueChanged(int32 PinIndex, const FString& DefaultValue);
+	ENGINE_API virtual void ForcePropertyValueChanged(FProperty* Property, bool bUpdatePreview = true);
+	ENGINE_API virtual void RefreshNode(bool bUpdatePreview = true);
 	ENGINE_API virtual FString GetInputPinDefaultValue(int32 PinIndex);
 	ENGINE_API virtual TArray<FProperty*> GetPropertyInputs() const;
 
@@ -442,21 +449,21 @@ class UMaterialExpression : public UObject
 	virtual bool IsResultMaterialAttributes(int32 OutputIndex) { return false; }
 
 	/**
-	 * Marks certain expression types as outputting Strata material. Allows the material functions to directly return a Strata material as output pin.
+	 * Marks certain expression types as outputting Substrate material. Allows the material functions to directly return a Substrate material as output pin.
 	 */
-	virtual bool IsResultStrataMaterial(int32 OutputIndex) { return false; }
+	virtual bool IsResultSubstrateMaterial(int32 OutputIndex) { return false; }
 
 	/**
-	 * Recursively parse nodes outputing strata material in order to gather all the possible shading models used in a material graph output a Strata material.
+	 * Recursively parse nodes outputing Substrate material in order to gather all the possible shading models used in a material graph output a Substrate material.
 	 */
-	virtual void GatherStrataMaterialInfo(FStrataMaterialInfo& StrataMaterialInfo, int32 OutputIndex) { }
+	virtual void GatherSubstrateMaterialInfo(FSubstrateMaterialInfo& SubstrateMaterialInfo, int32 OutputIndex) { }
 
 	/**
 	 * A starta material is a tree with FrontMateiral being its root and BSDF being leaves, with operators in the middle.
-	 * This recursively parse nodes outputing strata material in order to gather the maximum distance to any leaves. 
+	 * This recursively parse nodes outputing Substrate material in order to gather the maximum distance to any leaves. 
 	 * This is used to drive the bottom up order processing of those nodes.
 	 */
-	ENGINE_API virtual FStrataOperator* StrataGenerateMaterialTopologyTree(class FMaterialCompiler* Compiler, class UMaterialExpression* Parent, int32 OutputIndex);
+	ENGINE_API virtual FSubstrateOperator* SubstrateGenerateMaterialTopologyTree(class FMaterialCompiler* Compiler, class UMaterialExpression* Parent, int32 OutputIndex);
 
 	/**
 	 * If true, discards the output index when caching this expression which allows more cases to re-use the output instead of adding a separate instruction
@@ -563,6 +570,7 @@ class UMaterialExpression : public UObject
 	virtual bool SetParameterValue(const FName& Name, const FMaterialParameterMetadata& Meta, EMaterialExpressionSetParameterValueFlags Flags = EMaterialExpressionSetParameterValueFlags::None) { return false; }
 
 	virtual void GetLandscapeLayerNames(TArray<FName>& OutLayers) const {}
+	virtual void GetIncludeFilePaths(TSet<FString>& OutIncludeFilePaths) const {}
 
 	/**
 	 * Called after a node copy, once the Material and Function properties are set correctly and that all new expressions are added to Material->Expressions
@@ -610,6 +618,6 @@ enum class EPositionOrigin : uint8
 	/** Absolute world position, i.e. relative to (0,0,0) */
 	Absolute UMETA(DisplayName="Absolute World Position"),
 
-	/** Camera relative world position */
+	/** Camera relative world position, i.e. translated world space */
 	CameraRelative UMETA(DisplayName="Camera Relative World Position")
 };

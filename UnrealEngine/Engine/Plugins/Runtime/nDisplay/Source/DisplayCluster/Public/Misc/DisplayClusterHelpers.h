@@ -16,6 +16,8 @@
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 
+#include "Interfaces/IPluginManager.h"
+
 class AActor;
 class UDisplayClusterCameraComponent;
 
@@ -352,71 +354,6 @@ namespace DisplayClusterHelpers
 	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////////
-	// Array helpers
-	//////////////////////////////////////////////////////////////////////////////////////////////
-	namespace array
-	{
-		// Max element in array
-		template<typename T>
-		T max(const T* data, int size)
-		{
-			T result = data[0];
-			for (int i = 1; i < size; i++)
-				if (result < data[i])
-					result = data[i];
-			return result;
-		}
-
-		// Max element's index in array
-		template<typename T>
-		size_t max_idx(const T* data, int size)
-		{
-			size_t idx = 0;
-			T result = data[0];
-			for (int i = 1; i < size; i++)
-				if (result < data[i])
-				{
-					result = data[i];
-					idx = i;
-				}
-			return idx;
-		}
-
-		// Min element in array
-		template<typename T>
-		T min(const T* data, int size)
-		{
-			T result = data[0];
-			for (int i = 1; i < size; i++)
-				if (result > data[i])
-					result = data[i];
-			return result;
-		}
-
-		// Min element's index in array
-		template<typename T>
-		size_t min_idx(const T* data, int size)
-		{
-			size_t idx = 0;
-			T result = data[0];
-			for (int i = 1; i < size; i++)
-				if (result > data[i])
-				{
-					result = data[i];
-					idx = i;
-				}
-			return idx;
-		}
-
-		// Helper for array size
-		template <typename T, size_t n>
-		constexpr size_t array_size(const T(&)[n])
-		{
-			return n;
-		}
-	}
-
-	//////////////////////////////////////////////////////////////////////////////////////////////
 	// Game helpers
 	//////////////////////////////////////////////////////////////////////////////////////////////
 	namespace game
@@ -471,42 +408,99 @@ namespace DisplayClusterHelpers
 			return RelativeConfig;
 		}
 
+		/** Get ordered search base dirs for resources. */
+		static TArray<FString> GetOrderedConfigResourceDirs()
+		{
+			TArray<FString> OutDirs;
+
+			// First look in the configuration directory
+			IDisplayClusterConfigManager* const ConfigMgr = IDisplayCluster::Get().GetConfigMgr();
+			if (ConfigMgr)
+			{
+				const FString ConfigPath = ConfigMgr->GetConfigPath();
+				if (!ConfigPath.IsEmpty())
+				{
+					OutDirs.Add(FPaths::GetPath(ConfigPath));
+				}
+			}
+
+			// Then look in the project directory
+			// This will allow us to use relative paths for external files inside the project
+			OutDirs.Add(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+
+			// Finally, look in the root directory of the UE.
+			OutDirs.Add(FPaths::RootDir());
+
+			return OutDirs;
+		}
+
+		/**
+		* Getting the relative path to an external file
+		*/
+		static FString GetRelativePathForConfigResource(const FString& ResourceFullPath)
+		{
+			FString CleanResourceFullPath = DisplayClusterHelpers::str::TrimStringValue(ResourceFullPath);
+			FPaths::NormalizeFilename(CleanResourceFullPath);
+
+			if (!CleanResourceFullPath.IsEmpty())
+			{
+				// Tries to create relative paths to allowed directories:
+				for (const FString& ResourcePathIt : GetOrderedConfigResourceDirs())
+				{
+					if (CleanResourceFullPath.StartsWith(ResourcePathIt))
+					{
+						// Creates a relative path to the files in the project directory
+						return CleanResourceFullPath.Mid(ResourcePathIt.Len());
+					}
+				}
+			}
+
+			return CleanResourceFullPath;
+		}
+
 		static FString GetFullPathForConfigResource(const FString& ResourcePath)
 		{
 			FString CleanResourcePath = DisplayClusterHelpers::str::TrimStringValue(ResourcePath);
 			FPaths::NormalizeFilename(CleanResourcePath);
 
-			IDisplayClusterConfigManager* const ConfigMgr = IDisplayCluster::Get().GetConfigMgr();
-			if (ConfigMgr)
+			if (FPaths::IsRelative(CleanResourcePath))
 			{
-				const FString ConfigPath = ConfigMgr->GetConfigPath();
-
-				if (FPaths::IsRelative(CleanResourcePath))
+				// Process base dirs in order:
+				for (const FString& ResourcePathIt : GetOrderedConfigResourceDirs())
 				{
-					TArray<FString> OrderedBaseDirs;
-
-					//Add ordered search base dirs
-					OrderedBaseDirs.Add(FPaths::GetPath(ConfigPath));
-					OrderedBaseDirs.Add(FPaths::RootDir());
-
-					// Process base dirs in order:
-					for (const auto& It : OrderedBaseDirs)
+					const FString FullPath = FPaths::ConvertRelativePathToFull(ResourcePathIt, CleanResourcePath);
+					if (FPaths::FileExists(FullPath))
 					{
-						FString FullPath = FPaths::ConvertRelativePathToFull(It, CleanResourcePath);
-						if (FPaths::FileExists(FullPath))
-						{
-							return FullPath;
-						}
+						return FullPath;
 					}
 				}
-				else
-				{
-					return CleanResourcePath;
-				}
+			}
+			else
+			{
+				return CleanResourcePath;
 			}
 
 			return FString();
 		}
-	}
 
+		/** Returns the full path to the DLL located in the ThirdParty directory in the nDisplay plugin.
+		* @param InRelativePathForThirdPartyDll - relative path to dll from ThirdParty root
+		* @return full path to file
+		*/
+		static FString GetFullPathForThirdPartyDLL(const FString& InRelativePathForThirdPartyDll)
+		{
+			// Get the DLL from the nDisplay plugin directory
+			const FString PluginDir = IPluginManager::Get().FindPlugin(TEXT("nDisplay"))->GetBaseDir();
+			const FString FullPath = FPaths::Combine(PluginDir, TEXT("Source/ThirdParty"), InRelativePathForThirdPartyDll);
+			if (FPaths::FileExists(FullPath))
+			{
+				return FullPath;
+			}
+
+			// Package/Standalone builds may use a different directory for the ThirdParty DLL.
+			// Todo: add ThirdParty DLL search for Package/Standalone builds.
+
+			return InRelativePathForThirdPartyDll;
+		}
+	}
 };

@@ -59,6 +59,8 @@ public:
 	uint32 FirstCardIndex = 0;
 	uint32 NumCards = 0;
 	uint32 CardLookup[Lumen::NumAxisAlignedDirections];
+
+	TArray<int32, TInlineAllocator<1>> ScenePrimitiveIndices;
 };
 
 namespace LumenMeshCards

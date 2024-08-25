@@ -2,16 +2,35 @@
 
 #include "MovieGraphAssetToolkit.h"
 
-#include "Customizations/Graph/GraphMemberCustomization.h"
-#include "Customizations/Graph/GraphNodeCustomization.h"
-#include "Framework/Commands/GenericCommands.h"
+#include "Customizations/Graph/MovieGraphCollectionsCustomization.h"
+#include "Customizations/Graph/MovieGraphFormatTokenCustomization.h"
+#include "Customizations/Graph/MovieGraphMemberCustomization.h"
+#include "Customizations/Graph/MovieGraphModifiersCustomization.h"
+#include "Customizations/Graph/MovieGraphNamedResolutionCustomization.h"
+#include "Customizations/Graph/MovieGraphNodeCustomization.h"
+#include "Customizations/Graph/MovieGraphSelectNodeCustomization.h"
+#include "Customizations/Graph/MovieGraphShowFlagsCustomization.h"
+#include "Customizations/Graph/MovieGraphVersioningSettingsCustomization.h"
+#include "Graph/Renderers/MovieGraphShowFlags.h"
+
 #include "Graph/MovieGraphConfig.h"
+#include "Graph/Nodes/MovieGraphCollectionNode.h"
+#include "Graph/Nodes/MovieGraphCommandLineEncoderNode.h"
+#include "Graph/Nodes/MovieGraphFileOutputNode.h"
+#include "Graph/Nodes/MovieGraphModifierNode.h"
+#include "Graph/Nodes/MovieGraphSelectNode.h"
 #include "MovieEdGraphNode.h"
 #include "MovieGraphSchema.h"
-#include "PropertyEditorModule.h"
+#include "MovieRenderPipelineSettings.h"
 #include "SMovieGraphActiveRenderSettingsTabContent.h"
 #include "SMovieGraphMembersTabContent.h"
+
+#include "Framework/Commands/GenericCommands.h"
+#include "IDetailRootObjectCustomization.h"
+#include "PropertyEditorModule.h"
+#include "Selection.h"
 #include "ToolMenus.h"
+#include "Graph/Nodes/MovieGraphDebugNode.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Graph/SMovieGraphConfigPanel.h"
 
@@ -23,12 +42,124 @@ const FName FMovieGraphAssetToolkit::DetailsTabId(TEXT("MovieGraphAssetToolkitDe
 const FName FMovieGraphAssetToolkit::MembersTabId(TEXT("MovieGraphAssetToolkitMembers"));
 const FName FMovieGraphAssetToolkit::ActiveRenderSettingsTabId(TEXT("MovieGraphAssetToolkitActiveRenderSettings"));
 
-// Temporary cvar to enable/disable upgrading to a graph-based configuration
-static TAutoConsoleVariable<bool> CVarMoviePipelineEnableRenderGraph(
-	TEXT("MoviePipeline.EnableRenderGraph"),
-	false,
-	TEXT("Determines if the Render Graph feature is enabled in the UI. This is a highly experimental feature and is not ready for use.")
-);
+void SMovieGraphSyncCollectionToOutlinerButton::Construct(const FArguments& InArgs)
+{
+	SelectedNodesAttribute = InArgs._SelectedNodes;
+
+	ChildSlot
+	[
+		SNew(SButton)
+		.ButtonStyle(&FAppStyle::Get().GetWidgetStyle<FButtonStyle>("SimpleButton"))
+		.ContentPadding(0.f)
+		.ToolTipText(LOCTEXT("PreviewCollectionButton_Tooltip", "Evaluate the collection and select the matched actors in the Outliner."))
+		.Visibility_Lambda([this]()
+		{
+			const TArray<TWeakObjectPtr<UObject>>& SelectedObjects = SelectedNodesAttribute.Get();
+			if ((SelectedObjects.Num() == 1) && SelectedObjects[0].IsValid() && SelectedObjects[0]->IsA<UMovieGraphCollectionNode>())
+			{
+				return EVisibility::Visible;
+			}
+
+			return EVisibility::Hidden;
+		})
+		.OnClicked_Lambda([this]()
+		{
+			EvaluateCollectionAndSelect();
+
+			return FReply::Handled();
+		})
+		[
+			SNew(SImage)
+			.ColorAndOpacity(FSlateColor::UseForeground())
+			.Image(FAppStyle::Get().GetBrush("FoliageEditMode.SelectAll"))
+		]
+	];
+}
+
+void SMovieGraphSyncCollectionToOutlinerButton::EvaluateCollectionAndSelect() const
+{
+	const TArray<TWeakObjectPtr<UObject>>& SelectedObjects = SelectedNodesAttribute.Get();
+	if ((SelectedObjects.Num() != 1) || !SelectedObjects[0].IsValid())
+	{
+		return;
+	}
+			
+	if (const UMovieGraphCollectionNode* CollectionNode = Cast<UMovieGraphCollectionNode>(SelectedObjects[0]))
+	{
+		// Evaluate the collection based on the current editor world
+		TSet<AActor*> EvaluatedActors = CollectionNode->Collection->Evaluate(GEditor->GetEditorWorldContext().World());
+
+		// Select all actors matched by the collection
+		{
+			GEditor->GetSelectedActors()->Modify();
+			GEditor->GetSelectedActors()->BeginBatchSelectOperation();
+			GEditor->GetSelectedActors()->DeselectAll();
+							
+			for (AActor* Actor : EvaluatedActors)
+			{
+				constexpr bool bShouldSelect = true;
+				constexpr bool bNotifyAfterSelect = false;
+				constexpr bool bSelectEvenIfHidden = true;
+				GEditor->SelectActor(Actor, bShouldSelect, bNotifyAfterSelect, bSelectEvenIfHidden);
+			}
+
+			constexpr bool bNotify = false;
+			GEditor->GetSelectedActors()->EndBatchSelectOperation(bNotify);
+		}
+	}
+}
+
+/** Header customization for when multiple objects are displayed in the details panel. */
+class FMovieGraphDetailsRootObjectCustomization final : public IDetailRootObjectCustomization
+{
+public:
+	explicit FMovieGraphDetailsRootObjectCustomization(const TSharedRef<IDetailsView>& InDetailsView)
+		: DetailsView(InDetailsView)
+	{
+		
+	}
+
+	// IDetailRootObjectCustomization interface
+	virtual TSharedPtr<SWidget> CustomizeObjectHeader(const FDetailsObjectSet& InRootObjectSet, const TSharedPtr<ITableRow>& InTableRow) override
+	{
+		FText DisplayName = InRootObjectSet.CommonBaseClass->GetDisplayNameText();
+		if (const UMovieGraphNode* GraphNode = Cast<const UMovieGraphNode>(InRootObjectSet.RootObjects[0]))
+		{
+			DisplayName = GraphNode->GetNodeTitle();
+		}
+		
+		return
+			SNew(SBox)
+			.Padding(5.f)
+			.VAlign(VAlign_Center)
+			.HAlign(HAlign_Left)
+			[
+				SNew(STextBlock)
+				.Text(DisplayName)
+				.Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.BoldFont")))
+			];
+	}
+
+	virtual bool AreObjectsVisible(const FDetailsObjectSet& InRootObjectSet) const override
+	{
+		return true;
+	}
+	
+	virtual bool ShouldDisplayHeader(const FDetailsObjectSet& InRootObjectSet) const override
+	{
+		// Only display the header if multiple objects are selected
+		if (DetailsView.IsValid())
+		{
+			return DetailsView.Pin()->GetSelectedObjects().Num() > 1;
+		}
+		
+		return true;
+	}
+	// End IDetailRootObjectCustomization interface
+
+private:
+	TWeakPtr<IDetailsView> DetailsView;
+};
 
 FMovieGraphAssetToolkit::FMovieGraphAssetToolkit()
 	: bIsInternalSelectionChange(false)
@@ -141,6 +272,12 @@ TSharedRef<SDockTab> FMovieGraphAssetToolkit::SpawnTab_RenderGraphEditor(const F
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot()
+			.AutoHeight()
+			[
+				GetDefaultGraphEditWarning()
+			]
+			
+			+ SVerticalBox::Slot()
 			[
 				SAssignNew(MovieGraphWidget, SMoviePipelineGraphPanel)
 				.Graph(InitialGraph)
@@ -216,26 +353,91 @@ TSharedRef<SDockTab> FMovieGraphAssetToolkit::SpawnTab_RenderGraphDetails(const 
 {
 	FPropertyEditorModule& PropertyEditorModule = FModuleManager::Get().LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	FDetailsViewArgs DetailsViewArgs;
-	DetailsViewArgs.bAllowSearch = false;
-	DetailsViewArgs.NameAreaSettings = FDetailsViewArgs::HideNameArea;
+	DetailsViewArgs.bShowPropertyMatrixButton = false;
+	DetailsViewArgs.bCustomNameAreaLocation = true;
+	DetailsViewArgs.NameAreaSettings = FDetailsViewArgs::ObjectsUseNameArea;
 	DetailsViewArgs.bHideSelectionTip = true;
+	DetailsViewArgs.bAllowMultipleTopLevelObjects = true;
 	DetailsViewArgs.ViewIdentifier = "MovieGraphSettings";
+	DetailsViewArgs.bLockable = false;
 
 	SelectedGraphObjectsDetailsWidget = PropertyEditorModule.CreateDetailView(DetailsViewArgs);
+	SelectedGraphObjectsDetailsWidget->SetRootObjectCustomizationInstance(
+		MakeShared<FMovieGraphDetailsRootObjectCustomization>(SelectedGraphObjectsDetailsWidget.ToSharedRef()));
 
 	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
 		UMovieGraphMember::StaticClass(),
-		FOnGetDetailCustomizationInstance::CreateStatic(&FGraphMemberCustomization::MakeInstance));
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphMemberCustomization::MakeInstance));
 
 	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
 		UMovieGraphNode::StaticClass(),
-		FOnGetDetailCustomizationInstance::CreateStatic(&FGraphNodeCustomization::MakeInstance));
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphNodeCustomization::MakeInstance));
+
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
+		UMovieGraphSelectNode::StaticClass(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphSelectNodeCustomization::MakeInstance));
+
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyTypeLayout(
+		UMovieGraphShowFlags::StaticClass()->GetFName(),
+		FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FMovieGraphShowFlagsCustomization::MakeInstance));
+
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyTypeLayout(
+		FMovieGraphNamedResolution::StaticStruct()->GetFName(),
+		FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FMovieGraphNamedResolutionCustomization::MakeInstance));
+
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyTypeLayout(
+		FMovieGraphVersioningSettings::StaticStruct()->GetFName(),
+		FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FMovieGraphVersioningSettingsCustomization::MakeInstance));
 	
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
+		UMovieGraphCollectionNode::StaticClass(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphCollectionsCustomization::MakeInstance));
+
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
+		UMovieGraphModifierNode::StaticClass(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphModifiersCustomization::MakeInstance));
+	
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
+		UMovieGraphFileOutputNode::StaticClass(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphFormatTokenCustomization::MakeInstance));
+
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
+		UMovieGraphCommandLineEncoderNode::StaticClass(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphFormatTokenCustomization::MakeInstance));
+
+	SelectedGraphObjectsDetailsWidget->RegisterInstancedCustomPropertyLayout(
+		UMovieGraphDebugSettingNode::StaticClass(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FMovieGraphFormatTokenCustomization::MakeInstance));
+	
+	TSharedRef<SWidget> CustomContent = SAssignNew(NameAreaCustomContent, SHorizontalBox)
+	+ SHorizontalBox::Slot()
+	[
+		SNew(SMovieGraphSyncCollectionToOutlinerButton)
+		.SelectedNodes_Lambda([this]()
+		{
+			return SelectedGraphObjectsDetailsWidget->GetSelectedObjects();
+		})
+	];
+	
+	SelectedGraphObjectsDetailsWidget->SetNameAreaCustomContent(CustomContent);
+
 	return SNew(SDockTab)
 		.TabColorScale(GetTabColorScale())
 		.Label(LOCTEXT("DetailsTab_Title", "Details"))
 		[
-			SelectedGraphObjectsDetailsWidget.ToSharedRef()
+			SNew(SVerticalBox)
+			
+			+ SVerticalBox::Slot()
+			.Padding(10.f, 4.f, 0.f, 0.f)
+			.AutoHeight()
+			[
+				SelectedGraphObjectsDetailsWidget->GetNameAreaWidget().ToSharedRef()
+			]
+
+			+ SVerticalBox::Slot()
+			[
+				SelectedGraphObjectsDetailsWidget.ToSharedRef()
+			]
 		];
 }
 
@@ -292,6 +494,46 @@ void FMovieGraphAssetToolkit::PersistEditorOnlyNodes() const
 
 		InitialGraph->SetEditorOnlyNodes(EditorOnlyNodes);
 	}
+}
+
+TSharedRef<SWidget> FMovieGraphAssetToolkit::GetDefaultGraphEditWarning() const
+{
+	// Determine if the default graph is being edited
+	bool bIsDefaultGraphBeingEdited = false;
+	const UMovieRenderPipelineProjectSettings* ProjectSettings = GetDefault<UMovieRenderPipelineProjectSettings>();
+	const TSoftObjectPtr<UMovieGraphConfig> ProjectDefaultGraph = ProjectSettings->DefaultGraph;
+	if (const UMovieGraphConfig* DefaultGraph = ProjectDefaultGraph.LoadSynchronous())
+	{
+		bIsDefaultGraphBeingEdited = (DefaultGraph == InitialGraph.Get());
+	}
+	
+	return SNew(SBorder)
+		.BorderImage(FAppStyle::GetBrush("Brushes.Warning"))
+		.BorderBackgroundColor_Lambda([]()
+		{
+			FLinearColor WarningColor = FAppStyle::GetSlateColor("Colors.Warning").GetSpecifiedColor();
+			WarningColor.A = 0.3;
+			return WarningColor;
+		})
+		.Padding(5.f)
+		.Visibility(bIsDefaultGraphBeingEdited ? EVisibility::Visible : EVisibility::Collapsed)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.Padding(0, 0, 5.f, 0)
+			.AutoWidth()
+			[
+				SNew(SImage)
+				.Image(FAppStyle::Get().GetBrush("Icons.WarningWithColor"))
+			]
+
+			+ SHorizontalBox::Slot()
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("GraphTab_EditingDefaultGraphWarning", "The default graph asset is being edited. 'Save As' to save a new graph asset."))
+				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+			]
+		];
 }
 
 FName FMovieGraphAssetToolkit::GetToolkitFName() const

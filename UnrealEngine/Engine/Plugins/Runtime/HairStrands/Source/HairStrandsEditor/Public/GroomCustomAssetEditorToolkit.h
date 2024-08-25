@@ -9,6 +9,7 @@
 #include "Toolkits/AssetEditorToolkit.h"
 #include "Widgets/SGroomEditorViewport.h"
 #include "HairStrandsInterface.h"
+#include "GroomEditorStyle.h"
 
 class FAssetThumbnailPool;
 class UGroomAsset; 
@@ -37,6 +38,8 @@ public:
 	virtual void PreviewBinding(int32 BindingIndex) = 0;
 
 	virtual int32 GetActiveBindingIndex() const =0;
+
+	virtual FGroomEditorStyle* GetSlateStyle() const { return nullptr; };
 };
 
 class HAIRSTRANDSEDITOR_API FGroomCustomAssetEditorToolkit : public IGroomCustomAssetEditorToolkit
@@ -82,6 +85,9 @@ public:
 
 	/** Return the index of the active binding. */
 	virtual int32 GetActiveBindingIndex() const override;
+
+	/** Return groom editor style. */
+	FGroomEditorStyle* GetSlateStyle() const override;
 
 private:
 
@@ -173,7 +179,8 @@ private:
 
 	bool bIsTabManagerInitialized = false;
 	int32 ActiveGroomBindingIndex = -1;
-	FDelegateHandle PropertyListenDelegate;
+	TArray<FDelegateHandle> PropertyListenDelegatesAssetChanged;
+	TArray<FDelegateHandle> PropertyListenDelegatesResourceChanged;
 	TWeakObjectPtr<UGroomAsset> GroomAsset;
 	TWeakObjectPtr<UGroomBindingAsset> GroomBindingAsset;
 	TWeakObjectPtr<UGroomBindingAssetList> GroomBindingAssetList;
@@ -183,5 +190,7 @@ private:
 	TWeakObjectPtr<UAnimationAsset> PreviewSkeletalAnimationAsset;
 
 	TSharedPtr<FAssetThumbnailPool> ThumbnailPool;
+
+	TSharedPtr<FGroomEditorStyle> GroomEditorStyle;
 };
 

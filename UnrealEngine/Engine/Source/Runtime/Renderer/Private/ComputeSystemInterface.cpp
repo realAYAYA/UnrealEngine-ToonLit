@@ -17,7 +17,7 @@ namespace ComputeSystemInterface
 		{
 			if (GRegisteredSystems[SystemIndex] == InSystem)
 			{
-				GRegisteredSystems.RemoveAtSwap(SystemIndex, 1, false);
+				GRegisteredSystems.RemoveAtSwap(SystemIndex, 1, EAllowShrinking::No);
 				break;
 			}
 		}

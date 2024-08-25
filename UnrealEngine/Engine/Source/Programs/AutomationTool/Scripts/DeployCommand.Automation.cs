@@ -55,7 +55,10 @@ namespace AutomationScripts
 					}
 					else
 					{
-						SC.StageTargetPlatform.Deploy(Params, SC);
+						if (SC.CustomDeployment == null || !SC.CustomDeployment.Deploy(Params, SC))
+						{
+							SC.StageTargetPlatform.Deploy(Params, SC);
+						}
 					}
 				}
 			}

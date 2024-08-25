@@ -30,7 +30,7 @@ namespace Chaos
 
 		VectorRegister4Float FurthestPoint = VectorMultiplyAdd(VectorAbs(XAxis), XHalfExtent, VectorMultiplyAdd(VectorAbs(YAxis), YHalfExtent, VectorMultiply(VectorAbs(ZAxis), ZHalfExtent)));
 
-		FurthestPoint = VectorMultiply(FurthestPoint, InvScale);
+		FurthestPoint = VectorMultiply(FurthestPoint, VectorAbs(InvScale));
 		MaxObb = VectorAdd(Position, FurthestPoint);
 		MinObb = VectorSubtract(Position, FurthestPoint);
 

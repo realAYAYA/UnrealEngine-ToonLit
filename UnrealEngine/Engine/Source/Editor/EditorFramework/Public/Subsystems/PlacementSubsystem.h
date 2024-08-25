@@ -125,6 +125,9 @@ public:
 
 	FSimpleMulticastDelegate& OnPlacementFactoriesRegistered();
 
+	TScriptInterface<IAssetFactoryInterface> GetAssetFactoryFromFactoryClass(UClass* InFactoryInterfaceClass) const;
+
+	UE_DEPRECATED(5.4, "This overload never worked as intended. Use the UClass* overload instead.")
 	TScriptInterface<IAssetFactoryInterface> GetAssetFactoryFromFactoryClass(TSubclassOf<UClass> InFactoryInterfaceClass) const;
 	
 	void RegisterAssetFactory(TScriptInterface<IAssetFactoryInterface> AssetFactory);

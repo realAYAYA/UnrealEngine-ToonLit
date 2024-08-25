@@ -5,14 +5,10 @@
 #include "Containers/UnrealString.h" // IWYU pragma: keep
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
-
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 #include "Microsoft/COMPointer.h"
 	#include <guiddef.h>
 	#include <RTSCom.h>
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 
 #include "IStylusState.h"

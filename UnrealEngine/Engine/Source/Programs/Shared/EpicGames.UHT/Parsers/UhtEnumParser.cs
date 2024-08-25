@@ -70,7 +70,7 @@ namespace EpicGames.UHT.Parsers
 
 					if ((topScope.HeaderParser.GetCurrentCompositeCompilerDirective() & UhtCompilerDirective.WithEditorOnlyData) != 0)
 					{
-						enumObject.IsEditorOnly = true;
+						enumObject.DefineScope |= UhtDefineScope.EditorOnlyData;
 					}
 
 					// Read base for enum class
@@ -78,7 +78,7 @@ namespace EpicGames.UHT.Parsers
 					{
 						ParseUnderlyingType(topScope, enumObject);
 
-						if (enumObject.UnderlyingType != UhtEnumUnderlyingType.Unspecified && enumObject.UnderlyingType != UhtEnumUnderlyingType.Uint8 && enumObject.MetaData.ContainsKey("BlueprintType"))
+						if (enumObject.UnderlyingType != UhtEnumUnderlyingType.Uint8 && enumObject.MetaData.ContainsKey("BlueprintType"))
 						{
 							topScope.TokenReader.LogError("Invalid BlueprintType enum base - currently only uint8 supported");
 						}

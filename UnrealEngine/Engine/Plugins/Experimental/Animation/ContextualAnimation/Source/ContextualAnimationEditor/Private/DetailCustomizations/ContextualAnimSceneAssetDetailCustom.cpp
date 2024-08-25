@@ -36,6 +36,25 @@ void FContextualAnimSceneAssetDetailCustom::CustomizeDetails(IDetailLayoutBuilde
 	IDetailCategoryBuilder& SettingsCategory = DetailBuilder.EditCategory(TEXT("Settings"));
 	SettingsCategory.SetSortOrder(0);
 
+	// Add button to update role tracks for the scene
+	SettingsCategory.AddCustomRow(FText::GetEmpty())
+		.ValueContent()
+		.VAlign(VAlign_Center)
+		.MaxDesiredWidth(250)
+		[
+			SNew(SButton).Text(LOCTEXT("UpdateRolesPointsLabel", "Update Roles"))
+			.OnClicked_Lambda([ViewModel]()
+				{
+					const FText DialogMsg = LOCTEXT("UpdateRolesPointsDialog", "Updating the roles will remove any tracks for roles that don't exist in your Roles Asset. Are you sure you want to continue?");
+					if (FMessageDialog::Open(EAppMsgType::YesNo, DialogMsg) == EAppReturnType::Yes)
+					{
+						ViewModel->UpdateRoles();
+					}
+
+					return FReply::Handled();
+				})
+		];
+
 	IDetailCategoryBuilder& Category = DetailBuilder.EditCategory(TEXT("Defaults"));
 	Category.SetCategoryVisibility(false);
 

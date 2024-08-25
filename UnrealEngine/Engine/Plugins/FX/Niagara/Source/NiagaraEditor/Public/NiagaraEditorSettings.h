@@ -330,6 +330,9 @@ struct FNiagaraViewportSharedSettings
 
 	UPROPERTY(config)
 	bool bShowMemoryInfo = false;
+
+	UPROPERTY(config)
+	bool bShowStatelessInfo = true;
 };
 
 FORCEINLINE uint32 GetTypeHash(const FNiagaraNamespaceMetadata& NamespaceMetaData)
@@ -435,10 +438,6 @@ public:
 	
 	NIAGARAEDITOR_API bool IsShowParticleCountsInViewport() const;
 	NIAGARAEDITOR_API void SetShowParticleCountsInViewport(bool bShowParticleCountsInViewport);
-	
-	NIAGARAEDITOR_API FNiagaraNewAssetDialogConfig GetNewAssetDailogConfig(FName InDialogConfigKey) const;
-
-	NIAGARAEDITOR_API void SetNewAssetDialogConfig(FName InDialogConfigKey, const FNiagaraNewAssetDialogConfig& InNewAssetDialogConfig);
 
 	NIAGARAEDITOR_API FNiagaraNamespaceMetadata GetDefaultNamespaceMetadata() const;
 	NIAGARAEDITOR_API FNiagaraNamespaceMetadata GetMetaDataForNamespaces(TArray<FName> Namespaces) const;
@@ -476,30 +475,36 @@ public:
 
 	DECLARE_DELEGATE_RetVal_OneParam(bool, FOnIsClassAllowed, const UClass* /*InClass*/);
 	DECLARE_DELEGATE_RetVal_OneParam(bool, FOnIsClassPathAllowed, const FTopLevelAssetPath& /*InClassPath*/);
-	DECLARE_DELEGATE_RetVal_OneParam(bool, FOnShouldFilterAssetByClassUsage, const FTopLevelAssetPath& /*InAssetPath*/)
+	DECLARE_DELEGATE_RetVal_OneParam(bool, FOnShouldFilterAsset, const FTopLevelAssetPath& /*InAssetPath*/)
 	
-	/** Sets a delegate that allows external code to restrict which features can be used within the niagara editor by filtering which classes are allowed. */
-	NIAGARAEDITOR_API void SetOnIsClassAllowed(const FOnIsClassAllowed& InOnIsClassAllowed);
+	/** Sets a delegate that allows external code to restrict which features can be used within the niagara editor by filtering which classes are visible in various menus.
+	 * A non-visible class might still be referenceable, and can be selected through actions as copy pasting content. */
+	NIAGARAEDITOR_API void SetOnIsClassVisible(const FOnIsClassAllowed& InOnIsClassAllowed);
 
-	/** Sets a delegate that allows external code to restrict which features can be used within the niagara editor by filtering which classes are allowed by class path. */
-	NIAGARAEDITOR_API void SetOnIsClassPathAllowed(const FOnIsClassPathAllowed& InOnIsClassPathAllowed);
+	/** Sets a delegate that allows external code to restrict which features can be used within the niagara editor by filtering which classes are actually referenceable.
+	 * A referenceable class is considered 'valid' content, but might or might not be visible in menus. */
+	NIAGARAEDITOR_API void SetOnIsClassReferenceable(const FOnIsClassAllowed& InOnIsClassAllowed);
 
 	/** Sets a delegate that allows external code to restrict which features can be used within the niagara editor by filtering which assets are allowed. */
-	NIAGARAEDITOR_API void SetOnShouldFilterAssetByClassUsage(const FOnShouldFilterAssetByClassUsage& InOnShouldFilterAssetByClassUsage);
+	NIAGARAEDITOR_API void SetOnShouldFilterAssetByClassUsage(const FOnShouldFilterAsset& InOnShouldFilterAssetByClassUsage);
 
-	/** Returns whether or not the supplied class can be used in the current editor context. */
-	NIAGARAEDITOR_API bool IsAllowedClass(const UClass* InClass) const;
+	/** Sets a delegate that allows external code to restrict what assets will show up in the Niagara Asset Browser. */
+	NIAGARAEDITOR_API void SetOnShouldFilterAssetInNiagaraAssetBrowser(const FOnShouldFilterAsset& InOnShouldFilterAssetByClassUsage);
 
-	/** Returns whether or not the class referenced by the supplied class path can be used in the current editor context. */
-	NIAGARAEDITOR_API bool IsAllowedClassPath(const FTopLevelAssetPath& InClassPath) const;
+	/** Returns whether or not the supplied class is visible for UI purposes in the current editor context. */
+	NIAGARAEDITOR_API bool IsVisibleClass(const UClass* InClass) const;
+
+	/** Returns whether or not the supplied class is valid to be used in the current editor context. */
+	NIAGARAEDITOR_API bool IsReferenceableClass(const UClass* InClass) const;
 
 	/** Returns whether or not the supplied niagara type definition can be used in the current editor context. */
-	NIAGARAEDITOR_API bool IsAllowedTypeDefinition(const FNiagaraTypeDefinition& InTypeDefinition) const;
+	NIAGARAEDITOR_API bool IsVisibleTypeDefinition(const FNiagaraTypeDefinition& InTypeDefinition) const;
 
 	NIAGARAEDITOR_API FAssetRegistryTag CreateClassUsageAssetRegistryTag(const UObject* SourceObject) const;
 
 	NIAGARAEDITOR_API bool IsAllowedAssetByClassUsage(const FAssetData& InAssetData) const;
 	NIAGARAEDITOR_API bool IsAllowedAssetObjectByClassUsage(const UObject& InAssetObject) const;
+	NIAGARAEDITOR_API bool IsAllowedAssetInNiagaraAssetBrowser(const FAssetData& InAssetData) const;
 
 	NIAGARAEDITOR_API bool GetUpdateStackValuesOnCommitOnly() const;
 
@@ -508,6 +513,8 @@ public:
 	
 	NIAGARAEDITOR_API float GetExposureValue() const;
 	NIAGARAEDITOR_API void SetAutoExposureValue(bool bInUseAutoExposure);
+
+	NIAGARAEDITOR_API bool GetForceSilentLoadingOfCachedAssets() const { return bForceSilentLoadingOfCachedAssets; }
 	
 private:
 	NIAGARAEDITOR_API bool IsAllowedObjectByClassUsageInternal(const UObject& InObject, TSet<const UObject*>& CheckedObjects) const;
@@ -564,9 +571,6 @@ private:
 
 	/** This is built using PlaybackSpeeds, populated whenever it is accessed using GetPlaybackSpeeds() */
 	mutable TOptional<TArray<float>> CachedPlaybackSpeeds;
-	
-	UPROPERTY(config)
-	TMap<FName, FNiagaraNewAssetDialogConfig> NewAssetDialogConfigMap;
 
 	UPROPERTY(config)
 	TMap<FString, FString> HLSLKeywordReplacements;
@@ -591,11 +595,15 @@ private:
 	
 	UPROPERTY(config)
 	TArray<FNiagaraParameterPanelSectionStorage> SystemParameterPanelSectionData;
-	
 
-	FOnIsClassAllowed OnIsClassAllowedDelegate;
+	UPROPERTY(config)
+	bool bForceSilentLoadingOfCachedAssets;
+	
+	FOnIsClassAllowed OnIsClassVisibleDelegate;
+	FOnIsClassAllowed OnIsClassReferenceableDelegate;
 	FOnIsClassPathAllowed OnIsClassPathAllowedDelegate;
-	FOnShouldFilterAssetByClassUsage OnShouldFilterAssetByClassUsage;
+	FOnShouldFilterAsset OnShouldFilterAssetByClassUsage;
+	FOnShouldFilterAsset OnShouldFilterAssetInNiagaraAssetBrowser;
 
 	TArray<UClass*> TrackedUsageBaseClasses;
 
@@ -608,4 +616,6 @@ public:
 	NIAGARAEDITOR_API void SetShowGpuTickInformation(bool bShowGpuTickInformation);
 	NIAGARAEDITOR_API bool IsShowMemoryInfo() const;
 	NIAGARAEDITOR_API void SetShowMemoryInfo(bool bInShowInfo);
+	NIAGARAEDITOR_API bool IsShowStatelessInfo() const;
+	NIAGARAEDITOR_API void SetShowStatelessInfo(bool bInShowInfo);
 };

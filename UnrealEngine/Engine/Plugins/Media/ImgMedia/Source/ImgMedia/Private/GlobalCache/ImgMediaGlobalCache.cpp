@@ -65,7 +65,7 @@ void FImgMediaGlobalCache::AddFrame(const FString& FileName, const FName& Sequen
 	FScopeLock Lock(&CriticalSection);
 
 	// Make sure we have enough space in the cache to add this new frame.
-	SIZE_T FrameSize = Frame->Info.UncompressedSize;
+	SIZE_T FrameSize = Frame->GetUncompressedSize();
 	if (HasMipMaps)
 	{
 		FrameSize = (FrameSize * 4) / 3;

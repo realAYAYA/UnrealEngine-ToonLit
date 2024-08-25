@@ -130,7 +130,32 @@ public:
 		const FOverlappingCorners& OverlappingCorners);
 
 	/** Create some UVs from the specified mesh description data. */
+	UE_DEPRECATED(5.4, "Please use GenerateUV() instead.")
 	static STATICMESHDESCRIPTION_API bool GenerateUniqueUVsForStaticMesh(const FMeshDescription& MeshDescription, int32 TextureResolution, bool bMergeIdenticalMaterials, TArray<FVector2D>& OutTexCoords);
+		
+	enum class EGenerateUVMethod
+	{
+		Default,
+		Legacy,
+		UVAtlas,
+		XAtlas,		
+		PatchBuilder
+	};
+
+	struct FGenerateUVOptions
+	{
+		// Expected texture resolution
+		int32 TextureResolution = 512;
+
+		// Wether to fold triangles sharing the same UVs & vertex colors in the generated UV mapping.
+		bool bMergeTrianglesWithIdenticalAttributes = false;
+
+		// Method to use when generating UVs
+		EGenerateUVMethod UVMethod = EGenerateUVMethod::Default;
+	};
+
+	/** Generate UV coordinates from the specified mesh description data. */
+	static STATICMESHDESCRIPTION_API bool GenerateUV(const FMeshDescription& MeshDescription, const FGenerateUVOptions& Options, TArray<FVector2D>& OutTexCoords);
 
 	/** Add a UV channel to the MeshDescription. */
 	static STATICMESHDESCRIPTION_API bool AddUVChannel(FMeshDescription& MeshDescription);
@@ -180,9 +205,12 @@ public:
 	/** Flip the facing for a set of input polygons. */
 	static STATICMESHDESCRIPTION_API void FlipPolygons(FMeshDescription& MeshDescription);
 
-	/** Transforms the MeshDescription data using the provided transform. */
-	static STATICMESHDESCRIPTION_API void ApplyTransform(FMeshDescription& MeshDescription, const FTransform& Transform);
-	static STATICMESHDESCRIPTION_API void ApplyTransform(FMeshDescription& MeshDescription, const FMatrix& Transform);	
+	/** 
+	 * Transforms the MeshDescription data using the provided transform.
+	 * @param bApplyCorrectNormalTransform Whether to correctly transform normals and tangents. Otherwise, will match the UE renderer and transform them without scale.
+	 */
+	static STATICMESHDESCRIPTION_API void ApplyTransform(FMeshDescription& MeshDescription, const FTransform& Transform, bool bApplyCorrectNormalTransform = false);
+	static STATICMESHDESCRIPTION_API void ApplyTransform(FMeshDescription& MeshDescription, const FMatrix& Transform, bool bApplyCorrectNormalTransform = false);
 
 	/**
 	 * Return the number of unique vertices, unique vertices are the result of welding all similar vertex instances (position, UV, tangent space, color,...)
@@ -201,4 +229,7 @@ public:
 		, FMeshDescription& DestinationMeshDescription
 		, TOptional<const FString> UnmatchMaterialNameWarning
 		, TOptional<const FString> DestinationPolygonGroupCountDifferFromSource_Msg);
+
+	/** Verify the mesh data does not contain any NAN or INF float value, if such a case happen the value are set to zero or identity for matrix or quat. */
+	static STATICMESHDESCRIPTION_API bool ValidateAndFixData(FMeshDescription& MeshDescription, const FString& DebugName);
 };

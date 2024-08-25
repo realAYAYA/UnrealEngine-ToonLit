@@ -91,8 +91,16 @@ namespace UE::UsdGroomConversion::Private
 	};
 
 	/** Convert the given primvar to hair attribute in the proper scope */
-	template <typename USDType, typename UEType>
-	void ConvertPrimvar(const pxr::UsdGeomPrimvar& Primvar, const pxr::UsdTimeCode& TimeCode, int32 StartStrandID, int32 NumStrands, int32 StartVertexID, int32 NumVertices, FHairDescription& HairDescription)
+	template<typename USDType, typename UEType>
+	void ConvertPrimvar(
+		const pxr::UsdGeomPrimvar& Primvar,
+		const pxr::UsdTimeCode& TimeCode,
+		int32 StartStrandID,
+		int32 NumStrands,
+		int32 StartVertexID,
+		int32 NumVertices,
+		FHairDescription& HairDescription
+	)
 	{
 		FString PrimvarName = UsdToUnreal::ConvertToken(Primvar.GetPrimvarName());
 		FName AttributeName(*PrimvarName);
@@ -128,7 +136,9 @@ namespace UE::UsdGroomConversion::Private
 			bool bIsConstantValue = Interpolation == pxr::UsdGeomTokens->constant;
 			for (int32 StrandIndex = 0; StrandIndex < NumStrands; ++StrandIndex)
 			{
-				StrandAttributeRef[FStrandID(StartStrandID + StrandIndex)] = TConverter<UEType>::ConvertType(Values[bIsConstantValue ? 0 : StrandIndex]);
+				StrandAttributeRef[FStrandID(StartStrandID + StrandIndex)] = TConverter<UEType>::ConvertType(
+					Values[bIsConstantValue ? 0 : StrandIndex]
+				);
 			}
 		}
 		else if (Interpolation == pxr::UsdGeomTokens->vertex || NumValues == NumVertices)
@@ -148,7 +158,15 @@ namespace UE::UsdGroomConversion::Private
 	}
 
 	/** Convert the given primvars to hair attributes */
-	void ConvertPrimvars(const std::vector<pxr::UsdGeomPrimvar>& Attributes, const pxr::UsdTimeCode& TimeCode, int32 StartStrandID, int32 NumStrands, int32 StartVertexID, int32 NumVertices, FHairDescription& HairDescription)
+	void ConvertPrimvars(
+		const std::vector<pxr::UsdGeomPrimvar>& Attributes,
+		const pxr::UsdTimeCode& TimeCode,
+		int32 StartStrandID,
+		int32 NumStrands,
+		int32 StartVertexID,
+		int32 NumVertices,
+		FHairDescription& HairDescription
+	)
 	{
 		for (const pxr::UsdGeomPrimvar& Primvar : Attributes)
 		{
@@ -208,11 +226,17 @@ namespace UE::UsdGroomConversion::Private
 			}
 		}
 	}
-}
+}	 // namespace UE::UsdGroomConversion::Private
 
 namespace UsdToUnreal
 {
-	bool ConvertGroomHierarchy(const pxr::UsdPrim& Prim, const pxr::UsdTimeCode& TimeCode, const FTransform& ParentTransform, FHairDescription& HairDescription, FGroomAnimationInfo* AnimInfo)
+	bool ConvertGroomHierarchy(
+		const pxr::UsdPrim& Prim,
+		const pxr::UsdTimeCode& TimeCode,
+		const FTransform& ParentTransform,
+		FHairDescription& HairDescription,
+		FGroomAnimationInfo* AnimInfo
+	)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(UsdToUnreal::ConvertGroomHierarchy);
 
@@ -296,11 +320,14 @@ namespace UsdToUnreal
 				pxr::TfToken Interpolation = Curves.GetWidthsInterpolation();
 
 				const float UEMetersPerUnit = 0.01f;
-				const float Scale = !FMath::IsNearlyEqual(StageInfo.MetersPerUnit, UEMetersPerUnit) ? StageInfo.MetersPerUnit / UEMetersPerUnit : 1.0f;
+				const float Scale = !FMath::IsNearlyEqual(StageInfo.MetersPerUnit, UEMetersPerUnit) ? StageInfo.MetersPerUnit / UEMetersPerUnit
+																									: 1.0f;
 				if (Interpolation == pxr::UsdGeomTokens->uniform || Interpolation == pxr::UsdGeomTokens->constant)
 				{
 					const float ConstWidth = WidthsArray[0] * Scale;
-					TStrandAttributesRef<float> WidthStrandAttributeRef = HairDescription.StrandAttributes().GetAttributesRef<float>(HairAttribute::Strand::Width);
+					TStrandAttributesRef<float> WidthStrandAttributeRef = HairDescription.StrandAttributes().GetAttributesRef<float>(
+						HairAttribute::Strand::Width
+					);
 					if (!WidthStrandAttributeRef.IsValid())
 					{
 						HairDescription.StrandAttributes().RegisterAttribute<float>(HairAttribute::Strand::Width);
@@ -309,12 +336,16 @@ namespace UsdToUnreal
 
 					for (int32 Index = 0; Index < NumCurves; ++Index)
 					{
-						WidthStrandAttributeRef[FStrandID(StartStrandID + Index)] = Interpolation == pxr::UsdGeomTokens->constant ? ConstWidth : WidthsArray[Index] * Scale;
+						WidthStrandAttributeRef[FStrandID(StartStrandID + Index)] = Interpolation == pxr::UsdGeomTokens->constant
+																						? ConstWidth
+																						: WidthsArray[Index] * Scale;
 					}
 				}
 				else if (Interpolation == pxr::UsdGeomTokens->vertex)
 				{
-					TVertexAttributesRef<float> VertexAttributeRef = HairDescription.VertexAttributes().GetAttributesRef<float>(HairAttribute::Vertex::Width);
+					TVertexAttributesRef<float> VertexAttributeRef = HairDescription.VertexAttributes().GetAttributesRef<float>(
+						HairAttribute::Vertex::Width
+					);
 					if (!VertexAttributeRef.IsValid())
 					{
 						HairDescription.VertexAttributes().RegisterAttribute<float>(HairAttribute::Vertex::Width);
@@ -333,7 +364,15 @@ namespace UsdToUnreal
 			std::vector<pxr::UsdGeomPrimvar> Primvars = PrimvarsAPI.GetPrimvars();
 			if (!Primvars.empty())
 			{
-				UE::UsdGroomConversion::Private::ConvertPrimvars(Primvars, TimeCode, StartStrandID, NumCurves, StartVertexID, NumPoints, HairDescription);
+				UE::UsdGroomConversion::Private::ConvertPrimvars(
+					Primvars,
+					TimeCode,
+					StartStrandID,
+					NumCurves,
+					StartVertexID,
+					NumPoints,
+					HairDescription
+				);
 			}
 
 			// Groom-scope attributes are not currently extracted since they are not strictly necessary
@@ -367,6 +406,6 @@ namespace UsdToUnreal
 
 		return bSuccess;
 	}
-}
+}	 // namespace UsdToUnreal
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

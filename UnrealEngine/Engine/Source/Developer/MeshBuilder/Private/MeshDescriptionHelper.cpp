@@ -46,6 +46,9 @@ void FMeshDescriptionHelper::SetupRenderMeshDescription(UObject* Owner, FMeshDes
 		RenderMeshDescription.Compact(Remappings);
 	}
 
+	//Make sure we do not have nan or infinite float in the mesh description data
+	FStaticMeshOperations::ValidateAndFixData(RenderMeshDescription, Owner->GetName());
+
 	//This function make sure the Polygon Normals Tangents Binormals are computed and also remove degenerated triangle from the render mesh description.
 	FStaticMeshOperations::ComputeTriangleTangentsAndNormals(RenderMeshDescription, ComparisonThreshold, *Owner->GetPathName());
 

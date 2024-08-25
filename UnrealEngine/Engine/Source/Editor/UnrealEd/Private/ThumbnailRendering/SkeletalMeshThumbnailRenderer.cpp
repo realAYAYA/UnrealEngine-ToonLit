@@ -50,7 +50,7 @@ bool USkeletalMeshThumbnailRenderer::CanVisualizeAsset(UObject* Object)
 		return false;
 	}
 	USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(Object);
-	const bool bValidRenderData = SkeletalMesh && !SkeletalMesh->IsCompiling() && SkeletalMesh->GetResourceForRendering();
+	const bool bValidRenderData = SkeletalMesh && SkeletalMesh->IsReadyToRenderInThumbnail();
 	return bValidRenderData;
 }
 

@@ -65,12 +65,11 @@ public:
 	//~ Begin URCBehaviour interface
 	virtual void Initialize() override;
 
-	/** Execute the behaviour */
-	virtual void Execute() override;
-
 	/** Duplicates an Action belonging to us into a given target behaviour*/
 	virtual URCAction* DuplicateAction(URCAction* InAction, URCBehaviour* InBehaviour) override;
 
+	/** Called when an action value changed */
+	virtual void NotifyActionValueChanged(URCAction* InChangedAction) override;
 	//~ End URCBehaviour interface
 
 	/** ~ OnActionAdded ~
@@ -82,14 +81,18 @@ public:
 	URCAction* AddConditionalAction(const TSharedRef<const FRemoteControlField> InRemoteControlField, const ERCBehaviourConditionType InConditionType, const TObjectPtr<URCVirtualPropertySelfContainer> InComparand);
 
 	/** Whether we can create an action pertaining to a given remote control field for the current behaviour */
-	virtual bool CanHaveActionForField(const TSharedPtr<FRemoteControlField> InRemoteControlField) const override
-	{
-		return true; // Conditional Behaviour can support multiple Action rows for a single Remote Control Field
-	}
+	virtual bool CanHaveActionForField(const TSharedPtr<FRemoteControlField> InRemoteControlField) const override;
 
 	/** User-friendly text representation of a condition enum. Used to display comparator info in the Actions table */
 	FText GetConditionTypeAsText(ERCBehaviourConditionType ConditionType) const;
-	
+
+protected:
+	//~ Begin URCBehaviour interface
+	/** Execute all the action if not provided a valid Action otherwise will only execute the given action */
+	virtual void ExecuteInternal(const TSet<TObjectPtr<URCAction>>& InActionsToExecute) override;
+	//~ End URCBehaviour interface
+
+public:
 	/** Data storage for Actions and related Conditions; stored as a mapping of Action object and associated condition data
 	*  Each Action is associated with a unique condition (for the Conditional Behaviour) */
 	UPROPERTY()

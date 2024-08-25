@@ -35,11 +35,6 @@
 #include "Subsystems/SubsystemCollection.h"
 #endif
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "DSP/SpectrumAnalyzer.h"
-#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-
-
 /**
  * Forward declares
  */
@@ -948,12 +943,6 @@ public:
 	*/
 	ENGINE_API void UnregisterSoundClass(USoundClass* SoundClass);
 
-	/* Initialized audio buses marked as default that are to be enabled for the duration of the application. */
-	virtual void InitDefaultAudioBuses() {}
-
-	/* Shutdown all audio buses marked as default. */
-	virtual void ShutdownDefaultAudioBuses() {}
-
 	/** Initializes sound submixes. */
 	virtual void InitSoundSubmixes() {}
 
@@ -961,56 +950,32 @@ public:
 	virtual void RegisterSoundSubmix(USoundSubmixBase* SoundSubmix, bool bInit) {}
 
 	/** Unregisters the sound submix */
-	virtual void UnregisterSoundSubmix(const USoundSubmixBase* SoundSubmix) {}
+	virtual void UnregisterSoundSubmix(const USoundSubmixBase* SoundSubmix, const bool bReparentChildren) {}
 
-	/**
-	 * Registers the submix buffer listener with the given submix.
-	 * A nullptr for SoundSubmix will register the listener with the master submix.
-	*/
+	ENGINE_API virtual USoundSubmix& GetMainSubmixObject() const;
+
+	UE_DEPRECATED(5.4, "Use RegisterSubmixBufferListener version that requires a shared reference to a listener and provide explicit reference to a submix: use GetMainSubmixObject to register with the Main Output Submix (rather than nullptr for safety), and instantiate buffer listener via the shared pointer API.")
 	ENGINE_API virtual void RegisterSubmixBufferListener(ISubmixBufferListener* InSubmixBufferListener, USoundSubmix* SoundSubmix = nullptr);
 
-	/**
-	 * Unregisters the submix buffer listener with the given submix.
-	 * A nullptr for SoundSubmix will unregister the listener with the master submix.
-	*/
+	UE_DEPRECATED(5.4, "Use UnregisterSubmixBufferListener version that requires a shared reference to a listener and provide explicit reference to a submix: use GetMainSubmixObject to unregister from the Main Output Submix (rather than nullptr for safety), and instantiate buffer listener via the shared pointer API.")
 	ENGINE_API virtual void UnregisterSubmixBufferListener(ISubmixBufferListener* InSubmixBufferListener, USoundSubmix* SoundSubmix = nullptr);
 
+	/**
+	 * Registers the provided submix buffer listener with the given submix.
+	*/
+	ENGINE_API virtual void RegisterSubmixBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> InSubmixBufferListener, USoundSubmix& SoundSubmix);
+
+	/**
+	 * Unregisters the provided submix buffer listener with the given submix.
+	*/
+	ENGINE_API virtual void UnregisterSubmixBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> InSubmixBufferListener, USoundSubmix& SoundSubmix);
+
+
 	ENGINE_API virtual Audio::FPatchOutputStrongPtr AddPatchForSubmix(uint32 InObjectId, float InPatchGain);
-
-	virtual void StartAudioBus(uint32 InAudioBusId, int32 InNumChannels, bool bInIsAutomatic)
-	{
-	}
-
-	virtual void StopAudioBus(uint32 InAudioBusId)
-	{
-	}
-
-	virtual bool IsAudioBusActive(uint32 InAudioBusId) const
-	{
-		return false;
-	}
-
-	UE_DEPRECATED(5.2, "AddPatchForAudioBus is deprecated.  Use AddPatchOutputForAudioBus.")
-	ENGINE_API virtual Audio::FPatchOutputStrongPtr AddPatchForAudioBus(uint32 InAudioBusId, float InPatchGain = 1.0f);
-
-	UE_DEPRECATED(5.2, "AddPatchForAudioBus_GameThread is deprecated.  Use AddPatchOutputForAudioBus.")
-	ENGINE_API virtual Audio::FPatchOutputStrongPtr AddPatchForAudioBus_GameThread(uint32 InAudioBusId, float InPatchGain = 1.0f);
-
-	UE_DEPRECATED(5.2, "This overload of AddPatchInputForAudioBus is deprecated.  Use the overload that takes the number of frames and channels as parameters.")
-	virtual void AddPatchInputForAudioBus(const Audio::FPatchInput& InPatchInput, uint32 InAudioBusId, float InPatchGain = 1.0f)
-	{
-	}
-
-	UE_DEPRECATED(5.2, "AddPatchInputForAudioBus_GameThread is deprecated.  Use AddPatchInputForAudioBus.")
-	virtual void AddPatchInputForAudioBus_GameThread(const Audio::FPatchInput& InPatchInput, uint32 InAudioBusId, float InPatchGain = 1.0f)
-	{
-	}
 
 	ENGINE_API virtual Audio::FPatchInput AddPatchInputForAudioBus(uint32 InAudioBusId, int32 InFrames, int32 InChannels, float InGain = 1.f);
 
 	ENGINE_API virtual Audio::FPatchOutputStrongPtr AddPatchOutputForAudioBus(uint32 InAudioBusId, int32 InFrames, int32 InChannels, float InGain = 1.f);
-
-	virtual void InitSoundEffectPresets() {}
 
 	/**
 	* Gets the current properties of a sound class, if the sound class hasn't been registered, then it returns nullptr
@@ -1164,9 +1129,6 @@ public:
 	 */
 	ENGINE_API void DeactivateReverbEffect(FName TagName);
 
-	UE_DEPRECATED(5.2, "GetRuntimeFormat is now deprecated. Please call SoundWave::GetRuntimeFormat() instead")
-	virtual FName GetRuntimeFormat(const USoundWave* SoundWave) const = 0;
-
 	/** Whether this SoundWave has an associated info class to decompress it */
 	virtual bool HasCompressedAudioInfoClass(USoundWave* SoundWave) { return false; }
 
@@ -1181,13 +1143,6 @@ public:
 	{
 		return false;
 	}
-
-	/** Creates a Compressed audio info class suitable for decompressing this SoundWave */
-	UE_DEPRECATED(5.2, "CreateCompressedAudioInfo is now deprecated. Please use IAudioInfoFactory::Create() instead")
-	virtual ICompressedAudioInfo* CreateCompressedAudioInfo(const USoundWave* SoundWave) const { return nullptr; }
-	
-	UE_DEPRECATED(5.2, "CreateCompressedAudioInfo is now deprecated. Please use IAudioInfoFactory::Create() instead")
-	virtual ICompressedAudioInfo* CreateCompressedAudioInfo(const FSoundWaveProxyPtr& SoundWave) const { return nullptr; }
 
 	/**
 	 * Check for errors and output a human readable string
@@ -1894,6 +1849,11 @@ public:
 	/** Returns the audio clock of the audio device. Not supported on all platforms. */
 	double GetAudioClock() const { return AudioClock; }
 
+	/** Returns the audio clock interploated between audio device callbacks to provide a smoothed value.
+	 *  Default implementation does not interpolate.
+	 */
+	virtual double GetInterpolatedAudioClock() const { return GetAudioClock(); }
+
 	ENGINE_API void AddVirtualLoop(const FAudioVirtualLoop& InVirtualLoop);
 
 	bool AreStartupSoundsPreCached() const { return bStartupSoundsPreCached; }
@@ -2025,6 +1985,7 @@ public:
 		int32 MaxChannelsSupportedBySpatializationPlugin = 1;
 		uint8 bSpatializationIsExternalSend:1;
 		uint8 bIsInitialized:1;
+		uint8 bReturnsToSubmixGraph:1;
 	};
 
 	UE_DEPRECATED(5.1, "Do not access this member directly, it is not used. Call GetSpatializationPluginInterface() instead.")

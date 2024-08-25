@@ -122,7 +122,7 @@ enum class EStandardToolContextMaterials
 
 /** Types of coordinate systems that a Tool/Gizmo might use */
 UENUM()
-enum class EToolContextCoordinateSystem
+enum class EToolContextCoordinateSystem : uint8
 {
 	/** World space coordinate system */
 	World = 0,
@@ -264,7 +264,7 @@ enum class ESelectedObjectsModificationType
 
 
 /** Represents a change to a set of selected Actors and Components */
-struct FSelectedOjectsChangeList
+struct FSelectedObjectsChangeList
 {
 	/** How should this list be interpreted in the context of a larger selection set */
 	ESelectedObjectsModificationType ModificationType;
@@ -273,6 +273,9 @@ struct FSelectedOjectsChangeList
 	/** List of Componets */
 	TArray<UActorComponent*> Components;
 };
+
+UE_DEPRECATED(5.4, "Use FSelectedObjectsChangeList instead")
+typedef FSelectedObjectsChangeList FSelectedOjectsChangeList;
 
 
 /**
@@ -314,8 +317,8 @@ public:
 
 	/**
 	 * Insert an FChange into the transaction history in the current Context. 
-	 * This cannot be called between Begin/EndUndoTransaction, the FChange should be 
-	 * automatically inserted into a Transaction.
+	 * It is safe but not necessary to call this between Begin/EndUndoTransaction;
+	 * the FChange will be automatically inserted into a Transaction.
 	 * @param TargetObject The UObject this Change is applied to
 	 * @param Change The Change implementation
 	 * @param Description text description of the transaction that could be shown to user
@@ -329,7 +332,7 @@ public:
 	 * @param SelectionChange desired modification to current selection
 	 * @return true if the selection change could be applied
 	 */
-	virtual bool RequestSelectionChange(const FSelectedOjectsChangeList& SelectionChange) = 0;
+	virtual bool RequestSelectionChange(const FSelectedObjectsChangeList& SelectionChange) = 0;
 
 };
 

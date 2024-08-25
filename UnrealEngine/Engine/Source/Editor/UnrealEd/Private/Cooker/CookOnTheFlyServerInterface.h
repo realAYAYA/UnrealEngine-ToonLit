@@ -52,15 +52,17 @@ public:
 	/** Returns the cooker sandbox directory path. */
 	virtual FString GetSandboxDirectory() const = 0;
 	
-	/**
-	 * Remove platform from the cook-on-the-fly session.
-	 *
-	 * @param PlatformName The platform name.
-	 */
-	virtual void RemovePlatform(const FName& PlatformName) = 0;
+	/** Request cooker set up and be ready to cook PlatformName. */
+	virtual const ITargetPlatform* AddPlatform(FName PlatformName, bool& bOutAlreadyInitialized) = 0;
+
+	/** Remove platform from the cook-on-the-fly session. */
+	virtual void RemovePlatform(FName PlatformName) = 0;
+
+	/** Report whether the current thread is the cooker's scheduler thread. */
+	virtual bool IsSchedulerThread() const = 0;
 
 	/**
-	 * Returns all unsolicited files that has been produced has a result of a cook request.
+	 * Returns all unsolicited files that have been produced as a result of a cook request.
 	 *
 	 * @param PlatformName The platform name.
 	 * @param Filename The filename.
@@ -103,8 +105,11 @@ public:
 
 	virtual void Tick() = 0;
 
-	/** Shutdown the reques tmanager. */
+	/** Shutdown the request manager. */
 	virtual void Shutdown() = 0;
+
+	/** Called when cooker has completed setup for a platform and the AssetRegistry is available */
+	virtual void OnSessionStarted(FName PlatformName, bool bFirstSessionInThisProcess) {}
 
 	/** Called when a new package is generated */
 	virtual void OnPackageGenerated(const FName& PackageName) = 0;

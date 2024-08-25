@@ -5,7 +5,9 @@
 #include "Engine/Engine.h"
 #include "EngineLogs.h"
 #include "EngineModule.h"
+#include "HAL/LowLevelMemStats.h"
 #include "Rendering/NaniteStreamingManager.h"
+#include "Rendering/RayTracingGeometryManager.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "EngineUtils.h"
 #include "Engine/MapBuildDataRegistry.h"
@@ -27,6 +29,8 @@
 #include "Stats/StatsTrace.h"
 
 #include "ComponentRecreateRenderStateContext.h"
+#include "StaticMeshSceneProxyDesc.h"
+#include "InstancedStaticMeshSceneProxyDesc.h"
 
 #if WITH_EDITOR
 #include "DerivedDataCache.h"
@@ -53,22 +57,29 @@ DECLARE_LLM_MEMORY_STAT(TEXT("Nanite"), STAT_NaniteLLM, STATGROUP_LLMFULL);
 DECLARE_LLM_MEMORY_STAT(TEXT("Nanite"), STAT_NaniteSummaryLLM, STATGROUP_LLM);
 LLM_DEFINE_TAG(Nanite, NAME_None, NAME_None, GET_STATFNAME(STAT_NaniteLLM), GET_STATFNAME(STAT_NaniteSummaryLLM));
 
-DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Total Instances"), STAT_NaniteInstanceCount, STATGROUP_Nanite);
-DECLARE_MEMORY_STAT(TEXT("Nanite Proxy Instance Memory"), STAT_ProxyInstanceMemory, STATGROUP_Nanite);
-
-DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Dynamic Data Instances"), STAT_InstanceHasDynamicCount, STATGROUP_Nanite);
-DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("LMSM Data Instances"), STAT_InstanceHasLMSMBiasCount, STATGROUP_Nanite);
-DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Custom Data Instances"), STAT_InstanceHasCustomDataCount, STATGROUP_Nanite);
-DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Random Data Instances"), STAT_InstanceHasRandomCount, STATGROUP_Nanite);
-DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Local Bounds Instances"), STAT_InstanceHasLocalBounds, STATGROUP_Nanite);
-DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("Hierarchy Offset Instances"), STAT_InstanceHasHierarchyOffset, STATGROUP_Nanite);
-
-// TODO: Heavily work in progress / experimental - do not use!
 static TAutoConsoleVariable<int32> CVarNaniteAllowComputeMaterials(
 	TEXT("r.Nanite.AllowComputeMaterials"),
-	0, // Off by default
-	TEXT("Whether to enable support for (highly experimental) Nanite compute materials"),
+	1,
+	TEXT("Whether to enable support for Nanite compute materials"),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly);
+
+static TAutoConsoleVariable<int32> CVarNaniteAllowLegacyMaterials(
+	TEXT("r.Nanite.AllowLegacyMaterials"),
+	1,
+	TEXT("Whether to enable support for Nanite legacy materials"),
+	ECVF_RenderThreadSafe | ECVF_ReadOnly);
+
+static TAutoConsoleVariable<int32> CVarNaniteUseComputeMaterials(
+	TEXT("r.Nanite.ComputeMaterials"),
+	1,
+	TEXT("Whether to enable Nanite compute materials"),
+	FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* InVariable)
+	{
+		// Force recaching of Nanite draw commands when toggled.
+		FGlobalComponentRecreateRenderStateContext Context;
+	}),
+	ECVF_RenderThreadSafe
+);
 
 static TAutoConsoleVariable<int32> CVarNaniteAllowTessellation(
 	TEXT("r.Nanite.AllowTessellation"),
@@ -78,8 +89,8 @@ static TAutoConsoleVariable<int32> CVarNaniteAllowTessellation(
 
 static TAutoConsoleVariable<int32> CVarNaniteAllowSplineMeshes(
 	TEXT("r.Nanite.AllowSplineMeshes"),
-	0, // Off by default
-	TEXT("Whether to enable support for (highly experimental) Nanite spline meshes"),
+	1,
+	TEXT("Whether to enable support for Nanite spline meshes"),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly);
 
 int32 GNaniteAllowMaskedMaterials = 1;
@@ -91,14 +102,6 @@ FAutoConsoleVariableRef CVarNaniteAllowMaskedMaterials(
 	{
 		FGlobalComponentRecreateRenderStateContext Context;
 	}),
-	ECVF_RenderThreadSafe
-);
-
-int32 GNaniteOptimizedRelevance = 1;
-FAutoConsoleVariableRef CVarNaniteOptimizedRelevance(
-	TEXT("r.Nanite.OptimizedRelevance"),
-	GNaniteOptimizedRelevance,
-	TEXT("Whether to optimize Nanite relevance (outside of editor)."),
 	ECVF_RenderThreadSafe
 );
 
@@ -116,15 +119,6 @@ static FAutoConsoleVariableRef CVarNaniteRayTracingMode(
 	ECVF_RenderThreadSafe
 );
 
-#define VF_NANITE_PROCEDURAL_INTERSECTOR 1
-
-static int32 GNaniteRaytracingProceduralPrimitive = 0;
-static FAutoConsoleVariableRef CVarNaniteRaytracingProceduralPrimitive(
-	TEXT("r.RayTracing.Nanite.ProceduralPrimitive"),
-	GNaniteRaytracingProceduralPrimitive,
-	TEXT("Whether to raytrace nanite meshes using procedural primitives instead of a proxy."),
-	ECVF_RenderThreadSafe | ECVF_ReadOnly);
-
 int32 GNaniteCustomDepthEnabled = 1;
 static FAutoConsoleVariableRef CVarNaniteCustomDepthStencil(
 	TEXT("r.Nanite.CustomDepth"),
@@ -138,11 +132,6 @@ namespace Nanite
 ERayTracingMode GetRayTracingMode()
 {
 	return (ERayTracingMode)GNaniteRayTracingMode;
-}
-
-bool GetSupportsRayTracingProceduralPrimitive(EShaderPlatform InShaderPlatform)
-{
-	return GNaniteRaytracingProceduralPrimitive && VF_NANITE_PROCEDURAL_INTERSECTOR && FDataDrivenShaderPlatformInfo::GetSupportsRayTracingProceduralPrimitive(InShaderPlatform);
 }
 
 bool GetSupportsCustomDepthRendering()
@@ -236,7 +225,7 @@ void FResources::Serialize(FArchive& Ar, UObject* Owner, bool bCooked)
 
 	// Note: this is all derived data, native versioning is not needed, but be sure to bump NANITE_DERIVEDDATA_VER when modifying!
 	FStripDataFlags StripFlags( Ar, 0 );
-	if( !StripFlags.IsDataStrippedForServer() )
+	if( !StripFlags.IsAudioVisualDataStripped() )
 	{
 		uint32 StoredResourceFlags;
 		if (Ar.IsSaving() && bCooked)
@@ -434,6 +423,7 @@ void FVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 bool FVertexFactory::ShouldCompilePermutation(const FVertexFactoryShaderPermutationParameters& Parameters)
 {
 	bool bShouldCompile =
+		NaniteLegacyMaterialsSupported() &&
 		(Parameters.MaterialParameters.bIsUsedWithNanite || Parameters.MaterialParameters.bIsSpecialEngineMaterial) &&
 		IsSupportedMaterialDomain(Parameters.MaterialParameters.MaterialDomain) &&
 		IsSupportedBlendMode(Parameters.MaterialParameters) &&
@@ -465,8 +455,12 @@ void FVertexFactory::ModifyCompilationEnvironment(const FVertexFactoryShaderPerm
 			// frequently causes occupancy issues, we may want to consider ways to split the spline meshes into their own
 			// shading bin and permute the PS.
 			OutEnvironment.SetDefine(TEXT("USE_SPLINEDEFORM"), 1);
+			OutEnvironment.SetDefine(TEXT("USE_SPLINE_MESH_SCENE_RESOURCES"), UseSplineMeshSceneResources(Parameters.Platform));
 		}
 	}
+
+	OutEnvironment.CompilerFlags.Add(CFLAG_ForceDXC);
+	OutEnvironment.CompilerFlags.Add(CFLAG_HLSL2021);
 }
 
 void FVertexFactory::GetPSOPrecacheVertexFetchElements(EVertexInputStreamType VertexInputStreamType, FVertexDeclarationElementList& Elements)
@@ -482,6 +476,7 @@ IMPLEMENT_VERTEX_FACTORY_TYPE(Nanite::FVertexFactory, "/Engine/Private/Nanite/Na
 	| EVertexFactoryFlags::SupportsPSOPrecaching
 	| EVertexFactoryFlags::SupportsRayTracing
 	| EVertexFactoryFlags::SupportsLumenMeshCards
+	| EVertexFactoryFlags::SupportsLandscape
 );
 
 void FSceneProxyBase::FMaterialSection::ResetToDefaultMaterial(bool bShading, bool bRaster)
@@ -501,6 +496,11 @@ void FSceneProxyBase::FMaterialSection::ResetToDefaultMaterial(bool bShading, bo
 #if WITH_EDITOR
 HHitProxy* FSceneProxyBase::CreateHitProxies(UPrimitiveComponent* Component, TArray<TRefCountPtr<HHitProxy>>& OutHitProxies)
 {
+	return FSceneProxyBase::CreateHitProxies(Component->GetPrimitiveComponentInterface(), OutHitProxies);
+}
+
+HHitProxy* FSceneProxyBase::CreateHitProxies(IPrimitiveComponent* ComponentInterface,TArray<TRefCountPtr<HHitProxy> >& OutHitProxies)
+{	
 	// Subclasses will have populated OutHitProxies already - update the hit proxy ID before used by GPUScene
 	HitProxyIds.SetNumUninitialized(OutHitProxies.Num());
 	for (int32 HitProxyId = 0; HitProxyId < HitProxyIds.Num(); ++HitProxyId)
@@ -508,8 +508,8 @@ HHitProxy* FSceneProxyBase::CreateHitProxies(UPrimitiveComponent* Component, TAr
 		HitProxyIds[HitProxyId] = OutHitProxies[HitProxyId]->Id;
 	}
 
-	// We don't want a default hit proxy, or to output any hit proxies (avoid 2x registration).
-	return nullptr;
+	// Create a default hit proxy, but don't add it to our internal list (needed for proper collision mesh selection)
+	return FPrimitiveSceneProxy::CreateHitProxies(ComponentInterface, OutHitProxies);
 }
 #endif
 
@@ -518,7 +518,17 @@ void FSceneProxyBase::DrawStaticElementsInternal(FStaticPrimitiveDrawInterface* 
 	LLM_SCOPE_BYTAG(Nanite);
 
 	FMeshBatch MeshBatch;
-	MeshBatch.VertexFactory = GVertexFactoryResource.GetVertexFactory();
+	if (NaniteLegacyMaterialsSupported())
+	{
+		MeshBatch.VertexFactory = GVertexFactoryResource.GetVertexFactory();
+	}
+	else
+	{
+		// TODO: Remove
+		// Dummy factory that will be ignored later on
+		MeshBatch.VertexFactory = GVertexFactoryResource.GetVertexFactory2();
+	}
+
 	MeshBatch.Type = GRHISupportsRectTopology ? PT_RectList : PT_TriangleList;
 	MeshBatch.ReverseCulling = false;
 	MeshBatch.bDisableBackfaceCulling = true;
@@ -572,11 +582,14 @@ void FSceneProxyBase::OnMaterialsUpdated()
 	MaxWPOExtent = 0.0f;
 	MinMaxMaterialDisplacement = FVector2f::Zero();
 	bHasProgrammableRaster = false;
+	bHasDynamicDisplacement = false;
 	bAnyMaterialAlwaysEvaluatesWorldPositionOffset = false;
+	bAnyMaterialHasPixelAnimation = false;
 
-	static const auto TessellationEnabledVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Nanite.Tessellation"));
-	const bool bTessellationEnabled = (TessellationEnabledVar && TessellationEnabledVar->GetValueOnAnyThread() != 0);
-	const bool bUseTessellation = bTessellationEnabled && NaniteTessellationSupported();
+	const bool bUseTessellation = UseNaniteTessellation();
+
+	EShaderPlatform ShaderPlatform = GetScene().GetShaderPlatform();
+	bool bVelocityEncodeHasPixelAnimation = VelocityEncodeHasPixelAnimation(ShaderPlatform);
 
 	for (auto& MaterialSection : MaterialSections)
 	{
@@ -609,6 +622,9 @@ void FSceneProxyBase::OnMaterialsUpdated()
 		MaterialSection.bAlwaysEvaluateWPO = bHasWPO && ShadingMaterial->ShouldAlwaysEvaluateWorldPositionOffset();
 		bAnyMaterialAlwaysEvaluatesWorldPositionOffset |= MaterialSection.bAlwaysEvaluateWPO;
 
+		// Determine if has any pixel animation.
+		bAnyMaterialHasPixelAnimation |= ShadingMaterial->HasPixelAnimation() && bVelocityEncodeHasPixelAnimation && IsOpaqueOrMaskedBlendMode(ShadingMaterial->GetBlendMode());
+
 		// Determine max extent of WPO
 		if (MaterialSection.bAlwaysEvaluateWPO || (bEvaluateWorldPositionOffset && bHasWPO))
 		{
@@ -630,6 +646,8 @@ void FSceneProxyBase::OnMaterialsUpdated()
 
 			MinMaxMaterialDisplacement.X = FMath::Min(MinMaxMaterialDisplacement.X, MinDisplacement);
 			MinMaxMaterialDisplacement.Y = FMath::Max(MinMaxMaterialDisplacement.Y, MaxDisplacement);
+
+			bHasDynamicDisplacement = true;
 		}
 		else
 		{
@@ -638,34 +656,62 @@ void FSceneProxyBase::OnMaterialsUpdated()
 	}
 }
 
-FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshComponent* Component)
-: FSceneProxyBase(Component)
-, MeshInfo(Component)
-, RenderData(Component->GetStaticMesh()->GetRenderData())
-, StaticMesh(Component->GetStaticMesh())
+bool FSceneProxyBase::SupportsAlwaysVisible() const
+{
+#if WITH_EDITOR
+	// Right now we never use the always visible optimization
+	// in editor builds due to dynamic relevance, hit proxies, etc..
+	return false;
+#else
+	if (Nanite::GetSupportsCustomDepthRendering() && ShouldRenderCustomDepth())
+	{
+		// Custom depth/stencil is not supported yet.
+		return false;
+	}
+
+	if (GetLightingChannelMask() != GetDefaultLightingChannelMask())
+	{
+		// Lighting channels are not supported yet.
+		return false;
+	}
+
+	static bool bAllowStaticLighting = FReadOnlyCVARCache::AllowStaticLighting();
+	if (bAllowStaticLighting)
+	{
+		// Static lighting is not supported
+		return false;
+	}
+
+	// Always visible
+	return true;
+#endif
+}
+
+FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, const FStaticMeshSceneProxyDesc& ProxyDesc, bool InbIsInstancedMesh)
+: FSceneProxyBase(ProxyDesc)
+, MeshInfo(ProxyDesc)
+, RenderData(ProxyDesc.GetStaticMesh()->GetRenderData())
+, StaticMesh(ProxyDesc.GetStaticMesh())
 #if NANITE_ENABLE_DEBUG_RENDERING
-, Owner(Component->GetOwner())
-, LightMapResolution(Component->GetStaticLightMapResolution())
-, BodySetup(Component->GetBodySetup())
+, Owner(ProxyDesc.GetOwner())
+, LightMapResolution(ProxyDesc.GetStaticLightMapResolution())
+, BodySetup(ProxyDesc.GetBodySetup())
 , CollisionTraceFlag(ECollisionTraceFlag::CTF_UseSimpleAndComplex)
-, CollisionResponse(Component->GetCollisionResponseToChannels())
-, ForcedLodModel(Component->ForcedLodModel)
-, LODForCollision(Component->GetStaticMesh()->LODForCollision)
-, bDrawMeshCollisionIfComplex(Component->bDrawMeshCollisionIfComplex)
-, bDrawMeshCollisionIfSimple(Component->bDrawMeshCollisionIfSimple)
+, CollisionResponse(ProxyDesc.GetCollisionResponseToChannels())
+, ForcedLodModel(ProxyDesc.ForcedLodModel)
+, LODForCollision(ProxyDesc.GetStaticMesh()->LODForCollision)
+, bDrawMeshCollisionIfComplex(ProxyDesc.bDrawMeshCollisionIfComplex)
+, bDrawMeshCollisionIfSimple(ProxyDesc.bDrawMeshCollisionIfSimple)
 #endif
 {
 	LLM_SCOPE_BYTAG(Nanite);
 
-	Resources = Component->GetNaniteResources();
+	Resources = ProxyDesc.GetNaniteResources();
 
 	// This should always be valid.
 	checkSlow(Resources && Resources->PageStreamingStates.Num() > 0);
 
-	// Nanite supports the GPUScene instance data buffer.
-	bSupportsInstanceDataBuffer = true;
-
-	DistanceFieldSelfShadowBias = FMath::Max(Component->bOverrideDistanceFieldSelfShadowBias ? Component->DistanceFieldSelfShadowBias : Component->GetStaticMesh()->DistanceFieldSelfShadowBias, 0.0f);
+	DistanceFieldSelfShadowBias = FMath::Max(ProxyDesc.bOverrideDistanceFieldSelfShadowBias ? ProxyDesc.DistanceFieldSelfShadowBias : ProxyDesc.GetStaticMesh()->DistanceFieldSelfShadowBias, 0.0f);
 
 	// Use fast path that does not update static draw lists.
 	bStaticElementsAlwaysUseProxyPrimitiveUniformBuffer = true;
@@ -676,11 +722,9 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshCompone
 	// Indicates if 1 or more materials contain settings not supported by Nanite.
 	bHasMaterialErrors = false;
 
-	InstanceWPODisableDistance = Component->WorldPositionOffsetDisableDistance;
+	InstanceWPODisableDistance = ProxyDesc.WorldPositionOffsetDisableDistance;
 
-	SetLevelColor(FLinearColor::White);
-	SetPropertyColor(FLinearColor::White);
-	SetWireframeColor(Component->GetWireframeColor());
+	SetWireframeColor(ProxyDesc.GetWireframeColor());
 
 	const bool bHasSurfaceStaticLighting = MeshInfo.GetLightMap() != nullptr || MeshInfo.GetShadowMap() != nullptr;
 
@@ -692,11 +736,11 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshCompone
 	DistanceFieldData = MeshResources.DistanceFieldData;
 	CardRepresentationData = MeshResources.CardRepresentationData;
 
-	bEvaluateWorldPositionOffset = !IsOptimizedWPO() || !!Component->bEvaluateWorldPositionOffset;
+	bEvaluateWorldPositionOffset = ProxyDesc.bEvaluateWorldPositionOffset;
 	
 	MaterialSections.SetNumZeroed(MeshSections.Num());
 
-	const bool bIsInstancedMesh = Component->IsA<UInstancedStaticMeshComponent>();
+	const bool bIsInstancedMesh = InbIsInstancedMesh;
 
 	NaniteMaterialMask = FUint32Vector2(0u, 0u);
 
@@ -710,23 +754,23 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshCompone
 		MaterialSection.bSelected = false;
 		if (GIsEditor)
 		{
-			if (Component->SelectedEditorMaterial != INDEX_NONE)
+			if (ProxyDesc.SelectedEditorMaterial != INDEX_NONE)
 			{
-				MaterialSection.bSelected = (Component->SelectedEditorMaterial == MaterialSection.MaterialIndex);
+				MaterialSection.bSelected = (ProxyDesc.SelectedEditorMaterial == MaterialSection.MaterialIndex);
 			}
-			else if (Component->SelectedEditorSection != INDEX_NONE)
+			else if (ProxyDesc.SelectedEditorSection != INDEX_NONE)
 			{
-				MaterialSection.bSelected = (Component->SelectedEditorSection == SectionIndex);
+				MaterialSection.bSelected = (ProxyDesc.SelectedEditorSection == SectionIndex);
 			}
 
 			// If material is hidden, then skip the raster
-			if ((Component->MaterialIndexPreview != INDEX_NONE) && (Component->MaterialIndexPreview != MaterialSection.MaterialIndex))
+			if ((ProxyDesc.MaterialIndexPreview != INDEX_NONE) && (ProxyDesc.MaterialIndexPreview != MaterialSection.MaterialIndex))
 			{
 				MaterialSection.bHidden = true;
 			}
 
 			// If section is hidden, then skip the raster
-			if ((Component->SectionIndexPreview != INDEX_NONE) && (Component->SectionIndexPreview != SectionIndex))
+			if ((ProxyDesc.SectionIndexPreview != INDEX_NONE) && (ProxyDesc.SectionIndexPreview != SectionIndex))
 			{
 				MaterialSection.bHidden = true;
 			}
@@ -750,7 +794,9 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshCompone
 			}
 
 			// Get the shading material
-			ShadingMaterial = MaterialAudit.GetSafeMaterial(MaterialSection.MaterialIndex);
+			ShadingMaterial = MaterialAudit.GetMaterial(MaterialSection.MaterialIndex);
+
+			MaterialSection.LocalUVDensities = MaterialAudit.GetLocalUVDensities(MaterialSection.MaterialIndex);
 
 			// Copy over per-instance material flags for this section
 			MaterialSection.bHasPerInstanceRandomID = MaterialAudit.HasPerInstanceRandomID(MaterialSection.MaterialIndex);
@@ -770,7 +816,7 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshCompone
 			}
 		}
 
-		if (ShadingMaterial == nullptr || Component->ShouldRenderProxyFallbackToDefaultMaterial())
+		if (ShadingMaterial == nullptr || ProxyDesc.ShouldRenderProxyFallbackToDefaultMaterial())
 		{
 			ShadingMaterial = MaterialSection.bHidden ? GEngine->NaniteHiddenSectionMaterial.Get() : UMaterial::GetDefaultMaterial(MD_Surface);
 		}
@@ -784,46 +830,6 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshCompone
 	// Nanite supports distance field representation for fully opaque meshes.
 	bSupportsDistanceFieldRepresentation = CombinedMaterialRelevance.bOpaque && DistanceFieldData && DistanceFieldData->IsValid();;
 
-#if RHI_RAYTRACING
-	RayTracingMaterialProxiesPerLOD.SetNumZeroed(RenderData->LODResources.Num());
-	for (int32 LODIndex = 0; LODIndex < RenderData->LODResources.Num(); LODIndex++)
-	{
-		const FStaticMeshLODResources& LOD = RenderData->LODResources[LODIndex];
-		const FStaticMeshSectionArray& LODMeshSections = LOD.Sections;
-
-		RayTracingMaterialProxiesPerLOD[LODIndex].SetNumZeroed(LODMeshSections.Num());
-
-		TArray<FMaterialRenderProxy*>& RayTracingMaterialProxies = RayTracingMaterialProxiesPerLOD[LODIndex];
-		
-		for (int32 SectionIndex = 0; SectionIndex < LODMeshSections.Num(); ++SectionIndex)
-		{
-			const FStaticMeshSection& MeshSection = LODMeshSections[SectionIndex];
-			
-			UMaterialInterface* ShadingMaterial = MaterialAudit.GetMaterial(MeshSection.MaterialIndex);
-
-			if (ShadingMaterial == nullptr)
-			{
-				ShadingMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
-			}
-
-			RayTracingMaterialProxies[SectionIndex] = ShadingMaterial->GetRenderProxy();
-		}
-	}
-
-	if (IsRayTracingAllowed())
-	{
-		CoarseMeshStreamingHandle = (Nanite::CoarseMeshStreamingHandle)Component->GetStaticMesh()->GetStreamingIndex();
-		if (MeshResources.GetNumVertices())
-		{
-			bHasRayTracingInstances = true;
-		}
-
-		// This will be filled later (on the render thread) and cached.
-		CachedRayTracingInstanceMaskAndFlags.Mask = 0;
-	}
-#endif
-
-#if NANITE_ENABLE_DEBUG_RENDERING
 	// Find the first LOD with any vertices (ie that haven't been stripped)
 	int32 FirstAvailableLOD = 0;
 	for (; FirstAvailableLOD < RenderData->LODResources.Num(); FirstAvailableLOD++)
@@ -834,55 +840,77 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshCompone
 		}
 	}
 
-	const int32 SMCurrentMinLOD = Component->GetStaticMesh()->GetMinLODIdx();
-	int32 EffectiveMinLOD = Component->bOverrideMinLOD ? Component->MinLOD : SMCurrentMinLOD; 
-	
+	const int32 SMCurrentMinLOD = ProxyDesc.GetStaticMesh()->GetMinLODIdx();
+	int32 EffectiveMinLOD = ProxyDesc.bOverrideMinLOD ? ProxyDesc.MinLOD : SMCurrentMinLOD;
 	ClampedMinLOD = FMath::Clamp(EffectiveMinLOD, FirstAvailableLOD, RenderData->LODResources.Num() - 1);
 
-	// Pre-allocate FallbackLODs. Dynamic resize is unsafe as the FFallbackLODInfo constructor queues up a rendering command with a reference to itself.
-	FallbackLODs.SetNumUninitialized(RenderData->LODResources.Num());
-
-	for (int32 LODIndex = 0; LODIndex < RenderData->LODResources.Num(); LODIndex++)
+#if RHI_RAYTRACING
+	if (IsRayTracingAllowed() && ProxyDesc.GetStaticMesh()->bSupportRayTracing && RenderData->LODResources[ClampedMinLOD].GetNumVertices())
 	{
-		FFallbackLODInfo* NewLODInfo = new (&FallbackLODs[LODIndex]) FFallbackLODInfo(Component, RenderData->LODVertexFactories, LODIndex, ClampedMinLOD);
-	}
+		bHasRayTracingInstances = true;
 
+		CoarseMeshStreamingHandle = (Nanite::CoarseMeshStreamingHandle)ProxyDesc.GetStaticMesh()->GetStreamingIndex();
+	}
+#endif
+
+#if RHI_RAYTRACING || NANITE_ENABLE_DEBUG_RENDERING
+	bool bInitializeFallBackLODs = false;
+#	if RHI_RAYTRACING
+		bInitializeFallBackLODs |= bHasRayTracingInstances;
+#	endif
+#	if NANITE_ENABLE_DEBUG_RENDERING
+		bInitializeFallBackLODs |= true;
+#	endif
+
+	if (bInitializeFallBackLODs)
+	{
+		// Pre-allocate FallbackLODs. Dynamic resize is unsafe as the FFallbackLODInfo constructor queues up a rendering command with a reference to itself.
+		FallbackLODs.SetNumUninitialized(RenderData->LODResources.Num());
+
+		for (int32 LODIndex = 0; LODIndex < RenderData->LODResources.Num(); LODIndex++)
+		{
+			FFallbackLODInfo* NewLODInfo = new (&FallbackLODs[LODIndex]) FFallbackLODInfo(&ProxyDesc, RenderData->LODVertexFactories, LODIndex, ClampedMinLOD);
+		}
+	}
+#endif
+
+#if NANITE_ENABLE_DEBUG_RENDERING
 	if (BodySetup)
 	{
 		CollisionTraceFlag = BodySetup->GetCollisionTraceFlag();
 	}
 #endif
 
-	FInstanceSceneData& Instance = InstanceSceneData.Emplace_GetRef();
-	Instance.LocalToPrimitive.SetIdentity();
-
 	FilterFlags = EFilterFlags::StaticMesh;
+	FilterFlags |= ProxyDesc.Mobility == EComponentMobility::Static ? EFilterFlags::StaticMobility : EFilterFlags::NonStaticMobility;
 
-	bReverseCulling = Component->bReverseCulling;
+	bReverseCulling = ProxyDesc.bReverseCulling;
 
+	bOpaqueOrMasked = true; // Nanite only supports opaque
 	UpdateVisibleInLumenScene();
 }
 
-FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UInstancedStaticMeshComponent* Component)
-: FSceneProxy(MaterialAudit, static_cast<UStaticMeshComponent*>(Component))
+FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, const FInstancedStaticMeshSceneProxyDesc& InProxyDesc)
+	: FSceneProxy(MaterialAudit, InProxyDesc, true)
 {
 	LLM_SCOPE_BYTAG(Nanite);
 
 	// Nanite meshes do not deform internally
 	bHasDeformableMesh = false;
 
-	PerInstanceRenderData = Component->PerInstanceRenderData;
-	check(PerInstanceRenderData.IsValid());
+	// Nanite supports the GPUScene instance data buffer.
+	InstanceDataSceneProxy = InProxyDesc.InstanceDataSceneProxy;
+	SetupInstanceSceneDataBuffers(InstanceDataSceneProxy->GeInstanceSceneDataBuffers());
 
 #if WITH_EDITOR
-	const bool bSupportInstancePicking = Component->bHasPerInstanceHitProxies && SMInstanceElementDataUtil::SMInstanceElementsEnabled();
+	const bool bSupportInstancePicking = HasPerInstanceHitProxies() && SMInstanceElementDataUtil::SMInstanceElementsEnabled();
 	HitProxyMode = bSupportInstancePicking ? EHitProxyMode::PerInstance : EHitProxyMode::MaterialSection;
 
 	if (HitProxyMode == EHitProxyMode::PerInstance)
 	{
-		for (int32 InstanceIndex = 0; InstanceIndex < Component->SelectedInstances.Num() && !bHasSelectedInstances; ++InstanceIndex)
+		for (int32 InstanceIndex = 0; InstanceIndex < InProxyDesc.SelectedInstances.Num() && !bHasSelectedInstances; ++InstanceIndex)
 		{
-			bHasSelectedInstances |= Component->SelectedInstances[InstanceIndex];
+			bHasSelectedInstances |= InProxyDesc.SelectedInstances[InstanceIndex];
 		}
 
 		if (bHasSelectedInstances)
@@ -893,161 +921,20 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UInstancedStaticMe
 	}
 #endif
 
-	// NumRenderInstances is the extent that the reorder table can map to.
-	// Temporarily when removing instances from a HISM this can be sparse so that NumInstances < NumRenderInstances.
-	const int32 NumInstances = Component->GetInstanceCount();
-	const int32 NumRenderInstances = FMath::Max<int32>(Component->InstanceUpdateCmdBuffer.NumEditInstances, NumInstances);
-	InstanceSceneData.SetNumZeroed(NumRenderInstances);
-
-	bHasPerInstanceLocalBounds = false;
-	bHasPerInstanceHierarchyOffset = false;
-
-	UpdateMaterialDynamicDataUsage();
-
-	bHasPerInstanceDynamicData = Component->PerInstancePrevTransform.Num() == NumInstances;
-	InstanceDynamicData.SetNumZeroed(bHasPerInstanceDynamicData ? NumRenderInstances : 0);
-
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnAnyThread() != 0);
-	bHasPerInstanceLMSMUVBias = bAllowStaticLighting;
-	InstanceLightShadowUVBias.SetNumZeroed(bHasPerInstanceLMSMUVBias ? NumRenderInstances : 0);
-
-	InstanceRandomID.SetNumZeroed(bHasPerInstanceRandom ? NumRenderInstances : 0); // Only allocate if material bound which uses this
-
-#if WITH_EDITOR
-	bHasPerInstanceEditorData = bSupportInstancePicking;// TODO: Would be good to decouple typed element picking from has editor data (i.e. always set this true, regardless)
-	InstanceEditorData.SetNumZeroed(bHasPerInstanceEditorData ? NumRenderInstances : 0);
-#endif
-
-	// Only allocate if material bound which uses this
-	const int32 NumInstCustDataFloats = Component->NumCustomDataFloats;
-	if (bHasPerInstanceCustomData && NumInstCustDataFloats > 0)
-	{
-		InstanceCustomData.SetNumZeroed(NumInstCustDataFloats * NumRenderInstances);
-		check(InstanceCustomData.Num() == Component->PerInstanceSMCustomData.Num()); // Sanity check on the data packing
-	}
-	else
-	{
-		bHasPerInstanceCustomData = false;
-	}
-
-	FVector TranslatedSpaceOffset = -Component->GetTranslatedInstanceSpaceOrigin();
-
-	for (int32 InstanceIndex = 0; InstanceIndex < NumInstances; ++InstanceIndex)
-	{
-		const int32 OutputIndex = Component->GetRenderIndex(InstanceIndex);
-		if (OutputIndex == INDEX_NONE)
-		{
-			// could be skipped by density settings
-			continue;
-		}
-
-		FInstanceSceneData& SceneData = InstanceSceneData[OutputIndex];
-
-		FTransform InstanceTransform;
-		Component->GetInstanceTransform(InstanceIndex, InstanceTransform);
-		InstanceTransform.AddToTranslation(TranslatedSpaceOffset);
-		SceneData.LocalToPrimitive = InstanceTransform.ToMatrixWithScale();
-
-		if (bHasPerInstanceDynamicData)
-		{
-			FTransform InstancePrevTransform;
-			const bool bHasPrevTransform = Component->GetInstancePrevTransform(InstanceIndex, InstancePrevTransform);
-			ensure(bHasPrevTransform); // Should always be true here
-			InstancePrevTransform.AddToTranslation(TranslatedSpaceOffset);
-			InstanceDynamicData[OutputIndex].PrevLocalToPrimitive = InstancePrevTransform.ToMatrixWithScale();
-		}
-
-		if (bHasPerInstanceCustomData)
-		{
-			// Sanity check overflows
-			check((InstanceIndex + 1) * NumInstCustDataFloats <= Component->PerInstanceSMCustomData.Num());
-			check((OutputIndex + 1) * NumInstCustDataFloats <= InstanceCustomData.Num());
-			
-			const float* InputFloats = &Component->PerInstanceSMCustomData[InstanceIndex * NumInstCustDataFloats];
-			float* OutputFloats = &InstanceCustomData[OutputIndex * NumInstCustDataFloats];
-			FMemory::Memcpy(OutputFloats, InputFloats, NumInstCustDataFloats * sizeof(float));
-		}
-	}
-
-	check(bHasPerInstanceRandom == false || InstanceRandomID.Num() == InstanceSceneData.Num());
-#if WITH_EDITOR
-	const bool bHasEditorData = bHasPerInstanceEditorData && InstanceEditorData.Num() == InstanceSceneData.Num();
-#else
-	const bool bHasEditorData = false;
-#endif
-
-	if (PerInstanceRenderData && (bHasPerInstanceRandom || bHasPerInstanceLMSMUVBias || bHasEditorData))
-	{
-		ENQUEUE_RENDER_COMMAND(SetNanitePerInstanceData)(
-			[this](FRHICommandList& RHICmdList)
-			{
-				check(bHasPerInstanceRandom == false || InstanceRandomID.Num() == InstanceSceneData.Num());
-
-				if (PerInstanceRenderData != nullptr &&
-					PerInstanceRenderData->InstanceBuffer.GetNumInstances() == InstanceSceneData.Num())
-				{
-					for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData.Num(); ++InstanceIndex)
-					{
-						if (bHasPerInstanceRandom)
-						{
-							PerInstanceRenderData->InstanceBuffer.GetInstanceRandomID(InstanceIndex, InstanceRandomID[InstanceIndex]);
-						}
-
-						if (bHasPerInstanceLMSMUVBias)
-						{
-							PerInstanceRenderData->InstanceBuffer.GetInstanceLightMapData(InstanceIndex, InstanceLightShadowUVBias[InstanceIndex]);
-						}
-
-					#if WITH_EDITOR
-						if (bHasPerInstanceEditorData)
-						{
-							FColor HitProxyColor;
-							bool bSelected;
-							PerInstanceRenderData->InstanceBuffer.GetInstanceEditorData(InstanceIndex, HitProxyColor, bSelected);
-							InstanceEditorData[InstanceIndex] = FInstanceUpdateCmdBuffer::PackEditorData(HitProxyColor, bSelected);
-						}
-					#endif
-					}
-				}
-
-				check(bHasPerInstanceRandom == false || InstanceRandomID.Num() == InstanceSceneData.Num());
-			}
-		);
-	}
-
-	// TODO: Should report much finer granularity than what this code is doing (i.e. dynamic vs static, per stream sizes, etc..)
-	// TODO: Also should be reporting this for all proxies, not just the Nanite ones
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceSceneData.GetAllocatedSize());
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceDynamicData.GetAllocatedSize());
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceCustomData.GetAllocatedSize());
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceRandomID.GetAllocatedSize());
-#if WITH_EDITOR
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceEditorData.GetAllocatedSize());
-#endif
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceLightShadowUVBias.GetAllocatedSize());
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceLocalBounds.GetAllocatedSize());
-	INC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceHierarchyOffset.GetAllocatedSize());
-
-	INC_DWORD_STAT_BY(STAT_NaniteInstanceCount, InstanceSceneData.Num());
-
-	INC_DWORD_STAT_BY(STAT_InstanceHasDynamicCount, bHasPerInstanceDynamicData ? InstanceSceneData.Num() : 0);
-	INC_DWORD_STAT_BY(STAT_InstanceHasLMSMBiasCount, bHasPerInstanceLMSMUVBias ? InstanceSceneData.Num() : 0);
-	INC_DWORD_STAT_BY(STAT_InstanceHasCustomDataCount, bHasPerInstanceCustomData ? InstanceSceneData.Num() : 0);
-	INC_DWORD_STAT_BY(STAT_InstanceHasRandomCount, bHasPerInstanceRandom ? InstanceSceneData.Num() : 0);
-	INC_DWORD_STAT_BY(STAT_InstanceHasLocalBounds, bHasPerInstanceLocalBounds ? InstanceSceneData.Num() : 0);
-	INC_DWORD_STAT_BY(STAT_InstanceHasHierarchyOffset, bHasPerInstanceHierarchyOffset ? InstanceSceneData.Num() : 0);
-
-#if RHI_RAYTRACING
-	if (InstanceSceneData.Num() == 0)
-	{
-		bHasRayTracingInstances = false;
-	}
-#endif
-
-	EndCullDistance = Component->InstanceEndCullDistance;
+	EndCullDistance = InProxyDesc.InstanceEndCullDistance;
 
 	FilterFlags = EFilterFlags::InstancedStaticMesh;
+	FilterFlags |= InProxyDesc.Mobility == EComponentMobility::Static ? EFilterFlags::StaticMobility : EFilterFlags::NonStaticMobility;
+}
+
+FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UStaticMeshComponent* Component)
+	: FSceneProxy(MaterialAudit, FStaticMeshSceneProxyDesc(Component))
+{
+}
+
+FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UInstancedStaticMeshComponent* Component)
+	: FSceneProxy(MaterialAudit, FInstancedStaticMeshSceneProxyDesc(Component))
+{
 }
 
 FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UHierarchicalInstancedStaticMeshComponent* Component)
@@ -1068,36 +955,32 @@ FSceneProxy::FSceneProxy(const FMaterialAudit& MaterialAudit, UHierarchicalInsta
 		FilterFlags = EFilterFlags::InstancedStaticMesh;
 		break;
 	}
+	FilterFlags |= Component->Mobility == EComponentMobility::Static ? EFilterFlags::StaticMobility : EFilterFlags::NonStaticMobility;
 }
 
 FSceneProxy::~FSceneProxy()
 {
-	// TODO: Should report much finer granularity than what this code is doing (i.e. dynamic vs static, per stream sizes, etc..)
-	// TODO: Also should be reporting this for all proxies, not just the Nanite ones
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceSceneData.GetAllocatedSize());
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceDynamicData.GetAllocatedSize());
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceCustomData.GetAllocatedSize());
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceRandomID.GetAllocatedSize());
-#if WITH_EDITOR
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceEditorData.GetAllocatedSize());
+#if RHI_RAYTRACING
+	ReleaseDynamicRayTracingGeometries();
 #endif
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceLightShadowUVBias.GetAllocatedSize());
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceLocalBounds.GetAllocatedSize());
-	DEC_MEMORY_STAT_BY(STAT_ProxyInstanceMemory, InstanceHierarchyOffset.GetAllocatedSize());
-
-	DEC_DWORD_STAT_BY(STAT_NaniteInstanceCount, InstanceSceneData.Num());
-
-	DEC_DWORD_STAT_BY(STAT_InstanceHasDynamicCount, bHasPerInstanceDynamicData ? InstanceSceneData.Num() : 0);
-	DEC_DWORD_STAT_BY(STAT_InstanceHasLMSMBiasCount, bHasPerInstanceLMSMUVBias ? InstanceSceneData.Num() : 0);
-	DEC_DWORD_STAT_BY(STAT_InstanceHasCustomDataCount, bHasPerInstanceCustomData ? InstanceSceneData.Num() : 0);
-	DEC_DWORD_STAT_BY(STAT_InstanceHasRandomCount, bHasPerInstanceRandom ? InstanceSceneData.Num() : 0);
-	DEC_DWORD_STAT_BY(STAT_InstanceHasLocalBounds, bHasPerInstanceLocalBounds ? InstanceSceneData.Num() : 0);
-	DEC_DWORD_STAT_BY(STAT_InstanceHasHierarchyOffset, bHasPerInstanceHierarchyOffset ? InstanceSceneData.Num() : 0);
 }
 
-void FSceneProxy::CreateRenderThreadResources()
+void FSceneProxy::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	check(Resources->RuntimeResourceID != INDEX_NONE && Resources->HierarchyOffset != INDEX_NONE);
+
+#if RHI_RAYTRACING
+	if (IsRayTracingAllowed())
+	{
+		// copy RayTracingGeometryGroupHandle from FStaticMeshRenderData since UStaticMesh can be released before the proxy is destroyed
+		RayTracingGeometryGroupHandle = RenderData->RayTracingGeometryGroupHandle;
+	}
+
+	if (IsRayTracingAllowed() && bNeedsDynamicRayTracingGeometries)
+	{
+		CreateDynamicRayTracingGeometries(RHICmdList);
+	}
+#endif
 }
 
 void FSceneProxy::OnEvaluateWorldPositionOffsetChanged_RenderThread()
@@ -1132,7 +1015,7 @@ FPrimitiveViewRelevance FSceneProxy::GetViewRelevance(const FSceneView* View) co
 #if WITH_EDITOR
 	const bool bOptimizedRelevance = false;
 #else
-	const bool bOptimizedRelevance = GNaniteOptimizedRelevance != 0;
+	const bool bOptimizedRelevance = true;
 #endif
 
 	FPrimitiveViewRelevance Result;
@@ -1228,7 +1111,12 @@ void FSceneProxy::GetLightRelevance(const FLightSceneProxy* LightSceneProxy, boo
 
 #if WITH_EDITOR
 
-HHitProxy* FSceneProxy::CreateHitProxies(UPrimitiveComponent* Component, TArray<TRefCountPtr<HHitProxy>>& OutHitProxies)
+FORCENOINLINE HHitProxy* FSceneProxy::CreateHitProxies(UPrimitiveComponent* Component, TArray<TRefCountPtr<HHitProxy>>& OutHitProxies)
+{
+	return FSceneProxy::CreateHitProxies(Component->GetPrimitiveComponentInterface(), OutHitProxies);
+}
+
+FORCENOINLINE HHitProxy* FSceneProxy::CreateHitProxies(IPrimitiveComponent* Component, TArray<TRefCountPtr<HHitProxy>>& OutHitProxies)
 {
 	LLM_SCOPE_BYTAG(Nanite);
 
@@ -1241,11 +1129,15 @@ HHitProxy* FSceneProxy::CreateHitProxies(UPrimitiveComponent* Component, TArray<
 				// Generate separate hit proxies for each material section, so that we can perform hit tests against each one.
 				for (int32 SectionIndex = 0; SectionIndex < MaterialSections.Num(); ++SectionIndex)
 				{
-					FMaterialSection& Section = MaterialSections[SectionIndex];
-					HHitProxy* ActorHitProxy = new HActor(Component->GetOwner(), Component, SectionIndex, SectionIndex);
-					check(!Section.HitProxy);
-					Section.HitProxy = ActorHitProxy;
-					OutHitProxies.Add(ActorHitProxy);
+					FMaterialSection& Section = MaterialSections[SectionIndex];					
+					HHitProxy* ActorHitProxy = Component->CreateMeshHitProxy(SectionIndex, SectionIndex);
+
+					if (ActorHitProxy)
+					{
+						check(!Section.HitProxy);
+						Section.HitProxy = ActorHitProxy;
+						OutHitProxies.Add(ActorHitProxy);
+					}
 				}
 			}
 			break;
@@ -1253,11 +1145,7 @@ HHitProxy* FSceneProxy::CreateHitProxies(UPrimitiveComponent* Component, TArray<
 
 		case FSceneProxyBase::EHitProxyMode::PerInstance:
 		{
-			if (PerInstanceRenderData.IsValid() && PerInstanceRenderData->HitProxies.Num() > 0)
-			{
-				// Add any per-instance hit proxies.
-				OutHitProxies += PerInstanceRenderData->HitProxies;
-			}
+			// Note: the instance data proxy handles the hitproxy lifetimes internally as the update cadence does not match FPrimitiveSceneInfo ctor cadence
 			break;
 		}
 
@@ -1270,18 +1158,25 @@ HHitProxy* FSceneProxy::CreateHitProxies(UPrimitiveComponent* Component, TArray<
 
 #endif
 
-FSceneProxy::FMeshInfo::FMeshInfo(const UStaticMeshComponent* InComponent)
+FSceneProxy::FMeshInfo::FMeshInfo(const FStaticMeshSceneProxyDesc& InProxyDesc)
 {
 	LLM_SCOPE_BYTAG(Nanite);
 
-	if (InComponent->LightmapType == ELightmapType::ForceVolumetric)
+	// StaticLighting only supported by UStaticMeshComponents & derived classes for the moment
+	const UStaticMeshComponent* Component =  InProxyDesc.GetUStaticMeshComponent();
+	if (!Component)
+	{
+		return;
+	}
+
+	if (Component->LightmapType == ELightmapType::ForceVolumetric)
 	{
 		SetGlobalVolumeLightmap(true);
 	}
 #if WITH_EDITOR
-	else if (FStaticLightingSystemInterface::GetPrimitiveMeshMapBuildData(InComponent, 0))
+	else if (Component && FStaticLightingSystemInterface::GetPrimitiveMeshMapBuildData(Component, 0))
 	{
-		const FMeshMapBuildData* MeshMapBuildData = FStaticLightingSystemInterface::GetPrimitiveMeshMapBuildData(InComponent, 0);
+		const FMeshMapBuildData* MeshMapBuildData = FStaticLightingSystemInterface::GetPrimitiveMeshMapBuildData(Component, 0);
 		if (MeshMapBuildData)
 		{
 			SetLightMap(MeshMapBuildData->LightMap);
@@ -1292,11 +1187,11 @@ FSceneProxy::FMeshInfo::FMeshInfo(const UStaticMeshComponent* InComponent)
 		}
 	}
 #endif
-	else if (InComponent->LODData.Num() > 0)
+	else if (InProxyDesc.LODData.Num() > 0)
 	{
-		const FStaticMeshComponentLODInfo& ComponentLODInfo = InComponent->LODData[0];
+		const FStaticMeshComponentLODInfo& ComponentLODInfo = InProxyDesc.LODData[0];
 
-		const FMeshMapBuildData* MeshMapBuildData = InComponent->GetMeshMapBuildData(ComponentLODInfo);
+		const FMeshMapBuildData* MeshMapBuildData = Component->GetMeshMapBuildData(ComponentLODInfo);
 		if (MeshMapBuildData)
 		{
 			SetLightMap(MeshMapBuildData->LightMap);
@@ -1322,26 +1217,26 @@ FLightInteraction FSceneProxy::FMeshInfo::GetInteraction(const FLightSceneProxy*
 	return FLightInteraction::Dynamic();
 }
 
-#if NANITE_ENABLE_DEBUG_RENDERING
+#if RHI_RAYTRACING || NANITE_ENABLE_DEBUG_RENDERING
 
 // Loosely copied from FStaticMeshSceneProxy::FLODInfo::FLODInfo and modified for Nanite fallback
 // TODO: Refactor all this to share common code with Nanite and regular SM scene proxy
 FSceneProxy::FFallbackLODInfo::FFallbackLODInfo(
-	const UStaticMeshComponent* InComponent,
+	const FStaticMeshSceneProxyDesc* InProxyDesc,
 	const FStaticMeshVertexFactoriesArray& InLODVertexFactories,
 	int32 LODIndex,
 	int32 InClampedMinLOD
 )
 {
-	const auto FeatureLevel = InComponent->GetWorld()->GetFeatureLevel();
+	const auto FeatureLevel = InProxyDesc->GetScene()->GetFeatureLevel();
 
-	FStaticMeshRenderData* MeshRenderData = InComponent->GetStaticMesh()->GetRenderData();
+	FStaticMeshRenderData* MeshRenderData = InProxyDesc->GetStaticMesh()->GetRenderData();
 	FStaticMeshLODResources& LODModel = MeshRenderData->LODResources[LODIndex];
 	const FStaticMeshVertexFactories& VFs = InLODVertexFactories[LODIndex];
 
-	if (LODIndex < InComponent->LODData.Num() && LODIndex >= InClampedMinLOD)
+	if (LODIndex < InProxyDesc->LODData.Num() && LODIndex >= InClampedMinLOD)
 	{
-		const FStaticMeshComponentLODInfo& ComponentLODInfo = InComponent->LODData[LODIndex];
+		const FStaticMeshComponentLODInfo& ComponentLODInfo = InProxyDesc->LODData[LODIndex];
 
 		// Initialize this LOD's overridden vertex colors, if it has any
 		if (ComponentLODInfo.OverrideVertexColors)
@@ -1369,11 +1264,11 @@ FSceneProxy::FFallbackLODInfo::FFallbackLODInfo(
 					FColorVertexBuffer* VertexBuffer = OverrideColorVertexBuffer;
 
 					//temp measure to identify nullptr crashes deep in the renderer
-					FString ComponentPathName = InComponent->GetPathName();
+					FString ComponentPathName = InProxyDesc->GetPathName();
 					checkf(LODModel.VertexBuffers.PositionVertexBuffer.GetNumVertices() > 0, TEXT("LOD: %i of PathName: %s has an empty position stream."), LODIndex, *ComponentPathName);
 
 					ENQUEUE_RENDER_COMMAND(FLocalVertexFactoryCopyData)(
-						[UniformBufferPtr, LocalVF, LODIndex, VertexBuffer, ComponentPathName](FRHICommandListImmediate& RHICmdList)
+						[UniformBufferPtr, LocalVF, LODIndex, VertexBuffer, ComponentPathName] (FRHICommandListBase&)
 						{
 							checkf(LocalVF->GetTangentsSRV(), TEXT("LOD: %i of PathName: %s has a null tangents srv."), LODIndex, *ComponentPathName);
 							checkf(LocalVF->GetTextureCoordinatesSRV(), TEXT("LOD: %i of PathName: %s has a null texcoord srv."), LODIndex, *ComponentPathName);
@@ -1392,27 +1287,29 @@ FSceneProxy::FFallbackLODInfo::FFallbackLODInfo(
 		FSectionInfo SectionInfo;
 
 		// Determine the material applied to this element of the LOD.
-		SectionInfo.Material = InComponent->GetMaterial(Section.MaterialIndex);
+		UMaterialInterface* Material = InProxyDesc->GetMaterial(Section.MaterialIndex);
 #if WITH_EDITORONLY_DATA
 		SectionInfo.MaterialIndex = Section.MaterialIndex;
 #endif
 
-		if (!SectionInfo.Material)
+		if (Material == nullptr)
 		{
-			SectionInfo.Material = UMaterial::GetDefaultMaterial(MD_Surface);
+			Material = UMaterial::GetDefaultMaterial(MD_Surface);
 		}
+
+		SectionInfo.MaterialProxy = Material->GetRenderProxy();
 
 		// Per-section selection for the editor.
 #if WITH_EDITORONLY_DATA
 		if (GIsEditor)
 		{
-			if (InComponent->SelectedEditorMaterial >= 0)
+			if (InProxyDesc->SelectedEditorMaterial >= 0)
 			{
-				SectionInfo.bSelected = (InComponent->SelectedEditorMaterial == Section.MaterialIndex);
+				SectionInfo.bSelected = (InProxyDesc->SelectedEditorMaterial == Section.MaterialIndex);
 			}
 			else
 			{
-				SectionInfo.bSelected = (InComponent->SelectedEditorSection == SectionIndex);
+				SectionInfo.bSelected = (InProxyDesc->SelectedEditorSection == SectionIndex);
 			}
 		}
 #endif
@@ -1434,17 +1331,10 @@ void FSceneProxy::DrawStaticElements(FStaticPrimitiveDrawInterface* PDI)
 // TODO: Refactor all this to share common code with Nanite and regular SM scene proxy
 void FSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const
 {
-#if !WITH_EDITOR
-	if (GNaniteOptimizedRelevance != 0)
-	{
-		// No dynamic relevance.
-		return;
-	}
-#endif
-
+	// Nanite only has dynamic relevance in the editor for certain debug modes
+#if WITH_EDITOR
 	LLM_SCOPE_BYTAG(Nanite);
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_NaniteSceneProxy_GetMeshElements);
-	checkSlow(IsInRenderingThread());
 
 	const bool bIsLightmapSettingError = HasStaticLighting() && !HasValidSettingsForStaticLighting();
 	const bool bProxyIsSelected = IsSelected();
@@ -1586,15 +1476,17 @@ void FSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views,
 			// Draw simple collision as wireframe if 'show collision', collision is enabled, and we are not using the complex as the simple
 			const bool bDrawSimpleWireframeCollision = (EngineShowFlags.Collision && IsCollisionEnabled() && CollisionTraceFlag != ECollisionTraceFlag::CTF_UseComplexAsSimple); 
 
-			const FRenderTransform PrimitiveToWorld = (FMatrix44f)GetLocalToWorld();
-			for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData.Num(); InstanceIndex++)
+			const FInstanceSceneDataBuffers *InstanceSceneDataBuffers = GetInstanceSceneDataBuffers();
+			// Note: this will return 1 for the non-instanced case.
+			const int32 InstanceCount = InstanceSceneDataBuffers ? InstanceSceneDataBuffers->GetNumInstances() : 1;
+
+			for (int32 InstanceIndex = 0; InstanceIndex < InstanceCount; InstanceIndex++)
 			{
-				FRenderTransform InstanceToWorld = InstanceSceneData[InstanceIndex].ComputeLocalToWorld(PrimitiveToWorld);
-				FMatrix InstanceToWorldMatrix = InstanceToWorld.ToMatrix();
+				FMatrix InstanceToWorld = InstanceSceneDataBuffers ? InstanceSceneDataBuffers->GetInstanceToWorld(InstanceIndex) : GetLocalToWorld();
 
 				if ((bDrawSimpleCollision || bDrawSimpleWireframeCollision) && BodySetup)
 				{
-					if (FMath::Abs(InstanceToWorldMatrix.Determinant()) < UE_SMALL_NUMBER)
+					if (FMath::Abs(InstanceToWorld.Determinant()) < UE_SMALL_NUMBER)
 					{
 						// Catch this here or otherwise GeomTransform below will assert
 						// This spams so commented out
@@ -1606,13 +1498,13 @@ void FSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views,
 
 						if (AllowDebugViewmodes() && bDrawSolid)
 						{
-							FTransform GeomTransform(InstanceToWorldMatrix);
+							FTransform GeomTransform(InstanceToWorld);
 							BodySetup->AggGeom.GetAggGeom(GeomTransform, GetWireframeColor().ToFColor(true), SimpleCollisionMaterialInstance, false, true, AlwaysHasVelocity(), ViewIndex, Collector);
 						}
 						// wireframe
 						else
 						{
-							FTransform GeomTransform(InstanceToWorldMatrix);
+							FTransform GeomTransform(InstanceToWorld);
 							BodySetup->AggGeom.GetAggGeom(GeomTransform, GetSelectionColor(SimpleCollisionColor, bProxyIsSelected, IsHovered()).ToFColor(true), nullptr, (Owner == nullptr), false, AlwaysHasVelocity(), ViewIndex, Collector);
 						}
 
@@ -1620,7 +1512,7 @@ void FSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views,
 						if (StaticMesh->GetNavCollision() && StaticMesh->GetNavCollision()->IsDynamicObstacle())
 						{
 							// Draw the static mesh's body setup (simple collision)
-							FTransform GeomTransform(InstanceToWorldMatrix);
+							FTransform GeomTransform(InstanceToWorld);
 							FColor NavCollisionColor = FColor(118, 84, 255, 255);
 							StaticMesh->GetNavCollision()->DrawSimpleGeom(Collector.GetPDI(ViewIndex), GeomTransform, GetSelectionColor(NavCollisionColor, bProxyIsSelected, IsHovered()).ToFColor(true));
 						}
@@ -1632,7 +1524,7 @@ void FSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views,
 				// Only render for texture painting; vertex painting is not supported for Nanite meshes
 				if (bProxyIsSelected && EngineShowFlags.VertexColors && AllowDebugViewmodes() && GVertexViewModeOverrideTexture.IsValid() && ShouldProxyUseVertexColorVisualization(GetOwnerName()))
 				{
-					FTransform GeomTransform(InstanceToWorldMatrix);
+					FTransform GeomTransform(InstanceToWorld);
 					BodySetup->AggGeom.GetAggGeom(GeomTransform, NewVertexMaterialColor.ToFColor(false), NewVertexColorVisualizationMaterialInstance, false, true, DrawsVelocity(), ViewIndex, Collector);
 				}
 #endif
@@ -1640,31 +1532,24 @@ void FSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views,
 
 				if (EngineShowFlags.MassProperties && DebugMassData.Num() > 0)
 				{
-					DebugMassData[0].DrawDebugMass(Collector.GetPDI(ViewIndex), FTransform(InstanceToWorldMatrix));
+					DebugMassData[0].DrawDebugMass(Collector.GetPDI(ViewIndex), FTransform(InstanceToWorld));
 				}
 
 				if (EngineShowFlags.StaticMeshes)
 				{
 					RenderBounds(Collector.GetPDI(ViewIndex), EngineShowFlags, GetBounds(), !Owner || IsSelected());
 				}
-
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-				if (EngineShowFlags.VisualizeInstanceUpdates && HasInstanceDebugData())
-				{
-					DrawWireStar(Collector.GetPDI(ViewIndex), (FVector)InstanceToWorld.Origin, 40.0f, WasInstanceXFormUpdatedThisFrame(InstanceIndex) ? FColor::Red : FColor::Green, EngineShowFlags.Game ? SDPG_World : SDPG_Foreground);
-
-					Collector.GetPDI(ViewIndex)->DrawLine((FVector)InstanceToWorld.Origin, (FVector)InstanceToWorld.Origin + 40.0f * FVector(0, 0, 1), FColor::Blue, EngineShowFlags.Game ? SDPG_World : SDPG_Foreground);
-
-					if (WasInstanceCustomDataUpdatedThisFrame(InstanceIndex))
-					{
-						DrawCircle(Collector.GetPDI(ViewIndex), (FVector)InstanceToWorld.Origin, FVector(1, 0, 0), FVector(0, 1, 0), FColor::Orange, 40.0f, 32, EngineShowFlags.Game ? SDPG_World : SDPG_Foreground);
-					}
-				}
-#endif
 			}
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+			if (EngineShowFlags.VisualizeInstanceUpdates && InstanceDataSceneProxy)
+			{
+				InstanceDataSceneProxy->DebugDrawInstanceChanges(Collector.GetPDI(ViewIndex), EngineShowFlags.Game ? SDPG_World : SDPG_Foreground);
+			}
+#endif
 		}
 	}
 #endif // NANITE_ENABLE_DEBUG_RENDERING
+#endif // WITH_EDITOR
 }
 
 #if NANITE_ENABLE_DEBUG_RENDERING
@@ -1757,28 +1642,6 @@ bool FSceneProxy::GetCollisionMeshElement(
 
 #endif
 
-void FSceneProxy::OnTransformChanged()
-{
-#if RHI_RAYTRACING
-	bCachedRayTracingInstanceTransformsValid = false;
-#endif
-
-	if (!bHasPerInstanceLocalBounds)
-	{
-		check(InstanceLocalBounds.Num() <= 1);
-		InstanceLocalBounds.SetNumUninitialized(1);
-		if (StaticMesh != nullptr)
-		{
-			SetInstanceLocalBounds(0, StaticMesh->GetBounds());
-		}
-		else
-		{
-			// NOTE: The proxy's local bounds have already been padded for WPO
-			SetInstanceLocalBounds(0, GetLocalBounds(), false);
-		}
-	}
-}
-
 bool FSceneProxy::GetInstanceDrawDistanceMinMax(FVector2f& OutDistanceMinMax) const
 {
 	if (EndCullDistance > 0)
@@ -1820,6 +1683,16 @@ void FSceneProxy::SetWorldPositionOffsetDisableDistance_GameThread(int32 NewValu
 		});
 }
 
+void FSceneProxy::SetInstanceCullDistance_RenderThread(float InStartCullDistance, float InEndCullDistance)
+{
+	EndCullDistance = InEndCullDistance;
+}
+
+FInstanceDataUpdateTaskInfo *FSceneProxy::GetInstanceDataUpdateTaskInfo() const
+{
+	return InstanceDataSceneProxy ? InstanceDataSceneProxy->GetUpdateTaskInfo() : nullptr;
+}
+
 #if RHI_RAYTRACING
 bool FSceneProxy::HasRayTracingRepresentation() const
 {
@@ -1835,7 +1708,7 @@ int32 FSceneProxy::GetFirstValidRaytracingGeometryLODIndex() const
 	}
 
 	int32 NumLODs = RenderData->LODResources.Num();
-	int LODIndex = 0;
+	int LODIndex = ClampedMinLOD;
 
 #if WITH_EDITOR
 	// If coarse mesh streaming mode is set to 2 then we force use the lowest LOD to visualize streamed out coarse meshes
@@ -1848,7 +1721,8 @@ int32 FSceneProxy::GetFirstValidRaytracingGeometryLODIndex() const
 	// find the first valid RT geometry index
 	for (; LODIndex < NumLODs; ++LODIndex)
 	{
-		if (RenderData->LODResources[LODIndex].RayTracingGeometry.IsValid())
+		const FRayTracingGeometry& RayTracingGeometry = RenderData->LODResources[LODIndex].RayTracingGeometry;
+		if (RayTracingGeometry.IsValid() && !RayTracingGeometry.HasPendingBuildRequest())
 		{
 			return LODIndex;
 		}
@@ -1857,40 +1731,118 @@ int32 FSceneProxy::GetFirstValidRaytracingGeometryLODIndex() const
 	return INDEX_NONE;
 }
 
-void FSceneProxy::SetupRayTracingMaterials(int32 LODIndex, TArray<FMeshBatch>& Materials, bool bUseNaniteVertexFactory) const
+void FSceneProxy::SetupRayTracingMaterials(int32 LODIndex, TArray<FMeshBatch>& OutMaterials) const
 {
-	check(Materials.Num() <= RayTracingMaterialProxiesPerLOD[LODIndex].Num());
-	for (int32 SectionIndex = 0; SectionIndex < Materials.Num(); ++SectionIndex)
+	OutMaterials.SetNum(MaterialSections.Num());
+
+	for (int32 SectionIndex = 0; SectionIndex < OutMaterials.Num(); ++SectionIndex)
 	{
-		const FMaterialRenderProxy* MaterialProxy = RayTracingMaterialProxiesPerLOD[LODIndex][SectionIndex];
-		FMeshBatch& MeshBatch = Materials[SectionIndex];
-		if (bUseNaniteVertexFactory)
-		{
-			MeshBatch.VertexFactory = GVertexFactoryResource.GetVertexFactory();
-		}
-		else
-		{
-			MeshBatch.VertexFactory = &RenderData->LODVertexFactories[LODIndex].VertexFactory;
-		}
-		MeshBatch.MaterialRenderProxy = MaterialProxy;
-		MeshBatch.bWireframe = false;
+		const FMaterialSection& MaterialSection = MaterialSections[SectionIndex];
+
+		const bool bWireframe = false;
+		const bool bUseReversedIndices = false;
+
+		FMeshBatch& MeshBatch = OutMaterials[SectionIndex];
+		FMeshBatchElement& MeshBatchElement = MeshBatch.Elements[0];
+
+		MeshBatch.VertexFactory = GVertexFactoryResource.GetVertexFactory();
+		MeshBatch.MaterialRenderProxy = MaterialSection.ShadingMaterialProxy;
+		MeshBatch.bWireframe = bWireframe;
 		MeshBatch.SegmentIndex = SectionIndex;
 		MeshBatch.LODIndex = 0;
-#if RHI_RAYTRACING
 		MeshBatch.CastRayTracedShadow = CastsDynamicShadow(); // Relying on BuildInstanceMaskAndFlags(...) to check Material.CastsRayTracedShadows()
-#endif
-		MeshBatch.Elements[0].PrimitiveUniformBufferResource = &GIdentityPrimitiveUniformBuffer;
+
+		MeshBatchElement.PrimitiveUniformBufferResource = &GIdentityPrimitiveUniformBuffer;
 	}
+}
+
+void FSceneProxy::SetupFallbackRayTracingMaterials(int32 LODIndex, TArray<FMeshBatch>& OutMaterials) const
+{
+	const FStaticMeshLODResources& LOD = RenderData->LODResources[LODIndex];
+	const FStaticMeshVertexFactories& VFs = RenderData->LODVertexFactories[LODIndex];
+
+	const FFallbackLODInfo& FallbackLODInfo = FallbackLODs[LODIndex];
+
+	OutMaterials.SetNum(FallbackLODInfo.Sections.Num());
+
+	for (int32 SectionIndex = 0; SectionIndex < OutMaterials.Num(); ++SectionIndex)
+	{
+		const FFallbackLODInfo::FSectionInfo& SectionInfo = FallbackLODInfo.Sections[SectionIndex];
+
+		FMeshBatch& MeshBatch = OutMaterials[SectionIndex];
+		FMeshBatchElement& MeshBatchElement = MeshBatch.Elements[0];
+
+		const bool bWireframe = false;
+		const bool bUseReversedIndices = false;
+
+		SetMeshElementGeometrySource(LODIndex, SectionIndex, bWireframe, bUseReversedIndices, &VFs.VertexFactory, MeshBatch);
+
+		MeshBatch.VertexFactory = &VFs.VertexFactory;
+		MeshBatchElement.VertexFactoryUserData = VFs.VertexFactory.GetUniformBuffer();
+
+		const FStaticMeshSection& Section = LOD.Sections[SectionIndex];
+
+		MeshBatchElement.MinVertexIndex = Section.MinVertexIndex;
+		MeshBatchElement.MaxVertexIndex = Section.MaxVertexIndex;
+
+		MeshBatch.MaterialRenderProxy = SectionInfo.MaterialProxy;
+		MeshBatch.bWireframe = bWireframe;
+		MeshBatch.SegmentIndex = SectionIndex;
+		MeshBatch.LODIndex = 0; // CacheRayTracingPrimitive(...) currently assumes that primitives with CacheInstances flag only cache mesh commands for one LOD
+		MeshBatch.CastRayTracedShadow = CastsDynamicShadow(); // Relying on BuildInstanceMaskAndFlags(...) to check Material.CastsRayTracedShadows()
+		MeshBatch.ReverseCulling = IsReversedCullingNeeded(bUseReversedIndices);
+
+		MeshBatchElement.PrimitiveUniformBufferResource = &GIdentityPrimitiveUniformBuffer;
+	}
+}
+
+void FSceneProxy::CreateDynamicRayTracingGeometries(FRHICommandListBase& RHICmdList)
+{
+	check(bNeedsDynamicRayTracingGeometries);
+	check(DynamicRayTracingGeometries.IsEmpty());
+
+	DynamicRayTracingGeometries.AddDefaulted(RenderData->LODResources.Num());
+
+	for (int32 LODIndex = ClampedMinLOD; LODIndex < RenderData->LODResources.Num(); LODIndex++)
+	{
+		FRayTracingGeometryInitializer Initializer = RenderData->LODResources[LODIndex].RayTracingGeometry.Initializer;
+		for (FRayTracingGeometrySegment& Segment : Initializer.Segments)
+		{
+			Segment.VertexBuffer = nullptr;
+		}
+		Initializer.bAllowUpdate = true;
+		Initializer.bFastBuild = true;
+		Initializer.Type = ERayTracingGeometryInitializerType::Rendering;
+
+		DynamicRayTracingGeometries[LODIndex].SetInitializer(MoveTemp(Initializer));
+		DynamicRayTracingGeometries[LODIndex].InitResource(RHICmdList);
+	}
+}
+
+void FSceneProxy::ReleaseDynamicRayTracingGeometries()
+{
+	for (auto& Geometry : DynamicRayTracingGeometries)
+	{
+		Geometry.ReleaseResource();
+	}
+
+	DynamicRayTracingGeometries.Empty();
 }
 
 void FSceneProxy::GetDynamicRayTracingInstances(FRayTracingMaterialGatheringContext& Context, TArray<FRayTracingInstance>& OutRayTracingInstances)
 {
+	check(!IsRayTracingStaticRelevant());
+
 	if (CVarRayTracingNaniteProxyMeshes.GetValueOnRenderThread() == 0 || !bHasRayTracingInstances)
 	{
 		return;
 	}
 
-	const bool bUsingNaniteRayTracing = GetRayTracingMode() != ERayTracingMode::Fallback;
+	if (GetRayTracingMode() != ERayTracingMode::Fallback)
+	{
+		// We don't currently support non-fallback dynamic instances
+		return;
+	}
 
 	// try and find the first valid RT geometry index
 	int32 ValidLODIndex = GetFirstValidRaytracingGeometryLODIndex();
@@ -1899,95 +1851,97 @@ void FSceneProxy::GetDynamicRayTracingInstances(FRayTracingMaterialGatheringCont
 		return;
 	}
 
+	if (!ensure(DynamicRayTracingGeometries.IsValidIndex(ValidLODIndex)))
+	{
+		return;
+	}
+
+	const FStaticMeshLODResources& LODData = RenderData->LODResources[ValidLODIndex];
+	FRayTracingGeometry* DynamicGeometry = &DynamicRayTracingGeometries[ValidLODIndex];
+
 	// Setup a new instance
 	FRayTracingInstance& RayTracingInstance = OutRayTracingInstances.Emplace_GetRef();
-	if (bUsingNaniteRayTracing)
-	{
-		RayTracingInstance.Geometry = nullptr;
-		RayTracingInstance.bApplyLocalBoundsTransform = false;
-	}
-	else
-	{
-		RayTracingInstance.Geometry = &RenderData->LODResources[ValidLODIndex].RayTracingGeometry;
-		RayTracingInstance.bApplyLocalBoundsTransform = RayTracingInstance.Geometry->RayTracingGeometryRHI->GetInitializer().GeometryType == RTGT_Procedural;
-	}
+	RayTracingInstance.Geometry = DynamicGeometry;
 
-	const int32 InstanceCount = InstanceSceneData.Num();
-	if (CachedRayTracingInstanceTransforms.Num() != InstanceCount || !bCachedRayTracingInstanceTransformsValid)
-	{
-		const FRenderTransform PrimitiveToWorld = (FMatrix44f)GetLocalToWorld();
-
-		CachedRayTracingInstanceTransforms.SetNumUninitialized(InstanceCount);
-		for (int32 InstanceIndex = 0; InstanceIndex < InstanceCount; ++InstanceIndex)
-		{
-			const FInstanceSceneData& Instance = InstanceSceneData[InstanceIndex];
-			const FRenderTransform InstanceLocalToWorld = Instance.ComputeLocalToWorld(PrimitiveToWorld);
-			CachedRayTracingInstanceTransforms[InstanceIndex] = InstanceLocalToWorld.ToMatrix();
-		}
-		bCachedRayTracingInstanceTransformsValid = true;
-	}
-
-	// Transforms are persistently allocated, so we can just return them by pointer.
-	RayTracingInstance.InstanceTransformsView = CachedRayTracingInstanceTransforms;
-	RayTracingInstance.NumTransforms = CachedRayTracingInstanceTransforms.Num();
+	const FInstanceSceneDataBuffers* InstanceSceneDataBuffers = GetInstanceSceneDataBuffers();
+	const int32 InstanceCount = InstanceSceneDataBuffers ? InstanceSceneDataBuffers->GetNumInstances() : 1;
 	
-	// When we are running with NaniteRT we need to force materials to come from LOD0.
-	// TODO: Figure out a better place to do it.
-	const int32 ValidLODIndexForMaterials = GetRayTracingMode() != ERayTracingMode::Fallback ? 0 : ValidLODIndex;
-	
-	// Currently we only support 1 material when using procedural ray tracing primitive
-	const bool bProcedural = RayTracingInstance.Geometry && RayTracingInstance.Geometry->Initializer.GeometryType == RTGT_Procedural;
-	const int32 NumRayTracingMaterialEntries = bProcedural ? 1 : RenderData->LODResources[ValidLODIndex].Sections.Num();
+	// NOTE: For now, only single-instance dynamic ray tracing is supported
+	checkf(
+		InstanceCount == 1,
+		TEXT("GetDynamicRayTracingInstances called for a Nanite scene proxy with multiple instances. ")
+		TEXT("This isn't currently supported.")
+	);
+	RayTracingInstance.InstanceTransformsView = MakeArrayView(&GetLocalToWorld(), 1);
+	RayTracingInstance.NumTransforms = 1;
+
+	const int32 NumRayTracingMaterialEntries = RenderData->LODResources[ValidLODIndex].Sections.Num();
 
 	// Setup the cached materials again when the LOD changes
 	if (NumRayTracingMaterialEntries != CachedRayTracingMaterials.Num() || ValidLODIndex != CachedRayTracingMaterialsLODIndex)
 	{
 		CachedRayTracingMaterials.Reset();
-		CachedRayTracingMaterials.SetNum(NumRayTracingMaterialEntries);
 
-		SetupRayTracingMaterials(ValidLODIndex, CachedRayTracingMaterials, bUsingNaniteRayTracing);
+		SetupFallbackRayTracingMaterials(ValidLODIndex, CachedRayTracingMaterials);
 		CachedRayTracingMaterialsLODIndex = ValidLODIndex;
-
-		// Request rebuild
-		CachedRayTracingInstanceMaskAndFlags.Mask = 0;
+	}
+	else
+	{
+		// Skip computing the mask and flags in the renderer since material didn't change
+		RayTracingInstance.bInstanceMaskAndFlagsDirty = false;
 	}
 
 	RayTracingInstance.MaterialsView = CachedRayTracingMaterials;
 
-	if (CachedRayTracingInstanceMaskAndFlags.Mask == 0)
-	{
-		CachedRayTracingInstanceMaskAndFlags = Context.BuildInstanceMaskAndFlags(RayTracingInstance, *this);
-	}
-	
-	// Skip computing the mask and flags in the renderer since we are using cached values.
-	RayTracingInstance.bInstanceMaskAndFlagsDirty = false;
-	RayTracingInstance.MaskAndFlags = CachedRayTracingInstanceMaskAndFlags;
+	// Use the shared vertex buffer - needs to be updated every frame
+	FRWBuffer* VertexBuffer = nullptr;
+
+	Context.DynamicRayTracingGeometriesToUpdate.Add(
+		FRayTracingDynamicGeometryUpdateParams
+		{
+			CachedRayTracingMaterials,
+			false,
+			(uint32)LODData.GetNumVertices(),
+			(uint32)LODData.GetNumVertices() * (uint32)sizeof(FVector3f),
+			DynamicGeometry->Initializer.TotalPrimitiveCount,
+			DynamicGeometry,
+			VertexBuffer,
+			true
+		}
+	);
 }
 
 ERayTracingPrimitiveFlags FSceneProxy::GetCachedRayTracingInstance(FRayTracingInstance& RayTracingInstance)
 {
 	if (!(IsVisibleInRayTracing() && ShouldRenderInMainPass() && (IsDrawnInGame() || AffectsIndirectLightingWhileHidden()|| CastsHiddenShadow())) && !IsRayTracingFarField())
 	{
-		return ERayTracingPrimitiveFlags::Excluded;
+		return ERayTracingPrimitiveFlags::Exclude;
 	}
 
 	if (CVarRayTracingNaniteProxyMeshes.GetValueOnRenderThread() == 0 || !bHasRayTracingInstances)
 	{
-		return ERayTracingPrimitiveFlags::Excluded;
+		return ERayTracingPrimitiveFlags::Exclude;
+	}
+
+	static const auto RayTracingStaticMeshesCVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.RayTracing.Geometry.StaticMeshes"));
+
+	if (RayTracingStaticMeshesCVar && RayTracingStaticMeshesCVar->GetValueOnRenderThread() <= 0)
+	{
+		return ERayTracingPrimitiveFlags::Exclude;
 	}
 
 	static const auto RayTracingHISMCVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.RayTracing.Geometry.HierarchicalInstancedStaticMesh"));
 
 	if (bIsHierarchicalInstancedStaticMesh && RayTracingHISMCVar && RayTracingHISMCVar->GetValueOnRenderThread() <= 0)
 	{
-		return ERayTracingPrimitiveFlags::Excluded;
+		return ERayTracingPrimitiveFlags::Exclude;
 	}
 
 	static const auto RayTracingLandscapeGrassCVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.RayTracing.Geometry.LandscapeGrass"));
 
 	if (bIsLandscapeGrass && RayTracingLandscapeGrassCVar && RayTracingLandscapeGrassCVar->GetValueOnRenderThread() <= 0)
 	{
-		return ERayTracingPrimitiveFlags::Excluded;
+		return ERayTracingPrimitiveFlags::Exclude;
 	}
 
 	const bool bUsingNaniteRayTracing = GetRayTracingMode() != ERayTracingMode::Fallback;
@@ -1996,9 +1950,18 @@ ERayTracingPrimitiveFlags FSceneProxy::GetCachedRayTracingInstance(FRayTracingIn
 	int32 ValidLODIndex = GetFirstValidRaytracingGeometryLODIndex();
 	if (ValidLODIndex == INDEX_NONE)
 	{
-		// If there is a streaming handle (but no valid LOD available), then give the streaming flag to make sure it's not excluded
-		// It's still needs to be processed during TLAS build because this will drive the streaming of these resources.
-		return (CoarseMeshStreamingHandle != INDEX_NONE) ? ERayTracingPrimitiveFlags::Streaming : ERayTracingPrimitiveFlags::Excluded;
+		// Use Skip flag here since Excluded primitives don't get cached ray tracing state updated even if it's marked dirty.
+		// ERayTracingPrimitiveFlags::Exclude should only be used for conditions that will cause proxy to be recreated when they change.
+		ERayTracingPrimitiveFlags ResultFlags = ERayTracingPrimitiveFlags::Skip;
+
+		if (CoarseMeshStreamingHandle != INDEX_NONE)
+		{
+			// If there is a streaming handle (but no valid LOD available), then give the streaming flag to make sure it's not excluded
+			// It's still needs to be processed during TLAS build because this will drive the streaming of these resources.
+			ResultFlags |= ERayTracingPrimitiveFlags::Streaming;
+		}
+
+		return ResultFlags;
 	}
 
 	if (bUsingNaniteRayTracing)
@@ -2009,33 +1972,30 @@ ERayTracingPrimitiveFlags FSceneProxy::GetCachedRayTracingInstance(FRayTracingIn
 	else
 	{
 		RayTracingInstance.Geometry = &RenderData->LODResources[ValidLODIndex].RayTracingGeometry;
-		RayTracingInstance.bApplyLocalBoundsTransform = RayTracingInstance.Geometry->RayTracingGeometryRHI->GetInitializer().GeometryType == RTGT_Procedural;
+		RayTracingInstance.bApplyLocalBoundsTransform = false;
 	}
 
-	checkf(SupportsInstanceDataBuffer() && InstanceSceneData.Num() <= GetPrimitiveSceneInfo()->GetNumInstanceSceneDataEntries(),
-		TEXT("Primitives using ERayTracingPrimitiveFlags::CacheInstances require instance transforms available in GPUScene"));
+	//checkf(SupportsInstanceDataBuffer() && InstanceSceneData.Num() <= GetPrimitiveSceneInfo()->GetNumInstanceSceneDataEntries(),
+	//	TEXT("Primitives using ERayTracingPrimitiveFlags::CacheInstances require instance transforms available in GPUScene"));
 
-	RayTracingInstance.NumTransforms = InstanceSceneData.Num();
+	RayTracingInstance.NumTransforms = GetPrimitiveSceneInfo()->GetNumInstanceSceneDataEntries();
 	// When ERayTracingPrimitiveFlags::CacheInstances is used, instance transforms are copied from GPUScene while building ray tracing instance buffer.
 
-	if (RayTracingInstance.Geometry && RayTracingInstance.Geometry->Initializer.GeometryType == RTGT_Procedural)
+	if (bUsingNaniteRayTracing)
 	{
-		// Currently we only support 1 material when using procedural ray tracing primitive
-		RayTracingInstance.Materials.SetNum(1);
+		SetupRayTracingMaterials(ValidLODIndex, RayTracingInstance.Materials);
 	}
 	else
 	{
-		RayTracingInstance.Materials.SetNum(RayTracingMaterialProxiesPerLOD[ValidLODIndex].Num());
+		SetupFallbackRayTracingMaterials(ValidLODIndex, RayTracingInstance.Materials);
 	}
-
-	SetupRayTracingMaterials(ValidLODIndex, RayTracingInstance.Materials, bUsingNaniteRayTracing);
 
 	const bool bIsRayTracingFarField = IsRayTracingFarField();
 
 	RayTracingInstance.InstanceLayer = bIsRayTracingFarField ? ERayTracingInstanceLayer::FarField : ERayTracingInstanceLayer::NearField;
 
 	// setup the flags
-	ERayTracingPrimitiveFlags ResultFlags = ERayTracingPrimitiveFlags::StaticMesh | ERayTracingPrimitiveFlags::CacheMeshCommands | ERayTracingPrimitiveFlags::CacheInstances;
+	ERayTracingPrimitiveFlags ResultFlags = ERayTracingPrimitiveFlags::CacheInstances;
 
 	if (CoarseMeshStreamingHandle != INDEX_NONE)
 	{
@@ -2050,9 +2010,15 @@ ERayTracingPrimitiveFlags FSceneProxy::GetCachedRayTracingInstance(FRayTracingIn
 	return ResultFlags;
 }
 
+RayTracing::GeometryGroupHandle FSceneProxy::GetRayTracingGeometryGroupHandle() const
+{
+	check(IsInRenderingThread());
+	return RayTracingGeometryGroupHandle;
+}
+
 #endif // RHI_RAYTRACING
 
-#if NANITE_ENABLE_DEBUG_RENDERING
+#if RHI_RAYTRACING || NANITE_ENABLE_DEBUG_RENDERING
 
 // Loosely copied from FStaticMeshSceneProxy::SetMeshElementGeometrySource and modified for Nanite fallback
 // TODO: Refactor all this to share common code with Nanite and regular SM scene proxy
@@ -2116,8 +2082,8 @@ uint32 FSceneProxy::SetMeshElementGeometrySource(
 bool FSceneProxy::IsReversedCullingNeeded(bool bUseReversedIndices) const
 {
 	// Use != to ensure consistent face directions between negatively and positively scaled primitives
-	// NOTE: This is only used by debug draw mesh elements (Nanite determines cull mode on the GPU. See
-	// ReverseWindingOrder() in NaniteRasterizer.usf)
+	// NOTE: This is only used by ray tracing and debug draw mesh elements
+	// (Nanite determines cull mode on the GPU. See ReverseWindingOrder() in NaniteRasterizer.usf)
 	const bool bReverseNeeded = IsCullingReversedByComponent() != IsLocalToWorldDeterminantNegative();
 	return bReverseNeeded && !bUseReversedIndices;
 }
@@ -2167,21 +2133,6 @@ void FSceneProxy::GetDistanceFieldAtlasData(const FDistanceFieldVolumeData*& Out
 	SelfShadowBias = DistanceFieldSelfShadowBias;
 }
 
-void FSceneProxy::GetDistanceFieldInstanceData(TArray<FRenderTransform>& InstanceLocalToPrimitiveTransforms) const
-{
-	check(InstanceLocalToPrimitiveTransforms.IsEmpty());
-
-	if (DistanceFieldData)
-	{
-		InstanceLocalToPrimitiveTransforms.SetNumUninitialized(InstanceSceneData.Num());
-		for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData.Num(); ++InstanceIndex)
-		{
-			const FInstanceSceneData& Instance = InstanceSceneData[InstanceIndex];
-			InstanceLocalToPrimitiveTransforms[InstanceIndex] = Instance.LocalToPrimitive;
-		}
-	}
-}
-
 bool FSceneProxy::HasDistanceFieldRepresentation() const
 {
 	return CastsDynamicShadow() && AffectsDistanceFieldLighting() && DistanceFieldData;
@@ -2223,25 +2174,61 @@ uint32 FSceneProxy::GetMemoryFootprint() const
 	return sizeof( *this ) + GetAllocatedSize();
 }
 
-void AuditMaterials(const UStaticMeshComponent* Component, FMaterialAudit& Audit)
+struct FAuditMaterialSlotInfo
+{
+	UMaterialInterface* Material;
+	FName SlotName;
+	FMeshUVChannelInfo UVChannelData;
+};
+
+template<class T>
+TArray<FAuditMaterialSlotInfo, TInlineAllocator<32>> GetMaterialSlotInfos(const T& Object)
+{
+	TArray<FAuditMaterialSlotInfo, TInlineAllocator<32>> Infos;
+
+	if (UStaticMesh* StaticMesh = Object.GetStaticMesh())
+	{
+		TArray<FStaticMaterial>& StaticMaterials = StaticMesh->GetStaticMaterials();
+
+		uint32 Index = 0;
+		for (FStaticMaterial& Material : StaticMaterials)
+		{
+			Infos.Add({Object.GetNaniteAuditMaterial(Index), Material.MaterialSlotName, Material.UVChannelData});
+			Index++;
+		}
+	}
+
+	return Infos;
+}
+
+template<class T> 
+FMaterialAudit& AuditMaterialsImp(const T* InProxyDesc, FMaterialAudit& Audit, bool bSetMaterialUsage)
 {
 	static const auto NaniteForceEnableMeshesCvar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Nanite.ForceEnableMeshes"));
 	static const bool bNaniteForceEnableMeshes = NaniteForceEnableMeshesCvar && NaniteForceEnableMeshesCvar->GetValueOnAnyThread() != 0;
 
 	Audit.bHasAnyError = false;
-	Audit.Entries.Reset();
+	Audit.Entries.Reset();	
 
-	if (Component != nullptr)
+	if (InProxyDesc != nullptr)
 	{
-		const int32 NumMaterials = Component->GetNumMaterials();
-		const TArray<FName> MaterialSlotNames = Component->GetMaterialSlotNames();
-		for (const FName& SlotName : MaterialSlotNames)
+		TArray<FAuditMaterialSlotInfo, TInlineAllocator<32>> Slots = Nanite::GetMaterialSlotInfos(*InProxyDesc);		
+
+		uint32 Index = 0;
+		for (const FAuditMaterialSlotInfo& SlotInfo : Slots)
 		{
 			FMaterialAuditEntry& Entry = Audit.Entries.AddDefaulted_GetRef();
-			Entry.MaterialSlotName = SlotName;
-			Entry.MaterialIndex = Component->GetMaterialIndex(SlotName);
-			Entry.Material = Component->GetNaniteAuditMaterial(Entry.MaterialIndex);
+			Entry.MaterialSlotName = SlotInfo.SlotName;
+			Entry.MaterialIndex = Index;
+			Index++;
+			Entry.Material = SlotInfo.Material;
 			Entry.bHasNullMaterial = Entry.Material == nullptr;
+			Entry.LocalUVDensities = FVector4f(
+				SlotInfo.UVChannelData.LocalUVDensities[0],
+				SlotInfo.UVChannelData.LocalUVDensities[1],
+				SlotInfo.UVChannelData.LocalUVDensities[2],
+				SlotInfo.UVChannelData.LocalUVDensities[3]
+			);
 
 			if (Entry.bHasNullMaterial)
 			{
@@ -2266,10 +2253,10 @@ void AuditMaterials(const UStaticMeshComponent* Component, FMaterialAudit& Audit
 			Entry.bHasPerInstanceCustomData		= CachedMaterialData.bHasPerInstanceCustomData;
 			Entry.bHasPixelDepthOffset			= Material->HasPixelDepthOffsetConnected();
 			Entry.bHasWorldPositionOffset		= Material->HasVertexPositionOffsetConnected();
-			Entry.bHasDynamicDisplacement		= Material->HasDisplacementConnected();
+			Entry.bHasTessellationEnabled		= Material->IsTessellationEnabled();
 			Entry.bHasUnsupportedBlendMode		= !IsSupportedBlendMode(BlendMode);
 			Entry.bHasUnsupportedShadingModel	= !IsSupportedShadingModel(Material->GetShadingModels());
-			Entry.bHasInvalidUsage				= bUsingCookedEditorData ? Material->NeedsSetMaterialUsage_Concurrent(bUsageSetSuccessfully, MATUSAGE_Nanite) : !Material->CheckMaterialUsage_Concurrent(MATUSAGE_Nanite);
+			Entry.bHasInvalidUsage				= (bUsingCookedEditorData || !bSetMaterialUsage) ? Material->NeedsSetMaterialUsage_Concurrent(bUsageSetSuccessfully, MATUSAGE_Nanite) : !Material->CheckMaterialUsage_Concurrent(MATUSAGE_Nanite);
 
 			if (BlendMode == BLEND_Masked)
 			{
@@ -2290,7 +2277,7 @@ void AuditMaterials(const UStaticMeshComponent* Component, FMaterialAudit& Audit
 			if (!bUsingCookedEditorData && Entry.bHasAnyError && !Audit.bHasAnyError)
 			{
 				// Only populate on error for performance/memory reasons
-				Audit.AssetName = Component->GetStaticMesh()->GetName();
+				Audit.AssetName = InProxyDesc->GetStaticMesh()->GetName();
 				Audit.FallbackMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
 			}
 
@@ -2327,6 +2314,19 @@ void AuditMaterials(const UStaticMeshComponent* Component, FMaterialAudit& Audit
 #endif
 		}
 	}
+
+	return Audit;
+}
+
+
+void AuditMaterials(const UStaticMeshComponent* Component, FMaterialAudit& Audit, bool bSetMaterialUsage)
+{
+	AuditMaterialsImp(Component, Audit, bSetMaterialUsage);
+}
+
+void AuditMaterials(const FStaticMeshSceneProxyDesc* ProxyDesc, FMaterialAudit& Audit, bool bSetMaterialUsage)
+{
+	AuditMaterialsImp(ProxyDesc, Audit, bSetMaterialUsage);
 }
 
 bool IsSupportedBlendMode(EBlendMode BlendMode)
@@ -2367,8 +2367,12 @@ void FVertexFactoryResource::InitRHI(FRHICommandListBase& RHICmdList)
 	if (DoesPlatformSupportNanite(GMaxRHIShaderPlatform))
 	{
 		LLM_SCOPE_BYTAG(Nanite);
-		VertexFactory = new FVertexFactory(ERHIFeatureLevel::SM5);
-		VertexFactory->InitResource(RHICmdList);
+
+		if (NaniteLegacyMaterialsSupported())
+		{
+			VertexFactory = new FVertexFactory(ERHIFeatureLevel::SM5);
+			VertexFactory->InitResource(RHICmdList);
+		}
 
 		if (NaniteComputeMaterialsSupported())
 		{
@@ -2384,8 +2388,11 @@ void FVertexFactoryResource::ReleaseRHI()
 	{
 		LLM_SCOPE_BYTAG(Nanite);
 
-		delete VertexFactory;
-		VertexFactory = nullptr;
+		if (NaniteLegacyMaterialsSupported())
+		{
+			delete VertexFactory;
+			VertexFactory = nullptr;
+		}
 
 		if (NaniteComputeMaterialsSupported())
 		{
@@ -2423,6 +2430,8 @@ bool FNaniteVertexFactory::ShouldCompilePermutation(const FVertexFactoryShaderPe
 		(Parameters.MaterialParameters.bIsUsedWithNanite || Parameters.MaterialParameters.bIsSpecialEngineMaterial) &&
 		Nanite::IsSupportedMaterialDomain(Parameters.MaterialParameters.MaterialDomain) &&
 		Nanite::IsSupportedBlendMode(Parameters.MaterialParameters) &&
+		!IsVulkanPlatform(Parameters.Platform) &&
+		!IsMetalPlatform(Parameters.Platform) && // TODO: Support CS derivatives
 		DoesPlatformSupportNanite(Parameters.Platform);
 
 	return bShouldCompile;
@@ -2451,20 +2460,28 @@ void FNaniteVertexFactory::ModifyCompilationEnvironment(const FVertexFactoryShad
 			// frequently causes occupancy issues, we may want to consider ways to split the spline meshes into their own
 			// shading bin and permute the CS.
 			OutEnvironment.SetDefine(TEXT("USE_SPLINEDEFORM"), 1);
+			OutEnvironment.SetDefine(TEXT("USE_SPLINE_MESH_SCENE_RESOURCES"), UseSplineMeshSceneResources(Parameters.Platform));
 		}
 	}
 
+	OutEnvironment.CompilerFlags.Add(CFLAG_ForceDXC);
+	OutEnvironment.CompilerFlags.Add(CFLAG_HLSL2021);
 	OutEnvironment.CompilerFlags.Add(CFLAG_Wave32);
+	OutEnvironment.CompilerFlags.Add(CFLAG_RootConstants);
+	OutEnvironment.CompilerFlags.Add(CFLAG_ShaderBundle);
+	OutEnvironment.CompilerFlags.Add(CFLAG_CheckForDerivativeOps);
 }
 
 IMPLEMENT_VERTEX_FACTORY_TYPE(FNaniteVertexFactory, "/Engine/Private/Nanite/NaniteVertexFactory.ush",
-	EVertexFactoryFlags::UsedWithMaterials
+	  EVertexFactoryFlags::UsedWithMaterials
 	| EVertexFactoryFlags::SupportsStaticLighting
 	| EVertexFactoryFlags::SupportsPrimitiveIdStream
 	| EVertexFactoryFlags::SupportsNaniteRendering
 	| EVertexFactoryFlags::SupportsComputeShading
 	| EVertexFactoryFlags::SupportsManualVertexFetch
 	| EVertexFactoryFlags::SupportsLumenMeshCards
+	| EVertexFactoryFlags::SupportsLandscape
+	| EVertexFactoryFlags::SupportsPSOPrecaching
 );
 
 void ClearNaniteResources(Nanite::FResources& InResources)

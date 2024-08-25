@@ -3,6 +3,7 @@
 #include "ViewModels/NiagaraEmitterViewModel.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraEmitterInstance.h"
+#include "NiagaraEmitterInstanceImpl.h"
 #include "NiagaraScriptSourceBase.h"
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "ViewModels/NiagaraScriptViewModel.h"
@@ -87,6 +88,7 @@ bool FNiagaraEmitterViewModel::Initialize(const FVersionedNiagaraEmitter& InEmit
 	SummaryViewHierarchyViewModel->Initialize(AsShared());
 	SummaryViewHierarchyViewModel->OnHierarchyChanged().AddSP(this, &FNiagaraEmitterViewModel::OnSummaryViewHierarchyChanged);
 	SummaryViewHierarchyViewModel->OnHierarchyPropertiesChanged().AddSP(this, &FNiagaraEmitterViewModel::OnSummaryViewHierarchyChanged);
+	GetEditorData().OnSummaryViewStateChanged().AddSP(this, &FNiagaraEmitterViewModel::UpdateSelectionOnSummaryViewStateChanged);
 	return true;
 }
 
@@ -254,14 +256,16 @@ FText FNiagaraEmitterViewModel::GetStatsText() const
 {
 	if (Simulation.IsValid())
 	{
-		TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> SimInstance = Simulation.Pin();
+		FNiagaraEmitterInstancePtr SimInstance = Simulation.Pin();
 		if (SimInstance.IsValid())
 		{
 			static const FNumberFormattingOptions FractionalFormatOptions = FNumberFormattingOptions()
 				.SetMinimumFractionalDigits(3)
 				.SetMaximumFractionalDigits(3);
 
-			if (!SimInstance->IsReadyToRun() || SimInstance->GetParentSystemInstance()->GetSystem()->HasOutstandingCompilationRequests())
+			FNiagaraEmitterInstanceImpl* StatefulSimInstance = SimInstance->AsStateful();
+			const bool bSystemCompiling = SimInstance->GetParentSystemInstance()->GetSystem()->HasOutstandingCompilationRequests();
+			if (bSystemCompiling || (StatefulSimInstance && !StatefulSimInstance->IsReadyToRun()))
 			{
 				return LOCTEXT("PendingCompile", "Compilation in progress...");
 			}
@@ -297,9 +301,10 @@ FText FNiagaraEmitterViewModel::GetStatsText() const
 				else
 				{
 					constexpr double Megabyte = 1024 * 1024;
+					const float TickTimeMS = FPlatformTime::ToMilliseconds(SimInstance->GetTickTimeCycles());
 					return FText::Format(StatsFormat,
 						FText::AsNumber(SimInstance->GetNumParticles()),
-						FText::AsNumber(SimInstance->GetTotalCPUTimeMS(), &FractionalFormatOptions),
+						FText::AsNumber(TickTimeMS, &FractionalFormatOptions),
 						FText::AsNumber(static_cast<double>(SimInstance->GetTotalBytesUsed()) / Megabyte, &FractionalFormatOptions),
 						ExecutionStateEnum->GetDisplayNameTextByValue(static_cast<int32>(SimInstance->GetExecutionState())));
 				}
@@ -326,14 +331,22 @@ UNiagaraSummaryViewViewModel* FNiagaraEmitterViewModel::GetSummaryHierarchyViewM
 
 const UNiagaraEmitterEditorData& FNiagaraEmitterViewModel::GetEditorData() const
 {
-	check(EmitterWeakPtr.Emitter.IsValid());
-	return *Cast<UNiagaraEmitterEditorData>(EmitterWeakPtr.GetEmitterData()->GetEditorData());
+	if (EmitterWeakPtr.Emitter.IsValid())
+	{
+		return *CastChecked<UNiagaraEmitterEditorData>(EmitterWeakPtr.GetEmitterData()->GetEditorData());
+	}
+	//-TODO:Stateless: We don't have UNiagaraEmitterEditorData
+	return *GetDefault<UNiagaraEmitterEditorData>();
 }
 
 UNiagaraEmitterEditorData& FNiagaraEmitterViewModel::GetEditorData()
 {
-	check(EmitterWeakPtr.IsValid());
-	return *Cast<UNiagaraEmitterEditorData>(EmitterWeakPtr.GetEmitterData()->GetEditorData());
+	if (EmitterWeakPtr.IsValid())
+	{
+		return *CastChecked<UNiagaraEmitterEditorData>(EmitterWeakPtr.GetEmitterData()->GetEditorData());
+	}
+	//-TODO:Stateless: We don't have UNiagaraEmitterEditorData
+	return *GetMutableDefault<UNiagaraEmitterEditorData>();
 }
 
 void FNiagaraEmitterViewModel::GetEmitterMessageStores(TArray<FNiagaraMessageSourceAndStore>& OutMessageStores)
@@ -524,6 +537,11 @@ FNiagaraEmitterViewModel::FOnScriptParameterStoreChanged& FNiagaraEmitterViewMod
 	return OnScriptParameterStoreChangedDelegate;
 }
 
+FNiagaraEmitterViewModel::FOnEmitterSelectionRequested& FNiagaraEmitterViewModel::OnEmitterSelectionRequested()
+{
+	return OnEmitterSelectionRequestedDelegate;
+}
+
 void FNiagaraEmitterViewModel::AddScriptEventHandlers()
 {
 	if (FVersionedNiagaraEmitterData* EmitterData = EmitterWeakPtr.GetEmitterData())
@@ -608,6 +626,14 @@ void FNiagaraEmitterViewModel::OnEmitterPropertiesChanged()
 void FNiagaraEmitterViewModel::OnSummaryViewHierarchyChanged()
 {
 	GetEditorData().OnPersistentDataChanged().Broadcast();
+}
+
+void FNiagaraEmitterViewModel::UpdateSelectionOnSummaryViewStateChanged() const
+{
+	if(GetEditorData().ShouldShowSummaryView())
+	{
+		OnEmitterSelectionRequestedDelegate.ExecuteIfBound(false);
+	}
 }
 
 FString FNiagaraEmitterViewModel::GetReferencerName() const

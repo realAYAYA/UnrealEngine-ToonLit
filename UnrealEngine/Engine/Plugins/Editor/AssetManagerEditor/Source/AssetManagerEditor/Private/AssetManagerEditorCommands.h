@@ -89,6 +89,9 @@ public:
 	// Toggles Compact Mode
 	TSharedPtr<FUICommandInfo> CompactMode;
 
+	// Toggles Show External Referencers
+	TSharedPtr<FUICommandInfo> ShowExternalReferencers;
+
 	// Toggles Path Comment 
 	TSharedPtr<FUICommandInfo> ShowCommentPath;
 

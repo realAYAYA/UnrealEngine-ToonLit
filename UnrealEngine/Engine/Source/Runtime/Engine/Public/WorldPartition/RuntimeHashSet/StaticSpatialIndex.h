@@ -6,6 +6,7 @@
 #include "Misc/TVariant.h"
 #include "UObject/ObjectPtr.h"
 #include "UObject/UObjectGlobals.h"
+#include "OverrideVoidReturnInvoker.h"
 
 struct IStaticSpatialIndexDataInterface
 {
@@ -29,27 +30,36 @@ public:
 		InitSpatialIndex();
 	}
 
-	void ForEachElement(TFunctionRef<void(const ValueType& InValue)> Func) const
+	template <class Func>
+	void ForEachElement(Func InFunc) const
 	{
-		SpatialIndex.ForEachElement([this, &Func](uint32 ValueIndex)
+		TOverrideVoidReturnInvoker Invoker(true, InFunc);
+
+		SpatialIndex.ForEachElement([this, &Invoker](uint32 ValueIndex)
 		{
-			Func(Elements[ValueIndex].Value);
+			return Invoker(Elements[ValueIndex].Value);
 		});
 	}
 
-	void ForEachIntersectingElement(const FBox& InBox, TFunctionRef<void(const ValueType& InValue)> Func) const
+	template <class Func>
+	void ForEachIntersectingElement(const FBox& InBox, Func InFunc) const
 	{
-		SpatialIndex.ForEachIntersectingElement(InBox, [this, &Func](uint32 ValueIndex)
+		TOverrideVoidReturnInvoker Invoker(true, InFunc);
+
+		SpatialIndex.ForEachIntersectingElement(InBox, [this, &Invoker](uint32 ValueIndex)
 		{
-			Func(Elements[ValueIndex].Value);
+			return Invoker(Elements[ValueIndex].Value);
 		});
 	}
 
-	void ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<void(const ValueType& InValue)> Func) const
+	template <class Func>
+	void ForEachIntersectingElement(const FSphere& InSphere, Func InFunc) const
 	{
-		SpatialIndex.ForEachIntersectingElement(InSphere, [this, &Func](uint32 ValueIndex)
+		TOverrideVoidReturnInvoker Invoker(true, InFunc);
+
+		SpatialIndex.ForEachIntersectingElement(InSphere, [this, &Invoker](uint32 ValueIndex)
 		{
-			Func(Elements[ValueIndex].Value);
+			return Invoker(Elements[ValueIndex].Value);
 		});
 	}
 
@@ -61,16 +71,6 @@ public:
 			{
 				Collector.AddReferencedObject(Element.Value);
 			}
-		}
-	}
-
-	void Serialize(FArchive& Ar)
-	{
-		Ar << Elements;
-
-		if (Ar.IsLoading())
-		{
-			InitSpatialIndex();
 		}
 	}
 
@@ -118,9 +118,9 @@ namespace FStaticSpatialIndex
 
 		void Init(const TArray<TPair<FBox, uint32>>& InElements);
 
-		void ForEachElement(TFunctionRef<void(uint32 InValueIndex)> Func) const;
-		void ForEachIntersectingElement(const FBox& InBox, TFunctionRef<void(uint32 InValueIndex)> Func) const;
-		void ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<void(uint32 InValueIndex)> Func) const;
+		bool ForEachElement(TFunctionRef<bool(uint32 InValueIndex)> Func) const;
+		bool ForEachIntersectingElement(const FBox& InBox, TFunctionRef<bool(uint32 InValueIndex)> Func) const;
+		bool ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<bool(uint32 InValueIndex)> Func) const;
 
 	private:
 		TArray<uint32> Elements;
@@ -135,9 +135,9 @@ namespace FStaticSpatialIndex
 
 		void Init(const TArray<TPair<FBox, uint32>>& InElements);
 
-		void ForEachElement(TFunctionRef<void(uint32 InValueIndex)> Func) const;
-		void ForEachIntersectingElement(const FBox& InBox, TFunctionRef<void(uint32 InValueIndex)> Func) const;
-		void ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<void(uint32 InValueIndex)> Func) const;
+		bool ForEachElement(TFunctionRef<bool(uint32 InValueIndex)> Func) const;
+		bool ForEachIntersectingElement(const FBox& InBox, TFunctionRef<bool(uint32 InValueIndex)> Func) const;
+		bool ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<bool(uint32 InValueIndex)> Func) const;
 
 	private:
 		struct FNode
@@ -149,9 +149,9 @@ namespace FStaticSpatialIndex
 			TVariant<FNodeType, FLeafType> Content;
 		};
 
-		void ForEachElementRecursive(const FNode* Node, TFunctionRef<void(uint32 InValueIndex)> Func) const;
-		void ForEachIntersectingElementRecursive(const FNode* Node, const FBox& InBox, TFunctionRef<void(uint32 InValueIndex)> Func) const;
-		void ForEachIntersectingElementRecursive(const FNode* Node, const FSphere& InSphere, TFunctionRef<void(uint32 InValueIndex)> Func) const;
+		bool ForEachElementRecursive(const FNode* Node, TFunctionRef<bool(uint32 InValueIndex)> Func) const;
+		bool ForEachIntersectingElementRecursive(const FNode* Node, const FBox& InBox, TFunctionRef<bool(uint32 InValueIndex)> Func) const;
+		bool ForEachIntersectingElementRecursive(const FNode* Node, const FSphere& InSphere, TFunctionRef<bool(uint32 InValueIndex)> Func) const;
 
 		FNode RootNode;
 	};

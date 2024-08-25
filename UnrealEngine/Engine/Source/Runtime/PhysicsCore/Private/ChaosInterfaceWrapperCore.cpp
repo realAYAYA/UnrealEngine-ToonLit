@@ -35,7 +35,7 @@ namespace ChaosInterface
 
 		while (CurrentGeometry && ResultObjectType == ImplicitObjectType::Transformed)
 		{
-			CurrentGeometry = static_cast<const TImplicitObjectTransformed<FReal, 3>*>(CurrentGeometry)->Object().Get();
+			CurrentGeometry = static_cast<const TImplicitObjectTransformed<FReal, 3>*>(CurrentGeometry)->GetGeometry();
 			ResultObjectType = GetInnerType(CurrentGeometry->GetType());
 		}
 

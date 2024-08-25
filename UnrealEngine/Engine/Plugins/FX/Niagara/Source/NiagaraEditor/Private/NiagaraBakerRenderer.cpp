@@ -12,10 +12,8 @@
 #include "NiagaraEditorCommon.h"
 
 #include "NiagaraDataInterfaceGrid2DCollection.h"
-#include "NiagaraDataInterfaceRenderTarget2D.h"
 
 #include "Components/SceneCaptureComponent2D.h"
-#include "Engine/Canvas.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -30,11 +28,18 @@
 #include "ImageWrapperHelper.h"
 #include "LegacyScreenPercentageDriver.h"
 #include "UObject/Package.h"
-#include "VolumeCache.h"
 #include "TextureResource.h"
 #include "SceneInterface.h"
 
+#include "NiagaraDataInterfaceGrid3DCollection.h"
+#include "NiagaraDataInterfaceRenderTargetVolume.h"
+
+#include "SparseVolumeTexture/SparseVolumeTexture.h"
+#include "Components/HeterogeneousVolumeComponent.h"
+
 //////////////////////////////////////////////////////////////////////////
+
+DEFINE_LOG_CATEGORY(LogNiagaraBaker);
 
 const FString FNiagaraBakerOutputBindingHelper::STRING_SceneCaptureSource("SceneCaptureSource");
 const FString FNiagaraBakerOutputBindingHelper::STRING_BufferVisualization("BufferVisualization");
@@ -285,6 +290,18 @@ FNiagaraBakerRenderer::~FNiagaraBakerRenderer()
 {
 	DestroyPreviewScene(PreviewComponent, AdvancedPreviewScene);
 	DestroyPreviewScene(SimCachePreviewComponent, SimCacheAdvancedPreviewScene);
+
+	// Clean up SVT preview scene
+	if (SVTPreviewScene && SVTPreviewComponent)
+	{
+		SVTPreviewScene->RemoveComponent(SVTPreviewComponent);
+		SVTPreviewScene = nullptr;
+	}
+	if (SVTPreviewComponent)
+	{
+		SVTPreviewComponent->DestroyComponent();
+		SVTPreviewComponent = nullptr;
+	}
 }
 
 void FNiagaraBakerRenderer::SetAbsoluteTime(float AbsoluteTime, bool bShouldTickComponent)
@@ -293,6 +310,11 @@ void FNiagaraBakerRenderer::SetAbsoluteTime(float AbsoluteTime, bool bShouldTick
 	if ( !ensure(BakerSettings) )
 	{
 		return;
+	}
+
+	if (!PreviewComponent->IsActive() && (AbsoluteTime < PreviewComponent->GetDesiredAge()))
+	{
+		PreviewComponent->ReinitializeSystem();
 	}
 
 	PreviewComponent->SetSeekDelta(BakerSettings->GetSeekDelta());
@@ -309,11 +331,9 @@ void FNiagaraBakerRenderer::SetAbsoluteTime(float AbsoluteTime, bool bShouldTick
 			// Send EOF updates before we flush our pending ticks to ensure everything is ready for Niagara
 			World->SendAllEndOfFrameUpdates();
 
-			// Since captures, etc, don't flush GPU updates so we need to force flush them
-			FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface = FNiagaraGpuComputeDispatchInterface::Get(World);
-			if ( ensureMsgf(ComputeDispatchInterface, TEXT("The batcher was not valid on the world this may result in incorrect baking")) )
+			if (FNiagaraWorldManager* WorldManager = FNiagaraWorldManager::Get(World))
 			{
-				ComputeDispatchInterface->FlushPendingTicks_GameThread();
+				WorldManager->FlushComputeAndDeferredQueues(false);
 			}
 		}
 	}
@@ -324,16 +344,16 @@ void FNiagaraBakerRenderer::RenderSceneCapture(UTextureRenderTarget2D* RenderTar
 	RenderSceneCapture(RenderTarget, PreviewComponent, CaptureSource);
 }
 
-void FNiagaraBakerRenderer::RenderSceneCapture(UTextureRenderTarget2D* RenderTarget, UNiagaraComponent* NiagaraComponent, ESceneCaptureSource CaptureSource) const
+void FNiagaraBakerRenderer::RenderSceneCapture(UTextureRenderTarget2D* RenderTarget, UPrimitiveComponent* BakedDataComponent, ESceneCaptureSource CaptureSource) const
 {
 	UNiagaraBakerSettings* BakerSettings = GetBakerSettings();
-	if (!NiagaraComponent || !RenderTarget || !BakerSettings)
+	if (!BakedDataComponent || !RenderTarget || !BakerSettings)
 	{
 		return;
 	}
 
 	const float WorldTime = GetWorldTime();
-	UWorld* World = NiagaraComponent->GetWorld();
+	UWorld* World = BakedDataComponent->GetWorld();
 
 	FCanvas Canvas(RenderTarget->GameThread_GetRenderTargetResource(), nullptr, FGameTime::CreateUndilated(WorldTime, FApp::GetDeltaTime()), GetFeatureLevel());
 	Canvas.Clear(FLinearColor::Black);
@@ -366,7 +386,7 @@ void FNiagaraBakerRenderer::RenderSceneCapture(UTextureRenderTarget2D* RenderTar
 	{
 		SceneCaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
 		SceneCaptureComponent->ShowOnlyComponents.Empty(1);
-		SceneCaptureComponent->ShowOnlyComponents.Add(NiagaraComponent);
+		SceneCaptureComponent->ShowOnlyComponents.Add(BakedDataComponent);
 	}
 	else
 	{
@@ -398,7 +418,6 @@ void FNiagaraBakerRenderer::RenderBufferVisualization(UTextureRenderTarget2D* Re
 	}
 
 	const FIntRect ViewRect = FIntRect(0, 0, RenderTarget->GetSurfaceWidth(), RenderTarget->GetSurfaceHeight());
-	const float GammaCorrection = 1.0f;
 	const float WorldTime = GetWorldTime();
 	UWorld* World = GetWorld();
 
@@ -409,7 +428,6 @@ void FNiagaraBakerRenderer::RenderBufferVisualization(UTextureRenderTarget2D* Re
 	FSceneViewFamilyContext ViewFamily(
 		FSceneViewFamily::ConstructionValues(RenderTarget->GameThread_GetRenderTargetResource(), World->Scene, FEngineShowFlags(ESFIM_Game))
 		.SetTime(FGameTime::CreateUndilated(WorldTime, FApp::GetDeltaTime()))
-		.SetGammaCorrection(GammaCorrection)
 	);
 	
 	ViewFamily.EngineShowFlags.SetScreenPercentage(false);
@@ -436,7 +454,7 @@ void FNiagaraBakerRenderer::RenderBufferVisualization(UTextureRenderTarget2D* Re
 	if (BakerSettings->bRenderComponentOnly)
 	{
 		ViewInitOptions.ShowOnlyPrimitives.Emplace();
-		ViewInitOptions.ShowOnlyPrimitives->Add(PreviewComponent->ComponentId);
+		ViewInitOptions.ShowOnlyPrimitives->Add(PreviewComponent->GetPrimitiveSceneId());
 	}
 	
 	FSceneView* NewView = new FSceneView(ViewInitOptions);
@@ -536,7 +554,7 @@ void FNiagaraBakerRenderer::RenderParticleAttribute(UTextureRenderTarget2D* Rend
 	
 	for ( const auto& EmitterInstance : SystemInstance->GetEmitters() )
 	{
-		UNiagaraEmitter* NiagaraEmitter = EmitterInstance->GetCachedEmitter().Emitter;
+		const UNiagaraEmitter* NiagaraEmitter = EmitterInstance->GetEmitter();
 		if ( !NiagaraEmitter || (NiagaraEmitter->GetUniqueEmitterName() != EmitterName) )
 		{
 			continue;
@@ -547,7 +565,7 @@ void FNiagaraBakerRenderer::RenderParticleAttribute(UTextureRenderTarget2D* Rend
 			return;
 		}
 	
-		const FNiagaraDataSet& ParticleDataSet = EmitterInstance->GetData();
+		const FNiagaraDataSet& ParticleDataSet = EmitterInstance->GetParticleData();
 		const FNiagaraDataBuffer* ParticleDataBuffer = ParticleDataSet.GetCurrentData();
 		FNiagaraDataSetReaderInt32<int32> UniqueIDAccessor = FNiagaraDataSetAccessor<int32>::CreateReader(ParticleDataSet, FName("UniqueID"));
 		if ( !ParticleDataBuffer || !UniqueIDAccessor.IsValid() )
@@ -562,11 +580,11 @@ void FNiagaraBakerRenderer::RenderParticleAttribute(UTextureRenderTarget2D* Rend
 		}
 		const FNiagaraVariableLayoutInfo& VariableInfo = ParticleDataSet.GetCompiledData().VariableLayouts[VariableIndex];
 	
-		float* FloatChannels[4];
-		FloatChannels[0] = (float*)ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart());
-		FloatChannels[1] = VariableInfo.GetNumFloatComponents() > 1 ? (float*)ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart() + 1) : nullptr;
-		FloatChannels[2] = VariableInfo.GetNumFloatComponents() > 2 ? (float*)ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart() + 2) : nullptr;
-		FloatChannels[3] = VariableInfo.GetNumFloatComponents() > 3 ? (float*)ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart() + 3) : nullptr;
+		const float* FloatChannels[4];
+		FloatChannels[0] = reinterpret_cast<const float*>(ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart()));
+		FloatChannels[1] = VariableInfo.GetNumFloatComponents() > 1 ? reinterpret_cast<const float*>(ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart() + 1)) : nullptr;
+		FloatChannels[2] = VariableInfo.GetNumFloatComponents() > 2 ? reinterpret_cast<const float*>(ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart() + 2)) : nullptr;
+		FloatChannels[3] = VariableInfo.GetNumFloatComponents() > 3 ? reinterpret_cast<const float*>(ParticleDataBuffer->GetComponentPtrFloat(VariableInfo.GetFloatComponentStart() + 3)) : nullptr;
 	
 		const FIntPoint RenderTargetSize(RenderTarget->GetSurfaceWidth(), RenderTarget->GetSurfaceHeight());
 		const int32 ParticleBufferStore = RenderTargetSize.X * RenderTargetSize.Y;
@@ -623,6 +641,69 @@ void FNiagaraBakerRenderer::RenderSimCache(UTextureRenderTarget2D* RenderTarget,
 	SimCachePreviewComponent->SetSimCache(nullptr);
 }
 
+void FNiagaraBakerRenderer::RenderSparseVolumeTexture(UTextureRenderTarget2D* RenderTarget, const FNiagaraBakerOutputFrameIndices Indices, UAnimatedSparseVolumeTexture* SVT) const
+{
+	UNiagaraBakerSettings* BakerSettings = GetBakerSettings();
+	if (!SVT)
+	{
+		return;
+	}
+
+	if (SVTPreviewComponent == nullptr)
+	{
+		SVTPreviewComponent = NewObject<UHeterogeneousVolumeComponent>(GetTransientPackage(), NAME_None, RF_Transient);
+				
+		// create HV component and wire all the things
+		UMaterialInterface* MaterialInterface = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/SparseVolumeMaterial"));
+		
+		UMaterial *Mat = MaterialInterface->GetMaterial();
+
+		// #todo(dmp): we had to duplicate the material itself because we cannot make a mid and send that to HV
+		// HV internally makes a MID from whatever is bound, and the MID of a MID workflow appears broken	
+		UMaterial *DuplicateMat = DuplicateObject<UMaterial>(Mat, SVTPreviewComponent);
+
+		FGuid ExprGuid;
+		DuplicateMat->SetStaticComponentMaskParameterValueEditorOnly("Temperature Mask", false, true, false, false, ExprGuid);
+
+		FGuid SwitchGuid;
+		DuplicateMat->SetStaticSwitchParameterValueEditorOnly("Temperature (Attributes B)", false, SwitchGuid);
+
+		DuplicateMat->SetSparseVolumeTextureParameterValueEditorOnly("SparseVolumeTexture", SVT);
+
+		SVTPreviewComponent->OverrideMaterials.Add(DuplicateMat);
+
+		SVTPreviewComponent->bIssueBlockingRequests = true;
+		SVTPreviewComponent->PostLoad();
+
+		SVTPreviewScene = MakeShareable(new FAdvancedPreviewScene(FPreviewScene::ConstructionValues()));
+		SVTPreviewScene->SetFloorVisibility(false);
+		SVTPreviewScene->AddComponent(SVTPreviewComponent, SVTPreviewComponent->GetRelativeTransform());
+	}
+	
+	TArray<FMaterialParameterInfo> ParameterInfo;
+	TArray<FGuid> ParameterIds;
+	SVTPreviewComponent->OverrideMaterials[0]->GetAllSparseVolumeTextureParameterInfo(ParameterInfo, ParameterIds);
+	USparseVolumeTexture* OldSVT;
+	SVTPreviewComponent->OverrideMaterials[0]->GetSparseVolumeTextureParameterValue(ParameterInfo[0], OldSVT);
+	
+	if (OldSVT != SVT)
+	{
+		SVTPreviewComponent->OverrideMaterials[0]->GetMaterial()->SetSparseVolumeTextureParameterValueEditorOnly("SparseVolumeTexture", SVT);
+	}
+	SVTPreviewComponent->SetFrame(Indices.FrameIndexA);
+	
+	// #todo(dmp): apply world scale and pivot to HV actor
+
+	const float SeekDelta = BakerSettings->GetSeekDelta();
+	SVTPreviewComponent->TickComponent(SeekDelta, ELevelTick::LEVELTICK_All, nullptr);
+
+	SVTPreviewComponent->MarkRenderDynamicDataDirty();
+	UWorld* World = SVTPreviewComponent->GetWorld();
+	World->SendAllEndOfFrameUpdates();
+
+	RenderSceneCapture(RenderTarget, SVTPreviewComponent, ESceneCaptureSource::SCS_SceneColorHDR);
+}
+
 UWorld* FNiagaraBakerRenderer::GetWorld() const
 {
 	return PreviewComponent->GetWorld();
@@ -649,6 +730,7 @@ void FNiagaraBakerRenderer::AddReferencedObjects(FReferenceCollector& Collector)
 	Collector.AddReferencedObject(PreviewComponent);
 	Collector.AddReferencedObject(SceneCaptureComponent);
 	Collector.AddReferencedObject(SimCachePreviewComponent);
+	Collector.AddReferencedObject(SVTPreviewComponent);
 }
 
 FNiagaraBakerOutputRenderer* FNiagaraBakerRenderer::GetOutputRenderer(UClass* Class)
@@ -751,4 +833,76 @@ bool FNiagaraBakerRenderer::ExportVolume(FStringView FilePath, FIntVector ImageS
 	{
 		return ExportImage(FilePath, FIntPoint(ImageSize.X, ImageSize.Y * ImageSize.Z), ImageData);
 	}
+}
+
+
+
+bool FVolumeDataInterfaceHelper::Initialize(const TArray<FString>& InputDataInterfacePath, UNiagaraComponent* InNiagaraComponent)
+{
+	NiagaraComponent = InNiagaraComponent;
+
+	DataInterfacePath = InputDataInterfacePath;
+	
+	if (DataInterfacePath.Num() < 2)
+	{
+		return false;
+	}
+
+	const FName DataInterfaceName(DataInterfacePath[0] + "." + DataInterfacePath[1]);
+	UNiagaraDataInterface* DataInterface = FNiagaraBakerOutputBindingHelper::GetDataInterface(NiagaraComponent, DataInterfaceName);
+	if (DataInterface == nullptr)
+	{
+		return false;
+	}
+
+	// Guaranteed since we got a data interface
+	SystemInstance = NiagaraComponent->GetSystemInstanceController()->GetSoloSystemInstance();
+
+	// Render Target Volume
+	if (DataInterface->IsA<UNiagaraDataInterfaceRenderTargetVolume>())
+	{
+		VolumeRenderTargetDataInterface = CastChecked<UNiagaraDataInterfaceRenderTargetVolume>(DataInterface);
+		VolumeRenderTargetProxy = static_cast<FNiagaraDataInterfaceProxyRenderTargetVolumeProxy*>(VolumeRenderTargetDataInterface->GetProxy());
+		VolumeRenderTargetInstanceData_GameThread = static_cast<FRenderTargetVolumeRWInstanceData_GameThread*>(SystemInstance->FindDataInterfaceInstanceData(VolumeRenderTargetDataInterface));
+		if (VolumeRenderTargetInstanceData_GameThread == nullptr)
+		{
+			return false;
+		}
+	}
+	// Grid 3D
+	else if (DataInterface->IsA<UNiagaraDataInterfaceGrid3DCollection>())
+	{
+		Grid3DDataInterface = CastChecked<UNiagaraDataInterfaceGrid3DCollection>(DataInterface);
+		Grid3DProxy = static_cast<FNiagaraDataInterfaceProxyGrid3DCollectionProxy*>(Grid3DDataInterface->GetProxy());
+		Grid3DInstanceData_GameThread = static_cast<FGrid3DCollectionRWInstanceData_GameThread*>(SystemInstance->FindDataInterfaceInstanceData(Grid3DDataInterface));
+		if (Grid3DInstanceData_GameThread == nullptr)
+		{
+			return false;
+		}
+
+		if (DataInterfacePath.Num() != 3)
+		{
+			// Perhaps a path to pull all attributes, i.e. whole texture?
+			return false;
+		}
+
+		Grid3DAttributeName = FName(DataInterfacePath[2]);
+		Grid3DVariableIndex = Grid3DInstanceData_GameThread->Vars.IndexOfByPredicate([&](const FNiagaraVariableBase& VariableBase) { return VariableBase.GetName() == Grid3DAttributeName; });
+		if (Grid3DVariableIndex == INDEX_NONE)
+		{
+			return false;
+		}
+		Grid3DAttributeStart = Grid3DInstanceData_GameThread->Offsets[Grid3DVariableIndex];
+		Grid3DAttributeChannels = Grid3DInstanceData_GameThread->Vars[Grid3DVariableIndex].GetType().GetSize() / sizeof(float);
+		Grid3DTextureSize.X = Grid3DInstanceData_GameThread->NumCells.X * Grid3DInstanceData_GameThread->NumTiles.X;
+		Grid3DTextureSize.Y = Grid3DInstanceData_GameThread->NumCells.Y * Grid3DInstanceData_GameThread->NumTiles.Y;
+		Grid3DTextureSize.Z = Grid3DInstanceData_GameThread->NumCells.Z * Grid3DInstanceData_GameThread->NumTiles.Z;
+	}
+	// Unsupported type
+	else
+	{
+		return false;
+	}
+
+	return true;
 }

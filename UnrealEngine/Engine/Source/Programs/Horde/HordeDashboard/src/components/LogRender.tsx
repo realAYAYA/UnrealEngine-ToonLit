@@ -1,13 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import { Stack, Text } from '@fluentui/react';
-import React from 'react';
 import Highlight from 'react-highlighter';
 import { IssueData, LogLine } from '../backend/Api';
+import backend from '../backend';
+import { NavigateFunction } from 'react-router-dom';
 
 enum TagType {
    None,
    SourceFile,
-   MSDNCode
+   MSDNCode,
+   AgentId,
+   LeaseId,
+   Link
 }
 
 export type LogItem = {
@@ -50,7 +54,7 @@ const renderMessage = (line: LogLine, lineNumber: number | undefined, logStyle: 
 };
 
 
-const renderTags = (line: LogLine, lineNumber: number | undefined, logStyle: any, tags: string[], search?: string) => {
+const renderTags = (navigate: NavigateFunction, line: LogLine, lineNumber: number | undefined, logStyle: any, tags: string[], search?: string) => {
 
    if (!line || !line.format || !line.properties) {
       return <Stack styles={{ root: { color: "#000000", paddingLeft: 8, whiteSpace: "pre", tabSize: "3" } }}>Internal log line format error</Stack>;
@@ -132,8 +136,20 @@ const renderTags = (line: LogLine, lineNumber: number | undefined, logStyle: any
             tagType = TagType.SourceFile;
          }
 
+         if (type === "Link") {
+            tagType = TagType.Link;
+         }
+
          if (type === "ErrorCode" && text.startsWith("C")) {
             tagType = TagType.MSDNCode;
+         }
+
+         if (type === "LeaseId") {
+            tagType = TagType.LeaseId;
+         }
+
+         if (type === "AgentId") {
+            tagType = TagType.AgentId;
          }
 
       }
@@ -142,9 +158,44 @@ const renderTags = (line: LogLine, lineNumber: number | undefined, logStyle: any
 
          return <Highlight key={key} search={search ? search : ""} className={logStyle.logLine}>{text}</Highlight>;
 
+      } else if (tagType === TagType.LeaseId) {
+
+         const navigateToLeaseLog = async (toplevel: boolean) => {
+
+            const logData = await backend.getLease(text);
+            const url = `/log/${logData?.logId}`;
+            if (!toplevel) {
+               navigate(url)
+            } else {
+               window.open(url, "_blank");
+            }
+         }
+
+         return <a key={key} href="/"
+
+            onAuxClick={(ev) => {
+               ev.preventDefault();
+               ev.stopPropagation()
+               navigateToLeaseLog(true)
+            }}
+
+            onClick={(ev) => {
+               ev.stopPropagation();
+               ev.preventDefault();
+               navigateToLeaseLog(!!ev?.ctrlKey || !!ev.metaKey)
+            }}>
+            <Highlight search={search ? search : ""} className={logStyle.logLine}>{text}</Highlight>
+         </a>;
+
       } else if (tagType === TagType.MSDNCode) {
 
          return <a key={key} target="_blank" rel="noopener noreferrer" href={`https://msdn.microsoft.com/query/dev16.query?appId=Dev16IDEF1&l=EN-US&k=k(${text.toLowerCase()})&rd=true`} onClick={(ev) => ev.stopPropagation()}><Highlight search={search ? search : ""} className={logStyle.logLine}>{text}</Highlight></a>;
+
+      } else if (tagType === TagType.AgentId) {
+         const search = new URLSearchParams(window.location.search);
+         search.set("agentId", encodeURIComponent(text));
+         const url = `${window.location.pathname}?` + search.toString();
+         return <a key={key} href="/" onClick={async (ev) => { ev.stopPropagation(); ev.preventDefault(); navigate(url, { replace: true }) }}><Highlight search={search ? search : ""} className={logStyle.logLine}>{text}</Highlight></a>;
 
       } else if (tagType === TagType.SourceFile) {
 
@@ -166,7 +217,10 @@ const renderTags = (line: LogLine, lineNumber: number | undefined, logStyle: any
             depotPath += `&line=${tagLine}`;
          }
 
-         return <a key={key} href={`ugs://timelapse?depotPath=${(depotPath)}`} onClick={(ev) => ev.stopPropagation()}><Highlight search={search ? search : ""} className={logStyle.logLine}>{record.relativePath ? record.relativePath : text}</Highlight></a>;
+         return <a key={key} href={`ugs://timelapse?depotPath=${(depotPath)}`} onClick={(ev) => ev.stopPropagation()}><Highlight search={search ? search : ""} className={logStyle.logLine}>{text}</Highlight></a>;
+      } else if (tagType === TagType.Link) {
+         
+         return <a key={key} rel="noreferrer" href={record.target} onClick={(ev) => ev.stopPropagation()}><Highlight search={search ? search : ""} className={logStyle.logLine}>{text}</Highlight></a>;
       }
 
       return <span key={key} />;
@@ -214,7 +268,7 @@ const renderTags = (line: LogLine, lineNumber: number | undefined, logStyle: any
 
 };
 
-export const renderLine = (line: LogLine | undefined, lineNumber: number | undefined, logStyle: any, search?: string) => {
+export const renderLine = (navigate: NavigateFunction, line: LogLine | undefined, lineNumber: number | undefined, logStyle: any, search?: string) => {
 
    if (!line) {
       return null;
@@ -235,17 +289,38 @@ export const renderLine = (line: LogLine | undefined, lineNumber: number | undef
       const match = format.match(tagRegex);
       if (match?.length)
          tags = match;
+
+      const properties = line.properties;
+
+      // fix issue with tag span, we need to replace react-highlighter as it does not highlight across child nodes
+      // should just be using a selector
+      if (properties) {
+         tags = tags.filter(t => {
+            const pname = t.slice(1, -1);
+
+            if (pname !== "WarningCode" && pname !== "WarningMessage") {
+               return true;
+            }
+
+            const ptext = (properties[pname] as any);
+            if (!ptext) {
+               return true;
+            }
+
+            line.format = line.format?.replaceAll(t, ptext);
+            return false;
+         });
+      }
    }
 
-   // we don't support c# alignment, as this requireds read behinds, etc 
+   // we don't support c# alignment, as this requireds read behinds, etc
    // so strip tags in this case and just output the line
    if (tags.find(t => t.indexOf(",") !== -1)) {
       tags = [];
    }
 
-
    if (tags.length && format && line.properties) {
-      return renderTags(line, lineNumber, logStyle, tags, search);
+      return renderTags(navigate, line, lineNumber, logStyle, tags, search);
    }
 
    return renderMessage(line, lineNumber, logStyle, search);

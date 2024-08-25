@@ -132,6 +132,46 @@ TEST_CASE_NAMED(FPathTests, "System::Core::Misc::Paths", "[ApplicationContextMas
 			CHECK_EQUALS(TEXT("ConvertRelativePathToFull"), FStringView(Actual), Pair.Expected);
 		}
 	}
+
+	// Split
+	auto RunSplitTest = [](const TCHAR* InPath, const TCHAR* InExpectedPath, const TCHAR* InExpectedName, const TCHAR* InExpectedExt)
+		{
+			FString SplitPath, SplitName, SplitExt;
+			FPaths::Split(InPath, SplitPath, SplitName, SplitExt);
+			if (SplitPath != InExpectedPath || SplitName != InExpectedName || SplitExt != InExpectedExt)
+			{
+				FAIL_CHECK(FString::Printf(TEXT("Failed to split path '%s' (got ('%s', '%s', '%s'), expected ('%s', '%s', '%s'))."), InPath,
+					*SplitPath, *SplitName, *SplitExt, InExpectedPath, InExpectedName, InExpectedExt));
+			}
+		};
+
+	RunSplitTest(TEXT(""), TEXT(""), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT(".txt"), TEXT(""), TEXT(""), TEXT("txt"));
+	RunSplitTest(TEXT(".tar.gz"), TEXT(""), TEXT(".tar"), TEXT("gz"));
+	RunSplitTest(TEXT(".tar.gz/"), TEXT(".tar.gz"), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT(".tar.gz\\"), TEXT(".tar.gz"), TEXT(""), TEXT(""));
+	// TEXT(".") is ambiguous; we currently treat it as an extension separator but we don't guarantee that in our contract
+	//RunSplitTest(TEXT("."), TEXT(""), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT(".."), TEXT(""), TEXT(".."), TEXT(""));
+	RunSplitTest(TEXT("File"), TEXT(""), TEXT("File"), TEXT(""));
+	RunSplitTest(TEXT("File.txt"), TEXT(""), TEXT("File"), TEXT("txt"));
+	RunSplitTest(TEXT("File.tar.gz"), TEXT(""), TEXT("File.tar"), TEXT("gz"));
+	RunSplitTest(TEXT("File.tar.gz/"), TEXT("File.tar.gz"), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT("File.tar.gz\\"), TEXT("File.tar.gz"), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT("C:/Folder/"), TEXT("C:/Folder"), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT("C:/Folder/File"), TEXT("C:/Folder"), TEXT("File"), TEXT(""));
+	RunSplitTest(TEXT("C:/Folder/File.txt"), TEXT("C:/Folder"), TEXT("File"), TEXT("txt"));
+	RunSplitTest(TEXT("C:/Folder/File.tar.gz"), TEXT("C:/Folder"), TEXT("File.tar"), TEXT("gz"));
+	RunSplitTest(TEXT("C:/Folder/First.Last/File"), TEXT("C:/Folder/First.Last"), TEXT("File"), TEXT(""));
+	RunSplitTest(TEXT("C:/Folder/First.Last/File.txt"), TEXT("C:/Folder/First.Last"), TEXT("File"), TEXT("txt"));
+	RunSplitTest(TEXT("C:/Folder/First.Last/File.tar.gz"), TEXT("C:/Folder/First.Last"), TEXT("File.tar"), TEXT("gz"));
+	RunSplitTest(TEXT("C:\\Folder\\"), TEXT("C:\\Folder"), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT("C:\\Folder\\File"), TEXT("C:\\Folder"), TEXT("File"), TEXT(""));
+	RunSplitTest(TEXT("C:\\Folder\\First.Last\\"), TEXT("C:\\Folder\\First.Last"), TEXT(""), TEXT(""));
+	RunSplitTest(TEXT("C:\\Folder\\First.Last\\File"), TEXT("C:\\Folder\\First.Last"), TEXT("File"), TEXT(""));
+	RunSplitTest(TEXT("C:\\Folder\\First.Last\\File.txt"), TEXT("C:\\Folder\\First.Last"), TEXT("File"), TEXT("txt"));
+	RunSplitTest(TEXT("C:\\Folder\\First.Last\\File.tar.gz"), TEXT("C:\\Folder\\First.Last"), TEXT("File.tar"), TEXT("gz"));
+
 }
 
 #endif //WITH_TESTS

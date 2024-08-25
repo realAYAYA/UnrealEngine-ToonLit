@@ -17,7 +17,6 @@
 // Insights
 #include "Insights/Common/InsightsMenuBuilder.h"
 #include "Insights/InsightsManager.h"
-#include "Insights/Tests/UITests.h"
 #include "Insights/InsightsStyle.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -8,6 +8,7 @@
 #include "UObject/Interface.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
 #include "VisualLogger/VisualLoggerCustomVersion.h"
+#include "VisualLogger/VisualLogger.h"
 #endif
 
 namespace
@@ -67,11 +68,18 @@ FVisualLogEntry::FVisualLogEntry(const AActor* InActor, TArray<TWeakObjectPtr<UO
 	if (!IsValid(InActor))
 	{
 		Reset();
+		return;
 	}
 
-	TimeStamp = InActor->GetWorld()->TimeSeconds; // Should we be bypassing FVisualLogger::GetTimeStampForObject() ?
+	WorldTimeStamp = InActor->GetWorld()->TimeSeconds;
 	Location = InActor->GetActorLocation();
 	bIsLocationValid = true;
+
+#if ENABLE_VISUAL_LOG
+	TimeStamp = FVisualLogger::Get().GetTimeStampForObject(InActor);
+#else
+	TimeStamp = WorldTimeStamp;
+#endif
 
 	const IVisualLoggerDebugSnapshotInterface* DebugSnapshotInterface = Cast<const IVisualLoggerDebugSnapshotInterface>(InActor);
 	if (DebugSnapshotInterface)
@@ -127,12 +135,14 @@ void FVisualLogEntry::InitializeEntry(const double InTimeStamp)
 {
 	Reset();
 	TimeStamp = InTimeStamp;
+	WorldTimeStamp = InTimeStamp;
 	bIsInitialized = true;
 }
 
 void FVisualLogEntry::Reset()
 {
-	TimeStamp = -1.;
+	TimeStamp = -1.0;
+	WorldTimeStamp = -1.0;
 	Location = FVector::ZeroVector;
 	bIsLocationValid = false;
 	Events.Reset();
@@ -186,7 +196,13 @@ void FVisualLogEntry::AddElement(const FVisualLogShapeElement& Element)
 	ElementsToDraw.Add(Element);
 }
 
+// Deprecated : 
 void FVisualLogEntry::AddElement(const TArray<FVector>& Points, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
+{
+	AddPath(Points, CategoryName, Verbosity, Color, Description, Thickness);
+}
+
+void FVisualLogEntry::AddPath(const TArray<FVector>&Points, const FName & CategoryName, ELogVerbosity::Type Verbosity, const FColor & Color, const FString & Description, uint16 Thickness)
 {
 	FVisualLogShapeElement Element(Description, Color, Thickness, CategoryName);
 	Element.Points = Points;
@@ -195,7 +211,12 @@ void FVisualLogEntry::AddElement(const TArray<FVector>& Points, const FName& Cat
 	ElementsToDraw.Add(Element);
 }
 
+// Deprecated : 
 void FVisualLogEntry::AddElement(const FVector& Point, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
+{
+	AddLocation(Point, CategoryName, Verbosity, Color, Description, Thickness);
+}
+void FVisualLogEntry::AddLocation(const FVector& Point, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
 {
 	FVisualLogShapeElement Element(Description, Color, Thickness, CategoryName);
 	Element.Points.Add(Point);
@@ -204,7 +225,21 @@ void FVisualLogEntry::AddElement(const FVector& Point, const FName& CategoryName
 	ElementsToDraw.Add(Element);
 }
 
+void FVisualLogEntry::AddSphere(const FVector& Center, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, bool bInUseWires)
+{
+	FVisualLogShapeElement Element(Description, Color, Radius, CategoryName);
+	Element.Points.Add(Center);
+	Element.Type = bInUseWires ? EVisualLoggerShapeElement::WireSphere : EVisualLoggerShapeElement::Sphere;
+	Element.Verbosity = Verbosity;
+	ElementsToDraw.Add(Element);
+}
+
+// Deprecated : 
 void FVisualLogEntry::AddElement(const FVector& Start, const FVector& End, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
+{
+	AddSegment(Start, End, CategoryName, Verbosity, Color, Description, Thickness);
+}
+void FVisualLogEntry::AddSegment(const FVector& Start, const FVector& End, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
 {
 	FVisualLogShapeElement Element(Description, Color, Thickness, CategoryName);
 	Element.Points.Reserve(2);
@@ -243,13 +278,18 @@ void FVisualLogEntry::AddCircle(const FVector& Center, const FVector& UpAxis, co
 	ElementsToDraw.Add(Element);
 }
 
-void FVisualLogEntry::AddElement(const FBox& Box, const FMatrix& Matrix, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
+// Deprecated : 
+void FVisualLogEntry::AddElement(const FBox& Box, const FMatrix& Matrix, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness, bool bInUseWires)
+{
+	AddBox(Box, Matrix, CategoryName, Verbosity, Color, Description, Thickness, bInUseWires);
+}
+void FVisualLogEntry::AddBox(const FBox& Box, const FMatrix& Matrix, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness, bool bInUseWires)
 {
 	FVisualLogShapeElement Element(Description, Color, Thickness, CategoryName);
 	Element.Points.Reserve(2);
 	Element.Points.Add(Box.Min);
 	Element.Points.Add(Box.Max);
-	Element.Type = EVisualLoggerShapeElement::Box;
+	Element.Type = bInUseWires ? EVisualLoggerShapeElement::WireBox : EVisualLoggerShapeElement::Box;
 	Element.Verbosity = Verbosity;
 	Element.TransformationMatrix = Matrix;
 	ElementsToDraw.Add(Element);
@@ -269,43 +309,63 @@ void FVisualLogEntry::AddBoxes(const TArray<FBox>& Boxes, const FName& CategoryN
 	Element.Verbosity = Verbosity;
 }
 
-void FVisualLogEntry::AddElement(const FVector& Orgin, const FVector& Direction, float Length, float AngleWidth, float AngleHeight, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
+// Deprecated : 
+void FVisualLogEntry::AddElement(const FVector& Origin, const FVector& Direction, float Length, float AngleWidth, float AngleHeight, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness, bool bInUseWires)
+{
+	AddCone(Origin, Direction, Length, AngleWidth, AngleHeight, CategoryName, Verbosity, Color, Description, Thickness, bInUseWires);
+}
+void FVisualLogEntry::AddCone(const FVector& Origin, const FVector& Direction, float Length, float AngleWidth, float AngleHeight, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness, bool bInUseWires)
 {
 	FVisualLogShapeElement Element(Description, Color, Thickness, CategoryName);
 	Element.Points.Reserve(3);
-	Element.Points.Add(Orgin);
+	Element.Points.Add(Origin);
 	Element.Points.Add(Direction);
 	Element.Points.Add(FVector(Length, AngleWidth, AngleHeight));
-	Element.Type = EVisualLoggerShapeElement::Cone;
+	Element.Type = bInUseWires ? EVisualLoggerShapeElement::WireCone : EVisualLoggerShapeElement::Cone;
 	Element.Verbosity = Verbosity;
 	ElementsToDraw.Add(Element);
 }
 
-void FVisualLogEntry::AddElement(const FVector& Start, const FVector& End, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness)
+// Deprecated : 
+void FVisualLogEntry::AddElement(const FVector& Start, const FVector& End, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness, bool bInUseWires)
+{
+	AddCylinder(Start, End, Radius, CategoryName, Verbosity, Color, Description, Thickness, bInUseWires);
+}
+void FVisualLogEntry::AddCylinder(const FVector& Start, const FVector& End, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, uint16 Thickness, bool bInUseWires)
 {
 	FVisualLogShapeElement Element(Description, Color, Thickness, CategoryName);
 	Element.Points.Reserve(3);
 	Element.Points.Add(Start);
 	Element.Points.Add(End);
 	Element.Points.Add(FVector(Radius, Thickness, 0));
-	Element.Type = EVisualLoggerShapeElement::Cylinder;
+	Element.Type = bInUseWires ? EVisualLoggerShapeElement::WireCylinder : EVisualLoggerShapeElement::Cylinder;
 	Element.Verbosity = Verbosity;
 	ElementsToDraw.Add(Element);
 }
 
-void FVisualLogEntry::AddElement(const FVector& Base, float HalfHeight, float Radius, const FQuat & Rotation, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description)
+// Deprecated : 
+void FVisualLogEntry::AddElement(const FVector& Base, float HalfHeight, float Radius, const FQuat& Rotation, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, bool bInUseWires)
+{
+	AddCapsule(Base, HalfHeight, Radius, Rotation, CategoryName, Verbosity, Color, Description, bInUseWires);
+}
+void FVisualLogEntry::AddCapsule(const FVector& Base, float HalfHeight, float Radius, const FQuat & Rotation, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description, bool bInUseWires)
 {
 	FVisualLogShapeElement Element(Description, Color, 0, CategoryName);
 	Element.Points.Reserve(3);
 	Element.Points.Add(Base);
 	Element.Points.Add(FVector(HalfHeight, Radius, Rotation.X));
 	Element.Points.Add(FVector(Rotation.Y, Rotation.Z, Rotation.W));
-	Element.Type = EVisualLoggerShapeElement::Capsule;
+	Element.Type = bInUseWires ? EVisualLoggerShapeElement::WireCapsule : EVisualLoggerShapeElement::Capsule;
 	Element.Verbosity = Verbosity;
 	ElementsToDraw.Add(Element);
 }
 
+// Deprecated : 
 void FVisualLogEntry::AddElement(const TArray<FVector>& ConvexPoints, FVector::FReal MinZ, FVector::FReal MaxZ, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description)
+{
+	AddPulledConvex(ConvexPoints, MinZ, MaxZ, CategoryName, Verbosity, Color, Description);
+}
+void FVisualLogEntry::AddPulledConvex(const TArray<FVector>& ConvexPoints, FVector::FReal MinZ, FVector::FReal MaxZ, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description)
 {
 	FVisualLogShapeElement Element(Description, Color, 0, CategoryName);
 	Element.Points.Reserve(1 + ConvexPoints.Num());
@@ -316,7 +376,12 @@ void FVisualLogEntry::AddElement(const TArray<FVector>& ConvexPoints, FVector::F
 	ElementsToDraw.Add(Element);
 }
 
+// Deprecated : 
 void FVisualLogEntry::AddElement(const TArray<FVector>& Vertices, const TArray<int32>& Indices, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description)
+{
+	AddMesh(Vertices, Indices, CategoryName, Verbosity, Color, Description);
+}
+void FVisualLogEntry::AddMesh(const TArray<FVector>& Vertices, const TArray<int32>& Indices, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color, const FString& Description)
 {
 	FVisualLogShapeElement Element(Description, Color, 0, CategoryName);
 	uint32 FacesNum = Indices.Num() / 3;
@@ -544,10 +609,7 @@ FArchive& operator<<(FArchive& Ar, FVisualLogEntry& LogEntry)
 	const int32 VLogsOldVer = Ar.CustomVer(EVisualLoggerVersion::GUID);
 	const int32 VLogsStreamObjectVer = Ar.CustomVer(FUE5MainStreamObjectVersion::GUID);
 
-	// @todo replace with FUE5MainStreamObjectVersion::VisualLoggerTimeStampAsDouble when it becomes available
-	constexpr int32 TEMPVisualLoggerTimeStampAsDouble = 98;
-
-	if (VLogsStreamObjectVer >= TEMPVisualLoggerTimeStampAsDouble)
+	if (VLogsStreamObjectVer >= FUE5MainStreamObjectVersion::VisualLoggerTimeStampAsDouble)
 	{
 		Ar << LogEntry.TimeStamp;
 	}
@@ -556,6 +618,15 @@ FArchive& operator<<(FArchive& Ar, FVisualLogEntry& LogEntry)
 		float TimeStampFlt = static_cast<float>(LogEntry.TimeStamp);
 		Ar << TimeStampFlt;
 		LogEntry.TimeStamp = TimeStampFlt;
+	}
+
+	if (VLogsStreamObjectVer < FUE5MainStreamObjectVersion::VisualLoggerAddedSeparateWorldTime)
+	{
+		LogEntry.WorldTimeStamp = LogEntry.TimeStamp;
+	}
+	else
+	{
+		Ar << LogEntry.WorldTimeStamp;
 	}
 
 	if (VLogsOldVer >= EVisualLoggerVersion::LargeWorldCoordinatesAndLocationValidityFlag)

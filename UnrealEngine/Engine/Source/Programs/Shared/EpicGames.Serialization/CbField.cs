@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Buffers;
 using System.Buffers.Binary;
@@ -13,6 +12,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EpicGames.Core;
 
 #pragma warning disable CA1721 // Property names should not match get methods
 #pragma warning disable CA1028 // Enum Storage should be Int32
@@ -194,7 +194,7 @@ namespace EpicGames.Serialization
 	[DebuggerDisplay("{Hash}")]
 	[JsonConverter(typeof(CbBinaryAttachmentJsonConverter))]
 	[TypeConverter(typeof(CbBinaryAttachmentTypeConverter))]
-	public struct CbBinaryAttachment : IEquatable<CbBinaryAttachment>
+	public readonly struct CbBinaryAttachment : IEquatable<CbBinaryAttachment>
 	{
 		/// <summary>
 		/// Attachment with a hash of zero
@@ -276,7 +276,7 @@ namespace EpicGames.Serialization
 	[DebuggerDisplay("{Hash}")]
 	[JsonConverter(typeof(CbObjectAttachmentJsonConverter))]
 	[TypeConverter(typeof(CbObjectAttachmentTypeConverter))]
-	public struct CbObjectAttachment : IEquatable<CbObjectAttachment>
+	public readonly struct CbObjectAttachment : IEquatable<CbObjectAttachment>
 	{
 		/// <summary>
 		/// Attachment with a hash of zero
@@ -655,7 +655,7 @@ namespace EpicGames.Serialization
 	class CbFieldDebugView
 	{
 		public CbFieldDebugView(CbField field) => Value = field.HasName()
-				? new CbFieldWithNameDebugView { Name = field.Name.ToString(), Value = field.Value } 
+				? new CbFieldWithNameDebugView { Name = field.Name.ToString(), Value = field.Value }
 				: field.Value;
 
 		[DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
@@ -937,7 +937,7 @@ namespace EpicGames.Serialization
 		/// Access the field as a UTF-8 string.
 		/// </summary>
 		/// <returns></returns>
-		public string AsString(string defaultValue) => AsUtf8String(defaultValue).ToString();
+		public string AsString(string defaultValue) => AsUtf8String(new Utf8String(defaultValue)).ToString();
 
 		/// <summary>
 		/// Access the field as a UTF-8 string.
@@ -1466,7 +1466,7 @@ namespace EpicGames.Serialization
 		/// <inheritdoc cref="CbFieldUtils.IsTimeSpan(CbFieldType)"/>
 		public bool IsTimeSpan() => CbFieldUtils.IsTimeSpan(TypeWithFlags);
 
-		
+
 		/// <inheritdoc cref="CbFieldUtils.IsObjectId(CbFieldType)"/>
 		public bool IsObjectId() => CbFieldUtils.IsObjectId(TypeWithFlags);
 
@@ -1611,7 +1611,7 @@ namespace EpicGames.Serialization
 		/// <param name="name"></param>
 		/// <returns></returns>
 #pragma warning disable CA1043 // Use Integral Or String Argument For Indexers
-		public CbField this[Utf8String name] => this.FirstOrDefault(field => field.Name == name) ?? CbField.Empty;
+		public CbField this[CbFieldName name] => this.FirstOrDefault(field => field.Name == name.Text) ?? CbField.Empty;
 #pragma warning restore CA1043 // Use Integral Or String Argument For Indexers
 
 		/// <summary>
@@ -2335,7 +2335,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		public bool TryGetView(out ReadOnlyMemory<byte> outView)
 		{
-			if(_innerField.HasName())
+			if (_innerField.HasName())
 			{
 				outView = ReadOnlyMemory<byte>.Empty;
 				return false;
@@ -2445,14 +2445,14 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="name">The name of the field.</param>
 		/// <returns>The matching field if found, otherwise a field with no value.</returns>
-		public CbField Find(Utf8String name) => _innerField[name];
+		public CbField Find(CbFieldName name) => _innerField[name.Text];
 
 		/// <summary>
 		/// Find a field by case-insensitive name comparison.
 		/// </summary>
 		/// <param name="name">The name of the field.</param>
 		/// <returns>The matching field if found, otherwise a field with no value.</returns>
-		public CbField FindIgnoreCase(Utf8String name) => _innerField.FirstOrDefault(field => Utf8StringComparer.OrdinalIgnoreCase.Equals(field.Name, name)) ?? new CbField();
+		public CbField FindIgnoreCase(CbFieldName name) => _innerField.FirstOrDefault(field => Utf8StringComparer.OrdinalIgnoreCase.Equals(field.Name, name.Text)) ?? new CbField();
 
 		/// <summary>
 		/// Find a field by case-sensitive name comparison.
@@ -2460,7 +2460,7 @@ namespace EpicGames.Serialization
 		/// <param name="name">The name of the field.</param>
 		/// <returns>The matching field if found, otherwise a field with no value.</returns>
 #pragma warning disable CA1043 // Use Integral Or String Argument For Indexers
-		public CbField this[Utf8String name] => _innerField[name];
+		public CbField this[CbFieldName name] => _innerField[name.Text];
 #pragma warning restore CA1043 // Use Integral Or String Argument For Indexers
 
 		/// <summary>

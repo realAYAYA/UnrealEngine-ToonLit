@@ -84,7 +84,7 @@ private:
 	}
 
 	//we don't support this because it could lead to bugs with values not being properly written to remote
-	TChaosProperty<T,PropName>& operator=(const TChaosProperty<T,PropName>& Rhs) {}
+	TChaosProperty<T,PropName>& operator=(const TChaosProperty<T,PropName>& Rhs) = delete;
 };
 
 template <typename T, EChaosProperty PropName>
@@ -158,7 +158,7 @@ private:
 	}
 
 	//we don't support this because it could lead to bugs with values not being properly written to remote
-	TShapeProperty<T,PropName>& operator=(const TShapeProperty<T,PropName>& Rhs) {}
+	TShapeProperty<T, PropName>& operator=(const TShapeProperty<T, PropName>& Rhs) = delete;
 };
 
 template <typename T,EShapeProperty PropName>

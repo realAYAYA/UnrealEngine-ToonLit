@@ -66,6 +66,8 @@ public:
 		Writer.Seek(StartPos);
 	}
 
+	uint32 GetStartPos() const { return StartPos; }
+
 private:
 	FNetBitStreamWriter& Writer;
 	const uint32 StartPos;

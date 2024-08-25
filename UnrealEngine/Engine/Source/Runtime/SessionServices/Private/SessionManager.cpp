@@ -30,7 +30,7 @@ FSessionManager::FSessionManager(const TSharedRef<IMessageBus, ESPMode::ThreadSa
 		{
 			FString Owner = Filter.Left(PlusIdx);
 			FilteredOwners.Add(Owner);
-			Filter.RightInline(Filter.Len() - (PlusIdx + 1), false);
+			Filter.RightInline(Filter.Len() - (PlusIdx + 1), EAllowShrinking::No);
 			PlusIdx = Filter.Find(TEXT("+"), ESearchCase::CaseSensitive);
 		}
 

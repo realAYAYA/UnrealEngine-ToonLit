@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DataDrivenShaderPlatformInfo.h"
 #include "GlobalShader.h"
 #include "Math/IntVector.h"
 #include "Math/UnrealMathSSE.h"
@@ -14,6 +15,7 @@
 #include "RHIDefinitions.h"
 #include "Serialization/MemoryLayout.h"
 #include "Shader.h"
+#include "ShaderCompilerCore.h"
 #include "ShaderCore.h"
 #include "ShaderParameterUtils.h"
 #include "ShaderParameters.h"
@@ -157,6 +159,11 @@ public:
 	static inline void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		BaseType::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
+		if (FDataDrivenShaderPlatformInfo::GetRequiresBindfulUtilityShaders(Parameters.Platform))
+		{
+			OutEnvironment.CompilerFlags.Add(CFLAG_ForceBindful);
+		}
 	
 		OutEnvironment.SetDefine(TEXT("THREADGROUPSIZE_X"), ThreadGroupSizeX);
 		OutEnvironment.SetDefine(TEXT("THREADGROUPSIZE_Y"), ThreadGroupSizeY);
@@ -391,9 +398,12 @@ inline void ClearUAVShader_T(FRHIComputeCommandList& RHICmdList, FRHIUnorderedAc
 		FMath::DivideAndRoundUp(SizeZ, ComputeShader->ThreadGroupSizeZ)
 	);
 
-	FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
-	UnsetUAVParameter(BatchedUnbinds, ComputeShader->GetClearResourceParam());
-	RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	if (RHICmdList.NeedsShaderUnbinds())
+	{
+		FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
+		UnsetUAVParameter(BatchedUnbinds, ComputeShader->GetClearResourceParam());
+		RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	}
 
 	if (bBarriers)
 	{

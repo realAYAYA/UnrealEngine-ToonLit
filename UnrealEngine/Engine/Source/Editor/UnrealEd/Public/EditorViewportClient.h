@@ -32,10 +32,13 @@ class FEditorViewportClient;
 class FEdMode;
 class FMouseDeltaTracker;
 class FPreviewScene;
+struct FTypedElementHandle;
+class IAssetFactoryInterface;
 class SEditorViewport;
 class UActorFactory;
 class UTypedElementViewportInteraction;
 enum class EViewStatusForScreenPercentage;
+struct FGizmoState;
 
 /** Delegate called by FEditorViewportClient to check its visibility */
 DECLARE_DELEGATE_RetVal( bool, FViewportStateGetter );
@@ -78,6 +81,11 @@ public:
 
 	TSharedPtr< FUICommandInfo > FovZoomIn;
 	TSharedPtr< FUICommandInfo > FovZoomOut;
+
+	TSharedPtr< FUICommandInfo > RotateUp;
+	TSharedPtr< FUICommandInfo > RotateDown;
+	TSharedPtr< FUICommandInfo > RotateLeft;
+	TSharedPtr< FUICommandInfo > RotateRight;
 };
 
 // FPrioritizedInputChord
@@ -231,6 +239,7 @@ public:
 	/** Set the ortho zoom amount */
 	void SetOrthoZoom( float InOrthoZoom )
 	{
+		ensure(InOrthoZoom >= MIN_ORTHOZOOM && InOrthoZoom <= MAX_ORTHOZOOM);
 		OrthoZoom = InOrthoZoom;
 	}
 
@@ -292,6 +301,8 @@ private:
 /** Parameter struct for editor viewport view modifiers */
 struct FEditorViewportViewModifierParams
 {
+	FEditorViewportClient* ViewportClient = nullptr;
+
 	FMinimalViewInfo ViewInfo;
 
 	void AddPostProcessBlend(const FPostProcessSettings& Settings, float Weight)
@@ -607,6 +618,9 @@ public:
 	UNREALED_API virtual void SetEnabledStats(const TArray<FString>& InEnabledStats) override;
 	UNREALED_API virtual bool IsStatEnabled(const FString& InName) const override;
 
+	UNREALED_API virtual bool BeginTransform(const FGizmoState& InState) { return false; }
+	UNREALED_API virtual bool EndTransform(const FGizmoState& InState) { return false; }
+	
 protected:
 
 	UNREALED_API virtual bool Internal_InputKey(const FInputKeyEventArgs& EventArgs);
@@ -818,9 +832,11 @@ public:
 	 */
 	UNREALED_API virtual void CheckHoveredHitProxy( HHitProxy* HoveredHitProxy );
 
+	//~ TODO: UE_DEPRECATED(5.4,"Use HasDropPreviewElements instead.")
 	/** Returns true if a placement dragging actor exists */
 	virtual bool HasDropPreviewActors() const { return false; }
 
+	//~ TODO: UE_DEPRECATED(5.4,"Use UpdateDropPreviewElements instead.")
 	/**
 	 * If dragging an actor for placement, this function updates its position.
 	 *
@@ -833,10 +849,33 @@ public:
 	 */
 	virtual bool UpdateDropPreviewActors(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, bool& out_bDroppedObjectsVisible, UActorFactory* FactoryToUse = NULL) { return false; }
 
+	//~ TODO: UE_DEPRECATED(5.4,"Use DestroyDropPreviewElements instead.")
 	/**
 	 * If dragging an actor for placement, this function destroys the actor.
 	 */
 	virtual void DestroyDropPreviewActors() {}
+
+	/** Returns true if a placement drag preview elements exists */
+	virtual bool HasDropPreviewElements() const { return false; }
+
+	/**
+	 * If dragging items for placement, this function updates their position.
+	 *
+	 * @param MouseX						The position of the mouse's X coordinate
+	 * @param MouseY						The position of the mouse's Y coordinate
+	 * @param DroppedObjects				The Objects that were used to create preview objects
+	 * @param out_bDroppedObjectsVisible	Output, returns if preview objects are visible or not
+	 *
+	 * Returns true if preview elements were updated
+	 */
+	virtual bool UpdateDropPreviewElements(int32 MouseX, int32 MouseY, 
+		const TArray<UObject*>& DroppedObjects, bool& out_bDroppedObjectsVisible, 
+		TScriptInterface<IAssetFactoryInterface> Factory = nullptr) { return false; }
+
+	/**
+	 * If dragging items for placement, this function destroys the items.
+	 */
+	virtual void DestroyDropPreviewElements() {}
 
 	/**
 	 * Checks the viewport to see if the given object can be dropped using the given mouse coordinates local to this viewport
@@ -847,19 +886,43 @@ public:
 	 */
 	virtual FDropQuery CanDropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const FAssetData& AssetInfo) { return FDropQuery(); }
 
+	struct FDropObjectOptions
+	{
+		//~ This default constructor just exists as a workaround for a bug in some compilers
+		//~ where trying to use a nested class as a default parameter in a member function of
+		//~ the same outer class will fail to compile if the nested class has default member 
+		//~ initializers and an implicitly declared default constructor.
+		FDropObjectOptions() {}
+
+		// Flag that when true, will only attempt a drop on the actor targeted by the mouse position. Defaults to false.
+		bool bOnlyDropOnTarget = false;
+		// If true, a drop preview will be spawned instead of a normal result.
+		bool bCreateDropPreview = false;
+		// If true, select the newly dropped elements
+		bool bSelectOutput = true;
+		// The preferred factory to use (optional)
+		TScriptInterface<IAssetFactoryInterface> FactoryToUse = nullptr;
+	};
+
 	/**
 	 * Attempts to intelligently drop the given objects in the viewport, using the given mouse coordinates local to this viewport
 	 *
-	 * @param MouseX			 The position of the mouse's X coordinate
-	 * @param MouseY			 The position of the mouse's Y coordinate
-	 * @param DroppedObjects	 The Objects to be placed into the editor via this viewport
-	 * @param OutNewActors		 The new actor objects that were created
-	 * @param bOnlyDropOnTarget  Flag that when True, will only attempt a drop on the actor targeted by the Mouse position. Defaults to false.
-	 * @param bCreateDropPreview If true, a drop preview actor will be spawned instead of a normal actor.
-	 * @param bSelectActors		 If true, select the newly dropped actors (defaults: true)
-	 * @param FactoryToUse		 The preferred actor factory to use (optional)
+	 * @param MouseX			The position of the mouse's X coordinate
+	 * @param MouseY			The position of the mouse's Y coordinate
+	 * @param DroppedObjects	The Objects to be placed into the editor via this viewport
+	 * @param OutNewObjects		The new actor objects that were created
+	 * @param Options			Additional options
 	 */
-	virtual bool DropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, TArray<AActor*>& OutNewActors, bool bOnlyDropOnTarget = false, bool bCreateDropPreview = false, bool bSelectActors = true, UActorFactory* FactoryToUse = NULL ) { return false; }
+	UNREALED_API virtual bool DropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, TArray<FTypedElementHandle>& OutNewObjects,
+		const FDropObjectOptions& Options = FDropObjectOptions())
+		// Forwards to the other overload (which returns false) during deprecation. Will return false directly once the other
+		// overload is removed.
+		;
+
+	UE_DEPRECATED(5.4, "Use the overload that takes FDropObjectOptions instead.")
+	UNREALED_API virtual bool DropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, TArray<AActor*>& OutNewActors,
+		bool bOnlyDropOnTarget = false, bool bCreateDropPreview = false, bool bSelectActors = true,
+		UActorFactory* FactoryToUse = NULL) { return false; }
 
 	/** Returns true if the viewport is allowed to be possessed for previewing cinematic sequences or keyframe animations*/
 	bool AllowsCinematicControl() const { return bAllowCinematicControl; }
@@ -1244,6 +1307,7 @@ public:
 
 	/** Show or hide the widget. */
 	UNREALED_API void ShowWidget(const bool bShow);
+	UNREALED_API bool GetShowWidget() const { return bShowWidget; }
 
 	/**
 	 * Returns whether or not the flight camera is active
@@ -1319,24 +1383,24 @@ public:
 	UNREALED_API FText GetCurrentLumenVisualizationModeDisplayName() const;
 
 	/**
-	 * Changes the Strata visualization mode for this viewport.
+	 * Changes the Substrate visualization mode for this viewport.
 	 *
 	 * @param InName	The ID of the required visualization mode
 	 */
-	UNREALED_API void ChangeStrataVisualizationMode(FName InName);
+	UNREALED_API void ChangeSubstrateVisualizationMode(FName InName);
 
 	/**
-	 * Checks if a Strata visualization mode is selected.
+	 * Checks if a Substrate visualization mode is selected.
 	 *
 	 * @param InName	The ID of the required visualization mode
-	 * @return	true if the supplied Strata visualization mode is checked
+	 * @return	true if the supplied Substrate visualization mode is checked
 	 */
-	UNREALED_API bool IsStrataVisualizationModeSelected(FName InName) const;
+	UNREALED_API bool IsSubstrateVisualizationModeSelected(FName InName) const;
 
 	/**
-	 * Returns the FText display name associated with CurrentStrataVisualizationMode.
+	 * Returns the FText display name associated with CurrentSubstrateVisualizationMode.
 	 */
-	UNREALED_API FText GetCurrentStrataVisualizationModeDisplayName() const;
+	UNREALED_API FText GetCurrentSubstrateVisualizationModeDisplayName() const;
 
 	/**
 	 * Changes the Groom visualization mode for this viewport.
@@ -1733,7 +1797,7 @@ public:
 	FName CurrentBufferVisualizationMode;
 	FName CurrentNaniteVisualizationMode;
 	FName CurrentLumenVisualizationMode;
-	FName CurrentStrataVisualizationMode;
+	FName CurrentSubstrateVisualizationMode;
 	FName CurrentGroomVisualizationMode;
 	FName CurrentVirtualShadowMapVisualizationMode;
 

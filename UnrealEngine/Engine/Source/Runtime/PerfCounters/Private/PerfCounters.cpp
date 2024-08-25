@@ -74,12 +74,7 @@ bool FPerfCounters::Initialize()
 	// Register a handler for /stats
 	TWeakPtr<FPerfCounters> WeakThisPtr(AsShared());
     StatsRouteHandle = HttpRouter->BindRoute(FHttpPath("/stats"), EHttpServerRequestVerbs::VERB_GET,
-		[WeakThisPtr](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
-	{
-		auto SharedThis = WeakThisPtr.Pin();
-		if (!SharedThis.IsValid()) { return false; }
-		return SharedThis->ProcessStatsRequest(Request, OnComplete);
-	});
+		FHttpRequestHandler::CreateSP(this, &FPerfCounters::ProcessStatsRequest));
 	if(!StatsRouteHandle.IsValid())
 	{
 		UE_LOG(LogPerfCounters, Error,
@@ -89,12 +84,7 @@ bool FPerfCounters::Initialize()
 
 	// Register a handler for /exec
 	ExecRouteHandle = HttpRouter->BindRoute(FHttpPath("/exec"), EHttpServerRequestVerbs::VERB_GET,
-		[WeakThisPtr] (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
-	{
-		auto SharedThis = WeakThisPtr.Pin();
-		if (!SharedThis.IsValid()) { return false; }
-		return SharedThis->ProcessExecRequest(Request, OnComplete);
-	});
+		FHttpRequestHandler::CreateSP(this, &FPerfCounters::ProcessExecRequest));
 	if(!ExecRouteHandle.IsValid())
 	{
 		UE_LOG(LogPerfCounters, Error,

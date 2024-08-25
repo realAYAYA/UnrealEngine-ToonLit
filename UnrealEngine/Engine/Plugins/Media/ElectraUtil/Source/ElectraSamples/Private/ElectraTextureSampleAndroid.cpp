@@ -536,7 +536,7 @@ bool FElectraTextureSample::Convert(FTexture2DRHIRef& InDstTexture, const FConve
 
 	// Setup conversion from Rec2020 to current working color space
 	const UE::Color::FColorSpace& Working = UE::Color::FColorSpace::GetWorking();
-	FMatrix44f ColorSpaceMtx = UE::Color::Transpose<float>(Working.GetXYZToRgb()) * GetGamutToXYZMatrix();
+	FMatrix44f ColorSpaceMtx = FMatrix44f(Working.GetXYZToRgb().GetTransposed() * GetGamutToXYZMatrix());
 	if (GetEncodingType() == UE::Color::EEncoding::ST2084)
 	{
 		// Normalize output (e.g. 80 or 100 nits == 1.0)

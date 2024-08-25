@@ -202,13 +202,17 @@ void FAnalyticsProviderFlurry::RecordEvent(const FString& EventName, const TArra
 #if WITH_FLURRY
 	if (EventName.Len() > 0)
 	{
+		TArray<FAnalyticsEventAttribute> EventAttributes;
+		EventAttributes.Append(Attributes);
+		EventAttributes.Append(DefaultEventAttributes);
+
 		NSString* ConvertedEventName = [NSString stringWithFString : EventName];
-		const int32 AttrCount = Attributes.Num();
+		const int32 AttrCount = EventAttributes.Num();
 		if (AttrCount > 0)
 		{
 			// Convert the event attributes into a dictionary object
 			NSDictionary* AttributesDict = [NSMutableDictionary dictionaryWithCapacity:AttrCount];
-			for	(auto Attr : Attributes)
+			for	(auto Attr : EventAttributes)
 			{
 				NSString* AttrName = [NSString stringWithFString : Attr.GetName()];
 				NSString* AttrValue = [NSString stringWithFString : Attr.GetValue()];
@@ -401,4 +405,25 @@ void FAnalyticsProviderFlurry::RecordProgress(const FString& ProgressType, const
 #else
 	UE_LOG(LogAnalytics, Warning, TEXT("WITH_FLURRY=0. Are you missing the SDK?"));
 #endif
+}
+
+
+void FAnalyticsProviderFlurry::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
+{
+	DefaultEventAttributes = Attributes;
+}
+
+TArray<FAnalyticsEventAttribute> FAnalyticsProviderFlurry::GetDefaultEventAttributesSafe() const
+{
+	return DefaultEventAttributes;
+}
+
+int32 FAnalyticsProviderFlurry::GetDefaultEventAttributeCount() const
+{
+	return DefaultEventAttributes.Num();
+}
+
+FAnalyticsEventAttribute FAnalyticsProviderFlurry::GetDefaultEventAttribute(int AttributeIndex) const
+{
+	return DefaultEventAttributes[AttributeIndex];
 }

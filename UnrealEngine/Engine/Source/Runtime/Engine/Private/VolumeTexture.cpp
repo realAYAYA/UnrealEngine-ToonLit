@@ -18,10 +18,15 @@
 #include "Streaming/TextureStreamOut.h"
 #include "Streaming/VolumeTextureStreaming.h"
 #include "TextureCompiler.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 #include "ImageCoreUtils.h"
 #include "Math/GuardedInt.h"
+
+#if WITH_EDITOR
+#include "AsyncCompilationHelpers.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(VolumeTexture)
 
@@ -103,9 +108,6 @@ static UVolumeTexture* GetDefaultVolumeTexture(const UVolumeTexture* Texture)
 UVolumeTexture::UVolumeTexture(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, PrivatePlatformData(nullptr)
-	, PlatformData(
-		[this]()-> FTexturePlatformData* { return GetPlatformData(); },
-		[this](FTexturePlatformData* InPlatformData) { SetPlatformData(InPlatformData); })
 {
 	SRGB = true;
 }
@@ -118,6 +120,12 @@ FTexturePlatformData** UVolumeTexture::GetRunningPlatformData()
 
 void UVolumeTexture::SetPlatformData(FTexturePlatformData* InPlatformData)
 {
+	if (PrivatePlatformData)
+	{
+		ReleaseResource();
+		delete PrivatePlatformData;
+	}
+
 	PrivatePlatformData = InPlatformData;
 }
 
@@ -244,17 +252,18 @@ ENGINE_API bool UVolumeTexture::UpdateSourceFromFunction(TFunction<void(int32, i
 		return false;
 	}
 	
-	Modify(true);
+	PreEditChange(nullptr);
 
 	Source2DTexture = nullptr;
 	const int64 FormatDataSize = ERawImageFormat::GetBytesPerPixel(FImageCoreUtils::ConvertToRawImageFormat(Format));
 
 	// Allocate temp buffer used to fill texture
 	uint8* const NewData = (uint8*)FMemory::Malloc(SizeX * SizeY * SizeZ * FormatDataSize);
-	uint8* CurPos = NewData;
+	uint8* DataPtr = NewData;
 
-	// Temporary storage for a single voxel value extracted from the lambda, type depends on Format
-	void* const NewValue = FMemory::Malloc(FormatDataSize);
+	// use PixelDataScratch just in case the function does something like write RGBA32F
+	//	 when our format is actually BGRA8 , to try to avoid crashing
+	uint64 PixelDataScratch[4];
 
 	// Loop over all voxels and fill from our TFunction
 	for (int32 PosZ = 0; PosZ < SizeZ; ++PosZ)
@@ -263,11 +272,12 @@ ENGINE_API bool UVolumeTexture::UpdateSourceFromFunction(TFunction<void(int32, i
 		{
 			for (int32 PosX = 0; PosX < SizeX; ++PosX)
 			{
-				Func(PosX, PosY, PosZ, NewValue);
+				// ?? Func knows our pixel format somehow?
+				//	should have defined this so that Func always writes FLinearColor and we convert
+				Func(PosX, PosY, PosZ, PixelDataScratch);
 
-				FMemory::Memcpy(CurPos, NewValue, FormatDataSize);
-
-				CurPos += FormatDataSize;
+				memcpy(DataPtr,PixelDataScratch,FormatDataSize);
+				DataPtr += FormatDataSize;
 			}
 		}
 	}
@@ -277,14 +287,10 @@ ENGINE_API bool UVolumeTexture::UpdateSourceFromFunction(TFunction<void(int32, i
 	
 	// Free temp buffers
 	FMemory::Free(NewData);
-	FMemory::Free(NewValue);
 
 	SetLightingGuid(); // Because the content has changed, use a new GUID.
 
-	ValidateSettingsAfterImportOrEdit();
-
-	// Make sure to update the texture resource so the results of filling the texture 
-	UpdateResource();
+	PostEditChange();
 
 	bSourceValid = true;
 #endif
@@ -330,6 +336,13 @@ void UVolumeTexture::PostLoad()
 
 void UVolumeTexture::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UVolumeTexture::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 #if WITH_EDITOR
 	int32 SizeX = Source.GetSizeX();
 	int32 SizeY = Source.GetSizeY();
@@ -341,10 +354,10 @@ void UVolumeTexture::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) co
 #endif
 
 	const FString Dimensions = FString::Printf(TEXT("%dx%dx%d"), SizeX, SizeY, SizeZ);
-	OutTags.Add( FAssetRegistryTag("Dimensions", Dimensions, FAssetRegistryTag::TT_Dimensional) );
-	OutTags.Add( FAssetRegistryTag("Format", GPixelFormats[GetPixelFormat()].Name, FAssetRegistryTag::TT_Alphabetical) );
+	Context.AddTag( FAssetRegistryTag("Dimensions", Dimensions, FAssetRegistryTag::TT_Dimensional) );
+	Context.AddTag( FAssetRegistryTag("Format", GPixelFormats[GetPixelFormat()].Name, FAssetRegistryTag::TT_Alphabetical) );
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 void UVolumeTexture::UpdateResource()

@@ -10,7 +10,7 @@
 #include "Materials/MaterialExpression.h"
 #include "MaterialExpressionSceneTexture.generated.h"
 
-UCLASS(collapsecategories, hidecategories=Object)
+UCLASS(MinimalAPI, collapsecategories, hidecategories=Object)
 class UMaterialExpressionSceneTexture : public UMaterialExpression
 {
 	GENERATED_UCLASS_BODY()

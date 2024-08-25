@@ -18,6 +18,7 @@
 #include "Templates/UnrealTemplate.h"
 #include "UObject/Class.h"
 #include "UObject/ObjectMacros.h"
+#include "Curves/RealCurve.h"
 
 #include "MovieSceneBoolChannel.generated.h"
 
@@ -32,7 +33,7 @@ struct FMovieSceneBoolChannel : public FMovieSceneChannel
 	GENERATED_BODY()
 
 	FMovieSceneBoolChannel()
-		: DefaultValue(false), bHasDefaultValue(false)
+		: PreInfinityExtrap(RCCE_Constant), PostInfinityExtrap(RCCE_Constant), DefaultValue(false), bHasDefaultValue(false)
 	{}
 
 	/**
@@ -121,6 +122,8 @@ public:
 	MOVIESCENE_API virtual void Offset(FFrameNumber DeltaPosition) override;
 	MOVIESCENE_API virtual void Optimize(const FKeyDataOptimizationParams& InParameters) override;
 	MOVIESCENE_API virtual void ClearDefault() override;
+	MOVIESCENE_API virtual FKeyHandle GetHandle(int32 Index) override;
+	MOVIESCENE_API virtual int32 GetIndex(FKeyHandle Handle) override;
 
 public:
 
@@ -152,6 +155,14 @@ public:
 	{
 		bHasDefaultValue = false;
 	}
+public:
+	/** Pre-infinity extrapolation state, bool channel only supports constant, cycle and oscillate */
+	UPROPERTY()
+	TEnumAsByte<ERichCurveExtrapolation> PreInfinityExtrap;
+
+	/** Post-infinity extrapolation state, bool channel only supports  constant, cycle and oscillate */
+	UPROPERTY()
+	TEnumAsByte<ERichCurveExtrapolation> PostInfinityExtrap;
 
 protected:
 

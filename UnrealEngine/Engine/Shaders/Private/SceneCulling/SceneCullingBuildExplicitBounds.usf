@@ -1,0 +1,108 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+#include "../ComputeShaderUtils.ush"
+#include "../ThreadGroupPrefixSum.ush"
+
+// Move with debug shader
+#include "../Visualization.ush"
+#include "../ShaderPrint.ush"
+
+#include "SceneCulling.ush"
+
+RWStructuredBuffer<float4> OutExplicitCellBoundsBuffer;
+
+
+void TransformAABB(float4x4 Transform, float3 Center, float3 Extent, inout float3 OutTransformedBoundsMin, inout float3 OutTransformedBoundsMax)
+{
+	float3 NewCenter = mul(float4(Center, 1.0f), Transform).xyz;
+
+	float3 NewExtent = abs(Extent.xxx * Transform[0].xyz)
+		+ abs(Extent.yyy * Transform[1].xyz)
+		+ abs(Extent.zzz * Transform[2].xyz);
+
+	OutTransformedBoundsMin = NewCenter - NewExtent;
+	OutTransformedBoundsMax = NewCenter + NewExtent;
+}
+
+StructuredBuffer<uint> UpdatedCellIds;
+
+[numthreads(NUM_THREADS_PER_GROUP, 1, 1)]
+void ComputeExplicitCellBounds(uint3 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex)
+{
+#if DO_FULL_REBUILD
+	const uint CellId = GetUnWrappedDispatchGroupId(GroupId);
+
+	if (CellId < MaxCells)
+	{
+#else
+	const uint CellIdIndex = GetUnWrappedDispatchGroupId(GroupId);
+
+	if (CellIdIndex < MaxCells)
+	{
+		uint CellId = UpdatedCellIds[CellIdIndex];
+#endif
+		FSceneHiearchyCellData CellData = GetSceneHiearchyCellData(CellId, /*bAllowExplicitBounds*/ false);
+
+		float3 BoundsMin = float3(POSITIVE_INFINITY, POSITIVE_INFINITY, POSITIVE_INFINITY);
+		float3 BoundsMax = float3(NEGATIVE_INFINITY, NEGATIVE_INFINITY, NEGATIVE_INFINITY);
+
+		FDFVector3 WorldToBlockRelativeTranslation = DFNegate(CellData.BlockData.WorldPos);
+
+		FCellHeader CellHeader = GetCellHeader(CellId);
+		for (uint Index = 0u; Index < CellHeader.NumItemChunks; ++Index)
+		{
+			uint PackedItemChunkDesc = InstanceHierarchyItemChunks[CellHeader.ItemChunksOffset + Index];
+
+			bool bIsRLEPackedChunk = false;
+			uint GroupNumInstances =  UnpackChunkInstanceCount(PackedItemChunkDesc, bIsRLEPackedChunk);
+
+			if (GroupThreadIndex >= GroupNumInstances)
+			{
+				continue;
+			}
+
+			uint InstanceId = UnpackChunkInstanceId(bIsRLEPackedChunk, PackedItemChunkDesc, GroupThreadIndex);
+
+			uint PrimitiveId;
+			uint InstanceFlags;
+			LoadInstancePrimitiveIdAndFlags(InstanceId, Scene.GPUScene.InstanceDataSOAStride, PrimitiveId, InstanceFlags);
+
+			if (PrimitiveId == INVALID_PRIMITIVE_ID)
+			{
+				continue;
+			}
+
+			FInstanceSceneData InstanceData = GetInstanceSceneData(InstanceId, Scene.GPUScene.InstanceDataSOAStride, false);
+			
+			float3 RelBoundsMin;
+			float3 RelBoundsMax;
+
+			float4x4 LocalToBlockRelativeWorld = DFFastMultiplyTranslationDemote(InstanceData.LocalToWorld, WorldToBlockRelativeTranslation);
+			TransformAABB(LocalToBlockRelativeWorld, InstanceData.LocalBoundsCenter, InstanceData.LocalBoundsExtent, RelBoundsMin, RelBoundsMax);
+			BoundsMin = min(BoundsMin, RelBoundsMin);
+			BoundsMax = max(BoundsMax, RelBoundsMax);
+
+			// TODO: Maybe do a group reduce here & store per chunk bounds as well? TBD Per chunk is a lot more data, and also more logic in the unpack may lead to very unbalanced workloads
+			//       Also, if implementing this it would make more sense to go wide over the chunks & then reduce the final values (atomically, probably).
+		}
+
+		float3 GroupBoundsMin = BoundsMin;
+		float3 GroupBoundsMax = BoundsMax;
+
+		if (CellHeader.NumItemChunks > 0)
+		{
+			GroupBoundsMin = float3(ThreadGroupReduceMin(BoundsMin.x, GroupThreadIndex), ThreadGroupReduceMin(BoundsMin.y, GroupThreadIndex), ThreadGroupReduceMin(BoundsMin.z, GroupThreadIndex)); 
+			GroupBoundsMax = float3(ThreadGroupReduceMax(BoundsMax.x, GroupThreadIndex), ThreadGroupReduceMax(BoundsMax.y, GroupThreadIndex), ThreadGroupReduceMax(BoundsMax.z, GroupThreadIndex)); 
+		}
+
+		if (GroupThreadIndex == 0)
+		{
+			// TODO: Pack into far fewer bits! The bounds are _cell_ relative and thus need very few bits
+			OutExplicitCellBoundsBuffer[CellId * 2 + 0] = float4((GroupBoundsMin + GroupBoundsMax) * 0.5f - CellData.LocalBoundsCenter, CellId);
+			OutExplicitCellBoundsBuffer[CellId * 2 + 1] = float4((GroupBoundsMax - GroupBoundsMin) * 0.5f, CellId);
+		}
+	}
+}

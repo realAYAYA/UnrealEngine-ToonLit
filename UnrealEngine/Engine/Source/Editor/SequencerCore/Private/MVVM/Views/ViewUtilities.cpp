@@ -2,63 +2,88 @@
 
 #include "MVVM/Views/ViewUtilities.h"
 
-#include "Delegates/Delegate.h"
-#include "Fonts/SlateFontInfo.h"
-#include "Internationalization/Text.h"
-#include "Layout/Margin.h"
-#include "Layout/Visibility.h"
-#include "Misc/Attribute.h"
-#include "SlotBase.h"
 #include "Styling/AppStyle.h"
-#include "Styling/CoreStyle.h"
-#include "Styling/SlateColor.h"
-#include "Templates/TypeHash.h"
-#include "Types/SlateEnums.h"
-#include "Widgets/DeclarativeSyntaxSupport.h"
-#include "Widgets/Images/SImage.h"
-#include "Widgets/Input/SComboButton.h"
-#include "Widgets/SBoxPanel.h"
-#include "Widgets/Text/STextBlock.h"
+#include "MVVM/ViewModelPtr.h"
+#include "MVVM/ViewModels/ViewModelIterators.h"
+#include "MVVM/ViewModels/EditorViewModel.h"
+#include "MVVM/ViewModels/EditorSharedViewModelData.h"
+#include "MVVM/Extensions/IHoveredExtension.h"
+#include "MVVM/Views/OutlinerColumns/SOutlinerColumnButton.h"
 
-class SWidget;
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
-TSharedRef<SWidget> MakeAddButton(FText HoverText, FOnGetContent MenuContent, const TAttribute<bool>& HoverState, const TAttribute<bool>& IsEnabled)
+TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnClicked& HandleClicked, const FViewModelPtr& ViewModel)
 {
-	TSharedRef<SComboButton> ComboButton =
+	TAttribute<bool> IsHovered;
+	if (TSharedPtr<IHoveredExtension> Hoverable = ViewModel.ImplicitCast())
+	{
+		IsHovered = MakeAttributeSP(Hoverable.ToSharedRef(), &IHoveredExtension::IsHovered);
+	}
 
-		SNew(SComboButton)
-		.HasDownArrow(false)
-		.IsFocusable(true)
-		.ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
-		.ForegroundColor( FSlateColor::UseForeground() )
+	TSharedPtr<FSharedViewModelData>        SharedData       = ViewModel->GetSharedData();
+	TSharedPtr<FEditorSharedViewModelData>  SharedEditorData = SharedData       ? SharedData->CastThisShared<FEditorSharedViewModelData>() : nullptr;
+	TSharedPtr<FEditorViewModel>            Editor           = SharedEditorData ? SharedEditorData->GetEditor() : nullptr;
+
+	TAttribute<bool> IsEnabled;
+	if (Editor)
+	{
+		IsEnabled = MakeAttributeSP(Editor.ToSharedRef(), &FEditorViewModel::IsEditable);
+	}
+
+	return SNew(SOutlinerColumnButton)
+		.ToolTipText(HoverText)
+		.OnClicked(HandleClicked)
 		.IsEnabled(IsEnabled)
-		.OnGetMenuContent(MenuContent)
-		.ContentPadding(FMargin(5, 2))
-		.HAlign(HAlign_Center)
-		.VAlign(VAlign_Center)
-		.ButtonContent()
-		[
-			SNew(SHorizontalBox)
-
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			.Padding(FMargin(0,0,2,0))
-			[
-				SNew(SImage)
-				.ColorAndOpacity( FSlateColor::UseForeground() )
-				.Image(FAppStyle::GetBrush("Plus"))
-				.ToolTipText(HoverText)
-			]
-		];
-
-	return ComboButton;
+		.IsRowHovered(IsHovered)
+		.Image(FAppStyle::GetBrush("Sequencer.Outliner.Plus"));
 }
 
-} // namespace Sequencer
-} // namespace UE
+TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnGetContent& HandleGetMenuContent, const FViewModelPtr& ViewModel)
+{
+	TAttribute<bool> IsHovered;
+	if (TSharedPtr<IHoveredExtension> Hoverable = ViewModel.ImplicitCast())
+	{
+		IsHovered = MakeAttributeSP(Hoverable.ToSharedRef(), &IHoveredExtension::IsHovered);
+	}
+
+	TSharedPtr<FSharedViewModelData>        SharedData       = ViewModel->GetSharedData();
+	TSharedPtr<FEditorSharedViewModelData>  SharedEditorData = SharedData       ? SharedData->CastThisShared<FEditorSharedViewModelData>() : nullptr;
+	TSharedPtr<FEditorViewModel>            Editor           = SharedEditorData ? SharedEditorData->GetEditor() : nullptr;
+
+	TAttribute<bool> IsEnabled;
+	if (Editor)
+	{
+		IsEnabled = MakeAttributeSP(Editor.ToSharedRef(), &FEditorViewModel::IsEditable);
+	}
+
+	return SNew(SOutlinerColumnButton)
+		.ToolTipText(HoverText)
+		.OnGetMenuContent(HandleGetMenuContent)
+		.IsEnabled(IsEnabled)
+		.IsRowHovered(IsHovered)
+		.Image(FAppStyle::GetBrush("Sequencer.Outliner.Plus"));
+}
+
+TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnGetContent& MenuContent, const TAttribute<bool>& HoverState, const TAttribute<bool>& IsEnabled)
+{
+	return SNew(SOutlinerColumnButton)
+		.ToolTipText(HoverText)
+		.OnGetMenuContent(MenuContent)
+		.IsEnabled(IsEnabled)
+		.IsRowHovered(HoverState)
+		.Image(FAppStyle::GetBrush("Sequencer.Outliner.Plus"));
+}
+
+TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnClicked& OnClicked, const TAttribute<bool>& HoverState, const TAttribute<bool>& IsEnabled)
+{
+	return SNew(SOutlinerColumnButton)
+		.ToolTipText(HoverText)
+		.OnClicked(OnClicked)
+		.IsEnabled(IsEnabled)
+		.IsRowHovered(HoverState)
+		.Image(FAppStyle::GetBrush("Sequencer.Outliner.Plus"));
+}
+
+} // namespace UE::Sequencer

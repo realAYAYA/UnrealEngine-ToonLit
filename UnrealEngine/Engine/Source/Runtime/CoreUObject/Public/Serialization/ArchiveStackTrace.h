@@ -73,9 +73,19 @@ struct FPackageData
 	int64 HeaderSize = 0;
 	int64 StartOffset = 0;
 };
+
+struct FDeleteByFree
+{
+	void operator()(void* Ptr) const
+	{
+		FMemory::Free(Ptr);
+	}
+};
+
 /** Helper function to load package contents into memory. Supports EDL packages. */
 COREUOBJECT_API bool LoadPackageIntoMemory(const TCHAR* InFilename,
-	FPackageData& OutPackageData, TUniquePtr<uint8>& OutLoadedBytes);
+	FPackageData& OutPackageData, TUniquePtr<uint8, FDeleteByFree>& OutLoadedBytes);
+
 COREUOBJECT_API void ForceKillPackageAndLinker(FLinkerLoad* Linker);
 COREUOBJECT_API bool ShouldIgnoreDiff();
 COREUOBJECT_API bool ShouldBypassDiff();
@@ -428,7 +438,7 @@ public:
 
 	/** Helper function to load package contents into memory. Supports EDL packages. */
 	static COREUOBJECT_API bool LoadPackageIntoMemory(const TCHAR* InFilename, FPackageData& OutPackageData,
-		TUniquePtr<uint8>& OutLoadedBytes);
+		TUniquePtr<uint8, UE::ArchiveStackTrace::FDeleteByFree>& OutLoadedBytes);
 
 private:
 	FArchiveCallstacks Callstacks;

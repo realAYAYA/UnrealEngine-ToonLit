@@ -46,6 +46,7 @@ void FSkeletonTreeCommands::RegisterCommands()
 	UI_COMMAND( CreateWeightBlendProfile, "Add Weight Blend Profile", "Add a new weight blend profile for this skeleton", EUserInterfaceActionType::Button, FInputChord() );
 	UI_COMMAND( CreateBlendMask, "Add Blend Mask", "Add a new blend mask for this skeleton", EUserInterfaceActionType::Button, FInputChord() );
 	UI_COMMAND( DeleteCurrentBlendProfile, "Delete the Current Blend Profile", "Delete the active blend profile for this skeleton", EUserInterfaceActionType::Button, FInputChord() );
+	UI_COMMAND( RenameBlendProfile, "Rename the Current Blend Profile", "Rename the active blend profile for this skeleton", EUserInterfaceActionType::Button, FInputChord());
 
 }
 

@@ -23,6 +23,9 @@ public:
 	/** Looks for a specific instruction by index and brings it into focus */
 	TSharedPtr< FUICommandInfo > GoToInstruction;
 
+	/** Selects the target instruction(s) of an instruction */
+	TSharedPtr< FUICommandInfo > SelectTargetInstructions;
+
 	/**
 	 * Initialize commands
 	 */

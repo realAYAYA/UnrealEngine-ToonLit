@@ -49,6 +49,6 @@ public class RemoteNotificationsListener extends GcmListenerService
 		notificationManager.notify((int)System.currentTimeMillis(), notification);		
 		*/
 		
-		GameActivity._activity.nativeGCMReceivedRemoteNotification( message );
+		GameActivity.Get().nativeGCMReceivedRemoteNotification( message );
 	}
 }

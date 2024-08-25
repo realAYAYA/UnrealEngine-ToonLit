@@ -72,7 +72,6 @@ public:
 	virtual void OnRemoveSessionPlatform(const ITargetPlatform* TargetPlatform) = 0;
 
 	// Functions that are written locally for Directors but are sent to Director for Workers
-	virtual void ReportAccessedIniSettings(UCookOnTheFlyServer& COTFS, const FConfigFile& Config) = 0;
 	virtual void ReportDemoteToIdle(UE::Cook::FPackageData& PackageData, ESuppressCookReason Reason) = 0;
 	virtual void ReportPromoteToSaveComplete(UE::Cook::FPackageData& PackageData) = 0;
 

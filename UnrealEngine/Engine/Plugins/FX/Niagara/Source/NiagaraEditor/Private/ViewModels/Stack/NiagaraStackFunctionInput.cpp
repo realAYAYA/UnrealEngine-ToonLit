@@ -7,6 +7,7 @@
 #include "EdGraphSchema_Niagara.h"
 #include "Editor.h"
 #include "INiagaraEditorTypeUtilities.h"
+#include "NiagaraAnalytics.h"
 #include "NiagaraClipboard.h"
 #include "NiagaraConstants.h"
 #include "NiagaraConvertInPlaceUtilityBase.h"
@@ -23,6 +24,7 @@
 #include "NiagaraNodeOutput.h"
 #include "NiagaraNodeParameterMapGet.h"
 #include "NiagaraNodeParameterMapSet.h"
+#include "NiagaraParameterDefinitions.h"
 #include "NiagaraRendererProperties.h"
 #include "NiagaraScript.h"
 #include "ViewModels/NiagaraScriptGraphViewModel.h"
@@ -31,6 +33,7 @@
 #include "NiagaraSettings.h"
 #include "ViewModels/NiagaraSystemScriptViewModel.h"
 #include "ScopedTransaction.h"
+#include "Algo/RemoveIf.h"
 #include "EdGraph/EdGraphPin.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Materials/Material.h"
@@ -77,8 +80,7 @@ void GenerateInputParameterHandlePath(UNiagaraNodeFunctionCall& ModuleNode, UNia
 	{
 		FunctionOutputPins.Reset();
 		CurrentFunctionCallNode->GetOutputPins(FunctionOutputPins);
-		if (ensureMsgf(FunctionOutputPins.Num() == 1 && FunctionOutputPins[0]->LinkedTo.Num() == 1 && FunctionOutputPins[0]->LinkedTo[0]->GetOwningNode()->IsA<UNiagaraNodeParameterMapSet>(),
-			TEXT("Invalid Stack Graph - Dynamic Input Function call didn't have a valid connected output.")))
+		if (FunctionOutputPins.Num() == 1 && FunctionOutputPins[0]->LinkedTo.Num() == 1 && FunctionOutputPins[0]->LinkedTo[0]->GetOwningNode()->IsA<UNiagaraNodeParameterMapSet>())
 		{
 			FNiagaraParameterHandle AliasedHandle(FunctionOutputPins[0]->LinkedTo[0]->PinName);
 			OutHandlePath.Add(FNiagaraParameterHandle::CreateModuleParameterHandle(AliasedHandle.GetName()));
@@ -96,7 +98,6 @@ void GenerateInputParameterHandlePath(UNiagaraNodeFunctionCall& ModuleNode, UNia
 				}
 			}
 
-
 			if (ensureMsgf(CurrentFunctionCallNode != nullptr, TEXT("Invalid Stack Graph - Function call node for override pin %s could not be found."), *FunctionOutputPins[0]->PinName.ToString()) == false)
 			{
 				OutHandlePath.Empty();
@@ -105,6 +106,8 @@ void GenerateInputParameterHandlePath(UNiagaraNodeFunctionCall& ModuleNode, UNia
 		}
 		else
 		{
+			UE_LOG(LogNiagaraEditor, Log, TEXT("Invalid Stack Graph - Dynamic Input Function call didn't have a valid connected output."));
+
 			OutHandlePath.Empty();
 			return;
 		}
@@ -162,7 +165,7 @@ void UNiagaraStackFunctionInput::Initialize(
 	DisplayName = FText::FromName(InputParameterHandle.GetName());
 
 	InputType = InInputType;
-	StackEditorDataKey = FNiagaraStackGraphUtilities::GenerateStackFunctionInputEditorDataKey(*OwningFunctionCallNode.Get(), InputParameterHandle);
+	StackEditorDataKey = FNiagaraStackGraphUtilities::StackKeys::GenerateStackFunctionInputEditorDataKey(*OwningFunctionCallNode.Get(), InputParameterHandle);
 
 	TArray<UNiagaraScript*> AffectedScriptsNotWeak;
 	for (TWeakObjectPtr<UNiagaraScript> AffectedScript : AffectedScripts)
@@ -389,7 +392,7 @@ bool UNiagaraStackFunctionInput::SupportsSummaryView() const
 {
 	if(GetInputMetaData().IsSet())
 	{
-		if(GetInputMetaData()->bInlineEditConditionToggle || !GetInputMetaData()->ParentAttribute.IsNone())
+		if(GetInputMetaData()->bInlineEditConditionToggle)
 		{
 			return false;
 		}
@@ -466,6 +469,18 @@ void UNiagaraStackFunctionInput::GetCurrentChangeIds(FGuid& OutOwningGraphChange
 bool UNiagaraStackFunctionInput::FilterInlineChildren(const UNiagaraStackEntry& Child) const
 {
 	return GbEnableExperimentalInlineDynamicInputs == 0 || GetInlineDisplayMode() == ENiagaraStackEntryInlineDisplayMode::None;
+}
+
+void UNiagaraStackFunctionInput::ReportScriptVersionChange() const
+{
+	// analytics
+	TArray<FAnalyticsEventAttribute> Attributes;
+	Attributes.Add(FAnalyticsEventAttribute(TEXT("Type"), TEXT("DynamicInput")));
+	if (NiagaraAnalytics::IsPluginAsset(GetDynamicInputNode()->FunctionScript))
+	{
+		Attributes.Add(FAnalyticsEventAttribute(TEXT("AssetName"), GetDynamicInputNode()->FunctionScript->GetPackage()->GetName()));
+	}
+	NiagaraAnalytics::RecordEvent(TEXT("Versioning.ScriptVersionChanged"), Attributes);
 }
 
 FText UNiagaraStackFunctionInput::GetCollapsedStateText() const
@@ -656,6 +671,8 @@ UNiagaraStackEntry::FStackIssueFixDelegate UNiagaraStackFunctionInput::GetUpgrad
 			FunctionCallNode->GetNiagaraGraph()->NotifyGraphNeedsRecompile();
 			GetSystemViewModel()->ResetSystem();
 		}
+
+		ReportScriptVersionChange();
 	});
 }
 
@@ -922,7 +939,8 @@ void UNiagaraStackFunctionInput::RefreshChildrenInternal(const TArray<UNiagaraSt
 		{
 			ValueObjectEntry = NewObject<UNiagaraStackObject>(this);
 			bool bIsTopLevelObject = false;
-			ValueObjectEntry->Initialize(CreateDefaultChildRequiredData(), InputValues.DataObject.Get(), bIsTopLevelObject, GetOwnerStackItemEditorDataKey(), OwningFunctionCallNode.Get());
+			bool bHideTopLevelCategories = false;
+			ValueObjectEntry->Initialize(CreateDefaultChildRequiredData(), InputValues.DataObject.Get(), bIsTopLevelObject, bHideTopLevelCategories, GetOwnerStackItemEditorDataKey(), OwningFunctionCallNode.Get());
 		}
 		NewChildren.Add(ValueObjectEntry);
 	}
@@ -1197,7 +1215,7 @@ void UNiagaraStackFunctionInput::RefreshValues()
 	}
 	else
 	{
-		if (InputType.IsDataInterface())
+		if (InputType.IsDataInterface() && DefaultInputValues.Mode == EValueMode::Data)
 		{
 			// If the input it a data interface but hasn't been edited yet, we need to provide a placeholder data interface to edit.
 			FGuid EmitterHandleId = GetEmitterViewModel().IsValid()
@@ -1211,7 +1229,7 @@ void UNiagaraStackFunctionInput::RefreshValues()
 				DefaultInputValues.DataObject->CopyTo(InputValues.DataObject.Get());
 			}
 		}
-		else if (InputType.IsUObject())
+		else if (InputType.IsUObject() && DefaultInputValues.Mode == EValueMode::ObjectAsset)
 		{
 			InputValues.Mode = EValueMode::ObjectAsset;
 			InputValues.ObjectAssetInputNode = DefaultInputValues.ObjectAssetInputNode;
@@ -1283,6 +1301,10 @@ void UNiagaraStackFunctionInput::RefreshFromMetaData(TArray<FStackIssue>& NewIss
 			{
 				InputMetaData = *FoundMetaData;
 			}
+		}
+		else if (UNiagaraScriptVariable* ScriptVariable = GetSystemViewModel()->FindSubscribedParameterDefinitionsScriptVarByName(InputParameterHandle.GetName()))
+		{
+			InputMetaData = ScriptVariable->Metadata;
 		}
 	}
 	else if (OwningFunctionCallNode->FunctionScript != nullptr)
@@ -1547,6 +1569,20 @@ FName GetNamespaceForUsage(ENiagaraScriptUsage Usage)
 	}
 }
 
+bool IsNamespaceAllowedInUsage(FName Namespace, ENiagaraScriptUsage Usage)
+{
+	FName UsageName = GetNamespaceForUsage(Usage);
+	if (UsageName == FNiagaraConstants::SystemNamespace && (Namespace == FNiagaraConstants::EmitterNamespace || Namespace == FNiagaraConstants::ParticleAttributeNamespace))
+	{
+		return false;
+	}
+	if (UsageName == FNiagaraConstants::EmitterNamespace && Namespace == FNiagaraConstants::ParticleAttributeNamespace)
+	{
+		return false;
+	}
+	return true;
+}
+
 UNiagaraScript* UNiagaraStackFunctionInput::FindConversionScript(const FNiagaraTypeDefinition& FromType, TMap<FNiagaraTypeDefinition, UNiagaraScript*>& ConversionScriptCache, bool bIncludeConversionScripts) const
 {
 	if (bIncludeConversionScripts == false)
@@ -1715,29 +1751,38 @@ void UNiagaraStackFunctionInput::GetAvailableParameterHandles(TArray<FNiagaraPar
 	}
 
 	//Parameter Collections
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	TArray<FAssetData> CollectionAssets;
-	AssetRegistryModule.Get().GetAssetsByClass(UNiagaraParameterCollection::StaticClass()->GetClassPathName(), CollectionAssets);
-
-	for (FAssetData& CollectionAsset : CollectionAssets)
+	TArray<UNiagaraParameterCollection*> AvailableParameterCollections;
+	FNiagaraEditorUtilities::GetAvailableParameterCollections(AvailableParameterCollections);
+	for (UNiagaraParameterCollection* Collection : AvailableParameterCollections)
 	{
-		if ( UNiagaraParameterCollection* Collection = Cast<UNiagaraParameterCollection>(CollectionAsset.GetAsset()) )
+		for (const FNiagaraVariable& CollectionParam : Collection->GetParameters())
 		{
-			for (const FNiagaraVariable& CollectionParam : Collection->GetParameters())
+			if (FNiagaraEditorUtilities::AreTypesAssignable(CollectionParam.GetType(), InputType))
 			{
-				if (FNiagaraEditorUtilities::AreTypesAssignable(CollectionParam.GetType(), InputType))
-				{
-					AvailableParameterHandles.AddUnique(FNiagaraParameterHandle(CollectionParam.GetName()));
-				}
-				else if (UNiagaraScript* ConversionScript = FindConversionScript(CollectionParam.GetType(), ConversionScriptCache, bIncludeConversionScripts))
-				{
-					AvailableConversionHandles.Add(CollectionParam, ConversionScript);
-				}
+				AvailableParameterHandles.AddUnique(FNiagaraParameterHandle(CollectionParam.GetName()));
+			}
+			else if (UNiagaraScript* ConversionScript = FindConversionScript(CollectionParam.GetType(), ConversionScriptCache, bIncludeConversionScripts))
+			{
+				AvailableConversionHandles.Add(CollectionParam, ConversionScript);
 			}
 		}
-		else
+	}
+
+	// Filter gathered attributes by allowed usage
+	ENiagaraScriptUsage CurrentUsage = CurrentOutputNode ? CurrentOutputNode->GetUsage() : ENiagaraScriptUsage::Module;
+	AvailableParameterHandles.SetNum(Algo::RemoveIf(AvailableParameterHandles, [CurrentUsage](FNiagaraParameterHandle& Handle)
+	{
+		return !IsNamespaceAllowedInUsage(Handle.GetNamespace(), CurrentUsage);
+	}));
+	TArray<FNiagaraVariable> ParameterNames;
+	AvailableConversionHandles.GetKeys(ParameterNames);
+	for (int i = 0; i < ParameterNames.Num(); i++)
+	{
+		FNiagaraVariable Parameter = ParameterNames[i];
+		FNiagaraParameterHandle Handle(Parameter.GetName());
+		if (!IsNamespaceAllowedInUsage(Handle.GetNamespace(), CurrentUsage))
 		{
-			UE_LOG(LogNiagaraEditor, Warning, TEXT("Failed to load NiagaraParameterCollection '%s'"), *CollectionAsset.GetObjectPathString());
+			AvailableConversionHandles.Remove(Parameter);
 		}
 	}
 }
@@ -2009,6 +2054,38 @@ void UNiagaraStackFunctionInput::SetLocalValue(TSharedRef<FStructOnScope> InLoca
 	{
 		RefreshChildren();
 	}
+}
+
+void UNiagaraStackFunctionInput::SetDataInterfaceValue(const UNiagaraDataInterface& InDataInterface)
+{
+	checkf(InDataInterface.GetClass() == InputType.GetClass(), TEXT("Can not set an input to an unrelated type."));
+
+	if (InputValues.Mode == EValueMode::Data && InputValues.DataObject->Equals(&InDataInterface))
+	{
+		// The value matches the current value so noop.
+		return;
+	}
+
+	TGuardValue<bool> UpdateGuard(bUpdatingLocalValueDirectly, true);
+	FScopedTransaction ScopedTransaction(LOCTEXT("UpdateInputLocalDataValue", "Update input local data interface value"));
+	bool bGraphWillNeedRelayout = false;
+	UEdGraphPin* OverridePin = GetOverridePin();
+
+	if (OverridePin != nullptr && OverridePin->LinkedTo.Num() > 0)
+	{
+		// If there is an override pin and it's linked we'll need to remove all of the linked nodes to set a local value.
+		RemoveNodesForOverridePin(*OverridePin);
+		bGraphWillNeedRelayout = true;
+	}
+
+	if (OverridePin == nullptr)
+	{
+		OverridePin = &GetOrCreateOverridePin();
+	}
+
+	UNiagaraDataInterface* InputDataInterface = nullptr;
+	FNiagaraStackGraphUtilities::SetDataInterfaceValueForFunctionInput(*OverridePin, InDataInterface.GetClass(), AliasedInputParameterHandle.GetParameterHandleString().ToString(), InputDataInterface);
+
 }
 
 bool UNiagaraStackFunctionInput::CanReset() const
@@ -2738,6 +2815,8 @@ void UNiagaraStackFunctionInput::ChangeScriptVersion(FGuid NewScriptVersion)
 	if (CachedSysViewModel->GetSystemStackViewModel())
 		CachedSysViewModel->GetSystemStackViewModel()->InvalidateCachedParameterUsage();
 	RefreshChildren();
+
+	ReportScriptVersionChange();
 }
 
 const UNiagaraClipboardFunctionInput* UNiagaraStackFunctionInput::ToClipboardFunctionInput(UObject* InOuter) const
@@ -3100,16 +3179,23 @@ UEdGraphPin& UNiagaraStackFunctionInput::GetOrCreateOverridePin()
 
 void UNiagaraStackFunctionInput::GetDefaultDataInterfaceValueFromDefaultPin(UEdGraphPin* DefaultPin, UNiagaraStackFunctionInput::FInputValues& InInputValues) const
 {
-	// Default data interfaces are stored on the input node in the graph, but if it doesn't exist or it's data interface pointer is null, just use the CDO.
-	InInputValues.Mode = EValueMode::Data;
 	if (DefaultPin->LinkedTo.Num() == 1 && DefaultPin->LinkedTo[0]->GetOwningNode() != nullptr && DefaultPin->LinkedTo[0]->GetOwningNode()->IsA<UNiagaraNodeInput>())
 	{
+		// If a valid input node was linked, use the data interface from there.
+		InInputValues.Mode = EValueMode::Data;
 		UNiagaraNodeInput* DataInputNode = CastChecked<UNiagaraNodeInput>(DefaultPin->LinkedTo[0]->GetOwningNode());
 		InInputValues.DataObject = DataInputNode->GetDataInterface();
 	}
-	if (InInputValues.DataObject.IsValid() == false)
+	else
 	{
-		InInputValues.DataObject = Cast<UNiagaraDataInterface>(InputType.GetClass()->GetDefaultObject());
+		// If there was no input node, try to get a linked data interface default.
+		GetDefaultLinkedHandleOrLinkedFunctionFromDefaultPin(DefaultPin, InInputValues);
+		if (InInputValues.Mode == EValueMode::None)
+		{
+			// If there is no specified default input and no linked value, use the CDO as the default data value.
+			InInputValues.Mode = EValueMode::Data;
+			InInputValues.DataObject = Cast<UNiagaraDataInterface>(InputType.GetClass()->GetDefaultObject());
+		}
 	}
 }
 
@@ -3449,7 +3535,7 @@ bool UNiagaraStackFunctionInput::OpenSourceAsset() const
 bool UNiagaraStackFunctionInput::SupportsCustomExpressions() const
 {
 	const UNiagaraEditorSettings* NiagaraEditorSettings = GetDefault<UNiagaraEditorSettings>();
-	return NiagaraEditorSettings->IsAllowedClass(UNiagaraNodeCustomHlsl::StaticClass());
+	return NiagaraEditorSettings->IsVisibleClass(UNiagaraNodeCustomHlsl::StaticClass());
 }
 
 #undef LOCTEXT_NAMESPACE

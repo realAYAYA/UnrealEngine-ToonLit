@@ -121,7 +121,28 @@ void UPlacementSubsystem::RegisterPlacementFactories()
 	PlacementFactoriesRegistered.Broadcast();
 }
 
+// Deprecated in 5.4. This function is a mistake because the user is not expected to pass in a 
+// UClass that identifies a subclass of a UClass- they are expected to pass in a UClass that
+// identifies their factory (which does not derive from UClass). TSubclassOf does not do any
+// verification when it is created, it will just give false in the if statement and the function
+// will return nullptr.
 TScriptInterface<IAssetFactoryInterface> UPlacementSubsystem::GetAssetFactoryFromFactoryClass(TSubclassOf<UClass> InFactoryInterfaceClass) const
+{
+	if (InFactoryInterfaceClass)
+	{
+		for (const TScriptInterface<IAssetFactoryInterface>& AssetFactory : AssetFactories)
+		{
+			if (AssetFactory.GetObject()->IsA(InFactoryInterfaceClass))
+			{
+				return AssetFactory;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+TScriptInterface<IAssetFactoryInterface> UPlacementSubsystem::GetAssetFactoryFromFactoryClass(UClass* InFactoryInterfaceClass) const
 {
 	if (InFactoryInterfaceClass)
 	{

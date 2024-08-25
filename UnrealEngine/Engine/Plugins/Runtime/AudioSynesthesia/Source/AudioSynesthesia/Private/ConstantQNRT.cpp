@@ -275,7 +275,12 @@ UClass* UConstantQNRT::GetSupportedClass() const
 {
 	return UConstantQNRT::StaticClass();
 }
-#endif
+
+bool UConstantQNRT::ShouldEventTriggerAnalysis(FPropertyChangedEvent& PropertyChangeEvent)
+{
+	return Settings != nullptr && Super::ShouldEventTriggerAnalysis(PropertyChangeEvent);
+}
+#endif // WITH_EDITOR
 
 FName UConstantQNRT::GetAnalyzerNRTFactoryName() const 
 {

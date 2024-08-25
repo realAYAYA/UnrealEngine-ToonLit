@@ -269,14 +269,14 @@ void FSwarmCommentsAPI::GetComments(const FReviewTopic& Topic, const OnGetCommen
 		TSharedPtr<FJsonObject> JsonObject;
 		if (FJsonSerializer::Deserialize(JsonReader, JsonObject))
 		{
-			if (JsonObject->HasField("error"))
+			if (JsonObject->HasField(TEXT("error")))
 			{
-				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField("error"));
+				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField(TEXT("error")));
 				return;
 			}
-			if (JsonObject->HasField("comments"))
+			if (JsonObject->HasField(TEXT("comments")))
 			{
-				OnComplete.ExecuteIfBound(BuildCommentArray(JsonObject->GetArrayField("comments")), {});
+				OnComplete.ExecuteIfBound(BuildCommentArray(JsonObject->GetArrayField(TEXT("comments"))), {});
 				return;
 			}
 		}
@@ -321,14 +321,14 @@ void FSwarmCommentsAPI::PostComment(FReviewComment& Comment, const OnPostComment
 		TSharedPtr<FJsonObject> JsonObject;
 		if (FJsonSerializer::Deserialize(JsonReader, JsonObject))
 		{
-			if (JsonObject->HasField("error"))
+			if (JsonObject->HasField(TEXT("error")))
 			{
-				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField("error"));
+				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField(TEXT("error")));
 				return;
 			}
-			if (JsonObject->HasField("comment"))
+			if (JsonObject->HasField(TEXT("comment")))
 			{
-				FReviewComment Comment = FReviewComment::FromJson(JsonObject->GetObjectField("comment"));
+				FReviewComment Comment = FReviewComment::FromJson(JsonObject->GetObjectField(TEXT("comment")));
 				if (TSharedPtr<const FSwarmCommentsAPI> Self = WeakSelf.Pin())
 				{
 					// This comment may effect the userdata. update it if necessary
@@ -394,14 +394,14 @@ void FSwarmCommentsAPI::EditComment(const FReviewComment& Comment, const OnEditC
 		TSharedPtr<FJsonObject> JsonObject;
 		if (FJsonSerializer::Deserialize(JsonReader, JsonObject))
 		{
-			if (JsonObject->HasField("error"))
+			if (JsonObject->HasField(TEXT("error")))
 			{
-				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField("error"));
+				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField(TEXT("error")));
 				return;
 			}
-			if (JsonObject->HasField("comment"))
+			if (JsonObject->HasField(TEXT("comment")))
 			{
-				FReviewComment Comment = FReviewComment::FromJson(JsonObject->GetObjectField("comment"));
+				FReviewComment Comment = FReviewComment::FromJson(JsonObject->GetObjectField(TEXT("comment")));
 				TakeMetadataFromBody(Comment);
 				OnComplete.ExecuteIfBound(Comment, {});
 				return;
@@ -447,14 +447,14 @@ void FSwarmCommentsAPI::GetReviewTopicForCL(const FString& ChangelistNum,
 		TSharedPtr<FJsonObject> JsonObject;
 		if (FJsonSerializer::Deserialize(JsonReader, JsonObject))
 		{
-			if (JsonObject->HasField("error"))
+			if (JsonObject->HasField(TEXT("error")))
 			{
-				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField("error"));
+				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField(TEXT("error")));
 				return;
 			}
-			if (JsonObject->HasField("reviews"))
+			if (JsonObject->HasField(TEXT("reviews")))
 			{
-				const TArray<TSharedPtr<FJsonValue>> ReviewsJson = JsonObject->GetArrayField("reviews");
+				const TArray<TSharedPtr<FJsonValue>> ReviewsJson = JsonObject->GetArrayField(TEXT("reviews"));
 				if (ReviewsJson.IsEmpty())
 				{
 					OnComplete.ExecuteIfBound({}, TEXT("Review Not Found"));
@@ -523,14 +523,14 @@ void FSwarmCommentsAPI::CreateReviewTopicForCL(const FString& ChangelistNum, con
 		TSharedPtr<FJsonObject> JsonObject;
 		if (FJsonSerializer::Deserialize(JsonReader, JsonObject))
 		{
-			if (JsonObject->HasField("error"))
+			if (JsonObject->HasField(TEXT("error")))
 			{
-				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField("error"));
+				OnComplete.ExecuteIfBound({}, JsonObject->GetStringField(TEXT("error")));
 				return;
 			}
-			if (JsonObject->HasField("review"))
+			if (JsonObject->HasField(TEXT("review")))
 			{
-				const TSharedPtr<FJsonObject> ReviewJson = JsonObject->GetObjectField("review");
+				const TSharedPtr<FJsonObject> ReviewJson = JsonObject->GetObjectField(TEXT("review"));
 				
 				OnComplete.ExecuteIfBound(FReviewTopic{
 					FString::FromInt(ReviewJson->GetIntegerField(TEXT("id"))),
@@ -761,22 +761,36 @@ FSwarmCommentsAPI::FAuthTicket FSwarmCommentsAPI::RetrieveAuthorizationTicket()
 		return {};
 	}
 
+	TArray<FStringView> Options;
 	for (FStringView TicketString : TicketStrings)
 	{
 		// find beginning of ticket
-		int32 ChopIndex = TicketString.Find(TEXT("p4d1="));
-		if (ChopIndex == INDEX_NONE)
+		int32 ChopIndex;
+		if (!TicketString.FindChar('=', ChopIndex))
 		{
 			continue;
 		}
-		// skip 'p4d1='
-		ChopIndex += 5;
+
+		// remove the '='
+		ChopIndex += 1;
 		
 		const FStringView Ticket = TicketString.RightChop(ChopIndex);
 		if (Ticket.StartsWith(*Username + TEXT(":"), ESearchCase::IgnoreCase))
 		{
-			return {Ticket};
+			if (TicketString.StartsWith(TEXT("localhost")))
+			{
+				return {Ticket}; // prioritize localhost if the username matches
+			}
+			Options.Add(Ticket);
 		}
+	}
+	if (!Options.IsEmpty())
+	{
+		if (Options.Num() > 1)
+		{
+			UE_LOG(LogSourceControl, Warning, TEXT("Multiple viable tickets found for p4 user. Selecting one arbitrarily"));
+		}
+		return {Options.Last()};
 	}
 	
 	return {};

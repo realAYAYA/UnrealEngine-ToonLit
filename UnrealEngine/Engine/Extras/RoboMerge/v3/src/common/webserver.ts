@@ -182,7 +182,7 @@ export class WebServer {
 			if (!(route instanceof RegExp)) {
 				const lastDotIndex = route.lastIndexOf('.')
 				if (lastDotIndex !== -1) {
-					filetype = route.substr(lastDotIndex + 1)
+					filetype = route.substring(lastDotIndex + 1)
 				}
 			}
 		}
@@ -192,7 +192,7 @@ export class WebServer {
 			if (lastDotIndex === -1) {
 				throw new Error('File type or file extension required')
 			}
-			filetype = filePattern.substr(lastDotIndex + 1)
+			filetype = filePattern.substring(lastDotIndex + 1)
 		}
 		if (!MIME_TYPES.has(filetype) && filetype.split('/').length !== 2) {
 			throw new Error(`Unknown file type '${filetype}'`)

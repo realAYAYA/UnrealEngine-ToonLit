@@ -6,7 +6,9 @@
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
 #include "Engine/EngineTypes.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "NavFilters/NavigationQueryFilter.h"
+#endif
 #include "Actions/PawnAction.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "PawnAction_Move.generated.h"

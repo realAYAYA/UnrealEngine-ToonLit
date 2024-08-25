@@ -147,10 +147,6 @@ public:
 	TMap<UEdGraphNode*, UEdGraphNode*> CallsIntoUbergraph;
 	int32 bIsFullCompile:1;
 
-	// Source pin to latent/delegate entry point
-	TMap<UEdGraphNode*, UK2Node_Event*> SourceNodeToExpansionEvent;
-	TMap<UEdGraphPin*, UK2Node_Event*> SourcePinToExpansionEvent;
-
 	// Map that can be used to find the macro node that spawned a provided node, 
 	// if any. Macro instances can have more macros inside of them, so entries 
 	// in this map may chain (i.e. values may also need to be used as keys to find
@@ -214,9 +210,9 @@ public:
 
 	// Spawns an intermediate node associated with the source node (for error purposes)
 	template <typename NodeType>
-	NodeType* SpawnIntermediateNode(UEdGraphNode* SourceNode, UEdGraph* ParentGraph = NULL)
+	NodeType* SpawnIntermediateNode(UEdGraphNode* SourceNode, UEdGraph* ParentGraph = nullptr)
 	{
-		if (ParentGraph == NULL)
+		if (ParentGraph == nullptr)
 		{
 			ParentGraph = SourceNode->GetGraph();
 		}
@@ -231,37 +227,11 @@ public:
 		return Result;
 	}
 
-	// Spawns an intermediate event node associated with the source node (for error purposes)
 	template <typename NodeType>
+	UE_DEPRECATED(5.4, "SpawnIntermediateEventNode is equivalent to SpawnIntermediateNode, this redundant function has been deprecated.")
 	NodeType* SpawnIntermediateEventNode(UEdGraphNode* SourceNode, UEdGraphPin* SourcePin = nullptr, UEdGraph* ParentGraph = nullptr)
 	{
-		if (ParentGraph == nullptr && SourceNode != nullptr)
-		{
-			ParentGraph = SourceNode->GetGraph();
-		}
-
-		NodeType* Result = ParentGraph->CreateIntermediateNode<NodeType>();
-		//check (Cast<UK2Node_Event>(Result) != nullptr); -- Removed to avoid any fallout, will replace with care later
-		MessageLog.NotifyIntermediateObjectCreation(Result, SourceNode); // this might be useful to track back function entry nodes to events.
-		Result->CreateNewGuid();
-		// Track all expansion step generated events.
-		if (bIsFullCompile)
-		{
-			if (SourcePin)
-			{
-				UEdGraphNode* TrueSourceNode = Cast<UEdGraphNode>(MessageLog.FindSourceObject(SourcePin->GetOwningNode()));
-				UEdGraphPin* TrueSourcePin = TrueSourceNode->FindPin(SourcePin->GetFName());
-				SourcePinToExpansionEvent.Add(TrueSourcePin) = Cast<UK2Node_Event>(Result);
-			}
-			else if (SourceNode)
-			{
-				UEdGraphNode* TrueSourceNode = Cast<UEdGraphNode>(MessageLog.FindSourceObject(SourceNode));
-				SourceNodeToExpansionEvent.Add(TrueSourceNode) = Cast<UK2Node_Event>(Result);
-			}
-		}
-		AutoAssignNodePosition(Result);
-
-		return Result;
+		return SpawnIntermediateNode<NodeType>(SourceNode, ParentGraph);
 	}
 
 	/**

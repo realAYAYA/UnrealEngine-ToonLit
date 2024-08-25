@@ -35,6 +35,7 @@ class Cherrypick(flow.cmd.Cmd):
     saferesolve   = flow.cmd.Opt(False, "Resolve safely and not automatically")
     dryrun        = flow.cmd.Opt(False, "Only pretend to do the cherrypick")
     force         = flow.cmd.Opt(False, "Force the operation through")
+    novalidate    = flow.cmd.Opt(False, "Don't run the validation step")
     alwayseddy    = flow.cmd.Opt(False, "Always edigrate the result regardless of relation")
     noeddy        = flow.cmd.Opt(False, "Skip the edigrate step")
     sync          = flow.cmd.Opt(False, "Syncs target files to head before resolving")
@@ -163,7 +164,7 @@ class Cherrypick(flow.cmd.Cmd):
         print("Affected files:", len(dest_paths))
         print("Checking for open files")
 
-        validate = not self.args.force
+        validate = not (self.args.novalidate or self.args.force)
         if len(dest_paths) > 500:
             validate = False
             self.print_warning("Skipping validation. Source changelist is too big")

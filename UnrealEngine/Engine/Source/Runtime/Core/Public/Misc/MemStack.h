@@ -77,8 +77,16 @@ private:
 class FMemStackBase //-V1062
 {
 public:
+	enum class EPageSize : uint8
+	{
+		// Small pages are allocated unless the allocation requires a larger page.
+		Small,
 
-	CORE_API FMemStackBase();
+		// Large pages are always allocated.
+		Large
+	};
+
+	CORE_API FMemStackBase(EPageSize PageSize = EPageSize::Small);
 
 	FMemStackBase(const FMemStackBase&) = delete;
 	FMemStackBase(FMemStackBase&& Other)
@@ -211,6 +219,8 @@ private:
 	/** The number of marks on this stack. */
 	int32 NumMarks;
 
+	/** The page size to use when allocating. */
+	EPageSize PageSize;
 
 protected:
 	bool bShouldEnforceAllocMarks;	

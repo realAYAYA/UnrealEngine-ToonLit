@@ -22,8 +22,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeSurfaceNew::Private::s_type =
-            NODE_TYPE( "NewSurface", NodeSurface::GetStaticType() );
+    FNodeType NodeSurfaceNew::Private::s_type =
+            FNodeType( "NewSurface", NodeSurface::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -34,153 +34,11 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeSurfaceNew::GetInputCount() const
-	{
-        return m_pD->m_meshes.Num() + m_pD->m_images.Num() + m_pD->m_vectors.Num() +
-                      m_pD->m_scalars.Num() + m_pD->m_strings.Num();
-    }
-
-
-	//---------------------------------------------------------------------------------------------
-    mu::Node* NodeSurfaceNew::GetInputNode( int i ) const
-	{
-		check( i >=0 && i < GetInputCount() );
-
-        int32 index = i;
-
-        if ( index < m_pD->m_meshes.Num() )
-        {
-            return m_pD->m_meshes[index].m_pMesh.get();
-        }
-		else
-		{
-            index -= m_pD->m_meshes.Num();
-        }
-
-        if ( index < m_pD->m_images.Num() )
-        {
-            return m_pD->m_images[index].m_pImage.get();
-        }
-        else 
-		{
-            index -= m_pD->m_images.Num();
-        }
-
-        if ( index < m_pD->m_vectors.Num() )
-        {
-            return m_pD->m_vectors[index].m_pVector.get();
-        }
-        else
-        {
-            index -= m_pD->m_vectors.Num();
-        }
-
-        if ( index < m_pD->m_scalars.Num() )
-        {
-            return m_pD->m_scalars[index].m_pScalar.get();
-        }
-        else
-        {
-            index -= m_pD->m_scalars.Num();
-        }
-
-        if ( index < m_pD->m_strings.Num() )
-        {
-            return m_pD->m_strings[index].m_pString.get();
-        }
-        else
-        {
-            index -= m_pD->m_strings.Num();
-        }
-
-        return nullptr;
-    }
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeSurfaceNew::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i >=0 && i < GetInputCount());
-
-        std::size_t index = size_t( i );
-
-        if ( index<m_pD->m_meshes.Num() )
-		{
-			m_pD->m_meshes[ index ].m_pMesh = dynamic_cast<NodeMesh*>(pNode.get());
-            return;
-        }
-		else
-		{
-            index -= m_pD->m_meshes.Num();
-        }
-
-
-        if ( index < m_pD->m_images.Num())
-        {
-			m_pD->m_images[index].m_pImage = dynamic_cast<NodeImage*>(pNode.get());
-            return;
-        }
-        else
-        {
-            index -= m_pD->m_images.Num();
-        }
-        
-		if ( index < m_pD->m_vectors.Num() )
-        {
-            m_pD->m_vectors[index].m_pVector = dynamic_cast<NodeColour*>(pNode.get());
-            return;
-        }
-        else
-        {
-            index -= m_pD->m_vectors.Num();
-        }
-
-        if ( index < m_pD->m_scalars.Num() )
-        {
-            m_pD->m_scalars[index].m_pScalar = dynamic_cast<NodeScalar*>( pNode.get() );
-            return;
-        }
-        else
-        {
-            index -= m_pD->m_scalars.Num();
-        }
-
-        if ( index < m_pD->m_strings.Num() )
-        {
-            m_pD->m_strings[index].m_pString = dynamic_cast<NodeString*>( pNode.get() );
-            return;
-        }
-        else
-        {
-            index -= m_pD->m_strings.Num();
-        }
-    }
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-    const char* NodeSurfaceNew::GetName() const
-	{
-		const char* strResult = m_pD->m_name.c_str();
-
-		return strResult;
-	}
-
-
-    //---------------------------------------------------------------------------------------------
-    void NodeSurfaceNew::SetName( const char* strName )
+    void NodeSurfaceNew::SetName( const FString& strName )
     {
-        if (strName)
-        {
-            m_pD->m_name = strName;
-        }
-        else
-        {
-            m_pD->m_name = "";
-        }
+        m_pD->m_name = strName;
     }
 
 
@@ -191,15 +49,8 @@ namespace mu
     }
 
 
-	//---------------------------------------------------------------------------------------------
-	int32 NodeSurfaceNew::GetSharedSurfaceId() const
-    {
-		return m_pD->SharedSurfaceId;
-    }
-
-
     //---------------------------------------------------------------------------------------------
-    void NodeSurfaceNew::SetCustomID( uint32_t id )
+    void NodeSurfaceNew::SetCustomID( uint32 id )
     {
         m_pD->ExternalId = id;
     }
@@ -239,29 +90,20 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-    const char* NodeSurfaceNew::GetMeshName( int index ) const
+    const FString& NodeSurfaceNew::GetMeshName( int index ) const
 	{
 		check( index >=0 && index < (int)m_pD->m_meshes.Num() );
 
-		const char* strResult = m_pD->m_meshes[ index ].m_name.c_str();
-
-		return strResult;
+		return m_pD->m_meshes[ index ].m_name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    void NodeSurfaceNew::SetMeshName( int index, const char* strName )
+    void NodeSurfaceNew::SetMeshName( int index, const FString& strName )
 	{
 		check( index >=0 && index < (int)m_pD->m_meshes.Num() );
 
-		if (strName)
-		{
-			m_pD->m_meshes[ index ].m_name = strName;
-		}
-		else
-		{
-			m_pD->m_meshes[ index ].m_name = "";
-		}
+		m_pD->m_meshes[ index ].m_name = strName;
 	}
 
 
@@ -299,29 +141,20 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-    const char* NodeSurfaceNew::GetImageName( int index ) const
+    const FString& NodeSurfaceNew::GetImageName( int index ) const
 	{
 		check( index >=0 && index < (int)m_pD->m_images.Num() );
 
-		const char* strResult = m_pD->m_images[ index ].m_name.c_str();
-
-		return strResult;
+		return m_pD->m_images[ index ].m_name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    void NodeSurfaceNew::SetImageName( int index, const char* strName )
+    void NodeSurfaceNew::SetImageName( int index, const FString& strName )
 	{
 		check( index >=0 && index < (int)m_pD->m_images.Num() );
 
-		if (strName)
-		{
-			m_pD->m_images[ index ].m_name = strName;
-		}
-		else
-		{
-			m_pD->m_images[ index ].m_name = "";
-		}
+		m_pD->m_images[ index ].m_name = strName;
 	}
 
 
@@ -344,7 +177,7 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeSurfaceNew::SetImageAdditionalNames(int index, const char* strMaterialName, const char* strMaterialParameterName )
+	void NodeSurfaceNew::SetImageAdditionalNames(int index, const FString& strMaterialName, const FString& strMaterialParameterName )
 	{
 		if (index >= 0 && index < (int)m_pD->m_images.Num())
 		{
@@ -392,29 +225,20 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const char* NodeSurfaceNew::GetVectorName(int index) const
+	const FString& NodeSurfaceNew::GetVectorName(int index) const
 	{
         check(index >= 0 && index < (int)m_pD->m_vectors.Num());
 
-		const char* strResult = m_pD->m_vectors[index].m_name.c_str();
-
-		return strResult;
+		return m_pD->m_vectors[index].m_name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeSurfaceNew::SetVectorName(int index, const char* strName)
+	void NodeSurfaceNew::SetVectorName(int index, const FString& strName)
 	{
         check(index >= 0 && index < (int)m_pD->m_vectors.Num());
 
-		if (strName)
-		{
-			m_pD->m_vectors[index].m_name = strName;
-		}
-		else
-		{
-			m_pD->m_vectors[index].m_name = "";
-		}
+		m_pD->m_vectors[index].m_name = strName;
 	}
 
 
@@ -452,34 +276,28 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    const char* NodeSurfaceNew::GetScalarName(int index) const
+    const FString& NodeSurfaceNew::GetScalarName(int index) const
     {
         check(index >= 0 && index < (int)m_pD->m_scalars.Num());
 
-        const char* strResult = m_pD->m_scalars[index].m_name.c_str();
-
-        return strResult;
+        return m_pD->m_scalars[index].m_name;
     }
 
 
     //---------------------------------------------------------------------------------------------
-    void NodeSurfaceNew::SetScalarName(int index, const char* strName)
+    void NodeSurfaceNew::SetScalarName(int index, const FString& strName)
     {
         check(index >= 0 && index < (int)m_pD->m_scalars.Num());
 
-        if (strName)
-        {
-            m_pD->m_scalars[index].m_name = strName;
-        }
-        else
-        {
-            m_pD->m_scalars[index].m_name = "";
-        }
+        m_pD->m_scalars[index].m_name = strName;
     }
 
 
     //---------------------------------------------------------------------------------------------
-    int NodeSurfaceNew::GetStringCount() const { return (int)m_pD->m_strings.Num(); }
+    int NodeSurfaceNew::GetStringCount() const 
+	{ 
+		return (int)m_pD->m_strings.Num(); 
+	}
 
 
     //---------------------------------------------------------------------------------------------
@@ -509,34 +327,25 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    const char* NodeSurfaceNew::GetStringName( int index ) const
+    const FString& NodeSurfaceNew::GetStringName( int index ) const
     {
         check( index >= 0 && index < (int)m_pD->m_strings.Num() );
 
-        const char* strResult = m_pD->m_strings[index].m_name.c_str();
-
-        return strResult;
+        return m_pD->m_strings[index].m_name;
     }
 
 
     //---------------------------------------------------------------------------------------------
-    void NodeSurfaceNew::SetStringName( int index, const char* strName )
+    void NodeSurfaceNew::SetStringName( int index, const FString& strName )
     {
         check( index >= 0 && index < (int)m_pD->m_strings.Num() );
 
-        if ( strName )
-        {
-            m_pD->m_strings[index].m_name = strName;
-        }
-        else
-        {
-            m_pD->m_strings[index].m_name = "";
-        }
+        m_pD->m_strings[index].m_name = strName;
     }
 
 
     //---------------------------------------------------------------------------------------------
-    int NodeSurfaceNew::Private::FindImage( const char* strName ) const
+    int NodeSurfaceNew::Private::FindImage( const FString& strName ) const
 	{		
 		for ( int32 i = 0; i<m_images.Num(); ++i )
 		{
@@ -551,7 +360,7 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	int NodeSurfaceNew::Private::FindMesh(const char* strName) const
+	int NodeSurfaceNew::Private::FindMesh(const FString& strName) const
 	{
 		for ( int32 i = 0; i < m_meshes.Num(); ++i)
 		{
@@ -566,7 +375,7 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    int NodeSurfaceNew::Private::FindVector(const char* strName) const
+    int NodeSurfaceNew::Private::FindVector(const FString& strName) const
     {
         for ( int32 i = 0; i < m_vectors.Num(); ++i)
         {
@@ -581,7 +390,7 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    int NodeSurfaceNew::Private::FindScalar( const char* strName ) const
+    int NodeSurfaceNew::Private::FindScalar( const FString& strName ) const
     {
         for (int32 i = 0; i < m_scalars.Num(); ++i)
         {
@@ -596,7 +405,7 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    int NodeSurfaceNew::Private::FindString( const char* strName ) const
+    int NodeSurfaceNew::Private::FindString( const FString& strName ) const
     {
         for (int32 i = 0; i < m_strings.Num(); ++i)
         {
@@ -611,28 +420,10 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-	void NodeSurfaceNew::AddTag(const char* tagName)
+	void NodeSurfaceNew::AddTag(const FString& tagName)
 	{
 		m_pD->m_tags.Add(tagName);
 	}
-
-
-    //---------------------------------------------------------------------------------------------
-    int NodeSurfaceNew::GetTagCount() const
-    {
-        return m_pD->m_tags.Num();
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    const char* NodeSurfaceNew::GetTag( int i ) const
-    {
-        if (i>=0 && i<GetTagCount())
-        {
-            return m_pD->m_tags[i].c_str();
-        }
-        return nullptr;
-    }
 
 }
 

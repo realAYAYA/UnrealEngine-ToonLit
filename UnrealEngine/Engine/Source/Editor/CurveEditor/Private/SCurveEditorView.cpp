@@ -194,7 +194,7 @@ void SCurveEditorView::GetCurveDrawParam(TSharedPtr<FCurveEditor>& CurveEditor,c
 {
 
 	FCurveEditorScreenSpace CurveSpace = GetCurveSpace(ModelID);
-	const float DisplayRatio = (CurveSpace.PixelsPerOutput() / CurveSpace.PixelsPerInput());
+	const double DisplayRatio = (CurveSpace.PixelsPerOutput() / CurveSpace.PixelsPerInput());
 
 	const FKeyHandleSet* SelectedKeys = CurveEditor->GetSelection().GetAll().Find(ModelID);
 
@@ -256,8 +256,8 @@ void SCurveEditorView::GetCurveDrawParam(TSharedPtr<FCurveEditor>& CurveEditor,c
 				(TangentVisibility == ECurveEditorTangentVisibility::SelectedKeys && SelectedKeys &&
 					(SelectedKeys->Contains(VisibleKeys[Index], ECurvePointType::Any)));
 
-			float TimeScreenPos = CurveSpace.SecondsToScreen(KeyPosition.InputValue + InputOffset);
-			float ValueScreenPos = CurveSpace.ValueToScreen(KeyPosition.OutputValue);
+			double TimeScreenPos = CurveSpace.SecondsToScreen(KeyPosition.InputValue + InputOffset);
+			double ValueScreenPos = CurveSpace.ValueToScreen(KeyPosition.OutputValue);
 
 			// Add this key
 			FCurvePointInfo Key(KeyHandle);
@@ -315,7 +315,6 @@ void SCurveEditorView::GetCurveDrawParam(TSharedPtr<FCurveEditor>& CurveEditor,c
 				{
 					float PixelLength = 60.0f;
 					LeaveTangentPoint.ScreenPosition = Key.ScreenPosition + CurveEditor::GetVectorFromSlopeAndLength(LeaveTangent * -DisplayRatio, PixelLength);
-
 				}
 
 				LeaveTangentPoint.LineDelta = Key.ScreenPosition - LeaveTangentPoint.ScreenPosition;

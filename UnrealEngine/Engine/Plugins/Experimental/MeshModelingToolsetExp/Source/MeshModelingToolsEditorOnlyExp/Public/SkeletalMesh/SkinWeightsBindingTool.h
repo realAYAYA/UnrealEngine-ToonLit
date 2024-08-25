@@ -113,6 +113,8 @@ protected:
 	TSharedPtr<UE::Geometry::FOccupancyGrid3> Occupancy;
 	
 	TSharedPtr<UE::Geometry::FDynamicMesh3, ESPMode::ThreadSafe> OriginalMesh;
+	
+	TUniquePtr<FMeshDescription> EditedMeshDescription;
 
 	FReferenceSkeleton ReferenceSkeleton;
 	
@@ -124,6 +126,9 @@ protected:
 	UPROPERTY()
 	TWeakObjectPtr<USkeletalMeshEditorContextObjectBase> EditorContext = nullptr;
 
+	// updates the skin weights using the operator's result
+	bool UpdateSkinWeightsFromDynamicMesh(UE::Geometry::FDynamicMesh3& InResultMesh) const;
+	
 	// ISkeletalMeshEditionInterface
 	virtual void HandleSkeletalMeshModified(const TArray<FName>& InBoneNames, const ESkeletalMeshNotifyType InNotifyType) override;
 };

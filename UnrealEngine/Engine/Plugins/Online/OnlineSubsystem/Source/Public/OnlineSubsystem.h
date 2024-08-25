@@ -40,6 +40,7 @@ class IOnlineStats;
 class IOnlineGameActivity;
 class IOnlineGameItemStats;
 class IOnlineGameMatches;
+class IOnlineContentAgeRestriction;
 
 LLM_DECLARE_TAG_API(OnlineSubsystem, ONLINESUBSYSTEM_API);
 
@@ -110,6 +111,7 @@ typedef TSharedPtr<class IOnlineStats, ESPMode::ThreadSafe> IOnlineStatsPtr;
 typedef TSharedPtr<IOnlineGameActivity, ESPMode::ThreadSafe> IOnlineGameActivityPtr;
 typedef TSharedPtr<IOnlineGameItemStats, ESPMode::ThreadSafe> IOnlineGameItemStatsPtr;
 typedef TSharedPtr<IOnlineGameMatches, ESPMode::ThreadSafe> IOnlineGameMatchesPtr;
+typedef TSharedPtr<IOnlineContentAgeRestriction, ESPMode::ThreadSafe> IOnlineContentAgeRestrictionPtr;
 
 /**
  * Called when the connection state as reported by the online platform changes
@@ -456,6 +458,12 @@ public:
 	 * @return Interface pointer for the game matches interface
 	 */
 	virtual IOnlineGameMatchesPtr GetGameMatchesInterface() const = 0;
+
+	/**
+	 * Get interface for accessing the online content age restriction
+	 * @return Interface pointer for online content age restriction
+	 */
+	 virtual IOnlineContentAgeRestrictionPtr GetOnlineContentAgeRestrictionInterface() const = 0;
 
 	/**
 	 * Get the notification handler instance for this subsystem

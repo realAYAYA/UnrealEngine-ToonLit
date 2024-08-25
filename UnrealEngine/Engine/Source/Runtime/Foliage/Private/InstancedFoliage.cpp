@@ -58,6 +58,10 @@ InstancedFoliage.cpp: Instanced foliage implementation.
 #include "Misc/CoreMisc.h"
 #include "Engine/DamageEvents.h"
 
+#if WITH_EDITOR
+#include "ActorEditorContext/ScopedActorEditorContextFromActor.h"
+#endif
+
 #define LOCTEXT_NAMESPACE "InstancedFoliage"
 
 #define DO_FOLIAGE_CHECK			0			// whether to validate foliage data during editing.
@@ -1195,7 +1199,6 @@ void FFoliageStaticMesh::PreAddInstances(const UFoliageType* FoliageType, int32 
 	}
 	else
 	{
-		Component->InitPerInstanceRenderData(false);
 		Component->InvalidateLightingCache();
 	}
 
@@ -1825,7 +1828,6 @@ void FFoliageStaticMesh::Reapply(const UFoliageType* FoliageType)
 
 		const bool bWasRegistered = Component->IsRegistered();
 		Component->UnregisterComponent();
-		Component->InitPerInstanceRenderData(false);
 
 		Component->bAutoRebuildTreeOnInstanceChanges = false;
 
@@ -2442,7 +2444,7 @@ void FFoliageInfo::RemoveInstancesImpl(TArrayView<const int32> InInstancesToRemo
 		SelectedIndices.Remove(InstanceIndex);
 
 		// remove from instances array
-		Instances.RemoveAtSwap(InstanceIndex, 1, false);
+		Instances.RemoveAtSwap(InstanceIndex, 1, EAllowShrinking::No);
 
 		// update hashes for swapped instance
 		if (InstanceIndex != Instances.Num() && Instances.Num() > 0)
@@ -2629,7 +2631,7 @@ void FFoliageInfo::RecomputeHash()
 void FFoliageInfo::ReallocateClusters(UFoliageType* InSettings)
 {
 	// In case Foliage Type Changed recreate implementation
-	if (Implementation.IsValid())
+	if (Implementation.IsValid() && Implementation->IsInitialized())
 	{
 		Implementation->Uninitialize();
 	}
@@ -2714,8 +2716,6 @@ bool FFoliageInfo::CheckForOverlappingSphere(const FSphere& Sphere) const
 {
 	TArrayView<const FFoliageInstance> InstancesView = Instances;
 	return InstanceHash->IsAnyInstanceInSphere([InstancesView](int32 Index) -> FVector { return InstancesView[Index].Location; }, Sphere.Center, Sphere.W);
-
-	return false;
 }
 
 // Returns whether or not there is are any instances overlapping the instance specified, excluding the set of instances provided
@@ -3246,11 +3246,25 @@ namespace FoliagePartitioningUtils
 	}
 }
 
+void AInstancedFoliageActor::MoveSelectedInstancesToActorEditorContext(UWorld* InWorld)
+{
+	for (TActorIterator<AInstancedFoliageActor> It(InWorld); It; ++It)
+	{
+		AInstancedFoliageActor* IFA = *It;
+		IFA->ForEachFoliageInfo([IFA](UFoliageType* FoliageType, FFoliageInfo& FoliageInfo)
+		{
+			FoliagePartitioningUtils::Update(IFA, FoliageInfo, [&]() { return &FoliageInfo.SelectedIndices; });
+			return true; // continue iteration
+		});
+	}
+}
+
 void AInstancedFoliageActor::UpdateInstancePartitioning(UWorld* InWorld)
 {
 	for (TActorIterator<AInstancedFoliageActor> It(InWorld); It; ++It)
 	{
 		AInstancedFoliageActor* IFA = *It;
+		FScopedActorEditorContextFromActor Context(IFA);
 		IFA->ForEachFoliageInfo([IFA](UFoliageType* FoliageType, FFoliageInfo& FoliageInfo)
         {
 			FoliagePartitioningUtils::Update(IFA, FoliageInfo, [&]() { return &FoliageInfo.SelectedIndices; });
@@ -3267,10 +3281,13 @@ void AInstancedFoliageActor::UpdateInstancePartitioningForMovedComponent(UActorC
 		return;
 	}
 
-	for (auto& Pair : FoliageInfos)
 	{
-		FFoliageInfo& Info = *Pair.Value;
-		FoliagePartitioningUtils::Update(this, Info, [&]() { return Info.ComponentHash.Find(BaseId); });
+		FScopedActorEditorContextFromActor Context(this);
+		for (auto& Pair : FoliageInfos)
+		{
+			FFoliageInfo& Info = *Pair.Value;
+			FoliagePartitioningUtils::Update(this, Info, [&]() { return Info.ComponentHash.Find(BaseId); });
+		}
 	}
 }
 
@@ -3565,6 +3582,7 @@ void AInstancedFoliageActor::MoveInstancesToNewComponent(UPrimitiveComponent* In
 
 	// If Modify was called on this IFA
 	bool bModified = false;
+	FScopedActorEditorContextFromActor Context(this);
 	
 	for (auto& Pair : FoliageInfos)
 	{			
@@ -3819,7 +3837,7 @@ UFoliageType* AInstancedFoliageActor::AddFoliageType(const UFoliageType* InType,
 
 FFoliageInfo* AInstancedFoliageActor::AddMesh(UStaticMesh* InMesh, UFoliageType** OutSettings, const UFoliageType_InstancedStaticMesh* DefaultSettings)
 {
-	// This function is deprecated in a partioned world.
+	// This function is deprecated in a partitioned world.
 	// FoliageType cannot have an AInstancedFoliageActor as their Outer
 	// This creates issues with the Foliage Edit mode.
 	// Proper way is to Create an asset for the UFoliageType and call
@@ -5262,21 +5280,33 @@ bool AInstancedFoliageActor::FoliageTrace(const UWorld* InWorld, FHitResult& Out
 		// Don't place foliage on itself
 		const AActor* HitActor = Hit.HitObjectHandle.FetchActor();
 		const AInstancedFoliageActor* IFA = Cast<AInstancedFoliageActor>(HitActor);
-		if (!IFA && HitActor && FFoliageHelper::IsOwnedByFoliage(HitActor))
+
+		if (HitActor)
 		{
-			IFA = HitActor->GetLevel()->InstancedFoliageActor.Get();
-			if (IFA == nullptr)
+			// Don't place foliage on hidden actors.
+			if (HitActor->IsTemporarilyHiddenInEditor())
 			{
 				bOutDiscardHit = true;
 				return true;
 			}
 
-			if (const FFoliageInfo* FoundMeshInfo = IFA->FindInfo(DesiredInstance.FoliageType))
+			// Don't place foliage on itself.
+			if (!IFA && FFoliageHelper::IsOwnedByFoliage(HitActor))
 			{
-				if (FoundMeshInfo->Implementation->IsOwnedComponent(HitComponent))
+				IFA = HitActor->GetLevel()->InstancedFoliageActor.Get();
+				if (IFA == nullptr)
 				{
 					bOutDiscardHit = true;
 					return true;
+				}
+
+				if (const FFoliageInfo* FoundMeshInfo = IFA->FindInfo(DesiredInstance.FoliageType))
+				{
+					if (FoundMeshInfo->Implementation->IsOwnedComponent(HitComponent))
+					{
+						bOutDiscardHit = true;
+						return true;
+					}
 				}
 			}
 		}
@@ -5659,6 +5689,7 @@ void AInstancedFoliageActor::HandleFoliageInstancePostMove(const FFoliageInstanc
 	// This instance may be been moved into a new world partition
 	// Verify, and re-instance any existing typed elements if required
 	{
+		FScopedActorEditorContextFromActor Context(this);
 		const FFoliageInstance& FoliageInstance = InstanceId.GetInstanceChecked();
 		AInstancedFoliageActor* TargetIFA = AInstancedFoliageActor::Get(GetWorld(), /*bCreateIfNone*/true, GetLevel(), FoliageInstance.Location);
 		if (TargetIFA != this)

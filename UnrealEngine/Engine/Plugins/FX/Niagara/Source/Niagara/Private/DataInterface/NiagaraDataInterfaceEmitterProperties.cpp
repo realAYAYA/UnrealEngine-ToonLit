@@ -123,9 +123,9 @@ bool UNiagaraDataInterfaceEmitterProperties::InitPerInstanceData(void* PerInstan
 
 	FInstanceData_GameThread* InstanceData_GT = new(PerInstanceData) FInstanceData_GameThread();
 	InstanceData_GT->EmitterInstance = EmitterBinding.Resolve(SystemInstance, this);
-	if (InstanceData_GT->EmitterInstance && InstanceData_GT->EmitterInstance->GetCachedEmitterData())
+	if (InstanceData_GT->EmitterInstance)
 	{
-		InstanceData_GT->bLocalSpace = InstanceData_GT->EmitterInstance->GetCachedEmitterData()->bLocalSpace;
+		InstanceData_GT->bLocalSpace = InstanceData_GT->EmitterInstance->IsLocalSpace();
 	}
 
 	if ( IsUsedWithGPUScript() )
@@ -188,7 +188,8 @@ bool UNiagaraDataInterfaceEmitterProperties::PerInstanceTick(void* PerInstanceDa
 	return false;
 }
 
-void UNiagaraDataInterfaceEmitterProperties::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceEmitterProperties::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIEmitterPropertiesLocal;
 
@@ -246,6 +247,7 @@ void UNiagaraDataInterfaceEmitterProperties::GetFunctions(TArray<FNiagaraFunctio
 #endif
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceEmitterProperties::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* PerInstanceData, FVMExternalFunction& OutFunc)
 {
@@ -332,7 +334,7 @@ void UNiagaraDataInterfaceEmitterProperties::GetFeedback(UNiagaraSystem* Asset, 
 	// See if we are resolve the source emitter
 	if ( EmitterBinding.BindingMode == ENiagaraDataInterfaceEmitterBindingMode::Other )
 	{
-		UNiagaraEmitter* NiagaraEmitter = EmitterBinding.Resolve(Asset);
+		UNiagaraEmitter* NiagaraEmitter = EmitterBinding.Resolve(this);
 		if (NiagaraEmitter == nullptr)
 		{
 			OutWarnings.Emplace(

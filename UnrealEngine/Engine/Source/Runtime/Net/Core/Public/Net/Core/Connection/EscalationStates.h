@@ -662,7 +662,7 @@ public:
 			FEscalationManagerParms
 			{
 				TNum, MakeArrayView(RegisteredCountersCacheAlloc, TNumCategories),
-				EscalationStateType::StaticStruct(), (uint8*)&StateAlloc
+				EscalationStateType::StaticStruct(), (uint8*)&StateAlloc //-V1050
 			})
 	{
 		static_assert(UE_ARRAY_COUNT(CountersPerPeriodHistory) == 16,

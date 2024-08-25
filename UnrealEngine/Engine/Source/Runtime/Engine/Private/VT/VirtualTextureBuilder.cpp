@@ -15,6 +15,7 @@
 
 UVirtualTextureBuilder::UVirtualTextureBuilder(const FObjectInitializer& ObjectInitializer)
 	: UObject(ObjectInitializer)
+	, EnableCookPerPlatform(true)
 {
 }
 
@@ -31,7 +32,14 @@ void UVirtualTextureBuilder::Serialize(FArchive& Ar)
 		UVirtualTexture2D* TextureMobileBackup = TextureMobile;
 		
 		// Clear Texture during cook for platforms that don't support virtual texturing
-		if (!UseVirtualTexturing(GMaxRHIFeatureLevel, Ar.CookingTarget()))
+		if (!UseVirtualTexturing(GMaxRHIShaderPlatform, Ar.CookingTarget()))
+		{
+			Texture = nullptr;
+			TextureMobile = nullptr;
+		}
+
+		// Clear during cook for platforms that have explicitly disabled cooking in the asset settings.
+		if (!EnableCookPerPlatform.GetValueForPlatform(*Ar.CookingTarget()->PlatformName()))
 		{
 			Texture = nullptr;
 			TextureMobile = nullptr;
@@ -67,7 +75,7 @@ void UVirtualTextureBuilder::PostLoad()
 	// Discard one of the VTs on a cooked platform that support both rendering modes
 	if (FPlatformProperties::RequiresCookedData())
 	{
-		if (FSceneInterface::GetShadingPath(GMaxRHIFeatureLevel) == EShadingPath::Mobile && bSeparateTextureForMobile)
+		if (GetFeatureLevelShadingPath(GMaxRHIFeatureLevel) == EShadingPath::Mobile && bSeparateTextureForMobile)
 		{
 			Texture = nullptr;
 		}

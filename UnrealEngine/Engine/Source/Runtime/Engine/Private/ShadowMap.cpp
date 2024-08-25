@@ -15,7 +15,6 @@
 #include "Misc/QueuedThreadPool.h"
 #include "Modules/ModuleManager.h"
 #include "GameFramework/WorldSettings.h"
-#include "PrimitiveInstanceUpdateCommand.h"
 
 #if WITH_EDITOR
 
@@ -114,12 +113,7 @@ struct FShadowMapAllocation
 				// TODO: We currently only support one LOD of static lighting in foliage
 				// Need to create per-LOD instance data to fix that
 				MeshBuildData->PerInstanceLightmapData[InstanceIndex].ShadowmapUVBias = FVector2f(ShadowMap->GetCoordinateBias());
-				const int32 RenderIndex = Component->GetRenderIndex(InstanceIndex);
-				if (RenderIndex != INDEX_NONE)
-				{
-					Component->InstanceUpdateCmdBuffer.SetShadowMapData(RenderIndex, FVector2D(MeshBuildData->PerInstanceLightmapData[InstanceIndex].ShadowmapUVBias));
-					Component->MarkRenderStateDirty();
-				}
+				Component->SetBakedLightingDataChanged(InstanceIndex);
 			}
 		}
 	}

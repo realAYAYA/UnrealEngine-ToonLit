@@ -1,24 +1,52 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.IO;
-using System.Diagnostics;
-using UnrealBuildTool;
 using EpicGames.Core;
-using UnrealBuildBase;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.Versioning;
+using UnrealBuildTool;
 
 namespace AutomationTool
 {
 	class WindowsHostPlatform : HostPlatform
 	{
+		static string CachedFrameworkMsbuildTool = "";
+
 		[SupportedOSPlatform("windows")]
 		public override string GetFrameworkMsbuildExe()
 		{
-			return WindowsExports.GetMSBuildToolPath();
+			if (string.IsNullOrEmpty(CachedFrameworkMsbuildTool))
+			{
+				try
+				{
+					// Look for visual studio msbuild
+					FileReference msbuild = FileReference.FromString(WindowsExports.GetMSBuildToolPath());
+					if (msbuild != null && FileReference.Exists(msbuild))
+					{
+						CachedFrameworkMsbuildTool = msbuild.FullName;
+						Logger.LogInformation("Using {MsBuild}", CachedFrameworkMsbuildTool);
+						return CachedFrameworkMsbuildTool;
+					}
+				}
+				catch (BuildException)
+				{
+				}
+
+				FileReference dotnet = FileReference.FromString(CommandUtils.WhichApp("dotnet"));
+				if (dotnet != null && FileReference.Exists(dotnet))
+				{
+					Logger.LogInformation("Using {DotNet}", dotnet.FullName);
+					CachedFrameworkMsbuildTool = "dotnet msbuild";
+				}
+				else
+				{
+					throw new BuildException("Unable to find installation of MSBuild.");
+				}
+			}
+
+			return CachedFrameworkMsbuildTool;
 		}
 
 		public override string RelativeBinariesFolder

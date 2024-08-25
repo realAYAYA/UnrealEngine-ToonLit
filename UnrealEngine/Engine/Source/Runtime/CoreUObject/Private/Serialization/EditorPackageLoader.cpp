@@ -25,6 +25,11 @@ public:
 
 	virtual ~FEditorPackageLoader () { }
 
+	virtual ELoaderType GetLoaderType() const override
+	{
+		return ELoaderType::EditorPackageLoader;
+	}
+
 	virtual void InitializeLoading() override
 	{
 		if (FIoDispatcher::Get().DoesChunkExist(CreateIoChunkId(0, 0, EIoChunkType::ScriptObjects)))
@@ -59,6 +64,21 @@ public:
 		// Use the old loader if an uncooked package exists on disk
 		const bool bDoesUncookedPackageExist = FPackageName::DoesPackageExistEx(InPackagePath, FPackageName::EPackageLocationFilter::FileSystem) != FPackageName::EPackageLocationFilter::None;
 		return !bDoesUncookedPackageExist;
+	}
+
+	virtual int32 LoadPackage(const FPackagePath& PackagePath, FLoadPackageAsyncOptionalParams OptionalParams) override
+	{
+		if (OptionalParams.ProgressDelegate.IsValid())
+		{
+			UE_LOG(LogStreaming, Warning, TEXT("Progress delegate is only supported for zenloader. A CompletionDelegate should be used instead for this loader."));
+		}
+
+		FLoadPackageAsyncDelegate CompletionDelegate;
+		if (OptionalParams.CompletionDelegate.IsValid())
+		{
+			CompletionDelegate = MoveTemp(*OptionalParams.CompletionDelegate.Get());
+		}
+		return LoadPackage(PackagePath, OptionalParams.CustomPackageName, MoveTemp(CompletionDelegate), OptionalParams.PackageFlags, OptionalParams.PIEInstanceID, OptionalParams.PackagePriority, OptionalParams.InstancingContext, OptionalParams.LoadFlags);
 	}
 
 	virtual int32 LoadPackage(

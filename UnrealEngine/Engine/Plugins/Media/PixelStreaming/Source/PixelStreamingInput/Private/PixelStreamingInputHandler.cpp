@@ -47,45 +47,44 @@ namespace UE::PixelStreamingInput
 		, bIsMouseActive(false)
 		, MessageHandler(InTargetHandler)
 		, PixelStreamerApplicationWrapper(InApplicationWrapper)
-		, FocusedPos(FVector2D(-1.0f, -1.0f))
-		, UnfocusedPos(FVector2D(-1.0f, -1.0f))
 	{
 		// Register this input handler as an IMotionController. The module handles the registering as an IInputDevice
 		IModularFeatures::Get().RegisterModularFeature(GetModularFeatureName(), this);
 
-		RegisterMessageHandler("KeyPress", [this](FMemoryReader Ar) { HandleOnKeyChar(Ar); });
-		RegisterMessageHandler("KeyUp", [this](FMemoryReader Ar) { HandleOnKeyUp(Ar); });
-		RegisterMessageHandler("KeyDown", [this](FMemoryReader Ar) { HandleOnKeyDown(Ar); });
+		RegisterMessageHandler("KeyPress", [this](FString SourceId, FMemoryReader Ar) { HandleOnKeyChar(Ar); });
+		RegisterMessageHandler("KeyUp", [this](FString SourceId, FMemoryReader Ar) { HandleOnKeyUp(Ar); });
+		RegisterMessageHandler("KeyDown", [this](FString SourceId, FMemoryReader Ar) { HandleOnKeyDown(Ar); });
 
-		RegisterMessageHandler("TouchStart", [this](FMemoryReader Ar) { HandleOnTouchStarted(Ar); });
-		RegisterMessageHandler("TouchMove", [this](FMemoryReader Ar) { HandleOnTouchMoved(Ar); });
-		RegisterMessageHandler("TouchEnd", [this](FMemoryReader Ar) { HandleOnTouchEnded(Ar); });
+		RegisterMessageHandler("TouchStart", [this](FString SourceId, FMemoryReader Ar) { HandleOnTouchStarted(Ar); });
+		RegisterMessageHandler("TouchMove", [this](FString SourceId, FMemoryReader Ar) { HandleOnTouchMoved(Ar); });
+		RegisterMessageHandler("TouchEnd", [this](FString SourceId, FMemoryReader Ar) { HandleOnTouchEnded(Ar); });
 
-		RegisterMessageHandler("GamepadConnected", [this](FMemoryReader Ar) { HandleOnControllerConnected(Ar); });
-		RegisterMessageHandler("GamepadAnalog", [this](FMemoryReader Ar) { HandleOnControllerAnalog(Ar); });
-		RegisterMessageHandler("GamepadButtonPressed", [this](FMemoryReader Ar) { HandleOnControllerButtonPressed(Ar); });
-		RegisterMessageHandler("GamepadButtonReleased", [this](FMemoryReader Ar) { HandleOnControllerButtonReleased(Ar); });
-		RegisterMessageHandler("GamepadDisconnected", [this](FMemoryReader Ar) { HandleOnControllerDisconnected(Ar); });
+		RegisterMessageHandler("GamepadConnected", [this](FString SourceId, FMemoryReader Ar) { HandleOnControllerConnected(Ar); });
+		RegisterMessageHandler("GamepadAnalog", [this](FString SourceId, FMemoryReader Ar) { HandleOnControllerAnalog(Ar); });
+		RegisterMessageHandler("GamepadButtonPressed", [this](FString SourceId, FMemoryReader Ar) { HandleOnControllerButtonPressed(Ar); });
+		RegisterMessageHandler("GamepadButtonReleased", [this](FString SourceId, FMemoryReader Ar) { HandleOnControllerButtonReleased(Ar); });
+		RegisterMessageHandler("GamepadDisconnected", [this](FString SourceId, FMemoryReader Ar) { HandleOnControllerDisconnected(Ar); });
 
-		RegisterMessageHandler("MouseEnter", [this](FMemoryReader Ar) { HandleOnMouseEnter(Ar); });
-		RegisterMessageHandler("MouseLeave", [this](FMemoryReader Ar) { HandleOnMouseLeave(Ar); });
-		RegisterMessageHandler("MouseUp", [this](FMemoryReader Ar) { HandleOnMouseUp(Ar); });
-		RegisterMessageHandler("MouseDown", [this](FMemoryReader Ar) { HandleOnMouseDown(Ar); });
-		RegisterMessageHandler("MouseMove", [this](FMemoryReader Ar) { HandleOnMouseMove(Ar); });
-		RegisterMessageHandler("MouseWheel", [this](FMemoryReader Ar) { HandleOnMouseWheel(Ar); });
-		RegisterMessageHandler("MouseDouble", [this](FMemoryReader Ar) { HandleOnMouseDoubleClick(Ar); });
+		RegisterMessageHandler("MouseEnter", [this](FString SourceId, FMemoryReader Ar) { HandleOnMouseEnter(Ar); });
+		RegisterMessageHandler("MouseLeave", [this](FString SourceId, FMemoryReader Ar) { HandleOnMouseLeave(Ar); });
+		RegisterMessageHandler("MouseUp", [this](FString SourceId, FMemoryReader Ar) { HandleOnMouseUp(Ar); });
+		RegisterMessageHandler("MouseDown", [this](FString SourceId, FMemoryReader Ar) { HandleOnMouseDown(Ar); });
+		RegisterMessageHandler("MouseMove", [this](FString SourceId, FMemoryReader Ar) { HandleOnMouseMove(Ar); });
+		RegisterMessageHandler("MouseWheel", [this](FString SourceId, FMemoryReader Ar) { HandleOnMouseWheel(Ar); });
+		RegisterMessageHandler("MouseDouble", [this](FString SourceId, FMemoryReader Ar) { HandleOnMouseDoubleClick(Ar); });
 
-		RegisterMessageHandler("XRHMDTransform", [this](FMemoryReader Ar) { HandleOnXRHMDTransform(Ar); });
-		RegisterMessageHandler("XRControllerTransform", [this](FMemoryReader Ar) { HandleOnXRControllerTransform(Ar); });
-		RegisterMessageHandler("XRButtonPressed", [this](FMemoryReader Ar) { HandleOnXRButtonPressed(Ar); });
-		RegisterMessageHandler("XRButtonTouched", [this](FMemoryReader Ar) { HandleOnXRButtonTouched(Ar); });
-		RegisterMessageHandler("XRButtonReleased", [this](FMemoryReader Ar) { HandleOnXRButtonReleased(Ar); });
-		RegisterMessageHandler("XRAnalog", [this](FMemoryReader Ar) { HandleOnXRAnalog(Ar); });
-		RegisterMessageHandler("XRSystem", [this](FMemoryReader Ar) { HandleOnXRSystem(Ar); });
+		RegisterMessageHandler("XREyeViews", [this](FString SourceId, FMemoryReader Ar) { HandleOnXREyeViews(Ar); });
+		RegisterMessageHandler("XRHMDTransform", [this](FString SourceId, FMemoryReader Ar) { HandleOnXRHMDTransform(Ar); });
+		RegisterMessageHandler("XRControllerTransform", [this](FString SourceId, FMemoryReader Ar) { HandleOnXRControllerTransform(Ar); });
+		RegisterMessageHandler("XRButtonPressed", [this](FString SourceId, FMemoryReader Ar) { HandleOnXRButtonPressed(Ar); });
+		RegisterMessageHandler("XRButtonTouched", [this](FString SourceId, FMemoryReader Ar) { HandleOnXRButtonTouched(Ar); });
+		RegisterMessageHandler("XRButtonReleased", [this](FString SourceId, FMemoryReader Ar) { HandleOnXRButtonReleased(Ar); });
+		RegisterMessageHandler("XRAnalog", [this](FString SourceId, FMemoryReader Ar) { HandleOnXRAnalog(Ar); });
+		RegisterMessageHandler("XRSystem", [this](FString SourceId, FMemoryReader Ar) { HandleOnXRSystem(Ar); });
 
-		RegisterMessageHandler("Command", [this](FMemoryReader Ar) { HandleOnCommand(Ar); });
-		RegisterMessageHandler("UIInteraction", [this](FMemoryReader Ar) { HandleUIInteraction(Ar); });
-		RegisterMessageHandler("TextboxEntry", [this](FMemoryReader Ar) { HandleOnTextboxEntry(Ar); });
+		RegisterMessageHandler("Command", [this](FString SourceId, FMemoryReader Ar) { HandleOnCommand(SourceId, Ar); });
+		RegisterMessageHandler("UIInteraction", [this](FString SourceId, FMemoryReader Ar) { HandleUIInteraction(Ar); });
+		RegisterMessageHandler("TextboxEntry", [this](FString SourceId, FMemoryReader Ar) { HandleOnTextboxEntry(Ar); });
 
 		// Populate map
 		// Button indices found in: https://github.com/immersive-web/webxr-input-profiles/tree/master/packages/registry/profiles
@@ -186,12 +185,12 @@ namespace UE::PixelStreamingInput
 	{
 	}
 
-	void FPixelStreamingInputHandler::RegisterMessageHandler(const FString& MessageType, const TFunction<void(FMemoryReader)>& Handler)
+	void FPixelStreamingInputHandler::RegisterMessageHandler(const FString& MessageType, const MessageHandlerFn& Handler)
 	{
 		DispatchTable.Add(FPixelStreamingInputProtocol::ToStreamerProtocol.Find(MessageType)->GetID(), Handler);
 	}
 
-	TFunction<void(FMemoryReader)> FPixelStreamingInputHandler::FindMessageHandler(const FString& MessageType)
+	IPixelStreamingInputHandler::MessageHandlerFn FPixelStreamingInputHandler::FindMessageHandler(const FString& MessageType)
 	{
 		return DispatchTable.FindRef(FPixelStreamingInputProtocol::ToStreamerProtocol.Find(MessageType)->GetID());
 	}
@@ -272,24 +271,25 @@ namespace UE::PixelStreamingInput
 		while (Messages.Dequeue(Message))
 		{
 			FMemoryReader Ar(Message.Data);
-			(*Message.Handler)(Ar);
+			(*Message.Handler)(Message.SourceId, Ar);
 		}
 		
 		ProcessLatestAnalogInputFromThisTick();
 		BroadcastActiveTouchMoveEvents();
 	}
 
-	void FPixelStreamingInputHandler::OnMessage(TArray<uint8> Buffer)
+	void FPixelStreamingInputHandler::OnMessage(FString SourceId, TArray<uint8> Buffer)
 	{
 		uint8 MessageType = Buffer[0];
 		// Remove the message type. The remaining data in the buffer is now purely
 		// the message data
 		Buffer.RemoveAt(0);
 
-		TFunction<void(FMemoryReader)>* Handler = DispatchTable.Find(MessageType);
+		TFunction<void(FString, FMemoryReader)>* Handler = DispatchTable.Find(MessageType);
 		if (Handler != nullptr)
 		{
 			FMessage Message = {
+				SourceId, // Who sent this message
 				Handler, // The function to call
 				Buffer	 // The message data
 			};
@@ -310,16 +310,6 @@ namespace UE::PixelStreamingInput
 	TWeakPtr<SWindow> FPixelStreamingInputHandler::GetTargetWindow()
 	{
 		return TargetWindow;
-	}
-
-	void FPixelStreamingInputHandler::SetTargetScreenSize(TWeakPtr<FIntPoint> InScreenSize)
-	{
-		TargetScreenSize = InScreenSize;
-	}
-
-	TWeakPtr<FIntPoint> FPixelStreamingInputHandler::GetTargetScreenSize()
-	{
-		return TargetScreenSize;
 	}
 
 	void FPixelStreamingInputHandler::SetTargetScreenRect(TWeakPtr<FIntRect> InScreenRect)
@@ -894,79 +884,84 @@ namespace UE::PixelStreamingInput
 		}
 	}
 
-	/**
-	 * XR Handling
-	 */
-	void FPixelStreamingInputHandler::HandleOnXRHMDTransform(FMemoryReader Ar)
+	FMatrix FPixelStreamingInputHandler::ExtractWebXRMatrix(FMemoryReader& Ar)
 	{
-		// The buffer contains the transform matrix stored as 16 floats
-		FMatrix HMDMatrix;
+		FMatrix OutMat;
 		for (int32 Row = 0; Row < 4; ++Row)
 
 		{
-			float Col0, Col1, Col2, Col3;
+			float Col0 = 0.0f, Col1 = 0.0f, Col2 = 0.0f, Col3 = 0.0f;
 			Ar << Col0 << Col1 << Col2 << Col3;
-			HMDMatrix.M[Row][0] = Col0;
-			HMDMatrix.M[Row][1] = Col1;
-			HMDMatrix.M[Row][2] = Col2;
-			HMDMatrix.M[Row][3] = Col3;
+			OutMat.M[Row][0] = Col0;
+			OutMat.M[Row][1] = Col1;
+			OutMat.M[Row][2] = Col2;
+			OutMat.M[Row][3] = Col3;
 		}
-		HMDMatrix.DiagnosticCheckNaN();
-		/**
-		 * Converts the 'Y up' 'right handed' WebXR coordinate system transform to Unreal's 'Z up'
-		 * 'left handed' coordinate system.
-		 *
-		 * Ignores scale.
-		 *
-		 * HMD Coordinate space (https://developer.mozilla.org/en-US/docs/Web/API/WebXR_Device_API/Geometry)
-		 */
+		OutMat.DiagnosticCheckNaN();
+		return OutMat;
+	}
+
+	FTransform FPixelStreamingInputHandler::WebXRMatrixToUETransform(FMatrix Mat)
+	{
 		// Rows and columns are swapped between raw mat and FMat
 		FMatrix UEMatrix = FMatrix(
-			FPlane(HMDMatrix.M[0][0], HMDMatrix.M[1][0], HMDMatrix.M[2][0], HMDMatrix.M[3][0]),
-			FPlane(HMDMatrix.M[0][1], HMDMatrix.M[1][1], HMDMatrix.M[2][1], HMDMatrix.M[3][1]),
-			FPlane(HMDMatrix.M[0][2], HMDMatrix.M[1][2], HMDMatrix.M[2][2], HMDMatrix.M[3][2]),
-			FPlane(HMDMatrix.M[0][3], HMDMatrix.M[1][3], HMDMatrix.M[2][3], HMDMatrix.M[3][3]));
+			FPlane(Mat.M[0][0], Mat.M[1][0], Mat.M[2][0], Mat.M[3][0]),
+			FPlane(Mat.M[0][1], Mat.M[1][1], Mat.M[2][1], Mat.M[3][1]),
+			FPlane(Mat.M[0][2], Mat.M[1][2], Mat.M[2][2], Mat.M[3][2]),
+			FPlane(Mat.M[0][3], Mat.M[1][3], Mat.M[2][3], Mat.M[3][3]));
 		// Extract & convert translation
 		FVector Translation = FVector(-UEMatrix.M[3][2], UEMatrix.M[3][0], UEMatrix.M[3][1]) * 100.0f;
 		// Extract & convert rotation
 		FQuat RawRotation(UEMatrix);
 		FQuat Rotation(-RawRotation.Z, RawRotation.X, RawRotation.Y, -RawRotation.W);
+		return FTransform(Rotation, Translation, FVector(Mat.GetScaleVector(1.0f)));
+	}
+
+	/**
+	 * XR Handling
+	 */
+	void FPixelStreamingInputHandler::HandleOnXREyeViews(FMemoryReader Ar)
+	{
+		// The `Ar` buffer contains the left eye transform matrix stored as 16 floats
+		FTransform LeftEyeTransform = WebXRMatrixToUETransform(ExtractWebXRMatrix(Ar));
+
+		// The `Ar` buffer contains the left eye projection matrix stored as 16 floats
+		FMatrix LeftEyeProjectionMatrix = ExtractWebXRMatrix(Ar);
+
+		// The `Ar` buffer contains the right eye transform matrix stored as 16 floats
+		FTransform RightEyeTransform = WebXRMatrixToUETransform(ExtractWebXRMatrix(Ar));
+
+		// The `Ar` buffer contains the right eye projection matrix stored as 16 floats
+		FMatrix RightEyeProjectionMatrix = ExtractWebXRMatrix(Ar);
 
 		if (FPixelStreamingHMD* HMD = IPixelStreamingHMDModule::Get().GetPixelStreamingHMD(); HMD != nullptr)
 		{
-			HMD->SetTransform(FTransform(Rotation, Translation, FVector(HMDMatrix.GetScaleVector(1.0f))));
+			HMD->SetEyeViews(LeftEyeTransform, LeftEyeProjectionMatrix, RightEyeTransform, RightEyeProjectionMatrix);
+		}
+	}
+
+	void FPixelStreamingInputHandler::HandleOnXRHMDTransform(FMemoryReader Ar)
+	{
+		// The `Ar` buffer contains the transform matrix stored as 16 floats
+		FTransform HMDTransform = WebXRMatrixToUETransform(ExtractWebXRMatrix(Ar));
+
+		if (FPixelStreamingHMD* HMD = IPixelStreamingHMDModule::Get().GetPixelStreamingHMD(); HMD != nullptr)
+		{
+			HMD->SetTransform(HMDTransform);
 		}
 	}
 
 	void FPixelStreamingInputHandler::HandleOnXRControllerTransform(FMemoryReader Ar)
 	{
-		// The buffer contains the transform matrix stored as 16 floats
-		FMatrix ControllerMatrix;
-		for (int32 Row = 0; Row < 4; ++Row)
-		{
-			float Col0, Col1, Col2, Col3;
-			Ar << Col0 << Col1 << Col2 << Col3;
-			// Rows and columns are swapped between raw mat and FMat
-			ControllerMatrix.M[Row][0] = Col0;
-			ControllerMatrix.M[Row][1] = Col1;
-			ControllerMatrix.M[Row][2] = Col2;
-			ControllerMatrix.M[Row][3] = Col3;
-		}
-		ControllerMatrix.DiagnosticCheckNaN();
-		FMatrix UEMatrix = FMatrix(
-			FPlane(ControllerMatrix.M[0][0], ControllerMatrix.M[1][0], ControllerMatrix.M[2][0], ControllerMatrix.M[3][0]),
-			FPlane(ControllerMatrix.M[0][1], ControllerMatrix.M[1][1], ControllerMatrix.M[2][1], ControllerMatrix.M[3][1]),
-			FPlane(ControllerMatrix.M[0][2], ControllerMatrix.M[1][2], ControllerMatrix.M[2][2], ControllerMatrix.M[3][2]),
-			FPlane(ControllerMatrix.M[0][3], ControllerMatrix.M[1][3], ControllerMatrix.M[2][3], ControllerMatrix.M[3][3]));
-		// Extract & convert translation
-		FVector Translation = FVector(-UEMatrix.M[3][2], UEMatrix.M[3][0], UEMatrix.M[3][1]) * 100.0f;
-		// Extract & convert rotation
-		FQuat RawRotation(UEMatrix);
-		FQuat Rotation(-RawRotation.Z, RawRotation.X, RawRotation.Y, -RawRotation.W);
-		EControllerHand Handedness;
+		// The `Ar` buffer contains the transform matrix stored as 16 floats
+		FTransform ControllerTransform = WebXRMatrixToUETransform(ExtractWebXRMatrix(Ar));
+
+		// The `Ar` buffer contains a UInt8 for the handedness
+		EControllerHand Handedness = EControllerHand::Left;
 		Ar << Handedness;
+
 		FPixelStreamingXRController Controller;
-		Controller.Transform = FTransform(Rotation, Translation, FVector(ControllerMatrix.GetScaleVector(1.0f)));
+		Controller.Transform = ControllerTransform;
 		Controller.Handedness = Handedness;
 		XRControllers.Add(Handedness, Controller);
 	}
@@ -1077,33 +1072,44 @@ namespace UE::PixelStreamingInput
 
 	void FPixelStreamingInputHandler::HandleOnXRSystem(FMemoryReader Ar)
 	{
-		uint8 ActiveSystem;
+		uint8 ActiveSystem = (uint8)EPixelStreamingXRSystem::Unknown;
 		Ar << ActiveSystem;
 		IPixelStreamingHMDModule::Get().SetActiveXRSystem(static_cast<XRSystem>(ActiveSystem));
 	}
 
-	void FPixelStreamingInputHandler::SetCommandHandler(const FString& CommandName, const TFunction<void(FString, FString)>& Handler)
+	void FPixelStreamingInputHandler::SetCommandHandler(const FString& CommandName, const CommandHandlerFn& Handler)
 	{
 		CommandHandlers.Add(CommandName, Handler);
 	}
 
+	void FPixelStreamingInputHandler::SetElevatedCheck(const TFunction<bool(FString)>& CheckFn)
+	{
+		ElevatedCheck = CheckFn;
+	}
+
+	bool FPixelStreamingInputHandler::IsElevated(const FString& Id)
+	{
+		return !ElevatedCheck || ElevatedCheck(Id);
+	}
+
 	void FPixelStreamingInputHandler::PopulateDefaultCommandHandlers()
 	{
-
 		// Execute console commands if passed "ConsoleCommand" and -PixelStreamingAllowConsoleCommands is on.
-		CommandHandlers.Add(TEXT("ConsoleCommand"), [](FString Descriptor, FString ConsoleCommand) {
-			if (!UE::PixelStreamingInput::Settings::CVarPixelStreamingInputAllowConsoleCommands.GetValueOnAnyThread())
+		CommandHandlers.Add(TEXT("ConsoleCommand"), [this](FString SourceId, FString Descriptor, FString ConsoleCommand) {
+			if (!UE::PixelStreamingInput::Settings::CVarPixelStreamingInputAllowConsoleCommands.GetValueOnAnyThread()
+				|| !IsElevated(SourceId))
 			{
 				return;
 			}
-			GEngine->Exec(GEngine->GetWorld(), *ConsoleCommand); });
+			GEngine->Exec(GEngine->GetWorld(), *ConsoleCommand);
+		});
 
 		// Change width/height if sent { "Resolution.Width": 1920, "Resolution.Height": 1080 }
-		CommandHandlers.Add(TEXT("Resolution.Width"), [](FString Descriptor, FString WidthString) {
+		CommandHandlers.Add(TEXT("Resolution.Width"), [this](FString SourceId, FString Descriptor, FString WidthString) {
 			bool bSuccess = false;
 			FString HeightString;
 			UE::PixelStreamingInput::ExtractJsonFromDescriptor(Descriptor, TEXT("Resolution.Height"), HeightString, bSuccess);
-			if (bSuccess)
+			if (bSuccess && IsElevated(SourceId))
 			{
 				int Width = FCString::Atoi(*WidthString);
 				int Height = FCString::Atoi(*HeightString);
@@ -1114,18 +1120,20 @@ namespace UE::PixelStreamingInput
 
 				FString ChangeResCommand = FString::Printf(TEXT("r.SetRes %dx%d"), Width, Height);
 				GEngine->Exec(GEngine->GetWorld(), *ChangeResCommand);
-			} });
+			}
+		});
 
 		// Response to "Stat.FPS" by calling "stat fps"
-		CommandHandlers.Add(TEXT("Stat.FPS"), [](FString Descriptor, FString FPSCommand) {
+		CommandHandlers.Add(TEXT("Stat.FPS"), [](FString SourceId, FString Descriptor, FString FPSCommand) {
 			FString StatFPSCommand = FString::Printf(TEXT("stat fps"));
-			GEngine->Exec(GEngine->GetWorld(), *StatFPSCommand); });
+			GEngine->Exec(GEngine->GetWorld(), *StatFPSCommand);
+		});
 	}
 
 	/**
 	 * Command handling
 	 */
-	void FPixelStreamingInputHandler::HandleOnCommand(FMemoryReader Ar)
+	void FPixelStreamingInputHandler::HandleOnCommand(FString SourceId, FMemoryReader Ar)
 	{
 		FString Res;
 		Res.GetCharArray().SetNumUninitialized(Ar.TotalSize() / 2 + 1);
@@ -1143,7 +1151,7 @@ namespace UE::PixelStreamingInput
 			if (bSuccess)
 			{
 				// Execute bound command handler with descriptor and parsed command value
-				CommandHandlersPair.Value(Descriptor, CommandValue);
+				CommandHandlersPair.Value(SourceId, Descriptor, CommandValue);
 				return;
 			}
 		}
@@ -1185,6 +1193,18 @@ namespace UE::PixelStreamingInput
 				{
 					SMultiLineEditableTextBox* TextBox = static_cast<SMultiLineEditableTextBox*>(FocusedWidget.Get());
 					TextBox->SetText(FText::FromString(Text));
+				}
+
+				// We need to manually trigger an Enter key press so that the OnTextCommitted delegate gets fired
+				const uint32* KeyPtr = nullptr;
+				const uint32* CharacterPtr = nullptr;
+				FInputKeyManager::Get().GetCodesFromKey(EKeys::Enter, KeyPtr, CharacterPtr);
+				uint32 Key = KeyPtr ? *KeyPtr : 0;
+				uint32 Character = CharacterPtr ? *CharacterPtr : 0;
+				if(Key != 0 || Character != 0)
+				{
+					MessageHandler->OnKeyDown((int32)Key, (int32)Character, false);
+					MessageHandler->OnKeyUp((int32)Key, (int32)Character, false);
 				}
 			}
 		});
@@ -1360,6 +1380,19 @@ namespace UE::PixelStreamingInput
 			static FName SEditableTextType(TEXT("SEditableText"));
 			static FName SMultiLineEditableTextType(TEXT("SMultiLineEditableText"));
 			bool bEditable = FocusedWidget && (FocusedWidget->GetType() == SEditableTextType || FocusedWidget->GetType() == SMultiLineEditableTextType);
+			if (bEditable)
+			{
+				if (FocusedWidget->GetType() == TEXT("SEditableText"))
+				{
+					SEditableText* TextBox = static_cast<SEditableText*>(FocusedWidget.Get());
+					bEditable = !TextBox->IsTextReadOnly();
+				}
+				else if (FocusedWidget->GetType() == TEXT("SMultiLineEditableText"))
+				{
+					SMultiLineEditableText* TextBox = static_cast<SMultiLineEditableText*>(FocusedWidget.Get());
+					bEditable = !TextBox->IsTextReadOnly();
+				}
+			}
 
 			// Tell the browser that the focus has changed.
 			TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject);
@@ -1368,7 +1401,7 @@ namespace UE::PixelStreamingInput
 
 			if (bEditable)
 			{
-				FVector2D NormalizedLocation;
+				FVector2D NormalizedLocation = FVector2D::ZeroVector;
 				TSharedPtr<SWindow> ApplicationWindow = TargetWindow.Pin();
 				if (ApplicationWindow.IsValid())
 				{
@@ -1409,7 +1442,7 @@ namespace UE::PixelStreamingInput
 				{
 					FIntRect ScreenRect = *ScreenRectPtr;
 					FIntPoint SizeInScreen = ScreenRect.Max - ScreenRect.Min;
-					NormalizedLocation = FocusedPos / SizeInScreen;
+					NormalizedLocation = FocusedWidget->GetCachedGeometry().GetAbsolutePosition() / SizeInScreen;
 				}
 
 				NormalizedLocation *= uint16_MAX;

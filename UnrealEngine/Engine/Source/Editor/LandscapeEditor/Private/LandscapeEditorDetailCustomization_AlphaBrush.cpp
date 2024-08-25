@@ -200,7 +200,6 @@ void FLandscapeEditorDetailCustomization_AlphaBrush::CustomizeDetails(IDetailLay
 	DetailBuilder.HideProperty(PropertyHandle_AlphaTextureChannel);
 
 	BrushSettingsCategory.AddProperty(PropertyHandle_AlphaTexture)
-	.OverrideResetToDefault(FResetToDefaultOverride::Hide())
 	.CustomWidget()
 	.NameContent()
 	[
@@ -248,8 +247,7 @@ void FLandscapeEditorDetailCustomization_AlphaBrush::CustomizeDetails(IDetailLay
 		]
 	];
 
-	BrushSettingsCategory.AddProperty(PropertyHandle_AlphaTextureChannel)
-	.OverrideResetToDefault(FResetToDefaultOverride::Hide());
+	BrushSettingsCategory.AddProperty(PropertyHandle_AlphaTextureChannel);
 
 	if (IsBrushSetActive("BrushSet_Pattern"))
 	{

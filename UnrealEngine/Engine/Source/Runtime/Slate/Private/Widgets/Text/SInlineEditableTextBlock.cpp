@@ -159,7 +159,7 @@ bool SInlineEditableTextBlock::IsInEditMode() const
 	return TextBlock->GetVisibility() == EVisibility::Collapsed;
 }
 
-void SInlineEditableTextBlock::SetReadOnly(bool bInIsReadOnly)
+void SInlineEditableTextBlock::SetReadOnly(const TAttribute<bool>& bInIsReadOnly)
 {
 	bIsReadOnly = bInIsReadOnly;
 }
@@ -176,6 +176,12 @@ void SInlineEditableTextBlock::SetText( const FString& InText )
 	Text = FText::FromString( InText );
 	TextBlock->SetText( Text );
 	SetEditableText( Text );
+}
+
+
+void SInlineEditableTextBlock::SetHighlightText( const TAttribute< FText >& InText )
+{
+	TextBlock->SetHighlightText(InText);
 }
 
 void SInlineEditableTextBlock::SetWrapTextAt( const TAttribute<float>& InWrapTextAt )

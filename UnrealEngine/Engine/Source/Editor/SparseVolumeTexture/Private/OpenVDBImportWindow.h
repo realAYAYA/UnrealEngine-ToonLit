@@ -11,16 +11,9 @@
 
 struct FOpenVDBGridInfo;
 struct FOpenVDBImportOptions;
+struct FOpenVDBGridComponentInfo;
 struct FOpenVDBSparseVolumeAttributesDesc;
 enum class ESparseVolumeAttributesFormat : uint8;
-
-struct FOpenVDBGridComponentInfo
-{
-	uint32 Index;
-	uint32 ComponentIndex;
-	FString Name;
-	FString DisplayString; // Contains source file grid index, name and component (if it is a multi component type like Float3)
-};
 
 class SOpenVDBGridInfoTableRow : public SMultiColumnTableRow<TSharedPtr<FOpenVDBGridInfo>>
 {

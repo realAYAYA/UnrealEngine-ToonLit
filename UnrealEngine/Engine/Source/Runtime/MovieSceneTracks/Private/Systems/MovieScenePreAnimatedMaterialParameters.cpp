@@ -14,17 +14,22 @@ TAutoRegisterPreAnimatedStorageID<FPreAnimatedVectorMaterialParameterStorage> FP
 
 FMaterialParameterKey::FMaterialParameterKey(const FObjectComponent& InBoundMaterial, const FName& InParameterName)
 	: BoundMaterial(InBoundMaterial.GetObject())
-	, ParameterName(InParameterName)
+	, ParameterInfo(InParameterName)
+{}
+
+FMaterialParameterKey::FMaterialParameterKey(const FObjectComponent& InBoundMaterial, const FMaterialParameterInfo& InParameterInfo)
+	: BoundMaterial(InBoundMaterial.GetObject())
+	, ParameterInfo(InParameterInfo)
 {}
 
 uint32 GetTypeHash(const FMaterialParameterKey& InKey)
 {
-	return GetTypeHash(InKey.BoundMaterial) ^ GetTypeHash(InKey.ParameterName);
+	return GetTypeHash(InKey.BoundMaterial) ^ GetTypeHash(InKey.ParameterInfo);
 }
 
 bool operator==(const FMaterialParameterKey& A, const FMaterialParameterKey& B)
 {
-	return A.BoundMaterial == B.BoundMaterial && A.ParameterName == B.ParameterName;
+	return A.BoundMaterial == B.BoundMaterial && A.ParameterInfo == B.ParameterInfo;
 }
 
 void FMaterialParameterCollectionScalarTraits::ReplaceObject(FMaterialParameterKey& InOutKey, const FObjectKey& NewObject)
@@ -34,16 +39,21 @@ void FMaterialParameterCollectionScalarTraits::ReplaceObject(FMaterialParameterK
 
 float FMaterialParameterCollectionScalarTraits::CachePreAnimatedValue(const FObjectComponent& InBoundMaterial, const FName& ParameterName)
 {
+	return CachePreAnimatedValue(InBoundMaterial, FMaterialParameterInfo(ParameterName));
+}
+
+float FMaterialParameterCollectionScalarTraits::CachePreAnimatedValue(const FObjectComponent& InBoundMaterial, const FMaterialParameterInfo& ParameterInfo)
+{
 	UObject* BoundMaterial = InBoundMaterial.GetObject();
 
 	float ParameterValue = 0.f;
 	if (UMaterialParameterCollectionInstance* MPCI = Cast<UMaterialParameterCollectionInstance>(BoundMaterial))
 	{
-		MPCI->GetScalarParameterValue(ParameterName, ParameterValue);
+		MPCI->GetScalarParameterValue(ParameterInfo.Name, ParameterValue);
 	}
 	else if (UMaterialInterface* MaterialInterface = Cast<UMaterialInterface>(BoundMaterial))
 	{
-		MaterialInterface->GetScalarParameterValue(FMaterialParameterInfo(ParameterName), ParameterValue);
+		MaterialInterface->GetScalarParameterValue(ParameterInfo, ParameterValue);
 	}
 	return ParameterValue;
 }
@@ -54,11 +64,11 @@ void FMaterialParameterCollectionScalarTraits::RestorePreAnimatedValue(const FMa
 
 	if (UMaterialParameterCollectionInstance* MPCI = Cast<UMaterialParameterCollectionInstance>(BoundObject))
 	{
-		MPCI->SetScalarParameterValue(InKey.ParameterName, OldValue);
+		MPCI->SetScalarParameterValue(InKey.ParameterInfo.Name, OldValue);
 	}
 	else if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(BoundObject))
 	{
-		MID->SetScalarParameterValue(InKey.ParameterName, OldValue);
+		MID->SetScalarParameterValueByInfo(InKey.ParameterInfo, OldValue);
 	}
 }
 
@@ -69,16 +79,21 @@ void FMaterialParameterCollectionVectorTraits::ReplaceObject(FMaterialParameterK
 
 FLinearColor FMaterialParameterCollectionVectorTraits::CachePreAnimatedValue(const FObjectComponent& InBoundMaterial, const FName& ParameterName)
 {
+	return CachePreAnimatedValue(InBoundMaterial, FMaterialParameterInfo(ParameterName));
+}
+
+FLinearColor FMaterialParameterCollectionVectorTraits::CachePreAnimatedValue(const FObjectComponent& InBoundMaterial, const FMaterialParameterInfo& ParameterInfo)
+{
 	UObject* BoundMaterial = InBoundMaterial.GetObject();
 
 	FLinearColor ParameterValue = FLinearColor::White;
 	if (UMaterialParameterCollectionInstance* MPCI = Cast<UMaterialParameterCollectionInstance>(BoundMaterial))
 	{
-		MPCI->GetVectorParameterValue(ParameterName, ParameterValue);
+		MPCI->GetVectorParameterValue(ParameterInfo.Name, ParameterValue);
 	}
 	else if (UMaterialInterface* MaterialInterface = Cast<UMaterialInterface>(BoundMaterial))
 	{
-		MaterialInterface->GetVectorParameterValue(FMaterialParameterInfo(ParameterName), ParameterValue);
+		MaterialInterface->GetVectorParameterValue(ParameterInfo, ParameterValue);
 	}
 	return ParameterValue;
 }
@@ -89,11 +104,11 @@ void FMaterialParameterCollectionVectorTraits::RestorePreAnimatedValue(const FMa
 
 	if (UMaterialParameterCollectionInstance* MPCI = Cast<UMaterialParameterCollectionInstance>(BoundObject))
 	{
-		MPCI->SetVectorParameterValue(InKey.ParameterName, OldValue);
+		MPCI->SetVectorParameterValue(InKey.ParameterInfo.Name, OldValue);
 	}
 	else if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(BoundObject))
 	{
-		MID->SetVectorParameterValue(InKey.ParameterName, OldValue);
+		MID->SetVectorParameterValueByInfo(InKey.ParameterInfo, OldValue);
 	}
 }
 

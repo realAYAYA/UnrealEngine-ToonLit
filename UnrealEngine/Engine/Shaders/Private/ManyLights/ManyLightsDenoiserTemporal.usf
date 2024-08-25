@@ -1,0 +1,282 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "ManyLights.ush"
+
+Texture2D<float4> CompositeUpsampleWeights;
+Texture2D<float2> SampleLuminanceSumTexture;
+Texture2D ResolvedDiffuseLighting;
+Texture2D ResolvedSpecularLighting;
+Texture2D ManyLightsDepthHistory;
+Texture2D DiffuseLightingAndSecondMomentHistoryTexture;
+Texture2D SpecularLightingAndSecondMomentHistoryTexture;
+Texture2D<UNORM float> NumFramesAccumulatedHistoryTexture;
+
+float4 HistoryScreenPositionScaleBias;
+float4 HistoryUVMinMax;
+float PrevSceneColorPreExposureCorrection;
+float TemporalMaxFramesAccumulated;
+float TemporalNeighborhoodClampScale;
+uint TemporalAdvanceFrame;
+uint2 DownsampledViewSize;
+
+RWTexture2D<float4> RWDiffuseLightingAndSecondMoment;
+RWTexture2D<float4> RWSpecularLightingAndSecondMoment;
+RWTexture2D<UNORM float> RWNumFramesAccumulated;
+RWTexture2D<float> RWSceneDepth;
+RWTexture2D<float4> RWSceneColor;
+
+struct FNeighborhood
+{
+	float3 Mean;
+	float3 ClampMin;
+	float3 ClampMax;
+};
+
+FNeighborhood GetNeighborhood(
+	uint2 ScreenCoord, 
+	Texture2D SampleTexture,
+	float3 CenterSample)
+{
+	float3 SampleSum = CenterSample;
+	float3 SampleSqSum = Pow2(CenterSample);
+
+	// #ml_todo: optimize using groupshared and cross-lane ops
+	const int KernelSize = 2;
+	for (int NeigborOffsetY = -KernelSize; NeigborOffsetY <= KernelSize; ++NeigborOffsetY)
+	{
+		for (int NeigborOffsetX = -KernelSize; NeigborOffsetX <= KernelSize; ++NeigborOffsetX)
+		{
+			if (!(NeigborOffsetX == 0 && NeigborOffsetY == 0))
+			{
+				uint2 NeigborScreenCoord = clamp(ScreenCoord + int2(NeigborOffsetX, NeigborOffsetY), 0u, View.ViewRectMinAndSize.zw - 1);
+				float3 NeigborSample = SampleTexture[NeigborScreenCoord].xyz;
+	
+				SampleSum += NeigborSample;
+				SampleSqSum += Pow2(NeigborSample);
+			}
+		}
+	}
+
+	float NumSamples = Pow2(2.0f * KernelSize + 1.0f);
+	float3 M1 = SampleSum / NumSamples;
+	float3 M2 = SampleSqSum / NumSamples;
+	float3 Variance = max(M2 - Pow2(M1), 0.0f);
+	float3 StdDev = sqrt(Variance);
+	
+	FNeighborhood Neighborhood = (FNeighborhood)0;
+	Neighborhood.Mean = M1;
+	Neighborhood.ClampMin = M1 - TemporalNeighborhoodClampScale * StdDev;
+	Neighborhood.ClampMax = M1 + TemporalNeighborhoodClampScale * StdDev;
+	return Neighborhood;
+}
+
+void AccumulateSampleLuminanceSum(uint2 DownsampledScreenCoord, float UpsampleWeight, inout float2 SampleLuminanceSum)
+{
+	if (all(DownsampledScreenCoord < DownsampledViewSize))
+	{
+		SampleLuminanceSum += SampleLuminanceSumTexture[DownsampledScreenCoord] * UpsampleWeight;
+	}
+}
+
+float3 ClampLuminance(float3 Lighting, float LuminanceClamp)
+{
+	if (Luminance(Lighting) > LuminanceClamp)
+	{
+		Lighting *= LuminanceClamp / Luminance(Lighting);
+	}
+
+	return Lighting;
+}
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void DenoiserTemporalCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 ScreenCoord = DispatchThreadId.xy;
+
+#if DEBUG_MODE
+	int2 DebugScreenCoord = View.CursorPosition.x >= 0 ? View.CursorPosition * View.ViewResolutionFraction : -1;
+	bool bDebug = all(ScreenCoord == DebugScreenCoord);
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.55, 0.4));
+#endif
+
+	if (all(ScreenCoord < View.ViewRectMinAndSize.zw))
+	{
+		float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+		FGBufferData GBuffer = GetGBufferData(ScreenUV);
+
+		const float DeviceZ = SceneDepthTexture[ScreenCoord].x;
+		GBuffer.Depth = ConvertFromDeviceZ(DeviceZ);
+
+		float3 DiffuseLighting = 0.0f;
+		float3 SpecularLighting = 0.0f;
+		float DiffuseSecondMoment = 0.0f;
+		float SpecularSecondMoment = 0.0f;
+		float NumFramesAccumulated = 0.0f;
+
+		if (GBuffer.Depth > 0.0f && GBuffer.ShadingModelID != SHADINGMODELID_UNLIT)
+		{
+			float2 SampleLuminanceSum = 0.0f;
+			{
+				uint2 DownsampledScreenCoord = floor(ScreenUV * View.BufferSizeAndInvSize.xy / DOWNSAMPLE_FACTOR - 0.5f);
+				float4 DownsampledScreenWeights = CompositeUpsampleWeights[ScreenCoord];
+				AccumulateSampleLuminanceSum(DownsampledScreenCoord + uint2(0, 0), DownsampledScreenWeights.x, SampleLuminanceSum);
+				AccumulateSampleLuminanceSum(DownsampledScreenCoord + uint2(1, 0), DownsampledScreenWeights.y, SampleLuminanceSum);
+				AccumulateSampleLuminanceSum(DownsampledScreenCoord + uint2(0, 1), DownsampledScreenWeights.z, SampleLuminanceSum);
+				AccumulateSampleLuminanceSum(DownsampledScreenCoord + uint2(1, 1), DownsampledScreenWeights.w, SampleLuminanceSum);
+			}
+
+			DiffuseLighting = ResolvedDiffuseLighting[ScreenCoord].xyz;
+			SpecularLighting = ResolvedSpecularLighting[ScreenCoord].xyz;
+
+			DiffuseSecondMoment = Pow2(Luminance(DiffuseLighting));
+			SpecularSecondMoment = Pow2(Luminance(SpecularLighting));
+
+			#if VALID_HISTORY
+			{
+				float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+				float3 HistoryScreenPosition = GetHistoryScreenPosition(ScreenPosition, ScreenUV, DeviceZ);
+				float2 HistoryScreenUV = HistoryScreenPosition.xy * HistoryScreenPositionScaleBias.xy + HistoryScreenPositionScaleBias.wz;
+
+				bool bHistoryWasOnScreen = all(HistoryScreenUV >= HistoryUVMinMax.xy) && all (HistoryScreenUV <= HistoryUVMinMax.zw);
+				if (bHistoryWasOnScreen)
+				{
+					uint2 HistoryScreenCoord = floor(HistoryScreenUV * View.BufferSizeAndInvSize.xy - 0.5f);
+					float2 HistoryBilinearWeights = frac(HistoryScreenUV * View.BufferSizeAndInvSize.xy - 0.5f);
+					float2 HistoryGatherUV = (HistoryScreenCoord + 1.0f) * View.BufferSizeAndInvSize.zw;
+
+					float4 HistorySampleSceneDepth4 = ManyLightsDepthHistory.GatherRed(GlobalPointClampedSampler, HistoryGatherUV).wzxy;
+
+					// #ml_todo: plane weighting
+					float ReprojectedSceneDepth = ConvertFromDeviceZ(HistoryScreenPosition.z);
+					float DisocclusionDistanceThreshold = 0.03f;
+					const float4 DistanceToHistoryValue = abs(HistorySampleSceneDepth4 - ReprojectedSceneDepth);
+					float4 DepthWeights = select(DistanceToHistoryValue >= ReprojectedSceneDepth * DisocclusionDistanceThreshold, 0.0f, 1.0f);
+
+					float4 HistoryWeights = float4(
+						(1 - HistoryBilinearWeights.y) * (1 - HistoryBilinearWeights.x),
+						(1 - HistoryBilinearWeights.y) * HistoryBilinearWeights.x,
+						HistoryBilinearWeights.y * (1 - HistoryBilinearWeights.x),
+						HistoryBilinearWeights.y * HistoryBilinearWeights.x);
+
+					HistoryWeights *= DepthWeights;
+
+					#if DEBUG_MODE	
+					if (bDebug)
+					{
+						Print(Context, TEXT("TemporalAccumulation"));
+						Newline(Context);
+						Print(Context, TEXT("ScreenCoord: "));
+						Print(Context, ScreenCoord.x);
+						Print(Context, ScreenCoord.y);
+						Newline(Context);
+						Print(Context, TEXT("DepthWeights: "));
+						Print(Context, DepthWeights);
+						Newline(Context);
+						Print(Context, TEXT("HistoryWeights: "));
+						Print(Context, HistoryWeights);
+					}
+					#endif
+
+					// Use history only if we found at least one valid sample
+					if (any(HistoryWeights > 0.01f))
+					{
+						float4 DiffuseLightingAndSecondMomentHistory = 0.0f;
+						DiffuseLightingAndSecondMomentHistory.x = dot(DiffuseLightingAndSecondMomentHistoryTexture.GatherRed(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						DiffuseLightingAndSecondMomentHistory.y = dot(DiffuseLightingAndSecondMomentHistoryTexture.GatherGreen(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						DiffuseLightingAndSecondMomentHistory.z = dot(DiffuseLightingAndSecondMomentHistoryTexture.GatherBlue(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						DiffuseLightingAndSecondMomentHistory.w = dot(DiffuseLightingAndSecondMomentHistoryTexture.GatherAlpha(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						DiffuseLightingAndSecondMomentHistory = DiffuseLightingAndSecondMomentHistory / dot(HistoryWeights, 1.0f);
+
+						float4 SpecularLightingAndSecondMomentHistory = 0.0f;
+						SpecularLightingAndSecondMomentHistory.x = dot(SpecularLightingAndSecondMomentHistoryTexture.GatherRed(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						SpecularLightingAndSecondMomentHistory.y = dot(SpecularLightingAndSecondMomentHistoryTexture.GatherGreen(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						SpecularLightingAndSecondMomentHistory.z = dot(SpecularLightingAndSecondMomentHistoryTexture.GatherBlue(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						SpecularLightingAndSecondMomentHistory.w = dot(SpecularLightingAndSecondMomentHistoryTexture.GatherAlpha(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights);
+						SpecularLightingAndSecondMomentHistory = SpecularLightingAndSecondMomentHistory / dot(HistoryWeights, 1.0f);
+
+						// Correct history for current frame exposure
+						float3 HistoryDiffuseLighting = DiffuseLightingAndSecondMomentHistory.xyz * PrevSceneColorPreExposureCorrection;
+						float3 HistorySpecularLighting = SpecularLightingAndSecondMomentHistory.xyz * PrevSceneColorPreExposureCorrection;
+						float HistoryDiffuseSecondMoment = DiffuseLightingAndSecondMomentHistory.w * Pow2(PrevSceneColorPreExposureCorrection);
+						float HistorySpecularSecondMoment = SpecularLightingAndSecondMomentHistory.w * Pow2(PrevSceneColorPreExposureCorrection);
+
+						// Reproject and rescale normalized NumFramesAccumulated
+						float NumFramesAccumulatedHistory = 0.0f;
+						NumFramesAccumulatedHistory = dot(NumFramesAccumulatedHistoryTexture.GatherRed(GlobalPointClampedSampler, HistoryGatherUV).wzxy, HistoryWeights) * TemporalMaxFramesAccumulated;
+						NumFramesAccumulatedHistory = NumFramesAccumulatedHistory / dot(HistoryWeights, 1.0f);
+
+						// Advance the frame counter
+						if (TemporalAdvanceFrame != 0)
+						{
+							NumFramesAccumulatedHistory += 1.0f;
+						}
+						NumFramesAccumulated = min(NumFramesAccumulatedHistory, TemporalMaxFramesAccumulated);
+
+						// Clamp history to current neighborhood
+						FNeighborhood DiffuseNeighborhood = GetNeighborhood(ScreenCoord, ResolvedDiffuseLighting, DiffuseLighting);
+						FNeighborhood SpecularNeighborhood = GetNeighborhood(ScreenCoord, ResolvedSpecularLighting, SpecularLighting);
+						float3 ClampedHistoryDiffuseLighting = clamp(HistoryDiffuseLighting, DiffuseNeighborhood.ClampMin, DiffuseNeighborhood.ClampMax);
+						float3 ClampedHistorySpecularLighting = clamp(HistorySpecularLighting, SpecularNeighborhood.ClampMin, SpecularNeighborhood.ClampMax);
+
+						// Clamp history to max sample luminance
+						ClampedHistoryDiffuseLighting = ClampLuminance(ClampedHistoryDiffuseLighting, SampleLuminanceSum.x);
+						ClampedHistorySpecularLighting = ClampLuminance(ClampedHistorySpecularLighting, SampleLuminanceSum.y);
+						float ClampedHistoryDiffuseSecondMoment = clamp(HistoryDiffuseSecondMoment, 0, Pow2(SampleLuminanceSum.x));
+						float ClampedHistorySpecularSecondMoment = clamp(HistorySpecularSecondMoment, 0, Pow2(SampleLuminanceSum.y));
+
+						// Blend history with new samples
+						float Alpha = 1.0f / (1.0f + NumFramesAccumulated);
+						DiffuseLighting = lerp(ClampedHistoryDiffuseLighting, DiffuseLighting, Alpha);
+						SpecularLighting = lerp(ClampedHistorySpecularLighting, SpecularLighting, Alpha);
+						DiffuseSecondMoment = lerp(ClampedHistoryDiffuseSecondMoment, DiffuseSecondMoment, Alpha);
+						SpecularSecondMoment = lerp(ClampedHistorySpecularSecondMoment, SpecularSecondMoment, Alpha);
+					}
+				}
+			}
+			#endif
+
+			DiffuseLighting = MakeFinite(DiffuseLighting);
+			SpecularLighting = MakeFinite(SpecularLighting);
+
+			#if DEBUG_MODE
+			if (bDebug)
+			{
+				float DiffuseVariance = max(DiffuseSecondMoment - Pow2(Luminance(DiffuseLighting)), 0.0f);
+				float SpecularVariance = max(SpecularSecondMoment - Pow2(Luminance(SpecularLighting)), 0.0f);
+
+				Newline(Context);
+				Print(Context, TEXT("NumFramesAccumulated: "));
+				Print(Context, NumFramesAccumulated);
+				Newline(Context);
+				Print(Context, TEXT("DiffuseVariance:  "));
+				Print(Context, DiffuseVariance);
+				Newline(Context);
+				Print(Context, TEXT("SpecularVariance: "));
+				Print(Context, SpecularVariance);
+				Newline(Context);
+				Print(Context, TEXT("Specular Second Moment: "));
+				Print(Context, SpecularSecondMoment);
+				Newline(Context);
+				Print(Context, TEXT("Specular Lighting: "));
+				Print(Context, SpecularLighting);
+				Newline(Context);
+				Print(Context, TEXT("SampleLuminanceSum: "));
+				Print(Context, SampleLuminanceSum);
+				Newline(Context);
+				Print(Context, TEXT("Luminance:          "));
+				Print(Context, Luminance(DiffuseLighting));
+				Print(Context, Luminance(SpecularLighting));
+			}
+			#endif
+		}
+
+		RWDiffuseLightingAndSecondMoment[ScreenCoord] = float4(DiffuseLighting, DiffuseSecondMoment);
+		RWSpecularLightingAndSecondMoment[ScreenCoord] = float4(SpecularLighting, SpecularSecondMoment);
+		RWNumFramesAccumulated[ScreenCoord] = (NumFramesAccumulated + 0.5f) / TemporalMaxFramesAccumulated;
+		RWSceneDepth[ScreenCoord] = GBuffer.Depth;
+	}
+}

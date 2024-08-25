@@ -12,23 +12,21 @@
 
 const FName FUsdAssetCacheAssetEditorToolkit::TabId("AssetCacheEditor");
 
-void FUsdAssetCacheAssetEditorToolkit::Initialize(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, UUsdAssetCache2* InAssetCache)
+void FUsdAssetCacheAssetEditorToolkit::Initialize(
+	const EToolkitMode::Type Mode,
+	const TSharedPtr<IToolkitHost>& InitToolkitHost,
+	UUsdAssetCache2* InAssetCache
+)
 {
-	const TSharedRef<FTabManager::FLayout> StandaloneDefaultLayout = FTabManager::NewLayout("Standalone_AssetCacheEditor")
-		->AddArea
-		(
-			FTabManager::NewPrimaryArea()
-			->SetOrientation(Orient_Vertical)
-			->Split(FTabManager::NewSplitter()
-				->SetOrientation(Orient_Horizontal)
-				->Split
-				(
-					FTabManager::NewStack()
-					->SetHideTabWell(true)
-					->AddTab(TabId, ETabState::OpenedTab)
-				)
-			)
-		);
+	const TSharedRef<FTabManager::FLayout>
+		StandaloneDefaultLayout = FTabManager::NewLayout("Standalone_AssetCacheEditor")
+									  ->AddArea(
+										  FTabManager::NewPrimaryArea()
+											  ->SetOrientation(Orient_Vertical)
+											  ->Split(FTabManager::NewSplitter()
+														  ->SetOrientation(Orient_Horizontal)
+														  ->Split(FTabManager::NewStack()->SetHideTabWell(true)->AddTab(TabId, ETabState::OpenedTab)))
+									  );
 
 	AssetCache = InAssetCache;
 
@@ -81,12 +79,8 @@ TSharedRef<SDockTab> FUsdAssetCacheAssetEditorToolkit::SpawnTab(const FSpawnTabA
 {
 	check(Args.GetTabId().TabType == TabId);
 
-	TSharedRef<SDockTab> NewDockTab = SNew(SDockTab)
-		.Label(GetBaseToolkitName())
-		.TabColorScale(GetWorldCentricTabColorScale())
-		[
-			AssetCacheEditorWidget.ToSharedRef()
-		];
+	TSharedRef<SDockTab>
+		NewDockTab = SNew(SDockTab).Label(GetBaseToolkitName()).TabColorScale(GetWorldCentricTabColorScale())[AssetCacheEditorWidget.ToSharedRef()];
 
 	return NewDockTab;
 }

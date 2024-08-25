@@ -50,11 +50,6 @@
 #include "Widgets/SWidget.h"
 
 
-#if WITH_OPENCV
-#include "OpenCVHelper.h"
-#endif
-
-
 #define LOCTEXT_NAMESPACE "CameraCalibrationStepsController"
 
 namespace CameraCalibrationStepsController
@@ -1446,6 +1441,7 @@ void FCameraCalibrationStepsController::TogglePlay()
 	}
 	else
 	{
+		// TODO: Trigger the current step (and ultimately the algo) to cache any data it cares about (like 3D scene data)
 		MediaPlayer->Pause();
 	}
 }
@@ -1638,7 +1634,7 @@ UTextureRenderTarget2D* FCameraCalibrationStepsController::GetMediaPlateRenderTa
 	return MediaPlateRenderTarget.Get();
 }
 
-bool FCameraCalibrationStepsController::CalculateNormalizedMouseClickPosition(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent, FVector2D& OutPosition, ESimulcamViewportPortion ViewportPortion) const
+bool FCameraCalibrationStepsController::CalculateNormalizedMouseClickPosition(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent, FVector2f& OutPosition, ESimulcamViewportPortion ViewportPortion) const
 {
 	// Reject viewports with no area
 	if (FMath::IsNearlyZero(MyGeometry.Size.X) || FMath::IsNearlyZero(MyGeometry.Size.Y))
@@ -1653,7 +1649,7 @@ bool FCameraCalibrationStepsController::CalculateNormalizedMouseClickPosition(co
 	// * MyGeometry.AbsolutePosition        : Position of the top-left corner of viewport within screen
 	// * MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition()) gives you the pixel coordinates local to the viewport.
 
-	const FVector2D LocalInPixels = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
+	const FVector2f LocalInPixels = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
 
 	float XNormalized = LocalInPixels.X / MyGeometry.Size.X;
 	float YNormalized = LocalInPixels.Y / MyGeometry.Size.Y;
@@ -1683,12 +1679,12 @@ bool FCameraCalibrationStepsController::CalculateNormalizedMouseClickPosition(co
 	}
 
 	// Position 0~1. Origin at top-left corner of the viewport.
-	OutPosition = FVector2D(XNormalized, YNormalized);
+	OutPosition = FVector2f(XNormalized, YNormalized);
 
 	return true;
 }
 
-bool FCameraCalibrationStepsController::ReadMediaPixels(TArray<FColor>& Pixels, FIntPoint& Size, ETextureRenderTargetFormat& PixelFormat, FText& OutErrorMessage, ESimulcamViewportPortion ViewportPortion) const
+bool FCameraCalibrationStepsController::ReadMediaPixels(TArray<FColor>& Pixels, FIntPoint& Size, FText& OutErrorMessage, ESimulcamViewportPortion ViewportPortion) const
 {
 	// Get the media plate texture render target 2d
 
@@ -1707,7 +1703,11 @@ bool FCameraCalibrationStepsController::ReadMediaPixels(TArray<FColor>& Pixels, 
 		return false;
 	}
 
-	PixelFormat = MediaPlateRenderTarget->RenderTargetFormat;
+	if (MediaPlateRenderTarget->RenderTargetFormat != ETextureRenderTargetFormat::RTF_RGBA8)
+	{
+		OutErrorMessage = LOCTEXT("InvalidFormat", "MediaPlateRenderTarget did not have the expected RTF_RGBA8 format");
+		return false;
+	}
 
 	// Read the pixels onto CPU
 	TArray<FColor> MediaPixels;

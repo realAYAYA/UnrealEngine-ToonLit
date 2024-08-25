@@ -76,6 +76,7 @@ public:
 		, _Font()
 		, _Margin( FMargin() )
 		, _LineHeightPercentage( 1.0f )
+		, _ApplyLineHeightToBottomLine( true )
 		, _Justification( ETextJustify::Left )
 		, _IsReadOnly(false)
 		, _OnTextChanged()
@@ -134,6 +135,9 @@ public:
 
 		/** The amount to scale each lines height by. */
 		SLATE_ATTRIBUTE(float, LineHeightPercentage)
+
+		/** The amount to scale each lines height by. */
+		SLATE_ATTRIBUTE(bool, ApplyLineHeightToBottomLine)
 
 		/** How the text should be aligned with the margin. */
 		SLATE_ATTRIBUTE(ETextJustify::Type, Justification)
@@ -311,6 +315,9 @@ public:
 
 	/** See LineHeightPercentage attribute */
 	SLATE_API void SetLineHeightPercentage(const TAttribute<float>& InLineHeightPercentage);
+
+	/** See ApplyLineHeightToBottomLine attribute */
+	SLATE_API void SetApplyLineHeightToBottomLine(const TAttribute<bool>& InApplyLineHeightToBottomLine);
 
 	/** See Margin attribute */
 	SLATE_API void SetMargin(const TAttribute<FMargin>& InMargin);

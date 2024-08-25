@@ -87,6 +87,11 @@ void FAnimNode_CallFunction::Initialize_AnyThread(const FAnimationInitializeCont
 	CallFunctionFromCallSite(EAnimFunctionCallSite::OnInitializePostRecursion, InContext);
 }
 
+void FAnimNode_CallFunction::CacheBones_AnyThread(const FAnimationCacheBonesContext& Context)
+{
+	Source.CacheBones(Context);
+}
+
 const FAnimNodeFunctionRef& FAnimNode_CallFunction::GetFunction() const
 {
 	return GET_ANIM_NODE_DATA(FAnimNodeFunctionRef, Function);

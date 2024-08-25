@@ -29,6 +29,9 @@ public:
 
 	UPROPERTY(EditAnywhere, Category=CustomizableObject)
 	ECustomizableObjectGroupType GroupType;
+	
+	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	FString DefaultValue;
 
 	UPROPERTY(EditAnywhere, Category = UI, meta = (DisplayName = "Parameter UI Metadata"))
 	FMutableParamUIMetadata ParamUIMetadata;

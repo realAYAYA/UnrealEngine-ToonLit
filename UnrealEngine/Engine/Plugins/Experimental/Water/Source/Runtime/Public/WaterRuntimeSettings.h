@@ -33,12 +33,16 @@ public:
 
 	UMaterialInterface* GetDefaultWaterInfoMaterial() const;
 
+	UE_DEPRECATED(5.4, "Seting moved to WaterBodyActor")
 	TSubclassOf<UWaterBodyRiverComponent> GetWaterBodyRiverComponentClass() const;
 
+	UE_DEPRECATED(5.4, "Seting moved to WaterBodyActor")
 	TSubclassOf<UWaterBodyLakeComponent> GetWaterBodyLakeComponentClass() const;
 
+	UE_DEPRECATED(5.4, "Seting moved to WaterBodyActor")
 	TSubclassOf<UWaterBodyOceanComponent> GetWaterBodyOceanComponentClass() const;
 
+	UE_DEPRECATED(5.4, "Seting moved to WaterBodyActor")
 	TSubclassOf<UWaterBodyCustomComponent> GetWaterBodyCustomComponentClass() const;
 
 	//#todo_water: how can we put these settins on the editor settings but still access them from the WaterModule?
@@ -76,17 +80,17 @@ private:
 	UPROPERTY(EditAnywhere, config, Category = Water)
 	TSoftObjectPtr<UMaterialInterface> DefaultWaterInfoMaterial;
 	
-	UPROPERTY(EditAnywhere, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyRiverComponent"))
-	TSubclassOf<UWaterBodyRiverComponent> WaterBodyRiverComponentClass;
+	UPROPERTY(Config, meta=(DeprecatedProperty, DeprecationMessage = "Moved to WaterBodyActor", MetaClass = "/Script/Water.WaterBodyRiverComponent"))
+	TSubclassOf<UWaterBodyRiverComponent> WaterBodyRiverComponentClass_DEPRECATED;
 
-	UPROPERTY(EditAnywhere, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyLakeComponent"))
-	TSubclassOf<UWaterBodyLakeComponent> WaterBodyLakeComponentClass;
+	UPROPERTY(Config, meta=(DeprecatedProperty, DeprecationMessage = "Moved to WaterBodyActor", MetaClass = "/Script/Water.WaterBodyLakeComponent"))
+	TSubclassOf<UWaterBodyLakeComponent> WaterBodyLakeComponentClass_DEPRECATED;
 
-	UPROPERTY(EditAnywhere, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyOceanComponent"))
-	TSubclassOf<UWaterBodyOceanComponent> WaterBodyOceanComponentClass;
+	UPROPERTY(Config, meta=(DeprecatedProperty, DeprecationMessage = "Moved to WaterBodyActor", MetaClass = "/Script/Water.WaterBodyOceanComponent"))
+	TSubclassOf<UWaterBodyOceanComponent> WaterBodyOceanComponentClass_DEPRECATED;
 
-	UPROPERTY(EditAnywhere, Config, Category = Water,  meta = (MetaClass = "/Script/Water.WaterBodyCustomComponent"))
-	TSubclassOf<UWaterBodyCustomComponent> WaterBodyCustomComponentClass;
+	UPROPERTY(Config, meta=(DeprecatedProperty, DeprecationMessage = "Moved to WaterBodyActor", MetaClass = "/Script/Water.WaterBodyCustomComponent"))
+	TSubclassOf<UWaterBodyCustomComponent> WaterBodyCustomComponentClass_DEPRECATED;
 
 	// #todo_water: move this
 	/** If enabled, MapCheck will notify users that their ocean does not completely fill the water zone. This can be desirable in some cases but the default should be to fill completely. */

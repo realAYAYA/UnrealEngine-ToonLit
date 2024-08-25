@@ -313,48 +313,51 @@ public:
 	 */
 	struct Builder
 	{
-		FORCEINLINE Builder()
-			: Box(ForceInitToZero)
+		FORCEINLINE Builder& operator+=(const TBoxSphereBounds<T, TExtent>& Other)
 		{
+			return Append(Other);
 		}
 
-		FORCEINLINE Builder& operator+=(const TBoxSphereBounds<T, TExtent>& OtherBounds)
+		FORCEINLINE Builder& operator+=(const TBox<T>& Box)
 		{
-			Box += OtherBounds.GetBox();
-			return *this;
-		}
-
-		FORCEINLINE Builder& operator+=(const TBox<T>& OtherBox)
-		{
-			Box += OtherBox;
-			return *this;
+			return Append(Box);
 		}
 
 		FORCEINLINE Builder& operator+=(const TSphere<T>& Sphere)
 		{
-			Box += Sphere.Center + TVector<T>(Sphere.W);
-			Box += Sphere.Center - TVector<T>(Sphere.W);
-			return *this;
+			return Append(Sphere);
 		}
 
 		FORCEINLINE Builder& operator+=(const TVector<T>& Point)
 		{
-			Box += Point;
-			return *this;
+			return Append(TBoxSphereBounds<T, TExtent>(Point, TVector<T>::ZeroVector, T(0)));
 		}
 
 		FORCEINLINE bool IsValid() const
 		{
-			return !!Box.IsValid;
+			return BoxSphereBounds.IsSet();
 		}
 
 		FORCEINLINE operator TBoxSphereBounds<T, TExtent>() const
 		{
-			return TBoxSphereBounds<T, TExtent>(Box);
+			return BoxSphereBounds.Get(TBoxSphereBounds<T, TExtent>(ForceInitToZero));
 		}
 
 	private:
-		TBox<T> Box;
+		FORCEINLINE Builder& Append(const TBoxSphereBounds<T, TExtent>& Other)
+		{
+			if (IsValid())
+			{
+				*BoxSphereBounds = *BoxSphereBounds + Other;
+			}
+			else
+			{
+				BoxSphereBounds.Emplace(Other);
+			}
+			return *this;
+		}
+
+		TOptional<TBoxSphereBounds<T, TExtent>> BoxSphereBounds;
 	};
 };
 

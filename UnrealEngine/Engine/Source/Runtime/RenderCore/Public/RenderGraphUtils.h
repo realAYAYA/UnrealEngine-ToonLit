@@ -35,9 +35,6 @@
 #include "Templates/RefCounting.h"
 #include "Templates/UnrealTemplate.h"
 #include "Templates/UnrealTypeTraits.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "RHIGPUReadback.h"
-#endif
 #include "PipelineStateCache.h"
 
 #include <initializer_list>
@@ -271,14 +268,19 @@ inline FRDGBufferRef TryRegisterExternalBuffer(
 	return ExternalPooledBuffer ? GraphBuilder.RegisterExternalBuffer(ExternalPooledBuffer, Flags) : nullptr;
 }
 
-inline FRDGTextureRef RegisterExternalTexture(FRDGBuilder& GraphBuilder, FRHITexture* Texture, const TCHAR* NameIfUnregistered)
+inline FRDGTextureRef RegisterExternalTexture(FRDGBuilder& GraphBuilder, FRHITexture* Texture, const TCHAR* NameIfUnregistered, ERDGTextureFlags Flags)
 {
 	if (FRDGTextureRef FoundTexture = GraphBuilder.FindExternalTexture(Texture))
 	{
 		return FoundTexture;
 	}
 
-	return GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Texture, NameIfUnregistered));
+	return GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Texture, NameIfUnregistered), Flags);
+}
+
+inline FRDGTextureRef RegisterExternalTexture(FRDGBuilder& GraphBuilder, FRHITexture* Texture, const TCHAR* NameIfUnregistered)
+{
+	return RegisterExternalTexture(GraphBuilder, Texture, NameIfUnregistered, ERDGTextureFlags::None);
 }
 
 /** Simple pair of RDG textures used for MSAA. */
@@ -448,7 +450,7 @@ namespace FComputeShaderUtils
 
 	inline void ValidateIndirectArgsBuffer(const FRDGBufferRef IndirectArgsBuffer, uint32 IndirectArgOffset)
 	{
-		checkf(EnumHasAnyFlags(IndirectArgsBuffer->Desc.Usage, EBufferUsageFlags::VertexBuffer), TEXT("The buffer %s needs to be a vertex buffer to be used as an indirect dispatch parameters"), IndirectArgsBuffer->Name);
+		checkf(EnumHasAnyFlags(IndirectArgsBuffer->Desc.Usage, EBufferUsageFlags::VertexBuffer | EBufferUsageFlags::ByteAddressBuffer), TEXT("The buffer %s needs to be a vertex or byte address buffer to be used as an indirect dispatch parameters"), IndirectArgsBuffer->Name);
 		checkf(EnumHasAnyFlags(IndirectArgsBuffer->Desc.Usage, EBufferUsageFlags::DrawIndirect), TEXT("The buffer %s for indirect dispatch parameters was not flagged with BUF_DrawIndirect"), IndirectArgsBuffer->Name);
 		ValidateIndirectArgsBuffer(IndirectArgsBuffer->GetSize(), IndirectArgOffset);
 	}
@@ -693,9 +695,6 @@ namespace FComputeShaderUtils
 		return AddPass(GraphBuilder, Forward<FRDGEventName>(PassName), ERDGPassFlags::Compute, ComputeShader, Parameters, IndirectArgsBuffer, IndirectArgsOffset, MoveTemp(DispatchLateParamCallback));
 	}
 
-	RENDERCORE_API void ClearUAV(FRDGBuilder& GraphBuilder, FGlobalShaderMap* ShaderMap, FRDGBufferUAVRef UAV, uint32 ClearValue);
-	RENDERCORE_API void ClearUAV(FRDGBuilder& GraphBuilder, FGlobalShaderMap* ShaderMap, FRDGBufferUAVRef UAV, FVector4f ClearValue);
-
 	/**
 	 * Create and set up an 1D indirect dispatch argument from some GPU-side integer in a buffer (InputCountBuffer).
 	 * 	Sets up a group count as (InputCountBuffer[InputCountOffset] * Multiplier + Divisor - 1U) / Divisor;
@@ -913,6 +912,26 @@ FORCEINLINE FRDGBufferRef CreateStructuredBuffer(
 }
 
 /**
+ * Helper to create a structured buffer with initial data from a TArray with move semantics, this can be cheaper as it guarantees the lifetimes of the data & permits copy-free upload.
+ */
+template <typename ElementType, typename AllocatorType>
+FORCEINLINE FRDGBufferRef CreateStructuredBuffer(
+	FRDGBuilder& GraphBuilder,
+	const TCHAR* Name,
+	TArray<ElementType, AllocatorType>&& InitialData)
+{
+	static const ElementType DummyElement = ElementType();
+	if (InitialData.Num() == 0)
+	{
+		return CreateStructuredBuffer(GraphBuilder, Name, InitialData.GetTypeSize(), 1, &DummyElement, InitialData.GetTypeSize(), ERDGInitialDataFlags::NoCopy);
+	}
+
+	// Create a move-initialized copy of the TArray with RDG lifetime & move the data there.
+	TArray<ElementType, AllocatorType>& UploadData = *GraphBuilder.AllocObject<TArray<ElementType, AllocatorType> >(MoveTemp(InitialData));
+	return CreateStructuredBuffer(GraphBuilder, Name, UploadData.GetTypeSize(), UploadData.Num(), UploadData.GetData(), UploadData.Num() * UploadData.GetTypeSize(), ERDGInitialDataFlags::NoCopy);
+}
+
+/**
  * Helper to create a structured buffer with initial data from a TConstArrayView.
  */
 template <typename ElementType>
@@ -1033,6 +1052,21 @@ FORCEINLINE FRDGBufferRef CreateStructuredUploadBuffer(
 	return Buffer;
 }
 
+/**
+ * Helper to create a byte address upload buffer with initial data from a TArray.
+ * NOTE: does not provide a 1-size fallback for empty initial data.
+ */
+template <typename ElementType, typename AllocatorType>
+FORCEINLINE FRDGBufferRef CreateByteAddressUploadBuffer(
+	FRDGBuilder& GraphBuilder,
+	const TCHAR* Name,
+	const TArray<ElementType, AllocatorType> &InitialData,
+	ERDGInitialDataFlags InitialDataFlags = ERDGInitialDataFlags::None)
+{
+	FRDGBufferRef Buffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateByteAddressUploadDesc(sizeof(ElementType) * InitialData.Num()), Name);
+	GraphBuilder.QueueBufferUpload(Buffer, TConstArrayView<ElementType>(InitialData), InitialDataFlags);
+	return Buffer;
+}
 
 /** Creates a vertex buffer with initial data by creating an upload pass. */
 RENDERCORE_API FRDGBufferRef CreateVertexBuffer(

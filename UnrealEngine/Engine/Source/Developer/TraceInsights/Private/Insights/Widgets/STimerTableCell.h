@@ -124,7 +124,7 @@ protected:
 
 	EVisibility HasExtraDisplayName() const
 	{
-		return TimerNodePtr->GetType() == ETimerNodeType::Group && TimerNodePtr->HasExtraDisplayName() ? EVisibility::Visible : EVisibility::Collapsed;
+		return TimerNodePtr->HasExtraDisplayName() ? EVisibility::Visible : EVisibility::Collapsed;
 	}
 
 	FText GetValueAsText() const;

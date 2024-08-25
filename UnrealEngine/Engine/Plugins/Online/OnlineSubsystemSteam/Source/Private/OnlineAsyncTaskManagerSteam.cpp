@@ -611,7 +611,7 @@ void FOnlineAsyncTaskManagerSteam::OnSteamServersDisconnected(SteamServersDiscon
 }
 
 /**
- * Notification event from Steam that server session has connected with the master server
+ * Notification event from Steam that server session has connected with the server list
  */
 class FOnlineAsyncEventSteamServerConnectedGS : public FOnlineAsyncEvent<FOnlineSubsystemSteam>
 {
@@ -683,7 +683,7 @@ void FOnlineAsyncTaskManagerSteam::OnSteamServersConnectedGS(SteamServersConnect
 }
 
 /**
- * Notification event from Steam that server session has been disconnected with the master server
+ * Notification event from Steam that server session has been disconnected with the server list
  */
 class FOnlineAsyncEventSteamServerDisconnectedGS : public FOnlineAsyncEvent<FOnlineSubsystemSteam>
 {
@@ -881,6 +881,55 @@ void FOnlineAsyncTaskManagerSteam::OnPolicyResponseGS(GSPolicyResponse_t* Callba
 	AddToOutQueue(NewEvent);
 }
 
+class FOnlineAsyncEventSteamGetTicketForWebApiResponse : public FOnlineAsyncEvent<FOnlineSubsystemSteam>
+{
+private:
+	GetTicketForWebApiResponse_t CallbackResults;
+
+public:
+	FOnlineAsyncEventSteamGetTicketForWebApiResponse(FOnlineSubsystemSteam* InSubsystem, const GetTicketForWebApiResponse_t& InResults)
+		: FOnlineAsyncEvent(InSubsystem)
+		, CallbackResults(InResults)
+	{
+	}
+
+	virtual ~FOnlineAsyncEventSteamGetTicketForWebApiResponse()
+	{
+	}
+
+	/**
+	*	Get a human readable description of task
+	*/
+	virtual FString ToString() const override
+	{
+		return FString::Printf(TEXT("FOnlineAsyncEventSteamGetTicketForWebApiResponse Received code %d."), (int32)CallbackResults.m_eResult);
+	}
+
+	/**
+	* Give the async task a chance to marshal its data back to the game thread
+	* Can only be called on the game thread by the async task manager
+	*/
+	virtual void Finalize() override
+	{
+		FOnlineAuthSteamPtr AuthInt = StaticCastSharedPtr<FOnlineAuthSteam>(Subsystem->GetAuthInterface());
+		if (AuthInt.IsValid())
+		{
+			FString ResultToken = BytesToHex(CallbackResults.m_rgubTicket, CallbackResults.m_cubTicket);
+			AuthInt->OnGetTicketForWebResponse(CallbackResults.m_hAuthTicket, ResultToken);
+		}
+		else
+		{
+			UE_LOG_ONLINE(Warning, TEXT("Auth interface is not valid!"));
+		}
+	}
+};
+
+void FOnlineAsyncTaskManagerSteam::OnGetTicketForWebApiResponse(GetTicketForWebApiResponse_t* CallbackData)
+{
+	FOnlineAsyncEventSteamGetTicketForWebApiResponse* NewEvent = new FOnlineAsyncEventSteamGetTicketForWebApiResponse(SteamSubsystem, *CallbackData);
+	UE_LOG_ONLINE(Verbose, TEXT("%s"), *NewEvent->ToString());
+	AddToOutQueue(NewEvent);
+}
 
 class FOnlineAsyncEventSteamAuthenticationResponse : public FOnlineAsyncEvent<FOnlineSubsystemSteam>
 {

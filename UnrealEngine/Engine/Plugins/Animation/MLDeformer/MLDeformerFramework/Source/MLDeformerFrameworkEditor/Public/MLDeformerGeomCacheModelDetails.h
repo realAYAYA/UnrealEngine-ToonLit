@@ -28,13 +28,13 @@ namespace UE::MLDeformer
 	public:
 		// FMLDeformerModelDetails overrides.
 		virtual bool UpdateMemberPointers(const TArray<TWeakObjectPtr<UObject>>& Objects) override;
-		virtual void AddTargetMesh() override;
-		virtual void AddAnimSequenceErrors() override;
+		virtual void AddTrainingInputAnims() override;
 		// ~END FMLDeformerModelDetails overrides.
 
 	protected:
 		/** Add warnings to the UI about mesh mapping errors when mapping between geometry caches and a skeletal mesh. */
-		void AddGeomCacheMeshMappingWarnings(IDetailCategoryBuilder* InTargetMeshCategoryBuilder, USkeletalMesh* SkeletalMesh, UGeometryCache* GeometryCache);
+		UE_DEPRECATED(5.4, "This method will be removed.")
+		void AddGeomCacheMeshMappingWarnings(IDetailCategoryBuilder* InTargetMeshCategoryBuilder, USkeletalMesh* SkeletalMesh, UGeometryCache* GeometryCache) {}
 
 	protected:
 		/** The geometry cache based runtime model. This value gets updated once UpdateMemberPointers gets called. */

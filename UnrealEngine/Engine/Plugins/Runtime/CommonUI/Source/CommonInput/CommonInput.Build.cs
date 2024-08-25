@@ -45,7 +45,7 @@ public class CommonInput : ModuleRules
 		}
 
 		PrivateDefinitions.Add("UE_COMMONINPUT_PLATFORM_KBM_REQUIRES_ATTACHED_MOUSE=" + (bPlatformKBMRequiresAttachedMouse ? "1" : "0"));
-		PrivateDefinitions.Add("UE_COMMONINPUT_PLATFORM_SUPPORTS_TOUCH=" + (bPlatformSupportsTouch ? "1" : "0"));
+		PrivateDefinitions.Add("UE_COMMONINPUT_FORCE_TOUCH_SUPPORT_DISABLED=" + (bForceTouchSupportDisabled ? "1" : "0"));
 	}
 
 	static public string ToCommonUIPlatform(UnrealTargetPlatform TargetPlatform)
@@ -75,15 +75,5 @@ public class CommonInput : ModuleRules
 	}
 
 	protected virtual bool bPlatformKBMRequiresAttachedMouse { get { return false; } }
-	protected virtual bool bPlatformSupportsTouch
-	{
-		get
-		{
-			// Support touch testing until touch is supported on desktop
-			return (Target.Platform.IsInGroup(UnrealPlatformGroup.Desktop) && Target.Configuration != UnrealTargetConfiguration.Shipping)
-					// Platforms always with touch support
-					|| (Target.Platform == UnrealTargetPlatform.Android)
-					|| (Target.Platform == UnrealTargetPlatform.IOS);
-		}
-	}
+	protected virtual bool bForceTouchSupportDisabled { get { return false; } }
 }

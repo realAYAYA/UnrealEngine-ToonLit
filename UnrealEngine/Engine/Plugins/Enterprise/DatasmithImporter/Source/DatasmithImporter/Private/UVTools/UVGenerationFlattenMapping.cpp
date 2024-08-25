@@ -350,7 +350,7 @@ void FUVGenerationFlattenMappingInternal::GetUVIslands(const TArray< TArray<Face
 
 			while ( CurrentFacesToSearch.Num() > 0 )
 			{
-				int32 CurrentFaceIndex = CurrentFacesToSearch.Pop( false );
+				int32 CurrentFaceIndex = CurrentFacesToSearch.Pop( EAllowShrinking::No );
 
 				for (int32 Edge = 0; Edge < 3; Edge++)
 				{
@@ -1062,7 +1062,7 @@ void FUVGenerationFlattenMappingInternal::CalculateUVs(TArray<FaceStruct>& Flatt
 	TempMeshFaces.RemoveAllSwap([](const TSet< FUVGenerationFlattenMappingInternal::FaceStruct* >& Element)
 	{
 		return Element.Num() <= 0;
-	}, false);
+	}, EAllowShrinking::No);
 
 	const int32 NumGeomGroupsNotEmpty = TempMeshFaces.Num();
 

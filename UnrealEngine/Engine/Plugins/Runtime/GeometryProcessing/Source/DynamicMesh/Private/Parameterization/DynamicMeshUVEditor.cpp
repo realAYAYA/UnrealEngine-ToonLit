@@ -194,6 +194,36 @@ void FDynamicMeshUVEditor::TransformUVElements(const TArray<int32>& ElementIDs, 
 }
 
 
+void FDynamicMeshUVEditor::SetToPerVertexUVs(TArray<int32>& VertexToUVOut, bool& bIsIdentityMapOut, FUVEditResult* Result)
+{
+	bIsIdentityMapOut = true;
+	VertexToUVOut.Init(IndexConstants::InvalidID, Mesh->MaxVertexID());
+
+	UVOverlay->ClearElements();
+	for (int32 VertexID : Mesh->VertexIndicesItr())
+	{
+		int32 UVID = UVOverlay->AppendElement(FVector2f::Zero());
+		VertexToUVOut[VertexID] = UVID;
+		bIsIdentityMapOut &= (UVID == VertexID);
+
+		if (Result)
+		{
+			Result->NewUVElements.Add(UVID);
+		}
+	}
+
+	for (int32 TriangleID : Mesh->TriangleIndicesItr())
+	{
+		FIndex3i Tri = Mesh->GetTriangle(TriangleID);
+		Tri.A = VertexToUVOut[Tri.A];
+		Tri.B = VertexToUVOut[Tri.B];
+		Tri.C = VertexToUVOut[Tri.C];
+		UVOverlay->SetTriangle(TriangleID, Tri);
+	}
+
+}
+
+
 template<typename EnumerableType>
 void InternalSetPerTriangleUVs(EnumerableType TriangleIDs, const FDynamicMesh3* Mesh, FDynamicMeshUVOverlay* UVOverlay, double ScaleFactor, FUVEditResult* Result)
 {

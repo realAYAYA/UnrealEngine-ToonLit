@@ -227,10 +227,15 @@ void FGroomCacheStreamingManager::UnregisterGroomCache(UGroomCache* GroomCache, 
 {
 	FScopeLock Lock(&CriticalSection);
 
-	TSet<UGroomComponent*>& Users = GroomCacheUsers.FindChecked(GroomCache);
-	Users.Remove(GroomComponent);
+	TSet<UGroomComponent*>* Users = GroomCacheUsers.Find(GroomCache);
+	if (!Users)
+	{
+		return;
+	}
 
-	if (Users.Num() == 0)
+	Users->Remove(GroomComponent);
+
+	if (Users->Num() == 0)
 	{
 		FGroomCacheStreamingData** StreamingData = StreamingGroomCaches.Find(GroomCache);
 		if (StreamingData)

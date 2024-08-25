@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SGameplayTagPicker.h"
 #include "Misc/ConfigCacheIni.h"
@@ -75,6 +75,15 @@ bool SGameplayTagPicker::GetEditableTagContainersFromPropertyHandle(const TShare
 	});
 }
 
+SGameplayTagPicker::~SGameplayTagPicker()
+{
+	if (PostUndoRedoDelegateHandle.IsValid())
+	{
+		FEditorDelegates::PostUndoRedo.Remove(PostUndoRedoDelegateHandle);
+		PostUndoRedoDelegateHandle.Reset();
+	}
+}
+
 void SGameplayTagPicker::Construct(const FArguments& InArgs)
 {
 	TagContainers = InArgs._TagContainers;
@@ -101,6 +110,8 @@ void SGameplayTagPicker::Construct(const FArguments& InArgs)
 
 	bRestrictedTags = InArgs._RestrictedTags;
 
+	PostUndoRedoDelegateHandle = FEditorDelegates::PostUndoRedo.AddSP(this, &SGameplayTagPicker::OnPostUndoRedo);
+	
 	UGameplayTagsManager::OnEditorRefreshGameplayTagTree.AddSP(this, &SGameplayTagPicker::RefreshOnNextTick);
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 
@@ -148,7 +159,7 @@ void SGameplayTagPicker::Construct(const FArguments& InArgs)
 	SettingsCombo->SetOnGetMenuContent(FOnGetContent::CreateSP(this, &SGameplayTagPicker::MakeSettingsMenu, SettingsCombo));
 
 
-	TWeakPtr<SGameplayTagPicker> WeakSelf = StaticCastWeakPtr<SGameplayTagPicker>(AsWeak());
+	TWeakPtr<SGameplayTagPicker> WeakSelf = SharedThis(this);
 	
 	TSharedRef<SWidget> Picker = 
 		SNew(SBorder)
@@ -1488,19 +1499,17 @@ const FString& SGameplayTagPicker::GetGameplayTagsEditorStateIni()
 
 void SGameplayTagPicker::MigrateSettings()
 {
-	if (FConfigSection* EditorPerProjectIniSection = GConfig->GetSectionPrivate(*SettingsIniSection, /*Force=*/false, /*Const=*/true, GEditorPerProjectIni))
+	if (const FConfigSection* EditorPerProjectIniSection = GConfig->GetSection(*SettingsIniSection, /*Force=*/false, GEditorPerProjectIni))
 	{
 		if (EditorPerProjectIniSection->Num() > 0)
 		{
-			FConfigSection* DestinationSection = GConfig->GetSectionPrivate(*SettingsIniSection, /*Force=*/true, /*Const=*/false, GetGameplayTagsEditorStateIni());
-
-			DestinationSection->Reserve(DestinationSection->Num() + EditorPerProjectIniSection->Num());
+			const FString& DestFilename = GetGameplayTagsEditorStateIni();
 			for (const auto& It : *EditorPerProjectIniSection)
 			{
-				DestinationSection->FindOrAdd(It.Key, It.Value);
+				GConfig->AddUniqueToSection(*SettingsIniSection, It.Key, It.Value.GetSavedValue(), DestFilename);
 			}
 
-			GConfig->Flush(false, GetGameplayTagsEditorStateIni());
+			GConfig->Flush(false, DestFilename);
 		}
 
 		GConfig->EmptySection(*SettingsIniSection, GEditorPerProjectIni);
@@ -1775,12 +1784,7 @@ void SGameplayTagPicker::SetTagContainers(TConstArrayView<FGameplayTagContainer>
 	TagContainers = InTagContainers;
 }
 
-void SGameplayTagPicker::PostUndo(bool bSuccess)
-{
-	OnRefreshTagContainers.ExecuteIfBound(*this);
-}
-
-void SGameplayTagPicker::PostRedo(bool bSuccess)
+void SGameplayTagPicker::OnPostUndoRedo()
 {
 	OnRefreshTagContainers.ExecuteIfBound(*this);
 }

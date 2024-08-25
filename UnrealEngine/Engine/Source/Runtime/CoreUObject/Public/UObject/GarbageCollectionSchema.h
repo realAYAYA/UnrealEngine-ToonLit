@@ -8,6 +8,11 @@
 #include "UObject/GarbageCollection.h"
 #include "UObject/NameTypes.h"
 #include "UObject/ObjectPtr.h"
+#include "UObject/VerseTypesFwd.h"
+
+#if (WITH_VERSE_VM && DO_GUARD_SLOW) || defined(__INTELLISENSE__)
+#include "VerseVM/VVMRestValue.h"
+#endif
 
 #ifndef UE_GC_DEBUGNAMES
 #define UE_GC_DEBUGNAMES (!UE_BUILD_SHIPPING)
@@ -34,6 +39,10 @@ enum class EMemberType : uint8
 	ARO,								// Call Add[Struct]ReferencedObjects() on current object / struct
 	SlowARO,							// Call or queue AddReferencedObjects() on current object
 	MemberARO,							// Call AddStructReferencedObjects() on a struct member in current object / struct
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+	VerseValue,							// Member - Verse value
+	VerseValueArray,					// Member - Verse value array
+#endif
 	Count
 };
 
@@ -113,7 +122,7 @@ public:
 	explicit FSchemaView(const FMemberWord* Data, EOrigin Origin = EOrigin::Other)
 	: Handle(reinterpret_cast<uint64>(Data) | static_cast<uint64>(Origin))
 	{
-		static_assert(sizeof(Handle) >= sizeof(Data));
+		static_assert(sizeof(Handle) >= sizeof(Data)); //-V568
 	} 
 	
 		
@@ -327,6 +336,42 @@ TMemberDeclaration<T> MakeNestedMember(const char* Name, uint32 Offset, TArray<S
 {
     return TMemberDeclaration<T>(Name, Offset, EMemberType::StructArray, InnerSchema.Build());
 }
+
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+// Note: VValue, VRestValue and TWriteBarrier<U> share the same EMemberType because they are bit-compatible
+// When a VValue points to a cell, it is bit-identical to the raw pointer so we can bitcast from VCell* to VValue
+// Additionally, a VRestValue is bit-identical to a TWriteBarrier<VValue>/TWriteBarrier<VCell>
+#if DO_GUARD_SLOW
+static_assert(sizeof(::Verse::VValue) == sizeof(::Verse::VCell*), "");
+static_assert(sizeof(::Verse::VValue) == sizeof(::Verse::VRestValue), "");
+static_assert(sizeof(::Verse::VValue) == sizeof(::Verse::TWriteBarrier<::Verse::VValue>), "");
+static_assert(sizeof(::Verse::VValue) == sizeof(::Verse::TWriteBarrier<::Verse::VCell>), "");
+#endif
+
+template<class T>
+TMemberDeclaration<T> MakeMember(const char* Name, uint32 Offset, ::Verse::VRestValue T::*)
+{
+	return TMemberDeclaration<T>(Name, Offset, EMemberType::VerseValue);
+}
+
+template<class T>
+TMemberDeclaration<T> MakeMember(const char* Name, uint32 Offset, TArray<::Verse::VRestValue> T::*)
+{
+	return TMemberDeclaration<T>(Name, Offset, EMemberType::VerseValueArray);
+}
+
+template<class T, typename U>
+TMemberDeclaration<T> MakeMember(const char* Name, uint32 Offset, ::Verse::TWriteBarrier<U> T::*)
+{
+	return TMemberDeclaration<T>(Name, Offset, EMemberType::VerseValue);
+}
+
+template<class T, typename U>
+TMemberDeclaration<T> MakeMember(const char* Name, uint32 Offset, TArray<::Verse::TWriteBarrier<U>> T::*)
+{
+	return TMemberDeclaration<T>(Name, Offset, EMemberType::VerseValueArray);
+}
+#endif
 
 } // namespace Private
 

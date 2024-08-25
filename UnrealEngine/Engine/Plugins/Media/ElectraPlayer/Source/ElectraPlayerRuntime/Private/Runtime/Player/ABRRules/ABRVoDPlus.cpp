@@ -42,7 +42,7 @@ public:
 	void ReportPlaybackEnded() override;
 
 	FTimeValue GetMinBufferTimeForPlayback(IAdaptiveStreamSelector::EMinBufferType InBufferingType, FTimeValue InDefaultMBT) override;
-	IAdaptiveStreamSelector::FRebufferAction GetRebufferAction(const FParamDict& CurrentPlayerOptions) override;
+	IAdaptiveStreamSelector::FRebufferAction GetRebufferAction() override;
 	IAdaptiveStreamSelector::EHandlingAction PeriodicHandle() override;
 	void DebugPrint(void* pThat, void (*pPrintFN)(void* pThat, const char *pFmt, ...)) override;
 
@@ -272,10 +272,10 @@ FABROnDemandPlus::FABROnDemandPlus(IABRInfoInterface* InInfo, EMediaFormatType I
 	, FormatType(InFormatType)
 	, PresentationType(InPresentationType)
 {
-	bRebufferingJustResumesLoading = Info->GetPlayerOptions().GetValue(OptionRebufferingContinuesLoading).SafeGetBool(false);
-	if (Info->GetPlayerOptions().HaveKey(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus))
+	bRebufferingJustResumesLoading = Info->GetOptionValue(OptionRebufferingContinuesLoading).SafeGetBool(false);
+	if (Info->HaveOptionValue(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus))
 	{
-		HTTPStatusCodeToDenyStream.Set((int32) Info->GetPlayerOptions().GetValue(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus).SafeGetInt64(-1));
+		HTTPStatusCodeToDenyStream.Set((int32) Info->GetOptionValue(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus).SafeGetInt64(-1));
 	}
 
 	FTimeRange RenderRange = Info->ABRGetSupportedRenderRateScale();
@@ -473,13 +473,16 @@ void FABROnDemandPlus::ReportDownloadEnd(const Metrics::FSegmentDownloadStats& S
 			const int64 LastAddedBandwidth = WorkVars->AverageBandwidth.GetLastSample();
 			const int32 NextHighestQualityIndex = QualityIndex + 1 < StreamInformation.Num() ? QualityIndex + 1 : QualityIndex;
 			const int32 NextHighestBitrate = StreamInformation[NextHighestQualityIndex]->Bitrate;
+			const double InverseUsableBandwidthScaleFactor = IsAudioOnly() ? 2.0 / UsableBandwidthScaleFactor : 1.0 / UsableBandwidthScaleFactor;
+			const double PretendedLatency = IsAudioOnly() ? 0.06 : 0.12;
+
 			// Last seen bandwidth already higher than what we might want to switch up to next?
 			if (LastAddedBandwidth > NextHighestBitrate)
 			{
 				// We want to bring the average down a bit in preparation for the next uncached segment in case the network
 				// has degraded. This way we are not overshooting the target.
 				ThisBitrate = (LastAddedBandwidth + NextHighestBitrate) / 2;
-				WorkVars->AverageBandwidth.AddValue(ThisBitrate);
+				WorkVars->AverageBandwidth.AddValue(ThisBitrate * InverseUsableBandwidthScaleFactor);
 			}
 			else if (LastAddedBandwidth > ThisBitrate)
 			{
@@ -488,14 +491,15 @@ void FABROnDemandPlus::ReportDownloadEnd(const Metrics::FSegmentDownloadStats& S
 				// at lightning speed and have its duration worth of time to spend on attempting the next segment download.
 				// If that doesn't finish in time we can downswitch without hurting things too much.
 				ThisBitrate = NextHighestBitrate;
-				WorkVars->AverageBandwidth.InitializeTo(ThisBitrate);
+				WorkVars->AverageBandwidth.InitializeTo(ThisBitrate * InverseUsableBandwidthScaleFactor);
 			}
 			else
 			{
 				// Let's try to bring the average up a bit.
 				ThisBitrate = (int32)(ThisBitrate * 0.2 + NextHighestBitrate * 0.8);
-				WorkVars->AverageBandwidth.AddValue(ThisBitrate);
+				WorkVars->AverageBandwidth.AddValue(ThisBitrate * InverseUsableBandwidthScaleFactor);
 			}
+			WorkVars->AverageLatency.AddValue(PretendedLatency);
 		}
 
 		// Adjust any forced bitrate duration.
@@ -726,9 +730,14 @@ IAdaptiveStreamSelector::ESegmentAction FABROnDemandPlus::EvaluateForError(TArra
 										CurrentStreamInfo->Health.BecomesAvailableAgainAtUTC = TimeNow + FTimeValue().SetFromMilliseconds(1000);
 									}
 								}
+								else if (IsAudioOnly() && Stats.RetryNumber < 2)
+								{
+									OutDelay.SetFromMilliseconds(400);
+									bRetryIfPossible = true;
+								}
 								else
 								{
-									// Need to insert filler data instead.
+									// Insert filler data instead.
 									bRetryIfPossible = false;
 								}
 							}
@@ -969,7 +978,7 @@ FTimeValue FABROnDemandPlus::GetMinBufferTimeForPlayback(IAdaptiveStreamSelector
 	return FTimeValue();
 }
 
-IAdaptiveStreamSelector::FRebufferAction FABROnDemandPlus::GetRebufferAction(const FParamDict& CurrentPlayerOptions)
+IAdaptiveStreamSelector::FRebufferAction FABROnDemandPlus::GetRebufferAction()
 {
 	IAdaptiveStreamSelector::FRebufferAction Action;
 	Action.Action = bRebufferingJustResumesLoading ? IAdaptiveStreamSelector::FRebufferAction::EAction::ContinueLoading : IAdaptiveStreamSelector::FRebufferAction::EAction::Restart;

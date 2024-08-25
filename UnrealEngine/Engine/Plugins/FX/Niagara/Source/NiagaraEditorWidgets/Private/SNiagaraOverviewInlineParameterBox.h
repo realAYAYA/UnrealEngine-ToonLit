@@ -42,6 +42,7 @@ private:
 	/** We build a substitute map of entries that we want to */
 	TWeakObjectPtr<const UNiagaraStackFunctionInput> FindSubstituteEntry(const UNiagaraStackFunctionInput* Input);
 
+	void OnModuleItemStructureChanged(ENiagaraStructureChangedFlags);
 private:
 	/** The module item whose parameters this box is representing */
 	TWeakObjectPtr<UNiagaraStackModuleItem> ModuleItem;

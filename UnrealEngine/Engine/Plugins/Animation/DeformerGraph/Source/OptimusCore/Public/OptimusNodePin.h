@@ -89,11 +89,18 @@ public:
 	/** Returns the data domain that this pin is expected to cover */
 	const FOptimusDataDomain& GetDataDomain() const { return DataDomain; }
 	
-	/** Return all component source bindings that flow into this input pin. If the pin is an
-	 *  output pin, it always returns an empty array.
+	/** Return all component source bindings that flow into pin. 
 	 */
-	TSet<UOptimusComponentSourceBinding*> GetComponentSourceBindings() const;
+	TSet<UOptimusComponentSourceBinding*> GetComponentSourceBindings(const FOptimusPinTraversalContext& InContext) const;
 
+	/** Return all component source bindings that flow into this input pin and its sub-pins.
+	 */
+	TSet<UOptimusComponentSourceBinding*> GetComponentSourceBindingsRecursively(const FOptimusPinTraversalContext& InContext) const;
+
+	/** Whether the data presented by the pin can change over time
+	 */
+	bool IsMutable(const FOptimusPinTraversalContext& InContext) const;
+	
 	/** Returns the FProperty object for this pin. This can be used to directly address the
 	  * node data represented by this pin. Not all pins have an underlying resource so this can
 	  * return nullptr.

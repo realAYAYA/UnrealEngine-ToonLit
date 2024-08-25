@@ -20,176 +20,51 @@ namespace StageAppBeaconReceiverConstants
 }
 
 FStageAppBeaconReceiver::FStageAppBeaconReceiver()
-	: Guid(FGuid::NewGuid())
+	: FDiscoveryBeaconReceiver(
+		TEXT("StageAppBeaconResponder"),
+		StageAppBeaconReceiverConstants::ProtocolIdentifier,
+		StageAppBeaconReceiverConstants::ProtocolVersion
+	)
 {
 }
 
 void FStageAppBeaconReceiver::Startup()
+{
+	WebsocketPort = GetDefault<URemoteControlSettings>()->RemoteControlWebSocketServerPort;
+
+	FDiscoveryBeaconReceiver::Startup();
+}
+
+bool FStageAppBeaconReceiver::GetDiscoveryAddress(FIPv4Address& OutAddress) const
 {
 	const UStageAppSettings& Settings = *GetDefault<UStageAppSettings>();
 	FIPv4Address DiscoveryAddress;
 	if (!FIPv4Address::Parse(Settings.DiscoveryEndpoint, DiscoveryAddress))
 	{
 		UE_LOG(LogRemoteControl, Error, TEXT("Failed to parse Stage App discovery endpoint address \"%s\""), *Settings.DiscoveryEndpoint);
-		return;
+		return false;
 	}
 
-	WebsocketPort = GetDefault<URemoteControlSettings>()->RemoteControlWebSocketServerPort;
-
-	Socket = FUdpSocketBuilder(TEXT("StageAppBeaconResponder"))
-		.AsNonBlocking()
-		.AsReusable()
-		.BoundToPort(Settings.DiscoveryPort)
-		.WithMulticastLoopback()
-		.WithReceiveBufferSize(256);
-
-	if (!Socket)
-	{
-		UE_LOG(LogRemoteControl, Warning, TEXT("StageAppBeaconReceiver failed to create multicast socket"));
-		return;
-	}
-
-	// Listen for multicast packets on all interfaces.
-	// Note: If a new interface appears later on, the socket will need to join it in order to receive multicast packets from it.
-	{
-		TSharedRef<FInternetAddr> DiscoveryInternetAddr = FIPv4Endpoint(DiscoveryAddress, 0).ToInternetAddr(); // Note: Port will be ignored by JoinMulticastGroup
-
-		TArray<TSharedPtr<FInternetAddr>> LocapIps;
-		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->GetLocalAdapterAddresses(LocapIps);
-
-		for (TSharedPtr<FInternetAddr>& LocalIp : LocapIps)
-		{
-			if (!LocalIp.IsValid())
-			{
-				continue;
-			}
-			
-			const bool bJoinedGroup = Socket->JoinMulticastGroup(*DiscoveryInternetAddr, *LocalIp);
-
-			if (bJoinedGroup)
-			{
-				UE_LOG(LogRemoteControl, Log,
-					TEXT("StageAppBeaconReceiver joined multicast group '%s' on detected local interface '%s'"),
-					*DiscoveryAddress.ToString(), *LocalIp->ToString(false));
-			}
-			else
-			{
-				UE_LOG(LogRemoteControl, Warning,
-					TEXT("StageAppBeaconReceiver failed to join multicast group '%s' on detected local interface '%s'"),
-					*DiscoveryAddress.ToString(), *LocalIp->ToString(false));
-			}
-		}
-	}
-
-	Thread.Reset(FRunnableThread::Create(this, TEXT("StageAppBeaconResponderThread"), 0, TPri_Normal, FPlatformAffinity::GetPoolThreadMask()));
-}
-
-void FStageAppBeaconReceiver::Shutdown()
-{
-	if (Thread)
-	{
-		Thread->Kill();
-		Thread = nullptr;
-	}
-
-	if (Socket)
-	{
-		ISocketSubsystem::Get()->DestroySocket(Socket);
-	}
-}
-
-bool FStageAppBeaconReceiver::Init()
-{
+	OutAddress = DiscoveryAddress;
 	return true;
 }
 
-uint32 FStageAppBeaconReceiver::Run()
+int32 FStageAppBeaconReceiver::GetDiscoveryPort() const
 {
 	const UStageAppSettings& Settings = *GetDefault<UStageAppSettings>();
-	const FTimespan WaitTime = FTimespan::FromSeconds(Settings.DiscoverySocketWaitTime);
-
-	while (!bStopping)
-	{
-		if (!Socket)
-		{
-			return 0;
-		}
-
-		Socket->Wait(ESocketWaitConditions::WaitForRead, WaitTime);
-		ReceiveBeaconMessages();
-	}
-
-	return 0;
+	return Settings.DiscoveryPort;
 }
 
-void FStageAppBeaconReceiver::Stop()
+bool FStageAppBeaconReceiver::MakeBeaconResponse(uint8 BeaconProtocolVersion, FArrayReader& InMessageData, FArrayWriter& OutResponseData) const
 {
-	bStopping = true;
-}
-
-void FStageAppBeaconReceiver::ReceiveBeaconMessages()
-{
-	if (!Socket)
-	{
-		return;
-	}
-
-	uint32 PendingDataSize;
-	if (Socket->HasPendingData(PendingDataSize) && PendingDataSize > 0)
-	{
-		FArrayReader MessageData = FArrayReader(true);
-		MessageData.SetNumUninitialized(PendingDataSize);
-
-		int32 NumRead;
-		TSharedRef<FInternetAddr> Source = ISocketSubsystem::Get()->CreateInternetAddr();
-		if (Socket->RecvFrom(MessageData.GetData(), MessageData.Num(), NumRead, *Source) && NumRead > 0)
-		{
-			HandleBeaconMessage(MessageData, Source);
-		}
-	}
-}
-
-void FStageAppBeaconReceiver::HandleBeaconMessage(FArrayReader& MessageData, TSharedRef<FInternetAddr> Source)
-{
-	if (MessageData.Num() != 5)
-	{
-		return;
-	}
-
-	// Check that the protocol identifier matches. If not, this message is probably unrelated.
-	for (const uint8 ExpectedByte : StageAppBeaconReceiverConstants::ProtocolIdentifier)
-	{
-		uint8 AppByte;
-		MessageData << AppByte;
-
-		if (AppByte != ExpectedByte)
-		{
-			return;
-		}
-	}
-
-	// We don't do anything with this yet, but could use it to ignore beacons from apps with incompatible protocols
-	uint8 AppProtocolVersion;
-	MessageData << AppProtocolVersion;
-
 	const FString FriendlyName = GetFriendlyName();
 
-	FArrayWriter Writer(true);
-
-#if !PLATFORM_LITTLE_ENDIAN
-	// App expects little-endian byte order
-	Writer.SetByteSwapping(true);
-#endif
-
 	{
-		Writer << (uint8&)StageAppBeaconReceiverConstants::ProtocolVersion;
-		Writer << Guid;
-		Writer << (uint32&)WebsocketPort;
-		Writer << (FString&)FriendlyName;
+		OutResponseData << (uint32&)WebsocketPort;
+		OutResponseData << (FString&)FriendlyName;
 	}
 
-	int32 Sent;
-	Socket->SendTo(Writer.GetData(), Writer.Num(), Sent, *Source);
+	return true;
 }
 
 FString FStageAppBeaconReceiver::GetFriendlyName() const

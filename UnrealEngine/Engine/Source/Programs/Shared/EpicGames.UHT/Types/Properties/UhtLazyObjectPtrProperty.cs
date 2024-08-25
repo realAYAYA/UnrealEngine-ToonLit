@@ -49,10 +49,6 @@ namespace EpicGames.UHT.Types
 		{
 			switch (textType)
 			{
-				case UhtPropertyTextType.FunctionThunkParameterArgType:
-					builder.Append("TLazyObjectPtr<").Append(Class.SourceName).Append("> "); //COMPATIBILITY-TODO - Extra space
-					break;
-
 				default:
 					builder.Append("TLazyObjectPtr<").Append(Class.SourceName).Append('>');
 					break;

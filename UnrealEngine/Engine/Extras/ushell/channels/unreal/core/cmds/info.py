@@ -166,7 +166,7 @@ class Config(InfoBase):
     override = unrealcmd.Opt("", "Alternative config set to enumerate (e.g. 'WinGDK')")
 
     def complete_category(self, prefix):
-	    return ("Engine", "Game", "Input", "DeviceProfiles", "GameUserSettings",
+        return ("Engine", "Game", "Input", "DeviceProfiles", "GameUserSettings",
             "Scalability", "RuntimeOptions", "InstallBundle", "Hardware", "GameplayTags")
 
     def _get_info(self):

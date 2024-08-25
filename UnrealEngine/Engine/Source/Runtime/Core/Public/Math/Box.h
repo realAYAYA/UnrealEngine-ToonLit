@@ -88,7 +88,7 @@ public:
 		{
 #if ENABLE_UNINITIALIZED_BOX_DIAGNOSTIC
 			// In case ENABLE_UNINITIALIZED_BOX_DIAGNOSTIC was explicitly enabled then report each encountered accesses to uninitialized members.
-			ensureAlwaysMsgf(TEXT("FBox contains NaN: %s. Initializing with zero extent and marking as invalid for safety."), *ToString());			
+			ensureAlwaysMsgf(false, TEXT("FBox contains NaN: %s. Initializing with zero extent and marking as invalid for safety."), *ToString());
 #else
 			// In case diagnostic check is enable from NaN diagnostic we report the error using the NaN error reporting behavior.
 			logOrEnsureNanError(TEXT("FBox contains NaN: %s. Initializing with zero extent and marking as invalid for safety."), *ToString());
@@ -279,7 +279,7 @@ public:
 	 * @param W The size to increase the volume by.
 	 * @return A new bounding box.
 	 */
-	UE_NODISCARD FORCEINLINE TBox<T> ExpandBy(T W) const
+	[[nodiscard]] FORCEINLINE TBox<T> ExpandBy(T W) const
 	{
 		return TBox<T>(Min - TVector<T>(W, W, W), Max + TVector<T>(W, W, W));
 	}
@@ -290,7 +290,7 @@ public:
 	* @param V The size to increase the volume by.
 	* @return A new bounding box.
 	*/
-	UE_NODISCARD FORCEINLINE TBox<T> ExpandBy(const TVector<T>& V) const
+	[[nodiscard]] FORCEINLINE TBox<T> ExpandBy(const TVector<T>& V) const
 	{
 		return TBox<T>(Min - V, Max + V);
 	}
@@ -302,7 +302,7 @@ public:
 	* @param Pos The size to increase the volume by in the positive direction (positive values move the bounds outwards)
 	* @return A new bounding box.
 	*/
-	UE_NODISCARD TBox<T> ExpandBy(const TVector<T>& Neg, const TVector<T>& Pos) const
+	[[nodiscard]] TBox<T> ExpandBy(const TVector<T>& Neg, const TVector<T>& Pos) const
 	{
 		return TBox<T>(Min - Neg, Max + Pos);
 	}
@@ -313,7 +313,7 @@ public:
 	 * @param Offset The vector to shift the box by.
 	 * @return A new bounding box.
 	 */
-	UE_NODISCARD FORCEINLINE TBox<T> ShiftBy( const TVector<T>& Offset ) const
+	[[nodiscard]] FORCEINLINE TBox<T> ShiftBy( const TVector<T>& Offset ) const
 	{
 		return TBox<T>(Min + Offset, Max + Offset);
 	}
@@ -324,7 +324,7 @@ public:
 	 * @param Destination The destination point to move center of box to.
 	 * @return A new bounding box.
 	 */
-	UE_NODISCARD FORCEINLINE TBox<T> MoveTo( const TVector<T>& Destination ) const
+	[[nodiscard]] FORCEINLINE TBox<T> MoveTo( const TVector<T>& Destination ) const
 	{
 		const TVector<T> Offset = Destination - GetCenter();
 		return TBox<T>(Min + Offset, Max + Offset);
@@ -436,7 +436,7 @@ public:
 	 * @param Other The bounding box to test overlap
 	 * @return the overlap box. It can be 0 if they don't overlap
 	 */
-	UE_NODISCARD TBox<T> Overlap( const TBox<T>& Other ) const;
+	[[nodiscard]] TBox<T> Overlap( const TBox<T>& Other ) const;
 
 	/**
 	  * Gets a bounding volume transformed by an inverted TTransform<T> object.
@@ -444,7 +444,7 @@ public:
 	  * @param M The transformation object to perform the inversely transform this box with.
 	  * @return	The transformed box.
 	  */
-	UE_NODISCARD TBox<T> InverseTransformBy( const TTransform<T>& M ) const;
+	[[nodiscard]] TBox<T> InverseTransformBy( const TTransform<T>& M ) const;
 
 	/** 
 	 * Checks whether the given location is inside this box.
@@ -491,6 +491,21 @@ public:
 	FORCEINLINE bool IsInside( const TBox<T>& Other ) const
 	{
 		return (IsInside(Other.Min) && IsInside(Other.Max));
+	}
+
+	/** 
+	 * Checks whether a given box is fully encapsulated by this box.
+	 * 
+	 * @param Other The box to test for encapsulation within the bounding volume.
+	 * @return true if box is inside this volume.
+	 * @see IsInsideXY
+	 *
+	 * @note  This function assumes boxes have closed bounds, i.e. boxes with
+	 *        coincident borders on any edge are encapsulated.
+	 */
+	FORCEINLINE bool IsInsideOrOn( const TBox<T>& Other ) const
+	{
+		return (IsInsideOrOn(Other.Min) && IsInsideOrOn(Other.Max));
 	}
 
 	/** 
@@ -547,7 +562,7 @@ public:
 	 * @return The transformed box.
 	 * @see TransformProjectBy
 	 */
-	UE_NODISCARD TBox<T> TransformBy( const TMatrix<T>& M ) const;
+	[[nodiscard]] TBox<T> TransformBy( const TMatrix<T>& M ) const;
 
 	/**
 	 * Gets a bounding volume transformed by a TTransform<T> object.
@@ -556,7 +571,7 @@ public:
 	 * @return The transformed box.
 	 * @see TransformProjectBy
 	 */
-	UE_NODISCARD TBox<T> TransformBy( const TTransform<T>& M ) const;
+	[[nodiscard]] TBox<T> TransformBy( const TTransform<T>& M ) const;
 
 	/** 
 	 * Returns the current world bounding box transformed and projected to screen space
@@ -565,7 +580,7 @@ public:
 	 * @return The transformed box.
 	 * @see TransformBy
 	 */
-	UE_NODISCARD TBox<T> TransformProjectBy( const TMatrix<T>& ProjM ) const;
+	[[nodiscard]] TBox<T> TransformProjectBy( const TMatrix<T>& ProjM ) const;
 
 	/**
 	 * Get a textual representation of this box.

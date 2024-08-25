@@ -106,11 +106,12 @@ void UNiagaraDataInterfaceRenderTarget2DArray::PostInitProperties()
 	}
 }
 
-void UNiagaraDataInterfaceRenderTarget2DArray::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceRenderTarget2DArray::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIRenderTarget2DArrayLocal;
 
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	const int32 EmitterSystemOnlyBitmask = ENiagaraScriptUsageMask::Emitter | ENiagaraScriptUsageMask::System;
 	OutFunctions.Reserve(OutFunctions.Num() + 4);
@@ -231,7 +232,6 @@ void UNiagaraDataInterfaceRenderTarget2DArray::GetFunctions(TArray<FNiagaraFunct
 	}
 }
 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceRenderTarget2DArray::UpgradeFunctionCall(FNiagaraFunctionSignature& FunctionSignature)
 {
 	using namespace NDIRenderTarget2DArrayLocal;
@@ -395,6 +395,8 @@ void UNiagaraDataInterfaceRenderTarget2DArray::SetShaderParameters(const FNiagar
 		InstanceData_RT->TransientRDGTexture = GraphBuilder.RegisterExternalTexture(InstanceData_RT->RenderTarget);
 		InstanceData_RT->TransientRDGSRV = GraphBuilder.CreateSRV(InstanceData_RT->TransientRDGTexture);
 		InstanceData_RT->TransientRDGUAV = GraphBuilder.CreateUAV(InstanceData_RT->TransientRDGTexture);
+
+		GraphBuilder.UseInternalAccessMode(InstanceData_RT->TransientRDGTexture);
 		Context.GetRDGExternalAccessQueue().Add(InstanceData_RT->TransientRDGTexture);
 	}
 

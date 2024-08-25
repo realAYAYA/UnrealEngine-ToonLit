@@ -17,16 +17,22 @@
 namespace AVEncoder
 {
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 class FVideoDecoderOutputMPEG4 : public FVideoDecoderOutput
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 public:
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderOutputMPEG4(int32 w, int32 h, int64 pts)
 	: Width(w), Height(h), PTS(pts)
 	{}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual ~FVideoDecoderOutputMPEG4()
 	{
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	virtual int32 AddRef() override
 	{
@@ -59,7 +65,9 @@ public:
 		return PTS;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual const FVideoDecoderAllocFrameBufferResult* GetAllocatedBuffer() const
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		return &Buffer;
 	}
@@ -106,13 +114,17 @@ public:
 	}
 
 	// Internal for allocation.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderAllocFrameBufferResult* GetBuffer()
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		return &Buffer;
 	}
 
 private:
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderAllocFrameBufferResult	Buffer = {};
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	int32	RefCount = 1;
 	int32	Width = 0;
 	int32	Pitch = 0;
@@ -135,10 +147,14 @@ static TMap<void*, uint32>& Actives()
 class FVideoDecoderMPEG4_Impl : public FVideoDecoderMPEG4, public vdecmpeg4::VIDStreamIO, public vdecmpeg4::VIDStreamEvents
 {
 public:
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual bool Setup(const FInit& InInit) override;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual void Shutdown() override;
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual EDecodeResult Decode(const FVideoDecoderInput* InInput) override;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	FVideoDecoderMPEG4_Impl();
 	virtual ~FVideoDecoderMPEG4_Impl();
@@ -196,16 +212,22 @@ protected:
 
 
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoDecoderMPEG4::Register(FVideoDecoderFactory& InFactory)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderInfo	DecoderInfo;
 	DecoderInfo.CodecType = ECodecType::MPEG4;
 	DecoderInfo.MaxWidth = 1920;
 	DecoderInfo.MaxHeight = 1088;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	InFactory.Register(DecoderInfo, []() {
-			return new FVideoDecoderMPEG4_Impl();
-		});
+		return new FVideoDecoderMPEG4_Impl();
+	});
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 int32 gTestStreamIndex4 = 0;
@@ -224,10 +246,14 @@ FVideoDecoderMPEG4_Impl::~FVideoDecoderMPEG4_Impl()
 	check(!DecoderHandle);
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 bool FVideoDecoderMPEG4_Impl::Setup(const FVideoDecoder::FInit& InInit)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	CreateDecoderAllocationInterfaceFN = InInit.CreateDecoderAllocationInterface;
 	ReleaseDecoderAllocationInterfaceFN = InInit.ReleaseDecoderAllocationInterface;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	return true;
 }
 
@@ -240,7 +266,9 @@ void FVideoDecoderMPEG4_Impl::Shutdown()
 			vdecmpeg4::VIDDestroyDecoder(DecoderHandle);
 			DecoderHandle = nullptr;
 		}
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		ReleaseDecoderAllocationInterface();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		bIsInitialized = false;
 	}
 	delete this;
@@ -250,7 +278,9 @@ bool FVideoDecoderMPEG4_Impl::FirstUseInit()
 {
 	if (!bIsInitialized)
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		bIsInitialized = CreateDecoderAllocationInterface();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		if (bIsInitialized)
 		{
 			FMemory::Memzero(DecoderSetup);
@@ -325,7 +355,9 @@ bool FVideoDecoderMPEG4_Impl::IsEof()
 }
 
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 static void CopyI420ToNV12(const FVideoDecoderAllocFrameBufferResult* OutBuf, const vdecmpeg4::VIDImage* vid)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	int32 Width = vid->width;
 	int32 Height = vid->height;
@@ -335,6 +367,7 @@ static void CopyI420ToNV12(const FVideoDecoderAllocFrameBufferResult* OutBuf, co
 	const uint8_t* srcV = vid->v;
 
 	// Allocated buffer needs to have 3 planes.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	check(OutBuf->AllocatedPlanesNum == 3);
 
 	uint8* OutBufferBase = (uint8*)OutBuf->AllocatedBuffer;
@@ -342,22 +375,28 @@ static void CopyI420ToNV12(const FVideoDecoderAllocFrameBufferResult* OutBuf, co
 	check(OutBuf->AllocatedPlaneDesc[0].BytesPerPixel == 1);
 	check(OutBuf->AllocatedPlaneDesc[0].ByteOffsetBetweenPixels == 1);
 	uint8* dstY = OutBufferBase + OutBuf->AllocatedPlaneDesc[0].ByteOffsetToFirstPixel;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	// Need to copy the Y plane row by row.
 	for(int32 y=0; y<Height; ++y)
 	{
 		FMemory::Memcpy(dstY, srcY, Width);
 		srcY += vid->texWidth;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		dstY += OutBuf->AllocatedPlaneDesc[0].ByteOffsetBetweenRows;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
+	
 
 	// The U and V plane must be interleaved for NV12. We don't specifically do interleaving here but
 	// instead rely on the output plane description to be set up accordingly.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	check(OutBuf->AllocatedPlaneDesc[1].BytesPerPixel == 1);
 	check(OutBuf->AllocatedPlaneDesc[2].BytesPerPixel == 1);
 	uint8* dstU = OutBufferBase + OutBuf->AllocatedPlaneDesc[1].ByteOffsetToFirstPixel;
 	uint8* dstV = OutBufferBase + OutBuf->AllocatedPlaneDesc[2].ByteOffsetToFirstPixel;
 	const int32 uOffCol = OutBuf->AllocatedPlaneDesc[1].ByteOffsetBetweenPixels;
 	const int32 vOffCol = OutBuf->AllocatedPlaneDesc[2].ByteOffsetBetweenPixels;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	for(int32 v=0, vMax=Height/2; v<vMax; ++v)
 	{
 		uint8* U = dstU;
@@ -371,27 +410,40 @@ static void CopyI420ToNV12(const FVideoDecoderAllocFrameBufferResult* OutBuf, co
 		}
 		srcU += (vid->texWidth - vid->width) / 2;
 		srcV += (vid->texWidth - vid->width) / 2;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		dstU += OutBuf->AllocatedPlaneDesc[1].ByteOffsetBetweenRows;
 		dstV += OutBuf->AllocatedPlaneDesc[2].ByteOffsetBetweenRows;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 }
 
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FVideoDecoder::EDecodeResult FVideoDecoderMPEG4_Impl::Decode(const FVideoDecoderInput* InInput)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	// With no registered callback that's interested in the result we can presume we would have been successful.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	if (!OnDecodedFrame)
 	{
 		return FVideoDecoder::EDecodeResult::Success;
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	// Initialize decoder on first decode call.
 	if (!FirstUseInit())
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		return FVideoDecoder::EDecodeResult::Failure;
-	}
+	}PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	
 
 	// Setup an access unit to run through the decoder.
 	TUniquePtr<FInDecoderData> AU = MakeUnique<FInDecoderData>();
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	if (InInput->GetDataSize() <= 0)
+	{
+		return FVideoDecoder::EDecodeResult::Failure;
+	}
 	AU->Data.AddUninitialized(InInput->GetDataSize());
 	FMemory::Memcpy(AU->Data.GetData(), InInput->GetData(), InInput->GetDataSize());
 	AU->DataOffset = 0;
@@ -400,6 +452,7 @@ FVideoDecoder::EDecodeResult FVideoDecoderMPEG4_Impl::Decode(const FVideoDecoder
 	AU->Height = InInput->GetHeight();
 	AU->bIsKeyframe = InInput->IsKeyframe();
 	AU->bIsComplete = InInput->IsCompleteFrame();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	PendingDecodeData.Enqueue(MoveTemp(AU));
 
 	// Decode all pending input.
@@ -422,7 +475,9 @@ FVideoDecoder::EDecodeResult FVideoDecoderMPEG4_Impl::Decode(const FVideoDecoder
 			else
 			{
 				UE_LOG(LogVideoDecoder, Error, TEXT("VIDCreateDecoder() failed with %d"), (int)LastDecoderError);
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				return FVideoDecoder::EDecodeResult::Failure;
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				//vdecmpeg4::VIDDestroyDecoder(DecoderHandle);
 				//DecoderHandle = nullptr;
 			}
@@ -436,6 +491,7 @@ FVideoDecoder::EDecodeResult FVideoDecoderMPEG4_Impl::Decode(const FVideoDecoder
 				int32_t	Width = frame->width;
 				int32_t Height = frame->height;
 
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				TUniquePtr<FVideoDecoderOutputMPEG4> pNew(new FVideoDecoderOutputMPEG4(Width, Height, InInput->GetPTS()));
 
 				// Get memory from the application
@@ -478,13 +534,16 @@ FVideoDecoder::EDecodeResult FVideoDecoderMPEG4_Impl::Decode(const FVideoDecoder
 				{
 					pNew->SetPitchX(ap.Width);
 				}
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 				// Copy the image across, converting it into NV12 format.
 				CopyI420ToNV12(pNew->GetBuffer(), frame);
 				frame->Release();
 				// Deliver
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				OnDecodedFrame(pNew.Release());
-			}
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			}	
 		}
 		else if (LastDecoderError == vdecmpeg4::VID_ERROR_STREAM_UNDERFLOW)
 		{
@@ -499,7 +558,9 @@ FVideoDecoder::EDecodeResult FVideoDecoderMPEG4_Impl::Decode(const FVideoDecoder
 			// Error!
 			UE_LOG(LogVideoDecoder, Error, TEXT("VIDStreamDecode() failed with %d"), (int)LastDecoderError);
 // TODO: destroy decoder and wait for next keyframe?
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			return FVideoDecoder::EDecodeResult::Failure;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			break;
 		}
 
@@ -509,8 +570,11 @@ FVideoDecoder::EDecodeResult FVideoDecoderMPEG4_Impl::Decode(const FVideoDecoder
 			CurrentAU.Reset();
 		}
 	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	return FVideoDecoder::EDecodeResult::Success;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
+
 
 } // namespace AVEncoder
 

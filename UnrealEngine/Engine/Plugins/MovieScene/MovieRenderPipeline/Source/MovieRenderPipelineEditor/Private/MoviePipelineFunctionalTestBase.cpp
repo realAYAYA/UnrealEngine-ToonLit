@@ -162,22 +162,20 @@ void AMoviePipelineFunctionalTestBase::CompareRenderOutputToGroundTruth(FMoviePi
 	IScreenShotManagerPtr ScreenshotManager = ScreenShotModule.GetScreenShotManager();
 
 	// Now we know where to look for our ground truth data.
-	FString ReportDirectory = ScreenshotManager->GetIdealApprovedFolderForImage(MetaData);
-	FString GroundTruthFilename = ReportDirectory / "GroundTruth.json";
-
-	if (FPaths::FileExists(GroundTruthFilename))
+	TArray<FString> GroundTruthFilenames = ScreenshotManager->FindApprovedFiles(MetaData, TEXT("GroundTruth.json"));
+	if (GroundTruthFilenames.Num() == 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("GroundTruth file located at %s"), *GroundTruthFilename);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to find a GroundTruth file at %s, generating one now. Rerun the test after verifying them!"), *GroundTruthFilename);
-		SaveOutputToGroundTruth(ReportDirectory, InOutputData);
+		FString IdealReportDirectory = ScreenshotManager->GetIdealApprovedFolderForImage(MetaData);
+		UE_LOG(LogTemp, Error, TEXT("Failed to find a GroundTruth file at %s, generating one now. Rerun the test after verifying them!"), *IdealReportDirectory);
+		SaveOutputToGroundTruth(IdealReportDirectory, InOutputData);
 		FinishTest(EFunctionalTestResult::Failed, TEXT("Generated ground truth, run test again after verifying the ground truth is correct."));
 		return;
 	}
+	FString GroundTruthFilename = GroundTruthFilenames[0];
+	UE_LOG(LogTemp, Log, TEXT("GroundTruth file located at %s"), *GroundTruthFilename);
+	FString ReportDirectory = FPaths::GetPath(GroundTruthFilename);
 
-	// The groundtruth file exists, so we can load it and turn it back into a FMoviePipelineOutputData struct.
+	// The ground truth file exists, so we can load it and turn it back into a FMoviePipelineOutputData struct.
 	FString LoadedGroundTruthJsonStr;
 	FFileHelper::LoadFileToString(LoadedGroundTruthJsonStr, *GroundTruthFilename);
 
@@ -190,41 +188,34 @@ void AMoviePipelineFunctionalTestBase::CompareRenderOutputToGroundTruth(FMoviePi
 	int32 NumShotsGT = GroundTruthData.ShotData.Num();
 	if (NumShotsNew != NumShotsGT)
 	{
-		FinishTest(EFunctionalTestResult::Failed, TEXT("Mismatched number of shots between GT and New."));
+		FinishTest(EFunctionalTestResult::Failed, FString::Printf(TEXT("Mismatched number of shots between GroudTruth and New. Expected %d got %d."), NumShotsGT, NumShotsNew));
 		return;
 	}
 
 	TMap<FString, FString> OldToNewImagesToCompare;
 
-	for (const FMoviePipelineShotOutputData& GroundTruthShot : GroundTruthData.ShotData)
+	for (int32 ShotIndex = 0; ShotIndex < GroundTruthData.ShotData.Num(); ShotIndex++)
 	{
-		// Look up the matching shot in the new data.
-		const FMoviePipelineShotOutputData* FoundInNewData = InOutputData.ShotData.FindByPredicate([GroundTruthShot](const FMoviePipelineShotOutputData& InOther)
-			{
-				return GroundTruthShot.Shot->InnerName == InOther.Shot->InnerName &&
-					GroundTruthShot.Shot->OuterName == InOther.Shot->OuterName;
-			});
-		if (!FoundInNewData)
-		{
-			FinishTest(EFunctionalTestResult::Failed, TEXT("Did not render a shot that was in the Ground Truth."));
-			return;
-		}
+		// We compare them using indexes because we know that they have the same number of indexes,
+		// and the order should be deterministic. 
+		const FMoviePipelineShotOutputData & GroundTruthShot = GroundTruthData.ShotData[ShotIndex];
+		const FMoviePipelineShotOutputData & NewData = InOutputData.ShotData[ShotIndex];
 
 		// And then repeat this for each render pass in the shot
-		int32 NumRenderPassesNew = FoundInNewData->RenderPassData.Num();
+		int32 NumRenderPassesNew = NewData.RenderPassData.Num();
 		int32 NumRenderPassesGT = GroundTruthShot.RenderPassData.Num();
 		if (NumRenderPassesNew != NumRenderPassesGT)
 		{
-			FinishTest(EFunctionalTestResult::Failed, TEXT("Mismatched number of Render Passes between GT and New."));
+			FinishTest(EFunctionalTestResult::Failed, FString::Printf(TEXT("Mismatched number of shots between GroudTruth and New. Expected %d got %d."), NumRenderPassesGT, NumRenderPassesNew));
 			return;
 		}
 
 		for (const TPair<FMoviePipelinePassIdentifier, FMoviePipelineRenderPassOutputData>& GroundTruthPair : GroundTruthShot.RenderPassData)
 		{
-			const FMoviePipelineRenderPassOutputData* NewDataOutputData = FoundInNewData->RenderPassData.Find(GroundTruthPair.Key);
+			const FMoviePipelineRenderPassOutputData* NewDataOutputData = NewData.RenderPassData.Find(GroundTruthPair.Key);
 			if (!NewDataOutputData)
 			{
-				FinishTest(EFunctionalTestResult::Failed, TEXT("Did not render a render pass that was in the Ground Truth."));
+				FinishTest(EFunctionalTestResult::Failed, FString::Printf(TEXT("Did not render pass '%s' from camera '%s' that is in the Ground Truth."), *GroundTruthPair.Key.Name, *GroundTruthPair.Key.CameraName));
 				return;
 			}
 
@@ -233,7 +224,7 @@ void AMoviePipelineFunctionalTestBase::CompareRenderOutputToGroundTruth(FMoviePi
 			int32 NumOutputFilesGT = GroundTruthPair.Value.FilePaths.Num();
 			if (NumOutputFilesNew != NumOutputFilesGT)
 			{
-				FinishTest(EFunctionalTestResult::Failed, TEXT("Mismatched number of files on disk between GT and New."));
+				FinishTest(EFunctionalTestResult::Failed, FString::Printf(TEXT("Mismatched number of shots between GroudTruth and New. Expected %d got %d."), NumOutputFilesGT, NumOutputFilesNew));
 				return;
 			}
 
@@ -249,27 +240,15 @@ void AMoviePipelineFunctionalTestBase::CompareRenderOutputToGroundTruth(FMoviePi
 	}
 
 	// Time for the computationally expensive part, doing image comparisons!
-	for (const TPair<FString, FString>& Pair : OldToNewImagesToCompare)
+	TSharedPtr<FImageComparisonResult> ComparisonResult = ScreenshotManager->CompareImageSequence(OldToNewImagesToCompare, MetaData);
+	if (ComparisonResult.IsValid() && !ComparisonResult->AreSimilar())
 	{
-		const FString& OldImagePath = Pair.Key;
-		const FString& NewImagePath = Pair.Value;
-
-		// Calculate a path for the delta image to be saved.
-		FString DeltaPath = FPaths::ChangeExtension(NewImagePath, TEXT(""));
-		FString OldExtension = FPaths::GetExtension(NewImagePath, true);
-		DeltaPath += TEXT("_Delta") + OldExtension;
-
-		// Alright we have both images in memory now, now use a FImageComparer for less strict comparison.
-		FImageTolerance Tolerance = FImageTolerance::DefaultIgnoreLess;
-		FImageComparer Comparer;
-		FImageComparisonResult ComparisonResults = Comparer.Compare(OldImagePath, NewImagePath, Tolerance, DeltaPath);
-
-		if (!ComparisonResults.AreSimilar())
-		{
-			FinishTest(EFunctionalTestResult::Failed, TEXT("Frames failed comparison tolerance!"));
-			return;
-		}
+		ScreenshotManager->NotifyAutomationTestFrameworkOfImageComparison(*ComparisonResult);
+		FinishTest(EFunctionalTestResult::Failed, TEXT("Frames failed comparison tolerance!"));
+		return;
 	}
+
+	UE_LOG(LogTemp, Display, TEXT("All image sequences from %s are similar to the Ground Truth."), *MetaData.ScreenShotName);
 
 	FinishTest(EFunctionalTestResult::Succeeded, TEXT(""));
 }

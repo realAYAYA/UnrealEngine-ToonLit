@@ -107,7 +107,6 @@ enum class EEmissionPatternTypeEnum : uint8
 };
 
 
-
 UENUM(BlueprintType)
 enum class EDamageModelTypeEnum : uint8
 {

@@ -70,7 +70,10 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	/** If true, subclasses of ClassPaths will also be included and RecursiveClassPathsExclusionSet will be excluded. */
 	bool bRecursiveClasses = false;
 
-	/** If true, only on-disk assets will be returned. Be warned that this is rarely what you want and should only be used for performance reasons */
+	/**
+	 * If true, use only DiskGatheredData, do not calculate from UObjects. @see IAssetRegistry class header for
+	 * bIncludeOnlyOnDiskAssets.
+	 */
 	bool bIncludeOnlyOnDiskAssets = false;
 
 	/** The exclusive filter component for package flags. Only assets without any of the specified flags will be returned. */

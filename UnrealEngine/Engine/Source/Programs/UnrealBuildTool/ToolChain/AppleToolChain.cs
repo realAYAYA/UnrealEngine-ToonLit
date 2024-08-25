@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography.X509Certificates;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -15,59 +16,144 @@ using UnrealBuildBase;
 
 namespace UnrealBuildTool
 {
-	abstract class AppleToolChainSettings
+	/// <summary>
+	/// Helper class for managing Xcode paths, versions, etc. Helps to differentiate between Apple xcode platforms
+	/// </summary>
+	public abstract class AppleToolChainSettings
 	{
 		/// <summary>
 		/// Which developer directory to root from? If this is "xcode-select", UBT will query for the currently selected Xcode
 		/// </summary>
-		public string XcodeDeveloperDir = "xcode-select";
+		public static DirectoryReference XcodeDeveloperDir => _XcodeDeveloperDir!;
 
-		public AppleToolChainSettings(bool bVerbose, ILogger Logger)
-			{   
-			SelectXcode(ref XcodeDeveloperDir, bVerbose, Logger);
+		// This is not expected to be used before we've made any Settings options, so XcodeDeveloperDir will assert if it's used too early
+		private static DirectoryReference? _XcodeDeveloperDir = null;
+
+		/// <summary>
+		/// Directory for the developer binaries
+		/// </summary>
+		public DirectoryReference ToolchainDir;
+
+		/// <summary>
+		/// A portion of the target "tuple"
+		/// </summary>
+		private string TargetOSName;
+
+		/// <summary>
+		/// The version of the iOS SDK to target at build time.
+		/// </summary>
+		public string SDKVersion;
+
+		/// <summary>
+		/// The version in a floating point value for easy comparison
+		/// </summary>
+		public readonly float SDKVersionFloat = 0.0f;
+
+		/// <summary>
+		/// Cache SDK dir for device and simulator (for non-Mac)
+		/// </summary>
+		DirectoryReference SDKDir;
+		DirectoryReference? SimulatorSDKDir = null;
+
+		/// <summary>
+		/// Constructor, called by platform sybclasses
+		/// </summary>
+		/// <param name="OSPrefix">SDK name (like "MacOSX")</param>
+		/// <param name="SimulatorOSPrefix">Sinulator SDK name (like "iPhoneOSSimulator")</param>
+		/// <param name="TargetOSName">Platform name used in the -target parameter</param>
+		/// <param name="bVerbose"></param>
+		/// <param name="Logger"></param>
+		protected AppleToolChainSettings(string OSPrefix, string? SimulatorOSPrefix, string TargetOSName, bool bVerbose, ILogger Logger)
+		{
+			this.TargetOSName = TargetOSName;
+
+			if (_XcodeDeveloperDir == null)
+			{
+				SelectXcode(bVerbose, Logger);
+			}
+
+			// set up directories
+			ToolchainDir = DirectoryReference.Combine(XcodeDeveloperDir, "Toolchains/XcodeDefault.xctoolchain/usr/bin");
+			SDKDir = DirectoryReference.Combine(XcodeDeveloperDir, $"Platforms/{OSPrefix}.platform/Developer/SDKs/{OSPrefix}.sdk");
+			if (SimulatorOSPrefix != null)
+			{
+				SimulatorSDKDir = DirectoryReference.Combine(XcodeDeveloperDir, $"Platforms/{SimulatorOSPrefix}.platform/Developer/SDKs/{SimulatorOSPrefix}.sdk");
+			}
+
+			// use one up fro the SDK dir to look in for the version'd name directories next to the SDK dir
+			SDKVersion = SelectSDK(SDKDir.ParentDirectory!, OSPrefix, bVerbose, Logger);
+
+			// convert to float for easy comparison
+			SDKVersionFloat = Single.Parse(SDKVersion, System.Globalization.CultureInfo.InvariantCulture);
+
+			// Xcode sdk files are not allowed to be transferred over the network, ensure UBA will not do so
+			EpicGames.UBA.Utils.RegisterDisallowedPaths(XcodeDeveloperDir.FullName);
 		}
 
-		private static void SelectXcode(ref string DeveloperDir, bool bVerbose, ILogger Logger)
-			{
-			string Reason = "hardcoded";
-
-			if (DeveloperDir == "xcode-select")
+		/// <summary>
+		/// Get the path to the SDK diretory in xcode for the given architecture
+		/// </summary>
+		/// <param name="Architecture"></param>
+		/// <returns></returns>
+		public DirectoryReference GetSDKPath(UnrealArch Architecture)
 		{
-				Reason = "xcode-select";
+			// note that VisionOS uses IOSSimulator (as TVOS should eventually do as well)
+			if (Architecture == UnrealArch.IOSSimulator || Architecture == UnrealArch.TVOSSimulator)
+			{
+				return SimulatorSDKDir!;
+			}
+			return SDKDir;
+		}
 
+		/// <summary>
+		/// Gets the string used by xcode to taget a platform and version (will return something like "arm64-apple-ios17.0-simulator"
+		/// </summary>
+		/// <param name="Architecture"></param>
+		/// <returns></returns>
+		public string GetTargetTuple(UnrealArch Architecture)
+		{
+			string Prefix = Architecture.AppleName;
+			string Suffix = (Architecture == UnrealArch.IOSSimulator || Architecture == UnrealArch.TVOSSimulator) ? "-simulator" : "";
+
+			return $"{Prefix}-apple-{TargetOSName}{SDKVersion}{Suffix}";
+		}
+
+		/// <summary>
+		/// Find the Xcode developer directory
+		/// </summary>
+		/// <param name="bVerbose"></param>
+		/// <param name="Logger"></param>
+		/// <exception cref="BuildException"></exception>
+		public static void SelectXcode(bool bVerbose, ILogger Logger)
+		{
 			// on the Mac, run xcode-select directly.
 			int ReturnCode;
-				DeveloperDir = Utils.RunLocalProcessAndReturnStdOut("xcode-select", "--print-path", null, out ReturnCode);
+			string XcodeSelectResult = Utils.RunLocalProcessAndReturnStdOut("xcode-select", "--print-path", null, out ReturnCode);
 			if (ReturnCode != 0)
 			{
 				string? MinVersion = UEBuildPlatform.GetSDK(UnrealTargetPlatform.Mac)!.GetSDKInfo("Sdk")!.Min;
 				throw new BuildException($"We were unable to find your build tools (via 'xcode-select --print-path'). Please install Xcode, version {MinVersion} or later");
 			}
 
+			_XcodeDeveloperDir = new DirectoryReference(XcodeSelectResult);
+
 			// make sure we get a full path
-				if (Directory.Exists(DeveloperDir) == false)
+			if (DirectoryReference.Exists(XcodeDeveloperDir) == false)
 			{
-					throw new BuildException("Selected Xcode ('{0}') doesn't exist, cannot continue.", DeveloperDir);
+				throw new BuildException("Selected Xcode ('{0}') doesn't exist, cannot continue.", XcodeDeveloperDir);
 			}
 
-				if (DeveloperDir.Contains("CommandLineTools", StringComparison.InvariantCultureIgnoreCase))
+			if (XcodeDeveloperDir.ContainsName("CommandLineTools", 0))
 			{
-					throw new BuildException($"Your Mac is set to use CommandLineTools for its build tools ({DeveloperDir}). Unreal expects Xcode as the build tools. Please install Xcode if it's not already, then do one of the following:\n" +
+				throw new BuildException($"Your Mac is set to use CommandLineTools for its build tools ({XcodeDeveloperDir}). Unreal expects Xcode as the build tools. Please install Xcode if it's not already, then do one of the following:\n" +
 					"  - Run Xcode, go to Settings, and in the Locations tab, choose your Xcode in Command Line Tools dropdown.\n" +
 					"  - In Terminal, run 'sudo xcode-select -s /Applications/Xcode.app' (or an alternate location if you installed Xcode to a non-standard location)\n" +
 					"Either way, you will need to enter your Mac password.");
 			}
 
-				if (DeveloperDir.EndsWith("/") == false)
-				{
-					// we expect this to end with a slash
-					DeveloperDir += "/";
-				}
-			}
-
-			if (bVerbose && !DeveloperDir.StartsWith("/Applications/Xcode.app"))
+			if (bVerbose && !XcodeDeveloperDir.FullName.StartsWith("/Applications/Xcode.app"))
 			{
-				Log.TraceInformationOnce("Compiling with non-standard Xcode ({0}): {1}", Reason, DeveloperDir);
+				Log.TraceInformationOnce("Compiling with non-standard Xcode: {0}", XcodeDeveloperDir);
 			}
 
 			// Installed engine requires Xcode 13
@@ -85,23 +171,18 @@ namespace UnrealBuildTool
 			}
 		}
 
-		protected void SelectSDK(string BaseSDKDir, string OSPrefix, ref string PlatformSDKVersion, bool bVerbose, ILogger Logger)
+		private static string SelectSDK(DirectoryReference BaseSDKDir, string OSPrefix, bool bVerbose, ILogger Logger)
 		{
-			if (PlatformSDKVersion == "latest")
-			{
-				PlatformSDKVersion = "";
+			string PlatformSDKVersion = "";
 			try
 			{
-					// on the Mac, we can just get the directory name
-					string[] SubDirs = System.IO.Directory.GetDirectories(BaseSDKDir);
-
 				// loop over the subdirs and parse out the version
 				int MaxSDKVersionMajor = 0;
 				int MaxSDKVersionMinor = 0;
 				string? MaxSDKVersionString = null;
-					foreach (string SubDir in SubDirs)
+				foreach (DirectoryReference SubDir in DirectoryReference.EnumerateDirectories(BaseSDKDir))
 				{
-						string SubDirName = Path.GetFileNameWithoutExtension(SubDir);
+					string SubDirName = Path.GetFileNameWithoutExtension(SubDir.GetDirectoryName());
 					if (SubDirName.StartsWith(OSPrefix))
 					{
 						// get the SDK version from the directory name
@@ -147,18 +228,13 @@ namespace UnrealBuildTool
 				Logger.LogInformation("Triggered an exception while looking for SDK directory in Xcode.app");
 				Logger.LogInformation("{Ex}", Ex.ToString());
 			}
-			}
-
-			// make sure we have a valid SDK directory
-			if (!RuntimePlatform.IsWindows && !Directory.Exists(Path.Combine(BaseSDKDir, OSPrefix + PlatformSDKVersion + ".sdk")))
-			{
-				throw new BuildException("Invalid SDK {0}{1}.sdk, not found in {2}", OSPrefix, PlatformSDKVersion, BaseSDKDir);
-			}
 
 			if (bVerbose && !ProjectFileGenerator.bGenerateProjectFiles)
 			{
 				Logger.LogInformation("Compiling with {Os} SDK {Sdk}", OSPrefix, PlatformSDKVersion);
 			}
+
+			return PlatformSDKVersion;
 		}
 	}
 
@@ -176,13 +252,24 @@ namespace UnrealBuildTool
 			protected override string QueryArchiverVersionString() => ClangVersionString;
 		}
 
+		public Lazy<AppleToolChainSettings> ToolChainSettings;
+
 		protected FileReference? ProjectFile;
+		public readonly ReadOnlyTargetRules? Target;
+
+		// cache some ini settings
+		readonly bool bUseSwiftUIMain;
+		readonly bool bCreateSwiftBridgingHeader;
 
 		protected bool bUseModernXcode => AppleExports.UseModernXcode(ProjectFile);
 
-		public AppleToolChain(FileReference? InProjectFile, ClangToolChainOptions InOptions, ILogger InLogger) : base(InOptions, InLogger)
+		public AppleToolChain(ReadOnlyTargetRules? Target, Func<AppleToolChainSettings> InCreateSettings, ClangToolChainOptions InOptions, ILogger InLogger) : base(InOptions, InLogger)
 		{
-			ProjectFile = InProjectFile;
+			this.Target = Target;
+			ProjectFile = Target?.ProjectFile;
+			ToolChainSettings = new Lazy<AppleToolChainSettings>(InCreateSettings);
+
+			AppleExports.GetSwiftIntegrationSettings(ProjectFile, Target == null ? UnrealTargetPlatform.Mac : Target.Platform, out bUseSwiftUIMain, out bCreateSwiftBridgingHeader);
 		}
 
 		/// <summary>
@@ -201,8 +288,13 @@ namespace UnrealBuildTool
 			return Unreal.EngineSourceDirectory;
 		}
 
-		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
+		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
 		{
+			if (ShouldSkipCompile(CompileEnvironment))
+			{
+				return new CPPOutput();
+			}
+
 			List<string> GlobalArguments = new();
 
 			GetCompileArguments_Global(CompileEnvironment, GlobalArguments);
@@ -229,7 +321,7 @@ namespace UnrealBuildTool
 			return Result;
 		}
 
-		protected void StripSymbolsWithXcode(FileReference SourceFile, FileReference TargetFile, string ToolchainDir)
+		protected void StripSymbolsWithXcode(FileReference SourceFile, FileReference TargetFile, DirectoryReference ToolchainDir)
 		{
 			if (SourceFile != TargetFile)
 			{
@@ -238,7 +330,7 @@ namespace UnrealBuildTool
 			}
 
 			ProcessStartInfo StartInfo = new ProcessStartInfo();
-			StartInfo.FileName = Path.Combine(ToolchainDir, "strip");
+			StartInfo.FileName = Path.Combine(ToolchainDir.FullName, "strip");
 			StartInfo.Arguments = String.Format("\"{0}\" -S", TargetFile.FullName);
 			StartInfo.UseShellExecute = false;
 			StartInfo.CreateNoWindow = true;
@@ -271,8 +363,9 @@ namespace UnrealBuildTool
 
 			// make path to the script
 			FileItem BundleScript = FileItem.GetItemByFileReference(FileReference.Combine(Unreal.EngineDirectory, "Build/BatchFiles/Mac/UpdateVersionAfterBuild.sh"));
-			UpdateVersionAction.CommandArguments = $"\"{BundleScript.AbsolutePath}\" {ProductDirectory} {LinkEnvironment.Platform}";
+			UpdateVersionAction.CommandArguments = $"\"{BundleScript.AbsolutePath}\" \"{ProductDirectory}\" {LinkEnvironment.Platform}";
 			UpdateVersionAction.PrerequisiteItems.Add(Prerequisite);
+			UpdateVersionAction.PrerequisiteItems.Add(BundleScript);
 			UpdateVersionAction.ProducedItems.Add(DestFile);
 			UpdateVersionAction.StatusDescription = $"Updating version file: {OutputVersionFile}";
 
@@ -444,6 +537,11 @@ namespace UnrealBuildTool
 			if (CompileEnvironment.bCreateDebugInfo)
 			{
 				Arguments.Add("-gdwarf-4");
+
+				if (CompileEnvironment.bDebugLineTablesOnly)
+				{
+					Arguments.Add("-gline-tables-only");
+				}
 			}
 		}
 
@@ -471,6 +569,146 @@ namespace UnrealBuildTool
 		{
 			// Temporarily turn of shared response files for apple toolchains
 			return CompileEnvironment;
+		}
+
+		protected override FileItem GetCompileArguments_FileType(CppCompileEnvironment CompileEnvironment, FileItem SourceFile, DirectoryReference OutputDir, List<string> Arguments, Action CompileAction, CPPOutput CompileResult)
+		{
+			FileItem Output = base.GetCompileArguments_FileType(CompileEnvironment, SourceFile, OutputDir, Arguments, CompileAction, CompileResult);
+
+			// @todo hack fix this better - it's so that files can see the generated -Swift.h headers - we don't know when we need them at this point
+			if (CompileEnvironment.Platform == UnrealTargetPlatform.VisionOS)
+			{
+				if (bCreateSwiftBridgingHeader && !SourceFile.HasExtension(".swift") && SourceFile.Location.ContainsName("Launch", 0))
+				{
+					FileItem OutputInteropHeader = GetBridgingHeader("UESwift", OutputDir);
+					Arguments.Add(GetUserIncludePathArgument(OutputInteropHeader.GetDirectoryItem().Location));
+					CompileAction.PrerequisiteItems.Add(OutputInteropHeader);
+				}
+
+			}
+			Arguments.Add("-DUE_USE_SWIFT_UI_MAIN=" + (bUseSwiftUIMain ? "1" : "0"));
+			return Output;
+		}
+
+		private FileItem GetBridgingHeader(string SourceFile, DirectoryReference OutputDir)
+		{
+			string Filename = $"{Path.GetFileNameWithoutExtension(SourceFile)}-Swift.h";
+			return FileItem.GetItemByFileReference(FileReference.Combine(OutputDir, "Bridging", Filename));
+		}
+
+		protected override Action CompileCPPFile(CppCompileEnvironment CompileEnvironment, FileItem SourceFile, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph, IReadOnlyCollection<string> GlobalArguments, CPPOutput Result)
+		{
+			if (SourceFile.HasExtension(".swift"))
+			{
+				return CompileSwiftFile(CompileEnvironment, SourceFile, OutputDir, Graph, Result);
+			}
+
+			return base.CompileCPPFile(CompileEnvironment, SourceFile, OutputDir, ModuleName, Graph, GlobalArguments, Result);
+		}
+
+		private Action CompileSwiftFile(CppCompileEnvironment CompileEnvironment, FileItem SourceFile, DirectoryReference OutputDir, IActionGraphBuilder Graph, CPPOutput CompileResult)
+		{
+			FileItem OutputFile = FileItem.GetItemByFileReference(FileReference.Combine(OutputDir, GetFileNameFromExtension(SourceFile.Name, ".o")));
+
+			List<string> Arguments = new();
+			Arguments.Add($"\"{SourceFile}\"");
+
+			// output file settings
+			Arguments.Add("-emit-object"); // same as -c
+			Arguments.Add($"-parse-as-library"); // don't create a main function (even if we use the SwiftUI @main, this still seems to be correctly working)
+			Arguments.Add($"-o \"{OutputFile}\"");
+
+			// platform settings
+			Arguments.Add($"-target {ToolChainSettings.Value.GetTargetTuple(CompileEnvironment.Architecture)}");
+			Arguments.Add($"-sdk {ToolChainSettings.Value.GetSDKPath(CompileEnvironment.Architecture)}");
+
+			// misc settings copied from Xcode
+			Arguments.Add("-Xllvm");
+			Arguments.Add("-aarch64-use-tbi");
+			Arguments.Add("-stack-check");
+			Arguments.Add($"-swift-version 5");
+
+			Arguments.Add("-enable-objc-interop");
+			Arguments.Add("-cxx-interoperability-mode=default");
+			Arguments.Add($"-import-objc-header {Unreal.EngineDirectory}/Source/Runtime/Launch/Private/IOS/UECppToSwift.h");
+			Arguments.Add($"-module-name Launch");
+
+			if (bUseSwiftUIMain)
+			{
+				Arguments.Add("-DUE_USE_SWIFT_UI_MAIN");
+			}
+
+			Action CompileAction = Graph.CreateAction(ActionType.Compile);
+			CompileAction.Weight = CompileActionWeight;
+			CompileAction.CommandArguments = String.Join(" ", Arguments);
+			CompileAction.CommandPath = FileReference.Combine(ToolChainSettings.Value.ToolchainDir, "swift-frontend");
+			CompileAction.PrerequisiteItems.Add(SourceFile);
+			CompileAction.ProducedItems.Add(OutputFile);
+			CompileResult.ObjectFiles.Add(OutputFile);
+			CompileAction.WorkingDirectory = Unreal.EngineSourceDirectory;
+			CompileAction.CommandDescription = "Compile";
+			UnrealArchitectureConfig ArchConfig = UnrealArchitectureConfig.ForPlatform(CompileEnvironment.Platform);
+			if (ArchConfig.Mode != UnrealArchitectureMode.SingleArchitecture)
+			{
+				string ReadableArch = ArchConfig.ConvertToReadableArchitecture(CompileEnvironment.Architecture);
+				CompileAction.CommandDescription += $" [{ReadableArch}]";
+			}
+			CompileAction.StatusDescription = Path.GetFileName(SourceFile.AbsolutePath);
+			CompileAction.bIsGCCCompiler = true;
+			CompileAction.bCanExecuteRemotely = true;
+
+			if (bCreateSwiftBridgingHeader)
+			{
+				FileItem OutputInteropHeader = GetBridgingHeader(SourceFile.FullName, OutputDir);
+
+				// obj-c bridging header settings
+				Arguments.Clear();
+				Arguments.Add($"\"{SourceFile}\"");
+				Arguments.Add("-parse"); // this will allow it to generate the header without writing out any .o/executable
+				Arguments.Add("-emit-objc-header");
+				Arguments.Add($"-emit-objc-header-path \"{OutputInteropHeader}\"");
+				Arguments.Add("-parse-as-library");
+
+				//Arguments.Add("-enable-objc-interop");
+				//Arguments.Add("-cxx-interoperability-mode=default");
+				Arguments.Add($"-import-objc-header {Unreal.EngineDirectory}/Source/Runtime/Launch/Private/IOS/UECppToSwift.h");
+
+				// platform settings
+				Arguments.Add($"-target {ToolChainSettings.Value.GetTargetTuple(CompileEnvironment.Architecture)}");
+				Arguments.Add($"-sdk {ToolChainSettings.Value.GetSDKPath(CompileEnvironment.Architecture)}");
+
+				Arguments.Add($"-swift-version 5");
+
+				Arguments.Add($"-module-name Launch");
+
+				if (bUseSwiftUIMain)
+				{
+					Arguments.Add("-DUE_USE_SWIFT_UI_MAIN");
+				}
+
+				// now make an action to export the swift code as a header Obj-C bridging
+				Action HeaderAction = Graph.CreateAction(ActionType.CompileModuleInterface);
+				HeaderAction.CommandPath = FileReference.Combine(ToolChainSettings.Value.ToolchainDir, "swiftc");
+				HeaderAction.CommandArguments = String.Join(" ", Arguments);
+				HeaderAction.PrerequisiteItems.Add(SourceFile);
+				HeaderAction.ProducedItems.Add(OutputInteropHeader);
+				HeaderAction.CommandDescription = "Generate Header";
+				HeaderAction.StatusDescription = Path.GetFileName(OutputInteropHeader.AbsolutePath);
+				if (ArchConfig.Mode != UnrealArchitectureMode.SingleArchitecture)
+				{
+					string ReadableArch = ArchConfig.ConvertToReadableArchitecture(CompileEnvironment.Architecture);
+					CompileAction.CommandDescription += $" [{ReadableArch}]";
+				}
+
+				HeaderAction.WorkingDirectory = CompileAction.WorkingDirectory;
+				HeaderAction.bIsGCCCompiler = CompileAction.bIsGCCCompiler;
+				HeaderAction.bCanExecuteRemotely = CompileAction.bCanExecuteRemotely;
+			}
+			//Console.WriteLine($"{CompileAction.CommandPath} {CompileAction.CommandArguments}");
+			//Console.WriteLine($"{HeaderAction.CommandPath} {HeaderAction.CommandArguments}");
+
+			// this is likely ignored, but the Compile action is the important one
+			return CompileAction;
 		}
 
 		protected string GetDsymutilPath(ILogger Logger, out string ExtraOptions, bool bIsForLTOBuild = false)
@@ -545,6 +783,8 @@ namespace UnrealBuildTool
 
 				PostBuildAction.PrerequisiteItems.UnionWith(OutputFiles);
 				OutputFiles.AddRange(PostBuildAction.ProducedItems);
+
+				OutputFiles.Add(UpdateVersionFile(BinaryLinkEnvironment, FileItem.GetItemByFileReference(BinaryLinkEnvironment.OutputFilePath), Graph));
 			}
 
 			return OutputFiles;
@@ -666,7 +906,7 @@ namespace UnrealBuildTool
 				List<string> Arguments = new()
 				{
 					"UBT_NO_POST_DEPLOY=true",
-					new IOSToolChainSettings(Logger).XcodeDeveloperDir + "usr/bin/xcodebuild",
+					FileReference.Combine(AppleToolChainSettings.XcodeDeveloperDir, "usr/bin/xcodebuild").FullName,
 					Action,
 					$"-workspace \"{XcodeProject.FullName}\"",
 					$"-scheme \"{SchemeName}\"",
@@ -679,7 +919,7 @@ namespace UnrealBuildTool
 					ExtraOptions,
 					//$"-sdk {SDKName}",
 				};
-	
+
 				Process LocalProcess = new Process();
 				LocalProcess.StartInfo = new ProcessStartInfo("/usr/bin/env", String.Join(" ", Arguments));
 				LocalProcess.OutputDataReceived += (Sender, Args) => { LocalProcessOutput(Args, false, Logger); };
@@ -782,7 +1022,7 @@ namespace UnrealBuildTool
 		private int PostBuildSync(ApplePostBuildSyncTarget Target, ILogger Logger)
 		{
 			// generate the IOS plist file every time
-			if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+			if (Target.Platform.IsInGroup(UnrealPlatformGroup.IOS))
 			{
 				string GameName = Target.ProjectFile == null ? "UnrealGame" : Target.ProjectFile.GetFileNameWithoutAnyExtensions();
 				// most of these params are uused in modern
@@ -815,7 +1055,7 @@ namespace UnrealBuildTool
 				ExtraOptions += SetupRemoteCodesigning(Target);
 			}
 
-			int ExitCode = AppleExports.BuildWithStubXcodeProject(Target.ProjectFile, Target.Platform, Target.Architectures, Target.Configuration, Target.TargetName, 
+			int ExitCode = AppleExports.BuildWithStubXcodeProject(Target.ProjectFile, Target.Platform, Target.Architectures, Target.Configuration, Target.TargetName,
 				AppleExports.XcodeBuildMode.PostBuildSync, Logger, ExtraOptions, bForceDummySigning: bUseDummySigning);
 
 			// restore the keychain as soon as possible
@@ -938,12 +1178,9 @@ namespace UnrealBuildTool
 
 			string PostBuildSyncArguments = String.Format("-modernxcode -Input=\"{0}\" -XmlConfigCache=\"{1}\" -remoteini=\"{2}\"", PostBuildSyncFile, XmlConfig.CacheFile, UnrealBuildTool.GetRemoteIniPath());
 			Action PostBuildSyncAction = Graph.CreateRecursiveAction<ApplePostBuildSyncMode>(ActionType.CreateAppBundle, PostBuildSyncArguments);
-
-			PostBuildSyncAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 			PostBuildSyncAction.PrerequisiteItems.Add(Executable);
 			PostBuildSyncAction.ProducedItems.Add(GetPostBuildOutputFile(Executable.Location, Target.Name, Target.Platform));
 			PostBuildSyncAction.StatusDescription = $"Executing PostBuildSync [{Executable.Location}]";
-			PostBuildSyncAction.bCanExecuteRemotely = false;
 
 			if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
 			{

@@ -14,14 +14,15 @@ public:
 	// IHttpRequest
 	HTTP_API virtual FHttpRequestCompleteDelegate& OnProcessRequestComplete() override;
 	HTTP_API virtual FHttpRequestProgressDelegate& OnRequestProgress() override;
+	HTTP_API virtual FHttpRequestProgressDelegate64& OnRequestProgress64() override;
+	HTTP_API virtual FHttpRequestStatusCodeReceivedDelegate& OnStatusCodeReceived() override;
 	HTTP_API virtual FHttpRequestHeaderReceivedDelegate& OnHeaderReceived() override;
 	HTTP_API virtual FHttpRequestWillRetryDelegate& OnRequestWillRetry() override;
 
-	HTTP_API virtual void SetTimeout(float InTimeoutSecs) override;
-	HTTP_API virtual void ClearTimeout() override;
-	HTTP_API virtual TOptional<float> GetTimeout() const override;
-
-	HTTP_API float GetTimeoutOrDefault() const;
+	/**
+	 * Clear callbacks before http module get deleted
+	 */
+	HTTP_API virtual void Shutdown();
 
 protected:
 	/** 
@@ -37,12 +38,15 @@ protected:
 	/** Delegate that will get called once per tick with bytes downloaded so far */
 	FHttpRequestProgressDelegate RequestProgressDelegate;
 
+	/** Delegate that will get called once per tick with bytes downloaded so far */
+	FHttpRequestProgressDelegate64 RequestProgressDelegate64;
+
+	/** Delegate that will get called when status code received */
+	FHttpRequestStatusCodeReceivedDelegate StatusCodeReceivedDelegate;
+
 	/** Delegate that will get called for each new header received */
 	FHttpRequestHeaderReceivedDelegate HeaderReceivedDelegate;
 	
 	/** Delegate that will get called when request will be retried */
 	FHttpRequestWillRetryDelegate OnRequestWillRetryDelegate;
-
-	/** Timeout in seconds for the entire HTTP request to complete */
-	TOptional<float> TimeoutSecs;
 };

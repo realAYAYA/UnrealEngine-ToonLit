@@ -1234,7 +1234,7 @@ FNetworkPacketEventRef SPacketContentView::GetEventAtMousePosition(float X, floa
 			const float EventX1 = ViewportX.GetRoundedOffsetForValue(static_cast<double>(Event.BitOffset));
 			const float EventX2 = ViewportX.GetRoundedOffsetForValue(static_cast<double>(Event.BitOffset + Event.BitSize));
 
-			const float EventY = Viewport.GetTopEventPosY() + (Viewport.GetEventHeight() + Viewport.GetEventDY()) * Event.Level;
+			const float EventY = Viewport.GetTopEventPosY() + (Viewport.GetEventHeight() + Viewport.GetEventDY()) * static_cast<float>(Event.Level);
 
 			constexpr float ToleranceX = 1.0f;
 
@@ -1328,10 +1328,10 @@ int32 SPacketContentView::OnPaint(const FPaintArgs& Args, const FGeometry& Allot
 
 		DrawContext.LayerId++;
 
-		DrawContext.DrawBox(DbgX - 2.0f, DbgY - 2.0f, DbgW, DbgH, WhiteBrush, FLinearColor(1.0, 1.0, 1.0, 0.9));
+		DrawContext.DrawBox(DbgX - 2.0f, DbgY - 2.0f, DbgW, DbgH, WhiteBrush, FLinearColor(1.0f, 1.0f, 1.0f, 0.9f));
 		DrawContext.LayerId++;
 
-		FLinearColor DbgTextColor(0.0, 0.0, 0.0, 0.9);
+		FLinearColor DbgTextColor(0.0f, 0.0f, 0.0f, 0.9f);
 
 		// Time interval since last OnPaint call.
 		const uint64 CurrentTime = FPlatformTime::Cycles64();

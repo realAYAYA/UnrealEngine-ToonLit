@@ -89,7 +89,7 @@ namespace FrontendFilterHelper
 		TArray<FAssetIdentifier> AssetDependencies;
 		while (PackageNamesToProcess.Num() > 0)
 		{
-			const FName PackageName = PackageNamesToProcess.Pop(false);
+			const FName PackageName = PackageNamesToProcess.Pop(EAllowShrinking::No);
 			AssetDependencies.Reset();
 			AssetRegistry.GetDependencies(FAssetIdentifier(PackageName), AssetDependencies);
 			for (const FAssetIdentifier& Dependency : AssetDependencies)
@@ -285,7 +285,7 @@ public:
 				int32 LastDotIndex = INDEX_NONE;
 				if (AssetFullPath.FindLastChar(TEXT('/'), LastSlashIndex) && AssetFullPath.FindLastChar(TEXT('.'), LastDotIndex) && LastDotIndex > LastSlashIndex)
 				{
-					AssetFullPath.LeftInline(LastDotIndex, /*bAllowShrinking*/false);
+					AssetFullPath.LeftInline(LastDotIndex, EAllowShrinking::No);
 				}
 			}
 			AssetFullPath.ParseIntoArray(AssetSplitPath, TEXT("/"));
@@ -715,7 +715,7 @@ void FFrontendFilter_Text::RebuildReferencedDynamicCollections()
 /////////////////////////////////////////
 
 FFrontendFilter_CheckedOut::FFrontendFilter_CheckedOut(TSharedPtr<FFrontendFilterCategory> InCategory) 
-	: FFrontendFilter(InCategory),
+	: FFrontendFilter(MoveTemp(InCategory)),
 	bSourceControlEnabled(false)
 {
 	
@@ -774,7 +774,7 @@ void FFrontendFilter_CheckedOut::SourceControlOperationComplete(const FSourceCon
 /////////////////////////////////////////
 
 FFrontendFilter_NotSourceControlled::FFrontendFilter_NotSourceControlled(TSharedPtr<FFrontendFilterCategory> InCategory) 
-	: FFrontendFilter(InCategory),
+	: FFrontendFilter(MoveTemp(InCategory)),
 	bSourceControlEnabled(false),
 	bIsRequestStatusRunning(false),
 	bInitialRequestCompleted(false)
@@ -869,7 +869,7 @@ void FFrontendFilter_NotSourceControlled::SourceControlOperationComplete(const F
 /////////////////////////////////////////
 
 FFrontendFilter_Modified::FFrontendFilter_Modified(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 	, bIsCurrentlyActive(false)
 {
 	UPackage::PackageDirtyStateChangedEvent.AddRaw(this, &FFrontendFilter_Modified::OnPackageDirtyStateUpdated);
@@ -920,7 +920,7 @@ bool FFrontendFilter_ReplicatedBlueprint::PassesFilter(FAssetFilterType InItem) 
 #define LOCTEXT_NAMESPACE "ContentBrowser"
 
 FFrontendFilter_ArbitraryComparisonOperation::FFrontendFilter_ArbitraryComparisonOperation(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 	, TagName(TEXT("TagName"))
 	, TargetTagValue(TEXT("Value"))
 	, ComparisonOp(ETextFilterComparisonOperation::NotEqual)
@@ -1087,7 +1087,7 @@ FString FFrontendFilter_ArbitraryComparisonOperation::ConvertOperationToString(E
 /////////////////////////////////////////
 
 FFrontendFilter_ShowOtherDevelopers::FFrontendFilter_ShowOtherDevelopers(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 	, BaseDeveloperPath(TEXT("/Game/Developers/"))
 	, BaseDeveloperPathAnsi()
 	, UserDeveloperPath(BaseDeveloperPath + FPaths::GameUserDeveloperFolderName() + TEXT("/"))
@@ -1168,7 +1168,7 @@ bool FFrontendFilter_ShowOtherDevelopers::GetShowOtherDeveloperAssets() const
 /////////////////////////////////////////
 
 FFrontendFilter_ShowRedirectors::FFrontendFilter_ShowRedirectors(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 {
 	bAreRedirectorsInBaseFilter = false;
 	RedirectorClassName = UObjectRedirector::StaticClass()->GetPathName();
@@ -1197,7 +1197,7 @@ bool FFrontendFilter_ShowRedirectors::PassesFilter(FAssetFilterType InItem) cons
 /////////////////////////////////////////
 
 FFrontendFilter_InUseByLoadedLevels::FFrontendFilter_InUseByLoadedLevels(TSharedPtr<FFrontendFilterCategory> InCategory) 
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 {
 	FEditorDelegates::MapChange.AddRaw(this, &FFrontendFilter_InUseByLoadedLevels::OnEditorMapChange);
 
@@ -1357,17 +1357,12 @@ void FFrontendFilter_InUseByLoadedLevels::OnEditorMapChange( uint32 MapChangeFla
 /////////////////////////////////////////
 
 FFrontendFilter_UsedInAnyLevel::FFrontendFilter_UsedInAnyLevel(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 {
 	// Prepare asset registry.
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 	AssetRegistry = &AssetRegistryModule.Get();
 	check (AssetRegistry != nullptr);
-}
-
-FFrontendFilter_UsedInAnyLevel::~FFrontendFilter_UsedInAnyLevel()
-{
-	AssetRegistry = nullptr;
 }
 
 void FFrontendFilter_UsedInAnyLevel::ActiveStateChanged(bool bActive)
@@ -1400,18 +1395,12 @@ bool FFrontendFilter_UsedInAnyLevel::PassesFilter(FAssetFilterType InItem) const
 /////////////////////////////////////////
 
 FFrontendFilter_NotUsedInAnyLevel::FFrontendFilter_NotUsedInAnyLevel(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 {
 	// Prepare asset registry.
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 	AssetRegistry = &AssetRegistryModule.Get();
 	check (AssetRegistry != nullptr);
-}
-
-
-FFrontendFilter_NotUsedInAnyLevel::~FFrontendFilter_NotUsedInAnyLevel()
-{
-	AssetRegistry = nullptr;
 }
 
 void FFrontendFilter_NotUsedInAnyLevel::ActiveStateChanged(bool bActive)
@@ -1439,13 +1428,35 @@ bool FFrontendFilter_NotUsedInAnyLevel::PassesFilter(FAssetFilterType InItem) co
 	return false;
 }
 
+/////////////////////////////////////////
+// FFrontendFilter_NotUsedInAnyAsset
+/////////////////////////////////////////
+
+FFrontendFilter_NotUsedInAnyAsset::FFrontendFilter_NotUsedInAnyAsset(TSharedPtr<FFrontendFilterCategory> InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
+{
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	AssetRegistry = &AssetRegistryModule.Get();
+}
+
+bool FFrontendFilter_NotUsedInAnyAsset::PassesFilter(FAssetFilterType InItem) const
+{
+	FAssetData ItemAssetData;
+	if (InItem.Legacy_TryGetAssetData(ItemAssetData))
+	{
+		TArray<FName> OutReferencers;
+		AssetRegistry->GetReferencers(ItemAssetData.PackageName, OutReferencers);
+		return OutReferencers.IsEmpty();
+	}
+	return false;
+}
 
 /////////////////////////////////////////
 // FFrontendFilter_Recent
 /////////////////////////////////////////
 
 FFrontendFilter_Recent::FFrontendFilter_Recent(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 	, bIsCurrentlyActive(false)
 {
 	UContentBrowserSettings::OnSettingChanged().AddRaw(this, &FFrontendFilter_Recent::ResetFilter);
@@ -1506,7 +1517,7 @@ void FFrontendFilter_Recent::ResetFilter(FName InName)
 /////////////////////////////////////////
 
 FFrontendFilter_Writable::FFrontendFilter_Writable(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 {
 }
 
@@ -1533,7 +1544,7 @@ bool FFrontendFilter_Writable::PassesFilter(FAssetFilterType InItem) const
 /////////////////////////////////////////
 
 FFrontendFilter_VirtualizedData::FFrontendFilter_VirtualizedData(TSharedPtr<FFrontendFilterCategory> InCategory)
-	: FFrontendFilter(InCategory)
+	: FFrontendFilter(MoveTemp(InCategory))
 {
 }
 

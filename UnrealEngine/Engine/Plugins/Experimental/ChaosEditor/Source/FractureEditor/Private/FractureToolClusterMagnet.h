@@ -14,12 +14,6 @@ namespace Chaos
 }
 
 
-struct FClusterMagnet
-{
-	TSet<int32> ClusteredNodes;
-	TSet<int32> Connections;
-};
-
 
 UCLASS(DisplayName = "Cluster Magnet", Category = "FractureTools")
 class UFractureClusterMagnetSettings : public UFractureToolSettings
@@ -61,12 +55,5 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = AutoCluster)
 	TObjectPtr<UFractureClusterMagnetSettings> ClusterMagnetSettings;
-
-private:
-	bool CheckPresenceOfNecessaryAttributes(const FGeometryCollectionPtr GeometryCollection) const;
-	TMap<int32, TSet<int32>> InitializeConnectivity(const TSet<int32>& TopNodes, FGeometryCollectionPtr GeometryCollection, int32 OperatingLevel) const;
-	void CollectTopNodeConnections(FGeometryCollectionPtr GeometryCollection, int32 Index, int32 OperatingLevel, TSet<int32>& OutConnections) const;
-	void SeparateClusterMagnets(const TSet<int32>& TopNodes, const TArray<int32>& Selection, const TMap<int32, TSet<int32>>& TopNodeConnectivity, TArray<FClusterMagnet>& OutClusterMagnets, TSet<int32>& OutRemainingPool) const;
-	bool AbsorbClusterNeighbors(const TMap<int32, TSet<int32>> TopNodeConnectivity, FClusterMagnet& OutClusterMagnets, TSet<int32>& OutRemainingPool) const;
 
 };

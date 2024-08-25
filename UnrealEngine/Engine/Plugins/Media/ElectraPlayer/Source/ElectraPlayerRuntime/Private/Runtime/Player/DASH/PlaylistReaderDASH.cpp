@@ -806,7 +806,7 @@ void FPlaylistReaderDASH::InternalSetup()
 	PlayerSessionServices->GetAEMSEventHandler()->AddAEMSReceiver(AsShared(), DASH::Schemes::ManifestEvents::Scheme_urn_mpeg_dash_event_ttfn_2016, TEXT(""), IAdaptiveStreamingPlayerAEMSReceiver::EDispatchMode::OnStart, false);
 
 	// Get the minimum MPD update time limit.
-	MinTimeBetweenUpdates = PlayerSessionServices->GetOptions().GetValue(DASH::OptionKey_MinTimeBetweenMPDUpdates).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000));
+	MinTimeBetweenUpdates = PlayerSessionServices->GetOptionValue(DASH::OptionKey_MinTimeBetweenMPDUpdates).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000));
 
 	// Setup the playlist load request for the master playlist.
 	TSharedPtrTS<FMPDLoadRequestDASH> PlaylistLoadRequest = MakeSharedTS<FMPDLoadRequestDASH>();
@@ -903,19 +903,18 @@ void FPlaylistReaderDASH::ExecutePendingRequests(const FTimeValue& TimeNow)
 
 void FPlaylistReaderDASH::SetupRequestTimeouts(FResourceLoadRequestPtr InRequest)
 {
-	const FParamDict& Options = PlayerSessionServices->GetOptions();
 	switch(InRequest->LoadType)
 	{
 		case FMPDLoadRequestDASH::ELoadType::MPD:
 		{
-			InRequest->Request->ConnectionTimeout(Options.GetValue(DASH::OptionKeyMPDLoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8)));
-			InRequest->Request->NoDataTimeout(Options.GetValue(DASH::OptionKeyMPDLoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 5)));
+			InRequest->Request->ConnectionTimeout(PlayerSessionServices->GetOptionValue(DASH::OptionKeyMPDLoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8)));
+			InRequest->Request->NoDataTimeout(PlayerSessionServices->GetOptionValue(DASH::OptionKeyMPDLoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 5)));
 			break;
 		}
 		case FMPDLoadRequestDASH::ELoadType::MPDUpdate:
 		{
-			InRequest->Request->ConnectionTimeout(Options.GetValue(DASH::OptionKeyMPDReloadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 2)));
-			InRequest->Request->NoDataTimeout(Options.GetValue(DASH::OptionKeyMPDReloadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 2)));
+			InRequest->Request->ConnectionTimeout(PlayerSessionServices->GetOptionValue(DASH::OptionKeyMPDReloadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 2)));
+			InRequest->Request->NoDataTimeout(PlayerSessionServices->GetOptionValue(DASH::OptionKeyMPDReloadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 2)));
 			break;
 		}
 		case FMPDLoadRequestDASH::ELoadType::Segment:

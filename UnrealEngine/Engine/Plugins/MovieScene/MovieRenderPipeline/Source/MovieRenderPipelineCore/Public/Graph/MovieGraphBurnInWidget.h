@@ -18,7 +18,8 @@ public:
 	/** 
 	* Called on the first temporal and first spatial sample of each output frame.
 	* @param	InGraphPipeline		The graph pipeline the burn-in is for. This will be consistent throughout a burn-in widget's life.
+	* @param	InEvaluatedConfig	The evaluated graph that was used to generate this output frame.
 	*/
 	UFUNCTION(BlueprintImplementableEvent)
-	void UpdateForGraph(UMovieGraphPipeline* InGraphPipeline);
+	void UpdateForGraph(UMovieGraphPipeline* InGraphPipeline, UMovieGraphEvaluatedConfig* InEvaluatedConfig);
 };

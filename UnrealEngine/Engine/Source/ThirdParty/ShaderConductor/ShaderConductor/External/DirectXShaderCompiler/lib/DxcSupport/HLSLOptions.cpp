@@ -992,6 +992,9 @@ int ReadDxcOpts(const OptTable *optionTable, unsigned flagsToInclude,
   opts.SpirvOptions.svPositionimplicitInvariant =
       Args.hasFlag(OPT_fspv_svposition_implicit_invariant, OPT_INVALID, false);
   // UE Change End: Allow SV_Position to be implicit invariant
+  // UE Change Begin: Allow precise semantic outputs 
+  opts.SpirvOptions.supportPreciseOutputs = Args.hasFlag(OPT_fspv_support_precise_outputs, OPT_INVALID, false);
+  // UE Change End: Allow precise semantic outputs 
   // qualifier for older versions of Metal.
   opts.SpirvOptions.noWarnIgnoredFeatures =
       Args.hasFlag(OPT_Wno_vk_ignored_features, OPT_INVALID, false);

@@ -177,20 +177,20 @@ void FDebugRenderSceneProxy::GetDynamicMeshElementsForView(const FSceneView* Vie
 	// Draw Cylinders
 	for (const FWireCylinder& Cylinder : Cylinders)
 	{
-		Cylinder.Draw(PDI, DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
+		Cylinder.Draw(PDI, (Cylinder.DrawTypeOverride != EDrawType::Invalid) ? Cylinder.DrawTypeOverride : DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
 	}
 
 	// Draw Boxes
 	for (const FDebugBox& Box : Boxes)
 	{
-		Box.Draw(PDI, DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
+		Box.Draw(PDI, (Box.DrawTypeOverride != EDrawType::Invalid) ? Box.DrawTypeOverride : DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
 	}
 
 	// Draw Cones
 	TArray<FVector> Verts;
 	for (const FCone& Cone : Cones)
 	{
-		Cone.Draw(PDI, DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector, &Verts);
+		Cone.Draw(PDI, (Cone.DrawTypeOverride != EDrawType::Invalid) ? Cone.DrawTypeOverride : DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector, &Verts);
 	}
 
 	// Draw spheres
@@ -198,7 +198,7 @@ void FDebugRenderSceneProxy::GetDynamicMeshElementsForView(const FSceneView* Vie
 	{
 		if (PointInView(Sphere.Location, View))
 		{
-			Sphere.Draw(PDI, DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
+			Sphere.Draw(PDI, (Sphere.DrawTypeOverride != EDrawType::Invalid) ? Sphere.DrawTypeOverride : DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
 		}
 	}
 
@@ -207,7 +207,7 @@ void FDebugRenderSceneProxy::GetDynamicMeshElementsForView(const FSceneView* Vie
 	{
 		if (PointInView(Capsule.Base, View))
 		{
-			Capsule.Draw(PDI, DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
+			Capsule.Draw(PDI, (Capsule.DrawTypeOverride != EDrawType::Invalid) ? Capsule.DrawTypeOverride : DrawType, DrawAlpha, DefaultMaterialCache, ViewIndex, Collector);
 		}
 	}
 
@@ -308,20 +308,22 @@ void FDebugRenderSceneProxy::FDebugBox::Draw(FPrimitiveDrawInterface* PDI, EDraw
 	}
 	if (InDrawType == SolidAndWireMeshes || InDrawType == SolidMesh)
 	{
-		GetBoxMesh(FTransform(Box.GetCenter()).ToMatrixNoScale() * Transform.ToMatrixWithScale(), Box.GetExtent(), MaterialCache[Color.WithAlpha(InDrawAlpha)], SDPG_World, ViewIndex, Collector);
+		GetBoxMesh(FTransform(Box.GetCenter()).ToMatrixNoScale() * Transform.ToMatrixWithScale(), Box.GetExtent(), MaterialCache[Color.WithAlpha(InDrawAlpha * Color.A)], SDPG_World, ViewIndex, Collector);
 	}
 }
 
 void FDebugRenderSceneProxy::FWireCylinder::Draw(FPrimitiveDrawInterface* PDI, EDrawType InDrawType, uint32 InDrawAlpha, FMaterialCache& MaterialCache, int32 ViewIndex, FMeshElementCollector& Collector) const
 {
+	FVector XAxis, YAxis;
+	Direction.FindBestAxisVectors(XAxis, YAxis);
 	if (InDrawType == SolidAndWireMeshes || InDrawType == WireMesh)
 	{
-		DrawWireCylinder(PDI, Base, FVector(1, 0, 0), FVector(0, 1, 0), FVector(0, 0, 1), Color, Radius, HalfHeight, (InDrawType == SolidAndWireMeshes) ? 9 : 16, SDPG_World, InDrawType == SolidAndWireMeshes ? 2 : 0, 0, true);
+		DrawWireCylinder(PDI, Base, XAxis, YAxis, Direction, Color, Radius, HalfHeight, (InDrawType == SolidAndWireMeshes) ? 9 : 16, SDPG_World, InDrawType == SolidAndWireMeshes ? 2 : 0, 0, true);
 	}
 
 	if (InDrawType == SolidAndWireMeshes || InDrawType == SolidMesh)
 	{
-		GetCylinderMesh(Base, FVector(1, 0, 0), FVector(0, 1, 0), FVector(0, 0, 1), Radius, HalfHeight, 16, MaterialCache[Color.WithAlpha(InDrawAlpha)], SDPG_World, ViewIndex, Collector);
+		GetCylinderMesh(Base, XAxis, YAxis, Direction, Radius, HalfHeight, 16, MaterialCache[Color.WithAlpha(InDrawAlpha * Color.A)], SDPG_World, ViewIndex, Collector);
 	}
 }
 
@@ -335,7 +337,7 @@ void FDebugRenderSceneProxy::FCone::Draw(FPrimitiveDrawInterface* PDI, EDrawType
 	}
 	if (InDrawType == SolidAndWireMeshes || InDrawType == SolidMesh)
 	{
-		GetConeMesh(ConeToWorld, Angle1, Angle2, 16, MaterialCache[Color.WithAlpha(InDrawAlpha)], SDPG_World, ViewIndex, Collector);
+		GetConeMesh(ConeToWorld, Angle1, Angle2, 16, MaterialCache[Color.WithAlpha(InDrawAlpha * Color.A)], SDPG_World, ViewIndex, Collector);
 	}
 }
 
@@ -348,7 +350,7 @@ void FDebugRenderSceneProxy::FSphere::Draw(FPrimitiveDrawInterface* PDI, EDrawTy
 	}
 	if (InDrawType == SolidAndWireMeshes || InDrawType == SolidMesh)
 	{
-		GetSphereMesh(Location, FVector(Radius), 20, 7, MaterialCache[Color.WithAlpha(InDrawAlpha)], SDPG_World, false, ViewIndex, Collector);
+		GetSphereMesh(Location, FVector(Radius), 20, 7, MaterialCache[Color.WithAlpha(InDrawAlpha * Color.A)], SDPG_World, false, ViewIndex, Collector);
 	}
 }
 
@@ -365,6 +367,6 @@ void FDebugRenderSceneProxy::FCapsule::Draw(FPrimitiveDrawInterface* PDI, EDrawT
 	}
 	if (InDrawType == SolidAndWireMeshes || InDrawType == SolidMesh)
 	{
-		GetCapsuleMesh(Base, X, Y, Z, Color, Radius, HalfHeight, 16, MaterialCache[Color.WithAlpha(InDrawAlpha)], SDPG_World, false, ViewIndex, Collector);
+		GetCapsuleMesh(Base, X, Y, Z, Color, Radius, HalfHeight, 16, MaterialCache[Color.WithAlpha(InDrawAlpha * Color.A)], SDPG_World, false, ViewIndex, Collector);
 	}
 }

@@ -28,7 +28,10 @@ private:
 		UE::Zen::FZenLocalServiceRunContext RunContext;
 		FString Version;
 		UE::Zen::FGCStatus GCStatus;
+		UE::Zen::FZenCacheStats ZenCacheStats;
+		UE::Zen::FZenProjectStats ZenProjectStats;
 		uint16 LocalPort = 0;
+		bool bHaveStats = false;
 		bool bGotRunContext = false;
 		bool bIsRunning = false;
 	};

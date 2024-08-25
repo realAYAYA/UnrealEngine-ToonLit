@@ -92,7 +92,9 @@ void BrushToDynamicMesh(UModel& BrushModel, UE::Geometry::FDynamicMesh3& Mesh, c
 	using namespace VolumeToDynamicMeshLocals;
 
 	Mesh.Clear();
-	if (Options.bSetGroups)
+	// Note: Groups are also used to compute normals matching the input polygons
+	// If normals are requested but groups are not, groups will be discarded after normals are computed
+	if (Options.bSetGroups || Options.bGenerateNormals)
 	{
 		Mesh.EnableTriangleGroups();
 	}
@@ -225,6 +227,10 @@ void BrushToDynamicMesh(UModel& BrushModel, UE::Geometry::FDynamicMesh3& Mesh, c
 		FDynamicMeshNormalOverlay* Normals = Mesh.Attributes()->PrimaryNormals();
 		FMeshNormals::InitializeOverlayTopologyFromFaceGroups(&Mesh, Normals);
 		FMeshNormals::QuickRecomputeOverlayNormals(Mesh);
+		if (!Options.bSetGroups)
+		{
+			Mesh.DiscardTriangleGroups();
+		}
 	}
 }
 

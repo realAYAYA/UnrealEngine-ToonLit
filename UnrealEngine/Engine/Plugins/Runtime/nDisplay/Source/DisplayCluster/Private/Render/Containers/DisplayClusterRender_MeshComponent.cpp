@@ -11,12 +11,12 @@
 
 //-------------------------------------------------------------------------------
 //
-static void ImplUpdateMeshComponentProxyData(FDisplayClusterRender_MeshComponentProxy* MeshComponentProxy, FDisplayClusterRender_MeshComponentProxyData* NewProxyData)
+static void ImplUpdateMeshComponentProxyData(const TSharedPtr<FDisplayClusterRender_MeshComponentProxy, ESPMode::ThreadSafe>& InMeshComponentProxy, FDisplayClusterRender_MeshComponentProxyData* NewProxyData)
 {
-	if (MeshComponentProxy)
+	if (InMeshComponentProxy.IsValid())
 	{
 		ENQUEUE_RENDER_COMMAND(DisplayClusterRender_MeshComponentProxy_Update)(
-			[MeshComponentProxy, NewProxyData](FRHICommandListImmediate& RHICmdList)
+			[MeshComponentProxy = InMeshComponentProxy, NewProxyData](FRHICommandListImmediate& RHICmdList)
 		{
 			// Update RHI
 			if (NewProxyData != nullptr)
@@ -32,13 +32,16 @@ static void ImplUpdateMeshComponentProxyData(FDisplayClusterRender_MeshComponent
 	}
 }
 
-static void ImplDeleteMeshComponentProxy(FDisplayClusterRender_MeshComponentProxy* MeshComponentProxy)
+static void ImplDeleteMeshComponentProxy(const TSharedPtr<FDisplayClusterRender_MeshComponentProxy, ESPMode::ThreadSafe>& InMeshComponentProxy)
 {
-	ENQUEUE_RENDER_COMMAND(DisplayClusterRender_MeshComponentProxy_Delete)(
-		[MeshComponentProxy](FRHICommandListImmediate& RHICmdList)
+	if (InMeshComponentProxy.IsValid())
 	{
-		delete MeshComponentProxy;
-	});
+		ENQUEUE_RENDER_COMMAND(DisplayClusterRender_MeshComponentProxy_Delete)(
+			[MeshComponentProxy = InMeshComponentProxy](FRHICommandListImmediate& RHICmdList)
+			{
+				MeshComponentProxy->Release_RenderThread();
+			});
+	}
 }
 
 static const FStaticMeshLODResources* ImplGetStaticMeshLODResources(const UStaticMesh* InStaticMesh, int32 LODIndex = 0)
@@ -97,16 +100,16 @@ static const FProcMeshSection* ImplGetProceduralMeshComponentSection(UProcedural
 FDisplayClusterRender_MeshComponent::FDisplayClusterRender_MeshComponent()
 {
 	// Create render proxy object
-	MeshComponentProxy = new FDisplayClusterRender_MeshComponentProxy();
+	MeshComponentProxyPtr = MakeShared<FDisplayClusterRender_MeshComponentProxy, ESPMode::ThreadSafe>();
 }
 
 FDisplayClusterRender_MeshComponent::~FDisplayClusterRender_MeshComponent()
 {
 	// Delete proxy on RenderThread
-	ImplDeleteMeshComponentProxy(MeshComponentProxy);
+	ImplDeleteMeshComponentProxy(MeshComponentProxyPtr);
 
 	// Forget Ptr on GameThread
-	MeshComponentProxy = nullptr;
+	MeshComponentProxyPtr.Reset();
 }
 
 USceneComponent* FDisplayClusterRender_MeshComponent::GetOriginComponent() const
@@ -127,7 +130,24 @@ IDisplayClusterRender_MeshComponentProxy* FDisplayClusterRender_MeshComponent::G
 {
 	check(IsInRenderingThread());
 
-	return MeshComponentProxy;
+	return MeshComponentProxyPtr.Get();
+}
+
+UMeshComponent* FDisplayClusterRender_MeshComponent::GetMeshComponent() const
+{
+	switch (GetGeometrySource())
+	{
+	case EDisplayClusterRender_MeshComponentGeometrySource::StaticMeshComponentRef:
+		return GetStaticMeshComponent();
+
+	case EDisplayClusterRender_MeshComponentGeometrySource::ProceduralMeshComponentRef:
+		return GetProceduralMeshComponent();
+
+	default:
+		break;
+	}
+
+	return nullptr;
 }
 
 UStaticMeshComponent* FDisplayClusterRender_MeshComponent::GetStaticMeshComponent() const
@@ -184,12 +204,12 @@ void FDisplayClusterRender_MeshComponent::AssignStaticMeshComponentRefs(UStaticM
 	{
 		const FString SourceGeometryName = InStaticMeshComponent->GetFName().ToString();
 		// Send geometry to proxy
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *StaticMeshLODResources, InUVs));
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *StaticMeshLODResources, InUVs));
 	}
 	else
 	{
 		// no StaticMesh - release proxy geometry
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, nullptr);
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, nullptr);
 	}
 }
 
@@ -237,12 +257,12 @@ void FDisplayClusterRender_MeshComponent::AssignProceduralMeshComponentRefs(UPro
 	{
 		const FString SourceGeometryName = InProceduralMeshComponent->GetFName().ToString();
 		// Send geometry to proxy
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *ProcMeshSection, InUVs));
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *ProcMeshSection, InUVs));
 	}
 	else
 	{
 		// no ProceduralMesh - release proxy geometry
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, nullptr);
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, nullptr);
 	}
 }
 
@@ -262,7 +282,7 @@ void FDisplayClusterRender_MeshComponent::AssignProceduralMeshSection(const FPro
 
 	const FString SourceGeometryName(TEXT("ProcMeshSection"));
 	// Send geometry to proxy
-	ImplUpdateMeshComponentProxyData(MeshComponentProxy, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, InProcMeshSection, InUVs));
+	ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, InProcMeshSection, InUVs));
 }
 
 void FDisplayClusterRender_MeshComponent::AssignStaticMesh(const UStaticMesh* InStaticMesh, const FDisplayClusterMeshUVs& InUVs, int32 InLODIndex)
@@ -285,12 +305,12 @@ void FDisplayClusterRender_MeshComponent::AssignStaticMesh(const UStaticMesh* In
 	{
 		const FString SourceGeometryName = InStaticMesh->GetFName().ToString();
 		// Send geometry to proxy
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *StaticMeshLODResources, InUVs));
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *StaticMeshLODResources, InUVs));
 	}
 	else
 	{
 		// no StaticMesh - release proxy geometry
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, nullptr);
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, nullptr);
 	}
 }
 
@@ -312,12 +332,12 @@ void FDisplayClusterRender_MeshComponent::AssignMeshGeometry(const FDisplayClust
 	{
 		const FString SourceGeometryName(TEXT("nDCRender_MeshGeometry"));
 		// Send geometry to proxy
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *InMeshGeometry));
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, DataFunc, *InMeshGeometry));
 	}
 	else
 	{
 		// no InMeshGeometry- release proxy geometry
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, nullptr);
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, nullptr);
 	}
 }
 
@@ -329,7 +349,7 @@ void FDisplayClusterRender_MeshComponent::AssignMeshGeometry_RenderThread(const 
 	{
 		const FString SourceGeometryName(TEXT("nDCRender_MeshGeometry_RenderThread"));
 		// Send geometry to proxy
-		ImplUpdateMeshComponentProxyData(MeshComponentProxy, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, InDataFunc, *InMeshGeometry));
+		ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, new FDisplayClusterRender_MeshComponentProxyData(SourceGeometryName, InDataFunc, *InMeshGeometry));
 	}
 }
 
@@ -347,7 +367,7 @@ void FDisplayClusterRender_MeshComponent::ReleaseMeshComponent()
 	// Set source geometry type
 	GeometrySource = EDisplayClusterRender_MeshComponentGeometrySource::Disabled;
 
-	ImplUpdateMeshComponentProxyData(MeshComponentProxy, nullptr);
+	ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, nullptr);
 }
 
 void FDisplayClusterRender_MeshComponent::ReleaseProxyGeometry()
@@ -355,7 +375,7 @@ void FDisplayClusterRender_MeshComponent::ReleaseProxyGeometry()
 	check(IsInGameThread());
 
 	// just release  geometry on proxy
-	ImplUpdateMeshComponentProxyData(MeshComponentProxy, nullptr);
+	ImplUpdateMeshComponentProxyData(MeshComponentProxyPtr, nullptr);
 }
 
 bool FDisplayClusterRender_MeshComponent::EqualsMeshComponentName(const FName& InMeshComponentName) const

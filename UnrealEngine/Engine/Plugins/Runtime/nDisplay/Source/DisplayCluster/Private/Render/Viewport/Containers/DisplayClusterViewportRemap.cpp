@@ -11,7 +11,7 @@
 #include "Render/Viewport/RenderFrame/DisplayClusterRenderFrameSettings.h"
 #include "Render/Containers/DisplayClusterRender_MeshGeometry.h"
 
-bool FDisplayClusterViewportRemap::UpdateConfiguration(const FDisplayClusterViewport& InViewport, const FDisplayClusterConfigurationViewport_Remap& InRemapConfiguration)
+bool FDisplayClusterViewportRemap::UpdateViewportRemap(const FDisplayClusterViewport& InViewport, const FDisplayClusterConfigurationViewport_Remap& InRemapConfiguration)
 {
 	if (InRemapConfiguration.bEnable)
 	{
@@ -65,7 +65,7 @@ bool FDisplayClusterViewportRemap::UpdateConfiguration(const FDisplayClusterView
 void FDisplayClusterViewportRemap::Update(const FDisplayClusterViewport& InViewport, const FIntPoint& InRenderFrameSize)
 {
 	// Preview in editor not support this feature
-	if (InViewport.GetRenderMode() == EDisplayClusterRenderFrameMode::PreviewInScene)
+	if (InViewport.Configuration->IsPreviewRendering())
 	{
 		return;
 	}

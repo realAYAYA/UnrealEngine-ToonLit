@@ -73,7 +73,13 @@ void Chaos::PhysicsParallelFor(int32 InNum, TFunctionRef<void(int32)> InCallable
 #endif
 		InCallable(Idx);
 	};
-	::ParallelFor(InNum, PassThrough, !!GSingleThreadedPhysics || bDisablePhysicsParallelFor || bForceSingleThreaded);
+
+	const bool bSingleThreaded = !!GSingleThreadedPhysics || bDisablePhysicsParallelFor || bForceSingleThreaded;
+	const EParallelForFlags Flags = (bSingleThreaded ? EParallelForFlags::ForceSingleThread : EParallelForFlags::None);
+	const int32 MinBatchSize = ((MaxNumWorkers > 0) && (InNum > MaxNumWorkers)) ? FMath::DivideAndRoundUp(InNum, MaxNumWorkers) : 1;
+
+	ParallelFor(TEXT("PhysicsParallelFor"), InNum, MinBatchSize, PassThrough, Flags);
+	//::ParallelFor(InNum, PassThrough, !!GSingleThreadedPhysics || bDisablePhysicsParallelFor || bForceSingleThreaded);
 }
 
 void Chaos::PhysicsParallelForRange(int32 InNum, TFunctionRef<void(int32, int32)> InCallable, const int32 InMinBatchSize, bool bForceSingleThreaded)
@@ -167,6 +173,7 @@ void Chaos::PhysicsParallelForWithContext(int32 InNum, TFunctionRef<int32 (int32
 
 	const bool bSingleThreaded = !!GSingleThreadedPhysics || bDisablePhysicsParallelFor || bForceSingleThreaded;
 	const EParallelForFlags Flags = bSingleThreaded ? (EParallelForFlags::ForceSingleThread) : (EParallelForFlags::None);
+	const int32 MinBatchSize = ((MaxNumWorkers > 0) && (InNum > MaxNumWorkers)) ? FMath::DivideAndRoundUp(InNum, MaxNumWorkers) : 1;
 
 	// Unfortunately ParallelForWithTaskContext takes an array of context objects - we don't use it and in our case
 	// it ends up being an array where array[index] = index.
@@ -175,7 +182,7 @@ void Chaos::PhysicsParallelForWithContext(int32 InNum, TFunctionRef<int32 (int32
 	// contexts and use the context indeex to get its context from it.
 	TArray<int32, TInlineAllocator<16>> Contexts;
 
-	::ParallelForWithTaskContext(Contexts, InNum, InContextCreator, PassThrough, Flags);
+	::ParallelForWithTaskContext(TEXT("PhysicsParallelForWithContext"), Contexts, InNum, MinBatchSize, InContextCreator, PassThrough, Flags);
 }
 
 

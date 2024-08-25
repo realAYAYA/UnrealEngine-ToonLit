@@ -5,6 +5,7 @@
 [![Sonar Status](https://sonarcloud.io/api/project_badges/measure?project=nfrechette_acl&metric=alert_status)](https://sonarcloud.io/dashboard?id=nfrechette_acl)
 [![GitHub release](https://img.shields.io/github/release/nfrechette/acl.svg)](https://github.com/nfrechette/acl/releases)
 [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/nfrechette/acl/master/LICENSE)
+[![Conan](https://img.shields.io/badge/on-conan-blue.svg)](https://conan.io/center/nfrechette-acl)
 [![Discord](https://img.shields.io/discord/691048241864769647?label=discord)](https://discord.gg/UERt4bS)
 
 # Animation Compression Library
@@ -44,19 +45,16 @@ Much thought was put into designing the library for it to be as flexible and pow
 ## Supported platforms
 
 *  Windows VS2015 x86 and x64
-*  Windows (VS2017, VS2019) x86, x64, and ARM64
-*  Windows VS2019 with clang9 x86 and x64
-*  Linux (gcc 5 to 10) x86 and x64
-*  Linux (clang 4 to 11) x86 and x64
-*  OS X (Xcode 10.3) x86 and x64
-*  OS X (Xcode 11.2) x64
+*  Windows (VS2017 to VS2022) x86, x64, and ARM64
+*  Windows (VS2017 to VS2022) with clang x86 and x64
+*  Linux (gcc 5 to 13) x86 and x64
+*  Linux (clang 4 to 15) x86 and x64
+*  OS X (12.5, 13.2, 14.2) x64 and ARM64
 *  Android (NDK 21) ARMv7-A and ARM64
-*  iOS (Xcode 10.3, 11.2) ARM64
+*  iOS (Xcode 10.3, 11.7, 12.5, 13.2, 14.2) ARM64
 *  Emscripten (1.39.11) WASM
 
 The above supported platform list is only what is tested every release but if it compiles, it should run just fine.
-
-Note: *VS2017* and *VS2019* compile with *ARM64* on *AppVeyor* but I have no device to test them with.
 
 The [Unreal Engine](https://www.unrealengine.com/en-US/blog) is supported through a plugin found [here](https://github.com/nfrechette/acl-ue4-plugin).
 
@@ -65,6 +63,8 @@ The [Unreal Engine](https://www.unrealengine.com/en-US/blog) is supported throug
 This library is **100%** headers as such you just need to include them in your own project to start using it. However, if you wish to run the unit tests, regression tests, to contribute to ACL or use it for research, head on over to the [getting started](./docs/getting_started.md) section in order to setup your environment and make sure to check out the [contributing guidelines](CONTRIBUTING.md).
 
 If you would like to integrate ACL into your own game engine, follow the integration instructions [here](./docs#how-to-integrate-the-library).
+
+You can install `nfrechette-acl` with [Conan](https://conan.io/center/nfrechette-acl).
 
 ## Performance metrics
 
@@ -95,15 +95,25 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
 <table>
-  <tr>
-    <td align="center"><a href="https://github.com/CodyDWJones"><img src="https://avatars.githubusercontent.com/u/28773740?v=4?s=100" width="100px;" alt=""/><br /><sub><b>CodyDWJones</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=CodyDWJones" title="Code">💻</a> <a href="#data-CodyDWJones" title="Data">🔣</a> <a href="#maintenance-CodyDWJones" title="Maintenance">🚧</a> <a href="#tool-CodyDWJones" title="Tools">🔧</a> <a href="#infra-CodyDWJones" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#ideas-CodyDWJones" title="Ideas, Planning, & Feedback">🤔</a></td>
-    <td align="center"><a href="https://github.com/Meradrin"><img src="https://avatars.githubusercontent.com/u/7066278?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Meradrin</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=Meradrin" title="Code">💻</a></td>
-    <td align="center"><a href="https://github.com/tirpidz"><img src="https://avatars.githubusercontent.com/u/9991876?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Martin Turcotte</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=tirpidz" title="Code">💻</a> <a href="#tool-tirpidz" title="Tools">🔧</a> <a href="#ideas-tirpidz" title="Ideas, Planning, & Feedback">🤔</a></td>
-    <td align="center"><a href="https://github.com/vjeffh"><img src="https://avatars.githubusercontent.com/u/22382688?v=4?s=100" width="100px;" alt=""/><br /><sub><b>vjeffh</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=vjeffh" title="Code">💻</a></td>
-    <td align="center"><a href="https://github.com/Romain-Piquois"><img src="https://avatars.githubusercontent.com/u/3689912?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Romain-Piquois</b></sub></a><br /><a href="https://github.com/nfrechette/acl/issues?q=author%3ARomain-Piquois" title="Bug reports">🐛</a></td>
-    <td align="center"><a href="https://github.com/janisozaur"><img src="https://avatars.githubusercontent.com/u/550290?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Michał Janiszewski</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=janisozaur" title="Code">💻</a> <a href="#tool-janisozaur" title="Tools">🔧</a> <a href="#maintenance-janisozaur" title="Maintenance">🚧</a> <a href="#infra-janisozaur" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
-    <td align="center"><a href="http://keybase.io/visualphoenix"><img src="https://avatars.githubusercontent.com/u/394175?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Raymond Barbiero</b></sub></a><br /><a href="#ideas-visualphoenix" title="Ideas, Planning, & Feedback">🤔</a></td>
-  </tr>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/CodyDWJones"><img src="https://avatars.githubusercontent.com/u/28773740?v=4?s=100" width="100px;" alt="CodyDWJones"/><br /><sub><b>CodyDWJones</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=CodyDWJones" title="Code">💻</a> <a href="#data-CodyDWJones" title="Data">🔣</a> <a href="#maintenance-CodyDWJones" title="Maintenance">🚧</a> <a href="#tool-CodyDWJones" title="Tools">🔧</a> <a href="#infra-CodyDWJones" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#ideas-CodyDWJones" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Meradrin"><img src="https://avatars.githubusercontent.com/u/7066278?v=4?s=100" width="100px;" alt="Meradrin"/><br /><sub><b>Meradrin</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=Meradrin" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/tirpidz"><img src="https://avatars.githubusercontent.com/u/9991876?v=4?s=100" width="100px;" alt="Martin Turcotte"/><br /><sub><b>Martin Turcotte</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=tirpidz" title="Code">💻</a> <a href="#tool-tirpidz" title="Tools">🔧</a> <a href="#ideas-tirpidz" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/vjeffh"><img src="https://avatars.githubusercontent.com/u/22382688?v=4?s=100" width="100px;" alt="vjeffh"/><br /><sub><b>vjeffh</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=vjeffh" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Romain-Piquois"><img src="https://avatars.githubusercontent.com/u/3689912?v=4?s=100" width="100px;" alt="Romain-Piquois"/><br /><sub><b>Romain-Piquois</b></sub></a><br /><a href="https://github.com/nfrechette/acl/issues?q=author%3ARomain-Piquois" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/janisozaur"><img src="https://avatars.githubusercontent.com/u/550290?v=4?s=100" width="100px;" alt="Michał Janiszewski"/><br /><sub><b>Michał Janiszewski</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=janisozaur" title="Code">💻</a> <a href="#tool-janisozaur" title="Tools">🔧</a> <a href="#maintenance-janisozaur" title="Maintenance">🚧</a> <a href="#infra-janisozaur" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://keybase.io/visualphoenix"><img src="https://avatars.githubusercontent.com/u/394175?v=4?s=100" width="100px;" alt="Raymond Barbiero"/><br /><sub><b>Raymond Barbiero</b></sub></a><br /><a href="#ideas-visualphoenix" title="Ideas, Planning, & Feedback">🤔</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ddeadguyy"><img src="https://avatars.githubusercontent.com/u/42090666?v=4?s=100" width="100px;" alt="ddeadguyy"/><br /><sub><b>ddeadguyy</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=ddeadguyy" title="Code">💻</a> <a href="#ideas-ddeadguyy" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://gitlab.com/intelligide"><img src="https://avatars.githubusercontent.com/u/12529837?v=4?s=100" width="100px;" alt="Yoann Potinet"/><br /><sub><b>Yoann Potinet</b></sub></a><br /><a href="#infra-intelligide" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/jbrd-pg"><img src="https://avatars.githubusercontent.com/u/100773491?v=4?s=100" width="100px;" alt="James Bird"/><br /><sub><b>James Bird</b></sub></a><br /><a href="#ideas-jbrd-pg" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/nfrechette/acl/commits?author=jbrd-pg" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/GermanAizek"><img src="https://avatars.githubusercontent.com/u/21138600?v=4?s=100" width="100px;" alt="Herman Semenov"/><br /><sub><b>Herman Semenov</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=GermanAizek" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Dreaming381"><img src="https://avatars.githubusercontent.com/u/25555355?v=4?s=100" width="100px;" alt="Tyler"/><br /><sub><b>Tyler</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=Dreaming381" title="Code">💻</a> <a href="#ideas-Dreaming381" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/naetherm"><img src="https://avatars.githubusercontent.com/u/16878712?v=4?s=100" width="100px;" alt="naetherm"/><br /><sub><b>naetherm</b></sub></a><br /><a href="https://github.com/nfrechette/acl/commits?author=naetherm" title="Code">💻</a></td>
+    </tr>
+  </tbody>
 </table>
 
 <!-- markdownlint-restore -->

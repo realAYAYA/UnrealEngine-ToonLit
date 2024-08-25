@@ -67,6 +67,9 @@ UEdGraphNode* FBehaviorTreeSchemaAction_AutoArrange::PerformAction(class UEdGrap
 UEdGraphSchema_BehaviorTree::UEdGraphSchema_BehaviorTree(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	CompositeDecoratorClass = UBehaviorTreeGraphNode_CompositeDecorator::StaticClass();
+	DecoratorClass = UBehaviorTreeGraphNode_Decorator::StaticClass();
+	TaskClass = UBehaviorTreeGraphNode_Task::StaticClass();
+	ServiceClass = UBehaviorTreeGraphNode_Service::StaticClass();
 }
 
 void UEdGraphSchema_BehaviorTree::CreateDefaultNodesForGraph(UEdGraph& Graph) const
@@ -99,12 +102,12 @@ void UEdGraphSchema_BehaviorTree::GetSubNodeClasses(int32 SubNodeFlags, TArray<F
 	if (SubNodeFlags == ESubNode::Decorator)
 	{
 		ClassCache.GatherClasses(UBTDecorator::StaticClass(), ClassData);
-		GraphNodeClass = UBehaviorTreeGraphNode_Decorator::StaticClass();
+		GraphNodeClass = DecoratorClass;
 	}
 	else
 	{
 		ClassCache.GatherClasses(UBTService::StaticClass(), ClassData);
-		GraphNodeClass = UBehaviorTreeGraphNode_Service::StaticClass();
+		GraphNodeClass = ServiceClass;
 	}
 }
 
@@ -176,7 +179,7 @@ void UEdGraphSchema_BehaviorTree::GetGraphContextActions(FGraphContextMenuBuilde
 
 			TSharedPtr<FAISchemaAction_NewNode> AddOpAction = UAIGraphSchema::AddNewNodeAction(TasksBuilder, NodeClass.GetCategory(), NodeTypeName, NodeClass.GetTooltip());
 			
-			UClass* GraphNodeClass = UBehaviorTreeGraphNode_Task::StaticClass();
+			UClass* GraphNodeClass = TaskClass;
 			if (IsNodeSubtreeTask(NodeClass))
 			{
 				GraphNodeClass = UBehaviorTreeGraphNode_SubtreeTask::StaticClass();

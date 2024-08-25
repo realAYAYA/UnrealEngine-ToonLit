@@ -4,6 +4,9 @@
 
 #include "CoreMinimal.h"
 
+/**
+* Rendering Mode.
+*/
 enum class EDisplayClusterRenderFrameMode: uint8
 {
 	Unknown = 0,
@@ -20,22 +23,24 @@ enum class EDisplayClusterRenderFrameMode: uint8
 	// Special render: render to two separated backbuffer textures, with half size Y
 	TopBottom,
 
+
+	// Monoscopic rendering in PIE
+	PIE_Mono,
+
+	// Stereoscopic side-by-side rendering in PIE
+	PIE_SideBySide,
+
+	// Stereoscopic top-bottom rendering in PIE
+	PIE_TopBottom,
+
+	// Monoscopic rendering for MRQ
+	MRQ_Mono,
+
+
 	// Special render for preview in scene
 	PreviewInScene,
-};
 
-// (experimental, not implemented, reserved)
-enum class EDisplayClusterRenderFamilyMode : uint8
-{
-	// Render all viewports to unique RenderTargets
-	None = 0,
-
-	// Merge views by ViewFamilyGroupNum
-	AllowMergeForGroups,
-
-	// Merge views by ViewFamilyGroupNum and stereo
-	AllowMergeForGroupsAndStereo,
-
-	// Use rules to merge views to minimal num of families (separate by: buffer_ratio, viewExtension, max RTT size)
-	MergeAnyPossible,
+	// Special render of ProxyHit for preview in scene
+	// *** Not implemented.
+	PreviewProxyHitInScene,
 };

@@ -12,11 +12,7 @@ class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodePassThroughTextureSwit
 {
 public:
 	GENERATED_BODY()
-
+	
 	// UCustomizableObjectNodeSwitchBase interface
-	FString GetOutputPinName() const override;
-
-	FName GetCategory() const override;
-
-	FString GetPinPrefix() const;
+	virtual FName GetCategory() const override;
 };

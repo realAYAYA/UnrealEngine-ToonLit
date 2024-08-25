@@ -209,10 +209,14 @@ namespace Metasound
 				DataType = OutputHandle->GetDataType();
 			}
 
+			const UMetasoundEditorSettings* MetaSoundSettings = GetDefault<UMetasoundEditorSettings>();
+			const bool bIsDataTypeFAudioBufferSupported = DataType == GetMetasoundDataTypeName<FAudioBuffer>() && MetaSoundSettings && MetaSoundSettings->bShowOscilloscopeOnAudioPinMouseOver;
+
 			const bool bIsSupportedType = DataType == GetMetasoundDataTypeName<float>()
 				|| DataType == GetMetasoundDataTypeName<int32>()
 				|| DataType == GetMetasoundDataTypeName<FString>()
-				|| DataType == GetMetasoundDataTypeName<bool>();
+				|| DataType == GetMetasoundDataTypeName<bool>()
+				|| bIsDataTypeFAudioBufferSupported;
 
 			if (!bIsSupportedType)
 			{
@@ -242,7 +246,7 @@ namespace Metasound
 				DisplayName = Metadata.GetDisplayName();
 				if (DisplayName.IsEmptyOrWhitespace())
 				{
-					const FNodeRegistryKey RegistryKey = NodeRegistryKey::CreateKey(Metadata);
+					const FNodeRegistryKey RegistryKey = FNodeRegistryKey(Metadata);
 					bool bIsClassNative = FMetasoundFrontendRegistryContainer::Get()->IsNodeNative(RegistryKey);
 					if (!bIsClassNative)
 					{
@@ -431,7 +435,7 @@ namespace Metasound
 			NewGraphNode = NodeCreator.CreateNode(bInSelectNewNode);
 			if (ensure(NewGraphNode))
 			{
-				const FNodeRegistryKey RegistryKey = NodeRegistryKey::CreateKey(InNodeHandle->GetClassMetadata());
+				const FNodeRegistryKey RegistryKey = FNodeRegistryKey(InNodeHandle->GetClassMetadata());
 				NewGraphNode->bIsClassNative = FMetasoundFrontendRegistryContainer::Get()->IsNodeNative(RegistryKey);
 				NewGraphNode->ClassName = InNodeHandle->GetClassMetadata().GetClassName();
 				NewGraphNode->CacheTitle();
@@ -712,6 +716,12 @@ namespace Metasound
 			if (PinType.PinCategory == PinCategoryWaveTable)
 			{
 				return Settings->WaveTablePinTypeColor;
+			}
+
+			// custom colors
+			if (const FLinearColor* Color = Settings->CustomPinTypeColors.Find(PinType.PinCategory))
+			{
+				return *Color;
 			}
 
 			return Settings->DefaultPinTypeColor;
@@ -1823,6 +1833,10 @@ namespace Metasound
 			FMetaSoundAssetRegistrationOptions RegOptions;
 			RegOptions.bForceReregister = true;
 			RegOptions.bForceViewSynchronization = bInForceViewSynchronization;
+			// Protect against race conditions by utilizing a copy of the graph. Race conditions can happen
+			// if registration is performed asynchronously while the editor is still modifying the graph.
+			RegOptions.bRegisterCopyIfAsync = true; 
+			
 			// if EditedReferencingMetaSounds is empty, then no MetaSounds are open
 			// that reference this MetaSound, so just register this asset. Otherwise,
 			// this graph will recursively get updated when the open referencing graphs
@@ -2318,13 +2332,13 @@ namespace Metasound
 
 						bEditorGraphModified |= SynchronizeNodeLocation(Node, *EditorNode);
 						AssociatedNodeData.EditorNodes.Add(EditorNode);
-						EditorNodes.RemoveAtSwap(j, 1, false /* bAllowShrinking */);
+						EditorNodes.RemoveAtSwap(j, 1, EAllowShrinking::No);
 					}
 				}
 
 				if (bFoundEditorNode)
 				{
-					FrontendNodes.RemoveAtSwap(i, 1, false /* bAllowShrinking */);
+					FrontendNodes.RemoveAtSwap(i, 1, EAllowShrinking::No);
 				}
 			}
 
@@ -2529,8 +2543,7 @@ namespace Metasound
 				{
 					if (!InputHandles.IsEmpty())
 					{
-						constexpr bool bAllowShrinking = false;
-						FConstInputHandle InputHandle = InputHandles.Pop(bAllowShrinking);
+						FConstInputHandle InputHandle = InputHandles.Pop(EAllowShrinking::No);
 						for (int32 j = i; j >= 0; --j)
 						{
 							if (IsMatchingInputHandleAndPin(InputHandle, *InEditorNode.Pins[j]))
@@ -2545,8 +2558,7 @@ namespace Metasound
 				{
 					if (!OutputHandles.IsEmpty())
 					{
-						constexpr bool bAllowShrinking = false;
-						FConstOutputHandle OutputHandle = OutputHandles.Pop(bAllowShrinking);
+						FConstOutputHandle OutputHandle = OutputHandles.Pop(EAllowShrinking::No);
 						for (int32 j = i; j >= 0; --j)
 						{
 							if (IsMatchingOutputHandleAndPin(OutputHandle, *InEditorNode.Pins[j]))

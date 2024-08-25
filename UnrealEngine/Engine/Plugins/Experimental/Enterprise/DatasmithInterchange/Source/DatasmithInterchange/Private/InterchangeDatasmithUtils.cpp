@@ -18,6 +18,8 @@ namespace UE::DatasmithInterchange::NodeUtils
 	const FString LevelSequencePrefix(FString(TEXT("\\LevelSequence\\")));
 	const FString LevelVariantSetPrefix(FString(TEXT("\\LevelVariantSet\\")));
 	const FString LightPrefix(FString(TEXT("\\Light\\")));
+	const FString DecalPrefix(FString(TEXT("\\Decal\\")));
+	const FString DecalMaterialPrefix(FString(TEXT("\\DecalMaterial\\")));
 	const FString MaterialPrefix(FString(TEXT("\\Material\\")));
 	const FString MaterialExpressionPrefix(FString(TEXT("\\MaterialExpression\\")));
 	const FString MaterialFunctionPrefix(FString(TEXT("\\MaterialFunction\\")));

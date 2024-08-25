@@ -16,7 +16,7 @@ void HZBTestPS(in float4 SvPosition : SV_Position, out float4 OutColor : SV_Targ
 
 	float4 BoundsCenter = BoundsCenterTexture.SampleLevel( BoundsCenterSampler, InUV, 0 );
 	float4 BoundsExtent = BoundsExtentTexture.SampleLevel( BoundsExtentSampler, InUV, 0 );
-	BoundsCenter.xyz += LWCHackToFloat(PrimaryView.PreViewTranslation);
+	BoundsCenter.xyz += DFHackToFloat(PrimaryView.PreViewTranslation);
 
 #if 1
 	BRANCH

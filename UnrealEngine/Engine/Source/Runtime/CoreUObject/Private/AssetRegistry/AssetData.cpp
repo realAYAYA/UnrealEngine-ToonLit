@@ -7,7 +7,9 @@
 #include "Algo/Unique.h"
 #include "AssetRegistry/ARFilter.h"
 #include "Containers/Set.h"
+#include "Containers/VersePath.h"
 #include "HAL/CriticalSection.h"
+#include "HAL/PlatformMath.h"
 #include "Misc/AsciiSet.h"
 #include "Misc/PathViews.h"
 #include "Misc/ScopeRWLock.h"
@@ -16,6 +18,7 @@
 #include "Serialization/CompactBinaryWriter.h"
 #include "Serialization/CustomVersion.h"
 #include "String/Find.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/LinkerLoad.h"
 #include "UObject/PropertyPortFlags.h"
 
@@ -331,6 +334,11 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 FAssetData::FAssetData(const UObject* InAsset, FAssetData::ECreationFlags InCreationFlags)
+	: FAssetData(InAsset, InCreationFlags, EAssetRegistryTagsCaller::Uncategorized)
+{
+}
+
+FAssetData::FAssetData(const UObject* InAsset, FAssetData::ECreationFlags InCreationFlags, EAssetRegistryTagsCaller Caller)
 {
 	if (InAsset != nullptr)
 	{
@@ -362,7 +370,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		if (!EnumHasAnyFlags(InCreationFlags, FAssetData::ECreationFlags::SkipAssetRegistryTagsGathering))
 		{
-			InAsset->GetAssetRegistryTags(*this);
+			FAssetRegistryTagsContextData Context(InAsset, Caller);
+			InAsset->GetAssetRegistryTags(Context, *this);
 		}
 
 		PackageFlags = Package->GetPackageFlags();
@@ -435,6 +444,11 @@ bool FAssetData::IsTopLevelAsset(UObject* Object)
 		return false;
 	}
 	return Outer->IsA<UPackage>();
+}
+
+UE::Core::FVersePath FAssetData::GetVersePath() const
+{
+	return FPackageName::GetVersePath(GetSoftObjectPath());
 }
 
 UClass* FAssetData::GetClass(EResolveClass ResolveClass) const
@@ -938,15 +952,34 @@ void FAssetPackageData::SerializeForCacheInternal(FArchive& Ar, FAssetPackageDat
 	}
 }
 
-COREUOBJECT_API void FAssetPackageData::SerializeForCache(FArchive& Ar)
+void FAssetPackageData::SerializeForCache(FArchive& Ar)
 {
 	// Calling with hard-coded version and using force-inline on SerializeForCacheInternal eliminates the cost of its if-statements
 	SerializeForCacheInternal(Ar, *this, FAssetRegistryVersion::LatestVersion);
 }
 
-COREUOBJECT_API void FAssetPackageData::SerializeForCacheOldVersion(FArchive& Ar, FAssetRegistryVersion::Type Version)
+void FAssetPackageData::SerializeForCacheOldVersion(FArchive& Ar, FAssetRegistryVersion::Type Version)
 {
 	SerializeForCacheInternal(Ar, *this, Version);
+}
+
+FIoHash FAssetPackageData::GetPackageSavedHash() const
+{
+	FIoHash Result;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	FMemory::Memcpy(&Result.GetBytes(), &this->PackageGuid,
+		FMath::Min(sizeof(decltype(Result.GetBytes())), sizeof(PackageGuid)));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+	return Result;
+}
+
+void FAssetPackageData::SetPackageSavedHash(const FIoHash& InHash)
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	PackageGuid = FGuid();
+	FMemory::Memcpy(&PackageGuid, &InHash.GetBytes(),
+		FMath::Min(sizeof(PackageGuid), sizeof(decltype(InHash.GetBytes()))));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 }
 
 void FARFilter::PostSerialize(const FArchive& Ar)

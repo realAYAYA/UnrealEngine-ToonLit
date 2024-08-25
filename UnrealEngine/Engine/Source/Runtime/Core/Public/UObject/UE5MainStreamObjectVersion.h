@@ -369,6 +369,9 @@ struct FUE5MainStreamObjectVersion
 
 		// Cloth collection single lod schema
 		ClothCollectionSingleLodSchema,
+
+		// Visual Logger format now includes a WorldTimeStamp in addition to TimeStamp for easier debugging between multiple instances.
+		VisualLoggerAddedSeparateWorldTime,
 		
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,

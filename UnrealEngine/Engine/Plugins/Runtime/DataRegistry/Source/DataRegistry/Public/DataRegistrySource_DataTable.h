@@ -55,6 +55,9 @@ protected:
 	/** Last time this was accessed */
 	mutable float LastAccessTime;
 
+	/** This is set if the table fails to load or could never load */
+	bool bInvalidSourceTable = false;
+
 	/** Handle for in progress load */
 	TSharedPtr<FStreamableHandle> LoadingTableHandle;
 
@@ -87,14 +90,10 @@ protected:
 	// Object interface
 	virtual void PostLoad() override;
 
-#if WITH_EDITOR
-	virtual void EditorRefreshSource();
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // Suppress compiler warning on override of deprecated function
-	UE_DEPRECATED(5.0, "Use version that takes FObjectPreSaveContext instead.")
-	virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
+	virtual void OnDataTableChanged();
 
+#if WITH_EDITOR
+	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 #endif
 };
 

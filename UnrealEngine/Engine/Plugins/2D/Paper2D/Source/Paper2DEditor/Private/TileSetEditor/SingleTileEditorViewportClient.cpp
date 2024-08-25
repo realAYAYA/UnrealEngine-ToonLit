@@ -80,9 +80,7 @@ void FSingleTileEditorViewportClient::TrackingStarted(const struct FInputEventSt
 
 	if (!bManipulating && bIsDragging && !bTrackingHandledExternally)
 	{
-		BeginTransaction(LOCTEXT("ModificationInViewportTransaction", "Modification in Viewport"));
-		bManipulating = true;
-		bManipulationDirtiedSomething = false;
+		HandleBeginTransform();
 	}
 }
 
@@ -93,9 +91,41 @@ void FSingleTileEditorViewportClient::TrackingStopped()
 
 	if (bManipulating && !bTransactingHandledByEditorMode)
 	{
+		HandleEndTransform();
+	}
+}
+
+bool FSingleTileEditorViewportClient::BeginTransform(const FGizmoState& InState)
+{
+	return HandleBeginTransform();
+}
+
+bool FSingleTileEditorViewportClient::EndTransform(const FGizmoState& InState)
+{
+	return HandleEndTransform();
+}
+
+bool FSingleTileEditorViewportClient::HandleBeginTransform()
+{
+	if (!bManipulating)
+	{
+		BeginTransaction(LOCTEXT("ModificationInViewportTransaction", "Modification in Viewport"));
+		bManipulating = true;
+		bManipulationDirtiedSomething = false;
+		return true;
+	}
+	return false;
+}
+
+bool FSingleTileEditorViewportClient::HandleEndTransform()
+{
+	if (bManipulating)
+	{
 		EndTransaction();
 		bManipulating = false;
+		return true;
 	}
+	return false;
 }
 
 void FSingleTileEditorViewportClient::DrawCanvas(FViewport& InViewport, FSceneView& View, FCanvas& Canvas)

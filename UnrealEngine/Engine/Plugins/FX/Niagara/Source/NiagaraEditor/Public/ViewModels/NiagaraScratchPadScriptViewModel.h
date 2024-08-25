@@ -109,6 +109,8 @@ private:
 
 	NIAGARAEDITOR_API void OnScriptPropertyChanged(FPropertyChangedEvent& PropertyChangedEvent);
 
+	FGuid GetScriptChangeID() const;
+
 	bool bIsPendingRename;
 	bool bIsPinned;
 	float EditorHeight;
@@ -119,6 +121,7 @@ private:
 	TWeakPtr<FNiagaraSystemViewModel> SystemViewModel;
 
 	bool bHasPendingChanges;
+	FGuid LastAppliedChangeID;
 
 	TSharedPtr<FUICommandList> ParameterPanelCommands;
 	TSharedPtr<FNiagaraScriptToolkitParameterPanelViewModel> ParameterPaneViewModel;

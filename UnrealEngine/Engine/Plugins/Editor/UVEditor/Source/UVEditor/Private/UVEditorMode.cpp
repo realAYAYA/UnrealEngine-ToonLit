@@ -39,6 +39,7 @@
 #include "UVEditorSeamTool.h"
 #include "UVEditorRecomputeUVsTool.h"
 #include "UVSelectTool.h"
+#include "UVEditorTexelDensityTool.h"
 #include "UVEditorInitializationContext.h"
 #include "UVEditorModeToolkit.h"
 #include "UVEditorSubsystem.h"
@@ -520,6 +521,10 @@ void UUVEditorMode::RegisterTools()
 	UVEditorDistributeToolBuilder->Targets = &ToolInputObjects;
 	RegisterTool(CommandInfos.BeginDistributeTool, TEXT("BeginDistributeTool"), UVEditorDistributeToolBuilder);
 
+	UUVEditorTexelDensityToolBuilder* UVEditorTexelDensityToolBuilder = NewObject<UUVEditorTexelDensityToolBuilder>();
+	UVEditorTexelDensityToolBuilder->Targets = &ToolInputObjects;
+	RegisterTool(CommandInfos.BeginTexelDensityTool, TEXT("BeginTexelDensityTool"), UVEditorTexelDensityToolBuilder);
+
 	UUVEditorParameterizeMeshToolBuilder* UVEditorParameterizeMeshToolBuilder = NewObject<UUVEditorParameterizeMeshToolBuilder>();
 	UVEditorParameterizeMeshToolBuilder->Targets = &ToolInputObjects;
 	RegisterTool(CommandInfos.BeginParameterizeMeshTool, TEXT("BeginParameterizeMeshTool"), UVEditorParameterizeMeshToolBuilder);
@@ -853,7 +858,7 @@ void UUVEditorMode::Exit()
 	}
 	RegisteredActions.Reset();
 
-	for (TObjectPtr<UUVEditorToolMeshInput> ToolInput : ToolInputObjects)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& ToolInput : ToolInputObjects)
 	{
 		ToolInput->Shutdown();
 	}
@@ -861,7 +866,7 @@ void UUVEditorMode::Exit()
 	WireframesToTick.Reset();
 	OriginalObjectsToEdit.Reset();
 	
-	for (TObjectPtr<UMeshOpPreviewWithBackgroundCompute> Preview : AppliedPreviews)
+	for (const TObjectPtr<UMeshOpPreviewWithBackgroundCompute>& Preview : AppliedPreviews)
 	{
 		Preview->Shutdown();
 	}
@@ -1069,6 +1074,8 @@ void UUVEditorMode::InitializeTargets()
 		AppliedPreviews.Add(AppliedPreview);
 	}
 
+	UMaterialInterface* Material = LoadObject<UMaterial>(nullptr, TEXT("/UVEditor/Materials/UVEditor_UnwrapMaterial"));
+
 	// When creating UV unwraps, these functions will determine the mapping between UV values and the
 	// resulting unwrap mesh vertex positions. 
 	// If we're looking down on the unwrapped mesh, with the Z axis towards us, we want U's to be right, and
@@ -1099,12 +1106,15 @@ void UUVEditorMode::InitializeTargets()
 			ToolInputObject->AppliedPreview->PreviewMesh->SetTransform(Transforms[AssetID]);
 		}
 
+		UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(Material, GetToolManager());
+		MatInstance->SetVectorParameterValue(TEXT("Color"), FUVEditorUXSettings::GetTriangleColorByTargetIndex(AssetID));
+		MatInstance->SetScalarParameterValue(TEXT("DepthBias"), FUVEditorUXSettings::UnwrapTriangleDepthOffset);
+		MatInstance->SetScalarParameterValue(TEXT("Opacity"), FUVEditorUXSettings::UnwrapTriangleOpacity);
+		MatInstance->SetScalarParameterValue(TEXT("UseVertexColors"), false);
+
+		ToolInputObject->bEnableTriangleVertexColors = false;
 		ToolInputObject->UnwrapPreview->PreviewMesh->SetMaterial(
-			0, ToolSetupUtil::GetCustomTwoSidedDepthOffsetMaterial(
-				GetToolManager(),
-				FUVEditorUXSettings::GetTriangleColorByTargetIndex(AssetID),
-				FUVEditorUXSettings::UnwrapTriangleDepthOffset,
-				FUVEditorUXSettings::UnwrapTriangleOpacity));
+			0, MatInstance);
 
 		// Set up the wireframe display of the unwrapped mesh.
 		UMeshElementsVisualizer* WireframeDisplay = NewObject<UMeshElementsVisualizer>(this);
@@ -1120,7 +1130,8 @@ void UUVEditorMode::InitializeTargets()
 		WireframeDisplay->Settings->bShowNormalSeams = false;
 		// These are not exposed at the visualizer level yet
 		// TODO: Should they be?
-		WireframeDisplay->WireframeComponent->BoundaryEdgeThickness = 2;
+		WireframeDisplay->WireframeComponent->WireframeThickness = FUVEditorUXSettings::WireframeThickness;
+		WireframeDisplay->WireframeComponent->BoundaryEdgeThickness = FUVEditorUXSettings::BoundaryEdgeThickness;
 
 		// The wireframe will track the unwrap preview mesh
 		WireframeDisplay->SetMeshAccessFunction([ToolInputObject](UMeshElementsVisualizer::ProcessDynamicMeshFunc ProcessFunc) {
@@ -1317,7 +1328,7 @@ void UUVEditorMode::UpdateTriangleMaterialBasedOnDisplaySettings()
 		for (int32 AssetID = 0; AssetID < ToolInputObjects.Num(); ++AssetID) {
 			UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(Material, GetToolManager());
 			MatInstance->SetVectorParameterValue(TEXT("Color"), FUVEditorUXSettings::GetTriangleColorByTargetIndex(AssetID));
-			MatInstance->SetScalarParameterValue(TEXT("PercentDepthOffset"), FUVEditorUXSettings::UnwrapTriangleDepthOffset);
+			MatInstance->SetScalarParameterValue(TEXT("DepthBias"), FUVEditorUXSettings::UnwrapTriangleDepthOffset);
 			MatInstance->SetScalarParameterValue(TEXT("Opacity"), TriangleOpacity);
 			MatInstance->SetScalarParameterValue(TEXT("UseVertexColors"), bUseVertexColors);
 
@@ -1361,17 +1372,23 @@ void UUVEditorMode::FocusLivePreviewCameraOnSelection()
 
 	for (const FUVToolSelection& Selection : CurrentSelections)
 	{
-		SelectionBoundingBox.Contain(Selection.GetConvertedSelectionForAppliedMesh().ToBoundingBox(*Selection.Target->AppliedCanonical));
+		FTransform3d Transform = Selection.Target->AppliedPreview->PreviewMesh->GetTransform();
+		SelectionBoundingBox.Contain(Selection.GetConvertedSelectionForAppliedMesh().ToBoundingBox(*Selection.Target->AppliedCanonical, Transform));
 	}
 	for (const FUVToolSelection& Selection : CurrentUnsetSelections)
 	{
-		SelectionBoundingBox.Contain(Selection.ToBoundingBox(*Selection.Target->AppliedCanonical));
+		FTransform3d Transform = Selection.Target->AppliedPreview->PreviewMesh->GetTransform();
+		SelectionBoundingBox.Contain(Selection.ToBoundingBox(*Selection.Target->AppliedCanonical, Transform));
 	}
 	if (CurrentSelections.Num() == 0 && CurrentUnsetSelections.Num() == 0)
 	{
 		for (int32 AssetID = 0; AssetID < ToolInputObjects.Num(); ++AssetID)
 		{
-			SelectionBoundingBox.Contain(ToolInputObjects[AssetID]->AppliedCanonical->GetBounds());
+			FTransform3d Transform = ToolInputObjects[AssetID]->AppliedPreview->PreviewMesh->GetTransform();
+			FAxisAlignedBox3d ObjectBoundingBox = ToolInputObjects[AssetID]->AppliedCanonical->GetBounds();
+			ObjectBoundingBox.Max = Transform.TransformPosition(ObjectBoundingBox.Max);
+			ObjectBoundingBox.Min = Transform.TransformPosition(ObjectBoundingBox.Min);
+			SelectionBoundingBox.Contain(ObjectBoundingBox);
 		}
 	}
 	

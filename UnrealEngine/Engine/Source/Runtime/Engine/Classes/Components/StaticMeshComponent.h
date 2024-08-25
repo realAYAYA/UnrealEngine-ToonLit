@@ -10,6 +10,7 @@
 #include "Engine/EngineTypes.h"
 #include "Engine/TextureStreamingTypes.h"
 #include "Components/MeshComponent.h"
+#include "Components/ActorStaticMeshComponentInterface.h"
 #include "PackedNormal.h"
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "RawIndexBuffer.h"
@@ -29,6 +30,7 @@ class FStaticMeshStaticLightingMesh;
 class ULightComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+class UNavCollisionBase;
 struct FConvexVolume;
 struct FEngineShowFlags;
 struct FNavigableGeometryExport;
@@ -157,7 +159,6 @@ public:
 
 	/** 
 	 * Whether to evaluate World Position Offset. 
-	 * This is only used when running with r.OptimizedWPO=1 
 	 */
 	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadWrite, Category = Rendering)
 	uint8 bEvaluateWorldPositionOffset : 1;
@@ -186,6 +187,9 @@ public:
 protected:
 	/** Initial value of bEvaluateWorldPositionOffset when BeginPlay() was called. Can be useful if we want to reset to initial state. */
 	uint8 bInitialEvaluateWorldPositionOffset : 1;
+
+	/** Whether mip callbacks have been registered and need to be removed on destroy */
+	uint8 bMipLevelCallbackRegistered : 1;
 
 public:
 
@@ -397,9 +401,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Rendering|LOD")
 	ENGINE_API void SetWorldPositionOffsetDisableDistance(int32 NewValue);
 
-	/** Get the initial value of bEvaluateWorldPositionOffset. This is the value when BeginPlay() was last called. */
+	/** Get the initial value of bEvaluateWorldPositionOffset. This is the value when BeginPlay() was last called, or if UpdateInitialEvaluateWorldPositionOffset is called. */
 	UFUNCTION(BlueprintCallable, Category = "Rendering|LOD")
 	bool GetInitialEvaluateWorldPositionOffset() { return bInitialEvaluateWorldPositionOffset; }
+
+	/** This manually updates the initial value of bEvaluateWorldPositionOffset to be the current value.
+	 *	This is useful if the default value of bEvaluateWorldPositionOffset is changed after constructing
+	 *	the component. */
+	UFUNCTION(BlueprintCallable, Category = "Rendering|LOD")
+	void UpdateInitialEvaluateWorldPositionOffset() { bInitialEvaluateWorldPositionOffset = bEvaluateWorldPositionOffset; }
 
 	/** 
 	 * Get Local bounds
@@ -475,7 +485,7 @@ public:
 #endif
 	//~ End USceneComponent Interface
 
-
+	UE_DECLARE_COMPONENT_ACTOR_INTERFACE(StaticMeshComponent)	
 
 	//~ Begin UActorComponent Interface.
 protected: 
@@ -538,8 +548,8 @@ public:
 	ENGINE_API virtual bool HasValidSettingsForStaticLighting(bool bOverlookInvalidComponents) const override;
 
 	ENGINE_API virtual void GetLightAndShadowMapMemoryUsage( int32& LightMapMemoryUsage, int32& ShadowMapMemoryUsage ) const override;
-	ENGINE_API virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials = false) const override;
-	ENGINE_API virtual UMaterialInterface* GetMaterial(int32 MaterialIndex) const override;
+	ENGINE_API virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials = false) const final;
+	ENGINE_API virtual UMaterialInterface* GetMaterial(int32 MaterialIndex) const final;
 	ENGINE_API virtual UMaterialInterface* GetEditorMaterial(int32 MaterialIndex) const override;
 	ENGINE_API virtual int32 GetMaterialIndex(FName MaterialSlotName) const override;
 	ENGINE_API virtual UMaterialInterface* GetMaterialFromCollisionFaceIndex(int32 FaceIndex, int32& SectionIndex) const override;
@@ -550,16 +560,28 @@ public:
 
 	ENGINE_API virtual bool IsShown(const FEngineShowFlags& ShowFlags) const override;
 #if WITH_EDITOR
+	ENGINE_API void OnMeshRebuild(bool bRenderDataChanged);
 	ENGINE_API virtual void PostStaticMeshCompilation();
 	ENGINE_API virtual bool ComponentIsTouchingSelectionBox(const FBox& InSelBBox, const bool bConsiderOnlyBSP, const bool bMustEncompassEntireComponent) const override;
 	ENGINE_API virtual bool ComponentIsTouchingSelectionFrustum(const FConvexVolume& InSelBBox, const bool bConsiderOnlyBSP, const bool bMustEncompassEntireComponent) const override;
 #endif
 	virtual float GetStreamingScale() const override { return GetComponentTransform().GetMaximumAxisScale(); }
 	virtual bool SupportsWorldPositionOffsetVelocity() const override { return bWorldPositionOffsetWritesVelocity; }
-	//~ End UPrimitiveComponent Interface.
+	ENGINE_API virtual void GetPrimitiveStats(FPrimitiveStats& PrimitiveStats) const override;	
+#if WITH_EDITOR
+	ENGINE_API virtual HHitProxy* CreateMeshHitProxy(int32 SectionIndex, int32 MaterialIndex) const override;	
+#endif
+//~ End UPrimitiveComponent Interface.
+
+	//~ Begin UMeshComponent Interface
+	ENGINE_API virtual void RegisterLODStreamingCallback(FLODStreamingCallback&& Callback, int32 LODIdx, float TimeoutSecs, bool bOnStreamIn) override;
+	ENGINE_API virtual void RegisterLODStreamingCallback(FLODStreamingCallback&& CallbackStreamingStart, FLODStreamingCallback&& CallbackStreamingDone, float TimeoutStartSecs, float TimeoutDoneSecs) override;
+	ENGINE_API virtual bool PrestreamMeshLODs(float Seconds) override;
+	//~ End UMeshComponent Interface
 
 	//~ Begin INavRelevantInterface Interface.
 	ENGINE_API virtual bool IsNavigationRelevant() const override;
+	ENGINE_API virtual FBox GetNavigationBounds() const override;
 	ENGINE_API virtual void GetNavigationData(FNavigationRelevantData& Data) const override;
 	//~ End INavRelevantInterface Interface.
 	/**
@@ -704,10 +726,10 @@ private:
 
 protected:
 	/** Collect all the PSO precache data used by the static mesh component */
-	ENGINE_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FComponentPSOPrecacheParamsList& OutParams) override;
+	ENGINE_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 	/** Shared implementation for all StaticMesh derived components */
 	using GetPSOVertexElementsFn = TFunctionRef<void(const FStaticMeshLODResources& LODRenderData, int32 LODIndex, bool bSupportsManualVertexFetch, FVertexDeclarationElementList& Elements)>;
-	ENGINE_API void CollectPSOPrecacheDataImpl(const FVertexFactoryType* VFType, const FPSOPrecacheParams& BasePrecachePSOParams, GetPSOVertexElementsFn GetVertexElements, FComponentPSOPrecacheParamsList& OutParams) const;
+	ENGINE_API void CollectPSOPrecacheDataImpl(const FVertexFactoryType* VFType, const FPSOPrecacheParams& BasePrecachePSOParams, GetPSOVertexElementsFn GetVertexElements, FMaterialInterfacePSOPrecacheParamsList& OutParams) const;
 		
 	/** Whether the component type supports static lighting. */
 	virtual bool SupportsStaticLighting() const override
@@ -719,6 +741,8 @@ protected:
 
 	// Overload this in child implementations that wish to extend Static Mesh or Nanite scene proxy implementations
 	ENGINE_API virtual FPrimitiveSceneProxy* CreateStaticMeshSceneProxy(Nanite::FMaterialAudit& NaniteMaterials, bool bCreateNanite);
+
+	ENGINE_API bool ShouldExportAsObstacle(const UNavCollisionBase& InNavCollision) const;
 
 public:
 

@@ -61,17 +61,16 @@ namespace AudioModulation
 			return Metadata;
 		}
 
-		static TUniquePtr<Metasound::IOperator> CreateOperator(const Metasound::FCreateOperatorParams& InParams, TArray<TUniquePtr<Metasound::IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<Metasound::IOperator> CreateOperator(const Metasound::FBuildOperatorParams& InParams, Metasound::FBuildResults& OutResults)
 		{
 			using namespace Metasound;
 
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			if (InParams.Environment.Contains<Audio::FDeviceId>(Metasound::Frontend::SourceInterface::Environment::DeviceID))
 			{
-				FSoundModulatorAssetReadRef ModulatorReadRef = InputCollection.GetDataReadReferenceOrConstruct<FSoundModulatorAsset>("Modulator");
-				FBoolReadRef NormalizedReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, "Normalized", InParams.OperatorSettings);
+				FSoundModulatorAssetReadRef ModulatorReadRef = InputData.GetOrConstructDataReadReference<FSoundModulatorAsset>("Modulator");
+				FBoolReadRef NormalizedReadRef = InputData.GetOrCreateDefaultDataReadReference<bool>("Normalized", InParams.OperatorSettings);
 
 				return MakeUnique<FGetModulatorValueNodeOperator>(InParams, ModulatorReadRef, NormalizedReadRef);
 			}
@@ -82,7 +81,7 @@ namespace AudioModulation
 			}
 		}
 
-		FGetModulatorValueNodeOperator(const Metasound::FCreateOperatorParams& InParams, const FSoundModulatorAssetReadRef& InModulator, const Metasound::FBoolReadRef& InNormalized)
+		FGetModulatorValueNodeOperator(const Metasound::FBuildOperatorParams& InParams, const FSoundModulatorAssetReadRef& InModulator, const Metasound::FBoolReadRef& InNormalized)
 			: DeviceId(InParams.Environment.GetValue<Audio::FDeviceId>(Metasound::Frontend::SourceInterface::Environment::DeviceID))
 			, Modulator(InModulator)
 			, Normalized(InNormalized)

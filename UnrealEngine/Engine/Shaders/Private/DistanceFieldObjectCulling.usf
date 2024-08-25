@@ -47,10 +47,9 @@ void CullObjectsForViewCS(
 		uint SourceIndex = ObjectIndex;
 
 		FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-		const float3 TranslatedCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PrimaryView.PreViewTranslation));
+		const float3 TranslatedCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PrimaryView.PreViewTranslation);
 
-		const float3 CenterToCamera = PrimaryView.TranslatedWorldCameraOrigin - TranslatedCenter;
-		float DistanceToViewSq = dot(CenterToCamera, CenterToCamera);
+		float DistanceToViewSq = GetDistanceToCameraFromViewVectorSqr(PrimaryView.TranslatedWorldCameraOrigin - TranslatedCenter);
 
 		if (DistanceToViewSq < Square(AOMaxViewDistance + DFObjectBounds.SphereRadius)
 			&& ViewFrustumIntersectSphere(TranslatedCenter, DFObjectBounds.SphereRadius + AOObjectMaxDistance))
@@ -129,11 +128,9 @@ void BuildTileConesMain(
 {
     uint ThreadIndex = GroupThreadId.y * THREADGROUP_SIZEX + GroupThreadId.x;
 
+	// Sampling from the texture based off of the ViewRect size because the texture is created on a per-view basis
 	float2 BaseLevelScreenUV = (DispatchThreadId.xy + float2(.5f, .5f)) * DOWNSAMPLE_FACTOR * View.BufferSizeAndInvSize.zw;
 	float SceneDepth = GetDownsampledDepth(BaseLevelScreenUV);
-
-	//float2 ScreenUV = (DispatchThreadId.xy * DOWNSAMPLE_FACTOR + View.ViewRectMin.xy + float2(.5f, .5f)) * View.BufferSizeAndInvSize.zw;
-	//float SceneDepth = CalcSceneDepth(ScreenUV);
 
 	// Initialize per-tile variables
     if (ThreadIndex == 0) 
@@ -251,7 +248,7 @@ void ObjectCullVS(
 
 	//@todo - implement ConservativelyBoundSphere
 	FDFObjectBounds ObjectBounds = LoadDFObjectBounds(ObjectIndex);
-	const float3 TranslatedCenter = LWCToFloat(LWCAdd(ObjectBounds.Center, PrimaryView.PreViewTranslation));
+	const float3 TranslatedCenter = DFFastToTranslatedWorld(ObjectBounds.Center, PrimaryView.PreViewTranslation);
 	//@todo - expand to handle conservative rasterization
 	float EffectiveRadius = (ObjectBounds.SphereRadius + AOObjectMaxDistance) * ConservativeRadiusScale;
 	float3 TranslatedWorldPosition = InPosition.xyz * EffectiveRadius + TranslatedCenter;
@@ -277,7 +274,7 @@ bool IntersectObjectWithConeDepthRange(
 #define USE_DISTANCE_FIELD_FOR_OBJECT_CULLING 1
 #if USE_DISTANCE_FIELD_FOR_OBJECT_CULLING
 		FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
-		float4x4 TranslatedWorldToVolume = LWCMultiplyTranslation(LWCNegate(PrimaryView.PreViewTranslation), DFObjectData.WorldToVolume);
+		float4x4 TranslatedWorldToVolume = DFFastToTranslatedWorld(DFObjectData.WorldToVolume, PrimaryView.PreViewTranslation);
 
 		// Use the position halfway between the depth ranges as the center for the bounding sphere of this tile depth range
 		float3 ViewTileBoundingSphereCenter = TileConeVertex + TileConeAxis * (.5f * (ConeDepthRange.x + ConeDepthRange.y));

@@ -43,7 +43,7 @@ protected:
 	private:
 		
 		bool HasRetriesRemaining() const;
-		void UpdateHttpProgress(FHttpRequestPtr UnderlyingHttpRequest, int32 BytesSent, int32 BytesReceived);
+		void UpdateHttpProgress(FHttpRequestPtr UnderlyingHttpRequest, uint64 BytesSent, uint64 BytesReceived);
 
 		void CleanUpHttpRequest();
 
@@ -67,7 +67,7 @@ protected:
 		int32 MaxRetries;
 
 		//How many bytes we had last time we sent progress updates
-		int32 LastProgressUpdateBytes;
+		uint64 LastProgressUpdateBytes;
 	};
 
 	TUniquePtr<FGenericPlatformBackgroundHttpWrapper> RequestWrapper;

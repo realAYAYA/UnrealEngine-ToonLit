@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using EpicGames.Core;
+
 namespace HordeCommon.Wrapper
 {
 	using NativeNamespaceId = EpicGames.Horde.Storage.NamespaceId;
@@ -9,7 +11,7 @@ namespace HordeCommon.Wrapper
 	{
 		public static implicit operator NativeNamespaceId(NamespaceId wrapper)
 		{
-			return new NativeNamespaceId(wrapper.Data);
+			return new NativeNamespaceId(new Utf8String(wrapper.Data));
 		}
 
 		public static implicit operator NamespaceId(NativeNamespaceId source)

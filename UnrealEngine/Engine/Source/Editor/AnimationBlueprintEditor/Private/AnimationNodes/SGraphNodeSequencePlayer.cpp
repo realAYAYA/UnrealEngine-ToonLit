@@ -7,6 +7,7 @@
 #include "AnimGraphNode_SequencePlayer.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimNode_SequencePlayer.h"
 #include "Animation/AnimSequenceBase.h"
 #include "Animation/AnimationAsset.h"
@@ -70,6 +71,50 @@ void SGraphNodeSequencePlayer::Construct(const FArguments& InArgs, UAnimGraphNod
 
 void SGraphNodeSequencePlayer::GetNodeInfoPopups(FNodeInfoContext* Context, TArray<FGraphInformationPopupInfo>& Popups) const
 {
+	SGraphNodeK2Base::GetNodeInfoPopups(Context, Popups);
+
+	UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(FBlueprintEditorUtils::FindBlueprintForNode(GraphNode));
+	if(AnimBlueprint)
+	{
+		UAnimInstance* ActiveObject = Cast<UAnimInstance>(AnimBlueprint->GetObjectBeingDebugged());
+		UAnimBlueprintGeneratedClass* Class = AnimBlueprint->GetAnimBlueprintGeneratedClass();
+
+		const FLinearColor Color(1.f, 0.5f, 0.25f);
+
+		// Display various types of debug data
+		if ((ActiveObject != NULL) && (Class != NULL))
+		{
+			if (Class->GetAnimNodeProperties().Num())
+			{
+				if(int32* NodeIndexPtr = Class->GetAnimBlueprintDebugData().NodePropertyToIndexMap.Find(TWeakObjectPtr<UAnimGraphNode_Base>(Cast<UAnimGraphNode_Base>(GraphNode))))
+				{
+					int32 AnimNodeIndex = *NodeIndexPtr;
+					// reverse node index temporarily because of a bug in NodeGuidToIndexMap
+					AnimNodeIndex = Class->GetAnimNodeProperties().Num() - AnimNodeIndex - 1;
+
+					FString PopupText;
+					for(auto & NodeValue : Class->GetAnimBlueprintDebugData().NodeValuesThisFrame)
+					{
+						if (NodeValue.NodeID == AnimNodeIndex && NodeValue.Text.Contains("Asset ="))
+						{
+							if (PopupText.IsEmpty())
+							{
+								PopupText = NodeValue.Text;
+							}
+							else
+							{
+								PopupText = FString::Format(TEXT("{0}\n{1}"), {PopupText, NodeValue.Text});
+							}
+						}
+					}
+					if (!PopupText.IsEmpty())
+					{
+						Popups.Emplace(nullptr, Color, PopupText);
+					}
+				}
+			}
+		}
+	}
 }
 
 FText SGraphNodeSequencePlayer::GetPositionTooltip() const

@@ -100,7 +100,11 @@ void FElementID::InitElement(FSyncData* IOSyncdata)
 	Index3D = IOSyncdata->GetIndex3D();
 	if (Index3D > 0)
 	{
-		SyncContext.GetModel().GetElement(Index3D, &Element3D);
+		GS::Int32 ElementCount = SyncContext.GetModel().GetElementCount();
+		if (ensureMsgf(ElementCount >= Index3D, TEXT("Element index became outside of elements range of the model")))
+		{
+			SyncContext.GetModel().GetElement(Index3D, &Element3D);
+		}
 	}
 	MeshClass = nullptr;
 	LibPartInfo = nullptr;
@@ -159,8 +163,9 @@ FMeshClass* FElementID::GetMeshClass()
 			MeshClass->ElementType = Element3D.GetType();
 			MeshClass->TransformCount = bTransformed ? 0 : 1;
 			SyncContext.GetSyncDatabase().AddInstance(HashValue, std::move(NewInstance));
+			
 			UE_AC_VerboseF("FElementID::GetMeshClass - First instance %u {%s}\n", MeshClass->Hash,
-						   APIGuidToString(ElementGuid).ToUtf8());
+						   APIGuidToString(APIElementHeader.guid).ToUtf8());
 		}
 		else
 		{
@@ -182,7 +187,7 @@ FMeshClass* FElementID::GetMeshClass()
 			++MeshClass->InstancesCount;
 			MeshClass->TransformCount += bTransformed ? 0 : 1;
 			UE_AC_VerboseF("FElementID::GetMeshClass - Reuse MeshClass %u {%s}\n", MeshClass->Hash,
-						   APIGuidToString(ElementGuid).ToUtf8());
+						   APIGuidToString(APIElementHeader.guid).ToUtf8());
 		}
 	}
 	return MeshClass;
@@ -246,7 +251,7 @@ void FElementID::CollectDependantElementsType(API_ElemTypeID TypeID) const
 		}
 		ChildSyncData->SetParent(SyncData);
 		UE_AC_VerboseF("FElementID::ConnectedElements %u %s -> %s\n", i, APIGuidToString(ConnectedElements[i]).ToUtf8(),
-					   SyncData->ElementId.ToUniString().ToUtf8());
+					   SyncData->GetId().ToUniString().ToUtf8());
 	}
 }
 

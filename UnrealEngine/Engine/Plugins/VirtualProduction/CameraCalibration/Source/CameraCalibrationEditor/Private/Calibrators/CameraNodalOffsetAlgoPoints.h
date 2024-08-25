@@ -119,11 +119,11 @@ struct FNodalOffsetPointsRowData
 
 	// Normalized 0~1 2d location of the identified calibrator point in the media plate.
 	UPROPERTY()
-	FVector2D Point2D = FVector2D::ZeroVector;
+	FVector2f Point2D = FVector2f::ZeroVector;
 
 	// Location of Point2D after it has been undistorted
 	UPROPERTY()
-	FVector2D UndistortedPoint2D = FVector2D::ZeroVector;
+	FVector2f UndistortedPoint2D = FVector2f::ZeroVector;
 
 	// True if this row has had its Point2D undistorted
 	UPROPERTY()
@@ -404,9 +404,6 @@ protected:
 
 	/* Refine the input nodal offset by running a minimization algorithm designed to minimize the sum of the reprojection errors for the camera views in the set of input pose groups*/
 	double MinimizeReprojectionError(FTransform& InOutNodalOffset, const TArray<TSharedPtr<TArray<TSharedPtr<FNodalOffsetPointsRowData>>>>& SamePoseRowGroups) const;
-
-	/* Compute the reprojection error for the rows in the input PoseGroup using the input NodalOffset */
-	double ComputeReprojectionError(const FTransform& NodalOffset, const TArray<TSharedPtr<FNodalOffsetPointsRowData>>& PoseGroup) const;
 
 	/** Export global session data to a .json file */
 	void ExportSessionData();

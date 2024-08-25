@@ -49,6 +49,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Movie Render Pipeline")
 	static void EnsureJobHasDefaultSettings(UMoviePipelineExecutorJob* InJob);
 
+	/** Returns display string for output directory for this job. Does not resolve the full path from tokens. */
+	UFUNCTION(BlueprintCallable, Category = "Movie Render Pipeline")
+	static bool GetDisplayOutputPathFromJob(UMoviePipelineExecutorJob* InJob, FString& OutOutputPath);
+
 	/** Resolves as much of the output directory for this job into a usable directory path as possible. Cannot resolve anything that relies on shot name, frame numbers, etc. */
 	UFUNCTION(BlueprintCallable, Category = "Movie Render Pipeline")
 	static FString ResolveOutputDirectoryFromJob(UMoviePipelineExecutorJob* InJob);

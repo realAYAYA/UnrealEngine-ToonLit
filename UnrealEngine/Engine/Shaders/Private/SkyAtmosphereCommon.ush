@@ -8,6 +8,7 @@
 #pragma once
 
 #include "ParticipatingMediaCommon.ush"
+#include "/Engine/Shared/EnvironmentComponentsFlags.h"
 
 // Disabled for all mobile platforms, see USkyLightComponent::IsRealTimeCaptureEnabled
 #define AP_SUPPORT_REALTIME_REFLECTION_CAPTURE (FEATURE_LEVEL > FEATURE_LEVEL_ES3_1)
@@ -50,6 +51,11 @@ float4 GetAerialPerspectiveLuminanceTransmittance(
 	float OneOverExposure,
 	float NearFadeOutRangeInvDepthKm)
 {
+	if (View.RenderingReflectionCaptureMask == 0.0f && !IsSkyAtmosphereRenderedInMain(View.EnvironmentComponentsFlags))
+	{
+		return float4(0.0f, 0.0f, 0.0f, 1.0f);
+	}
+	
 	float2 ScreenUv = (NDC.xy / NDC.ww) * float2(0.5f, -0.5f) + 0.5f;
 
 	float tDepth = max(0.0f, length(WorldPositionRelativeToCamera) - AerialPerspectiveVolumeStartDepth);

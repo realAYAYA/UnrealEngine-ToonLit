@@ -76,6 +76,14 @@ private:
 };
 
 UCLASS(MinimalAPI)
+class UNiagaraHierarchyEmitterProperties : public UNiagaraHierarchyItem
+{
+	GENERATED_BODY()
+public:
+	void Initialize(const FVersionedNiagaraEmitter& Emitter);
+};
+
+UCLASS(MinimalAPI)
 class UNiagaraHierarchyRenderer : public UNiagaraHierarchyItem
 {
 	GENERATED_BODY()
@@ -336,6 +344,31 @@ protected:
 	
 	virtual bool RepresentsExternalData() const override { return true; }
 	virtual bool DoesExternalDataStillExist(const UNiagaraHierarchyDataRefreshContext* Context) const override { return GetRendererProperties() != nullptr;}
+
+	virtual const UNiagaraHierarchySection* GetSectionInternal() const override;
+	
+	TWeakObjectPtr<UNiagaraHierarchySection> Section;
+	mutable TOptional<bool> IsFromBaseEmitterCache;
+};
+
+/** Emitter Properties currently don't list their individual properties since it's a mix of data of FVersionedNiagaraEmitterData & actual properties on the emitter which requires customization. */
+struct FNiagaraHierarchyEmitterPropertiesViewModel : public FNiagaraHierarchyItemViewModel
+{
+	FNiagaraHierarchyEmitterPropertiesViewModel(UNiagaraHierarchyEmitterProperties* EmitterProperties, TSharedPtr<FNiagaraHierarchyItemViewModelBase> InParent, TWeakObjectPtr<UNiagaraSummaryViewViewModel> ViewModel, bool bInIsForHierarchy)
+	: FNiagaraHierarchyItemViewModel(EmitterProperties, InParent, ViewModel, bInIsForHierarchy) {}
+
+	virtual FString ToString() const override;
+	virtual bool CanRenameInternal() override { return false; }
+
+	void SetSection(UNiagaraHierarchySection& InSection) { Section = &InSection; }
+
+	bool IsFromBaseEmitter() const;
+protected:	
+	virtual FCanPerformActionResults IsEditableByUser() override;
+	virtual bool CanHaveChildren() const override { return bIsForHierarchy == false; }
+	
+	virtual bool RepresentsExternalData() const override { return true; }
+	virtual bool DoesExternalDataStillExist(const UNiagaraHierarchyDataRefreshContext* Context) const override { return true; }
 
 	virtual const UNiagaraHierarchySection* GetSectionInternal() const override;
 	

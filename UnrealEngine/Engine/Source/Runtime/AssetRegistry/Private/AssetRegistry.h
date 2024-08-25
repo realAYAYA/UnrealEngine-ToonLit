@@ -34,8 +34,6 @@ public:
 	virtual bool GetAssetsByPackageName(FName PackageName, TArray<FAssetData>& OutAssetData, bool bIncludeOnlyOnDiskAssets = false, bool bSkipARFilteredAssets=true) const override;
 	virtual bool GetAssetsByPath(FName PackagePath, TArray<FAssetData>& OutAssetData, bool bRecursive = false, bool bIncludeOnlyOnDiskAssets = false) const override;
 	virtual bool GetAssetsByPaths(TArray<FName> PackagePath, TArray<FAssetData>& OutAssetData, bool bRecursive = false, bool bIncludeOnlyOnDiskAssets = false) const override;
-	UE_DEPRECATED(5.1, "Class names are now represented by path names. Please use a version of this function that uses FTopLevelAssetPath.")
-	virtual bool GetAssetsByClass(FName ClassName, TArray<FAssetData>& OutAssetData, bool bSearchSubClasses = false) const override;
 	virtual bool GetAssetsByClass(FTopLevelAssetPath ClassPathName, TArray<FAssetData>& OutAssetData, bool bSearchSubClasses = false) const override;
 	virtual bool GetAssetsByTags(const TArray<FName>& AssetTags, TArray<FAssetData>& OutAssetData) const override;
 	virtual bool GetAssetsByTagValues(const TMultiMap<FName, FString>& AssetTagsAndValues, TArray<FAssetData>& OutAssetData) const override;
@@ -53,21 +51,15 @@ public:
 	virtual FName GetFirstPackageByName(FStringView PackageName) const override;
 	virtual bool GetDependencies(const FAssetIdentifier& AssetIdentifier, TArray<FAssetIdentifier>& OutDependencies, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::All, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override;
 	virtual bool GetDependencies(const FAssetIdentifier& AssetIdentifier, TArray<FAssetDependency>& OutDependencies, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::All, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override;
-	virtual bool GetDependencies(FName PackageName, TArray<FName>& OutDependencies, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::Package, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override;
+	virtual bool GetDependencies(FName PackageName, TArray<FName>& OutDependencies, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::Package, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override; //-V1101
 	virtual bool GetReferencers(const FAssetIdentifier& AssetIdentifier, TArray<FAssetIdentifier>& OutReferencers, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::All, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override;
 	virtual bool GetReferencers(const FAssetIdentifier& AssetIdentifier, TArray<FAssetDependency>& OutReferencers, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::All, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override;
-	virtual bool GetReferencers(FName PackageName, TArray<FName>& OutReferencers, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::Package, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override;
+	virtual bool GetReferencers(FName PackageName, TArray<FName>& OutReferencers, UE::AssetRegistry::EDependencyCategory Category = UE::AssetRegistry::EDependencyCategory::Package, const UE::AssetRegistry::FDependencyQuery& Flags = UE::AssetRegistry::FDependencyQuery()) const override; //-V1101
 	virtual TOptional<FAssetPackageData> GetAssetPackageDataCopy(FName PackageName) const override;
 	virtual void EnumerateAllPackages(TFunctionRef<void(FName PackageName, const FAssetPackageData& PackageData)> Callback) const override;
 	virtual bool DoesPackageExistOnDisk(FName PackageName, FString* OutCorrectCasePackageName = nullptr, FString* OutExtension = nullptr) const override;
-	virtual FSoftObjectPath GetRedirectedObjectPath(const FSoftObjectPath& ObjectPath) const override;
-	UE_DEPRECATED(5.1, "Asset path FNames have been deprecated, use FSoftObjectPath instead.")
-	virtual FName GetRedirectedObjectPath(const FName ObjectPath) const override;
-	UE_DEPRECATED(5.1, "Class names are now represented by path names. Please use a version of this function that uses FTopLevelAssetPath.")
-	virtual bool GetAncestorClassNames(FName ClassName, TArray<FName>& OutAncestorClassNames) const override;
+	virtual FSoftObjectPath GetRedirectedObjectPath(const FSoftObjectPath& ObjectPath) override;
 	virtual bool GetAncestorClassNames(FTopLevelAssetPath ClassName, TArray<FTopLevelAssetPath>& OutAncestorClassNames) const override;
-	UE_DEPRECATED(5.1, "Class names are now represented by path names. Please use a version of this function that uses FTopLevelAssetPath.")
-	virtual void GetDerivedClassNames(const TArray<FName>& ClassNames, const TSet<FName>& ExcludedClassNames, TSet<FName>& OutDerivedClassNames) const override;
 	virtual void GetDerivedClassNames(const TArray<FTopLevelAssetPath>& ClassNames, const TSet<FTopLevelAssetPath>& ExcludedClassNames, TSet<FTopLevelAssetPath>& OutDerivedClassNames) const override;	
 	virtual void GetAllCachedPaths(TArray<FString>& OutPathList) const override;
 	virtual void EnumerateAllCachedPaths(TFunctionRef<bool(FString)> Callback) const override;
@@ -99,6 +91,7 @@ public:
 	virtual bool IsSearchAllAssets() const override;
 	virtual bool IsSearchAsync() const override;
 	virtual void WaitForCompletion() override;
+	virtual void WaitForPremadeAssetRegistry() override;
 	virtual void ClearGathererCache() override;
 	virtual void WaitForPackage(const FString& PackageName) override;
 	virtual void ScanSynchronous(const TArray<FString>& InPaths, const TArray<FString>& InFilePaths, UE::AssetRegistry::EScanFlags InScanFlags = UE::AssetRegistry::EScanFlags::None) override;
@@ -127,6 +120,10 @@ public:
 	DECLARE_DERIVED_EVENT( UAssetRegistryImpl, IAssetRegistry::FFilesBlockedEvent, FFilesBlockedEvent);
 	virtual FFilesBlockedEvent& OnFilesBlocked() override;
 
+	DECLARE_DERIVED_EVENT( UAssetRegistryImpl, IAssetRegistry::FPathsEvent, FPathsEvent);
+	virtual FPathsEvent& OnPathsAdded() override;
+	virtual FPathsEvent& OnPathsRemoved() override;
+	
 	DECLARE_DERIVED_EVENT( UAssetRegistryImpl, IAssetRegistry::FPathAddedEvent, FPathAddedEvent);
 	virtual FPathAddedEvent& OnPathAdded() override;
 
@@ -136,10 +133,16 @@ public:
 	virtual void AssetCreated(UObject* NewAsset) override;
 	virtual void AssetDeleted(UObject* DeletedAsset) override;
 	virtual void AssetRenamed(const UObject* RenamedAsset, const FString& OldObjectPath) override;
+	UE_DEPRECATED(5.2, "Use the new AssetsSaved function that takes FAssetData.")
 	virtual void AssetSaved(const UObject& SavedAsset) override;
 	virtual void AssetsSaved(TArray<FAssetData>&& SavedAssets) override;
+	virtual void AssetUpdateTags(UObject* Object, EAssetRegistryTagsCaller Caller) override;
+	UE_DEPRECATED(5.4, "Call AssetUpdateTags with EAssetRegistryTagsCaller::Fast")
 	virtual void AssetFullyUpdateTags(UObject* Object) override;
 	virtual void AssetTagsFinalized(const UObject& FinalizedAsset) override;
+
+	virtual bool VerseCreated(const FString& FilePath) override;
+	virtual bool VerseDeleted(const FString& FilePath) override;
 
 	virtual void PackageDeleted(UPackage* DeletedPackage) override;
 
@@ -182,6 +185,14 @@ public:
 	virtual FFileLoadProgressUpdatedEvent& OnFileLoadProgressUpdated() override;
 
 	virtual bool IsLoadingAssets() const override;
+	virtual bool ShouldUpdateDiskCacheAfterLoad() const override
+	{
+#if WITH_EDITORONLY_DATA
+		return bUpdateDiskCacheAfterLoad;
+#else
+		return false;
+#endif
+	}
 
 	virtual void Tick (float DeltaTime) override;
 
@@ -191,15 +202,10 @@ public:
 
 protected:
 	virtual void SetManageReferences(const TMultiMap<FAssetIdentifier, FAssetIdentifier>& ManagerMap, bool bClearExisting, UE::AssetRegistry::EDependencyCategory RecurseType, TSet<FDependsNode*>& ExistingManagedNodes, ShouldSetManagerPredicate ShouldSetManager = nullptr) override;
-	virtual bool SetPrimaryAssetIdForObjectPath(const FName ObjectPath, FPrimaryAssetId PrimaryAssetId) override
-	{
-		return SetPrimaryAssetIdForObjectPath(FSoftObjectPath(ObjectPath), PrimaryAssetId);
-	}
 	virtual bool SetPrimaryAssetIdForObjectPath(const FSoftObjectPath& ObjectPath, FPrimaryAssetId PrimaryAssetId) override;
 
 private:
 	void OnEnginePreExit();
-	void OnAllModuleLoadingPhasesComplete();
 #if WITH_EDITOR
 	void OnFEngineLoopInitCompleteSearchAllAssets();
 	/** Called when new gatherer is registered. Requires subsequent call to RebuildAssetDependencyGathererMapIfNeeded */
@@ -263,7 +269,8 @@ private:
 	void GetInheritanceContextWithRequiredLock(FWriteScopeLock& InOutScopeLock,
 		UE::AssetRegistry::Impl::FClassInheritanceContext& InheritanceContext,
 		UE::AssetRegistry::Impl::FClassInheritanceBuffer& StackBuffer);
-	void GetInheritanceContextAfterVerifyingLock(uint64 CurrentClassesVersionNumber,
+	void GetInheritanceContextAfterVerifyingLock(uint64 CurrentGeneratorClassesVersionNumber,
+		uint64 CurrentAllClassesVersionNumber,
 		UE::AssetRegistry::Impl::FClassInheritanceContext& InheritanceContext,
 		UE::AssetRegistry::Impl::FClassInheritanceBuffer& StackBuffer);
 
@@ -273,7 +280,13 @@ private:
 	 * Callback for FObject::FAssetRegistryTag::OnGetExtraObjectTags
 	 * If bAddMetaDataTagsToOnGetExtraObjectTags is true, this function will add missing UMetaData tags to cooked assets
 	 */
-	void OnGetExtraObjectTags(const UObject* Object, TArray<UObject::FAssetRegistryTag>& OutTags);
+	void OnGetExtraObjectTags(FAssetRegistryTagsContext Context);
+
+	/**
+	 * Checks whether the given path is already covered by the general directory watches, or whether we need to setup a
+	 * new directory watcher. The caller must ensure that the Directory parameter is in FPaths::CreateStandardFilename format.
+	 */
+	bool IsDirAlreadyWatchedByRootWatchers(const FString& Directory) const;
 #endif
 
 private:
@@ -286,16 +299,26 @@ private:
 #if WITH_EDITOR
 	/** Handles to all registered OnDirectoryChanged delegates */
 	TMap<FString, FDelegateHandle> OnDirectoryChangedDelegateHandles;
+	TArray<FString> DirectoryWatchRoots;
 #endif
 
 #if WITH_EDITORONLY_DATA
 	/** If true, the asset registry will inject missing tags from UMetaData for cooked assets only in GetAssetRegistryTags */
 	bool bAddMetaDataTagsToOnGetExtraObjectTags = true;
+
+	/** If true, the AssetRegistry updates its on-disk information for an Asset whenever that Asset loads. */
+	bool bUpdateDiskCacheAfterLoad = true;
 #endif
 
 	/** The delegate to execute when one or more files have been blocked from the registry */
 	FFilesBlockedEvent FilesBlockedEvent;
 
+	/** The delegate to execute when a batch of paths are added to the registry */
+	FPathsEvent PathsAddedEvent;
+
+	/** The delegate to execute when a batch of paths are removed from the registry */
+	FPathsEvent PathsRemovedEvent;
+	
 	/** The delegate to execute when an asset path is added to the registry */
 	FPathAddedEvent PathAddedEvent;
 

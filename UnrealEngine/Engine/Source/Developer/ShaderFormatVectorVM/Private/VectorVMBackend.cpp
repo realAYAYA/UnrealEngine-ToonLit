@@ -53,7 +53,7 @@ bool FVectorVMCodeBackend::GenerateMain(EHlslShaderFrequency Frequency, const ch
 	SCOPE_CYCLE_COUNTER(STAT_VVMGenerateMain);
 	//vm_debug_dump(Instructions, ParseState);
 
-	ir_function_signature* MainSig = NULL;
+	ir_function_signature* MainSig = nullptr;
 	int NumFunctions = 0;
 
 	foreach_iter(exec_list_iterator, iter, *Instructions)

@@ -592,9 +592,10 @@ void FProfilerSession::PopulateHierarchy_Recurrent
 		ChildrenDurationCycles += ChildDurationCycles;
 	}
 
-	const uint32 SelfTimeCycles = ParentDurationCycles - ChildrenDurationCycles;
-	if( SelfTimeCycles > 0.0f && ParentGraph.Children.Num() > 0 )
+	if (ParentDurationCycles > ChildrenDurationCycles && ParentGraph.Children.Num() > 0)
 	{
+		const uint32 SelfTimeCycles = ParentDurationCycles - ChildrenDurationCycles;
+
 		// Create a fake stat that represents this profiler sample's exclusive time.
 		// This is required if we want to create correct combined event graphs later.
 		DataProvider->AddHierarchicalSample
@@ -638,7 +639,7 @@ float FProfilerSession::GetProgress() const
 {
 	if (NumFrames > 0)
 	{
-		return (float)NumFramesProcessed / NumFrames;
+		return (float)NumFramesProcessed / (float)NumFrames;
 	}
 	return 0.0f;
 }

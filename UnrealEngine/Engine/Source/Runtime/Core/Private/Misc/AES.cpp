@@ -973,7 +973,7 @@ void FAES::EncryptData(uint8 *Contents, uint64 NumBytes, const FAESKey& Key)
 
 void FAES::EncryptData(uint8 *Contents, uint64 NumBytes, const ANSICHAR* Key)
 {
-	checkf(Key, TEXT("No encryption key specified"));
+	checkf(Key!=nullptr, TEXT("No encryption key specified"));
 	EncryptData(Contents, NumBytes, (const uint8*)Key, TCString<ANSICHAR>::Strlen(Key));
 }
 
@@ -1008,7 +1008,7 @@ void FAES::DecryptData(uint8* Contents, uint64 NumBytes, const FAESKey& Key)
 
 void FAES::DecryptData(uint8 *Contents, uint64 NumBytes, const ANSICHAR* Key)
 {
-	checkf(Key, TEXT("No valid decryption key specified"));
+	checkf(Key!=nullptr, TEXT("No valid decryption key specified"));
 	DecryptData(Contents, NumBytes, (const uint8*)Key, TCString<ANSICHAR>::Strlen(Key));
 }
 

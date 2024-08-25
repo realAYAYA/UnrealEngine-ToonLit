@@ -169,7 +169,7 @@ bool FAnimationRecorder::TriggerRecordAnimation(USkeletalMeshComponent* Componen
 
 		SetSampleRateAndLength(SampleRate, MaximumLength);
 		
-		Parent = CreatePackage( *ValidatedAssetPath);
+		Parent = CreatePackage( *ValidatedAssetPath);	
 	}
 
 	UObject* const Object = LoadObject<UObject>(Parent, *ValidatedAssetName, nullptr, LOAD_Quiet, nullptr);
@@ -180,7 +180,10 @@ bool FAnimationRecorder::TriggerRecordAnimation(USkeletalMeshComponent* Componen
 		return false;		// failed
 	}
 
-	// If not, create new one now.
+	// If not, create new one now. (also means we should not transact the recording)
+	const bool bExistingAnimSequence = FindObject<UAnimSequence>(Parent, *ValidatedAssetName) != nullptr;
+	bTransactRecording &= bExistingAnimSequence;
+
 	UAnimSequence* const NewSeq = NewObject<UAnimSequence>(Parent, *ValidatedAssetName, RF_Public | RF_Standalone);
 	if (NewSeq)
 	{
@@ -299,40 +302,101 @@ void FAnimationRecorder::StartRecord(USkeletalMeshComponent* Component, UAnimSeq
 #endif
 	}
 
+	// record first-frame notifies
+	if (Component->GetAnimInstance())
+	{
+		RecordNotifies(Component, Component->GetAnimInstance()->NotifyQueue.AnimNotifies, 0.0f, 0.0f);
+	}
+
 	// record the first frame
 	Record(Component, PreviousComponentToWorld, PreviousSpacesBases, PreviousAnimCurves,  0);
 }
 
 void FAnimationRecorder::ProcessNotifies()
 {
-	if (AnimationObject)
+	if (AnimationObject == nullptr)
 	{
-		// Copy recorded notify events, animation its notify array should be empty at this point
-		AnimationObject->Notifies.Append(RecordedNotifyEvents);
-		
-		// build notify tracks - first find how many tracks we want
-		for (FAnimNotifyEvent& Event : AnimationObject->Notifies)
-		{
-			if (Event.TrackIndex >= AnimationObject->AnimNotifyTracks.Num())
-			{
-				AnimationObject->AnimNotifyTracks.SetNum(Event.TrackIndex + 1);
+		return;
+	}
 
-				// remake track names to create a nice sequence
-				const int32 TrackNum = AnimationObject->AnimNotifyTracks.Num();
-				for (int32 TrackIndex = 0; TrackIndex < TrackNum; ++TrackIndex)
-				{
-					FAnimNotifyTrack& Track = AnimationObject->AnimNotifyTracks[TrackIndex];
-					Track.TrackName = *FString::FromInt(TrackIndex + 1);
-				}
+	// Get play length to clamp any active notifies against
+	const float PlayLength = AnimationObject->GetDataModel()->GetPlayLength();
+
+	// Update the end time of any notifies that are currently active
+	for (FRecordedAnimNotify& RecordedNotify : RecordingAnimNotifies)
+	{
+		RecordedNotify.AnimNotifyEndTime = PlayLength;
+		RecordedAnimNotifies.Add(RecordedNotify);
+	}
+
+	RecordingAnimNotifies.Reset();
+
+	for (FRecordedAnimNotify& RecordedNotify : RecordedAnimNotifies)
+	{
+		RecordedNotify.NewNotifyEvent.SetTime(RecordedNotify.AnimNotifyStartTime);
+		RecordedNotify.NewNotifyEvent.TriggerTimeOffset = 0.0f;
+		RecordedNotify.NewNotifyEvent.EndTriggerTimeOffset = 0.0f;
+
+		if (RecordedNotify.OriginalNotifyEvent->GetDuration() > 0.f)
+		{
+			RecordedNotify.NewNotifyEvent.SetDuration(RecordedNotify.AnimNotifyEndTime - RecordedNotify.AnimNotifyStartTime);
+		}
+
+		// see if we need to create a new notify
+		if (RecordedNotify.OriginalNotifyEvent->Notify)
+		{
+			UAnimNotify** FoundNotify = UniqueNotifies.Find(RecordedNotify.OriginalNotifyEvent->Notify);
+			if (FoundNotify == nullptr)
+			{
+				RecordedNotify.NewNotifyEvent.Notify = Cast<UAnimNotify>(StaticDuplicateObject(RecordedNotify.NewNotifyEvent.Notify, AnimationObject));
+				UniqueNotifies.Add(RecordedNotify.OriginalNotifyEvent->Notify, RecordedNotify.NewNotifyEvent.Notify);
+			}
+			else
+			{
+				RecordedNotify.NewNotifyEvent.Notify = *FoundNotify;
 			}
 		}
 
-		// now build tracks
-		for (int32 EventIndex = 0; EventIndex < AnimationObject->Notifies.Num(); ++EventIndex)
+		// see if we need to create a new notify state
+		if (RecordedNotify.OriginalNotifyEvent->NotifyStateClass)
 		{
-			FAnimNotifyEvent& Event = AnimationObject->Notifies[EventIndex];
-			AnimationObject->AnimNotifyTracks[Event.TrackIndex].Notifies.Add(&AnimationObject->Notifies[EventIndex]);
+			UAnimNotifyState** FoundNotifyState = UniqueNotifyStates.Find(RecordedNotify.OriginalNotifyEvent->NotifyStateClass);
+			if (FoundNotifyState == nullptr)
+			{
+				RecordedNotify.NewNotifyEvent.NotifyStateClass = Cast<UAnimNotifyState>(StaticDuplicateObject(RecordedNotify.NewNotifyEvent.NotifyStateClass, AnimationObject));
+				UniqueNotifyStates.Add(RecordedNotify.OriginalNotifyEvent->NotifyStateClass, RecordedNotify.NewNotifyEvent.NotifyStateClass);
+			}
+			else
+			{
+				RecordedNotify.NewNotifyEvent.NotifyStateClass = *FoundNotifyState;
+			}
 		}
+
+		AnimationObject->Notifies.Add(RecordedNotify.NewNotifyEvent);
+	}
+
+	// build notify tracks - first find how many tracks we want
+	for (FAnimNotifyEvent& Event : AnimationObject->Notifies)
+	{
+		if (Event.TrackIndex >= AnimationObject->AnimNotifyTracks.Num())
+		{
+			AnimationObject->AnimNotifyTracks.SetNum(Event.TrackIndex + 1);
+
+			// remake track names to create a nice sequence
+			const int32 TrackNum = AnimationObject->AnimNotifyTracks.Num();
+			for (int32 TrackIndex = 0; TrackIndex < TrackNum; ++TrackIndex)
+			{
+				FAnimNotifyTrack& Track = AnimationObject->AnimNotifyTracks[TrackIndex];
+				Track.TrackName = *FString::FromInt(TrackIndex + 1);
+			}
+		}
+	}
+
+	// now build tracks
+	for (int32 EventIndex = 0; EventIndex < AnimationObject->Notifies.Num(); ++EventIndex)
+	{
+		FAnimNotifyEvent& Event = AnimationObject->Notifies[EventIndex];
+		AnimationObject->AnimNotifyTracks[Event.TrackIndex].Notifies.Add(&AnimationObject->Notifies[EventIndex]);
 	}
 }
 
@@ -511,7 +575,7 @@ UAnimSequence* FAnimationRecorder::StopRecord(bool bShowMessage)
 		Controller.NotifyPopulated();
 		Controller.CloseBracket(bTransactRecording);
 
-
+		AnimationObject->PostEditChange();
 		AnimationObject->MarkPackageDirty();
 		
 		// save the package to disk, for convenience and so we can run this in standalone mode
@@ -958,9 +1022,9 @@ void FAnimationRecorder::RecordNotifies(USkeletalMeshComponent* Component, const
 	if (ensure(AnimationObject))
 	{
 		// flag notifies as possibly unused this frame
-		for (auto& ActiveNotify : ActiveNotifies)
+		for (FRecordedAnimNotify& RecordingNotify : RecordingAnimNotifies)
 		{
-			ActiveNotify.Value = false;
+			RecordingNotify.bWasActive = false;
 		}
 
 		int32 AddedThisFrame = 0;
@@ -968,77 +1032,48 @@ void FAnimationRecorder::RecordNotifies(USkeletalMeshComponent* Component, const
 		{
 			if(const FAnimNotifyEvent* NotifyEvent = NotifyEventRef.GetNotify())
 			{
-				// we don't want to insert notifies with duration more than once
-				if(NotifyEvent->GetDuration() > 0.0f)
+				if (NotifyEvent->GetDuration() <= 0.f)
 				{
-					// if this event is active already then don't add it
+					// If the duration of this notify <= 0.0 we just store it as recorded
+					RecordedAnimNotifies.Emplace(*NotifyEvent, NotifyEvent, RecordTime, RecordTime);
+				}
+				else
+				{
+					// Check to see if the notify is already active
 					bool bAlreadyActive = false;
-					for (auto& ActiveNotify : ActiveNotifies)
+					for (FRecordedAnimNotify& RecordingNotify : RecordingAnimNotifies)
 					{
-						if(NotifyEvent == ActiveNotify.Key)
+						if (NotifyEvent == RecordingNotify.OriginalNotifyEvent)
 						{
-							// flag as active
-							ActiveNotify.Value = true;
 							bAlreadyActive = true;
+							RecordingNotify.bWasActive = true;
 							break;
 						}
 					}
 
-					// already active, so skip adding
-					if(bAlreadyActive)
+					// Add this 'new' notify
+					if (!bAlreadyActive)
 					{
-						continue;
-					}
-					else
-					{
-						// add a new active notify with duration
-						ActiveNotifies.Emplace(NotifyEvent, true);
+						RecordingAnimNotifies.Emplace(*NotifyEvent, NotifyEvent, RecordTime, RecordTime);
 					}
 				}
 
-				// make a new notify from this event & set the current time
-				FAnimNotifyEvent NewEvent = *NotifyEvent;
-				NewEvent.SetTime(RecordTime);
-				NewEvent.TriggerTimeOffset = 0.0f;
-				NewEvent.EndTriggerTimeOffset = 0.0f;
-
-				// see if we need to create a new notify
-				if(NotifyEvent->Notify)
-				{
-					UAnimNotify** FoundNotify = UniqueNotifies.Find(NotifyEvent->Notify);
-					if(FoundNotify == nullptr)
-					{
-						NewEvent.Notify = Cast<UAnimNotify>(StaticDuplicateObject(NewEvent.Notify, AnimationObject));
-						UniqueNotifies.Add(NotifyEvent->Notify, NewEvent.Notify);
-					}
-					else
-					{
-						NewEvent.Notify = *FoundNotify;
-					}
-				}
-
-				// see if we need to create a new notify state
-				if (NotifyEvent->NotifyStateClass)
-				{
-					UAnimNotifyState** FoundNotifyState = UniqueNotifyStates.Find(NotifyEvent->NotifyStateClass);
-					if (FoundNotifyState == nullptr)
-					{
-						NewEvent.NotifyStateClass = Cast<UAnimNotifyState>(StaticDuplicateObject(NewEvent.NotifyStateClass, AnimationObject));
-						UniqueNotifyStates.Add(NotifyEvent->NotifyStateClass, NewEvent.NotifyStateClass);
-					}
-					else
-					{
-						NewEvent.NotifyStateClass = *FoundNotifyState;
-					}
-				}
-
-				RecordedNotifyEvents.Add(NewEvent);
 				AddedThisFrame++;
 			}
 		}
 
-		// remove all notifies that didnt get added this time
-		ActiveNotifies.RemoveAll([](TPair<const FAnimNotifyEvent*, bool>& ActiveNotify){ return !ActiveNotify.Value; });
+		for (int32 RecordingAnimNotifyIndex = 0; RecordingAnimNotifyIndex < RecordingAnimNotifies.Num(); ++RecordingAnimNotifyIndex)
+		{
+			FRecordedAnimNotify& RecordingNotify = RecordingAnimNotifies[RecordingAnimNotifyIndex];
+
+			// If a notify wasnt active this frame, commit it as 'recorded'
+			if (!RecordingNotify.bWasActive)
+			{
+				RecordingNotify.AnimNotifyEndTime = RecordTime;
+				RecordedAnimNotifies.Add(RecordingNotify);
+				RecordingAnimNotifies.RemoveAtSwap(RecordingAnimNotifyIndex);
+			}
+		}
 
 		UE_LOG(LogAnimation, Log, TEXT("Added notifies : %d"), AddedThisFrame);
 	}
@@ -1373,7 +1408,7 @@ void FAnimationRecorderManager::StopRecordingAnimation(USkeletalMeshComponent* C
 			Inst.FinishRecording(bShowMessage);
 
 			// remove instance, which will clean itself up
-			RecorderInstances.RemoveAtSwap(Idx, 1, false);
+			RecorderInstances.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 
 			// all done
 			break;

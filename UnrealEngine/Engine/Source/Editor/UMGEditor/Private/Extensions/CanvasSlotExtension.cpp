@@ -76,14 +76,14 @@ private:
 /////////////////////////////////////////////////////
 // FCanvasSlotExtension
 
-const float SnapDistance = 7;
+const double SnapDistance = 7.0;
 
-static float DistancePointToLine2D(const FVector2D& LinePointA, const FVector2D& LinePointB, const FVector2D& PointC)
+static double DistancePointToLine2D(const FVector2D& LinePointA, const FVector2D& LinePointB, const FVector2D& PointC)
 {
 	FVector2D AB = LinePointB - LinePointA;
 	FVector2D AC = PointC - LinePointA;
 
-	float Distance = FVector2D::CrossProduct(AB, AC) / FVector2D::Distance(LinePointA, LinePointB);
+	double Distance = FVector2D::CrossProduct(AB, AC) / FVector2D::Distance(LinePointA, LinePointB);
 	return FMath::Abs(Distance);
 }
 
@@ -358,12 +358,12 @@ FReply FCanvasSlotExtension::HandleAnchorEndDrag(const FGeometry& Geometry, cons
 
 void FCanvasSlotExtension::ProximitySnapValue(float SnapFrequency, float SnapProximity, FVector2D::FReal& Value)
 {
-	float MajorAnchorDiv = Value / SnapFrequency;
-	float SubAnchorLinePos = MajorAnchorDiv - FMath::RoundToInt(MajorAnchorDiv);
+	double MajorAnchorDiv = Value / SnapFrequency;
+	double SubAnchorLinePos = MajorAnchorDiv - FMath::RoundToDouble(MajorAnchorDiv);
 
 	if ( FMath::Abs(SubAnchorLinePos) <= SnapProximity )
 	{
-		Value = FMath::RoundToInt(MajorAnchorDiv) * SnapFrequency;
+		Value = FMath::RoundToDouble(MajorAnchorDiv) * SnapFrequency;
 	}
 }
 
@@ -572,7 +572,7 @@ void FCanvasSlotExtension::PaintDragPercentages(const TSet< FWidgetReference >& 
 				const FVector2D AnchorMin = LayoutData.Anchors.Minimum;
 				const FVector2D AnchorMax = LayoutData.Anchors.Maximum;
 
-				auto DrawSegment =[&] (FVector2D Offset, FVector2D Start, FVector2D End, float Value, FVector2D TextTransform, bool InHorizontalLine) {
+				auto DrawSegment =[&] (FVector2D Offset, FVector2D Start, FVector2D End, double Value, FVector2D TextTransform, bool InHorizontalLine) {
 					PaintLineWithText(
 						Start + Offset,
 						End + Offset,
@@ -748,7 +748,7 @@ void FCanvasSlotExtension::PaintCollisionLines(const TSet< FWidgetReference >& S
 										FVector2D CollisionPoint = MySegmentBase;
 
 										//TODO Collide against all sides of the arranged geometry.
-										float Distance = DistancePointToLine2D(PointA, PointB, CollisionPoint);
+										double Distance = DistancePointToLine2D(PointA, PointB, CollisionPoint);
 										if ( Distance <= SnapDistance )
 										{
 											FVector2D FarthestPoint = FVector2D::Distance(PointA, CollisionPoint) > FVector2D::Distance(PointB, CollisionPoint) ? PointA : PointB;

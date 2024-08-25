@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { DefaultButton, DetailsList, DetailsListLayoutMode, DetailsRow, DirectionalHint, Dropdown, FocusZone, FocusZoneDirection, IColumn, Icon, IconButton, IContextualMenuItem, IContextualMenuProps, IDetailsListProps, ITextField, List, Modal, ProgressIndicator, ScrollToMode, Selection, SelectionMode, SelectionZone, Separator, Spinner, SpinnerSize, Stack, Text, TextField } from '@fluentui/react';
+import { Callout, DefaultButton, DetailsList, DetailsListLayoutMode, DetailsRow, DirectionalHint, Dropdown, FocusZone, FocusZoneDirection, FontIcon, IColumn, Icon, IconButton, IContextualMenuItem, IContextualMenuProps, IDetailsListProps, ITextField, List, Modal, PrimaryButton, ProgressIndicator, ScrollToMode, Selection, SelectionMode, SelectionZone, Separator, Spinner, SpinnerSize, Stack, Text, TextField, TooltipHost } from '@fluentui/react';
 import { action, makeObservable, observable } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import moment from 'moment-timezone';
-import React, { useEffect, useState } from 'react';
-import { Link, useNavigate, useLocation, useParams } from 'react-router-dom';
+import React, { useEffect, useId, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import backend from '../backend';
 import { ArtifactContextType, ArtifactData, EventSeverity, GetChangeSummaryResponse, GetJobStepRefResponse, GetLogEventResponse, LogLevel } from '../backend/Api';
 import { CommitCache } from '../backend/CommitCache';
@@ -14,7 +14,9 @@ import { JobDetails } from '../backend/JobDetails';
 import { Markdown } from '../base/components/Markdown';
 import { useWindowSize } from '../base/utilities/hooks';
 import { displayTimeZone, getElapsedString } from '../base/utilities/timeUtils';
-import { hordeClasses, modeColors } from '../styles/Styles';
+import { getHordeStyling } from '../styles/Styles';
+import { getHordeTheme } from '../styles/theme';
+import { JobArtifactsModal } from './artifacts/ArtifactsModal';
 import { Breadcrumbs } from './Breadcrumbs';
 import { ChangeContextMenu, ChangeContextMenuTarget } from './ChangeButton';
 import { HistoryModal } from './HistoryModal';
@@ -23,11 +25,10 @@ import { JobDetailArtifacts } from './JobDetailArtifacts';
 import { useQuery } from './JobDetailCommon';
 import { LogItem, renderLine } from './LogRender';
 import { JobLogSource, LogSource } from './LogSource';
-import { lineRenderStyleNormal, lineRenderStyleSmall, logMetricNormal, logMetricSmall, logStyleNormal, logStyleSmall } from "./LogStyle";
+import { getLogStyles, logMetricNormal, logMetricSmall } from "./LogStyle";
 import { PrintException } from './PrintException';
 import { StepRefStatusIcon } from './StatusIcon';
 import { TopNav } from './TopNav';
-import { JobArtifactsModal } from './artifacts/ArtifactsModal';
 
 class LogHandler {
 
@@ -52,6 +53,8 @@ class LogHandler {
    trailing?: boolean;
    scroll?: number;
    initialRender = true;
+
+   infoLine?: number;
 
    // could be a preference
    compact = false;
@@ -78,6 +81,8 @@ class LogHandler {
 
    get style(): any {
 
+      const { logStyleNormal, logStyleSmall } = getLogStyles();
+
       if (!this.logSource?.logItems) {
          return logStyleNormal;
       }
@@ -87,6 +92,8 @@ class LogHandler {
    }
 
    get lineRenderStyle(): any {
+
+      const { lineRenderStyleNormal, lineRenderStyleSmall } = getLogStyles();
 
       if (!this.logSource?.logItems) {
          return lineRenderStyleNormal;
@@ -194,6 +201,9 @@ const StepHistoryModal: React.FC<{ jobDetails: JobDetails, stepId: string | unde
    const [commitState, setCommitState] = useState<{ target?: ChangeContextMenuTarget, commit?: GetChangeSummaryResponse, rangeCL?: number }>({});
    const [stepHistory, setStepHistory] = useState<GetJobStepRefResponse[] | undefined>(undefined);
 
+   const { hordeClasses } = getHordeStyling();
+   const hordeTheme = getHordeTheme();
+
    const jobData = jobDetails.jobdata;
 
    if (!jobData || !jobData.streamId || !jobData.templateId) {
@@ -205,7 +215,7 @@ const StepHistoryModal: React.FC<{ jobDetails: JobDetails, stepId: string | unde
          setStepHistory(r);
       })
 
-      return <Modal isOpen={true} styles={{ main: { padding: 8, width: 1084, height: '624px', backgroundColor: '#FFFFFF' } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
+      return <Modal isOpen={true} styles={{ main: { padding: 8, width: 1084, height: '624px', backgroundColor: hordeTheme.horde.contentBackground } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
          <Stack style={{ paddingTop: 24 }} horizontalAlign='center' tokens={{ childrenGap: 18 }}>
             <Stack>
                <Text variant='mediumPlus'>Loading Step History</Text>
@@ -351,7 +361,7 @@ const StepHistoryModal: React.FC<{ jobDetails: JobDetails, stepId: string | unde
          const commonSelectors = { ".ms-DetailsRow-cell": { "overflow": "visible", padding: 0 } };
 
          if (ref.stepId === stepId && ref.jobId === jobDetails.id) {
-            props.styles = { ...props.styles, root: { background: 'rgb(233, 232, 231)', selectors: { ...commonSelectors as any, "a, a:hover, a:visited": { color: "#FFFFFF" }, ":hover": { background: 'rgb(223, 222, 221)' } } } };
+            props.styles = { ...props.styles, root: { background: `${hordeTheme.palette.neutralLight} !important`, selectors: { ...commonSelectors as any } } };
          } else {
             props.styles = { ...props.styles, root: { selectors: { ...commonSelectors as any } } };
          }
@@ -362,7 +372,7 @@ const StepHistoryModal: React.FC<{ jobDetails: JobDetails, stepId: string | unde
       return null;
    };
 
-   return (<Modal isOpen={true} styles={{ main: { padding: 8, width: 1084, height: '624px', backgroundColor: '#FFFFFF' } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
+   return (<Modal isOpen={true} styles={{ main: { padding: 8, width: 1084, height: '624px', backgroundColor: hordeTheme.horde.contentBackground } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
       {commitState.target && <ChangeContextMenu target={commitState.target} job={jobDetails.jobdata} commit={commitState.commit} rangeCL={commitState.rangeCL} onDismiss={() => setCommitState({})} />}
       <Stack styles={{ root: { paddingTop: 8, paddingLeft: 24, paddingRight: 12, paddingBottom: 8 } }}>
          <Stack tokens={{ childrenGap: 12 }}>
@@ -401,6 +411,8 @@ const StepHistoryModal: React.FC<{ jobDetails: JobDetails, stepId: string | unde
 
 const StepArtifactsModal: React.FC<{ jobDetails: JobDetails, stepId: string | undefined, onClose: () => void }> = observer(({ jobDetails, stepId, onClose }) => {
 
+   const { hordeClasses } = getHordeStyling();
+
    let artifacts: ArtifactData[] = jobDetails.artifacts;
    if (stepId) {
       artifacts = artifacts.filter(artifact => artifact.stepId === stepId);
@@ -408,7 +420,9 @@ const StepArtifactsModal: React.FC<{ jobDetails: JobDetails, stepId: string | un
 
    let height = Math.min(36 * artifacts.length + 60, 500) + 200;
 
-   return (<Modal isOpen={true} styles={{ main: { padding: 8, width: 1084, height: height, backgroundColor: '#FFFFFF' } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
+   const hordeTheme = getHordeTheme();
+
+   return (<Modal isOpen={true} styles={{ main: { padding: 8, width: 1084, height: height, backgroundColor: hordeTheme.horde.contentBackground } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
 
       <Stack styles={{ root: { paddingTop: 8, paddingLeft: 24, paddingRight: 12, paddingBottom: 16 } }}>
          <Stack tokens={{ childrenGap: 12 }}>
@@ -456,6 +470,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
    const [issueHistory, setIssueHistory] = useState(false);
    const [logHistory, setLogHistory] = useState(false);
    const [logArtifacts, setLogArtifacts] = useState("");
+   const [logError, setLogError] = useState("")
 
    let [historyAgentId, setHistoryAgentId] = useState<string | undefined>(undefined);
 
@@ -463,6 +478,8 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
       historyAgentId = query.get("agentId")!;
    }
 
+   const artifactContext = !!query.get("artifactContext") ? query.get("artifactContext")! as ArtifactContextType : undefined;
+   const artifactPath = !!query.get("artifactPath") ? query.get("artifactPath")! : undefined;
 
    globalHandler = handler;
    globalSearchState = searchState;
@@ -500,12 +517,21 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
 
    }, []);
 
+   if (logError) {
+      return <Stack horizontalAlign='center' style={{ paddingTop: 24 }} >
+         <Text variant='mediumPlus'>{`Unable to load log data - ${logError}`}</Text>
+      </Stack>
+   }
+
    if (handler && handler.logSource && handler.logSource.logId !== logId) {
       selection.setItems([], true);
       LogHandler.clear();
 
       setHandler(undefined);
    }
+
+   const hordeTheme = getHordeTheme();
+   const { hordeClasses, modeColors } = getHordeStyling();
 
    if (!logId) {
       console.error("Bad log id settings up LogList");
@@ -516,14 +542,14 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
 
       const error = `Error getting job data, please check that you are logged in and that the link is valid.\n\n${handler.logSource.fatalError}`;
       return <Stack horizontal style={{ paddingTop: 48 }}>
-         <div key={`windowsize_logview1_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - 720, flexShrink: 0, backgroundColor: '#FFFFFF' }} />
+         <div key={`windowsize_logview1_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - 720, flexShrink: 0, backgroundColor: hordeTheme.horde.contentBackground }} />
          <Stack horizontalAlign="center" style={{ width: 1440 }}><PrintException message={error} /></Stack>
       </Stack>
    }
 
    if (!handler) {
-      const source = LogSource.create(logId, query);
-      source.init().then(() => {
+      LogSource.create(logId, query).then(async (source) => {
+         await source.init();
 
          const handler = new LogHandler();
 
@@ -533,10 +559,12 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
 
          handler.logSource = source;
          setHandler(handler);
+      }).catch((reason) => {
+         setLogError(reason);
+      });
 
-      }).catch(reason => console.error(reason));
       return <Spinner size={SpinnerSize.large} />;
-   }
+   };
 
    // subscribe
    if (handler.updated) { }
@@ -629,6 +657,8 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
 
          const IssueButton: React.FC<{ item: LogItem, event: GetLogEventResponse }> = ({ item, event }) => {
 
+            const tooltipId = useId();
+
             const error = event.severity === EventSeverity.Error;
 
             const issueId = item!.issueId!.toString();
@@ -644,17 +674,25 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
             }
 
             return <Stack>
-               <DefaultButton className={error ? styles.errorButton : styles.warningButton}
-                  href={href}
-                  style={{ padding: 0, margin: 0, width: tsWidth, paddingLeft: 8, paddingRight: 8, height: "100%", fontWeight: "unset" }}
+               <TooltipHost
+                  content={timestamp}
+                  id={tooltipId}
+                  calloutProps={{ gapSpace: 0 }}
+                  styles={{ root: { display: 'inline-block' } }}>
+                  <DefaultButton className={error ? styles.errorButton : styles.warningButton}
+                     href={href}
+                     style={{ padding: 0, margin: 0, width: tsWidth, paddingLeft: 8, paddingRight: 8, height: "100%", fontWeight: "unset" }}
 
-                  onClick={(ev) => {
-                     ev.preventDefault();
-                     ev.stopPropagation();
-                     location.search = `?issue=${issueId}`;
-                     setIssueHistory(true);
-                     navigate(location);
-                  }}><Text variant="small" style={{ ...fontStyle }}>Issue</Text><div style={{ ...fontStyle }}>&nbsp;</div><Text variant="small" style={{ ...fontStyle }}>{`${issueId}`}</Text></DefaultButton>
+                     onClick={(ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        location.search = `?issue=${issueId}`;
+                        setIssueHistory(true);
+                        navigate(location);
+                     }}>
+                     <Text variant="small" style={{ ...fontStyle }}>Issue</Text><div style={{ ...fontStyle }}>&nbsp;</div><Text variant="small" style={{ ...fontStyle }}>{`${issueId}`}</Text>
+                  </DefaultButton>
+               </TooltipHost>
             </Stack>
          }
 
@@ -684,16 +722,52 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
             }
          }
 
+         const eyeColor = modeColors.text + "44";
+
          return (
-            <Stack key={`key_log_line_${item.lineNumber}`} style={{ width: "max-content", height: handler.lineHeight }} onClick={() => { navigate(location.pathname + `?lineindex=${item.lineNumber - 1}`, { replace: true }) }}>
+            <Stack key={`key_log_line_${item.lineNumber}`} style={{ width: "max-content", height: handler.lineHeight }} onClick={() => {
+               const search = new URLSearchParams(window.location.search);
+               search.set("lineindex", (item.lineNumber - 1).toString());
+               const url = `${window.location.pathname}?` + search.toString();
+
+               navigate(url, { replace: true })
+            }}>
                <div style={{ position: "relative" }}>
-                  <Stack className={styles.logLine} tokens={{ childrenGap: 8 }} horizontal disableShrink={true}>
+                  <Stack className={styles.logLine} style={{ position: "relative" }} tokens={{ childrenGap: 8 }} horizontal disableShrink={true}>
                      <Stack styles={{ root: { color: "#c0c0c0", width: 80, textAlign: "right", userSelect: "none", fontSize: handler.fontSize } }}>{prefix + item.lineNumber}</Stack>
-                     <Stack className={style} horizontal disableShrink={true} >
+                     <Stack className={style} horizontal disableShrink={true}>
                         <Stack className={gutterStyle}></Stack>
                         {(!item.issueId || !ev) && <Stack styles={{ root: { color: "#8a8a8a", width: tsWidth, whiteSpace: "nowrap", fontSize: handler.fontSize, userSelect: "none" } }}> {timestamp}</Stack>}
                         {!!item.issueId && !!ev && <IssueButton item={item} event={ev!} />}
-                        <div className={styles.logLineOuter}> <Stack styles={{ root: { paddingLeft: 8, paddingRight: 8 } }}> {renderLine(item.line, item.lineNumber, handler.lineRenderStyle, searchState.search)}</Stack></div>
+                        <div className={styles.logLineOuter}> <Stack styles={{ root: { paddingLeft: 8, paddingRight: 8, position: "relative", verticalAlign: "center" } }}> {renderLine(navigate, item.line, item.lineNumber, handler.lineRenderStyle, searchState.search)}
+                           <Stack id={`callout_target_${item?.lineNumber}`} style={{ position: "absolute", cursor: "pointer", userSelect: "none", left: "-12px", top: "0px" }} onClick={() => {
+                              handler.infoLine = item.lineNumber;
+                              handler.externalUpdate();
+                           }}><FontIcon id="infoview" style={{ fontSize: 14, color: eyeColor }} iconName="Eye" /></Stack>
+                           {handler.infoLine === item.lineNumber && <Callout
+                              styles={{ root: { padding: "32px 24px", maxWidth: 1300 } }}
+                              role="dialog"
+                              gapSpace={12}
+                              target={`#callout_target_${item?.lineNumber}`}
+                              isBeakVisible={true}
+                              beakWidth={12}
+                              onDismiss={() => {
+                                 handler.infoLine = undefined;
+                                 handler.externalUpdate();
+                              }}
+                              directionalHint={DirectionalHint.rightCenter}
+                              setInitialFocus>
+                              <Stack style={{ maxWidth: 1140 }}>
+                                 <Stack style={{ paddingBottom: 24 }}>
+                                    <Text style={{ fontSize: 14, fontFamily: "Horde Open Sans SemiBold" }}>Structured Log Line</Text>
+                                 </Stack>
+                                 <Stack style={{ paddingLeft: 12 }}>
+                                    <Text style={{ fontSize: 11, whiteSpace: "pre-wrap", fontFamily: "Horde Cousine Regular" }}>{JSON.stringify(item.line, undefined, 2).replaceAll("\\r", "").replaceAll("\\n", "\n")}</Text></Stack>
+                              </Stack>
+                           </Callout>}
+
+                        </Stack>
+                        </div>
                      </Stack>
                   </Stack>
                </div>
@@ -731,13 +805,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
 
    let summaryText = logSource.summary;
 
-   const leaseId = logSource.getLeaseId();
-
    let baseUrl = location.pathname;
-
-   if (leaseId) {
-      baseUrl = baseUrl + `?leaseId=${leaseId}`;
-   }
 
    /*
    if (agentId && summaryText) {
@@ -833,7 +901,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
 
       }
 
-   }   
+   }
 
    // we need job details here, though need to make a better accessor
    const fixme = (logSource as any).jobDetails as JobDetails | undefined;
@@ -850,12 +918,6 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
          }
       }
 
-      menuProps.items.push({
-         key: 'jobstep_history',
-         text: 'Step History',
-         onClick: () => setLogHistory(true)
-      })
-
       if (!fixme.jobdata?.useArtifactsV2) {
          menuProps.items.push({
             key: 'jobstep_artifacts',
@@ -868,6 +930,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
          const stepArtifacts = (logSource as JobLogSource).artifactsV2;
 
          const atypes = new Map<ArtifactContextType, number>();
+         const knownTypes = new Set<string>(["step-saved", "step-output", "step-trace"]);
 
          stepArtifacts?.forEach(a => {
             let c = atypes.get(a.type) ?? 0;
@@ -877,29 +940,53 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
 
          const opsList: IContextualMenuItem[] = [];
 
+         const navigateToArtifacts = (context: string) => {
+            const search = new URLSearchParams(window.location.search);
+            search.set("artifactContext", encodeURIComponent(context));
+            const url = `${window.location.pathname}?` + search.toString();
+            navigate(url, { replace: true })
+         }
+
          opsList.push({
             key: 'stepops_artifacts_step',
-            text: "Step Artifacts",
+            text: "Logs",
             iconProps: { iconName: "Folder" },
             disabled: !atypes.get("step-saved"),
-            onClick: () => { setLogArtifacts("step-saved") }
+            onClick: () => {
+               navigateToArtifacts("step-saved");
+            }
          });
 
          opsList.push({
             key: 'stepops_artifacts_output',
-            text: "Output Artifacts",
+            text: "Temp Storage",
             iconProps: { iconName: "MenuOpen" },
             disabled: !atypes.get("step-output"),
-            onClick: () => { setLogArtifacts("step-output") }
+            onClick: () => {
+               navigateToArtifacts("step-output");
+            }
          });
 
          opsList.push({
             key: 'stepops_artifacts_trace',
-            text: "Trace Artifacts",
+            text: "Traces",
             iconProps: { iconName: "SearchTemplate" },
             disabled: !atypes.get("step-trace"),
-            onClick: () => { setLogArtifacts("step-trace") }
+            onClick: () => {
+               navigateToArtifacts("step-trace");
+            }
          });
+
+         const custom = stepArtifacts?.filter(a => !knownTypes.has(a.type)).sort((a, b) => a.type.localeCompare(b.type));
+         custom?.forEach(c => {
+            opsList.push({
+               key: `stepops_artifacts_${c.type}`,
+               text: c.description ?? c.name,
+               iconProps: { iconName: "Clean" },
+               onClick: () => { navigateToArtifacts(c.type) }
+            });
+         })
+
 
          menuProps.items.push({
             key: 'jobstep_artifacts',
@@ -910,18 +997,31 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
          })
       }
 
+      menuProps.items.push({
+         key: 'jobstep_history',
+         text: 'Step History',
+         onClick: () => setLogHistory(true)
+      })
+
+
    }
 
    function updateError() {
       if (!handler || handler.currentError === undefined) return;
       handler.currentWarning = undefined;
       handler.stopTrailing();
-      let lineIdx = errors[handler.currentError].lineIndex - 10;
+      let lineIdx = errors[handler.currentError].lineIndex;
+      const search = new URLSearchParams(window.location.search);
+      search.set("lineindex", (lineIdx).toString());
+      const url = `${window.location.pathname}?` + search.toString();               
+      lineIdx -= 10;
       if (lineIdx < 0) {
          lineIdx = 0;
       }
       handler.externalUpdate();
       listRef?.scrollToIndex(lineIdx, () => handler.lineHeight, ScrollToMode.top);
+
+      navigate(url, { replace: true })
    }
 
    function prevError() {
@@ -957,12 +1057,19 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
       handler.currentError = undefined;
 
       handler.stopTrailing();
-      let lineIdx = warnings[handler.currentWarning].lineIndex - 10;
+      let lineIdx = warnings[handler.currentWarning].lineIndex ;
+      const search = new URLSearchParams(window.location.search);
+      search.set("lineindex", (lineIdx).toString());
+      const url = `${window.location.pathname}?` + search.toString();               
+
+      lineIdx -= 10
       if (lineIdx < 0) {
          lineIdx = 0;
       }
       handler.externalUpdate();
       listRef?.scrollToIndex(lineIdx, () => handler.lineHeight, ScrollToMode.top);
+
+      navigate(url, { replace: true })
    }
 
    function prevWarning() {
@@ -1014,17 +1121,19 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
       errorText = "No";
    }
 
+   const buttonNoneText = dashboard.darktheme ? "#949898" : "#616e85";
+
    return <Stack>
       {!!fixme && <IssueModalV2 issueId={query.get("issue")} popHistoryOnClose={issueHistory} />}
       {!!fixme && logHistory && <StepHistoryModal jobDetails={fixme!} stepId={fixme!.stepByLogId(logId)?.id} onClose={() => setLogHistory(false)} />}
       {!!fixme && logArtifacts === "legacy" && <StepArtifactsModal jobDetails={fixme!} stepId={fixme!.stepByLogId(logId)?.id} onClose={() => setLogArtifacts("")} />}
-      {!!fixme && logArtifacts && logArtifacts !== "legacy" && <JobArtifactsModal jobId={fixme!.jobdata!.id} stepId={fixme!.stepByLogId(logId)?.id!} artifacts={(logSource as JobLogSource).artifactsV2} contextType={logArtifacts as ArtifactContextType} onClose={() => setLogArtifacts("")} />}
+      {!!fixme && !!artifactContext && logArtifacts !== "legacy" && <JobArtifactsModal jobId={fixme!.jobdata!.id} stepId={fixme!.stepByLogId(logId)?.id!} artifacts={(logSource as JobLogSource).artifactsV2} contextType={artifactContext} artifactPath={artifactPath} onClose={() => { navigate(window.location.pathname, { replace: true }) }} />}
       {!!historyAgentId && <HistoryModal agentId={historyAgentId} onDismiss={() => { navigate(baseUrl, { replace: true }); setHistoryAgentId(undefined) }} />}
       <Breadcrumbs items={logSource?.crumbs ?? []} title={logSource?.crumbTitle} />
-      <Stack tokens={{ childrenGap: 0 }} style={{ backgroundColor: "#FFFFFF", paddingTop: 12 }}>
+      <Stack tokens={{ childrenGap: 0 }} style={{ backgroundColor: hordeTheme.horde.contentBackground, paddingTop: 12 }}>
          <Stack horizontal >
             <div key={`windowsize_logview1_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440 / 2), flexShrink: 0 }} />
-            <Stack tokens={{ childrenGap: 0, maxWidth: 1440 }} disableShrink={true} styles={{ root: { width: "100%", backgroundColor: "#FFFFFF", paddingLeft: 4, paddingRight: 24, paddingTop: 12 } }}>
+            <Stack tokens={{ childrenGap: 0, maxWidth: 1440 }} disableShrink={true} styles={{ root: { width: "100%", backgroundColor: hordeTheme.horde.contentBackground, paddingLeft: 4, paddingRight: 24, paddingTop: 12 } }}>
                <Stack horizontal style={{ paddingBottom: 4 }}>
                   <Stack className={hordeClasses.button} horizontal horizontalAlign={"start"} verticalAlign="center" tokens={{ childrenGap: 8 }}>
                      <Stack horizontal tokens={{ childrenGap: 2 }}>
@@ -1033,7 +1142,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                            onClick={() => {
                               nextError();
                            }}
-                           style={{ color: errors.length ? "#F9F9FB" : "rgb(97, 110, 133)", padding: 15 }} >
+                           style={{ color: errors.length ? "#F9F9FB" : buttonNoneText, padding: 15 }} >
                            {!!errors.length && <Icon style={{ fontSize: 19, paddingLeft: 12 }} iconName='ChevronDown' />}
                         </DefaultButton>
 
@@ -1053,11 +1162,11 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                               onClick={() => {
                                  nextWarning();
                               }}
-                              style={{ color: (dashboard.darktheme && warnings.length) ? "#F9F9FB" : "rgb(97, 110, 133)", padding: 15 }} >
+                              style={{ color: (dashboard.darktheme && warnings.length) ? "#F9F9FB" : buttonNoneText, padding: 15 }} >
                               {!!warnings.length && <Icon style={{ fontSize: 19, paddingLeft: 12 }} iconName='ChevronDown' />}
                            </DefaultButton>
                            {!!warnings.length && <Stack>
-                              <IconButton className={handler.style.warningButton} style={{ height: 30, fontSize: 19, padding: 8, color: (dashboard.darktheme && warnings.length) ? "#F9F9FB" : "rgb(97, 110, 133)" }} iconProps={{ iconName: 'ChevronUp' }} onClick={(event: any) => {
+                              <IconButton className={handler.style.warningButton} style={{ height: 30, fontSize: 19, padding: 8, color: (dashboard.darktheme && warnings.length) ? "#F9F9FB" : buttonNoneText }} iconProps={{ iconName: 'ChevronUp' }} onClick={(event: any) => {
                                  event?.stopPropagation();
                                  prevWarning();
 
@@ -1067,7 +1176,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                         </Stack>
 
 
-                        {!!menuProps.items.find(i => !i.disabled) && <Stack style={{ paddingLeft: 18 }}><DefaultButton primary disabled={!menuProps.items.find(i => !i.disabled)} text="View" menuProps={menuProps} style={{ fontFamily: "Horde Open Sans SemiBold", borderStyle: "hidden", padding: 15 }} /></Stack>}
+                        {!!menuProps.items.find(i => !i.disabled) && <Stack style={{ paddingLeft: 18 }}><PrimaryButton disabled={!menuProps.items.find(i => !i.disabled)} text="View" menuProps={menuProps} style={{ fontFamily: "Horde Open Sans SemiBold", borderStyle: "hidden", padding: 15 }} /></Stack>}
                         {!menuProps.items.find(i => !i.disabled) && <Stack style={{ paddingLeft: 18 }}><DefaultButton disabled={true} className={handler.style.warningButtonDisabled} text="View" style={{ color: "rgb(97, 110, 133)", padding: 15 }} /> </Stack>}
 
                      </Stack>
@@ -1093,7 +1202,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                                     componentRef={searchBox}
 
                                     styles={{
-                                       root: { width: 320, fontSize: 12 }, fieldGroup: {
+                                       root: { width: 280, fontSize: 12 }, fieldGroup: {
                                           borderWidth: 1
                                        }
                                     }}
@@ -1120,7 +1229,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                                     }}
 
                                  />
-                                 <Stack horizontal style={{ borderWidth: 1, borderStyle: "solid", borderColor: "rgb(96, 94, 92)", height: 32, borderLeft: 0 }}>
+                                 <Stack horizontal style={{ borderWidth: 1, borderStyle: "solid", borderColor: dashboard.darktheme ? "#3F3F3F" : "rgb(96, 94, 92)", height: 32, borderLeft: 0 }}>
                                     <IconButton style={{ height: 30 }} iconProps={{ iconName: 'ChevronUp' }} onClick={(event: any) => {
                                        searchUp();
                                     }} />
@@ -1141,9 +1250,8 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                                  }}
                               />
 
-                              <DefaultButton
+                              <PrimaryButton
                                  text="Download"
-                                 primary
                                  split
                                  onClick={() => logSource.download(false)}
                                  menuProps={downloadProps}
@@ -1157,7 +1265,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                </Stack>
                <Stack>
                   <Stack style={{ paddingTop: 12 }}>
-                     <Separator styles={{ root: { fontSize: 0, width: "100%", padding: 0, selectors: { '::before': { background: '#D3D2D1' } } } }} />
+                     <Separator styles={{ root: { fontSize: 0, width: "100%", padding: 0, selectors: { '::before': { background: dashboard.darktheme ? '#313638' : '#D3D2D1' } } } }} />
                   </Stack>
 
                   <Stack style={{ paddingBottom: 12, paddingTop: 12, fontSize: 12, fontFamily: "Horde Open Sans Regular" }}>
@@ -1167,14 +1275,14 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                      </Stack>
                   </Stack>
                   <Stack horizontalAlign="center" style={{ paddingBottom: 12 }}>
-                     <Separator styles={{ root: { fontSize: 0, width: "100%", padding: 0, selectors: { '::before': { background: '#D3D2D1' } } } }} />
+                     <Separator styles={{ root: { fontSize: 0, width: "100%", padding: 0, selectors: { '::before': { background: dashboard.darktheme ? '#313638' : '#D3D2D1' } } } }} />
                   </Stack>
                </Stack>
 
             </Stack>
          </Stack>
 
-         <Stack style={{ backgroundColor: "#FFFFFF", paddingLeft: "24px", paddingRight: "24px" }}>
+         <Stack style={{ backgroundColor: hordeTheme.horde.contentBackground, paddingLeft: "24px", paddingRight: "24px" }}>
             <Stack tokens={{ childrenGap: 0 }}>
                <FocusZone direction={FocusZoneDirection.vertical} isInnerZoneKeystroke={() => { return true; }} defaultActiveElement="#LogList" style={{ padding: 0, margin: 0 }} >
                   <div className={handler.style.container} data-is-scrollable={true}
@@ -1200,7 +1308,7 @@ export const LogList: React.FC<{ logId: string }> = observer(({ logId }) => {
                      }}>
                      <Stack horizontal>
                         {!dashboard.leftAlignLog && <div key={`windowsize_logview2_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440 / 2) - 48, flexShrink: 0 }} />}
-                        <Stack styles={{ root: { backgroundColor: "#FFFFFF", paddingLeft: "0px", paddingRight: "0px" } }}>
+                        <Stack styles={{ root: { "backgroundColor": hordeTheme.horde.contentBackground, paddingLeft: "0px", paddingRight: "0px" } }}>
                            <SelectionZone selection={selection} selectionMode={SelectionMode.multiple}>
                               <List key={`log_list_key_${logListKey}`} id="LogList" ref={(list: List) => { listRef = list; }}
                                  items={logSource.logItems}
@@ -1243,6 +1351,8 @@ export const LogView: React.FC = () => {
          LogHandler.clear();
       };
    }, []);
+
+   const { hordeClasses } = getHordeStyling();
 
 
    if (!logId) {

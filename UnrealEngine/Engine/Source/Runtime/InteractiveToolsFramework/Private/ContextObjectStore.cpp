@@ -6,11 +6,24 @@
 
 UObject* UContextObjectStore::FindContextByClass(UClass* InClass) const
 {
-	for (UObject* ContextObject : ContextObjects)
+	if (InClass->HasAnyClassFlags(CLASS_Interface))
 	{
-		if (ContextObject && ContextObject->IsA(InClass))
+		for (UObject* ContextObject : ContextObjects)
 		{
-			return ContextObject;
+			if (ContextObject && ContextObject->GetClass()->ImplementsInterface(InClass))
+			{
+				return ContextObject;
+			}
+		}
+	}
+	else
+	{
+		for (UObject* ContextObject : ContextObjects)
+		{
+			if (ContextObject && ContextObject->IsA(InClass))
+			{
+				return ContextObject;
+			}
 		}
 	}
 	

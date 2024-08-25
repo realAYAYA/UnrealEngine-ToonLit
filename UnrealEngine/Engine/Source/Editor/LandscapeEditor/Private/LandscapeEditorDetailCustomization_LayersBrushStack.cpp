@@ -14,6 +14,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "EditorModeManager.h"
 #include "EditorModes.h"
 #include "DetailLayoutBuilder.h"
@@ -22,6 +23,7 @@
 #include "PropertyCustomizationHelpers.h"
 #include "LandscapeEditorDetailCustomization_Layers.h"
 #include "LandscapeEditTypes.h"
+#include "Styling/StyleColors.h"
 
 #include "ScopedTransaction.h"
 
@@ -125,7 +127,7 @@ TSharedPtr<SWidget> FLandscapeEditorCustomNodeBuilder_LayersBrushStack::Generate
 {
 	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
 	TSharedPtr<SWidget> RowWidget = SNew(SLandscapeEditorSelectableBorder)
-		.Padding(0.0f)
+		.Padding(FMargin(8.0f, 0.f))
 		.VAlign(VAlign_Center)
 		.OnContextMenuOpening(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnBrushContextMenuOpening, InBrushIndex)
 		.OnSelected(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnBrushSelectionChanged, InBrushIndex)
@@ -170,53 +172,54 @@ TSharedPtr<SWidget> FLandscapeEditorCustomNodeBuilder_LayersBrushStack::Generate
 			.Padding(0, 0, 4, 0)
 			.VAlign(VAlign_Center)
 			[
-				SNew(SButton)
-				.ContentPadding(0.0f)
-				.ButtonStyle(FAppStyle::Get(), "NoBorder")
-				.OnClicked(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsHeightmap, InBrushIndex)
+				SNew(SCheckBox)
+				.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+				.IsChecked_Lambda([InBrushIndex, this]() { return this->IsAffectingHeightmap(InBrushIndex) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Raw(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsHeightmap, InBrushIndex)
 				.ToolTipText(LOCTEXT("LandscapeBrushAffectsHeightmap", "Toggle Affects Heightmap"))
 				.HAlign(HAlign_Center)
-				.VAlign(VAlign_Center)
-				.Content()
+				.Padding(FMargin(5.f, 3.f))
 				[
 					SNew(SImage)
+					.ColorAndOpacity(FSlateColor::UseForeground())
 					.Image(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsHeightmapBrush, InBrushIndex)
 				]
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
-            .VAlign(VAlign_Center)
+			.Padding(0, 0, 4, 0)
+			.VAlign(VAlign_Center)
             [
-				SNew(SButton)
-                .ContentPadding(0.0f)
-                .ButtonStyle(FAppStyle::Get(), "NoBorder")
-                .OnClicked(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsWeightmap, InBrushIndex)
-                .ToolTipText(LOCTEXT("LandscapeBrushAffectsWeightmap", "Toggle Affects Weightmap"))
-                .HAlign(HAlign_Center)
-                .VAlign(VAlign_Center)
-                .Content()
-                [
-                    SNew(SImage)
-                    .Image(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsWeightmapBrush, InBrushIndex)
-                ]
+				SNew(SCheckBox)
+				.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+				.IsChecked_Lambda([InBrushIndex, this]() { return this->IsAffectingWeightmap(InBrushIndex) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Raw(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsWeightmap, InBrushIndex)
+				.ToolTipText(LOCTEXT("LandscapeBrushAffectsWeightmap", "Toggle Affects Weightmap"))
+				.HAlign(HAlign_Center)
+				.Padding(FMargin(5.f, 3.f))
+				[
+					SNew(SImage)
+					.ColorAndOpacity(FSlateColor::UseForeground())
+					.Image(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsWeightmapBrush, InBrushIndex)
+				]
             ]
 			+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(SCheckBox)
+				.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+				.IsChecked_Lambda([InBrushIndex, this]() { return this->IsAffectingVisibilityLayer(InBrushIndex) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+				.OnCheckStateChanged_Raw(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsVisibilityLayer, InBrushIndex)
+				.ToolTipText(LOCTEXT("LandscapeBrushAffectsVisibilityLayer", "Toggle Affects Visibility Layer"))
+				.HAlign(HAlign_Center)
+				.Padding(FMargin(5.f, 3.f))
 				[
-					SNew(SButton)
-					.ContentPadding(0.0f)
-					.ButtonStyle(FAppStyle::Get(), "NoBorder")
-					.OnClicked(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsVisibilityLayer, InBrushIndex)
-					.ToolTipText(LOCTEXT("LandscapeBrushAffectsVisibilityLayer", "Toggle Affects Visibility Layer"))
-					.HAlign(HAlign_Center)
-					.VAlign(VAlign_Center)
-					.Content()
-					[
-						SNew(SImage)
-						.Image(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsVisibilityLayerBrush, InBrushIndex)
-					]
+					SNew(SImage)
+					.ColorAndOpacity(FSlateColor::UseForeground())
+					.Image(this, &FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsVisibilityLayerBrush, InBrushIndex)
 				]
+			]
 		];
 	
 	return RowWidget;
@@ -309,36 +312,46 @@ void FLandscapeEditorCustomNodeBuilder_LayersBrushStack::FillAddBrushMenu(FMenuB
 	}
 }
 
-FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsHeightmap(int32 InBrushIndex)
+void FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsHeightmap(ECheckBoxState InCheckBoxState, int32 InBrushIndex)
 {
+	if ((InCheckBoxState != ECheckBoxState::Checked) && (InCheckBoxState != ECheckBoxState::Unchecked))
+	{
+		return;
+	}
+
 	if (ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex))
 	{
 		const FScopedTransaction Transaction(LOCTEXT("Landscape_Brush_AffectsHeightmap", "Set Brush Can Affect Heightmap"));
-		bool bCanAffectHeightmap = Brush->CanAffectHeightmap();
-		Brush->SetCanAffectHeightmap(!bCanAffectHeightmap);
+		Brush->SetCanAffectHeightmap(InCheckBoxState == ECheckBoxState::Checked);
 	}
-	return FReply::Handled();
 }
 
-FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsWeightmap(int32 InBrushIndex)
+void FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsWeightmap(ECheckBoxState InCheckBoxState, int32 InBrushIndex)
 {
+	if ((InCheckBoxState != ECheckBoxState::Checked) && (InCheckBoxState != ECheckBoxState::Unchecked))
+	{
+		return;
+	}
+
 	if (ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex))
 	{
 		const FScopedTransaction Transaction(LOCTEXT("Landscape_Brush_AffectsWeightmap", "Set Brush Can Affect Weightmap"));
-		bool bCanAffectWeightmap = Brush->CanAffectWeightmap();
-		Brush->SetCanAffectWeightmap(!bCanAffectWeightmap);
+		Brush->SetCanAffectWeightmap(InCheckBoxState == ECheckBoxState::Checked);
 	}
-	return FReply::Handled();
 }
-FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsVisibilityLayer(int32 InBrushIndex)
+
+void FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleAffectsVisibilityLayer(ECheckBoxState InCheckBoxState, int32 InBrushIndex)
 {
+	if ((InCheckBoxState != ECheckBoxState::Checked) && (InCheckBoxState != ECheckBoxState::Unchecked))
+	{
+		return;
+	}
+
 	if (ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex))
 	{
 		const FScopedTransaction Transaction(LOCTEXT("Landscape_Brush_AffectsVisibilityLayer", "Set Brush Can Affect Visibility Layer"));
-		bool bCanAffectVisibilityLayer = Brush->CanAffectVisibilityLayer();
-		Brush->SetCanAffectVisibilityLayer(!bCanAffectVisibilityLayer);
+		Brush->SetCanAffectVisibilityLayer(InCheckBoxState == ECheckBoxState::Checked);
 	}
-	return FReply::Handled();
 }
 
 FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleVisibility(int32 InBrushIndex)
@@ -359,20 +372,38 @@ void FLandscapeEditorCustomNodeBuilder_LayersBrushStack::OnToggleVisibility(ALan
 
 const FSlateBrush* FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsWeightmapBrush(int32 InBrushIndex) const
 {
+	return IsAffectingWeightmap(InBrushIndex) ? FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsWeightmap") : FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsWeightmap.Disabled");
+}
+
+bool FLandscapeEditorCustomNodeBuilder_LayersBrushStack::IsAffectingWeightmap(int32 InBrushIndex) const
+{
 	ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex);
-	return Brush && Brush->CanAffectWeightmap() ? FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsWeight.Enabled") : FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsWeight.Disabled");
+
+	return Brush && Brush->CanAffectWeightmap();
 }
 
 const FSlateBrush* FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsHeightmapBrush(int32 InBrushIndex) const
 {
+	return IsAffectingHeightmap(InBrushIndex) ? FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsHeightmap") : FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsHeightmap.Disabled");
+}
+
+bool FLandscapeEditorCustomNodeBuilder_LayersBrushStack::IsAffectingHeightmap(int32 InBrushIndex) const
+{
 	ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex);
-	return Brush && Brush->CanAffectHeightmap() ? FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsHeight.Enabled") : FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsHeight.Disabled");
+
+	return Brush && Brush->CanAffectHeightmap();
 }
 
 const FSlateBrush* FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetAffectsVisibilityLayerBrush(int32 InBrushIndex) const
 {
+	return IsAffectingVisibilityLayer(InBrushIndex) ? FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsVisibilityLayer") : FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsVisibilityLayer.Disabled");
+}
+
+bool FLandscapeEditorCustomNodeBuilder_LayersBrushStack::IsAffectingVisibilityLayer(int32 InBrushIndex) const
+{
 	ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex);
-	return Brush && Brush->CanAffectVisibilityLayer() ? FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsVisibilityLayer.Enabled") : FAppStyle::GetBrush("LandscapeEditor.Brush.AffectsVisibilityLayer.Disabled");
+
+	return Brush && Brush->CanAffectVisibilityLayer();
 }
 
 const FSlateBrush* FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetVisibilityBrush(int32 InBrushIndex) const
@@ -435,12 +466,14 @@ FText FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetBrushText(int32 InB
 
 FSlateColor FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetBrushTextColor(int32 InBrushIndex) const
 {
-	if (ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex))
+	ALandscapeBlueprintBrushBase* Brush = GetBrush(InBrushIndex);
+
+	if (Brush == nullptr)
 	{
-		return FSlateColor::UseForeground();
+		return FSlateColor::UseSubduedForeground();
 	}
 
-	return FSlateColor::UseSubduedForeground();
+	return IsBrushSelected(InBrushIndex) ? FStyleColors::ForegroundHover : FSlateColor::UseForeground();
 }
 
 ALandscapeBlueprintBrushBase* FLandscapeEditorCustomNodeBuilder_LayersBrushStack::GetBrush(int32 InBrushIndex) const
@@ -476,7 +509,7 @@ FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::HandleDragDetected(co
 				TSharedPtr<SWidget> Row = GenerateRow(SlotIndex);
 				if (Row.IsValid())
 				{
-					return FReply::Handled().BeginDragDrop(FLandscapeListElementDragDropOp::New(SlotIndex, Slot, Row));
+					return FReply::Handled().BeginDragDrop(FLandscapeBrushDragDropOp::New(SlotIndex, Slot, Row));
 				}
 			}
 		}
@@ -486,7 +519,7 @@ FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::HandleDragDetected(co
 
 TOptional<SDragAndDropVerticalBox::EItemDropZone> FLandscapeEditorCustomNodeBuilder_LayersBrushStack::HandleCanAcceptDrop(const FDragDropEvent& DragDropEvent, SDragAndDropVerticalBox::EItemDropZone DropZone, SVerticalBox::FSlot* Slot)
 {
-	TSharedPtr<FLandscapeListElementDragDropOp> DragDropOperation = DragDropEvent.GetOperationAs<FLandscapeListElementDragDropOp>();
+	TSharedPtr<FLandscapeBrushDragDropOp> DragDropOperation = DragDropEvent.GetOperationAs<FLandscapeBrushDragDropOp>();
 
 	if (DragDropOperation.IsValid())
 	{
@@ -498,7 +531,7 @@ TOptional<SDragAndDropVerticalBox::EItemDropZone> FLandscapeEditorCustomNodeBuil
 
 FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::HandleAcceptDrop(FDragDropEvent const& DragDropEvent, SDragAndDropVerticalBox::EItemDropZone DropZone, int32 SlotIndex, SVerticalBox::FSlot* Slot)
 {
-	TSharedPtr<FLandscapeListElementDragDropOp> DragDropOperation = DragDropEvent.GetOperationAs<FLandscapeListElementDragDropOp>();
+	TSharedPtr<FLandscapeBrushDragDropOp> DragDropOperation = DragDropEvent.GetOperationAs<FLandscapeBrushDragDropOp>();
 
 	if (DragDropOperation.IsValid())
 	{
@@ -506,10 +539,10 @@ FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::HandleAcceptDrop(FDra
 		ALandscape* Landscape = LandscapeEdMode ? LandscapeEdMode->GetLandscape() : nullptr;
 		if (Landscape)
 		{
-			int32 StartingLayerIndex = DragDropOperation->SlotIndexBeingDragged;
-			int32 DestinationLayerIndex = SlotIndex;
+			int32 StartingBrushIndex = DragDropOperation->SlotIndexBeingDragged;
+			int32 DestinationBrushIndex = SlotIndex;
 			const FScopedTransaction Transaction(LOCTEXT("Landscape_LayerBrushes_Reorder", "Reorder Layer Brush"));
-			if (Landscape->ReorderLayerBrush(LandscapeEdMode->GetCurrentLayerIndex(), StartingLayerIndex, DestinationLayerIndex))
+			if (Landscape->ReorderLayerBrush(LandscapeEdMode->GetCurrentLayerIndex(), StartingBrushIndex, DestinationBrushIndex))
 			{
 				LandscapeEdMode->RefreshDetailPanel();
 				return FReply::Handled();
@@ -518,6 +551,23 @@ FReply FLandscapeEditorCustomNodeBuilder_LayersBrushStack::HandleAcceptDrop(FDra
 	}
 
 	return FReply::Unhandled();
+}
+
+TSharedRef<FLandscapeBrushDragDropOp> FLandscapeBrushDragDropOp::New(int32 InSlotIndexBeingDragged, 
+	SVerticalBox::FSlot* InSlotBeingDragged, TSharedPtr<SWidget> InWidgetToShow)
+{
+	// Same code as FLandscapeListElementDragDropOp, just returns a different type.
+
+	TSharedRef<FLandscapeBrushDragDropOp> Operation = MakeShared<FLandscapeBrushDragDropOp>();
+
+	Operation->MouseCursor = EMouseCursor::GrabHandClosed;
+	Operation->SlotIndexBeingDragged = InSlotIndexBeingDragged;
+	Operation->SlotBeingDragged = InSlotBeingDragged;
+	Operation->WidgetToShow = InWidgetToShow;
+
+	Operation->Construct();
+
+	return Operation;
 }
 
 #undef LOCTEXT_NAMESPACE

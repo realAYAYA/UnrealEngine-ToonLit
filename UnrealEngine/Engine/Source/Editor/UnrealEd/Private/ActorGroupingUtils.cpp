@@ -10,6 +10,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 
 bool UActorGroupingUtils::bGroupingActive = true;
+TMap<FName, UActorGroupingUtils::FCanGroupActors> UActorGroupingUtils::CanGroupActorsDelegates;
 
 void UActorGroupingUtils::SetGroupingActive(bool bInGroupingActive)
 {
@@ -24,7 +25,7 @@ UActorGroupingUtils* UActorGroupingUtils::Get()
 
 AGroupActor* UActorGroupingUtils::GroupSelected()
 {
-	if (IsGroupingActive())
+	if (IsGroupingActive() && CanGroupSelectedActors())
 	{
 		TArray<AActor*> ActorsToAdd;
 		for (FSelectionIterator It(GEditor->GetSelectedActorIterator()); It; ++It)
@@ -50,7 +51,7 @@ AGroupActor* UActorGroupingUtils::GroupSelected()
 
 AGroupActor* UActorGroupingUtils::GroupActors(const TArray<AActor*>& ActorsToGroup)
 {
-	if(IsGroupingActive())
+	if(IsGroupingActive() && CanGroupActors(ActorsToGroup))
 	{
 		ULevel* ActorLevel = nullptr;
 		TArray<AActor*> FinalActorList;
@@ -206,7 +207,7 @@ void UActorGroupingUtils::UnlockSelectedGroups()
 
 void UActorGroupingUtils::AddSelectedToGroup()
 {
-	if (IsGroupingActive())
+	if (IsGroupingActive() && CanGroupSelectedActors())
 	{
 		AGroupActor::AddSelectedActorsToSelectedGroup();
 	}
@@ -278,4 +279,44 @@ void UActorGroupingUtils::RemoveSelectedFromGroup()
 		}
 	}
 
+}
+
+void UActorGroupingUtils::AddCanGroupActorsDelegate(const FName& Owner, const FCanGroupActors& InGroupActorsFilter)
+{
+	CanGroupActorsDelegates.Emplace(Owner, InGroupActorsFilter);
+}
+
+void UActorGroupingUtils::RemoveCanGroupActorsDelegate(const FName& Owner)
+{
+	CanGroupActorsDelegates.Remove(Owner);
+}
+
+bool UActorGroupingUtils::CanGroupActors(const TArray<AActor*>& ActorsToGroup) const
+{
+	for(const TPair<FName, FCanGroupActors>& Filter : CanGroupActorsDelegates)
+	{
+		if(!Filter.Value.Execute(ActorsToGroup))
+		{
+			return false;
+		}
+	}
+	
+	return true;
+}
+
+bool UActorGroupingUtils::CanGroupSelectedActors() const
+{
+	USelection* ActorSelection = GEditor->GetSelectedActors();
+	TArray<AActor*> Actors;
+	ActorSelection->GetSelectedObjects(Actors);
+	
+	for(const TPair<FName, FCanGroupActors>& Filter : CanGroupActorsDelegates)
+	{
+		if(!Filter.Value.Execute(Actors))
+		{
+			return false;
+		}
+	}
+
+	return true;
 }

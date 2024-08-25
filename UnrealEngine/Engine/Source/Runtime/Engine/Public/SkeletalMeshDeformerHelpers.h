@@ -77,6 +77,9 @@ public:
 	 * Update all of the MeshObject's passthrough vertex factories with the currently allocated vertex buffers. 
 	 * Usually call this after all AllocateVertexFactory*() functions for a frame.
 	 */
+	ENGINE_API static void UpdateVertexFactoryBufferOverrides(FRHICommandListBase& RHICmdList, FSkeletalMeshObject* InMeshObject, int32 InLodIndex);
+
+	UE_DEPRECATED(5.4, "UpdateVertexFactoryBufferOverrides requires a command list.")
 	ENGINE_API static void UpdateVertexFactoryBufferOverrides(FSkeletalMeshObject* InMeshObject, int32 InLodIndex);
 
 	/** 

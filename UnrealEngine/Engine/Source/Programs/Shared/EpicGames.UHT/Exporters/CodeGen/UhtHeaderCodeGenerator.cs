@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using EpicGames.Core;
 using EpicGames.UHT.Types;
@@ -16,10 +17,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 		public const string CallbackWrappersMacroSuffix = "CALLBACK_WRAPPERS";
 		public const string SparseDataMacroSuffix = "SPARSE_DATA";
 		public const string SparseDataPropertyAccessorsMacroSuffix = "SPARSE_DATA_PROPERTY_ACCESSORS";
-		public const string EditorOnlySparseDataPropertyAccessorsMacroSuffix = "EDITOR_ONLY_SPARSE_DATA_PROPERTY_ACCESSORS";
-		public const string EditorOnlyRpcWrappersMacroSuffix = "EDITOR_ONLY_RPC_WRAPPERS";
 		public const string RpcWrappersMacroSuffix = "RPC_WRAPPERS";
-		public const string EditorOnlyRpcWrappersNoPureDeclsMacroSuffix = "EDITOR_ONLY_RPC_WRAPPERS_NO_PURE_DECLS";
 		public const string RpcWrappersNoPureDeclsMacroSuffix = "RPC_WRAPPERS_NO_PURE_DECLS";
 		public const string AccessorsMacroSuffix = "ACCESSORS";
 		public const string ArchiveSerializerMacroSuffix = "ARCHIVESERIALIZER";
@@ -148,7 +146,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 
 		#region Function helper methods
 		protected StringBuilder AppendNativeFunctionHeader(StringBuilder builder, UhtFunction function, UhtPropertyTextType textType, bool isDeclaration,
-			string? alternateFunctionName, string? extraParam, UhtFunctionExportFlags extraExportFlags, string endl)
+			string? alternateFunctionName, string? extraParam, UhtFunctionExportFlags extraExportFlags, int tabs, string endl)
 		{
 			UhtClass? outerClass = function.Outer as UhtClass;
 			UhtFunctionExportFlags exportFlags = function.FunctionExportFlags | extraExportFlags;
@@ -156,10 +154,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			bool isInterface = !isDelegate && (outerClass != null && outerClass.ClassFlags.HasAnyFlags(EClassFlags.Interface));
 			bool isK2Override = function.FunctionFlags.HasAnyFlags(EFunctionFlags.BlueprintEvent);
 
-			if (!isDelegate)
-			{
-				builder.Append('\t');
-			}
+			builder.AppendTabs(tabs);
 
 			if (isDeclaration)
 			{
@@ -429,9 +424,9 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				!function.FunctionExportFlags.HasAnyFlags(UhtFunctionExportFlags.CustomThunk);
 		}
 
-		protected static bool IsRpcFunction(UhtFunction function, bool editorOnly)
+		protected static bool IsCallbackFunction(UhtFunction function)
 		{
-			return IsRpcFunction(function) && function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly) == editorOnly;
+			return function.FunctionFlags.HasAnyFlags(EFunctionFlags.Event) && function.SuperFunction == null;
 		}
 
 		/// <summary>
@@ -588,219 +583,95 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.HasFieldNotify);
 		}
 
-		protected static void GetFieldNotifyStats(UhtClass classObj, out bool hasProperties, out bool hasFunctions, out bool hasEditorFields, out bool allEditorFields)
+		protected static string GetNotifyTypeName(UhtType notifyType)
 		{
-			// Scan the children to see what we have
-			hasProperties = false;
-			hasFunctions = false;
-			hasEditorFields = false;
-			allEditorFields = true;
-			foreach (UhtType type in classObj.Children)
+			if (notifyType is UhtProperty property)
 			{
-				if (type is UhtProperty property)
-				{
-					if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.FieldNotify))
-					{
-						hasProperties = true;
-						hasEditorFields |= property.IsEditorOnlyProperty;
-						allEditorFields &= property.IsEditorOnlyProperty;
-					}
-				}
-				else if (type is UhtFunction function)
-				{
-					if (function.FunctionExportFlags.HasAnyFlags(UhtFunctionExportFlags.FieldNotify))
-					{
-						hasFunctions = true;
-						hasEditorFields |= function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly);
-						allEditorFields &= function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly);
-					}
-				}
+				return property.SourceName;
 			}
-
-			// If we have no editor fields, then by definition, all fields can't be editor fields
-			allEditorFields &= hasEditorFields;
+			else if (notifyType is UhtFunction function)
+			{
+				return function.CppImplName;
+			}
+			else
+			{
+				throw new UhtIceException("Unexpected type in notification code generation");
+			}
 		}
 
-		protected static StringBuilder AppendFieldNotify(StringBuilder builder, UhtClass classObj,
-			bool hasProperties, bool hasFunctions, bool hasEditorFields, bool allEditorFields,
-			bool includeEditorOnlyFields, bool appendDefine, Action<StringBuilder, UhtClass, string> appendAction)
+		protected static UhtUsedDefineScopes<UhtType> GetFieldNotifyTypes(UhtClass classObj)
 		{
-			if (hasProperties && !allEditorFields)
+			UhtUsedDefineScopes<UhtType> notifyTypes = new(classObj.Children.Where(x =>
 			{
-				foreach (UhtType child in classObj.Children)
+				if (x is UhtProperty property)
 				{
-					if (child is UhtProperty property)
-					{
-						if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.FieldNotify) && !property.IsEditorOnlyProperty)
-						{
-							appendAction(builder, classObj, property.SourceName);
-						}
-					}
+					return property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.FieldNotify);
 				}
-			}
+				else if (x is UhtFunction function)
+				{
+					return function.FunctionExportFlags.HasAnyFlags(UhtFunctionExportFlags.FieldNotify);
+				}
+				else
+				{
+					return false;
+				}
+			}));
 
-			if (hasFunctions && !allEditorFields)
-			{
-				foreach (UhtType child in classObj.Children)
-				{
-					if (child is UhtFunction function)
-					{
-						if (function.FunctionExportFlags.HasAnyFlags(UhtFunctionExportFlags.FieldNotify) && !function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly))
-						{
-							appendAction(builder, classObj, function.CppImplName);
-						}
-					}
-				}
-			}
-
-			if (hasEditorFields && includeEditorOnlyFields)
-			{
-				if (!allEditorFields && appendDefine)
-				{
-					builder.Append("#if WITH_EDITORONLY_DATA\r\n");
-				}
-
-				if (hasProperties)
-				{
-					foreach (UhtType child in classObj.Children)
-					{
-						if (child is UhtProperty property)
-						{
-							if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.FieldNotify) && property.IsEditorOnlyProperty)
-							{
-								appendAction(builder, classObj, property.SourceName);
-							}
-						}
-					}
-				}
-
-				if (hasFunctions)
-				{
-					foreach (UhtType child in classObj.Children)
-					{
-						if (child is UhtFunction function)
-						{
-							if (function.FunctionExportFlags.HasAnyFlags(UhtFunctionExportFlags.FieldNotify) && function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly))
-							{
-								appendAction(builder, classObj, function.CppImplName);
-							}
-						}
-					}
-				}
-
-				if (!allEditorFields && appendDefine)
-				{
-					builder.Append("#endif // WITH_EDITORONLY_DATA\r\n");
-				}
-			}
-			return builder;
+			// We want properties followed by functions
+			notifyTypes.Instances = notifyTypes.Instances.OrderBy(x => (x is UhtProperty ? 0 : 1) * (int)UhtDefineScope.ScopeCount + x.DefineScope).ToList();
+			return notifyTypes;
 		}
 		#endregion
 
 		#region AutoGettersSetters support
-		protected static bool NeedAutoGetterSetterCodeGen(UhtClass classObj)
+		protected static UhtUsedDefineScopes<UhtProperty> GetAutoGetterSetterProperties(UhtClass classObj)
 		{
-			return classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.HasAutoGettersSetters);
-		}
-		
-		protected static void GetAutoGetterSetterStats(UhtClass classObj, out bool hasProperties, out bool hasEditorFields, out bool allEditorFields)
-		{
-			// Scan the children to see what we have
-			hasProperties = false;
-			hasEditorFields = false;
-			allEditorFields = true;
-			foreach (UhtType type in classObj.Children)
-			{
-				if (type is UhtProperty property)
-				{
-					if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.GetterSpecifiedAuto | UhtPropertyExportFlags.SetterSpecifiedAuto))
-					{
-						hasProperties = true;
-						hasEditorFields |= property.IsEditorOnlyProperty;
-						allEditorFields &= property.IsEditorOnlyProperty;
-					}
-				}
-			}
-
-			// If we have no editor fields, then by definition, all fields can't be editor fields
-			allEditorFields &= hasEditorFields;
-		}
-		
-		protected static StringBuilder AppendAutoGettersSetters(StringBuilder builder, UhtClass classObj,
-			UhtPropertyExportFlags specifierFlag,
-			bool hasProperties, bool hasEditorFields, bool allEditorFields,
-			bool includeEditorOnlyFields, bool appendDefine, Action<StringBuilder, UhtClass, UhtProperty> appendAction)
-		{
-			if (hasProperties && !allEditorFields)
-			{
-				foreach (UhtType child in classObj.Children)
-				{
-					if (child is UhtProperty property)
-					{
-						if (property.PropertyExportFlags.HasAnyFlags(specifierFlag) && !property.IsEditorOnlyProperty)
-						{
-							appendAction(builder, classObj, property);
-						}
-					}
-				}
-			}
-
-			if (hasEditorFields && includeEditorOnlyFields)
-			{
-				if (!allEditorFields && appendDefine)
-				{
-					builder.Append("#if WITH_EDITORONLY_DATA\r\n");
-				}
-
-				if (hasProperties)
-				{
-					foreach (UhtType child in classObj.Children)
-					{
-						if (child is UhtProperty property)
-						{
-							if (property.PropertyExportFlags.HasAnyFlags(specifierFlag) && property.IsEditorOnlyProperty)
-							{
-								appendAction(builder, classObj, property);
-							}
-						}
-					}
-				}
-
-				if (!allEditorFields && appendDefine)
-				{
-					builder.Append("#endif // WITH_EDITORONLY_DATA\r\n");
-				}
-			}
-			return builder;
+			UhtUsedDefineScopes<UhtProperty> properties =  new(classObj.Properties.Where(
+				x => x.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.GetterSpecifiedAuto | UhtPropertyExportFlags.SetterSpecifiedAuto
+				)));
+			return properties;
 		}
 		#endregion
 	}
 
 	internal static class UhtHaederCodeGeneratorStringBuilderExtensions
 	{
-		public static StringBuilder AppendMacroName(this StringBuilder builder, string fileId, int lineNumber, string macroSuffix)
+		public static StringBuilder AppendMacroName(this StringBuilder builder, string fileId, int lineNumber, string macroSuffix, UhtDefineScope defineScope = UhtDefineScope.None, bool includeSuffix = true)
 		{
-			return builder.Append(fileId).Append('_').Append(lineNumber).Append('_').Append(macroSuffix);
+			builder.Append(fileId).Append('_').Append(lineNumber).Append('_').Append(macroSuffix);
+			if (includeSuffix)
+			{
+				if (defineScope.HasAnyFlags(UhtDefineScope.EditorOnlyData))
+				{
+					builder.Append("_EOD");
+				}
+			}
+			return builder;
 		}
 
-		public static StringBuilder AppendMacroName(this StringBuilder builder, UhtHeaderCodeGenerator generator, int lineNumber, string macroSuffix)
+		public static StringBuilder AppendMacroName(this StringBuilder builder, UhtHeaderCodeGenerator generator, int lineNumber, string macroSuffix, UhtDefineScope defineScope = UhtDefineScope.None, bool includeSuffix = true)
 		{
-			return builder.AppendMacroName(generator.FileId, lineNumber, macroSuffix);
+			return builder.AppendMacroName(generator.FileId, lineNumber, macroSuffix, defineScope, includeSuffix);
 		}
 
-		public static StringBuilder AppendMacroName(this StringBuilder builder, UhtHeaderCodeGenerator generator, UhtClass classObj, string macroSuffix)
+		public static StringBuilder AppendMacroName(this StringBuilder builder, UhtHeaderCodeGenerator generator, UhtType type, string macroSuffix, UhtDefineScope defineScope = UhtDefineScope.None, bool includeSuffix = true)
 		{
-			return builder.AppendMacroName(generator, classObj.GeneratedBodyLineNumber, macroSuffix);
-		}
-
-		public static StringBuilder AppendMacroName(this StringBuilder builder, UhtHeaderCodeGenerator generator, UhtScriptStruct scriptStruct, string macroSuffix)
-		{
-			return builder.AppendMacroName(generator, scriptStruct.MacroDeclaredLineNumber, macroSuffix);
-		}
-
-		public static StringBuilder AppendMacroName(this StringBuilder builder, UhtHeaderCodeGenerator generator, UhtFunction function, string macroSuffix)
-		{
-			return builder.AppendMacroName(generator, function.MacroLineNumber, macroSuffix);
+			if (type is UhtClass classObj)
+			{
+				return builder.AppendMacroName(generator, classObj.GeneratedBodyLineNumber, macroSuffix, defineScope, includeSuffix);
+			}
+			else if (type is UhtScriptStruct scriptStruct)
+			{
+				return builder.AppendMacroName(generator, scriptStruct.MacroDeclaredLineNumber, macroSuffix, defineScope, includeSuffix);
+			}
+			else if (type is UhtFunction function)
+			{
+				return builder.AppendMacroName(generator, function.MacroLineNumber, macroSuffix, defineScope, includeSuffix);
+			}
+			else
+			{
+				throw new UhtException(type, "Can not use given type to create a macro");
+			}
 		}
 	}
 }

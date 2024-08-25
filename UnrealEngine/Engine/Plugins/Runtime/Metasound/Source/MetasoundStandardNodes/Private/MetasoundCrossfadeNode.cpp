@@ -202,19 +202,18 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace CrossfadeVertexNames;
 
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FFloatReadRef CrossfadeValue = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputCrossfadeValue), InParams.OperatorSettings);
+			FFloatReadRef CrossfadeValue = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputCrossfadeValue), InParams.OperatorSettings);
 
 			TArray<TDataReadReference<ValueType>> InputValues;
 			for (uint32 i = 0; i < NumInputs; ++i)
 			{
-				InputValues.Add(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<ValueType>(InputInterface, GetInputName(i), InParams.OperatorSettings));
+				InputValues.Add(InputData.GetOrCreateDefaultDataReadReference<ValueType>(GetInputName(i), InParams.OperatorSettings));
 			}
 
 			return MakeUnique<TCrossfadeOperator<ValueType, NumInputs>>(InParams.OperatorSettings, CrossfadeValue, MoveTemp(InputValues));

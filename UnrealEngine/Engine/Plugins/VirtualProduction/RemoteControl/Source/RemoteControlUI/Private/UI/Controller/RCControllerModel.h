@@ -1,7 +1,8 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
+#include "EditorUndoClient.h"
 #include "UI/BaseLogicUI/RCLogicModeBase.h"
 #include "UObject/WeakFieldPtr.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
@@ -10,6 +11,7 @@
 enum class EPropertyBagPropertyType : uint8;
 class FRCBehaviourModel;
 class IDetailTreeNode;
+class SEditableTextBox;
 class SInlineEditableTextBlock;
 class SRemoteControlPanel;
 class URCBehaviour;
@@ -25,7 +27,7 @@ class URCVirtualPropertyBase;
 * Contains a row widget with Controller Name, Field Id and a Value Widget.
 * If this is setup to be a MultiController, a Value Type selection Widget will be available as well.
 */
-class FRCControllerModel : public FRCLogicModeBase
+class FRCControllerModel : public FRCLogicModeBase, public FSelfRegisteringEditorUndoClient
 {
 public:
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnValueTypeChanged, URCVirtualPropertyBase* /* InController */, EPropertyBagPropertyType /* InValueType */);
@@ -42,14 +44,14 @@ public:
 	/** The widget showing the Name of this Controller */
 	TSharedRef<SWidget> GetNameWidget() const;
 
+	/** The widget showing the Description of this Controller */
+	TSharedRef<SWidget> GetDescriptionWidget() const;
+
 	/** The widget showing the Field Id of this Controller */
 	TSharedRef<SWidget> GetFieldIdWidget() const;
 
 	/** The widget showing the Value Type selection dropdown for this Controller (used for MultiControllers) */
 	TSharedRef<SWidget> GetTypeSelectionWidget();
-
-	/** Retrieve the widget for a custom controller */
-	TSharedRef<SWidget> GetCustomControllerWidget(const FString& InCustomControllerTypeName) const;
 
 	/** The widget allowing controller columns customization */
 	TSharedRef<SWidget> GetControllerExtensionWidget(const FName& InColumnName) const;
@@ -73,10 +75,13 @@ public:
 	void UpdateSelectedBehaviourModel(TSharedPtr<FRCBehaviourModel> InModel);
 
 	/** Allows users to enter text into the Controller Name Box */
-	void EnterRenameMode();
+	void EnterDescriptionEditingMode();
 
 	/** User-friendly Name of the underlying Controller */
 	FName GetControllerDisplayName();
+
+	/** Description of the underlying Controller */
+	FText GetControllerDescription();
 
 	/**Fetches the unique Id for this UI item */
 	FGuid GetId() const { return Id; }
@@ -88,8 +93,16 @@ public:
 	FOnValueChanged OnValueChanged;
 
 private:
+	//~ Begin FEditorUndoClient Interface
+	virtual void PostUndo(bool bSuccess) override;
+	virtual void PostRedo(bool bSuccess) override { PostUndo(bSuccess); };
+	// End of FEditorUndoClient
+
 	/** Text commit event for Controller Name text box */
 	void OnControllerNameCommitted(const FText& InNewControllerName, ETextCommit::Type InCommitInfo);
+
+	/** Text commit event for Controller description text box */
+	void OnControllerDescriptionCommitted(const FText& InNewControllerDescription, ETextCommit::Type InCommitInfo);
 
 	/** Text commit event for Controller FieldId text box */
 	void OnControllerFieldIdCommitted(const FText& InNewControllerFieldId, ETextCommit::Type InCommitInfo);
@@ -112,8 +125,11 @@ private:
 	/** The currently selected Behaviour (UI model) */
 	TWeakPtr<FRCBehaviourModel>  SelectedBehaviourModelWeakPtr;
 
-	/** Controller name - editable text box */
-	TSharedPtr<SInlineEditableTextBlock> ControllerNameTextBox;
+	/** Controller id - editable text box */
+	TSharedPtr<SEditableTextBox> ControllerNameTextBox;
+
+	/** Controller description - editable text box */
+	TSharedPtr<SInlineEditableTextBlock> ControllerDescriptionTextBox;
 
 	/** Controller Field Id - editable text box */
 	TSharedPtr<SInlineEditableTextBlock> ControllerFieldIdTextBox;

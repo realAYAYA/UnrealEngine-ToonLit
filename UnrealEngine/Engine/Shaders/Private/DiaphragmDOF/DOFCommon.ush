@@ -149,6 +149,8 @@ static const int2 kOffsetsSquare3x3[9] = {
 //------------------------------------------------------- PARAMETERS
 
 float CocInfinityRadius;
+float CocInFocusRadius;
+uint bCocEnableDynamicRadiusOffset;
 float CocMinRadius;
 float CocMaxRadius;
 float CocSqueeze;
@@ -157,6 +159,8 @@ float CocInvSqueeze;
 float DepthBlurRadius;
 float DepthBlurExponent;
 
+Texture2D		DynamicRadiusOffsetLUT;
+SamplerState	DynamicRadiusOffsetLUTSampler;
 
 //------------------------------------------------------- DEBUG OUTPUT
 
@@ -167,6 +171,26 @@ RWTexture2D<float4> DebugOutput;
 
 //------------------------------------------------------- COMMON API.
 
+#if WITH_DYNAMIC_COC_OFFSET
+float GetCocOffset(float CocRadius)
+{
+	float DynamicOffset = 0.0;
+	BRANCH if (bCocEnableDynamicRadiusOffset)
+	{
+		// The 1D LUT is indexed by ratio of object CoC to in-focus CoC, starting at ratio of 1 (since we only care about objects at or beyond the in-focus plane)
+		// and going to a maximum ratio calculated by the number of pixels in the LUT and the starting object and wall CoCs. By convention, the LUT has been
+		// computed with starting CoC of 32
+		float MaxRatio = (256 + 32) / 32;
+		float Ratio = CocInFocusRadius > 0 ? CocRadius / CocInFocusRadius : MaxRatio;
+		float2 TexCoords = float2((Ratio - 1) / (MaxRatio - 1), 0);
+		float Offset = DynamicRadiusOffsetLUT.SampleLevel(DynamicRadiusOffsetLUTSampler, TexCoords, 0).r * CocInFocusRadius;
+		DynamicOffset = -min(Offset, CocRadius);
+	}
+
+	return DynamicOffset;
+}
+#endif
+
 // Returns the coc radius
 float SceneDepthToCocRadius(float SceneDepth)
 {
@@ -174,6 +198,10 @@ float SceneDepthToCocRadius(float SceneDepth)
 	
 	// Radius from the circle of confusion.
 	float CocRadius = ((SceneDepth - Focus) / SceneDepth) * CocInfinityRadius;
+
+#if WITH_DYNAMIC_COC_OFFSET
+	CocRadius = CocRadius + GetCocOffset(CocRadius);
+#endif
 
 	// Depth blur's radius.
 	float DepthBlurAbsRadius = (1.0 - exp2(-SceneDepth * DepthBlurExponent)) * DepthBlurRadius;

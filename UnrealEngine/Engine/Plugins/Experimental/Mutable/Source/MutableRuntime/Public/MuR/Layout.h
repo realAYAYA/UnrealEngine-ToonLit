@@ -22,7 +22,8 @@ namespace mu
 	enum class EPackStrategy : uint32
 	{
 		RESIZABLE_LAYOUT,
-		FIXED_LAYOUT
+		FIXED_LAYOUT,
+		OVERLAY_LAYOUT
 	};
 
 	//! Types of layout reduction methods 
@@ -107,8 +108,9 @@ namespace mu
 		//! Returns the reduction priority of a block.
 		//! \param index Block to get priority.
 		//! \param[out] priority reduction priority of the block
-		//! \param[out] bUSeSymmetry reduction method of the block
-		void GetBlockOptions(int index, int* priority, bool* bUseSymmetry) const;
+		//! \param[out] bReduceBothAxes reduction method of the block
+		//! \param[out] bReduceByTwo reduction method of the block
+		void GetBlockOptions(int index, int& priority, bool& bReduceBothAxes, bool& bReduceByTwo) const;
 
 		//! Set a block of the layout.
 		//! "Position" here means the lower-left corner of the block.
@@ -124,8 +126,9 @@ namespace mu
 		//! Set the reduction options of a block
 		//! \param index Block to set the options
 		//! \param priority will be set to the reduction priority of the block. The blocks with the highest values will be the last to be reduced
-		//! \param bUseSymmetry will be set to reduce the block in both axis at the same time.
-		void SetBlockOptions(int index, int priority, bool bUseSymmetry);
+		//! \param bReduceBothAxes will be set to reduce the block in both axis at the same time.
+		//! \param bReduceByTwo will reduce by two blocks on a unitary reduction.
+		void SetBlockOptions(int index, int priority, bool bReduceBothAxes, bool bReduceByTwo);
 
 		//! Set the texture layout packing strategy
 		//! By default the texture layout packing strategy is set to resizable layout
@@ -163,7 +166,8 @@ namespace mu
 				m_size = size;
 				m_id = -1;
 				m_priority = 0;
-				bUseSymmetry = false;
+				bReduceBothAxes = false;
+				bReduceByTwo = false;
 			}
 
 			UE::Math::TIntVector2<uint16> m_min = UE::Math::TIntVector2<uint16>(0,0);
@@ -176,7 +180,10 @@ namespace mu
 			int32 m_priority;
 
 			//! Value to control the method to reduce the block
-			bool bUseSymmetry;
+			bool bReduceBothAxes;
+
+			//! Value to control if a block has to be reduced by two in an unitary reduction strategy
+			bool bReduceByTwo;
 
 
 			//!
@@ -192,7 +199,8 @@ namespace mu
 					(m_size == o.m_size) &&
 					(m_id == o.m_id) &&
 					(m_priority == o.m_priority) &&
-					(bUseSymmetry == o.bUseSymmetry);
+					(bReduceBothAxes == o.bReduceBothAxes) &&
+					(bReduceByTwo == o.bReduceByTwo);
 			}
 
 			inline bool IsSimilar(const FBlock& o) const
@@ -201,7 +209,8 @@ namespace mu
 				return (m_min == o.m_min) &&
 					(m_size == o.m_size) &&
 					(m_priority == o.m_priority) &&
-					(bUseSymmetry == o.bUseSymmetry);
+					(bReduceBothAxes == o.bReduceBothAxes) &&
+					(bReduceByTwo == o.bReduceByTwo);
 			}
 
 			//!

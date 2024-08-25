@@ -12,14 +12,14 @@ FD3D12ConstantBuffer::FD3D12ConstantBuffer(FD3D12Device* InParent, FD3D12FastCon
 	bIsDirty(false),
 	Allocator(InAllocator)
 {
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 	View = new FD3D12ConstantBufferView(InParent);
 #endif
 }
 
 FD3D12ConstantBuffer::~FD3D12ConstantBuffer()
 {
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 	delete View;
 #endif
 }
@@ -46,7 +46,7 @@ bool FD3D12ConstantBuffer::Version(FD3D12ResourceLocation& BufferOut, bool bDisc
 	}
 
 	FD3D12ConstantBufferView* ViewToUse = nullptr;
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 	ViewToUse = View;
 #endif
 

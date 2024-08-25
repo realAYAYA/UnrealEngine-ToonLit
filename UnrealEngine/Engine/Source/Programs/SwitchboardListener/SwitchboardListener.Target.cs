@@ -1,15 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
-using System.Collections.Generic;
 
-public class SwitchboardListenerTarget : TargetRules
+
+public class SwitchboardListenerTargetBase : TargetRules
 {
-	public SwitchboardListenerTarget(TargetInfo Target) : base(Target)
+	public SwitchboardListenerTargetBase(TargetInfo Target) : base(Target)
 	{
+		SolutionDirectory = "Programs/Switchboard";
+
 		Type = TargetType.Program;
 		LinkType = TargetLinkType.Monolithic;
-		LaunchModuleName = "SwitchboardListener";
 
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 
@@ -21,9 +22,15 @@ public class SwitchboardListenerTarget : TargetRules
 		// Disable internationalization support, so the exe can be launched outside of the engine directory.
 		bCompileICU = false;
 
-		// The listener is meant to be a console application (no window), but on MacOS, to get a proper log console, a full application must be built.
-		bIsBuildingConsoleApplication = Target.Platform != UnrealTargetPlatform.Mac;
+		bEnableTrace = true;
+	}
+}
 
-		GlobalDefinitions.Add("UE_TRACE_ENABLED=1");
+
+public class SwitchboardListenerTarget : SwitchboardListenerTargetBase
+{
+	public SwitchboardListenerTarget(TargetInfo Target) : base(Target)
+	{
+		LaunchModuleName = "SwitchboardListener";
 	}
 }

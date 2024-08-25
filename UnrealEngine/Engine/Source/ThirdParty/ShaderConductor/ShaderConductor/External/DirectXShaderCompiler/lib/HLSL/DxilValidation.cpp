@@ -5657,6 +5657,10 @@ HRESULT ValidateDxilContainerParts(llvm::Module *pModule,
     case DFCC_FeatureInfo:
       VerifyFeatureInfoMatches(ValCtx, GetDxilPartData(pPart), pPart->PartSize);
       break;
+    // UE Change Begin: Added UserInfo container and check for derivative ops
+    case DFCC_UserInfo:
+      break;
+    // UE Change End: Added UserInfo container and check for derivative ops
     case DFCC_RootSignature:
       pRootSignaturePart = pPart;
       if (ValCtx.isLibProfile) {

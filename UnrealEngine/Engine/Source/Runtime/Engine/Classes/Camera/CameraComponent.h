@@ -40,17 +40,41 @@ class UCameraComponent : public USceneComponent
 	UFUNCTION(BlueprintCallable, Category = Camera)
 	void SetOrthoWidth(float InOrthoWidth) { OrthoWidth = InOrthoWidth; }
 
-	/** The near plane distance of the orthographic view (in world units) */
+	/** Automatically determine a min/max Near/Far clip plane position depending on OrthoWidth value*/
 	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings)
+	bool bAutoCalculateOrthoPlanes;
+	UFUNCTION(BlueprintCallable, Category = Camera)
+	void SetAutoCalculateOrthoPlanes(bool bAutoCalculate) { bAutoCalculateOrthoPlanes = bAutoCalculate; }
+
+	/** Manually adjusts the planes of this camera, maintaining the distance between them. Positive moves out to the farplane, negative towards the near plane */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings, meta = (EditCondition = "bAutoCalculateOrthoPlanes"))
+	float AutoPlaneShift;
+	UFUNCTION(BlueprintCallable, Category = Camera)
+	void SetAutoPlaneShift(float InAutoPlaneShift) { AutoPlaneShift = InAutoPlaneShift; }
+
+	/** The near plane distance of the orthographic view (in world units) */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings, meta = (EditCondition = "!bAutoCalculateOrthoPlanes"))
 	float OrthoNearClipPlane;
 	UFUNCTION(BlueprintCallable, Category = Camera)
 	void SetOrthoNearClipPlane(float InOrthoNearClipPlane) { OrthoNearClipPlane = InOrthoNearClipPlane; }
 
 	/** The far plane distance of the orthographic view (in world units) */
-	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings)
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings, meta = (EditCondition = "!bAutoCalculateOrthoPlanes"))
 	float OrthoFarClipPlane;
 	UFUNCTION(BlueprintCallable, Category = Camera)
 	void SetOrthoFarClipPlane(float InOrthoFarClipPlane) { OrthoFarClipPlane = InOrthoFarClipPlane; }
+
+	/** Adjusts the near/far planes and the view origin of the current camera automatically to avoid clipping and light artefacting*/
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings)
+	bool bUpdateOrthoPlanes;
+	UFUNCTION(BlueprintCallable, Category = Camera)
+	void SetUpdateOrthoPlanes(bool bInUpdateOrthoPlanes) { bUpdateOrthoPlanes = bInUpdateOrthoPlanes; }
+
+	/** If UpdateOrthoPlanes is enabled, this setting will use the cameras current height to compensate the distance to the general view (as a pseudo distance to view target when one isn't present) */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings, meta = (EditCondition = "bUpdateOrthoPlanes"))
+	bool bUseCameraHeightAsViewTarget;
+	UFUNCTION(BlueprintCallable, Category = Camera)
+	void SetUseCameraHeightAsViewTarget(bool bInUseCameraHeightAsViewTarget) { bUseCameraHeightAsViewTarget = bInUseCameraHeightAsViewTarget; }
 
 	/** Aspect Ratio (Width/Height) */
 	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = CameraSettings, meta = (ClampMin = "0.1", ClampMax = "100.0", EditCondition = "bConstrainAspectRatio"))

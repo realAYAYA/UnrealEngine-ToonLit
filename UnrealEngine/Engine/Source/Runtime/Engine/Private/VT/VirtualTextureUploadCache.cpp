@@ -102,7 +102,7 @@ uint32 FVTUploadTileAllocator::Allocate(FRHICommandList& RHICmdList, EPixelForma
 	}
 
 	// Pop a free tile and return handle.
-	int32 TileIndex = StagingBuffer.TileFreeList.Pop(false);
+	int32 TileIndex = StagingBuffer.TileFreeList.Pop(EAllowShrinking::No);
 
 	FHandle Handle;
 	Handle.FormatIndex = FormatIndex;

@@ -14,6 +14,7 @@
 #include "Installer/ChunkReferenceTracker.h"
 #include "Installer/MessagePump.h"
 #include "Installer/InstallerError.h"
+#include "Installer/InstallerSharedContext.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/WindowsHWrapper.h"
@@ -133,20 +134,22 @@ namespace BuildPatchServices
 		// Configuration.
 		const FChunkDbSourceConfig Configuration;
 		// Dependencies.
-		IPlatform* Platform;
-		IFileSystem* FileSystem;
-		IChunkStore* ChunkStore;
-		IChunkReferenceTracker* ChunkReferenceTracker;
-		IChunkDataSerialization* ChunkDataSerialization;
-		IMessagePump* MessagePump;
-		IInstallerError* InstallerError;
+		IPlatform* Platform = nullptr;
+		IFileSystem* FileSystem = nullptr;
+		IChunkStore* ChunkStore = nullptr;
+		IChunkReferenceTracker* ChunkReferenceTracker = nullptr;
+		IChunkDataSerialization* ChunkDataSerialization = nullptr;
+		IMessagePump* MessagePump = nullptr;
+		IInstallerError* InstallerError = nullptr;
 		IChunkDbChunkSourceStat* ChunkDbChunkSourceStat;
-		// The future for our worker thread.
+		// Worker thread lifetime management
+		TPromise<void> Promise;
 		TFuture<void> Future;
+		IBuildInstallerThread* Thread = nullptr;
 		// Control signals.
-		FThreadSafeBool bIsPaused;
-		FThreadSafeBool bShouldAbort;
-		FThreadSafeBool bStartedLoading;
+		std::atomic<bool> bIsPaused = false;
+		std::atomic<bool> bShouldAbort = false;
+		std::atomic<bool> bStartedLoading = false;
 		// Handling of chunks we lose access to.
 		TFunction<void(TSet<FGuid>)> UnavailableChunksCallback;
 		TSet<FGuid> UnavailableChunks;
@@ -173,10 +176,7 @@ namespace BuildPatchServices
 		, MessagePump(InMessagePump)
 		, InstallerError(InInstallerError)
 		, ChunkDbChunkSourceStat(InChunkDbChunkSourceStat)
-		, bIsPaused(false)
-		, bShouldAbort(false)
-		, bStartedLoading(InConfiguration.bBeginLoadsOnFirstGet == false)
-		, UnavailableChunksCallback(nullptr)
+		, bStartedLoading(!InConfiguration.bBeginLoadsOnFirstGet)
 	{
 		// Allow OS intervention only once.
 		bool bResetOsIntervention = false;
@@ -224,8 +224,9 @@ namespace BuildPatchServices
 		// Start threaded load worker.
 		if (ChunkDbDataAccesses.Num() > 0)
 		{
-			TFunction<void()> Task = [this]() { return ThreadRun(); };
-			Future = Async(EAsyncExecution::ThreadIfForkSafe, MoveTemp(Task));
+			Future = Promise.GetFuture();
+			Thread = Configuration.SharedContext->CreateThread();
+			Thread->RunTask([this]() { ThreadRun(); });
 		}
 	}
 
@@ -233,10 +234,15 @@ namespace BuildPatchServices
 	{
 		Abort();
 
-		if (Future.IsValid())
+		if (!Thread)
 		{
-			Future.Wait();
+			// The thread was never started, so complete the promise here
+			Promise.SetValue();
 		}
+
+		Future.Wait();
+		Configuration.SharedContext->ReleaseThread(Thread);
+		Thread = nullptr;
 	}
 
 	void FChunkDbChunkSource::SetPaused(bool bInIsPaused)
@@ -323,7 +329,7 @@ namespace BuildPatchServices
 				TFunction<bool(const FGuid&)> RemovePredicate = [this](const FGuid& ChunkId) { return PlacedInStore.Contains(ChunkId); };
 				BatchLoadChunks.RemoveAll(RemovePredicate);
 				// Clamp to configured max.
-				BatchLoadChunks.SetNum(FMath::Min(BatchLoadChunks.Num(), Configuration.PreFetchMaximum), false);
+				BatchLoadChunks.SetNum(FMath::Min(BatchLoadChunks.Num(), Configuration.PreFetchMaximum), EAllowShrinking::No);
 				// Load this batch.
 				ChunkDbChunkSourceStat->OnBatchStarted(BatchLoadChunks);
 				for (int32 ChunkIdx = 0; ChunkIdx < BatchLoadChunks.Num() && !bShouldAbort; ++ChunkIdx)
@@ -344,6 +350,8 @@ namespace BuildPatchServices
 				Platform->Sleep(0.1f);
 			}
 		}
+
+		Promise.SetValue();
 	}
 
 	void FChunkDbChunkSource::LoadChunk(const FGuid& DataId)

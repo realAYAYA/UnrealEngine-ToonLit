@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-// Includes all necessary PhysX headers
 
 #pragma once
+
+// HEADER_UNIT_SKIP - Deprecated
+
+#pragma message (__FILE__"(5): warning: PhysXIncludes.h is no longer useful")
 
 #include "CoreMinimal.h"

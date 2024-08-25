@@ -12,16 +12,20 @@
 namespace AVEncoder
 {
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 class FVideoDecoderH264_Dummy : public FVideoDecoder
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 public:
 	// register decoder with video decoder factory
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static void Register(FVideoDecoderFactory& InFactory);
-
 	virtual bool Setup(const FInit& InInit) override;
+	virtual EDecodeResult Decode(const FVideoDecoderInput* InInput) override;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 	virtual void Shutdown() override;
 
-	virtual EDecodeResult Decode(const FVideoDecoderInput* InInput) override;
 
 
 	// query whether or not encoder is supported and available

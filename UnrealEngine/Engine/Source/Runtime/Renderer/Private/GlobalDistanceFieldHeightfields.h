@@ -34,8 +34,8 @@ class FMarkHeightfieldPagesCS : public FGlobalShader
 		SHADER_PARAMETER(uint32, NumHeightfields)
 		SHADER_PARAMETER(float, HeightfieldThickness)
 
-		SHADER_PARAMETER(FVector3f, ViewTilePosition)
-		SHADER_PARAMETER(FVector3f, RelativePreViewTranslation)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
@@ -143,8 +143,8 @@ class FComposeHeightfieldsIntoPagesCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>, HeightfieldDescriptions)
 		SHADER_PARAMETER(uint32, NumHeightfields)
 		SHADER_PARAMETER(float, HeightfieldThickness)
-		SHADER_PARAMETER(FVector3f, ViewTilePosition)
-		SHADER_PARAMETER(FVector3f, RelativePreViewTranslation)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)
 	END_SHADER_PARAMETER_STRUCT()
 
 	class FCompositeCoverageAtlas : SHADER_PERMUTATION_BOOL("COMPOSITE_COVERAGE_ATLAS");
@@ -196,8 +196,8 @@ class FCompositeHeightfieldsIntoObjectGridPagesCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>, HeightfieldDescriptions)
 		SHADER_PARAMETER(uint32, NumHeightfields)
 		SHADER_PARAMETER(float, HeightfieldThickness)
-		SHADER_PARAMETER(FVector3f, ViewTilePosition)
-		SHADER_PARAMETER(FVector3f, RelativePreViewTranslation)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)

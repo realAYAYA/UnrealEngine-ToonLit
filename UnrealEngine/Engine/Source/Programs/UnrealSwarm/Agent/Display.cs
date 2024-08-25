@@ -86,7 +86,7 @@ namespace Agent
 			UpdateWindowState();
 
 			// Set the title bar to include the name of the machine and the group
-			TopLevelControl.Text = "Swarm Agent running on " + Environment.MachineName;
+			TopLevelControl.Text = "Swarm Agent running on " + System.Net.Dns.GetHostName();
 
 			LogOutputWindowView.Refresh();
 		}

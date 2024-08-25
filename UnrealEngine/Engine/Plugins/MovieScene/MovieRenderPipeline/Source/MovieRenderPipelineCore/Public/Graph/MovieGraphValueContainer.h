@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "MovieGraphCommon.h"
 #include "PropertyBag.h"
+#include "Templates/ValueOrError.h"
 
 #include "MovieGraphValueContainer.generated.h"
 
@@ -29,7 +30,7 @@ namespace UE::MovieGraph::Private
  * Holds a generic value, with an API for getting/setting the value, as well as getting/setting its type
  * and container (eg, array).
  */
-UCLASS(Abstract)
+UCLASS()
 class MOVIERENDERPIPELINECORE_API UMovieGraphValueContainer : public UObject
 {
 	GENERATED_BODY()
@@ -86,7 +87,7 @@ public:
 
 	/** Gets the UClass value of the held data. Returns true on success, else false. */
 	UFUNCTION(BlueprintCallable, Category="Config")
-	bool GetValueClass(UClass* OutValue) const;
+	bool GetValueClass(UClass*& OutValue) const;
 
 	/** Gets the serialized string value of the held data. */
 	UFUNCTION(BlueprintCallable, Category="Config")
@@ -196,9 +197,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Config")
 	EMovieGraphValueType GetValueType() const;
 
-	/** Sets the type of the stored data. */
+	/** Sets the type of the stored data. Enums, structs, and classes must specify a value type object. */
 	UFUNCTION(BlueprintCallable, Category="Config")
-	void SetValueType(EMovieGraphValueType ValueType);
+	void SetValueType(EMovieGraphValueType ValueType, UObject* InValueTypeObject = nullptr);
 
 	/** Gets the object that defines the enum, struct, or class. */
 	UFUNCTION(BlueprintCallable, Category="Config")
@@ -216,9 +217,37 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Config")
 	void SetValueContainerType(EMovieGraphContainerType ContainerType);
 
+	/**
+	 * Gets a reference to the array backing the value, if any. GetValueContainerType() will return
+	 * EMovieGraphContainerType::Array if the value is holding an array.
+	 */
+	TValueOrError<FPropertyBagArrayRef, EPropertyBagResult> GetArrayRef();
+
+	/**
+	 * Sets the name of the property that the value container holds. This is mostly unneeded unless the display name
+	 * of the property is important (eg, in the details panel).
+	 */
+	void SetPropertyName(const FName& InName);
+
+	/** Gets the name of the property that the value container holds. */
+	FName GetPropertyName() const;
+
 private:
-	/** The name of the single property stored in the property bag. The name in the property bag does not change. */
+	/**
+	 * Sets the configuration of this container from a property desc. This is less safe than the strongly-typed methods,
+	 * and is reserved only for UMovieJobVariableAssignmentContainer to call. The serialized representation of the value
+	 * needs to be supplied via InString.
+	 */
+	friend class UMovieJobVariableAssignmentContainer;
+	void SetFromDesc(const FPropertyBagPropertyDesc* InDesc, const FString& InString);
+
+private:
+	/** The default name of the single property stored in the property bag. */
 	static const FName PropertyBagDefaultPropertyName;
+
+	/** The name of the single property stored in the property bag. */
+	UPROPERTY()
+	FName PropertyName;
 	
 	// Note: The property bag only stores one property, since the object only needs to store one value. This is an odd
 	// use of a property bag, but the property bag solves a number of issues that would be very difficult to solve
@@ -226,6 +255,6 @@ private:
 	// of a property which can have its type changed, 3) the ability to set the value of the property from both Python
 	// and C++, and 4) the ability to change the property at runtime.
 	/** The value held by this object. */
-	UPROPERTY(EditAnywhere, meta=(ShowOnlyInnerProperties), Category = "Value")
+	UPROPERTY(EditAnywhere, meta=(ShowOnlyInnerProperties, FixedLayout), Category = "Value")
 	FInstancedPropertyBag Value;
 };

@@ -93,10 +93,10 @@ void FWidgetMockNonTemplate::OnPaintDataValidation(const FGeometry& AllottedGeom
 	if (TestJsonObject.IsValid())
 	{
 		// Validate the parameters AllottedGeometry and InWidgetStyle.
-		if (TestJsonObject->GetStringField("AllottedGeometry") == AllottedGeometry.ToString()
-			&& TestJsonObject->GetObjectField("WidgetStyle")->GetStringField("ColorAndOpacityTint") == InWidgetStyle.GetColorAndOpacityTint().ToString()
-			&& TestJsonObject->GetObjectField("WidgetStyle")->GetStringField("ForegroundColor") == InWidgetStyle.GetForegroundColor().ToString()
-			&& TestJsonObject->GetObjectField("WidgetStyle")->GetStringField("SubduedForeground") == InWidgetStyle.GetSubduedForegroundColor().ToString())
+		if (TestJsonObject->GetStringField(TEXT("AllottedGeometry")) == AllottedGeometry.ToString()
+			&& TestJsonObject->GetObjectField(TEXT("WidgetStyle"))->GetStringField(TEXT("ColorAndOpacityTint")) == InWidgetStyle.GetColorAndOpacityTint().ToString()
+			&& TestJsonObject->GetObjectField(TEXT("WidgetStyle"))->GetStringField(TEXT("ForegroundColor")) == InWidgetStyle.GetForegroundColor().ToString()
+			&& TestJsonObject->GetObjectField(TEXT("WidgetStyle"))->GetStringField(TEXT("SubduedForeground")) == InWidgetStyle.GetSubduedForegroundColor().ToString())
 		{
 			// Validate the payloads in OutDrawElements.
 			for (FSlateCachedElementList* CachedElementList : OutDrawElements.GetCurrentCachedElementWithNewData())
@@ -106,8 +106,8 @@ void FWidgetMockNonTemplate::OnPaintDataValidation(const FGeometry& AllottedGeom
 					//@TODO Support all element types and create their own JSON conversion function.
 					for (const FSlateShapedTextElement& DrawElements : CachedElementList->DrawElements.Get<(uint8)EElementType::ET_ShapedText>())
 					{
-						if (TestJsonObject->GetObjectField("ShapedTextElement")->GetStringField("Tint") == DrawElements.GetTint().ToString()
-							&& TestJsonObject->GetObjectField("ShapedTextElement")->GetStringField("OutlineTint") == DrawElements.GetOutlineTint().ToString())
+						if (TestJsonObject->GetObjectField(TEXT("ShapedTextElement"))->GetStringField(TEXT("Tint")) == DrawElements.GetTint().ToString()
+							&& TestJsonObject->GetObjectField(TEXT("ShapedTextElement"))->GetStringField(TEXT("OutlineTint")) == DrawElements.GetOutlineTint().ToString())
 						{
 							if (!DataValidations.Contains(FTestFunctionNames::NAME_OnPaint))
 							{
@@ -156,7 +156,7 @@ void FWidgetMockNonTemplate::ComputeDesiredSizeDataValidation(float LayoutScaleM
 	if (TestJsonObject.IsValid())
 	{
 		// Validate the computed size in JSON against the size we just computed.
-		if (TestJsonObject->GetNumberField("ComputeDesiredSizeX") == RealComputedSize.X && TestJsonObject->GetNumberField("ComputeDesiredSizeY") == RealComputedSize.Y)
+		if (TestJsonObject->GetNumberField(TEXT("ComputeDesiredSizeX")) == RealComputedSize.X && TestJsonObject->GetNumberField(TEXT("ComputeDesiredSizeY")) == RealComputedSize.Y)
 		{
 			DataValidations.Add(FTestFunctionNames::NAME_ComputeDesiredSize, true);
 

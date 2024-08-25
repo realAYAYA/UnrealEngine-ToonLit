@@ -10,6 +10,7 @@
 #include "Extensions/WidgetBlueprintGeneratedClassExtension.h"
 #include "UMGPrivate.h"
 #include "Interfaces/ITargetPlatform.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/EditorObjectVersion.h"
 #include "UObject/ObjectResource.h"
 #include "UObject/LinkerLoad.h"
@@ -103,7 +104,10 @@ FAutoConsoleCommand GDumpTemplateSizesCommand(
 int32 TemplatePreviewInEditor = 0;
 static FAutoConsoleVariableRef CVarTemplatePreviewInEditor(TEXT("Widget.TemplatePreviewInEditor"), TemplatePreviewInEditor, TEXT("Should a dynamic template be generated at runtime for the editor for widgets?  Useful for debugging templates."), ECVF_Default);
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 FWidgetBlueprintGeneratedClassDelegates::FGetAssetTags FWidgetBlueprintGeneratedClassDelegates::GetAssetTags;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+FWidgetBlueprintGeneratedClassDelegates::FGetAssetTagsWithContext FWidgetBlueprintGeneratedClassDelegates::GetAssetTagsWithContext;
 
 #endif
 
@@ -123,6 +127,7 @@ namespace
 
 UWidgetBlueprintGeneratedClass::UWidgetBlueprintGeneratedClass()
 {
+	bCanCallInitializedWithoutPlayerContext = false;
 #if WITH_EDITORONLY_DATA
 	{
 		static const FAutoRegisterTextReferenceCollectorCallback AutomaticRegistrationOfTextReferenceCollector(UWidgetBlueprintGeneratedClass::StaticClass(), &CollectWidgetBlueprintGeneratedClassTextReferences);
@@ -530,9 +535,24 @@ void UWidgetBlueprintGeneratedClass::GetExtensions(TArray<UWidgetBlueprintGenera
 #if WITH_EDITOR
 void UWidgetBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
 
-	FWidgetBlueprintGeneratedClassDelegates::GetAssetTags.Broadcast(this, OutTags);
+void UWidgetBlueprintGeneratedClass::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	TArray<UObject::FAssetRegistryTag> DeprecatedFunctionTags;
+	FWidgetBlueprintGeneratedClassDelegates::GetAssetTags.Broadcast(this, DeprecatedFunctionTags);
+	for (UObject::FAssetRegistryTag& Tag : DeprecatedFunctionTags)
+	{
+		Context.AddTag(MoveTemp(Tag));
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+	FWidgetBlueprintGeneratedClassDelegates::GetAssetTagsWithContext.Broadcast(this, Context);
 }
 #endif
 

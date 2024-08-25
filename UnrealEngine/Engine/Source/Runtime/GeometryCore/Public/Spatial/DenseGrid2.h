@@ -63,11 +63,16 @@ public:
 		return FVector2i((int32)DimensionX, (int32)DimensionY);
 	}
 
-	void Resize(int32 DimX, int32 DimY, bool bAllowShrinking = true)
+	void Resize(int32 DimX, int32 DimY, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		DimensionX = (int64)DimX;
 		DimensionY = (int64)DimY;
-		Buffer.SetNumUninitialized( DimensionX*DimensionY, bAllowShrinking);
+		Buffer.SetNumUninitialized( DimensionX*DimensionY, AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("Resize")
+	FORCEINLINE void Resize(int32 DimX, int32 DimY, bool bAllowShrinking)
+	{
+		Resize(DimX, DimY, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	void AssignAll(ElemType Value)

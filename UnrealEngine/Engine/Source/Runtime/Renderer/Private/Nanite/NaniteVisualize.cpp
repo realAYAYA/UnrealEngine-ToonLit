@@ -17,6 +17,8 @@
 #include "Materials/MaterialRenderProxy.h"
 #include "NaniteSceneProxy.h"
 #include "ShaderPrint.h"
+#include "InstanceDataSceneProxy.h"
+#include "Nanite/NaniteMaterialsSceneExtension.h"
 
 // Specifies if visualization only shows Nanite information that passes full scene depth test
 // -1: Use default composition specified the each mode
@@ -65,6 +67,16 @@ FAutoConsoleVariableRef CVarNanitePickingDomain(
 	TEXT("")
 );
 
+int32 GNanitePixelProgrammableVisMode = NANITE_PIXEL_PROG_VIS_MODE_DEFAULT;
+FAutoConsoleVariableRef CVarNanitePixelProgrammableVisMode(
+	TEXT("r.Nanite.Visualize.PixelProgrammableVisMode"),
+	GNanitePixelProgrammableVisMode,
+	TEXT("0: Show masked, pixel depth offset, and dynamic displacement materials.\n")
+	TEXT("1: Show masked materials only.\n")
+	TEXT("2: Show pixel depth offset only.\n")
+	TEXT("3: Show dynamic displacement only.")
+);
+
 
 static FRDGBufferSRVRef GetEditorSelectedHitProxyIdsSRV(FRDGBuilder& GraphBuilder, const FViewInfo& View)
 {
@@ -78,7 +90,7 @@ static FRDGBufferSRVRef GetEditorSelectedHitProxyIdsSRV(FRDGBuilder& GraphBuilde
 	TArray<uint32, SceneRenderingAllocator> HitProxyIdsCopy;
 	if (BufferCount > IdCount)
 	{
-		const uint32 FillValue = IdCount == 0 ? 0 : HitProxyIds.Last();
+		const uint32 FillValue = IdCount == 0 ? FHitProxyId().GetColor().ToPackedARGB() : HitProxyIds.Last();
 		HitProxyIdsCopy.Reserve(BufferCount);
 		HitProxyIdsCopy.Append(View.EditorSelectedNaniteHitProxyIds);
 		for (uint32 i = IdCount; i < BufferCount; ++i)
@@ -101,17 +113,28 @@ static FIntVector4 GetVisualizeConfig(int32 ModeID, bool bCompositeScene, bool b
 {
 	if (ModeID != INDEX_NONE)
 	{
-		return FIntVector4(ModeID, GNanitePickingDomain, bCompositeScene ? 1 : 0, bEdgeDetect ? 1 : 0);
+		int32 ModeArg = 0;
+		switch (ModeID)
+		{
+		case NANITE_VISUALIZE_PICKING:
+			ModeArg = GNanitePickingDomain;
+			break;
+		case NANITE_VISUALIZE_PIXEL_PROGRAMMABLE_RASTER:
+			ModeArg = GNanitePixelProgrammableVisMode;
+		default:
+			break;
+		}
+		return FIntVector4(ModeID, ModeArg, bCompositeScene ? 1 : 0, bEdgeDetect ? 1 : 0);
 	}
 
 	return FIntVector4(INDEX_NONE, 0, 0, 0);
 }
 
-static FIntVector4 GetVisualizeScales(int32 ModeID)
+static FIntVector4 GetVisualizeScales(int32 ModeID, uint32 ShadingExportCount)
 {
 	if (ModeID != INDEX_NONE)
 	{
-		return FIntVector4(GNaniteVisualizeOverdrawScale, GNaniteVisualizeComplexityScale, 0 /* Unused */, 0 /* Unused */);
+		return FIntVector4(GNaniteVisualizeOverdrawScale, GNaniteVisualizeComplexityScale, int32(ShadingExportCount), 0 /* Unused */);
 	}
 
 	return FIntVector4(INDEX_NONE, 0, 0, 0);
@@ -164,9 +187,11 @@ class FNaniteVisualizeCS : public FNaniteGlobalShader
 		SHADER_PARAMETER(FIntPoint, PickingPixelPos)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FVirtualShadowMapUniformParameters, VirtualShadowMap)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, ClusterPageData)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, VisibleClustersSWHW)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FNaniteShadingBinMeta>, ShadingBinMeta)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, ShadingBinData)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FNaniteRasterBinMeta>, RasterBinMeta)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<UlongType>, VisBuffer64)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<UlongType>, DbgBuffer64)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, DbgBuffer32)
@@ -176,9 +201,9 @@ class FNaniteVisualizeCS : public FNaniteGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<FUint32Vector4>, SceneZLayout)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float>, MaterialZDecoded)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<FUint32Vector4>, MaterialZLayout)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialSlotTable)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, FastClearTileVis)
 		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialDepthTable)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
 	END_SHADER_PARAMETER_STRUCT()
 };
 IMPLEMENT_GLOBAL_SHADER(FNaniteVisualizeCS, "/Engine/Private/Nanite/NaniteVisualize.usf", "VisualizeCS", SF_Compute);
@@ -207,10 +232,10 @@ class FNanitePickingCS : public FNaniteGlobalShader
 		SHADER_PARAMETER(uint32, MaxVisibleClusters)
 		SHADER_PARAMETER(uint32, RenderFlags)
 		SHADER_PARAMETER(uint32, RegularMaterialRasterBinCount)
-		SHADER_PARAMETER(uint32, FixedFunctionBin)
 		SHADER_PARAMETER(FIntPoint, PickingPixelPos)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, ShadingBinData)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, ClusterPageData)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, VisibleClustersSWHW)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<UlongType>, VisBuffer64)
@@ -218,9 +243,8 @@ class FNanitePickingCS : public FNaniteGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, DbgBuffer32)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, ShadingMask)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float>, SceneDepth)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialSlotTable)
 		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialDepthTable)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
 	END_SHADER_PARAMETER_STRUCT()
 };
 IMPLEMENT_GLOBAL_SHADER(FNanitePickingCS, "/Engine/Private/Nanite/NaniteVisualize.usf", "PickingCS", SF_Compute);
@@ -276,12 +300,11 @@ public:
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<UlongType>, VisBuffer64)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float>, SceneDepth)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, ShadingMask)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialSlotTable)
 		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialDepthTable)
 		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialEditorTable)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, EditorSelectedHitProxyIds)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FNaniteShadingBinMeta>, ShadingBinMeta)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, ShadingBinData)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -310,18 +333,34 @@ IMPLEMENT_GLOBAL_SHADER(FExportDebugViewPS, "/Engine/Private/Nanite/NaniteDebugV
 namespace Nanite
 {
 
-static FRDGBufferSRVRef GetShadingBinMetaSRV(FRDGBuilder& GraphBuilder)
+static FRDGBufferSRVRef GetShadingBinDataSRV(FRDGBuilder& GraphBuilder)
 {
-	FRDGBufferRef ShadingBinMeta = nullptr;
-	if (Nanite::GGlobalResources.GetShadingBinMetaBufferRef().IsValid())
+	FRDGBufferRef ShadingBinData = nullptr;
+	if (Nanite::GGlobalResources.GetShadingBinDataBufferRef().IsValid())
 	{
-		ShadingBinMeta = GraphBuilder.RegisterExternalBuffer(Nanite::GGlobalResources.GetShadingBinMetaBufferRef());
+		ShadingBinData = GraphBuilder.RegisterExternalBuffer(Nanite::GGlobalResources.GetShadingBinDataBufferRef());
 	}
 	else
 	{
-		ShadingBinMeta = GSystemTextures.GetDefaultStructuredBuffer<FNaniteShadingBinMeta>(GraphBuilder);
+		ShadingBinData = GSystemTextures.GetDefaultByteAddressBuffer(GraphBuilder, 4u);
 	}
-	return GraphBuilder.CreateSRV(ShadingBinMeta);
+
+	return GraphBuilder.CreateSRV(ShadingBinData);
+}
+
+static FRDGTextureRef GetFastClearTileVis(FRDGBuilder& GraphBuilder)
+{
+	FRDGTextureRef FastClearTileVis = nullptr;
+	if (Nanite::GGlobalResources.GetFastClearTileVisRef().IsValid())
+	{
+		FastClearTileVis = GraphBuilder.RegisterExternalTexture(Nanite::GGlobalResources.GetFastClearTileVisRef());
+	}
+	else
+	{
+		FastClearTileVis = GSystemTextures.GetBlackAlphaOneDummy(GraphBuilder);
+	}
+
+	return FastClearTileVis;
 }
 
 static FRDGBufferRef PerformPicking(
@@ -340,7 +379,7 @@ static FRDGBufferRef PerformPicking(
 		8 * 2			// 2 OBBs - Instance + Cluster
 		+ 3				// Instance origin axis
 		+ 32 * 3		// (Cluster domain) Cluster LOD bounds sphere
-		+ 5 * 4			// (Cluster domain, Spline mesh) Rect slices used to generate deformed cluster AABB
+		+ 8 * 16 * 3	// (Cluster domain, Spline mesh) Slice spheres used to generate deformed cluster AABB
 	;
 	ShaderPrint::RequestSpaceForLines(NumDebugLines);
 
@@ -353,19 +392,20 @@ static FRDGBufferRef PerformPicking(
 	FRDGBufferDesc PickingFeedbackBufferDesc(FRDGBufferDesc::CreateStructuredDesc(sizeof(FNanitePickingFeedback), 1));
 	PickingFeedbackBufferDesc.Usage |= BUF_SourceCopy;
 	FRDGBufferRef PickingFeedback = GraphBuilder.CreateBuffer(PickingFeedbackBufferDesc, TEXT("Nanite.PickingFeedback"));
+	FRDGBufferRef HitProxyIDBuffer = GSystemTextures.GetDefaultByteAddressBuffer(GraphBuilder, 4u); // NOTE: unused in this mode
 
 	{
 		FNanitePickingCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FNanitePickingCS::FParameters>();
 		ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, PassParameters->ShaderPrintUniformBuffer);
 		PassParameters->View = View.GetShaderParameters();
 		PassParameters->Scene = View.GetSceneUniforms().GetBuffer(GraphBuilder);
+		PassParameters->ShadingBinData = GetShadingBinDataSRV(GraphBuilder);
 		PassParameters->ClusterPageData = Nanite::GStreamingManager.GetClusterPageDataSRV(GraphBuilder);
 		PassParameters->VisualizeConfig = GetVisualizeConfig(NANITE_VISUALIZE_PICKING, /* bCompositeScene = */ false, GNaniteVisualizeEdgeDetect != 0);
 		PassParameters->PageConstants = Data.PageConstants;
 		PassParameters->MaxVisibleClusters = Data.MaxVisibleClusters;
 		PassParameters->RenderFlags = Data.RenderFlags;
 		PassParameters->RegularMaterialRasterBinCount = RasterPipelines.GetRegularBinCount();
-		PassParameters->FixedFunctionBin = Data.FixedFunctionBin;
 		PassParameters->PickingPixelPos = FIntPoint((int32)VisualizationData.GetPickingMousePos().X, (int32)VisualizationData.GetPickingMousePos().Y);
 		PassParameters->VisibleClustersSWHW = GraphBuilder.CreateSRV(Data.VisibleClustersSWHW);
 		PassParameters->VisBuffer64 = Data.VisBuffer64;
@@ -373,15 +413,8 @@ static FRDGBufferRef PerformPicking(
 		PassParameters->DbgBuffer32 = Data.DbgBuffer32;
 		PassParameters->ShadingMask = Data.ShadingMask;
 		PassParameters->SceneDepth = SceneTextures.Depth.Target;
-		PassParameters->MaterialSlotTable = MaterialCommands.GetMaterialSlotSRV();
 		PassParameters->MaterialDepthTable = MaterialCommands.GetMaterialDepthSRV();
-	#if WITH_EDITOR
-		PassParameters->MaterialHitProxyTable = MaterialCommands.GetHitProxyTableSRV();
-	#else
-		// TODO: Permutation with hit proxy support to keep this clean?
-		// For now, bind a valid SRV
-		PassParameters->MaterialHitProxyTable = MaterialCommands.GetMaterialSlotSRV();
-	#endif
+		PassParameters->MaterialHitProxyTable = GraphBuilder.CreateSRV(HitProxyIDBuffer);
 		PassParameters->FeedbackBuffer = GraphBuilder.CreateUAV(PickingFeedback);
 
 		auto PickingShader = View.ShaderMap->GetShader<FNanitePickingCS>();
@@ -433,8 +466,8 @@ void DisplayPicking(const FScene* Scene, const FNanitePickingFeedback& PickingFe
 		return;
 	}
 
-	const int32 PickedPrimitiveIndex = int32(PickingFeedback.PrimitiveId);
-	if (PickedPrimitiveIndex >= Scene->PrimitiveSceneProxies.Num())
+	const int32 PickedPrimitiveIndex = Scene->GetPrimitiveIndex(FPersistentPrimitiveIndex{int32(PickingFeedback.PrimitiveId)});
+	if (!Scene->PrimitiveSceneProxies.IsValidIndex(PickedPrimitiveIndex))
 	{
 		return;
 	}
@@ -451,9 +484,11 @@ void DisplayPicking(const FScene* Scene, const FNanitePickingFeedback& PickingFe
 	Writer.EmptyLine();
 
 	Writer.DrawLine(FText::FromString(FString::Printf(TEXT("Persistent Index: %d"), PickingFeedback.PersistentIndex)), 10, FColor::Yellow);
-	Writer.DrawLine(FText::FromString(FString::Printf(TEXT("Primitive Id: %d"),     PickingFeedback.PrimitiveId)),     10, FColor::Yellow);
+	Writer.DrawLine(FText::FromString(FString::Printf(TEXT("Primitive Id: %d"),     PickedPrimitiveIndex)),     10, FColor::Yellow);
 	Writer.DrawLine(FText::FromString(FString::Printf(TEXT("Instance Id: %d"),      PickingFeedback.InstanceId)),      10, FColor::Yellow);
-	Writer.DrawLine(FText::FromString(FString::Printf(TEXT("Instance Count: %d"),   PickedNaniteProxy->GetInstanceSceneData().Num())), 10, FColor::Yellow);
+	const FInstanceSceneDataBuffers *InstanceSceneDataBuffers = PickedNaniteProxy->GetInstanceSceneDataBuffers();
+	int32 NumInstances = InstanceSceneDataBuffers ? InstanceSceneDataBuffers->GetNumInstances() : 0;
+	Writer.DrawLine(FText::FromString(FString::Printf(TEXT("Instance Count: %d"),   NumInstances)), 10, FColor::Yellow);
 
 	Writer.EmptyLine();
 
@@ -562,7 +597,8 @@ void AddVisualizationPasses(
 	const FEngineShowFlags& EngineShowFlags,
 	TArrayView<const FViewInfo> Views,
 	TArrayView<Nanite::FRasterResults> Results,
-	FNanitePickingFeedback& PickingFeedback
+	FNanitePickingFeedback& PickingFeedback,
+	FVirtualShadowMapArray&	VirtualShadowMapArray
 )
 {
 	checkSlow(DoesPlatformSupportNanite(GMaxRHIShaderPlatform));
@@ -573,6 +609,11 @@ void AddVisualizationPasses(
 
 	if (Scene && Views.Num() > 0 && VisualizationData.IsActive() && EngineShowFlags.VisualizeNanite)
 	{
+		// Don't create the hit proxy ID buffer until it's needed
+		// TODO: Permutation with hit proxy support to keep this clean when !WITH_EDITOR?
+		FRDGBufferRef HitProxyIDBuffer = GSystemTextures.GetDefaultByteAddressBuffer(GraphBuilder, 4u);
+		bool bHitProxyIDBufferCreated = false;
+
 		// These should always match 1:1
 		if (ensure(Views.Num() == Results.Num()))
 		{
@@ -602,6 +643,8 @@ void AddVisualizationPasses(
 					FRDGTextureRef DbgBuffer64 = Data.DbgBuffer64 ? Data.DbgBuffer64 : SystemTextures.Black;
 					FRDGTextureRef DbgBuffer32 = Data.DbgBuffer32 ? Data.DbgBuffer32 : SystemTextures.Black;
 					FRDGTextureRef ShadingMask = Data.ShadingMask ? Data.ShadingMask : SystemTextures.Black;
+
+					FRDGBufferRef RasterBinMeta = Data.RasterBinMeta ? Data.RasterBinMeta : GSystemTextures.GetDefaultStructuredBuffer<FNaniteRasterBinMeta>(GraphBuilder);
 
 					FRDGBufferRef VisibleClustersSWHW = Data.VisibleClustersSWHW;
 
@@ -641,6 +684,7 @@ void AddVisualizationPasses(
 						}
 					}
 
+					bool bRequiresHitProxyIDs = false;
 					bool bRequiresHiZDecode = false;
 					for (FVisualizeResult& Visualization : Data.Visualizations)
 					{
@@ -649,15 +693,21 @@ void AddVisualizationPasses(
 							continue;
 						}
 
-						if (VisualizationRequiresHiZDecode(Visualization.ModeID))
-						{
-							bRequiresHiZDecode = true;
-							break;
-						}
+						bRequiresHitProxyIDs |= Visualization.ModeID == NANITE_VISUALIZE_HIT_PROXY_DEPTH;
+						bRequiresHiZDecode |= VisualizationRequiresHiZDecode(Visualization.ModeID);
 					}
 
-                    FRDGTextureRef DefaultUintVec4 = GSystemTextures.GetDefaultTexture(GraphBuilder, ETextureDimension::Texture2D, PF_R32G32B32A32_UINT, FUintVector4(0.0, 0.0, 0.0, 0.0));
-                    
+				#if WITH_EDITOR
+					if (bRequiresHitProxyIDs && !bHitProxyIDBufferCreated)
+					{
+						auto& MaterialsExtension = Scene->GetExtension<Nanite::FMaterialsSceneExtension>();
+						HitProxyIDBuffer = MaterialsExtension.CreateHitProxyIDBuffer(GraphBuilder);
+						bHitProxyIDBufferCreated = true;
+					}
+				#endif
+
+					FRDGTextureRef DefaultUintVec4 = GSystemTextures.GetDefaultTexture(GraphBuilder, ETextureDimension::Texture2D, PF_R32G32B32A32_UINT, FUintVector4(0.0, 0.0, 0.0, 0.0));
+
 					FRDGTextureRef SceneZDecoded = SystemTextures.Black;
 					FRDGTextureRef SceneZLayout = DefaultUintVec4;
 					FRDGTextureRef MaterialZDecoded = SystemTextures.Black;
@@ -733,28 +783,21 @@ void AddVisualizationPasses(
 
 						Visualization.ModeOutput = GraphBuilder.CreateTexture(VisualizationOutputDesc, TEXT("Nanite.Visualization"));
 
-						FRDGBufferRef ShadingBinMeta = nullptr;
-						if (Nanite::GGlobalResources.GetShadingBinMetaBufferRef().IsValid())
-						{
-							ShadingBinMeta = GraphBuilder.RegisterExternalBuffer(Nanite::GGlobalResources.GetShadingBinMetaBufferRef());
-						}
-						else
-						{
-							ShadingBinMeta = GSystemTextures.GetDefaultStructuredBuffer<FUint32Vector4>(GraphBuilder);
-						}
-
 						FNaniteVisualizeCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FNaniteVisualizeCS::FParameters>();
+
+						FGraphicsPipelineRenderTargetsInfo RenderTargetsInfo;
+						const uint32 ShadingExportCount = SceneTextures.Config.GetGBufferRenderTargetsInfo(RenderTargetsInfo);
 
 						PassParameters->View = View.GetShaderParameters();
 						PassParameters->Scene = View.GetSceneUniforms().GetBuffer(GraphBuilder);
+						PassParameters->VirtualShadowMap = VirtualShadowMapArray.GetUniformBuffer();
 						PassParameters->ClusterPageData = Nanite::GStreamingManager.GetClusterPageDataSRV(GraphBuilder);
 						PassParameters->VisualizeConfig = GetVisualizeConfig(Visualization.ModeID, Visualization.bCompositeScene, GNaniteVisualizeEdgeDetect != 0);
-						PassParameters->VisualizeScales = GetVisualizeScales(Visualization.ModeID);
+						PassParameters->VisualizeScales = GetVisualizeScales(Visualization.ModeID, ShadingExportCount);
 						PassParameters->PageConstants = Data.PageConstants;
 						PassParameters->MaxVisibleClusters = Data.MaxVisibleClusters;
 						PassParameters->RenderFlags = Data.RenderFlags;
 						PassParameters->RegularMaterialRasterBinCount = RasterPipelines.GetRegularBinCount();
-						PassParameters->FixedFunctionBin = Data.FixedFunctionBin;
 						PassParameters->PickingPixelPos = FIntPoint((int32)VisualizationData.GetPickingMousePos().X, (int32)VisualizationData.GetPickingMousePos().Y);
 						PassParameters->VisibleClustersSWHW = GraphBuilder.CreateSRV(VisibleClustersSWHW);
 						PassParameters->VisBuffer64 = VisBuffer64;
@@ -766,16 +809,11 @@ void AddVisualizationPasses(
 						PassParameters->SceneZLayout = SceneZLayout;
 						PassParameters->MaterialZDecoded = MaterialZDecoded;
 						PassParameters->MaterialZLayout = MaterialZLayout;
-						PassParameters->MaterialSlotTable = MaterialCommands.GetMaterialSlotSRV();
+						PassParameters->FastClearTileVis = GetFastClearTileVis(GraphBuilder);
 						PassParameters->MaterialDepthTable = MaterialCommands.GetMaterialDepthSRV();
-					#if WITH_EDITOR
-						PassParameters->MaterialHitProxyTable = MaterialCommands.GetHitProxyTableSRV();
-					#else
-						// TODO: Permutation with hit proxy support to keep this clean?
-						// For now, bind a valid SRV
-						PassParameters->MaterialHitProxyTable = MaterialCommands.GetMaterialSlotSRV();
-					#endif
-						PassParameters->ShadingBinMeta = GetShadingBinMetaSRV(GraphBuilder);
+						PassParameters->MaterialHitProxyTable = GraphBuilder.CreateSRV(HitProxyIDBuffer);
+						PassParameters->ShadingBinData = GetShadingBinDataSRV(GraphBuilder);
+						PassParameters->RasterBinMeta = GraphBuilder.CreateSRV(RasterBinMeta);
 						PassParameters->DebugOutput = GraphBuilder.CreateUAV(Visualization.ModeOutput);
 
 						auto ComputeShader = View.ShaderMap->GetShader<FNaniteVisualizeCS>();
@@ -800,31 +838,27 @@ void AddVisualizationPasses(
 		int32& PickingBufferWriteIndex = Nanite::GGlobalResources.PickingBufferWriteIndex;
 		int32& PickingBufferNumPending = Nanite::GGlobalResources.PickingBufferNumPending;
 
-		TArray<FRHIGPUBufferReadback*>& PickingBuffers = Nanite::GGlobalResources.PickingBuffers;
+		TArray<TUniquePtr<FRHIGPUBufferReadback>>& PickingBuffers = Nanite::GGlobalResources.PickingBuffers;
 
 		// Skip when queue is full. It is NOT safe to EnqueueCopy on a buffer that already has a pending copy
-		if (PickingBufferNumPending != MaxPickingBuffers)
+		if (PickingBufferNumPending < MaxPickingBuffers)
 		{
-			if (PickingBuffers[PickingBufferWriteIndex] == nullptr)
+			TUniquePtr<FRHIGPUBufferReadback>* GPUBufferReadback = &PickingBuffers[PickingBufferWriteIndex];
+			if (!GPUBufferReadback->IsValid())
 			{
-				FRHIGPUBufferReadback* GPUBufferReadback = new FRHIGPUBufferReadback(TEXT("Nanite.PickingFeedback"));
-				PickingBuffers[PickingBufferWriteIndex] = GPUBufferReadback;
+				static const FName PickingFeedbackName(TEXT("Nanite.PickingFeedback"));
+				PickingBuffers[PickingBufferWriteIndex] = MakeUnique<FRHIGPUBufferReadback>(PickingFeedbackName);
+				GPUBufferReadback = &PickingBuffers[PickingBufferWriteIndex];
 			}
 
-			FRHIGPUBufferReadback* PickingReadback = PickingBuffers[PickingBufferWriteIndex];
-
-			AddReadbackBufferPass(GraphBuilder, RDG_EVENT_NAME("Readback"), PickingBuffer,
-				[PickingReadback, PickingBuffer](FRHICommandList& RHICmdList)
-				{
-					PickingReadback->EnqueueCopy(RHICmdList, PickingBuffer->GetRHI(), 0u);
-				});
+			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback->Get(), PickingBuffer, 0);
 
 			PickingBufferWriteIndex = (PickingBufferWriteIndex + 1) % MaxPickingBuffers;
 			PickingBufferNumPending = FMath::Min(PickingBufferNumPending + 1, MaxPickingBuffers);
 		}
 
 		{
-			FRHIGPUBufferReadback* LatestPickingBuffer = nullptr;
+			TUniquePtr<FRHIGPUBufferReadback>* LatestPickingBuffer = nullptr;
 
 			// Find latest buffer that is ready
 			while (PickingBufferNumPending > 0)
@@ -833,7 +867,7 @@ void AddVisualizationPasses(
 				if (PickingBuffers[Index]->IsReady())
 				{
 					--PickingBufferNumPending;
-					LatestPickingBuffer = PickingBuffers[Index];
+					LatestPickingBuffer = &PickingBuffers[Index];
 				}
 				else
 				{
@@ -841,11 +875,15 @@ void AddVisualizationPasses(
 				}
 			}
 
-			if (LatestPickingBuffer != nullptr)
+			if (LatestPickingBuffer && LatestPickingBuffer->IsValid())
 			{
 				TRACE_CPUPROFILER_EVENT_SCOPE(LockBuffer);
-				PickingFeedback = *((const FNanitePickingFeedback*)LatestPickingBuffer->Lock(sizeof(FNanitePickingFeedback)));
-				LatestPickingBuffer->Unlock();
+				const FNanitePickingFeedback* DataPtr = (const FNanitePickingFeedback*)(*LatestPickingBuffer)->Lock(sizeof(FNanitePickingFeedback));
+				if (DataPtr)
+				{
+					PickingFeedback = *DataPtr;
+					(*LatestPickingBuffer)->Unlock();
+				}
 			}
 		}
 	}
@@ -900,20 +938,20 @@ void RenderDebugViewMode(
 	PassParameters->VisBuffer64 = RasterResults.VisBuffer64;
 	PassParameters->SceneDepth = InputDepthTexture;
 	PassParameters->ShadingMask = RasterResults.ShadingMask;
-	PassParameters->MaterialSlotTable = MaterialCommands.GetMaterialSlotSRV();
 	PassParameters->MaterialDepthTable = MaterialCommands.GetMaterialDepthSRV();
 	PassParameters->MaterialEditorTable = MaterialCommands.GetMaterialEditorSRV();
 	PassParameters->EditorSelectedHitProxyIds = GetEditorSelectedHitProxyIdsSRV(GraphBuilder, View);
-	PassParameters->ShadingBinMeta = GetShadingBinMetaSRV(GraphBuilder);
+	PassParameters->ShadingBinData = GetShadingBinDataSRV(GraphBuilder);
 
-#if WITH_EDITOR
-	PassParameters->MaterialHitProxyTable = MaterialCommands.GetHitProxyTableSRV();
-#else
-	// TODO: Permutation with hit proxy support to keep this clean?
-	// For now, bind a valid SRV
-	PassParameters->MaterialHitProxyTable = MaterialCommands.GetMaterialSlotSRV();
-#endif
-
+	PassParameters->MaterialHitProxyTable = GraphBuilder.CreateSRV(
+	#if WITH_EDITOR
+		Scene.GetExtension<Nanite::FMaterialsSceneExtension>().CreateHitProxyIDBuffer(GraphBuilder)
+	#else
+		// TODO: Permutation with hit proxy support to keep this clean?
+		// For now, bind a valid SRV
+		GSystemTextures.GetDefaultByteAddressBuffer(GraphBuilder, 4u)
+	#endif
+	);
 
 	PassParameters->RenderTargets[0] = FRenderTargetBinding(OutputColorTexture, ERenderTargetLoadAction::ELoad, 0);
 

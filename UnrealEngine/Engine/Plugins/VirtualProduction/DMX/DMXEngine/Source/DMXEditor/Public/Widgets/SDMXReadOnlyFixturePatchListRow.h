@@ -2,15 +2,16 @@
 
 #pragma once
 
-#include "Library/DMXEntityReference.h"
 #include "SDMXReadOnlyFixturePatchList.h"
 #include "Widgets/Views/SListView.h"
 #include "Widgets/Views/STableRow.h"
 
+class FDMXReadOnlyFixturePatchListItem;
+
 
 /** Entity Fixture Patch as a row in a list */
 class DMXEDITOR_API SDMXReadOnlyFixturePatchListRow
-	: public SMultiColumnTableRow<TSharedPtr<FDMXEntityFixturePatchRef>>
+	: public SMultiColumnTableRow<TSharedPtr<FDMXReadOnlyFixturePatchListItem>>
 {
 public:
 	SLATE_BEGIN_ARGS(SDMXReadOnlyFixturePatchListRow)
@@ -21,10 +22,7 @@ public:
 	SLATE_END_ARGS()
 			
 	/** Constructs this widget */
-	void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTable, const TSharedRef<FDMXEntityFixturePatchRef>& InFixturePatchRef);
-
-	/** Gets the Fixture Patch this widget is based on */
-	UDMXEntityFixturePatch* GetFixturePatch() const { return FixturePatchRef.GetFixturePatch(); }
+	void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTable, const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& InItem);
 
 protected:
 	//~ Begin SMultiColumnTableRow interface
@@ -50,24 +48,6 @@ private:
 	/** Generates the row that displays the Patch */
 	TSharedRef<SWidget> GeneratePatchRow();
 
-	/** Gets Fixture Patch editor color */
-	FSlateColor GetFixtureEditorColor() const;
-
-	/** Gets Fixture Patch Name as text */
-	FText GetFixturePatchNameText() const;
-
-	/** Gets Fixture ID as text */
-	FText GetFixtureIDText() const;
-
-	/** Gets Fixture Type as text */
-	FText GetFixtureTypeText() const;
-
-	/** Gets Fixture Mode as text */
-	FText GetModeText() const;
-
-	/** Gets Fixture Universe and Address as text */
-	FText GetPatchText() const;
-
-	/** Reference to the FixturePatchRef this widget is based on */
-	FDMXEntityFixturePatchRef FixturePatchRef;
+	/** The item this widget draws */
+	TSharedPtr<FDMXReadOnlyFixturePatchListItem> Item;
 };

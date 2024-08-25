@@ -11,6 +11,7 @@ public class BootstrapPackagedGameTarget : TargetRules
 	{
 		Type = TargetType.Program;
 		LinkType = TargetLinkType.Monolithic;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 		LaunchModuleName = "BootstrapPackagedGame";
 
 		bUseStaticCRT = true;

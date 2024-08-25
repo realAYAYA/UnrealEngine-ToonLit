@@ -6,7 +6,30 @@
 #include "MoviePipelineImageSequenceOutput.generated.h"
 
 // Forward Declare
+struct FImagePixelData;
 class IImageWriteQueue;
+class FImageWriteTask;
+
+namespace UE
+{
+	namespace MoviePipeline
+	{
+		struct FAsyncImageQuantization
+		{
+			/** Constructor.*/
+			FAsyncImageQuantization(FImageWriteTask* InWriteTask, const bool bInConvertToSRGB);
+
+			/** Process/quantize pixel data */
+			void operator()(FImagePixelData* PixelData);
+
+			/** Parent image write task. */
+			FImageWriteTask* ParentWriteTask;
+
+			/** True if the quantization should also apply an sRGB encoding. */
+			bool bConvertToSRGB;
+		};
+	}
+}
 
 UCLASS(Blueprintable, Abstract)
 class MOVIERENDERPIPELINERENDERPASSES_API UMoviePipelineImageSequenceOutputBase : public UMoviePipelineOutputBase

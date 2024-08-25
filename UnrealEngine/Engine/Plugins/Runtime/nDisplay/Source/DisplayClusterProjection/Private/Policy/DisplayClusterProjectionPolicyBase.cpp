@@ -12,6 +12,35 @@
 #include "Render/Viewport/IDisplayClusterViewportManager.h"
 #include "Render/Viewport/IDisplayClusterViewport.h"
 
+namespace UE::DisplayCluster::Projection::PolicyBaseHelpers
+{
+	static inline USceneComponent* FindOriginComponent(IDisplayClusterViewport* InViewport, const EDisplayClusterRootActorType InRootActorType, const FString& OriginCompId, const FString& PolicyId, bool bAllowExtraLog)
+	{
+		if (ADisplayClusterRootActor* InRootActor = InViewport->GetConfiguration().GetRootActor(InRootActorType))
+		{
+			// Try to get a node specified in the config file
+			if (!OriginCompId.IsEmpty())
+			{
+				UE_LOG(LogDisplayClusterProjection, Verbose, TEXT("Looking for an origin component '%s'..."), *OriginCompId);
+				if (USceneComponent* PolicyOriginComp = InRootActor->GetComponentByName<USceneComponent>(OriginCompId))
+				{
+					return PolicyOriginComp;
+				}
+
+				if (bAllowExtraLog)
+				{
+					UE_LOG(LogDisplayClusterProjection, Error, TEXT("No custom origin set or component '%s' not found for policy '%s'. VR root will be used."), *OriginCompId, *PolicyId);
+				}
+			}
+
+			// default use root actor as Origin
+			return InRootActor->GetRootComponent();
+		}
+
+		return nullptr;
+	}
+};
+using namespace UE::DisplayCluster::Projection;
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // FDisplayClusterProjectionPolicyBase
@@ -46,7 +75,7 @@ bool FDisplayClusterProjectionPolicyBase::IsEditorOperationMode(IDisplayClusterV
 	}
 
 	// Get state from viewport world (UE-114493)
-	return InViewport && InViewport->IsCurrentWorldHasAnyType(EWorldType::Editor, EWorldType::EditorPreview);
+	return InViewport && InViewport->GetConfiguration().IsCurrentWorldHasAnyType(EWorldType::Editor, EWorldType::EditorPreview);
 }
 
 bool FDisplayClusterProjectionPolicyBase::IsConfigurationChanged(const FDisplayClusterConfigurationProjection* InConfigurationProjectionPolicy) const
@@ -70,49 +99,22 @@ bool FDisplayClusterProjectionPolicyBase::IsConfigurationChanged(const FDisplayC
 
 void FDisplayClusterProjectionPolicyBase::InitializeOriginComponent(IDisplayClusterViewport* InViewport, const FString& OriginCompId)
 {
-	// Reset previous one
-	PolicyOriginComponentRef.ResetSceneComponent();
+	const bool bAllowExtraLog = !IsEditorOperationMode(InViewport);
+
+	ReleaseOriginComponent();
 
 	if (InViewport)
 	{
-		USceneComponent* PolicyOriginComp = nullptr;
-		if (ADisplayClusterRootActor* RootActor = InViewport->GetRootActor())
-		{
-			// default use root actor as Origin
-			PolicyOriginComp = RootActor->GetRootComponent();
+		// Get origin from scene DCRA (uses for math)
+		PolicySceneOriginComponentRef.SetSceneComponent(PolicyBaseHelpers::FindOriginComponent(InViewport, EDisplayClusterRootActorType::Scene, OriginCompId, GetId(), bAllowExtraLog));
 
-			// Try to get a node specified in the config file
-			if (!OriginCompId.IsEmpty())
-			{
-				UE_LOG(LogDisplayClusterProjection, Verbose, TEXT("Looking for an origin component '%s'..."), *OriginCompId);
-				PolicyOriginComp = RootActor->GetComponentByName<USceneComponent>(OriginCompId);
-
-				if (PolicyOriginComp == nullptr)
-				{
-					if (!IsEditorOperationMode(InViewport))
-					{
-						UE_LOG(LogDisplayClusterProjection, Error, TEXT("No custom origin set or component '%s' not found for policy '%s'. VR root will be used."), *OriginCompId, *GetId());
-					}
-
-					PolicyOriginComp = RootActor->GetRootComponent();
-				}
-			}
-		}
-
-		if (!PolicyOriginComp)
-		{
-			if (!IsEditorOperationMode(InViewport))
-			{
-				UE_LOG(LogDisplayClusterProjection, Error, TEXT("Couldn't set origin component"));
-			}
-			return;
-		}
-
-		PolicyOriginComponentRef.SetSceneComponent(PolicyOriginComp);
+		// This origin used to get origin from preview DCRA (uses for preview mesh)
+		PolicyPreviewMeshOriginComponentRef.SetSceneComponent(PolicyBaseHelpers::FindOriginComponent(InViewport, EDisplayClusterRootActorType::Preview, OriginCompId, GetId(), bAllowExtraLog));
 	}
 }
 
 void FDisplayClusterProjectionPolicyBase::ReleaseOriginComponent()
 {
-	PolicyOriginComponentRef.ResetSceneComponent();
+	PolicySceneOriginComponentRef.ResetSceneComponent();
+	PolicyPreviewMeshOriginComponentRef.ResetSceneComponent();
 }

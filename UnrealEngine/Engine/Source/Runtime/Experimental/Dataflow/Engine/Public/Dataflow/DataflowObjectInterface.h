@@ -18,18 +18,17 @@ namespace Dataflow
 	public:
 		DATAFLOW_CONTEXT_INTERNAL(Base, TEngineContext);
 
-		TEngineContext(UObject* InOwner, UDataflow* InGraph, FTimestamp InTimestamp)
+		TEngineContext(const TObjectPtr<UObject>& InOwner,const TObjectPtr<UDataflow>& InGraph, FTimestamp InTimestamp)
 				: Base(InTimestamp)
 				, Owner(InOwner)
 				, Graph(InGraph)
 		{}
 	
-		UObject* Owner = nullptr;
-		UDataflow* Graph = nullptr;
-	};
+		TObjectPtr<UObject> Owner = nullptr;
+		TObjectPtr<UDataflow> Graph = nullptr;
 
-	template class TEngineContext<FContextSingle>;
-	template class TEngineContext<FContextThreaded>;
+		~TEngineContext(){}
+	};
 
 	typedef TEngineContext<FContextSingle> FEngineContext;
 	typedef TEngineContext<FContextThreaded> FEngineContextThreaded;

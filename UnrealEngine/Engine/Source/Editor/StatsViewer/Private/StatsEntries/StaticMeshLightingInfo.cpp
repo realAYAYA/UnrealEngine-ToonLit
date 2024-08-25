@@ -5,7 +5,6 @@
 #include "Engine/Level.h"
 #include "GameFramework/Actor.h"
 #include "Model.h"
-#include "Lightmass/LightmappedSurfaceCollection.h"
 
 #define LOCTEXT_NAMESPACE "Editor.StatsViewer"
 
@@ -18,20 +17,10 @@ void UStaticMeshLightingInfo::UpdateNames()
 {
 	if ( LevelName.Len() == 0 || StaticMeshActor.IsValid() )
 	{
-		AActor* Actor = Cast<AActor>(StaticMeshActor.Get());
-		ULightmappedSurfaceCollection* SurfaceCollection = Cast<ULightmappedSurfaceCollection>(StaticMeshActor.Get());
-
-		if (SurfaceCollection && SurfaceCollection->SourceModel)
-		{
-			LevelName = SurfaceCollection->SourceModel->GetOutermost()->GetName();
-		}
-		else if (Actor)
+		const AActor* Actor = StaticMeshActor.Get();
+		if (Actor)
 		{
 			LevelName = Actor->GetLevel()->GetOutermost()->GetName();
-		}
-		else if (StaticMeshActor.Get())
-		{
-			LevelName = StaticMeshActor.Get()->GetOutermost()->GetName();
 		}
 		else
 		{
@@ -41,7 +30,7 @@ void UStaticMeshLightingInfo::UpdateNames()
 		const int32 NameIndex = LevelName.Find( TEXT("/"), ESearchCase::CaseSensitive);
 		if ( NameIndex != INDEX_NONE )
 		{
-			LevelName.RightChopInline( NameIndex + 1, false );
+			LevelName.RightChopInline( NameIndex + 1, EAllowShrinking::No );
 		}
 	}
 

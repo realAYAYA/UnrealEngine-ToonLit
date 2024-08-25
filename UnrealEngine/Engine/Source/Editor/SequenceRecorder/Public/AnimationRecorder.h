@@ -11,6 +11,7 @@
 #include "Animation/AnimNotifyQueue.h"
 #include "Serializers/MovieSceneAnimationSerialization.h"
 #include "Misc/QualifiedFrameTime.h"
+#include "Animation/AnimTypes.h"
 #include "AnimationRecorder.generated.h"
 
 class UAnimBoneCompressionSettings;
@@ -70,17 +71,41 @@ private:
 	FTransform InitialRootTransform;
 	int32 SkeletonRootIndex;
 
-	/** Array of currently active notifies that have duration */
-	TArray<TPair<const FAnimNotifyEvent*, bool>> ActiveNotifies;
-
 	/** Unique notifies added to this sequence during recording */
 	TMap<UAnimNotify*, UAnimNotify*> UniqueNotifies;
 
 	/** Unique notify states added to this sequence during recording */
 	TMap<UAnimNotifyState*, UAnimNotifyState*> UniqueNotifyStates;
 
+	struct FRecordedAnimNotify
+	{
+		FRecordedAnimNotify(const FAnimNotifyEvent& InNewNotifyEvent, const FAnimNotifyEvent* InOriginalNotifyEvent, float InAnimNotifyStartTime, float InAnimNotifyEndTime)
+			: NewNotifyEvent(InNewNotifyEvent)
+			, OriginalNotifyEvent(InOriginalNotifyEvent)
+			, AnimNotifyStartTime(InAnimNotifyStartTime)
+			, AnimNotifyEndTime(InAnimNotifyEndTime)
+			, bWasActive(true)
+		{}
+
+		/** Notify which will be added to this sequence */
+		FAnimNotifyEvent NewNotifyEvent;
+
+		/** Notify which was called on the sequence being recorded */
+		const FAnimNotifyEvent* OriginalNotifyEvent;
+
+		/** The time in the recorded animation at which the recorded notify started and ended */
+		float AnimNotifyStartTime;
+		float AnimNotifyEndTime;
+
+		/** Whether this notify was active this frame */
+		bool bWasActive;
+	};
+
 	/** Notify events recorded at any point, processed and inserted into animation when recording has finished */
-	TArray<FAnimNotifyEvent> RecordedNotifyEvents;
+	TArray<FRecordedAnimNotify> RecordedAnimNotifies;
+
+	/** Currently recording notify events that have duration */
+	TArray<FRecordedAnimNotify> RecordingAnimNotifies;
 
 	static float DefaultSampleRate;
 

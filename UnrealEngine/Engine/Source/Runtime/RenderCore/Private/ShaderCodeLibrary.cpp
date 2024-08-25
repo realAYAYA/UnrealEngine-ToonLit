@@ -18,6 +18,7 @@ ShaderCodeLibrary.cpp: Bound shader state cache implementation.
 #include "HAL/PlatformSplash.h" // IWYU pragma: keep
 #include "Hash/CityHash.h"
 #include "Interfaces/IPluginManager.h"
+#include "Internationalization/Regex.h"
 #include "Math/UnitConversion.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
@@ -36,6 +37,8 @@ ShaderCodeLibrary.cpp: Bound shader state cache implementation.
 #include "ShaderPipelineCache.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "String/ParseTokens.h"
+#include "IO/IoChunkId.h"
+#include "IO/IoDispatcher.h"
 
 #if WITH_EDITORONLY_DATA
 #include "Interfaces/IShaderFormat.h"
@@ -49,13 +52,14 @@ ShaderCodeLibrary.cpp: Bound shader state cache implementation.
 #include "UObject/Object.h"
 #include "Serialization/CompactBinarySerialization.h"
 #include "Serialization/CompactBinaryWriter.h"
+#include "RHIStrings.h"
 #endif
 
 // allow introspection (e.g. dumping the contents) for easier debugging
 #define UE_SHADERLIB_WITH_INTROSPECTION			!UE_BUILD_SHIPPING
 
-// In some development-only scenario (e.g. LaunchOn), the library is chunked, but the build isn't pak'd. We need to find the chunk files manually then.
-#define UE_SHADERLIB_SUPPORT_CHUNK_DISCOVERY	!UE_BUILD_SHIPPING
+// Enabled by default for all configurations, runtime check should prevent chuck discovery in non dev builds
+#define UE_SHADERLIB_SUPPORT_CHUNK_DISCOVERY	(1)
 
 DEFINE_LOG_CATEGORY(LogShaderLibrary);
 
@@ -66,6 +70,10 @@ static FString ShaderExtension = TEXT(".ushaderbytecode");
 static FString ShaderAssetInfoExtension = TEXT(".assetinfo.json");
 static FString StableExtension = TEXT(".shk");
 static FString PipelineExtension = TEXT(".ushaderpipelines");
+
+static FString ShaderCodePatternStr = TEXT("^ShaderCode\\-(\\w*)\\-([\\w\\-]*)\\.ushaderbytecode$");
+static FString ShaderArchivePatternStr = TEXT("^ShaderArchive\\-(\\w*)\\-([\\w\\-]*)\\.ushaderbytecode$");
+static FString StableInfoPatternStr = TEXT("^ShaderStableInfo\\-(\\w*)\\-([\\w\\-]*)\\.shk$");
 
 int32 GShaderCodeLibrarySeparateLoadingCache = 0;
 static FAutoConsoleVariableRef CVarShaderCodeLibrarySeparateLoadingCache(
@@ -104,6 +112,30 @@ namespace UE
 					return BaseName;
 				}
 				return FString::Printf(TEXT("%s_Chunk%d"), *BaseName, ChunkId);
+			}
+
+			bool IsRunningWithPakFile()
+			{
+				static const bool bRunningWithPakFile =
+					(FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile")) != nullptr);
+				return bRunningWithPakFile;
+			}
+			bool IsRunningWithIoStore()
+			{
+				static const bool bRunningWithIoStore =
+					FIoDispatcher::IsInitialized()
+					&& FIoDispatcher::Get().DoesChunkExist(CreateIoChunkId(0, 0, EIoChunkType::ScriptObjects));
+				return bRunningWithIoStore;
+			}
+			bool IsRunningWithZenStore()
+			{
+				static const bool bRunningWithZenStore =
+					FPlatformFileManager::Get().FindPlatformFile(TEXT("StorageServer")) != nullptr;
+				return bRunningWithZenStore;
+			}
+			bool ShouldLookForLooseCookedChunks()
+			{
+				return IsRunningWithZenStore() || !IsRunningWithIoStore();
 			}
 
 			// [RCL] TODO 2020-11-20: Separate runtime and editor-only code (tracked as UE-103486)
@@ -237,6 +269,11 @@ public:
 	virtual ~FShaderMapResource_SharedCode();
 
 	// FRenderResource interface.
+	virtual void ReleaseResource() override
+	{
+		FShaderMapResource::ReleaseResource();
+		ensureMsgf(!bShaderMapPreloaded && !LibraryInstance, TEXT("FShaderMapResource_SharedCode::ReleaseRHI() was not called on a shadermap resource owned by %s"), *GetOwnerName().ToString());
+	}
 	virtual void ReleaseRHI() override;
 
 	// FShaderMapResource interface
@@ -846,13 +883,14 @@ public:
 			ShaderCodeDirectory = ShaderCodeDir;
 		}
 
-		if (!Library && FIoDispatcher::IsInitialized())
+		if (!Library && UE::ShaderLibrary::Private::IsRunningWithIoStore())
 		{
 			Library = FIoStoreShaderCodeArchive::Create(InShaderPlatform, InLibraryName, FIoDispatcher::Get());
 			ShaderCodeDirectory.Empty();	// paths don't matter for IoStore-based libraries
 		}
 
-		if (!Library)
+		// Shader library as a ushaderbytecode file is no longer an option for distribution. Some cases (a build using loose files) still require its support though.
+		if (!Library && UE::ShaderLibrary::Private::ShouldLookForLooseCookedChunks())
 		{
 			const FName PlatformName = FDataDrivenShaderPlatformInfo::GetName(InShaderPlatform);
 			const FName ShaderFormatName = LegacyShaderPlatformToShaderFormat(InShaderPlatform);
@@ -1078,6 +1116,7 @@ public:
 		{
 			Resource = new FShaderMapResource_SharedCode(this, ShaderMapIndex);
 			Resource->bShaderMapPreloaded = Library->PreloadShaderMap(ShaderMapIndex, AttachShaderReadRequestFunc);
+			BeginInitResource(Resource);
 		}
 		Resource->AddRef();
 	}
@@ -1171,11 +1210,8 @@ FRHIShader* FShaderMapResource_SharedCode::CreateRHIShaderOrCrash(int32 ShaderIn
 	double TimeFunctionEntered = FPlatformTime::Seconds();
 	ON_SCOPE_EXIT
 	{
-		if (IsInRenderingThread())
-		{
-			double ShaderCreationTime = FPlatformTime::Seconds() - TimeFunctionEntered;
-			INC_FLOAT_STAT_BY(STAT_Shaders_TotalRTShaderInitForRenderingTime, ShaderCreationTime);
-		}
+		double ShaderCreationTime = FPlatformTime::Seconds() - TimeFunctionEntered;
+		INC_FLOAT_STAT_BY(STAT_Shaders_TotalRTShaderInitForRenderingTime, ShaderCreationTime);
 	};
 #endif
 
@@ -1205,7 +1241,7 @@ void FShaderMapResource_SharedCode::ReleasePreloadedShaderCode(int32 ShaderIndex
 
 void FShaderMapResource_SharedCode::ReleaseRHI()
 {
-	if (LibraryInstance)
+	if (LibraryInstance && ensureMsgf(LibraryInstance->Library, TEXT("LibraryInstance->Library pointer is expected to be valid as long as library's FShaderMapResource are alive.")))
 	{
 		const int32 NumShaders = GetNumShaders();
 		for (int32 i = 0; i < NumShaders; ++i)
@@ -1354,8 +1390,9 @@ struct FEditorShaderCodeArchive
 			// the cook because of serialization path being reused for other purposes than actual saving, so counting them every time artificially inflates number of shaders.
 			CodeStats.NumShaders += Code->ShaderEntries.Num();
 			CodeStats.NumShaderMaps++;
-			MarkShaderMapDirty(ShaderMapIndex);
 		}
+		// always mark the shadermap dirty, because it might have gotten new asset associations
+		MarkShaderMapDirty(ShaderMapIndex);
 		return ShaderMapIndex;
 	}
 
@@ -1565,6 +1602,8 @@ struct FEditorShaderCodeArchive
 			const FShaderMapAssetPaths* const SourceAssetPaths = SourceArchive.ShaderCodeToAssets.Find(SourceShaderMapHash);
 			int32 TargetShaderMapIndex;
 			const bool bIsNewShaderMap = TargetArchive.FindOrAddShaderMap(SourceShaderMapHash, TargetShaderMapIndex, SourceAssetPaths);
+			// always mark the shadermap dirty, because it might have gotten new asset associations
+			MarkShaderMapDirty(TargetShaderMapIndex);
 			if (!bIsNewShaderMap)
 			{
 				// ShaderMap has already been loaded in this process, e.g. from another CookWorker loading the same Material
@@ -1592,7 +1631,6 @@ struct FEditorShaderCodeArchive
 
 			CodeStats.NumShaders += TargetEntry.NumShaders; // Sum of shader counts used by each ShaderMap, without removing duplicates
 			CodeStats.NumShaderMaps++;
-			MarkShaderMapDirty(TargetShaderMapIndex);
 		}
 		return bOk;
 	}
@@ -1653,8 +1691,9 @@ struct FEditorShaderCodeArchive
 				}
 				SerializedShaders.ShaderIndices[ShaderMapEntry.ShaderIndicesOffset + i] = ShaderIndex;
 			}
-			MarkShaderMapDirty(ShaderMapIndex);
 		}
+		// always mark the shadermap dirty, because it might have gotten new asset associations
+		MarkShaderMapDirty(ShaderMapIndex);
 		return ShaderMapIndex;
 	}
 
@@ -1696,8 +1735,9 @@ struct FEditorShaderCodeArchive
 				}
 				SerializedShaders.ShaderIndices[ShaderMapEntry.ShaderIndicesOffset + i] = ShaderIndex;
 			}
-			MarkShaderMapDirty(ShaderMapIndex);
 		}
+		// always mark the shadermap dirty, because it might have gotten new asset associations
+		MarkShaderMapDirty(ShaderMapIndex);
 		return ShaderMapIndex;
 	}
 
@@ -1750,58 +1790,75 @@ struct FEditorShaderCodeArchive
 		return bOK;
 	}
 
+	void AddShaderCodeLibraryByName(const FString& BaseDir, const FString& InLibraryName)
+	{
+		if (FArchive* PrevCookedAr = IFileManager::Get().CreateFileReader(*GetCodeArchiveFilename(BaseDir, InLibraryName, FormatName)))
+		{
+			uint32 Version = 0;
+			*PrevCookedAr << Version;
+
+			if (Version == GShaderCodeArchiveVersion)
+			{
+				FSerializedShaderArchive PrevCookedShaders;
+
+				*PrevCookedAr << PrevCookedShaders;
+
+				// check if it also contains the asset info file
+				if (PrevCookedShaders.LoadAssetInfo(GetShaderAssetInfoFilename(BaseDir, InLibraryName, FormatName)))
+				{
+					UE_LOG(LogShaderLibrary, Display, TEXT("Loaded asset info %s for the shader library %s: %d entries"),
+						*GetShaderAssetInfoFilename(BaseDir, InLibraryName, FormatName),
+						*GetCodeArchiveFilename(BaseDir, InLibraryName, FormatName),
+						PrevCookedShaders.ShaderCodeToAssets.Num()
+					);
+				}
+				else
+				{
+					UE_LOG(LogShaderLibrary, Warning, TEXT("Could not find or load asset info %s for the shader library %s"),
+						*GetShaderAssetInfoFilename(BaseDir, InLibraryName, FormatName),
+						*GetCodeArchiveFilename(BaseDir, InLibraryName, FormatName)
+					);
+				}
+
+				int64 PrevCookedShadersCodeStart = PrevCookedAr->Tell();
+				for (int32 PrevShaderMapIndex = 0; PrevShaderMapIndex < PrevCookedShaders.ShaderMapEntries.Num(); ++PrevShaderMapIndex)
+				{
+					AddShaderCode(PrevShaderMapIndex, PrevCookedShaders, PrevCookedShadersCodeStart, *PrevCookedAr);
+				}
+			}
+
+			PrevCookedAr->Close();
+			delete PrevCookedAr;
+		}
+	}
+
+	void AddShaderCodeLibraryFromDirectory(const FString& BaseDir)
+	{
+		AddShaderCodeLibraryByName(BaseDir, LibraryName);
+	}
+
 	void AddExistingShaderCodeLibrary(FString const& OutputDir)
 	{
 		check(LibraryName.Len() > 0);
+		static const FRegexPattern ShaderCodePattern(ShaderCodePatternStr);
 
-		const FString ShaderIntermediateLocation = FPaths::ProjectSavedDir() / TEXT("Shaders") / FormatName.ToString();
+		const FString FormatNameStr = FormatName.ToString();
+		const FString ShaderIntermediateLocation = FPaths::ProjectSavedDir() / TEXT("Shaders") / FormatNameStr;
 
 		TArray<FString> ShaderFiles;
 		IFileManager::Get().FindFiles(ShaderFiles, *ShaderIntermediateLocation, *ShaderExtension);
 
 		for (const FString& ShaderFileName : ShaderFiles)
 		{
-			if (ShaderFileName.Contains(LibraryName + TEXT("-") + FormatName.ToString() + TEXT(".")))
+			FRegexMatcher FindShaderFormat(ShaderCodePattern, ShaderFileName);
+			if (FindShaderFormat.FindNext())
 			{
-				FArchive* PrevCookedAr = IFileManager::Get().CreateFileReader(*GetCodeArchiveFilename(OutputDir, LibraryName, FormatName));
+				const FString& FoundLibraryName = FindShaderFormat.GetCaptureGroup(1);
+				const FString& FoundFormatName = FindShaderFormat.GetCaptureGroup(2);
 
-				if (PrevCookedAr)
+				if (FoundLibraryName.StartsWith(LibraryName) && FoundFormatName.Equals(FormatNameStr, ESearchCase::IgnoreCase))
 				{
-					uint32 Version = 0;
-					*PrevCookedAr << Version;
-
-					if (Version == GShaderCodeArchiveVersion)
-					{
-						FSerializedShaderArchive PrevCookedShaders;
-
-						*PrevCookedAr << PrevCookedShaders;
-
-						// check if it also contains the asset info file
-						if (PrevCookedShaders.LoadAssetInfo(GetShaderAssetInfoFilename(OutputDir, LibraryName, FormatName)))
-						{
-							UE_LOG(LogShaderLibrary, Display, TEXT("Loaded asset info %s for the shader library %s: %d entries"),
-								*GetShaderAssetInfoFilename(OutputDir, LibraryName, FormatName),
-								*GetCodeArchiveFilename(OutputDir, LibraryName, FormatName),
-								PrevCookedShaders.ShaderCodeToAssets.Num()
-								);
-						}
-						else
-						{
-							UE_LOG(LogShaderLibrary, Warning, TEXT("Could not find or load asset info %s for the shader library %s"),
-								*GetShaderAssetInfoFilename(OutputDir, LibraryName, FormatName),
-								*GetCodeArchiveFilename(OutputDir, LibraryName, FormatName)
-							);
-						}
-
-						int64 PrevCookedShadersCodeStart = PrevCookedAr->Tell();
-						for (int32 PrevShaderMapIndex = 0; PrevShaderMapIndex < PrevCookedShaders.ShaderMapEntries.Num(); ++PrevShaderMapIndex)
-						{
-							AddShaderCode(PrevShaderMapIndex, PrevCookedShaders, PrevCookedShadersCodeStart, *PrevCookedAr);
-						}
-					}
-
-					PrevCookedAr->Close();
-					delete PrevCookedAr;
+					AddShaderCodeLibraryByName(OutputDir, FoundLibraryName);
 				}
 			}
 		}
@@ -2060,6 +2117,30 @@ struct FEditorShaderCodeArchive
 					UsageString += FString::Printf(TEXT("%d, "), ExtendedStats.TopShaderUsages[IdxUsage]);
 				}
 				UE_LOG(LogShaderLibrary, Display, TEXT("    %s%d"), *UsageString, ExtendedStats.TopShaderUsages[ExtendedStats.TopShaderUsages.Num() - 1]);
+
+				// print per-frequency stats
+				UE_LOG(LogShaderLibrary, Display, TEXT("Unique shaders itemization (sorted by compressed size):"));
+				// sort by compressed size
+				TArray<int32> SortedIndices;
+				for (int32 IdxFreq = 0; IdxFreq < SF_NumFrequencies; ++IdxFreq)
+				{
+					SortedIndices.Add(IdxFreq);
+				}
+				SortedIndices.StableSort([&ExtendedStats](int32 IndexA, int32 IndexB) { return ExtendedStats.CompressedSizePerFrequency[IndexA] >= ExtendedStats.CompressedSizePerFrequency[IndexB]; });
+				for (int32 Freq : SortedIndices)
+				{
+					if (ExtendedStats.NumShadersPerFrequency[Freq] > 0)
+					{
+						UE_LOG(LogShaderLibrary, Display, TEXT("%s: %d shaders (%.2f%%), compressed size: %.2f MB (%.2f KB avg per shader), uncompressed size: %.2f MB (%.2f KB avg per shader)"),
+							GetShaderFrequencyString(static_cast<EShaderFrequency>(Freq)),
+							ExtendedStats.NumShadersPerFrequency[Freq],
+							100.0 * ExtendedStats.NumShadersPerFrequency[Freq] / double(Stats.NumUniqueShaders),
+							double(ExtendedStats.CompressedSizePerFrequency[Freq]) / (1024.0 * 1024.0), double(ExtendedStats.CompressedSizePerFrequency[Freq]) / (double(ExtendedStats.NumShadersPerFrequency[Freq]) * 1024.0),
+							double(ExtendedStats.UncompressedSizePerFrequency[Freq]) / (1024.0 * 1024.0), double(ExtendedStats.UncompressedSizePerFrequency[Freq]) / (double(ExtendedStats.NumShadersPerFrequency[Freq]) * 1024.0)
+						);
+					}
+				}
+
 			}
 			else
 			{
@@ -2146,42 +2227,79 @@ struct FEditorShaderStableInfo
 		LibraryName = TEXT("");
 	}
 
-	void AddShader(FStableShaderKeyAndValue& StableKeyValue)
+	enum class EMergeRule
+	{
+		/** If the key already exists, do not modify it, keep the existing value. */
+		KeepExisting,
+		/**
+		 * If the key already exists, compare whether the output hash is different. If different,
+		 * log a warning and keep the existing value. If the same, overwrite the existing value
+		 * with the new value. 
+		 */
+		OverwriteUnmodifiedWarnModified,
+	};
+	void AddShader(FStableShaderKeyAndValue& StableKeyValue, EMergeRule MergeRule)
 	{
 		FStableShaderKeyAndValue* Existing = StableMap.Find(StableKeyValue);
-		if (Existing && Existing->OutputHash != StableKeyValue.OutputHash)
+		if (Existing)
 		{
-			UE_LOG(LogShaderLibrary, Warning, TEXT("Duplicate key in stable shader library, but different keys, skipping new item:"));
-			UE_LOG(LogShaderLibrary, Warning, TEXT("    Existing: %s"), *Existing->ToString());
-			UE_LOG(LogShaderLibrary, Warning, TEXT("    New     : %s"), *StableKeyValue.ToString());
-			return;
+			switch (MergeRule)
+			{
+			case EMergeRule::KeepExisting:
+				return;
+			case EMergeRule::OverwriteUnmodifiedWarnModified:
+				if (Existing->OutputHash != StableKeyValue.OutputHash)
+				{
+					UE_LOG(LogShaderLibrary, Warning, TEXT("Duplicate key in stable shader library, but different output, skipping new item:"));
+					UE_LOG(LogShaderLibrary, Warning, TEXT("    Existing: %s"), *Existing->ToString());
+					UE_LOG(LogShaderLibrary, Warning, TEXT("    New     : %s"), *StableKeyValue.ToString());
+					return;
+				}
+				break; // Otherwise fall through to overwrite
+			default:
+				checkNoEntry();
+				break;
+			}
 		}
 		StableMap.Add(StableKeyValue);
 		MarkKeyValueDirty(StableKeyValue);
+	}
+
+	void AddShaderCodeLibraryFromDirectory(const FString& BaseDir, EMergeRule MergeRule)
+	{
+		TArray<FStableShaderKeyAndValue> StableKeys;
+		if (UE::PipelineCacheUtilities::LoadStableKeysFile(GetStableInfoArchiveFilename(BaseDir, LibraryName, FormatName), StableKeys))
+		{
+			for (FStableShaderKeyAndValue& Item : StableKeys)
+			{
+				AddShader(Item, MergeRule);
+			}
+		}
 	}
 
 	void AddExistingShaderCodeLibrary(FString const& OutputDir)
 	{
 		check(LibraryName.Len() > 0);
 
-		const FString ShaderIntermediateLocation = FPaths::ProjectSavedDir() / TEXT("Shaders") / FormatName.ToString();
-
-		TArray<FString> ShaderFiles;
-		IFileManager::Get().FindFiles(ShaderFiles, *ShaderIntermediateLocation, *ShaderExtension);
-
-		for (const FString& ShaderFileName : ShaderFiles)
+		bool bLibraryExistsInSavedShadersDir = false;
 		{
-			if (ShaderFileName.Contains(LibraryName + TEXT("-") + FormatName.ToString() + TEXT(".")))
+			const FString ShaderIntermediateLocation = FPaths::ProjectSavedDir() / TEXT("Shaders") / FormatName.ToString();
+			TArray<FString> ShaderFiles;
+			IFileManager::Get().FindFiles(ShaderFiles, *ShaderIntermediateLocation, *StableExtension);
+			FString ExpectedFileNameText = LibraryName + TEXT("-") + FormatName.ToString() + TEXT(".");
+
+			for (const FString& ShaderFileName : ShaderFiles)
 			{
-				TArray<FStableShaderKeyAndValue> StableKeys;
-				if (UE::PipelineCacheUtilities::LoadStableKeysFile(GetStableInfoArchiveFilename(OutputDir, LibraryName, FormatName), StableKeys))
+				if (ShaderFileName.Contains(ExpectedFileNameText))
 				{
-					for (FStableShaderKeyAndValue& Item : StableKeys)
-					{
-						AddShader(Item);
-					}
+					bLibraryExistsInSavedShadersDir = true;
+					break;
 				}
 			}
+		}
+		if (bLibraryExistsInSavedShadersDir)
+		{
+			AddShaderCodeLibraryFromDirectory(OutputDir, EMergeRule::KeepExisting);
 		}
 	}
 
@@ -2340,7 +2458,7 @@ struct FEditorShaderStableInfo
 			FStableShaderKeyAndValue StableInfo;
 			if (LoadFromCompactBinary(InfoView, StableInfo, Hashes))
 			{
-				AddShader(StableInfo);
+				AddShader(StableInfo, EMergeRule::OverwriteUnmodifiedWarnModified);
 			}
 			else
 			{
@@ -2539,9 +2657,9 @@ public:
 				{
 					// Some deployment flows (e.g. Launch on) avoid pak files despite project packaging settings. 
 					// In case we run under such circumstances, we need to discover the components ourselves
-					if (FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile")) == nullptr)
+					if (!IsRunningWithPakFile() && ShouldLookForLooseCookedChunks())
 					{
-						UE_LOG(LogShaderLibrary, Display, TEXT("Running without a pakfile and did not find a monolithic library '%s' - attempting disk search for its chunks"), *Name);
+						UE_LOG(LogShaderLibrary, Display, TEXT("Running without a pakfile/IoStore and did not find a monolithic library '%s' - attempting disk search for its chunks"), *Name);
 
 						TArray<FString> UshaderbytecodeFiles;
 						FString SearchMask = Directory / FString::Printf(TEXT("ShaderArchive-*%s*.ushaderbytecode"), *Name);
@@ -2625,7 +2743,8 @@ public:
 			{
 				if (bAddNewNamedLibrary)
 				{
-					UE_LOG(LogShaderLibrary, Display, TEXT("Tried to open shader library '%s', but could not find it neither as a monolithic library nor as a chunked one."), *Name);
+					UE_LOG(LogShaderLibrary, Display, TEXT("Tried to open shader library '%s', but could not find it%s"), *Name, 
+						bMonolithicOnly ? TEXT(" (only tried to open it as a monolithic library).") : TEXT(" neither as a monolithic library nor as a chunked one."));
 
 					check(Library->GetNumComponents() == 0);
 					delete Library;
@@ -2880,12 +2999,23 @@ public:
 	}
 
 #if WITH_EDITOR
+
+	FString GetFormatAndPlatformName(const FName& Format)
+	{
+		EShaderPlatform Platform = ShaderFormatToLegacyShaderPlatform(Format);
+		FName PossiblyAdjustedFormat = LegacyShaderPlatformToShaderFormat(Platform);	// Vulkan and GL switch between name variants depending on CVars 
+
+		return PossiblyAdjustedFormat.ToString() + TEXT("-") + FDataDrivenShaderPlatformInfo::GetName(Platform).ToString();
+	}
+
 	void CleanDirectories(TArray<FName> const& ShaderFormats)
 	{
 		for (FName const& Format : ShaderFormats)
 		{
 			FString ShaderIntermediateLocation = FPaths::ProjectSavedDir() / TEXT("Shaders") / Format.ToString();
+			FString ShaderPlatformIntermediateLocation = FPaths::ProjectSavedDir() / TEXT("Shaders") / GetFormatAndPlatformName(Format);
 			IFileManager::Get().DeleteDirectory(*ShaderIntermediateLocation, false, true);
+			IFileManager::Get().DeleteDirectory(*ShaderPlatformIntermediateLocation, false, true);
 		}
 	}
 
@@ -2898,9 +3028,7 @@ public:
 			FName const& Format = Descriptor.ShaderFormat;
 
 			EShaderPlatform Platform = ShaderFormatToLegacyShaderPlatform(Format);
-			FName PossiblyAdjustedFormat = LegacyShaderPlatformToShaderFormat(Platform);	// Vulkan and GL switch between name variants depending on CVars 
-
-			FString FormatAndPlatformName = PossiblyAdjustedFormat.ToString() + TEXT("-") + FDataDrivenShaderPlatformInfo::GetName(Platform).ToString();
+			FString FormatAndPlatformName = GetFormatAndPlatformName(Format);
 			FEditorShaderCodeArchive* CodeArchive = EditorShaderCodeArchive[Platform];
 			if (!CodeArchive)
 			{
@@ -3096,9 +3224,9 @@ public:
 		FScopeLock ScopeLock(&ShaderCodeCS);
 
 		StableKeyValue.ComputeKeyHash();
-		StableArchive->AddShader(StableKeyValue);
+		StableArchive->AddShader(StableKeyValue, FEditorShaderStableInfo::EMergeRule::OverwriteUnmodifiedWarnModified);
 	}
-
+ 
 	void FinishPopulateShaderCode(const FString& ShaderCodeDir, const FString& MetaOutputDir, const TArray<FName>& ShaderFormats)
 	{
 		for (FName ShaderFormatName : ShaderFormats)
@@ -3308,7 +3436,7 @@ FShaderLibrariesCollection* FShaderLibrariesCollection::Impl = nullptr;
 
 static void FShaderCodeLibraryPluginMountedCallback(IPlugin& Plugin)
 {
-	if (UE::ShaderLibrary::Private::PluginsToIgnoreOnMount.Remove(Plugin.GetName()) == 0)
+	if (FApp::CanEverRender() && UE::ShaderLibrary::Private::PluginsToIgnoreOnMount.Remove(Plugin.GetName()) == 0)
 	{
 		FShaderCodeLibrary::OpenPluginShaderLibrary(Plugin);
 	}
@@ -3398,7 +3526,7 @@ void FShaderCodeLibrary::InitForRuntime(EShaderPlatform ShaderPlatform)
 			UE::ShaderLibrary::Private::OnPluginMountedDelegateHandle = IPluginManager::Get().OnNewPluginMounted().AddStatic(&FShaderCodeLibraryPluginMountedCallback);
 			UE::ShaderLibrary::Private::OnPluginUnmountedDelegateHandle = IPluginManager::Get().OnPluginUnmounted().AddStatic(&FShaderCodeLibraryPluginUnmountedCallback);
 		
-#if !UE_BUILD_SHIPPING
+#if (!UE_BUILD_SHIPPING && !UE_BUILD_TEST)	// test builds are supposed to be closer to Shipping than to Development, and as such not have development features
 			// support shared cooked builds by also opening the shared cooked build shader code file
 			FShaderLibrariesCollection::Impl->OpenLibrary(TEXT("Global_SC"), FPaths::ProjectContentDir());
 #endif
@@ -3814,6 +3942,120 @@ void FShaderLibraryCooker::FinishPopulateShaderLibrary(const ITargetPlatform* Ta
 	}
 }
 
+bool FShaderLibraryCooker::MergeShaderCodeArchive(const TArray<FString>& CookedMetadataDirs, const FString& OutputDir, TArray<FString>& OutWrittenFiles)
+{
+	OutWrittenFiles.Empty();
+
+	bool bNeedsDeterministicOrder = false;
+	GConfig->GetBool(TEXT("/Script/UnrealEd.ProjectPackagingSettings"), TEXT("bDeterministicShaderCodeOrder"), bNeedsDeterministicOrder, GGameIni);
+
+	static const FRegexPattern ShaderArchivePattern(ShaderArchivePatternStr);
+	static const FRegexPattern StableInfoPattern(StableInfoPatternStr);
+
+	// Map of file name to the archive we are unioning
+	TMap<FString, FEditorShaderCodeArchive> ShaderCodeArchives;
+	TMap<FString, FEditorShaderStableInfo> ShaderStableInfos;
+
+	for (const FString& MetadataDir : CookedMetadataDirs)
+	{
+		const FString ShaderCodeDir = MetadataDir / TEXT("ShaderLibrarySource");
+		const FString ShaderStableInfoDir = MetadataDir / TEXT("PipelineCaches");
+
+		TArray<FString> ShaderBytecodeFiles;
+		IFileManager::Get().FindFiles(ShaderBytecodeFiles, *ShaderCodeDir, *ShaderExtension);
+		for (const FString& ByteCodeFile : ShaderBytecodeFiles)
+		{
+			if (ShaderCodeArchives.Contains(ByteCodeFile))
+			{
+				ShaderCodeArchives[ByteCodeFile].AddShaderCodeLibraryFromDirectory(ShaderCodeDir);
+			}
+			else
+			{
+				FRegexMatcher FindShaderFormat(ShaderArchivePattern, ByteCodeFile);
+				if (ensureMsgf(FindShaderFormat.FindNext(), TEXT("Unable to parse out shader format from %s"), *ByteCodeFile))
+				{
+					const FName ShaderFormat(*FindShaderFormat.GetCaptureGroup(2));
+					FEditorShaderCodeArchive NewCodeArchive(ShaderFormat, bNeedsDeterministicOrder);
+					NewCodeArchive.OpenLibrary(FindShaderFormat.GetCaptureGroup(1));
+					NewCodeArchive.AddShaderCodeLibraryFromDirectory(ShaderCodeDir);
+
+					ShaderCodeArchives.FindOrAdd(ByteCodeFile, MoveTemp(NewCodeArchive));
+				}
+			}
+		}
+
+		TArray<FString> StableInfoFiles;
+		IFileManager::Get().FindFiles(StableInfoFiles, *ShaderStableInfoDir, *StableExtension);
+		for (const FString& StableInfoFile : StableInfoFiles)
+		{
+			if (ShaderStableInfos.Contains(StableInfoFile))
+			{
+				ShaderStableInfos[StableInfoFile].AddShaderCodeLibraryFromDirectory(ShaderStableInfoDir,
+					FEditorShaderStableInfo::EMergeRule::OverwriteUnmodifiedWarnModified);
+			}
+			else
+			{
+				FRegexMatcher FindShaderInfo(StableInfoPattern, StableInfoFile);
+				if (ensureMsgf(FindShaderInfo.FindNext(), TEXT("Unable to parse out shader format from %s"), *StableInfoFile))
+				{
+					const FName ShaderFormat(*FindShaderInfo.GetCaptureGroup(2));
+					FEditorShaderStableInfo NewStableInfo(ShaderFormat);
+					NewStableInfo.OpenLibrary(FindShaderInfo.GetCaptureGroup(1));
+					NewStableInfo.AddShaderCodeLibraryFromDirectory(ShaderStableInfoDir,
+						FEditorShaderStableInfo::EMergeRule::OverwriteUnmodifiedWarnModified);
+
+					ShaderStableInfos.FindOrAdd(StableInfoFile, MoveTemp(NewStableInfo));
+				}
+			}
+		}
+	}
+
+	const FString OutShaderCodeDir = OutputDir / TEXT("ShaderLibrarySource");
+	const FString OutContentDir = OutputDir / TEXT("../Content");
+	const FString OutShaderStableInfoDir = OutputDir / TEXT("PipelineCaches");
+
+	bool bSuccess = true;
+	for (TPair<FString, FEditorShaderCodeArchive>& ShaderCodeArchivePair : ShaderCodeArchives)
+	{
+		TArray<FString> CreatedFiles;
+		if (ShaderCodeArchivePair.Value.SaveToDisk(OutShaderCodeDir, TEXT(""), false, &CreatedFiles))
+		{
+			OutWrittenFiles.Append(MoveTemp(CreatedFiles));
+		}
+		else
+		{
+			UE_LOG(LogShaderLibrary, Error, TEXT("Failed to save %s"), *ShaderCodeArchivePair.Key);
+			bSuccess = false;
+		}
+		CreatedFiles.Reset();
+		if (ShaderCodeArchivePair.Value.SaveToDisk(OutContentDir, TEXT(""), false, &CreatedFiles))
+		{
+			OutWrittenFiles.Append(MoveTemp(CreatedFiles));
+		}
+		else
+		{
+			UE_LOG(LogShaderLibrary, Error, TEXT("Failed to save to Content Dir %s"), *ShaderCodeArchivePair.Key);
+			bSuccess = false;
+		}
+	}
+
+	for (TPair<FString, FEditorShaderStableInfo>& ShaderStableInfoPair : ShaderStableInfos)
+	{
+		FString WrittenFile;
+		if (ShaderStableInfoPair.Value.SaveToDisk(OutShaderStableInfoDir, WrittenFile))
+		{
+			OutWrittenFiles.Add(MoveTemp(WrittenFile));
+		}
+		else
+		{
+			UE_LOG(LogShaderLibrary, Error, TEXT("Failed to save %s"), *ShaderStableInfoPair.Key);
+			bSuccess = false;
+		}
+	}
+
+	return bSuccess;
+}
+
 bool FShaderLibraryCooker::SaveShaderLibraryWithoutChunking(const ITargetPlatform* TargetPlatform, FString const& Name,
 	FString const& SandboxDestinationPath, FString const& SandboxMetadataPath, TArray<FString>& PlatformSCLCSVPaths, FString& OutErrorMessage,
 	bool& bOutHasData)
@@ -3886,14 +4128,25 @@ void FShaderCodeLibrary::UnregisterSharedShaderCodeRequestDelegate_Handle(FDeleg
 void FShaderCodeLibrary::DontOpenPluginShaderLibraryOnMount(const FString& PluginName)
 {
 	check(IsInGameThread());
-	UE::ShaderLibrary::Private::PluginsToIgnoreOnMount.Add(PluginName);
+	if (FApp::CanEverRender())
+	{
+		UE::ShaderLibrary::Private::PluginsToIgnoreOnMount.Add(PluginName);
+	}
 }
 
 void FShaderCodeLibrary::OpenPluginShaderLibrary(IPlugin& Plugin, bool bMonolithicOnly)
 {
-	if (Plugin.CanContainContent() && Plugin.IsEnabled())
+	if (Plugin.CanContainContent() && Plugin.IsEnabled() && FApp::CanEverRender())
 	{
 		// load any shader libraries that may exist in this plugin
+		if (!bMonolithicOnly)
+		{
+			// Chunked libraries in plugins that are not built in (i.e. ones that were cooked separately as DLC) are not supported atm. This is because the main game can be cooked without chunks (-fastcook), but still needs
+			// to load the same plugins, so it would not know which ChunkIDs to try.
+			// Plugins that are built-in can be chunked, but their shaders don't go into a separate library (cooker doesn't separate that atm), everything goes into main project's library.
+			UE_LOG(LogShaderLibrary, Display, TEXT("Opening a chunked shader library for plugin '%s' is ignored. Chunked libraries for plugins are not supported."), *Plugin.GetName());
+		}
+		bMonolithicOnly = true;
 		FShaderCodeLibrary::OpenLibrary(Plugin.GetName(), Plugin.GetContentDir(), bMonolithicOnly);
 	}
 }

@@ -52,7 +52,7 @@ void UComposurePostProcessPass::SetSetupMaterial(UMaterialInterface* Material)
 			*BaseMaterial->GetName());
 		return;
 	}
-	else if (BaseMaterial->BlendableLocation != BL_BeforeTranslucency)
+	else if (BaseMaterial->BlendableLocation != BL_SceneColorBeforeDOF)
 	{
 		UE_LOG(Composure, Error,
 			TEXT("Can't set setup material %s: is not at the before translucency post process location."),

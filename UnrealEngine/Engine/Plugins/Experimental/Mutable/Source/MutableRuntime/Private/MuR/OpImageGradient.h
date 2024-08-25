@@ -13,7 +13,7 @@ namespace mu
 	{
 		check(pDest && pDest->GetFormat()==EImageFormat::IF_RGBA_UBYTE);
 
-        uint8* pDestBuf = pDest->GetData();
+        uint8* pDestBuf = pDest->GetLODData(0);
 
 		int32 sizeX = pDest->GetSizeX();
 		int32 sizeY = pDest->GetSizeX();
@@ -21,7 +21,7 @@ namespace mu
 		for ( int i=0; i< sizeX; ++i )
 		{
 			float delta = float(i)/float(sizeX -1);
-			vec3<float> c = c0 * (1.0f-delta) + c1 * delta;
+			FVector3f c = c0 * (1.0f-delta) + c1 * delta;
 
             uint8 colour[4];
             colour[0] = (uint8)FMath::Max( 0, FMath::Min( 255, int(c[0]*255.0f) ) );

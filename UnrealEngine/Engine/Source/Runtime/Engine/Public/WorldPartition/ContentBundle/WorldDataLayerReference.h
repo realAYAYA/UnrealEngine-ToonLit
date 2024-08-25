@@ -13,7 +13,10 @@ class FWorldDataLayersReference
 {
 public:
 	ENGINE_API FWorldDataLayersReference();
-	ENGINE_API FWorldDataLayersReference(UActorDescContainer* Container, FName WorldDataLayerName); // Retrieve Actor
+
+	UE_DEPRECATED(5.4, "Use UActorDescContainerInstance version instead")
+	ENGINE_API FWorldDataLayersReference(UActorDescContainer* Container, FName WorldDataLayerName) {}
+	ENGINE_API FWorldDataLayersReference(UActorDescContainerInstance* ContainerInstance, FName WorldDataLayerName); // Retrieve Actor
 	ENGINE_API FWorldDataLayersReference(const FActorSpawnParameters& SpawnParameters); // Retrieve and Create Actor if Not Found, FActorSpawnParameters::Name must be set
 	ENGINE_API FWorldDataLayersReference(FWorldDataLayersReference&& Other);
 
@@ -32,7 +35,7 @@ public:
 	ENGINE_API FWorldDataLayersReference& operator=(FWorldDataLayersReference&& Other);
 
 private:
-	ENGINE_API bool TrySetReference(UActorDescContainer* Container, FName WorldDataLayerName);
+	ENGINE_API bool TrySetReference(UActorDescContainerInstance* ContainerInstance, FName WorldDataLayerName);
 
 	TVariant<AWorldDataLayers*, FWorldPartitionReference> WorldDataLayersVariant;
 };

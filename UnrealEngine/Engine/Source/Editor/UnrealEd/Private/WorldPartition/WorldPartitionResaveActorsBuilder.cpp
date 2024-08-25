@@ -4,6 +4,7 @@
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
 #include "WorldPartition/WorldPartitionClassDescRegistry.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "PackageSourceControlHelper.h"
 #include "SourceControlHelpers.h"
 #include "Engine/Level.h"
@@ -241,9 +242,9 @@ bool UWorldPartitionResaveActorsBuilder::RunInternal(UWorld* World, const FCellI
 
 		// Build clusters
 		TArray<TPair<FGuid, TArray<FGuid>>> ActorsWithRefs;
-		for (FActorDescContainerCollection::TIterator<> ActorDescIterator(WorldPartition); ActorDescIterator; ++ActorDescIterator)
+		for (FActorDescContainerInstanceCollection::TIterator<> Iterator(WorldPartition); Iterator; ++Iterator)
 		{
-			ActorsWithRefs.Emplace(ActorDescIterator->GetGuid(), ActorDescIterator->GetReferences());
+			ActorsWithRefs.Emplace(Iterator->GetGuid(), Iterator->GetReferences());
 		}
 
 		TArray<TArray<FGuid>> Clusters = GenerateObjectsClusters(ActorsWithRefs);
@@ -264,12 +265,12 @@ bool UWorldPartitionResaveActorsBuilder::RunInternal(UWorld* World, const FCellI
 			// Change packaging of all actors in the current cluster
 			for (FWorldPartitionReference& ActorReference : ActorReferences)
 			{
-				const FWorldPartitionActorDesc* ActorDesc = ActorReference.Get();
-				AActor* Actor = ActorDesc->GetActor();
+				const FWorldPartitionActorDescInstance* ActorDescInstance = *ActorReference;
+				AActor* Actor = ActorReference.GetActor();
 
 				if (!Actor)
 				{
-					PackagesToDelete.Add(ActorDesc->GetActorPackage().ToString());
+					PackagesToDelete.Add(ActorDescInstance->GetActorPackage().ToString());
 					continue;
 				}
 				else
@@ -280,7 +281,7 @@ bool UWorldPartitionResaveActorsBuilder::RunInternal(UWorld* World, const FCellI
 					if (!bReportOnly)
 					{
 						// Always mark this package for deletion, as it will contain a temporary redirector to fixup references
-						PackagesToDelete.Add(ActorDesc->GetActorPackage().ToString());
+						PackagesToDelete.Add(ActorDescInstance->GetActorPackage().ToString());
 
 						// Move actor back into world's package
 						Actor->SetPackageExternal(false);
@@ -430,13 +431,13 @@ bool UWorldPartitionResaveActorsBuilder::RunInternal(UWorld* World, const FCellI
 			PackagesToSave.Empty();
 		};
 
-		FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [this, &PackagesToDelete, &PackagesToSave, &DirtyActorDescsOld, &DirtyActorDescsNew](const FWorldPartitionActorDesc* ActorDesc)
+		FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [this, &PackagesToDelete, &PackagesToSave, &DirtyActorDescsOld, &DirtyActorDescsNew](const FWorldPartitionActorDescInstance* ActorDescInstance)
 		{
-			AActor* Actor = ActorDesc->GetActor();
-
+			AActor* Actor = ActorDescInstance->GetActor();
+			
 			if (!Actor)
 			{
-				PackagesToDelete.Add(ActorDesc->GetActorPackage().ToString());
+				PackagesToDelete.Add(ActorDescInstance->GetActorPackage().ToString());
 			}
 			else
 			{
@@ -454,6 +455,7 @@ bool UWorldPartitionResaveActorsBuilder::RunInternal(UWorld* World, const FCellI
 
 				if (bResaveDirtyActorDescsOnly)
 				{
+					const FWorldPartitionActorDesc* ActorDesc = ActorDescInstance->GetActorDesc();
 					TUniquePtr<FWorldPartitionActorDesc> NewActorDesc = Actor->CreateActorDesc();
 
 					if (!ActorDesc->IsResaveNeeded() && !ActorDesc->ShouldResave(NewActorDesc.Get()))

@@ -5,7 +5,7 @@
 
 namespace Lightmass
 {
-	// The logic of these function needs to match StrataMaterial.cpp
+	// The logic of these function needs to match SubstrateMaterial.cpp
 	bool IsOpaqueOrMaskedBlendMode(EBlendMode BlendMode)	{ return BlendMode == BLEND_Opaque || BlendMode == BLEND_Masked; }
 	bool IsTranslucentOnlyBlendMode(EBlendMode BlendMode)	{ return BlendMode == BLEND_Translucent || BlendMode == BLEND_TranslucentColoredTransmittance || BlendMode == BLEND_TranslucentGreyTransmittance; }
 	bool IsAlphaHoldoutBlendMode(EBlendMode BlendMode)		{ return BlendMode == BLEND_AlphaHoldout; }

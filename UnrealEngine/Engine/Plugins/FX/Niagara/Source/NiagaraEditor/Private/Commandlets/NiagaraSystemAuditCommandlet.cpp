@@ -4,9 +4,11 @@
 #include "DeviceProfiles/DeviceProfile.h"
 #include "DeviceProfiles/DeviceProfileManager.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "Modules/ModuleManager.h"
 #include "Misc/PackageName.h"
+#include "Modules/ModuleManager.h"
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/ARFilter.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -18,6 +20,7 @@
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "NiagaraSettings.h"
 #include "NiagaraSystem.h"
+#include "NiagaraSystemImpl.h"
 #include "NiagaraSimulationStageBase.h"
 #include "NiagaraRendererProperties.h"
 #include "NiagaraLightRendererProperties.h"
@@ -87,16 +90,16 @@ int32 UNiagaraSystemAuditCommandlet::Main(const FString& Params)
 	INiagaraModule& NiagaraModule = FModuleManager::LoadModuleChecked<INiagaraModule>("Niagara");
 	// User Data Interfaces to Find
 	{
-		FString UserDataInterfacesToFindString;
-		if (FParse::Value(*Params, TEXT("UserDataInterfacesToFind="), UserDataInterfacesToFindString, false))
+		FString DataInterfacesToFindString;
+		if (FParse::Value(*Params, TEXT("DataInterfacesToFind="), DataInterfacesToFindString, false))
 		{
 			TArray<FString> DataInterfaceNames;
-			UserDataInterfacesToFindString.ParseIntoArray(DataInterfaceNames, TEXT(","));
+			DataInterfacesToFindString.ParseIntoArray(DataInterfaceNames, TEXT(","));
 			for (const FString& DIName : DataInterfaceNames)
 			{
 				if (UClass* FoundClass = UClass::TryFindTypeSlow<UClass>(DIName, EFindFirstObjectOptions::ExactClass))
 				{
-					UserDataInterfacesToFind.Add(FoundClass);
+					DataInterfacesToFind.Add(FoundClass);
 				}
 				else
 				{
@@ -129,7 +132,28 @@ int32 UNiagaraSystemAuditCommandlet::Main(const FString& Params)
 
 	FParse::Bool(*Params, TEXT("RendererDetailed="), bRendererDetailed);
 
-	FParse::Bool(*Params, TEXT("CaptureDataInterfaceUsage="), bCaptureDataInterfaceUsage);
+	// Disable on specific platforms
+	// Example To Capture Specific: -run=NiagaraSystemAuditCommandlet -CaptureDataInterfaceUsage=MyDataInterface
+	// Example To Capture All: -run=NiagaraSystemAuditCommandlet -CaptureDataInterfaceUsage
+	{
+		FString DINamesArrayString;
+		if (FParse::Value(*Params, TEXT("CaptureDataInterfaceUsage="), DINamesArrayString, false))
+		{
+			bCaptureDataInterfaceUsage = true;
+
+			TArray<FString> DINamesArray;
+			DINamesArrayString.ParseIntoArray(DINamesArray, TEXT(","));
+
+			for (FString DIString : DINamesArray)
+			{
+				NiagaraDataInterfaceUsageToCapture.Add(FName(*DIString));
+			}
+		}
+		else
+		{
+			bCaptureDataInterfaceUsage = FParse::Param(*Params, TEXT("CaptureDataInterfaceUsage"));
+		}
+	}
 
 	// Validation enabled?
 	bool bRunValidation = false;
@@ -154,6 +178,22 @@ int32 UNiagaraSystemAuditCommandlet::Main(const FString& Params)
 	if (PackagePaths.Num() == 0 && FParse::Param(*Params, TEXT("GameContentOnly")))
 	{
 		PackagePaths.Add(FName(TEXT("/Game")));
+	}
+
+	// Include only assets
+	FString IncludeOnlyPackagesFileName;
+	if (FParse::Value(*Params, TEXT("IncludeOnlyPackages="), IncludeOnlyPackagesFileName, false))
+	{
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		if (PlatformFile.FileExists(*IncludeOnlyPackagesFileName))
+		{
+			TArray<FString> IncludeOnlyPackagesStringArray;
+			FFileHelper::LoadFileToStringArray(IncludeOnlyPackagesStringArray, *IncludeOnlyPackagesFileName);
+			for (const FString& Entry : IncludeOnlyPackagesStringArray)
+			{
+				IncludeOnlyPackages.Add(FName(Entry));
+			}
+		}
 	}
 
 	ProcessNiagaraSystems();
@@ -204,6 +244,14 @@ bool UNiagaraSystemAuditCommandlet::ProcessNiagaraSystems()
 		const FString SystemName = AssetIt.GetObjectPathString();
 		const FString PackageName = AssetIt.PackageName.ToString();
 
+		if (IncludeOnlyPackages.Num())
+		{
+			if (!IncludeOnlyPackages.Contains(AssetIt.PackagePath) && !IncludeOnlyPackages.Contains(FName(SystemName)))
+			{
+				continue;
+			}
+		}
+
 		if (PackageName.StartsWith(DevelopersFolder))
 		{
 			// Skip developer folders
@@ -234,6 +282,8 @@ bool UNiagaraSystemAuditCommandlet::ProcessNiagaraSystems()
 			continue;
 		}
 
+		NiagaraSystem->WaitForCompilationComplete(true, false);
+
 		// Iterate over all data interfaces used by the system / emitters
 		TSet<FName> SystemDataInterfacesWihPrereqs;
 		TSet<FName> SystemUserDataInterfaces;
@@ -241,16 +291,20 @@ bool UNiagaraSystemAuditCommandlet::ProcessNiagaraSystems()
 		{
 			if (bCaptureDataInterfaceUsage)
 			{
-				FDataInterfaceUsage& DataInterfaceUsage = NiagaraDataInterfaceUsage.FindOrAdd(DataInterface->GetClass()->GetFName());
-				++DataInterfaceUsage.UsageCount;
-				DataInterfaceUsage.Systems.Add(NiagaraSystem->GetFName());
+				const FName DIClassName = DataInterface->GetClass()->GetFName();
+				if ( NiagaraDataInterfaceUsageToCapture.IsEmpty() || NiagaraDataInterfaceUsageToCapture.Contains(DIClassName) )
+				{
+					FDataInterfaceUsage& DataInterfaceUsage = NiagaraDataInterfaceUsage.FindOrAdd(DataInterface->GetClass()->GetFName());
+					++DataInterfaceUsage.UsageCount;
+					DataInterfaceUsage.Systems.Add(NiagaraSystem->GetFName());
+				}
 			}
 
 			if (DataInterface->HasTickGroupPrereqs())
 			{
 				SystemDataInterfacesWihPrereqs.Add(DataInterface->GetClass()->GetFName());
 			}
-			if (UserDataInterfacesToFind.Contains(DataInterface->GetClass()))
+			if (DataInterfacesToFind.Contains(DataInterface->GetClass()))
 			{
 				SystemUserDataInterfaces.Add(DataInterface->GetClass()->GetFName());
 			}
@@ -371,6 +425,15 @@ bool UNiagaraSystemAuditCommandlet::ProcessNiagaraSystems()
 						RendererBuilder.Append(EmitterHandle.GetInstance().Emitter->GetPathName());
 						RendererBuilder.Append(TEXT(","));
 						RendererBuilder.Append(NiagaraRibbonTessellationModeEnum->GetValueAsString(RibbonRendererProperties->TessellationMode));
+						RendererBuilder.Append(TEXT(","));
+						if (RibbonRendererProperties->bUseGPUInit)
+						{
+							RendererBuilder.Append(TEXT("GPUInit=true "));
+						}
+						if (EmitterData->SimTarget == ENiagaraSimTarget::GPUComputeSim)
+						{
+							RendererBuilder.Append(TEXT("GPUSim=true "));
+						}
 						NiagaraRibbonRenderers.Add(RendererBuilder.ToString());
 					}
 				}
@@ -433,7 +496,7 @@ bool UNiagaraSystemAuditCommandlet::ProcessNiagaraSystems()
 				}
 				DataInterfaceNames.Append(*it->ToString());
 			}
-			NiagaraSystemsWithUserDataInterface.Add(FString::Printf(TEXT("%s,%s"), *NiagaraSystem->GetPathName(), *DataInterfaceNames));
+			NiagaraSystemsWithDataInterfaceToFind.Add(FString::Printf(TEXT("%s,%s"), *NiagaraSystem->GetPathName(), *DataInterfaceNames));
 		}
 
 		// Run validation last as it will potentially modify the asset
@@ -474,9 +537,9 @@ void UNiagaraSystemAuditCommandlet::DumpResults()
 	DumpSimpleSet(NiagaraSystemsWithEvents, TEXT("NiagaraSystemsWithEvents"), TEXT("Name"));
 	DumpSimpleSet(NiagaraSystemsWithPrerequisites, TEXT("NiagaraSystemsWithPrerequisites"), TEXT("Name,DataInterface"));
 	DumpSimpleSet(NiagaraSystemsWithDynamicBounds, TEXT("NiagaraSystemsWithDynamicBounds"), TEXT("Name,Emitters With Dynamic Bounds"));
-	if (UserDataInterfacesToFind.Num() > 0)
+	if (DataInterfacesToFind.Num() > 0)
 	{
-		DumpSimpleSet(NiagaraSystemsWithUserDataInterface, TEXT("NiagaraSystemsWithUserDataInterface"), TEXT("Name,DataInterface"));
+		DumpSimpleSet(NiagaraSystemsWithDataInterfaceToFind, TEXT("NiagaraSystemsWithDataInterfaceToFind"), TEXT("Name,DataInterface"));
 	}
 	if (NiagaraSystemsWithGPUEmitters.Num() > 0)
 	{
@@ -515,7 +578,7 @@ void UNiagaraSystemAuditCommandlet::DumpResults()
 
 	if (bRendererDetailed)
 	{
-		DumpSimpleSet(NiagaraRibbonRenderers, TEXT("NiagaraRibbonRenderers"), TEXT("Name,TessellationMode"));
+		DumpSimpleSet(NiagaraRibbonRenderers, TEXT("NiagaraRibbonRenderers"), TEXT("Name,TessellationMode,GPU"));
 	}
 }
 
@@ -565,44 +628,26 @@ FArchive* UNiagaraSystemAuditCommandlet::GetOutputFile(const TCHAR* InShortFilen
 TArray<class UNiagaraDataInterface*> UNiagaraSystemAuditCommandlet::GetDataInterfaces(class UNiagaraSystem* NiagaraSystem)
 {
 	TArray<UNiagaraDataInterface*> DataInterfaces;
-	for (UNiagaraDataInterface* ParamDI : NiagaraSystem->GetExposedParameters().GetDataInterfaces())
+	for (UNiagaraDataInterface* DataInterface : NiagaraSystem->GetExposedParameters().GetDataInterfaces())
 	{
-		if (ParamDI != nullptr)
+		if (DataInterface != nullptr)
 		{
-			DataInterfaces.AddUnique(ParamDI);
+			DataInterfaces.AddUnique(DataInterface);
 		}
 	}
 
-	auto GatherScriptDIs =
-		[&](UNiagaraScript* NiagaraScript)
+	NiagaraSystem->ForEachScript(
+		[&DataInterfaces](UNiagaraScript* NiagaraScript)
 		{
-			for (const FNiagaraScriptDataInterfaceInfo& DataInterfaceInfo : NiagaraScript->GetCachedDefaultDataInterfaces())
+			for (const FNiagaraScriptResolvedDataInterfaceInfo& ResolveDataInterfaceInfo : NiagaraScript->GetResolvedDataInterfaces())
 			{
-				if ( UNiagaraDataInterface* ScriptDI = DataInterfaceInfo.DataInterface )
+				if ( UNiagaraDataInterface* DataInterface = ResolveDataInterfaceInfo.ResolvedDataInterface )
 				{
-					DataInterfaces.AddUnique(ScriptDI);
+					DataInterfaces.AddUnique(DataInterface);
 				}
 			}
-		};
-
-	GatherScriptDIs(NiagaraSystem->GetSystemSpawnScript());
-	GatherScriptDIs(NiagaraSystem->GetSystemUpdateScript());
-
-	for (const FNiagaraEmitterHandle& EmitterHandle : NiagaraSystem->GetEmitterHandles())
-	{
-		FVersionedNiagaraEmitterData* EmitterData = EmitterHandle.GetEmitterData();
-		if (EmitterData == nullptr)
-		{
-			continue;
 		}
-
-		TArray<UNiagaraScript*> EmitterScripts;
-		EmitterData->GetScripts(EmitterScripts);
-		for (UNiagaraScript* Script : EmitterScripts)
-		{
-			GatherScriptDIs(Script);
-		}
-	}
+	);
 	return DataInterfaces;
 }
 

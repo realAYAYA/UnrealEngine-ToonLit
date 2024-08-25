@@ -615,7 +615,7 @@ TSharedRef<SWidget> SDerivedDataCacheStatisticsDialog::GetGridPanel()
 		.Font(TitleFont)
 		.Text(LOCTEXT("Read Speed", "Read Speed (MiB/s)"))
 		.AutoWrapText(true)
-		.WrapTextAt(66.0f)
+		.WrapTextAt(100.0f)
 	];
 
 	Panel->AddSlot(8, Row)
@@ -627,7 +627,7 @@ TSharedRef<SWidget> SDerivedDataCacheStatisticsDialog::GetGridPanel()
 		.Font(TitleFont)
 		.Text(LOCTEXT("Write Speed", "Write Speed (MiB/s)"))
 		.AutoWrapText(true)
-		.WrapTextAt(66.0f)
+		.WrapTextAt(100.0f)
 	];
 
 	Panel->AddSlot(9, Row)
@@ -636,13 +636,23 @@ TSharedRef<SWidget> SDerivedDataCacheStatisticsDialog::GetGridPanel()
 		.Margin(TitleMargin)
 		.ColorAndOpacity(TitleColor)
 		.Font(TitleFont)
-		.Text(LOCTEXT("Name", "Name"))
+		.Text(LOCTEXT("Storage Size", "Storage Size"))
+	];
+
+	Panel->AddSlot(10, Row)
+	[
+		SNew(STextBlock)
+		.Margin(TitleMargin)
+		.ColorAndOpacity(TitleColor)
+		.Font(TitleFont)
+		.Text(LOCTEXT("Path", "Path"))
 	];
 
 	Row++;
 
 	double SumTotalGetMB = 0.0;
 	double SumTotalPutMB = 0.0;
+	uint64 SumTotalPhysicalSize = ~0ull;
 
 	for (TSharedRef<const FDerivedDataCacheStatsNode> Node : LeafUsageStats)
 	{
@@ -666,6 +676,19 @@ TSharedRef<SWidget> SDerivedDataCacheStatisticsDialog::GetGridPanel()
 
 		SumTotalGetMB += TotalGetMB;
 		SumTotalPutMB += TotalPutMB;
+
+		const uint64 TotalPhysicalSize = Node->GetTotalPhysicalSize();
+		if (TotalPhysicalSize != ~0ull)
+		{
+			if (SumTotalPhysicalSize == ~0ull)
+			{
+				SumTotalPhysicalSize = TotalPhysicalSize;
+			}
+			else
+			{
+				SumTotalPhysicalSize += TotalPhysicalSize;
+			}
+		}
 
 		TSharedPtr<SImage> StatusIcon;
 		switch (Node->GetCacheStatus())
@@ -791,6 +814,13 @@ TSharedRef<SWidget> SDerivedDataCacheStatisticsDialog::GetGridPanel()
 		[
 			SNew(STextBlock)
 			.Margin(DefaultMargin)
+			.Text(Node->GetTotalPhysicalSize() == ~0ull ? LOCTEXT("N/A", "N/A") : FText::AsMemory(Node->GetTotalPhysicalSize(), EMemoryUnitStandard::IEC))
+		];
+
+		Panel->AddSlot(10, Row)
+		[
+			SNew(STextBlock)
+			.Margin(DefaultMargin)
 			.Text(FText::FromString(Node->GetCacheName()))
 		];
 
@@ -824,6 +854,16 @@ TSharedRef<SWidget> SDerivedDataCacheStatisticsDialog::GetGridPanel()
 		.ColorAndOpacity(TitleColor)
 		.Font(TitleFont)
 		.Text(FText::FromString(SingleDecimalFormat(SumTotalPutMB)))
+	];
+
+	Panel->AddSlot(9, Row)
+	.HAlign(HAlign_Right)
+	[
+		SNew(STextBlock)
+		.Margin(TitleMargin)
+		.ColorAndOpacity(TitleColor)
+		.Font(TitleFont)
+		.Text(SumTotalPhysicalSize == ~0ull ? LOCTEXT("N/A", "N/A") : FText::AsMemory(SumTotalPhysicalSize, EMemoryUnitStandard::IEC))
 	];
 
 #else

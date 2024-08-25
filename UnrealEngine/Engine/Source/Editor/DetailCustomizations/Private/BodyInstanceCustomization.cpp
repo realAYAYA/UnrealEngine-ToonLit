@@ -1265,6 +1265,7 @@ void FBodyInstanceCustomizationHelper::UpdateFilters()
 	bDisplayAngularDamping = true;
 	bDisplayEnableGravity = true;
 	bDisplayInertiaConditioning = true;
+	bDisplayInitialOverlapDepenetration = true;
 	bDisplayWalkableSlopeOverride = true;
 	bDisplayAutoWeld = true;
 	bDisplayStartAwake = true;
@@ -1291,6 +1292,7 @@ void FBodyInstanceCustomizationHelper::UpdateFilters()
 				bDisplayAngularDamping = false;
 				bDisplayEnableGravity = false;
 				bDisplayInertiaConditioning = false;
+				bDisplayInitialOverlapDepenetration = false;
 				bDisplayWalkableSlopeOverride = false;
 				bDisplayAutoWeld = false;
 				bDisplayStartAwake = false;
@@ -1383,7 +1385,6 @@ void FBodyInstanceCustomizationHelper::CustomizeDetails( IDetailLayoutBuilder& D
 		BodyInstanceHandler->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBodyInstance, bLockZRotation))->MarkHiddenByCustomization();
 		BodyInstanceHandler->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBodyInstance, PositionSolverIterationCount))->MarkHiddenByCustomization();
 		BodyInstanceHandler->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBodyInstance, VelocitySolverIterationCount))->MarkHiddenByCustomization();
-		BodyInstanceHandler->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBodyInstance, MaxDepenetrationVelocity))->MarkHiddenByCustomization();
 		BodyInstanceHandler->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBodyInstance, CustomDOFPlaneNormal))->MarkHiddenByCustomization();
 
 		//Add the rest

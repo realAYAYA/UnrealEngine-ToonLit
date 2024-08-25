@@ -22,22 +22,13 @@ public class OnlineSubsystemGooglePlay : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[] { 
-                "Core", 
-                "CoreUObject", 
-                "Engine", 
-                "Sockets",
+				"Core",
+				"Engine",
+				"CoreOnline",
 				"OnlineSubsystem", 
-                "HTTP",
 				"AndroidRuntimeSettings",
-				"Launch",
-				"GpgCppSDK"
+				"Launch"
             }
-			);
-
-		PublicIncludePathModuleNames.AddRange(
-			new string[] {
-				"AndroidPermission"
-			}
 			);
 
         string PluginPath = Utils.MakePathRelativeTo(ModuleDirectory, Target.RelativeEnginePath);

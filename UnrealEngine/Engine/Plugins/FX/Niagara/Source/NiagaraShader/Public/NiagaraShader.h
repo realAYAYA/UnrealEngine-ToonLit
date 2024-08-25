@@ -69,9 +69,9 @@ public:
 		SHADER_PARAMETER(int32,		Engine_System_CurrentTimeStep)
 		SHADER_PARAMETER(int32,		Engine_System_NumTimeSteps)
 		SHADER_PARAMETER(float,		Engine_System_TimeStepFraction)
+		SHADER_PARAMETER(int32,		Engine_System_NumParticles)
 		SHADER_PARAMETER(int32,		System_Pad0)
 		SHADER_PARAMETER(int32,		System_Pad1)
-		SHADER_PARAMETER(int32,		System_Pad2)
 
 		SHADER_PARAMETER(float,		PREV_Engine_Owner_TimeSinceRendered)
 		SHADER_PARAMETER(float,		PREV_Engine_Owner_LODDistance)
@@ -86,9 +86,9 @@ public:
 		SHADER_PARAMETER(int32,		PREV_CurrentTimeStep)
 		SHADER_PARAMETER(int32,		PREV_NumTimeSteps)
 		SHADER_PARAMETER(float,		PREV_TimeStepFraction)
+		SHADER_PARAMETER(int32,		PREV_Engine_System_NumParticles)
 		SHADER_PARAMETER(int32,		PREV_System_Pad0)
 		SHADER_PARAMETER(int32,		PREV_System_Pad1)
-		SHADER_PARAMETER(int32,		PREV_System_Pad2)
 	END_SHADER_PARAMETER_STRUCT()
 
 	// This structure is a replication of FNiagaraOwnerParameters with interpolated parameters includes
@@ -138,7 +138,7 @@ public:
 
 	// This structure is a replication of FNiagaraEmitterParameters with interpolated parameters includes
 	BEGIN_SHADER_PARAMETER_STRUCT(FEmitterParameters, )
-		SHADER_PARAMETER(int32,		Engine_Emitter_NumParticle)
+		SHADER_PARAMETER(int32,		Engine_Emitter_NumParticles)
 		SHADER_PARAMETER(int32,		Engine_Emitter_TotalSpawnedParticles)
 		SHADER_PARAMETER(float,		Engine_Emitter_SpawnCountScale)
 		SHADER_PARAMETER(float,		Emitter_Age)
@@ -147,7 +147,7 @@ public:
 		SHADER_PARAMETER(int32,		Emitter_Pad0)
 		SHADER_PARAMETER(int32,		Emitter_Pad1)
 
-		SHADER_PARAMETER(int32,		PREV_Engine_Emitter_NumParticle)
+		SHADER_PARAMETER(int32,		PREV_Engine_Emitter_NumParticles)
 		SHADER_PARAMETER(int32,		PREV_Engine_Emitter_TotalSpawnedParticles)
 		SHADER_PARAMETER(float,		PREV_Engine_Emitter_SpawnCountScale)
 		SHADER_PARAMETER(float,		PREV_Emitter_Age)
@@ -178,8 +178,7 @@ public:
 		SHADER_PARAMETER_SRV(Buffer<int>,							FreeIDList)
 		SHADER_PARAMETER_UAV(RWBuffer<int>,							RWIDToIndexTable)
 
-		SHADER_PARAMETER(FIntVector4,								SimulationStageIterationInfo)
-		SHADER_PARAMETER(float,										SimulationStageNormalizedIterationIndex)
+		SHADER_PARAMETER(FUintVector4,								SimulationStageIterationInfo)
 
 		SHADER_PARAMETER(FIntVector3,								ParticleIterationStateInfo)
 
@@ -203,7 +202,7 @@ public:
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters,	View)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureShaderParameters,	SceneTextures)
 
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataPublicGlobalUniformParameters, StrataPublic)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstratePublicGlobalUniformParameters, SubstratePublic)
 	END_SHADER_PARAMETER_STRUCT()
 
 	using FPermutationParameters = FNiagaraShaderPermutationParameters;
@@ -244,8 +243,6 @@ public:
 private:
 	// Data about parameters used for each Data Interface.
 	LAYOUT_FIELD(TMemoryImageArray<FNiagaraDataInterfaceParamRef>, DataInterfaceParameters);
-
-	LAYOUT_FIELD(FMemoryImageString, DebugDescription);
 };
 
 extern NIAGARASHADER_API int32 GNiagaraSkipVectorVMBackendOptimizations;

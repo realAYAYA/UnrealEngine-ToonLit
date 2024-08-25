@@ -596,6 +596,8 @@ class UMaterialInstance : public UMaterialInterface
 	uint8 bCastDynamicShadowAsMasked : 1;
 	uint8 bOutputTranslucentVelocity : 1;
 	uint8 bIsShadingModelFromMaterialExpression : 1;
+	uint8 bHasPixelAnimation : 1;
+	uint8 bEnableTessellation : 1;
 protected:
 	uint8 bLoadedCachedData : 1;
 public:
@@ -805,7 +807,7 @@ public:
 	virtual ENGINE_API FGraphEventArray PrecachePSOs(const FPSOPrecacheVertexFactoryDataList& VertexFactoryDataList, const FPSOPrecacheParams& PreCacheParams, EPSOPrecachePriority Priority, TArray<FMaterialPSOPrecacheRequestID>& OutMaterialPSORequestIDs) override;
 
 #if WITH_EDITOR
-	ENGINE_API virtual void ForceRecompileForRendering() override;
+	ENGINE_API virtual void ForceRecompileForRendering(EMaterialShaderPrecompileMode CompileMode = EMaterialShaderPrecompileMode::Default) override;
 #endif // WITH_EDITOR
 
 	ENGINE_API virtual float GetOpacityMaskClipValue() const override;
@@ -822,8 +824,11 @@ public:
 	ENGINE_API virtual FDisplacementScaling GetDisplacementScaling() const override;
 	ENGINE_API virtual float GetMaxWorldPositionOffsetDisplacement() const override;
 	ENGINE_API virtual bool ShouldAlwaysEvaluateWorldPositionOffset() const override;
+	ENGINE_API virtual bool IsDeferredDecal() const override;
+	ENGINE_API virtual bool HasPixelAnimation() const override;
 	ENGINE_API virtual USubsurfaceProfile* GetSubsurfaceProfile_Internal() const override;
 	ENGINE_API virtual bool CastsRayTracedShadows() const override;
+	ENGINE_API virtual bool IsTessellationEnabled() const override;
 
 	/** Checks to see if an input property should be active, based on the state of the material */
 	ENGINE_API virtual bool IsPropertyActive(EMaterialProperty InProperty) const override;
@@ -988,6 +993,10 @@ public:
 	ENGINE_API virtual void CacheGivenTypesForCooking(EShaderPlatform Platform, ERHIFeatureLevel::Type InFeatureLevel, EMaterialQualityLevel::Type QualityLevel, const TArray<const FVertexFactoryType*>& VFTypes, const TArray<const FShaderPipelineType*> PipelineTypes, const TArray<const FShaderType*>& ShaderTypes) override;
 #endif
 	ENGINE_API virtual bool IsComplete() const override;
+
+#if WITH_EDITOR
+	ENGINE_API virtual bool IsCompiling() const override;
+#endif
 
 	/** Tracking of in-flight uniform expression cache update operations for the material instance, for thread safety destroying the resource. */
 	void StartCacheUniformExpressions() const;

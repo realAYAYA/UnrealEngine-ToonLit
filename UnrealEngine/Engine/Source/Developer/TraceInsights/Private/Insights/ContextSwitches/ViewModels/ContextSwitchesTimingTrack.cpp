@@ -276,6 +276,56 @@ void FContextSwitchesTimingTrack::BuildContextMenu(FMenuBuilder& InOutMenuBuilde
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+const TSharedPtr<const ITimingEvent> FContextSwitchesTimingTrack::SearchEvent(const FTimingEventSearchParameters& InSearchParameters) const
+{
+	TSharedPtr<const ITimingEvent> FoundEvent;
+
+	TTimingEventSearch<TraceServices::FContextSwitch>::Search(
+		InSearchParameters,
+
+		[this, &InSearchParameters](TTimingEventSearch<TraceServices::FContextSwitch>::FContext& InContext)
+		{
+			TSharedPtr<const TraceServices::IAnalysisSession> Session = FInsightsManager::Get()->GetSession();
+			if (Session.IsValid())
+			{
+				TraceServices::FAnalysisSessionReadScope SessionReadScope(*Session.Get());
+				if (Session.IsValid() && TraceServices::ReadContextSwitchesProvider(*Session.Get()))
+				{
+					const TraceServices::IContextSwitchesProvider* ContextSwitchesProvider = TraceServices::ReadContextSwitchesProvider(*Session.Get());
+
+					auto Callback = [&InContext](double EventStartTime, double EventEndTime, uint32 EventDepth, const TraceServices::FContextSwitch& Event)
+					{
+						InContext.Check(EventStartTime, EventEndTime, EventDepth, Event);
+						return InContext.ShouldContinueSearching() ? TraceServices::EContextSwitchEnumerationResult::Continue : TraceServices::EContextSwitchEnumerationResult::Stop;
+					};
+
+					ContextSwitchesProvider->EnumerateContextSwitches(ThreadId, InSearchParameters.StartTime, InSearchParameters.EndTime,
+						[ContextSwitchesProvider, Callback](const TraceServices::FContextSwitch& ContextSwitchEvent)
+						{
+							return Callback(ContextSwitchEvent.Start, ContextSwitchEvent.End, 0, ContextSwitchEvent);
+						});
+				}
+			}
+		},
+
+		[](double EventStartTime, double EventEndTime, uint32 EventDepth, const TraceServices::FContextSwitch& Event)
+		{
+			return true;
+		},
+
+		[&FoundEvent, this](double InFoundStartTime, double InFoundEndTime, uint32 InFoundDepth, const TraceServices::FContextSwitch& InEvent)
+		{
+			FoundEvent = MakeShared<FTimingEvent>(SharedThis(this), InFoundStartTime, InFoundEndTime, InFoundDepth, InEvent.CoreNumber);
+		},
+
+		TTimingEventSearch<TraceServices::FContextSwitch>::NoMatch
+	);
+
+	return FoundEvent;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 } // namespace Insights
 
 #undef LOCTEXT_NAMESPACE

@@ -13,7 +13,7 @@ struct FDecoratorA_BaseSharedData : public FAnimNextDecoratorSharedData
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	uint32 DecoratorUID;
 
 	FDecoratorA_BaseSharedData();
@@ -24,7 +24,7 @@ struct FDecoratorAB_AddSharedData : public FAnimNextDecoratorSharedData
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	uint32 DecoratorUID;
 
 	FDecoratorAB_AddSharedData();
@@ -35,7 +35,7 @@ struct FDecoratorAC_AddSharedData : public FAnimNextDecoratorSharedData
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	uint32 DecoratorUID;
 
 	FDecoratorAC_AddSharedData();
@@ -46,28 +46,28 @@ struct FDecoratorSerialization_BaseSharedData : public FAnimNextDecoratorSharedD
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	int32 Integer = 0;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	int32 IntegerArray[4] = { 0, 0, 0, 0 };
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	TArray<int32> IntegerTArray;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FVector Vector = FVector::ZeroVector;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FVector VectorArray[2] = { FVector::ZeroVector, FVector::ZeroVector };
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	TArray<FVector> VectorTArray;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FString String;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FName Name;
 };
 
@@ -76,28 +76,28 @@ struct FDecoratorSerialization_AddSharedData : public FAnimNextDecoratorSharedDa
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	int32 Integer = 0;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	int32 IntegerArray[4] = { 0, 0, 0, 0 };
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	TArray<int32> IntegerTArray;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FVector Vector = FVector::ZeroVector;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FVector VectorArray[2] = { FVector::ZeroVector, FVector::ZeroVector };
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	TArray<FVector> VectorTArray;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FString String;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FName Name;
 };
 
@@ -106,28 +106,28 @@ struct FDecoratorNativeSerialization_AddSharedData : public FAnimNextDecoratorSh
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	int32 Integer = 0;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	int32 IntegerArray[4] = { 0, 0, 0, 0 };
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	TArray<int32> IntegerTArray;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FVector Vector = FVector::ZeroVector;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FVector VectorArray[2] = { FVector::ZeroVector, FVector::ZeroVector };
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	TArray<FVector> VectorTArray;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FString String;
 
-	UPROPERTY()
+	UPROPERTY(meta = (Inline))
 	FName Name;
 
 	bool bSerializeCalled = false;

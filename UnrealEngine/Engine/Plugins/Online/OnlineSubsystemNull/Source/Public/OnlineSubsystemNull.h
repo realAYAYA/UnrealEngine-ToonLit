@@ -125,6 +125,9 @@ PACKAGE_SCOPE:
 	/** True if it should fail faked network queries and act like an offline system */
 	static bool bForceOfflineMode;
 
+	/** True if the first login only counts as local login, a second is required for online access */
+	static bool bOnlineRequiresSecondLogin;
+
 private:
 
 	/** Interface to the session services */

@@ -8,7 +8,7 @@
 #include "TextureResource.h"
 #include "SystemTextures.h"
 
-void OpenColorIOBindTextureResources(FOpenColorIOPixelShaderParameters* Parameters, const TSortedMap<int32, FTextureResource*>& InTextureResources)
+bool OpenColorIOBindTextureResources(FOpenColorIOPixelShaderParameters* Parameters, const TSortedMap<int32, FTextureResource*>& InTextureResources)
 {
 	/**
 	* The engine's shader parameter API doesn't provide name/slot-based updates (in the style of legacy OpenGL),
@@ -23,9 +23,17 @@ void OpenColorIOBindTextureResources(FOpenColorIOPixelShaderParameters* Paramete
 	for ( const TPair<int32, FTextureResource*>& Pair : InTextureResources )
 	{
 		const int32 Index = Pair.Key;
-		ensureMsgf(Index >= 0 && Index < (int32)OpenColorIOShader::MaximumTextureSlots, TEXT("Out of range LUT texture slot index."));
+		if (!ensureMsgf(Index >= 0 && Index < (int32)OpenColorIOShader::MaximumTextureSlots, TEXT("Out of range LUT texture slot index.")))
+		{
+			return false;
+		}
 
 		const FTextureResource* Texture = Pair.Value;
+		if (!ensureMsgf(Texture, TEXT("Texture resource should not be null.")))
+		{
+			return false;
+		}
+
 		const bool bIsLUT3D = Texture->GetTexture3DResource() != nullptr;
 
 		const uint32 BaseOffset = bIsLUT3D ? offsetof(FOpenColorIOPixelShaderParameters, Ocio_lut3d_0) : offsetof(FOpenColorIOPixelShaderParameters, Ocio_lut1d_0);
@@ -34,6 +42,8 @@ void OpenColorIOBindTextureResources(FOpenColorIOPixelShaderParameters* Paramete
 		*((FRHITexture**)(BaseAddress + ParamOffset)) = Texture->TextureRHI.GetReference();
 		*((FRHISamplerState**)(BaseAddress + ParamOffset + sizeof(FRHITexture*))) = Texture->SamplerStateRHI.GetReference();
 	}
+
+	return true;
 }
 
 FRHITexture* OpenColorIOGetMiniFontTexture()

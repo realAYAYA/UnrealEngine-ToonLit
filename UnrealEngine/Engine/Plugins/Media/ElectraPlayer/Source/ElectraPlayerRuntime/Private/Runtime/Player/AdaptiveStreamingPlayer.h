@@ -30,9 +30,16 @@ class IAdaptiveStreamingPlayer : public TMediaNoncopyable<IAdaptiveStreamingPlay
 public:
 	struct FCreateParam
 	{
-		TSharedPtr<IMediaRenderer, ESPMode::ThreadSafe>					VideoRenderer;
-		TSharedPtr<IMediaRenderer, ESPMode::ThreadSafe>					AudioRenderer;
-		FGuid															ExternalPlayerGUID;
+		TSharedPtr<IMediaRenderer, ESPMode::ThreadSafe> VideoRenderer;
+		TSharedPtr<IMediaRenderer, ESPMode::ThreadSafe> AudioRenderer;
+		FGuid ExternalPlayerGUID;
+		enum class EWorkerThreads
+		{
+			Shared,
+			DedicatedWorker,
+			DedicatedWorkerAndEventDispatch
+		};
+		EWorkerThreads WorkerThreads = EWorkerThreads::Shared;
 	};
 
 	static TSharedPtr<IAdaptiveStreamingPlayer, ESPMode::ThreadSafe> Create(const FCreateParam& InCreateParameters);

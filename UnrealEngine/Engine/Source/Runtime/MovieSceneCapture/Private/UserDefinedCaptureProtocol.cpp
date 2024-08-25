@@ -431,7 +431,7 @@ void UUserDefinedImageCaptureProtocol::WriteImageToDisk(const FCapturedPixels& P
 	// If the pixels are FColors, and this is the final pixels buffer, and we're writing PNG, always write out full alpha
 	if (PixelData.ImageData->GetType() == EImagePixelType::Color && ImageTask->Format == EImageFormat::PNG && StreamID.Identifiers.OrderIndependentCompareEqual(FinalPixelsID.Identifiers))
 	{
-		ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColor>(255));
+		ImageTask->AddPreProcessorToSetAlphaOpaque();
 	}
 
 	if (Format == EDesiredImageFormat::EXR)

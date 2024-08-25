@@ -21,6 +21,9 @@
 #include "RewindData.h"
 #include "ChaosVisualDebugger/ChaosVDContextProvider.h"
 
+// Enable support for Collision Test Mode (reset particle positions and constraints every tick for debugging)
+#define CHAOS_EVOLUTION_COLLISION_TESTMODE (!UE_BUILD_TEST && !UE_BUILD_SHIPPING)
+
 extern int32 ChaosRigidsEvolutionApplyAllowEarlyOutCVar;
 extern int32 ChaosRigidsEvolutionApplyPushoutAllowEarlyOutCVar;
 extern int32 ChaosNumPushOutIterationsOverride;
@@ -65,16 +68,6 @@ struct FBroadPhaseConfig
 };
 
 extern CHAOS_API FBroadPhaseConfig BroadPhaseConfig;
-
-namespace CVars
-{
-	extern CHAOS_API bool bDisallowSetKinematicTargetOnDynamics;
-}
-
-namespace Collisions
-{
-	void CHAOS_API ResetChaosCollisionCounters();
-}
 
 extern CHAOS_API int32 FixBadAccelerationStructureRemoval;
 
@@ -413,32 +406,6 @@ public:
 	}
 
 	/**
-	* Set the kinematic target for a particle. This will exist for only one tick - a new target must be set for the next tick if required.
-	*/
-	void SetParticleKinematicTarget(FKinematicGeometryParticleHandle* KinematicHandle, const FKinematicTarget& NewKinematicTarget)
-	{
-		if (KinematicHandle == nullptr)
-		{
-			return;
-		}
-
-		// NOTE: We ignore SetKinematicTarget if called on a dynamic body since this is not supported
-		// and if we callMarkMovingKinematic(KinematicHandle) on a dynamic the particle will end up
-		// in two mutally exlcusivbe particle lists, leading to a collision detection race condition.
-		// @todo(chaos): maybe we should ensure that this is not called for dynamics
-		if ((KinematicHandle->ObjectState() == EObjectStateType::Kinematic) || !CVars::bDisallowSetKinematicTargetOnDynamics)
-		{
-			// optimization : we keep track of moving kinematic targets ( list gets clear every frame )
-			if (NewKinematicTarget.GetMode() != EKinematicTargetMode::None)
-			{
-				// move particle from "non-moving" kinematics to "moving" kinematics
-				Particles.MarkMovingKinematic(KinematicHandle);
-			}
-			KinematicHandle->SetKinematicTarget(NewKinematicTarget);
-		}
-	}
-	
-	/**
 	* To be called after creating a particle in the Particles container
 	* @todo(chaos): We should add a particle creation API to the evolution
 	* @todo(chaos): This is (or could be) very similar to Enable/Disable - do we really need both?
@@ -454,6 +421,8 @@ public:
 				IslandManager.AddParticle(Particle);
 			}
 		}
+
+		CVD_TRACE_PARTICLE(Particle);
 
 		// Flag as dirty to update the spatial query acceleration structures
 		DirtyParticle(*Particle);
@@ -476,11 +445,27 @@ public:
 	*/
 	void DisableParticle(FGeometryParticleHandle* Particle)
 	{
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
+		TestModeParticleDisabled(Particle);
+#endif
+
+		// NOTE: kinematics must visit their graph edges to determine what islands they are in, so we must remove the 
+		// particle from the graph before we disable its constraints or we don't know what island(s) to wake.
+		IslandManager.RemoveParticle(Particle);
+
 		RemoveParticleFromAccelerationStructure(*Particle);
 		Particles.DisableParticle(Particle);
 		DisableConstraints(Particle);
 		DestroyTransientConstraints(Particle);
-		IslandManager.RemoveParticle(Particle);
+
+		if (FPBDRigidParticleHandle* Rigid = Particle->CastToRigidParticle())
+		{
+			// This flag is only updated for moving kinematics, so make sure 
+			// we don't leave a residual value if we get enabled again
+			Rigid->ClearIsMovingKinematic();
+		}
+
+		CVD_TRACE_PARTICLE(Particle);
 	}
 
 	/**
@@ -579,6 +564,10 @@ public:
 
 	void DestroyParticle(FGeometryParticleHandle* Particle)
 	{
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
+		TestModeParticleDisabled(Particle);
+#endif
+
 		if (MRewindData)
 		{
 			MRewindData->RemoveObject(Particle);
@@ -604,6 +593,9 @@ public:
 	}
 
 	CHAOS_API void SetParticleObjectState(FPBDRigidParticleHandle* Particle, EObjectStateType ObjectState);
+
+	// Wake a dynamic particle and reset sleep counters for its island
+	CHAOS_API void WakeParticle(FPBDRigidParticleHandle* Particle);
 
 	CHAOS_API void SetParticleSleepType(FPBDRigidParticleHandle* Particle, ESleepType InSleepType);
 
@@ -657,29 +649,23 @@ public:
 	*/
 	void DisableConstraints(FGeometryParticleHandle* ParticleHandle)
 	{
-		RemoveConstraintsFromConstraintGraph(ParticleHandle->ParticleConstraints());
-
-		for (FConstraintHandle* Constraint : ParticleHandle->ParticleConstraints())
+		for (FPBDConstraintContainer* Container : ConstraintContainers)
 		{
-			if (Constraint->IsEnabled())
-			{
-				Constraint->SetEnabled(false);
-			}
+			Container->OnDisableParticle(ParticleHandle);
 		}
+
+		RemoveConstraintsFromConstraintGraph(ParticleHandle->ParticleConstraints());
 	}
 
 	/** 
 	* Enable constraints (all types except collisions) from the enabled particles; constraints will only become enabled if their particle end points are valid.
-	* @note This only applies to persistent constraints (joints etc), not transient constraints (collisons)
+	* @note This only applies to persistent constraints (joints etc), not transient constraints (collisions)
 	*/
 	void EnableConstraints(FGeometryParticleHandle* ParticleHandle)
 	{
-		for (FConstraintHandle* Constraint : ParticleHandle->ParticleConstraints())
+		for (FPBDConstraintContainer* Container : ConstraintContainers)
 		{
-			if (!Constraint->IsEnabled())
-			{
-				Constraint->SetEnabled(true);
-			}
+			Container->OnEnableParticle(ParticleHandle);
 		}
 	}
 
@@ -712,10 +698,13 @@ public:
 	* Destroy all transient constraints (collisions) involving the specified particle.
 	*/
 	virtual void DestroyTransientConstraints(FGeometryParticleHandle* Particle) {}
+	virtual void DestroyTransientConstraints() {}
 
 	const TParticleView<FPBDRigidClusteredParticles>& GetNonDisabledClusteredView() const { return Particles.GetNonDisabledClusteredView(); }
 
 	TSerializablePtr<FChaosPhysicsMaterial> GetPhysicsMaterial(const FGeometryParticleHandle* Particle) const { return Particle->AuxilaryValue(PhysicsMaterials); }
+
+	CHAOS_API const FChaosPhysicsMaterial* GetFirstPhysicsMaterial(const FGeometryParticleHandle* Particle) const;
 	
 	const TUniquePtr<FChaosPhysicsMaterial> &GetPerParticlePhysicsMaterial(const FGeometryParticleHandle* Particle) const { return Particle->AuxilaryValue(PerParticlePhysicsMaterials); }
 
@@ -734,8 +723,6 @@ public:
 
 	void PrepareTick()
 	{
-		Collisions::ResetChaosCollisionCounters();
-
 		for (FPBDConstraintContainer* Container : ConstraintContainers)
 		{
 			Container->PrepareTick();
@@ -750,133 +737,7 @@ public:
 		}
 	}
 
-	void ApplyKinematicTargets(const FReal Dt, const FReal StepFraction)
-	{
-		check(StepFraction > (FReal)0);
-		check(StepFraction <= (FReal)1);
-
-		const bool IsLastStep = (FMath::IsNearlyEqual(StepFraction, (FReal)1, (FReal)UE_KINDA_SMALL_NUMBER));
-
-		FChaosVDContextWrapper CVDContext;
-		CVD_GET_WRAPPED_CURRENT_CONTEXT(CVDContext);
-
-		// NOTE: ApplyKinematicTargetForParticle is run in a parallel-for. We only write to particle state
-		const auto& ApplyParticleKinematicTarget = 
-		[Dt, StepFraction, IsLastStep, CVDContext]
-		(FTransientPBDRigidParticleHandle& Particle, const int32 ParticleIndex)
-		-> void
-		{
-			CVD_SCOPE_CONTEXT(CVDContext.Context);
-
-			TKinematicTarget<FReal, 3>& KinematicTarget = Particle.KinematicTarget();
-			const FVec3 CurrentX = Particle.X();
-			const FRotation3 CurrentR = Particle.R();
-			constexpr FReal MinDt = 1e-6f;
-
-			bool bMoved = false;
-			switch (KinematicTarget.GetMode())
-			{
-			case EKinematicTargetMode::None:
-				// Nothing to do
-				break;
-
-			case EKinematicTargetMode::Reset:
-			{
-				// Reset velocity and then switch to do-nothing mode
-				Particle.V() = FVec3(0, 0, 0);
-				Particle.W() = FVec3(0, 0, 0);
-				KinematicTarget.SetMode(EKinematicTargetMode::None);
-				break;
-			}
-
-			case EKinematicTargetMode::Position:
-			{
-				// Move to kinematic target and update velocities to match
-				// Target positions only need to be processed once, and we reset the velocity next frame (if no new target is set)
-				FVec3 NewX;
-				FRotation3 NewR;
-				if (IsLastStep)
-				{
-					NewX = KinematicTarget.GetTarget().GetLocation();
-					NewR = KinematicTarget.GetTarget().GetRotation();
-					KinematicTarget.SetMode(EKinematicTargetMode::Reset);
-				}
-				else
-				{
-					// as a reminder, stepfraction is the remaing fraction of the step from the remaining steps
-					// for total of 4 steps and current step of 2, this will be 1/3 ( 1 step passed, 3 steps remains )
-					NewX = FVec3::Lerp(CurrentX, KinematicTarget.GetTarget().GetLocation(), StepFraction);
-					NewR = FRotation3::Slerp(CurrentR, KinematicTarget.GetTarget().GetRotation(), decltype(FQuat::X)(StepFraction));
-				}
-
-				const bool bPositionChanged = !FVec3::IsNearlyEqual(NewX, CurrentX, UE_SMALL_NUMBER);
-				const bool bRotationChanged = !FRotation3::IsNearlyEqual(NewR, CurrentR, UE_SMALL_NUMBER);
-				bMoved = bPositionChanged || bRotationChanged;
-				FVec3 NewV = FVec3(0);
-				FVec3 NewW = FVec3(0);
-				if (Dt > MinDt)
-				{
-					if (bPositionChanged)
-					{
-						NewV = FVec3::CalculateVelocity(CurrentX, NewX, Dt);
-					}
-					if (bRotationChanged)
-					{
-						NewW = FRotation3::CalculateAngularVelocity(CurrentR, NewR, Dt);
-					}
-				}
-				Particle.X() = NewX;
-				Particle.R() = NewR;
-				Particle.V() = NewV;
-				Particle.W() = NewW;
-
-				break;
-			}
-
-			case EKinematicTargetMode::Velocity:
-			{
-				// Move based on velocity
-				bMoved = true;
-				Particle.X() = Particle.X() + Particle.V() * Dt;
-				Particle.R() = FRotation3::IntegrateRotationWithAngularVelocity(Particle.R(), Particle.W(), Dt);
-				break;
-			}
-			}
-			
-			// Set positions and previous velocities if we can
-			// Note: At present kininematics are in fact rigid bodies
-			Particle.P() = Particle.X();
-			Particle.Q() = Particle.R();
-			Particle.PreV() = Particle.V();
-			Particle.PreW() = Particle.W();
-
-			if (bMoved)
-			{
-				if (!Particle.CCDEnabled())
-				{
-					Particle.UpdateWorldSpaceState(FRigidTransform3(Particle.P(), Particle.Q()), FVec3(0));
-				}
-				else
-				{
-					Particle.UpdateWorldSpaceStateSwept(FRigidTransform3(Particle.P(), Particle.Q()), FVec3(0), -Particle.V() * Dt);
-				}
-			}
-
-			CVD_TRACE_PARTICLE(Particle.Handle())
-		};
-
-		// Apply kinematic targets in parallel
-		Particles.GetActiveMovingKinematicParticlesView().ParallelFor(ApplyParticleKinematicTarget);
-
-		// done with update, let's clear the tracking structures
-		if (IsLastStep)
-		{
-			Particles.UpdateAllMovingKinematic();
-		}
-
-		// If we changed any particle state, the views need to be refreshed
-		Particles.UpdateDirtyViews();
-	}
+	CHAOS_API virtual void ApplyKinematicTargets(const FReal Dt, const FReal StepFraction) {}
 
 	/** Make a copy of the acceleration structure to allow for external modification.
 	    This is needed for supporting sync operations on SQ structure from game thread. You probably want to go through solver which maintains PendingExternal */
@@ -927,9 +788,18 @@ public:
 		return UniqueIndicesPendingRelease.Contains(UniqueIdx) || PendingReleaseIndices.Contains(UniqueIdx);
 	}
 
+	void KillSafeAsyncTasks()
+	{
+		if (AccelerationStructureTaskComplete.GetReference() && !AccelerationStructureTaskComplete->IsComplete() && bAccelerationStructureTaskSignalKill != nullptr)
+		{
+			*bAccelerationStructureTaskSignalKill = true;			
+		}
+	}
+
 	bool AreAnyTasksPending() const
 	{
-		return (AccelerationStructureTaskComplete.GetReference() && !AccelerationStructureTaskComplete->IsComplete());
+		return AccelerationStructureTaskComplete.GetReference() && !AccelerationStructureTaskComplete->IsComplete() && 
+			(bAccelerationStructureTaskSignalKill == nullptr || bAccelerationStructureTaskStarted  == nullptr || *bAccelerationStructureTaskSignalKill == false || *bAccelerationStructureTaskStarted == true);
 	}
 
 	void SetCanStartAsyncTasks(bool bInCanStartAsyncTasks)
@@ -942,9 +812,17 @@ public:
 		MRewindData = RewindData;
 	}
 
+	FRewindData* GetRewindData()
+	{
+		return MRewindData;
+	}
+
 	CHAOS_API void DisableParticleWithRemovalEvent(FGeometryParticleHandle* Particle);
 	const TArray<FRemovalData>& GetAllRemovals() { return MAllRemovals; }
 	void ResetAllRemovals() { MAllRemovals.Reset(); }
+
+	void SetName(const FString& InName) { EvolutionName = InName; }
+	const FString& GetName() const { return EvolutionName; }
 
 protected:
 	int32 NumConstraints() const
@@ -1102,7 +980,9 @@ protected:
 			, FAccelerationStructure* InExternalAccelerationStructure
 			, bool InForceFullBuild
 			, bool InIsSingleThreaded
-			, bool bNeedsReset);
+			, bool bNeedsReset
+			, std::atomic<bool>** bOutStarted
+			, std::atomic<bool>** bOutKillTask);
 		static FORCEINLINE TStatId GetStatId();
 		static FORCEINLINE ENamedThreads::Type GetDesiredThread();
 		static FORCEINLINE ESubsequentsMode::Type GetSubsequentsMode();
@@ -1115,11 +995,15 @@ protected:
 		bool IsForceFullBuild;
 		bool bIsSingleThreaded;
 		bool bNeedsReset;
+		std::atomic<bool> bStarted;
+		std::atomic<bool> bKillTask;
 
 	private:
 		void UpdateStructure(FAccelerationStructure* AccelerationStructure, FAccelerationStructure* CopyToAccelerationStructure = nullptr);
 	};
 	FGraphEventRef AccelerationStructureTaskComplete;
+	std::atomic<bool>* bAccelerationStructureTaskStarted;
+	std::atomic<bool>* bAccelerationStructureTaskSignalKill;
 
 	TUniquePtr<ISpatialAccelerationCollectionFactory> SpatialCollectionFactory;
 
@@ -1132,6 +1016,27 @@ protected:
 	TArray<FUniqueIdx> PendingReleaseIndices;	//for now just assume a one frame delay, but may need something more general
 	bool bIsResim = false; 
 	bool bIsReset = false;
+
+	// Useful name for debugging. E.g., Indicates whether we are on client or server
+	FString EvolutionName;
+
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
+	// Test Mode for Collision issues (resets particle positions every tick for repeatable testing)
+	CHAOS_API void TestModeStep();
+	CHAOS_API void TestModeParticleDisabled(FGeometryParticleHandle* Particle);
+	CHAOS_API void TestModeSaveParticles();
+	CHAOS_API void TestModeSaveParticle(FGeometryParticleHandle* Particle);
+	CHAOS_API void TestModeUpdateSavedParticle(FGeometryParticleHandle* Particle);
+	CHAOS_API void TestModeRestoreParticles();
+	CHAOS_API void TestModeRestoreParticle(FGeometryParticleHandle* Particle);
+
+	struct FTestModeParticleData
+	{
+		FVec3 X, P, V, W;
+		FRotation3 R, Q;
+	};
+	TMap<FPBDRigidParticleHandle*, FTestModeParticleData> TestModeData;
+#endif
 };
 
 

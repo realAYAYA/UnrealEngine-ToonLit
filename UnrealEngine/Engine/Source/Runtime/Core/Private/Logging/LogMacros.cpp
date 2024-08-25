@@ -3,6 +3,7 @@
 #include "Logging/LogMacros.h"
 #include "CoreGlobals.h"
 #include "HAL/Platform.h"
+#include "HAL/PlatformMallocCrash.h"
 #include "Misc/ScopeLock.h"
 #include "Misc/OutputDeviceRedirector.h"
 #include "Misc/FeedbackContext.h"
@@ -54,7 +55,6 @@ void FMsg::LogV(const ANSICHAR* File, int32 Line, const FLogCategoryName& Catego
 #if !NO_LOGGING
 	LLM_SCOPE_BYNAME("EngineMisc/FMsgLogf")
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FMsgLogf);
-	CSV_CUSTOM_STAT(FMsgLogf, FMsgLogfCount, 1, ECsvCustomStatOp::Accumulate);
 
 	if (LIKELY(Verbosity != ELogVerbosity::Fatal))
 	{
@@ -79,6 +79,15 @@ void FMsg::LogV(const ANSICHAR* File, int32 Line, const FLogCategoryName& Catego
 		{
 			(OutputDevice ? OutputDevice : GLog)->Serialize(Message, Verbosity, Category);
 		});
+
+#if CSV_PROFILER
+		// Only update the CSV stat if we're not crashing, otherwise things can get messy
+		if (LIKELY(!FPlatformMallocCrash::Get().IsActive()))
+		{
+			CSV_CUSTOM_STAT(FMsgLogf, FMsgLogfCount, 1, ECsvCustomStatOp::Accumulate);
+		}
+#endif
+
 	}
 	else
 	{

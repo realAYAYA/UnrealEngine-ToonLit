@@ -18,9 +18,11 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimInstanceProxy.h"
 #include "Animation/AttributesRuntime.h"
+#include "Rigs/RigModuleDefines.h"
 
 #if WITH_EDITOR
 #include "RigVMModel/RigVMPin.h"
+#include "RigVMModel/Nodes/RigVMUnitNode.h"
 #include "RigVMTypeUtils.h"
 #endif
 
@@ -45,7 +47,7 @@ CONTROLRIG_API DECLARE_LOG_CATEGORY_EXTERN(LogControlRig, Log, All);
 
 /** Runs logic for mapping input data to transforms (the "Rig") */
 UCLASS(Blueprintable, Abstract, editinlinenew)
-class CONTROLRIG_API UControlRig : public URigVMHost, public INodeMappingProviderInterface
+class CONTROLRIG_API UControlRig : public URigVMHost, public INodeMappingProviderInterface, public IRigHierarchyProvider
 {
 	GENERATED_UCLASS_BODY()
 
@@ -65,7 +67,7 @@ public:
 
 	/** Bindable event to manage undo / redo brackets in the client */
 	DECLARE_EVENT_TwoParams(UControlRig, FControlUndoBracketEvent, UControlRig*, bool /* bOpen */);
-	
+
 	// To support Blueprints/scripting, we need a different delegate type (a 'Dynamic' delegate) which supports looser style UFunction binding (using names).
 	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_ThreeParams(FOnControlSelectedBP, UControlRig, OnControlSelected_BP, UControlRig*, Rig, const FRigControlElement&, Control, bool, bSelected);
 
@@ -83,10 +85,42 @@ public:
 	virtual void PostLoad() override;
 	virtual UScriptStruct* GetPublicContextStruct() const override { return FControlRigExecuteContext::StaticStruct(); }
 
+	// Returns the settings of the module this instance belongs to
+	const FRigModuleSettings& GetRigModuleSettings() const;
+
+	// Returns true if the rig is defined as a rig module
+	bool IsRigModule() const;
+
+	// Returns true if this rig is an instance module. Rigs may be a module but not instance
+	// when being interacted with the asset editor
+	bool IsRigModuleInstance() const;
+
+	// Returns true if this rig is a modular rig (of class UModularRig)
+	bool IsModularRig() const;
+
+	// Returns true if this is a standalone rig (of class UControlRig and not modular)
+	bool IsStandaloneRig() const;
+
+	// Returns true if this is a native rig (implemented in C++)
+	bool IsNativeRig() const;
+
+	// Returns the parent rig hosting this module instance
+	UControlRig* GetParentRig() const;
+
+	// Returns the namespace of this module (for example ArmModule::)
+	const FString& GetRigModuleNameSpace() const;
+
+	// Returns the redirector from key to key for this rig
+	virtual FRigElementKeyRedirector& GetElementKeyRedirector();
+	virtual FRigElementKeyRedirector GetElementKeyRedirector() const { return ElementKeyRedirector; }
+	
+	// Returns the redirector from key to key for this rig
+	virtual void SetElementKeyRedirector(const FRigElementKeyRedirector InElementRedirector);
+
 	/** Creates a transformable control handle for the specified control to be used by the constraints system. Should use the UObject from 
 	ConstraintsScriptingLibrary::GetManager(UWorld* InWorld)*/
 	UFUNCTION(BlueprintCallable, Category = "Control Rig | Constraints")
-	UTransformableControlHandle* CreateTransformableControlHandle(UObject* Outer, const FName& ControlName) const;
+	UTransformableControlHandle* CreateTransformableControlHandle(const FName& ControlName) const;
 
 
 #if WITH_EDITOR
@@ -102,6 +136,26 @@ public:
 
 	/** Initialize the VM */
 	virtual bool InitializeVM(const FName& InEventName) override;
+
+	virtual void InitializeVMs(bool bInitRigUnits = true) { Super::Initialize(bInitRigUnits); }
+	virtual bool InitializeVMs(const FName& InEventName) { return Super::InitializeVM(InEventName); }
+
+	/** Evaluates the ControlRig */
+	virtual void Evaluate_AnyThread() override;
+
+	/** Ticks animation of the skeletal mesh component bound to this control rig */
+	bool EvaluateSkeletalMeshComponent(double InDeltaTime);
+
+	/** Removes any stored additive control values */
+	void ResetControlValues();
+
+	/** Resets the stored pose coming from the anim sequence.
+	 * This usually indicates a new pose should be stored. */
+	void ClearPoseBeforeBackwardsSolve();
+
+	/* For additive rigs, will set control values by inverting the pose found after the backwards solve */
+	/* Returns the array of control elements that were modified*/
+	TArray<FRigControlElement*> InvertInputPose(const TArray<FRigElementKey>& InElements = TArray<FRigElementKey>(), EControlRigSetKey InSetKey = EControlRigSetKey::Never);
 
 	/** Setup bindings to a runtime object (or clear by passing in nullptr). */
 	void SetObjectBinding(TSharedPtr<IControlRigObjectBinding> InObjectBinding)
@@ -125,7 +179,7 @@ public:
 		return DynamicHierarchy;
 	}
 	
-	URigHierarchy* GetHierarchy() const
+	virtual URigHierarchy* GetHierarchy() const override
 	{
 		return DynamicHierarchy;
 	}
@@ -134,6 +188,9 @@ public:
 
 	// called after post reinstance when compilng blueprint by Sequencer
 	void PostReinstanceCallback(const UControlRig* Old);
+
+	// resets the recorded transform changes
+	void ResetRecordedTransforms(const FName& InEventName);
 
 #endif // WITH_EDITOR
 	
@@ -150,12 +207,27 @@ public:
 	virtual bool Execute(const FName& InEventName) override;
 	virtual bool Execute_Internal(const FName& InEventName) override;
 	virtual void RequestInit() override;
+	virtual void RequestInitVMs()  { Super::RequestInit(); }
+	virtual bool SupportsEvent(const FName& InEventName) const override { return Super::SupportsEvent(InEventName); }
+	virtual const TArray<FName>& GetSupportedEvents() const override{ return Super::GetSupportedEvents(); }
+
+	template<class T>
+	bool SupportsEvent() const
+	{
+		return SupportsEvent(T::EventName);
+	}
+
+	bool AllConnectorsAreResolved(FString* OutFailureReason = nullptr, FRigElementKey* OutConnector = nullptr) const;
 
 	/** Requests to perform construction during the next execution */
 	UFUNCTION(BlueprintCallable, Category = "Control Rig")
 	void RequestConstruction();
 
 	bool IsConstructionRequired() const;
+
+	/** Contains a backwards solve event */
+	UFUNCTION(BlueprintCallable, Category = "Control Rig")
+	bool SupportsBackwardsSolve() const;
 
 	virtual void AdaptEventQueueForEvaluate(TArray<FName>& InOutEventQueueToRun) override;
 
@@ -181,30 +253,35 @@ public:
 	}
 
 	// Returns the value of a Control
-	FRigControlValue GetControlValue(const FName& InControlName)
+	FRigControlValue GetControlValue(const FName& InControlName) const
 	{
 		const FRigElementKey Key(InControlName, ERigElementType::Control);
+		if (FRigBaseElement* Element = DynamicHierarchy->Find(Key))
+		{
+			if (FRigControlElement* ControlElement = Cast<FRigControlElement>(Element))
+			{
+				return GetControlValue(ControlElement, ERigControlValueType::Current);
+			}
+		}
 		return DynamicHierarchy->GetControlValue(Key);
 	}
 
+	FRigControlValue GetControlValue(FRigControlElement* InControl, const ERigControlValueType& InValueType) const;
+
 	// Sets the relative value of a Control
 	virtual void SetControlValueImpl(const FName& InControlName, const FRigControlValue& InValue, bool bNotify = true,
-		const FRigControlModifiedContext& Context = FRigControlModifiedContext(), bool bSetupUndo = true, bool bPrintPythonCommnds = false, bool bFixEulerFlips = false)
+		const FRigControlModifiedContext& Context = FRigControlModifiedContext(), bool bSetupUndo = true, bool bPrintPythonCommnds = false, bool bFixEulerFlips = false);
+
+	void SwitchToParent(const FRigElementKey& InElementKey, const FRigElementKey& InNewParentKey, bool bInitial, bool bAffectChildren);
+
+	FTransform GetInitialLocalTransform(const FRigElementKey &InKey)
 	{
-		const FRigElementKey Key(InControlName, ERigElementType::Control);
-
-		FRigControlElement* ControlElement = DynamicHierarchy->Find<FRigControlElement>(Key);
-		if(ControlElement == nullptr)
+		if (bIsAdditive)
 		{
-			return;
+			// The initial value of all additive controls is always Identity
+			return FTransform::Identity;
 		}
-
-		DynamicHierarchy->SetControlValue(ControlElement, InValue, ERigControlValueType::Current, bSetupUndo, false, bPrintPythonCommnds, bFixEulerFlips);
-
-		if (bNotify && OnControlModified.IsBound())
-		{
-			OnControlModified.Broadcast(this, ControlElement, Context);
-		}
+		return GetHierarchy()->GetInitialLocalTransform(InKey);
 	}
 
 	bool SetControlGlobalTransform(const FName& InControlName, const FTransform& InGlobalTransform, bool bNotify = true, const FRigControlModifiedContext& Context = FRigControlModifiedContext(), bool bSetupUndo = true, bool bPrintPythonCommands = false, bool bFixEulerFlips = false);
@@ -213,6 +290,8 @@ public:
 
 	virtual void SetControlLocalTransform(const FName& InControlName, const FTransform& InLocalTransform, bool bNotify = true, const FRigControlModifiedContext& Context = FRigControlModifiedContext(), bool bSetupUndo = true, bool bFixEulerFlips = false);
 	virtual FTransform GetControlLocalTransform(const FName& InControlName) ;
+
+	FVector GetControlSpecifiedEulerAngle(const FRigControlElement* InControlElement, bool bIsInitial = false) const;
 
 	virtual const TArray<TSoftObjectPtr<UControlRigShapeLibrary>>& GetShapeLibraries() const;
 	virtual void CreateRigControlsForCurveContainer();
@@ -273,6 +352,7 @@ public:
 	FControlRigExecuteEvent& OnPostConstruction_AnyThread() { return PostConstructionEvent; }
 	FControlRigExecuteEvent& OnPreForwardsSolve_AnyThread() { return PreForwardsSolveEvent; }
 	FControlRigExecuteEvent& OnPostForwardsSolve_AnyThread() { return PostForwardsSolveEvent; }
+	FControlRigExecuteEvent& OnPreAdditiveValuesApplication_AnyThread() { return PreAdditiveValuesApplicationEvent; }
 	FRigEventDelegate& OnRigEvent_AnyThread() { return RigEventDelegate; }
 
 	// Setup the initial transform / ref pose of the bones based upon an anim instance
@@ -310,6 +390,8 @@ public:
 #endif
 
 	virtual USceneComponent* GetOwningSceneComponent() override;
+
+	void SetDynamicHierarchy(TObjectPtr<URigHierarchy> InHierarchy);
 
 protected:
 
@@ -360,6 +442,9 @@ public:
 	};
 	
 private:
+	UPROPERTY(Transient)
+	FRigVMExtendedExecuteContext RigVMExtendedExecuteContext;
+
 	UE::Anim::FStackAttributeContainer* ExternalAnimAttributeContainer;
 
 #if WITH_EDITOR
@@ -393,18 +478,26 @@ private:
 	/** Broadcasts a notification after a forward solve has been initiated */
 	FControlRigExecuteEvent PostForwardsSolveEvent;
 
+	/** Broadcasts a notification before additive controls have been applied */
+	FControlRigExecuteEvent PreAdditiveValuesApplicationEvent;
+
 	/** Handle changes within the hierarchy */
 	void HandleHierarchyModified(ERigHierarchyNotification InNotification, URigHierarchy* InHierarchy, const FRigBaseElement* InElement);
 
+protected:
+	
+	virtual void RunPostConstructionEvent();
+
+private:
 #if WITH_EDITOR
-	/** Remove a transient / temporary control used to interact with a pin */
-	FName AddTransientControl(URigVMPin* InPin, FRigElementKey SpaceKey = FRigElementKey(), FTransform OffsetTransform = FTransform::Identity);
+	/** Add a transient / temporary control used to interact with a node */
+	FName AddTransientControl(const URigVMUnitNode* InNode, const FRigDirectManipulationTarget& InTarget);
 
-	/** Sets the value of a transient control based on a pin */
-	bool SetTransientControlValue(URigVMPin* InPin);
+	/** Sets the value of a transient control based on a node */
+	bool SetTransientControlValue(const URigVMUnitNode* InNode, TSharedPtr<FRigDirectManipulationInfo> InInfo);
 
-	/** Remove a transient / temporary control used to interact with a pin */
-	FName RemoveTransientControl(URigVMPin* InPin);
+	/** Remove a transient / temporary control used to interact with a node */
+	FName RemoveTransientControl(const URigVMUnitNode* InNode, const FRigDirectManipulationTarget& InTarget);
 
 	FName AddTransientControl(const FRigElementKey& InElement);
 
@@ -415,9 +508,13 @@ private:
 	FName RemoveTransientControl(const FRigElementKey& InElement);
 
 	static FName GetNameForTransientControl(const FRigElementKey& InElement);
-	FName GetNameForTransientControl(URigVMPin* InPin) const;
-	static FString GetPinNameFromTransientControl(const FRigElementKey& InKey);
+	FName GetNameForTransientControl(const URigVMUnitNode* InNode, const FRigDirectManipulationTarget& InTarget) const;
+	static FString GetNodeNameFromTransientControl(const FRigElementKey& InKey);
+	static FString GetTargetFromTransientControl(const FRigElementKey& InKey);
+	TSharedPtr<FRigDirectManipulationInfo> GetRigUnitManipulationInfoForTransientControl(const FRigElementKey& InKey);
+	
 	static FRigElementKey GetElementKeyFromTransientControl(const FRigElementKey& InKey);
+	bool CanAddTransientControl(const URigVMUnitNode* InNode, const FRigDirectManipulationTarget& InTarget, FString* OutFailureReason);
 
 	/** Removes all  transient / temporary control used to interact with pins */
 	void ClearTransientControls();
@@ -434,13 +531,15 @@ public:
 	
 #endif
 
-private: 
+protected:
 
 	void HandleHierarchyEvent(URigHierarchy* InHierarchy, const FRigEventContext& InEvent);
 	FRigEventDelegate RigEventDelegate;
 
-	void OnAddShapeLibrary(const FControlRigExecuteContext* InContext, const FString& InLibraryName, UControlRigShapeLibrary* InShapeLibrary, bool bReplaceExisting, bool bLogResults);
+	void RestoreShapeLibrariesFromCDO();
+	void OnAddShapeLibrary(const FControlRigExecuteContext* InContext, const FString& InLibraryName, UControlRigShapeLibrary* InShapeLibrary, bool bLogResults);
 	bool OnShapeExists(const FName& InShapeName) const;
+	virtual void InitializeVMsFromCDO() { Super::InitializeFromCDO(); }
 	virtual void InitializeFromCDO() override;
 
 
@@ -449,25 +548,10 @@ private:
 
 	const FRigInfluenceMap* FindInfluenceMap(const FName& InEventName);
 
-	UPROPERTY(transient, BlueprintGetter = GetInteractionRig, BlueprintSetter = SetInteractionRig, Category = "Interaction")
-	TObjectPtr<UControlRig> InteractionRig;
 
-	UPROPERTY(EditInstanceOnly, transient, BlueprintGetter = GetInteractionRigClass, BlueprintSetter = SetInteractionRigClass, Category = "Interaction", Meta=(DisplayName="Interaction Rig"))
-	TSubclassOf<UControlRig> InteractionRigClass;
+	FRigElementKeyRedirector ElementKeyRedirector;
 
 public:
-
-	UFUNCTION(BlueprintGetter)
-	UControlRig* GetInteractionRig() const { return InteractionRig; }
-
-	UFUNCTION(BlueprintSetter)
-	void SetInteractionRig(UControlRig* InInteractionRig);
-
-	UFUNCTION(BlueprintGetter)
-	TSubclassOf<UControlRig> GetInteractionRigClass() const { return InteractionRigClass; }
-
-	UFUNCTION(BlueprintSetter)
-	void SetInteractionRigClass(TSubclassOf<UControlRig> InInteractionRigClass);
 
 	// UObject interface
 #if WITH_EDITOR
@@ -476,6 +560,7 @@ public:
 #endif
 
 	float GetDebugBoneRadiusMultiplier() const { return DebugBoneRadiusMultiplier; }
+	static FRigUnit* GetRigUnitInstanceFromScope(TSharedPtr<FStructOnScope> InScope);
 
 public:
 	//~ Begin IInterface_AssetUserData Interface
@@ -484,29 +569,35 @@ public:
 protected:
 	mutable TArray<TObjectPtr<UAssetUserData>> CombinedAssetUserData;
 
+	UPROPERTY(Transient, DuplicateTransient)
+	mutable TMap<FName, TObjectPtr<UDataAssetLink>> ExternalVariableDataAssetLinks;
+
+	DECLARE_DELEGATE_RetVal(TArray<TObjectPtr<UAssetUserData>>, FGetExternalAssetUserData);
+	FGetExternalAssetUserData GetExternalAssetUserDataDelegate;
+
 private:
 
 	void CopyPoseFromOtherRig(UControlRig* Subject);
-	void HandleInteractionRigControlModified(UControlRig* Subject, FRigControlElement* Control, const FRigControlModifiedContext& Context);
-	void HandleInteractionRigInitialized(URigVMHost* Subject, const FName& EventName);
-	void HandleInteractionRigExecuted(URigVMHost* Subject, const FName& EventName);
-	void HandleInteractionRigControlSelected(UControlRig* Subject, FRigControlElement* InControl, bool bSelected, bool bInverted);
-
 
 protected:
 	bool bCopyHierarchyBeforeConstruction;
 	bool bResetInitialTransformsBeforeConstruction;
+	bool bResetCurrentTransformsAfterConstruction;
 	bool bManipulationEnabled;
 
 	int32 PreConstructionBracket;
 	int32 PostConstructionBracket;
 	int32 PreForwardsSolveBracket;
 	int32 PostForwardsSolveBracket;
+	int32 PreAdditiveValuesApplicationBracket;
 	int32 InteractionBracket;
 	int32 InterRigSyncBracket;
 	int32 ControlUndoBracketIndex;
 	uint8 InteractionType;
 	TArray<FRigElementKey> ElementsBeingInteracted;
+#if WITH_EDITOR
+	TArray<TSharedPtr<FRigDirectManipulationInfo>> RigUnitManipulationInfos;
+#endif
 	bool bInteractionJustBegan;
 
 	TWeakObjectPtr<USceneComponent> OuterSceneComponent;
@@ -535,6 +626,7 @@ protected:
 	{
 		return InterRigSyncBracket > 0;
 	}
+
 
 #if WITH_EDITOR
 	static void OnHierarchyTransformUndoRedoWeak(URigHierarchy* InHierarchy, const FRigElementKey& InKey, ERigTransformType::Type InTransformType, const FTransform& InTransform, bool bIsUndo, TWeakObjectPtr<UControlRig> WeakThis)
@@ -569,17 +661,57 @@ private:
 
 #endif
 
+
+protected:
+	/** An additive control rig runs a backwards solve before applying additive control values
+	 * and running the forward solve
+	 */
+	UPROPERTY()
+	bool bIsAdditive;
+
+	struct FRigSetControlValueInfo
+	{
+		FRigControlValue Value;
+		bool bNotify;
+		FRigControlModifiedContext Context;
+		bool bSetupUndo;
+		bool bPrintPythonCommnds;
+		bool bFixEulerFlips;
+	};
+	struct FRigSwitchParentInfo
+	{
+		FRigElementKey NewParent;
+		bool bInitial;
+		bool bAffectChildren;
+	};
+	FRigPose PoseBeforeBackwardsSolve;
+	FRigPose ControlsAfterBackwardsSolve;
+	TMap<FRigElementKey, FRigSetControlValueInfo> ControlValues; // Layered Rigs: Additive values in local space (to add after backwards solve)
+	TMap<FRigElementKey, FRigSwitchParentInfo> SwitchParentValues; // Layered Rigs: Parent switching values to perform after backwards solve
+
+
+private:
 	float DebugBoneRadiusMultiplier;
 	
-#if WITH_EDITOR	
-
 public:
+	
+#if WITH_EDITOR	
 
 	void ToggleControlsVisible() { bControlsVisible = !bControlsVisible; }
 	void SetControlsVisible(const bool bIsVisible) { bControlsVisible = bIsVisible; }
 	bool GetControlsVisible()const { return bControlsVisible;}
 
-#endif	
+#endif
+	
+	virtual bool IsAdditive() const { return bIsAdditive; }
+	void SetIsAdditive(const bool bInIsAdditive)
+	{
+		bIsAdditive = bInIsAdditive;
+		if (URigHierarchy* Hierarchy = GetHierarchy())
+		{
+			Hierarchy->bUsePreferredEulerAngles = !bIsAdditive;
+		}
+	}
 
 private:
 
@@ -599,6 +731,15 @@ private:
 		FRigPose CachedPose;
 		ERigTransformType::Type TransformType;
 	};
+
+	UPROPERTY()
+	FRigModuleSettings RigModuleSettings;
+
+	UPROPERTY(transient)
+	mutable FString RigModuleNameSpace;
+
+
+public:
 
 #if WITH_EDITOR
 
@@ -627,7 +768,6 @@ private:
 		TObjectPtr<URigHierarchy> Hierarchy;
 	};
 
-public:
 	// Class used to temporarily cache current pose of transient controls
 	// restore them after a ResetPoseToInitial call,
 	// which allows user to move bones in construction mode
@@ -669,10 +809,51 @@ public:
 	bool bRecordSelectionPoseForConstructionMode;
 	TMap<FRigElementKey, FTransform> SelectionPoseForConstructionMode;
 	bool bIsClearingTransientControls;
+
+	FRigPose InputPoseOnDebuggedRig;
 	
 #endif
+
+public:
+	UE_DEPRECATED(5.4, "InteractionRig is no longer used") UFUNCTION(BlueprintGetter, meta = (DeprecatedFunction, DeprecationMessage = "InteractionRig is no longer used"))
+	UControlRig* GetInteractionRig() const
+	{
+#if WITH_EDITORONLY_DATA
+		return InteractionRig_DEPRECATED;
+#else
+		return nullptr;
+#endif
+	}
+
+	UE_DEPRECATED(5.4, "InteractionRig is no longer used")
+	UFUNCTION(BlueprintSetter, meta = (DeprecatedFunction, DeprecationMessage = "InteractionRig is no longer used"))
+	void SetInteractionRig(UControlRig* InInteractionRig) {}
+
+	UE_DEPRECATED(5.4, "InteractionRig is no longer used")
+	UFUNCTION(BlueprintGetter, meta = (DeprecatedFunction, DeprecationMessage = "InteractionRig is no longer used"))
+	TSubclassOf<UControlRig> GetInteractionRigClass() const
+	{
+#if WITH_EDITORONLY_DATA
+		return InteractionRigClass_DEPRECATED;
+#else
+		return nullptr;
+#endif
+	}
+
+	UE_DEPRECATED(5.4, "InteractionRig is no longer used")
+	UFUNCTION(BlueprintSetter, meta = (DeprecatedFunction, DeprecationMessage = "InteractionRig is no longer used"))
+	void SetInteractionRigClass(TSubclassOf<UControlRig> InInteractionRigClass) {}
+
+	uint32 GetShapeLibraryHash() const;
 	
 private:
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	TObjectPtr<UControlRig> InteractionRig_DEPRECATED;
+
+	UPROPERTY()
+	TSubclassOf<UControlRig> InteractionRigClass_DEPRECATED;
+#endif
 
 	friend class FControlRigBlueprintCompilerContext;
 	friend struct FRigHierarchyRef;
@@ -688,12 +869,15 @@ private:
 	friend class FControlRigInteractionScope;
 	friend class UControlRigValidator;
 	friend struct FAnimNode_ControlRig;
+	friend struct FAnimNode_ControlRigBase;
 	friend class URigHierarchy;
 	friend class UFKControlRig;
 	friend class UControlRigGraph;
 	friend class AControlRigControlActor;
 	friend class AControlRigShapeActor;
 	friend class FRigTransformElementDetails;
+	friend class FControlRigEditorModule;
+	friend class UModularRig;
 };
 
 class CONTROLRIG_API FControlRigBracketScope

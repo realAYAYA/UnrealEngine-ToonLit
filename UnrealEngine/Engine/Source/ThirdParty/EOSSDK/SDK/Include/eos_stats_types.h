@@ -47,6 +47,12 @@ EOS_STRUCT(EOS_Stats_IngestStatOptions, (
 
 /**
  * Data containing the result information for an ingest stat request.
+ * 
+ * NOTE: A result code of EOS_Success indicates the ingest request 
+ * reached the server successfully, but does not guarantee successful processing. 
+ * For example, if an incorrect StatName value is provided in the ingest call, 
+ * processing may still fail.
+ * 
  */
 EOS_STRUCT(EOS_Stats_IngestStatCompleteCallbackInfo, (
 	/** Result code for the operation. EOS_Success is returned for a successful request, other codes indicate an error. */

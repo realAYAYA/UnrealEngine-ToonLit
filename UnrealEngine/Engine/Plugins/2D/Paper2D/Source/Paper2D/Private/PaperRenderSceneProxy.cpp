@@ -58,11 +58,7 @@ public:
 	{
 	}
 
-	virtual ~FSpriteTextureOverrideRenderProxy()
-	{
-	}
-
-	void CheckValidity(FMaterialRenderProxy* InCurrentParent)
+	bool CheckValidity(FMaterialRenderProxy* InCurrentParent)
 	{
 		if (InCurrentParent != Parent)
 		{
@@ -70,12 +66,15 @@ public:
 			ParentMaterialSerialNumber = INDEX_NONE;
 		}
 
+		bool bValid = true;
+
 		if (ParentMaterialSerialNumber != Parent->GetExpressionCacheSerialNumber())
 		{
-			// Not valid, need to rebuild
-			CacheUniformExpressions(/*bRecreateUniformBuffer=*/ true);
+			bValid = false;
 			ParentMaterialSerialNumber = Parent->GetExpressionCacheSerialNumber();
 		}
+
+		return bValid;
 	}
 
 	void Reinitialize(const FMaterialRenderProxy* InParent, const UTexture* InBaseTexture, FAdditionalSpriteTextureArray InAdditionalTextures)
@@ -178,12 +177,6 @@ FPaperRenderSceneProxy::FPaperRenderSceneProxy(const UPrimitiveComponent* InComp
 	bSpritesUseVertexBufferPath = CVarDrawSpritesUsingPrebuiltVertexBuffers.GetValueOnAnyThread() != 0;
 }
 
-SIZE_T FPaperRenderSceneProxy::GetTypeHash() const
-{
-	static size_t UniquePointer;
-	return reinterpret_cast<size_t>(&UniquePointer);
-}
-
 FPaperRenderSceneProxy::~FPaperRenderSceneProxy()
 {
 	for (FSpriteTextureOverrideRenderProxy* Proxy : MaterialTextureOverrideProxies)
@@ -193,8 +186,16 @@ FPaperRenderSceneProxy::~FPaperRenderSceneProxy()
 			Proxy->ReleasePrimitiveResource();
 		}
 	}
+	MaterialTextureOverrideProxies.Empty();
+
 	VertexBuffer.ReleaseResource();
 	VertexFactory.ReleaseResource();
+}
+
+SIZE_T FPaperRenderSceneProxy::GetTypeHash() const
+{
+	static size_t UniquePointer;
+	return reinterpret_cast<size_t>(&UniquePointer);
 }
 
 void FPaperRenderSceneProxy::DebugDrawBodySetup(const FSceneView* View, int32 ViewIndex, FMeshElementCollector& Collector, UBodySetup* BodySetup, const FMatrix& GeomTransformMatrix, const FLinearColor& CollisionColor, bool bDrawSolid) const
@@ -255,26 +256,26 @@ void FPaperRenderSceneProxy::RecreateCachedRenderData(FRHICommandListBase& RHICm
 			//When the buffer reallocates, the factory needs to bind the buffers and SRV again, we just init again.
 			if (bFactoryRequiresReInitialization)
 			{
-				VertexFactory.Init(&VertexBuffer);
+				VertexFactory.Init(RHICmdList, &VertexBuffer);
 			}
 		}
 		else
 		{
 			VertexBuffer.InitResource(RHICmdList);
-			VertexFactory.Init(&VertexBuffer);
+			VertexFactory.Init(RHICmdList, &VertexBuffer);
 		}
 	}
 }
 
-void FPaperRenderSceneProxy::CreateRenderThreadResources()
+void FPaperRenderSceneProxy::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	if (bSpritesUseVertexBufferPath && (Vertices.Num() > 0))
 	{
 		VertexBuffer.Vertices = Vertices;
 
 		// Init the resources
-		VertexBuffer.InitResource(FRHICommandListImmediate::Get());
-		VertexFactory.Init(&VertexBuffer);
+		VertexBuffer.InitResource(RHICmdList);
+		VertexFactory.Init(RHICmdList, &VertexBuffer);
 	}
 }
 
@@ -290,7 +291,6 @@ void FPaperRenderSceneProxy::DebugDrawCollision(const FSceneView* View, int32 Vi
 void FPaperRenderSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_PaperRenderSceneProxy_GetDynamicMeshElements);
-	checkSlow(IsInRenderingThread());
 
 	const FEngineShowFlags& EngineShowFlags = ViewFamily.EngineShowFlags;
 
@@ -406,7 +406,7 @@ void FPaperRenderSceneProxy::GetNewBatchMeshes(const FSceneView* View, int32 Vie
 				}
 
 				// Create a texture override material proxy or make sure our existing one is valid
-				FSpriteTextureOverrideRenderProxy* SectionMaterialProxy = GetCachedMaterialProxyForSection(SectionIndex, ParentMaterialProxy);
+				FSpriteTextureOverrideRenderProxy* SectionMaterialProxy = GetCachedMaterialProxyForSection(Collector, SectionIndex, ParentMaterialProxy);
 
 				Settings.CastShadow = bCastShadow;
 				Settings.bDisableBackfaceCulling = bDrawTwoSided;
@@ -432,7 +432,7 @@ void FPaperRenderSceneProxy::GetNewBatchMeshesPrebuilt(const FSceneView* View, i
 	{
 		FMeshBatch& Batch = Collector.AllocateMesh();
 
-		if (GetMeshElement(SectionIndex, DPG, IsSelected(), Batch))
+		if (GetMeshElement(Collector, SectionIndex, DPG, IsSelected(), Batch))
 		{
 			// Implementing our own wireframe coloring as the automatic one (controlled by Mesh.bCanApplyViewModeOverrides) only supports per-FPrimitiveSceneProxy WireframeColor
 			if (bIsWireframeView)
@@ -460,7 +460,7 @@ void FPaperRenderSceneProxy::GetNewBatchMeshesPrebuilt(const FSceneView* View, i
 	}
 }
 
-bool FPaperRenderSceneProxy::GetMeshElement(int32 SectionIndex, uint8 DepthPriorityGroup, bool bIsSelected, FMeshBatch& OutMeshBatch) const
+bool FPaperRenderSceneProxy::GetMeshElement(FMeshElementCollector& Collector, int32 SectionIndex, uint8 DepthPriorityGroup, bool bIsSelected, FMeshBatch& OutMeshBatch) const
 {
 	check(bSpritesUseVertexBufferPath);
 	check(SectionIndex < BatchedSections.Num());
@@ -481,7 +481,7 @@ bool FPaperRenderSceneProxy::GetMeshElement(int32 SectionIndex, uint8 DepthPrior
 		OutMeshBatch.DepthPriorityGroup = DepthPriorityGroup;
 		OutMeshBatch.Type = PT_TriangleList;
 		OutMeshBatch.bDisableBackfaceCulling = bDrawTwoSided;
-		OutMeshBatch.MaterialRenderProxy = GetCachedMaterialProxyForSection(SectionIndex, Section.Material->GetRenderProxy());
+		OutMeshBatch.MaterialRenderProxy = GetCachedMaterialProxyForSection(Collector, SectionIndex, Section.Material->GetRenderProxy());
 
 		// Set up the FMeshBatchElement.
 		FMeshBatchElement& BatchElement = OutMeshBatch.Elements[0];
@@ -600,8 +600,10 @@ void FPaperRenderSceneProxy::SetTransientTextureOverride_RenderThread(const UTex
 }
 #endif
 
-FSpriteTextureOverrideRenderProxy* FPaperRenderSceneProxy::GetCachedMaterialProxyForSection(int32 SectionIndex, FMaterialRenderProxy* ParentMaterialProxy) const
+FSpriteTextureOverrideRenderProxy* FPaperRenderSceneProxy::GetCachedMaterialProxyForSection(FMeshElementCollector& Collector, int32 SectionIndex, FMaterialRenderProxy* ParentMaterialProxy) const
 {
+	UE::TScopeLock Lock(MaterialTextureOverrideProxiesMutex);
+
 	if (MaterialTextureOverrideProxies.Num() < BatchedSections.Num())
 	{
 		MaterialTextureOverrideProxies.AddDefaulted(BatchedSections.Num() - MaterialTextureOverrideProxies.Num());
@@ -614,7 +616,10 @@ FSpriteTextureOverrideRenderProxy* FPaperRenderSceneProxy::GetCachedMaterialProx
 		Result = new FSpriteTextureOverrideRenderProxy(ParentMaterialProxy, Section.BaseTexture, Section.AdditionalTextures UE_EXPAND_IF_WITH_EDITOR(, TextureOverrideList));
 	}
 
-	Result->CheckValidity(ParentMaterialProxy);
+	if (!Result->CheckValidity(ParentMaterialProxy))
+	{
+		Collector.CacheUniformExpressions(Result, /** bRecreateUniformBuffer */ true);
+	}
 
 	return Result;
 }

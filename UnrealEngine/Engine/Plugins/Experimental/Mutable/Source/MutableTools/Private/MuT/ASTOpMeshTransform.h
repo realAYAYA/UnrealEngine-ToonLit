@@ -17,13 +17,13 @@ struct FProgram;
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
-	class ASTOpMeshTransform : public ASTOp
+	class ASTOpMeshTransform final : public ASTOp
 	{
 	public:
 
 		ASTChild source;
 
-		mat4f matrix;
+		FMatrix44f matrix;
 
 	public:
 

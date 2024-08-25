@@ -2,6 +2,8 @@
 
 #pragma once
 
+#if SOURCE_CONTROL_WITH_SLATE
+
 #include "Styling/SlateStyle.h"
 
 /**
@@ -58,3 +60,5 @@ protected:
 private:
 	static FName StyleName;
 };
+
+#endif //SOURCE_CONTROL_WITH_SLATE

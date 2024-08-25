@@ -5,7 +5,6 @@
 #include "IcmpModule.h"
 #include "SocketSubsystem.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 THIRD_PARTY_INCLUDES_START
 #define _WINSOCK_DEPRECATED_NO_WARNINGS

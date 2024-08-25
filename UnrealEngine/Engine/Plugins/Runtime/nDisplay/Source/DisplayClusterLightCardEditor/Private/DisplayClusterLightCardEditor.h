@@ -103,16 +103,16 @@ public:
 	}
 	
 	/** Adds a new light card to the root actor and centers it in the viewport */
-	void AddNewLightCard();
+	ADisplayClusterLightCardActor* AddNewLightCard();
 
 	/** Select an existing Light Card from a menu */
 	void AddExistingLightCard();
 
 	/** Adds a new light card configured as a flag */
-	void AddNewFlag();
+	ADisplayClusterLightCardActor* AddNewFlag();
 
 	/** Add a new actor dynamically based on a class */
-	void AddNewDynamic(UClass* InClass);
+	AActor* AddNewDynamic(UClass* InClass);
 
 	/** Adds the given Light Card to the root actor */
 	void AddLightCardsToActor(const TArray<ADisplayClusterLightCardActor*>& LightCards);
@@ -134,7 +134,7 @@ public:
 	bool CanCopySelectedActors() const;
 
 	/** Pastes any actors in the clipboard to the current root actor */
-	void PasteActors();
+	TArray<AActor*> PasteActors();
 
 	/** Determines if there are any actors that can be pasted from the clipboard */
 	bool CanPasteActors() const;

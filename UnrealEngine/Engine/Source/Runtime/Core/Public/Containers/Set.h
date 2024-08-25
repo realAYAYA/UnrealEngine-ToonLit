@@ -16,7 +16,6 @@
 #include <initializer_list>
 #include "Templates/TypeHash.h"
 #include "Containers/SparseArray.h"
-#include "Templates/Decay.h"
 #include "Serialization/StructuredArchive.h"
 #include "Serialization/MemoryImageWriter.h"
 #include "ContainersFwd.h"
@@ -165,8 +164,8 @@ public:
 
 	/** Initialization constructor. */
 	template <
-		typename InitType,
-		typename = std::enable_if_t<!std::is_same_v<TSetElementBase, typename TDecay<InitType>::Type>>
+		typename InitType
+		UE_REQUIRES(!std::is_same_v<TSetElementBase, std::decay_t<InitType>>)
 	>
 	explicit FORCEINLINE TSetElementBase(InitType&& InValue)
 		: Value(Forward<InitType>(InValue))
@@ -199,8 +198,8 @@ public:
 
 	/** Initialization constructor. */
 	template <
-		typename InitType,
-		typename = std::enable_if_t<!std::is_same_v<TSetElementBase, typename TDecay<InitType>::Type>>
+		typename InitType
+		UE_REQUIRES(!std::is_same_v<TSetElementBase, std::decay_t<InitType>>)
 	>
 	explicit FORCEINLINE TSetElementBase(InitType&& InValue)
 		: Value(Forward<InitType>(InValue))
@@ -234,8 +233,8 @@ public:
 
 	/** Initialization constructor. */
 	template <
-		typename InitType,
-		typename = std::enable_if_t<!std::is_same_v<TSetElement, typename TDecay<InitType>::Type>>
+		typename InitType
+		UE_REQUIRES(!std::is_same_v<TSetElement, std::decay_t<InitType>>)
 	>
 	explicit FORCEINLINE TSetElement(InitType&& InValue)
 		: Super(Forward<InitType>(InValue))
@@ -441,7 +440,7 @@ public:
 	{
 		// Empty the elements array, and reallocate it for the expected number of elements.
 		const int32 DesiredHashSize = Allocator::GetNumberOfHashBuckets(ExpectedNumElements);
-		const bool ShouldDoRehash = ShouldRehash(ExpectedNumElements,DesiredHashSize,true);
+		const bool ShouldDoRehash = ShouldRehash(ExpectedNumElements, DesiredHashSize, EAllowShrinking::Yes);
 
 		if (!ShouldDoRehash)
 		{
@@ -531,7 +530,7 @@ public:
 	/** Relaxes the set's hash to a size strictly bounded by the number of elements in the set. */
 	FORCEINLINE void Relax()
 	{
-		ConditionalRehash(Elements.Num(),true);
+		ConditionalRehash(Elements.Num(), EAllowShrinking::Yes);
 	}
 
 	/** 
@@ -687,7 +686,7 @@ private:
 	bool TryReplaceExisting(uint32 KeyHash, SetElementType& Element, SizeType& InOutElementIndex, bool* bIsAlreadyInSetPtr)
 	{
 		bool bIsAlreadyInSet = false;
-		if (!KeyFuncs::bAllowDuplicateKeys)
+		if constexpr (!KeyFuncs::bAllowDuplicateKeys)
 		{
 			// If the set doesn't allow duplicate keys, check for an existing element with the same key as the element being added.
 
@@ -719,7 +718,7 @@ private:
 	FORCEINLINE void RehashOrLink(uint32 KeyHash, SetElementType& Element, SizeType ElementIndex)
 	{
 		// Check if the hash needs to be resized.
-		if (!ConditionalRehash(Elements.Num()))
+		if (!ConditionalRehash(Elements.Num(), EAllowShrinking::No))
 		{
 			// If the rehash didn't add the new element to the hash, add it.
 			LinkElement(ElementIndex, Element, KeyHash);
@@ -1019,7 +1018,7 @@ private:
 				RemoveByIndex(NextElementId->Index);
 				NumRemovedElements++;
 
-				if (!KeyFuncs::bAllowDuplicateKeys)
+				if constexpr (!KeyFuncs::bAllowDuplicateKeys)
 				{
 					// If the hash disallows duplicate keys, we're done removing after the first matched key.
 					break;
@@ -1315,8 +1314,8 @@ public:
 	 */
 	template <
 		typename OtherKeyFuncs,
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	TSet& operator=(TSet<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, OtherKeyFuncs, Allocator>&& Other)
 	{
@@ -1336,8 +1335,8 @@ public:
 	template <
 		typename OtherKeyFuncs,
 		typename OtherAllocator,
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	TSet& operator=(const TSet<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, OtherKeyFuncs, OtherAllocator>& Other)
 	{
@@ -1355,8 +1354,8 @@ public:
 	template <
 		typename OtherKeyFuncs,
 		typename OtherAllocator,
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	void Append(const TSet<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, OtherKeyFuncs, OtherAllocator>& OtherSet)
 	{
@@ -1375,8 +1374,8 @@ public:
 	 */
 	template <
 		typename OtherKeyFuncs,
-		typename AliasElementType = ElementType,
-		typename std::enable_if_t<TIsContainerElementTypeCopyable<AliasElementType>::Value>* = nullptr
+		typename AliasElementType = ElementType
+		UE_REQUIRES(TIsContainerElementTypeCopyable_V<AliasElementType>)
 	>
 	void Append(TSet<typename TContainerElementTypeCompatibility<ElementType>::CopyFromOtherType, OtherKeyFuncs, Allocator>&& OtherSet)
 	{
@@ -1506,28 +1505,28 @@ private:
 	 * Checks if the hash has an appropriate number of buckets, and if it should be resized.
 	 * @param NumHashedElements - The number of elements to size the hash for.
 	 * @param DesiredHashSize - Desired size if we should rehash.
-	 * @param bAllowShrinking - true if the hash is allowed to shrink.
+	 * @param AllowShrinking - If the hash is allowed to shrink.
 	 * @return true if the set should berehashed.
 	 */
-	FORCEINLINE bool ShouldRehash(int32 NumHashedElements,int32 DesiredHashSize,bool bAllowShrinking = false) const
+	FORCEINLINE bool ShouldRehash(int32 NumHashedElements, int32 DesiredHashSize, EAllowShrinking AllowShrinking) const
 	{
 		// If the hash hasn't been created yet, or is smaller than the desired hash size, rehash.
 		// If shrinking is allowed and the hash is bigger than the desired hash size, rehash.
-		return ((NumHashedElements > 0 && HashSize < DesiredHashSize) || (bAllowShrinking && HashSize > DesiredHashSize));
+		return ((NumHashedElements > 0 && HashSize < DesiredHashSize) || (AllowShrinking == EAllowShrinking::Yes && HashSize > DesiredHashSize));
 	}
 
 	/**
 	 * Checks if the hash has an appropriate number of buckets, and if not resizes it.
 	 * @param NumHashedElements - The number of elements to size the hash for.
-	 * @param bAllowShrinking - true if the hash is allowed to shrink.
+	 * @param AllowShrinking - If the hash is allowed to shrink.
 	 * @return true if the set was rehashed.
 	 */
-	bool ConditionalRehash(int32 NumHashedElements,bool bAllowShrinking = false) const
+	bool ConditionalRehash(int32 NumHashedElements, EAllowShrinking AllowShrinking) const
 	{
 		// Calculate the desired hash size for the specified number of elements.
 		const int32 DesiredHashSize = Allocator::GetNumberOfHashBuckets(NumHashedElements);
 
-		if (ShouldRehash(NumHashedElements, DesiredHashSize, bAllowShrinking))
+		if (ShouldRehash(NumHashedElements, DesiredHashSize, AllowShrinking))
 		{
 			HashSize = DesiredHashSize;
 			Rehash();
@@ -1569,14 +1568,14 @@ private:
 	private:
 		friend class TSet;
 
-		typedef typename TChooseClass<bConst,const ElementType,ElementType>::Result ItElementType;
+		typedef std::conditional_t<bConst,const ElementType,ElementType> ItElementType;
 
 	public:
-		typedef typename TChooseClass<
+		typedef std::conditional_t<
 			bConst,
-			typename TChooseClass<bRangedFor, typename ElementArrayType::TRangedForConstIterator, typename ElementArrayType::TConstIterator>::Result,
-			typename TChooseClass<bRangedFor, typename ElementArrayType::TRangedForIterator,      typename ElementArrayType::TIterator     >::Result
-		>::Result ElementItType;
+			std::conditional_t<bRangedFor, typename ElementArrayType::TRangedForConstIterator, typename ElementArrayType::TConstIterator>,
+			std::conditional_t<bRangedFor, typename ElementArrayType::TRangedForIterator,      typename ElementArrayType::TIterator     >
+		> ElementItType;
 
 		FORCEINLINE TBaseIterator(const ElementItType& InElementIt)
 			: ElementIt(InElementIt)
@@ -1626,14 +1625,14 @@ private:
 	class TBaseKeyIterator
 	{
 	private:
-		typedef typename TChooseClass<bConst,const TSet,TSet>::Result SetType;
-		typedef typename TChooseClass<bConst,const ElementType,ElementType>::Result ItElementType;
+		typedef std::conditional_t<bConst, const TSet, TSet> SetType;
+		typedef std::conditional_t<bConst,const ElementType,ElementType> ItElementType;
 		typedef typename TTypeTraits<typename KeyFuncs::KeyType>::ConstPointerType ReferenceOrValueType;
 
 	public:
 		using KeyArgumentType =
 			std::conditional_t<
-				std::is_reference<ReferenceOrValueType>::value,
+				std::is_reference_v<ReferenceOrValueType>,
 				TRetainedRef<std::remove_reference_t<ReferenceOrValueType>>,
 				KeyInitType
 			>;
@@ -1645,7 +1644,7 @@ private:
 			, Index(INDEX_NONE)
 		{
 			// The set's hash needs to be initialized to find the elements with the specified key.
-			Set.ConditionalRehash(Set.Elements.Num());
+			Set.ConditionalRehash(Set.Elements.Num(), EAllowShrinking::No);
 			if (Set.HashSize)
 			{
 				NextIndex = Set.GetTypedHash(KeyFuncs::GetKeyHash(Key)).Index;
@@ -1689,6 +1688,10 @@ private:
 		}
 
 		// Accessors.
+		[[nodiscard]] FORCEINLINE FSetElementId GetId() const
+		{
+			return FSetElementId(Index);
+		}
 		FORCEINLINE ItElementType* operator->() const
 		{
 			return &Set.Elements[Index].Value;
@@ -1846,7 +1849,7 @@ struct FScriptSetLayout
 template <typename Allocator, typename InDerivedType>
 class TScriptSet
 {
-	using DerivedType = typename TChooseClass<std::is_void_v<InDerivedType>, TScriptSet, InDerivedType>::Result;
+	using DerivedType = std::conditional_t<std::is_void_v<InDerivedType>, TScriptSet, InDerivedType>;
 
 public:
 	static FScriptSetLayout GetScriptLayout(int32 ElementSize, int32 ElementAlignment)
@@ -2205,7 +2208,7 @@ struct TSetPrivateFriend
 			Set.HashSize = 0;
 
 			// Hash the newly loaded elements.
-			Set.ConditionalRehash(Set.Elements.Num());
+			Set.ConditionalRehash(Set.Elements.Num(), EAllowShrinking::No);
 		}
 
 		return Ar;
@@ -2224,7 +2227,7 @@ struct TSetPrivateFriend
 			Set.HashSize = 0;
 
 			// Hash the newly loaded elements.
-			Set.ConditionalRehash(Set.Elements.Num());
+			Set.ConditionalRehash(Set.Elements.Num(), EAllowShrinking::No);
 		}
  	}
 
@@ -2275,3 +2278,7 @@ bool LegacyCompareNotEqual(const TSet<ElementType, KeyFuncs, Allocator>& A,const
 {
 	return !TSetPrivateFriend::LegacyCompareEqual(A, B);
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/Decay.h"
+#endif

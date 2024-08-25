@@ -107,7 +107,8 @@ struct FPackedCluster
 	// Members needed by materials
 	uint32		AttributeOffset_BitsPerAttribute;				// AttributeOffset: 22, BitsPerAttribute: 10
 	uint32		DecodeInfoOffset_HasTangents_NumUVs_ColorMode;	// DecodeInfoOffset: 22, bHasTangents: 1, NumUVs: 3, ColorMode: 2
-	uint32		UV_Prec;										// U0:4, V0:4, U1:4, V1:4, U2:4, V2:4, U3:4, V3:4
+	uint32		UVBitOffsets;									// Bit offsets of UV sets relative to beginning of UV data.
+																// UV0 Offset: 8, UV1 Offset: 8, UV2 Offset: 8, UV3 Offset: 8
 	uint32		PackedMaterialInfo;
 
 	uint32		VertReuseBatchInfo[4];
@@ -118,13 +119,13 @@ struct FPackedCluster
 	uint32		GetNumTris() const						{ return GetBits(NumTris_IndexOffset, 8, 0); }
 	uint32		GetIndexOffset() const					{ return GetBits(NumTris_IndexOffset, 24, 8); }
 
-	uint32		GetBitsPerIndex() const					{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 4, 0); }
-	int32		GetPosPrecision() const					{ return (int32)GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 5, 4) + NANITE_MIN_POSITION_PRECISION; }
+	uint32		GetBitsPerIndex() const					{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 3, 0) + 1; }
+	int32		GetPosPrecision() const					{ return (int32)GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 6, 3) + NANITE_MIN_POSITION_PRECISION; }
 	uint32		GetPosBitsX() const						{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 5, 9); }
 	uint32		GetPosBitsY() const						{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 5, 14); }
 	uint32		GetPosBitsZ() const						{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 5, 19); }
 	uint32		GetNormalPrecision() const				{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 4, 24); }
-	uint32		GetTangentPrecision() const				{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 28, 4); }
+	uint32		GetTangentPrecision() const				{ return GetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, 4, 28); }
 
 	uint32		GetAttributeOffset() const				{ return GetBits(AttributeOffset_BitsPerAttribute, 22, 0); }
 	uint32		GetBitsPerAttribute() const				{ return GetBits(AttributeOffset_BitsPerAttribute, 10, 22); }
@@ -135,8 +136,8 @@ struct FPackedCluster
 	void		SetNumTris(uint32 NumTris)				{ SetBits(NumTris_IndexOffset, NumTris, 8, 0); }
 	void		SetIndexOffset(uint32 Offset)			{ SetBits(NumTris_IndexOffset, Offset, 24, 8); }
 
-	void		SetBitsPerIndex(uint32 BitsPerIndex)	{ SetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, BitsPerIndex, 4, 0); }
-	void		SetPosPrecision(int32 Precision)		{ SetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, uint32(Precision - NANITE_MIN_POSITION_PRECISION), 5, 4); }
+	void		SetBitsPerIndex(uint32 BitsPerIndex)	{ SetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, BitsPerIndex - 1, 3, 0); }
+	void		SetPosPrecision(int32 Precision)		{ SetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, uint32(Precision - NANITE_MIN_POSITION_PRECISION), 6, 3); }
 	void		SetPosBitsX(uint32 NumBits)				{ SetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, NumBits, 5, 9); }
 	void		SetPosBitsY(uint32 NumBits)				{ SetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, NumBits, 5, 14); }
 	void		SetPosBitsZ(uint32 NumBits)				{ SetBits(BitsPerIndex_PosPrecision_PosBits_NormalPrecision_TangentPrecision, NumBits, 5, 19); }
@@ -149,7 +150,7 @@ struct FPackedCluster
 	void		SetDecodeInfoOffset(uint32 Offset)		{ SetBits(DecodeInfoOffset_HasTangents_NumUVs_ColorMode, Offset, 22, 0); }
 	void		SetHasTangents(bool bHasTangents)		{ SetBits(DecodeInfoOffset_HasTangents_NumUVs_ColorMode, bHasTangents, 1, 22); }
 	void		SetNumUVs(uint32 Num)					{ SetBits(DecodeInfoOffset_HasTangents_NumUVs_ColorMode, Num, 3, 23); }
-	void		SetColorMode(uint32 Mode)				{ SetBits(DecodeInfoOffset_HasTangents_NumUVs_ColorMode, Mode, 2, 26); }
+	void		SetColorMode(uint32 Mode)				{ SetBits(DecodeInfoOffset_HasTangents_NumUVs_ColorMode, Mode, 1, 26); }
 
 	void		SetColorBitsR(uint32 NumBits)			{ SetBits(ColorBits_GroupIndex, NumBits, 4, 0); }
 	void		SetColorBitsG(uint32 NumBits)			{ SetBits(ColorBits_GroupIndex, NumBits, 4, 4); }
@@ -384,8 +385,8 @@ public:
 
 private:
 	// TODO: Work in progress / experimental (having two factories is temporary).
-	// VertexFactory is the currently used one for VS/PS material shading in Nanite.
-	// VertexFactory2 is the WIP compute shader path.
+	// VertexFactory is the legacy VS/PS shading path.
+	// VertexFactory2 is the new compute shader path.
 	class FVertexFactory* VertexFactory = nullptr;
 	class FNaniteVertexFactory* VertexFactory2 = nullptr;
 };

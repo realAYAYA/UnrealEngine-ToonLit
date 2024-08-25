@@ -5,15 +5,18 @@
 #include "UObject/Object.h"
 #include "NearestNeighborOptimizedNetwork.generated.h"
 
+namespace UE::NNE
+{
+	class IModelCPU;
+	class IModelInstanceCPU;
+}
+
+class UNNEModelData;
+
 class UNearestNeighborOptimizedNetworkInstance;
 
-#define NEARESTNEIGHBORMODEL_USE_ISPC INTEL_ISPC
-#if !defined(NEARESTNEIGHBORMODEL_USE_ISPC)
-	#define NEARESTNEIGHBORMODEL_USE_ISPC 0
-#endif
-
 USTRUCT()
-struct FNearestNeighborNetworkParameter
+struct UE_DEPRECATED(5.4, "Nearest Neighbor Network Parameter no longer used for inference.") FNearestNeighborNetworkParameter
 {
 	GENERATED_BODY()
 
@@ -24,61 +27,42 @@ struct FNearestNeighborNetworkParameter
 	TArray<int32> Shape;
 };
 
-UENUM(BlueprintType)
-enum class ENearestNeighborNetworkLayerType : uint8
-{
-	None,
-	Gemm_Prelu,
-	Gemm,
-};
-
-
-/** A general network layer that contains a list of parameters. The Run() method should be implemented by child classes */ 
 UCLASS()
-class UNearestNeighborNetworkLayer
+class UE_DEPRECATED(5.4, "Nearest Neighbor Network Layer no longer used for inference.") UNearestNeighborNetworkLayer
 	: public UObject
 {
 	GENERATED_BODY()
 
 public:
-	/** The weight matrix number of inputs (rows). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
 	int32 NumInputs = 0;
 
-	/** The weight matrix number of outputs (columns). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
 	int32 NumOutputs = 0;
 
-	// /** The parameters of the layer */
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
 	UPROPERTY()
 	TArray<FNearestNeighborNetworkParameter> Parameters;
 
-	UFUNCTION(BlueprintCallable, Category = "MLDeformer")
-	void AddParameter(const TArray<float>& Values, const TArray<int32>& Shape);
-
-	virtual void Run(const float* RESTRICT InputBuffer, float* RESTRICT OutputBuffer) const;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 };
 
-/** Gemm: GEneral Matrix Multiplication: Wx + b */
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
 UCLASS()
-class UNearestNeighborNetworkLayer_Gemm_Prelu
-	: public UNearestNeighborNetworkLayer
+class UE_DEPRECATED(5.4, "Nearest Neighbor Network Layer no longer used for inference.") UNearestNeighborNetworkLayer_Gemm_Prelu : public UNearestNeighborNetworkLayer
 {
 	GENERATED_BODY()
-
-public:
-	virtual void Run(const float* RESTRICT InputBuffer, float* RESTRICT OutputBuffer) const override;
 };
 
 UCLASS()
-class UNearestNeighborNetworkLayer_Gemm
-	: public UNearestNeighborNetworkLayer
+class UE_DEPRECATED(5.4, "Nearest Neighbor Network Layer no longer used for inference.") UNearestNeighborNetworkLayer_Gemm : public UNearestNeighborNetworkLayer
 {
 	GENERATED_BODY()
-
-public:
-	virtual void Run(const float* RESTRICT InputBuffer, float* RESTRICT OutputBuffer) const override;
 };
+
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 /**
  * The specialized neural network for the MLDeformerModel.
@@ -91,6 +75,9 @@ class UNearestNeighborOptimizedNetwork
 	GENERATED_BODY()
 
 public:
+
+	virtual void PostLoad() override;
+
 	/** Clear the network, getting rid of all layers. */
 	UFUNCTION(BlueprintCallable, Category = "MLDeformer")
 	virtual void Empty();
@@ -115,7 +102,8 @@ public:
 	 * Create an instance of this neural network.
 	 * @return A pointer to the neural network instance.
 	 */
-	virtual UNearestNeighborOptimizedNetworkInstance* CreateInstance();
+	virtual UNearestNeighborOptimizedNetworkInstance* CreateInstance(UObject* Parent = nullptr) const;
+
 
 	/**
 	 * Get the number of inputs, which is the number of floats the network takes as input.
@@ -129,31 +117,51 @@ public:
 	 */
 	virtual int32 GetNumOutputs() const;
 
+	/**
+	 * Sets the number of inputs, which is the number of floats the network takes as input.
+	 * @param InNumInputs The number of input floats to the network.
+	 */
+	virtual void SetNumInputs(int32 InNumInputs);
 
 	/**
-	 * Get the number of network layers.
-	 * @return The number of network layer.
+	 * Sets the number of outputs, which is the number of floats the network will output.
+	 * @param InNumOutputs The number of floats that the network outputs.
 	 */
-	const int32 GetNumLayers() const;
+	virtual void SetNumOutputs(int32 InNumOutputs);
 
 	/**
-	 * Get a given network layer.
-	 * @return A pointer to the layer, which will contain the parameters.
+	 * Get the Model.
+	 * @return A pointer to the Model.
 	 */
-	UNearestNeighborNetworkLayer* GetLayer(int32 Index) const;
-
-
-	/**
-	 * Add a network layer.
-	 * @return A pointer to the layer, which will contain the parameters.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MLDeformer")
-	UNearestNeighborNetworkLayer* AddLayer(const int32 LayerType);
+	UE::NNE::IModelCPU* GetModel() const;
 
 protected:
-	/** The network layers */
+
+	/** The Model Data used for network */
 	UPROPERTY()
-	TArray<TObjectPtr<UNearestNeighborNetworkLayer>> Layers;
+	TObjectPtr<UNNEModelData> ModelData;
+
+	/** The Neural Network used. */
+	TSharedPtr<UE::NNE::IModelCPU> Model;
+
+	UPROPERTY()
+	int32 NumInputs = 0;
+
+	UPROPERTY()
+	int32 NumOutputs = 0;
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+	UE_DEPRECATED(5.4, "Layers Object no longer available.")
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Network format changed."))
+	TArray<TObjectPtr<UNearestNeighborNetworkLayer>> Layers_DEPRECATED;
+
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+private:
+
+	static const TCHAR* RuntimeName;
+	static const TCHAR* RuntimeModuleName;
 };
 
 /** 
@@ -170,6 +178,13 @@ class UNearestNeighborOptimizedNetworkInstance
 	GENERATED_BODY()
 
 public:
+
+	// These are required because of the use of TUniquePtr
+	UNearestNeighborOptimizedNetworkInstance();
+	UNearestNeighborOptimizedNetworkInstance(const FObjectInitializer& ObjectInitializer);
+	UNearestNeighborOptimizedNetworkInstance(FVTableHelper& Helper);
+	virtual ~UNearestNeighborOptimizedNetworkInstance();
+
 	/**
 	 * Get the network input buffer.
 	 * @return The array view of floats that represents the network inputs.
@@ -198,20 +213,13 @@ public:
 	virtual void Run();
 
 protected:
-	struct FRunSettings
-	{
-		float* TempInputBuffer;
-		float* TempOutputBuffer;
-		const float* InputBuffer;
-		float* OutputBuffer;
-	};
 
 	/**
  	 * Initialize this instance using a given network object.
 	 * This is automatically called by the UNearestNeighborOptimizedNetwork::CreateInstance() method.
 	 * @param InNeuralNetwork The network that this is an instance of.
 	 */
-	void Init(UNearestNeighborOptimizedNetwork* InNeuralNetwork);
+	void Init(const UNearestNeighborOptimizedNetwork* InNeuralNetwork);
 
 protected:
 	/** The input values. */
@@ -220,13 +228,10 @@ protected:
 	/** The output values. */
 	TArray<float> Outputs;
 
-	/** A pre-allocated temp buffer for inputs. */
-	TArray<float> TempInputArray;
-
-	/** A pre-allocated temp buffer for outputs. */
-	TArray<float> TempOutputArray;
+	/** The instance data for this Network Instance. */
+	TSharedPtr<UE::NNE::IModelInstanceCPU> Instance;
 
 	/** The neural network this is an instance of. */
 	UPROPERTY(Transient)
-	TObjectPtr<UNearestNeighborOptimizedNetwork> Network;
+	TObjectPtr<const UNearestNeighborOptimizedNetwork> Network;
 };

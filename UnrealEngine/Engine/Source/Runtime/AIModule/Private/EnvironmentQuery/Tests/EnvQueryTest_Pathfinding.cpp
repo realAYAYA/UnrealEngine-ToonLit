@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "NavigationData.h"
 #include "NavigationSystem.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_VectorBase.h"
 #include "EnvironmentQuery/Contexts/EnvQueryContext_Querier.h"
 

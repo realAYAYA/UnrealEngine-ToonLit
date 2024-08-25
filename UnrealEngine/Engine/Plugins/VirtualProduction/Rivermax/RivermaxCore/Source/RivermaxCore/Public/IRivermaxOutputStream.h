@@ -11,14 +11,36 @@ namespace UE::RivermaxCore
 {
 	struct FRivermaxOutputStreamOptions;
 
+	/** Description of video frame to be captured. */
 	struct RIVERMAXCORE_API FRivermaxOutputVideoFrameInfo
 	{
+		/** Incremental number identifying frame. Usually GFrameCounter */
 		uint32 FrameIdentifier = 0;
+
+		/** Height of the frame */
 		uint32 Height = 0;
+		
+		/** Width of the frame */
 		uint32 Width = 0;
+
+		/** Stride of a line */
 		uint32 Stride = 0;
+
+		/** Video frame data location in system memory */
 		void* VideoBuffer = nullptr;
+
+		/** Video frame data location when using GPUDirect */
 		FBufferRHIRef GPUBuffer;
+	};
+
+	/** Information about the last frame that was presented by the stream */
+	struct RIVERMAXCORE_API FPresentedFrameInfo
+	{
+		/** Frame boundary at which the RenderedFrameNumber has been presented*/
+		uint64 PresentedFrameBoundaryNumber = 0;
+
+		/** Last engine's FrameNumber that was presented. */
+		uint32 RenderedFrameNumber = 0;
 	};
 
 	class RIVERMAXCORE_API IRivermaxOutputStreamListener
@@ -70,6 +92,9 @@ namespace UE::RivermaxCore
 		 * this method will block until a free frame is found. 
 		 */
 		virtual bool ReserveFrame(uint32 FrameIdentifier) const = 0;
+
+		/** Returns information about the last frame that was presented on the wire */
+		virtual void GetLastPresentedFrame(FPresentedFrameInfo& OutFrameInfo) const = 0;
 	};
 }
 

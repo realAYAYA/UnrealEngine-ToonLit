@@ -33,6 +33,14 @@ uint AtmospherePerPixelTransmittanceEnabled;
 #include "VirtualShadowMaps/VirtualShadowMapProjectionCommon.ush"
 #endif
 
+#ifndef ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+#define ADAPTIVE_VOLUMETRIC_SHADOW_MAP 0
+#endif // ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+
+#if ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+#include "HeterogeneousVolumes/HeterogeneousVolumesAdaptiveVolumetricShadowMapSampling.ush"
+#endif // ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+
 float CalcSimpleLightAttenuation(float3 TranslatedWorldPosition)
 {
 	float3 WorldLightVector = SimpleLightPositionAndRadius.xyz - TranslatedWorldPosition;
@@ -139,7 +147,7 @@ void InjectMainPS(
 
 		TranslatedWorldPosition = float3(View.TranslucencyLightingVolumeMin[VolumeCascadeIndex].xy + Input.Vertex.UV / View.TranslucencyLightingVolumeInvSize[VolumeCascadeIndex].xy - .5f * View.TranslucencyLightingVolumeInvSize[VolumeCascadeIndex].w, ZPosition);
 	}
-	float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+	float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation);
 
 	// compute UVW of the position we shade in the volume
 	float3 VolumeUVs = float3(Input.Vertex.UV, (Input.LayerIndex + .5f) * View.TranslucencyLightingVolumeMin[VolumeCascadeIndex].w);
@@ -203,6 +211,10 @@ void InjectMainPS(
 		FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapTranslatedWorld(VirtualShadowMapId, TranslatedWorldPositionForLighting);
 		ShadowFactor *= VirtualShadowMapSample.ShadowFactor;
 #endif
+
+#if ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+		ShadowFactor *= AVSM_SampleTransmittance(TranslatedWorldPositionForLighting, DeferredLightUniforms.TranslatedWorldPosition);
+#endif // ADAPTIVE_VOLUMETRIC_SHADOW_MAP
 
 		// Apply light function (it will also fade out at the edge of the volume so overall dimming of light using light function is not a recommended workflow)
 		ShadowFactor *= GetLightFunctionShadowFactor(TranslatedWorldPositionForLighting);

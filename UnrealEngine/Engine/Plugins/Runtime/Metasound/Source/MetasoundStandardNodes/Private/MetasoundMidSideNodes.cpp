@@ -34,7 +34,7 @@ namespace Metasound
 	{
 	public:
 
-		FMidSideEncodeOperator(const FCreateOperatorParams& InParams,
+		FMidSideEncodeOperator(const FBuildOperatorParams& InParams,
 			const FAudioBufferReadRef& InLeftAudioInput,
 			const FAudioBufferReadRef& InRightAudioInput,
 			const FFloatReadRef& InSpreadAmount,
@@ -138,16 +138,16 @@ namespace Metasound
 			return {};
 		}
 		
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace MidSideEncodeVertexNames;
-			const FDataReferenceCollection& Inputs = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = DeclareVertexInterface().GetInputInterface();
 			
-			FAudioBufferReadRef LeftAudioIn = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioLeft), InParams.OperatorSettings);
-			FAudioBufferReadRef RightAudioIn = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioRight), InParams.OperatorSettings);
-			FFloatReadRef SpreadAmountIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputSpreadAmount), InParams.OperatorSettings);
-			FBoolReadRef bEqualPowerIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(InputEqualPower), InParams.OperatorSettings);
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
+			
+			FAudioBufferReadRef LeftAudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioLeft), InParams.OperatorSettings);
+			FAudioBufferReadRef RightAudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioRight), InParams.OperatorSettings);
+			FFloatReadRef SpreadAmountIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputSpreadAmount), InParams.OperatorSettings);
+			FBoolReadRef bEqualPowerIn = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputEqualPower), InParams.OperatorSettings);
 
 			return MakeUnique<FMidSideEncodeOperator>(InParams, LeftAudioIn, RightAudioIn, SpreadAmountIn, bEqualPowerIn);
 		}
@@ -282,7 +282,7 @@ namespace Metasound
 	{
 	public:
 
-		FMidSideDecodeOperator(const FCreateOperatorParams& InParams,
+		FMidSideDecodeOperator(const FBuildOperatorParams& InParams,
 			const FAudioBufferReadRef& InLeftAudioInput,
 			const FAudioBufferReadRef& InRightAudioInput,
 			const FFloatReadRef& InSpreadAmount,
@@ -392,16 +392,16 @@ namespace Metasound
 			return {};
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace MidSideDecodeVertexNames;
-			const FDataReferenceCollection& Inputs = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = DeclareVertexInterface().GetInputInterface();
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FAudioBufferReadRef MidAudioIn = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioMid), InParams.OperatorSettings);
-			FAudioBufferReadRef SideAudioIn = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioSide), InParams.OperatorSettings);
-			FFloatReadRef SpreadAmountIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputSpreadAmount), InParams.OperatorSettings);
-			FBoolReadRef bEqualPowerIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(InputEqualPower), InParams.OperatorSettings);
+			FAudioBufferReadRef MidAudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioMid), InParams.OperatorSettings);
+			FAudioBufferReadRef SideAudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudioSide), InParams.OperatorSettings);
+			FFloatReadRef SpreadAmountIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputSpreadAmount), InParams.OperatorSettings);
+			FBoolReadRef bEqualPowerIn = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputEqualPower), InParams.OperatorSettings);
 
 			return MakeUnique<FMidSideDecodeOperator>(InParams, MidAudioIn, SideAudioIn, SpreadAmountIn, bEqualPowerIn);
 		}

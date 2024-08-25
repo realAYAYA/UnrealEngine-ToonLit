@@ -10,6 +10,7 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialParameterCollectionInstance.h"
 #include "Materials/MaterialParameterCollection.h"
+#include "Misc/App.h"
 
 int32 GDeferUpdateRenderStates = 1;
 FAutoConsoleVariableRef CVarDeferUpdateRenderStates(
@@ -32,7 +33,7 @@ void UMaterialParameterCollection::PostInitProperties()
 {
 	Super::PostInitProperties();
 
-	if (!HasAnyFlags(RF_ClassDefaultObject))
+	if (LIKELY(!HasAnyFlags(RF_ClassDefaultObject) && FApp::CanEverRender()))
 	{
 		DefaultResource = new FMaterialParameterCollectionInstanceResource();
 	}
@@ -535,6 +536,11 @@ const FCollectionVectorParameter* UMaterialParameterCollection::GetVectorParamet
 
 void UMaterialParameterCollection::CreateBufferStruct()
 {	
+	if (UNLIKELY(!FApp::CanEverRenderOrProduceRenderData()))
+	{
+		return;
+	}
+
 	TArray<FShaderParametersMetadata::FMember> Members;
 	uint32 NextMemberOffset = 0;
 
@@ -591,6 +597,11 @@ void UMaterialParameterCollection::GetDefaultParameterData(TArray<FVector4f>& Pa
 
 void UMaterialParameterCollection::UpdateDefaultResource(bool bRecreateUniformBuffer)
 {
+	if (UNLIKELY(!FApp::CanEverRender()))
+	{
+		return;
+	}
+
 	// Propagate the new values to the rendering thread
 	TArray<FVector4f> ParameterData;
 	GetDefaultParameterData(ParameterData);
@@ -617,7 +628,7 @@ void UMaterialParameterCollectionInstance::PostInitProperties()
 {
 	Super::PostInitProperties();
 
-	if (!HasAnyFlags(RF_ClassDefaultObject))
+	if (!HasAnyFlags(RF_ClassDefaultObject) && FApp::CanEverRender())
 	{
 		Resource = new FMaterialParameterCollectionInstanceResource();
 	}
@@ -631,7 +642,12 @@ void UMaterialParameterCollectionInstance::SetCollection(UMaterialParameterColle
 
 bool UMaterialParameterCollectionInstance::SetScalarParameterValue(FName ParameterName, float ParameterValue)
 {
-	check(World.IsValid() && Collection.IsValid());
+	if (!World.IsValid())
+	{
+		return false;
+	}
+
+	check(Collection.IsValid());
 
 	if (Collection->GetScalarParameterByName(ParameterName))
 	{
@@ -665,7 +681,12 @@ bool UMaterialParameterCollectionInstance::SetScalarParameterValue(FName Paramet
 
 bool UMaterialParameterCollectionInstance::SetVectorParameterValue(FName ParameterName, const FLinearColor& ParameterValue)
 {
-	check(World.IsValid() && Collection.IsValid());
+	if (!World.IsValid())
+	{
+		return false;
+	}
+
+	check(Collection.IsValid());
 
 	if (Collection->GetVectorParameterByName(ParameterName))
 	{
@@ -809,6 +830,11 @@ void UMaterialParameterCollectionInstance::FinishDestroy()
 
 void FMaterialParameterCollectionInstanceResource::GameThread_UpdateContents(const FGuid& InGuid, const TArray<FVector4f>& Data, const FName& InOwnerName, bool bRecreateUniformBuffer)
 {
+	if (UNLIKELY(!FApp::CanEverRender()))
+	{
+		return;
+	}
+
 	FMaterialParameterCollectionInstanceResource* Resource = this;
 	ENQUEUE_RENDER_COMMAND(UpdateCollectionCommand)(
 		[InGuid, Data, InOwnerName, Resource, bRecreateUniformBuffer](FRHICommandListImmediate& RHICmdList)

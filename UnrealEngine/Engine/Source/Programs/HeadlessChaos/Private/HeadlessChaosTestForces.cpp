@@ -24,7 +24,7 @@ namespace ChaosTest
 		TArray<FPBDRigidParticleHandle*> Dynamics = Evolution.CreateDynamicParticles(1);
 		Evolution.EnableParticle(Dynamics[0]);
 		Evolution.AdvanceOneTimeStep(0.1);
-		EXPECT_LT(Dynamics[0]->X()[2], 0);
+		EXPECT_LT(Dynamics[0]->GetX()[2], 0);
 	}
 	
 	GTEST_TEST(AllEvolutions,Forces)

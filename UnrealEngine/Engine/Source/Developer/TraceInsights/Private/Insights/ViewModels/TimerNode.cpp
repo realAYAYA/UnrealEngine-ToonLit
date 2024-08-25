@@ -17,8 +17,8 @@ const FName FTimerNode::CpuGroup(TEXT("CPU"));
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FTimerNode::FTimerNode(uint32 InTimerId, const TCHAR* InName, ETimerNodeType InType)
-	: FBaseTreeNode(FName(InName), true) // Timer nodes are groups (for callers/callees use case)
+FTimerNode::FTimerNode(uint32 InTimerId, const TCHAR* InName, ETimerNodeType InType, bool bInIsGroup)
+	: FBaseTreeNode(FName(InName), bInIsGroup)
 	, TimerId(InTimerId)
 	, MetaGroupName(InType == ETimerNodeType::CpuScope ? CpuGroup : InType == ETimerNodeType::GpuScope ? GpuGroup : NAME_None)
 	, Type(InType)

@@ -1,22 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Diagnostics.CodeAnalysis;
 using EpicGames.Core;
-using EpicGames.Horde.Storage;
 using Horde.Agent.Parser;
-using Horde.Agent.Services;
 using Horde.Agent.Utility;
 using Horde.Common.Rpc;
 using HordeCommon;
 using HordeCommon.Rpc;
 using HordeCommon.Rpc.Messages;
-using HordeCommon.Rpc.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Horde.Agent.Execution
@@ -25,9 +16,50 @@ namespace Horde.Agent.Execution
 	{
 		public const string Name = "Test";
 
+		readonly IReadOnlyDictionary<string, string> _arguments;
+
 		public TestExecutor(JobExecutorOptions options, ILogger logger)
 			: base(options, logger)
 		{
+			Dictionary<string, string> arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			foreach (string argument in options.Batch.Arguments)
+			{
+				const string ArgumentPrefix = "-set:";
+				if (argument.StartsWith(ArgumentPrefix, StringComparison.OrdinalIgnoreCase))
+				{
+					int keyIdx = ArgumentPrefix.Length;
+					int valueIdx = argument.IndexOf('=', keyIdx);
+
+					if (valueIdx != -1)
+					{
+						string key = argument.Substring(keyIdx, valueIdx - keyIdx);
+						string value = argument.Substring(valueIdx + 1);
+						arguments[key] = value;
+					}
+				}
+			}
+			_arguments = arguments;
+		}
+
+		[return: NotNullIfNotNull("defaultValue")]
+		string? GetArgument(string name, string? defaultValue)
+		{
+			string? result;
+			if (!_arguments.TryGetValue(name, out result))
+			{
+				result = defaultValue;
+			}
+			return result;
+		}
+
+		bool GetArgument(string name, bool defaultValue)
+		{
+			bool result;
+			if (!_arguments.TryGetValue(name, out string? value) || !Boolean.TryParse(value, out result))
+			{
+				result = defaultValue;
+			}
+			return result;
 		}
 
 		public override Task InitializeAsync(ILogger logger, CancellationToken cancellationToken)
@@ -36,45 +68,50 @@ namespace Horde.Agent.Execution
 			return Task.CompletedTask;
 		}
 
-		protected override async Task<bool> SetupAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken)
+		protected override async Task<bool> SetupAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken)
 		{
 			logger.LogInformation("**** BEGIN JOB SETUP ****");
 
 			await Task.Delay(5000, cancellationToken);
 
-			UpdateGraphRequest updateGraph = new UpdateGraphRequest();
-			updateGraph.JobId = _jobId;
+			JobStepOutcome warningOutcome = GetArgument("SimulateWarning", false) ? JobStepOutcome.Warnings : JobStepOutcome.Success;
+			JobStepOutcome failureOutcome = GetArgument("SimulateError", false) ? JobStepOutcome.Failure : JobStepOutcome.Success;
 
-			CreateGroupRequest winEditorGroup = CreateGroup("AnyAgent");
+			string projectName = GetArgument("Project", "UnknownProject");
+
+			UpdateGraphRequest updateGraph = new UpdateGraphRequest();
+			updateGraph.JobId = JobId.ToString();
+
+			CreateGroupRequest winEditorGroup = CreateGroup("Win64");
 			winEditorGroup.Nodes.Add(CreateNode("Update Version Files", Array.Empty<string>(), JobStepOutcome.Success));
 			winEditorGroup.Nodes.Add(CreateNode("Compile UnrealHeaderTool Win64", new string[] { "Update Version Files" }, JobStepOutcome.Success));
-			winEditorGroup.Nodes.Add(CreateNode("Compile UE4Editor Win64", new string[] { "Compile UnrealHeaderTool Win64" }, JobStepOutcome.Success));
-			winEditorGroup.Nodes.Add(CreateNode("Compile FortniteEditor Win64", new string[] { "Compile UnrealHeaderTool Win64", "Compile UE4Editor Win64" }, JobStepOutcome.Success));
+			winEditorGroup.Nodes.Add(CreateNode("Compile UnrealEditor Win64", new string[] { "Compile UnrealHeaderTool Win64" }, JobStepOutcome.Success));
+			winEditorGroup.Nodes.Add(CreateNode($"Compile {projectName}Editor Win64", new string[] { "Compile UnrealHeaderTool Win64", "Compile UnrealEditor Win64" }, JobStepOutcome.Success));
 			updateGraph.Groups.Add(winEditorGroup);
 
-			CreateGroupRequest winToolsGroup = CreateGroup("AnyAgent"); 
-			winToolsGroup.Nodes.Add(CreateNode("Compile Tools Win64", new string[] { "Compile UnrealHeaderTool Win64" }, JobStepOutcome.Warnings));
+			CreateGroupRequest winToolsGroup = CreateGroup("Win64");
+			winToolsGroup.Nodes.Add(CreateNode("Compile Tools Win64", new string[] { "Compile UnrealHeaderTool Win64" }, warningOutcome));
 			updateGraph.Groups.Add(winToolsGroup);
 
-			CreateGroupRequest winClientsGroup = CreateGroup("AnyAgent");
-			winClientsGroup.Nodes.Add(CreateNode("Compile FortniteClient Win64", new string[] { "Compile UnrealHeaderTool Win64" }, JobStepOutcome.Success));
+			CreateGroupRequest winClientsGroup = CreateGroup("Win64");
+			winClientsGroup.Nodes.Add(CreateNode($"Compile {projectName}Client Win64", new string[] { "Compile UnrealHeaderTool Win64" }, JobStepOutcome.Success));
 			updateGraph.Groups.Add(winClientsGroup);
 
-			CreateGroupRequest winCooksGroup = CreateGroup("AnyAgent");
-			winCooksGroup.Nodes.Add(CreateNode("Cook FortniteClient Win64", new string[] { "Compile FortniteEditor Win64", "Compile Tools Win64" }, JobStepOutcome.Warnings));
-			winCooksGroup.Nodes.Add(CreateNode("Stage FortniteClient Win64", new string[] { "Cook FortniteClient Win64", "Compile Tools Win64" }, JobStepOutcome.Success));
-			winCooksGroup.Nodes.Add(CreateNode("Publish FortniteClient Win64", new string[] { "Stage FortniteClient Win64" }, JobStepOutcome.Success));
+			CreateGroupRequest winCooksGroup = CreateGroup("Win64");
+			winCooksGroup.Nodes.Add(CreateNode($"Cook {projectName}Client Win64", new string[] { $"Compile {projectName}Editor Win64", "Compile Tools Win64" }, warningOutcome));
+			winCooksGroup.Nodes.Add(CreateNode($"Stage {projectName}Client Win64", new string[] { $"Cook {projectName}Client Win64", "Compile Tools Win64" }, failureOutcome));
+			winCooksGroup.Nodes.Add(CreateNode($"Publish {projectName}Client Win64", new string[] { $"Stage {projectName}Client Win64" }, JobStepOutcome.Success));
 			updateGraph.Groups.Add(winCooksGroup);
 
 			CreateAggregateRequest aggregate = new CreateAggregateRequest();
 			aggregate.Name = "Full Build";
-			aggregate.Nodes.Add("Publish FortniteClient Win64");
+			aggregate.Nodes.Add($"Publish {projectName}Client Win64");
 			updateGraph.Aggregates.Add(aggregate);
 
 			Dictionary<string, string[]> dependencyMap = CreateDependencyMap(updateGraph.Groups);
-			updateGraph.Labels.Add(CreateLabel("Editors", "UE4", new string[] { "Compile UE4Editor Win64" }, Array.Empty<string>(), dependencyMap));
-			updateGraph.Labels.Add(CreateLabel("Editors", "Fortnite", new string[] { "Compile FortniteEditor Win64" }, Array.Empty<string>(), dependencyMap));
-			updateGraph.Labels.Add(CreateLabel("Clients", "Fortnite", new string[] { "Cook FortniteClient Win64" }, new string[] { "Publish FortniteClient Win64" }, dependencyMap));
+			updateGraph.Labels.Add(CreateLabel("Editors", "Engine", new string[] { "Compile UnrealEditor Win64" }, Array.Empty<string>(), dependencyMap));
+			updateGraph.Labels.Add(CreateLabel("Editors", "Project", new string[] { $"Compile {projectName}Editor Win64" }, Array.Empty<string>(), dependencyMap));
+			updateGraph.Labels.Add(CreateLabel("Clients", "Project", new string[] { $"Cook {projectName}Client Win64" }, new string[] { $"Publish {projectName}Client Win64" }, dependencyMap));
 
 			await RpcConnection.InvokeAsync((JobRpc.JobRpcClient x) => x.UpdateGraphAsync(updateGraph, null, null, cancellationToken), cancellationToken);
 
@@ -133,7 +170,7 @@ namespace Horde.Agent.Execution
 			return nameToDependencyNames;
 		}
 
-		protected override async Task<bool> ExecuteAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken)
+		protected override async Task<bool> ExecuteAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken)
 		{
 			logger.LogInformation("**** BEGIN NODE {StepName} ****", step.Name);
 
@@ -149,11 +186,6 @@ namespace Horde.Agent.Execution
 			};
 			await UploadTestDataAsync(step.StepId, items);
 
-			if (step.Name == "Stage FortniteClient Win64")
-			{
-				outcome = JobStepOutcome.Failure;
-			}
-
 			foreach (KeyValuePair<string, string> credential in step.Credentials)
 			{
 				logger.LogInformation("Credential: {CredentialName}={CredentialValue}", credential.Key, credential.Value);
@@ -164,13 +196,13 @@ namespace Horde.Agent.Execution
 
 			using (LogParser filter = new LogParser(perforceLogger, new List<string>()))
 			{
-				if(outcome == JobStepOutcome.Warnings)
+				if (outcome == JobStepOutcome.Warnings)
 				{
 					filter.WriteLine("D:\\Test\\Path\\To\\Source\\File.cpp(234): warning: This is a compilation warning");
 					logger.LogWarning("This is a warning!");
 					filter.WriteLine("warning: this is a test");
 				}
-				if(outcome == JobStepOutcome.Failure)
+				if (outcome == JobStepOutcome.Failure)
 				{
 					filter.WriteLine("D:\\Test\\Path\\To\\Source\\File.cpp(234): error: This is a compilation error");
 					logger.LogError("This is an error!");
@@ -178,8 +210,9 @@ namespace Horde.Agent.Execution
 				}
 			}
 
-			FileReference currentFile = new FileReference(Assembly.GetExecutingAssembly().Location);
-			await ArtifactUploader.UploadAsync(RpcConnection, _jobId, _batchId, step.StepId, currentFile.GetFileName(), currentFile, logger, cancellationToken);
+			FileReference tempFileName = new(Path.GetTempFileName());
+			await File.WriteAllTextAsync(tempFileName.FullName, "Some example data", cancellationToken);
+			await ArtifactUploader.UploadAsync(RpcConnection, JobId, BatchId, step.StepId, tempFileName.GetFileName(), tempFileName, logger, cancellationToken);
 
 			logger.LogInformation("**** FINISH NODE {StepName} ****", step.Name);
 

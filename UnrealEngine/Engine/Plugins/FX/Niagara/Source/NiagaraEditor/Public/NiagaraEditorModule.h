@@ -12,8 +12,10 @@
 #include "NiagaraPerfBaseline.h"
 #include "NiagaraDebuggerCommon.h"
 #include "NiagaraRendererProperties.h"
+#include "Customizations/NiagaraDataInterfaceSimCacheVisualizer.h"
 #include "NiagaraEditorModule.generated.h"
 
+class FNiagaraRecentAndFavoritesManager;
 class IAssetTools;
 class IAssetTypeActions;
 class INiagaraEditorTypeUtilities;
@@ -49,8 +51,9 @@ class UNiagaraReservedParametersManager;
 class FNiagaraGraphDataCache;
 class UNiagaraParameterCollection;
 struct FNiagaraSystemAsyncCompileResults;
+class ITargetPlatform;
 
-DECLARE_STATS_GROUP(TEXT("Niagara Editor"), STATGROUP_NiagaraEditor, STATCAT_Advanced);
+DECLARE_STATS_GROUP(TEXT("Niagara Editor"), STATGROUP_NiagaraEditor, STATCAT_Niagara);
 
 extern NIAGARAEDITOR_API int32 GbShowNiagaraDeveloperWindows;
 extern NIAGARAEDITOR_API int32 GbPreloadSelectablePluginAssetsOnDemand;
@@ -78,7 +81,7 @@ struct FReservedParameter
 
 public:
 	FReservedParameter()
-		: Parameter(FNiagaraVariable())
+		: Parameter(FNiagaraVariableBase())
 		, ReservingDefinitionsAsset(nullptr)
 	{};
 
@@ -114,11 +117,22 @@ struct FNiagaraRendererCreationInfo
 	FNiagaraRendererCreationInfo(FText InDisplayName, FText InDescription, const FTopLevelAssetPath& InRendererClassPath, FRendererFactory InFactory) : DisplayName(InDisplayName), Description(InDescription), RendererClassPath(InRendererClassPath), RendererFactory(InFactory)
 	{}
 
+	FNiagaraRendererCreationInfo(FText InDisplayName, bool bInIsSupportedByStateless, const FTopLevelAssetPath& InRendererClassPath, FRendererFactory InFactory) 
+		: DisplayName(InDisplayName), bIsSupportedByStateless(bInIsSupportedByStateless), RendererClassPath(InRendererClassPath), RendererFactory(InFactory)
+	{}
+
+	FNiagaraRendererCreationInfo(FText InDisplayName, FText InDescription, bool bInIsSupportedByStateless, const FTopLevelAssetPath& InRendererClassPath, FRendererFactory InFactory) 
+		: DisplayName(InDisplayName), Description(InDescription), bIsSupportedByStateless(bInIsSupportedByStateless), RendererClassPath(InRendererClassPath), RendererFactory(InFactory)
+	{}
+
 	UPROPERTY()
 	FText DisplayName;
 
 	UPROPERTY()
 	FText Description;
+
+	UPROPERTY()
+	bool bIsSupportedByStateless = false;
 
 	UPROPERTY()
 	FTopLevelAssetPath RendererClassPath;
@@ -147,6 +161,8 @@ public:
 	/** Get the instance of this module. */
 	NIAGARAEDITOR_API static FNiagaraEditorModule& Get();
 
+	NIAGARAEDITOR_API FNiagaraRecentAndFavoritesManager* GetRecentsManager();
+	
 	/** Start the compilation of the specified script. */
 	virtual int32 CompileScript(const FNiagaraCompileRequestDataBase* InCompileRequest, const FNiagaraCompileRequestDuplicateDataBase* InCompileRequestDuplicate, const FNiagaraCompileOptions& InCompileOptions);
 	virtual TSharedPtr<FNiagaraVMExecutableData> GetCompilationResult(int32 JobID, bool bWait, FNiagaraScriptCompileMetrics& ScriptMetrics);
@@ -160,7 +176,7 @@ public:
 		FGuid TargetVersion);
 	TSharedPtr<FNiagaraGraphCachedDataBase, ESPMode::ThreadSafe> CacheGraphTraversal(const UObject* Obj, FGuid Version);
 
-	FNiagaraCompilationTaskHandle RequestCompileSystem(UNiagaraSystem* System, bool bForce);
+	FNiagaraCompilationTaskHandle RequestCompileSystem(UNiagaraSystem* System, bool bForce, const ITargetPlatform* TargetPlatform);
 	bool PollSystemCompile(FNiagaraCompilationTaskHandle, FNiagaraSystemAsyncCompileResults&, bool /*bWait*/, bool /*bPeek*/);
 	void AbortSystemCompile(FNiagaraCompilationTaskHandle);
 
@@ -174,7 +190,7 @@ public:
 	/** Register/unregister niagara editor settings. */
 	void RegisterSettings();
 	void UnregisterSettings();
-
+	
 	/** Gets Niagara editor type utilities for a specific type if there are any registered. */
 	TSharedPtr<INiagaraEditorTypeUtilities, ESPMode::ThreadSafe> NIAGARAEDITOR_API GetTypeUtilities(const FNiagaraTypeDefinition& Type);
 
@@ -182,6 +198,11 @@ public:
 	NIAGARAEDITOR_API void UnregisterWidgetProvider(TSharedRef<INiagaraEditorWidgetProvider> InWidgetProvider);
 
 	TSharedRef<INiagaraEditorWidgetProvider> GetWidgetProvider() const;
+
+	
+	NIAGARAEDITOR_API void RegisterDataInterfaceCacheVisualizer(UClass* DataInterfaceClass, TSharedRef<INiagaraDataInterfaceSimCacheVisualizer> InCacheVisualizer);
+	NIAGARAEDITOR_API void UnregisterDataInterfaceCacheVisualizer(UClass* DataInterfaceClass, TSharedRef<INiagaraDataInterfaceSimCacheVisualizer> InCacheVisualizer);
+	TArrayView<TSharedRef<INiagaraDataInterfaceSimCacheVisualizer>> FindDataInterfaceCacheVisualizer(UClass* DataInterfaceClass);
 
 	TSharedRef<FNiagaraScriptMergeManager> GetScriptMergeManager() const;
 
@@ -241,6 +262,7 @@ public:
 #endif
 
 	const TArray<TWeakObjectPtr<UNiagaraParameterDefinitions>>& GetCachedParameterDefinitionsAssets();
+	const TArray<TWeakObjectPtr<UNiagaraParameterCollection>>& GetCachedParameterCollectionAssets();
 
 	NIAGARAEDITOR_API void GetTargetSystemAndEmitterForDataInterface(UNiagaraDataInterface* InDataInterface, UNiagaraSystem*& OutOwningSystem, FVersionedNiagaraEmitter& OutOwningEmitter);
 	NIAGARAEDITOR_API void GetDataInterfaceFeedbackSafe(UNiagaraDataInterface* InDataInterface, TArray<FNiagaraDataInterfaceError>& OutErrors, TArray<FNiagaraDataInterfaceFeedback>& Warnings, TArray<FNiagaraDataInterfaceFeedback>& Info);
@@ -257,6 +279,9 @@ public:
 	
 	/** Callback whenever a script is applied/updated in the editor. */
 	FOnScriptApplied& OnScriptApplied();
+
+	UPackage* GetTempPackage() { return TempPackage; }
+
 private:
 	class FDeferredDestructionContainerBase
 	{
@@ -298,7 +323,17 @@ private:
 			{
 				if (AssetDatum.IsAssetLoaded() || (bAllowLoading && FPackageName::GetPackageMountPoint(AssetDatum.PackageName.ToString()) != NAME_None))
 				{
-					if (AssetType* Asset = Cast<AssetType>(AssetDatum.GetAsset()))
+					AssetType* Asset = nullptr;
+					if (AssetDatum.IsAssetLoaded() == false && bForceLoadSilent)
+					{
+						Asset = Cast<AssetType>(LoadSilent(AssetDatum));
+					}
+					else
+					{
+						Asset = Cast<AssetType>(AssetDatum.GetAsset());
+					}
+
+					if (Asset != nullptr)
 					{
 						Asset->ConditionalPostLoad();
 						CachedAssets.Add(MakeWeakObjectPtr(Asset));
@@ -309,8 +344,18 @@ private:
 
 		const TArray<TWeakObjectPtr<AssetType>>& Get() const { return CachedAssets; };
 
+		void SetForceLoadSilent(bool bInForceLoadSilent) { bForceLoadSilent = bInForceLoadSilent; }
+
+	private:
+		static UObject* LoadSilent(const FAssetData& AssetData)
+		{
+			uint32 LoadFlags = LOAD_Quiet | LOAD_NoWarn;
+			return StaticLoadObject(AssetType::StaticClass(), nullptr, *AssetData.GetObjectPathString(), nullptr, LoadFlags, nullptr, true);
+		};
+
 	private:
 		TArray<TWeakObjectPtr<AssetType>> CachedAssets;
+		bool bForceLoadSilent = false;
 	};
 
 	void RegisterDefaultRendererFactories();
@@ -395,6 +440,8 @@ private:
 
 	TSharedPtr<INiagaraEditorWidgetProvider> WidgetProvider;
 
+	TMap<TObjectKey<UClass>, TArray<TSharedRef<INiagaraDataInterfaceSimCacheVisualizer>>> DataInterfaceVisualizers;
+
 	TSharedPtr<FNiagaraScriptMergeManager> ScriptMergeManager;
 
 	TSharedPtr<INiagaraEditorOnlyDataUtilities> EditorOnlyDataUtilities;
@@ -402,7 +449,7 @@ private:
 	TSharedPtr<FNiagaraComponentBroker> NiagaraComponentBroker;
 
 	TMap<const UScriptStruct*, FOnCreateMovieSceneTrackForParameter> TypeToParameterTrackCreatorMap;
-
+	
 	IConsoleCommand* TestCompileScriptCommand;
 	IConsoleCommand* ValidateScriptVariableGuidsCommand;
 	IConsoleCommand* ValidateAndFixScriptVariableGuidsCommand;
@@ -464,4 +511,8 @@ private:
 	TAssetPreloadCache<UNiagaraParameterDefinitions> ParameterDefinitionsAssetCache;
 
 	TArray<UClass*> PluginAssetClassesPreloaded;
+
+	TSharedPtr<FNiagaraRecentAndFavoritesManager> RecentAndFavoritesManager;
+
+	UPackage* TempPackage = nullptr;
 };

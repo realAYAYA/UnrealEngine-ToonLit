@@ -83,7 +83,7 @@ FStorageServerRequest::FStorageServerRequest(FAnsiStringView Verb, FAnsiStringVi
 		<< "Accept: " << GetMimeTypeString(Accept) << "\r\n";
 }
 
-FSocket* FStorageServerRequest::Send(FStorageServerConnection& Owner)
+FSocket* FStorageServerRequest::Send(FStorageServerConnection& Owner, bool bLogOnError)
 {
 	if (BodyBuffer.Num())
 	{
@@ -137,7 +137,10 @@ FSocket* FStorageServerRequest::Send(FStorageServerConnection& Owner)
 		}
 		return Socket;
 	}
-	UE_LOG(LogStorageServerConnection, Fatal, TEXT("Failed sending request to storage server."));
+	if (bLogOnError)
+	{
+		UE_LOG(LogStorageServerConnection, Fatal, TEXT("Failed sending request to storage server."));
+	}
 	return nullptr;
 }
 
@@ -506,7 +509,10 @@ int32 FStorageServerConnection::HandshakeRequest(TArrayView<const TSharedPtr<FIn
 		
 		UE_LOG(LogStorageServerConnection, Display, TEXT("Trying to handshake with Zen at '%s'"), *Addr->ToString(true));
 
-		FSocket* ConnectSocket = AcquireNewSocket();
+		// Handshakes are done with a limited connection timeout so that we can find out if the destination is unreachable
+		// in a timely manner.
+		const float ConnectionTimeoutSeconds = 5.0f;
+		FSocket* ConnectSocket = AcquireNewSocket(ConnectionTimeoutSeconds);
 		if (!ConnectSocket)
 		{
 			continue;
@@ -514,7 +520,7 @@ int32 FStorageServerConnection::HandshakeRequest(TArrayView<const TSharedPtr<FIn
 		ReleaseSocket(ConnectSocket, true);
 
 		FStorageServerRequest Request("GET", *ResourceBuilder, Hostname);
-		if (FSocket* Socket = Request.Send(*this))
+		if (FSocket* Socket = Request.Send(*this, false))
 		{
 			FStorageServerResponse Response(*this, *Socket);
 
@@ -534,11 +540,17 @@ int32 FStorageServerConnection::HandshakeRequest(TArrayView<const TSharedPtr<FIn
 				UE_LOG(LogStorageServerConnection, Fatal, TEXT("Failed to handshake with Zen at %s. '%s'"), *ServerAddr->ToString(true), *Response.GetErrorMessage());
 			}
 		}
+		else
+		{
+			UE_LOG(LogStorageServerConnection, Warning, TEXT("Failed to send handshake request to Zen at %s."), *ServerAddr->ToString(true));
+		}
 	}
+
+	UE_LOG(LogStorageServerConnection, Error, TEXT("Failed to handshake with Zen at any of host addresses."));
 
 	Hostname.Reset();
 	ServerAddr.Reset();
-	
+
 	return -1;
 }
 
@@ -710,19 +722,35 @@ FSocket* FStorageServerConnection::AcquireSocketFromPool()
 	FScopeLock Lock(&SocketPoolCritical);
 	if (!SocketPool.IsEmpty())
 	{
-		return SocketPool.Pop(false);
+		return SocketPool.Pop(EAllowShrinking::No);
 	}
 	return nullptr;
 }
 
-FSocket* FStorageServerConnection::AcquireNewSocket()
+FSocket* FStorageServerConnection::AcquireNewSocket(float TimeoutSeconds)
 {
 	FSocket* Socket = SocketSubsystem.CreateSocket(NAME_Stream, TEXT("StorageServer"), ServerAddr->GetProtocolType());
 	check(Socket);
 
-	if (Socket->Connect(*ServerAddr))
+	if (TimeoutSeconds > 0.0f)
 	{
-		return Socket;
+		Socket->SetNonBlocking(true);
+		ON_SCOPE_EXIT
+		{
+			Socket->SetNonBlocking(false);
+		};
+
+		if (Socket->Connect(*ServerAddr) && Socket->Wait(ESocketWaitConditions::WaitForWrite, FTimespan::FromSeconds(TimeoutSeconds)))
+		{
+			return Socket;
+		}
+	}
+	else
+	{
+		if (Socket->Connect(*ServerAddr))
+		{
+			return Socket;
+		}
 	}
 
 	delete Socket;

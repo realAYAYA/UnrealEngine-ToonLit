@@ -886,7 +886,7 @@ private:
 	/// Returns pointer to tile in the tile array.
 	NAVMESH_API dtMeshTile* getTile(int i);
 
-	/// Returns neighbour tile based on side.
+	/// Returns the tile at the coordinates.
 	NAVMESH_API int getTilesAt(const int x, const int y,
 				   dtMeshTile** tiles, const int maxTiles) const;
 

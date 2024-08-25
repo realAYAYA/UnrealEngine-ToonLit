@@ -69,12 +69,32 @@ namespace UnsyncUI
         { }
     }
 
-    public static class AsyncIO
+	public interface IDirectoryEnumerator
+	{
+		public Task<IEnumerable<string>> EnumerateDirectories(string path, CancellationToken token);
+		public Task<IEnumerable<string>> EnumerateFiles(string path, CancellationToken token);
+	}
+
+	public class NativeDirectoryEnumerator : IDirectoryEnumerator
+	{
+		public Task<IEnumerable<string>> EnumerateDirectories(string path, CancellationToken token)
+		{
+			return AsyncIO.EnumerateDirectoriesAsync(path, token);
+		}
+		public Task<IEnumerable<string>> EnumerateFiles(string path, CancellationToken token)
+		{
+			return AsyncIO.EnumerateFilesAsync(path, token);
+		}
+	}
+
+	static class AsyncIO
     {
 		private static SemaphoreSlim mutex = new SemaphoreSlim(4);
 
         public static Task<IEnumerable<string>> EnumerateDirectoriesAsync(string path, CancellationToken token)
         {
+			App.Current?.LogMessage($"Enumerating: {path}");
+
 			var tcs = new TaskCompletionSource<IEnumerable<string>>();
             Task.Run(() =>
 			{
@@ -87,14 +107,7 @@ namespace UnsyncUI
 					mutex.Wait(token);
 					try
 					{
-						var timer = new Stopwatch();
-						timer.Start();
-
 						var dirs = Directory.EnumerateDirectories(path, "*", enumOptions).ToList();
-
-						timer.Stop();
-						Debug.WriteLine($"Time: {timer.Elapsed.TotalSeconds:0.000} s - {path}");
-
 						tcs.TrySetResult(dirs);
 					}
 					catch (Exception ex)
@@ -130,7 +143,7 @@ namespace UnsyncUI
 						var dirs = Directory.EnumerateFiles(path).ToList();
 
 						timer.Stop();
-						Debug.WriteLine($"Time: {timer.Elapsed.TotalSeconds:0.000} s - {path}");
+						App.Current?.LogMessage($"Time: {timer.Elapsed.TotalSeconds:0.000} s - {path}");
 
 						tcs.TrySetResult(dirs);
 					}
@@ -268,8 +281,11 @@ namespace UnsyncUI
 			};
 		}
 
-		public async IAsyncEnumerable<string> RunAsync([EnumeratorCancellation] CancellationToken cancelToken)
+		public async IAsyncEnumerable<string> RunAsync([EnumeratorCancellation] CancellationToken cancelToken, bool ReadStdErr = true)
 		{
+			string processFileName = Path.GetFileName(proc.StartInfo.FileName);
+			App.Current?.LogMessage($"Running: {processFileName} {proc.StartInfo.Arguments}");
+
 			try
 			{
 				using (var cancel = cancelToken.Register(() =>
@@ -285,7 +301,7 @@ namespace UnsyncUI
 
 					var pipe = new BufferBlock<string>();
 
-					async Task ReadStream(Stream stream)
+					async Task ReadStream(Stream stream, bool ShouldPost)
 					{
 						var block = new byte[4096];
 						var mem = new Memory<byte>(block);
@@ -294,17 +310,21 @@ namespace UnsyncUI
 						{
 							int bytesRead = await stream.ReadAsync(mem);
 							if (bytesRead == 0)
+							{
 								break;
+							}
 
-							// @todo: this won't handle UTF-8 encoding if a char is split across the read boundary.
-							pipe.Post(Encoding.UTF8.GetString(mem.Span.Slice(0, bytesRead)));
+							if (ShouldPost)
+							{
+								// @todo: this won't handle UTF-8 encoding if a char is split across the read boundary.
+								string decodedString = Encoding.UTF8.GetString(mem.Span.Slice(0, bytesRead));
+								pipe.Post(decodedString);
+							}
 						}
-
-						pipe.Complete();
 					}
 
-					var stdoutTask = ReadStream(proc.StandardOutput.BaseStream);
-					var stderrTask = ReadStream(proc.StandardError.BaseStream);
+					var stdoutTask = ReadStream(proc.StandardOutput.BaseStream, true);
+					var stderrTask = ReadStream(proc.StandardError.BaseStream, ReadStdErr);
 
 					var completionTask = Task.Run(async () =>
 					{
@@ -314,7 +334,8 @@ namespace UnsyncUI
 
 					while (await pipe.OutputAvailableAsync())
 					{
-						yield return pipe.Receive();
+						string receivedString = pipe.Receive();
+						yield return receivedString;
 					}
 
 					await completionTask;
@@ -325,8 +346,21 @@ namespace UnsyncUI
 				ExitCode = proc.ExitCode;
 				proc.Dispose();
 
+				App.Current?.LogDebug($"Finished: {processFileName} with exit code {ExitCode}");
+
 				cancelToken.ThrowIfCancellationRequested();
 			}
+		}
+
+		public async Task<string> RunAndGetOutput(bool ReadStdErr = true)
+		{
+			var result = "";
+			var cancellationToken = new CancellationToken();
+			await foreach (var str in RunAsync(cancellationToken, false /*ReadStdErr*/))
+			{
+				result += str;
+			}
+			return result;
 		}
 	}
 }

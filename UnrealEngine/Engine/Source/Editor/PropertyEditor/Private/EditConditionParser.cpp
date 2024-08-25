@@ -70,6 +70,17 @@ static TOptional<FExpressionError> ConsumeNullPtr(FExpressionTokenConsumer& Cons
 	return TOptional<FExpressionError>();
 }
 
+static TOptional<FExpressionError> ConsumeIndexNone(FExpressionTokenConsumer& Consumer)
+{
+	TOptional<FStringToken> IndexNoneToken = Consumer.GetStream().ParseToken(TEXT("INDEX_NONE"));
+	if (IndexNoneToken.IsSet())
+	{
+		Consumer.Add(IndexNoneToken.GetValue(), EditConditionParserTokens::FIndexNoneToken());
+	}
+
+	return TOptional<FExpressionError>();
+}
+
 static TOptional<FExpressionError> ConsumePropertyName(FExpressionTokenConsumer& Consumer)
 {
 	enum class EParsedStringType : uint8
@@ -319,6 +330,31 @@ static FExpressionResult ApplyPropertyIsNull(const EditConditionParserTokens::FP
 	}
 
 	return MakeValue(bIsNull);
+}
+
+static FExpressionResult ApplyPropertyIsIndexNone(const EditConditionParserTokens::FPropertyToken& Property, const IEditConditionContext& Context, bool bNegate)
+{
+	TWeakObjectPtr<UFunction> CachedFunction = Context.GetFunction(Property.PropertyName);
+
+	TOptional<FString> TypeName = Context.GetTypeName(Property.PropertyName, CachedFunction);
+	if (!TypeName.IsSet())
+	{
+		return MakeError(FText::Format(LOCTEXT("InvalidOperand", "EditCondition attempted to use an invalid operand \"{0}\"."), FText::FromString(Property.PropertyName)));
+	}
+
+	TOptional<int64> Value = Context.GetIntegerValue(Property.PropertyName, CachedFunction);
+	if (!Value.IsSet())
+	{
+		return MakeError(FText::Format(LOCTEXT("InvalidOperand", "EditCondition attempted to use an invalid operand \"{0}\"."), FText::FromString(Property.PropertyName)));
+	}
+
+	bool bIsIndexNone = Value.GetValue() == (int64)INDEX_NONE;
+	if (bNegate)
+	{
+		bIsIndexNone = !bIsIndexNone;
+	}
+
+	return MakeValue(bIsIndexNone);
 }
 
 static FExpressionResult ApplyPropertiesEqual(const EditConditionParserTokens::FPropertyToken& A, const EditConditionParserTokens::FPropertyToken& B, const IEditConditionContext& Context, bool bNegate)
@@ -730,6 +766,7 @@ FEditConditionParser::FEditConditionParser()
 	TokenDefinitions.DefineToken(&ExpressionParser::ConsumeSymbol<FSubExpressionEnd>);
 	TokenDefinitions.DefineToken(&ExpressionParser::ConsumeNumber);
 	TokenDefinitions.DefineToken(&ConsumeNullPtr);
+	TokenDefinitions.DefineToken(&ConsumeIndexNone);
 	TokenDefinitions.DefineToken(&ConsumeBool);
 	TokenDefinitions.DefineToken(&ConsumePropertyName);
 				
@@ -769,6 +806,17 @@ FEditConditionParser::FEditConditionParser()
 	OperatorJumpTable.MapBinary<FNotEqual>([](const FPropertyToken& A, const FNullPtrToken& B, const IEditConditionContext* Context) -> FExpressionResult
 	{
 		return ApplyPropertyIsNull(A, *Context, true);
+	});
+
+	// INDEX_NONE
+	OperatorJumpTable.MapBinary<FEqual>([](const FPropertyToken& A, const FIndexNoneToken& B, const IEditConditionContext* Context) -> FExpressionResult
+	{
+		return ApplyPropertyIsIndexNone(A, *Context, false);
+	});
+
+	OperatorJumpTable.MapBinary<FNotEqual>([](const FPropertyToken& A, const FIndexNoneToken& B, const IEditConditionContext* Context) -> FExpressionResult
+	{
+		return ApplyPropertyIsIndexNone(A, *Context, true);
 	});
 
 	// BITWISE AND

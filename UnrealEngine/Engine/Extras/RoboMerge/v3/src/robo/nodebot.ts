@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import * as Sentry from '@sentry/node';
+import * as p4util from '../common/p4util';
 import { _nextTick } from '../common/helper';
 import { ContextualLogger } from '../common/logger';
 import { Mailer, MailParams, Recipients } from '../common/mailer';
@@ -9,7 +10,7 @@ import { IPCControls, NodeBotInterface, QueuedChange, ReconsiderArgs } from './b
 import { ApprovalOptions, BotConfig, EdgeOptions, NodeOptions } from './branchdefs'
 import { BlockagePauseInfo, BranchStatus } from './status-types';
 import { AlreadyIntegrated, Blockage, Branch, BranchArg, BranchGraphInterface, ChangeInfo, EndIntegratingToGateEvent, Failure } from './branch-interfaces';
-import { MergeAction, OperationResult, PendingChange, resolveBranchArg, StompedRevision, StompVerification, StompVerificationFile }  from './branch-interfaces';
+import { MergeAction, OperationResult, PendingChange, resolveBranchArg, StompedRevision, StompVerification, StompVerificationFile, UnlockVerification }  from './branch-interfaces';
 import { Conflicts } from './conflicts';
 import { EdgeBot, EdgeMergeResults } from './edgebot';
 import { BotEventTriggers } from './events';
@@ -33,8 +34,6 @@ const DEFAULT_ACKNOWLEDGED_NAG_LEEWAY = 15
 const NAG_EMAIL_MIN_TIME_MINUTES = 60
 const NAG_EMAIL_MIN_TIME_DESCRIPTION = 'an hour'
 const SYNTAX_ERROR_PAUSE_TIMEOUT_SECONDS = 10 * 60
-
-const MAX_CHANGES_TO_PROCESS_BEFORE_YIELDING = 50 // when catching up, we seem to get through 10 changes a minute
 
 const ALLOWED_STOMPABLE_NONBINARY = [
 	/\.collection$/
@@ -86,7 +85,8 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 	public isActive = false
 
 	constructor(
-		branchDef: Branch, 
+		branchDef: Branch,
+		private readonly previewMode: boolean,
 		mailer: Mailer,
 		slackMessages: SlackMessages | undefined,
 		externalUrl: string, 
@@ -244,9 +244,10 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 
 	/** @return true if full tick completed, only used for analytics */
 	async tick() {
-		for (const edgeBot of this.edges.values()) {
-			await edgeBot.tick()
+		if (this.previewMode) {
+			return false
 		}
+		await Promise.all(Array.from(this.edges.values(), async edgeBot => edgeBot.tick()))
 
 		// Pre-tick
 
@@ -282,7 +283,7 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 			// reset integration timers - easier to do it here than on every integration code path
 			edgeBot.resetIntegrationTimestamp()
 		}
-	// End Pre-tick
+		// End Pre-tick
 
 		// see if our flow is paused
 		if (this.isManuallyPaused) {
@@ -343,7 +344,7 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 			this.ticksSinceLastNewP4Commit = 0
 
 			this.headCL = changes[0].change
-			await this._processListOfChanges(availableEdges, changes, MAX_CHANGES_TO_PROCESS_BEFORE_YIELDING)
+			await this._processListOfChanges(availableEdges, changes)
 		}
 		return true
 	}
@@ -353,6 +354,10 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 	}
 
 	async processQueuedChange(fromQueue: QueuedChange) {
+		if (this.previewMode) {
+			this._log_action(`(PREVIEW MODE) - Skipping manually queued change ${fromQueue.cl} on ${this.fullName}, requested by ${fromQueue.who}`)
+			return
+		}
 		let logMessage = `Processing manually queued change ${fromQueue.cl} on ${this.fullName}, requested by ${fromQueue.who}`
 		if (fromQueue.workspace) {
 			logMessage += `, in workspace ${fromQueue.workspace}`
@@ -953,7 +958,7 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 			return { success: false, message: "Missing parameters for stompChanges node operation" }
 		}
 
-		// Reverify, but don't revert on a successfull verification!
+		// Reverify, but don't revert on a successful verification!
 		const verifyResult = await this.verifyStomp(changeCl, targetBranchName)
 
 		if (!verifyResult.success) {
@@ -994,6 +999,126 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 
 	}
 
+	async verifyUnlock(changeCl: number, targetBranchName: string) : Promise<UnlockVerification> {
+		this._log_action(`Verifying unlock request of CL ${changeCl} to ${targetBranchName}`, "verbose")
+		if (!changeCl || !targetBranchName) {
+			return { success: false, message: "Missing parameters for unlock operation" }
+		}
+
+		const targetBranch = this._getBranch(targetBranchName)
+
+		if (!targetBranch) {
+			return { success: false, message: `Unable to retrieve branch infomation for "${targetBranchName}". Unable to unlock, please contact Robomerge support."` }
+		}
+
+		const edge = this.getImmediateEdge(targetBranch)
+
+		if (!edge) {
+			return { success: false, message: `This bot has no edge for specified branch "${targetBranch.name}" on ${this.fullName}`}
+		}
+
+		// Ensure we're paused on a non-manual pause blockage
+		if (!edge.isBlocked) {
+			return { success: false, message: "Branch needs to have conflict to unlock files." }
+		}
+
+		// Get the pause info of the edge
+		const blockageInfo = edge.pauseState.blockagePauseInfo!
+
+		// We've ensured we're on a blockage now. Make sure the CL is still valid.
+		if (blockageInfo.change !== changeCl) {
+			return { success: false, message: `Requested change CL "${changeCl}" does not match blockage change CL "${blockageInfo.change}"` }
+		}
+
+		let conflict = this.conflicts.getConflictByChangeCl(changeCl, targetBranch)
+
+		if (!conflict) {
+			return { success: false, message: `Unable to retrieve conflict for CL ${changeCl} merging to ${targetBranch.name}. Unable to unlock, please contact Robomerge support.` }
+		}
+		if (conflict.kind !== 'Exclusive check-out') {
+			return { success: false, message: `Unlock only usable when edge is blocked by exclusive check-out ${targetBranch.name}. ` + 
+				`If you thinks this is an error, contact Robomerge support.` }
+		}
+
+		return { success: true, validRequest: true, message: "Unlock verified", lockedFiles: blockageInfo.additionalInfo.exclusiveFiles}
+	}
+
+	// First, re-verify the unlock request
+	// If verified, we should have a list of files to unlock
+	async unlockChanges(owner: string, changeCl: number, targetBranchName: string): Promise<OperationResult> {
+		// Ensure this is a valid request
+		// Parameter validation (should not be blank)
+		if (!owner || !changeCl || !targetBranchName) {
+			return { success: false, message: "Missing parameters for unlockChanges node operation" }
+		}
+
+		const verifyResult = await this.verifyUnlock(changeCl, targetBranchName)
+
+		if (!verifyResult.success) {
+			return { success: false, message: `unlockChanges Request Failed Due to Bad Verification: ${verifyResult.message}` }
+		}
+
+		if (!verifyResult.validRequest) {
+			return { success: false, message: `unlockChanges Request Cannot Be Completed: ${verifyResult.message}` }
+		}
+
+		this.nodeBotLogger.info(`Unlock Request for cl ${changeCl} by ${owner} validated, unlocking files`)
+
+		let filesByClient = new Map<string,string[]>()
+		let filesByUser = new Map<string,string[]>()
+		for (const lockedFile of verifyResult.lockedFiles!) {
+			filesByClient.set(lockedFile.client, [...(filesByClient.get(lockedFile.client) || []), lockedFile.depotPath])
+			filesByUser.set(lockedFile.user, [...(filesByUser.get(lockedFile.user) || []), lockedFile.depotPath])
+		}
+
+		filesByClient.forEach((files,client) => this.p4.revertFiles(files,client))
+
+		if (this.slackMessages) {
+			
+			filesByUser.forEach(async (files, author) => {
+
+				let userToNotify = `@${author}`
+				const emailAddress = await this.findEmail(author)
+				if (emailAddress)
+				{
+					const user = await this.slackMessages!.getSlackUser(emailAddress)
+					if (user) {
+						userToNotify = `<@${user}>`
+					}
+				}
+				const unlockMessage: SlackMessage = {
+					text: `${userToNotify} - ${owner} has unlocked the following files:\n${files.join('\n')}`,
+					style: SlackMessageStyles.DANGER,
+					channel: this.branchGraph.config.slackChannel,
+					mrkdwn: true
+				}
+
+				this.slackMessages!.postReply(changeCl, targetBranchName, unlockMessage)
+			})
+		}
+
+		if (this.tickJournal) {
+			// Add number of successful unlocks
+			++this.tickJournal.unlockQueued
+		}
+
+		const targetBranch = this._getBranch(targetBranchName)
+
+		if (!targetBranch) {
+			return { success: false, message: `Unable to retrieve branch infomation for "${targetBranchName}". Unable to unlock, please contact Robomerge support."` }
+		}
+
+		const edge = this.getImmediateEdge(targetBranch)
+
+		if (!edge) {
+			return { success: false, message: `This bot has no edge for specified branch "${targetBranch.name}" on ${this.fullName}`}
+		}
+
+		edge.unblock("files unlocked")
+
+		return { success: true, message: 'Queued unlock request' }
+	}
+
 	createEdgeBlockageInfo(edgeBranch: Branch, failure: Failure, pending: PendingChange): BlockagePauseInfo {
 		// Check source node if it is currently tracking this conflict
 		let existingConflict = this.getConflictByBranchAndSourceCl(edgeBranch, pending.change.source_cl)
@@ -1002,7 +1127,8 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 			failure.description,
 			<PendingChange> pending,
 			existingConflict ? existingConflict.time : new Date,
-			edgeBranch
+			edgeBranch,
+			failure.additionalInfo
 		)
 
 		// Check to see if this conflict has been acknowledged
@@ -1014,10 +1140,10 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 		return pauseInfo
 	}
 
-	private static _makeBlockageInfo(errstr: string, errlong: string, arg: ChangeInfo | PendingChange, startedAt: Date, targetBranch?: Branch): BlockagePauseInfo {
+	private static _makeBlockageInfo(errstr: string, errlong: string, arg: ChangeInfo | PendingChange, startedAt: Date, targetBranch?: Branch, additionalInfo?: any): BlockagePauseInfo {
 		const MAX_LEN = 700
 		if (errlong.length > MAX_LEN) {
-			errlong = errlong.substr(0,MAX_LEN) + "..."
+			errlong = errlong.substring(0,MAX_LEN) + "..."
 		}
 
 		const maybePendingChange = arg as PendingChange
@@ -1029,7 +1155,8 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 			change: info.cl,
 			sourceCl: info.source_cl,
 			source: info.source,
-			message: `${errstr}:\n${errlong}`
+			message: `${errstr}:\n${errlong}`,
+			additionalInfo
 		}
 
 		if (maybePendingChange.change) {
@@ -1211,6 +1338,16 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 				)
 			}
 
+			if (blockage.failure.kind === 'Exclusive check-out') {
+				urls.unlockUrl = OperationUrlHelper.createUnlockUrl(
+					externalUrl,
+					botname,
+					branchname,
+					cl,
+					blockage.action.branch.name
+				)
+			}
+
 			// Do not generate skip urls if this branch is configure to disallow it
 			if (!disallowSkip) {
 				urls.skipUrl = OperationUrlHelper.createSkipUrl(
@@ -1253,17 +1390,15 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 		this.conflicts.onAlreadyIntegrated(event)
 
 		if (event.change.userRequest && this.slackMessages) {
-			if (this.slackMessages) {
-				const message = `Change ${event.change.cl} was not necessary in ${event.action.branch.name}`
-				let dm: SlackMessage = {
-					text: message,
-					style: SlackMessageStyles.WARNING,
-					channel: '',
-					mrkdwn: true
-				}
-				
-				this.slackMessages.postDM(this.findEmail(event.change.owner!), event.change.cl, this.branch, dm)			
+			const message = `Change ${event.change.cl} was not necessary in ${event.action.branch.name}`
+			let dm: SlackMessage = {
+				text: message,
+				style: SlackMessageStyles.WARNING,
+				channel: '',
+				mrkdwn: true
 			}
+			
+			this.slackMessages.postDM(this.findEmail(event.change.owner!), event.change.cl, this.branch, dm)			
 		}
 	}
 
@@ -1311,10 +1446,10 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 			return
 		}
 
-		const owner = pendingChange.change.owner
+		const owner = pendingChange.change.owner || pendingChange.change.author
 		// Should never happen
 		if (!owner) {
-			this.nodeBotLogger.warn(`Unable to send shelf creation notification for source CL ${pendingChange.change.source_cl} in branch ${shelfBranch} because there was no owner.`)
+			this.nodeBotLogger.warn(`Unable to send shelf creation notification for source CL ${pendingChange.change.source_cl} in branch ${shelfBranch.name} because there was no owner.`)
 			return
 		}
 
@@ -1343,7 +1478,7 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 		}
 	}
 
-	private async _processListOfChanges(availableEdges: Map<string, EdgeBot>, allChanges: Change[], maxChangesToProcess: number) {
+	private async _processListOfChanges(availableEdges: Map<string, EdgeBot>, allChanges: Change[]) {
 		// list of changes except reconsiders
 		const changes: Change[] = []
 
@@ -1369,7 +1504,7 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 		// make sure the list is sorted in ascending order
 		changes.sort((a, b) => a.change - b.change)
 
-		const integrationsPerEdge = new Map<string, number>()
+		const startTime = Date.now()
 
 		for (let changeIndex = 0; changeIndex < changes.length; ++changeIndex) {
 			const change = changes[changeIndex]
@@ -1416,19 +1551,10 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 				edgeBot.onNodeProcessedChange(changes, changeIndex, changeResult)
 			}
 
-			// yield if necessary - might be better to make this time-based
-			if (maxChangesToProcess > 0) {
-
-				for (const [targetName, result] of changeResult.edges) {
-					if (result.result === 'ok') {
-						const numIntegrations = (integrationsPerEdge.get(targetName) || 0) + 1
-						if (numIntegrations >= maxChangesToProcess) {
-							this.nodeBotLogger.info(`${targetName} yielding after ${maxChangesToProcess} revisions`)
-							availableEdges.delete(targetName)
-						}
-						integrationsPerEdge.set(targetName, numIntegrations)
-					}
-				}
+			const duration = Math.round((Date.now() - startTime) / 1000);
+			if (this.branchGraph.config.checkIntervalSecs < duration) {
+				this.nodeBotLogger.info(`${this.fullName} yielding after ${duration}s`)
+				return
 			}
 
 			// If we've been paused (or blocked?) while the previous change was being processed, stop now
@@ -1454,13 +1580,24 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 			return emResult
 		}
 
-		// should also do this for #manual changes (set up some testing around those first)
-		if (change.forceCreateAShelf && optWorkspaceOverride) {
-			// see if we need to talk to an edge server to create the shelf
-			const edgeServer = await this.p4.getWorkspaceEdgeServer(
-				coercePerforceWorkspace(optWorkspaceOverride)!.name)
-			if (edgeServer) {
-				result.info.edgeServerToHostShelf = edgeServer
+		// this will deal with #manual changes with a single target and will also manage to work for multiple
+		// targets as long as all the target workspaces are on the same edge, but it will still crash if you
+		// have multiple targets with workspaces on different edgeservers
+		const numTargets = (result.info.targets || []).length;
+		let isManualChange = numTargets > 0 ? result.info.targets![0].flags.has('manual') : false;
+		if (change.forceCreateAShelf || (change.isUserRequest && !change.forceStompChanges) || isManualChange) {
+			if (!optWorkspaceOverride && numTargets == 1) {
+				result.info.targetWorkspaceForShelf = await p4util.chooseBestWorkspaceForUser(this.p4, result.info.owner||result.info.author, result.info.targets![0].branch.stream)
+				optWorkspaceOverride = result.info.targetWorkspaceForShelf
+				this.nodeBotLogger.info(`Chose workspace ${optWorkspaceOverride}`)
+			}
+			if (optWorkspaceOverride) {
+				// see if we need to talk to an edge server to create the shelf
+				const edgeServer = await this.p4.getWorkspaceEdgeServer(
+					coercePerforceWorkspace(optWorkspaceOverride)!.name)
+				if (edgeServer) {
+					result.info.edgeServerToHostShelf = edgeServer
+				}
 			}
 		}
 
@@ -1516,7 +1653,7 @@ export class NodeBot extends PerforceStatefulBot implements NodeBotInterface {
 				for (const entry of describeResult!.entries) {
 					const fileExtIndex = entry.depotFile.lastIndexOf('.')
 					if (fileExtIndex !== -1) {
-						const fileExt = entry.depotFile.substr(fileExtIndex + 1)
+						const fileExt = entry.depotFile.substring(fileExtIndex + 1)
 						if (fileExt === 'uasset' || fileExt === 'umap') {
 							changeContainsAssets = true
 							break

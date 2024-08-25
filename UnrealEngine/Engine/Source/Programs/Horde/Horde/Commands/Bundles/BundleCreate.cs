@@ -1,46 +1,71 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.ComponentModel;
 using System.Diagnostics;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Storage.Bundles;
+using EpicGames.Horde.Storage.Clients;
 using EpicGames.Horde.Storage.Nodes;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Horde.Commands.Bundles
 {
 	[Command("bundle", "create", "Creates a bundle from a folder on the local hard drive")]
 	class BundleCreate : StorageCommandBase
 	{
-		[CommandLine("-File=", Description = "Output file for the bundle ref")]
+		[CommandLine("-File=")]
+		[Description("Output file for the bundle ref. Either -File=.. or -Ref=.. must be set.")]
 		public FileReference? File { get; set; }
 
 		[CommandLine("-Ref=")]
+		[Description("Output ref for the bundled data. Either -File=.. or -Ref=.. must be set.")]
 		public string? Ref { get; set; }
 
-		[CommandLine("-Input=", Required = true, Description = "Input file or directory")]
+		[CommandLine("-Input=", Required = true)]
+		[Description("Input file or directory")]
 		public string Input { get; set; } = null!;
 
-		[CommandLine("-Filter=", Description = "Filter for files to include, in P4 syntax (eg. Foo/...).")]
+		[CommandLine("-Filter=")]
+		[Description("Filter for files to include, in P4 syntax (eg. Foo/...).")]
 		public string Filter { get; set; } = "...";
+
+		[CommandLine("-CleanOutput")]
+		[Description("Clean the output folder before writing any data")]
+		public bool CleanOutput { get; set; }
+
+		public BundleCreate(HttpStorageClientFactory storageClientFactory, BundleCache bundleCache, IOptions<CmdConfig> config)
+			: base(storageClientFactory, bundleCache, config)
+		{
+		}
 
 		public override async Task<int> ExecuteAsync(ILogger logger)
 		{
-			// Create the storage client
-			IStorageClient store;
+			if (CleanOutput && File != null)
+			{
+				logger.LogInformation("Cleaning {Directory}...", File.Directory);
+				FileUtils.ForceDeleteDirectoryContents(File.Directory);
+			}
+
 			if (File != null)
 			{
-				store = new FileStorageClient(File.Directory, logger);
+				using IStorageClient store = BundleStorageClient.CreateFromDirectory(File.Directory, BundleCache, logger);
+				return await ExecuteInternalAsync(store, logger);
 			}
 			else if (!String.IsNullOrEmpty(Ref))
 			{
-				store = await CreateStorageClientAsync(logger);
+				using IStorageClient store = CreateStorageClient();
+				return await ExecuteInternalAsync(store, logger);
 			}
 			else
 			{
 				throw new CommandLineArgumentException("Either -File=... or -Ref=... must be specified.");
 			}
+		}
 
+		async Task<int> ExecuteInternalAsync(IStorageClient store, ILogger logger)
+		{
 			// Gather the input files
 			DirectoryReference baseDir;
 			List<FileReference> files = new List<FileReference>();
@@ -66,24 +91,26 @@ namespace Horde.Commands.Bundles
 			// Create the bundle
 			Stopwatch timer = Stopwatch.StartNew();
 
-			await using (IStorageWriter writer = store.CreateWriter())
+			await using (IBlobWriter writer = store.CreateBlobWriter())
 			{
 				ChunkingOptions options = new ChunkingOptions();
 
-				DirectoryNode node = await DirectoryNode.CreateAsync(baseDir, files.ConvertAll(x => x.ToFileInfo()), options, writer, null, CancellationToken.None);
-				NodeRef<DirectoryNode> nodeRef = await writer.WriteNodeAsync(node, CancellationToken.None);
+				List<FileInfo> fileInfos = files.ConvertAll(x => x.ToFileInfo());
+				UpdateStatsLogger updateStatsLogger = new UpdateStatsLogger(files.Count, fileInfos.Sum(x => x.Length), logger);
+
+				IBlobRef<DirectoryNode> nodeRef = await writer.WriteFilesAsync(baseDir.ToDirectoryInfo(), fileInfos, options, updateStatsLogger, CancellationToken.None);
 
 				await writer.FlushAsync();
 
 				if (File != null)
 				{
 					logger.LogInformation("Writing {File}", File);
-					await FileReference.WriteAllTextAsync(File, nodeRef.Handle.ToString());
+					await FileReference.WriteAllTextAsync(File, nodeRef.GetLocator().ToString()!);
 				}
 				else
 				{
 					logger.LogInformation("Writing ref {Ref}", Ref);
-					await store.WriteRefTargetAsync(new RefName(Ref!), nodeRef.Handle);
+					await store.WriteRefAsync(new RefName(Ref!), nodeRef);
 				}
 			}
 

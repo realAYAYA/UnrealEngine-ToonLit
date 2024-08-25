@@ -64,6 +64,12 @@ void UOpenColorIODisplayExtensionWrapper::SetSceneExtensionIsActiveFunctions(con
 
 void UOpenColorIODisplayExtensionWrapper::RemoveSceneExtension()
 {
+	// We disable the display configuration before deletion so it's not accidentally kept alive by the GatherActiveExtensions() shared pointers.
+	if (DisplayExtension.IsValid())
+	{
+		DisplayExtension->GetDisplayConfiguration().bIsEnabled = false;
+	}
+
 	DisplayExtension.Reset();
 }
 
@@ -71,12 +77,6 @@ UOpenColorIODisplayExtensionWrapper* UOpenColorIODisplayExtensionWrapper::Create
 	FOpenColorIODisplayConfiguration InDisplayConfiguration,
 	const FSceneViewExtensionIsActiveFunctor& IsActiveFunction)
 {
-	if (!InDisplayConfiguration.ColorConfiguration.IsValid())
-	{
-		UE_LOG(LogOpenColorIO, Warning, TEXT("%s, no display extension was created."), *InDisplayConfiguration.ColorConfiguration.ToString());
-		return nullptr;
-	}
-
 	// Create OCIO Scene View Extension and configure it.
 
 	UOpenColorIODisplayExtensionWrapper* OutExtension = NewObject<UOpenColorIODisplayExtensionWrapper>();

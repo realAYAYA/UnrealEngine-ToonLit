@@ -2,11 +2,15 @@
 
 #pragma once
 
-#include "Components/MeshComponent.h"
 #include "CoreMinimal.h"
 #include "Engine/Scene.h"
 #include "GameFramework/Actor.h"
 #include "UObject/ObjectMacros.h"
+#include "UObject/Object.h"
+#include "Components/StaticMeshComponent.h"
+
+#include "StageActor/IDisplayClusterStageActor.h"
+
 #include "ColorCorrectRegion.generated.h"
 
 
@@ -107,10 +111,16 @@ typedef TSharedPtr<FColorCorrectRenderProxy, ESPMode::ThreadSafe> FColorCorrectR
  * More information in ColorCorrectRegionsSubsytem.h
  */
 UCLASS(Blueprintable, NotPlaceable, Abstract)
-class COLORCORRECTREGIONS_API AColorCorrectRegion : public AActor
+class COLORCORRECTREGIONS_API AColorCorrectRegion : public AActor, public IDisplayClusterStageActor
 {
 	GENERATED_UCLASS_BODY()
 public:
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMeshComponent>> MeshComponents;
+
+public:
+	virtual ~AColorCorrectRegion() override;
+	
 	/** Region type. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="Color Correction")
 	EColorCorrectRegionsType Type;
@@ -193,9 +203,11 @@ public:
 #if WITH_EDITOR
 	/** Called when any of the properties are changed. */
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-
+	virtual void PostEditMove(bool bFinished) override;
+	virtual void PostTransacted(const FTransactionObjectEvent& TransactionEvent) override;
 #endif
 
+public:
 	/** The main purpose of this component is to determine the visibility status of this Color Correction Actor. */
 	UPROPERTY()
 	TObjectPtr<UColorCorrectionInvisibleComponent> IdentityComponent;
@@ -225,6 +237,84 @@ public:
 	*/
 	void TransferState();
 
+protected:
+
+	/**
+	* All CC Actors rely on a shape for selection. These shapes need to be swapped depending on the type.
+	* This function forces the refresh of the shape if the Type was changed outside of UI.
+	* For internal use only.
+	*/
+	virtual void ChangeShapeVisibilityForActorType() {};
+
+	/** All CC Actors rely on a shape for selection. These shapes need to be swapped depending on the type. */
+	template <typename TCCActorType>
+	void ChangeShapeVisibilityForActorTypeInternal(TCCActorType InDesiredType)
+	{
+		if (!IsValid(this) || MeshComponents.Num() != (uint8)TCCActorType::MAX)
+		{
+			return;
+		}
+
+		for (TCCActorType CCActorType : TEnumRange<TCCActorType>())
+		{
+			uint8 TypeIndex = static_cast<uint8>(CCActorType);
+
+			if (!IsValid(MeshComponents[TypeIndex]))
+			{
+#if WITH_EDITOR
+				FixMeshComponentReferencesInternal<TCCActorType>(InDesiredType);
+#else
+				ensure(IsValid(MeshComponents[TypeIndex]));
+#endif
+				return;
+			}
+
+			if (CCActorType == InDesiredType)
+			{
+				MeshComponents[TypeIndex]->SetVisibility(true, true);
+			}
+			else
+			{
+				MeshComponents[TypeIndex]->SetVisibility(false, true);
+			}
+		}
+	};
+
+#if WITH_EDITOR
+protected:
+	/** Used to validate child components. */
+	virtual void FixMeshComponentReferences() {};
+
+	template <typename TCCActorType>
+	void FixMeshComponentReferencesInternal(TCCActorType InDesiredType)
+	{
+		if (!RootComponent)
+		{
+			return;
+		}
+
+		TArray<USceneComponent*> ChildComponents;
+		RootComponent->GetChildrenComponents(false, ChildComponents);
+		MeshComponents.Empty();
+		for (TCCActorType CCActorType : TEnumRange<TCCActorType>())
+		{
+			const FString ShapeNameString = UEnum::GetValueAsString(CCActorType);
+			for (USceneComponent* ChildComponent : ChildComponents)
+			{
+				TObjectPtr<UStaticMeshComponent> ChildMeshComponent = Cast<UStaticMeshComponent>(ChildComponent);
+				if (ChildMeshComponent && ChildComponent->GetName() == ShapeNameString)
+				{
+					MeshComponents.Add(ChildMeshComponent);
+					break;
+				}
+
+			}
+
+		}
+		ChangeShapeVisibilityForActorTypeInternal<TCCActorType>(InDesiredType);
+	};
+#endif
+
 private:
 
 #if WITH_METADATA
@@ -239,6 +329,80 @@ private:
 	*/
 	void HandleAffectedActorsPropertyChange(uint32 ActorListChangeType);
 
+#if WITH_EDITOR
+	/** Called when a sequencer has its time changed. */
+	void OnSequencerTimeChanged(TWeakPtr<class ISequencer> InSequencer);
+#endif
+	
+public:
+
+	// ~Begin IDisplayClusterStageActor interface
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetLongitude(double InValue) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual double GetLongitude() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetLatitude(double InValue) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual double GetLatitude() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetDistanceFromCenter(double InValue) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual double GetDistanceFromCenter() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetSpin(double InValue) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual double GetSpin() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetPitch(double InValue) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual double GetPitch() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetYaw(double InValue) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual double GetYaw() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetRadialOffset(double InValue) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual double GetRadialOffset() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetScale(const FVector2D& InScale) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual FVector2D GetScale() const override;
+
+	UFUNCTION(BlueprintSetter)
+	virtual void SetOrigin(const FTransform& InOrigin) override;
+	UFUNCTION(BlueprintGetter)
+	virtual FTransform GetOrigin() const override;
+
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual void SetPositionalParams(const FDisplayClusterPositionalParams& InParams) override;
+	UFUNCTION(BlueprintCallable, Category = Orientation)
+	virtual FDisplayClusterPositionalParams GetPositionalParams() const override;
+
+	virtual void GetPositionalProperties(FPositionalPropertyArray& OutPropertyPairs) const override;
+	virtual FName GetPositionalPropertiesMemberName() const override;
+	// ~End IDisplayClusterStageActor interface
+	
+protected:
+	/** Spherical coordinates in relation to the origin, primarily used with the ICVFX panel. */
+	UPROPERTY(EditAnywhere, Category = Orientation, meta = (ShowOnlyInnerProperties))
+	FDisplayClusterPositionalParams PositionalParams;
+
+	/** The origin when used in the ICVFX panel. */
+	UPROPERTY(VisibleAnywhere, BlueprintSetter=SetOrigin, BlueprintGetter=GetOrigin, Category = Orientation)
+	FTransform Origin;
+
+	/** Update the transform when a positional setter is called. */
+	bool bNotifyOnParamSetter = true;
+	
 private:
 	TWeakObjectPtr<UColorCorrectRegionsSubsystem> ColorCorrectRegionsSubsystem;
 
@@ -263,19 +427,19 @@ UCLASS(Blueprintable, NotPlaceable)
 class COLORCORRECTREGIONS_API AColorCorrectionRegion : public AColorCorrectRegion
 {
 	GENERATED_UCLASS_BODY()
-public:
-	UPROPERTY()
-	TArray<TObjectPtr<UStaticMeshComponent>> MeshComponents;
-
-public:
-	/** Swaps meshes for different CCR. */
-	void SetMeshVisibilityForRegionType();
 
 #if WITH_EDITOR
 	/** Called when any of the properties are changed. */
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual FName GetCustomIconName() const override;
+
+protected:
+	virtual void FixMeshComponentReferences() override;
 #endif
+
+protected:
+	virtual void ChangeShapeVisibilityForActorType() override;
+
 };
 
 

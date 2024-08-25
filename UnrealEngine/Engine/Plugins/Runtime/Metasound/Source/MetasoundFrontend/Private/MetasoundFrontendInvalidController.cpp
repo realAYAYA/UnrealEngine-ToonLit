@@ -178,5 +178,17 @@ namespace Metasound
 		{
 			return IGraphController::GetInvalidHandle();
 		}
+
+		FDocumentAccessPtr FInvalidDocumentController::GetDocumentPtr()
+		{
+			static FDocumentAccessPtr Invalid;
+			return Invalid;
+		}
+
+		const FDocumentAccessPtr FInvalidDocumentController::GetDocumentPtr() const
+		{
+			static const FDocumentAccessPtr Invalid;
+			return Invalid;
+		}
 	}
 }

@@ -371,6 +371,7 @@ void SCinematicLevelViewport::Construct(const FArguments& InArgs)
 								.ColorAndOpacity(Gray)
 								.Text_Lambda([this] { return UIData.LocalPlaybackTime; })
 								.ToolTipText(LOCTEXT("LocalPlaybackTime", "The current playback time relative to the currently evaluated sequence."))
+								.MinDesiredWidth(this, &SCinematicLevelViewport::GetPlayTimeMinDesiredWidth)
 							]
 						]
 					]
@@ -538,6 +539,24 @@ float SCinematicLevelViewport::GetPlayTimeMinDesiredWidth() const
 
 		FString LowerBoundStr = Sequencer->GetNumericTypeInterface()->ToString(ViewRange.GetLowerBoundValue());
 		FString UpperBoundStr = Sequencer->GetNumericTypeInterface()->ToString(ViewRange.GetUpperBoundValue());
+
+		// Always measure with the negative and subframe indicator so that the size doesn't change when there is and isn't a subframe
+		if (!LowerBoundStr.Contains(TEXT("*")))
+		{
+			LowerBoundStr += TEXT("*");
+		}
+		if (!LowerBoundStr.Contains(TEXT("-")))
+		{
+			LowerBoundStr += TEXT("-");
+		}
+		if (!UpperBoundStr.Contains(TEXT("*")))
+		{
+			UpperBoundStr += TEXT("*");
+		}
+		if (!UpperBoundStr.Contains(TEXT("-")))
+		{
+			UpperBoundStr += TEXT("-");
+		}
 
 		const FSlateFontInfo PlayTimeFont = FAppStyle::GetFontStyle("Sequencer.FixedFont");
 

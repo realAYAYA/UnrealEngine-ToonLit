@@ -27,6 +27,11 @@
 #define DISKELMESH_ADJ_INDEX_FORMAT DISKELMESH_ADJ_INDEX_FORMAT_FULL
 #endif
 
+#if FEATURE_LEVEL <= FEATURE_LEVEL_ES3_1
+#undef DISKELMESH_ALLOW_DEFORMED
+#define DISKELMESH_ALLOW_DEFORMED	0
+#endif
+
 //-TODO: We need to consolodate the random interface inside NiagaraEmitterInstanceShader.usf it's a bit messy at the moment but should follow what FNDIRandomHelper does
 float DISKelMesh_Random(uint S1, uint S2, uint S3)
 {
@@ -51,14 +56,24 @@ float3 DISKelMesh_RandomBarycentricCoord(uint Seed1, uint Seed2, uint Seed3)
 	return float3(1.0f - sqrt0, sqrt0 * (1.0 - r1), r1 * sqrt0);
 }
 
-int4 DISkelMesh_UnpackIndices4(uint Packed)
+int4 DISkelMesh_UnpackIndices4x8(uint Packed)
 {
 	return int4(Packed & 0xff, Packed >> 8 & 0xff, Packed >> 16 & 0xff, Packed >> 24 & 0xff);
 }
 
-float4 DISkelMesh_UnpackWeights4(uint Packed)
+int4 DISkelMesh_UnpackIndices4x16(uint PackedA, uint PackedB)
+{
+	return int4(PackedA & 0xffff, PackedA >> 16 & 0xffff, PackedB & 0xffff, PackedB >> 16 & 0xffff);
+}
+
+float4 DISkelMesh_UnpackWeights4x8(uint Packed)
 {
 	return float4(Packed & 0xff, Packed >> 8 & 0xff, Packed >> 16 & 0xff, Packed >> 24 & 0xff) / 255.0f;
+}
+
+float4 DISkelMesh_UnpackWeights4x16(uint PackedA, uint PackedB)
+{
+	return float4(PackedA & 0xffff, PackedA >> 16 & 0xffff, PackedB & 0xffff, PackedB >> 16 & 0xffff) / 65535.0f;
 }
 
 // UvMappingBuffer organized as an array of:

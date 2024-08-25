@@ -11,6 +11,7 @@
 #include "MassObserverManager.h"
 #include "Containers/MpscQueue.h"
 #include "MassRequirementAccessDetector.h"
+#include "Templates/FunctionFwd.h"
 
 
 struct FMassEntityQuery;
@@ -78,6 +79,7 @@ public:
 	private:
 		std::atomic<int32>& ScopedProcessingCount;
 	};
+	using FStructInitializationCallback = TFunctionRef<void(void* Fragment, const UScriptStruct& FragmentType)>;
 
 	const static FMassEntityHandle InvalidEntity;
 
@@ -102,7 +104,7 @@ public:
 	 * A special, relaxed but slower version of CreateArchetype functions that allows FragmentAngTagsList to contain 
 	 * both fragments and tags. 
 	 */
-	FMassArchetypeHandle CreateArchetype(TConstArrayView<const UScriptStruct*> FragmentsAndTagsList, const FName ArchetypeDebugName = FName());
+	FMassArchetypeHandle CreateArchetype(TConstArrayView<const UScriptStruct*> FragmentsAndTagsList, const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
 
 	/**
 	 * A special, relaxed but slower version of CreateArchetype functions that allows FragmentAngTagsList to contain
@@ -110,29 +112,29 @@ public:
 	 * provided list if they're not already in the original archetype.
 	 */
 	FMassArchetypeHandle CreateArchetype(FMassArchetypeHandle SourceArchetype, 
-		TConstArrayView<const UScriptStruct*> FragmentsAndTagsList, const FName ArchetypeDebugName = FName());
+		TConstArrayView<const UScriptStruct*> FragmentsAndTagsList, const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
 
 	/**
 	 * CreateArchetype from a composition descriptor and initial values
 	 *
 	 * @param Composition of fragment, tag and chunk fragment types
-	 * @param ArchetypeDebugName Name to identify the archetype while debugging
+	 * @param CreationParams Parameters used during archetype construction
 	 * @return a handle of a new archetype 
 	 */
-	FMassArchetypeHandle CreateArchetype(const FMassArchetypeCompositionDescriptor& Composition, const FName ArchetypeDebugName = FName());
+	FMassArchetypeHandle CreateArchetype(const FMassArchetypeCompositionDescriptor& Composition, const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
 
 	/** 
 	 *  Creates an archetype like SourceArchetype + InFragments. 
 	 *  @param SourceArchetype the archetype used to initially populate the list of fragments of the archetype being created. 
 	 *  @param InFragments list of unique fragments to add to fragments fetched from SourceArchetype. Note that 
 	 *   adding an empty list is not supported and doing so will result in failing a `check`
-	 *  @param ArchetypeDebugName Name to identify the archetype while debugging
+	 *  @param CreationParams Parameters used during archetype construction
 	 *  @return a handle of a new archetype
 	 *  @note it's caller's responsibility to ensure that NewFragmentList is not empty and contains only fragment
 	 *   types that SourceArchetype doesn't already have. If the caller cannot guarantee it use of AddFragment functions
 	 *   family is recommended.
 	 */
-	FMassArchetypeHandle CreateArchetype(const TSharedPtr<FMassArchetypeData>& SourceArchetype, const FMassFragmentBitSet& InFragments, const FName ArchetypeDebugName = FName());
+	FMassArchetypeHandle CreateArchetype(const TSharedPtr<FMassArchetypeData>& SourceArchetype, const FMassFragmentBitSet& InFragments, const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
 
 	/** Fetches the archetype for a given Entity. If Entity is not valid it will still return a handle, just with an invalid archetype */
 	FMassArchetypeHandle GetArchetypeForEntity(FMassEntityHandle Entity) const;
@@ -164,7 +166,7 @@ public:
 	 * @param SharedFragmentValues to be associated with the entity
 	 * @param ArchetypeDebugName Name to identify the archetype while debugging
 	 * @return FMassEntityHandle id of the newly created entity */
-	FMassEntityHandle CreateEntity(TConstArrayView<FInstancedStruct> FragmentInstanceList, const FMassArchetypeSharedFragmentValues& SharedFragmentValues = {}, const FName ArchetypeDebugName = FName());
+	FMassEntityHandle CreateEntity(TConstArrayView<FInstancedStruct> FragmentInstanceList, const FMassArchetypeSharedFragmentValues& SharedFragmentValues = {}, const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
 
 	/**
 	 * A dedicated structure for ensuring the "on entities creation" observers get notified only once all other 
@@ -250,6 +252,7 @@ public:
 	void BatchDestroyEntityChunks(const FMassArchetypeEntityCollection& Collection);
 
 	void AddFragmentToEntity(FMassEntityHandle Entity, const UScriptStruct* FragmentType);
+	void AddFragmentToEntity(FMassEntityHandle Entity, const UScriptStruct* FragmentType, const FStructInitializationCallback& Initializer);
 
 	/** 
 	 *  Ensures that only unique fragments are added. 
@@ -265,8 +268,10 @@ public:
 	void RemoveTagFromEntity(FMassEntityHandle Entity, const UScriptStruct* TagType);
 	void SwapTagsForEntity(FMassEntityHandle Entity, const UScriptStruct* FromFragmentType, const UScriptStruct* ToFragmentType);
 
-	void BatchBuildEntities(const FMassArchetypeEntityCollectionWithPayload& EncodedEntitiesWithPayload, const FMassFragmentBitSet& FragmentsAffected, const FMassArchetypeSharedFragmentValues& SharedFragmentValues = {}, const FName ArchetypeDebugName = FName());
-	void BatchBuildEntities(const FMassArchetypeEntityCollectionWithPayload& EncodedEntitiesWithPayload, FMassArchetypeCompositionDescriptor&& Composition, const FMassArchetypeSharedFragmentValues& SharedFragmentValues = {}, const FName ArchetypeDebugName = FName());
+	void BatchBuildEntities(const FMassArchetypeEntityCollectionWithPayload& EncodedEntitiesWithPayload, const FMassFragmentBitSet& FragmentsAffected
+		, const FMassArchetypeSharedFragmentValues& SharedFragmentValues = {}, const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
+	void BatchBuildEntities(const FMassArchetypeEntityCollectionWithPayload& EncodedEntitiesWithPayload, FMassArchetypeCompositionDescriptor&& Composition
+		, const FMassArchetypeSharedFragmentValues& SharedFragmentValues = {}, const FMassArchetypeCreationParams& CreationParams = FMassArchetypeCreationParams());
 	void BatchChangeTagsForEntities(TConstArrayView<FMassArchetypeEntityCollection> EntityCollections, const FMassTagBitSet& TagsToAdd, const FMassTagBitSet& TagsToRemove);
 	void BatchChangeFragmentCompositionForEntities(TConstArrayView<FMassArchetypeEntityCollection> EntityCollections, const FMassFragmentBitSet& FragmentsToAdd, const FMassFragmentBitSet& FragmentsToRemove);
 	void BatchAddFragmentInstancesForEntities(TConstArrayView<FMassArchetypeEntityCollectionWithPayload> EntityCollections, const FMassFragmentBitSet& FragmentsAffected);
@@ -315,21 +320,90 @@ public:
 	// Asserts that IsEntityBuilt
 	void CheckIfEntityIsActive(FMassEntityHandle Entity) const;
 
-	template <typename FragmentType>
+	template<typename FragmentType>
 	FragmentType& GetFragmentDataChecked(FMassEntityHandle Entity) const
 	{
+		static_assert(TIsDerivedFrom<FragmentType, FMassFragment>::IsDerived
+			, "Given struct doesn't represent a valid fragment type. Make sure to inherit from FMassFragment or one of its child-types.");
 		return *((FragmentType*)InternalGetFragmentDataChecked(Entity, FragmentType::StaticStruct()));
 	}
 
-	template <typename FragmentType>
+	template<typename FragmentType>
 	FragmentType* GetFragmentDataPtr(FMassEntityHandle Entity) const
 	{
+		static_assert(TIsDerivedFrom<FragmentType, FMassFragment>::IsDerived
+			, "Given struct doesn't represent a valid fragment type. Make sure to inherit from FMassFragment or one of its child-types.");
 		return (FragmentType*)InternalGetFragmentDataPtr(Entity, FragmentType::StaticStruct());
 	}
 
 	FStructView GetFragmentDataStruct(FMassEntityHandle Entity, const UScriptStruct* FragmentType) const
 	{
+		checkf((FragmentType != nullptr) && FragmentType->IsChildOf(FMassFragment::StaticStruct())
+			, TEXT("GetFragmentDataStruct called with an invalid fragment type '%s'"), *GetPathNameSafe(FragmentType));
 		return FStructView(FragmentType, static_cast<uint8*>(InternalGetFragmentDataPtr(Entity, FragmentType)));
+	}
+
+	template<typename ConstSharedFragmentType>
+	ConstSharedFragmentType* GetConstSharedFragmentDataPtr(FMassEntityHandle Entity) const
+	{
+		static_assert(TIsDerivedFrom<ConstSharedFragmentType, FMassSharedFragment>::IsDerived, "Given struct doesn't represent a valid shared fragment type. Make sure to inherit from FMassSharedFragment or one of its child-types.");
+		const FConstSharedStruct* ConstSharedStruct = InternalGetConstSharedFragmentPtr(Entity, ConstSharedFragmentType::StaticStruct());
+		return (ConstSharedFragmentType*)(ConstSharedStruct ? ConstSharedStruct->GetMemory() : nullptr);
+	}
+
+	template<typename ConstSharedFragmentType>
+	ConstSharedFragmentType& GetConstSharedFragmentDataChecked(FMassEntityHandle Entity) const
+	{
+		ConstSharedFragmentType* TypePtr = GetConstSharedFragmentDataPtr<ConstSharedFragmentType>(Entity);
+		check(TypePtr);
+		return *TypePtr;
+	}
+
+	FConstStructView GetConstSharedFragmentDataStruct(FMassEntityHandle Entity, const UScriptStruct* ConstSharedFragmentType) const
+	{
+		checkf((ConstSharedFragmentType != nullptr) && ConstSharedFragmentType->IsChildOf(FMassSharedFragment::StaticStruct())
+			, TEXT("GetConstSharedFragmentDataStruct called with an invalid fragment type '%s'"), *GetPathNameSafe(ConstSharedFragmentType));
+		const FConstSharedStruct* ConstSharedStruct = InternalGetConstSharedFragmentPtr(Entity, ConstSharedFragmentType);
+		return ConstSharedStruct
+			? FConstStructView(*ConstSharedStruct)
+			: FConstStructView();
+	}
+
+	template<typename SharedFragmentType>
+	TConstArrayView<FSharedStruct> GetSharedFragmentsOfType()
+	{
+		static_assert(TIsDerivedFrom<SharedFragmentType, FMassSharedFragment>::IsDerived
+			, "Given struct doesn't represent a valid shared fragment type. Make sure to inherit from FMassSharedFragment or one of its child-types.");
+
+		TArray<FSharedStruct>* InstancesOfType = SharedFragmentsTypeMap.Find(SharedFragmentType::StaticStruct());
+		return InstancesOfType ? *InstancesOfType : TConstArrayView<FSharedStruct>();
+	}
+
+	template<typename SharedFragmentType>
+	SharedFragmentType* GetSharedFragmentDataPtr(FMassEntityHandle Entity) const
+	{
+		static_assert(TIsDerivedFrom<SharedFragmentType, FMassSharedFragment>::IsDerived
+			, "Given struct doesn't represent a valid shared fragment type. Make sure to inherit from FMassSharedFragment or one of its child-types.");
+		const FSharedStruct* FragmentPtr = InternalGetSharedFragmentPtr(Entity, SharedFragmentType::StaticStruct());
+		return (SharedFragmentType*)(FragmentPtr ? FragmentPtr->GetMemory() : nullptr);
+	}
+
+	template<typename SharedFragmentType>
+	SharedFragmentType& GetSharedFragmentDataChecked(FMassEntityHandle Entity) const
+	{
+		SharedFragmentType* TypePtr = GetSharedFragmentDataPtr<SharedFragmentType>(Entity);
+		check(TypePtr);
+		return *TypePtr;
+	}
+
+	FConstStructView GetSharedFragmentDataStruct(FMassEntityHandle Entity, const UScriptStruct* SharedFragmentType) const
+	{
+		checkf((SharedFragmentType != nullptr) && SharedFragmentType->IsChildOf(FMassSharedFragment::StaticStruct())
+			, TEXT("GetSharedFragmentDataStruct called with an invalid fragment type '%s'"), *GetPathNameSafe(SharedFragmentType));
+		const FSharedStruct* FragmentPtr = InternalGetSharedFragmentPtr(Entity, SharedFragmentType);
+		return FragmentPtr
+			? FConstStructView(*FragmentPtr)
+			: FConstStructView();
 	}
 
 	uint32 GetArchetypeDataVersion() const { return ArchetypeDataVersion; }
@@ -356,11 +430,18 @@ public:
 	 */
 	void FlushCommands(const TSharedPtr<FMassCommandBuffer>& InCommandBuffer = TSharedPtr<FMassCommandBuffer>());
 
+	/** 
+	 * Depending on the current state of Manager's command buffer the function will either move all the commands out of 
+	 * InOutCommandBuffer into the main command buffer or append it to the list of command buffers waiting to be flushed.
+	 * @note as a consequence of the call InOutCommandBuffer can get its contents emptied due some of the undelying code using Move semantics
+	 */
+	void AppendCommands(TSharedPtr<FMassCommandBuffer>& InOutCommandBuffer);
+
 	/**
 	 * Shared fragment creation methods
 	 */
 	template<typename T>
-	FConstSharedStruct& GetOrCreateConstSharedFragmentByHash(const uint32 Hash, const T& Fragment)
+	const FConstSharedStruct& GetOrCreateConstSharedFragmentByHash(const uint32 Hash, const T& Fragment)
 	{
 		static_assert(TIsDerivedFrom<T, FMassSharedFragment>::IsDerived, "Given struct doesn't represent a valid shared fragment type. Make sure to inherit from FMassSharedFragment or one of its child-types.");
 		int32& Index = ConstSharedFragmentsMap.FindOrAddByHash(Hash, Hash, INDEX_NONE);
@@ -372,14 +453,14 @@ public:
 	}
 
 	template<typename T>
-	FConstSharedStruct& GetOrCreateConstSharedFragment(const T& Fragment)
+	const FConstSharedStruct& GetOrCreateConstSharedFragment(const T& Fragment)
 	{
 		const uint32 Hash = UE::StructUtils::GetStructCrc32(FConstStructView::Make(Fragment));
 		return GetOrCreateConstSharedFragmentByHash(Hash, Fragment);
 	}
 
 	template<typename T, typename... TArgs>
-	FSharedStruct& GetOrCreateSharedFragmentByHash(const uint32 Hash, TArgs&&... InArgs)
+	const FSharedStruct& GetOrCreateSharedFragmentByHash(const uint32 Hash, TArgs&&... InArgs)
 	{
 		static_assert(TIsDerivedFrom<T, FMassSharedFragment>::IsDerived, "Given struct doesn't represent a valid shared fragment type. Make sure to inherit from FMassSharedFragment or one of its child-types.");
 
@@ -387,20 +468,39 @@ public:
 		if (Index == INDEX_NONE)
 		{
 			Index = SharedFragments.Add(FSharedStruct::Make<T>(Forward<TArgs>(InArgs)...));
+			// note that even though we're copying the freshly created FSharedStruct instance it's perfectly fine since 
+			// FSharedStruct do guarantee there's not going to be data duplication (via a member shared pointer to hosted data)
+			TArray<FSharedStruct>& InstancesOfType = SharedFragmentsTypeMap.FindOrAdd(T::StaticStruct(), {});
+			InstancesOfType.Add(SharedFragments[Index]);
 		}
 
 		return SharedFragments[Index];
 	}
 
 	template<typename T>
-	void ForEachSharedFragment(TFunction< void(T& /*SharedFragment*/) > ExecuteFunction)
+	void ForEachSharedFragment(TFunctionRef< void(T& /*SharedFragment*/) > ExecuteFunction)
 	{
-		FStructTypeEqualOperator Predicate(T::StaticStruct());
-		for (FSharedStruct& Struct : SharedFragments)
+		if (TArray<FSharedStruct>* InstancesOfType = SharedFragmentsTypeMap.Find(T::StaticStruct()))
 		{
-			if (Predicate(Struct))
+			for (const FSharedStruct& SharedStruct : *InstancesOfType)
 			{
-				ExecuteFunction(Struct.Get<T>());
+				ExecuteFunction(SharedStruct.Get<T>());
+			}
+		}
+	}
+
+	template<typename T>
+	void ForEachSharedFragmentConditional(TFunctionRef< bool(T& /*SharedFragment*/) > ConditionFunction, TFunctionRef< void(T& /*SharedFragment*/) > ExecuteFunction)
+	{
+		if (TArray<FSharedStruct>* InstancesOfType = SharedFragmentsTypeMap.Find(T::StaticStruct()))
+		{
+			for (const FSharedStruct& SharedStruct : *InstancesOfType)
+			{
+				T& StructInstanceRef = SharedStruct.Get<T>();
+				if (ConditionFunction(StructInstanceRef))
+				{
+					ExecuteFunction(StructInstanceRef);
+				}
 			}
 		}
 	}
@@ -423,7 +523,7 @@ public:
 	int32 DebugGetArchetypeEntitiesCount(const FMassArchetypeHandle& Archetype) const;
 	int32 DebugGetArchetypeEntitiesCountPerChunk(const FMassArchetypeHandle& Archetype) const;
 	int32 DebugGetEntityCount() const { return Entities.Num() - NumReservedEntities - EntityFreeIndexList.Num(); }
-	int32 DebugGetArchetypesCount() const { return FragmentHashToArchetypeMap.Num(); }
+	int32 DebugGetArchetypesCount() const { return AllArchetypes.Num(); }
 	void DebugRemoveAllEntities();
 	void DebugForceArchetypeDataVersionBump() { ++ArchetypeDataVersion; }
 	void DebugGetArchetypeStrings(const FMassArchetypeHandle& Archetype, TArray<FName>& OutFragmentNames, TArray<FName>& OutTagNames);
@@ -434,7 +534,7 @@ public:
 #endif // WITH_MASSENTITY_DEBUG
 
 protected:
-	void GetValidArchetypes(const FMassEntityQuery& Query, TArray<FMassArchetypeHandle>& OutValidArchetypes, const uint32 FromArchetypeDataVersion) const;
+	void GetMatchingArchetypes(const FMassFragmentRequirements& Requirements, TArray<FMassArchetypeHandle>& OutValidArchetypes, const uint32 FromArchetypeDataVersion) const;
 	
 	/** 
 	 * A "similar" archetype is an archetype exactly the same as SourceArchetype except for one composition aspect 
@@ -454,16 +554,23 @@ private:
 
 	/** 
 	 *  Adds fragments in FragmentList to Entity. Only the unique fragments will be added.
+	 *  @return Bitset for the added fragments (might be empty or a subset of `InFragments` depending on the current archetype fragments)
 	 */
-	void InternalAddFragmentListToEntityChecked(FMassEntityHandle Entity, const FMassFragmentBitSet& InFragments);
+	FMassFragmentBitSet InternalAddFragmentListToEntityChecked(FMassEntityHandle Entity, const FMassFragmentBitSet& InFragments);
 
 	/** 
 	 *  Similar to InternalAddFragmentListToEntity but expects NewFragmentList not overlapping with current entity's
 	 *  fragment list. It's callers responsibility to ensure that's true. Failing this will cause a `check` fail.
 	 */
 	void InternalAddFragmentListToEntity(FMassEntityHandle Entity, const FMassFragmentBitSet& InFragments);
+	/** Note that it's the caller's responsibility to ensure `FragmentType` is a kind of FMassFragment */
 	void* InternalGetFragmentDataChecked(FMassEntityHandle Entity, const UScriptStruct* FragmentType) const;
+	/** Note that it's the caller's responsibility to ensure `FragmentType` is a kind of FMassFragment */
 	void* InternalGetFragmentDataPtr(FMassEntityHandle Entity, const UScriptStruct* FragmentType) const;
+	/** Note that it's the caller's responsibility to ensure `ConstSharedFragmentType` is a kind of FMassSharedFragment */
+	const FConstSharedStruct* InternalGetConstSharedFragmentPtr(FMassEntityHandle Entity, const UScriptStruct* ConstSharedFragmentType) const;
+	/** Note that it's the caller's responsibility to ensure `SharedFragmentType` is a kind of FMassSharedFragment */
+	const FSharedStruct* InternalGetSharedFragmentPtr(FMassEntityHandle Entity, const UScriptStruct* SharedFragmentType) const;
 
 	TSharedRef<FEntityCreationContext> InternalBatchCreateReservedEntities(const FMassArchetypeHandle& ArchetypeHandle,
 		const FMassArchetypeSharedFragmentValues& SharedFragmentValues, TConstArrayView<FMassEntityHandle> ReservedEntities);
@@ -487,14 +594,20 @@ private:
 	// Map to list of archetypes that contain the specified fragment type
 	TMap<const UScriptStruct*, TArray<TSharedPtr<FMassArchetypeData>>> FragmentTypeToArchetypeMap;
 
+	// Contains all archetypes ever created. The array always growing and a given archetypes remains at a given index 
+	// throughout its lifetime, and the index is never reused for another archetype. 
+	TArray<TSharedPtr<FMassArchetypeData>> AllArchetypes;
+
 	// Shared fragments
 	TArray<FConstSharedStruct> ConstSharedFragments;
 	// Hash/Index in array pair
 	TMap<uint32, int32> ConstSharedFragmentsMap;
 
 	TArray<FSharedStruct> SharedFragments;
-	// Hash/Index in array pair
+	// Hash/Index in array pair, indices point at SharedFragments
 	TMap<uint32, int32> SharedFragmentsMap;
+	// Maps specific struct type to a collection of FSharedStruct instances of that type
+	TMap<UScriptStruct*, TArray<FSharedStruct>> SharedFragmentsTypeMap;
 
 	FMassObserverManager ObserverManager;
 
@@ -508,6 +621,29 @@ private:
 	FOnNewArchetypeDelegate OnNewArchetypeEvent;
 
 	bool bInitialized = false;
+	bool bFirstCommandFlush = true;
+
+
+	//-----------------------------------------------------------------------------
+	// DEPRECATED
+	//-----------------------------------------------------------------------------
+public:
+	UE_DEPRECATED(5.3, "This Flavor of CreateArchetype is deprecated. Use the one with FMassArchetypeCreationParams parameter instead.")
+	FMassArchetypeHandle CreateArchetype(TConstArrayView<const UScriptStruct*> FragmentsAndTagsList, const FName ArchetypeDebugName);
+	UE_DEPRECATED(5.3, "This Flavor of CreateArchetype is deprecated. Use the one with FMassArchetypeCreationParams parameter instead.")
+	FMassArchetypeHandle CreateArchetype(FMassArchetypeHandle SourceArchetype, TConstArrayView<const UScriptStruct*> FragmentsAndTagsList, const FName ArchetypeDebugName);
+	UE_DEPRECATED(5.3, "This Flavor of CreateArchetype is deprecated. Use the one with FMassArchetypeCreationParams parameter instead.")
+	FMassArchetypeHandle CreateArchetype(const FMassArchetypeCompositionDescriptor& Composition, const FName ArchetypeDebugName);
+	UE_DEPRECATED(5.3, "This Flavor of CreateArchetype is deprecated. Use the one with FMassArchetypeCreationParams parameter instead.")
+	FMassArchetypeHandle CreateArchetype(const TSharedPtr<FMassArchetypeData>& SourceArchetype, const FMassFragmentBitSet& InFragments, const FName ArchetypeDebugName);
+	UE_DEPRECATED(5.3, "This Flavor of CreateEntity is deprecated. Use the one with FMassArchetypeCreationParams parameter instead.")
+	FMassEntityHandle CreateEntity(TConstArrayView<FInstancedStruct> FragmentInstanceList, const FMassArchetypeSharedFragmentValues& SharedFragmentValues, const FName ArchetypeDebugName);
+	UE_DEPRECATED(5.3, "This Flavor of BatchBuildEntities is deprecated. Use the one with FMassArchetypeCreationParams parameter instead.")
+	void BatchBuildEntities(const FMassArchetypeEntityCollectionWithPayload& EncodedEntitiesWithPayload, const FMassFragmentBitSet& FragmentsAffected
+		, const FMassArchetypeSharedFragmentValues& SharedFragmentValues, const FName ArchetypeDebugName);
+	UE_DEPRECATED(5.3, "This Flavor of BatchBuildEntities is deprecated. Use the one with FMassArchetypeCreationParams parameter instead.")
+	void BatchBuildEntities(const FMassArchetypeEntityCollectionWithPayload& EncodedEntitiesWithPayload, FMassArchetypeCompositionDescriptor&& Composition
+		, const FMassArchetypeSharedFragmentValues& SharedFragmentValues, const FName ArchetypeDebugName);
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

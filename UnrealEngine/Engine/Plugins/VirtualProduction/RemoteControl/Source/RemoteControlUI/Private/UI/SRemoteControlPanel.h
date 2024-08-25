@@ -54,7 +54,7 @@ DECLARE_DELEGATE_TwoParams(FOnLiveModeChange, TSharedPtr<SRemoteControlPanel> /*
  * UI representation of a remote control preset.
  * Allows a user to expose/unexpose properties and functions from actors and blueprint libraries.
  */
-class SRemoteControlPanel : public SCompoundWidget
+class SRemoteControlPanel : public SCompoundWidget, public FGCObject
 {
 	SLATE_BEGIN_ARGS(SRemoteControlPanel) {}
 		SLATE_EVENT(FOnLiveModeChange, OnLiveModeChange)
@@ -75,7 +75,6 @@ public:
 
 	void Construct(const FArguments& InArgs, URemoteControlPreset* InPreset, TSharedPtr<IToolkitHost> InToolkitHost);
 	~SRemoteControlPanel();
-	static void Shutdown();
 
 	//~ Begin SWidget interface
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime);
@@ -154,15 +153,21 @@ public:
 	}
 
 	/** For Copy UI command - Sets the logic clipboard item and source */
-	void SetLogicClipboardItem(UObject* InItem, TSharedPtr<SRCLogicPanelBase> SourcePanel);
+	void SetLogicClipboardItems(const TArray<UObject*>& InItems, const TSharedPtr<SRCLogicPanelBase>& SourcePanel);
 
 	/** Fetches the last UI item copied to Logic clipboard by the user */
-	UObject* GetLogicClipboardItem()
+	TArray<UObject*> GetLogicClipboardItems()
 	{
-		return LogicClipboardItem;
+		return LogicClipboardItems;
 	}
 
+	// FGCObject interface
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+
 private:
+
+	/** Returns a Helper widget for entity details view and protocol details view. */
+	static TSharedRef<SBox> CreateNoneSelectedWidget();
 
 	//~ Remote Control Commands
 	void BindRemoteControlCommands();
@@ -332,16 +337,14 @@ private:
 	/** Called to test if user is able to Duplicate a logic UI item. */
 	bool CanDuplicateItem() const;
 
-	// Exposed Entities filtering. (Filters the Exposed Entities view)
-	void OnSearchTextChanged(const FText& InFilterText);
-	void OnSearchTextCommitted(const FText& InFilterText, ETextCommit::Type InCommitType);
-	void PopulateSearchStrings(const SRCPanelTreeNode& Item, TArray<FString>& OutSearchStrings) const;
+	/** Called when user attempts to Update a logic UI item. */
+	void UpdateValue_Execute();
 
-	/** Handler for when a filter in the filter list has changed */
-	void OnFilterChanged();
+	/** Called to test if user is able to Update a logic UI item. */
+	bool CanUpdateValue() const;
 
 	/** Loads settings from config based on the preset identifier. */
-	void LoadSettings(const FGuid& InInstanceId);
+	void LoadSettings(const FGuid& InInstanceId) const;
 
 	/** Saves settings from config based on the preset identifier. */
 	void SaveSettings();
@@ -382,8 +385,6 @@ private:
 	TSharedPtr<class IStructureDetailsView> EntityDetailsView;
 	/** Wrapper widget for entity details view. */
 	TSharedPtr<SBorder> WrappedEntityDetailsView;
-	/** Helper widget for entity details view and protocol details view. */
-	static TSharedPtr<SBox> NoneSelectedWidget;
 	/** Holds the field's protocol details. */
 	TSharedPtr<SBox> EntityProtocolDetails;
 	/** Whether to show the rebind all button. */
@@ -406,16 +407,8 @@ private:
 	TSharedPtr<SBorder> AuxiliaryToolbarWidgetContent;
 	/** Additional widgets to be added to the toolbar */
 	TArray<TSharedRef<SWidget>> ToolbarWidgets;
-	/** The text box used to search for tags. */
-	TSharedPtr<SSearchBox> SearchBoxPtr;
-	/** Holds a shared pointer reference to the active entity that is selected. */
-	TSharedPtr<SRCPanelTreeNode> SelectedEntity;
-	/** Text filter for the search text. */
-	TSharedPtr<TTextFilter<const SRCPanelTreeNode&>> SearchTextFilter;
-	/** The filter list */
-	TSharedPtr<SRCPanelFilter> FilterPtr;
-	/** Actively serached term. */
-	TSharedPtr<FText> SearchedText;
+	/** Holds a shared pointer reference to the last entity that was selected. */
+	TSharedPtr<SRCPanelTreeNode> LastSelectedEntity;
 	/** Panel Drawer widget holds all docked panels. */
 	TSharedPtr<SRCPanelDrawer> PanelDrawer;
 	/** Map of Opened Drawers. */
@@ -436,13 +429,15 @@ private:
 	/** Action panel UI widget for Remote Control Logic*/
 	TSharedPtr<class SRCActionPanel> ActionPanel;
 
-	/** LogicClipboardItem - Holds the latest item copied from a Logic panel
+	/** LogicClipboardItems - Holds the items copied from a Logic panel
 	*
 	* Note: We track UObjects (Data Model) here rather than the UI Models as the latter are swept away the moment the user navigates to a different Controller.
 	* For example if the user copies an action from a behaviour in a given Controller but then navigates to another Controller, we can no longer rely on the previous UI objects
 	* as they would have been discarded in favor of a new data set for the actively selected Controller */
-	UPROPERTY(Transient)
-	TObjectPtr<UObject> LogicClipboardItem;
+	TArray<TObjectPtr<UObject>> LogicClipboardItems;
+
+	// FGCObject interface
+	virtual FString GetReferencerName() const override { return "RemoteControlPanel"; }
 
 	/** Keeps track of whether materials were compiled from the current frame. Used to limit the number of UI refresh to once per frame. */
 	bool bMaterialsCompiledThisFrame = false;

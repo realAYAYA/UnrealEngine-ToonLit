@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using PerfReportTool;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -165,7 +166,7 @@ namespace PerfSummaries
 		public static Colour Red = new Colour(1.0f, 0.4f, 0.4f);
 		public static Colour Orange = new Colour(1.0f, 0.7f, 0.4f, 1.0f);
 		public static Colour Yellow = new Colour(1.0f, 1.0f, 0.5f);
-		public static Colour Green = new Colour(0.4f, 0.82f, 0.45f);
+		public static Colour Green = new Colour(0.53f, 0.83f, 0.53f);
 
 		public float r, g, b;
 		public float alpha;
@@ -382,24 +383,21 @@ namespace PerfSummaries
 			return list.GetColourForValue(value);
 		}
 
-		public static ColourThresholdList ReadColourThresholdListXML(XElement colourThresholdEl)
+		public static ColourThresholdList ReadColourThresholdListXML(XElement colourThresholdEl, XmlVariableMappings vars)
 		{
 			if (colourThresholdEl != null)
 			{
 				ColourThresholdList thresholdList = new ColourThresholdList();
 
-				XAttribute lerpColoursElement = colourThresholdEl.Attribute("lerpColours");
-				if (lerpColoursElement != null)
-				{
-					thresholdList.LerpColours = bool.Parse(lerpColoursElement.Value);
-				}
+				thresholdList.LerpColours = colourThresholdEl.GetSafeAttribute<bool>(vars, "lerpColours", thresholdList.LerpColours);
 
 				XElement thresholdsElement = colourThresholdEl.Element("thresholds");
 				XElement coloursElement = colourThresholdEl.Element("colours");
 				if (thresholdsElement != null && coloursElement != null)
 				{
-					string[] thresholdStrings = thresholdsElement.Value.Split(',');
-					string[] colourStrings = coloursElement.Value.Split(',');
+					// Colour thresholds support variables so resolve them if provided
+					string[] thresholdStrings = thresholdsElement.GetValue(vars).Split(',');
+					string[] colourStrings = coloursElement.GetValue(vars).Split(',');
 					if (thresholdStrings.Length != colourStrings.Length)
 					{
 						throw new Exception("Number of colour thresholds and colours must match");
@@ -415,7 +413,7 @@ namespace PerfSummaries
 				else
 				{
 					// Revert to previous logic if sub elements don't exist.
-					double[] values = ReadColourThresholdsXML(colourThresholdEl);
+					double[] values = ReadColourThresholdsXML(colourThresholdEl, vars);
 					if (values != null)
 					{
 						foreach (double value in values)
@@ -429,11 +427,12 @@ namespace PerfSummaries
 			return null;
 		}
 
-		public static double[] ReadColourThresholdsXML(XElement colourThresholdEl)
+		public static double[] ReadColourThresholdsXML(XElement colourThresholdEl, XmlVariableMappings vars )
 		{
 			if (colourThresholdEl != null)
 			{
-				string[] colourStrings = colourThresholdEl.Value.Split(',');
+				string colourThresholdElementStr = colourThresholdEl.GetValue(vars);
+				string[] colourStrings = colourThresholdElementStr.Split(',');
 				if (colourStrings.Length != 4)
 				{
 					throw new Exception("Incorrect number of colourthreshold entries. Should be 4.");

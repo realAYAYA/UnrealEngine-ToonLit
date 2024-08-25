@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassEntityManager.h"
 #include "MassEntitySubsystem.generated.h"
 
@@ -13,7 +13,7 @@
  * use this by default. 
  */
 UCLASS()
-class MASSENTITY_API UMassEntitySubsystem : public UWorldSubsystem
+class MASSENTITY_API UMassEntitySubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 

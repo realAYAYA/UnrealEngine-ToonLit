@@ -13,9 +13,6 @@ namespace mu
 
 	// Forward definitions
     class NodeBool;
-    typedef Ptr<NodeBool> NodeBoolPtr;
-    typedef Ptr<const NodeBool> NodeBoolPtrConst;
-
     class NodeImageConditional;
     typedef Ptr<NodeImageConditional> NodeImageConditionalPtr;
     typedef Ptr<const NodeImageConditional> NodeImageConditionalPtrConst;
@@ -42,14 +39,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        virtual int GetInputCount() const override;
-        virtual Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface

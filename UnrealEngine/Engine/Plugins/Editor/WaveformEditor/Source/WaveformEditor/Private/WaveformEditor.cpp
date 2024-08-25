@@ -103,7 +103,7 @@ void FWaveformEditor::AddDefaultTransformations()
 	if (SoundWave->Transformations.Num() == 0)
 	{
 		const UWaveformEditorTransformationsSettings* TransformationsSettings = GetWaveformEditorTransformationsSettings();
-		for (const TSubclassOf<UWaveformTransformationBase> TransformationClass : TransformationsSettings->LaunchTransformations)
+		for (const TSubclassOf<UWaveformTransformationBase>& TransformationClass : TransformationsSettings->LaunchTransformations)
 		{
 			if (TransformationClass)
 			{

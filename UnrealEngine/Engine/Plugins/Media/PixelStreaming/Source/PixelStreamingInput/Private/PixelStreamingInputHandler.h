@@ -25,13 +25,16 @@ namespace UE::PixelStreamingInput
 		virtual void Tick(float DeltaTime) override;
 
 		/** Poll for controller state and send events if needed */
-		virtual void SendControllerEvents() override{};
+		virtual void SendControllerEvents() override {};
 
 		/** Set which MessageHandler will route input  */
 		virtual void SetMessageHandler(const TSharedRef<FGenericApplicationMessageHandler>& InTargetHandler) override;
 
 		/** Register a custom function to execute when command JSON is received. */
-		virtual void SetCommandHandler(const FString& CommandName, const TFunction<void(FString, FString)>& Handler) override;
+		virtual void SetCommandHandler(const FString& CommandName, const CommandHandlerFn& Handler) override;
+
+		virtual void SetElevatedCheck(const TFunction<bool(FString)>& CheckFn) override;
+		virtual bool IsElevated(const FString& Id) override;
 
 		/** Exec handler to allow console commands to be passed through for debugging */
 		virtual bool Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar) override;
@@ -40,19 +43,16 @@ namespace UE::PixelStreamingInput
 		 */
 		virtual void SetChannelValue(int32 ControllerId, FForceFeedbackChannelType ChannelType, float Value) override;
 		virtual void SetChannelValues(int32 ControllerId, const FForceFeedbackValues& values) override;
-		virtual void OnMessage(TArray<uint8> Buffer) override;
+		virtual void OnMessage(FString SourceId, TArray<uint8> Buffer) override;
 		virtual void SetTargetWindow(TWeakPtr<SWindow> InWindow) override;
 		virtual TWeakPtr<SWindow> GetTargetWindow() override;
 		virtual void SetTargetViewport(TWeakPtr<SViewport> InViewport) override;
 		virtual TWeakPtr<SViewport> GetTargetViewport() override;
-		/** These two are deprectated but we keep them around until they can be removed in 5.4 */
-		virtual void SetTargetScreenSize(TWeakPtr<FIntPoint> InScreenSize) override;
-		virtual TWeakPtr<FIntPoint> GetTargetScreenSize() override;
 		virtual void SetTargetScreenRect(TWeakPtr<FIntRect> InScreenRect) override;
 		virtual TWeakPtr<FIntRect> GetTargetScreenRect() override;
 		virtual bool IsFakingTouchEvents() const override { return bFakingTouchEvents; }
-		virtual void RegisterMessageHandler(const FString& MessageType, const TFunction<void(FMemoryReader)>& Handler) override;
-		virtual TFunction<void(FMemoryReader)> FindMessageHandler(const FString& MessageType) override;
+		virtual void RegisterMessageHandler(const FString& MessageType, const MessageHandlerFn& Handler) override;
+		virtual MessageHandlerFn FindMessageHandler(const FString& MessageType) override;
 		virtual void SetInputType(EPixelStreamingInputType InInputType) override { InputType = InInputType; };
 		// IMotionController Interface
 		virtual FName GetMotionControllerDeviceTypeName() const override;
@@ -96,6 +96,7 @@ namespace UE::PixelStreamingInput
 		/**
 		 * XR handling
 		 */
+		virtual void HandleOnXREyeViews(FMemoryReader Ar);
 		virtual void HandleOnXRHMDTransform(FMemoryReader Ar);
 		virtual void HandleOnXRControllerTransform(FMemoryReader Ar);
 		virtual void HandleOnXRButtonPressed(FMemoryReader Ar);
@@ -106,7 +107,7 @@ namespace UE::PixelStreamingInput
 		/**
 		 * Command handling
 		 */
-		virtual void HandleOnCommand(FMemoryReader Ar);
+		virtual void HandleOnCommand(FString SourceId, FMemoryReader Ar);
 		/**
 		 * UI Interaction handling
 		 */
@@ -120,6 +121,19 @@ namespace UE::PixelStreamingInput
 		 * Populate default command handlers for data channel messages sent with "{ type: "Command" }".
 		 */
 		void PopulateDefaultCommandHandlers();
+
+		/**
+		 * Extract 4x4 WebXR ordered matrix and convert to FMatrix.
+		*/
+		FMatrix ExtractWebXRMatrix(FMemoryReader& Ar);
+
+		/**
+		 * Converts the 'Y up' 'right handed' WebXR coordinate system transform to Unreal's 'Z up'
+		 * 'left handed' coordinate system. Note: Ignores scale.
+		 * Assumes WebXR conforms to the following: (https://developer.mozilla.org/en-US/docs/Web/API/WebXR_Device_API/Geometry)
+		 * @return A 4x4 z-up transform matrix for use with UE.
+		*/
+		FTransform WebXRMatrixToUETransform(FMatrix Mat);
 
 		FIntPoint ConvertFromNormalizedScreenLocation(const FVector2D& ScreenLocation, bool bIncludeOffset = true);
 		FWidgetPath FindRoutingMessageWidget(const FVector2D& Location) const;
@@ -166,7 +180,8 @@ namespace UE::PixelStreamingInput
 
 		struct FMessage
 		{
-			TFunction<void(FMemoryReader)>* Handler;
+			FString SourceId;
+			TFunction<void(FString, FMemoryReader)>* Handler;
 			TArray<uint8> Data;
 		};
 
@@ -179,7 +194,7 @@ namespace UE::PixelStreamingInput
 		TQueue<FMessage> Messages;
 		EPixelStreamingInputType InputType = EPixelStreamingInputType::RouteToWindow;
 		FVector2D LastTouchLocation = FVector2D(EForceInit::ForceInitToZero);
-		TMap<uint8, TFunction<void(FMemoryReader)>> DispatchTable;
+		TMap<uint8, MessageHandlerFn> DispatchTable;
 
 		/** Reference to the message handler which events should be passed to. */
 		TSharedPtr<FGenericApplicationMessageHandler> MessageHandler;
@@ -193,18 +208,6 @@ namespace UE::PixelStreamingInput
 		 * state to replicate the behavior of the application.
 		 */
 		bool bFakingTouchEvents;
-
-		/**
-		 * Touch only. Location of the focused UI widget. If no UI widget is focused
-		 * then this has the UnfocusedPos value.
-		 */
-		FVector2D FocusedPos;
-
-		/**
-		 * Touch only. A special position which indicates that no UI widget is
-		 * focused.
-		 */
-		const FVector2D UnfocusedPos;
 
 		/*
 		 * Padding for string parsing when handling messages.
@@ -226,10 +229,13 @@ namespace UE::PixelStreamingInput
 		 * A map of named commands we respond to when we receive a datachannel message of type "command".
 		 * Key = command name (e.g "Encoder.MaxQP")
 		 * Value = The command handler lambda function whose parameters are as follows:
-		 * 	FString - the descriptor (e.g. the full json payload of the command message)
-		 * 	FString - the parsed value of the command, e.g. if key was "Encoder.MaxQP" and descriptor was { type: "Command", "Encoder.MaxQP": 51 }, then parsed value is "51".
+		 *  FString - the source id of the user who sent the message
+		 *  FString - the descriptor (e.g. the full json payload of the command message)
+		 *  FString - the parsed value of the command, e.g. if key was "Encoder.MaxQP" and descriptor was { type: "Command", "Encoder.MaxQP": 51 }, then parsed value is "51".
 		 */
-		TMap<FString, TFunction<void(FString, FString)>> CommandHandlers;
+		TMap<FString, CommandHandlerFn> CommandHandlers;
+
+		TFunction<bool(FString)> ElevatedCheck;
 
 	private:
 		float uint16_MAX = (float)UINT16_MAX;

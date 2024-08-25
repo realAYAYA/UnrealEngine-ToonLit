@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "PixelFormat.h"
 #include "UObject/Object.h"
 
 #include "DMXPixelMappingPreprocessRenderer.generated.h"
@@ -64,12 +65,24 @@ class DMXPIXELMAPPINGRENDERER_API UDMXPixelMappingPreprocessRenderer
 
 public:
 	/** Sets the input texture that is used when rendering */
+	void SetInputTexture(UTexture* InTexture, EPixelFormat InFormat);
+
+	/** Sets the input texture that is used when rendering */
+	void SetInputMaterial(UMaterialInterface* InMaterial, EPixelFormat InFormat);
+
+	/** Sets the input texture that is used when rendering */
+	void SetInputUserWidget(UUserWidget* InUserWidget, EPixelFormat InFormat);
+
+	/** DEPRECATED 5.4 - Sets the input texture that is used when rendering */
+	UE_DEPRECATED(5.4, "It is now required to specify a pixel format, see related overload.")
 	void SetInputTexture(UTexture* InTexture);
 
-	/** Sets the input texture that is used when rendering */
+	/** DEPRECATED 5.4 - Sets the input texture that is used when rendering */
+	UE_DEPRECATED(5.4, "It is now required to specify a pixel format, see related overload.")
 	void SetInputMaterial(UMaterialInterface* InMaterial);
 
-	/** Sets the input texture that is used when rendering */
+	/** DEPRECATED 5.4 - Sets the input texture that is used when rendering */
+	UE_DEPRECATED(5.4, "It is now required to specify a pixel format, see related overload.")
 	void SetInputUserWidget(UUserWidget* InUserWidget);
 
 	/** Clears input */

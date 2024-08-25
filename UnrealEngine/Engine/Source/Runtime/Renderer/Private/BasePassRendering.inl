@@ -27,11 +27,10 @@ void TBasePassVertexShaderPolicyParamType<LightMapPolicyType>::GetShaderBindings
 	const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 	const FMaterialRenderProxy& MaterialRenderProxy,
 	const FMaterial& Material,
-	const FMeshPassProcessorRenderState& DrawRenderState,
 	const TBasePassShaderElementData<LightMapPolicyType>& ShaderElementData,
 	FMeshDrawSingleShaderBindings& ShaderBindings) const
 {
-	FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+	FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 	LightMapPolicyType::GetVertexShaderBindings(
 		PrimitiveSceneProxy,
@@ -65,11 +64,10 @@ void TBasePassPixelShaderPolicyParamType<LightMapPolicyType>::GetShaderBindings(
 	const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 	const FMaterialRenderProxy& MaterialRenderProxy,
 	const FMaterial& Material,
-	const FMeshPassProcessorRenderState& DrawRenderState,
 	const TBasePassShaderElementData<LightMapPolicyType>& ShaderElementData,
 	FMeshDrawSingleShaderBindings& ShaderBindings) const
 {
-	FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+	FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 	LightMapPolicyType::GetPixelShaderBindings(
 		PrimitiveSceneProxy,
@@ -85,11 +83,10 @@ void TBasePassComputeShaderPolicyParamType<LightMapPolicyType>::GetShaderBinding
 	const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 	const FMaterialRenderProxy& MaterialRenderProxy,
 	const FMaterial& Material,
-	const FMeshPassProcessorRenderState& DrawRenderState,
 	const TBasePassShaderElementData<LightMapPolicyType>& ShaderElementData,
 	FMeshDrawSingleShaderBindings& ShaderBindings) const
 {
-	FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+	FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 	LightMapPolicyType::GetComputeShaderBindings(
 		PrimitiveSceneProxy,

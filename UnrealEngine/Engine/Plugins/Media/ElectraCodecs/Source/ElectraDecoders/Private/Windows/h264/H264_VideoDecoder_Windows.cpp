@@ -206,6 +206,7 @@ void IElectraVideoDecoderH264_DX::PlatformGetConfigurationOptions(TMap<FString, 
 {
 	OutOptions.Emplace(IElectraDecoderFeature::MinimumNumberOfOutputFrames, FVariant((int32)8));
 	OutOptions.Emplace(IElectraDecoderFeature::IsAdaptive, FVariant(false));
+	OutOptions.Emplace(IElectraDecoderFeature::SupportsDroppingOutput, FVariant(true));
 }
 
 
@@ -332,43 +333,60 @@ IElectraDecoder::FError IElectraVideoDecoderH264_DX::PlatformCreateMFDecoderTran
 					return Error.SetMessage(TEXT("MFCreateDXGIDeviceManager() failed")).SetCode(ERRCODE_INTERNAL_BAD_PARAMETER).SetSdkCode(hr);
 				}
 
+				bool bAssociatedDeviceManager = false;
+#if ALLOW_MFSAMPLE_WITH_DX12
+				// Try setting the D3D12 device with the device manager.
+				if (pfh->DXVersion == 12000)
+				{
+					bAssociatedDeviceManager = SUCCEEDED(pfh->DxDeviceManager->ResetDevice(static_cast<ID3D12Device*>(ApplicationD3DDevice), ResetToken));
+					// note: pfh->Ctx.DxDevice & pfh->Ctx.DxDeviceContext will be nullptr (everything uses the DX12 render device)
+				}
+#endif
+
 #ifdef ELECTRA_DECODERS_HAVE_DX11
-				D3D_FEATURE_LEVEL FeatureLevel;
+				if (!bAssociatedDeviceManager)
+				{
+					D3D_FEATURE_LEVEL FeatureLevel;
 
-				uint32 DeviceCreationFlags = 0;
-				if ((DxDeviceCreationFlags & D3D11_CREATE_DEVICE_DEBUG) != 0)
-				{
-					DeviceCreationFlags |= D3D11_CREATE_DEVICE_DEBUG;
-				}
+					uint32 DeviceCreationFlags = 0;
+					if ((DxDeviceCreationFlags & D3D11_CREATE_DEVICE_DEBUG) != 0)
+					{
+						DeviceCreationFlags |= D3D11_CREATE_DEVICE_DEBUG;
+					}
 
-				hr = D3D11CreateDevice(DXGIAdapter, DXGIAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr,
-						DeviceCreationFlags, nullptr, 0, D3D11_SDK_VERSION, pfh->Ctx.DxDevice.GetInitReference(), &FeatureLevel, pfh->Ctx.DxDeviceContext.GetInitReference());
-				if (hr != S_OK || !pfh->Ctx.DxDevice.IsValid())
-				{
-					return Error.SetMessage(TEXT("D3D11CreateDevice() failed")).SetCode(ERRCODE_INTERNAL_BAD_PARAMETER).SetSdkCode(hr);
-				}
-				if (FeatureLevel < D3D_FEATURE_LEVEL_9_3)
-				{
-					return Error.SetMessage(TEXT("Failed to create D3D11 Device with feature level 9.3 or above")).SetCode(ERRCODE_INTERNAL_BAD_PARAMETER);
-				}
-				if ((hr = pfh->DxDeviceManager->ResetDevice(pfh->Ctx.DxDevice, ResetToken)) != S_OK)
-				{
-					return Error.SetMessage(TEXT("DXGIDeviceManager::ResetDevice() failed")).SetCode(ERRCODE_INTERNAL_BAD_PARAMETER).SetSdkCode(hr);
-				}
+					hr = D3D11CreateDevice(DXGIAdapter, DXGIAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr,
+							DeviceCreationFlags, nullptr, 0, D3D11_SDK_VERSION, pfh->Ctx.DxDevice.GetInitReference(), &FeatureLevel, pfh->Ctx.DxDeviceContext.GetInitReference());
+					if (hr != S_OK || !pfh->Ctx.DxDevice.IsValid())
+					{
+						return Error.SetMessage(TEXT("D3D11CreateDevice() failed")).SetCode(ERRCODE_INTERNAL_BAD_PARAMETER).SetSdkCode(hr);
+					}
+					if (FeatureLevel < D3D_FEATURE_LEVEL_9_3)
+					{
+						return Error.SetMessage(TEXT("Failed to create D3D11 Device with feature level 9.3 or above")).SetCode(ERRCODE_INTERNAL_BAD_PARAMETER);
+					}
 
-				// Multithread protect the newly created device as we're going to use it from decoding thread and from render thread for texture
-				// sharing between decoding and rendering DX devices
-				TRefCountPtr<ID3D10Multithread> DxMultithread;
-				if ((hr = pfh->Ctx.DxDevice->QueryInterface(__uuidof(ID3D10Multithread), (void**)DxMultithread.GetInitReference())) == S_OK)
-				{
-					DxMultithread->SetMultithreadProtected(1);
+					hr = pfh->DxDeviceManager->ResetDevice(pfh->Ctx.DxDevice, ResetToken);
+					if (hr != S_OK)
+					{
+						return Error.SetMessage(TEXT("DXGIDeviceManager::ResetDevice() failed")).SetCode(ERRCODE_INTERNAL_BAD_PARAMETER).SetSdkCode(hr);
+					}
+					// Multithread protect the newly created device as we're going to use it from decoding thread and from render thread for texture
+					// sharing between decoding and rendering DX devices
+					TRefCountPtr<ID3D10Multithread> DxMultithread;
+					if ((hr = pfh->Ctx.DxDevice->QueryInterface(__uuidof(ID3D10Multithread), (void**)DxMultithread.GetInitReference())) == S_OK)
+					{
+						DxMultithread->SetMultithreadProtected(1);
+					}
+					bAssociatedDeviceManager = true;
+
+
+
+
 				}
 #endif
 
 				// No need to set a device manager when we didn't create a device for it to manage.
-#ifdef ELECTRA_DECODERS_HAVE_DX11
-				if ((hr = NewDecoder->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(pfh->DxDeviceManager.GetReference()))) != S_OK)
-#endif
+				if (!bAssociatedDeviceManager || (hr = NewDecoder->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(pfh->DxDeviceManager.GetReference()))) != S_OK)
 				{
 					// Fallback to software decoding.
 					pfh->bIsSW = true;

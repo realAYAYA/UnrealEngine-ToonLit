@@ -188,13 +188,17 @@ float4 CalcFullSceneColor(float2 ScreenUV)
 
 
 /** Returns DeviceZ which is the z value stored in the depth buffer. */
-float LookupDeviceZ( float2 ScreenUV )
+float LookupDeviceZ( float2 ScreenUV, float ArrayIndex )
 {
 #if	SCENE_TEXTURES_DISABLED
 	return FarDepthValue;
 #elif FORCE_DEPTH_TEXTURE_READS || PLATFORM_NEEDS_DEPTH_TEXTURE_READS
 	// native Depth buffer lookup
-	return Texture2DSampleLevel(MobileSceneTextures.SceneDepthTexture, MobileSceneTextures.SceneDepthTextureSampler, ScreenUV, 0).r;
+	#if INSTANCED_STEREO || MOBILE_MULTI_VIEW
+		return Texture2DArraySample(MobileSceneTextures.SceneDepthTextureArray, MobileSceneTextures.SceneDepthTextureSampler, float3(ScreenUV.xy,ArrayIndex)).r;
+	#else
+		return Texture2DSampleLevel(MobileSceneTextures.SceneDepthTexture, MobileSceneTextures.SceneDepthTextureSampler, ScreenUV, 0).r;
+	#endif
 #elif MOBILE_DEPTHFECTH && COMPILER_GLSL_ES3_1
 	return DepthbufferFetchES2();
 #elif MOBILE_DEPTHFECTH && VULKAN_PROFILE
@@ -204,21 +208,44 @@ float LookupDeviceZ( float2 ScreenUV )
 #elif (USE_SCENE_DEPTH_AUX && !MOBILE_DEFERRED_SHADING)
 	// SceneDepth texture is discarded after BasePass (with forward shading) 
 	// instead fetch DeviceZ from SceneDepthAuxTexture
-	return Texture2DSampleLevel(MobileSceneTextures.SceneDepthAuxTexture, MobileSceneTextures.SceneDepthAuxTextureSampler, ScreenUV, 0).r;
+	#if INSTANCED_STEREO || MOBILE_MULTI_VIEW
+		return Texture2DArraySample(MobileSceneTextures.SceneDepthAuxTextureArray, MobileSceneTextures.SceneDepthAuxTextureSampler, float3(ScreenUV.xy,ArrayIndex)).r;
+	#else
+		return Texture2DSampleLevel(MobileSceneTextures.SceneDepthAuxTexture, MobileSceneTextures.SceneDepthAuxTextureSampler, ScreenUV, 0).r;
+	#endif
 #else
 	// native Depth buffer lookup
-	return Texture2DSampleLevel(MobileSceneTextures.SceneDepthTexture, MobileSceneTextures.SceneDepthTextureSampler, ScreenUV, 0).r;
+	#if INSTANCED_STEREO || MOBILE_MULTI_VIEW
+		return Texture2DArraySample(MobileSceneTextures.SceneDepthTextureArray, MobileSceneTextures.SceneDepthTextureSampler, float3(ScreenUV.xy,ArrayIndex)).r;
+	#else
+		return Texture2DSampleLevel(MobileSceneTextures.SceneDepthTexture, MobileSceneTextures.SceneDepthTextureSampler, ScreenUV, 0).r;
+	#endif
 #endif
 }
 
+/** Returns DeviceZ which is the z value stored in the depth buffer. */
+float LookupDeviceZ( float2 ScreenUV )
+{
+	return LookupDeviceZ(ScreenUV, 0);
+}
+
 /** Returns clip space W, which is world space distance along the View Z axis. Note if you need DeviceZ LookupDeviceZ() is the faster option */
-float CalcSceneDepth(float2 ScreenUV)
+float CalcSceneDepth(float2 ScreenUV, float ArrayIndex)
 {
 #if SCENE_TEXTURES_DISABLED
 	return SCENE_TEXTURES_DISABLED_SCENE_DEPTH_VALUE;
 #else
-	return ConvertFromDeviceZ(LookupDeviceZ(ScreenUV));
+	#if INSTANCED_STEREO || MOBILE_MULTI_VIEW
+			return ConvertFromDeviceZ(LookupDeviceZ(ScreenUV, ArrayIndex));
+	#else
+			return ConvertFromDeviceZ(LookupDeviceZ(ScreenUV));
+	#endif
 #endif
+}
+
+float CalcSceneDepth(float2 ScreenUV)
+{
+	return CalcSceneDepth(ScreenUV, 0);
 }
 
 #endif // SHADING_PATH_MOBILE

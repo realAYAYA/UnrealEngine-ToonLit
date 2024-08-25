@@ -53,14 +53,14 @@ namespace GeometryCollectionTest
 		FVector Pos2 = GlobalTransform[2].GetTranslation();
 		EXPECT_FVECTOR_NEAR(Pos2, FVector(-10, 0, 0), 0.0001);
 
-		FTransform Frame = GeometryCollectionAlgo::GlobalMatrix(Collection->Transform, Collection->Parent, 2);
-		EXPECT_FVECTOR_NEAR(Frame.GetRotation().Euler(), FVector(0, 0, -90), 0.0001);
-		EXPECT_FVECTOR_NEAR(Frame.GetTranslation(), FVector(-10, 0, 0), 0.0001);
+		FTransform3f Frame = GeometryCollectionAlgo::GlobalMatrix3f(Collection->Transform, Collection->Parent, 2);
+		EXPECT_FVECTOR_NEAR(Frame.GetRotation().Euler(), FVector3f(0, 0, -90), 0.0001);
+		EXPECT_FVECTOR_NEAR(Frame.GetTranslation(), FVector3f(-10, 0, 0), 0.0001);
 
-		Frame = GeometryCollectionAlgo::GlobalMatrix(Collection->Transform, Collection->Parent, 1);
-		FVector FrameRot = Frame.GetRotation().Euler();
-		EXPECT_TRUE(FrameRot.Equals(FVector(0, 0, -180), 0.0001) || FrameRot.Equals(FVector(0, 0, 180), 0.0001));
-		EXPECT_FVECTOR_NEAR(Frame.GetTranslation(), FVector(-10, 10, 0), 0.0001);
+		Frame = GeometryCollectionAlgo::GlobalMatrix3f(Collection->Transform, Collection->Parent, 1);
+		FVector3f FrameRot = Frame.GetRotation().Euler();
+		EXPECT_TRUE(FrameRot.Equals(FVector3f(0, 0, -180), 0.0001) || FrameRot.Equals(FVector3f(0, 0, 180), 0.0001));
+		EXPECT_FVECTOR_NEAR(Frame.GetTranslation(), FVector3f(-10, 10, 0), 0.0001);
 	}
 
 	void ReparentingMatrices()
@@ -82,8 +82,8 @@ namespace GeometryCollectionTest
 		//  ......2
 		TArray<int32> Bones = { 2 };
 		GeometryCollectionAlgo::ParentTransforms(Collection.Get(), 1, Bones);
-		EXPECT_FVECTOR_NEAR((Collection->Transform)[2].GetTranslation(), FVector(0, 10, 0), 0.0001);
-		EXPECT_FVECTOR_NEAR((Collection->Transform)[2].GetRotation().Euler(), FVector(0, 0, 90.), 0.0001);
+		EXPECT_FVECTOR_NEAR((Collection->Transform)[2].GetTranslation(), FVector3f(0, 10, 0), 0.0001);
+		EXPECT_FVECTOR_NEAR((Collection->Transform)[2].GetRotation().Euler(), FVector3f(0, 0, 90.), 0.0001);
 
 		TArray<FTransform> GlobalTransform;
 		GeometryCollectionAlgo::GlobalMatrices(Collection->Transform, Collection->Parent, GlobalTransform);
@@ -120,10 +120,10 @@ namespace GeometryCollectionTest
 		}
 		(Collection.Children)[index].Empty();
 
-		(Collection.Transform)[0] = FTransform(FQuat::MakeFromEuler(FVector(0, 0, 0)), FVector(0, 0, 0));
-		(Collection.Transform)[1] = FTransform(FQuat::MakeFromEuler(FVector(0, 0, 90.)), FVector(1, 0, 0));
-		(Collection.Transform)[2] = FTransform(FQuat::MakeFromEuler(FVector(0, 90.,0)), FVector(1, 0, 0));
-		(Collection.Transform)[3] = FTransform(FQuat::MakeFromEuler(FVector(0, 0, 0)), FVector(1, 0, 0));
+		(Collection.Transform)[0] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(0, 0, 0)), FVector3f(0, 0, 0));
+		(Collection.Transform)[1] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(0, 0, 90.)), FVector3f(1, 0, 0));
+		(Collection.Transform)[2] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(0, 90.,0)), FVector3f(1, 0, 0));
+		(Collection.Transform)[3] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(0, 0, 0)), FVector3f(1, 0, 0));
 
 		TArray<FTransform> GlobalMatrices0;
 		GeometryCollectionAlgo::GlobalMatrices(Collection.Transform, Collection.Parent, GlobalMatrices0);

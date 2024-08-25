@@ -325,12 +325,17 @@ namespace Gauntlet
 			return "\"" + inStr + "\"";
 		}
 
-		public static bool BuildVersionValidationCheck(string InBuildVersion, string CsvDirectory)
+		public static bool BuildVersionValidationCheck(string InBuildVersion, string CsvDirectory, string SearchPattern = null)
 		{
-			Dictionary<string, string> Metadata = ReadCsvMetadataFromDirectory(CsvDirectory);
+			Dictionary<string, string> Metadata = ReadCsvMetadataFromDirectory(CsvDirectory, false, SearchPattern);
 			return BuildVersionValidationCheck(InBuildVersion, Metadata);
 		}
 
+		public static bool BuildVersionValidationCheckForCsv(string InBuildVersion, string CsvFilename)
+		{
+			Dictionary<string, string> Metadata = ReadCsvMetadata(CsvFilename);
+			return BuildVersionValidationCheck(InBuildVersion, Metadata);
+		}
 
 		public static string GetMetadataQueryForLastNDays(int DurationInDays)
 		{

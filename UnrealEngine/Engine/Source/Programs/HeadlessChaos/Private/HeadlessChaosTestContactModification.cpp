@@ -42,7 +42,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity,should collide with floor and not fall through.
 		FSingleParticlePhysicsProxy* CollidingCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& CollidingCubeParticle = CollidingCubeProxy->GetGameThreadAPI();
-		auto CollidingCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto CollidingCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		CollidingCubeParticle.SetGeometry(CollidingCubeGeom);
 		Solver->RegisterObject(CollidingCubeProxy);
 		CollidingCubeParticle.SetGravityEnabled(false);
@@ -54,7 +54,7 @@ namespace ChaosTest
 		// Simulated cube with downawrd velocity, contact modification disables collision with floor, should fall through.
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(false);
@@ -67,7 +67,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0,0,0));
@@ -132,7 +132,7 @@ namespace ChaosTest
 		// Both boxes should turn all contacts to probes, one of them has CCD enabled
 		// and the other one doesn't.
 
-		auto CubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto CubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 
 		// Fall through the floor, no ccd
 		FSingleParticlePhysicsProxy* CubeProxyA = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
@@ -162,7 +162,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -220,7 +220,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity, should rest directly on floor.
 		FSingleParticlePhysicsProxy* RegularCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& RegularCubeParticle = RegularCubeProxy->GetGameThreadAPI();
-		auto RegularCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto RegularCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		RegularCubeParticle.SetGeometry(RegularCubeGeom);
 		Solver->RegisterObject(RegularCubeProxy);
 		RegularCubeParticle.SetGravityEnabled(true);
@@ -231,7 +231,7 @@ namespace ChaosTest
 		// Simulated cube with downawrd velocity, contact modification subtracts SeparationPadding from separation,  causing cube to rest above floor.
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(true);
@@ -243,7 +243,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -316,7 +316,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity, should rest directly on floor.
 		FSingleParticlePhysicsProxy* RegularCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& RegularCubeParticle = RegularCubeProxy->GetGameThreadAPI();
-		auto RegularCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto RegularCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		RegularCubeParticle.SetGeometry(RegularCubeGeom);
 		Solver->RegisterObject(RegularCubeProxy);
 		RegularCubeParticle.SetGravityEnabled(false);
@@ -327,7 +327,7 @@ namespace ChaosTest
 
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(false);
@@ -340,7 +340,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -411,7 +411,7 @@ namespace ChaosTest
 		// simulated cube falling onto floor with center of mass over hanging past edge, should fall under floor,
 		FSingleParticlePhysicsProxy* FallingCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& FallingCubeParticle = FallingCubeProxy->GetGameThreadAPI();
-		auto FallingCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto FallingCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		FallingCubeParticle.SetGeometry(FallingCubeGeom);
 		Solver->RegisterObject(FallingCubeProxy);
 		FallingCubeParticle.SetGravityEnabled(true);
@@ -422,7 +422,7 @@ namespace ChaosTest
 		// cube with CoM hanging past edge of floor, contact mod moves contact under CoM so it will not tip off edge.
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(true);
@@ -434,7 +434,7 @@ namespace ChaosTest
 		// static floor at origin, X/Y spanning [-500, 500] and Z spanning [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -511,7 +511,7 @@ namespace ChaosTest
 		// Simulated cube with downawrd velocity, should not bounce, and end up with zero velocity.
 		FSingleParticlePhysicsProxy* NoBounceCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& NoBounceCubeParticle = NoBounceCubeProxy->GetGameThreadAPI();
-		auto NoBounceCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto NoBounceCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		NoBounceCubeParticle.SetGeometry(NoBounceCubeGeom);
 		Solver->RegisterObject(NoBounceCubeProxy);
 		NoBounceCubeParticle.SetGravityEnabled(false);
@@ -523,7 +523,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -591,7 +591,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity, should bounce on floor and end up with upward velocity.
 		FSingleParticlePhysicsProxy* BounceCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& BounceCubeParticle = BounceCubeProxy->GetGameThreadAPI();
-		auto BounceCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto BounceCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		BounceCubeParticle.SetGeometry(BounceCubeGeom);
 		Solver->RegisterObject(BounceCubeProxy);
 		BounceCubeParticle.SetGravityEnabled(false);
@@ -603,7 +603,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -667,7 +667,7 @@ namespace ChaosTest
 
 		FSingleParticlePhysicsProxy* SlidingCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& SlidingCubeParticle = SlidingCubeProxy->GetGameThreadAPI();
-		auto SlidingCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto SlidingCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		SlidingCubeParticle.SetGeometry(SlidingCubeGeom);
 		Solver->RegisterObject(SlidingCubeProxy);
 		SlidingCubeParticle.SetGravityEnabled(true);
@@ -678,7 +678,7 @@ namespace ChaosTest
 
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(true);
@@ -691,7 +691,7 @@ namespace ChaosTest
 		// static floor rotated 30 degrees
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -758,7 +758,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity, on contact modification set an upward velocity so it should move away from floor,.
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(false);
@@ -771,7 +771,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -822,7 +822,7 @@ namespace ChaosTest
 		// simulated cube falling on floor, on contact modification set angular velocity to make it spin
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(true);
@@ -834,7 +834,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -881,7 +881,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity, on contact modification teleport particle and clear velocity.
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(false);
@@ -894,7 +894,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -954,7 +954,7 @@ namespace ChaosTest
 		// simulated cube with downward velocity, on contact modification rotate particle.
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(true);
@@ -965,7 +965,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -1023,7 +1023,7 @@ namespace ChaosTest
 		// simulated cube dropped from just above the floor
 		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
 		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
-		auto ModifiedCubeGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		auto ModifiedCubeGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
 		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
 		Solver->RegisterObject(ModifiedCubeProxy);
 		ModifiedCubeParticle.SetGravityEnabled(true);
@@ -1034,7 +1034,7 @@ namespace ChaosTest
 		// static floor at origin, occupying Z = [-100,0]
 		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
-		auto FloorGeom = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(-90, 500, 0)));
+		auto FloorGeom = Chaos::FImplicitObjectPtr(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(-90, 500, 0)));
 		FloorParticle.SetGeometry(FloorGeom);
 		Solver->RegisterObject(FloorProxy);
 		FloorParticle.SetX(FVec3(0, 0, 0));
@@ -1078,6 +1078,88 @@ namespace ChaosTest
 		EXPECT_NEAR(ModifiedCubeParticle.X().Z, 100.0, 0.001);
 
 		Solver->UnregisterAndFreeSimCallbackObject_External(Callback);
+		Solver->UnregisterObject(ModifiedCubeProxy);
+		Solver->UnregisterObject(FloorProxy);
+		Module->DestroySolver(Solver);
+	}
+
+	GTEST_TEST(AllTraits, ContactModification_SelectByParticle)
+	{
+		FChaosSolversModule* Module = FChaosSolversModule::GetModule();
+		auto* Solver = Module->CreateSolver(nullptr, /*AsyncDt=*/-1);
+		InitSolverSettings(Solver);
+		Solver->SetThreadingMode_External(EThreadingModeTemp::SingleThread);
+
+		// Similar to the "Disable" test:
+		// - Create a static floor and two boxes falling onto it.
+		// - One box has contacts disabled and should fall through, one should collide.
+		// - Rather than loop over all contacts, get contacts for a particular particle proxy
+
+		// simulated cube with downward velocity,should collide with floor and not fall through.
+		FSingleParticlePhysicsProxy* CollidingCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
+		auto& CollidingCubeParticle = CollidingCubeProxy->GetGameThreadAPI();
+		auto CollidingCubeGeom = TRefCountPtr<FImplicitObject>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		CollidingCubeParticle.SetGeometry(CollidingCubeGeom);
+		Solver->RegisterObject(CollidingCubeProxy);
+		CollidingCubeParticle.SetGravityEnabled(false);
+		CollidingCubeParticle.SetV(FVec3(0, 0, -100));
+		CollidingCubeParticle.SetX(FVec3(200, 0, 500));
+		SetCubeInertiaTensor(CollidingCubeParticle, /*Dimension=*/200, /*Mass=*/1);
+		ChaosTest::SetParticleSimDataToCollide({ CollidingCubeProxy->GetParticle_LowLevel() });
+
+		// Simulated cube with downawrd velocity, contact modification disables collision with floor, should fall through.
+		FSingleParticlePhysicsProxy* ModifiedCubeProxy = FSingleParticlePhysicsProxy::Create(Chaos::FPBDRigidParticle::CreateParticle());
+		auto& ModifiedCubeParticle = ModifiedCubeProxy->GetGameThreadAPI();
+		auto ModifiedCubeGeom = TRefCountPtr<FImplicitObject>(new TBox<FReal, 3>(FVec3(-100), FVec3(100)));
+		ModifiedCubeParticle.SetGeometry(ModifiedCubeGeom);
+		Solver->RegisterObject(ModifiedCubeProxy);
+		ModifiedCubeParticle.SetGravityEnabled(false);
+		ModifiedCubeParticle.SetV(FVec3(0, 0, -100));
+		ModifiedCubeParticle.SetX(FVec3(-200, 0, 500));
+		SetCubeInertiaTensor(ModifiedCubeParticle, /*Dimension=*/200, /*Mass=*/1);
+		ChaosTest::SetParticleSimDataToCollide({ ModifiedCubeProxy->GetParticle_LowLevel() });
+
+		// static floor at origin, occupying Z = [-100,0]
+		FSingleParticlePhysicsProxy* FloorProxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
+		auto& FloorParticle = FloorProxy->GetGameThreadAPI();
+		auto FloorGeom = TRefCountPtr<FImplicitObject>(new TBox<FReal, 3>(FVec3(-500, -500, -100), FVec3(500, 500, 0)));
+		FloorParticle.SetGeometry(FloorGeom);
+		Solver->RegisterObject(FloorProxy);
+		FloorParticle.SetX(FVec3(0, 0, 0));
+		ChaosTest::SetParticleSimDataToCollide({ FloorProxy->GetParticle_LowLevel() });
+
+		// Save Unique indices of floor and modified cube to disable in contact mod.
+		TVec2<FUniqueIdx> UniqueIndices({ ModifiedCubeParticle.UniqueIdx(), FloorParticle.UniqueIdx() });
+
+		FContactModificationTestCallback* Callback = Solver->CreateAndRegisterSimCallbackObject_External<FContactModificationTestCallback>();
+		Callback->TestLambda = [UniqueIndices, ModifiedCubeProxy](Chaos::FCollisionContactModifier& Modifier)
+		{
+			Chaos::FGeometryParticleHandle* ModifiedCubeParticle = ModifiedCubeProxy->GetHandle_LowLevel();
+			for (FContactPairModifier& PairModifier : Modifier.GetContacts(ModifiedCubeParticle))
+			{
+				PairModifier.Disable();
+			}
+		};
+
+		const float Dt = 1.0f;
+		const int32 Steps = 10;
+		for (int Step = 0; Step < Steps; ++Step)
+		{
+			Solver->AdvanceAndDispatch_External(Dt);
+			Solver->UpdateGameThreadStructures();
+		}
+
+		// Modified cube should be below floor because we disabled collision.
+		EXPECT_LT(ModifiedCubeParticle.X().Z, FloorParticle.X().Z);
+
+		// Colliding cube should be above floor due to collision.
+		EXPECT_GT(CollidingCubeParticle.X().Z, FloorParticle.X().Z);
+
+		// Floor should be at origin.
+		EXPECT_EQ(FloorParticle.X().Z, 0);
+
+		Solver->UnregisterAndFreeSimCallbackObject_External(Callback);
+		Solver->UnregisterObject(CollidingCubeProxy);
 		Solver->UnregisterObject(ModifiedCubeProxy);
 		Solver->UnregisterObject(FloorProxy);
 		Module->DestroySolver(Solver);

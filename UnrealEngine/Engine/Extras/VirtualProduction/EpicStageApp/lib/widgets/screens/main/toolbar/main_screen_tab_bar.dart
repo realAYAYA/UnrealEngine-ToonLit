@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 
-import '../../../../utilities/unreal_colors.dart';
-import '../../../elements/asset_icon.dart';
 import '../tabs/main_screen_tabs.dart';
 
 /// The tab bar shown within the [MainScreenToolbar].
@@ -33,7 +33,9 @@ class _MainScreenTabBarState extends State<MainScreenTabBar> {
         color: Theme.of(context).colorScheme.primary,
       ),
       indicatorSize: TabBarIndicatorSize.label,
+      labelColor: Colors.white,
       tabs: MainScreenTabs.tabConfigs.map((tabConfig) => _MainScreenTabBarTab(tabConfig: tabConfig)).toList(),
+      tabAlignment: TabAlignment.start,
     );
   }
 }

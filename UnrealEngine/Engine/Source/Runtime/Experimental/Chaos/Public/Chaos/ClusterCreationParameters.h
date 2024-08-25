@@ -34,6 +34,7 @@ namespace Chaos
 			, Chaos::TPBDRigidClusteredParticleHandle<Chaos::FReal,3>* ClusterParticleHandleIn = nullptr
 			, const FVec3& ScaleIn = FVec3::OneVector
 			, bool bIsAnchoredIn = false
+			, bool bInEnableStrainOnCollision = true
 		)
 			: CoillisionThicknessPercent(CoillisionThicknessPercentIn)
 			, MaxNumConnections(MaxNumConnectionsIn)
@@ -46,6 +47,7 @@ namespace Chaos
 			, ClusterParticleHandle(ClusterParticleHandleIn)
 			, Scale(ScaleIn)
 			, bIsAnchored(bIsAnchoredIn)
+			, bEnableStrainOnCollision(bInEnableStrainOnCollision)
 		{}
 
 		FReal CoillisionThicknessPercent;
@@ -59,5 +61,6 @@ namespace Chaos
 		Chaos::FPBDRigidClusteredParticleHandle* ClusterParticleHandle;
 		FVec3 Scale;
 		bool bIsAnchored;
+		bool bEnableStrainOnCollision;
 	};
 }

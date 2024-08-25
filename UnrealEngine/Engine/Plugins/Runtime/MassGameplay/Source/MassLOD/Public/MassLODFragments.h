@@ -39,10 +39,12 @@ struct MASSLOD_API FMassViewerInfoFragment : public FMassFragment
 	GENERATED_BODY()
 
 	// Closest viewer distance
-	float ClosestViewerDistanceSq;
+	UPROPERTY()
+	float ClosestViewerDistanceSq = FLT_MAX;
 
 	// Closest distance to frustum
-	float ClosestDistanceToFrustum;
+	UPROPERTY()
+	float ClosestDistanceToFrustum = FLT_MAX;
 };
 
 USTRUCT()
@@ -84,14 +86,30 @@ struct MASSLOD_API FMassVariableTickChunkFragment : public FMassChunkFragment
 	}
 
 private:
+	UPROPERTY()
 	bool bShouldTickThisFrame = true;
-	EMassLOD::Type LOD = EMassLOD::Max;
+
+	UPROPERTY()
+	TEnumAsByte<EMassLOD::Type> LOD = EMassLOD::Max;
+
+	UPROPERTY()
 	float TimeUntilNextTick = 0.0f;
+
+	UPROPERTY()
 	int32 LastChunkSerialModificationNumber = INDEX_NONE;
 };
 
 USTRUCT()
 struct FMassCollectLODViewerInfoTag : public FMassTag
+{
+	GENERATED_BODY();
+};
+
+/*
+ * Tag to use to trigger the collector processor that uses the LODCollector without Visibility Logic, so strictly based of distance
+ */
+USTRUCT()
+struct FMassCollectDistanceLODViewerInfoTag : public FMassTag
 {
 	GENERATED_BODY();
 };
@@ -216,11 +234,14 @@ struct MASSLOD_API FMassVisualizationChunkFragment : public FMassChunkFragment
 protected:
 
 	/** Visibility of the current chunk, should never change */
+	UPROPERTY()
 	EMassVisibility Visibility = EMassVisibility::Max;
 
 	/** Not visible chunks, might contains entity that are newly visible and not yet moved. */
+	UPROPERTY()
 	bool bContainsNewlyVisibleEntity = true;
 
 	/** Not visible chunks delta time until next update */
+	UPROPERTY()
 	float DeltaTime = 0;
 };

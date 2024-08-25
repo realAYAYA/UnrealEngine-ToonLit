@@ -278,7 +278,7 @@ void SMajorTabWindow::Construct(const FArguments& InArgs, const TSharedRef<SDock
 			+ SVerticalBox::Slot()
 			.FillHeight(1.0f)
 			[
-				TabManager->RestoreFrom(Layout, ConstructUnderWindow).ToSharedRef()
+				TabManager->RestoreFrom(Layout, ConstructUnderWindow, false, EOutputCanBeNullptr::IfNoTabValid).ToSharedRef()
 			]
 		]
 

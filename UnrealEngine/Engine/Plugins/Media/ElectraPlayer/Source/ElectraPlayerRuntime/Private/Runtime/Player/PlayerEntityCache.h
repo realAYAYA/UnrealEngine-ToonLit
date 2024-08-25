@@ -37,7 +37,7 @@ public:
 		TSharedPtrTS<const TArray<uint8>> RawPayloadData;
 	};
 
-	static TSharedPtrTS<IPlayerEntityCache> Create(IPlayerSessionServices* SessionServices, const FParamDict& Options);
+	static TSharedPtrTS<IPlayerEntityCache> Create(IPlayerSessionServices* SessionServices);
 
 	virtual ~IPlayerEntityCache() = default;
 

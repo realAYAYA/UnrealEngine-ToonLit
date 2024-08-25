@@ -106,6 +106,9 @@ DECLARE_DELEGATE_RetVal_OneParam(bool, FOnGotoBinding, FName /*InPropertyName*/)
 DECLARE_DELEGATE_RetVal_OneParam(bool, FOnCanGotoBinding, FName /*InPropertyName*/);
 
 /** Delegate used to check whether a property is considered for binding. Returning false will discard the property and all child properties. */
+DECLARE_DELEGATE_RetVal_TwoParams(bool, FOnCanAcceptPropertyOrChildrenWithBindingChain, FProperty* /*InProperty*/, TConstArrayView<FBindingChainElement> /*InBindingChain*/);
+
+// UE_DEPRECATED(5.4, "Please use OnCanAcceptPropertyOrChildrenWithBindingChain instead.")
 DECLARE_DELEGATE_RetVal_OneParam(bool, FOnCanAcceptPropertyOrChildren, FProperty* /*InProperty*/);
 
 /** Delegate used to check whether a property can be bound to the property in question */
@@ -144,6 +147,15 @@ DECLARE_DELEGATE_RetVal_TwoParams(FReply, FOnDrop, const FGeometry&, const FDrag
 /** Setup arguments structure for a property binding widget */
 struct FPropertyBindingWidgetArgs
 {
+	// Macro needed to avoid deprecation errors when the struct is copied or created in the default methods.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FPropertyBindingWidgetArgs() = default;
+	FPropertyBindingWidgetArgs(const FPropertyBindingWidgetArgs&) = default;
+	FPropertyBindingWidgetArgs(FPropertyBindingWidgetArgs&&) = default;
+	FPropertyBindingWidgetArgs& operator=(const FPropertyBindingWidgetArgs&) = default;
+	FPropertyBindingWidgetArgs& operator=(FPropertyBindingWidgetArgs&&) = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	
 	/** An optional bindable property */
 	FProperty* Property = nullptr;
 
@@ -160,6 +172,9 @@ struct FPropertyBindingWidgetArgs
 	FOnCanGotoBinding OnCanGotoBinding;
 
 	/** Delegate used to check whether a property is considered for binding. Returning false will discard the property and all child properties. */
+	FOnCanAcceptPropertyOrChildrenWithBindingChain OnCanAcceptPropertyOrChildrenWithBindingChain;
+
+	UE_DEPRECATED(5.4, "Please use OnCanAcceptPropertyOrChildrenWithBindingChain instead.")
 	FOnCanAcceptPropertyOrChildren OnCanAcceptPropertyOrChildren;
 	
 	/** Delegate used to check whether a property can be bound to the property in question */
@@ -212,6 +227,9 @@ struct FPropertyBindingWidgetArgs
 
 	/** Optional style override for bind button */
 	const FButtonStyle* BindButtonStyle = nullptr;
+
+	/** The maximum level of depth to generate */
+	uint8 MaxDepth = 10;
 	
 	/** Whether to generate pure bindings */
 	bool bGeneratePureBindings = true;
@@ -367,6 +385,14 @@ public:
 
 		/** Function called when a function is resolved. */
 		TFunction<void(int32 /*SegmentIndex*/, UFunction* /*Function*/, FProperty* /*ReturnProperty*/)> FunctionFunction;
+
+		/** 
+		 * Whether to use the most up to date classes when traversing the path. 
+		 * This can be useful for situations where we are resolving against potentially out of date
+		 * classes, but the resulting path will not be valid to use or persist due to functions and properties
+		 * being on skeleton classes 
+		 */
+		bool bUseMostUpToDateClasses = false;
 	};
 	
 	/**

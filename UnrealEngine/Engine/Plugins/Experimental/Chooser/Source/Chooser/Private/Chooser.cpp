@@ -2,8 +2,23 @@
 #include "Chooser.h"
 #include "ChooserFunctionLibrary.h"
 #include "ChooserPropertyAccess.h"
+#include "ChooserTrace.h"
+#include "ObjectTrace.h"
+#include "Engine/UserDefinedStruct.h"
+#include "Engine/Blueprint.h"
+#include "ChooserIndexArray.h"
+#include "IChooserParameterGameplayTag.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(Chooser)
+
+DEFINE_LOG_CATEGORY(LogChooser)
+
+
+#if WITH_EDITOR
+const FName UChooserTable::PropertyNamesTag = "ChooserPropertyNames";
+const FString UChooserTable::PropertyTagDelimiter = TEXT(";");
+#endif
 
 UChooserTable::UChooserTable(const FObjectInitializer& Initializer)
 	:Super(Initializer)
@@ -11,55 +26,16 @@ UChooserTable::UChooserTable(const FObjectInitializer& Initializer)
 
 }
 
-#if WITH_EDITOR
-void UChooserTable::PostEditUndo()
-{
-	UObject::PostEditUndo();
-
-	if (CachedPreviousOutputObjectType != OutputObjectType || CachedPreviousResultType != ResultType)
-	{
-		OnOutputObjectTypeChanged.Broadcast(OutputObjectType);
-		CachedPreviousOutputObjectType = OutputObjectType;
-		CachedPreviousResultType = ResultType;
-	}
-	OnContextClassChanged.Broadcast();
-}
-
-void UChooserTable::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
-{
-	UObject::PostEditChangeProperty(PropertyChangedEvent);
-	
-	static FName OutputObjectTypeName = "OutputObjectType";
-	static FName ResultTypeName = "ResultType";
-	if (PropertyChangedEvent.Property->GetName() == OutputObjectTypeName)
-	{
-		if (CachedPreviousOutputObjectType != OutputObjectType)
-		{
-			OnOutputObjectTypeChanged.Broadcast(OutputObjectType);
-			CachedPreviousOutputObjectType = OutputObjectType;
-		}
-	}
-	else if (PropertyChangedEvent.Property->GetName() == ResultTypeName)
-	{
-		if (CachedPreviousResultType != ResultType)
-		{
-			OnOutputObjectTypeChanged.Broadcast(OutputObjectType);
-			CachedPreviousResultType = ResultType;
-		}
-	}
-	else
-	{
-		OnContextClassChanged.Broadcast();
-	}
-}
-
 void UChooserTable::PostLoad()
 {
 	Super::PostLoad();
 
+#if WITH_EDITOR
 	CachedPreviousOutputObjectType = OutputObjectType;
 	CachedPreviousResultType = ResultType;
+#endif
 
+#if WITH_EDITORONLY_DATA
 	// convert old data if it exists
 
 	if (ContextObjectType_DEPRECATED)
@@ -101,45 +77,174 @@ void UChooserTable::PostLoad()
 		Results_DEPRECATED.SetNum(0);
 		Columns_DEPRECATED.SetNum(0);
 	}
+#endif
 
-	// call PostLoad on Columns
+	Compile();
+}
+
+void UChooserTable::BeginDestroy()
+{
+	ColumnsStructs.Empty();
+	ResultsStructs.Empty();
+	Super::BeginDestroy();
+}
+
+#if WITH_EDITOR
+
+void UChooserTable::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UChooserTable::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	// Output property names we use
+	TStringBuilder<256> PropertyNamesBuilder;
+	PropertyNamesBuilder.Append(PropertyTagDelimiter);
+
+	for(const FInstancedStruct& Column : ColumnsStructs)
+	{
+		if (const FChooserColumnBase* ColumnBase = Column.GetPtr<FChooserColumnBase>())
+		{
+			if (FChooserParameterBase* Parameter = const_cast<FChooserColumnBase*>(ColumnBase)->GetInputValue())
+			{
+				Parameter->AddSearchNames(PropertyNamesBuilder);
+			}
+		}
+	}
+
+	Context.AddTag(FAssetRegistryTag(PropertyNamesTag, PropertyNamesBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
+}
+
+void UChooserTable::AddCompileDependency(const UStruct* InStructType)
+{
+	UStruct* StructType = const_cast<UStruct*>(InStructType);
+	if (!CompileDependencies.Contains(StructType))
+	{
+		if (UUserDefinedStruct* UserDefinedStruct = Cast<UUserDefinedStruct>(StructType))
+		{
+			UserDefinedStruct->ChangedEvent.AddUObject(this, &UChooserTable::OnDependentStructChanged);
+			CompileDependencies.Add(StructType);
+		}
+		else if (UClass* Class = Cast<UClass>(StructType))
+		{
+			if(UBlueprint* Blueprint = Cast<UBlueprint>(Class->ClassGeneratedBy))
+			{
+				Blueprint->OnCompiled().AddUObject(this, &UChooserTable::OnDependencyCompiled);
+				CompileDependencies.Add(StructType);
+			}
+		}
+	}
+}
+
+#endif
+
+void UChooserTable::Compile(bool bForce)
+{
+	IHasContextClass* ContextOwner = GetContextOwner();
+	
 	for (FInstancedStruct& ColumnData : ColumnsStructs)
 	{
 		if (ColumnData.IsValid())
 		{
 			FChooserColumnBase& Column = ColumnData.GetMutable<FChooserColumnBase>();
-			Column.PostLoad();
+			Column.Compile(ContextOwner, bForce);
 		}
 	}
-		
+
+	for(FInstancedStruct& ResultData : ResultsStructs)
+	{
+		if (ResultData.IsValid())
+		{
+			FObjectChooserBase& Result = ResultData.GetMutable<FObjectChooserBase>();
+			Result.Compile(ContextOwner, bForce);
+		}
+	}
 }
 
-void UChooserTable::IterateRecentContextObjects(TFunction<void(const UObject*)> Callback) const
+#if WITH_EDITOR
+void UChooserTable::PostEditUndo()
+{
+	UObject::PostEditUndo();
+
+	if (CachedPreviousOutputObjectType != OutputObjectType || CachedPreviousResultType != ResultType)
+	{
+		OnOutputObjectTypeChanged.Broadcast(OutputObjectType);
+		CachedPreviousOutputObjectType = OutputObjectType;
+		CachedPreviousResultType = ResultType;
+	}
+	OnContextClassChanged.Broadcast();
+}
+
+void UChooserTable::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	UObject::PostEditChangeProperty(PropertyChangedEvent);
+	
+	if (PropertyChangedEvent.Property)
+	{
+		static FName OutputObjectTypeName = "OutputObjectType";
+		static FName ResultTypeName = "ResultType";
+		if (PropertyChangedEvent.Property->GetName() == OutputObjectTypeName)
+		{
+			if (CachedPreviousOutputObjectType != OutputObjectType)
+			{
+				OnOutputObjectTypeChanged.Broadcast(OutputObjectType);
+				CachedPreviousOutputObjectType = OutputObjectType;
+			}
+		}
+		else if (PropertyChangedEvent.Property->GetName() == ResultTypeName)
+		{
+			if (CachedPreviousResultType != ResultType)
+			{
+				OnOutputObjectTypeChanged.Broadcast(OutputObjectType);
+				CachedPreviousResultType = ResultType;
+			}
+		}
+		else
+		{
+			OnContextClassChanged.Broadcast();
+		}
+	}
+	else
+	{
+		OnOutputObjectTypeChanged.Broadcast(OutputObjectType);
+		OnContextClassChanged.Broadcast();
+	}
+}
+
+void UChooserTable::IterateRecentContextObjects(TFunction<void(const FString&)> Callback) const
 {
 	FScopeLock Lock(&DebugLock);
-	for(TWeakObjectPtr<const UObject>& Object : RecentContextObjects)
+	for(const FString& ObjectName : RecentContextObjects)
 	{
-		if (Object.IsValid())
-		{
-			Callback(Object.Get());
-		}
+		Callback(ObjectName);
 	}
 }
 
 void UChooserTable::UpdateDebugging(FChooserEvaluationContext& Context) const
 {
 	FScopeLock Lock(&DebugLock);
-	for (const FInstancedStruct& Param : Context.Params)
+
+	const UChooserTable* ContextOwner = GetContextOwner();
+	
+	for (const FStructView& Param : Context.Params)
 	{
-		if (const FChooserEvaluationInputObject* ObjectParam = Param.GetPtr<FChooserEvaluationInputObject>())
+		if (const FChooserEvaluationInputObject* ObjectParam = Param.GetPtr<const FChooserEvaluationInputObject>())
 		{
-			UObject* ContextObject = ObjectParam->Object;
-			RecentContextObjects.Add(MakeWeakObjectPtr(ContextObject));
-			if (ContextObject == DebugTarget)
+			if (UObject* ContextObject = ObjectParam->Object)
 			{
-				bDebugTestValuesValid = true;
-				Context.DebuggingInfo.bCurrentDebugTarget = true;
-				return;
+				RecentContextObjects.Add(ContextObject->GetName());
+				
+				if (ContextObject->GetName() == ContextOwner->GetDebugTargetName()) 
+				{
+					bDebugTestValuesValid = true;
+					Context.DebuggingInfo.bCurrentDebugTarget = true;
+					return;
+				}
 			}
 		}
 	}
@@ -150,6 +255,8 @@ void UChooserTable::UpdateDebugging(FChooserEvaluationContext& Context) const
 
 FObjectChooserBase::EIteratorStatus UChooserTable::EvaluateChooser(FChooserEvaluationContext& Context, const UChooserTable* Chooser, FObjectChooserBase::FObjectChooserIteratorCallback Callback)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(EvaluateChooser);
+	
 	if (Chooser == nullptr)
 	{
 		return FObjectChooserBase::EIteratorStatus::Continue;
@@ -158,11 +265,21 @@ FObjectChooserBase::EIteratorStatus UChooserTable::EvaluateChooser(FChooserEvalu
 	// todo validate that parameter types in context data match
 
 #if WITH_EDITOR
-	Chooser->UpdateDebugging(Context);
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(EvaluateChooser_Debugging);
+		Chooser->UpdateDebugging(Context);
+	}
+#endif
+	
+#if CHOOSER_DEBUGGING_ENABLED
+	Context.DebuggingInfo.CurrentChooser = Chooser;
 #endif
 
-	TArray<uint32> Indices1;
-	TArray<uint32> Indices2;
+	uint32 Count = Chooser->ResultsStructs.Num();
+	uint32 BufferSize = Count * sizeof(uint32);
+
+	FChooserIndexArray Indices1(static_cast<uint32*>(FMemory_Alloca(BufferSize)), Count);
+	FChooserIndexArray Indices2(static_cast<uint32*>(FMemory_Alloca(BufferSize)), Count);
 
 	int RowCount = Chooser->ResultsStructs.Num();
 	Indices1.SetNum(RowCount);
@@ -170,8 +287,8 @@ FObjectChooserBase::EIteratorStatus UChooserTable::EvaluateChooser(FChooserEvalu
 	{
 		Indices1[i]=i;
 	}
-	TArray<uint32>* IndicesOut = &Indices1;
-	TArray<uint32>* IndicesIn = &Indices2;
+	FChooserIndexArray* IndicesOut = &Indices1;
+	FChooserIndexArray* IndicesIn = &Indices2;
 
 	for (const FInstancedStruct& ColumnData : Chooser->ColumnsStructs)
 	{
@@ -179,34 +296,37 @@ FObjectChooserBase::EIteratorStatus UChooserTable::EvaluateChooser(FChooserEvalu
 		if (Column.HasFilters())
 		{
 			Swap(IndicesIn, IndicesOut);
-			IndicesOut->SetNum(0, false);
+			IndicesOut->SetNum(0);
 			Column.Filter(Context, *IndicesIn, *IndicesOut);
 		}
 	}
 	
-	// of the rows that passed all column filters, iterate through them calling the callback until it returns Stop
 	bool bSetOutputs = false;
-	for (uint32 SelectedIndex : *IndicesOut)
+	if (IndicesOut->IsEmpty())
 	{
-		if (Chooser->ResultsStructs.Num() > (int32)SelectedIndex)
+		// if no rows passed the filter columns then return the FallbackResult and output the FallbackValue from each output column
+		
+		#if WITH_EDITOR
+		if (Context.DebuggingInfo.bCurrentDebugTarget)
 		{
-			const FObjectChooserBase& SelectedResult = Chooser->ResultsStructs[SelectedIndex].Get<FObjectChooserBase>();
+			Chooser->SetDebugSelectedRow(-1);
+		}
+		#endif
+		TRACE_CHOOSER_EVALUATION(Chooser, Context, -1);
+	
+		if (Chooser->FallbackResult.IsValid())
+		{
+			const FObjectChooserBase& SelectedResult = Chooser->FallbackResult.Get<FObjectChooserBase>();
 			FObjectChooserBase::EIteratorStatus Status = SelectedResult.ChooseMulti(Context, Callback);
 			if (Status != FObjectChooserBase::EIteratorStatus::Continue)
 			{
 				bSetOutputs = true;
-				// trigger all output columns
+				// trigger all output columns to set their default output value
 				for (const FInstancedStruct& ColumnData : Chooser->ColumnsStructs)
 				{
 					const FChooserColumnBase& Column = ColumnData.Get<FChooserColumnBase>();
-					Column.SetOutputs(Context, SelectedIndex);
+					Column.SetOutputs(Context, -1);
 				}
-#if WITH_EDITOR
-				if (Context.DebuggingInfo.bCurrentDebugTarget)
-				{
-					Chooser->SetDebugSelectedRow(SelectedIndex);
-				}
-#endif
 			}
 			if (Status == FObjectChooserBase::EIteratorStatus::Stop)
 			{
@@ -214,8 +334,40 @@ FObjectChooserBase::EIteratorStatus UChooserTable::EvaluateChooser(FChooserEvalu
 			}
 		}
 	}
-
-	// If this is a nested chooser make sure the parent also sets the output vales from the row that contained this chooser
+	else
+	{
+		// of the rows that passed all column filters, iterate through them calling the callback until it returns Stop
+		for (uint32 SelectedIndex : *IndicesOut)
+		{
+			if (Chooser->ResultsStructs.Num() > (int32)SelectedIndex)
+			{
+				const FObjectChooserBase& SelectedResult = Chooser->ResultsStructs[SelectedIndex].Get<FObjectChooserBase>();
+				FObjectChooserBase::EIteratorStatus Status = SelectedResult.ChooseMulti(Context, Callback);
+				if (Status != FObjectChooserBase::EIteratorStatus::Continue)
+				{
+					bSetOutputs = true;
+					// trigger all output columns
+					for (const FInstancedStruct& ColumnData : Chooser->ColumnsStructs)
+					{
+						const FChooserColumnBase& Column = ColumnData.Get<FChooserColumnBase>();
+						Column.SetOutputs(Context, SelectedIndex);
+					}
+					#if WITH_EDITOR
+					if (Context.DebuggingInfo.bCurrentDebugTarget)
+					{
+						Chooser->SetDebugSelectedRow(SelectedIndex);
+					}
+					#endif
+					TRACE_CHOOSER_EVALUATION(Chooser, Context, SelectedIndex);
+				}
+				if (Status == FObjectChooserBase::EIteratorStatus::Stop)
+				{
+					return FObjectChooserBase::EIteratorStatus::Stop;
+				}
+			}
+		}
+	}
+	// If this is a nested chooser make sure the parent also sets the output values from the row that contained this chooser
 	return bSetOutputs ? FObjectChooserBase::EIteratorStatus::ContinueWithOutputs : FObjectChooserBase::EIteratorStatus::Continue;
 }
 
@@ -234,4 +386,39 @@ UObject* FEvaluateChooser::ChooseObject(FChooserEvaluationContext& Context) cons
 FObjectChooserBase::EIteratorStatus FEvaluateChooser::ChooseMulti(FChooserEvaluationContext& Context, FObjectChooserIteratorCallback Callback) const
 {
 	return UChooserTable::EvaluateChooser(Context, Chooser, Callback);
+}
+
+void FEvaluateChooser::GetDebugName(FString& OutDebugName) const
+{
+	if (Chooser)
+	{
+		OutDebugName = Chooser.GetName();
+	}
+}
+
+
+FNestedChooser::FNestedChooser()
+{
+}
+
+UObject* FNestedChooser::ChooseObject(FChooserEvaluationContext& Context) const
+{
+	UObject* Result = nullptr;
+	UChooserTable::EvaluateChooser(Context, Chooser, FObjectChooserIteratorCallback::CreateLambda([&Result](UObject* InResult)
+	{
+		Result = InResult;
+		return FObjectChooserBase::EIteratorStatus::Stop;
+	}));
+
+	return Result;
+}
+
+FObjectChooserBase::EIteratorStatus FNestedChooser::ChooseMulti(FChooserEvaluationContext& Context, FObjectChooserIteratorCallback Callback) const
+{
+	return UChooserTable::EvaluateChooser(Context, Chooser, Callback);
+}
+
+void FNestedChooser::GetDebugName(FString& OutDebugName) const
+{
+	OutDebugName  = GetNameSafe(Chooser);
 }

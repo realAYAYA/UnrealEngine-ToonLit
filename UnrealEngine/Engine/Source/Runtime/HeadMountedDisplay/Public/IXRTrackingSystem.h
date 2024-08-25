@@ -15,6 +15,7 @@ class UARPin;
 class FSceneViewFamily;
 struct FWorldContext;
 class FARSupportInterface;
+class IOpenXRHMD;
 
 /**
  * Struct representing the properties of an external tracking sensor.
@@ -454,4 +455,9 @@ public:
 	 * Get the transform and dimensions of the area where the user can freely move while remaining tracked centered around the specified origin transform
 	 */
 	virtual bool GetPlayAreaRect(FTransform& OutTransform, FVector2D& OutRect) const { return false; }
+
+	/**
+	* Get the IOpenXRHMD interface, if there is one.
+	*/
+	virtual IOpenXRHMD* GetIOpenXRHMD() { return nullptr; }
 };

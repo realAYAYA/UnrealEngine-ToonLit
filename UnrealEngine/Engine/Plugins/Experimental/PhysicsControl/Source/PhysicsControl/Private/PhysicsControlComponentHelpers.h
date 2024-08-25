@@ -14,7 +14,7 @@ class USkeletalMeshComponent;
 
 namespace UE
 {
-namespace PhysicsControlComponent
+namespace PhysicsControl
 {
 
 /** 

@@ -83,8 +83,8 @@ TSharedRef<FSlateStyleSet> FCustomizableObjectEditorStyle::Create()
 	Style->Set("CustomizableObjectEditor.Debug.Small", new IMAGE_BRUSH_SVG(Style, "Starship/Common/Debug", Icon20x20));
 	Style->Set("CustomizableObjectEditor.TextureAnalyzer", new IMAGE_BRUSH_SVG(Style, "Starship/Common/IssueTracker", Icon40x40));
 	Style->Set("CustomizableObjectEditor.TextureAnalyzer.Small", new IMAGE_BRUSH_SVG(Style, "Starship/Common/IssueTracker", Icon20x20));
-	Style->Set("CustomizableObjectEditor.PerofrmanceReport", new IMAGE_BRUSH_SVG(Style, "Starship/MainToolbar/simulate", Icon40x40));
-	Style->Set("CustomizableObjectEditor.PerofrmanceReport.Small", new IMAGE_BRUSH_SVG(Style, "Starship/MainToolbar/simulate", Icon20x20));
+	Style->Set("CustomizableObjectEditor.PerformanceReport", new IMAGE_BRUSH_SVG(Style, "Starship/MainToolbar/simulate", Icon40x40));
+	Style->Set("CustomizableObjectEditor.PerformanceReport.Small", new IMAGE_BRUSH_SVG(Style, "Starship/MainToolbar/simulate", Icon20x20));
 
 	Style->Set("CustomizableObjectEditor.Tabs.Preview", new IMAGE_BRUSH_SVG(Style, "Starship/Persona/PersonaPreviewAnimation", Icon20x20));
 	Style->Set("CustomizableObjectEditor.Tabs.PreviewSettings", new IMAGE_BRUSH_SVG(Style, "Starship/AssetIcons/CameraActor_64", Icon20x20));

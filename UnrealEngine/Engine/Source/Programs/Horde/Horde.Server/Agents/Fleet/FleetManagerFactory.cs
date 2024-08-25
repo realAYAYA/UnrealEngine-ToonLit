@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.Metrics;
+using System.IO;
 using System.Text.Json;
 using Amazon.AutoScaling;
 using Amazon.EC2;
@@ -26,7 +27,7 @@ public interface IFleetManagerFactory
 	/// <param name="config">Config as a serialized JSON string</param>
 	/// <returns>An instantiated fleet manager with parameters loaded from config</returns>
 	/// <exception cref="ArgumentException">If fleet manager could not be instantiated</exception>
-	public IFleetManager CreateFleetManager(FleetManagerType type, string config = "{}");
+	public IFleetManager CreateFleetManager(FleetManagerType type, string? config = null);
 }
 
 /// <summary>
@@ -41,10 +42,10 @@ public sealed class FleetManagerFactory : IFleetManagerFactory
 	private readonly IOptionsMonitor<ServerSettings> _settings;
 	private readonly Tracer _tracer;
 	private readonly ILoggerFactory _loggerFactory;
-	
+
 	private IAmazonAutoScaling? _awsAutoScaling;
 	private IAmazonEC2? _awsEc2;
-	
+
 	/// <summary>
 	/// Constructor
 	/// </summary>
@@ -58,9 +59,9 @@ public sealed class FleetManagerFactory : IFleetManagerFactory
 		_tracer = tracer;
 		_loggerFactory = loggerFactory;
 	}
-	
+
 	/// <inheritdoc/>
-	public IFleetManager CreateFleetManager(FleetManagerType type, string config)
+	public IFleetManager CreateFleetManager(FleetManagerType type, string? config)
 	{
 		return type switch
 		{
@@ -79,14 +80,21 @@ public sealed class FleetManagerFactory : IFleetManagerFactory
 			_ => throw new ArgumentException("Unknown fleet manager type " + type)
 		};
 	}
-	
-	private static T DeserializeSettings<T>(string config)
+
+	private static T DeserializeSettings<T>(string? config)
 	{
-		if (String.IsNullOrEmpty(config)) { config = "{}"; }
+		if (String.IsNullOrEmpty(config))
+		{
+			config = "{}";
+		}
+
 		try
 		{
 			T? settings = JsonSerializer.Deserialize<T>(config);
-			if (settings == null) throw new NullReferenceException($"Unable to deserialize");
+			if (settings == null)
+			{
+				throw new InvalidDataException($"Unable to deserialize");
+			}
 			return settings;
 		}
 		catch (ArgumentException e)
@@ -97,8 +105,11 @@ public sealed class FleetManagerFactory : IFleetManagerFactory
 
 	private IAmazonEC2 GetAwsEc2(FleetManagerType type)
 	{
-		if (_awsEc2 != null) return _awsEc2;
-		
+		if (_awsEc2 != null)
+		{
+			return _awsEc2;
+		}
+
 		_awsEc2 = _provider.GetService<IAmazonEC2>();
 		if (_settings.CurrentValue.WithAws == false || _awsEc2 == null)
 		{
@@ -107,11 +118,14 @@ public sealed class FleetManagerFactory : IFleetManagerFactory
 
 		return _awsEc2;
 	}
-	
+
 	private IAmazonAutoScaling GetAwsAutoScaling(FleetManagerType type)
 	{
-		if (_awsAutoScaling != null) return _awsAutoScaling;
-		
+		if (_awsAutoScaling != null)
+		{
+			return _awsAutoScaling;
+		}
+
 		_awsAutoScaling = _provider.GetService<IAmazonAutoScaling>();
 		if (_settings.CurrentValue.WithAws == false || _awsAutoScaling == null)
 		{

@@ -265,13 +265,10 @@ bool TDataTableExporterJSON<CharType>::WriteStructEntry(const void* InRowData, c
 		JsonWriter->WriteArrayStart(Identifier);
 
 		FScriptSetHelper SetHelper(SetProp, InPropertyData);
-		for (int32 SetSparseIndex = 0; SetSparseIndex < SetHelper.GetMaxIndex(); ++SetSparseIndex)
+		for (FScriptSetHelper::FIterator It(SetHelper); It; ++It)
 		{
-			if (SetHelper.IsValidIndex(SetSparseIndex))
-			{
-				const uint8* SetEntryData = SetHelper.GetElementPtr(SetSparseIndex);
-				WriteContainerEntry(SetHelper.GetElementProperty(), SetEntryData);
-			}
+			const uint8* SetEntryData = SetHelper.GetElementPtr(It);
+			WriteContainerEntry(SetHelper.GetElementProperty(), SetEntryData);
 		}
 
 		JsonWriter->WriteArrayEnd();
@@ -281,17 +278,14 @@ bool TDataTableExporterJSON<CharType>::WriteStructEntry(const void* InRowData, c
 		JsonWriter->WriteObjectStart(Identifier);
 
 		FScriptMapHelper MapHelper(MapProp, InPropertyData);
-		for (int32 MapSparseIndex = 0; MapSparseIndex < MapHelper.GetMaxIndex(); ++MapSparseIndex)
+		for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 		{
-			if (MapHelper.IsValidIndex(MapSparseIndex))
-			{
-				const uint8* MapKeyData = MapHelper.GetKeyPtr(MapSparseIndex);
-				const uint8* MapValueData = MapHelper.GetValuePtr(MapSparseIndex);
+			const uint8* MapKeyData = MapHelper.GetKeyPtr(It);
+			const uint8* MapValueData = MapHelper.GetValuePtr(It);
 
-				// JSON object keys must always be strings
-				const FString KeyValue = DataTableUtils::GetPropertyValueAsStringDirect(MapHelper.GetKeyProperty(), (uint8*)MapKeyData, DTExportFlags);
-				WriteContainerEntry(MapHelper.GetValueProperty(), MapValueData, &KeyValue);
-			}
+			// JSON object keys must always be strings
+			const FString KeyValue = DataTableUtils::GetPropertyValueAsStringDirect(MapHelper.GetKeyProperty(), (uint8*)MapKeyData, DTExportFlags);
+			WriteContainerEntry(MapHelper.GetValueProperty(), MapValueData, &KeyValue);
 		}
 
 		JsonWriter->WriteObjectEnd();

@@ -221,7 +221,7 @@ void FNameNetSerializer::Quantize(FNetSerializationContext& Context, const FNetQ
 			}
 			else
 			{
-				ensureAlwaysMsgf(bEncodingSuccess, TEXT("Failed to encode string '%s'"), TempWideBuffer);
+				ensureMsgf(bEncodingSuccess, TEXT("Failed to encode string '%s'"), TempWideBuffer);
 				TargetName.ElementCount = 1;
 				EncodingBuffer[0] = 0;
 			}

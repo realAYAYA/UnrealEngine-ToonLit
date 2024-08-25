@@ -7,7 +7,7 @@
 #include "RuntimeVirtualTextureVolume.generated.h"
 
 /** Actor used to place a URuntimeVirtualTexture in the world. */
-UCLASS(HideCategories = (Actor, Collision, Cooking, Input, LOD, Physics, Replication, Rendering), MinimalAPI)
+UCLASS(Blueprintable, HideCategories = (Actor, Collision, Cooking, HLOD, Input, LOD, Networking, Physics, Replication), MinimalAPI)
 class ARuntimeVirtualTextureVolume : public AActor
 {
 	GENERATED_UCLASS_BODY()

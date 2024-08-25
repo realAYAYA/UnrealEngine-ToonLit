@@ -41,7 +41,7 @@ namespace UE::ConcertSyncTests::RenameEditAndDeleteMapsFlowTest
 	 *	7 -> 5 (PackageRename)
 	 *	8 -> 5 (PackageRemoval)
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenameEditAndDeleteMapsFlowTest, "Concert.History.BuildGraph.RenameEditAndDeleteMapsFlow", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenameEditAndDeleteMapsFlowTest, "Editor.Concert.History.BuildGraph.RenameEditAndDeleteMapsFlow", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FRenameEditAndDeleteMapsFlowTest::RunTest(const FString& Parameters)
 	{
 		FScopedSessionDatabase SessionDatabase(*this);
@@ -190,7 +190,7 @@ namespace UE::ConcertSyncTests::DeletingAndRecreatingActorIsHardDependency
 	 *
 	 * 3 > 2 is a hard dependency (removing 2 would result in attempting to create the actor twice, which is invalid).
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDeletingAndRecreatingActorIsHardDependency, "Concert.History.BuildGraph.DeletingAndRecreatingActorIsHardDependency", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDeletingAndRecreatingActorIsHardDependency, "Editor.Concert.History.BuildGraph.DeletingAndRecreatingActorIsHardDependency", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FDeletingAndRecreatingActorIsHardDependency::RunTest(const FString& Parameters)
 	{
 		using namespace ConcertSyncCore;
@@ -307,7 +307,7 @@ namespace UE::ConcertSyncTests::IndirectPackageDependencyTest
 	 *
 	 * This is relevant because the actor's construction script may depend query data from the data asset.
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIndirectPackageDependencyTest, "Concert.History.BuildGraph.IndirectPackageDependencyTest", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIndirectPackageDependencyTest, "Editor.Concert.History.BuildGraph.IndirectPackageDependencyTest", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FIndirectPackageDependencyTest::RunTest(const FString& Parameters)
 	{
 		// TODO:
@@ -372,7 +372,7 @@ namespace UE::ConcertSyncTests::PackageEditedDependencyTest
 	 *  8 -> 7
 	 *  13 -> 12
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPackageEditedDependencyTest, "Concert.History.BuildGraph.PackageEditedDependencyTest", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPackageEditedDependencyTest, "Editor.Concert.History.BuildGraph.PackageEditedDependencyTest", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FPackageEditedDependencyTest::RunTest(const FString& Parameters)
 	{
 		using namespace ConcertSyncCore;
@@ -527,7 +527,7 @@ namespace UE::ConcertSyncTests::RenamingDependencyEdgeCases
 	 *  8 Add Bar
 	 *  9 Rename Bar to Foo
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenamingDependencyEdgeCaseTests, "Concert.History.BuildGraph.RenamingDependencyEdgeCaseTests", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenamingDependencyEdgeCaseTests, "Editor.Concert.History.BuildGraph.RenamingDependencyEdgeCaseTests", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FRenamingDependencyEdgeCaseTests::RunTest(const FString& Parameters)
 	{
 		using namespace ConcertSyncCore;
@@ -598,7 +598,7 @@ namespace UE::ConcertSyncTests::TransactionDependencyEdgeCases
 	
 	TArray<FActivityID> FillDatabase(FScopedSessionDatabase& SessionDatabase);
 	
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTransactionDependencyEdgeCaseTests, "Concert.History.BuildGraph.TransactionDependencyEdgeCaseTests", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTransactionDependencyEdgeCaseTests, "Editor.Concert.History.BuildGraph.TransactionDependencyEdgeCaseTests", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FTransactionDependencyEdgeCaseTests::RunTest(const FString& Parameters)
 	{
 		using namespace ConcertSyncCore;

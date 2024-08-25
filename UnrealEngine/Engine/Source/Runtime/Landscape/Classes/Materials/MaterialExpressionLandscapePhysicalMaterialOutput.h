@@ -50,11 +50,17 @@ class UMaterialExpressionLandscapePhysicalMaterialOutput : public UMaterialExpre
 	LANDSCAPE_API virtual FName GetInputName(int32 InputIndex) const override;
 	virtual uint32 GetInputType(int32 InputIndex) override { return MCT_Float; }
 	LANDSCAPE_API virtual int32 Compile(class FMaterialCompiler* Compiler, int32 OutputIndex) override;
+
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
 	//~ End UMaterialExpression Interface
 #endif
 
 	//~ Begin UMaterialExpressionCustomOutput Interface
 	virtual int32 GetNumOutputs() const override { return Inputs.Num(); }
 	virtual FString GetFunctionName() const override { return TEXT("GetPhysicalMaterial"); }
+
+#if WITH_EDITOR
+	virtual UE::Shader::EValueType GetCustomOutputType(int32 OutputIndex) const override;
+#endif
 	//~ End UMaterialExpressionCustomOutput Interface
 };

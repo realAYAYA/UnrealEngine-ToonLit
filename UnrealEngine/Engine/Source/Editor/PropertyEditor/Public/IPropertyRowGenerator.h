@@ -120,4 +120,7 @@ public:
 
 	/* Invalidates internal cached state.  Common use of this API is to synchronize the viewed object with changes made by external code. */
 	virtual void InvalidateCachedState() = 0;
+
+	/** Apply filters to generated row tree nodes */
+	virtual void FilterNodes(const TArray<FString>& InFilterStrings) = 0;
 };

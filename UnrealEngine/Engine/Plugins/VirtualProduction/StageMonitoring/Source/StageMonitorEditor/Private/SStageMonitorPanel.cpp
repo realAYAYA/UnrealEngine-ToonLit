@@ -604,8 +604,6 @@ FText SStageMonitorPanel::GetMonitorStatus() const
 	{
 		return LOCTEXT("MonitorStatusInactive", "Inactive");
 	}
-
-	return LOCTEXT("MonitorStatusUnavailable", "Unavailable");
 }
 
 ECheckBoxState SStageMonitorPanel::IsMonitorActive() const

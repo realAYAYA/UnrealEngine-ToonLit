@@ -131,7 +131,7 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 
 	const uint NumBatches = (NumControlPoints + 63) / 64;
 	const uint NumLoops = (NumBatches + (NumWorkGroups - 1)) / NumWorkGroups;
-	const float3 PositionOffset = HairStrandsVF_PositionOffsetBuffer[0].xyz;
+	const float3 PositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 
 	LOOP for (uint LoopIndex = 0; LoopIndex < NumLoops; ++LoopIndex)
 	{
@@ -158,10 +158,8 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 
 			const uint VertexIndex0 = HairStrandsVF_CullingIndexBuffer[FetchIndex0];
 			const uint VertexIndex1 = HairStrandsVF_CullingIndexBuffer[FetchIndex1];
-			const float LodRadiusScale0 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex0];
-			const float LodRadiusScale1 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex1];
 
-			if ((LodRadiusScale0 <= 0.0f) || (VertexIndex1 != VertexIndex0 + 1))
+			if (VertexIndex1 != VertexIndex0 + 1)
 			{
 				bSegValid = false;
 			}
@@ -182,8 +180,9 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 		}
 
 		// Fetch both control points
-		FHairControlPoint CP0 = UnpackHairControlPoint(
-			HairStrandsVF_PositionBuffer[PrimID],
+		FHairControlPoint CP0 = ReadHairControlPoint(
+			HairStrandsVF_PositionBuffer,
+			PrimID,
 			PositionOffset,
 			HairStrandsVF_Radius,
 			HairStrandsVF_RootScale,
@@ -194,8 +193,9 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 			continue;
 		}
 
-		const FHairControlPoint CP1 = UnpackHairControlPoint(
-			HairStrandsVF_PositionBuffer[PrimID + 1],
+		const FHairControlPoint CP1 = ReadHairControlPoint(
+			HairStrandsVF_PositionBuffer,
+			PrimID + 1,
 			PositionOffset,
 			HairStrandsVF_Radius,
 			HairStrandsVF_RootScale,
@@ -204,8 +204,8 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 		// Transform to world space
 		const float3 CP0WP = mul(float4(CP0.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
 		const float3 CP1WP = mul(float4(CP1.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
-		float4 SP0 = mul(float4(CP0WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
-		float4 SP1 = mul(float4(CP1WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+		float4 SP0 = mul(float4(CP0WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
+		float4 SP1 = mul(float4(CP1WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 
 		if (!BlinnLineClipping(SP0, SP1))
 		{

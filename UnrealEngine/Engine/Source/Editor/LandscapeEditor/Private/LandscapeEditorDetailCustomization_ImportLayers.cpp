@@ -222,14 +222,19 @@ void FLandscapeEditorStructCustomization_FLandscapeImportLayer::CustomizeChildre
 void FLandscapeEditorStructCustomization_FLandscapeImportLayer::OnImportWeightmapFilenameChanged()
 {
 	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
-	check(LandscapeEdMode != nullptr);
-	LandscapeEdMode->UISettings->OnImportWeightmapFilenameChanged();
+	if (LandscapeEdMode && LandscapeEdMode->UISettings)
+	{
+		LandscapeEdMode->UISettings->OnImportWeightmapFilenameChanged();
+	}
 }
 
 FReply FLandscapeEditorStructCustomization_FLandscapeImportLayer::OnLayerFilenameButtonClicked(TSharedRef<IPropertyHandle> PropertyHandle_LayerFilename)
 {
 	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
-	check(LandscapeEdMode != nullptr);
+	if (!LandscapeEdMode)
+	{
+		return FReply::Handled();
+	}
 
 	ILandscapeEditorModule& LandscapeEditorModule = FModuleManager::GetModuleChecked<ILandscapeEditorModule>("LandscapeEditor");
 	const bool bIsImporting = IsImporting();
@@ -306,7 +311,10 @@ TSharedRef<SWidget> FLandscapeEditorStructCustomization_FLandscapeImportLayer::O
 void FLandscapeEditorStructCustomization_FLandscapeImportLayer::OnImportLayerCreateClicked(TSharedRef<IPropertyHandle> PropertyHandle_LayerInfo, FName LayerName, bool bNoWeightBlend)
 {
 	FEdModeLandscape* LandscapeEdMode = GetEditorMode();
-	check(LandscapeEdMode != nullptr);
+	if (!LandscapeEdMode)
+	{
+		return;
+	}
 	
 	// Hack as we don't have a direct world pointer in the EdMode...
 	ULevel* Level = LandscapeEdMode->CurrentGizmoActor->GetWorld()->GetCurrentLevel();

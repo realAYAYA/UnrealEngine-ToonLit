@@ -88,6 +88,13 @@ public:
 	void GetAllNodes(TArray< TSharedPtr<FGraphActionNode> >& OutNodeArray) const;
 
 	/**
+	 * Recursively collects all child/grandchild/decendent action nodes.
+	 * 
+	 * @param  OutNodeArray	The array to fill out with decendent nodes.
+	 */
+	void GetAllActionNodes(TArray<TSharedPtr<FGraphActionNode>>& OutNodeArray) const;
+
+	/**
 	 * Recursively collects all decendent action/separator nodes (leaves out 
 	 * branching category-nodes).
 	 * 

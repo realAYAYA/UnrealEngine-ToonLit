@@ -1,0 +1,23 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+float3	SpriteFacingAndAlignment_SpriteFacing;
+float3	SpriteFacingAndAlignment_SpriteAlignment;
+
+struct FStatelessModule_SpriteFacingAndAlignment
+{
+};
+
+void SpriteFacingAndAlignment_Initialize(inout FStatelessModule_SpriteFacingAndAlignment ModuleData, inout FStatelessParticle Particle)
+{
+	Particle.SpriteFacing = SpriteFacingAndAlignment_SpriteFacing;
+	Particle.SpriteAlignment = SpriteFacingAndAlignment_SpriteAlignment;
+
+	Particle.PreviousSpriteFacing = SpriteFacingAndAlignment_SpriteFacing;
+	Particle.PreviousSpriteAlignment = SpriteFacingAndAlignment_SpriteAlignment;
+}
+	
+void SpriteFacingAndAlignment_Simulate(in FStatelessModule_SpriteFacingAndAlignment ModuleData, inout FStatelessParticle Particle)
+{
+}

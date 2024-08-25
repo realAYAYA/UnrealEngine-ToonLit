@@ -14,13 +14,22 @@ public class OpenSSL : ModuleRules
 		string PlatformSubdir = Target.Platform.ToString();
 		string ConfigFolder = (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT) ? "Debug" : "Release";
 
-		if (Target.Platform == UnrealTargetPlatform.Mac || Target.Platform == UnrealTargetPlatform.IOS)
+		if (Target.Platform == UnrealTargetPlatform.Mac || Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
 		{
+			// IOS binaries are fully compatible with TVOS
+			if (Target.Platform == UnrealTargetPlatform.TVOS)
+			{
+				PlatformSubdir = "IOS";
+			}
+
 			PublicSystemIncludePaths.Add(Path.Combine(OpenSSLPath, "include", PlatformSubdir));
 
 			string LibPath = Path.Combine(OpenSSLPath, "lib", PlatformSubdir);
 
-			string LibExt = (Target.Platform == UnrealTargetPlatform.IOS && Target.Architecture == UnrealArch.IOSSimulator) ? ".sim.a" : ".a";
+			bool bIsIOSSimulator = Target.Platform == UnrealTargetPlatform.IOS && Target.Architecture == UnrealArch.IOSSimulator;
+			bool bIsTVOSSimulator = Target.Platform == UnrealTargetPlatform.TVOS && Target.Architecture == UnrealArch.TVOSSimulator;
+
+			string LibExt = (bIsIOSSimulator || bIsTVOSSimulator) ? ".sim.a" : ".a";
 			PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libssl" + LibExt));
 			PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libcrypto" + LibExt));
 		}

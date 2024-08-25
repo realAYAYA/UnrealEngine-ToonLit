@@ -1,10 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MovieSceneObjectBindingID.h"
+#include "Evaluation/MovieSceneRootOverridePath.h"
 #include "Evaluation/MovieSceneSequenceHierarchy.h"
-#include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
 #include "Compilation/MovieSceneCompiledDataManager.h"
 #include "EntitySystem/MovieSceneSequenceInstance.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
 #include "IMovieScenePlayer.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneObjectBindingID)
@@ -17,7 +18,7 @@ namespace MovieScene
 {
 
 
-FMovieSceneSequenceID ResolveExternalSequenceID(FMovieSceneSequenceID SourceSequenceID, int32 RemapSourceParentIndex, FMovieSceneSequenceID TargetSequenceID, IMovieScenePlayer& Player)
+FMovieSceneSequenceID ResolveExternalSequenceID(FMovieSceneSequenceID SourceSequenceID, int32 RemapSourceParentIndex, FMovieSceneSequenceID TargetSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
 	ensureMsgf(RemapSourceParentIndex >= 0, TEXT("Invalid parent index specified"));
 
@@ -26,7 +27,7 @@ FMovieSceneSequenceID ResolveExternalSequenceID(FMovieSceneSequenceID SourceSequ
 		return TargetSequenceID;
 	}
 
-	const FMovieSceneSequenceHierarchy* Hierarchy = Player.GetEvaluationTemplate().GetHierarchy();
+	const FMovieSceneSequenceHierarchy* Hierarchy = SharedPlaybackState->GetHierarchy();
 	if (!ensureMsgf(Hierarchy, TEXT("Sequence being evaluated as a sub sequence without any hierarchy. This indicates a bug with either the player or the compiled data.")))
 	{
 		return TargetSequenceID;
@@ -75,7 +76,12 @@ FRelativeObjectBindingID::FRelativeObjectBindingID(FMovieSceneSequenceID SourceS
 
 FRelativeObjectBindingID::FRelativeObjectBindingID(FMovieSceneSequenceID SourceSequenceID, FMovieSceneSequenceID TargetSequenceID, const FGuid& TargetGuid, IMovieScenePlayer& Player)
 {
-	ConstructInternal(SourceSequenceID, TargetSequenceID, TargetGuid, Player.GetEvaluationTemplate().GetHierarchy());
+	ConstructInternal(SourceSequenceID, TargetSequenceID, TargetGuid, Player.GetSharedPlaybackState()->GetHierarchy());
+}
+
+FRelativeObjectBindingID::FRelativeObjectBindingID(FMovieSceneSequenceID SourceSequenceID, FMovieSceneSequenceID TargetSequenceID, const FGuid& TargetGuid, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
+{
+	ConstructInternal(SourceSequenceID, TargetSequenceID, TargetGuid, SharedPlaybackState->GetHierarchy());
 }
 
 
@@ -98,7 +104,12 @@ void FRelativeObjectBindingID::ConstructInternal(FMovieSceneSequenceID SourceSeq
 
 FRelativeObjectBindingID FFixedObjectBindingID::ConvertToRelative(FMovieSceneSequenceID SourceSequenceID, IMovieScenePlayer& InPlayer) const
 {
-	return FRelativeObjectBindingID(SourceSequenceID, SequenceID, Guid, InPlayer);
+	return ConvertToRelative(SourceSequenceID, InPlayer.GetSharedPlaybackState());
+}
+
+FRelativeObjectBindingID FFixedObjectBindingID::ConvertToRelative(FMovieSceneSequenceID SourceSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const
+{
+	return FRelativeObjectBindingID(SourceSequenceID, SequenceID, Guid, SharedPlaybackState);
 }
 
 FRelativeObjectBindingID FFixedObjectBindingID::ConvertToRelative(FMovieSceneSequenceID SourceSequenceID, const FMovieSceneSequenceHierarchy* Hierarchy) const
@@ -128,6 +139,11 @@ void FMovieSceneObjectBindingID::PostSerialize(const FArchive& Ar)
 
 FMovieSceneSequenceID FMovieSceneObjectBindingID::ResolveSequenceID(FMovieSceneSequenceID LocalSequenceID, IMovieScenePlayer& Player) const
 {
+	return ResolveSequenceID(LocalSequenceID, Player.GetSharedPlaybackState());
+}
+
+FMovieSceneSequenceID FMovieSceneObjectBindingID::ResolveSequenceID(FMovieSceneSequenceID LocalSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const
+{
 	FMovieSceneSequenceID TargetSequenceID = FMovieSceneSequenceID(SequenceID);
 
 	if (ResolveParentIndex == FixedRootSequenceParentIndex)
@@ -135,7 +151,7 @@ FMovieSceneSequenceID FMovieSceneObjectBindingID::ResolveSequenceID(FMovieSceneS
 		return TargetSequenceID;
 	}
 	
-	return UE::MovieScene::ResolveExternalSequenceID(LocalSequenceID, ResolveParentIndex, TargetSequenceID, Player);
+	return UE::MovieScene::ResolveExternalSequenceID(LocalSequenceID, ResolveParentIndex, TargetSequenceID, SharedPlaybackState);
 }
 
 FMovieSceneSequenceID FMovieSceneObjectBindingID::ResolveSequenceID(FMovieSceneSequenceID LocalSequenceID, const FMovieSceneSequenceHierarchy* Hierarchy) const
@@ -152,6 +168,11 @@ FMovieSceneSequenceID FMovieSceneObjectBindingID::ResolveSequenceID(FMovieSceneS
 }
 UE::MovieScene::FFixedObjectBindingID FMovieSceneObjectBindingID::ResolveToFixed(FMovieSceneSequenceID RuntimeSequenceID, IMovieScenePlayer& Player) const
 {
+	return ResolveToFixed(RuntimeSequenceID, Player.GetSharedPlaybackState());
+}
+
+UE::MovieScene::FFixedObjectBindingID FMovieSceneObjectBindingID::ResolveToFixed(FMovieSceneSequenceID RuntimeSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const
+{
 	FMovieSceneSequenceID ThisSequenceID = FMovieSceneSequenceID(SequenceID);
 
 	if (ResolveParentIndex == FixedRootSequenceParentIndex)
@@ -160,7 +181,7 @@ UE::MovieScene::FFixedObjectBindingID FMovieSceneObjectBindingID::ResolveToFixed
 	}
 	else if (ensure(RuntimeSequenceID != MovieSceneSequenceID::Invalid))
 	{
-		ThisSequenceID = UE::MovieScene::ResolveExternalSequenceID(RuntimeSequenceID, ResolveParentIndex, ThisSequenceID, Player);
+		ThisSequenceID = UE::MovieScene::ResolveExternalSequenceID(RuntimeSequenceID, ResolveParentIndex, ThisSequenceID, SharedPlaybackState);
 
 		return UE::MovieScene::FFixedObjectBindingID(Guid, ThisSequenceID);
 	}
@@ -170,21 +191,29 @@ UE::MovieScene::FFixedObjectBindingID FMovieSceneObjectBindingID::ResolveToFixed
 
 TArrayView<TWeakObjectPtr<>> FMovieSceneObjectBindingID::ResolveBoundObjects(FMovieSceneSequenceID LocalSequenceID, IMovieScenePlayer& Player) const
 {
-	if (!IsValid())
+	return ResolveBoundObjects(LocalSequenceID, Player.GetSharedPlaybackState());
+}
+
+TArrayView<TWeakObjectPtr<>> FMovieSceneObjectBindingID::ResolveBoundObjects(FMovieSceneSequenceID LocalSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const
+{
+	if (IsValid())
 	{
-		return TArrayView<TWeakObjectPtr<>>();
+		if (FMovieSceneEvaluationState* State = SharedPlaybackState->FindCapability<FMovieSceneEvaluationState>())
+		{
+			FMovieSceneSequenceID ResolvedSequenceID = ResolveSequenceID(LocalSequenceID, SharedPlaybackState);
+			return State->FindBoundObjects(Guid, ResolvedSequenceID, SharedPlaybackState);
+		}
 	}
 
-	FMovieSceneSequenceID ResolvedSequenceID = ResolveSequenceID(LocalSequenceID, Player);
-	return Player.FindBoundObjects(Guid, ResolvedSequenceID);
+	return TArrayView<TWeakObjectPtr<>>();
 }
 
 TArrayView<TWeakObjectPtr<>> FMovieSceneObjectBindingID::ResolveBoundObjects(const UE::MovieScene::FSequenceInstance& SequenceInstance) const
 {
-	if (!IsValid())
+	if (IsValid())
 	{
-		return TArrayView<TWeakObjectPtr<>>();
+		return ResolveBoundObjects(SequenceInstance.GetSequenceID(), SequenceInstance.GetSharedPlaybackState());
 	}
 
-	return ResolveBoundObjects(SequenceInstance.GetSequenceID(), *SequenceInstance.GetPlayer());
+	return TArrayView<TWeakObjectPtr<>>();
 }

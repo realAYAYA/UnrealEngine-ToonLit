@@ -27,6 +27,9 @@
 
 #include <limits>
 
+static_assert(Insights::FMemoryTracker::InvalidTrackerId == TraceServices::FMemoryTrackerInfo::InvalidTrackerId, "InvalidTrackerId");
+static_assert(Insights::FMemoryTag::InvalidTagId == TraceServices::FMemoryTagInfo::InvalidTagId, "InvalidTagId");
+
 #define LOCTEXT_NAMESPACE "MemorySharedState"
 
 const FName Insights::FQueryTargetWindowSpec::NewWindow = TEXT("New Window");
@@ -564,7 +567,7 @@ TSharedPtr<FMemoryGraphTrack> FMemorySharedState::CreateMemTagGraphTrack(Insight
 	}
 	else
 	{
-		SeriesName = FString::Printf(TEXT("Unknown LLM Tag (tag id: 0x%X, tracker id: %i)"), InMemTagId, int32(InMemTrackerId));
+		SeriesName = FString::Printf(TEXT("Unknown LLM Tag (tag id: 0x%llX, tracker id: %i)"), uint64(InMemTagId), int32(InMemTrackerId));
 	}
 
 	const FLinearColor Color = TagPtr ? TagPtr->GetColor() : FLinearColor(0.5f, 0.5f, 0.5f, 1.0f);

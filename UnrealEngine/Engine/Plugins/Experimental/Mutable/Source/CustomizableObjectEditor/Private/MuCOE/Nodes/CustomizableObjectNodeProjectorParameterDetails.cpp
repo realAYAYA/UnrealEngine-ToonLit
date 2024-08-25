@@ -6,6 +6,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "IDetailsView.h"
+#include "ScopedTransaction.h"
 #include "MuCOE/CustomizableObjectEditorUtilities.h"
 #include "MuCOE/CustomizableObjectGraph.h"
 #include "MuCOE/ICustomizableObjectEditor.h"
@@ -195,6 +196,8 @@ FReply FCustomizableObjectNodeProjectorParameterDetails::OnProjectorCopyPressed(
 
 FReply FCustomizableObjectNodeProjectorParameterDetails::OnProjectorPastePressed()
 {
+	FScopedTransaction Transaction(LOCTEXT("PasteTransform", "Paste Transform"));
+	
 	FString ClipText;
 
 	FPlatformApplicationMisc::ClipboardPaste(ClipText);
@@ -203,16 +206,18 @@ FReply FCustomizableObjectNodeProjectorParameterDetails::OnProjectorPastePressed
 
 	if (NodeParameter)
 	{
+		NodeParameter->Modify();
+	
 		UScriptStruct* Struct = NodeParameter->DefaultValue.StaticStruct();
 		Struct->ImportText(*ClipText, &NodeParameter->DefaultValue, nullptr, 0, GLog, GetPathNameSafe(Struct));
-		NodeParameter->ParameterSetModified = 2;
 		Editor = NodeParameter->GetGraphEditor();
 	}
 	else if (NodeConstant)
 	{
+		NodeConstant->Modify();
+		
 		UScriptStruct* Struct = NodeConstant->Value.StaticStruct();
 		Struct->ImportText(*ClipText, &NodeConstant->Value, nullptr, 0, GLog, GetPathNameSafe(Struct));
-		NodeConstant->ParameterSetModified = 2;
 		Editor = NodeConstant->GetGraphEditor();
 	}
 

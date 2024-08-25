@@ -1,17 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Input/CommonBoundActionBar.h"
+
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
-#include "Editor/WidgetCompilerLog.h"
 #include "CommonUITypes.h"
+#include "Editor/WidgetCompilerLog.h"
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
+#include "InputAction.h"
 #include "Input/CommonBoundActionButtonInterface.h"
 #include "Input/CommonUIActionRouterBase.h"
 #include "Input/UIActionBinding.h"
-#include "InputAction.h"
-#include "TimerManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CommonBoundActionBar)
 
@@ -47,7 +47,7 @@ void UCommonBoundActionBar::Tick(float DeltaTime)
 
 ETickableTickType UCommonBoundActionBar::GetTickableTickType() const
 {
-	return ETickableTickType::Always;
+	return (IsTemplate() ? ETickableTickType::Never : ETickableTickType::Always);
 }
 
 TStatId UCommonBoundActionBar::GetStatId() const
@@ -129,6 +129,8 @@ void UCommonBoundActionBar::HandleBoundActionsUpdated(bool bFromOwningPlayer)
 
 void UCommonBoundActionBar::HandleDeferredDisplayUpdate()
 {
+	ActionBarUpdateBegin();
+	
 	bIsRefreshQueued = false;
 
 	ResetInternal();
@@ -158,7 +160,7 @@ void UCommonBoundActionBar::HandleDeferredDisplayUpdate()
 					const FName& PlayerGamepadName = InputSubsystem.GetCurrentGamepadName();
 
 					TSet<FName> AcceptedBindings;
-					TArray<FUIActionBindingHandle> FilteredBindings = ActionRouter->GatherActiveBindings().FilterByPredicate([ActionRouter, PlayerInputType, PlayerGamepadName, &AcceptedBindings](const FUIActionBindingHandle& Handle) mutable
+					TArray<FUIActionBindingHandle> FilteredBindings = ActionRouter->GatherActiveBindings().FilterByPredicate([ActionRouter, PlayerInputType, PlayerGamepadName, &AcceptedBindings, this](const FUIActionBindingHandle& Handle) mutable
 						{
 							if (TSharedPtr<FUIActionBinding> Binding = FUIActionBinding::FindBinding(Handle))
 							{
@@ -171,7 +173,17 @@ void UCommonBoundActionBar::HandleDeferredDisplayUpdate()
 								{
 									if (TObjectPtr<const UInputAction> InputAction = Binding->InputAction.Get())
 									{
-										return CommonUI::ActionValidForInputType(ActionRouter->GetLocalPlayer(), PlayerInputType, InputAction);
+										if (CommonUI::ActionValidForInputType(ActionRouter->GetLocalPlayer(), PlayerInputType, InputAction))
+										{
+											if (!bIgnoreDuplicateActions)
+											{
+												return true;
+											}
+											bool bAlreadyAccepted = false;
+											AcceptedBindings.Add(Binding->ActionName, &bAlreadyAccepted);
+											return !bAlreadyAccepted;
+										}
+										return false;
 									}
 								}
 
@@ -187,6 +199,10 @@ void UCommonBoundActionBar::HandleDeferredDisplayUpdate()
 									return false; 
 								}
 
+								if (!bIgnoreDuplicateActions)
+								{
+									return true;
+								}
 								bool bAlreadyAccepted = false;
 								AcceptedBindings.Add(Binding->ActionName, &bAlreadyAccepted);
 								return !bAlreadyAccepted;
@@ -301,7 +317,7 @@ void UCommonBoundActionBar::HandleDeferredDisplayUpdate()
 
 					for (FUIActionBindingHandle BindingHandle : FilteredBindings)
 					{
-						ICommonBoundActionButtonInterface* ActionButton = Cast<ICommonBoundActionButtonInterface>(CreateEntryInternal(ActionButtonClass));
+						ICommonBoundActionButtonInterface* ActionButton = Cast<ICommonBoundActionButtonInterface>(CreateActionButton(BindingHandle));
 						if (ensure(ActionButton))
 						{
 							ActionButton->SetRepresentedAction(BindingHandle);
@@ -312,6 +328,14 @@ void UCommonBoundActionBar::HandleDeferredDisplayUpdate()
 			}
 		}
 	}
+
+	OnActionBarUpdated.Broadcast();
+	ActionBarUpdateEnd();
+}
+
+UUserWidget* UCommonBoundActionBar::CreateActionButton(const FUIActionBindingHandle& BindingHandle)
+{
+	return CreateEntryInternal(ActionButtonClass);
 }
 
 void UCommonBoundActionBar::HandlePlayerAdded(int32 PlayerIdx)
@@ -327,6 +351,16 @@ void UCommonBoundActionBar::MonitorPlayerActions(const ULocalPlayer* NewPlayer)
 	{
 		ActionRouter->OnBoundActionsUpdated().AddUObject(this, &UCommonBoundActionBar::HandleBoundActionsUpdated, NewPlayer == GetOwningLocalPlayer());
 	}
+}
+
+void UCommonBoundActionBar::ActionBarUpdateBegin()
+{
+	ActionBarUpdateBeginImpl();
+}
+
+void UCommonBoundActionBar::ActionBarUpdateEnd()
+{
+	ActionBarUpdateEndImpl();
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -74,10 +74,11 @@ bool FNotifyTrack::UpdateInternal()
 	
 	if(EventUpdateRequested > 10 && GameplayProvider && AnimationProvider)
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(FNotifiesTrack::UpdateEventPointsInternal);
 		EventUpdateRequested = 0;
 		
 		auto& EventPoints = EventData->Points;
-		EventPoints.SetNum(0,false);
+		EventPoints.SetNum(0,EAllowShrinking::No);
 		EventData->Windows.SetNum(0);
 
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
@@ -162,6 +163,12 @@ FName FNotifiesTrackCreator::GetNameInternal() const
 	return NotifiesName;
 }
 
+void FNotifiesTrackCreator::GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const
+{
+	Types.Add({ NotifiesName, LOCTEXT("Notifies", "Notifies") });
+}
+
+
 TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FNotifiesTrackCreator::CreateTrackInternal(uint64 ObjectId) const
 {
 	return MakeShared<RewindDebugger::FNotifiesTrack>(ObjectId);
@@ -177,6 +184,7 @@ FNotifiesTrack::FNotifiesTrack(uint64 InObjectId) :
 
 bool FNotifiesTrack::UpdateInternal()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FNotifiesTrack::UpdateInternal);
 	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
 	
 	TRange<double> TraceTimeRange = RewindDebugger->GetCurrentTraceRange();
@@ -238,7 +246,10 @@ bool FNotifiesTrack::UpdateInternal()
 				bChanged = true;
 			}
 
-			bChanged = bChanged || Children[i]->Update();
+			if (Children[i]->Update())
+			{
+				bChanged = true;
+			}
 		}
 	}
 	
@@ -255,6 +266,7 @@ void FNotifiesTrack::IterateSubTracksInternal(TFunction<void(TSharedPtr<FRewindD
 
 bool FNotifiesTrackCreator::HasDebugInfoInternal(uint64 ObjectId) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FNotifiesTrack::HasDebugInfoInternal);
 	const TraceServices::IAnalysisSession* AnalysisSession = IRewindDebugger::Instance()->GetAnalysisSession();
 	
 	TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);

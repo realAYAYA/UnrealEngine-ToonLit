@@ -72,11 +72,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FMeshMaterialShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 	}
 
 	void GetElementShaderBindings(
@@ -132,7 +131,10 @@ void FRayTracingDynamicGeometryCollection::Clear()
 
 int64 FRayTracingDynamicGeometryCollection::BeginUpdate()
 {
-	Clear();
+	check(DispatchCommands.IsEmpty());
+	check(BuildParams.IsEmpty());
+	check(Segments.IsEmpty());
+	check(ReferencedUniformBuffers.IsEmpty());
 
 	// Vertex buffer data can be immediatly reused the next frame, because it's already 'consumed' for building the AccelerationStructure data
 	// Garbage collect unused buffers for n generations
@@ -240,15 +242,7 @@ void FRayTracingDynamicGeometryCollection::AddDynamicMeshBatchForGeometryUpdate(
 		auto* MaterialInterface = Material.GetMaterialInterface();
 		const FMaterialRenderProxy& MaterialRenderProxy = FallbackMaterialRenderProxyPtr ? *FallbackMaterialRenderProxyPtr : *MeshBatch.MaterialRenderProxy;
 
-		TMeshProcessorShaders<
-			FMeshMaterialShader,
-			FMeshMaterialShader,
-			FMeshMaterialShader,
-			FMeshMaterialShader,
-			FRayTracingDynamicGeometryConverterCS> Shaders;
-
 		FMeshComputeDispatchCommand DispatchCmd;
-
 		
 		FMaterialShaderTypes ShaderTypes;
 		ShaderTypes.AddShaderType<FRayTracingDynamicGeometryConverterCS>();
@@ -262,19 +256,18 @@ void FRayTracingDynamicGeometryCollection::AddDynamicMeshBatchForGeometryUpdate(
 		TShaderRef<FRayTracingDynamicGeometryConverterCS> Shader;
 		MaterialShaders.TryGetShader(SF_Compute, Shader);
 
+		FMeshProcessorShaders MeshProcessorShaders;
+		MeshProcessorShaders.ComputeShader = Shader;
+
 		DispatchCmd.MaterialShader = Shader;
 		FMeshDrawShaderBindings& ShaderBindings = DispatchCmd.ShaderBindings;
-
-		Shaders.ComputeShader = Shader;
-		ShaderBindings.Initialize(Shaders.GetUntypedShaders());
+		ShaderBindings.Initialize(MeshProcessorShaders);
 
 		FMeshMaterialShaderElementData ShaderElementData;
 		ShaderElementData.InitializeMeshMaterialData(View, PrimitiveSceneProxy, MeshBatch, -1, false);
 
-		int32 DataOffset = 0;
-		FMeshDrawSingleShaderBindings SingleShaderBindings = ShaderBindings.GetSingleShaderBindings(SF_Compute, DataOffset);
-		FMeshPassProcessorRenderState DrawRenderState;
-		Shader->GetShaderBindings(Scene, Scene->GetFeatureLevel(), PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, SingleShaderBindings);
+		FMeshDrawSingleShaderBindings SingleShaderBindings = ShaderBindings.GetSingleShaderBindings(SF_Compute);
+		Shader->GetShaderBindings(Scene, Scene->GetFeatureLevel(), PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, SingleShaderBindings);
 
 		FVertexInputStreamArray DummyArray;
 		FMeshMaterialShader::GetElementShaderBindings(Shader, Scene, View, MeshBatch.VertexFactory, EVertexInputStreamType::Default, Scene->GetFeatureLevel(), PrimitiveSceneProxy, MeshBatch, MeshBatch.Elements[0], ShaderElementData, SingleShaderBindings, DummyArray);
@@ -309,8 +302,7 @@ void FRayTracingDynamicGeometryCollection::AddDynamicMeshBatchForGeometryUpdate(
 		SingleShaderBindings.Add(Shader->WorldToInstance, UpdateParams.WorldToInstance);
 
 #if MESH_DRAW_COMMAND_DEBUG_DATA
-		FMeshProcessorShaders ShadersForDebug = Shaders.GetUntypedShaders();
-		ShaderBindings.Finalize(&ShadersForDebug);
+		ShaderBindings.Finalize(&MeshProcessorShaders);
 #endif
 
 		DispatchCommands.Add(DispatchCmd);
@@ -372,9 +364,9 @@ void FRayTracingDynamicGeometryCollection::AddDynamicMeshBatchForGeometryUpdate(
 
 	if (bUseSharedVertexBuffer)
 	{
-		// Make render thread side temporary copy and move to rhi side allocation when command list is known
-		// Cache the count of segments so final views can be made when all segments are collected (Segments array could still be reallocated)
 		Segments.Append(Geometry.Initializer.Segments);
+
+		// Cache the count of segments so final views can be made when all segments are collected (Segments array could still be reallocated)
 		Params.Segments = MakeArrayView((FRayTracingGeometrySegment*)nullptr, Geometry.Initializer.Segments.Num());
 	}
 
@@ -582,8 +574,7 @@ void FRayTracingDynamicGeometryCollection::EndUpdate(FRHICommandListImmediate& R
 {
 	ReferencedUniformBuffers.Empty(ReferencedUniformBuffers.Max());
 
-	// Move ownership to RHI thread for another frame
-	RHICmdList.EnqueueLambda([ArrayOwnedByRHIThread = MoveTemp(Segments)](FRHICommandListImmediate&){});
+	Clear();
 }
 
 uint32 FRayTracingDynamicGeometryCollection::ComputeScratchBufferSize()

@@ -57,6 +57,8 @@ public:
 	/* End of UObject overrides */
 
 private:
+	friend class USkeletalMesh;
+	
 	/** Imported raw mesh data. Optional, only the imported mesh LOD has this, generated LOD or old asset will be empty. */
 	TArray<TSharedRef<FRawSkeletalMeshBulkData>> RawSkeletalMeshBulkDatas;
 

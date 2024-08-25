@@ -3,7 +3,7 @@
 
 #include "MuCOPE/AssetDefinition_CustomizableObjectPopulationClass.h"
 
-#include "MuCOE/CustomizableObjectEditorModule.h"
+#include "MuCO/ICustomizableObjectEditorModule.h"
 #include "MuCOP/CustomizableObjectPopulationClass.h"
 #include "MuCOPE/CustomizableObjectPopulationEditorModule.h"
 

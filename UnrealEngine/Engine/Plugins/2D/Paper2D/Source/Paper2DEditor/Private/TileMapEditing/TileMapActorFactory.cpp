@@ -47,27 +47,6 @@ void UTileMapActorFactory::PostSpawnActor(UObject* Asset, AActor* NewActor)
 	}
 }
 
-void UTileMapActorFactory::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (APaperTileMapActor* TypedActor = Cast<APaperTileMapActor>(CDO))
-	{
-		UPaperTileMapComponent* RenderComponent = TypedActor->GetRenderComponent();
-		check(RenderComponent);
-
-		if (UPaperTileMap* TileMap = Cast<UPaperTileMap>(Asset))
-		{
-			RenderComponent->TileMap = TileMap;
-		}
-		else if (RenderComponent->OwnsTileMap())
-		{
-			UPaperTileMap* OwnedTileMap = RenderComponent->TileMap;
-			check(OwnedTileMap);
-
-			GetDefault<UPaperImporterSettings>()->ApplySettingsForTileMapInit(OwnedTileMap, Cast<UPaperTileSet>(Asset));
-		}
-	}
-}
-
 bool UTileMapActorFactory::CanCreateActorFrom(const FAssetData& AssetData, FText& OutErrorMsg)
 {
 	if (AssetData.IsValid())

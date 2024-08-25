@@ -44,7 +44,6 @@
 #include "KismetCastingUtils.h"
 #include "KismetCompiledFunctionContext.h"
 #include "KismetCompiler.h"
-
 #include "K2Node_EnumLiteral.h"
 #include "Kismet/KismetArrayLibrary.h"
 #include "Kismet2/KismetReinstanceUtilities.h"
@@ -52,6 +51,7 @@
 #include "Kismet2/StructureEditorUtils.h"
 #include "ObjectTools.h"
 #include "BlueprintEditorSettings.h"
+#include "Components/ActorComponent.h"
 
 #define LOCTEXT_NAMESPACE "KismetCompiler"
 
@@ -557,7 +557,8 @@ FProperty* FKismetCompilerUtilities::FindPropertyInScope(UStruct* Scope, UEdGrap
 	}
 	else if (!FKismetCompilerUtilities::IsMissingMemberPotentiallyLoading(Cast<UBlueprint>(SelfClass->ClassGeneratedBy), Scope))
 	{
-		MessageLog.Error(*FText::Format(LOCTEXT("PropertyNotFound_Error", "The property associated with @@ could not be found in '{0}'"), FText::FromString(SelfClass->GetPathName())).ToString(), Pin);
+		UObject* MessageScope = Scope ? Scope : SelfClass;
+		MessageLog.Error(*FText::Format(LOCTEXT("PropertyNotFound_Error", "The property associated with @@ could not be found in '{0}'"), FText::FromString(MessageScope->GetPathName())).ToString(), Pin);
 	}
 
 	return nullptr;
@@ -1253,19 +1254,31 @@ FProperty* FKismetCompilerUtilities::CreatePrimitiveProperty(FFieldVariant Prope
 				{
 					NewPropertyObj = new FWeakObjectProperty(PropertyScope, ValidatedPropertyName, ObjectFlags);
 				}
-				else if (FLinkerLoad::IsImportLazyLoadEnabled())
-				{
-					NewPropertyObj = new FObjectPtrProperty(PropertyScope, ValidatedPropertyName, ObjectFlags);
-				}
 				else
 				{
 					NewPropertyObj = new FObjectProperty(PropertyScope, ValidatedPropertyName, ObjectFlags);
+					// If lazy load is enabled make the object property a TObjectPtr property
+					// to allow for unresolved UObjects
+					if (FLinkerLoad::IsImportLazyLoadEnabled())
+					{
+						NewPropertyObj->SetPropertyFlags(CPF_TObjectPtrWrapper);
+					}
 				}
 
 				// Is the property a reference to something that should default to instanced?
 				if (SubType->HasAnyClassFlags(CLASS_DefaultToInstanced))
 				{
 					NewPropertyObj->SetPropertyFlags(CPF_InstancedReference);
+
+					// Actor components should only be instanced by the SCS editor.
+					// 
+					// Default actor components are outered to the generated BP class instead of the CDO.
+					// If we set "EditInline" on actor components, we would actually outer them to the CDO.
+					// This would lead to various serialization and instancing issues.
+					if (!SubType->IsChildOf<UActorComponent>())
+					{
+						NewPropertyObj->SetMetaData(TEXT("EditInline"), TEXT("true"));
+					}
 				}
 
 				// we want to use this setter function instead of setting the 
@@ -1456,9 +1469,6 @@ FProperty* FKismetCompilerUtilities::CreatePropertyOnScope(UStruct* Scope, const
 	// Check to see if there's already a object on this scope with the same name, and throw an internal compiler error if so
 	// If this happens, it breaks the property link, which causes stack corruption and hard-to-track errors, so better to fail at this point
 	{
-#if !USE_UBER_GRAPH_PERSISTENT_FRAME
-	#error "Without the uber graph frame we will intentionally create properties with conflicting names on the same scope - disable this error at your own risk"
-#else
 		FFieldVariant ExistingObject = CheckPropertyNameOnScope(Scope, PropertyName);
 		if (ExistingObject.IsValid())
 		{
@@ -1478,7 +1488,6 @@ FProperty* FKismetCompilerUtilities::CreatePropertyOnScope(UStruct* Scope, const
 
 			ValidatedPropertyName = TestName;
 		}
-#endif
 	}
 
 	FProperty* NewProperty = nullptr;
@@ -1673,204 +1682,9 @@ FFieldVariant FKismetCompilerUtilities::CheckPropertyNameOnScope(UStruct* Scope,
 	return FFieldVariant();
 }
 
-/** Checks if the execution path ends with a Return node */
 void FKismetCompilerUtilities::ValidateProperEndExecutionPath(FKismetFunctionContext& Context)
 {
-	struct FRecrursiveHelper
-	{
-		static bool IsExecutionSequence(const UEdGraphNode* Node)
-		{
-			return Node && (UK2Node_ExecutionSequence::StaticClass() == Node->GetClass()); // no "SourceNode->IsA<UK2Node_ExecutionSequence>()" because MultiGate is based on ExecutionSequence
-		}
-
-		static void CheckPathEnding(const UK2Node* StartingNode, TSet<const UK2Node*>& VisitedNodes, FKismetFunctionContext& InContext, bool bPathShouldEndWithReturn, TSet<const UK2Node*>& BreakableNodesSeeds)
-		{
-			const UK2Node* CurrentNode = StartingNode;
-			while (CurrentNode)
-			{
-				const UK2Node* SourceNode = CurrentNode;
-				CurrentNode = nullptr;
-
-				bool bAlreadyVisited = false;
-				VisitedNodes.Add(SourceNode, &bAlreadyVisited);
-				if (!bAlreadyVisited && !SourceNode->IsA<UK2Node_FunctionResult>())
-				{
-					const bool bIsExecutionSequence = IsExecutionSequence(SourceNode); 
-					for (UEdGraphPin* CurrentPin : SourceNode->Pins)
-					{
-						if (CurrentPin
-							&& (CurrentPin->Direction == EEdGraphPinDirection::EGPD_Output)
-							&& (CurrentPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec))
-						{
-							if (!CurrentPin->LinkedTo.Num())
-							{
-								if (!bIsExecutionSequence)
-								{
-									BreakableNodesSeeds.Add(SourceNode);
-								}
-								if (bPathShouldEndWithReturn && !bIsExecutionSequence)
-								{
-									InContext.MessageLog.Note(*LOCTEXT("ExecutionEnd_Note", "The execution path doesn't end with a return node. @@").ToString(), CurrentPin);
-								}
-								continue;
-							}
-							UEdGraphPin* LinkedPin = CurrentPin->LinkedTo[0];
-							const UK2Node* NextNode = ensure(LinkedPin) ? Cast<const UK2Node>(LinkedPin->GetOwningNodeUnchecked()) : nullptr;
-							ensure(NextNode);
-							if (CurrentNode)
-							{
-								FRecrursiveHelper::CheckPathEnding(CurrentNode, VisitedNodes, InContext, bPathShouldEndWithReturn && !bIsExecutionSequence, BreakableNodesSeeds);
-							}
-							CurrentNode = NextNode;
-						}
-					}
-				}
-			}
-		}
-
-		static void GatherBreakableNodes(const UK2Node* StartingNode, TSet<const UK2Node*>& BreakableNodes, FKismetFunctionContext& InContext)
-		{
-			const UK2Node* CurrentNode = StartingNode;
-			while (CurrentNode)
-			{
-				const UK2Node* SourceNode = CurrentNode;
-				CurrentNode = nullptr;
-
-				bool bAlreadyVisited = false;
-				BreakableNodes.Add(SourceNode, &bAlreadyVisited);
-				if (!bAlreadyVisited)
-				{
-					for (UEdGraphPin* CurrentPin : SourceNode->Pins)
-					{
-						if (CurrentPin
-							&& (CurrentPin->Direction == EEdGraphPinDirection::EGPD_Input)
-							&& (CurrentPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
-							&& CurrentPin->LinkedTo.Num())
-						{
-							for (UEdGraphPin* LinkedPin : CurrentPin->LinkedTo)
-							{
-								const UK2Node* NextNode = ensure(LinkedPin) ? Cast<const UK2Node>(LinkedPin->GetOwningNodeUnchecked()) : nullptr;
-								ensure(NextNode);
-								if (!FRecrursiveHelper::IsExecutionSequence(NextNode))
-								{
-									if (CurrentNode)
-									{
-										GatherBreakableNodes(CurrentNode, BreakableNodes, InContext);
-									}
-									CurrentNode = NextNode;
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		static void GatherBreakableNodesSeedsFromSequences(TSet<const UK2Node_ExecutionSequence*>& UnBreakableExecutionSequenceNodes
-			, TSet<const UK2Node*>& BreakableNodesSeeds
-			, TSet<const UK2Node*>& BreakableNodes
-			, FKismetFunctionContext& InContext)
-		{
-			for (const UK2Node_ExecutionSequence* SequenceNode : UnBreakableExecutionSequenceNodes)
-			{
-				bool bIsBreakable = true;
-				// Sequence is breakable when all it's outputs are breakable
-				for (UEdGraphPin* CurrentPin : SequenceNode->Pins)
-				{
-					if (CurrentPin
-						&& (CurrentPin->Direction == EEdGraphPinDirection::EGPD_Output)
-						&& (CurrentPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
-						&& CurrentPin->LinkedTo.Num())
-					{
-						UEdGraphPin* LinkedPin = CurrentPin->LinkedTo[0];
-						const UK2Node* NextNode = ensure(LinkedPin) ? Cast<const UK2Node>(LinkedPin->GetOwningNodeUnchecked()) : nullptr;
-						ensure(NextNode);
-						if (!BreakableNodes.Contains(NextNode))
-						{
-							bIsBreakable = false;
-							break;
-						}
-					}
-				}
-
-				if (bIsBreakable)
-				{
-					bool bWasAlreadyBreakable = false;
-					BreakableNodesSeeds.Add(SequenceNode, &bWasAlreadyBreakable);
-					ensure(!bWasAlreadyBreakable);
-					int32 WasRemoved = UnBreakableExecutionSequenceNodes.Remove(SequenceNode);
-					ensure(WasRemoved);
-				}
-			}
-		}
-
-		static void CheckDeadExecutionPath(TSet<const UK2Node*>& BreakableNodesSeeds, FKismetFunctionContext& InContext)
-		{
-			TSet<const UK2Node_ExecutionSequence*> UnBreakableExecutionSequenceNodes;
-			for (UEdGraphNode* Node : InContext.SourceGraph->Nodes)
-			{
-				if (FRecrursiveHelper::IsExecutionSequence(Node))
-				{
-					UnBreakableExecutionSequenceNodes.Add(Cast<UK2Node_ExecutionSequence>(Node));
-				}
-			}
-
-			TSet<const UK2Node*> BreakableNodes;
-			while (BreakableNodesSeeds.Num())
-			{
-				for (const UK2Node* StartingNode : BreakableNodesSeeds)
-				{
-					GatherBreakableNodes(StartingNode, BreakableNodes, InContext);
-				}
-				BreakableNodesSeeds.Empty();
-				FRecrursiveHelper::GatherBreakableNodesSeedsFromSequences(UnBreakableExecutionSequenceNodes, BreakableNodesSeeds, BreakableNodes, InContext);
-			}
-
-			for (const UK2Node_ExecutionSequence* UnBreakableExecutionSequenceNode : UnBreakableExecutionSequenceNodes)
-			{
-				bool bUnBreakableOutputWasFound = false;
-				for (UEdGraphPin* CurrentPin : UnBreakableExecutionSequenceNode->Pins)
-				{
-					if (CurrentPin
-						&& (CurrentPin->Direction == EEdGraphPinDirection::EGPD_Output)
-						&& (CurrentPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
-						&& CurrentPin->LinkedTo.Num())
-					{
-						if (bUnBreakableOutputWasFound)
-						{
-							InContext.MessageLog.Note(*LOCTEXT("DeadExecution_Note", "The path is never executed. @@").ToString(), CurrentPin);
-							break;
-						}
-
-						UEdGraphPin* LinkedPin = CurrentPin->LinkedTo[0];
-						const UK2Node* NextNode = ensure(LinkedPin) ? Cast<const UK2Node>(LinkedPin->GetOwningNodeUnchecked()) : nullptr;
-						ensure(NextNode);
-						if (!BreakableNodes.Contains(NextNode))
-						{
-							bUnBreakableOutputWasFound = true;
-						}
-					}
-				}
-			}
-		}
-	};
-
-	// Function is designed for multiple return nodes.
-	if (!Context.IsEventGraph() && Context.SourceGraph && Context.Schema)
-	{
-		TArray<UK2Node_FunctionResult*> ReturnNodes;
-		Context.SourceGraph->GetNodesOfClass(ReturnNodes);
-		if (ReturnNodes.Num() && ensure(Context.EntryPoint))
-		{
-			TSet<const UK2Node*> VisitedNodes, BreakableNodesSeeds;
-			FRecrursiveHelper::CheckPathEnding(Context.EntryPoint, VisitedNodes, Context, true, BreakableNodesSeeds);
-
-			// A non-pure node, that lies on a execution path, that may result with "EndThread" state, is called Breakable.
-			// The execution path between the node and Return node can be broken.
-
-			FRecrursiveHelper::CheckDeadExecutionPath(BreakableNodesSeeds, Context);
-		}
-	}
+	ensureMsgf(false, TEXT("ValidateProperEndExecutionPath has been deprecated"));
 }
 
 void FKismetCompilerUtilities::DetectValuesReturnedByRef(const UFunction* Func, const UK2Node * Node, FCompilerResultsLog& MessageLog)
@@ -2628,8 +2442,6 @@ FString FNetNameMapping::MakeBaseName(const UObject* Net)
 //////////////////////////////////////////////////////////////////////////
 // FKismetFunctionContext
 
-// @todo: BP2CPP_remove - remove disable/enable deprecation warning once deprecated members are removed
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FKismetFunctionContext::FKismetFunctionContext(FCompilerResultsLog& InMessageLog, const UEdGraphSchema_K2* InSchema, UBlueprintGeneratedClass* InNewClass, UBlueprint* InBlueprint)
 	: Blueprint(InBlueprint)
 	, SourceGraph(nullptr)
@@ -2661,10 +2473,7 @@ FKismetFunctionContext::FKismetFunctionContext(FCompilerResultsLog& InMessageLog
 		bCreateDebugData = false;
 	}
 }
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-// @todo: BP2CPP_remove - remove disable/enable deprecation warning once deprecated members are removed
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FKismetFunctionContext::~FKismetFunctionContext()
 {
 	if (bAllocatedNetNameMap)
@@ -2678,7 +2487,6 @@ FKismetFunctionContext::~FKismetFunctionContext()
 		delete AllGeneratedStatements[i];
 	}
 }
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void FKismetFunctionContext::SetExternalNetNameMap(FNetNameMapping* NewMap)
 {

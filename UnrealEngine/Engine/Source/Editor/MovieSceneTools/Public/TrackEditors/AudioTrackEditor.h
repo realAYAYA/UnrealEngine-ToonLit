@@ -12,9 +12,11 @@
 #include "ISequencerTrackEditor.h"
 #include "MovieSceneTrackEditor.h"
 #include "IContentBrowserSingleton.h"
+#include "Containers/Map.h"
 
 struct FAssetData;
 class FAudioThumbnail;
+class FDelegateHandle;
 class FMenuBuilder;
 class FSequencerSectionPainter;
 class USoundWave;
@@ -50,6 +52,8 @@ public:
 
 	// ISequencerTrackEditor interface
 
+	virtual void OnInitialize() override;
+	virtual void OnRelease() override;
 	virtual void BuildAddTrackMenu(FMenuBuilder& MenuBuilder) override;
 	virtual void BuildObjectBindingTrackMenu(FMenuBuilder& MenuBuilder, const TArray<FGuid>& ObjectBindings, const UClass* ObjectClass) override;
 	virtual TSharedPtr<SWidget> BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params) override;
@@ -93,6 +97,28 @@ private:
 
 	/** Attached audio asset enter pressed */
 	void OnAttachedAudioEnterPressed(const TArray<FAssetData>& AssetData, TArray<FGuid> ObjectBindings);
+
+	/** Registers a delegate with the sequencer for monitoring edits */
+	void RegisterMovieSceneChangedDelegate();
+
+	/** Movie Scene Data Changed Delegate */
+	void OnMovieSceneDataChanged(EMovieSceneDataChangeType InChangeType);
+
+	/** Returns true if the given Sequence or any subsequence contains an audio track */
+	bool SequenceContainsAudioTrack(const UMovieSceneSequence* InSequence);
+
+	/** Will return true if a sequence contains an audio track and the user was notified about the potential clock source issue */
+	bool CheckSequenceClockSource();
+
+	/** Prompts user and potentially modifies settings pref USequencerSettings::bAutoSelectAudioClockSource */
+	void PromptUserForClockSource();
+
+	/** Sets the clock source for the given sequence to use the audio clock */
+	void SetClockSoureToAudioClock();
+
+private:
+
+	FDelegateHandle MovieSceneChangedDelegate;
 };
 
 
@@ -118,7 +144,7 @@ public:
 	virtual UMovieSceneSection* GetSectionObject() override;
 	virtual FText GetSectionTitle() const override;
 	virtual FText GetSectionToolTip() const override;
-	virtual float GetSectionHeight() const override;
+	virtual float GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const override;
 	virtual int32 OnPaintSection(FSequencerSectionPainter& Painter) const override;
 	virtual void Tick(const FGeometry& AllottedGeometry, const FGeometry& ParentGeometry, const double InCurrentTime, const float InDeltaTime) override;
 	virtual void BeginResizeSection() override;

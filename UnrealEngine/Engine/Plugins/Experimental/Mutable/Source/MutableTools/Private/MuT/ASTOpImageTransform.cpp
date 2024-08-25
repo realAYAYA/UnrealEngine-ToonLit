@@ -9,21 +9,18 @@
 #include "MuR/Types.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
 
 	//-------------------------------------------------------------------------------------------------
 	ASTOpImageTransform::ASTOpImageTransform()
-		: base(this)
-		, offsetX(this)
-		, offsetY(this)
-		, scaleX(this)
-		, scaleY(this)
-		, rotation(this)
+		: Base(this)
+		, OffsetX(this)
+		, OffsetY(this)
+		, ScaleX(this)
+		, ScaleY(this)
+		, Rotation(this)
 	{
 	}
 
@@ -37,17 +34,24 @@ namespace mu
 
 
 	//-------------------------------------------------------------------------------------------------
-	bool ASTOpImageTransform::IsEqual(const ASTOp& otherUntyped) const
+	bool ASTOpImageTransform::IsEqual(const ASTOp& OtherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpImageTransform*>(&otherUntyped))
+		if (OtherUntyped.GetOpType()==GetOpType())
 		{
-			return base == other->base &&
-				offsetX == other->offsetX &&
-				offsetY == other->offsetY &&
-				scaleX == other->scaleX &&
-				scaleY == other->scaleY &&
-				rotation == other->rotation &&
-				AddressMode == other->AddressMode;
+			auto Other = static_cast<const ASTOpImageTransform*>(&OtherUntyped);
+			return 
+				Base 	 == Other->Base &&
+				OffsetX  == Other->OffsetX &&
+				OffsetY  == Other->OffsetY &&
+				ScaleX 	 == Other->ScaleX &&
+				ScaleY 	 == Other->ScaleY &&
+				Rotation == Other->Rotation &&
+				AddressMode == Other->AddressMode &&
+				SizeX == Other->SizeX &&
+				SizeY == Other->SizeY &&
+				SourceSizeX == Other->SourceSizeX &&
+				SourceSizeY == Other->SourceSizeY &&
+				bKeepAspectRatio == Other->bKeepAspectRatio;
 		}
 		return false;
 	}
@@ -56,47 +60,57 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	uint64 ASTOpImageTransform::Hash() const
 	{
-		uint64 res = std::hash<OP_TYPE>()(OP_TYPE::IM_TRANSFORM);
-		hash_combine(res, base.child().get());
-		hash_combine(res, offsetX.child().get());
-		hash_combine(res, offsetY.child().get());
-		hash_combine(res, scaleX.child().get());
-		hash_combine(res, scaleY.child().get());
-		hash_combine(res, rotation.child().get());
-		hash_combine(res, std::hash<uint32>()(static_cast<uint32>(AddressMode)));
-		return res;
+		uint64 Res = std::hash<OP_TYPE>()(OP_TYPE::IM_TRANSFORM);
+		hash_combine(Res, Base.child().get());
+		hash_combine(Res, OffsetX.child().get());
+		hash_combine(Res, OffsetY.child().get());
+		hash_combine(Res, ScaleX.child().get());
+		hash_combine(Res, ScaleY.child().get());
+		hash_combine(Res, Rotation.child().get());
+		hash_combine(Res, std::hash<uint32>()(static_cast<uint32>(AddressMode)));
+		hash_combine(Res, SizeX);
+		hash_combine(Res, SizeY);
+		hash_combine(Res, SourceSizeX);
+		hash_combine(Res, SourceSizeY);
+		hash_combine(Res, bKeepAspectRatio);
+		return Res;
 	}
 
 
 	//-------------------------------------------------------------------------------------------------
-	mu::Ptr<ASTOp> ASTOpImageTransform::Clone(MapChildFuncRef mapChild) const
+	mu::Ptr<ASTOp> ASTOpImageTransform::Clone(MapChildFuncRef MapChild) const
 	{
-		Ptr<ASTOpImageTransform> n = new ASTOpImageTransform();
-		n->base = mapChild(base.child());
-		n->offsetX = mapChild(offsetX.child());
-		n->offsetY = mapChild(offsetY.child());
-		n->scaleX = mapChild(scaleX.child());
-		n->scaleY = mapChild(scaleY.child());
-		n->rotation = mapChild(rotation.child());
-		n->AddressMode = AddressMode;
-		return n;
+		Ptr<ASTOpImageTransform> NewOp = new ASTOpImageTransform();
+		NewOp->Base     = MapChild(Base.child());
+		NewOp->OffsetX  = MapChild(OffsetX.child());
+		NewOp->OffsetY  = MapChild(OffsetY.child());
+		NewOp->ScaleX   = MapChild(ScaleX.child());
+		NewOp->ScaleY   = MapChild(ScaleY.child());
+		NewOp->Rotation = MapChild(Rotation.child());
+		NewOp->AddressMode = AddressMode;
+		NewOp->SizeX = SizeX;
+		NewOp->SizeY = SizeY;
+		NewOp->SourceSizeX = SourceSizeX;
+		NewOp->SourceSizeY = SourceSizeY;
+		NewOp->bKeepAspectRatio = bKeepAspectRatio;
+		return NewOp;
 	}
 
 
 	//-------------------------------------------------------------------------------------------------
-	void ASTOpImageTransform::ForEachChild(const TFunctionRef<void(ASTChild&)> f)
+	void ASTOpImageTransform::ForEachChild(const TFunctionRef<void(ASTChild&)> Func)
 	{
-		f(base);
-		f(offsetX);
-		f(offsetY);
-		f(scaleX);
-		f(scaleY);
-		f(rotation);
+		Func(Base);
+		Func(OffsetX);
+		Func(OffsetY);
+		Func(ScaleX);
+		Func(ScaleY);
+		Func(Rotation);
 	}
 
 
 	//-------------------------------------------------------------------------------------------------
-	void ASTOpImageTransform::Link(FProgram& program, FLinkerOptions*)
+	void ASTOpImageTransform::Link(FProgram& Program, FLinkerOptions*)
 	{
 		// Already linked?
 		if (!linkedAddress)
@@ -104,66 +118,79 @@ namespace mu
 			OP::ImageTransformArgs Args;
 			FMemory::Memzero(Args);
 
-			Args.base = base ? base->linkedAddress : 0;
-			Args.offsetX = offsetX ? offsetX->linkedAddress : 0;
-			Args.offsetY = offsetY ? offsetY->linkedAddress : 0;
-			Args.scaleX = scaleX ? scaleX->linkedAddress : 0;
-			Args.scaleY = scaleY ? scaleY->linkedAddress : 0;
-			Args.rotation = rotation ? rotation->linkedAddress : 0;
+			Args.Base     = Base     ? Base->linkedAddress     : 0;
+			Args.OffsetX  = OffsetX  ? OffsetX->linkedAddress  : 0;
+			Args.OffsetY  = OffsetY  ? OffsetY->linkedAddress  : 0;
+			Args.ScaleX   = ScaleX   ? ScaleX->linkedAddress   : 0;
+			Args.ScaleY   = ScaleY   ? ScaleY->linkedAddress   : 0;
+			Args.Rotation = Rotation ? Rotation->linkedAddress : 0;
 			Args.AddressMode = static_cast<uint32>(AddressMode);
+			Args.bKeepAspectRatio = bKeepAspectRatio;
+			Args.SizeX = SizeX;
+			Args.SizeY = SizeY;
+			Args.SourceSizeX = SourceSizeX;
+			Args.SourceSizeY = SourceSizeY;
 
-
-			linkedAddress = (OP::ADDRESS)program.m_opAddress.Num();
-			program.m_opAddress.Add((uint32_t)program.m_byteCode.Num());
-			AppendCode(program.m_byteCode, OP_TYPE::IM_TRANSFORM);
-			AppendCode(program.m_byteCode, Args);
+			linkedAddress = (OP::ADDRESS)Program.m_opAddress.Num();
+			Program.m_opAddress.Add((uint32_t)Program.m_byteCode.Num());
+			AppendCode(Program.m_byteCode, OP_TYPE::IM_TRANSFORM);
+			AppendCode(Program.m_byteCode, Args);
 		}
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	FImageDesc ASTOpImageTransform::GetImageDesc(bool returnBestOption, FGetImageDescContext* context) const
+	FImageDesc ASTOpImageTransform::GetImageDesc(bool bReturnBestOption, FGetImageDescContext* Context) const
 	{
-		FImageDesc res;
+		FImageDesc Result;
 
 		// Local context in case it is necessary
-		FGetImageDescContext localContext;
-		if (!context)
+		FGetImageDescContext LocalContext;
+		if (!Context)
 		{
-			context = &localContext;
+			Context = &LocalContext;
 		}
 		else
 		{
 			// Cached result?
-			FImageDesc* PtrValue = context->m_results.Find(this);
+			FImageDesc* PtrValue = Context->m_results.Find(this);
 			if (PtrValue)
 			{
 				return *PtrValue;
 			}
 		}
 
+
 		// Actual work
-		if (base)
+		if (Base)
 		{
-			res = base->GetImageDesc(returnBestOption, context);
+			Result = Base->GetImageDesc(bReturnBestOption, Context);
+			
+			Result.m_format = GetUncompressedFormat(Result.m_format); 
+			Result.m_lods = 1;
+			
+			if (!(SizeX == 0 && SizeY == 0))
+			{
+				Result.m_size = FImageSize(SizeX, SizeY);
+			}
 		}
 
 
 		// Cache the result
-		if (context)
+		if (Context)
 		{
-			context->m_results.Add(this, res);
+			Context->m_results.Add(this, Result);
 		}
 
-		return res;
+		return Result;
 	}
 
 
 	//-------------------------------------------------------------------------------------------------
 	void ASTOpImageTransform::GetLayoutBlockSize(int* pBlockX, int* pBlockY)
 	{
-		if (base)
+		if (Base)
 		{
-			base->GetLayoutBlockSize(pBlockX, pBlockY);
+			Base->GetLayoutBlockSize(pBlockX, pBlockY);
 		}
 	}
 
@@ -171,9 +198,21 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	mu::Ptr<ImageSizeExpression> ASTOpImageTransform::GetImageSizeExpression() const
 	{
-		if (base)
+		if (Base)
 		{
-			return base->GetImageSizeExpression();
+			if (!(SizeX == 0 && SizeY == 0))
+			{
+				Ptr<ImageSizeExpression> SizeExpr = new ImageSizeExpression;
+				SizeExpr->type = ImageSizeExpression::ISET_CONSTANT;
+				SizeExpr->size[0] = SizeX;
+				SizeExpr->size[1] = SizeY;
+
+				return SizeExpr;
+			}
+			else
+			{
+				return Base->GetImageSizeExpression();
+			}
 		}
 
 		return nullptr;

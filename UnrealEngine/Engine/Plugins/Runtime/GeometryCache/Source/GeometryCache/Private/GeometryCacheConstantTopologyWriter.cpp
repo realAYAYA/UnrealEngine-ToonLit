@@ -196,6 +196,18 @@ namespace UE::GeometryCacheHelpers
 			const TArray<int32>& Map = LODModel.MeshToImportVertexMap;
 			return TArray<uint32>(reinterpret_cast<const uint32*>(Map.GetData()), Map.Num());
 		}
+
+		template<typename T>
+		TArray<T> GetSubArray(const TArray<T>& Array, int32 Start, int32 End)
+		{
+			if (Start >= End || Start >= Array.Num())
+			{
+				return TArray<T>();
+			}
+			Start = FMath::Clamp(Start, 0, Array.Num() - 1);
+			End = FMath::Clamp(End, 0, Array.Num());
+			return TArray<T>(Array.GetData() + Start, End - Start);
+		}
 	}
 
 	FGeometryCacheConstantTopologyWriter::FGeometryCacheConstantTopologyWriter(UGeometryCache& OutCache)
@@ -212,9 +224,9 @@ namespace UE::GeometryCacheHelpers
 	}
 	
 	using FTrackWriter = FGeometryCacheConstantTopologyWriter::FTrackWriter;
-	FTrackWriter& FGeometryCacheConstantTopologyWriter::AddTrackWriter()
+	FTrackWriter& FGeometryCacheConstantTopologyWriter::AddTrackWriter(FName TrackName)
 	{
-		return TrackWriters.Emplace_GetRef(*this);
+		return TrackWriters.Emplace_GetRef(*this, TrackName);
 	}
 
 	FTrackWriter& FGeometryCacheConstantTopologyWriter::GetTrackWriter(int32 TrackIndex)
@@ -227,7 +239,7 @@ namespace UE::GeometryCacheHelpers
 		return TrackWriters.Num();
 	}
 
-	void FGeometryCacheConstantTopologyWriter::AddMaterials(TArrayView<TObjectPtr<UMaterialInterface>> InMaterials)
+	void FGeometryCacheConstantTopologyWriter::AddMaterials(const TArray<TObjectPtr<UMaterialInterface>>& InMaterials)
 	{
 		if (!Cache.IsValid())
 		{
@@ -241,7 +253,7 @@ namespace UE::GeometryCacheHelpers
 		return Cache.IsValid() ? Cache->Materials.Num() : 0;
 	}
 
-	FGeometryCacheConstantTopologyWriter::FTrackWriter::FTrackWriter(FGeometryCacheConstantTopologyWriter& InOwner)
+	FGeometryCacheConstantTopologyWriter::FTrackWriter::FTrackWriter(FGeometryCacheConstantTopologyWriter& InOwner, FName TrackName)
 		: Owner(&InOwner) 
 	{
 		UGeometryCache* const CachePtr = Owner->Cache.Get();
@@ -250,7 +262,10 @@ namespace UE::GeometryCacheHelpers
 			return;
 		}
 		const FString BaseName = CachePtr->GetName();
-		const FName TrackName = MakeUniqueObjectName(CachePtr, UGeometryCacheTrackStreamable::StaticClass(), FName(BaseName + FString(TEXT("_Track"))));
+		if (TrackName.IsNone())
+		{
+			TrackName = MakeUniqueObjectName(CachePtr, UGeometryCacheTrackStreamable::StaticClass(), FName(BaseName + FString(TEXT("_Track"))));
+		}
 		Track = TStrongObjectPtr(NewObject<UGeometryCacheTrackStreamable>(CachePtr, TrackName, RF_Public));
 	}
 
@@ -331,7 +346,7 @@ namespace UE::GeometryCacheHelpers
 		int32 MaxRecordedFrame = -1;
 		for (int32 Frame = 0; Frame < NumFrames; ++Frame)
 		{
-			const float Time = Frame / ConfigRef.FPS;
+			const float Time = static_cast<float>(Frame) / ConfigRef.FPS;
 			FFrameData& FrameData = FramesToMoveFrom[Frame];
 			if (FrameData.Positions.Num() != NumVertices)
 			{
@@ -403,7 +418,7 @@ namespace UE::GeometryCacheHelpers
 		}
 		check(MaxRecordedFrame >= 0);
 		TArray<FMatrix> Mats { FMatrix::Identity, FMatrix::Identity };
-		TArray<float> MatTimes { 0.0f, MaxRecordedFrame / ConfigRef.FPS };
+		TArray<float> MatTimes { 0.0f, static_cast<float>(MaxRecordedFrame) / ConfigRef.FPS };
 		TrackStreamable->SetMatrixSamples(Mats, MatTimes);
 		
 		if (ensureAlways(TrackStreamable->EndCoding()))
@@ -444,5 +459,35 @@ namespace UE::GeometryCacheHelpers
 		Writer.AddMaterials(GetMaterialInterfaces(Asset));
 		return Writer.GetNumTracks() - 1;
 	}
+
+	int32 AddTrackWritersFromTemplateCache(FGeometryCacheConstantTopologyWriter& Writer, const UGeometryCache& TemplateCache)
+	{
+		int32 NumAddedTracks = 0;
+		for (TObjectPtr<UGeometryCacheTrack> Track : TemplateCache.Tracks)
+		{
+			if (!Track)
+			{
+				continue;
+			}
+			FGeometryCacheMeshData MeshData;
+			const bool bSuccess = Track->GetMeshDataAtSampleIndex(0, MeshData);
+			if (!bSuccess)
+			{
+				continue;
+			}
+
+			FTrackWriter& TrackWriter = Writer.AddTrackWriter(FName(*Track->GetName()));
+			TrackWriter.Indices = MeshData.Indices;
+			TrackWriter.UVs = MeshData.TextureCoordinates;
+			TrackWriter.Colors = MeshData.Colors;
+			TrackWriter.ImportedVertexNumbers = MeshData.ImportedVertexNumbers;
+			TrackWriter.BatchesInfo = MeshData.BatchesInfo;
+			NumAddedTracks++;
+		}
+
+		Writer.AddMaterials(TemplateCache.Materials);
+		return NumAddedTracks;
+	}
+
 #endif // WITH_EDITOR
 };

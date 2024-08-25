@@ -127,7 +127,7 @@ struct FSkinweightReadbackData
 /** Runtime structure for keeping track of skin weight profile(s) and the associated buffer */
 struct FSkinWeightProfilesData
 {
-	FSkinWeightProfilesData() : BaseBuffer(nullptr), DefaultOverrideSkinWeightBuffer(nullptr), bDefaultOverriden(false), bStaticOverriden(false), DefaultProfileName(NAME_None) {}
+	FSkinWeightProfilesData() : BaseBuffer(nullptr), DefaultOverrideSkinWeightBuffer(nullptr), bDefaultOverridden(false), bStaticOverridden(false), DefaultProfileName(NAME_None) {}
 	ENGINE_API void Init(FSkinWeightVertexBuffer* InBaseBuffer);
 
 	ENGINE_API ~FSkinWeightProfilesData();
@@ -163,7 +163,11 @@ struct FSkinWeightProfilesData
 
 	ENGINE_API void ReleaseCPUResources();
 
+	ENGINE_API void CreateRHIBuffers(FRHICommandListBase& RHICmdList, TArray<TPair<FName, FSkinWeightRHIInfo>>& OutBuffers);
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffers instead.")
 	ENGINE_API void CreateRHIBuffers_RenderThread(TArray<TPair<FName, FSkinWeightRHIInfo>>& OutBuffers);
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffers instead.")
 	ENGINE_API void CreateRHIBuffers_Async(TArray<TPair<FName, FSkinWeightRHIInfo>>& OutBuffers);
 
 	ENGINE_API void InitRHIForStreaming(const TArray<TPair<FName, FSkinWeightRHIInfo>>& IntermediateBuffers, FRHIResourceUpdateBatcher& Batcher);
@@ -178,11 +182,10 @@ struct FSkinWeightProfilesData
 	ENGINE_API void ResetGPUReadback();
 	ENGINE_API void InitialiseProfileBuffer(const FName& ProfileName);
 
+	ENGINE_API bool IsDefaultOverridden() const { return bDefaultOverridden; }
+	ENGINE_API bool IsStaticOverridden() const { return bStaticOverridden; }
 protected:
 	ENGINE_API void ApplyOverrideProfile(FSkinWeightVertexBuffer* OverrideBuffer, const FName& ProfileName);
-
-	template <bool bRenderThread>
-	void CreateRHIBuffers_Internal(TArray<TPair<FName, FSkinWeightRHIInfo>>& OutBuffers);
 
 	FSkinWeightVertexBuffer* BaseBuffer;
 	FSkinWeightVertexBuffer* DefaultOverrideSkinWeightBuffer;
@@ -190,8 +193,8 @@ protected:
 	TMap<FName, FSkinWeightVertexBuffer*> ProfileNameToBuffer;
 	TMap<FName, FRuntimeSkinWeightProfileData> OverrideData;
 
-	bool bDefaultOverriden;
-	bool bStaticOverriden;
+	bool bDefaultOverridden;
+	bool bStaticOverridden;
 	FName DefaultProfileName;
 
 protected:

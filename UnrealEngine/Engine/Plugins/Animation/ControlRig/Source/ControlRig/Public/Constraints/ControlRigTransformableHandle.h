@@ -4,7 +4,6 @@
 
 #include "TransformableHandle.h"
 #include "Rigs/RigHierarchyDefines.h"
-#include "ControlRig.h"
 
 #include "ControlRigTransformableHandle.generated.h"
 
@@ -13,7 +12,20 @@ struct FRigControlElement;
 
 class UControlRig;
 class USkeletalMeshComponent;
+class UControlRigComponent;
 class URigHierarchy;
+
+/**
+ * FControlEvaluationGraphBinding
+ */
+struct CONTROLRIG_API FControlEvaluationGraphBinding
+{
+	void HandleControlModified(
+		UControlRig* InControlRig,
+		FRigControlElement* InControl,
+		const FRigControlModifiedContext& InContext);
+	bool bPendingFlush = false;
+};
 
 /**
  * UTransformableControlHandle
@@ -31,7 +43,7 @@ public:
 	virtual void PostLoad() override;
 	
 	/** Sanity check to ensure that ControlRig and ControlName are safe to use. */
-	virtual bool IsValid() const override;
+	virtual bool IsValid(const bool bDeepCheck = true) const override;
 
 	/** Sets the global transform of the control. */
 	virtual void SetGlobalTransform(const FTransform& InGlobal) const override;
@@ -71,11 +83,15 @@ public:
 	/** Make a duplicate of myself with this outer*/
 	virtual UTransformableHandle* Duplicate(UObject* NewOuter) const override;
 
-	/** tick things when baking*/ 
-	virtual void TickForBaking() override;
+	/** Tick any skeletal mesh related to the bound component. */ 
+	virtual void TickTarget() const override;
 
-	/** Returns the skeletal mesh bound to ControlRig. */
-	USkeletalMeshComponent* GetSkeletalMesh() const;
+	/**
+	 * Perform any pre-evaluation of the handle to ensure that the transform data is up to date.
+	 * @param bTick to force any pre-evaluation ticking. The rig will still be pre-evaluated even
+	 * if bTick is false (it just won't tick the bound skeletal meshes) Default is false.
+	*/
+	virtual void PreEvaluate(const bool bTick = false) const override;
 
 	/** Registers/Unregisters useful delegates to track changes in the control's transform. */
 	void UnregisterDelegates() const;
@@ -109,7 +125,12 @@ public:
 	
 private:
 
-	/** @todo document */
+	/** Returns the component bounded to ControlRig. */
+	USceneComponent* GetBoundComponent() const;
+	USkeletalMeshComponent* GetSkeletalMesh() const;
+	UControlRigComponent* GetControlRigComponent() const;
+	
+	/** Handles notifications coming from the ControlRig's hierarchy */
 	void OnHierarchyModified(
 		ERigHierarchyNotification InNotif,
 		URigHierarchy* InHierarchy,
@@ -117,6 +138,8 @@ private:
 
 	void OnControlRigBound(UControlRig* InControlRig);
 	void OnObjectBoundToControlRig(UObject* InObject);
+	
+	static FControlEvaluationGraphBinding& GetEvaluationBinding();
 
 #if WITH_EDITOR
 	/** @todo document */

@@ -124,7 +124,7 @@ private:
 	FString ServerProject;
 	FString ServerPlatform;
 	mutable TArray<FString> HostAddrs;
-	mutable uint16 HostPort = 1337;
+	mutable uint16 HostPort = 8558;
 };
 
 #endif

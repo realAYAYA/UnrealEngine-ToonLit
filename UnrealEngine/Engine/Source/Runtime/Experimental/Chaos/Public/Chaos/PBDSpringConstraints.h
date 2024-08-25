@@ -12,6 +12,24 @@ class FPBDSpringConstraints : public FPBDSpringConstraintsBase
 public:
 	template<int32 Valence>
 	FPBDSpringConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVector<int32, Valence>>& InConstraints,
+		const TConstArrayView<FRealSingle>& StiffnessMultipliers,
+		const FSolverVec2& InStiffness,
+		bool bTrimKinematicConstraints = false,
+		typename TEnableIf<Valence >= 2 && Valence <= 4>::Type* = nullptr)
+		: Base(
+			Particles,
+			InConstraints,
+			StiffnessMultipliers,
+			InStiffness,
+			bTrimKinematicConstraints)
+	{
+		InitColor(Particles);
+	}
+
+	template<int32 Valence>
+	FPBDSpringConstraints(
 		const FSolverParticles& Particles,
 		int32 InParticleOffset,
 		int32 InParticleCount,
@@ -34,7 +52,8 @@ public:
 
 	virtual ~FPBDSpringConstraints() override {}
 
-	CHAOS_API void Apply(FSolverParticles& Particles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const;
 
 	const TArray<int32>& GetConstraintsPerColorStartIndex() const { return ConstraintsPerColorStartIndex; }
 
@@ -46,8 +65,10 @@ protected:
 	using Base::ParticleCount;
 
 private:
-	CHAOS_API void InitColor(const FSolverParticles& InParticles);
-	CHAOS_API void ApplyHelper(FSolverParticles& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void InitColor(const SolverParticlesOrRange& InParticles);
+	template<typename SolverParticlesOrRange>
+	void ApplyHelper(SolverParticlesOrRange& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const;
 
 private:
 	TArray<int32> ConstraintsPerColorStartIndex; // Constraints are ordered so each batch is contiguous. This is ColorNum + 1 length so it can be used as start and end.
@@ -60,6 +81,21 @@ public:
 	{
 		return IsEdgeSpringStiffnessEnabled(PropertyCollection, false);
 	}
+
+	FPBDEdgeSpringConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVec3<int32>>& InConstraints,
+		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+		const FCollectionPropertyConstFacade& PropertyCollection,
+		bool bTrimKinematicConstraints = false)
+		: FPBDSpringConstraints(
+			Particles,
+			InConstraints,
+			WeightMaps.FindRef(GetEdgeSpringStiffnessString(PropertyCollection, EdgeSpringStiffnessName.ToString())),
+			FSolverVec2(GetWeightedFloatEdgeSpringStiffness(PropertyCollection, 1.f)),
+			bTrimKinematicConstraints)
+		, EdgeSpringStiffnessIndex(PropertyCollection)
+	{}
 
 	FPBDEdgeSpringConstraints(
 		const FSolverParticles& Particles,
@@ -125,6 +161,21 @@ public:
 	{
 		return IsBendingSpringStiffnessEnabled(PropertyCollection, false);
 	}
+
+	FPBDBendingSpringConstraints(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVec2<int32>>& InConstraints,
+		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+		const FCollectionPropertyConstFacade& PropertyCollection,
+		bool bTrimKinematicConstraints = false)
+		: FPBDSpringConstraints(
+			Particles,
+			InConstraints,
+			WeightMaps.FindRef(GetBendingSpringStiffnessString(PropertyCollection, BendingSpringStiffnessName.ToString())),
+			FSolverVec2(GetWeightedFloatBendingSpringStiffness(PropertyCollection, 1.f)),
+			bTrimKinematicConstraints)
+		, BendingSpringStiffnessIndex(PropertyCollection)
+	{}
 
 	FPBDBendingSpringConstraints(
 		const FSolverParticles& Particles,

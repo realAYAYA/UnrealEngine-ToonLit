@@ -16,6 +16,12 @@ template <typename FuncType> class TFunctionRef;
 class FPathTree
 {
 public:
+	ASSETREGISTRY_API FPathTree();
+	
+	/** Reserve extra space for the expected number of paths that will be added in future. 
+	 * Count is added to the current number of stored paths and not any previous reservation. */
+	ASSETREGISTRY_API void EnsureAdditionalCapacity(int32 NumNewPaths);
+	
 	/** Adds the specified path to the tree, creating nodes as needed and calling OnPathAdded for any new paths added. Returns true if the specified path was actually added (as opposed to already existed) */
 	ASSETREGISTRY_API bool CachePath(FName Path, TFunctionRef<void(FName)> OnPathAdded);
 

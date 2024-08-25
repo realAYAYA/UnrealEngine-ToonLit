@@ -291,9 +291,9 @@ public:
 	 */
 	TSet<int>&& ExtractFinalTriangleROI()
 	{
-		return MoveTemp(TriangleROI);
 		EdgeROI.Reset();
 		VertexROI.Reset();
+		return MoveTemp(TriangleROI);
 	}
 
 
@@ -448,7 +448,7 @@ protected:
 		}
 		int32 NumVertices = SmoothIndices.Num();
 
-		SmoothedPositions.SetNum(NumVertices, false);
+		SmoothedPositions.SetNum(NumVertices, EAllowShrinking::No);
 
 		TFunction<FVector3d(const FDynamicMesh3&, int, double)> UseSmoothFunc = GetSmoothFunction();
 		

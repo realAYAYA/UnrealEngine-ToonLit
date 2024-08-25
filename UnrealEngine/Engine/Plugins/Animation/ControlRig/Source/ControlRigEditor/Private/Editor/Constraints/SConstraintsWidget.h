@@ -8,8 +8,11 @@
 #include "EditorUndoClient.h"
 #include "IStructureDetailsView.h"
 #include "BakingAnimationKeySettings.h"
+#include "Misc/QualifiedFrameTime.h"
 #include "ConstraintsManager.h"
+#include "Misc/NotifyHook.h"
 
+class UTickableTransformConstraint;
 class AActor;
 class SConstraintsCreationWidget;
 class SConstraintsEditionWidget;
@@ -25,9 +28,14 @@ class FConstraintInfo
 public:
 	static const FSlateBrush* GetBrush(uint8 InType);
 	static int8 GetType(UClass* InClass);
+	static UTickableTransformConstraint* GetMutable(ETransformConstraintType InType);
+	static UTickableTransformConstraint* GetConfigurable(ETransformConstraintType InType);
+	
 private:
 	static const TArray< const FSlateBrush* >& GetBrushes();
 	static const TMap< UClass*, ETransformConstraintType >& GetConstraintToType();
+	static const TArray< UTickableTransformConstraint* >& GetMutableDefaults();
+	static const TArray< TFunction<UTickableTransformConstraint*()> >& GetConfigurableConstraints();
 };
 
 /**
@@ -60,37 +68,50 @@ private:
 };
 
 /**
- * SDroppableConstraintItem
+ * SConstraintMenuEntry
  */
 
-class SDroppableConstraintItem : public SCompoundWidget
+class SConstraintMenuEntry : public SCompoundWidget, public FNotifyHook
 {
 public:
-	SLATE_BEGIN_ARGS(SDroppableConstraintItem){}
+	SLATE_BEGIN_ARGS(SConstraintMenuEntry){}
+
+		SLATE_EVENT(FOnConstraintCreated, OnConstraintCreated)
+	
 	SLATE_END_ARGS()
 
 	/** Constructs this widget with InArgs and the actual tree item. */
 	void Construct(
 		const FArguments& InArgs,
-		const TSharedPtr<const FDroppableConstraintItem>& InItem,
-		TSharedPtr<SConstraintsCreationWidget> InConstraintsWidget);
+		const ETransformConstraintType& InType);
 
 	// SWidget interface
 	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
 	virtual FReply OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
 	virtual FReply OnDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
 	// End of SWidget interface
+
+	// FNotifyHook interface
+	/** NotifyPostChange is used to copy the property value from the configurable constraint to the cdo. */
+	virtual void NotifyPostChange( const FPropertyChangedEvent& InPropertyChangedEvent, FProperty* InPropertyThatChanged ) override;
 	
 private:
 
-	/** todo documentation */
-	FReply CreateSelectionPicker() const;
+	/** Activates the ActorPickerMode to pick a parent in the viewport. */
+	FReply CreateSelectionPicker(const bool bUseDefault) const;
+
+	/** Delegate triggered when a new constraint has been created. */
+	FOnConstraintCreated OnConstraintCreated;
+
+	/** Creates a widget to edit the constraint default properties. */
+	TSharedRef<SWidget> GenerateConstraintDefaultWidget();
 	
 	/** Creates the constraint between the current selection and the picked actor. */
 	static void CreateConstraint(
 		AActor* InParent,
 		FOnConstraintCreated InDelegate,
-		const ETransformConstraintType InConstraintType);
+		const ETransformConstraintType InConstraintType,
+		const bool bUseDefault);
 
 	/** TSharedPtr to the tree item. */
 	TSharedPtr<const FDroppableConstraintItem> ConstraintItem;
@@ -100,7 +121,8 @@ private:
 	/** State on the item. */
 	bool bIsPressed = false;
 
-	TWeakPtr<SConstraintsCreationWidget> ConstraintsWidget;
+	/** object ptr to the configurable constraint. */
+	TObjectPtr<UTickableConstraint> ConfigurableConstraint = nullptr;
 };
 
 /**
@@ -213,6 +235,18 @@ class CONTROLRIGEDITOR_API FBaseConstraintListWidget : public FEditorUndoClient
 {
 public:
 
+	/**
+	*  Constraints to show in Widget
+	*/
+	enum class EShowConstraints
+	{
+		ShowSelected = 0x0,
+		ShowLevelSequence = 0x1,
+		ShowValid = 0x2,
+		ShowAll = 0x3,
+	};
+public:
+
 	virtual ~FBaseConstraintListWidget() override;
 	/* FEditorUndoClient interface */
 	virtual void PostUndo(bool bSuccess);
@@ -220,13 +254,26 @@ public:
 	/* End FEditorUndoClient interface */
 
 	/** Invalidates the constraint list for further rebuild. */
-	void InvalidateConstraintList();
+	virtual void InvalidateConstraintList();
 
 	/** Rebuild the constraint list based on the current selection. */
 	virtual int32 RefreshConstraintList();
 
 	/** Triggers a constraint list invalidation when selection in the level viewport. */
 	void OnActorSelectionChanged(const TArray<UObject*>& NewSelection, bool bForceRefresh);
+
+	/** Which constraints to show  */
+	EShowConstraints GetShowConstraints() const { return ShowConstraints; }
+	void SetShowConstraints(EShowConstraints InShowConstraints)
+	{
+		if (InShowConstraints != ShowConstraints)
+		{
+			ShowConstraints = InShowConstraints;
+			InvalidateConstraintList();
+		}
+	}
+	FText GetShowConstraintsText(EShowConstraints Index) const;
+	FText GetShowConstraintsTooltip(EShowConstraints Index) const;
 
 protected:
 	/** Types */
@@ -248,6 +295,10 @@ protected:
 
 	FDelegateHandle OnSelectionChangedHandle;
 
+public:
+
+	static EShowConstraints ShowConstraints;
+
 };
 
 /**
@@ -259,7 +310,6 @@ class CONTROLRIGEDITOR_API SConstraintsEditionWidget : public SCompoundWidget, p
 public:
 	SLATE_BEGIN_ARGS(SConstraintsEditionWidget)	{}
 	SLATE_END_ARGS()
-
 	/** Constructs this widget with InArgs */
 	void Construct(const FArguments& InArgs);
 
@@ -277,6 +327,12 @@ public:
 	/**  */
 	void RemoveItem(const TSharedPtr<FEditableConstraintItem>& Item);
 
+	// FBaseConstraintListWidget overrides
+	virtual void InvalidateConstraintList() override;
+
+	/** Notify from sequencer changed. */
+	void SequencerChanged(const TWeakPtr<ISequencer>& InNewSequencer);
+	
 private:
 
 	/** Generates a widget for the specified item */
@@ -291,6 +347,14 @@ private:
 	void OnItemDoubleClicked(ItemSharedPtr InItem);
 
 	FReply OnBakeClicked();
+
+	void UpdateSequencer();
+
+	//sequencer and it's time
+	TWeakPtr<ISequencer> WeakSequencer;
+	bool SequencerTimeChanged();
+	FQualifiedFrameTime SequencerLastTime;
+
 };
 
 /** Widget allowing baking of constraints */

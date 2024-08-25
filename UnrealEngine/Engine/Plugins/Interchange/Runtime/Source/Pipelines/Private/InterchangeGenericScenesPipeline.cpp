@@ -14,6 +14,8 @@
 #include "InterchangeLightFactoryNode.h"
 #include "InterchangeMeshActorFactoryNode.h"
 #include "InterchangeMeshNode.h"
+#include "InterchangeDecalActorFactoryNode.h"
+#include "InterchangeDecalNode.h"
 #include "InterchangePipelineLog.h"
 #include "InterchangePipelineMeshesUtilities.h"
 #include "InterchangeSceneNode.h"
@@ -31,6 +33,7 @@
 #include "Engine/SpotLight.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
+#include "Misc/PackageName.h"
 
 #if WITH_EDITOR
 #include "ObjectTools.h"
@@ -38,15 +41,47 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(InterchangeGenericScenesPipeline)
 
+#define COPY_FROM_TRANSLATED_TO_FACTORY(TranslatedNode, FactoryNode, AttributeName, AttributeType) \
+if(AttributeType AttributeName; TranslatedNode->GetCustom##AttributeName(AttributeName)) \
+{ \
+	FactoryNode->SetCustom##AttributeName(AttributeName); \
+}
+
 namespace UE::Interchange::Private
 {
+	TArray<FString> GetAllActiveJoints(UInterchangeBaseNodeContainer* BaseNodeContainer)
+	{
+		TArray<FString> AllActiveJoints;
+		BaseNodeContainer->IterateNodesOfType<UInterchangeSkeletonFactoryNode>([&BaseNodeContainer, &AllActiveJoints](const FString& NodeUid, UInterchangeSkeletonFactoryNode* Node)
+			{
+				FString RootNodeUid;
+				if (Node->GetCustomRootJointUid(RootNodeUid))
+				{
+					AllActiveJoints.Add(RootNodeUid);
+					BaseNodeContainer->IterateNodeChildren(RootNodeUid, [&AllActiveJoints](const UInterchangeBaseNode* Node)
+						{
+							if (const UInterchangeSceneNode* SceneNode = Cast<UInterchangeSceneNode>(Node))
+							{
+								TArray<FString> SpecializeTypes;
+								SceneNode->GetSpecializedTypes(SpecializeTypes);
+								if (SpecializeTypes.Contains(UE::Interchange::FSceneNodeStaticData::GetJointSpecializeTypeString()))
+								{
+									AllActiveJoints.Add(Node->GetUniqueID());
+								}
+							}
+						});
+				}
+			});
+		return AllActiveJoints;
+	}
+
 	//Either a (TransformSpecialized || !JointSpecialized || RootJoint) can be a parent (only those get FactoryNodes) :
-	FString FindFactoryParentSceneNodeUid(UInterchangeBaseNodeContainer* BaseNodeContainer, const UInterchangeSceneNode* SceneNode)
+	FString FindFactoryParentSceneNodeUid(UInterchangeBaseNodeContainer* BaseNodeContainer, TArray<FString>& ActiveSkeletonUids, const UInterchangeSceneNode* SceneNode)
 	{
 		FString ParentUid = SceneNode->GetParentUid();
 		if (const UInterchangeSceneNode* ParentSceneNode = Cast<UInterchangeSceneNode>(BaseNodeContainer->GetNode(ParentUid)))
 		{
-			if (ParentSceneNode->IsSpecializedTypeContains(UE::Interchange::FSceneNodeStaticData::GetTransformSpecializeTypeString()))
+			if (!ActiveSkeletonUids.Contains(ParentUid) || ParentSceneNode->IsSpecializedTypeContains(UE::Interchange::FSceneNodeStaticData::GetTransformSpecializeTypeString()))
 			{
 				return ParentUid;
 			}
@@ -63,7 +98,7 @@ namespace UE::Interchange::Private
 						bool bParentsParentIsJoint = ParentSceneNode->IsSpecializedTypeContains(UE::Interchange::FSceneNodeStaticData::GetJointSpecializeTypeString());
 						if (bParentsParentIsJoint)
 						{
-							return FindFactoryParentSceneNodeUid(BaseNodeContainer, ParentSceneNode);
+							return FindFactoryParentSceneNodeUid(BaseNodeContainer, ActiveSkeletonUids, ParentSceneNode);
 						}
 						else
 						{
@@ -190,7 +225,7 @@ void UInterchangeGenericLevelPipeline::AdjustSettingsForContext(EInterchangePipe
 	bIsReimportContext = ReimportAsset != nullptr;
 }
 
-void UInterchangeGenericLevelPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas)
+void UInterchangeGenericLevelPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas, const FString& ContentBasePath)
 {
 	if (!InBaseNodeContainer)
 	{
@@ -260,6 +295,9 @@ void UInterchangeGenericLevelPipeline::ExecutePipeline(UInterchangeBaseNodeConta
 	}
 #endif
 
+	/* Find all scene node that are active joint. Non active joint should be convert to actor if they are in a static mesh hierarchy */
+	TArray<FString> ActiveSkeletonUids = UE::Interchange::Private::GetAllActiveJoints(BaseNodeContainer);
+
 	for (const UInterchangeSceneNode* SceneNode : SceneNodes)
 	{
 		if (SceneNode)
@@ -273,14 +311,21 @@ void UInterchangeGenericLevelPipeline::ExecutePipeline(UInterchangeBaseNodeConta
 					bool bSkipNode = true;
 					if (SpecializeTypes.Contains(UE::Interchange::FSceneNodeStaticData::GetJointSpecializeTypeString()))
 					{
-						//check if its the root joint (we want to create an actor for the root joint)
-						FString CurrentNodesParentUid = SceneNode->GetParentUid();
-						const UInterchangeBaseNode* ParentNode = BaseNodeContainer->GetNode(CurrentNodesParentUid);
-						if (const UInterchangeSceneNode* ParentSceneNode = Cast<UInterchangeSceneNode>(ParentNode))
+						if(!ActiveSkeletonUids.Contains(SceneNode->GetUniqueID()))
+						{ 
+							bSkipNode = false;
+						}
+						else
 						{
-							if (!ParentSceneNode->IsSpecializedTypeContains(UE::Interchange::FSceneNodeStaticData::GetJointSpecializeTypeString()))
+							//check if its the root joint (we want to create an actor for the root joint)
+							FString CurrentNodesParentUid = SceneNode->GetParentUid();
+							const UInterchangeBaseNode* ParentNode = BaseNodeContainer->GetNode(CurrentNodesParentUid);
+							if (const UInterchangeSceneNode* ParentSceneNode = Cast<UInterchangeSceneNode>(ParentNode))
 							{
-								bSkipNode = false;
+								if (!ParentSceneNode->IsSpecializedTypeContains(UE::Interchange::FSceneNodeStaticData::GetJointSpecializeTypeString()))
+								{
+									bSkipNode = false;
+								}
 							}
 						}
 					}
@@ -404,9 +449,14 @@ void UInterchangeGenericLevelPipeline::ExecuteSceneNodePreImport(const FTransfor
 	ActorFactoryNode->InitializeNode(FactoryNodeUid, SceneNode->GetDisplayLabel(), EInterchangeNodeContainerType::FactoryData);
 	const FString ActorFactoryNodeUid = BaseNodeContainer->AddNode(ActorFactoryNode);
 
+	// The translator is responsible to provide a unique name
+	ActorFactoryNode->SetAssetName(SceneNode->GetAssetName());
+
 	if (!SceneNode->GetParentUid().IsEmpty())
 	{
-		FString ParentNodeUid = UE::Interchange::Private::FindFactoryParentSceneNodeUid(BaseNodeContainer, SceneNode);
+		/* Find all scene node that are active joint. Non active joint should be convert to actor if they are in a static mesh hierarchy */
+		TArray<FString> ActiveSkeletonUids = UE::Interchange::Private::GetAllActiveJoints(BaseNodeContainer);
+		FString ParentNodeUid = UE::Interchange::Private::FindFactoryParentSceneNodeUid(BaseNodeContainer, ActiveSkeletonUids, SceneNode);
 		if (ParentNodeUid != UInterchangeBaseNode::InvalidNodeUid())
 		{
 			FString ParentFactoryNodeUid = UInterchangeFactoryBaseNode::BuildFactoryNodeUid(ParentNodeUid);
@@ -428,23 +478,52 @@ void UInterchangeGenericLevelPipeline::ExecuteSceneNodePreImport(const FTransfor
 	}
 
 	//TODO move this code to the factory, a stack over pipeline can change the global offset transform which will affect this value.
-	FTransform GlobalTransform;
-	if (SceneNode->GetCustomGlobalTransform(BaseNodeContainer, GlobalOffsetTransform, GlobalTransform))
+	//We prioritize Local (Relative) Transforms due to issues introduced by 0 scales with Global Transforms.
+	//In case the LocalTransform is not available we fallback onto GlobalTransforms
+	FTransform LocalTransform;
+	if (SceneNode->GetCustomLocalTransform(LocalTransform))
 	{
 		if (bRootJointNode)
 		{
-			GlobalTransform = FTransform::Identity;
+			LocalTransform = FTransform::Identity;
 			//LocalTransform of RootjointNode is already baked into the Skeletal and animation.
 			//due to that we acquire the Parent SceneNode and get its GlobalTransform:
 			if (!SceneNode->GetParentUid().IsEmpty())
 			{
 				if (const UInterchangeSceneNode* ParentSceneNode = Cast<UInterchangeSceneNode>(BaseNodeContainer->GetNode(SceneNode->GetParentUid())))
 				{
-					ParentSceneNode->GetCustomGlobalTransform(BaseNodeContainer, GlobalOffsetTransform, GlobalTransform);
+					ParentSceneNode->GetCustomLocalTransform(LocalTransform);
 				}
 			}
 		}
-		ActorFactoryNode->SetCustomGlobalTransform(GlobalTransform);
+
+		if (SceneNode->GetParentUid().IsEmpty())
+		{
+			LocalTransform = LocalTransform * GlobalOffsetTransform;
+		}
+
+		ActorFactoryNode->SetCustomLocalTransform(LocalTransform);
+	}
+	else
+	{
+		FTransform GlobalTransform;
+		if (SceneNode->GetCustomGlobalTransform(BaseNodeContainer, GlobalOffsetTransform, GlobalTransform))
+		{
+			if (bRootJointNode)
+			{
+				GlobalTransform = FTransform::Identity;
+				//LocalTransform of RootjointNode is already baked into the Skeletal and animation.
+				//due to that we acquire the Parent SceneNode and get its GlobalTransform:
+				if (!SceneNode->GetParentUid().IsEmpty())
+				{
+					if (const UInterchangeSceneNode* ParentSceneNode = Cast<UInterchangeSceneNode>(BaseNodeContainer->GetNode(SceneNode->GetParentUid())))
+					{
+						ParentSceneNode->GetCustomGlobalTransform(BaseNodeContainer, GlobalOffsetTransform, GlobalTransform);
+					}
+				}
+			}
+			ActorFactoryNode->SetCustomGlobalTransform(GlobalTransform);
+		}
 	}
 
 	ActorFactoryNode->SetCustomMobility(EComponentMobility::Static);
@@ -517,6 +596,10 @@ UInterchangeActorFactoryNode* UInterchangeGenericLevelPipeline::CreateActorFacto
 		{
 			return NewObject<UInterchangeDirectionalLightFactoryNode>(BaseNodeContainer, NAME_None);
 		}
+		else if (TranslatedAssetNode && TranslatedAssetNode->IsA<UInterchangeDecalNode>())
+		{
+			return NewObject<UInterchangeDecalActorFactoryNode>(BaseNodeContainer, NAME_None);
+		}
 	}
 
 	return NewObject<UInterchangeActorFactoryNode>(BaseNodeContainer, NAME_None);
@@ -557,7 +640,7 @@ void UInterchangeGenericLevelPipeline::SetUpFactoryNode(UInterchangeActorFactory
 			TMap<FString, FString> SlotMaterialDependencies;
 			SceneNode->GetSlotMaterialDependencies(SlotMaterialDependencies);
 
-			UE::Interchange::MeshesUtilities::ApplySlotMaterialDependencies(*MeshActorFactoryNode, SlotMaterialDependencies, *BaseNodeContainer);
+			UE::Interchange::MeshesUtilities::ApplySlotMaterialDependencies(*MeshActorFactoryNode, SlotMaterialDependencies, *BaseNodeContainer, nullptr);
 
 			FString AnimationAssetUidToPlay;
 			if (SceneNode->GetCustomAnimationAssetUidToPlay(AnimationAssetUidToPlay))
@@ -611,35 +694,33 @@ void UInterchangeGenericLevelPipeline::SetUpFactoryNode(UInterchangeActorFactory
 			{
 				if (UInterchangeLightFactoryNode* LightFactoryNode = Cast<UInterchangeLightFactoryNode>(BaseLightFactoryNode))
 				{
+					if (FString IESTextureUid; LightNode->GetCustomIESTexture(IESTextureUid))
+					{
+						if (BaseNodeContainer->GetNode(IESTextureUid))
+						{
+							LightFactoryNode->SetCustomIESTexture(IESTextureUid);
+							LightFactoryNode->AddFactoryDependencyUid(UInterchangeFactoryBaseNode::BuildFactoryNodeUid(IESTextureUid));
+
+							COPY_FROM_TRANSLATED_TO_FACTORY(LightNode, LightFactoryNode, UseIESBrightness, bool)
+							COPY_FROM_TRANSLATED_TO_FACTORY(LightNode, LightFactoryNode, IESBrightnessScale, float)
+							COPY_FROM_TRANSLATED_TO_FACTORY(LightNode, LightFactoryNode, Rotation, FRotator)
+						}
+					}
+
 					if (EInterchangeLightUnits IntensityUnits; LightNode->GetCustomIntensityUnits(IntensityUnits))
 					{
 						LightFactoryNode->SetCustomIntensityUnits(ELightUnits(IntensityUnits));
 					}
 
-					if (float AttenuationRadius; LightNode->GetCustomAttenuationRadius(AttenuationRadius))
-					{
-						LightFactoryNode->SetCustomAttenuationRadius(AttenuationRadius);
-					}
-
-					if(FString IESTexture; LightNode->GetCustomIESTexture(IESTexture))
-					{
-						LightFactoryNode->SetCustomIESTexture(IESTexture);
-					}
+					COPY_FROM_TRANSLATED_TO_FACTORY(LightNode, LightFactoryNode, AttenuationRadius, float)
 
 					// RectLight
 					if(const UInterchangeRectLightNode* RectLightNode = Cast<UInterchangeRectLightNode>(LightNode))
 					{
 						if(UInterchangeRectLightFactoryNode* RectLightFactoryNode = Cast<UInterchangeRectLightFactoryNode>(LightFactoryNode))
 						{
-							if(float SourceWidth; RectLightNode->GetCustomSourceWidth(SourceWidth))
-							{
-								RectLightFactoryNode->SetCustomSourceWidth(SourceWidth);
-							}
-
-							if(float SourceHeight; RectLightNode->GetCustomSourceHeight(SourceHeight))
-							{
-								RectLightFactoryNode->SetCustomSourceHeight(SourceHeight);
-							}
+							COPY_FROM_TRANSLATED_TO_FACTORY(RectLightNode, RectLightFactoryNode, SourceWidth, float)
+							COPY_FROM_TRANSLATED_TO_FACTORY(RectLightNode, RectLightFactoryNode, SourceHeight, float)
 						}
 					}
 
@@ -652,25 +733,17 @@ void UInterchangeGenericLevelPipeline::SetUpFactoryNode(UInterchangeActorFactory
 							{
 								PointLightFactoryNode->SetCustomUseInverseSquaredFalloff(bUseInverseSquaredFalloff);
 
-								if (float LightFalloffExponent; PointLightNode->GetCustomLightFalloffExponent(LightFalloffExponent))
-								{
-									PointLightFactoryNode->SetCustomLightFalloffExponent(LightFalloffExponent);
-								}
+								COPY_FROM_TRANSLATED_TO_FACTORY(PointLightNode, PointLightFactoryNode, LightFalloffExponent, float)
 							}
 
 
 							// Spot Light
 							if (const UInterchangeSpotLightNode* SpotLightNode = Cast<UInterchangeSpotLightNode>(PointLightNode))
 							{
-								UInterchangeSpotLightFactoryNode* SpotLightFactoryNode = Cast<UInterchangeSpotLightFactoryNode>(PointLightFactoryNode);
-								if (float InnerConeAngle; SpotLightNode->GetCustomInnerConeAngle(InnerConeAngle))
+								if (UInterchangeSpotLightFactoryNode* SpotLightFactoryNode = Cast<UInterchangeSpotLightFactoryNode>(PointLightFactoryNode))
 								{
-									SpotLightFactoryNode->SetCustomInnerConeAngle(InnerConeAngle);
-								}
-
-								if (float OuterConeAngle; SpotLightNode->GetCustomOuterConeAngle(OuterConeAngle))
-								{
-									SpotLightFactoryNode->SetCustomOuterConeAngle(OuterConeAngle);
+									COPY_FROM_TRANSLATED_TO_FACTORY(SpotLightNode, SpotLightFactoryNode, InnerConeAngle, float)
+									COPY_FROM_TRANSLATED_TO_FACTORY(SpotLightNode, SpotLightFactoryNode, OuterConeAngle, float)
 								}
 							}
 						}
@@ -803,6 +876,37 @@ void UInterchangeGenericLevelPipeline::SetUpFactoryNode(UInterchangeActorFactory
 					CameraFactoryNode->SetCustomFieldOfView(FieldOfView);
 				}
 			}
+		}
+	}
+	else if (const UInterchangeDecalNode* DecalNode = Cast<UInterchangeDecalNode>(TranslatedAssetNode))
+	{
+		UInterchangeDecalActorFactoryNode* DecalActorFactory = Cast<UInterchangeDecalActorFactoryNode>(ActorFactoryNode);
+		ensure(DecalActorFactory);
+
+		if (FVector DecalSize; DecalNode->GetCustomDecalSize(DecalSize))
+		{
+			DecalActorFactory->SetCustomDecalSize(DecalSize);
+		}
+
+		if (int32 SortOrder; DecalNode->GetCustomSortOrder(SortOrder))
+		{
+			DecalActorFactory->SetCustomSortOrder(SortOrder);
+		}
+		
+		bool bHasMaterialPathName = false;
+		FString DecalMaterialPathName;
+		if (DecalNode->GetCustomDecalMaterialPathName(DecalMaterialPathName))
+		{
+			DecalActorFactory->SetCustomDecalMaterialPathName(DecalMaterialPathName);
+			bHasMaterialPathName = true;
+		}
+
+		// If the path is not a valid object path then it is an Interchange Node UID (Decal Material Node to be specific).
+		if (bHasMaterialPathName && !FPackageName::IsValidObjectPath(DecalMaterialPathName))
+		{
+			const FString MaterialFactoryUid = UInterchangeFactoryBaseNode::BuildFactoryNodeUid(DecalMaterialPathName);
+			DecalActorFactory->SetCustomDecalMaterialPathName(MaterialFactoryUid);
+			DecalActorFactory->AddFactoryDependencyUid(MaterialFactoryUid);
 		}
 	}
 }

@@ -11,6 +11,33 @@
 
 #define LOCTEXT_NAMESPACE "SRCProtocolMaskTriplet"
 
+const TMap<UScriptStruct*, EMaskingType>& FRemoteControlProtocolMasking::GetStructsToMaskingTypes()
+{
+	static TMap<UScriptStruct*, EMaskingType> StructsToMaskingTypes = { { TBaseStructure<FColor>::Get(), EMaskingType::Color }
+		, { TBaseStructure<FLinearColor>::Get(), EMaskingType::Color }
+		, { TBaseStructure<FRotator>::Get(), EMaskingType::Rotator }
+		, { TBaseStructure<FVector>::Get(), EMaskingType::Vector }
+		, { TBaseStructure<FIntVector>::Get(), EMaskingType::Vector }
+		, { TBaseStructure<FVector4>::Get(), EMaskingType::Quat }
+		, { TBaseStructure<FIntVector4>::Get(), EMaskingType::Quat }
+		, { TBaseStructure<FQuat>::Get(), EMaskingType::Quat }
+	};
+
+	return StructsToMaskingTypes;
+}
+
+const TSet<UScriptStruct*>& FRemoteControlProtocolMasking::GetOptionalMaskStructs()
+{
+	static TSet<UScriptStruct*> OptionalMaskStructs = {
+		TBaseStructure<FLinearColor>::Get(),
+		TBaseStructure<FVector4>::Get(),
+		TBaseStructure<FQuat>::Get(),
+		TBaseStructure<FIntVector4>::Get()
+	};
+
+	return OptionalMaskStructs;
+}
+
 void SRCProtocolMaskTriplet::Construct(const FArguments& InArgs)
 {
 	WidgetStyle = &FProtocolPanelStyle::Get()->GetWidgetStyle<FProtocolWidgetStyle>("ProtocolsPanel.Widgets.Mask");

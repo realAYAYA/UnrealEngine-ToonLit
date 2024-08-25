@@ -42,9 +42,17 @@ bool UInterchangeCommonPipelineDataFactoryNode::GetCustomGlobalOffsetTransform(F
 UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Common Pipeline Data")
 bool UInterchangeCommonPipelineDataFactoryNode::SetCustomGlobalOffsetTransform(const UInterchangeBaseNodeContainer* NodeContainer, const FTransform& AttributeValue)
 {
-	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(GlobalOffsetTransform, FTransform);
-	//Reset all scene node container cache
-	UInterchangeSceneNode::ResetAllGlobalTransformCaches(NodeContainer);
+	auto ImplementationFunction = [this, &NodeContainer, &AttributeValue]()
+		{
+			IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(GlobalOffsetTransform, FTransform);
+		};
+	if (ImplementationFunction())
+	{
+		//Reset all scene node container cache
+		UInterchangeSceneNode::ResetAllGlobalTransformCaches(NodeContainer);
+		return true;
+	}
+	return false;
 }
 
 bool UInterchangeCommonPipelineDataFactoryNode::GetBakeMeshes(bool& AttributeValue) const

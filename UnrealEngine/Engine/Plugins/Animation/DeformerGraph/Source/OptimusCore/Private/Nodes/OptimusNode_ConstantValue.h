@@ -3,6 +3,7 @@
 #pragma once
 
 #include "IOptimusGeneratedClassDefiner.h"
+#include "IOptimusPinMutabilityDefiner.h"
 #include "IOptimusValueProvider.h"
 #include "OptimusNode.h"
 #include "OptimusDataType.h"
@@ -43,7 +44,8 @@ UCLASS(Hidden)
 class UOptimusNode_ConstantValue :
 	public UOptimusNode,
 	public IOptimusValueProvider,
-	public IOptimusGeneratedClassDefiner
+	public IOptimusGeneratedClassDefiner,
+	public IOptimusPinMutabilityDefiner
 {
 	GENERATED_BODY()
 
@@ -74,6 +76,9 @@ public:
 		UPackage* InPackage,
 		const TCHAR* InCreationString
 		) const override;
+
+	// IOptimusPinMutabilityDefiner implementation
+	EOptimusPinMutability GetOutputPinMutability(const UOptimusNodePin* InPin) const override { return EOptimusPinMutability::Immutable; };
 	
 	
 protected:

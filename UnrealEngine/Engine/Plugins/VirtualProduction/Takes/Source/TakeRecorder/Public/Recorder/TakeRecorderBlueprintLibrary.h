@@ -105,28 +105,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Take Recorder", meta=(DisplayName="Set On Take Recorder Panel Changed"))
 	static void SetOnTakeRecorderPanelChanged(FOnTakeRecorderPanelChanged OnTakeRecorderPanelChanged);
 
-	/** Called before initialization occurs (ie. when the recording button is pressed and before the countdown starts) */
-	UFUNCTION(BlueprintCallable, Category = "Take Recorder")
+	UE_DEPRECATED(5.4, "Please use TakeRecorderSubsystem::TakeRecorderPreInitialize")
+	UFUNCTION(BlueprintCallable, Category = "Take Recorder", meta = (DeprecatedFunction, DeprecationMessage = "Please use TakeRecorderSubsystem::TakeRecorderPreInitialize"))
 	static void SetOnTakeRecorderPreInitialize(FOnTakeRecorderPreInitialize OnTakeRecorderPreInitialize);
 
-	/** Called when take recording starts. */
-	UFUNCTION(BlueprintCallable, Category = "Take Recorder")
+	UE_DEPRECATED(5.4, "Please use TakeRecorderSubsystem::TakeRecorderStarted")
+	UFUNCTION(BlueprintCallable, Category = "Take Recorder", meta = (DeprecatedFunction, DeprecationMessage = "Please use TakeRecorderSubsystem::TakeRecorderStarted"))
 	static void SetOnTakeRecorderStarted(FOnTakeRecorderStarted OnTakeRecorderStarted);
 
-	/** Called when take recording is stopped. */
-	UFUNCTION(BlueprintCallable, Category = "Take Recorder")
+	UE_DEPRECATED(5.4, "Please use TakeRecorderSubsystem::TakeRecorderStopped")
+	UFUNCTION(BlueprintCallable, Category = "Take Recorder", meta = (DeprecatedFunction, DeprecationMessage = "Please use TakeRecorderSubsystem::TakeRecorderStopped"))
 	static void SetOnTakeRecorderStopped(FOnTakeRecorderStopped OnTakeRecorderStopped);
 
-	/** Called when take recording finishes. */
-	UFUNCTION(BlueprintCallable, Category = "Take Recorder")
+	UE_DEPRECATED(5.4, "Please use TakeRecorderSubsystem::TakeRecorderFinished")
+	UFUNCTION(BlueprintCallable, Category = "Take Recorder", meta = (DeprecatedFunction, DeprecationMessage = "Please use TakeRecorderSubsystem::TakeRecorderFinished"))
 	static void SetOnTakeRecorderFinished(FOnTakeRecorderFinished OnTakeRecorderFinished);
 
-	/** Called when take recording is cancelled. */
-	UFUNCTION(BlueprintCallable, Category = "Take Recorder")
+	UE_DEPRECATED(5.4, "Please use TakeRecorderSubsystem::TakeRecorderCancelled")
+	UFUNCTION(BlueprintCallable, Category = "Take Recorder", meta = (DeprecatedFunction, DeprecationMessage = "Please use TakeRecorderSubsystem::TakeRecorderCancelled"))
 	static void SetOnTakeRecorderCancelled(FOnTakeRecorderCancelled OnTakeRecorderCancelled);
 
-	/** Called when a marked frame is added. */
-	UFUNCTION(BlueprintCallable, Category = "Take Recorder")
+	UE_DEPRECATED(5.4, "Please use TakeRecorderSubsystem::TakeRecorderMarkedFrameAdded")
+	UFUNCTION(BlueprintCallable, Category = "Take Recorder", meta = (DeprecatedFunction, DeprecationMessage = "Please use TakeRecorderSubsystem::TakeRecorderMarkedFrameAdded"))
 	static void SetOnTakeRecorderMarkedFrameAdded(FOnTakeRecorderMarkedFrameAdded OnTakeRecorderMarkedFrameAdded);
 
 	static void OnTakeRecorderPreInitialize();

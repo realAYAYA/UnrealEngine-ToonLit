@@ -51,6 +51,11 @@ MANAGED_ARRAY_TYPE(TArray<float>, FloatArray)
 MANAGED_ARRAY_TYPE(FVector4f, Vector4f)
 MANAGED_ARRAY_TYPE(TArray<FVector3f>, FVectorArray)
 MANAGED_ARRAY_TYPE(TUniquePtr<Chaos::FPBDRigidParticle>, TPBDRigidParticle3fUniquePtr)
+MANAGED_ARRAY_TYPE(Chaos::FImplicitObjectPtr, FImplicitObjectRefCountedPtr)
+MANAGED_ARRAY_TYPE(Chaos::FConvexPtr, FConvexRefCountedPtr)
+MANAGED_ARRAY_TYPE(FTransform3f, Transform3f)
+MANAGED_ARRAY_TYPE(TArray<FIntVector3>, IntVector3Array)
+MANAGED_ARRAY_TYPE(TArray<FVector4f>, Vector4fArray)
 
 // NOTE: new types must be added at the bottom to keep serialization from breaking
 

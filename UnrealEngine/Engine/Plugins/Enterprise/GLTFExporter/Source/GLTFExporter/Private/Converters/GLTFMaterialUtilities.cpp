@@ -6,17 +6,34 @@
 #include "Converters/GLTFProxyMaterialCompiler.h"
 #include "Utilities/GLTFProxyMaterialUtilities.h"
 #include "Materials/Material.h"
-#include "Misc/DefaultValueHelper.h"
+#include "Modules/ModuleManager.h"
+#include "Engine/RendererSettings.h"
+#include "Materials/MaterialExpressionTextureObject.h"
+#include "Materials/MaterialExpressionTextureObjectParameter.h"
 #if WITH_EDITOR
 #include "IMaterialBakingModule.h"
 #include "MaterialBakingStructures.h"
-#include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialAttributeDefinitionMap.h"
-#endif
-#include "Engine/RendererSettings.h"
-#include "Modules/ModuleManager.h"
 #include "Materials/MaterialExpressionCustomOutput.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
+#endif
+
+#include "Materials/MaterialInstance.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionConstant.h"
+#include "Materials/MaterialExpressionConstant2Vector.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
+#include "Materials/MaterialExpressionConstant4Vector.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionTextureSample.h"
+#include "Materials/MaterialExpressionTextureSampleParameter2D.h"
+
+#include "Utilities/GLTFCoreUtilities.h"
+
+#if GLTF_EXPORT_ENABLE
+#include "Gltf/InterchangeGLTFMaterial.h"
+#endif
 
 UMaterialInterface* FGLTFMaterialUtilities::GetDefaultMaterial()
 {
@@ -30,6 +47,7 @@ bool FGLTFMaterialUtilities::IsClearCoatBottomNormalEnabled()
 }
 
 #if WITH_EDITOR
+
 
 bool FGLTFMaterialUtilities::IsNormalMap(const FMaterialPropertyEx& Property)
 {
@@ -120,7 +138,7 @@ FGLTFPropertyBakeOutput FGLTFMaterialUtilities::BakeMaterialProperty(const FIntP
 		MeshSet.LightMap = MeshData->LightMap;
 		MeshSet.LightMapIndex = MeshData->LightMapTexCoord;
 		MeshSet.LightmapResourceCluster = MeshData->LightMapResourceCluster;
-		MeshSet.PrimitiveData = &MeshData->PrimitiveData;
+		MeshSet.PrimitiveData = MeshData->PrimitiveData;
 	}
 
 	FMaterialDataEx MatSet;
@@ -198,24 +216,117 @@ uint32 FGLTFMaterialUtilities::GetMaskComponentCount(const FExpressionInput& Exp
 	return ExpressionInput.MaskR + ExpressionInput.MaskG + ExpressionInput.MaskB + ExpressionInput.MaskA;
 }
 
-bool FGLTFMaterialUtilities::TryGetTextureCoordinateIndex(const UMaterialExpressionTextureSample* TextureSampler, int32& TexCoord, FGLTFJsonTextureTransform& Transform)
+bool FGLTFMaterialUtilities::TryGetMaxTextureSize(const UMaterialInterface* Material, const FMaterialPropertyEx& Property, FIntPoint& OutMaxSize)
 {
-	const UMaterialExpression* Expression = TextureSampler->Coordinates.Expression;
+	TArray<UMaterialExpressionTextureSample*> TextureSamples;
+	GetAllInputExpressionsOfType(Material, Property, TextureSamples);
+
+	if (TextureSamples.Num() == 0)
+	{
+		return false;
+	}
+
+	FIntPoint MaxSize = { 0, 0 };
+
+	for (const UMaterialExpressionTextureSample* TextureSample : TextureSamples)
+	{
+		const UTexture* Texture = GetTextureFromSample(Material, TextureSample);
+		if (Texture == nullptr || !FGLTFTextureUtilities::Is2D(Texture))
+		{
+			return false;
+		}
+
+		FGLTFTextureUtilities::FullyLoad(Texture);
+		FIntPoint TextureSize = FGLTFTextureUtilities::GetInGameSize(Texture);
+
+		MaxSize = MaxSize.ComponentMax(TextureSize);
+	}
+
+	OutMaxSize = MaxSize;
+	return true;
+}
+
+bool FGLTFMaterialUtilities::TryGetMaxTextureSize(const UMaterialInterface* Material, const FMaterialPropertyEx& PropertyA, const FMaterialPropertyEx& PropertyB, FIntPoint& OutMaxSize)
+{
+	FIntPoint MaxSizeA;
+	if (!TryGetMaxTextureSize(Material, PropertyA, MaxSizeA))
+	{
+		return false;
+	}
+
+	FIntPoint MaxSizeB;
+	if (!TryGetMaxTextureSize(Material, PropertyB, MaxSizeB))
+	{
+		return false;
+	}
+
+	OutMaxSize = MaxSizeA.ComponentMax(MaxSizeB);
+	return true;
+}
+
+UTexture* FGLTFMaterialUtilities::GetTextureFromSample(const UMaterialInterface* Material, const UMaterialExpressionTextureSample* SampleExpression)
+{
+	if (const UMaterialExpressionTextureSampleParameter2D* SampleParameter = ExactCast<UMaterialExpressionTextureSampleParameter2D>(SampleExpression))
+	{
+		UTexture* ParameterValue = SampleParameter->Texture;
+
+		if (!Material->GetTextureParameterValue(SampleParameter->GetParameterName(), ParameterValue))
+		{
+			return nullptr;
+		}
+
+		return ParameterValue;
+	}
+
+	if (const UMaterialExpressionTextureSample* Sample = ExactCast<UMaterialExpressionTextureSample>(SampleExpression))
+	{
+		UMaterialExpression* ObjectExpression = Sample->TextureObject.Expression;
+		if (ObjectExpression == nullptr)
+		{
+			return Sample->Texture;
+		}
+
+		if (const UMaterialExpressionTextureObjectParameter* ObjectParameter = ExactCast<UMaterialExpressionTextureObjectParameter>(ObjectExpression))
+		{
+			UTexture* ParameterValue = ObjectParameter->Texture;
+
+			if (!Material->GetTextureParameterValue(ObjectParameter->GetParameterName(), ParameterValue))
+			{
+				return nullptr;
+			}
+
+			return ParameterValue;
+		}
+
+		if (const UMaterialExpressionTextureObject* Object = ExactCast<UMaterialExpressionTextureObject>(ObjectExpression))
+		{
+			return Object->Texture;
+		}
+
+		return nullptr;
+	}
+
+	return nullptr;
+}
+
+bool FGLTFMaterialUtilities::TryGetTextureCoordinateIndex(const UMaterialExpressionTextureSample* TextureSample, int32& OutTexCoord, FGLTFJsonTextureTransform& OutTransform)
+{
+	const UMaterialExpression* Expression = TextureSample->Coordinates.Expression;
 	if (Expression == nullptr)
 	{
-		TexCoord = TextureSampler->ConstCoordinate;
-		Transform = {};
+		OutTexCoord = TextureSample->ConstCoordinate;
+		OutTransform = {};
 		return true;
 	}
 
 	if (const UMaterialExpressionTextureCoordinate* TextureCoordinate = Cast<UMaterialExpressionTextureCoordinate>(Expression))
 	{
-		TexCoord = TextureCoordinate->CoordinateIndex;
-		Transform.Offset.X = TextureCoordinate->UnMirrorU ? TextureCoordinate->UTiling * 0.5f : 0.0f;
-		Transform.Offset.Y = TextureCoordinate->UnMirrorV ? TextureCoordinate->VTiling * 0.5f : 0.0f;
-		Transform.Scale.X = TextureCoordinate->UTiling * (TextureCoordinate->UnMirrorU ? 0.5f : 1.0f);
-		Transform.Scale.Y = TextureCoordinate->VTiling * (TextureCoordinate->UnMirrorV ? 0.5f : 1.0f);
-		Transform.Rotation = 0;
+		OutTexCoord = TextureCoordinate->CoordinateIndex;
+		OutTransform.Offset.X = TextureCoordinate->UnMirrorU ? TextureCoordinate->UTiling * 0.5f : 0.0f;
+		OutTransform.Offset.Y = TextureCoordinate->UnMirrorV ? TextureCoordinate->VTiling * 0.5f : 0.0f;
+		OutTransform.Scale.X = TextureCoordinate->UTiling * (TextureCoordinate->UnMirrorU ? 0.5f : 1.0f);
+		OutTransform.Scale.Y = TextureCoordinate->VTiling * (TextureCoordinate->UnMirrorV ? 0.5f : 1.0f);
+		OutTransform.Rotation = 0;
 		return true;
 	}
 
@@ -224,10 +335,10 @@ bool FGLTFMaterialUtilities::TryGetTextureCoordinateIndex(const UMaterialExpress
 	return false;
 }
 
-void FGLTFMaterialUtilities::GetAllTextureCoordinateIndices(const UMaterialInterface* InMaterial, const FMaterialPropertyEx& InProperty, FGLTFIndexArray& OutTexCoords)
+void FGLTFMaterialUtilities::GetAllTextureCoordinateIndices(const UMaterialInterface* Material, const FMaterialPropertyEx& Property, FGLTFIndexArray& OutTexCoords)
 {
 	FMaterialAnalysisResult Analysis;
-	AnalyzeMaterialProperty(InMaterial, InProperty, Analysis);
+	AnalyzeMaterialProperty(Material, Property, Analysis);
 
 	const TBitArray<>& TexCoords = Analysis.TextureCoordinates;
 	for (int32 Index = 0; Index < TexCoords.Num(); Index++)
@@ -279,6 +390,56 @@ FMaterialShadingModelField FGLTFMaterialUtilities::EvaluateShadingModelExpressio
 	FMaterialAnalysisResult Analysis;
 	AnalyzeMaterialProperty(Material, MP_ShadingModel, Analysis);
 	return Analysis.ShadingModels;
+}
+
+template <typename ExpressionType>
+void FGLTFMaterialUtilities::GetAllInputExpressionsOfType(const UMaterialInterface* Material, const FMaterialPropertyEx& Property, TArray<ExpressionType*>& OutExpressions)
+{
+	const FExpressionInput* Input = GetInputForProperty(Material, Property);
+	if (Input == nullptr)
+	{
+		return;
+	}
+
+	UMaterialExpression* InputExpression = Input->Expression;
+	if (InputExpression == nullptr)
+	{
+		return;
+	}
+
+	TArray<UMaterialExpression*> AllInputExpressions;
+	InputExpression->GetAllInputExpressions(AllInputExpressions);
+
+	for (UMaterialExpression* Expression : AllInputExpressions)
+	{
+		if (ExpressionType* ExpressionOfType = Cast<ExpressionType>(Expression))
+		{
+			OutExpressions.Add(ExpressionOfType);
+		}
+
+		if (UMaterialFunctionInterface* MaterialFunction = UMaterial::GetExpressionFunctionPointer(Expression))
+		{
+			MaterialFunction->GetAllExpressionsOfType<ExpressionType>(OutExpressions);
+		}
+		else if (TOptional<UMaterial::FLayersInterfaces> LayersInterfaces = UMaterial::GetExpressionLayers(Expression))
+		{
+			for (UMaterialFunctionInterface* Layer : LayersInterfaces->Layers)
+			{
+				if (Layer != nullptr)
+				{
+					Layer->GetAllExpressionsOfType<ExpressionType>(OutExpressions);
+				}
+			}
+
+			for (UMaterialFunctionInterface* Blend : LayersInterfaces->Blends)
+			{
+				if (Blend != nullptr)
+				{
+					Blend->GetAllExpressionsOfType<ExpressionType>(OutExpressions);
+				}
+			}
+		}
+	}
 }
 
 #endif
@@ -377,4 +538,517 @@ bool FGLTFMaterialUtilities::NeedsMeshData(const TArray<const UMaterialInterface
 #endif
 
 	return false;
+}
+
+EMaterialShadingModel FGLTFMaterialUtilities::GetShadingModel(const UMaterialInterface* Material, FString& OutMessage)
+{
+	const FMaterialShadingModelField Possibilities = Material->GetShadingModels();
+	const int32 PossibilitiesCount = Possibilities.CountShadingModels();
+
+	if (PossibilitiesCount == 0)
+	{
+		const EMaterialShadingModel ShadingModel = MSM_DefaultLit;
+		OutMessage = FString::Printf(
+			TEXT("No shading model defined for material %s, will export as %s"),
+			*Material->GetName(),
+			*FGLTFNameUtilities::GetName(ShadingModel));
+		return ShadingModel;
+	}
+
+	if (PossibilitiesCount > 1)
+	{
+#if WITH_EDITOR
+		if (!FApp::CanEverRender())
+		{
+			const EMaterialShadingModel ShadingModel = FGLTFMaterialUtilities::GetRichestShadingModel(Possibilities);
+			OutMessage = FString::Printf(
+				TEXT("Can't evaluate shading model expression in material %s because renderer missing, will export as %s"),
+				*Material->GetName(),
+				*FGLTFNameUtilities::GetName(ShadingModel));
+			return ShadingModel;
+		}
+
+		if (Material->IsShadingModelFromMaterialExpression())
+		{
+			const FMaterialShadingModelField Evaluation = FGLTFMaterialUtilities::EvaluateShadingModelExpression(Material);
+			const int32 EvaluationCount = Evaluation.CountShadingModels();
+
+			if (EvaluationCount == 0)
+			{
+				const EMaterialShadingModel ShadingModel = FGLTFMaterialUtilities::GetRichestShadingModel(Possibilities);
+				OutMessage = FString::Printf(
+					TEXT("Evaluation of shading model expression in material %s returned none, will export as %s"),
+					*Material->GetName(),
+					*FGLTFNameUtilities::GetName(ShadingModel));
+				return ShadingModel;
+			}
+
+			if (EvaluationCount > 1)
+			{
+				const EMaterialShadingModel ShadingModel = FGLTFMaterialUtilities::GetRichestShadingModel(Evaluation);
+				OutMessage = FString::Printf(
+					TEXT("Evaluation of shading model expression in material %s is inconclusive (%s), will export as %s"),
+					*Material->GetName(),
+					*FGLTFMaterialUtilities::ShadingModelsToString(Evaluation),
+					*FGLTFNameUtilities::GetName(ShadingModel));
+				return ShadingModel;
+			}
+
+			return Evaluation.GetFirstShadingModel();
+		}
+
+		// we should never end up here
+#else
+		const EMaterialShadingModel ShadingModel = FGLTFMaterialUtilities::GetRichestShadingModel(Possibilities);
+		OutMessage = FString::Printf(
+			TEXT("Can't evaluate shading model expression in material %s without editor, will export as %s"),
+			*Material->GetName(),
+			*FGLTFNameUtilities::GetName(ShadingModel));
+		return ShadingModel;
+#endif
+	}
+
+	return Possibilities.GetFirstShadingModel();
+}
+
+FGLTFImportMaterialMatchMakingHelper::FGLTFImportMaterialMatchMakingHelper(FGLTFConvertBuilder& InBuilder,
+	const UMaterialInterface* InMaterial,
+	FGLTFJsonMaterial& InJsonMaterial)
+	: Builder(InBuilder)
+	, JsonMaterial(InJsonMaterial)
+	, Material(InMaterial)
+	, bMaterialInstance(InMaterial ? InMaterial->IsA(UMaterialInstance::StaticClass()) : false)
+	, bIsGLTFImportedMaterial(false)
+{
+#if GLTF_EXPORT_ENABLE
+	if (!Material)
+	{
+		return;
+	}
+
+	using namespace UE::Interchange::GLTFMaterials;
+
+	const UMaterial* TopMostParentMaterial = Material->GetMaterial();
+
+	if (bMaterialInstance)
+	{
+		FString PathName = TopMostParentMaterial->GetPathName();
+
+		TMap<FString, EShadingModel> MaterialPathsToShadingModels = GetMaterialPathsToShadingModels();
+
+		if (MaterialPathsToShadingModels.Contains(PathName))
+		{
+			bIsGLTFImportedMaterial = true;
+
+			JsonMaterial.ShadingModel = EGLTFJsonShadingModel(MaterialPathsToShadingModels[PathName]);
+		}
+	}
+	else
+	{
+#if WITH_EDITOR
+		//Acquire glTF Importer's MaterialFunctionPaths
+		TMap<FString, EShadingModel> MaterialFunctionPathsToShadingModels = GetMaterialFunctionPathsToShadingModels();
+
+		//Acquire the Material's expressions and check if any matches a MaterialFunctionCall which matches the glTF Importer's list:
+		TConstArrayView<TObjectPtr<UMaterialExpression>> MaterialExpressions = TopMostParentMaterial->GetExpressions();
+
+		UMaterialExpressionMaterialFunctionCall* GLTFImportedMaterialFunction = nullptr;
+		EShadingModel GLTFImportedShadingModel = EShadingModel::DEFAULT;
+
+		for (const TObjectPtr<UMaterialExpression>& MaterialExpression : MaterialExpressions)
+		{
+			if (UMaterialExpressionMaterialFunctionCall* FunctionCallExpression = Cast<UMaterialExpressionMaterialFunctionCall>(MaterialExpression))
+			{
+				if (FunctionCallExpression->MaterialFunction)
+				{
+					FString PathName = FunctionCallExpression->MaterialFunction->GetPathName();
+
+					if (MaterialFunctionPathsToShadingModels.Contains(PathName))
+					{
+						//Material imported by glTF Importer
+						GLTFImportedMaterialFunction = FunctionCallExpression;
+						GLTFImportedShadingModel = MaterialFunctionPathsToShadingModels[PathName];
+
+						break;
+					}
+				}
+			}
+		}
+
+		if (!GLTFImportedMaterialFunction)
+		{
+			return;
+		}
+
+		bIsGLTFImportedMaterial = true;
+
+		JsonMaterial.ShadingModel = EGLTFJsonShadingModel(GLTFImportedShadingModel);
+
+		//If Exported Material is a MaterialInstance then we will use the GetParameter APIs
+		if (!bMaterialInstance)
+		{
+			TArrayView<FExpressionInput*> InputsView = GLTFImportedMaterialFunction->GetInputsView();
+
+			for (FExpressionInput* Input : InputsView)
+			{
+				if (!Input || !Input->Expression || !Input->IsConnected())
+				{
+					continue;
+				}
+
+				FString Name = Input->InputName.ToString();
+				UMaterialExpression* InputExpression = Input->GetTracedInput().Expression;
+
+				Inputs.Add(Name, InputExpression);
+			}
+		}
+#endif
+#endif
+	}
+}
+
+bool FGLTFImportMaterialMatchMakingHelper::GetValue(const FString& InputKey, float& OutValue)
+{
+	if (bMaterialInstance)
+	{
+		if (!Material->GetScalarParameterValue(*InputKey, OutValue, true))
+		{
+			return false;
+		}
+	}
+	else
+	{
+		if (!Inputs.Contains(InputKey))
+		{
+			return false;
+		}
+
+		UMaterialExpression* InputExpression = Inputs[InputKey];
+
+		if (UMaterialExpressionConstant* ConstExpr1 = Cast<UMaterialExpressionConstant>(InputExpression))
+		{
+			OutValue = ConstExpr1->R;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool FGLTFImportMaterialMatchMakingHelper::GetValue(const FString& InputKey, FGLTFJsonColor3& OutValue)
+{
+	FLinearColor Value;
+
+	if (bMaterialInstance)
+	{
+		if (!Material->GetVectorParameterValue(*InputKey, Value, true))
+		{
+			return false;
+		}
+	}
+	else
+	{
+		if (!Inputs.Contains(InputKey))
+		{
+			return false;
+		}
+
+		UMaterialExpression* InputExpression = Inputs[InputKey];
+
+		if (UMaterialExpressionConstant3Vector* ConstExpr3 = Cast<UMaterialExpressionConstant3Vector>(InputExpression))
+		{
+			Value = ConstExpr3->Constant;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	OutValue = FGLTFCoreUtilities::ConvertColor3(Value);
+
+	return true;
+}
+
+bool FGLTFImportMaterialMatchMakingHelper::GetValue(const FString& InputKey, FGLTFJsonColor4& OutValue, bool HandleAsColor)
+{
+#if GLTF_EXPORT_ENABLE
+	using namespace UE::Interchange::GLTFMaterials::Inputs::PostFix;
+
+	FLinearColor Value;
+
+	if (bMaterialInstance)
+	{
+		if (!Material->GetVectorParameterValue(*InputKey, Value, true))
+		{
+			return false;
+		}
+	}
+	else
+	{
+		if (!Inputs.Contains(InputKey))
+		{
+			if (HandleAsColor)
+			{
+				float Alpha = 1;
+				FGLTFJsonColor3 RGB = FGLTFJsonColor3::White;
+				if (GetValue(InputKey + Color_RGB, RGB) || GetValue(InputKey + Color_A, Alpha))
+				{
+					OutValue = { RGB.R, RGB.G, RGB.B, FMath::Clamp(Alpha, 0.0f, 1.0f) };
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		UMaterialExpression* InputExpression = Inputs[InputKey];
+
+
+		if (UMaterialExpressionConstant4Vector* ConstExpr4 = Cast<UMaterialExpressionConstant4Vector>(InputExpression))
+		{
+			Value = ConstExpr4->Constant;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	if (HandleAsColor)
+	{
+		OutValue = FGLTFCoreUtilities::ConvertColor(Value);
+	}
+	else
+	{
+		OutValue = { Value.R, Value.G, Value.B, Value.A };
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+//To acquire TextureAddress from glTF Imported material TilingMethod values:
+TextureAddress GetTextureAddress(float Value)
+{
+	//0: wrap
+	//1: clamp
+	//2: mirror
+	int ValueInt = FMath::RoundToInt(Value);
+
+	switch (ValueInt)
+	{
+		case 0:     return TextureAddress::TA_Wrap;
+		case 1:     return TextureAddress::TA_Clamp;
+		case 2:	    return TextureAddress::TA_Mirror;
+		default:    return TextureAddress::TA_MAX;
+	}
+}
+
+bool FGLTFImportMaterialMatchMakingHelper::GetValue(const FString& InputKey, FGLTFJsonTextureInfo& OutValue)
+{
+#if GLTF_EXPORT_ENABLE
+	using namespace UE::Interchange::GLTFMaterials::Inputs;
+
+	UTexture* Texture = nullptr;
+
+	if (bMaterialInstance)
+	{
+		if (!Material->GetTextureParameterValue(*InputKey, Texture, true))
+		{
+			return false;
+		}
+	}
+	else
+	{
+
+		if (!Inputs.Contains(InputKey))
+		{
+			return false;
+		}
+
+		UMaterialExpression* InputExpression = Inputs[InputKey];
+
+		if (UMaterialExpressionTextureObject* TextureObject = Cast<UMaterialExpressionTextureObject>(InputExpression))
+		{
+			if (TextureObject->Texture)
+			{
+				Texture = TextureObject->Texture.Get();
+			}
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	if (!Texture)
+	{
+		return false;
+	}
+
+	TextureAddress TextureAddressX = TextureAddress::TA_Wrap; //glTF Importer's default tiling method is Wrap
+	TextureAddress TextureAddressY = TextureAddress::TA_Wrap; //glTF Importer's default tiling method is Wrap
+
+	FGLTFJsonColor4 TilingMethod = FGLTFColor4{ 0.f, 0.f, 0.f, 0.f };
+	if (GetValue(InputKey + PostFix::TilingMethod, TilingMethod, false))
+	{
+		TextureAddressX = GetTextureAddress(TilingMethod.R);
+		TextureAddressY = GetTextureAddress(TilingMethod.G);
+	}
+
+	const bool bSRGB = InputKey == BaseColorTexture || InputKey == EmissiveTexture;
+	OutValue.Index = Builder.AddUniqueTexture(Texture, bSRGB, TextureAddressX, TextureAddressY);
+
+	float UVIndex;
+	if (GetValue(InputKey + PostFix::TexCoord, UVIndex))
+	{
+		OutValue.TexCoord = FMath::RoundToInt(UVIndex);
+	}
+
+	FGLTFJsonColor4 UVOffsetScale = FGLTFColor4{ 0.f, 0.f, 1.f, 1.f };
+	if (GetValue(InputKey + PostFix::OffsetScale, UVOffsetScale, false))
+	{
+		OutValue.Transform.Offset.X = UVOffsetScale.R;
+		OutValue.Transform.Offset.Y = UVOffsetScale.G;
+
+		OutValue.Transform.Scale.X = UVOffsetScale.B;
+		OutValue.Transform.Scale.Y = UVOffsetScale.A;
+	}
+	else
+	{
+		if (GetValue(InputKey + PostFix::OffsetX, UVOffsetScale.R))
+		{
+			OutValue.Transform.Offset.X = UVOffsetScale.R;
+		}
+		if (GetValue(InputKey + PostFix::OffsetY, UVOffsetScale.G))
+		{
+			OutValue.Transform.Offset.Y = UVOffsetScale.G;
+		}
+
+		if (GetValue(InputKey + PostFix::ScaleX, UVOffsetScale.B))
+		{
+			OutValue.Transform.Scale.X = UVOffsetScale.B;
+		}
+		if (GetValue(InputKey + PostFix::ScaleY, UVOffsetScale.A))
+		{
+			OutValue.Transform.Scale.Y = UVOffsetScale.A;
+		}
+	}
+
+	float UVRotation;
+	if (GetValue(InputKey + PostFix::Rotation, UVRotation))
+	{
+		OutValue.Transform.Rotation = UVRotation;
+	}
+
+	if (!Builder.ExportOptions->bExportTextureTransforms && !OutValue.Transform.IsExactlyDefault())
+	{
+		Builder.LogWarning(FString::Printf(
+			TEXT("Texture coordinates [%d] in %s for material %s are transformed, but texture transform is disabled by export options"),
+			OutValue.TexCoord,
+			*InputKey,
+			*Material->GetName()));
+		OutValue.Transform = {};
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+void FGLTFImportMaterialMatchMakingHelper::Process()
+{
+#if GLTF_EXPORT_ENABLE
+	using namespace UE::Interchange::GLTFMaterials;
+
+	GetValue(Inputs::AlphaCutoff, JsonMaterial.AlphaCutoff);
+
+	if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::SpecularGlossiness)
+	{
+		GetValue(Inputs::DiffuseTexture, JsonMaterial.PBRSpecularGlossiness.DiffuseTexture);
+		GetValue(Inputs::DiffuseFactor, JsonMaterial.PBRSpecularGlossiness.DiffuseFactor, true);
+	}
+	else
+	{
+		GetValue(Inputs::BaseColorTexture, JsonMaterial.PBRMetallicRoughness.BaseColorTexture);
+		GetValue(Inputs::BaseColorFactor, JsonMaterial.PBRMetallicRoughness.BaseColorFactor, true);
+	}
+
+	if (JsonMaterial.ShadingModel != EGLTFJsonShadingModel::Unlit)
+	{
+		if (JsonMaterial.ShadingModel != EGLTFJsonShadingModel::SpecularGlossiness)
+		{
+			GetValue(Inputs::MetallicRoughnessTexture, JsonMaterial.PBRMetallicRoughness.MetallicRoughnessTexture);
+			GetValue(Inputs::MetallicFactor, JsonMaterial.PBRMetallicRoughness.MetallicFactor);
+			GetValue(Inputs::RoughnessFactor, JsonMaterial.PBRMetallicRoughness.RoughnessFactor);
+
+			GetValue(Inputs::SpecularFactor, JsonMaterial.Specular.Factor);
+			GetValue(Inputs::SpecularTexture, JsonMaterial.Specular.Texture);
+
+			GetValue(Inputs::IOR, JsonMaterial.IOR.Value);
+
+			//Iridescence
+			GetValue(Inputs::IridescenceFactor, JsonMaterial.Iridescence.IridescenceFactor);
+			GetValue(Inputs::IridescenceTexture, JsonMaterial.Iridescence.IridescenceTexture);
+			GetValue(Inputs::IridescenceIOR, JsonMaterial.Iridescence.IridescenceIOR);
+			GetValue(Inputs::IridescenceThicknessMinimum, JsonMaterial.Iridescence.IridescenceThicknessMinimum);
+			GetValue(Inputs::IridescenceThicknessMaximum, JsonMaterial.Iridescence.IridescenceThicknessMaximum);
+			GetValue(Inputs::IridescenceThicknessTexture, JsonMaterial.Iridescence.IridescenceThicknessTexture);
+		}
+
+		//Importer does not support Emissive for Transmission at the moment
+		GetValue(Inputs::EmissiveTexture, JsonMaterial.EmissiveTexture);
+		GetValue(Inputs::EmissiveFactor, JsonMaterial.EmissiveFactor);
+		GetValue(Inputs::EmissiveStrength, JsonMaterial.EmissiveStrength);
+
+		GetValue(Inputs::NormalTexture, JsonMaterial.NormalTexture);
+		GetValue(Inputs::NormalScale, JsonMaterial.NormalTexture.Scale);
+
+		GetValue(Inputs::OcclusionTexture, JsonMaterial.OcclusionTexture);
+		GetValue(Inputs::OcclusionStrength, JsonMaterial.OcclusionTexture.Strength);
+
+		if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::ClearCoat)
+		{
+			GetValue(Inputs::ClearCoatTexture, JsonMaterial.ClearCoat.ClearCoatTexture);
+			GetValue(Inputs::ClearCoatFactor, JsonMaterial.ClearCoat.ClearCoatFactor);
+
+			GetValue(Inputs::ClearCoatRoughnessTexture, JsonMaterial.ClearCoat.ClearCoatRoughnessTexture);
+			GetValue(Inputs::ClearCoatRoughnessFactor, JsonMaterial.ClearCoat.ClearCoatRoughnessFactor);
+
+			GetValue(Inputs::ClearCoatNormalTexture, JsonMaterial.ClearCoat.ClearCoatNormalTexture);
+			GetValue(Inputs::ClearCoatNormalScale, JsonMaterial.ClearCoat.ClearCoatNormalTexture.Scale);
+		}
+		else if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::Sheen)
+		{
+			GetValue(Inputs::SheenColorFactor, JsonMaterial.Sheen.ColorFactor);
+			GetValue(Inputs::SheenColorTexture, JsonMaterial.Sheen.ColorTexture);
+			GetValue(Inputs::SheenRoughnessFactor, JsonMaterial.Sheen.RoughnessFactor);
+			GetValue(Inputs::SheenRoughnessTexture, JsonMaterial.Sheen.RoughnessTexture);
+		}
+		else if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::Transmission)
+		{
+			GetValue(Inputs::TransmissionFactor, JsonMaterial.Transmission.Factor);
+			GetValue(Inputs::TransmissionTexture, JsonMaterial.Transmission.Texture);
+
+			float AlphaMode;
+			if (GetValue(Inputs::AlphaMode, AlphaMode))
+			{
+				JsonMaterial.AlphaMode = EGLTFJsonAlphaMode(FMath::RoundToInt(AlphaMode));
+			}
+		}
+		else if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::SpecularGlossiness)
+		{
+			GetValue(Inputs::SpecFactor, JsonMaterial.PBRSpecularGlossiness.SpecularFactor);
+			GetValue(Inputs::GlossinessFactor, JsonMaterial.PBRSpecularGlossiness.GlossinessFactor);
+			GetValue(Inputs::SpecularGlossinessTexture, JsonMaterial.PBRSpecularGlossiness.SpecularGlossinessTexture);
+		}
+	}
+#endif
 }

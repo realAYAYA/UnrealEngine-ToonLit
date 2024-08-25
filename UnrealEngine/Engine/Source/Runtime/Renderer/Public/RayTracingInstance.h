@@ -75,7 +75,8 @@ struct FRayTracingInstance
 			return MaterialsView;
 		}
 	}
-
+	
+	UE_DEPRECATED(5.4, "MaskAndFlags is automatically built and cached in RayTracing.cpp")
 	FRayTracingMaskAndFlags MaskAndFlags;
 
 	/** Whether local bounds scale and center translation should be applied to the instance transform. */
@@ -127,16 +128,15 @@ struct FRayTracingInstance
 	/** When instance transforms are only available in GPU, this SRV holds them. */
 	FShaderResourceViewRHIRef InstanceGPUTransformsSRV;
 
-	/** Build mask and flags based on materials specified in Materials. You can still override Mask after calling this function.*/
-	UE_DEPRECATED(5.2, "Use BuildInstanceMaskAndFlags() with PrimitiveSceneProxy instead. Calling this function leads to incorrect path tracing result")
-	void BuildInstanceMaskAndFlags(ERHIFeatureLevel::Type FeatureLevel);
+	//disable deprecation warnings for default constructors
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FRayTracingInstance() = default;
+	FRayTracingInstance(const FRayTracingInstance&) = default;
+	FRayTracingInstance& operator=(const FRayTracingInstance&) = default;
+	FRayTracingInstance(FRayTracingInstance&&) = default;
+	FRayTracingInstance& operator=(FRayTracingInstance&&) = default;
+	~FRayTracingInstance() = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 };
 
-
-/** Build mask and flags based on materials specified in Materials. You can still override Mask after calling this function. */
-UE_DEPRECATED(5.2, "Use BuildRayTracingInstanceMaskAndFlags() with FSceneProxyRayTracingMaskInfo instead. Calling this function leads to incorrect path tracing result")
-FRayTracingMaskAndFlags BuildRayTracingInstanceMaskAndFlags(TArrayView<const FMeshBatch> MeshBatches, ERHIFeatureLevel::Type FeatureLevel, ERayTracingInstanceLayer InstanceLayer = ERayTracingInstanceLayer::NearField, uint8 ExtraMask = 0);
-
-UE_DEPRECATED(5.2, "Use BlendModeToRayTracingInstanceMask() instead. Calling this function leads to incorrect path tracing result.")
-uint8 ComputeBlendModeMask(const EBlendMode BlendMode);
 #endif

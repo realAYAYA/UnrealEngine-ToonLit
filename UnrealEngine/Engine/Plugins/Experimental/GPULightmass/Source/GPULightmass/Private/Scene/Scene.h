@@ -76,9 +76,9 @@ struct FCachedRayTracingSceneData
 	TRefCountPtr<FRDGPooledBuffer> GPUSceneInstancePayloadDataBuffer;
 	TRefCountPtr<FRDGPooledBuffer> GPUSceneLightDataBuffer;
 
-	void SetupViewAndSceneUniformBufferFromSceneRenderState(FRDGBuilder& GraphBuilder, class FSceneRenderState& Scene);
+	void SetupViewAndSceneUniformBufferFromSceneRenderState(FRDGBuilder& GraphBuilder, class FSceneRenderState& Scene, FSceneUniformBuffer& SceneUniforms);
 	void SetupFromSceneRenderState(class FSceneRenderState& Scene);
-	void RestoreCachedBuffers(FRDGBuilder& GraphBuilder, class FSceneRenderState& Scene);
+	void RestoreCachedBuffers(FRDGBuilder& GraphBuilder, FSceneUniformBuffer& SceneUniforms);
 };
 
 class FSceneRenderState
@@ -88,8 +88,6 @@ public:
 
 	void RenderThreadInit();
 	void BackgroundTick();
-
-	FSceneUniformBuffer SceneUniforms;
 
 	FRayTracingSceneRHIRef RayTracingScene;
 	FShaderResourceViewRHIRef RayTracingSceneSRV;
@@ -120,7 +118,7 @@ public:
 
 	int32 GetPrimitiveIdForGPUScene(const FGeometryInstanceRenderStateRef& GeometryInstanceRef) const;
 
-	bool SetupRayTracingScene(FRDGBuilder& GraphBuilder, int32 LODIndex = INDEX_NONE);
+	bool SetupRayTracingScene(FRDGBuilder& GraphBuilder, FSceneUniformBuffer& SceneUniforms, int32 LODIndex = INDEX_NONE);
 	void DestroyRayTracingScene();
 
 	void CalculateDistributionPrefixSumForAllLightmaps();

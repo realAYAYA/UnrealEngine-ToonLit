@@ -9,7 +9,7 @@
 // Helper macros
 #define DECLARE_ANIM_DECORATOR_INTERFACE(InterfaceName, InterfaceNameHash) \
 	/* Globally unique UID for this interface */ \
-	static constexpr UE::AnimNext::FDecoratorInterfaceUID InterfaceUID = UE::AnimNext::FDecoratorInterfaceUID(TEXT(#InterfaceName), InterfaceNameHash); \
+	static constexpr UE::AnimNext::FDecoratorInterfaceUID InterfaceUID = UE::AnimNext::FDecoratorInterfaceUID(InterfaceNameHash, TEXT(#InterfaceName)); \
 	virtual UE::AnimNext::FDecoratorInterfaceUID GetInterfaceUID() const override { return InterfaceUID; }
 
 namespace UE::AnimNext
@@ -28,7 +28,7 @@ namespace UE::AnimNext
 		// The globally unique UID for this interface
 		// Derived types will have their own InterfaceUID member that hides/aliases/shadows this one
 		// @see DECLARE_ANIM_DECORATOR_INTERFACE
-		static constexpr FDecoratorInterfaceUID InterfaceUID = FDecoratorInterfaceUID(TEXT("IDecoratorInterface"), 0x402f6df4);
+		static constexpr FDecoratorInterfaceUID InterfaceUID = FDecoratorInterfaceUID(0x402f6df4, TEXT("IDecoratorInterface"));
 
 		// Returns the globally unique UID for this interface
 		virtual FDecoratorInterfaceUID GetInterfaceUID() const { return InterfaceUID; };

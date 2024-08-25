@@ -26,6 +26,7 @@
 
 SDMXChannelsMonitor::SDMXChannelsMonitor()
 	: UniverseID(1)
+	, AnalyticsProvider("ChannelsMonitor")
 {}
 
 BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION

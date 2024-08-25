@@ -16,7 +16,9 @@
 namespace AVEncoder
 {
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoDecoderVP8::Register(FVideoDecoderFactory& InFactory)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 }
 

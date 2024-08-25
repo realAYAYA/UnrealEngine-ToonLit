@@ -103,6 +103,11 @@ enum class EContentBrowserFolderAttributes : uint8
 	 * This folder has source (uncooked) content that will appear in the Content Browser view.
 	 */
 	HasSourceContent = 1<<3,
+
+	/** 
+	 * This folder is inside a plugin.
+	 */
+	IsInPlugin = 1<<4,
 };
 ENUM_CLASS_FLAGS(EContentBrowserFolderAttributes);
 
@@ -133,6 +138,7 @@ public:
 
 		void RemoveUnusedCachedData(const FContentBrowserDataFilterCacheIDOwner& IDOwner, TArrayView<const FName> InVirtualPathsInUse, const FContentBrowserDataFilter& DataFilter);
 		void ClearCachedData(const FContentBrowserDataFilterCacheIDOwner& IDOwner);
+		void Reset();
 
 	private:
 		friend UContentBrowserAssetDataSource;
@@ -417,9 +423,9 @@ private:
 
 	void OnObjectPreSave(UObject* InObject, class FObjectPreSaveContext InObjectPreSaveContext);
 
-	void OnPathAdded(const FString& InPath);
+	void OnPathsAdded(TConstArrayView<FStringView> Paths);
 
-	void OnPathRemoved(const FString& InPath);
+	void OnPathsRemoved(TConstArrayView<FStringView> Paths);
 
 	void OnPathPopulated(const FAssetData& InAssetData);
 

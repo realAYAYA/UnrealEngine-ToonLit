@@ -16,10 +16,13 @@
 #include "DisplayClusterConfigurationTypes_PostRender.h"
 #include "DisplayClusterConfigurationTypes_Postprocess.h"
 #include "DisplayClusterConfigurationTypes_OCIO.h"
+#include "DisplayClusterConfigurationTypes_ViewportOverscan.h"
 
 #include "Containers/DisplayClusterShader_Enums.h"
 
 #include "DisplayClusterConfigurationTypes_ICVFX.generated.h"
+
+class UCineCameraComponent;
 
 USTRUCT(Blueprintable)
 struct DISPLAYCLUSTERCONFIGURATION_API FDisplayClusterConfigurationICVFX_LightcardCustomOCIO
@@ -68,13 +71,11 @@ public:
 	/** Return InCamera OCIO configuration for the specified cluster node. Return nullptr if no OCIO. */
 	const FOpenColorIOColorConversionSettings* FindOCIOConfiguration(const FString& InClusterNodeId) const;
 
-#if WITH_EDITOR
 	/** Returns true if the InCamera OCIO configuration is the same for the input nodes. */
-	bool IsInnerFrustumViewportSettingsEqual_Editor(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
+	bool IsInnerFrustumViewportSettingsEqual(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
 
 	/** Returns true if the Chromakey OCIO configuration is the same for the input nodes. */
-	bool IsChromakeyViewportSettingsEqual_Editor(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
-#endif
+	bool IsChromakeyViewportSettingsEqual(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
 
 public:
 	/** OCIO Display look configuration for all nodes */
@@ -515,6 +516,10 @@ public:
 	// Advanced render settings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NDisplay)
 	FDisplayClusterConfigurationICVFX_CameraAdvancedRenderSettings AdvancedRenderSettings;
+
+public:
+	/** Propagates general render related settings to the view info. */
+	void SetupViewInfo(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, FMinimalViewInfo& InOutViewInfo) const;
 };
 
 USTRUCT(BlueprintType)
@@ -557,6 +562,49 @@ public:
 	/** Motion Blur Settings Override */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NDisplay, meta = (DisplayName = "Motion Blur Settings Override"))
 	FDisplayClusterConfigurationICVFX_CameraMotionBlurOverridePPS MotionBlurPPS;
+
+public:
+	/** Propagates Motion Blur related settings to the view info. */
+	void SetupViewInfo(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, FMinimalViewInfo& InOutViewInfo) const;
+};
+
+USTRUCT(BlueprintType)
+struct DISPLAYCLUSTERCONFIGURATION_API FDisplayClusterConfigurationICVFX_CameraDepthOfField
+{
+	GENERATED_BODY()
+
+public:
+	/** Enables depth of field correction on the wall, which dynamically adjusts the size of the defocus circle of confusion to compensate for the real-world camera blur when shooting the wall */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = NDisplay)
+	bool bEnableDepthOfFieldCompensation = false;
+
+	/** Allows the ICVFX camera to automatically compute its distance from the stage walls using ray casting every tick */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = NDisplay)
+	bool bAutomaticallySetDistanceToWall = true;
+
+	/** The distance from the ICVFX camera to the wall it is pointing at */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = NDisplay, meta=(EditCondition="!bAutomaticallySetDistanceToWall"))
+	float DistanceToWall = 0.0;
+
+	/** An offset applied to DistanceToWall (applied regardless of whether DistanceToWall is automatically set) */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = NDisplay)
+	float DistanceToWallOffset = 0.0;
+
+	/** A gain factor that scales the amount of depth of field blur rendered on the wall */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = NDisplay, meta = (UIMin=0.0, UIMax=4.0, ClampMin=0.0, ClampMax=4.0))
+	float DepthOfFieldGain = 1.0;
+
+	/** Look-up texture that encodes the specific amount of compensation used for each combination of wall distance and object distance */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = NDisplay)
+	TSoftObjectPtr<UTexture2D> CompensationLUT = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/nDisplay/DepthOfField/T_LUT_PointRMS.T_LUT_PointRMS")));
+
+	/** Actual LUT to use with the depth of field pipeline, copied and modified from CompensationLUT */
+	UPROPERTY(Transient)
+	UTexture2D* DynamicCompensationLUT = nullptr;
+
+public:
+	/** Processes the compensation LUT by adding any needed DoF gain and writes the result to the dynamic compensation LUT texture */
+	void UpdateDynamicCompensationLUT();
 };
 
 USTRUCT(BlueprintType)
@@ -640,12 +688,33 @@ struct DISPLAYCLUSTERCONFIGURATION_API FDisplayClusterConfigurationICVFX_CameraC
 	/** Pixel/Percent value to alter the frustum to the bottom */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NDisplay, meta = (DisplayName = "Bottom", ClampMin = "-500.0", UIMin = "-500.0", ClampMax = "500.0", UIMax = "500.0"))
 	float Bottom = 0;
+
+public:
+	/** Propagates Custom Frustum related settings to the view info. */
+	void SetupViewInfo(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings, FMinimalViewInfo& InOutViewInfo) const;
+
+	/** Get camera FOV multiplier. */
+	float GetCameraFieldOfViewMultiplier(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
+
+	/** Get camera adapt resolution ratio. */
+	float GetCameraAdaptResolutionRatio(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
+
 };
 
 USTRUCT(BlueprintType)
 struct DISPLAYCLUSTERCONFIGURATION_API FDisplayClusterConfigurationICVFX_CameraSettings
 {
 	GENERATED_BODY()
+
+public:
+	/**
+	* Returns true if this camera is active
+	* @param InConfigurationData - cluster configuration data
+	* @param InClusterNodeId     - current cluster node name
+	* 
+	* @return - true if this camera can be used
+	**/
+	bool IsICVFXEnabled(const class UDisplayClusterConfigurationData& InConfigurationData, const FString& InClusterNodeId) const;
 
 public:
 	FDisplayClusterConfigurationICVFX_CameraSettings();
@@ -656,31 +725,26 @@ public:
 	/** Return Chromakey OCIO configuration for the specified cluster node. Return nullptr if no OCIO. */
 	const FOpenColorIOColorConversionSettings* FindChromakeyOCIOConfiguration(const FString& InClusterNodeId) const;
 
-#if WITH_EDITOR
-	bool IsInnerFrustumViewportSettingsEqual_Editor(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
-	bool IsChromakeyViewportSettingsEqual_Editor(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
-#endif
+	bool IsInnerFrustumViewportSettingsEqual(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
+	bool IsChromakeyViewportSettingsEqual(const FString& InClusterNodeId1, const FString& InClusterNodeId2) const;
 
 	/** Return calculated soft edges values. */
-	FVector4 GetCameraSoftEdge(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
-
-	/** Get camera FOV multiplier. */
-	float GetCameraFieldOfViewMultiplier(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
-
-	/** Get camera adapt resolution ratio. */
-	float GetCameraAdaptResolutionRatio(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
+	FVector4 GetCameraSoftEdge(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, const UCineCameraComponent& InCineCameraComponent) const;
 
 	/** Get camera buffer ratio. */
 	float GetCameraBufferRatio(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
 
 	/** Get camera frame size. */
-	FIntPoint GetCameraFrameSize(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
+	FIntPoint GetCameraFrameSize(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, const UCineCameraComponent& InCineCameraComponent) const;
 
 	/** Get camera frame aspect ratio. */
-	float GetCameraFrameAspectRatio(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings) const;
+	float GetCameraFrameAspectRatio(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, const UCineCameraComponent& InCineCameraComponent) const;
 
 	/** Get camera border settings. */
 	bool GetCameraBorder(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, FLinearColor& OutBorderColor, float& OutBorderThickness) const;
+
+	/** Sets up view info for each relevant setting such as render, custom frustrum and motion blur settings. */
+	void SetupViewInfo(const FDisplayClusterConfigurationICVFX_StageSettings& InStageSettings, FMinimalViewInfo& InOutViewInfo);
 
 public:
 	/** Render the inner frustum for this ICVFX camera. */
@@ -711,6 +775,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "In Camera VFX", meta = (DisplayName = "Inner Frustum Offset"))
 	FVector FrustumOffset = FVector::ZeroVector;
 
+	/** Off-axis / off-center projection offset as proportion of screen dimensions. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "In Camera VFX", meta = (DisplayName = "Inner Frustum Projection Offset"))
+	FVector2D OffCenterProjectionOffset = FVector2D::ZeroVector;
+
 	/**Border for the inner frustum. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "In Camera VFX", meta = (DisplayName = "Inner Frustum Border"))
 	FDisplayClusterConfigurationICVFX_CameraBorder Border;
@@ -718,6 +786,10 @@ public:
 	/** Render motion blur more accurately by subtracting blur from camera motion and avoiding amplification of blur by the physical camera. */
 	UPROPERTY(BlueprintReadWrite, BlueprintReadWrite, EditAnywhere, Category = "In Camera VFX")
 	FDisplayClusterConfigurationICVFX_CameraMotionBlur CameraMotionBlur;
+
+	/** Settings that control the depth of field blur applied to the ICVFX image */
+	UPROPERTY(BlueprintReadWrite, BlueprintReadWrite, EditAnywhere, Category = "In Camera VFX")
+	FDisplayClusterConfigurationICVFX_CameraDepthOfField CameraDepthOfField;
 
 	/** Configure global render settings for this viewport */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = NDisplay)

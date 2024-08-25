@@ -61,7 +61,7 @@ namespace Horde.Server.Compute
 		{
 			_redis = redis;
 			_keyPrefix = keyPrefix;
-			_updateChannel = keyPrefix.Append("updates").ToString();
+			_updateChannel = RedisChannel.Literal(keyPrefix.Append("updates").ToString());
 
 			redis.Multiplexer.GetSubscriber().Subscribe(_updateChannel, OnChannelUpdate);
 		}
@@ -116,7 +116,7 @@ namespace Horde.Server.Compute
 		async Task<bool> ReadMessagesAsync(RedisListKey<T> list, List<T> messages)
 		{
 			T? message = await _redis.ListLeftPopAsync(list);
-			while(message != null)
+			while (message != null)
 			{
 				messages.Add(message);
 				message = await _redis.ListLeftPopAsync(list);
@@ -146,7 +146,7 @@ namespace Horde.Server.Compute
 				{
 					if (!_channelWakeEvents.TryGetValue(channelId, out completionSource))
 					{
-						completionSource = new TaskCompletionSource<bool>();
+						completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 						_channelWakeEvents.Add(channelId, completionSource);
 					}
 				}
@@ -154,7 +154,7 @@ namespace Horde.Server.Compute
 				try
 				{
 					// Read the current queue state again, in case it was modified since we registered.
-					if(await ReadMessagesAsync(channel, messages))
+					if (await ReadMessagesAsync(channel, messages))
 					{
 						break;
 					}

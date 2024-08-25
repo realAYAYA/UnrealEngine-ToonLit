@@ -7,6 +7,7 @@
 #include "WorldPartition/WorldPartitionRuntimeHash.h"
 #include "WorldPartition/ContentBundle/ContentBundleLog.h"
 #include "Engine/World.h"
+#include "UObject/Package.h"
 
 #if WITH_EDITOR
 #include "WorldPartition/ContentBundle/ContentBundleWorldSubsystem.h"
@@ -35,12 +36,12 @@ void FContentBundle::DoInitialize()
 		}
 		else
 		{
-			UE_LOG(LogContentBundle, Error, TEXT("%s No streaming object found in package %s."), *ContentBundle::Log::MakeDebugInfoString(*this), *GetExternalStreamingObjectPackagePath());
+			UE_LOG(LogContentBundle, Error, TEXT("%s No streaming object found in package %s. No content will be injected."), *ContentBundle::Log::MakeDebugInfoString(*this), *GetExternalStreamingObjectPackagePath());
 		}
 	}
 	else
 	{
-		UE_LOG(LogContentBundle, Log, TEXT("%s No streaming object found. No content will be injected."), *ContentBundle::Log::MakeDebugInfoString(*this));
+		UE_LOG(LogContentBundle, Log, TEXT("%s Streaming package %s not found. No content will be injected."), *ContentBundle::Log::MakeDebugInfoString(*this), *GetExternalStreamingObjectPackagePath());
 	}
 #endif
 

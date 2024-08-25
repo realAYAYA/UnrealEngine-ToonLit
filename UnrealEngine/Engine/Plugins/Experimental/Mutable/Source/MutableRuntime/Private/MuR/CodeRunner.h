@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "Async/TaskGraphInterfaces.h"
 #include "Containers/Array.h"
 #include "Containers/ContainerAllocationPolicies.h"
 #include "HAL/PlatformCrt.h"
@@ -19,16 +18,10 @@
 #include "MuR/System.h"
 #include "MuR/SystemPrivate.h"
 #include "MuR/Types.h"
+#include "Tasks/Task.h"
 #include "Templates/RefCounting.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/Tuple.h"
-
-// This define could come from MuR/System.h
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-	#include "Tasks/Task.h"
-#else
-	#include "Async/TaskGraphFwd.h"
-#endif
 
 namespace mu::MemoryCounters
 {
@@ -42,30 +35,37 @@ namespace  mu
 	class Parameters;
 	class RangeIndex;
 
-	using EventType = 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-		UE::Tasks::FTaskEvent;
-#else
-		FGraphEventRef;
-#endif
-
-	using TaskType = 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-		UE::Tasks::FTask;
-#else
-		FGraphEventRef;
-#endif
-
     /** Code execution of the mutable virtual machine. */
-    class CodeRunner
+    class CodeRunner : public TSharedFromThis<CodeRunner>
     {
-    public:
-		CodeRunner(const Ptr<const Settings>&, class System::Private*, 
+		// The private token allows only members or friends to call MakeShared.
+		struct FPrivateToken { explicit FPrivateToken() = default; };
+
+	public:
+		static TSharedRef<CodeRunner> Create(
+				const Ptr<const Settings>&, 
+				class System::Private*, 
+				EExecutionStrategy,
+				const TSharedPtr<const Model>&, 
+				const Parameters* pParams,
+				OP::ADDRESS at, uint32 lodMask, uint8 executionOptions, int32 InImageLOD, FScheduledOp::EType);
+
+		// Private constructor to prevent stack allocation. In general we can not call AsShared() if the lifetime is
+		// bounded.
+		explicit CodeRunner(FPrivateToken, 
+			const Ptr<const Settings>&, 
+			class System::Private*, 
 			EExecutionStrategy,
-			const TSharedPtr<const Model>&, const Parameters* pParams,
-			OP::ADDRESS at, uint32 lodMask, uint8 executionOptions, int32 InImageLOD, FScheduledOp::EType );
+			const TSharedPtr<const Model>&, 
+			const Parameters* pParams,
+			OP::ADDRESS at, uint32 lodMask, uint8 executionOptions, int32 InImageLOD, FScheduledOp::EType);
 
     protected:
+		struct FProfileContext
+		{
+			uint32 NumRunOps = 0;
+			uint32 RunOpsPerType[int32(OP_TYPE::COUNT)] = {};
+		};
 
         /** Type of data sometimes stored in the code runner heap to pass info between operation stages. */
         struct FScheduledOpData
@@ -96,9 +96,21 @@ namespace  mu
 					uint8 Mip;
 					float MipValue;
 				} RasterMesh;
+
+				struct
+				{
+					uint16 SizeX;
+					uint16 SizeY;
+					uint16 ScaleXEncodedHalf;
+					uint16 ScaleYEncodedHalf;
+					float MipValue;
+				} ImageTransform;
 			};
             Ptr<RefCounted> Resource;
         };
+
+		// Assertion to know when FScheduledOpData size changes. It is ok to modifiy if needed. 
+		static_assert(sizeof(FScheduledOpData) == 4*4 + sizeof(Ptr<RefCounted>), "FScheduledOpData size changed.");
 
 
         Ptr<RangeIndex> BuildCurrentOpRangeIndex( const FScheduledOp&, const Parameters*, const Model*, int32 ParameterIndex );
@@ -124,13 +136,18 @@ namespace  mu
 
     public:
 
+		struct FExternalImageId
+		{
+			/** If it is an image reference. */
+			int32 ReferenceImageId = -1;
+
+			/** If it is an image parameter.*/
+			FName ParameterId; 
+		};
+
 		//! Load an external image asynchronously, retuns an event to wait for complition and a cleanup function 
 		//! that must be called once the event has completed.
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-		TTuple<UE::Tasks::FTask, TFunction<void()>> LoadExternalImageAsync(FName Id, uint8 MipmapsToSkip, TFunction<void(Ptr<Image>)>& ResultCallback);
-#else
-		TTuple<FGraphEventRef, TFunction<void()>> LoadExternalImageAsync(FName Id, uint8 MipmapsToSkip, TFunction<void(Ptr<Image>)>& ResultCallback);
-#endif
+		TTuple<UE::Tasks::FTask, TFunction<void()>> LoadExternalImageAsync(FExternalImageId Id, uint8 MipmapsToSkip, TFunction<void(Ptr<Image>)>& ResultCallback);
  	    mu::FImageDesc GetExternalImageDesc(FName Id, uint8 MipmapsToSkip);
 
 		/** Settings that may affect the execution of some operations, like image conversion quality. */
@@ -139,15 +156,19 @@ namespace  mu
     protected:
         //! Heap of intermediate data pushed by some instructions and referred by others.
         //! It is not released until no operations are pending.
-		TArray< FScheduledOpData > m_heapData;
-		TArray< FImageDesc > m_heapImageDesc;
+		TArray<FScheduledOpData> m_heapData;
+		TArray<FImageDesc> m_heapImageDesc;
 
 		/** Only used for correct mip skipping with external images. It is the LOD for which the image is build. */
 		int32 ImageLOD;
 
+		UE::Tasks::FTaskEvent RunnerCompletionEvent;
+
+		void Run(TUniquePtr<FProfileContext>&& ProfileContext, bool bForceInlineExecution);
+		void AbortRun();
 	public:
 
-		void Run();
+		UE::Tasks::FTask StartRun(bool bForceInlineExecution);
 
 		//!
 		void GetImageDescResult(FImageDesc& OutDesc);
@@ -200,11 +221,7 @@ namespace  mu
 		public:
 			const FScheduledOp Op;
 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 			UE::Tasks::FTask Event = {};
-#else
-			FGraphEventRef Event = nullptr;
-#endif
 
 			FIssuedTask(const FScheduledOp& InOp) : Op(InOp) {}
 			virtual ~FIssuedTask() {}
@@ -215,12 +232,7 @@ namespace  mu
 			virtual void Complete(CodeRunner*) = 0;
 			virtual bool IsComplete(CodeRunner*)
 			{ 
-				// Event can be null if we forced single-threaded execution.
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 				return !Event.IsValid() || Event.IsCompleted(); 
-#else
-				return !Event.IsValid() || Event->IsComplete();
-#endif
 			}
 		};
 
@@ -231,7 +243,7 @@ namespace  mu
 			int32 RomIndex = -1;
 			ModelReader::OPERATION_ID m_streamID = -1;
 			StreamingDataContainerType m_streamBuffer;
-			TaskType Event;
+			UE::Tasks::FTask Event;
 		};
 
 		class FLoadMeshRomTask : public CodeRunner::FIssuedTask
@@ -569,12 +581,12 @@ namespace  mu
 			return m_pSystem->WorkingMemoryManager.Release(Resource);
 		}
 
-		UE_NODISCARD inline Ptr<Mesh> CreateMesh(int32 BudgetReserveSize = 0)
+		[[nodiscard]] inline Ptr<Mesh> CreateMesh(int32 BudgetReserveSize = 0)
 		{
 			return m_pSystem->WorkingMemoryManager.CreateMesh(BudgetReserveSize);
 		}
 
-		UE_NODISCARD inline Ptr<Mesh> CloneOrTakeOver(Ptr<const Mesh>& Ref)
+		[[nodiscard]] inline Ptr<Mesh> CloneOrTakeOver(Ptr<const Mesh>& Ref)
 		{
 			return m_pSystem->WorkingMemoryManager.CloneOrTakeOver(Ref);
 		}
@@ -747,7 +759,9 @@ namespace  mu
 				Ptr<Image> New = Runner->CreateImage(i->GetSizeX(), i->GetSizeY(), i->GetLODCount(), i->GetFormat(), EInitializationType::NotInitialized);
 				New->Copy(i);
 				return New;
-			}
+			},
+
+			Runner->m_pSystem->ImagePixelFormatOverride
 		);
 	}
 

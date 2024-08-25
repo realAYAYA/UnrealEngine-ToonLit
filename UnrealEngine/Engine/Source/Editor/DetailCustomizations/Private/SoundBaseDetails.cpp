@@ -3,6 +3,7 @@
 #include "SoundBaseDetails.h"
 
 #include "DetailLayoutBuilder.h"
+#include "Modules/ModuleManager.h"
 #include "PropertyHandle.h"
 #include "Sound/AudioSettings.h"
 #include "Sound/SoundBase.h"
@@ -16,5 +17,8 @@ TSharedRef<IDetailCustomization> FSoundBaseDetails::MakeInstance()
 
 void FSoundBaseDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 {
-	// Does nothing currently
+	if (!FModuleManager::Get().IsModuleLoaded("AudioProperties"))
+	{
+		DetailBuilder.HideCategory("AudioProperties");
+	}
 }

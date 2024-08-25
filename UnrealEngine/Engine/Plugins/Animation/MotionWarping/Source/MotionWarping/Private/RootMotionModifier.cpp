@@ -13,7 +13,7 @@
 // FMotionWarpingTarget
 ///////////////////////////////////////////////////////////////
 
-FMotionWarpingTarget::FMotionWarpingTarget(const FName& InName, const USceneComponent* InComp, FName InBoneName, bool bInFollowComponent)
+FMotionWarpingTarget::FMotionWarpingTarget(const FName& InName, const USceneComponent* InComp, FName InBoneName, bool bInFollowComponent, const FVector& InLocOffset, const FRotator& InRotOffset)
 {
 	if (ensure(InComp))
 	{
@@ -21,6 +21,8 @@ FMotionWarpingTarget::FMotionWarpingTarget(const FName& InName, const USceneComp
 		Component = InComp;
 		BoneName = InBoneName;
 		bFollowComponent = bInFollowComponent;
+		LocationOffset = InLocOffset;
+		RotationOffset = InRotOffset;
 
 		FTransform Transform = FTransform::Identity;
 		if (BoneName != NAME_None)
@@ -31,6 +33,8 @@ FMotionWarpingTarget::FMotionWarpingTarget(const FName& InName, const USceneComp
 		{
 			Transform = InComp->GetComponentTransform();
 		}
+
+		Transform = FTransform(RotationOffset, LocationOffset) * Transform;
 
 		Location = Transform.GetLocation();
 		Rotation = Transform.Rotator();
@@ -60,14 +64,17 @@ FTransform FMotionWarpingTarget::GetTargetTrasform() const
 {
 	if (Component.IsValid() && bFollowComponent)
 	{
+		FTransform Transform = FTransform::Identity;
 		if (BoneName != NAME_None)
 		{
-			return FMotionWarpingTarget::GetTargetTransformFromComponent(Component.Get(), BoneName);
+			Transform = FMotionWarpingTarget::GetTargetTransformFromComponent(Component.Get(), BoneName);
 		}
 		else
 		{
-			return Component->GetComponentTransform();
+			Transform = Component->GetComponentTransform();
 		}
+
+		return FTransform(RotationOffset, LocationOffset) * Transform;
 	}
 
 	return FTransform(Rotation, Location);

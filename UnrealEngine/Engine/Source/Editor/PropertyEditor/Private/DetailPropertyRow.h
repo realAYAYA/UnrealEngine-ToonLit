@@ -31,11 +31,13 @@ public:
 	virtual IDetailPropertyRow& ToolTip( const FText& InToolTip ) override;
 	virtual IDetailPropertyRow& ShowPropertyButtons( bool bInShowPropertyButtons ) override;
 	virtual IDetailPropertyRow& EditCondition( TAttribute<bool> EditConditionValue, FOnBooleanValueChanged OnEditConditionValueChanged ) override;
+	virtual IDetailPropertyRow& EditConditionHides(bool bEditConditionHideValue) override;
 	virtual IDetailPropertyRow& IsEnabled(TAttribute<bool> InIsEnabled) override;
 	virtual IDetailPropertyRow& ShouldAutoExpand(bool bForceExpansion) override;
 	virtual IDetailPropertyRow& Visibility( TAttribute<EVisibility> Visibility ) override;
 	virtual IDetailPropertyRow& OverrideResetToDefault(const FResetToDefaultOverride& ResetToDefault) override;
 	virtual IDetailPropertyRow& DragDropHandler(TSharedPtr<IDetailDragDropHandler> InDragDropHandler) override;
+	virtual bool IsExpanded() const override;
 	virtual FDetailWidgetRow& CustomWidget( bool bShowChildren = false ) override;
 	virtual FDetailWidgetDecl* CustomNameWidget() override;
 	virtual FDetailWidgetDecl* CustomValueWidget() override;
@@ -122,6 +124,7 @@ public:
 	EVisibility GetPropertyVisibility() const;
 
 	static void MakeExternalPropertyRowCustomization(TSharedPtr<FStructOnScope> StructData, FName PropertyName, TSharedRef<FDetailCategoryImpl> ParentCategory, struct FDetailLayoutCustomization& OutCustomization, const FAddPropertyParams& Parameters);
+	static void MakeExternalPropertyRowCustomization(TSharedPtr<IStructureDataProvider> StructDataProvider, FName PropertyName, TSharedRef<FDetailCategoryImpl> ParentCategory, struct FDetailLayoutCustomization& OutCustomization, const FAddPropertyParams& Parameters);
 	static void MakeExternalPropertyRowCustomization(const TArray<UObject*>& InObjects, FName PropertyName, TSharedRef<FDetailCategoryImpl> ParentCategory, struct FDetailLayoutCustomization& OutCustomization, const FAddPropertyParams& Parameters);
 
 private:
@@ -149,6 +152,16 @@ private:
 	 * @return Whether or not this row is enabled
 	 */
 	bool GetEnabledState() const;
+
+	/**
+	 * @return true if this row's edit condition has been met
+	 */
+	bool IsEditConditionMet() const;
+
+	/**
+	 * @return true if this row should be shown/hidden based on the edit condition state
+	 */
+	bool IsOnlyVisibleWhenEditConditionMet() const;
 
 	/** 
 	 * Looks up and caches (if not already) the associated type interface, and then returns it.
@@ -216,6 +229,8 @@ private:
 	TAttribute<bool> CustomEditConditionValue;
 	/** User customized edit condition change handler. */
 	FOnBooleanValueChanged CustomEditConditionValueChanged;
+	/** User customized edit condition hides specifier */
+	bool bCustomEditConditionHides = false;
 	/** User customized reset to default */
 	TOptional<FResetToDefaultOverride> CustomResetToDefault;
 	/** User customized drag/drop handler */

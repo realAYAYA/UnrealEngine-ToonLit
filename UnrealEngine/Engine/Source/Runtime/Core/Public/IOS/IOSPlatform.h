@@ -45,6 +45,7 @@ typedef FIOSPlatformTypes FPlatformTypes;
 #define PLATFORM_HAS_BSD_TIME							1
 #define PLATFORM_HAS_BSD_IPV6_SOCKETS					1
 #define PLATFORM_HAS_BSD_SOCKET_FEATURE_MSG_DONTWAIT	1
+#define PLATFORM_HAS_MULTITHREADED_PREMAIN				1
 #define PLATFORM_MAX_FILEPATH_LENGTH_DEPRECATED			IOS_MAX_PATH
 #define PLATFORM_SUPPORTS_TEXTURE_STREAMING				1
 #define PLATFORM_BUILTIN_VERTEX_HALF_FLOAT				0
@@ -74,19 +75,14 @@ typedef FIOSPlatformTypes FPlatformTypes;
 #define PLATFORM_NEEDS_RHIRESOURCELIST					0
 #define PLATFORM_SUPPORTS_GEOMETRY_SHADERS				0
 #define PLATFORM_SUPPORTS_VIRTUAL_TEXTURE_STREAMING		1
+#define PLATFORM_SUPPORTS_BINDLESS_RENDERING			0
 
 #define PLATFORM_GLOBAL_LOG_CATEGORY					LogIOS
 
-#define PLATFORM_BREAK()                                __builtin_trap()
+#define PLATFORM_BREAK()                                __builtin_debugtrap()
 
 #define PLATFORM_CODE_SECTION(Name)						__attribute__((section("__TEXT,__" Name ",regular,pure_instructions"))) \
 														__attribute__((aligned(4)))
-
-#if __has_feature(cxx_decltype_auto)
-	#define PLATFORM_COMPILER_HAS_DECLTYPE_AUTO 1
-#else
-	#define PLATFORM_COMPILER_HAS_DECLTYPE_AUTO 0
-#endif
 
 //mallocpoison not safe with aligned ansi allocator.  returns the larger unaligned size during Free() which causes writes off the end of the allocation.
 #define UE_USE_MALLOC_FILL_BYTES 0 

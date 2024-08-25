@@ -19,9 +19,9 @@ bool FPolyglotTextSource::GetNativeCultureName(const ELocalizedTextSourceCategor
 
 	if (FCultureInfo* CultureInfo = AvailableCultureInfo.Find(InCategory))
 	{
-		for (const auto& NativeCulturePair : CultureInfo->NativeCultures)
+		if (CultureInfo->NativeCultures.Num() > 0)
 		{
-			OutNativeCultureName = NativeCulturePair.Key;
+			OutNativeCultureName = CultureInfo->NativeCultures.CreateConstIterator()->Key;
 			return true;
 		}
 	}

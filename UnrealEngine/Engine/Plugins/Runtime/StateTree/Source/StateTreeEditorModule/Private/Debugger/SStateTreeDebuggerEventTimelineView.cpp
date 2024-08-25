@@ -50,15 +50,18 @@ int32 SStateTreeDebuggerEventTimelineView::PaintEvents(const FGeometry& Allotted
 
 				FVector2D EventSize = EventBrush->GetImageSize();
 
-				const float XStart = RangeToScreen.InputToLocalX(Window.TimeStart);
-				const float XEnd = RangeToScreen.InputToLocalX(Window.TimeEnd);
-				const float Y = (AllottedGeometry.Size.Y - EventSize.Y) / 2;
+				const float XStart = RangeToScreen.InputToLocalX(static_cast<float>(Window.TimeStart));
+				const float XEnd = RangeToScreen.InputToLocalX(static_cast<float>(Window.TimeEnd));
+				const float Y = static_cast<float>(AllottedGeometry.Size.Y - EventSize.Y) / 2.f;
 
 				// window bar
+				constexpr float HSizeReduction = 2.f;
+				constexpr float VSizeReduction = 2.f;
+				constexpr float VerticalOffset = 0.5f * VSizeReduction;
 				FSlateDrawElement::MakeBox
 				(OutDrawElements,
 					LayerId++,
-					AllottedGeometry.ToPaintGeometry(FVector2D(XEnd - XStart, EventSize.Y - 2), FSlateLayoutTransform(FVector2D(XStart, Y + 1))),
+					AllottedGeometry.ToPaintGeometry(FVector2f((XEnd - XStart) - HSizeReduction, EventSize.Y - VSizeReduction), FSlateLayoutTransform(FVector2f(XStart, Y + VerticalOffset))),
 					Brush,
 					ESlateDrawEffect::None,
 					Window.Color);
@@ -102,9 +105,9 @@ int32 SStateTreeDebuggerEventTimelineView::PaintEvents(const FGeometry& Allotted
 
 				FVector2D EventSize = EventBrush->GetImageSize();
 
-				float X = RangeToScreen.InputToLocalX(Point.Time);
-				X = X - EventSize.X / 2;
-				float Y = (AllottedGeometry.Size.Y - EventSize.Y) / 2;
+				float X = RangeToScreen.InputToLocalX(static_cast<float>(Point.Time));
+				X = X - static_cast<float>(EventSize.X) / 2.f;
+				float Y = (AllottedGeometry.GetLocalSize().Y - static_cast<float>(EventSize.Y)) / 2.f;
 				if (Point.Time == PrevPointTime)
 				{
 					OverlappingPointCount++;

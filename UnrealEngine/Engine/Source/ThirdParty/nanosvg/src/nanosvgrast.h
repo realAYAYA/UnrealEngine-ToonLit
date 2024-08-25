@@ -22,6 +22,23 @@
  *
  */
 
+#pragma once
+
+
+#include "HAL/Platform.h"
+
+#if PLATFORM_WINDOWS
+#define NSVG_EXPORT __declspec(dllexport)
+#elif PLATFORM_MAC
+#define NSVG_EXPORT __attribute__((visibility("default")))
+#elif PLATFORM_LINUX
+#define NSVG_EXPORT __attribute__((visibility("default")))
+#elif PLATFORM_CONSOLE_DYNAMIC_LINK
+#define NSVG_EXPORT __declspec(dllexport)
+#else
+#define NSVG_EXPORT
+#endif
+
 #ifndef NANOSVGRAST_H
 #define NANOSVGRAST_H
 
@@ -43,7 +60,7 @@ extern "C" {
 	*/
 
 	// Allocated rasterizer context.
-	NSVGrasterizer* nsvgCreateRasterizer();
+	NSVG_EXPORT NSVGrasterizer* nsvgCreateRasterizer();
 
 	// Rasterizes SVG image, returns RGBA image (non-premultiplied alpha)
 	//   r - pointer to rasterizer context
@@ -54,15 +71,15 @@ extern "C" {
 	//   w - width of the image to render
 	//   h - height of the image to render
 	//   stride - number of bytes per scaleline in the destination buffer
-	void nsvgRasterize(NSVGrasterizer* r,
+	NSVG_EXPORT void nsvgRasterize(NSVGrasterizer* r,
 		NSVGimage* image, float tx, float ty, float scale,
 		unsigned char* dst, int w, int h, int stride);
-	void nsvgRasterizeFull(NSVGrasterizer* r, NSVGimage* image,
+	NSVG_EXPORT void nsvgRasterizeFull(NSVGrasterizer* r, NSVGimage* image,
 		float tx, float ty, float scalex, float scaley,
 		unsigned char* dst, int w, int h, int stride);
 
 	// Deletes rasterizer context.
-	void nsvgDeleteRasterizer(NSVGrasterizer*);
+	NSVG_EXPORT void nsvgDeleteRasterizer(NSVGrasterizer*);
 
 
 #ifdef __cplusplus

@@ -59,9 +59,13 @@ struct FNameEntryId
 		return Value == 0;
 	}
 
-	/** Slow alphabetical order that is stable / deterministic over process runs */
+	/** Slow alphabetical order that is stable / deterministic over process runs, ignores case */
 	CORE_API int32 CompareLexical(FNameEntryId Rhs) const;
 	bool LexicalLess(FNameEntryId Rhs) const { return CompareLexical(Rhs) < 0; }
+
+	/** Slow alphabetical order that is stable / deterministic over process runs, case-sensitive */
+	CORE_API int32 CompareLexicalSensitive(FNameEntryId Rhs) const;
+	bool LexicalSensitiveLess(FNameEntryId Rhs) const { return CompareLexicalSensitive(Rhs) < 0; }
 
 	/** Fast non-alphabetical order that is only stable during this process' lifetime */
 	int32 CompareFast(FNameEntryId Rhs) const { return Value - Rhs.Value; };
@@ -760,10 +764,11 @@ public:
 	 *
 	 * @return	true if the name is valid
 	 */
-	bool IsValidXName( const FString& InInvalidChars = INVALID_NAME_CHARACTERS, FText* OutReason = nullptr, const FText* InErrorCtx = nullptr ) const
+	bool IsValidXName( const FString& InInvalidChars, FText* OutReason = nullptr, const FText* InErrorCtx = nullptr ) const
 	{
 		return IsValidXName(*this, InInvalidChars, OutReason, InErrorCtx);
 	}
+	CORE_API bool IsValidXName() const;
 
 	/**
 	 * Takes an FName and checks to see that it follows the rules that Unreal requires.
@@ -773,10 +778,11 @@ public:
 	 *
 	 * @return	true if the name is valid
 	 */
-	bool IsValidXName( FText& OutReason, const FString& InInvalidChars = INVALID_NAME_CHARACTERS ) const
+	bool IsValidXName( FText& OutReason, const FString& InInvalidChars ) const
 	{
 		return IsValidXName(*this, InInvalidChars, &OutReason);
 	}
+	CORE_API bool IsValidXName( FText& OutReason ) const;
 
 	/**
 	 * Takes an FName and checks to see that it follows the rules that Unreal requires for object names.
@@ -785,10 +791,7 @@ public:
 	 *
 	 * @return	true if the name is valid
 	 */
-	bool IsValidObjectName( FText& OutReason ) const
-	{
-		return IsValidXName(*this, INVALID_OBJECTNAME_CHARACTERS, &OutReason);
-	}
+	CORE_API bool IsValidObjectName( FText& OutReason ) const;
 
 	/**
 	 * Takes an FName and checks to see that it follows the rules that Unreal requires for package or group names.
@@ -798,10 +801,7 @@ public:
 	 *
 	 * @return	true if the name is valid
 	 */
-	bool IsValidGroupName( FText& OutReason, bool bIsGroupName=false ) const
-	{
-		return IsValidXName(*this, INVALID_LONGPACKAGE_CHARACTERS, &OutReason);
-	}
+	CORE_API bool IsValidGroupName( FText& OutReason, bool bIsGroupName=false ) const;
 
 	/**
 	 * Printing FNames in logging or on screen can be problematic when they contain Whitespace characters such as \n and \r,
@@ -1011,6 +1011,8 @@ public:
 
 	CORE_API static void DisplayHash( class FOutputDevice& Ar );
 	CORE_API static FString SafeString(FNameEntryId InDisplayIndex, int32 InstanceNumber = NAME_NO_NUMBER_INTERNAL);
+
+	CORE_API static void Reserve(uint32 NumBytes, uint32 NumNames);
 
 	/**
 	 * @return Size of all name entries.
@@ -1500,10 +1502,7 @@ FORCEINLINE FScriptName NameToScriptName(FName InName)
 	return FScriptName(InName);
 }
 
-FORCEINLINE FString LexToString(const FName& Name)
-{
-	return Name.ToString();
-}
+CORE_API FString LexToString(const FName& Name);
 
 FORCEINLINE void LexFromString(FName& Name, const TCHAR* Str)
 {
@@ -1580,7 +1579,7 @@ class FLazyName
 {
 public:
 	FLazyName()
-		: Either(FNameEntryId())
+		: Either(FNameEntryId(), FNameEntryId())
 	{}
 
 	/** @param Literal must be a string literal */
@@ -1600,7 +1599,7 @@ public:
 	{}
 
 	explicit FLazyName(FName Name)
-		: Either(Name.GetComparisonIndex())
+		: Either(Name.GetComparisonIndex(), Name.GetDisplayIndex())
 		, Number(Name.GetNumber())
 	{}
 	
@@ -1616,6 +1615,7 @@ private:
 	{
 		// NOTE: uses high bit of pointer for flag; this may be an issue in future when high byte of address may be used for features like hardware ASAN
 		static constexpr uint64 LiteralFlag = uint64(1) << (sizeof(uint64) * 8 - 1);
+		static constexpr uint32 DisplayNameShift = 32;
 
 		explicit FLiteralOrName(const ANSICHAR* Literal)
 			: Int(reinterpret_cast<uint64>(Literal) | LiteralFlag)
@@ -1625,9 +1625,13 @@ private:
 			: Int(reinterpret_cast<uint64>(Literal) | LiteralFlag)
 		{}
 
-		explicit FLiteralOrName(FNameEntryId Name)
-			: Int(Name.ToUnstableInt())
-		{}
+		explicit FLiteralOrName(FNameEntryId ComparisionId, FNameEntryId DisplayId)
+			: Int(ComparisionId.ToUnstableInt() |
+				(WITH_CASE_PRESERVING_NAME ? ((static_cast<uint64>(DisplayId.ToUnstableInt()) << DisplayNameShift)) : 0))
+		{
+			// FName indices fit within 31 bits -> (DisplayId & LiteralFlag) == 0 -> IsName() == true.
+			checkName(IsName());
+		}
 
 		bool IsName() const
 		{
@@ -1639,9 +1643,18 @@ private:
 			return (LiteralFlag & Int) != 0;
 		}
 
-		FNameEntryId AsName() const
+		FNameEntryId GetComparisionId() const
 		{
 			return FNameEntryId::FromUnstableInt(static_cast<uint32>(Int));
+		}
+
+		FNameEntryId GetDisplayId() const
+		{
+#if WITH_CASE_PRESERVING_NAME
+			return FNameEntryId::FromUnstableInt(static_cast<uint32>(Int >> DisplayNameShift)); // Can assume LiteralFlag == 0 
+#else
+			return GetComparisionId();
+#endif
 		}
 		
 		const ANSICHAR* AsAnsiLiteral() const

@@ -145,18 +145,6 @@ int32 UHeadMountedDisplayFunctionLibrary::GetNumOfTrackingSensors()
 	return 0;
 }
 
-void UHeadMountedDisplayFunctionLibrary::GetPositionalTrackingCameraParameters(FVector& CameraOrigin, FRotator& CameraRotation, float& HFOV, float& VFOV, float& CameraDistance, float& NearPlane, float& FarPlane)
-{
-	bool isActive;
-	float LeftFOV;
-	float RightFOV;
-	float TopFOV;
-	float BottomFOV;
-	GetTrackingSensorParameters(CameraOrigin, CameraRotation, LeftFOV, RightFOV, TopFOV, BottomFOV, CameraDistance, NearPlane, FarPlane, isActive, 0);
-	HFOV = LeftFOV + RightFOV;
-	VFOV = TopFOV + BottomFOV;
-}
-
 void UHeadMountedDisplayFunctionLibrary::GetTrackingSensorParameters(FVector& Origin, FRotator& Rotation, float& LeftFOV, float& RightFOV, float& TopFOV, float& BottomFOV, float& Distance, float& NearPlane, float& FarPlane, bool& IsActive, int32 Index)
 {
 	IsActive = false;
@@ -244,28 +232,13 @@ void UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(TEnumAsByte<EHMDTrack
 {
 	if (GEngine->XRSystem.IsValid())
 	{
-		EHMDTrackingOrigin::Type Origin = EHMDTrackingOrigin::Eye;
-		switch (InOrigin)
-		{
-		case EHMDTrackingOrigin::Eye:
-			Origin = EHMDTrackingOrigin::Eye;
-			break;
-		case EHMDTrackingOrigin::Floor:
-			Origin = EHMDTrackingOrigin::Floor;
-			break;
-		case EHMDTrackingOrigin::Stage:
-			Origin = EHMDTrackingOrigin::Stage;
-			break;
-		default:
-			break;
-		}
-		GEngine->XRSystem->SetTrackingOrigin(Origin);
+		GEngine->XRSystem->SetTrackingOrigin(InOrigin);
 	}
 }
 
 TEnumAsByte<EHMDTrackingOrigin::Type> UHeadMountedDisplayFunctionLibrary::GetTrackingOrigin()
 {
-	EHMDTrackingOrigin::Type Origin = EHMDTrackingOrigin::Eye;
+	EHMDTrackingOrigin::Type Origin = EHMDTrackingOrigin::Local;
 
 	if (GEngine->XRSystem.IsValid())
 	{
@@ -478,12 +451,6 @@ void UHeadMountedDisplayFunctionLibrary::GetMotionControllerData(UObject* WorldC
 	}
 }
 
-bool UHeadMountedDisplayFunctionLibrary::ConfigureGestures(const FXRGestureConfig& GestureConfig)
-{
-	// Deprecated in 5.3.
-	return false;
-}
-
 bool UHeadMountedDisplayFunctionLibrary::GetCurrentInteractionProfile(const EControllerHand Hand, FString& InteractionProfile)
 {
 	IXRTrackingSystem* TrackingSys = GEngine->XRSystem.Get();
@@ -628,22 +595,7 @@ FVector2D UHeadMountedDisplayFunctionLibrary::GetPlayAreaBounds(TEnumAsByte<EHMD
 {
 	if (GEngine->XRSystem.IsValid())
 	{
-		EHMDTrackingOrigin::Type Origin = EHMDTrackingOrigin::Stage;
-		switch (InOrigin)
-		{
-		case EHMDTrackingOrigin::Eye:
-			Origin = EHMDTrackingOrigin::Eye;
-			break;
-		case EHMDTrackingOrigin::Floor:
-			Origin = EHMDTrackingOrigin::Floor;
-			break;
-		case EHMDTrackingOrigin::Stage:
-			Origin = EHMDTrackingOrigin::Stage;
-			break;
-		default:
-			break;
-		}
-		return GEngine->XRSystem->GetPlayAreaBounds(Origin);
+		return GEngine->XRSystem->GetPlayAreaBounds(InOrigin);
 	}
 	return FVector2D::ZeroVector;
 }
@@ -686,5 +638,17 @@ void UHeadMountedDisplayFunctionLibrary::BreakKey(FKey InKey, FString& Interacti
 		Indentifier.Reset();
 		Component.Reset();
 	}
+}
+
+bool UHeadMountedDisplayFunctionLibrary::SetHMDColorScaleAndBias(FLinearColor ColorScale, FLinearColor ColorBias)
+{
+	IXRTrackingSystem* TrackingSys = GEngine->XRSystem.Get();
+	if (TrackingSys) {
+		IHeadMountedDisplay* HMD = TrackingSys->GetHMDDevice();
+		if (HMD) {
+			return HMD->SetColorScaleAndBias(ColorScale, ColorBias);
+		}
+	}
+	return false;
 }
 

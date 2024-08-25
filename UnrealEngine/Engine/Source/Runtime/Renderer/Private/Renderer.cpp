@@ -43,6 +43,11 @@
 #include "EngineModule.h"
 #include "RendererInterface.h"
 #include "PrimitiveSceneShaderData.h"
+#include "MeshDrawCommandStats.h"
+#include "LocalFogVolumeRendering.h"
+#include "Rendering/RayTracingGeometryManager.h"
+#include "PathTracing.h"
+#include "LightFunctionAtlas.h"
 
 DEFINE_LOG_CATEGORY(LogRenderer);
 
@@ -62,7 +67,15 @@ FAutoConsoleVariableRef CVarFlushRenderTargetsOnWorldCleanup(TEXT("r.bFlushRende
 
 void FRendererModule::StartupModule()
 {
+#if MESH_DRAW_COMMAND_STATS
+	FMeshDrawCommandStatsManager::CreateInstance();
+#endif
+
 	GScreenSpaceDenoiser = IScreenSpaceDenoiser::GetDefaultDenoiser();
+
+#if RHI_RAYTRACING
+	GRayTracingGeometryManager = new FRayTracingGeometryManager();
+#endif
 
 	FRendererOnScreenNotification::Get();
 	FVirtualTextureSystem::Initialize();
@@ -72,6 +85,7 @@ void FRendererModule::StartupModule()
 		ENQUEUE_RENDER_COMMAND(FSceneRendererCleanUp)(
 			[](FRHICommandListImmediate& RHICmdList)
 		{
+			FRDGBuilder::WaitForAsyncDeleteTask();
 			FSceneRenderer::CleanUp(RHICmdList);
 		});
 	}));
@@ -80,6 +94,19 @@ void FRendererModule::StartupModule()
 	GIdentityPrimitiveUniformBuffer.InitContents();
 	GDistanceCullFadedInUniformBuffer.InitContents();
 	GDitherFadedInUniformBuffer.InitContents();
+
+#if RHI_RAYTRACING && WITH_EDITOR
+	if (FApp::CanEverRender() && !FApp::IsUnattended())
+	{
+		FCoreDelegates::OnPostEngineInit.AddLambda([]() {
+			// We add this step via the PostEngineInit delegate so that it can run after PostInitRHI has run,
+			// and the rendering thread has been started so that we are able to create RTPSOs.
+			// For now, we only attempt to create the PathTracer RTPSO as it is the most expensive to compile by far.
+			// See UE-190955 for example timings.
+			PreparePathTracingRTPSO();
+		});
+	}
+#endif
 }
 
 void FRendererModule::ShutdownModule()
@@ -88,6 +115,11 @@ void FRendererModule::ShutdownModule()
 
 	FVirtualTextureSystem::Shutdown();
 	FRendererOnScreenNotification::TearDown();
+
+#if RHI_RAYTRACING
+	delete GRayTracingGeometryManager;
+	GRayTracingGeometryManager = nullptr;
+#endif
 
 	// Free up the memory of the default denoiser. Responsibility of the plugin to free up theirs.
 	delete IScreenSpaceDenoiser::GetDefaultDenoiser();
@@ -124,8 +156,7 @@ void FRendererModule::InitializeSystemTextures(FRHICommandListImmediate& RHICmdL
 
 BEGIN_SHADER_PARAMETER_STRUCT(FDrawTileMeshPassParameters, )
 	SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
-	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
-	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FInstanceCullingGlobalUniforms, InstanceCulling)
+	SHADER_PARAMETER_STRUCT_INCLUDE(FInstanceCullingDrawParams, InstanceCullingDrawParams)
 	SHADER_PARAMETER_STRUCT_REF(FReflectionCaptureShaderData, ReflectionCapture)
 	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FDebugViewModePassUniformParameters, DebugViewMode)
 	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FTranslucentBasePassUniformParameters, TranslucentBasePass)
@@ -177,7 +208,9 @@ FSceneUniformBuffer* FRendererModule::CreateSinglePrimitiveSceneUniformBuffer(FR
 				INVALID_LAST_UPDATE_FRAME,
 				0 /* Custom Data Count */,
 				0.0f /* Random ID */,
-				PrimitiveParams.LocalToRelativeWorld
+				PrimitiveParams.LocalToRelativeWorld,
+				true,
+				FInstanceSceneShaderData::SupportsCompressedTransforms()
 			);
 
 			// Set up the parameters for the LightmapSceneData from the given LCI data 
@@ -208,6 +241,48 @@ FSceneUniformBuffer* FRendererModule::CreateSinglePrimitiveSceneUniformBuffer(FR
 	return &SceneUniforms;
 }
 
+TRDGUniformBufferRef<FBatchedPrimitiveParameters> FRendererModule::CreateSinglePrimitiveUniformView(FRDGBuilder& GraphBuilder, const FViewInfo& SceneView, FMeshBatch& Mesh)
+{
+	check(PlatformGPUSceneUsesUniformBufferView(SceneView.GetShaderPlatform()));
+
+	FBatchedPrimitiveParameters* BatchedPrimitiveParameters = GraphBuilder.AllocParameters<FBatchedPrimitiveParameters>();
+
+	FRDGBufferDesc PrimitiveDataBufferDesc = FRDGBufferDesc::CreateStructuredUploadDesc(16u, (PLATFORM_MAX_UNIFORM_BUFFER_RANGE / 16u));
+	PrimitiveDataBufferDesc.Usage |= EBufferUsageFlags::UniformBuffer;
+	FRDGBufferRef PrimitiveDataBuffer = nullptr;
+	
+	ERHIFeatureLevel::Type FeatureLevel = SceneView.GetFeatureLevel();
+	if (Mesh.VertexFactory->GetPrimitiveIdStreamIndex(FeatureLevel, EVertexInputStreamType::PositionOnly) >= 0)
+	{
+		FMeshBatchElement& MeshElement = Mesh.Elements[0];
+		checkf(Mesh.Elements.Num() == 1, TEXT("Only 1 batch element currently supported by CreateSinglePrimitiveSceneUniformBuffer"));
+		checkf(MeshElement.PrimitiveUniformBuffer == nullptr, TEXT("CreateSinglePrimitiveUniformView does not currently support an explicit primitive uniform buffer on vertex factories which manually fetch primitive data.  Use PrimitiveUniformBufferResource instead."));
+
+		if (MeshElement.PrimitiveUniformBufferResource)
+		{
+			checkf(MeshElement.NumInstances == 1, TEXT("CreateSinglePrimitiveUniformView does not currently support instancing"));
+			// Force PrimitiveId to be 0 in the shader
+			MeshElement.PrimitiveIdMode = PrimID_ForceZero;
+			FPrimitiveUniformShaderParameters PrimitiveParams = *(const FPrimitiveUniformShaderParameters*)MeshElement.PrimitiveUniformBufferResource->GetContents();
+			// Now we just need to fill out the first entry of a batched primitive data in a buffer
+			FBatchedPrimitiveShaderData ShaderData(PrimitiveParams);
+			PrimitiveDataBuffer = GraphBuilder.CreateBuffer(PrimitiveDataBufferDesc, TEXT("SinglePrimitiveUniformView"));
+			GraphBuilder.QueueBufferUpload(PrimitiveDataBuffer, ShaderData.Data.GetData(), ShaderData.Data.Num() * sizeof(FVector4f));
+		}
+	}
+
+	if (PrimitiveDataBuffer == nullptr)
+	{
+		// Upload Identity parameters
+		FBatchedPrimitiveShaderData ShaderData{};
+		PrimitiveDataBuffer = GraphBuilder.CreateBuffer(PrimitiveDataBufferDesc, TEXT("SinglePrimitiveUniformView"));
+		GraphBuilder.QueueBufferUpload(PrimitiveDataBuffer, ShaderData.Data.GetData(), ShaderData.Data.Num() * sizeof(FVector4f));
+	}
+
+	BatchedPrimitiveParameters->Data = GraphBuilder.CreateSRV(PrimitiveDataBuffer);
+	return GraphBuilder.CreateUniformBuffer(BatchedPrimitiveParameters);
+}
+
 void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPassProcessorRenderState& DrawRenderState, const FSceneView& SceneView, FMeshBatch& Mesh, bool bIsHitTesting, const FHitProxyId& HitProxyId, bool bUse128bitRT)
 {
 	if (!GUsingNullRHI)
@@ -218,6 +293,7 @@ void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPas
 		View.ViewRect = View.UnscaledViewRect;
 		FViewFamilyInfo* ViewFamily = RenderContext.Alloc<FViewFamilyInfo>(*SceneView.Family);
 		ViewFamily->Views.Add(&View);
+		ViewFamily->AllViews.Add(&View);
 		View.Family = ViewFamily;
 
 		// Default init of SceneTexturesConfig will take extents from FSceneTextureExtentState.
@@ -226,7 +302,7 @@ void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPas
 		ViewFamily->SceneTexturesConfig.Extent = View.ViewRect.Size();
 
 		const auto FeatureLevel = View.GetFeatureLevel();
-		const EShadingPath ShadingPath = FSceneInterface::GetShadingPath(FeatureLevel);
+		const EShadingPath ShadingPath = GetFeatureLevelShadingPath(FeatureLevel);
 
 		FScene* Scene = nullptr;
 		if (ViewFamily->Scene)
@@ -249,7 +325,7 @@ void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPas
 
 		// Materials sampling VTs need FVirtualTextureSystem to be updated before being rendered
 		const FMaterial& MeshMaterial = Mesh.MaterialRenderProxy->GetIncompleteMaterialWithFallback(FeatureLevel);
-		const bool bUseVirtualTexturing = UseVirtualTexturing(FeatureLevel) && !MeshMaterial.GetUniformVirtualTextureExpressions().IsEmpty();
+		const bool bUseVirtualTexturing = UseVirtualTexturing(View.GetShaderPlatform()) && !MeshMaterial.GetUniformVirtualTextureExpressions().IsEmpty();
 		if (bUseVirtualTexturing)
 		{
 			FVirtualTextureUpdateSettings Settings;
@@ -261,6 +337,12 @@ void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPas
 
 		View.InitRHIResources();
 		View.ForwardLightingResources.SetUniformBuffer(CreateDummyForwardLightUniformBuffer(GraphBuilder, View.GetShaderPlatform()));
+		SetDummyLocalFogVolumeForView(GraphBuilder, View);
+
+		// Create a disabled LightFunctionAtlas to be able to render base pass.
+		LightFunctionAtlas::FLightFunctionAtlas LightFunctionAtlas;
+		LightFunctionAtlas::FLightFunctionAtlasSceneData LightFunctionAtlasSceneData;
+		LightFunctionAtlas.ClearEmptySceneFrame(&View, 0u, &LightFunctionAtlasSceneData);
 
 		TUniformBufferRef<FReflectionCaptureShaderData> EmptyReflectionCaptureUniformBuffer;
 
@@ -274,9 +356,17 @@ void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPas
 		auto* PassParameters = GraphBuilder.AllocParameters<FDrawTileMeshPassParameters>();
 		PassParameters->RenderTargets[0] = FRenderTargetBinding(RenderContext.GetRenderTarget(), ERenderTargetLoadAction::ELoad);
 		PassParameters->View = View.GetShaderParameters();
-		PassParameters->Scene = SceneUniforms.GetBuffer(GraphBuilder);
+		PassParameters->InstanceCullingDrawParams.Scene = SceneUniforms.GetBuffer(GraphBuilder);
+		PassParameters->InstanceCullingDrawParams.InstanceCulling = FInstanceCullingContext::CreateDummyInstanceCullingUniformBuffer(GraphBuilder);
 		PassParameters->ReflectionCapture = EmptyReflectionCaptureUniformBuffer;
-		PassParameters->InstanceCulling = FInstanceCullingContext::CreateDummyInstanceCullingUniformBuffer(GraphBuilder);
+
+		if (ShadingPath == EShadingPath::Mobile && MobileRequiresSceneDepthAux(ViewFamily->GetShaderPlatform()))
+		{
+			FSceneTexturesConfig& Config = ViewFamily->SceneTexturesConfig;
+			FRDGTextureDesc DepthAuxDesc = FRDGTextureDesc::Create2D(Config.Extent, PF_R16F, FClearValueBinding(FLinearColor::Transparent), TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_InputAttachmentRead);
+			FRDGTextureRef DepthAux = GraphBuilder.CreateTexture(DepthAuxDesc, TEXT("SceneDepthAux"));
+			PassParameters->RenderTargets[1] = FRenderTargetBinding(DepthAux, ERenderTargetLoadAction::EClear);
+		}
 
 		// handle translucent material blend modes, not relevant in MaterialTexCoordScalesAnalysis since it outputs the scales.
 		if (ViewFamily->GetDebugViewShaderMode() == DVSM_OutputMaterialTextureScales)
@@ -346,7 +436,6 @@ void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPas
 						FMobileBasePassMeshProcessor PassMeshProcessor(
 							EMeshPass::TranslucencyAll,
 							Scene,
-							View.GetFeatureLevel(),
 							&View,
 							DrawRenderState,
 							DynamicMeshPassContext,
@@ -427,7 +516,6 @@ void FRendererModule::DrawTileMesh(FCanvasRenderContext& RenderContext, FMeshPas
 							FMobileBasePassMeshProcessor PassMeshProcessor(
 								EMeshPass::BasePass,
 								Scene,
-								View.GetFeatureLevel(),
 								&View,
 								DrawRenderState,
 								DynamicMeshPassContext,

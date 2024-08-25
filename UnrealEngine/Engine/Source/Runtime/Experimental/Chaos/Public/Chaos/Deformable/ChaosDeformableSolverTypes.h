@@ -37,7 +37,10 @@ namespace Chaos::Softs
 			bool InbUseGaussSeidelConstraints = false, 
 			bool InbUseSOR = true,
 			FSolverReal InOmegaSOR = (FSolverReal)1.6, 
-			bool InbUseGSNeohookean = false)
+			bool InbUseGSNeohookean = false,
+			FSolverReal InCollisionSearchRadius = (FSolverReal)10.,
+			FSolverReal InCollisionSpringStiffness = (FSolverReal)500.,
+			bool InbAllowSliding = true)
 			: NumSolverSubSteps(InNumSolverSubSteps)
 			, NumSolverIterations(InNumSolverIterations)
 			, FixTimeStep(InFixTimeStep)
@@ -60,6 +63,9 @@ namespace Chaos::Softs
 			, bUseSOR(InbUseSOR)
 			, OmegaSOR(InOmegaSOR)
 			, bUseGSNeohookean(InbUseGSNeohookean)
+			, CollisionSearchRadius(InCollisionSearchRadius)
+			, CollisionSpringStiffness(InCollisionSpringStiffness)
+			, bAllowSliding(InbAllowSliding)
 		{}
 
 		int32 NumSolverSubSteps = 5;
@@ -84,6 +90,9 @@ namespace Chaos::Softs
 		bool bUseSOR = true;
 		FSolverReal OmegaSOR = (FSolverReal)1.6;
 		bool bUseGSNeohookean = false;
+		FSolverReal CollisionSearchRadius = (FSolverReal)10.;
+		FSolverReal CollisionSpringStiffness = (FSolverReal)500.;
+		bool bAllowSliding = true;
 	};
 
 

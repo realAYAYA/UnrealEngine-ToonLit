@@ -538,7 +538,7 @@ namespace UE
 							delete ShutdownReadCompileTasks[i].ReadRequests;
 							ShutdownReadCompileTasks[i].ReadRequests = nullptr;
 
-							ShutdownReadCompileTasks.RemoveAtSwap(i, 1, false);
+							ShutdownReadCompileTasks.RemoveAtSwap(i, 1, EAllowShrinking::No);
 							++RemovedTaskCount;
 						}
 						else
@@ -1074,6 +1074,8 @@ bool FShaderPipelineCacheTask::Precompile(FRHICommandListImmediate& RHICmdList, 
 				GraphicsInitializer.MultiViewCount = PSO.GraphicsDesc.MultiViewCount;
 				GraphicsInitializer.bHasFragmentDensityAttachment = PSO.GraphicsDesc.bHasFragmentDensityAttachment;
 
+				GraphicsInitializer.bDepthBounds = PSO.GraphicsDesc.bDepthBounds;
+
 				GraphicsInitializer.DepthStencilTargetFormat = PSO.GraphicsDesc.DepthStencilFormat;
 				GraphicsInitializer.DepthStencilTargetFlag = PSO.GraphicsDesc.DepthStencilFlags;
 				GraphicsInitializer.DepthTargetLoadAction = PSO.GraphicsDesc.DepthLoad;
@@ -1114,7 +1116,7 @@ bool FShaderPipelineCacheTask::Precompile(FRHICommandListImmediate& RHICmdList, 
 				FComputeShaderRHIRef ComputeInitializer = FShaderCodeLibrary::CreateComputeShader(Platform, PSO.ComputeDesc.ComputeShader);
 				if (ComputeInitializer.IsValid())
 				{
-					FComputePipelineState* ComputeResult = PipelineStateCache::GetAndOrCreateComputePipelineState(RHICmdList, ComputeInitializer, true);
+					FComputePipelineState* ComputeResult = PipelineStateCache::GetAndOrCreateComputePipelineState(RHICmdList, ComputeInitializer, true, EPSOPrecacheResult::Untracked);
 					bOk = ComputeResult != nullptr;
 				}
 			}
@@ -1590,9 +1592,6 @@ FShaderPipelineCache::FShaderPipelineCache(EShaderPlatform Platform)
 			break;
 	}
 	
-	BatchSize = CVarPSOFileCacheBatchSize.GetValueOnAnyThread();
-	BatchTime = CVarPSOFileCacheBatchTime.GetValueOnAnyThread();
-	
 	FString StableShaderKeyFile;
 	if (FParse::Value(FCommandLine::Get(), TEXT("-shkfile="), StableShaderKeyFile) && !StableShaderKeyFile.IsEmpty())
 	{
@@ -1773,6 +1772,7 @@ bool FShaderPipelineCache::IsTickable() const
 
 void FShaderPipelineCache::Tick(float DeltaTime)
 {
+	LLM_SCOPE(ELLMTag::Shaders);
 	FScopeLock Lock(&Mutex);
 
 	FShaderPipelineCacheTask* CurrentCacheTask = CurrentPrecompilingPSOFCKey.IsEmpty() ? nullptr : ShaderCacheTasks.Find(CurrentPrecompilingPSOFCKey)->Get();

@@ -16,8 +16,6 @@
 #include "MuT/NodeScalarTable.h"
 #include "MuT/NodeScalarVariation.h"
 
-#include <stdint.h>
-
 
 namespace mu
 {
@@ -25,13 +23,13 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeScalarType = NODE_TYPE( "NodeScalar", Node::GetStaticType() );
+	static FNodeType s_nodeScalarType = FNodeType( "NodeScalar", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeScalar::Serialise( const NodeScalar* p, OutputArchive& arch )
 	{
-        uint32_t ver = 0;
+        uint32 ver = 0;
 		arch << ver;
 
 		arch << uint32_t(p->Type);
@@ -42,11 +40,11 @@ namespace mu
     //---------------------------------------------------------------------------------------------
 	NodeScalarPtr NodeScalar::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (id)
@@ -67,14 +65,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeScalar::GetType() const
+	const FNodeType* NodeScalar::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeScalar::GetStaticType()
+	const FNodeType* NodeScalar::GetStaticType()
 	{
 		return &s_nodeScalarType;
 	}

@@ -3,6 +3,7 @@
 #include "EnvironmentQuery/Tests/EnvQueryTest_PathfindingBatch.h"
 #include "Engine/World.h"
 #include "NavigationSystem.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "NavMesh/RecastNavMesh.h"
 #include "NavMesh/RecastQueryFilter.h"
 

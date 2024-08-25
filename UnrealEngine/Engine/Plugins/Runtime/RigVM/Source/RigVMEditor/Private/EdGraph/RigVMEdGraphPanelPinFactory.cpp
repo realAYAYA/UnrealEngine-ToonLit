@@ -10,6 +10,7 @@
 #include "Widgets/SRigVMGraphPinVariableBinding.h"
 #include "Widgets/SRigVMGraphPinUserDataNameSpace.h"
 #include "Widgets/SRigVMGraphPinUserDataPath.h"
+#include "Widgets/SRigVMGraphPinQuat.h"
 #include "KismetPins/SGraphPinExec.h"
 #include "SGraphPinComboBox.h"
 #include "RigVMHost.h"
@@ -18,6 +19,7 @@
 #include "Curves/CurveFloat.h"
 #include "RigVMModel/Nodes/RigVMUnitNode.h"
 #include "RigVMCore/RigVMExecuteContext.h"
+#include "Widgets/SRigVMGraphPinEnumPicker.h"
 
 FName FRigVMEdGraphPanelPinFactory::GetFactoryName() const
 {
@@ -26,6 +28,11 @@ FName FRigVMEdGraphPanelPinFactory::GetFactoryName() const
 
 TSharedPtr<SGraphPin> FRigVMEdGraphPanelPinFactory::CreatePin(UEdGraphPin* InPin) const
 {
+	if(InPin == nullptr)
+	{
+		return nullptr;
+	}
+	
 	// we need to check if this is the right factory for the implementation
 	if(const UEdGraphNode* EdGraphNode = InPin->GetOuter())
 	{
@@ -42,6 +49,16 @@ TSharedPtr<SGraphPin> FRigVMEdGraphPanelPinFactory::CreatePin(UEdGraphPin* InPin
 	if(InternalResult.IsValid())
 	{
 		return InternalResult;
+	}
+
+	// if the graph we are looking at is not a rig vm graph - let's not do this
+	if (const UEdGraphNode* OwningNode = InPin->GetOwningNode())
+	{
+		// only create pins within rig vm graphs
+		if (Cast<URigVMEdGraph>(OwningNode->GetGraph()) == nullptr)
+		{
+			return nullptr;
+		}
 	}
 
 	return FNodeFactory::CreateK2PinWidget(InPin);
@@ -64,7 +81,8 @@ TSharedPtr<SGraphPin> FRigVMEdGraphPanelPinFactory::CreatePin_Internal(UEdGraphP
 		{
 			URigVMEdGraph* RigGraph = Cast<URigVMEdGraph>(RigNode->GetGraph());
 
-			if (URigVMPin* ModelPin = RigNode->GetModelPinFromPinPath(InPin->GetName()))
+			URigVMPin* ModelPin = RigNode->GetModelPinFromPinPath(InPin->GetName());
+			if (ModelPin)
 			{
 				if (ModelPin->IsBoundToVariable())
 				{
@@ -96,6 +114,12 @@ TSharedPtr<SGraphPin> FRigVMEdGraphPanelPinFactory::CreatePin_Internal(UEdGraphP
 					return SNew(SRigVMGraphPinUserDataPath, InPin)
 						.ModelPins({ModelPin});
 				}
+
+				if (ModelPin->GetCPPTypeObject() == UEnum::StaticClass())
+				{
+					return SNew(SRigVMGraphPinEnumPicker, InPin)
+						.ModelPin(ModelPin);
+				}
 			}
 
 			if (InPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Struct)
@@ -108,6 +132,10 @@ TSharedPtr<SGraphPin> FRigVMEdGraphPanelPinFactory::CreatePin_Internal(UEdGraphP
 				if (InPin->PinType.PinSubCategoryObject == FRuntimeFloatCurve::StaticStruct())
 				{
 					return SNew(SRigVMGraphPinCurveFloat, InPin);
+				}
+				if (ModelPin && (InPin->PinType.PinSubCategoryObject == TBaseStructure<FQuat>::Get()))
+				{
+					return SNew(SRigVMGraphPinQuat, InPin).ModelPin(ModelPin);
 				}
 			}
 		}

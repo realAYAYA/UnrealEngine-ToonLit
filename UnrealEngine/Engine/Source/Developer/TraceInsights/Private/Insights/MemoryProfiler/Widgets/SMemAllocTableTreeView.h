@@ -13,6 +13,7 @@
 namespace Insights
 {
 
+class FCallstackFrameGroupNode;
 class FMemAllocNode;
 class FMemoryRuleSpec;
 
@@ -95,10 +96,12 @@ protected:
 	virtual void InternalCreateGroupings() override;
 
 	TSharedPtr<FMemAllocNode> GetSingleSelectedMemAllocNode() const;
+	TSharedPtr<FCallstackFrameGroupNode> GetSingleSelectedCallstackFrameGroupNode() const;
 	uint32 CountSourceFiles(FMemAllocNode& MemAllocNode);
 
-	virtual void ExtendMenu(FMenuBuilder& MenuBuilder) override;
-	void BuildOpenSourceSubMenu(FMenuBuilder& MenuBuilder);
+	virtual void ExtendMenu(TSharedRef<FExtender> Extender) override;
+	bool BuildOpenSourceSubMenuItems(FMenuBuilder& MenuBuilder, const TraceServices::FCallstack& Callstack);
+	void BuildOpenSourceSubMenu(FMenuBuilder& MenuBuilder, bool bIsAllocCallstack);
 	bool CanOpenCallstackFrameSourceFileInIDE() const;
 	void OpenCallstackFrameSourceFileInIDE();
 	FText GetSelectedCallstackFrameFileName() const;
@@ -107,6 +110,10 @@ protected:
 	bool IsExportMemorySnapshotAvailable() const;
 
 private:
+	void ExtendMenuAllocation(FMenuBuilder& MenuBuilder);
+	void ExtendMenuCallstackFrame(FMenuBuilder& MenuBuilder);
+	void ExtendMenuExportSnapshot(FMenuBuilder& MenuBuilder);
+
 	void OnQueryInvalidated();
 	void StartQuery();
 	void UpdateQuery(TraceServices::IAllocationsProvider::EQueryStatus& OutStatus);

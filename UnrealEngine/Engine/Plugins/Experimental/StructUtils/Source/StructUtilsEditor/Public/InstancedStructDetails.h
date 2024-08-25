@@ -5,6 +5,7 @@
 #include "IPropertyTypeCustomization.h"
 #include "IDetailCustomNodeBuilder.h"
 #include "EditorUndoClient.h"
+#include "StructViewerFilter.h"
 
 class IPropertyHandle;
 class IDetailPropertyRow;
@@ -59,11 +60,11 @@ private:
  * Can be used in a implementation of a IPropertyTypeCustomization CustomizeChildren() to display editable FInstancedStruct contents.
  * OnChildRowAdded() is called right after each property is added, which allows the property row to be customizable.
  */
-class STRUCTUTILSEDITOR_API FInstancedStructDataDetails : public IDetailCustomNodeBuilder, public FSelfRegisteringEditorUndoClient, public TSharedFromThis<FInstancedStructDataDetails>
+class STRUCTUTILSEDITOR_API FInstancedStructDataDetails : public IDetailCustomNodeBuilder, public TSharedFromThis<FInstancedStructDataDetails>
 {
 public:
 	FInstancedStructDataDetails(TSharedPtr<IPropertyHandle> InStructProperty);
-	~FInstancedStructDataDetails();
+	virtual ~FInstancedStructDataDetails() override;
 
 	//~ Begin IDetailCustomNodeBuilder interface
 	virtual void SetOnRebuildChildren(FSimpleDelegate InOnRegenerateChildren) override;
@@ -74,10 +75,6 @@ public:
 	virtual bool InitiallyCollapsed() const override { return false; }
 	virtual FName GetName() const override;
 	//~ End IDetailCustomNodeBuilder interface
-
-	/** FEditorUndoClient interface */
-	virtual void PostUndo(bool bSuccess) override;
-	virtual void PostRedo(bool bSuccess) override;
 
 	// Called when a child is added, override to customize a child row.
 	virtual void OnChildRowAdded(IDetailPropertyRow& ChildRow) {}
@@ -105,9 +102,6 @@ private:
 	/** Delegate that can be used to refresh the child rows of the current struct (eg, when changing struct type) */
 	FSimpleDelegate OnRegenerateChildren;
 
-	/** The last time that SyncEditableInstanceFromSource was called, in FPlatformTime::Seconds() */
-	double LastSyncEditableInstanceFromSourceSeconds = 0.0;
-
 	/** True if we're currently handling a StructValuePostChange */
 	bool bIsHandlingStructValuePostChange = false;
 	
@@ -116,6 +110,26 @@ private:
 protected:
 	void OnStructLayoutChanges();
 };
+
+/**
+ * Filter used by the instanced struct struct picker.
+ */
+ class STRUCTUTILSEDITOR_API FInstancedStructFilter : public IStructViewerFilter
+{
+public:
+	/** The base struct for the property that classes must be a child-of. */
+	const UScriptStruct* BaseStruct = nullptr;
+
+	// A flag controlling whether we allow UserDefinedStructs
+	bool bAllowUserDefinedStructs = false;
+
+	// A flag controlling whether we allow to select the BaseStruct
+	bool bAllowBaseStruct = true;
+
+	virtual bool IsStructAllowed(const FStructViewerInitializationOptions& InInitOptions, const UScriptStruct* InStruct, TSharedRef<FStructViewerFilterFuncs> InFilterFuncs) override;
+	virtual bool IsUnloadedStructAllowed(const FStructViewerInitializationOptions& InInitOptions, const FSoftObjectPath& InStructPath, TSharedRef<FStructViewerFilterFuncs> InFilterFuncs) override;
+};
+
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"

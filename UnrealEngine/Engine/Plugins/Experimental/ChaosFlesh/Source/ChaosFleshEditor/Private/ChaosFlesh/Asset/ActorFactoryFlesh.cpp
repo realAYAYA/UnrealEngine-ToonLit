@@ -50,15 +50,4 @@ void UActorFactoryFlesh::PostSpawnActor(UObject* Asset, AActor* NewActor)
 	NewFleshActor->GetFleshComponent()->RegisterComponent();
 }
 
-void UActorFactoryFlesh::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != NULL && CDO != NULL)
-	{
-		UFleshAsset* Flesh = CastChecked<UFleshAsset>(Asset);
-		AFleshActor* FleshActor = CastChecked<AFleshActor>(CDO);
-
-		FleshActor->GetFleshComponent()->SetRestCollection(Flesh);
-	}
-}
-
 #undef LOCTEXT_NAMESPACE

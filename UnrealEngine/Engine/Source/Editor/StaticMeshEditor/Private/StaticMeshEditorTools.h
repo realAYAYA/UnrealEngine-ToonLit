@@ -747,12 +747,6 @@ private:
 	ECheckBoxState IsEnabledChecked() const;
 	void OnEnabledChanged(ECheckBoxState NewState);
 
-	ECheckBoxState IsPreserveAreaChecked() const;
-	void OnPreserveAreaChanged(ECheckBoxState NewState);
-
-	ECheckBoxState IsExplicitTangentsChecked() const;
-	void OnExplicitTangentsChanged(ECheckBoxState NewState);
-
 	void OnPositionPrecisionChanged(TSharedPtr<FString> NewValue, ESelectInfo::Type SelectInfo);
 	void OnNormalPrecisionChanged(TSharedPtr<FString> NewValue, ESelectInfo::Type SelectInfo);
 	void OnTangentPrecisionChanged(TSharedPtr<FString> NewValue, ESelectInfo::Type SelectInfo);

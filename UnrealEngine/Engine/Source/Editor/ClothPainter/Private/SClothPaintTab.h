@@ -32,16 +32,11 @@ public:
 	void Construct(const FArguments& InArgs);
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 
-	/** Toggles cloth paint mode */
-	void TogglePaintMode();
-
-	/** Gets whether cloth paint mode is active */
-	bool IsPaintModeActive() const;
+	/** Setup and teardown the cloth paint UI */
+	void EnterPaintMode();
+	void ExitPaintMode();
 
 protected:
-
-	/** Called as the tool selection changes to enable/disable painting */
-	void UpdatePaintTools();
 
 	/** Called from the selector when the asset selection changes (Asset, LOD, Mask) */
 	void OnAssetSelectionChanged(TWeakObjectPtr<UClothingAssetCommon> InAssetPtr, int32 InLodIndex, int32 InMaskIndex);
@@ -61,5 +56,4 @@ protected:
 	TSharedPtr<IDetailsView> DetailsView;
 
 	bool bModeApplied;
-	bool bPaintModeEnabled;
 };

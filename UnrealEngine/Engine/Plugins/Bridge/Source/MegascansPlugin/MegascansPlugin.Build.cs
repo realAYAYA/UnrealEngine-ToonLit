@@ -37,9 +37,7 @@ namespace UnrealBuildTool.Rules
 					"EditorScriptingUtilities",
 					"Projects",
 					"ApplicationCore",
-					"InputCore",
-					"Projects",
-					"ToolWidgets"
+					"MetaHumanProjectUtilities"
 				}
 			);
 		}

@@ -39,6 +39,9 @@ UDisplayClusterNetConnection::UDisplayClusterNetConnection(const FObjectInitiali
 	bIsClusterConnection(false),
 	bSynchronousMode(false)
 {
+	// By default, networking settings are set for internet based gameplay with a limited bandwidth capacity
+	// Those settings are not working well in high speed LAN environment
+	SetUnlimitedBunchSizeAllowed(true);
 }
 
 void UDisplayClusterNetConnection::SetClientLoginState(const EClientLoginState::Type NewState)
@@ -93,7 +96,7 @@ void UDisplayClusterNetConnection::SetClientLoginState(const EClientLoginState::
 		}
 		else
 		{
-			UE_LOG(LogDisplayClusterNetDriver, Verbose, TEXT("Cluster connection joined: Client [%u]; Node [%s]; RemoteAddr: %s"), ClientId, *NodeName, *GetRemoteAddr()->ToString(false));
+			UE_LOG(LogDisplayClusterNetDriver, Verbose, TEXT("Cluster connection joined: Client [%u]; Node [%s]; RemoteAddr: %s"), ClientId, *NodeName, *NodeAddress);
 		}
 
 		DisplayClusterNetDriver->AddNodeConnection(this);
@@ -161,7 +164,7 @@ void UDisplayClusterNetConnection::ProcessPacket(int32 PacketId)
 
 		bool bSkipAck = false;
 		bool bHasBunchErrors = false;
-		DispatchPacket(InPackets[CurrentPacketId], PacketId, bSkipAck, bHasBunchErrors);
+		DispatchPacket(InPackets[CurrentPacketId], CurrentPacketId, bSkipAck, bHasBunchErrors);
 
 		InPackets.Remove(CurrentPacketId);
 	}

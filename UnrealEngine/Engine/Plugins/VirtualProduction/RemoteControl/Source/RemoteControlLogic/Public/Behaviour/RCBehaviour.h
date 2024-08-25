@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -12,6 +12,7 @@ struct FRemoteControlField;
 class URCBehaviourNode;
 class URCController;
 class URCFunctionAction;
+class URCPropertyIdAction;
 class URCPropertyAction;
 class URemoteControlPreset;
 class URCAction;
@@ -39,7 +40,13 @@ public:
 	virtual void Initialize() {}
 
 	/** Execute the behaviour */
-	virtual void Execute();
+	void Execute();
+
+	/** Add a Logic action as an identity action. */
+	virtual URCAction* AddAction();
+
+	/** Add a Logic action as an identity action. */
+	virtual URCAction* AddAction(FName InFieldId);
 
 	/** Add a Logic action using a remote control field as input */
 	virtual URCAction* AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField);
@@ -78,6 +85,15 @@ public:
 	const FText& GetBehaviorDescription();
 #endif
 
+	/**
+	 * @brief Called internally when entity Ids are renewed.
+	 * @param InEntityIdMap Map of old Id to new Id.
+	 */
+	virtual void UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap);
+
+	/** Called when an action value changed */
+	virtual void NotifyActionValueChanged(URCAction* InChangedAction) {}
+
 protected:
 	/**
 	 * It created the node if it called first time
@@ -85,6 +101,12 @@ protected:
 	 * Or just return cached one
 	 */
 	URCBehaviourNode* GetBehaviourNode();
+
+	/** Execute all the action if not provided a valid Action otherwise will only execute the given action */
+	virtual void ExecuteInternal(const TSet<TObjectPtr<URCAction>>& InActionsToExecute);
+
+	/** Execute the given Action */
+    void ExecuteSingleAction(URCAction* InAction);
 
 public:
 	/** Associated cpp behaviour */

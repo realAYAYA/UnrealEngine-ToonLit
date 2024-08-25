@@ -19,12 +19,21 @@ enum EPropertyPathTestEnum : int
 	Four
 };
 
-USTRUCT(BlueprintType)
-struct FPropertyPathTestInnerStruct
+USTRUCT()
+struct FPropertyPathTestBaseStruct
 {
 	GENERATED_BODY()
 
-	~FPropertyPathTestInnerStruct()
+public:
+	virtual ~FPropertyPathTestBaseStruct() { }
+};
+
+USTRUCT(BlueprintType)
+struct FPropertyPathTestInnerStruct : public FPropertyPathTestBaseStruct
+{
+	GENERATED_BODY()
+
+	virtual ~FPropertyPathTestInnerStruct()
 	{
 		Float = -1.5f;
 		Bool = true;
@@ -79,11 +88,11 @@ struct FPropertyPathTestInnerStruct
 };
 
 USTRUCT(BlueprintType)
-struct FPropertyPathTestStruct
+struct FPropertyPathTestStruct : public FPropertyPathTestBaseStruct
 {
 	GENERATED_BODY()
 
-	~FPropertyPathTestStruct()
+	virtual ~FPropertyPathTestStruct()
 	{
 		Float = -1.5f;
 		Bool = true;

@@ -9,6 +9,9 @@ csharp_style_prefer_switch_expression = false
 csharp_style_implicit_object_creation_when_type_is_apparent = false
 dotnet_remove_unnecessary_suppression_exclusions = all
 
+# CA1591: Missing comment for XMLDOC
+dotnet_diagnostic.CS1591.severity = none
+
 # Sort using and Import directives with System.* appearing first
 dotnet_sort_system_directives_first = true
 dotnet_separate_import_directive_groups = false

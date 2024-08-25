@@ -2,7 +2,7 @@
 
 #include "MetalRHIPrivate.h"
 #include "MetalRHIRenderQuery.h"
-#include "MetalCommandBufferFence.h"
+#include "MetalRHIVisionOSBridge.h"
 
 TGlobalResource<TBoundShaderStateHistory<10000>> FMetalRHICommandContext::BoundShaderStateHistory;
 
@@ -13,7 +13,7 @@ FMetalDeviceContext& GetMetalDeviceContext()
 	return ((FMetalDeviceContext&)Context->GetInternalContext());
 }
 
-void SafeReleaseMetalObject(id Object)
+void SafeReleaseMetalObject(NS::Object* Object)
 {
 	if(GIsMetalInitialized && GDynamicRHI && Object)
 	{
@@ -24,10 +24,10 @@ void SafeReleaseMetalObject(id Object)
 			return;
 		}
 	}
-	[Object release];
+	Object->release();
 }
 
-void SafeReleaseMetalTexture(FMetalTexture& Object)
+void SafeReleaseMetalTexture(MTLTexturePtr Object)
 {
 	if(GIsMetalInitialized && GDynamicRHI && Object)
 	{
@@ -40,11 +40,11 @@ void SafeReleaseMetalTexture(FMetalTexture& Object)
 	}
 }
 
-void SafeReleaseMetalBuffer(FMetalBuffer& Buffer)
+void SafeReleaseMetalBuffer(FMetalBufferPtr Buffer)
 {
 	if(GIsMetalInitialized && GDynamicRHI && Buffer)
 	{
-		Buffer.SetOwner(nullptr, false);
+		Buffer->SetOwner(nullptr, false);
 		FMetalRHICommandContext* Context = static_cast<FMetalRHICommandContext*>(RHIGetDefaultContext());
 		if(Context)
 		{
@@ -64,6 +64,19 @@ void SafeReleaseMetalFence(FMetalFence* Object)
 			return;
 		}
 	}
+}
+
+void SafeReleaseFunction(TFunction<void()> ReleaseFunc)
+{
+    if(GIsMetalInitialized && GDynamicRHI)
+    {
+        FMetalRHICommandContext* Context = static_cast<FMetalRHICommandContext*>(RHIGetDefaultContext());
+        if(Context)
+        {
+            ((FMetalDeviceContext&)Context->GetInternalContext()).ReleaseFunction(ReleaseFunc);
+            return;
+        }
+    }
 }
 
 FMetalRHICommandContext::FMetalRHICommandContext(class FMetalProfiler* InProfiler, FMetalDeviceContext* WrapContext)
@@ -86,7 +99,7 @@ FMetalRHIImmediateCommandContext::FMetalRHIImmediateCommandContext(class FMetalP
 
 void FMetalRHICommandContext::RHIBeginRenderPass(const FRHIRenderPassInfo& InInfo, const TCHAR* InName)
 {
-	SCOPED_AUTORELEASE_POOL;
+    MTL_SCOPED_AUTORELEASE_POOL;
 
 	Context->SetRenderPassInfo(InInfo);
 
@@ -96,8 +109,8 @@ void FMetalRHICommandContext::RHIBeginRenderPass(const FRHIRenderPassInfo& InInf
 		const FRHIRenderPassInfo::FColorEntry& RenderTargetView = InInfo.ColorRenderTargets[0];
 		FMetalSurface* RenderTarget = GetMetalSurfaceFromRHITexture(RenderTargetView.RenderTarget);
 
-		uint32 Width = FMath::Max((uint32)(RenderTarget->Texture.GetWidth() >> RenderTargetView.MipIndex), (uint32)1);
-		uint32 Height = FMath::Max((uint32)(RenderTarget->Texture.GetHeight() >> RenderTargetView.MipIndex), (uint32)1);
+		uint32 Width = FMath::Max((uint32)(RenderTarget->Texture->width() >> RenderTargetView.MipIndex), (uint32)1);
+		uint32 Height = FMath::Max((uint32)(RenderTarget->Texture->height() >> RenderTargetView.MipIndex), (uint32)1);
 
 		RHISetViewport(0.0f, 0.0f, 0.0f, (float)Width, (float)Height, 1.0f);
 	}
@@ -115,6 +128,8 @@ void FMetalRHICommandContext::RHIEndRenderPass()
 	{
 		RHIEndOcclusionQueryBatch();
 	}
+    
+    Context->EndRenderPass();
 
 	UE::RHICore::ResolveRenderPassTargets(RenderPassInfo, [this](UE::RHICore::FResolveTextureInfo Info)
 	{
@@ -124,7 +139,8 @@ void FMetalRHICommandContext::RHIEndRenderPass()
 
 void FMetalRHICommandContext::ResolveTexture(UE::RHICore::FResolveTextureInfo Info)
 {
-	@autoreleasepool{
+    MTL_SCOPED_AUTORELEASE_POOL;
+    
 	FMetalSurface* Source = GetMetalSurfaceFromRHITexture(Info.SourceTexture);
 	FMetalSurface* Destination = GetMetalSurfaceFromRHITexture(Info.DestTexture);
 
@@ -137,8 +153,8 @@ void FMetalRHICommandContext::ResolveTexture(UE::RHICore::FResolveTextureInfo In
 	// Resolve required - Device must support this - Using Shader for resolve not supported amd NumSamples should be 1
 	check((!bDepthStencil && bSupportsMSAAStoreAndResolve) || (bDepthStencil && bSupportsMSAADepthResolve));
 
-	mtlpp::Origin Origin(0, 0, 0);
-	mtlpp::Size Size(0, 0, 1);
+	MTL::Origin Origin(0, 0, 0);
+    MTL::Size Size(0, 0, 1);
 
 	if (Info.ResolveRect.IsValid())
 	{
@@ -169,8 +185,7 @@ void FMetalRHICommandContext::ResolveTexture(UE::RHICore::FResolveTextureInfo In
 
 	for (int32 ArraySlice = ArraySliceBegin; ArraySlice < ArraySliceEnd; ArraySlice++)
 	{
-		Context->CopyFromTextureToTexture(Source->MSAAResolveTexture, ArraySlice, Info.MipLevel, Origin, Size, Destination->Texture, ArraySlice, Info.MipLevel, Origin);
-	}
+		Context->CopyFromTextureToTexture(Source->MSAAResolveTexture.get(), ArraySlice, Info.MipLevel, Origin, Size, Destination->Texture.get(), ArraySlice, Info.MipLevel, Origin);
 	}
 }
 
@@ -190,29 +205,27 @@ void FMetalRHICommandContext::RHINextSubpass()
 
 void FMetalRHICommandContext::RHIBeginRenderQuery(FRHIRenderQuery* QueryRHI)
 {
-	@autoreleasepool {
-		FMetalRHIRenderQuery* Query = ResourceCast(QueryRHI);
-		Query->Begin(Context, CommandBufferFence);
-	}
+    MTL_SCOPED_AUTORELEASE_POOL;
+	FMetalRHIRenderQuery* Query = ResourceCast(QueryRHI);
+    Query->Begin(Context, CommandBufferFence);
 }
 
 void FMetalRHICommandContext::RHIEndRenderQuery(FRHIRenderQuery* QueryRHI)
 {
-	@autoreleasepool {
-		FMetalRHIRenderQuery* Query = ResourceCast(QueryRHI);
-		Query->End(Context);
-	}
+    MTL_SCOPED_AUTORELEASE_POOL;
+    FMetalRHIRenderQuery* Query = ResourceCast(QueryRHI);
+	Query->End(Context);
 }
 
 void FMetalRHICommandContext::RHIBeginOcclusionQueryBatch(uint32 NumQueriesInBatch)
 {
-	check(!CommandBufferFence.IsValid());
+    check(!CommandBufferFence.IsValid());
 	CommandBufferFence = MakeShareable(new FMetalCommandBufferFence);
+    Context->InsertCommandBufferFence(CommandBufferFence, FMetalCommandBufferCompletionHandler());
 }
 
 void FMetalRHICommandContext::RHIEndOcclusionQueryBatch()
 {
 	check(CommandBufferFence.IsValid());
-	Context->InsertCommandBufferFence(*CommandBufferFence);
 	CommandBufferFence.Reset();
 }

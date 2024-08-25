@@ -75,9 +75,15 @@ static const float3 WorkingColorSpaceLuminanceFactors = Linear_sRGB_2_XYZ_MAT._m
 static const float3 WorkingColorSpaceLuminanceFactors = WORKING_COLOR_SPACE_RGB_TO_XYZ_MAT._m10_m11_m12;
 #endif
 
-float3 Luminance( float3 LinearColor, float3 LuminanceFactors )
+float Luminance( float3 LinearColor, float3 LuminanceFactors )
 {
 	return dot( LinearColor, LuminanceFactors );
+}
+
+// Working color space-accurate luminance function for scene-referred linear colors.
+float SceneLuminance( float3 LinearColor )
+{
+	return Luminance( LinearColor, WorkingColorSpaceLuminanceFactors );
 }
 
 //------------------------------------------------------------------

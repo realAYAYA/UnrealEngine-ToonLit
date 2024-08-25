@@ -46,7 +46,7 @@ public:
 				int32 TrimCount = InPackageName.Len() - BasePackageLength;
 				if (TrimCount > 0)
 				{
-					InPackageName.RemoveAt(BasePackageLength, TrimCount, false);
+					InPackageName.RemoveAt(BasePackageLength, TrimCount, EAllowShrinking::No);
 				}
 
 				InPackageName += FString::Printf(TEXT("_%04d"), UniqueIndex++);

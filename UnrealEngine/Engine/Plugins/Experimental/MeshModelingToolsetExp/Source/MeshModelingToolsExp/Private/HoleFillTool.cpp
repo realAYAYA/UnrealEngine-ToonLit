@@ -180,6 +180,11 @@ void UHoleFillTool::Setup()
 		// Since this tool can tolerate failing to fill a boundary loop, just convert the spans to loops and let them fail
 		for (const FEdgeSpan& Span : BoundaryLoops->Spans)
 		{
+			// skip span if there is no edge connecting the first and last vertices, as these cannot be initialized as loops
+			if (Span.Vertices.Num() < 2 || FDynamicMesh3::InvalidID == OriginalMesh->FindEdge(Span.Vertices[0], Span.Vertices.Last()))
+			{
+				continue;
+			}
 			FEdgeLoop SpanLoop(OriginalMesh.Get());
 			if (SpanLoop.InitializeFromVertices(Span.Vertices))
 			{

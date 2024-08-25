@@ -15,9 +15,7 @@
 #include "UObject/UObjectIterator.h"
 
 #include "Sound/AudioFormatSettings.h"
-#include "ADPCMAudioInfo.h"
-#include "VorbisAudioInfo.h"
-#include "OpusAudioInfo.h"
+#include "AudioDecompress.h"
 
 #if INSTRUMENT_AUDIODEVICE_HANDLES
 #include "Containers/StringConv.h"
@@ -214,11 +212,19 @@ FAudioDeviceManager::~FAudioDeviceManager()
 
 	FAudioThread::StopAudioThread();
 
+	TMap<Audio::FDeviceId, FAudioDeviceContainer> DevicesToShutdown;
 	{
-		FScopeLock ScopeLock(&DeviceMapCriticalSection);
-		MainAudioDeviceHandle.Reset();
-		Devices.Reset();
+		FScopeLock ScopeLock(&DeviceMapCriticalSection);		
+		DevicesToShutdown = MoveTemp(Devices);
 	}
+
+	// Can only be destroyed outside of critical section to avoid a deadlock,
+	// but need to remove the device from the manager's list in case of calls
+	// being executed from individual device render thread commands attempting
+	// to access their given device. This is a means to communicate to pending
+	// commands the device is no longer available without destroying it mid-flight.
+	DevicesToShutdown.Reset();
+	MainAudioDeviceHandle.Reset();
 
 	FCoreDelegates::ApplicationWillEnterBackgroundDelegate.RemoveAll(this);
 
@@ -348,13 +354,7 @@ void FAudioDeviceManager::RegisterAudioInfoFactories()
 			FModuleManager::Get().LoadModuleChecked(*i);
 		}
 	}
-
-	// Register the engine formats.
-	EngineFormats.Add(MakePimpl<FSimpleAudioInfoFactory>([] { return new FADPCMAudioInfo(); }, Audio::NAME_PCM));
-	EngineFormats.Add(MakePimpl<FSimpleAudioInfoFactory>([] { return new FADPCMAudioInfo(); }, Audio::NAME_ADPCM));
-	EngineFormats.Add(MakePimpl<FSimpleAudioInfoFactory>([] { return new FVorbisAudioInfo(); }, Audio::NAME_OGG));
-	EngineFormats.Add(MakePimpl<FSimpleAudioInfoFactory>([] { return new FOpusAudioInfo(); }, Audio::NAME_OPUS));
-
+		
 	// Sanity check we have all the Factories we need to run now by 
 	TArray<FName> AllFormats;
 	GetAudioFormatSettings().GetAllWaveFormats(AllFormats);
@@ -511,42 +511,43 @@ void FAudioDeviceManager::DecrementDevice(Audio::FDeviceId DeviceID, UWorld* InW
 		FScopeLock ScopeLock(&DeviceMapCriticalSection);
 
 		// If there is an FAudioDeviceHandle out in the world
-		check(Devices.Contains(DeviceID));
-
-		FAudioDeviceContainer& Container = Devices[DeviceID];
-		check(Container.NumberOfHandlesToThisDevice > 0);
-
-		// Report device being destroyed before actual destruction
-		// to allow listeners to access and respond where applicable.
-		bool bDestroyingDevice = false;
-		if (Container.NumberOfHandlesToThisDevice == 1)
+		if (Devices.Contains(DeviceID))
 		{
-			bDestroyingDevice = true;
-			FAudioDeviceManagerDelegates::OnAudioDeviceDestroyed.Broadcast(DeviceID);
+			FAudioDeviceContainer& Container = Devices[DeviceID];
+			check(Container.NumberOfHandlesToThisDevice > 0);
 
-			// Subsystems deinitialization
-			Container.Device->Deinitialize();
-
-			// If this is the active device and being destroyed, set the main device as the active device.
-			if (DeviceID == ActiveAudioDeviceID)
+			// Report device being destroyed before actual destruction
+			// to allow listeners to access and respond where applicable.
+			bool bDestroyingDevice = false;
+			if (Container.NumberOfHandlesToThisDevice == 1)
 			{
-				SetActiveDevice(MainAudioDeviceHandle.GetDeviceID());
+				bDestroyingDevice = true;
+				FAudioDeviceManagerDelegates::OnAudioDeviceDestroyed.Broadcast(DeviceID);
+
+				// Subsystems deinitialization
+				Container.Device->Deinitialize();
+
+				// If this is the active device and being destroyed, set the main device as the active device.
+				if (DeviceID == ActiveAudioDeviceID)
+				{
+					SetActiveDevice(MainAudioDeviceHandle.GetDeviceID());
+				}
+
+				UnregisterWorld(InWorld, DeviceID);
 			}
 
-			UnregisterWorld(InWorld, DeviceID);
-		}
+			Container.NumberOfHandlesToThisDevice--;
 
-		Container.NumberOfHandlesToThisDevice--;
-
-		// If there is no longer any users of this device, destroy it.
-		if (Container.NumberOfHandlesToThisDevice)
-		{
-			ensureMsgf(!bDestroyingDevice, TEXT("AudioDevice Destruction Failure: 'OnAudioDeviceDestroyed' listener generated new persistent handle(s) to AudioDevice."));
-		}
-		else
-		{
-			Swap(DeviceToTearDown, Container.Device);
-			Devices.Remove(DeviceID);
+			// If there is no longer any users of this device, destroy it.
+			if (Container.NumberOfHandlesToThisDevice)
+			{
+				ensureMsgf(!bDestroyingDevice, TEXT("AudioDevice Destruction Failure: 'OnAudioDeviceDestroyed' listener generated new persistent handle(s) to AudioDevice."));
+			}
+			else
+			{
+				Swap(DeviceToTearDown, Container.Device);
+				Devices.Remove(DeviceID);
+			}
 		}
 	}
 
@@ -825,7 +826,7 @@ void FAudioDeviceManager::UnregisterSoundSubmix(const USoundSubmixBase* SoundSub
 	IterateOverAllDevices(
 		[&SoundSubmix](Audio::FDeviceId, FAudioDevice* InDevice)
 		{
-			InDevice->UnregisterSoundSubmix(SoundSubmix);
+			InDevice->UnregisterSoundSubmix(SoundSubmix, true);
 		}
 	);
 }
@@ -842,12 +843,7 @@ void FAudioDeviceManager::InitSoundSubmixes()
 
 void FAudioDeviceManager::InitSoundEffectPresets()
 {
-	IterateOverAllDevices(
-		[](Audio::FDeviceId, FAudioDevice* InDevice)
-		{
-			InDevice->InitSoundEffectPresets();
-		}
-	);
+	// Deprecated.
 }
 
 void FAudioDeviceManager::UpdateSourceEffectChain(const uint32 SourceEffectChainId, const TArray<FSourceEffectChainEntry>& SourceEffectChain, const bool bPlayEffectChainTails)

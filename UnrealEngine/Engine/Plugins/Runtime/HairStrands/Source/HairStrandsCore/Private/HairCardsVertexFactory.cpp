@@ -19,18 +19,73 @@
 #include "GlobalRenderResources.h"
 #include "DataDrivenShaderPlatformInfo.h"
 
+#define HAIR_CARDS_VF_PRIMITIVEID_STREAM_INDEX 13
+static int32 GHairCardCoverageBias = 0;
+static FAutoConsoleVariableRef CVarHairCardCoverageBias(TEXT("r.HairStrands.Cards.CoverageBias"), GHairCardCoverageBias, TEXT("Apply a texture LOD bias to coverage texture"));
+
 template<typename T> inline void VFC_BindParam(FMeshDrawSingleShaderBindings& ShaderBindings, const FShaderResourceParameter& Param, T* Value) { if (Param.IsBound() && Value) ShaderBindings.Add(Param, Value); }
 template<typename T> inline void VFC_BindParam(FMeshDrawSingleShaderBindings& ShaderBindings, const FShaderParameter& Param, const T& Value) { if (Param.IsBound()) ShaderBindings.Add(Param, Value); }
 
 enum class EHairCardsFactoryFlags : uint32
 {
-	InvertedUV = 1,
-	TextureRootUV = 2,
-	TextureGroupIndex = 4,
-	TextureBaseColor = 8,
-	TextureRoughness = 10,
-	TextureAttribute = 12
+	InvertedUV = 0x1,
 };
+
+static void SetTextures(
+	const TArray<FTextureReferenceRHIRef>& InTextures,
+	const TArray<FSamplerStateRHIRef>& InSamplers,
+	const uint32 InLayoutIndex,
+	FHairCardsVertexFactoryUniformShaderParameters& Out)
+{
+	Out.LayoutIndex = InLayoutIndex;
+	Out.TextureCount = InTextures.Num();
+	for (uint32 TextureIt = 0, TextureCount = InTextures.Num(); TextureIt < TextureCount; ++TextureIt)
+	{
+		if (InTextures[TextureIt] != nullptr)
+		{
+			Out.Flags |= 1u<<(TextureIt+1u);		
+			switch (TextureIt)
+			{
+				case 0:
+				{
+					Out.Texture0Texture = InTextures[TextureIt];
+					Out.Texture0Sampler = InSamplers[TextureIt];
+				} break;
+				case 1:
+				{
+					Out.Texture1Texture = InTextures[TextureIt];
+					Out.Texture1Sampler = InSamplers[TextureIt];
+				} break;
+				case 2:
+				{
+					Out.Texture2Texture = InTextures[TextureIt];
+					Out.Texture2Sampler = InSamplers[TextureIt];
+				} break;
+				case 3:
+				{
+					Out.Texture3Texture = InTextures[TextureIt];
+					Out.Texture3Sampler = InSamplers[TextureIt];
+				} break;
+				case 4:
+				{
+					Out.Texture4Texture = InTextures[TextureIt];
+					Out.Texture4Sampler = InSamplers[TextureIt];
+				} break;
+				case 5:
+				{
+					Out.Texture5Texture = InTextures[TextureIt];
+					Out.Texture5Sampler = InSamplers[TextureIt];
+				} break;
+				default:
+				{
+					// Only support up to 6 textures for now
+					check(false);
+				}
+
+			}
+		}
+	}
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Cards based vertex factory
@@ -49,9 +104,11 @@ FHairCardsUniformBuffer CreateHairCardsVFUniformBuffer(
 		const FHairGroupInstance::FCards::FLOD& LOD = Instance->Cards.LODs[LODIndex];
 
 		// Cards atlas UV are inverted so fetching needs to be inverted on the y-axis
-		UniformParameters.Flags = 0;
-		if (LOD.RestResource->bInvertUV) { UniformParameters.Flags |= uint32(EHairCardsFactoryFlags::InvertedUV);  }
+		UniformParameters.Flags = LOD.RestResource->bInvertUV ? uint32(EHairCardsFactoryFlags::InvertedUV) : 0u;
+		UniformParameters.AttributeTextureIndex = 0; // TODO pack attribute texture/channel description. Currently use hardcoded layout in shader attribute code.
+		UniformParameters.AttributeChannelIndex = 0; // TODO pack attribute texture/channel description. Currently use hardcoded layout in shader attribute code.
 		UniformParameters.MaxVertexCount = LOD.RestResource->GetVertexCount();
+		UniformParameters.CoverageBias = FMath::Clamp(GHairCardCoverageBias, -16.f, 16.f);
 
 		// When the geometry is not-dynamic (no binding to skeletal mesh, no simulation), only a single vertex buffer is allocated. 
 		// In this case we force the buffer index to 0
@@ -72,18 +129,7 @@ FHairCardsUniformBuffer CreateHairCardsVFUniformBuffer(
 		UniformParameters.UVsBuffer = LOD.RestResource->UVsBuffer.ShaderResourceViewRHI.GetReference();
 		UniformParameters.MaterialsBuffer = LOD.RestResource->MaterialsBuffer.ShaderResourceViewRHI.GetReference();
 
-		UniformParameters.DepthTexture = LOD.RestResource->DepthTexture;
-		UniformParameters.DepthSampler = LOD.RestResource->DepthSampler;
-		UniformParameters.TangentTexture = LOD.RestResource->TangentTexture;
-		UniformParameters.TangentSampler = LOD.RestResource->TangentSampler;
-		UniformParameters.CoverageTexture = LOD.RestResource->CoverageTexture;
-		UniformParameters.CoverageSampler = LOD.RestResource->CoverageSampler;
-		UniformParameters.AttributeTexture = LOD.RestResource->AttributeTexture;
-		UniformParameters.AttributeSampler = LOD.RestResource->AttributeSampler;
-		UniformParameters.AuxilaryDataTexture = LOD.RestResource->AuxilaryDataTexture;
-		UniformParameters.AuxilaryDataSampler = LOD.RestResource->AuxilaryDataSampler;
-		UniformParameters.MaterialTexture = nullptr; // Material properties & Group index are stored on vertices for cards
-		UniformParameters.MaterialSampler = nullptr; // Material properties & Group index are stored on vertices for cards
+		SetTextures(LOD.RestResource->Textures, LOD.RestResource->Samplers, LOD.RestResource->LayoutIndex, UniformParameters);
 	}
 	else if (GeometryType == EHairGeometryType::Meshes)
 	{
@@ -105,56 +151,43 @@ FHairCardsUniformBuffer CreateHairCardsVFUniformBuffer(
 
 		// Meshes UV are not inverted so no need to invert the y-axis
 		UniformParameters.Flags = 0;
-		UniformParameters.Flags |= uint32(EHairCardsFactoryFlags::TextureRootUV);
-		UniformParameters.Flags |= uint32(EHairCardsFactoryFlags::TextureAttribute);
-		UniformParameters.Flags |= uint32(EHairCardsFactoryFlags::TextureGroupIndex);
-		UniformParameters.Flags |= uint32(EHairCardsFactoryFlags::TextureBaseColor);
-		UniformParameters.Flags |= uint32(EHairCardsFactoryFlags::TextureRoughness);
-
+		UniformParameters.AttributeTextureIndex = 0; // TODO pack attribute texture/channel description. Currently use hardcoded layout in shader attribute code.
+		UniformParameters.AttributeChannelIndex = 0; // TODO pack attribute texture/channel description. Currently use hardcoded layout in shader attribute code.
 		UniformParameters.MaxVertexCount = LOD.RestResource->GetVertexCount();
+		UniformParameters.CoverageBias = 0;
+
 		UniformParameters.NormalsBuffer = LOD.RestResource->NormalsBuffer.ShaderResourceViewRHI.GetReference();
 		UniformParameters.UVsBuffer = LOD.RestResource->UVsBuffer.ShaderResourceViewRHI.GetReference();
 		UniformParameters.MaterialsBuffer = UniformParameters.NormalsBuffer; // Reuse normal buffer as a dummy input for material buffer, since it not used for meshes (material data is fetch through textures)
 
-		UniformParameters.DepthTexture = LOD.RestResource->DepthTexture;
-		UniformParameters.DepthSampler = LOD.RestResource->DepthSampler;
-		UniformParameters.TangentTexture = LOD.RestResource->TangentTexture;
-		UniformParameters.TangentSampler = LOD.RestResource->TangentSampler;
-		UniformParameters.CoverageTexture = LOD.RestResource->CoverageTexture;
-		UniformParameters.CoverageSampler = LOD.RestResource->CoverageSampler;
-		UniformParameters.AttributeTexture = LOD.RestResource->AttributeTexture;
-		UniformParameters.AttributeSampler = LOD.RestResource->AttributeSampler;
-		UniformParameters.AuxilaryDataTexture = LOD.RestResource->AuxilaryDataTexture;
-		UniformParameters.AuxilaryDataSampler = LOD.RestResource->AuxilaryDataSampler;
-		UniformParameters.MaterialTexture = LOD.RestResource->MaterialTexture;
-		UniformParameters.MaterialSampler = LOD.RestResource->MaterialSampler;
+		SetTextures(LOD.RestResource->Textures, LOD.RestResource->Samplers, LOD.RestResource->LayoutIndex, UniformParameters);
 	}
 
 	if (!bSupportsManualVertexFetch)
 	{
-		UniformParameters.PositionBuffer = GNullVertexBuffer.VertexBufferSRV;
+		UniformParameters.PositionBuffer         = GNullVertexBuffer.VertexBufferSRV;
 		UniformParameters.PreviousPositionBuffer = GNullVertexBuffer.VertexBufferSRV;
-		UniformParameters.NormalsBuffer = GNullVertexBuffer.VertexBufferSRV;
-		UniformParameters.UVsBuffer = GNullVertexBuffer.VertexBufferSRV;
-		UniformParameters.MaterialsBuffer = GNullVertexBuffer.VertexBufferSRV;
+		UniformParameters.NormalsBuffer          = GNullVertexBuffer.VertexBufferSRV;
+		UniformParameters.UVsBuffer              = GNullVertexBuffer.VertexBufferSRV;
+		UniformParameters.MaterialsBuffer        = GNullVertexBuffer.VertexBufferSRV;
 	}
 
 	FRHITexture* DefaultTexture = GBlackTexture->TextureRHI;
 	FSamplerStateRHIRef DefaultSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
-	if (!UniformParameters.DepthTexture)		{ UniformParameters.DepthTexture = DefaultTexture;	  }
-	if (!UniformParameters.TangentTexture)		{ UniformParameters.TangentTexture = DefaultTexture;  }
-	if (!UniformParameters.CoverageTexture)		{ UniformParameters.CoverageTexture = DefaultTexture; }
-	if (!UniformParameters.AttributeTexture)	{ UniformParameters.AttributeTexture = DefaultTexture;}
-	if (!UniformParameters.AuxilaryDataTexture)	{ UniformParameters.AuxilaryDataTexture = DefaultTexture; }
-	if (!UniformParameters.MaterialTexture)		{ UniformParameters.MaterialTexture = DefaultTexture; }
+	if (!UniformParameters.Texture0Texture)	{ UniformParameters.Texture0Texture = DefaultTexture; }
+	if (!UniformParameters.Texture1Texture)	{ UniformParameters.Texture1Texture = DefaultTexture; }
+	if (!UniformParameters.Texture2Texture)	{ UniformParameters.Texture2Texture = DefaultTexture; }
+	if (!UniformParameters.Texture3Texture)	{ UniformParameters.Texture3Texture = DefaultTexture; }
+	if (!UniformParameters.Texture4Texture)	{ UniformParameters.Texture4Texture = DefaultTexture; }
+	if (!UniformParameters.Texture5Texture)	{ UniformParameters.Texture5Texture = DefaultTexture; }
 
-	if (!UniformParameters.DepthSampler)		{ UniformParameters.DepthSampler = DefaultSampler;	  }
-	if (!UniformParameters.TangentSampler)		{ UniformParameters.TangentSampler = DefaultSampler;  }
-	if (!UniformParameters.CoverageSampler)		{ UniformParameters.CoverageSampler = DefaultSampler; }
-	if (!UniformParameters.AttributeSampler)	{ UniformParameters.AttributeSampler = DefaultSampler;}
-	if (!UniformParameters.AuxilaryDataSampler) { UniformParameters.AuxilaryDataSampler = DefaultSampler; }
-	if (!UniformParameters.MaterialSampler)		{ UniformParameters.MaterialSampler = DefaultSampler;}
+	if (!UniformParameters.Texture0Sampler) { UniformParameters.Texture0Sampler = DefaultSampler; }
+	if (!UniformParameters.Texture1Sampler) { UniformParameters.Texture1Sampler = DefaultSampler; }
+	if (!UniformParameters.Texture2Sampler) { UniformParameters.Texture2Sampler = DefaultSampler; }
+	if (!UniformParameters.Texture3Sampler) { UniformParameters.Texture3Sampler = DefaultSampler; }
+	if (!UniformParameters.Texture4Sampler) { UniformParameters.Texture4Sampler = DefaultSampler; }
+	if (!UniformParameters.Texture5Sampler) { UniformParameters.Texture5Sampler = DefaultSampler; }
 
 	return TUniformBufferRef<FHairCardsVertexFactoryUniformShaderParameters>::CreateUniformBufferImmediate(UniformParameters, UniformBuffer_MultiFrame);
 }
@@ -256,8 +289,33 @@ void FHairCardsVertexFactory::ValidateCompiledResult(const FVertexFactoryType* T
 
 void FHairCardsVertexFactory::GetPSOPrecacheVertexFetchElements(EVertexInputStreamType VertexInputStreamType, FVertexDeclarationElementList& Elements)
 {
-	// Manual vertex fetch is available for this factory so only primitive ID stream is used
-	Elements.Add(FVertexElement(0, 0, VET_UInt, 13, 0, true));
+	if (!PlatformGPUSceneUsesUniformBufferView(GMaxRHIShaderPlatform))
+	{ 
+		// Manual vertex fetch is available for this factory so only primitive ID stream is used
+		Elements.Add(FVertexElement(0, 0, VET_UInt, HAIR_CARDS_VF_PRIMITIVEID_STREAM_INDEX, 0, true));
+	}
+
+	const bool bManualFetch = RHISupportsManualVertexFetch(GMaxRHIShaderPlatform);
+	if (!bManualFetch)
+	{
+		uint8 NumStreams = Elements.Num();
+		
+		Elements.Add(FVertexElement(0+NumStreams, 0, FHairCardsPositionFormat::VertexElementType, 0, FHairCardsPositionFormat::SizeInByte, false));
+		Elements.Add(FVertexElement(0+NumStreams, 0, FHairCardsPositionFormat::VertexElementType, 5, FHairCardsPositionFormat::SizeInByte, false));
+
+		uint8 NormalOffset0 = 0u;
+		uint8 NormalOffset1 = FHairCardsNormalFormat::SizeInByte;
+		Elements.Add(FVertexElement(1+NumStreams, NormalOffset0, FHairCardsNormalFormat::VertexElementType, 1, FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount, false));
+		Elements.Add(FVertexElement(1+NumStreams, NormalOffset1, FHairCardsNormalFormat::VertexElementType, 2, FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount, false));
+
+		Elements.Add(FVertexElement(2+NumStreams, 0, FHairCardsUVFormat::VertexElementType, 3, FHairCardsUVFormat::SizeInByte, false));
+		Elements.Add(FVertexElement(3+NumStreams, 0, FHairCardsMaterialFormat::VertexElementType, 4, FHairCardsMaterialFormat::SizeInByte, false));
+	}
+}
+
+EPrimitiveIdMode FHairCardsVertexFactory::GetPrimitiveIdMode(ERHIFeatureLevel::Type In) const
+{
+	return PrimID_DynamicPrimitiveShaderData;
 }
 
 void FHairCardsVertexFactory::SetData(const FDataType& InData)
@@ -274,7 +332,7 @@ void FHairCardsVertexFactory::Copy(const FHairCardsVertexFactory& Other)
 {
 	FHairCardsVertexFactory* VertexFactory = this;
 	const FDataType* DataCopy = &Other.Data;
-	ENQUEUE_RENDER_COMMAND(FHairStrandsVertexFactoryCopyData)(
+	ENQUEUE_RENDER_COMMAND(FHairStrandsVertexFactoryCopyData)(/*UE::RenderCommandPipe::Groom,*/
 	[VertexFactory, DataCopy](FRHICommandListImmediate& RHICmdList)
 	{
 		VertexFactory->Data = *DataCopy;
@@ -294,37 +352,102 @@ void FHairCardsVertexFactory::InitResources(FRHICommandListBase& RHICmdList)
 	// We create different streams based on feature level
 	check(HasValidFeatureLevel());
 
+	const ERHIFeatureLevel::Type CurrentFeatureLevel = GetFeatureLevel();
+
 	// If the platform does not support manual vertex fetching we assume it is a low end platform, and so we don't enable deformation.
 	// VertexFactory needs to be able to support max possible shader platform and feature level
 	// in case if we switch feature level at runtime.
 	FVertexDeclarationElementList Elements;
-	SetPrimitiveIdStreamIndex(GetFeatureLevel(), EVertexInputStreamType::Default, -1);
-	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, 0xff);
+	SetPrimitiveIdStreamIndex(CurrentFeatureLevel, EVertexInputStreamType::Default, -1);
+
+	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, HAIR_CARDS_VF_PRIMITIVEID_STREAM_INDEX /*AttributeIndex*/, HAIR_CARDS_VF_PRIMITIVEID_STREAM_INDEX /*AttributeIndex_Mobile*/);
 
 	// Note this is a local version of the VF's bSupportsManualVertexFetch, which take into account the feature level
-	const bool bManualFetch = SupportsManualVertexFetch(GetFeatureLevel());
+	// When manual fetch is not supported, buffers are bound through input assembly based on vertex declaration. 
+	// A vertex declaraction only access FVertexBuffer buffers, so we create wrappers of pooled buffers
+	const bool bManualFetch = SupportsManualVertexFetch(CurrentFeatureLevel);
 	if (!bManualFetch)
 	{
 		if (Data.GeometryType == EHairGeometryType::Cards)
 		{
 			const FHairGroupInstance::FCards::FLOD& LOD = Data.Instance->Cards.LODs[Data.LODIndex];
-		
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->RestPositionBuffer,	0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 0));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,			0, 0,									FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 1));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,			0, FHairCardsNormalFormat::SizeInByte,	FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 2));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->UVsBuffer,				0, 0,									FHairCardsUVFormat::SizeInByte,														FHairCardsUVFormat::VertexElementType,			EVertexStreamUsage::Default), 3));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->MaterialsBuffer,		0, 0,									FHairCardsMaterialFormat::SizeInByte,												FHairCardsMaterialFormat::VertexElementType,	EVertexStreamUsage::Default), 4));
+			
+			const bool bDynamic = LOD.DeformedResource != nullptr;
+			if (bDynamic)
+			{
+				DeformedPositionVertexBuffer[0] = FRDGWrapperVertexBuffer(LOD.DeformedResource->GetBuffer(FHairCardsDeformedResource::EFrameType::Current));
+				DeformedPositionVertexBuffer[0].InitResource(RHICmdList);
+
+				DeformedPositionVertexBuffer[1] = FRDGWrapperVertexBuffer(LOD.DeformedResource->GetBuffer(FHairCardsDeformedResource::EFrameType::Previous));
+				DeformedPositionVertexBuffer[1].InitResource(RHICmdList);
+
+				DeformedNormalVertexBuffer = FRDGWrapperVertexBuffer(LOD.DeformedResource->DeformedNormalBuffer);
+				DeformedNormalVertexBuffer.InitResource(RHICmdList);
+
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&(DeformedPositionVertexBuffer[0]),		0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 0));
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&(DeformedPositionVertexBuffer[1]),		0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 5));
+
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&DeformedNormalVertexBuffer,				0, 0,									FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 1));
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&DeformedNormalVertexBuffer,				0, FHairCardsNormalFormat::SizeInByte,	FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 2));
+			}
+			else
+			{
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->RestPositionBuffer,	0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 0));
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->RestPositionBuffer,	0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 5));
+
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,			0, 0,									FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 1));
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,			0, FHairCardsNormalFormat::SizeInByte,	FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 2));
+			}
+			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->UVsBuffer,					0, 0,									FHairCardsUVFormat::SizeInByte,														FHairCardsUVFormat::VertexElementType,			EVertexStreamUsage::Default), 3));
+			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->MaterialsBuffer,			0, 0,									FHairCardsMaterialFormat::SizeInByte,												FHairCardsMaterialFormat::VertexElementType,	EVertexStreamUsage::Default), 4));
+
+			// Ensure the rest resources are in correct states for the VF
+			const FHairCardsRestResource* RestResource = LOD.RestResource;
+			ENQUEUE_RENDER_COMMAND(FHairCardsVertexFactoryTransition)(/*UE::RenderCommandPipe::Groom,*/
+			[RestResource](FRHICommandListImmediate& RHICmdImmediateList)
+			{
+				RHICmdImmediateList.Transition(FRHITransitionInfo(RestResource->RestPositionBuffer.VertexBufferRHI,	ERHIAccess::Unknown, ERHIAccess::VertexOrIndexBuffer));
+				RHICmdImmediateList.Transition(FRHITransitionInfo(RestResource->NormalsBuffer.VertexBufferRHI, 		ERHIAccess::Unknown, ERHIAccess::VertexOrIndexBuffer));
+				RHICmdImmediateList.Transition(FRHITransitionInfo(RestResource->UVsBuffer.VertexBufferRHI, 			ERHIAccess::Unknown, ERHIAccess::VertexOrIndexBuffer));
+				RHICmdImmediateList.Transition(FRHITransitionInfo(RestResource->MaterialsBuffer.VertexBufferRHI, 	ERHIAccess::Unknown, ERHIAccess::VertexOrIndexBuffer));
+			});
 		}
 		else if (Data.GeometryType == EHairGeometryType::Meshes)
 		{
 			const FHairGroupInstance::FMeshes::FLOD& LOD = Data.Instance->Meshes.LODs[Data.LODIndex];
 
 			// Note: Use the 'Normal' buffer as a dummy input for 'Material' buffer, as Material data is fetched through textures for meshes
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->RestPositionBuffer,	0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 0));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,			0, 0,									FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 1));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,			0, FHairCardsNormalFormat::SizeInByte,	FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 2));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->UVsBuffer,				0, 0,									FHairCardsUVFormat::SizeInByte,														FHairCardsUVFormat::VertexElementType,			EVertexStreamUsage::Default), 3));
-			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,			0, 0,									FHairCardsMaterialFormat::SizeInByte,												FHairCardsMaterialFormat::VertexElementType,	EVertexStreamUsage::Default), 4)); 
+			const bool bDynamic = LOD.DeformedResource != nullptr;
+			if (bDynamic)
+			{
+				DeformedPositionVertexBuffer[0] = FRDGWrapperVertexBuffer(LOD.DeformedResource->GetBuffer(FHairMeshesDeformedResource::EFrameType::Current));
+				DeformedPositionVertexBuffer[0].InitResource(RHICmdList);
+
+				DeformedPositionVertexBuffer[1] = FRDGWrapperVertexBuffer(LOD.DeformedResource->GetBuffer(FHairMeshesDeformedResource::EFrameType::Previous));
+				DeformedPositionVertexBuffer[1].InitResource(RHICmdList);
+
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&(DeformedPositionVertexBuffer[0]),		0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 0));
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&(DeformedPositionVertexBuffer[1]),		0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 5));
+			}
+			else
+			{
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->RestPositionBuffer,	0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 0));
+				Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->RestPositionBuffer,	0, 0,									FHairCardsPositionFormat::SizeInByte,												FHairCardsPositionFormat::VertexElementType,	EVertexStreamUsage::Default), 5));
+			}
+			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,				0, 0,									FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 1));
+			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,				0, FHairCardsNormalFormat::SizeInByte,	FHairCardsNormalFormat::SizeInByte * FHairCardsNormalFormat::ComponentCount,		FHairCardsNormalFormat::VertexElementType,		EVertexStreamUsage::Default), 2));
+			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->UVsBuffer,					0, 0,									FHairCardsUVFormat::SizeInByte,														FHairCardsUVFormat::VertexElementType,			EVertexStreamUsage::Default), 3));
+			Elements.Add(AccessStreamComponent(FVertexStreamComponent(&LOD.RestResource->NormalsBuffer,				0, 0,									FHairCardsMaterialFormat::SizeInByte,												FHairCardsMaterialFormat::VertexElementType,	EVertexStreamUsage::Default), 4)); 
+
+			// Ensure the rest resources are in correct states for the VF
+			const FHairMeshesRestResource* RestResource = LOD.RestResource;
+			ENQUEUE_RENDER_COMMAND(FHairCardsVertexFactoryTransition)(/*UE::RenderCommandPipe::Groom,*/
+			[RestResource](FRHICommandListImmediate& RHICmdImmediateList)
+			{
+				RHICmdImmediateList.Transition(FRHITransitionInfo(RestResource->RestPositionBuffer.VertexBufferRHI,	ERHIAccess::Unknown, ERHIAccess::VertexOrIndexBuffer));
+				RHICmdImmediateList.Transition(FRHITransitionInfo(RestResource->NormalsBuffer.VertexBufferRHI, 		ERHIAccess::Unknown, ERHIAccess::VertexOrIndexBuffer));
+				RHICmdImmediateList.Transition(FRHITransitionInfo(RestResource->UVsBuffer.VertexBufferRHI, 			ERHIAccess::Unknown, ERHIAccess::VertexOrIndexBuffer));
+			});
 		}
 
 		bNeedsDeclaration = true;
@@ -352,6 +475,14 @@ void FHairCardsVertexFactory::InitResources(FRHICommandListBase& RHICmdList)
 			HairInstance->Meshes.LODs[Data.LODIndex].UniformBuffer = CreateHairCardsVFUniformBuffer(HairInstance, Data.LODIndex, EHairGeometryType::Meshes, bManualFetch);
 		}
 	}
+}
+
+void FHairCardsVertexFactory::ReleaseResource()
+{
+	FVertexFactory::ReleaseResource();
+	DeformedPositionVertexBuffer[0].ReleaseResource();
+	DeformedPositionVertexBuffer[1].ReleaseResource();
+	DeformedNormalVertexBuffer.ReleaseResource();
 }
 
 void FHairCardsVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)

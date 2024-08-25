@@ -3,11 +3,15 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using EpicGames.Perforce;
 using EpicGames.Redis;
 using Horde.Server.Server;
@@ -44,6 +48,9 @@ namespace Horde.Server.Perforce
 			public int MaxChange { get; set; }
 
 			[BsonDictionaryOptions(DictionaryRepresentation.ArrayOfDocuments)]
+			public Dictionary<StreamId, IoHash> Streams { get; set; } = new Dictionary<StreamId, IoHash>();
+
+			[BsonDictionaryOptions(DictionaryRepresentation.ArrayOfDocuments)]
 			public Dictionary<StreamId, int> MinChanges { get; set; } = new Dictionary<StreamId, int>();
 		}
 
@@ -64,8 +71,9 @@ namespace Horde.Server.Perforce
 			public StreamConfig StreamConfig { get; set; }
 			public PerforceViewMap View { get; }
 			public PerforceChangeView ChangeView { get; }
+			public IoHash Hash { get; }
 
-			public List<CommitTagInfo> CommitTags { get; set; } = new List<CommitTagInfo>();
+			public IReadOnlyList<CommitTagInfo> CommitTags { get; }
 
 			public StreamInfo(StreamConfig streamConfig, PerforceViewMap view, PerforceChangeView changeView)
 			{
@@ -73,12 +81,31 @@ namespace Horde.Server.Perforce
 				View = view;
 				ChangeView = changeView;
 
+				List<CommitTagInfo> commitTags = new List<CommitTagInfo>();
 				foreach (CommitTagConfig commitTagConfig in streamConfig.GetAllCommitTags())
 				{
 					if (streamConfig.TryGetCommitTagFilter(commitTagConfig.Name, out FileFilter? filter))
 					{
-						CommitTags.Add(new CommitTagInfo(commitTagConfig.Name, filter));
+						commitTags.Add(new CommitTagInfo(commitTagConfig.Name, filter));
 					}
+				}
+				CommitTags = commitTags;
+
+				using (StringWriter writer = new StringWriter())
+				{
+					writer.WriteLine("View");
+					foreach (PerforceViewMapEntry entry in view.Entries)
+					{
+						writer.WriteLine($"  {entry.Include}|{entry.Source}|{entry.Target}");
+					}
+
+					writer.WriteLine("ChangeView");
+					foreach (PerforceChangeViewEntry entry in changeView.Entries)
+					{
+						writer.WriteLine($"  {entry.Path}|{entry.Change}");
+					}
+
+					Hash = IoHash.Compute(Encoding.UTF8.GetBytes(writer.ToString()));
 				}
 			}
 		}
@@ -191,9 +218,10 @@ namespace Horde.Server.Perforce
 		readonly IDowntimeService _downtimeService;
 		readonly IMongoCollection<CachedCommitDoc> _commits;
 		readonly IOptionsMonitor<GlobalConfig> _globalConfig;
+		readonly Tracer _tracer;
 		readonly ILogger _logger;
 
-		static readonly RedisChannel<StreamId> s_commitUpdateChannel = new RedisChannel<StreamId>("commit-update");
+		static readonly RedisChannel<StreamId> s_commitUpdateChannel = new RedisChannel<StreamId>(RedisChannel.Literal("commit-update"));
 
 		readonly ITicker _updateCommitsTicker;
 
@@ -210,20 +238,21 @@ namespace Horde.Server.Perforce
 			List<MongoIndex<CachedCommitDoc>> indexes = new List<MongoIndex<CachedCommitDoc>>();
 			indexes.Add(MongoIndex.Create<CachedCommitDoc>(keys => keys.Ascending(x => x.StreamId).Descending(x => x.Number), true));
 			indexes.Add(MongoIndex.Create<CachedCommitDoc>(keys => keys.Ascending(x => x.StreamId).Ascending(x => x.CommitTags).Descending(x => x.Number), true));
-			_commits = mongoService.GetCollection<CachedCommitDoc>("CommitsV2", indexes);
+			_commits = mongoService.GetCollection<CachedCommitDoc>("CommitsV3", indexes);
 
 			_globalConfig = globalConfig;
+			_tracer = tracer;
 			_logger = logger;
 
 			_updateCommitsTicker = clock.AddSharedTicker<PerforceServiceCache>(TimeSpan.FromSeconds(10.0), UpdateCommitsAsync, logger);
 		}
 
 		/// <inheritdoc/>
-		public override void Dispose()
+		public override async ValueTask DisposeAsync()
 		{
-			base.Dispose();
+			await base.DisposeAsync();
 
-			_updateCommitsTicker.Dispose();
+			await _updateCommitsTicker.DisposeAsync();
 		}
 
 		/// <inheritdoc/>
@@ -247,13 +276,7 @@ namespace Horde.Server.Perforce
 		/// <returns></returns>
 		async ValueTask UpdateCommitsAsync(CancellationToken cancellationToken)
 		{
-			// Don't do any updates during downtime; we might just create a bunch of P4 errors.
-			if (_downtimeService.IsDowntimeActive)
-			{
-				return;
-			}
-
-			CacheState state = await _mongoService.GetSingletonAsync<CacheState>();
+			CacheState state = await _mongoService.GetSingletonAsync<CacheState>(cancellationToken);
 
 			// Get the current list of streams and their views
 			Dictionary<string, List<StreamInfo>> clusters = await CreateStreamInfoAsync(cancellationToken);
@@ -264,93 +287,105 @@ namespace Horde.Server.Perforce
 
 			// Poll each cluster
 			List<ClusterTicker> tickers = new List<ClusterTicker>();
-
-			for (; ; )
+			try
 			{
-				// Update the background task for refreshing the list of clusters
-				if(clusterTask != null && clusterTask.IsCompleted)
+				for (; ; )
 				{
-					try
+					// Update the background task for refreshing the list of clusters
+					if (clusterTask != null && clusterTask.IsCompleted)
 					{
-						clusters = await clusterTask;
-					}
-					catch (Exception ex)
-					{
-						_logger.LogError(ex, "Exception while updating cluster information: {Message}", ex.Message);
-					}
-					clusterTask = null;
-				}
-				if (clusterTask == null && clusterTimer.Elapsed > TimeSpan.FromSeconds(30.0))
-				{
-					clusterTask = Task.Run(() => CreateStreamInfoAsync(cancellationToken), cancellationToken);
-					clusterTimer.Restart();
-				}
-
-				// Remove any state for clusters that are no longer valid
-				bool updateState = false;
-				foreach (string clusterName in state.Clusters.Keys)
-				{
-					if (!clusters.ContainsKey(clusterName))
-					{
-						state.Clusters.Remove(clusterName);
-						updateState = true;
-					}
-				}
-
-				// Make sure there's a ticker for every cluster
-				foreach (string clusterName in clusters.Keys)
-				{
-					if (!tickers.Any(x => x.ClusterName.Equals(clusterName, StringComparison.OrdinalIgnoreCase)))
-					{
-						ClusterTicker ticker = new ClusterTicker(clusterName);
-						tickers.Add(ticker);
-					}
-				}
-
-				// Check if it's time to update any tickers
-				for (int idx = 0; idx < tickers.Count; idx++)
-				{
-					ClusterTicker ticker = tickers[idx];
-					if (ticker.Task != null && ticker.Task.IsCompleted)
-					{
-						ClusterState? clusterState = await ticker.Task;
-						if (clusterState != null)
+						try
 						{
-							state.Clusters[ticker.ClusterName] = clusterState;
-							updateState = true;
+							clusters = await clusterTask;
 						}
-						ticker.Task = null;
-					}
-					if (ticker.Task == null)
-					{
-						List<StreamInfo>? streams;
-						if (!clusters.TryGetValue(ticker.ClusterName, out streams))
+						catch (Exception ex)
 						{
-							tickers.RemoveAt(idx--);
-							continue;
+							_logger.LogError(ex, "Exception while updating cluster information: {Message}", ex.Message);
+						}
+						clusterTask = null;
+					}
+
+					// Don't do any updates during downtime; we might just create a bunch of P4 errors.
+					if (!_downtimeService.IsDowntimeActive)
+					{
+						// Check if it's time to start a new cluster update
+						if (clusterTask == null && clusterTimer.Elapsed > TimeSpan.FromSeconds(30.0))
+						{
+							clusterTask = Task.Run(() => CreateStreamInfoAsync(cancellationToken), cancellationToken);
+							clusterTimer.Restart();
 						}
 
-						ClusterState? clusterState;
-						if (!state.Clusters.TryGetValue(ticker.ClusterName, out clusterState))
+						// Remove any state for clusters that are no longer valid
+						bool updateState = false;
+						foreach (string clusterName in state.Clusters.Keys)
 						{
-							clusterState = new ClusterState();
+							if (!clusters.ContainsKey(clusterName))
+							{
+								state.Clusters.Remove(clusterName);
+								updateState = true;
+							}
 						}
 
-						ticker.Task = Task.Run(() => UpdateClusterGuardedAsync(ticker.ClusterName, streams, clusterState, cancellationToken));
-					}
-				}
+						// Make sure there's a ticker for every cluster
+						foreach (string clusterName in clusters.Keys)
+						{
+							if (!tickers.Any(x => x.ClusterName.Equals(clusterName, StringComparison.OrdinalIgnoreCase)))
+							{
+								ClusterTicker ticker = new ClusterTicker(clusterName);
+								tickers.Add(ticker);
+							}
+						}
 
-				// Apply any updates to the global state
-				if (updateState)
-				{
-					if (!await _mongoService.TryUpdateSingletonAsync(state))
-					{
-						state = await _mongoService.GetSingletonAsync<CacheState>();
-					}
-				}
+						// Check if it's time to update any tickers
+						for (int idx = 0; idx < tickers.Count; idx++)
+						{
+							ClusterTicker ticker = tickers[idx];
+							if (ticker.Task != null && ticker.Task.IsCompleted)
+							{
+								ClusterState? clusterState = await ticker.Task;
+								if (clusterState != null)
+								{
+									state.Clusters[ticker.ClusterName] = clusterState;
+									updateState = true;
+								}
+								ticker.Task = null;
+							}
+							if (ticker.Task == null)
+							{
+								List<StreamInfo>? streams;
+								if (!clusters.TryGetValue(ticker.ClusterName, out streams))
+								{
+									tickers.RemoveAt(idx--);
+									continue;
+								}
 
-				// Wait before performing the next poll
-				await Task.Delay(TimeSpan.FromSeconds(2.0), cancellationToken);
+								ClusterState? clusterState;
+								if (!state.Clusters.TryGetValue(ticker.ClusterName, out clusterState))
+								{
+									clusterState = new ClusterState();
+								}
+
+								ticker.Task = Task.Run(() => UpdateClusterGuardedAsync(ticker.ClusterName, streams, clusterState, cancellationToken));
+							}
+						}
+
+						// Apply any updates to the global state
+						if (updateState)
+						{
+							if (!await _mongoService.TryUpdateSingletonAsync(state, cancellationToken))
+							{
+								state = await _mongoService.GetSingletonAsync<CacheState>(cancellationToken);
+							}
+						}
+					}
+
+					// Wait before performing the next poll
+					await Task.Delay(TimeSpan.FromSeconds(2.0), cancellationToken);
+				}
+			}
+			finally
+			{
+				await Task.WhenAll(tickers.Select(x => x.Task).Where(x => x != null)!);
 			}
 		}
 
@@ -393,6 +428,10 @@ namespace Horde.Server.Perforce
 				ClusterState? next = await UpdateClusterAsync(clusterName, streamInfos, state, cancellationToken);
 				return next;
 			}
+			catch (OperationCanceledException)
+			{
+				return null;
+			}
 			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Exception while updating cluster state: {Message}", ex.Message);
@@ -404,8 +443,27 @@ namespace Horde.Server.Perforce
 		{
 			const int MaxChanges = 250;
 
+			using TelemetrySpan telemetrySpan = _tracer.StartActiveSpan($"{nameof(PerforceServiceCache)}.{nameof(UpdateClusterAsync)}");
+			telemetrySpan.SetAttribute("Cluster", clusterName);
+
 			using (IPooledPerforceConnection perforce = await ConnectAsync(clusterName, null, cancellationToken))
 			{
+				// If the hash of any stream definition has changed, invalidate the replicated changes.
+				bool modified = false;
+				foreach (StreamInfo streamInfo in streamInfos)
+				{
+					IoHash prevHash;
+					if (state.Streams.TryGetValue(streamInfo.StreamConfig.Id, out prevHash) && prevHash != streamInfo.Hash)
+					{
+						_logger.LogInformation("Invalidating cached commits for stream {StreamId} due to definition change ({OldHash} -> {NewHash})", streamInfo.StreamConfig.Id, prevHash, streamInfo.Hash);
+						state.MinChanges.Remove(streamInfo.StreamConfig.Id);
+						modified = true;
+					}
+				}
+
+				// Update the new hashes
+				state.Streams = streamInfos.ToDictionary(x => x.StreamConfig.Id, x => x.Hash);
+
 				// Remove any changes we need to update
 				int[] refreshNumbers = await _redisService.GetDatabase().SetPopAsync(GetRefreshSetKey(clusterName), 100);
 
@@ -418,14 +476,21 @@ namespace Horde.Server.Perforce
 
 				// Find the changes within that range, and abort if there's nothing new
 				List<ChangesRecord> changes = await perforce.GetChangesAsync(ChangesOptions.None, MaxChanges, ChangeStatus.Submitted, spec, cancellationToken);
+				if (changes.Count > 0)
+				{
+					telemetrySpan.SetAttribute("MinChange", changes.Min(x => x.Number));
+					telemetrySpan.SetAttribute("MaxChange", changes.Max(x => x.Number));
+				}
 
 				List<int> changeNumbers = new List<int>();
 				changeNumbers.AddRange(refreshNumbers.Where(x => x <= state.MaxChange));
 				changeNumbers.AddRange(changes.Select(x => x.Number));
 
+				telemetrySpan.SetAttribute("NumChanges", changes.Count);
+
 				if (changeNumbers.Count == 0)
 				{
-					return null;
+					return modified ? state : null;
 				}
 
 				// If we've retrieved the maximum number of changes from the server, we no longer have a complete chronological cache and need to reset it.
@@ -446,11 +511,24 @@ namespace Horde.Server.Perforce
 				const int MaxFiles = 1000;
 
 				// Describe the changes and create records for them
-				List<DescribeRecord> describeRecords = await perforce.DescribeAsync(DescribeOptions.None, MaxFiles, changeNumbers.ToArray(), cancellationToken);
+				PerforceResponseList<DescribeRecord> describeRecordResponses = await perforce.TryDescribeAsync(DescribeOptions.None, MaxFiles, changeNumbers.ToArray(), cancellationToken);
 				foreach (StreamInfo streamInfo in streamInfos)
 				{
-					foreach (DescribeRecord describeRecord in describeRecords)
+					foreach (PerforceResponse<DescribeRecord> describeRecordResponse in describeRecordResponses)
 					{
+						if (!describeRecordResponse.Succeeded)
+						{
+							// We can receive trigger notifications for modified changes that no longer exist. Ignore them.
+							continue;
+						}
+
+						DescribeRecord describeRecord = describeRecordResponse.Data;
+						if (describeRecord.Status != ChangeStatus.Submitted)
+						{
+							// This can happen because we received a P4 trigger notifying us of a form save. Need to filter out non-committed changes.
+							continue;
+						}
+
 						files.Clear();
 						foreach (DescribeFileRecord describeFile in describeRecord.Files)
 						{
@@ -548,15 +626,15 @@ namespace Horde.Server.Perforce
 				}
 
 				int numResults = 0;
-				_owner._logger.LogDebug("Querying Perforce cache for {StreamId} commits from {MinChange} to {MaxChange} (max: {MaxResults}, tags: {Tags})", _streamConfig.Id, minChange ?? -2, maxChange ?? -2, maxResults ?? -1, (tags == null || tags.Count == 0) ? "none" : String.Join("/", tags.Select(x => x.ToString())));
+				_owner._logger.LogDebug("Querying Perforce cache for {StreamId} commits from {MinChange} to {MaxChange} (max: {MaxResults}, tags: {Tags})", StreamConfig.Id, minChange ?? -2, maxChange ?? -2, maxResults ?? -1, (tags == null || tags.Count == 0) ? "none" : String.Join("/", tags.Select(x => x.ToString())));
 
-				CacheState state = await _owner._mongoService.GetSingletonAsync<CacheState>();
-				if (state.Clusters.TryGetValue(_streamConfig.ClusterName, out ClusterState? clusterState))
+				CacheState state = await _owner._mongoService.GetSingletonAsync<CacheState>(cancellationToken);
+				if (state.Clusters.TryGetValue(StreamConfig.ClusterName, out ClusterState? clusterState))
 				{
 					int minReplicatedChange;
-					if (clusterState.MinChanges.TryGetValue(_streamConfig.Id, out minReplicatedChange) && (maxChange == null || maxChange > minReplicatedChange))
+					if (clusterState.MinChanges.TryGetValue(StreamConfig.Id, out minReplicatedChange) && (maxChange == null || maxChange > minReplicatedChange))
 					{
-						FilterDefinition<CachedCommitDoc> filter = Builders<CachedCommitDoc>.Filter.Eq(x => x.StreamId, _streamConfig.Id);
+						FilterDefinition<CachedCommitDoc> filter = Builders<CachedCommitDoc>.Filter.Eq(x => x.StreamId, StreamConfig.Id);
 
 						if (tags != null && tags.Count > 0)
 						{
@@ -594,7 +672,7 @@ namespace Horde.Server.Perforce
 							{
 								foreach (CachedCommitDoc commit in cursor.Current)
 								{
-									commit.PostLoad(_owner, _streamConfig);
+									commit.PostLoad(_owner, StreamConfig);
 									yield return commit;
 									numResults++;
 								}
@@ -616,14 +694,14 @@ namespace Horde.Server.Perforce
 						maxChange = minReplicatedChange - 1;
 
 						// Expand the range of cached changes if necessary
-						if (maxResults == null || maxResults.Value > 0)
+						if ((maxResults == null || maxResults.Value > 0) && maxChange > 0)
 						{
 							await foreach (ICommit commit in base.FindAsync(minChange, maxChange, maxResults, null, cancellationToken))
 							{
 								CachedCommitDoc cachedCommit = await CachedCommitDoc.FromCommitAsync(commit, cancellationToken);
 								await _owner.AddCachedCommitAsync(cachedCommit, cancellationToken);
-								await _owner._mongoService.UpdateSingletonAsync<CacheState>(x => TryUpdateRange(x, _streamConfig, commit.Number, maxChange));
-								_owner._logger.LogDebug("Adding new cached commit for {StreamId} at change {Change}", _streamConfig.Id, commit.Number);
+								await _owner._mongoService.UpdateSingletonAsync<CacheState>(x => TryUpdateRange(x, StreamConfig, commit.Number, maxChange), cancellationToken);
+								_owner._logger.LogDebug("Adding new cached commit for {StreamId} at change {Change}", StreamConfig.Id, commit.Number);
 
 								if (tags == null || tags.Any(x => cachedCommit.CommitTags.Contains(x)))
 								{
@@ -636,8 +714,8 @@ namespace Horde.Server.Perforce
 							if (maxResults == null || maxResults.Value > 0)
 							{
 								int newMinChange = minChange ?? 0;
-								_owner._logger.LogDebug("Extending range for {StreamId} cache to {Change}..", _streamConfig.Id, newMinChange);
-								await _owner._mongoService.UpdateSingletonAsync<CacheState>(x => TryUpdateRange(x, _streamConfig, newMinChange, maxChange));
+								_owner._logger.LogDebug("Extending range for {StreamId} cache to {Change}..", StreamConfig.Id, newMinChange);
+								await _owner._mongoService.UpdateSingletonAsync<CacheState>(x => TryUpdateRange(x, StreamConfig, newMinChange, maxChange), cancellationToken);
 							}
 						}
 					}
@@ -645,7 +723,7 @@ namespace Horde.Server.Perforce
 
 				if (maxResults == null || maxResults.Value > 0)
 				{
-					_owner._logger.LogDebug("Querying Perforce server for {StreamId} commits from {MinChange} to {MaxChange} (max: {MaxResults}, tags: {Tags})", _streamConfig.Id, minChange ?? -2, maxChange ?? -2, maxResults ?? -1, (tags == null || tags.Count == 0) ? "none" : String.Join("/", tags.Select(x => x.ToString())));
+					_owner._logger.LogDebug("Querying Perforce server for {StreamId} commits from {MinChange} to {MaxChange} (max: {MaxResults}, tags: {Tags})", StreamConfig.Id, minChange ?? -2, maxChange ?? -2, maxResults ?? -1, (tags == null || tags.Count == 0) ? "none" : String.Join("/", tags.Select(x => x.ToString())));
 
 					await foreach (ICommit commit in base.FindAsync(minChange, maxChange, maxResults, tags, cancellationToken))
 					{
@@ -674,10 +752,10 @@ namespace Horde.Server.Perforce
 
 			public override async Task<ICommit> GetAsync(int changeNumber, CancellationToken cancellationToken = default)
 			{
-				CachedCommitDoc? commit = await _owner._commits.Find(x => x.StreamId == _streamConfig.Id && x.Number == changeNumber).FirstOrDefaultAsync(cancellationToken);
-				if(commit != null)
+				CachedCommitDoc? commit = await _owner._commits.Find(x => x.StreamId == StreamConfig.Id && x.Number == changeNumber).FirstOrDefaultAsync(cancellationToken);
+				if (commit != null)
 				{
-					commit.PostLoad(_owner, _streamConfig);
+					commit.PostLoad(_owner, StreamConfig);
 					return commit;
 				}
 				return await base.GetAsync(changeNumber, cancellationToken);
@@ -690,7 +768,7 @@ namespace Horde.Server.Perforce
 
 				void OnUpdate(StreamId streamId)
 				{
-					if (streamId == _streamConfig.Id)
+					if (streamId == StreamConfig.Id)
 					{
 						updateEvent.Set();
 					}

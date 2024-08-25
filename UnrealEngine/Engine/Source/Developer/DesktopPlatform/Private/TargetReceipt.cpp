@@ -169,6 +169,13 @@ bool FTargetReceipt::Read(const FString& FileName, bool bExpandVariables)
 		}
 	}
 
+	// Read the list of build plugins
+	FJsonSerializableArray BuildPluginsArray;
+	if (Object->TryGetStringArrayField(TEXT("BuildPlugins"), BuildPluginsArray))
+	{
+		BuildPlugins.Append(BuildPluginsArray.GetData(), BuildPluginsArray.Num());
+	}	
+
 	// Read the list of additional properties
 	const TArray<TSharedPtr<FJsonValue>>* AdditionalPropertiesArray;
 	if (Object->TryGetArrayField(TEXT("AdditionalProperties"), AdditionalPropertiesArray))

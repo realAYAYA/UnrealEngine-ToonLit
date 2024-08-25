@@ -3,6 +3,7 @@
 
 #include "BlueprintEditor.h"
 #include "BlueprintEditorModule.h"
+#include "BlueprintEditorSettings.h"
 #include "BlueprintEditorTabs.h"
 #include "CoreGlobals.h"
 #include "Dom/JsonValue.h"
@@ -60,7 +61,6 @@
 #include "Styling/SlateTypes.h"
 #include "Styling/StyleColors.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Trace/Detail/Channel.h"
 #include "Types/SlateConstants.h"
@@ -97,6 +97,66 @@ struct FSlateBrush;
 
 #define LOCTEXT_NAMESPACE "FindInBlueprints"
 
+KISMET_API UClass* FindInBlueprintsHelpers::GetFunctionOriginClass(const UFunction* Function)
+{
+	// Abort if invalid param
+	if (!Function)
+	{
+		return nullptr;
+	}
+
+	// Get outermost super function
+	while (const UFunction* SuperFunction = Function->GetSuperFunction())
+	{
+		Function = SuperFunction;
+	}
+
+	// Get that function's class
+	UClass* OwnerClass = Function->GetOwnerClass() && Function->GetOwnerClass()->GetAuthoritativeClass() ? Function->GetOwnerClass()->GetAuthoritativeClass() : Function->GetOwnerClass();
+
+	// Consider case where a blueprint implements an interface function
+	if (const UBlueprintGeneratedClass* BPGC = Cast<UBlueprintGeneratedClass>(OwnerClass))
+	{
+		const FName FunctionName = Function->GetFName();
+		for (const FImplementedInterface& Interface : BPGC->Interfaces)
+		{
+			if (!Interface.Class)
+			{
+				continue;
+			}
+
+			if (UFunction* InterfaceFunction = Interface.Class->FindFunctionByName(FunctionName))
+			{
+				if (InterfaceFunction->IsSignatureCompatibleWith(Function))
+				{
+					OwnerClass = Interface.Class;
+					break;
+				}
+			}
+		}
+	}
+
+	return OwnerClass;
+}
+
+bool FindInBlueprintsHelpers::ConstructSearchTermFromFunction(const UFunction* Function, FString& SearchTerm)
+{
+	if (!Function)
+	{
+		return false;
+	}
+
+	const UClass* FuncOriginClass = GetFunctionOriginClass(Function);
+	if (!FuncOriginClass)
+	{
+		return false;
+	}
+
+	const FString FunctionNativeName = Function->GetName();
+	const FString TargetTypeName = FuncOriginClass->GetPathName();
+	SearchTerm = FString::Printf(TEXT("Nodes(\"Native Name\"=+\"%s\" && (Pins(Name=Target && ObjectClass=+\"%s\") || FuncOriginClass=+\"%s\"))"), *FunctionNativeName, *TargetTypeName, *TargetTypeName);
+	return true;
+}
 
 FText FindInBlueprintsHelpers::AsFText(TSharedPtr< FJsonValue > InJsonValue, const TMap<int32, FText>& InLookupTable)
 {
@@ -908,13 +968,30 @@ void SFindInBlueprints::ConditionallyAddCacheBar()
 							[
 								SNew(SButton)
 								.Text(LOCTEXT("IndexAllBlueprints", "Index All"))
+								.IsEnabled( this, &SFindInBlueprints::CanCacheAllUnindexedBlueprints )
 								.OnClicked( this, &SFindInBlueprints::OnCacheAllUnindexedBlueprints )
 								.ToolTip(IDocumentation::Get()->CreateToolTip(
-									LOCTEXT("IndexAlLBlueprints_Tooltip", "Loads all non-indexed Blueprints and saves them with their search data. This can be a very slow process and the editor may become unresponsive."),
+									LOCTEXT("IndexAlLBlueprints_Tooltip", "Loads all Blueprints with an out-of-date index (search metadata) and resaves them with an up-to-date index. This can be a very slow process and the editor may become unresponsive. This action can be disabled via Blueprint Editor settings."),
 									NULL,
 									TEXT("Shared/Editors/BlueprintEditor"),
 									TEXT("FindInBlueprint_IndexAll"))
 								)
+							]
+
+							+ SHorizontalBox::Slot()
+							.AutoWidth()
+							.Padding(HPadding, 0.f, 0.f, 0.f)
+							.VAlign(VAlign_Center)
+							[
+								SNew(SButton)
+									.Text(LOCTEXT("IndexExportList", "Export Asset List"))
+									.OnClicked(this, &SFindInBlueprints::OnExportUnindexedAssetList)
+									.ToolTip(IDocumentation::Get()->CreateToolTip(
+										LOCTEXT("IndexExportList_Tooltip", "Exports a list of all Blueprints that have an out-of-date index (search metadata)."),
+										NULL,
+										TEXT("Shared/Editors/BlueprintEditor"),
+										TEXT("FindInBlueprint_IndexExportList_Tooltip"))
+									)
 							]
 						
 						]
@@ -1394,6 +1471,13 @@ FReply SFindInBlueprints::OnCacheAllUnindexedBlueprints()
 	return OnCacheAllBlueprints(CachingOptions);
 }
 
+FReply SFindInBlueprints::OnExportUnindexedAssetList()
+{
+	FFindInBlueprintSearchManager& FindInBlueprintManager = FFindInBlueprintSearchManager::Get();
+	FindInBlueprintManager.ExportOutdatedAssetList();
+	return FReply::Handled();
+}
+
 FReply SFindInBlueprints::OnCacheAllBlueprints(const FFindInBlueprintCachingOptions& InOptions)
 {
 	if(!FFindInBlueprintSearchManager::Get().IsCacheInProgress())
@@ -1559,7 +1643,27 @@ FText SFindInBlueprints::GetCacheBarStatusText() const
 		Args.Add(TEXT("OutOfDateCount"), OutOfDateWithLastSearchBPCount);
 		Args.Add(TEXT("Count"), UnindexedCount + OutOfDateWithLastSearchBPCount);
 
-		ReturnDisplayText = FText::Format(LOCTEXT("UncachedAssets", "Search incomplete. {Count} ({UnindexedCount} non-indexed/{OutOfDateCount} out-of-date) Blueprints need to be loaded and indexed!  Editor may become unresponsive while these assets are loaded for indexing. This may take some time!"), Args);
+		// Show a different instruction depending on the "Index All" permission level in editor settings
+		const EFiBIndexAllPermission IndexAllPermission = GetDefault<UBlueprintEditorSettings>()->AllowIndexAllBlueprints;
+		const FText IndexAllDisabledText = LOCTEXT("IndexAllDisabled", "Your editor settings disallow loading all these assets from this window, see Blueprint Editor Settings: AllowIndexAllBlueprints. Export the asset list to inspect which assets do not have optimal searchability.");
+		const FText IndexAllWarningText_LoadOnly = LOCTEXT("IndexAllWarning_LoadOnly", "Press \"Index All\" to load these assets right now. The editor may become unresponsive while these assets are loaded for indexing. Save your work before initiating this: broken assets and memory usage can affect editor stability. Alternatively, export the asset list to inspect which assets do not have optimal searchability.");
+		const FText IndexAllWarningText_Checkout = LOCTEXT("IndexAllWarning_Checkout", "Press \"Index All\" to load, and optionally checkout and resave, these assets right now. The editor may become unresponsive while these assets are loaded for indexing. Save your work before initiating this: broken assets and memory usage can affect editor stability. Alternatively, export the asset list to inspect which assets do not have optimal searchability.");
+		switch (IndexAllPermission)
+		{
+		case EFiBIndexAllPermission::CheckoutAndResave:
+			Args.Add(TEXT("Instruction"), IndexAllWarningText_Checkout);
+			break;
+		case EFiBIndexAllPermission::LoadOnly:
+			Args.Add(TEXT("Instruction"), IndexAllWarningText_LoadOnly);
+			break;
+		case EFiBIndexAllPermission::None:
+			Args.Add(TEXT("Instruction"), IndexAllDisabledText);
+			break;
+		default:
+			ensureMsgf(false, TEXT("Unhandled case"));
+		}
+		
+		ReturnDisplayText = FText::Format(LOCTEXT("UncachedAssets", "Search incomplete: {Count} blueprints don't have an up-to-date index ({UnindexedCount} unindexed/{OutOfDateCount} out-of-date). These assets are searchable but some results may be missing. Load and resave these assets to improve their searchability. \n\n{Instruction}"), Args);
 
 		const int32 FailedToCacheCount = FindInBlueprintManager.GetFailedToCacheCount();
 		if (FailedToCacheCount > 0)
@@ -1582,6 +1686,11 @@ FText SFindInBlueprints::GetCacheBarCurrentAssetName() const
 	}
 
 	return FText::FromString(LastCachedAssetPath.ToString());
+}
+
+bool SFindInBlueprints::CanCacheAllUnindexedBlueprints() const
+{
+	return GetDefault<UBlueprintEditorSettings>()->AllowIndexAllBlueprints != EFiBIndexAllPermission::None;
 }
 
 void SFindInBlueprints::OnCacheStarted(EFiBCacheOpType InOpType, EFiBCacheOpFlags InOpFlags)

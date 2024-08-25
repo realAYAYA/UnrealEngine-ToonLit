@@ -3,6 +3,7 @@
 #include "NiagaraConstants.h"
 #include "NiagaraCommon.h"
 #include "NiagaraModule.h"
+#include "NiagaraVariableMetaData.h"
 
 #include "Internationalization/Internationalization.h"
 
@@ -91,6 +92,8 @@ void FNiagaraConstants::Init()
 		SystemParameters.Add(SYS_PARAM_ENGINE_Y_AXIS);
 		SystemParameters.Add(SYS_PARAM_ENGINE_Z_AXIS);
 		SystemParameters.Add(SYS_PARAM_ENGINE_LWC_TILE);
+		SystemParameters.Add(SYS_PARAM_ENGINE_EXEC_INDEX);
+		SystemParameters.Add(SYS_PARAM_ENGINE_EMITTER_ID);
 
 		SystemParameters.Add(SYS_PARAM_ENGINE_ROTATION);
 
@@ -215,6 +218,9 @@ void FNiagaraConstants::Init()
 		UpdatedSystemParameters.Add(FName(TEXT("Interp Spawn Start Dt")), SYS_PARAM_EMITTER_INTERP_SPAWN_START_DT);
 		UpdatedSystemParameters.Add(FName(TEXT("Spawn Group")), SYS_PARAM_EMITTER_SPAWN_GROUP);
 		UpdatedSystemParameters.Add(FName(TEXT("Inv Delta Time")), SYS_PARAM_ENGINE_INV_DELTA_TIME);
+
+		UpdatedSystemParameters.Add(FName(TEXT("Exec Index")), SYS_PARAM_ENGINE_EXEC_INDEX);
+		UpdatedSystemParameters.Add(FName(TEXT("Emitter ID")), SYS_PARAM_ENGINE_EMITTER_ID);
 	}
 
 	if (SystemStrMap.Num() == 0)
@@ -236,6 +242,8 @@ void FNiagaraConstants::Init()
 		SystemStrMap.Add(SYS_PARAM_ENGINE_Z_AXIS, LOCTEXT("ZAxisDesc", "The Z-axis of the owning component."));
 		SystemStrMap.Add(SYS_PARAM_ENGINE_ROTATION, LOCTEXT("EngineRotationDesc", "The owning component's rotation in world space."));
 		SystemStrMap.Add(SYS_PARAM_ENGINE_LWC_TILE, LOCTEXT("EngineLWCTileDesc", "Due to large world coordinates, the simulation position can be shifted from the actual world position to allow for more accuracy. This is the tile the system is shifted by, so (SimulationPosition + Tile * TileSize) gives the original world position. The x,y,z components of this vector are the tile and the w component is the tile size."));
+		SystemStrMap.Add(SYS_PARAM_ENGINE_EXEC_INDEX, LOCTEXT("EngineExecIndexDesc", "Index of this particle in the current execution. For example, in a spawn script this gives the index of the particle being spawned which can be used to interpolate it's position."));
+		SystemStrMap.Add(SYS_PARAM_ENGINE_EMITTER_ID, LOCTEXT("EngineEmitterIDDesc", "ID of the currently executing Emitter. This can be used to access or otherwise target a specific emitter in certain Data Interface functions. This is only valid for Emitter and Particle scripts."));
 
 		SystemStrMap.Add(SYS_PARAM_ENGINE_LOCAL_TO_WORLD, LOCTEXT("LocalToWorldDesc", "Owning component's local space to world space transform matrix."));
 		SystemStrMap.Add(SYS_PARAM_ENGINE_WORLD_TO_LOCAL, LOCTEXT("WorldToLocalDesc", "Owning component's world space to local space transform matrix."));
@@ -341,6 +349,7 @@ void FNiagaraConstants::Init()
 		AttrDataSetKeyMap.Add(SYS_PARAM_PARTICLES_LIGHT_RADIUS, GetAttributeAsParticleDataSetKey(SYS_PARAM_PARTICLES_LIGHT_RADIUS));
 		AttrDataSetKeyMap.Add(SYS_PARAM_PARTICLES_LIGHT_EXPONENT, GetAttributeAsParticleDataSetKey(SYS_PARAM_PARTICLES_LIGHT_EXPONENT));
 		AttrDataSetKeyMap.Add(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING, GetAttributeAsParticleDataSetKey(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING));
+		AttrDataSetKeyMap.Add(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE, GetAttributeAsParticleDataSetKey(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE));
 		AttrDataSetKeyMap.Add(SYS_PARAM_PARTICLES_VISIBILITY_TAG, GetAttributeAsParticleDataSetKey(SYS_PARAM_PARTICLES_VISIBILITY_TAG));
 		AttrDataSetKeyMap.Add(SYS_PARAM_PARTICLES_COMPONENTS_ENABLED, GetAttributeAsParticleDataSetKey(SYS_PARAM_PARTICLES_COMPONENTS_ENABLED));
 		AttrDataSetKeyMap.Add(SYS_PARAM_PARTICLES_RIBBONID, GetAttributeAsParticleDataSetKey(SYS_PARAM_PARTICLES_RIBBONID));
@@ -481,6 +490,11 @@ void FNiagaraConstants::Init()
 		Var.SetValue<float>(0.0f);
 		AttrDefaultsValueMap.Add(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING, Var);
 
+		AttrDefaultsStrMap.Add(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE, TEXT("1.0"));
+		Var = SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE;
+		Var.SetValue<float>(1.0f);
+		AttrDefaultsValueMap.Add(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE, Var);
+
 		AttrDefaultsStrMap.Add(SYS_PARAM_PARTICLES_VISIBILITY_TAG, TEXT("0"));
 		Var = SYS_PARAM_PARTICLES_VISIBILITY_TAG;
 		Var.SetValue<float>(0.0f);
@@ -570,6 +584,7 @@ void FNiagaraConstants::Init()
 		AttrDescStrMap.Add(SYS_PARAM_PARTICLES_LIGHT_ENABLED, LOCTEXT("LightEnabledParamDesc", "This can be used with the Light renderer to dynamically control if a light exists on a per-particle basis."));
 		AttrDescStrMap.Add(SYS_PARAM_PARTICLES_LIGHT_EXPONENT, LOCTEXT("LightExponentParamDesc", "Used to drive the attenuation of the light when using a Light renderer without inverse squared falloff enabled."));
 		AttrDescStrMap.Add(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING, LOCTEXT("LightVolumetricScatteringParamDesc", "Used to drive the volumetric scattering intensity of the light when using a Light renderer."));
+		AttrDescStrMap.Add(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE, LOCTEXT("LightSpecularScaleParamDesc", "Used to drive the specular scale of the light when using a Light renderer."));
 		AttrDescStrMap.Add(SYS_PARAM_INSTANCE_ALIVE, LOCTEXT("AliveParamDesc", "Used to determine whether or not this particle instance is still valid or if it can be deleted."));
 		AttrDescStrMap.Add(SYS_PARAM_PARTICLES_VISIBILITY_TAG, LOCTEXT("VisibilityTag", "Used for selecting renderers to use when rendering this particle. Without this, the particle will render in all renderers"));
 		AttrDescStrMap.Add(SYS_PARAM_PARTICLES_COMPONENTS_ENABLED, LOCTEXT("ComponentRenderEnabledParamDesc", "Used to check if component rendering should be enabled on a per-particle basis. Without this, the each particle will spawn a component."));

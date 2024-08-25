@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Analytics/DMXEditorToolAnalyticsProvider.h"
 #include "CoreMinimal.h"
 #include "UObject/GCObject.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
@@ -28,7 +29,7 @@ public:
 
 	SLATE_END_ARGS()
 
-	/** Destructor */
+	SDMXPatchTool();
 	virtual ~SDMXPatchTool();
 
 	/** Constructs the widget */
@@ -105,4 +106,7 @@ private:
 
 	/** The previously selected library, to unbind from library changes */
 	TWeakObjectPtr<UDMXLibrary> PreviouslySelectedLibrary;
+
+	/** The analytics provider for this tool */
+	UE::DMX::FDMXEditorToolAnalyticsProvider AnalyticsProvider;
 };

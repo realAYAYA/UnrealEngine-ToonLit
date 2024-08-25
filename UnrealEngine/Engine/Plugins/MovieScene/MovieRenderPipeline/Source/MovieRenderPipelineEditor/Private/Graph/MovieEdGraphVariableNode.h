@@ -16,5 +16,6 @@ public:
 	// ~Begin UEdGraphNode interface
 	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
 	virtual void AllocateDefaultPins() override;
+	virtual bool CanPasteHere(const UEdGraph* TargetGraph) const override;
 	// ~End UEdGraphNode interface
 };

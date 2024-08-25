@@ -25,8 +25,8 @@ float3 InvPageGridResolution;
 float ClipmapVoxelExtent;
 float InfluenceRadius;
 float HeightfieldThickness;
-float3 ViewTilePosition;
-float3 RelativePreViewTranslation;
+float3 PreViewTranslationHigh;
+float3 PreViewTranslationLow;
 
 struct FHeightfieldSample
 {
@@ -36,7 +36,7 @@ struct FHeightfieldSample
 	float3 WorldNormal;
 };
 
-FHeightfieldSample SampleHeightfield(FLWCVector3 PreViewTranslation, FLWCVector3 VoxelWorldCenter, float VoxelWorldExtent)
+FHeightfieldSample SampleHeightfield(FDFVector3 PreViewTranslation, FDFVector3 VoxelWorldCenter, float VoxelWorldExtent)
 {
 	FHeightfieldSample Sample;
 	Sample.bValid = false;
@@ -46,7 +46,7 @@ FHeightfieldSample SampleHeightfield(FLWCVector3 PreViewTranslation, FLWCVector3
 
 	for (uint HeightfieldIndex = 0; HeightfieldIndex < NumHeightfields; HeightfieldIndex++)
 	{
-		float3 LocalPosition = LWCMultiply(VoxelWorldCenter, GetWorldToLocal(HeightfieldIndex));
+		float3 LocalPosition = DFMultiplyDemote(VoxelWorldCenter, GetWorldToLocal(HeightfieldIndex));
 		float4 MinMaxHeightfieldUV;
 		float2 HeightfieldUV = GetHeightfieldUV(HeightfieldIndex, LocalPosition.xy, MinMaxHeightfieldUV);
 
@@ -59,15 +59,15 @@ FHeightfieldSample SampleHeightfield(FLWCVector3 PreViewTranslation, FLWCVector3
 
 	if (Sample.HeightfieldIndex < NumHeightfields)
 	{
-		float3 LocalPosition = LWCMultiply(VoxelWorldCenter, GetWorldToLocal(Sample.HeightfieldIndex));
+		float3 LocalPosition = DFMultiplyDemote(VoxelWorldCenter, GetWorldToLocal(Sample.HeightfieldIndex));
 		float4 MinMaxHeightfieldUV;
 		float2 HeightfieldUV = GetHeightfieldUV(Sample.HeightfieldIndex, LocalPosition.xy, MinMaxHeightfieldUV);
 
 		if (all(HeightfieldUV >= MinMaxHeightfieldUV.xy) && all(HeightfieldUV <= MinMaxHeightfieldUV.zw))
 		{
 			float HeightfieldVisibility;
-			FLWCVector3 WorldHeightfieldShadingPosition = GetHeightfieldWorldPositionAndNormal(Sample.HeightfieldIndex, LocalPosition.xy, HeightfieldUV, VoxelWorldExtent, Sample.WorldNormal, HeightfieldVisibility);
-			Sample.TranslatedWorldPosition = LWCToFloat(LWCAdd(WorldHeightfieldShadingPosition, PreViewTranslation));
+			FDFVector3 WorldHeightfieldShadingPosition = GetHeightfieldWorldPositionAndNormal(Sample.HeightfieldIndex, LocalPosition.xy, HeightfieldUV, VoxelWorldExtent, Sample.WorldNormal, HeightfieldVisibility);
+			Sample.TranslatedWorldPosition = DFFastToTranslatedWorld(WorldHeightfieldShadingPosition, PreViewTranslation);
 
 			// Skip holes in the heightfield
 			if (HeightfieldVisibility > 0.5f)
@@ -107,13 +107,13 @@ void MarkHeightfieldPagesCS(
 	uint ThreadIndex = GroupThreadId.x + GroupThreadId.y * THREADGROUP_SIZE;
 	uint IndexInPageBuffer = GroupId.x;
 
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	uint3 TexelCoordInPage = uint3(GroupThreadId.xy, 0);
 	uint3 PageGridCoord = UnpackPageUpdateTile(PageUpdateTileBuffer[IndexInPageBuffer]);
 	float3 PageCoord = PageGridCoord * GLOBAL_DISTANCE_FIELD_PAGE_RESOLUTION + TexelCoordInPage - GLOBAL_DISTANCE_FIELD_PAGE_BORDER;
 	float3 VoxelTranslatedWorldCenter = PageCoord * PageCoordToVoxelTranslatedCenterScale + PageCoordToVoxelTranslatedCenterBias;
-	FLWCVector3 VoxelWorldCenter = LWCSubtract(VoxelTranslatedWorldCenter, PreViewTranslation);
+	FDFVector3 VoxelWorldCenter = DFFastSubtract(VoxelTranslatedWorldCenter, PreViewTranslation);
 
 	GroupMarkedPage[ThreadIndex] = 0;
 
@@ -229,13 +229,13 @@ void ComposeHeightfieldsIntoPagesCS(
 	uint3 GroupId : SV_GroupID,
 	uint3 GroupThreadId : SV_GroupThreadID)
 {
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	uint3 TexelCoordInPage = uint3(GroupThreadId.xy, 0);
 	uint3 PageGridCoord = UnpackPageUpdateTile(ComposeTileBuffer[GroupId.x]);
 	float3 PageCoord = PageGridCoord * GLOBAL_DISTANCE_FIELD_PAGE_RESOLUTION + TexelCoordInPage - GLOBAL_DISTANCE_FIELD_PAGE_BORDER;
 	float3 VoxelTranslatedWorldCenter = PageCoord * PageCoordToVoxelTranslatedCenterScale + PageCoordToVoxelTranslatedCenterBias;
-	FLWCVector3 VoxelWorldCenter = LWCSubtract(VoxelTranslatedWorldCenter, PreViewTranslation);
+	FDFVector3 VoxelWorldCenter = DFFastSubtract(VoxelTranslatedWorldCenter, PreViewTranslation);
 
 	uint3 PageTableTextureCoord = PageGridCoordToPageTableTextureCoord(PageGridCoord);
 	FGlobalDistanceFieldPage Page = UnpackGlobalDistanceFieldPage(PageTableLayerTexture.Load(int4(PageTableTextureCoord, 0)));
@@ -283,7 +283,7 @@ void CompositeHeightfieldsIntoObjectGridPagesCS(
 	uint3 GroupId : SV_GroupID,
 	uint3 GroupThreadId : SV_GroupThreadID)
 {
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	// One thread per cell in a page
 	uint3 CellCoordInPage = GroupThreadId.xyz;
@@ -295,7 +295,7 @@ void CompositeHeightfieldsIntoObjectGridPagesCS(
 
 	float3 ObjectGridCellPageCoord = PageGridCoord * GLOBAL_DISTANCE_FIELD_PAGE_RESOLUTION + CellCoordInPage * 2.0f + 0.5f - GLOBAL_DISTANCE_FIELD_PAGE_BORDER;
 	float3 ObjectGridCellTranslatedWorldCenter = ObjectGridCellPageCoord * PageCoordToVoxelTranslatedCenterScale + PageCoordToVoxelTranslatedCenterBias;
-	FLWCVector3 ObjectGridCellWorldCenter = LWCSubtract(ObjectGridCellTranslatedWorldCenter, PreViewTranslation);
+	FDFVector3 ObjectGridCellWorldCenter = DFFastSubtract(ObjectGridCellTranslatedWorldCenter, PreViewTranslation);
 	float ObjectGridCellWorldExtent = ClipmapVoxelExtent * GLOBAL_DISTANCE_FIELD_PAGE_RESOLUTION / float(DISTANCE_FIELD_OBJECT_GRID_PAGE_RESOLUTION);
 	float CardInterpolationRange = DISTANCE_FIELD_OBJECT_GRID_CARD_INTERPOLATION_RANGE_IN_VOXELS * ClipmapVoxelExtent;
 	float MaxQueryDistance = 1.44f * ObjectGridCellWorldExtent + CardInterpolationRange;

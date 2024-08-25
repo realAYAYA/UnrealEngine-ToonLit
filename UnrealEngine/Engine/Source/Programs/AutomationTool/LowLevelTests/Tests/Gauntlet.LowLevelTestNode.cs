@@ -50,7 +50,7 @@ namespace LowLevelTests
 		{
 			if (LowLevelTestsApp == null)
 			{
-				LowLevelTestsApp = new LowLevelTestsSession(Context.BuildInfo, Context.Options.Tags, Context.Options.Sleep, Context.Options.AttachToDebugger, Context.Options.ReportType, Context.Options.Timeout);
+				LowLevelTestsApp = new LowLevelTestsSession(Context.BuildInfo, Context.Options);
 			}
 
 			return LowLevelTestsApp.TryReserveDevices();
@@ -89,6 +89,11 @@ namespace LowLevelTests
 			ArtifactPath = Path.Join(Context.Options.LogDir, Context.Options.TestApp);
 			Log.Info("LowLevelTestNode.StartTest Creating artifacts path at {0}", ArtifactPath);
 			Directory.CreateDirectory(ArtifactPath);
+
+			foreach (ILowLevelTestsExtension LowLevelTestsExtension in Context.BuildInfo.LowLevelTestsExtensions)
+			{
+				LowLevelTestsExtension.PreRunTests();
+			}
 
 			TestInstance = LowLevelTestsApp.InstallAndRunNativeTestApp();
 			if (TestInstance != null)
@@ -168,142 +173,156 @@ namespace LowLevelTests
 
 		public override void StopTest(StopReason InReason)
 		{
-			base.StopTest(InReason);
-
-			if (TestInstance != null && !TestInstance.HasExited)
+			try
 			{
-				TestInstance.Kill();
-			}
+				base.StopTest(InReason);
 
-			string StdOut;
-			if (TestInstance is IWithUnfilteredStdOut)
-			{
-				StdOut = ((IWithUnfilteredStdOut)TestInstance).UnfilteredStdOut;
-			}
-			else
-			{
-				StdOut = TestInstance.StdOut;
-			}
-
-			string LogDir = Path.Combine(Unreal.EngineDirectory.FullName, "Programs", "AutomationTool", "Saved", "Logs");
-
-			if (StdOut == null || string.IsNullOrEmpty(StdOut.Trim()))
-			{
-				Log.Warning("No StdOut returned from low level test app.");
-			}
-			else // Save log artifact
-			{
-				const string ClientLogFile = "ClientOutput.log";
-				string ClientOutputLog = Path.Combine(ArtifactPath, ClientLogFile);
-
-				using (var ClientOutputWriter = File.CreateText(ClientOutputLog))
+				if (TestInstance != null && !TestInstance.HasExited)
 				{
-					ClientOutputWriter.Write(StdOut);
+					TestInstance.Kill();
 				}
 
-				string DestClientLogFile = Path.Combine(LogDir, ClientLogFile);
-				if (DestClientLogFile != ClientOutputLog)
+				string StdOut;
+				if (TestInstance is IWithUnfilteredStdOut)
 				{
-					File.Copy(ClientOutputLog, DestClientLogFile, true);
-				}
-			}
-
-			bool? ReportCopied = null;
-			string ReportPath = null;
-			if (!string.IsNullOrEmpty(Context.Options.ReportType))
-			{
-				ILowLevelTestsReporting LowLevelTestsReporting = Gauntlet.Utils.InterfaceHelpers.FindImplementations<ILowLevelTestsReporting>(true)
-					.Where(B => B.CanSupportPlatform(Context.Options.Platform))
-					.First();
-
-				try
-				{
-					ReportPath = LowLevelTestsReporting.CopyDeviceReportTo(LowLevelTestsApp.Install, Context.Options.Platform, Context.Options.TestApp, Context.Options.Build, LogDir);
-					ReportCopied = true;
-				}
-				catch (Exception ex)
-				{
-					ReportCopied = false;
-					Log.Error("Failed to copy report: {0}", ex.ToString());
-				}
-			}
-
-
-			string ExitReason = "";
-			if (TestInstance.WasKilled)
-			{
-				if (InReason == StopReason.MaxDuration || LowLevelTestResult == TestResult.TimedOut)
-				{
-					LowLevelTestResult = TestResult.TimedOut;
-					ExitReason = "Timed Out";
+					StdOut = ((IWithUnfilteredStdOut)TestInstance).UnfilteredStdOut;
 				}
 				else
 				{
-					LowLevelTestResult = TestResult.Failed;
-					ExitReason = $"Process was killed by Gauntlet with reason {InReason.ToString()}.";
+					StdOut = TestInstance.StdOut;
 				}
-			}
-			else if (TestInstance.ExitCode != 0)
-			{
-				LowLevelTestResult = TestResult.Failed;
-				ExitReason = $"Process exited with exit code {TestInstance.ExitCode}";
-			}
-			else if (ReportCopied.HasValue && !ReportCopied.Value)
-			{
-				LowLevelTestResult = TestResult.Failed;
-				ExitReason = "Uabled to read test report";
-			}
-			else if (ReportPath != null)
-			{
-				string ReportContents = File.ReadAllText(ReportPath);
-				if (Context.Options.LogReportContents) // Some tests prefer to log report contents
+
+				string LogDir = Path.Combine(Unreal.EngineDirectory.FullName, "Programs", "AutomationTool", "Saved", "Logs");
+
+				if (StdOut == null || string.IsNullOrEmpty(StdOut.Trim()))
 				{
-					Log.Info(ReportContents);
+					Log.Warning("No StdOut returned from low level test app.");
 				}
-				string ReportType = Context.Options.ReportType.ToLower();
-				if (ReportType == "console")
+				else // Save log artifact
 				{
-					LowLevelTestsLogParser LowLevelTestsLogParser = new LowLevelTestsLogParser(ReportContents);
-					if (LowLevelTestsLogParser.GetCatchTestResults().Passed)
+					const string ClientLogFile = "ClientOutput.log";
+					string ClientOutputLog = Path.Combine(ArtifactPath, ClientLogFile);
+
+					using (var ClientOutputWriter = File.CreateText(ClientOutputLog))
 					{
-						LowLevelTestResult = TestResult.Passed;
-						ExitReason = "Tests passed";
+						ClientOutputWriter.Write(StdOut);
+					}
+
+					string DestClientLogFile = Path.Combine(LogDir, ClientLogFile);
+					if (DestClientLogFile != ClientOutputLog)
+					{
+						File.Copy(ClientOutputLog, DestClientLogFile, true);
+					}
+				}
+
+				bool? ReportCopied = null;
+				string ReportPath = null;
+				if (!string.IsNullOrEmpty(Context.Options.ReportType))
+				{
+					ILowLevelTestsReporting LowLevelTestsReporting = Gauntlet.Utils.InterfaceHelpers.FindImplementations<ILowLevelTestsReporting>(true)
+						.Where(B => B.CanSupportPlatform(Context.Options.Platform))
+						.First();
+
+					try
+					{
+						ReportPath = LowLevelTestsReporting.CopyDeviceReportTo(LowLevelTestsApp.Install, Context.Options.Platform, Context.Options.TestApp, Context.Options.Build, LogDir);
+						ReportCopied = true;
+					}
+					catch (Exception ex)
+					{
+						ReportCopied = false;
+						Log.Error("Failed to copy report: {0}", ex.ToString());
+					}
+				}
+
+
+				string ExitReason = "";
+				if (TestInstance.WasKilled)
+				{
+					if (InReason == StopReason.MaxDuration || LowLevelTestResult == TestResult.TimedOut)
+					{
+						LowLevelTestResult = TestResult.TimedOut;
+						ExitReason = "Timed Out";
 					}
 					else
 					{
 						LowLevelTestResult = TestResult.Failed;
-						ExitReason = "Tests failed";
+						ExitReason = $"Process was killed by Gauntlet with reason {InReason.ToString()}.";
 					}
 				}
-				else if (ReportType == "xml")
+				else if (TestInstance.ExitCode != 0)
 				{
-					LowLevelTestsReportParser LowLevelTestsReportParser = new LowLevelTestsReportParser(ReportContents);
-					if (LowLevelTestsReportParser.HasPassed())
+					LowLevelTestResult = TestResult.Failed;
+					ExitReason = $"Process exited with exit code {TestInstance.ExitCode}";
+				}
+				else if (ReportCopied.HasValue && !ReportCopied.Value)
+				{
+					LowLevelTestResult = TestResult.Failed;
+					ExitReason = "Uabled to read test report";
+				}
+				else if (ReportPath != null)
+				{
+					string ReportContents = File.ReadAllText(ReportPath);
+					if (Context.Options.LogReportContents) // Some tests prefer to log report contents
 					{
-						LowLevelTestResult = TestResult.Passed;
-						ExitReason = "Tests passed";
+						Log.Info(ReportContents);
+					}
+					string ReportType = Context.Options.ReportType.ToLower();
+					if (ReportType == "console")
+					{
+						LowLevelTestsLogParser LowLevelTestsLogParser = new LowLevelTestsLogParser(ReportContents);
+						if (LowLevelTestsLogParser.GetCatchTestResults().Passed)
+						{
+							LowLevelTestResult = TestResult.Passed;
+							ExitReason = "Tests passed";
+						}
+						else
+						{
+							LowLevelTestResult = TestResult.Failed;
+							ExitReason = "Tests failed according to console report";
+						}
+					}
+					else if (ReportType == "xml")
+					{
+						LowLevelTestsReportParser LowLevelTestsReportParser = new LowLevelTestsReportParser(ReportContents);
+						if (LowLevelTestsReportParser.HasPassed())
+						{
+							LowLevelTestResult = TestResult.Passed;
+							ExitReason = "Tests passed";
+						}
+						else
+						{
+							LowLevelTestResult = TestResult.Failed;
+							ExitReason = "Tests failed according to xml report";
+						}
+					}
+				}
+				else // ReportPath == null
+				{
+					if (TestInstance.ExitCode != 0)
+					{
+						LowLevelTestResult = TestResult.Failed;
+						ExitReason = "Tests failed (no report to parse)";
 					}
 					else
 					{
-						LowLevelTestResult = TestResult.Failed;
-						ExitReason = "Tests failed";
+						LowLevelTestResult = TestResult.Passed;
+						ExitReason = "Tests passed (no report to parse)";
 					}
 				}
+				Log.Info($"Low level test exited with code {TestInstance.ExitCode} and reason: {ExitReason}");
 			}
-			else // ReportPath == null
+			catch
 			{
-				if (TestInstance.ExitCode != 0)
+				throw;
+			} 
+			finally 
+			{ 
+				foreach (ILowLevelTestsExtension LowLevelTestsExtension in Context.BuildInfo.LowLevelTestsExtensions)
 				{
-					LowLevelTestResult = TestResult.Failed;
-					ExitReason = "Tests failed (no report to parse)";
-				}
-				else
-				{
-					LowLevelTestResult = TestResult.Passed;
-					ExitReason = "Tests passed (no report to parse)";
+					LowLevelTestsExtension.PostRunTests();
 				}
 			}
-			Log.Info($"Low level test exited with code {TestInstance.ExitCode} and reason: {ExitReason}");
 		}
 
 		public override void CleanupTest()

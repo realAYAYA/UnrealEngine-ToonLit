@@ -206,17 +206,30 @@ void FWorldPartitionClassDescRegistry::PrefetchClassDescs(const TArray<FTopLevel
 
 	auto GetBlueprintAssets = [&AssetRegistry](const TArray<FString>& FilePaths, TArray<FAssetData>& Assets)
 	{
+		int32 AssetIndex = Assets.Num();
+
 		FARFilter Filter;
-		Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
-		Filter.ClassPaths.Add(UBlueprintGeneratedClass::StaticClass()->GetClassPathName());
-		Filter.ClassPaths.Add(UObjectRedirector::StaticClass()->GetClassPathName());
-		Filter.bRecursiveClasses = true;
+		// Don't rely on the AR to filter out classes as it's going to gather all assets for the specified classes first, then filtering for the provided packages names afterward,
+		// resulting in execution time being over 100 times slower than filtering for classes after package names.
+		//Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+		//Filter.ClassPaths.Add(UBlueprintGeneratedClass::StaticClass()->GetClassPathName());
+		//Filter.ClassPaths.Add(UObjectRedirector::StaticClass()->GetClassPathName());
+		//Filter.bRecursiveClasses = true;
 		Filter.bIncludeOnlyOnDiskAssets = true;
 		Filter.PackageNames.Reserve(FilePaths.Num());
 		Algo::Transform(FilePaths, Filter.PackageNames, [](const FString& ClassPath) { return *ClassPath; });
-	
+
 		AssetRegistry.ScanSynchronous(TArray<FString>(), FilePaths);
 		AssetRegistry.GetAssets(Filter, Assets);
+
+		// Filter out unwanted classes, see above comment for details.
+		for (; AssetIndex < Assets.Num(); AssetIndex++)
+		{
+			if (UClass* AssetClass = Assets[AssetIndex].GetClass(); !AssetClass || (!AssetClass->IsChildOf<UBlueprint>() && !AssetClass->IsChildOf<UBlueprintGeneratedClass>() && !AssetClass->IsChildOf<UObjectRedirector>()))
+			{
+				Assets.RemoveAtSwap(AssetIndex--);
+			}
+		}
 	};
 
 	TArray<FAssetData> Assets;
@@ -240,7 +253,7 @@ void FWorldPartitionClassDescRegistry::PrefetchClassDescs(const TArray<FTopLevel
 	{
 		check(AssetData.IsValid());
 
-		TArray<FTopLevelAssetPath> ClassRedirects;
+		TSet<FTopLevelAssetPath> ClassRedirects;
 		while (AssetData.IsRedirector())
 		{
 			// Folow the redirector to the destination object
@@ -264,23 +277,33 @@ void FWorldPartitionClassDescRegistry::PrefetchClassDescs(const TArray<FTopLevel
 				break;
 			}
 
-			ClassRedirects.Add(FTopLevelAssetPath(AssetData.ToSoftObjectPath().ToString()));
+			bool bRedirectAlreadyRegistered;
+			ClassRedirects.Add(FTopLevelAssetPath(AssetData.ToSoftObjectPath().ToString()), &bRedirectAlreadyRegistered);
+
+			if (bRedirectAlreadyRegistered)
+			{
+				const FString ClassRedirectsLoop = FString::JoinBy(ClassRedirects, TEXT("\n"), [](const FTopLevelAssetPath& RedirectPath) { return FString::Printf(TEXT("  -> %s"), *RedirectPath.ToString()); })
+					+ FString::Printf(TEXT("\n  -> %s"), *FTopLevelAssetPath(AssetData.ToSoftObjectPath().ToString()).ToString());
+				UE_LOG(LogWorldPartition, Warning, TEXT("Redirector loop detected for '%s' from '%s':\n%s"), *AssetData.ToSoftObjectPath().ToString(), *AssetClassPath.ToString(), *ClassRedirectsLoop);
+				AssetData = FAssetData();
+				break;
+			}
 
 			// Find the blueprint asset or the proper blueprint redirector
 			RedirectAssets.Sort(SortBlueprintAssetsByNameLength);
 			AssetData = MoveTemp(RedirectAssets[0]);
 		}
 
-		// Register redirects
-		for (const FTopLevelAssetPath& ClassRedirect : ClassRedirects)
-		{
-			const FTopLevelAssetPath SourceClassPath(GetAssetDataClassNameForBlueprint(ClassRedirect.ToString()));
-			const FTopLevelAssetPath RedirectedClassPath(GetAssetDataClassName(AssetData));
-			RedirectClassMap.Add(SourceClassPath, RedirectedClassPath);
-		}
-
 		if (AssetData.IsValid())
 		{
+			// Register redirects
+			for (const FTopLevelAssetPath& ClassRedirect : ClassRedirects)
+			{
+				const FTopLevelAssetPath SourceClassPath(GetAssetDataClassNameForBlueprint(ClassRedirect.ToString()));
+				const FTopLevelAssetPath RedirectedClassPath(GetAssetDataClassName(AssetData));
+				RedirectClassMap.Add(SourceClassPath, RedirectedClassPath);
+			}
+
 			FString ParentClassName;
 			if (AssetData.GetTagValue(FBlueprintTags::ParentClassPath, ParentClassName))
 			{
@@ -485,15 +508,21 @@ void FWorldPartitionClassDescRegistry::RegisterClassDescriptorFromActorClass(con
 
 void FWorldPartitionClassDescRegistry::OnObjectPreSave(UObject* InObject, FObjectPreSaveContext InSaveContext)
 {
+	// Are we are saving a blueprint?
 	if (UBlueprint* Blueprint = Cast<UBlueprint>(InObject))
 	{
-		// We are saving a blueprint
-		if (UBlueprintGeneratedClass* BlueprintGeneratedClass = Cast<UBlueprintGeneratedClass>(Blueprint->GeneratedClass))
+		// Is this blueprint an asset (could be a level script)?
+		if (Cast<UPackage>(Blueprint->GetOuter()))
 		{
-			if (BlueprintGeneratedClass->IsChildOf<AActor>())
+			// Is this blueprint generated class valid?
+			if (UBlueprintGeneratedClass* BlueprintGeneratedClass = Cast<UBlueprintGeneratedClass>(Blueprint->GeneratedClass))
 			{
-				PrefetchClassDesc(BlueprintGeneratedClass);
-				UpdateClassDescriptor(Blueprint, false);
+				// Is it an actor derived blueprint?
+				if (BlueprintGeneratedClass->IsChildOf<AActor>())
+				{
+					PrefetchClassDesc(BlueprintGeneratedClass);
+					UpdateClassDescriptor(Blueprint, false);
+				}
 			}
 		}
 	}
@@ -501,13 +530,17 @@ void FWorldPartitionClassDescRegistry::OnObjectPreSave(UObject* InObject, FObjec
 
 void FWorldPartitionClassDescRegistry::OnObjectPropertyChanged(UObject* InObject, FPropertyChangedEvent& InPropertyChangedEvent)
 {
-	if (UBlueprint* Blueprint = Cast<UBlueprint>(InObject))
+	// We only want to handle BP class compiles, not property changes.
+	if (!InPropertyChangedEvent.Property)
 	{
-		// The generated class is invalid in some situations, like renaming a blueprint, etc.
-		if (Blueprint->GeneratedClass && Blueprint->GeneratedClass->IsChildOf<AActor>())
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(InObject))
 		{
-			PrefetchClassDesc(Blueprint->GeneratedClass);
-			UpdateClassDescriptor(InObject, true);
+			// The generated class is invalid in some situations, like renaming a blueprint, etc.
+			if (Blueprint->GeneratedClass && Blueprint->GeneratedClass->IsChildOf<AActor>())
+			{
+				PrefetchClassDesc(Blueprint->GeneratedClass);
+				UpdateClassDescriptor(InObject, true);
+			}
 		}
 	}
 }

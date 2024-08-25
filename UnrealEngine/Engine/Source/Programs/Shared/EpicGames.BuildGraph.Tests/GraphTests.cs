@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Collections.Generic;
 using System.Linq;
-using EpicGames.BuildGraph.Expressions;
 using System.Threading.Tasks;
+using EpicGames.BuildGraph.Expressions;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace EpicGames.BuildGraph.Tests
 {
@@ -47,7 +47,7 @@ namespace EpicGames.BuildGraph.Tests
 			Assert.AreEqual(0, node1.InputDependencies.Count);
 			Assert.AreEqual(0, node1.Inputs.Count);
 		}
-		
+
 		[TestMethod]
 		public void AgentTest()
 		{
@@ -59,12 +59,13 @@ namespace EpicGames.BuildGraph.Tests
 			Assert.AreEqual(2, agent.PossibleTypes.Count);
 			Assert.AreEqual("win64", agent.PossibleTypes[0]);
 			Assert.AreEqual("incremental", agent.PossibleTypes[1]);
-/*
-			Assert.AreEqual(1, agent.Nodes.Count);
+			/*
+						Assert.AreEqual(1, agent.Nodes.Count);
 
-			BgNode node = agent.Nodes[0];
-			Assert.AreEqual("Update Version Files", node.Name);
-*/		}
+						BgNode node = agent.Nodes[0];
+						Assert.AreEqual("Update Version Files", node.Name);
+			*/
+		}
 
 		[TestMethod]
 		public void AggregateTest()

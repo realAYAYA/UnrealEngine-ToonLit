@@ -39,6 +39,24 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="stream">Stream to read from</param>
 		/// <param name="buffer">Buffer to receive the output data</param>
+		public static void ReadFixedLengthBytes(this Stream stream, Span<byte> buffer)
+		{
+			for (int offset = 0; offset < buffer.Length;)
+			{
+				int readLength = stream.Read(buffer.Slice(offset));
+				if (readLength == 0)
+				{
+					throw new EndOfStreamException($"Unexpected end of stream while trying to read {buffer.Length} bytes.");
+				}
+				offset += readLength;
+			}
+		}
+
+		/// <summary>
+		/// Reads a fixed amount of data from a stream, throwing an exception if the entire buffer cannot be read.
+		/// </summary>
+		/// <param name="stream">Stream to read from</param>
+		/// <param name="buffer">Buffer to receive the output data</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		public static async Task ReadFixedLengthBytesAsync(this Stream stream, Memory<byte> buffer, CancellationToken cancellationToken = default)
 		{
@@ -56,13 +74,26 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Read the contents of a file async using double buffering
 		/// </summary>
-		/// <param name="stream">Data to compute the hash for</param>
+		/// <param name="stream">Stream to read from</param>
+		/// <param name="cancellationToken">Cancellation token used to terminate processing</param>
+		/// <returns>Contents of the stream</returns>
+		public static async Task<byte[]> ReadAllBytesAsync(this Stream stream, CancellationToken cancellationToken = default)
+		{
+			using MemoryStream memoryStream = new MemoryStream();
+			await stream.CopyToAsync(memoryStream, cancellationToken);
+			return memoryStream.ToArray();
+		}
+
+		/// <summary>
+		/// Read the contents of a file async using double buffering
+		/// </summary>
+		/// <param name="stream">Stream to read from</param>
 		/// <param name="fileSizeHint">If available, the file size so an appropriate buffer size can be used</param>
 		/// <param name="minBufferSize">Minimum size of the buffer</param>
 		/// <param name="maxBufferSize">Maximum size of the buffer</param>
 		/// <param name="callback">Callback used to send read data back to the caller</param>
 		/// <param name="cancellationToken">Cancellation token used to terminate processing</param>
-		/// <returns>New content hash instance containing the hash of the data</returns>
+		/// <returns>Contents of the stream</returns>
 		public static async Task ReadAllBytesAsync(this Stream stream, long fileSizeHint, int minBufferSize, int maxBufferSize, Func<ReadOnlyMemory<byte>, Task> callback, CancellationToken cancellationToken = default)
 		{
 			int bufferLength = minBufferSize;

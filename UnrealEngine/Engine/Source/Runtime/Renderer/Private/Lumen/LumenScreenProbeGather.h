@@ -90,6 +90,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FScreenProbeParameters, )
 	SHADER_PARAMETER(uint32, NumUniformScreenProbes)
 	SHADER_PARAMETER(uint32, MaxNumAdaptiveProbes)
 	SHADER_PARAMETER(int32, FixedJitterIndex)
+	SHADER_PARAMETER(uint32, ScreenProbeRayDirectionFrameIndex)
 
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, NumAdaptiveScreenProbes)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, AdaptiveScreenProbeData)
@@ -201,7 +202,8 @@ extern void RenderHardwareRayTracingShortRangeAO(
 	FRDGBuilder& GraphBuilder,
 	const FScene* Scene,
 	const FSceneTextureParameters& SceneTextures,
-	const FScreenProbeParameters& ScreenProbeParameters,
+	const FBlueNoise& BlueNoise,
+	float MaxScreenTraceFraction,
 	const FViewInfo& View,
 	FRDGTextureRef ScreenBentNormal,
 	uint32 NumPixelRays);
@@ -221,7 +223,9 @@ extern FLumenScreenSpaceBentNormalParameters ComputeScreenSpaceShortRangeAO(
 	const FViewInfo& View,
 	const FSceneTextures& SceneTextures,
 	FRDGTextureRef LightingChannelsTexture,
-	const FScreenProbeParameters& ScreenProbeParameters,
+	const FBlueNoise& BlueNoise,
+	float MaxScreenTraceFraction,
+	float ScreenTraceNoFallbackThicknessScale,
 	ERDGPassFlags ComputePassFlags);
 
 namespace LumenScreenProbeGatherRadianceCache

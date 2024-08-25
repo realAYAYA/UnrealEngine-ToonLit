@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+
 #include "MoviePipelineInProcessExecutor.h"
 #include "Engine/GameInstance.h"
 #include "MoviePipeline.h"
@@ -13,6 +14,7 @@
 #include "Engine/GameEngine.h"
 #include "MoviePipelineUtils.h"
 #include "Graph/MovieGraphPipeline.h"
+#include "Graph/Nodes/MovieGraphGlobalGameOverrides.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MoviePipelineInProcessExecutor)
 
@@ -68,21 +70,10 @@ void UMoviePipelineInProcessExecutor::Start(const UMoviePipelineExecutorJob* InJ
 		// We were launched into an empty map so we'll look at our job and figure out which map we should load.
 		// Get the next job in the queue
 		FString MapOptions;
-
-		TArray<UMoviePipelineSetting*> AllSettings = InJob->GetConfiguration()->GetAllSettings();
-		UMoviePipelineSetting** GameOverridesPtr = AllSettings.FindByPredicate([](UMoviePipelineSetting* InSetting) { return InSetting->GetClass() == UMoviePipelineGameOverrideSetting::StaticClass(); });
-		if (GameOverridesPtr)
+		
+		if (const TSubclassOf<AGameModeBase> GameModeOverride = UMovieGraphGlobalGameOverridesNode::GetGameModeOverride(InJob))
 		{
-			UMoviePipelineSetting* Setting = *GameOverridesPtr;
-			if (Setting)
-			{
-				UMoviePipelineGameOverrideSetting* GameOverrideSetting = CastChecked<UMoviePipelineGameOverrideSetting>(Setting);
-				if (GameOverrideSetting->GameModeOverride)
-				{
-					MapOptions = TEXT("?game=") + GameOverrideSetting->GameModeOverride->GetPathName();
-				}
-
-			}
+			MapOptions = TEXT("?game=") + GameModeOverride->GetPathName();
 		}
 
 		FString LevelPath = InJob->Map.GetLongPackageName();
@@ -126,7 +117,7 @@ void UMoviePipelineInProcessExecutor::OnMapLoadFinished(UWorld* NewWorld)
 	}
 
 	// Temporary
-	if (CurrentJob->GetGraphConfig())
+	if (CurrentJob->IsUsingGraphConfiguration())
 	{
 		MoviePipelineClass = UMovieGraphPipeline::StaticClass();
 	}
@@ -229,7 +220,10 @@ void UMoviePipelineInProcessExecutor::OnMoviePipelineFinished(FMoviePipelineOutp
 	RestoreState();
 
 	// Now that another frame has passed and we should be OK to start another PIE session, notify our owner.
-	OnIndividualPipelineFinished(InOutputData.Pipeline);
+	// We do the cast to UMoviePipeline (which will return nullptr during a graph render) because the functions
+	// all take a pointer, but it's never actually used, and you can only have one pipeline at once so the API
+	// doesn't really need to pass back the pointer to a soon-to-be-destroyed object.
+	OnIndividualPipelineFinished(Cast<UMoviePipeline>(InOutputData.Pipeline));
 }
 
 void UMoviePipelineInProcessExecutor::BackupState()

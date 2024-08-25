@@ -114,7 +114,6 @@ namespace UnsyncUI
 	public sealed class BuildModel : BaseModel
 	{
 		private CancellationTokenSource cts;
-
 		public string Stream => Template.Stream;
 		public string CL => Template.CL;
 		public string Suffix => Template.Suffix;
@@ -122,15 +121,18 @@ namespace UnsyncUI
 		public Config.Directory RootDir { get; }
 		public string Path { get; }
 
-		public Config.BuildTemplate Template { get; }
+		internal Config.BuildTemplate Template { get; }
 
 		public Command OnRefreshPlatformsClicked { get; }
 		public Command OnStopRefreshPlatformsClicked { get; }
 
 		public ObservableCollection<BuildPlatformModel> Platforms { get; } = new ObservableCollection<BuildPlatformModel>();
 
-		public BuildModel(string path, Config.Directory rootDir, Config.BuildTemplate template)
+		private Config AppConfig;
+
+		internal BuildModel(string path, Config.Directory rootDir, Config.BuildTemplate template, Config config)
 		{
+			AppConfig = config;
 			Path = path;
 			RootDir = rootDir;
 			Template = template;
@@ -144,19 +146,19 @@ namespace UnsyncUI
 
 		public bool HasPlatform(string platform) => Platforms.Where(p => p.Platform == platform).Any();
 
-		private async Task EnumeratePlatforms(Config.Directory currentDir, string path, Config.BuildTemplate template, CancellationTokenSource cancellationToken)
+		private async Task EnumeratePlatforms(IDirectoryEnumerator dirEnum, Config.Directory currentDir, string path, Config.BuildTemplate template, CancellationTokenSource cancellationToken)
 		{
 			if (!currentDir.Parse(path, ref template))
 				return;
 
-			foreach (var childDir in await AsyncIO.EnumerateDirectoriesAsync(path, cancellationToken.Token))
+			foreach (var childDir in await dirEnum.EnumerateDirectories(path, cancellationToken.Token))
 			{
 				if (System.IO.Path.GetFileName(childDir) == ".unsync")
 				{
 					List<Config.BuildTemplate> fileGroups = null;
 					if (currentDir.FileGroups?.Any() == true)
 					{
-						var files = await AsyncIO.EnumerateFilesAsync(path, cancellationToken.Token);
+						var files = await dirEnum.EnumerateFiles(path, cancellationToken.Token);
 						currentDir.ParseFileGroups(files.ToList(), template, out fileGroups);
 					}
 					if (fileGroups?.Any() == true)
@@ -177,7 +179,7 @@ namespace UnsyncUI
 				{
 					foreach (var subDir in currentDir.SubDirectories)
 					{
-						await EnumeratePlatforms(subDir, childDir, template, cancellationToken);
+						await EnumeratePlatforms(dirEnum, subDir, childDir, template, cancellationToken);
 					}
 				}
 			}
@@ -193,9 +195,11 @@ namespace UnsyncUI
 
 			Platforms.Clear();
 
+			IDirectoryEnumerator dirEnum = AppConfig.CreateDirectoryEnumerator(Path, RootDir);
+
 			try
 			{
-				await EnumeratePlatforms(RootDir, Path, Template, cts);
+				await EnumeratePlatforms(dirEnum, RootDir, Path, Template, cts);
 			}
 			catch (OperationCanceledException)
 			{ }
@@ -333,6 +337,8 @@ namespace UnsyncUI
 			}
 		}
 
+		public bool DryRun { get; set; }
+
 		private bool appendBuildName = true;
 		public bool AppendBuildName
 		{
@@ -454,14 +460,14 @@ namespace UnsyncUI
 				}
 				else
 				{
-					Debug.WriteLine($"Search took {timer.Elapsed.TotalSeconds} seconds.");
+					App.Current.LogMessage($"Search took {timer.Elapsed.TotalSeconds} seconds.");
 				}
 			}
 			catch (OperationCanceledException)
 			{ }
 			catch (Exception ex)
 			{
-				Debug.WriteLine($"Directory enumeration failed with exception: {ex}");
+				App.Current.LogMessage($"Directory enumeration failed with exception: {ex}");
 				StatusString = ex.Message;
 			}
 			finally
@@ -477,6 +483,7 @@ namespace UnsyncUI
 				var Config = new SyncStartConfig();
 				Config.DstPath = Path.Combine(finalDstPath, s.DestPathRelative);
 				Config.Exclusions = Definition.Exclusions?.ToArray();
+				Config.DryRun = DryRun;
 				if (App.Current.UserConfig.AppendBuildName)
 				{
 					Config.ScavengePath = DstPath;

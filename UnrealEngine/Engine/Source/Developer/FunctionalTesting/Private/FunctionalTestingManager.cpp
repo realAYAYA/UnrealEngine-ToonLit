@@ -334,7 +334,7 @@ bool UFunctionalTestingManager::RunFirstValidTest()
 
 			// first param is the test name. Look for it		
 			const FString TestName = TestParams[0];
-			TestParams.RemoveAt(0, 1, /*bAllowShrinking=*/false);
+			TestParams.RemoveAt(0, 1, EAllowShrinking::No);
 
 			AFunctionalTest* TestToRun = nullptr;
 			for (TActorIterator<AFunctionalTest> It(World); It; ++It)
@@ -406,7 +406,7 @@ bool UFunctionalTestingManager::RunFirstValidTest()
 
 			if (bRemove)
 			{
-				TestsLeft.RemoveAtSwap(Index, 1, false);
+				TestsLeft.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 		}
 	}

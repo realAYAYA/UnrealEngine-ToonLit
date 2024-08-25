@@ -19,9 +19,12 @@ FOptimusAction::~FOptimusAction()
 
 
 
-void FOptimusCompoundAction::AddSubAction(FOptimusAction* InAction)
+TWeakPtr<FOptimusAction> FOptimusCompoundAction::AddSubAction(FOptimusAction* InAction)
 {
 	AddSubAction(TSharedPtr<FOptimusAction>(InAction));
+
+	return SubActions.Last().ToWeakPtr();
+	
 }
 
 

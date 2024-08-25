@@ -4,32 +4,21 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Resources;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Horde.Logs;
 using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Storage.Clients;
 using EpicGames.Horde.Tests.Properties;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-
-[assembly: NeutralResourcesLanguageAttribute("en-US")]
 
 namespace EpicGames.Horde.Tests
 {
 	[TestClass]
 	public sealed class LogTests
 	{
-		readonly MemoryStorageClient _store;
-
 		private readonly byte[] _data = Resources.TextFile;
-
-		public LogTests()
-		{
-			_store = new MemoryStorageClient();
-		}
 
 		[TestMethod]
 		public void NgramTests()
@@ -49,8 +38,10 @@ namespace EpicGames.Horde.Tests
 		}
 
 		[TestMethod]
-		public async Task IndexTests()
+		public async Task IndexTestsAsync()
 		{
+			using KeyValueStorageClient store = KeyValueStorageClient.CreateInMemory();
+
 			// Write the test data to the log file in blocks
 			LogBuilder builder = new LogBuilder(LogFormat.Text, 1, 1, NullLogger.Instance);
 
@@ -78,38 +69,40 @@ namespace EpicGames.Horde.Tests
 			}
 
 			// Flush it to storage, and read the finished log node
-			NodeRef<LogNode> logRef;
-			await using (IStorageWriter writer = _store.CreateWriter())
+			IBlobRef<LogNode> logRef;
+			await using (IBlobWriter writer = store.CreateBlobWriter())
 			{
 				logRef = await builder.FlushAsync(writer, true, CancellationToken.None);
 			}
-			LogNode log = await logRef.ExpandAsync();
+			LogNode log = await logRef.ReadBlobAsync();
 
 			// Read the data back out and check it's the same
 			byte[] readData = new byte[_data.Length];
 
 			int writeOffset = 0;
-			await foreach (ReadOnlyMemory<byte> line in log.ReadLogLinesAsync(0, CancellationToken.None))
+			await foreach (ReadOnlyMemory<byte> line in log.ReadLogLinesAsync(0))
 			{
 				line.CopyTo(readData.AsMemory(writeOffset));
 				writeOffset += line.Length;
 			}
 
 			int equalSize = 0;
-			while(equalSize < _data.Length && _data[equalSize] == readData[equalSize])
+			while (equalSize < _data.Length && _data[equalSize] == readData[equalSize])
 			{
 				equalSize++;
 			}
 			Assert.AreEqual(equalSize, readOffset);
 
 			// Test some searches
-			LogIndexNode index = await log.IndexRef.ExpandAsync();
+			LogIndexNode index = await log.IndexRef.ReadBlobAsync();
 			await SearchLogDataTestAsync(index);
 		}
 
 		[TestMethod]
-		public async Task PartialTokenTests()
+		public async Task PartialTokenTestsAsync()
 		{
+			using IStorageClient store = KeyValueStorageClient.CreateInMemory();
+
 			// Generate the test data
 			string[] lines =
 			{
@@ -125,16 +118,16 @@ namespace EpicGames.Horde.Tests
 				builder.WriteData(Encoding.UTF8.GetBytes(lines[lineIdx]));
 			}
 
-			NodeRef<LogNode> rootNodeRef;
-			await using (IStorageWriter writer = _store.CreateWriter())
+			IBlobRef<LogNode> rootNodeRef;
+			await using (IBlobWriter writer = store.CreateBlobWriter())
 			{
 				rootNodeRef = await builder.FlushAsync(writer, true, CancellationToken.None);
 			}
 
 			// Read it back in and test the index
-			LogNode rootNode = await rootNodeRef.ExpandAsync();
-			LogIndexNode index = await rootNode.IndexRef.ExpandAsync();
-		
+			LogNode rootNode = await rootNodeRef.ReadBlobAsync();
+			LogIndexNode index = await rootNode.IndexRef.ReadBlobAsync();
+
 			for (int lineIdx = 0; lineIdx < lines.Length; lineIdx++)
 			{
 				for (int strLen = 1; strLen < 7; strLen++)
@@ -144,7 +137,7 @@ namespace EpicGames.Horde.Tests
 						string str = lines[lineIdx].Substring(strOfs, strLen);
 
 						SearchStats stats = new SearchStats();
-						List<int> results = await index.Search(0, new SearchTerm(str), stats, CancellationToken.None).ToListAsync();
+						List<int> results = await index.SearchAsync(0, new SearchTerm(str), stats).ToListAsync();
 						Assert.AreEqual(1, results.Count);
 						Assert.AreEqual(lineIdx, results[0]);
 
@@ -212,7 +205,7 @@ namespace EpicGames.Horde.Tests
 		static async Task SearchLogDataTestAsync(LogIndexNode index, string text, int firstLine, int count, int[] expectedLines)
 		{
 			SearchStats stats = new SearchStats();
-			List<int> lines = await index.Search(firstLine, new SearchTerm(text), stats, CancellationToken.None).Take(count).ToListAsync();
+			List<int> lines = await index.SearchAsync(firstLine, new SearchTerm(text), stats, CancellationToken.None).Take(count).ToListAsync();
 			Assert.IsTrue(lines.SequenceEqual(expectedLines));
 		}
 	}

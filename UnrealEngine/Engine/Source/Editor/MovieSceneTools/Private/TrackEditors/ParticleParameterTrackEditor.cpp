@@ -7,7 +7,7 @@
 #include "Sections/MovieSceneParameterSection.h"
 #include "Tracks/MovieSceneParticleParameterTrack.h"
 #include "Sections/ParameterSection.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 
 
 #define LOCTEXT_NAMESPACE "ParticleParameterTrackEditor"
@@ -38,11 +38,10 @@ TSharedRef<ISequencerSection> FParticleParameterTrackEditor::MakeSectionInterfac
 TSharedPtr<SWidget> FParticleParameterTrackEditor::BuildOutlinerEditWidget( const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params )
 {
 	UMovieSceneParticleParameterTrack* ParticleParameterTrack = Cast<UMovieSceneParticleParameterTrack>(Track);
-	
-	// Create a container edit box
-	return FSequencerUtilities::MakeAddButton(LOCTEXT("ParameterText", "Parameter"),
+
+	return UE::Sequencer::MakeAddButton(LOCTEXT("ParameterText", "Parameter"),
 		FOnGetContent::CreateSP(this, &FParticleParameterTrackEditor::OnGetAddParameterMenuContent, ObjectBinding, ParticleParameterTrack),
-		Params.NodeIsHovered, GetSequencer());
+		Params.ViewModel);
 }
 
 

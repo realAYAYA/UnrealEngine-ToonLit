@@ -122,6 +122,38 @@ TUniquePtr<IBufferedCurveModel> FBoolChannelCurveModel::CreateBufferedCurveCopy(
 	return nullptr;
 }
 
+void FBoolChannelCurveModel::GetCurveAttributes(FCurveAttributes& OutCurveAttributes) const
+{
+	FMovieSceneBoolChannel* Channel = GetChannelHandle().Get();
+	if (Channel)
+	{
+		OutCurveAttributes.SetPreExtrapolation(Channel->PreInfinityExtrap);
+		OutCurveAttributes.SetPostExtrapolation(Channel->PostInfinityExtrap);
+	}
+}
+
+void FBoolChannelCurveModel::SetCurveAttributes(const FCurveAttributes& InCurveAttributes)
+{
+	FMovieSceneBoolChannel* Channel = GetChannelHandle().Get();
+	UMovieSceneSection* Section = Cast<UMovieSceneSection>(GetOwningObject());
+	if (Channel && Section && !IsReadOnly())
+	{
+		Section->MarkAsChanged();
+
+		if (InCurveAttributes.HasPreExtrapolation())
+		{
+			Channel->PreInfinityExtrap = InCurveAttributes.GetPreExtrapolation();
+		}
+
+		if (InCurveAttributes.HasPostExtrapolation())
+		{
+			Channel->PostInfinityExtrap = InCurveAttributes.GetPostExtrapolation();
+		}
+
+		CurveModifiedDelegate.Broadcast();
+	}
+}
+
 double FBoolChannelCurveModel::GetKeyValue(TArrayView<const bool> Values, int32 Index) const
 {
 	return (double)Values[Index];

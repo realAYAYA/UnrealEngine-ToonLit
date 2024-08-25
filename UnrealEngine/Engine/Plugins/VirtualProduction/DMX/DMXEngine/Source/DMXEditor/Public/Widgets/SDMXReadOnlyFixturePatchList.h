@@ -3,22 +3,24 @@
 #pragma once
 
 #include "Engine/EngineTypes.h"
-#include "Library/DMXEntityReference.h"
+#include "Types/SlateEnums.h"
+#include "UObject/GCObject.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/SHeaderRow.h"
 
 #include "SDMXReadOnlyFixturePatchList.generated.h"
 
-struct FDMXEntityFixturePatchRef;
-class SDMXReadOnlyFixturePatchListRow;
-class UDMXEntity;
-class UDMXLibrary;
-
+class FDMXReadOnlyFixturePatchListItem;
 class ITableRow;
+class SDMXReadOnlyFixturePatchListRow;
 class SHeaderRow;
 template <typename ItemType> class SListView;
 class SSearchBox;
 class STableViewBase;
+class UDMXEntity;
+class UDMXEntityFixturePatch;
+class UDMXEntityFixtureType;
+class UDMXLibrary;
 
 
 enum class EDMXReadOnlyFixturePatchListShowMode : uint8
@@ -74,24 +76,25 @@ struct DMXEDITOR_API FDMXReadOnlyFixturePatchListDescriptor
 /** Generic list of Fixture Patches in a DMX library for read only purposes */
 class DMXEDITOR_API SDMXReadOnlyFixturePatchList
 	: public SCompoundWidget
+	, public FGCObject
 {
 public:
-	DECLARE_DELEGATE_OneParam(FDMXFixturePatchListRowDelegate, const TSharedPtr<FDMXEntityFixturePatchRef>)
-	DECLARE_DELEGATE_RetVal_OneParam(bool, FDMXFixturePatchListRowRetValDelegate, const TSharedPtr<FDMXEntityFixturePatchRef>)
-	DECLARE_DELEGATE_TwoParams(FDMXFixturePatchListRowSelectionDelegate, const TSharedPtr<FDMXEntityFixturePatchRef>, ESelectInfo::Type)
+	DECLARE_DELEGATE_OneParam(FDMXFixturePatchListRowDelegate, TSharedPtr<FDMXReadOnlyFixturePatchListItem>)
+	DECLARE_DELEGATE_RetVal_OneParam(bool, FDMXFixturePatchListRowRetValDelegate, TSharedPtr<FDMXReadOnlyFixturePatchListItem>)
+	DECLARE_DELEGATE_TwoParams(FDMXFixturePatchListRowSelectionDelegate, TSharedPtr<FDMXReadOnlyFixturePatchListItem>, ESelectInfo::Type)
 
 	SLATE_BEGIN_ARGS(SDMXReadOnlyFixturePatchList)
-	: _ListDescriptor(FDMXReadOnlyFixturePatchListDescriptor())
-	, _DMXLibrary(nullptr)
+		: _ListDescriptor(FDMXReadOnlyFixturePatchListDescriptor())
+		, _DMXLibrary(nullptr)
 	{}
-
+		/** Descriptor of the list, useful for loading and storing the state of the list to disk */
 		SLATE_ARGUMENT(FDMXReadOnlyFixturePatchListDescriptor, ListDescriptor)
 
 		/** The displayed DMX Library */
 		SLATE_ARGUMENT(UDMXLibrary*, DMXLibrary)
 
 		/** Fixture patches not displayed in the list */
-		SLATE_ARGUMENT(TArray<FDMXEntityFixturePatchRef>, ExcludedFixturePatches)
+		SLATE_ARGUMENT(TArray<UDMXEntityFixturePatch*>, ExcludedFixturePatches)
 
 		/** Called when a row of the list is right clicked */
 		SLATE_EVENT(FOnContextMenuOpening, OnContextMenuOpening)
@@ -120,16 +123,31 @@ public:
 	void Construct(const FArguments& InArgs);
 
 	/** Updates the List on the next tick */
-	void RequestListRefresh();
+	void RequestRefresh();
 
-	/** Gets current selected Fixture Patches from the list */
-	TArray<TSharedPtr<FDMXEntityFixturePatchRef>> GetSelectedFixturePatchRefs() const;
+	/** Gets all fixture patches in the DMX Library */
+	TArray<UDMXEntityFixturePatch*> GetFixturePatchesInDMXLibrary() const;
 
-	/** Gets all visible Fixture Patches from the list */
-	TArray<TSharedPtr<FDMXEntityFixturePatchRef>> GetVisibleFixturePatchRefs() const;
+	/** Gets all fixture patches displayed in the list. Note, the result does not contain excluded fixture patches. */
+	TArray<UDMXEntityFixturePatch*> GetFixturePatchesInList() const;
 
-	/** Gets the current Show Mode of the list */
-	EDMXReadOnlyFixturePatchListShowMode GetShowMode() const { return ShowMode; }
+	/** Gets current selected fixture patches in the list */
+	TArray<UDMXEntityFixturePatch*> GetSelectedFixturePatches() const;
+
+	/** Sets the displayed DMX library. Note, this does not refresh the list. Call RequestRefresh() to update the list. */
+	void SetDMXLibrary(UDMXLibrary* InDMXLibrary);
+
+	/** Sets the excluded fixture patches. Note, this does not refresh the list. Call RequestRefresh() to update the list. */
+	void SetExcludedFixturePatches(const TArray<UDMXEntityFixturePatch*>& NewExcludedFixturePatches);
+
+	/** Selects specified items in the list */
+	void SelectItems(const TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>>& ItemsToSelect, ESelectInfo::Type SelectInfo = ESelectInfo::Direct);
+
+	/** Sets the selection state of the given item, if valid */
+	void SetItemSelection(TSharedPtr<FDMXReadOnlyFixturePatchListItem> SelectedItem, bool bSelected, ESelectInfo::Type SelectInfo = ESelectInfo::Direct);
+
+	/** Returns the selected items */
+	TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> GetSelectedItems() const;
 
 	/** Gets the a descriptor for the current parameters for this list */
 	FDMXReadOnlyFixturePatchListDescriptor MakeListDescriptor() const;
@@ -137,42 +155,42 @@ public:
 	/** Gets the current displayed DMX library */
 	UDMXLibrary* GetDMXLibrary() const { return WeakDMXLibrary.Get(); }
 
-	/** Sets the displayed DMX library */
-	void SetDMXLibrary(UDMXLibrary* InDMXLibrary);
-
-	/** Sets the selection state of the given item, if valid */
-	void SetItemSelection(const TSharedPtr<FDMXEntityFixturePatchRef> SelectedItem, bool bSelected);
-
-	/** Sets the excluded fixture patches */
-	void SetExcludedFixturePatches(const TArray<FDMXEntityFixturePatchRef>& NewExcludedFixturePatches);
-
 	/** Returns the items displayed int his list */
-	TArray<TSharedPtr<FDMXEntityFixturePatchRef>> GetListItems() const { return ListItems; }
-
-	/** Selects specified items in the list */
-	void SelectItems(const TArray<TSharedPtr<FDMXEntityFixturePatchRef>>& ItemsToSelect, ESelectInfo::Type SelectInfo = ESelectInfo::Direct);
+	TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> GetListItems() const { return ListItems; }
 
 protected:
-	/** Initializes the list parameters using the given ListDescriptor */
-	virtual void InitializeByListDescriptor(const FDMXReadOnlyFixturePatchListDescriptor& InListDescriptor);
+	//~ Begin FGCObject interface
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override;
+	//~ End FGCObject interface
+
+	/** Returns the menu name of the header row filter menu. Useful to override the default menu and extend it only for a specfic inherited class */
+	virtual FName GetHeaderRowFilterMenuName() const; 
 
 	/** Refreshes the Fixture Patch List */
-	virtual void RefreshList();
+	virtual void ForceRefresh();
 
-	/** Updates ListItems array */
-	void UpdateListItems();
+	/** Called to generate the header row of the list */
+	virtual TSharedRef<SHeaderRow> GenerateHeaderRow();
+
+	/** Called to generate a row in the list */
+	virtual TSharedRef<ITableRow> OnGenerateRow(TSharedPtr<FDMXReadOnlyFixturePatchListItem> InItem, const TSharedRef<STableViewBase>& OwnerTable);
+
+	/** Toggles show state of the column with the given ID */
+	virtual void ToggleColumnShowState(const FName ColumnID);
+
+private:
+	/** Generates a filter menu fot the Header Row of the List */
+	TSharedRef<SWidget> GenerateHeaderRowFilterMenu();
+
+	/** Applies settings of the list descriptor */
+	void ApplyListDescriptor(const FDMXReadOnlyFixturePatchListDescriptor& InListDescriptor);
 
 	/** Filters ListItems array by the given search text */
-	TArray<TSharedPtr<FDMXEntityFixturePatchRef>> FilterListItems(const FText& SearchText);
+	TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> FilterListItems(const FText& SearchText);
 
-	/** Called when a row in the List gets generated */
-	virtual TSharedRef<ITableRow> OnGenerateRow(TSharedPtr<FDMXEntityFixturePatchRef> InItem, const TSharedRef<STableViewBase>& OwnerTable);
-
-	/** Called to get wheter a row of the list is enabled or not */
-	virtual bool IsRowEnabled(const TSharedPtr<FDMXEntityFixturePatchRef> InFixturePatchRef) const;
-
-	/** Called to get wheter a row of the list is visible or not */
-	virtual EVisibility GetRowVisibility(const TSharedPtr<FDMXEntityFixturePatchRef> InFixturePatchRef) const;
+	/** Sort the list by ColumnId */
+	void SortByColumnID(const EColumnSortPriority::Type SortPriority, const FName& ColumnId, const EColumnSortMode::Type InSortMode);
 
 	/** Called when text from searchbox is changed */
 	void OnSearchTextChanged(const FText& SearchText);
@@ -186,35 +204,14 @@ protected:
 	/** Called when a Fixture Type changed */
 	void OnFixtureTypeChanged(const UDMXEntityFixtureType* FixtureType);
 
-	/** Generates the Header Row of the List */
-	virtual TSharedRef<SHeaderRow> GenerateHeaderRow();
-
-	/** Generates a visibility menu fot the Header Row of the List */
-	TSharedRef<SWidget> GenerateHeaderRowVisibilityMenu();
-
-	/** Toggles show state of the column with the given ID */
-	void ToggleColumnShowState(const FName ColumnID);
-
 	/** Gets show state of the column with the given ID */
 	bool IsColumnShown(const FName ColumnID) const;
 
 	/** Returns the column sort mode for the list*/
 	EColumnSortMode::Type GetColumnSortMode(const FName ColumnID) const;
 
-	/** Sort the list by ColumnId */
-	void SortByColumnID(const EColumnSortPriority::Type SortPriority, const FName& ColumnId, const EColumnSortMode::Type InSortMode);
-
-	/** Sets the current ShowMode */
-	void SetShowMode(EDMXReadOnlyFixturePatchListShowMode NewShowMode);
-
-	/** Returns true if the ShowModeToCheck is the one this widget uses */
-	bool IsUsingShowMode(EDMXReadOnlyFixturePatchListShowMode ShowModeToCheck) const;
-
 	/** The current Sort Mode */
 	EColumnSortMode::Type SortMode = EColumnSortMode::Ascending;
-
-	/** The current Show Mode */
-	EDMXReadOnlyFixturePatchListShowMode ShowMode;
 
 	/** By which column ID the List is sorted */
 	FName SortedByColumnID;
@@ -228,23 +225,20 @@ protected:
 	/** The Header Row of the List */
 	TSharedPtr<SSearchBox> SearchBox;
 
-	/** The Header Row of the List */
-	TSharedPtr<SHeaderRow> HeaderRow;
-
-	/** The list of Fixture Patch references */
-	TSharedPtr<SListView<TSharedPtr<FDMXEntityFixturePatchRef>>> ListView;
+	/** The actual fixture patch list */
+	TSharedPtr<SListView<TSharedPtr<FDMXReadOnlyFixturePatchListItem>>> ListView;
 
 	/** Rows of Mode widgets in the List */
-	TArray<TSharedPtr<SDMXReadOnlyFixturePatchListRow>> ListRows;
+	TArray<TSharedRef<SDMXReadOnlyFixturePatchListRow>> ListRows;
 
-	/** Array of current Fixture Patch Ref list items */
-	TArray<TSharedPtr<FDMXEntityFixturePatchRef>> ListItems;
+	/** The list source, an array of read only fixture patch list items */
+	TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> ListItems;
 
 	/** Current displayed DMX Library */
 	TWeakObjectPtr<UDMXLibrary> WeakDMXLibrary;
 
 	// Slate Arguments
-	TArray<FDMXEntityFixturePatchRef> ExcludedFixturePatches;
+	TArray<TObjectPtr<UDMXEntityFixturePatch>> ExcludedFixturePatches;
 	FDMXFixturePatchListRowRetValDelegate IsRowEnabledDelegate;
 	FDMXFixturePatchListRowRetValDelegate IsRowVisibleDelegate;
 	FOnDragDetected OnRowDragDetectedDelegate;

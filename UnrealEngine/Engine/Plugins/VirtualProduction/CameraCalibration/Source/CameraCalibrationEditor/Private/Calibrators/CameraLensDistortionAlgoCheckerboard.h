@@ -4,20 +4,8 @@
 
 #include "CameraLensDistortionAlgo.h"
 
-#include "LensFile.h"
-
-#if WITH_OPENCV
-
-#include <vector>
-
-#include "OpenCVHelper.h"
-#include "PreOpenCVHeaders.h"
-#include "opencv2/calib3d.hpp"
-#include "opencv2/imgproc.hpp"
-#include "PostOpenCVHeaders.h"
-
-#endif //WITH_OPENCV
-
+#include "CameraCalibrationSolver.h"
+#include "ImageCore.h"
 
 #include "CameraLensDistortionAlgoCheckerboard.generated.h"
 
@@ -90,7 +78,7 @@ struct FLensDistortionCheckerboardRowData
 
 	// Checkerboard corners in 2d image pixel coordinates.
 	UPROPERTY()
-	TArray<FVector2D> Points2d;
+	TArray<FVector2f> Points2d;
 
 	// Checkerboard corners in 3d local space.
 	UPROPERTY()
@@ -147,16 +135,10 @@ public:
 	virtual UMaterialInterface* GetOverlayMaterial() const override;
 	virtual bool IsOverlayEnabled() const override { return bShouldShowOverlay; };
 	virtual void OnDistortionSavedToLens() override;
-	virtual bool GetLensDistortion(
-		float& OutFocus,
-		float& OutZoom,
-		FDistortionInfo& OutDistortionInfo,
-		FFocalLengthInfo& OutFocalLengthInfo,
-		FImageCenterInfo& OutImageCenterInfo,
-		TSubclassOf<ULensModel>& OutLensModel,
-		double& OutError,
-		FText& OutErrorMessage
-	) override;
+	virtual FDistortionCalibrationTask BeginCalibration(FText& OutErrorMessage) override;
+	virtual void CancelCalibration() override;
+	virtual bool GetCalibrationStatus(FText& StatusText) const override;
+	virtual bool SupportsAsyncCalibration() override { return true; };
 	virtual bool HasCalibrationData() const override;
 	virtual void PreImportCalibrationData() override;
 	virtual int32 ImportCalibrationRow(const TSharedRef<FJsonObject>& CalibrationRowObject, const FImage& RowImage) override;
@@ -200,8 +182,8 @@ private:
 	/** If true, the solver will not solve for image center, and will just use the input value */
 	bool bFixImageCenter = false;
 
-	/** Estimated focal length to initialize the distortion solver */
-	float FocalLengthEstimate = 0.0f;
+	/** Estimate for the focal length to provide to the solver. If not set, user will be warned to set before continuing calibration */
+	TOptional<float> FocalLengthEstimate;
 
 	/** If true, the solver will use the current camera pose to initialize the camera extrinsic parameters for each image */
 	bool bUseExtrinsicsGuess = false;
@@ -212,10 +194,8 @@ private:
 	/** Texture into which detected chessboard corners from each calibration row are drawn */
 	TObjectPtr<UTexture2D> CoverageTexture;
 
-#if WITH_OPENCV
-	/** OpenCV matrix used to draw chessboard corners */
-	cv::Mat CvCoverage;
-#endif
+	/** Solver instance that will run the distortion calibration */
+	TObjectPtr<ULensDistortionSolver> Solver;
 
 private:
 
@@ -245,6 +225,18 @@ private:
 
 	/** Builds the UI for the action buttons (RemoveLast, ClearAll) */
 	TSharedRef<SWidget> BuildCalibrationActionButtons();
+
+	/** Get the current value of the focal length estimate */
+	TOptional<float> GetFocalLengthEstimate() const;
+
+	/** Set the current value of the focal length estimate */
+	void SetFocalLengthEstimate(float NewValue);
+
+	/** Returns the state of the fix focal length checkbox */
+	ECheckBoxState IsFixFocalLengthChecked() const;
+
+	/** Changes the state of the fix focal length checkbox */
+	void OnFixFocalLengthCheckStateChanged(ECheckBoxState NewState);
 
 private:
 

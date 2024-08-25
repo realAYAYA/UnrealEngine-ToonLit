@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "StructUtilsFunctionLibrary.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 #include "UObject/EnumProperty.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(StructUtilsFunctionLibrary)

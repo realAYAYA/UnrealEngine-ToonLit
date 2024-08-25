@@ -19,7 +19,6 @@
 #include "UI/SRemoteControlPanel.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SSpacer.h"
-#include "Widgets/Layout/SSeparator.h"
 
 #define LOCTEXT_NAMESPACE "SRCBehaviourDetails"
 
@@ -56,56 +55,6 @@ void SRCBehaviourDetails::Construct(const FArguments& InArgs, TSharedRef<SRCActi
 		[
 			SNew(SVerticalBox)
 
-			+ SVerticalBox::Slot()
-			.HAlign(HAlign_Fill)
-			.Padding(6.f)
-			.AutoHeight()
-			[
-				SNew(SHorizontalBox)
-
-				// Behaviour Name
-				+ SHorizontalBox::Slot()
-				.HAlign(HAlign_Left)
-				.VAlign(VAlign_Center)
-				.FillWidth(1.f)
-				.Padding(4.f)
-				[
-					SAssignNew(BehaviourTitleWidget, STextBlock)
-					.ColorAndOpacity(FLinearColor::White)
-					.Text(BehaviourDisplayName)
-					.TextStyle(&RCPanelStyle->SectionHeaderTextStyle)
-					.ToolTipText(BehaviourDescription)
-				]
-
-				// Toggle Behaviour Button
-				+ SHorizontalBox::Slot()
-				.VAlign(VAlign_Center)
-				.AutoWidth()
-				.Padding(4.f, 0.f)
-				[
-					SNew(SCheckBox)
-					.AddMetaData<FTagMetaData>(FTagMetaData(TEXT("Toggle Behavior")))
-					.ToolTipText(LOCTEXT("EditModeTooltip", "Enable/Disable this Behaviour.\nWhen a behaviour is disabled its Actions will not be processed when the Controller value changes"))
-					.HAlign(HAlign_Center)
-					.Style(&RCPanelStyle->ToggleButtonStyle)
-					.ForegroundColor(FSlateColor::UseForeground())
-					.IsChecked_Lambda([this]() { return BehaviourItemWeakPtr.IsValid() && BehaviourItemWeakPtr.Pin()->IsBehaviourEnabled() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-					.OnCheckStateChanged(this, &SRCBehaviourDetails::OnToggleEnableBehaviour)
-				]
-			]
-			
-			// Border (separating Header and Behaviour specific details panel)
-			+ SVerticalBox::Slot()
-			.Padding(2.f, 4.f)
-			.AutoHeight()
-			[
-				SNew(SSeparator)
-				.SeparatorImage(FAppStyle::Get().GetBrush("Separator"))
-				.Thickness(2.f)
-				.Orientation(EOrientation::Orient_Horizontal)
-				.Visibility_Lambda([this]() { return this->BehaviourDetailsWidget.IsValid() ? EVisibility::Visible : EVisibility::Collapsed; })
-			]
-
 			// Behaviour Specific Details Panel
 			+ SVerticalBox::Slot()
 			.Padding(8.f, 4.f)
@@ -124,11 +73,6 @@ void SRCBehaviourDetails::Construct(const FArguments& InArgs, TSharedRef<SRCActi
 		];
 
 	RefreshIsBehaviourEnabled(bIsChecked);
-}
-
-void SRCBehaviourDetails::OnToggleEnableBehaviour(ECheckBoxState State)
-{
-	SetIsBehaviourEnabled(State == ECheckBoxState::Checked);
 }
 
 void SRCBehaviourDetails::SetIsBehaviourEnabled(const bool bIsEnabled)

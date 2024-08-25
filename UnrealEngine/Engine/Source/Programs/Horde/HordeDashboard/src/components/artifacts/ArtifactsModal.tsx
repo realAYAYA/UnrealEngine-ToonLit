@@ -4,11 +4,11 @@ import { DetailsList, DetailsListLayoutMode, FontIcon, IColumn, IconButton, Moda
 import { action, makeObservable, observable } from "mobx";
 import { observer } from "mobx-react-lite";
 import { useEffect, useState } from "react";
+import { NavigateFunction, useNavigate } from "react-router-dom";
 import backend from "../../backend";
 import { ArtifactContextType, GetArtifactDirectoryEntryResponse, GetArtifactDirectoryResponse, GetArtifactFileEntryResponse, GetArtifactResponseV2 } from "../../backend/Api";
-import dashboard from "../../backend/Dashboard";
-import { hordeClasses } from "../../styles/Styles";
-
+import dashboard, { StatusColor } from "../../backend/Dashboard";
+import { getHordeStyling } from "../../styles/Styles";
 
 enum BrowserType {
    Directory,
@@ -27,14 +27,21 @@ type BrowserItem = {
 
 class ArtifactsHandler {
 
-   constructor(jobId: string, stepId: string, contextType: ArtifactContextType, artifacts?:GetArtifactResponseV2[]) {
+   constructor(jobId: string, stepId: string, contextType: ArtifactContextType, artifactPath?: string, artifacts?: GetArtifactResponseV2[]) {
       makeObservable(this);
       this.jobId = jobId;
       this.stepId = stepId;
       this.context = contextType;
       this.artifacts = artifacts;
+      this.set(artifactPath);
 
-      this.set();
+      const params = new URLSearchParams(window.location.search);
+      params.delete("artifactPath");
+      this.baseSearch = `?${params.toString()}`;
+
+      ArtifactsHandler.current = this;
+
+
    }
 
    @observable
@@ -45,27 +52,27 @@ class ArtifactsHandler {
       this.updated++;
    }
 
-   private async set() {
+   private async set(artifactPath?: string) {
 
       let artifacts: GetArtifactResponseV2[] | undefined = this.artifacts;
 
-      if (!artifacts) {         
+      if (!artifacts) {
 
          const key = `job:${this.jobId}/step:${this.stepId}`;
          try {
             const v = await backend.getJobArtifactsV2(undefined, [key]);
-            artifacts = v.artifacts;               
+            artifacts = v.artifacts;
          } catch (err) {
             console.error(err);
-         } 
-   
+         }
+
          if (!artifacts) {
             console.error(`Missing artifacts for job: ${this.jobId} step: ${this.stepId}`);
             return;
          }
-   
-         this.artifacts = artifacts;   
-      }      
+
+         this.artifacts = artifacts;
+      }
 
       if (!artifacts) {
          console.error(`Missing artifacts for job: ${this.jobId} step: ${this.stepId}`);
@@ -74,33 +81,17 @@ class ArtifactsHandler {
 
       this.artifacts = artifacts;
 
-      this.contexts = [];
-
-      let a = artifacts.find(a => a.type === "step-saved");
-      if (a) {
-         this.contexts.push("step-saved");
-      }
-
-      a = artifacts.find(a => a.type === "step-output");
-      if (a) {
-         this.contexts.push("step-output");
-      }
-
-      a = artifacts.find(a => a.type === "step-trace");
-      if (a) {
-         this.contexts.push("step-trace");
-      }
-
       if (!this.context) {
          console.error("Artifact browser has no context");
          this.updateReady();
          return;
       }
 
-      a = artifacts.find(a => a.type === this.context)!;
+      let a = artifacts.find(a => a.type === this.context)!;
 
       if (!a) {
          console.error("Unable to find artifact for context", this.context, artifacts);
+         this.artifactMissing = true;
          this.updateReady();
          return;
       }
@@ -110,9 +101,26 @@ class ArtifactsHandler {
       this.loading = true;
       this.updateReady();
 
-      this.browse = await backend.getBrowseArtifacts(a.id);
+      if (!artifactPath) {
+         this.browse = await backend.getBrowseArtifacts(a.id);
+         if (this.browse.directories?.length === 1 && !this.browse.files?.length) {
+            let d = this.browse.directories[0] as GetArtifactDirectoryEntryResponse | undefined;
+            const path: string[] = [];
+            while (d) {
+               path.push(d.name);
+               d = d.directories?.length ? d.directories[0] : undefined;
+            }
+            const dpath = path.join("/");
+            this.browse = await backend.getBrowseArtifacts(a.id, dpath);
+            this.path = dpath;
+         }
+         this.loading = false;
+      } else {
+         this.browse = await backend.getBrowseArtifacts(this.artifact.id, artifactPath);
+         this.path = artifactPath;
+         this.loading = false;
+      }
 
-      this.loading = false;
       this.updateReady();
 
    }
@@ -123,7 +131,20 @@ class ArtifactsHandler {
 
    }
 
-   async browseTo(path: string, push = true) {
+   get contextName(): string {
+      switch (this.context) {
+         case "step-output":
+            return "Temp Storage";
+         case "step-saved":
+            return "Log";
+         case "step-trace":
+            return "Trace";
+         default:
+            return this.artifact?.description ?? this.artifact?.name ?? "Unknown";
+      }
+   }
+
+   async browseTo(path: string, navigate: NavigateFunction, push = true) {
 
       if (!this.artifact) {
          return;
@@ -137,6 +158,15 @@ class ArtifactsHandler {
 
       if (push) {
          this.history.push(path);
+      }
+
+      if (this.baseSearch) {
+         let url = `${window.location.pathname}${this.baseSearch}`;
+         if (path?.length) {
+            url += `&artifactPath=${encodeURI(path)}`;
+         }
+         navigate(url, { replace: true });
+         console.log(this.artifact.id, path);
       }
 
       this.loading = false;
@@ -202,13 +232,15 @@ class ArtifactsHandler {
       this.path = undefined;
       this.browse = undefined;
       this.artifact = undefined;
-      this.artifacts = undefined;
-      this.contexts = undefined;
+      this.artifacts = undefined;      
       this.history = [];
       this.stepId = "";
       this.loading = false;
+      this.baseSearch = undefined;
+      this.artifactMissing = undefined;
+      ArtifactsHandler.current = undefined;
    }
-   
+
 
    selectionCallback?: () => void;
 
@@ -219,9 +251,7 @@ class ArtifactsHandler {
    browse?: GetArtifactDirectoryResponse;
 
    artifact?: GetArtifactResponseV2;
-   artifacts?: GetArtifactResponseV2[];
-
-   private contexts?: ArtifactContextType[];
+   artifacts?: GetArtifactResponseV2[];   
 
    readonly context: ArtifactContextType;
 
@@ -231,34 +261,54 @@ class ArtifactsHandler {
    history: string[] = [];
 
    loading = false;
+
+   baseSearch?: string;
+
+   artifactMissing?: boolean;
+
+   static current?: ArtifactsHandler;
 }
 
-const styles = mergeStyleSets({
-   list: {
-      selectors: {
-         'a': {
-            height: "unset !important",
-         },
-         '.ms-List-cell': {
+let _styles: any;
 
-            borderTop: "1px solid #EDEBE9",
-            borderRight: "1px solid #EDEBE9",
-            borderLeft: "1px solid #EDEBE9"
-         },
-         '.ms-List-cell:nth-last-child(-n + 1)': {
-            borderBottom: "1px solid #EDEBE9"
-         },
-         ".ms-DetailsRow #artifactview": {
-            opacity: 0
-         },
-         ".ms-DetailsRow:hover #artifactview": {
-            opacity: 1
-         },
+const getStyles = () => {
+
+   const border = `1px solid ${dashboard.darktheme ? "#2D2B29" : "#EDEBE9"}`
+
+   const styles = _styles ?? mergeStyleSets({
+      list: {
+         selectors: {
+            'a': {
+               height: "unset !important",
+            },
+            '.ms-List-cell': {
+   
+               borderTop: border,
+               borderRight: border,
+               borderLeft: border
+            },
+            '.ms-List-cell:nth-last-child(-n + 1)': {
+               borderBottom: border
+            },
+            ".ms-DetailsRow #artifactview": {
+               opacity: 0
+            },
+            ".ms-DetailsRow:hover #artifactview": {
+               opacity: 1
+            },
+         }
       }
-   }
-});
+   });
+
+   _styles = styles;
+
+   return styles;
+   
+}
 
 const BrowseHistory: React.FC<{ handler: ArtifactsHandler }> = observer(({ handler }) => {
+
+   const navigate = useNavigate();
 
    // subscribe
    if (handler.updated) { };
@@ -271,10 +321,10 @@ const BrowseHistory: React.FC<{ handler: ArtifactsHandler }> = observer(({ handl
             <IconButton disabled={backDisabled} style={{ fontSize: 14, paddingTop: 1 }} iconProps={{ iconName: 'ArrowLeft' }} onClick={() => {
                if (handler.history.length === 1) {
                   handler.history = [];
-                  handler.browseTo("", false);
+                  handler.browseTo("", navigate, false);
                } else {
                   handler.history.pop();
-                  handler.browseTo(handler.history[handler.history.length - 1], false);
+                  handler.browseTo(handler.history[handler.history.length - 1], navigate, false);
                }
             }} />
          </Stack>
@@ -285,17 +335,25 @@ const BrowseHistory: React.FC<{ handler: ArtifactsHandler }> = observer(({ handl
 
 const BrowseBreadCrumbs: React.FC<{ handler: ArtifactsHandler }> = observer(({ handler }) => {
 
+   const navigate = useNavigate();
+
    // subscribe
    if (handler.updated) { }
 
    const fontSize = 13;
 
-   let rootName = "Step";
-   if (handler.context === "step-output") {
+   let rootName = handler.context;
+
+   if (handler.context === "step-saved") {
+      rootName = "Saved";
+   }
+   else if (handler.context === "step-output") {
       rootName = "Output";
    }
-   if (handler.context === "step-trace") {
+   else if (handler.context === "step-trace") {
       rootName = "Trace";
+   } else {
+      rootName = handler.contextName
    }
 
    if (!handler.path) {
@@ -320,7 +378,7 @@ const BrowseBreadCrumbs: React.FC<{ handler: ArtifactsHandler }> = observer(({ h
       const color = last ? undefined : (dashboard.darktheme ? "#55B7FF" : "#0078D4");
       const cursor = last ? undefined : "pointer";
 
-      return <Stack horizontal onClick={() => handler.browseTo(path)} style={{ cursor: cursor }}>
+      return <Stack horizontal onClick={() => handler.browseTo(path, navigate)} style={{ cursor: cursor }}>
          <Stack>
             <Text style={{ fontSize: fontSize, color: color, fontWeight: last ? 600 : undefined }}>{e}</Text>
          </Stack>
@@ -328,7 +386,7 @@ const BrowseBreadCrumbs: React.FC<{ handler: ArtifactsHandler }> = observer(({ h
       </Stack>
    });
 
-   elements.unshift(<Stack style={{ cursor: "pointer" }} onClick={() => handler.browseTo("")}>
+   elements.unshift(<Stack style={{ cursor: "pointer" }} onClick={() => handler.browseTo("", navigate)}>
       <Stack style={{ paddingLeft: 2, paddingRight: 4 }}>
          <Text style={{ fontSize: fontSize, color: (dashboard.darktheme ? "#55B7FF" : "#0078D4"), fontWeight: 600 }}>{rootName} /</Text>
       </Stack>
@@ -360,7 +418,6 @@ function formatBytes(bytes: number, decimals = 2) {
 
 const DownloadButton: React.FC<{ handler: ArtifactsHandler }> = observer(({ handler }) => {
 
-   const [downloading, setDownloading] = useState(false);
    const [selectKey, setSelectionKey] = useState(0);
 
 
@@ -394,13 +451,8 @@ const DownloadButton: React.FC<{ handler: ArtifactsHandler }> = observer(({ hand
       buttonText = `Download (${sizeText})`;
    }
 
-   if (downloading) {
-      buttonText = "Downloading";
-   }
-
    return <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }}>
-      {downloading && <Stack><Spinner size={SpinnerSize.large} /></Stack>}
-      <PrimaryButton styles={{ root: { fontFamily: 'Horde Open Sans SemiBold !important' } }} disabled={!selection.size || downloading} onClick={async () => {
+      <PrimaryButton styles={{ root: { fontFamily: 'Horde Open Sans SemiBold !important' } }} disabled={!selection.filesSelected && !selection.directoriesSelected} onClick={async () => {
 
          const selection = handler.currentSelection.items;
 
@@ -414,12 +466,11 @@ const DownloadButton: React.FC<{ handler: ArtifactsHandler }> = observer(({ hand
             if (item.type === BrowserType.File) {
 
                try {
-                  setDownloading(true);
-                  await backend.downloadArtifactV2(handler.artifact.id, (handler.path ? handler.path + "/" : "") + item.text, item.text);
+                  backend.downloadArtifactV2(handler.artifact.id, (handler.path ? handler.path + "/" : "") + item.text);
                } catch (err) {
                   console.error(err);
                } finally {
-                  setDownloading(false);
+
                }
 
                return;
@@ -441,25 +492,12 @@ const DownloadButton: React.FC<{ handler: ArtifactsHandler }> = observer(({ hand
             return `${path}${item.text}`;
          }).filter(f => !!f);
 
-         let context = handler.context;
-         let contextName = "step";
-         if (context === "step-output") {
-            contextName = "output";
-         }
-
-         if (context === "step-trace") {
-            contextName = "trace";
-         }
-
-         const filename = "horde-" + contextName + "-artifacts-" + handler.jobId + '-' + handler.stepId + ".zip";
-
          try {
-            setDownloading(true);
-            await backend.downloadArtifactZipV2(handler.artifact.id, { filter: filters }, filename);
+            backend.downloadArtifactZipV2(handler.artifact.id, { filter: filters });
          } catch (err) {
             console.error(err);
          } finally {
-            setDownloading(false);
+
          }
 
       }}>{buttonText}</PrimaryButton>
@@ -469,18 +507,59 @@ const DownloadButton: React.FC<{ handler: ArtifactsHandler }> = observer(({ hand
 
 let idcounter = 0;
 
-const JobDetailArtifactsInner: React.FC<{ handler: ArtifactsHandler }> = observer(({ handler }) => {
+const JobDetailArtifactsInner: React.FC<{ jobId: string; stepId: string, artifacts?: GetArtifactResponseV2[], contextType: ArtifactContextType, artifactPath?: string }> = observer(({ jobId, stepId, artifacts, contextType, artifactPath }) => {
+
+   // eslint-disable-next-line
+   const handler = ArtifactsHandler.current ?? new ArtifactsHandler(jobId, stepId, contextType, artifactPath, artifacts);
+
+   useEffect(() => {
+      return () => {
+         handler?.clear();
+      };
+   }, [handler]);
+
+   const navigate = useNavigate();
+
+   const styles = getStyles();
 
    // subscribe
    if (handler.updated) { }
 
+   if (handler.artifactMissing) {
+
+      let text = `${handler.contextName} artifact was not found on server.`;
+
+      if (handler.contextName === "Temp Storage") {
+         text += "  Temporary storage artifacts expire due to high volume.";
+      }
+
+      return <Stack>
+         <Stack horizontal verticalAlign="center" verticalFill tokens={{ childrenGap: 12 }}>
+            <FontIcon style={{ paddingTop: 1, fontSize: 17, color: dashboard.getStatusColors().get(StatusColor.Failure) }} iconName="Error" />
+            <Text variant="mediumPlus">{text}</Text>
+         </Stack>
+      </Stack>;
+   }
+
    const browse = handler.browse;
 
    if (!browse) {
-      return <Stack><Spinner size={ SpinnerSize.large}/></Stack>;
+      return <Stack><Spinner size={SpinnerSize.large} /></Stack>;
    }
 
    const items: BrowserItem[] = [];
+
+   const getFileHRef = (item: BrowserItem) => {
+      
+      if (item.type !== BrowserType.File) {
+         return undefined;
+      }
+
+      const path = encodeURI((handler.path ? handler.path + "/" : "") + item.text);
+      const server = backend.serverUrl;
+      return `${server}/api/v2/artifacts/${handler.artifact!.id}/file?path=${path}`;
+      
+   }
 
    // use the up arrow instead
    if (handler.path?.length) {
@@ -490,9 +569,9 @@ const JobDetailArtifactsInner: React.FC<{ handler: ArtifactsHandler }> = observe
    browse.directories?.forEach(d => {
 
       function recurseDirectories(dir: GetArtifactDirectoryEntryResponse, flattened: GetArtifactDirectoryEntryResponse[]) {
-         if (!dir.directories?.length) {
+         if (!dir.directories || dir.directories.length > 1  || dir.files?.length) {
             const name = flattened.length ? flattened.map(d => d.name).join("/") + "/" + dir.name : dir.name;
-            items.push({ key: d.hash, text: name, icon: "Folder", type: BrowserType.Directory, size: d.length });
+            items.push({ key: dir.hash, text: name, icon: "Folder", type: BrowserType.Directory, size: dir.length });
          } else {
             flattened.push(dir);
             dir.directories.forEach(d => recurseDirectories(d, [...flattened]));
@@ -536,10 +615,7 @@ const JobDetailArtifactsInner: React.FC<{ handler: ArtifactsHandler }> = observe
             return null;
          }
 
-         const path = encodeURI(handler.path + "/" + item.text);
-         const server = backend.serverUrl;
-         const href = `${server}/api/v2/artifacts/${handler.artifact!.id}/file?path=${path}`;
-
+         const href = getFileHRef(item);
 
          return <Stack data-selection-disabled verticalAlign="center" verticalFill horizontal horizontalAlign="end" style={{ paddingTop: 0, paddingBottom: 0 }}>
             <IconButton id="artifactview" href={`${href}&inline=true`} target="_blank" style={{ paddingTop: 1, color: "#106EBE" }} iconProps={{ iconName: "Eye", styles: { root: { fontSize: "14px" } } }} />
@@ -563,12 +639,12 @@ const JobDetailArtifactsInner: React.FC<{ handler: ArtifactsHandler }> = observe
 
             if (item.type === BrowserType.Directory) {
                const nbrowse = handler.path ? `${handler.path}/${item.text}` : item.text;
-               handler.browseTo(nbrowse);
+               handler.browseTo(nbrowse, navigate);
             }
             if (item.type === BrowserType.NavigateUp && handler.path) {
                const nbrowse = handler.path.split("/")
                nbrowse.pop();
-               handler.browseTo(nbrowse.join("/"));
+               handler.browseTo(nbrowse.join("/"), navigate);
             }
 
          }}>
@@ -620,9 +696,19 @@ const JobDetailArtifactsInner: React.FC<{ handler: ArtifactsHandler }> = observe
                   columns={columns}
                   layoutMode={DetailsListLayoutMode.fixedColumns}
                   selectionMode={SelectionMode.multiple}
+                  enableUpdateAnimations={false}
                   selection={handler.selection}
                   selectionPreservedOnEmptyClick={true}
-                  //onItemInvoked={this._onItemInvoked} <--- double click*/                  
+                  onShouldVirtualize={() => false}
+                  onItemInvoked={(item:BrowserItem) => {
+                     if (item?.type !== BrowserType.File) {
+                        return;
+                     }
+                     const href = getFileHRef(item);
+                     if (href) {
+                        window.open(href + "&inline=true", "_blank");
+                     }                     
+                  }}
                   onRenderItemColumn={renderItem}
                />
             </SelectionZone>
@@ -636,15 +722,9 @@ const JobDetailArtifactsInner: React.FC<{ handler: ArtifactsHandler }> = observe
 
 
 
-export const JobArtifactsModal: React.FC<{ jobId: string; stepId: string, artifacts?:GetArtifactResponseV2[], contextType: ArtifactContextType, onClose: () => void }> = ({ jobId, stepId, artifacts, contextType, onClose }) => {
+export const JobArtifactsModal: React.FC<{ jobId: string; stepId: string, artifacts?: GetArtifactResponseV2[], contextType: ArtifactContextType, artifactPath?: string, onClose: () => void }> = ({ jobId, stepId, artifacts, contextType, artifactPath, onClose }) => {
 
-   const [handler] = useState(new ArtifactsHandler(jobId, stepId, contextType, artifacts));
-
-   useEffect(() => {
-      return () => {
-         handler?.clear();
-      };
-   }, [handler]);
+   const { hordeClasses } = getHordeStyling();
 
    return <Stack>
       <Modal isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 1180, height: 820, hasBeenOpened: false, top: "80px", position: "absolute" } }} onDismiss={() => onClose()} className={hordeClasses.modal}>
@@ -662,10 +742,9 @@ export const JobArtifactsModal: React.FC<{ jobId: string; stepId: string, artifa
                            onClick={() => { onClose() }}
                         />
                      </Stack>
-
                   </Stack>
                   <Stack styles={{ root: { paddingLeft: 4, paddingRight: 0, paddingTop: 8, paddingBottom: 4 } }}>
-                     <JobDetailArtifactsInner handler={handler} />
+                     <JobDetailArtifactsInner stepId={stepId} jobId={jobId} contextType={contextType} artifactPath={artifactPath} artifacts={artifacts} />
                   </Stack>
                </Stack>
             </Stack>

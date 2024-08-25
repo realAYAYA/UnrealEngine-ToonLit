@@ -9,6 +9,28 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Hair control points
 
+FPackedHairPosition ReadPackedHairPosition(ByteAddressBuffer InBuffer, uint InPointIndex)
+{
+	return InBuffer.Load2(InPointIndex * FPackedHairPositionStrideInBytes);
+}
+
+void WritePackedHairPosition(RWByteAddressBuffer InBuffer, uint InPointIndex, FPackedHairPosition In)
+{
+	InBuffer.Store2(InPointIndex * FPackedHairPositionStrideInBytes, In);
+}
+
+void CopyPackedAttribute(inout FPackedHairPosition Out, in FPackedHairPosition In)
+{
+	// Copy the last 16bits which contains the CoordU|Radius|Type
+	Out.y = (Out.y & 0x0000FFFF) | (In.y & 0xFFFF0000);
+}
+
+void CopyPackedHairControlPoint(RWByteAddressBuffer OutBuffer, ByteAddressBuffer InBuffer, uint Index)
+{
+	const uint AddressInBytes = Index * FPackedHairPositionStrideInBytes;
+	OutBuffer.Store2(AddressInBytes, InBuffer.Load2(AddressInBytes));
+}
+
 struct FHairControlPoint
 {
 	float3 Position;
@@ -17,57 +39,123 @@ struct FHairControlPoint
 	uint   Type;
 };
 
-uint4 PackHairControlPoint(
+FPackedHairPosition PackHairControlPoint(
 	FHairControlPoint CP,
 	float3 InVF_PositionOffset,
-	float InVF_Radius)
+	float InVF_Radius) 
 {
-	uint PackedAttribute =  (uint(clamp(CP.UCoord * 0xFFu, 0u, 0xFFu)) << 8) |
-							(uint(clamp((CP.WorldRadius / InVF_Radius) * 63u, 0u, 63u)) << 2u) |
-							(CP.Type & 0x3);
-	return uint4(f32tof16(CP.Position - InVF_PositionOffset), PackedAttribute);
+	const uint UCoord8bits = PackR8(CP.UCoord);
+	const uint Radius6bits = PackR6(CP.WorldRadius / InVF_Radius);
+	const uint Type2bits   = CP.Type & 0x3;
+	CP.Position -= InVF_PositionOffset;
+
+	FPackedHairPosition Out = 0;
+	Out.x = PackFloat2ToUInt(CP.Position.x, CP.Position.y);
+	Out.y = f32tof16(CP.Position.z) | (UCoord8bits << 16u) | (Radius6bits << 24u) | (Type2bits << 30u);
+	return Out;
 }
 
 FHairControlPoint UnpackHairControlPoint(
-	uint4 InPackedData,
+	FPackedHairPosition In,
 	float3 InVF_PositionOffset=0,
 	float InVF_Radius=1,
 	float InVF_RootScale=1,
 	float InVF_TipScale=1)
 {
-	const uint PackedAlpha	= asuint(InPackedData.a);
-
 	FHairControlPoint Out = (FHairControlPoint)0;
-	Out.Position	= f16tof32(InPackedData.xyz) + InVF_PositionOffset;
-	Out.UCoord		= ((PackedAlpha & 0xFF00) >> 8) / 255.f;
-	Out.WorldRadius	= ((PackedAlpha & 0x00FC) >> 2) / 63.f;
-	Out.Type		= PackedAlpha & 0x3;
+	Out.Position	= float3(UnpackFloat2FromUInt(In.x), f16tof32(BitFieldExtractU32(In.y, 16, 0))) + InVF_PositionOffset;
+	Out.UCoord		= UnpackR8(BitFieldExtractU32(In.y, 8, 16));
+	Out.WorldRadius	= UnpackR6(BitFieldExtractU32(In.y, 6, 24));
+	Out.Type		= BitFieldExtractU32(In.y, 2, 30);
 
 	Out.WorldRadius *= InVF_Radius * lerp(InVF_RootScale, InVF_TipScale, Out.UCoord);
-
-	return Out;	
+	return Out;
 }
 
-float UnpackHairControlPointCoordU(uint4 InPackedData)
+FHairControlPoint ReadHairControlPoint(
+	ByteAddressBuffer InBuffer,
+	uint InIndex,
+	float3 InVF_PositionOffset=0,
+	float InVF_Radius=1,
+	float InVF_RootScale=1,
+	float InVF_TipScale=1)
 {
-	const uint PackedAlpha = asuint(InPackedData.w);
-	return ((PackedAlpha & 0xFF00) >> 8) / 255.f;
+	return UnpackHairControlPoint(
+		InBuffer.Load2(InIndex * FPackedHairPositionStrideInBytes),
+		InVF_PositionOffset,
+		InVF_Radius,
+		InVF_RootScale,
+		InVF_TipScale);
 }
 
-float3 UnpackHairControlPointPosition(uint4 InPackedData, float3 InVF_PositionOffset=0)
+FHairControlPoint ReadHairControlPoint(
+	RWByteAddressBuffer InBuffer,
+	uint InIndex,
+	float3 InVF_PositionOffset=0,
+	float InVF_Radius=1,
+	float InVF_RootScale=1,
+	float InVF_TipScale=1)
 {
-	return f16tof32(InPackedData.xyz) + InVF_PositionOffset;
+	return UnpackHairControlPoint(
+		InBuffer.Load2(InIndex * FPackedHairPositionStrideInBytes),
+		InVF_PositionOffset,
+		InVF_Radius,
+		InVF_RootScale,
+		InVF_TipScale);
 }
 
-uint4 PackHairControlPointPosition(uint4 InPackedData, float3 InNewPosition, float3 InPositionOffset=0)
+void WriteHairControlPointPosition(
+	RWByteAddressBuffer OutBuffer, 
+	uint InIndex, 
+	FHairControlPoint InCP,
+	float3 InVF_PositionOffset=0,
+	float InVF_Radius=1)
 {
-	return uint4(f32tof16(InNewPosition.xyz - InPositionOffset), InPackedData.w);
+	OutBuffer.Store2(InIndex * FPackedHairPositionStrideInBytes, PackHairControlPoint(InCP, InVF_PositionOffset, InVF_Radius));
 }
 
-uint4 PackHairControlPointRadius(uint4 InPackedData, float InNewWorldRadius, float InVFRadius)
+float UnpackHairControlPointCoordU(FPackedHairPosition In)
 {
-	const uint PackedNewRadius = uint(clamp(saturate(InNewWorldRadius / InVFRadius) * 63u, 0u, 63u)) << 2u;	
-	return uint4(InPackedData.xyz, (InPackedData.w & (~0xFC)) | PackedNewRadius);
+	return UnpackR8(BitFieldExtractU32(In.y, 8, 16));
+}
+
+float3 UnpackHairControlPointPosition(FPackedHairPosition In, float3 InVF_PositionOffset=0)
+{
+	return float3(UnpackFloat2FromUInt(In.x), f16tof32(BitFieldExtractU32(In.y, 16, 0))) + InVF_PositionOffset;
+}
+
+float3 ReadHairControlPointPosition(ByteAddressBuffer InBuffer, uint InPointIndex, float3 InVF_PositionOffset=0)
+{
+	return UnpackHairControlPointPosition(InBuffer.Load2(InPointIndex * FPackedHairPositionStrideInBytes), InVF_PositionOffset);
+}
+
+float3 ReadHairControlPointPosition(RWByteAddressBuffer InBuffer, uint InPointIndex, float3 InVF_PositionOffset=0)
+{
+	return UnpackHairControlPointPosition(InBuffer.Load2(InPointIndex * FPackedHairPositionStrideInBytes), InVF_PositionOffset);
+}
+
+FPackedHairPosition PackHairControlPointPosition(FPackedHairPosition InPackedData, float3 InNewPosition, float3 InPositionOffset=0)
+{
+	InNewPosition -= InPositionOffset;
+
+	FPackedHairPosition Out = 0;
+	Out.x = PackFloat2ToUInt(InNewPosition.x, InNewPosition.y);
+	Out.y = f32tof16(InNewPosition.z) | (InPackedData.y & 0xFFFF0000);
+	return Out;
+}
+
+void WritePackedHairControlPointPosition(RWByteAddressBuffer OutBuffer, uint InIndex, FPackedHairPosition InPackedData, float3 InNewPosition, float3 InPositionOffset=0)
+{
+	OutBuffer.Store2(InIndex * FPackedHairPositionStrideInBytes, PackHairControlPointPosition(InPackedData, InNewPosition, InPositionOffset));
+}
+
+FPackedHairPosition PackHairControlPointRadius(FPackedHairPosition InPackedData, float InNewWorldRadius, float InVFRadius)
+{
+	const uint Radius6bits = PackR6(InNewWorldRadius / InVFRadius);	
+
+	FPackedHairPosition Out = InPackedData;
+	Out.y = (Out.y & 0xC0FFFFFF) | (Radius6bits << 24);
+	return Out;
 }
 
 bool IsValidHairStrandsSegment(const FHairControlPoint CP0, const FHairControlPoint CP1)
@@ -127,7 +215,7 @@ uint3 UnpackHairClumpID(uint In)
 
 uint3 UnpackHairClumpID(uint2 In)
 {
-	return uint3(In.x & 0xFFFF, (In.x>>16) & 0xFFFF, (In.x>>32) & 0xFFFF);
+	return uint3(In.x & 0xFFFF, (In.x>>16) & 0xFFFF, In.y & 0xFFFF);
 }
 
 uint PackHairColor(float3 In)
@@ -169,37 +257,103 @@ float UnpackHairAO(uint In)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Guide
 
-struct FGuideData
+struct FGuideCurveData
 {
-	uint3  VertexIndices;
-	float3 VertexLerps;
-	float3 VertexWeights;
+	uint2  CurveIndices;		// Index of the sim curve
+	float2 CurveWeights;		// Weight of the sim curve
+	uint2  RootPointIndices;		// Index of the first/root point of the sim curve (stored to avoid indirect fetch on CurveBuffer)
 };
 
-FGuideData UnpackGuideData(uint In)
+FGuideCurveData UnpackGuideCurveData(ByteAddressBuffer InBuffer, uint InCurveIndex, bool bUseSingleGuide)
 {
-	FGuideData Out = (FGuideData)0;
-	Out.VertexWeights		= float3(1, 0, 0);
-	Out.VertexIndices		= 0;
-	Out.VertexLerps			= 0;
-	Out.VertexIndices.x		= In & 0xFFFFFF;
-	Out.VertexLerps.x		= UnpackR8(In >> 24);
+	// This code assumes:
+	// * HAIR_INTERPOLATION_CURVE_STRIDE == 8
+	// * HAIR_INTERPOLATION_MAX_GUIDE_COUNT == 2
+
+	FGuideCurveData Out = (FGuideCurveData)0;
+	if (bUseSingleGuide)
+	{
+		const uint AddressInBytes = InCurveIndex * HAIR_INTERPOLATION_CURVE_STRIDE;
+		const uint2 Data = InBuffer.Load2(AddressInBytes);
+
+		Out.CurveIndices = Data.x & 0xFFFFFF;
+		Out.CurveWeights = UnpackR8(Data.x>>24);
+		Out.RootPointIndices = Data.y & 0xFFFFFF;
+	}
+	else
+	{
+		const uint AddressInBytes = InCurveIndex * HAIR_INTERPOLATION_CURVE_STRIDE * HAIR_INTERPOLATION_MAX_GUIDE_COUNT;
+		const uint4 Data = InBuffer.Load4(AddressInBytes);
+
+		Out.CurveIndices.x = Data.x & 0xFFFFFF;
+		Out.CurveWeights.x = UnpackR8(Data.x>>24);
+		Out.RootPointIndices.x = Data.y & 0xFFFFFF;
+
+		Out.CurveIndices.y = Data.z & 0xFFFFFF;
+		Out.CurveWeights.y = UnpackR8(Data.z>>24);
+		Out.RootPointIndices.y = Data.w & 0xFFFFFF;
+	}
 	return Out;
 }
 
-FGuideData UnpackGuideData(uint4 In)
+struct FGuidePointData
 {
-	FGuideData Out = (FGuideData)0;
-	Out.VertexIndices.x = (In.x & 0xFFFF) | (((In.z      ) & 0xFF) << 16);
-	Out.VertexIndices.y = (In.x >> 16   ) | (((In.z >> 8 ) & 0xFF) << 16);
-	Out.VertexIndices.z = (In.y & 0xFFFF) | (((In.z >> 16) & 0xFF) << 16);
+	uint2  PointIndices;
+	float2 PointLerps;
+};
 
-	Out.VertexWeights	= float3(UnpackR8(In.y>>16), UnpackR8(In.y>>24), 0);
-	Out.VertexWeights.z = saturate(1.0f - (Out.VertexWeights.x + Out.VertexWeights.y));
+FGuidePointData UnpackGuidePointData(ByteAddressBuffer InBuffer, uint InPointIndex, bool bUseSingleGuide)
+{
+	// This code assumes:
+	// * HAIR_INTERPOLATION_POINT_STRIDE == 2
+	// * HAIR_INTERPOLATION_MAX_GUIDE_COUNT == 2
 
-	Out.VertexLerps.x	= UnpackR8(In.w);
-	Out.VertexLerps.y	= UnpackR8(In.w >> 8);
-	Out.VertexLerps.z	= UnpackR8(In.w >> 16);
+	FGuidePointData Out = (FGuidePointData)0;
+	if (bUseSingleGuide)
+	{
+		// Ensure address is aligned on 4
+		// Since the data is 16bit wide, odd index needs to be shifted out of the 32bit input
+		// [    uint 32bits   ][    uint 32bits   ] ...
+		// [ Point0 ][ Point1 ][ Point2 ][ Point3 ] ...
+		const uint AddressInBytes = InPointIndex * HAIR_INTERPOLATION_POINT_STRIDE;
+		const uint AlignedAddressInBytes = AddressInBytes & 0xFFFFFFFE;
+		uint Data = InBuffer.Load(AlignedAddressInBytes);
+		Data = InPointIndex & 1 ? (Data>>16u) : Data;
+		
+		Out.PointIndices	= Data & 0xFF;
+		Out.PointLerps		= UnpackR8(Data >> 8);
+	}
+	else
+	{
+		const uint AddressInBytes = InPointIndex * HAIR_INTERPOLATION_POINT_STRIDE * HAIR_INTERPOLATION_MAX_GUIDE_COUNT;
+		const uint Data = InBuffer.Load(AddressInBytes);
+
+		Out.PointIndices.x	= Data & 0xFF;
+		Out.PointLerps.x	= UnpackR8(Data >> 8);
+
+		Out.PointIndices.y	= (Data>>16) & 0xFF;
+		Out.PointLerps.y	= UnpackR8(Data >> 24);
+	}
+	return Out;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Cards guides
+
+struct FCardsGuideData
+{
+	uint  VertexIndex;
+	float VertexLerp;
+};
+
+FCardsGuideData ReadCardGuideData(ByteAddressBuffer InBuffer, uint InVertexId)
+{
+	const uint Data = InBuffer.Load(InVertexId * HAIR_INTERPOLATION_CARDS_GUIDE_STRIDE);
+
+	FCardsGuideData Out = (FCardsGuideData)0;
+	Out.VertexIndex	= Data & 0xFFFFFF;
+	Out.VertexLerp	= UnpackR8(Data >> 24);
 	return Out;
 }
 
@@ -223,14 +377,40 @@ uint PackHairCurve(FHairCurve In)
 
 FHairCurve UnpackHairCurve(uint In)
 {
-	#if HAIR_MAX_NUM_POINT_PER_CURVE != 0xFF || HAIR_MAX_NUM_POINT_PER_GROUP != 0xFFFFFF
-	#error Update hair curve ENCODING_TYPE
-	#endif
+#if HAIR_MAX_NUM_POINT_PER_CURVE != 0xFF || HAIR_MAX_NUM_POINT_PER_GROUP != 0xFFFFFF
+#error Update hair curve ENCODING_TYPE
+#endif
 
 	FHairCurve Out = (FHairCurve)0;
 	Out.PointIndex = In & HAIR_MAX_NUM_POINT_PER_GROUP;
 	Out.PointCount = In >> 24;
 	return Out;
+}
+
+FHairCurve ReadHairCurve(ByteAddressBuffer InBuffer, uint InIndex)
+{
+	return UnpackHairCurve(InBuffer.Load(InIndex * 4u));
+}
+
+void WriteHairCurve(RWByteAddressBuffer InBuffer, uint InIndex, FHairCurve In)
+{
+	InBuffer.Store(InIndex * 4u, PackHairCurve(In));
+}
+
+uint ReadHairPointToCurveIndex(ByteAddressBuffer InBuffer, uint InPointIndex)
+{
+	// Encoding: base curve index + delta encoding for 8 consecutive control points
+
+	const uint PointIndex8 = InPointIndex >> 3u;
+	const uint LocalIndex8 = InPointIndex & 0x7;
+	const uint Data = InBuffer.Load(PointIndex8 * 4u);
+
+	// Extract the curve index delta encoding
+	const uint Mask     = BitFieldMaskU32(LocalIndex8+1, 0);
+	const uint Bitfield = BitFieldExtractI32(Data, 8u, 24u);
+	const uint Deltas   = countbits(Mask & Bitfield);
+
+	return (Data & 0xFFFFFF) + Deltas;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

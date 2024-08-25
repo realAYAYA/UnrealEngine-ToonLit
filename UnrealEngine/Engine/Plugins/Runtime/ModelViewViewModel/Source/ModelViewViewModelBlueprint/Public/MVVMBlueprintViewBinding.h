@@ -56,14 +56,14 @@ struct MODELVIEWVIEWMODELBLUEPRINT_API FMVVMBlueprintViewConversionPath
 	 * The graph that contains the conversion function when converting the value from the destination to the source.
 	 * When the function doesn't need a wrapper.
 	 */
-	UPROPERTY(Instanced)
+	UPROPERTY(VisibleAnywhere, NoClear, Category = "Viewmodel", Instanced)
 	TObjectPtr<UMVVMBlueprintViewConversionFunction> DestinationToSourceConversion;
 
 	/**
 	 * The graph that contains the conversion function when converting the value from the source to the destination.
 	 * When the function doesn't need a wrapper.
 	 */
-	UPROPERTY(Instanced)
+	UPROPERTY(VisibleAnywhere, NoClear, Category = "Viewmodel", Instanced)
 	TObjectPtr<UMVVMBlueprintViewConversionFunction> SourceToDestinationConversion;
 
 public:
@@ -74,7 +74,7 @@ public:
 
 	void GenerateWrapper(UBlueprint* Blueprint);
 	void SavePinValues(UBlueprint* Blueprint);
-	void DeprecateViewConversionFunction(UBlueprint* Blueprint);
+	void DeprecateViewConversionFunction(UBlueprint* Blueprint, FMVVMBlueprintViewBinding& Owner);
 
 public:
 PRAGMA_DISABLE_DEPRECATION_WARNINGS

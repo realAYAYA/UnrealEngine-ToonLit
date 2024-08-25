@@ -255,6 +255,17 @@ bool FNiagaraStackClipboardUtilities::TestCanDeleteSelectionWithMessage(const TA
 	}
 }
 
+void FNiagaraStackClipboardUtilities::CopyNote(const UNiagaraStackEntry* StackEntry)
+{
+	if(StackEntry->HasStackNoteData())
+	{
+		UNiagaraClipboardContent* NewClipboardContent = UNiagaraClipboardContent::Create();
+		NewClipboardContent->StackNote = StackEntry->GetStackNoteData();
+
+		FNiagaraEditorModule::Get().GetClipboard().SetClipboardContent(NewClipboardContent);
+	}
+}
+
 void FNiagaraStackClipboardUtilities::DeleteSelection(const TArray<UNiagaraStackEntry*>& SelectedEntries)
 {
 	FText TransactionMessage;

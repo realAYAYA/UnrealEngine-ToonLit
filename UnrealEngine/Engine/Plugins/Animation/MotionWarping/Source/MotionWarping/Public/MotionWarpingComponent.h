@@ -142,9 +142,11 @@ public:
 	 * @param BoneName Optional bone or socket in the component used to get the target transform. 
 	 * @param bFollowComponent Whether the target transform should update while the warping is active. Useful for tracking moving targets.
 	 *		  Note that this will be one frame off if our owner ticks before the target actor. Add tick pre-requisites to avoid this.
+	 * @param LocationOffset Optional translation offset to apply to the transform we get from the component
+	 * @param RotationOffset Optional rotation offset to apply to the transform we get from the component
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Motion Warping")
-	void AddOrUpdateWarpTargetFromComponent(FName WarpTargetName, const USceneComponent* Component, FName BoneName, bool bFollowComponent);
+	void AddOrUpdateWarpTargetFromComponent(FName WarpTargetName, const USceneComponent* Component, FName BoneName, bool bFollowComponent, FVector LocationOffset = FVector::ZeroVector, FRotator RotationOffset = FRotator::ZeroRotator);
 
 	/**
 	 * Create and adds or update a target associated with a specified name
@@ -171,6 +173,10 @@ public:
 	/** Removes the warp target associated with the specified key  */
 	UFUNCTION(BlueprintCallable, Category = "Motion Warping")
 	int32 RemoveWarpTarget(FName WarpTargetName);
+
+	/** Removes all warp targets */
+	UFUNCTION(BlueprintCallable, Category = "Motion Warping")
+	int32 RemoveAllWarpTargets();
 
 protected:
 

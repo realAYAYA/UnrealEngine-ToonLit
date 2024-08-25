@@ -306,10 +306,10 @@ void YUVv210ConvertPS(
 	uint PixelIndex = Mod(PosX, 6);
 	uint3 PosUV = uint3(4 * (PosX / 6), InUV.y * YUVv210ConvertUB.OutputDimY, 0u);
 
-	float3 In0 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(0,0));	// Cb0, Y0, Cr0
-	float3 In1 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(1,0));	// Y1, Cb1, Y2
-	float3 In2 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(2,0));	// Cr1, Y3, Cb2
-	float3 In3 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(3,0));	// Y4, Cr2, Y5
+	float3 In0 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(0,0)).rgb;	// Cb0, Y0, Cr0
+	float3 In1 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(1,0)).rgb;	// Y1, Cb1, Y2
+	float3 In2 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(2,0)).rgb;	// Cr1, Y3, Cb2
+	float3 In3 = YUVv210ConvertUB.YUVTexture.Load(PosUV, int2(3,0)).rgb;	// Y4, Cr2, Y5
 
 	float3 YUV;
 	if (PixelIndex == 0)

@@ -5,6 +5,7 @@
 #include "Components/MeshComponent.h"
 #include "ComputeFramework/ComputeFramework.h"
 #include "ComputeWorkerInterface.h"
+#include "IOptimusPersistentBufferProvider.h"
 #include "DataInterfaces/OptimusDataInterfaceGraph.h"
 #include "DataInterfaces/OptimusDataInterfaceRawBuffer.h"
 #include "OptimusComputeGraph.h"
@@ -33,9 +34,11 @@ void FOptimusPersistentBufferPool::GetResourceBuffers(
 	int32 InElementStride,
 	int32 InRawStride,
 	TArray<int32> const& InElementCounts,
-	TArray<FRDGBufferRef>& OutBuffers)
+	TArray<FRDGBufferRef>& OutBuffers,
+	bool& bOutJustAllocated)
 {
 	OutBuffers.Reset();
+	bOutJustAllocated = false;
 
 	TMap<int32, TArray<FOptimusPersistentStructuredBuffer>>& LODResources = ResourceBuffersMap.FindOrAdd(InResourceName);  
 	TArray<FOptimusPersistentStructuredBuffer>* ResourceBuffersPtr = LODResources.Find(InLODIndex);
@@ -43,52 +46,106 @@ void FOptimusPersistentBufferPool::GetResourceBuffers(
 	{
 		// Create pooled buffers and store.
 		TArray<FOptimusPersistentStructuredBuffer> ResourceBuffers;
-		ResourceBuffers.Reserve(InElementCounts.Num());
-
-		// If we are using a raw type alias for the buffer then we need to adjust stride and count.
-		check(InRawStride == 0 || InElementStride % InRawStride == 0);
-		const int32 Stride = InRawStride ? InRawStride : InElementStride;
-		const int32 ElementStrideMultiplier = InRawStride ? InElementStride / InRawStride : 1;
-
-		for (int32 Index = 0; Index < InElementCounts.Num(); Index++)
-		{
-			FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateStructuredDesc(Stride, InElementCounts[Index] * ElementStrideMultiplier);
-			FRDGBufferRef Buffer = GraphBuilder.CreateBuffer(BufferDesc, TEXT("FOptimusPersistentBuffer"), ERDGBufferFlags::None);
-			OutBuffers.Add(Buffer);
-
-			FOptimusPersistentStructuredBuffer& PersistentBuffer = ResourceBuffers.AddDefaulted_GetRef();
-			PersistentBuffer.ElementStride = InElementStride;
-			PersistentBuffer.ElementCount = InElementCounts[Index];
-			PersistentBuffer.PooledBuffer = GraphBuilder.ConvertToExternalBuffer(Buffer);
-		}
-
+		AllocateBuffers(GraphBuilder, InElementStride, InRawStride, InElementCounts, ResourceBuffers, OutBuffers);
 		LODResources.Add(InLODIndex, MoveTemp(ResourceBuffers));
+		bOutJustAllocated = true;
 	}
 	else
 	{
-		// Verify that the buffers are correct based on the incoming information. 
-		// If there's a mismatch, then something has gone wrong upstream.
-		// Maybe either duplicated names, missing resource clearing on recompile, or something else.
-		if (!ensure(ResourceBuffersPtr->Num() == InElementCounts.Num()))
+		ValidateAndGetBuffers(GraphBuilder,InElementStride, InElementCounts, *ResourceBuffersPtr, OutBuffers);
+	}
+}
+
+void FOptimusPersistentBufferPool::GetImplicitPersistentBuffers(
+	FRDGBuilder& GraphBuilder,
+	FName DataInterfaceName,
+	int32 InLODIndex,
+	int32 InElementStride, 
+	int32 InRawStride,
+	TArray<int32> const& InElementCounts,
+	TArray<FRDGBuffer*>& OutBuffers,
+	bool& bOutJustAllocated)
+{
+	OutBuffers.Reset();
+	bOutJustAllocated = false;
+
+	TMap<int32, TArray<FOptimusPersistentStructuredBuffer>>& LODResources = ImplicitBuffersMap.FindOrAdd(DataInterfaceName);  
+	TArray<FOptimusPersistentStructuredBuffer>* ResourceBuffersPtr = LODResources.Find(InLODIndex);
+	if (ResourceBuffersPtr == nullptr)
+	{
+		// Create pooled buffers and store.
+		TArray<FOptimusPersistentStructuredBuffer> ResourceBuffers;
+		AllocateBuffers(GraphBuilder, InElementStride, InRawStride, InElementCounts, ResourceBuffers, OutBuffers);
+		LODResources.Add(InLODIndex, MoveTemp(ResourceBuffers));
+		bOutJustAllocated = true;
+	}
+	else
+	{
+		ValidateAndGetBuffers(GraphBuilder,InElementStride, InElementCounts, *ResourceBuffersPtr, OutBuffers);
+	}
+}
+
+
+
+void FOptimusPersistentBufferPool::AllocateBuffers(
+	FRDGBuilder& GraphBuilder,
+	int32 InElementStride,
+	int32 InRawStride,
+	TArray<int32> const& InElementCounts,
+	TArray<FOptimusPersistentStructuredBuffer>& OutResourceBuffers,
+	TArray<FRDGBuffer*>& OutBuffers
+	)
+{
+	OutResourceBuffers.Reserve(InElementCounts.Num());
+
+	// If we are using a raw type alias for the buffer then we need to adjust stride and count.
+	check(InRawStride == 0 || InElementStride % InRawStride == 0);
+	const int32 Stride = InRawStride ? InRawStride : InElementStride;
+	const int32 ElementStrideMultiplier = InRawStride ? InElementStride / InRawStride : 1;
+
+	for (int32 Index = 0; Index < InElementCounts.Num(); Index++)
+	{
+		FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateStructuredDesc(Stride, InElementCounts[Index] * ElementStrideMultiplier);
+		FRDGBufferRef Buffer = GraphBuilder.CreateBuffer(BufferDesc, TEXT("FOptimusPersistentBuffer"), ERDGBufferFlags::None);
+		OutBuffers.Add(Buffer);
+
+		FOptimusPersistentStructuredBuffer& PersistentBuffer = OutResourceBuffers.AddDefaulted_GetRef();
+		PersistentBuffer.ElementStride = InElementStride;
+		PersistentBuffer.ElementCount = InElementCounts[Index];
+		PersistentBuffer.PooledBuffer = GraphBuilder.ConvertToExternalBuffer(Buffer);
+	}
+}
+
+void FOptimusPersistentBufferPool::ValidateAndGetBuffers(
+	FRDGBuilder& GraphBuilder,
+	int32 InElementStride,
+	TArray<int32> const& InElementCounts,
+	const TArray<FOptimusPersistentStructuredBuffer>& InResourceBuffers,
+	TArray<FRDGBuffer*>& OutBuffers
+	) const
+{
+	// Verify that the buffers are correct based on the incoming information. 
+	// If there's a mismatch, then something has gone wrong upstream.
+	// Maybe either duplicated names, missing resource clearing on recompile, or something else.
+	if (!ensure(InResourceBuffers.Num() == InElementCounts.Num()))
+	{
+		return;
+	}
+
+	for (int32 Index = 0; Index < InResourceBuffers.Num(); Index++)
+	{
+		const FOptimusPersistentStructuredBuffer& PersistentBuffer = InResourceBuffers[Index];
+		if (!ensure(PersistentBuffer.PooledBuffer.IsValid()) ||
+			!ensure(PersistentBuffer.ElementStride == InElementStride) ||
+			!ensure(PersistentBuffer.ElementCount == InElementCounts[Index]))
 		{
+			OutBuffers.Reset();
 			return;
-		}
+		}	
 
-		for (int32 Index = 0; Index < ResourceBuffersPtr->Num(); Index++)
-		{
-			FOptimusPersistentStructuredBuffer& PersistentBuffer = (*ResourceBuffersPtr)[Index];
-			if (!ensure(PersistentBuffer.PooledBuffer.IsValid()) ||
-				!ensure(PersistentBuffer.ElementStride == InElementStride) ||
-				!ensure(PersistentBuffer.ElementCount == InElementCounts[Index]))
-			{
-				OutBuffers.Reset();
-				return;
-			}	
-
-			// Register buffer back into the graph and return it.
-			FRDGBufferRef Buffer = GraphBuilder.RegisterExternalBuffer(PersistentBuffer.PooledBuffer);
-			OutBuffers.Add(Buffer);
-		}
+		// Register buffer back into the graph and return it.
+		FRDGBufferRef Buffer = GraphBuilder.RegisterExternalBuffer(PersistentBuffer.PooledBuffer);
+		OutBuffers.Add(Buffer);
 	}
 }
 
@@ -96,6 +153,7 @@ void FOptimusPersistentBufferPool::ReleaseResources()
 {
 	check(IsInRenderingThread());
 	ResourceBuffersMap.Reset();
+	ImplicitBuffersMap.Reset();
 }
 
 FOptimusDeformerInstanceExecInfo::FOptimusDeformerInstanceExecInfo()
@@ -276,7 +334,9 @@ UOptimusComponentSourceBinding const* UOptimusDeformerInstanceSettings::GetCompo
 
 void UOptimusDeformerInstance::SetMeshComponent(UMeshComponent* InMeshComponent)
 { 
+	check(InMeshComponent);
 	MeshComponent = InMeshComponent;
+	Scene = MeshComponent->GetScene();
 }
 
 void UOptimusDeformerInstance::SetInstanceSettings(UOptimusDeformerInstanceSettings* InInstanceSettings)
@@ -301,14 +361,27 @@ void UOptimusDeformerInstance::SetupFromDeformer(UOptimusDeformer* InDeformer)
 		InstanceSettingsPtr->InitializeSettings(InDeformer, MeshComponent.Get());
 	}
 	InstanceSettingsPtr->GetComponentBindings(InDeformer, MeshComponent.Get(), BoundComponents);
+	
+	WeakBoundComponents.Reset();
+	for (UActorComponent* Component : BoundComponents)
+	{
+		WeakBoundComponents.Add(Component);
+	}
 
+	WeakComponentSources.Reset();
+	const TArray<UOptimusComponentSourceBinding*>& ComponentBindings = InDeformer->GetComponentBindings();
+	for (const UOptimusComponentSourceBinding* ComponentBinding : ComponentBindings)
+	{
+		WeakComponentSources.Add(ComponentBinding->GetComponentSource());
+	}
+	
 	// Create the persistent buffer pool
 	BufferPool = MakeShared<FOptimusPersistentBufferPool>();
 	
 	// (Re)Create and bind data providers.
 	ComputeGraphExecInfos.Reset();
 	GraphsToRunOnNextTick.Reset();
-
+	
 	for (int32 GraphIndex = 0; GraphIndex < InDeformer->ComputeGraphs.Num(); ++GraphIndex)
 	{
 		FOptimusComputeGraphInfo const& ComputeGraphInfo = InDeformer->ComputeGraphs[GraphIndex];
@@ -342,16 +415,15 @@ void UOptimusDeformerInstance::SetupFromDeformer(UOptimusDeformer* InDeformer)
 		for(TObjectPtr<UComputeDataProvider> DataProvider: Info.ComputeGraphInstance.GetDataProviders())
 		{
 			// Make the persistent buffer data provider aware of the buffer pool and current LOD index.
-			// TBD: Interface-based.
-			if (UOptimusPersistentBufferDataProvider* PersistentBufferProvider = Cast<UOptimusPersistentBufferDataProvider>(DataProvider))
+			if (IOptimusPersistentBufferProvider* PersistentBufferProvider = Cast<IOptimusPersistentBufferProvider>(DataProvider))
 			{
-				PersistentBufferProvider->BufferPool = BufferPool;
+				PersistentBufferProvider->SetBufferPool(BufferPool);
 			}
 
 			// Set this instance on the graph data provider so that it can query variables.
-			if (UOptimusGraphDataProvider* GraphProvider = Cast<UOptimusGraphDataProvider>(DataProvider))
+			if (IOptimusDeformerInstanceAccessor* InstanceAccessor = Cast<IOptimusDeformerInstanceAccessor>(DataProvider))
 			{
-				GraphProvider->DeformerInstance = this;
+				InstanceAccessor->SetDeformerInstance(this);
 			}
 		}
 
@@ -405,13 +477,20 @@ void UOptimusDeformerInstance::AllocateResources()
 
 void UOptimusDeformerInstance::ReleaseResources()
 {
-	if (BufferPool)
+	if (Scene || BufferPool)
 	{
-		ENQUEUE_RENDER_COMMAND(FOptimusReleasePoolMemory)(
-			[BufferPool=MoveTemp(BufferPool)](FRHICommandListImmediate& InCmdList)
+		ENQUEUE_RENDER_COMMAND(OptimusReleaseResources)([BufferPool=MoveTemp(BufferPool), Scene = Scene, OwnerPointer = this] (FRHICommandListImmediate& InCmdList)
+		{
+			if (Scene)
+			{
+				ComputeFramework::AbortWork(Scene, OwnerPointer);
+			}
+
+			if (BufferPool)
 			{
 				BufferPool->ReleaseResources();
-			});
+			}
+		});
 	}
 }
 
@@ -433,22 +512,37 @@ void UOptimusDeformerInstance::EnqueueWork(FEnqueueWorkDesc const& InDesc)
 		return;
 	}
 
-	// Get the current queued graphs.
-	TSet<FName> GraphsToRun;
-	{
-		UE::TScopeLock<FCriticalSection> Lock(GraphsToRunOnNextTickLock);
-		Swap(GraphsToRunOnNextTick, GraphsToRun);
-	}
+
 	
 	// Enqueue work.
 	bool bIsWorkEnqueued = false;
 	if (bCanBeActive)
 	{
+		bool AreAllGraphsReady = true;
 		for (FOptimusDeformerInstanceExecInfo& Info: ComputeGraphExecInfos)
 		{
-			if (Info.GraphType == EOptimusNodeGraphType::Update || GraphsToRun.Contains(Info.GraphName))
+			if (Info.ComputeGraph->HasKernelResourcesPendingShaderCompilation())
 			{
-				bIsWorkEnqueued |= Info.ComputeGraphInstance.EnqueueWork(Info.ComputeGraph, InDesc.Scene, ExecutionGroupName, InDesc.OwnerName, InDesc.FallbackDelegate);
+				AreAllGraphsReady = false;
+				break;
+			}
+		}
+
+		if (AreAllGraphsReady)
+		{
+			// Get the current queued graphs.
+			TSet<FName> GraphsToRun;
+			{
+				UE::TScopeLock<FCriticalSection> Lock(GraphsToRunOnNextTickLock);
+				Swap(GraphsToRunOnNextTick, GraphsToRun);
+			}
+			
+			for (FOptimusDeformerInstanceExecInfo& Info: ComputeGraphExecInfos)
+			{
+				if (Info.GraphType == EOptimusNodeGraphType::Update || GraphsToRun.Contains(Info.GraphName))
+				{
+					bIsWorkEnqueued |= Info.ComputeGraphInstance.EnqueueWork(Info.ComputeGraph, InDesc.Scene, ExecutionGroupName, InDesc.OwnerName, InDesc.FallbackDelegate, this);
+				}
 			}
 		}
 	}
@@ -555,7 +649,7 @@ bool UOptimusDeformerInstance::EnqueueTriggerGraph(FName InTriggerGraphName)
 }
 
 
-void UOptimusDeformerInstance::SetConstantValueDirect(FString const& InVariableName, TArray<uint8> const& InValue)
+void UOptimusDeformerInstance::SetConstantValueDirect(TSoftObjectPtr<UObject> InSourceObject, TArray<uint8> const& InValue)
 {
 	// Poke constants into the UGraphDataProvider objects.
 	// This is an editor only operation when constant nodes are edited in the graph and we want to see the result without a full compile step.
@@ -567,7 +661,7 @@ void UOptimusDeformerInstance::SetConstantValueDirect(FString const& InVariableN
 		{
 			if (UOptimusGraphDataProvider* GraphDataProvider = Cast<UOptimusGraphDataProvider>(DataProvider))
 			{
-				GraphDataProvider->SetConstant(InVariableName, InValue);
+				GraphDataProvider->SetConstant(InSourceObject, InValue);
 				break;
 			}
 		}

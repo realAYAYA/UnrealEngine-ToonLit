@@ -43,7 +43,6 @@ void UDataflowSchema::GetContextMenuActions(class UToolMenu* Menu, class UGraphN
 				Section.AddMenuEntry(FDataflowEditorCommands::Get().EvaluateNode);
 			}
 		}
-
 		{
 			FToolMenuSection& Section = Menu->AddSection("TestGraphSchemaOrganization", LOCTEXT("GraphSchemaOrganization_MenuHeader", "Organization"));
 			{
@@ -69,8 +68,21 @@ void UDataflowSchema::GetContextMenuActions(class UToolMenu* Menu, class UGraphN
 				}));
 			}
 		}
-	}
+		{
+			FToolMenuSection& Section = Menu->AddSection("TestGraphSchemaDisplay", LOCTEXT("GraphSchemaDisplay_MenuHeader", "Display"));
+			{
+				Section.AddSubMenu("PinVisibility", LOCTEXT("PinVisibilityHeader", "Pin Visibility"), FText(),
+					FNewToolMenuDelegate::CreateLambda([](UToolMenu* PinVisibilityMenu)
+				{
+					FToolMenuSection& InSection = PinVisibilityMenu->AddSection("TestGraphSchemaPinVisibility");
+					InSection.AddMenuEntry(FGraphEditorCommands::Get().ShowAllPins);
+					InSection.AddMenuEntry(FGraphEditorCommands::Get().HideNoConnectionPins);
+					InSection.AddMenuEntry(FGraphEditorCommands::Get().HideNoConnectionNoDefaultPins);
+				}));
+			}
 
+		}
+	}
 	Super::GetContextMenuActions(Menu, Context);
 }
 
@@ -92,38 +104,51 @@ void UDataflowSchema::GetGraphContextActions(FGraphContextMenuBuilder& ContextMe
 	}
 }
 
-
-bool HasLoop(const UEdGraphNode* DownstreamNode, const UEdGraphNode* UpstreamNode)
+bool HasLoopIfConnected(const UEdGraphNode* FromNode, const UEdGraphNode* ToNode)
 {
-	if (DownstreamNode == UpstreamNode)
+	if (ToNode == FromNode)
 	{
 		return true;
 	}
 
-	TArray< const UEdGraphNode*> ConnectedUpstreamNodes;
-	for (UEdGraphPin* Pin : DownstreamNode->GetAllPins())
+	// We only need to process from the FromNode and test if anything in the feeding nodes contains ToNode
+	TArray<const UEdGraphNode*> NodesToProcess;
+	NodesToProcess.Push(FromNode);
+
+	// to speed things up, we do not revisit branches we have already look at  
+	TSet<const UEdGraphNode*> VisitedNodes;
+
+	while (NodesToProcess.Num() > 0)
 	{
-		if (Pin->Direction == EEdGraphPinDirection::EGPD_Input)
+		const UEdGraphNode* NodeToProcess = NodesToProcess.Pop();
+		if (!VisitedNodes.Contains(NodeToProcess))
 		{
-			if (Pin->HasAnyConnections())
+			VisitedNodes.Add(NodeToProcess);
+
+			int32 NumConnectedInputPins = 0;
+			for (UEdGraphPin* Pin : NodeToProcess->GetAllPins())
 			{
-				if (ensure(Pin->LinkedTo.Num() == 1))
+				if (Pin->Direction == EEdGraphPinDirection::EGPD_Input)
 				{
-					if (Pin->LinkedTo[0]->GetOwningNode())
+					if (Pin->HasAnyConnections())
 					{
-						ConnectedUpstreamNodes.Add(Pin->LinkedTo[0]->GetOwningNode());
+						NumConnectedInputPins++;
+						if (ensure(Pin->LinkedTo.Num() == 1))
+						{
+							if (const UEdGraphNode* OwningNode = Pin->LinkedTo[0]->GetOwningNode())
+							{
+								if (OwningNode == ToNode)
+								{
+									return true;
+								}
+								NodesToProcess.Push(OwningNode);
+							}
+						}
 					}
 				}
 			}
 		}
-	}
 
-	for (const UEdGraphNode* ConnectedNode : ConnectedUpstreamNodes)
-	{
-		if (HasLoop(ConnectedNode, UpstreamNode))
-		{
-			return true;
-		}
 	}
 
 	return false;
@@ -153,7 +178,7 @@ const FPinConnectionResponse UDataflowSchema::CanCreateConnection(const UEdGraph
 				if (PinA->PinType == PinB->PinType)
 				{
 					// cycle checking on connect
-					if (!HasLoop(PinA->GetOwningNode(), PinB->GetOwningNode()))
+					if (!HasLoopIfConnected(PinA->GetOwningNode(), PinB->GetOwningNode()))
 					{
 
 						if (PinB->LinkedTo.Num())
@@ -278,6 +303,12 @@ void FDataflowConnectionDrawingPolicy::DetermineWiringStyle(UEdGraphPin* OutputP
 		}
 	}
 }
+
+void FDataflowConnectionDrawingPolicy::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObject(Schema);
+}
+
 
 #undef LOCTEXT_NAMESPACE
 

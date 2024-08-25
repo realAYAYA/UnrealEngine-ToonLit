@@ -5,6 +5,7 @@
 // HEADER_UNIT_SKIP - Not included directly
 
 #include "Templates/SharedPointer.h"
+#include "CastedTo.h"
 
 class FControlFlowContainerBase : public TSharedFromThis<FControlFlowContainerBase>
 {
@@ -36,47 +37,22 @@ private:
 	FString FlowName;
 };
 
-template<typename OwningObjectT, bool /*bDerivedFromUObject*/, bool /*bDerivedFromTSharedFromThis*/>
-class FControlFlowContainerInternal;
-
-template<typename OwningObjectT>
-class FControlFlowContainerInternal<OwningObjectT, true, false> : public FControlFlowContainerBase
-{
-public:
-	FControlFlowContainerInternal() = delete;
-	FControlFlowContainerInternal(OwningObjectT* InOwner, TSharedRef<FControlFlow> InFlow, const FString& FlowId)
-		: FControlFlowContainerBase(InFlow, FlowId)
-		, OwningObject(InOwner)
-	{}
-protected:
-	virtual const void* const GetOwningObject() const override { return OwningObject.IsValid() ? OwningObject.Get() : nullptr; }
-private:
-	TWeakObjectPtr<const OwningObjectT> OwningObject;
-};
-
-template<typename OwningObjectT>
-class FControlFlowContainerInternal<OwningObjectT, false, true> : public FControlFlowContainerBase
-{
-public:
-	FControlFlowContainerInternal() = delete;
-	FControlFlowContainerInternal(OwningObjectT* InOwner, TSharedRef<FControlFlow> InFlow, const FString& FlowId)
-		: FControlFlowContainerBase(InFlow, FlowId)
-		, OwningObject(StaticCastSharedRef<OwningObjectT>(InOwner->AsShared()))
-	{}
-protected:
-	virtual const void* const GetOwningObject() const override { return OwningObject.IsValid() ? OwningObject.Pin().Get() : nullptr; }
-private:
-	TWeakPtr<const OwningObjectT> OwningObject;
-};
-
-#define FControlFlowContainerInternal_Decl FControlFlowContainerInternal<ExternalObjectT, TIsDerivedFrom<ExternalObjectT, UObject>::IsDerived, IsDerivedFromSharedFromThis<ExternalObjectT>()>
-
-template<typename ExternalObjectT>
-class TControlFlowContainer : public FControlFlowContainerInternal_Decl
+template<typename T>
+class TControlFlowContainer : public FControlFlowContainerBase
 {
 public:
 	TControlFlowContainer() = delete;
-	TControlFlowContainer(ExternalObjectT* InOwner, TSharedRef<FControlFlow> InFlow, const FString& FlowId) : FControlFlowContainerInternal_Decl(InOwner, InFlow, FlowId) {}
-};
+	TControlFlowContainer(T* InOwner, TSharedRef<FControlFlow> InFlow, const FString& FlowId)
+		: FControlFlowContainerBase(InFlow, FlowId)
+		, OwningObject(InOwner)
+	{}
 
-#undef FControlFlowContainerInternal_Decl
+private:
+	virtual const void* const GetOwningObject() const override final
+	{
+		return OwningObject.IsValid() ? OwningObject.Cast() : nullptr;
+	}
+
+private:
+	TWeakContainer<T> OwningObject;
+};

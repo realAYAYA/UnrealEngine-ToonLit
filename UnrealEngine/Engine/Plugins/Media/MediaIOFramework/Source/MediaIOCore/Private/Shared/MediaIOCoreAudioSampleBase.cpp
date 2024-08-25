@@ -76,8 +76,7 @@ bool FMediaIOCoreAudioSampleBase::SetProperties(uint32 InBufferSize, uint32 InNu
 	SampleRate = InSampleRate;
 	Duration = (InBufferSize * ETimespan::TicksPerSecond) / (Channels * SampleRate);
 
-	constexpr bool bAllowShrinking = false;
-	Buffer.SetNum(InBufferSize, bAllowShrinking);
+	Buffer.SetNum(InBufferSize, EAllowShrinking::No);
 
 	return true;
 }

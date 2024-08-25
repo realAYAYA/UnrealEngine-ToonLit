@@ -336,7 +336,8 @@ void FStreamingWaveData::BeginPendingRequests(const TArray<uint32>& IndicesToLoa
 					MoveTemp(NullOnLoadCompletedCallback)
 				);
 				PendingAsyncStreamDerivedChunkTasks.Add(Task);
-				Task->StartBackgroundTask();
+				// This task may perform a long synchronous DDC request. Using DoNotRunInsideBusyWait prevents potentially delaying foreground tasks.
+				Task->StartBackgroundTask(GThreadPool, EQueuedWorkPriority::Normal, EQueuedWorkFlags::DoNotRunInsideBusyWait);
 			}
 			else
 #endif // #if WITH_EDITORONLY_DATA
@@ -682,9 +683,6 @@ int32 FLegacyAudioStreamingManager::BlockTillAllRequestsFinished(float TimeLimit
 
 		return Result;
 	}
-
-	// Not sure yet whether this will work the same as textures - aside from just before destroying
-	return 0;
 }
 
 void FLegacyAudioStreamingManager::CancelForcedResources()
@@ -760,7 +758,7 @@ void FLegacyAudioStreamingManager::RemoveStreamingSoundWave(const FSoundWaveProx
 				{
 					delete LoadResult;
 					
-					AsyncAudioStreamChunkResults.RemoveAtSwap(i, 1, false);
+					AsyncAudioStreamChunkResults.RemoveAtSwap(i, 1, EAllowShrinking::No);
 				}
 			}
 		}

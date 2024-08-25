@@ -30,7 +30,7 @@ bool USequentialPartialNetBlobHandler::SplitNetBlob(const TRefCountPtr<FNetBlob>
 
 	FNetBlobCreationInfo CreationInfo = {};
 	CreationInfo.Type = GetNetBlobType();
-	CreationInfo.Flags = ENetBlobFlags::Reliable;
+	CreationInfo.Flags = Blob->GetCreationInfo().Flags & (ENetBlobFlags::Ordered | ENetBlobFlags::Reliable);
 
 	FPartialNetBlob::FSplitParams SplitParams = {};
 	SplitParams.MaxPartBitCount = Config->GetMaxPartBitCount();
@@ -61,7 +61,7 @@ bool USequentialPartialNetBlobHandler::SplitNetBlob(const UE::Net::FNetObjectRef
 
 	FNetBlobCreationInfo CreationInfo = {};
 	CreationInfo.Type = GetNetBlobType();
-	CreationInfo.Flags = ENetBlobFlags::Reliable;
+	CreationInfo.Flags = Blob->GetCreationInfo().Flags & (ENetBlobFlags::Ordered | ENetBlobFlags::Reliable);
 
 	FPartialNetBlob::FSplitParams SplitParams = {};
 	SplitParams.MaxPartBitCount = Config->GetMaxPartBitCount();

@@ -20,7 +20,6 @@ static const FText RigVMEdGraphChangePinTypeMultipleValues = LOCTEXT("MultipleVa
 void SRigVMGraphChangePinType::Construct(const FArguments& InArgs)
 {
 	this->Types = InArgs._Types;
-	this->Blueprint = InArgs._Blueprint;
 	this->OnTypeSelected = InArgs._OnTypeSelected;
 
 	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
@@ -47,61 +46,13 @@ void SRigVMGraphChangePinType::Construct(const FArguments& InArgs)
 
 	this->ChildSlot
 	[
-		PropertyAccessEditor.MakePropertyBindingWidget(Blueprint, BindingArgs)
+		PropertyAccessEditor.MakePropertyBindingWidget(nullptr, BindingArgs)
 	];
 }
 
 FText SRigVMGraphChangePinType::GetBindingText(const FRigVMTemplateArgumentType& InType)
 {
-	if(UObject* CPPTypeObject = InType.CPPTypeObject)
-	{
-		if(const UScriptStruct* ScriptStruct = Cast<UScriptStruct>(CPPTypeObject))
-		{
-			return ScriptStruct->GetDisplayNameText();
-		}
-		if(const UEnum* Enum = Cast<UEnum>(CPPTypeObject))
-		{
-			return Enum->GetDisplayNameText();
-		}
-	}
-	else
-	{
-		FString CPPType = InType.CPPType.ToString();
-		if(RigVMTypeUtils::IsArrayType(CPPType))
-		{
-			CPPType = RigVMTypeUtils::BaseTypeFromArrayType(CPPType);
-		}
-
-		static const FText BoolLabel = LOCTEXT("BoolLabel", "Boolean");
-		static const FText FloatLabel = LOCTEXT("FloatLabel", "Float");
-		static const FText Int32Label = LOCTEXT("Int32Label", "Integer");
-		static const FText FNameLabel = LOCTEXT("FNameLabel", "Name");
-		static const FText FStringLabel = LOCTEXT("FStringLabel", "String");
-
-		if(CPPType == RigVMTypeUtils::BoolType)
-		{
-			return BoolLabel;
-		}
-		if(CPPType == RigVMTypeUtils::FloatType || CPPType == RigVMTypeUtils::DoubleType)
-		{
-			return FloatLabel;
-		}
-		if(CPPType == RigVMTypeUtils::Int32Type)
-		{
-			return Int32Label;
-		}
-		if(CPPType == RigVMTypeUtils::FNameType)
-		{
-			return FNameLabel;
-		}
-		if(CPPType == RigVMTypeUtils::FStringType)
-		{
-			return FStringLabel;
-		}
-
-		return FText::FromString(CPPType);
-	}
-	return FText();
+	return RigVMTypeUtils::GetDisplayTextForArgumentType(InType);
 }
 
 FText SRigVMGraphChangePinType::GetBindingText() const
@@ -270,7 +221,7 @@ void SRigVMGraphChangePinType::FillPinTypeMenu(FMenuBuilder& MenuBuilder)
 
 			if(bHasAllTypes && Type.CPPTypeObject)
 			{
-				if(Type.CPPTypeObject->IsA<UEnum>() || Type.CPPTypeObject->IsA<UClass>())
+				if(Type.CPPTypeObject->IsA<UEnum>())
 				{
 					continue;
 				}

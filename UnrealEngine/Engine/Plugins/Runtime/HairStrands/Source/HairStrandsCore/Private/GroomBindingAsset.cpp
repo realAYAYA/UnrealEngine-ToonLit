@@ -12,6 +12,8 @@
 #include "UObject/AnimObjectVersion.h"
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/DevObjectVersion.h"
+#include "Misc/CoreMisc.h"
+#include "Interfaces/ITargetPlatformManagerModule.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GroomBindingAsset)
 
@@ -29,92 +31,82 @@ LLM_DECLARE_TAG(Groom);
 /////////////////////////////////////////////////////////////////////////////////////////
 
 bool IsHairStrandsDDCLogEnable();
+uint32 GetAssetNameHash(const FString& In);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-static void InternalSerializeGuides(FArchive& Ar, UObject* Owner, FHairStrandsRootBulkData& Data)
+static void InternalSerializeGuides(FArchive& Ar, UObject* Owner, TArray<FHairStrandsRootBulkData>& Datas)
 {
-	Data.SerializeHeader(Ar, Owner);
-	for (int32 LODIndex = 0, LODCount = Data.GetLODCount(); LODIndex < LODCount; ++LODIndex)
+	uint32 MeshLODCount = Datas.Num();
+	Ar << MeshLODCount;
+	if (Ar.IsLoading())
 	{
-		Data.SerializeData(Ar, Owner, LODIndex);
+		Datas.SetNum(MeshLODCount);
+	}
+	for (FHairStrandsRootBulkData& Data : Datas)
+	{
+		Data.SerializeHeader(Ar, Owner);
+		Data.SerializeData(Ar, Owner);
 	}
 }
 
-static void InternalSerializeStrands(FArchive& Ar, UObject* Owner, FHairStrandsRootBulkData& Data, uint32 Flags, bool bHeader, bool bData, bool* bOutHasDataInCache = nullptr)
+static void InternalSerializeStrands(FArchive& Ar, UObject* Owner, TArray<FHairStrandsRootBulkData>& Datas, uint32 Flags, bool bHeader, bool bData)
 {
 	Ar.UsingCustomVersion(FAnimObjectVersion::GUID);
 
 	const bool bStripped = (Flags & UGroomAsset::CDSF_StrandsStripped);
 	if (!bStripped)
 	{
-		// When cooking data, force loading of *all* bulk data prior to saving them
-		// Note: bFillBulkdata is true for filling in the bulkdata container prior to serialization. This also forces the resources loading 
-		// from the 'start' (i.e., without offset)
-		if (Ar.IsCooking() && Ar.IsSaving())
+		uint32 MeshLODCount = Datas.Num();
+		Ar << MeshLODCount;
+		if (Ar.IsLoading())
 		{
-			for (int32 LODIndex = 0, LODCount = Data.GetLODCount(); LODIndex < LODCount; ++LODIndex)
-			{
-				FHairStreamingRequest R; R.Request(HAIR_MAX_NUM_CURVE_PER_GROUP, HAIR_MAX_NUM_POINT_PER_GROUP, LODIndex, Data, true /*bWait*/, true /*bFillBulkdata*/, true /*bWarmCache*/, Owner->GetFName());
-			}
+			Datas.SetNum(MeshLODCount);
 		}
-
-		if (bHeader){ Data.SerializeHeader(Ar, Owner); }
-		if (bData)
+		for (FHairStrandsRootBulkData& Data : Datas)
 		{
-			for (int32 LODIndex = 0, LODCount = Data.GetLODCount(); LODIndex < LODCount; ++LODIndex)
-			{
-				Data.SerializeData(Ar, Owner, LODIndex);
-			}
+			if (bHeader){ Data.SerializeHeader(Ar, Owner); }
+			if (bData)	{ Data.SerializeData(Ar, Owner); }
 		}
-
-		// Pre-warm DDC cache
-		#if WITH_EDITORONLY_DATA
-		const bool bPreWarmCache = Ar.IsLoading() && bHeader && !bData;
-		if (bPreWarmCache)
-		{
-			bool bHasDataInCache = true;
-			for (int32 LODIndex = 0, LODCount = Data.GetLODCount(); LODIndex < LODCount; ++LODIndex)
-			{
-				FHairStreamingRequest R; bHasDataInCache &= R.WarmCache(HAIR_MAX_NUM_CURVE_PER_GROUP, HAIR_MAX_NUM_POINT_PER_GROUP, LODIndex, Data);
-			}
-
-			if (bOutHasDataInCache) { *bOutHasDataInCache = bHasDataInCache; }
-		}
-		#endif
 	}
 }
 
-static void InternalSerializeCards(FArchive& Ar, UObject* Owner, TArray<FHairStrandsRootBulkData>& Datas)
+static void InternalSerializeCards(FArchive& Ar, UObject* Owner, TArray<TArray<FHairStrandsRootBulkData>>& Datass)
 {
-	uint32 CardLODCount = Datas.Num();
+	uint32 CardLODCount = Datass.Num();
 	Ar << CardLODCount;
 	if (Ar.IsLoading())
 	{
-		Datas.SetNum(CardLODCount);
+		Datass.SetNum(CardLODCount);
 	}
-	for (FHairStrandsRootBulkData& Data : Datas)
+	for (TArray<FHairStrandsRootBulkData>& Datas : Datass)
 	{
-		Data.SerializeHeader(Ar, Owner);
-		for (int32 LODIndex = 0, LODCount = Data.GetLODCount(); LODIndex < LODCount; ++LODIndex)
+		uint32 MeshLODCount = Datas.Num();
+		Ar << MeshLODCount;
+		if (Ar.IsLoading())
 		{
-			Data.SerializeData(Ar, Owner, LODIndex);
+			Datas.SetNum(MeshLODCount);
+		}
+		for (FHairStrandsRootBulkData& Data : Datas)
+		{	
+			Data.SerializeHeader(Ar, Owner);
+			Data.SerializeData(Ar, Owner);
 		}
 	}
 }
 
-static void InternalSerializePlatformData(FArchive& Ar, UObject* Owner, UGroomBindingAsset::FHairGroupPlatformData& GroupData, uint32 Flags, bool bHeader, bool bData, bool* bOutHasDataInCache = nullptr)
+static void InternalSerializePlatformData(FArchive& Ar, UObject* Owner, UGroomBindingAsset::FHairGroupPlatformData& GroupData, uint32 Flags, bool bHeader, bool bData)
 {
 	Ar.UsingCustomVersion(FAnimObjectVersion::GUID);
 
 	// Guides
-	InternalSerializeGuides(Ar, Owner, GroupData.SimRootBulkData);
+	InternalSerializeGuides(Ar, Owner, GroupData.SimRootBulkDatas);
 
 	// Strands
-	InternalSerializeStrands(Ar, Owner, GroupData.RenRootBulkData, Flags, bHeader, bData, bOutHasDataInCache);
+	InternalSerializeStrands(Ar, Owner, GroupData.RenRootBulkDatas, Flags, bHeader, bData);
 
 	// Cards
-	InternalSerializeCards(Ar, Owner, GroupData.CardsRootBulkData);
+	InternalSerializeCards(Ar, Owner, GroupData.CardsRootBulkDatas);
 }
 
 static void InternalSerializePlatformDatas(FArchive& Ar, UObject* Owner, TArray<UGroomBindingAsset::FHairGroupPlatformData>& GroupDatas, uint32 Flags)
@@ -147,12 +139,28 @@ void UGroomBindingAsset::Serialize(FArchive& Ar)
 	Super::Serialize(Ar);
 	Ar.UsingCustomVersion(FAnimObjectVersion::GUID);
 #if WITH_EDITOR
+	// When using editor:
+	// * The header are loaded in CacheDerivedData(), and the data are streamed from DDC
+	// * When cooking, we write out data from the cached cooked platform data
 	if (Ar.IsCooking())
-#endif
+	{
+		if (TArray<UGroomBindingAsset::FHairGroupPlatformData>* CookedDatas = GetCachedCookedPlatformData(Ar.CookingTarget()))
+		{
+			InternalSerializePlatformDatas(Ar, this /*Owner*/, *CookedDatas, Flags);
+			bIsValid = true;
+		}
+		else
+		{
+			UE_LOG(LogHairStrands, Error, TEXT("[Groom] The binding asset (%s) has missing cooked platform data."), *GetName());
+		}
+	}
+#else
+	// Always loaded dara from the archive when not using the editor
 	{
 		InternalSerializePlatformDatas(Ar, this, GetHairGroupsPlatformData(), Flags);
 		bIsValid = true;
 	}
+#endif
 }
 
 void UGroomBindingAsset::InitResource()
@@ -162,7 +170,7 @@ void UGroomBindingAsset::InitResource()
 	TRACE_CPUPROFILER_EVENT_SCOPE(UGroomBindingAsset::InitResource);
 
 	// Ensure we are releasing binding resources before reallocating them
-	ReleaseResource();
+	ReleaseResource(true/*bResetLoadedSize*/);
 
 	for (UGroomBindingAsset::FHairGroupPlatformData& BulkData : GetHairGroupsPlatformData())
 	{
@@ -174,32 +182,32 @@ void UGroomBindingAsset::InitResource()
 
 		// Guides
 		Resource.SimRootResources = nullptr;
-		if (BulkData.SimRootBulkData.IsValid())
+		if (BulkData.SimRootBulkDatas.Num() > 0)
 		{
-			Resource.SimRootResources = new FHairStrandsRestRootResource(BulkData.SimRootBulkData, EHairStrandsResourcesType::Guides, ResourceName, OwnerName);
-			BeginInitResource(Resource.SimRootResources);
+			Resource.SimRootResources = new FHairStrandsRestRootResource(BulkData.SimRootBulkDatas, EHairStrandsResourcesType::Guides, ResourceName, OwnerName);
+			Resource.SimRootResources->BeginInitResource();
 		}
 
 		// Strands
 		Resource.RenRootResources = nullptr;
-		if (IsHairStrandsEnabled(EHairStrandsShaderType::Strands) && BulkData.RenRootBulkData.IsValid())
+		if (IsHairStrandsEnabled(EHairStrandsShaderType::Strands) && BulkData.RenRootBulkDatas.Num() > 0)
 		{
-			Resource.RenRootResources = new FHairStrandsRestRootResource(BulkData.RenRootBulkData, EHairStrandsResourcesType::Strands, ResourceName, OwnerName);
-			BeginInitResource(Resource.RenRootResources);
+			Resource.RenRootResources = new FHairStrandsRestRootResource(BulkData.RenRootBulkDatas, EHairStrandsResourcesType::Strands, ResourceName, OwnerName);
+			Resource.RenRootResources->BeginInitResource();
 		}
 
 		// Cards
 		if (IsHairStrandsEnabled(EHairStrandsShaderType::Cards))
 		{
-			const uint32 CardsLODCount = BulkData.CardsRootBulkData.Num();
+			const uint32 CardsLODCount = BulkData.CardsRootBulkDatas.Num();
 			Resource.CardsRootResources.SetNum(CardsLODCount);
 			for (uint32 CardsLODIt=0; CardsLODIt<CardsLODCount; ++CardsLODIt)
 			{
 				Resource.CardsRootResources[CardsLODIt] = nullptr;
-				if (BulkData.CardsRootBulkData[CardsLODIt].IsValid())
+				if (BulkData.CardsRootBulkDatas[CardsLODIt].Num() > 0)
 				{
-					Resource.CardsRootResources[CardsLODIt] = new FHairStrandsRestRootResource(BulkData.CardsRootBulkData[CardsLODIt], EHairStrandsResourcesType::Cards, FHairResourceName(GetFName(), GroupIndex, CardsLODIt), GetAssetPathName(CardsLODIt));
-					BeginInitResource(Resource.CardsRootResources[CardsLODIt]);
+					Resource.CardsRootResources[CardsLODIt] = new FHairStrandsRestRootResource(BulkData.CardsRootBulkDatas[CardsLODIt], EHairStrandsResourcesType::Cards, FHairResourceName(GetFName(), GroupIndex, CardsLODIt), GetAssetPathName(CardsLODIt));
+					Resource.CardsRootResources[CardsLODIt]->BeginInitResource();
 				}
 			}
 		}
@@ -212,25 +220,25 @@ void UGroomBindingAsset::UpdateResource()
 	{
 		if (Resource.SimRootResources)
 		{
-			BeginUpdateResourceRHI(Resource.SimRootResources);
+			Resource.SimRootResources->BeginUpdateResourceRHI();
 		}
 
 		if (Resource.RenRootResources)
 		{
-			BeginUpdateResourceRHI(Resource.RenRootResources);
+			Resource.RenRootResources->BeginUpdateResourceRHI();
 		}
 
 		for (FHairStrandsRestRootResource* CardsRootResource : Resource.CardsRootResources)
 		{
 			if (CardsRootResource)
 			{
-				BeginUpdateResourceRHI(CardsRootResource);
+				CardsRootResource->BeginUpdateResourceRHI();
 			}
 		}
 	}
 }
 
-void UGroomBindingAsset::ReleaseResource()
+void UGroomBindingAsset::ReleaseResource(bool bResetLoadedSize)
 {
 	// Delay destruction to insure that the rendering thread is done with all resources usage
 	if (GetHairGroupResources().Num() > 0)
@@ -239,8 +247,8 @@ void UGroomBindingAsset::ReleaseResource()
 		{
 			FHairStrandsRestRootResource* InSimRootResources = Resource.SimRootResources;
 			FHairStrandsRestRootResource* InRenRootResources = Resource.RenRootResources;
-			ENQUEUE_RENDER_COMMAND(ReleaseHairStrandsResourceCommand)(
-				[InSimRootResources, InRenRootResources](FRHICommandList& RHICmdList)
+			ENQUEUE_RENDER_COMMAND(ReleaseHairStrandsResourceCommand)(UE::RenderCommandPipe::Groom,
+				[InSimRootResources, InRenRootResources, bResetLoadedSize](FRHICommandList& RHICmdList)
 			{
 				if (InSimRootResources)
 				{
@@ -249,6 +257,10 @@ void UGroomBindingAsset::ReleaseResource()
 				}
 				if (InRenRootResources)
 				{
+					if (bResetLoadedSize)
+					{
+						InRenRootResources->InternalResetLoadedSize();
+					}
 					InRenRootResources->ReleaseResource();
 					delete InRenRootResources;
 				}
@@ -258,7 +270,7 @@ void UGroomBindingAsset::ReleaseResource()
 
 			for (FHairStrandsRestRootResource*& InCardsRootResources : Resource.CardsRootResources)
 			{
-				ENQUEUE_RENDER_COMMAND(ReleaseHairStrandsResourceCommand)(
+				ENQUEUE_RENDER_COMMAND(ReleaseHairStrandsResourceCommand)(UE::RenderCommandPipe::Groom,
 					[InCardsRootResources](FRHICommandList& RHICmdList)
 					{
 						if (InCardsRootResources)
@@ -279,7 +291,7 @@ void UGroomBindingAsset::ReleaseResource()
 	{
 		FHairStrandsRestRootResource* InSimRootResources = ResourceToDelete.SimRootResources;
 		FHairStrandsRestRootResource* InRenRootResources = ResourceToDelete.RenRootResources;
-		ENQUEUE_RENDER_COMMAND(ReleaseHairStrandsResourceCommand)(
+		ENQUEUE_RENDER_COMMAND(ReleaseHairStrandsResourceCommand)(UE::RenderCommandPipe::Groom,
 			[InSimRootResources, InRenRootResources](FRHICommandList& RHICmdList)
 		{
 			if (InSimRootResources)
@@ -299,15 +311,16 @@ void UGroomBindingAsset::ReleaseResource()
 
 void UGroomBindingAsset::Reset()
 {
-	ReleaseResource();
+	// No need for resetting LoadedSize as the bulk datas are removed (e.g., when reloading/reimporting a groom asset)
+	ReleaseResource(false/*bResetLoadedSize*/);
 	for (UGroomBindingAsset::FHairGroupPlatformData& Data : GetHairGroupsPlatformData())
 	{
-		Data.SimRootBulkData.Reset();
-		Data.RenRootBulkData.Reset();
+		Data.SimRootBulkDatas.Empty();
+		Data.RenRootBulkDatas.Empty();
 
-		for (FHairStrandsRootBulkData& CardsRootBulkData : Data.CardsRootBulkData)
+		for (TArray<FHairStrandsRootBulkData>& CardsRootBulkData : Data.CardsRootBulkDatas)
 		{
-			CardsRootBulkData.Reset();
+			CardsRootBulkData.Empty();
 		}
 	}
 
@@ -332,6 +345,10 @@ void UGroomBindingAsset::PostLoad()
 	LLM_SCOPE_BYTAG(Groom);
 
 	Super::PostLoad();
+
+	// Compute a hash of the Groom asset fullname for finding unique groom during LOD selection/streaming
+	AssetNameHash = GetAssetNameHash(GetFullName());
+
 	if (UGroomAsset* LocalGroom = GetGroom())
 	{
 		// Make sure that the asset initialized its resources first since the component needs them to initialize its own resources
@@ -358,15 +375,20 @@ void UGroomBindingAsset::PostLoad()
 		if (LocalGroom)
 		{
 			LocalGroom->GetOnGroomAssetChanged().AddUObject(this, &UGroomBindingAsset::InvalidateBinding);
+			LocalGroom->GetOnGroomAssetResourcesChanged().AddUObject(this, &UGroomBindingAsset::InvalidateBinding);
 			bRegisterGroomAssetCallback = true;
 		}
 	#endif
 	}
 
+	// * When running with the editor, InitResource is called in CacheDerivedDatas
+	// * When running without the editor, InitResource is explicitely called here
+#if !WITH_EDITOR
 	if (!IsTemplate() && IsValid())
 	{
 		InitResource();
 	}
+#endif
 }
 
 void UGroomBindingAsset::PreSave(const class ITargetPlatform* TargetPlatform)
@@ -378,12 +400,6 @@ void UGroomBindingAsset::PreSave(const class ITargetPlatform* TargetPlatform)
 
 void UGroomBindingAsset::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {
-#if WITH_EDITOR
-	while (QueryStatus == EQueryStatus::Submitted)
-	{
-		FPlatformProcess::Sleep(1);
-	}
-#endif
 	Super::PreSave(ObjectSaveContext);
 #if WITH_EDITOR
 	OnGroomBindingAssetChanged.Broadcast();
@@ -407,7 +423,7 @@ void UGroomBindingAsset::PostSaveRoot(FObjectPostSaveRootContext ObjectSaveConte
 
 void UGroomBindingAsset::BeginDestroy()
 {
-	ReleaseResource();
+	ReleaseResource(false/*bResetLoadedSize*/);
 	Super::BeginDestroy();
 
 #if WITH_EDITOR
@@ -425,6 +441,7 @@ void UGroomBindingAsset::BeginDestroy()
 
 	if (GetGroom() && bRegisterGroomAssetCallback)
 	{
+		GetGroom()->GetOnGroomAssetResourcesChanged().RemoveAll(this);
 		GetGroom()->GetOnGroomAssetChanged().RemoveAll(this);
 		bRegisterGroomAssetCallback = false;
 	}
@@ -739,11 +756,11 @@ void UpdateGroomBindingAssetInfos(UGroomBindingAsset* In)
 		{
 			FGoomBindingGroupInfo& Info = In->GetGroupInfos()[GroupIt];
 			const UGroomBindingAsset::FHairGroupPlatformData& BulkData = In->GetHairGroupsPlatformData()[GroupIt];
-			Info.SimRootCount = BulkData.SimRootBulkData.GetRootCount();
-			Info.SimLODCount  = BulkData.SimRootBulkData.GetLODCount();
+			Info.SimRootCount = BulkData.SimRootBulkDatas.Num() > 0 ? BulkData.SimRootBulkDatas[0].GetRootCount() : 0u;
+			Info.SimLODCount  = BulkData.SimRootBulkDatas.Num();
 
-			Info.RenRootCount = BulkData.RenRootBulkData.GetRootCount();
-			Info.RenLODCount  = BulkData.RenRootBulkData.GetLODCount();
+			Info.RenRootCount = BulkData.RenRootBulkDatas.Num() > 0 ? BulkData.RenRootBulkDatas[0].GetRootCount() : 0u;
+			Info.RenLODCount  = BulkData.RenRootBulkDatas.Num();
 		}
 	}
 }
@@ -773,7 +790,7 @@ namespace GroomBindingDerivedDataCacheUtils
 	}
 }
 
-static FString BuildDerivedDataKeySuffix(const UGroomBindingAsset& BindingAsset)
+static FString BuildDerivedDataKeySuffix(const UGroomBindingAsset& BindingAsset, const ITargetPlatform* TargetPlatform)
 {
 	FString BindingType;
 	FString SourceKey;
@@ -782,8 +799,8 @@ static FString BuildDerivedDataKeySuffix(const UGroomBindingAsset& BindingAsset)
 	if (BindingAsset.GetGroomBindingType() == EGroomBindingMeshType::SkeletalMesh)
 	{
 		// Binding type is implicitly SkeletalMesh so keep BindingType empty to prevent triggering rebuild of old binding for nothing
-		SourceKey = BindingAsset.GetSourceSkeletalMesh() ? BindingAsset.GetSourceSkeletalMesh()->GetDerivedDataKey() : FString();
-		TargetKey = BindingAsset.GetTargetSkeletalMesh() ? BindingAsset.GetTargetSkeletalMesh()->GetDerivedDataKey() : FString();
+		SourceKey = BindingAsset.GetSourceSkeletalMesh() ? BindingAsset.GetSourceSkeletalMesh()->BuildDerivedDataKey(TargetPlatform) : FString();
+		TargetKey = BindingAsset.GetTargetSkeletalMesh() ? BindingAsset.GetTargetSkeletalMesh()->BuildDerivedDataKey(TargetPlatform) : FString();
 	}
 	else
 	{
@@ -805,6 +822,20 @@ static FString BuildDerivedDataKeySuffix(const UGroomBindingAsset& BindingAsset)
 	return KeySuffix;
 }
 
+static FString BuildDerivedDataKeyGroup(const UGroomBindingAsset& BindingAsset, const ITargetPlatform* TargetPlatform, uint32 InGroupIndex)
+{
+	const FString DeriveDataKeySuffix = BuildDerivedDataKeySuffix(BindingAsset, TargetPlatform);
+	return GroomBindingDerivedDataCacheUtils::BuildGroomBindingDerivedDataKey(DeriveDataKeySuffix + FString(TEXT("_Group")) + FString::FromInt(InGroupIndex));
+}
+
+static FString BuildDerivedDataKeyGroup(const FString& InDeriveDataKeySuffix , uint32 InGroupIndex)
+{
+	return GroomBindingDerivedDataCacheUtils::BuildGroomBindingDerivedDataKey(InDeriveDataKeySuffix + FString(TEXT("_Group")) + FString::FromInt(InGroupIndex));
+}
+
+static TArray<FString> GetGroupDerivedDataKeys(const UGroomBindingAsset* In, const ITargetPlatform* TargetPlatform);
+static void CacheDerivedDatas(UGroomBindingAsset* In, const uint32 InGroupIndex, const FString& DerivedDataKey, bool& bOutValid, const ITargetPlatform* TargetPlatform, UGroomBindingAsset::FHairGroupPlatformData& OutPlatformData);
+
 void UGroomBindingAsset::CacheDerivedDatas()
 {
 	if (!GetGroom() || !GetGroom()->IsValid())
@@ -818,46 +849,89 @@ void UGroomBindingAsset::CacheDerivedDatas()
 	CachedDerivedDataKey.SetNum(GroupCount);
 	GetGroupInfos().SetNum(GroupCount);
 
-	// 2. Prepare main cache key
-	const FString KeySuffix = BuildDerivedDataKeySuffix(*this);
+	// 2.1 Prepare main cache key
+	// Cache derived data for the running platform.
+	ITargetPlatform* RunningPlatform = GetTargetPlatformManagerRef().GetRunningTargetPlatform();
+	check(RunningPlatform);
+	const FString KeySuffix = BuildDerivedDataKeySuffix(*this, RunningPlatform);
+
+	// 2.2 Build the key for each group and check if any group needs to be rebuilt
+	const TArray<FString> GroupDerivedDataKeys = GetGroupDerivedDataKeys(this, RunningPlatform);
+	const bool bAnyGroupNeedRebuild = GroupDerivedDataKeys != CachedDerivedDataKey;
 
 	// 3. Build or retrieve from cache, binding data for each group
 	bIsValid = true;
 	bool bReloadResource = false;
-	for (uint32 GroupIndex = 0; GroupIndex < GroupCount; ++GroupIndex)
+	if (bAnyGroupNeedRebuild)
 	{
-		bool bGroupReloadResource = false;
-		bool bGroupValid = true;
+		FGroomComponentRecreateRenderStateContext RecreateRenderContext(GetGroom());
 
-		CacheDerivedDatas(GroupIndex, KeySuffix, bGroupValid, bGroupReloadResource);
+		for (uint32 GroupIndex = 0; GroupIndex < GroupCount; ++GroupIndex)
+		{
+			// 1. Build data
+			bool bGroupValid = true;
+			bool bGroupReloadResource = false;
+			if (GroupDerivedDataKeys[GroupIndex] != CachedDerivedDataKey[GroupIndex])
+			{
+				::CacheDerivedDatas(this, GroupIndex, GroupDerivedDataKeys[GroupIndex], bGroupValid, RunningPlatform, GetHairGroupsPlatformData()[GroupIndex]);
+	
+				if (bGroupValid)
+				{
+					bGroupReloadResource = true;
+					CachedDerivedDataKey[GroupIndex] = GroupDerivedDataKeys[GroupIndex] ;
+				}
+				else
+				{
+					UE_LOG(LogHairStrands, Error, TEXT("[Groom] The binding asset (%s) couldn't be built. This binding asset won't be used."), *GetName());
+				}
+			}
+	
+			// 2. Release existing resources data
+			if (bGroupReloadResource)
+			{
+				UGroomBindingAsset::FHairGroupResources& OutHairGroupResources = GetHairGroupResources();
+				if (OutHairGroupResources.Num() > 0)
+				{
+					for (UGroomBindingAsset::FHairGroupResource& GroupResources : OutHairGroupResources)
+					{
+						AddHairGroupResourcesToDelete(GroupResources);
+					}
+					OutHairGroupResources.Empty();
+				}
+				check(OutHairGroupResources.Num() == 0);
+			}
 
-		bIsValid = bIsValid && bGroupValid;
-		bReloadResource = bReloadResource || bGroupReloadResource;
+			bIsValid = bIsValid && bGroupValid;
+			bReloadResource = bReloadResource || bGroupReloadResource;
+		}
+
+		// 3. Update binding infos here as they need to be valid when RecreateRenderContext is deleted
+		//    When RecreateRenderContext's Dtor is called, it will recreate component, which will run 
+		//    the binding validation to assess if the binding asset is compatible. This validation logic 
+		//    use the binding infos to know if curve count match between GroomAsset and GroomBindingAsset
+		UpdateGroomBindingAssetInfos(this);
+
+		// 4. Reload resources if needed
+		if (bReloadResource)
+		{
+			InitResource();
+		}
 	}
-
-	// 4. Reload resources if needed
-	if (bReloadResource)
+	else
 	{
-		InitResource();
+		// 3. Patch hair group info if it does not match the DDC-read/deserialized data
+		UpdateGroomBindingAssetInfos(this);
 	}
-
-	// 3. Patch hair group info if it does not match the DDC-read/deserialized data
-	UpdateGroomBindingAssetInfos(this);
 }
 
-void UGroomBindingAsset::CacheDerivedDatas(uint32 InGroupIndex, const FString KeySuffix, bool& bOutValid, bool& bOutReloadResource)
+static void CacheDerivedDatas(UGroomBindingAsset* In, const uint32 InGroupIndex, const FString& DerivedDataKey, bool& bOutValid, const ITargetPlatform* TargetPlatform, UGroomBindingAsset::FHairGroupPlatformData& OutPlatformData)
 {
-	const FString DerivedDataKey = GroomBindingDerivedDataCacheUtils::BuildGroomBindingDerivedDataKey(KeySuffix + FString(TEXT("_Group")) + FString::FromInt(InGroupIndex));
-
-	bOutValid = true;
-	bOutReloadResource = false;
-	if (DerivedDataKey != CachedDerivedDataKey[InGroupIndex])
 	{
 		bOutValid = false;
 		using namespace UE::DerivedData;
 
 		const FCacheKey HeaderKey = ConvertLegacyCacheKey(DerivedDataKey + FString(TEXT("_Header")));
-		const FSharedString Name = MakeStringView(GetPathName());
+		const FSharedString Name = MakeStringView(In->GetPathName());
 		FSharedBuffer Data;
 		{
 			FRequestOwner Owner(EPriority::Blocking);
@@ -868,45 +942,65 @@ void UGroomBindingAsset::CacheDerivedDatas(uint32 InGroupIndex, const FString Ke
 			Owner.Wait();
 		}
 
-		UGroomBindingAsset::FHairGroupPlatformData& PlatformData = GetHairGroupsPlatformData()[InGroupIndex];
-
 		// Populate key/name for streaming data request
 		auto FillDrivedDataKey = [&DerivedDataKey, &Name](UGroomBindingAsset::FHairGroupPlatformData& In)
 		{
-			In.RenRootBulkData.DerivedDataKey = DerivedDataKey + FString(TEXT("_Data"));
+			for (uint32 MeshLODIndex = 0, MeshLODCount=In.RenRootBulkDatas.Num(); MeshLODIndex < MeshLODCount; ++MeshLODIndex)
+			{
+				In.RenRootBulkDatas[MeshLODIndex].DerivedDataKey = DerivedDataKey + FString::Printf(TEXT("_RenRootData_MeshLOD%d"), MeshLODIndex);
+			}
 		};
 
-		FGroomComponentRecreateRenderStateContext RecreateRenderContext(GetGroom());
-
-		bool bSuccess = false;
+		bool bHasDataInCache = false;
 		if (Data)
 		{
-			UE_CLOG(IsHairStrandsDDCLogEnable(), LogHairStrands, Log, TEXT("[GroomBinding/DDC] Found (GroomBinding:%s)."), *GetName());
-
-			FillDrivedDataKey(PlatformData);
+			UE_CLOG(IsHairStrandsDDCLogEnable(), LogHairStrands, Log, TEXT("[GroomBinding/DDC] Found (GroomBinding:%s)."), *In->GetName());
 
 			// Header
 			FMemoryReaderView Ar(Data, /*bIsPersistent*/ true);
-			InternalSerializePlatformData(Ar, this, PlatformData, 0 /*Flags*/, true /*bHeader*/, false /*bData*/, &bSuccess);
+			InternalSerializePlatformData(Ar, In, OutPlatformData, 0 /*Flags*/, true /*bHeader*/, false /*bData*/);
+			bHasDataInCache = true;
+
+			// Fill DDC key for each strands LOD root bulk data. Done after InternalSerializePlatformData(), as RenRootBulkDatas is not filled in yet, and OutPlatformData.RenRootBulkDatas.Num() == 0.
+			FillDrivedDataKey(OutPlatformData);
+
+			// Verify that all strands data are correctly cached into the DDC
+			{
+				for (int32 MeshLODIndex = 0, MeshLODCount = OutPlatformData.RenRootBulkDatas.Num(); MeshLODIndex < MeshLODCount; ++MeshLODIndex)
+				{
+					FHairStreamingRequest R; bHasDataInCache &= R.WarmCache(HAIR_MAX_NUM_CURVE_PER_GROUP, HAIR_MAX_NUM_POINT_PER_GROUP, OutPlatformData.RenRootBulkDatas[MeshLODIndex]);
+				}
+			}
 
 			bOutValid = true;
 		}
-		if (!bSuccess)
+		if (!bHasDataInCache)
 		{
-			UE_CLOG(IsHairStrandsDDCLogEnable(), LogHairStrands, Log, TEXT("[GroomBinding/DDC] Not found (GroomBinding:%s)."), *GetName());
+			UE_CLOG(IsHairStrandsDDCLogEnable(), LogHairStrands, Log, TEXT("[GroomBinding/DDC] Not found (GroomBinding:%s)."), *In->GetName());
 
 			// Build groom binding data
-			bOutValid = FGroomBindingBuilder::BuildBinding(this, InGroupIndex);
+			FGroomBindingBuilder::FInput BuilderInput;
+			BuilderInput.BindingType = In->GetGroomBindingType();
+			BuilderInput.NumInterpolationPoints = In->GetNumInterpolationPoints();
+			BuilderInput.MatchingSection = In->GetMatchingSection();
+			BuilderInput.bHasValidTarget = In->HasValidTarget();
+			BuilderInput.GroomAsset = In->GetGroom();
+			BuilderInput.SourceSkeletalMesh = In->GetSourceSkeletalMesh();
+			BuilderInput.TargetSkeletalMesh = In->GetTargetSkeletalMesh();
+			BuilderInput.SourceGeometryCache = In->GetSourceGeometryCache();
+			BuilderInput.TargetGeometryCache = In->GetTargetGeometryCache();
+
+			bOutValid = FGroomBindingBuilder::BuildBinding(BuilderInput, InGroupIndex, TargetPlatform, OutPlatformData);
 
 			if (bOutValid)
 			{
-				FillDrivedDataKey(PlatformData);
+				FillDrivedDataKey(OutPlatformData);
 
 				// Header
 				{
 					TArray<uint8> WriteData;
 					FMemoryWriter Ar(WriteData, /*bIsPersistent*/ true);
-					InternalSerializePlatformData(Ar, this, PlatformData, 0 /*Flags*/, true /*bHeader*/, false /*bData*/);
+					InternalSerializePlatformData(Ar, In, OutPlatformData, 0 /*Flags*/, true /*bHeader*/, false /*bData*/);
 	
 					FRequestOwner AsyncOwner(EPriority::Normal);
 					GetCache().PutValue({ {Name, HeaderKey, FValue::Compress(MakeSharedBufferFromArray(MoveTemp(WriteData)))} }, AsyncOwner);
@@ -914,10 +1008,10 @@ void UGroomBindingAsset::CacheDerivedDatas(uint32 InGroupIndex, const FString Ke
 				}
 	
 				// Data
-				for (uint32 LODIt=0, LODCount = PlatformData.RenRootBulkData.GetLODCount(); LODIt<LODCount;++LODIt)
+				for (uint32 MeshLODIndex=0, MeshLODCount = OutPlatformData.RenRootBulkDatas.Num(); MeshLODIndex<MeshLODCount;++MeshLODIndex)
 				{
 					TArray<FCachePutValueRequest> Out;
-					PlatformData.RenRootBulkData.Write_DDC(this, Out, LODIt);
+					OutPlatformData.RenRootBulkDatas[MeshLODIndex].Write_DDC(In, Out);
 
 					FRequestOwner AsyncOwner(EPriority::Normal);
 					GetCache().PutValue(Out, AsyncOwner);
@@ -925,18 +1019,111 @@ void UGroomBindingAsset::CacheDerivedDatas(uint32 InGroupIndex, const FString Ke
 				}
 			}
 		}
-
-		if (bOutValid)
-		{
-			bOutReloadResource = true;
-			CachedDerivedDataKey[InGroupIndex] = DerivedDataKey;
-		}
-		else
-		{
-			UE_LOG(LogHairStrands, Error, TEXT("[Groom] The binding asset (%s) couldn't be built. This binding asset won't be used."), *GetName());
-		}
 	}
 }
+
+static TArray<FString> GetGroupDerivedDataKeys(const UGroomBindingAsset* In, const ITargetPlatform* TargetPlatform)
+{
+	check(In);
+	check(TargetPlatform);
+
+	const FString KeySuffix = BuildDerivedDataKeySuffix(*In, TargetPlatform);
+	const uint32 GroupCount = In->GetGroupInfos().Num();
+
+	TArray<FString> Out;
+	Out.SetNum(GroupCount);
+	for (uint32 GroupIndex = 0; GroupIndex < GroupCount; ++GroupIndex)
+	{
+		Out[GroupIndex] = BuildDerivedDataKeyGroup(KeySuffix, GroupIndex);
+	}
+	return Out;
+}
+
+static UGroomBindingAsset::FCachedCookedPlatformData* FindCachedCookedPlatformData(const TArray<FString>& InGroupKeys, TArray<UGroomBindingAsset::FCachedCookedPlatformData*>& InCachedCookedData)
+{
+	for (UGroomBindingAsset::FCachedCookedPlatformData* CookedPlatformData : InCachedCookedData)
+	{
+		if (CookedPlatformData->GroupDerivedDataKeys == InGroupKeys)
+		{
+			return CookedPlatformData;
+		}
+	}
+	return nullptr;
+}
+
+void UGroomBindingAsset::BeginCacheForCookedPlatformData(const ITargetPlatform* TargetPlatform)
+{
+	Super::BeginCacheForCookedPlatformData(TargetPlatform);
+
+	// 1. Build the key for each group
+	const TArray<FString> GroupDerivedDataKeys = GetGroupDerivedDataKeys(this, TargetPlatform);
+
+	// 2. Find existing cached cooked data
+	UGroomBindingAsset::FCachedCookedPlatformData* TargetPlatformData = FindCachedCookedPlatformData(GroupDerivedDataKeys, CachedCookedPlatformDatas);
+
+	// 3. If the target cooked data does not already exist, we build it
+	if (TargetPlatformData == nullptr && GetGroom() != nullptr)
+	{
+		// 3.1 Build cooked derived data
+		const uint32 GroupCount = GroupDerivedDataKeys.Num();
+		TargetPlatformData = new FCachedCookedPlatformData();
+		TargetPlatformData->GroupDerivedDataKeys = GroupDerivedDataKeys;
+		TargetPlatformData->GroupPlatformDatas.SetNum(GroupCount);
+		for (uint32 GroupIndex = 0; GroupIndex < GroupCount; ++GroupIndex)
+		{
+			bool bGroupValid = true;
+			::CacheDerivedDatas(this, GroupIndex, TargetPlatformData->GroupDerivedDataKeys[GroupIndex], bGroupValid, TargetPlatform, TargetPlatformData->GroupPlatformDatas[GroupIndex]);
+			if (!bGroupValid)
+			{
+				UE_LOG(LogHairStrands, Error, TEXT("[Groom] The binding asset (%s) couldn't be built. This binding asset won't be used."), *GetName());
+			}
+		}
+
+		// 3.2 Place cooked derived data into their bulk data. 
+		// This is done only for strands, which support DDC streaming
+		// When cooking data, force loading of *all* bulk data prior to saving them
+		// Note: bFillBulkdata is true for filling in the bulkdata container prior to serialization. This also forces the resources loading 
+		// from the 'start' (i.e., without offset)
+		for (uint32 GroupIndex = 0; GroupIndex < GroupCount; ++GroupIndex)
+		{
+			TArray<FHairStrandsRootBulkData>& RenRootBulkDatas = TargetPlatformData->GroupPlatformDatas[GroupIndex].RenRootBulkDatas;
+			for (int32 MeshLODIndex = 0, MeshLODCount = RenRootBulkDatas.Num(); MeshLODIndex < MeshLODCount; ++MeshLODIndex)
+			{
+				FHairStreamingRequest R; R.Request(HAIR_MAX_NUM_CURVE_PER_GROUP, HAIR_MAX_NUM_POINT_PER_GROUP, RenRootBulkDatas[MeshLODIndex], true /*bWait*/, true /*bFillBulkdata*/, true /*bWarmCache*/, GetFName());
+			}
+		}
+
+		CachedCookedPlatformDatas.Add(TargetPlatformData);
+	}
+}
+
+TArray<UGroomBindingAsset::FHairGroupPlatformData>* UGroomBindingAsset::GetCachedCookedPlatformData(const ITargetPlatform* TargetPlatform)
+{
+	// 1. Build the key for each group
+	const TArray<FString> GroupDerivedDataKeys = GetGroupDerivedDataKeys(this, TargetPlatform);
+
+	// 2. Find existing cached cooked data
+	if (UGroomBindingAsset::FCachedCookedPlatformData* CachedCookedPlatformData = FindCachedCookedPlatformData(GroupDerivedDataKeys, CachedCookedPlatformDatas))
+	{
+		return &CachedCookedPlatformData->GroupPlatformDatas;
+	}
+	else
+	{
+		return nullptr;
+	}
+}
+
+void UGroomBindingAsset::ClearAllCachedCookedPlatformData()
+{
+	for (UGroomBindingAsset::FCachedCookedPlatformData* CookedPlatformData : CachedCookedPlatformDatas)
+	{
+		delete CookedPlatformData;
+	}
+	CachedCookedPlatformDatas.Empty();
+
+	Super::ClearAllCachedCookedPlatformData();
+}
+
 #endif
 
 void UGroomBindingAsset::GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize)
@@ -1072,3 +1259,32 @@ TArray<UGroomBindingAsset::FHairGroupPlatformData>& UGroomBindingAsset::GetHairG
 	return HairGroupsPlatformData;
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
+
+#if WITH_EDITOR
+void UGroomBindingAsset::RecreateResources()
+{
+	ReleaseResource(true /*bResetLoadedSize*/);
+	InitResource();
+	OnGroomBindingAssetChanged.Broadcast();
+}
+
+void UGroomBindingAsset::ChangeFeatureLevel(ERHIFeatureLevel::Type In)
+{
+	// When changing feature level, recreate resources to the correct feature level
+	if (CachedResourcesFeatureLevel != In)
+	{
+		RecreateResources();
+		CachedResourcesFeatureLevel = In;
+	}
+}
+
+void UGroomBindingAsset::ChangePlatformLevel(ERHIFeatureLevel::Type In)
+{
+	// When changing platform preview level, recreate resources to the correct platform settings (e.g., r.hairstrands.strands=0/1)
+	if (CachedResourcesPlatformLevel != In)
+	{
+		RecreateResources();
+		CachedResourcesPlatformLevel = In;
+	}
+}
+#endif // WITH_EDITOR

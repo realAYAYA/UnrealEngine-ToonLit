@@ -66,8 +66,8 @@ enum class ETriggerType : uint8
 	// Input may trigger only if all implicit triggers are triggered.
 	Implicit,
 
-	// Inverted trigger that will block all other triggers if it is triggered.
-	Blocker,
+	// Inverted trigger that will block all other triggers when IsBlocking returns true
+	Blocker
 };
 
 /**
@@ -162,6 +162,9 @@ public:
 	 * Returns true if the the ETriggerEvent is can be triggered based off of the ETriggerEventsSupported.
 	 */
 	static bool IsSupportedTriggerEvent(const ETriggerEventsSupported SupportedEvents, const ETriggerEvent Event);
+
+	/** Returns true when all other triggers should be blocked, i.e. chords block when not triggered. */
+	virtual bool IsBlocking(const ETriggerState State) const { return false; }
 		
 	// Provide debug output for use with ShowDebug EnhancedInput. Return an empty string to disable display.
 	virtual FString GetDebugState() const { return FString(); }
@@ -395,6 +398,8 @@ protected:
 	virtual ETriggerType GetTriggerType_Implementation() const override { return ETriggerType::Implicit; }
 
 	virtual ETriggerState UpdateState_Implementation(const UEnhancedPlayerInput* PlayerInput, FInputActionValue ModifiedValue, float DeltaTime) override;
+	virtual bool IsBlocking(const ETriggerState State) const override { return State != ETriggerState::Triggered; }
+
 public:
 
 	// The action that must be triggering for this trigger's action to trigger
@@ -412,6 +417,7 @@ class UInputTriggerChordBlocker final : public UInputTriggerChordAction
 	GENERATED_BODY()
 protected:
 	virtual ETriggerType GetTriggerType_Implementation() const override { return ETriggerType::Blocker; }
+	virtual bool IsBlocking(const ETriggerState State) const override { return State == ETriggerState::Triggered; }
 };
 
 USTRUCT(BlueprintType)

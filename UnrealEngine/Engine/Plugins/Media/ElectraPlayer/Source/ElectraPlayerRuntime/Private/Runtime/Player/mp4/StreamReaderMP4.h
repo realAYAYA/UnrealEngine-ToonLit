@@ -108,7 +108,6 @@ private:
 	void LogMessage(IInfoLog::ELevel Level, const FString& Message);
 	int32 HTTPProgressCallback(const IElectraHttpManager::FRequest* InRequest);
 	void HTTPCompletionCallback(const IElectraHttpManager::FRequest* InRequest);
-	void HTTPUpdateStats(const FTimeValue& CurrentTime, const IElectraHttpManager::FRequest* Request);
 	void HandleRequest();
 
 	bool HasBeenAborted() const;
@@ -187,7 +186,6 @@ private:
 	TSharedPtrTS<FStreamSegmentRequestMP4>		CurrentRequest;
 	FMediaEvent									WorkSignal;
 	FReadBuffer									ReadBuffer;
-	FMediaCriticalSection						MetricUpdateLock;
 
 	TMap<uint32, FSelectedTrackData>			ActiveTrackMap;
 

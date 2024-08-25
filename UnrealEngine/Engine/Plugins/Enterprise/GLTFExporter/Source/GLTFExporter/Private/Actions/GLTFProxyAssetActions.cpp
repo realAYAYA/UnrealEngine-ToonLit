@@ -4,10 +4,12 @@
 
 #include "Actions/GLTFProxyAssetActions.h"
 #include "Actions/GLTFEditorStyle.h"
+#include "AssetToolsModule.h"
 #include "Materials/MaterialInterface.h"
 #include "Options/GLTFProxyOptions.h"
 #include "UI/GLTFProxyOptionsWindow.h"
 #include "Converters/GLTFMaterialProxyFactory.h"
+#include "UserData/GLTFMaterialUserData.h"
 #include "ContentBrowserMenuContexts.h"
 #include "ToolMenus.h"
 
@@ -23,6 +25,17 @@ void FGLTFProxyAssetActions::AddMenuEntry()
 	if (ToolMenus == nullptr)
 	{
 		return;
+	}
+	
+	// Do not add any entry if UGLTFMaterialExportOptions is not supported
+	IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
+	TSharedPtr<FPathPermissionList> AssetClassPermissionList = AssetTools.GetAssetClassPathPermissionList(EAssetClassAction::CreateAsset);
+	if (AssetClassPermissionList && AssetClassPermissionList->HasFiltering())
+	{
+		if (!AssetClassPermissionList->PassesFilter(UGLTFMaterialExportOptions::StaticClass()->GetPathName()))
+		{
+			return;
+		}
 	}
 
 	UToolMenu* Menu = ToolMenus->ExtendMenu(MenuName);

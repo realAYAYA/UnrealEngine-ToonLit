@@ -6,7 +6,7 @@
 #include "SceneRendering.h"
 #include "SceneTextures.h"
 #include "SceneTextureParameters.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "DataDrivenShaderPlatformInfo.h"
 
 // We do not want such debug in shipping build or when the editor is not available.
@@ -72,7 +72,7 @@ public:
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("STRATA_INLINE_SHADING"), 1);
+		OutEnvironment.SetDefine(TEXT("SUBSTRATE_INLINE_SHADING"), 1);
 	}
 };
 
@@ -98,10 +98,12 @@ static void CommonStampDeferredDebugProbeDrawCall(
 	int32 RenderPass,
 	bool bIlluminanceMeter)
 {
+	check(FPlatformProperties::HasEditorOnlyData());
+
 	PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
-	PassParameters->MaterialTextureArrayUAV = View.StrataViewData.SceneData->MaterialTextureArrayUAVWithoutRTs;
-	PassParameters->MaxBytesPerPixel = View.StrataViewData.SceneData->MaxBytesPerPixel;
-	PassParameters->bRoughDiffuse = View.StrataViewData.SceneData->bRoughDiffuse ? 1 : 0;
+	PassParameters->MaterialTextureArrayUAV = View.SubstrateViewData.SceneData->MaterialTextureArrayUAVWithoutRTs;
+	PassParameters->MaxBytesPerPixel = View.SubstrateViewData.SceneData->EffectiveMaxBytesPerPixel;
+	PassParameters->bRoughDiffuse = View.SubstrateViewData.SceneData->bRoughDiffuse ? 1 : 0;
 	PassParameters->DebugProbesMode = View.Family->EngineShowFlags.VisualizeLightingOnProbes ? 3 : FMath::Clamp(CVarVisualizeLightingOnProbes.GetValueOnRenderThread(), 0, 3);
 		
 	FStampDeferredDebugProbePS::FPermutationDomain PermutationVector;
@@ -125,6 +127,11 @@ void StampDeferredDebugProbeDepthPS(
 	const FRDGTextureRef SceneDepthTexture)
 {
 #if DEBUG_PROBE_ENABLED
+	if (FPlatformProperties::HasEditorOnlyData())
+	{
+		return;
+	}
+
 	RDG_EVENT_SCOPE(GraphBuilder, "StampDeferredDebugProbeDepth");
 	RDG_GPU_STAT_SCOPE(GraphBuilder, StampDeferredDebugProbe);
 
@@ -154,6 +161,11 @@ void StampDeferredDebugProbeMaterialPS(
 	const FMinimalSceneTextures& SceneTextures)
 {
 #if DEBUG_PROBE_ENABLED
+	if (FPlatformProperties::HasEditorOnlyData())
+	{
+		return;
+	}
+
 	RDG_EVENT_SCOPE(GraphBuilder, "StampDeferredDebugProbeMaterial");
 	RDG_GPU_STAT_SCOPE(GraphBuilder, StampDeferredDebugProbe);
 
@@ -173,13 +185,13 @@ void StampDeferredDebugProbeMaterialPS(
 		{
 			// We do not want to update the normal of the material in this case,
 			// because in this case we want to use the scene normal as the direction of the hemisphere over which we evaluate Illuminance.
-			// So for legacy, we unbind the normal buffer and for strata we unbind the toplayer data (that is enough since the material written is going to be of simple type)
-			if (Strata::IsStrataEnabled())
+			// So for legacy, we unbind the normal buffer and for Substrate we unbind the toplayer data (that is enough since the material written is going to be of simple type)
+			if (Substrate::IsSubstrateEnabled())
 			{
 				// Search for the TopLayerTexture render target and nullify it to not update it.
 				for (int32 i = 0; i < MaxSimultaneousRenderTargets; ++i)
 				{
-					if (PassParameters->RenderTargets.Output[i].GetTexture() == View.StrataViewData.SceneData->TopLayerTexture)
+					if (PassParameters->RenderTargets.Output[i].GetTexture() == View.SubstrateViewData.SceneData->TopLayerTexture)
 					{
 						PassParameters->RenderTargets.Output[i] = FRenderTargetBinding();
 					}
@@ -192,7 +204,7 @@ void StampDeferredDebugProbeMaterialPS(
 			}
 		}
 
-		if (Strata::IsStrataEnabled())
+		if (Substrate::IsSubstrateEnabled())
 		{
 			// Make sure we do not write depth so that we can safely read it from texture parameters
 			PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding();
@@ -214,6 +226,11 @@ void StampDeferredDebugProbeVelocityPS(
 	const FRenderTargetBindingSlots& BasePassRenderTargets)
 {
 #if DEBUG_PROBE_ENABLED
+	if (FPlatformProperties::HasEditorOnlyData())
+	{
+		return;
+	}
+
 	RDG_EVENT_SCOPE(GraphBuilder, "StampDeferredDebugProbeVelocity");
 	RDG_GPU_STAT_SCOPE(GraphBuilder, StampDeferredDebugProbe);
 

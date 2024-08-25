@@ -290,7 +290,7 @@ void FMeshConnectedComponents::FindTriComponent(FComponent* Component, TArray<in
 
 	while (ComponentQueue.Num() > 0)
 	{
-		int32 CurTriangle = ComponentQueue.Pop(false);
+		int32 CurTriangle = ComponentQueue.Pop(EAllowShrinking::No);
 
 		ActiveSet[CurTriangle] = (uint8)EProcessingState::Done;   // tri has been processed
 		Component->Indices.Add(CurTriangle);
@@ -316,7 +316,7 @@ void FMeshConnectedComponents::FindTriComponent(FComponent* Component, TArray<in
 	
 	while (ComponentQueue.Num() > 0)
 	{
-		int32 CurTriangle = ComponentQueue.Pop(false);
+		int32 CurTriangle = ComponentQueue.Pop(EAllowShrinking::No);
 
 		ActiveSet[CurTriangle] = (uint8)EProcessingState::Done;   // tri has been processed
 		Component->Indices.Add(CurTriangle);
@@ -428,7 +428,7 @@ void FMeshConnectedComponents::FindVertComponent(FComponent* Component, TArray<i
 
 	while (ComponentQueue.Num() > 0)
 	{
-		int32 CurVert = ComponentQueue.Pop(false);
+		int32 CurVert = ComponentQueue.Pop(EAllowShrinking::No);
 
 		ActiveSet[CurVert] = (uint8)EProcessingState::Done;   // Vert has been processed
 		Component->Indices.Add(CurVert);
@@ -453,7 +453,7 @@ void FMeshConnectedComponents::FindVertComponent(FComponent* Component, TArray<i
 
 	while (ComponentQueue.Num() > 0)
 	{
-		int32 CurVert = ComponentQueue.Pop(false);
+		int32 CurVert = ComponentQueue.Pop(EAllowShrinking::No);
 
 		ActiveSet[CurVert] = (uint8)EProcessingState::Done;   // Vert has been processed
 		Component->Indices.Add(CurVert);
@@ -689,7 +689,7 @@ void FMeshConnectedComponents::GrowToConnectedTriangles(const FDynamicMesh3* Mes
 
 	while (QueueBuffer->Num() > 0)
 	{
-		int32 CurTri = QueueBuffer->Pop(false);
+		int32 CurTri = QueueBuffer->Pop(EAllowShrinking::No);
 		ResultROI.Add(CurTri);
 
 		FIndex3i NbrTris = Mesh->GetTriNeighbourTris(CurTri);
@@ -723,7 +723,7 @@ void FMeshConnectedComponents::GrowToConnectedTriangles(const FDynamicMesh3* Mes
 
 	while (QueueBuffer->Num() > 0)
 	{
-		int32 CurTri = QueueBuffer->Pop(false);
+		int32 CurTri = QueueBuffer->Pop(EAllowShrinking::No);
 		ResultROI.Add(CurTri);
 
 		FIndex3i NbrTris = Mesh->GetTriNeighbourTris(CurTri);
@@ -756,7 +756,7 @@ void FMeshConnectedComponents::GrowToConnectedVertices(const FDynamicMesh3& Mesh
 
 	while (QueueBuffer->Num() > 0)
 	{
-		int32 CurVertexID = QueueBuffer->Pop(false);
+		int32 CurVertexID = QueueBuffer->Pop(EAllowShrinking::No);
 		ResultROI.Add(CurVertexID);
 
 		Mesh.EnumerateVertexVertices(CurVertexID, [&](int32 NbrVertexID)
@@ -788,7 +788,7 @@ void FMeshConnectedComponents::GrowToConnectedEdges(const FDynamicMesh3& Mesh,
 
 	while (QueueBuffer->Num() > 0)
 	{
-		int32 CurEdgeID = QueueBuffer->Pop(false);
+		int32 CurEdgeID = QueueBuffer->Pop(EAllowShrinking::No);
 		ResultROI.Add(CurEdgeID);
 
 		FIndex2i EdgeV = Mesh.GetEdgeV(CurEdgeID);

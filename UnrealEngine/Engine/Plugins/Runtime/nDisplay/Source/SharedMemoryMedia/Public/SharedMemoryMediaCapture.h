@@ -67,6 +67,9 @@ protected:
 	/** Adds to the graph builder the copy from the input texture to the shared gpu texture that corresponds to the current frame number */
 	void AddCopyToSharedGpuTexturePass(FRDGBuilder& GraphBuilder, FRDGTextureRef InSourceTexture, uint32 SharedTextureIdx);
 
+	/** Adds a pass to invert the alpha of the texture */
+	void AddInvertAlphaConversionPass(FRDGBuilder& GraphBuilder, const FRDGTextureRef& SourceTexture, FRDGTextureRef DestTexture);
+
 private:
 
 	/** Number of shared buffers */

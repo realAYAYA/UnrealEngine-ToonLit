@@ -4,6 +4,9 @@ using UnrealBuildTool;
 
 public class HTTP : ModuleRules
 {
+	// Currently there is a random event loop crash when shutdown HTTP manager on PC
+	protected virtual bool bPlatformEventLoopEnabledByDefault { get { return !Target.Platform.IsInGroup(UnrealPlatformGroup.Windows); } }
+
 	protected virtual bool bPlatformSupportsWinHttp
 	{
 		get
@@ -21,12 +24,12 @@ public class HTTP : ModuleRules
 				Target.IsInPlatformGroup(UnrealPlatformGroup.Android);
 		}
 	}
-	protected virtual bool bPlatformSupportsXCurl { get { return false; } }
+	protected virtual bool bPlatformSupportsXCurl { get { return Target.Platform.IsInGroup(UnrealPlatformGroup.Windows) && Target.WindowsPlatform.bUseXCurl; } }
+	protected virtual bool bPlatformSupportsCurlMultiSocket { get { return !bPlatformSupportsXCurl; } }
 
 	protected virtual bool bPlatformSupportsCurlMultiPoll { get { return true; } }
 
 	protected virtual bool bPlatformSupportsCurlMultiWait { get { return false; } }
-	protected virtual bool bPlatformSupportsCurlMultiSocket { get { return true; } }
 	protected virtual bool bPlatformSupportsCurlQuickExit { get { return !bPlatformSupportsXCurl; } }
 
 	private bool bPlatformSupportsCurl { get { return bPlatformSupportsLibCurl || bPlatformSupportsXCurl; } }
@@ -81,8 +84,9 @@ public class HTTP : ModuleRules
 			}
 		}
 
+		PrivateDefinitions.Add("UE_HTTP_EVENT_LOOP_ENABLE_CHANCE_BY_DEFAULT=" + (bPlatformEventLoopEnabledByDefault ? "100" : "0"));
 		PrivateDefinitions.Add("WITH_CURL_LIBCURL =" + (bPlatformSupportsLibCurl ? "1" : "0"));
-		PrivateDefinitions.Add("WITH_CURL_XCURL=" + (bPlatformSupportsXCurl ? "1" : "0"));
+		PublicDefinitions.Add("WITH_CURL_XCURL=" + (bPlatformSupportsXCurl ? "1" : "0"));
 		PrivateDefinitions.Add("WITH_CURL_MULTIPOLL=" + (bPlatformSupportsCurlMultiPoll ? "1" : "0"));
 		PrivateDefinitions.Add("WITH_CURL_MULTIWAIT=" + (bPlatformSupportsCurlMultiWait ? "1" : "0"));
 		PrivateDefinitions.Add("WITH_CURL_MULTISOCKET=" + (bPlatformSupportsCurlMultiSocket ? "1" : "0"));
@@ -110,7 +114,7 @@ public class HTTP : ModuleRules
 			PrivateDefinitions.Add("WITH_SSL=0");
 		}
 
-		if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS || Target.Platform == UnrealTargetPlatform.Mac)
+		if (Target.Platform.IsInGroup(UnrealPlatformGroup.Apple))
 		{
 			PublicFrameworks.Add("Security");
 		}

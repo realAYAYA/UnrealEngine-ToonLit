@@ -11,6 +11,8 @@ namespace UE::Net::Private
 struct FReplicationParameters
 {
 	uint32 MaxActiveReplicatedObjectCount;	
+	uint32 PreAllocatedReplicatedObjectCount;
+	uint32 MaxReplicatedWriterObjectCount;
 	uint32 PacketSendWindowSize;
 	uint32 ConnectionId;
 	UReplicationSystem* ReplicationSystem = nullptr;

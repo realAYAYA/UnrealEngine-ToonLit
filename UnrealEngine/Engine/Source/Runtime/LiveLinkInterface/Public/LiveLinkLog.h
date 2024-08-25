@@ -17,7 +17,7 @@
 
 struct FTimespan;
 
-#define ENABLE_LIVELINK_LOGGING (1 && !NO_LOGGING && !(UE_BUILD_SHIPPING || UE_BUILD_TEST))
+#define ENABLE_LIVELINK_LOGGING (!NO_LOGGING && !UE_BUILD_TEST)
 
 /** This class represents a log of LiveLink output each of which can be a rich tokenized message */
 class FLiveLinkLog

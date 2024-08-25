@@ -4,6 +4,7 @@
 
 #include "OpenXRPlatformRHI.h"
 #include "Containers/Map.h"
+#include "UObject/NameTypes.h"
 #include "Serialization/ArrayReader.h"
 #include "XRScribeFileFormat.h"
 
@@ -45,6 +46,7 @@ public:
 	[[nodiscard]] const TMap<XrAction, TArray<FOpenXRGetActionStateFloatPacket>>& GetFloatActionStates() { return FloatActionStates; }
 	[[nodiscard]] const TMap<XrAction, TArray<FOpenXRGetActionStateVector2fPacket>>& GetVectorActionStates() { return VectorActionStates; }
 	[[nodiscard]] const TMap<XrAction, TArray<FOpenXRGetActionStatePosePacket>>& GetPoseActionStates() { return PoseActionStates; }
+	[[nodiscard]] const TMap<XrPath, FName>& GetPathToStringMap() { return PathToStringMap; }
 
 	TArray<uint8>& GetEncodedData()
 	{
@@ -160,8 +162,8 @@ protected:
 
 	TMap<XrViewConfigurationType, TArray<FOpenXRLocateViewsPacket>> ViewLocations;
 
-	TMap<XrPath, FString> PathToStringMap;
-	TMap<FString, TArray<XrActionSuggestedBinding>> StringToSuggestedBindingsMap;
+	TMap<XrPath, FName> PathToStringMap;
+	TMap<FName, TArray<XrActionSuggestedBinding>> StringToSuggestedBindingsMap;
 
 	TArray<FOpenXRCreateActionPacket> CreatedActions;
 

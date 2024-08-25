@@ -12,10 +12,6 @@
 #include "Misc/EnumRange.h"
 #include "UObject/ConstructorHelpers.h"
 
-#if WITH_EDITOR
-#include "IDisplayClusterLightCardExtenderModule.h"
-#endif
-
 ENUM_RANGE_BY_COUNT(EColorCorrectWindowType, EColorCorrectWindowType::MAX)
 
 AColorCorrectionWindow::AColorCorrectionWindow(const FObjectInitializer& ObjectInitializer)
@@ -50,30 +46,16 @@ AColorCorrectionWindow::AColorCorrectionWindow(const FObjectInitializer& ObjectI
 		MeshComponent->CastShadow = false;
 		MeshComponent->SetHiddenInGame(true);
 	}
-	SetMeshVisibilityForWindowType();
+
+	ChangeShapeVisibilityForActorType();
 
 #if WITH_METADATA
 	CreateIcon();
-#endif
-
-#if WITH_EDITOR
-	if (!IsTemplate())
-	{
-		IDisplayClusterLightCardExtenderModule& LightCardExtenderModule = IDisplayClusterLightCardExtenderModule::Get();
-		LightCardExtenderModule.GetOnSequencerTimeChanged().AddUObject(this, &AColorCorrectionWindow::OnSequencerTimeChanged);
-	}
 #endif
 }
 
 AColorCorrectionWindow::~AColorCorrectionWindow()
 {
-#if WITH_EDITOR
-	if (!IsTemplate())
-	{
-		IDisplayClusterLightCardExtenderModule& LightCardExtenderModule = IDisplayClusterLightCardExtenderModule::Get();
-		LightCardExtenderModule.GetOnSequencerTimeChanged().RemoveAll(this);
-	}
-#endif
 }
 
 #if WITH_EDITOR
@@ -83,52 +65,20 @@ void AColorCorrectionWindow::PostEditChangeProperty(struct FPropertyChangedEvent
 
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(AColorCorrectionWindow, WindowType))
 	{
-		SetMeshVisibilityForWindowType();
-	}
-	else
-	{
-		const FStructProperty* StructProperty = CastField<FStructProperty>(PropertyChangedEvent.MemberProperty);
-		const bool bIsOrientation = StructProperty ? StructProperty->Struct == FDisplayClusterPositionalParams::StaticStruct() : false;
-	
-		if (bIsOrientation)
-		{
-			UpdateStageActorTransform();
-			// Updates MU in real-time. Skip our method as the positional coordinates are already correct.
-			AActor::PostEditMove(PropertyChangedEvent.ChangeType != EPropertyChangeType::Interactive);
-		}
-		else if (
-			PropertyName == USceneComponent::GetRelativeLocationPropertyName() ||
-			PropertyName == USceneComponent::GetRelativeRotationPropertyName() ||
-			PropertyName == USceneComponent::GetRelativeScale3DPropertyName())
-		{
-			bNotifyOnParamSetter = false;
-			UpdatePositionalParamsFromTransform();
-			bNotifyOnParamSetter = true;
-		}
+		ChangeShapeVisibilityForActorType();
 	}
 
-	// Call after stage actor transform is updated, so any observers will have both the correct actor transform and
-	// positional properties.
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 }
 
 void AColorCorrectionWindow::PostEditMove(bool bFinished)
 {
 	Super::PostEditMove(bFinished);
-
-	bNotifyOnParamSetter = false;
-	UpdatePositionalParamsFromTransform();
-	bNotifyOnParamSetter = true;
 }
 
 FName AColorCorrectionWindow::GetCustomIconName() const
 {
 	return TEXT("CCW.OutlinerThumbnail");
-}
-
-void AColorCorrectionWindow::OnSequencerTimeChanged(TWeakPtr<ISequencer> InSequencer)
-{
-	UpdatePositionalParamsFromTransform();
 }
 
 #endif //WITH_EDITOR
@@ -178,168 +128,20 @@ void AColorCorrectionWindow::CreateIcon()
 }
 #endif 
 
-void AColorCorrectionWindow::SetMeshVisibilityForWindowType()
+void AColorCorrectionWindow::ChangeShapeVisibilityForActorType()
 {
-	for (EColorCorrectWindowType CCWType : TEnumRange<EColorCorrectWindowType>())
-	{
-		uint8 TypeIndex = static_cast<uint8>(CCWType);
-
-		if (CCWType == WindowType)
-		{
-			MeshComponents[TypeIndex]->SetVisibility(true, true);
-		}
-		else
-		{
-			MeshComponents[TypeIndex]->SetVisibility(false, true);
-		}
-	}
+	ChangeShapeVisibilityForActorTypeInternal<EColorCorrectWindowType>(WindowType);
 }
 
-#define NOTIFY_PARAM_SETTER()\
-	if (bNotifyOnParamSetter)\
-	{\
-		UpdateStageActorTransform();\
-	}\
-
-void AColorCorrectionWindow::SetLongitude(double InValue)
+#if WITH_EDITOR
+void AColorCorrectionWindow::FixMeshComponentReferences()
 {
-	PositionalParams.Longitude = InValue;
-	NOTIFY_PARAM_SETTER()
+	FixMeshComponentReferencesInternal<EColorCorrectWindowType>(WindowType);
 }
-
-double AColorCorrectionWindow::GetLongitude() const
-{
-	return PositionalParams.Longitude;
-}
-
-void AColorCorrectionWindow::SetLatitude(double InValue)
-{
-	PositionalParams.Latitude = InValue;
-	NOTIFY_PARAM_SETTER()
-}
-
-double AColorCorrectionWindow::GetLatitude() const
-{
-	return PositionalParams.Latitude;
-}
-
-void AColorCorrectionWindow::SetDistanceFromCenter(double InValue)
-{
-	PositionalParams.DistanceFromCenter = InValue;
-	NOTIFY_PARAM_SETTER()
-}
-
-double AColorCorrectionWindow::GetDistanceFromCenter() const
-{
-	return PositionalParams.DistanceFromCenter;
-}
-
-void AColorCorrectionWindow::SetSpin(double InValue)
-{
-	PositionalParams.Spin = InValue;
-	NOTIFY_PARAM_SETTER()
-}
-
-double AColorCorrectionWindow::GetSpin() const
-{
-	return PositionalParams.Spin;
-}
-
-void AColorCorrectionWindow::SetPitch(double InValue)
-{
-	PositionalParams.Pitch = InValue;
-	NOTIFY_PARAM_SETTER()
-}
-
-double AColorCorrectionWindow::GetPitch() const
-{
-	return PositionalParams.Pitch;
-}
-
-void AColorCorrectionWindow::SetYaw(double InValue)
-{
-	PositionalParams.Yaw = InValue;
-	NOTIFY_PARAM_SETTER()
-}
-
-double AColorCorrectionWindow::GetYaw() const
-{
-	return PositionalParams.Yaw;
-}
-
-void AColorCorrectionWindow::SetRadialOffset(double InValue)
-{
-	PositionalParams.RadialOffset = InValue;
-	NOTIFY_PARAM_SETTER()
-}
-
-double AColorCorrectionWindow::GetRadialOffset() const
-{
-	return PositionalParams.RadialOffset;
-}
-
-void AColorCorrectionWindow::SetScale(const FVector2D& InScale)
-{
-	PositionalParams.Scale = InScale;
-	NOTIFY_PARAM_SETTER()
-}
-
-FVector2D AColorCorrectionWindow::GetScale() const
-{
-	return PositionalParams.Scale;
-}
-
-void AColorCorrectionWindow::SetOrigin(const FTransform& InOrigin)
-{
-	Origin = InOrigin;
-}
-
-FTransform AColorCorrectionWindow::GetOrigin() const
-{
-	return Origin;
-}
-
-void AColorCorrectionWindow::SetPositionalParams(const FDisplayClusterPositionalParams& InParams)
-{
-	PositionalParams = InParams;
-	NOTIFY_PARAM_SETTER()
-}
-
-FDisplayClusterPositionalParams AColorCorrectionWindow::GetPositionalParams() const
-{
-	return PositionalParams;
-}
+#endif
 
 ADEPRECATED_ColorCorrectWindow::ADEPRECATED_ColorCorrectWindow(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 
 }
-
-void AColorCorrectionWindow::GetPositionalProperties(FPositionalPropertyArray& OutPropertyPairs) const
-{
-	void* Container = (void*)(&PositionalParams);
-
-	const TSet<FName>& PropertyNames = GetPositionalPropertyNames();
-	OutPropertyPairs.Reserve(PropertyNames.Num());
-
-	for (const FName& PropertyName : PropertyNames)
-	{
-		if (FProperty* Property = FindFProperty<FProperty>(FDisplayClusterPositionalParams::StaticStruct(), PropertyName))
-		{
-			OutPropertyPairs.Emplace(Container, Property);
-		}
-	}
-
-	if (FStructProperty* ParamsProperty = FindFProperty<FStructProperty>(GetClass(), GET_MEMBER_NAME_CHECKED(AColorCorrectionWindow, PositionalParams)))
-	{
-		OutPropertyPairs.Emplace((void*)this, ParamsProperty);
-	}
-}
-
-FName AColorCorrectionWindow::GetPositionalPropertiesMemberName() const
-{
-	return GET_MEMBER_NAME_CHECKED(AColorCorrectionWindow, PositionalParams);
-}
-
-#undef NOTIFY_PARAM_SETTER

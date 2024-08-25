@@ -69,6 +69,14 @@ public:
 	 */
 	virtual void Tick(float DeltaTime, float ModelWeight);
 
+	/** 
+	 * Executed at the end of the tick. This is always executed when Tick is called, also if the model weight is 0 etc. 
+	 * When the model weight is tiny or setting the inputs failed, the Execute function wasn't called during Tick.
+	 * The parameter that is passed to this method will let you know whether Execute got called or not.
+	 * @param bExecuteCalled This is true when we called Execute, otherwise it is false.
+	 */
+	virtual void PostTick(bool bExecuteCalled) {}
+
 	/**
 	 * Check whether the deformer is compatible with a given skeletal mesh component.
 	 * This internally also edits the value returned by GetCompatibilityErrorText().
@@ -86,6 +94,25 @@ public:
 	 * @return Returns true if the data provider in would be in a valid state, otherwise false is returned.
 	 */
 	virtual bool IsValidForDataProvider() const;
+
+#if WITH_EDITOR
+	/**
+	 * Copy over data from the debug actor, if any is used.
+	 * You can get the debug actor using UMLDeformerComponent::GetDebugActor().
+	 * This should make calls to the CopyDataFromDebugActor, which takes the actor pointer and ML Deformer component as parameters.
+	 * Compatibility checks between the debug actor and the current model instance should be done inside this method.
+	 * This could for example copy over morph target weights etc.
+	 */
+	virtual void CopyDataFromCurrentDebugActor();
+
+	/**
+	 * Copy data from a specific debug actor.
+	 * This method already assumes DebugActor and MLDeformerComponent are compatible with the current model instance.
+	 * @param DebugActor The debug actor object to copy data from.
+	 * @param DebugMLDeformerComponent The debug ML Deformer component to copy data from.
+	 */
+	virtual void CopyDataFromDebugActor(const AActor* DebugActor, const UMLDeformerComponent* DebugMLDeformerComponent) {}
+#endif
 
 	/**
 	 * Is the deformer asset used compatible with the skeletal mesh component used during the Init call?
@@ -133,6 +160,14 @@ public:
 	 */
 	UMLDeformerComponent* GetMLDeformerComponent() const;
 
+	/**
+	 * Get the skeletal mesh component to get transforms from etc.
+	 * If we are debugging this will return the debugged skeletal mesh component, otherwise the skel mesh component
+	 * of our own actor is returned.
+	 * @return The skeletal mesh component to grab input data from.
+	 */
+	USkeletalMeshComponent* GetFinalSkeletalMeshComponent() const;
+
 protected:
 	/**
 	 * Update the neural network input values directly inside its input tensor.
@@ -169,12 +204,6 @@ protected:
 	 * Instead, this method is called in that case. It can be used to for example set morph target weights to zero.
 	 */
 	virtual void HandleZeroModelWeight() {}
-
-	/**
-	 * Get the current component space bone transforms that we grabbed from the skeletal mesh component.
-	 * @return The cached bone transforms, in component space.
-	 */
-	const TArray<FTransform>& GetBoneTransforms() const;
 
 	/**
 	 * Set the bone transformations inside a given output buffer, starting from a given StartIndex.
@@ -220,8 +249,8 @@ protected:
 	/** The cached current local space bone transforms for the current frame. */
 	TArray<FTransform> TrainingBoneTransforms;
 
-	/** A temp array of bone transforms. */
-	TArray<FTransform> BoneTransforms;
+	/** The debug bone space transforms. */
+	TArray<FTransform> DebugBoneSpaceTransforms;
 
 	/** Maps the ML deformer asset bone index to a skeletal mesh component bone index. */
 	TArray<int32> AssetBonesToSkelMeshMappings;

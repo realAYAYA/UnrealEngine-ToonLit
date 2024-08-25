@@ -49,7 +49,6 @@
 void FActorPaletteModule::StartupModule()
 {
 	FActorPaletteStyle::Initialize();
-	FActorPaletteStyle::ReloadTextures();
 
 	FActorPaletteCommands::Register();
 	

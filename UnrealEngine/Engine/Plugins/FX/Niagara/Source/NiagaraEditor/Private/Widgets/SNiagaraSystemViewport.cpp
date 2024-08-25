@@ -7,6 +7,7 @@
 #include "EditorViewportCommands.h"
 #include "EngineUtils.h"
 #include "ImageUtils.h"
+#include "Stateless/NiagaraStatelessEmitter.h"
 #include "NiagaraComponent.h"
 #include "NiagaraEditorCommands.h"
 #include "NiagaraEditorModule.h"
@@ -29,7 +30,6 @@
 #include "Engine/Canvas.h"
 #include "Engine/Font.h"
 #include "Engine/TextureCube.h"
-#include "Serialization/ArchiveCountMem.h"
 #include "Slate/SceneViewport.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -69,6 +69,7 @@ public:
 	void DrawEmitterExecutionOrder(UNiagaraComponent* Component, FCanvas* Canvas, float& CurrentX, float& CurrentY, UFont* Font, const float FontHeight);
 	void DrawGpuTickInformation(UNiagaraComponent* Component, FCanvas* Canvas, float& CurrentX, float& CurrentY, UFont* Font, const float FontHeight);
 	void DrawMemoryInfo(UNiagaraComponent* Component, FCanvas* Canvas, float& CurrentX, float& CurrentY, UFont* Font, const float FontHeight);
+	void DrawStatelessInfo(UNiagaraComponent* Component, FViewport* InViewport, FCanvas* Canvas, UFont* Font, const float FontHeight);
 	void SetUpdateViewportFocus(bool bUpdate) { bUpdateViewportFocus = bUpdate; }
 
 	TWeakPtr<SNiagaraSystemViewport> NiagaraViewportPtr;
@@ -172,7 +173,7 @@ void FNiagaraSystemViewportClient::Draw(FViewport* InViewport, FCanvas* Canvas)
 		}
 
 		UWorld* World = Component->GetWorld();
-		if (World && !ParticleSystem->bFixedBounds)
+		if (World && ParticleSystem && !ParticleSystem->bFixedBounds)
 		{
 			FNiagaraSystemInstance* SystemInstance = SystemInstanceController->GetSystemInstance_Unsafe();
 			const TArray<FNiagaraEmitterHandle>& EmitterHandles = ParticleSystem->GetEmitterHandles();
@@ -187,6 +188,22 @@ void FNiagaraSystemViewportClient::Draw(FViewport* InViewport, FCanvas* Canvas)
 				const FBox EmitterBounds = EmitterInstance.GetBounds();
 				DrawDebugBox(World, EmitterBounds.GetCenter() + Transform.GetLocation(), EmitterBounds.GetExtent(), Transform.GetRotation(), FColor::Green);
 			}
+		}
+	}
+
+	//-TODO:Stateless: Temporary to draw some debug information
+	if (ParticleSystem && Component)
+	{
+		UWorld* World = Component->GetWorld();
+		for (const FNiagaraEmitterHandle& EmitterHandle : ParticleSystem->GetEmitterHandles())
+		{
+			UNiagaraStatelessEmitter* StatelessEmitter = EmitterHandle.GetStatelessEmitter();
+			if (!StatelessEmitter || EmitterHandle.GetEmitterMode() != ENiagaraEmitterMode::Stateless)
+			{
+				continue;
+			}
+
+			StatelessEmitter->DrawModuleDebug(World, Component->GetComponentTransform());
 		}
 	}
 
@@ -235,11 +252,15 @@ void FNiagaraSystemViewportClient::Draw(FViewport* InViewport, FCanvas* Canvas)
 			DrawParticleCounts(Component, Canvas, CurrentX, CurrentY, Font, FontHeight);
 			CurrentY += FontHeight;
 		}
+		if (NiagaraViewport->GetDrawElement(SNiagaraSystemViewport::EDrawElements::StatelessInfo) && Component)
+		{
+			UFont* TinyFont = GEngine->GetTinyFont();
+			DrawStatelessInfo(Component, InViewport, Canvas, TinyFont, TinyFont->GetMaxCharHeight() * 1.1f);
+		}
 	}
 
 	if (bCaptureScreenShot && ScreenShotOwner.IsValid() && OnScreenShotCaptured.IsBound())
 	{
-
 		int32 SrcWidth = InViewport->GetSizeXY().X;
 		int32 SrcHeight = InViewport->GetSizeXY().Y;
 		// Read the contents of the viewport into an array.
@@ -261,6 +282,7 @@ void FNiagaraSystemViewportClient::Draw(FViewport* InViewport, FCanvas* Canvas)
 			UTexture2D* ThumbnailImage = FImageUtils::CreateTexture2D(ScaledWidth, ScaledHeight, ScaledBitmap, ScreenShotOwner.Get(), TEXT("ThumbnailTexture"), RF_NoFlags, Params);
 
 			OnScreenShotCaptured.Execute(ThumbnailImage);
+			NiagaraViewport->GetPreviewComponent()->MarkRenderStateDirty();
 		}
 
 		bCaptureScreenShot = false;
@@ -333,19 +355,23 @@ void FNiagaraSystemViewportClient::DrawParticleCounts(UNiagaraComponent* Compone
 		TextItem.Draw(Canvas);
 		CurrentY += FontHeight;
 
-		for (const TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe>& EmitterInstance : SystemInstance->GetEmitters())
+		for (const FNiagaraEmitterInstanceRef& EmitterInstance : SystemInstance->GetEmitters())
 		{
-			const FName EmitterName = EmitterInstance->GetEmitterHandle().GetName();
+			const FNiagaraEmitterHandle& EmitterHandle = EmitterInstance->GetEmitterHandle();
+			FVersionedNiagaraEmitterData* EmitterData = EmitterHandle.GetEmitterData();
+
+			const FName EmitterName = EmitterHandle.GetName();
 			const int32 CurrentCount = EmitterInstance->GetNumParticles();
-			const int32 MaxCount = EmitterInstance->GetEmitterHandle().GetEmitterData()->GetMaxParticleCountEstimate();
-			const bool IsIsolated = EmitterInstance->GetEmitterHandle().IsIsolated();
-			const bool IsEnabled = EmitterInstance->GetEmitterHandle().GetIsEnabled();
+			const int32 MaxCount = EmitterData ? EmitterData->GetMaxParticleCountEstimate() : 0;
+			const bool IsIsolated = EmitterHandle.IsIsolated();
+			const bool IsEnabled = EmitterHandle.GetIsEnabled();
 			const ENiagaraExecutionState ExecutionState = EmitterInstance->GetExecutionState();
 			const FString EmitterExecutionString = UEnum::GetValueAsString(ExecutionState);
 			const int32 EmitterExecutionStringValueIndex = EmitterExecutionString.Find(TEXT("::"));
 			const TCHAR* EmitterExecutionText = EmitterExecutionStringValueIndex == INDEX_NONE ? *EmitterExecutionString : *EmitterExecutionString + EmitterExecutionStringValueIndex + 2;
+			const TCHAR* EmitterMode = EmitterHandle.GetEmitterMode() == ENiagaraEmitterMode::Stateless ? TEXT("[Lightweight]") : TEXT("");
 
-			TextItem.Text = FText::FromString(FString::Printf(TEXT("%i Current, %i Max (est.) - [%s] [%s]"), CurrentCount, MaxCount, *EmitterName.ToString(), EmitterExecutionText));
+			TextItem.Text = FText::FromString(FString::Printf(TEXT("%i Current, %i Max (est.) - [%s] [%s] %s"), CurrentCount, MaxCount, *EmitterName.ToString(), EmitterExecutionText, EmitterMode));
 			TextItem.Position = FVector2D(CurrentX, CurrentY);
 			TextItem.bOutlined = IsIsolated;
 			TextItem.OutlineColor = FLinearColor(0.7f, 0.0f, 0.0f);
@@ -436,9 +462,9 @@ void FNiagaraSystemViewportClient::DrawGpuTickInformation(UNiagaraComponent* Com
 			Canvas->DrawShadowedString(CurrentX + 5.0f, CurrentY, TEXT("No GPU Emitters"), Font, FLinearColor::White);
 			CurrentY += FontHeight;
 		}
-		if (SystemInstance->RequiresDistanceFieldData())
+		if (SystemInstance->RequiresGlobalDistanceField())
 		{
-			Canvas->DrawShadowedString(CurrentX + 5.0f, CurrentY, TEXT("RequiresDistanceFieldData"), Font, FLinearColor::White);
+			Canvas->DrawShadowedString(CurrentX + 5.0f, CurrentY, TEXT("RequiresGlobalDistanceField"), Font, FLinearColor::White);
 			CurrentY += FontHeight;
 		}
 		if (SystemInstance->RequiresDepthBuffer())
@@ -511,6 +537,51 @@ void FNiagaraSystemViewportClient::DrawMemoryInfo(UNiagaraComponent* Component, 
 		Font, FLinearColor::White
 	);
 	CurrentY += FontHeight;
+}
+
+void FNiagaraSystemViewportClient::DrawStatelessInfo(UNiagaraComponent* Component, FViewport* InViewport, FCanvas* Canvas, UFont* Font, const float FontHeight)
+{
+	UNiagaraSystem* NiagaraSystem = Component->GetAsset();
+	if (!NiagaraSystem)
+	{
+		return;
+	}
+
+	int32 NumStatelessEmitters = 0;
+	int32 NumEmitters = 0;
+
+	for (const FNiagaraEmitterHandle& EmitterHandle : NiagaraSystem->GetEmitterHandles())
+	{
+		if (EmitterHandle.GetIsEnabled())
+		{
+			++NumEmitters;
+			UNiagaraStatelessEmitter* StatelessEmitter = EmitterHandle.GetEmitterMode() == ENiagaraEmitterMode::Stateless ? EmitterHandle.GetStatelessEmitter() : nullptr;
+			if (StatelessEmitter)
+			{
+				++NumStatelessEmitters;
+			}
+		}
+	}
+
+	if (NumStatelessEmitters > 0)
+	{
+		const FVector2D ScaledViewportSize = FVector2D(InViewport->GetSizeXY()) / Canvas->GetDPIScale();
+		FCanvasTextItem TextItem(FVector2D::ZeroVector, FText::GetEmpty(), Font, FLinearColor::White);
+
+		FString StatelessInfo = FString::Printf(TEXT("Stateless: %d / %d Emitters"), NumStatelessEmitters, NumEmitters);
+		if (NiagaraSystem->SystemStateFastPathEnabled())
+		{
+			StatelessInfo.Append(TEXT(" [FastPath]"));
+		}
+
+		int32 Width = 0;
+		int32 Height = 0;
+		UCanvas::ClippedStrLen(Font, 1.0f, 1.0f, Width, Height, *StatelessInfo);
+
+		TextItem.Text = FText::FromString(StatelessInfo);
+		TextItem.EnableShadow(FLinearColor::Black);
+		TextItem.Draw(Canvas, ScaledViewportSize.X - 5 - float(Width), ScaledViewportSize.Y - 5 - float(Height));
+	}
 }
 
 void FNiagaraSystemViewportClient::SetOrbitModeFromSettings()
@@ -609,6 +680,8 @@ void FNiagaraSystemViewportClient::LoadSharedSettingsFromConfig()
 	FEngineShowFlags EditorShowFlags(ESFIM_Editor);
 	FEngineShowFlags GameShowFlags(ESFIM_Game);
 
+	EditorShowFlags.DisableAdvancedFeatures();
+
 	if(!ViewportSharedSettings.EditorShowFlagsString.IsEmpty())
 	{
 		EditorShowFlags.SetFromString(*ViewportSharedSettings.EditorShowFlagsString);
@@ -685,6 +758,7 @@ void SNiagaraSystemViewport::Construct(const FArguments& InArgs, TSharedRef<FNia
 	DrawFlags |= Settings->IsShowEmitterExecutionOrder() ? EDrawElements::EmitterExecutionOrder : 0;
 	DrawFlags |= Settings->IsShowGpuTickInformation() ? EDrawElements::GpuTickInformation : 0;
 	DrawFlags |= Settings->IsShowMemoryInfo() ? EDrawElements::MemoryInfo : 0;
+	DrawFlags |= Settings->IsShowStatelessInfo() ? EDrawElements::StatelessInfo : 0;
 
 	bShowBackground = false;
 	PreviewComponent = nullptr;
@@ -696,7 +770,7 @@ void SNiagaraSystemViewport::Construct(const FArguments& InArgs, TSharedRef<FNia
 	float Roll = 0.0;
 	AdvancedPreviewScene->SetLightDirection(FRotator(Pitch, Yaw, Roll));
 
-	OnThumbnailCaptured = InArgs._OnThumbnailCaptured;
+	OnThumbnailCapturedDelegate = InArgs._OnThumbnailCaptured;
 	Sequencer = InArgs._Sequencer;
 	
 	SEditorViewport::Construct( SEditorViewport::FArguments() );
@@ -734,10 +808,23 @@ SNiagaraSystemViewport::~SNiagaraSystemViewport()
 	}
 }
 
-void SNiagaraSystemViewport::CreateThumbnail(UObject* InScreenShotOwner)
+void SNiagaraSystemViewport::CreateThumbnail(UObject* InScreenShotOwner, TOptional<FGuid> InEmitterToCaptureThumbnailFor)
 {
 	if (SystemViewportClient.IsValid() && PreviewComponent != nullptr)
 	{
+		PreviewComponent->MarkRenderStateDirty();
+
+		// If we want to capture the thumbnail for a specific emitter in a system, we make sure isolation state is correctly handled
+		if(InEmitterToCaptureThumbnailFor.IsSet() && SystemViewModel.IsValid() && SystemViewModel.Pin()->GetEditMode() == ENiagaraSystemViewModelEditMode::SystemAsset)
+		{
+			if(TSharedPtr<FNiagaraEmitterHandleViewModel> EditableEmitterHandleViewModel = SystemViewModel.Pin()->GetEmitterHandleViewModelById(InEmitterToCaptureThumbnailFor.GetValue()))
+			{
+				SystemViewModel.Pin()->CacheIsolatedEmitterState();
+				EditableEmitterHandleViewModel->SetIsIsolated(true);
+			}
+		}
+		
+		EmitterToCaptureThumbnailFor = InEmitterToCaptureThumbnailFor;
 		SystemViewportClient->bCaptureScreenShot = true;
 		SystemViewportClient->ScreenShotOwner = InScreenShotOwner;
 	}
@@ -824,7 +911,6 @@ void SNiagaraSystemViewport::Tick( const FGeometry& AllottedGeometry, const doub
 	{
 		const float MotionTime = PreviewComponent->GetDesiredAge();
 
-		UWorld* World = GetWorld();
 		FVector Location;
 		Location.X = MotionRadius * FMath::Sin(FMath::DegreesToRadians(MotionRate) * MotionTime);
 		Location.Y = 0.0f;
@@ -879,7 +965,8 @@ bool SNiagaraSystemViewport::IsVisible() const
 
 void SNiagaraSystemViewport::OnScreenShotCaptured(UTexture2D* ScreenShot)
 {
-	OnThumbnailCaptured.ExecuteIfBound(ScreenShot);
+	OnThumbnailCapturedDelegate.ExecuteIfBound(ScreenShot, EmitterToCaptureThumbnailFor);
+	EmitterToCaptureThumbnailFor.Reset();
 }
 
 void SNiagaraSystemViewport::BindCommands()
@@ -959,6 +1046,18 @@ void SNiagaraSystemViewport::BindCommands()
 		}),
 		FCanExecuteAction(),
 		FIsActionChecked::CreateLambda([Viewport = this]() -> bool { return Viewport->GetDrawElement(EDrawElements::MemoryInfo); })
+	);
+
+	CommandList->MapAction(
+		Commands.ToggleStatelessInfo,
+		FExecuteAction::CreateLambda([Viewport = this]()
+		{
+			Viewport->ToggleDrawElement(EDrawElements::StatelessInfo);
+			GetMutableDefault<UNiagaraEditorSettings>()->SetShowStatelessInfo(Viewport->GetDrawElement(EDrawElements::StatelessInfo));
+			Viewport->RefreshViewport();
+		}),
+		FCanExecuteAction(),
+		FIsActionChecked::CreateLambda([Viewport = this]() -> bool { return Viewport->GetDrawElement(EDrawElements::StatelessInfo); })
 	);
 
 	CommandList->MapAction(
@@ -1181,7 +1280,7 @@ void FNiagaraBaselineViewportClient::Tick(float DeltaSeconds)
 
 	if (UWorld* World = PreviewScene->GetWorld())
 	{
-		if (!World->bBegunPlay)
+		if (!World->GetBegunPlay())
 		{
 			for (FActorIterator It(World); It; ++It)
 			{
@@ -1190,7 +1289,7 @@ void FNiagaraBaselineViewportClient::Tick(float DeltaSeconds)
 					It->DispatchBeginPlay();
 				}
 			}
-			World->bBegunPlay = true;
+			World->SetBegunPlay(true);
 
 			// Simulate behavior from GameEngine.cpp
 			World->bWorldWasLoadedThisTick = false;
@@ -1254,11 +1353,6 @@ SNiagaraBaselineViewport::~SNiagaraBaselineViewport()
 	{
 		SystemViewportClient->Viewport = NULL;
 	}
-}
-
-void SNiagaraBaselineViewport::AddReferencedObjects( FReferenceCollector& Collector )
-{
-
 }
 
 void SNiagaraBaselineViewport::RefreshViewport()

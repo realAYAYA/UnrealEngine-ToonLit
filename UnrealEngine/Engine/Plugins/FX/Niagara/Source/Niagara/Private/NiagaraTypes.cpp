@@ -58,7 +58,7 @@ bool FNiagaraVariableBase::ReplaceRootNamespace(const FStringView& ExpectedNames
 
 bool FNiagaraVariableBase::SerializeFromMismatchedTag(const struct FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == FNiagaraVariable::StaticStruct()->GetFName())
+	if (Tag.GetType().IsStruct(FNiagaraVariable::StaticStruct()->GetFName()))
 	{
 		FNiagaraVariable Var;
 		FNiagaraVariable::StaticStruct()->SerializeItem(Slot, &Var, nullptr);
@@ -68,18 +68,6 @@ bool FNiagaraVariableBase::SerializeFromMismatchedTag(const struct FPropertyTag&
 		return true;
 	}
 	return false;
-}
-
-void FNiagaraVariableMetaData::CopyUserEditableMetaData(const FNiagaraVariableMetaData& OtherMetaData)
-{
-	for (const FProperty* ChildProperty : TFieldRange<FProperty>(StaticStruct()))
-	{
-		if (ChildProperty->HasAnyPropertyFlags(CPF_Edit))
-		{
-			int32 PropertyOffset = ChildProperty->GetOffset_ForInternal();
-			ChildProperty->CopyCompleteValue((uint8*)this + PropertyOffset, (uint8*)&OtherMetaData + PropertyOffset);
-		};
-	}
 }
 
 FVersionedNiagaraEmitterData* FVersionedNiagaraEmitter::GetEmitterData() const
@@ -307,6 +295,8 @@ FNiagaraTypeDefinition FNiagaraTypeHelper::Vector2DDef;
 FNiagaraTypeDefinition FNiagaraTypeHelper::VectorDef;
 FNiagaraTypeDefinition FNiagaraTypeHelper::Vector4Def;
 FNiagaraTypeDefinition FNiagaraTypeHelper::QuatDef;
+FNiagaraTypeDefinition FNiagaraTypeHelper::DoubleDef;
+FString FNiagaraTypeHelper::ConvertedSWCStructSuffix = TEXT("_SWC");
 
 FRWLock FNiagaraTypeHelper::RemapTableLock;
 TMap<TWeakObjectPtr<UScriptStruct>, FNiagaraTypeHelper::FRemapEntry> FNiagaraTypeHelper::RemapTable;
@@ -317,21 +307,21 @@ FString FNiagaraTypeHelper::ToString(const uint8* ValueData, const UObject* Stru
 	FString Ret;
 	if (const UEnum* Enum = Cast<const UEnum>(StructOrEnum))
 	{
-		Ret = Enum->GetNameStringByValue(*(int32*)ValueData);
+		Ret = Enum->GetNameStringByValue(*reinterpret_cast<const int32*>(ValueData));
 	}
 	else if (const UScriptStruct* Struct = Cast<const UScriptStruct>(StructOrEnum))
 	{
 		if (Struct == FNiagaraTypeDefinition::GetFloatStruct())
 		{
-			Ret += FString::Printf(TEXT("%g "), *(float*)ValueData);
+			Ret += FString::Printf(TEXT("%g "), *reinterpret_cast<const float*>(ValueData));
 		}
 		else if (Struct == FNiagaraTypeDefinition::GetIntStruct())
 		{
-			Ret += FString::Printf(TEXT("%d "), *(int32*)ValueData);
+			Ret += FString::Printf(TEXT("%d "), *reinterpret_cast<const int32*>(ValueData));
 		}
 		else if (Struct == FNiagaraTypeDefinition::GetBoolStruct())
 		{
-			int32 Val = *(int32*)ValueData;
+			int32 Val = *reinterpret_cast<const int32*>(ValueData);
 			Ret += Val == 0xFFFFFFFF ? (TEXT("True")) : (Val == 0x0 ? TEXT("False") : TEXT("Invalid"));
 		}
 		else
@@ -342,26 +332,26 @@ FString FNiagaraTypeHelper::ToString(const uint8* ValueData, const UObject* Stru
 				const uint8* PropPtr = ValueData + PropertyIt->GetOffset_ForInternal();
 				if (Property->IsA(FFloatProperty::StaticClass()))
 				{
-					Ret += FString::Printf(TEXT("%s: %g "), *Property->GetNameCPP(), *(float*)PropPtr);
+					Ret += FString::Printf(TEXT("%s: %g "), *Property->GetNameCPP(), *reinterpret_cast<const float*>(PropPtr));
 				}
 				else if (Property->IsA(FDoubleProperty::StaticClass()))
 				{
-					Ret += FString::Printf(TEXT("%s: %g "), *Property->GetNameCPP(), *(double*)PropPtr);
+					Ret += FString::Printf(TEXT("%s: %g "), *Property->GetNameCPP(), *reinterpret_cast<const double*>(PropPtr));
 				}
 				else if (Property->IsA(FUInt16Property::StaticClass()))
 				{
-					FFloat16 Val = *(FFloat16*)PropPtr;
+					FFloat16 Val = *reinterpret_cast<const FFloat16*>(PropPtr);
 					Ret += FString::Printf(TEXT("%s: %f "), *Property->GetNameCPP(), Val.GetFloat());
 				}
 				else if (Property->IsA(FIntProperty::StaticClass()))
 				{
-					Ret += FString::Printf(TEXT("%s: %d "), *Property->GetNameCPP(), *(int32*)PropPtr);
+					Ret += FString::Printf(TEXT("%s: %d "), *Property->GetNameCPP(), *reinterpret_cast<const int32*>(PropPtr));
 				}
 				else if (Property->IsA(FBoolProperty::StaticClass()))
 				{
-					int32 Val = *(int32*)ValueData;
+					int32 Val = *reinterpret_cast<const int32*>(ValueData);
 					FString BoolStr = Val == 0xFFFFFFFF ? (TEXT("True")) : (Val == 0x0 ? TEXT("False") : TEXT("Invalid"));
-					Ret += FString::Printf(TEXT("%s: %d "), *Property->GetNameCPP(), *BoolStr);
+					Ret += FString::Printf(TEXT("%s: %s "), *Property->GetNameCPP(), *BoolStr);
 				}
 				else if (const FStructProperty* StructProp = CastFieldChecked<const FStructProperty>(Property))
 				{
@@ -380,11 +370,10 @@ FString FNiagaraTypeHelper::ToString(const uint8* ValueData, const UObject* Stru
 
 FNiagaraLwcStructConverter BuildSWCStructure(UScriptStruct* NewStruct, UScriptStruct* InStruct)
 {
-	static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
-	static UScriptStruct* Vector2fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector2f"));
-	static UScriptStruct* Vector3fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector3f"));
-	static UScriptStruct* Vector4fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector4f"));
-	static UScriptStruct* Quat4fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Quat4f"));
+	static UScriptStruct* Vector2fStruct = FNiagaraTypeDefinition::GetVec2Struct();
+	static UScriptStruct* Vector3fStruct = FNiagaraTypeDefinition::GetVec3Struct();
+	static UScriptStruct* Vector4fStruct = FNiagaraTypeDefinition::GetVec4Struct();
+	static UScriptStruct* Quat4fStruct = FNiagaraTypeDefinition::GetQuatStruct();
 
 	FNiagaraLwcStructConverter StructConverter;
 	int32 AlignedOffset = 0;
@@ -481,7 +470,7 @@ FNiagaraLwcStructConverter BuildSWCStructure(UScriptStruct* NewStruct, UScriptSt
 	return StructConverter;
 }
 
-bool FNiagaraTypeHelper::IsLWCStructure(UStruct* InStruct)
+bool FNiagaraTypeHelper::IsLWCStructure(const UStruct* InStruct)
 {
 	for (const FField* ChildProperty = InStruct->ChildProperties; ChildProperty; ChildProperty = ChildProperty->Next)
 	{
@@ -496,6 +485,30 @@ bool FNiagaraTypeHelper::IsLWCStructure(UStruct* InStruct)
 				 (StructName == NAME_Vector3d) || (StructName == NAME_Vector) ||
 				 (StructName == NAME_Vector4d) || (StructName == NAME_Vector4) ||
 				 (StructName == NAME_Quat4d) || (StructName == NAME_Quat) )
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool FNiagaraTypeHelper::IsConvertedSWCStructure(const UStruct* InStruct)
+{
+	if (InStruct)
+	{
+		FNameBuilder StructName(InStruct->GetFName());
+		if (!StructName.ToView().EndsWith(ConvertedSWCStructSuffix))
+		{
+			return false;
+		}
+	}
+
+	{
+		FReadScopeLock ReadLock(RemapTableLock);
+		for (auto It = RemapTable.CreateConstIterator(); It; ++It)
+		{
+			if (It->Value.Struct.Get() == InStruct)
 			{
 				return true;
 			}
@@ -565,39 +578,30 @@ UScriptStruct* FNiagaraTypeHelper::GetSWCStruct(UScriptStruct* LWCStruct)
 			if (IsLWCStructure(LWCStruct))
 			{
 				//Return common SWC variant of common LWC Types.
-				static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
-				static UScriptStruct* Vector2Struct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector2D"));
-				static UScriptStruct* Vector3Struct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector"));
-				static UScriptStruct* Vector4Struct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector4"));
-				static UScriptStruct* QuatStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Quat"));
-				if(LWCStruct == FNiagaraDouble::StaticStruct())
+				if (LWCStruct == FNiagaraDouble::StaticStruct())
 				{
 					SWCStruct = FNiagaraFloat::StaticStruct();
 				}
-				else if(LWCStruct == Vector2Struct) 
+				else if(LWCStruct == GetVector2DDef().GetStruct()) 
 				{
-					static UScriptStruct* Vector2fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector2f"));
-					SWCStruct = Vector2fStruct;
+					SWCStruct = FNiagaraTypeDefinition::GetVec2Struct();
 				}
-				else if (LWCStruct == Vector3Struct)
+				else if (LWCStruct == GetVectorDef().GetStruct())
 				{
-					static UScriptStruct* Vector3fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector3f"));
-					SWCStruct = Vector3fStruct;
+					SWCStruct = FNiagaraTypeDefinition::GetVec3Struct();
 				}
-				else if (LWCStruct == Vector4Struct)
+				else if (LWCStruct == GetVector4Def().GetStruct())
 				{
-					static UScriptStruct* Vector4fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector4f"));
-					SWCStruct = Vector4fStruct;
+					SWCStruct = FNiagaraTypeDefinition::GetVec4Struct();
 				}
-				else if (LWCStruct == QuatStruct)
+				else if (LWCStruct == GetQuatDef().GetStruct())
 				{
-					static UScriptStruct* Quat4fStruct = FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Quat4f"));
-					SWCStruct = Quat4fStruct;
+					SWCStruct = FNiagaraTypeDefinition::GetQuatStruct();
 				}
 				//More?
 				else
 				{
-					FName SWCName = FName(LWCStruct->GetName() + TEXT("_SWC"));
+					FName SWCName = FName(LWCStruct->GetName() + ConvertedSWCStructSuffix);
 
 					//check if the remap table contains a previous entry for that struct. This might happen when the lwc struct was changed at runtime.
 					// In that case we want to reuse the existing swc struct object, since it might already be referenced by compile results.
@@ -630,7 +634,7 @@ UScriptStruct* FNiagaraTypeHelper::GetSWCStruct(UScriptStruct* LWCStruct)
 			{
 				SWCStruct = LWCStruct;
 			}
-			FRemapEntry& RemapEntry = RemapTable.Add(LWCStruct);
+			FRemapEntry& RemapEntry = RemapTable.Add(TWeakObjectPtr<UScriptStruct>(LWCStruct));
 			RemapEntry.Struct = SWCStruct;
 		#if WITH_EDITORONLY_DATA
 			RemapEntry.SerialNumber = LWCStruct->FieldPathSerialNumber;
@@ -682,9 +686,10 @@ FNiagaraTypeDefinition FNiagaraTypeHelper::GetLWCType(const FNiagaraTypeDefiniti
 		return InType;
 	}
 
+	InitLWCTypes();
 	if(InType == FNiagaraTypeDefinition::GetFloatDef())
 	{
-		return FNiagaraTypeDefinition(FNiagaraDouble::StaticStruct(), FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+		return DoubleDef;
 	}
 	else if (InType == FNiagaraTypeDefinition::GetVec2Def())
 	{
@@ -716,7 +721,7 @@ FNiagaraTypeDefinition FNiagaraTypeHelper::GetLWCType(const FNiagaraTypeDefiniti
 	return InType;
 }
 
-void FNiagaraTypeHelper::InitStaticTypes()
+void FNiagaraTypeHelper::InitLWCTypes()
 {
 	if (Vector2DDef.IsValid() == false)
 	{
@@ -725,27 +730,47 @@ void FNiagaraTypeHelper::InitStaticTypes()
 		VectorDef = FNiagaraTypeDefinition(FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector")), FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
 		Vector4Def = FNiagaraTypeDefinition(FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Vector4")), FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
 		QuatDef = FNiagaraTypeDefinition(FindObjectChecked<UScriptStruct>(CoreUObjectPkg, TEXT("Quat")), FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
+		DoubleDef = FNiagaraTypeDefinition(FNiagaraDouble::StaticStruct(), FNiagaraTypeDefinition::EAllowUnfriendlyStruct::Allow);
 	}
+}
+
+void FNiagaraTypeHelper::RegisterLWCTypes()
+{
+	FNiagaraTypeRegistry::Register(Vector2DDef, ENiagaraTypeRegistryFlags::None);
+	FNiagaraTypeRegistry::Register(VectorDef, ENiagaraTypeRegistryFlags::None);
+	FNiagaraTypeRegistry::Register(Vector4Def, ENiagaraTypeRegistryFlags::None);
+	FNiagaraTypeRegistry::Register(QuatDef, ENiagaraTypeRegistryFlags::None);
+	FNiagaraTypeRegistry::Register(DoubleDef, ENiagaraTypeRegistryFlags::None);
 }
 
 FNiagaraTypeDefinition FNiagaraTypeHelper::GetVector2DDef()
 {
+	InitLWCTypes();
 	return Vector2DDef;
 }
 
 FNiagaraTypeDefinition FNiagaraTypeHelper::GetVectorDef()
 {
+	InitLWCTypes();
 	return VectorDef;
 }
 
 FNiagaraTypeDefinition FNiagaraTypeHelper::GetVector4Def()
 {
+	InitLWCTypes();
 	return Vector4Def;
 }
 
 FNiagaraTypeDefinition FNiagaraTypeHelper::GetQuatDef()
 {
+	InitLWCTypes();
 	return QuatDef;
+}
+
+FNiagaraTypeDefinition FNiagaraTypeHelper::GetDoubleDef()
+{
+	InitLWCTypes();
+	return DoubleDef;
 }
 
 UScriptStruct* FNiagaraTypeHelper::FindNiagaraFriendlyTopLevelStruct(UScriptStruct* InStruct, ENiagaraStructConversion StructConversion)

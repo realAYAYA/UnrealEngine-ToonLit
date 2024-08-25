@@ -136,9 +136,8 @@ void FCbWriter::BeginField()
 	}
 	else
 	{
-		checkf((State.Flags & EStateFlags::Name) == EStateFlags::Name,
-			TEXT("A new field cannot be written until the previous field '%.*hs' is finished."),
-			GetActiveName().Len(), GetActiveName().GetData());
+		checkf((State.Flags & EStateFlags::Name) == EStateFlags::Name, 
+			TEXT("A new field cannot be written until the previous field '%s' is finished."), *WriteToString<64>(GetActiveName()));
 	}
 }
 
@@ -174,13 +173,12 @@ FCbWriter& FCbWriter::SetName(const FUtf8StringView Name)
 {
 	FState& State = States.Last();
 	checkf((State.Flags & EStateFlags::Array) != EStateFlags::Array,
-		TEXT("It is invalid to write a name for an array field. Name '%.*hs'"), Name.Len(), Name.GetData());
+		TEXT("It is invalid to write a name for an array field. Name '%s'"), *WriteToString<64>(Name));
 	checkf(!Name.IsEmpty(), TEXT("%s"), (State.Flags & EStateFlags::Object) == EStateFlags::Object
 		? TEXT("It is invalid to write an empty name for an object field. Specify a unique non-empty name.")
 		: TEXT("It is invalid to write an empty name for a top-level field. Specify a name or avoid this call."));
 	checkf((State.Flags & (EStateFlags::Name | EStateFlags::Field)) == EStateFlags::None,
-		TEXT("A new field '%.*hs' cannot be written until the previous field '%.*hs' is finished."),
-		Name.Len(), Name.GetData(), GetActiveName().Len(), GetActiveName().GetData());
+		TEXT("A new field '%s' cannot be written until the previous field '%s' is finished."), *WriteToString<64>(Name), *WriteToString<64>(GetActiveName()));
 
 	BeginField();
 	State.Flags |= EStateFlags::Name;
@@ -235,7 +233,7 @@ void FCbWriter::MakeFieldsUniform(const int64 FieldBeginOffset, const int64 Fiel
 	}
 	if (!TargetView.IsEmpty())
 	{
-		Data.RemoveAt(FieldEndOffset - TargetView.GetSize(), TargetView.GetSize(), /*bAllowShrinking*/ false);
+		Data.RemoveAt(FieldEndOffset - TargetView.GetSize(), TargetView.GetSize(), EAllowShrinking::No);
 	}
 }
 
@@ -595,8 +593,7 @@ void FCbWriter::AddCustom(const uint64 TypeId, const FMemoryView Value)
 
 void FCbWriter::AddCustom(const FUtf8StringView TypeName, const FMemoryView Value)
 {
-	checkf(!TypeName.IsEmpty(), TEXT("Field '%.*hs' requires a non-empty type name for its custom type."),
-		GetActiveName().Len(), GetActiveName().GetData());
+	checkf(!TypeName.IsEmpty(), TEXT("Field '%s' requires a non-empty type name for its custom type."), *WriteToString<64>(GetActiveName()));
 
 	BeginField();
 

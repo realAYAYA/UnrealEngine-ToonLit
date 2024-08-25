@@ -7,6 +7,7 @@
 #include "Styling/ISlateStyle.h"
 #include "Styling/SlateStyle.h"
 #include "HAL/LowLevelMemTracker.h"
+#include "RHIFwd.h"
 
 #define HAIRSTRANDSEDITOR_MODULE_NAME TEXT("HairStrandsEditor")
 
@@ -23,11 +24,12 @@ public:
 
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
+	virtual bool SupportsDynamicReloading() override { return false; }
 
-	virtual bool SupportsDynamicReloading() override
-	{
-		return false;
-	}
+	void OnPostEngineInit();
+	void OnPreviewPlatformChanged();
+	void OnPreExit();
+	void OnPreviewFeatureLevelChanged(ERHIFeatureLevel::Type InPreviewFeatureLevel);
 
 	static inline FGroomEditor& Get()
 	{
@@ -56,6 +58,8 @@ private:
 	TSharedPtr<FSlateStyleSet> StyleSet;
 
 	FDelegateHandle TrackEditorBindingHandle;
+	FDelegateHandle PreviewPlatformChangedHandle;
+	FDelegateHandle PreviewFeatureLevelChangedHandle;
 
 public:
 

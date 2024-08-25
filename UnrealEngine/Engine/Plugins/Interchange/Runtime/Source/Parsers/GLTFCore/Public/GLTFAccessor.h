@@ -10,8 +10,15 @@ namespace GLTF
 {
 	struct GLTFCORE_API FBuffer
 	{
-		const uint64 ByteLength;
-		const uint8* Data;
+		uint64 ByteLength;
+		uint8* Data;
+
+		FBuffer()
+			: ByteLength(0)
+			, Data(nullptr)
+		{
+
+		}
 
 		explicit FBuffer(uint64 InByteLength)
 		    : ByteLength(InByteLength)
@@ -29,16 +36,30 @@ namespace GLTF
 			checkSlow(Data);
 			return Data + Offset;
 		}
+
+		void operator=(const FBuffer& InBuffer)
+		{
+			ByteLength = InBuffer.ByteLength;
+			Data = InBuffer.Data;
+		}
 	};
 
 	struct GLTFCORE_API FBufferView
 	{
-		const FBuffer& Buffer;
-		const uint64 ByteOffset;
-		const uint64 ByteLength;
+		FBuffer Buffer;
+		uint64 ByteOffset;
+		uint64 ByteLength;
 		// if zero then accessor elements are tightly packed, i.e., effective stride equals the size of the element
-		const uint32 ByteStride;  // range 4..252
+		uint32 ByteStride;  // range 4..252
 
+		FBufferView()
+			: Buffer()
+			, ByteOffset(0)
+			, ByteLength(0)
+			, ByteStride(0)
+		{
+
+		}
 		explicit FBufferView(const FBuffer& InBuffer, uint64 InOffset, uint64 InLength, uint32 InStride)
 		    : Buffer(InBuffer)
 		    , ByteOffset(InOffset)
@@ -46,6 +67,14 @@ namespace GLTF
 		    , ByteStride(InStride)
 		{
 			// check that view fits completely inside the buffer
+		}
+
+		void operator=(const FBufferView& InBufferView)
+		{
+			Buffer = InBufferView.Buffer;
+			ByteOffset = InBufferView.ByteOffset;
+			ByteLength = InBufferView.ByteLength;
+			ByteStride = InBufferView.ByteStride;
 		}
 
 		bool IsValid() const
@@ -59,19 +88,22 @@ namespace GLTF
 		}
 	};
 
-	struct GLTFCORE_API FVoidBufferView final : FBufferView
+	enum EMeshAttributeType : uint8
 	{
-		FVoidBufferView()
-			: FBufferView(FBuffer(0), 0, 0, 0)
-		{
+		POSITION = 0,
+		NORMAL,
+		TANGENT,
+		TEXCOORD_0, 
+		TEXCOORD_1,
+		COLOR_0,
 
-		}
-		static FVoidBufferView& GetVoidBufferView()
-		{
-			static FVoidBufferView Void;
-			return Void;
-		}
+		JOINTS_0,
+		WEIGHTS_0,
+
+		COUNT,
 	};
+
+	GLTFCORE_API FString ToString(const EMeshAttributeType& Type);
 
 	struct GLTFCORE_API FAccessor
 	{
@@ -113,34 +145,34 @@ namespace GLTF
 			{
 				const int32          Count; //Helper for creating cache, equals to FSparse.Count
 
-				const FBufferView&   BufferView;
+				FBufferView          BufferView;
 				const uint64         ByteOffset;
 				const EComponentType ComponentType;
 
 				FIndices()
 					: Count(0)
-					, BufferView(FVoidBufferView::GetVoidBufferView())
+					, BufferView()
 					, ByteOffset(0)
 					, ComponentType(EComponentType::None)
 				{
 				}
 
-				FIndices(uint32 InCount, const FBufferView& InBufferView, uint64 InByteOffset, EComponentType InComponentType);
+				FIndices(uint32 InCount, FBufferView& InBufferView, uint64 InByteOffset, EComponentType InComponentType);
 			} Indices;
 			
 			//Values:
 			struct FValues
 			{
-				const FBufferView&   BufferView;
+				FBufferView          BufferView;
 				const uint64         ByteOffset;
 				
 				FValues()
-					: BufferView(FVoidBufferView::GetVoidBufferView())
+					: BufferView()
 					, ByteOffset(0)
 				{
 				}
 
-				FValues(const FBufferView& InBufferView, uint64 InByteOffset)
+				FValues(FBufferView& InBufferView, uint64 InByteOffset)
 					: BufferView(InBufferView)
 					, ByteOffset(InByteOffset)
 				{
@@ -156,8 +188,8 @@ namespace GLTF
 			}
 
 			FSparse(uint32 InCount,
-				const FBufferView& InIndicesBufferView, uint64 InIndicesByteOffset, EComponentType InIndicesComponentType,
-				const FBufferView& InValuesBufferView, uint64 InValuesByteOffset)
+				FBufferView& InIndicesBufferView, uint64 InIndicesByteOffset, EComponentType InIndicesComponentType,
+				FBufferView& InValuesBufferView, uint64 InValuesByteOffset)
 				: bHasSparse(true)
 				, Count(InCount)
 				, Indices(InCount, InIndicesBufferView, InIndicesByteOffset, InIndicesComponentType)
@@ -166,94 +198,73 @@ namespace GLTF
 			}
 		};
 
-		const uint32         Count;
-		const EType          Type;
-		const EComponentType ComponentType;
-		const bool           bNormalized;
-		bool                 bQuantized;
-		const FSparse        Sparse;
+		uint32                AccessorIndex; //Index of the Accessor in Asset->Accessors list
 
+		const uint32          Count;
+		const EType           Type;
+		const EComponentType  ComponentType;
+		const bool            bNormalized;
+		bool                  bQuantized;
+		const FSparse         Sparse;
 
-		FAccessor(uint32 InCount, EType InType, EComponentType InComponentType, bool bInNormalized, const FSparse& InSparse);
+		FBufferView           BufferView;
+		uint64                ByteOffset;
+		const uint32          NumberOfComponents;
+		const uint32          ElementSize;
+		const uint32	      ByteStride;
 
-		virtual bool IsValid() const = 0;
-		virtual FMD5Hash GetHash() const = 0;
+		FAccessor();
+		FAccessor(uint32 InAccessorIndex, FBufferView& InBufferView, uint64 InOffset, uint32 InCount, EType InType, EComponentType InCompType, bool bInNormalized, const FSparse& InSparse);
 
-		virtual uint32 GetUnsignedInt(uint32 Index) const;
-		virtual void   GetUnsignedInt16x4(uint32 Index, uint16 Values[4]) const;
+		/**
+		* Compressed Data sets (FAccessor does not have FBufferView at processing of Accessors, as FBufferview will be created with the processing of the KHR_draco_mesh_compression extension)
+		*/
+		FAccessor(uint32 InAccessorIndex, uint32 InCount, EType InType, EComponentType InCompType, bool bInNormalized, const FSparse& InSparse);
 
-		virtual float     GetFloat(uint32 Index) const;
-		virtual FVector2D GetVec2(uint32 Index) const;
-		virtual FVector   GetVec3(uint32 Index) const;
-		virtual FVector4  GetVec4(uint32 Index) const;
-		virtual FMatrix   GetMat4(uint32 Index) const;
+		bool IsValid() const;
+		FMD5Hash GetHash() const;
+
+		uint32       GetUnsignedInt(uint32 Index) const;
+		void         GetUnsignedInt16x4(uint32 Index, uint16 Values[4]) const;
+
+		float        GetFloat(uint32 Index) const;
+		FVector2D    GetVec2(uint32 Index) const;
+		FVector      GetVec3(uint32 Index) const;
+		FVector4     GetVec4(uint32 Index) const;
+		FMatrix      GetMat4(uint32 Index) const;
 
 		void         GetUnsignedIntArray(TArray<uint32>& Buffer) const;
-		virtual void GetUnsignedIntArray(uint32* Buffer) const;
+		void         GetUnsignedIntArray(uint32* Buffer) const;
+
 		void         GetFloatArray(TArray<float>& Buffer) const;
-		virtual void GetFloatArray(float* Buffer) const;
+		void         GetFloatArray(float* Buffer) const;
+
 		void         GetVec2Array(TArray<FVector2f>& Buffer) const;
-		virtual void GetVec2Array(FVector2f* Buffer) const;
+		void         GetVec2Array(FVector2f* Buffer) const;
+
 		void         GetVec3Array(TArray<FVector3f>& Buffer) const;
-		virtual void GetVec3Array(FVector3f* Buffer) const;
+		void         GetVec3Array(FVector3f* Buffer) const;
+
 		///@note Performs axis conversion for vec3s(i.e. from glTF right-handed and Y-up to left-handed and Z-up).
 		void         GetCoordArray(TArray<FVector3f>& Buffer) const;
 		void         GetCoordArray(FVector3f* Buffer) const;
+
 		void         GetVec4Array(TArray<FVector4f>& Buffer) const;
-		virtual void GetVec4Array(FVector4f* Buffer) const;
+		void         GetVec4Array(FVector4f* Buffer) const;
+
 		///@note Performs axis conversion for quaternion(i.e. from glTF right-handed and Y-up to left-handed and Z-up).
 		void         GetQuatArray(TArray<FVector4f>& Buffer) const;
 		void         GetQuatArray(FVector4f* Buffer) const;
+
 		void         GetMat4Array(TArray<FMatrix44f>& Buffer) const;
-		virtual void GetMat4Array(FMatrix44f* Buffer) const;
+		void         GetMat4Array(FMatrix44f* Buffer) const;
 
-		enum class EDataType
-		{
-			Position,
-			Normal,
-			Tangent,
-			Texcoord,
-			Color,
-			Joints,
-			Weights
-		};
-		bool IsValidDataType(EDataType DataType, bool bMorphTargetProperty) const;
-		bool CheckAccessorTypeForDataType(EDataType DataType, bool bMorphTargetProperty) const;
-		bool CheckNonQuantizedComponentTypeForDataType(EDataType DataType, bool bMorphTargetProperty) const;
-		bool CheckQuantizedComponentTypeForDataType(EDataType DataType, bool bMorphTargetProperty) const;
-	};
-
-	struct GLTFCORE_API FValidAccessor final : FAccessor
-	{
-		FValidAccessor(FBufferView& InBufferView, uint64 InOffset, uint32 InCount, EType InType, EComponentType InCompType, bool bInNormalized, const FSparse& InSparse);
-
-		bool IsValid() const override;
-
-		FMD5Hash GetHash() const override;
-
-		uint32 GetUnsignedInt(uint32 Index) const override;
-		void   GetUnsignedInt16x4(uint32 Index, uint16 Values[4]) const override;
-
-		float     GetFloat(uint32 Index) const override;
-		FVector2D GetVec2(uint32 Index) const override;
-		FVector   GetVec3(uint32 Index) const override;
-		FVector4  GetVec4(uint32 Index) const override;
-
-		FMatrix GetMat4(uint32 Index) const override;
-
-		void GetUnsignedIntArray(uint32* Buffer) const override;
-		void GetFloatArray(float* Buffer) const override;
-		void GetVec2Array(FVector2f* Buffer) const override;
-		void GetVec3Array(FVector3f* Buffer) const override;
-		void GetVec4Array(FVector4f* Buffer) const override;
-		void GetMat4Array(FMatrix44f* Buffer) const override;
+		bool IsValidDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const;
+		bool CheckAccessorTypeForDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const;
+		bool CheckNonQuantizedComponentTypeForDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const;
+		bool CheckQuantizedComponentTypeForDataType(EMeshAttributeType MeshAttributeType, bool bMorphTargetProperty) const;
 
 		const uint8* DataAt(uint32 Index) const;
-
-		const FBufferView& BufferView;
-		const uint64       ByteOffset;
-		const uint32       ElementSize;
-		const uint32	   ByteStride;
 
 		//Sparse related helpers:
 		void UpdateUnsignedIntWithSparse(uint32 Index, uint32& Data) const;
@@ -272,74 +283,4 @@ namespace GLTF
 		template<typename ItemType, uint32 ItemElementCount>
 		void UpdateArrayWithSparse(ItemType* Data) const;
 	};
-
-	struct GLTFCORE_API FVoidAccessor final : FAccessor
-	{
-		FVoidAccessor()
-		    : FAccessor(0, EType::Scalar, EComponentType::S8, false, FSparse())
-		{
-		}
-
-		bool IsValid() const override;
-		FMD5Hash GetHash() const override;
-	};
-
-	//
-
-	inline void FAccessor::GetUnsignedIntArray(TArray<uint32>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetUnsignedIntArray(Buffer.GetData());
-	}
-
-	inline void FAccessor::GetFloatArray(TArray<float>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetFloatArray(Buffer.GetData());
-	}
-
-	inline void FAccessor::GetVec2Array(TArray<FVector2f>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetVec2Array(Buffer.GetData());
-	}
-
-	inline void FAccessor::GetVec3Array(TArray<FVector3f>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetVec3Array(Buffer.GetData());
-	}
-
-	inline void FAccessor::GetCoordArray(TArray<FVector3f>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetCoordArray(Buffer.GetData());
-	}
-
-	inline void FAccessor::GetVec4Array(TArray<FVector4f>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetVec4Array(Buffer.GetData());
-	}
-
-	inline void FAccessor::GetQuatArray(TArray<FVector4f>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetQuatArray(Buffer.GetData());
-	}
-
-	inline void FAccessor::GetMat4Array(TArray<FMatrix44f>& Buffer) const
-	{
-		if (IsValid())
-			Buffer.SetNumUninitialized(Count, false);
-		GetMat4Array(Buffer.GetData());
-	}
-
 }  // namespace GLTF

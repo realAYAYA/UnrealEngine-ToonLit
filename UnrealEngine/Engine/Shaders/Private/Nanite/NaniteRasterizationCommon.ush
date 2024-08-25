@@ -8,13 +8,16 @@
 #include "NaniteRasterizer.ush"
 #include "NaniteAttributeDecode.ush"
 #include "../VirtualShadowMaps/VirtualShadowMapPageAccessCommon.ush"
-#include "../VirtualShadowMaps/VirtualShadowMapStaticCaching.ush"
 #include "../VirtualShadowMaps/VirtualShadowMapPageOverlap.ush"
 #include "NaniteWritePixel.ush"
 
 // Material includes
 #include "/Engine/Generated/Material.ush"
 #include "NaniteVertexFactory.ush"
+
+#if NANITE_TESSELLATION
+#include "NaniteTessellation.ush"
+#endif
 
 #ifndef NANITE_TWO_SIDED
 #define NANITE_TWO_SIDED 0
@@ -55,20 +58,29 @@ float3 GetPerspectiveCorrectBarycentrics( float3 C, float3 InvW )
 	return UVW;
 }
 
-FBarycentrics CalculateBarycentrics( FRasterTri Tri, float3 C )
+FBarycentrics CalculateBarycentrics( FRasterTri Tri, float3 C, bool bPerspectiveCorrectDerivatives )
 {
 	FBarycentrics Barycentrics = (FBarycentrics)0;
 
-	const float3 OffsetX	= { -Tri.Edge12.y, -Tri.Edge20.y, -Tri.Edge01.y };
-	const float3 OffsetY	= {  Tri.Edge12.x,  Tri.Edge20.x,  Tri.Edge01.x };
-	const float3 UVW		= GetPerspectiveCorrectBarycentrics( C,				Tri.InvW );
-	const float3 UVW_X		= GetPerspectiveCorrectBarycentrics( C + OffsetX,	Tri.InvW );
-	const float3 UVW_Y		= GetPerspectiveCorrectBarycentrics( C + OffsetY,	Tri.InvW );
+	const float3 UVW		= GetPerspectiveCorrectBarycentrics( C,	Tri.InvW );
+	Barycentrics.Value		= UVW;
 
-	Barycentrics.UVW 	= UVW;
-	Barycentrics.UVW_dx	= UVW_X - UVW;
-	Barycentrics.UVW_dy	= UVW_Y - UVW;
-
+	BRANCH
+	if( bPerspectiveCorrectDerivatives )
+	{
+		const float3 OffsetX	= { -Tri.Edge12.y, -Tri.Edge20.y, -Tri.Edge01.y };
+		const float3 OffsetY	= {  Tri.Edge12.x,  Tri.Edge20.x,  Tri.Edge01.x };
+		const float3 UVW_X		= GetPerspectiveCorrectBarycentrics( C + OffsetX,	Tri.InvW );
+		const float3 UVW_Y		= GetPerspectiveCorrectBarycentrics( C + OffsetY,	Tri.InvW );
+		Barycentrics.Value_dx	= UVW_X - UVW;
+		Barycentrics.Value_dy	= UVW_Y - UVW;
+	}
+	else
+	{
+		Barycentrics.Value_dx	= Tri.Barycentrics_dx;
+		Barycentrics.Value_dy	= Tri.Barycentrics_dy;
+	}
+	
 	return Barycentrics;
 }
 
@@ -309,6 +321,8 @@ struct TNaniteWritePixel
 
 		Pixel.WriteOverdraw();
 
+	#if NANITE_PIXEL_PROGRAMMABLE && !NANITE_TESSELLATION
+
 	#if ENABLE_EARLY_Z_TEST
 		BRANCH
 		if( !Pixel.EarlyDepthTest() )
@@ -317,8 +331,7 @@ struct TNaniteWritePixel
 		}
 	#endif
 
-	#if NANITE_PIXEL_PROGRAMMABLE
-		FBarycentrics Barycentrics = CalculateBarycentrics( Tri, C );
+		FBarycentrics Barycentrics = CalculateBarycentrics( Tri, C, false );	// Perspective correct derivatives are not worth the effort for masked/PDO.
 
 		float4 SvPosition = float4( Pixel.Position.xy + 0.5, Pixel.Depth, 1.0 );
 	#if VIRTUAL_TEXTURE_TARGET
@@ -327,7 +340,7 @@ struct TNaniteWritePixel
 	#endif
 
 		BRANCH
-		if( !Shader.EvaluatePixel( Barycentrics, SvPosition, Pixel ) )
+		if( !Shader.EvaluatePixel( Barycentrics, SvPosition, Tri.bBackFace, Pixel ) )
 		{
 			return;
 		}
@@ -349,6 +362,11 @@ struct FMaterialShader
 	FNaniteTransformedTri		TransformedTri;
 #endif
 
+#if USES_DISPLACEMENT
+	float DisplacementCenter;
+	float DisplacementMagnitude;
+#endif
+
 	float3 EvaluateWorldPositionOffset( FNanitePostDeformVertex InputVert )
 	{
 		float3 WorldPositionOffset = 0.0f;
@@ -358,7 +376,7 @@ struct FMaterialShader
 		if ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_EVALUATE_WORLD_POSITION_OFFSET) != 0u)
 		{
 			// Should be Pow2(InvScale) but that requires renormalization
-			float3x3 LocalToWorld = LWCToFloat3x3(InstanceData.LocalToWorld);
+			float3x3 LocalToWorld = DFToFloat3x3(InstanceData.LocalToWorld);
 			float3 InvScale = InstanceData.InvNonUniformScale;
 			LocalToWorld[0] *= InvScale.x;
 			LocalToWorld[1] *= InvScale.y;
@@ -368,33 +386,33 @@ struct FMaterialShader
 			SetVertexParameterInstanceData(VertexParameters, InstanceData, PrimitiveData, true /* WPO */);
 			SetVertexParameterAttributeData(VertexParameters, InputVert, InstanceDynamicData.LocalToTranslatedWorld, LocalToWorld);
 
+		#if ENABLE_NEW_HLSL_GENERATOR
+			EvaluateVertexMaterialAttributes(VertexParameters);
+		#endif
 			WorldPositionOffset = GetMaterialWorldPositionOffset(VertexParameters);
 		}
 	#endif
 		return WorldPositionOffset;
 	}
 
-#if NANITE_VERTEX_PROGRAMMABLE || NANITE_PIXEL_PROGRAMMABLE
-	float4 EvaluateDomain( FBarycentrics Barycentrics )
+#if NANITE_TESSELLATION && (NANITE_VERTEX_PROGRAMMABLE || NANITE_PIXEL_PROGRAMMABLE)
+	float4 EvaluateDomain( float4 UVDensities, FBarycentrics Barycentrics )
 	{
-		float3 PointLocal;
-		PointLocal  = TransformedTri.Verts[0].PointLocal * Barycentrics.UVW[0];
-		PointLocal += TransformedTri.Verts[1].PointLocal * Barycentrics.UVW[1];
-		PointLocal += TransformedTri.Verts[2].PointLocal * Barycentrics.UVW[2];
+		float3 PointPostDeform = Lerp( 
+			TransformedTri.Verts[0].PointPostDeform,
+			TransformedTri.Verts[1].PointPostDeform,
+			TransformedTri.Verts[2].PointPostDeform,
+			Barycentrics ).Value;
 
-	#if NANITE_TESSELLATION && USES_DISPLACEMENT
-		float3 Normal;
-		Normal  = TransformedTri.Verts[0].RawAttributeData.TangentZ * Barycentrics.UVW[0];
-		Normal += TransformedTri.Verts[1].RawAttributeData.TangentZ * Barycentrics.UVW[1];
-		Normal += TransformedTri.Verts[2].RawAttributeData.TangentZ * Barycentrics.UVW[2];
-		Normal = normalize( Normal );
+		float4 BaseClip = Lerp( 
+			TransformedTri.Verts[0].PointClip,
+			TransformedTri.Verts[1].PointClip,
+			TransformedTri.Verts[2].PointClip,
+			Barycentrics ).Value;
 
 		// Hopefully never used and will be dead code eliminated. TODO VT feedback needs this right now :(
 		float4 SvPosition;
-		SvPosition  = TransformedTri.Verts[0].PointClip * Barycentrics.UVW[0];
-		SvPosition += TransformedTri.Verts[1].PointClip * Barycentrics.UVW[1];
-		SvPosition += TransformedTri.Verts[2].PointClip * Barycentrics.UVW[2];
-		SvPosition.xyz /= SvPosition.w;
+		SvPosition.xyz = BaseClip.xyz / BaseClip.w;
 		SvPosition.xy = ( float2(0.5, -0.5) * SvPosition.xy + 0.5 ) * NaniteView.ViewSizeAndInvSize.xy + NaniteView.ViewRect.xy;
 		SvPosition.w = 1;
 
@@ -402,6 +420,20 @@ struct FMaterialShader
 
 		FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
 		FMaterialPixelParameters MaterialParameters = FetchNaniteMaterialPixelParameters( PrimitiveData, InstanceData, InstanceDynamicData, NaniteView, TransformedTri, Cluster, Barycentrics, Interpolants, SvPosition );
+
+		// Now we want to override UV derivatives to be based on uniform UV density so that there are no cracks
+	#if NUM_TEX_COORD_INTERPOLATORS > 0
+		for (uint TexCoordIndex = 0; TexCoordIndex < NUM_TEX_COORD_INTERPOLATORS; ++TexCoordIndex)
+		{
+			float2 Deriv = CalculateUVDerivativeForDomainPoint(
+				NaniteView,
+				BaseClip.w,
+				InstanceData.NonUniformScale.w,
+				UVDensities[TexCoordIndex] );
+			MaterialParameters.TexCoords_DDX[TexCoordIndex] = Deriv;
+			MaterialParameters.TexCoords_DDY[TexCoordIndex] = Deriv;
+		}
+	#endif
 
 		FPixelMaterialInputs PixelMaterialInputs;
 		CalcMaterialParametersEx(
@@ -413,17 +445,49 @@ struct FMaterialShader
 			MaterialParameters.WorldPosition_CamRelative,
 			MaterialParameters.WorldPosition_NoOffsets_CamRelative );
 
-		const float Displacement = GetMaterialDisplacementScaled(PixelMaterialInputs);
-		PointLocal += Normal * Displacement;
+	#if USES_DISPLACEMENT
+		const float NormalizedDisplacement = GetMaterialDisplacement(PixelMaterialInputs);
+		const float CenterScaled = DisplacementCenter * DisplacementMagnitude;
+		const float Displacement = (NormalizedDisplacement * DisplacementMagnitude) - CenterScaled;
+
+	#if NANITE_TESSELLATION_NORMALIZE 
+		float3 Normal = Lerp(
+			TransformedTri.Verts[0].NormalPostDeform,
+			TransformedTri.Verts[1].NormalPostDeform,
+			TransformedTri.Verts[2].NormalPostDeform,
+			Barycentrics ).Value;
+		Normal = normalize( Normal );
+
+		PointPostDeform += Normal * Displacement;
+	#else	// !NANITE_TESSELLATION_NORMALIZE
+		float4 NormalClip = Lerp(
+			TransformedTri.Verts[0].NormalClip,
+			TransformedTri.Verts[1].NormalClip,
+			TransformedTri.Verts[2].NormalClip,
+			Barycentrics).Value;
+
+		float4 PointClip = BaseClip + NormalClip * Displacement;
+	#endif	// NANITE_TESSELLATION_NORMALIZE
+	#endif	// USES_DISPLACEMENT
+		
+	#if !(USES_DISPLACEMENT && !NANITE_TESSELLATION_NORMALIZE)
+		float3 PointWorld = mul( float4( PointPostDeform, 1 ), InstanceDynamicData.LocalToTranslatedWorld ).xyz;
+		float4 PointClip = mul( float4( PointWorld, 1 ), NaniteView.TranslatedWorldToClip );
 	#endif
 
-		float3 PointWorld = mul( float4( PointLocal, 1 ), InstanceDynamicData.LocalToTranslatedWorld ).xyz;
-		float4 PointClip = mul( float4( PointWorld, 1 ), NaniteView.TranslatedWorldToClip );
+	#if NANITE_PIXEL_PROGRAMMABLE && MATERIALBLENDING_MASKED
+		if( GetMaterialMask(PixelMaterialInputs) < 0.0 )
+		{
+			PointClip.z = -2.0;
+			PointClip.w = -1.0;
+		}
+	#endif
+
 		return PointClip;
 	}
 #endif
 
-	bool EvaluatePixel( FBarycentrics Barycentrics, float4 SvPosition, inout FVisBufferPixel Pixel )
+	bool EvaluatePixel( FBarycentrics Barycentrics, float4 SvPosition, bool bBackFace, inout FVisBufferPixel Pixel )
 	{
 	#if NANITE_PIXEL_PROGRAMMABLE
 		FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
@@ -431,12 +495,14 @@ struct FMaterialShader
 		FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
 	
 		FMaterialPixelParameters MaterialParameters = FetchNaniteMaterialPixelParameters( PrimitiveData, InstanceData, InstanceDynamicData, NaniteView, TransformedTri, Cluster, Barycentrics, Interpolants, SvPosition );
+		MaterialParameters.TwoSidedSign = bBackFace ? 1.0f : -1.0f;
 
 		FPixelMaterialInputs PixelMaterialInputs;
 		CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, true /*bIsFrontFace*/);
 
 		// NOTE: Disable PDO in shadow passes (it does undesirable things and has always been disabled in these passes in Unreal)
-		#if WANT_PIXEL_DEPTH_OFFSET && DEPTH_ONLY == 0
+		// PDO with tessellation would screw up barycentrics.
+		#if WANT_PIXEL_DEPTH_OFFSET && DEPTH_ONLY == 0 && !NANITE_TESSELLATION
 		ApplyPixelDepthOffsetToMaterialParameters(MaterialParameters, PixelMaterialInputs, Pixel.Depth);
 		#endif
 
@@ -468,18 +534,13 @@ uint2 VsmPageTableLoad(uint2 Coords)
 	return uint2(pPagePacked & 0xffff, pPagePacked >> 16);
 }
 
-void FetchAndCachePageTableEntry(FNaniteView NaniteView, uint2 vPageStart, uint2 vPageEnd, uint PageFlagMask, uint CacheIndex)
+void FetchAndCachePageTableEntry(FNaniteView NaniteView, uint2 vPageStart, uint2 vPageEnd, uint CacheIndex)
 {
 	uint2 CacheCoords = uint2(CacheIndex & 0x7, CacheIndex >> 3);
 	if (all(vPageStart + CacheCoords <= vPageEnd))
 	{
-		uint PageEntryOffset = CalcPageOffset(NaniteView.TargetLayerIndex, NaniteView.TargetMipLevel, vPageStart + CacheCoords);
-		uint PageFlag = VirtualShadowMap.PageFlags[PageEntryOffset];
-		uint2 pPageAddress = 0xffff;
-		if ((PageFlag & PageFlagMask) != 0)
-		{
-			pPageAddress = ShadowGetPhysicalPage(PageEntryOffset).PhysicalAddress;	
-		}
+		FShadowPhysicalPage PhysicalPage = ShadowGetPhysicalPage( CalcPageOffset( NaniteView.TargetLayerIndex, NaniteView.TargetMipLevel, vPageStart + CacheCoords ) );
+		uint2 pPageAddress = PhysicalPage.bThisLODValid ? PhysicalPage.PhysicalAddress : 0xffff;
 		VsmPageTableStore(pPageAddress, CacheCoords);
 	}
 }
@@ -519,3 +580,31 @@ struct FFetchPageTable
 		return true;
 	}
 };
+
+uint2 GetVisualizeValues(uint AddValue, uint SubPatch, uint MicroTri)
+{
+#if VISUALIZE
+	uint VisualizeValueMax = 0;			// InterlockedMax64 using depth (value associated with surviving fragment)
+	uint VisualizeValueAdd = AddValue;	// InterlockedAdd32 (value accumulated with every evaluated fragment)
+
+#if NANITE_TESSELLATION
+	VisualizeValueMax = 3; // Software Tessellation
+#elif SOFTWARE_RASTER
+	VisualizeValueMax = 2; // Software Raster
+#else
+	VisualizeValueMax = 1; // Hardware Raster
+#endif
+
+	VisualizeValueMax |= (SubPatch & 0xffu) << 8u;
+	VisualizeValueMax |= (MicroTri & 0xffu) << 16u;
+
+	return uint2(VisualizeValueMax, VisualizeValueAdd);
+#else
+	return 0;
+#endif
+}
+
+uint2 GetVisualizeValues()
+{
+	return GetVisualizeValues(1u /* AddValue */, 0u /* SubPatch */, 0u /* MicroTri */);
+}

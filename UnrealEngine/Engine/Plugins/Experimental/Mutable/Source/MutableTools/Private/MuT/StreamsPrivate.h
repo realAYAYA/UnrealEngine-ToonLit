@@ -11,45 +11,72 @@
 #include "MuT/Streams.h"
 #include "MuR/Platform.h"
 #include "MuR/Operations.h"
+#include "MuR/MutableRuntimeModule.h"
+
+#include <atomic>
+#include <inttypes.h>
 
 namespace mu
 {
 
 
 	//---------------------------------------------------------------------------------------------
-	class MUTABLETOOLS_API InputFileStream::Private : public Base
+	class MUTABLETOOLS_API InputFileStream::Private
 	{
 	public:
 
-		FILE* m_pFile;
+		TSharedPtr<IFileHandle> File;
 
-		uint64 m_size;
-		uint64 m_pos;
-
-		uint64 m_readBytes;
+		uint64 FileSize;
+		uint64 BytesInBuffer;
+		uint64 BufferPosition;
+		uint64 FilePosition;
 
     private:
-        uint8* m_buffer;
+        TArray<uint8> Buffer;
 
         friend class InputFileStream;
     };
 
 
 	//---------------------------------------------------------------------------------------------
-	class MUTABLETOOLS_API OutputFileStream::Private : public Base
+	class MUTABLETOOLS_API OutputFileStream::Private
 	{
 	public:
 
-		FILE* m_pFile;
+		TSharedPtr<IFileHandle> File;
 
-		uint64 m_pos;
+		uint64 BufferPosition;
 
     private:
-        uint8* m_buffer;
+		TArray<uint8> Buffer;
 
         friend class OutputFileStream;
     };
 
+
+	/** Statistics about the proxy file usage. */
+	struct FProxyFileContext
+	{
+		FProxyFileContext();
+
+		/** Options */
+
+		/** Minimum data size in bytes to dumpt it to the disk. */
+		uint64 MinProxyFileSize = 1024 * 1024;
+
+		/** When creating temporary files, number of retries in case the OS-level call fails. */
+		uint64 MaxFileCreateAttempts = 256;
+
+		/** Statistics */
+		std::atomic<uint64> FilesWritten = 0;
+		std::atomic<uint64> FilesRead = 0;
+		std::atomic<uint64> BytesWritten = 0;
+		std::atomic<uint64> BytesRead = 0;
+
+		/** Internal data. */
+		std::atomic<uint64> CurrentFileIndex = 0;
+	};
     
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
@@ -58,13 +85,16 @@ namespace mu
     class MUTABLETOOLS_API ResourceProxyTempFile : public ResourceProxy<R>
     {
     private:
-        Ptr<const R> m_resource;
-        FString m_fileName;
-		uint64 m_fileSize = 0;
+        Ptr<const R> Resource;
+        FString FileName;
+		uint64 FileSize = 0;
 		FCriticalSection Mutex;
 
+		FProxyFileContext& Options;
+		
     public:
-        ResourceProxyTempFile( const R* resource )
+        ResourceProxyTempFile( const R* resource, FProxyFileContext& InOptions )
+			: Options(InOptions)
         {
 			IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
@@ -79,48 +109,56 @@ namespace mu
             OutputArchive arch(&stream);
             R::Serialise( resource, arch );
 
-            if (stream.GetBufferSize()<=256*1024)
+            if (stream.GetBufferSize()<=Options.MinProxyFileSize)
             {
-                m_resource = resource;
+                Resource = resource;
             }
             else
             {
-                m_fileSize = stream.GetBufferSize();
+                FileSize = stream.GetBufferSize();
 
-				FString TempPath = FPlatformProcess::UserTempDir();
-				TempPath += TEXT("mut.temp");
+				FString Prefix = FPlatformProcess::UserTempDir();
 
-				FRandomStream RandomStream;
-				RandomStream.GenerateNewSeed();
-				
-				auto prefix = TempPath;
-				
+				uint32 PID = FPlatformProcess::GetCurrentProcessId();
+				Prefix += FString::Printf(TEXT("mut.temp.%u"), PID);
+								
 				FString FinalTempPath;
-				bool found = true;
-                while(found)
+				IFileHandle* ResourceFile = nullptr;
+				uint64 AttemptCount = 0;
+                while(!ResourceFile && AttemptCount< Options.MaxFileCreateAttempts)
                 {
-					FinalTempPath = TempPath+FString::Printf(TEXT(".%.8x.%.8x.%.8x.%.8x"), RandomStream.GetUnsignedInt(), RandomStream.GetUnsignedInt(), RandomStream.GetUnsignedInt(), RandomStream.GetUnsignedInt());
-					found = PlatformFile.FileExists(*FinalTempPath);
+					uint64 ThisThreadFileIndex = Options.CurrentFileIndex.load();
+					while (!Options.CurrentFileIndex.compare_exchange_strong(ThisThreadFileIndex, ThisThreadFileIndex + 1));
+
+					FinalTempPath = Prefix +FString::Printf(TEXT(".%.16" PRIx64), ThisThreadFileIndex);
+					ResourceFile = PlatformFile.OpenWrite(*FinalTempPath);
+					++AttemptCount;
                 }
-				IFileHandle* resourceFile = PlatformFile.OpenWrite(*FinalTempPath);
 
-                check(resourceFile);
-				resourceFile->Write( (const uint8*) stream.GetBuffer(), stream.GetBufferSize() );
-				delete resourceFile;
+				if (!ResourceFile)
+				{
+					UE_LOG(LogMutableCore, Error, TEXT("Failed to create temporary file. Disk full?"));
+					check(false);
+				}
 
-                m_fileName = FinalTempPath;
-            }
+				ResourceFile->Write( (const uint8*) stream.GetBuffer(), stream.GetBufferSize() );
+				delete ResourceFile;
+
+                FileName = FinalTempPath;
+				Options.FilesWritten++;
+				Options.BytesWritten += stream.GetBufferSize();
+			}
         }
 
         ~ResourceProxyTempFile()
         {
 			FScopeLock Lock(&Mutex);
 
-            if (!m_fileName.IsEmpty())
+            if (!FileName.IsEmpty())
             {
                 // Delete temp file
-				FPlatformFileManager::Get().GetPlatformFile().DeleteFile(*m_fileName);
-                m_fileName.Empty();
+				FPlatformFileManager::Get().GetPlatformFile().DeleteFile(*FileName);
+				FileName.Empty();
             }
         }
 
@@ -129,24 +167,27 @@ namespace mu
 			FScopeLock Lock(&Mutex);
 
             Ptr<const R> r;
-            if (m_resource)
+            if (Resource)
             {
                 // cached
-                r = m_resource;
+                r = Resource;
             }
-            else if (!m_fileName.IsEmpty())
+            else if (!FileName.IsEmpty())
             {
 				TArray<char> buf;
-				buf.SetNumUninitialized(m_fileSize);
-                auto resourceFile = FPlatformFileManager::Get().GetPlatformFile().OpenRead( *m_fileName );
+				buf.SetNumUninitialized(FileSize);
+				IFileHandle* resourceFile = FPlatformFileManager::Get().GetPlatformFile().OpenRead( *FileName);
                 check(resourceFile);
-                resourceFile->Read((uint8*)buf.GetData(), m_fileSize);
+                resourceFile->Read((uint8*)buf.GetData(), FileSize);
                 delete resourceFile;
 
-                InputMemoryStream stream( buf.GetData(), m_fileSize );
+                InputMemoryStream stream( buf.GetData(), FileSize );
                 InputArchive arch(&stream);
                 r =  R::StaticUnserialise( arch );
-            }
+			
+				Options.FilesRead++;
+				Options.BytesRead += FileSize;
+			}
             return r;
         }
 
@@ -161,16 +202,15 @@ namespace mu
     class MUTABLETOOLS_API ResourceProxyFile : public ResourceProxy<R>
     {
     private:
-        std::string m_fileName;
-        uint64 m_filePos = 0;
+		FString FileName;
+        uint64 FilePos = 0;
 		FCriticalSection Mutex;
 
     public:
-        ResourceProxyFile( const std::string& fileName, uint64 filePos )
+        ResourceProxyFile( const FString& InFileName, uint64 InFilePos )
         {
-			FScopeLock Lock(&Mutex);
-			m_fileName = fileName;
-            m_filePos = filePos;
+			FileName = InFileName;
+            FilePos = InFilePos;
         }
 
         Ptr<const R> Get() override
@@ -178,10 +218,10 @@ namespace mu
 			FScopeLock Lock(&Mutex);
 
             Ptr<const R> r;
-            if (!m_fileName.empty())
+            if (!FileName.IsEmpty())
             {
-                InputFileStream stream( m_fileName.c_str() );
-                stream.Seek( m_filePos );
+                InputFileStream stream(FileName);
+                stream.Seek( FilePos );
                 InputArchive arch(&stream);
                 r =  R::StaticUnserialise( arch );
             }

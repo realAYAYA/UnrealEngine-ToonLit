@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "CustomizableObjectEditorViewportClient.h"
+#include "ICustomizableObjectEditor.h"
 #include "MuR/Types.h"
 #include "Widgets/Input/SSpinBox.h"
 
@@ -14,6 +16,7 @@ class SSearchBox;
 class STextBlock;
 class SVerticalBox;
 class UCustomizableObjectInstance;
+class FCustomizableObjectEditor;
 struct FGeometry;
 struct FPointerEvent;
 
@@ -33,7 +36,7 @@ public:
 	friend class SCreateProfileParameters;
 	
 	SLATE_BEGIN_ARGS(SCustomizableInstanceProperties) {}
-	SLATE_ARGUMENT(TWeakObjectPtr<UCustomizableObjectInstance>, CustomInstance)
+	SLATE_ARGUMENT(UCustomizableObjectInstance*, CustomInstance) 
 	SLATE_ARGUMENT(TWeakPtr<FCustomizableInstanceDetails>, InstanceDetails)
 	SLATE_END_ARGS()
 	
@@ -51,9 +54,6 @@ public:
 	const UCustomizableObjectInstance* GetInstance() const;
 	void SetNoInstanceMessage( const FText& Message );
 
-	/** Set SimplifiedProjectorInterface bool value - Deprecated */
-	void SetSimplifiedProjectorInterface( bool Enabled );
-
 	/** Redraws the Instance Properties Widget */
 	void ResetParamBox();
 
@@ -61,14 +61,13 @@ public:
 	bool bShouldResetParamBox = true;
 
 private:
-	/** Bool that decides the type of interface of projectors - Deprecated */
-	bool SimplifiedProjectorInterface;
-
 	/** Message to to indicate that there is no instance and the CO needs to be compiled*/
 	FText NoInstanceMessage;
 
 	/** Pointer to the Instance Details. Owner of this widget. */
 	TWeakPtr<FCustomizableInstanceDetails> InstanceDetails;
+
+	TWeakPtr<ICustomizableObjectInstanceEditor> WeakEditor;
 
 	/** Pointer to the Customizable Object Instance */
 	TWeakObjectPtr<UCustomizableObjectInstance> CustomInstance;
@@ -100,6 +99,15 @@ private:
 	// These come from the texture generators registered in the CustomizableObjectSystem
 	TArray<TSharedPtr<FString>> TextureParameterValueNames;
 	TArray<FName> TextureParameterValues;
+
+	/** Array with all the possible multilayer projector texture options */
+	TArray<TSharedPtr<TArray<TSharedPtr<FString>>>> ProjectorTextureOptions;
+
+	/** Map from ParamIndexInObject to the param's int selector options */
+	TMap<int32, TSharedPtr<TArray<TSharedPtr<FString>>>> IntParameterOptions;
+
+	/** Map from ParamIndexInObject to the projector param pose options  */
+	TMap<int32, TSharedPtr<TArray<TSharedPtr<FString>>>> ProjectorParameterPoseOptions;
 
 	struct FSliderData
 	{
@@ -169,39 +177,31 @@ private:
 	/** SearchBox OnTextCommitted Callback to search a parameter int by name */
 	void OnIntParameterComboBoxChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo, FString ParamName);
 
+	TSharedRef<SWidget> OnGenerateWidgetIntParameter(TSharedPtr<FString> InItem) const;
+
 	/** Gets the name value of a int parameter */
 	FString GetIntParameterValue(FString ParamName, int RangeIndex = -1) const;
-
-	/** CheckBox IsChecked Callbacks for projectors management */
-	ECheckBoxState IsProjectorHidden(FString ParamNameWithIndex) const;
-	ECheckBoxState IsProjectorTranslate(FString ParamNameWithIndex) const;
-	ECheckBoxState IsProjectorRotate(FString ParamNameWithIndex) const;
-	ECheckBoxState IsProjectorScale(FString ParamNameWithIndex) const;
-
-	/** CheckBox OnCheckStateChanged Callbacks for projectors management */
-	void OnProjectorTranslateStateChanged( ECheckBoxState InCheckboxState, FString ParamNameWithIndex) const;
-	void OnProjectorRotateStateChanged( ECheckBoxState InCheckboxState, FString ParamNameWithIndex) const;
-	void OnProjectorScaleStateChanged( ECheckBoxState InCheckboxState, FString ParamNameWithIndex) const;
 	
 	/** Button OnClicked Callback to select or unselect a projector */
-	FReply OnProjectorSelectStateChanged(FString ParamNameWithIndex);
+	FReply OnProjectorSelectChanged(FString ParamName, int32 RangeIndex) const;
 	
 	/** SearchBox OnTextCommitted Callback to search a parameter texture by name */
-	void OnProjectorTextureParameterComboBoxChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo, FString ParamNameWithIndex) const;
+	void OnProjectorTextureParameterComboBoxChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo, FString ParamName, int32 RangeIndex) const;
+	TSharedRef<SWidget> OnGenerateWidgetProjectorParameter(TSharedPtr<FString> InItem) const;
 
 	/** Slider OnValueChanged Callbacks for float parameters */
-	void OnProjectorFloatParameterChanged(float Value, int SliderIndex, FString ParamNameWithIndex);
+	void OnProjectorFloatParameterChanged(float Value, int SliderIndex);
 	void OnProjectorFloatParameterSliderBegin();
 	void OnProjectorFloatParameterSliderEnd(float Value);
 
 	/** OnClicked Button Callbacks - Manage Projector layers */
 	FReply OnProjectorLayerAdded(FString ParamName) const;
-	FReply OnProjectorLayerRemoved(FString ParamNameWithIndex) const;
+	FReply OnProjectorLayerRemoved(FString ParamName, int32 RangeIndex) const;
 
 	/** OnClicked Button Callbacks - Manage Projectors Transform */
-    FReply OnProjectorCopyTransform(FString ParamName) const;
-    FReply OnProjectorPasteTransform(FString ParamName) const;
-    FReply OnProjectorResetTransform(FString ParamName) const;
+    FReply OnProjectorCopyTransform(FString ParamName, int32 RangeIndex) const;
+    FReply OnProjectorPasteTransform(FString ParamName, int32 RangeIndex);
+    FReply OnProjectorResetTransform(FString ParamName, int32 RangeIndex);
 
 	/** Gets the value of a vector parameter */
 	FLinearColor GetColorParameterValue(FString ParamName) const;
@@ -215,15 +215,7 @@ private:
 	/** ComboBox OnSelectionChanged Callback - Changes the texture of a projector */
 	void OnTextureParameterComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo, FString ParamName);
 
-	/** Array with the names of the current projector parameter names with their multidimensional (range) index */
-	TArray<FString> ArrayProjectorParameterNameWithIndex;
-
 	bool bSlidersChanged = false;
-
-	// Map where to store the instances of the select / unselect projector SButton
-	TMap<FString, TSharedPtr<SButton>> MapProjectorButton;
-	TMap<FString, TSharedPtr<STextBlock>> MapProjectorButtonTextBlock;
-
 
 	/** Called when the filter text changes.  This filters specific property nodes out of view */
 	void OnFilterTextChanged(const FText& InFilterText);
@@ -258,6 +250,8 @@ private:
 	bool HasAnyParameters() const;
 
 	void InstanceUpdated(UCustomizableObjectInstance* Instance) const;
+
+	TSharedPtr<ICustomizableObjectInstanceEditor> GetEditorChecked() const;
 	
 	/*Check if SaveDescriptor has been called before LoadDescriptor*/
 	bool ParametersHaveBeenRead;

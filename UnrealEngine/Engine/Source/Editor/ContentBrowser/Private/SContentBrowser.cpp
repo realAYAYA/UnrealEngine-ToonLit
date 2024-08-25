@@ -94,6 +94,7 @@
 #include "SAssetView.h"
 #include "SCollectionView.h"
 #include "SFilterList.h"
+#include "SNavigationBar.h"
 #include "SPathView.h"
 #include "SPositiveActionButton.h"
 #include "SSearchToggleButton.h"
@@ -104,6 +105,7 @@
 #include "SourcesData.h"
 #include "SourcesSearch.h"
 #include "StatusBarSubsystem.h"
+#include "String/Find.h"
 #include "Styling/AppStyle.h"
 #include "Styling/ISlateStyle.h"
 #include "Styling/SlateColor.h"
@@ -167,6 +169,116 @@ namespace ContentBrowser
 	// It is useful when debugging enumeration issues to shut this system off so that breakpoints set will not be triggered every tick
 	bool bCrumbsEnumerate = true;
 	FAutoConsoleVariableRef CrumbsEnumerateCVar(TEXT("ContentBrowser.Debug.CrumbsEnumerate"), bCrumbsEnumerate, TEXT("Enumerate crumbs"), ECVF_Default);
+	
+	const FContentBrowserInstanceConfig* GetConstInstanceConfig(FName ForInstance) 
+	{
+		if (ForInstance.IsNone())
+		{
+			return nullptr;
+		}
+
+		UContentBrowserConfig* Config = UContentBrowserConfig::Get();
+		if (Config == nullptr)
+		{
+			return nullptr;
+		}
+
+		const FContentBrowserInstanceConfig* InstanceConfig = Config->Instances.Find(ForInstance);
+		return InstanceConfig;
+	}
+
+	// Returns child items that can be navigated to from Path e.g. subfolders
+	TArray<FContentBrowserItem> GetChildItemsFromVirtualPath(
+		FName Path,
+		EContentBrowserItemCategoryFilter ItemCategoryFilter, 
+		EContentBrowserItemAttributeFilter ItemAttributeFilter,
+		FName ConfigInstanceName,
+		SPathView& PathViewForFiltering 
+		)
+	{
+		const UContentBrowserSettings* ContentBrowserSettings = GetDefault<UContentBrowserSettings>();
+		bool bDisplayEmpty = ContentBrowserSettings->DisplayEmptyFolders;
+		// check to see if we have an instance config that overrides the default in UContentBrowserSettings
+		if (const FContentBrowserInstanceConfig* EditorConfig = GetConstInstanceConfig(ConfigInstanceName))
+		{
+			bDisplayEmpty = EditorConfig->bShowEmptyFolders;
+		}
+
+		UContentBrowserDataSubsystem* ContentBrowserData = IContentBrowserDataModule::Get().GetSubsystem();
+
+		FContentBrowserDataFilter SubItemsFilter;
+		SubItemsFilter.ItemTypeFilter = EContentBrowserItemTypeFilter::IncludeFolders;
+		SubItemsFilter.bRecursivePaths = false;
+		SubItemsFilter.ItemCategoryFilter = ItemCategoryFilter;
+		SubItemsFilter.ItemAttributeFilter = ItemAttributeFilter;
+
+		TArray<FContentBrowserItem> SubItems = ContentBrowserData->GetItemsUnderPath(Path, SubItemsFilter);
+
+		for (auto It = SubItems.CreateIterator(); It; ++It)
+		{
+			const FContentBrowserItem& Item = *It;
+			if (!Item.GetInternalPath().IsNone())
+			{
+				if (!PathViewForFiltering.InternalPathPassesBlockLists(FNameBuilder(Item.GetInternalPath())))
+				{
+					It.RemoveCurrent();
+					continue;
+				}
+			}
+			else
+			{
+				// Test if any child internal paths pass for this fully virtual path
+				bool bPasses = false;
+				for (const FContentBrowserItemData& ItemData : Item.GetInternalItems())
+				{
+					UContentBrowserDataSource* ItemDataSource = ItemData.GetOwnerDataSource();
+					if (!ItemDataSource) 
+					{
+						continue;
+					}
+
+					auto OnSubPath = [&PathViewForFiltering, &bPasses, &SubItemsFilter](FName VirtualSubPath, FName InternalPath)
+					{
+						if (InternalPath.IsNone())
+						{
+							// Keep enumerating, this path only exist virtually e.g. /All/Plugins
+							return true;
+						}
+
+						const FNameBuilder InternalPathBuilder(InternalPath);
+						if (ContentBrowserDataUtils::PathPassesAttributeFilter(InternalPathBuilder, 0, SubItemsFilter.ItemAttributeFilter) 
+						&& PathViewForFiltering.InternalPathPassesBlockLists(InternalPathBuilder))
+						{
+							bPasses = true;
+							// Stop enumerating
+							return false;
+						}
+						return true;
+					}; 
+					ItemDataSource->GetRootPathVirtualTree().EnumerateSubPaths(Item.GetVirtualPath(), OnSubPath, /*bRecurse*/ true);
+
+					if (bPasses)
+					{
+						break;
+					}
+				}
+
+				if (!bPasses)
+				{
+					It.RemoveCurrent();
+					continue;
+				}
+			}
+
+			if (!ContentBrowserData->IsFolderVisible(Item.GetVirtualPath(), ContentBrowserUtils::GetIsFolderVisibleFlags(bDisplayEmpty)))
+			{
+				It.RemoveCurrent();
+				continue;
+			}
+		}
+
+		return SubItems;
+	}
 }
 
 SContentBrowser::~SContentBrowser()
@@ -204,6 +316,8 @@ BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION
 void SContentBrowser::Construct( const FArguments& InArgs, const FName& InInstanceName, const FContentBrowserConfig* Config )
 {
 	InstanceName = InInstanceName;
+
+	JumpMRU.MaxItems = 30;
 
 	UContentBrowserConfig::Initialize();
 	UContentBrowserConfig::Get()->LoadEditorConfig();
@@ -383,46 +497,25 @@ void SContentBrowser::Construct( const FArguments& InArgs, const FName& InInstan
 						.ColorAndOpacity(FSlateColor::UseForeground())
 					]
 				]
-				// Path picker
-				+ SHorizontalBox::Slot()
-				.Padding(2, 0, 0, 0)
-				.AutoWidth()
-				.VAlign(VAlign_Fill)
-				[
-					SAssignNew( PathPickerButton, SComboButton )
-					.Visibility( ( Config != nullptr ? Config->bUsePathPicker : true ) ? EVisibility::Visible : EVisibility::Collapsed )
-					.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-					.ToolTipText( LOCTEXT( "PathPickerTooltip", "Choose a path" ) )
-					.OnGetMenuContent( this, &SContentBrowser::GetPathPickerContent )
-					.HasDownArrow( false )
-					.AddMetaData<FTagMetaData>(FTagMetaData(TEXT("ContentBrowserPathPicker")))
-					.ContentPadding(FMargin(1, 0))
-					.ButtonContent()
-					[
-						SNew(SImage)
-						.Image(FAppStyle::Get().GetBrush("Icons.FolderClosed"))
-						.ColorAndOpacity(FSlateColor::UseForeground())
-					]
-				]
-
+				
 				// Path
 				+ SHorizontalBox::Slot()
 				.VAlign(VAlign_Center)
-				.HAlign(HAlign_Left)
+				.HAlign(HAlign_Fill)
 				.FillWidth(1.0f)
 				.Padding(2, 0, 0, 0)
 				[
-					SAssignNew(PathBreadcrumbTrail, SBreadcrumbTrail<FString>)
-					.ButtonContentPadding(FMargin(2, 2))
-					.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-					.DelimiterImage(FAppStyle::Get().GetBrush("Icons.ChevronRight"))
-					.TextStyle(FAppStyle::Get(), "NormalText")
-					.ShowLeadingDelimiter(false)
-					.OnCrumbClicked(this, &SContentBrowser::OnPathClicked)
-					.HasCrumbMenuContent(this, &SContentBrowser::OnHasCrumbDelimiterContent)
-					.GetCrumbMenuContent(this, &SContentBrowser::OnGetCrumbDelimiterContent)
+					SAssignNew(NavigationBar, SNavigationBar)
+					.OnPathClicked(this, &SContentBrowser::OnPathClicked)
+					.HasPathMenuContent(this, &SContentBrowser::OnHasCrumbDelimiterContent)
+					.GetPathMenuContent(this, &SContentBrowser::OnGetCrumbDelimiterContent)
+					.GetComboOptions(this, &SContentBrowser::GetRecentPaths)
+					.OnNavigateToPath(this, &SContentBrowser::OnNavigateToPath)
+					.OnCompletePrefix(this, &SContentBrowser::OnCompletePathPrefix)
+					.OnCanEditPathAsText(this, &SContentBrowser::OnCanEditPathAsText)
 					.AddMetaData<FTagMetaData>(FTagMetaData(TEXT("ContentBrowserPath")))
 				]
+
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
 				.HAlign(HAlign_Right)
@@ -661,6 +754,14 @@ void SContentBrowser::BindCommands()
 
 	Commands->MapAction(FContentBrowserCommands::Get().ResaveAllCurrentFolder, FUIAction(
 		FExecuteAction::CreateSP(this, &SContentBrowser::HandleResaveAllCurrentFolderCommand)
+	));
+
+	Commands->MapAction(FContentBrowserCommands::Get().CopySelectedAssetPath, FUIAction(
+		FExecuteAction::CreateSP(this, &SContentBrowser::CopySelectedAssetPathCommand)
+	));
+	
+	Commands->MapAction(FContentBrowserCommands::Get().EditPath, FUIAction(
+		FExecuteAction::CreateSP(this, &SContentBrowser::EditPathCommand)
 	));
 
 	// Allow extenders to add commands
@@ -957,7 +1058,6 @@ TSharedRef<SWidget> SContentBrowser::CreateAssetView(const FContentBrowserConfig
 	// Create the Filter Bar Widget
 	FilterListPtr = SNew(SFilterList)
 					.OnFilterChanged(this, &SContentBrowser::OnFilterChanged)
-					.OnGetContextMenu(this, &SContentBrowser::GetFilterContextMenu)
 					.Visibility((Config != nullptr ? Config->bCanShowFilters : true) ? EVisibility::Visible : EVisibility::Collapsed)
 					.FrontendFilters(FrontendFilters)
 					.FilterBarIdentifier(InstanceName)
@@ -1866,6 +1966,8 @@ void SContentBrowser::SaveSettings() const
 	FavoritePathViewPtr->SaveSettings(GEditorPerProjectIni, SettingsIniSection, SettingsString + TEXT(".Favorites"));
 	CollectionViewPtr->SaveSettings(GEditorPerProjectIni, SettingsIniSection, SettingsString);
 	AssetViewPtr->SaveSettings(GEditorPerProjectIni, SettingsIniSection, SettingsString);
+	
+	GConfig->SetArray(*SettingsIniSection, *(SettingsString + TEXT(".JumpMRU")), JumpMRU, GEditorPerProjectIni);
 }
 
 const FName SContentBrowser::GetInstanceName() const
@@ -2016,6 +2118,8 @@ void SContentBrowser::LoadSettings(const FName& InInstanceName)
 	FavoritePathViewPtr->LoadSettings(GEditorPerProjectIni, SettingsIniSection, SettingsString + TEXT(".Favorites"));
 	CollectionViewPtr->LoadSettings(GEditorPerProjectIni, SettingsIniSection, SettingsString);
 	AssetViewPtr->LoadSettings(GEditorPerProjectIni, SettingsIniSection, SettingsString);
+
+	GConfig->GetArray(*SettingsIniSection, *(SettingsString + TEXT(".JumpMRU")), JumpMRU, GEditorPerProjectIni);
 }
 
 void SContentBrowser::SourcesChanged(const TArray<FString>& SelectedPaths, const TArray<FCollectionNameType>& SelectedCollections)
@@ -2108,6 +2212,8 @@ void SContentBrowser::FolderEntered(const FString& FolderPath)
 
 void SContentBrowser::PathSelected(const FString& FolderPath)
 {
+	JumpMRU.AddUnique(FolderPath);
+
 	// You may not select both collections and paths
 	CollectionViewPtr->ClearSelection();
 
@@ -2131,6 +2237,8 @@ void SContentBrowser::PathSelected(const FString& FolderPath)
 
 void SContentBrowser::FavoritePathSelected(const FString& FolderPath)
 {
+	JumpMRU.AddUnique(FolderPath);
+	
 	// You may not select both collections and paths
 	CollectionViewPtr->ClearSelection();
 
@@ -2385,6 +2493,24 @@ void SContentBrowser::SaveSearchAsFilter()
 	FilterListPtr->CreateCustomFilterDialog(TextFilter->GetRawFilterText());
 }
 
+void SContentBrowser::EditPathCommand()
+{
+	NavigationBar->StartEditingPath();
+}
+
+void SContentBrowser::OnNavigateToPath(const FString& NewPath)
+{
+	// If NewPath is not a valid location, the content browser will stay in its current location.
+	TArray<FName> VirtualPaths;
+	FStringView PathView = NewPath;
+	if (PathView.EndsWith('/'))
+	{
+		PathView.LeftChopInline(1);
+	}
+	VirtualPaths.Add(FName(PathView)); 
+	SyncToVirtualPaths(VirtualPaths);
+}
+
 void SContentBrowser::OnPathClicked( const FString& CrumbData )
 {
 	FSourcesData SourcesData = AssetViewPtr->GetSourcesData();
@@ -2430,9 +2556,58 @@ void SContentBrowser::OnPathClicked( const FString& CrumbData )
 	}
 }
 
+TArray<FString> SContentBrowser::GetRecentPaths() const
+{
+	return JumpMRU;	
+}
+
 void SContentBrowser::OnPathMenuItemClicked(FString ClickedPath)
 {
-	OnPathClicked( ClickedPath );
+	OnPathClicked(ClickedPath);
+}
+
+bool SContentBrowser::OnCanEditPathAsText(const FString& Text) const
+{
+	FSourcesData SourcesData = AssetViewPtr->GetSourcesData();
+	if (SourcesData.HasCollections())
+	{
+		// Do not present collections as text because their names are not very user friendly right now.
+		return false;
+	}
+	return true;
+}
+
+TArray<FString> SContentBrowser::OnCompletePathPrefix(const FString& Prefix) const
+{
+	FStringView PrefixView = Prefix;
+	
+	// Strip to last path separator
+	FName Parent;
+	if (int32 Index = UE::String::FindLastChar(PrefixView, '/'); Index != INDEX_NONE)
+	{	
+		PrefixView.LeftInline(Index);
+		Parent = FName(PrefixView);
+	}
+
+	// Find PrefixView in the available tree of data sources, get its direct children, and filter them by SuffixView 
+	UContentBrowserDataSubsystem* ContentBrowserData = IContentBrowserDataModule::Get().GetSubsystem();
+	TArray<FContentBrowserItem> SubItems = ContentBrowser::GetChildItemsFromVirtualPath(
+		Parent,
+		PathViewPtr->GetContentBrowserItemCategoryFilter(),
+		PathViewPtr->GetContentBrowserItemAttributeFilter(),
+		InstanceName,
+		*PathViewPtr); 
+	TArray<FString> Results;
+	for (const FContentBrowserItem& Item : SubItems)
+	{
+		FName Path = Item.GetVirtualPath();
+		FNameBuilder PathBuilder(Path);
+		if (PathBuilder.ToView().StartsWith(Prefix))
+		{
+			Results.Add(Item.GetVirtualPath().ToString());
+		}
+	}
+	return Results;
 }
 
 bool SContentBrowser::OnHasCrumbDelimiterContent(const FString& CrumbData) const
@@ -2543,81 +2718,12 @@ TSharedRef<SWidget> SContentBrowser::OnGetCrumbDelimiterContent(const FString& C
 	}
 	else if( SourcesData.HasVirtualPaths() )
 	{
-		const UContentBrowserSettings* ContentBrowserSettings = GetDefault<UContentBrowserSettings>();
-		bool bDisplayEmpty = ContentBrowserSettings->DisplayEmptyFolders;
-		// check to see if we have an instance config that overrides the default in UContentBrowserSettings
-		if (const FContentBrowserInstanceConfig* EditorConfig = GetConstInstanceConfig())
-		{
-			bDisplayEmpty = EditorConfig->bShowEmptyFolders;
-		}
-
-		UContentBrowserDataSubsystem* ContentBrowserData = IContentBrowserDataModule::Get().GetSubsystem();
-
-		FContentBrowserDataFilter SubItemsFilter;
-		SubItemsFilter.ItemTypeFilter = EContentBrowserItemTypeFilter::IncludeFolders;
-		SubItemsFilter.bRecursivePaths = false;
-		SubItemsFilter.ItemCategoryFilter = PathViewPtr->GetContentBrowserItemCategoryFilter();
-		SubItemsFilter.ItemAttributeFilter = PathViewPtr->GetContentBrowserItemAttributeFilter();
-
-		TArray<FContentBrowserItem> SubItems = ContentBrowserData->GetItemsUnderPath(*CrumbData, SubItemsFilter);
-
-		for (auto It = SubItems.CreateIterator(); It; ++It)
-		{
-			const FContentBrowserItem& Item = *It;
-			if (!Item.GetInternalPath().IsNone())
-			{
-				if (!PathViewPtr->InternalPathPassesBlockLists(FNameBuilder(Item.GetInternalPath())))
-				{
-					It.RemoveCurrent();
-					continue;
-				}
-			}
-			else
-			{
-				// Test if any child internal paths pass for this fully virtual path
-				bool bPasses = false;
-				for (const FContentBrowserItemData& ItemData : Item.GetInternalItems())
-				{
-					if (UContentBrowserDataSource* ItemDataSource = ItemData.GetOwnerDataSource())
-					{
-						ItemDataSource->GetRootPathVirtualTree().EnumerateSubPaths(Item.GetVirtualPath(), [this, &bPasses, &SubItemsFilter](FName VirtualSubPath, FName InternalPath)
-						{
-							if (!InternalPath.IsNone())
-							{
-								const FNameBuilder InternalPathBuilder(InternalPath);
-								if (ContentBrowserDataUtils::PathPassesAttributeFilter(InternalPathBuilder, 0, SubItemsFilter.ItemAttributeFilter) &&
-									PathViewPtr->InternalPathPassesBlockLists(InternalPathBuilder))
-								{
-									bPasses = true;
-									// Stop enumerating
-									return false;
-								}
-							}
-							// Keep enumerating
-							return true;
-						}, /*bRecurse*/ true);
-
-						if (bPasses)
-						{
-							break;
-						}
-					}
-				}
-
-				if (!bPasses)
-				{
-					It.RemoveCurrent();
-					continue;
-				}
-			}
-
-			if (!ContentBrowserData->IsFolderVisible(Item.GetVirtualPath(), ContentBrowserUtils::GetIsFolderVisibleFlags(bDisplayEmpty)))
-			{
-				It.RemoveCurrent();
-				continue;
-			}
-		}
-
+		TArray<FContentBrowserItem> SubItems = ContentBrowser::GetChildItemsFromVirtualPath(
+			*CrumbData,
+			PathViewPtr->GetContentBrowserItemCategoryFilter(),
+			PathViewPtr->GetContentBrowserItemAttributeFilter(),
+			InstanceName,
+			*PathViewPtr); 
 		SubItems.Sort([](const FContentBrowserItem& ItemOne, const FContentBrowserItem& ItemTwo)
 		{
 			return ItemOne.GetDisplayName().CompareTo(ItemTwo.GetDisplayName()) < 0;
@@ -2654,49 +2760,6 @@ TSharedRef<SWidget> SContentBrowser::OnGetCrumbDelimiterContent(const FString& C
 	}
 
 	return Widget.ToSharedRef();
-}
-
-TSharedRef<SWidget> SContentBrowser::GetPathPickerContent()
-{
-	FPathPickerConfig PathPickerConfig;
-
-	FSourcesData SourcesData = AssetViewPtr->GetSourcesData();
-	if ( SourcesData.HasVirtualPaths() )
-	{
-		PathPickerConfig.DefaultPath = SourcesData.VirtualPaths[0].ToString();
-	}
-	
-	// TODO: This needs to be able to pick any content folder, so needs to use the new item-based API
-	PathPickerConfig.OnPathSelected = FOnPathSelected::CreateSP(this, &SContentBrowser::PathPickerPathSelected);
-	PathPickerConfig.bAllowContextMenu = false;
-	PathPickerConfig.bAllowClassesFolder = true;
-	PathPickerConfig.bOnPathSelectedPassesVirtualPaths = true;
-
-	return SNew(SBox)
-		.WidthOverride(300.f)
-		.HeightOverride(500.f)
-		.Padding(4.f)
-		[
-			SNew(SVerticalBox)
-
-			// Path Picker
-			+SVerticalBox::Slot()
-			.FillHeight(1.f)
-			[
-				FContentBrowserSingleton::Get().CreatePathPicker(PathPickerConfig)
-			]
-
-			// Collection View
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(0.f, 6.f, 0.f, 0.f)
-			[
-				SNew(SCollectionView)
-				.AllowCollectionButtons(false)
-				.OnCollectionSelected(this, &SContentBrowser::PathPickerCollectionSelected)
-				.AllowContextMenu(false)
-			]
-		];
 }
 
 FString SContentBrowser::GetCurrentPath(const EContentBrowserPathType PathType) const
@@ -2841,7 +2904,9 @@ TSharedRef<SWidget> SContentBrowser::MakeAddNewContextMenu(const EContentBrowser
 	FToolMenuContext ToolMenuContext(nullptr, MenuExtender, nullptr);
 	AppendNewMenuContextObjects(InDomain, SourcesData.VirtualPaths, ToolMenuContext, CommonContext, bCanBeModified);
 
-	return UToolMenus::Get()->GenerateWidget("ContentBrowser.AddNewContextMenu", ToolMenuContext);
+	TSharedRef<SWidget> GeneratedWidget = UToolMenus::Get()->GenerateWidget("ContentBrowser.AddNewContextMenu", ToolMenuContext);
+	GeneratedWidget->AddMetadata<FTagMetaData>(MakeShared<FTagMetaData>(TEXT("ContentBrowser.AddNewContextMenu")));
+	return GeneratedWidget;
 }
 
 void SContentBrowser::PopulateAddNewContextMenu(class UToolMenu* Menu)
@@ -2946,16 +3011,6 @@ FText SContentBrowser::GetAddNewToolTipText() const
 	}
 	
 	return LOCTEXT( "AddNewToolTip_NoPath", "No path is selected as an add target." );
-}
-
-TSharedRef<SWidget> SContentBrowser::MakeAddFilterMenu()
-{
-	return FilterListPtr->ExternalMakeAddFilterMenu();
-}
-
-TSharedPtr<SWidget> SContentBrowser::GetFilterContextMenu()
-{
-	return FilterListPtr->ExternalMakeAddFilterMenu();
 }
 
 void SContentBrowser::RegisterPathViewFiltersMenu()
@@ -3375,6 +3430,11 @@ void SContentBrowser::HandleResaveAllCurrentFolderCommand() const
 	PathContextMenu->ExecuteResaveFolder();
 }
 
+void SContentBrowser::CopySelectedAssetPathCommand() const
+{
+	PathContextMenu->CopySelectedFolder();
+}
+
 bool SContentBrowser::HandleDeleteCommandCanExecute() const
 {
 	// The order of these conditions are carefully crafted to match the logic of the context menu summoning, as this callback 
@@ -3624,7 +3684,7 @@ void SContentBrowser::UpdatePath()
 {
 	FSourcesData SourcesData = AssetViewPtr->GetSourcesData();
 
-	PathBreadcrumbTrail->ClearCrumbs();
+	NavigationBar->ClearPaths();
 
 	int32 NewSourcesWidgetIndex = ActiveSourcesWidgetIndex;
 
@@ -3643,7 +3703,7 @@ void SContentBrowser::UpdatePath()
 			CrumbPath += Crumb;
 
 			const FContentBrowserItem CrumbFolderItem = ContentBrowserData->GetItemAtPath(*CrumbPath, EContentBrowserItemTypeFilter::IncludeFolders);
-			PathBreadcrumbTrail->PushCrumb(CrumbFolderItem.IsValid() ? CrumbFolderItem.GetDisplayName() : FText::FromString(Crumb), CrumbPath);
+			NavigationBar->PushPath(CrumbFolderItem.IsValid() ? CrumbFolderItem.GetDisplayName() : FText::FromString(Crumb), CrumbPath);
 
 			CrumbPath += TEXT("/");
 		}
@@ -3673,12 +3733,12 @@ void SContentBrowser::UpdatePath()
 			Args.Add(TEXT("CollectionName"), FText::FromName(CollectionPathItem.Name));
 			const FText DisplayName = FText::Format(LOCTEXT("CollectionPathIndicator", "{CollectionName} (Collection)"), Args);
 
-			PathBreadcrumbTrail->PushCrumb(DisplayName, CrumbData);
+			NavigationBar->PushPath(DisplayName, CrumbData);
 		}
 	}
 	else
 	{
-		PathBreadcrumbTrail->PushCrumb(LOCTEXT("AllAssets", "All Assets"), TEXT(""));
+		NavigationBar->PushPath(LOCTEXT("AllAssets", "All Assets"), TEXT(""));
 	}
 
 	if (ActiveSourcesWidgetIndex != NewSourcesWidgetIndex)
@@ -3936,15 +3996,8 @@ void SContentBrowser::HandleItemDataUpdated(TArrayView<const FContentBrowserItem
 
 bool SContentBrowser::HandlePrivateContentFilter(const FContentBrowserItem& AssetItem)
 {
-	static const auto PublicAssetUIEnabledCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("ContentBrowser.PublicAsset.EnablePublicAssetFeature"));
-	bool bIsPublicAssetUIEnabled = false;
-
-	if (PublicAssetUIEnabledCVar)
-	{
-		bIsPublicAssetUIEnabled = PublicAssetUIEnabledCVar->GetBool();
-	}
-
-	if (!bIsPublicAssetUIEnabled)
+	static const IConsoleVariable* EnablePublicAssetFeatureCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("AssetTools.EnablePublicAssetFeature"));
+	if (!EnablePublicAssetFeatureCVar || !EnablePublicAssetFeatureCVar->GetBool())
 	{
 		return false;
 	}
@@ -4158,7 +4211,7 @@ FText SContentBrowser::OnAssetSearchSuggestionChosen(const FText& SearchText, co
 	ExtractAssetSearchFilterTerms(SearchText, nullptr, nullptr, &SuggestionInsertionIndex);
 
 	FString SearchString = SearchText.ToString();
-	SearchString.RemoveAt(SuggestionInsertionIndex, SearchString.Len() - SuggestionInsertionIndex, false);
+	SearchString.RemoveAt(SuggestionInsertionIndex, SearchString.Len() - SuggestionInsertionIndex, EAllowShrinking::No);
 	SearchString.Append(Suggestion);
 
 	return FText::FromString(SearchString);
@@ -4388,19 +4441,7 @@ void SContentBrowser::OpenNewContentBrowser()
  
 const FContentBrowserInstanceConfig* SContentBrowser::GetConstInstanceConfig() const
 {
-	if (InstanceName.IsNone())
-	{
-		return nullptr;
-	}
-
-	UContentBrowserConfig* Config = UContentBrowserConfig::Get();
-	if (Config == nullptr)
-	{
-		return nullptr;
-	}
-
-	const FContentBrowserInstanceConfig* InstanceConfig = Config->Instances.Find(InstanceName);
-	return InstanceConfig;
+	return ContentBrowser::GetConstInstanceConfig(InstanceName);
 }
 
 FContentBrowserInstanceConfig* SContentBrowser::GetMutableInstanceConfig()

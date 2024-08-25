@@ -1,69 +1,80 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde;
+using EpicGames.Horde.Artifacts;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
 using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Storage.Clients;
 using EpicGames.Horde.Storage.Nodes;
 using Grpc.Core;
 using Horde.Agent.Parser;
 using Horde.Agent.Services;
 using Horde.Agent.Utility;
-using Horde.Common;
 using Horde.Common.Rpc;
 using Horde.Storage.Utility;
 using HordeCommon;
 using HordeCommon.Rpc;
 using HordeCommon.Rpc.Messages;
 using HordeCommon.Rpc.Tasks;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using OpenTracing;
 using OpenTracing.Util;
 
 namespace Horde.Agent.Execution
 {
-	interface IJobExecutor
+	record class JobStepInfo
+	(
+		JobStepId StepId,
+		LogId LogId,
+		string Name,
+		IReadOnlyDictionary<string, string> Credentials,
+		IReadOnlyDictionary<string, string> Properties,
+		IReadOnlyDictionary<string, string> EnvVars,
+		bool? Warnings,
+		IReadOnlyList<string> Inputs,
+		IReadOnlyList<string> OutputNames,
+		IList<int> PublishOutputs,
+		IReadOnlyList<CreateGraphArtifactRequest> Artifacts
+	)
+	{
+		public JobStepInfo(BeginStepResponse response)
+			: this(JobStepId.Parse(response.StepId), LogId.Parse(response.LogId), response.Name, response.Credentials, response.Properties, response.EnvVars, response.Warnings, response.Inputs, response.OutputNames, response.PublishOutputs, response.Artifacts)
+		{
+		}
+	}
+
+	interface IJobExecutor : IDisposable
 	{
 		Task InitializeAsync(ILogger logger, CancellationToken cancellationToken);
-		Task<JobStepOutcome> RunAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken);
+		Task<JobStepOutcome> RunAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken);
 		Task FinalizeAsync(ILogger logger, CancellationToken cancellationToken);
 	}
 
 	class JobExecutorOptions
 	{
 		public ISession Session { get; }
-		public IServerStorageFactory StorageFactory { get; }
-		public string JobId { get; }
-		public string BatchId { get; }
+		public HttpStorageClientFactory StorageFactory { get; }
+		public JobId JobId { get; }
+		public JobStepBatchId BatchId { get; }
 		public BeginBatchResponse Batch { get; }
-		public NamespaceId NamespaceId { get; }
-		public string StoragePrefix { get; }
 		public string Token { get; }
 		public JobOptions JobOptions { get; }
 
-		public JobExecutorOptions(ISession session, IServerStorageFactory storageFactory, string jobId, string batchId, BeginBatchResponse batch, NamespaceId namespaceId, string storagePrefix, string token, JobOptions jobOptions)
+		public JobExecutorOptions(ISession session, HttpStorageClientFactory storageFactory, JobId jobId, JobStepBatchId batchId, BeginBatchResponse batch, string token, JobOptions jobOptions)
 		{
 			Session = session;
 			StorageFactory = storageFactory;
 			JobId = jobId;
 			BatchId = batchId;
 			Batch = batch;
-			NamespaceId = namespaceId;
-			StoragePrefix = storagePrefix;
 			Token = token;
 			JobOptions = jobOptions;
 		}
@@ -114,12 +125,24 @@ namespace Horde.Agent.Execution
 			public string? Dependencies { get; set; }
 		}
 
+		protected class ExportedArtifact
+		{
+			public string Name { get; set; } = String.Empty;
+			public string? Type { get; set; }
+			public string? Description { get; set; }
+			public string? BasePath { get; set; }
+			public List<string> Keys { get; set; } = new List<string>();
+			public List<string> Metadata { get; set; } = new List<string>();
+			public string OutputName { get; set; } = String.Empty;
+		}
+
 		protected class ExportedGraph
 		{
 			public List<ExportedGroup> Groups { get; set; } = new List<ExportedGroup>();
 			public List<ExportedAggregate> Aggregates { get; set; } = new List<ExportedAggregate>();
 			public List<ExportedLabel> Labels { get; set; } = new List<ExportedLabel>();
 			public List<ExportedBadge> Badges { get; set; } = new List<ExportedBadge>();
+			public List<ExportedArtifact> Artifacts { get; set; } = new List<ExportedArtifact>();
 		}
 
 		class TraceEvent
@@ -177,6 +200,7 @@ namespace Horde.Agent.Execution
 			public ReportScope Scope { get; set; }
 			public ReportPlacement Placement { get; set; }
 			public string Name { get; set; } = String.Empty;
+			public string Content { get; set; } = String.Empty;
 			public string FileName { get; set; } = String.Empty;
 		}
 
@@ -189,58 +213,63 @@ namespace Horde.Agent.Execution
 		protected List<string> _targets = new List<string>();
 		protected string? _scriptFileName;
 		protected bool _preprocessScript;
+		protected bool _savePreprocessedScript;
 
 		/// <summary>
 		/// Logger for the local agent process (as opposed to job logger)
 		/// </summary>
-		protected readonly ILogger _logger;
+		protected ILogger Logger { get; }
 
-		protected readonly string _jobId;
-		protected readonly string _batchId;
-		protected readonly BeginBatchResponse _batch;
+		protected JobId JobId { get; }
+		protected JobStepBatchId BatchId { get; }
+		protected BeginBatchResponse Batch { get; }
 
 		protected List<string> _additionalArguments = new List<string>();
+		protected bool _allowTargetChanges;
 
 		protected bool _compileAutomationTool = true;
 
-		protected readonly ISession _session;
-		protected readonly IServerStorageFactory _storageFactory;
-		private readonly NamespaceId _namespaceId;
-		private readonly string _storagePrefix;
-		private readonly string _token;
-		protected readonly JobOptions _jobOptions;
+		protected ISession Session { get; }
+		protected HttpStorageClientFactory StorageFactory { get; }
+		protected JobOptions JobOptions { get; }
 
-		protected IRpcConnection RpcConnection => _session.RpcConnection;
+		protected IRpcConnection RpcConnection => Session.RpcConnection;
 		protected Dictionary<string, string> _remapAgentTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 		protected Dictionary<string, string> _envVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-		private XgeMetadataExtractor? _xgeMetadataExtractor;
-
-		public JobExecutor(JobExecutorOptions options, ILogger logger)
+		protected JobExecutor(JobExecutorOptions options, ILogger logger)
 		{
-			_session = options.Session;
-			_storageFactory = options.StorageFactory;
+			Session = options.Session;
+			StorageFactory = options.StorageFactory;
 
-			_jobId = options.JobId;
-			_batchId = options.BatchId;
-			_batch = options.Batch;
+			JobId = options.JobId;
+			BatchId = options.BatchId;
+			Batch = options.Batch;
 
-			_namespaceId = options.NamespaceId;
-			_storagePrefix = options.StoragePrefix;
-			_token = options.Token;
-			_jobOptions = options.JobOptions;
+			JobOptions = options.JobOptions;
 
-			_envVars["UE_HORDE_URL"] = options.Session.ServerUrl.ToString();
-			_envVars["UE_HORDE_TOKEN"] = options.Token;
+			_envVars[HordeHttpClient.HordeUrlEnvVarName] = options.Session.ServerUrl.ToString();
+			_envVars[HordeHttpClient.HordeTokenEnvVarName] = options.Token;
 
-			_logger = logger;
+			Logger = logger;
+		}
+
+		/// <inheritdoc/>
+		public void Dispose()
+		{
+			GC.SuppressFinalize(this);
+			Dispose(true);
+		}
+
+		protected virtual void Dispose(bool disposing)
+		{
 		}
 
 		public virtual Task InitializeAsync(ILogger logger, CancellationToken cancellationToken)
 		{
 			// Setup the agent type
-			foreach (KeyValuePair<string, string> envVar in _batch.Environment)
+			foreach (KeyValuePair<string, string> envVar in Batch.Environment)
 			{
 				_envVars[envVar.Key] = envVar.Value;
 			}
@@ -259,7 +288,7 @@ namespace Horde.Agent.Execution
 			}
 
 			// Get the BuildGraph arguments
-			foreach (string argument in _batch.Arguments)
+			foreach (string argument in Batch.Arguments)
 			{
 				const string RemapAgentTypesPrefix = "-RemapAgentTypes=";
 				if (argument.StartsWith(RemapAgentTypesPrefix, StringComparison.OrdinalIgnoreCase))
@@ -281,6 +310,14 @@ namespace Horde.Agent.Execution
 				{
 					_preprocessScript = true;
 				}
+				else if (argument.Equals("-SavePreprocessed", StringComparison.OrdinalIgnoreCase))
+				{
+					_savePreprocessedScript = true;
+				}
+				else if (argument.Equals("-AllowTargetChanges", StringComparison.OrdinalIgnoreCase))
+				{
+					_allowTargetChanges = true;
+				}
 				else if (argument.StartsWith(TargetArgumentPrefix, StringComparison.OrdinalIgnoreCase))
 				{
 					_targets.Add(argument.Substring(TargetArgumentPrefix.Length));
@@ -290,22 +327,9 @@ namespace Horde.Agent.Execution
 					_additionalArguments.Add(argument);
 				}
 			}
-			if (_batch.PreflightChange != 0)
+			if (Batch.PreflightChange != 0)
 			{
-				_additionalArguments.Add($"-set:PreflightChange={_batch.PreflightChange}");
-			}
-
-			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-			{
-				DirectoryReference? xgeDir = XgeMetadataExtractor.FindXgeDir();
-				if (xgeDir != null)
-				{
-					_xgeMetadataExtractor = new XgeMetadataExtractor(xgeDir);
-				}
-				else
-				{
-					_logger.LogInformation("Unable to locate XGE directory. Not installed?");
-				}
+				_additionalArguments.Add($"-set:PreflightChange={Batch.PreflightChange}");
 			}
 
 			return Task.CompletedTask;
@@ -320,7 +344,7 @@ namespace Horde.Agent.Execution
 
 			try
 			{
-				using(WindowsIdentity identity = WindowsIdentity.GetCurrent())
+				using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
 				{
 					WindowsPrincipal principal = new WindowsPrincipal(identity);
 					return principal.IsInRole(WindowsBuiltInRole.Administrator);
@@ -332,7 +356,7 @@ namespace Horde.Agent.Execution
 			}
 		}
 
-		public virtual async Task<JobStepOutcome> RunAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken)
+		public virtual async Task<JobStepOutcome> RunAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken)
 		{
 			if (step.Name == "Setup Build")
 			{
@@ -411,12 +435,12 @@ namespace Horde.Agent.Execution
 			}
 		}
 
-		private async Task StorePreprocessedFile(FileReference? localFile, string stepId, DirectoryReference? sharedStorageDir, ILogger logger, CancellationToken cancellationToken)
+		private async Task StorePreprocessedFileAsync(FileReference? localFile, JobStepId stepId, DirectoryReference? sharedStorageDir, ILogger logger, CancellationToken cancellationToken)
 		{
 			if (localFile != null)
 			{
 				string fileName = localFile.GetFileName();
-				await ArtifactUploader.UploadAsync(RpcConnection, _jobId, _batchId, stepId, fileName, localFile, logger, cancellationToken);
+				await ArtifactUploader.UploadAsync(RpcConnection, JobId, BatchId, stepId, fileName, localFile, logger, cancellationToken);
 
 				if (sharedStorageDir != null)
 				{
@@ -443,11 +467,19 @@ namespace Horde.Agent.Execution
 			}
 		}
 
-		protected abstract Task<bool> SetupAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken);
+		protected abstract Task<bool> SetupAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken);
 
-		protected abstract Task<bool> ExecuteAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken);
+		protected abstract Task<bool> ExecuteAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken);
 
-		protected virtual async Task<bool> SetupAsync(BeginStepResponse step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, bool? useP4, ILogger logger, CancellationToken cancellationToken)
+		const string SetupStepName = "setup";
+		const string BuildGraphTempStorageDir = "BuildGraph";
+
+		IStorageClient CreateStorageClient(NamespaceId namespaceId, string? token)
+		{
+			return StorageFactory.CreateClient(namespaceId, token);
+		}
+
+		protected virtual async Task<bool> SetupAsync(JobStepInfo step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, bool? useP4, ILogger logger, CancellationToken cancellationToken)
 		{
 			FileReference definitionFile = FileReference.Combine(workspaceDir, "Engine", "Saved", "Horde", "Exported.json");
 
@@ -458,6 +490,15 @@ namespace Horde.Agent.Execution
 			}
 			arguments.AppendArgument("-HordeExport=", definitionFile.FullName);
 			arguments.AppendArgument("-ListOnly");
+
+			if (!_allowTargetChanges)
+			{
+				foreach (string target in _targets)
+				{
+					arguments.AppendArgument(TargetArgumentPrefix + target);
+				}
+			}
+
 			//Arguments.AppendArgument("-TokenSignature=", JobId.ToString());
 			foreach (string additionalArgument in _additionalArguments)
 			{
@@ -466,7 +507,7 @@ namespace Horde.Agent.Execution
 
 			FileReference? preprocessedScriptFile = null;
 			FileReference? preprocessedSchemaFile = null;
-			if (_preprocessScript)
+			if (_preprocessScript || _savePreprocessedScript)
 			{
 				preprocessedScriptFile = FileReference.Combine(workspaceDir, PreprocessedScript);
 				arguments.AppendArgument("-Preprocess=", preprocessedScriptFile.FullName);
@@ -485,21 +526,97 @@ namespace Horde.Agent.Execution
 			{
 				return false;
 			}
-			
-			await ArtifactUploader.UploadAsync(RpcConnection, _jobId, _batchId, step.StepId, definitionFile.GetFileName(), definitionFile, logger, cancellationToken);
-			await StorePreprocessedFile(preprocessedScriptFile, step.StepId, sharedStorageDir, logger, cancellationToken);
-			await StorePreprocessedFile(preprocessedSchemaFile, step.StepId, sharedStorageDir, logger, cancellationToken);
 
+			if (JobOptions.UseNewTempStorage ?? true)
+			{
+				List<FileReference> buildGraphFiles = new List<FileReference>();
+				buildGraphFiles.Add(definitionFile);
+				if (preprocessedScriptFile != null)
+				{
+					buildGraphFiles.Add(preprocessedScriptFile);
+				}
+				if (preprocessedSchemaFile != null)
+				{
+					buildGraphFiles.Add(preprocessedSchemaFile);
+				}
+
+				using (GlobalTracer.Instance.BuildSpan("TempStorage").WithTag("resource", "Write").StartActive())
+				{
+					// Create the artifact
+					using IRpcClientRef<JobRpc.JobRpcClient> jobRpc = await RpcConnection.GetClientRefAsync<JobRpc.JobRpcClient>(cancellationToken);
+
+					ArtifactName artifactName = TempStorage.GetArtifactNameForNode(SetupStepName);
+					ArtifactType artifactType = ArtifactType.StepOutput;
+
+					CreateJobArtifactRequestV2 artifactRequest = new CreateJobArtifactRequestV2();
+					artifactRequest.JobId = JobId.ToString();
+					artifactRequest.StepId = step.StepId.ToString();
+					artifactRequest.Name = artifactName.ToString();
+					artifactRequest.Type = artifactType.ToString();
+
+					CreateJobArtifactResponseV2 artifact = await jobRpc.Client.CreateArtifactV2Async(artifactRequest, cancellationToken: cancellationToken);
+					logger.LogInformation("Creating output artifact {ArtifactId} '{ArtifactName}' ({ArtifactType}) with ref {RefName} in namespace {NamespaceId}", artifact.Id, artifactName, artifactType, artifact.RefName, artifact.NamespaceId);
+
+					// Write the data
+					using IStorageClient storage = CreateStorageClient(new NamespaceId(artifact.NamespaceId), artifact.Token);
+
+					Stopwatch timer = Stopwatch.StartNew();
+
+					IBlobRef<DirectoryNode> rootNodeRef;
+					await using (IBlobWriter blobWriter = storage.CreateBlobWriter(artifact.RefName))
+					{
+						DirectoryNode buildGraphNode = new DirectoryNode();
+						await buildGraphNode.AddFilesAsync(workspaceDir, buildGraphFiles, blobWriter, cancellationToken: cancellationToken);
+						IBlobRef<DirectoryNode> outputNodeRef = await blobWriter.WriteBlobAsync(buildGraphNode, cancellationToken);
+
+						DirectoryNode rootNode = new DirectoryNode();
+						rootNode.AddDirectory(new DirectoryEntry(BuildGraphTempStorageDir, buildGraphNode.Length, outputNodeRef));
+
+						rootNodeRef = await blobWriter.WriteBlobAsync(rootNode, cancellationToken);
+					}
+					await storage.WriteRefAsync(artifact.RefName, rootNodeRef, new RefOptions(), cancellationToken);
+
+					logger.LogInformation("Upload took {Time:n1}s", timer.Elapsed.TotalSeconds);
+				}
+			}
+			else
+			{
+				await ArtifactUploader.UploadAsync(RpcConnection, JobId, BatchId, step.StepId, definitionFile.GetFileName(), definitionFile, logger, cancellationToken);
+				await StorePreprocessedFileAsync(preprocessedScriptFile, step.StepId, sharedStorageDir, logger, cancellationToken);
+				await StorePreprocessedFileAsync(preprocessedSchemaFile, step.StepId, sharedStorageDir, logger, cancellationToken);
+			}
+
+			UpdateGraphRequest updateGraph = await ParseGraphUpdateAsync(definitionFile, logger, cancellationToken);
+			await RpcConnection.InvokeAsync((JobRpc.JobRpcClient x) => x.UpdateGraphAsync(updateGraph, null, null, cancellationToken), cancellationToken);
+
+			HashSet<string> validTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			validTargets.Add("Setup Build");
+			validTargets.UnionWith(updateGraph.Groups.SelectMany(x => x.Nodes).Select(x => x.Name));
+			validTargets.UnionWith(updateGraph.Aggregates.Select(x => x.Name));
+
+			foreach (string target in _targets)
+			{
+				if (!validTargets.Contains(target))
+				{
+					logger.LogInformation("Target '{Target}' does not exist in the graph.", target);
+				}
+			}
+
+			return true;
+		}
+
+		private async Task<UpdateGraphRequest> ParseGraphUpdateAsync(FileReference definitionFile, ILogger logger, CancellationToken cancellationToken)
+		{
 			JsonSerializerOptions options = new JsonSerializerOptions();
 			options.PropertyNameCaseInsensitive = true;
 			options.Converters.Add(new JsonStringEnumConverter());
 
 			ExportedGraph graph = JsonSerializer.Deserialize<ExportedGraph>(await FileReference.ReadAllBytesAsync(definitionFile, cancellationToken), options)!;
 
-			List<string> missingAgentTypes = new List<string>();
-
 			UpdateGraphRequest updateGraph = new UpdateGraphRequest();
-			updateGraph.JobId = _jobId;
+			updateGraph.JobId = JobId.ToString();
+
+			List<string> missingAgentTypes = new List<string>();
 			foreach (ExportedGroup exportedGroup in graph.Groups)
 			{
 				string? agentTypeName = null;
@@ -511,7 +628,7 @@ namespace Horde.Agent.Execution
 						thisAgentTypeName = validAgentTypeName;
 					}
 
-					if (_batch.ValidAgentTypes.Contains(thisAgentTypeName))
+					if (Batch.ValidAgentTypes.Contains(thisAgentTypeName))
 					{
 						agentTypeName = thisAgentTypeName;
 						break;
@@ -621,17 +738,17 @@ namespace Horde.Agent.Execution
 					}
 				}
 
-				if (exportedBadge.Change == _batch.Change || exportedBadge.Change == 0)
+				if (exportedBadge.Change == Batch.Change || exportedBadge.Change == 0)
 				{
 					createLabel.Change = LabelChange.Current;
 				}
-				else if (exportedBadge.Change == _batch.CodeChange)
+				else if (exportedBadge.Change == Batch.CodeChange)
 				{
 					createLabel.Change = LabelChange.Code;
 				}
 				else
 				{
-					logger.LogWarning("Badge is set to display for changelist {Change}. This is neither the current changelist ({CurrentChange}) or the current code changelist ({CurrentCodeChange}).", exportedBadge.Change, _batch.Change, _batch.CodeChange);
+					logger.LogWarning("Badge is set to display for changelist {Change}. This is neither the current changelist ({CurrentChange}) or the current code changelist ({CurrentCodeChange}).", exportedBadge.Change, Batch.Change, Batch.CodeChange);
 				}
 
 				if (exportedBadge.Dependencies != null)
@@ -639,7 +756,7 @@ namespace Horde.Agent.Execution
 					createLabel.RequiredNodes.AddRange(exportedBadge.Dependencies.Split(new char[] { ';' }, StringSplitOptions.RemoveEmptyEntries));
 
 					HashSet<string> dependencies = new HashSet<string>();
-					foreach(string requiredNode in createLabel.RequiredNodes)
+					foreach (string requiredNode in createLabel.RequiredNodes)
 					{
 						GetRecursiveDependencies(requiredNode, nameToNode, dependencies);
 					}
@@ -647,44 +764,23 @@ namespace Horde.Agent.Execution
 				}
 				updateGraph.Labels.Add(createLabel);
 			}
-			
 
-			await RpcConnection.InvokeAsync((JobRpc.JobRpcClient x) => x.UpdateGraphAsync(updateGraph, null, null, cancellationToken), cancellationToken);
-
-			HashSet<string> validTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			validTargets.Add("Setup Build");
-			validTargets.UnionWith(updateGraph.Groups.SelectMany(x => x.Nodes).Select(x => x.Name));
-			validTargets.UnionWith(updateGraph.Aggregates.Select(x => x.Name));
-			foreach (string target in _targets)
+			foreach (ExportedArtifact exportedArtifact in graph.Artifacts)
 			{
-				if (!validTargets.Contains(target))
-				{
-					logger.LogWarning("Target '{Target}' does not exist in the graph", target);
-				}
+				CreateGraphArtifactRequest createArtifact = new CreateGraphArtifactRequest();
+
+				createArtifact.Name = exportedArtifact.Name;
+				createArtifact.Type = exportedArtifact.Type ?? String.Empty;
+				createArtifact.Description = exportedArtifact.Description ?? String.Empty;
+				createArtifact.BasePath = exportedArtifact.BasePath ?? String.Empty;
+				createArtifact.Keys.AddRange(exportedArtifact.Keys);
+				createArtifact.Metadata.AddRange(exportedArtifact.Metadata);
+				createArtifact.OutputName = exportedArtifact.OutputName;
+
+				updateGraph.Artifacts.Add(createArtifact);
 			}
 
-			return true;
-		}
-		
-		private async Task UploadXgeMonitorFilesAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken)
-		{
-			if (_xgeMetadataExtractor != null && _jobOptions.CollectIbMonFilesAsArtifacts is true)
-			{
-				using IScope scope = GlobalTracer.Instance.BuildSpan("XgeMonitorFilesUpload").StartActive();
-				List<FileReference> ibMonFiles = _xgeMetadataExtractor.GetLocalIbMonFilePaths();
-
-				scope.Span.SetTag("NumIbMonFiles", ibMonFiles.Count);
-				ParallelOptions options = new () { MaxDegreeOfParallelism = 5, CancellationToken = cancellationToken };
-				await Parallel.ForEachAsync(ibMonFiles, options, async (file, innerCt) =>
-				{
-					string artifactName = "Xge/" + file.GetFileName()
-						.Replace("{", "", StringComparison.Ordinal)
-						.Replace("}", "", StringComparison.Ordinal);
-					
-					await ArtifactUploader.UploadAsync(RpcConnection, _jobId, _batchId, step.StepId,
-						artifactName, file, logger, innerCt);
-				});
-			}
+			return updateGraph;
 		}
 
 		private static void GetRecursiveDependencies(string name, Dictionary<string, ExportedNode> nameToNode, HashSet<string> dependencies)
@@ -699,25 +795,63 @@ namespace Horde.Agent.Execution
 			}
 		}
 
-		protected async Task<bool> ExecuteAsync(BeginStepResponse step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, bool? useP4, ILogger logger, CancellationToken cancellationToken)
+		protected async Task<bool> ExecuteAsync(JobStepInfo step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, bool? useP4, ILogger logger, CancellationToken cancellationToken)
 		{
 			StringBuilder arguments = new StringBuilder("BuildGraph");
 			if (_preprocessScript)
 			{
 				FileReference localPreprocessedScript = FileReference.Combine(workspaceDir, PreprocessedScript);
-				FetchPreprocessedFile(localPreprocessedScript, sharedStorageDir, logger);
 				arguments.AppendArgument(ScriptArgumentPrefix, localPreprocessedScript.FullName);
 
 				FileReference localPreprocessedSchema = FileReference.Combine(workspaceDir, PreprocessedSchema);
-				FetchPreprocessedFile(localPreprocessedSchema, sharedStorageDir, logger);
 				arguments.AppendArgument("-ImportSchema=", localPreprocessedSchema.FullName);
+
+				if (JobOptions.UseNewTempStorage ?? true)
+				{
+					ArtifactName artifactName = TempStorage.GetArtifactNameForNode(SetupStepName);
+
+					using IRpcClientRef<JobRpc.JobRpcClient> jobRpc = await RpcConnection.GetClientRefAsync<JobRpc.JobRpcClient>(cancellationToken);
+
+					GetJobArtifactRequest artifactRequest = new GetJobArtifactRequest();
+					artifactRequest.JobId = JobId.ToString();
+					artifactRequest.StepId = step.StepId.ToString();
+					artifactRequest.Name = artifactName.ToString();
+					artifactRequest.Type = ArtifactType.StepOutput.ToString();
+
+					GetJobArtifactResponse artifact = await jobRpc.Client.GetArtifactAsync(artifactRequest, cancellationToken: cancellationToken);
+
+					NamespaceId namespaceId = new NamespaceId(artifact.NamespaceId);
+					RefName refName = new RefName(artifact.RefName);
+
+					logger.LogInformation("Reading preprocessed script from {NamespaceId}:{RefName}", namespaceId, refName);
+
+					using IStorageClient storage = CreateStorageClient(namespaceId, artifact.Token);
+
+					DirectoryNode node = await storage.ReadRefTargetAsync<DirectoryNode>(refName, cancellationToken: cancellationToken);
+					DirectoryNode? buildGraphDir = await node.TryOpenDirectoryAsync(BuildGraphTempStorageDir, cancellationToken: cancellationToken);
+					if (buildGraphDir != null)
+					{
+						await buildGraphDir.CopyToDirectoryAsync(new DirectoryInfo(workspaceDir.FullName), null, logger, cancellationToken);
+						logger.LogInformation("Copying preprocessed script from {BuildGraphFolderName} into {OutputDir}", BuildGraphTempStorageDir, workspaceDir);
+					}
+					else
+					{
+						logger.LogInformation("Bundle has no {BuildGraphFolderName} folder; not copying any files", BuildGraphTempStorageDir);
+					}
+				}
+				else
+				{
+					logger.LogInformation("Fetching preprocessed script from {SharedDir}", sharedStorageDir);
+					FetchPreprocessedFile(localPreprocessedScript, sharedStorageDir, logger);
+					FetchPreprocessedFile(localPreprocessedSchema, sharedStorageDir, logger);
+				}
 			}
 			else if (_scriptFileName != null)
 			{
 				arguments.AppendArgument(ScriptArgumentPrefix, _scriptFileName);
 			}
 			arguments.AppendArgument("-SingleNode=", step.Name);
-//			Arguments.AppendArgument("-TokenSignature=", JobId.ToString());
+			//			Arguments.AppendArgument("-TokenSignature=", JobId.ToString());
 
 			foreach (string additionalArgument in _additionalArguments)
 			{
@@ -727,15 +861,9 @@ namespace Horde.Agent.Execution
 				}
 			}
 
-			if (_jobOptions.CollectIbMonFilesAsArtifacts is true)
-			{
-				_xgeMetadataExtractor?.ClearLocalIbMonFiles();	
-			}
-			
-			if (_jobOptions.UseNewTempStorage ?? false)
+			if (JobOptions.UseNewTempStorage ?? true)
 			{
 				bool result = await ExecuteWithTempStorageAsync(step, workspaceDir, arguments.ToString(), useP4, logger, cancellationToken);
-				await UploadXgeMonitorFilesAsync(step, logger, cancellationToken);
 				return result;
 			}
 			else
@@ -744,55 +872,71 @@ namespace Horde.Agent.Execution
 				{
 					arguments.AppendArgument("-SharedStorageDir=", sharedStorageDir.FullName);
 				}
-				
+
 				bool result = await ExecuteAutomationToolAsync(step, workspaceDir, sharedStorageDir, arguments.ToString(), useP4, logger, cancellationToken) == 0;
-				await UploadXgeMonitorFilesAsync(step, logger, cancellationToken);
 				return result;
 			}
 		}
 
-		protected async Task CreateArtifactsAsync(string stepId, JobArtifactType type, DirectoryReference baseDir, IEnumerable<(string, FileReference)> files, ILogger logger, CancellationToken cancellationToken)
+		protected async Task CreateArtifactsAsync(JobStepId stepId, ArtifactName name, ArtifactType type, DirectoryReference baseDir, IEnumerable<(string, FileReference)> files, ILogger logger, CancellationToken cancellationToken)
 		{
-			if (_jobOptions.UseNewTempStorage ?? false)
+			if (JobOptions.UseNewTempStorage ?? true)
 			{
-				await CreateArtifactAsync(stepId, type, baseDir, files.Select(x => x.Item2), logger, cancellationToken);
+				await CreateArtifactAsync(stepId, name, type, baseDir, files.Select(x => x.Item2), logger, cancellationToken);
 			}
 			else
 			{
-				await ArtifactUploader.UploadAsync(RpcConnection, _jobId, _batchId, stepId, files, logger, CancellationToken.None);
+				await ArtifactUploader.UploadAsync(RpcConnection, JobId, BatchId, stepId, files, logger, CancellationToken.None);
 			}
 		}
 
-		protected async Task CreateArtifactAsync(string stepId, JobArtifactType type, DirectoryReference baseDir, IEnumerable<FileReference> files, ILogger logger, CancellationToken cancellationToken)
+		protected async Task CreateArtifactAsync(JobStepId stepId, ArtifactName name, ArtifactType type, DirectoryReference baseDir, IEnumerable<FileReference> files, ILogger logger, CancellationToken cancellationToken)
 		{
 			try
 			{
 				using IRpcClientRef<JobRpc.JobRpcClient> jobRpc = await RpcConnection.GetClientRefAsync<JobRpc.JobRpcClient>(cancellationToken);
 
-				CreateJobArtifactResponse artifact = await jobRpc.Client.CreateArtifactAsync(new CreateJobArtifactRequest { JobId = _jobId, StepId = stepId, Type = type }, cancellationToken: cancellationToken);
-				_logger.LogInformation("Created artifact {ArtifactId} with ref {RefName} in ns {Namespace}", artifact.Id, artifact.RefName, artifact.NamespaceId);
+				CreateJobArtifactRequestV2 artifactRequest = new CreateJobArtifactRequestV2();
+				artifactRequest.JobId = JobId.ToString();
+				artifactRequest.StepId = stepId.ToString();
+				artifactRequest.Name = name.ToString();
+				artifactRequest.Type = type.ToString();
 
-				IStorageClient storage = _storageFactory.CreateStorageClient(_session, new NamespaceId(artifact.NamespaceId), artifact.Token);
-				await using IStorageWriter writer = storage.CreateWriter(new RefName(artifact.RefName));
+				CreateJobArtifactResponseV2 artifact = await jobRpc.Client.CreateArtifactV2Async(artifactRequest, cancellationToken: cancellationToken);
+				Logger.LogInformation("Created artifact {ArtifactId} '{ArtifactName}' ({ArtifactType}) with ref {RefName} ({Link})", artifact.Id, name, type, artifact.RefName, $"{Session.ServerUrl}/api/v1/storage/{artifact.NamespaceId}/refs/{artifact.RefName}");
 
-				DirectoryNode dir = new DirectoryNode();
-				await dir.AddFilesAsync(baseDir, files, new ChunkingOptions(), writer, new CopyStatsLogger(logger), cancellationToken);
+				using IStorageClient storage = CreateStorageClient(new NamespaceId(artifact.NamespaceId), artifact.Token);
 
-				await storage.WriteNodeAsync(new RefName(artifact.RefName), dir, cancellationToken: cancellationToken);
+				IBlobRef<DirectoryNode> rootRef;
+				await using (IBlobWriter blobWriter = storage.CreateBlobWriter(new RefName(artifact.RefName)))
+				{
+					try
+					{
+						DirectoryNode dir = new DirectoryNode();
+						await dir.AddFilesAsync(baseDir, files, blobWriter, progress: new UpdateStatsLogger(logger), cancellationToken: cancellationToken);
+						rootRef = await blobWriter.WriteBlobAsync(dir, cancellationToken: cancellationToken);
+					}
+					catch (Exception ex)
+					{
+						Logger.LogInformation(ex, "Error uploading files for artifact {ArtifactId}", artifact.Id);
+						throw;
+					}
+				}
+				await storage.WriteRefAsync(new RefName(artifact.RefName), rootRef, cancellationToken: cancellationToken);
+
+				Logger.LogInformation("Uploaded artifact {ArtifactId}", artifact.Id);
 			}
 			catch (Exception ex)
 			{
-				_logger.LogInformation(ex, "Error creating artifact '{Type}'", type);
+				Logger.LogInformation(ex, "Error creating artifact '{Type}'", type);
 			}
 		}
 
-		private async Task<bool> ExecuteWithTempStorageAsync(BeginStepResponse step, DirectoryReference workspaceDir, string arguments, bool? useP4, ILogger logger, CancellationToken cancellationToken)
+		private async Task<bool> ExecuteWithTempStorageAsync(JobStepInfo step, DirectoryReference workspaceDir, string arguments, bool? useP4, ILogger logger, CancellationToken cancellationToken)
 		{
 			DirectoryReference manifestDir = DirectoryReference.Combine(workspaceDir, "Engine", "Saved", "BuildGraph");
 
-			using MemoryCache cache = new MemoryCache(new MemoryCacheOptions { });
-			IStorageClient storage = _storageFactory.CreateStorageClient(_session, _namespaceId, _token);
-			BundleReader reader = new BundleReader(storage, cache, _logger);
+			using IRpcClientRef<JobRpc.JobRpcClient> jobRpc = await RpcConnection.GetClientRefAsync<JobRpc.JobRpcClient>(cancellationToken);
 
 			// Create the mapping of tag names to file sets
 			Dictionary<string, HashSet<FileReference>> tagNameToFileSet = new Dictionary<string, HashSet<FileReference>>();
@@ -811,7 +955,7 @@ namespace Horde.Agent.Execution
 				string nodeName = input.Substring(0, slashIdx);
 				string tagName = input.Substring(slashIdx + 1);
 
-				TempStorageTagManifest fileList = await TempStorage.RetrieveTagAsync(storage, _storagePrefix, nodeName, tagName, manifestDir, logger, cancellationToken);
+				TempStorageTagManifest fileList = await TempStorage.RetrieveTagAsync(jobRpc, JobId, step.StepId, StorageFactory, nodeName, tagName, manifestDir, logger, cancellationToken);
 				tagNameToFileSet[tagName] = fileList.ToFileSet(workspaceDir);
 				inputStorageBlocks.UnionWith(fileList.Blocks);
 			}
@@ -824,7 +968,7 @@ namespace Horde.Agent.Execution
 				scope.Span.SetTag("blocks", inputStorageBlocks.Count);
 				foreach (TempStorageBlockRef inputStorageBlock in inputStorageBlocks)
 				{
-					TempStorageBlockManifest manifest = await TempStorage.RetrieveBlockAsync(storage, _storagePrefix, inputStorageBlock.NodeName, inputStorageBlock.OutputName, workspaceDir, manifestDir, logger, cancellationToken);
+					TempStorageBlockManifest manifest = await TempStorage.RetrieveBlockAsync(jobRpc, JobId, step.StepId, StorageFactory, inputStorageBlock.NodeName, inputStorageBlock.OutputName, workspaceDir, manifestDir, logger, cancellationToken);
 					inputManifests[inputStorageBlock] = manifest;
 				}
 				scope.Span.SetTag("size", inputManifests.Sum(x => x.Value.GetTotalSize()));
@@ -951,76 +1095,136 @@ namespace Horde.Agent.Execution
 			// Write all the storage blocks, and update the mapping from file to storage block
 			using (GlobalTracer.Instance.BuildSpan("TempStorage").WithTag("resource", "Write").StartActive())
 			{
+				// Create the artifact
+				CreateJobArtifactRequestV2 artifactRequest = new CreateJobArtifactRequestV2();
+				artifactRequest.JobId = JobId.ToString();
+				artifactRequest.StepId = step.StepId.ToString();
+				artifactRequest.Name = TempStorage.GetArtifactNameForNode(step.Name).ToString();
+				artifactRequest.Type = ArtifactType.StepOutput.ToString();
+
+				CreateJobArtifactResponseV2 artifact = await jobRpc.Client.CreateArtifactV2Async(artifactRequest, cancellationToken: cancellationToken);
+				logger.LogInformation("Created artifact {ArtifactId} '{ArtifactName}' ({ArtifactType}) with ref {RefName} ({RefUrl})", artifact.Id, artifactRequest.Name, ArtifactType.StepOutput, artifact.RefName, $"{Session.ServerUrl.ToString().TrimEnd('/')}/api/v1/storage/{artifact.NamespaceId}/refs/{artifact.RefName}");
+
+				using IStorageClient storage = CreateStorageClient(new NamespaceId(artifact.NamespaceId), artifact.Token);
+
+				// Upload the data
 				Stopwatch timer = Stopwatch.StartNew();
-				RefName refName = TempStorage.GetRefNameForNode(_storagePrefix, step.Name);
 
-				await using IStorageWriter treeWriter = storage.CreateWriter(refName);
-
-				DirectoryNode outputNode = new DirectoryNode();
-
-				// Create all the output blocks
-				foreach (KeyValuePair<string, HashSet<FileReference>> pair in outputStorageBlockToFiles)
+				IBlobRef<DirectoryNode> outputNodeRef;
+				await using (IBlobWriter blobWriter = storage.CreateBlobWriter(artifact.RefName))
 				{
-					TempStorageBlockRef outputBlock = new TempStorageBlockRef(step.Name, pair.Key);
-					foreach (FileReference file in pair.Value)
-					{
-						fileToStorageBlock.Add(file, outputBlock);
-					}
-					if (pair.Value.Any(x => referencedOutputFiles.Contains(x)))
-					{
-						outputNode.AddDirectory(await TempStorage.ArchiveBlockAsync(manifestDir, step.Name, pair.Key, workspaceDir, pair.Value.ToArray(), treeWriter, logger, cancellationToken));
-					}
-				}
+					DirectoryNode outputNode = new DirectoryNode();
 
-				// Create all the output tags
-				foreach (string outputName in step.OutputNames)
-				{
-					HashSet<FileReference> files = tagNameToFileSet[outputName];
-
-					HashSet<TempStorageBlockRef> storageBlocks = new HashSet<TempStorageBlockRef>();
-					foreach (FileReference file in files)
+					// Create all the output blocks
+					foreach (KeyValuePair<string, HashSet<FileReference>> pair in outputStorageBlockToFiles)
 					{
-						TempStorageBlockRef? storageBlock;
-						if (fileToStorageBlock.TryGetValue(file, out storageBlock))
+						TempStorageBlockRef outputBlock = new TempStorageBlockRef(step.Name, pair.Key);
+						foreach (FileReference file in pair.Value)
 						{
-							storageBlocks.Add(storageBlock);
+							fileToStorageBlock.Add(file, outputBlock);
+						}
+						if (pair.Value.Any(x => referencedOutputFiles.Contains(x)))
+						{
+							outputNode.AddDirectory(await TempStorage.ArchiveBlockAsync(manifestDir, step.Name, pair.Key, workspaceDir, pair.Value.ToArray(), blobWriter, logger, cancellationToken));
 						}
 					}
 
-					outputNode.AddFile(await TempStorage.ArchiveTagAsync(manifestDir, step.Name, outputName, workspaceDir, files, storageBlocks.ToArray(), treeWriter, logger, cancellationToken));
+					// Create all the output tags
+					foreach (string outputName in step.OutputNames)
+					{
+						HashSet<FileReference> files = tagNameToFileSet[outputName];
+
+						HashSet<TempStorageBlockRef> storageBlocks = new HashSet<TempStorageBlockRef>();
+						foreach (FileReference file in files)
+						{
+							TempStorageBlockRef? storageBlock;
+							if (fileToStorageBlock.TryGetValue(file, out storageBlock))
+							{
+								storageBlocks.Add(storageBlock);
+							}
+						}
+
+						outputNode.AddFile(await TempStorage.ArchiveTagAsync(manifestDir, step.Name, outputName, workspaceDir, files, storageBlocks.ToArray(), blobWriter, logger, cancellationToken));
+					}
+
+					outputNodeRef = await blobWriter.WriteBlobAsync(outputNode, cancellationToken: cancellationToken);
 				}
 
 				// Write the final node
-				await storage.WriteNodeAsync(refName, outputNode, refOptions: new RefOptions(), cancellationToken: cancellationToken);
+				await storage.WriteRefAsync(artifact.RefName, outputNodeRef, new RefOptions(), cancellationToken: cancellationToken);
 				logger.LogInformation("Upload took {Time:n1}s", timer.Elapsed.TotalSeconds);
+			}
 
-				// Create the artifact
-				using IRpcClientRef<JobRpc.JobRpcClient> jobRpc = await RpcConnection.GetClientRefAsync<JobRpc.JobRpcClient>(cancellationToken);
+			// Create all the named artifacts. TODO: Merge this with regular temp storage artifacts?
+			logger.LogInformation("Uploading {NumArtifacts} artifacts", step.Artifacts.Count);
+			foreach (CreateGraphArtifactRequest graphArtifact in step.Artifacts)
+			{
+				logger.LogInformation("Uploading artifact {Name} using output {Output}", graphArtifact.Name, graphArtifact.OutputName);
 
-				CreateJobArtifactRequest artifactRequest = new CreateJobArtifactRequest();
-				artifactRequest.JobId = _jobId;
-				artifactRequest.StepId = step.StepId;
-				artifactRequest.Type = JobArtifactType.Output;
-				artifactRequest.NamespaceId = _namespaceId.ToString();
-				artifactRequest.RefName = refName.ToString();
+				HashSet<FileReference>? files;
+				if (!tagNameToFileSet.TryGetValue(graphArtifact.OutputName, out files))
+				{
+					logger.LogWarning("Missing output fileset for artifact {Name} (output={OutputName})", graphArtifact.Name, graphArtifact.OutputName);
+					continue;
+				}
 
-				CreateJobArtifactResponse artifact = await jobRpc.Client.CreateArtifactAsync(artifactRequest, cancellationToken: cancellationToken);
-				logger.LogInformation("Created output artifact {ArtifactId} with ref {RefName} in namespace {Namespace}", artifact.Id, artifact.RefName, artifact.NamespaceId);
+				using (GlobalTracer.Instance.BuildSpan("Artifact").WithTag("name", graphArtifact.Name).WithTag("resource", "Write").StartActive())
+				{
+					// Create the artifact
+					CreateJobArtifactRequestV2 artifactRequest = new CreateJobArtifactRequestV2();
+					artifactRequest.JobId = JobId.ToString();
+					artifactRequest.StepId = step.StepId.ToString();
+					artifactRequest.Name = graphArtifact.Name;
+					artifactRequest.Type = graphArtifact.Type;
+					artifactRequest.Description = graphArtifact.Description;
+					artifactRequest.Keys.AddRange(graphArtifact.Keys);
+					artifactRequest.Metadata.AddRange(graphArtifact.Metadata);
+
+					CreateJobArtifactResponseV2 artifact = await jobRpc.Client.CreateArtifactV2Async(artifactRequest, cancellationToken: cancellationToken);
+					logger.LogInformation("Created artifact {ArtifactId} '{ArtifactName}' ({ArtifactType}) with ref {RefName} ({RefUrl})", artifact.Id, artifactRequest.Name, ArtifactType.StepOutput, artifact.RefName, $"{Session.ServerUrl.ToString().TrimEnd('/')}/api/v1/storage/{artifact.NamespaceId}/refs/{artifact.RefName}");
+
+					using IStorageClient storage = CreateStorageClient(new NamespaceId(artifact.NamespaceId), artifact.Token);
+
+					// Upload the data
+					Stopwatch timer = Stopwatch.StartNew();
+
+					IBlobRef<DirectoryNode> outputNodeRef;
+					await using (IBlobWriter blobWriter = storage.CreateBlobWriter(artifact.RefName))
+					{
+						DirectoryNode outputNode = new DirectoryNode();
+
+						DirectoryReference baseDir = DirectoryReference.Combine(workspaceDir, graphArtifact.BasePath);
+						if (DirectoryReference.Exists(baseDir))
+						{
+							await outputNode.AddFilesAsync(baseDir, files, blobWriter, cancellationToken: cancellationToken);
+						}
+						else
+						{
+							logger.LogWarning("Base path for artifact {ArtifactName} does not exist ({Path})", graphArtifact.Name, baseDir);
+						}
+
+						outputNodeRef = await blobWriter.WriteBlobAsync(outputNode, cancellationToken: cancellationToken);
+					}
+
+					// Write the final node
+					await storage.WriteRefAsync(artifact.RefName, outputNodeRef, new RefOptions(), cancellationToken: cancellationToken);
+					logger.LogInformation("Upload took {Time:n1}s", timer.Elapsed.TotalSeconds);
+				}
 			}
 
 			return true;
 		}
 
-		protected async Task<int> ExecuteAutomationToolAsync(BeginStepResponse step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, string? arguments, bool? useP4, ILogger logger, CancellationToken cancellationToken)
+		protected async Task<int> ExecuteAutomationToolAsync(JobStepInfo step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, string? arguments, bool? useP4, ILogger logger, CancellationToken cancellationToken)
 		{
 			int result;
 			using IScope scope = GlobalTracer.Instance.BuildSpan("BuildGraph").StartActive();
-			
+
 			if (!_compileAutomationTool)
 			{
 				arguments += " -NoCompile";
 			}
-			
+
 			if (useP4 is false)
 			{
 				arguments += " -NoP4";
@@ -1033,12 +1237,12 @@ namespace Horde.Agent.Execution
 			else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
 			{
 				string args = $"\"{workspaceDir}/Engine/Build/BatchFiles/RunUAT.sh\" {arguments}";
-				
-				if (_jobOptions.UseWine is true)
+
+				if (JobOptions.UseWine is true)
 				{
 					args = $"\"{workspaceDir}/Engine/Build/BatchFiles/RunWineUAT.sh\" {arguments}";
 				}
-				
+
 				result = await ExecuteCommandAsync(step, workspaceDir, sharedStorageDir, "/bin/bash", args, logger, cancellationToken);
 			}
 			else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -1060,7 +1264,7 @@ namespace Horde.Agent.Execution
 			for (int idx = 0; idx < numDirs; idx++)
 			{
 				DirectoryReference subDir = DirectoryReference.Combine(directories[idx], subFolder);
-				if(DirectoryReference.Exists(subDir))
+				if (DirectoryReference.Exists(subDir))
 				{
 					directories.AddRange(DirectoryReference.EnumerateDirectories(subDir));
 				}
@@ -1140,7 +1344,7 @@ namespace Horde.Agent.Execution
 		{
 			try
 			{
-				await _session.TerminateProcessesAsync(condition, logger, CancellationToken.None);
+				await Session.TerminateProcessesAsync(condition, logger, CancellationToken.None);
 			}
 			catch (Exception ex)
 			{
@@ -1216,7 +1420,7 @@ namespace Horde.Agent.Execution
 				}
 			}
 		}
-		
+
 		/// <summary>
 		/// Execute a process inside a Linux container
 		/// </summary>
@@ -1235,22 +1439,22 @@ namespace Horde.Agent.Execution
 				throw new Exception("Only Linux is supported for executing a process inside a container");
 			}
 
-			if (String.IsNullOrEmpty(_jobOptions.Container.ImageUrl))
+			if (String.IsNullOrEmpty(JobOptions.Container.ImageUrl))
 			{
 				throw new Exception("Image URL is null or empty");
 			}
 
 			// Default to "docker" executable and assume it's available on the path
-			string executable = _jobOptions.Container.ContainerEngineExecutable ?? "docker";
+			string executable = JobOptions.Container.ContainerEngineExecutable ?? "docker";
 
 			uint linuxUid = LinuxInterop.getuid();
 			uint linuxGid = LinuxInterop.getgid();
-			
+
 			List<string> containerArgs = new()
 				{
 					"run",
 					"--tty", // Allocate a pseudo-TTY
-					$"--name horde-job-{_jobId}-{_batchId}", // Better name for debugging purposes
+					$"--name horde-job-{JobId}-{BatchId}", // Better name for debugging purposes
 					"--rm", // Ensure container is removed after run
 					$"--user {linuxUid}:{linuxGid}" // Run container as current user (important for mounted dirs)
 				};
@@ -1272,17 +1476,17 @@ namespace Horde.Agent.Execution
 				containerArgs.Add("--env-file=" + envFilePath);
 			}
 
-			if (!String.IsNullOrEmpty(_jobOptions.Container.ExtraArguments))
+			if (!String.IsNullOrEmpty(JobOptions.Container.ExtraArguments))
 			{
-				containerArgs.Add(_jobOptions.Container.ExtraArguments);
+				containerArgs.Add(JobOptions.Container.ExtraArguments);
 			}
-			
-			containerArgs.Add(_jobOptions.Container.ImageUrl);
+
+			containerArgs.Add(JobOptions.Container.ImageUrl);
 			string containerArgStr = String.Join(' ', containerArgs);
 			arguments = containerArgStr + " " + arguments;
-			
+
 			logger.LogInformation("Executing {File} {Arguments} in container", executable.QuoteArgument(), arguments);
-			
+
 			// Skip forwarding of env vars as they are explicitly set above as arguments to container run
 			return await ExecuteProcessAsync(executable, arguments, new Dictionary<string, string>(), filter, logger, cancellationToken);
 		}
@@ -1302,7 +1506,17 @@ namespace Horde.Agent.Execution
 			return dirs;
 		}
 
-		async Task<int> ExecuteCommandAsync(BeginStepResponse step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, string fileName, string arguments, ILogger jobLogger, CancellationToken cancellationToken)
+		private static string ConformEnvironmentVariableName(string name)
+		{
+			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				// Non-windows platforms don't allow dashes in variable names. The engine platform layer substitutes underscores for them.
+				return name.Replace('-', '_');
+			}
+			return name;
+		}
+
+		async Task<int> ExecuteCommandAsync(JobStepInfo step, DirectoryReference workspaceDir, DirectoryReference? sharedStorageDir, string fileName, string arguments, ILogger jobLogger, CancellationToken cancellationToken)
 		{
 			// Method for expanding environment variable properties related to this step
 			Dictionary<string, string> properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1312,15 +1526,15 @@ namespace Horde.Agent.Execution
 			Dictionary<string, string> newEnvVars = new Dictionary<string, string>(StringComparer.Ordinal);
 			foreach (KeyValuePair<string, string> envVar in _envVars)
 			{
-				newEnvVars[envVar.Key] = StringUtils.ExpandProperties(envVar.Value, properties);
+				newEnvVars[ConformEnvironmentVariableName(envVar.Key)] = StringUtils.ExpandProperties(envVar.Value, properties);
 			}
 			foreach (KeyValuePair<string, string> envVar in step.EnvVars)
 			{
-				newEnvVars[envVar.Key] = StringUtils.ExpandProperties(envVar.Value, properties);
+				newEnvVars[ConformEnvironmentVariableName(envVar.Key)] = StringUtils.ExpandProperties(envVar.Value, properties);
 			}
 			foreach (KeyValuePair<string, string> envVar in step.Credentials)
 			{
-				newEnvVars[envVar.Key] = envVar.Value;
+				newEnvVars[ConformEnvironmentVariableName(envVar.Key)] = envVar.Value;
 			}
 
 			// Add all the other Horde-specific variables
@@ -1338,9 +1552,17 @@ namespace Horde.Agent.Execution
 			FileUtils.ForceDeleteDirectoryContents(testDataDir);
 			newEnvVars["UE_TESTDATA_DIR"] = testDataDir.FullName;
 
-			newEnvVars["UE_HORDE_JOBID"] = _jobId;
-			newEnvVars["UE_HORDE_BATCHID"] = _batchId;
-			newEnvVars["UE_HORDE_STEPID"] = step.StepId;
+			FileReference graphUpdateFile = FileReference.Combine(workspaceDir, "Engine", "Saved", "Horde", "Graph.json");
+			FileUtils.ForceDeleteFile(graphUpdateFile);
+			newEnvVars["UE_HORDE_GRAPH_UPDATE"] = graphUpdateFile.FullName;
+
+			// TODO: These are AWS specific, this should be extended to handle more clouds or for licensees to be able to set these
+			newEnvVars["UE_HORDE_AVAILABILITY_ZONE"] = Amazon.Util.EC2InstanceMetadata.AvailabilityZone ?? "";
+			newEnvVars["UE_HORDE_REGION"] = Amazon.Util.EC2InstanceMetadata.Region?.DisplayName ?? "";
+
+			newEnvVars["UE_HORDE_JOBID"] = JobId.ToString();
+			newEnvVars["UE_HORDE_BATCHID"] = BatchId.ToString();
+			newEnvVars["UE_HORDE_STEPID"] = step.StepId.ToString();
 
 			// Enable structured logging output
 			newEnvVars["UE_LOG_JSON_TO_STDOUT"] = "1";
@@ -1354,7 +1576,7 @@ namespace Horde.Agent.Execution
 			newEnvVars["UE_HORDE_LEASE_CLEANUP"] = leaseCleanupScript.FullName;
 
 			// Set up the shared working dir
-			newEnvVars["UE_HORDE_SHARED_DIR"] = DirectoryReference.Combine(_session.WorkingDir, "Saved").FullName;
+			newEnvVars["UE_HORDE_SHARED_DIR"] = DirectoryReference.Combine(Session.WorkingDir, "Saved").FullName;
 
 			// Disable the S3DDC. This is technically a Fortnite-specific setting, but affects a large number of branches and is hard to retrofit. 
 			// Setting here for now, since it's likely to be temporary.
@@ -1365,6 +1587,8 @@ namespace Horde.Agent.Execution
 
 			// Log all the environment variables to the log
 			HashSet<string> credentialKeys = new HashSet<string>(step.Credentials.Keys, StringComparer.OrdinalIgnoreCase);
+			credentialKeys.Add(HordeHttpClient.HordeTokenEnvVarName);
+
 			foreach (KeyValuePair<string, string> envVar in newEnvVars.OrderBy(x => x.Key))
 			{
 				string value = "[redacted]";
@@ -1400,14 +1624,14 @@ namespace Horde.Agent.Execution
 				await ExecuteCleanupScriptAsync(cleanupScript, filter, jobLogger);
 				try
 				{
-					if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && _jobOptions?.Container?.Enabled is true)
+					if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && JobOptions?.Container?.Enabled is true)
 					{
 						List<DirectoryReference> mountDirs = GetContainerMountDirs(workspaceDir, sharedStorageDir, newEnvVars);
 						exitCode = await ExecuteProcessInContainerAsync(arguments, mountDirs, newEnvVars, filter, jobLogger, cancellationToken);
 					}
 					else
 					{
-						exitCode = await ExecuteProcessAsync(fileName, arguments, newEnvVars, filter, jobLogger, cancellationToken);	
+						exitCode = await ExecuteProcessAsync(fileName, arguments, newEnvVars, filter, jobLogger, cancellationToken);
 					}
 				}
 				finally
@@ -1429,7 +1653,7 @@ namespace Horde.Agent.Execution
 					jobLogger.LogInformation(ex, "Unable to parse/upload telemetry files: {Message}", ex.Message);
 				}
 
-				await CreateArtifactsAsync(step.StepId, JobArtifactType.Trace, workspaceDir, telemetryFiles, jobLogger, cancellationToken);
+				await CreateArtifactsAsync(step.StepId, TempStorage.GetArtifactNameForNode(step.Name), ArtifactType.StepTrace, workspaceDir, telemetryFiles, jobLogger, cancellationToken);
 
 				foreach ((_, FileReference telemetryFile) in telemetryFiles)
 				{
@@ -1471,15 +1695,15 @@ namespace Horde.Agent.Execution
 				jobLogger.LogInformation("Found {NumResults} test results", combinedTestData.Count);
 				await UploadTestDataAsync(step.StepId, combinedTestData);
 
-				await CreateArtifactsAsync(step.StepId, JobArtifactType.TestData, workspaceDir, testDataFiles, jobLogger, cancellationToken);
+				await CreateArtifactsAsync(step.StepId, TempStorage.GetArtifactNameForNode(step.Name), ArtifactType.StepTestData, workspaceDir, testDataFiles, jobLogger, cancellationToken);
 			}
 
 			if (DirectoryReference.Exists(logDir))
 			{
 				List<FileReference> artifactFiles = DirectoryReference.EnumerateFiles(logDir, "*", SearchOption.AllDirectories).ToList();
-				if (_jobOptions.UseNewTempStorage ?? false)
+				if (JobOptions.UseNewTempStorage ?? true)
 				{
-					await CreateArtifactAsync(step.StepId, JobArtifactType.Saved, workspaceDir, artifactFiles, jobLogger, cancellationToken);
+					await CreateArtifactAsync(step.StepId, TempStorage.GetArtifactNameForNode(step.Name), ArtifactType.StepSaved, workspaceDir, artifactFiles, jobLogger, cancellationToken);
 				}
 				else
 				{
@@ -1488,23 +1712,59 @@ namespace Horde.Agent.Execution
 					{
 						string artifactName = artifactFile.MakeRelativeTo(logDir);
 
-						string? artifactId = await ArtifactUploader.UploadAsync(RpcConnection, _jobId, _batchId, step.StepId, artifactName, artifactFile, jobLogger, cancellationToken);
+						string? artifactId = await ArtifactUploader.UploadAsync(RpcConnection, JobId, BatchId, step.StepId, artifactName, artifactFile, jobLogger, cancellationToken);
 						if (artifactId != null)
 						{
 							artifactFileToId[artifactFile] = artifactId;
 						}
 					}
+				}
 
-					foreach (FileReference reportFile in artifactFileToId.Keys.Where(x => x.HasExtension(".report.json")))
+				foreach (FileReference reportFile in artifactFiles.Where(x => x.HasExtension(".report.json")))
+				{
+					try
 					{
-						try
-						{
-							await CreateReportAsync(step.StepId, reportFile, artifactFileToId, jobLogger);
-						}
-						catch (Exception ex)
-						{
-							jobLogger.LogWarning("Unable to upload report: {Message}", ex.Message);
-						}
+						await CreateReportAsync(step.StepId, reportFile, jobLogger);
+					}
+					catch (Exception ex)
+					{
+						jobLogger.LogWarning("Unable to upload report: {Message}", ex.Message);
+					}
+				}
+			}
+
+			if (FileReference.Exists(graphUpdateFile))
+			{
+				jobLogger.LogInformation("Parsing graph update from {File}", graphUpdateFile);
+
+				UpdateGraphRequest updateGraph = await ParseGraphUpdateAsync(graphUpdateFile, jobLogger, cancellationToken);
+				foreach (CreateGroupRequest group in updateGraph.Groups)
+				{
+					jobLogger.LogInformation("  AgentType: {Name}", group.AgentType);
+					foreach (CreateNodeRequest node in group.Nodes)
+					{
+						jobLogger.LogInformation("    Node: {Name}", node.Name);
+					}
+				}
+
+				await RpcConnection.InvokeAsync((JobRpc.JobRpcClient x) => x.UpdateGraphAsync(updateGraph, null, null, cancellationToken), cancellationToken);
+
+				HashSet<string> publishOutputNames = new HashSet<string>(updateGraph.Groups.SelectMany(x => x.Nodes).SelectMany(x => x.Inputs), StringComparer.OrdinalIgnoreCase);
+				foreach (string publishOutputName in publishOutputNames)
+				{
+					jobLogger.LogInformation("Required output: {OutputName}", publishOutputName);
+				}
+				foreach (string stepOutputName in step.OutputNames)
+				{
+					jobLogger.LogInformation("Output from current step: {OutputName}", stepOutputName);
+				}
+
+				for (int idx = 0; idx < step.OutputNames.Count; idx++)
+				{
+					if (!step.PublishOutputs.Contains(idx) && publishOutputNames.Contains(step.OutputNames[idx]))
+					{
+						jobLogger.LogInformation("Added new publish output on {Name}", step.OutputNames[idx]);
+						step.PublishOutputs.Add(idx);
 					}
 				}
 			}
@@ -1612,7 +1872,7 @@ namespace Horde.Agent.Execution
 					}
 					else
 					{
-						_logger.LogInformation("Parent {ParentId} of span {SpanId} was not found.", span.ParentId, span.SpanId);
+						Logger.LogInformation("Parent {ParentId} of span {SpanId} was not found.", span.ParentId, span.SpanId);
 					}
 				}
 
@@ -1631,47 +1891,44 @@ namespace Horde.Agent.Execution
 			}
 		}
 
-		private async Task CreateReportAsync(string stepId, FileReference reportFile, Dictionary<FileReference, string> artifactFileToId, ILogger logger)
+		private async Task CreateReportAsync(JobStepId stepId, FileReference reportFile, ILogger logger)
 		{
 			byte[] data = await FileReference.ReadAllBytesAsync(reportFile);
 
 			JsonSerializerOptions options = new JsonSerializerOptions();
 			options.PropertyNameCaseInsensitive = true;
 			options.Converters.Add(new JsonStringEnumConverter());
-			ReportData report = JsonSerializer.Deserialize<ReportData>(data, options)!;
 
+			ReportData report = JsonSerializer.Deserialize<ReportData>(data, options)!;
 			if (String.IsNullOrEmpty(report.Name))
 			{
 				logger.LogWarning("Missing 'Name' field in report data");
 				return;
 			}
-			if (String.IsNullOrEmpty(report.FileName))
-			{
-				logger.LogWarning("Missing 'FileName' field in report data");
-				return;
-			}
 
-			FileReference artifactFile = FileReference.Combine(reportFile.Directory, report.FileName);
-			if (!artifactFileToId.TryGetValue(artifactFile, out string? artifactId))
+			if (String.IsNullOrEmpty(report.Content) && !String.IsNullOrEmpty(report.FileName))
 			{
-				logger.LogWarning("Unable to find artifact id for {File}", artifactFile);
-				return;
+				FileReference reportDataFile = FileReference.Combine(reportFile.Directory, report.FileName);
+				if (!FileReference.Exists(reportDataFile))
+				{
+					logger.LogWarning("Cannot find file '{File}' referenced by report data", report.FileName);
+					return;
+				}
+				report.Content = await FileReference.ReadAllTextAsync(reportDataFile);
 			}
-
-			logger.LogInformation("Creating report for {File} using artifact {ArtifactId}", reportFile, artifactId);
 
 			CreateReportRequest request = new CreateReportRequest();
-			request.JobId = _jobId;
-			request.BatchId = _batchId;
-			request.StepId = stepId;
+			request.JobId = JobId.ToString();
+			request.BatchId = BatchId.ToString();
+			request.StepId = stepId.ToString();
 			request.Scope = report.Scope;
 			request.Placement = report.Placement;
 			request.Name = report.Name;
-			request.ArtifactId = artifactId;
+			request.Content = report.Content;
 			await RpcConnection.InvokeAsync((JobRpc.JobRpcClient x) => x.CreateReportAsync(request), CancellationToken.None);
 		}
 
-		private ISpan CreateTracingData(ISpan parent, TraceSpan span)
+		private static ISpan CreateTracingData(ISpan parent, TraceSpan span)
 		{
 			ISpan newSpan = GlobalTracer.Instance.BuildSpan(span.Name)
 				.AsChildOf(parent)
@@ -1699,7 +1956,7 @@ namespace Horde.Agent.Execution
 			return newSpan;
 		}
 
-		protected async Task UploadTestDataAsync(string jobStepId, IEnumerable<KeyValuePair<string, object>> testData)
+		protected async Task UploadTestDataAsync(JobStepId jobStepId, IEnumerable<KeyValuePair<string, object>> testData)
 		{
 			if (testData.Any())
 			{
@@ -1707,7 +1964,7 @@ namespace Horde.Agent.Execution
 			}
 		}
 
-		async Task<bool> UploadTestDataAsync(JobRpc.JobRpcClient rpcClient, string jobStepId, IEnumerable<KeyValuePair<string, object>> pairs)
+		async Task<bool> UploadTestDataAsync(JobRpc.JobRpcClient rpcClient, JobStepId jobStepId, IEnumerable<KeyValuePair<string, object>> pairs)
 		{
 			using (AsyncClientStreamingCall<UploadTestDataRequest, UploadTestDataResponse> call = rpcClient.UploadTestData())
 			{
@@ -1719,8 +1976,8 @@ namespace Horde.Agent.Execution
 					byte[] data = JsonSerializer.SerializeToUtf8Bytes(pair.Value, options);
 
 					UploadTestDataRequest request = new UploadTestDataRequest();
-					request.JobId = _jobId;
-					request.JobStepId = jobStepId;
+					request.JobId = JobId.ToString();
+					request.JobStepId = jobStepId.ToString();
 					request.Key = pair.Key;
 					request.Value = Google.Protobuf.ByteString.CopyFrom(data);
 					await call.RequestStream.WriteAsync(request);

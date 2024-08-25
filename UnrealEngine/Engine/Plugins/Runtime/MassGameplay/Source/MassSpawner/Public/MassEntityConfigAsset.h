@@ -73,6 +73,11 @@ struct MASSSPAWNER_API FMassEntityConfig
 
 	const FGuid& GetGuid() const { return ConfigGuid; }
 	
+#if WITH_EDITOR
+	/** Needs to be called when the given config is being duplicated - ensured the ConfigGuid remains unique */
+	void PostDuplicate(bool bDuplicateForPIE);
+#endif // WITH_EDITOR
+	
 protected:
 	/** Combines traits based on the config hierarchy and returns list of unique traits */
 	void GetCombinedTraits(TArray<UMassEntityTraitBase*>& OutTraits) const;
@@ -138,6 +143,8 @@ public:
 	}
 
 #if WITH_EDITOR
+	/** Called upon asset's dupllication. Ensured the underlying config's ConfigGuid remains unique */
+	virtual void PostDuplicate(bool bDuplicateForPIE) override;
 
 	UFUNCTION(CallInEditor, Category = "Entity Config")
 	void ValidateEntityConfig();

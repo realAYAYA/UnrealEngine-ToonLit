@@ -186,7 +186,7 @@ IQueuedWork* FImgMediaScheduler::GetWorkOrReturnToPool(FImgMediaSchedulerThread*
 
 				while (CheckedLoaders++ < NumLoaders)
 				{
-					LoaderRoundRobin = (LoaderRoundRobin + 1) % NumLoaders;
+					LoaderRoundRobin = (LoaderRoundRobin + 1) % Loaders.Num();
 
 					TSharedPtr<FImgMediaLoader, ESPMode::ThreadSafe> Loader = Loaders[LoaderRoundRobin].Pin();
 

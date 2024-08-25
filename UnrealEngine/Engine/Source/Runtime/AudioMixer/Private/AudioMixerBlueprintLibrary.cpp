@@ -9,6 +9,7 @@
 #include "AudioDevice.h"
 #include "AudioDeviceManager.h"
 #include "AudioMixerDevice.h"
+#include "AudioMixerSubmix.h"
 #include "ContentStreaming.h"
 #include "CoreMinimal.h"
 #include "DSP/ConstantQ.h"
@@ -706,6 +707,99 @@ bool UAudioMixerBlueprintLibrary::IsAudioBusActive(const UObject* WorldContextOb
 	{
 		UE_LOG(LogAudioMixer, Error, TEXT("Audio buses are an audio mixer only feature. Please run the game with audio mixer enabled for this feature."));
 		return false;
+	}
+}
+
+void UAudioMixerBlueprintLibrary::RegisterAudioBusToSubmix(const UObject* WorldContextObject, USoundSubmix* SoundSubmix, UAudioBus* AudioBus)
+{
+	if (!SoundSubmix)
+	{
+		UE_LOG(LogAudioMixer, Error, TEXT("RegisterAudioBusToSubmix called with an invalid Submix."));
+		return;
+	}
+
+	if (!AudioBus)
+	{
+		UE_LOG(LogAudioMixer, Error, TEXT("RegisterAudioBusToSubmix called with an invalid Audio Bus."));
+		return;
+	}
+
+	if (!IsInAudioThread())
+	{
+		//Send this over to the audio thread, with the same settings
+		FAudioThread::RunCommandOnAudioThread([WorldContextObject, SoundSubmix, AudioBus]()
+		{
+			RegisterAudioBusToSubmix(WorldContextObject, SoundSubmix, AudioBus);
+		});
+
+		return;
+	}
+
+	if (Audio::FMixerDevice* MixerDevice = FAudioDeviceManager::GetAudioMixerDeviceFromWorldContext(WorldContextObject))
+	{
+		Audio::FMixerSubmixPtr MixerSubmixPtr = MixerDevice->GetSubmixInstance(SoundSubmix).Pin();
+
+		if (MixerSubmixPtr.IsValid())
+		{
+			UAudioBusSubsystem* AudioBusSubsystem = MixerDevice->GetSubsystem<UAudioBusSubsystem>();
+			check(AudioBusSubsystem);
+
+			const Audio::FAudioBusKey AudioBusKey = Audio::FAudioBusKey(AudioBus->GetUniqueID());
+			MixerSubmixPtr->RegisterAudioBus(AudioBusKey, AudioBusSubsystem->AddPatchInputForAudioBus(AudioBusKey, MixerDevice->GetNumOutputFrames(), AudioBus->GetNumChannels()));
+		}
+		else
+		{
+			UE_LOG(LogAudioMixer, Error, TEXT("Submix not found in audio mixer."));
+		}
+	}
+	else
+	{
+		UE_LOG(LogAudioMixer, Error, TEXT("Audio mixer device not found."));
+	}
+}
+
+void UAudioMixerBlueprintLibrary::UnregisterAudioBusFromSubmix(const UObject* WorldContextObject, USoundSubmix* SoundSubmix, UAudioBus* AudioBus)
+{
+	if (!SoundSubmix)
+	{
+		UE_LOG(LogAudioMixer, Error, TEXT("UnregisterAudioBusToSubmix called with an invalid Submix."));
+		return;
+	}
+
+	if (!AudioBus)
+	{
+		UE_LOG(LogAudioMixer, Error, TEXT("UnregisterAudioBusToSubmix called with an invalid Audio Bus."));
+		return;
+	}
+
+	if (!IsInAudioThread())
+	{
+		//Send this over to the audio thread, with the same settings
+		FAudioThread::RunCommandOnAudioThread([WorldContextObject, SoundSubmix, AudioBus]()
+		{
+			UnregisterAudioBusFromSubmix(WorldContextObject, SoundSubmix, AudioBus);
+		});
+
+		return;
+	}
+
+	if (Audio::FMixerDevice* MixerDevice = FAudioDeviceManager::GetAudioMixerDeviceFromWorldContext(WorldContextObject))
+	{
+		Audio::FMixerSubmixPtr MixerSubmixPtr = MixerDevice->GetSubmixInstance(SoundSubmix).Pin();
+
+		if (MixerSubmixPtr.IsValid())
+		{
+			const Audio::FAudioBusKey AudioBusKey(AudioBus->GetUniqueID());
+			MixerSubmixPtr->UnregisterAudioBus(AudioBusKey);
+		}
+		else
+		{
+			UE_LOG(LogAudioMixer, Error, TEXT("Submix not found in audio mixer."));
+		}
+	}
+	else
+	{
+		UE_LOG(LogAudioMixer, Error, TEXT("Audio mixer device not found."));
 	}
 }
 

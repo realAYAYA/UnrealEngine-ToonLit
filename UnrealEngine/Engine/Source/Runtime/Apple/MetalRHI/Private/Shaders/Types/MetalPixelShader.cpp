@@ -18,16 +18,16 @@
 FMetalPixelShader::FMetalPixelShader(TArrayView<const uint8> InCode)
 {
 	FMetalCodeHeader Header;
-	Init(InCode, Header);
+	Init(InCode, Header, MTLLibraryPtr());
 }
 
-FMetalPixelShader::FMetalPixelShader(TArrayView<const uint8> InCode, mtlpp::Library InLibrary)
+FMetalPixelShader::FMetalPixelShader(TArrayView<const uint8> InCode, MTLLibraryPtr InLibrary)
 {
 	FMetalCodeHeader Header;
 	Init(InCode, Header, InLibrary);
 }
 
-mtlpp::Function FMetalPixelShader::GetFunction()
+MTLFunctionPtr FMetalPixelShader::GetFunction()
 {
 	return GetCompiledFunction();
 }

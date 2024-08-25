@@ -148,7 +148,8 @@ public:
 	CONTROLFLOWS_API TSharedPtr<FTrackedActivity> GetTrackedActivity() const;
 
 public:
-	CONTROLFLOWS_API FControlFlow& QueueDelay(const float InDelay, const FString& NodeName = FString());
+	CONTROLFLOWS_API FControlFlow& QueueDelay(const float InSeconds, const FString& NodeName = FString());
+	CONTROLFLOWS_API FControlFlow& QueueSetCancelledNodeAsComplete(const bool bCancelledNodeIsComplete, const FString& NodeName = FString());
 
 	template<typename...ArgsT>
 	FControlFlow& QueueStep(const FString& NodeName, ArgsT...Params)
@@ -327,6 +328,7 @@ private:
 	friend class FControlFlowTask_Branch;
 	friend class FControlFlowTask_ConditionalLoop;
 	friend class FControlFlowStatics;
+	friend class FConcurrentControlFlows;
 	friend struct FConcurrencySubFlowContainer;
 
 public:
@@ -335,6 +337,8 @@ public:
 	CONTROLFLOWS_API FControlFlowPopulator& QueueLoop(FControlFlowLoopComplete& LoopCompleteDelgate, const FString& TaskName = TEXT(""), const FString& FlowNodeDebugName = TEXT(""));
 	
 private:
+	FORCEINLINE void SetProfilerEventStarted() { ensureMsgf(!bProfilerEventStarted, TEXT("Started a new control flow profiler event before previous step completed.")); bProfilerEventStarted = true; }
+
 	void HandleControlFlowNodeCompleted(TSharedRef<const FControlFlowNode> NodeCompleted);
 
 	mutable FSimpleMulticastDelegate OnStepCompletedDelegate;
@@ -388,10 +392,31 @@ private:
 
 	TSharedPtr<FControlFlowNode> CurrentNode = nullptr;
 
+	TWeakPtr<FControlFlow> ParentFlow;
+
+	TPair<double /*Timestamp*/, float /*DeltaTime*/> LastZeroSecondDelay;
+
 	//TODO: Put behind some args, because this is expensive.
 	TArray<TSharedRef<FControlFlow>> SubFlowStack_ForDebugging;
 
 	TArray<TSharedRef<FControlFlowNode>> FlowQueue;
 
 	TSharedPtr<FTrackedActivity> Activity;
+
+	bool bProfilerEventStarted = false;
 };
+
+#if CPUPROFILERTRACE_ENABLED
+
+#define CONTROL_FLOW_PERF_TRACE_STEP(FlowHandle, EventName) \
+	TRACE_CPUPROFILER_EVENT_MANUAL_START(#EventName); \
+	if (TRACE_CPUPROFILER_EVENT_MANUAL_IS_ENABLED()) \
+	{ \
+		FlowHandle->SetProfilerEventStarted(); \
+	}
+
+#else
+
+#define CONTROL_FLOW_PERF_TRACE_STEP(FlowHandle, EventName)
+
+#endif

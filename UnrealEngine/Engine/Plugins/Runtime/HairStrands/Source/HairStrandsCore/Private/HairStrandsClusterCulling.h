@@ -15,7 +15,7 @@ struct FHairStrandClusterData
 {
 	struct FHairGroup
 	{
-		uint32 ClusterCount = 0;
+		uint32 InstanceRegisteredIndex = ~0;
 		float ClusterScale = 0;
 		uint32 MaxPointPerCurve = 0;
 		FVector4f ClusterInfoParameters = FVector4f::Zero();
@@ -27,8 +27,6 @@ struct FHairStrandClusterData
 		FRDGExternalBuffer* PointLODBuffer = nullptr;
 
 		// See FHairStrandsClusterResource fro details about those buffers.
-		FRDGExternalBuffer* GroupAABBBuffer = nullptr;
-		FRDGExternalBuffer* ClusterAABBBuffer = nullptr;
 		FRDGExternalBuffer* ClusterInfoBuffer = nullptr; // SRV
 		FRDGExternalBuffer* CurveToClusterIdBuffer = nullptr; // SRV
 
@@ -39,7 +37,6 @@ struct FHairStrandClusterData
 		// Culling & LOD output
 		FRDGExternalBuffer* GetCulledCurveBuffer() const				{ return HairGroupPublicPtr ? &HairGroupPublicPtr->GetCulledCurveBuffer() : nullptr; }
 		FRDGExternalBuffer* GetCulledVertexIdBuffer() const				{ return HairGroupPublicPtr ? &HairGroupPublicPtr->GetCulledVertexIdBuffer() : nullptr; }
-		FRDGExternalBuffer* GetCulledVertexRadiusScaleBuffer() const	{ return HairGroupPublicPtr ? &HairGroupPublicPtr->GetCulledVertexRadiusScaleBuffer() : nullptr; }
 		bool GetCullingResultAvailable() const							{ return HairGroupPublicPtr ? HairGroupPublicPtr->GetCullingResultAvailable() : false; }
 		void SetCullingResultAvailable(bool b)							{ if (HairGroupPublicPtr) HairGroupPublicPtr->SetCullingResultAvailable(b); }
 
@@ -53,9 +50,10 @@ void AddInstanceToClusterData(
 	FHairGroupInstance* In,
 	FHairStrandClusterData& Out);
 
-void ComputeHairStrandsClustersCulling(
+void AddClusterCullingPass(
 	FRDGBuilder& GraphBuilder,
-	FGlobalShaderMap& ShaderMap,
-	const TArray<const FSceneView*>& Views,
+	FGlobalShaderMap* ShaderMap,
+	const FSceneView* View,
 	const FShaderPrintData* ShaderPrintData,
-	FHairStrandClusterData& ClusterDatas);
+	FHairStrandClusterData& ClusterDatas,
+	FRDGBufferUAVRef IndirectDispatchArgsGlobalUAV);

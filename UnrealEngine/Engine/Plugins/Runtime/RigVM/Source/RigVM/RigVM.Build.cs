@@ -7,18 +7,20 @@ public class RigVM : ModuleRules
 {
     public RigVM(ReadOnlyTargetRules Target) : base(Target)
     {
-	    PrivateIncludePaths.Add(Path.Combine(EngineDirectory,"Plugins/Runtime/RigVM/Source/RigVM/ThirdParty/AHEasing"));
+        PrivateIncludePaths.Add(Path.Combine(EngineDirectory,"Source/ThirdParty/AHEasing/AHEasing-1.3.2"));
 
         PublicDependencyModuleNames.AddRange(
             new string[] {
-                "Core",
-                "CoreUObject",
-                "Engine",
-                "AnimationCore",
-                "AnimGraphRuntime",
-                "DeveloperSettings",
-            }
-        );
+				"AnimGraphRuntime",
+				"AnimationCore",
+				"Core",
+				"CoreUObject",
+				"DeveloperSettings",
+				"Engine",
+				"Projects",
+				"StructUtils",
+			}
+		);
 
         if (Target.bBuildEditor == true)
         {
@@ -27,7 +29,8 @@ public class RigVM : ModuleRules
                 {
                     "UnrealEd",
                     "BlueprintGraph",
-                }
+					"StructUtilsEditor",
+				}
             );
         }
     }

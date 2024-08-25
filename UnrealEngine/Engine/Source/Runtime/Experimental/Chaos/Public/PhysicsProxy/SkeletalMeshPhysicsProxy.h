@@ -2,13 +2,18 @@
 #pragma once
 
 #include "Chaos/Framework/PhysicsProxy.h"
+#include "Chaos/Framework/BufferedData.h"
 #include "BoneHierarchy.h"
 #include "GeometryCollection/GeometryCollectionSimulationTypes.h"
 
-#include "Chaos/PBDJointConstraints.h"
 #include "Framework/TripleBufferedData.h"
 
 // @todo(chaos): remove this file
+
+namespace Chaos
+{
+	class FParticleData;
+}
 
 struct FSkeletalMeshPhysicsProxyParams
 {
@@ -95,7 +100,7 @@ struct FSkeletalMeshPhysicsProxyInputs
 	TArray<FVector> AngularVelocities;
 };
 
-struct FSkeletalMeshPhysicsProxyOutputs : public Chaos::FParticleData
+struct FSkeletalMeshPhysicsProxyOutputs //: public Chaos::FParticleData
 {
 	TArray<FTransform> Transforms;
 	TArray<FVector> LinearVelocities;
@@ -146,7 +151,7 @@ public:
 	CHAOS_API void FlipBuffer();
 	CHAOS_API bool PullFromPhysicsState(const int32 SolverSyncTimestamp);
 	bool IsDirty() { return false; }
-	EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::SkeletalMeshType; }
+	static constexpr EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::SkeletalMeshType; }
 	/** ----------------------- */
 
 	/**
@@ -162,7 +167,7 @@ public:
 
 	/** 
 	 */
-	const FSkeletalMeshPhysicsProxyOutputs* GetOutputs() const { return CurrentOutputConsumerBuffer; }
+	const FSkeletalMeshPhysicsProxyOutputs* GetOutputs() const { return nullptr; }
 
 	const FBoneHierarchy& GetBoneHierarchy() const { return Parameters.BoneHierarchy; }
 
@@ -170,14 +175,4 @@ private:
 	using FJointConstraints = Chaos::FPBDJointConstraints;
 
 	FSkeletalMeshPhysicsProxyParams Parameters;
-	TArray<int32> RigidBodyIds;
-	FJointConstraints JointConstraints;
-	// @todo(ccaulfield): sort out the IO buffer stuff
-	Chaos::TTripleBufferedData<FSkeletalMeshPhysicsProxyInputs> InputBuffers;
-	Chaos::TBufferedData<FSkeletalMeshPhysicsProxyOutputs> OutputBuffers;
-	FSkeletalMeshPhysicsProxyInputs* NextInputProducerBuffer;				// Buffer for the game to write to next
-	const FSkeletalMeshPhysicsProxyOutputs* CurrentOutputConsumerBuffer;	// Buffer for the game to read from next
-	bool bInitializedState;
-
-	FInitFunc InitFunc;
 };

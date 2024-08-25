@@ -13,7 +13,6 @@
 #include "Engine/Engine.h"
 #include "Misc/AssertionMacros.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Toolkits/IToolkit.h"
 #include "UObject/Class.h"

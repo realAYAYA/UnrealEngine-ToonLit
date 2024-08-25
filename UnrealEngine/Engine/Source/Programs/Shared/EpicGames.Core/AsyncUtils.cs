@@ -54,7 +54,7 @@ namespace EpicGames.Core
 		/// <param name="task">Task to wait for</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Wrapped task</returns>
-		public static async Task<T> AbandonOnCancel<T>(this Task<T> task, CancellationToken cancellationToken)
+		public static async Task<T> AbandonOnCancelAsync<T>(this Task<T> task, CancellationToken cancellationToken)
 		{
 			if (cancellationToken.CanBeCanceled)
 			{
@@ -164,7 +164,7 @@ namespace EpicGames.Core
 		/// <param name="source">Sequence to enumerate</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public static async IAsyncEnumerable<T> Prefetch<T>(this IAsyncEnumerable<T> source, [EnumeratorCancellation] CancellationToken cancellationToken)
+		public static async IAsyncEnumerable<T> PrefetchAsync<T>(this IAsyncEnumerable<T> source, [EnumeratorCancellation] CancellationToken cancellationToken)
 		{
 			await using IAsyncEnumerator<T> enumerator = source.GetAsyncEnumerator(cancellationToken);
 			if (await enumerator.MoveNextAsync())
@@ -216,14 +216,14 @@ namespace EpicGames.Core
 		}
 
 		/// <summary>
-		/// Waits for a native wait handle to be signalled
+		/// Waits for a native wait handle to be signaled
 		/// </summary>
 		/// <param name="handle">Handle to wait for</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		public static Task WaitOneAsync(this WaitHandle handle, CancellationToken cancellationToken = default) => handle.WaitOneAsync(-1, cancellationToken);
 
 		/// <summary>
-		/// Waits for a native wait handle to be signalled
+		/// Waits for a native wait handle to be signaled
 		/// </summary>
 		/// <param name="handle">Handle to wait for</param>
 		/// <param name="timeoutMs">Timeout for the wait</param>

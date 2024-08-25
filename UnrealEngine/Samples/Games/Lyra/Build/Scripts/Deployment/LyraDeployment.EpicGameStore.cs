@@ -147,7 +147,7 @@ namespace LyraDeployment
 					//	CommandUtils.LogInformation(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
 					//}
 
-					throw Ex;
+					throw;
 				}
 			}
 			Logger.LogInformation("BuildPatchTool Patch Generation Done!");
@@ -189,7 +189,7 @@ namespace LyraDeployment
 					//	CommandUtils.LogInformation(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
 					//}
 
-					throw Ex;
+					throw;
 				}
 			}
 			Logger.LogInformation("BuildPatchTool Patch Generation Done!");

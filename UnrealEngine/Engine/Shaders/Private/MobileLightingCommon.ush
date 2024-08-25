@@ -143,40 +143,39 @@ half MobileDirectionalLightCSM(float2 ScreenPosition, float SceneDepth, inout fl
 	Settings.DensityMulConstant = 0;
 	Settings.ProjectionDepthBiasParameters = 0;
 
-	float4 ShadowPosition = float4(0, 0, 0, 0);
-	for (uint i = 0; i < MAX_MOBILE_SHADOWCASCADES; i++)
+	float4 Count = float4(SceneDepth.xxxx >= MobileDirectionalLight.DirectionalLightShadowDistances);
+	uint CascadeIndex = uint(Count.x + Count.y + Count.z + Count.w);
+	
+	if (CascadeIndex < MobileDirectionalLight.DirectionalLightNumCascades)
 	{
-		if (SceneDepth < MobileDirectionalLight.DirectionalLightShadowDistances[i])
-		{
-		#if MOBILE_MULTI_VIEW
-			ShadowPosition = mul(float4(ScreenPosition.x, ScreenPosition.y, SceneDepth, 1), ResolvedView.MobileMultiviewShadowTransform);
-			ShadowPosition = mul(ShadowPosition, MobileDirectionalLight.DirectionalLightScreenToShadow[i]);
-		#else
-			ShadowPosition = mul(float4(ScreenPosition.x, ScreenPosition.y, SceneDepth, 1), MobileDirectionalLight.DirectionalLightScreenToShadow[i]);
-		#endif
-			ShadowPositionZ = ShadowPosition.z;
-			break; // position found.
-		}
-	}
-
-	// Process CSM only when ShadowPosition is valid.
-	if (ShadowPosition.z > 0)
-	{
-		// Clamp pixel depth in light space for shadowing opaque, because areas of the shadow depth buffer that weren't rendered to will have been cleared to 1
-		// We want to force the shadow comparison to result in 'unshadowed' in that case, regardless of whether the pixel being shaded is in front or behind that plane
-
-		// Invert ShadowZ as the shadow space has been changed (but not yet the filtering code)
-		float ShadowZ = 1.0f - ShadowPosition.z;
-		float LightSpacePixelDepthForOpaque = min(ShadowZ, 0.99999f);
-		Settings.SceneDepth = LightSpacePixelDepthForOpaque;
-
-		ShadowMap = MobileShadowPCF(ShadowPosition.xy, Settings);
-
-	#if FADE_CSM
-		float Fade = saturate(SceneDepth * MobileDirectionalLight.DirectionalLightDistanceFadeMADAndSpecularScale.x + MobileDirectionalLight.DirectionalLightDistanceFadeMADAndSpecularScale.y);
-		// lerp out shadow based on fade params.
-		ShadowMap = lerp(ShadowMap, 1.0, Fade * Fade);
+		float4 ShadowPosition = float4(0, 0, 0, 0);
+	#if MOBILE_MULTI_VIEW
+		ShadowPosition = mul(float4(ScreenPosition.x, ScreenPosition.y, SceneDepth, 1), ResolvedView.MobileMultiviewShadowTransform);
+		ShadowPosition = mul(ShadowPosition, MobileDirectionalLight.DirectionalLightScreenToShadow[CascadeIndex]);
+	#else
+		ShadowPosition = mul(float4(ScreenPosition.x, ScreenPosition.y, SceneDepth, 1), MobileDirectionalLight.DirectionalLightScreenToShadow[CascadeIndex]);
 	#endif
+		ShadowPositionZ = ShadowPosition.z;
+
+		// Process CSM only when ShadowPosition is valid.
+		if (ShadowPosition.z > 0)
+		{
+			// Clamp pixel depth in light space for shadowing opaque, because areas of the shadow depth buffer that weren't rendered to will have been cleared to 1
+			// We want to force the shadow comparison to result in 'unshadowed' in that case, regardless of whether the pixel being shaded is in front or behind that plane
+
+			// Invert ShadowZ as the shadow space has been changed (but not yet the filtering code)
+			float ShadowZ = 1.0f - ShadowPosition.z;
+			float LightSpacePixelDepthForOpaque = min(ShadowZ, 0.99999f);
+			Settings.SceneDepth = LightSpacePixelDepthForOpaque;
+
+			ShadowMap = MobileShadowPCF(ShadowPosition.xy, Settings);
+
+		#if FADE_CSM
+			float Fade = saturate(SceneDepth * MobileDirectionalLight.DirectionalLightDistanceFadeMADAndSpecularScale.x + MobileDirectionalLight.DirectionalLightDistanceFadeMADAndSpecularScale.y);
+			// lerp out shadow based on fade params.
+			ShadowMap = lerp(ShadowMap, 1.0, Fade * Fade);
+		#endif
+		}
 	}
 #endif //ENABLE_MOBILE_CSM
 	return ShadowMap;
@@ -308,6 +307,14 @@ half3 GetMobileSkyLightReflection(half3 ReflectionVector, half Roughness, half C
 {
 	half AbsoluteSpecularMip = ComputeReflectionCaptureMipFromRoughness(Roughness, CubemapMaxMip);
 	half4 Reflection = MobileReflectionCapture.Texture.SampleLevel(MobileReflectionCapture.TextureSampler, ReflectionVector, AbsoluteSpecularMip);
+#if FORWARD_SHADING_FORCES_SKYLIGHT_CUBEMAPS_BLENDING
+	float BlendFraction = MobileReflectionCapture.Params.w;
+	if (BlendFraction > 0.0f)
+	{
+		half4 ReflectionBlend = MobileReflectionCapture.TextureBlend.SampleLevel(MobileReflectionCapture.TextureBlendSampler, ReflectionVector, AbsoluteSpecularMip);
+		Reflection = lerp(Reflection, ReflectionBlend, BlendFraction.xxxx);
+	}
+#endif
 	return Reflection.rgb * ResolvedView.SkyLightColor.rgb;
 }
 #endif
@@ -343,17 +350,24 @@ half3 GetImageBasedReflectionLighting_Mobile(
 
 #elif MOBILE_DEFERRED_LIGHTING
 
+	// Normalize for static skylight types which mix with lightmaps.
+	bool bNormalize = ReflectionStruct.SkyLightParameters.z < 1;
 	float SkyAverageBrightness = 1.0f;
 	SpecularIBL = GetSkyLightReflection(ReflectionVector, Roughness, SkyAverageBrightness);
 	
-	#if ALLOW_STATIC_LIGHTING
-	SpecularIBL *= ComputeMixingWeight(IndirectIrradiance, SkyAverageBrightness, Roughness);
-	#endif
+	if (bNormalize)
+	{
+		#if ALLOW_STATIC_LIGHTING
+		SpecularIBL *= ComputeMixingWeight(IndirectIrradiance, SkyAverageBrightness, Roughness);
+		#endif
+	}
 
 	SpecularIBL *= CompositeAlpha;
 #else // !(ENABLE_CLUSTERED_REFLECTION || MOBILE_DEFERRED_LIGHTING)
 
-	half UsingSkyReflection = MobileReflectionCapture.Params.y > 0.0f;
+	bool UsingSkyReflection = MobileReflectionCapture.Params.y > 0.0f;
+	// Normalize for static skylight types which mix with lightmaps.
+	bool bNormalize = UsingSkyReflection && MobileReflectionCapture.Params.z < 1;
 	if (UsingSkyReflection)
 	{
 		// Apply sky colour if the reflection map is the sky.
@@ -368,9 +382,12 @@ half3 GetImageBasedReflectionLighting_Mobile(
 		SpecularIBL = SpecularIBL * ReflectionCaptureBrightness;
 	}
 
-	#if ALLOW_STATIC_LIGHTING
-	SpecularIBL *= ComputeMixingWeight(IndirectIrradiance, MobileReflectionCapture.Params.x, Roughness);
-	#endif
+	if (bNormalize)
+	{
+		#if ALLOW_STATIC_LIGHTING
+		SpecularIBL *= ComputeMixingWeight(IndirectIrradiance, MobileReflectionCapture.Params.x, Roughness);
+		#endif
+	}
 
 	SpecularIBL *= CompositeAlpha;
 #endif
@@ -394,7 +411,7 @@ half3 GetPlanarReflectionbasedReflectionLighting_Mobile(float3 TranslatedWorldPo
 	return Out;
 }
 
-// Version used for Strata
+// Version used for Substrate
 float3 GetImageBasedReflectionSpecular(
 	  half3 SpecularDirection, 
 	  half Roughness, 
@@ -525,11 +542,12 @@ void AccumulateLightGridLocalLighting(const FCulledLightsGridData InLightGridDat
 {
 	// Limit max to ForwardLightData.NumLocalLights.
 	// This prevents GPU hangs when the PS tries to read from uninitialized NumCulledLightsGrid buffer
-	const uint NumLocalLights = min(InLightGridData.NumLocalLights, GetNumLocalLights(EyeIndex));
+	const uint NumLightsInGridCell = min(InLightGridData.NumLights, GetMaxLightsPerCell(EyeIndex));
+
 	LOOP
-	for (uint LocalLightListIndex = FirstNonSimpleLightIndex; LocalLightListIndex < NumLocalLights; LocalLightListIndex++)
+	for (uint GridLightListIndex = FirstNonSimpleLightIndex; GridLightListIndex < NumLightsInGridCell; GridLightListIndex++)
 	{
-		const FLocalLightData LocalLight = GetLocalLightData(InLightGridData.DataStartIndex + LocalLightListIndex, EyeIndex);
+		const FLocalLightData LocalLight = GetLocalLightData(InLightGridData.DataStartIndex + GridLightListIndex, EyeIndex);
 
 #if MOBILE_DEFERRED_LIGHTING
 		// The lights are sorted such that all that support clustered deferred are at the beginning, there might be others
@@ -580,6 +598,83 @@ void AccumulateLightGridLocalLighting(const FCulledLightsGridData InLightGridDat
 		FLightAccumulator NewLighting = AccumulateDynamicLighting(TranslatedWorldPosition, CameraVector, GBuffer, 1, GBuffer.ShadingModelID, LightData, LightAttenuation, 0, uint2(0, 0), SurfaceShadow);
 #endif
 		DirectLighting = LightAccumulator_Add(DirectLighting, NewLighting);
+	}
+}
+#endif
+
+#if ENABLE_CLUSTERED_LIGHTS || MERGED_LOCAL_LIGHTS_MOBILE
+void MergeLocalLights(const FCulledLightsGridData InLightGridData
+	, float3 TranslatedWorldPosition
+	, uint EyeIndex
+	, float bSupportLightFunctions
+	, inout float3 MergedLightColor
+	, inout float3 MergedLightL
+	, inout float MergedSpecularScale
+	, inout float MergedTotalWeight
+#if ENABLE_NDOTL_INTEGRATION
+	, inout float3 N
+#endif
+)
+{
+	MergedLightColor = uint3(0.f, 0.f , 0.f);
+	MergedLightL = float3(0,0,0);
+	MergedTotalWeight = 0;
+	MergedSpecularScale = 0.f;
+	
+	uint NumLightsInGridCell = min(InLightGridData.NumLights, GetMaxLightsPerCell(EyeIndex));
+
+	LOOP
+	for (uint GridLightListIndex = 0; GridLightListIndex < NumLightsInGridCell; GridLightListIndex++)
+	{
+		const FLocalLightData LocalLight = GetLocalLightData(InLightGridData.DataStartIndex + GridLightListIndex, EyeIndex);
+
+		// extra-early out since we know light grid is sloppy and all lights in list are radial (have a range)
+		// appears useless
+		float InvLightRadiusSq = LocalLight.LightPositionAndInvRadius.w * LocalLight.LightPositionAndInvRadius.w;
+		float DistLight = length2(TranslatedWorldPosition - LocalLight.LightPositionAndInvRadius.xyz) * InvLightRadiusSq;
+		
+		if (DistLight > 1.0f)
+		{
+			continue;
+		}
+
+		FDeferredLightData LightData = ConvertToDeferredLight_Mobile(LocalLight);
+		LightData.SpecularScale	= UnpackLightSpecularScale(LocalLight);
+
+		float3 L = LightData.Direction;	// Already normalized
+		float3 ToLight = L;
+		float3 MaskedLightColor = LightData.Color;
+		float LightMask = 1;
+		if (LightData.bRadialLight)
+		{
+			LightMask = GetLocalLightAttenuation( TranslatedWorldPosition, LightData, ToLight, L );
+			MaskedLightColor *= LightMask;
+		}
+
+		float WeightLight = 1 - DistLight;
+		if (LightData.bSpotLight)
+		{
+			WeightLight *= SpotAttenuation(L, -LightData.Direction, LightData.SpotAngles);
+		}
+
+		#if ENABLE_NDOTL_INTEGRATION
+			half NoL = max(0, dot(N, L));
+			WeightLight = WeightLight * NoL;
+			MaskedLightColor = MaskedLightColor * NoL;
+		#endif
+
+		if( LightMask > 0)
+		{
+			MergedSpecularScale += LightData.SpecularScale * WeightLight;
+			MergedTotalWeight += WeightLight;
+			// For lights with light functions we only only use the compute the direction (OutColorB)
+			// The Color is added in additional draws using MainLightFunction()
+			if (!bSupportLightFunctions || !UnpackHasLightFunction(LocalLight))
+			{
+				MergedLightColor += MaskedLightColor;
+			}
+			MergedLightL += L *  WeightLight;
+		}
 	}
 }
 #endif

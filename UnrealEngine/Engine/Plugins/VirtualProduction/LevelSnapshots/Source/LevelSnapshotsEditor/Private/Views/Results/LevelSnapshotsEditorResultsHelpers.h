@@ -39,6 +39,30 @@ namespace FLevelSnapshotsEditorResultsHelpers
 
 	UObject* FindCounterpartComponent(const UActorComponent* SubObjectToMatch, const TSet<UActorComponent*>& InCounterpartSubObjects);
 
+	/**
+	 * Determines whether the specified ActorComponent is an instanced actor component and whether or not it is desirable
+	 * for the Level Snapshots process based on its creation method, this function's parameters and editor settings.
+	 * @param ActorComponent The ActorComponent to check.
+	 * @param bHideConstructionScriptComponentsInDetailsView Whether to hide construction script components in the details view. Default is true.
+	 * @return true if the ActorComponent should be added to a given Level Snapshots component array, false otherwise.
+	 */
+	bool IsInstancedActorComponentDesirableForComponentArray(
+		UActorComponent* ActorComponent, const bool bHideConstructionScriptComponentsInDetailsView = true);
+
+	/**
+	 * Filters out invalid and instanced actor components based on editor settings.
+	 * @param UnfilteredActorComponentList The unfiltered list of actor components.
+	 * @return The filtered set of actor components.
+	 */
+	TSet<UActorComponent*> FilterOutActorComponentsBasedOnEditorSettings(const TSet<UActorComponent*>& UnfilteredActorComponentList);
+
+	/**
+	 * Filters out invalid and instanced actor components based on editor settings.
+	 * @param UnfilteredActorComponentList The unfiltered list of actor components.
+	 * @return The filtered set of actor components.
+	 */
+	TSet<UActorComponent*> FilterOutActorComponentsBasedOnEditorSettings(const TSet<TWeakObjectPtr<UActorComponent>>& UnfilteredActorComponentList);
+
 	int32 CreateNewHierarchyStructInLoop(const AActor* InActor, USceneComponent* SceneComponent, TArray<TWeakPtr<FComponentHierarchy>>& AllHierarchies);
 
 	/* Creates a node tree of all scene components in an actor. Only scene components can have children. Non-scene actor components do not */

@@ -81,6 +81,8 @@ enum class EAnimNodeDataFlags : uint32
 
 	// This node binds its update function
 	HasUpdateFunction			= 0x00000004,
+
+	AllFunctions = HasInitialUpdateFunction | HasBecomeRelevantFunction | HasUpdateFunction,
 };
 
 ENUM_CLASS_FLAGS(EAnimNodeDataFlags);

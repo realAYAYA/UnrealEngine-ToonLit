@@ -86,8 +86,8 @@ struct FInboundTransferStatistics
 };
 
 
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnOutboundTransferDataUpdated, FOutboundTransferStatistics);
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnInboundTransferDataUpdated, FInboundTransferStatistics);
+DECLARE_TS_MULTICAST_DELEGATE_OneParam(FOnOutboundTransferDataUpdated, FOutboundTransferStatistics);
+DECLARE_TS_MULTICAST_DELEGATE_OneParam(FOnInboundTransferDataUpdated, FInboundTransferStatistics);
 
 /**
  * Interface for the messaging module network extension

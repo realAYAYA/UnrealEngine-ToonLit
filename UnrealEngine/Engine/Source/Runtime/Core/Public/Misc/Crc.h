@@ -215,7 +215,7 @@ inline uint32 FCrc::Strihash_DEPRECATED(const UTF8CHAR* Data)
 	WIDECHAR* Temp = new WIDECHAR[ConvertedLen];
 
 	WIDECHAR* TempEnd = FPlatformString::Convert(Temp, ConvertedLen, Data, Len);
-	checkf(TempEnd, TEXT("String conversion unsuccessful"));
+	checkf(TempEnd!=nullptr, TEXT("String conversion unsuccessful"));
 
 	// This doesn't work for strings containing characters outside the BMP, but
 	// then neither does the WIDECHAR overload.
@@ -236,7 +236,7 @@ inline uint32 FCrc::Strihash_DEPRECATED(const int32 DataLen, const UTF8CHAR* Dat
 	WIDECHAR* Temp = new WIDECHAR[ConvertedLen];
 
 	WIDECHAR* TempEnd = FPlatformString::Convert(Temp, ConvertedLen, Data, DataLen);
-	checkf(TempEnd, TEXT("String conversion unsuccessful"));
+	checkf(TempEnd!=nullptr, TEXT("String conversion unsuccessful"));
 
 	// This doesn't work for strings containing characters outside the BMP, but
 	// then neither does the WIDECHAR overload.

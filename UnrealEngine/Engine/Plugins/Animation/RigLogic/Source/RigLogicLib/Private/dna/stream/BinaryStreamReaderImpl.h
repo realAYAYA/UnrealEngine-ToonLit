@@ -6,12 +6,13 @@
 #include "dna/ReaderImpl.h"
 #include "dna/TypeDefs.h"
 #include "dna/stream/FilteredBinaryInputArchive.h"
+#include "dna/stream/StreamReaderStatus.h"
 
 #include <status/Provider.h>
 
 namespace dna {
 
-class BinaryStreamReaderImpl : public ReaderImpl<BinaryStreamReader> {
+class BinaryStreamReaderImpl : public ReaderImpl<BinaryStreamReader>, private StreamReaderStatus {
     public:
         BinaryStreamReaderImpl(BoundedIOStream* stream_,
                                DataLayer layer_,
@@ -27,8 +28,6 @@ class BinaryStreamReaderImpl : public ReaderImpl<BinaryStreamReader> {
         bool isLODConstrained() const;
 
     private:
-        static sc::StatusProvider status;
-
         BoundedIOStream* stream;
         FilteredBinaryInputArchive archive;
         bool lodConstrained;

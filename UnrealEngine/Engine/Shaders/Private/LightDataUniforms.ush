@@ -40,6 +40,8 @@ FDeferredLightData InitDeferredLightFromUniforms(uint InLightType)
 	Out.RectLightData.AtlasData.AtlasUVOffset	= DeferredLightUniforms.RectLightAtlasUVOffset;
 	Out.RectLightData.AtlasData.AtlasUVScale	= DeferredLightUniforms.RectLightAtlasUVScale;
 
+	Out.LightFunctionAtlasLightIndex = DeferredLightUniforms.LightFunctionAtlasLightIndex;
+
 	Out.HairTransmittance		= InitHairTransmittanceData();
 	return Out;
 }

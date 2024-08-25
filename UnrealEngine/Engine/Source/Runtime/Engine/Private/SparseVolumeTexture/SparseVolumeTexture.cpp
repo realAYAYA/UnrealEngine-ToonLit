@@ -14,10 +14,12 @@
 #include "Shader/ShaderTypes.h"
 #include "RenderingThread.h"
 #include "GlobalRenderResources.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "SparseVolumeTexture/SparseVolumeTextureData.h"
 #include "SparseVolumeTexture/SparseVolumeTextureUtility.h"
 #include "SparseVolumeTexture/ISparseVolumeTextureStreamingManager.h"
+#include "ContentStreaming.h"
 
 #if WITH_EDITORONLY_DATA
 #include "Misc/ScopedSlowTask.h"
@@ -37,6 +39,10 @@
 #include "Serialization/EditorBulkDataReader.h"
 #include "Serialization/EditorBulkDataWriter.h"
 
+#if WITH_EDITOR
+#include "Editor.h"
+#endif
+
 #define LOCTEXT_NAMESPACE "USparseVolumeTexture"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSparseVolumeTexture, Log, All);
@@ -47,6 +53,23 @@ static FAutoConsoleVariableRef CVarSVTRemoteDDCBehavior(
 	GSVTRemoteDDCBehavior,
 	TEXT("Controls how SVTs use remote DDC. 0: The bLocalDDCOnly property controls per-SVT caching behavior, 1: Force local DDC only usage for all SVTs, 2: Force local + remote DDC usage for all SVTs"),
 	ECVF_Default
+);
+
+static float GSVTStreamingRequestMipBias = 1.0f;
+static FAutoConsoleVariableRef CVarSVTStreamingRequestMipBias(
+	TEXT("r.SparseVolumeTexture.Streaming.RequestMipBias"),
+	GSVTStreamingRequestMipBias,
+	TEXT("Bias to apply the calculated mip level to stream at. This is used to account for the mip estimation based on projected screen space size being very conservative. ")
+	TEXT("The default value of 1.0 was found empirically to roughly result in a 1:1 voxel to pixel ratio."),
+	ECVF_Default
+);
+
+static int32 GSVTStreamingDDCChunkSize = 2;
+static FAutoConsoleVariableRef CVarSVTStreamingDDCChunkSize(
+	TEXT("r.SparseVolumeTexture.Streaming.DDCChunkSize"),
+	GSVTStreamingDDCChunkSize,
+	TEXT("Size of DDC chunks the streaming data is split into (in MiB). A smaller size leads to more requests but can improve streaming performance. Default: 2 MiB"),
+	ECVF_Default | ECVF_ReadOnly
 );
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -82,6 +105,13 @@ FArchive& operator<<(FArchive& Ar, UE::SVT::FHeader& Header)
 	return Ar;
 }
 
+FArchive& operator<<(FArchive& Ar, UE::SVT::FPageTopology::FMip& Mip)
+{
+	Ar << Mip.PageOffset;
+	Ar << Mip.PageCount;
+	return Ar;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace UE
@@ -104,7 +134,7 @@ static int32 ComputeNumMipLevels(const FIntVector3& InVirtualVolumeMin, const FI
 
 static const FString& GetDerivedDataVersion()
 {
-	static FString CachedVersionString = TEXT("381AE2A9-A903-4C8F-8486-891E24D6FC72");	// Bump this if you want to ignore all cached data so far.
+	static FString CachedVersionString = TEXT("49DD2D7C-C346-4A02-963A-D3F81E7E1601");	// Bump this if you want to ignore all cached data so far.
 	return CachedVersionString;
 }
 
@@ -177,7 +207,7 @@ bool FHeader::Validate(bool bPrintToLog)
 	{
 		if (bPrintToLog)
 		{
-			UE_LOG(LogSparseVolumeTexture, Warning, TEXT("SparseVolumeTexture page table texture memory size (%ll) exceeds the 2048MB GPU resource limit!"), (long long)PageTableSizeBytes);
+			UE_LOG(LogSparseVolumeTexture, Warning, TEXT("SparseVolumeTexture page table texture memory size (%lld) exceeds the 2048MB GPU resource limit!"), (long long)PageTableSizeBytes);
 		}
 		return false;
 	}
@@ -187,11 +217,52 @@ bool FHeader::Validate(bool bPrintToLog)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
+void FPageTopology::Reset()
+{
+	MipInfo.Reset();
+	PackedPageTableCoords.Reset();
+	TileIndices.Reset();
+	ParentIndices.Reset();
+}
+
+void FPageTopology::Serialize(FArchive& Ar)
+{
+	Ar << MipInfo;
+	Ar << PackedPageTableCoords;
+	Ar << TileIndices;
+	Ar << ParentIndices;
+}
+
+void FPageTopology::GetTileRange(uint32 PageOffset, uint32 PageCount, uint32& OutTileOffset, uint32& OutTileCount) const
+{
+	uint32 TileRangeMin = UINT32_MAX;
+	uint32 TileRangeMax = 0;
+	for (uint32 PageIndex = PageOffset; PageIndex < (PageOffset + PageCount); ++PageIndex)
+	{
+		check(IsValidPageIndex(PageIndex));
+		const uint32 TileIndex = TileIndices[PageIndex];
+		TileRangeMin = FMath::Min(TileIndex, TileRangeMin);
+		TileRangeMax = FMath::Max(TileIndex, TileRangeMax);
+	}
+	if (TileRangeMax >= TileRangeMin)
+	{
+		OutTileOffset = TileRangeMin;
+		OutTileCount = TileRangeMax - TileRangeMin + 1;
+	}
+	else
+	{
+		OutTileOffset = 0;
+		OutTileCount = 0;
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
 void FResources::Serialize(FArchive& Ar, UObject* Owner, bool bCooked)
 {
 	// Note: this is all derived data, native versioning is not needed, but be sure to bump GetDerivedDataVersion() when modifying!
 	FStripDataFlags StripFlags(Ar, 0);
-	if (!StripFlags.IsDataStrippedForServer())
+	if (!StripFlags.IsAudioVisualDataStripped())
 	{
 		Ar << Header;
 
@@ -208,8 +279,21 @@ void FResources::Serialize(FArchive& Ar, UObject* Owner, bool bCooked)
 			StoredResourceFlags = ResourceFlags;
 		}
 
-		Ar << MipLevelStreamingInfo;
+		Ar << StreamingMetaData.TileDataOffsets;
+		Ar << StreamingMetaData.NumVoxelsA;
+		Ar << StreamingMetaData.FirstStreamingTileIndex;
 		Ar << RootData;
+
+		Topology.Serialize(Ar);
+
+#if WITH_EDITORONLY_DATA
+		// These members are only needed when streaming from DDC
+		if (!bCooked)
+		{
+			Ar << DDCChunkIds;
+			Ar << DDCChunkMaxTileIndices;
+		}
+#endif
 
 		// StreamableMipLevels is only serialized in cooked builds and when caching to DDC failed in editor builds.
 		// If the data was successfully cached to DDC, we just query it from DDC on the next run or recreate it if that failed.
@@ -232,21 +316,7 @@ void FResources::Serialize(FArchive& Ar, UObject* Owner, bool bCooked)
 
 bool FResources::HasStreamingData() const
 {
-	if (MipLevelStreamingInfo.Num() == 1)
-	{
-		// Root mip level does not stream
-		return false;
-	}
-	else
-	{
-		// It is possible for multiple mip levels to exist but all these levels are empty, so we can't just check the number of mip levels
-		bool bHasStreamingData = false;
-		for (int32 MipLevelIndex = 0; MipLevelIndex < MipLevelStreamingInfo.Num() - 1; ++MipLevelIndex)
-		{
-			bHasStreamingData = bHasStreamingData || (MipLevelStreamingInfo[MipLevelIndex].BulkSize > 0);
-		}
-		return bHasStreamingData;
-	}
+	return StreamingMetaData.GetNumStreamingTiles() > 0;
 }
 
 #if WITH_EDITORONLY_DATA
@@ -313,7 +383,7 @@ bool FResources::Build(USparseVolumeTextureFrame* Owner, UE::Serialization::FEdi
 
 		const int32 NumMipLevelsGlobal = Owner->GetNumMipLevels();
 		const bool bMoveMip0FromSource = true; // we have no need to keep SourceTextureData around
-		FTextureData DerivedTextureData;
+		FDerivedTextureData DerivedTextureData;
 		if (!SourceTextureData.BuildDerivedData(AddressingInfo, NumMipLevelsGlobal, bMoveMip0FromSource, DerivedTextureData))
 		{
 			return false;
@@ -322,212 +392,33 @@ bool FResources::Build(USparseVolumeTextureFrame* Owner, UE::Serialization::FEdi
 		// Now unload the source data
 		SourceData.UnloadData();
 
-		const int32 NumMipLevels = DerivedTextureData.MipMaps.Num();
-
 		Header = DerivedTextureData.Header;
+		NumMipLevels = DerivedTextureData.MipPageRanges.Num();
 		RootData.Reset();
-		MipLevelStreamingInfo.SetNumZeroed(NumMipLevels);
+		Topology.Reset();
 		ResourceFlags = 0;
 		ResourceName.Reset();
 		DDCKeyHash.Reset();
-		DDCRawHash.Reset();
+		DDCChunkIds.Reset();
+		DDCChunkMaxTileIndices.Reset();
 		DDCRebuildState.store(EDDCRebuildState::Initial);
 
-		// Stores page table into BulkData as two consecutive arrays of packed page coordinates and linear indices into the physical tiles array.
-		// Returns number of written/non-zero page table entries
-		auto CompressPageTable = [](const TArray<uint32>& PageTable, const FIntVector3& Resolution, TArray<uint8>& BulkData) -> int32
+		// Build page topology
+		Topology.Reset();
+		Topology.MipInfo.Reserve(DerivedTextureData.MipPageRanges.Num());
+		for (const FDerivedTextureData::FMipPageRange& MipRange : DerivedTextureData.MipPageRanges)
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FResources::Build::CompressPageTable);
-
-			int32 NumNonZeroEntries = 0;
-			for (uint32 Entry : PageTable)
-			{
-				if (Entry)
-				{
-					++NumNonZeroEntries;
-				}
-			}
-
-			const int32 BaseOffset = BulkData.Num();
-			BulkData.SetNum(BulkData.Num() + NumNonZeroEntries * 2 * sizeof(uint32));
-			uint32* PackedCoords = reinterpret_cast<uint32*>(BulkData.GetData() + BaseOffset);
-			uint32* PageEntries = PackedCoords + NumNonZeroEntries;
-			
-			int32 NumWrittenEntries = 0;
-			for (int32 Z = 0; Z < Resolution.Z; ++Z)
-			{
-				for (int32 Y = 0; Y < Resolution.Y; ++Y)
-				{
-					for (int32 X = 0; X < Resolution.X; ++X)
-					{
-						const int32 LinearCoord = (Z * Resolution.Y * Resolution.X) + (Y * Resolution.X) + X;
-						const uint32 Entry = PageTable[LinearCoord];
-						if (Entry)
-						{
-							const uint32 Packed = (X & 0x7FFu) | ((Y & 0x7FFu) << 11u) | ((Z & 0x3FFu) << 22u);
-							PackedCoords[NumWrittenEntries] = Packed;
-							PageEntries[NumWrittenEntries] = Entry - 1;
-							++NumWrittenEntries;
-						}
-					}
-				}
-			}
-
-			return NumNonZeroEntries;
-		};
-
-		auto CompressTiles = [](int32 NumTiles, const TArray64<uint8>& PhysicalTileDataA, const TArray64<uint8>& PhysicalTileDataB, const TArrayView<EPixelFormat>& Formats, const TArrayView<FVector4f>& FallbackValues, TArray<uint8>& BulkData, FMipLevelStreamingInfo& MipStreamingInfo)
-		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FResources::Build::CompressTiles);
-
-			const int64 FormatSize[] = { GPixelFormats[Formats[0]].BlockBytes, GPixelFormats[Formats[1]].BlockBytes };
-			uint8 NullTileValuesU8[2][sizeof(float) * 4] = {};
-			int32 NumTextures = 0;
-			for (int32 i = 0; i < 2; ++i)
-			{
-				if (Formats[i] != PF_Unknown)
-				{
-					++NumTextures;
-					SVT::WriteVoxel(0, NullTileValuesU8[i], Formats[i], FallbackValues[i]);
-				}
-			}
-
-			const int32 OccupancySizePerTexture = NumTiles * SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32);
-			const int32 OccupancySize = NumTextures * OccupancySizePerTexture;
-			const int32 TileDataOffsetsSize = NumTextures * NumTiles * sizeof(uint32);
-			BulkData.Reserve(BulkData.Num() + OccupancySize + TileDataOffsetsSize);
-
-			MipStreamingInfo.OccupancyBitsOffset[0] = BulkData.Num() - MipStreamingInfo.BulkOffset;
-			MipStreamingInfo.OccupancyBitsSize[0] = Formats[0] != PF_Unknown ? OccupancySizePerTexture : 0;
-			BulkData.SetNum(BulkData.Num() + MipStreamingInfo.OccupancyBitsSize[0]);
-			
-			MipStreamingInfo.OccupancyBitsOffset[1] = BulkData.Num() - MipStreamingInfo.BulkOffset;
-			MipStreamingInfo.OccupancyBitsSize[1] = Formats[1] != PF_Unknown ? OccupancySizePerTexture : 0;
-			BulkData.SetNum(BulkData.Num() + MipStreamingInfo.OccupancyBitsSize[1]);
-
-			MipStreamingInfo.TileDataOffsetsOffset[0] = BulkData.Num() - MipStreamingInfo.BulkOffset;
-			MipStreamingInfo.TileDataOffsetsSize[0] = Formats[0] != PF_Unknown ? NumTiles * sizeof(uint32) : 0;
-			BulkData.SetNum(BulkData.Num() + MipStreamingInfo.TileDataOffsetsSize[0]);
-
-			MipStreamingInfo.TileDataOffsetsOffset[1] = BulkData.Num() - MipStreamingInfo.BulkOffset;
-			MipStreamingInfo.TileDataOffsetsSize[1] = Formats[1] != PF_Unknown ? NumTiles * sizeof(uint32) : 0;
-			BulkData.SetNum(BulkData.Num() + MipStreamingInfo.TileDataOffsetsSize[1]);
-
-			// Zero the bitmasks
-			FMemory::Memzero(BulkData.GetData() + MipStreamingInfo.BulkOffset + MipStreamingInfo.OccupancyBitsOffset[0], MipStreamingInfo.OccupancyBitsSize[0] + MipStreamingInfo.OccupancyBitsSize[1]);
-
-			uint32* OccupancyBits[2];
-			OccupancyBits[0] = reinterpret_cast<uint32*>(BulkData.GetData() + MipStreamingInfo.BulkOffset + MipStreamingInfo.OccupancyBitsOffset[0]);
-			OccupancyBits[1] = reinterpret_cast<uint32*>(BulkData.GetData() + MipStreamingInfo.BulkOffset + MipStreamingInfo.OccupancyBitsOffset[1]);
-
-			uint32* PrefixSums[2];
-			PrefixSums[0] = reinterpret_cast<uint32*>(BulkData.GetData() + MipStreamingInfo.BulkOffset + MipStreamingInfo.TileDataOffsetsOffset[0]);
-			PrefixSums[1] = reinterpret_cast<uint32*>(BulkData.GetData() + MipStreamingInfo.BulkOffset + MipStreamingInfo.TileDataOffsetsOffset[1]);
-
-			// Compute occupancy bitmasks and count number of non-fallback voxels per tile
-			ParallelFor(NumTiles, [&](int32 TileIndex)
-				{
-					for (int32 AttributesIdx = 0; AttributesIdx < 2; ++AttributesIdx)
-					{
-						if (Formats[AttributesIdx] != PF_Unknown)
-						{
-							PrefixSums[AttributesIdx][TileIndex] = 0;
-							for (int64 VoxelIndex = 0; VoxelIndex < SVT::NumVoxelsPerPaddedTile; ++VoxelIndex)
-							{
-								const uint8* Src = (AttributesIdx == 0 ? PhysicalTileDataA.GetData() : PhysicalTileDataB.GetData()) + FormatSize[AttributesIdx] * (TileIndex * SVT::NumVoxelsPerPaddedTile + VoxelIndex);
-								bool bIsFallbackValue = FMemory::Memcmp(Src, NullTileValuesU8[AttributesIdx], FormatSize[AttributesIdx]) == 0;
-								if (!bIsFallbackValue)
-								{
-									const int64 WordIndex = TileIndex * SVT::NumOccupancyWordsPerPaddedTile + (VoxelIndex / 32);
-									OccupancyBits[AttributesIdx][WordIndex] |= 1u << (static_cast<uint32>(VoxelIndex) % 32u);
-									PrefixSums[AttributesIdx][TileIndex]++;
-								}
-							}
-						}
-					}
-				});
-
-			// Compute actual per-tile voxel data offsets (prefix sum)
-			uint32 Sums[2] = {};
-			for (int32 AttributesIdx = 0; AttributesIdx < 2; ++AttributesIdx)
-			{
-				if (Formats[AttributesIdx] != PF_Unknown)
-				{
-					for (int32 TileIndex = 0; TileIndex < NumTiles; ++TileIndex)
-					{
-						uint32 Tmp = PrefixSums[AttributesIdx][TileIndex];
-						PrefixSums[AttributesIdx][TileIndex] = Sums[AttributesIdx];
-						Sums[AttributesIdx] += Tmp;
-					}
-				}
-			}
-
-			// Allocate compacted tile data memory
-			MipStreamingInfo.TileDataOffset[0] = BulkData.Num() - MipStreamingInfo.BulkOffset;
-			MipStreamingInfo.TileDataSize[0] = Sums[0] * FormatSize[0];
-
-			MipStreamingInfo.TileDataOffset[1] = MipStreamingInfo.TileDataOffset[0] + MipStreamingInfo.TileDataSize[0];
-			MipStreamingInfo.TileDataSize[1] = Sums[1] * FormatSize[1];
-
-			BulkData.SetNum(BulkData.Num() + MipStreamingInfo.TileDataSize[0] + MipStreamingInfo.TileDataSize[1]);
-
-			// All above pointers into the BulkData are now invalid!
-
-			uint8* RelativeBulkDataPtr = BulkData.GetData() + MipStreamingInfo.BulkOffset;
-
-			uint8* DstTileData[2];
-			DstTileData[0] = RelativeBulkDataPtr + MipStreamingInfo.TileDataOffset[0];
-			DstTileData[1] = RelativeBulkDataPtr + MipStreamingInfo.TileDataOffset[1];
-
-			// Copy voxels to compacted locations
-			ParallelFor(NumTiles, [&](int32 TileIndex)
-				{
-					for (int32 AttributesIdx = 0; AttributesIdx < 2; ++AttributesIdx)
-					{
-						if (Formats[AttributesIdx] != PF_Unknown)
-						{
-							uint32 VoxelDataWriteOffset = reinterpret_cast<uint32*>(RelativeBulkDataPtr + MipStreamingInfo.TileDataOffsetsOffset[AttributesIdx])[TileIndex];
-							const uint32* TileOccupancyBits = reinterpret_cast<uint32*>(RelativeBulkDataPtr + MipStreamingInfo.OccupancyBitsOffset[AttributesIdx] + TileIndex * SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32));
-
-							for (int64 VoxelIndex = 0; VoxelIndex < SVT::NumVoxelsPerPaddedTile; ++VoxelIndex)
-							{
-								const int64 WordIndex = (VoxelIndex / 32);
-
-								if (TileOccupancyBits[WordIndex] & (1u << (static_cast<uint32>(VoxelIndex) % 32u)))
-								{
-									uint8* Dst = DstTileData[AttributesIdx] + VoxelDataWriteOffset * FormatSize[AttributesIdx];
-									const uint8* Src = (AttributesIdx == 0 ? PhysicalTileDataA.GetData() : PhysicalTileDataB.GetData()) + FormatSize[AttributesIdx] * (TileIndex * SVT::NumVoxelsPerPaddedTile + VoxelIndex);
-									FMemory::Memcpy(Dst, Src, FormatSize[AttributesIdx]);
-									++VoxelDataWriteOffset;
-								}
-							}
-						}
-					}
-				});
-		};
-
-		TArray<uint8> StreamableBulkData;
-		for (int32 MipLevelIdx = 0; MipLevelIdx < DerivedTextureData.MipMaps.Num(); ++MipLevelIdx)
-		{
-			const FTextureData::FMipMap& Mip = DerivedTextureData.MipMaps[MipLevelIdx];
-			const bool bIsRootMipLevel = (MipLevelIdx == (DerivedTextureData.MipMaps.Num() - 1));
-			TArray<uint8>& BulkData = bIsRootMipLevel ? RootData : StreamableBulkData;
-
-			FIntVector3 MipPageTableResolution = DerivedTextureData.Header.PageTableVolumeResolution >> MipLevelIdx;
-			MipPageTableResolution = FIntVector3(FMath::Max(1, MipPageTableResolution.X), FMath::Max(1, MipPageTableResolution.Y), FMath::Max(1, MipPageTableResolution.Z));
-
-			FMipLevelStreamingInfo& MipStreamingInfo = MipLevelStreamingInfo[MipLevelIdx];
-			MipStreamingInfo.BulkOffset = BulkData.Num();
-
-			MipStreamingInfo.PageTableOffset = BulkData.Num() - MipStreamingInfo.BulkOffset;
-			const int32 NumNonZeroPageTableEntries = CompressPageTable(Mip.PageTable, MipPageTableResolution, BulkData);
-			MipStreamingInfo.PageTableSize = NumNonZeroPageTableEntries * 2 * sizeof(uint32);
-			
-			CompressTiles(Mip.NumPhysicalTiles, Mip.PhysicalTileDataA, Mip.PhysicalTileDataB, Header.AttributesFormats, Header.FallbackValues, BulkData, MipStreamingInfo);
-
-			MipStreamingInfo.BulkSize = BulkData.Num() - MipStreamingInfo.BulkOffset;
-			MipStreamingInfo.NumPhysicalTiles = Mip.NumPhysicalTiles;
+			FPageTopology::FMip& Mip = Topology.MipInfo.AddDefaulted_GetRef();
+			Mip.PageOffset = MipRange.PageOffset;
+			Mip.PageCount = MipRange.PageCount;
 		}
+		Topology.PackedPageTableCoords = MoveTemp(DerivedTextureData.PageTableCoords);
+		Topology.TileIndices = MoveTemp(DerivedTextureData.PageTableTileIndices);
+		Topology.ParentIndices = MoveTemp(DerivedTextureData.PageTableParentIndices);
+
+		// Compress tile data
+		TArray64<uint8> StreamableBulkData;
+		StreamingMetaData = CompressTiles(Topology, DerivedTextureData, RootData, StreamableBulkData);
 
 		// Store StreamableMipLevels
 		{
@@ -558,8 +449,8 @@ void FResources::Cache(USparseVolumeTextureFrame* Owner, UE::Serialization::FEdi
 	using namespace UE::DerivedData;
 
 	static const FValueId SVTDataId = FValueId::FromName("SparseVolumeTextureData");
-	static const FValueId SVTStreamingDataId = FValueId::FromName("SparseVolumeTextureStreamingData");
-	const FString KeySuffix = SourceData.GetIdentifier().ToString() + FString::Format(TEXT("{0}_{1}_{2}_{3}"), { Owner->GetNumMipLevels(), Owner->GetTextureAddressX(), Owner->GetTextureAddressY(), Owner->GetTextureAddressZ() });
+	const int32 DDCChunkSizeInMiB = FMath::Max(GSVTStreamingDDCChunkSize, 1);
+	const FString KeySuffix = SourceData.GetIdentifier().ToString() + FString::Format(TEXT("{0}_{1}_{2}_{3}_{4}"), { Owner->GetNumMipLevels(), Owner->GetTextureAddressX(), Owner->GetTextureAddressY(), Owner->GetTextureAddressZ(), DDCChunkSizeInMiB });
 	FString DerivedDataKey = FDerivedDataCacheInterface::BuildCacheKey(TEXT("SPARSEVOLUMETEXTURE"), *GetDerivedDataVersion(), *KeySuffix);
 
 	FCacheKey CacheKey;
@@ -577,12 +468,11 @@ void FResources::Cache(USparseVolumeTextureFrame* Owner, UE::Serialization::FEdi
 
 	// Check if the data already exists in DDC
 	FSharedBuffer ResourcesDataBuffer;
-	FIoHash SVTStreamingDataHash;
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FResources::Cache::CheckDDC);
 
-		FCacheRecordPolicyBuilder PolicyBuilder(DefaultCachePolicy | ECachePolicy::KeepAlive);
-		PolicyBuilder.AddValuePolicy(SVTStreamingDataId, DefaultCachePolicy | ECachePolicy::SkipData);
+		FCacheRecordPolicyBuilder PolicyBuilder(DefaultCachePolicy | ECachePolicy::KeepAlive | ECachePolicy::SkipData);
+		PolicyBuilder.AddValuePolicy(SVTDataId, DefaultCachePolicy);
 
 		FCacheGetRequest Request;
 		Request.Name = Owner->GetPathName();
@@ -591,14 +481,12 @@ void FResources::Cache(USparseVolumeTextureFrame* Owner, UE::Serialization::FEdi
 
 		FRequestOwner RequestOwner(EPriority::Blocking);
 		GetCache().Get(MakeArrayView(&Request, 1), RequestOwner,
-			[&ResourcesDataBuffer, &SVTStreamingDataHash](FCacheGetResponse&& Response)
+			[&ResourcesDataBuffer](FCacheGetResponse&& Response)
 			{
 				if (Response.Status == EStatus::Ok)
 				{
 					const FCompressedBuffer& CompressedBuffer = Response.Record.GetValue(SVTDataId).GetData();
 					ResourcesDataBuffer = CompressedBuffer.Decompress();
-
-					SVTStreamingDataHash = Response.Record.GetValue(SVTStreamingDataId).GetRawHash();
 				}
 			});
 		RequestOwner.Wait();
@@ -617,7 +505,6 @@ void FResources::Cache(USparseVolumeTextureFrame* Owner, UE::Serialization::FEdi
 		if (ResourceFlags & EResourceFlag_StreamingDataInDDC)
 		{
 			DDCKeyHash = CacheKey.Hash;
-			DDCRawHash = SVTStreamingDataHash;
 		}
 	}
 	else
@@ -627,19 +514,49 @@ void FResources::Cache(USparseVolumeTextureFrame* Owner, UE::Serialization::FEdi
 		check(bBuiltSuccessfully);
 
 		FCacheRecordBuilder RecordBuilder(CacheKey);
-		if (!MipLevelStreamingInfo.IsEmpty())
+		if (HasStreamingData())
 		{
-			if (HasStreamingData())
-			{
-				FByteBulkData& BulkData = StreamableMipLevels;
+			FByteBulkData& BulkData = StreamableMipLevels;
+			const uint8* SrcPtr = static_cast<const uint8*>(BulkData.LockReadOnly());
+			const int64 SrcSize = BulkData.GetBulkDataSize();
+			const int64 TargetChunkSize = DDCChunkSizeInMiB * 1024LL * 1024LL;
+			
+			check(DDCChunkMaxTileIndices.IsEmpty());
+			check(DDCChunkIds.IsEmpty());
+			static_assert(sizeof(FValueId::ByteArray) == 12);
 
-				FValue Value = FValue::Compress(FSharedBuffer::MakeView(BulkData.LockReadOnly(), BulkData.GetBulkDataSize()));
-				RecordBuilder.AddValue(SVTStreamingDataId, Value);
-				BulkData.Unlock();
-				ResourceFlags |= EResourceFlag_StreamingDataInDDC;
-				DDCKeyHash = CacheKey.Hash;
-				DDCRawHash = Value.GetRawHash();
+			uint32 FirstTileIndexInChunk = StreamingMetaData.FirstStreamingTileIndex;
+			for (uint32 TileIndex = StreamingMetaData.FirstStreamingTileIndex; TileIndex < StreamingMetaData.GetNumTiles(); ++TileIndex)
+			{
+				bool bCreateChunk = !StreamingMetaData.TileDataOffsets.IsValidIndex(TileIndex + 2); // Create a chunk if this is the last tile.
+				if (!bCreateChunk)
+				{
+					const int64 RangeSizeIncludingNextTile = StreamingMetaData.TileDataOffsets[TileIndex + 2] - StreamingMetaData.TileDataOffsets[FirstTileIndexInChunk];
+					bCreateChunk = RangeSizeIncludingNextTile > TargetChunkSize; // Create a chunk if the next tile would exceed the target chunk size
+				}
+
+				if (bCreateChunk)
+				{
+					const int64 ChunkOffset = StreamingMetaData.TileDataOffsets[FirstTileIndexInChunk] - StreamingMetaData.GetRootTileSize();
+					const int64 ChunkSize = StreamingMetaData.TileDataOffsets[TileIndex + 1] - StreamingMetaData.TileDataOffsets[FirstTileIndexInChunk];
+					const uint8* ChunkPtr = SrcPtr + ChunkOffset;
+					const FValue Value = FValue::Compress(FSharedBuffer::MakeView(ChunkPtr, ChunkSize));
+
+					const FString ChunkName = FString::Printf(TEXT("SparseVolumeTextureDataChunk%i"), DDCChunkMaxTileIndices.Num());
+					const FValueId ChunkId = FValueId::FromName(ChunkName.GetCharArray());
+					const uint8* ChunkIdBytes = ChunkId.GetBytes();
+
+					RecordBuilder.AddValue(ChunkId, Value);
+
+					DDCChunkMaxTileIndices.Add(TileIndex);
+					FMemory::Memcpy(DDCChunkIds.AddDefaulted_GetRef().GetData(), ChunkIdBytes, 12);
+					FirstTileIndexInChunk = TileIndex + 1;
+				}
 			}
+
+			BulkData.Unlock();
+			ResourceFlags |= EResourceFlag_StreamingDataInDDC;
+			DDCKeyHash = CacheKey.Hash;
 		}
 
 		// Serialize to a buffer and store into DDC.
@@ -686,12 +603,14 @@ void FResources::SetDefault(EPixelFormat FormatA, EPixelFormat FormatB, const FV
 {
 	Header = FHeader(FIntVector(0, 0, 0), FIntVector(1, 1, 1), FormatA, FormatB, FallbackValueA, FallbackValueB);
 	ResourceFlags = 0;
-	MipLevelStreamingInfo.SetNumZeroed(1);
+	NumMipLevels = 1;
+	StreamingMetaData.Reset();
 	RootData.Reset();
 	StreamableMipLevels.RemoveBulkData();
 	ResourceName.Reset();
 	DDCKeyHash.Reset();
-	DDCRawHash.Reset();
+	DDCChunkIds.Reset();
+	DDCChunkMaxTileIndices.Reset();
 	DDCRebuildState.store(EDDCRebuildState::Initial);
 }
 
@@ -701,36 +620,55 @@ void FResources::SetDefault(EPixelFormat FormatA, EPixelFormat FormatB, const FV
 
 void FResources::BeginRebuildBulkDataFromCache(const UObject* Owner)
 {
+	using namespace UE::DerivedData;
+
 	check(DDCRebuildState.load() == EDDCRebuildState::Initial);
 	if (!HasStreamingData() || (ResourceFlags & EResourceFlag_StreamingDataInDDC) == 0u)
 	{
 		return;
 	}
-	using namespace UE::DerivedData;
-	FCacheKey Key;
-	Key.Bucket = FCacheBucket(TEXT("SparseVolumeTexture"));
-	Key.Hash = DDCKeyHash;
+	
 	check(!DDCKeyHash.IsZero());
-	FCacheGetChunkRequest Request;
-	Request.Name = Owner->GetPathName();
-	Request.Id = FValueId::FromName("SparseVolumeTextureStreamingData");
-	Request.Key = Key;
-	Request.RawHash = DDCRawHash;
-	check(!DDCRawHash.IsZero());
-	FSharedBuffer SharedBuffer;
 	*DDCRequestOwner = MakePimpl<FRequestOwner>(EPriority::Normal);
 	DDCRebuildState.store(EDDCRebuildState::Pending);
-	GetCache().GetChunks(MakeArrayView(&Request, 1), **DDCRequestOwner,
-		[this](FCacheGetChunkResponse&& Response)
+	DDCRebuildNumFinishedRequests.store(0);
+
+	// Lock and realloc bulk data
+	StreamableMipLevels.Lock(LOCK_READ_WRITE);
+	const int64 StreamableBulkDataSize = StreamingMetaData.TileDataOffsets.Last() - StreamingMetaData.GetRootTileSize();
+	uint8* BulkDataPtr = (uint8*)StreamableMipLevels.Realloc(StreamableBulkDataSize);
+
+	// Generate requests
+	const int32 NumChunks = DDCChunkIds.Num();
+	check(NumChunks > 0);
+	TArray<FCacheGetChunkRequest> DDCRequests;
+	DDCRequests.Reserve(NumChunks);
+	uint32 FirstTileIndexInChunk = StreamingMetaData.FirstStreamingTileIndex;
+	for (int32 ChunkIndex = 0; ChunkIndex < NumChunks; ++ChunkIndex)
+	{
+		FCacheGetChunkRequest& Request = DDCRequests.AddDefaulted_GetRef();
+		Request.Name = Owner->GetPathName();
+		Request.Key.Bucket = FCacheBucket(TEXT("SparseVolumeTexture"));
+		Request.Key.Hash = DDCKeyHash;
+		Request.Id = FValueId(FMemoryView(DDCChunkIds[ChunkIndex].GetData(), 12));
+		Request.UserData = StreamingMetaData.TileDataOffsets[FirstTileIndexInChunk] - StreamingMetaData.GetRootTileSize(); // Store write offset in UserData
+		FirstTileIndexInChunk = DDCChunkMaxTileIndices[ChunkIndex] + 1;
+	}
+
+	// Issue requests
+	GetCache().GetChunks(DDCRequests, **DDCRequestOwner,
+		[this, BulkDataPtr, NumChunks](FCacheGetChunkResponse&& Response)
 		{
 			if (Response.Status == EStatus::Ok)
 			{
-				StreamableMipLevels.Lock(LOCK_READ_WRITE);
-				uint8* Ptr = (uint8*)StreamableMipLevels.Realloc(Response.RawData.GetSize());
-				FMemory::Memcpy(Ptr, Response.RawData.GetData(), Response.RawData.GetSize());
-				StreamableMipLevels.Unlock();
-				StreamableMipLevels.SetBulkDataFlags(BULKDATA_Force_NOT_InlinePayload);
-				DDCRebuildState.store(EDDCRebuildState::Succeeded);
+				FMemory::Memcpy(BulkDataPtr + Response.UserData, Response.RawData.GetData(), Response.RawData.GetSize());
+				
+				// The last request to finish sets the Succeeded flag
+				const int32 NumFinishedRequests = DDCRebuildNumFinishedRequests.fetch_add(1) + 1;
+				if (NumFinishedRequests == NumChunks)
+				{
+					DDCRebuildState.store(EDDCRebuildState::Succeeded);
+				}
 			}
 			else
 			{
@@ -741,6 +679,8 @@ void FResources::BeginRebuildBulkDataFromCache(const UObject* Owner)
 
 void FResources::EndRebuildBulkDataFromCache()
 {
+	StreamableMipLevels.Unlock();
+	StreamableMipLevels.SetBulkDataFlags(BULKDATA_Force_NOT_InlinePayload);
 	if (*DDCRequestOwner)
 	{
 		(*DDCRequestOwner)->Wait();
@@ -751,17 +691,155 @@ void FResources::EndRebuildBulkDataFromCache()
 
 #endif // WITH_EDITORONLY_DATA
 
+FTileStreamingMetaData FResources::CompressTiles(const FPageTopology& Topology, const FDerivedTextureData& DerivedTextureData, TArray<uint8>& OutRootBulkData, TArray64<uint8>& OutStreamingBulkData)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FResources::Build::CompressTiles);
+
+	const EPixelFormat Formats[] = { DerivedTextureData.Header.AttributesFormats[0], DerivedTextureData.Header.AttributesFormats[1] };
+	const int64 FormatSize[] = { GPixelFormats[Formats[0]].BlockBytes, GPixelFormats[Formats[1]].BlockBytes };
+	uint8 NullTileValuesU8[2][sizeof(float) * 4] = {};
+	int32 NumTextures = 0;
+	for (int32 i = 0; i < 2; ++i)
+	{
+		if (Formats[i] != PF_Unknown)
+		{
+			++NumTextures;
+			SVT::WriteVoxel(0, NullTileValuesU8[i], DerivedTextureData.Header.AttributesFormats[i], DerivedTextureData.Header.FallbackValues[i]);
+		}
+	}
+	const uint8* PhysicalTileData[] = { DerivedTextureData.PhysicalTileDataA.GetData(), DerivedTextureData.PhysicalTileDataB.GetData() };
+
+	const uint32 NumTiles = DerivedTextureData.NumPhysicalTiles;
+	const uint32 NumOccupancyWordsPerTexture = NumTiles * SVT::NumOccupancyWordsPerPaddedTile;
+	const uint32 NumOccupancyWords = NumTextures * NumOccupancyWordsPerTexture;
+	TArray<uint32> OccupancyBits;
+	OccupancyBits.SetNumZeroed(NumOccupancyWords);
+	uint32* OccupancyBitsPtr[2];
+	OccupancyBitsPtr[0] = FormatSize[0] ? OccupancyBits.GetData() : nullptr;
+	OccupancyBitsPtr[1] = FormatSize[1] ? (OccupancyBits.GetData() + (FormatSize[0] ? NumOccupancyWordsPerTexture : 0)) : nullptr;
+
+	TStaticArray<TArray<uint16>, 2> NumVoxels;
+	NumVoxels[0].SetNumZeroed(NumTiles);
+	NumVoxels[1].SetNum((FormatSize[1] > 0) ? NumTiles : 0);
+
+	// Compute occupancy bitmasks and count number of non-fallback voxels per tile
+	ParallelFor(NumTiles, [&](int32 TileIndex)
+	{
+		for (int32 AttributesIdx = 0; AttributesIdx < 2; ++AttributesIdx)
+		{
+			if (Formats[AttributesIdx] != PF_Unknown)
+			{
+				NumVoxels[AttributesIdx][TileIndex] = 0;
+				for (int64 VoxelIndex = 0; VoxelIndex < SVT::NumVoxelsPerPaddedTile; ++VoxelIndex)
+				{
+					const uint8* Src = PhysicalTileData[AttributesIdx] + FormatSize[AttributesIdx] * (TileIndex * SVT::NumVoxelsPerPaddedTile + VoxelIndex);
+					bool bIsFallbackValue = FMemory::Memcmp(Src, NullTileValuesU8[AttributesIdx], FormatSize[AttributesIdx]) == 0;
+					if (!bIsFallbackValue)
+					{
+						const int64 WordIndex = TileIndex * SVT::NumOccupancyWordsPerPaddedTile + (VoxelIndex / 32);
+						OccupancyBitsPtr[AttributesIdx][WordIndex] |= 1u << (static_cast<uint32>(VoxelIndex) % 32u);
+						NumVoxels[AttributesIdx][TileIndex]++;
+					}
+				}
+			}
+		}
+	});
+
+	TArray<uint32> TileDataOffsets;
+	TileDataOffsets.SetNum(NumTiles + 1);
+
+	// Compute actual tile data offsets. Each tile stores data like this: | OccupancyBitsA | OccupancyBitsB | VoxelsA | VoxelsB |
+	// OccupancyBits A and B always have the same size, but VoxelsA and VoxelsB can vary
+	uint32 CurrentOffset = 0;
+	for (uint32 TileIndex = 0; TileIndex < NumTiles; ++TileIndex)
+	{
+		uint32 PrevOffset = CurrentOffset;
+		TileDataOffsets[TileIndex] = CurrentOffset;
+		CurrentOffset += SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32) * NumTextures;
+		for (int32 AttributesIdx = 0; AttributesIdx < 2; ++AttributesIdx)
+		{
+			if (Formats[AttributesIdx] != PF_Unknown)
+			{
+				CurrentOffset += NumVoxels[AttributesIdx][TileIndex] * FormatSize[AttributesIdx];
+			}
+		}
+		checkf(PrevOffset < CurrentOffset, TEXT("SVT streaming data overflowed the uint32 range!"));
+	}
+
+	// Write final size at the end of the array so we can compute individual tile sizes as (Offsets[N+1] - Offsets[N])
+	TileDataOffsets[NumTiles] = CurrentOffset;
+
+	// Reuse the allocations
+	FTileStreamingMetaData StreamingMetaData;
+	StreamingMetaData.TileDataOffsets = MoveTemp(TileDataOffsets);
+	StreamingMetaData.NumVoxelsA = MoveTemp(NumVoxels[0]);
+	StreamingMetaData.FirstStreamingTileIndex = Topology.MipInfo.Last().PageOffset + Topology.MipInfo.Last().PageCount;
+
+	// We're assuming that the very first tile belongs to the root mip and that there is only a maximum of one such tile
+	check(Topology.MipInfo.Last().PageOffset == 0);
+	check(Topology.MipInfo.Last().PageCount <= 1);
+	check(Topology.MipInfo.Last().PageCount == 0 || Topology.TileIndices[0] == 0);
+
+	// Allocate memory for all tiles
+	const uint32 RootTileSize = StreamingMetaData.GetRootTileSize();
+	OutRootBulkData.SetNum(RootTileSize);
+	OutStreamingBulkData.SetNum(CurrentOffset - RootTileSize);
+
+	uint8* RootTileData = OutRootBulkData.GetData();
+	uint8* StreamingTileData = OutStreamingBulkData.GetData();
+
+	// Copy tile data to compacted locations
+	ParallelFor(NumTiles, [&](uint32 TileIndex)
+	{
+		const bool bStreamingTile = TileIndex >= StreamingMetaData.FirstStreamingTileIndex;
+		uint8* WritePtr = bStreamingTile ? (StreamingTileData + StreamingMetaData.TileDataOffsets[TileIndex] - RootTileSize) : RootTileData;
+
+		const FTileInfo TileInfo = StreamingMetaData.GetTileInfo(TileIndex, FormatSize[0], FormatSize[1]);
+		const uint8* BaseWritePtr = WritePtr;
+
+		// Write occupancy bits
+		for (int32 AttributesIdx = 0; AttributesIdx < 2; ++AttributesIdx)
+		{
+			if (Formats[AttributesIdx] != PF_Unknown)
+			{
+				check(WritePtr == (BaseWritePtr + TileInfo.OccupancyBitsOffsets[AttributesIdx]));
+				FMemory::Memcpy(WritePtr, OccupancyBitsPtr[AttributesIdx] + TileIndex * SVT::NumOccupancyWordsPerPaddedTile, SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32));
+				WritePtr += SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32);
+			}
+		}
+
+		// Write voxel data
+		for (int32 AttributesIdx = 0; AttributesIdx < 2; ++AttributesIdx)
+		{
+			if (Formats[AttributesIdx] != PF_Unknown)
+			{
+				check(WritePtr == (BaseWritePtr + TileInfo.VoxelDataOffsets[AttributesIdx]));
+				const uint32* TileOccupancyBits = OccupancyBitsPtr[AttributesIdx] + TileIndex * SVT::NumOccupancyWordsPerPaddedTile;
+
+				for (int64 VoxelIndex = 0; VoxelIndex < SVT::NumVoxelsPerPaddedTile; ++VoxelIndex)
+				{
+					const int64 WordIndex = (VoxelIndex / 32);
+
+					if (TileOccupancyBits[WordIndex] & (1u << (static_cast<uint32>(VoxelIndex) % 32u)))
+					{
+						const uint8* Src = PhysicalTileData[AttributesIdx] + FormatSize[AttributesIdx] * (TileIndex * SVT::NumVoxelsPerPaddedTile + VoxelIndex);
+						FMemory::Memcpy(WritePtr, Src, FormatSize[AttributesIdx]);
+						WritePtr += FormatSize[AttributesIdx];
+					}
+				}
+			}
+		}
+		check((WritePtr - BaseWritePtr) == TileInfo.Size);
+	});
+	
+	return StreamingMetaData;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 void FTextureRenderResources::GetPackedUniforms(FUintVector4& OutPacked0, FUintVector4& OutPacked1) const
 {
 	check(IsInParallelRenderingThread());
-
-	auto AsUint = [](float X)
-	{
-		union { float F; uint32 U; } FU = { X };
-		return FU.U;
-	};
 
 	const FIntVector3 PageTableOffset = Header.PageTableVolumeAABBMin;
 	const FVector3f TileDataTexelSize = FVector3f(
@@ -770,13 +848,13 @@ void FTextureRenderResources::GetPackedUniforms(FUintVector4& OutPacked0, FUintV
 		1.0f / TileDataTextureResolution.Z);
 	const FVector3f VolumePageResolution = FVector3f(GlobalVolumeResolution) / SPARSE_VOLUME_TILE_RES;
 
-	OutPacked0.X = AsUint(VolumePageResolution.X);
-	OutPacked0.Y = AsUint(VolumePageResolution.Y);
-	OutPacked0.Z = AsUint(VolumePageResolution.Z);
-	OutPacked0.W = (PageTableOffset.X & 0x7FFu) | ((PageTableOffset.Y & 0x7FFu) << 11u) | ((PageTableOffset.Z & 0x3FFu) << 22u);
-	OutPacked1.X = AsUint(TileDataTexelSize.X);
-	OutPacked1.Y = AsUint(TileDataTexelSize.Y);
-	OutPacked1.Z = AsUint(TileDataTexelSize.Z);
+	OutPacked0.X = FMath::AsUInt(VolumePageResolution.X);
+	OutPacked0.Y = FMath::AsUInt(VolumePageResolution.Y);
+	OutPacked0.Z = FMath::AsUInt(VolumePageResolution.Z);
+	OutPacked0.W = SVT::PackX11Y11Z10(PageTableOffset);
+	OutPacked1.X = FMath::AsUInt(TileDataTexelSize.X);
+	OutPacked1.Y = FMath::AsUInt(TileDataTexelSize.Y);
+	OutPacked1.Z = FMath::AsUInt(TileDataTexelSize.Z);
 	OutPacked1.W = 0;
 	OutPacked1.W |= (uint32)((FrameIndex & 0xFFFF) << 0);
 	OutPacked1.W |= (uint32)(((NumLogicalMipLevels - 1) & 0xFFFF) << 16);
@@ -791,11 +869,11 @@ void FTextureRenderResources::SetGlobalVolumeResolution_GameThread(const FIntVec
 		});
 }
 
-void FTextureRenderResources::InitRHI(FRHICommandListBase&)
+void FTextureRenderResources::InitRHI(FRHICommandListBase& RHICmdList)
 {
-	PageTableTextureReferenceRHI = RHICreateTextureReference(GBlackUintVolumeTexture->TextureRHI);
-	PhysicalTileDataATextureReferenceRHI = RHICreateTextureReference(GBlackVolumeTexture->TextureRHI);
-	PhysicalTileDataBTextureReferenceRHI = RHICreateTextureReference(GBlackVolumeTexture->TextureRHI);
+	PageTableTextureReferenceRHI = RHICmdList.CreateTextureReference(GBlackUintVolumeTexture->TextureRHI);
+	PhysicalTileDataATextureReferenceRHI = RHICmdList.CreateTextureReference(GBlackVolumeTexture->TextureRHI);
+	PhysicalTileDataBTextureReferenceRHI = RHICmdList.CreateTextureReference(GBlackVolumeTexture->TextureRHI);
 }
 
 void FTextureRenderResources::ReleaseRHI()
@@ -803,7 +881,65 @@ void FTextureRenderResources::ReleaseRHI()
 	PageTableTextureReferenceRHI.SafeRelease();
 	PhysicalTileDataATextureReferenceRHI.SafeRelease();
 	PhysicalTileDataBTextureReferenceRHI.SafeRelease();
-	StreamingInfoBufferSRVRHI.SafeRelease();
+}
+
+FTileInfo FTileStreamingMetaData::GetTileInfo(uint32 TileIndex, uint32 FormatSizeA, uint32 FormatSizeB) const
+{
+	const uint32 NumVoxelsInA = NumVoxelsA[TileIndex];
+	const uint32 VoxelDataSizeA = NumVoxelsInA * FormatSizeA;
+
+	FTileInfo Result;
+	Result.Offset = TileDataOffsets[TileIndex];
+	Result.Size = TileDataOffsets[TileIndex + 1] - Result.Offset;
+	Result.OccupancyBitsOffsets[0] = 0;
+	Result.OccupancyBitsOffsets[1] = FormatSizeA > 0 ? SVT::OccupancyBitsSizePerPaddedTile : 0;
+	Result.OccupancyBitsSizes[0] = FormatSizeA > 0 ? SVT::OccupancyBitsSizePerPaddedTile : 0;
+	Result.OccupancyBitsSizes[1] = FormatSizeB > 0 ? SVT::OccupancyBitsSizePerPaddedTile : 0;
+	Result.VoxelDataOffsets[0] = Result.OccupancyBitsOffsets[1] + (FormatSizeB > 0 ? SVT::OccupancyBitsSizePerPaddedTile : 0);
+	Result.VoxelDataOffsets[1] = Result.VoxelDataOffsets[0] + VoxelDataSizeA;
+	Result.VoxelDataSizes[0] = VoxelDataSizeA;
+	Result.VoxelDataSizes[1] = Result.Size - Result.VoxelDataOffsets[1];
+	Result.NumVoxels[0] = NumVoxelsInA;
+	Result.NumVoxels[1] = FormatSizeB > 0 ? (Result.VoxelDataSizes[1] / FormatSizeB) : 0;
+	
+	if (TileIndex >= FirstStreamingTileIndex)
+	{
+		Result.Offset -= TileDataOffsets[FirstStreamingTileIndex];
+	}
+
+	check((Result.OccupancyBitsSizes[0] + Result.OccupancyBitsSizes[1] + Result.VoxelDataSizes[0] + Result.VoxelDataSizes[1]) == Result.Size);
+	check((Result.OccupancyBitsOffsets[0] + Result.OccupancyBitsSizes[0]) == Result.OccupancyBitsOffsets[1]);
+	check((Result.OccupancyBitsOffsets[1] + Result.OccupancyBitsSizes[1]) == Result.VoxelDataOffsets[0]);
+	check((Result.VoxelDataOffsets[0] + Result.VoxelDataSizes[0]) == Result.VoxelDataOffsets[1]);
+	check((Result.VoxelDataOffsets[1] + Result.VoxelDataSizes[1]) == Result.Size);
+
+	return Result;
+}
+
+void FTileStreamingMetaData::GetNumVoxelsInTileRange(uint32 TileOffset, uint32 TileCount, uint32 FormatSizeA, uint32 FormatSizeB, const TBitArray<>* OptionalValidTiles, uint32& OutNumVoxelsA, uint32& OutNumVoxelsB) const
+{
+	check(FormatSizeA > 0 || FormatSizeB > 0);
+	const uint32 NumTextures = (FormatSizeA > 0 && FormatSizeB > 0) ? 2 : 1;
+	const uint32 TileOccupancyBitsSize = NumTextures * SVT::OccupancyBitsSizePerPaddedTile;
+	OutNumVoxelsA = 0;
+	OutNumVoxelsB = 0;
+	for (uint32 TileIndex = TileOffset; TileIndex < (TileOffset + TileCount); ++TileIndex)
+	{
+		if (OptionalValidTiles && !(*OptionalValidTiles)[TileIndex])
+		{
+			continue;
+		}
+		const uint32 NumVoxelsATmp = NumVoxelsA[TileIndex];
+		OutNumVoxelsA += NumVoxelsATmp;
+		// For NumVoxelsB, we need to reconstruct that value based on the total tile size and the sizes of the other memory sections in the tile
+		if (FormatSizeB > 0)
+		{
+			const uint32 TileSize = GetTileMemorySize(TileIndex);
+			const uint32 VoxelsDataOffsetB = TileOccupancyBitsSize + NumVoxelsATmp * FormatSizeA;
+			check(TileSize >= VoxelsDataOffsetB);
+			OutNumVoxelsB += (TileSize - VoxelsDataOffsetB) / FormatSizeB;
+		}
+	}
 }
 
 }
@@ -814,6 +950,40 @@ void FTextureRenderResources::ReleaseRHI()
 USparseVolumeTexture::USparseVolumeTexture(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
+}
+
+float USparseVolumeTexture::GetOptimalStreamingMipLevel(const FBoxSphereBounds& Bounds, float MipBias) const
+{
+	check(IsInGameThread());
+	float ResultMipLevel = 0.0f;
+	if (IStreamingManager* StreamingManager = IStreamingManager::Get_Concurrent())
+	{
+		ResultMipLevel = FLT_MAX;
+		const int32 NumViews = StreamingManager->GetNumViews();
+		for (int32 ViewIndex = 0; ViewIndex < NumViews; ++ViewIndex)
+		{
+			const FStreamingViewInfo& ViewInfo = StreamingManager->GetViewInformation(ViewIndex);
+
+			// Determine the pixel-width at the near-plane.
+			const float PixelWidth = 1.0f / (ViewInfo.FOVScreenSize * 0.5f); // FOVScreenSize = ViewRect.Width / Tan(FOV * 0.5)
+
+			// Project to nearest distance of volume bounds.
+			const float Distance = FMath::Max<float>(1.0f, ((ViewInfo.ViewOrigin - Bounds.Origin).GetAbs() - Bounds.BoxExtent).Length());
+			const float VoxelWidth = Distance * PixelWidth;
+
+			// MIP is defined as the log of the ratio of native voxel resolution to pixel-coverage of volume bounds.
+			// We want to be conservative here (use potentially lower mip), so try to minimize the term we pass into Log2() by using
+			// the maximum dimension of the bounds and the minimum extent of the volume resolution. The bounds are axis aligned, so
+			// we can't assume that a given dimension in SVT UV space aligns with any particular dimension of the axis aligned bounds.
+			const float PixelWidthCoverage = (2.0f * Bounds.BoxExtent.GetMax()) / VoxelWidth;
+			const float VoxelResolution = GetVolumeResolution().GetMin();
+			float ViewMipLevel = FMath::Log2(VoxelResolution / PixelWidthCoverage) + MipBias + GSVTStreamingRequestMipBias;
+			ViewMipLevel = FMath::Clamp(ViewMipLevel, 0.0f, GetNumMipLevels() - 1.0f);
+
+			ResultMipLevel = FMath::Min(ViewMipLevel, ResultMipLevel);
+		}
+	}
+	return ResultMipLevel;
 }
 
 UE::Shader::EValueType USparseVolumeTexture::GetUniformParameterType(int32 Index)
@@ -882,21 +1052,25 @@ USparseVolumeTextureFrame::USparseVolumeTextureFrame(const FObjectInitializer& O
 {
 }
 
-USparseVolumeTextureFrame* USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(USparseVolumeTexture* SparseVolumeTexture, float FrameIndex, int32 MipLevel, bool bBlocking)
+USparseVolumeTextureFrame* USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(USparseVolumeTexture* SparseVolumeTexture, uint32 StreamingInstanceKey, float FrameRate, float FrameIndex, float MipLevel, bool bBlocking, bool bHasValidFrameRate)
 {
 	if (UStreamableSparseVolumeTexture* StreamableSVT = Cast<UStreamableSparseVolumeTexture>(SparseVolumeTexture))
 	{
-		UE::SVT::GetStreamingManager().Request_GameThread(StreamableSVT, FrameIndex, MipLevel, bBlocking);
+		UE::SVT::EStreamingRequestFlags RequestFlags = UE::SVT::EStreamingRequestFlags::None;
+		RequestFlags |= bBlocking ? UE::SVT::EStreamingRequestFlags::Blocking : UE::SVT::EStreamingRequestFlags::None;
+		RequestFlags |= bHasValidFrameRate ? UE::SVT::EStreamingRequestFlags::HasFrameRate : UE::SVT::EStreamingRequestFlags::None;
+		UE::SVT::GetStreamingManager().Request_GameThread(StreamableSVT, StreamingInstanceKey, FrameRate, FrameIndex, MipLevel, RequestFlags);
 		return StreamableSVT->GetFrame(static_cast<int32>(FrameIndex));
 	}
 	return nullptr;
 }
 
-bool USparseVolumeTextureFrame::Initialize(USparseVolumeTexture* InOwner, int32 InFrameIndex, UE::SVT::FTextureData& UncookedFrame)
+bool USparseVolumeTextureFrame::Initialize(USparseVolumeTexture* InOwner, int32 InFrameIndex, const FTransform& InFrameTransform, UE::SVT::FTextureData& UncookedFrame)
 {
 #if WITH_EDITORONLY_DATA
 	Owner = InOwner;
 	FrameIndex = InFrameIndex;
+	Transform = InFrameTransform;
 	{
 		UE::Serialization::FEditorBulkDataWriter SourceDataArchiveWriter(SourceData);
 		SourceDataArchiveWriter << UncookedFrame;
@@ -910,7 +1084,7 @@ bool USparseVolumeTextureFrame::Initialize(USparseVolumeTexture* InOwner, int32 
 
 bool USparseVolumeTextureFrame::CreateTextureRenderResources()
 {
-	if (!TextureRenderResources)
+	if (!TextureRenderResources && !IsTemplate() && FApp::CanEverRender())
 	{
 		TextureRenderResources = new UE::SVT::FTextureRenderResources();
 		TextureRenderResources->SetGlobalVolumeResolution_GameThread(Owner->GetVolumeResolution());
@@ -936,20 +1110,34 @@ void USparseVolumeTextureFrame::FinishDestroy()
 void USparseVolumeTextureFrame::BeginDestroy()
 {
 	// Ensure that the streamable SVT has been removed from the streaming manager
-	if (IsValid(Owner))
-	{
-		UE::SVT::GetStreamingManager().Remove_GameThread(CastChecked<UStreamableSparseVolumeTexture>(Owner));
-	}
 	
-	if (TextureRenderResources)
+	if (!IsTemplate())
 	{
-		ENQUEUE_RENDER_COMMAND(USparseVolumeTextureFrame_DeleteTextureRenderResources)(
-			[Resources = TextureRenderResources](FRHICommandListImmediate& RHICmdList)
+		if (IsValid(Owner) && FApp::CanEverRender())
+		{
+			UStreamableSparseVolumeTexture* SVTOwner = CastChecked<UStreamableSparseVolumeTexture>(Owner);
+			for (int i = 0; i < SVTOwner->GetNumFrames(); ++i)
 			{
-				Resources->ReleaseResource();
-				delete Resources;
-			});
-		TextureRenderResources = nullptr;
+				// if the owner contains the current frame being deleted, remove the owner from the streaming manager
+				// SVT_TODO: This is a temporary fix for a GC problem.  In the future this will be replaced with a more robust solution.
+				if (SVTOwner->GetFrame(i) == this)
+				{
+					UE::SVT::GetStreamingManager().Remove_GameThread(SVTOwner);
+					break;
+				}
+			}
+		}
+
+		if (TextureRenderResources)
+		{
+			ENQUEUE_RENDER_COMMAND(USparseVolumeTextureFrame_DeleteTextureRenderResources)(
+				[Resources = TextureRenderResources](FRHICommandListImmediate& RHICmdList)
+				{
+					Resources->ReleaseResource();
+					delete Resources;
+				});
+			TextureRenderResources = nullptr;
+		}
 	}
 
 	Super::BeginDestroy();
@@ -1042,6 +1230,19 @@ void USparseVolumeTextureFrame::Cache(bool bSkipDDCAndSetResourcesToDefault)
 UStreamableSparseVolumeTexture::UStreamableSparseVolumeTexture(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
+#if WITH_EDITOR
+	if (!IsTemplate())
+	{
+		if (HasAnyFlags(RF_NeedPostLoad) || GetOuter()->HasAnyFlags(RF_NeedPostLoad))
+		{
+			// Delegate registration is not thread-safe, so we postpone it on PostLoad when coming from loading which could be on another thread
+		}
+		else
+		{
+			RegisterEditorDelegates();
+		}
+	}
+#endif // WITH_EDITOR
 }
 
 bool UStreamableSparseVolumeTexture::BeginInitialize(int32 NumExpectedFrames)
@@ -1060,6 +1261,12 @@ bool UStreamableSparseVolumeTexture::BeginInitialize(int32 NumExpectedFrames)
 	check(FormatA == PF_Unknown);
 	check(FormatB == PF_Unknown);
 
+	// This is different to other texture types which all seem to default to wrap. However, for SVT content it is more common to want a single volume without wrapping
+	// and since changing the addressing mode currently results in fairly costly recomputing of derived data, defaulting to clamp should result in a better user experience in most cases.
+	AddressX = TA_Clamp;
+	AddressY = TA_Clamp;
+	AddressZ = TA_Clamp;
+
 	InitState = EInitState_Pending;
 
 	return true;
@@ -1068,7 +1275,7 @@ bool UStreamableSparseVolumeTexture::BeginInitialize(int32 NumExpectedFrames)
 #endif
 }
 
-bool UStreamableSparseVolumeTexture::AppendFrame(UE::SVT::FTextureData& UncookedFrame)
+bool UStreamableSparseVolumeTexture::AppendFrame(UE::SVT::FTextureData& UncookedFrame, const FTransform& FrameTransform)
 {
 #if WITH_EDITORONLY_DATA
 	if (InitState != EInitState_Pending)
@@ -1086,9 +1293,14 @@ bool UStreamableSparseVolumeTexture::AppendFrame(UE::SVT::FTextureData& Uncooked
 		return false;
 	}
 
-	// SVT_TODO: Valide formats against list of supported formats
 	if (Frames.IsEmpty())
 	{
+		if (!UE::SVT::IsSupportedFormat(UncookedFrame.Header.AttributesFormats[0]) || !UE::SVT::IsSupportedFormat(UncookedFrame.Header.AttributesFormats[1]))
+		{
+			UE_LOG(LogSparseVolumeTexture, Error, TEXT("Tried to add a frame with unsupported formats to a SparseVolumeTexture! Formats: (%i %i)"),
+				(int)UncookedFrame.Header.AttributesFormats[0], (int)UncookedFrame.Header.AttributesFormats[1]);
+			return false;
+		}
 		FormatA = UncookedFrame.Header.AttributesFormats[0];
 		FormatB = UncookedFrame.Header.AttributesFormats[1];
 		FallbackValueA = UncookedFrame.Header.FallbackValues[0];
@@ -1127,9 +1339,11 @@ bool UStreamableSparseVolumeTexture::AppendFrame(UE::SVT::FTextureData& Uncooked
 		VolumeResolution = VolumeBoundsMax;
 	}
 	
-
-	USparseVolumeTextureFrame* Frame = NewObject<USparseVolumeTextureFrame>(this);
-	if (Frame->Initialize(this, Frames.Num(), UncookedFrame))
+	const int32 FrameIndex = Frames.Num();
+	const FName FrameBaseName = FName(FString::Printf(TEXT("%s_Frame%i"), *GetFName().ToString(), FrameIndex));
+	const FName FrameName = MakeUniqueObjectName(this, USparseVolumeTextureFrame::StaticClass(), FrameBaseName);
+	USparseVolumeTextureFrame* Frame = NewObject<USparseVolumeTextureFrame>(this, USparseVolumeTextureFrame::StaticClass(), FrameName, RF_Public);
+	if (Frame->Initialize(this, FrameIndex, FrameTransform, UncookedFrame))
 	{
 		Frames.Add(Frame);
 		return true;
@@ -1156,7 +1370,7 @@ bool UStreamableSparseVolumeTexture::EndInitialize()
 		UE_LOG(LogSparseVolumeTexture, Warning, TEXT("SVT has zero frames! Adding a dummy frame. SVT: %s"), *GetName());
 		UE::SVT::FTextureData DummyFrame;
 		DummyFrame.CreateDefault();
-		AppendFrame(DummyFrame);
+		AppendFrame(DummyFrame, FTransform::Identity);
 	}
 
 	check(VolumeResolution.X > 0 && VolumeResolution.Y > 0 && VolumeResolution.Z > 0);
@@ -1188,7 +1402,7 @@ bool UStreamableSparseVolumeTexture::EndInitialize()
 #endif
 }
 
-bool UStreamableSparseVolumeTexture::Initialize(const TArrayView<UE::SVT::FTextureData>& InUncookedData)
+bool UStreamableSparseVolumeTexture::Initialize(const TArrayView<UE::SVT::FTextureData>& InUncookedData, const TArrayView<FTransform>& InFrameTransforms)
 {
 	if (InUncookedData.IsEmpty())
 	{
@@ -1196,13 +1410,16 @@ bool UStreamableSparseVolumeTexture::Initialize(const TArrayView<UE::SVT::FTextu
 		return false;
 	}
 
-	if (!BeginInitialize(InUncookedData.Num()))
+	const int32 NumUncookedFrameData = InUncookedData.Num();
+	const int32 NumFrameTransforms = InFrameTransforms.Num();
+	const bool bHasValidFrameTransforms = NumUncookedFrameData <= NumFrameTransforms;
+	if (!BeginInitialize(NumUncookedFrameData))
 	{
 		return false;
 	}
-	for (UE::SVT::FTextureData& UncookedFrame : InUncookedData)
+	for (int32 i = 0; i < NumUncookedFrameData; ++i)
 	{
-		if (!AppendFrame(UncookedFrame))
+		if (!AppendFrame(InUncookedData[i], bHasValidFrameTransforms ? InFrameTransforms[i] : FTransform::Identity))
 		{
 			return false;
 		}
@@ -1231,18 +1448,32 @@ void UStreamableSparseVolumeTexture::PostLoad()
 {
 	Super::PostLoad();
 
+#if WITH_EDITOR
+	if (!IsTemplate())
+	{
+		RegisterEditorDelegates();
+	}
+#endif
+
 	// Ensure that NumFrames always corresponds to the actual number of frames
 	NumFrames = GetNumFrames();
 
-#if WITH_EDITORONLY_DATA
-	RecacheFrames();
-#else
-	for (USparseVolumeTextureFrame* Frame : Frames)
+	if (!IsTemplate())
 	{
-		Frame->CreateTextureRenderResources();
-	}
-	UE::SVT::GetStreamingManager().Add_GameThread(this); // RecacheFrames() handles this in editor builds
+#if WITH_EDITORONLY_DATA
+		RecacheFrames();
+#else
+		if (FApp::CanEverRender())
+		{
+			for (USparseVolumeTextureFrame* Frame : Frames)
+			{
+				check(Frame); // Elements in Frames should only ever be null when the SVT is being deleted
+				Frame->CreateTextureRenderResources();
+			}
+			UE::SVT::GetStreamingManager().Add_GameThread(this); // RecacheFrames() handles this in editor builds
+		}
 #endif
+	}
 }
 
 void UStreamableSparseVolumeTexture::FinishDestroy()
@@ -1253,7 +1484,18 @@ void UStreamableSparseVolumeTexture::FinishDestroy()
 void UStreamableSparseVolumeTexture::BeginDestroy()
 {
 	Super::BeginDestroy();
-	UE::SVT::GetStreamingManager().Remove_GameThread(this);
+	
+	if (!IsTemplate())
+	{
+		if (FApp::CanEverRender())
+		{
+			UE::SVT::GetStreamingManager().Remove_GameThread(this);
+		}
+
+#if WITH_EDITOR
+		UnregisterEditorDelegates();
+#endif
+	}
 }
 
 void UStreamableSparseVolumeTexture::Serialize(FArchive& Ar)
@@ -1269,6 +1511,17 @@ void UStreamableSparseVolumeTexture::Serialize(FArchive& Ar)
 #if WITH_EDITOR
 void UStreamableSparseVolumeTexture::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
+	// It's possible for outside code/GC to null the elements in Frames. This happens when the SVT is deleted and all the child objects are also first deleted and their references nulled.
+	bool bInvalidFramesArray = false;
+	for (USparseVolumeTextureFrame* Frame : Frames)
+	{
+		if (!Frame)
+		{
+			bInvalidFramesArray = true;
+			break;
+		}
+	}
+
 	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UStreamableSparseVolumeTexture, AddressX)
 		|| PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UStreamableSparseVolumeTexture, AddressY)
 		|| PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UStreamableSparseVolumeTexture, AddressZ))
@@ -1277,13 +1530,37 @@ void UStreamableSparseVolumeTexture::PostEditChangeProperty(FPropertyChangedEven
 		NotifyMaterials();
 		for (USparseVolumeTextureFrame* Frame : Frames)
 		{
-			Frame->NotifyMaterials();
+			if (Frame)
+			{
+				Frame->NotifyMaterials();
+			}
 		}
 	}
 
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
-	RecacheFrames();
+	// Don't bother trying to recache the frame data if the Frames array is invalid. This very likely means that this object is about to be deleted.
+	bool bRecacheFrames = !bInvalidFramesArray;
+
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UStreamableSparseVolumeTexture, StreamingPoolSizeFactor)
+		|| PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UStreamableSparseVolumeTexture, NumberOfPrefetchFrames)
+		|| PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UStreamableSparseVolumeTexture, PrefetchPercentageStepSize)
+		|| PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UStreamableSparseVolumeTexture, PrefetchPercentageBias))
+	{
+		// Re-register the SVT with the streamer so it picks up on the changed streaming parameters.
+		if (FApp::CanEverRender() && !IsTemplate())
+		{
+			UE::SVT::GetStreamingManager().Remove_GameThread(this);
+			UE::SVT::GetStreamingManager().Add_GameThread(this);
+		}
+		
+		bRecacheFrames = false;
+	}
+	
+	if (bRecacheFrames)
+	{
+		RecacheFrames();
+	}
 }
 #endif // WITH_EDITOR
 
@@ -1295,7 +1572,10 @@ void UStreamableSparseVolumeTexture::GetResourceSizeEx(FResourceSizeEx& Cumulati
 	SizeCPU += Frames.GetAllocatedSize();
 	for (USparseVolumeTextureFrame* Frame : Frames)
 	{
-		Frame->GetResourceSizeEx(CumulativeResourceSize);
+		if (Frame)
+		{
+			Frame->GetResourceSizeEx(CumulativeResourceSize);
+		}
 	}
 	CumulativeResourceSize.AddDedicatedSystemMemoryBytes(SizeCPU);
 	CumulativeResourceSize.AddDedicatedVideoMemoryBytes(SizeGPU);
@@ -1303,19 +1583,91 @@ void UStreamableSparseVolumeTexture::GetResourceSizeEx(FResourceSizeEx& Cumulati
 
 void UStreamableSparseVolumeTexture::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UStreamableSparseVolumeTexture::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 #if WITH_EDITORONLY_DATA
 	if (AssetImportData)
 	{
-		OutTags.Add(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
 	}
 #endif
 }
 
+void UStreamableSparseVolumeTexture::AddAssetUserData(UAssetUserData* InUserData)
+{
+	if (InUserData != nullptr)
+	{
+		UAssetUserData* ExistingData = GetAssetUserDataOfClass(InUserData->GetClass());
+		if (ExistingData != nullptr)
+		{
+			AssetUserData.Remove(ExistingData);
+		}
+		AssetUserData.Add(InUserData);
+	}
+}
+
+UAssetUserData* UStreamableSparseVolumeTexture::GetAssetUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass)
+{
+	for (UAssetUserData* Datum : AssetUserData)
+	{
+		if (Datum != nullptr && Datum->IsA(InUserDataClass))
+		{
+			return Datum;
+		}
+	}
+	return nullptr;
+}
+
+void UStreamableSparseVolumeTexture::RemoveUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass)
+{
+	for (int32 DataIdx = 0; DataIdx < AssetUserData.Num(); DataIdx++)
+	{
+		UAssetUserData* Datum = AssetUserData[DataIdx];
+		if (Datum != nullptr && Datum->IsA(InUserDataClass))
+		{
+			AssetUserData.RemoveAt(DataIdx);
+			return;
+		}
+	}
+}
+
+const TArray<UAssetUserData*>* UStreamableSparseVolumeTexture::GetAssetUserDataArray() const
+{
+	return &ToRawPtrTArrayUnsafe(AssetUserData);
+}
+
+#if WITH_EDITOR
+void UStreamableSparseVolumeTexture::OnAssetsAddExtraObjectsToDelete(TArray<UObject*>& ObjectsToDelete)
+{
+	if (ObjectsToDelete.Contains(this))
+	{
+		// When UStreamableSparseVolumeTexture is deleted, we also want all owned USparseVolumeTextureFrame objects to be deleted.
+		for (USparseVolumeTextureFrame* Frame : Frames)
+		{
+			if (Frame)
+			{
+				ObjectsToDelete.Add(Frame);
+			}
+		}
+	}
+}
+#endif
+
 #if WITH_EDITORONLY_DATA
 void UStreamableSparseVolumeTexture::RecacheFrames()
 {
+	if (IsTemplate())
+	{
+		return;
+	}
+
 	if (InitState != EInitState_Done)
 	{
 		UE_LOG(LogSparseVolumeTexture, Warning, TEXT("Tried to cache derived data of an uninitialized SVT: %s"), *GetName());
@@ -1325,12 +1677,18 @@ void UStreamableSparseVolumeTexture::RecacheFrames()
 	FScopedSlowTask RecacheTask(static_cast<float>(Frames.Num() + 2), LOCTEXT("SparseVolumeTextureCacheFrames", "Caching SparseVolumeTexture frames in Derived Data Cache"));
 	RecacheTask.MakeDialog(true);
 
-	UE::SVT::GetStreamingManager().Remove_GameThread(this);
+	const bool bCanEverRender = FApp::CanEverRender();
+	if (bCanEverRender)
+	{
+		UE::SVT::GetStreamingManager().Remove_GameThread(this);
+	}
+	
 	RecacheTask.EnterProgressFrame(1.0f);
 
 	bool bCanceled = false;
 	for (USparseVolumeTextureFrame* Frame : Frames)
 	{
+		check(Frame); // RecacheFrames() is assumed to never be called when the Frames array is invalid (has nullptr elements). Elements may be nulled as part of deleting the SVT.
 		if (!bCanceled && RecacheTask.ShouldCancel())
 		{
 			bCanceled = true;
@@ -1352,9 +1710,34 @@ void UStreamableSparseVolumeTexture::RecacheFrames()
 		RecacheTask.EnterProgressFrame(1.0f);
 	}
 	
-	UE::SVT::GetStreamingManager().Add_GameThread(this);
+	if (bCanEverRender)
+	{
+		UE::SVT::GetStreamingManager().Add_GameThread(this);
+	}
 }
 #endif
+
+#if WITH_EDITOR
+bool UStreamableSparseVolumeTexture::ShouldRegisterDelegates()
+{
+	return GEditor && !IsTemplate() && !IsRunningCookCommandlet();
+}
+void UStreamableSparseVolumeTexture::RegisterEditorDelegates()
+{
+	if (ShouldRegisterDelegates())
+	{
+		UnregisterEditorDelegates();
+		FEditorDelegates::OnAssetsAddExtraObjectsToDelete.AddUObject(this, &UStreamableSparseVolumeTexture::OnAssetsAddExtraObjectsToDelete);
+	}
+}
+void UStreamableSparseVolumeTexture::UnregisterEditorDelegates()
+{
+	if (ShouldRegisterDelegates())
+	{
+		FEditorDelegates::OnAssetsAddExtraObjectsToDelete.RemoveAll(this);
+	}
+}
+#endif // WITH_EDITOR
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1363,14 +1746,14 @@ UStaticSparseVolumeTexture::UStaticSparseVolumeTexture(const FObjectInitializer&
 {
 }
 
-bool UStaticSparseVolumeTexture::AppendFrame(UE::SVT::FTextureData& UncookedFrame)
+bool UStaticSparseVolumeTexture::AppendFrame(UE::SVT::FTextureData& UncookedFrame, const FTransform& InFrameTransform)
 {
 	if (!Frames.IsEmpty())
 	{
 		UE_LOG(LogSparseVolumeTexture, Error, TEXT("Tried to initialize a UStaticSparseVolumeTexture with more than 1 frame"));
 		return false;
 	}
-	return Super::AppendFrame(UncookedFrame);
+	return Super::AppendFrame(UncookedFrame, InFrameTransform);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1437,7 +1820,7 @@ USparseVolumeTextureFrame* UAnimatedSparseVolumeTextureController::GetFrameByInd
 		return nullptr;
 	}
 
-	return USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, FrameIndex, MipLevel, bBlockingStreamingRequests);
+	return USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, GetTypeHash(this), 0.0f /*FrameRate*/, FrameIndex, MipLevel, bBlockingStreamingRequests, false /*bHasValidFrameRate*/);
 }
 
 USparseVolumeTextureFrame* UAnimatedSparseVolumeTextureController::GetCurrentFrame()
@@ -1450,7 +1833,7 @@ USparseVolumeTextureFrame* UAnimatedSparseVolumeTextureController::GetCurrentFra
 	// Compute (fractional) index of frame to sample
 	const float FrameIndexF = GetFractionalFrameIndex();
 
-	return USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, FrameIndexF, MipLevel, bBlockingStreamingRequests);
+	return USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, GetTypeHash(this), FrameRate, FrameIndexF, MipLevel, bBlockingStreamingRequests, true /*bHasValidFrameRate*/);
 }
 
 void UAnimatedSparseVolumeTextureController::GetCurrentFramesForInterpolation(USparseVolumeTextureFrame*& Frame0, USparseVolumeTextureFrame*& Frame1, float& LerpAlpha)
@@ -1465,8 +1848,9 @@ void UAnimatedSparseVolumeTextureController::GetCurrentFramesForInterpolation(US
 	const int32 FrameIndex = (int32)FrameIndexF;
 	LerpAlpha = FMath::Frac(FrameIndexF);
 
-	Frame0 = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, FrameIndexF, MipLevel, bBlockingStreamingRequests);
-	Frame1 = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, (FrameIndex + 1) % SparseVolumeTexture->GetNumFrames(), MipLevel, bBlockingStreamingRequests);
+	const uint32 StreamingInstanceKey = GetTypeHash(this);
+	Frame0 = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, StreamingInstanceKey, FrameRate, FrameIndexF, MipLevel, bBlockingStreamingRequests, true /*bHasValidFrameRate*/);
+	Frame1 = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SparseVolumeTexture, StreamingInstanceKey, FrameRate, (FrameIndex + 1) % SparseVolumeTexture->GetNumFrames(), MipLevel, bBlockingStreamingRequests, true /*bHasValidFrameRate*/);
 }
 
 float UAnimatedSparseVolumeTextureController::GetDuration()

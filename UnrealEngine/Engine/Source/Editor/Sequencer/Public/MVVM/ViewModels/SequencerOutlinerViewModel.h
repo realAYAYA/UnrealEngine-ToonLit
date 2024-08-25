@@ -5,6 +5,8 @@
 #include "Input/DragAndDrop.h"
 #include "MVVM/ViewModels/OutlinerViewModel.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
+#include "MovieSceneTimeUnit.h"
+#include "SequencerKeyCollection.h"
 #include "ISequencerModule.h"
 
 class FMenuBuilder;
@@ -30,6 +32,14 @@ public:
 	/*~ FOutlinerViewModel */
 	TSharedPtr<SWidget> CreateContextMenuWidget() override;
 	TSharedRef<FDragDropOperation> InitiateDrag(TArray<TWeakViewModelPtr<IOutlinerExtension>>&& InDraggedModels) override;
+	void RequestUpdate() override;
+
+	FFrameNumber GetNextKey(const TArray<TSharedRef<UE::Sequencer::FViewModel>>& InNodes, FFrameNumber FrameNumber, EMovieSceneTimeUnit TimeUnit, const TRange<FFrameNumber>& Range);
+	FFrameNumber GetPreviousKey(const TArray<TSharedRef<UE::Sequencer::FViewModel>>& InNodes, FFrameNumber FrameNumber, EMovieSceneTimeUnit TimeUnit, const TRange<FFrameNumber>& Range);
+
+private:
+
+	FFrameNumber GetNextKeyInternal(const TArray<TSharedRef<UE::Sequencer::FViewModel>>& InNodes, FFrameNumber FrameNumber, EMovieSceneTimeUnit TimeUnit, const TRange<FFrameNumber>& Range, EFindKeyDirection Direction);
 
 public:
 

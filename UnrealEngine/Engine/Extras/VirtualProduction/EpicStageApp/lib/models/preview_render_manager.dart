@@ -63,6 +63,9 @@ class PreviewRenderManager with WidgetsBindingObserver {
   /// Whether we've sent a request to create the preview renderer.
   bool _bHasCreatedRenderer = false;
 
+  /// Whether an actor drag operation is in progress.
+  bool _bIsDraggingActors = false;
+
   /// The size of preview to request from the engine. The engine may provide a lower resolution with the same aspect
   /// ratio.
   Size _desiredResolution = const Size(1920, 1080);
@@ -72,6 +75,9 @@ class PreviewRenderManager with WidgetsBindingObserver {
 
   /// Helper currently attempting to request a preview render.
   MessageTimeoutRetryHelper? _requestRenderHelper;
+
+  /// The last sequence number we sent the engine for a drag update.
+  int _dragSequenceNumber = 0;
 
   /// Stream subscriptions to user settings.
   final List<StreamSubscription> _settingSubscriptions = [];
@@ -104,6 +110,9 @@ class PreviewRenderManager with WidgetsBindingObserver {
       focalPoint.dy,
     );
   }
+
+  /// Whether an actor drag operation is in progress.
+  bool get bIsDraggingActors => _bIsDraggingActors;
 
   /// Construct the manager and register it with the connection manager.
   PreviewRenderManager(BuildContext context)
@@ -161,6 +170,78 @@ class PreviewRenderManager with WidgetsBindingObserver {
     return true;
   }
 
+  /// Send a message to the engine beginning a drag operation on the given [actors] (paths) and using the [primaryActor]
+  /// as the fulcrum point.
+  /// A drag must not already be in progress, which you can check with [bIsDraggingActors].
+  void beginActorDrag({required List<String> actors, String? primaryActor}) {
+    if (rendererId == null) {
+      _log.warning('Tried to start a drag operation, but there was no renderer ID');
+      return;
+    }
+
+    if (bIsDraggingActors) {
+      _log.warning('Tried to start a drag operation, but one was already in progress');
+      return;
+    }
+
+    _bIsDraggingActors = true;
+
+    ++_dragSequenceNumber;
+    _connectionManager.sendMessage('ndisplay.preview.actor.drag.begin', {
+      'RendererId': rendererId!,
+      'Actors': actors,
+      'PrimaryActor': primaryActor ?? actors.last,
+      'SequenceNumber': _dragSequenceNumber,
+    });
+  }
+
+  /// Send a message to the engine updating the normalized [position] of the current actor drag operation within the
+  /// preview. A drag must already be in progress, which you can check with [bIsDraggingActors].
+  void updateActorDrag(Offset position) {
+    if (rendererId == null) {
+      _log.warning('Tried to update a drag operation, but there was no renderer ID');
+      return;
+    }
+
+    if (!bIsDraggingActors) {
+      _log.warning('Tried to update a drag operation, but there was not one in progress');
+      return;
+    }
+
+    // Send the latest actor drag position
+    ++_dragSequenceNumber;
+    _connectionManager.sendMessage('ndisplay.preview.actor.drag.move', {
+      'RendererId': rendererId!,
+      'DragPosition': offsetToJson(position),
+      'SequenceNumber': _dragSequenceNumber,
+    });
+  }
+
+  /// Send a message to the engine ending the current actor drag operation at the given normalized [position] within the
+  /// preview.
+  /// A drag must already be in progress, which you can check with [bIsDraggingActors].
+  void endActorDrag(Offset position) {
+    if (rendererId == null) {
+      _log.warning('Tried to end a drag operation, but there was no renderer ID');
+      return;
+    }
+
+    if (!bIsDraggingActors) {
+      _log.warning('Tried to end a drag operation, but there was not one in progress');
+      return;
+    }
+
+    _bIsDraggingActors = false;
+
+    // Send the latest actor drag position
+    ++_dragSequenceNumber;
+    _connectionManager.sendMessage('ndisplay.preview.actor.drag.end', {
+      'RendererId': rendererId!,
+      'DragPosition': offsetToJson(position),
+      'SequenceNumber': _dragSequenceNumber,
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
@@ -215,8 +296,11 @@ class PreviewRenderManager with WidgetsBindingObserver {
       _connectionManager.sendMessage('ndisplay.preview.renderer.destroy', {'RendererId': _previewRendererId!});
     }
 
+    _requestRenderHelper?.giveUp();
+
     _previewRendererId = null;
     _bHasCreatedRenderer = false;
+    _bIsDraggingActors = false;
   }
 
   /// Called when the connection manager's connection state changes.
@@ -245,13 +329,17 @@ class PreviewRenderManager with WidgetsBindingObserver {
   void _onDisconnected() {
     _destroyPreviewRenderer();
 
-    _requestRenderHelper?.giveUp();
     _engineUpdateTimer?.cancel();
     _engineUpdateTimer = null;
   }
 
   /// Send a request to initialize the preview renderer in the engine.
   void _initializePreviewRenderer() {
+    if (_connectionManager.bIsInDemoMode) {
+      _onPreviewRendererCreated({'RendererId': 0});
+      return;
+    }
+
     final rootPath = _selectedActorSettings.displayClusterRootPath.getValue();
     if (rootPath.isEmpty) {
       return;
@@ -307,6 +395,7 @@ class PreviewRenderManager with WidgetsBindingObserver {
     _log.info('Preview renderer #$rendererId ready');
 
     _previewRendererId = rendererId;
+    _dragSequenceNumber = 0;
 
     final String rootPath = _selectedActorSettings.displayClusterRootPath.getValue();
     if (_initialRootPath != rootPath) {
@@ -320,7 +409,16 @@ class PreviewRenderManager with WidgetsBindingObserver {
 
   /// Request a preview render from the engine (if there's anybody to consume it).
   void _requestPreviewRender() {
-    if (_previewRendererId == null || _consumers.isEmpty || _requestRenderHelper != null) {
+    if (_previewRendererId == null || _consumers.isEmpty || _requestRenderHelper?.bIsActive == true) {
+      return;
+    }
+
+    if (_connectionManager.bIsInDemoMode) {
+      _onPreviewRenderCompleted({
+        'RendererId': _previewRendererId,
+        // A 1x1 black square encoded as a base64 image so that we have something to display
+        'ImageBase64': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      });
       return;
     }
 
@@ -387,32 +485,35 @@ class PreviewRenderManager with WidgetsBindingObserver {
       // Gather actor position data
       final List<PreviewActorData> actorPositions = [];
       final dynamic actorPositionsData = message['ActorPositions'];
-      for (dynamic positionPair in actorPositionsData) {
-        final String? actorPath = positionPair['Path'];
-        if (actorPath == null) {
-          continue;
-        }
 
-        final dynamic actorPositionData = positionPair['Position'];
-        if (actorPositionData == null) {
-          continue;
-        }
+      if (actorPositionsData is List) {
+        for (dynamic positionPair in actorPositionsData) {
+          final String? actorPath = positionPair['Path'];
+          if (actorPath == null) {
+            continue;
+          }
 
-        final double? xPosition = jsonNumberToDouble(actorPositionData['X']);
-        final double? yPosition = jsonNumberToDouble(actorPositionData['Y']);
-        if (xPosition == null || yPosition == null) {
-          continue;
-        }
+          final dynamic actorPositionData = positionPair['Position'];
+          if (actorPositionData == null) {
+            continue;
+          }
 
-        actorPositions.add(PreviewActorData(
-          path: actorPath,
-          position: Offset(xPosition, yPosition),
-        ));
+          final double? xPosition = jsonNumberToDouble(actorPositionData['X']);
+          final double? yPosition = jsonNumberToDouble(actorPositionData['Y']);
+          if (xPosition == null || yPosition == null) {
+            continue;
+          }
+
+          actorPositions.add(PreviewActorData(
+            path: actorPath,
+            position: Offset(xPosition, yPosition),
+          ));
+        }
       }
 
       for (final PreviewRenderConsumer consumer in _consumers) {
         consumer.onPreviewRenderCompleted(
-          sequenceNumber: sequenceNumber.toInt(),
+          bIsForLatestRequest: sequenceNumber.toInt() >= _dragSequenceNumber,
           resolution: resolution,
           imageData: imageData,
           actorPositions: actorPositions,
@@ -557,13 +658,14 @@ class PreviewActorData {
 /// Mixin for classes that want to receive renders from [PreviewRenderManager].
 abstract class PreviewRenderConsumer {
   /// Called when a preview render from the engine completes.
-  /// [sequenceNumber] is the last sequence number the engine received before producing the render.
+  /// [bIsForLatestRequest] is true if this contains the latest available preview and actor position data, or false if
+  /// the engine is expected to send more recent data after this.
   /// [resolution] is the resolution of the preview image.
   /// [imageData] is the data for the preview image.
   /// [actorPositions] is a list of position data for all actors visible in the preview.
   /// [bIsRealTimeDisabled] is whether real-time rendering was disabled in the engine when the preview was rendered.
   void onPreviewRenderCompleted({
-    required int sequenceNumber,
+    required bool bIsForLatestRequest,
     required Size resolution,
     required Uint8List imageData,
     required List<PreviewActorData> actorPositions,

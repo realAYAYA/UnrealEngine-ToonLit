@@ -666,13 +666,39 @@ bool UMovieSceneCompiledDataManager::IsDirty(UMovieSceneSequence* Sequence) cons
 	return true;
 }
 
+bool UMovieSceneCompiledDataManager::ValidateEntry(FMovieSceneCompiledDataID DataID, UMovieSceneSequence* Sequence) const
+{
+	if (!ensureMsgf(
+			CompiledDataEntries.IsValidIndex(DataID.Value),
+			TEXT("Given DataID %d is not valid! (%d entries in the data manager)"), DataID.Value, CompiledDataEntries.Num()))
+	{
+		return false;
+	}
+
+	const FMovieSceneCompiledDataEntry& Entry = CompiledDataEntries[DataID.Value];
+	UMovieSceneSequence* EntrySequence = Entry.GetSequence();
+	if (!ensureMsgf(
+			EntrySequence == Sequence,
+			TEXT("Unexpected sequence for data ID! Expected '%s', but data manager has '%s'."), *GetNameSafe(Sequence), *GetNameSafe(EntrySequence)))
+	{
+		return false;
+	}
+
+	return true;
+}
 
 void UMovieSceneCompiledDataManager::Compile(FMovieSceneCompiledDataID DataID)
+{
+	Compile(DataID, NetworkMask);
+}
+
+
+void UMovieSceneCompiledDataManager::Compile(FMovieSceneCompiledDataID DataID, EMovieSceneServerClientMask InNetworkMask)
 {
 	check(DataID.IsValid() && CompiledDataEntries.IsValidIndex(DataID.Value));
 	UMovieSceneSequence* Sequence = CompiledDataEntries[DataID.Value].GetSequence();
 	check(Sequence);
-	Compile(DataID, Sequence);
+	Compile(DataID, Sequence, InNetworkMask);
 }
 
 FMovieSceneCompiledDataID UMovieSceneCompiledDataManager::Compile(UMovieSceneSequence* Sequence)
@@ -683,6 +709,11 @@ FMovieSceneCompiledDataID UMovieSceneCompiledDataManager::Compile(UMovieSceneSeq
 }
 
 void UMovieSceneCompiledDataManager::Compile(FMovieSceneCompiledDataID DataID, UMovieSceneSequence* Sequence)
+{
+	Compile(DataID, Sequence, NetworkMask);
+}
+
+void UMovieSceneCompiledDataManager::Compile(FMovieSceneCompiledDataID DataID, UMovieSceneSequence* Sequence, EMovieSceneServerClientMask InNetworkMask)
 {
 	check(DataID.IsValid() && CompiledDataEntries.IsValidIndex(DataID.Value));
 	FMovieSceneCompiledDataEntry Entry = CompiledDataEntries[DataID.Value];
@@ -697,12 +728,19 @@ void UMovieSceneCompiledDataManager::Compile(FMovieSceneCompiledDataID DataID, U
 	Entry.DeterminismFences.Empty();
 	Entry.AccumulatedFlags = Sequence->GetFlags();
 	Params.TemplateGenerator.Reset(&Entry);
-	Params.NetworkMask = NetworkMask;
+	Params.NetworkMask = InNetworkMask;
 
 	// ---------------------------------------------------------------------------------------------------
 	// Step 1 - Always ensure the hierarchy information is completely up to date first
 	FMovieSceneSequenceHierarchy NewHierarchy;
 	const bool bHasHierarchy = CompileHierarchy(Sequence, Params, &NewHierarchy);
+
+	// If the network mask of the compiled data manager is 'all', but the sequence has been created with client-only and/or server-only subsections,
+	// then we mark the sequence volatile as we may need to recompile it at runtime in order to exclude these subsections depending on the net mode at runtime.
+	if (Params.NetworkMask == EMovieSceneServerClientMask::All && NewHierarchy.GetAccumulatedNetworkMask() != EMovieSceneServerClientMask::All)
+	{
+		Entry.AccumulatedFlags |= EMovieSceneSequenceFlags::Volatile;
+	}
 
 	if (IMovieSceneDeterminismSource* DeterminismSource = Cast<IMovieSceneDeterminismSource>(Sequence))
 	{
@@ -1303,7 +1341,7 @@ void UMovieSceneCompiledDataManager::GatherTrack(const FMovieSceneBinding* Objec
 		// Iterate everything in the field
 		for (const FMovieSceneTrackEvaluationFieldEntry& Entry : EvaluationField.Entries)
 		{
-			FMovieSceneSequenceTransform SequenceToRootTransform  = Params.RootToSequenceTransform.InverseFromWarp(Params.RootToSequenceWarpCounter);
+			FMovieSceneSequenceTransform SequenceToRootTransform  = Params.RootToSequenceTransform.InverseFromLoop(Params.RootToSequenceWarpCounter);
 			TRange<FFrameNumber>         ClampedRangeRoot         = Params.ClampRoot(SequenceToRootTransform.TransformRangeUnwarped(Entry.Range));
 			UMovieSceneSection*          Section                  = Entry.Section;
 
@@ -1569,8 +1607,23 @@ void UMovieSceneCompiledDataManager::PopulateSubSequenceTree(UMovieSceneSubTrack
 			continue;
 		}
 
-		const FMovieSceneTimeTransform SequenceToRootTransform = Params.RootToSequenceTransform.InverseFromWarp(Params.RootToSequenceWarpCounter);
-		TRange<FFrameNumber> EffectiveRange = Params.ClampRoot(Entry.Range * SequenceToRootTransform);
+		InOutHierarchy->AccumulateNetworkMask(SubSection->GetNetworkMask());
+		
+
+		const FMovieSceneSequenceTransform SequenceToRootTransform = Params.RootToSequenceTransform.InverseFromLoop(Params.RootToSequenceWarpCounter);
+
+		// In the case the Sequence to Root Transform contains an infinite timescale, then one of the timescales above us is zero. In this case, we cannot
+		// rely on a simple multiply by an inverse transform to figure out an effective range of this entry in root space, as this is non-deterministic.
+		// It all comes down to whether the single frame is inside or outside of this entry. 
+		// If inside, the effective range in root space is the entire clamp range.
+		// If outside, the effective range in root space is empty, and we should not include this entry.
+
+		TRange<FFrameNumber> EffectiveRange = TRange<FFrameNumber>::Empty();
+		if (FMath::IsFinite(SequenceToRootTransform.GetTimeScale()) || !TRange<FFrameNumber>::Intersection(Params.LocalClampRange, Entry.Range).IsEmpty())
+		{
+			EffectiveRange = Params.ClampRoot(SequenceToRootTransform.TransformRangeConstrained(Entry.Range));
+		}
+
 		if (EffectiveRange.IsEmpty())
 		{
 			continue;
@@ -1586,14 +1639,26 @@ void UMovieSceneCompiledDataManager::PopulateSubSequenceTree(UMovieSceneSubTrack
 
 		const ESectionEvaluationFlags SubEntryFlags = Entry.Flags | Params.Flags;
 
-		if (!SubSectionParams.bCanLoop)
+		// If we can't loop, or our timescale is zero, and therefore looping is irrelevant
+		if (!SubSectionParams.bCanLoop || FMath::IsNearlyZero(SubData->RootToSequenceTransform.GetTimeScale()))
 		{
 			FGatherParameters SubParams = Params.CreateForSubData(*SubData, SubSequenceID, Params.RootToSequenceWarpCounter);
 			SubParams.SetClampRange(EffectiveRange);
 			SubParams.Flags |= Entry.Flags;
 			SubParams.NetworkMask = NewMask;
-			SubParams.RootToSequenceWarpCounter.AddNonWarpingLevel();
 
+			for (int i = 0; i < SubParams.RootToSequenceTransform.NestedTransforms.Num(); ++i)
+			{
+				if (SubParams.RootToSequenceTransform.NestedTransforms[i].IsLooping())
+				{
+					SubParams.RootToSequenceWarpCounter.AddWarpingLevel(1);
+				}
+				else
+				{
+					SubParams.RootToSequenceWarpCounter.AddNonWarpingLevel();
+				}
+			}
+			
 			// The section isn't looping, so we can just add it to the tree.
 			InOutHierarchy->AddRange(EffectiveRange, SubSequenceID, SubEntryFlags, SubParams.RootToSequenceWarpCounter);
 

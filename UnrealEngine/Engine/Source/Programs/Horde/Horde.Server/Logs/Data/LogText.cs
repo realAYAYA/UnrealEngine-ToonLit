@@ -90,13 +90,13 @@ namespace Horde.Server.Logs.Data
 		public static void FindLineOffsets(ReadOnlySpan<byte> span, int offset, Span<int> lineOffsets, int lineCount)
 		{
 			Debug.Assert(span.Length == 0 || span[^1] == (byte)'\n');
-			for(; ; )
+			for (; ; )
 			{
 				// Store the start of this line
 				lineOffsets[lineCount++] = offset;
 
 				// Check if we're at the end
-				if(offset >= span.Length)
+				if (offset >= span.Length)
 				{
 					break;
 				}
@@ -272,10 +272,10 @@ namespace Horde.Server.Logs.Data
 		/// <returns>True if the given text is empty</returns>
 		public static bool IsEmptyOrWhitespace(ReadOnlySpan<byte> input)
 		{
-			for(int idx = 0; idx < input.Length; idx++)
+			for (int idx = 0; idx < input.Length; idx++)
 			{
 				byte v = input[idx];
-				if(v != (byte)'\n' && v != '\r' && v != ' ')
+				if (v != (byte)'\n' && v != '\r' && v != ' ')
 				{
 					return false;
 				}
@@ -292,7 +292,7 @@ namespace Horde.Server.Logs.Data
 		/// <returns></returns>
 		public static int ConvertToPlainText(ReadOnlySpan<byte> input, byte[] output, int outputOffset)
 		{
-			if(IsEmptyOrWhitespace(input))
+			if (IsEmptyOrWhitespace(input))
 			{
 				output[outputOffset] = (byte)'\n';
 				return outputOffset + 1;
@@ -394,13 +394,13 @@ namespace Horde.Server.Logs.Data
 		{
 			int newLength = Length;
 
-			if(_internalData.Length < targetLength)
+			if (_internalData.Length < targetLength)
 			{
 				Array.Resize(ref _internalData, targetLength);
 			}
 
 			string suffix = $" (server: {hostName})";
-			for(int newLineCount = LineCount; newLineCount < targetLineCount; newLineCount++)
+			for (int newLineCount = LineCount; newLineCount < targetLineCount; newLineCount++)
 			{
 				byte[] errorBytes = Encoding.ASCII.GetBytes($"{{ \"level\":\"Error\",\"message\":\"[Missing data at chunk {chunkIdx}, line {newLineCount}{suffix}]\" }}\n");
 				if (newLength + errorBytes.Length > targetLength)
@@ -451,9 +451,9 @@ namespace Horde.Server.Logs.Data
 
 				// Calculate the new number of newlines
 				ReadOnlySpan<byte> newData = _internalData.AsSpan(0, newLength);
-				for(int idx = Length; idx < newLength; idx++)
+				for (int idx = Length; idx < newLength; idx++)
 				{
-					if(newData[idx] == '\n')
+					if (newData[idx] == '\n')
 					{
 						_internalLineOffsets.Add(idx + 1);
 					}
@@ -479,7 +479,7 @@ namespace Horde.Server.Logs.Data
 		public static int GetLineIndexForOffset(this ILogText logText, int offset)
 		{
 			int lineIdx = logText.LineOffsets.BinarySearch(offset);
-			if(lineIdx < 0)
+			if (lineIdx < 0)
 			{
 				lineIdx = ~lineIdx - 1;
 			}

@@ -6,7 +6,7 @@
 #define INTERCHANGEFBXPARSER_MODULE_NAME TEXT("InterchangeFbxParser")
 
 /**
- * This module allow out of process interchange translator in case a third party SDK is not thread safe.
+ * This module allows out-of-process Interchange translators in case a third-party SDK is not thread-safe.
  */
 class FInterchangeFbxParserModule : public IModuleInterface
 {

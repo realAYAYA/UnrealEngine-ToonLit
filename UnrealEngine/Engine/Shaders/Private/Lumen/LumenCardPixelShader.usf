@@ -4,7 +4,7 @@
 
 #include "../Common.ush"
 #include "../BRDF.ush"
-
+ 
 #define SceneTexturesStruct LumenCardPass.SceneTextures 
 #define EyeAdaptationStruct LumenCardPass
 
@@ -64,7 +64,7 @@ void Main(
 		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
 	}
 
-#if TEMPLATE_USES_STRATA
+#if TEMPLATE_USES_SUBSTRATE
 	const float3 V = MaterialParameters.WorldNormal; // Use the normal to avoid view dependent transmittance effects when baking non directional card data.
 	const float3 L = MaterialParameters.WorldNormal;
 
@@ -74,56 +74,75 @@ void Main(
 	float3 Emissive      = 0;
 	float TotalCoverage  = 1.f;
 
-  #if STRATA_OPTIMIZED_UNLIT
-	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
-	UnlitBSDF.StrataSanitizeBSDF();
-	Emissive = BSDF_GETEMISSIVE(UnlitBSDF);
-	TotalCoverage = UnlitBSDF.Coverage;
-  #else // STRATA_OPTIMIZED_UNLIT
-	// Initialise a Strata header with normal in registers
-	FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
-	FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
-	StrataPixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+	// Initialise a Substrate header with normal in registers
+	FSubstrateData SubstrateData = PixelMaterialInputs.GetFrontSubstrateData();
+	FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
+
+  #if SUBSTRATE_OPTIMIZED_UNLIT
+
+	// Unlit BSDF goes through the SubstrateTree to support weighting operations. Technically, layering and mixing could also be supported.
+	float3	UnlitSurfaceTransmittancePreCoverage = 0.0f;
+	float3	UnlitSurfaceNormal = 0.0f;
+	SubstratePixelHeader.SubstrateUpdateTreeUnlit(
+		uint2(SvPosition.xy),
+		MaterialParameters.CameraVector,
+		SubstrateData,
+		Emissive,
+		TotalCoverage,
+		UnlitSurfaceTransmittancePreCoverage,
+		UnlitSurfaceNormal);
+
+  #else // SUBSTRATE_OPTIMIZED_UNLIT
+	SubstratePixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
 	
-	if (StrataPixelHeader.StrataTree.BSDFCount > 0)
+	if (SubstratePixelHeader.SubstrateTree.BSDFCount > 0)
 	{
-		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(true /*bForceFullyRough*/, true /*bRoughDiffuseEnabled*/, 0 /*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
+		// To have better 'specular as diffuse' response, we use bForceFullyRoughAccurate which computes specular & diffuse separately. 
+		// They are both merge them manually at the end, as Lumen card stores only diffuse albedo.
+		// Match behavior in LumenHardwareRayTracingCommon.ush
+		FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(true /*bForceFullyRough*/, true /*bRoughDiffuseEnabled*/, 0 /*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
+		Settings.bForceFullyRoughAccurate = true;
+
 		float3 TotalTransmittancePreCoverage = 0;
-		FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
-		StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, StrataData, V, Settings, TotalCoverage, TotalTransmittancePreCoverage);
+		SubstratePixelHeader.SubstrateUpdateTree(SubstrateData, V, Settings, TotalCoverage, TotalTransmittancePreCoverage);
 
 
 		// Extract averaged DiffuseAlbedo / SpecularColor
-		STRATA_UNROLL_N(STRATA_CLAMPED_BSDF_COUNT)
-		for (int BSDFIdx = 0; BSDFIdx < StrataPixelHeader.StrataTree.BSDFCount; ++BSDFIdx)
+		SUBSTRATE_UNROLL_N(SUBSTRATE_CLAMPED_CLOSURE_COUNT)
+		for (int BSDFIdx = 0; BSDFIdx < SubstratePixelHeader.SubstrateTree.BSDFCount; ++BSDFIdx)
 		{
-			#define CurrentBSDF StrataPixelHeader.StrataTree.BSDFs[BSDFIdx]
-			if (StrataIsBSDFVisible(CurrentBSDF))
+			#define CurrentBSDF SubstratePixelHeader.SubstrateTree.BSDFs[BSDFIdx]
+			if (SubstrateIsBSDFVisible(CurrentBSDF))
 			{
-				FStrataBSDFContext StrataBSDFContext = StrataCreateBSDFContext(StrataPixelHeader, CurrentBSDF, NullStrataAddressing, V, L);
-				FStrataEnvLightResult StrataEnvLight = StrataEvaluateForEnvLight(StrataBSDFContext, true /*bEnableSpecular*/, Settings);
+				FSubstrateAddressing NullSubstrateAddressing = (FSubstrateAddressing)0;	// Fake unused in SubstrateCreateBSDFContext when using Forward inline shading
+				FSubstrateBSDFContext SubstrateBSDFContext = SubstrateCreateBSDFContext(SubstratePixelHeader, CurrentBSDF, NullSubstrateAddressing, V, L);
+				FSubstrateEnvLightResult SubstrateEnvLight = SubstrateEvaluateForEnvLight(SubstrateBSDFContext, true /*bEnableSpecular*/, Settings);
 
 				// Use LuminanceWeightV instead of LuminanceWeight(..) as we only need to weight these value with the view transmittance, not the light transmittance;
 				const float3 Weight = CurrentBSDF.LuminanceWeightV;
 
-				DiffuseColor  += Weight * (StrataEnvLight.DiffuseWeight + StrataEnvLight.DiffuseBackFaceWeight); // This is not correct, as the albedo/diffuse color can go above 1. However this is necessary to match legacy behavior.
-				SpecularColor += Weight * StrataEnvLight.SpecularWeight;
-				WorldNormal   += Weight * StrataBSDFContext.N;
+				DiffuseColor  += Weight * (SubstrateEnvLight.DiffuseWeight + SubstrateEnvLight.DiffuseBackFaceWeight); // This is not correct, as the albedo/diffuse color can go above 1. However this is necessary to match legacy behavior.
+				SpecularColor += Weight * SubstrateEnvLight.SpecularWeight;
+				WorldNormal   += Weight * SubstrateBSDFContext.N;
 				Emissive      += Weight * CurrentBSDF.Emissive;
+
+				// Lumen card stores only diffuse albedo, so merge specular & diffuse color, 
+				// which are propertly weighted respectively to each other
+				DiffuseColor = SpecularColor + DiffuseColor;
 			}
 			#undef CurrentBSDF
 		}
 	}
-  #endif // STRATA_OPTIMIZED_UNLIT
+  #endif // SUBSTRATE_OPTIMIZED_UNLIT
 	
 	float Opacity = 1.0f;
 #if MATERIALBLENDING_ANY_TRANSLUCENT
 	Opacity = TotalCoverage > 0.5f ? 1.0f : 0.0f;
 #elif MATERIALBLENDING_MASKED
-	Opacity = TotalCoverage - GetMaterialOpacityMaskClipValue() >= 0.0f ? 1.0f : 0.0f;
+	Opacity = GetMaterialMask(PixelMaterialInputs) >= 0.0f ? 1.0f : 0.0f;
 #endif
 
-#else // TEMPLATE_USES_STRATA
+#else // TEMPLATE_USES_SUBSTRATE
 
 	float3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
 	float Metallic = GetMaterialMetallic(PixelMaterialInputs);
@@ -155,7 +174,7 @@ void Main(
 	}
 #endif
 
-#endif // TEMPLATE_USES_STRATA
+#endif // TEMPLATE_USES_SUBSTRATE
 
 	// Normals are stored in local card space
 	float3 CardSpaceNormal = float3(0, 0, 1);

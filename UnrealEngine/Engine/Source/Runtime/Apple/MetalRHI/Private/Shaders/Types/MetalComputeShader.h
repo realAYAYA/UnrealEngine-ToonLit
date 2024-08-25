@@ -15,11 +15,11 @@
 class FMetalComputeShader : public TMetalBaseShader<FRHIComputeShader, SF_Compute>
 {
 public:
-	FMetalComputeShader(TArrayView<const uint8> InCode, mtlpp::Library InLibrary = nil);
+	FMetalComputeShader(TArrayView<const uint8> InCode, MTLLibraryPtr InLibrary);
 	virtual ~FMetalComputeShader();
 
-	FMetalShaderPipeline* GetPipeline();
-	mtlpp::Function GetFunction();
+	FMetalShaderPipelinePtr GetPipeline();
+    MTLFunctionPtr GetFunction();
 
 	// thread group counts
 	int32 NumThreadsX;
@@ -33,5 +33,5 @@ public:
 
 private:
 	// the state object for a compute shader
-	FMetalShaderPipeline* Pipeline;
+	FMetalShaderPipelinePtr Pipeline;
 };

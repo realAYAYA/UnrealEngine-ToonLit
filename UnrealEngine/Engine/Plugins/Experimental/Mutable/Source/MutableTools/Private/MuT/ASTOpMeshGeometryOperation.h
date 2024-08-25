@@ -10,13 +10,13 @@
 
 namespace mu
 {
-struct FProgram;
+	struct FProgram;
 
 
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
-	class ASTOpMeshGeometryOperation : public ASTOp
+	class ASTOpMeshGeometryOperation final : public ASTOp
 	{
 	public:
 

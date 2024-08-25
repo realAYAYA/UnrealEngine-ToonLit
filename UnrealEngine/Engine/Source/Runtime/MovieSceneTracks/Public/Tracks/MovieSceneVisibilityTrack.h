@@ -4,7 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
-#include "Tracks/MovieSceneBoolTrack.h"
+#include "Tracks/MovieScenePropertyTrack.h"
+
 #include "MovieSceneVisibilityTrack.generated.h"
 
 /**
@@ -12,17 +13,17 @@
  */
 UCLASS(MinimalAPI)
 class UMovieSceneVisibilityTrack
-	: public UMovieSceneBoolTrack
+	: public UMovieScenePropertyTrack
 {
 	GENERATED_UCLASS_BODY()
 
 public:
 
 	// UMovieSceneTrack interface
-	virtual FMovieSceneEvalTemplatePtr CreateTemplateForSection(const UMovieSceneSection& InSection) const override;
 	virtual void PostLoad() override;
 	virtual bool SupportsType(TSubclassOf<UMovieSceneSection> SectionClass) const override;
 	virtual UMovieSceneSection* CreateNewSection() override;
+	virtual void Serialize(FArchive& Ar) override;
 
 #if WITH_EDITORONLY_DATA
 	virtual FText GetDisplayName() const override;

@@ -2,19 +2,23 @@
 
 #include "OpenColorIOConfiguration.h"
 
+#include "ColorSpace.h"
 #include "Containers/SortedMap.h"
 #include "EngineAnalytics.h"
 #include "Engine/VolumeTexture.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "Hash/xxhash.h"
 #include "Math/PackedVector.h"
 #include "Misc/PathViews.h"
 #include "Modules/ModuleManager.h"
 #include "OpenColorIOColorTransform.h"
 #include "OpenColorIOModule.h"
 #include "OpenColorIOSettings.h"
+#include "OpenColorIOWrapper.h"
 #include "TextureResource.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OpenColorIOConfiguration)
@@ -23,7 +27,6 @@
 
 
 #if WITH_EDITOR
-#include "OpenColorIOWrapper.h"
 #include "DerivedDataCacheInterface.h"
 #include "DirectoryWatcherModule.h"
 #include "IDirectoryWatcher.h"
@@ -60,19 +63,21 @@ void UOpenColorIOConfiguration::BeginDestroy()
 
 bool UOpenColorIOConfiguration::IsTransformReady(const FOpenColorIOColorConversionSettings& InSettings)
 {
-	if (const TObjectPtr<UOpenColorIOColorTransform>* TransformPtr = FindTransform(InSettings))
+	TObjectPtr<const UOpenColorIOColorTransform> Transform = FindTransform(InSettings);
+	if (IsValid(Transform))
 	{
-		return (*TransformPtr)->AreRenderResourcesReady();
+		return Transform->AreRenderResourcesReady();
 	}
 
 	return false;
 }
 
-bool UOpenColorIOConfiguration::GetRenderResources(ERHIFeatureLevel::Type InFeatureLevel, const FOpenColorIOColorConversionSettings& InSettings, FOpenColorIOTransformResource*& OutShaderResource, TSortedMap<int32, FTextureResource*>& OutTextureResources)
+bool UOpenColorIOConfiguration::GetRenderResources(ERHIFeatureLevel::Type InFeatureLevel, const FOpenColorIOColorConversionSettings& InSettings, FOpenColorIOTransformResource*& OutShaderResource, TSortedMap<int32, TWeakObjectPtr<UTexture>>& OutTextureResources)
 {
-	if (const TObjectPtr<UOpenColorIOColorTransform>* TransformPtr = FindTransform(InSettings))
+	TObjectPtr<const UOpenColorIOColorTransform> Transform = FindTransform(InSettings);
+	if (IsValid(Transform))
 	{
-		return (*TransformPtr)->GetRenderResources(InFeatureLevel, OutShaderResource, OutTextureResources);
+		return Transform->GetRenderResources(InFeatureLevel, OutShaderResource, OutTextureResources);
 	}
 
 	return false;
@@ -120,7 +125,7 @@ bool UOpenColorIOConfiguration::HasDesiredDisplayView(const FOpenColorIODisplayV
 
 bool UOpenColorIOConfiguration::Validate() const
 {
-#if WITH_EDITOR
+#if WITH_OCIO
 	if (!ConfigurationFile.FilePath.IsEmpty() && Config.IsValid())
 	{
 		//When loading the configuration file, if any errors are detected, it will throw an exception. Thus, our pointer won't be valid.
@@ -130,15 +135,26 @@ bool UOpenColorIOConfiguration::Validate() const
 	return false;
 #else
 	return true;
-#endif // WITH_EDITOR
+#endif // WITH_OCIO
 }
 
-#if WITH_EDITOR
+bool UOpenColorIOConfiguration::TransformColor(const FOpenColorIOColorConversionSettings& InSettings, FLinearColor& InOutColor) const
+{
+	TObjectPtr<const UOpenColorIOColorTransform> Transform = FindTransform(InSettings);
+	if (IsValid(Transform))
+	{
+		return Transform->TransformColor(InOutColor);
+	}
+
+	return false;
+}
+
 bool UOpenColorIOConfiguration::TransformImage(const FOpenColorIOColorConversionSettings& InSettings, const FImageView& InOutImage) const
 {
-	if (const TObjectPtr<UOpenColorIOColorTransform>* TransformPtr = FindTransform(InSettings))
+	TObjectPtr<const UOpenColorIOColorTransform> Transform = FindTransform(InSettings);
+	if (IsValid(Transform))
 	{
-		return (*TransformPtr)->TransformImage(InOutImage);
+		return Transform->TransformImage(InOutImage);
 	}
 
 	return false;
@@ -146,34 +162,32 @@ bool UOpenColorIOConfiguration::TransformImage(const FOpenColorIOColorConversion
 
 bool UOpenColorIOConfiguration::TransformImage(const FOpenColorIOColorConversionSettings& InSettings, const FImageView& SrcImage, const FImageView& DestImage) const
 {
-	if (const TObjectPtr<UOpenColorIOColorTransform>* TransformPtr = FindTransform(InSettings))
+	TObjectPtr<const UOpenColorIOColorTransform> Transform = FindTransform(InSettings);
+	if (IsValid(Transform))
 	{
-		return (*TransformPtr)->TransformImage(SrcImage, DestImage);
+		return Transform->TransformImage(SrcImage, DestImage);
 	}
 
 	return false;
 }
-#endif
 
-void UOpenColorIOConfiguration::ReloadExistingColorspaces()
+void UOpenColorIOConfiguration::ReloadExistingColorspaces(bool bForce)
 {
-#if WITH_EDITOR
 	LoadConfiguration();
 
+#if WITH_OCIO
 	if (Config && Config->IsValid())
 	{
-		FString LoadedConfigHash = Config->GetCacheID() + FString(OpenColorIOWrapper::GetVersion());
-		
-		const UOpenColorIOSettings* Settings = GetDefault<UOpenColorIOSettings>();
-		if (Settings->bSupportInverseViewTransforms)
+		FString NewConfigHash;
+		if (!GetHash(NewConfigHash))
 		{
-			LoadedConfigHash += FString(TEXT("_Inv"));
+			bForce = true;
 		}
 
 		// Hash is different, proceed with the regeneration...
-		if (ConfigHash != LoadedConfigHash)
+		if (ConfigHash != NewConfigHash || bForce)
 		{
-			ConfigHash = LoadedConfigHash;
+			ConfigHash = NewConfigHash;
 
 			TArray<FOpenColorIOColorSpace> ColorSpacesToBeReloaded = DesiredColorSpaces;
 			TArray<FOpenColorIODisplayView> DisplayViewsToBeReloaded = DesiredDisplayViews;
@@ -220,6 +234,8 @@ void UOpenColorIOConfiguration::ReloadExistingColorspaces()
 				}
 			}
 
+			const UOpenColorIOSettings* Settings = GetDefault<UOpenColorIOSettings>();
+
 			// Genereate new shaders.
 			for (int32 indexTop = 0; indexTop < DesiredColorSpaces.Num(); ++indexTop)
 			{
@@ -254,6 +270,7 @@ void UOpenColorIOConfiguration::ReloadExistingColorspaces()
 		DesiredColorSpaces.Reset();
 		DesiredDisplayViews.Reset();
 		ColorTransforms.Reset();
+		ConfigHash.Empty();
 	}
 
 	if (!MarkPackageDirty())
@@ -314,7 +331,20 @@ void UOpenColorIOConfiguration::ConfigPathChangedEvent(const TArray<FFileChangeD
 
 FOpenColorIOWrapperConfig* UOpenColorIOConfiguration::GetConfigWrapper() const
 {
-#if WITH_EDITOR
+#if WITH_OCIO
+	return Config.Get();
+#else
+	return nullptr;
+#endif
+}
+
+FOpenColorIOWrapperConfig* UOpenColorIOConfiguration::GetOrCreateConfigWrapper()
+{
+#if WITH_OCIO
+	if (!Config.IsValid())
+	{
+		LoadConfiguration();
+	}
 	return Config.Get();
 #else
 	return nullptr;
@@ -359,9 +389,9 @@ void UOpenColorIOConfiguration::StopDirectoryWatch()
 #endif
 }
 
-const TObjectPtr<UOpenColorIOColorTransform>* UOpenColorIOConfiguration::FindTransform(const FOpenColorIOColorConversionSettings& InSettings) const
+TObjectPtr<const UOpenColorIOColorTransform> UOpenColorIOConfiguration::FindTransform(const FOpenColorIOColorConversionSettings& InSettings) const
 {
-	return ColorTransforms.FindByPredicate([&](const UOpenColorIOColorTransform* InTransform)
+	const TObjectPtr<UOpenColorIOColorTransform>* TransformPtr = ColorTransforms.FindByPredicate([&](const UOpenColorIOColorTransform* InTransform)
 		{
 			EOpenColorIOViewTransformDirection DisplayViewDirection;
 			
@@ -374,9 +404,10 @@ const TObjectPtr<UOpenColorIOColorTransform>* UOpenColorIOConfiguration::FindTra
 				return InTransform->SourceColorSpace == InSettings.SourceColorSpace.ColorSpaceName && InTransform->DestinationColorSpace == InSettings.DestinationColorSpace.ColorSpaceName;
 			}
 		});
+
+	return (TransformPtr != nullptr) ? *TransformPtr : nullptr;
 }
 
-#if WITH_EDITOR
 void UOpenColorIOConfiguration::CreateColorTransform(const FString& InSourceColorSpace, const FString& InDestinationColorSpace)
 {
 	if (InSourceColorSpace.IsEmpty() || InDestinationColorSpace.IsEmpty())
@@ -428,7 +459,6 @@ void UOpenColorIOConfiguration::CreateColorTransform(const FString& InSourceColo
 		UE_LOG(LogOpenColorIO, Warning, TEXT("Could not create color space transform from %s to %s - %s. Verify your OCIO config file, it may have errors in it."), *InSourceColorSpace, *InDisplay, *InView);
 	}
 }
-#endif
 
 void UOpenColorIOConfiguration::CleanupTransforms()
 {
@@ -492,7 +522,12 @@ void UOpenColorIOConfiguration::PostInitProperties()
 void UOpenColorIOConfiguration::PostLoad()
 {
 	Super::PostLoad();
+
+#if WITH_EDITOR
+	// In non-editor modes, the shader & texture resources are already baked.
+	// For CPU transforms, the config is lazily-loaded.
 	ReloadExistingColorspaces();
+#endif
 
 	for (UOpenColorIOColorTransform* Transform : ColorTransforms)
 	{
@@ -502,7 +537,14 @@ void UOpenColorIOConfiguration::PostLoad()
 
 void UOpenColorIOConfiguration::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UOpenColorIOConfiguration::GetAssetRegistryTags(FAssetRegistryTagsContext RegistryTagsContext) const
+{
+	Super::GetAssetRegistryTags(RegistryTagsContext);
 
 	FString Description;
 	if (ConfigurationFile.FilePath.IsEmpty())
@@ -518,7 +560,7 @@ void UOpenColorIOConfiguration::GetAssetRegistryTags(TArray<FAssetRegistryTag>& 
 		Description = TEXT("Configuration: ") + ConfigurationFile.FilePath;
 	}
 
-	OutTags.Add(FAssetRegistryTag(TEXT("ConfigurationFile"), Description, FAssetRegistryTag::TT_Hidden));
+	RegistryTagsContext.AddTag(FAssetRegistryTag(TEXT("ConfigurationFile"), Description, FAssetRegistryTag::TT_Hidden));
 }
 
 #if WITH_EDITORONLY_DATA
@@ -552,6 +594,111 @@ void UOpenColorIOConfiguration::PreSave(FObjectPreSaveContext SaveContext)
 	OpenColorIOConfiguration::SendAnalytics(TEXT("Usage.OpenColorIO.ConfigAssetSaved"), DesiredColorSpaces);
 }
 
+void UOpenColorIOConfiguration::LoadConfiguration()
+{
+#if WITH_OCIO
+	Config.Reset();
+
+	if (ConfigurationFile.FilePath.IsEmpty())
+	{
+		return;
+	}
+
+	bool bIsBuiltIn = false;
+	FString FilePath = ConfigurationFile.FilePath;
+
+	if (ConfigurationFile.FilePath.StartsWith(TEXT("ocio://")))
+	{
+		bIsBuiltIn = true;
+	}
+	else if (ConfigurationFile.FilePath.Equals(TEXT("$OCIO")) || ConfigurationFile.FilePath.Equals(TEXT("%OCIO%")))
+	{
+		FilePath = FPlatformMisc::GetEnvironmentVariable(TEXT("OCIO"));
+	}
+	else if (ConfigurationFile.FilePath.Contains(TEXT("{Engine}")))
+	{
+		FilePath = FPaths::ConvertRelativePathToFull(ConfigurationFile.FilePath.Replace(TEXT("{Engine}"), *FPaths::EngineDir()));
+	}
+	else if (FPaths::IsRelative(ConfigurationFile.FilePath))
+	{
+		const FString AbsoluteGameDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+		FilePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(AbsoluteGameDir, ConfigurationFile.FilePath));
+	}
+
+	Config = MakePimpl<FOpenColorIOWrapperConfig>(FilePath, FOpenColorIOWrapperConfig::WCS_AsInterchangeSpace);
+
+	if (Config->IsValid())
+	{
+		if (!bIsBuiltIn)
+		{
+			StartDirectoryWatch(FilePath);
+		}
+
+		UE_LOG(LogOpenColorIO, Verbose, TEXT("Loaded OCIO configuration file %s"), *FilePath);
+	}
+	else
+	{
+		UE_LOG(LogOpenColorIO, Error, TEXT("Could not load OCIO configuration file %s. Verify that the path is good or that the file is valid."), *FilePath);
+	}
+#endif //WITH_OCIO
+}
+
+bool UOpenColorIOConfiguration::GetHash(FString& OutHash) const
+{
+#if WITH_OCIO
+	if (Config && Config->IsValid())
+	{
+		const FString CacheID = Config->GetCacheID();
+		if (CacheID.IsEmpty())
+		{
+			UE_LOG(LogOpenColorIO, Warning, TEXT("Failed to get cache ID: forcing constant transform recreation. Please fix invalid config."));
+			return false;
+		}
+
+		const FStringView CacheIDView = CacheID;
+		const uint32 VersionID = OpenColorIOWrapper::GetVersionHex();
+		const uint8 bSupportsInverse = GetDefault<UOpenColorIOSettings>()->bSupportInverseViewTransforms;
+
+		// Note that we use 128-bit xxhash to match the library.
+		// See: https://github.com/AcademySoftwareFoundation/OpenColorIO/wiki/Caches-and-cache-IDs-in-OpenColorIO#object-cacheids
+
+		FXxHash128Builder HashBuilder;
+		HashBuilder.Update(CacheIDView.GetData(), CacheIDView.Len() * sizeof(CacheIDView[0]));
+		HashBuilder.Update(&VersionID, sizeof(VersionID));
+		HashBuilder.Update(&bSupportsInverse, sizeof(bSupportsInverse));
+
+		const UE::Color::FColorSpace& WCS = UE::Color::FColorSpace::GetWorking();
+		if (!WCS.IsSRGB())
+		{
+			// The working color space is uniquely defined by its chromaticities (as loaded from renderer settings).
+			HashBuilder.Update(&WCS.GetRedChromaticity(), sizeof(FVector2d));
+			HashBuilder.Update(&WCS.GetGreenChromaticity(), sizeof(FVector2d));
+			HashBuilder.Update(&WCS.GetBlueChromaticity(), sizeof(FVector2d));
+			HashBuilder.Update(&WCS.GetWhiteChromaticity(), sizeof(FVector2d));
+		}
+
+		for (const TPair<FString, FString>& Pair : Context)
+		{
+			if (!Pair.Value.IsEmpty())
+			{
+				const FStringView Key = Pair.Key;
+				const FStringView Value = Pair.Value;
+
+				HashBuilder.Update(Key.GetData(), Key.Len() * sizeof(Key[0]));
+				HashBuilder.Update(Value.GetData(), Value.Len() * sizeof(Value[0]));
+			}
+		}
+		
+		FStringBuilderBase StringBuilder;
+		StringBuilder << HashBuilder.Finalize();
+		OutHash = StringBuilder.ToString();
+
+		return true;
+	}
+#endif // WITH_OCIO
+
+	return false;
+}
 
 #if WITH_EDITOR
 
@@ -620,50 +767,13 @@ void UOpenColorIOConfiguration::PostEditChangeProperty(FPropertyChangedEvent& Pr
 			CleanupTransforms();
 		}
 	}
+	else if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UOpenColorIOConfiguration, Context))
+	{
+		// Note: Reload calls LoadConfiguration() internally.
+		ReloadExistingColorspaces();
+	}
+
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-}
-
-void UOpenColorIOConfiguration::LoadConfiguration()
-{
-	Config.Reset();
-
-	if (ConfigurationFile.FilePath.IsEmpty())
-	{
-		return;
-	}
-
-	bool bIsBuiltIn = false;
-	FString FilePath = ConfigurationFile.FilePath;
-
-	if (ConfigurationFile.FilePath.StartsWith(TEXT("ocio://")))
-	{
-		bIsBuiltIn = true;
-	}
-	else if(ConfigurationFile.FilePath.Contains(TEXT("{Engine}")))
-	{
-		FilePath = FPaths::ConvertRelativePathToFull(ConfigurationFile.FilePath.Replace(TEXT("{Engine}"), *FPaths::EngineDir()));
-	}
-	else if (FPaths::IsRelative(ConfigurationFile.FilePath))
-	{
-		const FString AbsoluteGameDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-		FilePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(AbsoluteGameDir, ConfigurationFile.FilePath));
-	}
-
-	Config = MakePimpl<FOpenColorIOWrapperConfig>(FilePath, FOpenColorIOWrapperConfig::WCS_AsInterchangeSpace);
-
-	if (Config->IsValid())
-	{
-		if (!bIsBuiltIn)
-		{
-			StartDirectoryWatch(FilePath);
-		}
-
-		UE_LOG(LogOpenColorIO, Verbose, TEXT("Loaded OCIO configuration file %s"), *FilePath);
-	}
-	else
-	{
-		UE_LOG(LogOpenColorIO, Error, TEXT("Could not load OCIO configuration file %s. Verify that the path is good or that the file is valid."), *FilePath);
-	}
 }
 
 void UOpenColorIOConfiguration::OnToastCallback(bool bInReloadColorspaces)

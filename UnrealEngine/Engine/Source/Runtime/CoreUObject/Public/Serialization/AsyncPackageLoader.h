@@ -124,6 +124,19 @@ public:
 			uint32 InLoadFlags) = 0;
 
 	/**
+	 * Asynchronously load a package.
+	 *
+	 * @param  PackagePath         PackagePath to load. Must be a mounted path. The package is created if it does not already exist.
+	 * @param  OptionalParams      Struct containing all the parameters required to load the package.
+	 * @return Unique ID associated with this load request (the same package can be associated with multiple IDs).
+	 */
+	virtual int32 LoadPackage(const FPackagePath& PackagePath, FLoadPackageAsyncOptionalParams OptionalParams)
+	{
+		checkf(false, TEXT("Not Implemented"));
+		return INDEX_NONE;
+	};
+
+	/**
 	 * Process all currently loading package requests.
 	 *
 	 * @param bUseTimeLimit			Whether to use time limit or not
@@ -216,6 +229,8 @@ public:
 	virtual void NotifyRegistrationEvent(const TCHAR* PackageName, const TCHAR* Name, ENotifyRegistrationType NotifyRegistrationType, ENotifyRegistrationPhase NotifyRegistrationPhase, UObject* (*InRegister)(), bool InbDynamic, UObject* FinishedObject) = 0;
 
 	virtual void NotifyRegistrationComplete() = 0;
+
+	virtual ELoaderType GetLoaderType() const = 0;
 
 protected:
 	static int32 GetNextRequestId();

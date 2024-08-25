@@ -10,6 +10,7 @@
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
+#include "Misc/ScopeExit.h"
 #include "Shaders/Debugging/MetalShaderDebugCache.h"
 #include "Shaders/MetalCompiledShaderKey.h"
 #include "Shaders/MetalCompiledShaderCache.h"
@@ -20,7 +21,7 @@
 #pragma mark - Metal RHI Base Shader Class Support Routines
 
 
-extern mtlpp::LanguageVersion ValidateVersion(uint32 Version);
+extern MTL::LanguageVersion ValidateVersion(uint32 Version);
 
 
 //------------------------------------------------------------------------------
@@ -55,15 +56,15 @@ public:
 		this->Destroy();
 	}
 
-	void Init(TArrayView<const uint8> InCode, FMetalCodeHeader& Header, mtlpp::Library InLibrary = nil);
+	void Init(TArrayView<const uint8> InCode, FMetalCodeHeader& Header, MTLLibraryPtr InLibrary);
 	void Destroy();
 
 	/**
-	 * Gets the Metal source code as an NSString if available or nil if not.  Note
+	 * Gets the Metal source code as an NSString if available or nullptr if not.  Note
 	 * that this will dynamically decompress from compressed data on first
 	 * invocation.
 	 */
-	NSString* GetSourceCode();
+	NS::String* GetSourceCode();
 
 	// IRefCountedObject interface:
 	virtual uint32 AddRef() const override final;
@@ -77,7 +78,7 @@ public:
 	TArray<CrossCompiler::FUniformBufferCopyInfo> UniformBuffersCopyInfo;
 
 	/* Argument encoders for shader IABs */
-	TMap<uint32, mtlpp::ArgumentEncoder> ArgumentEncoders;
+	TMap<uint32, MTL::ArgumentEncoder*> ArgumentEncoders;
 
 	/* Tier1 Argument buffer bitmasks */
 	TMap<uint32, TBitArray<>> ArgumentBitmasks;
@@ -96,17 +97,17 @@ public:
 	uint32 ConstantValueHash = 0;
 
 protected:
-	mtlpp::Function GetCompiledFunction(bool const bAsync = false);
+	MTLFunctionPtr GetCompiledFunction(bool const bAsync = false, const int32 FunctionIndex = -1);
 
 	// this is the compiler shader
-	mtlpp::Function Function = nil;
+	MTLFunctionPtr Function;
 
 private:
 	// This is the MTLLibrary for the shader so we can dynamically refine the MTLFunction
-	mtlpp::Library Library = nil;
+	MTLLibraryPtr Library;
 
 	/** The debuggable text source */
-	NSString* GlslCodeNSString = nil;
+	NS::String* GlslCodeNSString = nullptr;
 
 	/** The compressed text source */
 	TArray<uint8> CompressedSource;
@@ -117,6 +118,9 @@ private:
 	// Function constant states
 	bool bHasFunctionConstants = false;
 	bool bDeviceFunctionConstants = false;
+
+    /** Index of the function (in the library) pointing to the function requested by the user (when GetCompiledFunction() is called with an explicit index). */
+    uint32 LibraryFunctionIndex = -1;
 };
 
 
@@ -126,7 +130,7 @@ private:
 
 
 template<typename BaseResourceType, int32 ShaderType>
-void TMetalBaseShader<BaseResourceType, ShaderType>::Init(TArrayView<const uint8> InShaderCode, FMetalCodeHeader& Header, mtlpp::Library InLibrary)
+void TMetalBaseShader<BaseResourceType, ShaderType>::Init(TArrayView<const uint8> InShaderCode, FMetalCodeHeader& Header, MTLLibraryPtr InLibrary)
 {
 	FShaderCodeReader ShaderCode(InShaderCode);
 
@@ -167,7 +171,7 @@ void TMetalBaseShader<BaseResourceType, ShaderType>::Init(TArrayView<const uint8
 
 	bool bOfflineCompile = (OfflineCompiledFlag > 0);
 
-	const ANSICHAR* ShaderSource = ShaderCode.FindOptionalData('c');
+	const ANSICHAR* ShaderSource = ShaderCode.FindOptionalData(EShaderOptionalDataKey::SourceCode);
 	bool bHasShaderSource = (ShaderSource && FCStringAnsi::Strlen(ShaderSource) > 0);
 
 	static bool bForceTextShaders = FMetalCommandQueue::SupportsFeature(EMetalFeaturesGPUTrace);
@@ -175,8 +179,8 @@ void TMetalBaseShader<BaseResourceType, ShaderType>::Init(TArrayView<const uint8
 	{
 		int32 LZMASourceSize = 0;
 		int32 SourceSize = 0;
-		const uint8* LZMASource = ShaderCode.FindOptionalDataAndSize('z', LZMASourceSize);
-		const uint8* UnSourceLen = ShaderCode.FindOptionalDataAndSize('u', SourceSize);
+		const uint8* LZMASource = ShaderCode.FindOptionalDataAndSize(EShaderOptionalDataKey::CompressedDebugCode, LZMASourceSize);
+		const uint8* UnSourceLen = ShaderCode.FindOptionalDataAndSize(EShaderOptionalDataKey::UncompressedSize, SourceSize);
 		if (LZMASource && LZMASourceSize > 0 && UnSourceLen && SourceSize == sizeof(uint32))
 		{
 			CompressedSource.Append(LZMASource, LZMASourceSize);
@@ -186,19 +190,22 @@ void TMetalBaseShader<BaseResourceType, ShaderType>::Init(TArrayView<const uint8
 #if !UE_BUILD_SHIPPING
 		else if(bForceTextShaders)
 		{
-			GlslCodeNSString = [FMetalShaderDebugCache::Get().GetShaderCode(SourceLen, SourceCRC).GetPtr() retain];
+            GlslCodeNSString = FMetalShaderDebugCache::Get().GetShaderCode(SourceLen, SourceCRC);
+            check(GlslCodeNSString);
+            GlslCodeNSString->retain();
 		}
 #endif
 		if (bForceTextShaders && CodeSize && CompressedSource.Num())
 		{
-			bHasShaderSource = (GetSourceCode() != nil);
+			bHasShaderSource = (GetSourceCode() != nullptr);
 		}
 	}
 	else if (bOfflineCompile && bHasShaderSource)
 	{
-		GlslCodeNSString = [NSString stringWithUTF8String:ShaderSource];
+		GlslCodeNSString = NS::String::string(ShaderSource, NS::UTF8StringEncoding);
 		check(GlslCodeNSString);
-		[GlslCodeNSString retain];
+        
+		GlslCodeNSString->retain();
 	}
 
 	bHasFunctionConstants = (Header.bDeviceFunctionConstants);
@@ -240,119 +247,128 @@ void TMetalBaseShader<BaseResourceType, ShaderType>::Init(TArrayView<const uint8
 				check(!(Header.CompileFlags & (1 << CFLAG_Archive)) || BufferSize > 0);
 
 				// allow GCD to copy the data into its own buffer
-				//		dispatch_data_t GCDBuffer = dispatch_data_create(InShaderCode.GetTypedData() + CodeOffset, ShaderCode.GetActualShaderCodeSize() - CodeOffset, nil, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-				ns::AutoReleasedError AError;
+				//		dispatch_data_t GCDBuffer = dispatch_data_create(InShaderCode.GetTypedData() + CodeOffset, ShaderCode.GetActualShaderCodeSize() - CodeOffset, nullptr, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+				NS::Error* AError;
 				void* Buffer = FMemory::Malloc( BufferSize );
 				FMemory::Memcpy( Buffer, InShaderCode.GetData() + CodeOffset, BufferSize );
 				dispatch_data_t GCDBuffer = dispatch_data_create(Buffer, BufferSize, dispatch_get_main_queue(), ^(void) { FMemory::Free(Buffer); } );
 
 				// load up the already compiled shader
-				Library = GetMetalDeviceContext().GetDevice().NewLibrary(GCDBuffer, &AError);
+				Library = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newLibrary(GCDBuffer, &AError));
 				dispatch_release(GCDBuffer);
 
-				if (Library == nil)
+				if (!Library)
 				{
-					NSLog(@"Failed to create library: %@", ns::Error(AError).GetPtr());
+                    UE_LOG(LogMetal, Display, TEXT("Failed to create library: %s"), *NSStringToFString(AError->description()));
 				}
 			}
 		}
 		else
 		{
 			METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("NewLibrarySource: %d_%d"), SourceLen, SourceCRC)));
-			NSString* ShaderString = ((OfflineCompiledFlag == 0) ? [NSString stringWithUTF8String:SourceCode] : GlslCodeNSString);
+			NS::String* ShaderString = ((OfflineCompiledFlag == 0) ? NS::String::string(SourceCode, NS::UTF8StringEncoding) : GlslCodeNSString);
 
+            FString FinalShaderString(TEXT(""));
 			const FString ShaderName = ShaderCode.FindOptionalData(FShaderCodeName::Key);
 			if(ShaderName.Len())
 			{
-				ShaderString = [NSString stringWithFormat:@"// %@\n%@", ShaderName.GetNSString(), ShaderString];
+                FinalShaderString = FString::Printf(TEXT("// %s\n"), *ShaderName);
 			}
 
-			NSString* NewShaderString = [ShaderString stringByReplacingOccurrencesOfString:@"#pragma once" withString:@""];
+            FinalShaderString += NSStringToFString(ShaderString);
+            FinalShaderString.Replace(TEXT("#pragma once"), TEXT(""));
+            NS::String* NewShaderString = FStringToNSString(FinalShaderString);
 
-			mtlpp::CompileOptions CompileOptions;
+            MTL::CompileOptions* CompileOptions = MTL::CompileOptions::alloc()->init();
+            check(CompileOptions);
 
 #if DEBUG_METAL_SHADERS
 			static bool bForceFastMath = FParse::Param(FCommandLine::Get(), TEXT("metalfastmath"));
 			static bool bForceNoFastMath = FParse::Param(FCommandLine::Get(), TEXT("metalnofastmath"));
 			if (bForceNoFastMath)
 			{
-				CompileOptions.SetFastMathEnabled(NO);
+				CompileOptions->setFastMathEnabled(NO);
 			}
 			else if (bForceFastMath)
 			{
-				CompileOptions.SetFastMathEnabled(YES);
+				CompileOptions->setFastMathEnabled(YES);
 			}
 			else
 #endif
 			{
-				CompileOptions.SetFastMathEnabled((BOOL)(!(Header.CompileFlags & (1 << CFLAG_NoFastMath))));
+				CompileOptions->setFastMathEnabled((BOOL)(!(Header.CompileFlags & (1 << CFLAG_NoFastMath))));
 			}
 
 #if !PLATFORM_MAC || DEBUG_METAL_SHADERS
-			NSMutableDictionary *PreprocessorMacros = [NSMutableDictionary new];
+            NS::Dictionary* PreprocessorMacros = nullptr;;
 #if !PLATFORM_MAC // Pretty sure that as_type-casts work on macOS, but they don't for half2<->uint on older versions of the iOS runtime compiler.
-			[PreprocessorMacros addEntriesFromDictionary: @{ @"METAL_RUNTIME_COMPILER" : @(1)}];
+			PreprocessorMacros = NS::Dictionary::dictionary(NS::String::string("1", NS::UTF8StringEncoding),
+                                                            NS::String::string("METAL_RUNTIME_COMPILER", NS::UTF8StringEncoding));
 #endif
 #if DEBUG_METAL_SHADERS
-			[PreprocessorMacros addEntriesFromDictionary: @{ @"MTLSL_ENABLE_DEBUG_INFO" : @(1)}];
+            PreprocessorMacros = NS::Dictionary::dictionary(NS::String::string("1", NS::UTF8StringEncoding),
+                                                            NS::String::string("MTLSL_ENABLE_DEBUG_INFO", NS::UTF8StringEncoding));
 #endif
-			CompileOptions.SetPreprocessorMacros(PreprocessorMacros);
-			[PreprocessorMacros release];
+            if(PreprocessorMacros)
+            {
+                CompileOptions->setPreprocessorMacros(PreprocessorMacros);
+                PreprocessorMacros->release();
+            }
 #endif
 
-			mtlpp::LanguageVersion MetalVersion;
+			MTL::LanguageVersion MetalVersion;
 			switch (Header.Version)
 			{
                 case 8:
-                    MetalVersion = mtlpp::LanguageVersion::Version3_0;
+                    MetalVersion = MTL::LanguageVersion3_0;
                     break;
 				case 7:
-					MetalVersion = mtlpp::LanguageVersion::Version2_4;
+					MetalVersion = MTL::LanguageVersion2_4;
 					break;
 #if PLATFORM_MAC
 				case 6:
-					MetalVersion = mtlpp::LanguageVersion::Version2_3;
+					MetalVersion = MTL::LanguageVersion2_3;
 					break;
 				case 5:
 					// Fall through
 				case 0:
 					// Fall through
 				default:
-					MetalVersion = mtlpp::LanguageVersion::Version2_2;
+					MetalVersion = MTL::LanguageVersion2_2;
 					break;
 #else
 				case 0:
-                    MetalVersion = mtlpp::LanguageVersion::Version2_4;
+                    MetalVersion = MTL::LanguageVersion2_4;
                     break;
 				default:
-					UE_LOG(LogRHI, Fatal, TEXT("Failed to create shader with unknown version %d: %s"), Header.Version, *FString(NewShaderString));
-					MetalVersion = mtlpp::LanguageVersion::Version2_4;
+					UE_LOG(LogRHI, Fatal, TEXT("Failed to create shader with unknown version %d: %s"), Header.Version, *NSStringToFString(NewShaderString));
+					MetalVersion = MTL::LanguageVersion2_4;
 					break;
 #endif
 			}
-			CompileOptions.SetLanguageVersion(MetalVersion);
+			CompileOptions->setLanguageVersion(MetalVersion);
 
-			if(ShaderType == SF_Vertex && MetalVersion > mtlpp::LanguageVersion::Version2_2)
+			if(ShaderType == SF_Vertex && MetalVersion > MTL::LanguageVersion2_2)
 			{
-				[CompileOptions.GetPtr() setPreserveInvariance:YES];
+				CompileOptions->setPreserveInvariance(YES);
 			}
 
-			ns::AutoReleasedError Error;
-			Library = GetMetalDeviceContext().GetDevice().NewLibrary(NewShaderString, CompileOptions, &Error);
-			if (Library == nil)
+			NS::Error* Error = nullptr;
+			Library = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newLibrary(NewShaderString, CompileOptions, &Error));
+			if (Library.get() == nullptr)
 			{
-				UE_LOG(LogRHI, Error, TEXT("*********** Error\n%s"), *FString(NewShaderString));
-				UE_LOG(LogRHI, Fatal, TEXT("Failed to create shader: %s"), *FString([Error.GetPtr() description]));
+				UE_LOG(LogRHI, Error, TEXT("*********** Error\n%s"), *NSStringToFString(NewShaderString));
+				UE_LOG(LogRHI, Fatal, TEXT("Failed to create shader: %s"), *NSStringToFString(Error->description()));
 			}
-			else if (Error != nil)
+			else if (Error != nullptr)
 			{
 				// Warning...
-				UE_LOG(LogRHI, Warning, TEXT("*********** Warning\n%s"), *FString(NewShaderString));
-				UE_LOG(LogRHI, Warning, TEXT("Created shader with warnings: %s"), *FString([Error.GetPtr() description]));
+				UE_LOG(LogRHI, Warning, TEXT("*********** Warning\n%s"), *NSStringToFString(NewShaderString));
+				UE_LOG(LogRHI, Warning, TEXT("Created shader with warnings: %s"), *NSStringToFString(Error->description()));
 			}
 
 			GlslCodeNSString = NewShaderString;
-			[GlslCodeNSString retain];
+			GlslCodeNSString->retain();
 		}
 
 		GetCompiledFunction(true);
@@ -361,16 +377,24 @@ void TMetalBaseShader<BaseResourceType, ShaderType>::Init(TArrayView<const uint8
 	SideTableBinding = Header.SideTable;
 
 	UE::RHICore::InitStaticUniformBufferSlots(StaticSlots, Bindings.ShaderResourceTable);
+
+#if RHI_INCLUDE_SHADER_DEBUG_DATA
+    this->Debug.ShaderName = FString::Printf(TEXT("Main_%0.8x_%0.8x"), Header.SourceLen, Header.SourceCRC);
+#endif
 }
 
 template<typename BaseResourceType, int32 ShaderType>
 void TMetalBaseShader<BaseResourceType, ShaderType>::Destroy()
 {
-	[GlslCodeNSString release];
+    if(GlslCodeNSString)
+    {
+        GlslCodeNSString->release();
+        GlslCodeNSString = nullptr;
+    }
 }
 
 template<typename BaseResourceType, int32 ShaderType>
-inline NSString* TMetalBaseShader<BaseResourceType, ShaderType>::GetSourceCode()
+inline NS::String* TMetalBaseShader<BaseResourceType, ShaderType>::GetSourceCode()
 {
 	if (!GlslCodeNSString && CodeSize && CompressedSource.Num())
 	{
@@ -378,7 +402,9 @@ inline NSString* TMetalBaseShader<BaseResourceType, ShaderType>::GetSourceCode()
 	}
 	if (!GlslCodeNSString)
 	{
-		GlslCodeNSString = [FString::Printf(TEXT("Hash: %s, Name: Main_%0.8x_%0.8x"), *BaseResourceType::GetHash().ToString(), SourceLen, SourceCRC).GetNSString() retain];
+        FString ShaderString = FString::Printf(TEXT("Hash: %s, Name: Main_%0.8x_%0.8x"), *BaseResourceType::GetHash().ToString(), SourceLen, SourceCRC);
+        GlslCodeNSString = FStringToNSString(ShaderString);
+        GlslCodeNSString->retain();
 	}
 	return GlslCodeNSString;
 }
@@ -402,48 +428,71 @@ uint32 TMetalBaseShader<BaseResourceType, ShaderType>::GetRefCount() const
 }
 
 template<typename BaseResourceType, int32 ShaderType>
-mtlpp::Function TMetalBaseShader<BaseResourceType, ShaderType>::GetCompiledFunction(bool const bAsync)
+MTLFunctionPtr TMetalBaseShader<BaseResourceType, ShaderType>::GetCompiledFunction(bool const bAsync, const int32 FunctionIndex)
 {
-	mtlpp::Function Func = Function;
+	MTLFunctionPtr Func = Function;
 
-	if (!Func)
+	bool bNeedToRecreateFunction = (LibraryFunctionIndex != FunctionIndex);
+    if (!Func || bNeedToRecreateFunction)
 	{
 		// Find the existing compiled shader in the cache.
 		uint32 FunctionConstantHash = ConstantValueHash;
 		FMetalCompiledShaderKey Key(SourceLen, SourceCRC, FunctionConstantHash);
 		Func = Function = GetMetalCompiledShaderCache().FindRef(Key);
 
+        if (bNeedToRecreateFunction)
+        {
+            Function = MTLFunctionPtr();
+            Func = MTLFunctionPtr();
+            LibraryFunctionIndex = FunctionIndex;
+        }
+
 		if (!Func)
 		{
 			// Get the function from the library - the function name is "Main" followed by the CRC32 of the source MTLSL as 0-padded hex.
 			// This ensures that even if we move to a unified library that the function names will be unique - duplicates will only have one entry in the library.
-			NSString* Name = [NSString stringWithFormat:@"Main_%0.8x_%0.8x", SourceLen, SourceCRC];
-			mtlpp::FunctionConstantValues ConstantValues(nil);
+            NS::String* Name = (LibraryFunctionIndex != -1)
+            ? (NS::String*)Library->functionNames()->object(LibraryFunctionIndex) : FStringToNSString(FString::Printf(TEXT("Main_%0.8x_%0.8x"), SourceLen, SourceCRC));
+			MTL::FunctionConstantValues* ConstantValues = nullptr;
+			ON_SCOPE_EXIT { if (ConstantValues){ ConstantValues->release(); } };
 			if (bHasFunctionConstants)
 			{
-				ConstantValues = mtlpp::FunctionConstantValues();
+				ConstantValues = MTL::FunctionConstantValues::alloc()->init();
+                check(ConstantValues);
 
 				if (bDeviceFunctionConstants)
 				{
 					// Index 33 is the device vendor id constant
-					ConstantValues.SetConstantValue(&GRHIVendorId, mtlpp::DataType::UInt, @"GMetalDeviceManufacturer");
+					ConstantValues->setConstantValue((void*)&GRHIVendorId, MTL::DataTypeUInt, NS::String::string("GMetalDeviceManufacturer", NS::UTF8StringEncoding));
 				}
 			}
 
+#if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+            // TODO: Make those constants optional?
+            static constexpr bool bEnableTessellation = false;
+            
+            ConstantValues = MTL::FunctionConstantValues::alloc()->init();
+            bHasFunctionConstants = true;
+            
+            ConstantValues->setConstantValue(&bEnableTessellation, MTL::DataTypeBool,
+											 NS::String::string("tessellationEnabled", NS::UTF8StringEncoding));
+			ConstantValues->setConstantValue(&Bindings.OutputSizeVS, MTL::DataTypeInt,
+											 NS::String::string("vertex_shader_output_size_fc", NS::UTF8StringEncoding));
+#endif
+
 			if (!bHasFunctionConstants || !bAsync)
 			{
-				METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("NewFunction: %s"), *FString(Name))));
+				METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("NewFunction: %s"), *NSStringToFString(Name))));
 				if (!bHasFunctionConstants)
 				{
-					Function = Library.NewFunction(Name);
+					Function = NS::TransferPtr(Library->newFunction(Name));
 				}
 				else
 				{
-					ns::AutoReleasedError AError;
-					Function = Library.NewFunction(Name, ConstantValues, &AError);
-					ns::Error Error = AError;
-					UE_CLOG(Function == nil, LogMetal, Error, TEXT("Failed to create function: %s"), *FString(Error.GetPtr().description));
-					UE_CLOG(Function == nil, LogMetal, Fatal, TEXT("*********** Error\n%s"), *FString(GetSourceCode()));
+					NS::Error* Error;
+					Function = NS::TransferPtr(Library->newFunction(Name, ConstantValues, &Error));
+					UE_CLOG(Function.get() == nullptr, LogMetal, Error, TEXT("Failed to create function: %s"), *NSStringToFString(Error->description()));
+					UE_CLOG(Function.get() == nullptr, LogMetal, Fatal, TEXT("*********** Error\n%s"), *NSStringToFString(GetSourceCode()));
 				}
 
 				check(Function);
@@ -453,28 +502,30 @@ mtlpp::Function TMetalBaseShader<BaseResourceType, ShaderType>::GetCompiledFunct
 			}
 			else
 			{
-				METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("NewFunctionAsync: %s"), *FString(Name))));
+				METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("NewFunctionAsync: %s"), *NSStringToFString(Name))));
 				METAL_GPUPROFILE(uint64 CPUStart = CPUStat.Stats ? CPUStat.Stats->CPUStartTime : 0);
 #if ENABLE_METAL_GPUPROFILE
-				ns::String nsName(Name);
-				Library.NewFunction(Name, ConstantValues, [Key, this, CPUStart, nsName](mtlpp::Function const& NewFunction, ns::Error const& Error){
+                NS::String* nsName = Name;
+                const std::function<void(MTL::Function* pFunction, NS::Error* pError)> Handler = [Key, this, CPUStart, nsName](MTL::Function* NewFunction, NS::Error* Error){
 #else
-				Library.NewFunction(Name, ConstantValues, [Key, this](mtlpp::Function const& NewFunction, ns::Error const& Error){
+                const std::function<void(MTL::Function* pFunction, NS::Error* pError)> Handler = [Key, this](MTL::Function* NewFunction, NS::Error* Error){
 #endif
-					METAL_GPUPROFILE(FScopedMetalCPUStats CompletionStat(FString::Printf(TEXT("NewFunctionCompletion: %s"), *FString(nsName.GetPtr()))));
-					UE_CLOG(NewFunction == nil, LogMetal, Error, TEXT("Failed to create function: %s"), *FString(Error.GetPtr().description));
-					UE_CLOG(NewFunction == nil, LogMetal, Fatal, TEXT("*********** Error\n%s"), *FString(GetSourceCode()));
+					METAL_GPUPROFILE(FScopedMetalCPUStats CompletionStat(FString::Printf(TEXT("NewFunctionCompletion: %s"), *NSStringToFString(nsName))));
+					UE_CLOG(NewFunction == nullptr, LogMetal, Error, TEXT("Failed to create function: %s"), *NSStringToFString(Error->description()));
+					UE_CLOG(NewFunction == nullptr, LogMetal, Fatal, TEXT("*********** Error\n%s"), *NSStringToFString(GetSourceCode()));
 
-					GetMetalCompiledShaderCache().Add(Key, Library, NewFunction);
+					GetMetalCompiledShaderCache().Add(Key, Library, NS::RetainPtr(NewFunction));
 #if ENABLE_METAL_GPUPROFILE
 					if (CompletionStat.Stats)
 					{
 						CompletionStat.Stats->CPUStartTime = CPUStart;
 					}
 #endif
-				});
+				};
+                    
+                Library->newFunction(Name, ConstantValues, Handler);
 
-				return nil;
+				return MTLFunctionPtr();
 			}
 		}
 	}
@@ -487,7 +538,7 @@ mtlpp::Function TMetalBaseShader<BaseResourceType, ShaderType>::GetCompiledFunct
 			uint32 Index = __builtin_ctz(ArgumentBuffers);
 			ArgumentBuffers &= ~(1 << Index);
 
-			mtlpp::ArgumentEncoder ArgumentEncoder = Function.NewArgumentEncoderWithBufferIndex(Index);
+			MTL::ArgumentEncoder* ArgumentEncoder = Function->newArgumentEncoder(Index);
 			ArgumentEncoders.Add(Index, ArgumentEncoder);
 
 			TBitArray<> Resources;

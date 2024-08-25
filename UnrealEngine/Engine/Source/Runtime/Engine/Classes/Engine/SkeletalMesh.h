@@ -6,33 +6,32 @@
  * Contains the shared data that is used by all SkeletalMeshComponents (instances).
  */
 
-#include "CoreMinimal.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/Object.h"
-#include "Templates/SubclassOf.h"
-#include "Interfaces/Interface_AssetUserData.h"
-#include "RenderCommandFence.h"
-#include "EngineDefines.h"
-#include "ReferenceSkeleton.h"
-#include "GPUSkinPublicDefs.h"
-#include "Animation/PreviewAssetAttachComponent.h"
-#include "Interfaces/Interface_CollisionDataProvider.h"
-#include "EngineTypes.h"
-#include "SkeletalMeshSampling.h"
-#include "PerPlatformProperties.h"
-#include "Misc/EnumClassFlags.h"
-#include "Animation/NodeMappingProviderInterface.h"
 #include "Animation/MorphTarget.h"
+#include "Animation/NodeMappingProviderInterface.h"
+#include "Animation/PreviewAssetAttachComponent.h"
 #include "Engine/StreamableRenderAsset.h"
+#include "EngineDefines.h"
+#include "EngineTypes.h"
+#include "Interfaces/Interface_AssetUserData.h"
+#include "Interfaces/Interface_CollisionDataProvider.h"
+#include "Misc/EnumClassFlags.h"
+#include "PerPlatformProperties.h"
 #include "PerQualityLevelProperties.h"
+#include "ReferenceSkeleton.h"
+#include "RenderCommandFence.h"
+#include "SkeletalMeshSampling.h"
+#include "SkeletalMeshSourceModel.h"
 #include "SkinnedAsset.h"
+#include "Templates/SubclassOf.h"
+#include "UObject/Object.h"
+#include "UObject/ObjectMacros.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
+#include "Animation/SkinWeightProfile.h"
+#include "BoneContainer.h"
 #include "Components.h"
 #include "Rendering/SkeletalMeshRenderData.h"
-#include "BoneContainer.h"
 #include "SkeletalMeshLODSettings.h"
-#include "Animation/SkinWeightProfile.h"
 #endif
 
 #include "SkeletalMesh.generated.h"
@@ -62,6 +61,8 @@ class FSkinnedAssetPostLoadContext;
 class USkeletalMeshLODSettings;
 class USkeleton;
 class UThumbnailInfo;
+class FEvent;
+class USkeletalMesh;
 struct FMeshUVChannelInfo;
 struct FSkeletalMaterial;
 struct FSkinWeightProfileInfo;
@@ -84,7 +85,7 @@ enum class ESkeletalMeshAsyncProperties : uint64
 	RetargetBasePose = 1 << 3,
 	RefBasesInvMatrix = 1 << 4,
 	MeshClothingAssets = 1 << 5,
-	UseLegacyMeshDerivedDataKey = 1 << 6,
+	SourceModels = 1 << 6,	
 	HasActiveClothingAssets = 1 << 7,
 	LODSettings = 1 << 8,
 	HasVertexColors = 1 << 9,
@@ -410,6 +411,26 @@ namespace NSSkeletalMeshSourceFileLabels
 }
 #endif
 
+/* Scoped SkeletalMeshRenderData
+ * All to get access to SkeletalMeshRenderData for a given platform an ensuring the data are thread-safe during the entire scope
+ */
+struct ENGINE_API FScopedSkeletalMeshRenderData
+{
+public:
+	UE_DEPRECATED(5.4, "This class is deprecated, there is no replacement because this is not a safe async design.")
+	FScopedSkeletalMeshRenderData(USkeletalMesh* Mesh);
+	
+	~FScopedSkeletalMeshRenderData();
+
+	UE_DEPRECATED(5.4, "This class is deprecated, there is no replacement because this is not a safe async design.")
+	const FSkeletalMeshRenderData* GetData() const;
+private:
+	FEvent* Lock = nullptr;
+	USkeletalMesh* Mesh = nullptr;
+	FSkeletalMeshRenderData* Data = nullptr;
+
+	friend class USkeletalMesh;
+};
 
 /**
  * SkeletalMesh is geometry bound to a hierarchical skeleton of bones which can be animated for the purpose of deforming the mesh.
@@ -433,7 +454,40 @@ class USkeletalMesh : public USkinnedAsset, public IInterface_CollisionDataProvi
 #endif
 private:
 #if WITH_EDITORONLY_DATA
-	/** Imported skeletal mesh geometry information (not used at runtime). */
+	/** The imported/editable geometric source data for generating renderable data. */
+	UE_DEPRECATED(5.4, "This must be protected for async build, always use the accessors even internally.")
+	UPROPERTY()
+	TArray<FSkeletalMeshSourceModel> SourceModels;
+
+	/** Set the number of source models. If adding more LODs than currently exist, empty LODs will be created
+	 *  to fill in the gap. If the new size is smaller than the existing LODs, the source geometry for LODs
+	 *  at and higher than the number given will be thrown away.
+	 *  NOTE: Internal for now, use AddLODInfo to add LODs (incl. source models).
+	 */
+	void SetNumSourceModels(const int32 InNumSourceModels);
+
+	/** Used by both SetNumSourceModels and AddLODInfo to set the current number of source models.
+	 *  Does not take an async lock, expects the calling function to be holding it already.
+	 *  \param InNumSourceModels The number of source models to set. Can be lower or higher than the
+	 *     current number of entries and models will be added/removed as needed.
+	 */
+	void SetNumSourceModelsInternal(const int32 InNumSourceModels);
+
+	/** Remove the source model for the given LOD. LODs above it will be adjusted down.
+	 *  NOTE: Internal for now, use RemoveLODInfo to remove specific LODs.  
+	 */
+	void RemoveSourceModel(const int32 InLODIndex);
+	
+	/** Used by RemoveLODInfo to remove source models if a LOD is removed.
+	 *  Does not take an async lock, expects the calling function to be holding it already.
+	 *  \param InLODIndex The LOD index whose model data is being removed.
+	 */
+	void RemoveSourceModelInternal(const int32 InLODIndex);
+	
+	/** Processed skeletal mesh geometry information (not used at runtime). */
+	/** NOTE: This data is slated for removal in future versions of UE. Do not rely on it. Use either the
+	 *  render data, or source models, as needed.
+	 */
 	UE_DEPRECATED(5.0, "This must be protected for async build, always use the accessors even internally.")
 	TSharedPtr<FSkeletalMeshModel> ImportedModel;
 #endif
@@ -447,7 +501,6 @@ private:
 	ENGINE_API void SetSkeletalMeshRenderData(TUniquePtr<FSkeletalMeshRenderData>&& InSkeletalMeshRenderData);
 
 #if WITH_EDITORONLY_DATA
-public:
 	/*
 	 * This editor data asset is save under the skeletalmesh(skel mesh is the owner), the editor data asset is always loaded.
 	 * There is only one editor data asset possible per skeletalmesh.
@@ -455,40 +508,122 @@ public:
 	 */
 	UE_DEPRECATED(4.27, "Please do not access this member directly; use the public ImportData API.")
 	UPROPERTY()
-	mutable TObjectPtr<USkeletalMeshEditorData> MeshEditorDataObject;
-
-private:
-	USkeletalMeshEditorData* GetMeshEditorDataObject() const
-	{
-		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::MeshEditorDataObject);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return MeshEditorDataObject;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
-	void SetMeshEditorDataObject(USkeletalMeshEditorData* InMeshEditorDataObject)
-	{
-		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::MeshEditorDataObject);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		MeshEditorDataObject = InMeshEditorDataObject;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
-	/*
-	 * Return a valid USkeletalMeshEditorData, if the MeshEditorDataPath is invalid it will create the USkeletalMeshEditorData and set the MeshEditorDataPath to point on it.
-	 */
-	ENGINE_API USkeletalMeshEditorData& GetMeshEditorData() const;
-
-	bool IsMeshEditorDataValid() const
-	{
-		return GetMeshEditorDataObject() != nullptr;
-	}
+	mutable TObjectPtr<USkeletalMeshEditorData> MeshEditorDataObject_DEPRECATED;
 
 #endif //WITH_EDITORONLY_DATA
 
 public:
 
 #if WITH_EDITORONLY_DATA
+	/** Returns the number of source models.
+	 *  \note This value is the same as the return value of GetLODNum, as these two are kept in sync.
+	 */
+	ENGINE_API int32 GetNumSourceModels() const;
+
+	/** Returns the source model object for the skeletal mesh of a given LOD. This source models stores
+	 *  an optional mesh description that the renderable data is generated from. If there is no mesh description
+	 *  object, then the geometry of this LOD is automatically generated from an earlier LOD.
+	 *  \param InLODIndex The LOD index to retrieve a FSkeletalMeshSourceModel object for. 
+	 */
+	ENGINE_API const FSkeletalMeshSourceModel& GetSourceModel(const int32 InLODIndex) const;
+	
+	/** Returns the source model object for the skeletal mesh of a given LOD. This source models stores
+	 *  an optional mesh description that the renderable data is generated from. If there is no mesh description
+	 *  object, then the geometry of this LOD is automatically generated from an earlier LOD.
+	 *  \param InLODIndex The LOD index to retrieve a FSkeletalMeshSourceModel object for. 
+	 */
+	ENGINE_API FSkeletalMeshSourceModel& GetSourceModel(const int32 InLODIndex);
+	
+	/** Returns the MeshDescription object associated with the given LOD index. If there's no import data
+	 *  at this LOD, and the LOD is auto-generated, then a \c nullptr is returned.
+	 *  \param InLODIndex The LOD index to retrieve a FMeshDescription object for. 
+	 */
+	ENGINE_API FMeshDescription* GetMeshDescription(const int32 InLODIndex) const;
+	
+	/** Returns the MeshDescription object associated with the given LOD index. If there's no import data
+	 *  at this LOD, and the LOD is auto-generated, then a \c nullptr is returned.
+	 *  \param InLODIndex The LOD index to clone a FMeshDescription object from.
+	 *  \param OutMeshDescription The target mesh description object to copy the source data into.
+	 *  \return \c true if valid mesh description was copied in. \c false if there was no mesh description
+	 *     the LOD is automatically generated.
+	 */
+	ENGINE_API bool CloneMeshDescription(const int32 InLODIndex, FMeshDescription& OutMeshDescription) const;
+
+	/** Returns \c true if this LOD has a mesh description to generate render data from.
+	 *  If not, then render data is automatically generated from a lower LOD level.
+	 *  Use this rather than GetMeshDescription if the only requirement is to check for existence, since
+	 *  this function won't unpack a full mesh description object from bulk storage if it doesn't have to.
+	 *  \param InLODIndex The LOD index to check for existence of a mesh description object.
+	 *  \return \c This LOD index contains a valid mesh description object.
+	 */
+	ENGINE_API bool HasMeshDescription(const int32 InLODIndex) const;
+
+	/** Creates a new, empty mesh description at the LOD index given. If there was a mesh description there
+	 *  prior, that object is destroyed.
+	 *  \param InLODIndex The LOD index to create a new mesh description object at.
+	 *  \return \c A pointer to the newly created object, or \c nullptr if the method was unable to create anything.
+	 */
+	ENGINE_API FMeshDescription* CreateMeshDescription(const int32 InLODIndex);
+
+	/** Creates a new mesh description at the LOD index given, moving the contents of the given mesh description
+	 *  into it. If there was a mesh description there prior, that object is destroyed.
+	 *  \param InLODIndex The LOD index to create a new mesh description object at.
+	 *  \param InMeshDescription The mesh description object to initialize from as a copy.
+	 *  \return \c A pointer to the newly created object, or \c nullptr if the method was unable to create anything.
+	 */
+	ENGINE_API FMeshDescription* CreateMeshDescription(const int32 InLODIndex, FMeshDescription&& InMeshDescription);
+
+	
+	/* Structure that defines parameters passed into the commit mesh description function */
+	struct FCommitMeshDescriptionParams
+	{
+		FCommitMeshDescriptionParams() {}
+		
+		/** Mark the package as dirty. If calling CommitMeshDescription from a non-game thread,
+		 *  this value should be set to \c false.
+		 */
+		bool bMarkPackageDirty = true;
+
+		/** Force the render data to update. By default the render data uses the hash of the mesh to check if
+		 *  an update is required, this forces this hash to be unique, causing the render data to update whether
+		 *  the mesh has changed or not.
+		 */
+		bool bForceUpdate = false;
+	};
+
+	/* Commits the stored mesh description object to bulk storage. This also forces the imported bounds to update
+	 * if the mesh committed is on LOD 0. If there is no stored mesh description, the bulk storage will be emptied.
+	 *  \param InLODIndex The LOD index at which to commit the mesh description to bulk storage.
+	 *  \param InParams An optional object to control how the commit is done.
+	 *  \return \c true if the commit was successful. Even if there was no mesh description to store, the commit
+	 *    is still successful.
+	 */
+	ENGINE_API bool CommitMeshDescription(const int32 InLODIndex, const FCommitMeshDescriptionParams& InParams = {});
+
+	/** Mark the bulk data as dirty so that it can be transacted for undo/redo.
+	 *  \param InLODIndex The LOD index at which to mark the bulk data dirty.
+	 *  \param bInAlwaysMarkPackageDirty Always mark the owning package dirty, even if there was not transaction open to store into.
+	 *  \return \c true if the bulk data was stored in the transaction buffer.
+	 */
+	ENGINE_API bool ModifyMeshDescription(const int32 InLODIndex, const bool bInAlwaysMarkPackageDirty = true);
+
+	/** Clears a stored mesh description and releases its memory. Leaves the bulk data in place if the mesh
+	 *  description is needed again.
+	 *  \param InLODIndex The LOD index at which to clear out the mesh description.
+	 */
+	ENGINE_API void ClearMeshDescription(const int32 InLODIndex);
+
+	/** Clears a all stored mesh descriptions on all LODs and releases their memory. Leaves the bulk data in 
+	 *  place if the mesh descriptions are needed again.
+	 */
+	ENGINE_API void ClearAllMeshDescriptions();
+
+	/** Clears the stored mesh description _and_ the bulk data. Use this to mark the LOD as being auto-generated.
+	 *  Once this function is called, the LOD settings for this level should be updated to reflect how the
+	 *  geometry should be autogenerated from a prior LOD.
+	 *  \param InLODIndex The LOD index at which to clear out the mesh description and bulk data.
+	 */
+	ENGINE_API void ClearMeshDescriptionAndBulkData(const int32 InLODIndex);
 
 	//////////////////////////////////////////////////////////////////////////
 	// USkeletalMeshEditorData public skeletalmesh API
@@ -501,62 +636,56 @@ public:
 	
 
 	/* Fill the OutMesh with the imported data */
+	UE_DEPRECATED(5.4, "Use GetMeshDescription instead.")
 	ENGINE_API void LoadLODImportedData(const int32 LODIndex, FSkeletalMeshImportData& OutMesh) const;
 
 	/* Fill the asset LOD entry with the InMesh. */
-	ENGINE_API void SaveLODImportedData(const int32 LODIndex, FSkeletalMeshImportData& InMesh);
+	UE_DEPRECATED(5.4, "Use CommitMeshDescription instead.")
+	ENGINE_API void SaveLODImportedData(const int32 LODIndex, const FSkeletalMeshImportData& InMesh);
 	
 	/* Return true if the imported data has all the necessary data to use the skeletalmesh builder. Return False otherwise.
 	 * Old asset before the refactor will not be able to be build until it get fully re-import.
 	 * This value is cache in the LODModel and update when we call SaveLODImportedData.
 	 */
+	UE_DEPRECATED(5.4, "Use HasMeshDescription instead.")
 	ENGINE_API bool IsLODImportedDataBuildAvailable(const int32 LODIndex) const;
 	
 	/* Return true if the imported data is present. Return false otherwise.
 	 * Old asset before the split workflow will not have this data and will not support import geo only or skinning only.
 	 * This value is cache in the LODModel and update when we call SaveLODImportedData.
 	 */
+	UE_DEPRECATED(5.4, "Use HasMeshDescription instead.")
 	ENGINE_API bool IsLODImportedDataEmpty(const int32 LODIndex) const;
 
 	/* Get the Versions of the geo and skinning data. We use those versions to answer to IsLODImportedDataBuildAvailable function. */
+	UE_DEPRECATED(5.4, "No equivalent provided since versioning is not surfaced for mesh description bulk data.")
 	ENGINE_API void GetLODImportedDataVersions(const int32 LODIndex, ESkeletalMeshGeoImportVersions& OutGeoImportVersion, ESkeletalMeshSkinningImportVersions& OutSkinningImportVersion) const;
 
 	/* Set the Versions of the geo and skinning data. We use those versions to answer to IsLODImportedDataBuildAvailable function. */
+	UE_DEPRECATED(5.4, "No equivalent provided since versioning is not surfaced for mesh description bulk data.")
 	ENGINE_API void SetLODImportedDataVersions(const int32 LODIndex, const ESkeletalMeshGeoImportVersions& InGeoImportVersion, const ESkeletalMeshSkinningImportVersions& InSkinningImportVersion);
 
-	/* Static function that copy the LOD import data from a source s^keletal mesh to a destination skeletal mesh*/
+	/* Static function that copy the LOD import data from a source skeletal mesh to a destination skeletal mesh*/
+	UE_DEPRECATED(5.4, "Use GetMeshDescription and CreateMeshDescription instead.")
 	static ENGINE_API void CopyImportedData(int32 SrcLODIndex, USkeletalMesh* SrcSkeletalMesh, int32 DestLODIndex, USkeletalMesh* DestSkeletalMesh);
 
 	/* Allocate the space we need. Use this before calling this API in multithreaded. */
+	UE_DEPRECATED(5.4, "No equivalent provided. All LODs should be added up-front for multi-threaded use.")
 	ENGINE_API void ReserveLODImportData(int32 MaxLODIndex);
 	
+	UE_DEPRECATED(5.4, "No equivalent provided.")
 	ENGINE_API void ForceBulkDataResident(const int32 LODIndex);
 
 	/* Remove the import data for the specified LOD */
+	UE_DEPRECATED(5.4, "Use ClearMeshDescriptionAndBulkData instead.")
 	ENGINE_API void EmptyLODImportData(const int32 LODIndex);
 
 	/* Remove the import data for all the LODs */
+	UE_DEPRECATED(5.4, "Use ClearMeshDescriptionAndBulkData instead.")
 	ENGINE_API void EmptyAllImportData();
 
 	// End USkeletalMeshEditorData public skeletalmesh API
 	//////////////////////////////////////////////////////////////////////////
-
-	/* Structure that defines parameters passed into the commit mesh description function */
-	struct FCommitMeshDescriptionParams
-	{
-		FCommitMeshDescriptionParams()
-			: bModify(true)
-		{}
-
-		bool bModify;
-	};
-
-	/* Fills OutMeshDescription from the associated InLODIndex. */
-	ENGINE_API void GetMeshDescription(const int32 InLODIndex, FMeshDescription& OutMeshDescription) const;
-
-	/* Sets InMeshDescription to the associated InLODIndex. */
-	ENGINE_API void CommitMeshDescription(const int32 InLODIndex, const FMeshDescription& InMeshDescription,
-		const FCommitMeshDescriptionParams& InParams = FCommitMeshDescriptionParams());
 
 	/** Get the number of imported vertices. This returns 0 if GetImportedModel() returns a nullptr.
 	  * This is the number of vertices as they appear in the source asset, for example 8 for a cube. */
@@ -747,6 +876,8 @@ public:
 		return false;
 	}
 
+	ENGINE_API bool IsReadyToRenderInThumbnail() const;
+
 	/* Return true if this skeletalmesh was never build since its creation. USkinnedAsset interface. */
 	ENGINE_API virtual bool IsInitialBuildDone() const override;
 
@@ -805,6 +936,10 @@ private:
 	UPROPERTY(EditAnywhere, EditFixedSize, Category=LevelOfDetail)
 	TArray<FSkeletalMeshLODInfo> LODInfo;
 
+#if WITH_EDITOR
+	FSimpleMulticastDelegate OnVertexAttributesArrayChanged;
+#endif
+	
 #if !WITH_EDITOR
 	/** Acceleration struct used for faster socket lookups */
 	struct FSocketInfo
@@ -830,10 +965,8 @@ public:
 	{
 #if WITH_EDITORONLY_DATA
 		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::MinLod);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		MinQualityLevelLOD.PerQuality = QualityLevelProperty::ConvertQualtiyLevelData(QualityLevelMinimumLODs);
 		MinQualityLevelLOD.Default = Default >=0 ? Default : MinQualityLevelLOD.Default;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
@@ -842,32 +975,24 @@ public:
 	{
 #if WITH_EDITORONLY_DATA
 		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::MinLod, ESkinnedAssetAsyncPropertyLockType::ReadOnly);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		QualityLevelMinimumLODs = QualityLevelProperty::ConvertQualtiyLevelData(MinQualityLevelLOD.PerQuality);
 		Default = MinQualityLevelLOD.Default;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
 	static FName GetQualityLevelMinLodMemberName()
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		return GET_MEMBER_NAME_CHECKED(USkeletalMesh, MinQualityLevelLOD);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	const FPerQualityLevelInt& GetQualityLevelMinLod() const
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			return MinQualityLevelLOD;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		return MinQualityLevelLOD;
 	}
 
 	void SetQualityLevelMinLod(FPerQualityLevelInt InMinLod)
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			MinQualityLevelLOD = MoveTemp(InMinLod);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	/** Check the QualitLevel property is enabled for MinLod. USkinnedAsset interface. */
@@ -875,7 +1000,8 @@ public:
 
 	/** USkinnedAsset interface */
 	ENGINE_API virtual int32 GetPlatformMinLODIdx(const ITargetPlatform* TargetPlatform) const override;
-	ENGINE_API virtual void SetSkinWeightProfilesData(int32 LODIndex, FSkinWeightProfilesData& SkinWeightProfilesData) override;
+	ENGINE_API virtual void SetSkinWeightProfilesData(int32 LODIndex, FSkinWeightProfilesData& SkinWeightProfilesData) override;	
+	ENGINE_API virtual FSkinWeightProfilesData* GetSkinWeightProfilesData(int32 LODIndex) override;
 
 	static ENGINE_API void OnLodStrippingQualityLevelChanged(IConsoleVariable* Variable);
 
@@ -2220,9 +2346,15 @@ protected:
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category=SkeletalMesh)
 	TArray<TObjectPtr<UAssetUserData>> AssetUserData;
 
+#if WITH_EDITORONLY_DATA
+	/** Array of user data stored with the asset */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category=SkeletalMesh)
+	TArray<TObjectPtr<UAssetUserData>> AssetUserDataEditorOnly;
+#endif
 #if WITH_EDITOR
 	FOnMeshChanged OnMeshChanged;
 #endif
+
 
 	friend struct FSkeletalMeshUpdateContext;
 	friend class FSkeletalMeshUpdate;
@@ -2302,11 +2434,6 @@ private:
 	ENGINE_API void PostLoadValidateUserSectionData();
 
 	/*
-	 * This function ensure skeletalmesh each non generated LOD has some imported data. If there is no import data it will create it from the LODModel data.
-	 */
-	ENGINE_API void PostLoadEnsureImportDataExist();
-
-	/*
 	 * This function will ensure we have valid tangent in all LODs. If we found an invalid tangent axis, we will try to set it with the cross product of the two other axis.
 	 * If the two other axes are also bad, it will simply apply the triangle normals, which will facet the mesh.
 	 * It will validate tangents only for assets that do not have source build data. (This means assets imported before the build refactor that was done in UE 4.24.)
@@ -2347,10 +2474,11 @@ public:
 
 	/**
 	* Lock the skeletalmesh properties until the caller trigger the Event parameter.
+	* The returned Event memory is all handle by the LockPropertiesUntil function, do not  return the event to the pool
 	* 
-	* @Param Event - When the caller will trigger the event the skeletal mesh properties will be unlocked
+	* @Return - Return the Event caller must trigger to unlock the skeletal mesh properties
 	*/
-	ENGINE_API void LockPropertiesUntil(FEvent* Event);
+	ENGINE_API FEvent* LockPropertiesUntil();
 
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 
@@ -2380,6 +2508,8 @@ public:
 #endif
 
 	ENGINE_API virtual bool IsPostLoadThreadSafe() const override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	ENGINE_API virtual FString GetDesc() override;
 	ENGINE_API virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
@@ -2387,11 +2517,11 @@ public:
 	//~ End UObject Interface.
 
 	//~ Begin UStreamableRenderAsset Interface.
-	ENGINE_API virtual int32 CalcCumulativeLODSize(int32 NumLODs) const final override;
-	ENGINE_API virtual FIoFilenameHash GetMipIoFilenameHash(const int32 MipIndex) const final override;
-	ENGINE_API virtual bool DoesMipDataExist(const int32 MipIndex) const final override;
-	ENGINE_API virtual bool StreamOut(int32 NewMipCount) final override;
-	ENGINE_API virtual bool StreamIn(int32 NewMipCount, bool bHighPrio) final override;
+	ENGINE_API virtual int32 CalcCumulativeLODSize(int32 NumLODs) const override;
+	ENGINE_API virtual FIoFilenameHash GetMipIoFilenameHash(const int32 MipIndex) const override;
+	ENGINE_API virtual bool DoesMipDataExist(const int32 MipIndex) const override;
+	ENGINE_API virtual bool StreamOut(int32 NewMipCount) override;
+	ENGINE_API virtual bool StreamIn(int32 NewMipCount, bool bHighPrio) override;
 	ENGINE_API virtual bool HasPendingRenderResourceInitialization() const;
 	virtual EStreamableRenderAssetType GetRenderAssetType() const final override { return EStreamableRenderAssetType::SkeletalMesh; }
 	//~ End UStreamableRenderAsset Interface.
@@ -2406,6 +2536,16 @@ public:
 	/** Setup-only routines - not concerned with the instance. */
 
 	ENGINE_API void CalculateInvRefMatrices();
+
+#if WITH_EDITORONLY_DATA
+	// Asset registry information for morph target names
+	ENGINE_API static const FName MorphNamesTag;
+	ENGINE_API static const FString MorphNamesTagDelimiter;
+
+	// Asset registry information for scalar material param names
+	ENGINE_API static const FName MaterialParamNamesTag;
+	ENGINE_API static const FString MaterialParamNamesTagDelimiter;
+#endif
 
 #if WITH_EDITOR
 	/** Calculate the required bones for a Skeletal Mesh LOD, including possible extra influences */
@@ -2532,12 +2672,20 @@ public:
 	/** if name conflicts, it will overwrite the reference */
 	ENGINE_API bool RegisterMorphTarget(UMorphTarget* MorphTarget, bool bInvalidateRenderData = true);
 
-	ENGINE_API void UnregisterMorphTarget(UMorphTarget* MorphTarget);
+	ENGINE_API void UnregisterMorphTarget(UMorphTarget* MorphTarget, bool bInvalidateRenderData = true);
 
 	ENGINE_API void UnregisterAllMorphTarget();
 
 	/** Initialize MorphSets look up table : MorphTargetIndexMap */
 	ENGINE_API void InitMorphTargets();
+
+#if WITH_EDITOR
+	/** Remove the morph targets with the specified names */
+	ENGINE_API bool RemoveMorphTargets(TConstArrayView<FName> InMorphTargetNames);
+
+	/** Rename the morph target named InOldName to InNewName */
+	ENGINE_API bool RenameMorphTarget(FName InOldName, FName InNewName);
+#endif
 
 	/** 
 	 * Checks whether the provided section is using APEX cloth. if bCheckCorrespondingSections is true
@@ -2573,7 +2721,7 @@ public:
 	{
 		return true;
 	}
-	virtual void GetMeshId(FString& OutMeshId) override { OutMeshId = TEXT("3FC28DC87B814E08BA852C92D18D41D4"); }
+	virtual void GetMeshId(FString& OutMeshId) override { OutMeshId = TEXT("659304F7CF5D4F31BCC54A9FBB0B49E0"); }
 	//~ End Interface_CollisionDataProvider Interface
 
 	//~ Begin IInterface_AssetUserData Interface
@@ -2604,6 +2752,9 @@ public:
 
 	/** Generate the derived data key used to fetch derived data */
 	ENGINE_API FString GetDerivedDataKey();
+
+	/** Get a skeletal mesh render data for requested platform. */
+	ENGINE_API static void GetPlatformSkeletalMeshRenderData(const ITargetPlatform* Platform, FScopedSkeletalMeshRenderData& Out);
 #endif 
 
 private:
@@ -2778,6 +2929,10 @@ public:
 	 */	
 	ENGINE_API virtual const FSkeletalMeshLODInfo* GetLODInfo(int32 Index) const override;
 
+#if WITH_EDITOR
+	ENGINE_API FSimpleMulticastDelegate& GetOnVertexAttributesArrayChanged();
+#endif
+	
 	/**
 	 *	Get BakePose for the given LOD
 	 */
@@ -2809,14 +2964,6 @@ public:
 		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
-	virtual UMeshDeformer* GetDefaultMeshDeformer() const override
-	{
-		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::DefaultMeshDeformer, ESkinnedAssetAsyncPropertyLockType::ReadOnly);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return DefaultMeshDeformer;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
 	TArray<FSkinWeightProfileInfo>& GetSkinWeightProfiles() 
 	{
 		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::SkinWeightProfiles); 
@@ -2837,37 +2984,6 @@ public:
 	/** Releases all allocated Skin Weight Profile resources, assumes none are currently in use */
 	ENGINE_API void ReleaseSkinWeightProfileResources();
 
-#if WITH_EDITORONLY_DATA
-	/*Transient data use when we postload an old asset to use legacy ddc key, it is turn off so if the user change the asset it go back to the latest ddc code*/
-	UE_DEPRECATED(4.27, "Please do not access this member directly; use USkeletalMesh::GetUseLegacyMeshDerivedDataKey() or USkeletalMesh::SetUseLegacyMeshDerivedDataKey().")
-	bool UseLegacyMeshDerivedDataKey = false;
-
-	static FName GetUseLegacyMeshDerivedDataKeyMemberName()
-	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return GET_MEMBER_NAME_CHECKED(USkeletalMesh, UseLegacyMeshDerivedDataKey);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
-	// USkinnedAsset interface
-	virtual bool GetUseLegacyMeshDerivedDataKey() const override
-	{
-		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::UseLegacyMeshDerivedDataKey, ESkinnedAssetAsyncPropertyLockType::ReadOnly);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return UseLegacyMeshDerivedDataKey;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
-	void SetUseLegacyMeshDerivedDataKey(const bool InUseLegacyMeshDerivedDataKey)
-	{
-		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::UseLegacyMeshDerivedDataKey);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		UseLegacyMeshDerivedDataKey = InUseLegacyMeshDerivedDataKey;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
-#endif
-
 protected:
 	/** Set of skin weight profiles associated with this mesh */
 	UE_DEPRECATED(5.0, "This must be protected for async build, always use the accessors even internally.")
@@ -2876,7 +2992,7 @@ protected:
 
 	/** Default mesh deformer to use with this mesh. */
 	UE_DEPRECATED(5.1, "This must be protected for async build, always use the accessors even internally.")
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Deformer", Meta=(Filter="/Script/Engine.SkinnedMeshComponent"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Deformer", BlueprintGetter=GetDefaultMeshDeformer)
 	TObjectPtr<UMeshDeformer> DefaultMeshDeformer;
 
 	/** Default translucent material to blend on top of this mesh. Mesh will be rendered twice - once with a base material and once with overlay material */
@@ -2890,6 +3006,27 @@ protected:
 	float OverlayMaterialMaxDrawDistance;
 
 public:
+	/** Set the default mesh deformer used by this mesh. A mesh deformer is used to deform the skeletal mesh at runtime.
+	 *  The default deformer can be overridden by the USkinnedMeshComponent object. */
+	void SetDefaultMeshDeformer(UMeshDeformer* InMeshDeformer)
+	{
+		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::DefaultMeshDeformer, ESkinnedAssetAsyncPropertyLockType::WriteOnly);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		DefaultMeshDeformer = InMeshDeformer;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS		
+	}
+	
+	/** Get the default mesh deformer used by this mesh. A mesh deformer is used to deform the skeletal mesh at runtime */
+	UFUNCTION(BlueprintCallable, Category="Rendering|Deformer")
+	virtual UMeshDeformer* GetDefaultMeshDeformer() const override
+	{
+		WaitUntilAsyncPropertyReleased(ESkeletalMeshAsyncProperties::DefaultMeshDeformer, ESkinnedAssetAsyncPropertyLockType::ReadOnly);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		return DefaultMeshDeformer;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+
+	
 	/** Get the default overlay material used by this mesh */
 	UFUNCTION(BlueprintCallable, Category="Rendering|Material")
 	virtual class UMaterialInterface* GetOverlayMaterial() const override

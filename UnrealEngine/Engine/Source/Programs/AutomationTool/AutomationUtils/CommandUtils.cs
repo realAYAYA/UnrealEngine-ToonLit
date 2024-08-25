@@ -1,28 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Net;
+using System.IO.Compression;
+using System.Linq;
 using System.Runtime.Serialization;
-using System.Runtime.Serialization.Json;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
-using UnrealBuildTool;
-using System.Runtime.CompilerServices;
-using System.Linq;
-using System.Reflection;
-using System.Security.Permissions;
 using System.Threading.Tasks;
-using EpicGames.Core;
 using System.Xml;
 using System.Xml.Serialization;
-using System.IO.Compression;
-using JetBrains.Annotations;
+
+using EpicGames.Core;
 using UnrealBuildBase;
-using Microsoft.Extensions.Logging;
-using System.Runtime.Versioning;
+using UnrealBuildTool;
+using JetBrains.Annotations;
 
 using static AutomationTool.CommandUtils;
 
@@ -70,6 +66,12 @@ namespace AutomationTool
 	}
 
 	/// <summary>
+	/// Delegate to override the copy operation.
+	/// <returns>Return true if the copy was handled. Otherwise false to fallback on the built in copy operation</returns>
+	/// </summary>
+	public delegate bool OverrideCopyDelegate(ILogger Logger, string SourceName, string TargetName);
+
+	/// <summary>
 	/// Base utility function for script commands.
 	/// </summary>
 	public partial class CommandUtils
@@ -106,6 +108,25 @@ namespace AutomationTool
 		/// Provides access to the structured logging interface
 		/// </summary>
 		public static ILogger Logger => Log.Logger;
+
+		/// <summary>
+		/// Global activity source for UAT. Can be used to add trace data and additional context to logs.
+		/// </summary>
+		public static ActivitySource ActivitySource => CreateActivitySource();
+
+		static ActivityListener _activityListener;
+
+		static ActivitySource CreateActivitySource()
+		{
+			ActivitySource activitySource = new ActivitySource("AutomationTool");
+
+			_activityListener = new ActivityListener();
+			_activityListener.ShouldListenTo = x => x == activitySource;
+			_activityListener.Sample = (ref ActivityCreationOptions<ActivityContext> x) => ActivitySamplingResult.AllData;
+			ActivitySource.AddActivityListener(_activityListener);
+
+			return activitySource;
+		}
 
 		/// <summary>
 		/// Writes formatted text to log (with LogEventType.Console).
@@ -1238,12 +1259,12 @@ namespace AutomationTool
 			var CombinedPath = new StringBuilder(CombinePathMaxLength);
 
 			// Combine all paths
-			CombinedPath.Append(Paths[0]);
+			CombinedPath.Append(Paths[0].Replace("\"", ""));
 			for (int PathIndex = 1; PathIndex < Paths.Length; ++PathIndex)
 			{
-				var NextPath = Paths[PathIndex];
-				if (String.IsNullOrEmpty(NextPath) == false)
+				if (String.IsNullOrEmpty(Paths[PathIndex]) == false)
 				{
+					var NextPath = Paths[PathIndex].Replace("\"", "");
 					int NextPathStartIndex = 0;
 					if (CombinedPath.Length != 0)
 					{
@@ -1396,7 +1417,7 @@ namespace AutomationTool
 		/// <param name="Dest">The full path to the destination file</param>
 		/// <param name="bAllowDifferingTimestamps">If true, will always skip a file if the destination exists, even if timestamp differs; defaults to false</param>
 		/// <returns>True if the operation was successful, false otherwise.</returns>
-		public static void CopyFileIncremental(FileReference Source, FileReference Dest, bool bAllowDifferingTimestamps = false, List<string> IniKeyDenyList = null, List<string> IniSectionDenyList = null)
+		public static void CopyFileIncremental(FileReference Source, FileReference Dest, OverrideCopyDelegate OverrideCopyHandler = null, bool bAllowDifferingTimestamps = false, List<string> IniKeyDenyList = null, List<string> IniSectionDenyList = null)
 		{
 			if (InternalUtils.SafeFileExists(Dest.FullName, true))
 			{
@@ -1424,7 +1445,7 @@ namespace AutomationTool
 			{
 				throw new AutomationException("Failed to delete {0} for copy", Dest);
 			}
-			if (!InternalUtils.SafeCopyFile(Source.FullName, Dest.FullName, IniKeyDenyList: IniKeyDenyList, IniSectionDenyList: IniSectionDenyList))
+			if (!InternalUtils.SafeCopyFile(Source.FullName, Dest.FullName, OverrideCopyHandler: OverrideCopyHandler, IniKeyDenyList: IniKeyDenyList, IniSectionDenyList: IniSectionDenyList))
 			{
 				throw new AutomationException("Failed to copy {0} to {1}", Source, Dest);
 			}
@@ -2276,8 +2297,8 @@ namespace AutomationTool
 					if (AgeDays > MaximumDaysToKeepTempStorage)
                     {
 						Logger.LogInformation("Deleting formal build directory {Directory}, because it is {Age} days old (maximum {MaximumDaysToKeepTempStorage}).", ThisDirInfo.FullName, (int)AgeDays, MaximumDaysToKeepTempStorage);
-                        DeleteDirectory_NoExceptions(true, ThisDirInfo.FullName);
-                    }
+						DeleteDirectory_NoExceptions(true, ThisDirInfo.FullName);
+					}
                     else
                     {
 						Logger.LogDebug("Not deleting formal build directory {Directory}, because it is {Age} days old (maximum {MaximumDaysToKeepTempStorage}).", ThisDirInfo.FullName, (int)AgeDays, MaximumDaysToKeepTempStorage);
@@ -2585,7 +2606,7 @@ namespace AutomationTool
 						try
 						{
 							// Write the machine name to the file.
-							Stream.Write(Encoding.UTF8.GetBytes(Environment.MachineName));
+							Stream.Write(Encoding.UTF8.GetBytes(Unreal.MachineName));
 							Stream.Flush();
 							break;
 						}
@@ -2854,8 +2875,8 @@ namespace AutomationTool
                     Name = AlternateName;
                 }
 
-                var OutputStr = String.Format("UAT,{0},{1},{2}" + Environment.NewLine, Name, StartTime, DateTime.Now);
-                Logger.LogDebug("{Text}", OutputStr);
+                var OutputStr = $"UAT,{Name},{StartTime},{DateTime.Now}" + Environment.NewLine;
+                Logger.LogDebug("{CSVHeader}", OutputStr);
                 if (CommandUtils.IsBuildMachine && !String.IsNullOrEmpty(CommandUtils.CmdEnv.CSVFile) && CommandUtils.CmdEnv.CSVFile != "nul")
                 {
                     try
@@ -2864,7 +2885,7 @@ namespace AutomationTool
                     }
                     catch (Exception Ex)
                     {
-                        Logger.LogWarning("Could not append to csv file ({Arg0}) : {Arg1}", CommandUtils.CmdEnv.CSVFile, Ex.ToString());
+                        Logger.LogWarning("Could not append to csv file ({File}) : {Exception}", CommandUtils.CmdEnv.CSVFile, Ex.ToString());
                     }
                 }
             }
@@ -2995,80 +3016,116 @@ namespace AutomationTool
 
 		static readonly string[] TimestampServersSHA256 =
 		{
+			"http://timestamp.digicert.com",
 			"http://sha256timestamp.ws.symantec.com/sha256/timestamp",
 			"http://timestamp.comodoca.com/?td=sha256",
 			"http://rfc3161timestamp.globalsign.com/advanced"
 		};
 
+		static readonly int LongestSHA1 = TimestampServersSHA1.Select(x => x.Length).Max();
+		static readonly int LongestSHA256 = TimestampServersSHA1.Select(x => x.Length).Max();
+
 		[SupportedOSPlatform("windows")]
-		public static void Sign(FileReference File, SignatureType SignatureType, bool AllowMultipleSignatures = true)
+		public static void Sign(FileReference File, SignatureType SignatureType, bool AllowMultipleSignatures = true, string Description = null, bool RunInParallel = false)
 		{
 			List<FileReference> Files = new List<FileReference> { File };
-			Sign(Files, SignatureType, AllowMultipleSignatures);
+			Sign(Files, SignatureType, AllowMultipleSignatures, Description, RunInParallel);
 		}
 
 		[SupportedOSPlatform("windows")]
-		public static void Sign(List<FileReference> Files, SignatureType SignatureType, bool AllowMultipleSignatures = true)
+		public static void Sign(List<FileReference> Files, SignatureType SignatureType, bool AllowMultipleSignatures = true, string Description = null, bool RunInParallel = false)
 		{
+			const int MaxAttempts = 6;
 			string SignToolPath = GetSignToolPath();
+			string DescriptionArg = String.IsNullOrEmpty(Description) ? "" : $"/d \"{Description}\"";
 			string SpecificStoreArg = bUseMachineStoreForCertificates ? " /sm" : "";
 			string MultipleSignatureArg = AllowMultipleSignatures ? " /as" : "";
 			string SHA1TimestampArg = AllowMultipleSignatures ? " /tr" : " /t";
+			string SHA256TimestampArg = " /tr";
+
+			List<Task> SignTaskList = new List<Task>();
 
 			for(int FileIdx = 0; FileIdx < Files.Count; )
 			{
-				Stopwatch Timer = Stopwatch.StartNew();
-
-				int NumAttempts = 0;
-				for(;;)
+				//@TODO: Verbosity choosing
+				//  /v will spew lots of info
+				//  /q does nothing on success and minimal output on failure
+				StringBuilder CommandLine = new StringBuilder();
+				StringBuilder FileList = new StringBuilder();
+				if(SignatureType == SignatureType.SHA1)
 				{
-					//@TODO: Verbosity choosing
-					//  /v will spew lots of info
-					//  /q does nothing on success and minimal output on failure
-					StringBuilder CommandLine = new StringBuilder();
-					if(SignatureType == SignatureType.SHA1)
-					{
-						CommandLine.AppendFormat("sign{0} /a /n \"{1}\" {2} {3} /v {4}", SpecificStoreArg, SigningIdentity, SHA1TimestampArg, TimestampServersSHA1[NumAttempts % TimestampServersSHA1.Length], MultipleSignatureArg);
-					}
-					else if(SignatureType == SignatureType.SHA256)
-					{
-						CommandLine.AppendFormat("sign{0} /a /fd sha256 /td sha256 /as /n \"{1}\" /tr {2}", SpecificStoreArg, SigningIdentity, TimestampServersSHA256[NumAttempts % TimestampServersSHA256.Length]);
-					}
-					else
-					{
-						throw new ArgumentException(String.Format("Invalid signature type type ({0})", SignatureType));
-					}
-
-					// Append the files for this batch
-					// per: https://docs.microsoft.com/en-us/dotnet/api/system.diagnostics.process.start?view=net-6.0#system-diagnostics-process-start(system-diagnostics-processstartinfo)
-					// The length of the application + command line arguments cannot exceed 2080 characters, otherwise a Win32Exception will be thrown.
-					int NextFileIdx = FileIdx;
-					while(NextFileIdx < Files.Count && SignToolPath.Length + CommandLine.Length + Files[NextFileIdx].FullName.Length < 2080)
-					{
-						CommandLine.AppendFormat(" \"{0}\"", Files[NextFileIdx]);
-						NextFileIdx++;
-					}
-
-					IProcessResult Result = CommandUtils.Run(SignToolPath, CommandLine.ToString(), null, CommandUtils.ERunOptions.AllowSpew);
-					NumAttempts++;
-
-					if (Result.ExitCode != 1)
-					{
-						if (Result.ExitCode == 2)
-						{
-							Logger.LogError("{Text}", String.Format("Signtool returned a warning."));
-						}
-						// Success!
-						FileIdx = NextFileIdx;
-						break;
-					}
-
-					if (Timer.Elapsed.TotalMinutes > 3.0 && NumAttempts >= 6)
-					{
-						throw new AutomationException("Failed to sign files {0} times over a period of {1}", NumAttempts, Timer.Elapsed);
-					}
+					CommandLine.Append($"sign{SpecificStoreArg} /a /n \"{SigningIdentity}\" /v {MultipleSignatureArg} {DescriptionArg}");
 				}
+				else if(SignatureType == SignatureType.SHA256)
+				{
+					CommandLine.Append($"sign{SpecificStoreArg} /a /fd sha256 /td sha256 /as /n \"{SigningIdentity}\" {DescriptionArg}");
+				}
+				else
+				{
+					throw new ArgumentException($"Invalid signature type type ({SignatureType})");
+				}
+
+				// Append the files for this batch
+				// per: https://docs.microsoft.com/en-us/dotnet/api/system.diagnostics.process.start?view=net-6.0#system-diagnostics-process-start(system-diagnostics-processstartinfo)
+				// The length of the application + command line arguments cannot exceed 2080 characters, otherwise a Win32Exception will be thrown.
+				int NextFileIdx = FileIdx;
+				int FileCount = 0;
+				int TimeStampLength = SignatureType == SignatureType.SHA1 ? SHA1TimestampArg.Length + LongestSHA1 : SHA256TimestampArg.Length + LongestSHA256;
+				while(NextFileIdx < Files.Count && (SignToolPath.Length + TimeStampLength + CommandLine.Length + FileList.Length + Files[NextFileIdx].FullName.Length < 2080))
+				{
+					FileList.Append($" \"{Files[NextFileIdx]}\"");
+					NextFileIdx++;
+					FileCount++;
+				}
+
+				Action SignToolAction = new Action(() =>
+				{
+					Stopwatch TaskTimer = Stopwatch.StartNew();
+					for (int Attempts = 0; ; ++Attempts)
+					{
+						StringBuilder FinalCommandline = new StringBuilder();
+						FinalCommandline.Append(CommandLine);
+
+						if (SignatureType == SignatureType.SHA1)
+						{
+							FinalCommandline.Append($"{SHA1TimestampArg} {TimestampServersSHA1[Attempts % TimestampServersSHA1.Length]} ");
+						}
+						else
+						{
+							FinalCommandline.Append($"{SHA256TimestampArg} {TimestampServersSHA256[Attempts % TimestampServersSHA256.Length]} ");
+						}
+
+						FinalCommandline.Append(FileList);
+
+
+						IProcessResult Result = CommandUtils.Run(SignToolPath, FinalCommandline.ToString(), null, CommandUtils.ERunOptions.AllowSpew);
+
+						if (Result.ExitCode != 1)
+						{
+							if (Result.ExitCode == 2)
+							{
+								Logger.LogWarning("Signtool returned a warning.");
+							}
+							// Success!
+							break;
+						}
+
+						if (TaskTimer.Elapsed.TotalMinutes > 3.0 && Attempts >= MaxAttempts)
+						{
+							throw new AutomationException($"Failed to sign files {Attempts} times over a period of {TaskTimer.Elapsed}");
+						}
+					}
+				});
+
+				FileIdx = NextFileIdx;
+
+				SignTaskList.Add(new Task(SignToolAction));
 			}
+
+			// If running in parallel, Limit to between 4 and 16 concurrent. Otherwise 1 instance.
+			int MaxParallelism = RunInParallel ? Math.Max(16, Math.Min(Environment.ProcessorCount, 4)) : 1;
+			Logger.LogInformation("Running {Count}, {Concurrent} max concurrent, signtool instances", SignTaskList.Count, MaxParallelism);
+			Parallel.ForEach(SignTaskList, new ParallelOptions() { MaxDegreeOfParallelism = MaxParallelism }, x => { x.Start(); x.Wait(); });
 		}
 
 		/// <summary>
@@ -3115,11 +3172,11 @@ namespace AutomationTool
 		/// <summary>
 		/// Code signs the specified file
 		/// </summary>
-		public static void SignSingleExecutableIfEXEOrDLL(string Filename, bool bIgnoreExtension = false)
+		public static void SignSingleExecutableIfEXEOrDLL(string Filename, bool bIgnoreExtension = false, string Description = null)
 		{
             if (!OperatingSystem.IsWindows())
             {
-                Logger.LogDebug("{Text}", String.Format("Can't sign '{0}' on non-Windows platform.", Filename));
+                Logger.LogDebug("Can't sign '{File}' on non-Windows platform.", Filename);
                 return;
             }
             if (!CommandUtils.FileExists(Filename))
@@ -3130,9 +3187,11 @@ namespace AutomationTool
 			FileInfo TargetFileInfo = new FileInfo(Filename);
 
 			// Executable extensions
-			List<string> Extensions = new List<string>();
-			Extensions.Add(".dll");
-			Extensions.Add(".exe");
+			List<string> Extensions = new List<string>
+			{
+				".dll",
+				".exe"
+			};
 
 			bool IsExecutable = bIgnoreExtension;
 
@@ -3146,17 +3205,17 @@ namespace AutomationTool
 			}
 			if (!IsExecutable)
 			{
-				Logger.LogDebug("{Text}", String.Format("Won't sign '{0}', not an executable.", TargetFileInfo.FullName));
+				Logger.LogDebug("Won't sign '{File}', not an executable.", TargetFileInfo.FullName);
 				return;
 			}
 
 			TargetFileInfo.IsReadOnly = false;
 
-			CodeSignWindows.Sign(new FileReference(TargetFileInfo), CodeSignWindows.SignatureType.SHA1);
+			CodeSignWindows.Sign(new FileReference(TargetFileInfo), CodeSignWindows.SignatureType.SHA1, Description: Description);
 			// MSI files can only have one signature; prefer SHA1 for compatibility, so don't run SHA256 on msi files.
 			if (!TargetFileInfo.FullName.EndsWith(".msi", StringComparison.InvariantCultureIgnoreCase))
 			{
-				CodeSignWindows.Sign(new FileReference(TargetFileInfo), CodeSignWindows.SignatureType.SHA256);
+				CodeSignWindows.Sign(new FileReference(TargetFileInfo), CodeSignWindows.SignatureType.SHA256, Description: Description);
 			}
 		}
 
@@ -3200,12 +3259,14 @@ namespace AutomationTool
 			}
 
 			// Executable extensions
-			List<string> Extensions = new List<string>();
-			Extensions.Add(".dylib");
-			Extensions.Add(".so");
-			Extensions.Add(".app");
-			Extensions.Add(".framework");
-			Extensions.Add(".bundle");
+			List<string> Extensions = new List<string>
+			{
+				".dylib",
+				".so",
+				".app",
+				".framework",
+				".bundle"
+			};
 
 			bool bIsExecutable = bIgnoreExtension || (!bIsDirectory && Path.GetExtension(InPath) == "" && !InPath.EndsWith("PkgInfo"));
 
@@ -3221,7 +3282,7 @@ namespace AutomationTool
 			{
 				if (!bIsDirectory)
 				{
-					Logger.LogDebug("{Text}", String.Format("Won't sign '{0}', not an executable.", InPath));
+					Logger.LogDebug("Won't sign '{File}', not an executable.", InPath);
 				}
 				return;
 			}
@@ -3277,11 +3338,12 @@ namespace AutomationTool
 		/// Will automatically skip signing if -NoSign is specified in the command line.
 		/// </summary>
 		/// <param name="Files">List of files to sign</param>
-		public static void SignMultipleIfEXEOrDLL(BuildCommand Command, IEnumerable<string> Files)
+		/// <param name="bRunInParallel">Run the sign operation in paralle, Windows only</param>
+		public static void SignMultipleIfEXEOrDLL(BuildCommand Command, IEnumerable<string> Files, string Description = null, bool bRunInParallel = false)
 		{
 			if (!Command.ParseParam("NoSign"))
 			{
-				Logger.LogInformation("Signing up to {Arg0} files...", Files.Count());
+				Logger.LogInformation("Signing up to {FileCount} files...", Files.Count());
 				UnrealBuildTool.UnrealTargetPlatform TargetPlatform = UnrealBuildTool.BuildHostPlatform.Current.Platform;
 				if (TargetPlatform == UnrealBuildTool.UnrealTargetPlatform.Mac)
 				{
@@ -3297,20 +3359,20 @@ namespace AutomationTool
 					{
 						FilesToSign.Add(new FileReference(File));
 					}
-					SignMultipleFilesIfEXEOrDLL(FilesToSign);
+					SignMultipleFilesIfEXEOrDLL(FilesToSign, Description: Description, bRunInParallel: bRunInParallel);
 				}
 			}
 			else
 			{
-				Logger.LogDebug("Skipping signing {Arg0} files due to -nosign.", Files.Count());
+				Logger.LogDebug("Skipping signing {FileCount} files due to -nosign.", Files.Count());
 			}
 		}
 
-		public static void SignMultipleFilesIfEXEOrDLL(List<FileReference> Files, bool bIgnoreExtension = false)
+		public static void SignMultipleFilesIfEXEOrDLL(List<FileReference> Files, bool bIgnoreExtension = false, string Description = null, bool bRunInParallel = false)
 		{
 			if (!OperatingSystem.IsWindows())
 			{
-				Logger.LogDebug("{Text}", String.Format("Can't sign on non-Windows platform."));
+				Logger.LogDebug("Can't sign on non-Windows platform.");
 				return;
 			}
 			List<FileReference> FinalFiles = new List<FileReference>();
@@ -3319,11 +3381,13 @@ namespace AutomationTool
 				FileInfo TargetFileInfo = new FileInfo(Filename);
 
 				// Executable extensions
-				List<string> Extensions = new List<string>();
-				Extensions.Add(".dll");
-				Extensions.Add(".exe");
-				Extensions.Add(".msi");
-				Extensions.Add(".dle");
+				List<string> Extensions = new List<string>
+				{
+					".dll",
+					".exe",
+					".msi",
+					".dle"
+				};
 
 				bool IsExecutable = bIgnoreExtension;
 
@@ -3342,8 +3406,8 @@ namespace AutomationTool
 					FinalFiles.Add(new FileReference(TargetFileInfo));
 				}
 			}
-			CodeSignWindows.Sign(FinalFiles, CodeSignWindows.SignatureType.SHA1, !FinalFiles.Any(x => x.HasExtension(".msi"))); // By default we append signatures, but disable if there are MSI files in the list
-			CodeSignWindows.Sign(FinalFiles.Where(x => !x.HasExtension(".msi")).ToList(), CodeSignWindows.SignatureType.SHA256); // MSI files can only have one signature; prefer SHA1 for compatibility
+			CodeSignWindows.Sign(FinalFiles, CodeSignWindows.SignatureType.SHA1, !FinalFiles.Any(x => x.HasExtension(".msi")), Description: Description, bRunInParallel); // By default we append signatures, but disable if there are MSI files in the list
+			CodeSignWindows.Sign(FinalFiles.Where(x => !x.HasExtension(".msi")).ToList(), CodeSignWindows.SignatureType.SHA256, Description: Description, RunInParallel: bRunInParallel); // MSI files can only have one signature; prefer SHA1 for compatibility
 		}
 	}
 

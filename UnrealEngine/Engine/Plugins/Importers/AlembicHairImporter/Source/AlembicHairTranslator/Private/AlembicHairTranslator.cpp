@@ -12,7 +12,6 @@
 
 #if PLATFORM_WINDOWS
 #include "HairAttributes.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #endif
 
@@ -959,7 +958,7 @@ bool FAlembicHairTranslator::Translate(const FString& FileName, FHairDescription
 	/** Alembic typed root (top) object*/
 	Alembic::Abc::IObject TopObject;
 
-	Factory.setPolicy(Alembic::Abc::ErrorHandler::kThrowPolicy);
+	Factory.setPolicy(Alembic::Abc::ErrorHandler::kQuietNoopPolicy);
 	Factory.setOgawaNumStreams(12);
 
 	// Extract Archive and compression type from file
@@ -1002,7 +1001,7 @@ public:
 	{
 		Alembic::AbcCoreFactory::IFactory::CoreType CompressionType = Alembic::AbcCoreFactory::IFactory::kUnknown;
 
-		Factory.setPolicy(Alembic::Abc::ErrorHandler::kThrowPolicy);
+		Factory.setPolicy(Alembic::Abc::ErrorHandler::kQuietNoopPolicy);
 		Factory.setOgawaNumStreams(12);
 
 		// Extract Archive and compression type from file
@@ -1071,6 +1070,11 @@ FAlembicHairTranslator::~FAlembicHairTranslator()
 
 static void ValidateObject(const Alembic::Abc::IObject& InObject, bool& bHasGeometry, int32& NumCurves)
 {
+	if (!InObject)
+	{
+		return;
+	}
+
 	// Validate that the Alembic has curves only
 	// Any PolyMesh will cause the Alembic to be rejected by this translator
 
@@ -1108,7 +1112,7 @@ bool FAlembicHairTranslator::CanTranslate(const FString& FilePath)
 	/** Alembic typed root (top) object*/
 	Alembic::Abc::IObject TopObject;
 
-	Factory.setPolicy(Alembic::Abc::ErrorHandler::kThrowPolicy);
+	Factory.setPolicy(Alembic::Abc::ErrorHandler::kQuietNoopPolicy);
 	Factory.setOgawaNumStreams(12);
 
 	// Extract Archive and compression type from file

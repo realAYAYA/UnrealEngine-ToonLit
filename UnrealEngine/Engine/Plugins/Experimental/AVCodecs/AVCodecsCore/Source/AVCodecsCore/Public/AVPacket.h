@@ -5,6 +5,7 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
+#include "Templates/SharedPointer.h"
 
 /**
  * Base container for raw encoded AV resources, created by encoders and consumed by decoders.

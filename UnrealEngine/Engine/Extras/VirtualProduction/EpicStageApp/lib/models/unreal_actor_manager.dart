@@ -98,6 +98,9 @@ class UnrealActorManager with WidgetsBindingObserver {
   /// Map from watched class names to the callback functions to be called when they change.
   final Map<String, Set<ActorUpdateCallback>> _classWatchCallbacks = {};
 
+  /// Callback functions for when any actor is updated.
+  final Set<ActorUpdateCallback> _anyClassWatchCallbacks = {};
+
   /// Map from an actor's path in the editor to the data we've stored about it locally.
   final Map<String, UnrealObject> _actorsByPath = {};
 
@@ -120,6 +123,10 @@ class UnrealActorManager with WidgetsBindingObserver {
   /// Start watching for any engine-side changes to actors of the Unreal type [className], and call [callback] when
   /// there's any change in the list of relevant actors.
   void watchClassName(String className, ActorUpdateCallback callback) {
+    if (_connectionManager.bIsInDemoMode) {
+      return;
+    }
+
     if (_classWatchCallbacks.containsKey(className)) {
       // We're already watching this class, so just add the callback
       _classWatchCallbacks[className]!.add(callback);
@@ -169,6 +176,18 @@ class UnrealActorManager with WidgetsBindingObserver {
       actor.onUnwatched();
       _actorsByPath.remove(actor.path);
     }
+  }
+
+  /// Watch for updates to all actor classes which are already watched by previous or future calls to [watchClassName].
+  /// Note that this will not subscribe to any new classes in the engine.
+  void watchExistingSubscriptions(ActorUpdateCallback callback) {
+    _anyClassWatchCallbacks.add(callback);
+  }
+
+  /// Stop watching for updates to all actor classes for a callback that was previously passed to
+  /// [watchExistingSubscriptions].
+  void stopWatchingExistingSubscriptions(ActorUpdateCallback callback) {
+    _anyClassWatchCallbacks.remove(callback);
   }
 
   /// Check whether a [className] is currently being watched by at least one watcher.
@@ -293,14 +312,20 @@ class UnrealActorManager with WidgetsBindingObserver {
         continue;
       }
 
+      final updateDetails = ActorUpdateDetails(
+        className: className,
+        addedActors: [],
+        renamedActors: [],
+        deletedActors: classPair.value.toList(growable: false),
+        bIsDueToDisconnect: true,
+      );
+
       for (ActorUpdateCallback callback in callbacks) {
-        callback(ActorUpdateDetails(
-          className: className,
-          addedActors: [],
-          renamedActors: [],
-          deletedActors: classPair.value.toList(growable: false),
-          bIsDueToDisconnect: true,
-        ));
+        callback(updateDetails);
+      }
+
+      for (ActorUpdateCallback callback in _anyClassWatchCallbacks) {
+        callback(updateDetails);
       }
     }
 
@@ -480,17 +505,24 @@ class UnrealActorManager with WidgetsBindingObserver {
       renamedActors.add(actor);
     }
 
+    final updateDetails = ActorUpdateDetails(
+      className: className,
+      addedActors: addedActors,
+      renamedActors: renamedActors,
+      deletedActors: deletedActors,
+    );
+
     // Call callbacks for watchers of this class
     final Set<ActorUpdateCallback>? callbacks = _classWatchCallbacks[className];
     if (callbacks != null) {
       for (final ActorUpdateCallback callback in callbacks) {
-        callback(ActorUpdateDetails(
-          className: className,
-          addedActors: addedActors,
-          renamedActors: renamedActors,
-          deletedActors: deletedActors,
-        ));
+        callback(updateDetails);
       }
+    }
+
+    // Call callbacks for watchers of any class
+    for (ActorUpdateCallback callback in _anyClassWatchCallbacks) {
+      callback(updateDetails);
     }
 
     // Dispose of actors that should no longer be referenced
@@ -501,6 +533,10 @@ class UnrealActorManager with WidgetsBindingObserver {
 
   /// Send a request to update the list of light cards for the current DCRA.
   void _updateRootActorLightCards() async {
+    if (_connectionManager.connectionState != EngineConnectionState.connected) {
+      return;
+    }
+
     final String rootPath = _selectedActorSettings.displayClusterRootPath.getValue();
     if (rootPath.isEmpty) {
       return;

@@ -25,6 +25,9 @@ struct FDMXPixelMappingMainStreamObjectVersion
 		// Update DMXPixelMappingFixtureGroupItemComponent and DMXPixelMappingMatrixCellComponent to use DMXPixelMappingColorSpace
 		UseDMXPixelMappingColorSpace,
 
+		// The renderer component now holds the layout rect, so its children can be layout out relative to the current texture size
+		RendererComponentHoldsLayoutRect,
+
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,
 		LatestVersion = VersionPlusOne - 1

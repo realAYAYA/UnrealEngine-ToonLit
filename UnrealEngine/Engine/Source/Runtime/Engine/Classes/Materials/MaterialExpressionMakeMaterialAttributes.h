@@ -88,6 +88,8 @@ class UMaterialExpressionMakeMaterialAttributes : public UMaterialExpression
 	virtual bool IsResultMaterialAttributes(int32 OutputIndex) override {return true;}
 	virtual uint32 GetInputType(int32 InputIndex) override;
 	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
+
+	uint64 GetConnectedInputs() const;
 #endif // WITH_EDITOR
 	//~ End UMaterialExpression Interface
 };

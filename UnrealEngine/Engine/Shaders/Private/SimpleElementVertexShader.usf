@@ -12,12 +12,12 @@
 
 float4x4 Transform;
 #if ENABLE_LWC
-float3 TransformTilePosition;
+float3 TransformPositionHigh;
 #endif
 
 void Main(
-	in float4 InRelativePosition : ATTRIBUTE0,
-	in float4 InTilePosition : ATTRIBUTE1,
+	in float4 InPositionHigh : ATTRIBUTE0,
+	in float4 InPositionLow : ATTRIBUTE1,
 	in float2 InTextureCoordinate : ATTRIBUTE2,
 	in float4 InColor : ATTRIBUTE3,
 	in float4 InHitProxyId : ATTRIBUTE4,
@@ -28,12 +28,12 @@ void Main(
 	)
 {
 #if ENABLE_LWC
-	FLWCVector4 InPosition = MakeLWCVector4(InTilePosition, InRelativePosition);
-	FLWCInverseMatrix WorldToClip = MakeLWCInverseMatrix(TransformTilePosition, Transform);
-	OutPosition = LWCMultiply(InPosition, WorldToClip);
+	FDFVector4 InPosition = MakeDFVector4(InPositionHigh, InPositionLow);
+	FDFInverseMatrix WorldToClip = MakeDFInverseMatrix(TransformPositionHigh, Transform);
+	OutPosition = DFMultiplyDemote(InPosition, WorldToClip);
 	OutPosition.z = max(OutPosition.z, 0);
 #else
-	OutPosition = mul(InRelativePosition, Transform);
+	OutPosition = mul(InPositionHigh, Transform);
 #endif
 
 	OutTextureCoordinate = InTextureCoordinate;

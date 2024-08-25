@@ -95,6 +95,8 @@ void URuntimeVirtualTextureThumbnailRenderer::Draw(UObject* Object, int32 X, int
 	RuntimeVirtualTexture->GetProducerDescription(VTDesc, URuntimeVirtualTexture::FInitSettings(), Transform);
 	const int32 MaxLevel = (int32)FMath::CeilLogTwo(FMath::Max(VTDesc.BlockWidthInTiles, VTDesc.BlockHeightInTiles));
 
+	UE::RenderCommandPipe::FSyncScope SyncScope;
+
 	ENQUEUE_RENDER_COMMAND(BakeStreamingTextureTileCommand)(
 		[Scene, VirtualTextureSceneIndex, MaterialType, RenderTarget, DestBox, Transform, Bounds, MaxLevel](FRHICommandListImmediate& RHICmdList)
 	{
@@ -111,7 +113,7 @@ void URuntimeVirtualTextureThumbnailRenderer::Draw(UObject* Object, int32 X, int
 		Desc.MaxLevel = MaxLevel;
 		Desc.bClearTextures = true;
 		Desc.bIsThumbnails = true;
-		Desc.DebugType = ERuntimeVirtualTextureDebugType::None;
+		Desc.FixedColor = FLinearColor::Transparent;
 		Desc.NumPageDescs = 1;
 		Desc.Targets[0].Texture = RenderTarget->GetRenderTargetTexture();
 		Desc.PageDescs[0].DestBox[0] = DestBox;

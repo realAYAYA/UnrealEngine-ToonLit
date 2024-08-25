@@ -3,12 +3,12 @@
 #include "Text3DComponent.h"
 
 #include "Algo/Count.h"
-#include "Algo/IndexOf.h"
 #include "Async/Async.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "Engine/StaticMesh.h"
+#include "Fonts/CompositeFont.h"
 #include "Fonts/SlateTextShaper.h"
 #include "Framework/Text/PlainTextLayoutMarshaller.h"
 #include "Glyph.h"
@@ -124,13 +124,15 @@ UText3DComponent::UText3DComponent()
 	ModifyFlags = EText3DModifyFlags::All;
 
 	TextScale = FVector::ZeroVector;
+
+	RefreshTypeface();
 }
 
 void UText3DComponent::PostLoad()
 {
 	// Reset so it's rebuilt (needed if re-using the component!)
 	ModifyFlags = EText3DModifyFlags::All;
-	
+
 	Super::PostLoad();
 }
 
@@ -164,6 +166,75 @@ void UText3DComponent::MarkForLayoutUpdate()
 void UText3DComponent::ClearUpdateFlags()
 {
 	ModifyFlags = EText3DModifyFlags::None;
+}
+
+uint32 UText3DComponent::GetTypeFaceIndex() const
+{
+	uint32 TypefaceIndex = 0;
+
+	if (Font)
+	{
+		TArray<FTypefaceEntry>& Fonts = Font->CompositeFont.DefaultTypeface.Fonts;
+
+		for (uint32 Index = 0; Index < static_cast<uint32>(Fonts.Num()); Index++)
+		{
+			if (Typeface == Fonts[Index].Name)
+			{
+				TypefaceIndex = Index;
+				break;
+			}
+		}
+	}
+
+	return TypefaceIndex;
+}
+
+bool UText3DComponent::IsTypefaceAvailable(FName InTypeface) const
+{
+	for (const FTypefaceEntry& TypefaceElement : GetAvailableTypefaces())
+	{
+		if (InTypeface == TypefaceElement.Name)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+TArray<FTypefaceEntry> UText3DComponent::GetAvailableTypefaces() const
+{
+	if (Font)
+	{
+		return Font->CompositeFont.DefaultTypeface.Fonts;
+	}
+
+	return {};
+}
+
+void UText3DComponent::RefreshTypeface()
+{
+	if (Font)
+	{
+		TArray<FTypefaceEntry>& Fonts = Font->CompositeFont.DefaultTypeface.Fonts;
+		for (int32 Index = 0; Index < Fonts.Num(); Index++)
+		{
+			if (Typeface == Fonts[Index].Name)
+			{
+				// Typeface stays the same
+				return;
+			}
+		}
+
+		if (!Fonts.IsEmpty())
+		{
+			Typeface = Fonts[0].Name;
+		}
+		else
+		{
+			Typeface = TEXT("");
+		}
+	}
 }
 
 void UText3DComponent::OnRegister()
@@ -229,7 +300,12 @@ void UText3DComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyCha
 		// Force minimum bevel segments based on the BevelType
 		SetBevelSegments(BevelSegments);
 	}
-	else if (Name == GET_MEMBER_NAME_CHECKED(UText3DComponent, Font) ||
+	else if (Name == GET_MEMBER_NAME_CHECKED(UText3DComponent, Font))
+	{
+		MarkForGeometryUpdate();
+		RefreshTypeface();
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(UText3DComponent, Typeface) ||
 			 Name == GET_MEMBER_NAME_CHECKED(UText3DComponent, Text) ||
 			 Name == GET_MEMBER_NAME_CHECKED(UText3DComponent, OutlineExpand) ||
 			 Name == GET_MEMBER_NAME_CHECKED(UText3DComponent, bOutline) ||
@@ -290,7 +366,7 @@ const FText& UText3DComponent::GetText() const
 }
 
 void UText3DComponent::SetText(const FText& Value)
-{	
+{
 	if (!Text.EqualTo(Value))
 	{
 		Text = Value;
@@ -309,6 +385,7 @@ void UText3DComponent::SetFont(UFont* InFont)
 	if (Font != InFont)
 	{
 		Font = InFont;
+		RefreshTypeface();
 		MarkForGeometryUpdate();
 		RebuildInternal();
 	}
@@ -324,7 +401,7 @@ void UText3DComponent::SetHasOutline(const bool bValue)
 	if (bOutline != bValue)
 	{
 		bOutline = bValue;
-		MarkForGeometryUpdate();	
+		MarkForGeometryUpdate();
 		RebuildInternal();
 	}
 }
@@ -472,10 +549,7 @@ bool UText3DComponent::AllocateGlyphs(int32 Num)
 
 			const FName CharacterKerningComponentName = MakeUniqueObjectName(this, USceneComponent::StaticClass(), FName(*FString::Printf(TEXT("CharacterKerning%d"), GlyphId)));
 			USceneComponent* CharacterKerningComponent = NewObject<USceneComponent>(this, CharacterKerningComponentName, RF_Transient);
-			
-#if WITH_EDITOR
-			CharacterKerningComponent->SetIsVisualizationComponent(true);
-#endif
+
 			CharacterKerningComponent->AttachToComponent(TextRoot, FAttachmentTransformRules::KeepRelativeTransform);
 			CharacterKerningComponent->RegisterComponent();
 			CharacterKernings.Add(CharacterKerningComponent);
@@ -506,7 +580,7 @@ bool UText3DComponent::AllocateGlyphs(int32 Num)
 				CharacterKerningComponent->UnregisterComponent();
 				CharacterKerningComponent->DestroyComponent();
 			}
-			
+
 			UStaticMeshComponent* StaticMeshComponent = CharacterMeshes[CharacterIndex];
 			if (IsValid(StaticMeshComponent))
 			{
@@ -515,7 +589,7 @@ bool UText3DComponent::AllocateGlyphs(int32 Num)
 				StaticMeshComponent->DestroyComponent();
 			}
 		}
-		
+
 		CharacterKernings.RemoveAt(CharacterKernings.Num() - 1 - DeltaNum, DeltaNum);
 		CharacterMeshes.RemoveAt(CharacterMeshes.Num() - 1 - DeltaNum, DeltaNum);
 	}
@@ -546,7 +620,7 @@ UMaterialInterface* UText3DComponent::GetMaterial(const EText3DGroupType Type) c
 	{
 		return BackMaterial;
 	}
-		
+
 	default:
 	{
 		return nullptr;
@@ -770,7 +844,7 @@ void UText3DComponent::SetCastShadow(bool NewCastShadow)
 		{
 			MeshComponent->SetCastShadow(bCastShadow);
 		}
-		
+
 		MarkRenderStateDirty();
 	}
 }
@@ -808,6 +882,19 @@ UStaticMeshComponent* UText3DComponent::GetGlyphMeshComponent(int32 Index)
 const TArray<UStaticMeshComponent*>& UText3DComponent::GetGlyphMeshComponents()
 {
 	return CharacterMeshes;
+}
+
+void UText3DComponent::SetTypeface(const FName InTypeface)
+{
+	if (Typeface == InTypeface || !IsTypefaceAvailable(InTypeface))
+	{
+		return;
+	}
+
+	Typeface = InTypeface;
+
+	MarkForGeometryUpdate();
+	RebuildInternal();
 }
 
 void UText3DComponent::Rebuild()
@@ -966,7 +1053,7 @@ void UText3DComponent::UpdateTransforms()
 		}
 	}
 
-	ModifyFlags &= EText3DModifyFlags::Layout; 
+	ModifyFlags &= ~EText3DModifyFlags::Layout;
 }
 
 void UText3DComponent::ClearTextMesh()
@@ -1018,7 +1105,7 @@ void UText3DComponent::TriggerInternalRebuild(const EText3DModifyFlags InModifyF
 		MarkForGeometryUpdate();
 	}
 
-	if (EnumHasAnyFlags(ModifyFlags, EText3DModifyFlags::Layout))
+	if (EnumHasAnyFlags(InModifyFlags, EText3DModifyFlags::Layout))
 	{
 		MarkForLayoutUpdate();
 	}
@@ -1033,7 +1120,7 @@ void UText3DComponent::BuildTextMesh(const bool& bCleanCache)
 	{
 		return;
 	}
-	
+
 	bIsBuilding = true;
 
 	TWeakObjectPtr<UText3DComponent> WeakThis(this);
@@ -1053,7 +1140,7 @@ void UText3DComponent::BuildTextMesh(const bool& bCleanCache)
 
 void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UText3DComponent::Rebuild"));
+	TRACE_CPUPROFILER_EVENT_SCOPE(UText3DComponent::Rebuild);
 
 	ON_SCOPE_EXIT { bIsBuilding = false; };
 
@@ -1069,18 +1156,21 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 	{
 		return;
 	}
-	
+
 	UText3DEngineSubsystem* Subsystem = GEngine->GetEngineSubsystem<UText3DEngineSubsystem>();
-	FCachedFontData& CachedFontData = Subsystem->GetCachedFontData(Font);
-	const FT_Face Face = CachedFontData.GetFreeTypeFace();
+
+	const uint32 TypefaceIndex = GetTypeFaceIndex();
+	FCachedFontData& CachedFontData = Subsystem->GetCachedFontData(Font, TypefaceIndex);
+	const FT_Face Face = CachedFontData.GetFreeTypeFace(TypefaceIndex);
 	if (!Face)
 	{ 
 		UE_LOG(LogText3D, Error, TEXT("Failed to load font data '%s'"), *CachedFontData.GetFontName());
 		return;
 	}
 
-	CachedCounterReferences.Add(CachedFontData.GetCacheCounter());
-	CachedCounterReferences.Add(CachedFontData.GetMeshesCacheCounter(FGlyphMeshParameters{Extrude, Bevel, BevelType, BevelSegments, bOutline, OutlineExpand}));
+	FGlyphMeshParameters GlyphMeshParameters{Extrude, Bevel, BevelType, BevelSegments, bOutline, OutlineExpand, TypefaceIndex};
+	CachedCounterReferences.Add(CachedFontData.GetCacheCounter(TypefaceIndex));
+	CachedCounterReferences.Add(CachedFontData.GetMeshesCacheCounter(GlyphMeshParameters));
 
 	ShapedText->Reset();
 	ShapedText->LineHeight = Face->size->metrics.height * FontInverseScale;
@@ -1090,7 +1180,8 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 	constexpr int32 AdjustedFontSize = 48; // Magic number that makes font scale consistent with previous implementation
 	FSlateFontInfo FontInfo(Font, AdjustedFontSize);
 	FontInfo.CompositeFont = FStyleDefaults::GetFontInfo().CompositeFont;
-	
+	FontInfo.TypefaceFontName = Typeface;
+
 	FTextBlockStyle Style;
 	Style.SetFont(FontInfo);
 
@@ -1129,7 +1220,7 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 				{
 					GlyphIndexToFontFace.Add(GlyphEntry.GlyphIndex, nullptr);
 				}
-				
+
 				continue;
 			}
 
@@ -1140,7 +1231,7 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 			}
 		}
 	}
-	
+
 	CalculateTextWidth();
 	CalculateTextScale();
 	TextRoot->SetRelativeScale3D(GetTextScale());
@@ -1176,7 +1267,7 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 			const int32 GlyphId = GlyphIndex++;
 
 			const FFreeTypeFace* FontFace = GlyphIndexToFontFace[ShapedGlyph.GlyphIndex];
-			UStaticMesh* CachedMesh = CachedFontData.GetGlyphMesh(ShapedGlyph.GlyphIndex, FGlyphMeshParameters{Extrude, Bevel, BevelType, BevelSegments, bOutline, OutlineExpand}, FontFace);
+			UStaticMesh* CachedMesh = CachedFontData.GetGlyphMesh(ShapedGlyph.GlyphIndex, GlyphMeshParameters, FontFace);
 			if (!CachedMesh || FMath::IsNearlyZero(CachedMesh->GetBounds().SphereRadius))
 			{
 				continue;
@@ -1185,7 +1276,7 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 			if (CharacterMeshes.IsValidIndex(GlyphId))
 			{
 				UStaticMeshComponent* StaticMeshComponent = CharacterMeshes[GlyphId];
-				StaticMeshComponent->SetStaticMesh(CachedMesh);			
+				StaticMeshComponent->SetStaticMesh(CachedMesh);
 				StaticMeshComponent->SetVisibility(GetVisibleFlag());
 				StaticMeshComponent->SetHiddenInGame(bHiddenInGame);
 				StaticMeshComponent->SetCastShadow(bCastShadow);
@@ -1210,7 +1301,7 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 			}
 		}
 	}
-	
+
 	for (int32 Index = 0; Index < static_cast<int32>(EText3DGroupType::TypeCount); Index++)
 	{
 		const EText3DGroupType Type = static_cast<EText3DGroupType>(Index);
@@ -1219,7 +1310,7 @@ void UText3DComponent::BuildTextMeshInternal(const bool& bCleanCache)
 
 	TextGeneratedNativeDelegate.Broadcast();
 	TextGeneratedDelegate.Broadcast();
-	
+
 	ClearUpdateFlags();
 
 	if (bCleanCache)
@@ -1249,7 +1340,7 @@ void UText3DComponent::UpdateMaterial(const EText3DGroupType Type, UMaterialInte
 	{
 		return; 
 	}
-	
+
 	const bool bHasExtrude = !FMath::IsNearlyZero(Extrude);
 	if (!bHasExtrude && Type == EText3DGroupType::Extrude)
 	{
@@ -1272,6 +1363,21 @@ FText UText3DComponent::GetFormattedText() const
 	FormatText(FormattedText);
 
 	return FormattedText;
+}
+
+TArray<FName> UText3DComponent::GetTypefaceNames() const
+{
+	TArray<FName> TypefaceNames;
+
+	if (Font)
+	{
+		for (const FTypefaceEntry& TypeFaceFont : Font->CompositeFont.DefaultTypeface.Fonts)
+		{
+			TypefaceNames.Add(TypeFaceFont.Name);
+		}
+	}
+
+	return TypefaceNames;
 }
 
 void UText3DComponent::OnVisibilityChanged()

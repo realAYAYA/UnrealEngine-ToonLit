@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Net/Core/NetBitArray.h"
+#include "Iris/Core/NetChunkedArray.h"
 #include "Iris/ReplicationSystem/ReplicationView.h"
 #include "UObject/ObjectMacros.h"
 #include "NetObjectFilter.generated.h"
@@ -12,7 +13,6 @@ class UReplicationSystem;
 namespace UE::Net
 {
 	typedef uint32 FNetObjectFilterHandle;
-	typedef uint16 FNetObjectGroupHandle;
 	struct FReplicationInstanceProtocol;
 	struct FReplicationProtocol;
 }
@@ -24,21 +24,6 @@ constexpr FNetObjectFilterHandle InvalidNetObjectFilterHandle = FNetObjectFilter
 constexpr FNetObjectFilterHandle ToOwnerFilterHandle = FNetObjectFilterHandle(1);
 /** ConnectionFilterHandle is for internal use only. */
 constexpr FNetObjectFilterHandle ConnectionFilterHandle = FNetObjectFilterHandle(2);
-
-/** Invalid group handle */
-constexpr FNetObjectGroupHandle InvalidNetObjectGroupHandle = FNetObjectGroupHandle(0);
-
-/** Special group, NetHandles assigned to this group will be filtered out for all connections */
-constexpr FNetObjectGroupHandle NotReplicatedNetObjectGroupHandle = FNetObjectGroupHandle(1);
-
-/** Special group, SubObjects assigned to this group will replicate to owner of RootParent */
-constexpr FNetObjectGroupHandle NetGroupOwnerNetObjectGroupHandle = FNetObjectGroupHandle(2);
-
-/** Special group, NetHandles assigned to this group will Replicate if replay netconditions is met  */
-constexpr FNetObjectGroupHandle NetGroupReplayNetObjectGroupHandle = FNetObjectGroupHandle(3);
-
-/** Returns true of the provided GroupHandle is a reserved NetObjectGroupHandle */
-static constexpr bool IsReservedNetObjectGroupHandle(FNetObjectGroupHandle GroupHandle) { return GroupHandle >= NotReplicatedNetObjectGroupHandle && GroupHandle <= NetGroupReplayNetObjectGroupHandle; }
 
 /** Used to control whether an object is allowed to be replicated or not. */
 enum class ENetFilterStatus : uint32
@@ -72,11 +57,8 @@ struct FNetObjectFilteringParams
 	/** FilteringInfos for all objects. Index using the set bit indices in FilteredObjects. */
 	const FNetObjectFilteringInfo* FilteringInfos = nullptr;
 
-	/** 
-	* State buffers for all objects. Index using the set bit indices in FilteredObjects. 
-	*/
-	
-	uint8 *const* StateBuffers = nullptr;
+	/** State buffers for all objects. Index using the set bit indices in FilteredObjects. */
+	const UE::Net::TNetChunkedArray<uint8*>* StateBuffers = nullptr;
 
 	/** ID of the connection that the filtering applies to. */
 	uint32 ConnectionId;
@@ -90,8 +72,16 @@ struct FNetObjectFilteringParams
  */
 struct FNetObjectPreFilteringParams
 {
+	FNetObjectPreFilteringParams(const UE::Net::FNetBitArrayView InFilteredObjects);
+
 	// The IDs of all valid connections.
 	UE::Net::FNetBitArrayView ValidConnections;
+
+	/** The indices of the objects that have this filter set. The indices of set bits correspond to the object indices. */
+	const UE::Net::FNetBitArrayView FilteredObjects;
+
+	/** FilteringInfos for all objects. Index using the set bit indices in FilteredObjects. */
+	TArrayView<const FNetObjectFilteringInfo> FilteringInfos;
 };
 
 /**
@@ -128,6 +118,13 @@ enum class ENetFilterType : uint8
 	 */
 	PostPoll_FragmentBased,
 };
+
+enum class ENetFilterTraits : uint8
+{
+	None = 0,
+	Spatial = 1,
+};
+ENUM_CLASS_FLAGS(ENetFilterTraits);
 
 /**
  * Base class for filter specific configuration.
@@ -170,6 +167,9 @@ struct FNetObjectFilterAddObjectParams
 	/** The info is zeroed before the AddObject() call. Fill in with filter specifics, like offsets to tags. */
 	FNetObjectFilteringInfo& OutInfo;
 
+	/** Name of a specialized configuration profile. When none, the default settings are expected. */
+	FName ProfileName;
+
 	/** The FReplicationInstanceProtocol which describes the source state data. */
 	const UE::Net::FReplicationInstanceProtocol* InstanceProtocol;
 
@@ -201,11 +201,11 @@ struct FNetObjectFilterUpdateParams
 	*/
 	UE::Net::FReplicationInstanceProtocol const* const* InstanceProtocols = nullptr;
 
-	/** 
-	* State buffers for all objects. Index using ObjectIndices[0..ObjectCount-1]. 
+	/**
+	* State buffers for all objects. Index using ObjectIndices[0..ObjectCount-1].
 	* NOTE: Only for filters of type FragmentBased; null for Raw types
 	*/
-	uint8* const* StateBuffers = nullptr;
+	const UE::Net::TNetChunkedArray<uint8*>* StateBuffers = nullptr;
 };
 
 UCLASS(Abstract)
@@ -248,6 +248,24 @@ public:
 	/** Returns what type of filter it is. Default is to cull and be executed before dirty state copying. */
 	ENetFilterType GetFilterType() const { return FilterType; }
 
+	/** Returns the filter's traits. */
+	ENetFilterTraits GetFilterTraits() const { return FilterTraits; }
+
+	struct FDebugInfoParams
+	{
+		FName FilterName;
+
+		const FNetObjectFilteringInfo* FilteringInfos = nullptr;
+
+		/** ID of the connection that the filtering applies to. */
+		uint32 ConnectionId = 0;
+
+		/** The view associated with the connection and its sub-connections that objects are filtered for. */
+		UE::Net::FReplicationView View;
+	};
+
+	IRISCORE_API virtual FString PrintDebugInfoForObject(const FDebugInfoParams& Params, uint32 ObjectIndex) const { return Params.FilterName.ToString(); };
+
 protected:
 	IRISCORE_API UNetObjectFilter();
 
@@ -262,6 +280,12 @@ protected:
 
 	/** Directly set when you want your dynamic filter to be executed. */
 	void SetupFilterType(ENetFilterType NewFilterType) { FilterType = NewFilterType; }
+
+	/** Adds traits. */
+	void AddFilterTraits(ENetFilterTraits Traits);
+
+	/** Sets the traits specified by TraitsMask to Traits. */
+	void SetFilterTraits(ENetFilterTraits Traits, ENetFilterTraits TraitsMask);
 
 private:
 	class FFilterInfo
@@ -282,6 +306,7 @@ private:
 	};
 
 	ENetFilterType FilterType = ENetFilterType::PrePoll_Raw;
+	ENetFilterTraits FilterTraits = ENetFilterTraits::None;
 	FFilterInfo FilterInfo;
 };
 
@@ -300,3 +325,13 @@ inline bool UNetObjectFilter::FFilterInfo::IsAddedToFilter(uint32 ObjectIndex) c
 	return ObjectIndex < FilteredObjects.GetNumBits() && FilteredObjects.IsBitSet(ObjectIndex);
 }
 
+inline void UNetObjectFilter::AddFilterTraits(ENetFilterTraits Traits)
+{
+	FilterTraits |= Traits;
+}
+
+inline void UNetObjectFilter::SetFilterTraits(ENetFilterTraits Traits, ENetFilterTraits TraitsMask)
+{
+	const ENetFilterTraits NewFilterTraits = (FilterTraits & ~TraitsMask) | (Traits & TraitsMask);
+	FilterTraits = NewFilterTraits;
+}

@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <string>
+
 #include "HAL/Platform.h"
 #include "MuR/MutableMemory.h"
 #include "MuR/Ptr.h"
@@ -12,35 +14,29 @@
 #include "Math/Vector4.h"
 #include "MuR/MutableMath.h"
 
+
 namespace mu
 {    
     class Image;
 	class Model;
 
-#define MUTABLE_DEFINE_POD_SERIALISABLE(T)							\
-	template<>														\
-	void DLLEXPORT operator<< <T>(OutputArchive& arch, const T& t);	\
-																	\
-	template<>														\
-	void DLLEXPORT operator>> <T>(InputArchive& arch, T& t);		\
+#define MUTABLE_DEFINE_POD_SERIALISABLE(Type)					   \
+	void DLLEXPORT operator<<(OutputArchive& Arch, const Type& T); \
+	void DLLEXPORT operator>>(InputArchive& Arch, Type& T);		   \
 
-#define MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(T)									     \
-	template<typename Alloc>                                                             \
-	void operator <<(OutputArchive& arch, const TArray<T, Alloc>& v);					 \
-	                                                                                     \
-	template<typename Alloc>                                                             \
-	void operator >>(InputArchive& arch, TArray<T, Alloc>& v);                           \
+#define MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(Type)					\
+	template<typename Alloc>                                            \
+	void operator<<(OutputArchive& Arch, const TArray<Type, Alloc>& V);	\
+	                                                                    \
+	template<typename Alloc>                                            \
+	void operator>>(InputArchive& Arch, TArray<Type, Alloc>& V);        \
 
-#define MUTABLE_DEFINE_ENUM_SERIALISABLE(T)							\
-	template<>														\
-    void DLLEXPORT operator<< <T>(OutputArchive& arch, const T& t);	\
-																	\
-	template<>														\
-    void DLLEXPORT operator>> <T>(InputArchive& arch, T& t);		\
+#define MUTABLE_DEFINE_ENUM_SERIALISABLE(Type)					   \
+    void DLLEXPORT operator<<(OutputArchive& Arch, const Type& T); \
+    void DLLEXPORT operator>>(InputArchive& Arch, Type& T);		   \
 	
 	
-    //! \brief
-    //! \ingroup model
+    /** This repesents a handle to Mutable resource. */
     template<class R>
     class ResourceProxy : public RefCounted
     {
@@ -51,6 +47,7 @@ namespace mu
     };
 
 
+	/** Proxy implementation that always has the resource loaded in memory. */
 	template<class R>
 	class ResourceProxyMemory : public ResourceProxy<R>
 	{
@@ -65,7 +62,7 @@ namespace mu
 			m_resource = i;
 		}
 
-		// ImageProxy interface
+		// ResourceProxy interface
 		Ptr<const R> Get() override
 		{
 			return m_resource;
@@ -74,7 +71,7 @@ namespace mu
 
 
 	/** */
-	class MUTABLERUNTIME_API ModelReader : public Base
+	class MUTABLERUNTIME_API ModelReader
     {
     public:
 
@@ -122,7 +119,7 @@ namespace mu
 
 
 	/** */
-	class MUTABLERUNTIME_API ModelWriter : public Base
+	class MUTABLERUNTIME_API ModelWriter
 	{
 	public:
 
@@ -167,7 +164,7 @@ namespace mu
 
     //! Interface for any input stream to be use with InputArchives.
     //! \ingroup tools
-    class MUTABLERUNTIME_API InputStream : public Base
+    class MUTABLERUNTIME_API InputStream
     {
     public:
 
@@ -183,7 +180,7 @@ namespace mu
 
     //! Interface for any output stream to be used with OutputArchives
     //! \ingroup tools
-    class MUTABLERUNTIME_API OutputStream : public Base
+    class MUTABLERUNTIME_API OutputStream
     {
     public:
 
@@ -200,7 +197,7 @@ namespace mu
 
     //! Archive containing data to be deserialised.
     //! \ingroup tools
-    class MUTABLERUNTIME_API InputArchive : public Base
+    class MUTABLERUNTIME_API InputArchive
     {
     public:
 
@@ -228,7 +225,7 @@ namespace mu
 
     //! Archive where data can be serialised to.
     //! \ingroup tools
-    class MUTABLERUNTIME_API OutputArchive : public Base
+    class MUTABLERUNTIME_API OutputArchive
     {
     public:
 
@@ -324,16 +321,16 @@ namespace mu
     };
 
 
-	template< typename T >
-	void operator<< ( OutputArchive& arch, const T& t )
+	template<typename Type>
+	void operator<<(OutputArchive& Arch, const Type& Value)
 	{
-        t.Serialise( arch );
+        Value.Serialise(Arch);
 	}
 
-	template< typename T >
-	void operator>> ( InputArchive& arch, T& t )
+	template<typename Type>
+	void operator>>(InputArchive& Arch, Type& Value)
 	{
-        t.Unserialise( arch );
+        Value.Unserialise(Arch);
 	}
 
 	MUTABLE_DEFINE_POD_SERIALISABLE(float);
@@ -347,7 +344,17 @@ namespace mu
     MUTABLE_DEFINE_POD_SERIALISABLE(uint8);
     MUTABLE_DEFINE_POD_SERIALISABLE(uint16);
     MUTABLE_DEFINE_POD_SERIALISABLE(uint32);
-    MUTABLE_DEFINE_POD_SERIALISABLE(uint64);
+	MUTABLE_DEFINE_POD_SERIALISABLE(uint64);
+
+	MUTABLE_DEFINE_POD_SERIALISABLE(FUintVector2);
+	MUTABLE_DEFINE_POD_SERIALISABLE(FIntVector2);
+	MUTABLE_DEFINE_POD_SERIALISABLE(UE::Math::TIntVector2<uint16>);
+	MUTABLE_DEFINE_POD_SERIALISABLE(UE::Math::TIntVector2<int16>);
+	MUTABLE_DEFINE_POD_SERIALISABLE(FVector2f);
+	MUTABLE_DEFINE_POD_SERIALISABLE(FVector4f);
+	MUTABLE_DEFINE_POD_SERIALISABLE(FMatrix44f);
+
+	MUTABLE_DEFINE_POD_SERIALISABLE(FGuid);
 
 	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(float);
 	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(double);
@@ -360,11 +367,9 @@ namespace mu
 	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(int32);
 	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(int64);
 
-	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(vec2f);
-	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(vec3f);
-	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(mat3f);
-	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(mat4f);
-	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(vec2<int>);
+	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(FVector2f);
+	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(FMatrix44f);
+	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(FIntVector2);
 	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(TCHAR);
 
 	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(FUintVector2);
@@ -373,54 +378,49 @@ namespace mu
 	MUTABLE_DEFINE_POD_VECTOR_SERIALISABLE(FVector4f);
 	
 	//---------------------------------------------------------------------------------------------
-	template<>
-	void operator<< <FString>(OutputArchive& arch, const FString& t);
+	MUTABLERUNTIME_API void operator<<(OutputArchive& arch, const FString& t);
 	
-	template<>
-	void operator>> <FString>(InputArchive& arch, FString& t);
+	MUTABLERUNTIME_API void operator>>(InputArchive& arch, FString& t);
+
+
+	//---------------------------------------------------------------------------------------------
+	MUTABLERUNTIME_API void operator<<(OutputArchive& arch, const FName& v);
+
+	MUTABLERUNTIME_API void operator>>(InputArchive& arch, FName& v);
 
 
 	//---------------------------------------------------------------------------------------------
 	template<typename T, typename Alloc> 
-	void operator<<(OutputArchive& arch, const TArray<T, Alloc>& v)
+	void operator<<(OutputArchive& Arch, const TArray<T, Alloc>& V)
 	{
-		const uint32 Num = (uint32)v.Num();
-		arch << Num;
+		const uint32 Num = (uint32)V.Num();
+		Arch << Num;
 		
-		for (SIZE_T i = 0; i < Num; ++i)
+		for (SIZE_T Index = 0; Index < Num; ++Index)
 		{
-			arch << v[i];
+			Arch << V[Index];
 		}
 	}
 
 	template<typename T, typename Alloc> 
-	void operator>>(InputArchive& arch, TArray<T, Alloc>& v)
+	void operator>>(InputArchive& Arch, TArray<T, Alloc>& V)
 	{
 		uint32 Num;
-		arch >> Num;
-		v.SetNum(Num);
+		Arch >> Num;
+		V.SetNum(Num);
 
-		for (SIZE_T i = 0; i < Num; ++i)
+		for (SIZE_T Index = 0; Index < Num; ++Index)
 		{
-			arch >> v[i];
+			Arch >> V[Index];
 		}
 	}
 
+	
+	MUTABLERUNTIME_API void operator>> ( InputArchive& arch, std::string& v );
 
-	//---------------------------------------------------------------------------------------------
-	template<> 
-	inline void operator<<(OutputArchive& arch, const FName& v)
-	{
-		arch << v.ToString();
-	}
+	// Bool size is not a standard
+	MUTABLERUNTIME_API void operator<<(OutputArchive& Arch, const bool& T);
 
-	template<> 
-	inline void operator>>(InputArchive& arch, FName& v)
-	{
-		FString Temp;
-		arch >> Temp;
-		v = FName(Temp);
-	}
-
+	MUTABLERUNTIME_API void operator>>(InputArchive& Arch, bool& T);
 }
 

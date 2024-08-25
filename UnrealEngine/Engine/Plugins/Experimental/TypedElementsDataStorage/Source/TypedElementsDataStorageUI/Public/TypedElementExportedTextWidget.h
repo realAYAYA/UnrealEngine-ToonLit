@@ -18,9 +18,10 @@ class TYPEDELEMENTSDATASTORAGEUI_API UTypedElementExportedTextWidgetFactory : pu
 public:
 	~UTypedElementExportedTextWidgetFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
 	void RegisterWidgetConstructors(ITypedElementDataStorageInterface& DataStorage,
 		ITypedElementDataStorageUiInterface& DataStorageUi) const override;
+
+	TSet<TWeakObjectPtr<const UScriptStruct>> RegisteredTypes;
 };
 
 USTRUCT()
@@ -33,10 +34,9 @@ public:
 	~FTypedElementExportedTextWidgetConstructor() override = default;
 
 	TConstArrayView<const UScriptStruct*> GetAdditionalColumnsList() const override;
-	bool CanBeReused() const override;
 
 protected:
-	TSharedPtr<SWidget> CreateWidget() override;
+	TSharedPtr<SWidget> CreateWidget(const TypedElementDataStorage::FMetaDataView& Arguments) override;
 	bool FinalizeWidget(
 		ITypedElementDataStorageInterface* DataStorage,
 		ITypedElementDataStorageUiInterface* DataStorageUi,

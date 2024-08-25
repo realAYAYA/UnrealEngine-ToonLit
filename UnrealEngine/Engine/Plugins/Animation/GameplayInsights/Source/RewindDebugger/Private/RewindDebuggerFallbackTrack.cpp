@@ -4,6 +4,7 @@
 #include "IRewindDebugger.h"
 #include "IGameplayProvider.h"
 #include "IAnimationProvider.h"
+#include "IRewindDebuggerView.h"
 #include "Styling/SlateIconFinder.h"
 #include "ObjectTrace.h"
 

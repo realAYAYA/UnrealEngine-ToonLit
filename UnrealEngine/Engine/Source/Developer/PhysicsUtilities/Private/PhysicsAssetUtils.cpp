@@ -203,7 +203,7 @@ int32 CalculateCommonRootBoneIndex(const FReferenceSkeleton& RefSkeleton, const 
 	return RootBoneIndex;
 }
 
-bool CreateFromSkeletalMeshInternal(UPhysicsAsset* PhysicsAsset, USkeletalMesh* SkelMesh, const FPhysAssetCreateParams& Params, const FSkinnedBoneTriangleCache& TriangleCache)
+bool CreateFromSkeletalMeshInternal(UPhysicsAsset* PhysicsAsset, USkeletalMesh* SkelMesh, const FPhysAssetCreateParams& Params, const FSkinnedBoneTriangleCache& TriangleCache, bool bShowProgress)
 {
 	// For each bone, get the vertices most firmly attached to it.
 	TArray<FBoneVertInfo> Infos;
@@ -340,8 +340,8 @@ bool CreateFromSkeletalMeshInternal(UPhysicsAsset* PhysicsAsset, USkeletalMesh* 
 	// Finally, iterate through all the bones and create bodies when needed
 
 	const bool bCanCreateConstraints = CanCreateConstraints();
-	FScopedSlowTask SlowTask((float)NumBones * 2, FText(), IsInGameThread());
-	if (IsInGameThread())
+	FScopedSlowTask SlowTask((float)NumBones * 2, FText(), bShowProgress&& IsInGameThread());
+	if (bShowProgress && IsInGameThread())
 	{
 		SlowTask.MakeDialog();
 	}
@@ -356,7 +356,7 @@ bool CreateFromSkeletalMeshInternal(UPhysicsAsset* PhysicsAsset, USkeletalMesh* 
 			// Go ahead and make this bone physical.
 			FName BoneName = SkelMesh->GetRefSkeleton().GetBoneName(BoneIndex);
 
-			if (IsInGameThread())
+			if (bShowProgress && IsInGameThread())
 			{
 				SlowTask.EnterProgressFrame(1.0f, FText::Format(NSLOCTEXT("PhysicsAssetEditor", "ResetCollsionStepInfo", "Generating collision for {0}"), FText::FromName(BoneName)));
 			}
@@ -469,7 +469,7 @@ bool CreateFromSkeletalMeshInternal(UPhysicsAsset* PhysicsAsset, USkeletalMesh* 
 		FBodyInstance* BodyInstance = Bodies[BodyIdx];
 		if(BodyInstance && BodyInstance->BodySetup.IsValid())
 		{
-			if (IsInGameThread())
+			if (bShowProgress && IsInGameThread())
 			{
 				SlowTask.EnterProgressFrame(1.0f, FText::Format(NSLOCTEXT("PhysicsAssetEditor", "ResetCollsionStepInfoOverlaps", "Fixing overlaps for {0}"), FText::FromName(BodyInstance->BodySetup->BoneName)));
 			}
@@ -493,7 +493,7 @@ bool CreateFromSkeletalMeshInternal(UPhysicsAsset* PhysicsAsset, USkeletalMesh* 
 	return NumBodies > 0;
 }
 
-bool CreateFromSkeletalMesh(UPhysicsAsset* PhysicsAsset, USkeletalMesh* SkelMesh, const FPhysAssetCreateParams& Params, FText& OutErrorMessage, bool bSetToMesh /*= true*/)
+bool CreateFromSkeletalMesh(UPhysicsAsset* PhysicsAsset, USkeletalMesh* SkelMesh, const FPhysAssetCreateParams& Params, FText& OutErrorMessage, bool bSetToMesh /*= true*/, bool bShowProgress /*= true */)
 {
 	PhysicsAsset->PreviewSkeletalMesh = SkelMesh;
 
@@ -507,14 +507,14 @@ bool CreateFromSkeletalMesh(UPhysicsAsset* PhysicsAsset, USkeletalMesh* SkelMesh
 		TriangleCache.BuildCache();
 	}
 
-	bool bSuccess = CreateFromSkeletalMeshInternal(PhysicsAsset, SkelMesh, Params, TriangleCache);
+	bool bSuccess = CreateFromSkeletalMeshInternal(PhysicsAsset, SkelMesh, Params, TriangleCache, bShowProgress);
 	if (!bSuccess)
 	{
 		// try lower minimum bone size 
 		FPhysAssetCreateParams LocalParams = Params;
 		LocalParams.MinBoneSize = 1.f;
 
-		bSuccess = CreateFromSkeletalMeshInternal(PhysicsAsset, SkelMesh, LocalParams, TriangleCache);
+		bSuccess = CreateFromSkeletalMeshInternal(PhysicsAsset, SkelMesh, LocalParams, TriangleCache, bShowProgress);
 
 		if(!bSuccess)
 		{
@@ -854,7 +854,7 @@ bool CreateCollisionsFromBones(UPhysicsAsset* PhysicsAsset, USkeletalMesh* SkelM
 		// Get sub-bones for any skinned levelsets
 		for (const FKSkinnedLevelSetElem& SkinnedLevelSetElem : BodySetup->AggGeom.SkinnedLevelSetElems)
 		{
-			if (const Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>* SkinnedLevelSet = SkinnedLevelSetElem.GetWeightedLevelSet().Get())
+			if (const Chaos::TWeightedLatticeImplicitObject<Chaos::FLevelSet>* SkinnedLevelSet = SkinnedLevelSetElem.WeightedLevelSet().GetReference())
 			{
 				SubBoneNames.Reserve(SubBoneNames.Num() + SkinnedLevelSet->GetUsedBones().Num());
 				for (const FName& SubBoneName : SkinnedLevelSet->GetUsedBones())
@@ -1288,4 +1288,11 @@ bool CanCreateConstraints()
 	return true;
 }
 
+void SanitizeRestrictedContent(UPhysicsAsset* PhysAsset)
+{
+	check(PhysAsset);
+}
+
 }; // namespace FPhysicsAssetUtils
+
+IMPLEMENT_MODULE(FDefaultModuleImpl, PhysicsAssetUtils)

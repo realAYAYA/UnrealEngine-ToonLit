@@ -7,6 +7,7 @@
 #include "Async/Future.h"
 #include "Containers/StringView.h"
 #include "IO/IoDispatcher.h"
+#include "IO/IoHash.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/DateTime.h"
 #include "Misc/EnumClassFlags.h"
@@ -94,10 +95,20 @@ public:
 	struct FCommitPackageInfo
 	{
 		FName PackageName;
+		FIoHash PackageHash;
+		UE_DEPRECATED(5.4, "Use PackageHash instead")
 		FGuid PackageGuid;
 		TArray<FCommitAttachmentInfo> Attachments;
 		ECommitStatus Status;
 		EWriteOptions WriteOptions;
+
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+		inline FCommitPackageInfo() = default;
+		inline FCommitPackageInfo(const FCommitPackageInfo&) = default;
+		inline FCommitPackageInfo(FCommitPackageInfo&&) = default;
+		inline FCommitPackageInfo& operator=(FCommitPackageInfo&) = default;
+		inline FCommitPackageInfo& operator=(FCommitPackageInfo&&) = default;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 	};
 
 	/** Finalize a package started with BeginPackage()
@@ -234,6 +245,9 @@ public:
 		/** Whether this writer implements -diffonly and -linkerdiff. */
 		bool bDiffModeSupported = false;
 
+		/** If true, the cooker will assume no packages are written and will skip writing non-package data. */
+		bool bReadOnly = false;
+
 		/** What header format is produced as output by this writer. */
 		EPackageHeaderFormat HeaderFormat = EPackageHeaderFormat::PackageFileSummary;
 	};
@@ -308,14 +322,26 @@ public:
 	 */
 	virtual void RemoveCookedPackages() = 0;
 
+	UE_DEPRECATED(5.4, "No longer called; override UpdatePackageModificationStatus instead")
+	virtual void MarkPackagesUpToDate(TArrayView<const FName> UpToDatePackages) {}
 	/**
-	 * Signal the given cooked package(s) have been checked for changes and have not been modified since the last cook.
+	 * During iterative cooking, signal the cooked package has been checked for changes,
+	 * and decide whether it should be iteratively skipped.
 	 */
-	virtual void MarkPackagesUpToDate(TArrayView<const FName> UpToDatePackages) = 0;
+	virtual void UpdatePackageModificationStatus(FName PackageName, bool bIterativelyUnmodified,
+		bool& bInOutShouldIterativelySkip) = 0;
+
+	struct FDeleteByFree
+	{
+		void operator()(void* Ptr) const
+		{
+			FMemory::Free(Ptr);
+		}
+	};
 
 	struct FPreviousCookedBytesData
 	{
-		TUniquePtr<uint8> Data;
+		TUniquePtr<uint8, FDeleteByFree> Data;
 		int64 Size;
 		int64 HeaderSize;
 		int64 StartOffset;

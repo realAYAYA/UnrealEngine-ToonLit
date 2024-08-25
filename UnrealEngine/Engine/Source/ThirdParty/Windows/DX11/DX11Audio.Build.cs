@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+using System.IO;
 using UnrealBuildTool;
 
 public class DX11Audio : ModuleRules
@@ -11,12 +12,12 @@ public class DX11Audio : ModuleRules
 		{
 			PublicDependencyModuleNames.Add("DirectX");
 
-			string DirectXLibDir = DirectX.GetLibDir(Target);
+			string DirectXLibDir = Target.WindowsPlatform.DirectXLibDir;
 			PublicAdditionalLibraries.AddRange(
 				new string[] 
 				{
-					DirectXLibDir + "dxguid.lib",
-					DirectXLibDir + "xapobase.lib"
+					Path.Combine(DirectXLibDir, "dxguid.lib"),
+					Path.Combine(DirectXLibDir, "xapobase.lib")
 				}
 			);
 		}

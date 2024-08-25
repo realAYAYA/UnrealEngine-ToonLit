@@ -9,6 +9,41 @@
 class UContextualAnimSceneInstance;
 class UContextualAnimSceneAsset;
 
+UENUM(BlueprintType)
+enum class EContextualAnimCollisionBehavior : uint8
+{
+	None,
+	IgnoreActorWhenMoving,
+	IgnoreChannels
+};
+
+USTRUCT(BlueprintType)
+struct FContextualAnimIgnoreChannelsParam
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Defaults", meta = (GetOptions = "GetRoles"))
+	FName Role = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category = "Defaults")
+	TArray<TEnumAsByte<ECollisionChannel>> Channels;
+};
+
+USTRUCT()
+struct FContextualAnimAttachmentParams
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Defaults", meta = (GetOptions = "GetRoles"))
+	FName Role = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category = "Defaults")
+	FName SocketName = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category = "Defaults")
+	FTransform RelativeTransform = FTransform::Identity;
+};
+
 UCLASS(Blueprintable)
 class CONTEXTUALANIMATION_API UContextualAnimRolesAsset : public UDataAsset
 {
@@ -195,12 +230,17 @@ public:
 	void ForEachAnimTrack(FForEachAnimTrackFunction Function) const;
 
 	FORCEINLINE const FName& GetPrimaryRole() const { return PrimaryRole; }
-	
-	FORCEINLINE bool GetDisableCollisionBetweenActors() const { return bDisableCollisionBetweenActors; }
-	FORCEINLINE const TSubclassOf<UContextualAnimSceneInstance>& GetSceneInstanceClass() const { return SceneInstanceClass; }
+	FORCEINLINE EContextualAnimCollisionBehavior GetCollisionBehavior() const { return CollisionBehavior; }
 	FORCEINLINE int32 GetSampleRate() const { return SampleRate; }
 	FORCEINLINE float GetRadius() const { return Radius; }
 	FORCEINLINE bool ShouldPrecomputeAlignmentTracks() const { return bPrecomputeAlignmentTracks; }
+
+	const TArray<TEnumAsByte<ECollisionChannel>>& GetCollisionChannelsToIgnoreForRole(FName Role) const;
+	
+	const FContextualAnimAttachmentParams* GetAttachmentParamsForRole(FName Role) const
+	{
+		return AttachmentParams.FindByPredicate([Role](const FContextualAnimAttachmentParams& Item) { return Item.Role == Role; });
+	}
 
 	bool HasValidData() const { return RolesAsset != nullptr && Sections.Num() > 0 && Sections[0].AnimSets.Num() > 0; }
 
@@ -286,8 +326,12 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Settings", meta = (GetOptions = "GetRoles"))
 	FName PrimaryRole = NAME_None;
 
+#if WITH_EDITORONLY_DATA
+
 	UPROPERTY(EditAnywhere, Category = "Settings", meta = (TitleProperty = "Role"))
 	TArray<FContextualAnimActorPreviewData> OverridePreviewData;
+
+#endif // WITH_EDITORONLY_DATA
 
 	UPROPERTY(EditAnywhere, Category = "Defaults")
 	TArray<FContextualAnimSceneSection> Sections;
@@ -296,10 +340,13 @@ protected:
 	float Radius = 0.f;
 
 	UPROPERTY(EditAnywhere, Category = "Settings")
-	TSubclassOf<UContextualAnimSceneInstance> SceneInstanceClass;
+	EContextualAnimCollisionBehavior CollisionBehavior = EContextualAnimCollisionBehavior::None;
+
+	UPROPERTY(EditAnywhere, Category = "Settings", meta = (EditCondition = "CollisionBehavior==EContextualAnimCollisionBehavior::IgnoreChannels", EditConditionHides))
+	TArray<FContextualAnimIgnoreChannelsParam> CollisionChannelsToIgnoreParams;
 
 	UPROPERTY(EditAnywhere, Category = "Settings")
-	bool bDisableCollisionBetweenActors = true;
+	TArray<FContextualAnimAttachmentParams> AttachmentParams;
 
 	/** Whether we should extract and cache alignment tracks off line. */
 	UPROPERTY(EditAnywhere, Category = "Settings", AdvancedDisplay)

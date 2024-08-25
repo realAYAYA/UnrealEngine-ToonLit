@@ -4,6 +4,7 @@
 #include "Async/Async.h"
 #include "AudioDevice.h"
 #include "AudioModulation.h"
+#include "AudioModulationDestination.h"
 #include "AudioModulationLogging.h"
 #include "AudioModulationProfileSerializer.h"
 #include "AudioModulationSystem.h"
@@ -121,7 +122,9 @@ void UAudioModulationStatics::ActivateBus(const UObject* WorldContextObject, USo
 	UWorld* World = GetAudioWorld(WorldContextObject);
 	if (AudioModulation::FAudioModulationManager* ModSystem = GetModulation(World))
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		ModSystem->ActivateBus(*Bus);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 }
 
@@ -144,7 +147,9 @@ void UAudioModulationStatics::ActivateGenerator(const UObject* WorldContextObjec
 	{
 		if (Generator)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			ModSystem->ActivateGenerator(*Generator);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 }
@@ -207,7 +212,9 @@ USoundControlBus* UAudioModulationStatics::CreateBus(UObject* WorldContextObject
 	{
 		if (AudioModulation::FAudioModulationManager* ModSystem = GetModulation(World))
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			ModSystem->ActivateBus(*NewBus);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 
@@ -328,6 +335,23 @@ USoundModulationGeneratorADEnvelope* UAudioModulationStatics::CreateADEnvelopeGe
 	return NewGenerator;
 }
 
+UAudioModulationDestination* UAudioModulationStatics::CreateModulationDestination(UObject* WorldContextObject, FName Name, USoundModulatorBase* Modulator)
+{
+	UWorld* World = GetAudioWorld(WorldContextObject);
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	if (UAudioModulationDestination* NewDestination = NewObject<UAudioModulationDestination>(WorldContextObject, Name))
+	{
+		NewDestination->SetModulator(Modulator);
+		return NewDestination;
+	}
+
+	return nullptr;
+}
+
 void UAudioModulationStatics::DeactivateBus(const UObject* WorldContextObject, USoundControlBus* Bus)
 {
 	if (Bus)
@@ -335,7 +359,9 @@ void UAudioModulationStatics::DeactivateBus(const UObject* WorldContextObject, U
 		UWorld* World = GetAudioWorld(WorldContextObject);
 		if (AudioModulation::FAudioModulationManager* ModSystem = GetModulation(World))
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			ModSystem->DeactivateBus(*Bus);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 }
@@ -359,9 +385,24 @@ void UAudioModulationStatics::DeactivateGenerator(const UObject* WorldContextObj
 	{
 		if (Generator)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			ModSystem->DeactivateGenerator(*Generator);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
+}
+
+bool UAudioModulationStatics::IsControlBusMixActive(const UObject* WorldContextObject, USoundControlBusMix* Mix)
+{
+	UWorld* World = GetAudioWorld(WorldContextObject);
+	if (AudioModulation::FAudioModulationManager* ModSystem = GetModulation(World))
+	{
+		if (Mix)
+		{
+			return ModSystem->IsBusMixActive(*Mix);
+		}
+	}
+	return false;
 }
 
 void UAudioModulationStatics::SaveMixToProfile(const UObject* WorldContextObject, USoundControlBusMix* BusMix, int32 ProfileIndex)
@@ -406,6 +447,25 @@ void UAudioModulationStatics::UpdateMix(const UObject* WorldContextObject, USoun
 			ModSystem->UpdateMix(Stages, *Mix, false /* bUpdateObject */, InFadeTime);
 		}
 	}
+}
+
+USoundControlBusMix* UAudioModulationStatics::CreateBusMixFromValue(const UObject* WorldContextObject, FName Name, const TArray<USoundControlBus*>& Buses, float Value, float AttackTime, float ReleaseTime, bool bActivate)
+{
+	UWorld* World = GetAudioWorld(WorldContextObject);
+	if (AudioModulation::FAudioModulationManager* ModSystem = GetModulation(World))
+	{
+		if (USoundControlBusMix* NewMix = ModSystem->CreateBusMixFromValue(Name, Buses, Value, AttackTime, ReleaseTime))
+		{
+			if (bActivate)
+			{
+				ModSystem->ActivateBusMix(*NewMix);
+			}
+
+			return NewMix;
+		}
+	}
+
+	return nullptr;
 }
 
 void UAudioModulationStatics::SetGlobalBusMixValue(const UObject* WorldContextObject, USoundControlBus* Bus, float Value, float FadeTime)

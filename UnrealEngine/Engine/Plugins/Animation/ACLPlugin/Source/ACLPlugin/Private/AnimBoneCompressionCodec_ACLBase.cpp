@@ -43,6 +43,7 @@ UAnimBoneCompressionCodec_ACLBase::UAnimBoneCompressionCodec_ACLBase(const FObje
 {
 #if WITH_EDITORONLY_DATA
 	CompressionLevel = ACLCL_Medium;
+	PhantomTrackMode = ACLPhantomTrackMode::Ignore;	// Same as UE codecs
 
 	// We use a higher virtual vertex distance when bones have a socket attached or are keyed end effectors (IK, hand, camera, etc)
 	// We use 100cm instead of 3cm. UE 4 usually uses 50cm (END_EFFECTOR_DUMMY_BONE_LENGTH_SOCKET) but
@@ -102,9 +103,12 @@ static void AppendMaxVertexDistances(USkeletalMesh* OptimizationTarget, TMap<FNa
 	{
 		const FSkelMeshSection& Section = MeshModel->LODModels[0].Sections[SectionIndex];
 		const uint32 NumVertices = Section.SoftVertices.Num();
+
 		for (uint32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
 		{
 			const FSoftSkinVertex& VertexInfo = Section.SoftVertices[VertexIndex];
+			const FVector VertexPosition = UEVector3Cast(VertexInfo.Position);
+
 			for (uint32 InfluenceIndex = 0; InfluenceIndex < MAX_TOTAL_INFLUENCES; ++InfluenceIndex)
 			{
 				if (VertexInfo.InfluenceWeights[InfluenceIndex] != 0)
@@ -113,8 +117,9 @@ static void AppendMaxVertexDistances(USkeletalMesh* OptimizationTarget, TMap<FNa
 					const uint32 BoneIndex = Section.BoneMap[SectionBoneIndex];
 
 					const FTransform& BoneTransform = RefSkeletonObjectSpacePose[BoneIndex];
+					const FVector BoneTranslation = UEVector3Cast(BoneTransform.GetTranslation());
 
-					const float VertexDistanceToBone = FVector::Distance((FVector)VertexInfo.Position, BoneTransform.GetTranslation());
+					const float VertexDistanceToBone = FVector::Distance(VertexPosition, BoneTranslation);
 
 					float& MostDistantVertexDistance = MostDistantVertexDistancePerBone[BoneIndex];
 					MostDistantVertexDistance = FMath::Max(MostDistantVertexDistance, VertexDistanceToBone);
@@ -181,13 +186,45 @@ static void PopulateShellDistanceFromOptimizationTargets(const FCompressibleAnim
 	}
 }
 
+static void StripBindPose(const FCompressibleAnimData& CompressibleAnimData, acl::track_array_qvvf& ACLTracks)
+{
+	// Additive sequences use the identity as their bind pose, no need for stripping
+	check(!CompressibleAnimData.bIsValidAdditive);
+
+	const int32 NumBones = CompressibleAnimData.BoneData.Num();
+
+	for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
+	{
+		const FBoneData& UE4Bone = CompressibleAnimData.BoneData[BoneIndex];
+
+		acl::track_qvvf& Track = ACLTracks[BoneIndex];
+		acl::track_desc_transformf& Desc = Track.get_description();
+
+		// When we decompress a whole pose, the output buffer will already contain the bind pose.
+		// As such, we skip all default sub-tracks and avoid writing anything to the output pose.
+		// By setting the default value to the bind pose, default sub-tracks will be equal to the bind pose
+		// and be stripped from the compressed data buffer entirely.
+
+		// As such, here are the potential behaviors for non-animated bones equal to the default_value below:
+		//     A stripped bone equal to the bind pose (stripped)
+		//         Skipped during whole pose decompression, already present in output buffer
+		//         Single bone decompression will output the bind pose taken from the decompression context
+		//     A stripped bone not equal to the bind pose (it won't be stripped nor skipped)
+		//         Decompressed normally with the rest of the pose and written to the output buffer
+		//         Single bone decompression will output the correct value
+
+		// Set the default value to the bind pose so that it can be stripped
+		Desc.default_value = rtm::qvv_set(UEQuatToACL(UE4Bone.Orientation), UEVector3ToACL(UE4Bone.Position), UEVector3ToACL(UE4Bone.Scale));
+	}
+}
+
 bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
 {
-	acl::track_array_qvvf ACLTracks = BuildACLTransformTrackArray(ACLAllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, false);
+	acl::track_array_qvvf ACLTracks = BuildACLTransformTrackArray(ACLAllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, false, PhantomTrackMode);
 
 	acl::track_array_qvvf ACLBaseTracks;
 	if (CompressibleAnimData.bIsValidAdditive)
-		ACLBaseTracks = BuildACLTransformTrackArray(ACLAllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, true);
+		ACLBaseTracks = BuildACLTransformTrackArray(ACLAllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, true, PhantomTrackMode);
 
 	UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation raw size: %u bytes [%s]"), ACLTracks.get_raw_size(), *CompressibleAnimData.FullName);
 
@@ -200,23 +237,27 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 
 	// Set our error threshold
 	for (acl::track_qvvf& Track : ACLTracks)
-		Track.get_description().precision = ErrorThreshold;
-
-	// Override track settings if we need to
-	if (IsA<UAnimBoneCompressionCodec_ACLSafe>())
 	{
-		// Disable constant rotation track detection
-		for (acl::track_qvvf& Track : ACLTracks)
-			Track.get_description().constant_rotation_threshold_angle = 0.0f;
+		Track.get_description().precision = ErrorThreshold;
+	}
+
+	// Enable bind pose stripping if we need to.
+	// Additive sequences have their bind pose equivalent as the additive identity transform and as
+	// such, ACL performs stripping by default and everything works great.
+	// See [Bind pose stripping] for details
+	const bool bUsesBindPoseStripping = !CompressibleAnimData.bIsValidAdditive;
+	if (bUsesBindPoseStripping)
+	{
+		StripBindPose(CompressibleAnimData, ACLTracks);
 	}
 
 	acl::compression_settings Settings;
-// @third party code - Epic Games Begin
-	GetCompressionSettings(Settings, CompressibleAnimData.TargetPlatform);
-// @third party code - Epic Games End
+	GetCompressionSettings(CompressibleAnimData.TargetPlatform, Settings);
+
+	constexpr acl::additive_clip_format8 AdditiveFormat = acl::additive_clip_format8::additive1;
 
 	acl::qvvf_transform_error_metric DefaultErrorMetric;
-	acl::additive_qvvf_transform_error_metric<acl::additive_clip_format8::additive1> AdditiveErrorMetric;
+	acl::additive_qvvf_transform_error_metric<AdditiveFormat> AdditiveErrorMetric;
 	if (!ACLBaseTracks.is_empty())
 	{
 		Settings.error_metric = &AdditiveErrorMetric;
@@ -226,87 +267,9 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 		Settings.error_metric = &DefaultErrorMetric;
 	}
 
-	const acl::additive_clip_format8 AdditiveFormat = acl::additive_clip_format8::additive0;
-	const bool bUseStreamingDatabase = UseDatabase();
-
-	if (bUseStreamingDatabase)
-	{
-		Settings.enable_database_support = true;
-// @third party code - Epic Games Begin
-		// force frame_stripping off - database takes precedence
-		Settings.enable_frame_stripping = false;
-// @third party code - Epic Games End
-	}
-
 	acl::output_stats Stats;
 	acl::compressed_tracks* CompressedTracks = nullptr;
 	const acl::error_result CompressionResult = acl::compress_track_list(ACLAllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, Stats);
-
-// @third party code - Epic Games Begin
-	if (CompressionResult.empty() && CompressedTracks)
-	{
-		// remove frames and recreate compressed tracks
-		if (Settings.enable_frame_stripping)
-		{
-			// Calculate how many frames are removable
-			// A frame is removable if it isn't the first or last frame of a segment
-			const uint32_t num_frames = acl::acl_impl::calculate_num_frames(&CompressedTracks, 1);
-			if (num_frames != 0)
-			{
-				const uint32_t num_movable_frames = acl::acl_impl::calculate_num_movable_frames(&CompressedTracks, 1);
-				ACL_ASSERT(num_movable_frames < num_frames, "Can not move out more frames than we have");
-
-				acl::acl_impl::frame_assignment_context context(ACLAllocatorImpl, &CompressedTracks, 1, num_movable_frames);
-
-				uint32_t num_frames_to_strip = 0;
-				if (Settings.frame_stripping_use_proportion)
-				{
-					num_frames_to_strip = std::min<uint32_t>(num_movable_frames, uint32_t(Settings.frame_stripping_proportion * float(num_frames)));
-				}
-				else
-				{
-					num_frames_to_strip = std::min<uint32_t>(num_movable_frames, context.get_num_frames_within_distance_error(Settings.frame_stripping_error_distance));
-				}
-
-				// Non-movable frames end up being high importance and remain in the compressed clip
-				// Set the number of frames in the low_importance tier to the number of frames we're stripping out
-				const uint32_t num_low_importance_frames = num_frames_to_strip;
-				const uint32_t num_medium_importance_frames = 0;
-				const uint32_t num_high_importance_frames = num_frames - num_frames_to_strip;
-
-
-				context.set_tier_num_frames(acl::quality_tier::highest_importance, num_high_importance_frames);
-				context.set_tier_num_frames(acl::quality_tier::medium_importance, num_medium_importance_frames);
-				context.set_tier_num_frames(acl::quality_tier::lowest_importance, num_low_importance_frames);
-
-				// Assign every frame to its tier
-				float worst_error = acl::acl_impl::assign_frames_to_tiers(context);
-				UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Frame Removal removed: %d frames out of %d with highest error at %g [%s]"), num_frames_to_strip, num_frames, worst_error, *CompressibleAnimData.FullName);
-
-				acl::compressed_tracks* CompressedTracksFrameStripped[1] = {};
-				// Build our new compressed track instances with the high importance tier data
-				acl::acl_impl::build_compressed_tracks(context, CompressedTracksFrameStripped);
-
-				// replace CompressedTracks with CompressedTracksFrameStripped:
-				ACLAllocatorImpl.deallocate(CompressedTracks, CompressedTracks->get_size());
-				CompressedTracks = CompressedTracksFrameStripped[0];
-			}
-		}
-		else //  If we aren't removing any frames, check that we are within the error threshold
-		{
-			// Make sure if we managed to compress, that the error is acceptable and if it isn't, re-compress again with safer settings
-			// This should be VERY rare with the default threshold
-			const ACLSafetyFallbackResult FallbackResult = ExecuteSafetyFallback(ACLAllocatorImpl, Settings, ACLTracks, ACLBaseTracks, *CompressedTracks, CompressibleAnimData, OutResult);
-			if (FallbackResult != ACLSafetyFallbackResult::Ignored)
-			{
-				ACLAllocatorImpl.deallocate(CompressedTracks, CompressedTracks->get_size());
-				CompressedTracks = nullptr;
-
-				return FallbackResult == ACLSafetyFallbackResult::Success;
-			}
-		}
-	}
-// @third party code - Epic Games End
 
 	if (!CompressionResult.empty() || CompressedTracks == nullptr)
 	{
@@ -314,57 +277,55 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 		return false;
 	}
 
-	if (CompressedTracks)
-	{
-		checkSlow(CompressedTracks->is_valid(true).empty());
+	checkSlow(CompressedTracks->is_valid(true).empty());
 
-		const uint32 CompressedClipDataSize = CompressedTracks->get_size();
+	const uint32 CompressedClipDataSize = CompressedTracks->get_size();
 
-		OutResult.CompressedByteStream.Empty(CompressedClipDataSize);
-		OutResult.CompressedByteStream.AddUninitialized(CompressedClipDataSize);
-		FMemory::Memcpy(OutResult.CompressedByteStream.GetData(), CompressedTracks, CompressedClipDataSize);
+	OutResult.CompressedByteStream.Empty(CompressedClipDataSize);
+	OutResult.CompressedByteStream.AddUninitialized(CompressedClipDataSize);
+	FMemory::Memcpy(OutResult.CompressedByteStream.GetData(), CompressedTracks, CompressedClipDataSize);
 
-		OutResult.Codec = this;
+	OutResult.Codec = this;
 
-		OutResult.AnimData = AllocateAnimData();
-		OutResult.AnimData->CompressedNumberOfKeys = CompressibleAnimData.NumberOfKeys;
+	OutResult.AnimData = AllocateAnimData();
+
+	OutResult.AnimData->CompressedNumberOfKeys = GetNumSamples(CompressibleAnimData);
 
 #if !NO_LOGGING
-		{
-			acl::decompression_context<UE4DebugDBDecompressionSettings> Context;
-			Context.initialize(*CompressedTracks);
+	{
+		// Use debug settings in case codec picked is the fallback
+		acl::decompression_context<UE4DebugDecompressionSettings> Context;
+		Context.initialize(*CompressedTracks);
 
-			const acl::track_error TrackError = acl::calculate_compression_error(ACLAllocatorImpl, ACLTracks, Context, *Settings.error_metric, ACLBaseTracks);
+		const acl::track_error TrackError = acl::calculate_compression_error(ACLAllocatorImpl, ACLTracks, Context, *Settings.error_metric, ACLBaseTracks);
 
-			UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation compressed size: %u bytes [%s]"), CompressedClipDataSize, *CompressibleAnimData.FullName);
-			UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation error: %.4f cm (bone %u @ %.3f) [%s]"), TrackError.error, TrackError.index, TrackError.sample_time, *CompressibleAnimData.FullName);
-		}
+		UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation compressed size: %u bytes [%s]"), CompressedClipDataSize, *CompressibleAnimData.FullName);
+		UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation error: %.4f cm (bone %u @ %.3f) [%s]"), TrackError.error, TrackError.index, TrackError.sample_time, *CompressibleAnimData.FullName);
+	}
 #endif
 
-		ACLAllocatorImpl.deallocate(CompressedTracks, CompressedClipDataSize);
+	ACLAllocatorImpl.deallocate(CompressedTracks, CompressedClipDataSize);
 
-		if (bUseStreamingDatabase)
-		{
-			RegisterWithDatabase(CompressibleAnimData, OutResult);
-		}
+	// Allow codecs to override final anim data and result
+	PostCompression(CompressibleAnimData, OutResult);
 
-		// Bind our compressed sequence data buffer
-		OutResult.AnimData->Bind(OutResult.CompressedByteStream);
-	}
+	// Bind our compressed sequence data buffer
+	OutResult.AnimData->Bind(OutResult.CompressedByteStream);
 
 	return true;
 }
 
-// @third party code - Epic Games Begin
+// TODO: Use CompressibleAnimData::RefLocalPoses for bind pose instance of BoneData
+
 void UAnimBoneCompressionCodec_ACLBase::PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar)
 {
 	Super::PopulateDDCKey(KeyArgs, Ar);
-// @third party code - Epic Games End
 
-	uint32 ForceRebuildVersion = 2;
+	uint32 ForceRebuildVersion = 18;
 
 	Ar << ForceRebuildVersion << DefaultVirtualVertexDistance << SafeVirtualVertexDistance << ErrorThreshold;
 	Ar << CompressionLevel;
+	Ar << PhantomTrackMode;
 
 	// Add the end effector match name list since if it changes, we need to re-compress
 	const TArray<FString>& KeyEndEffectorsMatchNameArray = UAnimationSettings::Get()->KeyEndEffectorsMatchNameArray;
@@ -373,6 +334,60 @@ void UAnimBoneCompressionCodec_ACLBase::PopulateDDCKey(const UE::Anim::Compressi
 		uint32 MatchNameHash = GetTypeHash(MatchName);
 		Ar << MatchNameHash;
 	}
+
+	// Additive sequences use the additive identity as their bind pose, no need for stripping
+	if (!KeyArgs.AnimSequence.IsValidAdditive())
+	{
+		// When bind pose stripping is enabled, we have to include the bind pose in the DDC key.
+		// If a sequence is compressed with bind pose A, and we strip a few bones and later modify the bind pose,
+		// bind pose B might now contain values that would not be stripped in our sequence.
+		// To avoid data being stale, the DDC must reflect this.
+
+		// TODO: It would be nice if Epic provided a GUID for the bind pose uniqueness to speed this up
+
+		const USkeleton* Skeleton = KeyArgs.AnimSequence.GetSkeleton();
+		const TArray<FTransform>& BindPose = Skeleton->GetRefLocalPoses();
+		for (const FTransform& BoneBindTransform : BindPose)
+		{
+			// The bind pose never has scale, or none that we use
+
+			FQuat Rotation = BoneBindTransform.GetRotation();
+			Ar << Rotation;
+
+			FVector Translation = BoneBindTransform.GetTranslation();
+			Ar << Translation;
+		}
+	}
+}
+
+int64 UAnimBoneCompressionCodec_ACLBase::EstimateCompressionMemoryUsage(const UAnimSequence& AnimSequence) const
+{
+	const int64 AnimSeqRawSize = AnimSequence.GetApproxRawSize();
+
+	int64 EstimatedMemoryUsage = 0;
+	EstimatedMemoryUsage += AnimSeqRawSize;	// We copy the raw data into the ACL format
+
+	if (AnimSequence.IsValidAdditive())
+	{
+		if (AnimSequence.RefPoseSeq)
+		{
+			// We copy the additive base into the ACL format
+			EstimatedMemoryUsage += AnimSequence.RefPoseSeq->GetApproxRawSize();
+		}
+		else
+		{
+			// We create the additive base in the ACL format, we use the same estimate as FAnimationSequenceAsyncCacheTask::GetRequiredMemoryEstimate()
+			EstimatedMemoryUsage += AnimSeqRawSize;
+		}
+	}
+
+	EstimatedMemoryUsage *= 2;	// Internally, ACL copies the raw data into a different format than the input because the input is not modified
+
+	EstimatedMemoryUsage += AnimSeqRawSize;	// ACL keeps a mutable copy of the lossy data that it modifies during compression
+	EstimatedMemoryUsage += AnimSeqRawSize;	// ACL will allocate the output buffer, assume that it's as large as the raw data
+	EstimatedMemoryUsage += 100 * 1024;		// Reserve 100 KB for internal bookkeeping and other required metadata
+
+	return EstimatedMemoryUsage;
 }
 
 ACLSafetyFallbackResult UAnimBoneCompressionCodec_ACLBase::ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
@@ -409,4 +424,3 @@ void UAnimBoneCompressionCodec_ACLBase::ByteSwapOut(ICompressedAnimData& AnimDat
 	// TODO: ACL does not support byte swapping
 	MemoryStream.Serialize(CompressedData.GetData(), CompressedData.Num());
 }
-

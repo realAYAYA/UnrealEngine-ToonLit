@@ -68,7 +68,7 @@ inline TArray<FVec3> CleanCollisionParticles(
 	}
 
 	// Shrink the array, if appropriate
-	Points.SetNum(Points.Num(), true);
+	Points.SetNum(Points.Num(), EAllowShrinking::Yes);
 	return Points;
 }
 

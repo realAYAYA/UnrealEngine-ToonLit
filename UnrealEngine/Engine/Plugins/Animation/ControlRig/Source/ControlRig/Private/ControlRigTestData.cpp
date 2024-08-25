@@ -2,6 +2,7 @@
 
 #include "ControlRigTestData.h"
 #include "ControlRig.h"
+#include "ControlRigObjectVersion.h"
 #include "HAL/PlatformTime.h"
 #if WITH_EDITOR
 #include "AssetToolsModule.h"
@@ -146,8 +147,32 @@ bool FControlRigTestDataFrame::RestoreVariables(UControlRig* InControlRig) const
 
 void UControlRigTestData::Serialize(FArchive& Ar)
 {
+	Ar.UsingCustomVersion(FControlRigObjectVersion::GUID);	
 	UObject::Serialize(Ar);
 	LastFrameIndex = INDEX_NONE;
+
+	// If pose is older than RigPoseWithParentKey, set the active parent of all poses to invalid key
+	if (GetLinkerCustomVersion(FControlRigObjectVersion::GUID) < FControlRigObjectVersion::RigPoseWithParentKey)
+	{
+		for (FRigPoseElement& Element : Initial.Pose)
+		{
+			Element.ActiveParent = FRigElementKey();
+		}
+		for (FControlRigTestDataFrame& Frame : InputFrames)
+		{
+			for (FRigPoseElement& Element : Frame.Pose)
+			{
+				Element.ActiveParent = FRigElementKey();
+			}
+		}
+		for (FControlRigTestDataFrame& Frame : OutputFrames)
+		{
+			for (FRigPoseElement& Element : Frame.Pose)
+			{
+				Element.ActiveParent = FRigElementKey();
+			}
+		}
+	}
 }
 
 UControlRigTestData* UControlRigTestData::CreateNewAsset(FString InDesiredPackagePath, FString InBlueprintPathName)
@@ -266,8 +291,10 @@ bool UControlRigTestData::Record(UControlRig* InControlRig, double InRecordingDu
 			const double TimeDelta = TimeNow - TimeAtStartOfRecording;
 			if(DesiredRecordingDuration <= TimeDelta)
 			{
-				ClearDelegates(InControlRig);
 				DesiredRecordingDuration = 0.0;
+
+				// Once clear delegates is called, we no longer have access to this pointer
+				ClearDelegates(InControlRig);
 			}
 		}
 	);

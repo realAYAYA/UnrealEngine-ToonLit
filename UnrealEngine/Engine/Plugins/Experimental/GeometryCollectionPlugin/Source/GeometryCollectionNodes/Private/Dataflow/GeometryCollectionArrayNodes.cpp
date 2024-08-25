@@ -390,7 +390,7 @@ void FRemoveFloatArrayElementDataflowNode::Evaluate(Dataflow::FContext& Context,
 			}
 			else
 			{
-				Array.RemoveAtSwap(Index, 1, false);
+				Array.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 
 			SetValue(Context, Array, &FloatArray);

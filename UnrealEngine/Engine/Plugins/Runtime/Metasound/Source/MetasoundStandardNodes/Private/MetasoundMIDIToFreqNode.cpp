@@ -64,9 +64,9 @@ namespace Metasound
 
 		static const FNodeClassMetadata& GetNodeInfo();
 		static const FVertexInterface& GetVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
-		TMidiToFreqOperator(const FCreateOperatorParams& InParams, const TDataReadReference<ValueType>& InMidiNote);
+		TMidiToFreqOperator(const FBuildOperatorParams& InParams, const TDataReadReference<ValueType>& InMidiNote);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
 		virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override;
@@ -87,7 +87,7 @@ namespace Metasound
 	};
 
 	template<typename ValueType>
-	TMidiToFreqOperator<ValueType>::TMidiToFreqOperator(const FCreateOperatorParams& InParams, const TDataReadReference<ValueType>& InMidiNote)
+	TMidiToFreqOperator<ValueType>::TMidiToFreqOperator(const FBuildOperatorParams& InParams, const TDataReadReference<ValueType>& InMidiNote)
 		: MidiNote(InMidiNote)
 		, FreqOutput(FFloatWriteRef::CreateNew(Audio::GetFrequencyFromMidi(*InMidiNote)))
 		, PrevMidiNote(*InMidiNote)
@@ -199,14 +199,12 @@ namespace Metasound
 	}
 
 	template<typename ValueType>
-	TUniquePtr<IOperator> TMidiToFreqOperator<ValueType>::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> TMidiToFreqOperator<ValueType>::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
 		using namespace MidiToFrequencyVertexNames;
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-		const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
-
-		TDataReadReference<ValueType> InMidiNote = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<ValueType>(InputInterface, METASOUND_GET_PARAM_NAME(InputMidi), InParams.OperatorSettings);
+		TDataReadReference<ValueType> InMidiNote = InputData.GetOrCreateDefaultDataReadReference<ValueType>(METASOUND_GET_PARAM_NAME(InputMidi), InParams.OperatorSettings);
 
 		return MakeUnique<TMidiToFreqOperator>(InParams, InMidiNote);
 	}

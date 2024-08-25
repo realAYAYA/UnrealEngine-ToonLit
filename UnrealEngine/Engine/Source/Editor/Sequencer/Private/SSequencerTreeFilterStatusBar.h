@@ -21,6 +21,12 @@ public:
 	/** Update the filter text to represent the current filter states in the tree */
 	void UpdateText();
 
+	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
+
+	void ShowStatusBar();
+	void HideStatusBar();
+	void FadeOutStatusBar();
+
 private:
 
 	/** Request the visibility of the clear hyperlink widget based on whether there's a filter active or not */
@@ -33,4 +39,5 @@ private:
 
 	TWeakPtr<FSequencer> WeakSequencer;
 	TSharedPtr<STextBlock> TextBlock;
+	double OpacityThrobEndTime = 0;
 };

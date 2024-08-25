@@ -59,11 +59,7 @@ public:
 	static ENGINE_API uint32 GetCRC(UStaticMeshComponent* InComponent, uint32 InCRC = 0, const FTransform& TransformComponents = FTransform::Identity);
 
 	ENGINE_API virtual void PostLoad() override;
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // Suppress compiler warning on override of deprecated function
-	UE_DEPRECATED(5.0, "Use version that takes FObjectPreSaveContext instead.")
-	ENGINE_API virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
-	ENGINE_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
+	ENGINE_API virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 
 	/** Returns true if proxy doesn't contain any mesh entry. */
 	ENGINE_API bool IsEmpty() const;

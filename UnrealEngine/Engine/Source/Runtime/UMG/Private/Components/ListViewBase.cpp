@@ -90,6 +90,15 @@ void UListViewBase::SetScrollbarVisibility(ESlateVisibility InVisibility)
 	}
 }
 
+UMG_API void UListViewBase::SetIsPointerScrollingEnabled(bool bInIsPointerScrollingEnabled)
+{
+	bIsPointerScrollingEnabled = bInIsPointerScrollingEnabled;
+	if (MyTableViewBase)
+	{
+		MyTableViewBase->SetIsPointerScrollingEnabled(bInIsPointerScrollingEnabled);
+	}
+}
+
 const TArray<UUserWidget*>& UListViewBase::GetDisplayedEntryWidgets() const
 { 
 	return EntryWidgetPool.GetActiveWidgets(); 
@@ -136,7 +145,10 @@ TSharedRef<SWidget> UListViewBase::RebuildWidget()
 
 	MyTableViewBase = RebuildListWidget();
 	MyTableViewBase->SetIsScrollAnimationEnabled(bEnableScrollAnimation);
+	MyTableViewBase->SetEnableTouchAnimatedScrolling(bInEnableTouchAnimatedScrolling);
 	MyTableViewBase->SetIsRightClickScrollingEnabled(bEnableRightClickScrolling);
+	MyTableViewBase->SetIsTouchScrollingEnabled(bEnableTouchScrolling);
+	MyTableViewBase->SetIsPointerScrollingEnabled(bIsPointerScrollingEnabled);
 	MyTableViewBase->SetFixedLineScrollOffset(bEnableFixedLineOffset ? TOptional<double>(FixedLineScrollOffset) : TOptional<double>());
 	MyTableViewBase->SetWheelScrollMultiplier(GetGlobalScrollAmount() * WheelScrollMultiplier);
 
@@ -159,7 +171,10 @@ void UListViewBase::SynchronizeProperties()
 	if (MyTableViewBase)
 	{
 		MyTableViewBase->SetIsScrollAnimationEnabled(bEnableScrollAnimation);
+		MyTableViewBase->SetEnableTouchAnimatedScrolling(bInEnableTouchAnimatedScrolling);
 		MyTableViewBase->SetIsRightClickScrollingEnabled(bEnableRightClickScrolling);
+		MyTableViewBase->SetIsTouchScrollingEnabled(bEnableTouchScrolling);
+		MyTableViewBase->SetIsPointerScrollingEnabled(bIsPointerScrollingEnabled);
 		MyTableViewBase->SetAllowOverscroll(AllowOverscroll ? EAllowOverscroll::Yes : EAllowOverscroll::No);
 		MyTableViewBase->SetFixedLineScrollOffset(bEnableFixedLineOffset ? TOptional<double>(FixedLineScrollOffset) : TOptional<double>());
 		MyTableViewBase->SetWheelScrollMultiplier(GetGlobalScrollAmount() * WheelScrollMultiplier);

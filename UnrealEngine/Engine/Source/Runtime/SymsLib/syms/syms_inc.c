@@ -14,7 +14,9 @@
 #include "syms/core/syms_eval.c"
 
 // "windows related" formats
+#include "syms/core/pe/syms_coff.c"
 #include "syms/core/pe/syms_pe.c"
+#include "syms/core/pdb/syms_cv.c"
 #include "syms/core/pdb/syms_pdb.c"
 
 // "linux related" foramts
@@ -25,7 +27,10 @@
 #include "syms/core/mach/syms_mach.c"
 
 // "windows related" parsers
+#include "syms/core/pe/syms_pecoff_helpers.c"
 #include "syms/core/pe/syms_pe_parser.c"
+#include "syms/core/pdb/syms_msf_parser.c"
+#include "syms/core/pdb/syms_cv_helpers.c"
 #include "syms/core/pdb/syms_pdb_parser.c"
 
 // "mach-o related" parsers
@@ -42,6 +47,7 @@
 #include "syms/core/syms_parser_invariants.c"
 #include "syms/core/data_structures/syms_data_structures.c"
 #include "syms/core/group/syms_type_graph.c"
+#include "syms/core/group/syms_functions.c"
 #include "syms/core/group/syms_group.c"
 #include "syms/core/file_inf/syms_file_inf.c"
 

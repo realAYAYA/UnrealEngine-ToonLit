@@ -11,6 +11,8 @@ using namespace UE::Geometry;
 
 FMeshShapeGenerator& FStairGenerator::Generate()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(StairGenerator_Generate);
+	
 	ResetData();
 
 	switch (StairStyle)

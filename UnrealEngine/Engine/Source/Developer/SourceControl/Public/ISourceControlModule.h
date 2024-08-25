@@ -21,6 +21,9 @@ SOURCECONTROL_API DECLARE_LOG_CATEGORY_EXTERN(LogSourceControl, Log, All);
 /** Delegate called when the source control login window is closed. Parameter determines if source control is enabled or not */
 DECLARE_DELEGATE_OneParam( FSourceControlLoginClosed, bool );
 
+/** Delegate called when the active source control provider is changing. Returns false if the operation is to be aborted */
+DECLARE_DELEGATE_RetVal(bool, FSourceControlProviderChanging);
+
 /** Delegate called when the active source control provider is changed */
 DECLARE_MULTICAST_DELEGATE_TwoParams( FSourceControlProviderChanged, ISourceControlProvider& /*OldProvider*/, ISourceControlProvider& /*NewProvider*/ );
 
@@ -177,6 +180,11 @@ public:
 	 */
 	virtual void SetUseGlobalSettings(bool bIsUseGlobalSettings) = 0;
 
+	/**
+	 * Retrieve a reference to a delegate to be called before the source control provider changes
+	 */
+	virtual FSourceControlProviderChanging& GetSourceControlProviderChanging() = 0;
+	
 	/**
 	 * Register a delegate to be called when the source control provider changes
 	 */

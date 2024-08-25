@@ -12,11 +12,11 @@ import { GetJobStepRefResponse, JobStepOutcome } from "../../backend/Api";
 import dashboard, { StatusColor } from "../../backend/Dashboard";
 import { ISideRailLink } from "../../base/components/SideRail";
 import { displayTimeZone, getElapsedString, getHumanTime, msecToElapsed } from "../../base/utilities/timeUtils";
-import { hordeClasses, modeColors } from "../../styles/Styles";
 import { ChangeButton } from "../ChangeButton";
 import { HistoryModal } from "../HistoryModal";
 import { StepRefStatusIcon } from "../StatusIcon";
 import { JobDataView, JobDetailsV2 } from "./JobDetailsViewCommon";
+import { getHordeStyling } from "../../styles/Styles";
 
 const sideRail: ISideRailLink = { text: "History", url: "rail_step_history" };
 
@@ -357,10 +357,12 @@ class StepHistoryRenderer {
 
       svg.attr("viewBox", [0, 0, width, height] as any);
 
+      /*
       svg.append("rect")
          .attr("width", "100%")
          .attr("height", "100%")
          .attr("fill", modeColors.background);
+      */
 
       const clipId = `step_history_clip`;
 
@@ -592,6 +594,8 @@ class StepHistoryRenderer {
 
 const GraphTooltip: React.FC<{ dataView: StepHistoryDataView }> = observer(({ dataView }) => {
 
+   const { modeColors } = getHordeStyling();
+
    // subscribe
    if (dataView.tooltip.updated) { }
 
@@ -679,6 +683,8 @@ const StepHistoryGraph: React.FC<{ dataView: StepHistoryDataView }> = ({ dataVie
    const [container, setContainer] = useState<HTMLDivElement | null>(null);
    const [state, setState] = useState<{ graph?: StepHistoryRenderer }>({});
 
+   const { hordeClasses, modeColors } = getHordeStyling();
+
    if (!state.graph) {
       setState({ ...state, graph: new StepHistoryRenderer(dataView) })
       return null;
@@ -721,6 +727,8 @@ export const StepHistoryPanelV2: React.FC<{ jobDetails: JobDetailsV2; stepId: st
    }, [dataView]);
 
    dataView.subscribe();
+
+   const { hordeClasses } = getHordeStyling();
 
    if (!jobDetails.jobData) {
       return null;

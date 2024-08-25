@@ -6,12 +6,6 @@
 
 #include "LearningAgentsNeuralNetwork.generated.h"
 
-namespace UE::Learning
-{
-	struct FNeuralNetwork;
-	enum class EActivationFunction : uint8;
-}
-
 /** Activation functions for neural networks. */
 UENUM(BlueprintType, Category = "LearningAgents")
 enum class ELearningAgentsActivationFunction : uint8
@@ -26,14 +20,7 @@ enum class ELearningAgentsActivationFunction : uint8
 	TanH	UMETA(DisplayName = "TanH"),
 };
 
-namespace UE::Learning::Agents
-{
-	/** Get the learning agents activation function from the UE::Learning activation function. */
-	LEARNINGAGENTS_API ELearningAgentsActivationFunction GetLearningAgentsActivationFunction(const EActivationFunction ActivationFunction);
-
-	/** Get the UE::Learning activation function from the learning agents activation function. */
-	LEARNINGAGENTS_API EActivationFunction GetActivationFunction(const ELearningAgentsActivationFunction ActivationFunction);
-}
+class ULearningNeuralNetworkData;
 
 /** A neural network data asset. */
 UCLASS(BlueprintType)
@@ -47,17 +34,13 @@ public:
 	ULearningAgentsNeuralNetwork(FVTableHelper& Helper);
 	virtual ~ULearningAgentsNeuralNetwork();
 
-	/** Serialize this neural network to/from the given archive. */
-	virtual void Serialize(FArchive& Ar) override;
-
-	/**
-	 * Resets this network asset to be empty.
-	 */
+	/** Resets this network asset to be empty. */
 	UFUNCTION(CallInEditor, Category = "LearningAgents")
 	void ResetNetwork();
 
 	/**
 	 * Load this network from a snapshot.
+	 * 
 	 * @param File The snapshot file.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (RelativePath))
@@ -65,23 +48,26 @@ public:
 
 	/**
 	 * Save this network into a snapshot.
+	 * 
 	 * @param File The snapshot file.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (RelativePath))
 	void SaveNetworkToSnapshot(const FFilePath& File);
 
 	/**
-	 * Copy another asset's network weights into this network. Network sizes must match.
+	 * Copy another asset into this network.
+	 * 
 	 * @param NeuralNetworkAsset The asset to load from.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
 	void LoadNetworkFromAsset(ULearningAgentsNeuralNetwork* NeuralNetworkAsset);
 
 	/**
-	 * Copy this network's weights to another asset. Network sizes must match.
+	 * Copy this network into another asset.
+	 * 
 	 * @param NeuralNetworkAsset The asset to save to.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", Meta = (DevelopmentOnly))
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
 	void SaveNetworkToAsset(ULearningAgentsNeuralNetwork* NeuralNetworkAsset);
 
 public:
@@ -91,6 +77,7 @@ public:
 
 public:
 
-	/** Pointer to the internal Neural Network Data */
-	TSharedPtr<UE::Learning::FNeuralNetwork> NeuralNetwork;
+	/** The internal Neural Network Data */
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "LearningAgents");
+	TObjectPtr<ULearningNeuralNetworkData> NeuralNetworkData;
 };

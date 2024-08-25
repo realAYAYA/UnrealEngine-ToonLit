@@ -3,7 +3,7 @@ using UnrealBuildTool;
 
 public class DX9 : ModuleRules
 {
-	protected virtual string LibDir { get => (Target.Platform == UnrealTargetPlatform.Win64) ? DirectX.GetLibDir(Target) : null; }
+	protected virtual string LibDir { get => (Target.Platform == UnrealTargetPlatform.Win64) ? Target.WindowsPlatform.DirectXLibDir : null; }
 
 	public DX9(ReadOnlyTargetRules Target) : base(Target)
 	{

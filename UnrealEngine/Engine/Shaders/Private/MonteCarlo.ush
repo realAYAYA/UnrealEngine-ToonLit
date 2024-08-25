@@ -362,7 +362,16 @@ float4 ImportanceSampleGGX( float2 E, float a2 )
 	return float4( H, PDF );
 }
 
-float VisibleGGXPDF(float3 V, float3 H, float a2)
+#ifndef GGX_BOUNDED_VNDF_SAMPLING
+// "Bounded VNDF Sampling for Smith–GGX Reflections"
+// Kenta Eto & Yusuke Tokuyoshi - Siggraph Asia 2023
+// This paper further improves the method of Dupuy and Benyoub in the case where the microfacet normal is used for reflection only.
+// It allows many fewer rays to be rejected at high roughness which improves quality. This is particularly noticeable
+// in multi-bounce reflections of rough metals because longer paths can be followed without early termination.
+#define GGX_BOUNDED_VNDF_SAMPLING 1
+#endif
+
+float VisibleGGXPDF(float3 V, float3 H, float a2, bool bLimitVDNFToReflection = true)
 {
 	float NoV = V.z;
 	float NoH = H.z;
@@ -370,12 +379,20 @@ float VisibleGGXPDF(float3 V, float3 H, float a2)
 
 	float d = (NoH * a2 - NoH) * NoH + 1;
 	float D = a2 / (PI*d*d);
-
-	float PDF = 2 * VoH * D / (NoV + sqrt(NoV * (NoV - NoV * a2) + a2));
+	float k = 1.0;
+#if GGX_BOUNDED_VNDF_SAMPLING
+	if (bLimitVDNFToReflection)
+	{
+		float s = 1.0f + length(V.xy);
+		float s2 = s * s;
+		k = (s2 - a2 * s2) / (s2 + a2 * V.z * V.z); // Eq. 5
+	}
+#endif
+	float PDF = 2 * VoH * D / (k * NoV + sqrt(NoV * (NoV - NoV * a2) + a2));
 	return PDF;
 }
 
-float VisibleGGXPDF_aniso(float3 V, float3 H, float2 Alpha)
+float VisibleGGXPDF_aniso(float3 V, float3 H, float2 Alpha, bool bLimitVDNFToReflection = true)
 {
 	float NoV = V.z;
 	float NoH = H.z;
@@ -385,42 +402,48 @@ float VisibleGGXPDF_aniso(float3 V, float3 H, float2 Alpha)
 	float S = dot(Hs, Hs);
 	float D = (1.0f / PI) * a2 * Square(a2 / S);
 	float LenV = length(float3(V.x * Alpha.x, V.y * Alpha.y, NoV));
-	float Pdf = (2 * D * VoH) / (NoV + LenV);
+	float k = 1.0;
+#if GGX_BOUNDED_VNDF_SAMPLING
+	if (bLimitVDNFToReflection)
+	{
+		float a = saturate(min(Alpha.x, Alpha.y));
+		float s = 1.0f + length(V.xy);
+		float ka2 = a * a, s2 = s * s;
+		k = (s2 - ka2 * s2) / (s2 + ka2 * V.z * V.z); // Eq. 5
+	}
+#endif
+	float Pdf = (2 * D * VoH) / (k * NoV + LenV);
 	return Pdf;
 }
 
 // PDF = G_SmithV * VoH * D / NoV / (4 * VoH)
 // PDF = G_SmithV * D / (4 * NoV)
-float4 ImportanceSampleVisibleGGX(float2 E, float2 Alpha, float3 V)
+float4 ImportanceSampleVisibleGGX(float2 E, float2 Alpha, float3 V, bool bLimitVDNFToReflection = true)
 {
 	// stretch
 	float3 Vh = normalize(float3(Alpha * V.xy, V.z));
 
-#if 0
-	// [ Heitz 2018, "Sampling the GGX Distribution of Visible Normals" ]
-	// http://jcgt.org/published/0007/04/01/
-
-	// Stable tangent basis based on V
-	float LenSq = Vh.x * Vh.x + Vh.y * Vh.y;
-	float3 Tx = LenSq > 0 ? float3(-Vh.y, Vh.x, 0) * rsqrt(LenSq) : float3(1, 0, 0);
-	float3 Ty = cross(Vh, Tx);
-
-	// #dxr_todo: Evaluate UniformSampleDiskConcentric
-	float2 p = UniformSampleDisk(E);
-	float s = 0.5 + 0.5 * Vh.z;
-	p.y = lerp(sqrt(1 - p.x * p.x), p.y, s);
-
-	float3 H = p.x * Tx + p.y * Ty + sqrt(saturate(1 - dot(p, p))) * Vh;
-#else
 	// "Sampling Visible GGX Normals with Spherical Caps"
 	// Jonathan Dupuy & Anis Benyoub - High Performance Graphics 2023
 	float Phi = (2 * PI) * E.x;
-	float Z = lerp(-Vh.z, 1.0, E.y);
+	float k = 1.0;
+#if GGX_BOUNDED_VNDF_SAMPLING
+	if (bLimitVDNFToReflection)
+	{
+		// If we know we will be reflecting the view vector around the sampled micronormal, we can
+		// tweak the range a bit more to eliminate some of the vectors that will point below the horizon
+		float a = saturate(min(Alpha.x, Alpha.y));
+		float s = 1.0 + length(V.xy);
+		float a2 = a * a, s2 = s * s;
+		k = (s2 - a2 * s2) / (s2 + a2 * V.z * V.z);
+	}
+#endif
+	float Z = lerp(1.0, -k * Vh.z, E.y);
 	float SinTheta = sqrt(saturate(1 - Z * Z));
 	float X = SinTheta * cos(Phi);
 	float Y = SinTheta * sin(Phi);
 	float3 H = float3(X, Y, Z) + Vh;
-#endif
+
 	// unstretch
 	H = normalize(float3(Alpha * H.xy, max(0.0, H.z)));
 

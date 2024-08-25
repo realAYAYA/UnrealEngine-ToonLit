@@ -3,8 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DSP/AlignedBuffer.h"
 #include "DSP/Dsp.h"
-#include "DSP/WaveTableOsc.h"
 
 namespace Audio
 {
@@ -16,13 +16,14 @@ namespace Audio
 		SIGNALPROCESSING_API FDelay();
 
 		// Virtual Destructor
-		SIGNALPROCESSING_API virtual ~FDelay();
+		SIGNALPROCESSING_API virtual ~FDelay() = default;
 
-	public:
 		// Initialization of the delay with given sample rate and max buffer size in samples.
+		// (calls Reset())
 		SIGNALPROCESSING_API void Init(const float InSampleRate, const float InBufferLengthSec = 2.0f);
 
 		// Resets the delay line state, flushes buffer and resets read/write pointers.
+		// (called by Init())
 		SIGNALPROCESSING_API void Reset();
 
 		// Sets the delay line length. Will clamp to within range of the max initialized delay line length (won't resize).
@@ -55,13 +56,17 @@ namespace Audio
 		// Process audio in the delay line, return the delayed value
 		SIGNALPROCESSING_API virtual float ProcessAudioSample(const float InAudio);
 
-	protected:
+		SIGNALPROCESSING_API virtual void ProcessAudioBuffer(const float* InAudio, int32 InNumSamples, float* OutAudio);
 
+	protected:
 		// Updates delay line based on any recent changes to settings
 		SIGNALPROCESSING_API void Update(bool bForce = false);
 
+		// Updates delay line based on any recent changes to settings
+		SIGNALPROCESSING_API void ResizeIfNeeded(const int32 InNewNumSamples);
+
 		// Pointer to the circular buffer of audio.
-		float* AudioBuffer;
+		FAlignedFloatBuffer AudioBuffer;
 
 		// Max length of buffer (in samples)
 		int32 AudioBufferSize;
@@ -77,6 +82,9 @@ namespace Audio
 
 		// Delay in samples; float supports fractional delay
 		float DelayInSamples;
+
+		// Upper limit of where we will resize the array
+		int32 MaxBufferLengthSamples;
 
 		// Eased delay in msec
 		FExponentialEase EaseDelayMsec;

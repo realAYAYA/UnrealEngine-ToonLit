@@ -19,6 +19,8 @@
 #include "IXRTrackingSystem.h"
 #include "IXRCamera.h"
 #include "Math/UnitConversion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/UE5ReleaseStreamObjectVersion.h"
 #include "UObject/UnrealType.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CameraComponent)
@@ -44,10 +46,15 @@ UCameraComponent::UCameraComponent(const FObjectInitializer& ObjectInitializer)
 
 	FieldOfView = 90.0f;
 	AspectRatio = 1.777778f;
-	OrthoWidth = 512.0f;
-	OrthoNearClipPlane = 0.0f;
-	OrthoFarClipPlane = UE_OLD_WORLD_MAX;
+	OrthoWidth = DEFAULT_ORTHOWIDTH;
+	bAutoCalculateOrthoPlanes = true;
+	AutoPlaneShift = 0.0f;
+	bUpdateOrthoPlanes = true;
+	bUseCameraHeightAsViewTarget = true;
+	OrthoNearClipPlane = DEFAULT_ORTHONEARPLANE;
+	OrthoFarClipPlane = DEFAULT_ORTHOFARPLANE;
 	bConstrainAspectRatio = false;
+	bOverrideAspectRatioAxisConstraint = false;
 	bUseFieldOfViewForLOD = true;
 	PostProcessBlendWeight = 1.0f;
 	bUsePawnControlRotation = false;
@@ -288,6 +295,20 @@ void UCameraComponent::RestoreFrustumColor()
 
 void UCameraComponent::Serialize(FArchive& Ar)
 {
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
+	if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::OrthographicCameraDefaultSettings)
+	{
+		OrthoWidth = 512.0f;
+		OrthoNearClipPlane = 0.0f;
+		OrthoFarClipPlane = UE_OLD_WORLD_MAX;
+	}
+
+	Ar.UsingCustomVersion(FUE5ReleaseStreamObjectVersion::GUID);
+	if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::OrthographicAutoNearFarPlane)
+	{
+		bAutoCalculateOrthoPlanes = false;
+	}
+
 	Super::Serialize(Ar);
 
 	if (Ar.IsLoading())
@@ -401,6 +422,18 @@ void UCameraComponent::GetCameraView(float DeltaTime, FMinimalViewInfo& DesiredV
 	DesiredView.OrthoWidth = OrthoWidth;
 	DesiredView.OrthoNearClipPlane = OrthoNearClipPlane;
 	DesiredView.OrthoFarClipPlane = OrthoFarClipPlane;
+	DesiredView.bAutoCalculateOrthoPlanes = bAutoCalculateOrthoPlanes;
+	DesiredView.AutoPlaneShift = AutoPlaneShift;
+	DesiredView.bUpdateOrthoPlanes = bUpdateOrthoPlanes;
+	DesiredView.bUseCameraHeightAsViewTarget = bUseCameraHeightAsViewTarget;
+	
+	if (bAutoCalculateOrthoPlanes)
+	{
+		if (const AActor* ViewTarget = GetOwner())
+		{
+			DesiredView.SetCameraToViewTarget(ViewTarget->GetActorLocation());
+		}
+	}
 
 	if (bOverrideAspectRatioAxisConstraint)
 	{

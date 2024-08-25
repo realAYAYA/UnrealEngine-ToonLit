@@ -5,11 +5,11 @@
 #include "MuR/Image.h"
 #include "MuR/System.h"
 #include "UObject/GCObject.h"
+#include "Containers/Ticker.h"
+#include "Containers/Map.h"
+#include "Containers/Queue.h"
 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 #include "Tasks/Task.h"
-#else
-#endif
 
 class UTexture2D;
 
@@ -19,14 +19,10 @@ class FUnrealMutableImageProvider : public mu::ImageParameterGenerator, public F
 {
 
 public:
-
 	// mu::ImageParameterGenerator interface
 	// Thread: worker
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 	virtual TTuple<UE::Tasks::FTask, TFunction<void()>> GetImageAsync(FName Id, uint8 MipmapsToSkip, TFunction<void(mu::Ptr<mu::Image>)>& ResultCallback) override;
-#else
-	virtual TTuple<FGraphEventRef, TFunction<void()>> GetImageAsync(FName Id, uint8 MipmapsToSkip, TFunction<void(mu::Ptr<mu::Image>)>& ResultCallback) override;
-#endif
+	virtual TTuple<UE::Tasks::FTask, TFunction<void()>> GetReferencedImageAsync(const void* ModelPtr, int32 Id, uint8 MipmapsToSkip, TFunction<void(mu::Ptr<mu::Image>)>& ResultCallback) override;
 
 	virtual mu::FImageDesc GetImageDesc(FName Id, uint8 MipmapsToSkip) override;
 
@@ -94,4 +90,29 @@ private:
 	/** Access to GlobalExternalImages must be protected with this because it may be accessed concurrently from the 
 	Game thread to modify it and from the Mutable thread to read it. */
 	FCriticalSection ExternalImagesLock;
+
+#if WITH_EDITOR
+public:
+	/** The provider may tick to support referenced images. */
+	bool Tick();
+
+private:
+	struct FReferencedImageRequest
+	{
+		FReferencedImageRequest(const UE::Tasks::FTaskEvent&& Event) : CompletionEvent(Event) {}
+
+		// Sync
+		UE::Tasks::FTaskEvent CompletionEvent;
+
+		// Input
+		int32 Id = 0;
+		uint8 MipmapsToSkip = 0;
+		const void* ModelPtr = nullptr;
+
+		// Result
+		mu::Ptr<mu::Image> ResultImage;
+	};
+	TQueue<FReferencedImageRequest*, EQueueMode::Spsc> QueuedReferencedImageRequests;
+#endif
+
 };

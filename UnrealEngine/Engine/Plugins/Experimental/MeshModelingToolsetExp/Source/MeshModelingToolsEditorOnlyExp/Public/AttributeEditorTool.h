@@ -328,7 +328,7 @@ public:
  * Mesh Attribute Editor Tool
  */
 UCLASS()
-class MESHMODELINGTOOLSEDITORONLYEXP_API UAttributeEditorTool : public UMultiSelectionMeshEditingTool
+class MESHMODELINGTOOLSEDITORONLYEXP_API UAttributeEditorTool : public UMultiSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -345,6 +345,12 @@ public:
 	virtual bool CanAccept() const override { return false; }
 
 	virtual void RequestAction(EAttributeEditorToolActions ActionType);
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 

@@ -75,16 +75,15 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace DiffuserNode;
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
-
-			FAudioBufferReadRef AudioIn = InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
-			FInt32ReadRef DepthIn = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputDiffusionDepth), InParams.OperatorSettings);
-			FFloatReadRef FeedbackIn = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputFeedbackGain), InParams.OperatorSettings);
+			FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
+			FInt32ReadRef DepthIn = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputDiffusionDepth), InParams.OperatorSettings);
+			FFloatReadRef FeedbackIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputFeedbackGain), InParams.OperatorSettings);
 
 			return MakeUnique<FDiffuserOperator>(InParams.OperatorSettings, AudioIn, DepthIn, FeedbackIn);
 		}

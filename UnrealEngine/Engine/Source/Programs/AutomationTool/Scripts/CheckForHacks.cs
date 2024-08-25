@@ -84,7 +84,7 @@ namespace AutomationTool
 			}
 
 			// Scan all of the files for invalid comments
-			Logger.LogInformation("Scanning files...", FilesToCheck.Count);
+			Logger.LogInformation("Scanning files...");
 			using (ThreadPoolWorkQueue Queue = new ThreadPoolWorkQueue())
 			{
 				foreach(FileInfo File in FilesToCheck)

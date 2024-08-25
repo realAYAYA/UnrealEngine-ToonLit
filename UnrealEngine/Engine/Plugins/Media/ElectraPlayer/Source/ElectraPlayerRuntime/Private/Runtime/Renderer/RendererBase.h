@@ -131,7 +131,7 @@ namespace Electra
 		 *
 		 * @return Should be UEMEDIA_ERROR_OK only. Anything else will cause a playback error (like UEMEDIA_ERROR_BAD_ARGUMENTS for bad properties)
 		 */
-		virtual UEMediaError ReturnBuffer(IBuffer* Buffer, bool bRender, const FParamDict& InSampleProperties) = 0;
+		virtual UEMediaError ReturnBuffer(IBuffer* Buffer, bool bRender, FParamDict& InOutSampleProperties) = 0;
 
 		/**
 		 * Informs that the decoder is done with this pool. This only indicates no calls to
@@ -150,6 +150,13 @@ namespace Electra
 		 * @return True if ready, false if decode should be delayed.
 		 */
 		virtual bool CanReceiveOutputFrames(uint64 NumFrames) const = 0;
+
+		/**
+		 * Returns how many frames of ready to use data the renderer has in its queue.
+		 * 
+		 * @return True if information is available, false if not.
+		 */
+		virtual bool GetEnqueuedFrameInfo(int32& OutNumberOfEnqueuedFrames, FTimeValue& OutDurationOfEnqueuedFrames) const = 0;
 
 		//=================================================================================================================
 		// Methods called from the player (and from within the player thread)
@@ -217,6 +224,30 @@ namespace Electra
 		 */
 		virtual void TickOutputBufferPool() {};
 	};
+
+
+	namespace RenderOptionKeys
+	{
+		static const FName ValidityValue(TEXT("$renderVV$"));
+		static const FName Duration(TEXT("duration"));
+		static const FName PTS(TEXT("pts"));
+		static const FName EOSFlag(TEXT("eos"));
+		static const FName DummyBufferFlag(TEXT("is_dummy"));
+
+		static const FName Texture(TEXT("texture"));
+		static const FName AllocatedAddress(TEXT("address"));
+		static const FName AllocatedSize(TEXT("size"));
+
+		static const FName MaxBuffers(TEXT("max_buffers"));
+		static const FName MaxBufferSize(TEXT("max_buffer_size"));
+		static const FName NumBuffers(TEXT("num_buffers"));
+		static const FName UsedByteSize(TEXT("byte_size"));
+
+		static const FName MaxChannels(TEXT("max_channels"));
+		static const FName NumChannels(TEXT("num_channels"));
+		static const FName SamplesPerBlock(TEXT("samples_per_block"));
+		static const FName SampleRate(TEXT("sample_rate"));
+	}
 
 } // namespace Electra
 

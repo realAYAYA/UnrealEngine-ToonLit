@@ -1427,7 +1427,7 @@ void UpdateRadianceCaches(
 
 			if (!Setup.bPersistentCache || !IsValidRef(RadianceCacheState.ProbeAllocator))
 			{
-				FComputeShaderUtils::ClearUAV(GraphBuilder, View.ShaderMap, ProbeAllocatorUAV, 0);
+				AddClearUAVPass(GraphBuilder, ProbeAllocatorUAV, 0);
 			}
 		}
 

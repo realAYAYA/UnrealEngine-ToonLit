@@ -28,6 +28,7 @@
 #include "ContentStreaming.h"
 #include "IAudioProxyInitializer.h"
 #include "IWaveformTransformation.h"
+#include "ISoundWaveCloudStreaming.h"
 #include "Templates/DontCopy.h"
 #include "SoundWave.generated.h"
 
@@ -73,6 +74,9 @@ struct FStreamedAudioChunk
 	/**  returns false if data retrieval failed */
 	bool GetCopy(void** OutChunkData);
 
+	/* Moves the memory out of the byte bulk-data. (Does copy with Discard original) */
+	FBulkDataBuffer<uint8> MoveOutAsBuffer();
+
 	/** Size of the chunk of data in bytes including zero padding */
 	int32 DataSize = 0;
 
@@ -96,6 +100,9 @@ public:
 
 	/** True if this chunk was loaded from a cooked package. */
 	bool bLoadedFromCookedPackage = false;
+
+	/** If marked true, will attempt to inline this chunk. */
+	bool bInlineChunk = false;
 
 	/**
 	 * Place chunk data in the derived data cache associated with the provided
@@ -125,7 +132,7 @@ struct FStreamedAudioPlatformData
 	mutable TDontCopy<FRWLock> AsyncTaskLock;
 	/** Async cache task if one is outstanding. */
 	struct FStreamedAudioAsyncCacheDerivedDataTask* AsyncTask;
-#endif // WITH_EDITORONLY_DATA
+#endif // #if WITH_EDITORONLY_DATA
 
 	/** Default constructor. */
 	ENGINE_API FStreamedAudioPlatformData();
@@ -155,7 +162,7 @@ struct FStreamedAudioPlatformData
 	ENGINE_API void Serialize(FArchive& Ar, class USoundWave* Owner);
 
 #if WITH_EDITORONLY_DATA
-	ENGINE_API void Cache(class USoundWave& InSoundWave, const FPlatformAudioCookOverrides* CompressionOverrides, FName AudioFormatName, uint32 InFlags);
+	ENGINE_API void Cache(class USoundWave& InSoundWave, const FPlatformAudioCookOverrides* CompressionOverrides, FName AudioFormatName, uint32 InFlags, const ITargetPlatform* InTargetPlatform=nullptr);
 	ENGINE_API void FinishCache();
 	ENGINE_API bool IsFinishedCache() const;
 	ENGINE_API bool IsAsyncWorkComplete() const;
@@ -182,7 +189,6 @@ private:
 	 * @param SerializedData Serialized data resulting from DDC.GetAsynchronousResults or DDC.GetSynchronous.
 	 * @param ChunkToDeserializeInto is the chunk to fill with the deserialized data.
 	 * @param ChunkIndex is the index of the chunk in this instance of FStreamedAudioPlatformData.
-	 * @param bCachedChunk is true if the chunk was successfully cached, false otherwise.
 	 * @param OutChunkData is a pointer to a pointer to populate with the chunk itself, or if pointing to nullptr, returns an allocated buffer.
 	 * @returns the size of the chunk loaded in bytes, or zero if the chunk didn't load.
 	 */
@@ -323,11 +329,17 @@ enum class ESoundAssetCompressionType : uint8
 	// Uncompressed audio. Large memory usage (streamed chunks contain less audio per chunk) but extremely cheap to decode and supports all features. 
 	PCM,
 
+	// Opus is a highly versatile audio codec. It is primarily designed for interactive speech and music transmission over the Internet, but is also applicable to storage and streaming applications.
+	Opus,
+
 	// Encodes the asset to a platform specific format and will be different depending on the platform. It does not currently support seeking.
 	PlatformSpecific,
 
 	// The project defines the codec used for this asset.
 	ProjectDefined,
+
+	// As BinkAudio, except better quality. Comparable CPU usage. Only valid sample rates are: 48000, 44100, 32000, and 24000.
+	RADAudio UMETA(DisplayName = "RAD Audio"),
 };
 
 
@@ -337,9 +349,11 @@ namespace Audio
 	{
 		switch (InDecoderType)
 		{
+		case ESoundAssetCompressionType::RADAudio:				return NAME_RADA;
 		case ESoundAssetCompressionType::BinkAudio:				return NAME_BINKA;
 		case ESoundAssetCompressionType::ADPCM:					return NAME_ADPCM;
 		case ESoundAssetCompressionType::PCM:					return NAME_PCM;
+		case ESoundAssetCompressionType::Opus:					return NAME_OPUS;
 		case ESoundAssetCompressionType::PlatformSpecific:		return NAME_PLATFORM_SPECIFIC;
 		case ESoundAssetCompressionType::ProjectDefined:		return NAME_PROJECT_DEFINED;
 		default:
@@ -352,9 +366,11 @@ namespace Audio
 	{
 		switch (InDefaultCompressionType)
 		{
+			case EDefaultAudioCompressionType::RADAudio:			return ESoundAssetCompressionType::RADAudio;
 			case EDefaultAudioCompressionType::BinkAudio:			return ESoundAssetCompressionType::BinkAudio;
 			case EDefaultAudioCompressionType::ADPCM:				return ESoundAssetCompressionType::ADPCM;
 			case EDefaultAudioCompressionType::PCM:					return ESoundAssetCompressionType::PCM;
+			case EDefaultAudioCompressionType::Opus:				return ESoundAssetCompressionType::Opus;
 			case EDefaultAudioCompressionType::PlatformSpecific:	return ESoundAssetCompressionType::PlatformSpecific;
 			default:
 				ensure(false);
@@ -385,6 +401,16 @@ struct FSoundWaveCuePoint
 	UPROPERTY(Category = Info, VisibleAnywhere, BlueprintReadOnly)
 	int32 FrameLength = 0;
 
+	bool IsLoopRegion() const { return bIsLoopRegion; }
+
+#if WITH_EDITORONLY_DATA
+	void ScaleFrameValues(float Factor)
+	{
+		FramePosition = FMath::FloorToInt((float)FramePosition * Factor);
+		FrameLength = FMath::FloorToInt((float)FrameLength * Factor);
+	}
+#endif // WITH_EDITORONLY_DATA
+
 	friend class USoundFactory;
 	friend class USoundWave;
 private:
@@ -412,7 +438,7 @@ class USoundWave : public USoundBase, public IAudioProxyDataFactory, public IInt
 private:
 
 	/** Platform agnostic compression quality. 1..100 with 1 being best compression and 100 being best quality. ADPCM and PCM sound asset compression types ignore this parameter. */
-	UPROPERTY(EditAnywhere, Category = "Format|Quality", meta = (DisplayName = "Compression", ClampMin = "1", ClampMax = "100", EditCondition = "SoundAssetCompressionType != ESoundAssetCompressionType::PCM || SoundAssetCompressionType != ESoundAssetCompressionType::ADPCM"), AssetRegistrySearchable)
+	UPROPERTY(EditAnywhere, Category = "Format|Quality", meta = (DisplayName = "Compression", ClampMin = "1", ClampMax = "100", EditCondition = "SoundAssetCompressionType != ESoundAssetCompressionType::PCM && SoundAssetCompressionType != ESoundAssetCompressionType::ADPCM"), AssetRegistrySearchable)
 	int32 CompressionQuality;
 
 public:
@@ -420,7 +446,10 @@ public:
 	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "5.0 - Property is deprecated. Streaming priority has no effect with stream caching enabled."))
 	int32 StreamingPriority;
 
-	/** Quality of sample rate conversion for platforms that opt into resampling during cook. The sample rate for each enumeration is definable per platform in platform target settings. */
+	/** Determines the max sample rate to use if the platform enables "Resampling For Device" in project settings. 
+	*	For example, if the platform enables Resampling For Device and specifies 32000 for High, then setting High here will
+	*	force the sound wave to be _at most_ 32000. Does nothing if Resampling For Device is disabled.
+	*/
 	UPROPERTY(EditAnywhere, Category = "Format|Quality")
 	ESoundwaveSampleRateSettings SampleRateQuality;
 
@@ -478,7 +507,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Audio")
 	ENGINE_API void SetSoundAssetCompressionType(ESoundAssetCompressionType InSoundAssetCompressionType, bool bMarkDirty = true);
 
-	/** Filters for the cue points that are _not_ loop regions and returns those as a new array*/
+	/** Filters for the cue points that are _not_ loop regions and returns those as a new array */
 	UFUNCTION(BlueprintCallable, Category = "Audio")
 	ENGINE_API TArray<FSoundWaveCuePoint> GetCuePoints() const;
 
@@ -593,9 +622,9 @@ public:
 	 */
 	ENGINE_API ESoundWaveLoadingBehavior GetLoadingBehavior(bool bCheckSoundClasses = true) const;
 
-	/** Use this to override how much audio data is loaded when this USoundWave is loaded. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Loading")
-	int32 InitialChunkSize;
+	/** Please use size of First Chunk in Seconds. */
+	UPROPERTY(AdvancedDisplay, meta=(DeprecatedProperty))
+	int32 InitialChunkSize_DEPRECATED;
 
 #if WITH_EDITOR
 	ENGINE_API const FWaveTransformUObjectConfiguration& GetTransformationChainConfig() const;
@@ -709,6 +738,13 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Loading", meta = (DisplayName = "Loading Behavior Override"))
 	mutable ESoundWaveLoadingBehavior LoadingBehavior;
 
+#if WITH_EDITORONLY_DATA
+public:
+   	/** How much audio to add to First Audio Chunk (in seconds) */
+	UPROPERTY(EditAnywhere, Category = Loading, meta = (UIMin = 0, UIMax = 10, EditCondition = "LoadingBehavior == ESoundWaveLoadingBehavior::RetainOnLoad || LoadingBehavior == ESoundWaveLoadingBehavior::PrimeOnLoad"), DisplayName="Size of First Audio Chunk (seconds)")
+   	FPerPlatformFloat SizeOfFirstAudioChunkInSeconds = 0.0f;
+#endif //WITH_EDITOR_ONLY_DATA
+
 	/** A localized version of the text that is actually spoken phonetically in the audio. */
 	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Use Subtitles instead."))
 	FString SpokenText_DEPRECATED;
@@ -728,10 +764,6 @@ public:
 	/** Number of channels of multichannel data; 1 or 2 for regular mono and stereo files */
 	UPROPERTY(Category = Info, AssetRegistrySearchable, VisibleAnywhere)
 	int32 NumChannels;
-
-	/** Cue point data parsed fro the .wav file. Contains "Loop Regions" as cue points as well! */
-	UPROPERTY(Category = Info, VisibleAnywhere, BlueprintReadOnly)
-	TArray<FSoundWaveCuePoint> CuePoints;
 
 #if WITH_EDITORONLY_DATA
 	/** Offsets into the bulk data for the source wav data */
@@ -754,7 +786,13 @@ protected:
 	/** Sample rate of the imported sound wave. */
 	UPROPERTY(Category = Info, AssetRegistrySearchable, VisibleAnywhere)
 	int32 ImportedSampleRate;
+
+	/** Cue point data parsed fro the .wav file. Contains "Loop Regions" as cue points as well! */
+	UPROPERTY(Category = Info, VisibleAnywhere, BlueprintGetter = GetCuePoints)
+	TArray<FSoundWaveCuePoint> CuePoints;
 #endif
+
+	ENGINE_API virtual void SerializeCuePoints(FArchive& Ar, const bool bIsLoadingFromCookedArchive);
 
 public:
 
@@ -812,11 +850,31 @@ protected:
 	UPROPERTY()
 	TObjectPtr<class UCurveTable> InternalCurves;
 
+#if WITH_EDITORONLY_DATA
+protected:
+	/** If enabled, this wave may be streamed from the cloud using the Opus format. Loading behavior must NOT be `Force Inline`. Requires a suitable support plugin to be installed. */
+	UPROPERTY(EditAnywhere, Category = "Format", Meta=(DisplayName="Enable cloud streaming", DisplayAfter="SoundAssetCompressionType", EditCondition = "LoadingBehavior != ESoundWaveLoadingBehavior::ForceInline"), AssetRegistrySearchable)
+	uint8 bEnableCloudStreaming : 1;
+	/** Platform specific. */
+	UPROPERTY(EditAnywhere, config, Category="Platform specific", Meta=(DisplayName="Platform specific settings", ToolTip="Optionally disables cloud streaming per platform"))
+	TMap<FGuid, FSoundWaveCloudStreamingPlatformSettings> PlatformSettings;
+public:
+	static FName GetCloudStreamingEnabledPropertyName() { return GET_MEMBER_NAME_CHECKED(USoundWave, bEnableCloudStreaming); }
+	ENGINE_API void SetCloudStreamingEnabled(bool bEnabled);
+	ENGINE_API bool IsCloudStreamingEnabled() const;
+	ENGINE_API void TriggerRecookForCloudStreaming();
+	static FName GetCloudStreamingPlatformSettingsPropertyName() { return GET_MEMBER_NAME_CHECKED(USoundWave, PlatformSettings); }
+	ENGINE_API TMap<FGuid, FSoundWaveCloudStreamingPlatformSettings>& GetCloudStreamingPlatformSettings() { return PlatformSettings; }
+	ENGINE_API const TMap<FGuid, FSoundWaveCloudStreamingPlatformSettings>& GetCloudStreamingPlatformSettings() const { return PlatformSettings; }
+#endif // WITH_EDITORONLY_DATA
+
 public:
 	/**
 	* helper function for getting the cached name of the current platform.
 	*/
 	static ENGINE_API ITargetPlatform* GetRunningPlatform();
+
+	static ENGINE_API ESoundWaveLoadingBehavior GetDefaultLoadingBehavior();
 
 	/** Async worker that decompresses the audio data on a different thread */
 	typedef FAsyncTask< class FAsyncAudioDecompressWorker > FAsyncAudioDecompress;	// Forward declare typedef
@@ -840,8 +898,166 @@ public:
 	ENGINE_API const uint8* GetResourceData() const;
 
 #if WITH_EDITORONLY_DATA
-	/** Uncompressed wav data 16 bit in mono or stereo - stereo not allowed for multichannel data */
-	UE::Serialization::FEditorBulkData RawData;
+	/** 
+	* Holds the uncompressed wav data that was imported. This is guaranteed to be 16 bit, and is
+	* mono or stereo - stereo not allowed for multichannel data. For multichannel data, there are
+	* distinct RIFF files concatenated in the RawData - one for each channel. These can be accessed with
+	* ChannelOffsets and ChannelSizes (see GetImportedSoundWaveData for example).
+	* 
+	* This structure is a pass-through for editor bulk data. It does an in-place conversion on the audio
+	* bits to allow the audio to compress significantly better when the underlying bulk data compression hits it.
+	* 
+	* If you need access to the underlying audio data, use GetImportedSoundWaveData and avoid touching this.
+	*/
+	struct FEditorAudioBulkData
+	{
+		UE::Serialization::FEditorBulkData RawData;
+
+		// The container soundwave for this raw data. This must be non-null for any non-metadata instances.
+		// We need this in order to parse the multichannel layout of the raw data - and we also use this 
+		// in place of the BulkData Owner parameter in many places because many call sites pass null incorrectly,
+		// resulting in the bulk data not being correlated with our asset.
+		USoundWave* SoundWave;
+
+		FEditorAudioBulkData()
+			: RawData()
+			, SoundWave()
+		{
+		}
+			
+		FEditorAudioBulkData(USoundWave* Owner)
+		{
+			SoundWave = Owner;
+		}
+
+		ENGINE_API void CreateFromBulkData(FBulkData& InBulkData, const FGuid& InGuid, UObject* Owner);
+		ENGINE_API void Serialize(FArchive& Ar, UObject* Owner, bool bAllowRegister=true);
+		ENGINE_API TFuture<FSharedBuffer> GetPayload() const;
+		ENGINE_API bool HasPayloadData() const;
+		ENGINE_API void UpdatePayload(FSharedBuffer InPayload, UObject* Owner = nullptr);
+
+		//
+		// Deprecated unused API forwarding for potential backwards compatability issues.
+		// As the raw data needs to be converted before use or storage, always access it via the above functions.
+		//
+#pragma region Deprecated Pass Thru
+		UE_DEPRECATED(5.4, "CreateLegacyUniqueIdentifier is provided just for API backwards compatibility.")
+		void CreateLegacyUniqueIdentifier(UObject* Owner)
+		{
+			RawData.CreateLegacyUniqueIdentifier(Owner);
+		}
+		UE_DEPRECATED(5.4, "Reset is provided just for API backwards compatibility.")
+		void Reset() 
+		{ 
+			RawData.Reset(); 
+		}
+		UE_DEPRECATED(5.4, "UnloadData is provided just for API backwards compatibility.")
+		void UnloadData()
+		{
+			RawData.UnloadData();
+		}
+		UE_DEPRECATED(5.4, "DetachFromDisk is provided just for API backwards compatibility.")
+		void DetachFromDisk(FArchive* Ar, bool bEnsurePayloadIsLoaded)
+		{
+			RawData.DetachFromDisk(Ar, bEnsurePayloadIsLoaded);
+		}
+		UE_DEPRECATED(5.4, "GetIdentifier is provided just for API backwards compatibility.")
+		FGuid GetIdentifier() const
+		{
+			return RawData.GetIdentifier();
+		}
+		UE_DEPRECATED(5.4, "GetPayloadId is provided just for API backwards compatibility.")
+		const FIoHash& GetPayloadId() const
+		{
+			return RawData.GetPayloadId();
+		}
+		UE_DEPRECATED(5.4, "GetPayloadSize is provided just for API backwards compatibility.")
+		int64 GetPayloadSize() const
+		{
+			return RawData.GetPayloadSize();
+		}
+		UE_DEPRECATED(5.4, "DoesPayloadNeedLoading is provided just for API backwards compatibility.")
+		bool DoesPayloadNeedLoading() const
+		{
+			return RawData.DoesPayloadNeedLoading();
+		}
+		UE_DEPRECATED(5.4, "GetCompressedPayload is provided just for API backwards compatibility.")
+		TFuture<FCompressedBuffer> GetCompressedPayload() const
+		{
+			return RawData.GetCompressedPayload();
+		}
+		UE_DEPRECATED(5.4, "UpdatePayload is provided just for API backwards compatibility.")
+		void UpdatePayload(FCompressedBuffer InPayload, UObject* Owner = nullptr)
+		{
+			RawData.UpdatePayload(InPayload, Owner);
+		}
+		UE_DEPRECATED(5.4, "UpdatePayload is provided just for API backwards compatibility.")
+		void UpdatePayload(UE::Serialization::FEditorBulkData::FSharedBufferWithID InPayload, UObject* Owner = nullptr)
+		{
+			RawData.UpdatePayload(MoveTemp(InPayload), Owner);
+		}
+		UE_DEPRECATED(5.4, "SetCompressionOptions is provided just for API backwards compatibility.")
+		void SetCompressionOptions(UE::Serialization::ECompressionOptions Option)
+		{
+			RawData.SetCompressionOptions(Option);
+		}
+		UE_DEPRECATED(5.4, "SetCompressionOptions is provided just for API backwards compatibility.")
+		void SetCompressionOptions(ECompressedBufferCompressor Compressor, ECompressedBufferCompressionLevel CompressionLevel)
+		{
+			RawData.SetCompressionOptions(Compressor, CompressionLevel);
+		}
+		UE_DEPRECATED(5.4, "GetBulkDataVersions is provided just for API backwards compatibility.")
+		void GetBulkDataVersions(FArchive& InlineArchive, FPackageFileVersion& OutUEVersion, int32& OutLicenseeUEVersion, FCustomVersionContainer& OutCustomVersions) const
+		{
+			RawData.GetBulkDataVersions(InlineArchive, OutUEVersion, OutLicenseeUEVersion, OutCustomVersions);
+		}
+		UE_DEPRECATED(5.4, "TearOff is provided just for API backwards compatibility.")
+		void TearOff()
+		{
+			RawData.TearOff();
+		}
+		UE_DEPRECATED(5.4, "CopyTornOff is provided just for API backwards compatibility.")
+		UE::Serialization::FEditorBulkData CopyTornOff() const
+		{
+			return RawData.CopyTornOff();
+		}
+		UE_DEPRECATED(5.4, "SerializeForRegistry is provided just for API backwards compatibility.")
+		void SerializeForRegistry(FArchive& Ar)
+		{
+			RawData.SerializeForRegistry(Ar);
+		}
+		UE_DEPRECATED(5.4, "CanSaveForRegistry is provided just for API backwards compatibility.")
+		bool CanSaveForRegistry() const
+		{
+			return RawData.CanSaveForRegistry();
+		}
+		UE_DEPRECATED(5.4, "HasPlaceholderPayloadId is provided just for API backwards compatibility.")
+		bool HasPlaceholderPayloadId() const
+		{
+			return RawData.HasPlaceholderPayloadId();
+		}
+		UE_DEPRECATED(5.4, "IsMemoryOnlyPayload is provided just for API backwards compatibility.")
+		bool IsMemoryOnlyPayload() const
+		{
+			return RawData.IsMemoryOnlyPayload();
+		}
+		UE_DEPRECATED(5.4, "UpdatePayloadId is provided just for API backwards compatibility.")
+		void UpdatePayloadId()
+		{
+			return RawData.UpdatePayloadId();
+		}
+		UE_DEPRECATED(5.4, "LocationMatches is provided just for API backwards compatibility.")
+		bool LocationMatches(const UE::Serialization::FEditorBulkData& Other) const
+		{
+			return RawData.LocationMatches(Other);
+		}
+		UE_DEPRECATED(5.4, "UpdateRegistrationOwner is provided just for API backwards compatibility.")
+		void UpdateRegistrationOwner(UObject* Owner)
+		{
+			RawData.UpdateRegistrationOwner(Owner);
+		}
+#pragma endregion
+	} RawData;
 
 	/** Waveform edits to be applied to this SoundWave on cook (editing transformations will trigger a cook) */
 	UPROPERTY(EditAnywhere, Instanced, Category = "Waveform Processing")
@@ -882,6 +1098,7 @@ public:
 	ENGINE_API virtual void BeginDestroy() override;
 #if WITH_EDITOR
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	ENGINE_API virtual bool CanEditChange(const FProperty* InProperty) const override;
 
 	/** IInterface_AsyncCompilation begin*/
 	ENGINE_API virtual bool IsCompiling() const override;
@@ -890,6 +1107,8 @@ public:
 	ENGINE_API bool IsAsyncWorkComplete() const;
 
 	ENGINE_API void PostImport();
+	
+	ENGINE_API virtual void PreSave(FObjectPreSaveContext SaveContext);
 
 private:
 	friend class FSoundWaveCompilingManager;
@@ -908,6 +1127,8 @@ public:
 	ENGINE_API virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
 	ENGINE_API virtual FName GetExporterName() override;
 	ENGINE_API virtual FString GetDesc() override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	//~ End UObject Interface.
 
@@ -1085,18 +1306,18 @@ public:
 	ENGINE_API bool IsLoadedFromCookedData() const;
 #endif //WITH_EDITOR
 
-	ENGINE_API virtual void BeginGetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides);
+	ENGINE_API virtual void BeginGetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides, const ITargetPlatform* InTargetPlatform);
 
 	/**
 	 * Gets the compressed data from derived data cache for the specified platform
 	 * Warning, the returned pointer isn't valid after we add new formats
 	 *
 	 * @param Format	format of compressed data
-	 * @param PlatformName optional name of platform we are getting compressed data for.
 	 * @param CompressionOverrides optional platform compression overrides
 	 * @return	compressed data, if it could be obtained
 	 */
-	ENGINE_API virtual FByteBulkData* GetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides = GetPlatformCompressionOverridesForCurrentPlatform());
+	ENGINE_API virtual FByteBulkData* GetCompressedData(FName Format, const FPlatformAudioCookOverrides* CompressionOverrides = GetPlatformCompressionOverridesForCurrentPlatform(),
+		const ITargetPlatform* InTargetPlatform = GetRunningPlatform());
 
 	/**
 	 * Change the guid and flush all compressed data
@@ -1182,10 +1403,43 @@ public:
 #if WITH_EDITORONLY_DATA
 
 #if WITH_EDITOR
+	
+	/*
+	* Used to determine the loading behavior that's applied by the owner of this wave. Will determine
+	* the most appropriate loading behavior if there are multiple owners. If there is no owner "Unintialized"
+	* will be returned. The results are cached in TMap below.
+	*/
+	ISoundWaveLoadingBehaviorUtil::FClassData GetOwnerLoadingBehavior(const ITargetPlatform* InTargetPlatform) const;
+	
+	mutable TMap<FName, ISoundWaveLoadingBehaviorUtil::FClassData> OwnerLoadingBehaviorCache;
+	mutable FCriticalSection OwnerLoadingBehaviorCacheCS;
+
+	/*
+	* Returns this SoundWave's CuePoints array with the frame values scaled by
+	* InSampleRate / ImportedSampleRate to account for resampling of the sound wave source data.
+	* If no resampling is necessary, returns the CuePoints as-is.
+	*
+	* @param InSampleRate	The sample rate the SoundWave 
+	* @return CuePoints array scaled if resampling occurred
+	*/
+	ENGINE_API TArray<FSoundWaveCuePoint> GetCuePointsScaledForSampleRate(const float InSampleRate) const;
+
+	/*
+	* Modifies the InOutCuePoints array with the frame values scaled by
+	* InSampleRate / ImportedSampleRate to account for resampling of the sound wave source data.
+	* Does not modify InOutCuePoints if no resampling is necessary
+	*
+	* @param InSampleRate	The sample rate the SoundWave
+	* @param InOutCuePoints	The CuePoints array to re-scale
+	*/
+	ENGINE_API void ScaleCuePointsForSampleRate(const float InSampleRate, TArray<FSoundWaveCuePoint>& InOutCuePoints) const;
+
 	/*
 	* Returns a sample rate if there is a specific sample rate override for this platform, -1.0 otherwise.
 	*/
 	ENGINE_API float GetSampleRateForTargetPlatform(const ITargetPlatform* TargetPlatform);
+	
+	ENGINE_API float GetSizeOfFirstAudioChunkInSeconds(const ITargetPlatform* InTargetPlatform) const;
 
 	/**
 	 * Begins caching platform data in the background for the platform requested
@@ -1289,6 +1543,7 @@ public:
 
 	ENGINE_API void OverrideRuntimeFormat(const FName& InRuntimeFormat);
 
+	const FGuid& GetGUID() const { return WaveGuid; }
 	const FName& GetFName() const { return NameCached; }
 	const FName& GetPackageName() const { return PackageNameCached; }
 	const FName& GetRuntimeFormat() const { return RuntimeFormat; }
@@ -1298,6 +1553,7 @@ public:
 	uint32 GetNumChannels() const { return NumChannels; }
 	const TArray<FSoundWaveCuePoint>& GetCuePoints() const { return CuePoints; }
 	const TArray<FSoundWaveCuePoint>& GetLoopRegions() const { return LoopRegions; }
+	void SetAllCuePoints(const TArray<FSoundWaveCuePoint>& InCuePoints);
 
 	ENGINE_API MaxChunkSizeResults GetMaxChunkSizeResults() const;
 
@@ -1348,6 +1604,7 @@ public:
 
 #if WITH_EDITORONLY_DATA
  	ENGINE_API FString GetDerivedDataKey() const;
+	ENGINE_API FPerPlatformFloat GetSizeOfFirstAudioChunkInSeconds() const { return SizeOfFirstAudioChunkInSeconds; }
 #endif // #if WITH_EDITORONLY_DATA
 
 	int32 GetResourceSize() { return ResourceSize; }
@@ -1382,6 +1639,11 @@ private:
 
 	ESoundWaveLoadingBehavior LoadingBehavior = ESoundWaveLoadingBehavior::Uninitialized;
 
+#if WITH_EDITORONLY_DATA
+	// Set by CacheInheritedLoadingBehavior after traversing the Soundclass heirarchy 
+	FPerPlatformFloat SizeOfFirstAudioChunkInSeconds = 0.f;
+#endif //WITH_EDITORONLY_DATA
+	
 #if WITH_EDITOR
 	std::atomic<int32> CurrentChunkRevision;
 #endif // #if WITH_EDITOR
@@ -1392,7 +1654,8 @@ private:
 	FObjectKey SoundWaveKeyCached;
 	TArray<FSoundWaveCuePoint> CuePoints;
 	TArray<FSoundWaveCuePoint> LoopRegions;
-	ESoundAssetCompressionType SoundAssetCompressionType;
+	ESoundAssetCompressionType SoundAssetCompressionType = ESoundAssetCompressionType::BinkAudio;
+	FGuid WaveGuid;
 	
 	float SampleRate = 0;
 	float Duration = 0;

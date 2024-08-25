@@ -107,6 +107,9 @@ public:
 	int GetSimTickRate() const;
 	void SetSimTickRate(int TickRate);
 
+	bool LockToSimulationFrameRate() const;
+	void ToggleLockToSimulationFrameRate();
+
 	void AddOutput(UClass* Class);
 	void RemoveCurrentOutput();
 	bool CanRemoveCurrentOutput() const;

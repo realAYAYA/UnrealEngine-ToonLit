@@ -44,17 +44,12 @@ namespace mu
 
 		//-----------------------------------------------------------------------------------------
         // Node interface
+		//-----------------------------------------------------------------------------------------		
+
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
+
 		//-----------------------------------------------------------------------------------------
-		
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-		int GetInputCount() const override;
-		Node* GetInputNode( int i ) const override;
-		void SetInputNode( int i, NodePtr pNode ) override;
-
-        //-----------------------------------------------------------------------------------------
         // NodeComponent interface
         //-----------------------------------------------------------------------------------------
         int GetSurfaceCount() const override;
@@ -67,10 +62,10 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 
 		//! Get the name of the component.
-		const char* GetName() const;
+		const FString& GetName() const;
 
 		//! Set the name of the component.
-		void SetName( const char* );
+		void SetName( const FString& );
 
 		//! Get the id of the component.
 		uint16 GetId() const;

@@ -201,7 +201,7 @@ TArray<FString> FOnlineConfigStructGConfig::CreateValueArray(const FString& InCo
 		if (*Str == TCHAR('('))
 		{
 			Str++;
-			while (*Str != TCHAR(')'))
+			while (*Str && *Str != TCHAR(')'))
 			{
 				const TCHAR* Start = Str;
 

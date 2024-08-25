@@ -582,14 +582,12 @@ void FGPUSortManager::Register(const FGPUSortKeyGenDelegate& CallbackDelegate, E
 	Callback.Name = InName;
 }
 
-bool FGPUSortManager::AddTask(FAllocationInfo& OutInfo, int32 ValueCount, EGPUSortFlags TaskFlags)
+bool FGPUSortManager::AddTask(FRHICommandListBase& RHICmdList, FAllocationInfo& OutInfo, int32 ValueCount, EGPUSortFlags TaskFlags)
 {
 	if (!FXConsoleVariables::bAllowGPUSorting)
 	{
 		return false;
 	}
-
-	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
 
 	LLM_SCOPE(ELLMTag::GPUSort);
 
@@ -639,6 +637,11 @@ bool FGPUSortManager::AddTask(FAllocationInfo& OutInfo, int32 ValueCount, EGPUSo
 	SortBatch.DynamicValueBuffer->Allocate(RHICmdList, OutInfo, Settings, ValueCount, TaskFlags);
 
 	return true;
+}
+
+bool FGPUSortManager::AddTask(FAllocationInfo& OutInfo, int32 ValueCount, EGPUSortFlags TaskFlags)
+{
+	return AddTask(FRHICommandListImmediate::Get(), OutInfo, ValueCount, TaskFlags);
 }
 
 void FGPUSortManager::FinalizeSortBatches()

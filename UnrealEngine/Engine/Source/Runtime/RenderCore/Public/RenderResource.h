@@ -36,11 +36,9 @@
 #include "DataDrivenShaderPlatformInfo.h"
 #endif
 
+class FRenderCommandPipe;
 class FRDGPooledBuffer;
 class FResourceArrayInterface;
-
-/** Experimental: whether we free helper structures after submitting to RHI. */
-extern RENDERCORE_API bool GFreeStructuresOnRHIBufferCreation;
 
 enum class ERenderResourceState : uint8
 {
@@ -134,7 +132,7 @@ public:
 	RENDERCORE_API virtual void InitResource(FRHICommandListBase& RHICmdList);
 
 	UE_DEPRECATED(5.3, "InitResource now requires a command list.")
-	virtual void InitResource() final { InitResource(GetCommandList()); }
+	virtual void InitResource() final { InitResource(GetImmediateCommandList()); }
 
 	/**
 	 * Prepares the resource for deletion.
@@ -170,18 +168,15 @@ protected:
 	FORCEINLINE bool HasValidFeatureLevel() const { return FeatureLevel < ERHIFeatureLevel::Num; }
 
 	// Helper for submitting a resource array to RHI and freeing eligible CPU memory
-	template<bool bRenderThread, typename T>
-	FBufferRHIRef CreateRHIBuffer(T& InOutResourceObject, const uint32 ResourceCount, EBufferUsageFlags InBufferUsageFlags, const TCHAR* InDebugName)
+	template<typename T>
+	FBufferRHIRef CreateRHIBuffer(FRHICommandListBase& RHICmdList, T& InOutResourceObject, uint32 ResourceCount, EBufferUsageFlags InBufferUsageFlags, const TCHAR* InDebugName)
 	{
 		FBufferRHIRef Buffer;
+
 		FResourceArrayInterface* RESTRICT ResourceArray = InOutResourceObject ? InOutResourceObject->GetResourceArray() : nullptr;
 		if (ResourceCount != 0)
 		{
-			Buffer = CreateRHIBufferInternal(InDebugName, GetOwnerName(), ResourceCount, InBufferUsageFlags, ResourceArray, bRenderThread, InOutResourceObject == nullptr);
-			if (!bRenderThread)
-			{
-				return Buffer;
-			}
+			Buffer = CreateRHIBufferInternal(RHICmdList, InDebugName, GetOwnerName(), ResourceCount, InBufferUsageFlags, ResourceArray, InOutResourceObject == nullptr);
 		}
 
 		// If the buffer creation emptied the resource array, delete the containing structure as well
@@ -194,7 +189,7 @@ protected:
 		return Buffer;
 	}
 
-	static RENDERCORE_API FRHICommandListBase& GetCommandList();
+	static RENDERCORE_API FRHICommandListBase& GetImmediateCommandList();
 
 	void SetInitPhase(EInitPhase InInitPhase)
 	{
@@ -206,12 +201,12 @@ protected:
 private:
 	static RENDERCORE_API bool ShouldFreeResourceObject(void* ResourceObject, FResourceArrayInterface* ResourceArray);
 	static RENDERCORE_API FBufferRHIRef CreateRHIBufferInternal(
+		FRHICommandListBase& RHICmdList,
 		const TCHAR* InDebugName,
 		const FName& InOwnerName,
 		uint32 ResourceCount,
 		EBufferUsageFlags InBufferUsageFlags,
 		FResourceArrayInterface* ResourceArray,
-		bool bRenderThread,
 		bool bWithoutNativeResource
 	);
 
@@ -231,19 +226,19 @@ public:
  * Sends a message to the rendering thread to initialize a resource.
  * This is called in the game thread.
  */
-extern RENDERCORE_API void BeginInitResource(FRenderResource* Resource);
+extern RENDERCORE_API void BeginInitResource(FRenderResource* Resource, FRenderCommandPipe* RenderCommandPipe = nullptr);
 
 /**
  * Sends a message to the rendering thread to update a resource.
  * This is called in the game thread.
  */
-extern RENDERCORE_API void BeginUpdateResourceRHI(FRenderResource* Resource);
+extern RENDERCORE_API void BeginUpdateResourceRHI(FRenderResource* Resource, FRenderCommandPipe* RenderCommandPipe = nullptr);
 
 /**
  * Sends a message to the rendering thread to release a resource.
  * This is called in the game thread.
  */
-extern RENDERCORE_API void BeginReleaseResource(FRenderResource* Resource);
+extern RENDERCORE_API void BeginReleaseResource(FRenderResource* Resource, FRenderCommandPipe* RenderCommandPipe = nullptr);
 
 /**
 * Enables the batching of calls to BeginReleaseResource
@@ -386,7 +381,11 @@ public:
 	 * true if the texture is in the same gamma space as the intended rendertarget (e.g. screenshots).
 	 * The texture will have sRGB==false and bIgnoreGammaConversions==true, causing a non-sRGB texture lookup
 	 * and no gamma-correction in the shader.
+	 * 
+	 * This was only ever checked in the Canvas renderer, not the standard Material shader path.
+	 * It is no longer set or checked.
 	 */
+	//UE_DEPRECATED(5.5,"bIgnoreGammaConversions should not be used")
 	bool				bIgnoreGammaConversions = false;
 
 	/** 
@@ -479,6 +478,10 @@ public:
 	RENDERCORE_API virtual void ReleaseRHI() override;
 	RENDERCORE_API virtual FString GetFriendlyName() const override;
 
+	const FBufferRHIRef& GetRHI() const { return VertexBufferRHI; }
+
+	RENDERCORE_API void SetRHI(const FBufferRHIRef& BufferRHI);
+
 	FBufferRHIRef VertexBufferRHI;
 };
 
@@ -507,6 +510,10 @@ public:
 	// FRenderResource interface.
 	RENDERCORE_API virtual void ReleaseRHI() override;
 	RENDERCORE_API virtual FString GetFriendlyName() const override;
+
+	const FBufferRHIRef& GetRHI() const { return IndexBufferRHI; }
+
+	RENDERCORE_API void SetRHI(const FBufferRHIRef& BufferRHI);
 
 	FBufferRHIRef IndexBufferRHI;
 };
@@ -561,7 +568,7 @@ private:
 		if (IsInRenderingThread())
 		{
 			// If the resource is constructed in the rendering thread, directly initialize it.
-			((ResourceType*)this)->InitResource(FRenderResource::GetCommandList());
+			((ResourceType*)this)->InitResource(FRenderResource::GetImmediateCommandList());
 		}
 		else
 		{

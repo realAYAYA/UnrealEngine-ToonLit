@@ -35,6 +35,8 @@ public class UIFramework : ModuleRules
 			}
 		);
 
+		bAllowAutoRTFMInstrumentation = true;
+
 		SetupIrisSupport(Target);
 	}
 }

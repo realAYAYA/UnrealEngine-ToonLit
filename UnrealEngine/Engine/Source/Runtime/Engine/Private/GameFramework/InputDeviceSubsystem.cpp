@@ -263,7 +263,7 @@ UWorld* UInputDeviceSubsystem::GetTickableGameObjectWorld() const
 
 ETickableTickType UInputDeviceSubsystem::GetTickableTickType() const
 {
-	return ETickableTickType::Conditional;
+	return (IsTemplate() ? ETickableTickType::Never : ETickableTickType::Conditional);
 }
 
 bool UInputDeviceSubsystem::IsAllowedToTick() const
@@ -503,16 +503,16 @@ FHardwareDeviceIdentifier UInputDeviceSubsystem::GetInputDeviceHardwareIdentifie
 
 void UInputDeviceSubsystem::SetMostRecentlyUsedHardwareDevice(const FInputDeviceId InDeviceId, const FHardwareDeviceIdentifier& InHardwareId)
 {	
-	// If the hardware hasn't changed, then just ignore it because we don't need to update anything.
-	if (const FHardwareDeviceIdentifier* ExistingDevice = LatestInputDeviceIdentifiers.Find(InDeviceId))
+	const FPlatformUserId OwningUserId = IPlatformInputDeviceMapper::Get().GetUserForInputDevice(InDeviceId);
+
+	// If this hardware is the same as what the platform user already has, then there is no need to fire this event
+	if (const FHardwareDeviceIdentifier* ExistingDevice = LatestUserDeviceIdentifiers.Find(OwningUserId))
 	{
 		if (InHardwareId == *ExistingDevice)
 		{
 			return;
 		}
 	}
-
-	FPlatformUserId OwningUserId = IPlatformInputDeviceMapper::Get().GetUserForInputDevice(InDeviceId);
 
 	// Keep track of each input device's latest hardware id
 	LatestInputDeviceIdentifiers.Add(InDeviceId, InHardwareId);

@@ -118,6 +118,25 @@ public:
 	static CORE_API bool IsPathLeaf(FStringView InPath);
 
 	/**
+	 * Report whether the given path is an invalid path because it has a drive specifier (':') without a following
+	 * path separator indicating the root of that drive. In general usage on Windows, drive specifiers without a
+	 * following path separator are interpreted to mean the current working directory of the given drive. But that
+	 * context is not always applicable and will need to be handled in system-specific ways.
+	 * @see SplitVolumeSpecifier for callers who want to followup by modifing the path.
+	 * 
+	 * D:		-> true
+	 * D:/		-> false
+	 * D:root	-> true
+	 * D:/root	-> false
+	 * //volume -> false
+	 * /root    -> false
+	 * relpath  -> false
+	 * 
+	 * See FPathViewsVolumeSpecifierTest for further edgecases.
+	 */
+	static CORE_API bool IsDriveSpecifierWithoutRoot(FStringView InPath);
+
+	/**
 	 * Splits InPath into individual directory components, and calls ComponentVisitor on each.
 	 *
 	 * Examples:
@@ -305,6 +324,19 @@ public:
 	 */
 	static CORE_API bool IsRelativePath(FStringView InPath);
 
+	/**
+	 * Report whether the path has an unneeded trailing slash. 
+	 * /root/path	-> false
+	 * /root/		-> true
+	 * /root//		-> true
+	 * /			-> false
+	 * //			-> false
+	 * ///			-> true
+	 * d:/			-> false
+	 * d://			-> true
+	 */
+	static CORE_API bool HasRedundantTerminatingSeparator(FStringView A);
+
 	/** Convert to absolute using process BaseDir(), normalize and append. FPaths::ConvertRelativePathToFull() equivalent. */
 	static CORE_API void ToAbsolutePath(FStringView InPath, FStringBuilderBase& OutPath);
 	
@@ -340,6 +372,24 @@ public:
 	 * @param OutRemainder Receives the relative path from OutFirstComponent to InPath, or empty if InPath is a leaf path.
 	 */
 	static CORE_API void SplitFirstComponent(FStringView InPath, FStringView& OutFirstComponent, FStringView& OutRemainder);
+
+	/**
+	 * Split the path into a volume specifier and the rest of the path.
+	 * This function handles drive specifiers without a root in a specific way, see the examples and
+	 * @see IsDriveSpecifierWithoutRoot
+	 *
+	 * <emptystring>      -> { '', '' }
+	 * D:		          -> { 'D:', '' }
+	 * D:root/path        -> { 'D:', 'root/path' }
+	 * D:/root/path       -> { 'D:', '/root/path' }
+	 * //volume           -> { '//volume', '' }
+	 * //volume/root/path -> { '//volume', '/root/path' }
+	 * root/path          -> { '', 'root/path' }
+	 * /root/path         -> { '', '/root/path' }
+	 * 
+	 * See FPathViewsVolumeSpecifierTest for further edgecases.
+	 */
+	static CORE_API void SplitVolumeSpecifier(FStringView InPath, FStringView& OutVolumeSpecifier, FStringView& OutRemainder);
 
 	/**
 	 * If AppendPath is a relative path, append it as a relative path onto InOutPath.

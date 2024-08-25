@@ -38,7 +38,7 @@ void UControlRigBlueprintGeneratedClass::Serialize(FArchive& Ar)
 	{
 		if (Ar.IsSaving() && CDO->VM)
 		{
-			VM->CopyFrom(CDO->VM);
+			VM->CopyDataForSerialization(CDO->VM);
 		}
 	}
 	
@@ -46,9 +46,9 @@ void UControlRigBlueprintGeneratedClass::Serialize(FArchive& Ar)
 
 	if (UControlRig* CDO = Cast<UControlRig>(GetDefaultObject(false)))
 	{
-		if (Ar.IsLoading())
+		if (Ar.IsLoading() && CDO->VM)
 		{
-			CDO->VM->CopyFrom(VM);
+			CDO->VM->CopyDataForSerialization(VM);
 		}
 	}
 

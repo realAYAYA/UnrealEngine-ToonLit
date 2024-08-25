@@ -428,6 +428,10 @@ public:
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		OutEnvironment.SetDefine(TEXT("COC_TILE_SIZE"), kCocTileSize);
+
+		// If on console, don't compile any dynamic CoC offset to avoid performance differences
+		const bool bIsConsole = FDataDrivenShaderPlatformInfo::GetIsConsole(Parameters.Platform);
+		OutEnvironment.SetDefine(TEXT("WITH_DYNAMIC_COC_OFFSET"), bIsConsole ? 0 : 1);
 	}
 
 	FDiaphragmDOFShader() {}
@@ -633,6 +637,10 @@ END_SHADER_PARAMETER_STRUCT()
 
 BEGIN_SHADER_PARAMETER_STRUCT(FDOFCocModelShaderParameters, )
 	SHADER_PARAMETER(float, CocInfinityRadius)
+	SHADER_PARAMETER(float, CocInFocusRadius)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DynamicRadiusOffsetLUT)
+	SHADER_PARAMETER_SAMPLER(SamplerState, DynamicRadiusOffsetLUTSampler)
+	SHADER_PARAMETER(uint32, bCocEnableDynamicRadiusOffset)
 	SHADER_PARAMETER(float, CocMinRadius)
 	SHADER_PARAMETER(float, CocMaxRadius)
 	SHADER_PARAMETER(float, CocSqueeze)
@@ -642,17 +650,33 @@ BEGIN_SHADER_PARAMETER_STRUCT(FDOFCocModelShaderParameters, )
 END_SHADER_PARAMETER_STRUCT()
 
 void SetCocModelParameters(
+	FRDGBuilder& GraphBuilder,
 	FDOFCocModelShaderParameters* OutParameters,
 	const DiaphragmDOF::FPhysicalCocModel& CocModel,
 	float CocRadiusBasis = 1.0f)
 {
 	OutParameters->CocInfinityRadius = CocRadiusBasis * CocModel.InfinityBackgroundCocRadius;
+	OutParameters->CocInFocusRadius = CocRadiusBasis * CocModel.InFocusRadius;
+	OutParameters->bCocEnableDynamicRadiusOffset = CocModel.bEnableDynamicOffset;
 	OutParameters->CocMinRadius = CocRadiusBasis * CocModel.MinForegroundCocRadius;
 	OutParameters->CocMaxRadius = CocRadiusBasis * CocModel.MaxBackgroundCocRadius;
 	OutParameters->CocSqueeze = CocModel.Squeeze;
 	OutParameters->CocInvSqueeze = 1.0f / CocModel.Squeeze;
 	OutParameters->DepthBlurRadius = CocRadiusBasis * CocModel.MaxDepthBlurRadius;
 	OutParameters->DepthBlurExponent = CocModel.DepthBlurExponent;
+
+	if (CocModel.DynamicRadiusOffsetLUT)
+	{
+		OutParameters->DynamicRadiusOffsetLUT = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(CocModel.DynamicRadiusOffsetLUT, TEXT("DynamicRadiusOffsetLUT")));
+	}
+	else
+	{
+		const FRDGSystemTextures& SystemTextures = FRDGSystemTextures::Get(GraphBuilder);
+
+		OutParameters->DynamicRadiusOffsetLUT = SystemTextures.Black;
+	}
+
+	OutParameters->DynamicRadiusOffsetLUTSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Wrap>::GetRHI();
 }
 
 
@@ -1341,17 +1365,19 @@ bool DiaphragmDOF::IsEnabled(const FViewInfo& View)
 		((View.FinalPostProcessSettings.DepthOfFieldFstop > 0.f && View.FinalPostProcessSettings.DepthOfFieldFocalDistance > 0.f) || View.FinalPostProcessSettings.DepthOfFieldDepthBlurRadius > 0.f);
 }
 
-FRDGTextureRef DiaphragmDOF::AddPasses(
+bool DiaphragmDOF::AddPasses(
 	FRDGBuilder& GraphBuilder,
 	const FSceneTextureParameters& SceneTextures,
 	const FViewInfo& View,
 	FRDGTextureRef InputSceneColor,
-	const FTranslucencyPassResources& TranslucencyPassResources)
+	const FTranslucencyPassResources& TranslucencyPassResources,
+	FRDGTextureRef& OutputColor)
 {
 	if (View.Family->EngineShowFlags.VisualizeDOF)
 	{
 		// no need for this pass
-		return InputSceneColor;
+		OutputColor = InputSceneColor;
+		return false;
 	}
 
 	// Format of the scene color.
@@ -1498,7 +1524,8 @@ FRDGTextureRef DiaphragmDOF::AddPasses(
 	// If the max blurring radius is too small, do not wire any passes.
 	if (MaxBluringRadius < MinRequiredBlurringRadius)
 	{
-		return InputSceneColor;
+		OutputColor = InputSceneColor;
+		return false;
 	}
 
 	RDG_GPU_STAT_SCOPE(GraphBuilder, DepthOfField);
@@ -1592,7 +1619,7 @@ FRDGTextureRef DiaphragmDOF::AddPasses(
 		FDiaphragmDOFSetupCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FDiaphragmDOFSetupCS::FParameters>();
 		{
 			PassParameters->CommonParameters = CommonParameters;
-			SetCocModelParameters(&PassParameters->CocModel, CocModel, EncodedCocRadiusBasis);
+			SetCocModelParameters(GraphBuilder, &PassParameters->CocModel, CocModel, EncodedCocRadiusBasis);
 			PassParameters->ViewportRect = FIntRect(FIntPoint::ZeroValue, PassViewSize);
 			PassParameters->SceneColorTexture = InputSceneColor;
 			PassParameters->SceneDepthTexture = SceneTextures.SceneDepthTexture;
@@ -2664,7 +2691,7 @@ FRDGTextureRef DiaphragmDOF::AddPasses(
 
 		FDiaphragmDOFRecombineCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FDiaphragmDOFRecombineCS::FParameters>();
 		PassParameters->CommonParameters = CommonParameters;
-		SetCocModelParameters(&PassParameters->CocModel, CocModel, /* CocRadiusBasis = */ float(GatheringViewSize.X));
+		SetCocModelParameters(GraphBuilder, &PassParameters->CocModel, CocModel, /* CocRadiusBasis = */ float(GatheringViewSize.X));
 
 		PassParameters->ViewportRect = PassViewRect;
 		PassParameters->ViewportSize = FVector4f(PassViewRect.Width(), PassViewRect.Height(), 1.0f / PassViewRect.Width(), 1.0f / PassViewRect.Height());
@@ -2744,5 +2771,6 @@ FRDGTextureRef DiaphragmDOF::AddPasses(
 			FComputeShaderUtils::GetGroupCount(PassViewRect.Size(), kDefaultGroupSize));
 	}
 
-	return NewSceneColor;
+	OutputColor = NewSceneColor;
+	return true;
 }

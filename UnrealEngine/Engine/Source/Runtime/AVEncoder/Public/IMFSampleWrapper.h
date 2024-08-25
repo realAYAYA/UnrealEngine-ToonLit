@@ -15,15 +15,16 @@ namespace AVEncoder
 //
 // Wrapper for IMFSample, to make it easier to report errors
 //
-class FIMFSampleWrapper
+class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FIMFSampleWrapper
 {
 public:
-
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FIMFSampleWrapper(EPacketType InMediaType = EPacketType::Invalid, IMFSample* InSample = nullptr)
 		: MediaType(InMediaType)
 		, Sample(InSample)
 	{
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	const IMFSample* GetSample() const
 	{
@@ -95,7 +96,9 @@ public:
 	AVENCODER_API FIMFSampleWrapper Clone() const;
 
 private:
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	EPacketType MediaType;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	TRefCountPtr<IMFSample> Sample;
 };
 

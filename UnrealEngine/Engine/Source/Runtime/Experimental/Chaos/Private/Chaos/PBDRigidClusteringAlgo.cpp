@@ -89,21 +89,39 @@ namespace Chaos
 			: FReal(1) / Inertia;
 	}
 
-	void MoveClusterToMassOffset(FPBDRigidClusteredParticleHandle* Cluster, const EMassOffsetType MassOffsetTypes)
+	void AdjustClusterInertia(FPBDRigidClusteredParticleHandle* Cluster, const EInertiaOperations InertiaOperations)
 	{
-		if (MassOffsetTypes | EMassOffsetType::EPosition)
+		if ((InertiaOperations & EInertiaOperations::LocalInertiaDropOffDiagonalTerms) != EInertiaOperations::None)
 		{
+			// Discard off-diagonal terms in inertia transformed into a particle's local space, and
+			// zero out the Rotation of Inertia parameter.
+			const FMatrix33 LocalSpaceInertia = Utilities::ComputeWorldSpaceInertia(Cluster->RotationOfMass(), Cluster->I());
+			Cluster->SetI(LocalSpaceInertia.GetDiagonal());
+			Cluster->SetRotationOfMass(FQuat::Identity);
+		}
+	}
+
+	FRigidTransform3 MoveClusterToMassOffset(FPBDRigidClusteredParticleHandle* Cluster, const EMassOffsetType MassOffsetTypes)
+	{
+		FRigidTransform3 MassToLocal = FRigidTransform3::Identity;
+
+		if ((MassOffsetTypes & EMassOffsetType::Position) != EMassOffsetType::None)
+		{
+			MassToLocal.SetTranslation(Cluster->CenterOfMass());
 			Cluster->SetX(Cluster->XCom());
-			Cluster->SetP(Cluster->X());
+			Cluster->SetP(Cluster->GetX());
 			Cluster->SetCenterOfMass(FVec3::ZeroVector);
 		}
 
-		if (MassOffsetTypes | EMassOffsetType::ERotation)
+		if ((MassOffsetTypes & EMassOffsetType::Rotation) != EMassOffsetType::None)
 		{
+			MassToLocal.SetRotation(Cluster->RotationOfMass());
 			Cluster->SetR(Cluster->RCom());
-			Cluster->SetQ(Cluster->R());
+			Cluster->SetQf(Cluster->GetRf());
 			Cluster->SetRotationOfMass(FQuat::Identity);
 		}
+
+		return MassToLocal;
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("TPBDRigidClustering<>::UpdateKinematicProperties()"), STAT_UpdateKinematicProperties, STATGROUP_Chaos);
@@ -189,22 +207,75 @@ namespace Chaos
 	DECLARE_CYCLE_STAT(TEXT("TPBDRigidClustering<>::UpdateGeometry_CopyPoints"), STAT_UpdateGeometry_CopyPoints, STATGROUP_Chaos);
 	DECLARE_CYCLE_STAT(TEXT("TPBDRigidClustering<>::UpdateGeometry_PointsBVH"), STAT_UpdateGeometry_PointsBVH, STATGROUP_Chaos);
 
+	void BuildScaledGeometry(Chaos::FPBDRigidClusteredParticleHandle* ParticleHandle, const Chaos::FImplicitObjectPtr& ProxyGeometry, const FVector& WorldScale)
+	{
+		if(ParticleHandle && ProxyGeometry.IsValid())
+		{ 
+			auto DeepCopyImplicit = [&WorldScale](const Chaos::FImplicitObjectPtr& ImplicitToCopy) -> Chaos::FImplicitObjectPtr
+			{
+				if (WorldScale.Equals(FVector::OneVector))
+				{
+					return ImplicitToCopy->DeepCopyGeometry();
+				}
+				else
+				{
+					return ImplicitToCopy->DeepCopyGeometryWithScale(WorldScale);
+				}
+			};
+
+			Chaos::EImplicitObjectType GeometryType = ProxyGeometry->GetType();
+			// Don't copy if it is not a level set and scale is one
+			if (GeometryType != Chaos::ImplicitObjectType::LevelSet && WorldScale.Equals(FVector::OneVector))
+			{
+				ParticleHandle->SetGeometry(ProxyGeometry);
+			}
+			else
+			{
+				ParticleHandle->SetGeometry(DeepCopyImplicit(ProxyGeometry));
+			}
+		}
+	}
+
+	void UpdateCollisionFlags(Chaos::FPBDRigidClusteredParticleHandle* ParticleHandle, const bool bUseParticleImplicit)
+	{
+		if (FImplicitObjectPtr ImplicitGeometry = ParticleHandle->GetGeometry())
+		{
+			// if children are ignore analytic and this is a dynamic geom, mark it too. todo(ocohen): clean this up
+			if (bUseParticleImplicit)
+			{
+				ImplicitGeometry->SetDoCollide(false);
+			}
+
+			ParticleHandle->SetHasBounds(true);
+			ParticleHandle->SetLocalBounds(ImplicitGeometry->BoundingBox());
+
+			if (const FImplicitObjectUnion* ImplicitUnion = ImplicitGeometry->GetObject<FImplicitObjectUnion>())
+			{
+				const_cast<FImplicitObjectUnion*>(ImplicitUnion)->SetAllowBVH(true);
+			}
+			else if (const FImplicitObjectUnion* ImplicitUnionClustered = ImplicitGeometry->GetObject<FImplicitObjectUnionClustered>())
+			{
+				const_cast<FImplicitObjectUnion*>(ImplicitUnionClustered)->SetAllowBVH(true);
+			}
+		}
+	}
+
 	void
 	UpdateGeometry(
 		Chaos::FPBDRigidClusteredParticleHandle* Parent,
 		const TSet<FPBDRigidParticleHandle*>& Children,
 		const FRigidClustering::FClusterMap& ChildrenMap,
-		TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe> ProxyGeometry,
+		const Chaos::FImplicitObjectPtr& ProxyGeometry,
 		const FClusterCreationParameters& Parameters)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_UpdateGeometry);
 
-		TArray<TUniquePtr<FImplicitObject>> Objects;
-		TArray<TUniquePtr<FImplicitObject>> Objects2; //todo: find a better way to reuse this
+		TArray<Chaos::FImplicitObjectPtr> Objects;
+		TArray<Chaos::FImplicitObjectPtr> Objects2; //todo: find a better way to reuse this
 		Objects.Reserve(Children.Num());
 		Objects2.Reserve(Children.Num());
 
-		const FRigidTransform3 ClusterWorldTM(Parent->X(), Parent->R());
+		const FRigidTransform3 ClusterWorldTM(Parent->GetX(), Parent->GetR());
 
 		TArray<FVec3> OriginalPoints;
 		TArray<FPBDRigidParticleHandle*> ChildParticleHandles;
@@ -236,15 +307,15 @@ namespace Chaos
 				}
 				else
 				{
-					const FRigidTransform3 ChildWorldTM(Child->X(), Child->R());
+					const FRigidTransform3 ChildWorldTM(Child->GetX(), Child->GetR());
 					Frame = ChildWorldTM.GetRelativeTransform(ClusterWorldTM);
 				}
 
 				FPBDRigidParticleHandle* UsedGeomChild = Child;
-				if (Child->Geometry())
+				if (Child->GetGeometry())
 				{
-					Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(Child->Geometry(), Frame)));
-					Objects2.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(Child->Geometry(), Frame)));
+					Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Child->GetGeometry(), Frame));
+					Objects2.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Child->GetGeometry(), Frame));
 					ChildParticleHandles.Add(Child);
 				}
 
@@ -260,11 +331,11 @@ namespace Chaos
 					{
 						for (uint32 i = 0; i < CollisionParticles->Size(); ++i)
 						{
-							OriginalPoints.Add(Frame.TransformPosition(CollisionParticles->X(i)));
+							OriginalPoints.Add(Frame.TransformPosition(CollisionParticles->GetX(i)));
 						}
 					}
 				}
-				if (Child->Geometry() && Child->Geometry()->GetType() == ImplicitObjectType::Unknown)
+				if (Child->GetGeometry() && Child->GetGeometry()->GetType() == ImplicitObjectType::Unknown)
 				{
 					bUseParticleImplicit = true;
 				}
@@ -273,11 +344,12 @@ namespace Chaos
 
 		{
 			QUICK_SCOPE_CYCLE_COUNTER(SpatialBVH);
-			TUniquePtr<FImplicitObjectUnionClustered>& ChildrenSpatial = Parent->ChildrenSpatial();
-			ChildrenSpatial.Reset(
-				Objects2.Num() ?
+			FImplicitObjectUnionClusteredPtr& ChildrenSpatial = Parent->GetChildrenSpatial();
+			FImplicitObjectUnionClustered* UnionClustered = Objects2.Num() ?
 				new Chaos::FImplicitObjectUnionClustered(MoveTemp(Objects2), ChildParticleHandles) :
-				nullptr);
+				nullptr;
+			
+			ChildrenSpatial = FImplicitObjectUnionClusteredPtr(UnionClustered);
 		}
 
 		TArray<FVec3> CleanedPoints;
@@ -294,37 +366,13 @@ namespace Chaos
 		// by failing artificially this condition thmake sure we create a FImplicitObjectUnionClustered for this particle 
 		if (ProxyGeometry)
 		{
-			const FVector Scale = Parameters.Scale;
-			auto DeepCopyImplicit = [&Scale](const TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>& ImplicitToCopy) -> TUniquePtr<Chaos::FImplicitObject>
-			{
-				if (Scale.Equals(FVector::OneVector))
-				{
-					return ImplicitToCopy->DeepCopy();
-				}
-				else
-				{
-					return ImplicitToCopy->DeepCopyWithScale(Scale);
-				}
-			};
-			//ensureMsgf(false, TEXT("Checking usage with proxy"));
-			//@coverage {production}
-
-			Chaos::EImplicitObjectType GeometryType = ProxyGeometry->GetType();
-			// Don't copy if it is not a level set and scale is one
-			if (GeometryType != Chaos::ImplicitObjectType::LevelSet && Scale.Equals(FVector::OneVector))
-			{
-				Parent->SetSharedGeometry(TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(ProxyGeometry));
-			}
-			else
-			{
-				Parent->SetSharedGeometry(TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(DeepCopyImplicit(ProxyGeometry).Release()));
-			}
+			BuildScaledGeometry(Parent, ProxyGeometry, Parameters.Scale);
 		}
 		else if (Objects.Num() == 0)
 		{
 			//ensureMsgf(false, TEXT("Checking usage with no proxy and no objects"));
 			//@coverage : {production}
-			Parent->SetGeometry(Chaos::TSerializablePtr<Chaos::FImplicitObject>());
+			Parent->SetGeometry(Chaos::FImplicitObjectPtr());
 		}
 		else
 		{
@@ -345,7 +393,7 @@ namespace Chaos
 
 					FErrorReporter ErrorReporter;
 					TUniformGrid<FReal, 3> Grid(Bounds.Min(), Bounds.Max(), NumCells, LevelsetGhostCells);
-					TUniquePtr<FLevelSet> LevelSet(new FLevelSet(ErrorReporter, Grid, UnionObject));
+					FLevelSet* LevelSet = new FLevelSet(ErrorReporter, Grid, UnionObject);
 
 					if (!Parameters.CollisionParticles)
 					{
@@ -362,35 +410,30 @@ namespace Chaos
 							}
 						}
 					}
-					Parent->SetDynamicGeometry(MoveTemp(LevelSet));
+					Chaos::FImplicitObjectPtr LevelSetPtr(LevelSet);
+					Parent->SetGeometry(MoveTemp(LevelSetPtr));
 				}
 				else
 				{
-					Parent->SetDynamicGeometry(
-						MakeUnique<TSphere<FReal, 3>>(FVec3(0), BoundsExtents.Size() * 0.5f));
+					Parent->SetGeometry(MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), BoundsExtents.Size() * 0.5f));
 				}
 			}
 			else // !UseLevelsetCollision
 			{
 				if (Objects.Num() == 1)
 				{
-					Parent->SetDynamicGeometry(MoveTemp(Objects[0]));
+					Parent->SetGeometry(MoveTemp(Objects[0]));
 				}
 				else
 				{
-					Parent->SetDynamicGeometry(
-						MakeUnique<FImplicitObjectUnionClustered>(
+					Parent->SetGeometry(
+						MakeImplicitObjectPtr<FImplicitObjectUnionClustered>(
 							MoveTemp(Objects), ChildParticleHandles));
 				}
 			}
 		}
 
-		//if children are ignore analytic and this is a dynamic geom, mark it too. todo(ocohen): clean this up
-		if (bUseParticleImplicit && Parent->DynamicGeometry())
-		{
-			Parent->DynamicGeometry()->SetDoCollide(false);
-		}
-
+		
 		if (Parameters.CollisionParticles)
 		{
 			SCOPE_CYCLE_COUNTER(STAT_UpdateGeometry_CopyPoints);
@@ -405,7 +448,7 @@ namespace Chaos
 				CollisionParticles->AddParticles(CleanedPoints.Num());
 				for (int32 i = 0; i < CleanedPoints.Num(); ++i)
 				{
-					CollisionParticles->X(i) = CleanedPoints[i];
+					CollisionParticles->SetX(i, CleanedPoints[i]);
 				}
 			}
 
@@ -415,24 +458,10 @@ namespace Chaos
 				Parent->CollisionParticles()->UpdateAccelerationStructures();
 			}
 		}
+		const Chaos::FRigidTransform3 Xf(Parent->GetX(), Parent->GetR());
+		Parent->UpdateWorldSpaceState(Xf, FVec3(0));
 
-		if (TSerializablePtr<FImplicitObject> Implicit = Parent->Geometry())
-		{
-			// strange hacked initilization that seems misplaced and ill thought
-			Parent->SetHasBounds(true);
-			Parent->SetLocalBounds(Implicit->BoundingBox());
-			const Chaos::FRigidTransform3 Xf(Parent->X(), Parent->R());
-			Parent->UpdateWorldSpaceState(Xf, FVec3(0));
-
-			if (const FImplicitObjectUnion* ImplicitUnion = Implicit->GetObject<FImplicitObjectUnion>())
-			{
-				const_cast<FImplicitObjectUnion*>(ImplicitUnion)->SetAllowBVH(true);
-			}
-			else if (const FImplicitObjectUnion* ImplicitUnionClustered = Implicit->GetObject<FImplicitObjectUnionClustered>())
-			{
-				const_cast<FImplicitObjectUnion*>(ImplicitUnionClustered)->SetAllowBVH(true);
-			}
-		}
+		UpdateCollisionFlags(Parent, bUseParticleImplicit);
 	
 		// Update filter data on new shapes
 		const FRigidClustering::FRigidHandleArray& ChildrenArray = ChildrenMap[Parent];

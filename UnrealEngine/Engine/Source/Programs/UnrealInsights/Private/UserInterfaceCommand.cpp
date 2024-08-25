@@ -28,7 +28,6 @@
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/MinWindows.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 #if PLATFORM_UNIX
@@ -80,8 +79,6 @@ bool CheckSessionBrowserSingleInstance()
 #if PLATFORM_WINDOWS
 	// Create a named event that other processes can detect.
 	// It allows only a single instance of Unreal Insights (Browser Mode).
-	// The event is also used by runtime to choose when to try to auto-connect.
-	// See FTraceAuxiliary::TryAutoConnect() in \Runtime\Core\Private\ProfilingDebugging\TraceAuxiliary.cpp
 	HANDLE SessionBrowserEvent = CreateEvent(NULL, true, false, TEXT("Local\\UnrealInsightsBrowser"));
 	if (SessionBrowserEvent == NULL || GetLastError() == ERROR_ALREADY_EXISTS)
 	{
@@ -297,19 +294,18 @@ void FUserInterfaceCommand::InitializeSlateApplication(bool bOpenTraceFile, cons
 		bUseCustomStoreAddress = true;
 	}
 
+	// This parameter will cause the application to close when analysis fails to start or completes successfully.
+	const bool bAutoQuit = FParse::Param(FCommandLine::Get(), TEXT("AutoQuit"));
+
 	const bool bInitializeTesting = FParse::Param(FCommandLine::Get(), TEXT("InsightsTest"));
+	if (bInitializeTesting)
+	{
+		const bool bInitAutomationModules = true;
+		TraceInsightsModule.InitializeTesting(bInitAutomationModules, bAutoQuit);
+	}
 
 	if (bUseTraceId || bOpenTraceFile) // viewer mode
 	{
-		// This parameter will cause the application to close when analysis fails to start or completes successfully.
-		const bool bAutoQuit = FParse::Param(FCommandLine::Get(), TEXT("AutoQuit"));
-
-		if (bInitializeTesting)
-		{
-			const bool bInitAutomationModules = true;
-			TraceInsightsModule.InitializeTesting(bInitAutomationModules, bAutoQuit);
-		}
-
 		FString Cmd;
 		bool bExecuteCommand = false;
 		if (FParse::Value(FCommandLine::Get(), TEXT("-ExecOnAnalysisCompleteCmd="), Cmd, false))
@@ -339,6 +335,13 @@ void FUserInterfaceCommand::InitializeSlateApplication(bool bOpenTraceFile, cons
 	}
 	else // browser mode
 	{
+		FString Cmd;
+		bool bExecuteCommand = false;
+		if (FParse::Value(FCommandLine::Get(), TEXT("-ExecBrowserAutomationTest="), Cmd, false))
+		{
+			bExecuteCommand = true;
+		}
+
 		if (bUseCustomStoreAddress)
 		{
 			TraceInsightsModule.ConnectToStore(*StoreHost, StorePort);
@@ -353,6 +356,11 @@ void FUserInterfaceCommand::InitializeSlateApplication(bool bOpenTraceFile, cons
 		Params.bInitializeTesting = bInitializeTesting;
 		Params.bStartProcessWithStompMalloc = FParse::Param(FCommandLine::Get(), TEXT("stompmalloc"));
 		TraceInsightsModule.CreateSessionBrowser(Params);
+
+		if (bExecuteCommand)
+		{
+			TraceInsightsModule.RunAutomationTest(Cmd);
+		}
 	}
 }
 

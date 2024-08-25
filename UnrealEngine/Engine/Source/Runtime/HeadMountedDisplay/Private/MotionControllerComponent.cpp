@@ -4,10 +4,7 @@
 #include "PrimitiveSceneProxy.h"
 #include "Misc/ScopeLock.h"
 #include "Features/IModularFeatures.h"
-#include "IMotionController.h"
 #include "GameFramework/WorldSettings.h"
-#include "IXRSystemAssets.h"
-#include "Components/StaticMeshComponent.h"
 #include "MotionDelayBuffer.h"
 #include "UObject/VRObjectVersion.h"
 #include "IXRTrackingSystem.h"
@@ -34,8 +31,6 @@ namespace {
 		ECVF_Cheat);
 } // anonymous namespace
 
-FName UMotionControllerComponent::CustomModelSourceId(TEXT("Custom"));
-
 namespace LegacyMotionSources
 {
 	static bool GetSourceNameForHand(EControllerHand InHand, FName& OutSourceName)
@@ -53,8 +48,6 @@ namespace LegacyMotionSources
 		return false;
 	}
 }
-
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
 //=============================================================================
 UMotionControllerComponent::UMotionControllerComponent(const FObjectInitializer& ObjectInitializer)
@@ -94,16 +87,6 @@ void UMotionControllerComponent::BeginDestroy()
 }
 
 //=============================================================================
-void UMotionControllerComponent::PostLoad()
-{
-	Super::PostLoad();
-	if (bDisplayDeviceModel)
-	{
-		UE_LOG(LogMotionControllerComponent, Warning, TEXT("bDisplayDeviceModel is deprecated. Please use XrDeviceVisualizationComponent instead."));
-	}
-}
-
-//=============================================================================
 FName UMotionControllerComponent::GetTrackingMotionSource() 
 {
 	return MotionSource;
@@ -134,13 +117,6 @@ void UMotionControllerComponent::TickComponent(float DeltaTime, enum ELevelTick 
 		{
 			OnActivateVisualizationComponent.Broadcast(true);
 		}
-
-		// This part is deprecated and will be removed in later versions.
-		// If controller tracking just kicked in or we haven't gotten a valid model yet
-		if (((!bTracked && bNewTrackedState) || !DisplayComponent) && bDisplayDeviceModel && DisplayModelSource != UMotionControllerComponent::CustomModelSourceId)
-		{
-			RefreshDisplayComponent();
-		} // End of deprecation
 
 		bTracked = bNewTrackedState;
 
@@ -329,31 +305,7 @@ bool UMotionControllerComponent::PollControllerState_GameThread(FVector& Positio
 			bPolledHMD_GameThread = false;
 		}
 
-		TArray<IMotionController*> MotionControllers;
-		MotionControllers = IModularFeatures::Get().GetModularFeatureImplementations<IMotionController>(IMotionController::GetModularFeatureName());
-		for (auto MotionController : MotionControllers)
-		{
-			if (MotionController == nullptr)
-			{
-				continue;
-			}
-
-			CurrentTrackingStatus = MotionController->GetControllerTrackingStatus(PlayerIndex, MotionSource);
-			if (MotionController->GetControllerOrientationAndPosition(PlayerIndex, MotionSource, Orientation, Position, OutbProvidedLinearVelocity, OutLinearVelocity, OutbProvidedAngularVelocity, OutAngularVelocityAsAxisAndLength, OutbProvidedLinearAcceleration, OutLinearAcceleration, WorldToMetersScale))
-			{
-				InUseMotionController = MotionController;
-				OnMotionControllerUpdated();
-				InUseMotionController = nullptr;
-
-				{
-					FScopeLock Lock(&PolledMotionControllerMutex);
-					PolledMotionController_GameThread = MotionController;  // We only want a render thread update from the motion controller we polled on the game thread.
-				}
-				return true;
-			}
-		}
-
-		if (MotionSource == IMotionController::HMDSourceId)
+		if (MotionSource == IMotionController::HMDSourceId || MotionSource == IMotionController::HeadSourceId)
 		{
 			IXRTrackingSystem* TrackingSys = GEngine->XRSystem.Get();
 			if (TrackingSys)
@@ -365,6 +317,32 @@ bool UMotionControllerComponent::PollControllerState_GameThread(FVector& Positio
 					{
 						FScopeLock Lock(&PolledMotionControllerMutex);
 						bPolledHMD_GameThread = true;  // We only want a render thread update from the hmd if we polled it on the game thread.
+					}
+					return true;
+				}
+			}
+		}
+		else
+		{
+			TArray<IMotionController*> MotionControllers;
+			MotionControllers = IModularFeatures::Get().GetModularFeatureImplementations<IMotionController>(IMotionController::GetModularFeatureName());
+			for (auto MotionController : MotionControllers)
+			{
+				if (MotionController == nullptr)
+				{
+					continue;
+				}
+
+				CurrentTrackingStatus = MotionController->GetControllerTrackingStatus(PlayerIndex, MotionSource);
+				if (MotionController->GetControllerOrientationAndPosition(PlayerIndex, MotionSource, Orientation, Position, OutbProvidedLinearVelocity, OutLinearVelocity, OutbProvidedAngularVelocity, OutAngularVelocityAsAxisAndLength, OutbProvidedLinearAcceleration, OutLinearAcceleration, WorldToMetersScale))
+				{
+					InUseMotionController = MotionController;
+					OnMotionControllerUpdated();
+					InUseMotionController = nullptr;
+
+					{
+						FScopeLock Lock(&PolledMotionControllerMutex);
+						PolledMotionController_GameThread = MotionController;  // We only want a render thread update from the motion controller we polled on the game thread.
 					}
 					return true;
 				}
@@ -557,280 +535,3 @@ bool UMotionControllerComponent::GetLinearAcceleration(FVector& OutLinearAcceler
 	
 	return bProvidedLinearAcceleration;
 }
-
-
-// These functions are deprecated and will be removed in later versions.
-//=============================================================================
-void UMotionControllerComponent::SetShowDeviceModel(const bool bShowDeviceModel)
-{
-	if (bDisplayDeviceModel != bShowDeviceModel)
-	{
-		bDisplayDeviceModel = bShowDeviceModel;
-#if WITH_EDITORONLY_DATA
-		const UWorld* MyWorld = GetWorld();
-		const bool bIsGameInst = MyWorld && MyWorld->WorldType != EWorldType::Editor && MyWorld->WorldType != EWorldType::EditorPreview;
-
-		if (!bIsGameInst)
-		{
-			// tear down and destroy the existing component if we're an editor inst
-			RefreshDisplayComponent(/*bForceDestroy =*/true);
-		}
-		else
-#endif
-		if (DisplayComponent)
-		{
-			DisplayComponent->SetHiddenInGame(!bShowDeviceModel, /*bPropagateToChildren =*/false);
-		}
-		else if (bShowDeviceModel)
-		{
-			RefreshDisplayComponent();
-		}
-	}
-}
-
-//=============================================================================
-void UMotionControllerComponent::SetDisplayModelSource(const FName NewDisplayModelSource)
-{
-	if (NewDisplayModelSource != DisplayModelSource)
-	{
-		DisplayModelSource = NewDisplayModelSource;
-		RefreshDisplayComponent();
-	}
-}
-
-//=============================================================================
-void UMotionControllerComponent::SetCustomDisplayMesh(UStaticMesh* NewDisplayMesh)
-{
-	if (NewDisplayMesh != CustomDisplayMesh)
-	{
-		CustomDisplayMesh = NewDisplayMesh;
-		if (DisplayModelSource == UMotionControllerComponent::CustomModelSourceId)
-		{
-			if (UStaticMeshComponent* AsMeshComponent = Cast<UStaticMeshComponent>(DisplayComponent))
-			{
-				AsMeshComponent->SetStaticMesh(NewDisplayMesh);
-			}
-			else
-			{
-				RefreshDisplayComponent();
-			}
-		}
-	}
-}
-
-//=============================================================================
-void UMotionControllerComponent::OnRegister()
-{
-	Super::OnRegister();
-
-	if (DisplayComponent == nullptr)
-	{
-		RefreshDisplayComponent();
-	}
-}
-
-//=============================================================================
-void UMotionControllerComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
-{
-	Super::OnComponentDestroyed(bDestroyingHierarchy);
-
-	if (DisplayComponent)
-	{
-		DisplayComponent->DestroyComponent();
-	}
-}
-
-//=============================================================================
-void UMotionControllerComponent::RefreshDisplayComponent(const bool bForceDestroy)
-{
-	if (IsRegistered())
-	{
-		TArray<USceneComponent*> DisplayAttachChildren;
-		auto DestroyDisplayComponent = [this, &DisplayAttachChildren]()
-		{
-			DisplayDeviceId.Clear();
-
-			if (DisplayComponent)
-			{
-				// @TODO: save/restore socket attachments as well
-				DisplayAttachChildren = DisplayComponent->GetAttachChildren();
-
-				DisplayComponent->DestroyComponent(/*bPromoteChildren =*/true);
-				DisplayComponent = nullptr;
-			}
-		};
-		if (bForceDestroy)
-		{
-			DestroyDisplayComponent();
-		}
-
-		UPrimitiveComponent* NewDisplayComponent = nullptr;
-		if (bDisplayDeviceModel)
-		{
-			const EObjectFlags SubObjFlags = RF_Transactional | RF_TextExportTransient;
-
-			if (DisplayModelSource == UMotionControllerComponent::CustomModelSourceId)
-			{
-				UStaticMeshComponent* MeshComponent = nullptr;
-				if ((DisplayComponent == nullptr) || (DisplayComponent->GetClass() != UStaticMeshComponent::StaticClass()))
-				{
-					DestroyDisplayComponent();
-
-					const FName SubObjName = MakeUniqueObjectName(this, UStaticMeshComponent::StaticClass(), TEXT("MotionControllerMesh"));
-					MeshComponent = NewObject<UStaticMeshComponent>(this, SubObjName, SubObjFlags);
-				}
-				else
-				{
-					MeshComponent = CastChecked<UStaticMeshComponent>(DisplayComponent);
-				}
-				NewDisplayComponent = MeshComponent;
-
-				if (ensure(MeshComponent))
-				{
-					if (CustomDisplayMesh)
-					{
-						MeshComponent->SetStaticMesh(CustomDisplayMesh);
-					}
-					else
-					{
-						UE_LOG(LogMotionControllerComponent, Warning, TEXT("Failed to create a custom display component for the MotionController since no mesh was specified."));
-					}
-				}
-			}
-			else
-			{
-				TArray<IXRSystemAssets*> XRAssetSystems = IModularFeatures::Get().GetModularFeatureImplementations<IXRSystemAssets>(IXRSystemAssets::GetModularFeatureName());
-				for (IXRSystemAssets* AssetSys : XRAssetSystems)
-				{
-					if (!DisplayModelSource.IsNone() && AssetSys->GetSystemName() != DisplayModelSource)
-					{
-						continue;
-					}
-
-					int32 DeviceId = INDEX_NONE;
-					if (MotionSource == IMotionController::HMDSourceId)
-					{
-						DeviceId = IXRTrackingSystem::HMDDeviceId;
-					}
-					else
-					{
-						EControllerHand ControllerHandIndex;
-						if (!IMotionController::GetHandEnumForSourceName(MotionSource, ControllerHandIndex))
-						{
-							break;
-						}
-						DeviceId = AssetSys->GetDeviceId(ControllerHandIndex);
-					}
-
-					if (DisplayComponent && DisplayDeviceId.IsOwnedBy(AssetSys) && DisplayDeviceId.DeviceId == DeviceId)
-					{
-						// assume that the current DisplayComponent is the same one we'd get back, so don't recreate it
-						// @TODO: maybe we should add a IsCurrentlyRenderable(int32 DeviceId) to IXRSystemAssets to confirm this in some manner
-						break;
-					}
-
-					// needs to be set before CreateRenderComponent() since the LoadComplete callback may be triggered before it returns (for syncrounous loads)
-					DisplayModelLoadState = EModelLoadStatus::Pending;
-					FXRComponentLoadComplete LoadCompleteDelegate = FXRComponentLoadComplete::CreateUObject(this, &UMotionControllerComponent::OnDisplayModelLoaded);
-
-					NewDisplayComponent = AssetSys->CreateRenderComponent(DeviceId, GetOwner(), SubObjFlags, /*bForceSynchronous=*/false, LoadCompleteDelegate);
-					if (NewDisplayComponent != nullptr)
-					{
-						if (DisplayModelLoadState != EModelLoadStatus::Complete)
-						{
-							DisplayModelLoadState = EModelLoadStatus::InProgress;
-						}
-						DestroyDisplayComponent();
-						DisplayDeviceId = FXRDeviceId(AssetSys, DeviceId);
-						break;
-					}
-					else
-					{
-						DisplayModelLoadState = EModelLoadStatus::Unloaded;
-					}
-				}
-			}
-
-			if (NewDisplayComponent && NewDisplayComponent != DisplayComponent)
-			{
-				NewDisplayComponent->SetupAttachment(this);
-				// force disable collision - if users wish to use collision, they can setup their own sub-component
-				NewDisplayComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-				NewDisplayComponent->RegisterComponent();
-
-				for (USceneComponent* Child : DisplayAttachChildren)
-				{
-					Child->SetupAttachment(NewDisplayComponent);
-				}
-
-				DisplayComponent = NewDisplayComponent;
-			}
-
-			if (DisplayComponent)
-			{
-				if (DisplayModelLoadState != EModelLoadStatus::InProgress)
-				{
-					OnDisplayModelLoaded(DisplayComponent);
-				}
-
-				DisplayComponent->SetHiddenInGame(bHiddenInGame);
-				DisplayComponent->SetVisibility(GetVisibleFlag());
-			}
-		}
-		else if (DisplayComponent)
-		{
-			DisplayComponent->SetHiddenInGame(true, /*bPropagateToChildren =*/false);
-		}
-	}
-}
-
-//=============================================================================
-void UMotionControllerComponent::OnDisplayModelLoaded(UPrimitiveComponent* InDisplayComponent)
-{
-	if (InDisplayComponent == DisplayComponent || DisplayModelLoadState == EModelLoadStatus::Pending)
-	{
-		if (InDisplayComponent)
-		{
-			const int32 MatCount = FMath::Min(InDisplayComponent->GetNumMaterials(), DisplayMeshMaterialOverrides.Num());
-			for (int32 MatIndex = 0; MatIndex < MatCount; ++MatIndex)
-			{
-				InDisplayComponent->SetMaterial(MatIndex, DisplayMeshMaterialOverrides[MatIndex]);
-			}
-		}
-		DisplayModelLoadState = EModelLoadStatus::Complete;
-	}
-}
-
-#if WITH_EDITOR
-//=============================================================================
-void UMotionControllerComponent::PreEditChange(FProperty* PropertyAboutToChange)
-{
-	PreEditMaterialCount = DisplayMeshMaterialOverrides.Num();
-	Super::PreEditChange(PropertyAboutToChange);
-}
-
-//=============================================================================
-void UMotionControllerComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
-{
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	FProperty* PropertyThatChanged = PropertyChangedEvent.Property;
-	const FName PropertyName = (PropertyThatChanged != nullptr) ? PropertyThatChanged->GetFName() : NAME_None;
-
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UMotionControllerComponent, bDisplayDeviceModel))
-	{
-		RefreshDisplayComponent(/*bForceDestroy =*/true);
-	}
-	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UMotionControllerComponent, DisplayMeshMaterialOverrides))
-	{
-		RefreshDisplayComponent(/*bForceDestroy =*/DisplayMeshMaterialOverrides.Num() < PreEditMaterialCount);
-	}
-	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UMotionControllerComponent, CustomDisplayMesh))
-	{
-		RefreshDisplayComponent(/*bForceDestroy =*/false);
-	}
-}
-#endif
-// End of deprecation.
-
-PRAGMA_ENABLE_DEPRECATION_WARNINGS

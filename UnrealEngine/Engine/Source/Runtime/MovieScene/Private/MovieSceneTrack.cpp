@@ -440,6 +440,11 @@ const FMovieSceneTrackEvaluationField& UMovieSceneTrack::GetEvaluationField()
 	return EvaluationField;
 }
 
+void UMovieSceneTrack::ForceUpdateEvaluationTree()
+{
+	UpdateEvaluationTree();
+}
+
 void UMovieSceneTrack::UpdateEvaluationTree()
 {
 	TMovieSceneEvaluationTree<FMovieSceneTrackEvaluationData> EvaluationTree;
@@ -504,7 +509,7 @@ void UMovieSceneTrack::UpdateEvaluationTree()
 			int32 NumToConsolidate = Index - StartIndex;
 			if (NumToConsolidate > 0)
 			{
-				Pair.Value.RemoveAt(StartIndex + 1, NumToConsolidate, false);
+				Pair.Value.RemoveAt(StartIndex + 1, NumToConsolidate, EAllowShrinking::No);
 				NumEntries -= NumToConsolidate;
 			}
 		}

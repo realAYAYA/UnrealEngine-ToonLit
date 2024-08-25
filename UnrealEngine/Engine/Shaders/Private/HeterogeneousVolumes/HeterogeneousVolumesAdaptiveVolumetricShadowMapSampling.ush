@@ -1,0 +1,117 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "HeterogeneousVolumesAdaptiveVolumetricShadowMapUtils.ush"
+
+uint GetMyLinearIndex(uint Face, uint2 PixelCoord)
+{
+	uint LinearIndex = Face * AVSM.Resolution.x * AVSM.Resolution.y + PixelCoord.y * AVSM.Resolution.x + PixelCoord.x;
+	return LinearIndex;
+}
+
+float AVSM_Sample(int Face, int2 Pixel, float WorldHitT)
+{
+	uint LinearIndex = GetMyLinearIndex(Face, Pixel);
+	FAVSMIndirectionData IndirectionData = ASVM_UnpackIndirectionData(AVSM.IndirectionBuffer[LinearIndex]);
+
+	FAVSMSampleData ShadowData[2] = {
+		AVSM_CreateSampleData(0.0, 1.0),
+		AVSM_CreateSampleData(0.0, 1.0)
+	};
+
+	if (IndirectionData.SampleCount > 0)
+	{
+		ShadowData[0] = AVSM_UnpackSampleData(AVSM.SampleBuffer[IndirectionData.PixelOffset]);
+		for (int ElementIndex = 1; ElementIndex < IndirectionData.SampleCount; ++ElementIndex)
+		{
+			ShadowData[1] = AVSM_UnpackSampleData(AVSM.SampleBuffer[IndirectionData.PixelOffset + ElementIndex]);
+			if (WorldHitT < ShadowData[1].X)
+			{
+				break;
+			}
+
+			ShadowData[0] = ShadowData[1];
+		}
+	}
+
+	float Transmittance = 1.0;
+	if (WorldHitT > ShadowData[0].X)
+	{
+		float BlendWeight = saturate((WorldHitT - ShadowData[0].X) * rcp(ShadowData[1].X - ShadowData[0].X));
+		Transmittance = lerp(ShadowData[0].Tau, ShadowData[1].Tau, BlendWeight);
+	}
+	return Transmittance;
+}
+
+float AVSM_SampleTransmittance(float3 TranslatedWorldPosition, float3 LightTranslatedWorldPosition)
+{
+	if (any(AVSM.Resolution == 0))
+	{
+		return 1.0;
+	}
+
+	float Transmittance = 1.0;
+
+	int Face = 0;
+	if (AVSM.NumShadowMatrices > 1)
+	{
+		float3 LightDir = TranslatedWorldPosition - AVSM.TranslatedWorldOrigin;
+		float3 LightDirAbs = abs(LightDir);
+
+		Face = LightDirAbs[1] > LightDirAbs[0] ? 1 : 0;
+		Face = LightDirAbs[2] > LightDirAbs[Face] ? 2 : Face;
+
+		int FaceOffset = (sign(LightDir[Face]) > 0) ? 1 : 0;
+		Face = Face * 2 + FaceOffset;
+	}
+
+	float4 ShadowPositionAsFloat4 = 0;
+	float3 ShadowPosition = 0;
+	{
+		ShadowPositionAsFloat4 = mul(float4(TranslatedWorldPosition, 1), AVSM.TranslatedWorldToShadow[Face]);
+		if (ShadowPositionAsFloat4.w > 0)
+		{
+			ShadowPosition = ShadowPositionAsFloat4.xyz / ShadowPositionAsFloat4.w;
+			if (all(ShadowPosition.xyz > 0) || all(ShadowPosition.xy < 1))
+			{
+				float2 ShadowMapCoord = clamp(ShadowPosition.xy * AVSM.Resolution, 0, AVSM.Resolution - 1);
+				float ShadowBias = 0.5;
+				float ShadowZ = length(TranslatedWorldPosition - AVSM.TranslatedWorldOrigin) - ShadowBias;
+				if (AVSM.bIsDirectionalLight)
+				{
+					ShadowZ = dot(AVSM.TranslatedWorldPlane.xyz, TranslatedWorldPosition) + AVSM.TranslatedWorldPlane.w;
+				}
+
+			#define BILINEAR_INTERPOLATION 1
+			#if BILINEAR_INTERPOLATION
+				// Bilinear interpolation of shadow data
+				int2 ShadowMapCoordX[4] =
+				{
+					clamp(ShadowMapCoord, 0, AVSM.Resolution - 1),
+					clamp(ShadowMapCoord + int2(0, 1), 0, AVSM.Resolution - 1),
+					clamp(ShadowMapCoord + int2(1, 0), 0, AVSM.Resolution - 1),
+					clamp(ShadowMapCoord + int2(1, 1), 0, AVSM.Resolution - 1)
+				};
+
+				float TransmittanceX[4] =
+				{
+					AVSM_Sample(Face, ShadowMapCoordX[0], ShadowZ),
+					AVSM_Sample(Face, ShadowMapCoordX[1], ShadowZ),
+					AVSM_Sample(Face, ShadowMapCoordX[2], ShadowZ),
+					AVSM_Sample(Face, ShadowMapCoordX[3], ShadowZ)
+				};
+
+				float2 Weight = frac(ShadowMapCoord);
+				float TransmittanceY0 = lerp(TransmittanceX[0], TransmittanceX[2], Weight.x);
+				float TransmittanceY1 = lerp(TransmittanceX[1], TransmittanceX[3], Weight.x);
+				Transmittance = lerp(TransmittanceY0, TransmittanceY1, Weight.y);
+			#else
+				Transmittance = AVSM_Sample(Face, ShadowMapCoord, ShadowZ);
+			#endif
+			}
+		}
+	}
+
+	return Transmittance;
+}

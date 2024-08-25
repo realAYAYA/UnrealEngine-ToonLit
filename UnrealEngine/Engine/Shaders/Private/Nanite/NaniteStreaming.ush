@@ -13,6 +13,8 @@ struct FStreamingRequest
 	uint Priority_Magic;
 };
 
+uint StreamingRequestsBufferVersion;
+
 void RequestPageRange( RWStructuredBuffer<FStreamingRequest> RequestsBuffer, uint RuntimeResourceID, uint StartPageIndex, uint NumPages, uint PriorityCategory, float Priority )
 {
 	if ((RenderFlags & NANITE_RENDER_FLAG_OUTPUT_STREAMING_REQUESTS) && NumPages > 0)
@@ -28,10 +30,10 @@ void RequestPageRange( RWStructuredBuffer<FStreamingRequest> RequestsBuffer, uin
 			Request.RuntimeResourceID_Magic		= (RuntimeResourceID << NANITE_STREAMING_REQUEST_MAGIC_BITS);
 			Request.PageIndex_NumPages_Magic	= (((StartPageIndex << NANITE_MAX_GROUP_PARTS_BITS) | NumPages) << NANITE_STREAMING_REQUEST_MAGIC_BITS);
 			Request.Priority_Magic				= UIntPriority & ~NANITE_STREAMING_REQUEST_MAGIC_MASK;		// Mask off low bits to leave space for magic
-			const uint FrameNibble = StreamingRequestsBufferVersion & 0xF;
-			Request.RuntimeResourceID_Magic		|= 0xA0 | FrameNibble;
-			Request.PageIndex_NumPages_Magic	|= 0xB0 | FrameNibble;
-			Request.Priority_Magic				|= 0xC0 | FrameNibble;
+			const uint FrameNibble				= StreamingRequestsBufferVersion & 0xF;
+			Request.RuntimeResourceID_Magic		|= 0x10 | FrameNibble;
+			Request.PageIndex_NumPages_Magic	|= 0x20 | FrameNibble;
+			Request.Priority_Magic				|= 0x30 | FrameNibble;
 #else
 			Request.RuntimeResourceID_Magic		= RuntimeResourceID;
 			Request.PageIndex_NumPages_Magic	= (StartPageIndex << NANITE_MAX_GROUP_PARTS_BITS) | NumPages;

@@ -1,5 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/localizations.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -7,10 +10,6 @@ import 'package:provider/provider.dart';
 import '../../../../models/unreal_actor_manager.dart';
 import '../../../../models/unreal_types.dart';
 import '../../../../utilities/constants.dart';
-import '../../../../utilities/unreal_colors.dart';
-import '../../../elements/asset_icon.dart';
-import '../../../elements/epic_icon_button.dart';
-import '../../../elements/modal.dart';
 
 /// Displays the list of currently available actors which users can select from.
 class NDisplaySelectorDialog extends StatefulWidget {
@@ -84,7 +83,7 @@ class _NDisplaySelectorDialogState extends State<NDisplaySelectorDialog> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 AssetIcon(
-                  path: 'assets/images/icons/unreal_u_logo.svg',
+                  path: 'packages/epic_common/assets/icons/unreal_u_logo.svg',
                   size: 24,
                 ),
                 SizedBox(width: 20),
@@ -115,7 +114,7 @@ class _NDisplaySelectorDialogState extends State<NDisplaySelectorDialog> {
                     if (!widget.bIsAlreadyConnected)
                       EpicLozengeButton(
                         onPressed: () => Navigator.pop(context),
-                        label: AppLocalizations.of(context)!.menuButtonCancel,
+                        label: EpicCommonLocalizations.of(context)!.menuButtonCancel,
                         color: (_selectedActor != null) ? Colors.transparent : Theme.of(context).colorScheme.secondary,
                       ),
                     if (_selectedActor != null)
@@ -124,7 +123,7 @@ class _NDisplaySelectorDialogState extends State<NDisplaySelectorDialog> {
                         child: EpicLozengeButton(
                             onPressed: () => Navigator.of(context).pop(_selectedActor),
                             label: widget.bIsAlreadyConnected
-                                ? AppLocalizations.of(context)!.menuButtonProceed
+                                ? EpicCommonLocalizations.of(context)!.menuButtonProceed
                                 : AppLocalizations.of(context)!.nDisplaySelectorModalConnectButtonLabel),
                       ),
                   ],
@@ -188,7 +187,7 @@ class NDisplayItem extends StatelessWidget {
         child: Row(
           children: [
             AssetIcon(
-              path: 'assets/images/icons/ndisplay.svg',
+              path: 'packages/epic_common/assets/icons/ndisplay.svg',
               size: 32,
             ),
             SizedBox(width: 16),

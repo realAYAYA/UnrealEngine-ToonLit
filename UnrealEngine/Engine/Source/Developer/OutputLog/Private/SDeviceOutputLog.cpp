@@ -104,8 +104,8 @@ void SDeviceOutputLog::Construct( const FArguments& InArgs )
 	bIsUserScrolled = false;
 	RequestForceScroll();
 	
-	ITargetPlatform::OnDeviceDiscovered().AddRaw(this, &SDeviceOutputLog::HandleTargetPlatformDeviceDiscovered);
-	ITargetPlatform::OnDeviceLost().AddRaw(this, &SDeviceOutputLog::HandleTargetPlatformDeviceLost);
+	ITargetPlatformControls::OnDeviceDiscovered().AddRaw(this, &SDeviceOutputLog::HandleTargetPlatformDeviceDiscovered);
+	ITargetPlatformControls::OnDeviceLost().AddRaw(this, &SDeviceOutputLog::HandleTargetPlatformDeviceLost);
 		
 	// Get list of available devices
 	for (ITargetPlatform* Platform : GetTargetPlatformManager()->GetTargetPlatforms())
@@ -128,8 +128,8 @@ void SDeviceOutputLog::Construct( const FArguments& InArgs )
 
 SDeviceOutputLog::~SDeviceOutputLog()
 {
-	ITargetPlatform::OnDeviceDiscovered().RemoveAll(this);
-	ITargetPlatform::OnDeviceLost().RemoveAll(this);
+	ITargetPlatformControls::OnDeviceDiscovered().RemoveAll(this);
+	ITargetPlatformControls::OnDeviceLost().RemoveAll(this);
 
 	// Clearing the pointer manually to ensure that when the pointed device output object is destroyed
 	// SDeviceOutputLog is still in a valid state in case CurrentDeviceOutputPtr wanted to dereference it.
@@ -277,7 +277,7 @@ void SDeviceOutputLog::AddDeviceEntry(ITargetDeviceRef TargetDevice)
 		return;
 	}
 	using namespace PlatformInfo;
-	FName DeviceIconStyleName = TargetDevice->GetTargetPlatform().GetPlatformInfo().GetIconStyleName(EPlatformIconSize::Normal);
+	FName DeviceIconStyleName = TargetDevice->GetPlatformControls().GetPlatformInfo().GetIconStyleName(EPlatformIconSize::Normal);
 	
 	TSharedPtr<FTargetDeviceEntry> DeviceEntry = MakeShareable(new FTargetDeviceEntry());
 	

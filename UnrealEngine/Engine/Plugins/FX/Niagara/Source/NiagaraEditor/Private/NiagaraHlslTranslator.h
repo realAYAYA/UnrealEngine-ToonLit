@@ -268,11 +268,11 @@ protected:
 	TMap<FNiagaraDataSetID, TMap<int32, FDataSetAccessInfo>> DataSetWriteInfo[(int32)ENiagaraDataSetAccessMode::Num];
 	TMap<FNiagaraDataSetID, int32> DataSetWriteConditionalInfo[(int32)ENiagaraDataSetAccessMode::Num];
 
-	NIAGARAEDITOR_API FString GetDataSetAccessSymbol(FNiagaraDataSetID DataSet, int32 IndexChunk, bool bRead);
-	FORCEINLINE FNiagaraDataSetID GetInstanceDataSetID()const { return FNiagaraDataSetID(TEXT("DataInstance"), ENiagaraDataSetType::ParticleData); }
-	FORCEINLINE FNiagaraDataSetID GetSystemEngineDataSetID()const { return FNiagaraDataSetID(TEXT("Engine"), ENiagaraDataSetType::ParticleData); }
-	FORCEINLINE FNiagaraDataSetID GetSystemUserDataSetID()const { return FNiagaraDataSetID(TEXT("User"), ENiagaraDataSetType::ParticleData); }
-	FORCEINLINE FNiagaraDataSetID GetSystemConstantDataSetID()const { return FNiagaraDataSetID(TEXT("Constant"), ENiagaraDataSetType::ParticleData); }
+	FString GetDataSetAccessSymbol(FNiagaraDataSetID DataSet, int32 IndexChunk, bool bRead);
+	FNiagaraDataSetID GetInstanceDataSetID()const { return FNiagaraDataSetID(TEXT("DataInstance"), ENiagaraDataSetType::ParticleData); }
+	FNiagaraDataSetID GetSystemEngineDataSetID()const { return FNiagaraDataSetID(TEXT("Engine"), ENiagaraDataSetType::ParticleData); }
+	FNiagaraDataSetID GetSystemUserDataSetID()const { return FNiagaraDataSetID(TEXT("User"), ENiagaraDataSetType::ParticleData); }
+	FNiagaraDataSetID GetSystemConstantDataSetID()const { return FNiagaraDataSetID(TEXT("Constant"), ENiagaraDataSetType::ParticleData); }
 
 	/** All functions called in the script. */
 	struct FNiagaraFunctionBody
@@ -289,15 +289,15 @@ protected:
 	TMap<FNiagaraFunctionSignature, TArray<FName>> FunctionStageReadTargets;
 	TArray<TArray<FName>> ActiveStageReadTargets;
 
-	NIAGARAEDITOR_API void GenerateFunctionCall(ENiagaraScriptUsage ScriptUsage, FNiagaraFunctionSignature& FunctionSignature, TArrayView<const int32> Inputs, TArray<int32>& Outputs);
-	NIAGARAEDITOR_API FString GetFunctionIncludeStatement(const FNiagaraCustomHlslInclude& Include) const;
-	NIAGARAEDITOR_API FString GetFunctionSignature(const FNiagaraFunctionSignature& Sig);
+	void GenerateFunctionCall(ENiagaraScriptUsage ScriptUsage, FNiagaraFunctionSignature& FunctionSignature, TArrayView<const int32> Inputs, TArray<int32>& Outputs);
+	FString GetFunctionIncludeStatement(const FNiagaraCustomHlslInclude& Include) const;
+	FString GetFunctionSignature(const FNiagaraFunctionSignature& Sig);
 
-	NIAGARAEDITOR_API void WriteDataSetContextVars(TMap<FNiagaraDataSetID, TMap<int32, FDataSetAccessInfo>>& DataSetAccessInfo, bool bRead, FString& OutHLSLOutput);
-	NIAGARAEDITOR_API void WriteDataSetStructDeclarations(TMap<FNiagaraDataSetID, TMap<int32, FDataSetAccessInfo>>& DataSetAccessInfo, bool bRead, FString& OutHLSLOutput);
-	NIAGARAEDITOR_API void DecomposeVariableAccess(UStruct* Struct, bool bRead, FString IndexSymbol, FString HLSLString);
+	void WriteDataSetContextVars(TMap<FNiagaraDataSetID, TMap<int32, FDataSetAccessInfo>>& DataSetAccessInfo, bool bRead, FString& OutHLSLOutput);
+	void WriteDataSetStructDeclarations(TMap<FNiagaraDataSetID, TMap<int32, FDataSetAccessInfo>>& DataSetAccessInfo, bool bRead, FString& OutHLSLOutput);
+	void DecomposeVariableAccess(UStruct* Struct, bool bRead, FString IndexSymbol, FString HLSLString);
 
-	NIAGARAEDITOR_API FString GetUniqueSymbolName(FName BaseName);
+	FString GetUniqueSymbolName(FName BaseName);
 
 	/** Stack of all function params. */
 	struct FFunctionContext
@@ -315,34 +315,38 @@ protected:
 	};
 	TArray<FFunctionContext> FunctionContextStack;
 	const FFunctionContext* FunctionCtx()const { return FunctionContextStack.Num() > 0 ? &FunctionContextStack.Last() : nullptr; }
-	NIAGARAEDITOR_API FString GetCallstack();
-	NIAGARAEDITOR_API TArray<FGuid> GetCallstackGuids();
+	FString GetCallstack();
+	TArray<FGuid> GetCallstackGuids();
 
-	NIAGARAEDITOR_API void EnterStatsScope(FNiagaraStatScope StatScope);
-	NIAGARAEDITOR_API void ExitStatsScope();
-	NIAGARAEDITOR_API void EnterStatsScope(FNiagaraStatScope StatScope, FString& OutHlsl);
-	NIAGARAEDITOR_API void ExitStatsScope(FString& OutHlsl);
+	void EnterStatsScope(FNiagaraStatScope StatScope);
+	void ExitStatsScope();
+	void EnterStatsScope(FNiagaraStatScope StatScope, FString& OutHlsl);
+	void ExitStatsScope(FString& OutHlsl);
 
-	NIAGARAEDITOR_API FString GeneratedConstantString(float Constant);
-	NIAGARAEDITOR_API FString GeneratedConstantString(FVector4 Constant);
+	FString GeneratedConstantString(float Constant);
+	FString GeneratedConstantString(FVector4 Constant);
 
 	/* Add a chunk that is not written to the source, only used as a source chunk for others. */
-	NIAGARAEDITOR_API int32 AddSourceChunk(FString SymbolName, const FNiagaraTypeDefinition& Type, bool bSanitize = true);
+	int32 AddSourceChunk(FString SymbolName, const FNiagaraTypeDefinition& Type, bool bSanitize = true);
 
 	/** Add a chunk defining a uniform value. */
-	NIAGARAEDITOR_API int32 AddUniformChunk(FString SymbolName, const FNiagaraVariable& InVariable, ENiagaraCodeChunkMode ChunkMode, bool AddPadding);
+	int32 AddChunkToConstantBuffer(const FString& SymbolName, const FNiagaraVariable& InVariable, ENiagaraCodeChunkMode ChunkMode);
+
+	/** Reserves a chunk for a uniform value.  The chunk isn't resolved till the call to PackRegisteredUniformChunk. */
+	int32 RegisterUniformChunkToPack(const FString& SymbolName, const FNiagaraVariable& InVariable, bool AddPadding, FNiagaraParameters& Parameters, TOptional<FNiagaraVariable>& ConflictingVariable);
+	void PackRegisteredUniformChunk(FNiagaraParameters& Parameters);
 
 	/* Add a chunk that is written to the body of the shader code. */
-	NIAGARAEDITOR_API int32 AddBodyChunk(FString SymbolName, FString Definition, const FNiagaraTypeDefinition& Type, TArray<int32>& SourceChunks, bool bDecl = true, bool bIsTerminated = true);
-	NIAGARAEDITOR_API int32 AddBodyChunk(FString SymbolName, FString Definition, const FNiagaraTypeDefinition& Type, int32 SourceChunk, bool bDecl = true, bool bIsTerminated = true);
-	NIAGARAEDITOR_API int32 AddBodyChunk(FString SymbolName, FString Definition, const FNiagaraTypeDefinition& Type, bool bDecl = true, bool bIsTerminated = true);
-	NIAGARAEDITOR_API int32 AddBodyComment(const FString& Comment);
-	NIAGARAEDITOR_API int32 AddBodyChunk(const FString& Definition);
+	int32 AddBodyChunk(FString SymbolName, FString Definition, const FNiagaraTypeDefinition& Type, TArray<int32>& SourceChunks, bool bDecl = true, bool bIsTerminated = true);
+	int32 AddBodyChunk(FString SymbolName, FString Definition, const FNiagaraTypeDefinition& Type, int32 SourceChunk, bool bDecl = true, bool bIsTerminated = true);
+	int32 AddBodyChunk(FString SymbolName, FString Definition, const FNiagaraTypeDefinition& Type, bool bDecl = true, bool bIsTerminated = true);
+	int32 AddBodyComment(const FString& Comment);
+	int32 AddBodyChunk(const FString& Definition);
 
-	NIAGARAEDITOR_API FString GetUniqueEmitterName() const;
-	NIAGARAEDITOR_API void ConvertCompileInfoToParamInfo(const FNiagaraScriptDataInterfaceCompileInfo& InCompileInfo, FNiagaraDataInterfaceGPUParamInfo& OutGPUParamInfo, TArray<FNiagaraFunctionSignature>& GeneratedFunctionSignatures);
+	FString GetUniqueEmitterName() const;
+	void ConvertCompileInfoToParamInfo(const FNiagaraScriptDataInterfaceCompileInfo& InCompileInfo, FNiagaraDataInterfaceGPUParamInfo& OutGPUParamInfo, TArray<FNiagaraFunctionSignature>& GeneratedFunctionSignatures);
 
-	NIAGARAEDITOR_API FString GetFunctionDefinitions();
+	FString GetFunctionDefinitions();
 
 public:
 	NIAGARAEDITOR_API FNiagaraHlslTranslator();
@@ -424,52 +428,55 @@ public:
 
 
 protected:
-	NIAGARAEDITOR_API bool ShouldConsiderTargetParameterMap(ENiagaraScriptUsage InUsage) const;
+	bool ShouldConsiderTargetParameterMap(ENiagaraScriptUsage InUsage) const;
 
-	NIAGARAEDITOR_API void HandleNamespacedExternalVariablesToDataSetRead(TArray<FNiagaraVariable>& InDataSetVars, FString InNamespaceStr);
+	void HandleNamespacedExternalVariablesToDataSetRead(TArray<FNiagaraVariable>& InDataSetVars, FString InNamespaceStr);
 
 	// For GPU simulations we have to special case some variables and pass them view shader parameters rather than the uniform buffer as they vary from CPU simulations
-	NIAGARAEDITOR_API bool IsVariableInUniformBuffer(const FNiagaraVariable& Variable) const;
+	bool IsVariableInUniformBuffer(const FNiagaraVariable& Variable) const;
 
-	NIAGARAEDITOR_API FString ComputeMatrixColumnAccess(const FString& Name);
-	NIAGARAEDITOR_API FString ComputeMatrixRowAccess(const FString& Name);
+	FString ComputeMatrixColumnAccess(const FString& Name);
+	FString ComputeMatrixRowAccess(const FString& Name);
 
 	// Add a raw float constant chunk
-	NIAGARAEDITOR_API int32 GetConstantDirect(float InValue);
-	NIAGARAEDITOR_API int32 GetConstantDirect(bool InValue);
-	NIAGARAEDITOR_API int32 GetConstantDirect(int InValue);
+	int32 GetConstantDirect(float InValue);
+	int32 GetConstantDirect(bool InValue);
+	int32 GetConstantDirect(int InValue);
 
-	NIAGARAEDITOR_API FNiagaraTypeDefinition GetChildType(const FNiagaraTypeDefinition& BaseType, const FName& PropertyName);
-	NIAGARAEDITOR_API FString NamePathToString(const FString& Prefix, const FNiagaraTypeDefinition& RootType, const TArray<FName>& NamePath);
-	NIAGARAEDITOR_API FString GenerateAssignment(const FNiagaraTypeDefinition& SrcType, const TArray<FName>& SrcPath, const FNiagaraTypeDefinition& DestType, const TArray<FName>& DestPath);
+	FNiagaraTypeDefinition GetChildType(const FNiagaraTypeDefinition& BaseType, const FName& PropertyName);
+	FString NamePathToString(const FString& Prefix, const FNiagaraTypeDefinition& RootType, const TArray<FName>& NamePath);
+	FString GenerateAssignment(const FNiagaraTypeDefinition& SrcType, const TArray<FName>& SrcPath, const FNiagaraTypeDefinition& DestType, const TArray<FName>& DestPath);
 
 	//Generates the code for the passed chunk.
-	NIAGARAEDITOR_API FString GetCode(FNiagaraCodeChunk& Chunk);
-	NIAGARAEDITOR_API FString GetCode(int32 ChunkIdx);
+	FString GetCode(FNiagaraCodeChunk& Chunk);
+	FString GetCode(int32 ChunkIdx);
 	//Retreives the code for this chunk being used as a source for another chunk
-	NIAGARAEDITOR_API FString GetCodeAsSource(int32 ChunkIdx);
+	FString GetCodeAsSource(int32 ChunkIdx);
 
 	// Generate a structure initializer string
 	// Returns true if we generated the structure successfully or false if we encounter something we could not handle
-	NIAGARAEDITOR_API bool GenerateStructInitializer(TStringBuilder<128>& InitializerString, UStruct* UserDefinedStruct, const void* StructData, int32 ByteOffset = 0);
+	bool GenerateStructInitializer(TStringBuilder<128>& InitializerString, UStruct* UserDefinedStruct, const void* StructData, int32 ByteOffset = 0);
 	// Convert a variable with actual data into a constant string
-	NIAGARAEDITOR_API FString GenerateConstantString(const FNiagaraVariable& Constant);
+	FString GenerateConstantString(const FNiagaraVariable& Constant);
 
 	// Takes the current script state (interpolated or not) and determines the correct context variable.
-	NIAGARAEDITOR_API FString GetParameterMapInstanceName(int32 ParamMapHistoryIdx);
+	FString GetParameterMapInstanceName(int32 ParamMapHistoryIdx);
 
 	// Register an attribute in its non namespaced form
 	virtual bool ParameterMapRegisterNamespaceAttributeVariable(const FNiagaraVariable& InVariable, int32 InParamMapHistoryIdx, int32& Output) = 0;
 
-	NIAGARAEDITOR_API bool ShouldInterpolateParameter(const FNiagaraVariable& Parameter);
+	bool ShouldInterpolateParameter(const FNiagaraVariable& Parameter);
+	FString GetInterpolateHlsl(const FNiagaraVariable& Parameter, const FString& PrevMapName, const FNiagaraCodeChunk& Chunk) const;
 
-	NIAGARAEDITOR_API bool IsBulkSystemScript() const;
-	NIAGARAEDITOR_API bool IsSpawnScript() const;
-	NIAGARAEDITOR_API bool RequiresInterpolation() const;
+	bool IsBulkSystemScript() const;
+	bool IsSpawnScript() const;
+	bool RequiresInterpolation() const;
+	bool IsWriteAllowedForNamespace(const FNiagaraVariable& Var, ENiagaraScriptUsage TargetUsage, FText& ErrorMsg);
 
 	template<typename T>
 	void BuildConstantBuffer(ENiagaraCodeChunkMode ChunkMode);
 
+	virtual FNiagaraEmitterID GetEmitterID() const = 0;
 	virtual const FString& GetEmitterUniqueName() const = 0;
 	virtual TConstArrayView<FNiagaraVariable> GetStaticVariables() const = 0;
 	virtual UNiagaraDataInterface* GetDataInterfaceCDO(UClass* DIClass) const = 0;
@@ -493,7 +500,7 @@ protected:
 	TArray<FunctionNodeStackEntry> FunctionNodeStack;
 
 	// Synced to the System uniforms encountered for parameter maps thus far.
-	struct UniformVariableInfo
+	struct FUniformVariableInfo
 	{
 		FNiagaraVariable Variable;
 		int32 ChunkIndex;
@@ -506,7 +513,11 @@ protected:
 		bool bDefaultExplicit = false; //Whether or not the default value of the variable is explicit, e.g. there is an explicit value on a pin, explicit binding, or explicit custom initialization.
 	};
 
-	TMap<FName, UniformVariableInfo> ParamMapDefinedSystemVars; // Map from the defined constants to the uniform chunk expressing them (i.e. have we encountered before in this graph?)
+	TArray<FNiagaraVariable> ParamMapDefinedEngineVars; // Engine provided values that we want to be accessible via the parameter map but not to add as uniforms etc.
+
+	TMap<int32 /*parameter index*/, int32 /*chunk index*/> UniformParametersToPack; // Map connecting the parameters that need to be packed for a uniform buffer with their registered chunk index
+
+	TMap<FName, FUniformVariableInfo> ParamMapDefinedSystemVars; // Map from the defined constants to the uniform chunk expressing them (i.e. have we encountered before in this graph?)
 
 	// Synced to the EmitterParameter uniforms encountered for parameter maps thus far.
 	TMap<FName, int32> ParamMapDefinedEmitterParameterVarsToUniformChunks; // Map from the variable name exposed by the emitter as a parameter to the uniform chunk expressing it (i.e. have we encountered before in this graph?)
@@ -726,6 +737,7 @@ protected:
 	void UpdateStaticSwitchConstants(const FPin* Pin);
 
 	virtual const FString& GetEmitterUniqueName() const override;
+	virtual FNiagaraEmitterID GetEmitterID() const override;
 	virtual TConstArrayView<FNiagaraVariable> GetStaticVariables() const override;
 	virtual UNiagaraDataInterface* GetDataInterfaceCDO(UClass* DIClass) const override;
 

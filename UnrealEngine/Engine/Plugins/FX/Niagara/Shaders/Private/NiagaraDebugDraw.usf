@@ -44,7 +44,7 @@ void MainVS(
 	UnpackLine(GpuLineBuffer, InstanceID, Position0, Position1, Color);
 
 	float3 Position = VertexID == 0 ? Position0 : Position1;
-	OutPosition = mul(float4(Position, 1), LWCHackToFloat(PrimaryView.WorldToClip));
+	OutPosition = mul(float4(Position, 1), DFHackToFloat(PrimaryView.WorldToClip));
 	OutColor = Color;
 }
 #endif

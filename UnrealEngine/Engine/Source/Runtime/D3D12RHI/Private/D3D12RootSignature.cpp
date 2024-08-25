@@ -156,7 +156,7 @@ FD3D12RootSignatureDesc::FD3D12RootSignatureDesc(const FD3D12QuantizedBoundShade
 #if D3D12_RHI_RAYTRACING
 	if (QBSS.RootSignatureType == RS_RayTracingLocal)
 	{
-		BindingSpace = RAY_TRACING_REGISTER_SPACE_LOCAL;
+		BindingSpace = UE_HLSL_SPACE_RAY_TRACING_LOCAL;
 
 		// Add standard root parameters for hit groups, as per FHitGroupSystemParameters declaration in D3D12RayTracing.cpp and RayTracingHitGroupCommon.ush:
 		//          Resources:
@@ -177,7 +177,7 @@ FD3D12RootSignatureDesc::FD3D12RootSignatureDesc(const FD3D12QuantizedBoundShade
 		// Index buffer descriptor
 		{
 			check(RootParameterCount < MaxRootParameters);
-			TableSlots[RootParameterCount].InitAsShaderResourceView(RAY_TRACING_SYSTEM_INDEXBUFFER_REGISTER, RAY_TRACING_REGISTER_SPACE_SYSTEM);
+			TableSlots[RootParameterCount].InitAsShaderResourceView(RAY_TRACING_SYSTEM_INDEXBUFFER_REGISTER, UE_HLSL_SPACE_RAY_TRACING_SYSTEM);
 			RootParameterCount++;
 			RootParametersSize += RootDescriptorCost;
 		}
@@ -185,7 +185,7 @@ FD3D12RootSignatureDesc::FD3D12RootSignatureDesc(const FD3D12QuantizedBoundShade
 		// Vertex buffer descriptor
 		{
 			check(RootParameterCount < MaxRootParameters);
-			TableSlots[RootParameterCount].InitAsShaderResourceView(RAY_TRACING_SYSTEM_VERTEXBUFFER_REGISTER, RAY_TRACING_REGISTER_SPACE_SYSTEM);
+			TableSlots[RootParameterCount].InitAsShaderResourceView(RAY_TRACING_SYSTEM_VERTEXBUFFER_REGISTER, UE_HLSL_SPACE_RAY_TRACING_SYSTEM);
 			RootParameterCount++;
 			RootParametersSize += RootDescriptorCost;
 		}
@@ -195,14 +195,14 @@ FD3D12RootSignatureDesc::FD3D12RootSignatureDesc(const FD3D12QuantizedBoundShade
 			check(RootParameterCount < MaxRootParameters);
 			static_assert(sizeof(FHitGroupSystemRootConstants) % 8 == 0, "FHitGroupSystemRootConstants structure must be 8-byte aligned");
 			const uint32 NumConstants = sizeof(FHitGroupSystemRootConstants) / sizeof(uint32);
-			TableSlots[RootParameterCount].InitAsConstants(NumConstants, RAY_TRACING_SYSTEM_ROOTCONSTANT_REGISTER, RAY_TRACING_REGISTER_SPACE_SYSTEM);
+			TableSlots[RootParameterCount].InitAsConstants(NumConstants, RAY_TRACING_SYSTEM_ROOTCONSTANT_REGISTER, UE_HLSL_SPACE_RAY_TRACING_SYSTEM);
 			RootParameterCount++;
 			RootParametersSize += NumConstants * RootConstantCost;
 		}
 	}
 	else if (QBSS.RootSignatureType == RS_RayTracingGlobal)
 	{
-		BindingSpace = RAY_TRACING_REGISTER_SPACE_GLOBAL;
+		BindingSpace = UE_HLSL_SPACE_RAY_TRACING_GLOBAL;
 	}
 #endif //D3D12_RHI_RAYTRACING
 
@@ -339,11 +339,20 @@ FD3D12RootSignatureDesc::FD3D12RootSignatureDesc(const FD3D12QuantizedBoundShade
 	}
 #endif
 
+	if (QBSS.bUseRootConstants)
+	{
+		check(RootParameterCount < MaxRootParameters);
+		RootConstantsSlot = int8(RootParameterCount);
+		TableSlots[RootParameterCount].InitAsConstants(4, 0, UE_HLSL_SPACE_SHADER_ROOT_CONSTANTS, D3D12_SHADER_VISIBILITY_ALL);
+		RootParameterCount++;
+		RootParametersSize += RootDescriptorCost;
+	}
+
 	if (bUseShaderDiagnosticBuffer)
 	{
 		check(RootParameterCount < MaxRootParameters);
 		DiagnosticBufferSlot = int8(RootParameterCount);
-		TableSlots[RootParameterCount].InitAsUnorderedAccessView(0, 999, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE, D3D12_SHADER_VISIBILITY_ALL);
+		TableSlots[RootParameterCount].InitAsUnorderedAccessView(0, UE_HLSL_SPACE_DIAGNOSTIC, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE, D3D12_SHADER_VISIBILITY_ALL);
 		RootParameterCount++;
 		RootParametersSize += RootDescriptorCost;
 	}
@@ -386,6 +395,22 @@ void FD3D12RootSignature::InitStaticGraphicsRootSignature(ED3D12RootSignatureFla
 	D3D12ShaderUtils::FBinaryRootSignatureCreator Creator;
 	D3D12ShaderUtils::CreateGfxRootSignature(Creator, InFlags);
 	Init(Creator.Finalize());
+
+	if (EnumHasAnyFlags(InFlags, ED3D12RootSignatureFlags::RootConstants))
+	{
+		for (int32 ParameterSlot = 0; ParameterSlot < Creator.Parameters.Num(); ++ParameterSlot)
+		{
+			const CD3DX12_ROOT_PARAMETER1 RootParameter = Creator.Parameters[ParameterSlot];
+			if (RootParameter.ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+			{
+				if (RootParameter.Constants.RegisterSpace == UE_HLSL_SPACE_SHADER_ROOT_CONSTANTS && RootParameter.Constants.ShaderRegister == 0)
+				{
+					RootConstantsSlot = int8(ParameterSlot);
+					break;
+				}
+			}
+		}
+	}
 }
 
 void FD3D12RootSignature::InitStaticComputeRootSignatureDesc(ED3D12RootSignatureFlags InFlags)
@@ -393,6 +418,22 @@ void FD3D12RootSignature::InitStaticComputeRootSignatureDesc(ED3D12RootSignature
 	D3D12ShaderUtils::FBinaryRootSignatureCreator Creator;
 	D3D12ShaderUtils::CreateComputeRootSignature(Creator, InFlags);
 	Init(Creator.Finalize());
+
+	if (EnumHasAnyFlags(InFlags, ED3D12RootSignatureFlags::RootConstants))
+	{
+		for (int32 ParameterSlot = 0; ParameterSlot < Creator.Parameters.Num(); ++ParameterSlot)
+		{
+			const CD3DX12_ROOT_PARAMETER1 RootParameter = Creator.Parameters[ParameterSlot];
+			if (RootParameter.ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+			{
+				if (RootParameter.Constants.RegisterSpace == UE_HLSL_SPACE_SHADER_ROOT_CONSTANTS && RootParameter.Constants.ShaderRegister == 0)
+				{
+					RootConstantsSlot = int8(ParameterSlot);
+					break;
+				}
+			}
+		}
+	}
 }
 
 #if D3D12_RHI_RAYTRACING
@@ -400,14 +441,14 @@ void FD3D12RootSignature::InitStaticRayTracingGlobalRootSignatureDesc(ED3D12Root
 {
 	D3D12ShaderUtils::FBinaryRootSignatureCreator Creator;
 	D3D12ShaderUtils::CreateRayTracingSignature(Creator, false, FD3D12_ROOT_SIGNATURE_FLAG_GLOBAL_ROOT_SIGNATURE, InFlags);
-	Init(Creator.Finalize(), RAY_TRACING_REGISTER_SPACE_GLOBAL);
+	Init(Creator.Finalize(), UE_HLSL_SPACE_RAY_TRACING_GLOBAL);
 }
 
-void FD3D12RootSignature::InitStaticRayTracingLocalRootSignatureDesc()
+void FD3D12RootSignature::InitStaticRayTracingLocalRootSignatureDesc(ED3D12RootSignatureFlags InFlags)
 {
 	D3D12ShaderUtils::FBinaryRootSignatureCreator Creator;
-	D3D12ShaderUtils::CreateRayTracingSignature(Creator, true, D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE, ED3D12RootSignatureFlags::None);
-	Init(Creator.Finalize(), RAY_TRACING_REGISTER_SPACE_LOCAL);
+	D3D12ShaderUtils::CreateRayTracingSignature(Creator, true, D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE, InFlags);
+	Init(Creator.Finalize(), UE_HLSL_SPACE_RAY_TRACING_LOCAL);
 }
 #endif // D3D12_RHI_RAYTRACING
 
@@ -418,17 +459,18 @@ void FD3D12RootSignature::Init(const FD3D12QuantizedBoundShaderState& InQBSS)
 
 	FD3D12RootSignatureDesc Desc(InQBSS, ResourceBindingTier);
 
+	RootConstantsSlot = Desc.GetRootConstantsSlot();
 	DiagnosticBufferSlot = Desc.GetDiagnosticBufferSlot();
 
 	uint32 BindingSpace = 0; // Default binding space for D3D 11 & 12 shaders
 
 	if (InQBSS.RootSignatureType == RS_RayTracingGlobal)
 	{
-		BindingSpace = RAY_TRACING_REGISTER_SPACE_GLOBAL;
+		BindingSpace = UE_HLSL_SPACE_RAY_TRACING_GLOBAL;
 	}
 	else if (InQBSS.RootSignatureType == RS_RayTracingLocal)
 	{
-		BindingSpace = RAY_TRACING_REGISTER_SPACE_LOCAL;
+		BindingSpace = UE_HLSL_SPACE_RAY_TRACING_LOCAL;
 	}
 
 	Init(Desc.GetDesc(), BindingSpace);

@@ -8,7 +8,7 @@
 namespace UE::Mass::Crowd
 {
 	bool bDebugReplicationPositions = false;
-	FAutoConsoleVariableRef CVarbDebugReplication(TEXT("ai.debug.CrowdReplicationPositions"), bDebugReplicationPositions, TEXT("Crowd debug replication positions on server and client"), ECVF_Cheat);
+	FAutoConsoleVariableRef CVarbDebugReplication(TEXT("mass.debug.CrowdReplicationPositions"), bDebugReplicationPositions, TEXT("Crowd debug replication positions on server and client"), ECVF_Cheat);
 
 #if WITH_MASSGAMEPLAY_DEBUG && WITH_EDITOR
 	// @todo provide a better way of selecting agents to debug

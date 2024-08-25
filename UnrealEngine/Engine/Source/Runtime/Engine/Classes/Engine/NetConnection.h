@@ -77,7 +77,7 @@ extern ENGINE_API TAutoConsoleVariable<int32> CVarNetEnableCongestionControl;
 /*-----------------------------------------------------------------------------
 	Types.
 -----------------------------------------------------------------------------*/
-enum { RELIABLE_BUFFER = 256 }; // Power of 2 >= 1.
+enum { RELIABLE_BUFFER = 512 }; // Power of 2 >= 1.
 enum { MAX_PACKETID = FNetPacketNotify::SequenceNumberT::SeqNumberCount };  // Power of 2 >= 1, covering guaranteed loss/misorder time.
 enum { MAX_CHSEQUENCE = 1024 }; // Power of 2 >RELIABLE_BUFFER, covering loss/misorder time.
 enum { MAX_BUNCH_HEADER_BITS = 256 };
@@ -535,6 +535,9 @@ public:
 	int32 InTotalPacketsLost, OutTotalPacketsLost;
 	/** total acks sent on this connection */
 	int32 OutTotalAcks;
+	/** Delayed RPCs and the total average frame delay */
+	int32 TotalDelayedRPCs = 0;
+	int32 TotalDelayedRPCsFrameCount = 0;
 
 private:
 	/** total packets received on this connection, including PacketHandler */
@@ -634,6 +637,9 @@ public:
 
 	FNetTraceCollector* GetInTraceCollector() const;
 	FNetTraceCollector* GetOutTraceCollector() const;
+
+	/** Returns the view target for this connection. Controlled by the player controller when one is assigned. The view target is the owning actor when no PC's are assigned or the PC's view target is invalid */
+	AActor* GetConnectionViewTarget() const;
 
 	// ----------------------------------------------
 	// Actor Channel Accessors
@@ -974,8 +980,14 @@ public:
 	/** Poll the connection. If it is timed out, close it. */
 	ENGINE_API virtual void Tick(float DeltaSeconds);
 
-	/** Return whether this channel is ready for sending. */
+	/** Return whether this connection is ready for sending. */
 	ENGINE_API virtual int32 IsNetReady( bool Saturate );
+
+	/**
+	 * Return whether this connection can send packets without exhausting the packet sequence history window, as it could cause packets to be NAKed even when they've been received by the remote peer. 
+	 * @param SafetyMargin A small number representing how many packets you would like to keep as a safety margin for heart beats or other important packets.
+	 */
+	ENGINE_API bool IsPacketSequenceWindowFull(uint32 SafetyMargin=0U);
 
 	/** 
 	 * Handle the player controller client
@@ -1170,10 +1182,17 @@ public:
 	/** Pops the LastStart bits off of the send buffer, used for merging bunches */
 	void PopLastStart();
 
+	/**
+	 * returns whether the client has initialized the given level
+	 * @return true if the client has initialized the given level, false otherwise
+	 */
+	ENGINE_API virtual bool ClientHasInitializedLevel(const ULevel* TestLevel) const;
+
 	/** 
 	 * returns whether the client has initialized the level required for the given object
 	 * @return true if the client has initialized the level the object is in or the object is not in a level, false otherwise
 	 */
+	UE_DEPRECATED(5.4, "ClientHasInitializedLevelFor is deprecated. Use ClientHasInitializedLevel and pass the actor's level (Actor->GetLevel()) instead.")
 	ENGINE_API virtual bool ClientHasInitializedLevelFor(const AActor* TestActor) const;
 
 	/**
@@ -1938,7 +1957,7 @@ public:
 	virtual void LowLevelSend(void* Data, int32 CountBits, FOutPacketTraits& Traits) override { }
 	ENGINE_API void HandleClientPlayer( APlayerController* PC, UNetConnection* NetConnection ) override;
 	virtual FString LowLevelGetRemoteAddress(bool bAppendPort=false) override { return FString(); }
-	virtual bool ClientHasInitializedLevelFor(const AActor* TestActor) const { return true; }
+	virtual bool ClientHasInitializedLevel(const ULevel* TestLevel) const override { return true; }
 
 	virtual void DestroyOwningActor() override { /* Don't destroy the OwningActor since we follow a real PlayerController*/ }
 

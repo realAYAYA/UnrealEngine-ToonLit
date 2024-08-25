@@ -56,14 +56,14 @@ static FAutoConsoleVariableRef CVarNetPacketHandlerTimeguardLimit(
 
 // Lightweight time guard. Note: Threshold of 0 disables the timeguard
 #define NET_LIGHTWEIGHT_TIME_GUARD_BEGIN( Name, ThresholdMS ) \
-	float PREPROCESSOR_JOIN(__TimeGuard_ThresholdMS_, Name) = ThresholdMS; \
+	double PREPROCESSOR_JOIN(__TimeGuard_ThresholdMS_, Name) = ThresholdMS; \
 	uint64 PREPROCESSOR_JOIN(__TimeGuard_StartCycles_, Name) = ( ThresholdMS > 0.0f && GPacketHandlerTimeguardLimit > 0 ) ? FPlatformTime::Cycles64() : 0; \
 	GPacketHandlerDiscardTimeguardMeasurement = false;
 
 #define NET_LIGHTWEIGHT_TIME_GUARD_END( Name, NameStringCode ) \
 	if ( PREPROCESSOR_JOIN(__TimeGuard_ThresholdMS_, Name) > 0.0f && GPacketHandlerTimeguardLimit > 0 && !GPacketHandlerDiscardTimeguardMeasurement ) \
 	{\
-		float PREPROCESSOR_JOIN(__TimeGuard_MSElapsed_,Name) = FPlatformTime::ToMilliseconds64( FPlatformTime::Cycles64() - PREPROCESSOR_JOIN(__TimeGuard_StartCycles_,Name) ); \
+		double PREPROCESSOR_JOIN(__TimeGuard_MSElapsed_,Name) = FPlatformTime::ToMilliseconds64( FPlatformTime::Cycles64() - PREPROCESSOR_JOIN(__TimeGuard_StartCycles_,Name) ); \
 		if ( PREPROCESSOR_JOIN(__TimeGuard_MSElapsed_,Name) > PREPROCESSOR_JOIN(__TimeGuard_ThresholdMS_, Name) ) \
 		{ \
 			FString ReportName = NameStringCode; \
@@ -75,6 +75,15 @@ static FAutoConsoleVariableRef CVarNetPacketHandlerTimeguardLimit(
   #define NET_LIGHTWEIGHT_TIME_GUARD_BEGIN( Name, ThresholdMS )
   #define NET_LIGHTWEIGHT_TIME_GUARD_END( Name, NameStringCode )
 #endif
+
+template<typename OutType, typename InType>
+OutType IntCastLog(InType In)
+{
+	bool bFitsIn = IntFitsIn<OutType, InType>(In);
+	ensureMsgf(bFitsIn, TEXT("PacketHandler: Loss of data caused by truncated cast"));
+	UE_CLOG(!bFitsIn, PacketHandlerLog, Warning, TEXT("PacketHandler: Loss of data caused by truncated cast"));
+	return static_cast<OutType>(In);
+}
 
 /**
  * BufferedPacket
@@ -609,7 +618,7 @@ EIncomingResult PacketHandler::Incoming_Internal(FReceivedPacketView& PacketView
 				}
 				else if (ProcessedPacketReader.GetPosBits() == 0)
 				{
-					HandlerCRCs.Add({FCrc::MemCrc32(ProcessedPacketReader.GetData(), ProcessedPacketReader.GetNumBytes()), true, false});
+					HandlerCRCs.Add({FCrc::MemCrc32(ProcessedPacketReader.GetData(), IntCastLog<int32, int64>(ProcessedPacketReader.GetNumBytes())), true, false});
 				}
 				else
 				{
@@ -630,7 +639,7 @@ EIncomingResult PacketHandler::Incoming_Internal(FReceivedPacketView& PacketView
 					{
 						FHandlerCRC& CurCRC = HandlerCRCs[HandlerCRCs.Num() - 1];
 
-						CurCRC.CRC = FCrc::MemCrc32(ProcessedPacketReader.GetData(), ProcessedPacketReader.GetNumBytes());
+						CurCRC.CRC = FCrc::MemCrc32(ProcessedPacketReader.GetData(), IntCastLog<int32, int64>(ProcessedPacketReader.GetNumBytes()));
 						CurCRC.bHasAlignedCRC = true;
 					}
 #endif
@@ -662,7 +671,7 @@ EIncomingResult PacketHandler::Incoming_Internal(FReceivedPacketView& PacketView
 #if !UE_BUILD_SHIPPING
 				if (UNLIKELY(!!GPacketHandlerCRCDump))
 				{
-					NetConnectionCRC = FCrc::MemCrc32(IncomingPacket.GetData(), IncomingPacket.GetBytesLeft());
+					NetConnectionCRC = FCrc::MemCrc32(IncomingPacket.GetData(), IntCastLog<int32, int64>(IncomingPacket.GetBytesLeft()));
 				}
 #endif
 			}
@@ -790,7 +799,7 @@ const ProcessedPacket PacketHandler::Outgoing_Internal(uint8* Packet, int32 Coun
 					}
 					else
 					{
-						HandlerCRCs.Add({FCrc::MemCrc32(OutgoingPacket.GetData(), OutgoingPacket.GetNumBytes()), false});
+						HandlerCRCs.Add({FCrc::MemCrc32(OutgoingPacket.GetData(), IntCastLog<int32, int64>(OutgoingPacket.GetNumBytes())), false});
 					}
 				}
 #endif
@@ -808,7 +817,7 @@ const ProcessedPacket PacketHandler::Outgoing_Internal(uint8* Packet, int32 Coun
 			{
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				// Let the reliability handler know about all processed packets, so it can record them for resending if needed
-				ReliabilityComponent->QueuePacketForResending(OutgoingPacket.GetData(), OutgoingPacket.GetNumBits(), Traits);
+				ReliabilityComponent->QueuePacketForResending(OutgoingPacket.GetData(), IntCastLog<int32, int64>(OutgoingPacket.GetNumBits()), Traits);
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 		}
@@ -892,7 +901,7 @@ void PacketHandler::ReplaceIncomingPacket(FBitReader& ReplacementPacket)
 	{
 		// @todo #JohnB: Make this directly adjust and write into IncomingPacket's buffer, instead of copying - very inefficient
 		TArray<uint8> TempPacketData;
-		TempPacketData.AddUninitialized(ReplacementPacket.GetBytesLeft());
+		TempPacketData.AddUninitialized(IntCastLog<int32, int64>(ReplacementPacket.GetBytesLeft()));
 		TempPacketData[TempPacketData.Num()-1] = 0;
 
 		int64 NewPacketSizeBits = ReplacementPacket.GetBitsLeft();
@@ -906,13 +915,13 @@ void PacketHandler::RealignPacket(FBitReader& Packet)
 {
 	if (Packet.GetPosBits() != 0)
 	{
-		uint32 BitsLeft = Packet.GetBitsLeft();
+		const int32 BitsLeft = IntCastLog<int32, int64>(Packet.GetBitsLeft());
 
 		if (BitsLeft > 0)
 		{
 			// @todo #JohnB: Based on above - when you optimize above, optimize this too
 			TArray<uint8> TempPacketData;
-			TempPacketData.AddUninitialized(Packet.GetBytesLeft());
+			TempPacketData.AddUninitialized(IntCastLog<int32, int64>(Packet.GetBytesLeft()));
 			TempPacketData[TempPacketData.Num()-1] = 0;
 
 			Packet.SerializeBits(TempPacketData.GetData(), BitsLeft);
@@ -972,12 +981,11 @@ void PacketHandler::SendHandlerPacket(HandlerComponent* InComponent, FBitWriter&
 			// Add a termination bit, the same as the UNetConnection code does, if appropriate
 			Writer.WriteBit(1);
 
-
 			if (ReliabilityComponent.IsValid())
 			{
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				// Let the reliability handler know about all processed packets, so it can record them for resending if needed
-				ReliabilityComponent->QueueHandlerPacketForResending(InComponent, Writer.GetData(), Writer.GetNumBits(), Traits);
+				ReliabilityComponent->QueueHandlerPacketForResending(InComponent, Writer.GetData(), IntCastLog<int32, int64>(Writer.GetNumBits()), Traits);
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 
@@ -986,7 +994,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			bRawSend = true;
 
-			LowLevelSendDel.ExecuteIfBound(Writer.GetData(), Writer.GetNumBits(), Traits);
+			LowLevelSendDel.ExecuteIfBound(Writer.GetData(), IntCastLog<int32, int64>(Writer.GetNumBits()), Traits);
 
 			bRawSend = bOldRawSend;
 		}

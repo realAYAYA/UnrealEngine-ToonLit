@@ -220,7 +220,7 @@ namespace InternalEditorLevelLibrary
 				FString ObjectLongPackagePath = FPackageName::GetLongPackagePath(ObjectPackageName);
 
 				// Remove source from the object name
-				ObjectLongPackagePath.MidInline(OutValidatedPaths.SourceValidDirectoryPath.Len(), MAX_int32, false);
+				ObjectLongPackagePath.MidInline(OutValidatedPaths.SourceValidDirectoryPath.Len(), MAX_int32, EAllowShrinking::No);
 
 				// Create AssetPath /Game/MyFolder/MyAsset.MyAsset
 				FString NewAssetPackageName;
@@ -497,6 +497,35 @@ TMap<FName, FString> UEditorAssetLibrary::GetTagValues(const FString& AssetPath)
 {
 	UEditorAssetSubsystem* EditorAssetSubsystem = GEditor->GetEditorSubsystem<UEditorAssetSubsystem>();
 	return EditorAssetSubsystem->GetTagValues(AssetPath);
+}
+
+namespace UE{ namespace Private {
+	// This is a long standing convention, but not encoded in an obvious owner
+	// that I could find:
+	static const TCHAR* DefaultRootAssetDirectory = TEXT("Game");
+	static FString ProjectRootAssetDirectory = TEXT("Game");
+}}
+
+FString UEditorAssetLibrary::GetProjectRootAssetDirectory()
+{
+	using namespace UE::Private;
+	return ProjectRootAssetDirectory;
+}
+
+void UEditorAssetLibrary::OverrideProjectRootAssetDirectory(FStringView InProjectRootAssetDirectory)
+{
+	using namespace UE::Private;
+	if(ensureMsgf(!InProjectRootAssetDirectory.StartsWith(TEXT("/")), TEXT("Expected root directory name without path")))
+	{
+		ProjectRootAssetDirectory = InProjectRootAssetDirectory;
+	}
+
+}
+
+void UEditorAssetLibrary::ResetProjectRootAssetDirectory()
+{
+	using namespace UE::Private;
+	ProjectRootAssetDirectory = DefaultRootAssetDirectory;
 }
 
 TMap<FName, FString> UEditorAssetLibrary::GetMetadataTagValues(UObject* Object)

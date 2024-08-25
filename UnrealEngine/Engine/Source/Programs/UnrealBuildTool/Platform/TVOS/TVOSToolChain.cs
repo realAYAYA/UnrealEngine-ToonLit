@@ -6,7 +6,7 @@ namespace UnrealBuildTool
 {
 	class TVOSToolChainSettings : IOSToolChainSettings
 	{
-		public TVOSToolChainSettings(ILogger Logger) : base("AppleTVOS", "AppleTVSimulator", Logger)
+		public TVOSToolChainSettings(ILogger Logger) : base("AppleTVOS", "AppleTVSimulator", "tvos", Logger)
 		{
 		}
 	}

@@ -60,7 +60,8 @@ void FTimingEventsTrackDrawStateBuilder::AddEvent(double EventStartTime, double 
 			//FString Name = FString::Printf(TEXT("%s [%llu]"), EventName, EventType);
 			FString Name = EventName;
 
-			if (Width > Name.Len() * 4.0f + 32.0f)
+			const float MinWidth = static_cast<float>(Name.Len()) * 4.0f + 32.0f;
+			if (Width > MinWidth)
 			{
 				AppendDurationToEventName(Name, EventEndTime - EventStartTime);
 			}
@@ -331,7 +332,7 @@ void FTimingViewDrawHelper::DrawEvents(const FTimingEventsTrackDrawState& DrawSt
 			const float EventFillH = Layout.EventH;
 			for (const FTimingEventsTrackDrawState::FBoxPrimitive& Box : DrawState.Boxes)
 			{
-				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * Box.Depth;
+				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * static_cast<float>(Box.Depth);
 				DrawContext.DrawBox(EventFillLayerId, Box.X, Y, Box.W, EventFillH, WhiteBrush, Box.Color);
 			}
 			NumDrawBoxes += DrawState.Boxes.Num();
@@ -344,7 +345,7 @@ void FTimingViewDrawHelper::DrawEvents(const FTimingEventsTrackDrawState& DrawSt
 			const float EventFillH = Layout.EventH - 2.0f;
 			for (const FTimingEventsTrackDrawState::FBoxPrimitive& Box : DrawState.InsideBoxes)
 			{
-				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * Box.Depth + 1.0f;
+				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * static_cast<float>(Box.Depth) + 1.0f;
 				DrawContext.DrawBox(EventFillLayerId, Box.X, Y, Box.W, EventFillH, WhiteBrush, Box.Color);
 			}
 			NumDrawBoxes += DrawState.InsideBoxes.Num();
@@ -357,7 +358,7 @@ void FTimingViewDrawHelper::DrawEvents(const FTimingEventsTrackDrawState& DrawSt
 			const float EventBorderH = Layout.EventH;
 			for (const FTimingEventsTrackDrawState::FBoxPrimitive& Box : DrawState.Borders)
 			{
-				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * Box.Depth;
+				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * static_cast<float>(Box.Depth);
 #if INSIGHTS_USE_LEGACY_BORDER
 				DrawContext.DrawBox(EventBorderLayerId, Box.X, Y, Box.W, EventBorderH, EventBorderBrush, Box.Color);
 #else
@@ -385,7 +386,7 @@ void FTimingViewDrawHelper::DrawEvents(const FTimingEventsTrackDrawState& DrawSt
 			const int32 EventTextLayerId = ReservedLayerId + ToInt32(EDrawLayer::EventText);
 			for (const FTimingEventsTrackDrawState::FTextPrimitive& Text : DrawState.Texts)
 			{
-				const float Y = TextY0 + TextDY * Text.Depth;
+				const float Y = TextY0 + TextDY * static_cast<float>(Text.Depth);
 				DrawContext.DrawText(EventTextLayerId, Text.X, Y, Text.Text, EventFont, Text.bWhite ? WhiteColor : BlackColor);
 			}
 			NumDrawTexts += DrawState.Texts.Num();
@@ -422,7 +423,7 @@ void FTimingViewDrawHelper::DrawFadedEvents(const FTimingEventsTrackDrawState& D
 			const float EventFillH = Layout.EventH;
 			for (const FTimingEventsTrackDrawState::FBoxPrimitive& Box : DrawState.Boxes)
 			{
-				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * Box.Depth;
+				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * static_cast<float>(Box.Depth);
 				DrawContext.DrawBox(EventFillLayerId, Box.X, Y, Box.W, EventFillH, WhiteBrush, Box.Color.CopyWithNewOpacity(Opacity));
 			}
 			NumDrawBoxes += DrawState.Boxes.Num();
@@ -435,7 +436,7 @@ void FTimingViewDrawHelper::DrawFadedEvents(const FTimingEventsTrackDrawState& D
 			const float EventFillH = Layout.EventH - 2.0f;
 			for (const FTimingEventsTrackDrawState::FBoxPrimitive& Box : DrawState.InsideBoxes)
 			{
-				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * Box.Depth + 1.0f;
+				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * static_cast<float>(Box.Depth) + 1.0f;
 				DrawContext.DrawBox(EventFillLayerId, Box.X, Y, Box.W, EventFillH, WhiteBrush, Box.Color.CopyWithNewOpacity(Opacity));
 			}
 			NumDrawBoxes += DrawState.InsideBoxes.Num();
@@ -448,7 +449,7 @@ void FTimingViewDrawHelper::DrawFadedEvents(const FTimingEventsTrackDrawState& D
 			const float EventBorderH = Layout.EventH;
 			for (const FTimingEventsTrackDrawState::FBoxPrimitive& Box : DrawState.Borders)
 			{
-				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * Box.Depth;
+				const float Y = TopLaneY + (Layout.EventH + Layout.EventDY) * static_cast<float>(Box.Depth);
 #if INSIGHTS_USE_LEGACY_BORDER
 				DrawContext.DrawBox(EventBorderLayerId, Box.X, Y, Box.W, EventBorderH, EventBorderBrush, Box.Color.CopyWithNewOpacity(Opacity));
 #else
@@ -477,7 +478,7 @@ void FTimingViewDrawHelper::DrawFadedEvents(const FTimingEventsTrackDrawState& D
 			const int32 EventTextLayerId = ReservedLayerId + ToInt32(EDrawLayer::EventText);
 			for (const FTimingEventsTrackDrawState::FTextPrimitive& Text : DrawState.Texts)
 			{
-				const float Y = TextY0 + (TextDY) * Text.Depth;
+				const float Y = TextY0 + (TextDY) * static_cast<float>(Text.Depth);
 				DrawContext.DrawText(EventTextLayerId, Text.X, Y, Text.Text, EventFont, Text.bWhite ? WhiteColor : BlackColor);
 			}
 			NumDrawTexts += DrawState.Texts.Num();

@@ -59,10 +59,7 @@ struct SActorTreeLabel : FSceneOutlinerCommonLabelData, public SCompoundWidget
 				.OnEnterEditingMode(this, &SActorTreeLabel::OnEnterEditingMode)
 				.OnExitEditingMode(this, &SActorTreeLabel::OnExitEditingMode)
 				.IsSelected(FIsSelected::CreateSP(&InRow, &STableRow<FSceneOutlinerTreeItemPtr>::IsSelectedExclusively))
-				.IsReadOnly_Lambda([Item = ActorItem.AsShared(), this]()
-				{
-					return !CanExecuteRenameRequest(Item.Get());
-				})
+				.IsReadOnly(this, &SActorTreeLabel::IsReadOnly)
 			];
 
 		if (WeakSceneOutliner.Pin()->GetMode()->IsInteractive())
@@ -296,11 +293,21 @@ private:
 		bInEditingMode = false;
 	}
 
+	bool IsReadOnly() const
+	{
+		AActor* Actor = ActorPtr.Get();
+		return !(Actor && Actor->IsActorLabelEditable() && CanExecuteRenameRequest(*TreeItemPtr.Pin()));
+	}
+
 	bool bInEditingMode = false;
 };
 
 FActorTreeItem::FActorTreeItem(AActor* InActor)
-	: IActorBaseTreeItem(Type)
+	// Forward to the other constructor using our type identifier.
+	: FActorTreeItem(Type, InActor) {}
+
+FActorTreeItem::FActorTreeItem(FSceneOutlinerTreeItemType TypeIn, AActor* InActor)
+	: IActorBaseTreeItem(TypeIn)
 	, Actor(InActor)
 	, ID(InActor)
 {
@@ -352,13 +359,7 @@ bool FActorTreeItem::ShouldShowPinnedState() const
 
 bool FActorTreeItem::ShouldShowVisibilityState() const
 {
-	if (const AActor* ActorPtr = Actor.Get())
-	{
-		const ULevel* Level = ActorPtr->GetLevel();
-		return Level->IsPersistentLevel() || !Level->IsInstancedLevel();
-	}
-
-	return false;
+	return true;
 }
 
 void FActorTreeItem::OnVisibilityChanged(const bool bNewVisibility)

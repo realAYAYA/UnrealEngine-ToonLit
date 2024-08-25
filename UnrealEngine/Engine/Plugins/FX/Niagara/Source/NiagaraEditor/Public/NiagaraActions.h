@@ -135,6 +135,9 @@ struct FNiagaraMenuAction_Base
 	/** The DisplayName used in lists */
 	FText DisplayName;
 
+	/** An alternate name used explicitly for search purposes. Example: Divide and '/'.*/
+	TOptional<FText> AlternateSearchName;
+
 	/** The Tooltip text for this action */
 	FText ToolTip;
 

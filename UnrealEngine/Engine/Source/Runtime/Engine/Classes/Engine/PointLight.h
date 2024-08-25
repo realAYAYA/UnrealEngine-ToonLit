@@ -29,12 +29,8 @@ class APointLight : public ALight
 #endif
 
 	//~ Begin UObject Interface.
-	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void LoadedFromAnotherClass(const FName& OldClassName) override;
 #endif
 	//~ End UObject Interface.
 };
-
-
-

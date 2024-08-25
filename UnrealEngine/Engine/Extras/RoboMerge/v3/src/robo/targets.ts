@@ -426,7 +426,7 @@ export function processOtherBotTargets(
 			continue
 		}
 
-		const target = '!-'.indexOf(arg[0]) < 0 ? arg : arg.substr(1)
+		const target = '!-'.indexOf(arg[0]) < 0 ? arg : arg.substring(1)
 		const branch = targetBranchGraph.getBranch(target)
 		if (!branch) {
 			if (!targetBranchGraph.config.macros[target.toLowerCase()] &&
@@ -540,17 +540,17 @@ class RequestedIntegrations {
 				break
 			
 			case '!':
-				this.integrations.push([arg.substr(1), 'null'])
+				this.integrations.push([arg.substring(1), 'null'])
 				break;
 
 			case '-':
-				this.integrations.push([arg.substr(1), 'skip'])
+				this.integrations.push([arg.substring(1), 'skip'])
 				break
 
 			case '$':
 			case '#':
 				// set the flag and continue the loop
-				const flagname = FLAGMAP[argLower.substr(1)]
+				const flagname = FLAGMAP[argLower.substring(1)]
 				if (flagname) {
 					this.flags.add(flagname)
 				}

@@ -19,7 +19,7 @@ EDataValidationResult UEnhancedInputPlatformData::IsDataValid(FDataValidationCon
 {
 	EDataValidationResult Result = Super::IsDataValid(Context);
 
-	for (const TPair<TObjectPtr<const UInputMappingContext>, TObjectPtr<const UInputMappingContext>> Pair : MappingContextRedirects)
+	for (const TPair<TObjectPtr<const UInputMappingContext>, TObjectPtr<const UInputMappingContext>>& Pair : MappingContextRedirects)
 	{
 		if (!Pair.Key)
 		{

@@ -5,16 +5,17 @@
 #include "Delegates/IDelegateInstance.h"
 #include "MassProcessingTypes.h"
 #include "MassProcessingPhaseManager.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassSimulationSubsystem.generated.h"
 
 
 struct FMassEntityManager;
+class IConsoleVariable;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogMassSim, Log, All);
 
 UCLASS(config = Game, defaultconfig)
-class MASSSIMULATION_API UMassSimulationSubsystem : public UWorldSubsystem
+class MASSSIMULATION_API UMassSimulationSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 public:
@@ -36,11 +37,16 @@ public:
 	/** @return whether hosted EntityManager is currently, actively being used for processing purposes. Equivalent to calling FMassEntityManager.IsProcessing() */
 	bool IsDuringMassProcessing() const;
 
+	/** Starts/stops simulation ticking for all worlds, based on new `mass.SimulationTickingEnabled` cvar value */
+	static void HandleSimulationTickingEnabledCVarChange(IConsoleVariable*);
+
 protected:
+	// UWorldSubsystem BEGIN
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void PostInitialize() override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
+	// UWorldSubsystem END
 	virtual void BeginDestroy() override;
 	
 	void RebuildTickPipeline();

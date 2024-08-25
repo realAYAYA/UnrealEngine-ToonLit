@@ -86,6 +86,13 @@ public:
 	 */
 	static bool SyncLatest();
 
+	/**
+	 * Saves all unsaved levels and assets and then - conditionally - performs an FSync operation to get the specified revision, and reloads the world
+	 *
+	 * @return	true - if command completed successfully.
+	 */
+	static bool SyncRevision(const FString& InRevision);
+
 	/** Determines whether we can sync to latest */
 	static bool CanSyncLatest();
 

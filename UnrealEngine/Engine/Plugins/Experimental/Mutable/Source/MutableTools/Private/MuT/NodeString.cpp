@@ -10,8 +10,6 @@
 #include "MuT/NodeStringConstant.h"
 #include "MuT/NodeStringParameter.h"
 
-#include <stdint.h>
-
 
 namespace mu
 {
@@ -19,22 +17,22 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeStringType = NODE_TYPE( "NodeString", Node::GetStaticType() );
+	static FNodeType s_nodeStringType = FNodeType( "NodeString", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeString::Serialise( const NodeString* p, OutputArchive& arch )
 	{
-        uint32_t ver = 0;
+        uint32 ver = 0;
 		arch << ver;
 
-
 #define SERIALISE_CHILDREN( C, ID ) \
-        ( const C* pTyped##ID = dynamic_cast<const C*>(p) )			\
-        {                                                           \
-            arch << (uint32_t)ID;                                   \
-            C::Serialise( pTyped##ID, arch );						\
-        }                                                           \
+		( p->GetType()==C::GetStaticType() )					\
+		{ 														\
+			const C* pTyped = static_cast<const C*>(p);			\
+            arch << (uint32_t)ID;								\
+			C::Serialise( pTyped, arch );						\
+		}														\
 
         if SERIALISE_CHILDREN( NodeStringConstant                   , 0 )
         else if SERIALISE_CHILDREN( NodeStringParameter             , 1 )
@@ -46,11 +44,11 @@ namespace mu
     //---------------------------------------------------------------------------------------------
 	NodeStringPtr NodeString::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (id)
@@ -65,14 +63,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeString::GetType() const
+	const FNodeType* NodeString::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeString::GetStaticType()
+	const FNodeType* NodeString::GetStaticType()
 	{
 		return &s_nodeStringType;
 	}

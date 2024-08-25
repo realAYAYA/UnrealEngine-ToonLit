@@ -30,6 +30,7 @@ void SMediaPlayerEditorOverlay::Tick(const FGeometry& AllottedGeometry, const do
 {
 	Canvas->ClearChildren();
 
+#if 0
 	// fetch overlay samples
 	TArray<TSharedPtr<IMediaOverlaySample, ESPMode::ThreadSafe>> OverlaySamples;
 	// @todo gmp: MF3.0 implement overlay sample caching
@@ -75,4 +76,5 @@ void SMediaPlayerEditorOverlay::Tick(const FGeometry& AllottedGeometry, const do
 
 	// recalculate layout
 	SlatePrepass(AllottedGeometry.GetAccumulatedLayoutTransform().GetScale());
+#endif
 }

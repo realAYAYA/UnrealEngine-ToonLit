@@ -14,6 +14,7 @@
 
 class FHttpListener;
 class IHttpRouter;
+class FHttpServerModuleImpl;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogHttpServerModule, Log, All);
 
@@ -26,6 +27,8 @@ class FHttpServerModule :
 {
 
 public:
+	FHttpServerModule();
+	~FHttpServerModule();
 
 	/**
 	 * Checks to see if this module is loaded and ready.  It is only valid to call Get() if IsAvailable() returns true.
@@ -97,10 +100,6 @@ private:
 	/** Singleton Instance */
 	static FHttpServerModule* Singleton;
 
-	/** The association of port bindings and respective HTTP listeners */
-	TMap<uint32, TUniquePtr<FHttpListener>> Listeners;
-
-	/** Whether listeners can be started */
-	bool bHttpListenersEnabled = false;
+	FHttpServerModuleImpl* Impl;
 };
 

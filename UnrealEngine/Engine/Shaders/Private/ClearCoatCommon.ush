@@ -48,9 +48,8 @@ void RemapClearCoatDiffuseAndSpecularColor(FGBufferData GBuffer, float2 ScreenPo
 {
 	if (GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
 	{
-		float3 TranslatedWorldPosition = mul(float4(ScreenPosition * GBuffer.Depth, GBuffer.Depth, 1), View.ScreenToTranslatedWorld).xyz;
-		float3 CameraToPixel = normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
-		float3 V = -CameraToPixel;
+		float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, GBuffer.Depth), GBuffer.Depth, 1), View.ScreenToTranslatedWorld).xyz;
+		float3 V = -GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
 		float NoV = saturate(dot(GBuffer.WorldNormal, V));
 
 		RemapClearCoatDiffuseAndSpecularColor(GBuffer, NoV, DiffuseColor, SpecularColor);

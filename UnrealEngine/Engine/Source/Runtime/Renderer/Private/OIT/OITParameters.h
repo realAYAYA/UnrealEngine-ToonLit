@@ -13,11 +13,9 @@ BEGIN_SHADER_PARAMETER_STRUCT(FOITBasePassUniformParameters, )
 	SHADER_PARAMETER(uint32, OITMethod)
 	SHADER_PARAMETER(uint32, MaxSideSamplePerPixel)
 	SHADER_PARAMETER(uint32, MaxSamplePerPixel)
-	SHADER_PARAMETER(uint32, TransmittanceThreshold)
+	SHADER_PARAMETER(float, TransmittanceThreshold)
 	SHADER_PARAMETER_RDG_TEXTURE_UAV(RasterizerOrderedTexture2D<uint>, OutOITSampleCount)
-	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>,  OutOITSampleColor)
-	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>,  OutOITSampleTrans)
-	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, OutOITSampleDepth)
+	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<uint>, OutOITSampleData)
 END_SHADER_PARAMETER_STRUCT()
 
 class FViewInfo;

@@ -26,7 +26,10 @@ enum class EMediaControl
 	Scrub,
 
 	/** Seek to playback position. */
-	Seek
+	Seek,
+
+	/** Playback of a range. */
+	PlaybackRange
 };
 
 
@@ -104,6 +107,19 @@ enum class EMediaStatus
 
 
 ENUM_CLASS_FLAGS(EMediaStatus);
+
+
+/**
+ * Different types of media timeline ranges.
+ */
+enum class EMediaTimeRangeType
+{
+	/** Total absolute time range as defined by the media. */
+	Absolute,
+
+	/** Current time range of the media, set by media internal means or through API calls. */
+	Current
+};
 
 
 /**
@@ -211,9 +227,9 @@ public:
 
 	/**
 	 * Hint for player indicating that blocked playback mode will be used / not used
-	 * 
+	 *
 	 * @param bFacadeWillUseBlockingPlayback True if blocked playback will be used, false otherwiese
-	 * 
+	 *
 	 * @note Implement as needed by the player.
 	 */
 	virtual void SetBlockingPlaybackHint(bool bFacadeWillUseBlockingPlayback)
@@ -280,6 +296,16 @@ public:
 		}
 
 		return Seek(SeekTime);
+	}
+
+	virtual TRange<FTimespan> GetPlaybackTimeRange(EMediaTimeRangeType InRangeToGet) const
+	{
+		return TRange<FTimespan>(FTimespan(0), GetDuration());
+	}
+
+	virtual bool SetPlaybackTimeRange(const TRange<FTimespan>& InTimeRange)
+	{
+		return false;
 	}
 
 public:

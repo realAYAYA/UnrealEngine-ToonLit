@@ -15,6 +15,7 @@
 #include "Misc/FrameRate.h"
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/UObjectHash.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieScene)
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneMarkedFrame)
@@ -119,6 +120,7 @@ void UMovieScene::Serialize( FArchive& Ar )
 {
 	Ar.UsingCustomVersion(FMovieSceneEvaluationCustomVersion::GUID);
 	Ar.UsingCustomVersion(FSequencerObjectVersion::GUID);
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
 
 	// Serialize the MovieScene
 	Super::Serialize(Ar);
@@ -202,6 +204,17 @@ void UMovieScene::Serialize( FArchive& Ar )
 		}
 	}
 #endif
+
+	if (Ar.IsLoading())
+	{
+		const bool bSortBindings = Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::MovieSceneSortedBindings;
+		if (bSortBindings)
+		{
+			Possessables.Sort();
+			Spawnables.Sort();
+			ObjectBindings.Sort();
+		}
+	}
 }
 
 #if WITH_EDITOR
@@ -213,6 +226,15 @@ void UMovieScene::PostEditUndo()
 }
 #endif
 
+template <typename RangeType, typename ValueType>
+auto InsertSorted(RangeType& Range, ValueType&& Value) -> decltype(GetNum(Range))
+{
+	auto InsertIndex = Algo::LowerBound(Range, Value);
+	check(InsertIndex >= 0 && InsertIndex <= GetNum(Range));
+	Range.Insert(Value, InsertIndex);
+	return InsertIndex;
+}
+
 // @todo sequencer: Some of these methods should only be used by tools, and should probably move out of MovieScene!
 FGuid UMovieScene::AddSpawnable( const FString& Name, UObject& ObjectTemplate )
 {
@@ -220,14 +242,18 @@ FGuid UMovieScene::AddSpawnable( const FString& Name, UObject& ObjectTemplate )
 
 	FMovieSceneSpawnable NewSpawnable( Name, ObjectTemplate );
 	NewSpawnable.AutoSetNetAddressableName();
-	Spawnables.Add( NewSpawnable );
 
-	// Add a new binding so that tracks can be added to it
-	new (ObjectBindings) FMovieSceneBinding( NewSpawnable.GetGuid(), NewSpawnable.GetName() );
+	// Insert new spawnable sorted into the Spawnables array
+	int32 NewSpawnableIndex = InsertSorted(Spawnables, MoveTemp(NewSpawnable));
 
-	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings.Last());
+	check(Spawnables.IsValidIndex(NewSpawnableIndex));
 
-	return NewSpawnable.GetGuid();
+	// Add a new binding (sorted) so that tracks can be added to it
+	int32 NewBindingIndex = InsertSorted(ObjectBindings, FMovieSceneBinding(Spawnables[NewSpawnableIndex].GetGuid(), Spawnables[NewSpawnableIndex].GetName()));
+
+	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings[NewBindingIndex]);
+
+	return Spawnables[NewSpawnableIndex].GetGuid();
 }
 
 void UMovieScene::AddSpawnable(const FMovieSceneSpawnable& InNewSpawnable, const FMovieSceneBinding& InNewBinding)
@@ -237,16 +263,18 @@ void UMovieScene::AddSpawnable(const FMovieSceneSpawnable& InNewSpawnable, const
 	FMovieSceneSpawnable NewSpawnable;
 	NewSpawnable = InNewSpawnable;
 	NewSpawnable.AutoSetNetAddressableName();
-	Spawnables.Add(NewSpawnable);
+
+	// Insert new spawnable sorted into the Spawnables array
+	InsertSorted(Spawnables, MoveTemp(NewSpawnable));
 
 	FMovieSceneBinding NewBinding = InNewBinding;
 	for (auto Track : NewBinding.GetTracks())
 	{
 		Track->Rename(nullptr, this);
 	}
-	ObjectBindings.Add(NewBinding);
+	int32 NewBindingIndex = InsertSorted(ObjectBindings, MoveTemp(NewBinding));
 
-	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings.Last());
+	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings[NewBindingIndex]);
 }
 
 bool UMovieScene::RemoveSpawnable( const FGuid& Guid )
@@ -254,21 +282,16 @@ bool UMovieScene::RemoveSpawnable( const FGuid& Guid )
 	bool bAnythingRemoved = false;
 	if( ensure( Guid.IsValid() ) )
 	{
-		for( auto SpawnableIter( Spawnables.CreateIterator() ); SpawnableIter; ++SpawnableIter )
+		int32 Index = IndexOfSpawnable(Guid);
+		if (Index != INDEX_NONE)
 		{
-			auto& CurSpawnable = *SpawnableIter;
-			if( CurSpawnable.GetGuid() == Guid )
-			{
-				Modify();
-				RemoveBinding( Guid );
+			Modify();
+			RemoveBinding(Guid);
+			Spawnables.RemoveAt(Index);
 
-				Spawnables.RemoveAt( SpawnableIter.GetIndex() );
+			EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingRemoved, Guid);
 
-				EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingRemoved, Guid);
-
-				bAnythingRemoved = true;
-				break;
-			}
+			bAnythingRemoved = true;
 		}
 	}
 
@@ -292,9 +315,12 @@ int32 UMovieScene::GetSpawnableCount() const
 
 FMovieSceneSpawnable* UMovieScene::FindSpawnable( const FGuid& Guid )
 {
-	return Spawnables.FindByPredicate([&](FMovieSceneSpawnable& Spawnable) {
-		return Spawnable.GetGuid() == Guid;
-	});
+	int32 Index = IndexOfSpawnable(Guid);
+	if (Index != INDEX_NONE)
+	{
+		return &Spawnables[Index];
+	}
+	return nullptr;
 }
 
 
@@ -302,15 +328,14 @@ FGuid UMovieScene::AddPossessable( const FString& Name, UClass* Class )
 {
 	Modify();
 
-	FMovieScenePossessable NewPossessable( Name, Class );
-	Possessables.Add( NewPossessable );
-
+	int32 NewPossessableIndex = InsertSorted(Possessables, FMovieScenePossessable(Name, Class));
+	check(Possessables.IsValidIndex(NewPossessableIndex));
 	// Add a new binding so that tracks can be added to it
-	new (ObjectBindings) FMovieSceneBinding( NewPossessable.GetGuid(), NewPossessable.GetName() );
+	int32 NewBindingIndex = InsertSorted(ObjectBindings, FMovieSceneBinding(Possessables[NewPossessableIndex].GetGuid(), Possessables[NewPossessableIndex].GetName()));
+	check(ObjectBindings.IsValidIndex(NewBindingIndex));
+	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings[NewBindingIndex]);
 
-	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings.Last());
-
-	return NewPossessable.GetGuid();
+	return Possessables[NewPossessableIndex].GetGuid();
 }
 
 
@@ -320,16 +345,17 @@ void UMovieScene::AddPossessable(const FMovieScenePossessable& InNewPossessable,
 
 	FMovieScenePossessable NewPossessable;
 	NewPossessable = InNewPossessable;
-	Possessables.Add(NewPossessable);
+	InsertSorted(Possessables, MoveTemp(NewPossessable));
 
 	FMovieSceneBinding NewBinding = InNewBinding;
 	for (auto Track : NewBinding.GetTracks())
 	{
 		Track->Rename(nullptr, this);
 	}
-	ObjectBindings.Add(NewBinding);
+	int32 NewBindingIndex = InsertSorted(ObjectBindings, MoveTemp(NewBinding));
+	check(ObjectBindings.IsValidIndex(NewBindingIndex));
 
-	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings.Last());
+	EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, ObjectBindings[NewBindingIndex]);
 }
 
 
@@ -337,34 +363,30 @@ bool UMovieScene::RemovePossessable( const FGuid& PossessableGuid )
 {
 	bool bAnythingRemoved = false;
 
-	for( auto PossesableIter( Possessables.CreateIterator() ); PossesableIter; ++PossesableIter )
+	int32 Index = IndexOfPossessable(PossessableGuid);
+	if (Index != INDEX_NONE)
 	{
-		auto& CurPossesable = *PossesableIter;
+		const FMovieScenePossessable& FoundPossessable = Possessables[Index];
+		Modify();
 
-		if( CurPossesable.GetGuid() == PossessableGuid )
-		{	
-			Modify();
-
-			// Remove the parent-child link for a parent spawnable/child possessable if necessary
-			if (CurPossesable.GetParent().IsValid())
+		// Remove the parent-child link for a parent spawnable/child possessable if necessary
+		if (FoundPossessable.GetParent().IsValid())
+		{
+			FMovieSceneSpawnable* ParentSpawnable = FindSpawnable(FoundPossessable.GetParent());
+			if (ParentSpawnable)
 			{
-				FMovieSceneSpawnable* ParentSpawnable = FindSpawnable(CurPossesable.GetParent());
-				if (ParentSpawnable)
-				{
-					ParentSpawnable->RemoveChildPossessable(PossessableGuid);
-				}
+				ParentSpawnable->RemoveChildPossessable(PossessableGuid);
 			}
-
-			// Found it!
-			Possessables.RemoveAt( PossesableIter.GetIndex() );
-
-			RemoveBinding( PossessableGuid );
-
-			EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingRemoved, PossessableGuid);
-
-			bAnythingRemoved = true;
-			break;
 		}
+
+		// Found it!
+		Possessables.RemoveAt(Index);
+
+		RemoveBinding(PossessableGuid);
+
+		EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingRemoved, PossessableGuid);
+
+		bAnythingRemoved = true;
 	}
 
 	return bAnythingRemoved;
@@ -375,36 +397,34 @@ bool UMovieScene::ReplacePossessable( const FGuid& OldGuid, const FMovieScenePos
 {
 	bool bAnythingReplaced = false;
 
-	for (auto& Possessable : Possessables)
+	if (FMovieScenePossessable* OldPossessable = FindPossessable(OldGuid))
 	{
-		if (Possessable.GetGuid() == OldGuid)
-		{	
-			Modify();
+		Modify();
 
-			bool bNullPossessedObjectClass = true;
+		bool bNullPossessedObjectClass = true;
 #if WITH_EDITORONLY_DATA
-			bNullPossessedObjectClass = InNewPosessable.GetPossessedObjectClass() == nullptr;
+		bNullPossessedObjectClass = InNewPosessable.GetPossessedObjectClass() == nullptr;
 #endif
 
-			// Found it!
-			if (bNullPossessedObjectClass)
-			{
-				// @todo: delete this when
-				// bool ReplacePossessable(const FGuid& OldGuid, const FGuid& NewGuid, const FString& Name)
-				// is removed
-				Possessable.SetGuid(InNewPosessable.GetGuid());
-				Possessable.SetName(InNewPosessable.GetName());
-			}
-			else
-			{
-				Possessable = InNewPosessable;
-			}
-
-			ReplaceBinding( OldGuid, InNewPosessable.GetGuid(), InNewPosessable.GetName() );
-			bAnythingReplaced = true;
-
-			break;
+		// Found it!
+		if (bNullPossessedObjectClass)
+		{
+			// @todo: delete this when
+			// bool ReplacePossessable(const FGuid& OldGuid, const FGuid& NewGuid, const FString& Name)
+			// is removed
+			OldPossessable->SetGuid(InNewPosessable.GetGuid());
+			OldPossessable->SetName(InNewPosessable.GetName());
 		}
+		else
+		{
+			*OldPossessable = InNewPosessable;
+		}
+
+		// Replace directly changes the guid, so force a sort here
+		Possessables.Sort();
+
+		ReplaceBinding( OldGuid, InNewPosessable.GetGuid(), InNewPosessable.GetName() );
+		bAnythingReplaced = true;
 	}
 
 	return bAnythingReplaced;
@@ -413,14 +433,11 @@ bool UMovieScene::ReplacePossessable( const FGuid& OldGuid, const FMovieScenePos
 
 FMovieScenePossessable* UMovieScene::FindPossessable( const FGuid& Guid )
 {
-	for (auto& Possessable : Possessables)
+	int32 Index = IndexOfPossessable(Guid);
+	if (Index != INDEX_NONE)
 	{
-		if (Possessable.GetGuid() == Guid)
-		{
-			return &Possessable;
-		}
+		return &Possessables[Index];
 	}
-
 	return nullptr;
 }
 
@@ -626,7 +643,7 @@ void UMovieScene::SetPlaybackRange(const TRange<FFrameNumber>& NewRange, bool bA
 #endif
 }
 
-void UMovieScene::SetWorkingRange(float Start, float End)
+void UMovieScene::SetWorkingRange(double Start, double End)
 {
 #if WITH_EDITORONLY_DATA
 	EditorData.WorkStart = Start;
@@ -634,7 +651,7 @@ void UMovieScene::SetWorkingRange(float Start, float End)
 #endif
 }
 
-void UMovieScene::SetViewRange(float Start, float End)
+void UMovieScene::SetViewRange(double Start, double End)
 {
 #if WITH_EDITORONLY_DATA
 	EditorData.ViewStart = Start;
@@ -999,15 +1016,10 @@ TArray<UMovieSceneSection*> UMovieScene::GetAllSections() const
 UMovieSceneTrack* UMovieScene::FindTrack(TSubclassOf<UMovieSceneTrack> TrackClass, const FGuid& ObjectGuid, const FName& TrackName) const
 {
 	check( ObjectGuid.IsValid() );
-	
-	for (const auto& Binding : ObjectBindings)
-	{
-		if (Binding.GetObjectGuid() != ObjectGuid) 
-		{
-			continue;
-		}
 
-		for (const auto& Track : Binding.GetTracks())
+	if (const FMovieSceneBinding* Binding = FindBinding(ObjectGuid))
+	{
+		for (const auto& Track : Binding->GetTracks())
 		{
 			if (TrackClass.GetDefaultObject() == nullptr || Track->GetClass()->IsChildOf(TrackClass))
 			{
@@ -1026,14 +1038,9 @@ TArray<UMovieSceneTrack*> UMovieScene::FindTracks(TSubclassOf<UMovieSceneTrack> 
 {
 	check(ObjectGuid.IsValid());
 	TArray<UMovieSceneTrack*> MovieSceneTracks;
-	for (const auto& Binding : ObjectBindings)
+	if (const FMovieSceneBinding* Binding = FindBinding(ObjectGuid))
 	{
-		if (Binding.GetObjectGuid() != ObjectGuid)
-		{
-			continue;
-		}
-
-		for (const auto& Track : Binding.GetTracks())
+		for (const auto& Track : Binding->GetTracks())
 		{
 			if (TrackClass.GetDefaultObject() == nullptr || Track->GetClass()->IsChildOf(TrackClass))
 			{
@@ -1059,18 +1066,15 @@ UMovieSceneTrack* UMovieScene::AddTrack( TSubclassOf<UMovieSceneTrack> TrackClas
 
 	UMovieSceneTrack* CreatedType = nullptr;
 
-	check( ObjectGuid.IsValid() )
+	check(ObjectGuid.IsValid());
 
-	for (auto& Binding : ObjectBindings)
+	if (FMovieSceneBinding* Binding = FindBinding(ObjectGuid))
 	{
-		if( Binding.GetObjectGuid() == ObjectGuid ) 
-		{
-			Modify();
+		Modify();
 
-			CreatedType = NewObject<UMovieSceneTrack>(this, TrackClass, NAME_None, RF_Transactional);
-			check(CreatedType);
-			Binding.AddTrack( *CreatedType, this );
-		}
+		CreatedType = NewObject<UMovieSceneTrack>(this, TrackClass, NAME_None, RF_Transactional);
+		check(CreatedType);
+		Binding->AddTrack(*CreatedType, this);
 	}
 
 	return CreatedType;
@@ -1089,14 +1093,11 @@ bool UMovieScene::AddGivenTrack(UMovieSceneTrack* InTrack, const FGuid& ObjectGu
 	check(InTrack);
 
 	Modify();
-	for (auto& Binding : ObjectBindings)
+	if (FMovieSceneBinding* Binding = FindBinding(ObjectGuid))
 	{
-		if (Binding.GetObjectGuid() == ObjectGuid)
-		{
-			InTrack->Rename(nullptr, this);
-			Binding.AddTrack(*InTrack, this);
-			return true;
-		}
+		InTrack->Rename(nullptr, this);
+		Binding->AddTrack(*InTrack, this);
+		return true;
 	}
 
 	return false;
@@ -1159,7 +1160,7 @@ UMovieSceneTrack* UMovieScene::FindTrack( TSubclassOf<UMovieSceneTrack> TrackCla
 {
 	UMovieSceneTrack* FoundTrack = nullptr;
 
-	for (const auto Track : Tracks)
+	for (const TObjectPtr<UMovieSceneTrack>& Track : Tracks)
 	{
 		if (Track->GetClass()->IsChildOf(TrackClass))
 		{
@@ -1489,36 +1490,50 @@ void UMovieScene::RemoveBinding(const FGuid& Guid)
 	// WARNING: This function intentionally does not trigger events to ensure
 	// that events are triggered when all processing is complete (ie, when removing a spawnable or posessable)
 
-	for (int32 BindingIndex = 0; BindingIndex < ObjectBindings.Num(); ++BindingIndex)
+	int32 Index = IndexOfBinding(Guid);
+	if (Index != INDEX_NONE)
 	{
-		if (ObjectBindings[BindingIndex].GetObjectGuid() == Guid)
-		{
-			ObjectBindings.RemoveAt(BindingIndex);
-			break;
-		}
+		ObjectBindings.RemoveAt(Index);
 	}
+}
+
+int32 UMovieScene::IndexOfBinding(const FGuid& ForGuid) const
+{
+	return Algo::BinarySearch(ObjectBindings, ForGuid);
+}
+
+int32 UMovieScene::IndexOfSpawnable(const FGuid& ForGuid) const
+{
+	return Algo::BinarySearch(Spawnables, ForGuid);
+}
+
+int32 UMovieScene::IndexOfPossessable(const FGuid& ForGuid) const
+{
+	return Algo::BinarySearch(Possessables, ForGuid);
 }
 
 void UMovieScene::ReplaceBinding(const FGuid& OldGuid, const FGuid& NewGuid, const FString& Name)
 {
-	for (auto& Binding : ObjectBindings)
+	if (FMovieSceneBinding* Binding = FindBinding(OldGuid))
 	{
-		if (Binding.GetObjectGuid() == OldGuid)
+		Binding->SetObjectGuid(NewGuid);
+		Binding->SetName(Name);
+
+		// Replace directly changes the guid, so force a sort here
+		ObjectBindings.Sort();
+
+		// Reget the binding after sorting
+		Binding = FindBinding(NewGuid);
+
+		// Changing a binding guid invalidates any tracks contained within the binding
+		// Make sure they are written into the transaction buffer by calling modify
+		for (UMovieSceneTrack* Track : Binding->GetTracks())
 		{
-			Binding.SetObjectGuid(NewGuid);
-			Binding.SetName(Name);
-
-			// Changing a binding guid invalidates any tracks contained within the binding
-			// Make sure they are written into the transaction buffer by calling modify
-			for (UMovieSceneTrack* Track : Binding.GetTracks())
-			{
-				Track->Modify();
-			}
-
-			EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingRemoved, OldGuid);
-			EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, Binding);
-			break;
+			Track->Modify();
 		}
+
+		EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingRemoved, OldGuid);
+		EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingAdded, *Binding);
 	}
 }
 
@@ -1526,11 +1541,9 @@ void UMovieScene::ReplaceBinding(const FGuid& BindingToReplaceGuid, const FMovie
 {
 	Modify();
 
-	FMovieSceneBinding* Binding = ObjectBindings.FindByPredicate([BindingToReplaceGuid](const FMovieSceneBinding& CheckedBinding) { return CheckedBinding.GetObjectGuid() == BindingToReplaceGuid; });
-	if (Binding)
+	if (FMovieSceneBinding* Binding = FindBinding(BindingToReplaceGuid))
 	{
 		*Binding = NewBinding;
-
 		// We also need to change the track's owners to be the MovieScene.
 		for (auto Track : Binding->GetTracks())
 		{
@@ -1544,25 +1557,8 @@ void UMovieScene::ReplaceBinding(const FGuid& BindingToReplaceGuid, const FMovie
 
 void UMovieScene::MoveBindingContents(const FGuid& SourceBindingId, const FGuid& DestinationBindingId)
 {
-	FMovieSceneBinding* SourceBinding = nullptr;
-	FMovieSceneBinding* DestinationBinding = nullptr;
-
-	for (FMovieSceneBinding& Binding : ObjectBindings)
-	{
-		if (Binding.GetObjectGuid() == SourceBindingId)
-		{
-			SourceBinding = &Binding;
-		}
-		else if (Binding.GetObjectGuid() == DestinationBindingId)
-		{
-			DestinationBinding = &Binding;
-		}
-
-		if (SourceBinding && DestinationBinding)
-		{
-			break;
-		}
-	}
+	FMovieSceneBinding* SourceBinding = FindBinding(SourceBindingId);
+	FMovieSceneBinding* DestinationBinding = FindBinding(DestinationBindingId);
 
 	if (SourceBinding && DestinationBinding)
 	{
@@ -1579,34 +1575,45 @@ void UMovieScene::MoveBindingContents(const FGuid& SourceBindingId, const FGuid&
 
 	FMovieSceneSpawnable* DestinationSpawnable = FindSpawnable(DestinationBindingId);
 
-	for( auto PossesableIter( Possessables.CreateIterator() ); PossesableIter; ++PossesableIter )
+	TArray<FGuid> BindingsToRemove;
+	for( auto SourcePossessableIter( Possessables.CreateIterator() ); SourcePossessableIter; ++SourcePossessableIter)
 	{
-		FMovieScenePossessable& SourcePossessable = *PossesableIter;
+		FMovieScenePossessable& SourcePossessable = *SourcePossessableIter;
 		
 		// If there is a possessable whose parent is the binding we're moving contents for, 
 		// that possessable needs to be remapped to the new destination parent
 		if (SourcePossessable.GetParent() == SourceBindingId)
 		{
-			// But if there is already a possessable for that destination binding, don't keep the source possessable around.
-			bool bAlreadyExists = false;
-			for (FMovieScenePossessable& DestinationPossessable : Possessables)
+			// Look for an existing destination child possessable
+			bool bUseSourcePossessable = true;
+			for (auto DestinationPossessableIter(Possessables.CreateIterator()); DestinationPossessableIter; ++DestinationPossessableIter)
 			{
+				FMovieScenePossessable& DestinationPossessable = *DestinationPossessableIter;
+
 				if (DestinationPossessable.GetName() == SourcePossessable.GetName() &&
 					DestinationPossessable.GetParent() == DestinationBindingId)
 				{
-					FGuid CurGuid = SourcePossessable.GetGuid();
-
-					// Found it!
-					Possessables.RemoveAt( PossesableIter.GetIndex() );
-
-					RemoveBinding( CurGuid );
-
-					bAlreadyExists = true;
+					// If it's not the same class, we can't use the source possessable because it's going to lead to trouble
+#if WITH_EDITORONLY_DATA
+					if (SourcePossessable.GetPossessedObjectClass() != DestinationPossessable.GetPossessedObjectClass())
+					{
+						bUseSourcePossessable = false;
+					}
+#endif
+					if (bUseSourcePossessable)
+					{
+						BindingsToRemove.Add(DestinationPossessable.GetGuid());
+					}
+					// Otherwise, discard the source possessable since it's a different class and probably going to be trouble
+					else
+					{
+						BindingsToRemove.Add(SourcePossessable.GetGuid());
+					}
 					break;
 				}
 			}
-
-			if (!bAlreadyExists)
+			
+			if (bUseSourcePossessable)
 			{
 				SourcePossessable.SetParent(DestinationBindingId, this);
 				if (DestinationSpawnable)
@@ -1616,6 +1623,42 @@ void UMovieScene::MoveBindingContents(const FGuid& SourceBindingId, const FGuid&
 			}
 		}
 	}
+
+	for (FGuid BindingToRemove : BindingsToRemove)
+	{
+		for (auto PossessableIter(Possessables.CreateIterator()); PossessableIter; ++PossessableIter)
+		{
+			FMovieScenePossessable& Possessable = *PossessableIter;
+			if (Possessable.GetGuid() == BindingToRemove)
+			{
+				Possessables.RemoveAt(PossessableIter.GetIndex());
+				break;
+			}
+		}
+
+		RemoveBinding(BindingToRemove);
+		EventHandlers.Trigger(&UE::MovieScene::ISequenceDataEventHandler::OnBindingRemoved, BindingToRemove);
+	}
+}
+
+FMovieSceneBinding* UMovieScene::FindBinding(const FGuid& ForGuid)
+{
+	int32 Index = IndexOfBinding(ForGuid);
+	if (Index != INDEX_NONE)
+	{
+		return &ObjectBindings[Index];
+	}
+	return nullptr;
+}
+
+const FMovieSceneBinding* UMovieScene::FindBinding(const FGuid& ForGuid) const
+{
+	int32 Index = IndexOfBinding(ForGuid);
+	if (Index != INDEX_NONE)
+	{
+		return &ObjectBindings[Index];
+	}
+	return nullptr;
 }
 
 TSharedPtr<FMovieSceneTimeController> UMovieScene::MakeCustomTimeController(UObject* PlaybackContext)
@@ -1793,7 +1836,6 @@ int32 UMovieScene::FindNextMarkedFrame(FFrameNumber InFrameNumber, bool bForward
 		}
 		return MarkedFrames.Num() - 1;
 	}
-	return INDEX_NONE;
 }
 
 #undef LOCTEXT_NAMESPACE

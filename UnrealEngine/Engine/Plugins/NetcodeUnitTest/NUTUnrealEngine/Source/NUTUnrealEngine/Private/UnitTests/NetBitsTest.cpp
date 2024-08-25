@@ -302,7 +302,7 @@ bool UNetBitsTest::ExecuteUnitTest()
 
 	// @todo #JohnB: REmove or incorporate properly - checking MAX_PACKETID size limits
 	{
-		uint32 MaxBits = 0;
+		int64 MaxBits = 0;
 
 		for (uint32 WriteValue=0; WriteValue<MAX_PACKETID; WriteValue++)
 		{

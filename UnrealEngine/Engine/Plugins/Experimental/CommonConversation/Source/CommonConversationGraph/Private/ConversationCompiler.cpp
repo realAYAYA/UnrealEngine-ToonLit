@@ -307,7 +307,7 @@ void FConversationCompiler::RebuildBank(UConversationDatabase* ConversationAsset
 
 		if (UConversationLinkNode* ExitTagNode = Cast<UConversationLinkNode>(NodeInstance))
 		{
-			ConversationAsset->ExitTags.AddLeafTag(ExitTagNode->GetRemoteEntryTag());
+			ConversationAsset->ExitTags.AddTag(ExitTagNode->GetRemoteEntryTag());
 		}
 	}
 

@@ -31,6 +31,7 @@ class IAnimBlueprintCopyTermDefaultsContext;
 class IAnimBlueprintNodeCopyTermDefaultsContext;
 class IAnimBlueprintNodeOverrideAssetsContext;
 class UAnimBlueprintExtension;
+class UAnimGraphNodeBinding;
 
 struct FPoseLinkMappingRecord
 {
@@ -182,6 +183,9 @@ struct FAnimGraphNodePropertyBinding
 	/** Whether the pin binding is a promotion (e.g. bool->int) */
 	UPROPERTY()
 	bool bIsPromotion = false;
+
+	UPROPERTY()
+	bool bOnlyUpdateWhenActive = false;
 };
 
 /**
@@ -199,13 +203,13 @@ class ANIMGRAPH_API UAnimGraphNode_Base : public UK2Node
 	TArray<FOptionalPinFromProperty> ShowPinForProperties;
 
 	/** Map from property name->binding info */
- 	UPROPERTY(EditAnywhere, Category=PinOptions)
- 	TMap<FName, FAnimGraphNodePropertyBinding> PropertyBindings;
+ 	UPROPERTY()
+ 	TMap<FName, FAnimGraphNodePropertyBinding> PropertyBindings_DEPRECATED;
 
 	/** Properties marked as always dynamic, so they can be set externally */
 	UPROPERTY()
 	TSet<FName> AlwaysDynamicProperties;
-	
+
 	UPROPERTY(Transient)
 	EBlueprintUsage BlueprintUsage;
 
@@ -222,6 +226,10 @@ class ANIMGRAPH_API UAnimGraphNode_Base : public UK2Node
 	FMemberReference UpdateFunction;
 
 private:
+	// Bindings for pins that this node exposes
+	UPROPERTY(EditAnywhere, Instanced, Category=Bindings)
+	TObjectPtr<UAnimGraphNodeBinding> Binding;
+
 	// Optional reference tag name. If this is set then this node can be referenced from elsewhere in this animation blueprint using an anim node reference
 	UPROPERTY(EditAnywhere, Category = Tag)
 	FName Tag;
@@ -268,6 +276,7 @@ public:
 	virtual bool CanJumpToDefinition() const override;
 	virtual void JumpToDefinition() const override;
 	virtual void HandleVariableRenamed(UBlueprint* InBlueprint, UClass* InVariableClass, UEdGraph* InGraph, const FName& InOldVarName, const FName& InNewVarName) override;
+	virtual void HandleFunctionRenamed(UBlueprint* InBlueprint, UClass* InFunctionClass, UEdGraph* InGraph, const FName& InOldFuncName, const FName& InNewFuncName) override;
 	virtual void ReplaceReferences(UBlueprint* InBlueprint, UBlueprint* InReplacementBlueprint, const FMemberReference& InSource, const FMemberReference& InReplacement) override;
 	virtual bool ReferencesVariable(const FName& InVarName, const UStruct* InScope) const override;
 	virtual bool ReferencesFunction(const FName& InFunctionName, const UStruct* InScope) const override;
@@ -541,6 +550,27 @@ public:
 	// Check if a specified function reference appears to be valid by inspecting only the validity of the name and guid
 	static bool IsPotentiallyBoundFunction(const FMemberReference& FunctionReference);
 
+	// Check whether the specified property is bound via PropertyBindings
+	virtual bool HasBinding(FName InPropertyName) const;
+
+	// Get the bindings for this node
+	const UAnimGraphNodeBinding* GetBinding() const { return Binding; }
+
+	// Get the mutable bindings for this node
+	UAnimGraphNodeBinding* GetMutableBinding() { return Binding; }
+
+	// Remove any bindings for the specified name
+	void RemoveBindings(FName InBindingName);
+
+	// Gets the animation FNode type represented by this ed graph node
+	UScriptStruct* GetFNodeType() const;
+
+	// Gets the animation FNode property represented by this ed graph node
+	FStructProperty* GetFNodeProperty() const;
+
+	// Get the runtime anim node that we template
+	FAnimNode_Base* GetFNode();
+
 protected:
 	friend class FAnimBlueprintCompilerContext;
 	friend class FAnimGraphNodeDetails;
@@ -551,15 +581,6 @@ protected:
 
 	// Set the tag for this node but without regenerating any BP data for tagging
 	void SetTagInternal(FName InTag) { Tag = InTag; }
-	
-	// Gets the animation FNode type represented by this ed graph node
-	UScriptStruct* GetFNodeType() const;
-
-	// Gets the animation FNode property represented by this ed graph node
-	FStructProperty* GetFNodeProperty() const;
-
-	// Get the runtime anim node that we template
-	FAnimNode_Base* GetFNode();
 	
 	// Get the extension types that this node type holds on the anim blueprint. Some extension types are always requested by the system
 	virtual void GetRequiredExtensions(TArray<TSubclassOf<UAnimBlueprintExtension>>& OutExtensions) const {}
@@ -613,9 +634,6 @@ protected:
 	// @return false if the pin cannot be bound
 	virtual bool GetPinBindingInfo(FName InPinName, FName& OutBindingName, FProperty*& OutPinProperty, int32& OutOptionalPinIndex) const;
 
-	// Check whether the specified property is bound via PropertyBindings
-	virtual bool HasBinding(FName InPropertyName) const;
-	
 	FOnNodePropertyChangedEvent PropertyChangeEvent;
 
 	FOnNodeTitleChangedEvent NodeTitleChangedEvent;
@@ -631,6 +649,9 @@ protected:
 	/** Helper function used to validate anim node function references */
 	void ValidateFunctionRef(FName InPropertyName, const FMemberReference& InRef, const FText& InFunctionName, FCompilerResultsLog& MessageLog);
 	
+	// Create the bindings subobject if required
+	void EnsureBindingsArePresent();
+
 protected:
 	// Old shown pins. Needs to be a member variable to track pin visibility changes between Pre and PostEditChange 
 	TArray<FName> OldShownPins;

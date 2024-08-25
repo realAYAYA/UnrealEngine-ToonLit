@@ -1,95 +1,76 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "OnlineAsyncTaskGooglePlayReadLeaderboard.h"
-#include "OnlineSubsystemGooglePlay.h"
-#include "OnlineIdentityInterfaceGooglePlay.h"
+#include "GooglePlayGamesWrapper.h"
 #include "OnlineLeaderboardInterfaceGooglePlay.h"
-
-THIRD_PARTY_INCLUDES_START
-#include "gpg/leaderboard_manager.h"
-THIRD_PARTY_INCLUDES_END
-
-using namespace gpg;
+#include "OnlineSubsystemGooglePlay.h"
 
 FOnlineAsyncTaskGooglePlayReadLeaderboard::FOnlineAsyncTaskGooglePlayReadLeaderboard(
 	FOnlineSubsystemGooglePlay* InSubsystem,
-	FOnlineLeaderboardReadRef& InReadObject,
-	const FString& InLeaderboardId)
+	const FOnlineLeaderboardReadRef& InReadObject,
+	const FString& InLeaderboardId )
 	: FOnlineAsyncTaskBasic(InSubsystem)
 	, ReadObject(InReadObject)
 	, LeaderboardId(InLeaderboardId)
 {
-	Response.status = ResponseStatus::ERROR_TIMEOUT;
-}
-
-void FOnlineAsyncTaskGooglePlayReadLeaderboard::Finalize()
-{
-	ReadObject->ReadState = bWasSuccessful ? EOnlineAsyncTaskState::Done : EOnlineAsyncTaskState::Failed;
-}
-
-void FOnlineAsyncTaskGooglePlayReadLeaderboard::TriggerDelegates()
-{
-	Subsystem->GetLeaderboardsInterface()->TriggerOnLeaderboardReadCompleteDelegates(bWasSuccessful);
+	ReadObject->Rows.Empty();
+	ReadObject->ReadState = EOnlineAsyncTaskState::InProgress;
 }
 
 void FOnlineAsyncTaskGooglePlayReadLeaderboard::Tick()
 {
-	// Convert our FString leaderboard ID to ASCII for the API's std::string.
-	auto ConvertedId = FOnlineSubsystemGooglePlay::ConvertFStringToStdString(LeaderboardId);
-	Response = Subsystem->GetGameServices()->Leaderboards().FetchScoreSummaryBlocking(
-		DataSource::CACHE_OR_NETWORK,
-		Timeout(10000),
-		ConvertedId,
-		LeaderboardTimeSpan::ALL_TIME,
-		LeaderboardCollection::PUBLIC);
-
-	bWasSuccessful = false;
-
-	if (Response.status != ResponseStatus::VALID)
+	if ( !bStarted)
 	{
-		bIsComplete = true;
-		return;
+		bStarted = true;
+		bWasSuccessful = Subsystem->GetGooglePlayGamesWrapper().RequestLeaderboardScore(this, LeaderboardId); 
+		bIsComplete = !bWasSuccessful;
 	}
-
-	// We can only get the current user's leaderboard score from Google Play, so just add one row with it.
-	//FUniqueNetIdRef UserId = FUniqueNetIdGooglePlay::Create(TEXT("0"));
-	auto UserId = Subsystem->GetIdentityGooglePlay()->GetCurrentUserId();
-	if (!UserId.IsValid())
-	{
-		// If there's no user signed in, can't get leaderboard.
-		bIsComplete = true;
-		return;
-	}
-
-	FOnlineStatsRow* UserRow = ReadObject.Get().FindPlayerRecord(*UserId);
-	if (UserRow == NULL)
-	{
-		UserRow = new (ReadObject->Rows) FOnlineStatsRow(UserId->ToString(), UserId.ToSharedRef());
-	}
-
-	for (int32 StatIdx = 0; StatIdx < ReadObject->ColumnMetadata.Num(); StatIdx++)
-	{
-		const FColumnMetaData& ColumnMeta = ReadObject->ColumnMetadata[StatIdx];
-
-		FVariantData* LastColumn = NULL;
-		switch (ColumnMeta.DataType)
-		{
-			case EOnlineKeyValuePairDataType::Int32:
-			{
-				int32 Value = Response.data.CurrentPlayerScore().Value();
-				LastColumn = &(UserRow->Columns.Add(ColumnMeta.ColumnName, FVariantData(Value)));
-				bWasSuccessful = true;
-				break;
-			}
-
-			default:
-			{
-				UE_LOG_ONLINE(Warning, TEXT("Unsupported key value pair during retrieval from Google Play %s"), *ColumnMeta.ColumnName.ToString());
-				break;
-			}
-		}
-	}
-	
-	bIsComplete = true;
 }
 
+void FOnlineAsyncTaskGooglePlayReadLeaderboard::Finalize()
+{
+	ReadObject->ReadState = bWasSuccessful? EOnlineAsyncTaskState::Done : EOnlineAsyncTaskState::Failed;
+}
+
+void FOnlineAsyncTaskGooglePlayReadLeaderboard::TriggerDelegates()
+{
+	Subsystem->GetLeaderboardsGooglePlay()->TriggerOnLeaderboardReadCompleteDelegates(bWasSuccessful);
+}
+
+void FOnlineAsyncTaskGooglePlayReadLeaderboard::AddScore(const FString& DisplayName, const FString& PlayerId, int64 Rank, int64 RawScore)
+{
+	if (!PlayerId.IsEmpty())
+	{
+		FUniqueNetIdRef UserId = FUniqueNetIdGooglePlay::Create(PlayerId);
+		FOnlineStatsRow* UserRow = ReadObject->FindPlayerRecord(*UserId);
+		if (UserRow == NULL)
+		{
+			UserRow = &ReadObject->Rows.Emplace_GetRef(DisplayName, UserId);
+		}
+
+		UserRow->Rank = Rank;
+
+		for (const FColumnMetaData& ColumnMeta: ReadObject->ColumnMetadata)
+		{
+			switch (ColumnMeta.DataType)
+			{
+				case EOnlineKeyValuePairDataType::Int64:
+				{
+					UserRow->Columns.Add(ColumnMeta.ColumnName, FVariantData(RawScore));
+					break;
+				}
+				case EOnlineKeyValuePairDataType::Int32:
+				{
+					int32 Value = (int32)FMath::Clamp(RawScore, MIN_int32, MAX_int32);
+					UserRow->Columns.Add(ColumnMeta.ColumnName, FVariantData(Value));
+					break;
+				}
+
+				default:
+				{
+					UE_LOG_ONLINE(Warning, TEXT("Unsupported key value pair during retrieval from Google Play %s"), *ColumnMeta.ColumnName.ToString());
+					break;
+				}
+			}
+		}
+	}}

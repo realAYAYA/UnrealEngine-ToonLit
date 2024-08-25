@@ -18,12 +18,8 @@ public:
 	TSharedPtr< FUICommandInfo > Compile;
 	TSharedPtr< FUICommandInfo > CompileOnlySelected;
 	TSharedPtr< FUICommandInfo > ResetCompileOptions;
-	TSharedPtr< FUICommandInfo > CompileOptions_EnableTextureCompression;
 	TSharedPtr< FUICommandInfo > CompileOptions_UseDiskCompilation;
-
 	TSharedPtr< FUICommandInfo > Debug;
-	TSharedPtr< FUICommandInfo > DebugOptions_OnlySelected;
-	TSharedPtr< FUICommandInfo > DebugOptions_EnableTextureCompression;
 
 	TSharedPtr< FUICommandInfo > PerformanceReport;
 	TSharedPtr< FUICommandInfo > ResetPerformanceReportOptions;
@@ -47,7 +43,6 @@ class FCustomizableObjectEditorViewportCommands : public TCommands<FCustomizable
 public:
 	FCustomizableObjectEditorViewportCommands();
 	
-	/**  */
 	TSharedPtr< FUICommandInfo > SetDrawUVs;
 	TSharedPtr< FUICommandInfo > SetShowGrid;
 	TSharedPtr< FUICommandInfo > SetShowSky;
@@ -56,14 +51,7 @@ public:
 	TSharedPtr< FUICommandInfo > SetCameraLock;
 	TSharedPtr< FUICommandInfo > SaveThumbnail;
 
-	// View Menu Commands
-	TSharedPtr< FUICommandInfo > SetShowNormals;
-	TSharedPtr< FUICommandInfo > SetShowTangents;
-	TSharedPtr< FUICommandInfo > SetShowBinormals;
-	TSharedPtr< FUICommandInfo > SetShowPivot;
-
 	TSharedPtr< FUICommandInfo > BakeInstance;
-	TSharedPtr< FUICommandInfo > StateChangeTest;
 	TSharedPtr< FUICommandInfo > StateChangeShowData;
 	TSharedPtr< FUICommandInfo > StateChangeShowGeometryData;
 

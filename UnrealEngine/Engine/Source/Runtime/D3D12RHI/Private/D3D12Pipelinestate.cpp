@@ -339,7 +339,7 @@ ID3D12PipelineState* FD3D12PipelineState::InternalGetPipelineState()
 
 				if (Time - StartTime > BusyWaitWarningTime)
 				{
-					UE_LOG(LogD3D12RHI, Warning, TEXT("Waited for PSO creation for %fms"), BusyWaitWarningTime * 1000.0);
+					UE_LOG(LogD3D12RHI, Log, TEXT("Waited for PSO creation for %fms"), BusyWaitWarningTime * 1000.0);
 					BusyWaitWarningTime *= 2.0;
 				}
 			}

@@ -41,8 +41,7 @@ SYMS_DwSectionKind_Names,
 SYMS_DwSectionKind_COUNT = 18
 } SYMS_DwSectionKind;
 typedef enum SYMS_DwLanguage{
-SYMS_DwLanguage_INVALID = 0x00,
-//  TODO(nick): rename invalid to null
+SYMS_DwLanguage_NULL = 0x00,
 SYMS_DwLanguage_C89 = 0x01,
 SYMS_DwLanguage_C = 0x02,
 SYMS_DwLanguage_Ada83 = 0x03,
@@ -80,9 +79,13 @@ SYMS_DwLanguage_Fortran03 = 0x22,
 SYMS_DwLanguage_Fortran08 = 0x23,
 SYMS_DwLanguage_RenderScript = 0x24,
 SYMS_DwLanguage_BLISS = 0x25,
+SYMS_DwLanguage_MIPS_ASSEMBLER = 0x8001,
+SYMS_DwLanguage_GOOGLE_RENDER_SCRIPT = 0x8E57,
+SYMS_DwLanguage_SUN_ASSEMBLER = 0x9001,
+SYMS_DwLanguage_BORLAND_DELPHI = 0xB000,
 SYMS_DwLanguage_LO_USER = 0x8000,
 SYMS_DwLanguage_HI_USER = 0xffff,
-SYMS_DwLanguage_COUNT = 40
+SYMS_DwLanguage_COUNT = 44
 } SYMS_DwLanguage;
 typedef enum SYMS_DwStdOpcode{
 SYMS_DwStdOpcode_EXTENDED_OPCODE = 0x00,
@@ -439,10 +442,27 @@ SYMS_DwAttribKind_APPLE_PROPERTY_ATTRIBUTE = 0x3feb,
 SYMS_DwAttribKind_APPLE_OBJC_COMPLETE_TYPE = 0x3fec,
 SYMS_DwAttribKind_APPLE_PROPERTY = 0x3fed,
 SYMS_DwAttribKind_APPLE_OBJ_DIRECT = 0x3fee,
-SYMS_DwAttribKind_APPLE_SDK = 0x3fef,
+SYMS_DwAttribKind_APPLE_SDK = 0x3fef,//  llvm/BinaryFormat/Dwarf.def
+SYMS_DwAttribKind_MIPS_FDE = 0x2001,
+SYMS_DwAttribKind_MIPS_LOOP_BEGIN = 0x2002,
+SYMS_DwAttribKind_MIPS_TAIL_LOOP_BEGIN = 0x2003,
+SYMS_DwAttribKind_MIPS_EPILOG_BEGIN = 0x2004,
+SYMS_DwAttribKind_MIPS_LOOP_UNROLL_FACTOR = 0x2005,
+SYMS_DwAttribKind_MIPS_SOFTWARE_PIPELINE_DEPTH = 0x2006,
+SYMS_DwAttribKind_MIPS_LINKAGE_NAME = 0x2007,
+SYMS_DwAttribKind_MIPS_STRIDE = 0x2008,
+SYMS_DwAttribKind_MIPS_ABSTRACT_NAME = 0x2009,
+SYMS_DwAttribKind_MIPS_CLONE_ORIGIN = 0x200a,
+SYMS_DwAttribKind_MIPS_HAS_INLINES = 0x200b,
+SYMS_DwAttribKind_MIPS_STRIDE_BYTE = 0x200c,
+SYMS_DwAttribKind_MIPS_STRIDE_ELEM = 0x200d,
+SYMS_DwAttribKind_MIPS_PTR_DOPETYPE = 0x200e,
+SYMS_DwAttribKind_MIPS_ALLOCATABLE_DOPETYPE = 0x200f,
+SYMS_DwAttribKind_MIPS_ASSUMED_SHAPE_DOPETYPE = 0x2010,
+SYMS_DwAttribKind_MIPS_ASSUMED_SIZE = 0x2011,
 SYMS_DwAttribKind_LO_USER = 0x2000,
 SYMS_DwAttribKind_HI_USER = 0x3fff,
-SYMS_DwAttribKind_COUNT = 182
+SYMS_DwAttribKind_COUNT = 199
 } SYMS_DwAttribKind;
 typedef enum SYMS_DwAttribTypeEncoding{
 SYMS_DwAttribTypeEncoding_Null,

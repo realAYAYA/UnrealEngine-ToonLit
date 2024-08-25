@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MovieGraphSchema.h"
+
+#include "EdGraphSchema_K2.h"
 #include "Graph/MovieGraphConfig.h"
 #include "Graph/Nodes/MovieGraphInputNode.h"
 #include "Graph/Nodes/MovieGraphOutputNode.h"
@@ -15,27 +17,29 @@
 #include "ScopedTransaction.h"
 #include "GraphEditor.h"
 #include "MovieEdGraphVariableNode.h"
+#include "MoviePipelineEdGraphSubgraphNode.h"
 
 TArray<UClass*> UMovieGraphSchema::MoviePipelineNodeClasses;
 
 #define LOCTEXT_NAMESPACE "MoviePipelineGraphSchema"
 
-const FName UMovieGraphSchema::PC_Branch(TEXT("branch"));
-const FName UMovieGraphSchema::PC_Boolean(TEXT("boolean"));
-const FName UMovieGraphSchema::PC_Byte(TEXT("byte"));
-const FName UMovieGraphSchema::PC_Integer(TEXT("integer"));
-const FName UMovieGraphSchema::PC_Int64(TEXT("int64"));
-const FName UMovieGraphSchema::PC_Float(TEXT("float"));
-const FName UMovieGraphSchema::PC_Double(TEXT("double"));
-const FName UMovieGraphSchema::PC_Name(TEXT("name"));
-const FName UMovieGraphSchema::PC_String(TEXT("string"));
-const FName UMovieGraphSchema::PC_Text(TEXT("text"));
-const FName UMovieGraphSchema::PC_Enum(TEXT("enum"));
-const FName UMovieGraphSchema::PC_Struct(TEXT("struct"));
-const FName UMovieGraphSchema::PC_Object(TEXT("object"));
-const FName UMovieGraphSchema::PC_SoftObject(TEXT("softobject"));
-const FName UMovieGraphSchema::PC_Class(TEXT("class"));
-const FName UMovieGraphSchema::PC_SoftClass(TEXT("softclass"));
+const FName UMovieGraphSchema::PC_Branch(TEXT("branch"));	// The branch looks like an Exec pin, but isn't the same thing, so we don't use the BP Exec type
+const FName UMovieGraphSchema::PC_Boolean(UEdGraphSchema_K2::PC_Boolean);
+const FName UMovieGraphSchema::PC_Byte(UEdGraphSchema_K2::PC_Byte);
+const FName UMovieGraphSchema::PC_Integer(UEdGraphSchema_K2::PC_Int);
+const FName UMovieGraphSchema::PC_Int64(UEdGraphSchema_K2::PC_Int64);
+const FName UMovieGraphSchema::PC_Real(UEdGraphSchema_K2::PC_Real);
+const FName UMovieGraphSchema::PC_Float(UEdGraphSchema_K2::PC_Float);
+const FName UMovieGraphSchema::PC_Double(UEdGraphSchema_K2::PC_Double);
+const FName UMovieGraphSchema::PC_Name(UEdGraphSchema_K2::PC_Name);
+const FName UMovieGraphSchema::PC_String(UEdGraphSchema_K2::PC_String);
+const FName UMovieGraphSchema::PC_Text(UEdGraphSchema_K2::PC_Text);
+const FName UMovieGraphSchema::PC_Enum(UEdGraphSchema_K2::PC_Enum);
+const FName UMovieGraphSchema::PC_Struct(UEdGraphSchema_K2::PC_Struct);
+const FName UMovieGraphSchema::PC_Object(UEdGraphSchema_K2::PC_Object);
+const FName UMovieGraphSchema::PC_SoftObject(UEdGraphSchema_K2::PC_SoftObject);
+const FName UMovieGraphSchema::PC_Class(UEdGraphSchema_K2::PC_Class);
+const FName UMovieGraphSchema::PC_SoftClass(UEdGraphSchema_K2::PC_SoftClass);
 
 namespace UE::MovieGraph::Private
 {
@@ -99,6 +103,18 @@ void UMovieGraphSchema::CreateDefaultNodesForGraph(UEdGraph& Graph) const
 	}*/
 }
 
+bool UMovieGraphSchema::SupportsPinTypeContainer(TWeakPtr<const FEdGraphSchemaAction> SchemaAction, const FEdGraphPinType& PinType, const EPinContainerType& ContainerType) const
+{
+	// No maps, sets, or arrays
+	return ContainerType == EPinContainerType::None;
+}
+
+bool UMovieGraphSchema::ShouldHidePinDefaultValue(UEdGraphPin* Pin) const
+{
+	// The graph doesn't support editing default values for pins yet
+	return true;
+}
+
 void UMovieGraphSchema::InitMoviePipelineNodeClasses()
 {
 	if (MoviePipelineNodeClasses.Num() > 0)
@@ -109,7 +125,7 @@ void UMovieGraphSchema::InitMoviePipelineNodeClasses()
 	for (TObjectIterator<UClass> It; It; ++It)
 	{
 		if (It->IsChildOf(UMovieGraphNode::StaticClass())
-			&& !It->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+			&& !It->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists | CLASS_Hidden | CLASS_HideDropDown))
 		{
 			MoviePipelineNodeClasses.Add(*It);
 		}
@@ -120,76 +136,26 @@ void UMovieGraphSchema::InitMoviePipelineNodeClasses()
 
 bool UMovieGraphSchema::IsConnectionToBranchAllowed(const UEdGraphPin* InputPin, const UEdGraphPin* OutputPin, FText& OutError) const
 {
-	UMovieGraphNode* ToNode = UE::MovieGraph::Private::GetGraphNodeFromEdPin(InputPin);
-	UMovieGraphNode* FromNode = UE::MovieGraph::Private::GetGraphNodeFromEdPin(OutputPin);
 	const UMovieGraphPin* ToPin = UE::MovieGraph::Private::GetGraphPinFromEdPin(InputPin);
 	const UMovieGraphPin* FromPin = UE::MovieGraph::Private::GetGraphPinFromEdPin(OutputPin);
-	const UMovieGraphConfig* GraphConfig = UE::MovieGraph::Private::GetGraphFromEdPin(InputPin);
+	
+	return FromPin->IsConnectionToBranchAllowed(ToPin, OutError);
+}
 
-	// Get all upstream/downstream nodes that occur on the connection -- these are the nodes that need to be checked for branch restrictions.
-	// FromNode/ToNode themselves also needs to be part of the validation checks.
-	TArray<UMovieGraphNode*> NodesToCheck = {FromNode, ToNode};
-	GraphConfig->VisitUpstreamNodes(FromNode, UMovieGraphConfig::FVisitNodesCallback::CreateLambda(
-		[&NodesToCheck](UMovieGraphNode* VisitedNode, const UMovieGraphPin* VisitedPin)
-		{
-			NodesToCheck.Add(VisitedNode);
-		}));
+void UMovieGraphSchema::AddExtraMenuActions(FGraphActionMenuBuilder& ActionMenuBuilder) const
+{
+	// Comment action
+	ActionMenuBuilder.AddAction(CreateCommentMenuAction());
+}
 
-	GraphConfig->VisitDownstreamNodes(ToNode, UMovieGraphConfig::FVisitNodesCallback::CreateLambda(
-		[&NodesToCheck](UMovieGraphNode* VisitedNode, const UMovieGraphPin* VisitedPin)
-		{
-			NodesToCheck.Add(VisitedNode);
-		}));
+TSharedRef<FMovieGraphSchemaAction_NewComment> UMovieGraphSchema::CreateCommentMenuAction() const
+{
+	const FText CommentMenuDesc = LOCTEXT("AddComment", "Add Comment");
+	const FText CommentCategory;
+	const FText CommentDescription = LOCTEXT("AddCommentTooltip", "Create a resizable comment box.");
 
-	// Determine which branch(es) are connected to this node up/downstream.
-	const TArray<FString> DownstreamBranchNames = GraphConfig->GetDownstreamBranchNames(ToNode, ToPin);
-	const TArray<FString> UpstreamBranchNames = GraphConfig->GetUpstreamBranchNames(FromNode, FromPin);
-	const bool bGlobalsIsDownstream = DownstreamBranchNames.Contains(UMovieGraphNode::GlobalsPinNameString);
-	const bool bGlobalsIsUpstream = UpstreamBranchNames.Contains(UMovieGraphNode::GlobalsPinNameString);
-	const bool bDownstreamBranchExistsAndIsntOnlyGlobals =
-		!DownstreamBranchNames.IsEmpty() && ((DownstreamBranchNames.Num() != 1) || (DownstreamBranchNames[0] != UMovieGraphNode::GlobalsPinNameString));
-	const bool bUpstreamBranchExistsAndIsntOnlyGlobals =
-		!UpstreamBranchNames.IsEmpty() && ((UpstreamBranchNames.Num() != 1) || (UpstreamBranchNames[0] != UMovieGraphNode::GlobalsPinNameString));
-
-	// Globals branches can only be connected to Globals branches
-	if ((bGlobalsIsDownstream && bUpstreamBranchExistsAndIsntOnlyGlobals) || (bGlobalsIsUpstream && bDownstreamBranchExistsAndIsntOnlyGlobals))
-	{
-		OutError = NSLOCTEXT("MoviePipeline", "GlobalsBranchMismatchError", "Globals branches can only be connected to other Globals branches.");
-		return false;
-	}
-
-	// Error out if any of the nodes that are part of the connection cannot be connected to the upstream/downstream branches.
-	for (const UMovieGraphNode* NodeToCheck : NodesToCheck)
-	{
-		if (NodeToCheck->GetBranchRestriction() == EMovieGraphBranchRestriction::Globals)
-		{
-			// Globals-specific nodes have to be connected such that the only upstream/downstream branches are Globals.
-			// If either the upstream/downstream branches are empty (ie, the node isn't connected to Inputs/Outputs yet)
-			// then the connection is OK for now -- the branch restriction will be enforced when nodes are connected to
-			// Inputs/Outputs.
-			if (bDownstreamBranchExistsAndIsntOnlyGlobals || bUpstreamBranchExistsAndIsntOnlyGlobals)
-			{
-				OutError = FText::Format(
-					NSLOCTEXT("MoviePipeline", "GlobalsBranchRestrictionError", "The node '{0}' can only be connected to the Globals branch."),
-						NodeToCheck->GetNodeTitle());
-				return false;
-			}
-		}
-
-		// Check that render-layer-only nodes aren't connected to Globals.
-		if (NodeToCheck->GetBranchRestriction() == EMovieGraphBranchRestriction::RenderLayer)
-		{
-			if (bGlobalsIsDownstream || bGlobalsIsUpstream)
-			{
-				OutError = FText::Format(
-					NSLOCTEXT("MoviePipeline", "RenderLayerBranchRestrictionError", "The node '{0}' can only be connected to a render layer branch."),
-						NodeToCheck->GetNodeTitle());
-				return false;
-			}
-		}
-	}
-
-	return true;
+	const TSharedRef<FMovieGraphSchemaAction_NewComment> NewCommentAction = MakeShared<FMovieGraphSchemaAction_NewComment>(CommentCategory, CommentMenuDesc, CommentDescription, 0);
+	return NewCommentAction;
 }
 
 void UMovieGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& ContextMenuBuilder) const
@@ -231,8 +197,10 @@ void UMovieGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& Context
 			const FText Name = PipelineNode->GetNodeTitle();
 			const FText Category = PipelineNode->GetMenuCategory();
 			const FText Tooltip = LOCTEXT("CreateNode_Tooltip", "Create a node of this type.");
+			constexpr int32 Grouping = 0;
+			const FText Keywords = PipelineNode->GetKeywords();
 			
-			TSharedPtr<FMovieGraphSchemaAction> NewAction = MakeShared<FMovieGraphSchemaAction_NewNode>(Category, Name, Tooltip); 
+			TSharedPtr<FMovieGraphSchemaAction> NewAction = MakeShared<FMovieGraphSchemaAction_NewNode>(Category, Name, Tooltip, Grouping, Keywords); 
 			NewAction->NodeClass = PipelineNodeClass;
 
 			ContextMenuBuilder.AddAction(NewAction);
@@ -252,48 +220,16 @@ void UMovieGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& Context
 		
 		ContextMenuBuilder.AddAction(NewAction);
 	}
+
+	AddExtraMenuActions(ContextMenuBuilder);
 }
 
 const FPinConnectionResponse UMovieGraphSchema::CanCreateConnection(const UEdGraphPin* PinA, const UEdGraphPin* PinB) const
 {
-	// No Circular Connections
-	if (PinA->GetOwningNode() == PinB->GetOwningNode())
-	{
-		return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, NSLOCTEXT("MoviePipeline", "CircularPinError", "No Circular Connections!"));
-	}
-
-	// Pins need to be the same type
-	if (PinA->PinType.PinCategory != PinB->PinType.PinCategory)
-	{
-		return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, NSLOCTEXT("MoviePipeline", "PinTypeMismatchError", "Pin types don't match!"));
-	}
-
-	// Re-organize PinA/PinB to Input/Output by comparing internal directions to avoid having to check both cases depending on which
-	// direction the conneciton was made.
-	const UEdGraphPin* InputPin = nullptr;
-	const UEdGraphPin* OutputPin = nullptr;
-
-	if (!CategorizePinsByDirection(PinA, PinB, /*out*/ InputPin, /*out*/ OutputPin))
-	{
-		return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, NSLOCTEXT("MoviePipeline", "PinDirectionMismatchError", "Directions are not compatible!"));
-	}
-
-	// Determine if the connection would violate branch restrictions enforced by the nodes involved in the connection.
-	FText BranchRestrictionError;
-	if (!IsConnectionToBranchAllowed(InputPin, OutputPin, BranchRestrictionError))
-	{
-		return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, BranchRestrictionError);
-	}
-
-	// We don't allow multiple things to be connected to an Input Pin
-	if(InputPin->HasAnyConnections())
-	{
-		const ECanCreateConnectionResponse ReplyBreakInputs = (PinA == InputPin) ? CONNECT_RESPONSE_BREAK_OTHERS_A : CONNECT_RESPONSE_BREAK_OTHERS_B;
-		return FPinConnectionResponse(ReplyBreakInputs, NSLOCTEXT("MoviePipeline", "PinInputReplaceExisting","Replace existing input connections"));
-	}
+	const UMovieGraphPin* FromPin = UE::MovieGraph::Private::GetGraphPinFromEdPin(PinA);
+	const UMovieGraphPin* ToPin = UE::MovieGraph::Private::GetGraphPinFromEdPin(PinB);
 	
-	// Make sure the pins are not on the same node
-	return FPinConnectionResponse(CONNECT_RESPONSE_MAKE, NSLOCTEXT("MoviePipeline", "PinConnect", "Connect nodes"));
+	return FromPin->CanCreateConnection_PinConnectionResponse(ToPin);
 }
 
 bool UMovieGraphSchema::TryCreateConnection(UEdGraphPin* InA, UEdGraphPin* InB) const
@@ -371,89 +307,102 @@ void UMovieGraphSchema::BreakSinglePinLink(UEdGraphPin* SourcePin, UEdGraphPin* 
 	UMovieGraphConfig* RuntimeGraph = SourceRuntimeNode->GetGraph();
 	check(RuntimeGraph);
 
-	RuntimeGraph->RemoveEdge(SourceRuntimeNode, SourcePin->PinName, TargetRuntimeNode, TargetPin->PinName);
+	RuntimeGraph->RemoveLabeledEdge(SourceRuntimeNode, SourcePin->PinName, TargetRuntimeNode, TargetPin->PinName);
 }
 
-FLinearColor UMovieGraphSchema::GetTypeColor(const FName& InType)
+FLinearColor UMovieGraphSchema::GetTypeColor(const FName& InPinCategory, const FName& InPinSubCategory)
 {
 	const UGraphEditorSettings* Settings = GetDefault<UGraphEditorSettings>();
 
-	if (InType == PC_Branch)
+	if (InPinCategory == PC_Branch)
 	{
 		return Settings->ExecutionPinTypeColor;
 	}
 
-	if (InType == PC_Boolean)
+	if (InPinCategory == PC_Boolean)
 	{
 		return Settings->BooleanPinTypeColor;
 	}
 	
-	if (InType == PC_Byte)
+	if (InPinCategory == PC_Byte)
 	{
 		return Settings->BytePinTypeColor;
 	}
 
-	if (InType == PC_Integer)
+	if (InPinCategory == PC_Integer)
 	{
 		return Settings->IntPinTypeColor;
 	}
 
-	if (InType == PC_Int64)
+	if (InPinCategory == PC_Int64)
 	{
 		return Settings->Int64PinTypeColor;
 	}
 
-	if (InType == PC_Float)
+	if (InPinCategory == PC_Float)
 	{
 		return Settings->FloatPinTypeColor;
 	}
 
-	if (InType == PC_Double)
+	if (InPinCategory == PC_Double)
 	{
 		return Settings->DoublePinTypeColor;
 	}
 
-	if (InType == PC_Name)
+	if (InPinCategory == PC_Real)
+	{
+		if (InPinSubCategory == PC_Float)
+		{
+			return Settings->FloatPinTypeColor;
+		}
+
+		if (InPinSubCategory == PC_Double)
+		{
+			return Settings->DoublePinTypeColor;
+		}
+	}
+
+	if (InPinCategory == PC_Name)
 	{
 		return Settings->NamePinTypeColor;
 	}
 
-	if (InType == PC_String)
+	if (InPinCategory == PC_String)
 	{
 		return Settings->StringPinTypeColor;
 	}
 
-	if (InType == PC_Text)
+	if (InPinCategory == PC_Text)
 	{
 		return Settings->TextPinTypeColor;
 	}
 
-	if (InType == PC_Enum)
+	if (InPinCategory == PC_Enum)
 	{
 		return Settings->BytePinTypeColor;
 	}
 
-	if (InType == PC_Struct)
+	if (InPinCategory == PC_Struct)
 	{
 		return Settings->StructPinTypeColor;
 	}
 	
-	if (InType == PC_Object)
+	if (InPinCategory == PC_Object)
 	{
 		return Settings->ObjectPinTypeColor;
 	}
 
-	if (InType == PC_SoftObject)
+	if (InPinCategory == PC_SoftObject)
 	{
 		return Settings->SoftObjectPinTypeColor;
 	}
 	
-	if (InType == PC_Class)
+	if (InPinCategory == PC_Class)
     {
     	return Settings->ClassPinTypeColor;
     }
 
-	if (InType == PC_SoftClass)
+	if (InPinCategory == PC_SoftClass)
 	{
 		return Settings->SoftClassPinTypeColor;
 	}
@@ -463,7 +412,7 @@ FLinearColor UMovieGraphSchema::GetTypeColor(const FName& InType)
 
 FLinearColor UMovieGraphSchema::GetPinTypeColor(const FEdGraphPinType& PinType) const
 {
-	return GetTypeColor(PinType.PinCategory);
+	return GetTypeColor(PinType.PinCategory, PinType.PinSubCategory);
 }
 
 FConnectionDrawingPolicy* UMovieGraphSchema::CreateConnectionDrawingPolicy(int32 InBackLayerID, int32 InFrontLayerID,
@@ -473,8 +422,8 @@ FConnectionDrawingPolicy* UMovieGraphSchema::CreateConnectionDrawingPolicy(int32
 	return new FMovieEdGraphConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, InZoomFactor, InClippingRect, InDrawElements, InGraphObj);
 }
 
-FMovieGraphSchemaAction_NewNode::FMovieGraphSchemaAction_NewNode(FText InNodeCategory, FText InDisplayName, FText InToolTip)
-	: FMovieGraphSchemaAction(MoveTemp(InNodeCategory), MoveTemp(InDisplayName), MoveTemp(InToolTip), 0)
+FMovieGraphSchemaAction_NewNode::FMovieGraphSchemaAction_NewNode(FText InNodeCategory, FText InDisplayName, FText InToolTip, int32 InGrouping, FText InKeywords)
+	: FMovieGraphSchemaAction(MoveTemp(InNodeCategory), MoveTemp(InDisplayName), MoveTemp(InToolTip), InGrouping, MoveTemp(InKeywords))
 {
 	
 }
@@ -484,12 +433,24 @@ UEdGraphNode* FMovieGraphSchemaAction_NewNode::PerformAction(UEdGraph* ParentGra
 	UMovieGraphConfig* RuntimeGraph = CastChecked<UMoviePipelineEdGraph>(ParentGraph)->GetPipelineGraph();
 	const FScopedTransaction Transaction(LOCTEXT("GraphEditor_NewNode", "Create Pipeline Graph Node."));
 	RuntimeGraph->Modify();
+	ParentGraph->Modify();
 
 	UMovieGraphNode* RuntimeNode = RuntimeGraph->ConstructRuntimeNode<UMovieGraphNode>(NodeClass);
 
 	// Now create the editor graph node
 	FGraphNodeCreator<UMoviePipelineEdGraphNode> NodeCreator(*ParentGraph);
-	UMoviePipelineEdGraphNode* GraphNode = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
+
+	// Define the ed graph node type here if it differs from UMoviePipelineEdGraphNode
+	// If other ed node class types are needed here,
+	// we should let ed nodes declare their equivalent runtime node,
+	// and use that mapping to determine the applicable ed node type rather than hard-coding.
+	TSubclassOf<UMoviePipelineEdGraphNode> InvokableEdGraphNodeClass = UMoviePipelineEdGraphNode::StaticClass();
+	if (RuntimeNode->IsA(UMovieGraphSubgraphNode::StaticClass()))
+	{
+		InvokableEdGraphNodeClass = UMoviePipelineEdGraphSubgraphNode::StaticClass();
+	}
+	
+	UMoviePipelineEdGraphNode* GraphNode = NodeCreator.CreateUserInvokedNode(bSelectNewNode, InvokableEdGraphNodeClass);
 	GraphNode->Construct(RuntimeNode);
 	GraphNode->NodePosX = Location.X;
 	GraphNode->NodePosY = Location.Y;
@@ -517,6 +478,7 @@ UEdGraphNode* FMovieGraphSchemaAction_NewVariableNode::PerformAction(UEdGraph* P
 	UMovieGraphConfig* RuntimeGraph = CastChecked<UMoviePipelineEdGraph>(ParentGraph)->GetPipelineGraph();
 	const FScopedTransaction Transaction(LOCTEXT("GraphEditor_NewVariableNode", "Add New Variable Accessor Node"));
 	RuntimeGraph->Modify();
+	ParentGraph->Modify();
 
 	UMovieGraphNode* RuntimeNode = RuntimeGraph->ConstructRuntimeNode<UMovieGraphNode>(NodeClass);
 	if (UMovieGraphVariableNode* VariableNode = Cast<UMovieGraphVariableNode>(RuntimeNode))

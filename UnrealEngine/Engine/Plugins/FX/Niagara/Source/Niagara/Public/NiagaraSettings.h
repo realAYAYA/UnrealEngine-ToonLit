@@ -82,6 +82,12 @@ enum class ENiagaraDefaultGpuTranslucentLatency : uint8
 };
 
 UENUM()
+enum class ENiagaraCompileErrorSeverity : uint8
+{
+	Ignore, LogOnly, Warning, Error
+};
+
+UENUM()
 namespace ENDICollisionQuery_AsyncGpuTraceProvider
 {
 	enum Type : int
@@ -92,6 +98,24 @@ namespace ENDICollisionQuery_AsyncGpuTraceProvider
 		None = 3 UMETA(DisplayName = "Disabled"),
 	};
 }
+
+UENUM()
+enum class ENiagaraStripScriptByteCodeOption : uint8
+{
+	Default = 0 UMETA(DisplayName = "No Stripping"),
+	Strip_Original = 1 UMETA(DisplayName = "Strip Original ByteCode"),
+	Strip_Experimental = 2 UMETA(DisplayName = "Strip Optimized ByteCode"),
+};
+
+#if WITH_EDITORONLY_DATA
+UENUM()
+enum class ENiagaraCompilationMode : int32
+{
+	Original = 0	UMETA(DisplayName = "Standard Compilation"),
+	AsyncTasks = 1	UMETA(DisplayName = "Experimental - Async Compilation"),
+	Verify = 2      UMETA(Hidden)
+};
+#endif
 
 UCLASS(config = Niagara, defaultconfig, meta=(DisplayName="Niagara"), MinimalAPI)
 class UNiagaraSettings : public UDeveloperSettings
@@ -133,12 +157,30 @@ class UNiagaraSettings : public UDeveloperSettings
 	bool bEnforceStrictStackTypes = true;
 
 	/**
-	 True indicates that we will generate byte code for the new experimental VM.  Control over whether the new VM will
+	 True indicates that we will generate byte code for the new optimized VM.  Control over whether the new VM will
 	 be used when executing NiagaraScripts will also take into account the overrides on the system (bDisableExperimentalVM) and
 	 the cvars fx.NiagaraScript.StripByteCodeOnLoad and fx.ForceExecVMPath.
 	*/
-	UPROPERTY(config, EditAnywhere, Category = Niagara, meta = (DisplayName = "Enable building data for Experimental VM"))
+	UPROPERTY(config, EditAnywhere, Category = Niagara, meta = (DisplayName = "Enable building data for Optimized VM"))
 	bool bExperimentalVMEnabled = false;
+
+	/**
+	Enables Lightweight Emitters experimental feature.
+	Statless emitters are lightweight fixed function emitters, they are not fully programmable like regular emitters and do not run scripts on the CPU.
+	Particle data is extrapolated per frame for the current particle age.  This means we never store particle data, we only generate it on demand.
+	Systems that contain only lightweight emitters and no system script modules can take advantage of a much faster path to execute.
+	** There is no guarantee on backwards compatability for this feature currently.  Do not ship lightweight content. **
+	*/
+	UPROPERTY(config, EditAnywhere, Category = Niagara, meta = (DisplayName = "Enable Lightweight Emitters (Experimental)", ConfigRestartRequired = true))
+	bool bStatelessEmittersEnabled = false;
+
+	/** If set to true, quaternion attributes will be interpolated via slerp instead of lerp in interpolated spawn scripts. */
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = Niagara)
+	bool bAccurateQuatInterpolation = true;
+
+	/** If the Niagara compiler sees that a script writes to a namespace that is read only (e.g. a particle script writing to a system attribute), what should it do. */
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = Niagara)
+	ENiagaraCompileErrorSeverity InvalidNamespaceWriteSeverity = ENiagaraCompileErrorSeverity::Warning;
 
 	/** Whether to limit the max tick delta time or not. */
 	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = "Niagara", meta = (InlineEditConditionToggle))
@@ -156,9 +198,24 @@ class UNiagaraSettings : public UDeveloperSettings
 	UPROPERTY(config, EditAnywhere, Category = Niagara, meta = (AllowedClasses = "/Script/Niagara.NiagaraEffectType"))
 	FSoftObjectPath RequiredEffectType;
 
+	/** Should we allow placing a Niagara System in the editor into a level which has no effect type assigned? */
+	UPROPERTY(config, EditAnywhere, Category = Niagara)
+	bool bAllowCreateActorFromSystemWithNoEffectType = true;
+
 	/** Position pin type color. The other pin colors are defined in the general editor settings. */
 	UPROPERTY(config, EditAnywhere, Category=Niagara)
 	FLinearColor PositionPinTypeColor;
+
+	/**
+	 Controls how byte code will be stripped when loading assets that have multiple sets of bytecode (i.e. optimized).
+	 */
+	UPROPERTY(config, EditAnywhere, Category = Niagara, meta = (DisplayName = "Option for how to strip bytecode"))
+	ENiagaraStripScriptByteCodeOption ByteCodeStripOption = ENiagaraStripScriptByteCodeOption::Default;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(config, EditAnywhere, Category = Niagara, meta = (DisplayName = "Option for how to compile Niagara scripts"))
+	ENiagaraCompilationMode CompilationMode = ENiagaraCompilationMode::Original;
+#endif
 
 	/** The quality levels Niagara uses. */
 	UPROPERTY(config, EditAnywhere, Category = Scalability)
@@ -195,6 +252,18 @@ class UNiagaraSettings : public UDeveloperSettings
 	/** The default InverseExposureBlend used for the light renderer. */
 	UPROPERTY(config, EditAnywhere, Category = LightRenderer)
 	float DefaultLightInverseExposureBlend = 0.0f;
+
+	/* 
+	When enabled we will read deformed geometry if available, i.e. data from the deformed graph / skin cache
+	When disable we will only read from the default vertex data which does not include morph targets, skin, etc.
+	Changing this setting requires restarting the editor.
+	Note: Enabling this does add additional branches to the skel mesh data reading.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = SkeletalMeshDI, meta = (DisplayName = "Support Reading Deformed Geometry", ConfigRestartRequired = true))
+	bool NDISkelMesh_SupportReadingDeformedGeometry = true;
+
+	UPROPERTY(config, EditAnywhere, Category = SkeletalMeshDI, meta = (DisplayName = "Support 16 bit index & weights", ToolTip = "Enabled support for 16 bit bone index & bone weight, optional to reduce shader complexity.  Changing this setting requires restarting the editor.", ConfigRestartRequired = true))
+	bool NDISkelMesh_Support16BitIndexWeight = true;
 
 	UPROPERTY(config, EditAnywhere, Category=SkeletalMeshDI, meta = ( DisplayName = "Gpu Max Bone Influences", ToolTip = "Controls the maximum number of influences we allow the Skeletal Mesh Data Interface to use on the GPU.  Changing this setting requires restarting the editor.", ConfigRestartRequired = true))
 	TEnumAsByte<ENDISkelMesh_GpuMaxInfluences::Type> NDISkelMesh_GpuMaxInfluences;

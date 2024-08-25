@@ -268,6 +268,7 @@ void UAnimStreamable::GetAnimationPose(FAnimationPoseData& OutAnimationPoseData,
 	//const bool bUseRawDataForPoseExtraction = bForceUseRawData || UseRawDataForPoseExtraction(RequiredBones);
 
 	const bool bIsBakedAdditive = false;//!bUseRawDataForPoseExtraction && IsValidAdditive();
+	const EAdditiveAnimationType AdditiveType = AAT_None;
 
 	const USkeleton* MySkeleton = GetSkeleton();
 	if (!MySkeleton)
@@ -403,7 +404,7 @@ void UAnimStreamable::GetAnimationPose(FAnimationPoseData& OutAnimationPoseData,
 		ChunkExtractionContext.PoseCurves = ExtractionContext.PoseCurves;
 
 		//FPlatformMisc::LowLevelOutputDebugStringf(TEXT("Playing Streaming Anim %s Time: %.2f Chunk:%i\n"), *GetName(), ExtractionContext.CurrentTime, ChunkIndex);
-		FAnimSequenceDecompressionContext Context(SamplingFrameRate, CurrentChunk.NumFrames, Interpolation, GetFName(), *CompressedData->CompressedDataStructure.Get(), GetSkeleton()->GetRefLocalPoses(), CompressedData->CompressedTrackToSkeletonMapTable, GetSkeleton(), bIsBakedAdditive);
+		FAnimSequenceDecompressionContext Context(SamplingFrameRate, CurrentChunk.NumFrames, Interpolation, GetFName(), *CompressedData->CompressedDataStructure.Get(), GetSkeleton()->GetRefLocalPoses(), CompressedData->CompressedTrackToSkeletonMapTable, GetSkeleton(), bIsBakedAdditive, AdditiveType);
 		UE::Anim::Decompression::DecompressPose(OutPose, *CompressedData, ChunkExtractionContext, Context, RetargetSource, RootMotionReset);
 	}
 }

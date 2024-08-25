@@ -1,17 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 
 import '../../models/settings/delta_widget_settings.dart';
-import '../../utilities/unreal_colors.dart';
 import 'delta_slider.dart';
 import 'delta_widget_base.dart';
 import 'dropdown_button.dart';
-import 'dropdown_list_menu.dart';
-import 'epic_icon_button.dart';
 
 const double _minSensitivity = 0.2;
 const double _maxSensitivity = 2.0;
@@ -75,7 +74,7 @@ class _SensitivitySliderButtonState extends State<SensitivitySliderButton> {
           alignment: Alignment.center,
           children: [
             EpicIconButton(
-              iconPath: 'assets/images/icons/slider_speed.svg',
+              iconPath: 'packages/epic_common/assets/icons/slider_speed.svg',
               bIsToggledOn: state != ModalDropdownButtonState.closed,
               bIsVisualOnly: true,
             ),

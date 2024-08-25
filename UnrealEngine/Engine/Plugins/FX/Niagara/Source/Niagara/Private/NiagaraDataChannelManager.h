@@ -24,7 +24,7 @@ public:
 	void Init();
 	void Cleanup();
 
-	void InitDataChannel(const UNiagaraDataChannel* Channel, bool bForce);
+	UNiagaraDataChannelHandler* InitDataChannel(const UNiagaraDataChannel* Channel, bool bForce);
 	void RemoveDataChannel(const UNiagaraDataChannel* Channel);
 
 	void BeginFrame(float DeltaSeconds);

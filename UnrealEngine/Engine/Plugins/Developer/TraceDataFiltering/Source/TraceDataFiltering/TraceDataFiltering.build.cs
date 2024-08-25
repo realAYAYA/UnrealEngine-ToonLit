@@ -6,24 +6,26 @@ public class TraceDataFiltering : ModuleRules
 {
 	public TraceDataFiltering(ReadOnlyTargetRules Target) : base(Target)
 	{
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
+
 		PrivateDependencyModuleNames.AddRange(
-                new string[] {
-                    "Core",
+				new string[] {
+					"Core",
 					"CoreUObject",
-                    "SlateCore",
-                    "Slate",
-                    "InputCore",
-                    "TraceLog",
+					"InputCore",
+					"Slate",
+					"SlateCore",
+					"Sockets",
 					"TraceAnalysis",
+					"TraceInsights",
+					"TraceLog",
 					"TraceServices",
-                    "TraceInsights",
-					"Sockets"
-                }
-            );
+				}
+			);
 
 		if (Target.bBuildEditor)
-        {
-            PrivateDependencyModuleNames.Add("SharedSettingsWidgets");
-        }
-    }
+		{
+			PrivateDependencyModuleNames.Add("SharedSettingsWidgets");
+		}
+	}
 }

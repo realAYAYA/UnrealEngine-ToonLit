@@ -972,6 +972,47 @@ bool UAnimDataController::SetCurveColor(const FAnimationCurveIdentifier& CurveId
 	return false;
 }
 
+bool UAnimDataController::SetCurveComment(const FAnimationCurveIdentifier& CurveId, const FString& Comment, bool bShouldTransact)
+{
+	ValidateModel();
+
+	if (CurveId.IsValid())
+	{
+		if (CurveId.CurveType == ERawCurveTrackTypes::RCT_Float)
+		{
+			if (FFloatCurve* Curve = Model->FindMutableFloatCurveById(CurveId))
+			{
+				FTransaction Transaction = ConditionalTransaction(LOCTEXT("ChangingCurveComment", "Changing Curve Comment"), bShouldTransact);
+
+				ConditionalAction<UE::Anim::FSetCurveCommentAction>(bShouldTransact, CurveId, Curve->Comment);
+
+				Curve->Comment = Comment;
+
+				FCurveChangedPayload Payload;
+				Payload.Identifier = CurveId;
+				Model->GetNotifier().Notify(EAnimDataModelNotifyType::CurveCommentChanged, Payload);
+
+				return true;
+			}
+			else
+			{
+				const FString CurveTypeAsString = GetCurveTypeValueName(CurveId.CurveType);
+				ReportWarningf(LOCTEXT("UnableToFindCurveWarning", "Unable to find curve: {0} of type {1}"), FText::FromName(CurveId.CurveName), FText::FromString(CurveTypeAsString));
+			}
+		}
+		else
+		{
+			Report(ELogVerbosity::Warning, LOCTEXT("NonSupportedCurveCommentSetWarning", "Changing curve comment is currently only supported for float curves"));
+		}
+	}
+	else
+	{
+		ReportWarningf(LOCTEXT("InvalidCurveIdentifier", "Invalid Curve Identifier : {0}"), FText::FromName(CurveId.CurveName));
+	}
+
+	return false;
+}
+
 bool UAnimDataController::ScaleCurve(const FAnimationCurveIdentifier& CurveId, float Origin, float Factor, bool bShouldTransact /*= true*/)
 {
 	ValidateModel();
@@ -1978,9 +2019,10 @@ bool UAnimDataController::DuplicateAttribute(const FAnimationAttributeIdentifier
 				{
 					FTransaction Transaction = ConditionalTransaction(LOCTEXT("DuplicateAttribute", "Duplicating Animation Attribute"), bShouldTransact);
 
-					FAnimatedBoneAttribute& DuplicateAttribute = Model->AnimatedBoneAttributes.AddDefaulted_GetRef();
+					FAnimatedBoneAttribute DuplicateAttribute;
 					DuplicateAttribute.Identifier = NewAttributeIdentifier;
 					DuplicateAttribute.Curve = AttributePtr->Curve;
+					Model->AnimatedBoneAttributes.Add(DuplicateAttribute);
 
 					FAttributeAddedPayload Payload;
 					Payload.Identifier = NewAttributeIdentifier;
@@ -2015,7 +2057,14 @@ bool UAnimDataController::DuplicateAttribute(const FAnimationAttributeIdentifier
 
 void UAnimDataController::UpdateWithSkeleton(USkeleton* TargetSkeleton, bool bShouldTransact)
 {
-	RemoveBoneTracksMissingFromSkeleton(TargetSkeleton);
+	OpenBracket(LOCTEXT("SettingNewskeleton", "Updating Skeleton for Animation Data Model"), bShouldTransact);
+	{
+		RemoveBoneTracksMissingFromSkeleton(TargetSkeleton);
+
+		// Notify of skeleton change
+		Model->GetNotifier().Notify(EAnimDataModelNotifyType::SkeletonChanged);
+	}
+	CloseBracket();
 }
 
 void UAnimDataController::PopulateWithExistingModel(TScriptInterface<IAnimationDataModel> InModel)

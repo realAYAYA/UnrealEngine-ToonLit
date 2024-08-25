@@ -181,4 +181,7 @@ protected:
 	FMassEntityQuery EntityQueryAdjustDistances;
 	FMassEntityQuery EntityQueryVariableTick;
 	FMassEntityQuery EntityQuerySetLODTag;
+
+	UPROPERTY(config, EditDefaultsOnly, Category="Mass")
+	bool bDoAdjustmentFromCount = true;
 };

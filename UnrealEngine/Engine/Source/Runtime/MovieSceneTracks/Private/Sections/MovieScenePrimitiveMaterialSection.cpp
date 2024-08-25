@@ -2,6 +2,7 @@
 
 #include "Sections/MovieScenePrimitiveMaterialSection.h"
 #include "Tracks/MovieScenePrimitiveMaterialTrack.h"
+#include "Tracks/MovieSceneMaterialTrack.h"
 #include "Channels/MovieSceneChannelProxy.h"
 #include "Materials/MaterialInterface.h"
 #include "EntitySystem/MovieSceneEntityBuilder.h"
@@ -95,7 +96,7 @@ void UMovieScenePrimitiveMaterialSection::ImportEntityImpl(UMovieSceneEntitySyst
 	UMovieScenePrimitiveMaterialTrack* Track = GetTypedOuter<UMovieScenePrimitiveMaterialTrack>();
 	check(Track);
 
-	const int32 MaterialIndex = Track->GetMaterialIndex();
+	const FComponentMaterialInfo& MaterialInfo = Track->GetMaterialInfo();
 
 	FBuiltInComponentTypes* BuiltInComponentTypes = FBuiltInComponentTypes::Get();
 	FMovieSceneTracksComponentTypes* TracksComponentTypes = FMovieSceneTracksComponentTypes::Get();
@@ -119,6 +120,6 @@ void UMovieScenePrimitiveMaterialSection::ImportEntityImpl(UMovieSceneEntitySyst
 		FEntityBuilder()
 		.AddConditional(BuiltInComponentTypes->GenericObjectBinding, ObjectBindingID, ObjectBindingID.IsValid())
 		.Add(BuiltInComponentTypes->ObjectResult, FObjectComponent::Strong(ValueToImport.Get()))
-		.Add(TracksComponentTypes->ComponentMaterialIndex, MaterialIndex)
+		.Add(TracksComponentTypes->ComponentMaterialInfo, MaterialInfo)
 	);
 }

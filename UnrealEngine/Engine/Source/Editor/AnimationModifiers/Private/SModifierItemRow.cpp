@@ -10,7 +10,6 @@
 #include "Misc/Attribute.h"
 #include "SlotBase.h"
 #include "Styling/AppStyle.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 #include "Widgets/Images/SImage.h"

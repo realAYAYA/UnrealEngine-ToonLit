@@ -31,6 +31,11 @@ public:
 	TSharedPtr<FUICommandInfo> RemoveBone;
 	TSharedPtr<FUICommandInfo> UnParentBone;
 	TSharedPtr<FUICommandInfo> RenameBone;
+
+	// Copy & Paste commands
+	TSharedPtr<FUICommandInfo> CopyBones;
+	TSharedPtr<FUICommandInfo> PasteBones;
+	TSharedPtr<FUICommandInfo> DuplicateBones;
 };
 
 class FSkeletalMeshModelingToolsActionCommands : public TInteractiveToolCommands<FSkeletalMeshModelingToolsActionCommands>

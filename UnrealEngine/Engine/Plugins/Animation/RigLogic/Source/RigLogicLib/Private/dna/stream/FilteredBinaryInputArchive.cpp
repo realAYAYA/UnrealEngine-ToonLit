@@ -37,6 +37,15 @@ static UnorderedMap<U, U> remappedPositions(const Vector<T>& target, const Unord
     return mapping;
 }
 
+template<typename TContainer>
+static void removeByIndex(TContainer& container, std::size_t index) {
+    assert(index < container.size());
+    for (std::size_t i = index; i < (container.size() - 1ul); ++i) {
+        container[i] = container[i + 1ul];
+    }
+    container.resize(container.size() - 1ul);
+}
+
 FilteredBinaryInputArchive::FilteredBinaryInputArchive(BoundedIOStream* stream_,
                                                        DataLayer layer_,
                                                        std::uint16_t maxLOD_,
@@ -51,6 +60,7 @@ FilteredBinaryInputArchive::FilteredBinaryInputArchive(BoundedIOStream* stream_,
     memRes{memRes_},
     layerBitmask{computeDataLayerBitmask(layer_)},
     lodConstraint{maxLOD_, minLOD_, memRes},
+    loadedControls(memRes),
     unconstrainedLODCount{},
     malformed{false} {
 }
@@ -68,6 +78,7 @@ FilteredBinaryInputArchive::FilteredBinaryInputArchive(BoundedIOStream* stream_,
     memRes{memRes_},
     layerBitmask{computeDataLayerBitmask(layer_)},
     lodConstraint{lods_, memRes},
+    loadedControls(memRes),
     unconstrainedLODCount{},
     malformed{false} {
 }
@@ -113,6 +124,9 @@ void FilteredBinaryInputArchive::process(RawDefinition& dest) {
     }
     // Load all data
     BaseArchive::process(dest);
+
+    loadedControls.resize(dest.rawControlNames.size(), true);
+
     // No filtering is done, unless LOD constraint may have some effect
     if (!lodConstraint.hasImpactOn(unconstrainedLODCount)) {
         return;
@@ -147,6 +161,11 @@ void FilteredBinaryInputArchive::process(RawDefinition& dest) {
     AnimatedMapFilter::configure(static_cast<std::uint16_t>(dest.animatedMapNames.size()),
                                  dest.lodAnimatedMapMapping.getCombinedDistinctIndices(memRes));
     AnimatedMapFilter::apply(dest);
+}
+
+void FilteredBinaryInputArchive::process(RawControls& dest) {
+    BaseArchive::process(dest);
+    loadedControls.resize(loadedControls.size() + dest.psdCount, true);
 }
 
 void FilteredBinaryInputArchive::process(RawJoints& dest) {
@@ -345,6 +364,8 @@ void FilteredBinaryInputArchive::process(RawMachineLearnedBehavior& dest) {
         process(dest.lodNeuralNetworkMapping);
         process(dest.neuralNetworkToMeshRegion);
 
+        loadedControls.resize(loadedControls.size() + dest.mlControlNames.size(), true);
+
         if (!lodConstraint.hasImpactOn(unconstrainedLODCount)) {
             process(dest.neuralNetworks);
             return;
@@ -392,6 +413,58 @@ void FilteredBinaryInputArchive::process(RawMachineLearnedBehavior& dest) {
                 process(netSizeMarker);
             }
         }
+    } else {
+        const auto mlControlCount = processSize();
+        loadedControls.resize(loadedControls.size() + mlControlCount, false);
+    }
+}
+
+void FilteredBinaryInputArchive::process(DNA& dest) {
+    BaseArchive::process(dest);
+    // Don't run control-based post-load filtering for delta DNA files
+    if (!loadedControls.empty()) {
+        removeUnreferencedBlendShapes(dest);
+    }
+}
+
+void FilteredBinaryInputArchive::removeUnreferencedBlendShapes(DNA& dest) {
+    auto& bsc = dest.behavior.blendShapeChannels;
+
+    const auto originalLODs = bsc.lods;
+    Vector<std::uint16_t> unreferencedChannels{memRes};
+    for (std::size_t iPlusOne = bsc.inputIndices.size(); iPlusOne > 0ul; --iPlusOne) {
+        const auto i = iPlusOne - 1ul;
+        const auto controlIndex = bsc.inputIndices[i];
+        if (!loadedControls[controlIndex]) {
+            unreferencedChannels.push_back(bsc.outputIndices[i]);
+            // Remove behavior data
+            removeByIndex(bsc.inputIndices, i);
+            removeByIndex(bsc.outputIndices, i);
+            for (std::uint16_t lod = {}; lod < bsc.lods.size(); ++lod) {
+                if (i < originalLODs[lod]) {
+                    --bsc.lods[lod];
+                }
+            }
+        }
+    }
+
+    // Remove channel from definition
+    dest.definition.lodBlendShapeMapping.filterIndices([&unreferencedChannels](std::uint16_t index) {
+        return !extd::contains(unreferencedChannels, index);
+    });
+
+    BlendShapeFilter::configure(static_cast<std::uint16_t>(dest.definition.blendShapeChannelNames.size()),
+                                dest.definition.lodBlendShapeMapping.getCombinedDistinctIndices(memRes));
+    BlendShapeFilter::apply(dest.definition);
+
+    // Remap remaining output indices
+    for (auto& outputIdx : bsc.outputIndices) {
+        outputIdx = BlendShapeFilter::remapped(outputIdx);
+    }
+
+    // Remove associated blend shape targets from geometry
+    for (auto& mesh : dest.geometry.meshes) {
+        BlendShapeFilter::apply(mesh);
     }
 }
 

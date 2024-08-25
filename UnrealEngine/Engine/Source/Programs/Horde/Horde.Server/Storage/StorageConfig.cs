@@ -1,22 +1,21 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Text.Json.Serialization;
-using Amazon.S3.Model;
+using EpicGames.Core;
+using EpicGames.Horde.Acls;
 using EpicGames.Horde.Storage;
 using Horde.Server.Acls;
 using Horde.Server.Server;
-using Horde.Server.Storage.Backends;
-using Horde.Server.Utilities;
+using Horde.Server.Storage.ObjectStores;
 
 namespace Horde.Server.Storage
 {
@@ -52,6 +51,11 @@ namespace Horde.Server.Storage
 	public class StorageConfig
 	{
 		/// <summary>
+		/// Whether to enable garbage collection
+		/// </summary>
+		public bool EnableGC { get; set; } = true;
+
+		/// <summary>
 		/// List of storage backends
 		/// </summary>
 		public List<BackendConfig> Backends { get; set; } = new List<BackendConfig>();
@@ -81,6 +85,20 @@ namespace Horde.Server.Storage
 			foreach (BackendConfig backendConfig in Backends)
 			{
 				MergeBackendConfigs(backendConfig.Id, _backendLookup, mergedBackendConfigs);
+			}
+
+			// Compute the hash for each backend
+			foreach (BackendConfig backendConfig in Backends)
+			{
+				using (MemoryStream stream = new MemoryStream())
+				{
+					JsonSerializerOptions options = new JsonSerializerOptions();
+					Startup.ConfigureJsonSerializer(options);
+
+					JsonSerializer.Serialize(stream, backendConfig, options: options);
+
+					backendConfig.Hash = IoHash.Compute(stream.ToArray());
+				}
 			}
 
 			// Validate the backend config for each namespace
@@ -183,10 +201,22 @@ namespace Horde.Server.Storage
 		public string? AwsRegion { get; set; }
 
 		/// <inheritdoc/>
+		public string? AzureConnectionString { get; set; }
+
+		/// <inheritdoc/>
+		public string? AzureContainerName { get; set; }
+
+		/// <inheritdoc/>
 		public string? RelayServer { get; set; }
 
 		/// <inheritdoc/>
 		public string? RelayToken { get; set; }
+
+		/// <summary>
+		/// Hash of this backend config. Used for caching backend instances.
+		/// </summary>
+		[JsonIgnore]
+		internal IoHash Hash { get; set; }
 
 		/// <summary>
 		/// Merge default values from another object
@@ -268,6 +298,8 @@ namespace Horde.Server.Storage
 		{
 			GlobalConfig = globalConfig;
 			BackendConfig = backendConfig;
+
+			Acl.PostLoad(globalConfig.Acl, $"namespace:{Id}");
 		}
 
 		/// <summary>

@@ -12,11 +12,21 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 import zipfile
 
-# The current test/decompression data version in use
-current_test_data = 'test_data_v5'
+# The current test data version in use
+REGRESSION_TEST_DATA_SOURCE_URL = 'https://github.com/nfrechette/acl-test-data/releases/download/v1.0.0/'
+CURRENT_REGRESSION_TEST_DATA_FILENAME = 'acl_regression_tests_v1.zip'
+
+# The current decompression data version in use
 current_decomp_data = 'decomp_data_v7'
+
+def is_host_cpu_arm64():
+	is_arm64_cpu = False
+	if platform.machine() == 'arm64' or platform.machine() == 'aarch64':
+		is_arm64_cpu = True
+	return is_arm64_cpu
 
 def parse_argv():
 	parser = argparse.ArgumentParser(add_help=False)
@@ -33,17 +43,20 @@ def parse_argv():
 	actions.add_argument('-convert', help='Input/Output directory to convert')
 
 	target = parser.add_argument_group(title='Target')
-	target.add_argument('-compiler', choices=['vs2015', 'vs2017', 'vs2019', 'vs2019-clang', 'android', 'clang4', 'clang5', 'clang6', 'clang7', 'clang8', 'clang9', 'clang10', 'clang11', 'gcc5', 'gcc6', 'gcc7', 'gcc8', 'gcc9', 'gcc10', 'osx', 'ios', 'emscripten'], help='Defaults to the host system\'s default compiler')
+	target.add_argument('-compiler', choices=['vs2015', 'vs2017', 'vs2019', 'vs2022', 'vs2019-clang', 'vs2022-clang', 'android', 'clang4', 'clang5', 'clang6', 'clang7', 'clang8', 'clang9', 'clang10', 'clang11', 'clang12', 'clang13', 'clang14', 'clang15', 'gcc5', 'gcc6', 'gcc7', 'gcc8', 'gcc9', 'gcc10', 'gcc11', 'gcc12', 'gcc13', 'osx', 'ios', 'emscripten'], help='Defaults to the host system\'s default compiler')
 	target.add_argument('-config', choices=['Debug', 'Release'], type=str.capitalize)
 	target.add_argument('-cpu', choices=['x86', 'x64', 'armv7', 'arm64', 'wasm'], help='Defaults to the host system\'s architecture')
+	target.add_argument('-cpp_version', choices=['11', '14', '17', '20'], help='Defaults to C++11')
 
 	misc = parser.add_argument_group(title='Miscellaneous')
 	misc.add_argument('-avx', dest='use_avx', action='store_true', help='Compile using AVX instructions on Windows, OS X, and Linux')
 	misc.add_argument('-pop', dest='use_popcnt', action='store_true', help='Compile using the POPCNT instruction')
 	misc.add_argument('-nosimd', dest='use_simd', action='store_false', help='Compile without SIMD instructions')
+	misc.add_argument('-simd', dest='use_simd', action='store_true', help='Compile with default SIMD instructions')
 	misc.add_argument('-nosjson', dest='use_sjson', action='store_false', help='Compile without SJSON support')
 	misc.add_argument('-num_threads', help='No. to use while compiling and regressing')
 	misc.add_argument('-tests_matching', help='Only run tests whose names match this regex')
+	misc.add_argument('-ci', action='store_true', help='Whether or not this is a Continuous Integration build')
 	misc.add_argument('-help', action='help', help='Display this usage information')
 
 	num_threads = multiprocessing.cpu_count()
@@ -53,10 +66,12 @@ def parse_argv():
 		num_threads = 4
 
 	parser.set_defaults(build=False, clean=False, clean_only=False, unit_test=False, regression_test=False, bench=False, run_bench=False, pull_bench=False,
-		compiler=None, config='Release', cpu=None, use_avx=False, use_popcnt=False, use_simd=True, use_sjson=True,
+		compiler=None, config='Release', cpu=None, cpp_version='11', use_avx=False, use_popcnt=False, use_simd=True, use_sjson=True,
 		num_threads=num_threads, tests_matching='')
 
 	args = parser.parse_args()
+
+	is_arm64_cpu = is_host_cpu_arm64()
 
 	# Sanitize and validate our options
 	if args.use_avx and not args.use_simd:
@@ -94,6 +109,10 @@ def parse_argv():
 			print('Unit tests cannot run from the command line on iOS')
 			sys.exit(1)
 
+		if args.regression_test:
+			print('Regression tests cannot run from the command line on iOS')
+			sys.exit(1)
+
 		if not args.cpu in ['arm64']:
 			print('{} cpu architecture not in supported list [arm64] for iOS'.format(args.cpu))
 			sys.exit(1)
@@ -114,11 +133,26 @@ def parse_argv():
 			sys.exit(1)
 	else:
 		if not args.cpu:
-			args.cpu = 'x64'
+			if is_arm64_cpu:
+				args.cpu = 'arm64'
+			else:
+				args.cpu = 'x64'
 
 	if args.cpu == 'arm64':
-		if not args.compiler in ['vs2017', 'vs2019', 'ios', 'android']:
-			print('arm64 is only supported with VS2017, VS2019, Android, and iOS')
+		is_arm_supported = False
+
+		# Cross compilation
+		if args.compiler in ['vs2017', 'vs2019', 'vs2022', 'ios', 'android']:
+			is_arm_supported = True
+
+		# Native compilation
+		if platform.system() == 'Darwin' and is_arm64_cpu:
+			is_arm_supported = True
+		elif platform.system() == 'Linux' and is_arm64_cpu:
+			is_arm_supported = True
+
+		if not is_arm_supported:
+			print('arm64 is only supported with VS2017, VS2019, OS X (M1 processors), Linux, Android, and iOS')
 			sys.exit(1)
 	elif args.cpu == 'armv7':
 		if not args.compiler == 'android':
@@ -158,6 +192,8 @@ def get_generator(compiler, cpu):
 				return 'Visual Studio 15 2017'
 		elif compiler == 'vs2019' or compiler == 'vs2019-clang':
 			return 'Visual Studio 16 2019'
+		elif compiler == 'vs2022' or compiler == 'vs2022-clang':
+			return 'Visual Studio 17 2022'
 		elif compiler == 'android':
 			# For Android, we use the default generator since we don't build with CMake
 			return None
@@ -186,7 +222,14 @@ def get_architecture(compiler, cpu):
 		if compiler == 'vs2017':
 			if cpu == 'arm64':
 				return 'ARM64'
-		elif compiler == 'vs2019' or compiler == 'vs2019-clang':
+
+		is_modern_vs = False
+		if compiler == 'vs2019' or compiler == 'vs2019-clang':
+			is_modern_vs = True
+		elif compiler == 'vs2022' or compiler == 'vs2022-clang':
+			is_modern_vs = True
+
+		if is_modern_vs:
 			if cpu == 'x86':
 				return 'Win32'
 			else:
@@ -206,7 +249,6 @@ def get_toolchain(compiler, cmake_script_dir):
 
 def set_compiler_env(compiler, args):
 	if platform.system() == 'Linux':
-		os.environ['MAKEFLAGS'] = '-j{}'.format(args.num_threads)
 		if compiler == 'clang4':
 			os.environ['CC'] = 'clang-4.0'
 			os.environ['CXX'] = 'clang++-4.0'
@@ -231,6 +273,18 @@ def set_compiler_env(compiler, args):
 		elif compiler == 'clang11':
 			os.environ['CC'] = 'clang-11'
 			os.environ['CXX'] = 'clang++-11'
+		elif compiler == 'clang12':
+			os.environ['CC'] = 'clang-12'
+			os.environ['CXX'] = 'clang++-12'
+		elif compiler == 'clang13':
+			os.environ['CC'] = 'clang-13'
+			os.environ['CXX'] = 'clang++-13'
+		elif compiler == 'clang14':
+			os.environ['CC'] = 'clang-14'
+			os.environ['CXX'] = 'clang++-14'
+		elif compiler == 'clang15':
+			os.environ['CC'] = 'clang-15'
+			os.environ['CXX'] = 'clang++-15'
 		elif compiler == 'gcc5':
 			os.environ['CC'] = 'gcc-5'
 			os.environ['CXX'] = 'g++-5'
@@ -249,6 +303,15 @@ def set_compiler_env(compiler, args):
 		elif compiler == 'gcc10':
 			os.environ['CC'] = 'gcc-10'
 			os.environ['CXX'] = 'g++-10'
+		elif compiler == 'gcc11':
+			os.environ['CC'] = 'gcc-11'
+			os.environ['CXX'] = 'g++-11'
+		elif compiler == 'gcc12':
+			os.environ['CC'] = 'gcc-12'
+			os.environ['CXX'] = 'g++-12'
+		elif compiler == 'gcc13':
+			os.environ['CC'] = 'gcc-13'
+			os.environ['CXX'] = 'g++-13'
 		elif compiler == 'emscripten':
 			# Nothing to do for Emscripten
 			return
@@ -257,7 +320,7 @@ def set_compiler_env(compiler, args):
 			print('See help with: python make.py -help')
 			sys.exit(1)
 
-def do_generate_solution(build_dir, cmake_script_dir, test_data_dir, decomp_data_dir, args):
+def do_generate_solution(build_dir, cmake_script_dir, regression_test_data_dir, decomp_data_dir, args):
 	compiler = args.compiler
 	cpu = args.cpu
 	config = args.config
@@ -267,6 +330,7 @@ def do_generate_solution(build_dir, cmake_script_dir, test_data_dir, decomp_data
 
 	extra_switches = ['--no-warn-unused-cli']
 	extra_switches.append('-DCPU_INSTRUCTION_SET:STRING={}'.format(cpu))
+	extra_switches.append('-DCMAKE_CXX_STANDARD:STRING={}'.format(args.cpp_version))
 
 	if args.use_avx:
 		print('Enabling AVX usage')
@@ -290,12 +354,17 @@ def do_generate_solution(build_dir, cmake_script_dir, test_data_dir, decomp_data
 	if not platform.system() == 'Windows':
 		extra_switches.append('-DCMAKE_BUILD_TYPE={}'.format(config.upper()))
 
+	if platform.system() == 'Darwin' and compiler == 'ios' and args.ci:
+		# Disable code signing for CI iOS builds since we just test compilation
+		extra_switches.append('-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO')
+		extra_switches.append('-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO')
+
 	toolchain = get_toolchain(compiler, cmake_script_dir)
 	if toolchain:
 		extra_switches.append('-DCMAKE_TOOLCHAIN_FILE={}'.format(toolchain))
 
-	if test_data_dir:
-		extra_switches.append('-DTEST_DATA_DIR:STRING="{}"'.format(test_data_dir))
+	if regression_test_data_dir:
+		extra_switches.append('-DTEST_DATA_DIR:STRING="{}"'.format(regression_test_data_dir))
 
 	if decomp_data_dir:
 		extra_switches.append('-DDECOMP_DATA_DIR:STRING="{}"'.format(decomp_data_dir))
@@ -310,7 +379,7 @@ def do_generate_solution(build_dir, cmake_script_dir, test_data_dir, decomp_data
 			print('Using default generator')
 		else:
 			generator_suffix = ''
-			if compiler == 'vs2019-clang':
+			if compiler == 'vs2019-clang' or compiler == 'vs2022-clang':
 				extra_switches.append('-T ClangCL')
 				generator_suffix = 'Clang CL'
 
@@ -497,24 +566,38 @@ def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_len
 def do_prepare_regression_test_data(test_data_dir, args):
 	print('Preparing regression test data ...')
 
-	current_test_data_zip = os.path.join(test_data_dir, '{}.zip'.format(current_test_data))
+	regression_test_data_dir = os.path.join(test_data_dir, 'regression_test_data')
+	current_test_data_zip = os.path.join(test_data_dir, CURRENT_REGRESSION_TEST_DATA_FILENAME)
 
 	# Validate that our regression test data is present
 	if not os.path.exists(current_test_data_zip):
 		print('Regression test data not found: {}'.format(current_test_data_zip))
-		return
+
+		# Delete any stale data we might have
+		if os.path.exists(regression_test_data_dir):
+			shutil.rmtree(regression_test_data_dir)
+
+		# Attempt to download it from GitHub
+		source_url = REGRESSION_TEST_DATA_SOURCE_URL + CURRENT_REGRESSION_TEST_DATA_FILENAME
+		print('Downloading regression test data from: ' + source_url)
+
+		try:
+			filename, headers = urllib.request.urlretrieve(source_url, CURRENT_REGRESSION_TEST_DATA_FILENAME)
+			shutil.copyfile(filename, current_test_data_zip)
+		except:
+			print('Failed to download regression tests')
+			return None
 
 	# If it hasn't been decompressed yet, do so now
-	current_test_data_dir = os.path.join(test_data_dir, current_test_data)
-	needs_decompression = not os.path.exists(current_test_data_dir)
+	needs_decompression = not os.path.exists(regression_test_data_dir)
 	if needs_decompression:
 		print('Decompressing {} ...'.format(current_test_data_zip))
 		with zipfile.ZipFile(current_test_data_zip, 'r') as zip_ref:
-			zip_ref.extractall(test_data_dir)
+			zip_ref.extractall(regression_test_data_dir)
 
 	# Grab all the test clips
 	regression_clips = []
-	for (dirpath, dirnames, filenames) in os.walk(current_test_data_dir):
+	for (dirpath, dirnames, filenames) in os.walk(regression_test_data_dir):
 		for filename in filenames:
 			if not filename.endswith('.acl'):
 				continue
@@ -553,7 +636,7 @@ def do_prepare_regression_test_data(test_data_dir, args):
 	regression_clips.sort(key=lambda entry: entry[1], reverse=True)
 
 	# Write our metadata file
-	with open(os.path.join(current_test_data_dir, 'metadata.sjson'), 'w') as metadata_file:
+	with open(os.path.join(regression_test_data_dir, 'metadata.sjson'), 'w') as metadata_file:
 		print('configs = [', file = metadata_file)
 		for config_filename, _ in test_configs:
 			print('\t"{}"'.format(os.path.relpath(config_filename, test_config_dir)), file = metadata_file)
@@ -561,11 +644,11 @@ def do_prepare_regression_test_data(test_data_dir, args):
 		print('', file = metadata_file)
 		print('clips = [', file = metadata_file)
 		for clip_filename, _ in regression_clips:
-			print('\t"{}"'.format(os.path.relpath(clip_filename, current_test_data_dir)), file = metadata_file)
+			print('\t"{}"'.format(os.path.relpath(clip_filename, regression_test_data_dir)), file = metadata_file)
 		print(']', file = metadata_file)
 		print('', file = metadata_file)
 
-	return current_test_data_dir
+	return regression_test_data_dir
 
 def do_prepare_decompression_test_data(test_data_dir, args):
 	print('Preparing decompression test data ...')
@@ -597,9 +680,12 @@ def do_prepare_decompression_test_data(test_data_dir, args):
 
 	if len(clips) == 0:
 		print('No decompression clips found')
-		sys.exit(1)
+		return
 
 	print('Found {} decompression clips'.format(len(clips)))
+
+	# Sort clips by name for determinism
+	clips.sort()
 
 	# Write our metadata file
 	with open(os.path.join(current_data_dir, 'metadata.sjson'), 'w') as metadata_file:
@@ -641,7 +727,7 @@ def do_regression_tests_android(build_dir, args):
 	# Restore working directory
 	os.chdir(build_dir)
 
-def do_regression_tests_cmake(test_data_dir, args):
+def do_regression_tests_cmake(test_data_dir, regression_test_data_dir, args):
 	if sys.version_info < (3, 4):
 		print('Python 3.4 or higher needed to run regression tests')
 		sys.exit(1)
@@ -663,8 +749,7 @@ def do_regression_tests_cmake(test_data_dir, args):
 
 	# Grab all the test clips
 	regression_clips = []
-	current_test_data_dir = os.path.join(test_data_dir, current_test_data)
-	for (dirpath, dirnames, filenames) in os.walk(current_test_data_dir):
+	for (dirpath, dirnames, filenames) in os.walk(regression_test_data_dir):
 		for filename in filenames:
 			if not filename.endswith('.acl'):
 				continue
@@ -738,14 +823,16 @@ def do_regression_tests_cmake(test_data_dir, args):
 			thread.daemon = True
 			thread.start()
 
-		print_progress(0, len(regression_clips), 'Testing clips:', '{} / {}'.format(0, len(regression_clips)))
+		if not args.ci:
+			print_progress(0, len(regression_clips), 'Testing clips:', '{} / {}'.format(0, len(regression_clips)))
 		try:
 			while True:
 				for thread in threads:
 					thread.join(1.0)
 
-				num_processed = completed_queue.qsize()
-				print_progress(num_processed, len(regression_clips), 'Testing clips:', '{} / {}'.format(num_processed, len(regression_clips)))
+				if not args.ci:
+					num_processed = completed_queue.qsize()
+					print_progress(num_processed, len(regression_clips), 'Testing clips:', '{} / {}'.format(num_processed, len(regression_clips)))
 
 				all_threads_done = True
 				for thread in threads:
@@ -765,13 +852,13 @@ def do_regression_tests_cmake(test_data_dir, args):
 		if regression_testing_failed:
 			sys.exit(1)
 
-def do_regression_tests(build_dir, test_data_dir, args):
+def do_regression_tests(build_dir, test_data_dir, regression_test_data_dir, args):
 	print('Running regression tests ...')
 
 	if args.compiler == 'android':
 		do_regression_tests_android(build_dir, args)
 	else:
-		do_regression_tests_cmake(test_data_dir, args)
+		do_regression_tests_cmake(test_data_dir, regression_test_data_dir, args)
 
 def do_run_bench_android(build_dir, args):
 	# Switch our working directory to where we built everything
@@ -868,29 +955,43 @@ if __name__ == "__main__":
 	print('Using cpu: {}'.format(args.cpu))
 	if args.compiler:
 		print('Using compiler: {}'.format(args.compiler))
+	print('Using C++-{}'.format(args.cpp_version))
 	print('Using {} threads'.format(args.num_threads))
 
-	regression_data_dir = do_prepare_regression_test_data(test_data_dir, args)
+	# Check if we are cross-compiling
+	is_cross_compiling = False
+	if args.compiler == 'ios' or args.compiler == 'android':
+		is_cross_compiling = True
+	elif args.cpu == 'x86' or args.cpu == 'x64':
+		is_cross_compiling = is_host_cpu_arm64()
+	elif args.cpu == 'armv7' or args.cpu == 'arm64':
+		is_cross_compiling = not is_host_cpu_arm64()
+
+	# We always prepare this since for Android/iOS the data is included as part of the executable
+	regression_test_data_dir = do_prepare_regression_test_data(test_data_dir, args)
 	decomp_data_dir = do_prepare_decompression_test_data(test_data_dir, args)
 
-	do_generate_solution(build_dir, cmake_script_dir, regression_data_dir, decomp_data_dir, args)
+	# Make sure 'make' runs with all available cores
+	os.environ['MAKEFLAGS'] = '-j{}'.format(args.num_threads)
+
+	do_generate_solution(build_dir, cmake_script_dir, regression_test_data_dir, decomp_data_dir, args)
 
 	if args.build:
 		do_build(args)
 
-	if args.convert:
+	if args.convert and not is_cross_compiling:
 		do_convert(test_data_dir, args)
 
-	if args.unit_test:
+	if args.unit_test and (not is_cross_compiling or args.compiler == 'android'):
 		do_tests(build_dir, args)
 
-	if args.regression_test and not args.compiler == 'ios':
-		do_regression_tests(build_dir, test_data_dir, args)
+	if args.regression_test and regression_test_data_dir and (not is_cross_compiling or args.compiler == 'android'):
+		do_regression_tests(build_dir, test_data_dir, regression_test_data_dir, args)
 
-	if args.run_bench:
+	if args.run_bench and (not is_cross_compiling or args.compiler == 'android'):
 		do_run_bench(build_dir, test_data_dir, args)
 
-	if args.pull_bench:
+	if args.pull_bench and (not is_cross_compiling or args.compiler == 'android'):
 		do_pull_bench_android(build_dir)
 
 	sys.exit(0)

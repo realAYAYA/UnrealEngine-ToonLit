@@ -5,7 +5,7 @@
 #include "Common.ush"
 #include "SHCommon.ush"
 
-// Reroute MobileSceneTextures uniform buffer references to the base pass uniform buffer
+// Reroute MobileSceneTextures uniform buffer references to the base pass uniform buffer 
 #define MobileSceneTextures		MobileBasePass.SceneTextures
 #define ForwardLightData		MobileBasePass.Forward
 #define PlanarReflectionStruct	MobileBasePass.PlanarReflection

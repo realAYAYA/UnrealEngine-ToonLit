@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include "HAL/Platform.h"
 #include "Math/UnrealMathUtility.h"
+#include "Templates/Function.h"
 
 namespace mu
 {
@@ -27,25 +29,33 @@ namespace mu
 	class ColorPixelProcessor
 	{
 	public:
-		inline void ProcessPixel( unsigned char* pBufferPos, float interpolatedValues[3] ) const
+		inline void ProcessPixel(uint8* pBufferPos, float interpolatedValues[3]) const
 		{
-			pBufferPos[0] = (unsigned char)(interpolatedValues[0]*0xFF);
-			pBufferPos[1] = (unsigned char)(interpolatedValues[1]*0xFF);
-			pBufferPos[2] = (unsigned char)(interpolatedValues[2]*0xFF);
+			pBufferPos[0] = (uint8)(interpolatedValues[0]*0xFF);
+			pBufferPos[1] = (uint8)(interpolatedValues[1]*0xFF);
+			pBufferPos[2] = (uint8)(interpolatedValues[2]*0xFF);
+		}
+
+		inline void operator()(uint8* BufferPos, float InterpolatedValues[3]) const
+		{
+			ProcessPixel(BufferPos, InterpolatedValues);
 		}
 	};
+
+	template<int32 NumInterpolatedValues>
+	using TTriangleRasterPixelProcRefType = TFunctionRef<void(uint8*, float[NumInterpolatedValues])>;
 
 	//! Templatized rasterizer. It is not very efficient on the interpolating side, but the cost
     //! per pixel is supposed to be huge compared to the raster process (for lightmaps or
     //! normalmaps).
 	//! TODO Optimize anyway.
 	//! TODO Option for two sided? right now it culls back facing.
-    template<class PIXEL_PROCESSOR, int NUM_INTERPOLATORS, typename INT=int64_t>
+    template<int32 NUM_INTERPOLATORS, typename INT=int64>
 	void Triangle( uint8* Buffer, int32 BufferSize, int Width, int Height, int PixelSize
 				 , const RasterVertex<NUM_INTERPOLATORS> &av1
 				 , const RasterVertex<NUM_INTERPOLATORS> &av2
 				 , const RasterVertex<NUM_INTERPOLATORS> &av3
-				 , PIXEL_PROCESSOR &processor
+				 , TTriangleRasterPixelProcRefType<NUM_INTERPOLATORS> PixelProc
 				 , bool cullBackface = true )
 	{
 		check(Width * Height * PixelSize <= BufferSize);
@@ -190,7 +200,7 @@ namespace mu
 							}
 
 	                        // Process pixel
-							processor.ProcessPixel( &CurrentBuffer[ix*PixelSize], interpolatedValues );
+							PixelProc(&CurrentBuffer[ix*PixelSize], interpolatedValues);
 	                    }
 
 						CurrentBuffer += Stride;
@@ -228,7 +238,7 @@ namespace mu
 															+ beta * v3.interpolators[ii];
 								}
 
-								processor.ProcessPixel( &CurrentBuffer[ix*PixelSize], interpolatedValues );
+								PixelProc(&CurrentBuffer[ix*PixelSize], interpolatedValues);
 	                        }
 
 	                        CX1 -= FDY12;
@@ -248,5 +258,4 @@ namespace mu
 			Buffer += q * Stride;
 	    }
 	}
-
 }

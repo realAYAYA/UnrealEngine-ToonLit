@@ -18,7 +18,8 @@ import QuickLayout
 class HeaderView : UIView {
     
     @objc dynamic let appSettings = AppSettings.shared
-    private var observers = [NSKeyValueObservation]()
+    private var livelinkSubjectNameObserver : NSKeyValueObservation?
+    private var timecodeSourceObserver : NSKeyValueObservation?
 
     private var displayLink: CADisplayLink!
     
@@ -55,8 +56,12 @@ class HeaderView : UIView {
         privateInit()
     }
     
+    deinit {
+        Log.info("HeaderView destructed.")
+    }
+    
     private func privateInit() {
-
+        Log.info("HeaderView constructed.")
     }
     
     override func awakeFromNib() {
@@ -167,42 +172,41 @@ class HeaderView : UIView {
             
             layer.addSublayer(border)
         }
-
-
-        observers.append(observe(\.appSettings.liveLinkSubjectName, options: [.initial,.new], changeHandler: { object, change in
-            self.subject = self.appSettings.liveLinkSubjectName
-        }))
         
-        observers.append(observe(\.appSettings.timecodeSource, options: [.initial,.new], changeHandler: { object, change in
-            
-            switch self.appSettings.timecodeSourceEnum() {
-            case .systemTime:
-                self.timecodeImageView.image = UIImage(named: "counterDevice")
-            case .ntp:
-                self.timecodeImageView.image = UIImage(named: "counterCloud")
-            case .tentacleSync:
-                self.timecodeImageView.image = UIImage(named: "tentacle")
-            default:
-                break
-            }
-        }))
-        
-        observers.append(observe(\.appSettings.showStreamingStats, options: [.initial,.new], changeHandler: { object, change in
-            
-        }))
     }
     
     func start() {
         // display link updates the timecode value
-        displayLink = CADisplayLink(
-          target: self, selector: #selector(displayLinkDidFire)
-        )
+        displayLink = CADisplayLink(target: self, selector: #selector(displayLinkDidFire))
         displayLink.add(to: .main, forMode: .common)
+        self.setupObservers()
     }
     
     func stop() {
         displayLink.invalidate()
         displayLink = nil
+    }
+    
+    func setupObservers() {
+        self.livelinkSubjectNameObserver = observe(\.appSettings.liveLinkSubjectName, options: [.initial,.new], changeHandler: { [weak self] object, change in
+            if let validSelf = self {
+                validSelf.subject = validSelf.appSettings.liveLinkSubjectName
+            }
+        })
+        
+        self.timecodeSourceObserver = observe(\.appSettings.timecodeSource, options: [.initial,.new], changeHandler: { [weak self] object, change in
+            
+            switch self?.appSettings.timecodeSourceEnum() {
+            case .systemTime:
+                self?.timecodeImageView.image = UIImage(named: "counterDevice")
+            case .ntp:
+                self?.timecodeImageView.image = UIImage(named: "counterCloud")
+            case .tentacleSync:
+                self?.timecodeImageView.image = UIImage(named: "tentacle")
+            default:
+                break
+            }
+        })
     }
     
     @objc func exitTapped(_ sender : Any) {
@@ -223,9 +227,7 @@ class HeaderView : UIView {
         }
     }
 
-
     @objc func displayLinkDidFire(_ displayLink: CADisplayLink) {
-
         self.timecodeLabel.text = Timecode.create().toString(includeFractional: false)
     }
 }

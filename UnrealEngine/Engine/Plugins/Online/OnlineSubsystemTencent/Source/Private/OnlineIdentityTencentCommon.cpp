@@ -35,7 +35,7 @@ ELoginStatus::Type FOnlineIdentityTencent::GetLoginStatus(const FUniqueNetId& Us
 FString FOnlineIdentityTencent::GetPlayerNickname(int32 LocalUserNum) const{ return FString(); }
 FString FOnlineIdentityTencent::GetPlayerNickname(const FUniqueNetId& UserId) const{ return FString(); }
 FString FOnlineIdentityTencent::GetAuthToken(int32 LocalUserNum) const{ return FString(); }
-void FOnlineIdentityTencent::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate){}
+void FOnlineIdentityTencent::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI){}
 FPlatformUserId FOnlineIdentityTencent::GetPlatformUserIdFromUniqueNetId(const FUniqueNetId& UniqueNetId) const { return FPlatformUserId();  }
 FString FOnlineIdentityTencent::GetAuthType() const{ return FString(); }
 void FOnlineIdentityTencent::RevokeAuthToken(const FUniqueNetId& UserId, const FOnRevokeAuthTokenCompleteDelegate& Delegate){ }

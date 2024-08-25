@@ -96,6 +96,10 @@ public:
 	{
 		return InBufferIndex == 0 ? ImageBuffer : nullptr;
 	}
+	virtual bool GetBufferTextureSyncByIndex(int32 InBufferIndex, FElectraDecoderOutputSync& SyncObject) const override
+	{
+		return false;
+	}
 	EElectraDecoderPlatformPixelFormat GetBufferFormatByIndex(int32 InBufferIndex) const override
 	{
 		return PixelFormat;
@@ -228,6 +232,7 @@ private:
 		FInputAccessUnit AccessUnit;
 		TMap<FString, FVariant> AdditionalOptions;
 		TSharedPtr<ElectraDecodersUtil::MPEG::FISO14496_10_seq_parameter_set_data, ESPMode::ThreadSafe> SPS;
+		bool bDropOutput = false;
 	};
 
 	struct FDecodedImage
@@ -378,6 +383,7 @@ void IElectraVideoDecoderH264_Apple::GetConfigurationOptions(TMap<FString, FVari
 
 	OutOptions.Emplace(IElectraDecoderFeature::NeedReplayDataOnDecoderLoss, FVariant(true));
 	OutOptions.Emplace(IElectraDecoderFeature::MustBeSuspendedInBackground, FVariant(true));
+	OutOptions.Emplace(IElectraDecoderFeature::SupportsDroppingOutput, FVariant(true));
 }
 
 TSharedPtr<IElectraDecoder, ESPMode::ThreadSafe> IElectraVideoDecoderH264_Apple::Create(const TMap<FString, FVariant>& InOptions, TSharedPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> InResourceDelegate)
@@ -546,15 +552,21 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_Apple::DecodeAccessUnit(
 		return IElectraDecoder::EDecoderError::EndOfData;
 	}
 
+	// CSD only buffer is not handled at the moment.
+	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
+
+	// If this is discardable and won't be output we do not need to handle it at all.
+	if ((InInputAccessUnit.Flags & (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable)) == (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable))
+	{
+		return IElectraDecoder::EDecoderError::None;
+	}
+
 	// If there is pending output it is very likely that decoding this access unit would also generate output.
 	// Since that would result in loss of the pending output we return now.
 	if (CurrentOutput.IsValid())
 	{
 		return IElectraDecoder::EDecoderError::NoBuffer;
 	}
-
-	// CSD only buffer is not handled at the moment.
-	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
 
 	// If a new decoder is needed, destroy the current one.
 	if (bNewDecoderRequired)
@@ -617,6 +629,7 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_Apple::DecodeAccessUnit(
 		TSharedPtr<FDecoderInput, ESPMode::ThreadSafe> In(new FDecoderInput);
 		In->AdditionalOptions = InAdditionalOptions;
 		In->AccessUnit = InInputAccessUnit;
+		In->bDropOutput = (InInputAccessUnit.Flags & EElectraDecoderFlags::DoNotOutput) == EElectraDecoderFlags::DoNotOutput;
 		In->SPS = CurrentSPS;
 		// Zero the input pointer and size in the copy. That data is not owned by us and it's best not to have any
 		// values here that would lead us to think that we do.
@@ -632,7 +645,7 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_Apple::DecodeAccessUnit(
 
 		// Decode
 		VTDecodeFrameFlags DecodeFlags = kVTDecodeFrame_EnableAsynchronousDecompression | kVTDecodeFrame_EnableTemporalProcessing;
-		if ((InInputAccessUnit.Flags & (/*EElectraDecoderFlags::DoNotOutput |*/ EElectraDecoderFlags::IsReplaySample | EElectraDecoderFlags::IsLastReplaySample)) != EElectraDecoderFlags::None)
+		if ((InInputAccessUnit.Flags & (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsReplaySample | EElectraDecoderFlags::IsLastReplaySample)) != EElectraDecoderFlags::None)
 		{
 			DecodeFlags |= kVTDecodeFrame_DoNotOutputFrame;
 		}
@@ -972,7 +985,7 @@ void FElectraVideoDecoderH264_Apple::DecodeCallback(void* pSrcRef, OSStatus Resu
 
 	if (Result == 0)
 	{
-		if (imageBuffer != nullptr && (infoFlags & kVTDecodeInfo_FrameDropped) == 0 && MatchingInput.IsValid())
+		if (imageBuffer != nullptr && (infoFlags & kVTDecodeInfo_FrameDropped) == 0 && !MatchingInput->bDropOutput)
 		{
 			FDecodedImage NextImage;
 			NextImage.SourceInfo = MatchingInput;
@@ -983,6 +996,10 @@ void FElectraVideoDecoderH264_Apple::DecodeCallback(void* pSrcRef, OSStatus Resu
 			ReadyImages.Sort();
 			ReadyImageMutex.Unlock();
 		}
+	}
+	else if (Result == kVTVideoDecoderReferenceMissingErr)
+	{
+		// Ignore this.
 	}
 	else
 	{

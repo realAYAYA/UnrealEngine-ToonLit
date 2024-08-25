@@ -2,15 +2,19 @@
 
 #include "Serialization/Formatters/JsonArchiveInputFormatter.h"
 #include "Serialization/JsonReader.h"
+#include "Containers/StringView.h"
 #include "Dom/JsonObject.h"
-#include "Serialization/JsonSerializer.h"
 #include "Misc/Base64.h"
+#include "Misc/CString.h"
 #include "Misc/SecureHash.h"
+#include "Serialization/JsonSerializer.h"
+#include "Templates/TypeCompatibleBytes.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/WeakObjectPtr.h"
 #include "UObject/LazyObjectPtr.h"
 #include "UObject/ObjectPtr.h"
+#include <limits>
 
 #if WITH_TEXT_ARCHIVE_SUPPORT
 
@@ -41,11 +45,7 @@ FArchive& FJsonArchiveInputFormatter::GetUnderlyingArchive()
 
 FStructuredArchiveFormatter* FJsonArchiveInputFormatter::CreateSubtreeReader()
 {
-	FJsonArchiveInputFormatter* Cloned = new FJsonArchiveInputFormatter(*this);
-	Cloned->ObjectStack.Empty();
-	Cloned->ValueStack.Empty();
-	Cloned->MapIteratorStack.Empty();
-	Cloned->ArrayValuesRemainingStack.Empty();
+	FJsonArchiveInputFormatter* Cloned = new FJsonArchiveInputFormatter(this->Inner, this->ResolveObject);
 	Cloned->ValueStack.Push(ValueStack.Top());
 
 	return Cloned;
@@ -306,14 +306,102 @@ void FJsonArchiveInputFormatter::Serialize(int64& Value)
 	verify(ValueStack.Top()->TryGetNumber(Value));
 }
 
+namespace
+{
+template<typename FloatType, typename IntType>
+bool ParseFPSpecial(const FString& String, FloatType& OutValue, IntType SignMask, IntType ExponentMask, IntType SignificandMask)
+{
+	FStringView ResidualString{String};
+	
+	// Parse the Number: prefix
+	FStringView SpecialStringPrefix = TEXT("Number:");
+	if (!ResidualString.StartsWith(SpecialStringPrefix))
+	{
+		return false;
+	}
+	ResidualString.MidInline(SpecialStringPrefix.Len());
+
+	// Parse the sign.
+	if (!ResidualString.Len())
+	{
+		return false;
+	}
+	if (ResidualString[0] != TEXT('+') && ResidualString[0] != TEXT('-'))
+	{
+		return false;
+	}
+	const bool bIsNegative = ResidualString[0] == TEXT('-');
+	ResidualString.MidInline(1);
+
+	if(ResidualString == TEXT("inf"))
+	{
+		OutValue = bIsNegative
+			? -std::numeric_limits<FloatType>::infinity()
+			: +std::numeric_limits<FloatType>::infinity();
+		return true;
+	}
+	else if(ResidualString.StartsWith(TEXT("nan:0x")))
+	{
+		ResidualString.MidInline(6);
+		
+		// Assume that the string view is null terminated for the sake of FCString::Strtoui64.
+		check(*ResidualString.end() == 0);
+		
+		// Parse the significand.
+		TCHAR* SignificandEnd = nullptr;
+		uint64 Significand64 = FCString::Strtoui64(ResidualString.begin(), &SignificandEnd, 16);
+		if (SignificandEnd != ResidualString.end()
+			|| Significand64 == 0
+			|| Significand64 > static_cast<uint64>(SignificandMask))
+		{
+			return false;
+		}
+		const IntType Significand = static_cast<IntType>(Significand64);
+
+		// Construct the output NaN from its components.
+		IntType ValueAsInt = ExponentMask | Significand;
+		if (bIsNegative)
+		{
+			ValueAsInt |= SignMask;
+		}
+		OutValue = BitCast<FloatType>(ValueAsInt);
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+}
+
 void FJsonArchiveInputFormatter::Serialize(float& Value)
 {
-	verify(ValueStack.Top()->TryGetNumber(Value));
+	if(!ValueStack.Top()->TryGetNumber(Value))
+	{
+		FString SpecialString;
+		verify(ValueStack.Top()->TryGetString(SpecialString));
+
+		if(!ParseFPSpecial<float, uint32>(SpecialString, Value, 0x80000000, 0x7f800000, 0x007fffff))
+		{
+			Value = 0.0f;
+			checkf(false, TEXT("Expected float special but got string \"%s\""), *SpecialString);
+		}
+	}
 }
 
 void FJsonArchiveInputFormatter::Serialize(double& Value)
 {
-	verify(ValueStack.Top()->TryGetNumber(Value));
+	if(!ValueStack.Top()->TryGetNumber(Value))
+	{
+		FString SpecialString;
+		verify(ValueStack.Top()->TryGetString(SpecialString));
+		
+		if(!ParseFPSpecial<double, uint64>(SpecialString, Value, 0x8000000000000000, 0x7ff0000000000000, 0x000fffffffffffff))
+		{
+			Value = 0.0f;
+			checkf(false, TEXT("Expected double special but got string \"%s\""), *SpecialString);
+		}
+	}
 }
 
 void FJsonArchiveInputFormatter::Serialize(bool& Value)

@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
+
 namespace UnrealBuildTool.Rules
 {
 	public class AvidDNxHDDecoderElectra : ModuleRules
@@ -23,6 +25,16 @@ namespace UnrealBuildTool.Rules
 						//"DNxUncompressed",
 					}
 				);
+
+				PublicDependencyModuleNames.Add("DirectX");
+				AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
+
+				if (Target.WindowsPlatform.Architecture != UnrealArch.Arm64)
+				{
+					PublicAdditionalLibraries.AddRange(new string[] {
+						Path.Combine(Target.WindowsPlatform.DirectXLibDir, "dxerr.lib"),
+					});
+				}
 			}
 		}
 	}

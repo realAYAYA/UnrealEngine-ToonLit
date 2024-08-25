@@ -12,6 +12,7 @@
 #include "EngineStats.h"
 #include "Engine/PackageMapClient.h"
 #include "Engine/NetConnection.h"
+#include "Net/Core/PushModel/PushModel.h"
 #include "Net/Core/PushModel/PushModelMacros.h"
 #include "Net/NetworkProfiler.h"
 #include "Engine/ActorChannel.h"
@@ -219,14 +220,10 @@ namespace UE_RepLayout_Private
 	{
 		const int32 NumReplicatedProperties = InRepLayout->GetNumParents();
 
-#if UE_WITH_IRIS
 		// Implement shared PushModelids/NetHandles for Iris and PushModel to avoid conflicts when we mix systems - JIRA: UE-158304
-		const bool bShouldUseIrisReplication = UE::Net::ShouldUseIrisReplication();
-#else
-		const bool bShouldUseIrisReplication = false;
-#endif
+		const bool bAllowedToCreateHandles = UEPushModelPrivate::IsHandleCreationAllowed();
 
-		if (UEPushModelPrivate::IsPushModelEnabled() && !bShouldUseIrisReplication &&
+		if (UEPushModelPrivate::IsPushModelEnabled() && bAllowedToCreateHandles &&
 			NumReplicatedProperties > 0 &&
 			EnumHasAnyFlags(InRepLayout->GetFlags(), ERepLayoutFlags::FullPushSupport | ERepLayoutFlags::PartialPushSupport))
 		{
@@ -947,19 +944,9 @@ static uint32 GetRepLayoutCmdCompatibleChecksum(
 	uint32 CompatibleChecksum = FCrc::StrCrc32(*Property->GetName().ToLower(), InChecksum);	
 	
 	// Evolve by property type
-	const FObjectPtrProperty* const ObjectPtrProperty = CastField<const FObjectPtrProperty>(Property);
+	const FObjectProperty* const ObjectPtrProperty = CastField<const FObjectProperty>(Property);
 
-	FString CPPType;
-	if (ObjectPtrProperty)
-	{
-		// To remain compatible with TObjectPtr, use the underlying pointer type in the checksum since the net-serialized data is compatible.
-		CPPType = ObjectPtrProperty->FObjectProperty::GetCPPType(nullptr, 0).ToLower();
-	}
-	else
-	{
-		CPPType = Property->GetCPPType(nullptr, 0).ToLower();
-	}
-
+	FString CPPType = Property->GetCPPType(nullptr, EPropertyExportCPPFlags::CPPF_NoTObjectPtr).ToLower();
 	CompatibleChecksum = FCrc::StrCrc32(*CPPType, CompatibleChecksum);
 	
 	// Evolve by StaticArrayIndex (to make all unrolled static array elements unique)
@@ -1182,6 +1169,11 @@ bool FRepChangelistState::HasAnyDirtyProperties() const
 {
 	return UEPushModelPrivate::DoesHaveDirtyPropertiesOrRecentlyCollectedGarbage(PushModelObjectHandle);
 }
+
+bool FRepChangelistState::HasValidPushModelHandle() const
+{
+	return PushModelObjectHandle.IsValid();
+}
 #endif
 
 void FRepChangelistState::CountBytes(FArchive& Ar) const
@@ -1266,7 +1258,7 @@ ERepLayoutResult FRepLayout::UpdateChangelistMgr(
 			{
 				FReplicationFlags TempFlags = RepFlags;
 				TempFlags.bRolesOnly = true;
-				Result = CompareProperties(RepState, &InChangelistMgr.RepChangelistState, (const uint8*)InObject, TempFlags);
+				Result = CompareProperties(RepState, &InChangelistMgr.RepChangelistState, (const uint8*)InObject, TempFlags, bForceCompare);
 			}
 
 			INC_DWORD_STAT_BY(STAT_NetSkippedDynamicProps, 1);
@@ -1288,7 +1280,7 @@ ERepLayoutResult FRepLayout::UpdateChangelistMgr(
 		}
 	}
 
-	Result = CompareProperties(RepState, &InChangelistMgr.RepChangelistState, (const uint8*)InObject, RepFlags);
+	Result = CompareProperties(RepState, &InChangelistMgr.RepChangelistState, (const uint8*)InObject, RepFlags, bForceCompare);
 
 	// Currently, comparing properties should only result in Success, Empty, or FatalError.
 	// So, don't bother checking for normal errors.
@@ -1322,6 +1314,7 @@ struct FComparePropertiesSharedParams
 	const bool bIsNetworkProfilerActive = false;
 	const bool bChangedNetOwner = false;
 	const bool bForceCustomPropsActive = false;
+	const bool bForceCompareProperties = false;
 #if (WITH_PUSH_VALIDATION_SUPPORT || USE_NETWORK_PROFILER)
 	TBitArray<> PropertiesCompared;
 	TBitArray<> PropertiesChanged;
@@ -1446,7 +1439,7 @@ static bool CompareParentProperty(
 	return !!(StackParams.Changed.Num() - NumChanges);
 }
 
-namespace UE_RepLayout_Private
+namespace UE::Net::Private
 {
 	static bool CompareParentPropertyHelper(
 		const int32 ParentIndex,
@@ -1472,10 +1465,11 @@ namespace UE_RepLayout_Private
 		const FComparePropertiesSharedParams& SharedParams,
 		FComparePropertiesStackParams& StackParams)
 	{
-		return !(*SharedParams.PushModelProperties)[ParentIndex] ||
+		return SharedParams.bForceCompareProperties ||
+			!(*SharedParams.PushModelProperties)[ParentIndex] || // non-push model properties are always considered dirty			
 			SharedParams.PushModelState->IsPropertyDirty(ParentIndex) ||
 			(bRecentlyCollectedGarbage &&
-			EnumHasAnyFlags(SharedParams.Parents[ParentIndex].Flags, ERepParentFlags::HasObjectProperties | ERepParentFlags::IsNetSerialize));
+				EnumHasAnyFlags(SharedParams.Parents[ParentIndex].Flags, ERepParentFlags::HasObjectProperties | ERepParentFlags::IsNetSerialize));
 	}
 #endif // WITH_PUSH_MODEL	
 }	
@@ -1484,6 +1478,7 @@ static void CompareParentProperties(
 	const FComparePropertiesSharedParams& SharedParams,
 	FComparePropertiesStackParams& StackParams)
 {
+	using namespace UE::Net::Private;
 	check(StackParams.ShadowData);
 
 #if WITH_PUSH_MODEL
@@ -1513,7 +1508,7 @@ static void CompareParentProperties(
 
 			for (int32 ParentIndex = 0; ParentIndex < SharedParams.Parents.Num(); ++ParentIndex)
 			{
-				UE_RepLayout_Private::CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
+				CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
 			}
 		}
 
@@ -1528,10 +1523,9 @@ static void CompareParentProperties(
 				const ELifetimeCondition Condition = SharedParams.Parents[ParentIndex].Condition;
 				const bool bRecompareInitialProperties = SharedParams.bIsInitial && (Condition == COND_InitialOnly || (Condition == COND_Dynamic && SharedParams.RepChangedPropertyTracker && SharedParams.RepChangedPropertyTracker->GetDynamicCondition(ParentIndex) == COND_InitialOnly));
 
-				const bool bIsPropertyDirty = bRecompareInitialProperties ||
-												UE_RepLayout_Private::IsPropertyDirty(ParentIndex, bRecentlyCollectedGarbage, SharedParams, StackParams);
+				const bool bIsPropertyDirty = bRecompareInitialProperties || IsPropertyDirty(ParentIndex, bRecentlyCollectedGarbage, SharedParams, StackParams);
 				
-				const bool bDidPropertyChange = UE_RepLayout_Private::CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
+				const bool bDidPropertyChange = CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
 
 				ensureAlwaysMsgf(!bDidPropertyChange || bIsPropertyDirty, TEXT("Push Model Property changed value, but was not marked dirty! Property=%s"), *SharedParams.Parents[ParentIndex].Property->GetPathName());
 			}	
@@ -1571,10 +1565,10 @@ static void CompareParentProperties(
 			for (int32 ParentIndex = 0; ParentIndex < SharedParams.Parents.Num(); ++ParentIndex)
 			{
 				const ELifetimeCondition Condition = SharedParams.Parents[ParentIndex].Condition;
-				if (Condition == COND_InitialOnly || UE_RepLayout_Private::IsPropertyDirty(ParentIndex, bRecentlyCollectedGarbage, SharedParams, StackParams)
-					|| (Condition == COND_Dynamic && SharedParams.RepChangedPropertyTracker && SharedParams.RepChangedPropertyTracker->GetDynamicCondition(ParentIndex) == COND_InitialOnly))
+				if (Condition == COND_InitialOnly || IsPropertyDirty(ParentIndex, bRecentlyCollectedGarbage, SharedParams, StackParams) ||
+					(Condition == COND_Dynamic && SharedParams.RepChangedPropertyTracker && SharedParams.RepChangedPropertyTracker->GetDynamicCondition(ParentIndex) == COND_InitialOnly))
 				{
-					UE_RepLayout_Private::CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
+					CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
 				}
 			}
 		}
@@ -1586,7 +1580,7 @@ static void CompareParentProperties(
 
 			for (TConstSetBitIterator<> It = SharedParams.PushModelState->GetDirtyProperties(); It; ++It)
 			{
-				UE_RepLayout_Private::CompareParentPropertyHelper(It.GetIndex(), SharedParams, StackParams);
+				CompareParentPropertyHelper(It.GetIndex(), SharedParams, StackParams);
 			}
 		}
 		else
@@ -1595,9 +1589,9 @@ static void CompareParentProperties(
 
 			for (int32 ParentIndex = 0; ParentIndex < SharedParams.Parents.Num(); ++ParentIndex)
 			{
-				if (UE_RepLayout_Private::IsPropertyDirty(ParentIndex, bRecentlyCollectedGarbage, SharedParams, StackParams))
+				if (IsPropertyDirty(ParentIndex, bRecentlyCollectedGarbage, SharedParams, StackParams))
 				{
-					UE_RepLayout_Private::CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
+					CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
 				}
 			}
 		}
@@ -1609,7 +1603,7 @@ static void CompareParentProperties(
 
 	for (int32 ParentIndex = 0; ParentIndex < SharedParams.Parents.Num(); ++ParentIndex)
 	{
-		UE_RepLayout_Private::CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
+		CompareParentPropertyHelper(ParentIndex, SharedParams, StackParams);
 	}
 }
 
@@ -1747,7 +1741,8 @@ ERepLayoutResult FRepLayout::CompareProperties(
 	FSendingRepState* RESTRICT RepState,
 	FRepChangelistState* RESTRICT RepChangelistState,
 	const FConstRepObjectDataBuffer Data,
-	const FReplicationFlags& RepFlags) const
+	const FReplicationFlags& RepFlags,
+	const bool bForceCompare) const
 {
 	CONDITIONAL_SCOPE_CYCLE_COUNTER(STAT_NetReplicateDynamicPropCompareTime, GUseDetailedScopeCounters);
 
@@ -1776,29 +1771,32 @@ ERepLayoutResult FRepLayout::CompareProperties(
 
 	ERepLayoutResult Result = ERepLayoutResult::Success;
 
-	FComparePropertiesSharedParams SharedParams{
-		/*bIsInitial=*/ !!RepFlags.bNetInitial,
-		/*bForceFail=*/ !!RepFlags.bNetInitial && !!RepFlags.bForceInitialDirty,
-		Flags,
-		Parents,
-		Cmds,
-		RepState,
-		RepChangelistState,
-		(RepState ? RepState->RepChangedPropertyTracker.Get() : nullptr),
-		NetSerializeLayouts,
-		/*PushModelState=*/UE_RepLayout_Private::GetPerNetDriverState(RepChangelistState),
-		/*PushModelProperties=*/ LocalPushModelProperties,
-		/*bValidateProperties=*/GbPushModelValidateProperties,
-		/*bIsNetworkProfilerActive=*/UE_RepLayout_Private::IsNetworkProfilerComparisonTrackingEnabled(),
-		/*bChangedNetOwner=*/ RepState && RepState->RepFlags.bNetOwner != RepFlags.bNetOwner,
-		/*bForceCustomPropsActive*/ !!RepFlags.bClientReplay
+	FComparePropertiesSharedParams SharedParams
+	{
+		.bIsInitial = !!RepFlags.bNetInitial,
+		.bForceFail = !!RepFlags.bNetInitial && !!RepFlags.bForceInitialDirty,
+		.Flags = Flags,
+		.Parents = Parents,
+		.Cmds = Cmds,
+		.RepState = RepState,
+		.RepChangelistState = RepChangelistState,
+		.RepChangedPropertyTracker = (RepState ? RepState->RepChangedPropertyTracker.Get() : nullptr),
+		.NetSerializeLayouts = NetSerializeLayouts,
+		.PushModelState = UE_RepLayout_Private::GetPerNetDriverState(RepChangelistState),
+		.PushModelProperties = LocalPushModelProperties,
+		.bValidateProperties = GbPushModelValidateProperties,
+		.bIsNetworkProfilerActive = UE_RepLayout_Private::IsNetworkProfilerComparisonTrackingEnabled(),
+		.bChangedNetOwner = RepState && RepState->RepFlags.bNetOwner != RepFlags.bNetOwner,
+		.bForceCustomPropsActive = !!RepFlags.bClientReplay,
+		.bForceCompareProperties = bForceCompare
 	};
 
-	FComparePropertiesStackParams StackParams{
-		Data,
-		RepChangelistState->StaticBuffer.GetData(),
-		Changed,
-		Result
+	FComparePropertiesStackParams StackParams
+	{
+		.Data = Data,
+		.ShadowData = RepChangelistState->StaticBuffer.GetData(),
+		.Changed = Changed,
+		.Result = Result
 	};
 
 	if (RepFlags.bRolesOnly)
@@ -3384,7 +3382,7 @@ static bool ReceivePropertyHelper(
 				check(GuidReferences->ParentIndex == Cmd.ParentIndex);
 
 				// If we're already tracking the guids, re-copy lists only if they've changed
-				if (!NetworkGuidSetsAreSame(GuidReferences->UnmappedGUIDs, TrackedUnmappedGuids))
+				if (!NetworkGuidSetsAreSame(GuidReferences->GetUnmappedGUIDs(), TrackedUnmappedGuids))
 				{
 					bOutGuidsChanged = true;
 				}
@@ -3397,7 +3395,7 @@ static bool ReceivePropertyHelper(
 			if (GuidReferences == nullptr || bOutGuidsChanged)
 			{
 				// First time tracking these guids (or guids changed), so add (or replace) new entry
-				GuidReferencesMap->Add(AbsOffset, FGuidReferences(Bunch, Mark, TrackedUnmappedGuids, TrackedDynamicMappedGuids, Cmd.ParentIndex, CmdIndex));
+				GuidReferencesMap->Emplace(AbsOffset, FGuidReferences(Bunch, Mark, TrackedUnmappedGuids, TrackedDynamicMappedGuids, Cmd.ParentIndex, CmdIndex, Bunch.PackageMap));
 				bOutGuidsChanged = true;
 			}
 			else if (UE::Net::Private::bAlwaysUpdateGuidReferenceMapForNetSerializeObjectStruct && Cmd.Type == ERepLayoutCmdType::NetSerializeStructWithObjectReferences)
@@ -3405,7 +3403,7 @@ static bool ReceivePropertyHelper(
 				// If this is a NetSerialize struct with object references, there may be other properties "wrapped up" with this GUID reference.
 				// In this case, the entry in the map should be always be updated, so there isn't outdated data in the entry that also gets
 				// applied when the Guid possibly goes unmapped and then mapped later.
-				GuidReferencesMap->Add(AbsOffset, FGuidReferences(Bunch, Mark, TrackedUnmappedGuids, TrackedDynamicMappedGuids, Cmd.ParentIndex, CmdIndex));
+				GuidReferencesMap->Emplace(AbsOffset, FGuidReferences(Bunch, Mark, TrackedUnmappedGuids, TrackedDynamicMappedGuids, Cmd.ParentIndex, CmdIndex, Bunch.PackageMap));
 			}
 		}
 		else
@@ -3439,7 +3437,8 @@ static FGuidReferencesMap* PrepReceivedArray(
 	FRepShadowDataBuffer* OutShadowBaseData,
 	FRepObjectDataBuffer* OutBaseData,
 	TArray<FProperty*>* RepNotifies,
-	bool& bOutShadowDataCopied)
+	bool& bOutShadowDataCopied,
+	UPackageMap* PackageMap)
 {
 	FGuidReferences* NewGuidReferencesArray = nullptr;
 
@@ -3450,11 +3449,7 @@ static FGuidReferencesMap* PrepReceivedArray(
 
 		if (NewGuidReferencesArray == nullptr)
 		{
-			NewGuidReferencesArray = &ParentGuidReferences->FindOrAdd(AbsOffset);
-
-			NewGuidReferencesArray->Array = new FGuidReferencesMap;
-			NewGuidReferencesArray->ParentIndex = Cmd.ParentIndex;
-			NewGuidReferencesArray->CmdIndex = CmdIndex;
+			NewGuidReferencesArray = &ParentGuidReferences->Emplace(AbsOffset, FGuidReferences(new FGuidReferencesMap, Cmd.ParentIndex, CmdIndex, PackageMap));
 		}
 
 		check(NewGuidReferencesArray != nullptr);
@@ -3657,7 +3652,8 @@ static bool ReceiveProperties_r(FReceivePropertiesSharedParams& Params, FReceive
 					&ShadowArrayBuffer,
 					&ObjectArrayBuffer,
 					StackParams.RepNotifies,
-					ArrayStackParams.bShadowDataCopied);
+					ArrayStackParams.bShadowDataCopied,
+					Params.Bunch.PackageMap);
 
 				// Read the next array handle.
 				ReadPropertyHandle(Params);
@@ -3734,6 +3730,12 @@ static bool ReceiveProperties_r(FReceivePropertiesSharedParams& Params, FReceive
 			// Read the next property handle to serialize.
 			// If we don't have any more properties, this could be a terminator.
 			ReadPropertyHandle(Params);
+
+			if (Params.ReadHandle != 0 && StackParams.CurrentHandle > Params.ReadHandle)
+			{
+				// Serialization of this property possibly has a bug and corrupted state, causing an invalid handle value to be read.
+				UE_LOG(LogRep, Error, TEXT("Replicated property %s has likely corrupted serialization of %s. Check its serialization code."), *Cmd.Property->GetFullName(), *GetFullNameSafe(Params.OwningObject));
+			}
 		}
 	}
 
@@ -4036,8 +4038,8 @@ bool FRepLayout::ReceiveProperties_BackwardsCompatible_r(
 				&LocalShadowData,
 				&LocalData,
 				ShadowData ? &RepState->RepNotifies : nullptr,
-				bShadowDataCopied
-				);
+				bShadowDataCopied,
+				TempReader.PackageMap);
 
 			// Read until we read all array elements
 			while (true)
@@ -4170,7 +4172,7 @@ void FRepLayout::GatherGuidReferences_r(
 
 		OutTrackedGuidMemoryBytes += GuidReferences.Buffer.Num();
 
-		OutReferencedGuids.Append(GuidReferences.UnmappedGUIDs);
+		OutReferencedGuids.Append(GuidReferences.GetUnmappedGUIDs());
 		OutReferencedGuids.Append(GuidReferences.MappedDynamicGUIDs);
 	}
 }
@@ -4233,7 +4235,7 @@ bool FRepLayout::MoveMappedObjectToUnmapped_r(FGuidReferencesMap* GuidReferences
 		if (GuidReferences.MappedDynamicGUIDs.Contains(GUID))
 		{
 			GuidReferences.MappedDynamicGUIDs.Remove(GUID);
-			GuidReferences.UnmappedGUIDs.Add(GUID);
+			GuidReferences.AddUnmappedGUID(GUID);
 			bFoundGUID = true;
 
 #if WITH_PUSH_MODEL
@@ -4357,40 +4359,7 @@ void FRepLayout::UpdateUnmappedObjects_r(
 			continue;
 		}
 
-		bool bMappedSomeGUIDs = false;
-
-		for (auto UnmappedIt = GuidReferences.UnmappedGUIDs.CreateIterator(); UnmappedIt; ++UnmappedIt)
-		{
-			const FNetworkGUID& GUID = *UnmappedIt;
-
-			if (Connection->PackageMap->IsGUIDBroken(GUID, false))
-			{
-				UE_LOG(LogRep, Warning, TEXT("UpdateUnmappedObjects_r: Broken GUID. NetGuid: %s"), *GUID.ToString());
-				UnmappedIt.RemoveCurrent();
-				continue;
-			}
-
-			UObject* Object = Connection->PackageMap->GetObjectFromNetGUID(GUID, false);
-
-			if (Object != nullptr)
-			{
-				UE_LOG(LogRep, VeryVerbose, TEXT("UpdateUnmappedObjects_r: REMOVED unmapped property: Offset: %i, Guid: %s, PropName: %s, ObjName: %s"), AbsOffset, *GUID.ToString(), *Cmd.Property->GetName(), *Object->GetName());
-
-				if (GUID.IsDynamic())
-				{
-					// If this guid is dynamic, move it to the dynamic guids list
-					GuidReferences.MappedDynamicGUIDs.Add(GUID);
-				}
-
-				// Remove from unmapped guids list
-				UnmappedIt.RemoveCurrent();
-				bMappedSomeGUIDs = true;
-
-#if WITH_PUSH_MODEL
-				FNetPrivatePushIdHelper::MarkPropertyDirty(OriginalObject, GuidReferences.ParentIndex);
-#endif
-			}
-		}
+		bool bMappedSomeGUIDs = GuidReferences.UpdateUnmappedGUIDs(Connection->PackageMap, OriginalObject, Cmd.Property, AbsOffset);
 
 		// If we resolved some guids, re-deserialize the data which will hook up the object pointer with the property
 		if (bMappedSomeGUIDs)
@@ -4439,11 +4408,11 @@ void FRepLayout::UpdateUnmappedObjects_r(
 		}
 
 		// If we still have more unmapped guids, we need to keep processing this entry
-		if (GuidReferences.UnmappedGUIDs.Num() > 0)
+		if (GuidReferences.GetUnmappedGUIDs().Num() > 0)
 		{
 			bOutHasMoreUnmapped = true;
 		}
-		else if (GuidReferences.UnmappedGUIDs.Num() == 0 && GuidReferences.MappedDynamicGUIDs.Num() == 0)
+		else if (GuidReferences.GetUnmappedGUIDs().Num() == 0 && GuidReferences.MappedDynamicGUIDs.Num() == 0)
 		{
 			It.RemoveCurrent();
 		}
@@ -7132,42 +7101,6 @@ void FRepLayout::BuildHandleToCmdIndexTable_r(
 	}
 }
 
-TStaticBitArray<COND_Max> FSendingRepState::BuildConditionMapFromRepFlags(const FReplicationFlags RepFlags)
-{
-	TStaticBitArray<COND_Max> ConditionMap;
-
-	// Setup condition map
-	const bool bIsInitial = RepFlags.bNetInitial ? true : false;
-	const bool bIsOwner = RepFlags.bNetOwner ? true : false;
-	const bool bIsSimulated = RepFlags.bNetSimulated ? true : false;
-	const bool bIsPhysics = RepFlags.bRepPhysics ? true : false;
-	const bool bIsReplay = RepFlags.bReplay ? true : false;
-
-	ConditionMap[COND_None] = true;
-	ConditionMap[COND_InitialOnly] = bIsInitial;
-
-	ConditionMap[COND_OwnerOnly] = bIsOwner;
-	ConditionMap[COND_SkipOwner] = !bIsOwner;
-
-	ConditionMap[COND_SimulatedOnly] = bIsSimulated;
-	ConditionMap[COND_SimulatedOnlyNoReplay] = bIsSimulated && !bIsReplay;
-	ConditionMap[COND_AutonomousOnly] = !bIsSimulated;
-
-	ConditionMap[COND_SimulatedOrPhysics] = bIsSimulated || bIsPhysics;
-	ConditionMap[COND_SimulatedOrPhysicsNoReplay] = (bIsSimulated || bIsPhysics) && !bIsReplay;
-
-	ConditionMap[COND_InitialOrOwner] = bIsInitial || bIsOwner;
-	ConditionMap[COND_ReplayOrOwner] = bIsReplay || bIsOwner;
-	ConditionMap[COND_ReplayOnly] = bIsReplay;
-	ConditionMap[COND_SkipReplay] = !bIsReplay;
-
-	ConditionMap[COND_Custom] = true;
-	ConditionMap[COND_Dynamic] = true;
-	ConditionMap[COND_Never] = false;
-
-	return ConditionMap;
-}
-
 bool FSendingRepState::HasAnyPendingRetirements() const
 {
 	for (const FPropertyRetirement& PropRet : Retirement)
@@ -7187,7 +7120,7 @@ void FRepLayout::RebuildConditionalProperties(FSendingRepState* RepState, const 
 	
 	RepState->RepFlags = RepFlags;
 
-	TStaticBitArray<COND_Max> ConditionMap = FSendingRepState::BuildConditionMapFromRepFlags(RepFlags);
+	TStaticBitArray<COND_Max> ConditionMap = UE::Net::BuildConditionMapFromRepFlags(RepFlags);
 	if (EnumHasAnyFlags(Flags, ERepLayoutFlags::HasDynamicConditionProperties) && RepState->RepChangedPropertyTracker.IsValid())
 	{
 		const FRepChangedPropertyTracker* RepChangedPropertyTracker = RepState->RepChangedPropertyTracker.Get();

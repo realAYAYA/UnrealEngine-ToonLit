@@ -316,7 +316,7 @@ void FCanvas::Construct()
 
 	const FIntPoint RenderTargetSizeXY = RenderTarget ? RenderTarget->GetSizeXY() : FIntPoint(1, 1);
 
-	new(TransformStack) FTransformEntry( 
+	TransformStack.Emplace( 
 		FMatrix( FScaleMatrix(GetDPIScale()) * CalcBaseTransform2D(RenderTargetSizeXY.X, RenderTargetSizeXY.Y) )
 		);
 
@@ -339,7 +339,7 @@ void FCanvas::SetBaseTransform(const FMatrix& Transform)
 	}
 	else
 	{
-		new(TransformStack) FTransformEntry(Transform);
+		TransformStack.Emplace(Transform);
 	}
 }
 
@@ -436,10 +436,6 @@ bool FCanvasBatchedElementRenderItem::Render_RenderThread(FCanvasRenderContext& 
 			// current render target set for the canvas
 			const FRenderTarget* CanvasRenderTarget = Canvas->GetRenderTarget();
 			float Gamma = 1.0f / CanvasRenderTarget->GetDisplayGamma();
-			if (LocalData->Texture && LocalData->Texture->bIgnoreGammaConversions)
-			{
-				Gamma = 1.0f;
-			}
 
 			// draw batched items
 			LocalData->BatchedElements.Draw(
@@ -471,14 +467,10 @@ bool FCanvasBatchedElementRenderItem::Render_GameThread(const FCanvas* Canvas, F
 	{
 		bDirty = true;
 
-		// current render target set for the canvas
+		// current render target set for the canvas  (eg. an FSlateTextureRenderTarget2DResource)
 		const FRenderTarget* CanvasRenderTarget = Canvas->GetRenderTarget();
-		float Gamma = 1.0f / CanvasRenderTarget->GetDisplayGamma();
-		if ( Data->Texture && Data->Texture->bIgnoreGammaConversions )
-		{
-			Gamma = 1.0f;
-		}
-
+		float Gamma = 1.0f / CanvasRenderTarget->GetDisplayGamma(); // GetDisplayGamma typically == 2.2
+		
 		// Render the batched elements.
 		struct FBatchedDrawParameters
 		{
@@ -571,6 +563,20 @@ FCanvasRenderThreadScope::~FCanvasRenderThreadScope()
 			(*RenderCommandArray)[Index](RenderContext);
 		}
 
+		// MSAA resolve as the last optional render pass
+		if (RenderTarget->GetRenderTargetTexture()->GetDesc().IsMultisample())
+		{
+			FRenderTargetParameters* PassParameters = GraphBuilder.AllocParameters<FRenderTargetParameters>();
+			FRDGTextureRef ResolveTexture = RegisterExternalTexture(GraphBuilder, RenderTarget->GetShaderResourceTexture(), TEXT("MSAAResolveCanvasTexture"));
+			PassParameters->RenderTargets[0] = FRenderTargetBinding(
+				RenderTarget->GetRenderTargetTexture(GraphBuilder),
+				ResolveTexture,
+				ERenderTargetLoadAction::ELoad
+			);
+
+			GraphBuilder.AddPass(RDG_EVENT_NAME("MSAAResolveCanvas"), PassParameters, ERDGPassFlags::Raster, [](FRHICommandList&) {});
+		}
+
 		GraphBuilder.Execute();
 		delete RenderCommandArray;
 	});
@@ -600,7 +606,7 @@ FCanvas::FCanvasSortElement& FCanvas::GetSortElement(int32 DepthSortKey)
 	// if it doesn't exist then add a new entry (no duplicates allowed)
 	else
 	{
-		new(SortedElements) FCanvasSortElement(DepthSortKey);
+		SortedElements.Emplace(DepthSortKey);
 		ElementIdx = SortedElements.Num()-1;
 		// keep track of newly added array index for later lookup
 		SortedElementLookupMap.Add( DepthSortKey, ElementIdx );
@@ -1603,7 +1609,7 @@ void UCanvas::ClippedStrLen( const UFont* Font, float ScaleX, float ScaleY, int3
 void VARARGS UCanvas::WrappedStrLenf( const UFont* Font, float ScaleX, float ScaleY, int32& XL, int32& YL, const TCHAR* Fmt, ... ) 
 {
 	TCHAR Text[4096];
-	GET_VARARGS( Text, UE_ARRAY_COUNT(Text), UE_ARRAY_COUNT(Text)-1, Fmt, Fmt );
+	GET_TYPED_VARARGS( TCHAR, Text, UE_ARRAY_COUNT(Text), UE_ARRAY_COUNT(Text)-1, Fmt, Fmt );
 
 	FFontRenderInfo Info;
 	WrappedPrint( false, 0.0f, 0.0f, XL, YL, Font, ScaleX, ScaleY, false, false, Text, Info ); 
@@ -2075,6 +2081,12 @@ void UCanvas::K2_DrawMaterial(UMaterialInterface* RenderMaterial, FVector2D Scre
 		// This is a user-facing function, so we'd rather make sure that shaders are ready by the time we render, in order to ensure we don't draw with a fallback material :
 		RenderMaterial->EnsureIsComplete();
 
+		// Should be moved earlier
+		FPSOPrecacheParams PSOPrecacheParams;
+		PSOPrecacheParams.bCanvasMaterial = true;
+		PSOPrecacheParams.BasePassPixelFormat = (Canvas->GetRenderTarget() && Canvas->GetRenderTarget()->GetRenderTargetTexture()) ? Canvas->GetRenderTarget()->GetRenderTargetTexture()->GetDesc().Format : PF_Unknown;
+		RenderMaterial->PrecachePSOs(&FLocalVertexFactory::StaticType, PSOPrecacheParams);
+
 		FCanvasTileItem TileItem(ScreenPosition, RenderMaterial->GetRenderProxy(), ScreenSize, CoordinatePosition, CoordinatePosition + CoordinateSize);
 		TileItem.Rotation = FRotator(0, Rotation, 0);
 		TileItem.PivotPoint = PivotPoint;
@@ -2205,15 +2217,15 @@ void FDisplayDebugManager::DrawString(const FString& InDebugString, const float&
 		DebugTextItem.Text = FText::FromString(InDebugString);
 		Canvas->DrawItem(DebugTextItem, FVector2D(CurrentPos.X + OptionalXOffset, CurrentPos.Y));
 
-		NextColumXPos = FMath::Max(NextColumXPos, CurrentPos.X + OptionalXOffset + DebugTextItem.DrawnSize.X);
-		CurrentPos.Y += FMath::Max(GetYStep(), DebugTextItem.DrawnSize.Y);
+		NextColumXPos = FMath::Max(NextColumXPos, CurrentPos.X + OptionalXOffset + (DebugTextItem.DrawnSize.X / Canvas->GetDPIScale()));
+		CurrentPos.Y += FMath::Max(GetYStep(), (DebugTextItem.DrawnSize.Y / Canvas->GetDPIScale()));
 		AddColumnIfNeeded();
 	}
 }
 
 float FDisplayDebugManager::GetTextScale() const
 {
-	return Canvas ? FMath::Max(Canvas->SizeX / 1920.f, 1.f) : 1.f;
+	return Canvas ? FMath::Max(Canvas->SizeX / (1920.f * Canvas->GetDPIScale()), 1.f) : 1.f;
 }
 
 void FDisplayDebugManager::AddColumnIfNeeded()
@@ -2221,7 +2233,7 @@ void FDisplayDebugManager::AddColumnIfNeeded()
 	if (Canvas)
 	{
 		const float YStep = GetYStep();
-		if ((CurrentPos.Y + YStep) > Canvas->SizeY)
+		if ((CurrentPos.Y + YStep) > Canvas->ClipY)
 		{
 			CurrentPos.Y = InitialPos.Y;
 			CurrentPos.X = NextColumXPos + YStep * 2.f;

@@ -174,4 +174,15 @@ public:
 	*  @param MaterialsInOut  : array of materials to append to
 	*/
 	static GEOMETRYCOLLECTIONENGINE_API void AppendGeometryCollectionSource(const FGeometryCollectionSource& GeometryCollectionSource, FGeometryCollection& GeometryCollectionInOut, TArray<UMaterial*>& MaterialsInOut, bool ReindexMaterials = true);
+
+	/**
+	*  Converts a StaticMesh to a GeometryCollection
+	*  @param StaticMesh : Const mesh to read vertex/normals/index data from
+	*  @param OutCollection : FGeometryCollection output
+	*  @param OutMaterials : materials from the StaticMesh
+	*  @param OutInstancedMeshes : InstancedMeshes
+	*  @param bSetInternalFromMaterialIndex : Set the internal faces using the materials
+	*  @param bSplitComponents : Split the components
+	*/
+	static GEOMETRYCOLLECTIONENGINE_API void ConvertStaticMeshToGeometryCollection(const TObjectPtr<UStaticMesh> StaticMesh, FManagedArrayCollection& OutCollection, TArray<TObjectPtr<UMaterial>>& OutMaterials, TArray<FGeometryCollectionAutoInstanceMesh>& OutInstancedMeshes, bool bSetInternalFromMaterialIndex = true, bool bSplitComponents = false);
 };

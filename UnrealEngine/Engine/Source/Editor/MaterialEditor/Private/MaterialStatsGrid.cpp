@@ -32,9 +32,9 @@ TSharedPtr<FGridCell> FStatsGridRow::GetCell(const FName ColumnName)
 	return RetCell;
 }
 
-void FStatsGridRow::RemovePlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow::RemovePlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	RemoveCell(ColumnName);
 }
 
@@ -55,8 +55,11 @@ void FStatsGridRow::FillPlatformCellsHelper(TSharedPtr<FMaterialStats> StatsMana
 
 			if (StatsManager->GetStatsQualityFlag(QualityLevel))
 			{
-				// call implementation specific function to build the needed cell
-				AddPlatform(StatsManager, Platform, QualityLevel);
+				for (int32 InstanceIndex = 0; InstanceIndex < Platform->GetPlatformData(QualityLevel).Instances.Num(); ++InstanceIndex)
+				{
+					// call implementation specific function to build the needed cell
+					AddPlatform(StatsManager, Platform, QualityLevel, InstanceIndex);
+				}
 			}
 		}
 	}
@@ -73,19 +76,46 @@ void FStatsGridRow_Empty::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
 	// just an array of empty cells
 	AddCell(FMaterialStatsGrid::DescriptorColumnName, MakeShareable(new FGridCell_Empty()));
 	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
 
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_Empty::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_Empty::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	TSharedPtr<FGridCell_Empty> Cell = MakeShareable(new FGridCell_Empty());
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
 /* end FStatsGridRow_Empty functions*/
+/*==============================================================================================================*/
+
+/*==============================================================================================================*/
+/* FStatsGridRow_Name functions*/
+
+void FStatsGridRow_Name::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
+{
+	// we don't use a descriptor for this row
+	AddCell(FMaterialStatsGrid::DescriptorColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
+
+	FillPlatformCellsHelper(StatsManager);
+}
+
+void FStatsGridRow_Name::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
+{
+	// add a cell that will query any available errors for this platform
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::Name, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
+	Cell->SetHorizontalAlignment(HAlign_Fill);
+
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
+	AddCell(ColumnName, Cell);
+}
+
+/*end FStatsGridRow_Name functions*/
 /*==============================================================================================================*/
 
 /*==============================================================================================================*/
@@ -96,11 +126,12 @@ void FStatsGridRow_Quality::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
 	// we don't use a descriptor for this row
 	AddCell(FMaterialStatsGrid::DescriptorColumnName, MakeShareable(new FGridCell_Empty()));
 	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
 
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_Quality::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_Quality::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	// translate material quality to string and store it inside a StaticString cell
 	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
@@ -110,7 +141,7 @@ void FStatsGridRow_Quality::AddPlatform(TSharedPtr<FMaterialStats> StatsManager,
 	FSlateColor CellColor = FMaterialStatsUtils::QualitySettingColor(QualityLevel);
 	Cell->SetColor(CellColor);
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
@@ -118,43 +149,13 @@ void FStatsGridRow_Quality::AddPlatform(TSharedPtr<FMaterialStats> StatsManager,
 /*==============================================================================================================*/
 
 /*==============================================================================================================*/
-/* FStatsGridRow_Errors functions*/
-
-void FStatsGridRow_Errors::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
-{
-	// add an "Error" string in the descriptor column
-	TSharedPtr<FGridCell> HeaderCell = MakeShareable(new FGridCell_StaticString(TEXT("Errors"), TEXT("Errors")));
-	HeaderCell->SetColor(FStyleColors::AccentOrange);
-	HeaderCell->SetContentBold(true);
-	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
-
-	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
-
-	FillPlatformCellsHelper(StatsManager);
-}
-
-void FStatsGridRow_Errors::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
-{
-	// add a cell that will query any available errors for this platform
-	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
-	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::Errors, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType()));
-	Cell->SetColor(FStyleColors::AccentOrange);
-	Cell->SetHorizontalAlignment(HAlign_Fill);
-
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
-	AddCell(ColumnName, Cell);
-}
-
-/*end FStatsGridRow_Errors functions*/
-/*==============================================================================================================*/
-
-/*==============================================================================================================*/
 /* FStatsGridRow_Shaders functions*/
 
-FStatsGridRow_Shaders::FStatsGridRow_Shaders(ERepresentativeShader RepresentativeShader, bool bHeader)
+FStatsGridRow_Shaders::FStatsGridRow_Shaders(ERepresentativeShader RepresentativeShader, bool bHeader, bool bInstructionRow)
+	: bIsHeaderRow(bHeader)
+	, bInstructionRow(bInstructionRow)
+	, ShaderType(RepresentativeShader)
 {
-	bIsHeaderRow = bHeader;
-	ShaderType = RepresentativeShader;
 }
 
 FStatsGridRow_Shaders::EShaderClass FStatsGridRow_Shaders::GetShaderClass(const ERepresentativeShader Shader)
@@ -210,16 +211,20 @@ void FStatsGridRow_Shaders::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
 	ShaderNameCell->SetColor(FStyleColors::Foreground);
 	AddCell(FMaterialStatsGrid::ShaderColumnName, ShaderNameCell);
 
+	// now add a cell that can display the what statistic we are describing.
+	FString ColumnContent = bInstructionRow ? TEXT("Instruction Count") : TEXT("Platform Statistics");
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_StaticString(ColumnContent, ColumnContent)));
+
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_Shaders::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_Shaders::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	// add a cell that display the instruction count for this platform
 	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
-	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::InstructionsCount, ShaderType, QualityLevel, Platform->GetPlatformShaderType()));
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, bInstructionRow ? EShaderInfoType::InstructionsCount : EShaderInfoType::GenericShaderStatistics, ShaderType, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
@@ -238,17 +243,18 @@ void FStatsGridRow_Samplers::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
 	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
 
 	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
 
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_Samplers::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_Samplers::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	// cell that will enumerate the total number of samplers in this material
 	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
-	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::SamplersCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType()));
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::SamplersCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
@@ -267,17 +273,18 @@ void FStatsGridRow_Interpolators::CreateRow(TSharedPtr<FMaterialStats> StatsMana
 	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
 
 	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
 
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_Interpolators::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_Interpolators::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	// cell that will enumerate the total number of interpolators in this material
 	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
-	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::InterpolatorsCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType()));
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::InterpolatorsCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
@@ -296,17 +303,18 @@ void FStatsGridRow_NumTextureSamples::CreateRow(TSharedPtr<FMaterialStats> Stats
 	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
 
 	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
 
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_NumTextureSamples::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_NumTextureSamples::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	// cell that will enumerate the total number of texture samples in this material
 	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
-	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::TextureSampleCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType()));
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::TextureSampleCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
@@ -325,17 +333,18 @@ void FStatsGridRow_NumVirtualTextureLookups::CreateRow(TSharedPtr<FMaterialStats
 	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
 
 	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
 
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_NumVirtualTextureLookups::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_NumVirtualTextureLookups::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	// cell that will enumerate the total number of texture samples in this material
 	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
-	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::VirtualTextureLookupCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType()));
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::VirtualTextureLookupCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
@@ -343,7 +352,7 @@ void FStatsGridRow_NumVirtualTextureLookups::AddPlatform(TSharedPtr<FMaterialSta
 /*==============================================================================================================*/
 
 /*==============================================================================================================*/
-/* FStatsGridRow_NumVirtualTextureLookups functions*/
+/* FStatsGridRow_NumShaders functions*/
 
 void FStatsGridRow_NumShaders::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
 {
@@ -354,21 +363,82 @@ void FStatsGridRow_NumShaders::CreateRow(TSharedPtr<FMaterialStats> StatsManager
 	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
 
 	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
 
 	FillPlatformCellsHelper(StatsManager);
 }
 
-void FStatsGridRow_NumShaders::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel)
+void FStatsGridRow_NumShaders::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	// cell that will enumerate the number of shaders
 	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
-	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::ShaderCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType()));
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::ShaderCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
 
-	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
 	AddCell(ColumnName, Cell);
 }
 
 /*end FStatsGridRow_NumTotalShaders functions*/
+/*==============================================================================================================*/
+
+/*==============================================================================================================*/
+/* FStatsGridRow_NumPreshaders functions*/
+
+void FStatsGridRow_NumPreshaders::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
+{
+	// static string in the descriptor column
+	TSharedPtr<FGridCell> HeaderCell = MakeShareable(new FGridCell_StaticString(TEXT("Preshader Count"), TEXT("Number of preshader instructions that will be evaluated on the CPU for this material.")));
+	HeaderCell->SetColor(FStyleColors::Foreground);
+	HeaderCell->SetContentBold(true);
+	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
+
+	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
+
+	FillPlatformCellsHelper(StatsManager);
+}
+
+void FStatsGridRow_NumPreshaders::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
+{
+	// cell that will enumerate the number of pre shaders
+	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::PreShaderCount, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
+
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
+	AddCell(ColumnName, Cell);
+}
+
+/*end FStatsGridRow_NumPreshaders functions*/
+/*==============================================================================================================*/
+
+/*==============================================================================================================*/
+/* FStatsGridRow_LWCUsage functions*/
+
+void FStatsGridRow_LWCUsage::CreateRow(TSharedPtr<FMaterialStats> StatsManager)
+{
+	// static string in the descriptor column
+	TSharedPtr<FGridCell> HeaderCell = MakeShareable(new FGridCell_StaticString(TEXT("Large World Coordinate Usages (Est.)"), TEXT("Estimates for the number of large world coordinate operations in the material.")));
+	HeaderCell->SetColor(FStyleColors::Foreground);
+	HeaderCell->SetContentBold(true);
+	AddCell(FMaterialStatsGrid::DescriptorColumnName, HeaderCell);
+
+	AddCell(FMaterialStatsGrid::ShaderColumnName, MakeShareable(new FGridCell_Empty()));
+	AddCell(FMaterialStatsGrid::ShaderStatisticColumnName, MakeShareable(new FGridCell_Empty()));
+
+	FillPlatformCellsHelper(StatsManager);
+}
+
+void FStatsGridRow_LWCUsage::AddPlatform(TSharedPtr<FMaterialStats> StatsManager, const TSharedPtr<FShaderPlatformSettings> Platform, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
+{
+	// cell that will enumerate the number of pre shaders
+	const FString CellContent = FMaterialStatsUtils::MaterialQualityToShortString(QualityLevel);
+	TSharedPtr<FGridCell_ShaderValue> Cell = MakeShareable(new FGridCell_ShaderValue(StatsManager, EShaderInfoType::LWCUsage, ERepresentativeShader::Num, QualityLevel, Platform->GetPlatformShaderType(), InstanceIndex));
+
+	const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel, InstanceIndex);
+	AddCell(ColumnName, Cell);
+}
+
+/*end FStatsGridRow_LWCUsage functions*/
 /*==============================================================================================================*/
 
 /***********************************************************************************************************************/
@@ -376,6 +446,7 @@ void FStatsGridRow_NumShaders::AddPlatform(TSharedPtr<FMaterialStats> StatsManag
 
 const FName FMaterialStatsGrid::DescriptorColumnName = TEXT("Descriptor");
 const FName FMaterialStatsGrid::ShaderColumnName = TEXT("ShaderList");
+const FName FMaterialStatsGrid::ShaderStatisticColumnName = TEXT("ShaderStatistics");
 
 FMaterialStatsGrid::FMaterialStatsGrid(TWeakPtr<FMaterialStats> _StatsManager)
 {
@@ -417,13 +488,13 @@ TSharedPtr<FGridCell> FMaterialStatsGrid::GetCell(int32 RowID, FName ColumnName)
 	return MakeShareable(new FGridCell_Empty());
 }
 
-void FMaterialStatsGrid::CollectShaderInfo(const TSharedPtr<FShaderPlatformSettings>& PlatformPtr, const EMaterialQualityLevel::Type QualityLevel)
+void FMaterialStatsGrid::CollectShaderInfo(const TSharedPtr<FShaderPlatformSettings>& PlatformPtr, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	const FShaderPlatformSettings::FPlatformData& PlatformData = PlatformPtr->GetPlatformData(QualityLevel);
 
 	for (int32 i = 0; i < (int32)ERepresentativeShader::Num; ++i)
 	{
-		UsedShaders[i] |= PlatformData.ShaderStatsInfo.ShaderInstructionCount.Contains((ERepresentativeShader)i);
+		UsedShaders[i] |= PlatformData.Instances[InstanceIndex].ShaderStatsInfo.ShaderInstructionCount.Contains((ERepresentativeShader)i);
 	}
 }
 
@@ -454,7 +525,10 @@ void FMaterialStatsGrid::CollectShaderInfo()
 		{
 			EMaterialQualityLevel::Type QualitySetting = static_cast<EMaterialQualityLevel::Type>(q);
 
-			CollectShaderInfo(Platform, QualitySetting);
+			for (int32 InstanceIndex = 0; InstanceIndex < Platform->GetPlatformData(QualitySetting).Instances.Num(); ++InstanceIndex)
+			{
+				CollectShaderInfo(Platform, QualitySetting, InstanceIndex);
+			}
 		}
 	}
 }
@@ -508,15 +582,18 @@ void FMaterialStatsGrid::CheckForErrors()
 				EMaterialQualityLevel::Type QualitySetting = static_cast<EMaterialQualityLevel::Type>(q);
 				if (StatsManager->GetStatsQualityFlag(QualitySetting))
 				{
-					auto &Data = Platform->GetPlatformData(QualitySetting);
+					for (int32 InstanceIndex = 0; InstanceIndex < Platform->GetPlatformData(QualitySetting).Instances.Num(); ++InstanceIndex)
+					{
+						auto &Data = Platform->GetInstanceData(QualitySetting, InstanceIndex);
 
-					if (Data.ShaderStatsInfo.HasErrors())
-					{
-						PlatformErrorsType = PlatformErrorsType == EGlobalErrorsType::SpecificPlatformErrors ? EGlobalErrorsType::SpecificPlatformErrors : EGlobalErrorsType::GlobalPlatformErrors;
-					}
-					else
-					{
-						PlatformErrorsType = PlatformErrorsType == EGlobalErrorsType::NoErrors ? EGlobalErrorsType::NoErrors : EGlobalErrorsType::SpecificPlatformErrors;
+						if (Data.ShaderStatsInfo.HasErrors())
+						{
+							PlatformErrorsType = PlatformErrorsType == EGlobalErrorsType::SpecificPlatformErrors ? EGlobalErrorsType::SpecificPlatformErrors : EGlobalErrorsType::GlobalPlatformErrors;
+						}
+						else
+						{
+							PlatformErrorsType = PlatformErrorsType == EGlobalErrorsType::NoErrors ? EGlobalErrorsType::NoErrors : EGlobalErrorsType::SpecificPlatformErrors;
+						}
 					}
 				}
 			}
@@ -528,13 +605,8 @@ void FMaterialStatsGrid::BuildRowIds()
 {
 	RowIDs.Reset();
 
+	BuildKeyAndInsert(ERowType::Name);
 	BuildKeyAndInsert(ERowType::Quality);
-
-	// add errors row if at least one platform has issues
-	if (PlatformErrorsType != EGlobalErrorsType::NoErrors)
-	{
-		BuildKeyAndInsert(ERowType::Errors);
-	}
 
 	// add the rest of the rows only if there's at least one error free platform
 	if (PlatformErrorsType != EGlobalErrorsType::GlobalPlatformErrors)
@@ -564,16 +636,27 @@ void FMaterialStatsGrid::BuildRowIds()
 		BuildKeyAndInsert(ERowType::VirtualTextureLookups);
 		BuildKeyAndInsert(ERowType::Interpolators);
 		BuildKeyAndInsert(ERowType::Shaders);
+		BuildKeyAndInsert(ERowType::PreShaders);
+		BuildKeyAndInsert(ERowType::LWCUsage);
 	}
 }
 
 void FMaterialStatsGrid::OnShaderChanged()
 {
 	CollectShaderInfo();
+
 	BuildShaderRows();
+	BuildColumnInfo();
 	CheckForErrors();
 
 	BuildRowIds();
+}
+
+void FMaterialStatsGrid::OnColumnNumChanged()
+{
+	// nuke all rows to rebuild columns
+	BuildStaticRows();
+	OnShaderChanged();
 }
 
 void FMaterialStatsGrid::BuildStaticRows()
@@ -591,14 +674,14 @@ void FMaterialStatsGrid::BuildStaticRows()
 		StaticRows.Add(ERowType::Empty, Row);
 	}
 	{
+		TSharedPtr<FStatsGridRow> Row = MakeShareable(new FStatsGridRow_Name());
+		Row->CreateRow(StatsManager);
+		StaticRows.Add(ERowType::Name, Row);
+	}
+	{
 		TSharedPtr<FStatsGridRow> Row = MakeShareable(new FStatsGridRow_Quality());
 		Row->CreateRow(StatsManager);
 		StaticRows.Add(ERowType::Quality, Row);
-	}
-	{
-		TSharedPtr<FStatsGridRow> Row = MakeShareable(new FStatsGridRow_Errors());
-		Row->CreateRow(StatsManager);
-		StaticRows.Add(ERowType::Errors, Row);
 	}
 	{
 		TSharedPtr<FStatsGridRow> Row = MakeShareable(new FStatsGridRow_Samplers());
@@ -625,6 +708,16 @@ void FMaterialStatsGrid::BuildStaticRows()
 		Row->CreateRow(StatsManager);
 		StaticRows.Add(ERowType::Shaders, Row);
 	}
+	{
+		TSharedPtr<FStatsGridRow> Row = MakeShareable(new FStatsGridRow_NumPreshaders());
+		Row->CreateRow(StatsManager);
+		StaticRows.Add(ERowType::PreShaders, Row);
+	}
+	{
+		TSharedPtr<FStatsGridRow> Row = MakeShareable(new FStatsGridRow_LWCUsage());
+		Row->CreateRow(StatsManager);
+		StaticRows.Add(ERowType::LWCUsage, Row);
+	}
 }
 
 void FMaterialStatsGrid::BuildShaderRows()
@@ -645,10 +738,15 @@ void FMaterialStatsGrid::BuildShaderRows()
 		{
 			bool bFirstShader = !FragmentShaderRows.Num();
 
-			TSharedPtr<FStatsGridRow> FragShaderRow = MakeShareable(new FStatsGridRow_Shaders((ERepresentativeShader)i, bFirstShader));
+			TSharedPtr<FStatsGridRow> FragShaderRow = MakeShareable(new FStatsGridRow_Shaders((ERepresentativeShader)i, bFirstShader, true));
 			FragShaderRow->CreateRow(StatsManager);
 
 			FragmentShaderRows.Add(FragShaderRow);
+
+			TSharedPtr<FStatsGridRow> FragShaderRow2 = MakeShareable(new FStatsGridRow_Shaders((ERepresentativeShader)i, false, false));
+			FragShaderRow2->CreateRow(StatsManager);
+
+			FragmentShaderRows.Add(FragShaderRow2);
 		}
 	}
 
@@ -659,7 +757,7 @@ void FMaterialStatsGrid::BuildShaderRows()
 		{
 			bool bFirstShader = !VertexShaderRows.Num();
 
-			TSharedPtr<FStatsGridRow> VertShaderRow = MakeShareable(new FStatsGridRow_Shaders((ERepresentativeShader)i, bFirstShader));
+			TSharedPtr<FStatsGridRow> VertShaderRow = MakeShareable(new FStatsGridRow_Shaders((ERepresentativeShader)i, bFirstShader, true));
 			VertShaderRow->CreateRow(StatsManager);
 
 			VertexShaderRows.Add(VertShaderRow);
@@ -669,8 +767,10 @@ void FMaterialStatsGrid::BuildShaderRows()
 
 void FMaterialStatsGrid::BuildColumnInfo()
 {
+	GridColumnContent.Empty();
 	GridColumnContent.Add(DescriptorColumnName, FColumnInfo());
 	GridColumnContent.Add(ShaderColumnName, FColumnInfo());
+	GridColumnContent.Add(ShaderStatisticColumnName, FColumnInfo());
 
 	TSharedPtr<FMaterialStats> StatsManager = StatsManagerWPtr.Pin();
 	if (!StatsManager.IsValid())
@@ -695,7 +795,14 @@ void FMaterialStatsGrid::BuildColumnInfo()
 				continue;
 			}
 
-			AddColumnInfo(PlatformPair.Value, QualityLevel);
+			const int32 NumInstances = PlatformPair.Value->GetPlatformData(QualityLevel).Instances.Num();
+			// skip all derived MI's if not asked to show stats as errors are shown separately
+			const int32 IterateForNum = StatsManager->GetMaterialStatsDerivedMIOption() == EMaterialStatsDerivedMIOption::ShowStats ? NumInstances : FMath::Min(1, NumInstances);  
+
+			for (int32 InstanceIndex = 0; InstanceIndex < IterateForNum; ++InstanceIndex)
+			{
+				AddColumnInfo(PlatformPair.Value, QualityLevel, InstanceIndex);
+			}
 		}
 	}
 }
@@ -712,7 +819,7 @@ void FMaterialStatsGrid::BuildGrid()
 	BuildRowIds();
 }
 
-void FMaterialStatsGrid::AddColumnInfo(TSharedPtr<FShaderPlatformSettings> PlatformPtr, const EMaterialQualityLevel::Type QualityLevel)
+void FMaterialStatsGrid::AddColumnInfo(TSharedPtr<FShaderPlatformSettings> PlatformPtr, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	FColumnInfo Info;
 
@@ -720,17 +827,17 @@ void FMaterialStatsGrid::AddColumnInfo(TSharedPtr<FShaderPlatformSettings> Platf
 	Info.Content = PlatformPtr->GetPlatformName().ToString();
 	Info.ContentLong = PlatformPtr->GetPlatformDescription();
 
-	const FName ColumnName = MakePlatformColumnName(PlatformPtr, QualityLevel);
+	const FName ColumnName = MakePlatformColumnName(PlatformPtr, QualityLevel, InstanceIndex);
 	GridColumnContent.Add(ColumnName, Info);
 }
 
-void FMaterialStatsGrid::RemoveColumnInfo(TSharedPtr<FShaderPlatformSettings> PlatformPtr, const EMaterialQualityLevel::Type QualityLevel)
+void FMaterialStatsGrid::RemoveColumnInfo(TSharedPtr<FShaderPlatformSettings> PlatformPtr, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
-	const FName ColumnName = MakePlatformColumnName(PlatformPtr, QualityLevel);
+	const FName ColumnName = MakePlatformColumnName(PlatformPtr, QualityLevel, InstanceIndex);
 	GridColumnContent.Remove(ColumnName);
 }
 
-void FMaterialStatsGrid::AddOrRemovePlatform(TSharedPtr<FShaderPlatformSettings> PlatformPtr, const bool bAdd, const EMaterialQualityLevel::Type QualityLevel)
+void FMaterialStatsGrid::AddOrRemovePlatform(TSharedPtr<FShaderPlatformSettings> PlatformPtr, const bool bAdd, const EMaterialQualityLevel::Type QualityLevel, const int32 InstanceIndex)
 {
 	TSharedPtr<FMaterialStats> StatsManager = StatsManagerWPtr.Pin();
 	if (!StatsManager.IsValid())
@@ -741,22 +848,22 @@ void FMaterialStatsGrid::AddOrRemovePlatform(TSharedPtr<FShaderPlatformSettings>
 	// update column record
 	if (bAdd)
 	{
-		AddColumnInfo(PlatformPtr, QualityLevel);
+		AddColumnInfo(PlatformPtr, QualityLevel, InstanceIndex);
 	}
 	else
 	{
-		RemoveColumnInfo(PlatformPtr, QualityLevel);
+		RemoveColumnInfo(PlatformPtr, QualityLevel, InstanceIndex);
 	}
 
 	for (auto RowPair : StaticRows)
 	{
 		if (bAdd)
 		{
-			RowPair.Value->AddPlatform(StatsManager, PlatformPtr, QualityLevel);
+			RowPair.Value->AddPlatform(StatsManager, PlatformPtr, QualityLevel, InstanceIndex);
 		}
 		else
 		{
-			RowPair.Value->RemovePlatform(StatsManager, PlatformPtr, QualityLevel);
+			RowPair.Value->RemovePlatform(StatsManager, PlatformPtr, QualityLevel, InstanceIndex);
 		}
 	}
 
@@ -764,11 +871,11 @@ void FMaterialStatsGrid::AddOrRemovePlatform(TSharedPtr<FShaderPlatformSettings>
 	{
 		if (bAdd)
 		{
-			VertexShaderRows[i]->AddPlatform(StatsManager, PlatformPtr, QualityLevel);
+			VertexShaderRows[i]->AddPlatform(StatsManager, PlatformPtr, QualityLevel, InstanceIndex);
 		}
 		else
 		{
-			VertexShaderRows[i]->RemovePlatform(StatsManager, PlatformPtr, QualityLevel);
+			VertexShaderRows[i]->RemovePlatform(StatsManager, PlatformPtr, QualityLevel, InstanceIndex);
 		}
 	}
 
@@ -776,11 +883,11 @@ void FMaterialStatsGrid::AddOrRemovePlatform(TSharedPtr<FShaderPlatformSettings>
 	{
 		if (bAdd)
 		{
-			FragmentShaderRows[i]->AddPlatform(StatsManager, PlatformPtr, QualityLevel);
+			FragmentShaderRows[i]->AddPlatform(StatsManager, PlatformPtr, QualityLevel, InstanceIndex);
 		}
 		else
 		{
-			FragmentShaderRows[i]->RemovePlatform(StatsManager, PlatformPtr, QualityLevel);
+			FragmentShaderRows[i]->RemovePlatform(StatsManager, PlatformPtr, QualityLevel, InstanceIndex);
 		}
 	}
 }
@@ -804,7 +911,10 @@ void FMaterialStatsGrid::OnAddOrRemovePlatform(TSharedPtr<FShaderPlatformSetting
 			continue;
 		}
 
-		AddOrRemovePlatform(PlatformPtr, bAdded, QualityLevel);
+		for (int32 InstanceIndex = 0; InstanceIndex < PlatformPtr->GetPlatformData(QualityLevel).Instances.Num(); ++InstanceIndex)
+		{
+			AddOrRemovePlatform(PlatformPtr, bAdded, QualityLevel, InstanceIndex);
+		}
 	}
 
 	// recheck shader rows in case something changed
@@ -817,14 +927,17 @@ void FMaterialStatsGrid::OnQualitySettingChanged(const EMaterialQualityLevel::Ty
 	if (!StatsManager.IsValid())
 		return;
 
-	bool bQualityOn = StatsManager->GetStatsQualityFlag(QualityLevel);
+	const bool bQualityOn = StatsManager->GetStatsQualityFlag(QualityLevel);
 
 	const auto& PlatformDB = StatsManager->GetPlatformsDB();
 	for (auto PlatformPair : PlatformDB)
 	{
 		if (PlatformPair.Value->IsPresentInGrid())
 		{
-			AddOrRemovePlatform(PlatformPair.Value, bQualityOn, QualityLevel);
+			for (int32 InstanceIndex = 0; InstanceIndex < PlatformPair.Value->GetPlatformData(QualityLevel).Instances.Num(); ++InstanceIndex)
+			{
+				AddOrRemovePlatform(PlatformPair.Value, bQualityOn, QualityLevel, InstanceIndex);
+			}
 		}
 	}
 
@@ -832,9 +945,9 @@ void FMaterialStatsGrid::OnQualitySettingChanged(const EMaterialQualityLevel::Ty
 	OnShaderChanged();
 }
 
-FName FMaterialStatsGrid::MakePlatformColumnName(const TSharedPtr<FShaderPlatformSettings>& Platform, const EMaterialQualityLevel::Type Quality)
+FName FMaterialStatsGrid::MakePlatformColumnName(const TSharedPtr<FShaderPlatformSettings>& Platform, const EMaterialQualityLevel::Type Quality, const int32 InstanceIndex)
 {
-	FName RetName = *(Platform->GetPlatformID().ToString() + "_" + FMaterialStatsUtils::MaterialQualityToString(Quality));
+	FName RetName = *(Platform->GetPlatformID().ToString() + "_" + FMaterialStatsUtils::MaterialQualityToString(Quality) + "_" + FString::FromInt(InstanceIndex));
 	return RetName;
 }
 
@@ -876,7 +989,7 @@ FString FGridCell_StaticString::GetCellContentLong()
 }
 
 FGridCell_ShaderValue::FGridCell_ShaderValue(const TWeakPtr<FMaterialStats>& _MaterialStatsWPtr, const EShaderInfoType _InfoType, const ERepresentativeShader _ShaderType,
-	const EMaterialQualityLevel::Type _QualityLevel, const EShaderPlatform _PlatformType)
+	const EMaterialQualityLevel::Type _QualityLevel, const EShaderPlatform _PlatformType, const int32 _InstanceIndex)
 {
 	MaterialStatsWPtr = _MaterialStatsWPtr;
 
@@ -884,6 +997,7 @@ FGridCell_ShaderValue::FGridCell_ShaderValue(const TWeakPtr<FMaterialStats>& _Ma
 	ShaderType = _ShaderType;
 	QualityLevel = _QualityLevel;
 	PlatformType = _PlatformType;
+	InstanceIndex = _InstanceIndex;
 }
 
 FString FGridCell_ShaderValue::InternalGetContent(bool bLongContent)
@@ -895,22 +1009,32 @@ FString FGridCell_ShaderValue::InternalGetContent(bool bLongContent)
 	}
 
 	auto Platform = MaterialStats->GetPlatformSettings(PlatformType);
-	if (!Platform.IsValid())
+	if (!Platform.IsValid() || Platform->GetPlatformData(QualityLevel).Instances.Num() <= InstanceIndex)
 	{
 		return TEXT("");
 	}
 
-	auto PlatformData = Platform->GetPlatformData(QualityLevel);
+	const auto& InstanceData = Platform->GetInstanceData(QualityLevel, InstanceIndex);
 
 	switch (InfoType)
 	{
-		case EShaderInfoType::Errors:
-			return PlatformData.ShaderStatsInfo.StrShaderErrors;
+		case EShaderInfoType::Name:
+			return MaterialStats->GetMaterialName(InstanceIndex);
 		break;
 
 		case EShaderInfoType::InstructionsCount:
 		{
-			auto* Count = PlatformData.ShaderStatsInfo.ShaderInstructionCount.Find(ShaderType);
+			auto* Count = InstanceData.ShaderStatsInfo.ShaderInstructionCount.Find(ShaderType);
+			if (Count)
+			{
+				return bLongContent ? Count->StrDescriptionLong : Count->StrDescription;
+			}
+		}
+		break;
+
+		case EShaderInfoType::GenericShaderStatistics:
+		{
+			auto* Count = InstanceData.ShaderStatsInfo.GenericShaderStatistics.Find(ShaderType);
 			if (Count)
 			{
 				return bLongContent ? Count->StrDescriptionLong : Count->StrDescription;
@@ -919,23 +1043,31 @@ FString FGridCell_ShaderValue::InternalGetContent(bool bLongContent)
 		break;
 
 		case EShaderInfoType::InterpolatorsCount:
-			return bLongContent ? PlatformData.ShaderStatsInfo.InterpolatorsCount.StrDescriptionLong : PlatformData.ShaderStatsInfo.InterpolatorsCount.StrDescription;
+			return bLongContent ? InstanceData.ShaderStatsInfo.InterpolatorsCount.StrDescriptionLong : InstanceData.ShaderStatsInfo.InterpolatorsCount.StrDescription;
 		break;
 
 		case EShaderInfoType::TextureSampleCount:
-			return bLongContent ? PlatformData.ShaderStatsInfo.TextureSampleCount.StrDescriptionLong : PlatformData.ShaderStatsInfo.TextureSampleCount.StrDescription;
+			return bLongContent ? InstanceData.ShaderStatsInfo.TextureSampleCount.StrDescriptionLong : InstanceData.ShaderStatsInfo.TextureSampleCount.StrDescription;
 		break;
 
 		case EShaderInfoType::SamplersCount:
-			return bLongContent ? PlatformData.ShaderStatsInfo.SamplersCount.StrDescriptionLong : PlatformData.ShaderStatsInfo.SamplersCount.StrDescription;
+			return bLongContent ? InstanceData.ShaderStatsInfo.SamplersCount.StrDescriptionLong : InstanceData.ShaderStatsInfo.SamplersCount.StrDescription;
 		break;
 
 		case EShaderInfoType::VirtualTextureLookupCount:
-			return bLongContent ? PlatformData.ShaderStatsInfo.VirtualTextureLookupCount.StrDescriptionLong : PlatformData.ShaderStatsInfo.VirtualTextureLookupCount.StrDescription;
+			return bLongContent ? InstanceData.ShaderStatsInfo.VirtualTextureLookupCount.StrDescriptionLong : InstanceData.ShaderStatsInfo.VirtualTextureLookupCount.StrDescription;
 		break;
 
 		case EShaderInfoType::ShaderCount:
-			return bLongContent ? PlatformData.ShaderStatsInfo.ShaderCount.StrDescriptionLong : PlatformData.ShaderStatsInfo.ShaderCount.StrDescription;
+			return bLongContent ? InstanceData.ShaderStatsInfo.ShaderCount.StrDescriptionLong : InstanceData.ShaderStatsInfo.ShaderCount.StrDescription;
+		break;
+
+		case EShaderInfoType::PreShaderCount:
+			return bLongContent ? InstanceData.ShaderStatsInfo.PreShaderCount.StrDescriptionLong : InstanceData.ShaderStatsInfo.PreShaderCount.StrDescription;
+		break;
+
+		case EShaderInfoType::LWCUsage:
+			return bLongContent ? InstanceData.ShaderStatsInfo.LWCUsage.StrDescriptionLong : InstanceData.ShaderStatsInfo.LWCUsage.StrDescription;
 		break;
 	}
 
@@ -950,4 +1082,28 @@ FString FGridCell_ShaderValue::GetCellContent()
 FString FGridCell_ShaderValue::GetCellContentLong()
 {
 	return InternalGetContent(true);
+}
+
+FGridCell::EIcon FGridCell_ShaderValue::GetIcon() const
+{
+	auto MaterialStats = MaterialStatsWPtr.Pin();
+	if (!MaterialStats.IsValid())
+	{
+		return EIcon::None;
+	}
+
+	auto Platform = MaterialStats->GetPlatformSettings(PlatformType);
+	if (!Platform.IsValid() || Platform->GetPlatformData(QualityLevel).Instances.Num() <= InstanceIndex)
+	{
+		return EIcon::None;
+	}
+
+	const auto& InstanceData = Platform->GetInstanceData(QualityLevel, InstanceIndex);
+	switch (InfoType)
+	{
+		case EShaderInfoType::Name:
+			return InstanceData.MaterialResourcesStats->GetCompileErrors().Num() > 0 ? EIcon::Error : EIcon::None;
+		default:
+			return EIcon::None;
+	}
 }

@@ -23,9 +23,9 @@ class FPBDCollisionSphereConstraints : public FPerParticleRule
 	{
 		for (int32 i = 0; i < (int32)InParticles.Size(); ++i)
 		{
-			MObjects.Add(TUniquePtr<FImplicitObject>(new TSphere<FReal, 3>(InParticles.P(i), Height)));
+			MObjects.Add(Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(InParticles.P(i), Height)));
 		}
-		TBoundingVolumeHierarchy<TArray<TUniquePtr<FImplicitObject>>, TArray<int32>> Hierarchy(MObjects);
+		TBoundingVolumeHierarchy<TArray<Chaos::FImplicitObjectPtr>, TArray<int32>> Hierarchy(MObjects);
 		FCriticalSection CriticalSection;
 		PhysicsParallelFor(InParticles.Size(), [&](int32 Index) {
 			TArray<int32> PotentialIntersections = Hierarchy.FindAllIntersections(InParticles.P(Index));
@@ -63,7 +63,7 @@ class FPBDCollisionSphereConstraints : public FPerParticleRule
   private:
 	FReal MH;
 	TMap<int32, TArray<int32>> MConstraints;
-	TArray<TUniquePtr<FImplicitObject>> MObjects;
+	TArray<Chaos::FImplicitObjectPtr> MObjects;
 };
 
 template <typename T, int d>

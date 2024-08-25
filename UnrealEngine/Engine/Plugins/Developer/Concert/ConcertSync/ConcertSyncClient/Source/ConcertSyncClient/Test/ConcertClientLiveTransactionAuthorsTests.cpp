@@ -157,7 +157,7 @@ void FenceTransactions(FConcertSyncClientLiveSession& InLiveSession, FConcertCli
 }
 
 /** Ensures the live transaction authors works correctly when there is no other clients connected. */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsSingleClient, "Concert.LiveTransactionAuthors.SingleClient", ConcertClientLiveTransactionAuthorsTestFlags)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsSingleClient, "Editor.Concert.LiveTransactionAuthors.SingleClient", ConcertClientLiveTransactionAuthorsTestFlags)
 
 bool FConcertLiveTransactionAuthorsSingleClient::RunTest(const FString& Parameters)
 {
@@ -196,7 +196,7 @@ bool FConcertLiveTransactionAuthorsSingleClient::RunTest(const FString& Paramete
 }
 
 /** Ensures the live transaction authors works correctly when there are many clients connected. */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsManyClients, "Concert.LiveTransactionAuthors.ManyClients", ConcertClientLiveTransactionAuthorsTestFlags)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsManyClients, "Editor.Concert.LiveTransactionAuthors.ManyClients", ConcertClientLiveTransactionAuthorsTestFlags)
 
 bool FConcertLiveTransactionAuthorsManyClients::RunTest(const FString& Parameters)
 {
@@ -310,7 +310,7 @@ bool FConcertLiveTransactionAuthorsManyClients::RunTest(const FString& Parameter
 }
 
 /** Ensures the live transaction authors works correctly when they are some transaction owned by a disconnected client. */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsDisconnectedClient, "Concert.LiveTransactionAuthors.DisconnectedClient", ConcertClientLiveTransactionAuthorsTestFlags)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsDisconnectedClient, "Editor.Concert.LiveTransactionAuthors.DisconnectedClient", ConcertClientLiveTransactionAuthorsTestFlags)
 
 bool FConcertLiveTransactionAuthorsDisconnectedClient::RunTest(const FString& Parameters)
 {
@@ -365,7 +365,7 @@ bool FConcertLiveTransactionAuthorsDisconnectedClient::RunTest(const FString& Pa
 }
 
 /** Ensures the live transaction authors works correctly when the same person is editing a package from two editors, on the same machine, concurrently. */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsClientUsingTwoEditors, "Concert.LiveTransactionAuthors.SamePersonUsingTwoEditorsConcurrently", ConcertClientLiveTransactionAuthorsTestFlags)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertLiveTransactionAuthorsClientUsingTwoEditors, "Editor.Concert.LiveTransactionAuthors.SamePersonUsingTwoEditorsConcurrently", ConcertClientLiveTransactionAuthorsTestFlags)
 
 bool FConcertLiveTransactionAuthorsClientUsingTwoEditors::RunTest(const FString& Parameters)
 {

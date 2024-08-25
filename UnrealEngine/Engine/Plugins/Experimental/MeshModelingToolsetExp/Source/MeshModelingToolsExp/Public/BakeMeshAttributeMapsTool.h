@@ -59,7 +59,7 @@ public:
 
 	/** The baked output type used for preview in the viewport */
 	UPROPERTY(EditAnywhere, Category = BakeOutput, meta = (DisplayName = "Preview Output Type", GetOptions = GetMapPreviewNamesFunc, TransientToolProperty,
-		EditCondition = "MapTypes != 0"))
+		EditCondition = "MapTypes != 0", NoResetToDefault))
 	FString MapPreview;
 
 	/** The pixel resolution of the generated textures */

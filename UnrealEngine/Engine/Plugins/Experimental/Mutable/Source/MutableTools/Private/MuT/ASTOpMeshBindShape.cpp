@@ -10,10 +10,8 @@
 #include "MuT/ASTOpConditional.h"
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/ASTOpMeshRemoveMask.h"
+#include "MuT/ASTOpMeshAddTags.h"
 #include "MuT/StreamsPrivate.h"
-
-#include <memory>
-#include <utility>
 
 
 namespace mu
@@ -25,6 +23,8 @@ namespace mu
 		, Shape(this)
 		, bReshapeSkeleton(false)
 		, bReshapePhysicsVolumes(false)
+		, bReshapeVertices(false)
+		, bApplyLaplacian(false)
 	{
 	}
 
@@ -38,12 +38,15 @@ namespace mu
 
 	bool ASTOpMeshBindShape::IsEqual(const ASTOp& OtherUntyped) const
 	{
-		if (const ASTOpMeshBindShape* Other = dynamic_cast<const ASTOpMeshBindShape*>(&OtherUntyped))
+		if (OtherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpMeshBindShape* Other = static_cast<const ASTOpMeshBindShape*>(&OtherUntyped);
+
 			const bool bSameFlags =
 				bReshapeSkeleton == Other->bReshapeSkeleton	&&
 				bReshapePhysicsVolumes == Other->bReshapePhysicsVolumes &&
-				bReshapeVertices == Other->bReshapeVertices;
+				bReshapeVertices == Other->bReshapeVertices &&
+				bApplyLaplacian == Other->bApplyLaplacian;
 
 			return bSameFlags &&
 				Mesh == Other->Mesh &&
@@ -63,29 +66,30 @@ namespace mu
 
 	uint64 ASTOpMeshBindShape::Hash() const
 	{
-		uint64 res = std::hash<void*>()(Mesh.child().get());
-		hash_combine(res, Shape.child().get());
-		hash_combine(res, bool(bReshapeSkeleton));
-		hash_combine(res, bool(bReshapePhysicsVolumes));
-		hash_combine(res, bool(bReshapeVertices));
-		hash_combine(res, bool(BindingMethod));
+		uint64 Result = std::hash<void*>()(Mesh.child().get());
+		hash_combine(Result, Shape.child().get());
+		hash_combine(Result, bool(bReshapeSkeleton));
+		hash_combine(Result, bool(bReshapePhysicsVolumes));
+		hash_combine(Result, bool(bReshapeVertices));
+		hash_combine(Result, bool(bApplyLaplacian));
+		hash_combine(Result, bool(BindingMethod));
 
-		hash_combine(res, static_cast<uint32>(RChannelUsage));
-		hash_combine(res, static_cast<uint32>(GChannelUsage));
-		hash_combine(res, static_cast<uint32>(BChannelUsage));
-		hash_combine(res, static_cast<uint32>(AChannelUsage));
+		hash_combine(Result, static_cast<uint32>(RChannelUsage));
+		hash_combine(Result, static_cast<uint32>(GChannelUsage));
+		hash_combine(Result, static_cast<uint32>(BChannelUsage));
+		hash_combine(Result, static_cast<uint32>(AChannelUsage));
 
 		for (const uint16 S : BonesToDeform)
 		{
-			hash_combine(res, S);
+			hash_combine(Result, S);
 		}
 
 		for (const uint16 S : PhysicsToDeform)
 		{
-			hash_combine(res, S);
+			hash_combine(Result, S);
 		}
 
-		return res;
+		return Result;
 	}
 
 
@@ -97,6 +101,7 @@ namespace mu
 		NewOp->bReshapeSkeleton	= bReshapeSkeleton;
 		NewOp->bReshapePhysicsVolumes = bReshapePhysicsVolumes;
 		NewOp->bReshapeVertices = bReshapeVertices;
+		NewOp->bApplyLaplacian = bApplyLaplacian;
 		NewOp->BonesToDeform = BonesToDeform;
 		NewOp->PhysicsToDeform = PhysicsToDeform;
 		NewOp->BindingMethod = BindingMethod;
@@ -110,10 +115,10 @@ namespace mu
 	}
 
 
-	void ASTOpMeshBindShape::ForEachChild(const TFunctionRef<void(ASTChild&)> f)
+	void ASTOpMeshBindShape::ForEachChild(const TFunctionRef<void(ASTChild&)> Func)
 	{
-		f(Mesh);
-		f(Shape);
+		Func(Mesh);
+		Func(Shape);
 	}
 
 
@@ -130,6 +135,7 @@ namespace mu
 			EnumAddFlags(BindFlags, bReshapeSkeleton ? EMeshBindShapeFlags::ReshapeSkeleton : NoFlags);
 			EnumAddFlags(BindFlags, bReshapePhysicsVolumes ? EMeshBindShapeFlags::ReshapePhysicsVolumes : NoFlags);
 			EnumAddFlags(BindFlags, bReshapeVertices ? EMeshBindShapeFlags::ReshapeVertices : NoFlags);
+			EnumAddFlags(BindFlags, bApplyLaplacian ? EMeshBindShapeFlags::ApplyLaplacian : NoFlags);
 
 			{
 				auto ConvertColorUsage = [](EVertexColorUsage Usage)
@@ -216,8 +222,8 @@ namespace mu
 			case OP_TYPE::ME_SWITCH:
 			{
 				// If the switch variable and structure is the same
-				const ASTOpSwitch* MeshSwitch = reinterpret_cast<const ASTOpSwitch*>(MeshAt.get());
-				const ASTOpSwitch* ShapeSwitch = reinterpret_cast<const ASTOpSwitch*>(ShapeAt.get());
+				const ASTOpSwitch* MeshSwitch = static_cast<const ASTOpSwitch*>(MeshAt.get());
+				const ASTOpSwitch* ShapeSwitch = static_cast<const ASTOpSwitch*>(ShapeAt.get());
 				bool bIsSimilarSwitch = MeshSwitch->IsCompatibleWith(ShapeSwitch);
 				if (!bIsSimilarSwitch)
 				{
@@ -253,8 +259,8 @@ namespace mu
 
 			case OP_TYPE::ME_CONDITIONAL:
 			{
-				const ASTOpConditional* MeshConditional = reinterpret_cast<const ASTOpConditional*>(MeshAt.get());
-				const ASTOpConditional* ShapeConditional = reinterpret_cast<const ASTOpConditional*>(ShapeAt.get());
+				const ASTOpConditional* MeshConditional = static_cast<const ASTOpConditional*>(MeshAt.get());
+				const ASTOpConditional* ShapeConditional = static_cast<const ASTOpConditional*>(ShapeAt.get());
 				bool bIsSimilar = MeshConditional->condition == ShapeConditional->condition;
 				if (!bIsSimilar)
 				{
@@ -364,6 +370,20 @@ namespace mu
 				break;
 			}
 
+			case OP_TYPE::ME_ADDTAGS:
+			{
+				Ptr<ASTOpMeshAddTags> New = mu::Clone<ASTOpMeshAddTags>(MeshAt);
+				if (New->Source)
+				{
+					Ptr<ASTOpMeshBindShape> NewBind = mu::Clone<ASTOpMeshBindShape>(this);
+					NewBind->Mesh = New->Source.child();
+					New->Source = NewBind;
+				}
+
+				NewOp = New;
+				break;
+			}
+
 			default:
 				break;
 
@@ -423,6 +443,16 @@ namespace mu
 				}
 
 				NewOp = NewConditional;
+				break;
+			}
+
+			case OP_TYPE::ME_ADDTAGS:
+			{
+				// Ignore the tags in the shape
+				Ptr<ASTOpMeshBindShape> NewBind = mu::Clone<ASTOpMeshBindShape>(this);
+				const ASTOpMeshAddTags* New = static_cast<const ASTOpMeshAddTags*>(ShapeAt.get());
+				NewBind->Shape = New->Source.child();
+				NewOp = NewBind;
 				break;
 			}
 

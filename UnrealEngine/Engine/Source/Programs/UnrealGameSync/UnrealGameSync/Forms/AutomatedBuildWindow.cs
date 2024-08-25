@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.Windows.Forms;
+using EpicGames.Perforce;
 
 namespace UnrealGameSync.Forms
 {
@@ -76,11 +76,11 @@ namespace UnrealGameSync.Forms
 			string? defaultWorkspaceName = AutomatedSyncWindow.FindDefaultWorkspace(owner, defaultPerforceSettings, streamName, loggerFactory);
 
 			string? defaultProjectPath = null;
-			if(!String.IsNullOrEmpty(projectPath))
+			if (!String.IsNullOrEmpty(projectPath))
 			{
 				defaultProjectPath = projectPath;
 			}
-			else if(defaultWorkspaceName != null)
+			else if (defaultWorkspaceName != null)
 			{
 				string clientPrefix = String.Format("//{0}/", defaultWorkspaceName);
 				foreach (UserSelectedProjectSettings projectSettings in settings.RecentProjects)

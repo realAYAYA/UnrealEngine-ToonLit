@@ -6,6 +6,7 @@
 #include "UObject/ObjectMacros.h"
 #include "Engine/EngineTypes.h"
 #include "Engine/DeveloperSettings.h"
+#include "Engine/TextureDefines.h"
 
 #include "TextureImportSettings.generated.h"
 
@@ -93,15 +94,19 @@ public:
 };
 
 
-#if WITH_EDITOR
 class UTexture;
 
 namespace UE::TextureUtilitiesCommon
 {
+#if WITH_EDITOR
 	/* Set default properties on Texture for newly imported textures, or reimports.
 	*  Should be called after all texture properties are set, before PostEditChange() 
 	*/
 	TEXTUREUTILITIESCOMMON_API void ApplyDefaultsForNewlyImportedTextures(UTexture * Texture, bool bIsReimport);
-
-}
 #endif
+
+	/* Get the default value for Texture->SRGB
+	* ImportImageSRGB is the SRGB setting of the imported image
+	*/
+	TEXTUREUTILITIESCOMMON_API bool GetDefaultSRGB(TextureCompressionSettings TC, ETextureSourceFormat ImportImageFormat, bool ImportImageSRGB); 
+}

@@ -60,8 +60,6 @@ static TAutoConsoleVariable<int32> CVarGTAOCombined(
 
 bool IsAmbientCubemapPassRequired(const FSceneView& View)
 {
-	FScene* Scene = (FScene*)View.Family->Scene;
-
 	return View.FinalPostProcessSettings.ContributingCubemaps.Num() != 0 && IsUsingGBuffers(View.GetShaderPlatform());
 }
 
@@ -75,7 +73,7 @@ static bool IsReflectionEnvironmentActive(const FSceneView& View)
 	bool HasReflectionCaptures = (Scene->ReflectionSceneData.RegisteredReflectionCaptures.Num() > 0);
 	bool HasSSR = View.Family->EngineShowFlags.ScreenSpaceReflections;
 
-	return (Scene->GetFeatureLevel() == ERHIFeatureLevel::SM5 && IsReflectingEnvironment && (HasReflectionCaptures || HasSSR) && !IsForwardShadingEnabled(View.GetShaderPlatform()));
+	return (Scene->GetFeatureLevel() >= ERHIFeatureLevel::SM5 && IsReflectingEnvironment && (HasReflectionCaptures || HasSSR) && !IsForwardShadingEnabled(View.GetShaderPlatform()));
 }
 
 static bool IsSkylightActive(const FViewInfo& View)
@@ -94,7 +92,7 @@ bool ShouldRenderScreenSpaceAmbientOcclusion(const FViewInfo& View, bool bLumenW
 		&& View.Family->EngineShowFlags.Lighting
 		&& View.FinalPostProcessSettings.AmbientOcclusionRadius >= 0.1f
 		&& !View.Family->UseDebugViewPS()
-		&& (FSSAOHelper::IsBasePassAmbientOcclusionRequired(View) || IsAmbientCubemapPassRequired(View) || IsReflectionEnvironmentActive(View) || IsSkylightActive(View) || View.Family->EngineShowFlags.VisualizeBuffer || bLumenWantsSSAO);
+		&& (FSSAOHelper::IsBasePassAmbientOcclusionRequired(View) || IsAmbientCubemapPassRequired(View) || IsReflectionEnvironmentActive(View) || IsSkylightActive(View) || IsForwardShadingEnabled(View.GetShaderPlatform()) || View.Family->EngineShowFlags.VisualizeBuffer || bLumenWantsSSAO);
 #if RHI_RAYTRACING
 	bEnabled &= !ShouldRenderRayTracingAmbientOcclusion(View);
 #endif
@@ -473,10 +471,10 @@ static FScreenPassTexture AddPostProcessingAmbientOcclusion(
 	}
 
 	FScreenPassTexture SetupTexture = CommonParameters.GBufferA;
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
-		// For Strata, we invalidate the setup texture for the final pass:
-		//	- We do not need GBufferA, the Strata TopLayer texture will fill in for that.
+		// For Substrate, we invalidate the setup texture for the final pass:
+		//	- We do not need GBufferA, the Substrate TopLayer texture will fill in for that.
 		//	- Setting it to nullptr will make the AddAmbientOcclusionPass use a valid viewport from SceneTextures.
 		SetupTexture.Texture = nullptr;
 	}
@@ -500,13 +498,27 @@ FCompositionLighting::FCompositionLighting(TArrayView<const FViewInfo> InViews, 
 	, ViewFamily(*InViews[0].Family)
 	, SceneTextures(InSceneTextures)
 	, bEnableDBuffer(IsDBufferEnabled(ViewFamily, SceneTextures.Config.ShaderPlatform))
-	, bEnableDecals(ViewFamily.EngineShowFlags.Decals && !ViewFamily.EngineShowFlags.VisualizeLightCulling)
+	, bEnableDecals(AreDecalsEnabled(ViewFamily))
 {
+	checkf(bEnableDecals || !bEnableDBuffer, TEXT("DBuffer should only be enabled when Decals are enabled."));
+
+	const FScene& Scene = *(FScene*)ViewFamily.Scene;
+
 	ViewAOConfigs.SetNum(Views.Num());
+
+	if (bEnableDecals)
+	{
+		VisibleDecals.SetNum(Views.Num());
+	}
 
 	for (int32 Index = 0; Index < Views.Num(); ++Index)
 	{
 		ViewAOConfigs[Index].bRequested = RequestSSAOFunction(Index);
+
+		if (bEnableDecals)
+		{
+			VisibleDecals[Index] = DecalRendering::BuildVisibleDecalList(Scene.Decals, Views[Index]);
+		}
 	}
 }
 
@@ -550,7 +562,7 @@ void FCompositionLighting::TryInit()
 	bInitialized = true;
 }
 
-void FCompositionLighting::ProcessBeforeBasePass(FRDGBuilder& GraphBuilder, FDBufferTextures& DBufferTextures)
+void FCompositionLighting::ProcessBeforeBasePass(FRDGBuilder& GraphBuilder, FDBufferTextures& DBufferTextures, FInstanceCullingManager& InstanceCullingManager)
 {
 	if (HasRayTracedOverlay(ViewFamily))
 	{
@@ -583,7 +595,7 @@ void FCompositionLighting::ProcessBeforeBasePass(FRDGBuilder& GraphBuilder, FDBu
 		if (bEnableDBuffer)
 		{
 			FDeferredDecalPassTextures DecalPassTextures = GetDeferredDecalPassTextures(GraphBuilder, View, SceneTextures, &DBufferTextures);
-			AddDeferredDecalPass(GraphBuilder, View, DecalPassTextures, EDecalRenderStage::BeforeBasePass);
+			AddDeferredDecalPass(GraphBuilder, View, VisibleDecals[ViewIndex], DecalPassTextures, InstanceCullingManager, EDecalRenderStage::BeforeBasePass);
 		}
 
 		if (bEnableSSAO)
@@ -600,7 +612,7 @@ void FCompositionLighting::ProcessBeforeBasePass(FRDGBuilder& GraphBuilder, FDBu
 	}
 }
 
-void FCompositionLighting::ProcessAfterBasePass(FRDGBuilder& GraphBuilder, EProcessAfterBasePassMode Mode)
+void FCompositionLighting::ProcessAfterBasePass(FRDGBuilder& GraphBuilder, FInstanceCullingManager& InstanceCullingManager, EProcessAfterBasePassMode Mode)
 {
 	if (HasRayTracedOverlay(ViewFamily))
 	{
@@ -628,13 +640,13 @@ void FCompositionLighting::ProcessAfterBasePass(FRDGBuilder& GraphBuilder, EProc
 		{
 			// We can disable this pass if using DBuffer decals
 			// Decals are before AmbientOcclusion so the decal can output a normal that AO is affected by
-			AddDeferredDecalPass(GraphBuilder, View, DecalPassTextures, EDecalRenderStage::BeforeLighting);
+			AddDeferredDecalPass(GraphBuilder, View, VisibleDecals[ViewIndex], DecalPassTextures, InstanceCullingManager, EDecalRenderStage::BeforeLighting);
 		}
 
 		if (bEnableDecals && Mode != EProcessAfterBasePassMode::OnlyBeforeLightingDecals)
 		{
 			// DBuffer decals with emissive component
-			AddDeferredDecalPass(GraphBuilder, View, DecalPassTextures, EDecalRenderStage::Emissive);
+			AddDeferredDecalPass(GraphBuilder, View, VisibleDecals[ViewIndex], DecalPassTextures, InstanceCullingManager, EDecalRenderStage::Emissive);
 		}
 
 		// Forward shading SSAO is applied before the base pass using only the depth buffer.
@@ -658,7 +670,7 @@ void FCompositionLighting::ProcessAfterBasePass(FRDGBuilder& GraphBuilder, EProc
 					AmbientOcclusion = AddPostProcessingGTAOPostAsync(GraphBuilder, View, Parameters, GTAOHorizons, FinalTarget);
 
 					ensureMsgf(
-						DecalRendering::BuildVisibleDecalList(*(FScene*)View.Family->Scene, View, EDecalRenderStage::AmbientOcclusion, nullptr) == false,
+						DecalRendering::BuildRelevantDecalList(VisibleDecals[ViewIndex], EDecalRenderStage::AmbientOcclusion, nullptr) == false,
 						TEXT("Ambient occlusion decals are not supported with Async compute SSAO."));
 				}
 				else
@@ -677,7 +689,7 @@ void FCompositionLighting::ProcessAfterBasePass(FRDGBuilder& GraphBuilder, EProc
 					if (bEnableDecals)
 					{
 						DecalPassTextures.ScreenSpaceAO = AmbientOcclusion.Texture;
-						AddDeferredDecalPass(GraphBuilder, View, DecalPassTextures, EDecalRenderStage::AmbientOcclusion);
+						AddDeferredDecalPass(GraphBuilder, View, VisibleDecals[ViewIndex], DecalPassTextures, InstanceCullingManager, EDecalRenderStage::AmbientOcclusion);
 					}
 				}
 			}

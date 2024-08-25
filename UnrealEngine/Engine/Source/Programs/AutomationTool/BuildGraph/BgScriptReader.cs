@@ -1,5 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using EpicGames.BuildGraph;
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -10,9 +13,6 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Schema;
-using EpicGames.BuildGraph;
-using EpicGames.Core;
-using Microsoft.Extensions.Logging;
 using UnrealBuildBase;
 
 #nullable enable
@@ -395,12 +395,25 @@ namespace AutomationTool
 			HashSet<string> validArgumentNames = new HashSet<string>(reader._graph.Options.Select(x => x.Name), StringComparer.OrdinalIgnoreCase);
 			validArgumentNames.Add("PreflightChange");
 
+			// All default properties are valid arguments too
+			foreach (string defaultPropertyKey in defaultProperties.Keys)
+			{
+				validArgumentNames.Add(defaultPropertyKey);
+			}
+
+			bool hasInvalidArguments = false;
 			foreach (string argumentName in arguments.Keys)
 			{
 				if (!validArgumentNames.Contains(argumentName))
 				{
+					hasInvalidArguments = true;
 					logger.LogWarning("Unknown argument '{ArgumentName}' for '{Script}'", argumentName, file);
 				}
+			}
+
+			if (hasInvalidArguments)
+			{
+				logger.LogInformation("Valid arguments for '{Script}': {Arguments}", file, String.Join(", ", validArgumentNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
 			}
 
 			// Return the constructed graph
@@ -456,6 +469,9 @@ namespace AutomationTool
 						break;
 					case "Regex":
 						await ReadRegexAsync(childElement);
+						break;
+					case "StringOp":
+						await ReadStringOpAsync(childElement);
 						break;
 					case "EnvVar":
 						await ReadEnvVarAsync(childElement);
@@ -542,7 +558,8 @@ namespace AutomationTool
 		/// <param name="element">Element containing the property assignment. Used for error messages if the property is shadowed in another scope.</param>
 		/// <param name="name">Name of the property</param>
 		/// <param name="value">Value for the property</param>
-		protected void SetPropertyValue(BgScriptElement element, string name, string value)
+		/// <param name="createInParentScope">If true, this property should be added to the parent scope and not the current scope. Cannot be used if the parent scope already contains a parameter with this name or if there is no parent scope</param>
+		protected void SetPropertyValue(BgScriptElement element, string name, string value, bool createInParentScope = false)
 		{
 			// Find the scope containing this property, defaulting to the current scope
 			int scopeIdx = 0;
@@ -551,9 +568,27 @@ namespace AutomationTool
 				scopeIdx++;
 			}
 
-			// Make sure this property name was not already used in a child scope; it likely indicates an error.
+			if (createInParentScope)
+			{
+				if (scopeIdx != ScopedProperties.Count - 1)
+				{
+					LogError(element, "Property '{PropertyName}' was already used in a parent scope but has CreateInParentScope=\"true\". Rename the property to avoid the conflict or disable CreateInParentScope.", name);
+					return;
+				}
+				else if ((scopeIdx - 1) < 0)
+				{
+					LogError(element, "Property '{Propertyname}' has CreateInParentScope=\"true\" but has no parent scope.", name);
+					return;
+				}
+				else
+				{
+					scopeIdx--;
+				}
+			}
+
 			if (_shadowProperties[scopeIdx].Contains(name))
 			{
+				// Make sure this property name was not already used in a child scope; it likely indicates an error.
 				LogError(element, "Property '{PropertyName}' was already used in a child scope. Move this definition before the previous usage if they are intended to share scope, or use a different name.", name);
 			}
 			else
@@ -796,7 +831,7 @@ namespace AutomationTool
 						}
 						value = builder.ToString();
 					}
-					SetPropertyValue(element, name, value);
+					SetPropertyValue(element, name, value, ReadBooleanAttribute(element, "CreateInParentScope", false));
 				}
 			}
 		}
@@ -856,6 +891,61 @@ namespace AutomationTool
 		}
 
 		/// <summary>
+		/// Reads a StringOp element and applies string method.
+		/// </summary>
+		/// <param name="element">Xml element to read the definition from</param>
+		async Task ReadStringOpAsync(BgScriptElement element)
+		{
+			if (await EvaluateConditionAsync(element))
+			{
+				string input = ReadAttribute(element, "Input");
+				string method = ReadAttribute(element, "Method");
+				string output = ReadAttribute(element, "Output");
+
+				string operationResult = string.Empty;
+
+				string[] arguments = { };
+
+				const string ArgumentsName = "Arguments";
+
+				if (element.HasAttribute(ArgumentsName))
+				{
+					arguments = ReadAttribute(element, ArgumentsName).Split(';');
+				}
+
+				// Supply more string operations here
+				switch (method)
+				{
+					case "ToLower": operationResult = input.ToLower(); break;
+					case "ToUpper": operationResult = input.ToUpper(); break;
+					case "Replace":
+						if (arguments.Length != 2)
+						{
+							throw new AutomationException($"String operation 'Replace' requires exactly 2 arguments.");
+						}
+						operationResult = input.Replace(arguments[0], arguments[1]);
+						break;
+					case "SplitFirst":
+						if (arguments.Length != 1)
+						{
+							throw new AutomationException($"String operation 'SplitFirst' requires exactly 1 argument.");
+						}
+						operationResult = input.Split(arguments[0]).First();
+						break;
+					case "SplitLast":
+						if (arguments.Length != 1)
+						{
+							throw new AutomationException($"String operation 'SplitLast' requires exactly 1 argument.");
+						}
+						operationResult = input.Split(arguments[0]).Last();
+						break;
+					default: throw new AutomationException($"String operation '{method}' not available.");
+				}
+				SetPropertyValue(element, output, operationResult);
+			}
+		}
+
+		/// <summary>
 		/// Reads a property assignment from an environment variable.
 		/// </summary>
 		/// <param name="element">Xml element to read the definition from</param>
@@ -866,7 +956,14 @@ namespace AutomationTool
 				string name = ReadAttribute(element, "Name");
 				if (ValidateName(element, name))
 				{
-					string value = Environment.GetEnvironmentVariable(name) ?? "";
+					string envVarName = name;
+					if (!RuntimePlatform.IsWindows)
+					{
+						// Non-windows platforms don't allow dashes in variable names. The engine platform layer substitutes underscores for them.
+						envVarName = envVarName.Replace("-", "_");
+					}
+
+					string value = Environment.GetEnvironmentVariable(envVarName) ?? "";
 					SetPropertyValue(element, name, value);
 				}
 			}
@@ -1007,6 +1104,9 @@ namespace AutomationTool
 					case "Regex":
 						await ReadRegexAsync(childElement);
 						break;
+					case "StringOp":
+						await ReadStringOpAsync(childElement);
+						break;
 					case "Node":
 						await ReadNodeAsync(childElement);
 						break;
@@ -1121,15 +1221,38 @@ namespace AutomationTool
 			string? name;
 			if (await EvaluateConditionAsync(element) && TryReadObjectName(element, out name))
 			{
+				string? type = ReadAttribute(element, "Type");
+				if (String.IsNullOrEmpty(type))
+				{
+					type = null;
+				}
+
+				string? description = ReadAttribute(element, "Description");
+				if (String.IsNullOrEmpty(description))
+				{
+					description = null;
+				}
+
+				string? basePath = ReadAttribute(element, "BasePath");
+				if (String.IsNullOrEmpty(basePath))
+				{
+					basePath = null;
+				}
+
 				string tag = ReadAttribute(element, "Tag");
 				if (String.IsNullOrEmpty(tag))
 				{
 					tag = $"#{name}";
 				}
+				if (!_graph.TagNameToNodeOutput.TryGetValue(tag, out _))
+				{
+					LogError(element, "Artifact '{Name}' references non-existent tag '{Tag}'", name, tag);
+				}
 
 				string[] keys = ReadListAttribute(element, "Keys");
+				string[] metadata = ReadListAttribute(element, "Metadata");
 
-				BgArtifactDef newArtifact = new BgArtifactDef(name, tag, keys);
+				BgArtifactDef newArtifact = new BgArtifactDef(name, type, description, basePath, tag, keys, metadata);
 				_graph.Artifacts.Add(newArtifact);
 			}
 		}
@@ -1359,6 +1482,9 @@ namespace AutomationTool
 						break;
 					case "Regex":
 						await ReadRegexAsync(childElement);
+						break;
+					case "StringOp":
+						await ReadStringOpAsync(childElement);
 						break;
 					case "Trace":
 						await ReadDiagnosticAsync(childElement, LogLevel.Information);
@@ -1630,7 +1756,7 @@ namespace AutomationTool
 				}
 
 				// Add the users to the list of reports
-				if (reportNames != null)
+				if (reportNames != null && users != null)
 				{
 					foreach (string reportName in reportNames)
 					{
@@ -1847,12 +1973,12 @@ namespace AutomationTool
 			{
 				if (idx > 0 && name[idx] == ' ' && name[idx - 1] == ' ')
 				{
-					LogError(element, "Consecutive spaces in object name - '{Name}'", name);
+					LogError(element, "Consecutive spaces in object name '{Name}'", name);
 					return false;
 				}
 				if (Char.IsControl(name[idx]) || BgScriptSchema.IllegalNameCharacters.IndexOf(name[idx]) != -1)
 				{
-					LogError(element, "Invalid character in object name - '{Name}'", name[idx]);
+					LogError(element, "Invalid character in object name '{Name}': '{Character}'", name, name[idx]);
 					return false;
 				}
 			}

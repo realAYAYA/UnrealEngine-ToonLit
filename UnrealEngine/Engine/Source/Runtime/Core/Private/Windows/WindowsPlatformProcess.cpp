@@ -9,6 +9,7 @@
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/PlatformAffinity.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/FileManager.h"
 #include "HAL/UnrealMemory.h"
 #include "Internationalization/Internationalization.h"
 #include "Logging/LogMacros.h"
@@ -29,7 +30,6 @@
 #include "Templates/UnrealTemplate.h"
 #include "Trace/Trace.h"
 #include "Trace/Trace.inl"
-#include "Windows/WindowsHWrapper.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
 	#include <shellapi.h>
@@ -107,11 +107,10 @@ void FWindowsPlatformProcess::AddDllDirectory(const TCHAR* Directory)
 		// enumerate the dir and cache all the dlls
 		{
 			TArray<FString> FoundDllFileNames;
-			IPlatformFile::GetPlatformPhysical().FindFiles(FoundDllFileNames, *NormalizedDirectory, TEXT("*.dll"));
-			for (const FString& DllFileName : FoundDllFileNames)
+			IPlatformFile::GetPlatformPhysical().FindFiles(FoundDllFileNames, *NormalizedDirectory, TEXT(".dll"));
+			for (FString& DllPath : FoundDllFileNames)
 			{
-				TArray<FString>& Paths = SearchPathDllCache.FindOrAdd(*DllFileName);
-				FString DllPath(NormalizedDirectory / DllFileName);
+				TArray<FString>& Paths = SearchPathDllCache.FindOrAdd(FName(FPathViews::GetCleanFilename(DllPath)));
 				FPaths::NormalizeDirectoryName(DllPath);
 				Paths.Add(DllPath);
 			}
@@ -1120,7 +1119,12 @@ const TCHAR* FWindowsPlatformProcess::BaseDir()
 
 			FString CollapseResult(Result);
 #ifdef UE_RELATIVE_BASE_DIR
-			CollapseResult /= UE_RELATIVE_BASE_DIR;
+			// this may have been defined at compile time because we are in Restricted, but then we have been staged as a program, and then remapped out of Restricted
+			// so if we are already in a Binaries/Win64 directory
+			if (IFileManager::Get().DirectoryExists(*FPaths::Combine(CollapseResult, UE_RELATIVE_BASE_DIR)))
+			{
+				CollapseResult = FPaths::Combine(CollapseResult, UE_RELATIVE_BASE_DIR);
+			}
 #endif
 			FPaths::CollapseRelativeDirectories(CollapseResult);
 			FCString::Strcpy(Result, *CollapseResult);
@@ -1153,22 +1157,55 @@ const TCHAR* FWindowsPlatformProcess::UserTempDir()
 	static FString WindowsUserTempDir;
 	if( !WindowsUserTempDir.Len() )
 	{
-		TCHAR TempPath[MAX_PATH];
-		ZeroMemory(TempPath, sizeof(TCHAR) * MAX_PATH);
+		// Windows temp dir functions don't understand integrity levels so we have to build our own path to AppData\LocalLow\Temp.
+		if (ShouldExpectLowIntegrityLevel())
+		{
+			TCHAR* UserPath;
+			HRESULT Ret = SHGetKnownFolderPath(FOLDERID_LocalAppDataLow, 0, NULL, &UserPath);
+			if (SUCCEEDED(Ret))
+			{
+				WindowsUserTempDir = FString(UserPath).Replace(TEXT("\\"), TEXT("/")) + TEXT("/Temp/");
+				CoTaskMemFree(UserPath);
+			}
+		}
+		else
+		{
+			TCHAR TempPath[MAX_PATH];
+			ZeroMemory(TempPath, sizeof(TCHAR) * MAX_PATH);
 
-		::GetTempPath(MAX_PATH, TempPath);
+			::GetTempPath(MAX_PATH, TempPath);
 
-		// Always expand the temp path in case windows returns short directory names.
-		TCHAR FullTempPath[MAX_PATH];
-		ZeroMemory(FullTempPath, sizeof(TCHAR) * MAX_PATH);
-		::GetLongPathName(TempPath, FullTempPath, MAX_PATH);
+			// Always expand the temp path in case windows returns short directory names.
+			TCHAR FullTempPath[MAX_PATH];
+			ZeroMemory(FullTempPath, sizeof(TCHAR) * MAX_PATH);
+			::GetLongPathName(TempPath, FullTempPath, MAX_PATH);
 
-		WindowsUserTempDir = FString(FullTempPath).Replace(TEXT("\\"), TEXT("/"));
+			WindowsUserTempDir = FString(FullTempPath).Replace(TEXT("\\"), TEXT("/"));
+		}
 	}
 	return *WindowsUserTempDir;
 }
 
 const TCHAR* FWindowsPlatformProcess::UserSettingsDir()
+{
+	static FString WindowsUserSettingsDir;
+	if (!WindowsUserSettingsDir.Len())
+	{
+		TCHAR* UserPath;
+
+		// get the local or locallow AppData directory depending on integrity configuration
+		HRESULT Ret = SHGetKnownFolderPath(ShouldExpectLowIntegrityLevel() ? FOLDERID_LocalAppDataLow : FOLDERID_LocalAppData, 0, NULL, &UserPath);
+		if (SUCCEEDED(Ret))
+		{
+			// make the base user dir path
+			WindowsUserSettingsDir = FString(UserPath).Replace(TEXT("\\"), TEXT("/")) + TEXT("/");
+			CoTaskMemFree(UserPath);
+		}
+	}
+	return *WindowsUserSettingsDir;
+}
+
+const TCHAR* FWindowsPlatformProcess::UserSettingsDirMediumIntegrity()
 {
 	static FString WindowsUserSettingsDir;
 	if (!WindowsUserSettingsDir.Len())
@@ -1227,7 +1264,7 @@ FString FWindowsPlatformProcess::GetApplicationSettingsDir(const ApplicationSett
 		}
 		case ApplicationSettingsContext::Context::LocalUser:
 		{
-			const HRESULT Ret = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &ApplicationSettingsPath);
+			const HRESULT Ret = SHGetKnownFolderPath(ShouldExpectLowIntegrityLevel() ? FOLDERID_LocalAppDataLow : FOLDERID_LocalAppData, 0, NULL, &ApplicationSettingsPath);
 			if (SUCCEEDED(Ret))
 			{
 				WindowsApplicationSettingsDir = FString(ApplicationSettingsPath);
@@ -2304,6 +2341,47 @@ void FWindowsPlatformProcess::CeaseBeingFirstInstance()
 {
 	// Release the mutex in the error case to ensure subsequent runs don't find it.
 	WindowsPlatformProcess::ReleaseNamedMutex();
+}
+
+bool FWindowsPlatformProcess::TryGetMemoryUsage(FProcHandle& ProcessHandle, FPlatformProcessMemoryStats& OutStats)
+{
+	PROCESS_MEMORY_COUNTERS ProcessMemoryCounters;
+	FPlatformMemory::Memzero(&ProcessMemoryCounters, sizeof(ProcessMemoryCounters));
+	if (!::GetProcessMemoryInfo(ProcessHandle.Get(), &ProcessMemoryCounters, sizeof(ProcessMemoryCounters)))
+	{
+		UE_LOG(LogWindows, Warning, TEXT("Failure in call to GetProcessMemoryInfo (GetLastError=%d)"), ::GetLastError());
+		return false;
+	}
+	OutStats.UsedPhysical = ProcessMemoryCounters.WorkingSetSize;
+	OutStats.PeakUsedPhysical = ProcessMemoryCounters.PeakWorkingSetSize;
+	OutStats.UsedVirtual = ProcessMemoryCounters.PagefileUsage;
+	OutStats.PeakUsedVirtual = ProcessMemoryCounters.PeakPagefileUsage;
+	return true;
+}
+
+static bool InitShouldExpectLowIntegrityLevel()
+{
+	// Set default based on preprocessor flag, but the behavior can be overridden on the command line at runtime.
+	bool Ret = WINDOWS_LOWINTEGRITYLEVEL_EXPECT_DEFAULT;
+
+	// -ExpectLowIntegrityLevel: Force low integrity level config.
+	// -ExpectMediumIntegrityLevel: Force Windows default medium integrity level config.
+	// If both options are specified then low integrity is selected.
+	if (FParse::Param(::GetCommandLineW(), TEXT("ExpectLowIntegrityLevel")))
+	{
+		Ret = true;
+	}
+	else if (FParse::Param(::GetCommandLineW(), TEXT("ExpectMediumIntegrityLevel")))
+	{
+		Ret = false;
+	}
+	return Ret;
+}
+
+bool FWindowsPlatformProcess::ShouldExpectLowIntegrityLevel()
+{
+	static bool bExpectLowIntegrityLevel = InitShouldExpectLowIntegrityLevel();
+	return bExpectLowIntegrityLevel;
 }
 
 namespace WindowsPlatformProcessImpl

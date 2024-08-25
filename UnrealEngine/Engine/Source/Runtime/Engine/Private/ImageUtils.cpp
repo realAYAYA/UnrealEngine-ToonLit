@@ -13,6 +13,7 @@ ImageUtils.cpp: Image utility functions.
 #include "Engine/TextureCubeArray.h"
 #include "Engine/VolumeTexture.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Engine/TextureRenderTargetCube.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Logging/MessageLog.h"
@@ -314,83 +315,286 @@ bool FImageUtils::ExportTextureSourceToDDS(TArray64<uint8> & OutData, UTexture *
 #endif
 }
 
-/**
- * Returns data containing the pixmap of the passed in rendertarget.
- * @param TexRT - The 2D rendertarget from which to read pixmap data.
- * @param RawData - an array to be filled with pixel data.
- * @return true if RawData has been successfully filled.
- */
-bool FImageUtils::GetRawData(UTextureRenderTarget2D* TexRT, TArray64<uint8>& RawData)
+bool FImageUtils::ExportRenderTargetToDDS(TArray64<uint8> & OutData, UTextureRenderTarget * TexRT)
 {
-	FRenderTarget* RenderTarget = TexRT->GameThread_GetRenderTargetResource();
-	EPixelFormat Format = TexRT->GetFormat();
+	FImage Image;
+	if ( ! GetRenderTargetImage(TexRT,Image) )
+	{
+		UE_LOG(LogImageUtils,Warning,TEXT("ExportRenderTargetToDDS : GetRenderTargetImage failed"));
+		return false;
+	}
 
-	int32 ImageBytes = CalculateImageBytes(TexRT->SizeX, TexRT->SizeY, 0, Format);
-	RawData.AddUninitialized(ImageBytes);
-	bool bReadSuccess = false;
-	switch (Format)
+	// some code dupe with GetRenderTargetImage to identify 2d/cube/vol :
+	ETextureClass TexRTClass = TexRT->GetRenderTargetTextureClass();
+	check( TexRTClass != ETextureClass::Invalid && TexRTClass != ETextureClass::RenderTarget );
+	bool bIsCube = TexRTClass == ETextureClass::Cube || TexRTClass == ETextureClass::CubeArray;
+	
+	int64 SizeX = FMath::RoundToInt64( TexRT->GetSurfaceWidth() ); // GetSurfaceWidth returns SizeX but as float
+	int64 SizeY = FMath::RoundToInt64( TexRT->GetSurfaceHeight() );
+	int64 TexRT_SizeZ = FMath::RoundToInt64( TexRT->GetSurfaceDepth() );
+	int64 TexRT_ArraySize = TexRT->GetSurfaceArraySize();
+	// TexRT_SizeZ , ArraySize are 0 if not used, not 1
+
+	int32 NumMips = 1;
+
+	int32 Dimension;
+	int32 SizeZ;
+	int32 ArraySize;
+	uint32 CreateFlags = 0;
+	if ( TexRT_SizeZ <= 1 && !bIsCube ) // 2D
 	{
-	case PF_FloatRGBA:
+		Dimension = 2;
+		SizeZ = 1;
+		ArraySize = TexRT_ArraySize ? TexRT_ArraySize : 1;
+	}
+	else if ( bIsCube )
+	{
+		Dimension = 2;
+		SizeZ = 1;
+
+		check( TexRT_ArraySize == 6 );
+		ArraySize = 6;
+		CreateFlags = UE::DDS::FDDSFile::CREATE_FLAG_CUBEMAP;
+	}
+	else if ( TexRT_SizeZ > 1 )
+	{
+		Dimension = 3;
+		SizeZ = TexRT_SizeZ;
+		ArraySize = 1;
+	}
+	else
+	{
+		checkf(false, TEXT("unexpected TextureClass"));
+		return false;
+	}
+	
+	UE::DDS::EDXGIFormat DXGIFormat = UE::DDS::DXGIFormatFromRawFormat(Image.Format,Image.GammaSpace);
+	
+	UE_LOG(LogImageUtils,Display,TEXT("Exporting DDS Dimension=%d SizeX=%d SizeY=%d SizeZ=%d NumMips=%d ArraySize=%d"),Dimension, SizeX,SizeY,SizeZ,NumMips,ArraySize);	
+	
+	UE::DDS::EDDSError Error;
+	UE::DDS::FDDSFile * DDS = UE::DDS::FDDSFile::CreateEmpty(Dimension, SizeX,SizeY,SizeZ,NumMips,ArraySize, DXGIFormat,CreateFlags, &Error);
+	if ( DDS == nullptr || Error != UE::DDS::EDDSError::OK )
+	{
+		UE_LOG(LogImageUtils,Warning,TEXT("FDDSFile::CreateEmpty (Error=%d)"),(int)Error);			
+		return false;
+	}
+	
+	// delete DDS at scope exit :
+	TUniquePtr<UE::DDS::FDDSFile> DDSPtr(DDS);
+
+	check( DDS->Validate() == UE::DDS::EDDSError::OK );
+	
+	// blit into the mips:
+	const int32 MipIndex = 0;
+
+	if ( DDS->Dimension == 3 )
+	{
+		check( DDS->Mips.Num() == DDS->MipCount );
+		check( DDS->Mips[MipIndex].Depth == Image.NumSlices );
+
+		DDS->FillMip( Image, MipIndex );
+	}
+	else
+	{
+		// DDS->Mips[] contains both mips and arrays
+		check( DDS->Mips.Num() == DDS->MipCount * Image.NumSlices );
+
+		for(int SliceIndex=0;SliceIndex<Image.NumSlices;SliceIndex++)
 		{
-		TArray<FFloat16Color> FloatColors;
-		bReadSuccess = RenderTarget->ReadFloat16Pixels(FloatColors);
-		FMemory::Memcpy(RawData.GetData(), FloatColors.GetData(), ImageBytes);
+			FImageView MipSlice = Image.GetSlice(SliceIndex);
+				
+			// DDS Mips[] array has whole mip chain of each slice, then next slice
+			// we have the opposite (all slices of top mip first, then next mip)
+			int DDSMipIndex = SliceIndex * DDS->MipCount + MipIndex;
+				
+			DDS->FillMip( MipSlice, DDSMipIndex );
 		}
-		break;
-	case PF_B8G8R8A8:
-		bReadSuccess = RenderTarget->ReadPixelsPtr((FColor*)RawData.GetData());
-		break;
-	default:
-		// bReadSuccess == false
-		UE_LOG(LogImageUtils,Warning,TEXT("RenderTarget GetRawData PixelFormat no supported : %s") , *(StaticEnum<EPixelFormat>()->GetDisplayNameTextByValue(Format).ToString()) );
-		break;
 	}
-	if (bReadSuccess == false)
+
+	Error = DDS->WriteDDS(OutData);
+	if ( Error != UE::DDS::EDDSError::OK )
 	{
-		RawData.Empty();
+		UE_LOG(LogImageUtils,Warning,TEXT("FDDSFile::WriteDDS failed (Error=%d)"),(int)Error);			
+		return false;
 	}
-	return bReadSuccess;
+
+	return true;
 }
 
-bool FImageUtils::GetRenderTargetImage(UTextureRenderTarget2D* TexRT, FImage & Image)
+bool FImageUtils::GetRawData(UTextureRenderTarget2D* TexRT, TArray64<uint8>& RawData)
 {
-	Image = FImage();
-	
-	// see ETextureRenderTargetFormat
-	// for allowed formats
+	// DEPRECATED , use GetRenderTargetImage
 
-	TArray64<uint8> RawData;
-	if ( ! GetRawData(TexRT,RawData) )
+	RawData.Empty();
+
+	FImage Image;
+	if ( ! GetRenderTargetImage(TexRT,Image) )
 	{
 		return false;
 	}
-	
-	// @todo Oodle : in theory the RenderTarget knows its gamma
-	//   but from what I've seen it's usually wrong?
-	// TexRT->GetDisplayGamma() or TexRT->SRGB or TexRT->IsSRGB() , OMG
 
-	Image.RawData = MoveTemp(RawData);
-	Image.SizeX = TexRT->SizeX;
-	Image.SizeY = TexRT->SizeY;
-	Image.NumSlices = 1;
+	RawData = MoveTemp(Image.RawData);
+	return true;
+}
+
+bool FImageUtils::GetRenderTargetImage(UTextureRenderTarget* TexRT, FImage & Image)
+{
+	return GetRenderTargetImage(TexRT,Image,FIntRect(0,0,0,0));
+}
+
+bool FImageUtils::GetRenderTargetImage(UTextureRenderTarget* TexRT, FImage & OutImage, const FIntRect & InRectOrZero)
+{
+	OutImage = FImage();
 	
-	EPixelFormat PixelFormat = TexRT->GetFormat();
-	switch(PixelFormat)
+	FRenderTarget* RenderTarget = TexRT->GameThread_GetRenderTargetResource();
+	EPixelFormat RTFormat = TexRT->GetFormat();
+
+	ERawImageFormat::Type ReadFormat = UTextureRenderTarget::GetReadPixelsFormat(RTFormat,false);
+	
+	// we have to identify cubes because they are treated differently
+	ETextureClass TexRTClass = TexRT->GetRenderTargetTextureClass();
+	check( TexRTClass != ETextureClass::Invalid && TexRTClass != ETextureClass::RenderTarget );
+	bool bIsCube = TexRTClass == ETextureClass::Cube || TexRTClass == ETextureClass::CubeArray;
+	
+	int64 TexRT_SizeX = FMath::RoundToInt64( TexRT->GetSurfaceWidth() ); // GetSurfaceWidth returns SizeX but as float
+	int64 TexRT_SizeY = FMath::RoundToInt64( TexRT->GetSurfaceHeight() );
+	int64 TexRT_SizeZ = FMath::RoundToInt64( TexRT->GetSurfaceDepth() );
+	int64 TexRT_ArraySize = TexRT->GetSurfaceArraySize();
+
+	if ( TexRT_SizeX <= 0 || TexRT_SizeY <= 0 )
 	{
-	case PF_FloatRGBA:
-		Image.Format = ERawImageFormat::RGBA16F;
-		Image.GammaSpace = EGammaSpace::Linear;
-		break;	
-	case PF_B8G8R8A8:
-		Image.Format = ERawImageFormat::BGRA8;
-		Image.GammaSpace = EGammaSpace::sRGB;
-		break;
-	default:
-		// should not get here because GetRawData would have returned false
-		check(0);
 		return false;
 	}
 
+	int64 NumSlices;
+	if ( bIsCube )
+	{
+		check( TexRT_SizeZ == 0 );
+		check( TexRT_ArraySize == 6 );
+		NumSlices = 6;
+	}
+	else if ( TexRT_SizeZ != 0 )
+	{
+		check( TexRT_ArraySize == 0 );
+		NumSlices = TexRT_SizeZ;
+	}
+	else if ( TexRT_ArraySize != 0 )
+	{
+		check( TexRT_SizeZ == 0 );
+		NumSlices = TexRT_ArraySize;
+	}
+	else
+	{
+		// 2D
+		NumSlices = 1;
+	}
+	
+	// UTextureRenderTarget2D returns 0 for Depth and ArraySize, not 1
+
+	// RCM_MinMax means don't renormalize, just read the pixels as they are
+	//	default RCM_UNorm does funny scalings
+	FReadSurfaceDataFlags ReadFlags(RCM_MinMax, CubeFace_MAX);
+	
+	FIntRect Rect = InRectOrZero;
+	if (InRectOrZero == FIntRect(0, 0, 0, 0))
+	{
+		Rect = FIntRect(0, 0, TexRT_SizeX, TexRT_SizeY);
+	}
+
+	int64 RectSizeX = Rect.Width();
+	int64 RectSizeY = Rect.Height();
+	if ( ! ensure( Rect.Min.X >= 0 && Rect.Min.Y >= 0 && 
+		Rect.Max.X <= TexRT_SizeX && Rect.Max.Y <= TexRT_SizeY &&
+		RectSizeX >= 0 && RectSizeY >= 0 ) )
+	{
+		return false;
+	}
+	if ( RectSizeX == 0 || RectSizeY == 0 )
+	{
+		return false; // or is that a success to grab zero pixels?
+	}
+
+	if ( ReadFormat == ERawImageFormat::RGBA16F )
+	{
+		// ReadFloat16Pixels does no conversions
+		//	must be used only exactly with FloatRGBA type
+
+		OutImage.Init(RectSizeX,RectSizeY,NumSlices,ERawImageFormat::RGBA16F,EGammaSpace::Linear);
+		
+		TArray<FFloat16Color> Colors;
+		
+		for (int32 SliceIndex = 0; SliceIndex < NumSlices; ++SliceIndex)
+		{
+			ReadFlags.SetCubeFace(  bIsCube ? (ECubeFace)(SliceIndex % 6) : CubeFace_MAX);
+			ReadFlags.SetArrayIndex(bIsCube ? (SliceIndex/6) : SliceIndex);
+
+			if ( ! RenderTarget->ReadFloat16Pixels(Colors,ReadFlags,Rect) )
+			{
+				return false;
+			}
+
+			FImageView ImageSlice = OutImage.GetSlice(SliceIndex);
+			check( ImageSlice.GetImageSizeBytes() == Colors.Num() * sizeof(Colors[0]) );
+			memcpy( ImageSlice.RawData, Colors.GetData(), ImageSlice.GetImageSizeBytes() );
+		}
+	}
+	else if ( ReadFormat == ERawImageFormat::BGRA8 )
+	{
+		// ?? not clear TexRT->IsSRGB is right , see other notes on various issues there
+		//	mainly we are trying to catch the check for whether the _SRGB or non _SRGB BGRA8 format as chosen
+		EGammaSpace GammaSpace = TexRT->IsSRGB() ? EGammaSpace::sRGB : EGammaSpace::Linear;
+		
+		OutImage.Init(RectSizeX,RectSizeY,NumSlices,ERawImageFormat::BGRA8,GammaSpace);
+		
+		// "LinearToGamma" is basically moot; that would only be used if we were reading float pixels to FColor
+		//	but in that case the ReadFormat should have been float, so we won't be here
+		//	gamma conversion will be handled by FImage after the pixel read, not inside RHI
+		ReadFlags.SetLinearToGamma( GammaSpace == EGammaSpace::sRGB );
+
+		TArray<FColor> Colors;
+		
+		for (int32 SliceIndex = 0; SliceIndex < NumSlices; ++SliceIndex)
+		{
+			ReadFlags.SetCubeFace(  bIsCube ? (ECubeFace)(SliceIndex % 6) : CubeFace_MAX);
+			ReadFlags.SetArrayIndex(bIsCube ? (SliceIndex/6) : SliceIndex);
+
+			if ( ! RenderTarget->ReadPixels(Colors,ReadFlags,Rect) )
+			{
+				return false;
+			}
+		
+			FImageView ImageSlice = OutImage.GetSlice(SliceIndex);
+			check( ImageSlice.GetImageSizeBytes() == Colors.Num() * sizeof(Colors[0]) );
+			memcpy( ImageSlice.RawData, Colors.GetData(), ImageSlice.GetImageSizeBytes() );
+		}
+	}
+	else if ( ReadFormat == ERawImageFormat::RGBA32F )
+	{
+		OutImage.Init(RectSizeX,RectSizeY,NumSlices,ERawImageFormat::RGBA32F,EGammaSpace::Linear);
+		
+		TArray<FLinearColor> Colors;
+		
+		for (int32 SliceIndex = 0; SliceIndex < NumSlices; ++SliceIndex)
+		{
+			ReadFlags.SetCubeFace(  bIsCube ? (ECubeFace)(SliceIndex % 6) : CubeFace_MAX);
+			ReadFlags.SetArrayIndex(bIsCube ? (SliceIndex/6) : SliceIndex);
+
+			if ( ! RenderTarget->ReadLinearColorPixels(Colors,ReadFlags,Rect) )
+			{
+				return false;
+			}
+			
+			FImageView ImageSlice = OutImage.GetSlice(SliceIndex);
+			check( ImageSlice.GetImageSizeBytes() == Colors.Num() * sizeof(Colors[0]) );
+			memcpy( ImageSlice.RawData, Colors.GetData(), ImageSlice.GetImageSizeBytes() );
+		}
+	}
+	else
+	{
+		check(0); // unexpected ReadFormat
+	}
+	
 	return true;
 }
 
@@ -408,6 +612,8 @@ bool FImageUtils::GetRenderTargetImage(UTextureRenderTarget2D* TexRT, FImage & I
  */
 void FImageUtils::ImageResize(int32 SrcWidth, int32 SrcHeight, const TArray<FColor> &SrcData, int32 DstWidth, int32 DstHeight, TArray<FColor> &DstData, bool bLinearSpace, bool bForceOpaqueOutput)
 {
+	// * DEPRECATED do not use this, use FImageCore::ResizeImage instead
+
 	DstData.Empty(DstWidth*DstHeight);
 	DstData.AddZeroed(DstWidth*DstHeight);
 
@@ -427,7 +633,8 @@ void FImageUtils::ImageResize(int32 SrcWidth, int32 SrcHeight, const TArray<FCol
  */
 void FImageUtils::ImageResize(int32 SrcWidth, int32 SrcHeight, const TArrayView<const FColor> &SrcData, int32 DstWidth, int32 DstHeight, const TArrayView<FColor> &DstData, bool bLinearSpace, bool bForceOpaqueOutput)
 {
-	//@todo OodleImageResize : deprecate ImageResize and direct users to new function
+	//@todo OodleImageResize : deprecate ImageResize
+	// * DEPRECATED do not use this, use FImageCore::ResizeImage instead
 
 	check(SrcData.Num() >= SrcWidth * SrcHeight);
 	check(DstData.Num() >= DstWidth * DstHeight);
@@ -532,6 +739,8 @@ void FImageUtils::ImageResize(int32 SrcWidth, int32 SrcHeight, const TArrayView<
  */
 void FImageUtils::ImageResize(int32 SrcWidth, int32 SrcHeight, const TArray64<FLinearColor>& SrcData, int32 DstWidth, int32 DstHeight, TArray64<FLinearColor>& DstData)
 {
+	// * DEPRECATED do not use this, use FImageCore::ResizeImage instead
+
 	DstData.Empty(DstWidth * DstHeight);
 	DstData.AddZeroed(DstWidth * DstHeight);
 
@@ -551,7 +760,8 @@ void FImageUtils::ImageResize(int32 SrcWidth, int32 SrcHeight, const TArray64<FL
  */
 void FImageUtils::ImageResize(int32 SrcWidth, int32 SrcHeight, const TArrayView64<const FLinearColor>& SrcData, int32 DstWidth, int32 DstHeight, const TArrayView64<FLinearColor>& DstData)
 {
-	//@todo OodleImageResize : deprecate ImageResize and direct users to new function
+	//@todo OodleImageResize : deprecate ImageResize
+	// * DEPRECATED do not use this, use FImageCore::ResizeImage instead
 
 	check(SrcData.Num() >= SrcWidth * SrcHeight);
 	check(DstData.Num() >= DstWidth * DstHeight);
@@ -634,8 +844,9 @@ UTexture2D* FImageUtils::CreateTexture2D(int32 SrcWidth, int32 SrcHeight, const 
 	uint8* MipData = Tex2D->Source.LockMip(0);
 	for( int32 y=0; y<SrcHeight; y++ )
 	{
-		uint8* DestPtr = &MipData[(SrcHeight - 1 - y) * SrcWidth * sizeof(FColor)];
-		const FColor* SrcPtr = &SrcData[(SrcHeight - 1 - y) * SrcWidth];
+		// when UseAlpha is true, this could/should just be a memcpy of the whole array
+		uint8* DestPtr = &MipData[(int64) y * SrcWidth * sizeof(FColor)];
+		const FColor* SrcPtr = &SrcData[(int64) y * SrcWidth];
 		for( int32 x=0; x<SrcWidth; x++ )
 		{
 			*DestPtr++ = SrcPtr->B;
@@ -668,17 +879,65 @@ UTexture2D* FImageUtils::CreateTexture2D(int32 SrcWidth, int32 SrcHeight, const 
 	}
 
 	Tex2D->VirtualTextureStreaming = InParams.bVirtualTexture;
+	
+	Tex2D->SetModernSettingsForNewOrChangedTexture();
 
 	Tex2D->PostEditChange();
 	return Tex2D;
 #else
-	UE_LOG(LogImageUtils, Fatal,TEXT("ConstructTexture2D not supported on console."));
-	return NULL;
+	UE_LOG(LogImageUtils, Fatal,TEXT("CreateTexture2D not supported without WITH_EDITOR."));
+	return nullptr;
+#endif
+}
+	
+UTexture * FImageUtils::CreateTexture(ETextureClass TextureClass, const FImageView & Image, UObject* Outer, const FString& Name, EObjectFlags Flags, bool DoPostEditChange )
+{
+#if WITH_EDITOR
+	UTexture * Tex;
+
+	switch(TextureClass)
+	{
+	case ETextureClass::TwoD:
+		Tex = NewObject<UTexture2D>(Outer, FName(*Name), Flags);
+		break;
+	case ETextureClass::Cube:
+		Tex = NewObject<UTextureCube>(Outer, FName(*Name), Flags);
+		break;
+	case ETextureClass::Array:
+		Tex = NewObject<UTexture2DArray>(Outer, FName(*Name), Flags);
+		break;
+	case ETextureClass::CubeArray:
+		Tex = NewObject<UTextureCubeArray>(Outer, FName(*Name), Flags);
+		break;
+	case ETextureClass::Volume:
+		Tex = NewObject<UVolumeTexture>(Outer, FName(*Name), Flags);
+		break;
+	default:
+		UE_LOG(LogImageUtils, Fatal,TEXT("CreateTexture invalid TextureClass."));
+		return nullptr;
+	}
+	
+	Tex->Source.Init(Image);
+	
+	Tex->SetModernSettingsForNewOrChangedTexture();
+
+	if ( DoPostEditChange )
+	{
+		Tex->PostEditChange();
+	}
+
+	return Tex;
+#else
+	UE_LOG(LogImageUtils, Fatal,TEXT("CreateTexture not supported without WITH_EDITOR."));
+	return nullptr;
 #endif
 }
 
 void FImageUtils::CropAndScaleImage( int32 SrcWidth, int32 SrcHeight, int32 DesiredWidth, int32 DesiredHeight, const TArray<FColor> &SrcData, TArray<FColor> &DstData  )
 {
+	// DEPRECATED , uses the bad ImageResize
+	//	this is used by the old Thumbnail code, not the new paths
+
 	// Get the aspect ratio, and calculate the dimension of the image to crop
 	float DesiredAspectRatio = (float)DesiredWidth/(float)DesiredHeight;
 
@@ -945,122 +1204,13 @@ UVolumeTexture* FImageUtils::CreateCheckerboardVolumeTexture(FColor ColorOne, FC
 HDR file format helper.
 ------------------------------------------------------------------------------*/
 // DEPRECATED
+// only used for cube maps for GenerateLongLatUnwrap
 // do not use HDR for exports, it is very lossy, use EXR instead for float output
 // if you need HDR, do not use this export code
 // instead use HdrImageWrapper via FImageUtils::CompressImage
 class FHDRExportHelper
 {
 public:
-	/**
-	* Writes HDR format image to an FArchive
-	* @param TexRT - A 2D source render target to read from.
-	* @param Ar - Archive object to write HDR data to.
-	* @return true on successful export.
-	*/
-	bool ExportHDR(UTextureRenderTarget2D* TexRT, FArchive& Ar)
-	{
-		check(TexRT != nullptr);
-		FRenderTarget* RenderTarget = TexRT->GameThread_GetRenderTargetResource();
-		Size = RenderTarget->GetSizeXY();
-		Format = TexRT->GetFormat();
-
-		TArray64<uint8> RawData;
-		bool bReadSuccess = FImageUtils::GetRawData(TexRT, RawData);
-		if (bReadSuccess)
-		{
-			WriteHDRImage(RawData, Ar);
-			return true;
-		}
-		return false;
-	}
-
-	/**
-	* Writes HDR format image to an FArchive
-	* @param TexRT - A 2D source render target to read from.
-	* @param Ar - Archive object to write HDR data to.
-	* @return true on successful export.
-	*/
-	bool ExportHDR(UTexture2D* Texture, FArchive& Ar)
-	{
-		check(Texture != nullptr);
-		bool bReadSuccess = true;
-		TArray64<uint8> RawData;
-
-#if WITH_EDITORONLY_DATA
-		Size = FIntPoint(Texture->Source.GetSizeX(), Texture->Source.GetSizeY());
-
-		bReadSuccess = Texture->Source.GetMipData(RawData, 0);
-		const ETextureSourceFormat NewFormat = Texture->Source.GetFormat();
-
-		// DEPRECATED
-		// not a general purpose HDR exporter
-		// can't write F32 or BGRE8
-		// do not use this except for longlat cubemaps
-		if (NewFormat == TSF_BGRA8)
-		{
-			Format = PF_B8G8R8A8;
-		}
-		else if (NewFormat == TSF_RGBA16F)
-		{
-			Format = PF_FloatRGBA;
-		}
-		else
-		{
-			bReadSuccess = false;			
-			FMessageLog("ImageUtils").Warning(LOCTEXT("ExportHDRUnsupportedSourceTextureFormat", "Unsupported source texture format provided."));
-		}
-#else
-		TArray<uint8*> RawData2;
-		Size = Texture->GetImportedSize();
-		RawData2.AddZeroed(Texture->GetNumMips());
-		// this is PlatformData GetMipData , not Source :
-		Texture->GetMipData(0, (void**)RawData2.GetData());
-		const EPixelFormat NewFormat = Texture->GetPixelFormat();
-
-		if (Texture->GetPlatformData()->Mips.Num() == 0)
-		{
-			bReadSuccess = false;
-			FMessageLog("ImageUtils").Warning(FText::Format(LOCTEXT("ExportHDRFailedToReadMipData", "Failed to read Mip Data in: '{0}'"), FText::FromString(Texture->GetName())));
-		}
-
-		if (NewFormat == PF_B8G8R8A8)
-		{
-			Format = PF_B8G8R8A8;
-		}
-		else if (NewFormat == PF_FloatRGBA)
-		{
-			Format = PF_FloatRGBA;
-		}
-		else
-		{
-			bReadSuccess = false;
-			FMessageLog("ImageUtils").Warning(LOCTEXT("ExportHDRUnsupportedTextureFormat", "Unsupported texture format provided."));
-		}
-
-		//Put first mip data into usable array
-		if (bReadSuccess)
-		{
-			const uint32 TotalSize = Texture->GetPlatformData()->Mips[0].BulkData.GetBulkDataSize();
-			RawData.AddZeroed(TotalSize);
-			FMemory::Memcpy(RawData.GetData(), RawData2[0], TotalSize);
-		}
-
-		//Deallocate the mip data
-		for (auto MipData : RawData2)
-		{
-			FMemory::Free(MipData);
-		}
-
-#endif // WITH_EDITORONLY_DATA
-
-		if (bReadSuccess)
-		{
-			WriteHDRImage(RawData, Ar);
-			return true;
-		}
-
-		return false;
-	}
 
 	/**
 	* Writes HDR format image to an FArchive
@@ -1243,8 +1393,6 @@ private:
 
 bool FImageUtils::ExportRenderTarget2DAsHDR(UTextureRenderTarget2D* TexRT, FArchive& Ar)
 {
-	UE_LOG(LogImageUtils, Warning, TEXT("HDR file format is very lossy, use EXR or PNG instead.") );
-
 	FImage Image;
 	if ( ! GetRenderTargetImage(TexRT,Image) )
 	{
@@ -1300,6 +1448,27 @@ bool FImageUtils::ExportRenderTarget2DAsEXR(UTextureRenderTarget2D* TexRT, FArch
 	return true;
 }
 
+bool FImageUtils::ExportTexture2DAsHDR(UTexture2D* Tex, FArchive& Ar)
+{
+	UE_LOG(LogImageUtils, Warning, TEXT("HDR file format is very lossy, use EXR or PNG instead.") );
+	
+	FImage Image;
+	if ( ! GetTexture2DSourceImage(Tex,Image) )
+	{
+		return false;
+	}
+
+	TArray64<uint8> CompressedData;
+	if ( ! CompressImage(CompressedData,TEXT("HDR"),Image) )
+	{
+		return false;
+	}
+
+	Ar.Serialize((void*)CompressedData.GetData(), CompressedData.GetAllocatedSize());
+
+	return true;
+}
+
 // if Texture source is available, get it as an FImage
 bool FImageUtils::GetTexture2DSourceImage(UTexture2D* Texture, FImage & OutImage)
 {
@@ -1331,28 +1500,13 @@ bool FImageUtils::GetTexture2DSourceImage(UTexture2D* Texture, FImage & OutImage
 #endif
 }
 
-bool FImageUtils::ExportTexture2DAsHDR(UTexture2D* TexRT, FArchive& Ar)
-{
-	UE_LOG(LogImageUtils, Warning, TEXT("HDR file format is very lossy, use EXR or PNG instead.") );
-
-	// could use GetTexture2DSourceImage
-	// then CompressImage
-	// for arbitrary format exports
-	// but just leave it alone for now
-
-	// this is only used by UKismetRenderingLibrary::ExportTexture2D
-	//	so we should take filename as input to auto-detect format
-
-	FHDRExportHelper Exporter;
-	return Exporter.ExportHDR(TexRT, Ar);
-}
-
 UTexture2D* FImageUtils::ImportFileAsTexture2D(const FString& Filename)
 {
 	UTexture2D* NewTexture = nullptr;
 	TArray64<uint8> Buffer;
 	if (FFileHelper::LoadFileToArray(Buffer, *Filename))
 	{
+		// note this make a Transient / PlatformData only Texture (no TextureSource)
 		NewTexture = FImageUtils::ImportBufferAsTexture2D(Buffer);
 
 		if(!NewTexture)
@@ -1377,6 +1531,7 @@ UTexture2D* FImageUtils::ImportBufferAsTexture2D(TArrayView64<const uint8> Buffe
 		return nullptr;
 	}
 
+	// note this make a Transient / PlatformData only Texture (no TextureSource)
 	return CreateTexture2DFromImage(Image);
 }
 
@@ -1399,6 +1554,7 @@ UTexture2D* FImageUtils::CreateTexture2DFromImage(const FImageView & Image)
 	int64 MipDataSize = NewTexture->GetPlatformData()->Mips[0].BulkData.GetBulkDataSize();
 
 	FImageView MipImage(MipData,Image.SizeX,Image.SizeY,1,PixelFormatRawFormat,Image.GammaSpace);
+	check( MipImage.GetImageSizeBytes() <= MipDataSize ); // is it exactly == ?
 
 	// copy into texture and convert if necessary :
 	FImageCore::CopyImage(Image,MipImage);

@@ -28,7 +28,8 @@ namespace UnrealBuildTool.Rules
 					"MLDeformerFrameworkEditor",
 					"NeuralMorphModel",
 					"PropertyEditor",
-					"ToolWidgets"
+					"ToolWidgets",
+					"DeveloperSettings"
 				}
 			);
 

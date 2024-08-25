@@ -16,18 +16,20 @@
 #include "NiagaraObjectSelection.h"
 #include "NiagaraOverviewGraphNodeFactory.h"
 #include "NiagaraOverviewNode.h"
+#include "NiagaraSettings.h"
 #include "NiagaraSystem.h"
 #include "NiagaraSystemEditorData.h"
 #include "NiagaraStackEditorData.h"
-#include "SNiagaraAssetPickerList.h"
 #include "SNiagaraOverviewGraphTitleBar.h"
 #include "SNiagaraStack.h"
 #include "ScopedTransaction.h"
+#include "Interfaces/IMainFrameModule.h"
 #include "Templates/SharedPointer.h"
 #include "ViewModels/NiagaraEmitterHandleViewModel.h"
 #include "ViewModels/NiagaraOverviewGraphViewModel.h"
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "Widgets/SItemSelector.h"
+#include "Widgets/AssetBrowser/SNiagaraAssetBrowser.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraOverviewGraph"
 
@@ -213,46 +215,12 @@ void SNiagaraOverviewGraph::PreClose()
 }
 
 void SNiagaraOverviewGraph::OpenAddEmitterMenu()
-{	
-	FNiagaraAssetPickerListViewOptions ViewOptions;
-	ViewOptions.SetCategorizeUserDefinedCategory(true);
-	ViewOptions.SetCategorizeLibraryAssets(true);
+{
+	IMainFrameModule& MainFrame = FModuleManager::LoadModuleChecked<IMainFrameModule>("MainFrame");
+	TSharedPtr<SWindow>	ParentWindow = MainFrame.GetParentWindow();
 
-	SNiagaraTemplateTabBox::FNiagaraTemplateTabOptions TabOptions;
-	TabOptions.ChangeTabState(ENiagaraScriptTemplateSpecification::Template, true);
-	TabOptions.ChangeTabState(ENiagaraScriptTemplateSpecification::None, true);
-	TabOptions.ChangeTabState(ENiagaraScriptTemplateSpecification::Behavior, true);	
-
-	TSharedPtr<SNiagaraAssetPickerList> AssetPickerList = SNew(SNiagaraAssetPickerList, UNiagaraEmitter::StaticClass())
-	.ClickActivateMode(EItemSelectorClickActivateMode::SingleClick)
-	.ViewOptions(ViewOptions)
-	.TabOptions(TabOptions)
-	.OnTemplateAssetActivated_Lambda([this](const FAssetData& AssetData) {
-		TSharedPtr<FNiagaraEmitterHandleViewModel> EmitterHandleViewModel = ViewModel->GetSystemViewModel()->AddEmitterFromAssetData(AssetData);
-		FSlateApplication::Get().DismissAllMenus();
-	});
-    
-	TSharedRef<SWidget> EmitterAddSubMenu =
-		SNew(SBorder)
-		.BorderImage(FNiagaraEditorStyle::Get().GetBrush("GraphActionMenu.Background"))
-		.Padding(0.0f)
-		[
-			SNew(SBox)
-			.WidthOverride(450.0f)
-			.HeightOverride(500.0f)
-			[
-				AssetPickerList.ToSharedRef()
-			]
-		];
-	
-	FSlateApplication::Get().PushMenu(SharedThis(this), FWidgetPath(), EmitterAddSubMenu, FSlateApplication::Get().GetCursorPos(), FPopupTransitionEffect::None);
-
-	// we need to set the keyboard focus for next tick instead of immediately
-	// if we open the menu via shortcut, we'd type the shortcut key into the search box
-	GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateLambda([AssetPickerList]()
-	{
-		FSlateApplication::Get().SetKeyboardFocus(AssetPickerList->GetSearchBox());
-	}));
+	TSharedRef<SWindow> AddEmitterWindow = SNew(SNiagaraAddEmitterToSystemWindow, ViewModel->GetSystemViewModel());
+	FSlateApplication::Get().AddModalWindow(AddEmitterWindow, ParentWindow);
 }
 
 bool SNiagaraOverviewGraph::CanAddEmitters() const
@@ -274,6 +242,14 @@ FActionMenuContent SNiagaraOverviewGraph::OnCreateGraphActionMenu(UEdGraph* InGr
 				LOCTEXT("AddEmitterToolTip", "Adds an empty emitter without any modules or renderers."),
 				FSlateIcon(),
 				FExecuteAction::CreateSP(this, &SNiagaraOverviewGraph::OnCreateEmptyEmitter));
+			if (GetDefault<UNiagaraSettings>()->bStatelessEmittersEnabled)
+			{
+				MenuBuilder.AddMenuEntry(
+					LOCTEXT("AddStatelessEmitter", "Add lightweight emitter"),
+					LOCTEXT("AddStatelessEmitterToolTip", "Adds a lightweight emitter without any modules or renderers."),
+					FSlateIcon(),
+					FExecuteAction::CreateSP(this, &SNiagaraOverviewGraph::OnCreateStatelessEmitter));
+			}
 			MenuBuilder.AddMenuEntry(
 				LOCTEXT("CommentsLabel", "Add Comment"),
 				LOCTEXT("AddCommentBoxToolTip", "Add a comment box"),
@@ -311,6 +287,11 @@ FActionMenuContent SNiagaraOverviewGraph::OnCreateGraphActionMenu(UEdGraph* InGr
 void SNiagaraOverviewGraph::OnCreateEmptyEmitter()
 {
 	ViewModel->GetSystemViewModel()->AddEmptyEmitter();
+}
+
+void SNiagaraOverviewGraph::OnCreateStatelessEmitter()
+{
+	ViewModel->GetSystemViewModel()->AddStatelessEmitter();
 }
 
 void SNiagaraOverviewGraph::OnCreateComment()

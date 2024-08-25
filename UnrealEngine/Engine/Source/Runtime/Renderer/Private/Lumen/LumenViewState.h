@@ -45,8 +45,6 @@ public:
 	TRefCountPtr<IPooledRenderTarget> RoughSpecularIndirectHistoryRT; 
 	TRefCountPtr<IPooledRenderTarget> NumFramesAccumulatedRT;
 	TRefCountPtr<IPooledRenderTarget> FastUpdateModeHistoryRT;
-	TRefCountPtr<IPooledRenderTarget> NormalHistoryRT;
-	TRefCountPtr<IPooledRenderTarget> BSDFTileHistoryRT;
 	FIntRect ProbeHistoryViewRect;
 	FVector4f ProbeHistoryScreenPositionScaleBias;
 	TRefCountPtr<IPooledRenderTarget> HistoryScreenProbeSceneDepth;
@@ -56,9 +54,7 @@ public:
 	FLumenGatherCvarState LumenGatherCvars;
 	FIntPoint HistorySceneTexturesExtent;
 	FIntPoint HistoryEffectiveResolution;
-	FIntPoint HistoryOverflowTileOffset;
-	FIntPoint HistoryOverflowTileCount;
-	uint32 HistoryStrataMaxBSDFCount;
+	uint32 HistorySubstrateMaxClosureCount;
 
 	FScreenProbeGatherTemporalState()
 	{
@@ -68,9 +64,7 @@ public:
 		ProbeHistoryScreenPositionScaleBias = FVector4f(0, 0, 0, 0);
 		HistorySceneTexturesExtent = FIntPoint(0,0);
 		HistoryEffectiveResolution = FIntPoint(0,0);
-		HistoryOverflowTileOffset = FIntPoint(0, 0);
-		HistoryOverflowTileCount = FIntPoint(0, 0);
-		HistoryStrataMaxBSDFCount = 0;
+		HistorySubstrateMaxClosureCount = 0;
 	}
 
 	void SafeRelease()
@@ -80,8 +74,6 @@ public:
 		RoughSpecularIndirectHistoryRT.SafeRelease();
 		NumFramesAccumulatedRT.SafeRelease();
 		FastUpdateModeHistoryRT.SafeRelease();
-		NormalHistoryRT.SafeRelease();
-		BSDFTileHistoryRT.SafeRelease();
 		HistoryScreenProbeSceneDepth.SafeRelease();
 		HistoryScreenProbeTranslatedWorldPosition.SafeRelease();
 		ProbeHistoryScreenProbeRadiance.SafeRelease();
@@ -98,8 +90,6 @@ public:
 		TRANSFER_LUMEN_RESOURCE(RoughSpecularIndirectHistoryRT);
 		TRANSFER_LUMEN_RESOURCE(NumFramesAccumulatedRT);
 		TRANSFER_LUMEN_RESOURCE(FastUpdateModeHistoryRT);
-		TRANSFER_LUMEN_RESOURCE(NormalHistoryRT);
-		TRANSFER_LUMEN_RESOURCE(BSDFTileHistoryRT);
 		TRANSFER_LUMEN_RESOURCE(HistoryScreenProbeSceneDepth);
 		TRANSFER_LUMEN_RESOURCE(HistoryScreenProbeTranslatedWorldPosition);
 		TRANSFER_LUMEN_RESOURCE(ProbeHistoryScreenProbeRadiance);
@@ -112,6 +102,82 @@ public:
 	uint64 GetGPUSizeBytes(bool bLogSizes) const;
 };
 
+class FReSTIRTemporalResamplingState
+{
+public:
+
+	FIntRect HistoryViewRect;
+	FVector4f HistoryScreenPositionScaleBias;
+	FIntPoint HistoryReservoirViewSize;
+	FIntPoint HistoryReservoirBufferSize;
+	TRefCountPtr<IPooledRenderTarget> TemporalReservoirRayDirectionRT;
+	TRefCountPtr<IPooledRenderTarget> TemporalReservoirTraceRadianceRT;
+	TRefCountPtr<IPooledRenderTarget> TemporalReservoirTraceHitDistanceRT;
+	TRefCountPtr<IPooledRenderTarget> TemporalReservoirTraceHitNormalRT;
+	TRefCountPtr<IPooledRenderTarget> TemporalReservoirWeightsRT;
+	TRefCountPtr<IPooledRenderTarget> DownsampledDepthHistoryRT;
+	TRefCountPtr<IPooledRenderTarget> DownsampledNormalHistoryRT;
+
+	FReSTIRTemporalResamplingState()
+	{
+		HistoryViewRect = FIntRect(0, 0, 0, 0);
+		HistoryScreenPositionScaleBias = FVector4f(0, 0, 0, 0);
+		HistoryReservoirViewSize = FIntPoint(0, 0);
+		HistoryReservoirBufferSize = FIntPoint(0, 0);
+	}
+
+	void SafeRelease()
+	{
+		TemporalReservoirRayDirectionRT.SafeRelease();
+		TemporalReservoirTraceRadianceRT.SafeRelease();
+		TemporalReservoirTraceHitDistanceRT.SafeRelease();
+		TemporalReservoirTraceHitNormalRT.SafeRelease();
+		TemporalReservoirWeightsRT.SafeRelease();
+		DownsampledDepthHistoryRT.SafeRelease();
+		DownsampledNormalHistoryRT.SafeRelease();
+	}
+};
+
+class FReSTIRTemporalAccumulationState
+{
+public:
+	FIntRect DiffuseIndirectHistoryViewRect;
+	FVector4f DiffuseIndirectHistoryScreenPositionScaleBias;
+	TRefCountPtr<IPooledRenderTarget> DiffuseIndirectHistoryRT;
+	TRefCountPtr<IPooledRenderTarget> RoughSpecularIndirectHistoryRT;
+	TRefCountPtr<IPooledRenderTarget> ResolveVarianceHistoryRT;
+	TRefCountPtr<IPooledRenderTarget> NumFramesAccumulatedRT;
+	FIntPoint HistorySceneTexturesExtent;
+	FIntPoint HistoryEffectiveResolution;
+
+	FReSTIRTemporalAccumulationState()
+	{
+		DiffuseIndirectHistoryViewRect = FIntRect(0, 0, 0, 0);
+		DiffuseIndirectHistoryScreenPositionScaleBias = FVector4f(0, 0, 0, 0);
+	}
+
+	void SafeRelease()
+	{
+		DiffuseIndirectHistoryRT.SafeRelease();
+		RoughSpecularIndirectHistoryRT.SafeRelease();
+		ResolveVarianceHistoryRT.SafeRelease();
+		NumFramesAccumulatedRT.SafeRelease();
+	}
+};
+
+class FReSTIRGatherTemporalState
+{
+public:
+
+	FReSTIRTemporalResamplingState TemporalResamplingState;
+	FReSTIRTemporalAccumulationState TemporalAccumulationState;
+
+	void SafeRelease()
+	{
+		TemporalResamplingState.SafeRelease();
+		TemporalAccumulationState.SafeRelease();
+	}
+};
 
 class FReflectionTemporalState
 {
@@ -121,14 +187,11 @@ public:
 	FVector4f HistoryScreenPositionScaleBias;
 	FIntPoint HistorySceneTexturesExtent;
 	FIntPoint HistoryEffectiveResolution;
-	FIntPoint HistoryOverflowTileOffset;
-	FIntPoint HistoryOverflowTileCount;
-	uint32 HistoryStrataMaxBSDFCount;
+	uint32 HistorySubstrateMaxClosureCount;
 
 	TRefCountPtr<IPooledRenderTarget> SpecularIndirectHistoryRT;
 	TRefCountPtr<IPooledRenderTarget> NumFramesAccumulatedRT;
 	TRefCountPtr<IPooledRenderTarget> ResolveVarianceHistoryRT;
-	TRefCountPtr<IPooledRenderTarget> BSDFTileHistoryRT;
 	TRefCountPtr<IPooledRenderTarget> DepthHistoryRT;
 	TRefCountPtr<IPooledRenderTarget> NormalHistoryRT;
 
@@ -139,9 +202,7 @@ public:
 		HistoryScreenPositionScaleBias = FVector4f(0, 0, 0, 0);
 		HistorySceneTexturesExtent = FIntPoint(0,0);
 		HistoryEffectiveResolution = FIntPoint(0,0);
-		HistoryOverflowTileOffset = FIntPoint(0, 0);
-		HistoryOverflowTileCount = FIntPoint(0,0);
-		HistoryStrataMaxBSDFCount = 0;
+		HistorySubstrateMaxClosureCount = 0;
 	}
 
 	void SafeRelease()
@@ -149,7 +210,6 @@ public:
 		SpecularIndirectHistoryRT.SafeRelease();
 		NumFramesAccumulatedRT.SafeRelease();
 		ResolveVarianceHistoryRT.SafeRelease();
-		BSDFTileHistoryRT.SafeRelease();
 		DepthHistoryRT.SafeRelease();
 		NormalHistoryRT.SafeRelease();
 	}
@@ -163,7 +223,6 @@ public:
 		TRANSFER_LUMEN_RESOURCE(SpecularIndirectHistoryRT);
 		TRANSFER_LUMEN_RESOURCE(NumFramesAccumulatedRT);
 		TRANSFER_LUMEN_RESOURCE(ResolveVarianceHistoryRT);
-		TRANSFER_LUMEN_RESOURCE(BSDFTileHistoryRT);
 		TRANSFER_LUMEN_RESOURCE(DepthHistoryRT);
 		TRANSFER_LUMEN_RESOURCE(NormalHistoryRT);
 
@@ -272,9 +331,11 @@ class FLumenViewState
 public:
 
 	FScreenProbeGatherTemporalState ScreenProbeGatherState;
+	FReSTIRGatherTemporalState ReSTIRGatherState;
 	FReflectionTemporalState ReflectionState;
 	FReflectionTemporalState TranslucentReflectionState;
 	TRefCountPtr<IPooledRenderTarget> DepthHistoryRT;
+	TRefCountPtr<IPooledRenderTarget> NormalHistoryRT;
 
 	// Translucency
 	TRefCountPtr<IPooledRenderTarget> TranslucencyVolume0;
@@ -286,12 +347,17 @@ public:
 	void SafeRelease()
 	{
 		ScreenProbeGatherState.SafeRelease();
+		ReSTIRGatherState.SafeRelease();
 		ReflectionState.SafeRelease();
 		TranslucentReflectionState.SafeRelease();
 		DepthHistoryRT.SafeRelease();
+		NormalHistoryRT.SafeRelease();
 
 		TranslucencyVolume0.SafeRelease();
 		TranslucencyVolume1.SafeRelease();
+
+		RadianceCacheState.ReleaseTextures();
+		TranslucencyVolumeRadianceCacheState.ReleaseTextures();
 	}
 
 #if WITH_MGPU

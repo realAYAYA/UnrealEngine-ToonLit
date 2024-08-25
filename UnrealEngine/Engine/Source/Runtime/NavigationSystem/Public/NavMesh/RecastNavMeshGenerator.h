@@ -1,10 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once 
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "Stats/Stats.h"
 #include "AI/Navigation/NavigationTypes.h"
 #include "AI/Navigation/NavigationInvokerPriority.h"
+#include "AI/Navigation/NavigationRelevantData.h"
 #include "EngineDefines.h"
 #include "AI/NavigationModifier.h"
 #include "NavigationOctree.h"
@@ -31,7 +34,6 @@ class FNavMeshBuildContext;
 class FRecastNavMeshGenerator;
 struct FTileRasterizationContext;
 struct BuildContext;
-struct FNavigationRelevantData;
 struct dtTileCacheLayer;
 struct FKAggregateGeom;
 struct FTileCacheCompressor;
@@ -81,7 +83,11 @@ struct FRecastBuildConfig : public rcConfig
 	int32 AgentIndex;
 	/** Resolution level */ 
 	ENavigationDataResolution TileResolution;
-
+	/** Ledge filtering mode */
+	ENavigationLedgeSlopeFilterMode LedgeSlopeFilterMode;
+	/** Is the config completely setup */
+	bool bIsTileSetupConfigCompleted = false;
+	
 	FRecastBuildConfig()
 	{
 		Reset();
@@ -101,9 +107,14 @@ struct FRecastBuildConfig : public rcConfig
 		MaxPolysPerTile = -1;
 		AgentIndex = 0;
 		TileResolution = ENavigationDataResolution::Default;
+		LedgeSlopeFilterMode = ENavigationLedgeSlopeFilterMode::Recast;
+		bIsTileSetupConfigCompleted = false;
 	}
 
 	rcReal GetTileSizeUU() const { return tileSize * cs; }
+
+	/** Detects if we are using big cell size values in relation to the walkableClimb and walkableSlopeAngle. */
+	bool IsUsingCoarseCellSize() const;
 };
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
@@ -176,6 +187,8 @@ struct FRecastAreaNavModifierElement
 	// When empty, areas are in world space
 	TArray<FTransform>	PerInstanceTransform;
 
+	ENavigationDataResolution NavMeshResolution = ENavigationDataResolution::Invalid;
+	
 	bool bMaskFillCollisionUnderneathForNavmesh = false;
 };
 
@@ -186,6 +199,21 @@ struct FRcTileBox
 	FRcTileBox(const FBox& UnrealBounds, const FVector& RcNavMeshOrigin, const FVector::FReal TileSizeInWorldUnits)
 	{
 		check(TileSizeInWorldUnits > 0);
+		checkf(!RcNavMeshOrigin.ContainsNaN(), TEXT("%hs: RcNavMeshOrigin ContainsNaN"), __FUNCTION__);
+		checkf(!UnrealBounds.ContainsNaN(), TEXT("%hs: UnrealBounds ContainsNaN"), __FUNCTION__);
+		
+		if (!ensureMsgf(UnrealBounds.IsValid, TEXT("%hs: UnrealBounds !IsValid"), __FUNCTION__))
+		{
+			// This is a bug but we'll handle it as well as we can.
+
+			// Invalid bounds, set to empty range.
+			// Max is set to -1, because the range is inclusive, used like: for (int32 y = TileBox.YMin; y <= TileBox.YMax; ++y)
+			XMin = 0;
+			XMax = -1;
+			YMin = 0;
+			YMax = -1;
+			return;
+		}
 
 		auto CalcMaxCoordExclusive = [](const FVector::FReal MaxAsFloat, const int32 MinCoord) -> int32
 		{
@@ -364,6 +392,9 @@ protected:
 	NAVIGATIONSYSTEM_API bool GenerateTile();
 
 	NAVIGATIONSYSTEM_API void Setup(const FRecastNavMeshGenerator& ParentGenerator, const TArray<FBox>& DirtyAreas);
+
+	/** Find highest navmesh resolution from Modifiers and use it to update the tile configuration. */
+	void SetupTileConfigFromHighestResolution(const FRecastNavMeshGenerator& ParentGenerator);
 	
 	/** Gather geometry */
 	NAVIGATIONSYSTEM_API virtual void GatherGeometry(const FRecastNavMeshGenerator& ParentGenerator, bool bGeometryChanged);
@@ -757,15 +788,60 @@ public:
 	NAVIGATIONSYSTEM_API virtual void GrabDebugSnapshot(struct FVisualLogEntry* Snapshot, const FBox& BoundingBox, const FName& CategoryName, ELogVerbosity::Type Verbosity) const override;
 #endif
 
-	/** 
-	 *	@param Actor is a reference to make callee responsible for assuring it's valid
-	 */
-	static NAVIGATIONSYSTEM_API void ExportComponentGeometry(UActorComponent* Component, FNavigationRelevantData& Data);
-	static NAVIGATIONSYSTEM_API void ExportVertexSoupGeometry(const TArray<FVector>& Verts, FNavigationRelevantData& Data);
+	UE_DEPRECATED(5.4, "Use ExportNavRelevantObjectGeometry")
+	static NAVIGATIONSYSTEM_API void ExportComponentGeometry(UActorComponent* InOutComponent, FNavigationRelevantData& OutData);
 
-	static NAVIGATIONSYSTEM_API void ExportRigidBodyGeometry(UBodySetup& BodySetup, TNavStatArray<FVector>& OutVertexBuffer, TNavStatArray<int32>& OutIndexBuffer, const FTransform& LocalToWorld = FTransform::Identity);
-	static NAVIGATIONSYSTEM_API void ExportRigidBodyGeometry(UBodySetup& BodySetup, TNavStatArray<FVector>& OutTriMeshVertexBuffer, TNavStatArray<int32>& OutTriMeshIndexBuffer, TNavStatArray<FVector>& OutConvexVertexBuffer, TNavStatArray<int32>& OutConvexIndexBuffer, TNavStatArray<int32>& OutShapeBuffer, const FTransform& LocalToWorld = FTransform::Identity);
-	static NAVIGATIONSYSTEM_API void ExportAggregatedGeometry(const FKAggregateGeom& AggGeom, TNavStatArray<FVector>& OutConvexVertexBuffer, TNavStatArray<int32>& OutConvexIndexBuffer, TNavStatArray<int32>& OutShapeBuffer, const FTransform& LocalToWorld = FTransform::Identity);
+	UE_DEPRECATED(5.4, "Use ExportRigidBodyGeometry that takes bounds as parameter.")
+	static NAVIGATIONSYSTEM_API void ExportRigidBodyGeometry(
+		UBodySetup& InOutBodySetup,
+		TNavStatArray<FVector>& OutVertexBuffer,
+		TNavStatArray<int32>& OutIndexBuffer,
+		const FTransform& LocalToWorld = FTransform::Identity);
+
+	UE_DEPRECATED(5.4, "Use ExportRigidBodyGeometry that takes bounds as parameter.")
+	static NAVIGATIONSYSTEM_API void ExportRigidBodyGeometry(
+		UBodySetup& InOutBodySetup,
+		TNavStatArray<FVector>& OutTriMeshVertexBuffer,
+		TNavStatArray<int32>& OutTriMeshIndexBuffer,
+		TNavStatArray<FVector>& OutConvexVertexBuffer,
+		TNavStatArray<int32>& OutConvexIndexBuffer,
+		TNavStatArray<int32>& OutShapeBuffer,
+		const FTransform& LocalToWorld = FTransform::Identity);
+
+	UE_DEPRECATED(5.4, "Use ExportAggregatedGeometry that takes bounds as parameter.")
+	static NAVIGATIONSYSTEM_API void ExportAggregatedGeometry(
+		const FKAggregateGeom& AggGeom,
+		TNavStatArray<FVector>& OutConvexVertexBuffer,
+		TNavStatArray<int32>& OutConvexIndexBuffer,
+		TNavStatArray<int32>& OutShapeBuffer,
+		const FTransform& LocalToWorld = FTransform::Identity);
+
+	static NAVIGATIONSYSTEM_API void ExportNavRelevantObjectGeometry(INavRelevantInterface& InOutNavRelevantInterface, FNavigationRelevantData& OutData);
+	static NAVIGATIONSYSTEM_API void ExportVertexSoupGeometry(const TArray<FVector>& InVerts, FNavigationRelevantData& OutData);
+
+	static NAVIGATIONSYSTEM_API void ExportRigidBodyGeometry(UBodySetup& InOutBodySetup,
+		TNavStatArray<FVector>& OutVertexBuffer,
+		TNavStatArray<int32>& OutIndexBuffer,
+		FBox& OutBounds,
+		const FTransform& LocalToWorld = FTransform::Identity);
+
+	static NAVIGATIONSYSTEM_API void ExportRigidBodyGeometry(
+		UBodySetup& InOutBodySetup,
+		TNavStatArray<FVector>& OutTriMeshVertexBuffer,
+		TNavStatArray<int32>& OutTriMeshIndexBuffer,
+		TNavStatArray<FVector>& OutConvexVertexBuffer,
+		TNavStatArray<int32>& OutConvexIndexBuffer,
+		TNavStatArray<int32>& OutShapeBuffer,
+		FBox& OutBounds,
+		const FTransform& LocalToWorld = FTransform::Identity);
+
+	static NAVIGATIONSYSTEM_API void ExportAggregatedGeometry(
+		const FKAggregateGeom& AggGeom,
+		TNavStatArray<FVector>& OutConvexVertexBuffer,
+		TNavStatArray<int32>& OutConvexIndexBuffer,
+		TNavStatArray<int32>& OutShapeBuffer,
+		FBox& OutBounds,
+		const FTransform& LocalToWorld = FTransform::Identity);
 
 #if UE_ENABLE_DEBUG_DRAWING
 	/** Converts data encoded in EncodedData.CollisionData to FNavDebugMeshData format */
@@ -873,8 +949,11 @@ public:
 	UE_DEPRECATED(5.1, "Use RemoveTileLayersAndGetUpdatedTiles instead")
 	NAVIGATIONSYSTEM_API TArray<uint32> RemoveTileLayers(const int32 TileX, const int32 TileY, TMap<int32, dtPolyRef>* OldLayerTileIdMap = nullptr);
 
-	/** Removes all tiles at specified grid location */
+	/** Removes all tiles at specified grid location and returns the updated FNavTileRef */
 	NAVIGATIONSYSTEM_API TArray<FNavTileRef> RemoveTileLayersAndGetUpdatedTiles(const int32 TileX, const int32 TileY, TMap<int32, dtPolyRef>* OldLayerTileIdMap = nullptr);
+
+	/** Removes all tiles at specified grid location */
+	NAVIGATIONSYSTEM_API void RemoveTileLayers(dtNavMesh* DetourMesh, const int32 TileX, const int32 TileY);
 
 	NAVIGATIONSYSTEM_API void RemoveTiles(const TArray<FIntPoint>& Tiles);
 
@@ -907,7 +986,7 @@ protected:
 	UE_DEPRECATED(5.3, "Use ConstructTileGeneratorImpl instead.")
 	TSharedRef<T> ConstuctTileGeneratorImpl(const FIntPoint& Coord, const TArray<FBox>& DirtyAreas, const double PendingTileCreationTime = 0.)
 	{
-		ConstructTileGeneratorImpl<T>(Coord, DirtyAreas, PendingTileCreationTime);
+		return ConstructTileGeneratorImpl<T>(Coord, DirtyAreas, PendingTileCreationTime);
 	}
 	
 	template <typename T>
@@ -939,8 +1018,13 @@ protected:
 		bool bTileWasAlreadyAdded = false;
 	};
 
-	/** Used internally, when LogNavigationDirtyArea is VeryVerbose, to log the number of tiles a dirty area is requesting. */
+	UE_DEPRECATED(5.4, "Use new version with ARecastNavMesh owner instead.")
 	NAVIGATIONSYSTEM_API void LogDirtyAreas(const TMap<FPendingTileElement, TArray<FNavigationDirtyAreaPerTileDebugInformation>>& DirtyAreasDebuggingInformation) const; 
+	
+	/** Used internally, when LogNavigationDirtyArea is VeryVerbose, to log the number of tiles a dirty area is requesting. */
+	NAVIGATIONSYSTEM_API void LogDirtyAreas(const UObject& OwnerNav,
+		const TMap<FPendingTileElement, TArray<FNavigationDirtyAreaPerTileDebugInformation>>& DirtyAreasDebuggingInformation) const;
+
 #endif
 	
 protected:
@@ -981,8 +1065,13 @@ protected:
 	/** List of tiles that were recently regenerated */
 	TNavStatArray<FTileTimestamp> RecentlyBuiltTiles;
 #endif// WITH_EDITOR
-	
+
+#if WITH_EDITORONLY_DATA	
+	UE_DEPRECATED(5.4, "Use ActiveTileSet instead.")
 	TArray<FIntPoint> ActiveTiles;
+#endif // WITH_EDITORONLY_DATA
+	
+	TSet<FIntPoint> ActiveTileSet;
 
 	/** */
 	FRecastNavMeshCachedData AdditionalCachedData;

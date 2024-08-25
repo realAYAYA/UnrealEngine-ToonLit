@@ -50,6 +50,8 @@ void UZoneGraphSubsystem::Deinitialize()
 #endif
 
 	bInitialized = false;
+
+	Super::Deinitialize();
 }
 
 void UZoneGraphSubsystem::Tick(float DeltaTime)
@@ -102,7 +104,7 @@ FZoneGraphDataHandle UZoneGraphSubsystem::RegisterZoneGraphData(AZoneGraphData& 
 		return FZoneGraphDataHandle();
 	}
 
-	const int32 Index = (ZoneGraphDataFreeList.Num() > 0) ? ZoneGraphDataFreeList.Pop(/*bAllowShrinking=*/ false) : RegisteredZoneGraphData.AddDefaulted();
+	const int32 Index = (ZoneGraphDataFreeList.Num() > 0) ? ZoneGraphDataFreeList.Pop(EAllowShrinking::No) : RegisteredZoneGraphData.AddDefaulted();
 	FRegisteredZoneGraphData& RegisteredData = RegisteredZoneGraphData[Index];
 	RegisteredData.Reset(RegisteredData.Generation); // Do not change generation.
 	RegisteredData.ZoneGraphData = &InZoneGraphData;

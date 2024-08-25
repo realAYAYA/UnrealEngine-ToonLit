@@ -2,7 +2,7 @@
 
 #include "AndroidEOSVoiceChatUser.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 void FAndroidEOSVoiceChatUser::SetSetting(const FString& Name, const FString& Value)
 {
@@ -29,4 +29,4 @@ FString FAndroidEOSVoiceChatUser::GetSetting(const FString& Name)
 	}
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

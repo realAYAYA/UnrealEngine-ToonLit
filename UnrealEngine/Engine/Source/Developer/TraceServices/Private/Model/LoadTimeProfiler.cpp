@@ -405,7 +405,7 @@ ITable<FPackagesTableRow>* FLoadTimeProfilerProvider::CreatePackageDetailsTable(
 			}
 			else
 			{
-				Stack.Pop(false);
+				Stack.Pop(EAllowShrinking::No);
 			}
 			return EEventEnumerate::Continue;
 		});
@@ -492,7 +492,7 @@ ITable<FExportsTableRow>* FLoadTimeProfilerProvider::CreateExportDetailsTable(do
 			}
 			else
 			{
-				Stack.Pop(false);
+				Stack.Pop(EAllowShrinking::No);
 			}
 			return EEventEnumerate::Continue;
 		});
@@ -559,7 +559,7 @@ FPackageInfo& FLoadTimeProfilerProvider::CreatePackage()
 {
 	Session.WriteAccessCheck();
 
-	uint32 PackageId = static_cast<uint32>(Packages.Num());
+	uint32 PackageId = uint32(Packages.Num());
 	FPackageInfo& Package = Packages.PushBack();
 	Package.Id = PackageId;
 	return Package;
@@ -586,14 +586,14 @@ void FLoadTimeProfilerProvider::DistributeBytesAcrossFrames(uint64 ByteCount, do
 	double TotalTime = EndTime - StartTime;
 	double TimeInFirstFrame = (BeginFrameIndex + 1) * LoaderFrameLength - StartTime;
 	check(TimeInFirstFrame >= 0.0);
-	uint64 BytesInFirstFrame = uint64(FMath::RoundToZero(TimeInFirstFrame / TotalTime * ByteCount));
+	uint64 BytesInFirstFrame = uint64(FMath::RoundToZero(TimeInFirstFrame / TotalTime * double(ByteCount)));
 	Frames[BeginFrameIndex].*FrameVariable += BytesInFirstFrame;
 
 	uint64 TotalDistributed = BytesInFirstFrame;
 
 	double TimeInLastFrame = EndTime - EndFrameIndex * LoaderFrameLength;
 	check(TimeInLastFrame >= 0.0);
-	uint64 BytesInLastFrame = uint64(FMath::RoundToZero(TimeInLastFrame / TotalTime * ByteCount));
+	uint64 BytesInLastFrame = uint64(FMath::RoundToZero(TimeInLastFrame / TotalTime * double(ByteCount)));
 
 	check(BytesInFirstFrame + BytesInLastFrame <= ByteCount);
 	ByteCount -= BytesInFirstFrame + BytesInLastFrame;
@@ -653,7 +653,7 @@ FPackageExportInfo& FLoadTimeProfilerProvider::CreateExport()
 {
 	Session.WriteAccessCheck();
 
-	uint32 ExportId = static_cast<uint32>(Exports.Num());
+	uint32 ExportId = uint32(Exports.Num());
 	FPackageExportInfo& Export = Exports.PushBack();
 	Export.Id = ExportId;
 	return Export;

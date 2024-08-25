@@ -28,7 +28,7 @@ static FAutoConsoleVariableRef CVarIrisPushModelMode(
 void FNetHandleLegacyPushModelHelper::InitPushModel()
 {
 	bIsIrisPushModelForceEnabled = IrisPushModelMode == 1;
-	if (bIsIrisPushModelForceEnabled && ensureAlwaysMsgf(IS_PUSH_MODEL_ENABLED(), TEXT("Trying to force enable Iris push model support when push model is disabled, falling back to optional path. Set Net.IsPushModelEnabled true")))
+	if (bIsIrisPushModelForceEnabled && ensureMsgf(IS_PUSH_MODEL_ENABLED(), TEXT("Trying to force enable Iris push model support when push model is disabled, falling back to optional path. Set Net.IsPushModelEnabled true")))
 	{
 		// Push model is assumed to be enabled at all times. The cvar will not be checked.
 		UE_NET_SET_IRIS_MARK_PROPERTY_DIRTY_DELEGATE(UEPushModelPrivate::FIrisMarkPropertyDirty::CreateStatic(&FNetHandleLegacyPushModelHelper::MarkPropertyOwnerDirty));

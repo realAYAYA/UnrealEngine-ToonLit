@@ -44,7 +44,7 @@ namespace Metasound
 		public:
 			FMetasoundGraphAnalyzerView() = default;
 
-			FMetasoundGraphAnalyzerView(const FMetasoundAssetBase& InAssetBase, uint64 InInstanceID, FSampleRate InSampleRate);
+			FMetasoundGraphAnalyzerView(const FMetasoundAssetBase& InAssetBase, uint64 InInstanceID, const FOperatorSettings& InOperatorSettings);
 			~FMetasoundGraphAnalyzerView();
 
 			void AddAnalyzerForAllSupportedOutputs(FName InAnalyzerName, bool bInRequiresConnection = true);

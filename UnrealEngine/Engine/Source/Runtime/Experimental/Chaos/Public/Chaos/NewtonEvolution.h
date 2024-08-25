@@ -8,7 +8,10 @@
 #include "Chaos/PBDSoftsSolverParticles.h"
 #include "Chaos/NewtonElasticFEM.h"
 #include "Chaos/NewtonCorotatedCache.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Chaos/KinematicGeometryParticles.h"
+#endif
+#include "Chaos/SoftsSolverCollisionParticles.h"
 #include "Chaos/VelocityField.h"
 
 namespace Chaos::Softs
@@ -25,7 +28,7 @@ public:
 	// TODO: Tidy up this constructor (and update Headless Chaos)
 	CHAOS_API FNewtonEvolution(
 		FSolverParticles&& InParticles,
-		FSolverRigidParticles&& InGeometryParticles,
+		FSolverCollisionParticles&& InGeometryParticles,
 		TArray<TVec3<int32>>&& CollisionTriangles,
 		const TArray<TVector<int32, 4>>& InMesh,
 		TArray<TArray<TVector<int32, 2>>>&& InIncidentElements,
@@ -41,7 +44,7 @@ public:
 		FSolverReal EMesh = (FSolverReal)1000.,
 		FSolverReal NuMesh = (FSolverReal).3,
 		FSolverReal NewtonTol = (FSolverReal) 1e-6,
-		FSolverReal CGTol = (FSolverReal) 1e-8,
+		FSolverReal CGTolIn = (FSolverReal) 1e-8,
 		bool bWriteDebugInfoIn = true);
 	~FNewtonEvolution() {}
 
@@ -83,10 +86,10 @@ public:
 	int32 GetCollisionParticleRangeSize(int32 Offset) const { return MCollisionParticlesActiveView.GetRangeSize(Offset); }
 
 	//// collision particles accessors
-	const FSolverRigidParticles& CollisionParticles() const { return MCollisionParticles; }
-	FSolverRigidParticles& CollisionParticles() { return MCollisionParticles; }
+	const FSolverCollisionParticles& CollisionParticles() const { return MCollisionParticles; }
+	FSolverCollisionParticles& CollisionParticles() { return MCollisionParticles; }
 	const TArray<uint32>& CollisionParticleGroupIds() const { return MCollisionParticleGroupIds; }
-	const TPBDActiveView<FSolverRigidParticles>& CollisionParticlesActiveView() { return MCollisionParticlesActiveView; }
+	const TPBDActiveView<FSolverCollisionParticles>& CollisionParticlesActiveView() { return MCollisionParticlesActiveView; }
 
 
 	// Reset all constraint init and rule functions.
@@ -124,7 +127,7 @@ public:
 	TArray<TFunction<void(FSolverParticles&, const FSolverReal)>>& PostCollisionConstraintRules() { return MPostCollisionConstraintRules; }
 
 	void SetKinematicUpdateFunction(TFunction<void(FSolverParticles&, const FSolverReal, const FSolverReal, const int32)> KinematicUpdate) { MKinematicUpdate = KinematicUpdate; }
-	void SetCollisionKinematicUpdateFunction(TFunction<void(FSolverRigidParticles&, const FSolverReal, const FSolverReal, const int32)> KinematicUpdate) { MCollisionKinematicUpdate = KinematicUpdate; }
+	void SetCollisionKinematicUpdateFunction(TFunction<void(FSolverCollisionParticles&, const FSolverReal, const FSolverReal, const int32)> KinematicUpdate) { MCollisionKinematicUpdate = KinematicUpdate; }
 
 	TFunction<void(FSolverParticles&, const FSolverReal, const int32)>& GetForceFunction(const uint32 GroupId = 0) { return MGroupForceRules[GroupId]; }
 	const TFunction<void(FSolverParticles&, const FSolverReal, const int32)>& GetForceFunction(const uint32 GroupId = 0) const { return MGroupForceRules[GroupId]; }
@@ -195,8 +198,8 @@ private:
 private:
 	FSolverParticles MParticles;
 	TPBDActiveView<FSolverParticles> MParticlesActiveView;
-	FSolverRigidParticles MCollisionParticles;
-	TPBDActiveView<FSolverRigidParticles> MCollisionParticlesActiveView;
+	FSolverCollisionParticles MCollisionParticles;
+	TPBDActiveView<FSolverCollisionParticles> MCollisionParticlesActiveView;
 
 	TArrayCollectionArray<FSolverRigidTransform3> MCollisionTransforms;  // Used for CCD to store the initial state before the kinematic update
 	TArrayCollectionArray<bool> MCollided;
@@ -222,7 +225,7 @@ private:
 	TPBDActiveView<TArray<TFunction<void(FSolverParticles&, const FSolverReal)>>> MPostCollisionConstraintRulesActiveView;
 
 	TFunction<void(FSolverParticles&, const FSolverReal, const FSolverReal, const int32)> MKinematicUpdate;
-	TFunction<void(FSolverRigidParticles&, const FSolverReal, const FSolverReal, const int32)> MCollisionKinematicUpdate;
+	TFunction<void(FSolverCollisionParticles&, const FSolverReal, const FSolverReal, const int32)> MCollisionKinematicUpdate;
 	//Newton specific lambdas:
 	TFunction<void(const bool)> UpdatePositionBasedState;
 	TFunction<void(const PMatrix<FSolverReal, 3, 3>&, PMatrix<FSolverReal, 3, 3>&, const int32)> PStress;

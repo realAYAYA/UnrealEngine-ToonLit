@@ -12,15 +12,15 @@
 #include "DeferredShadingCommon.ush"
 #include "DBufferDecalShared.ush"
 
-#if STRATA_ENABLED  
+#if SUBSTRATE_ENABLED  
 float DecalCommonOutput(
 	inout FPixelShaderOut Out, 
-	in FStrataPixelHeader InHeader,
-	in FStrataBSDF InBSDF,
+	in FSubstratePixelHeader InHeader,
+	in FSubstrateBSDF InBSDF,
 	in float FadeOutWeight,
 	in float CoverageOverBackground)
 {
-	FStrataDBuffer DBuffer = InHeader.StrataConvertToDBuffer(InBSDF);
+	FSubstrateDBuffer DBuffer = InHeader.SubstrateConvertToDBuffer(InBSDF);
 
 	DBuffer.Coverage *= FadeOutWeight;
 
@@ -34,16 +34,16 @@ float DecalCommonOutput(
 #endif
 #elif DECAL_RENDERSTAGE == DECAL_RENDERSTAGE_AO
 	// Replace color with AO for AO decals.
-#if STRATA_INLINE_SHADING
+#if SUBSTRATE_INLINE_SHADING
 	Color = lerp(1, InHeader.IrradianceAO.MaterialAO, DBuffer.Coverage);
 #else
-#error Strata - Decals must be evaluated inline.
+#error Substrate - Decals must be evaluated inline.
 #endif
 #endif
 
 #if DECAL_RENDERTARGETMODE == DECAL_RENDERTARGETMODE_SCENECOLOR
 	Color *= View.PreExposure;
-#if STRATA_USES_CONVERSION_FROM_LEGACY && MATERIALBLENDING_ALPHACOMPOSITE
+#if SUBSTRATE_USES_CONVERSION_FROM_LEGACY && MATERIALBLENDING_ALPHACOMPOSITE
 	// In legacy mode, emissive is always influenced by opacity, even when AlphaComposite blend mode is used.
 	// This is only here to maintain the legacy behavior after material are converted; not with Substrate itself.
 	Color *= CoverageOverBackground;
@@ -55,13 +55,16 @@ float DecalCommonOutput(
 
 #if DECAL_RENDERTARGETMODE == DECAL_RENDERTARGETMODE_DBUFFER
 	// If we output to DBuffer, write to all the 3 RTs.
-	StrataPackDBuffer(DBuffer, Out.MRT[0], Out.MRT[1], Out.MRT[2]);
+	SubstratePackDBuffer(DBuffer, Out.MRT[0], Out.MRT[1], Out.MRT[2]);
+
+	#if DECAL_RENDERTARGET_COUNT == 4
+		Out.MRT[3] = 1.0f; // DBufferMask
+	#endif
 
 	// This is to set the coverage over the background to an arbitrary value in case premultiplied alpha is used.
 	Out.MRT[0].a = CoverageOverBackground;
 	Out.MRT[1].a = CoverageOverBackground;
 	Out.MRT[2].a = CoverageOverBackground;
-	Out.MRT[3].a = CoverageOverBackground;
 #endif
 
 	// Allow shader compiler to cull outputs that we won't use.
@@ -81,7 +84,7 @@ float DecalCommonOutput(
 
 	return DBuffer.Coverage;
 }
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 void DecalCommonOutput(inout FPixelShaderIn In, inout FPixelShaderOut Out, float3 Color, float Opacity, FGBufferData Data)
 {
 #if DECAL_RENDERSTAGE == DECAL_RENDERSTAGE_MOBILE
@@ -113,7 +116,7 @@ void DecalCommonOutput(inout FPixelShaderIn In, inout FPixelShaderOut Out, float
 	}
 #endif
 
-// This is not support by Strata
+// This is not support by Substrate
 #if DECAL_RENDERTARGETMODE == DECAL_RENDERTARGETMODE_GBUFFER || DECAL_RENDERTARGETMODE == DECAL_RENDERTARGETMODE_GBUFFER_NONORMAL
 	
 	// Dummy outputs from EncodeGBuffer()
@@ -162,4 +165,4 @@ void DecalCommonOutput(inout FPixelShaderIn In, inout FPixelShaderOut Out, float
 	Out.MRT[3] = 0;
 #endif
 }
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED

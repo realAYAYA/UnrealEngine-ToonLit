@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "CoreMinimal.h"
 #include "Containers/ArrayView.h"
 #include "GlobalShader.h"
 #include "HAL/Platform.h"
@@ -11,7 +12,7 @@
 #include "ShaderParameterMacros.h"
 #include "RenderGraphFwd.h"
 
-struct FStrataSceneData;
+struct FSubstrateSceneData;
 class FScene;
 class FGlobalShaderMap;
 class FRDGBuilder;
@@ -53,13 +54,13 @@ public:
 	static RENDERER_API FDepthBoundsValues CalculateNearFarDepthExcludingSky();
 };
 
-// A minimal uniform struct providing necessary access for external systems to Strata parameters.
-DECLARE_UNIFORM_BUFFER_STRUCT(FStrataPublicGlobalUniformParameters, RENDERER_API)
+// A minimal uniform struct providing necessary access for external systems to Substrate parameters.
+DECLARE_UNIFORM_BUFFER_STRUCT(FSubstratePublicGlobalUniformParameters, RENDERER_API)
 
-namespace Strata
+namespace Substrate
 {
 	void PreInitViews(FScene& Scene);
 	void PostRender(FScene& Scene);
 
-	RENDERER_API TRDGUniformBufferRef<FStrataPublicGlobalUniformParameters> GetPublicGlobalUniformBuffer(FRDGBuilder& GraphBuilder, FScene& Scene);
+	RENDERER_API TRDGUniformBufferRef<FSubstratePublicGlobalUniformParameters> GetPublicGlobalUniformBuffer(FRDGBuilder& GraphBuilder, FScene& Scene);
 }

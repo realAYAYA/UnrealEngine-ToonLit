@@ -87,7 +87,7 @@ namespace Chaos
 		}
 
 		FGeometryDynamicCollection&            Collection       = Proxy->GetPhysicsCollection();
-		const TManagedArray<FTransform>&       MassToLocal		= Collection.MassToLocal;
+		const TManagedArray<FTransform>&       MassToLocal      = RestCollection->GetAttribute<FTransform>("MassToLocal", FGeometryCollection::TransformGroup);
 		const TManagedArray<int32>&            Parents			= RestCollection->Parent;
 		const TManagedArray<TSet<int32>>&	   Children         = RestCollection->Children;
 		const TArray<FBreakingData>&		   Breaks           = Solver->GetEvolution()->GetRigidClustering().GetAllClusterBreakings();
@@ -135,7 +135,7 @@ namespace Chaos
 
 		for(int32 TransformIndex = 0; TransformIndex < NumTransforms; ++TransformIndex)
 		{
-			FClusterParticle* Handle = Proxy->GetParticles()[TransformIndex];
+			FClusterParticle* Handle = Proxy->GetParticle_Internal(TransformIndex);
 			
 			if(Handle)
 			{
@@ -153,7 +153,7 @@ namespace Chaos
 					Pending.ParticleIndex = TransformIndex;
 					
 					// All recorded transforms are in actor space, ie relative to the Cache Manager making the recording.
-					FTransform LocalTransform = MassToLocal[TransformIndex].Inverse() * FTransform(Handle->R(), Handle->X());
+					FTransform LocalTransform = MassToLocal[TransformIndex].Inverse() * FTransform(Handle->GetR(), Handle->GetX());
 					FTransform ActorSpaceTransform = LocalTransform * WorldToActor;
 					Pending.PendingTransform = ActorSpaceTransform;
 				}
@@ -170,13 +170,13 @@ namespace Chaos
 		{
 			if (TransformIndex > INDEX_NONE)
 			{
-				FClusterParticle* Handle = Proxy->GetParticles()[TransformIndex];
+				FClusterParticle* Handle = Proxy->GetParticle_Internal(TransformIndex);
 				if (Handle)
 				{
 					OutFrame.PendingParticleData.AddDefaulted();
 					FPendingParticleWrite& Pending = OutFrame.PendingParticleData.Last();
 					Pending.ParticleIndex = TransformIndex;
-					FTransform LocalTransform = MassToLocal[TransformIndex].Inverse() * FTransform(Handle->R(), Handle->X());
+					FTransform LocalTransform = MassToLocal[TransformIndex].Inverse() * FTransform(Handle->GetR(), Handle->GetX());
 					FTransform ActorSpaceTransform = LocalTransform * WorldToActor;
 					Pending.PendingTransform = ActorSpaceTransform;
 					Pending.bPendingDeactivate = true;
@@ -262,8 +262,7 @@ namespace Chaos
 		}
 
 		FGeometryDynamicCollection&      Collection       = Proxy->GetPhysicsCollection();
-		const TManagedArray<FTransform>& MassToLocal	  = Collection.MassToLocal;
-		TArray<FClusterParticle*>        Particles        = Proxy->GetParticles();
+		const TManagedArray<FTransform>& MassToLocal      = RestCollection->GetAttribute<FTransform>("MassToLocal", FGeometryCollection::TransformGroup);
 
 		FCacheEvaluationContext Context(TickRecord);
 		Context.bEvaluateTransform = true;
@@ -285,31 +284,26 @@ namespace Chaos
 			{
 				if(FEnableStateEvent* Event = Handle.Get<FEnableStateEvent>())
 				{
-					if(Particles.IsValidIndex(Event->Index))
+					if(Chaos::FPBDRigidClusteredParticleHandle* ChildParticle = Proxy->GetParticle_Internal(Event->Index))
 					{
-						Chaos::FPBDRigidClusteredParticleHandle* ChildParticle = Particles[Event->Index];
-						
-						if (ChildParticle)
+						if (ChildParticle->ObjectState() != EObjectStateType::Kinematic)
 						{
-							if (ChildParticle->ObjectState() != EObjectStateType::Kinematic)
-							{
-								// If a field or other external actor set the particle to static or dynamic we no longer apply the cache
-								continue;
-							}
+							// If a field or other external actor set the particle to static or dynamic we no longer apply the cache
+							continue;
+						}
 
-							if (FRigidParticle* ClusterParent = ChildParticle->ClusterIds().Id)
+						if (FRigidParticle* ClusterParent = ChildParticle->ClusterIds().Id)
+						{
+							if (FClusterParticle* Parent = ClusterParent->CastToClustered())
 							{
-								if (FClusterParticle* Parent = ClusterParent->CastToClustered())
-								{
-									TArray<FRigidParticle*>& Cluster = NewClusters.FindOrAdd(Parent);
-									Cluster.Add(ChildParticle);
-								}
+								TArray<FRigidParticle*>& Cluster = NewClusters.FindOrAdd(Parent);
+								Cluster.Add(ChildParticle);
 							}
-							else
-							{
-								// This is a cluster parent
-								ChildParticle->SetDisabled(!Event->bEnable);
-							}
+						}
+						else
+						{
+							// This is a cluster parent
+							ChildParticle->SetDisabled(!Event->bEnable);
 						}
 					}
 				}
@@ -355,41 +349,36 @@ namespace Chaos
 			{
 				if (FBreakingEvent* Event = Handle.Get<FBreakingEvent>())
 				{
-					if (Particles.IsValidIndex(Event->Index))
+					if (Chaos::FPBDRigidClusteredParticleHandle* Particle = Proxy->GetParticle_Internal(Event->Index))
 					{
-						Chaos::FPBDRigidClusteredParticleHandle* Particle = Particles[Event->Index];
-
-						if (Particle)
+						if (Particle->ObjectState() != EObjectStateType::Kinematic)
 						{
-							if (Particle->ObjectState() != EObjectStateType::Kinematic)
-							{
-								// If a field or other external actor set the particle to static or dynamic we no longer apply the cache
-								continue;
-							}
+							// If a field or other external actor set the particle to static or dynamic we no longer apply the cache
+							continue;
+						}
 
-							FBreakingData CachedBreak;
-							CachedBreak.Proxy = Proxy;
-							CachedBreak.Location = ComponentToWorld.TransformPosition(Event->Location);
-							CachedBreak.Velocity = ComponentToWorld.TransformVector(Event->Velocity);
-							CachedBreak.AngularVelocity = Event->AngularVelocity;
-							CachedBreak.Mass = Event->Mass;
-							CachedBreak.BoundingBox = TAABB<FReal, 3>(Event->BoundingBoxMin, Event->BoundingBoxMax);
-							CachedBreak.BoundingBox = CachedBreak.BoundingBox.TransformedAABB(ComponentToWorld);
-							CachedBreak.SetEmitterFlag(Proxy->GetSimParameters().bGenerateBreakingData, Proxy->GetSimParameters().bGenerateGlobalBreakingData);
+						FBreakingData CachedBreak;
+						CachedBreak.Proxy = Proxy;
+						CachedBreak.Location = ComponentToWorld.TransformPosition(Event->Location);
+						CachedBreak.Velocity = ComponentToWorld.TransformVector(Event->Velocity);
+						CachedBreak.AngularVelocity = Event->AngularVelocity;
+						CachedBreak.Mass = Event->Mass;
+						CachedBreak.BoundingBox = TAABB<FReal, 3>(Event->BoundingBoxMin, Event->BoundingBoxMax);
+						CachedBreak.BoundingBox = CachedBreak.BoundingBox.TransformedAABB(ComponentToWorld);
+						CachedBreak.SetEmitterFlag(Proxy->GetSimParameters().bGenerateBreakingData, Proxy->GetSimParameters().bGenerateGlobalBreakingData);
 
-							if (!SolverBreakingEventFilter->Enabled() || SolverBreakingEventFilter->Pass(CachedBreak))
-							{
-								float TimeStamp = Solver->GetSolverTime();
-								Solver->GetEventManager()->AddEvent<FBreakingEventData>(EEventType::Breaking, [&CachedBreak, TimeStamp](FBreakingEventData& BreakingEventData)
+						if (!SolverBreakingEventFilter->Enabled() || SolverBreakingEventFilter->Pass(CachedBreak))
+						{
+							float TimeStamp = Solver->GetSolverTime();
+							Solver->GetEventManager()->AddEvent<FBreakingEventData>(EEventType::Breaking, [&CachedBreak, TimeStamp](FBreakingEventData& BreakingEventData)
+								{
+									if (BreakingEventData.BreakingData.TimeCreated != TimeStamp)
 									{
-										if (BreakingEventData.BreakingData.TimeCreated != TimeStamp)
-										{
-											BreakingEventData.BreakingData.AllBreakingsArray.Reset();
-											BreakingEventData.BreakingData.TimeCreated = TimeStamp;
-										}
-										BreakingEventData.BreakingData.AllBreakingsArray.Add(CachedBreak);
-									});
-							}
+										BreakingEventData.BreakingData.AllBreakingsArray.Reset();
+										BreakingEventData.BreakingData.TimeCreated = TimeStamp;
+									}
+									BreakingEventData.BreakingData.AllBreakingsArray.Add(CachedBreak);
+								});
 						}
 					}
 				}
@@ -404,39 +393,34 @@ namespace Chaos
 			{
 				if (FTrailingEvent* Event = Handle.Get<FTrailingEvent>())
 				{
-					if (Particles.IsValidIndex(Event->Index))
+					if (Chaos::FPBDRigidClusteredParticleHandle* Particle = Proxy->GetParticle_Internal(Event->Index))
 					{
-						Chaos::FPBDRigidClusteredParticleHandle* Particle = Particles[Event->Index];
-
-						if (Particle)
+						if (Particle->ObjectState() != EObjectStateType::Kinematic)
 						{
-							if (Particle->ObjectState() != EObjectStateType::Kinematic)
-							{
-								// If a field or other external actor set the particle to static or dynamic we no longer apply the cache
-								continue;
-							}
+							// If a field or other external actor set the particle to static or dynamic we no longer apply the cache
+							continue;
+						}
 
-							FTrailingData CachedTrail;
-							CachedTrail.Proxy = Proxy;
-							CachedTrail.Location = ComponentToWorld.TransformPosition(Event->Location);
-							CachedTrail.Velocity = ComponentToWorld.TransformVector(Event->Velocity);
-							CachedTrail.AngularVelocity = Event->AngularVelocity;
-							CachedTrail.BoundingBox = TAABB<FReal, 3>(Event->BoundingBoxMin, Event->BoundingBoxMax);
-							CachedTrail.BoundingBox = CachedTrail.BoundingBox.TransformedAABB(ComponentToWorld);
+						FTrailingData CachedTrail;
+						CachedTrail.Proxy = Proxy;
+						CachedTrail.Location = ComponentToWorld.TransformPosition(Event->Location);
+						CachedTrail.Velocity = ComponentToWorld.TransformVector(Event->Velocity);
+						CachedTrail.AngularVelocity = Event->AngularVelocity;
+						CachedTrail.BoundingBox = TAABB<FReal, 3>(Event->BoundingBoxMin, Event->BoundingBoxMax);
+						CachedTrail.BoundingBox = CachedTrail.BoundingBox.TransformedAABB(ComponentToWorld);
 
-							if (!SolverTrailingEventFilter->Enabled() || SolverTrailingEventFilter->Pass(CachedTrail))
-							{
-								float TimeStamp = Solver->GetSolverTime();
-								Solver->GetEventManager()->AddEvent<FTrailingEventData>(EEventType::Trailing, [&CachedTrail , TimeStamp](FTrailingEventData& TrailingEventData)
+						if (!SolverTrailingEventFilter->Enabled() || SolverTrailingEventFilter->Pass(CachedTrail))
+						{
+							float TimeStamp = Solver->GetSolverTime();
+							Solver->GetEventManager()->AddEvent<FTrailingEventData>(EEventType::Trailing, [&CachedTrail , TimeStamp](FTrailingEventData& TrailingEventData)
+								{
+									if (TrailingEventData.TrailingData.TimeCreated != TimeStamp)
 									{
-										if (TrailingEventData.TrailingData.TimeCreated != TimeStamp)
-										{
-											TrailingEventData.TrailingData.AllTrailingsArray.Reset();
-											TrailingEventData.TrailingData.TimeCreated = TimeStamp;
-										}
-										TrailingEventData.TrailingData.AllTrailingsArray.Add(CachedTrail);
-									});
-							}
+										TrailingEventData.TrailingData.AllTrailingsArray.Reset();
+										TrailingEventData.TrailingData.TimeCreated = TimeStamp;
+									}
+									TrailingEventData.TrailingData.AllTrailingsArray.Add(CachedTrail);
+								});
 						}
 					}
 				}
@@ -451,7 +435,6 @@ namespace Chaos
 			{
 				if (FCollisionEvent* Event = Handle.Get<FCollisionEvent>())
 				{
-					
 					FCollidingData CachedCollision;
 					CachedCollision.Location = ComponentToWorld.TransformPosition(Event->Location);
 					CachedCollision.AccumulatedImpulse = ComponentToWorld.TransformVector(Event->AccumulatedImpulse);
@@ -493,11 +476,9 @@ namespace Chaos
 			const int32      ParticleIndex      = EvaluatedResult.ParticleIndices[Index];
 			const FTransform EvaluatedTransform = EvaluatedResult.Transform[Index];
 
-			if(Particles.IsValidIndex(ParticleIndex))
+			if (Chaos::FPBDRigidClusteredParticleHandle* Handle = Proxy->GetParticle_Internal(ParticleIndex))
 			{
-				Chaos::FPBDRigidClusteredParticleHandle* Handle = Particles[ParticleIndex];
-
-				if(!Handle || Handle->ObjectState() != EObjectStateType::Kinematic)
+				if(Handle->ObjectState() != EObjectStateType::Kinematic)
 				{
 					// If a field or other external actor set the particle to static or dynamic we no longer apply the cache
 					continue;
@@ -509,8 +490,8 @@ namespace Chaos
 
 				Handle->SetP(WorldTransform.GetTranslation());
 				Handle->SetQ(WorldTransform.GetRotation());
-				Handle->SetX(Handle->P());
-				Handle->SetR(Handle->Q());
+				Handle->SetX(Handle->GetP());
+				Handle->SetRf(Handle->GetQf());
 				
 				Handle->UpdateWorldSpaceState(WorldTransform, FVec3(0));
 
@@ -661,7 +642,7 @@ namespace Chaos
 				RestTransforms.SetNum(NumTransforms);
 				for (int32 Idx = 0; Idx < NumTransforms; ++Idx)
 				{
-					RestTransforms[Idx] = GeometryCollection->Transform[Idx];
+					RestTransforms[Idx] = FTransform(GeometryCollection->Transform[Idx]);
 				}
 
 				for (int32 CacheIdx = 0; CacheIdx < NumCacheTransforms; ++CacheIdx)
@@ -786,7 +767,7 @@ namespace Chaos
 					InitialTransforms.SetNum(NumTransforms);
 					for (int32 Idx = 0; Idx < NumTransforms; ++Idx)
 					{
-						InitialTransforms[Idx] = GeometryCollection->Transform[Idx];
+						InitialTransforms[Idx] = FTransform(GeometryCollection->Transform[Idx]);
 					}
 
 					for (int32 CacheIdx = 0; CacheIdx < NumCacheTransforms; ++CacheIdx)
@@ -814,7 +795,7 @@ namespace Chaos
 
 	TArray<int32> FGeometryCollectionCacheAdapter::GatherAllBreaksUpToTime(UChaosCache* InCache, float InTime) const
 	{
-		// Evaluate all breaking event that have occured from the beginning of the cache up to the specified time.
+		// Evaluate all breaking event that have occurred from the beginning of the cache up to the specified time.
 		TArray<int32> ReleaseIndices;
 
 		FPlaybackTickRecord TickRecord;

@@ -2,6 +2,7 @@
 
 #include "OptimusDataInterfaceRawBuffer.h"
 
+#include "OptimusDataTypeRegistry.h"
 #include "ComputeFramework/ShaderParamTypeDefinition.h"
 #include "OptimusDeformerInstance.h"
 #include "OptimusExpressionEvaluator.h"
@@ -27,7 +28,16 @@ const UOptimusComponentSource* UOptimusRawBufferDataInterface::GetComponentSourc
 
 bool UOptimusRawBufferDataInterface::SupportsAtomics() const
 {
-	return ValueType->Type == EShaderFundamentalType::Int;
+	TArray<FOptimusDataTypeHandle> Types = FOptimusDataTypeRegistry::Get().GetAllTypesWithAtomicSupport();
+	for (FOptimusDataTypeHandle Type : Types)
+	{
+		if (Type->ShaderValueType == ValueType)
+		{
+			return true;
+		}
+	}
+	
+	return false;
 }
 
 FString UOptimusRawBufferDataInterface::GetRawType() const
@@ -68,12 +78,18 @@ TSubclassOf<UActorComponent> UOptimusRawBufferDataInterface::GetRequiredComponen
 
 void UOptimusRawBufferDataInterface::GetSupportedInputs(TArray<FShaderFunctionDefinition>& OutFunctions) const
 {
+	// Functions in order of EOptimusBufferReadType
 	OutFunctions.AddDefaulted_GetRef()
 		.SetName(TEXT("ReadNumValues"))
 		.AddReturnType(EShaderFundamentalType::Uint);
 
 	OutFunctions.AddDefaulted_GetRef()
 		.SetName(TEXT("ReadValue"))
+		.AddReturnType(ValueType)
+		.AddParam(EShaderFundamentalType::Uint);
+
+	OutFunctions.AddDefaulted_GetRef()
+		.SetName(TEXT("ReadValueUAV"))
 		.AddReturnType(ValueType)
 		.AddParam(EShaderFundamentalType::Uint);
 }
@@ -88,23 +104,26 @@ void UOptimusRawBufferDataInterface::GetSupportedOutputs(TArray<FShaderFunctionD
 
 	OutFunctions.AddDefaulted_GetRef()
 		.SetName(TEXT("WriteAtomicAdd"))
+		.AddReturnType(ValueType)
 		.AddParam(EShaderFundamentalType::Uint)
 		.AddParam(ValueType);
 
 	OutFunctions.AddDefaulted_GetRef()
 		.SetName(TEXT("WriteAtomicMin"))
+		.AddReturnType(ValueType)
 		.AddParam(EShaderFundamentalType::Uint)
 		.AddParam(ValueType);
 
 	OutFunctions.AddDefaulted_GetRef()
 		.SetName(TEXT("WriteAtomicMax"))
+		.AddReturnType(ValueType)
 		.AddParam(EShaderFundamentalType::Uint)
 		.AddParam(ValueType);
 }
 
-int32 UOptimusRawBufferDataInterface::GetReadValueInputIndex()
+int32 UOptimusRawBufferDataInterface::GetReadValueInputIndex(EOptimusBufferReadType ReadType)
 {
-	return 1;
+	return (int32)ReadType;
 }
 
 int32 UOptimusRawBufferDataInterface::GetWriteValueOutputIndex(EOptimusBufferWriteType WriteType)
@@ -122,6 +141,19 @@ END_SHADER_PARAMETER_STRUCT()
 void UOptimusTransientBufferDataInterface::GetShaderParameters(TCHAR const* UID, FShaderParametersMetadataBuilder& InOutBuilder, FShaderParametersMetadataAllocations& InOutAllocations) const
 {
 	InOutBuilder.AddNestedStruct<FTransientBufferDataInterfaceParameters>(UID);
+}
+
+BEGIN_SHADER_PARAMETER_STRUCT(FImplicitPersistentBufferDataInterfaceParameters, )
+	SHADER_PARAMETER(uint32, StartOffset)
+	SHADER_PARAMETER(uint32, BufferSize)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<int>, BufferSRV)
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<int>, BufferUAV)
+END_SHADER_PARAMETER_STRUCT()
+
+void UOptimusImplicitPersistentBufferDataInterface::GetShaderParameters(TCHAR const* UID,
+	FShaderParametersMetadataBuilder& InOutBuilder, FShaderParametersMetadataAllocations& InOutAllocations) const
+{
+	InOutBuilder.AddNestedStruct<FImplicitPersistentBufferDataInterfaceParameters>(UID);
 }
 
 BEGIN_SHADER_PARAMETER_STRUCT(FPersistentBufferDataInterfaceParameters, )
@@ -178,8 +210,22 @@ UComputeDataProvider* UOptimusTransientBufferDataInterface::CreateDataProvider(
 	) const
 {
 	UOptimusTransientBufferDataProvider *Provider = CreateProvider<UOptimusTransientBufferDataProvider>(InBinding);
-	Provider->ElementStride = ValueType->GetResourceElementSize();
-	Provider->RawStride = GetRawStride();
+	Provider->bZeroInitForAtomicWrites = bZeroInitForAtomicWrites;
+	return Provider;
+}
+
+
+FString UOptimusImplicitPersistentBufferDataInterface::GetDisplayName() const
+{
+	return TEXT("ImplicitPersistent");
+}
+
+UComputeDataProvider* UOptimusImplicitPersistentBufferDataInterface::CreateDataProvider(TObjectPtr<UObject> InBinding,
+	uint64 InInputMask, uint64 InOutputMask) const
+{
+	UOptimusImplicitPersistentBufferDataProvider *Provider = CreateProvider<UOptimusImplicitPersistentBufferDataProvider>(InBinding);
+	Provider->DataInterfaceName = this->GetFName();
+	Provider->bZeroInitForAtomicWrites = bZeroInitForAtomicWrites;
 	return Provider;
 }
 
@@ -226,13 +272,16 @@ bool UOptimusRawBufferDataProvider::GetLodAndInvocationElementCounts(
 	case EOptimusDataDomainType::Dimensional:
 		{
 			const FName ExecutionDomain = !DataDomain.DimensionNames.IsEmpty() ? DataDomain.DimensionNames[0] : NAME_None;
-			if (ComponentSourcePtr->GetComponentElementCountsForExecutionDomain(ExecutionDomain, ComponentPtr, OutLodIndex, OutInvocationElementCounts))
+			TArray<int32> Values;
+			if (ComponentSourcePtr->GetComponentElementCountsForExecutionDomain(ExecutionDomain, ComponentPtr, OutLodIndex, Values))
 			{
 				if (DataDomain.DimensionNames.Num() == 1)
 				{
-					for (int32& Count: OutInvocationElementCounts)
+					OutInvocationElementCounts.Reset(Values.Num());
+					for (int32& Count: Values)
 					{
 						Count *= FMath::Max(1, DataDomain.Multiplier);
+						OutInvocationElementCounts.Add(Count);
 					}
 					return true;
 				}
@@ -243,7 +292,7 @@ bool UOptimusRawBufferDataProvider::GetLodAndInvocationElementCounts(
 		}
 	case EOptimusDataDomainType::Expression:
 		{
-			TMap<FName, int32> EngineConstants;
+			TMap<FName, float> EngineConstants;
 			TMap<FName, TArray<int32>> ElementCountsPerDomain;
 
 			int32 NumInvocations = -1;
@@ -279,8 +328,17 @@ bool UOptimusRawBufferDataProvider::GetLodAndInvocationElementCounts(
 			
 			using namespace Optimus::Expression;
 
-			FEngine Engine(EngineConstants);
-			TVariant<FExpressionObject, FParseError> ParseResult = Engine.Parse(DataDomain.Expression);
+			FEngine Engine;
+			TVariant<FExpressionObject, FParseError> ParseResult = Engine.Parse(DataDomain.Expression, [EngineConstants](FName InName)->TOptional<float>
+			{
+				if (const float* Value = EngineConstants.Find(InName))
+				{
+					return *Value;
+				};
+
+				return {};
+			});
+			
 			if (ParseResult.IsType<FParseError>())
 			{
 				return false;
@@ -289,16 +347,25 @@ bool UOptimusRawBufferDataProvider::GetLodAndInvocationElementCounts(
 			OutInvocationElementCounts.Reset(NumInvocations);
 			for (int32 Index = 0; Index < NumInvocations; Index++)
 			{
-				for (TPair<FName, int32>& Constant: EngineConstants)
+				for (TPair<FName, float>& Constant: EngineConstants)
 				{
 					const FName ConstantName = Constant.Key;
-					int32& Value = Constant.Value;
+					float& Value = Constant.Value;
 					
 					const TArray<int32>& ElementCounts = ElementCountsPerDomain[ConstantName]; 
 					Value = ElementCounts.IsValidIndex(Index) ? ElementCounts[Index] : 1;
 				}
-				Engine.UpdateConstantValues(EngineConstants);
-				const int32 Count = Engine.Execute(ParseResult.Get<FExpressionObject>());
+				
+				const int32 Count = static_cast<int32>(Engine.Execute(ParseResult.Get<FExpressionObject>(),
+					[EngineConstants](FName InName)->TOptional<float>
+					{
+						if (const float* Value = EngineConstants.Find(InName))
+						{
+							return *Value;
+						};
+
+						return {};
+					}));
 
 				if (Count < 0)
 				{
@@ -318,19 +385,30 @@ bool UOptimusRawBufferDataProvider::GetLodAndInvocationElementCounts(
 
 			// We want to make sure the results are the same for unified and non-unified
 			// Do the sum across invocations first and then evaluate the expression
-			for (auto& [ConstantName, Value]: EngineConstants)
+			for (TPair<FName, float>& Constant : EngineConstants)
 			{
+				const FName ConstantName = Constant.Key;
+				float& Value = Constant.Value;
+				
 				Value = 0;
 				const TArray<int32>& ElementCounts = ElementCountsPerDomain[ConstantName];
 				
-				for (int32 Count : ElementCounts )
+				for (int32 Count : ElementCounts)
 				{
 					Value += Count;
 				}
 			}
 			
-			Engine.UpdateConstantValues(EngineConstants);
-			const int32 TotalElementCountForUnifiedDispatch = Engine.Execute(ParseResult.Get<FExpressionObject>());
+			const int32 TotalElementCountForUnifiedDispatch = static_cast<int32>(Engine.Execute(ParseResult.Get<FExpressionObject>(),
+				[EngineConstants](FName InName)->TOptional<float>
+				{
+					if (const float* Value = EngineConstants.Find(InName))
+					{
+						return *Value;
+					};
+
+					return {};
+				}));
 			
 			if (TotalElementCount != TotalElementCountForUnifiedDispatch)
 			{
@@ -344,17 +422,34 @@ bool UOptimusRawBufferDataProvider::GetLodAndInvocationElementCounts(
 	return false;
 }
 
-
 FComputeDataProviderRenderProxy* UOptimusTransientBufferDataProvider::GetRenderProxy()
 {
 	int32 LodIndex;
 	TArray<int32> InvocationCounts;
+	
 	if (!GetLodAndInvocationElementCounts(LodIndex, InvocationCounts))
 	{
 		InvocationCounts.Reset();
 	}
 	
-	return new FOptimusTransientBufferDataProviderProxy(InvocationCounts, ElementStride, RawStride);
+	return new FOptimusTransientBufferDataProviderProxy(InvocationCounts, ElementStride, RawStride, bZeroInitForAtomicWrites);
+}
+
+FComputeDataProviderRenderProxy* UOptimusImplicitPersistentBufferDataProvider::GetRenderProxy()
+{
+	int32 LodIndex;
+	TArray<int32> InvocationCounts;
+
+	if (!GetLodAndInvocationElementCounts(LodIndex, InvocationCounts))
+	{
+		InvocationCounts.Reset();
+	}
+
+	return new FOptimusImplicitPersistentBufferDataProviderProxy(
+		InvocationCounts, ElementStride, RawStride, bZeroInitForAtomicWrites,
+		BufferPool,
+		DataInterfaceName,
+		LodIndex);
 }
 
 
@@ -374,12 +469,14 @@ FComputeDataProviderRenderProxy* UOptimusPersistentBufferDataProvider::GetRender
 FOptimusTransientBufferDataProviderProxy::FOptimusTransientBufferDataProviderProxy(
 	TArray<int32> InInvocationElementCounts,
 	int32 InElementStride,
-	int32 InRawStride
+	int32 InRawStride,
+	bool bInZeroInitForAtomicWrites
 	) :
 	InvocationElementCounts(InInvocationElementCounts),
 	TotalElementCount(0),
 	ElementStride(InElementStride),
-	RawStride(InRawStride)
+	RawStride(InRawStride),
+	bZeroInitForAtomicWrites(bInZeroInitForAtomicWrites)
 {
 	for (int32 NumElements : InvocationElementCounts)
 	{
@@ -412,9 +509,93 @@ void FOptimusTransientBufferDataProviderProxy::AllocateResources(FRDGBuilder& Gr
 	Buffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(Stride, TotalElementCount * ElementStrideMultiplier), TEXT("TransientBuffer"), ERDGBufferFlags::None);
 	BufferSRV = GraphBuilder.CreateSRV(Buffer);
 	BufferUAV = GraphBuilder.CreateUAV(Buffer, ERDGUnorderedAccessViewFlags::SkipBarrier);
+
+	if (bZeroInitForAtomicWrites)
+	{
+		AddClearUAVPass(GraphBuilder, BufferUAV, 0);
+	}
 }
 
 void FOptimusTransientBufferDataProviderProxy::GatherDispatchData(FDispatchData const& InDispatchData)
+{
+	TStridedView<FParameters> ParameterArray = MakeStridedParameterView<FParameters>(InDispatchData);
+	for (int32 InvocationIndex = 0, StartOffset = 0; InvocationIndex < ParameterArray.Num(); ++InvocationIndex)
+	{
+		FParameters& Parameters = ParameterArray[InvocationIndex];
+		Parameters.StartOffset = InDispatchData.bUnifiedDispatch ? 0 : StartOffset;
+		Parameters.BufferSize = InDispatchData.bUnifiedDispatch ? TotalElementCount : InvocationElementCounts[InvocationIndex];
+		Parameters.BufferSRV = BufferSRV;
+		Parameters.BufferUAV = BufferUAV;
+		
+		StartOffset += InvocationElementCounts[InvocationIndex];
+	}
+}
+
+FOptimusImplicitPersistentBufferDataProviderProxy::FOptimusImplicitPersistentBufferDataProviderProxy(
+	TArray<int32> InInvocationElementCounts,
+	int32 InElementStride,
+	int32 InRawStride,
+	bool bInZeroInitForAtomicWrites,
+	TSharedPtr<FOptimusPersistentBufferPool> InBufferPool,
+	FName InDataInterfaceName,
+	int32 InLODIndex
+	) :
+	InvocationElementCounts(InInvocationElementCounts),
+	TotalElementCount(0),
+	ElementStride(InElementStride),
+	RawStride(InRawStride),
+	bZeroInitForAtomicWrites(bInZeroInitForAtomicWrites),
+	BufferPool(InBufferPool),
+	DataInterfaceName(InDataInterfaceName),
+	LODIndex(InLODIndex)
+{
+	for (int32 NumElements : InvocationElementCounts)
+	{
+		TotalElementCount += NumElements;
+	}
+}
+
+bool FOptimusImplicitPersistentBufferDataProviderProxy::IsValid(FValidationData const& InValidationData) const
+{
+	if (InValidationData.ParameterStructSize != sizeof(FParameters))
+	{
+		return false;
+	}
+	
+	if (TotalElementCount <= 0)
+	{
+		return false;
+	}
+
+	if (DataInterfaceName == NAME_None)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+void FOptimusImplicitPersistentBufferDataProviderProxy::AllocateResources(FRDGBuilder& GraphBuilder)
+{
+	TArray<int32> Count;
+	Count.Add(TotalElementCount);
+	TArray<FRDGBufferRef> Buffers;
+	bool bJustAllocated = false;
+	BufferPool->GetImplicitPersistentBuffers(GraphBuilder, DataInterfaceName, LODIndex, ElementStride, RawStride, Count, Buffers, bJustAllocated);
+
+	ensure(Buffers.Num() == 1);
+	Buffer = Buffers[0];
+
+	BufferSRV = GraphBuilder.CreateSRV(Buffer);
+	BufferUAV = GraphBuilder.CreateUAV(Buffer, ERDGUnorderedAccessViewFlags::SkipBarrier);
+
+	if (bZeroInitForAtomicWrites && bJustAllocated)
+	{
+		AddClearUAVPass(GraphBuilder, BufferUAV, 0);
+	}
+}
+
+void FOptimusImplicitPersistentBufferDataProviderProxy::GatherDispatchData(FDispatchData const& InDispatchData)
 {
 	TStridedView<FParameters> ParameterArray = MakeStridedParameterView<FParameters>(InDispatchData);
 	for (int32 InvocationIndex = 0, StartOffset = 0; InvocationIndex < ParameterArray.Num(); ++InvocationIndex)
@@ -472,7 +653,8 @@ void FOptimusPersistentBufferDataProviderProxy::AllocateResources(FRDGBuilder& G
 	TArray<int32> Count;
 	Count.Add(TotalElementCount);
 	TArray<FRDGBufferRef> Buffers;
-	BufferPool->GetResourceBuffers(GraphBuilder, ResourceName, LODIndex, ElementStride, RawStride, Count, Buffers);
+	bool bJustAllocated = false;
+	BufferPool->GetResourceBuffers(GraphBuilder, ResourceName, LODIndex, ElementStride, RawStride, Count, Buffers, bJustAllocated);
 
 	ensure(Buffers.Num() == 1);
 	Buffer = Buffers[0];

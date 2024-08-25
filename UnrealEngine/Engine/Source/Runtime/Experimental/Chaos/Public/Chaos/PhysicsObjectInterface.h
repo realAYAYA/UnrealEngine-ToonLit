@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Chaos/ClusterCreationParameters.h"
+#include "Chaos/ImplicitFwd.h"
 #include "Chaos/ParticleHandle.h"
 #include "Chaos/PhysicsObject.h"
 #include "Chaos/ShapeInstanceFwd.h"
@@ -15,6 +16,7 @@
 #include "PhysicsObjectInterface.generated.h"
 
 class FChaosScene;
+class FChaosUserDefinedEntity;
 class IPhysicsProxyBase;
 
 USTRUCT(BlueprintType)
@@ -60,6 +62,7 @@ namespace Chaos
 	public:
 		CHAOS_API FPhysicsObjectHandle GetRootObject(const FConstPhysicsObjectHandle Object);
 		CHAOS_API bool HasChildren(const FConstPhysicsObjectHandle Object);
+		CHAOS_API FChaosUserDefinedEntity* GetUserDefinedEntity(const FConstPhysicsObjectHandle Object);
 		CHAOS_API int32 GetClusterHierarchyLevel(const FConstPhysicsObjectHandle Object);
 
 		CHAOS_API FTransform GetTransform(const FConstPhysicsObjectHandle Object);
@@ -68,10 +71,12 @@ namespace Chaos
 		CHAOS_API FVector GetWorldCoM(const FConstPhysicsObjectHandle Object);
 		CHAOS_API FQuat GetR(const FConstPhysicsObjectHandle Object);
 		CHAOS_API FVector GetV(const FConstPhysicsObjectHandle Object);
+		CHAOS_API FVector GetVAtPoint(const FConstPhysicsObjectHandle Object, const FVector& Point);
 		CHAOS_API FVector GetW(const FConstPhysicsObjectHandle Object);
 		CHAOS_API FSpatialAccelerationIdx GetSpatialIndex(const FConstPhysicsObjectHandle Object);
 
 		CHAOS_API TThreadParticle<Id>* GetParticle(const FConstPhysicsObjectHandle Object);
+		CHAOS_API TThreadKinematicParticle<Id>* GetKinematicParticle(const FConstPhysicsObjectHandle Object);
 		CHAOS_API TThreadRigidParticle<Id>* GetRigidParticle(const FConstPhysicsObjectHandle Object);
 		CHAOS_API TArray<TThreadParticle<Id>*> GetAllParticles(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 		CHAOS_API TArray<TThreadRigidParticle<Id>*> GetAllRigidParticles(TArrayView<const FConstPhysicsObjectHandle> InObjects);
@@ -80,6 +85,7 @@ namespace Chaos
 		CHAOS_API TArray<FPerShapeData*> GetAllShapes(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 
 		CHAOS_API TArray<TThreadShapeInstance<Id>*> GetAllThreadShapes(TArrayView<const FConstPhysicsObjectHandle> InObjects);
+		CHAOS_API FImplicitObjectRef GetGeometry(const FConstPhysicsObjectHandle Handle);
 
 		// Returns true if a shape is found and we can stop iterating.
 		CHAOS_API void VisitEveryShape(TArrayView<const FConstPhysicsObjectHandle> InObjects, TFunctionRef<bool(const FConstPhysicsObjectHandle, TThreadShapeInstance<Id>*)> Lambda);
@@ -95,6 +101,7 @@ namespace Chaos
 		CHAOS_API bool AreAllSleeping(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 		CHAOS_API bool AreAllRigidBody(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 		CHAOS_API bool AreAllDynamic(TArrayView<const FConstPhysicsObjectHandle> InObjects);
+		CHAOS_API bool AreAllDynamicOrSleeping(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 		CHAOS_API bool AreAllDisabled(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 		CHAOS_API bool AreAllShapesQueryEnabled(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 		CHAOS_API float GetMass(TArrayView<const FConstPhysicsObjectHandle> InObjects);
@@ -118,12 +125,21 @@ namespace Chaos
 	class FWritePhysicsObjectInterface: public FReadPhysicsObjectInterface<Id>
 	{
 	public:
+		CHAOS_API void SetUserDefinedEntity(TArrayView<const FPhysicsObjectHandle> InObjects, FChaosUserDefinedEntity* UserDefinedEntity); // Set the user defined entity, use nullptr to remove the Entity and release the memory
 		CHAOS_API void PutToSleep(TArrayView<const FPhysicsObjectHandle> InObjects);
 		CHAOS_API void WakeUp(TArrayView<const FPhysicsObjectHandle> InObjects);
+		CHAOS_API void ForceKinematic(TArrayView<const FPhysicsObjectHandle> InObjects);
 		CHAOS_API void AddForce(TArrayView<const FPhysicsObjectHandle> InObjects, const FVector& Force, bool bInvalidate);
 		CHAOS_API void AddTorque(TArrayView<const FPhysicsObjectHandle> InObjects, const FVector& Torque, bool bInvalidate);
-		CHAOS_API void AddRadialImpulse(TArrayView<const FPhysicsObjectHandle> InObjects, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain, bool bInvalidate);
-		
+		CHAOS_API void SetLinearImpulseVelocity(TArrayView<const FPhysicsObjectHandle> InObjects, const FVector& Impulse, bool bVelChange);
+
+		UE_DEPRECATED(5.4, "This version AddRadialImpulse has been deprecated. Please use the version where the strain value is passed explicitly")
+		CHAOS_API void AddRadialImpulse(TArrayView<const FPhysicsObjectHandle> InObjects, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain, bool bInvalidate, bool bVelChange = false);
+
+		CHAOS_API void AddRadialImpulse(TArrayView<const FPhysicsObjectHandle> InObjects, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain, float Strain, bool bInvalidate, bool bVelChange = false, float MinValue = 0.f, float MaxValue = 1.f);
+		CHAOS_API void SetLinearEtherDrag(TArrayView<const FPhysicsObjectHandle> InObjects, float InLinearDrag);
+		CHAOS_API void SetAngularEtherDrag(TArrayView<const FPhysicsObjectHandle> InObjects, float InAngularDrag);
+
 		CHAOS_API void UpdateShapeCollisionFlags(TArrayView<const FPhysicsObjectHandle> InObjects, bool bSimCollision, bool bQueryCollision);
 		CHAOS_API void UpdateShapeFilterData(TArrayView<const FPhysicsObjectHandle> InObjects, const FCollisionFilterData& QueryData, const FCollisionFilterData& SimData);
 
@@ -166,6 +182,7 @@ namespace Chaos
 		FWritePhysicsObjectInterface() = default;
 	};
 
+
 	using FWritePhysicsObjectInterface_External = FWritePhysicsObjectInterface<EThreadContext::External>;
 	using FWritePhysicsObjectInterface_Internal = FWritePhysicsObjectInterface<EThreadContext::Internal>;
 
@@ -184,6 +201,7 @@ namespace Chaos
 		static CHAOS_API int32 GetId(const FConstPhysicsObjectHandle Object);
 
 		static CHAOS_API FPBDRigidsSolver* GetSolver(TArrayView<const FConstPhysicsObjectHandle> InObjects);
+		static CHAOS_API FPBDRigidsSolver* GetSolver(const FConstPhysicsObjectHandle InObject);
 		static CHAOS_API IPhysicsProxyBase* GetProxy(TArrayView<const FConstPhysicsObjectHandle> InObjects);
 
 	protected:

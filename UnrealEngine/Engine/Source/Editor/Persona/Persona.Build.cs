@@ -40,7 +40,8 @@ public class Persona : ModuleRules
                 "AppFramework",
                 "AnimationModifiers",
                 "AnimationBlueprintLibrary",
-                "Core", 
+				"AudioEditor",
+				"Core", 
                 "CoreUObject", 
 				"ApplicationCore",
                 "Slate", 
@@ -78,6 +79,7 @@ public class Persona : ModuleRules
 				"ToolWidgets",
 				"InteractiveToolsFramework",
 				"ContentBrowser",
+	            "SkeletalMeshDescription",
             }
         );
 

@@ -5,6 +5,7 @@
 #if WITH_EDITOR
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "EditorWorldUtils.h"
 #endif
 
@@ -50,13 +51,15 @@ namespace WorldPartitionTests
 		}
 		
 		check(WorldPartition);
-		UActorDescContainer* ActorDescMainContainer = WorldPartition->GetActorDescContainer();
-		if (!TestNotNull(TEXT("Missing World Partition Container"), ActorDescMainContainer))
+		UActorDescContainerInstance* BaseActorDescContainerInstance = WorldPartition->GetActorDescContainerInstance();
+		if (!TestNotNull(TEXT("Missing World Partition Container"), BaseActorDescContainerInstance))
 		{
 			return false;
 		}
 
-		UWorldPartition::FGenerateStreamingParams Params = UWorldPartition::FGenerateStreamingParams().SetActorDescContainer(ActorDescMainContainer);
+		FActorDescContainerInstanceCollection Collection({ TObjectPtr<UActorDescContainerInstance>(BaseActorDescContainerInstance) });
+		UWorldPartition::FGenerateStreamingParams Params = UWorldPartition::FGenerateStreamingParams()
+			.SetContainerInstanceCollection(Collection, FStreamingGenerationContainerInstanceCollection::ECollectionType::BaseAndEDLs);
 		UWorldPartition::FGenerateStreamingContext Context;
 
 		if (!TestTrue(TEXT("World Partition Generate Streaming"), WorldPartition->GenerateContainerStreaming(Params, Context)))
@@ -64,36 +67,36 @@ namespace WorldPartitionTests
 			return false;
 		}
 
-		FWorldPartitionReference ActorRef(ActorDescMainContainer, FGuid(TEXT("5D9F93BA407A811AFDDDAAB4F1CECC6A")));
+		FWorldPartitionReference ActorRef(BaseActorDescContainerInstance, FGuid(TEXT("5D9F93BA407A811AFDDDAAB4F1CECC6A")));
 		if (!TestTrue(TEXT("Invalid Actor Reference"), ActorRef.IsValid()))
 		{
 			return false;
 		}
 
-		AActor* Actor = ActorRef->GetActor();
+		AActor* Actor = ActorRef.GetActor();
 		if (!TestNotNull(TEXT("Missing Actor"), Actor))
 		{
 			return false;
 		}
 
-		FWorldPartitionHandle ActorHandle(ActorDescMainContainer, FGuid(TEXT("0D2B04D240BE5DE58FE437A8D2DBF5C9")));
+		FWorldPartitionHandle ActorHandle(BaseActorDescContainerInstance, FGuid(TEXT("0D2B04D240BE5DE58FE437A8D2DBF5C9")));
 		if (!TestTrue(TEXT("Invalid Actor Handle"), ActorHandle.IsValid()))
 		{
 			return false;
 		}
 
-		if (!TestNull(TEXT("Actor Handle Not Loaded"), ActorHandle->GetActor()))
+		if (!TestNull(TEXT("Actor Handle Not Loaded"), ActorHandle.GetActor()))
 		{
 			return false;
 		}
 
 		UObject* ResolvedObject = ActorHandle->GetActorSoftPath().TryLoad();
-		if (!TestNotNull(TEXT("Actor Handle Loaded"), ActorHandle->GetActor()))
+		if (!TestNotNull(TEXT("Actor Handle Loaded"), ActorHandle.GetActor()))
 		{
 			return false;
 		}
 
-		if (!TestTrue(TEXT("Resolving Runtime Actor From Editor Path Failed"), ResolvedObject == ActorHandle->GetActor()))
+		if (!TestTrue(TEXT("Resolving Runtime Actor From Editor Path Failed"), ResolvedObject == ActorHandle.GetActor()))
 		{
 			return false;
 		}

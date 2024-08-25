@@ -4,6 +4,8 @@
 #include "AnimNode_ControlRig_ExternalSource.h"
 #include "Sequencer/ControlRigLayerInstance.h"
 #include "AnimSequencerInstance.h"
+#include "ControlRig.h"
+#include "Sequencer/MovieSceneControlRigParameterTrack.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigLayerInstanceProxy)
 
@@ -38,8 +40,42 @@ void FControlRigLayerInstanceProxy::PreEvaluateAnimation(UAnimInstance* InAnimIn
 	}
 }
 
+void FControlRigLayerInstanceProxy::SortControlRigNodes()
+{
+	auto SortPredicate = [](TSharedPtr<FAnimNode_ControlRig_ExternalSource>& A, TSharedPtr<FAnimNode_ControlRig_ExternalSource>& B)
+	{
+		FAnimNode_ControlRig_ExternalSource* APtr = A.Get();
+		FAnimNode_ControlRig_ExternalSource* BPtr = B.Get();
+		if (APtr && BPtr && APtr->GetControlRig() && B->GetControlRig())
+		{
+			const bool AIsAdditive = A->GetControlRig()->IsAdditive();
+			const bool BIsAdditive = B->GetControlRig()->IsAdditive();
+			if (AIsAdditive != BIsAdditive)
+			{
+				return AIsAdditive; // if additive then first(first goes last) so true if AIsAdditive;
+			}
+			UMovieSceneControlRigParameterTrack* TrackA = APtr->GetControlRig()->GetTypedOuter<UMovieSceneControlRigParameterTrack>();
+			UMovieSceneControlRigParameterTrack* TrackB = BPtr->GetControlRig()->GetTypedOuter<UMovieSceneControlRigParameterTrack>();
+			if (TrackA && TrackB)
+			{
+				return TrackA->GetPriorityOrder() < TrackB->GetPriorityOrder();
+			}
+		}
+		else if (APtr && APtr->GetControlRig())
+		{
+			return false;
+		}
+		return true;
+	};
+
+	Algo::Sort(ControlRigNodes, SortPredicate);
+
+	ConstructNodes(); //we need to sort since prority may change at any time 
+}
+
 bool FControlRigLayerInstanceProxy::Evaluate(FPoseContext& Output)
 {
+	SortControlRigNodes();  //mz todo once we move over to ECS see if we can avoid this and trigger it as needed.
 	check(CurrentRoot);
 	CurrentRoot->Evaluate_AnyThread(Output);
 	return true;
@@ -140,29 +176,148 @@ void FControlRigLayerInstanceProxy::SetSourceAnimInstance(UAnimInstance* SourceA
 void FControlRigLayerInstanceProxy::AddControlRigTrack(int32 ControlRigID, UControlRig* InControlRig)
 {
 	FAnimNode_ControlRig_ExternalSource* Node = FindControlRigNode(ControlRigID);
-
+	const int32 DefaultPriorityOrder = 100;
 	if(!Node)
 	{
-		FAnimNode_ControlRig_ExternalSource* Parent = (ControlRigNodes.Num() > 0)? ControlRigNodes.Last().Get() : nullptr;
-		Node = ControlRigNodes.Add_GetRef(MakeShared<FAnimNode_ControlRig_ExternalSource>()).Get();
+		UMovieSceneControlRigParameterTrack* Track = InControlRig->GetTypedOuter<UMovieSceneControlRigParameterTrack>();
+
+		if (ControlRigNodes.Num() > 0)
+		{
+			int32 PriorityOrder = Track ? Track->GetPriorityOrder() : INDEX_NONE;
+			if (PriorityOrder == INDEX_NONE) //track has no order so just add to end, will happen on creation
+			{
+				if (InControlRig->IsAdditive()) //additive added to end of all
+				{
+					Node = ControlRigNodes[ControlRigNodes.Num() - 1].Get();
+					if (Track)
+					{
+						if (UMovieSceneControlRigParameterTrack* OtherTrack = Node->GetControlRig()->GetTypedOuter<UMovieSceneControlRigParameterTrack>())
+						{
+							Track->SetPriorityOrder(OtherTrack->GetPriorityOrder() + 1);
+						}
+						else
+						{
+							Track->SetPriorityOrder(DefaultPriorityOrder + ControlRigNodes.Num() -1);
+						}
+					}
+					Node = ControlRigNodes.Add_GetRef(MakeShared<FAnimNode_ControlRig_ExternalSource>()).Get();
+				}
+				else //if non-additive find first additive then insert there..
+				{
+					for (int32 Index = 0; Index < ControlRigNodes.Num(); ++Index)
+					{
+						Node = ControlRigNodes[Index].Get();
+						if (!Node || !Node->GetControlRig() || !Node->GetControlRig()->IsAdditive())
+						{
+							Node = nullptr;
+							continue; // not additive
+						}
+						//okay first additive so insert, but set priority first
+						if (Track)
+						{
+							if (UMovieSceneControlRigParameterTrack* OtherTrack = Node->GetControlRig()->GetTypedOuter<UMovieSceneControlRigParameterTrack>())
+							{
+								Track->SetPriorityOrder(OtherTrack->GetPriorityOrder() + 1);
+							}
+							else
+							{
+								Track->SetPriorityOrder(DefaultPriorityOrder + Index);
+							}
+						}
+						Node = ControlRigNodes.Insert_GetRef(MakeShared<FAnimNode_ControlRig_ExternalSource>(), Index).Get();
+						break;
+					}
+
+					if (Node == nullptr) //add to end
+					{
+						//set priority
+						Node = ControlRigNodes[ControlRigNodes.Num() - 1].Get();
+						if (Track)
+						{
+							if (UMovieSceneControlRigParameterTrack* OtherTrack = Node->GetControlRig()->GetTypedOuter<UMovieSceneControlRigParameterTrack>())
+							{
+								Track->SetPriorityOrder(OtherTrack->GetPriorityOrder() + 1);
+							}
+							else
+							{
+								Track->SetPriorityOrder(ControlRigNodes.Num() - 1);
+							}
+						}
+						Node = ControlRigNodes.Add_GetRef(MakeShared<FAnimNode_ControlRig_ExternalSource>()).Get();
+					}
+				}
+			}
+			else
+			{
+				int32 NewNodePosition = 0;
+				for (; NewNodePosition < ControlRigNodes.Num(); ++NewNodePosition)
+				{
+					Node = ControlRigNodes[NewNodePosition].Get();
+	
+					if (!Node || !Node->GetControlRig())
+					{
+						continue; // shouldn't happen
+					}
+					//additive but current isn't so keep going
+					if (InControlRig->IsAdditive() && !Node->GetControlRig()->IsAdditive())
+					{
+						continue;
+					}
+					//not additive but this one is so we add it here
+					else if (!InControlRig->IsAdditive() && Node->GetControlRig()->IsAdditive())
+					{
+						break;
+					}
+					if (UMovieSceneControlRigParameterTrack* OtherTrack = Node->GetControlRig()->GetTypedOuter<UMovieSceneControlRigParameterTrack>())
+					{
+						if (PriorityOrder >= OtherTrack->GetPriorityOrder())
+						{
+							continue;
+						}
+						else
+						{
+							break;
+						}
+					}
+				}
+				if (NewNodePosition >= ControlRigNodes.Num() - 1)
+				{
+					Node = ControlRigNodes.Add_GetRef(MakeShared<FAnimNode_ControlRig_ExternalSource>()).Get();
+				}
+				else
+				{
+					Node = ControlRigNodes.Insert_GetRef(MakeShared<FAnimNode_ControlRig_ExternalSource>(), NewNodePosition).Get();
+				}
+			}
+		}
+		else //no nodes add first one
+		{
+			Node = ControlRigNodes.Add_GetRef(MakeShared<FAnimNode_ControlRig_ExternalSource>()).Get();
+			if (Track)
+			{
+				int32 PriorityOrder = Track->GetPriorityOrder();
+				if (PriorityOrder == INDEX_NONE) //track has no order so just add to end, will happen on creation
+				{
+					Track->SetPriorityOrder(DefaultPriorityOrder);
+				}
+			}
+		}
+	
+		check(Node);
+		
+		//this will set up the link nodes
+		ConstructNodes();
 		SequencerToControlRigNodeMap.FindOrAdd(ControlRigID) = Node;
-		if (Parent)
-		{
-			FAnimNode_Base* LinkedNode = Parent->Source.GetLinkNode();
-			Parent->Source.SetLinkNode(Node);
-			Node->Source.SetLinkNode(LinkedNode);
-		}
-		else
-		{
-			// first node
-			CurrentRoot = Node;
-			Node->Source.SetLinkNode(&InputPose);
-		}
 	}
 
 	Node->SetControlRig(InControlRig);
 	Node->OnInitializeAnimInstance(this, CastChecked<UAnimInstance>(GetAnimInstanceObject()));
-	Node->Initialize_AnyThread(FAnimationInitializeContext(this));
+	//mz removed this due to crash since Skeleton is not set up on a previous linked node 
+	// see FORT-630426
+	//but leaving in case it's needed for something else in which case need
+	//to call AnimInstance::UpdateAnimation(via TickAnimation perhaps
+	// Also, this initialize will remove any source animations that additive control rigs might depend on
+	//Node->Initialize_AnyThread(FAnimationInitializeContext(this));
 }
 
 bool FControlRigLayerInstanceProxy::HasControlRigTrack(int32 ControlRigID)
@@ -192,6 +347,8 @@ void FControlRigLayerInstanceProxy::RemoveControlRigTrack(int32 ControlRigID)
 	if (FAnimNode_ControlRig_ExternalSource* Node = FindControlRigNode(ControlRigID))
 	{
 		FAnimNode_ControlRig_ExternalSource* Parent = nullptr;
+
+		// "ControlRigNodes" should have nodes sorted from parent(last to evaluate) to child(first to evaluate)
 		for (int32 Index = 0; Index < ControlRigNodes.Num(); ++Index)
 		{
 			FAnimNode_ControlRig_ExternalSource* Current = ControlRigNodes[Index].Get();
@@ -202,20 +359,7 @@ void FControlRigLayerInstanceProxy::RemoveControlRigTrack(int32 ControlRigID)
 				// find next child one
 				FAnimNode_ControlRig_ExternalSource* Child = (ControlRigNodes.IsValidIndex(Index + 1)) ? ControlRigNodes[Index + 1].Get() : nullptr;
 
-				// if no parent, change root
-				if (Parent == nullptr)
-				{
-					// first one to delete
-					if (Child)
-					{
-						CurrentRoot = Child;
-					}
-					else
-					{
-						CurrentRoot = &InputPose;
-					}
-				}
-				else
+				if (Parent)
 				{
 					if (Child)
 					{
@@ -234,6 +378,15 @@ void FControlRigLayerInstanceProxy::RemoveControlRigTrack(int32 ControlRigID)
 			Parent = Current;
 		}
 
+		if (ControlRigNodes.IsEmpty())
+		{
+			CurrentRoot = &InputPose;
+		}
+		else
+		{
+			// stay consistent with ConstructNodes()
+			CurrentRoot = ControlRigNodes[0].Get();
+		}
 		SequencerToControlRigNodeMap.Remove(ControlRigID);
 	}
 }
@@ -350,9 +503,13 @@ void FAnimNode_ControlRigInputPose::Update_AnyThread(const FAnimationUpdateConte
 	if (InputProxy)
 	{
 		FAnimationUpdateContext InputContext = Context.WithOtherProxy(InputProxy);
-		if (InputPose.GetLinkNode())
+		if (FAnimNode_Base* InputNode = InputPose.GetLinkNode())
 		{
-			InputPose.Update(InputContext);
+			InputProxy->UpdateAnimation_WithRoot(InputContext, InputNode, TEXT("AnimGraph"));
+		}
+		else if(InputProxy->HasRootNode())
+		{
+			InputProxy->UpdateAnimationNode(InputContext);
 		}
 		else
 		{
@@ -368,22 +525,25 @@ void FAnimNode_ControlRigInputPose::Evaluate_AnyThread(FPoseContext& Output)
 		FBoneContainer& RequiredBones = InputProxy->GetRequiredBones();
 		if (RequiredBones.IsValid())
 		{
-			Output.Pose.SetBoneContainer(&RequiredBones);
-			FPoseContext InputContext(InputProxy, Output.ExpectsAdditivePose());
-
+			FPoseContext InnerOutput(InputProxy, Output.ExpectsAdditivePose());
+			
 			// if no linked node, just use Evaluate of proxy
-			if (InputPose.GetLinkNode())
+			if (FAnimNode_Base* InputNode = InputPose.GetLinkNode())
 			{
-				InputPose.Evaluate(InputContext);
+				InputProxy->EvaluateAnimation_WithRoot(InnerOutput, InputNode);
+			}
+			else if(InputProxy->HasRootNode())
+			{
+				InputProxy->EvaluateAnimationNode(InnerOutput);
 			}
 			else
 			{
-				FControlRigLayerInstanceProxy::EvaluateCustomProxy(InputProxy, InputContext);
+				FControlRigLayerInstanceProxy::EvaluateCustomProxy(InputProxy, InnerOutput);
 			}
 
-			Output.Pose.MoveBonesFrom(InputContext.Pose);
-			Output.Curve.MoveFrom(InputContext.Curve);
-			Output.CustomAttributes.MoveFrom(InputContext.CustomAttributes);
+			Output.Pose.MoveBonesFrom(InnerOutput.Pose);
+			Output.Curve.MoveFrom(InnerOutput.Curve);
+			Output.CustomAttributes.MoveFrom(InnerOutput.CustomAttributes);
 			return;
 		}
 	}

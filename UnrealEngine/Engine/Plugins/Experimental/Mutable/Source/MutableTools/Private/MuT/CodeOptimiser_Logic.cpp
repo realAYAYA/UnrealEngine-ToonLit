@@ -11,10 +11,6 @@
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/CodeOptimiser.h"
 
-#include <memory>
-#include <utility>
-
-
 
 namespace mu
 {
@@ -1021,11 +1017,11 @@ namespace mu
 
                 if (n->GetOpType()==OP_TYPE::IN_CONDITIONAL)
                 {
-					ASTOpConditional* topConditional = dynamic_cast<ASTOpConditional*>(n.get());
+					ASTOpConditional* topConditional = static_cast<ASTOpConditional*>(n.get());
 					Ptr<ASTOp> yes = topConditional->yes.child();
                     if (yes && yes->GetOpType()==OP_TYPE::IN_ADDSURFACE)
                     {
-                        auto addSurface = dynamic_cast<ASTOpInstanceAdd*>(yes.get());
+						ASTOpInstanceAdd* addSurface = static_cast<ASTOpInstanceAdd*>(yes.get());
 
                         bool ended = false;
                         while (!ended)
@@ -1034,7 +1030,7 @@ namespace mu
 							Ptr<ASTOp> base = addSurface->instance.child();
                             if ( base && base->GetOpType()==OP_TYPE::IN_CONDITIONAL )
                             {
-								ASTOpConditional* bottomConditional = dynamic_cast<ASTOpConditional*>(base.get());
+								ASTOpConditional* bottomConditional = static_cast<ASTOpConditional*>(base.get());
 
                                 // Are the two conditions exclusive?
                                 bool conditionaAreExclusive = false;
@@ -1080,11 +1076,11 @@ namespace mu
 
                 else if (n->GetOpType()==OP_TYPE::ME_CONDITIONAL)
                 {
-					ASTOpConditional* topConditional = dynamic_cast<ASTOpConditional*>(n.get());
+					ASTOpConditional* topConditional = static_cast<ASTOpConditional*>(n.get());
                     Ptr<ASTOp> yes = topConditional->yes.child();
                     if ( yes && yes->GetOpType()==OP_TYPE::ME_MERGE )
                     {
-                        Ptr<ASTOpFixed> merge = dynamic_cast<ASTOpFixed*>(yes.get());
+                        Ptr<ASTOpFixed> merge = static_cast<ASTOpFixed*>(yes.get());
 
                         bool ended = false;
                         while (!ended)
@@ -1093,7 +1089,7 @@ namespace mu
 							Ptr<ASTOp> base = merge->children[merge->op.args.MeshMerge.base].child();
                             if ( base && base->GetOpType()==OP_TYPE::ME_CONDITIONAL )
                             {
-								ASTOpConditional* bottomConditional = dynamic_cast<ASTOpConditional*>(base.get());
+								ASTOpConditional* bottomConditional = static_cast<ASTOpConditional*>(base.get());
 
                                 // Are the two conditions exclusive?
                                 bool conditionaAreExclusive = false;
@@ -1200,10 +1196,14 @@ namespace mu
             {
                 bool recurse = true;
 
-                auto topConditional = dynamic_cast<ASTOpConditional*>(n.get());
+				ASTOpConditional* topConditional = nullptr;
+				if (n && n->IsConditional())
+				{
+					topConditional = static_cast<ASTOpConditional*>(n.get());
+				}
+
                 if (topConditional && topConditional->condition)
                 {
-
                     if ( topConditional->condition->GetOpType()==OP_TYPE::BO_EQUAL_INT_CONST
                          &&
                          topConditional->no
@@ -1214,7 +1214,7 @@ namespace mu
                         Ptr<ASTOpSwitch> switchOp = new ASTOpSwitch();
                         switchOp->type = GetSwitchForType(GetOpDataType(topConditional->GetOpType()));
 
-                        auto firstCompare = dynamic_cast<ASTOpFixed*>(topConditional->condition.child().get());
+						ASTOpFixed* firstCompare = static_cast<ASTOpFixed*>(topConditional->condition.child().get());
                         switchOp->variable = firstCompare->children[firstCompare->op.args.BoolEqualScalarConst.value].child();
 
                         auto current = n;
@@ -1222,7 +1222,12 @@ namespace mu
                         {
                             bool valid = false;
 
-                            auto conditional = dynamic_cast<ASTOpConditional*>(current.get());
+							ASTOpConditional* conditional = nullptr;
+							if (current && current->IsConditional())
+							{
+								conditional = static_cast<ASTOpConditional*>(current.get());
+							}
+
                             if ( conditional
                                  &&
                                  conditional->GetOpType()==topConditional->GetOpType()
@@ -1231,7 +1236,7 @@ namespace mu
                                  &&
                                  conditional->condition->GetOpType()==OP_TYPE::BO_EQUAL_INT_CONST )
                             {
-                                auto compare = dynamic_cast<ASTOpFixed*>(conditional->condition.child().get());
+								ASTOpFixed* compare = static_cast<ASTOpFixed*>(conditional->condition.child().get());
                                 check(compare);
                                 if (compare)
                                 {
@@ -1281,12 +1286,17 @@ namespace mu
             {
                 bool recurse = true;
 
-				ASTOpSwitch* topSwitch = dynamic_cast<ASTOpSwitch*>(n.get());
+				ASTOpSwitch* topSwitch = nullptr;
+				if (n && n->IsSwitch())
+				{
+					topSwitch = static_cast<ASTOpSwitch*>(n.get());
+				}
+
                 if (topSwitch)
                 {
                     bool first = true;
-                    auto caseType = OP_TYPE::NONE;
-                    for (const auto& c:topSwitch->cases)
+					OP_TYPE caseType = OP_TYPE::NONE;
+                    for (const ASTOpSwitch::FCase& c:topSwitch->cases)
                     {
                         if ( c.branch )
                         {

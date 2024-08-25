@@ -12,8 +12,20 @@ float4 DrawRectangleUVScaleBias;
 // PS parameters
 Texture2D InputTexture;
 Texture2D WarpMapTexture;
+
+// AlphaMap and BetaMap textures.
 Texture2D AlphaMapTexture;
 Texture2D BetaMapTexture;
+
+// Indicates the number of components within the alpha or beta map. Valid values are 1 or 3.
+int AlphaMapComponentDepth;
+int BetaMapComponentDepth;
+
+// This parameter contains the 'gammaEmbedded' tag value, which is the gamma value for the AlphaMap texture.
+// Note: The MPCDI 2.0 standard does not define an 'EmbeddedGamma' tag value for the BetaMap tag.
+// However, it does require gamma correction for BetaMap.
+// Therefore, this parameter is also used for the BetaMap texture.
+float AlphaMapGammaEmbedded;
 
 Texture2D InnerCameraTexture;
 Texture2D ChromakeyCameraTexture;
@@ -52,7 +64,7 @@ float4 OverlappedInnerCameraSoftEdges[MAX_INNER_CAMERAS_AMOUNT];
 #define ENABLE_INNER_CAMERA_OVERLAP 0
 #endif
 
-float AlphaEmbeddedGamma;
+float LightCardGamma;
 
 float4 InnerCameraSoftEdge;
 
@@ -136,24 +148,67 @@ void DrawRectangle(in float4 InPosition, in float2 InTexCoord, out float4 OutPos
 }
 
 
-float4 ApplyBlending(float3 color, OutputVS IN, float ColorAlphaValue)
+float4 ApplyBlending(float3 InColor_sRGB, OutputVS IN, float ColorAlphaValue)
 {
-#if ALPHAMAP_BLENDING
-	color = MPCDI_sRGBToLinear(color);
+	// 2.4 Apply Alpha and Beta mapping [MPCDI 2.0]
+	//
+	// Intensity blending and black level adjustments in projector overlap regions are expressed in alpha
+	// and beta maps respectively. These are expressed with the following equation.
+	//
+	//  Pf = (Pi * a * (1 - b)) + b
+	//
+	// where:
+	//   Pi - is the initial color
+	//   Pf - is final pixel color
+	//    a - is the gamma-corrected intensity mapping color
+	//    b - is the gamma-corrected black level offset color
+	
+	// BetaMap can be used by itself, without AlphaMap.
+#if ALPHAMAP_BLENDING || BETAMAP_BLENDING
+	float3 LinearColor = MPCDI_sRGBToLinear(InColor_sRGB);
 
-	// Load alpha
-	float alpha = pow(AlphaMapTexture.Sample(AlphaMapSampler, IN.UV.xy).r, AlphaEmbeddedGamma);
+	// To convert a texture between gamma and linear color space, simply use these formulas:
+	// LinearColor = pow(sRGBColor, Gamma)
+	//   sRGBColor = pow(LinearColor, 1.0 / Gamma)
+	
+	// Note: AlphaMapGammaEmbedded is used for both AlphaMap and BetaMap.
+	// (The MPCDI 2.0 standard does not define an 'EmbeddedGamma' tag value for the BetaMap tag. However, it does require gamma correction for BetaMap.)
+	
+#if ALPHAMAP_BLENDING
+	if(AlphaMapComponentDepth < 3)
+	{
+		// Grayscale AlphaMap: get a single-channel value and convert its color space to linear.
+		float LinearAlphaMap = pow(AlphaMapTexture.Sample(AlphaMapSampler, IN.UV.xy).r, AlphaMapGammaEmbedded);
+		LinearColor = LinearColor * LinearAlphaMap;
+	}
+	else
+	{
+		// RGB AlphaMap: get the values of the 3 texture channels and convert their color space to linear.
+		float3 LinearAlphaMap = pow(AlphaMapTexture.Sample(AlphaMapSampler, IN.UV.xy).rgb, AlphaMapGammaEmbedded);
+		LinearColor = LinearColor * LinearAlphaMap;
+	}
+#endif
 
 #if BETAMAP_BLENDING
-	float beta = BetaMapTexture.Sample(BetaMapSampler, IN.UV.xy).r;
-	color = (color*alpha*(1 - beta)) + beta;
-#else // NOT BETAMAP_BLENDING
-	color = color * alpha;
+	if(BetaMapComponentDepth < 3)
+	{
+		// Grayscale BetaMap: get a single-channel value and convert its color space to linear.
+		float LinearBetaMap = pow(BetaMapTexture.Sample(BetaMapSampler, IN.UV.xy).r, AlphaMapGammaEmbedded);
+		LinearColor = LinearColor * ( 1 - LinearBetaMap) + LinearBetaMap;
+	}
+	else
+	{
+		// RGB BetaMap: get the values of the 3 texture channels and convert their color space to linear.
+		float3 LinearBetaMap = pow(BetaMapTexture.Sample(BetaMapSampler, IN.UV.xy).rgb, AlphaMapGammaEmbedded);
+		LinearColor = LinearColor * ( 1 - LinearBetaMap) + LinearBetaMap;
+	}
 #endif // BETAMAP_BLENDING
-	// Load beta
 
-	return float4(MPCDI_LinearTosRGB(color), ColorAlphaValue);
-#else //NOT ALPHAMAP_BLENDING
-	return float4(color, ColorAlphaValue);
-#endif // ALPHAMAP_BLENDING
+	return float4(MPCDI_LinearTosRGB(LinearColor), ColorAlphaValue);
+
+#else // #if ALPHAMAP_BLENDING || BETAMAP_BLENDING
+	
+	return float4(InColor_sRGB, ColorAlphaValue);
+	
+#endif // #if ALPHAMAP_BLENDING || BETAMAP_BLENDING
 }

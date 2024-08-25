@@ -144,6 +144,8 @@ class UBTCompositeNode : public UBTNode
 
 	/** size of instance memory */
 	AIMODULE_API virtual uint16 GetInstanceMemorySize() const override;
+	virtual void InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const override;
+	virtual void CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const override;
 
 	/** @return child node at given index */
 	AIMODULE_API UBTNode* GetChildNode(int32 Index) const;

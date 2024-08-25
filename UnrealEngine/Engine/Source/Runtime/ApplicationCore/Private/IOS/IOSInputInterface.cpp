@@ -79,7 +79,7 @@ uint32 TranslateGCKeyCodeToASCII(GCKeyCode KeyCode)
         else if (KeyCode == GCKeyCodePeriod) { c = '.';}
         else if (KeyCode == GCKeyCodeSlash) { c = '/';}
         
-        UE_LOG(LogIOS, Log, TEXT("char: %c"), (char)c);
+        UE_LOG(LogIOS, Log, TEXT("char: %c"), TCHAR(c));
     }
     return c;
 }

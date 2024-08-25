@@ -8,10 +8,6 @@
 #include "MovieSceneSequenceTickInterval.h"
 #include "MovieSceneLatentActionManager.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-	#include "EntitySystem/MovieSceneEntitySystemRunner.h"
-#endif
-
 #include "MovieSceneSequenceTickManager.generated.h"
 
 
@@ -102,6 +98,8 @@ public:
 	MOVIESCENE_API void UnregisterSequenceActor(AActor* InActor, TScriptInterface<IMovieSceneSequenceTickManagerClient> InActorInterface);
 	/*~ -------------------------------------------------------------- */
 
+	static MOVIESCENE_API void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
+
 private:
 
 	/*~ UObject interface */
@@ -126,7 +124,7 @@ private:
 	struct FLinkerGroup
 	{
 		/** The linker that owns all the entity data, systems and instances */
-		UMovieSceneEntitySystemLinker* Linker;
+		TObjectPtr<UMovieSceneEntitySystemLinker> Linker;
 		/** Runner responsible for evaluating each phase of the pipeline */
 		TSharedPtr<FMovieSceneEntitySystemRunner> Runner;
 

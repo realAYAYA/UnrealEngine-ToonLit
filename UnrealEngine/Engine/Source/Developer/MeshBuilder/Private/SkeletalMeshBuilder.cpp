@@ -84,7 +84,6 @@ bool FSkeletalMeshBuilder::Build(const FSkeletalMeshBuildParameters& SkeletalMes
 	TArray<ClothingAssetUtils::FClothingAssetMeshBinding> ClothingBindings;
 	FLODUtilities::UnbindClothingAndBackup(SkeletalMesh, ClothingBindings, LODIndex);
 
-	FSkeletalMeshImportData SkeletalMeshImportData;
 	int32 NumTextCoord = 1; //We need to send rendering at least one tex coord buffer
 
 	//This scope define where we can use the LODModel, after a reduction the LODModel must be requery since it is a new instance
@@ -92,7 +91,8 @@ bool FSkeletalMeshBuilder::Build(const FSkeletalMeshBuildParameters& SkeletalMes
 		FSkeletalMeshLODModel& BuildLODModel = SkeletalMesh->GetImportedModel()->LODModels[LODIndex];
 
 		//Load the imported data
-		SkeletalMesh->LoadLODImportedData(LODIndex, SkeletalMeshImportData);
+		const FMeshDescription& SkeletalMeshModel = *SkeletalMesh->GetMeshDescription(LODIndex);
+		FSkeletalMeshImportData SkeletalMeshImportData = FSkeletalMeshImportData::CreateFromMeshDescription(SkeletalMeshModel);
 
 		TArray<FVector3f> LODPoints;
 		TArray<SkeletalMeshImportData::FMeshWedge> LODWedges;
@@ -151,12 +151,12 @@ bool FSkeletalMeshBuilder::Build(const FSkeletalMeshBuildParameters& SkeletalMes
 		SlowTask.EnterProgressFrame(1.0f, NSLOCTEXT("SkeltalMeshBuilder", "RebuildMorphTarget", "Rebuilding morph targets..."));
 		if (SkeletalMeshImportData.MorphTargetNames.Num() > 0)
 		{
-			FLODUtilities::BuildMorphTargets(SkeletalMesh, SkeletalMeshImportData, LODIndex, !Options.bComputeNormals, !Options.bComputeTangents, Options.bUseMikkTSpace, Options.OverlappingThresholds);
+			FLODUtilities::BuildMorphTargets(SkeletalMesh, SkeletalMeshModel, SkeletalMeshImportData, LODIndex, !Options.bComputeNormals, !Options.bComputeTangents, Options.bUseMikkTSpace, Options.OverlappingThresholds);
 		}
 
 		//Re-apply the alternate skinning it must be after the inline reduction
 		SlowTask.EnterProgressFrame(1.0f, NSLOCTEXT("SkeltalMeshBuilder", "RebuildAlternateSkinning", "Rebuilding alternate skinning..."));
-		const TArray<FSkinWeightProfileInfo>& SkinProfiles = SkeletalMesh->GetSkinWeightProfiles();
+		const TArray<FSkinWeightProfileInfo> SkinProfiles = SkeletalMesh->GetSkinWeightProfiles();
 		for (int32 SkinProfileIndex = 0; SkinProfileIndex < SkinProfiles.Num(); ++SkinProfileIndex)
 		{
 			const FSkinWeightProfileInfo& ProfileInfo = SkinProfiles[SkinProfileIndex];
@@ -173,7 +173,7 @@ bool FSkeletalMeshBuilder::Build(const FSkeletalMeshBuildParameters& SkeletalMes
 		{
 			SlowTask.EnterProgressFrame(1.0f, NSLOCTEXT("SkeltalMeshBuilder", "RegenerateLOD", "Regenerate LOD..."));
 			//Update the original reduction data since we just build a new LODModel.
-			if (LODInfo->ReductionSettings.BaseLOD == LODIndex && SkeletalMesh->IsLODImportedDataBuildAvailable(LODIndex))
+			if (LODInfo->ReductionSettings.BaseLOD == LODIndex && SkeletalMesh->HasMeshDescription(LODIndex))
 			{
 				if (LODIndex == 0)
 				{

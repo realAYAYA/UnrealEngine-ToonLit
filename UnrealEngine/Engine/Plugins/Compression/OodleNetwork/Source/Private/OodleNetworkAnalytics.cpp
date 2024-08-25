@@ -237,7 +237,7 @@ void FOodleNetAnalyticsData::SendAnalytics()
 		static const FString EZAttrib_NumOodleNetworkHandlersCompressionEnabled = TEXT("NumOodleNetworkHandlersCompressionEnabled");
 		static const FString EZAttrib_NumOodleNetworkHandlersCompressionDisabled = TEXT("NumOodleNetworkHandlersCompressionDisabled");
 
-		const TArray<FAnalyticsEventAttribute> EventAttributes = MakeAnalyticsEventAttributeArray(
+		TArray<FAnalyticsEventAttribute> EventAttributes = MakeAnalyticsEventAttributeArray(
 			EZAttrib_InCompressedNum, InCompressedNum,
 			EZAttrib_InNotCompressedNum, InNotCompressedNum,
 			EZAttrib_InCompressedWithOverheadLengthTotal, InCompressedWithOverheadLengthTotal,
@@ -273,6 +273,8 @@ void FOodleNetAnalyticsData::SendAnalytics()
 			EZAttrib_NumOodleNetworkHandlersCompressionEnabled, NumOodleNetworkHandlersCompressionEnabled,
 			EZAttrib_NumOodleNetworkHandlersCompressionDisabled, NumOodleNetworkHandlersCompressionDisabled
 		);
+
+		Aggregator->AppendGameInstanceAttributes(EventAttributes);
 
 		AnalyticsProvider->RecordEvent(GetAnalyticsEventName(), EventAttributes);
 	}

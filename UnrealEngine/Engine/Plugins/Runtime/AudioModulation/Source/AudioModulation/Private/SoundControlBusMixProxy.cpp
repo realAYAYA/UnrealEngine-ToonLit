@@ -20,7 +20,7 @@ namespace AudioModulation
 	const FBusMixId InvalidBusMixId = INDEX_NONE;
 
 	FModulatorBusMixStageSettings::FModulatorBusMixStageSettings(const FSoundControlBusMixStage& InStage)
-		: TModulatorBase<FBusId>(InStage.Bus->GetName(), InStage.Bus->GetUniqueID())
+		: TModulatorBase<FBusId>(InStage.Bus->GetFName(), InStage.Bus->GetUniqueID())
 		, Address(InStage.Bus->Address)
 		, ParamClassId(INDEX_NONE)
 		, ParamId(INDEX_NONE)
@@ -50,7 +50,7 @@ namespace AudioModulation
 	}
 
 	FModulatorBusMixSettings::FModulatorBusMixSettings(const USoundControlBusMix& InBusMix)
-		: TModulatorBase<FBusMixId>(InBusMix.GetName(), InBusMix.GetUniqueID())
+		: TModulatorBase<FBusMixId>(InBusMix.GetFName(), InBusMix.GetUniqueID())
 	{
 		for (const FSoundControlBusMixStage& Stage : InBusMix.MixStages)
 		{

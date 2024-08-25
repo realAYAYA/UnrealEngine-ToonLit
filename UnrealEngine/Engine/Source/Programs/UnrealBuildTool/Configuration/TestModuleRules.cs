@@ -15,9 +15,6 @@ namespace UnrealBuildTool
 	/// </summary>
 	public class TestModuleRules : ModuleRules
 	{
-		[ConfigFile(ConfigHierarchyType.Engine, "LowLevelTestsSettings", "UpdateBuildGraphPropertiesFile")]
-		bool bUpdateBuildGraphPropertiesFile = false;
-
 		private readonly XNamespace BuildGraphNamespace = XNamespace.Get("http://www.epicgames.com/BuildGraph");
 		private readonly XNamespace SchemaInstance = XNamespace.Get("http://www.w3.org/2001/XMLSchema-instance");
 		private readonly XNamespace SchemaLocation = XNamespace.Get("http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd");
@@ -71,6 +68,8 @@ namespace UnrealBuildTool
 
 			PrivateDependencyModuleNames.AddRange(TestedModule.PrivateDependencyModuleNames);
 			PublicDependencyModuleNames.AddRange(TestedModule.PublicDependencyModuleNames);
+
+			DirectoriesForModuleSubClasses = new Dictionary<Type, DirectoryReference>();
 
 			// Tests can refer to tested module's Public and Private paths
 			string ModulePublicDir = Path.Combine(TestedModule.ModuleDirectory, "Public");
@@ -146,7 +145,7 @@ namespace UnrealBuildTool
 		/// </summary>
 		protected void SetResourcesFolder(string ResourcesRelativeFolder)
 		{
-			AdditionalPropertiesForReceipt.Inner.RemoveAll(Prop => Prop.Name == "ResourcesFolder");
+			AdditionalPropertiesForReceipt.RemoveAll(Prop => Prop.Name == "ResourcesFolder");
 
 			foreach (DirectoryReference Directory in GetAllModuleDirectories())
 			{
@@ -166,14 +165,24 @@ namespace UnrealBuildTool
 		/// </summary>
 		protected void UpdateBuildGraphPropertiesFile(Metadata TestMetadata)
 		{
-			if (Environment.GetEnvironmentVariable("IsBuildMachine") != null || !bUpdateBuildGraphPropertiesFile || TestMetadata == null)
+			bool bUpdateBuildGraphPropertiesFile = false;
+			TestTargetRules? TestTargetRules = Target.InnerTestTargetRules;
+			if (TestTargetRules != null)
+			{
+				bUpdateBuildGraphPropertiesFile = TestTargetRules.bUpdateBuildGraphPropertiesFile;
+			}
+
+			bool bIsBuildMachine = Unreal.IsBuildMachine();
+			if (bIsBuildMachine || !bUpdateBuildGraphPropertiesFile || TestMetadata == null)
 			{
 				return;
 			}
 
+			string BaseFolder = GetBaseFolder();
+
 			string GeneratedPropertiesScriptFile;
 
-			string NonPublicPath = Path.Combine(Unreal.EngineDirectory.FullName, "Restricted", "NotForLicensees", "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
+			string NonPublicPath = Path.Combine(BaseFolder, "Restricted", "NotForLicensees", "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
 
 			bool ModuleInRestrictedPath = IsRestrictedPath(ModuleDirectory);
 
@@ -183,7 +192,7 @@ namespace UnrealBuildTool
 			}
 			else
 			{
-				GeneratedPropertiesScriptFile = Path.Combine(Unreal.EngineDirectory.FullName, "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
+				GeneratedPropertiesScriptFile = Path.Combine(BaseFolder, "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
 			}
 
 			if (!System.IO.File.Exists(GeneratedPropertiesScriptFile))
@@ -216,6 +225,7 @@ namespace UnrealBuildTool
 				TestBinariesPath = Path.GetRelativePath(Unreal.RootDirectory.FullName, TestBinariesPath);
 			}
 
+			MakeFileWriteable(GeneratedPropertiesScriptFile);
 			XDocument GenPropsDoc = XDocument.Load(GeneratedPropertiesScriptFile);
 			XElement? Root = GenPropsDoc.Root;
 			// First descendant must be TestNames
@@ -232,37 +242,14 @@ namespace UnrealBuildTool
 					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "Target", Convert.ToString(TestTargetName));
 					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "BinariesRelative", Convert.ToString(TestBinariesPath));
 					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "ReportType", Convert.ToString(TestMetadata.ReportType));
-
-					string ExtraArguments = Convert.ToString(TestMetadata.InitialExtraArgs);
-					if(TestMetadata.StagesWithProjectFile)
-					{
-						//  -BaseFromWorkingDir Is needed here for Programs to properly detect .ini files from its irregular platform path.
-						ExtraArguments += $"--extra-args -BaseFromWorkingDir";
-					}
-
-					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "InitialExtraArgs", ExtraArguments);
+					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "GauntletArgs", Convert.ToString(TestMetadata.InitialExtraArgs) + Convert.ToString(TestMetadata.GauntletArgs));
+					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "ExtraArgs", Convert.ToString(TestMetadata.ExtraArgs));
 					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "HasAfterSteps", Convert.ToString(TestMetadata.HasAfterSteps));
 					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "UsesCatch2", Convert.ToString(TestMetadata.UsesCatch2));
 
 					InsertOrUpdateTestOption(ref lastUpdatedNode, TestMetadata.TestName, $"Run {TestMetadata.TestShortName} Tests", "Run", "Tests", false.ToString());
 
-					List<UnrealTargetPlatform> AllSupportedPlatforms = new List<UnrealTargetPlatform>();
-					object[] SupportedPlatforms = GetType().GetCustomAttributes(typeof(SupportedPlatformsAttribute), false);
-					// If none specified we assume Win64
-					if (SupportedPlatforms.Length == 0)
-					{
-						UnrealTargetPlatform[] SupportedByDefault = { UnrealTargetPlatform.Win64 };
-						AllSupportedPlatforms.AddRange(SupportedByDefault);
-					}
-					else
-					{
-						foreach (object Platform in SupportedPlatforms)
-						{
-							AllSupportedPlatforms.AddRange(((SupportedPlatformsAttribute)Platform).Platforms);
-						}
-					}
-
-					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "SupportedPlatforms", AllSupportedPlatforms.Aggregate("", (current, next) => (String.IsNullOrEmpty(current) ? next.ToString() : current + ";" + next.ToString())));
+					InsertOrUpdateTestFlagProperty(ref lastUpdatedNode, TestMetadata.TestName, "SupportedPlatforms", TestMetadata.SupportedPlatforms.Aggregate("", (current, next) => (String.IsNullOrEmpty(current) ? next.ToString() : current + ";" + next.ToString())));
 				}
 			}
 
@@ -279,11 +266,11 @@ namespace UnrealBuildTool
 				bool IsRestrictedPlatformName = IsPlatformRestricted(ValidPlatform);
 				if (IsRestrictedPlatformName)
 				{
-					NonPublicPathPlatform = Path.Combine(Unreal.EngineDirectory.FullName, "Restricted", "NotForLicensees", "Platforms", ValidPlatform.ToString(), "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
+					NonPublicPathPlatform = Path.Combine(BaseFolder, "Restricted", "NotForLicensees", "Platforms", ValidPlatform.ToString(), "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
 				}
 				else
 				{
-					NonPublicPathPlatform = Path.Combine(Unreal.EngineDirectory.FullName, "Restricted", "NotForLicensees", "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
+					NonPublicPathPlatform = Path.Combine(BaseFolder, "Restricted", "NotForLicensees", "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
 				}
 
 				if (ModuleInRestrictedPath)
@@ -294,11 +281,11 @@ namespace UnrealBuildTool
 				{
 					if (IsRestrictedPlatformName)
 					{
-						GeneratedPropertiesPlatformFile = Path.Combine(Unreal.EngineDirectory.FullName, "Platforms", ValidPlatform.ToString(), "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
+						GeneratedPropertiesPlatformFile = Path.Combine(BaseFolder, "Platforms", ValidPlatform.ToString(), "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
 					}
 					else
 					{
-						GeneratedPropertiesPlatformFile = Path.Combine(Unreal.EngineDirectory.FullName, "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
+						GeneratedPropertiesPlatformFile = Path.Combine(BaseFolder, "Build", "LowLevelTests", $"{TestMetadata.TestName}.xml");
 					}
 				}
 
@@ -315,6 +302,7 @@ namespace UnrealBuildTool
 					}
 				}
 
+				MakeFileWriteable(GeneratedPropertiesPlatformFile);
 				XDocument XInitPlatformFile = XDocument.Load(GeneratedPropertiesPlatformFile);
 
 				// Adding per-test and per-platform tags
@@ -327,8 +315,22 @@ namespace UnrealBuildTool
 				string RunSupportedValue = TestMetadata.PlatformsRunUnsupported.Contains(ValidPlatform) ? "False" : "True";
 				AppendOrUpdateTestFlagProperty(ref XInitPlatformFile, TestMetadata.TestName, ValidPlatform.ToString(), "RunSupported", RunSupportedValue);
 
+				string RunContainerizedValue = TestMetadata.PlatformRunContainerized.ContainsKey(ValidPlatform) ? "True" : "False";
+				AppendOrUpdateTestFlagProperty(ref XInitPlatformFile, TestMetadata.TestName, ValidPlatform.ToString(), "RunContainerized", RunContainerizedValue);
+
 				XInitPlatformFile.Save(GeneratedPropertiesPlatformFile);
 			}
+		}
+
+		private string GetBaseFolder()
+		{
+			string RelativeModulePath = Path.GetRelativePath(Unreal.RootDirectory.FullName, ModuleDirectory);
+			string[] BreadCrumbs = RelativeModulePath.Split(new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+			if (BreadCrumbs.Length > 0)
+			{
+				return Path.Combine(Unreal.RootDirectory.FullName, BreadCrumbs[0]);
+			}
+			return Unreal.EngineDirectory.FullName;
 		}
 
 		private bool IsPlatformRestricted(UnrealTargetPlatform Platform)
@@ -354,6 +356,11 @@ namespace UnrealBuildTool
 			int SourceFolderIndex = ModuleDirectory.IndexOf("Source");
 			if (SourceFolderIndex < 0)
 			{
+				int PluginFolderIndex = ModuleDirectory.IndexOf("Plugins");
+				if (PluginFolderIndex >= 0)
+				{
+					return ModuleDirectory.Substring(0, PluginFolderIndex) + "Binaries";
+				}
 				throw new Exception("Could not detect source folder path for module " + GetType());
 			}
 			return ModuleDirectory.Substring(0, SourceFolderIndex) + "Binaries";
@@ -374,7 +381,6 @@ namespace UnrealBuildTool
 				Document.Root!.Add(ElementAppend);
 			}
 		}
-
 		private void InsertOrUpdateTestFlagProperty(ref XElement ElementUpsertAfter, string TestName, string FlagSuffix, string FlagValue)
 		{
 			IEnumerable<XElement> NextChunk = ElementUpsertAfter.ElementsAfterSelf(BuildGraphNamespace + "Property")
@@ -421,6 +427,11 @@ namespace UnrealBuildTool
 #pragma warning restore 8604
 #pragma warning restore 8602
 
+		private void MakeFileWriteable(string InFilePath)
+		{
+			System.IO.File.SetAttributes(InFilePath, System.IO.File.GetAttributes(InFilePath) & ~FileAttributes.ReadOnly);
+		}
+
 #pragma warning disable 8618
 		/// <summary>
 		/// Test metadata class.
@@ -447,8 +458,7 @@ namespace UnrealBuildTool
 			}
 
 			/// <summary>
-			/// Does this test use project files for staging additional files?
-			/// This will append `-SkipStage -Build=$(RootDir)/$($(TestName)Target)` to InitialExtraArgs
+			/// Does this test use project files for staging additional files
 			/// and cause the build to use BuildCookRun instead of a Compile step
 			/// </summary>
 			public bool StagesWithProjectFile { get; set; }
@@ -459,9 +469,24 @@ namespace UnrealBuildTool
 			public bool Disabled { get; set; }
 
 			/// <summary>
-			/// Any initial extra args to be passed to the test executable
+			/// Depercated, use GauntletArgs or ExtraArgs instead to help indicate arguments to launch the test under.
 			/// </summary>
-			public string InitialExtraArgs { get; set; }
+			public string InitialExtraArgs
+			{ 
+				get;
+				[Obsolete]
+				set; 
+			}
+
+			/// <summary>
+			/// Any initial Gauntlet args to be passed to the test executable
+			/// </summary>
+			public string GauntletArgs { get; set; }
+
+			/// <summary>
+			/// Any extra args to be passed to the test executable as --extra-args
+			/// </summary>
+			public string ExtraArgs { get; set; }
 
 			/// <summary>
 			/// Whether there's a step that gets executed after the tests have finished.
@@ -478,6 +503,11 @@ namespace UnrealBuildTool
 				get => UsesCatch2Private;
 				set => UsesCatch2Private = value;
 			}
+
+			/// <summary>
+			/// Set of supported platforms.
+			/// </summary>
+			public HashSet<UnrealTargetPlatform> SupportedPlatforms { get; set; } = new HashSet<UnrealTargetPlatform>() { UnrealTargetPlatform.Win64 };
 
 			private Dictionary<UnrealTargetPlatform, string> PlatformTagsPrivate = new Dictionary<UnrealTargetPlatform, string>();
 			/// <summary>
@@ -499,7 +529,12 @@ namespace UnrealBuildTool
 				set => PlatformCompilationExtraArgsPrivate = value;
 			}
 
-			private List<UnrealTargetPlatform> PlatformsRunUnsupportedPrivate = new List<UnrealTargetPlatform>() { UnrealTargetPlatform.Android, UnrealTargetPlatform.IOS };
+			private List<UnrealTargetPlatform> PlatformsRunUnsupportedPrivate = new List<UnrealTargetPlatform>() {
+				UnrealTargetPlatform.Android,
+				UnrealTargetPlatform.IOS,
+				UnrealTargetPlatform.TVOS,
+				UnrealTargetPlatform.VisionOS };
+
 			/// <summary>
 			/// List of platforms that cannot run tests.
 			/// </summary>
@@ -508,6 +543,17 @@ namespace UnrealBuildTool
 				get => PlatformsRunUnsupportedPrivate;
 				set => PlatformsRunUnsupportedPrivate = value;
 			}
+
+			private Dictionary<UnrealTargetPlatform, bool> PlatformRunContainerizedPrivate = new Dictionary<UnrealTargetPlatform, bool>();
+			/// <summary>
+			/// Whether or not the test is run inside a Docker container for a given platform.
+			/// </summary>
+			public Dictionary<UnrealTargetPlatform, bool> PlatformRunContainerized
+			{
+				get => PlatformRunContainerizedPrivate;
+				set => PlatformRunContainerizedPrivate = value;
+			}
+
 		}
 #pragma warning restore 8618
 	}

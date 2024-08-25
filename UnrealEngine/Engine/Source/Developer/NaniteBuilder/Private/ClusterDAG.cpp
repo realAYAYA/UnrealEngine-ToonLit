@@ -18,6 +18,11 @@ void BuildDAG( TArray< FClusterGroup >& Groups, TArray< FCluster >& Clusters, ui
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Nanite.BuildDAG);
 
+	if( ClusterRangeNum == 0 )
+	{
+		return;
+	}
+
 	uint32 LevelOffset	= ClusterRangeStart;
 	
 	TAtomic< uint32 > NumClusters( Clusters.Num() );
@@ -69,7 +74,7 @@ void BuildDAG( TArray< FClusterGroup >& Groups, TArray< FCluster >& Clusters, ui
 			DAGReduce( Groups, Clusters, NumClusters, Children, Groups.Num() - 1, MeshIndex );
 
 			// Correct num to atomic count
-			Clusters.SetNum( NumClusters, false );
+			Clusters.SetNum( NumClusters, EAllowShrinking::No );
 
 			continue;
 		}
@@ -283,7 +288,7 @@ void BuildDAG( TArray< FClusterGroup >& Groups, TArray< FCluster >& Clusters, ui
 			} );
 
 		// Correct num to atomic count
-		Clusters.SetNum( NumClusters, false );
+		Clusters.SetNum( NumClusters, EAllowShrinking::No );
 
 		// Force a deterministic order of the generated parent clusters
 		{

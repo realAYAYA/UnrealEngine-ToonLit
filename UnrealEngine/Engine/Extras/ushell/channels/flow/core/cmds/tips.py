@@ -33,9 +33,10 @@ class Tips(flow.cmd.Cmd):
             "Run '.help' to see all available commands",
             "Calvin and Hobbes is excellent",
             "Customise a session with '$USERPROFILE/.ushell/hooks/startup.bat'",
-            "'d:\>dc' changes directory using the fuzzy finder",
-            "'d:\>dc.' limits fuzzy-finder-chdir to the current directory",
-            "'d:\>dc DIR' limits fuzzy-finder-chdir to directory 'DIR'",
+            "'d:\\>dc' changes directory using the fuzzy finder",
+            "'d:\\>dc.' limits fuzzy-finder-chdir to the current directory",
+            "'d:\\>dc DIR' limits fuzzy-finder-chdir to directory 'DIR'",
             "Use Ctrl-P/Ctrl-N to recall previous queries to 'qq' and 'dc'",
             "'qq' to fuzzy find and execute lines from the command history",
+            "'.ushell theme' for setting and exploring terminal themes",
         )

@@ -39,7 +39,7 @@ void FPoseWatchCurveTrack::UpdateCurvePointsInternal()
 	double EndTime = TraceTimeRange.GetUpperBoundValue();
 	
 	auto& CurvePoints = CurveData->Points;
-	CurvePoints.SetNum(0,false);
+	CurvePoints.SetNum(0,EAllowShrinking::No);
 
 	TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 
@@ -114,7 +114,7 @@ bool FPoseWatchTrack::UpdateInternal()
 
 	if(GameplayProvider && AnimationProvider && EnabledSegments.IsValid())
 	{
-		EnabledSegments->Segments.SetNum(0, false);
+		EnabledSegments->Segments.SetNum(0, EAllowShrinking::No);
 
 		struct FPoseWatchEnabledTime
 		{
@@ -204,8 +204,11 @@ bool FPoseWatchTrack::UpdateInternal()
 				Children[i] = MakeShared<FPoseWatchCurveTrack>(ObjectId, UniqueCurveIds[i], PoseWatchTrackId);
 				bChanged = true;
 			}
-
-			bChanged = bChanged || Children[i]->Update();
+			
+			if (Children[i]->Update())
+			{
+				bChanged = true;
+			}
 		}
 
 		if(const TCHAR* FoundName = AnimationProvider->GetName(NameId))
@@ -244,10 +247,15 @@ FName FPoseWatchesTrackCreator::GetTargetTypeNameInternal() const
 	return AnimInstanceName;
 }
 	
+static const FName PoseWatchesName("PoseWatches");
 FName FPoseWatchesTrackCreator::GetNameInternal() const
 {
-	static const FName PoseWatchesName("PoseWatches");
 	return PoseWatchesName;
+}
+		
+void FPoseWatchesTrackCreator::GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const 
+{
+	Types.Add({PoseWatchesName, LOCTEXT("Pose Watches", "Pose Watches")});
 }
 
 TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FPoseWatchesTrackCreator::CreateTrackInternal(uint64 ObjectId) const
@@ -323,7 +331,10 @@ bool FPoseWatchesTrack::UpdateInternal()
 				bChanged = true;
 			}
 
-			bChanged = bChanged || Children[i]->Update();
+			if (Children[i]->Update())
+			{
+				bChanged = true;
+			}
 		}
 	}
 	
@@ -340,6 +351,7 @@ void FPoseWatchesTrack::IterateSubTracksInternal(TFunction<void(TSharedPtr<FRewi
 
 bool FPoseWatchesTrackCreator::HasDebugInfoInternal(uint64 ObjectId) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FPoseWatchesTrack::HasDebugInfoInternal);
 	const TraceServices::IAnalysisSession* AnalysisSession = IRewindDebugger::Instance()->GetAnalysisSession();
 	
 	TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);

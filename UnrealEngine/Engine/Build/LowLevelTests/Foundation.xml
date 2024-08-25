@@ -8,16 +8,18 @@
   <Property Name="FoundationTarget" Value="FoundationTests" />
   <Property Name="FoundationBinariesRelative" Value="Engine\Binaries" />
   <Property Name="FoundationReportType" Value="xml" />
+  <Property Name="FoundationGauntletArgs" Value="" />
+  <Property Name="FoundationExtraArgs" />
   <Property Name="FoundationInitialExtraArgs" />
   <Property Name="FoundationHasAfterSteps" Value="False" />
   <Property Name="FoundationUsesCatch2" Value="True" />
   <Option Name="RunFoundationTests" DefaultValue="False" Description="Run Foundation Tests" />
-  <Property Name="FoundationSupportedPlatforms" Value="Win64;Mac;Linux;Android" />
+  <Property Name="FoundationSupportedPlatforms" Value="Win64;Linux;Mac;Android;IOS" />
   <Property Name="Win64FoundationTags" Value="" />
   <Property Name="MacFoundationTags" Value="" />
   <Property Name="IOSFoundationTags" Value="" />
   <Property Name="AndroidFoundationTags" Value="" />
-  <Property Name="LinuxFoundationTags" Value="" />
+  <Property Name="LinuxFoundationTags" Value="~[.]~[Slow]" />
   <Property Name="LinuxArm64FoundationTags" Value="" />
   <Property Name="TVOSFoundationTags" Value="" />
   <Property Name="Win64FoundationExtraCompilationArgs" Value="-allmodules" />
@@ -33,5 +35,16 @@
   <Property Name="AndroidFoundationRunSupported" Value="False" />
   <Property Name="LinuxFoundationRunSupported" Value="True" />
   <Property Name="LinuxArm64FoundationRunSupported" Value="True" />
-  <Property Name="TVOSFoundationRunSupported" Value="True" />
+  <Property Name="TVOSFoundationRunSupported" Value="False" />
+  <Property Name="VisionOSFoundationTags" Value="" />
+  <Property Name="VisionOSFoundationExtraCompilationArgs" Value="-allmodules" />
+  <Property Name="VisionOSFoundationRunSupported" Value="False" />
+  <Property Name="Win64FoundationRunContainerized" Value="False" />
+  <Property Name="MacFoundationRunContainerized" Value="False" />
+  <Property Name="IOSFoundationRunContainerized" Value="False" />
+  <Property Name="AndroidFoundationRunContainerized" Value="False" />
+  <Property Name="LinuxFoundationRunContainerized" Value="False" />
+  <Property Name="LinuxArm64FoundationRunContainerized" Value="False" />
+  <Property Name="TVOSFoundationRunContainerized" Value="False" />
+  <Property Name="VisionOSFoundationRunContainerized" Value="False" />
 </BuildGraph>

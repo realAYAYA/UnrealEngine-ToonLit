@@ -109,6 +109,8 @@ class _Impl(unrealcmd.Cmd):
 
         platform = self.get_platform(platform)
 
+        cook_flavor = platform.get_cook_flavor()
+
         dot_uat_cmd = "_uat"
         dot_uat_args = (
             "BuildCookRun",
@@ -121,6 +123,7 @@ class _Impl(unrealcmd.Cmd):
             "-deploy" if self.args.deploy else None,
             "-config=" + self.args.variant,
             "-platform=" + platform.get_name(),
+            ("-cookflavor=" + cook_flavor) if cook_flavor else None,
             None if self.args.nopak else "-pak",
             *self.args.uatargs,
         )

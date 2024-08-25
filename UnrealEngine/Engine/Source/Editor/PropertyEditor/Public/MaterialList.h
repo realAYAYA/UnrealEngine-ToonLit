@@ -96,7 +96,7 @@ public:
 	 * @param bCanBeReplced Whether or not the material can be replaced by a user.
 	 * @param InCurrentComponent The current component using the current material
 	 */
-	virtual void AddMaterial( uint32 SlotIndex, UMaterialInterface* Material, bool bCanBeReplaced, UActorComponent* InCurrentComponent = nullptr) = 0;
+	virtual void AddMaterial( uint32 SlotIndex, UMaterialInterface* Material, bool bCanBeReplaced, UActorComponent* InCurrentComponent = nullptr, FName SlotName = FName()) = 0;
 };
 
 /**
@@ -116,21 +116,25 @@ struct FMaterialListItem
 	/** The current component using the current material */
 	TWeakObjectPtr<UActorComponent> CurrentComponent;
 
-	FMaterialListItem( UMaterialInterface* InMaterial = NULL, uint32 InSlotIndex = 0, bool bInCanBeReplaced = false, UActorComponent* InCurrentComponent = nullptr)
+	/** User-specified name for the slot on a component where this material is at (mesh element). May be empty. */
+	FName SlotName;
+
+	FMaterialListItem( UMaterialInterface* InMaterial = NULL, uint32 InSlotIndex = 0, bool bInCanBeReplaced = false, UActorComponent* InCurrentComponent = nullptr, FName InSlotName = FName())
 		: Material( InMaterial )
 		, SlotIndex( InSlotIndex )
 		, bCanBeReplaced( bInCanBeReplaced )
 		, CurrentComponent(InCurrentComponent)
+		, SlotName(InSlotName)
 	{}
 
 	friend uint32 GetTypeHash( const FMaterialListItem& InItem )
 	{
-		return GetTypeHash( InItem.Material ) + InItem.SlotIndex ;
+		return HashCombine(HashCombine(GetTypeHash(InItem.Material), GetTypeHash(InItem.SlotIndex)), GetTypeHash(InItem.SlotName));
 	}
 
 	bool operator==( const FMaterialListItem& Other ) const
 	{
-		return Material == Other.Material && SlotIndex == Other.SlotIndex ;
+		return Material == Other.Material && SlotIndex == Other.SlotIndex && SlotName == Other.SlotName;
 	}
 
 	bool operator!=( const FMaterialListItem& Other ) const

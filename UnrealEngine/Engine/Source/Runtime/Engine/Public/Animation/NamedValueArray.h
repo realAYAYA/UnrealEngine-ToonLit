@@ -118,7 +118,7 @@ struct TNamedValueArray
 	 * Predicate: (const ElementType&) -> void
 	 */
 	template<typename PredicateType>
-	void ForEachElement(const PredicateType& InPredicate) const
+	void ForEachElement(PredicateType InPredicate) const
 	{
 		for(const ElementType& Element : Elements)
 		{
@@ -131,7 +131,19 @@ struct TNamedValueArray
 	{
 		return Elements.Num();
 	}
-	
+
+	/** @returns the max number of elements reserved in the array */
+	int32 Max() const
+	{
+		return Elements.Max();
+	}
+
+	/** Compacts the memory for the elements based on what was actually used */
+	void Shrink()
+	{
+		return Elements.Shrink();
+	}
+
 protected:
 	// Sort by FName - Note: this is not stable across serialization
 	struct FElementSortPredicate
@@ -246,8 +258,13 @@ struct FNamedValueArrayUtils
 	// InPredicate is called on all elements that are added to or already existing in InOutValueArray0, with
 	// appropriate flags.
 	template<typename PredicateType, typename AllocatorTypeResult, typename ElementTypeResult, typename AllocatorTypeParam, typename ElementTypeParam>
-	static void Union(TNamedValueArray<AllocatorTypeResult, ElementTypeResult>& InOutValueArray0, const TNamedValueArray<AllocatorTypeParam, ElementTypeParam>& InValueArray1, const PredicateType& InPredicate)
+	static void Union(TNamedValueArray<AllocatorTypeResult, ElementTypeResult>& InOutValueArray0, const TNamedValueArray<AllocatorTypeParam, ElementTypeParam>& InValueArray1, PredicateType InPredicate)
 	{
+		CURVE_PROFILE_CYCLE_COUNTER(FNamedValueArrayUtils_Union2Params);
+
+		// Check arrays are not overlapping
+		checkSlow((void*)&InOutValueArray0 != (void*)&InValueArray1);
+
 		int32 NumElements0 = InOutValueArray0.Num();	// ValueArray1 elements remain constant, but ValueArray0 can have entries added.
 		const int32 NumElements1 = InValueArray1.Num();
 
@@ -261,8 +278,13 @@ struct FNamedValueArrayUtils
 		InOutValueArray0.SortElementsIfRequired();
 		InValueArray1.SortElementsIfRequired();
 
-		// Reserve memory for at least MAX(NumElements0, NumElements1)
-		InOutValueArray0.Reserve(FMath::Max(NumElements0, NumElements1));
+		// Reserve memory for 1.5x combined curve counts.
+		// This can overestimate in some circumstances, but it handles the common cases which are:
+		// - One input is empty, the other not
+		// - Both inputs are non-empty but do not share most elements
+		int32 ReserveSize = FMath::Max(NumElements0, NumElements1);
+		ReserveSize += ReserveSize / 2;
+		InOutValueArray0.Reserve(ReserveSize);
 
 		int32 ElementIndex0 = 0;
 		int32 ElementIndex1 = 0;
@@ -276,50 +298,46 @@ struct FNamedValueArrayUtils
 				InOutValueArray0.Elements.Reserve(InOutValueArray0.Elements.Num() + (NumElements1 - ElementIndex1));
 				for( ; ElementIndex1 < NumElements1; ++ElementIndex1)
 				{
-					const ElementTypeParam& Element1 = InValueArray1.Elements[ElementIndex1];
-					ElementTypeResult& Element0 = InOutValueArray0.Elements.AddDefaulted_GetRef();
-					Element0.Name = Element1.Name;
+					const ElementTypeParam* RESTRICT Element1 = &InValueArray1.Elements[ElementIndex1];
+					ElementTypeResult* RESTRICT Element0 = &InOutValueArray0.Elements.AddDefaulted_GetRef();
+					Element0->Name = Element1->Name;
 
-					InPredicate(Element0, Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
+					InPredicate(*Element0, *Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
 				}
 				break;
 			}
-			else if(ElementIndex1 == NumElements1 && ElementIndex0 < NumElements0)
+
+			if(ElementIndex1 == NumElements1 && ElementIndex0 <= NumElements0)
 			{
-				// Reached end of ValueArray1 with remaining in ValueArray0, we can just early out
+				// Reached end of ValueArray1 with remaining in ValueArray0 (or reached the end of both), we can just early out
 				break;
 			}
-			else if(ElementIndex0 == NumElements0 && ElementIndex1 == NumElements1)
-			{
-				// Reached end of both, exit
-				break;
-			}
+
+			ElementTypeResult* RESTRICT Element0 = &InOutValueArray0.Elements[ElementIndex0];
+			const ElementTypeParam* RESTRICT Element1 = &InValueArray1.Elements[ElementIndex1];
 			
-			ElementTypeResult& Element0 = InOutValueArray0.Elements[ElementIndex0];
-			const ElementTypeParam& Element1 = InValueArray1.Elements[ElementIndex1];
-			
-			if(Element0.Name == Element1.Name)
+			if(Element0->Name == Element1->Name)
 			{
 				// Elements match, run predicate and increment both indices
-				InPredicate(Element0, Element1, UE::Anim::ENamedValueUnionFlags::BothArgsValid);
+				InPredicate(*Element0, *Element1, UE::Anim::ENamedValueUnionFlags::BothArgsValid);
 				++ElementIndex0;
 				++ElementIndex1;
 			}
-			else if(Element0.Name.FastLess(Element1.Name))
+			else if(Element0->Name.FastLess(Element1->Name))
 			{
 				// ValueArray0 element is earlier, so run predicate with only ValueArray0 and increment ValueArray0
 				ElementTypeParam DefaultElement;
-				DefaultElement.Name = Element0.Name;
-				InPredicate(Element0, DefaultElement, UE::Anim::ENamedValueUnionFlags::ValidArg0);
+				DefaultElement.Name = Element0->Name;
+				InPredicate(*Element0, DefaultElement, UE::Anim::ENamedValueUnionFlags::ValidArg0);
 				++ElementIndex0;
 			}
 			else
 			{
 				// ValueArray1 element is earlier, so add to ValueArray0, run predicate with only second and increment ValueArray1
-				ElementTypeResult& NewElement = InOutValueArray0.Elements.InsertDefaulted_GetRef(ElementIndex0++); // increment beyond new element
+				ElementTypeResult* RESTRICT NewElement = &InOutValueArray0.Elements.InsertDefaulted_GetRef(ElementIndex0++); // increment beyond new element
 				NumElements0 = InOutValueArray0.Num();
-				NewElement.Name = Element1.Name;
-				InPredicate(NewElement, Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
+				NewElement->Name = Element1->Name;
+				InPredicate(*NewElement, *Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
 				++ElementIndex1;
 			}
 		}
@@ -363,8 +381,15 @@ struct FNamedValueArrayUtils
 		TNamedValueArray<AllocatorTypeResult, ElementTypeResult>& OutResultValueArray,
 		const TNamedValueArray<AllocatorType0, ElementType0>& InValueArray0,
 		const TNamedValueArray<AllocatorType1, ElementType1>& InValueArray1,
-		const PredicateType& InPredicate)
+		PredicateType InPredicate)
 	{
+		CURVE_PROFILE_CYCLE_COUNTER(FNamedValueArrayUtils_Union3Params);
+
+		// Check arrays are not overlapping
+		checkSlow((void*)&OutResultValueArray != (void*)&InValueArray0);
+		checkSlow((void*)&OutResultValueArray != (void*)&InValueArray1);
+		checkSlow((void*)&InValueArray0 != (void*)&InValueArray1);
+
 		// Make sure result is clear
 		OutResultValueArray.Elements.Reset();
 
@@ -375,9 +400,14 @@ struct FNamedValueArrayUtils
 		InValueArray0.SortElementsIfRequired();
 		InValueArray1.SortElementsIfRequired();
 
-		// Reserve memory for at least MAX(NumElements0, NumElements1)
-		OutResultValueArray.Reserve(FMath::Max(NumElements0, NumElements1));
-		
+		// Reserve memory for 1.5x combined curve counts.
+		// This can overestimate in some circumstances, but it handles the common cases which are:
+		// - One input is empty, the other not
+		// - Both inputs are non-empty but do not share most elements
+		int32 ReserveSize = FMath::Max(NumElements0, NumElements1);
+		ReserveSize += ReserveSize / 2;
+		OutResultValueArray.Reserve(ReserveSize);
+
 		int32 ElementIndex0 = 0;
 		int32 ElementIndex1 = 0;
 
@@ -391,74 +421,78 @@ struct FNamedValueArrayUtils
 				OutResultValueArray.Elements.Reserve(OutResultValueArray.Elements.Num() + (NumElements1 - ElementIndex1));
 				for(int32 ResultIndex = NumResults; ElementIndex1 < NumElements1; ++ResultIndex, ++ElementIndex1)
 				{
-					const ElementType1& Element1 = InValueArray1.Elements[ElementIndex1];
+					const ElementType1* RESTRICT Element1 = &InValueArray1.Elements[ElementIndex1];
 					ElementType0 DefaultElement0;
-					DefaultElement0.Name = Element1.Name;
-					ElementTypeResult& ResultElement = OutResultValueArray.Elements.AddDefaulted_GetRef();
-					ResultElement.Name = Element1.Name;
+					DefaultElement0.Name = Element1->Name;
+					ElementTypeResult* RESTRICT ResultElement = &OutResultValueArray.Elements.AddDefaulted_GetRef();
+					ResultElement->Name = Element1->Name;
 
-					InPredicate(ResultElement, DefaultElement0, Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
+					InPredicate(*ResultElement, DefaultElement0, *Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
 				}
 				break;
 			}
-			else if(ElementIndex1 == NumElements1 && ElementIndex0 < NumElements0)
+
+			if(ElementIndex1 == NumElements1)
 			{
-				// Reached end of ValueArray0 with remaining in ValueArray0, we can just copy the remainder of ValueArray0
-				const int32 NumResults = OutResultValueArray.Elements.Num();
-				OutResultValueArray.Elements.Reserve(OutResultValueArray.Elements.Num() + (NumElements0 - ElementIndex0));
-				for(int32 ResultIndex = NumResults; ElementIndex0 < NumElements0; ++ResultIndex, ++ElementIndex0)
+				if(ElementIndex0 < NumElements0)
 				{
-					const ElementType0& Element0 = InValueArray0.Elements[ElementIndex0];
-					ElementType1 DefaultElement1;
-					DefaultElement1.Name = Element0.Name;
-					ElementTypeResult& ResultElement = OutResultValueArray.Elements.AddDefaulted_GetRef();
-					ResultElement.Name = Element0.Name;
-					
-					InPredicate(OutResultValueArray.Elements[ResultIndex], Element0, DefaultElement1, UE::Anim::ENamedValueUnionFlags::ValidArg0);
+					// Reached end of ValueArray0 with remaining in ValueArray0, we can just copy the remainder of ValueArray0
+					const int32 NumResults = OutResultValueArray.Elements.Num();
+					OutResultValueArray.Elements.Reserve(OutResultValueArray.Elements.Num() + (NumElements0 - ElementIndex0));
+					for(int32 ResultIndex = NumResults; ElementIndex0 < NumElements0; ++ResultIndex, ++ElementIndex0)
+					{
+						const ElementType0* RESTRICT Element0 = &InValueArray0.Elements[ElementIndex0];
+						ElementType1 DefaultElement1;
+						DefaultElement1.Name = Element0->Name;
+						ElementTypeResult* RESTRICT ResultElement = &OutResultValueArray.Elements.AddDefaulted_GetRef();
+						ResultElement->Name = Element0->Name;
+						
+						InPredicate(OutResultValueArray.Elements[ResultIndex], *Element0, DefaultElement1, UE::Anim::ENamedValueUnionFlags::ValidArg0);
+					}
+					break;
 				}
-				break;
+				else if(ElementIndex0 == NumElements0)
+				{
+					// Reached end of both, exit
+					break;
+				}
 			}
-			else if(ElementIndex0 == NumElements0 && ElementIndex1 == NumElements1)
-			{
-				// Reached end of both, exit
-				break;
-			}
+
+			const ElementType0* RESTRICT Element0 = &InValueArray0.Elements[ElementIndex0];
+			const ElementType1* RESTRICT Element1 = &InValueArray1.Elements[ElementIndex1];
 			
-			const ElementType0& Element0 = InValueArray0.Elements[ElementIndex0];
-			const ElementType1& Element1 = InValueArray1.Elements[ElementIndex1];
-			
-			if(Element0.Name == Element1.Name)
+			if(Element0->Name == Element1->Name)
 			{
 				// Elements match, run predicate and increment both indices
-				ElementTypeResult& NewResultElement = OutResultValueArray.Elements.AddDefaulted_GetRef();
-				NewResultElement.Name = Element0.Name;
-				InPredicate(NewResultElement, Element0, Element1, UE::Anim::ENamedValueUnionFlags::BothArgsValid);
+				ElementTypeResult* RESTRICT NewResultElement = &OutResultValueArray.Elements.AddDefaulted_GetRef();
+				NewResultElement->Name = Element0->Name;
+				InPredicate(*NewResultElement, *Element0, *Element1, UE::Anim::ENamedValueUnionFlags::BothArgsValid);
 
 				++ElementIndex0;
 				++ElementIndex1;
 			}
-			else if(Element0.Name.FastLess(Element1.Name))
+			else if(Element0->Name.FastLess(Element1->Name))
 			{
 				// ValueArray0 element is earlier, so run predicate with only ValueArray0 and increment ValueArray0
-				ElementTypeResult& NewResultElement = OutResultValueArray.Elements.AddDefaulted_GetRef();
-				NewResultElement.Name = Element0.Name;
-				
+				ElementTypeResult* RESTRICT NewResultElement = &OutResultValueArray.Elements.AddDefaulted_GetRef();
+				NewResultElement->Name = Element0->Name;
+
 				ElementType1 DefaultElement;
-				DefaultElement.Name = Element0.Name;
-				
-				InPredicate(NewResultElement, Element0, DefaultElement, UE::Anim::ENamedValueUnionFlags::ValidArg0);
+				DefaultElement.Name = Element0->Name;
+
+				InPredicate(*NewResultElement, *Element0, DefaultElement, UE::Anim::ENamedValueUnionFlags::ValidArg0);
 				++ElementIndex0;
 			}
 			else
 			{
 				// ValueArray1 element is earlier, so so run predicate with only ValueArray1 and increment ValueArray1
-				ElementTypeResult& NewResultElement = OutResultValueArray.Elements.AddDefaulted_GetRef();
-				NewResultElement.Name = Element1.Name;
+				ElementTypeResult* RESTRICT NewResultElement = &OutResultValueArray.Elements.AddDefaulted_GetRef();
+				NewResultElement->Name = Element1->Name;
 				
 				ElementType0 DefaultElement;
-				DefaultElement.Name = Element1.Name;
+				DefaultElement.Name = Element1->Name;
 				
-				InPredicate(NewResultElement, DefaultElement, Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
+				InPredicate(*NewResultElement, DefaultElement, *Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
 				++ElementIndex1;
 			}
 		}
@@ -472,8 +506,13 @@ struct FNamedValueArrayUtils
 	// Helper function
 	// Calls predicate on all elements in the two passed-in value arrays.
 	template<typename PredicateType, typename AllocatorType0, typename ElementType0, typename AllocatorType1, typename ElementType1>
-	static void Union(const TNamedValueArray<AllocatorType0, ElementType0>& InValueArray0, const TNamedValueArray<AllocatorType1, ElementType1>& InValueArray1, const PredicateType& InPredicate)
+	static void Union(const TNamedValueArray<AllocatorType0, ElementType0>& InValueArray0, const TNamedValueArray<AllocatorType1, ElementType1>& InValueArray1, PredicateType InPredicate)
 	{
+		CURVE_PROFILE_CYCLE_COUNTER(FNamedValueArrayUtils_UnionPredicate);
+
+		// Check arrays are not overlapping
+		checkSlow((void*)&InValueArray0 != (void*)&InValueArray1);
+
 		// Sort both input arrays if required
 		InValueArray0.SortElementsIfRequired();
 		InValueArray1.SortElementsIfRequired();
@@ -492,11 +531,11 @@ struct FNamedValueArrayUtils
 				// Reached end of ValueArray0 with remaining in ValueArray1, we can just iterate over the remainder of ValueArray1
 				for( ; ElementIndex1 < NumElements1; ++ElementIndex1)
 				{
-					const ElementType1& Element1 = InValueArray1.Elements[ElementIndex1];
+					const ElementType1* RESTRICT Element1 = &InValueArray1.Elements[ElementIndex1];
 					ElementType0 DefaultElement0;
-					DefaultElement0.Name = Element1.Name;
+					DefaultElement0.Name = Element1->Name;
 
-					InPredicate(DefaultElement0, Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
+					InPredicate(DefaultElement0, *Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
 				}
 				break;
 			}
@@ -505,11 +544,11 @@ struct FNamedValueArrayUtils
 				// Reached end of ValueArray1 with remaining in ValueArray0, we can just iterate over the remainder of ValueArray0
 				for( ; ElementIndex0 < NumElements0; ++ElementIndex0)
 				{
-					const ElementType0 Element0 = InValueArray0.Elements[ElementIndex0];
+					const ElementType0* RESTRICT Element0 = &InValueArray0.Elements[ElementIndex0];
 					ElementType1 DefaultElement1;
-					DefaultElement1.Name = Element0.Name;
+					DefaultElement1.Name = Element0->Name;
 
-					InPredicate(Element0, DefaultElement1, UE::Anim::ENamedValueUnionFlags::ValidArg0);
+					InPredicate(*Element0, DefaultElement1, UE::Anim::ENamedValueUnionFlags::ValidArg0);
 				}	
 				break;
 			}
@@ -519,30 +558,30 @@ struct FNamedValueArrayUtils
 				break;
 			}
 			
-			const ElementType0& Element0 = InValueArray0.Elements[ElementIndex0];
-			const ElementType1& Element1 = InValueArray1.Elements[ElementIndex1];
+			const ElementType0* RESTRICT Element0 = &InValueArray0.Elements[ElementIndex0];
+			const ElementType1* RESTRICT Element1 = &InValueArray1.Elements[ElementIndex1];
 			
-			if(Element0.Name == Element1.Name)
+			if(Element0->Name == Element1->Name)
 			{
 				// Elements match, run predicate and increment both indices
-				InPredicate(Element0, Element1, UE::Anim::ENamedValueUnionFlags::BothArgsValid);
+				InPredicate(*Element0, *Element1, UE::Anim::ENamedValueUnionFlags::BothArgsValid);
 				++ElementIndex0;
 				++ElementIndex1;
 			}
-			else if(Element0.Name.FastLess(Element1.Name))
+			else if(Element0->Name.FastLess(Element1->Name))
 			{
 				// ValueArray0 element is earlier, so run predicate with only ValueArray0 and increment ElementIndex0
 				ElementType1 DefaultElement1;
-				DefaultElement1.Name = Element0.Name;
-				InPredicate(Element0, DefaultElement1, UE::Anim::ENamedValueUnionFlags::ValidArg0);
+				DefaultElement1.Name = Element0->Name;
+				InPredicate(*Element0, DefaultElement1, UE::Anim::ENamedValueUnionFlags::ValidArg0);
 				++ElementIndex0;
 			}
 			else
 			{
 				// ValueArray1 element is earlier, so run predicate with only ValueArray1 and increment ElementIndex1
 				ElementType0 DefaultElement0;
-				DefaultElement0.Name = Element1.Name;
-				InPredicate(DefaultElement0, Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
+				DefaultElement0.Name = Element1->Name;
+				InPredicate(DefaultElement0, *Element1, UE::Anim::ENamedValueUnionFlags::ValidArg1);
 				++ElementIndex1;
 			}
 		}
@@ -553,8 +592,13 @@ struct FNamedValueArrayUtils
 	 * ValuePredicateType is a function of signature: (const ElementType0& InElement0, const ElementType1& InElement1) -> void
 	 **/
 	template<typename AllocatorType0, typename ElementType0, typename AllocatorType1, typename ElementType1, typename ValuePredicateType>
-	static void Intersection(const TNamedValueArray<AllocatorType0, ElementType0>& InNamedValues0, const TNamedValueArray<AllocatorType1, ElementType1>& InNamedValues1, const ValuePredicateType& InValuePredicate)
+	static void Intersection(const TNamedValueArray<AllocatorType0, ElementType0>& InNamedValues0, const TNamedValueArray<AllocatorType1, ElementType1>& InNamedValues1, ValuePredicateType InValuePredicate)
 	{
+		CURVE_PROFILE_CYCLE_COUNTER(FNamedValueArrayUtils_Intersection);
+
+		// Check arrays are not overlapping
+		checkSlow((void*)&InNamedValues0 != (void*)&InNamedValues1);
+		
 		// Sort both inputs if required
 		InNamedValues0.SortElementsIfRequired();
 		InNamedValues1.SortElementsIfRequired();
@@ -584,17 +628,17 @@ struct FNamedValueArrayUtils
 				break;
 			}
 
-			const ElementType0& Element0 = InNamedValues0.Elements[ElementIndex0];
-			const ElementType1& Element1 = InNamedValues1.Elements[ElementIndex1];
+			const ElementType0* RESTRICT Element0 = &InNamedValues0.Elements[ElementIndex0];
+			const ElementType1* RESTRICT Element1 = &InNamedValues1.Elements[ElementIndex1];
 			
-			if(Element0.Name == Element1.Name)
+			if(Element0->Name == Element1->Name)
 			{
 				// Elements match so extract value
-				InValuePredicate(Element0, Element1);
+				InValuePredicate(*Element0, *Element1);
 				++ElementIndex0;
 				++ElementIndex1;
 			}
-			else if(Element0.Name.FastLess(Element1.Name))
+			else if(Element0->Name.FastLess(Element1->Name))
 			{
 				// Element exists only in array, skip
 				++ElementIndex0;
@@ -611,8 +655,12 @@ struct FNamedValueArrayUtils
 	 * Removes elements in InOutValueArray0 that match InValueArray1 if predicate returns false
 	 **/
 	template<typename AllocatorType0, typename ElementType0, typename AllocatorType1, typename ElementType1, typename PredicateType>
-	static void RemoveByPredicate(TNamedValueArray<AllocatorType0, ElementType0>& InOutValueArray0, const TNamedValueArray<AllocatorType1, ElementType1>& InValueArray1, const PredicateType& InPredicate)
+	static void RemoveByPredicate(TNamedValueArray<AllocatorType0, ElementType0>& InOutValueArray0, const TNamedValueArray<AllocatorType1, ElementType1>& InValueArray1, PredicateType InPredicate)
 	{
+		CURVE_PROFILE_CYCLE_COUNTER(FNamedValueArrayUtils_RemoveByPredicate);
+
+		checkSlow((void*)&InOutValueArray0 != (void*)&InValueArray1);
+
 		// Sort both input arrays if required
 		InOutValueArray0.SortElementsIfRequired();
 		InValueArray1.SortElementsIfRequired();
@@ -623,15 +671,15 @@ struct FNamedValueArrayUtils
 
 		while(ElementIndex0 < InOutValueArray0.Num() && ElementIndex1 < InValueArray1.Num())
 		{
-			const ElementType0& Element0 = InOutValueArray0.Elements[ElementIndex0];
-			const ElementType1& Element1 = InValueArray1.Elements[ElementIndex1];
+			const ElementType0* RESTRICT Element0 = &InOutValueArray0.Elements[ElementIndex0];
+			const ElementType1* RESTRICT Element1 = &InValueArray1.Elements[ElementIndex1];
 
-			if(Element0.Name == Element1.Name)
+			if(Element0->Name == Element1->Name)
 			{
 				// Elements match so check filter flags to see if it should be removed from InOutValueArray0
-				if(InPredicate(Element0, Element1))
+				if(InPredicate(*Element0, *Element1))
 				{
-					InOutValueArray0.Elements.RemoveAt(ElementIndex0, 1, false);
+					InOutValueArray0.Elements.RemoveAt(ElementIndex0, 1, EAllowShrinking::No);
 					++ElementIndex1;
 				}
 				else
@@ -640,7 +688,7 @@ struct FNamedValueArrayUtils
 					++ElementIndex1;
 				}
 			}
-			else if(Element0.Name.FastLess(Element1.Name))
+			else if(Element0->Name.FastLess(Element1->Name))
 			{
 				++ElementIndex0;
 			}
@@ -650,7 +698,6 @@ struct FNamedValueArrayUtils
 			}
 		}
 
-		InOutValueArray0.Elements.Shrink();
 		InOutValueArray0.CheckSorted();
 	}
 };

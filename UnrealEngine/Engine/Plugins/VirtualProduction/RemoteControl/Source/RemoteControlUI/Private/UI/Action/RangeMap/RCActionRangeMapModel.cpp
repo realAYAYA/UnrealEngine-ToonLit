@@ -11,18 +11,21 @@
 #include "RemoteControlField.h"
 #include "RemoteControlPreset.h"
 #include "Styling/RemoteControlStyles.h"
+#include "UI/Action/SRCActionPanel.h"
 #include "UI/Action/SRCVirtualPropertyWidget.h"
 #include "UI/Behaviour/Builtin/RangeMap/RCBehaviourRangeMapModel.h"
 #include "UI/RCUIHelpers.h"
 #include "UI/RemoteControlPanelStyle.h"
 #include "UI/SRCPanelDragHandle.h"
 #include "UI/SRCPanelExposedEntity.h"
+#include "UI/SRemoteControlPanel.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Text/STextBlock.h"
 #include "Widgets/Views/SHeaderRow.h"
 #include "Widgets/Views/SListView.h"
 #include "Widgets/Views/STableRow.h"
 
-#define LOCTEXT_NAMESPACE "RCActionModel"
+#define LOCTEXT_NAMESPACE "RCActionRangeMapModel"
 
 namespace UE::RCActionPanelRangeMapList
 {
@@ -112,6 +115,7 @@ TSharedPtr<SHeaderRow> FRCActionRangeMapModel::GetHeaderRow()
 FRCActionRangeMapModel::FRCActionRangeMapModel(URCAction* InAction, const TSharedPtr<FRCBehaviourModel> InBehaviourItem, const TSharedPtr<SRemoteControlPanel> InRemoteControlPanel)
 	: FRCActionModel(InAction, InBehaviourItem, InRemoteControlPanel)
 {
+	SAssignNew(ConditionWidget, STextBlock);
 }
 
 TSharedPtr<FRCActionRangeMapModel> FRCActionRangeMapModel::GetModelByActionType(URCAction* InAction, const TSharedPtr<class FRCBehaviourModel> InBehaviourItem, const TSharedPtr<SRemoteControlPanel> InRemoteControlPanel)
@@ -139,7 +143,8 @@ TSharedRef<SWidget> FRCActionRangeMapModel::GetInputWidget()
 				if (ensure(RangeMapInput->InputProperty))
 				{
 					return SAssignNew(EditableVirtualPropertyWidget, SRCVirtualPropertyWidget, RangeMapInput->InputProperty)
-						.OnGenerateWidget(this, &FRCActionRangeMapModel::OnGenerateInputWidget);
+						.OnGenerateWidget(this, &FRCActionRangeMapModel::OnGenerateInputWidget)
+						.OnExitingEditMode(this, &FRCActionRangeMapModel::OnExitingEditingMode);
 				}
 			}
 		}
@@ -155,7 +160,7 @@ TSharedRef<SWidget> FRCActionRangeMapModel::OnGenerateInputWidget(class URCVirtu
 		return SNullWidget::NullWidget;
 	}
 
-	if (TSharedPtr<FRCRangeMapBehaviourModel> BehaviourItem = StaticCastSharedPtr<FRCRangeMapBehaviourModel>(BehaviourItemWeakPtr.Pin()))
+	if (const TSharedPtr<FRCRangeMapBehaviourModel> BehaviourItem = StaticCastSharedPtr<FRCRangeMapBehaviourModel>(BehaviourItemWeakPtr.Pin()))
 	{
 		if (URCRangeMapBehaviour* Behaviour = Cast<URCRangeMapBehaviour>(BehaviourItem->GetBehaviour()))
 		{
@@ -166,16 +171,38 @@ TSharedRef<SWidget> FRCActionRangeMapModel::OnGenerateInputWidget(class URCVirtu
 				{
 					const FText StepAsText = FText::FromString(FString::SanitizeFloat(Value));
 
-					return SNew(SBox)
-						[
-							SNew(STextBlock).Text(StepAsText)
-						];
+					UpdateConditionWidget(StepAsText);
+
+					if (ConditionWidget.IsValid())
+					{
+						return ConditionWidget.ToSharedRef();
+					}
 				}
 			}
 		}
 	}
 
 	return SNullWidget::NullWidget;
+}
+
+void FRCActionRangeMapModel::OnExitingEditingMode() const
+{
+	if (const TSharedPtr<FRCRangeMapBehaviourModel> BehaviourItem = StaticCastSharedPtr<FRCRangeMapBehaviourModel>(BehaviourItemWeakPtr.Pin()))
+	{
+		if (URCRangeMapBehaviour* Behaviour = Cast<URCRangeMapBehaviour>(BehaviourItem->GetBehaviour()))
+		{
+			if (const FRCRangeMapInput* RangeInput = Behaviour->RangeMapActionContainer.Find(GetAction()))
+			{
+				double Value;
+				if(RangeInput->GetInputValue(Value))
+				{
+					const FText StepAsText = FText::FromString(FString::SanitizeFloat(Value));
+
+					UpdateSelectedRangeMapActionModel(Value, StepAsText);
+				}
+			}
+		}
+	}
 }
 
 TSharedRef<ITableRow> FRCActionRangeMapModel::OnGenerateWidgetForList(TSharedPtr<FRCActionRangeMapModel> InItem, const TSharedRef<STableViewBase>& OwnerTable)
@@ -185,6 +212,50 @@ TSharedRef<ITableRow> FRCActionRangeMapModel::OnGenerateWidgetForList(TSharedPtr
 	return SNew(ActionRowType, OwnerTable, InItem.ToSharedRef())
 		.Style(&RCPanelStyle->TableRowStyle)
 		.Padding(3.f);
+}
+
+void FRCActionRangeMapModel::UpdateConditionWidget(const FText& InNewText) const
+{
+	if (ConditionWidget.IsValid())
+	{
+		ConditionWidget->SetText(InNewText);
+	}
+}
+
+void FRCActionRangeMapModel::UpdateSelectedRangeMapActionModel(double InNewValue, const FText& InNewConditionText) const
+{
+	// Update other selected action based on the edited one
+	if (const TSharedPtr<SRemoteControlPanel> RCPanel = GetRemoteControlPanel())
+	{
+		if (const TSharedPtr<SRCActionPanel> LogicPanel = RCPanel->GetLogicActionPanel())
+		{
+			const TArray<TSharedPtr<FRCLogicModeBase>> SelectedLogicItems = LogicPanel->GetSelectedLogicItems();
+
+			// If the selected items don't contain this one then skip it
+			if (SelectedLogicItems.Contains(SharedThis(this)))
+			{
+				for (const TSharedPtr<FRCLogicModeBase>& SelectedLogicItem : SelectedLogicItems)
+				{
+					if (const TSharedPtr<FRCActionRangeMapModel> SelectedRangeMapActionModel = StaticCastSharedPtr<FRCActionRangeMapModel>(SelectedLogicItem))
+					{
+						if (const TSharedPtr<FRCBehaviourModel> SelectedBehaviourModel = SelectedRangeMapActionModel->GetParentBehaviour())
+						{
+							if (URCRangeMapBehaviour* SelectedBehaviour = Cast<URCRangeMapBehaviour>(SelectedBehaviourModel->GetBehaviour()))
+							{
+								if (const FRCRangeMapInput* SelectedRangeInput = SelectedBehaviour->RangeMapActionContainer.Find(SelectedRangeMapActionModel->GetAction()))
+								{
+									if (SelectedRangeInput->SetInputValue(InNewValue))
+									{
+										SelectedRangeMapActionModel->UpdateConditionWidget(InNewConditionText);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

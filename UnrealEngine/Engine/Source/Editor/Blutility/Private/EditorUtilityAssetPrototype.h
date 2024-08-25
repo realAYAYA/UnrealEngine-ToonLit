@@ -80,11 +80,11 @@ public:
 	}
 
 public:
-	static void AddTagsFor_Version(TArray<UObject::FAssetRegistryTag>& OutTags);
-	static void AddTagsFor_SupportedClasses(const TArray<TSoftClassPtr<UObject>>& SupportedClasses, TArray<UObject::FAssetRegistryTag>& OutTags);
-	static void AddTagsFor_SupportedConditions(const TArray<FAssetActionSupportCondition>& SupportedConditions, TArray<UObject::FAssetRegistryTag>& OutTags);
-	static void AddTagsFor_IsActionForBlueprints(bool IsActionForBlueprints, TArray<UObject::FAssetRegistryTag>& OutTags);
-	static void AddTagsFor_CallableFunctions(const UObject* FunctionsSource, TArray<UObject::FAssetRegistryTag>& OutTags);
+	static void AddTagsFor_Version(FAssetRegistryTagsContext Context);
+	static void AddTagsFor_SupportedClasses(const TArray<TSoftClassPtr<UObject>>& SupportedClasses, FAssetRegistryTagsContext Context);
+	static void AddTagsFor_SupportedConditions(const TArray<FAssetActionSupportCondition>& SupportedConditions, FAssetRegistryTagsContext Context);
+	static void AddTagsFor_IsActionForBlueprints(bool IsActionForBlueprints, FAssetRegistryTagsContext Context);
+	static void AddTagsFor_CallableFunctions(const UObject* FunctionsSource, FAssetRegistryTagsContext Context);
 
 private:
 	FAssetData UtilityBlueprintAsset;

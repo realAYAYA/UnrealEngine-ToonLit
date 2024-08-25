@@ -37,6 +37,8 @@ namespace EPropertyButton
 		NewBlueprint,
 		EditConfigHierarchy,
 		Documentation,
+		OptionalSet,
+		OptionalClear,
 	};
 }
 
@@ -153,6 +155,13 @@ namespace PropertyEditorHelpers
 	bool IsDynamicArray( const FPropertyNode& InPropertyNode );
 
 	/**
+	 * Returns whether or not a property is an optional wrapper
+	 *
+	 * @param InPropertyNode	The property node containing the property to check
+	 */
+	bool IsOptionalProperty(const FPropertyNode& InPropertyNode);
+
+	/**
 	 * Returns true if this is an FSoftObjectPath and should be treated like a TSoftObjectPtr
 	 */
 	bool IsSoftObjectPath(const FProperty* Property);
@@ -261,6 +270,16 @@ namespace PropertyEditorHelpers
 	 * @return The array of disallowed enums.
 	 */
 	TArray<FName> GetInvalidEnumsFromPropertyOverride(const FProperty* Property, const UEnum* InEnum);
+
+	/**
+	 * Returns any enums that are explicitly restricted by the "GetRestrictedEnumValues" metadata on FProperty using the specified enum.
+	 *
+	 * @param ObjectList The list of objects currently edited
+	 * @param Property	The property which may contain the "GetRestrictedEnumValues" metadata
+	 * @param InEnum	The enum to search
+	 * @return The array of restricted enums.  
+	 */
+	TArray<FName> GetRestrictedEnumsFromPropertyOverride(TArrayView<UObject*> ObjectList, const FProperty* Property, const UEnum* InEnum);
 
 	/**
 	 * Returns any enums that are have an overridden display name from the "EnumValueDisplayNameOverrides" metadata on FProperty using the specified enum.

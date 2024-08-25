@@ -5,7 +5,7 @@ set /p TARGET_LIB_SOURCE_PATH= Enter source path of libCurl...
 
 set LIBCURL_VERSION=8.4.0
 set OPENSSL_VERSION=1.1.1t
-set ZLIB_VERSION=1.2.13
+set ZLIB_VERSION=1.3
 set NGHTTP2_VERSION=1.47.0
 
 set ENGINE_ROOT=%~dp0..\..\..\..\..\..

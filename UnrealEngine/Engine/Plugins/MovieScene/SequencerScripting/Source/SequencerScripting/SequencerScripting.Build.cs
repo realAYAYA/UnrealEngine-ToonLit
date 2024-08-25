@@ -38,6 +38,7 @@ public class SequencerScripting : ModuleRules
 				"Slate",
 				"SlateCore",
                 "LevelSequence",
+				"UniversalObjectLocator",
 			}
 		);
 

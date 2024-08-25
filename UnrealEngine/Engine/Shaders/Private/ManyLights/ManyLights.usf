@@ -1,0 +1,240 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "ManyLights.ush"
+
+groupshared uint SharedTileMode[THREADGROUP_SIZE * THREADGROUP_SIZE];
+
+RWStructuredBuffer<uint> RWTileAllocator;
+RWStructuredBuffer<uint> RWTileData;
+uint TileDataStride;
+uint DownsampledTileDataStride;
+uint2 DownsampledViewSize;
+
+/**
+ * Run tile classification to generate tiles for each subsequent pass
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void TileClassificationCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint LinearThreadIndex = GroupThreadId.x + THREADGROUP_SIZE * GroupThreadId.y;
+
+	SharedTileMode[LinearThreadIndex] = 0;
+	
+	GroupMemoryBarrierWithGroupSync();
+
+	uint2 ScreenCoord = DispatchThreadId.xy;
+
+#if DOWNSAMPLED_CLASSIFICATION
+	if (all(ScreenCoord < DownsampledViewSize))
+#else
+	if (all(ScreenCoord < View.ViewRectMinAndSize.zw))
+#endif
+	{
+#if DOWNSAMPLED_CLASSIFICATION
+		float2 ScreenUV = DownsampledScreenCoordToScreenUV(ScreenCoord);
+#else
+		float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+#endif
+		FGBufferData GBuffer = GetGBufferData(ScreenUV);
+
+		if (GBuffer.ShadingModelID == SHADINGMODELID_UNLIT)
+		{
+			SharedTileMode[LinearThreadIndex] = 0x1;
+		}
+		else if (GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT)
+		{
+			SharedTileMode[LinearThreadIndex] = 0x2;
+		}
+		else
+		{
+			SharedTileMode[LinearThreadIndex] = 0x4;
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// GroupShared reduction
+	if (LinearThreadIndex < 32)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 32];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 16)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 16];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 8)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 8];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 4)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 4];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 2)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 2];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 1)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 1];
+	}
+
+	if (LinearThreadIndex == 0)
+	{
+#if DOWNSAMPLED_CLASSIFICATION
+		const uint DataStride = DownsampledTileDataStride;
+#else
+		const uint DataStride = TileDataStride;
+#endif
+
+		uint2 TileCoord = ScreenCoord / TILE_SIZE;
+
+		if (SharedTileMode[0] & 0x4)
+		{
+			uint ManyLightsTileIndex = 0;
+			InterlockedAdd(RWTileAllocator[TILE_MODE_COMPLEX_SHADING], 1, ManyLightsTileIndex);
+			RWTileData[DataStride * TILE_MODE_COMPLEX_SHADING + ManyLightsTileIndex] = PackTile(TileCoord);
+		}
+		else if (SharedTileMode[0] & 0x2)
+		{
+			uint ManyLightsTileIndex = 0;
+			InterlockedAdd(RWTileAllocator[TILE_MODE_SIMPLE_SHADING], 1, ManyLightsTileIndex);
+			RWTileData[DataStride * TILE_MODE_SIMPLE_SHADING + ManyLightsTileIndex] = PackTile(TileCoord);
+		}
+		else if (SharedTileMode[0] == 0x1)
+		{
+			uint ManyLightsTileIndex = 0;
+			InterlockedAdd(RWTileAllocator[TILE_MODE_EMPTY], 1, ManyLightsTileIndex);
+			RWTileData[DataStride * TILE_MODE_EMPTY + ManyLightsTileIndex] = PackTile(TileCoord);
+		}
+	}
+}
+
+RWBuffer<uint> RWTileIndirectArgs;
+RWBuffer<uint> RWDownsampledTileIndirectArgs;
+StructuredBuffer<uint> TileAllocator;
+StructuredBuffer<uint> DownsampledTileAllocator;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void InitTileIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint TileMode = DispatchThreadId.x;
+	if (TileMode < TILE_MODE_MAX)
+	{
+		WriteDispatchIndirectArgs(RWTileIndirectArgs, TileMode, TileAllocator[TileMode], 1, 1);
+		WriteDispatchIndirectArgs(RWDownsampledTileIndirectArgs, TileMode, DownsampledTileAllocator[TileMode], 1, 1);
+	}
+}
+
+RWBuffer<uint> RWIndirectArgs;
+StructuredBuffer<uint> CompositeTileAllocator;
+uint MaxCompositeTiles;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void InitCompositeIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (all(DispatchThreadId == 0))
+	{
+		// Dispatch one group per shadow mask tile
+		uint NumGroups = min(CompositeTileAllocator[0], MaxCompositeTiles);
+		WriteDispatchIndirectArgs(RWIndirectArgs, 0, NumGroups, 1, 1);
+	}
+}
+
+RWTexture2D<float4> RWCompositeUpsampleWeights;
+
+Texture2D<float> DownsampledSceneDepth;
+float2 DownsampledBufferInvSize;
+
+/**
+ * Prepare weights for upsampling in order to pull out common per pixel composite work into a separate dispatch.
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void InitCompositeUpsampleWeightsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 ScreenCoord = DispatchThreadId.xy;
+
+	if (all(ScreenCoord < View.ViewRectMinAndSize.zw))
+	{
+		float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+		FGBufferData GBuffer = GetGBufferData(ScreenUV);
+		float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, GBuffer.Depth);		
+
+		uint2 DownsampledScreenCoord00 = floor(ScreenUV * View.BufferSizeAndInvSize.xy / DOWNSAMPLE_FACTOR - 0.5f);
+		float2 DownsampledGatherUV = (DownsampledScreenCoord00 + 1.0f) * DownsampledBufferInvSize;
+
+		float4 CornerDepths = DownsampledSceneDepth.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV).wzxy;
+
+		int2 ScreenCoordOffset = ScreenCoord - DownsampledScreenCoord00 * 2;
+		int2 SampleOffset00 = GetSampleScreenCoordJitter(DownsampledScreenCoord00 + uint2(0, 0)) + uint2(0, 0) * 2 - ScreenCoordOffset;
+		int2 SampleOffset10 = GetSampleScreenCoordJitter(DownsampledScreenCoord00 + uint2(1, 0)) + uint2(1, 0) * 2 - ScreenCoordOffset;
+		int2 SampleOffset01 = GetSampleScreenCoordJitter(DownsampledScreenCoord00 + uint2(0, 1)) + uint2(0, 1) * 2 - ScreenCoordOffset;
+		int2 SampleOffset11 = GetSampleScreenCoordJitter(DownsampledScreenCoord00 + uint2(1, 1)) + uint2(1, 1) * 2 - ScreenCoordOffset;
+
+		// Triangle filter weights between pixel and 4 samples
+		float4 InterpolationWeights;
+		InterpolationWeights.x = (2.0f - abs(SampleOffset00.x)) * (2.0f - abs(SampleOffset00.y));
+		InterpolationWeights.y = (2.0f - abs(SampleOffset10.x)) * (2.0f - abs(SampleOffset10.y));
+		InterpolationWeights.z = (2.0f - abs(SampleOffset01.x)) * (2.0f - abs(SampleOffset01.y));
+		InterpolationWeights.w = (2.0f - abs(SampleOffset11.x)) * (2.0f - abs(SampleOffset11.y));
+
+		float4 DepthWeights = 0.0f;	
+
+		#define PLANE_WEIGHTING 1
+		#if PLANE_WEIGHTING
+		{
+			float4 ScenePlane = float4(GBuffer.WorldNormal, dot(TranslatedWorldPosition, GBuffer.WorldNormal));
+
+			float3 Position00 = GetTranslatedWorldPositionFromScreenUV(DownsampledScreenCoordToScreenUV(DownsampledScreenCoord00 + uint2(0, 0)), CornerDepths.x);
+			float3 Position10 = GetTranslatedWorldPositionFromScreenUV(DownsampledScreenCoordToScreenUV(DownsampledScreenCoord00 + uint2(1, 0)), CornerDepths.y);
+			float3 Position01 = GetTranslatedWorldPositionFromScreenUV(DownsampledScreenCoordToScreenUV(DownsampledScreenCoord00 + uint2(0, 1)), CornerDepths.z);
+			float3 Position11 = GetTranslatedWorldPositionFromScreenUV(DownsampledScreenCoordToScreenUV(DownsampledScreenCoord00 + uint2(1, 1)), CornerDepths.w);
+
+			float4 PlaneDistances;
+			PlaneDistances.x = abs(dot(float4(Position00, -1), ScenePlane));
+			PlaneDistances.y = abs(dot(float4(Position10, -1), ScenePlane));
+			PlaneDistances.z = abs(dot(float4(Position01, -1), ScenePlane));
+			PlaneDistances.w = abs(dot(float4(Position11, -1), ScenePlane));
+
+			float4 RelativeDepthDifference = PlaneDistances / GBuffer.Depth;
+
+			DepthWeights = select(CornerDepths > 0.0f, exp2(-10000.0f * (RelativeDepthDifference * RelativeDepthDifference)), 0.0f);
+		}
+		#else
+		{
+			float4 DepthDifference = abs(CornerDepths - GBuffer.Depth.xxxx);
+			float4 RelativeDepthDifference = DepthDifference / GBuffer.Depth;	
+
+			DepthWeights = select(CornerDepths > 0.0f, exp2(-100.0f * (RelativeDepthDifference * RelativeDepthDifference)), 0.0f);
+		}
+		#endif
+
+		float Epsilon = 0.001f;
+		InterpolationWeights *= DepthWeights;
+		InterpolationWeights /= max(dot(InterpolationWeights, 1), Epsilon);
+
+		RWCompositeUpsampleWeights[ScreenCoord] = InterpolationWeights;
+	}
+}

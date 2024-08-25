@@ -9,6 +9,7 @@
 
 #include "GpuProfilerTrace.h" // TODO Move defines into RHIDefinitions
 #include "Math/NumericLimits.h"
+#include "Misc/AssertionMacros.h"
 #include "Misc/EnumClassFlags.h"
 #include "ProfilingDebugging/CsvProfilerConfig.h" // TODO Move defines into RHIDefinitions
 
@@ -471,6 +472,37 @@ enum class EShaderCodeResourceBindingType : uint8
 	MAX
 };
 
+inline bool IsResourceBindingTypeSRV(EShaderCodeResourceBindingType Type)
+{
+	switch (Type)
+	{
+	case EShaderCodeResourceBindingType::Texture2D:
+	case EShaderCodeResourceBindingType::Texture2DArray:
+	case EShaderCodeResourceBindingType::Texture2DMS:
+	case EShaderCodeResourceBindingType::TextureCube:
+	case EShaderCodeResourceBindingType::TextureCubeArray:
+	case EShaderCodeResourceBindingType::Texture3D:
+	case EShaderCodeResourceBindingType::ByteAddressBuffer:
+	case EShaderCodeResourceBindingType::StructuredBuffer:
+	case EShaderCodeResourceBindingType::Buffer:
+	case EShaderCodeResourceBindingType::RaytracingAccelerationStructure:
+		return true;
+	case EShaderCodeResourceBindingType::RWTexture2D:
+	case EShaderCodeResourceBindingType::RWTexture2DArray:
+	case EShaderCodeResourceBindingType::RWTextureCube:
+	case EShaderCodeResourceBindingType::RWTexture3D:
+	case EShaderCodeResourceBindingType::RWByteAddressBuffer:
+	case EShaderCodeResourceBindingType::RWStructuredBuffer:
+	case EShaderCodeResourceBindingType::RWBuffer:
+	case EShaderCodeResourceBindingType::RasterizerOrderedTexture2D:
+		return false;
+	default:
+		ensureMsgf(0, TEXT("Missing or invalid SRV or UAV Type"));
+	}
+
+	return false;
+}
+
 /** The base type of a value in a shader parameter structure. */
 enum EUniformBufferBaseType : uint8
 {
@@ -556,7 +588,7 @@ inline bool IsUniformBufferStaticSlotValid(const FUniformBufferStaticSlot Slot)
 struct FRHIResourceTableEntry
 {
 public:
-	static CONSTEXPR uint32 GetEndOfStreamToken()
+	static constexpr uint32 GetEndOfStreamToken()
 	{
 		return 0xffffffff;
 	}
@@ -610,16 +642,19 @@ enum EResourceLockMode
 };
 
 /** limited to 8 types in FReadSurfaceDataFlags */
+// RCM_UNorm is the default
+// RCM_MinMax means "leave the values alone" and is recommended as what you should use
+// RCM_SNorm and RCM_MinMaxNorm seem to be unsupported
 enum ERangeCompressionMode
 {
 	// 0 .. 1
-	RCM_UNorm,
+	RCM_UNorm, // if you read values that go outside [0,1], they are scaled to fit inside [0,1]
 	// -1 .. 1
 	RCM_SNorm,
 	// 0 .. 1 unless there are smaller values than 0 or bigger values than 1, then the range is extended to the minimum or the maximum of the values
 	RCM_MinMaxNorm,
 	// minimum .. maximum (each channel independent)
-	RCM_MinMax,
+	RCM_MinMax, // read values without changing them
 };
 
 enum class EPrimitiveTopologyType : uint8
@@ -751,7 +786,7 @@ enum class EBufferUsageFlags : uint32
 	/**
 	 * Buffer contains opaque ray tracing acceleration structure data.
 	 * Resources with this flag can't be bound directly to any shader stage and only can be used with ray tracing APIs.
-	 * This flag is mutually exclusive with all other buffer flags except BUF_Static.
+	 * This flag is mutually exclusive with all other buffer flags except Static and ReservedResource.
 	*/
 	AccelerationStructure   = 1 << 13,
 
@@ -776,6 +811,15 @@ enum class EBufferUsageFlags : uint32
 
 	/** The buffer is a placeholder for streaming, and does not contain an underlying GPU resource. */
 	NullResource = 1 << 20,
+
+	/** Buffer can be used as uniform buffer on platforms that do support uniform buffer objects. */
+	UniformBuffer = 1 << 21,
+
+	/**
+	* EXPERIMENTAL: Allow the buffer to be created as a reserved (AKA tiled/sparse/virtual) resource internally, without physical memory backing.
+	* May not be used with Dynamic and other buffer flags that prevent the resource from being allocated in local GPU memory.
+	*/
+	ReservedResource = 1 << 22,
 
 	// Helper bit-masks
 	AnyDynamic = (Dynamic | Volatile),
@@ -805,6 +849,8 @@ ENUM_CLASS_FLAGS(EBufferUsageFlags);
 #define BUF_MultiGPUAllocate       EBufferUsageFlags::MultiGPUAllocate
 #define BUF_MultiGPUGraphIgnore    EBufferUsageFlags::MultiGPUGraphIgnore
 #define BUF_NullResource           EBufferUsageFlags::NullResource
+#define BUF_UniformBuffer          EBufferUsageFlags::UniformBuffer
+#define BUF_ReservedResource       EBufferUsageFlags::ReservedResource
 
 enum class EGpuVendorId : uint32
 {
@@ -865,7 +911,6 @@ enum ERHIResourceType : uint8
 	RRT_GPUFence,
 	RRT_RenderQuery,
 	RRT_RenderQueryPool,
-	RRT_ComputeFence,
 	RRT_Viewport,
 	RRT_UnorderedAccessView,
 	RRT_ShaderResourceView,
@@ -874,6 +919,7 @@ enum ERHIResourceType : uint8
 	RRT_CustomPresent,
 	RRT_ShaderLibrary,
 	RRT_PipelineBinaryLibrary,
+	RRT_ShaderBundle,
 
 	RRT_Num
 };
@@ -968,13 +1014,19 @@ enum class ETextureCreateFlags : uint64
 	External                		  = 1ull << 34,
 	/** Don't automatically transfer across GPUs in multi-GPU scenarios.  For example, if you are transferring it yourself manually. */
 	MultiGPUGraphIgnore				  = 1ull << 35,
-	/** EXPERIMENTAL: Allow the texture to be created as a reserved (AKA tiled/sparse/virtual) resource internally, without physical memory backing. */
+	/**
+	* EXPERIMENTAL: Allow the texture to be created as a reserved (AKA tiled/sparse/virtual) resource internally, without physical memory backing. 
+	* May not be used with Dynamic and other buffer flags that prevent the resource from being allocated in local GPU memory.
+	*/
 	ReservedResource                  = 1ull << 37,
 	/** EXPERIMENTAL: Used with ReservedResource flag to immediately allocate and commit memory on creation. May use N small physical memory allocations instead of a single large one. */
 	ImmediateCommit                   = 1ull << 38,
 
 	/** Don't lump this texture with streaming memory when tracking total texture allocation sizes */
 	ForceIntoNonStreamingMemoryTracking = 1ull << 39,
+
+	/** Textures marked with this are meant to be immediately evicted after creation for intentionally crashing the GPU with a page fault. */
+	Invalid                           = 1ull << 40,
 };
 ENUM_CLASS_FLAGS(ETextureCreateFlags);
 
@@ -1013,10 +1065,11 @@ ENUM_CLASS_FLAGS(ETextureCreateFlags);
 #define TexCreate_ReduceMemoryWithTilingMode     ETextureCreateFlags::ReduceMemoryWithTilingMode
 #define TexCreate_Transient                      ETextureCreateFlags::Transient
 #define TexCreate_AtomicCompatible               ETextureCreateFlags::AtomicCompatible
-#define TexCreate_External               		 ETextureCreateFlags::External
+#define TexCreate_External                       ETextureCreateFlags::External
 #define TexCreate_MultiGPUGraphIgnore            ETextureCreateFlags::MultiGPUGraphIgnore
 #define TexCreate_ReservedResource               ETextureCreateFlags::ReservedResource
 #define TexCreate_ImmediateCommit                ETextureCreateFlags::ImmediateCommit
+#define TexCreate_Invalid                        ETextureCreateFlags::Invalid
 
 enum EAsyncComputePriority
 {
@@ -1204,6 +1257,18 @@ enum class EResourceTransitionFlags
 };
 ENUM_CLASS_FLAGS(EResourceTransitionFlags);
 
+enum class ERequestedGPUCrash : uint8
+{
+	None = 0,
+	Type_Hang = 1 << 0,
+	Type_PageFault = 1 << 1,
+	Type_PlatformBreak = 1 << 2,
+
+	Queue_Direct = 1 << 3,
+	Queue_Compute = 1 << 4
+};
+ENUM_CLASS_FLAGS(ERequestedGPUCrash);
+
 /** Returns whether the shader parameter type references an RDG texture. */
 inline bool IsRDGTextureReferenceShaderParameterType(EUniformBufferBaseType BaseType)
 {
@@ -1354,6 +1419,18 @@ struct FShaderCodeValidationStride
 {
 	uint16 BindPoint;
 	uint16 Stride;
+};
+
+struct FShaderCodeValidationType
+{
+	uint16 BindPoint;
+	EShaderCodeResourceBindingType Type;
+};
+
+struct FShaderCodeValidationUBSize
+{
+	uint16 BindPoint;
+	uint32 Size;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

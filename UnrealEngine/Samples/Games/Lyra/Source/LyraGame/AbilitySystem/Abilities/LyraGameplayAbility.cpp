@@ -206,7 +206,7 @@ bool ULyraGameplayAbility::CheckCost(const FGameplayAbilitySpecHandle Handle, co
 	}
 
 	// Verify we can afford any additional costs
-	for (TObjectPtr<ULyraAbilityCost> AdditionalCost : AdditionalCosts)
+	for (const TObjectPtr<ULyraAbilityCost>& AdditionalCost : AdditionalCosts)
 	{
 		if (AdditionalCost != nullptr)
 		{
@@ -251,7 +251,7 @@ void ULyraGameplayAbility::ApplyCost(const FGameplayAbilitySpecHandle Handle, co
 	// Pay any additional costs
 	bool bAbilityHitTarget = false;
 	bool bHasDeterminedIfAbilityHitTarget = false;
-	for (TObjectPtr<ULyraAbilityCost> AdditionalCost : AdditionalCosts)
+	for (const TObjectPtr<ULyraAbilityCost>& AdditionalCost : AdditionalCosts)
 	{
 		if (AdditionalCost != nullptr)
 		{

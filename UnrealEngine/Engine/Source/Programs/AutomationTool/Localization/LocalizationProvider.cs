@@ -98,6 +98,19 @@ namespace EpicGames.Localization
 			ExportInfo = InExportInfo;
 		}
 
+		public List<string> GetConfigFilesToRun(List<string> RequestedLocalizationStepNames)
+		{
+			List<string> ConfigFiles = new();
+			foreach (var LocalizationStep in LocalizationSteps)
+			{
+				if (RequestedLocalizationStepNames.Contains(LocalizationStep.Name))
+				{
+					ConfigFiles.Add(LocalizationStep.LocalizationConfigFile);
+				}
+			}
+			return ConfigFiles;
+		}
+
 		/** The name of this project */
 		public string ProjectName { get; private set; }
 

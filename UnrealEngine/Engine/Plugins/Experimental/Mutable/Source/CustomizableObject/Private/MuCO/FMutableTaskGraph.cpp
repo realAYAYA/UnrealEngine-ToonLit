@@ -6,12 +6,7 @@
 #include "MuR/MutableTrace.h"
 
 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-const LowLevelTasks::ETaskPriority TASKGRAPH_PRIORITY = LowLevelTasks::ETaskPriority::BackgroundHigh;
-#else
-const ENamedThreads::Type TASKGRAPH_PRIORITY = ENamedThreads::AnyBackgroundHiPriTask;
-#endif
-
+constexpr LowLevelTasks::ETaskPriority TASKGRAPH_PRIORITY = LowLevelTasks::ETaskPriority::BackgroundHigh;
 
 static TAutoConsoleVariable<float> CVarMutableTaskLowPriorityMaxWaitTime(
 	TEXT("mutable.MutableTaskLowPriorityMaxWaitTime"),
@@ -26,34 +21,15 @@ static TAutoConsoleVariable<bool> CVarEnableMutableTaskLowPriority(
 	ECVF_Scalability);
 
 
-FMutableTaskGraph::TaskType FMutableTaskGraph::AddMutableThreadTask(const TCHAR* DebugName, TUniqueFunction<void()>&& TaskBody)
+UE::Tasks::FTask FMutableTaskGraph::AddMutableThreadTask(const TCHAR* DebugName, TUniqueFunction<void()>&& TaskBody)
 {
 	FScopeLock Lock(&MutableTaskLock);
 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-	if (LastMutableTask.IsValid())
-	{
-		LastMutableTask = UE::Tasks::Launch(DebugName, MoveTemp(TaskBody), LastMutableTask, TASKGRAPH_PRIORITY);
-	}
-	else
-	{
-		LastMutableTask = UE::Tasks::Launch(DebugName, MoveTemp(TaskBody), TASKGRAPH_PRIORITY);
-	}
-#else
-	FGraphEventArray Prerequisites;
-	if (LastMutableTask)
-	{
-		Prerequisites.Add(LastMutableTask);
-	}
+	TArray<UE::Tasks::FTask, TFixedAllocator<1>> Prerequisites = LastMutableTask.IsValid() 
+			? TArray<UE::Tasks::FTask, TFixedAllocator<1>>{LastMutableTask} 
+			: TArray<UE::Tasks::FTask, TFixedAllocator<1>>{};
 
-	LastMutableTask = FFunctionGraphTask::CreateAndDispatchWhenReady(
-		MoveTemp(TaskBody),
-		TStatId{},
-		&Prerequisites, 
-		TASKGRAPH_PRIORITY);
-	
-	LastMutableTask->SetDebugName(DebugName);
-#endif
+	LastMutableTask = UE::Tasks::Launch(DebugName, MoveTemp(TaskBody), Prerequisites, TASKGRAPH_PRIORITY);	
 	
 	return LastMutableTask;
 }
@@ -81,7 +57,7 @@ uint32 FMutableTaskGraph::AddMutableThreadTaskLowPriority(const TCHAR* DebugName
 }
 
 
-void FMutableTaskGraph::CancelMutableThreadTaskLowPriority(uint32 Id)
+bool FMutableTaskGraph::CancelMutableThreadTaskLowPriority(uint32 Id)
 {
 	FScopeLock Lock(&MutableTaskLock);
 
@@ -90,25 +66,17 @@ void FMutableTaskGraph::CancelMutableThreadTaskLowPriority(uint32 Id)
 		if (QueueMutableTasksLowPriority[Index].Id == Id)
 		{
 			QueueMutableTasksLowPriority.RemoveAt(Index);
-			break;
+			return true;
 		}
 	}
+
+	return false;
 }
 
 
 void FMutableTaskGraph::AddAnyThreadTask(const TCHAR* DebugName, TUniqueFunction<void()>&& TaskBody) const
 {
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 	UE::Tasks::Launch(DebugName, MoveTemp(TaskBody));
-#else
-	FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
-		MoveTemp(TaskBody),
-		TStatId{},
-		nullptr,
-		TASKGRAPH_PRIORITY);
-
-	Task->SetDebugName(DebugName);
-#endif
 }
 	
 
@@ -118,12 +86,36 @@ void FMutableTaskGraph::WaitForMutableTasks()
 
 	if (LastMutableTask.IsValid())
 	{
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-		LastMutableTask.Wait();
-#else
-		LastMutableTask->Wait();
-#endif
+		if (CVarTaskGraphBusyWait->GetBool())
+		{
+			LastMutableTask.BusyWait();
+		}
+		else
+		{
+			LastMutableTask.Wait();
+		}
+
 		LastMutableTask = {};
+	}
+}
+
+
+void FMutableTaskGraph::WaitForLaunchedLowPriorityTask(uint32 TaskID)
+{
+	UE::Tasks::FTask Task;
+
+	{
+		FScopeLock Lock(&MutableTaskLock);
+
+		if (LastMutableTaskLowPriorityID == TaskID)
+		{
+			Task = LastMutableTaskLowPriority;
+		}
+	}
+
+	if (Task.IsValid())
+	{
+		Task.Wait();
 	}
 }
 
@@ -142,8 +134,8 @@ void FMutableTaskGraph::TryLaunchMutableTaskLowPriority(bool bFromMutableTask)
 		return;
 	}
 
-	float TimeLimit;
-	float TimeElapsed;
+	double TimeLimit;
+	double TimeElapsed;
 	
 	bool bTimeLimit;
 	
@@ -172,6 +164,7 @@ void FMutableTaskGraph::TryLaunchMutableTaskLowPriority(bool bFromMutableTask)
 			return;
 		}
 
+		LastMutableTaskLowPriorityID = NextTask.Id;
 		LastMutableTaskLowPriority = AddMutableThreadTask(*NextTask.DebugName, [this, Task = MoveTemp(NextTask)]() // Moves the task, not the pointer.
 		{
 			MUTABLE_CPUPROFILER_SCOPE(LowPriorityTaskBody)
@@ -179,6 +172,7 @@ void FMutableTaskGraph::TryLaunchMutableTaskLowPriority(bool bFromMutableTask)
 
 			{
 				FScopeLock Lock(&MutableTaskLock);
+				LastMutableTaskLowPriorityID = INVALID_ID;
 				LastMutableTaskLowPriority = {};
 				
 				TryLaunchMutableTaskLowPriority(true);
@@ -195,13 +189,9 @@ void FMutableTaskGraph::TryLaunchMutableTaskLowPriority(bool bFromMutableTask)
 }
 
 
-bool FMutableTaskGraph::IsTaskCompleted(const TaskType& Task) const
+bool FMutableTaskGraph::IsTaskCompleted(const UE::Tasks::FTask& Task) const
 {
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 	return Task.IsCompleted();
-#else
-	return !Task.IsValid() || Task->IsComplete();
-#endif
 }
 
 
@@ -218,7 +208,7 @@ void FMutableTaskGraph::AllowLaunchingMutableTaskLowPriority(bool bAllow, bool b
 }
 
 
-void FMutableTaskGraph::Tick()
+int32 FMutableTaskGraph::Tick()
 {
 	check(IsInGameThread())
 	
@@ -239,8 +229,11 @@ void FMutableTaskGraph::Tick()
 		FScopeLock Lock(&MutableTaskLock);
 		if (IsTaskCompleted(LastMutableTaskLowPriority))
 		{
+			LastMutableTaskLowPriorityID = INVALID_ID;
 			LastMutableTaskLowPriority = {};
 		}
 	}
+	
+	return !IsTaskCompleted(LastMutableTask) + !IsTaskCompleted(LastMutableTaskLowPriority) + QueueMutableTasksLowPriority.Num();
 }
 

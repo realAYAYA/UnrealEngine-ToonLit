@@ -28,20 +28,24 @@ FString FRigDispatch_GetUserData::GetArgumentMetaData(const FName& InArgumentNam
 
 #endif
 
-const TArray<FRigVMTemplateArgument>& FRigDispatch_GetUserData::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigDispatch_GetUserData::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
-		FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
-	};
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		FRigVMTemplateArgument(ArgNameSpaceName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FString),
-		FRigVMTemplateArgument(ArgPathName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FString),
-		FRigVMTemplateArgument(ArgDefaultName, ERigVMPinDirection::Input, ValueCategories),
-		FRigVMTemplateArgument(ArgResultName, ERigVMPinDirection::Output, ValueCategories),
-		FRigVMTemplateArgument(ArgFoundName, ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::Bool)
-	};
-	return Arguments;
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if (Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
+			FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
+		};
+		
+		Infos.Emplace(ArgNameSpaceName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FString);
+		Infos.Emplace(ArgPathName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FString);
+		Infos.Emplace(ArgDefaultName, ERigVMPinDirection::Input, ValueCategories);
+		Infos.Emplace(ArgResultName, ERigVMPinDirection::Output, ValueCategories);
+		Infos.Emplace(ArgFoundName, ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::Bool);
+	}
+	
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigDispatch_GetUserData::OnNewArgumentType(const FName& InArgumentName,
@@ -79,9 +83,8 @@ void FRigDispatch_GetUserData::Execute(FRigVMExtendedExecuteContext& InContext, 
 	// allow to run only in construction event
 	if(ControlRigContext.GetEventName() != FRigUnit_PrepareForExecution::EventName)
 	{
-		static constexpr TCHAR ErrorMessageFormat[] = TEXT("Node can only run in %s Event");
-		ControlRigContext.Logf(EMessageSeverity::Error, ErrorMessageFormat, *FRigUnit_PrepareForExecution::EventName.ToString());
-		return;
+		static constexpr TCHAR ErrorMessageFormat[] = TEXT("It's recommended to use this node in the %s event. When using it in other events please consider caching the results.");
+		ControlRigContext.Logf(EMessageSeverity::Info, ErrorMessageFormat, *FRigUnit_PrepareForExecution::EventName.ToString());
 	}
 
 	const FProperty* PropertyDefault = Handles[2].GetResolvedProperty(); 
@@ -106,7 +109,7 @@ void FRigDispatch_GetUserData::Execute(FRigVMExtendedExecuteContext& InContext, 
 #if WITH_EDITOR
 		if(ControlRigContext.GetLog())
 		{
-			ControlRigContext.GetLog()->Report(EMessageSeverity::Info, ControlRigContext.GetFunctionName(), ControlRigContext.GetInstructionIndex(), Message);
+			ControlRigContext.Report(EMessageSeverity::Info, ControlRigContext.GetFunctionName(), ControlRigContext.GetInstructionIndex(), Message);
 		}
 		else
 #endif
@@ -176,7 +179,7 @@ FRigUnit_SetupShapeLibraryFromUserData_Execute()
 #if WITH_EDITOR
 		if(ExecuteContext.GetLog())
 		{
-			ExecuteContext.GetLog()->Report(EMessageSeverity::Info, ExecuteContext.GetFunctionName(), ExecuteContext.GetInstructionIndex(), Message);
+			ExecuteContext.Report(EMessageSeverity::Info, ExecuteContext.GetFunctionName(), ExecuteContext.GetInstructionIndex(), Message);
 		}
 		else
 #endif
@@ -188,9 +191,8 @@ FRigUnit_SetupShapeLibraryFromUserData_Execute()
 	// allow to run only in construction event
 	if(ExecuteContext.GetEventName() != FRigUnit_PrepareForExecution::EventName)
 	{
-		static constexpr TCHAR ErrorMessageFormat[] = TEXT("Node can only run in %s Event");
-		Log(FString::Printf(ErrorMessageFormat, *FRigUnit_PrepareForExecution::EventName.ToString()));
-		return;
+		static constexpr TCHAR MessageFormat[] = TEXT("It's recommended to use this node in the %s event. When using it in other events please consider caching the results.");
+		ExecuteContext.Logf(EMessageSeverity::Info, MessageFormat, *FRigUnit_PrepareForExecution::EventName.ToString());
 	}
 
 	if(const UNameSpacedUserData* UserDataObject = ExecuteContext.FindUserData(NameSpace))
@@ -204,7 +206,7 @@ FRigUnit_SetupShapeLibraryFromUserData_Execute()
 				{
 					if(ExecuteContext.OnAddShapeLibraryDelegate.IsBound())
 					{
-						ExecuteContext.OnAddShapeLibraryDelegate.Execute(&ExecuteContext, LibraryName, (UControlRigShapeLibrary*)UserData->GetMemory(), ReplaceExisting, LogShapeLibraries);
+						ExecuteContext.OnAddShapeLibraryDelegate.Execute(&ExecuteContext, LibraryName, (UControlRigShapeLibrary*)UserData->GetMemory(), LogShapeLibraries);
 					}
 					return;
 				}

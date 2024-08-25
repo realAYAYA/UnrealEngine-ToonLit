@@ -43,7 +43,7 @@ void FWorldPartitionPackageHelper::UnloadPackage(UPackage* InPackage)
 				{
 					TrashPackage(ExternalPackage);
 				}
-			}, false);
+			}, /*bIncludeNestedObjects*/ true);
 		}
 	}
 }

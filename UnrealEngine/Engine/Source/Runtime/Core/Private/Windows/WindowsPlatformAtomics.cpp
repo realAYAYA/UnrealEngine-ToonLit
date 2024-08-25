@@ -10,6 +10,6 @@
 void FWindowsPlatformAtomics::HandleAtomicsFailure(const TCHAR* InFormat, ...)
 {
 	TCHAR TempStr[1024];
-	GET_VARARGS(TempStr, UE_ARRAY_COUNT(TempStr), UE_ARRAY_COUNT(TempStr) - 1, InFormat, InFormat);
+	GET_TYPED_VARARGS(TCHAR, TempStr, UE_ARRAY_COUNT(TempStr), UE_ARRAY_COUNT(TempStr) - 1, InFormat, InFormat);
 	UE_LOG(LogWindows, Fatal, TEXT("%s"), TempStr);
 }

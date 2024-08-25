@@ -648,14 +648,7 @@ TSharedRef<SWidget> SWidgetHittestGrid::GetFlagsMenuContent()
 
 void SWidgetHittestGrid::HandleDisplayFlagsButtonClicked(FHittestGrid::EDisplayGridFlags Flag)
 {
-	if (EnumHasAnyFlags(DisplayGridFlags, Flag))
-	{
-		DisplayGridFlags &= ~Flag;
-	}
-	else
-	{
-		DisplayGridFlags |= Flag;
-	}
+	DisplayGridFlags ^= Flag;
 
 	SaveSettings();
 }

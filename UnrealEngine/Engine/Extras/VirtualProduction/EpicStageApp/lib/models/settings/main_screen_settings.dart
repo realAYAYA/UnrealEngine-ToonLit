@@ -1,8 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/preferences.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
-
-import '../../utilities/preferences_bundle.dart';
 
 /// Holds settings that affect the entire layout of the main screen.
 class MainScreenSettings {

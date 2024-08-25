@@ -10,7 +10,9 @@
 
 TSharedPtr<FContentBundleClient> FContentBundleClient::CreateClient(const UContentBundleDescriptor* InContentBundleDescriptor, FString const& InDisplayName)
 {
-	return GEngine->GetEngineSubsystem<UContentBundleEngineSubsystem>()->RegisterContentBundle(InContentBundleDescriptor, InDisplayName);
+	TSharedPtr<FContentBundleClient> ContentBundleClient = GEngine->GetEngineSubsystem<UContentBundleEngineSubsystem>()->RegisterContentBundle(InContentBundleDescriptor, InDisplayName);
+	UE_CLOG(ContentBundleClient == nullptr, LogContentBundle, Error, TEXT("FContentBundleClient::CreateClient failed to create a content bundle client for %s using %s"), *InDisplayName, *InContentBundleDescriptor->GetDisplayName());
+	return ContentBundleClient;
 }
 
 FContentBundleClient::FContentBundleClient(const UContentBundleDescriptor* InContentBundleDescriptor, FString const& InDisplayName)

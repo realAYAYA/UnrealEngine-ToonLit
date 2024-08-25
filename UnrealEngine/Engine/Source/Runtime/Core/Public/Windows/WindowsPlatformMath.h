@@ -6,6 +6,8 @@
 	#error this code should only be included on Windows
 #endif
 
+#include "HAL/Platform.h"
+
 #if PLATFORM_CPU_X86_FAMILY
 	#include <intrin.h>
 	#include <smmintrin.h>

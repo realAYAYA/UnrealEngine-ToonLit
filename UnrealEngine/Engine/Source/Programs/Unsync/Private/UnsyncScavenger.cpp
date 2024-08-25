@@ -75,7 +75,7 @@ FScavengeDatabase::BuildFromFileSyncTasks(const FSyncDirectoryOptions& SyncOptio
 
 	UNSYNC_VERBOSE(L"Loading scavenged manifests: %llu", llu(Result->Manifests.size()));
 
-	ParallelForEach(Result->Manifests.begin(), Result->Manifests.end(), [](FScavengedManifest& Entry) {
+	ParallelForEach(Result->Manifests, [](FScavengedManifest& Entry) {
 		FLogVerbosityScope VerbosityScope(false);  // turn off logging from threads
 		Entry.bValid = LoadDirectoryManifest(Entry.Manifest, Entry.Root, Entry.ManifestPath);
 		if (Entry.bValid)
@@ -160,7 +160,7 @@ FScavengeDatabase::BuildFromFileSyncTasks(const FSyncDirectoryOptions& SyncOptio
 
 			FPath FilePath = Manifest.Root / RelativeFilePath;
 
-			UNSYNC_VERBOSE(L"- %s: %llu", FilePath.wstring().c_str(), Item.Count);
+			UNSYNC_VERBOSE(L"- %ls: %llu", FilePath.wstring().c_str(), Item.Count);
 		}
 	}
 #endif
@@ -222,7 +222,7 @@ FScavengeDatabase::IsSourceValid(FScavengeBlockSource SourceId) const
 
 	const FFileManifest& FileManifest = FileIt->second;
 
-	FileAttributes Attrib = GetFileAttrib(FullFilePath);
+	FFileAttributes Attrib = GetFileAttrib(FullFilePath);
 
 	return Attrib.bValid && Attrib.Mtime == FileManifest.Mtime && Attrib.Size == FileManifest.Size;
 }
@@ -366,7 +366,7 @@ BuildTargetFromScavengedData(FIOWriter&						Output,
 
 		const FFileManifest& ScavengeFileManifest = ScavengeDatabase.GetFileManifest(PossibleSource);
 
-		NativeFile LocalSourceFile = NativeFile(PossibleSource.FullSourceFilePath, EFileMode::ReadOnlyUnbuffered);
+		FNativeFile LocalSourceFile = FNativeFile(PossibleSource.FullSourceFilePath, EFileMode::ReadOnlyUnbuffered);
 		if (LocalSourceFile.IsValid())
 		{
 			THashMap<FGenericHash, uint64> BlockOffsetMap;
@@ -392,7 +392,7 @@ BuildTargetFromScavengedData(FIOWriter&						Output,
 				continue;
 			}
 
-			UNSYNC_VERBOSE(L"Scavenging data from '%s'", PossibleSource.FullSourceFilePath.wstring().c_str());
+			UNSYNC_VERBOSE(L"Scavenging data from '%ls'", PossibleSource.FullSourceFilePath.wstring().c_str());
 
 			std::sort(LocalNeedList.begin(), LocalNeedList.end(), FNeedBlock::FCompareBySourceOffset());
 

@@ -767,7 +767,7 @@ bool STakeRecorderPanel::GetSavePresetPackageName(FString& OutName)
 	FormatArgs.Add(TEXT("date"), Today.ToString());
 
 	// determine default package path
-	const FString DefaultSaveDirectory = FString::Format(*ConfigSettings->PresetSaveDir.Path, FormatArgs);
+	const FString DefaultSaveDirectory = FString::Format(*ConfigSettings->GetResolvedPresetSaveDir(), FormatArgs);
 
 	FString DialogStartPath;
 	FPackageName::TryConvertFilenameToLongPackageName(DefaultSaveDirectory, DialogStartPath);
@@ -805,7 +805,7 @@ bool STakeRecorderPanel::GetSavePresetPackageName(FString& OutName)
 		bFilenameValid = FFileHelper::IsFilenameValidForSaving(NewPackageName, OutError);
 	}
 
-	ConfigSettings->PresetSaveDir.Path = FPackageName::GetLongPackagePath(UserPackageName);
+	ConfigSettings->SetPresetSaveDir(FPackageName::GetLongPackagePath(UserPackageName));
 	ConfigSettings->SaveConfig();
 	OutName = MoveTemp(NewPackageName);
 	return true;

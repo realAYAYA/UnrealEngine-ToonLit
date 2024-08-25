@@ -6,8 +6,6 @@
 #include "MuR/ModelPrivate.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <utility>
-
 
 namespace mu
 {
@@ -16,8 +14,9 @@ namespace mu
 //-------------------------------------------------------------------------------------------------
 bool ASTOpConstantExtensionData::IsEqual(const ASTOp& OtherUntyped) const
 {
-	if (const ASTOpConstantExtensionData* Other = dynamic_cast<const ASTOpConstantExtensionData*>(&OtherUntyped))
+	if (OtherUntyped.GetOpType() == GetOpType())
 	{
+		const ASTOpConstantExtensionData* Other = static_cast<const ASTOpConstantExtensionData*>(&OtherUntyped);
 		return Other->Value == Value;
 	}
 

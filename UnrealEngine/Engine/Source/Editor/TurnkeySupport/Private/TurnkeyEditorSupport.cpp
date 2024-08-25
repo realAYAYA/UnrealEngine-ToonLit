@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "TurnkeyEditorSupport.h"
+
+#if UE_WITH_TURNKEY_SUPPORT
+
 #include "Internationalization/Text.h"
 #include "ITurnkeyIOModule.h"
 #include "Misc/AssertionMacros.h"
@@ -87,7 +90,7 @@ void FTurnkeyEditorSupport::PrepareToLaunchRunningMap(const FString& DeviceId, c
 #endif
 }
 
-void FTurnkeyEditorSupport::LaunchRunningMap(const FString& DeviceId, const FString& DeviceName, const FString& ProjectPath, bool bUseTurnkey)
+void FTurnkeyEditorSupport::LaunchRunningMap(const FString& DeviceId, const FString& DeviceName, const FString& ProjectPath, bool bUseTurnkey, bool bOnSimulator)
 {
 #if WITH_EDITOR
 	FTargetDeviceId TargetDeviceId;
@@ -127,6 +130,7 @@ void FTurnkeyEditorSupport::LaunchRunningMap(const FString& DeviceId, const FStr
 			// @todo turnkey: we set this to false because we will kick off a Turnkey run before cooking, etc, to get an early warning. however, if it's too difficult
 			// to get an error back from CreateUatTask, then we should set this to bUseTurnkey and remove the block below, and let the code in FLauncherWorker::CreateAndExecuteTasks handle it
 			DeviceInfo.bUpdateDeviceFlash = false;
+			DeviceInfo.bIsSimulator = bOnSimulator;
 
 			FRequestPlaySessionParams SessionParams;
 			SessionParams.SessionDestination = EPlaySessionDestinationType::Launcher;
@@ -262,9 +266,9 @@ bool FTurnkeyEditorSupport::CheckSupportedPlatforms(FName IniPlatformName)
 {
 #if WITH_EDITOR
 	return FModuleManager::LoadModuleChecked<IProjectTargetPlatformEditorModule>("ProjectTargetPlatformEditor").ShowUnsupportedTargetWarning(IniPlatformName);
-#endif
-
+#else
 	return true;
+#endif
 }
 
 void FTurnkeyEditorSupport::ShowInstallationHelp(FName IniPlatformName, FString DocLink)
@@ -282,9 +286,12 @@ bool FTurnkeyEditorSupport::IsPIERunning()
 {
 #if WITH_EDITOR
 	return GEditor->PlayWorld != NULL;
-#endif
+#else
 	return false;
+#endif
 }
 
 
 #undef LOCTEXT_NAMESPACE
+
+#endif // UE_WITH_TURNKEY_SUPPORT

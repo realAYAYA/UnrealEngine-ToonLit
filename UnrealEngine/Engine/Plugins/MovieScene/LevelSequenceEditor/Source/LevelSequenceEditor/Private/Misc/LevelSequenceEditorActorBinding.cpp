@@ -98,6 +98,15 @@ void FLevelSequenceEditorActorBinding::AddPossessActorMenuExtensions(FMenuBuilde
 		}));
 	}
 
+	// Add an entry for an empty binding
+	MenuBuilder.AddMenuEntry(LOCTEXT("EmptyBinding", "New Empty Binding"),
+		LOCTEXT("EmptyBindingTooltip", "Add a new empty binding to Sequencer which can be connected to an object or actor afterwards in the Binding Properties"),
+		FSlateIcon(), // TODO: empty icon?
+		FExecuteAction::CreateLambda([this] {
+			FSlateApplication::Get().DismissAllMenus();
+			Sequencer.Pin()->AddEmptyBinding();
+			}));
+
 	MenuBuilder.BeginSection("ChooseActorSection", LOCTEXT("ChooseActor", "Choose Actor:"));
 
 	// Set up a menu entry to add any arbitrary actor to the sequencer

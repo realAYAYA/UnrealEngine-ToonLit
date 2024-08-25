@@ -27,6 +27,9 @@ struct FRecastInternalDebugData : public duDebugDraw
 	TArray<FVector> PointVertices;
 	TArray<FColor>  PointColors;
 
+	TArray<FVector> LabelVertices;
+	TArray<FString> Labels;
+
 	double BuildTime = 0.;
 	double BuildCompressedLayerTime = 0.;
 	double BuildNavigationDataTime = 0.;
@@ -62,6 +65,8 @@ struct FRecastInternalDebugData : public duDebugDraw
 	}
 
 	virtual void vertex(const FVector::FReal x, const FVector::FReal y, const FVector::FReal z, unsigned int color, const FVector::FReal u, const FVector::FReal v) override;
+
+	virtual void text(const FVector::FReal x, const FVector::FReal y, const FVector::FReal z, const char* text) override;
 
 	virtual void end() override;
 };

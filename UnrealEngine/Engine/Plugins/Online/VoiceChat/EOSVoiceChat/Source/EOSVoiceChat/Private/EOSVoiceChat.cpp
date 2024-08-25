@@ -2,7 +2,7 @@
 
 #include "EOSVoiceChat.h" 
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "Async/Async.h"
 #include "Containers/Ticker.h"
@@ -132,9 +132,10 @@ void FEOSVoiceChat::Initialize(const FOnVoiceChatInitializeCompleteDelegate& Ini
 					const FTCHARToUTF8 Utf8OverrideLocaleCode(*ConfigOverrideLocaleCode);
 
 					EOS_Platform_Options PlatformOptions = {};
-					PlatformOptions.ApiVersion = 12;
-					UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_OPTIONS_API_LATEST, 12);
+					PlatformOptions.ApiVersion = 14;
+					UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_OPTIONS_API_LATEST, 14);
 					PlatformOptions.Reserved = nullptr;
+					PlatformOptions.SystemSpecificOptions = nullptr;
 					PlatformOptions.ProductId = ConfigProductId.IsEmpty() ? nullptr : Utf8ProductId.Get();
 					PlatformOptions.SandboxId = ConfigSandboxId.IsEmpty() ? nullptr : Utf8SandboxId.Get();
 					PlatformOptions.ClientCredentials.ClientId = ConfigClientId.IsEmpty() ? nullptr : Utf8ClientId.Get();
@@ -148,13 +149,20 @@ void FEOSVoiceChat::Initialize(const FOnVoiceChatInitializeCompleteDelegate& Ini
 					PlatformOptions.CacheDirectory = nullptr;
 					PlatformOptions.TickBudgetInMilliseconds = 1;
 					PlatformOptions.IntegratedPlatformOptionsContainerHandle = nullptr;
+					PlatformOptions.TaskNetworkTimeoutSeconds = nullptr;
 #if UE_EDITOR
 					//PlatformCreateOptions.Flags |= EOS_PF_LOADING_IN_EDITOR;
 #endif
 
 					EOS_Platform_RTCOptions PlatformRTCOptions = {};
-					PlatformRTCOptions.ApiVersion = 1;
-					UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_RTCOPTIONS_API_LATEST, 1);
+					PlatformRTCOptions.ApiVersion = 2;
+					UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_RTCOPTIONS_API_LATEST, 2);
+					PlatformRTCOptions.BackgroundMode = EOS_ERTCBackgroundMode::EOS_RTCBM_KeepRoomsAlive;
+					FString RTCBackgroundModeStr;
+					if(GConfig->GetString(TEXT("EOSVoiceChat"), TEXT("RTCBackgroundMode"), RTCBackgroundModeStr, GEngineIni))
+					{
+						LexFromString(PlatformRTCOptions.BackgroundMode, *RTCBackgroundModeStr);					
+					}
 					PlatformOptions.RTCOptions = &PlatformRTCOptions;
 
 					EosPlatformHandle = EOSPlatformCreate(PlatformOptions);
@@ -604,9 +612,9 @@ FOnVoiceChatCallStatsUpdatedDelegate& FEOSVoiceChat::OnVoiceChatCallStatsUpdated
 	return GetVoiceChatUser().OnVoiceChatCallStatsUpdated();
 }
 
-void FEOSVoiceChat::Set3DPosition(const FString& ChannelName, const FVector& SpeakerPosition, const FVector& ListenerPosition, const FVector& ListenerForwardDirection, const FVector& ListenerUpDirection)
+void FEOSVoiceChat::Set3DPosition(const FString& ChannelName, const FVector& Position)
 {
-	GetVoiceChatUser().Set3DPosition(ChannelName, SpeakerPosition, ListenerPosition, ListenerForwardDirection, ListenerUpDirection);
+	GetVoiceChatUser().Set3DPosition(ChannelName, Position);
 }
 
 TArray<FString> FEOSVoiceChat::GetChannels() const
@@ -1062,4 +1070,4 @@ const TCHAR* LexToString(FEOSVoiceChat::EConnectionState State)
 
 #undef CHECKPIN
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

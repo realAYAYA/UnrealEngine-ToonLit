@@ -258,8 +258,8 @@ void AddDumpToFilePass(FRDGBuilder& GraphBuilder, FScreenPassTexture Input, cons
 
 		if (ImageTask->PixelData->GetType() == EImagePixelType::Color)
 		{
-			// Always write full alpha
-			ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColor>(255));
+			// Always write opaque alpha
+			ImageTask->AddPreProcessorToSetAlphaOpaque();
 
 			// ImageTask->PixelData should be sRGB
 			//  it will gamma correct automatically if written to EXR
@@ -267,7 +267,7 @@ void AddDumpToFilePass(FRDGBuilder& GraphBuilder, FScreenPassTexture Input, cons
 		else if(ImageTask->Format == EImageFormat::PNG)
 		{
 			// PNGs can't have 0 alpha or RGB data is destroyed.
-			ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FLinearColor>(1.0f));
+			ImageTask->AddPreProcessorToSetAlphaOpaque();
 		}
 
 		HighResScreenshotConfig.ImageWriteQueue->Enqueue(MoveTemp(ImageTask));
@@ -347,11 +347,11 @@ FScreenPassTexture AddVisualizeGBufferOverviewPass(
 		RDG_EVENT_SCOPE(GraphBuilder, "%s", *MaterialName);
 
 		FPostProcessMaterialInputs PostProcessMaterialInputs;
-		PostProcessMaterialInputs.SetInput(EPostProcessMaterialInput::SceneColor, Inputs.SceneColor);
-		PostProcessMaterialInputs.SetInput(EPostProcessMaterialInput::SeparateTranslucency, Inputs.SeparateTranslucency);
-		PostProcessMaterialInputs.SetInput(EPostProcessMaterialInput::PreTonemapHDRColor, Inputs.SceneColorBeforeTonemap);
-		PostProcessMaterialInputs.SetInput(EPostProcessMaterialInput::PostTonemapHDRColor, Inputs.SceneColorAfterTonemap);
-		PostProcessMaterialInputs.SetInput(EPostProcessMaterialInput::Velocity, Inputs.Velocity);
+		PostProcessMaterialInputs.SetInput(GraphBuilder, EPostProcessMaterialInput::SceneColor, Inputs.SceneColor);
+		PostProcessMaterialInputs.SetInput(GraphBuilder, EPostProcessMaterialInput::SeparateTranslucency, Inputs.SeparateTranslucency);
+		PostProcessMaterialInputs.SetInput(GraphBuilder, EPostProcessMaterialInput::PreTonemapHDRColor, Inputs.SceneColorBeforeTonemap);
+		PostProcessMaterialInputs.SetInput(GraphBuilder, EPostProcessMaterialInput::PostTonemapHDRColor, Inputs.SceneColorAfterTonemap);
+		PostProcessMaterialInputs.SetInput(GraphBuilder, EPostProcessMaterialInput::Velocity, Inputs.Velocity);
 
 		if (View.Family->EngineShowFlags.PathTracing && Inputs.PathTracingResources->bPostProcessEnabled)
 		{
@@ -406,14 +406,14 @@ FScreenPassTexture AddVisualizeGBufferOverviewPass(
 		{
 			FDownsamplePassInputs DownsampleInputs;
 			DownsampleInputs.Name = TEXT("MaterialHalfSize");
-			DownsampleInputs.SceneColor = Output;
+			DownsampleInputs.SceneColor = FScreenPassTextureSlice::CreateFromScreenPassTexture(GraphBuilder, Output);
 			DownsampleInputs.Flags = EDownsampleFlags::ForceRaster;
 			DownsampleInputs.Quality = EDownsampleQuality::Low;
 
 			FScreenPassTexture HalfSize = AddDownsamplePass(GraphBuilder, View, DownsampleInputs);
 
 			DownsampleInputs.Name = TEXT("MaterialQuarterSize");
-			DownsampleInputs.SceneColor = HalfSize;
+			DownsampleInputs.SceneColor = FScreenPassTextureSlice::CreateFromScreenPassTexture(GraphBuilder, HalfSize);
 
 			FVisualizeBufferTile Tile;
 			Tile.Input = AddDownsamplePass(GraphBuilder, View, DownsampleInputs);

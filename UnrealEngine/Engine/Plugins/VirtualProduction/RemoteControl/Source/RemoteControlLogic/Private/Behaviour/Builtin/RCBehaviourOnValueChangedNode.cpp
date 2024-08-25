@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Behaviour/Builtin/RCBehaviourOnValueChangedNode.h"
 
@@ -29,6 +29,7 @@ bool URCBehaviourOnValueChangedNode::IsSupported_Implementation(URCBehaviour* In
 		{ EPropertyBagPropertyType::String, nullptr },
 		{ EPropertyBagPropertyType::Text, nullptr },
 		{ EPropertyBagPropertyType::Struct, TBaseStructure<FVector>::Get() },
+		{ EPropertyBagPropertyType::Struct, TBaseStructure<FVector2D>::Get() },
 		{ EPropertyBagPropertyType::Struct, TBaseStructure<FColor>::Get() },
 		{ EPropertyBagPropertyType::Struct, TBaseStructure<FRotator>::Get() }
 	};

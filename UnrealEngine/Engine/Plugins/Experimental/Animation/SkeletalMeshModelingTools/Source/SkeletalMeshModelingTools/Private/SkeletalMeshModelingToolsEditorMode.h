@@ -34,6 +34,9 @@ public:
 	virtual void Enter() override;
 	virtual void Exit() override;
 	virtual void CreateToolkit() override;
+	virtual bool IsCompatibleWith(FEditorModeID OtherModeID) const override;
+	virtual bool UsesTransformWidget() const override { return false; };
+	virtual bool UsesPropertyWidgets() const override { return false; };
 	virtual void Tick(FEditorViewportClient* InViewportClient, float InDeltaTime) override;
 	virtual bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy *HitProxy, const FViewportClick &Click) override;
 	virtual bool ComputeBoundingBoxForViewportFocus(AActor* Actor, UPrimitiveComponent* PrimitiveComponent, FBox& InOutBox) const override;

@@ -267,7 +267,7 @@ private:
 	void ImplementFunction(TSharedPtr<FEdGraphSchemaAction_K2Graph> GraphAction);
 	void ImplementFunction(FEdGraphSchemaAction_K2Graph* GraphAction);
 	bool CanImplementFunction() const;
-	void OnFindReference();
+	void OnFindReference(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags);
 	bool CanFindReference() const;
 	void OnFindAndReplaceReference();
 	bool CanFindAndReplaceReference() const;

@@ -22,7 +22,6 @@
 #include "KismetCompiler.h"
 #include "KismetCompilerMisc.h"
 #include "Misc/AssertionMacros.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/Class.h"
 #include "UObject/NameTypes.h"

@@ -891,6 +891,60 @@ namespace D3DX12Residency
 				return ExecuteSubset(Queue, CommandLists, ResidencySets, Count);
 			}
 
+			// BEGIN EPIC MOD
+			// Attempt to make a specific set of resources resident, independently of a command list execution.
+			// This is useful for Queue-level operations on resources, such as UpdateTileMappings().
+			// NOTE: code duplicated from ExecuteCommandLists() to avoid significant divergence.
+			HRESULT MakeResident(ID3D12CommandQueue* Queue, ResidencySet* MasterSet)
+			{
+				HRESULT hr = S_OK;
+
+				Internal::Fence* QueueFence = nullptr;
+				hr = GetFence(Queue, QueueFence);
+
+				if (SUCCEEDED(hr))
+				{
+					// The following code must be atomic so that things get ordered correctly
+
+					Internal::ScopedLock Lock(&ExecutionCS);
+					// Evict or make resident all of the objects we identified above.
+					// This will run on an async thread, allowing the current to continue while still blocking the GPU if required
+					// If a native async MakeResident is supported, this will run on this thread - it will only block until work referencing
+					// resources which need to be evicted is completed, and does not need to wait for MakeResident to complete.
+					hr = EnqueueAsyncWork(MasterSet, AsyncThreadFence.FenceValue, CurrentSyncPointGeneration);
+#if !RESIDENCY_SINGLE_THREADED
+					if (Device3)
+#endif
+					{
+						AsyncWorkload* pWorkload = DequeueAsyncWork();
+						ProcessPagingWork(pWorkload);
+					}
+
+					// If there are some things that need to be made resident we need to make sure that the GPU
+					// doesn't execute until the async thread signals that the MakeResident call has returned.
+					if (SUCCEEDED(hr))
+					{
+						hr = AsyncThreadFence.GPUWait(Queue);
+
+						// If we're using a queued MakeResident, then ProcessPagingWork may increment the fence multiple times instead of
+						// signaling a pre-defined value.
+						if (!Device3)
+						{
+							AsyncThreadFence.Increment();
+						}
+					}
+				}
+
+				return hr;
+			}
+
+			HRESULT SignalFence(ID3D12CommandQueue* Queue)
+			{
+				UINT64 GPUSyncPoint = 0; // not used
+				return GetCurrentGPUSyncPoint(Queue, &GPUSyncPoint);
+			}
+			// END EPIC MOD
+
 			HRESULT GetCurrentGPUSyncPoint(ID3D12CommandQueue* Queue, UINT64 *pGPUSyncPoint)
 			{
 				Internal::Fence* QueueFence = nullptr;
@@ -1626,6 +1680,19 @@ namespace D3DX12Residency
 		{
 			return Manager.ExecuteCommandLists(Queue, CommandLists, ResidencySets, Count);
 		}
+
+		// BEGIN EPIC MOD
+		HRESULT MakeResident(ID3D12CommandQueue* Queue, ResidencySet*&& MasterSet)
+		{
+			HRESULT hr = Manager.MakeResident(Queue, MasterSet);
+			MasterSet = nullptr; // Ownerhip is taken over by the manager, which will destroy the set later
+			return hr;
+		}
+		HRESULT SignalFence(ID3D12CommandQueue* Queue)
+		{
+			return Manager.SignalFence(Queue);
+		}
+		// END EPIC MOD
 
 		FORCEINLINE ResidencySet* CreateResidencySet()
 		{

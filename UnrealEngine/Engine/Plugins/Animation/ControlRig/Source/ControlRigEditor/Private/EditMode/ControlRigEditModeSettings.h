@@ -7,6 +7,8 @@
 #include "UObject/LazyObjectPtr.h"
 #include "ControlRigEditModeSettings.generated.h"
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FGizmoScaleSet, float /* GizmoScale */);
+
 /** Settings object used to show useful information in the details panel */
 UCLASS(config=EditorPerProjectUserSettings, MinimalAPI)
 class UControlRigEditModeSettings : public UObject
@@ -16,6 +18,7 @@ class UControlRigEditModeSettings : public UObject
 	UControlRigEditModeSettings()
 		: bDisplayHierarchy(false)
 		, bDisplayNulls(false)
+		, bDisplaySockets(false)
 		, bHideControlShapes(false)
 		, bShowAllProxyControls(false)
 		, bShowControlsAsOverlay(false)
@@ -45,6 +48,10 @@ public:
 	/** Whether to show all nulls in the hierarchy */
 	UPROPERTY(config, EditAnywhere, Category = "Animation Settings")
 	bool bDisplayNulls;
+
+	/** Should we show sockets in the viewport */
+	UPROPERTY(config, EditAnywhere, Category = "Animation Settings")
+	bool bDisplaySockets;
 
 	/** Should we always hide control shapes in viewport */
 	UPROPERTY(config, EditAnywhere, Category = "Animation Settings")
@@ -88,4 +95,7 @@ public:
 
 	UPROPERTY(config)
 	FVector2D LastInViewportTweenWidgetLocation;
+
+	/** Delegate broadcasted whenever GizmoScale is modified */
+	FGizmoScaleSet GizmoScaleDelegate;
 };

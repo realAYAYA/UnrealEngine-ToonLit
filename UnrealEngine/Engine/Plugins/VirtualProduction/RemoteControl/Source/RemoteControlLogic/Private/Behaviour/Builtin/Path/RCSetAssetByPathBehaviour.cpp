@@ -40,6 +40,53 @@ void URCSetAssetByPathBehaviour::Initialize()
 	Super::Initialize();
 }
 
+void URCSetAssetByPathBehaviour::UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap)
+{
+	if (const FGuid* FoundId = InEntityIdMap.Find(TargetEntityId))
+	{
+		TargetEntityId = *FoundId;
+	}
+
+	Super::UpdateEntityIds(InEntityIdMap);
+}
+
+void URCSetAssetByPathBehaviour::PostLoad()
+{
+	Super::PostLoad();
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	// support for older version, loading the data of the deprecated property into the new one
+	if (!PathStruct.PathArray_DEPRECATED.IsEmpty())
+	{
+		PathStruct.AssetPath.Empty();
+	}
+	for (const FString& Path : PathStruct.PathArray_DEPRECATED)
+	{
+		bool bIsInput = false;
+		FString PathToCopy = Path;
+		if (PathToCopy.Contains(SetAssetByPathBehaviourHelpers::InputToken)
+			&& PathToCopy.Find(SetAssetByPathBehaviourHelpers::InputToken) == 0)
+		{
+			bIsInput = true;
+			PathToCopy.RemoveFromStart(SetAssetByPathBehaviourHelpers::InputToken);
+			int32 CharIndexStart;
+			int32 CharIndexEnd;
+			PathToCopy.FindChar('(', CharIndexStart);
+			PathToCopy.FindChar(')', CharIndexEnd);
+			if (CharIndexStart != INDEX_NONE)
+			{
+				PathToCopy.RemoveAt(CharIndexStart);
+			}
+			if (CharIndexEnd != INDEX_NONE)
+			{
+				PathToCopy.RemoveAt(CharIndexEnd-1);
+			}
+		}
+		PathStruct.AssetPath.Add(FRCAssetPathElement(bIsInput, PathToCopy));
+	}
+	PathStruct.PathArray_DEPRECATED.Empty();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
 bool URCSetAssetByPathBehaviour::SetAssetByPath(const FString& AssetPath, const FString& DefaultString)
 {
 	const URCController* Controller = ControllerWeakPtr.Get();
@@ -292,16 +339,14 @@ FString URCSetAssetByPathBehaviour::GetCurrentPath()
 
 	// Add Path String Concat
 	CurrentPath = bInternal ? SetAssetByPathBehaviourHelpers::ContentFolder : FString("");
-	for (FString PathPart : PathStruct.PathArray)
+	for (FRCAssetPathElement PathPart : PathStruct.AssetPath)
 	{
-		if (PathPart.IsEmpty())
+		if (PathPart.Path.IsEmpty())
 		{
 			continue;
 		}
-		
-		// Change *INPUT String Token to the correct Controller
-		if (PathPart.Contains(SetAssetByPathBehaviourHelpers::InputToken, ESearchCase::CaseSensitive)
-			&& PathPart.Find(SetAssetByPathBehaviourHelpers::InputToken) == 0)
+
+		if (PathPart.bIsInput)
 		{
 			const URemoteControlPreset* RemoteControlPreset = RCController->PresetWeakPtr.Get();
 			if (!RemoteControlPreset)
@@ -309,45 +354,32 @@ FString URCSetAssetByPathBehaviour::GetCurrentPath()
 				ensureMsgf(false, TEXT("Remote Control Preset is invalid"));
 				continue;
 			}
-			
-			PathPart.RemoveFromStart(SetAssetByPathBehaviourHelpers::InputToken);
-			int32 CharIndexStart;
-			int32 CharIndexEnd;
-			PathPart.FindChar('(', CharIndexStart);
-			PathPart.FindChar(')', CharIndexEnd);
-			if (CharIndexStart == INDEX_NONE || CharIndexEnd == INDEX_NONE)
-			{
-				// TODO: Add Message that Input token has been done wrongly.
-				ensureMsgf(false, TEXT("Token has been input wrongly"));
-				continue;
-			}
 
-			PathPart.RemoveAt(CharIndexStart);
-			PathPart.RemoveAt(CharIndexEnd-1);
-			const URCVirtualPropertyBase* TokenController = RemoteControlPreset->GetControllerByDisplayName(FName(PathPart));
+			const URCVirtualPropertyBase* TokenController = RemoteControlPreset->GetControllerByDisplayName(FName(PathPart.Path));
 			if (!TokenController)
 			{
-				ensureMsgf(false, TEXT("No Controller with given name found."));
-				continue;
+				PathPart.Path = TEXT("InvalidControllerName");
 			}
-
-			PathPart = TokenController->GetDisplayValueAsString();
+			else
+			{
+				PathPart.Path = TokenController->GetDisplayValueAsString();
+			}
 		}
 
 		// Check for certain chars.
 		int32 IndexFound;
-		if (PathPart.FindLastChar('_', IndexFound) && IndexFound == PathPart.Len() - 1)
+		if (PathPart.Path.FindLastChar('_', IndexFound) && IndexFound == PathPart.Path.Len() - 1)
 		{
 			// In the case there's underscore char in the at the end of one of the Path Strings, do nothing to facilitate more complex pathing behaviours.
 		}
-		else if (!PathPart.FindLastChar('/', IndexFound) || IndexFound < PathPart.Len() - 1)
+		else if (!PathPart.Path.FindLastChar('/', IndexFound) || IndexFound < PathPart.Path.Len() - 1)
 		{
-			PathPart = PathPart.AppendChar('/');
+			PathPart.Path = PathPart.Path.AppendChar('/');
 		}
 
-		PathPart.ReplaceCharInline(TCHAR('\\'), TCHAR('/'), ESearchCase::IgnoreCase);
+		PathPart.Path.ReplaceCharInline(TCHAR('\\'), TCHAR('/'), ESearchCase::IgnoreCase);
 		
-		CurrentPath += PathPart;
+		CurrentPath += PathPart.Path;
 	}
 
 	return CurrentPath;
@@ -484,9 +516,9 @@ void URCSetAssetByPathBehaviour::UpdateTargetEntity()
 
 void URCSetAssetByPathBehaviour::RefreshPathArray()
 {
-	if (PathStruct.PathArray.Num() < 1)
+	if (PathStruct.AssetPath.Num() < 1)
 	{
-		PathStruct.PathArray.Add("");
+		PathStruct.AssetPath.AddDefaulted();
 	}
 }
 

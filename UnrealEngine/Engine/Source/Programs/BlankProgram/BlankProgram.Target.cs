@@ -31,7 +31,7 @@ public class BlankProgramTarget : TargetRules
 		// bForceCompileDevelopmentAutomationTests = true;
 
 		// to enable tracing:
-		// GlobalDefinitions.Add("UE_TRACE_ENABLED=1");
+		// bEnableTrace = true;
 
 		// This app is a console application, not a Windows app (sets entry point to main(), instead of WinMain())
 		bIsBuildingConsoleApplication = true;

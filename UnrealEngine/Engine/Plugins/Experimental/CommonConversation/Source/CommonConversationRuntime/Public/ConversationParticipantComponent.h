@@ -48,7 +48,7 @@ public:
 #if WITH_SERVER_CODE
 	void ServerNotifyConversationStarted(UConversationInstance* Conversation, FGameplayTag AsParticipant);
 	void ServerNotifyConversationEnded(UConversationInstance* Conversation, const FConversationParticipants& PreservedParticipants);
-	void ServerNotifyExecuteTaskAndSideEffects(const FConversationNodeHandle& Handle);
+	void ServerNotifyExecuteTaskAndSideEffects(const FConversationNodeHandle& Handle, const UConversationDatabase* Graph = nullptr);
 	void ServerForAllConversationsRefreshChoices(UConversationInstance* IgnoreConversation = nullptr);
 	void ServerForAllConversationsRefreshTaskChoiceData(const FConversationNodeHandle& Handle, UConversationInstance* IgnoreConversation /*= nullptr*/);
 
@@ -91,7 +91,7 @@ protected:
 	void ClientUpdateParticipants(const FConversationParticipants& InParticipants);
 
 	UFUNCTION(Client, Reliable)
-	void ClientExecuteTaskAndSideEffects(FConversationNodeHandle Handle);
+	void ClientExecuteTaskAndSideEffects(FConversationNodeHandle Handle, const UConversationDatabase* Graph = nullptr);
 
 	UFUNCTION(Client, Reliable)
 	void ClientUpdateConversation(const FClientConversationMessagePayload& Message);

@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeModifierMeshClipDeform::Private::s_type =
-			NODE_TYPE( "NodeModifierMeshClipDeform", NodeModifier::GetStaticType() );
+	FNodeType NodeModifierMeshClipDeform::Private::s_type =
+			FNodeType( "NodeModifierMeshClipDeform", NodeModifier::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -25,32 +25,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeModifierMeshClipDeform, EType::MeshClipDeform, Node, Node::EType::Modifier)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeModifierMeshClipDeform::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeModifierMeshClipDeform::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-		(void)i;
-		return nullptr;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeModifierMeshClipDeform::SetInputNode( int32 i, NodePtr )
-	{
-		check( i>=0 && i< GetInputCount());
-		(void)i;
-	}
 
 
 	//---------------------------------------------------------------------------------------------

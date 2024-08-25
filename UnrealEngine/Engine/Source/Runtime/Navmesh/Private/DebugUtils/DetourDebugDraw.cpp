@@ -818,7 +818,7 @@ struct dtTileCacheContourSet
 };*/
 
 void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheContourSet& lcset,
-								  const dtReal* orig, const dtReal cs, const dtReal ch)
+								  const int32 layerIdx, const dtReal* orig, const dtReal cs, const dtReal ch)
 {
 	if (!dd) return;
 	
@@ -840,11 +840,12 @@ void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheConto
 			const int k = (j+1) % c.nverts;
 			const unsigned short* va = &c.verts[j*4];
 			const unsigned short* vb = &c.verts[k*4];
+			const dtReal verticalOffset = 1 + (0.05*i) + (0.3*layerIdx);
 			const dtReal ax = orig[0] + va[0]*cs;
-			const dtReal ay = orig[1] + (va[1]+1+(i&1))*ch;
+			const dtReal ay = orig[1] + (va[1]+verticalOffset)*ch;
 			const dtReal az = orig[2] + va[2]*cs;
 			const dtReal bx = orig[0] + vb[0]*cs;
-			const dtReal by = orig[1] + (vb[1]+1+(i&1))*ch;
+			const dtReal by = orig[1] + (vb[1]+verticalOffset)*ch;
 			const dtReal bz = orig[2] + vb[2]*cs;
 			unsigned int col = color;
 			if ((va[3] & 0xf) != 0xf)
@@ -866,7 +867,7 @@ void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheConto
 				dd->vertex(dx,dy,dz,duRGBA(255,0,0,255));
 			}
 			
-			duAppendArrow(dd, ax,ay,az, bx,by,bz, 0.0f, cs*0.5f, col);
+			duAppendArrow(dd, ax,ay,az, bx,by,bz, 0.0, cs*0.2, col);
 		}
 	}
 	dd->end();
@@ -890,9 +891,16 @@ void duDebugDrawTileCacheContours(duDebugDraw* dd, const struct dtTileCacheConto
 			}
 			
 			dtReal fx = orig[0] + va[0]*cs;
-			dtReal fy = orig[1] + (va[1]+1+(i&1))*ch;
+			const dtReal verticalOffset = 1 + (0.05*i) + (0.3*layerIdx);
+			dtReal fy = orig[1] + (va[1]+verticalOffset)*ch;
 			dtReal fz = orig[2] + va[2]*cs;
 			dd->vertex(fx,fy,fz, color);
+
+			// Add label for contour edge.
+			constexpr int bufferSize = 128;
+			char text[bufferSize];
+			snprintf(text, bufferSize, "%i (%i:%i) (%u,%u,%u) neiReg:%u r:%u a:%u", layerIdx, i, j, va[0], va[1], va[2], va[3], c.reg, c.area);
+			dd->text(fx,fy,fz, text);
 		}
 	}
 	dd->end();

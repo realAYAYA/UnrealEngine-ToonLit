@@ -23,6 +23,10 @@ static TAutoConsoleVariable<bool> CVarLandscapeSimulateAlphaBrushTextureLoadFail
 	false,
 	TEXT("Debug utility to simulate a loading failure (e.g. invalid source data, which can happen in cooked editor or with a badly virtualized texture) when loading the alpha brush texture"));
 
+const FVector ULandscapeEditorObject::NewLandscape_DefaultLocation = FVector(0, 0, 100);
+const FRotator ULandscapeEditorObject::NewLandscape_DefaultRotation = FRotator::ZeroRotator;
+const FVector ULandscapeEditorObject::NewLandscape_DefaultScale = FVector(100, 100, 100);
+
 ULandscapeEditorObject::ULandscapeEditorObject(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 
@@ -56,6 +60,7 @@ ULandscapeEditorObject::ULandscapeEditorObject(const FObjectInitializer& ObjectI
 	, ErodeIterationNum(28)
 	, ErosionNoiseMode(ELandscapeToolErosionMode::Lower)
 	, ErosionNoiseScale(60.0f)
+	, bErosionUseLayerHardness(false)
 
 	, RainAmount(128)
 	, SedimentCapacity(0.3f)
@@ -88,9 +93,9 @@ ULandscapeEditorObject::ULandscapeEditorObject(const FObjectInitializer& ObjectI
 	, NewLandscape_QuadsPerSection(63)
 	, NewLandscape_SectionsPerComponent(1)
 	, NewLandscape_ComponentCount(8, 8)
-	, NewLandscape_Location(0, 0, 100)
-	, NewLandscape_Rotation(0, 0, 0)
-	, NewLandscape_Scale(100, 100, 100)
+	, NewLandscape_Location(NewLandscape_DefaultLocation)
+	, NewLandscape_Rotation(NewLandscape_DefaultRotation)
+	, NewLandscape_Scale(NewLandscape_DefaultScale)
 	, ImportLandscape_Width(0)
 	, ImportLandscape_Height(0)
 	, ImportLandscape_AlphamapType(ELandscapeImportAlphamapType::Additive)
@@ -271,6 +276,7 @@ void ULandscapeEditorObject::Load()
 	GConfig->GetInt(TEXT("LandscapeEdit"), TEXT("ErosionNoiseMode"), InErosionNoiseMode, GEditorPerProjectIni);
 	ErosionNoiseMode = (ELandscapeToolErosionMode)InErosionNoiseMode;
 	GConfig->GetFloat(TEXT("LandscapeEdit"), TEXT("ErosionNoiseScale"), ErosionNoiseScale, GEditorPerProjectIni);
+	GConfig->GetBool(TEXT("LandscapeEdit"), TEXT("bErosionUseLayerHardness"), bErosionUseLayerHardness, GEditorPerProjectIni);
 
 	GConfig->GetInt(TEXT("LandscapeEdit"), TEXT("RainAmount"), RainAmount, GEditorPerProjectIni);
 	GConfig->GetFloat(TEXT("LandscapeEdit"), TEXT("SedimentCapacity"), SedimentCapacity, GEditorPerProjectIni);
@@ -421,6 +427,7 @@ void ULandscapeEditorObject::Save()
 	GConfig->SetInt(TEXT("LandscapeEdit"), TEXT("ErodeSurfaceThickness"), ErodeSurfaceThickness, GEditorPerProjectIni);
 	GConfig->SetInt(TEXT("LandscapeEdit"), TEXT("ErosionNoiseMode"), (int32)ErosionNoiseMode, GEditorPerProjectIni);
 	GConfig->SetFloat(TEXT("LandscapeEdit"), TEXT("ErosionNoiseScale"), ErosionNoiseScale, GEditorPerProjectIni);
+	GConfig->SetBool(TEXT("LandscapeEdit"), TEXT("bErosionUseLayerHardness"), bErosionUseLayerHardness, GEditorPerProjectIni);
 
 	GConfig->SetInt(TEXT("LandscapeEdit"), TEXT("RainAmount"), RainAmount, GEditorPerProjectIni);
 	GConfig->SetFloat(TEXT("LandscapeEdit"), TEXT("SedimentCapacity"), SedimentCapacity, GEditorPerProjectIni);

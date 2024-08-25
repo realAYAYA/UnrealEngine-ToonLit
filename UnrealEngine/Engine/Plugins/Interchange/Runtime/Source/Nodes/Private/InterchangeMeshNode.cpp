@@ -74,6 +74,8 @@ UInterchangeMeshNode::UInterchangeMeshNode()
 	SlotMaterialDependencies.Initialize(Attributes.ToSharedRef(), UE::Interchange::FMeshNodeStaticData::GetSlotMaterialDependenciesKey().ToString());
 }
 
+#if WITH_EDITOR
+
 FString UInterchangeMeshNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
 	FString KeyDisplayName = NodeAttributeKey.ToString();
@@ -179,6 +181,8 @@ FString UInterchangeMeshNode::GetAttributeCategory(const UE::Interchange::FAttri
 	}
 	return Super::GetAttributeCategory(NodeAttributeKey);
 }
+
+#endif //WITH_EDITOR
 
 FString UInterchangeMeshNode::GetTypeName() const
 {

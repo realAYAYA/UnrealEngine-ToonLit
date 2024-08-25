@@ -75,18 +75,18 @@ void UTemplateSequenceSystem::OnRun(FSystemTaskPrerequisites& InPrerequisites, F
 			const FGuid& ObjectBindingID = ObjectBindingIDs[Index];
 			const FTemplateSequenceComponentData& TemplateSequenceData = TemplateSequenceDatas[Index];
 
-			IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
-			if (ensure(Player))
+			IStaticBindingOverridesPlaybackCapability* StaticOverrides = SequenceInstance.GetSharedPlaybackState()->FindCapability<IStaticBindingOverridesPlaybackCapability>();
+			if (ensure(StaticOverrides))
 			{
 				if (bHasNeedsLink)
 				{
 					const FMovieSceneSequenceID SequenceID = SequenceInstance.GetSequenceID();
 					const FMovieSceneEvaluationOperand OuterOperand(SequenceID, ObjectBindingID);
-					Player->BindingOverrides.Add(TemplateSequenceData.InnerOperand, OuterOperand);
+					StaticOverrides->AddBindingOverride(TemplateSequenceData.InnerOperand, OuterOperand);
 				}
 				else if (bHasNeedsUnlink)
 				{
-					Player->BindingOverrides.Remove(TemplateSequenceData.InnerOperand);
+					StaticOverrides->RemoveBindingOverride(TemplateSequenceData.InnerOperand);
 				}
 			}
 		}
@@ -131,34 +131,32 @@ void UTemplateSequencePropertyScalingInstantiatorSystem::OnRun(FSystemTaskPrereq
 	// Step 1: Keep track of any new property scales.
 	auto GatherNewPropertyScaledInstances = [this, InstanceRegistry](
 			const FMovieSceneEntityID EntityID,
-			const FInstanceHandle InstanceHandle,
+			const FRootInstanceHandle RootInstanceHandle,
 			const FTemplateSequencePropertyScaleComponentData& PropertyScale)
 	{
-		const FInstanceHandle SubSequenceHandle = InstanceRegistry->FindRelatedInstanceHandle(InstanceHandle, PropertyScale.SubSequenceID);
-		if (ensure(SubSequenceHandle.IsValid()))
-		{
-			FPropertyScaleEntityIDs& PropertyScaleEntities = PropertyScaledInstances.FindOrAdd(SubSequenceHandle);
-			if (!PropertyScaleEntities.Contains(EntityID))
-			{
-				PropertyScaleEntities.Add(EntityID);
+		FPropertyScaledInstanceKey Key(RootInstanceHandle, PropertyScale.SubSequenceID);
 
-				switch (PropertyScale.PropertyScaleType)
-				{
-					case ETemplateSectionPropertyScaleType::FloatProperty:
-						++FloatScaleUseCount;
-						break;
-					case ETemplateSectionPropertyScaleType::TransformPropertyLocationOnly:
-					case ETemplateSectionPropertyScaleType::TransformPropertyRotationOnly:
-						++TransformScaleUseCount;
-						break;
-				}
+		FPropertyScaleEntityIDs& PropertyScaleEntities = PropertyScaledInstances.FindOrAdd(Key);
+		if (!PropertyScaleEntities.Contains(EntityID))
+		{
+			PropertyScaleEntities.Add(EntityID);
+
+			switch (PropertyScale.PropertyScaleType)
+			{
+				case ETemplateSectionPropertyScaleType::FloatProperty:
+					++FloatScaleUseCount;
+					break;
+				case ETemplateSectionPropertyScaleType::TransformPropertyLocationOnly:
+				case ETemplateSectionPropertyScaleType::TransformPropertyRotationOnly:
+					++TransformScaleUseCount;
+					break;
 			}
 		}
 	};
 
 	FEntityTaskBuilder()
 		.ReadEntityIDs()
-		.Read(BuiltInComponents->InstanceHandle)
+		.Read(BuiltInComponents->RootInstanceHandle)
 		.Read(TemplateSequenceComponents->PropertyScale)
 		.FilterAll({ BuiltInComponents->Tags.NeedsLink })
 		.Iterate_PerEntity(&Linker->EntityManager, GatherNewPropertyScaledInstances);
@@ -166,14 +164,14 @@ void UTemplateSequencePropertyScalingInstantiatorSystem::OnRun(FSystemTaskPrereq
 	// Step 2: Remove old property scales ending.
 	auto RemoveOldPropertyScaledInstances = [this, InstanceRegistry](
 			const FMovieSceneEntityID EntityID,
-			const FInstanceHandle InstanceHandle,
+			const FRootInstanceHandle RootInstanceHandle,
 			const FTemplateSequencePropertyScaleComponentData& PropertyScale)
 	{
-		const FInstanceHandle SubSequenceHandle = InstanceRegistry->FindRelatedInstanceHandle(InstanceHandle, PropertyScale.SubSequenceID);
-		if (ensure(SubSequenceHandle.IsValid()) && PropertyScaledInstances.Contains(SubSequenceHandle))
+		FPropertyScaledInstanceKey Key(RootInstanceHandle, PropertyScale.SubSequenceID);
+
+		if (FPropertyScaleEntityIDs* PropertyScaleEntities = PropertyScaledInstances.Find(Key))
 		{
-			FPropertyScaleEntityIDs& PropertyScaleEntities = PropertyScaledInstances.FindChecked(SubSequenceHandle);
-			if (PropertyScaleEntities.Remove(EntityID) > 0)
+			if (PropertyScaleEntities->Remove(EntityID) > 0)
 			{
 				switch (PropertyScale.PropertyScaleType)
 				{
@@ -186,16 +184,16 @@ void UTemplateSequencePropertyScalingInstantiatorSystem::OnRun(FSystemTaskPrereq
 						break;
 				}
 			}
-			if (PropertyScaleEntities.Num() == 0)
+			if (PropertyScaleEntities->Num() == 0)
 			{
-				PropertyScaledInstances.Remove(SubSequenceHandle);
+				PropertyScaledInstances.Remove(Key);
 			}
 		}
 	};
 
 	FEntityTaskBuilder()
 		.ReadEntityIDs()
-		.Read(BuiltInComponents->InstanceHandle)
+		.Read(BuiltInComponents->RootInstanceHandle)
 		.Read(TemplateSequenceComponents->PropertyScale)
 		.FilterAll({ BuiltInComponents->Tags.NeedsUnlink, TemplateSequenceComponents->PropertyScale })
 		.Iterate_PerEntity(&Linker->EntityManager, RemoveOldPropertyScaledInstances);
@@ -207,11 +205,13 @@ void UTemplateSequencePropertyScalingInstantiatorSystem::OnRun(FSystemTaskPrereq
 
 	auto ComputeReverseLookupBinding = [this, BuiltInComponents, &PropertyScaledEntities](
 			const FMovieSceneEntityID EntityID,
-			const FInstanceHandle InstanceHandle,
+			const FRootInstanceHandle RootInstanceHandle,
+			const FMovieSceneSequenceID* OptSequenceID,
 			const FMovieSceneEntityID ParentEntity, 
 			UObject* const BoundObject)
 	{
-		if (!PropertyScaledInstances.Contains(InstanceHandle))
+		FMovieSceneSequenceID SequenceID = OptSequenceID ? *OptSequenceID : MovieSceneSequenceID::Root;
+		if (!PropertyScaledInstances.Contains(FPropertyScaledInstanceKey(RootInstanceHandle, SequenceID)))
 		{
 			return;
 		}
@@ -235,7 +235,8 @@ void UTemplateSequencePropertyScalingInstantiatorSystem::OnRun(FSystemTaskPrereq
 
 	FEntityTaskBuilder()
 		.ReadEntityIDs()
-		.Read(BuiltInComponents->InstanceHandle)
+		.Read(BuiltInComponents->RootInstanceHandle)
+		.ReadOptional(BuiltInComponents->SequenceID)
 		.Read(BuiltInComponents->ParentEntity)
 		.Read(BuiltInComponents->BoundObject)
 		.FilterAll({ BuiltInComponents->Tags.NeedsLink })
@@ -352,18 +353,14 @@ struct FGatherPropertyScales
 	}
 
 	void ForEachEntity(
-			const FInstanceHandle& InstanceHandle, 
+			const FRootInstanceHandle& RootInstanceHandle, 
 			const FTemplateSequencePropertyScaleComponentData& PropertyScale,
 			float ScaleFactor) const
 	{
 		// Find the instance handle of the sub-sequence we need to scale.
-		const FInstanceHandle SubSequenceHandle = InstanceRegistry->FindRelatedInstanceHandle(InstanceHandle, PropertyScale.SubSequenceID);
-		if (ensure(SubSequenceHandle.IsValid()))
-		{
-			EvaluatorSystem->AddPropertyScale(
-					UEvaluatorSystem::FPropertyScaleKey { SubSequenceHandle, PropertyScale.ObjectBinding, PropertyScale.PropertyBinding.PropertyPath },
-					UEvaluatorSystem::FPropertyScaleValue { PropertyScale.PropertyScaleType, ScaleFactor });
-		}
+		EvaluatorSystem->AddPropertyScale(
+				UEvaluatorSystem::FPropertyScaleKey { RootInstanceHandle, PropertyScale.SubSequenceID, PropertyScale.ObjectBinding, PropertyScale.PropertyBinding.PropertyPath },
+				UEvaluatorSystem::FPropertyScaleValue { PropertyScale.PropertyScaleType, ScaleFactor });
 	}
 };
 
@@ -381,7 +378,8 @@ struct FScaleTransformProperties
 
 	void ForEachAllocation(
 			FEntityAllocation* Allocation,
-			TRead<FInstanceHandle> InstanceHandles,
+			TRead<FRootInstanceHandle> RootInstanceHandles,
+			TReadOptional<FMovieSceneSequenceID> SequenceIDs,
 			TRead<FMovieScenePropertyBinding> PropertyBindings,
 			TRead<FGuid> ReverseBindingLookups,
 			TReadOptional<double> BaseLocationXs, TReadOptional<double> BaseLocationYs, TReadOptional<double> BaseLocationZs,
@@ -395,14 +393,16 @@ struct FScaleTransformProperties
 	{
 		for (int32 Index = 0; Index < Allocation->Num(); ++Index)
 		{
-			const FInstanceHandle InstanceHandle = InstanceHandles[Index];
+			const FRootInstanceHandle InstanceHandle = RootInstanceHandles[Index];
 			const FMovieScenePropertyBinding& PropertyBinding = PropertyBindings[Index];
 			const FGuid ObjectBindingID = ReverseBindingLookups[Index];
+			const FMovieSceneSequenceID SequenceID = SequenceIDs ? SequenceIDs[Index] : MovieSceneSequenceID::Root;
+
 			ensure(ObjectBindingID.IsValid());
 
 			UEvaluatorSystem::FPropertyScaleValueArray TransformScales;
 			EvaluatorSystem->FindPropertyScales(
-					UEvaluatorSystem::FPropertyScaleKey { InstanceHandle, ObjectBindingID, PropertyBinding.PropertyPath },
+					UEvaluatorSystem::FPropertyScaleKey { InstanceHandle, SequenceID, ObjectBindingID, PropertyBinding.PropertyPath },
 					TransformScales);
 			for (const UEvaluatorSystem::FPropertyScaleValue& TransformScale : TransformScales)
 			{
@@ -445,7 +445,8 @@ struct FScaleFloatProperties
 
 	void ForEachAllocation(
 			FEntityAllocation* Allocation,
-			TRead<FInstanceHandle> InstanceHandles,
+			TRead<FRootInstanceHandle> RootInstanceHandles,
+			TReadOptional<FMovieSceneSequenceID> SequenceIDs,
 			TRead<FMovieScenePropertyBinding> PropertyBindings,
 			TRead<FGuid> ReverseBindingLookups,
 			TReadOptional<double> BasePropertyValues,
@@ -453,14 +454,15 @@ struct FScaleFloatProperties
 	{
 		for (int32 Index = 0; Index < Allocation->Num(); ++Index)
 		{
-			const FInstanceHandle InstanceHandle = InstanceHandles[Index];
+			const FRootInstanceHandle InstanceHandle = RootInstanceHandles[Index];
 			const FMovieScenePropertyBinding& PropertyBinding = PropertyBindings[Index];
 			const FGuid ObjectBindingID = ReverseBindingLookups[Index];
+			const FMovieSceneSequenceID SequenceID = SequenceIDs ? SequenceIDs[Index] : MovieSceneSequenceID::Root;
 			ensure(ObjectBindingID.IsValid());
 
 			UEvaluatorSystem::FPropertyScaleValueArray PropertyScales;
 			EvaluatorSystem->FindPropertyScales(
-					UEvaluatorSystem::FPropertyScaleKey { InstanceHandle, ObjectBindingID, PropertyBinding.PropertyPath },
+					UEvaluatorSystem::FPropertyScaleKey { InstanceHandle, SequenceID, ObjectBindingID, PropertyBinding.PropertyPath },
 					PropertyScales);
 			for (const UEvaluatorSystem::FPropertyScaleValue& PropertyScale : PropertyScales)
 			{
@@ -499,7 +501,7 @@ void UTemplateSequencePropertyScalingEvaluatorSystem::OnSchedulePersistentTasks(
 	// - ...are scaled by what factor (scale value), using what type of scale (scale type enum).
 	//
 	FTaskID GatherTask = FEntityTaskBuilder()
-	.Read(BuiltInComponents->InstanceHandle)
+	.Read(BuiltInComponents->RootInstanceHandle)
 	.Read(TemplateSequenceComponents->PropertyScale)
 	.Read(BuiltInComponents->DoubleResult[0])
 	.Schedule_PerEntity<FGatherPropertyScales>(&Linker->EntityManager, TaskScheduler, this);
@@ -510,7 +512,8 @@ void UTemplateSequencePropertyScalingEvaluatorSystem::OnSchedulePersistentTasks(
 	if (ensure(InstantiatorSystem) && InstantiatorSystem->HasAnyTransformScales())
 	{
 		FTaskID ScaleTransformTask = FEntityTaskBuilder()
-			.Read(BuiltInComponents->InstanceHandle)
+			.Read(BuiltInComponents->RootInstanceHandle)
+			.ReadOptional(BuiltInComponents->SequenceID)
 			.Read(BuiltInComponents->PropertyBinding)
 			.Read(TemplateSequenceComponents->PropertyScaleReverseBindingLookup)
 			.ReadOptional(BuiltInComponents->BaseDouble[0])
@@ -535,7 +538,8 @@ void UTemplateSequencePropertyScalingEvaluatorSystem::OnSchedulePersistentTasks(
 	if (ensure(InstantiatorSystem) && InstantiatorSystem->HasAnyFloatScales())
 	{
 		FTaskID ScaleFloatTask = FEntityTaskBuilder()
-			.Read(BuiltInComponents->InstanceHandle)
+			.Read(BuiltInComponents->RootInstanceHandle)
+			.ReadOptional(BuiltInComponents->SequenceID)
 			.Read(BuiltInComponents->PropertyBinding)
 			.Read(TemplateSequenceComponents->PropertyScaleReverseBindingLookup)
 			.ReadOptional(BuiltInComponents->BaseDouble[0])
@@ -567,7 +571,7 @@ void UTemplateSequencePropertyScalingEvaluatorSystem::OnRun(FSystemTaskPrerequis
 	// - ...are scaled by what factor (scale value), using what type of scale (scale type enum).
 	//
 	FGraphEventRef GatherTask = FEntityTaskBuilder()
-		.Read(BuiltInComponents->InstanceHandle)
+		.Read(BuiltInComponents->RootInstanceHandle)
 		.Read(TemplateSequenceComponents->PropertyScale)
 		.Read(BuiltInComponents->DoubleResult[0])
 		.Dispatch_PerEntity<FGatherPropertyScales>(&Linker->EntityManager, InPrerequisites, &Subsequents, this);
@@ -581,7 +585,8 @@ void UTemplateSequencePropertyScalingEvaluatorSystem::OnRun(FSystemTaskPrerequis
 	if (ensure(InstantiatorSystem) && InstantiatorSystem->HasAnyTransformScales())
 	{
 		FEntityTaskBuilder()
-			.Read(BuiltInComponents->InstanceHandle)
+			.Read(BuiltInComponents->RootInstanceHandle)
+			.ReadOptional(BuiltInComponents->SequenceID)
 			.Read(BuiltInComponents->PropertyBinding)
 			.Read(TemplateSequenceComponents->PropertyScaleReverseBindingLookup)
 			.ReadOptional(BuiltInComponents->BaseDouble[0])
@@ -604,7 +609,8 @@ void UTemplateSequencePropertyScalingEvaluatorSystem::OnRun(FSystemTaskPrerequis
 	if (ensure(InstantiatorSystem) && InstantiatorSystem->HasAnyFloatScales())
 	{
 		FEntityTaskBuilder()
-			.Read(BuiltInComponents->InstanceHandle)
+			.Read(BuiltInComponents->RootInstanceHandle)
+			.ReadOptional(BuiltInComponents->SequenceID)
 			.Read(BuiltInComponents->PropertyBinding)
 			.Read(TemplateSequenceComponents->PropertyScaleReverseBindingLookup)
 			.ReadOptional(BuiltInComponents->BaseDouble[0])

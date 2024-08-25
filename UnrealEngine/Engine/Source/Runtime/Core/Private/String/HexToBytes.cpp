@@ -27,11 +27,6 @@ static inline int32 HexToBytesImpl(TStringView<CharType> Hex, uint8* const OutBy
 	return static_cast<int32>(OutPos - OutBytes);
 }
 
-int32 HexToBytes(FAnsiStringView Hex, uint8* OutBytes)
-{
-	return HexToBytesImpl<ANSICHAR>(Hex, OutBytes);
-}
-
 int32 HexToBytes(FWideStringView Hex, uint8* OutBytes)
 {
 	return HexToBytesImpl<WIDECHAR>(Hex, OutBytes);

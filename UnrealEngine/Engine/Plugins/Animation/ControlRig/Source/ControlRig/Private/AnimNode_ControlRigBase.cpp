@@ -41,7 +41,6 @@ FAnimNode_ControlRigBase::FAnimNode_ControlRigBase()
 	, bControlRigRequiresInitialization(true)
 	, LastBonesSerialNumberForCacheBones(0)
 {
-
 }
 
 void FAnimNode_ControlRigBase::OnInitializeAnimInstance(const FAnimInstanceProxy* InProxy, const UAnimInstance* InAnimInstance)
@@ -49,6 +48,8 @@ void FAnimNode_ControlRigBase::OnInitializeAnimInstance(const FAnimInstanceProxy
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
 
 	FAnimNode_CustomProperty::OnInitializeAnimInstance(InProxy, InAnimInstance);
+
+	WeakAnimInstanceObject = TWeakObjectPtr<const UAnimInstance>(InAnimInstance);
 
 	USkeletalMeshComponent* Component = InAnimInstance->GetOwningComponent();
 	UControlRig* ControlRig = GetControlRig();
@@ -66,6 +67,7 @@ void FAnimNode_ControlRigBase::OnInitializeAnimInstance(const FAnimInstanceProxy
 
 		// register skeletalmesh component for now
 		ControlRig->GetDataSourceRegistry()->RegisterDataSource(UControlRig::OwnerComponent, InAnimInstance->GetOwningComponent());
+		UpdateGetAssetUserDataDelegate(ControlRig);
 	}
 }
 
@@ -75,19 +77,6 @@ void FAnimNode_ControlRigBase::Initialize_AnyThread(const FAnimationInitializeCo
 
 	FAnimNode_CustomProperty::Initialize_AnyThread(Context);
 	Source.Initialize(Context);
-
-	if (UControlRig* ControlRig = GetControlRig())
-	{
-		//Don't Inititialize the Control Rig here it may have the wrong VM on the CDO
-		SetTargetInstance(ControlRig);
-		ControlRig->RequestInit();
-		bControlRigRequiresInitialization = true;
-		LastBonesSerialNumberForCacheBones = 0;
-	}
-	else
-	{
-		SetTargetInstance(nullptr);
-	}
 }
 
 void FAnimNode_ControlRigBase::GatherDebugData(FNodeDebugData& DebugData)
@@ -147,7 +136,7 @@ void FAnimNode_ControlRigBase::UpdateInput(UControlRig* ControlRig, const FPoseC
 
 #if WITH_EDITOR
 	// if we are recording any change - let's clear the undo stack
-	if(Hierarchy->IsTracingChanges())
+	if(bExecute && Hierarchy->IsTracingChanges())
 	{
 		Hierarchy->ResetTransformStack();
 	}
@@ -164,9 +153,6 @@ void FAnimNode_ControlRigBase::UpdateInput(UControlRig* ControlRig, const FPoseC
 		// so the reset here ensures excluded bones are also reset
 		if(!ControlRigBoneInputMappingByName.IsEmpty() || bResetInputPoseToInitial)
 		{
-			{
-				FRigHierarchyValidityBracket ValidityBracket(Hierarchy);
-			}
 			FRigHierarchyValidityBracket ValidityBracket(Hierarchy);
 
 			{
@@ -193,7 +179,7 @@ void FAnimNode_ControlRigBase::UpdateInput(UControlRig* ControlRig, const FPoseC
 					const uint16 SkeletonIndex = Pair.Value;
 					
 					FCompactPoseBoneIndex CompactPoseIndex(SkeletonIndex);
-					FTransform ComponentTransform = MeshPoses.GetComponentSpaceTransform(CompactPoseIndex);
+					const FTransform& ComponentTransform = MeshPoses.GetComponentSpaceTransform(CompactPoseIndex);
 					Hierarchy->SetGlobalTransformByIndex(ControlRigIndex, ComponentTransform, false);
 				}
 			}
@@ -206,12 +192,18 @@ void FAnimNode_ControlRigBase::UpdateInput(UControlRig* ControlRig, const FPoseC
 					const FRigElementKey Key(Name, ERigElementType::Bone);
 
 					FCompactPoseBoneIndex CompactPoseIndex(Index);
-					FTransform ComponentTransform = MeshPoses.GetComponentSpaceTransform(CompactPoseIndex);
+
+					const FTransform& ComponentTransform = MeshPoses.GetComponentSpaceTransform(CompactPoseIndex);
 					if (NodeMappingContainer.IsValid())
 					{
-						ComponentTransform = NodeMappingContainer->GetSourceToTargetTransform(Name).GetRelativeTransformReverse(ComponentTransform);
+						const FTransform& RelativeTransformReverse = NodeMappingContainer->GetSourceToTargetTransform(Name).GetRelativeTransformReverse(ComponentTransform);
+						Hierarchy->SetGlobalTransform(Key, RelativeTransformReverse, false);
 					}
-					Hierarchy->SetGlobalTransform(Key, ComponentTransform, false);
+					else
+					{
+						Hierarchy->SetGlobalTransform(Key, ComponentTransform, false);
+					}
+					
 				}
 			}
 		}
@@ -225,7 +217,7 @@ void FAnimNode_ControlRigBase::UpdateInput(UControlRig* ControlRig, const FPoseC
 					const uint16 SkeletonIndex = Pair.Value;
 					
 					FCompactPoseBoneIndex CompactPoseIndex(SkeletonIndex);
-					FTransform LocalTransform = InOutput.Pose[CompactPoseIndex];
+					const FTransform& LocalTransform = InOutput.Pose[CompactPoseIndex];
 					Hierarchy->SetLocalTransformByIndex(ControlRigIndex, LocalTransform, false);
 				}
 			}
@@ -238,7 +230,7 @@ void FAnimNode_ControlRigBase::UpdateInput(UControlRig* ControlRig, const FPoseC
 					const FRigElementKey Key(Name, ERigElementType::Bone);
 
 					FCompactPoseBoneIndex CompactPoseIndex(SkeletonIndex);
-					FTransform LocalTransform = InOutput.Pose[CompactPoseIndex];
+					const FTransform& LocalTransform = InOutput.Pose[CompactPoseIndex];
 					Hierarchy->SetLocalTransform(Key, LocalTransform, false);
 				}
 			}
@@ -257,7 +249,7 @@ void FAnimNode_ControlRigBase::UpdateInput(UControlRig* ControlRig, const FPoseC
 	}
 
 #if WITH_EDITOR
-	if(Hierarchy->IsTracingChanges())
+	if(bExecute && Hierarchy->IsTracingChanges())
 	{
 		Hierarchy->StorePoseForTrace(TEXT("FAnimNode_ControlRigBase::UpdateInput"));
 	}
@@ -368,29 +360,22 @@ void FAnimNode_ControlRigBase::UpdateOutput(UControlRig* ControlRig, FPoseContex
 
 	if (OutputSettings.bUpdateCurves)
 	{
-		const TArray<FRigCurveElement*> Curves = Hierarchy->GetCurves();
-		auto GetNameFromIndex = [&Curves](int32 InCurveIndex)
-		{
-			return Curves[InCurveIndex]->GetName();
-		};
-
-		auto GetValueFromIndex = [&Curves](int32 InCurveIndex)
-		{
-			 return Curves[InCurveIndex]->Value;
-		};
-		
-		auto GetIsValidCurveFromIndex = [&Curves](int32 InCurveIndex)
-        {
-            return Curves[InCurveIndex]->bIsValueSet;
-        };
-
 		FBlendedCurve ControlRigCurves;
-		UE::Anim::FCurveUtils::BuildUnsortedValidated(ControlRigCurves, Curves.Num(), GetNameFromIndex, GetValueFromIndex, GetIsValidCurveFromIndex);
+		ControlRigCurves.Reserve(Hierarchy->Num(ERigElementType::Curve));
+		Hierarchy->ForEach<FRigCurveElement>([&ControlRigCurves](const FRigCurveElement* InElement)
+		{
+			if(InElement->bIsValueSet)
+			{
+				ControlRigCurves.Add(InElement->GetFName(), InElement->Value);
+			}
+			return true;
+		});
+
 		InOutput.Curve.Combine(ControlRigCurves);
 	}
 
 #if WITH_EDITOR
-	if(Hierarchy->IsTracingChanges())
+	if(bExecute && Hierarchy->IsTracingChanges())
 	{
 		Hierarchy->StorePoseForTrace(TEXT("FAnimNode_ControlRigBase::UpdateOutput"));
 		Hierarchy->DumpTransformStackToFile();
@@ -454,16 +439,21 @@ void FAnimNode_ControlRigBase::ExecuteControlRig(FPoseContext& InOutput)
 
 	if (UControlRig* ControlRig = GetControlRig())
 	{
+		// Before we start modifying the RigHierarchy, we need to lock the rig to avoid
+		// corrupted state
+		FScopeLock LockRig(&ControlRig->GetEvaluateMutex());
+		
 		// temporarily give control rig access to the stack allocated attribute container
 		// control rig may have rig units that can add/get attributes to/from this container
 		UControlRig::FAnimAttributeContainerPtrScope AttributeScope(ControlRig, InOutput.CustomAttributes);
 		
 		// first update input to the system
 		UpdateInput(ControlRig, InOutput);
-
 		
 		if (bExecute)
 		{
+			TGuardValue<bool> ResetCurrentTransfromsAfterConstructionGuard(ControlRig->bResetCurrentTransformsAfterConstruction, true);
+			
 #if WITH_EDITOR
 			URigHierarchy* Hierarchy = ControlRig->GetHierarchy();
 			if(Hierarchy == nullptr)
@@ -496,8 +486,14 @@ void FAnimNode_ControlRigBase::ExecuteControlRig(FPoseContext& InOutput)
 				ControlRig->SetEventQueue(EventNames);
 				bClearEventQueueRequired = true;
 			}
-			
+
+			if (ControlRig->IsAdditive())
+			{
+				ControlRig->ClearPoseBeforeBackwardsSolve();
+			}
+
 			// evaluate control rig
+			UpdateGetAssetUserDataDelegate(ControlRig);
 			ControlRig->Evaluate_AnyThread();
 
 #if ENABLE_ANIM_DEBUG 
@@ -564,56 +560,127 @@ void FAnimNode_ControlRigBase::CacheBones_AnyThread(const FAnimationCacheBonesCo
 
 	if (UControlRig* ControlRig = GetControlRig())
 	{
-		URigHierarchy* Hierarchy = ControlRig->GetHierarchy();
-		if(Hierarchy == nullptr)
-		{
-			return;
-		}
-
 		// fill up node names
-		FBoneContainer& RequiredBones = Context.AnimInstanceProxy->GetRequiredBones();
+		const FBoneContainer& RequiredBones = Context.AnimInstanceProxy->GetRequiredBones();
 
 		const uint16 BonesSerialNumber = RequiredBones.GetSerialNumber();
-		const bool bIsLODChange = !bControlRigRequiresInitialization && (BonesSerialNumber != LastBonesSerialNumberForCacheBones);
 
 		// the construction event may create a set of bones that we can map to. let's run construction now.
-		if(ControlRig->IsConstructionModeEnabled() ||
-			(ControlRig->IsConstructionRequired() && (bControlRigRequiresInitialization || bIsLODChange)))
+		if (bExecute)
 		{
-			ControlRig->Execute(FRigUnit_PrepareForExecution::EventName);
-			bControlRigRequiresInitialization = false;
+			const bool bIsLODChange = !bControlRigRequiresInitialization && (BonesSerialNumber != LastBonesSerialNumberForCacheBones);
+		
+			if(ControlRig->IsConstructionModeEnabled() ||
+				(ControlRig->IsConstructionRequired() && (bControlRigRequiresInitialization || bIsLODChange)))
+			{
+				UpdateGetAssetUserDataDelegate(ControlRig);
+				ControlRig->Execute(FRigUnit_PrepareForExecution::EventName);
+				bControlRigRequiresInitialization = false;
+			}
 		}
 
-		ControlRigBoneInputMappingByIndex.Reset();
-		ControlRigBoneOutputMappingByIndex.Reset();
-		ControlRigCurveMappingByIndex.Reset();
-		ControlRigBoneInputMappingByName.Reset();
-		ControlRigBoneOutputMappingByName.Reset();
-		ControlRigCurveMappingByName.Reset();
+		UpdateInputOutputMappingIfRequired(ControlRig, RequiredBones);
 
-		if(RequiredBones.IsValid())
+		if(bControlRigRequiresInitialization)
 		{
-			const TArray<FBoneIndexType>& RequiredBonesArray = RequiredBones.GetBoneIndicesArray();
-			const int32 NumBones = RequiredBonesArray.Num();
+			if(bExecute)
+			{
+				// re-init only if this is the first run
+				// and restore control values
+				ControlRig->RequestInit();
+				bControlRigRequiresInitialization = false;
+			}
+		}
+		
+		LastBonesSerialNumberForCacheBones = BonesSerialNumber;
+	}
+}
 
-			const FReferenceSkeleton& RefSkeleton = RequiredBones.GetReferenceSkeleton();
+void FAnimNode_ControlRigBase::UpdateInputOutputMappingIfRequired(UControlRig* InControlRig, const FBoneContainer& InRequiredBones)
+{
+	const URigHierarchy* Hierarchy = InControlRig->GetHierarchy();
+	if(Hierarchy == nullptr)
+	{
+		return;
+	}
 
-			// @todo: thread-safe? probably not in editor, but it may not be a big issue in editor
-			if (NodeMappingContainer.IsValid())
+	ControlRigBoneInputMappingByIndex.Reset();
+	ControlRigBoneOutputMappingByIndex.Reset();
+	ControlRigCurveMappingByIndex.Reset();
+	ControlRigBoneInputMappingByName.Reset();
+	ControlRigBoneOutputMappingByName.Reset();
+	ControlRigCurveMappingByName.Reset();
+
+	if(InRequiredBones.IsValid())
+	{
+		const TArray<FBoneIndexType>& RequiredBonesArray = InRequiredBones.GetBoneIndicesArray();
+		const int32 NumBones = RequiredBonesArray.Num();
+
+		const FReferenceSkeleton& RefSkeleton = InRequiredBones.GetReferenceSkeleton();
+
+		// @todo: thread-safe? probably not in editor, but it may not be a big issue in editor
+		if (NodeMappingContainer.IsValid())
+		{
+			// get target to source mapping table - this is reversed mapping table
+			TMap<FName, FName> TargetToSourceMappingTable;
+			NodeMappingContainer->GetTargetToSourceMappingTable(TargetToSourceMappingTable);
+
+			// now fill up node name
+			for (uint16 Index = 0; Index < NumBones; ++Index)
+			{
+				// get bone name, and find reverse mapping
+				FName TargetNodeName = RefSkeleton.GetBoneName(RequiredBonesArray[Index]);
+				FName* SourceName = TargetToSourceMappingTable.Find(TargetNodeName);
+				if (SourceName)
+				{
+					ControlRigBoneInputMappingByName.Add(*SourceName, Index);
+				}
+			}
+		}
+		else
+		{
+			TArray<FName> NodeNames;
+			TArray<FNodeItem> NodeItems;
+			InControlRig->GetMappableNodeData(NodeNames, NodeItems);
+
+			// even if not mapped, we map only node that exists in the controlrig
+			for (uint16 Index = 0; Index < NumBones; ++Index)
+			{
+				const FName& BoneName = RefSkeleton.GetBoneName(RequiredBonesArray[Index]);
+				if (NodeNames.Contains(BoneName))
+				{
+					ControlRigBoneInputMappingByName.Add(BoneName, Index);
+				}
+			}
+		}
+
+		auto UpdatingMappingFromSpecificTransferList = [] (
+			TArray<FBoneReference>& InTransferList,
+			const TWeakObjectPtr<UNodeMappingContainer>& InMappingContainer,
+			const FBoneContainer& InRequiredBones,
+			const FReferenceSkeleton& InRefSkeleton,
+			const TArray<FBoneIndexType>& InRequiredBonesArray,
+			const UControlRig* InControlRig,
+			TMap<FName, uint16>& OutMapping
+		) {
+			OutMapping.Reset();
+			
+			if (InMappingContainer.IsValid())
 			{
 				// get target to source mapping table - this is reversed mapping table
 				TMap<FName, FName> TargetToSourceMappingTable;
-				NodeMappingContainer->GetTargetToSourceMappingTable(TargetToSourceMappingTable);
+				InMappingContainer->GetTargetToSourceMappingTable(TargetToSourceMappingTable);
 
-				// now fill up node name
-				for (uint16 Index = 0; Index < NumBones; ++Index)
+				for(FBoneReference& InputBoneToTransfer : InTransferList)
 				{
-					// get bone name, and find reverse mapping
-					FName TargetNodeName = RefSkeleton.GetBoneName(RequiredBonesArray[Index]);
-					FName* SourceName = TargetToSourceMappingTable.Find(TargetNodeName);
-					if (SourceName)
+					if(!InputBoneToTransfer.Initialize(InRequiredBones))
 					{
-						ControlRigBoneInputMappingByName.Add(*SourceName, Index);
+						continue;
+					}
+					const FName TargetNodeName = InRefSkeleton.GetBoneName(InputBoneToTransfer.BoneIndex);
+					if (const FName* SourceName = TargetToSourceMappingTable.Find(TargetNodeName))
+					{
+						OutMapping.Add(*SourceName, InputBoneToTransfer.BoneIndex);
 					}
 				}
 			}
@@ -621,61 +688,16 @@ void FAnimNode_ControlRigBase::CacheBones_AnyThread(const FAnimationCacheBonesCo
 			{
 				TArray<FName> NodeNames;
 				TArray<FNodeItem> NodeItems;
-				ControlRig->GetMappableNodeData(NodeNames, NodeItems);
+				InControlRig->GetMappableNodeData(NodeNames, NodeItems);
 
-				// even if not mapped, we map only node that exists in the controlrig
-				for (uint16 Index = 0; Index < NumBones; ++Index)
+				for(FBoneReference& InputBoneToTransfer : InTransferList)
 				{
-					const FName& BoneName = RefSkeleton.GetBoneName(RequiredBonesArray[Index]);
-					if (NodeNames.Contains(BoneName))
+					if(!InputBoneToTransfer.Initialize(InRequiredBones))
 					{
-						ControlRigBoneInputMappingByName.Add(BoneName, Index);
+						continue;
 					}
-				}
-			}
-
-			auto UpdatingMappingFromSpecificTransferList = [] (
-				TArray<FBoneReference>& InTransferList,
-				const TWeakObjectPtr<UNodeMappingContainer>& InMappingContainer,
-				FBoneContainer& InRequiredBones,
-				const FReferenceSkeleton& InRefSkeleton,
-				const TArray<FBoneIndexType>& InRequiredBonesArray,
-				const UControlRig* InControlRig,
-				TMap<FName, uint16>& OutMapping
-			) {
-				OutMapping.Reset();
-				
-				if (InMappingContainer.IsValid())
-				{
-					// get target to source mapping table - this is reversed mapping table
-					TMap<FName, FName> TargetToSourceMappingTable;
-					InMappingContainer->GetTargetToSourceMappingTable(TargetToSourceMappingTable);
-
-					for(FBoneReference& InputBoneToTransfer : InTransferList)
+					if (InRequiredBonesArray.IsValidIndex(InputBoneToTransfer.BoneIndex))
 					{
-						if(!InputBoneToTransfer.Initialize(InRequiredBones))
-						{
-							continue;
-						}
-						const FName TargetNodeName = InRefSkeleton.GetBoneName(InputBoneToTransfer.BoneIndex);
-						if (const FName* SourceName = TargetToSourceMappingTable.Find(TargetNodeName))
-						{
-							OutMapping.Add(*SourceName, InputBoneToTransfer.BoneIndex);
-						}
-					}
-				}
-				else
-				{
-					TArray<FName> NodeNames;
-					TArray<FNodeItem> NodeItems;
-					InControlRig->GetMappableNodeData(NodeNames, NodeItems);
-
-					for(FBoneReference& InputBoneToTransfer : InTransferList)
-					{
-						if(!InputBoneToTransfer.Initialize(InRequiredBones))
-						{
-							continue;
-						}
 						const FName& BoneName = InRefSkeleton.GetBoneName(InRequiredBonesArray[InputBoneToTransfer.BoneIndex]);
 						if (NodeNames.Contains(BoneName))
 						{
@@ -683,84 +705,74 @@ void FAnimNode_ControlRigBase::CacheBones_AnyThread(const FAnimationCacheBonesCo
 						}
 					}
 				}
-			};
-			
-			if(!InputBonesToTransfer.IsEmpty())
-			{
-				ControlRigBoneOutputMappingByName = ControlRigBoneInputMappingByName;
-
-				UpdatingMappingFromSpecificTransferList(
-					InputBonesToTransfer,
-					NodeMappingContainer,
-					RequiredBones,
-					RefSkeleton,
-					RequiredBonesArray,
-					ControlRig,
-					ControlRigBoneInputMappingByName);
 			}
+		};
+		
+		if(!InputBonesToTransfer.IsEmpty())
+		{
+			ControlRigBoneOutputMappingByName = ControlRigBoneInputMappingByName;
 
-			if(!OutputBonesToTransfer.IsEmpty())
-			{
-				UpdatingMappingFromSpecificTransferList(
-					OutputBonesToTransfer,
-					NodeMappingContainer,
-					RequiredBones,
-					RefSkeleton,
-					RequiredBonesArray,
-					ControlRig,
-					ControlRigBoneOutputMappingByName);
-			}
+			UpdatingMappingFromSpecificTransferList(
+				InputBonesToTransfer,
+				NodeMappingContainer,
+				InRequiredBones,
+				RefSkeleton,
+				RequiredBonesArray,
+				InControlRig,
+				ControlRigBoneInputMappingByName);
+		}
 
-			// check if we can switch the bones to an index based mapping.
-			// we can only do that if there is no node mapping container set.
-			if(!NodeMappingContainer.IsValid())
+		if(!OutputBonesToTransfer.IsEmpty())
+		{
+			UpdatingMappingFromSpecificTransferList(
+				OutputBonesToTransfer,
+				NodeMappingContainer,
+				InRequiredBones,
+				RefSkeleton,
+				RequiredBonesArray,
+				InControlRig,
+				ControlRigBoneOutputMappingByName);
+		}
+
+		// check if we can switch the bones to an index based mapping.
+		// we can only do that if there is no node mapping container set.
+		if(!NodeMappingContainer.IsValid())
+		{
+			for(int32 InputOutput = 0; InputOutput < 2; InputOutput++)
 			{
-				for(int32 InputOutput = 0; InputOutput < 2; InputOutput++)
+				bool bIsMappingByIndex = true;
+				TMap<FName, uint16>& NameBasedMapping = InputOutput == 0 ? ControlRigBoneInputMappingByName : ControlRigBoneOutputMappingByName;
+				if(NameBasedMapping.IsEmpty())
 				{
-					bool bIsMappingByIndex = true;
-					TMap<FName, uint16>& NameBasedMapping = InputOutput == 0 ? ControlRigBoneInputMappingByName : ControlRigBoneOutputMappingByName;
-					if(NameBasedMapping.IsEmpty())
+					continue;
+				}
+				
+				TArray<TPair<uint16, uint16>>& IndexBasedMapping = InputOutput == 0 ? ControlRigBoneInputMappingByIndex : ControlRigBoneOutputMappingByIndex;
+				
+				for (auto Iter = NameBasedMapping.CreateConstIterator(); Iter; ++Iter)
+				{
+					const uint16 SkeletonIndex = Iter.Value();
+					const int32 ControlRigIndex = Hierarchy->GetIndex(FRigElementKey(Iter.Key(), ERigElementType::Bone));
+					if(ControlRigIndex != INDEX_NONE)
 					{
-						continue;
-					}
-					
-					TArray<TPair<uint16, uint16>>& IndexBasedMapping = InputOutput == 0 ? ControlRigBoneInputMappingByIndex : ControlRigBoneOutputMappingByIndex;
-					
-					for (auto Iter = NameBasedMapping.CreateConstIterator(); Iter; ++Iter)
-					{
-						const uint16 SkeletonIndex = Iter.Value();
-						const int32 ControlRigIndex = Hierarchy->GetIndex(FRigElementKey(Iter.Key(), ERigElementType::Bone));
-						if(ControlRigIndex != INDEX_NONE)
-						{
-							IndexBasedMapping.Add(TPair<uint16, uint16>((uint16)ControlRigIndex, SkeletonIndex));
-						}
-						else
-						{
-							bIsMappingByIndex = false;
-						}
-					}
-
-					if(bIsMappingByIndex)
-					{
-						NameBasedMapping.Reset();
+						IndexBasedMapping.Add(TPair<uint16, uint16>((uint16)ControlRigIndex, SkeletonIndex));
 					}
 					else
 					{
-						IndexBasedMapping.Reset();
+						bIsMappingByIndex = false;
 					}
+				}
+
+				if(bIsMappingByIndex)
+				{
+					NameBasedMapping.Reset();
+				}
+				else
+				{
+					IndexBasedMapping.Reset();
 				}
 			}
 		}
-
-		if(bControlRigRequiresInitialization)
-		{
-			// re-init only if this is the first run
-			// and restore control values
-			ControlRig->RequestInit();
-			bControlRigRequiresInitialization = false;
-		}
-		
-		LastBonesSerialNumberForCacheBones = BonesSerialNumber;
 	}
 }
 
@@ -828,6 +840,37 @@ void FAnimNode_ControlRigBase::QueueControlRigDrawInstructions(UControlRig* Cont
 			}
 		}
 	}
+}
+
+void FAnimNode_ControlRigBase::UpdateGetAssetUserDataDelegate(UControlRig* InControlRig) const
+{
+	if (!IsInGameThread())
+	{
+		return;
+	}
+	
+	if(GetAssetUserData().IsEmpty() || !WeakAnimInstanceObject.IsValid())
+	{
+		InControlRig->GetExternalAssetUserDataDelegate.Unbind();
+		return;
+	}
+	
+	// due to the re-instancing of the anim nodes we have to set this up for every run
+	// since the delegate may go stale quickly. to guard against destroyed anim nodes
+	// we'll rely on the anim instance to provide an indication if the memory is still valid. 
+	TWeakObjectPtr<const UAnimInstance> LocalWeakAnimInstance = WeakAnimInstanceObject;
+	InControlRig->GetExternalAssetUserDataDelegate = UControlRig::FGetExternalAssetUserData::CreateLambda([InControlRig, LocalWeakAnimInstance, this]
+	{
+		if(LocalWeakAnimInstance.IsValid())
+		{
+			return this->GetAssetUserData();
+		}
+		if(IsValid(InControlRig))
+		{
+			InControlRig->GetExternalAssetUserDataDelegate.Unbind();
+		}
+		return TArray<TObjectPtr<UAssetUserData>>();
+	});
 }
 
 

@@ -930,7 +930,7 @@ void FRPCDoSDetection::PostSequentialRPC(EPostSequentialRPCType SequenceType, do
 					{
 						const int32 EndIdx = FMath::Max(RPCTrackingAnalytics.Num() - 1, 0);
 
-						RPCTrackingAnalytics.RemoveAt(EndIdx, 1, false);
+						RPCTrackingAnalytics.RemoveAt(EndIdx, 1, EAllowShrinking::No);
 					}
 
 					if (InsertIdx != INDEX_NONE)
@@ -1308,7 +1308,7 @@ void FRPCDoSDetection::ClearStaleRPCTracking(double TimeSeconds)
 		{
 			const int32 NumToRemove = (EndRemoveIdx - StartRemoveIdx) + 1;
 
-			ActiveRPCTracking.RemoveAt(StartRemoveIdx, NumToRemove, false);
+			ActiveRPCTracking.RemoveAt(StartRemoveIdx, NumToRemove, EAllowShrinking::No);
 
 			EndRemoveIdx = INDEX_NONE;
 		};

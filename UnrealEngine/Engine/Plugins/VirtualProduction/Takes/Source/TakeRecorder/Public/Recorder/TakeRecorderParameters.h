@@ -64,7 +64,7 @@ struct FTakeRecorderProjectParameters
 	TAKERECORDER_API FTakeRecorderProjectParameters();
 
 	/** The take asset path, composed of the TakeRootSaveDir and the TakeSaveDir */
-	TAKERECORDER_API FString GetTakeAssetPath() const { return RootTakeSaveDir.Path / TakeSaveDir; }
+	TAKERECORDER_API FString GetTakeAssetPath() const;
 
 	/** The root of the directory in which to save recorded takes. */
 	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Take Recorder", meta = (ContentDir))

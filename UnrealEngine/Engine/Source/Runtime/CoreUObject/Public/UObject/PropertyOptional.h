@@ -3,6 +3,7 @@
 #pragma once
 
 #include "UObject/UnrealType.h"
+#include "UObject/UObjectGlobals.h"
 #include "Misc/Optional.h"
 
 // 
@@ -184,6 +185,7 @@ class COREUOBJECT_API FOptionalProperty : public FProperty, public FOptionalProp
 public:
 
 	FOptionalProperty(FFieldVariant InOwner, const FName& InName, EObjectFlags InObjectFlags);
+	FOptionalProperty(FFieldVariant InOwner, const UECodeGen_Private::FGenericPropertyParams& Prop);
 	virtual ~FOptionalProperty();
 
 	// Sets the optional property's value property.
@@ -198,11 +200,13 @@ public:
 	virtual void PostDuplicate(const FField& InField) override;
 	virtual FField* GetInnerFieldByName(const FName& InName) override;
 	virtual void GetInnerFields(TArray<FField*>& OutFields) override;
+	virtual void AddCppProperty(FProperty* Property) override;
 	// End of Field interface
 
 	// UHT interface
 	virtual FString GetCPPType(FString* ExtendedTypeText = NULL, uint32 CPPExportFlags = 0) const override;
 	virtual FString GetCPPMacroType(FString& ExtendedTypeText) const override;
+	UE_DEPRECATED(5.4, "UnrealHeaderTool only API.  No replacement available.")
 	virtual FString GetCPPTypeForwardDeclaration() const override;
 	// End of UHT interface
 
@@ -211,6 +215,7 @@ public:
 	virtual bool Identical(const void* A, const void* B, uint32 PortFlags) const override;
 	virtual void SerializeItem(FStructuredArchive::FSlot Slot, void* Value, void const* Defaults) const override;
 	virtual bool NetSerializeItem(FArchive& Ar, UPackageMap* Map, void* Data, TArray<uint8>* MetaData = NULL) const override;
+	virtual bool SupportsNetSharedSerialization() const override;
 	virtual void ExportText_Internal(FString& ValueStr, const void* ContainerOrPropertyPtr, EPropertyPointerType PropertyPointerType, const void* DefaultValue, UObject* Parent, int32 PortFlags, UObject* ExportRootScope) const override;
 	virtual const TCHAR* ImportText_Internal(const TCHAR* Buffer, void* ContainerOrPropertyPtr, EPropertyPointerType PropertyPointerType, UObject* Parent, int32 PortFlags, FOutputDevice* ErrorText) const override;
 	virtual void CopyValuesInternal(void* Dest, void const* Src, int32 Count) const override;
@@ -224,5 +229,9 @@ public:
 	virtual EConvertFromTypeResult ConvertFromType(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot, uint8* Data, UStruct* DefaultsStruct, const uint8* Defaults) override;
 	virtual uint32 GetValueTypeHashInternal(const void* Src) const override;
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual bool UseBinaryOrNativeSerialization(const FArchive& Ar) const override;
+	virtual bool LoadTypeName(UE::FPropertyTypeName Type, const FPropertyTag* Tag = nullptr) override;
+	virtual void SaveTypeName(UE::FPropertyTypeNameBuilder& Type) const override;
+	virtual bool CanSerializeFromTypeName(UE::FPropertyTypeName Type) const override;
 	// End of FProperty interface
 };

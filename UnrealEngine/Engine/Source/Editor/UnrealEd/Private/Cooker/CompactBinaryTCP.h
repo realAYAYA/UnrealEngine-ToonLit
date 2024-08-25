@@ -26,7 +26,7 @@ struct FSendBuffer;
 // and to allow room for the 16 byte PacketHeader.
 constexpr uint64 MaxOSPacketSize = (1 << 30) - 1;
 
-enum EConnectionStatus
+enum class EConnectionStatus
 {
 	/** Connection is still okay or operation succeeded. */
 	Okay,
@@ -41,23 +41,7 @@ enum EConnectionStatus
 };
 const TCHAR* DescribeStatus(EConnectionStatus Status);
 
-/**
- * The base class of messages that can be sent through CompactBinaryTCP. Messages are identified to
- * the remote connection by the Guid identifier from GetMessageType.
- */
-class IMessage
-{
-public:
-	virtual ~IMessage() {}
-	/** Marshall the message to a CompactBinaryObject. */
-	virtual void Write(FCbWriter& Writer) const = 0;
-	/** Unmarshall the message from a CompactBinaryObject. */
-	virtual bool TryRead(FCbObjectView Object) = 0;
-	/** Return the Guid that identifies the message to the remote connection. */
-	virtual FGuid GetMessageType() const = 0;
-};
-
-/** IMessages are marshalled into a Guid and a CompactBinaryObject for serialization through the socket. */
+/** The atom of data that can be sent through CompactBinaryTCP: guid identifier and compact binary payload. */
 struct FMarshalledMessage
 {
 	FGuid MessageType;
@@ -92,9 +76,7 @@ EConnectionStatus TryWritePacket(FSocket* Socket, FSendBuffer& Buffer,
 	TArray<FMarshalledMessage>&& AppendMessages, uint64 MaxPacketSize = 0);
 EConnectionStatus TryWritePacket(FSocket* Socket, FSendBuffer& Buffer,
 	FMarshalledMessage&& AppendMessage, uint64 MaxPacketSize = 0);
-EConnectionStatus TryWritePacket(FSocket* Socket, FSendBuffer& Buffer,
-	const IMessage& AppendMessage, uint64 MaxPacketSize = 0);
-void QueueMessage(FSendBuffer& Buffer, const IMessage& AppendMessage);
+void QueueMessage(FSendBuffer& Buffer, FMarshalledMessage&& Message);
 
 
 /** Attempt to finish sending packets that were previously queued by TryWritePacket */

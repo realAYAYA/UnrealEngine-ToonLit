@@ -6,6 +6,7 @@
 #include "WorldPartition/ContentBundle/ContentBundleEditorSubsystem.h"
 #include "WorldPartition/ContentBundle/ContentBundleEditor.h"
 #include "WorldPartition/ContentBundle/ContentBundleDescriptor.h"
+#include "DataLayer/DataLayerEditorSubsystem.h"
 #include "Framework/Commands/UIAction.h"
 #include "Framework/Commands/UICommandList.h"
 #include "Toolkits/GlobalEditorCommonCommands.h"
@@ -181,7 +182,11 @@ void FContentBundleMode::RegisterContextMenu()
 							FCanExecuteAction::CreateLambda([this, SceneOutliner]
 							{
 								TSharedPtr<FContentBundleEditor> SelectedContentBundleEditor = GetSelectedContentBundlePin(SceneOutliner);
-								return SelectedContentBundleEditor && !SelectedContentBundleEditor->IsBeingEdited();
+								if (SelectedContentBundleEditor && !SelectedContentBundleEditor->IsBeingEdited())
+								{
+									return !UDataLayerEditorSubsystem::Get()->GetActorEditorContextCurrentExternalDataLayer();
+								}
+								return false;
 							})
 						));
 
@@ -333,8 +338,11 @@ void FContentBundleMode::ToggleContentBundleActivation(const TWeakPtr<FContentBu
 				}
 				else
 				{
-					const FScopedTransaction Transaction(LOCTEXT("MakeCurrentContentBundle", "Make Current Content Bundle"));
-					ContentBundleEditingSubModule->ActivateContentBundleEditing(ContentBundlePin);
+					if (!UDataLayerEditorSubsystem::Get()->GetActorEditorContextCurrentExternalDataLayer())
+					{
+						const FScopedTransaction Transaction(LOCTEXT("MakeCurrentContentBundle", "Make Current Content Bundle"));
+						ContentBundleEditingSubModule->ActivateContentBundleEditing(ContentBundlePin);
+					}
 				}
 			}
 		}

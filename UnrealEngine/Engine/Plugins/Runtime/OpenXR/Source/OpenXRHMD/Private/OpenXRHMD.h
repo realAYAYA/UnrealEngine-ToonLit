@@ -15,6 +15,7 @@
 #include "DefaultSpectatorScreenController.h"
 #include "IHeadMountedDisplayVulkanExtensions.h"
 #include "IOpenXRExtensionPluginDelegates.h"
+#include "IOpenXRHMD.h"
 #include "Misc/EnumClassFlags.h"
 
 #include <openxr/openxr.h>
@@ -40,6 +41,7 @@ class FOpenXRHMD
 	, public FOpenXRAssetManager
 	, public TStereoLayerManager<FOpenXRLayer>
 	, public IOpenXRExtensionPluginDelegates
+	, public IOpenXRHMD
 {
 private:
 
@@ -48,6 +50,7 @@ public:
 	{
 	public:
 		FDeviceSpace(XrAction InAction, XrPath InPath);
+		FDeviceSpace(XrAction InAction, XrPath InPath, XrPath InSubactionPath);
 		~FDeviceSpace();
 
 		bool CreateSpace(XrSession InSession);
@@ -56,6 +59,7 @@ public:
 		XrAction Action;
 		XrSpace Space;
 		XrPath Path;
+		XrPath SubactionPath;
 	};
 
 	class FTrackingSpace
@@ -85,6 +89,9 @@ public:
 		TSharedPtr<FTrackingSpace> TrackingSpace;
 		float WorldToMetersScale = 100.0f;
 		float PixelDensity = 1.0f;
+		int WaitCount = 0;
+		int BeginCount = 0;
+		int EndCount = 0;
 		bool bXrFrameStateUpdated = false;
 	};
 
@@ -117,6 +124,14 @@ public:
 		XrBlendFactorFB	dstFactorAlpha;
 	};
 
+	struct FLayerColorScaleAndBias
+	{
+		// Used by XR_KHR_composition_layer_color_scale_bias to apply a color multiplier and offset to the background layer
+		// and set via UHeadMountedDisplayFunctionLibrary::SetHMDColorScaleAndBias() --> OpenXRHMD::SetColorScaleAndBias()
+		XrColor4f ColorScale;
+		XrColor4f ColorBias;
+	};
+
 	enum class EOpenXRLayerStateFlags : uint32
 	{
 		None = 0u,
@@ -144,6 +159,7 @@ public:
 
 		EOpenXRLayerStateFlags LayerStateFlags = EOpenXRLayerStateFlags::None;
 		FBasePassLayerBlendParameters BasePassLayerBlendParams;
+		FLayerColorScaleAndBias LayerColorScaleAndBias;
 	};
 
 	class FVulkanExtensions : public IHeadMountedDisplayVulkanExtensions
@@ -201,9 +217,9 @@ public:
 	virtual void ResetPosition() override;
 	virtual void Recenter(EOrientPositionSelector::Type Selector, float Yaw = 0.f);
 
-	virtual bool GetIsTracked(int32 DeviceId);
+	virtual bool GetIsTracked(int32 DeviceId) override;
 	virtual bool GetCurrentPose(int32 DeviceId, FQuat& CurrentOrientation, FVector& CurrentPosition) override;
-	virtual bool GetPoseForTime(int32 DeviceId, FTimespan Timespan, bool& OutTimeWasUsed, FQuat& CurrentOrientation, FVector& CurrentPosition, bool& bProvidedLinearVelocity, FVector& LinearVelocity, bool& bProvidedAngularVelocity, FVector& AngularVelocityAsAxisAndLength, bool& bProvidedLinearAcceleration, FVector& LinearAcceleration, float WorldToMetersScale);
+	virtual bool GetPoseForTime(int32 DeviceId, FTimespan Timespan, bool& OutTimeWasUsed, FQuat& CurrentOrientation, FVector& CurrentPosition, bool& bProvidedLinearVelocity, FVector& LinearVelocity, bool& bProvidedAngularVelocity, FVector& AngularVelocityAsAxisAndLength, bool& bProvidedLinearAcceleration, FVector& LinearAcceleration, float WorldToMetersScale) override;
 	virtual bool GetCurrentInteractionProfile(const EControllerHand Hand, FString& InteractionProfile) override;
 	
 	virtual void SetBaseRotation(const FRotator& InBaseRotation) override;
@@ -215,18 +231,8 @@ public:
 	virtual void SetBasePosition(const FVector& InBasePosition) override;
 	virtual FVector GetBasePosition() const override;
 
-	virtual void SetTrackingOrigin(EHMDTrackingOrigin::Type NewOrigin) override
-	{
-		if (!bUseCustomReferenceSpace)
-		{
-			TrackingSpaceType = (NewOrigin == EHMDTrackingOrigin::Eye || StageSpace == XR_NULL_HANDLE) ? XR_REFERENCE_SPACE_TYPE_LOCAL : XR_REFERENCE_SPACE_TYPE_STAGE;
-			bTrackingSpaceInvalid = true;
-		}
-	}
-	virtual EHMDTrackingOrigin::Type GetTrackingOrigin() const override
-	{
-		return (TrackingSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL) ? EHMDTrackingOrigin::Eye : EHMDTrackingOrigin::Stage;
-	}
+	virtual void SetTrackingOrigin(EHMDTrackingOrigin::Type NewOrigin) override;
+	virtual EHMDTrackingOrigin::Type GetTrackingOrigin() const override;
 
 	virtual class IHeadMountedDisplay* GetHMDDevice() override
 	{
@@ -283,9 +289,6 @@ protected:
 
 	void AllocateDepthTextureInternal(uint32 SizeX, uint32 SizeY, uint32 NumSamples, uint32 ArraySize);
 
-	// Used with FCoreDelegates
-	void VRHeadsetRecenterDelegate();
-
 	void SetupFrameLayers_RenderThread(FRHICommandListImmediate& RHICmdList);
 	void DrawEmulatedLayers_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& InView);
 	void DrawBackgroundCompositedEmulatedLayers_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& InView);
@@ -299,6 +302,7 @@ public:
 	virtual bool DoesSupportLateProjectionUpdate() const override { return true; }
 	virtual FString GetVersionString() const override;
 	virtual bool HasValidTrackingPosition() override { return IsTracking(HMDDeviceId); }
+	virtual IOpenXRHMD* GetIOpenXRHMD() { return this; }
 
 	/** IHeadMountedDisplay interface */
 	virtual bool IsHMDConnected() override;
@@ -324,6 +328,7 @@ public:
 	virtual void OnLateUpdateApplied_RenderThread(FRHICommandListImmediate& RHICmdList, const FTransform& NewRelativeTransform) override;
 	virtual bool OnStartGameFrame(FWorldContext& WorldContext) override;
 	virtual EHMDWornState::Type GetHMDWornState() override { return bIsReady ? EHMDWornState::Worn : EHMDWornState::NotWorn; }
+	virtual bool SetColorScaleAndBias(FLinearColor ColorScale, FLinearColor ColorBias);
 
 	/** IStereoRendering interface */
 	virtual bool IsStereoEnabled() const override;
@@ -381,10 +386,6 @@ public:
 	/** Constructor */
 	FOpenXRHMD(const FAutoRegister&, XrInstance InInstance, TRefCountPtr<FOpenXRRenderBridge>& InRenderBridge, TArray<const char*> InEnabledExtensions, TArray<class IOpenXRExtensionPlugin*> InExtensionPlugins, IARSystemSupport* ARSystemSupport);
 
-	void SetInputModule(IOpenXRInputModule* InInputModule)
-	{
-		InputModule = InInputModule;
-	}
 
 	/** Destructor */
 	virtual ~FOpenXRHMD();
@@ -393,23 +394,29 @@ public:
 	void OnBeginRendering_RHIThread(const FPipelinedFrameState& InFrameState, FXRSwapChainPtr ColorSwapchain, FXRSwapChainPtr DepthSwapchain, FXRSwapChainPtr EmulationSwapchain);
 	void OnFinishRendering_RHIThread();
 
+	/** IOpenXRHMD */
+	void SetInputModule(IOpenXRInputModule* InInputModule) override
+	{
+		InputModule = InInputModule;
+	}
 	/** @return	True if the HMD was initialized OK */
-	OPENXRHMD_API bool IsInitialized() const;
-	OPENXRHMD_API bool IsRunning() const;
-	OPENXRHMD_API bool IsFocused() const;
-
-	OPENXRHMD_API int32 AddTrackedDevice(XrAction Action, XrPath Path);
-	OPENXRHMD_API void ResetTrackedDevices();
-	OPENXRHMD_API XrPath GetTrackedDevicePath(const int32 DeviceId);
-	OPENXRHMD_API XrSpace GetTrackedDeviceSpace(const int32 DeviceId);
-
-	OPENXRHMD_API bool IsExtensionEnabled(const FString& Name) const { return EnabledExtensions.Contains(Name); }
-	OPENXRHMD_API XrInstance GetInstance() { return Instance; }
-	OPENXRHMD_API XrSystemId GetSystem() { return System; }
-	OPENXRHMD_API XrSession GetSession() { return Session; }
-	OPENXRHMD_API XrTime GetDisplayTime() const;
-	OPENXRHMD_API XrSpace GetTrackingSpace() const;
-	OPENXRHMD_API TArray<IOpenXRExtensionPlugin*>& GetExtensionPlugins() { return ExtensionPlugins; }
+	bool IsInitialized() const override;
+	bool IsRunning() const override;
+	bool IsFocused() const override;
+	int32 AddTrackedDevice(XrAction Action, XrPath Path) override;
+	int32 AddTrackedDevice(XrAction Action, XrPath Path, XrPath SubActionPath) override;
+	void ResetTrackedDevices() override;
+	XrPath GetTrackedDevicePath(const int32 DeviceId) override;
+	XrSpace GetTrackedDeviceSpace(const int32 DeviceId) override;
+	bool IsExtensionEnabled(const FString& Name) const override { return EnabledExtensions.Contains(Name); }
+	XrInstance GetInstance() override { return Instance; }
+	XrSystemId GetSystem() override { return System; }
+	XrSession GetSession() override { return Session; }
+	XrTime GetDisplayTime() const override;
+	XrSpace GetTrackingSpace() const override;
+	IOpenXRExtensionPluginDelegates& GetIOpenXRExtensionPluginDelegates() override { return *this; }
+	TArray<IOpenXRExtensionPlugin*>& GetExtensionPlugins() override { return ExtensionPlugins; }
+	
 	OPENXRHMD_API void SetEnvironmentBlendMode(XrEnvironmentBlendMode NewBlendMode);
 
 	/** Returns shader platform the plugin is currently configured for, in the editor it can change due to preview platforms. */
@@ -444,6 +451,7 @@ private:
 	bool					bIsStandaloneStereoOnlyDevice;
 	bool					bIsTrackingOnlySession;
 	bool					bIsAcquireOnAnyThreadSupported;
+	bool					bUseWaitCountToAvoidExtraXrBeginFrameCalls;
 	float					WorldToMetersScale = 100.0f;
 	float					RuntimePixelDensityMax = FHeadMountedDisplayBase::PixelDensityMax;
 	EShaderPlatform			ConfiguredShaderPlatform = EShaderPlatform::SP_NumPlatforms;
@@ -458,6 +466,7 @@ private:
 	XrSystemId				System;
 	XrSession				Session;
 	XrSpace					LocalSpace;
+	XrSpace					LocalFloorSpace;
 	XrSpace					StageSpace;
 	XrSpace					CustomSpace;
 	XrReferenceSpaceType	TrackingSpaceType;
@@ -501,6 +510,11 @@ private:
 	TUniquePtr<FFBFoveationImageGenerator> FBFoveationImageGenerator;
 	bool					bFoveationExtensionSupported;
 	bool					bRuntimeFoveationSupported;
+	bool					bLocalFloorExtensionSupported;
+
+	XrColor4f				LayerColorScale;
+	XrColor4f				LayerColorBias;
+	bool					bCompositionLayerColorScaleBiasSupported;
 };
 
 ENUM_CLASS_FLAGS(FOpenXRHMD::EOpenXRLayerStateFlags);

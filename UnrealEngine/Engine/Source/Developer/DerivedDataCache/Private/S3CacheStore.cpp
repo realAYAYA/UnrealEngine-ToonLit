@@ -6,7 +6,6 @@
 #if WITH_S3_DDC_BACKEND
 
 #if PLATFORM_MICROSOFT
-	#include "Microsoft/WindowsHWrapper.h"
 	#include "Microsoft/AllowMicrosoftPlatformTypes.h"
 #endif
 #if PLATFORM_MICROSOFT
@@ -25,6 +24,7 @@
 #include "HashingArchiveProxy.h"
 #include "Memory/SharedBuffer.h"
 #include "Misc/Base64.h"
+#include "Misc/Compression.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/FeedbackContext.h"
 #include "Misc/FileHelper.h"
@@ -58,8 +58,8 @@
 namespace UE::DerivedData
 {
 
-TRACE_DECLARE_INT_COUNTER(S3DDC_Get, TEXT("S3DDC Get"));
-TRACE_DECLARE_INT_COUNTER(S3DDC_GetHit, TEXT("S3DDC Get Hit"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(S3DDC_Get, TEXT("S3DDC Get"));
+TRACE_DECLARE_ATOMIC_INT_COUNTER(S3DDC_GetHit, TEXT("S3DDC Get Hit"));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -107,7 +107,7 @@ public:
 	static FStringAnsi Printf(const ANSICHAR* Format, ...)
 	{
 		ANSICHAR Buffer[1024];
-		GET_VARARGS_ANSI(Buffer, UE_ARRAY_COUNT(Buffer), UE_ARRAY_COUNT(Buffer) - 1, Format, Format);
+		GET_TYPED_VARARGS(ANSICHAR, Buffer, UE_ARRAY_COUNT(Buffer), UE_ARRAY_COUNT(Buffer) - 1, Format, Format);
 		return Buffer;
 	}
 
@@ -559,7 +559,7 @@ private:
 	static FString GetResponseAsString(const TArray<uint8>& Buffer)
 	{
 		FUTF8ToTCHAR TCHARData(reinterpret_cast<const ANSICHAR*>(Buffer.GetData()), Buffer.Num());
-		return FString(TCHARData.Length(), TCHARData.Get());
+		return FString::ConstructFromPtrSize(TCHARData.Get(), TCHARData.Length());
 	}
 
 	static int StaticStatusFn(void* Ptr, curl_off_t TotalDownloadSize, curl_off_t CurrentDownloadSize, curl_off_t TotalUploadSize, curl_off_t CurrentUploadSize)
@@ -892,7 +892,7 @@ struct FS3CacheStore::FRootManifest
 		for (const TSharedPtr<FJsonValue>& Value : *RootEntriesArray)
 		{
 			const TSharedPtr<FJsonObject>& LastRootManifestEntry = (*RootEntriesArray)[RootEntriesArray->Num() - 1]->AsObject();
-			Keys.Add(LastRootManifestEntry->GetStringField("Key"));
+			Keys.Add(LastRootManifestEntry->GetStringField(TEXT("Key")));
 		}
 
 		return true;

@@ -10,10 +10,38 @@
 #include "StaticToSkeletalMeshConverter.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Dialog/SCustomDialog.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Notifications/SNotificationList.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSkeletalMeshModelingToolsMeshConverter, Log, All)
 
 #define LOCTEXT_NAMESPACE "SkeletalMeshModelingToolsMeshConverter"
+
+static void ShowEditorMessage(ELogVerbosity::Type InMessageType, const FText& InMessage, const FText* InLogMessage)
+{
+	FNotificationInfo Notification(InMessage);
+	Notification.bUseSuccessFailIcons = true;
+	Notification.FadeOutDuration = 5.0f;
+
+	SNotificationItem::ECompletionState State = SNotificationItem::CS_Success;
+
+	switch(InMessageType)
+	{
+	case ELogVerbosity::Warning:
+		UE_LOG(LogSkeletalMeshModelingToolsMeshConverter, Warning, TEXT("%s"), InLogMessage ? *InLogMessage->ToString() : *InMessage.ToString());
+		break;
+	case ELogVerbosity::Error:
+		State = SNotificationItem::CS_Fail;
+		UE_LOG(LogSkeletalMeshModelingToolsMeshConverter, Error, TEXT("%s"), InLogMessage ? *InLogMessage->ToString() : *InMessage.ToString());
+		break;
+	default:
+		checkNoEntry();
+	}
+	
+	FSlateNotificationManager::Get().AddNotification(Notification)->SetCompletionState(State);
+}
+
 
 
 USkeletonFromStaticMeshFactory::USkeletonFromStaticMeshFactory(
@@ -36,14 +64,33 @@ UObject* USkeletonFromStaticMeshFactory::FactoryCreateNew(
 	FFeedbackContext* InWarn
 	)
 {
-	static const FVector RootBoneRelativePosition(0.5, 0.5, 0.0);
-
 	USkeleton* Skeleton = NewObject<USkeleton>(InParent, InName, InFlags);
-	
-	if (!FStaticToSkeletalMeshConverter::InitializeSkeletonFromStaticMesh(Skeleton, StaticMesh, RootBoneRelativePosition))
+
+	FVector WantedRootPosition;
+	switch(PositionReference)
 	{
-		return nullptr;
+	case ERootBonePositionReference::Absolute:
+		WantedRootPosition = RootPosition;
+		break;
+		
+	case ERootBonePositionReference::Relative:
+		{
+			const FBox Bounds = StaticMesh->GetBoundingBox();
+			WantedRootPosition = Bounds.Min + (Bounds.Max - Bounds.Min) * RootPosition;		
+		}
+		break;
+		
+	default:
+		checkNoEntry()
+		break;
 	}
+
+	const TCHAR* RootBoneName = TEXT("Root"); 
+	FTransform RootTransform(FTransform::Identity);
+	RootTransform.SetTranslation(WantedRootPosition);
+
+	FReferenceSkeletonModifier Modifier(Skeleton);
+	Modifier.Add(FMeshBoneInfo(RootBoneName, RootBoneName, INDEX_NONE), RootTransform);
 
 	return Skeleton;
 }
@@ -142,10 +189,30 @@ void UStaticMeshToSkeletalMeshConvertOptions::PostEditChangeProperty(FPropertyCh
 					BindingBoneName.Reset();
 				}
 			}
-			
-			(void)SkeletonProviderChanged.ExecuteIfBound();
 		}
 	}
+}
+
+static void CreateAssetName(
+	const UPackage* InTemplatePackageName,
+	const FString& InTargetPackagePath,
+	const FString& InPrefixToRemove,
+	const FString& InPrefixToAdd,
+	const FString& InSuffixToAdd,
+	FString &OutNewAssetName,
+	FString& OutNewPackageName
+	)
+{
+	IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
+	
+	FString TemplatePackageName = InTemplatePackageName->GetName();
+	FString TemplateAssetName = FPackageName::GetLongPackageAssetName(TemplatePackageName);
+	TemplateAssetName.RemoveFromStart(InPrefixToRemove);
+	TemplateAssetName.InsertAt(0, InPrefixToAdd);
+
+	TemplatePackageName = InTargetPackagePath + TEXT("/") + TemplateAssetName; 
+	
+	AssetTools.CreateUniqueAssetName(TemplatePackageName, InSuffixToAdd, OutNewPackageName, OutNewAssetName);
 }
 
 static bool ConvertSingleMeshToSkeletalMesh(
@@ -154,12 +221,6 @@ static bool ConvertSingleMeshToSkeletalMesh(
 	TArray<UObject*>& OutObjectsAdded
 	)
 {
-	
-	// Make these configurable.
-	// ReSharper disable CppTooWideScope
-	static const TCHAR* DefaultSkeletonSuffix = TEXT("_Skel");
-	static const TCHAR* DefaultSkeletalMeshSuffix = TEXT("_SkelMesh");
-
 	IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
 	FReferenceSkeleton ReferenceSkeleton;
 	USkeleton* Skeleton = nullptr;
@@ -171,12 +232,33 @@ static bool ConvertSingleMeshToSkeletalMesh(
 		{
 			FString SkeletonName;
 			FString SkeletonPackageName;
-			AssetTools.CreateUniqueAssetName(InStaticMesh->GetOutermost()->GetName(), DefaultSkeletonSuffix, SkeletonPackageName, SkeletonName);
+
+			CreateAssetName(InStaticMesh->GetPackage(), InOptions->DestinationPath.Path, InOptions->PrefixToRemove, InOptions->SkeletonPrefixToAdd, InOptions->SkeletonSuffixToAdd, SkeletonName, SkeletonPackageName);
 
 			USkeletonFromStaticMeshFactory* SkeletonFactory = NewObject<USkeletonFromStaticMeshFactory>();
 			SkeletonFactory->StaticMesh = InStaticMesh;
 
+			switch(InOptions->RootBonePlacement)
+			{
+			case ERootBonePlacementOptions::BottomCenter:
+				SkeletonFactory->RootPosition = FVector(0.5, 0.5, 0.0);
+				SkeletonFactory->PositionReference = ERootBonePositionReference::Relative;
+				break;
+			case ERootBonePlacementOptions::Center:
+				SkeletonFactory->RootPosition = FVector(0.5, 0.5, 0.5);
+				SkeletonFactory->PositionReference = ERootBonePositionReference::Relative;
+				break;
+			case ERootBonePlacementOptions::Origin:
+				SkeletonFactory->RootPosition = FVector(0.0, 0.0, 0.0);
+				SkeletonFactory->PositionReference = ERootBonePositionReference::Absolute;
+				break;
+			}
+
 			Skeleton = Cast<USkeleton>(AssetTools.CreateAsset(SkeletonName, FPackageName::GetLongPackagePath(SkeletonPackageName), USkeleton::StaticClass(), SkeletonFactory));
+			if (!Skeleton)
+			{
+				return false;
+			}
 			ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
 			
 			OutObjectsAdded.Add(Skeleton);
@@ -215,7 +297,8 @@ static bool ConvertSingleMeshToSkeletalMesh(
 	{
 		FString SkeletalMeshName;
 		FString SkeletalMeshPackageName;
-		AssetTools.CreateUniqueAssetName(InStaticMesh->GetOutermost()->GetName(), DefaultSkeletalMeshSuffix, SkeletalMeshPackageName, SkeletalMeshName);
+		
+		CreateAssetName(InStaticMesh->GetPackage(), InOptions->DestinationPath.Path, InOptions->PrefixToRemove, InOptions->SkeletalMeshPrefixToAdd, InOptions->SkeletalMeshSuffixToAdd, SkeletalMeshName, SkeletalMeshPackageName);
 
 		USkeletalMeshFromStaticMeshFactory* SkeletalMeshFactory = NewObject<USkeletalMeshFromStaticMeshFactory>();
 		SkeletalMeshFactory->StaticMesh = InStaticMesh;
@@ -251,6 +334,63 @@ static bool ConvertMultipleMeshesToSkeletalMesh(
 	return true;
 }
 
+static void DoConversion(
+	UStaticMeshToSkeletalMeshConvertOptions* InOptions,
+	const TArray<UStaticMesh*>& InMeshesToConvert
+	)
+{
+	auto IsValidPathPart = [](const FString& InPathPart, FStringView InPathPartName, const FText& InMessage)-> bool
+	{
+		FText FailureReason;
+		const FText FailureContext = FText::FromStringView(InPathPartName);
+		if (!FName::IsValidXName(InPathPart, INVALID_OBJECTNAME_CHARACTERS INVALID_LONGPACKAGE_CHARACTERS, &FailureReason, &FailureContext))
+		{
+			ShowEditorMessage(ELogVerbosity::Error, InMessage, &FailureReason); 
+			return false;
+		}
+		return true;
+	};
+
+	FPackageName::EErrorCode PackagePathErrorCode;
+	if (!FPackageName::IsValidLongPackageName(InOptions->DestinationPath.Path, false, &PackagePathErrorCode))
+	{
+		const FText LogMessage = FPackageName::FormatErrorAsText(InOptions->DestinationPath.Path, PackagePathErrorCode);
+		ShowEditorMessage(ELogVerbosity::Error, LOCTEXT("InvalidDestinationPath", "Destination Path is Invalid"), &LogMessage); 
+		return;
+	}
+
+	if (!IsValidPathPart(InOptions->SkeletalMeshPrefixToAdd, TEXT("Skeletal Mesh Prefix"), LOCTEXT("InvalidSkeletalMeshPrefix", "Invalid Characters in Skeletal Mesh Prefix")) ||
+		!IsValidPathPart(InOptions->SkeletalMeshSuffixToAdd, TEXT("Skeletal Mesh Suffix"), LOCTEXT("InvalidSkeletalMeshSuffix", "Invalid Characters in Skeletal Mesh Suffix")))
+	{	
+		return;
+	}
+				
+	if (InOptions->SkeletonImportOption == EReferenceSkeletonImportOption::CreateNew)
+	{
+		if (!IsValidPathPart(InOptions->SkeletonPrefixToAdd, TEXT("Skeleton Prefix"), LOCTEXT("InvalidSkeletonPrefix", "Invalid Characters in Skeleton Prefix")) ||
+			!IsValidPathPart(InOptions->SkeletonSuffixToAdd, TEXT("Skeleton Suffix"), LOCTEXT("InvalidSkeletonSuffix", "Invalid Characters in Skeleton Suffix")))
+		{
+			return;
+		}
+	}
+
+	InOptions->SaveConfig();
+	
+	TArray<UObject*> ObjectsAdded;
+	if (ConvertMultipleMeshesToSkeletalMesh(InOptions, InMeshesToConvert, ObjectsAdded))
+	{
+		FAssetToolsModule::GetModule().Get().SyncBrowserToAssets(ObjectsAdded);
+	}
+	else
+	{
+		for (UObject* ObjectToDelete: ObjectsAdded)
+		{
+			FAssetRegistryModule::AssetDeleted(ObjectToDelete);
+			ObjectToDelete->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_ForceNoResetLoaders | REN_NonTransactional);
+		}
+	}
+}
+
 void ConvertStaticMeshAssetsToSkeletalMeshesInteractive(
 	const TArray<FAssetData>& InStaticMeshAssets
 	)
@@ -267,11 +407,14 @@ void ConvertStaticMeshAssetsToSkeletalMeshesInteractive(
 
 		MeshesToConvert.Add(StaticMesh);
 	}
-	
+	if (MeshesToConvert.IsEmpty())
+	{
+		return;
+	}
 
 	UStaticMeshToSkeletalMeshConvertOptions* Options = NewObject<UStaticMeshToSkeletalMeshConvertOptions>();
 	FPropertyEditorModule& PropertyEditorModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
-
+	
 	// If the object paths don't resolve properly, the details view will still show something, which will be invalidated
 	// later.
 	if (Cast<USkeleton>(Options->Skeleton.ResolveObject()) == nullptr)
@@ -283,25 +426,8 @@ void ConvertStaticMeshAssetsToSkeletalMeshesInteractive(
 		Options->SkeletalMesh.Reset();
 	}
 
-	auto OnConvertLambda = [Options, MeshesToConvert]()
-	{
-		Options->SaveConfig();
+	Options->DestinationPath.Path = FPackageName::GetLongPackagePath(MeshesToConvert[0]->GetPackage()->GetPathName());
 	
-		TArray<UObject*> ObjectsAdded;
-		if (ConvertMultipleMeshesToSkeletalMesh(Options, MeshesToConvert, ObjectsAdded))
-		{
-			FAssetToolsModule::GetModule().Get().SyncBrowserToAssets(ObjectsAdded);
-		}
-		else
-		{
-			for (UObject* ObjectToDelete: ObjectsAdded)
-			{
-				FAssetRegistryModule::AssetDeleted(ObjectToDelete);
-				ObjectToDelete->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_ForceNoResetLoaders | REN_NonTransactional);
-			}
-		}
-	};
-
 	FDetailsViewArgs DetailsViewArgs;
 	DetailsViewArgs.bAllowSearch = false;
 	DetailsViewArgs.NameAreaSettings = FDetailsViewArgs::HideNameArea;
@@ -312,16 +438,18 @@ void ConvertStaticMeshAssetsToSkeletalMeshesInteractive(
 		.Title(LOCTEXT("OptionsDialogTitle", "Static Mesh Conversion Options"))
 		.Content()
 		[
-			DetailsView
+			SNew(SBox)
+			.MinDesiredWidth(450)
+			[
+				DetailsView
+			]
 		]
 	.Buttons({
-		SCustomDialog::FButton(LOCTEXT("DialogButtonConvert", "Convert"), FSimpleDelegate::CreateLambda(OnConvertLambda)),
+		SCustomDialog::FButton(LOCTEXT("DialogButtonConvert", "Convert"), FSimpleDelegate::CreateLambda([Options, MeshesToConvert]()
+		{
+			DoConversion(Options, MeshesToConvert);
+		})),
 		SCustomDialog::FButton(LOCTEXT("DialogButtonCancel", "Cancel"))
-	});
-
-	Options->SkeletonProviderChanged.BindLambda([DetailsView]()
-	{
-		DetailsView->ForceRefresh();
 	});
 
 	OptionsDialog->Show();

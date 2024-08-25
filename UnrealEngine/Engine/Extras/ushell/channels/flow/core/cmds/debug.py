@@ -11,8 +11,15 @@ from urllib.request import urlopen, URLError
 
 #-------------------------------------------------------------------------------
 def _http_get(url, on_data):
+    # Try and get the certifi CA file
+    try:
+        import certifi
+        cafile_path = certifi.where()
+    except ImportError:
+        cafile_path = None
+
     # Fire up an http client to get the url.
-    client = urlopen(url)
+    client = urlopen(url, cafile=cafile_path)
     if (client.status // 100) != 2:
         assert False, f"Error creating HTTP client for {url}"
 
@@ -66,6 +73,8 @@ class Invalidate(flow.cmd.Cmd):
             if not manifest_path.parent.samefile(working_dir):
                 print("Removing:", manifest_path.relative_to(working_dir))
                 manifest_path.unlink(missing_ok=True)
+
+        (working_dir / "manifest").unlink(missing_ok=True)
 
 #-------------------------------------------------------------------------------
 class Wipe(flow.cmd.Cmd):

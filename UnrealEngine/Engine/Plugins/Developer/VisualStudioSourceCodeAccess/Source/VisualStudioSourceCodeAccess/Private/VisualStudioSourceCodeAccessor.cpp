@@ -26,7 +26,6 @@
 #endif
 
 #include "VisualStudioDTE.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "Windows/AllowWindowsPlatformAtomics.h"
 	#include <unknwn.h>
@@ -104,8 +103,8 @@ int32 GetVisualStudioVersionForCompiler()
 	return 0;
 #else
 	#error "FVisualStudioSourceCodeAccessor::RefreshAvailability - Unknown _MSC_VER! Please update this code for this version of MSVC."
-#endif //_MSVC_VER
 	return 0;
+#endif //_MSVC_VER
 }
 
 int32 GetVisualStudioVersionForSolution(const FString& InSolutionFile)

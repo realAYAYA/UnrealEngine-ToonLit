@@ -27,6 +27,11 @@ void FNiagaraScratchPadUtilities::FixFunctionInputsFromFunctionScriptRename(UNia
 
 void FNiagaraScratchPadUtilities::FixExternalScratchPadScriptsForEmitter(UNiagaraSystem& SourceSystem, const FVersionedNiagaraEmitter& TargetEmitter)
 {
+	if ( TargetEmitter.Emitter == nullptr )
+	{
+		return;
+	}
+
 	UNiagaraSystem* TargetSystem = TargetEmitter.Emitter->GetTypedOuter<UNiagaraSystem>();
 	FVersionedNiagaraEmitterData* EmitterData = TargetEmitter.GetEmitterData();
 	if (EmitterData && TargetSystem != &SourceSystem)

@@ -271,6 +271,12 @@ void UMovieSceneNiagaraEmitterTrack::CreateSections(const FFrameRate& InFrameRes
 {
 	SectionInitializationErrors.Empty();
 
+	//-TODO:Stateless: We need to handle the stateless path here
+	if (GetEmitterHandleViewModel()->GetEmitterViewModel()->GetEmitter().GetEmitterData() == nullptr)
+	{
+		return;
+	}
+
 	UNiagaraScript* EmitterUpdateScript = GetEmitterHandleViewModel()->GetEmitterViewModel()->GetEmitter().GetEmitterData()->GetScript(ENiagaraScriptUsage::EmitterUpdateScript, FGuid());
 	UNiagaraScriptSource* ScriptSource = CastChecked<UNiagaraScriptSource>(EmitterUpdateScript->GetLatestSource());
 	UNiagaraNodeOutput* OutputNode = ScriptSource->NodeGraph->FindOutputNode(ENiagaraScriptUsage::EmitterUpdateScript);

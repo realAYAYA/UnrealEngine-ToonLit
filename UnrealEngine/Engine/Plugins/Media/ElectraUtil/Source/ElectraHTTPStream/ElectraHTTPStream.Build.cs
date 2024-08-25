@@ -4,6 +4,15 @@ using UnrealBuildTool;
 
 public class ElectraHTTPStream : ModuleRules
 {
+    // Returns true when this platform will use the HTTP module from Unreal Engine
+    protected virtual bool bPlatformUsesGenericUE
+    {
+		get
+		{
+			return true;
+		}
+    }
+
 	// Returns true when this platform uses WinHttp
 	protected virtual bool bPlatformUsesWinHttp
 	{
@@ -84,73 +93,90 @@ public class ElectraHTTPStream : ModuleRules
 				"ElectraBase"
 			});
 
-		// When Curl is used we need to make sure there is no conflict with its use in the engine's HTTP module
-		// as far as global initialization is concerned.
-		if (bPlatformUsesLibCurl || bPlatformUsesXCurl)
-		{
+        if (bPlatformUsesGenericUE)
+        {
+		    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_GENERIC_UE=1");
+		    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_WINHTTP=0");
+			PublicDefinitions.Add("ELECTRA_HTTPSTREAM_LIBCURL=0");
+			PublicDefinitions.Add("ELECTRA_HTTPSTREAM_XCURL=0");
+		    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_APPLE=0");
 			PrivateDependencyModuleNames.AddRange(
 				new string[] {
 					"HTTP",
 				});
-		}
+        }
+        else
+        {
+		    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_GENERIC_UE=0");
 
-		if (bPlatformRequiresSockets)
-		{
-			PrivateDependencyModuleNames.AddRange(
-				new string[] {
-					"Sockets",
-				}
-			);
-		}
+		    // When Curl is used we need to make sure there is no conflict with its use in the engine's HTTP module
+		    // as far as global initialization is concerned.
+		    if (bPlatformUsesLibCurl || bPlatformUsesXCurl)
+		    {
+			    PrivateDependencyModuleNames.AddRange(
+				    new string[] {
+					    "HTTP",
+				    });
+		    }
 
-		if (bPlatformUsesWinHttp)
-		{
-			PublicDefinitions.Add("ELECTRA_HTTPSTREAM_WINHTTP=1");
-			AddEngineThirdPartyPrivateStaticDependencies(Target, "WinHttp");
-		}
-		else
-		{
-			PublicDefinitions.Add("ELECTRA_HTTPSTREAM_WINHTTP=0");
-		}
+		    if (bPlatformRequiresSockets)
+		    {
+			    PrivateDependencyModuleNames.AddRange(
+				    new string[] {
+					    "Sockets",
+				    }
+			    );
+		    }
 
-		if (bPlatformUsesLibCurl || bPlatformUsesXCurl)
-		{
-			if (bPlatformUsesLibCurl)
-			{
-				PublicDefinitions.Add("ELECTRA_HTTPSTREAM_LIBCURL=1");
-				PublicDefinitions.Add("ELECTRA_HTTPSTREAM_XCURL=0");
-				AddEngineThirdPartyPrivateStaticDependencies(Target, "libcurl");
-			}
-			else
-			{
-				PublicDefinitions.Add("ELECTRA_HTTPSTREAM_LIBCURL=1");
-				PublicDefinitions.Add("ELECTRA_HTTPSTREAM_XCURL=1");
-			}
-		}
-		else
-		{
-			PublicDefinitions.Add("ELECTRA_HTTPSTREAM_LIBCURL=0");
-			PublicDefinitions.Add("ELECTRA_HTTPSTREAM_XCURL=0");
-		}
+		    if (bPlatformUsesWinHttp)
+		    {
+			    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_WINHTTP=1");
+			    AddEngineThirdPartyPrivateStaticDependencies(Target, "WinHttp");
+		    }
+		    else
+		    {
+			    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_WINHTTP=0");
+		    }
 
-		PublicDefinitions.Add("ELECTRA_HTTPSTREAM_REQUIRES_SECURE_CONNECTIONS=" + (bPlatformRequiresSecureConnections ? "1" : "0"));
+		    if (bPlatformUsesLibCurl || bPlatformUsesXCurl)
+		    {
+			    if (bPlatformUsesLibCurl)
+			    {
+				    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_LIBCURL=1");
+				    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_XCURL=0");
+				    AddEngineThirdPartyPrivateStaticDependencies(Target, "libcurl");
+			    }
+			    else
+			    {
+				    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_LIBCURL=1");
+				    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_XCURL=1");
+				    PublicDependencyModuleNames.Add("XCurl");
+			    }
+		    }
+		    else
+		    {
+			    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_LIBCURL=0");
+			    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_XCURL=0");
+		    }
+
+		    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_REQUIRES_SECURE_CONNECTIONS=" + (bPlatformRequiresSecureConnections ? "1" : "0"));
 		
-		if (bPlatformRequiresOpenSSL)
-		{
-			PrivateDependencyModuleNames.Add("SSL");
-			AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
-		}
-		else
-		{
-			PrivateDefinitions.Add("WITH_SSL=0");
-		}
+		    if (bPlatformRequiresOpenSSL)
+		    {
+			    PrivateDependencyModuleNames.Add("SSL");
+			    AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
+		    }
+		    else
+		    {
+			    PrivateDefinitions.Add("WITH_SSL=0");
+		    }
 
-		// Apple
-		if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS || Target.Platform == UnrealTargetPlatform.Mac)
-		{
-			PublicDefinitions.Add("ELECTRA_HTTPSTREAM_APPLE=1");
-			PublicFrameworks.Add("Security");
-		}
-
+		    // Apple
+		    if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
+		    {
+			    PublicDefinitions.Add("ELECTRA_HTTPSTREAM_APPLE=1");
+			    PublicFrameworks.Add("Security");
+		    }
+        }
 	}
 }

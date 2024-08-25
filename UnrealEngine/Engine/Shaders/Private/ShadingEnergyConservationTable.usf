@@ -67,7 +67,7 @@ void BuildEnergyTableCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			Weight = float2(GGXResult.x, GGXResult.x * Pow5(1 - dot(V, H)));
 		}
 #elif BUILD_ENERGY_TABLE == 1
-		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, Alpha, V).xyz;
+		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, Alpha, V, false).xyz;
 		{
 			// compute weight for outside -> in case
 			float3 L = 0;
@@ -78,7 +78,7 @@ void BuildEnergyTableCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			}
 			else
 			{
-				Weight.x = GGXEvalReflection(L, V, H, Alpha).x;
+				Weight.x = GGXEvalReflection(L, V, H, Alpha, false).x;
 			}
 		}
 		{
@@ -91,7 +91,7 @@ void BuildEnergyTableCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			}
 			else
 			{
-				Weight.y = GGXEvalReflection(L, V, H, Alpha).x;
+				Weight.y = GGXEvalReflection(L, V, H, Alpha, false).x;
 			}
 		}
 #elif BUILD_ENERGY_TABLE == 2
@@ -100,7 +100,7 @@ void BuildEnergyTableCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		const float NoL = L.z;
 		const float3 H = normalize(V + L);
 		const float NoH = H.z;
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 		const float DCloth = D_Charlie(Roughness, NoH);
 		const float VCloth = Vis_Ashikhmin(NoV, NoL);
 #else

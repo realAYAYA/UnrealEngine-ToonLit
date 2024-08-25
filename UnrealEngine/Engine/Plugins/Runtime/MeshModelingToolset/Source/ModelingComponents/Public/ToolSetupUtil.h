@@ -119,9 +119,9 @@ namespace ToolSetupUtil
 	MODELINGCOMPONENTS_API UMaterialInterface* GetSelectionMaterial(UInteractiveToolManager* ToolManager);
 
 	/**
-	 * @return Selection Material 1 with custom color and optional depth offset (depth offset moves vertices towards the camera)
+	 * @return Selection Material 1 with custom color and optional depth bias (depth bias moves vertices towards the camera)
 	 */
-	MODELINGCOMPONENTS_API UMaterialInterface* GetSelectionMaterial(const FLinearColor& UseColor, UInteractiveToolManager* ToolManager, float PercentDepthOffset = 0.0f);
+	MODELINGCOMPONENTS_API UMaterialInterface* GetSelectionMaterial(const FLinearColor& UseColor, UInteractiveToolManager* ToolManager, float DepthBias = 0.0f);
 
 	/**
 	 * @return Simple material with configurable color and opacity. Note that the material 
@@ -136,28 +136,28 @@ namespace ToolSetupUtil
 	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetSimpleCustomMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color);
 
 	 /**
-	  * @return Simple material with configurable depth offset, color, and opacity. Note that the material
+	  * @return Simple material with configurable depth bias, color, and opacity. Note that the material
 	  *  will have translucent blend mode, which can interact poorly with overlapping translucent
 	  *  objects, so use the other overload if you do not need opacity control.
 	  */
-	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset, float Opacity);
+	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias, float Opacity);
 
 	/**
-	 * @return Simple material with configurable depth offset and color. The material will have opaque blend mode.
+	 * @return Simple material with configurable depth bias and color. The material will have opaque blend mode.
 	 */
-	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset);
+	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias);
 	
 	/**
-	 * @return Simple two-sided material with configurable depth offset, color, and opacity. Note that 
+	 * @return Simple two-sided material with configurable depth bias, color, and opacity. Note that 
 	  *  the material will have translucent blend mode, which can interact poorly with overlapping translucent
 	  *  objects, so use the other overload if you do not need opacity control.
 	 */
-	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset, float Opacity);
+	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias, float Opacity);
 
 	/**
-	 * @return Simple two-sided material with configurable depth offset and color. The material will have opaque blend mode.
+	 * @return Simple two-sided material with configurable depth bias and color. The material will have opaque blend mode.
 	 */
-	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float PercentDepthOffset);
+	MODELINGCOMPONENTS_API UMaterialInstanceDynamic* GetCustomTwoSidedDepthOffsetMaterial(UInteractiveToolManager* ToolManager, const FLinearColor& Color, float DepthBias);
 
 	/**
 	 * @return Material used when editing AVolume objects using our tools.
@@ -172,7 +172,7 @@ namespace ToolSetupUtil
 	 *  Note that the current implementations of the depth-tested and non-depth-tested modes use opaque and translucent 
 	 *  blend modes, respectively, and so inherit their limitations. Specifically, opaque does not support opacity, 
 	 *  and translucent does not always follow correct draw order relative to other translucent objects, which means
-	 *  that depth offset cannot reliably order lines within a non-depth-tested line set component.
+	 *  that depth bias cannot reliably order lines within a non-depth-tested line set component.
 	 */
 	MODELINGCOMPONENTS_API UMaterialInterface* GetDefaultPointComponentMaterial(UInteractiveToolManager* ToolManager, bool bDepthTested = true);
 
@@ -195,7 +195,7 @@ namespace ToolSetupUtil
 	 *  Note that the current implementations of the depth-tested and non-depth-tested modes use opaque and translucent 
 	 *  blend modes, respectively, and so inherit their limitations. Specifically, opaque does not support opacity, 
 	 *  and translucent does not always follow correct draw order relative to other translucent objects, which means
-	 *  that depth offset cannot reliably order lines within a non-depth-tested line set component.
+	 *  that depth bias cannot reliably order lines within a non-depth-tested line set component.
 	 */
 	MODELINGCOMPONENTS_API UMaterialInterface* GetDefaultLineComponentMaterial(UInteractiveToolManager* ToolManager, bool bDepthTested = true);
 

@@ -32,4 +32,6 @@ public:
 	virtual TSharedPtr<SWindow> GetMenuWindow() const = 0;
 	virtual void OnMenuDismissed() = 0;
 	virtual bool UsingApplicationMenuStack() const = 0;
+
+	bool bShowMenuBackground = true;
 };

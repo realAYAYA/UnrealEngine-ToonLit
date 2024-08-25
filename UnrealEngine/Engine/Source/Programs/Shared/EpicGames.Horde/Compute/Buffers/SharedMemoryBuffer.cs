@@ -1,12 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using EpicGames.Core;
-using System.IO.MemoryMappedFiles;
 using System.IO;
-using System.Threading.Tasks;
-using System.Threading;
+using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using EpicGames.Core;
 
 namespace EpicGames.Horde.Compute.Buffers
 {
@@ -15,75 +15,22 @@ namespace EpicGames.Horde.Compute.Buffers
 	/// </summary>
 	public sealed class SharedMemoryBuffer : ComputeBuffer
 	{
-		class Resources : ResourcesBase
-		{
-			readonly MemoryMappedFile _memoryMappedFile;
-			readonly MemoryMappedViewAccessor _memoryMappedViewAccessor;
-			readonly MemoryMappedView _memoryMappedView;
-
-			readonly Native.EventHandle _readerEvent;
-			readonly Native.EventHandle _writerEvent;
-
-			public string Name { get; }
-
-			public Resources(string name, HeaderPtr headerPtr, Memory<byte>[] chunks, MemoryMappedFile memoryMappedFile, MemoryMappedViewAccessor memoryMappedViewAccessor, MemoryMappedView memoryMappedView, Native.EventHandle readerEvent, Native.EventHandle writerEvent)
-				: base(headerPtr, chunks)
-			{
-				Name = name;
-
-				_memoryMappedFile = memoryMappedFile;
-				_memoryMappedViewAccessor = memoryMappedViewAccessor;
-				_memoryMappedView = memoryMappedView;
-
-				_readerEvent = readerEvent;
-				_writerEvent = writerEvent;
-			}
-
-			public override void Dispose()
-			{
-				_readerEvent.Dispose();
-				_writerEvent.Dispose();
-
-				_memoryMappedView.Dispose();
-				_memoryMappedViewAccessor.Dispose();
-				_memoryMappedFile.Dispose();
-			}
-
-			/// <inheritdoc/>
-			public override void SetReadEvent(int readerIdx) => _readerEvent.Set();
-
-			/// <inheritdoc/>
-			public override void ResetReadEvent(int readerIdx) => _readerEvent.Reset();
-
-			/// <inheritdoc/>
-			public override Task WaitForReadEvent(int readerIdx, CancellationToken cancellationToken) => _readerEvent.WaitOneAsync(cancellationToken);
-
-			/// <inheritdoc/>
-			public override void SetWriteEvent() => _writerEvent.Set();
-
-			/// <inheritdoc/>
-			public override void ResetWriteEvent() => _writerEvent.Reset();
-
-			/// <inheritdoc/>
-			public override Task WaitForWriteEvent(CancellationToken cancellationToken) => _writerEvent.WaitOneAsync(cancellationToken);
-		}
-
 		/// <inheritdoc/>
-		public string Name => ((Resources)_resources).Name;
+		public string Name => ((SharedMemoryBufferDetail)_detail).Name;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		private SharedMemoryBuffer(ResourcesBase resources)
+		private SharedMemoryBuffer(ComputeBufferDetail resources)
 			: base(resources)
 		{
 		}
 
 		/// <inheritdoc/>
-		public override IComputeBuffer AddRef()
+		public override SharedMemoryBuffer AddRef()
 		{
-			_resources.AddRef();
-			return new SharedMemoryBuffer(_resources);
+			_detail.AddRef();
+			return new SharedMemoryBuffer(_detail);
 		}
 
 		/// <summary>
@@ -103,7 +50,49 @@ namespace EpicGames.Horde.Compute.Buffers
 		/// <param name="name">Name of the buffer</param>
 		/// <param name="numChunks">Number of chunks in the buffer</param>
 		/// <param name="chunkLength">Length of each chunk</param>
-		public static unsafe SharedMemoryBuffer CreateNew(string? name, int numChunks, int chunkLength)
+		public static unsafe SharedMemoryBuffer CreateNew(string? name, int numChunks, int chunkLength) => new SharedMemoryBuffer(SharedMemoryBufferDetail.CreateNew(name, numChunks, chunkLength));
+
+		/// <summary>
+		/// Open an existing buffer by name
+		/// </summary>
+		/// <param name="name">Name of the buffer to open</param>
+		public static unsafe SharedMemoryBuffer OpenExisting(string name) => new SharedMemoryBuffer(SharedMemoryBufferDetail.OpenExisting(name));
+	}
+
+	/// <summary>
+	/// Core implementation of <see cref="SharedMemoryBuffer"/>
+	/// </summary>
+	class SharedMemoryBufferDetail : ComputeBufferDetail
+	{
+		readonly MemoryMappedFile _memoryMappedFile;
+		readonly MemoryMappedViewAccessor _memoryMappedViewAccessor;
+		readonly MemoryMappedView _memoryMappedView;
+
+		readonly Native.EventHandle _readerEvent;
+		readonly Native.EventHandle _writerEvent;
+
+		public string Name { get; }
+
+		internal SharedMemoryBufferDetail(string name, HeaderPtr headerPtr, Memory<byte>[] chunks, MemoryMappedFile memoryMappedFile, MemoryMappedViewAccessor memoryMappedViewAccessor, MemoryMappedView memoryMappedView, Native.EventHandle readerEvent, Native.EventHandle writerEvent)
+			: base(headerPtr, chunks)
+		{
+			Name = name;
+
+			_memoryMappedFile = memoryMappedFile;
+			_memoryMappedViewAccessor = memoryMappedViewAccessor;
+			_memoryMappedView = memoryMappedView;
+
+			_readerEvent = readerEvent;
+			_writerEvent = writerEvent;
+		}
+
+		/// <summary>
+		/// Create a new shared memory buffer
+		/// </summary>
+		/// <param name="name">Name of the buffer</param>
+		/// <param name="numChunks">Number of chunks in the buffer</param>
+		/// <param name="chunkLength">Length of each chunk</param>
+		public static unsafe SharedMemoryBufferDetail CreateNew(string? name, int numChunks, int chunkLength)
 		{
 			long capacity = HeaderSize + (numChunks * sizeof(ulong)) + (numChunks * chunkLength);
 
@@ -113,20 +102,20 @@ namespace EpicGames.Horde.Compute.Buffers
 			MemoryMappedViewAccessor memoryMappedViewAccessor = memoryMappedFile.CreateViewAccessor();
 			MemoryMappedView memoryMappedView = new MemoryMappedView(memoryMappedViewAccessor);
 
-			Native.EventHandle writerEvent = Native.EventHandle.CreateNew($"{name}_W", EventResetMode.ManualReset, true, HandleInheritability.Inheritable);
-			Native.EventHandle readerEvent = Native.EventHandle.CreateNew($"{name}_R0", EventResetMode.ManualReset, true, HandleInheritability.Inheritable);
+			Native.EventHandle writerEvent = Native.EventHandle.CreateNew($"{name}_W", EventResetMode.AutoReset, true, HandleInheritability.Inheritable);
+			Native.EventHandle readerEvent = Native.EventHandle.CreateNew($"{name}_R0", EventResetMode.AutoReset, true, HandleInheritability.Inheritable);
 
 			HeaderPtr headerPtr = new HeaderPtr((ulong*)memoryMappedView.GetPointer(), 1, numChunks, chunkLength);
 			Memory<byte>[] chunks = CreateChunks(headerPtr.NumChunks, headerPtr.ChunkLength, memoryMappedView);
 
-			return new SharedMemoryBuffer(new Resources(name, headerPtr, chunks, memoryMappedFile, memoryMappedViewAccessor, memoryMappedView, readerEvent, writerEvent));
+			return new SharedMemoryBufferDetail(name, headerPtr, chunks, memoryMappedFile, memoryMappedViewAccessor, memoryMappedView, readerEvent, writerEvent);
 		}
 
 		/// <summary>
 		/// Open an existing buffer by name
 		/// </summary>
 		/// <param name="name">Name of the buffer to open</param>
-		public static unsafe SharedMemoryBuffer OpenExisting(string name)
+		public static unsafe SharedMemoryBufferDetail OpenExisting(string name)
 		{
 			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 			{
@@ -143,7 +132,7 @@ namespace EpicGames.Horde.Compute.Buffers
 			HeaderPtr headerPtr = new HeaderPtr((ulong*)memoryMappedView.GetPointer());
 			Memory<byte>[] chunks = CreateChunks(headerPtr.NumChunks, headerPtr.ChunkLength, memoryMappedView);
 
-			return new SharedMemoryBuffer(new Resources(name, headerPtr, chunks, memoryMappedFile, memoryMappedViewAccessor, memoryMappedView, readerEvent, writerEvent));
+			return new SharedMemoryBufferDetail(name, headerPtr, chunks, memoryMappedFile, memoryMappedViewAccessor, memoryMappedView, readerEvent, writerEvent);
 		}
 
 		static Memory<byte>[] CreateChunks(int numChunks, int chunkLength, MemoryMappedView memoryMappedView)
@@ -157,16 +146,32 @@ namespace EpicGames.Horde.Compute.Buffers
 			return chunks;
 		}
 
-		internal static string GetName(IComputeBufferReader reader)
+		/// <inheritdoc/>
+		protected override void Dispose(bool disposing)
 		{
-			Resources resources = (Resources)((ReaderImpl)reader).GetResources();
-			return resources.Name;
+			base.Dispose(disposing);
+
+			if (disposing)
+			{
+				_readerEvent.Dispose();
+				_writerEvent.Dispose();
+
+				_memoryMappedView.Dispose();
+				_memoryMappedViewAccessor.Dispose();
+				_memoryMappedFile.Dispose();
+			}
 		}
 
-		internal static string GetName(IComputeBufferWriter writer)
-		{
-			Resources resources = (Resources)((WriterImpl)writer).GetResources();
-			return resources.Name;
-		}
+		/// <inheritdoc/>
+		public override void SetReadEvent(int readerIdx) => _readerEvent.Set();
+
+		/// <inheritdoc/>
+		public override Task WaitToReadAsync(int readerIdx, CancellationToken cancellationToken) => _readerEvent.WaitOneAsync(cancellationToken);
+
+		/// <inheritdoc/>
+		public override void SetWriteEvent() => _writerEvent.Set();
+
+		/// <inheritdoc/>
+		public override Task WaitToWriteAsync(CancellationToken cancellationToken) => _writerEvent.WaitOneAsync(cancellationToken);
 	}
 }

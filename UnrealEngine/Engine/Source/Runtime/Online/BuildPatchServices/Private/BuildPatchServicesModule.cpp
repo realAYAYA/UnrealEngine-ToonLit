@@ -22,6 +22,7 @@
 #include "Generation/ChunkDeltaOptimiser.h"
 #include "Generation/PackageChunkData.h"
 #include "Installer/BuildStatistics.h"
+#include "Installer/InstallerSharedContext.h"
 #include "Installer/MachineConfig.h"
 #include "BuildPatchMergeManifests.h"
 #include "BuildPatchHash.h"
@@ -128,8 +129,13 @@ IBuildInstallerRef FBuildPatchServicesModule::CreateBuildInstaller(BuildPatchSer
 	{
 		Configuration.bRunRequiredPrereqs = false;
 	}
-	FBuildPatchInstallerRef Installer = MakeShareable(new FBuildPatchInstaller(MoveTemp(Configuration), AvailableInstallations, LocalMachineConfigFile, Analytics, InstallerStartDelegate, MoveTemp(CompleteDelegate)));
+	FBuildPatchInstallerRef Installer = MakeShared<FBuildPatchInstaller>(MoveTemp(Configuration), AvailableInstallations, LocalMachineConfigFile, Analytics, InstallerStartDelegate, MoveTemp(CompleteDelegate));
 	return Installer;
+}
+
+IBuildInstallerSharedContextRef FBuildPatchServicesModule::CreateBuildInstallerSharedContext(const TCHAR* DebugName) const
+{
+	return BuildPatchServices::FBuildInstallerSharedContextFactory::Create(DebugName);
 }
 
 IBuildStatisticsRef FBuildPatchServicesModule::CreateBuildStatistics(const IBuildInstallerRef& Installer) const

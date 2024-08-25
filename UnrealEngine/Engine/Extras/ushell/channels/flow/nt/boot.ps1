@@ -26,7 +26,7 @@ $PythonPath = Join-Path $Working "python\current\flow_python.exe"
 $Bootpy = Join-Path $PSScriptRoot "..\core\system\boot.py"
 Write-Debug "Python: $PythonPath"
 
-$TempDir = Join-Path Temp: "ushell" 
+$TempDir = Join-Path Temp: "ushell"
 New-Item -ItemType Directory -Force $TempDir
 $Cookie = Join-Path $TempDir "cmd_boot_$(New-Guid).ps1"
 $Cookie = New-Item $Cookie

@@ -28,6 +28,15 @@
 #include "UObject/ObjectPtr.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/WeakObjectPtr.h"
+#include "BlueprintActionDatabaseRegistrar.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "String/ParseTokens.h"
+#include "K2Node_Event.h"
+#include "AnimNotifyEventNodeSpawner.h"
+#include "BlueprintActionDatabase.h"
+#include "Animation/Skeleton.h"
+#include "Animation/AnimBlueprint.h"
+#include "Animation/AnimBlueprintGeneratedClass.h"
 
 class IAnimationBlueprintEditor;
 class IToolkitHost;
@@ -86,6 +95,96 @@ TSharedRef<IAnimationBlueprintEditor> FAnimationBlueprintEditorModule::CreateAni
 	TSharedRef< FAnimationBlueprintEditor > NewAnimationBlueprintEditor( new FAnimationBlueprintEditor() );
 	NewAnimationBlueprintEditor->InitAnimationBlueprintEditor( Mode, InitToolkitHost, InAnimBlueprint);
 	return NewAnimationBlueprintEditor;
+}
+
+void FAnimationBlueprintEditorModule::GetTypeActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const
+{
+	if (!ActionRegistrar.IsOpenForRegistration(UAnimBlueprint::StaticClass()))
+	{
+		return;
+	}
+
+	// Grab notifies from skeletons and anim sequences
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	FARFilter Filter;
+	Filter.bRecursiveClasses = true;
+
+	if (FBlueprintActionDatabase::IsClassAllowed(UAnimSequenceBase::StaticClass(), FBlueprintActionDatabase::EPermissionsContext::Asset))
+	{
+		Filter.ClassPaths.Add(UAnimSequenceBase::StaticClass()->GetClassPathName());
+	}
+
+	if (FBlueprintActionDatabase::IsClassAllowed(USkeleton::StaticClass(), FBlueprintActionDatabase::EPermissionsContext::Asset))
+	{
+		Filter.ClassPaths.Add(USkeleton::StaticClass()->GetClassPathName());
+	}
+
+	if (Filter.ClassPaths.Num() == 0)
+	{
+		return;
+	}
+
+	TArray<FAssetData> FoundAssetData;
+	AssetRegistryModule.Get().GetAssets(Filter, FoundAssetData);
+
+	TMap<FSoftObjectPath, TSet<FName>> NotifiesPerSkeleton;
+	for (const FAssetData& AssetData : FoundAssetData)
+	{
+		const FString TagValue = AssetData.GetTagValueRef<FString>(USkeleton::AnimNotifyTag);
+		if (!TagValue.IsEmpty())
+		{
+			FSoftObjectPath SkeletonPath;
+			if(AssetData.GetClass() == USkeleton::StaticClass())
+			{
+				SkeletonPath = AssetData.ToSoftObjectPath();
+			}
+			else
+			{
+				SkeletonPath = FSoftObjectPath(AssetData.GetTagValueRef<FString>("Skeleton"));
+			}
+			TSet<FName>& NotifyNames = NotifiesPerSkeleton.FindOrAdd(SkeletonPath);
+
+			UE::String::ParseTokens(TagValue, USkeleton::AnimNotifyTagDelimiter, [&NotifyNames](FStringView InToken)
+			{
+				FName NotifyName(InToken);
+				if(NotifyName != NAME_None)
+				{
+					NotifyNames.Add(NotifyName);
+				}
+			}, UE::String::EParseTokensOptions::SkipEmpty);
+		}
+	}
+
+	for (const TPair<FSoftObjectPath, TSet<FName>>& SkeletonPathNamesPair : NotifiesPerSkeleton)
+	{
+		for (FName NotifyName : SkeletonPathNamesPair.Value)
+		{
+			UAnimNotifyEventNodeSpawner* NodeSpawner = UAnimNotifyEventNodeSpawner::Create(SkeletonPathNamesPair.Key, NotifyName);
+			ActionRegistrar.AddBlueprintAction(UAnimBlueprint::StaticClass(), NodeSpawner);
+		}
+	}
+}
+
+void FAnimationBlueprintEditorModule::GetInstanceActions(const UAnimBlueprint* InAnimBlueprint, FBlueprintActionDatabaseRegistrar& ActionRegistrar) const
+{
+	if (UAnimBlueprintGeneratedClass* GeneratedClass = InAnimBlueprint->GetAnimBlueprintGeneratedClass())
+	{
+		FSoftObjectPath SkeletonPath;
+		if (InAnimBlueprint->TargetSkeleton)
+		{
+			SkeletonPath = FSoftObjectPath(InAnimBlueprint->TargetSkeleton);
+		}
+
+		for (int32 NotifyIdx = 0; NotifyIdx < GeneratedClass->GetAnimNotifies().Num(); NotifyIdx++)
+		{
+			FName NotifyName = GeneratedClass->GetAnimNotifies()[NotifyIdx].NotifyName;
+			if (NotifyName != NAME_None)
+			{
+				UAnimNotifyEventNodeSpawner* NodeSpawner = UAnimNotifyEventNodeSpawner::Create(SkeletonPath, NotifyName);
+				ActionRegistrar.AddBlueprintAction(GeneratedClass, NodeSpawner);
+			}
+		}
+	}
 }
 
 void FAnimationBlueprintEditorModule::OnNewBlueprintCreated(UBlueprint* InBlueprint)

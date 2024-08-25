@@ -10,6 +10,7 @@
 #include "FXRenderingUtils.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/SkeletalMesh.h"
 #include "EngineUtils.h"
 
@@ -73,6 +74,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FShaderParameters,)
 	SHADER_PARAMETER_SRV(Buffer<uint32>,	PhysicsTypeBuffer)
 	SHADER_PARAMETER_SRV(Buffer<uint32>,	DFIndexBuffer)
 	SHADER_PARAMETER(FVector3f,				SystemLWCTile)
+	SHADER_PARAMETER(FVector3f,				CombinedBBoxWorldMin)
+	SHADER_PARAMETER(FVector3f,				CombinedBBoxWorldMax)
 END_SHADER_PARAMETER_STRUCT()
 
 static const TCHAR* TemplateShaderFile = TEXT("/Plugin/FX/Niagara/Private/NiagaraDataInterfaceRigidMeshCollisionQuery.ush");
@@ -86,13 +89,16 @@ static const FName FindActorsName(TEXT("FindActors"));
 static const FName GetNumBoxesName(TEXT("GetNumBoxes"));
 static const FName GetNumSpheresName(TEXT("GetNumSpheres"));
 static const FName GetNumCapsulesName(TEXT("GetNumCapsules"));
+static const FName GetNumElementsName(TEXT("GetNumElements"));
 
 //------------------------------------------------------------------------------------------------------------
-
+static const FName IsWorldPositionInsideCombinedBoundsName(TEXT("IsWorldPositionInsideCombinedBounds"));
 static const FName GetClosestElementName(TEXT("GetClosestElement"));
 static const FName GetElementPointName(TEXT("GetElementPoint"));
+static const FName GetElementPointMeshDistanceFieldNoNormalName(TEXT("GetElementPointMeshDistanceFieldNoNormal"));
 static const FName GetElementDistanceName(TEXT("GetElementDistance"));
 static const FName GetClosestPointName(TEXT("GetClosestPoint"));
+static const FName GetClosestPointSimpleName(TEXT("GetClosestPointSimple"));
 static const FName GetClosestDistanceName(TEXT("GetClosestDistance"));
 static const FName GetClosestPointMeshDistanceFieldName(TEXT("GetClosestPointMeshDistanceField"));
 static const FName GetClosestPointMeshDistanceFieldAccurateName(TEXT("GetClosestPointMeshDistanceFieldAccurate"));
@@ -246,6 +252,16 @@ void ForEachBodySetup(USkeletalMeshComponent* Component, TBodySetupPredicate Pre
 	}
 }
 
+uint32 MeshComponentHash(const USkeletalMeshComponent* SkeletalMeshComponent)
+{
+	uint32 HashResult = GetTypeHash(SkeletalMeshComponent);
+	if (SkeletalMeshComponent)
+	{
+		HashResult = HashCombine(HashResult, GetTypeHash(SkeletalMeshComponent->GetSkeletalMeshAsset()));
+	}
+	return HashResult;
+}
+
 /// End UkeletalMeshComponent
 
 /// Begin UStaticMeshComponent
@@ -267,7 +283,23 @@ void ForEachBodySetup(UStaticMeshComponent* Component, TBodySetupPredicate Predi
 	Predicate(Component, Component->GetBodySetup());
 }
 
+uint32 MeshComponentHash(const UStaticMeshComponent* StaticMeshComponent)
+{
+	uint32 HashResult = GetTypeHash(StaticMeshComponent);
+	if (StaticMeshComponent)
+	{
+		HashResult = HashCombine(HashResult, GetTypeHash(StaticMeshComponent->GetStaticMesh()));
+	}
+	return HashResult;
+}
+
 /// End UStaticMeshComponent
+
+bool FilterShape(const FKShapeElem& Elem)
+{
+	// CollisionEnabledHasPhysics(Elem.GetCollisionEnabled());
+	return Elem.GetCollisionEnabled() != ECollisionEnabled::NoCollision;
+}
 
 template<typename TComponentType>
 void CountCollisionPrimitives(TConstArrayView<TComponentType*> Components, TArray<FNDIRigidMeshCollisionData::FComponentBodyCount>& PerComponentCounts, uint32& TotalBoxCount, uint32& TotalSphereCount, uint32& TotalCapsuleCount)
@@ -277,34 +309,34 @@ void CountCollisionPrimitives(TConstArrayView<TComponentType*> Components, TArra
 	for (TComponentType* Component : Components)
 	{
 		FNDIRigidMeshCollisionData::FComponentBodyCount& BodyCount = PerComponentCounts.AddDefaulted_GetRef();
-		BodyCount.ComponentHash = GetTypeHash(Component);
+		BodyCount.ComponentHash = MeshComponentHash(Component);
 
 		ForEachBodySetup(Component, [&](TComponentType* Component, const UBodySetup* BodySetup)
 		{
 			for (const FKConvexElem& ConvexElem : BodySetup->AggGeom.ConvexElems)
 			{
-				if (CollisionEnabledHasPhysics(ConvexElem.GetCollisionEnabled()))
+				if (FilterShape(ConvexElem))
 				{
 					++BodyCount.BoxCount;
 				}
 			}
 			for (const FKBoxElem& BoxElem : BodySetup->AggGeom.BoxElems)
 			{
-				if (CollisionEnabledHasPhysics(BoxElem.GetCollisionEnabled()))
+				if (FilterShape(BoxElem))
 				{
 					++BodyCount.BoxCount;
 				}
 			}
 			for (const FKSphereElem& SphereElem : BodySetup->AggGeom.SphereElems)
 			{
-				if (CollisionEnabledHasPhysics(SphereElem.GetCollisionEnabled()))
+				if (FilterShape(SphereElem))
 				{
 					++BodyCount.SphereCount;
 				}
 			}
 			for (const FKSphylElem& CapsuleElem : BodySetup->AggGeom.SphylElems)
 			{
-				if (CollisionEnabledHasPhysics(CapsuleElem.GetCollisionEnabled()))
+				if (FilterShape(CapsuleElem))
 				{
 					++BodyCount.CapsuleCount;
 				}
@@ -355,7 +387,7 @@ FTransform CreateElementTransform<USkeletalMeshComponent>(const USkeletalMeshCom
 }
 
 template<typename TComponentType, bool InitializeStatics>
-void UpdateAssetArrays(TConstArrayView<TComponentType*> Components, const FVector& LWCTile, FNDIRigidMeshCollisionArrays* OutAssetArrays, uint32& BoxIndex, uint32& SphereIndex, uint32& CapsuleIndex)
+void UpdateAssetArrays(TConstArrayView<TComponentType*> Components, const FVector& LWCTile, FNDIRigidMeshCollisionArrays* OutAssetArrays, uint32& BoxIndex, uint32& SphereIndex, uint32& CapsuleIndex, FBoxSphereBounds::Builder &CombinedWorldBoundsBuilder)
 {
 	auto UpdateAssetPredicate = [&](TComponentType* Component, const UBodySetup* BodySetup)
 	{
@@ -364,11 +396,11 @@ void UpdateAssetArrays(TConstArrayView<TComponentType*> Components, const FVecto
 
 		const FVector3f CurrMeshScale(MeshTransform.GetScale3D());
 
-		const int32 ComponentIdIndex = OutAssetArrays->UniqueCompnentId.AddUnique(Component->ComponentId);
+		const int32 ComponentIdIndex = OutAssetArrays->UniqueCompnentId.AddUnique(Component->GetPrimitiveSceneId());
 
 		for (const FKConvexElem& ConvexElem : BodySetup->AggGeom.ConvexElems)
 		{
-			if (CollisionEnabledHasPhysics(ConvexElem.GetCollisionEnabled()))
+			if (FilterShape(ConvexElem))
 			{
 				FBox BBox = ConvexElem.ElemBox;
 
@@ -389,7 +421,7 @@ void UpdateAssetArrays(TConstArrayView<TComponentType*> Components, const FVecto
 		}
 		for (const FKBoxElem& BoxElem : BodySetup->AggGeom.BoxElems)
 		{
-			if (CollisionEnabledHasPhysics(BoxElem.GetCollisionEnabled()))
+			if (FilterShape(BoxElem))
 			{
 				if (InitializeStatics)
 				{
@@ -407,12 +439,12 @@ void UpdateAssetArrays(TConstArrayView<TComponentType*> Components, const FVecto
 
 		for (const FKSphereElem& SphereElem : BodySetup->AggGeom.SphereElems)
 		{
-			if (CollisionEnabledHasPhysics(SphereElem.GetCollisionEnabled()))
+			if (FilterShape(SphereElem))
 			{
 				if (InitializeStatics)
 				{
 					OutAssetArrays->ElementExtent[SphereIndex] = FVector4f(SphereElem.Radius, 0, 0, 0);
-					OutAssetArrays->MeshScale[BoxIndex] = FVector4f(CurrMeshScale.X, CurrMeshScale.Y, CurrMeshScale.Z, 0);
+					OutAssetArrays->MeshScale[SphereIndex] = FVector4f(CurrMeshScale.X, CurrMeshScale.Y, CurrMeshScale.Z, 0);
 					OutAssetArrays->PhysicsType[SphereIndex] = (SphereElem.GetCollisionEnabled() == ECollisionEnabled::QueryAndPhysics);
 					OutAssetArrays->ComponentIdIndex[SphereIndex] = ComponentIdIndex;
 				}
@@ -425,12 +457,12 @@ void UpdateAssetArrays(TConstArrayView<TComponentType*> Components, const FVecto
 
 		for (const FKSphylElem& CapsuleElem : BodySetup->AggGeom.SphylElems)
 		{
-			if (CollisionEnabledHasPhysics(CapsuleElem.GetCollisionEnabled()))
+			if (FilterShape(CapsuleElem))
 			{
 				if (InitializeStatics)
 				{
 					OutAssetArrays->ElementExtent[CapsuleIndex] = FVector4f(CapsuleElem.Radius, CapsuleElem.Length, 0, 0);
-					OutAssetArrays->MeshScale[BoxIndex] = FVector4f(CurrMeshScale.X, CurrMeshScale.Y, CurrMeshScale.Z, 0);
+					OutAssetArrays->MeshScale[CapsuleIndex] = FVector4f(CurrMeshScale.X, CurrMeshScale.Y, CurrMeshScale.Z, 0);
 					OutAssetArrays->PhysicsType[CapsuleIndex] = (CapsuleElem.GetCollisionEnabled() == ECollisionEnabled::QueryAndPhysics);
 					OutAssetArrays->ComponentIdIndex[CapsuleIndex] = ComponentIdIndex;
 				}
@@ -470,9 +502,13 @@ void UpdateAssetArrays(TConstArrayView<TComponentType*> Components, const FVecto
 			++BoxIndex;
 		}
 	};
-
+	
 	for (TComponentType* Component : Components)
-	{
+	{				
+		FBoxSphereBounds LocalBounds = static_cast<USceneComponent*>(Component)->GetLocalBounds();
+		FBoxSphereBounds WorldBounds = LocalBounds.TransformBy(Component->GetComponentTransform());
+		CombinedWorldBoundsBuilder += WorldBounds;		
+
 		ForEachBodySetup(Component, UpdateAssetPredicate);
 	}
 }
@@ -481,51 +517,55 @@ template<bool FirstStage>
 void RemapPreviousTransforms(
 	TConstArrayView<FNDIRigidMeshCollisionData::FComponentBodyCount> PreviousCounts,
 	TConstArrayView<FNDIRigidMeshCollisionData::FComponentBodyCount> CurrentCounts,
+	const FNDIRigidMeshCollisionElementOffset& PreviousOffsets,
+	const FNDIRigidMeshCollisionElementOffset& CurrentOffsets,
 	FNDIRigidMeshCollisionArrays* OutAssetArrays)
 {
-	const FNDIRigidMeshCollisionElementOffset& CurrentOffsets = OutAssetArrays->ElementOffsets;
-
-	uint32 BoxCount = 0;
-	uint32 SphereCount = 0;
-	uint32 CapsuleCount = 0;
-
-	auto CopyComponent = [&BoxCount, &SphereCount, &CapsuleCount]
-		(const TArray<FVector4f>& Src, TArray<FVector4f>& Dst, const FNDIRigidMeshCollisionElementOffset& Offsets, const FNDIRigidMeshCollisionData::FComponentBodyCount& BodyCounts) -> void
+	auto CopyComponent = []
+		(const TArray<FVector4f>& Src, TArray<FVector4f>& Dst, 
+			const uint32 SrcBoxCount, const uint32 SrcSphereCount, const uint32 SrcCapsuleCount,
+			const uint32 DstBoxCount, const uint32 DstSphereCount, const uint32 DstCapsuleCount,
+			const FNDIRigidMeshCollisionElementOffset& SrcOffsets, const FNDIRigidMeshCollisionElementOffset& DstOffsets,
+			const FNDIRigidMeshCollisionData::FComponentBodyCount& BodyCounts) -> void
 	{
-		const uint32 BoxStartIndex = 3 * (Offsets.BoxOffset + BoxCount);
+		const uint32 SrcBoxStartIndex = 3 * (SrcOffsets.BoxOffset + SrcBoxCount);
+		const uint32 DstBoxStartIndex = 3 * (DstOffsets.BoxOffset + DstBoxCount);
 		for (uint32 ElementIt = 0; ElementIt < 3 * BodyCounts.BoxCount; ++ElementIt)
 		{
-			Dst[BoxStartIndex + ElementIt] = Src[BoxStartIndex + ElementIt];
+			Dst[DstBoxStartIndex + ElementIt] = Src[SrcBoxStartIndex + ElementIt];
 		}
 
-		const uint32 SphereStartIndex = 3 * (Offsets.SphereOffset + SphereCount);
+		const uint32 SrcSphereStartIndex = 3 * (SrcOffsets.SphereOffset + SrcSphereCount);
+		const uint32 DstSphereStartIndex = 3 * (DstOffsets.SphereOffset + DstSphereCount);
 		for (uint32 ElementIt = 0; ElementIt < 3 * BodyCounts.SphereCount; ++ElementIt)
 		{
-			Dst[SphereStartIndex + ElementIt] = Src[SphereStartIndex + ElementIt];
+			Dst[DstSphereStartIndex + ElementIt] = Src[SrcSphereStartIndex + ElementIt];
 		}
 
-		const uint32 CapsuleStartIndex = 3 * (Offsets.CapsuleOffset + CapsuleCount);
+		const uint32 SrcCapsuleStartIndex = 3 * (SrcOffsets.CapsuleOffset + SrcCapsuleCount);
+		const uint32 DstCapsuleStartIndex = 3 * (DstOffsets.CapsuleOffset + DstCapsuleCount);
 		for (uint32 ElementIt = 0; ElementIt < 3 * BodyCounts.CapsuleCount; ++ElementIt)
 		{
-			Dst[CapsuleStartIndex + ElementIt] = Src[CapsuleStartIndex + ElementIt];
+			Dst[DstCapsuleStartIndex + ElementIt] = Src[SrcCapsuleStartIndex + ElementIt];
 		}
 	};
 
-	int32 PreviousIndex = 0;
+	uint32 CurrentBoxCount = 0;
+	uint32 CurrentSphereCount = 0;
+	uint32 CurrentCapsuleCount = 0;
+
 	for (const FNDIRigidMeshCollisionData::FComponentBodyCount& CurrentCount : CurrentCounts)
 	{
 		bool bPreviousValuesCopied = false;
 
+		uint32 PreviousBoxCount = 0;
+		uint32 PreviousSphereCount = 0;
+		uint32 PreviousCapsuleCount = 0;
+
+		int32 PreviousIndex = 0;
 		while (PreviousCounts.IsValidIndex(PreviousIndex) && !bPreviousValuesCopied)
 		{
 			const FNDIRigidMeshCollisionData::FComponentBodyCount& PreviousCount = PreviousCounts[PreviousIndex];
-
-			// skip through the previous components until we find a match
-			if (PreviousCount.ComponentHash < CurrentCount.ComponentHash)
-			{
-				++PreviousIndex;
-				continue;
-			}
 
 			if (PreviousCount.ComponentHash == CurrentCount.ComponentHash)
 			{
@@ -535,94 +575,164 @@ void RemapPreviousTransforms(
 
 				bPreviousValuesCopied = true;
 
+				// For the body in the current tick, we found a match in the previous tick transforms.  Copy the previous tick transforms (stored in CurrentTransform)
+				// over to PreviousTransform.  Note the indices for the transforms might differ between current and previous as bodies enter/leave the arrays
 				if (FirstStage)
 				{
-					CopyComponent(OutAssetArrays->CurrentTransform, OutAssetArrays->PreviousTransform, CurrentOffsets, CurrentCount);
-					CopyComponent(OutAssetArrays->CurrentInverse, OutAssetArrays->PreviousInverse, CurrentOffsets, CurrentCount);
+					const TArray<FVector4f>& Src = OutAssetArrays->CurrentTransform;
+					TArray<FVector4f>& Dst = OutAssetArrays->PreviousTransform;
+					const TArray<FVector4f>& SrcInverse = OutAssetArrays->CurrentInverse;
+					TArray<FVector4f>& DstInverse = OutAssetArrays->PreviousInverse;
+
+					CopyComponent(Src, Dst,
+						PreviousBoxCount, PreviousSphereCount, PreviousCapsuleCount,
+						CurrentBoxCount, CurrentSphereCount, CurrentCapsuleCount,
+						PreviousOffsets, CurrentOffsets,
+						CurrentCount);
+
+					CopyComponent(SrcInverse, DstInverse,
+						PreviousBoxCount, PreviousSphereCount, PreviousCapsuleCount,
+						CurrentBoxCount, CurrentSphereCount, CurrentCapsuleCount,
+						PreviousOffsets, CurrentOffsets,
+						CurrentCount);
 				}
+
+				break;
 			}
 
-			break;
+			++PreviousIndex;
+			PreviousBoxCount += PreviousCount.BoxCount;
+			PreviousSphereCount += PreviousCount.SphereCount;
+			PreviousCapsuleCount += PreviousCount.CapsuleCount;
 		}
 
-		// copy the defaults over to the previous
+		// body is found in current tick but not in previous tick, so copy current transforms to previous buffer using indices and offsets from the current tick
 		if (!bPreviousValuesCopied && !FirstStage)
 		{
-			CopyComponent(OutAssetArrays->CurrentTransform, OutAssetArrays->PreviousTransform, CurrentOffsets, CurrentCount);
-			CopyComponent(OutAssetArrays->CurrentInverse, OutAssetArrays->PreviousInverse, CurrentOffsets, CurrentCount);
+			CopyComponent(OutAssetArrays->CurrentTransform, OutAssetArrays->PreviousTransform,
+				CurrentBoxCount, CurrentSphereCount, CurrentCapsuleCount,
+				CurrentBoxCount, CurrentSphereCount, CurrentCapsuleCount,
+				CurrentOffsets, CurrentOffsets,
+				CurrentCount);
+
+			CopyComponent(OutAssetArrays->CurrentInverse, OutAssetArrays->PreviousInverse,
+				CurrentBoxCount, CurrentSphereCount, CurrentCapsuleCount,
+				CurrentBoxCount, CurrentSphereCount, CurrentCapsuleCount,
+				CurrentOffsets, CurrentOffsets,
+				CurrentCount);
 		}
 
-		BoxCount += CurrentCount.BoxCount;
-		SphereCount += CurrentCount.SphereCount;
-		CapsuleCount += CurrentCount.CapsuleCount;
+		CurrentBoxCount += CurrentCount.BoxCount;
+		CurrentSphereCount += CurrentCount.SphereCount;
+		CurrentCapsuleCount += CurrentCount.CapsuleCount;
 	}
 }
 
-void UpdateInternalArrays(
+bool UpdateInternalArrays(
+	const FNiagaraSystemInstance* SystemInstance,
 	TConstArrayView<UStaticMeshComponent*> StaticMeshView,
 	TConstArrayView<USkeletalMeshComponent*> SkeletalMeshView,
 	FVector LWCTile,
 	bool bFullUpdate,
 	TArray<FNDIRigidMeshCollisionData::FComponentBodyCount>& BodyCounts,
-	FNDIRigidMeshCollisionArrays* OutAssetArrays)
+	FNDIRigidMeshCollisionArrays* OutAssetArrays,
+	uint32& TotalBoxCount,
+	uint32& TotalSphereCount,
+	uint32& TotalCapsuleCount)
 {
-	if (OutAssetArrays != nullptr && OutAssetArrays->ElementOffsets.NumElements < OutAssetArrays->MaxPrimitives)
+	TotalBoxCount = 0;
+	TotalSphereCount = 0;
+	TotalCapsuleCount = 0;
+
+	if (OutAssetArrays == nullptr || OutAssetArrays->ElementOffsets.NumElements >= OutAssetArrays->MaxPrimitives)
 	{
-		// when we are in game and we don't need to worry about bodies changing for a given mesh component we can try to optimize
-		// the update by just targeting the dynamic elements (transforms) and using the original values as the previous run
+		return false;
+	}
+
+	// when we are in game and we don't need to worry about bodies changing for a given mesh component we can try to optimize
+	// the update by just targeting the dynamic elements (transforms) and using the original values as the previous run
 #if !WITH_EDITOR
-		if (!bFullUpdate)
-		{
-			// if we're updating, then copy over last frame's transforms before we generate new ones
-			Swap(OutAssetArrays->PreviousTransform, OutAssetArrays->CurrentTransform);
-			Swap(OutAssetArrays->PreviousInverse, OutAssetArrays->CurrentInverse);
-
-			uint32 BoxIndex = OutAssetArrays->ElementOffsets.BoxOffset;
-			uint32 SphereIndex = OutAssetArrays->ElementOffsets.SphereOffset;
-			uint32 CapsuleIndex = OutAssetArrays->ElementOffsets.CapsuleOffset;
-
-			UpdateAssetArrays<UStaticMeshComponent, false>(StaticMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex);
-			UpdateAssetArrays<USkeletalMeshComponent, false>(SkeletalMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex);
-
-			return;
-		}
-#endif
-
-		TArray<FNDIRigidMeshCollisionData::FComponentBodyCount> CurrentBodyCounts;
-
-		uint32 TotalBoxCount = 0;
-		uint32 TotalSphereCount = 0;
-		uint32 TotalCapsuleCount = 0;
-
-		CountCollisionPrimitives(StaticMeshView, CurrentBodyCounts, TotalBoxCount, TotalSphereCount, TotalCapsuleCount);
-		CountCollisionPrimitives(SkeletalMeshView, CurrentBodyCounts, TotalBoxCount, TotalSphereCount, TotalCapsuleCount);
-
-		if ((TotalBoxCount + TotalSphereCount + TotalCapsuleCount) >= OutAssetArrays->MaxPrimitives)
-		{
-			UE_LOG(LogRigidMeshCollision, Error, TEXT("Number of Collision DI primitives is higher than the %d limit.  Please increase it."), OutAssetArrays->MaxPrimitives);
-			return;
-		}
-
-		OutAssetArrays->ElementOffsets.BoxOffset = 0;
-		OutAssetArrays->ElementOffsets.SphereOffset = OutAssetArrays->ElementOffsets.BoxOffset + TotalBoxCount;
-		OutAssetArrays->ElementOffsets.CapsuleOffset = OutAssetArrays->ElementOffsets.SphereOffset + TotalSphereCount;
-		OutAssetArrays->ElementOffsets.NumElements = OutAssetArrays->ElementOffsets.CapsuleOffset + TotalCapsuleCount;
+	if (!bFullUpdate)
+	{
+		// if we're updating, then copy over last frame's transforms before we generate new ones
+		Swap(OutAssetArrays->PreviousTransform, OutAssetArrays->CurrentTransform);
+		Swap(OutAssetArrays->PreviousInverse, OutAssetArrays->CurrentInverse);
 
 		uint32 BoxIndex = OutAssetArrays->ElementOffsets.BoxOffset;
 		uint32 SphereIndex = OutAssetArrays->ElementOffsets.SphereOffset;
 		uint32 CapsuleIndex = OutAssetArrays->ElementOffsets.CapsuleOffset;
+		
+		OutAssetArrays->CombinedBBoxWorldMin = FVector3f(TNumericLimits<float>::Max());
+		OutAssetArrays->CombinedBBoxWorldMax = FVector3f(TNumericLimits<float>::Lowest());
 
-		// where possible PreviousTransform & PreviousInverse should be pulled from the current values of CurrentTransform &
-		// CurrentInverse based on the remapped entries
-		RemapPreviousTransforms<true>(BodyCounts, CurrentBodyCounts, OutAssetArrays);
+		FBoxSphereBounds::Builder CombinedWorldBoundsBuilder;
 
-		UpdateAssetArrays<UStaticMeshComponent, true>(StaticMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex);
-		UpdateAssetArrays<USkeletalMeshComponent, true>(SkeletalMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex);
+		UpdateAssetArrays<UStaticMeshComponent, true>(StaticMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex, CombinedWorldBoundsBuilder);
+		UpdateAssetArrays<USkeletalMeshComponent, true>(SkeletalMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex, CombinedWorldBoundsBuilder);
 
-		RemapPreviousTransforms<false>(BodyCounts, CurrentBodyCounts, OutAssetArrays);
+		const FBoxSphereBounds CombinedWorldBounds(CombinedWorldBoundsBuilder);
+		const FBox CombinedWorldBoundingBox = CombinedWorldBounds.GetBox();
 
-		BodyCounts = MoveTemp(CurrentBodyCounts);
+		OutAssetArrays->CombinedBBoxWorldMin = (FVector3f)CombinedWorldBoundingBox.Min;
+		OutAssetArrays->CombinedBBoxWorldMax = (FVector3f)CombinedWorldBoundingBox.Max;
+
+		FNiagaraLWCConverter LWCConverter = SystemInstance->GetLWCConverter();
+		OutAssetArrays->CombinedBBoxWorldMin = LWCConverter.ConvertWorldToSimulationVector(CombinedWorldBoundingBox.Min);
+		OutAssetArrays->CombinedBBoxWorldMax = LWCConverter.ConvertWorldToSimulationVector(CombinedWorldBoundingBox.Max);
+
+		return true;
 	}
+#endif
+
+	TArray<FNDIRigidMeshCollisionData::FComponentBodyCount> CurrentBodyCounts;
+
+	CountCollisionPrimitives(StaticMeshView, CurrentBodyCounts, TotalBoxCount, TotalSphereCount, TotalCapsuleCount);
+	CountCollisionPrimitives(SkeletalMeshView, CurrentBodyCounts, TotalBoxCount, TotalSphereCount, TotalCapsuleCount);
+
+	if ((TotalBoxCount + TotalSphereCount + TotalCapsuleCount) >= OutAssetArrays->MaxPrimitives)
+	{
+		return false;
+	}
+
+	FNDIRigidMeshCollisionElementOffset PreviousElementOffsets = OutAssetArrays->ElementOffsets;
+
+	OutAssetArrays->ElementOffsets.BoxOffset = 0;
+	OutAssetArrays->ElementOffsets.SphereOffset = OutAssetArrays->ElementOffsets.BoxOffset + TotalBoxCount;
+	OutAssetArrays->ElementOffsets.CapsuleOffset = OutAssetArrays->ElementOffsets.SphereOffset + TotalSphereCount;
+	OutAssetArrays->ElementOffsets.NumElements = OutAssetArrays->ElementOffsets.CapsuleOffset + TotalCapsuleCount;
+
+	uint32 BoxIndex = OutAssetArrays->ElementOffsets.BoxOffset;
+	uint32 SphereIndex = OutAssetArrays->ElementOffsets.SphereOffset;
+	uint32 CapsuleIndex = OutAssetArrays->ElementOffsets.CapsuleOffset;
+
+	// where possible PreviousTransform & PreviousInverse should be pulled from the current values of CurrentTransform &
+	// CurrentInverse based on the remapped entries
+	RemapPreviousTransforms<true>(BodyCounts, CurrentBodyCounts, PreviousElementOffsets, OutAssetArrays->ElementOffsets, OutAssetArrays);
+
+	// Initialize world bounds
+	OutAssetArrays->CombinedBBoxWorldMin = FVector3f(TNumericLimits<float>::Max());
+	OutAssetArrays->CombinedBBoxWorldMax = FVector3f(TNumericLimits<float>::Lowest());
+
+	FBoxSphereBounds::Builder CombinedWorldBoundsBuilder;
+
+	UpdateAssetArrays<UStaticMeshComponent, true>(StaticMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex, CombinedWorldBoundsBuilder);
+	UpdateAssetArrays<USkeletalMeshComponent, true>(SkeletalMeshView, LWCTile, OutAssetArrays, BoxIndex, SphereIndex, CapsuleIndex, CombinedWorldBoundsBuilder);
+
+	const FBoxSphereBounds CombinedWorldBounds(CombinedWorldBoundsBuilder);
+	const FBox CombinedWorldBoundingBox = CombinedWorldBounds.GetBox();
+
+	OutAssetArrays->CombinedBBoxWorldMin = (FVector3f) CombinedWorldBoundingBox.Min;
+	OutAssetArrays->CombinedBBoxWorldMax = (FVector3f) CombinedWorldBoundingBox.Max;
+
+	FNiagaraLWCConverter LWCConverter = SystemInstance->GetLWCConverter();
+	OutAssetArrays->CombinedBBoxWorldMin = LWCConverter.ConvertWorldToSimulationVector(CombinedWorldBoundingBox.Min);
+	OutAssetArrays->CombinedBBoxWorldMax = LWCConverter.ConvertWorldToSimulationVector(CombinedWorldBoundingBox.Max);
+			
+	RemapPreviousTransforms<false>(BodyCounts, CurrentBodyCounts, PreviousElementOffsets, OutAssetArrays->ElementOffsets, OutAssetArrays);
+
+	BodyCounts = MoveTemp(CurrentBodyCounts);
+
+	return true;
 }
 
 static bool SystemHasFindActorsFunction(UNiagaraSystem* System)
@@ -770,6 +880,8 @@ void FNDIRigidMeshCollisionData::Init(int32 MaxNumPrimitives)
 		ReleaseBuffers();
 	}
 
+	MeshBodyCounts.Empty();
+
 	bRequiresFullUpdate = true;
 }
 
@@ -823,11 +935,6 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			StaticMeshes.Sort(SortPredicateByTypeHash);
 			SkeletalMeshes.Sort(SortPredicateByTypeHash);
 
-			auto HashComponentObject = [](const UMeshComponent* MeshComponent) -> uint32
-			{
-				return GetTypeHash(MeshComponent);
-			};
-
 			auto AccumulateHash = [](uint32 Lhs, uint32 Rhs) -> uint32
 			{
 				return HashCombine(Lhs, Rhs);
@@ -836,8 +943,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			// generate a hash with the collected components so that we can see if on subsequent frames we
 			// have a different collection, in which case we'll want to do a full rebuild of the array of transforms
 			uint32 NewHashValue = 0;
-			NewHashValue = Algo::TransformAccumulate(StaticMeshes, HashComponentObject, NewHashValue, AccumulateHash);
-			NewHashValue = Algo::TransformAccumulate(SkeletalMeshes, HashComponentObject, NewHashValue, AccumulateHash);
+
+			NewHashValue = Algo::TransformAccumulate(StaticMeshes, [](const UStaticMeshComponent* MeshComponent) -> uint32 { return MeshComponentHash(MeshComponent); }, NewHashValue, AccumulateHash);
+			NewHashValue = Algo::TransformAccumulate(SkeletalMeshes, [](const USkeletalMeshComponent* MeshComponent) -> uint32 { return MeshComponentHash(MeshComponent); }, NewHashValue, AccumulateHash);
 
 			if (NewHashValue != ComponentCollectionHash)
 			{
@@ -849,16 +957,47 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		TConstArrayView<UStaticMeshComponent*> StaticMeshView = MakeArrayView(StaticMeshes.GetData(), StaticMeshes.Num());
 		TConstArrayView<USkeletalMeshComponent*> SkeletalMeshView = MakeArrayView(SkeletalMeshes.GetData(), SkeletalMeshes.Num());
 
-		UpdateInternalArrays(
+		uint32 TotalBoxCount = 0;
+		uint32 TotalSphereCount = 0;
+		uint32 TotalCapsuleCount = 0;
+
+		const bool bArraysUpdated = UpdateInternalArrays(
+			SystemInstance,
 			StaticMeshView,
 			SkeletalMeshView,
 			FVector(SystemInstance->GetLWCTile()),
 			bRequiresFullUpdate,
 			MeshBodyCounts,
-			AssetArrays.Get());
-	}
+			AssetArrays.Get(),
+			TotalBoxCount,
+			TotalSphereCount,
+			TotalCapsuleCount);
 
-	bRequiresFullUpdate = false;
+		if (bArraysUpdated)
+		{
+			bRequiresFullUpdate = false;
+			bExceedingComponentLimits = false;
+		}
+		else
+		{
+			if (TotalBoxCount + TotalSphereCount + TotalCapsuleCount > AssetArrays->MaxPrimitives)
+			{
+				if (!bExceedingComponentLimits)
+				{
+					UE_LOG(LogRigidMeshCollision, Warning, TEXT("Number of Collision DI primitives (%d boxes, %d spheres, %d capsules) is higher than the %d limit for System[%s].  Please increase it."),
+						TotalBoxCount, TotalSphereCount, TotalCapsuleCount,
+						AssetArrays->MaxPrimitives,
+						*GetNameSafe(SystemInstance->GetSystem()));
+
+					bExceedingComponentLimits = true;
+				}
+			}
+		}
+	}
+	else
+	{
+		bRequiresFullUpdate = false;
+	}
 }
 
 //------------------------------------------------------------------------------------------------------------
@@ -879,6 +1018,9 @@ struct FNDIRigidMeshCollisionProxy : public FNiagaraDataInterfaceProxy
 		TArray<FPrimitiveComponentId> UniqueComponentIds;
 
 		FNDIRigidMeshCollisionBuffer* AssetBuffer = nullptr;
+
+		FVector3f CombinedBBoxWorldMin;
+		FVector3f CombinedBBoxWorldMax;
 	};
 
 	void RemoveInstance(const FNiagaraSystemInstanceID& Instance)
@@ -995,12 +1137,19 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::DrawDebugHud(FNDIDrawDebugHud
 	const uint32 SphereCount = ElementOffsets.CapsuleOffset - ElementOffsets.SphereOffset;
 	const uint32 CapsuleCount = ElementOffsets.NumElements - ElementOffsets.CapsuleOffset;
 
-	DebugHudContext.GetOutputString().Appendf(TEXT("Boxes(%d) Spheres(%d) Capsules(%d)"), BoxCount, SphereCount, CapsuleCount);
+	if (InstanceData_GT->bExceedingComponentLimits)
+	{
+		DebugHudContext.GetOutputString().Appendf(TEXT("EXCEEDED COMPONENT LIMIT - %d"), InstanceData_GT->AssetArrays->MaxPrimitives);
+	}
+	else
+	{
+		DebugHudContext.GetOutputString().Appendf(TEXT("Boxes(%d) Spheres(%d) Capsules(%d)"), BoxCount, SphereCount, CapsuleCount);
+	}
 
-	auto GetCurrentTransform = [&](int32 ElementIndex)
+	auto GetTransformFromArray = [&](TArray<FVector4f> &TransformArray, int32 ElementIndex)
 	{
 		const uint32 ElementOffset = 3 * ElementIndex;
-		FVector4f* TransformVec = InstanceData_GT->AssetArrays->CurrentTransform.GetData() + ElementOffset;
+		FVector4f* TransformVec = TransformArray.GetData() + ElementOffset;
 
 		FMatrix ElementMatrix;
 		ElementMatrix.SetIdentity();
@@ -1018,53 +1167,61 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::DrawDebugHud(FNDIDrawDebugHud
 
 	if (DebugHudContext.IsVerbose())
 	{
-		UCanvas* Canvas = DebugHudContext.GetCanvas();
+		const UWorld* World = DebugHudContext.GetWorld();
 
-		// the DrawDebugCanvas* functions don't reasoanbly handle the near clip plane (both in terms of clipping and in terms of
-		// objects being behind the camera); so we introduce this culling behavior to work around it
-		auto ShouldClip = [&](UCanvas* Canvas, const FMatrix& Transform, const FBoxSphereBounds& Bounds)
-		{
-			const FVector Origin = Transform.TransformPosition(Bounds.Origin);
-			return (Canvas->Project(Origin).GetMin() < UE_KINDA_SMALL_NUMBER);
-		};
+		TArray<FVector4f>& CurrentTransformArray = InstanceData_GT->AssetArrays->CurrentTransform;
+		TArray<FVector4f>& PreviousTransformArray = InstanceData_GT->AssetArrays->PreviousTransform;
+
+		// Inclusive world bounds for DI
+		FVector3f Center = (InstanceData_GT->AssetArrays->CombinedBBoxWorldMin + InstanceData_GT->AssetArrays->CombinedBBoxWorldMax) * .5;
+		FVector3f HalfExtent = (InstanceData_GT->AssetArrays->CombinedBBoxWorldMax - InstanceData_GT->AssetArrays->CombinedBBoxWorldMin) * .5;
+		DrawDebugBox(World, (FVector) Center, (FVector) HalfExtent, FQuat::Identity, FColor::Purple);
 
 		// Boxes
 		for (uint32 BoxIt = 0; BoxIt < BoxCount; ++BoxIt)
 		{
 			const FVector3f HalfBoxExtent = 0.5f * InstanceData_GT->AssetArrays->ElementExtent[ElementOffsets.BoxOffset + BoxIt];
-			const FBox Box(-HalfBoxExtent, HalfBoxExtent);
-			const FMatrix CurrentTransform = GetCurrentTransform(ElementOffsets.BoxOffset + BoxIt);
-			if (!ShouldClip(Canvas, CurrentTransform, FSphere(FVector::ZeroVector, HalfBoxExtent.Size())))
-			{
-				DrawDebugCanvasWireBox(Canvas, CurrentTransform, Box, FColor::Blue);
-			}
+			const FMatrix CurrentTransform = GetTransformFromArray(CurrentTransformArray, ElementOffsets.BoxOffset + BoxIt);
+			DrawDebugBox(World, CurrentTransform.TransformPosition(FVector::ZeroVector), FVector(HalfBoxExtent), CurrentTransform.Rotator().Quaternion(), FColor::Blue);			
+
+			const FMatrix PrevTransform = GetTransformFromArray(PreviousTransformArray, ElementOffsets.BoxOffset + BoxIt);
+			DrawDebugBox(World, PrevTransform.TransformPosition(FVector::ZeroVector), FVector(HalfBoxExtent), PrevTransform.Rotator().Quaternion(), FColor::Red);
 		}
 
 		// Spheres
 		for (uint32 SphereIt = 0; SphereIt < SphereCount; ++SphereIt)
 		{
 			const float Radius = InstanceData_GT->AssetArrays->ElementExtent[ElementOffsets.SphereOffset + SphereIt].X;
-			const FMatrix CurrentTransform = GetCurrentTransform(ElementOffsets.SphereOffset + SphereIt);
-			if (!ShouldClip(Canvas, CurrentTransform, FSphere(FVector::ZeroVector, Radius)))
-			{
-				DrawDebugCanvasWireSphere(Canvas, CurrentTransform.TransformPosition(FVector::ZeroVector), FColor::Blue, Radius, 20);
-			}
+			const FMatrix CurrentTransform = GetTransformFromArray(CurrentTransformArray, ElementOffsets.SphereOffset + SphereIt);
+			DrawDebugSphere(World, CurrentTransform.TransformPosition(FVector::ZeroVector), Radius, 20, FColor::Blue);
+
+			const FMatrix PrevTransform = GetTransformFromArray(PreviousTransformArray, ElementOffsets.SphereOffset + SphereIt);
+			DrawDebugSphere(World, PrevTransform.TransformPosition(FVector::ZeroVector), Radius, 20, FColor::Red);
 		}
 
 		// Capsules
 		for (uint32 CapsuleIt = 0; CapsuleIt < CapsuleCount; ++CapsuleIt)
 		{
 			const FVector2f RadiusLength(InstanceData_GT->AssetArrays->ElementExtent[ElementOffsets.CapsuleOffset + CapsuleIt]);
-			const FMatrix CurrentTransform = GetCurrentTransform(ElementOffsets.CapsuleOffset + CapsuleIt);
-			const float HalfTotalLength = RadiusLength.X + 0.5f * RadiusLength.Y;
-			if (!ShouldClip(Canvas, CurrentTransform, FSphere(FVector::ZeroVector, HalfTotalLength)))
-			{
-				DrawDebugCanvasCapsule(Canvas, CurrentTransform, HalfTotalLength, RadiusLength.X, FColor::Blue);
-			}
+			const FMatrix CurrentTransform = GetTransformFromArray(CurrentTransformArray, ElementOffsets.CapsuleOffset + CapsuleIt);
+			DrawDebugCapsule(World, CurrentTransform.TransformPosition(FVector::ZeroVector), RadiusLength.Y * 0.5f, RadiusLength.X, CurrentTransform.Rotator().Quaternion(), FColor::Blue);
+
+			const FMatrix PrevTransform = GetTransformFromArray(PreviousTransformArray, ElementOffsets.CapsuleOffset + CapsuleIt);
+			DrawDebugCapsule(World, PrevTransform.TransformPosition(FVector::ZeroVector), RadiusLength.Y * 0.5f, RadiusLength.X, CurrentTransform.Rotator().Quaternion(), FColor::Red);
 		}
 
 		if (!InstanceData_GT->ExplicitActors.IsEmpty() || !InstanceData_GT->FoundActors.IsEmpty())
 		{
+			UCanvas* Canvas = DebugHudContext.GetCanvas();
+
+			// the DrawDebugCanvas* functions don't reasoanbly handle the near clip plane (both in terms of clipping and in terms of
+			// objects being behind the camera); so we introduce this culling behavior to work around it
+			auto ShouldClip = [Canvas](const FMatrix& Transform, const FBoxSphereBounds& Bounds)
+			{
+				const FVector Origin = Transform.TransformPosition(Bounds.Origin);
+				return (Canvas->Project(Origin).GetMin() < UE_KINDA_SMALL_NUMBER);
+			};
+
 			const UFont* Font = GEngine->GetMediumFont();
 			Canvas->SetDrawColor(FColor::White);
 
@@ -1077,10 +1234,9 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::DrawDebugHud(FNDIDrawDebugHud
 					Actor->GetActorBounds(true, ActorOrigin, ActorBoundsExtent);
 
 					const FMatrix CurrentTransform = FTranslationMatrix(ActorOrigin);
-					if (!ShouldClip(Canvas, CurrentTransform, FSphere(FVector::ZeroVector, ActorBoundsExtent.Size())))
+					DrawDebugBox(World, CurrentTransform.TransformPosition(FVector::ZeroVector), ActorBoundsExtent, FQuat::Identity, FColor::Yellow);
+					if (!ShouldClip(CurrentTransform, FSphere(FVector::ZeroVector, ActorBoundsExtent.Size())))
 					{
-						DrawDebugCanvasWireBox(Canvas, CurrentTransform, FBox(-ActorBoundsExtent, ActorBoundsExtent), FColor::Yellow);
-
 						FString ActorLabel;
 #if WITH_EDITOR
 						ActorLabel = Actor->GetActorLabel();
@@ -1221,6 +1377,7 @@ bool UNiagaraDataInterfaceRigidMeshCollisionQuery::CopyToInternal(UNiagaraDataIn
 	OtherTyped->SourceActors = SourceActors;
 	OtherTyped->OnlyUseMoveable = OnlyUseMoveable;
 	OtherTyped->UseComplexCollisions = UseComplexCollisions;
+	OtherTyped->bFilterByObjectType = bFilterByObjectType;
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	OtherTyped->GlobalSearchAllowed = GlobalSearchAllowed;
 	OtherTyped->GlobalSearchForced = GlobalSearchForced;
@@ -1244,6 +1401,7 @@ bool UNiagaraDataInterfaceRigidMeshCollisionQuery::Equals(const UNiagaraDataInte
 		&& (OtherTyped->SourceActors == SourceActors)
 		&& (OtherTyped->OnlyUseMoveable == OnlyUseMoveable)
 		&& (OtherTyped->UseComplexCollisions == UseComplexCollisions)
+		&& (OtherTyped->bFilterByObjectType == bFilterByObjectType)
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		&& (OtherTyped->GlobalSearchAllowed == GlobalSearchAllowed)
 		&& (OtherTyped->GlobalSearchForced == GlobalSearchForced)
@@ -1277,7 +1435,8 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::PostLoad()
 #endif
 }
 
-void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIRigidMeshCollisionLocal;
 
@@ -1342,6 +1501,34 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetFunctions(TArray<FNiagaraF
 	}
 	{
 		FNiagaraFunctionSignature Sig;
+		Sig.Name = GetNumElementsName;
+		Sig.SetDescription(LOCTEXT("GetNumElementsNameDescription", "Returns the number of primitive elements for the collection of static meshes the DI represents."));
+		Sig.SetFunctionVersion(FNiagaraRigidMeshCollisionDIFunctionVersion::LatestVersion);
+		Sig.bSupportsGPU = true;
+		Sig.bSupportsCPU = true;
+		Sig.bMemberFunction = true;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Collision DI")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Num Elements")));
+
+		OutFunctions.Add(Sig);
+	}
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = IsWorldPositionInsideCombinedBoundsName;
+		Sig.SetDescription(LOCTEXT("IsWorldPositionInsideCombinedBoundsDescription", "Returns true if the query point is inside the bounding box of all the actors"));
+		Sig.SetFunctionVersion(FNiagaraRigidMeshCollisionDIFunctionVersion::LatestVersion);
+		Sig.bSupportsGPU = true;
+		Sig.bSupportsCPU = true;
+		Sig.bMemberFunction = true;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Collision DI")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("World Position")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("IsInside")));
+
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
 		Sig.Name = GetClosestPointName;
 		Sig.SetDescription(LOCTEXT("GetClosestPointDescription", "Given a world space position, computes the static mesh's closest point. Also returns normal and velocity for that point."));
 		Sig.SetFunctionVersion(FNiagaraRigidMeshCollisionDIFunctionVersion::LatestVersion);
@@ -1359,6 +1546,24 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetFunctions(TArray<FNiagaraF
 
 		OutFunctions.Add(Sig);
 	}
+
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = GetClosestPointSimpleName;
+		Sig.SetDescription(LOCTEXT("GetClosestPointSimpleDescription", "Given a world space position, computes the static mesh's closest point. Also returns normal and velocity for that point."));
+		Sig.SetFunctionVersion(FNiagaraRigidMeshCollisionDIFunctionVersion::LatestVersion);
+		Sig.bSupportsGPU = true;
+		Sig.bSupportsCPU = false;
+		Sig.bMemberFunction = true;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Collision DI")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("World Position")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Delta Time")));	
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Closest Distance")));		
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Closest Velocity")));
+
+		OutFunctions.Add(Sig);
+	}
+
 	{
 		FNiagaraFunctionSignature Sig;
 		Sig.Name = GetClosestElementName;
@@ -1389,6 +1594,25 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetFunctions(TArray<FNiagaraF
 		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Element Index")));
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("Closest Position")));
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Closest Normal")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Closest Velocity")));
+
+		OutFunctions.Add(Sig);
+	}
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = GetElementPointMeshDistanceFieldNoNormalName;
+		Sig.SetDescription(LOCTEXT("GetClosestElementPointMeshDistanceFieldNoNormalDescription", "Given a world space position and an element index, computes the static mesh's closest point. Also returns normal and velocity for that point."));
+		Sig.SetFunctionVersion(FNiagaraRigidMeshCollisionDIFunctionVersion::LatestVersion);
+		Sig.bSupportsGPU = true;
+		Sig.bSupportsCPU = false;
+		Sig.bMemberFunction = true;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Collision DI")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("World Position")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Delta Time")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Time Fraction")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(FNiagaraTypeDefinition::GetFloatDef()), TEXT("MaxDistance")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Element Index")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Closest Distance")));		
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Closest Velocity")));
 
 		OutFunctions.Add(Sig);
@@ -1487,8 +1711,11 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetFunctions(TArray<FNiagaraF
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceRigidMeshCollisionQuery, FindActorsCPU);
+DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceRigidMeshCollisionQuery, GetNumElementsCPU);
+DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceRigidMeshCollisionQuery, IsWorldPositionInsideCombinedBoundsCPU);
 
 void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {
@@ -1497,6 +1724,14 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetVMExternalFunction(const F
 	if (BindingInfo.Name == FindActorsName)
 	{
 		NDI_FUNC_BINDER(UNiagaraDataInterfaceRigidMeshCollisionQuery, FindActorsCPU)::Bind(this, OutFunc);
+	}
+	else if (BindingInfo.Name == GetNumElementsName)
+	{
+		NDI_FUNC_BINDER(UNiagaraDataInterfaceRigidMeshCollisionQuery, GetNumElementsCPU)::Bind(this, OutFunc);
+	}
+	else if (BindingInfo.Name == IsWorldPositionInsideCombinedBoundsName)
+	{
+		NDI_FUNC_BINDER(UNiagaraDataInterfaceRigidMeshCollisionQuery, IsWorldPositionInsideCombinedBoundsCPU)::Bind(this, OutFunc);
 	}
 	else
 	{
@@ -1513,9 +1748,13 @@ bool UNiagaraDataInterfaceRigidMeshCollisionQuery::GetFunctionHLSL(const FNiagar
 	if ((FunctionInfo.DefinitionName == GetNumBoxesName) ||
 		(FunctionInfo.DefinitionName == GetNumCapsulesName) ||
 		(FunctionInfo.DefinitionName == GetNumSpheresName) ||
+		(FunctionInfo.DefinitionName == GetNumElementsName) ||
+		(FunctionInfo.DefinitionName == IsWorldPositionInsideCombinedBoundsName) ||
 		(FunctionInfo.DefinitionName == GetClosestPointName) ||
+		(FunctionInfo.DefinitionName == GetClosestPointSimpleName) ||		
 		(FunctionInfo.DefinitionName == GetClosestElementName) ||
 		(FunctionInfo.DefinitionName == GetElementPointName) ||
+		(FunctionInfo.DefinitionName == GetElementPointMeshDistanceFieldNoNormalName) ||
 		(FunctionInfo.DefinitionName == GetElementDistanceName) ||
 		(FunctionInfo.DefinitionName == GetClosestDistanceName) ||
 		(FunctionInfo.DefinitionName == GetClosestPointMeshDistanceFieldName) ||
@@ -1549,6 +1788,12 @@ bool UNiagaraDataInterfaceRigidMeshCollisionQuery::UpgradeFunctionCall(FNiagaraF
 			bChanged = true;
 		}
 		if (FunctionSignature.Name == GetElementPointName && ensure(FunctionSignature.Inputs.Num() == 5) && ensure(FunctionSignature.Outputs.Num() == 3))
+		{
+			FunctionSignature.Inputs[1].SetType(FNiagaraTypeDefinition::GetPositionDef());
+			FunctionSignature.Outputs[0].SetType(FNiagaraTypeDefinition::GetPositionDef());
+			bChanged = true;
+		}
+		if (FunctionSignature.Name == GetElementPointMeshDistanceFieldNoNormalName && ensure(FunctionSignature.Inputs.Num() == 5) && ensure(FunctionSignature.Outputs.Num() == 2))
 		{
 			FunctionSignature.Inputs[1].SetType(FNiagaraTypeDefinition::GetPositionDef());
 			FunctionSignature.Outputs[0].SetType(FNiagaraTypeDefinition::GetPositionDef());
@@ -1691,6 +1936,9 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::SetShaderParameters(const FNi
 		ShaderParameters->ElementOffsets.W = ProxyData->ElementOffsets.NumElements;
 
 		bBindDistanceFieldData = true;
+
+		ShaderParameters->CombinedBBoxWorldMin = ProxyData->CombinedBBoxWorldMin;
+		ShaderParameters->CombinedBBoxWorldMax = ProxyData->CombinedBBoxWorldMax;
 	}
 	else
 	{
@@ -1705,6 +1953,9 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::SetShaderParameters(const FNi
 		ShaderParameters->CurrentOffset = 0;
 		ShaderParameters->PreviousOffset = 0;
 		ShaderParameters->ElementOffsets = FUintVector4(0, 0, 0, 0);
+
+		ShaderParameters->CombinedBBoxWorldMin = FVector3f(0, 0, 0);
+		ShaderParameters->CombinedBBoxWorldMax = FVector3f(0, 0, 0);
 	}
 
 	if (bDistanceFieldDataBound)
@@ -1771,6 +2022,9 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::ProvidePerInstanceDataForRend
 			RenderThreadData->UniqueComponentIds = GameThreadData->AssetArrays->UniqueCompnentId;
 			RenderThreadData->MaxPrimitiveCount = ElementCount;
 			RenderThreadData->AssetBuffer = GameThreadData->AssetBuffer;
+
+			RenderThreadData->CombinedBBoxWorldMin = GameThreadData->AssetArrays->CombinedBBoxWorldMin;
+			RenderThreadData->CombinedBBoxWorldMax = GameThreadData->AssetArrays->CombinedBBoxWorldMax;
 		}
 	}
 	check(Proxy);
@@ -1833,7 +2087,6 @@ bool UNiagaraDataInterfaceRigidMeshCollisionQuery::FindActors(UWorld* World, FND
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(NiagaraRigidMeshCollisionQuery), UseComplexCollisions);
 
 		// it is not clear the best strategy for filtering out results between ByObjectType and ByChannel.  For now we're going to preserve existing behavior
-		constexpr bool bFilterByObjectType = false;
 		if (bFilterByObjectType)
 		{
 			FCollisionObjectQueryParams ObjectParams;
@@ -1936,6 +2189,52 @@ void UNiagaraDataInterfaceRigidMeshCollisionQuery::FindActorsCPU(FVectorVMExtern
 	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 	{
 		ActorsChangedParam.SetAndAdvance(false);
+	}
+}
+
+void UNiagaraDataInterfaceRigidMeshCollisionQuery::GetNumElementsCPU(FVectorVMExternalFunctionContext& Context)
+{
+	VectorVM::FUserPtrHandler<FNDIRigidMeshCollisionData> InstanceData(Context);
+
+	FNDIOutputParam<int32> NumElementsParam(Context);
+
+	if (InstanceData->SystemInstance != nullptr && InstanceData->AssetArrays != nullptr)
+	{
+		NumElementsParam.SetAndAdvance(InstanceData->AssetArrays->ElementOffsets.NumElements);
+	}
+	else
+	{
+		NumElementsParam.SetAndAdvance(0);
+	}
+}
+
+void UNiagaraDataInterfaceRigidMeshCollisionQuery::IsWorldPositionInsideCombinedBoundsCPU(FVectorVMExternalFunctionContext& Context)
+{
+	VectorVM::FUserPtrHandler<FNDIRigidMeshCollisionData> InstanceData(Context);
+	
+	FNDIInputParam<FNiagaraPosition> WorldPositionParam(Context);
+	FNDIOutputParam<bool> IsInsideParam(Context);
+
+	if (InstanceData->SystemInstance != nullptr && InstanceData->AssetArrays != nullptr)
+	{
+		FNiagaraPosition WorldPosition = WorldPositionParam.GetAndAdvance();
+
+		FNiagaraLWCConverter LWCConverter = InstanceData->SystemInstance->GetLWCConverter();
+		const FVector ConvertedWorldPosition = LWCConverter.ConvertSimulationPositionToWorld(WorldPosition);
+
+		const bool IsInside =
+			ConvertedWorldPosition.X >= InstanceData->AssetArrays->CombinedBBoxWorldMin.X &&
+			ConvertedWorldPosition.Y >= InstanceData->AssetArrays->CombinedBBoxWorldMin.Y &&
+			ConvertedWorldPosition.Z >= InstanceData->AssetArrays->CombinedBBoxWorldMin.Z &&
+			ConvertedWorldPosition.X <= InstanceData->AssetArrays->CombinedBBoxWorldMax.X &&
+			ConvertedWorldPosition.Y <= InstanceData->AssetArrays->CombinedBBoxWorldMax.Y &&
+			ConvertedWorldPosition.Z <= InstanceData->AssetArrays->CombinedBBoxWorldMax.Z;
+
+		IsInsideParam.SetAndAdvance(IsInside);
+	}
+	else
+	{
+		IsInsideParam.SetAndAdvance(false);
 	}
 }
 

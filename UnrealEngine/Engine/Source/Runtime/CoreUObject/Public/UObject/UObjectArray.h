@@ -8,8 +8,15 @@
 
 #include "HAL/ThreadSafeCounter.h"
 #include "Containers/LockFreeList.h"
-#include "UObject/ObjectMacros.h"
+#include "UObject/GarbageCollectionGlobals.h"
 #include "UObject/UObjectBase.h"
+
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+namespace Verse
+{
+	struct VCell;
+}
+#endif
 
 /**
 * Controls whether the number of available elements is being tracked in the ObjObjects array.
@@ -29,10 +36,14 @@ struct
 #endif
 	FUObjectItem
 {
+	friend class FUObjectArray;
+
 	// Pointer to the allocated object
 	class UObjectBase* Object;
-	// Internal flags
+private:
+	// Internal flags. These can only be changed via Set* and Clear* functions
 	int32 Flags;
+public:
 	// UObject Owner Cluster Index
 	int32 ClusterRootIndex;	
 	// Weak Object Pointer Serial number associated with the object
@@ -101,7 +112,7 @@ struct
 
 	FORCEINLINE void SetFlags(EInternalObjectFlags FlagsToSet)
 	{
-		check((int32(FlagsToSet) & ~int32(EInternalObjectFlags::AllFlags)) == 0);
+		check((int32(FlagsToSet) & ~int32(EInternalObjectFlags_AllFlags)) == 0);
 		ThisThreadAtomicallySetFlag(FlagsToSet);
 	}
 
@@ -112,16 +123,16 @@ struct
 
 	FORCEINLINE void ClearFlags(EInternalObjectFlags FlagsToClear)
 	{
-		check((int32(FlagsToClear) & ~int32(EInternalObjectFlags::AllFlags)) == 0);
+		check((int32(FlagsToClear) & ~int32(EInternalObjectFlags_AllFlags)) == 0);
 		ThisThreadAtomicallyClearedFlag(FlagsToClear);
 	}
 
 	/**
-	 * Uses atomics to clear the specified flag(s).
+	 * Uses atomics to clear the specified flag(s). GC internal version
 	 * @param FlagsToClear
 	 * @return True if this call cleared the flag, false if it has been cleared by another thread.
 	 */
-	FORCEINLINE bool ThisThreadAtomicallyClearedFlag(EInternalObjectFlags FlagToClear)
+	FORCEINLINE bool ThisThreadAtomicallyClearedFlag_ForGC(EInternalObjectFlags FlagToClear)
 	{
 		static_assert(sizeof(int32) == sizeof(Flags), "Flags must be 32-bit for atomics.");
 		bool bIChangedIt = false;
@@ -142,7 +153,30 @@ struct
 		return bIChangedIt;
 	}
 
-	FORCEINLINE bool ThisThreadAtomicallySetFlag(EInternalObjectFlags FlagToSet)
+	/**
+	 * Uses atomics to clear the specified flag(s).
+	 * @param FlagsToClear
+	 * @return True if this call cleared the flag, false if it has been cleared by another thread.
+	 */
+	FORCEINLINE bool ThisThreadAtomicallyClearedFlag(EInternalObjectFlags FlagToClear)
+	{
+		FlagToClear &= ~UE::GC::GReachableObjectFlag; // reachability bit can only be cleared by GC through *_ForGC functions
+		if (!!(FlagToClear & EInternalObjectFlags_RootFlags))
+		{
+			return ClearRootFlags(FlagToClear);
+		}
+		else
+		{
+			return ThisThreadAtomicallyClearedFlag_ForGC(FlagToClear);
+		}
+	}
+
+	/**
+	 * Uses atomics to set the specified flag(s). GC internal version.
+	 * @param FlagToSet
+	 * @return True if this call set the flag, false if it has been set by another thread.
+	 */
+	FORCEINLINE bool ThisThreadAtomicallySetFlag_ForGC(EInternalObjectFlags FlagToSet)
 	{
 		static_assert(sizeof(int32) == sizeof(Flags), "Flags must be 32-bit for atomics.");
 		bool bIChangedIt = false;
@@ -163,45 +197,91 @@ struct
 		return bIChangedIt;
 	}
 
+	/**
+	 * Uses atomics to set the specified flag(s)
+	 * @param FlagToSet
+	 * @return True if this call set the flag, false if it has been set by another thread.
+	 */
+	FORCEINLINE bool ThisThreadAtomicallySetFlag(EInternalObjectFlags FlagToSet)
+	{		
+		if (!!(FlagToSet & EInternalObjectFlags_RootFlags))
+		{
+			return SetRootFlags(FlagToSet);
+		}
+		else
+		{
+			return ThisThreadAtomicallySetFlag_ForGC(FlagToSet);
+		}
+	}
+
 	FORCEINLINE bool HasAnyFlags(EInternalObjectFlags InFlags) const
 	{
 		return !!(GetFlagsInternal() & int32(InFlags));
 	}
 
+	FORCEINLINE bool HasAllFlags(EInternalObjectFlags InFlags) const
+	{
+		return (GetFlagsInternal() & int32(InFlags)) == int32(InFlags);
+	}
+
 	FORCEINLINE void SetUnreachable()
 	{
-		ThisThreadAtomicallySetFlag(EInternalObjectFlags::Unreachable);
+		ThisThreadAtomicallyClearedFlag_ForGC(UE::GC::GReachableObjectFlag);
+		ThisThreadAtomicallySetFlag_ForGC(UE::GC::GUnreachableObjectFlag);
+	}
+	FORCEINLINE void SetMaybeUnreachable()
+	{
+		ThisThreadAtomicallyClearedFlag_ForGC(UE::GC::GReachableObjectFlag);
+		ThisThreadAtomicallySetFlag_ForGC(UE::GC::GMaybeUnreachableObjectFlag);
 	}
 	FORCEINLINE void ClearUnreachable()
 	{
-		ThisThreadAtomicallyClearedFlag(EInternalObjectFlags::Unreachable);
+		ThisThreadAtomicallyClearedRFUnreachable();
 	}
 	FORCEINLINE bool IsUnreachable() const
 	{
-		return !!(GetFlagsInternal() & int32(EInternalObjectFlags::Unreachable));
+		return !!(GetFlagsInternal() & int32(UE::GC::GUnreachableObjectFlag));
+	}
+	FORCEINLINE bool IsMaybeUnreachable() const
+	{
+		return !!(GetFlagsInternal() & int32(UE::GC::GMaybeUnreachableObjectFlag));
 	}
 	FORCEINLINE bool ThisThreadAtomicallyClearedRFUnreachable()
 	{
-		return ThisThreadAtomicallyClearedFlag(EInternalObjectFlags::Unreachable);
+		if (ThisThreadAtomicallyClearedFlag_ForGC(UE::GC::GUnreachableObjectFlag))
+		{
+			ThisThreadAtomicallySetFlag_ForGC(UE::GC::GReachableObjectFlag);
+			return true;
+		}
+		return false;
+	}
+	FORCEINLINE void SetGarbage()
+	{
+		ThisThreadAtomicallySetFlag_ForGC(EInternalObjectFlags::Garbage);
+	}
+	FORCEINLINE void ClearGarbage()
+	{
+		ThisThreadAtomicallyClearedFlag_ForGC(EInternalObjectFlags::Garbage);
+	}
+	FORCEINLINE bool IsGarbage() const
+	{
+		return !!(GetFlagsInternal() & int32(EInternalObjectFlags::Garbage));
 	}
 
+	UE_DEPRECATED(5.4, "SetPendingKill() should no longer be used. Use SetGarbage() instead.")
 	FORCEINLINE void SetPendingKill()
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		ThisThreadAtomicallySetFlag(EInternalObjectFlags::PendingKill);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		SetGarbage();
 	}
+	UE_DEPRECATED(5.4, "ClearPendingKill() should no longer be used. Use ClearGarbage() instead.")
 	FORCEINLINE void ClearPendingKill()
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		ThisThreadAtomicallyClearedFlag(EInternalObjectFlags::PendingKill);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		ClearGarbage();
 	}
+	UE_DEPRECATED(5.4, "IsPendingKill() should no longer be used. Use IsGarbage() instead.")
 	FORCEINLINE bool IsPendingKill() const
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return !!(GetFlagsInternal() & int32(EInternalObjectFlags::PendingKill));
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		return IsGarbage();
 	}
 
 	FORCEINLINE void SetRootSet()
@@ -220,11 +300,52 @@ struct
 #if STATS || ENABLE_STATNAMEDEVENTS_UOBJECT
 	COREUOBJECT_API void CreateStatID() const;
 #endif
+
+	// Mark this object item as Reachable and clear MaybeUnreachable flag. For GC use only.
+	FORCEINLINE void FastMarkAsReachableInterlocked_ForGC()
+	{
+		using namespace UE::GC;
+		FPlatformAtomics::InterlockedAnd(&Flags, ~int32(GMaybeUnreachableObjectFlag));
+		FPlatformAtomics::InterlockedOr(&Flags, int32(GReachableObjectFlag));
+	}
+
+	// Mark this object item as Reachable and clear ReachableInCluster and MaybeUnreachable flags. For GC use only.
+	FORCEINLINE void FastMarkAsReachableAndClearReachaleInClusterInterlocked_ForGC()
+	{
+		using namespace UE::GC;
+		FPlatformAtomics::InterlockedAnd(&Flags, ~int32(GMaybeUnreachableObjectFlag | EInternalObjectFlags::ReachableInCluster));
+		FPlatformAtomics::InterlockedOr(&Flags, int32(GReachableObjectFlag));
+	}
+
+	/**
+	 * Mark this object item as Reachable and clear MaybeUnreachable flag. Only thread-safe for concurrent clear, not concurrent set+clear. Don't use during mark phase. For GC use only.
+	 * @return True if this call cleared MaybeUnreachable flag, false if it has been cleared by another thread.
+	 */
+	FORCEINLINE bool MarkAsReachableInterlocked_ForGC()
+	{
+		using namespace UE::GC;
+		const int32 FlagToClear = int32(UE::GC::GMaybeUnreachableObjectFlag);
+		if (FPlatformAtomics::AtomicRead_Relaxed(&Flags) & FlagToClear)
+		{
+			int32 Old = FPlatformAtomics::InterlockedAnd(&Flags, ~FlagToClear);
+			FPlatformAtomics::InterlockedOr(&Flags, int32(GReachableObjectFlag));
+			return Old & FlagToClear;
+		}
+		return false;
+	}
+
+	FORCEINLINE static constexpr ::size_t OffsetOfFlags()
+	{
+		return offsetof(FUObjectItem, Flags);
+	}
+
 private:
 	FORCEINLINE int32 GetFlagsInternal() const
 	{
 		return FPlatformAtomics::AtomicRead_Relaxed((int32*)&Flags);
 	}
+	COREUOBJECT_API bool SetRootFlags(EInternalObjectFlags FlagsToSet);
+	COREUOBJECT_API bool ClearRootFlags(EInternalObjectFlags FlagsToClear);
 };
 
 namespace UE::UObjectArrayPrivate
@@ -757,14 +878,12 @@ public:
 		return const_cast<FUObjectItem*>(&ObjObjects[Index]);
 	}
 
-	FORCEINLINE FUObjectItem* IndexToObject(int32 Index, bool bEvenIfPendingKill)
+	FORCEINLINE FUObjectItem* IndexToObject(int32 Index, bool bEvenIfGarbage)
 	{
 		FUObjectItem* ObjectItem = IndexToObject(Index);
 		if (ObjectItem && ObjectItem->Object)
 		{
-			PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			if (!bEvenIfPendingKill && ObjectItem->HasAnyFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage))
-			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			if (!bEvenIfGarbage && ObjectItem->HasAnyFlags(EInternalObjectFlags::Garbage))
 			{
 				ObjectItem = nullptr;;
 			}
@@ -778,45 +897,41 @@ public:
 		return ObjectItem;
 	}
 
-	FORCEINLINE bool IsValid(FUObjectItem* ObjectItem, bool bEvenIfPendingKill)
+	FORCEINLINE bool IsValid(FUObjectItem* ObjectItem, bool bEvenIfGarbage)
 	{
 		if (ObjectItem)
 		{
-			PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			return bEvenIfPendingKill ? !ObjectItem->IsUnreachable() : !(ObjectItem->HasAnyFlags(EInternalObjectFlags::Unreachable | EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage));
-			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			return bEvenIfGarbage ? !ObjectItem->IsUnreachable() : !(ObjectItem->HasAnyFlags(UE::GC::GUnreachableObjectFlag | EInternalObjectFlags::Garbage));
 		}
 		return false;
 	}
 
-	FORCEINLINE FUObjectItem* IndexToValidObject(int32 Index, bool bEvenIfPendingKill)
+	FORCEINLINE FUObjectItem* IndexToValidObject(int32 Index, bool bEvenIfGarbage)
 	{
 		FUObjectItem* ObjectItem = IndexToObject(Index);
-		return IsValid(ObjectItem, bEvenIfPendingKill) ? ObjectItem : nullptr;
+		return IsValid(ObjectItem, bEvenIfGarbage) ? ObjectItem : nullptr;
 	}
 
-	FORCEINLINE bool IsValid(int32 Index, bool bEvenIfPendingKill)
+	FORCEINLINE bool IsValid(int32 Index, bool bEvenIfGarbage)
 	{
 		// This method assumes Index points to a valid object.
 		FUObjectItem* ObjectItem = IndexToObject(Index);
-		return IsValid(ObjectItem, bEvenIfPendingKill);
+		return IsValid(ObjectItem, bEvenIfGarbage);
 	}
 
-	FORCEINLINE bool IsStale(FUObjectItem* ObjectItem, bool bEvenIfPendingKill)
+	FORCEINLINE bool IsStale(FUObjectItem* ObjectItem, bool bIncludingGarbage)
 	{
 		// This method assumes ObjectItem is valid.
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return bEvenIfPendingKill ? (ObjectItem->HasAnyFlags(EInternalObjectFlags::Unreachable | EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage)) : (ObjectItem->IsUnreachable());
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		return bIncludingGarbage ? (ObjectItem->HasAnyFlags(UE::GC::GUnreachableObjectFlag | EInternalObjectFlags::Garbage)) : (ObjectItem->IsUnreachable());
 	}
 
-	FORCEINLINE bool IsStale(int32 Index, bool bEvenIfPendingKill)
+	FORCEINLINE bool IsStale(int32 Index, bool bIncludingGarbage)
 	{
 		// This method assumes Index points to a valid object.
 		FUObjectItem* ObjectItem = IndexToObject(Index);
 		if (ObjectItem)
 		{
-			return IsStale(ObjectItem, bEvenIfPendingKill);
+			return IsStale(ObjectItem, bIncludingGarbage);
 		}
 		return true;
 	}
@@ -1180,6 +1295,10 @@ struct FUObjectCluster
 	TArray<int32> MutableObjects;
 	/** List of clusters that direcly reference this cluster. Used when dissolving a cluster. */
 	TArray<int32> ReferencedByClusters;
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+	/** All verse cells are considered mutable.  They will just be added directly to verse gc when the cluster is marked */
+	TArray<Verse::VCell*> MutableCells;
+#endif
 
 	/** Cluster needs dissolving, probably due to PendingKill reference */
 	bool bNeedsDissolving;
@@ -1274,9 +1393,9 @@ extern COREUOBJECT_API FUObjectClusterContainer GUObjectClusters;
 	*/
 struct FIndexToObject
 {
-	static FORCEINLINE class UObjectBase* IndexToObject(int32 Index, bool bEvenIfPendingKill)
+	static FORCEINLINE class UObjectBase* IndexToObject(int32 Index, bool bEvenIfGarbage)
 	{
-		FUObjectItem* ObjectItem = GUObjectArray.IndexToObject(Index, bEvenIfPendingKill);
+		FUObjectItem* ObjectItem = GUObjectArray.IndexToObject(Index, bEvenIfGarbage);
 		return ObjectItem ? ObjectItem->Object : nullptr;
 	}
 };

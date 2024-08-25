@@ -34,6 +34,7 @@
 #include "AnimBlueprintExtension.h"
 #include "UObject/FrameworkObjectVersion.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
+#include "AnimGraphNodeBinding.h"
 
 #define LOCTEXT_NAMESPACE "AnimBlueprintCompiler"
 
@@ -273,7 +274,29 @@ void FAnimBlueprintCompilerContext::ProcessAnimationNode(UAnimGraphNode_Base* Vi
 
 	if (NewProperty == nullptr)
 	{
-		MessageLog.Error(TEXT("Failed to create node property for @@"), VisualAnimNode);
+		MessageLog.Error(TEXT("ICE: Failed to create node property for @@"), VisualAnimNode);
+	}
+
+	// Create a handler property in constants
+	UScriptStruct* HandlerStruct = nullptr;
+	if(const UAnimGraphNodeBinding* Binding = VisualAnimNode->GetBinding())
+	{
+		HandlerStruct = Binding->GetAnimNodeHandlerStruct();
+		check(HandlerStruct->IsChildOf(FAnimNodeExposedValueHandler::StaticStruct()));
+	}
+	else
+	{
+		HandlerStruct = FAnimNodeExposedValueHandler::StaticStruct();
+	}
+
+	FEdGraphPinType HandlerVariableType;
+	HandlerVariableType.PinCategory = UAnimationGraphSchema::PC_Struct;
+	HandlerVariableType.PinSubCategoryObject = MakeWeakObjectPtr(HandlerStruct);
+
+	FStructProperty* NewHandlerProperty = CastField<FStructProperty>(CreateStructVariable(NewAnimBlueprintConstants, FName(*NodeVariableName), HandlerVariableType));
+	if (NewHandlerProperty == nullptr)
+	{
+		MessageLog.Error(TEXT("ICE: Failed to create node handler property for @@"), VisualAnimNode);
 	}
 
 	GatherFoldRecordsForAnimationNode(NodeType, NewProperty, VisualAnimNode);
@@ -281,6 +304,7 @@ void FAnimBlueprintCompilerContext::ProcessAnimationNode(UAnimGraphNode_Base* Vi
 	// Register this node with the compile-time data structures
 	const int32 AllocatedIndex = AllocateNodeIndexCounter++;
 	AllocatedAnimNodes.Add(VisualAnimNode, NewProperty);
+	AllocatedAnimNodeHandlers.Add(VisualAnimNode, NewHandlerProperty);
 	AllocatedNodePropertiesToNodes.Add(NewProperty, VisualAnimNode);
 	AllocatedAnimNodeIndices.Add(VisualAnimNode, AllocatedIndex);
 	AllocatedPropertiesByIndex.Add(AllocatedIndex, NewProperty);
@@ -846,28 +870,6 @@ void FAnimBlueprintCompilerContext::CopyTermDefaultsToDefaultObject(UObject* Def
 		FAnimBlueprintGeneratedClassCompiledData CompiledData(NewAnimBlueprintClass);
 		FAnimBlueprintCopyTermDefaultsContext CompilerContext(this);
 
-		// Initialize extensions from their templates
-		for (TFieldIterator<FStructProperty> It(DefaultAnimInstance->GetClass(), EFieldIteratorFlags::ExcludeSuper); It; ++It)
-		{
-			FStructProperty* TargetProperty = *It;
-
-			if (UAnimBlueprintExtension* Extension = InstancePropertyToExtensionMap.FindRef(TargetProperty))
-			{
-				uint8* DestinationPtr = TargetProperty->ContainerPtrToValuePtr<uint8>(DefaultAnimInstance);
-				const uint8* SourcePtr = nullptr;
-				const FStructProperty* SourceExtensionProperty = Extension->GetInstanceDataProperty();
-				
-				if(SourceExtensionProperty)
-				{
-					check(TargetProperty->Struct == SourceExtensionProperty->Struct);				
-					SourcePtr = SourceExtensionProperty->ContainerPtrToValuePtr<uint8>(Extension);
-				}
-				
-				FAnimBlueprintExtensionCopyTermDefaultsContext ExtensionContext(DefaultObject, TargetProperty, DestinationPtr, SourcePtr, LinkIndexCount);
-				Extension->CopyTermDefaultsToDefaultObject(DefaultAnimInstance, CompilerContext, ExtensionContext);
-			}
-		}
-		
 		// Initialize animation nodes from their templates
 		for (TFieldIterator<FProperty> It(DefaultAnimInstance->GetClass(), EFieldIteratorFlags::ExcludeSuper); It; ++It)
 		{
@@ -966,6 +968,28 @@ void FAnimBlueprintCompilerContext::CopyTermDefaultsToDefaultObject(UObject* Def
 			PatchDataArea(Mutables, MutablesStruct, MutablePropertyRecords);
 		}
 		
+		// Initialize extensions from their templates
+		for (TFieldIterator<FStructProperty> It(DefaultAnimInstance->GetClass(), EFieldIteratorFlags::ExcludeSuper); It; ++It)
+		{
+			FStructProperty* TargetProperty = *It;
+
+			if (UAnimBlueprintExtension* Extension = InstancePropertyToExtensionMap.FindRef(TargetProperty))
+			{
+				uint8* DestinationPtr = TargetProperty->ContainerPtrToValuePtr<uint8>(DefaultAnimInstance);
+				const uint8* SourcePtr = nullptr;
+				const FStructProperty* SourceExtensionProperty = Extension->GetInstanceDataProperty();
+
+				if (SourceExtensionProperty)
+				{
+					check(TargetProperty->Struct == SourceExtensionProperty->Struct);
+					SourcePtr = SourceExtensionProperty->ContainerPtrToValuePtr<uint8>(Extension);
+				}
+
+				FAnimBlueprintExtensionCopyTermDefaultsContext ExtensionContext(DefaultObject, TargetProperty, DestinationPtr, SourcePtr, LinkIndexCount);
+				Extension->CopyTermDefaultsToDefaultObject(DefaultAnimInstance, CompilerContext, ExtensionContext);
+			}
+		}
+
 		// And wire up node links
 		for (auto PoseLinkIt = ValidPoseLinkList.CreateIterator(); PoseLinkIt; ++PoseLinkIt)
 		{

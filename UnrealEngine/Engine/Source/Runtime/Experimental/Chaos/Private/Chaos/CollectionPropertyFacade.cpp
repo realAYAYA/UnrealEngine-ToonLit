@@ -15,7 +15,7 @@ namespace Chaos::Softs
 		static const FName StringValueName("StringValue");  // String value, or weight map name, ...etc.
 		static const FName FlagsName("Flags");  // Whether this property is enabled, animatable, ...etc.
 	}
-	
+
 	FCollectionPropertyConstFacade::FCollectionPropertyConstFacade(const TSharedPtr<const FManagedArrayCollection>& InManagedArrayCollection)
 		: ManagedArrayCollection(InManagedArrayCollection)
 	{
@@ -111,8 +111,8 @@ namespace Chaos::Softs
 	{
 		// Cannot set string dirty without also dirtying the property
 		Flags |= EnumHasAnyFlags(Flags, ECollectionPropertyFlags::StringDirty) ? ECollectionPropertyFlags::Dirty : ECollectionPropertyFlags::None;
-		// Cannot remove the dirty flags
-		Flags |= GetFlagsArray()[KeyIndex] & (ECollectionPropertyFlags::Dirty | ECollectionPropertyFlags::StringDirty);
+		// Cannot remove the Dirty, StringDirty, and Intrinsic flags
+		Flags |= GetFlagsArray()[KeyIndex] & (ECollectionPropertyFlags::Dirty | ECollectionPropertyFlags::StringDirty | ECollectionPropertyFlags::Intrinsic | ECollectionPropertyFlags::Interpolable);
 
 		SetValue(KeyIndex, GetFlagsArray(), Flags);
 	}
@@ -146,6 +146,32 @@ namespace Chaos::Softs
 		}
 	}
 
+	void FCollectionPropertyFacade::UpdateProperties(const TSharedPtr<const FManagedArrayCollection>& InManagedArrayCollection)
+	{
+		FCollectionPropertyConstFacade InPropertyFacade(InManagedArrayCollection);
+		if (InPropertyFacade.IsValid())
+		{
+			const int32 NumInKeys = InPropertyFacade.Num();
+			for (int32 InKeyIndex = 0; InKeyIndex < NumInKeys; ++InKeyIndex)
+			{
+				const FString& PropertyName = InPropertyFacade.GetKey(InKeyIndex);
+				const int32 PropertyIndex = GetKeyIndex(PropertyName);
+				if (PropertyIndex == INDEX_NONE)
+				{
+					continue;
+				}
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
+				// TODO: GetFlags needs to return an ECollectionPropertyFlags, not an uint8, but the uint8 getter needs to be deprecated first
+				SetFlags(PropertyIndex, (ECollectionPropertyFlags)InPropertyFacade.GetFlags(InKeyIndex));
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
+				// Setting as FVector3f since that is the underlying type
+				SetLowValue(PropertyIndex, InPropertyFacade.GetLowValue<FVector3f>(InKeyIndex));
+				SetHighValue(PropertyIndex, InPropertyFacade.GetHighValue<FVector3f>(InKeyIndex));
+				SetStringValue(PropertyIndex, InPropertyFacade.GetStringValue(InKeyIndex));
+			}
+		}
+	}
+
 	FCollectionPropertyMutableFacade::FCollectionPropertyMutableFacade(const TSharedPtr<FManagedArrayCollection>& InManagedArrayCollection)
 		: FCollectionPropertyFacade(InManagedArrayCollection, NoInit)
 	{
@@ -165,11 +191,12 @@ namespace Chaos::Softs
 		RebuildKeyIndices();
 	}
 
-	int32 FCollectionPropertyMutableFacade::AddProperty(const FString& Key, bool bEnabled, bool bAnimatable)
+	int32 FCollectionPropertyMutableFacade::AddProperty(const FString& Key, bool bEnabled, bool bAnimatable, bool bIntrinsic)
 	{
 		const ECollectionPropertyFlags Flags =
 			(bEnabled ? ECollectionPropertyFlags::Enabled : ECollectionPropertyFlags::None) |
-			(bAnimatable ? ECollectionPropertyFlags::Animatable : ECollectionPropertyFlags::None);
+			(bAnimatable ? ECollectionPropertyFlags::Animatable : ECollectionPropertyFlags::None) |
+			(bIntrinsic ? ECollectionPropertyFlags::Intrinsic : ECollectionPropertyFlags::None);
 		return AddProperty(Key, Flags);
 	}
 
@@ -191,11 +218,12 @@ namespace Chaos::Softs
 		return Index;
 	}
 
-	int32 FCollectionPropertyMutableFacade::AddProperties(const TArray<FString>& Keys, bool bEnabled, bool bAnimatable)
+	int32 FCollectionPropertyMutableFacade::AddProperties(const TArray<FString>& Keys, bool bEnabled, bool bAnimatable, bool bIntrinsic)
 	{
 		const ECollectionPropertyFlags Flags =
 			(bEnabled ? ECollectionPropertyFlags::Enabled : ECollectionPropertyFlags::None) |
-			(bAnimatable ? ECollectionPropertyFlags::Animatable : ECollectionPropertyFlags::None);
+			(bAnimatable ? ECollectionPropertyFlags::Animatable : ECollectionPropertyFlags::None) |
+			(bIntrinsic ? ECollectionPropertyFlags::Intrinsic : ECollectionPropertyFlags::None);
 
 		return AddProperties(Keys, Flags);
 	}
@@ -256,6 +284,10 @@ namespace Chaos::Softs
 		{
 			// Nothing to do
 			return;
+		}
+		if (UpdateFlags == ECollectionPropertyUpdateFlags::UpdateExistingProperties)
+		{
+			return UpdateProperties(InManagedArrayCollection);
 		}
 
 		const bool bAppendNewProperties = (UpdateFlags & ECollectionPropertyUpdateFlags::AppendNewProperties) != ECollectionPropertyUpdateFlags::None;
@@ -335,9 +367,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 
-	int32 FCollectionPropertyMutableFacade::AddWeightedFloatValue(const FString& Key, const FVector2f& Value, bool bEnabled, bool bAnimatable)
+	int32 FCollectionPropertyMutableFacade::AddWeightedFloatValue(const FString& Key, const FVector2f& Value, bool bEnabled, bool bAnimatable, bool bIntrinsic)
 	{
-		const int32 KeyIndex = AddProperty(Key, bEnabled, bAnimatable);
+		const int32 KeyIndex = AddProperty(Key, bEnabled, bAnimatable, bIntrinsic);
 		SetWeightedFloatValue(KeyIndex, Value);
 		return KeyIndex;
 	}
@@ -349,9 +381,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return KeyIndex;
 	}
 
-	int32 FCollectionPropertyMutableFacade::AddStringValue(const FString& Key, const FString& Value, bool bEnabled, bool bAnimatable)
+	int32 FCollectionPropertyMutableFacade::AddStringValue(const FString& Key, const FString& Value, bool bEnabled, bool bAnimatable, bool bIntrinsic)
 	{
-		const int32 KeyIndex = AddProperty(Key, bEnabled, bAnimatable);
+		const int32 KeyIndex = AddProperty(Key, bEnabled, bAnimatable, bIntrinsic);
 		SetStringValue(Key, Value);
 		return KeyIndex;
 	}
@@ -362,4 +394,4 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		SetStringValue(Key, Value);
 		return KeyIndex;
 	}
-}  // End namespace Chaos
+}  // End namespace Chaos::Softs

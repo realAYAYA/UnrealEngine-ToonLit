@@ -42,6 +42,7 @@ bool FFeedbackContextMarkup::ParseCommand(const FString& Line, FFeedbackContext*
 
 bool FFeedbackContextMarkup::PipeProcessOutput(const FText& Description, const FString& URL, const FString& Params, FFeedbackContext* Warn, int32* OutExitCode)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE_STR("FFeedbackContextMarkup::PipeProcessOutput");
 	bool bRes;
 
 	// Create a read and write pipe for the child process
@@ -80,7 +81,7 @@ bool FFeedbackContextMarkup::PipeProcessOutput(const FText& Description, const F
 					Warn->Log(*Line);
 				}
 
-				BufferedText.MidInline(EndOfLineIdx + 1, MAX_int32, false);
+				BufferedText.MidInline(EndOfLineIdx + 1, MAX_int32, EAllowShrinking::No);
 			}
 
 			FPlatformProcess::Sleep(0.1f);
@@ -167,7 +168,7 @@ bool FFeedbackContextMarkup::ReadString(const TCHAR*& Text, FString& OutString)
 		{
 			if(*End == *Text)
 			{
-				OutString = FString(UE_PTRDIFF_TO_INT32(End - (Text + 1)), Text + 1);
+				OutString = FString::ConstructFromPtrSize(Text + 1, UE_PTRDIFF_TO_INT32(End - (Text + 1)));
 				do { End++; } while(FChar::IsWhitespace(*End));
 				Text = End;
 				return true;

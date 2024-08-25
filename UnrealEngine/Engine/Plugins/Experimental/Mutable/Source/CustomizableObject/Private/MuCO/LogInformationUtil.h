@@ -25,26 +25,6 @@ public:
 	static void LogShowInstanceData(const UCustomizableObjectInstance* CustomizableObjectInstance, FString& LogData);
 
 	// Utility method just to log information, adds to the given FString containing the
-	// log message the log information of BoolParameters
-	static void PrintBoolParameters(const TArray<struct FCustomizableObjectBoolParameterValue>& BoolParameters, FString& Log);
-
-	// Utility method just to log information, adds to the given FString containing the
-	// log message the log information of IntParameters
-	static void PrintIntParameters(const TArray<struct FCustomizableObjectIntParameterValue>& IntParameters, FString& Log);
-
-	// Utility method just to log information, adds to the given FString containing the
-	// log message the log information of FloatParameters
-	static void PrintFloatParameters(const TArray<struct FCustomizableObjectFloatParameterValue>& FloatParameters, FString& Log);
-
-	// Utility method just to log information, adds to the given FString containing the
-	// log message the log information of VectorParameters
-	static void PrintVectorParameters(const TArray<struct FCustomizableObjectVectorParameterValue>& VectorParameters, FString& Log);
-
-	// Utility method just to log information, adds to the given FString containing the
-	// log message the log information of ProjectorParameters
-	static void PrintProjectorParameters(const TArray<struct FCustomizableObjectProjectorParameterValue>& ProjectorParameters, FString& Log);
-
-	// Utility method just to log information, adds to the given FString containing the
 	// log message the log information of GeneratedMaterials
 	static void PrintGeneratedMaterial(const TArray<struct FGeneratedMaterial> GeneratedMaterials, FString& Log);
 

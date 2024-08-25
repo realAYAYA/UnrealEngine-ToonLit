@@ -31,4 +31,7 @@ namespace ComputeFramework
 
 	/** Flush any enqueued ComputeGraph work for a given execution group. */
 	COMPUTEFRAMEWORK_API void FlushWork(FSceneInterface const* InScene, FName InExecutionGroupName);
+
+	/** Aborts any queued work associated with the scene / execution group / owner pointer tuple. */
+	COMPUTEFRAMEWORK_API void AbortWork(FSceneInterface const* InScene, UObject* OwnerPointer);
 }

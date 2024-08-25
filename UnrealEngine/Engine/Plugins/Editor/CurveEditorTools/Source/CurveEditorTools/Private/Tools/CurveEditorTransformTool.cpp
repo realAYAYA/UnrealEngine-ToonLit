@@ -4,6 +4,7 @@
 #include "CurveEditorToolCommands.h"
 #include "CurveEditor.h"
 #include "Framework/Commands/UICommandList.h"
+#include "Misc/FrameRate.h"
 #include "Rendering/DrawElementPayloads.h"
 #include "SCurveEditorView.h"
 #include "SCurveEditorPanel.h"
@@ -308,6 +309,9 @@ void FCurveEditorTransformTool::UpdateToolOptions()
 	TSharedPtr<FCurveEditor> CurveEditor = WeakCurveEditor.Pin();
 	if (CurveEditor.IsValid())
 	{
+		const FFrameRate DisplayRate = CurveEditor->GetTimeSliderController() ? CurveEditor->GetTimeSliderController()->GetDisplayRate() : FFrameRate();
+		const FFrameRate TickResolution = CurveEditor->GetTimeSliderController() ? CurveEditor->GetTimeSliderController()->GetTickResolution() : FFrameRate();
+
 		TArray<FCurveModelID> CurveKeys;
 		CurveEditor->GetSelection().GetAll().GetKeys(CurveKeys);
 		if (CurveKeys.Num() < 1)
@@ -321,12 +325,18 @@ void FCurveEditorTransformTool::UpdateToolOptions()
 		}
 		FCurveEditorScreenSpace CurveSpace = View->GetCurveSpace(CurveKeys[0]);
 
-		ToolOptions.LeftBound = CurveSpace.ScreenToSeconds(TransformWidget.BoundsPosition.X);
+		const double LeftBoundSeconds = CurveSpace.ScreenToSeconds(TransformWidget.BoundsPosition.X);
+		const double RightBoundSeconds = CurveSpace.ScreenToSeconds(TransformWidget.BoundsPosition.X + TransformWidget.BoundsSize.X);
+
+		ToolOptions.LeftBound = FFrameRate::TransformTime(DisplayRate.AsFrameNumber(LeftBoundSeconds), DisplayRate, TickResolution).CeilToFrame();
+		ToolOptions.RightBound = FFrameRate::TransformTime(DisplayRate.AsFrameNumber(RightBoundSeconds), DisplayRate, TickResolution).CeilToFrame();
+
 		ToolOptions.UpperBound = CurveSpace.ScreenToValue(TransformWidget.BoundsPosition.Y);
-		ToolOptions.RightBound = CurveSpace.ScreenToSeconds(TransformWidget.BoundsPosition.X + TransformWidget.BoundsSize.X);
 		ToolOptions.LowerBound = CurveSpace.ScreenToValue(TransformWidget.BoundsPosition.Y + TransformWidget.BoundsSize.Y);
 
-		ToolOptions.ScaleCenterX = CurveSpace.ScreenToSeconds(TransformWidget.BoundsPosition.X + TransformWidget.BoundsSize.X * DisplayRelativeScaleCenter.X);
+		const double ScaleCenterXSeconds = CurveSpace.ScreenToSeconds(TransformWidget.BoundsPosition.X + TransformWidget.BoundsSize.X * DisplayRelativeScaleCenter.X);
+
+		ToolOptions.ScaleCenterX = FFrameRate::TransformTime(DisplayRate.AsFrameNumber(ScaleCenterXSeconds), DisplayRate, TickResolution).CeilToFrame();
 		ToolOptions.ScaleCenterY = CurveSpace.ScreenToValue(TransformWidget.BoundsPosition.Y + TransformWidget.BoundsSize.Y * DisplayRelativeScaleCenter.Y);
 	}
 }
@@ -444,45 +454,49 @@ void FCurveEditorTransformTool::OnToolOptionsUpdated(const FPropertyChangedEvent
 		return;
 	}
 
+	const FFrameRate DisplayRate = CurveEditor->GetTimeSliderController() ? CurveEditor->GetTimeSliderController()->GetDisplayRate() : FFrameRate();
+	const FFrameRate TickResolution = CurveEditor->GetTimeSliderController() ? CurveEditor->GetTimeSliderController()->GetTickResolution() : FFrameRate();
+
 	FCurveEditorScreenSpace CurveSpace = View->GetCurveSpace(CurveKeys[0]);
 
 	FVector2D ScaleCenter = FVector2D(0.5f, 0.5f);
 	FVector2D ScaleDelta = FVector2D(0.0f, 0.0f);
 	bool bAffectsX = true, bAffectsY = true;
 
-	if (PropertyChangedEvent.GetPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, LeftBound)))
+	if (PropertyChangedEvent.GetMemberPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, LeftBound)))
 	{
 		bAffectsY = false;
 		ScaleCenter.X = 1.0f;
-		ScaleDelta.X = -(CurveSpace.SecondsToScreen(ToolOptions.LeftBound) - TransformWidget.Position.X);
+		const double LeftBoundSeconds = DisplayRate.AsSeconds(FFrameRate::TransformTime(ToolOptions.LeftBound, TickResolution, DisplayRate));
+		ScaleDelta.X = -(CurveSpace.SecondsToScreen(LeftBoundSeconds) - TransformWidget.Position.X);
 	}
-	else if (PropertyChangedEvent.GetPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, UpperBound)))
+	else if (PropertyChangedEvent.GetMemberPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, UpperBound)))
 	{
 		bAffectsX = false;
 		ScaleCenter.Y = 1.0f;
 		ScaleDelta.Y = -(CurveSpace.ValueToScreen(ToolOptions.UpperBound) - TransformWidget.Position.Y);
-		float diff = ToolOptions.UpperBound - CurveSpace.ScreenToValue(TransformWidget.Position.Y);
-		UE_LOG(LogTemp, Log, TEXT("diff: %f"), diff);
 	}
-	else if (PropertyChangedEvent.GetPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, RightBound)))
+	else if (PropertyChangedEvent.GetMemberPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, RightBound)))
 	{
 		bAffectsY = false;
 		ScaleCenter.X = 0.0f;
-		ScaleDelta.X = CurveSpace.SecondsToScreen(ToolOptions.RightBound) - (TransformWidget.Position.X + TransformWidget.Size.X);
+		const double RightBoundSeconds = DisplayRate.AsSeconds(FFrameRate::TransformTime(ToolOptions.RightBound, TickResolution, DisplayRate));
+		ScaleDelta.X = CurveSpace.SecondsToScreen(RightBoundSeconds) - (TransformWidget.Position.X + TransformWidget.Size.X);
 	}
-	else if (PropertyChangedEvent.GetPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, LowerBound)))
+	else if (PropertyChangedEvent.GetMemberPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, LowerBound)))
 	{
 		bAffectsX = false;
 		ScaleCenter.Y = 0.0f;
 		ScaleDelta.Y = CurveSpace.ValueToScreen(ToolOptions.LowerBound) - (TransformWidget.Position.Y + TransformWidget.Size.Y);
 	}
-	else if (PropertyChangedEvent.GetPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, ScaleCenterX)))
+	else if (PropertyChangedEvent.GetMemberPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, ScaleCenterX)))
 	{
-		const double ViewSpaceX = CurveSpace.SecondsToScreen(ToolOptions.ScaleCenterX);
+		const double ScaleCenterXSeconds = DisplayRate.AsSeconds(FFrameRate::TransformTime(ToolOptions.ScaleCenterX, TickResolution, DisplayRate));
+		const double ViewSpaceX = CurveSpace.SecondsToScreen(ScaleCenterXSeconds);
 		const double ViewSpaceXDelta = ViewSpaceX - TransformWidget.BoundsPosition.X;
 		RelativeScaleCenter.X = ViewSpaceXDelta / TransformWidget.BoundsSize.X;
 	}
-	else if (PropertyChangedEvent.GetPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, ScaleCenterY)))
+	else if (PropertyChangedEvent.GetMemberPropertyName().IsEqual(GET_MEMBER_NAME_CHECKED(FTransformToolOptions, ScaleCenterY)))
 	{
 		const double ViewSpaceY = CurveSpace.ValueToScreen(ToolOptions.ScaleCenterY);
 		const double ViewSpaceYDelta = ViewSpaceY - TransformWidget.BoundsPosition.Y;
@@ -1236,6 +1250,9 @@ void FCurveEditorTransformTool::Tick(const FGeometry& AllottedGeometry, const do
 		return;
 	}
 
+	const FFrameRate DisplayRate = CurveEditor->GetTimeSliderController() ? CurveEditor->GetTimeSliderController()->GetDisplayRate() : FFrameRate();
+	const FFrameRate TickResolution = CurveEditor->GetTimeSliderController() ? CurveEditor->GetTimeSliderController()->GetTickResolution() : FFrameRate();
+
 	// Check if all curve models have the same scales
 	TArray<FCurveModelID> CurveModelIDs;
 	CurveEditor->GetSelection().GetAll().GetKeys(CurveModelIDs);
@@ -1277,11 +1294,17 @@ void FCurveEditorTransformTool::Tick(const FGeometry& AllottedGeometry, const do
 
 		FCurveEditorScreenSpace CurveSpace = View->GetCurveSpace(FirstCurveID);
 
-		const FVector2D OptionsSize = FVector2D(ToolOptions.RightBound - ToolOptions.LeftBound, ToolOptions.LowerBound - ToolOptions.UpperBound);
+		const double RightBoundSeconds = DisplayRate.AsSeconds(FFrameRate::TransformTime(ToolOptions.RightBound, TickResolution, DisplayRate));
+		const double LeftBoundSeconds = DisplayRate.AsSeconds(FFrameRate::TransformTime(ToolOptions.LeftBound, TickResolution, DisplayRate));
+
+		const FVector2D OptionsSize = FVector2D(RightBoundSeconds - LeftBoundSeconds, ToolOptions.LowerBound - ToolOptions.UpperBound);
 		const FVector2D ViewSpaceOptionsSize = FVector2D(CurveSpace.PixelsPerInput() * FMath::Abs(OptionsSize.X), CurveSpace.PixelsPerOutput() * FMath::Abs(OptionsSize.Y));
-		if ((!DelayedDrag || (DelayedDrag && !DelayedDrag->IsDragging())) && (TransformWidget.BoundsSize - ViewSpaceOptionsSize).IsNearlyZero())
+		if ((!DelayedDrag || (DelayedDrag && !DelayedDrag->IsDragging())) && 
+			((TransformWidget.BoundsSize - ViewSpaceOptionsSize).IsNearlyZero() || SelectionSerialNumber != CurveEditor->GetSelection().GetSerialNumber()))
 		{
 			UpdateToolOptions();
+
+			SelectionSerialNumber = CurveEditor->GetSelection().GetSerialNumber();
 		}
 	}
 }

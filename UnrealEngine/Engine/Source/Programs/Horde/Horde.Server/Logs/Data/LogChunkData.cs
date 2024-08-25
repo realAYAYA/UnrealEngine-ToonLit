@@ -32,7 +32,7 @@ namespace Horde.Server.Logs.Data
 		/// Number of lines in this chunk
 		/// </summary>
 		public int LineCount { get; }
-			
+
 		/// <summary>
 		/// List of sub-chunks
 		/// </summary>
@@ -62,7 +62,7 @@ namespace Horde.Server.Logs.Data
 			SubChunkOffset = CreateSumLookup(subChunks, x => x.Length);
 			SubChunkLineIndex = CreateSumLookup(subChunks, x => x.LineCount);
 
-			if(subChunks.Count > 0)
+			if (subChunks.Count > 0)
 			{
 				int lastSubChunkIdx = subChunks.Count - 1;
 				Length = SubChunkOffset[lastSubChunkIdx] + subChunks[lastSubChunkIdx].Length;

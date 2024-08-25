@@ -11,7 +11,7 @@ struct EPICSTAGEAPP_API FEpicStageAppAPIVersion
 	static const uint16 Major = 1;
 
 	/** The minor component of the current version. */
-	static const uint16 Minor = 8;
+	static const uint16 Minor = 9;
 	
 	/** The patch component of the current version. */
 	static const uint16 Patch = 0;

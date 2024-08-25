@@ -242,6 +242,27 @@ void FRHICommandDispatchIndirectComputeShader::Execute(FRHICommandListBase& CmdL
 	INTERNAL_DECORATOR_COMPUTE(RHIDispatchIndirectComputeShader)(ArgumentBuffer, ArgumentOffset);
 }
 
+void FRHICommandDispatchShaderBundle::Execute(FRHICommandListBase& CmdList)
+{
+	RHISTAT(DispatchShaderBundle);
+	extern RHI_API FRHIComputePipelineState* ExecuteSetComputePipelineState(FComputePipelineState* ComputePipelineState);
+	for (int32 DispatchIndex = 0; DispatchIndex < Dispatches.Num(); ++DispatchIndex)
+	{
+		FRHIShaderBundleDispatch& Dispatch = Dispatches[DispatchIndex];
+		if (Dispatch.RecordIndex != ~uint32(0u))
+		{
+			Dispatch.RHIPipeline = ExecuteSetComputePipelineState(Dispatch.PipelineState);
+		}
+	}
+	INTERNAL_DECORATOR_COMPUTE(RHIDispatchShaderBundle)(ShaderBundle, RecordArgBufferSRV, Dispatches, bEmulated);
+}
+
+void FRHICommandSetShaderRootConstants::Execute(FRHICommandListBase& CmdList)
+{
+	RHISTAT(SetShaderRootConstants);
+	INTERNAL_DECORATOR_COMPUTE(RHISetShaderRootConstants)(Constants);
+}
+
 void FRHICommandBeginUAVOverlap::Execute(FRHICommandListBase& CmdList)
 {
 	RHISTAT(BeginUAVOverlap);
@@ -409,6 +430,18 @@ void FRHICommandSetStaticUniformBuffers::Execute(FRHICommandListBase& CmdList)
 	INTERNAL_DECORATOR_COMPUTE(RHISetStaticUniformBuffers)(UniformBuffers);
 }
 
+void FRHICommandSetStaticUniformBuffer::Execute(FRHICommandListBase& CmdList)
+{
+	RHISTAT(SetStaticUniformBuffer);
+	INTERNAL_DECORATOR_COMPUTE(RHISetStaticUniformBuffer)(Slot, Buffer);
+}
+
+void FRHICommandSetUniformBufferDynamicOffset::Execute(FRHICommandListBase& CmdList)
+{
+	RHISTAT(SetUniformBufferDynamicOffset);
+	INTERNAL_DECORATOR(RHISetUniformBufferDynamicOffset)(Slot, Offset);
+}
+
 void FRHICommandBeginRenderQuery::Execute(FRHICommandListBase& CmdList)
 {
 	RHISTAT(BeginRenderQuery);
@@ -565,12 +598,14 @@ void FRHICommandUpdateRHIResources::Execute(FRHICommandListBase& CmdList)
 		{
 		case FRHIResourceUpdateInfo::UT_Buffer:
 			GDynamicRHI->RHITransferBufferUnderlyingResource(
+				CmdList,
 				Info.Buffer.DestBuffer,
 				Info.Buffer.SrcBuffer);
 			break;
 #if RHI_RAYTRACING
 		case FRHIResourceUpdateInfo::UT_RayTracingGeometry:
 			GDynamicRHI->RHITransferRayTracingGeometryUnderlyingResource(
+				CmdList,
 				Info.RayTracingGeometry.DestGeometry,
 				Info.RayTracingGeometry.SrcGeometry);
 			break;

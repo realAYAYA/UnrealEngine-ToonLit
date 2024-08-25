@@ -68,7 +68,9 @@ struct FTestFastArrayReplicationState_FastArraySerializer : public FIrisFastArra
 	void PostReplicatedReceive(const FFastArraySerializer::FPostReplicatedReceiveParameters& Parameters)
 	{
 		bHitPostReplicatedReceive = 1U;
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		bPostReplicatedReceiveWasHitWithUnresolvedReferences = Parameters.bHasMoreUnmappedReferences;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 protected:

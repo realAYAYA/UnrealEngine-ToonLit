@@ -167,7 +167,7 @@ bool VoronoiNeighbors(const TArrayView<const FVector> &Sites, TArray<TArray<int>
 	int32 NumSites = Sites.Num();
 
 	Neighbors.Empty(NumSites);
-	Neighbors.SetNum(NumSites, true);
+	Neighbors.SetNum(NumSites, EAllowShrinking::Yes);
 
 	voro::voro_compute<voro::container> VoroCompute = Container->make_compute();
 	voro::c_loop_all CellIterator(*Container);

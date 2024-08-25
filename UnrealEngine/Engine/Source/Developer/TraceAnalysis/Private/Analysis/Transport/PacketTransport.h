@@ -14,6 +14,11 @@ class FPacketTransport
 public:
 	virtual					~FPacketTransport();
 	virtual void			Advance(uint32 BlockSize) override;
+	virtual bool			IsEmpty() const override;
+	virtual void			DebugBegin() override;
+	virtual void			DebugEnd() override;
+
+protected:
 	virtual const uint8*	GetPointerImpl(uint32 BlockSize) override;
 
 private:

@@ -1,9 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -14,6 +10,10 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Core;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -52,7 +52,7 @@ namespace UnrealGameSync
 				List<ClientsRecord> clients = await perforce.GetClientsAsync(ClientsOptions.None, perforce.Settings.UserName, cancellationToken);
 
 				string? currentStream = null;
-				if(!String.IsNullOrEmpty(currentWorkspaceName))
+				if (!String.IsNullOrEmpty(currentWorkspaceName))
 				{
 					currentStream = await perforce.GetCurrentStreamAsync(cancellationToken);
 				}
@@ -101,11 +101,11 @@ namespace UnrealGameSync
 			_serviceProvider = serviceProvider;
 
 			Dictionary<DirectoryReference, int> rootPathToCount = new Dictionary<DirectoryReference, int>();
-			foreach(ClientsRecord client in clients)
+			foreach (ClientsRecord client in clients)
 			{
-				if(client.Host == null || String.Equals(client.Host, info.ClientHost, StringComparison.OrdinalIgnoreCase))
+				if (client.Host == null || String.Equals(client.Host, info.ClientHost, StringComparison.OrdinalIgnoreCase))
 				{
-					if(!String.IsNullOrEmpty(client.Root) && client.Root != ".")
+					if (!String.IsNullOrEmpty(client.Root) && client.Root != ".")
 					{
 						DirectoryReference? parentDir;
 						try
@@ -117,7 +117,7 @@ namespace UnrealGameSync
 							parentDir = null;
 						}
 
-						if(parentDir != null)
+						if (parentDir != null)
 						{
 							int count;
 							rootPathToCount.TryGetValue(parentDir, out count);
@@ -128,16 +128,16 @@ namespace UnrealGameSync
 			}
 
 			int rootPathMaxCount = 0;
-			foreach(KeyValuePair<DirectoryReference, int> rootPathPair in rootPathToCount)
+			foreach (KeyValuePair<DirectoryReference, int> rootPathPair in rootPathToCount)
 			{
-				if(rootPathPair.Value > rootPathMaxCount)
+				if (rootPathPair.Value > rootPathMaxCount)
 				{
 					_defaultRootPath = rootPathPair.Key;
 					rootPathMaxCount = rootPathPair.Value;
 				}
 			}
 
-			if(forceStream != null)
+			if (forceStream != null)
 			{
 				StreamTextBox.Text = forceStream;
 				StreamTextBox.Enabled = false;
@@ -168,7 +168,7 @@ namespace UnrealGameSync
 			}
 
 			using NewWorkspaceWindow window = new NewWorkspaceWindow(perforceSettings, forceStreamName, task.Result.CurrentStream, task.Result.Info, task.Result.Clients, serviceProvider);
-			if(window.ShowDialog(owner) == DialogResult.OK)
+			if (window.ShowDialog(owner) == DialogResult.OK)
 			{
 				workspaceName = window._settings!.Name;
 				return true;
@@ -197,7 +197,7 @@ namespace UnrealGameSync
 			string baseName = Sanitize(String.Format("{0}_{1}_{2}", _info.UserName, _info.ClientHost, StreamTextBox.Text.Replace('/', '_').Trim('_'))).Trim('_');
 
 			string name = baseName;
-			for(int idx = 2; _clients.Any(x => x.Name != null && String.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)); idx++)
+			for (int idx = 2; _clients.Any(x => x.Name != null && String.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)); idx++)
 			{
 				name = String.Format("{0}_{1}", baseName, idx);
 			}
@@ -207,10 +207,10 @@ namespace UnrealGameSync
 		private string GetDefaultWorkspaceRootDir()
 		{
 			string rootDir = "";
-			if(_defaultRootPath != null)
+			if (_defaultRootPath != null)
 			{
-				string suffix = String.Join("_", StreamTextBox.Text.Split(new char[]{ '/' }, StringSplitOptions.RemoveEmptyEntries).Select(x => Sanitize(x)).Where(x => x.Length > 0));
-				if(suffix.Length > 0)
+				string suffix = String.Join("_", StreamTextBox.Text.Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries).Select(x => Sanitize(x)).Where(x => x.Length > 0));
+				if (suffix.Length > 0)
 				{
 					rootDir = DirectoryReference.Combine(_defaultRootPath, suffix).FullName;
 				}
@@ -221,9 +221,9 @@ namespace UnrealGameSync
 		private static string Sanitize(string text)
 		{
 			StringBuilder result = new StringBuilder();
-			for(int idx = 0; idx < text.Length; idx++)
+			for (int idx = 0; idx < text.Length; idx++)
 			{
-				if(Char.IsLetterOrDigit(text[idx]) || text[idx] == '_' || text[idx] == '.' || text[idx] == '-')
+				if (Char.IsLetterOrDigit(text[idx]) || text[idx] == '_' || text[idx] == '.' || text[idx] == '-')
 				{
 					result.Append(text[idx]);
 				}
@@ -249,10 +249,10 @@ namespace UnrealGameSync
 		private bool TryGetWorkspaceSettings([NotNullWhen(true)] out NewWorkspaceSettings? settings)
 		{
 			string newWorkspaceName = NameTextBox.Text.Trim();
-			if(newWorkspaceName.Length == 0)
+			if (newWorkspaceName.Length == 0)
 			{
 				newWorkspaceName = GetDefaultWorkspaceName();
-				if(newWorkspaceName.Length == 0)
+				if (newWorkspaceName.Length == 0)
 				{
 					settings = null;
 					return false;
@@ -260,17 +260,17 @@ namespace UnrealGameSync
 			}
 
 			string newStream = StreamTextBox.Text.Trim();
-			if(!newStream.StartsWith("//", StringComparison.Ordinal) || newStream.IndexOf('/', 2) == -1)
+			if (!newStream.StartsWith("//", StringComparison.Ordinal) || newStream.IndexOf('/', 2) == -1)
 			{
 				settings = null;
 				return false;
 			}
 
 			string newRootDir = RootDirTextBox.Text.Trim();
-			if(newRootDir.Length == 0)
+			if (newRootDir.Length == 0)
 			{
 				newRootDir = GetDefaultWorkspaceRootDir();
-				if(newRootDir.Length == 0)
+				if (newRootDir.Length == 0)
 				{
 					settings = null;
 					return false;
@@ -311,12 +311,12 @@ namespace UnrealGameSync
 
 		private void OkBtn_Click(object sender, EventArgs e)
 		{
-			if(TryGetWorkspaceSettings(out _settings))
+			if (TryGetWorkspaceSettings(out _settings))
 			{
 				DirectoryInfo rootDir = _settings.RootDir.ToDirectoryInfo();
-				if(rootDir.Exists && rootDir.EnumerateFileSystemInfos().Any(x => x.Name != "." && x.Name != ".."))
+				if (rootDir.Exists && rootDir.EnumerateFileSystemInfos().Any(x => x.Name != "." && x.Name != ".."))
 				{
-					if(MessageBox.Show(this, String.Format("The directory '{0}' is not empty. Are you sure you want to create a workspace there?", rootDir.FullName), "Directory not empty", MessageBoxButtons.YesNo) != DialogResult.Yes)
+					if (MessageBox.Show(this, String.Format("The directory '{0}' is not empty. Are you sure you want to create a workspace there?", rootDir.FullName), "Directory not empty", MessageBoxButtons.YesNo) != DialogResult.Yes)
 					{
 						return;
 					}
@@ -344,7 +344,7 @@ namespace UnrealGameSync
 		private void StreamBrowseBtn_Click(object sender, EventArgs e)
 		{
 			string? streamName = StreamTextBox.Text.Trim();
-			if(SelectStreamWindow.ShowModal(this, _perforceSettings, streamName, _serviceProvider, out streamName))
+			if (SelectStreamWindow.ShowModal(this, _perforceSettings, streamName, _serviceProvider, out streamName))
 			{
 				StreamTextBox.Text = streamName;
 			}
@@ -352,7 +352,7 @@ namespace UnrealGameSync
 
 		private void RootDirTextBox_Enter(object sender, EventArgs e)
 		{
-			if(RootDirTextBox.Text.Length == 0)
+			if (RootDirTextBox.Text.Length == 0)
 			{
 				RootDirTextBox.Text = RootDirTextBox.CueBanner;
 			}
@@ -360,7 +360,7 @@ namespace UnrealGameSync
 
 		private void RootDirTextBox_Leave(object sender, EventArgs e)
 		{
-			if(RootDirTextBox.Text == RootDirTextBox.CueBanner)
+			if (RootDirTextBox.Text == RootDirTextBox.CueBanner)
 			{
 				RootDirTextBox.Text = "";
 			}
@@ -368,7 +368,7 @@ namespace UnrealGameSync
 
 		private void NameTextBox_Enter(object sender, EventArgs e)
 		{
-			if(NameTextBox.Text.Length == 0)
+			if (NameTextBox.Text.Length == 0)
 			{
 				NameTextBox.Text = NameTextBox.CueBanner;
 			}
@@ -376,7 +376,7 @@ namespace UnrealGameSync
 
 		private void NameTextBox_Leave(object sender, EventArgs e)
 		{
-			if(NameTextBox.Text == NameTextBox.CueBanner)
+			if (NameTextBox.Text == NameTextBox.CueBanner)
 			{
 				NameTextBox.Text = "";
 			}

@@ -1,19 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Nodes;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
+using EpicGames.Core;
+using EpicGames.Horde;
+using EpicGames.Horde.Artifacts;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Storage;
+using EpicGames.Horde.Storage.Clients;
+using EpicGames.Horde.Storage.Nodes;
+using Horde.Agent.Utility;
+using Horde.Common.Rpc;
+using Microsoft.Extensions.Logging;
 
 #pragma warning disable CA1819 // Properties should not return arrays
 
@@ -148,11 +149,11 @@ namespace Horde.Storage.Utility
 		{
 			// Check the file exists and is in the right location
 			FileReference file = new FileReference(fileInfo);
-			if(!file.IsUnderDirectory(rootDir))
+			if (!file.IsUnderDirectory(rootDir))
 			{
 				throw new TempStorageException($"Attempt to add file to temp storage manifest that is outside the root directory ({file.FullName})");
 			}
-			if(!fileInfo.Exists)
+			if (!fileInfo.Exists)
 			{
 				throw new TempStorageException($"Attempt to add file to temp storage manifest that does not exist ({file.FullName})");
 			}
@@ -176,9 +177,9 @@ namespace Horde.Storage.Utility
 		public bool Compare(DirectoryReference rootDir, ILogger logger)
 		{
 			string? message;
-			if(Compare(rootDir, out message))
+			if (Compare(rootDir, out message))
 			{
-				if(message != null)
+				if (message != null)
 				{
 					logger.LogInformation("{Message}", message);
 				}
@@ -186,7 +187,7 @@ namespace Horde.Storage.Utility
 			}
 			else
 			{
-				if(message != null)
+				if (message != null)
 				{
 					logger.LogError("{Message}", message);
 				}
@@ -206,16 +207,16 @@ namespace Horde.Storage.Utility
 
 			// Get the local file info, and check it exists
 			FileInfo info = new FileInfo(localFile.FullName);
-			if(!info.Exists)
+			if (!info.Exists)
 			{
 				message = String.Format("Missing file from manifest - {0}", RelativePath);
 				return false;
 			}
 
 			// Check the size matches
-			if(info.Length != Length)
+			if (info.Length != Length)
 			{
-				if(TempStorage.IsDuplicateBuildProduct(localFile))
+				if (TempStorage.IsDuplicateBuildProduct(localFile))
 				{
 					message = String.Format("Ignored file size mismatch for {0} - was {1} bytes, expected {2} bytes", RelativePath, info.Length, Length);
 					return true;
@@ -320,7 +321,7 @@ namespace Horde.Storage.Utility
 		/// <summary>
 		/// Construct a static Xml serializer to avoid throwing an exception searching for the reflection info at runtime
 		/// </summary>
-		static readonly XmlSerializer s_serializer = XmlSerializer.FromTypes(new Type[]{ typeof(TempStorageBlockManifest) })[0]!;
+		static readonly XmlSerializer s_serializer = XmlSerializer.FromTypes(new Type[] { typeof(TempStorageBlockManifest) })[0]!;
 
 		/// <summary>
 		/// Construct an empty temp storage manifest
@@ -355,7 +356,7 @@ namespace Horde.Storage.Utility
 		public long GetTotalSize()
 		{
 			long result = 0;
-			foreach(TempStorageFile file in Files)
+			foreach (TempStorageFile file in Files)
 			{
 				result += file.Length;
 			}
@@ -384,7 +385,7 @@ namespace Horde.Storage.Utility
 		/// <param name="file">File to save</param>
 		public void Save(FileReference file)
 		{
-			using(StreamWriter writer = new StreamWriter(file.FullName))
+			using (StreamWriter writer = new StreamWriter(file.FullName))
 			{
 				XmlWriterSettings writerSettings = new() { Indent = true };
 				using (XmlWriter xmlWriter = XmlWriter.Create(writer, writerSettings))
@@ -425,7 +426,7 @@ namespace Horde.Storage.Utility
 		/// <summary>
 		/// Construct a static Xml serializer to avoid throwing an exception searching for the reflection info at runtime
 		/// </summary>
-		static readonly XmlSerializer s_serializer = XmlSerializer.FromTypes(new Type[]{ typeof(TempStorageTagManifest) })[0]!;
+		static readonly XmlSerializer s_serializer = XmlSerializer.FromTypes(new Type[] { typeof(TempStorageTagManifest) })[0]!;
 
 		/// <summary>
 		/// Construct an empty file list for deserialization
@@ -460,9 +461,9 @@ namespace Horde.Storage.Utility
 		{
 			List<string> newLocalFiles = new List<string>();
 			List<string> newExternalFiles = new List<string>();
-			foreach(FileReference file in files)
+			foreach (FileReference file in files)
 			{
-				if(file.IsUnderDirectory(rootDir))
+				if (file.IsUnderDirectory(rootDir))
 				{
 					newLocalFiles.Add(file.MakeRelativeTo(rootDir).Replace(Path.DirectorySeparatorChar, '/'));
 				}
@@ -483,7 +484,7 @@ namespace Horde.Storage.Utility
 		/// <param name="file">File to load</param>
 		public static TempStorageTagManifest Load(FileReference file)
 		{
-			using(StreamReader reader = new StreamReader(file.FullName))
+			using (StreamReader reader = new StreamReader(file.FullName))
 			{
 				XmlReaderSettings settings = new XmlReaderSettings();
 				using (XmlReader xmlReader = XmlReader.Create(reader, settings))
@@ -516,10 +517,10 @@ namespace Horde.Storage.Utility
 		/// <returns>Set of files</returns>
 		public HashSet<FileReference> ToFileSet(DirectoryReference rootDir)
 		{
-			HashSet<FileReference> Files = new HashSet<FileReference>();
-			Files.UnionWith(LocalFiles.Select(x => FileReference.Combine(rootDir, x)));
-			Files.UnionWith(ExternalFiles.Select(x => new FileReference(x)));
-			return Files;
+			HashSet<FileReference> files = new HashSet<FileReference>();
+			files.UnionWith(LocalFiles.Select(x => FileReference.Combine(rootDir, x)));
+			files.UnionWith(ExternalFiles.Select(x => new FileReference(x)));
+			return files;
 		}
 	}
 
@@ -538,26 +539,58 @@ namespace Horde.Storage.Utility
 		/// <summary>
 		/// Gets the ref name for a particular node
 		/// </summary>
-		/// <param name="refPrefix">Prefix for refs in this job</param>
-		/// <param name="nodeName"></param>
-		/// <returns></returns>
-		public static RefName GetRefNameForNode(string refPrefix, string nodeName)
+		/// <param name="name">Name of the node producing the artifact</param>
+		public static ArtifactName GetArtifactNameForNode(string name)
 		{
-			return new RefName(RefName.Sanitize($"{refPrefix}/steps/{nodeName}"));
+			StringBuilder builder = new StringBuilder();
+
+			int prefixLength = Math.Min(name.Length, StringId.MaxLength - 10);
+			bool appendHash = name.Length > prefixLength;
+
+			for (int idx = 0; idx < prefixLength; idx++)
+			{
+				if (name[idx] >= 'A' && name[idx] <= 'Z')
+				{
+					builder.Append((char)(name[idx] + 'a' - 'A'));
+				}
+				else if ((name[idx] >= 'a' && name[idx] <= 'z') || (name[idx] >= '0' && name[idx] <= '9'))
+				{
+					builder.Append(name[idx]);
+				}
+				else if (name[idx] == ' ')
+				{
+					builder.Append('-');
+				}
+				else
+				{
+					appendHash = true;
+				}
+			}
+
+			if (appendHash)
+			{
+				IoHash hash = IoHash.Compute(Encoding.UTF8.GetBytes(name.ToUpperInvariant()));
+				builder.Append('-');
+				builder.Append(hash.ToString(), 0, 8);
+			}
+
+			return new ArtifactName(builder.ToString());
 		}
 
 		/// <summary>
 		/// Reads a set of tagged files from disk
 		/// </summary>
-		/// <param name="storageClient">Reader for node data</param>
-		/// <param name="refPrefix">Prefix for ref names</param>
+		/// <param name="jobRpc">The job rpc interface</param>
+		/// <param name="jobId"></param>
+		/// <param name="stepId"></param>
+		/// <param name="storageClientFactory">Reader for node data</param>
 		/// <param name="nodeName">Name of the node which produced the tag set</param>
 		/// <param name="tagName">Name of the tag, with a '#' prefix</param>
 		/// <param name="manifestDir">The local directory containing manifests</param>
 		/// <param name="logger">Logger for output</param>
 		/// <param name="cancellationToken"></param>
 		/// <returns>The set of files</returns>
-		public static async Task<TempStorageTagManifest> RetrieveTagAsync(IStorageClient storageClient, string refPrefix, string nodeName, string tagName, DirectoryReference manifestDir, ILogger logger, CancellationToken cancellationToken)
+		public static async Task<TempStorageTagManifest> RetrieveTagAsync(IRpcClientRef<JobRpc.JobRpcClient> jobRpc, JobId jobId, JobStepId stepId, HttpStorageClientFactory storageClientFactory, string nodeName, string tagName, DirectoryReference manifestDir, ILogger logger, CancellationToken cancellationToken)
 		{
 			// Try to read the tag set from the local directory
 			FileReference localFileListLocation = GetTagManifestLocation(manifestDir, nodeName, tagName);
@@ -567,10 +600,24 @@ namespace Horde.Storage.Utility
 			}
 			else
 			{
-				RefName refName = GetRefNameForNode(refPrefix, nodeName);
-				logger.LogInformation("Reading node \"{NodeName}\" tag \"{TagName}\" from temp storage (ref: {RefName}, localFile: {LocalFile})", nodeName, tagName, refName, localFileListLocation);
+				ArtifactName artifactName = GetArtifactNameForNode(nodeName);
+				ArtifactType artifactType = ArtifactType.StepOutput;
 
-				DirectoryNode node = await storageClient.ReadNodeAsync<DirectoryNode>(refName, cancellationToken: cancellationToken);
+				GetJobArtifactRequest artifactRequest = new GetJobArtifactRequest();
+				artifactRequest.JobId = jobId.ToString();
+				artifactRequest.StepId = stepId.ToString();
+				artifactRequest.Name = artifactName.ToString();
+				artifactRequest.Type = artifactType.ToString();
+
+				GetJobArtifactResponse artifact = await jobRpc.Client.GetArtifactAsync(artifactRequest, cancellationToken: cancellationToken);
+
+				NamespaceId namespaceId = new NamespaceId(artifact.NamespaceId);
+				RefName refName = new RefName(artifact.RefName);
+
+				logger.LogInformation("Reading node \"{NodeName}\" tag \"{TagName}\" from temp storage (artifact: {ArtifactId} '{ArtifactName}' ({ArtifactType}), ns: {NamespaceId}, ref: {RefName}, localFile: {LocalFile})", nodeName, tagName, artifact.Id, artifactName, artifactType, namespaceId, refName, localFileListLocation);
+
+				using IStorageClient storageClient = storageClientFactory.CreateClient(namespaceId, artifact.Token);
+				DirectoryNode node = await storageClient.ReadRefTargetAsync<DirectoryNode>(artifact.RefName, cancellationToken: cancellationToken);
 
 				FileEntry fileEntry = node.GetFileEntry(localFileListLocation.GetFileName());
 				DirectoryReference.CreateDirectory(localFileListLocation.Directory);
@@ -592,7 +639,7 @@ namespace Horde.Storage.Utility
 		/// <param name="logger">Logger for output</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public static async Task<FileEntry> ArchiveTagAsync(DirectoryReference manifestDir, string nodeName, string tagName, DirectoryReference workspaceDir, IEnumerable<FileReference> files, TempStorageBlockRef[] blocks, IStorageWriter writer, ILogger logger, CancellationToken cancellationToken)
+		public static async Task<FileEntry> ArchiveTagAsync(DirectoryReference manifestDir, string nodeName, string tagName, DirectoryReference workspaceDir, IEnumerable<FileReference> files, TempStorageBlockRef[] blocks, IBlobWriter writer, ILogger logger, CancellationToken cancellationToken)
 		{
 			logger.LogInformation("Creating output tag \"{TagName}\"", tagName);
 
@@ -601,10 +648,10 @@ namespace Horde.Storage.Utility
 			FileReference localFileListLocation = GetTagManifestLocation(manifestDir, nodeName, tagName);
 			fileList.Save(localFileListLocation);
 
-			ChunkedDataWriter fileNodeWriter = new ChunkedDataWriter(writer, new ChunkingOptions());
-			NodeRef<ChunkedDataNode> rootRef = await fileNodeWriter.CreateAsync(localFileListLocation.ToFileInfo(), cancellationToken);
+			using ChunkedDataWriter fileNodeWriter = new ChunkedDataWriter(writer, new ChunkingOptions());
+			ChunkedData fileNodeData = await fileNodeWriter.CreateAsync(localFileListLocation.ToFileInfo(), cancellationToken);
 
-			return new FileEntry(localFileListLocation.GetFileName(), FileEntryFlags.None, fileNodeWriter.Length, rootRef);
+			return new FileEntry(localFileListLocation.GetFileName(), FileEntryFlags.None, fileNodeWriter.Length, fileNodeData);
 		}
 
 		/// <summary>
@@ -636,7 +683,7 @@ namespace Horde.Storage.Utility
 		/// <param name="logger">Logger for output</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The created manifest instance (which has already been saved to disk).</returns>
-		public static async Task<DirectoryEntry> ArchiveBlockAsync(DirectoryReference manifestDir, string nodeName, string blockName, DirectoryReference workspaceDir, IEnumerable<FileReference> files, IStorageWriter writer, ILogger logger, CancellationToken cancellationToken)
+		public static async Task<DirectoryEntry> ArchiveBlockAsync(DirectoryReference manifestDir, string nodeName, string blockName, DirectoryReference workspaceDir, IEnumerable<FileReference> files, IBlobWriter writer, ILogger logger, CancellationToken cancellationToken)
 		{
 			string blockDirectoryName = GetBlockDirectoryName(blockName);
 			logger.LogInformation("Creating output block \"{BlockName}\" (as {DirectoryName})", blockName, blockDirectoryName);
@@ -653,17 +700,19 @@ namespace Horde.Storage.Utility
 
 			// Create the file tree
 			DirectoryNode rootNode = new DirectoryNode();
-			await rootNode.AddFilesAsync(workspaceDir, archiveFiles, new ChunkingOptions(), writer, new CopyStatsLogger(logger), cancellationToken);
-			
-			NodeRef<DirectoryNode> rootNodeRef = await writer.WriteNodeAsync(rootNode, cancellationToken);
+			await rootNode.AddFilesAsync(workspaceDir, archiveFiles, writer, progress: new UpdateStatsLogger(logger), cancellationToken: cancellationToken);
+
+			IBlobRef<DirectoryNode> rootNodeRef = await writer.WriteBlobAsync(rootNode, cancellationToken: cancellationToken);
 			return new DirectoryEntry(blockDirectoryName, rootNode.Length, rootNodeRef);
 		}
 
 		/// <summary>
 		/// Retrieve an output of the given node. Fetches and decompresses the files from shared storage if necessary, or validates the local files.
 		/// </summary>
-		/// <param name="storageClient">Store to read data from</param>
-		/// <param name="refPrefix">Prefix for ref names</param>
+		/// <param name="jobRpc"></param>
+		/// <param name="jobId"></param>
+		/// <param name="stepId"></param>
+		/// <param name="storageClientFactory">Store to read data from</param>
 		/// <param name="nodeName">The node which created the storage block</param>
 		/// <param name="blockName">Name of the block to retrieve.</param>
 		/// <param name="rootDir">Local directory for extracting data to</param>
@@ -671,7 +720,7 @@ namespace Horde.Storage.Utility
 		/// <param name="logger">Logger for output</param>
 		/// <param name="cancellationToken"></param>
 		/// <returns>Manifest of the files retrieved</returns>
-		public static async Task<TempStorageBlockManifest> RetrieveBlockAsync(IStorageClient storageClient, string refPrefix, string nodeName, string blockName, DirectoryReference rootDir, DirectoryReference manifestDir, ILogger logger, CancellationToken cancellationToken)
+		public static async Task<TempStorageBlockManifest> RetrieveBlockAsync(IRpcClientRef<JobRpc.JobRpcClient> jobRpc, JobId jobId, JobStepId stepId, HttpStorageClientFactory storageClientFactory, string nodeName, string blockName, DirectoryReference rootDir, DirectoryReference manifestDir, ILogger logger, CancellationToken cancellationToken)
 		{
 			// Get the path to the local manifest
 			FileReference localManifestFile = GetBlockManifestLocation(manifestDir, nodeName, blockName);
@@ -679,7 +728,7 @@ namespace Horde.Storage.Utility
 
 			// Read the manifest, either from local storage or shared storage
 			TempStorageBlockManifest? manifest;
-			if(local)
+			if (local)
 			{
 				logger.LogInformation("Reading block manifest from {File}", localManifestFile.FullName);
 				manifest = TempStorageBlockManifest.Load(localManifestFile);
@@ -689,10 +738,23 @@ namespace Horde.Storage.Utility
 				string blockDirectoryName = GetBlockDirectoryName(blockName);
 
 				// Read the shared manifest
-				RefName refName = GetRefNameForNode(refPrefix, nodeName);
-				logger.LogInformation("Reading node \"{NodeName}\" block \"{BlockName}\" from temp storage (ref: {RefName}, local: {LocalFile}, blockdir: {BlockDir})", nodeName, blockName, refName, localManifestFile, blockDirectoryName);
+				ArtifactName artifactName = GetArtifactNameForNode(nodeName);
+				ArtifactType artifactType = ArtifactType.StepOutput;
 
-				DirectoryNode node = await storageClient.ReadNodeAsync<DirectoryNode>(refName, cancellationToken: cancellationToken);
+				GetJobArtifactRequest artifactRequest = new GetJobArtifactRequest();
+				artifactRequest.JobId = jobId.ToString();
+				artifactRequest.StepId = stepId.ToString();
+				artifactRequest.Name = artifactName.ToString();
+				artifactRequest.Type = artifactType.ToString();
+
+				GetJobArtifactResponse artifact = await jobRpc.Client.GetArtifactAsync(artifactRequest, cancellationToken: cancellationToken);
+				NamespaceId namespaceId = new NamespaceId(artifact.NamespaceId);
+				RefName refName = new RefName(artifact.RefName);
+
+				logger.LogInformation("Reading node \"{NodeName}\" block \"{BlockName}\" from temp storage (artifact: {ArtifactId} '{ArtifactName}' ({ArtifactType}), ns: {NamespaceId}, ref: {RefName}, local: {LocalFile}, blockdir: {BlockDir})", nodeName, blockName, artifact.Id, artifactName, artifactType, namespaceId, refName, localManifestFile, blockDirectoryName);
+
+				using IStorageClient storageClient = storageClientFactory.CreateClient(namespaceId, artifact.Token);
+				DirectoryNode node = await storageClient.ReadRefTargetAsync<DirectoryNode>(refName, cancellationToken: cancellationToken);
 
 				DirectoryEntry? rootDirEntry;
 				if (!node.TryGetDirectoryEntry(blockDirectoryName, out rootDirEntry))
@@ -700,9 +762,15 @@ namespace Horde.Storage.Utility
 					throw new TempStorageException($"Missing block \"{blockName}\" from node \"{nodeName}\"");
 				}
 
+				StorageStats initialStats = storageClient.GetStats();
+				Stopwatch timer = Stopwatch.StartNew();
+
 				// Add all the files and flush the ref
-				DirectoryNode rootDirNode = await rootDirEntry.ExpandAsync(cancellationToken);
-				await rootDirNode.CopyToDirectoryAsync(rootDir.ToDirectoryInfo(), logger, cancellationToken);
+				DirectoryNode rootDirNode = await rootDirEntry.Handle.ReadBlobAsync(cancellationToken: cancellationToken);
+				await rootDirNode.CopyToDirectoryAsync(rootDir.ToDirectoryInfo(), new ExtractStatsLogger(logger), logger, cancellationToken);
+
+				StorageStats deltaStats = StorageStats.GetDelta(initialStats, storageClient.GetStats());
+				logger.LogInformation("{Stats}", $"Elapsed: {(int)timer.Elapsed.TotalSeconds}s, {String.Join(", ", deltaStats.Values.Select(x => $"{x.Item1}: {x.Item2:n0}"))}");
 
 				// Read the manifest in
 				manifest = TempStorageBlockManifest.Load(localManifestFile);
@@ -722,11 +790,11 @@ namespace Horde.Storage.Utility
 
 			// Check all the local files are as expected
 			bool allMatch = true;
-			foreach(TempStorageFile File in manifest.Files)
+			foreach (TempStorageFile file in manifest.Files)
 			{
-				allMatch &= File.Compare(rootDir, logger);
+				allMatch &= file.Compare(rootDir, logger);
 			}
-			if(!allMatch)
+			if (!allMatch)
 			{
 				throw new TempStorageException("Files have been modified");
 			}
@@ -741,7 +809,7 @@ namespace Horde.Storage.Utility
 		/// <param name="blockName">Name of the output block to get the manifest for</param>
 		public static FileReference GetBlockManifestLocation(DirectoryReference baseDir, string nodeName, string? blockName)
 		{
-			return FileReference.Combine(baseDir, nodeName, String.IsNullOrEmpty(blockName)? "Manifest.xml" : String.Format("Manifest-{0}.xml", blockName));
+			return FileReference.Combine(baseDir, nodeName, String.IsNullOrEmpty(blockName) ? "Manifest.xml" : String.Format("Manifest-{0}.xml", blockName));
 		}
 
 		/// <summary>
@@ -808,6 +876,11 @@ namespace Horde.Storage.Utility
 			}
 			if (fileName.Equals("plugInfo.json", StringComparison.OrdinalIgnoreCase))
 			{
+				return true;
+			}
+			if ((fileName.Equals("info.plist", StringComparison.OrdinalIgnoreCase) || fileName.Equals("coderesources", StringComparison.OrdinalIgnoreCase)) && localFile.FullName.Contains(".app/", StringComparison.OrdinalIgnoreCase))
+			{
+				// xcode can generate plist files and coderesources differently in different stages of compile/cook/stage/package/etc. only allow ones inside a .app bundle
 				return true;
 			}
 			return false;

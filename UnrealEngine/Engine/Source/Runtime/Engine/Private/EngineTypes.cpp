@@ -79,6 +79,19 @@ void FMeshMergingSettings::PostSerialize(const FArchive& Ar)
 		}
 	}
 }
+
+void FMeshApproximationSettings::PostSerialize(const FArchive& Ar)
+{
+	if (Ar.IsLoading())
+	{
+		FMeshApproximationSettings DefaultObject;
+		if (NaniteProxyTrianglePercent_DEPRECATED != DefaultObject.NaniteProxyTrianglePercent_DEPRECATED)
+		{
+			NaniteFallbackTarget = ENaniteFallbackTarget::Auto;
+			NaniteFallbackPercentTriangles = NaniteProxyTrianglePercent_DEPRECATED / 100.0f;
+		}
+	}
+}
 #endif
 
 UEngineBaseTypes::UEngineBaseTypes(const FObjectInitializer& ObjectInitializer)
@@ -182,7 +195,7 @@ UActorComponent* FSoftComponentReference::GetComponent(AActor* OwningActor) cons
 bool FSoftComponentReference::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	static const FName ComponentReferenceContextName("ComponentReference");
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == ComponentReferenceContextName)
+	if (Tag.GetType().IsStruct(ComponentReferenceContextName))
 	{
 		FComponentReference Reference;
 		FComponentReference::StaticStruct()->SerializeItem(Slot, &Reference, nullptr);

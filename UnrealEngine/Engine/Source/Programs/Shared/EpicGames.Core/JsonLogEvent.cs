@@ -87,7 +87,7 @@ namespace EpicGames.Core
 		public static JsonLogEvent Parse(ReadOnlyMemory<byte> data)
 		{
 			JsonLogEvent logEvent;
-			if (!TryParse(data, out logEvent))
+			if (!TryParseInternal(data, out logEvent))
 			{
 				throw new InvalidOperationException("Cannot parse string");
 			}
@@ -104,53 +104,62 @@ namespace EpicGames.Core
 		{
 			try
 			{
-				LogLevel level = LogLevel.None;
-				int eventId = 0;
-				int lineIndex = 0;
-				int lineCount = 1;
-
-				Utf8JsonReader reader = new Utf8JsonReader(data.Span);
-				if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
-				{
-					while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
-					{
-						ReadOnlySpan<byte> propertyName = reader.ValueSpan;
-						if (!reader.Read())
-						{
-							break;
-						}
-						else if (propertyName.SequenceEqual(LogEventPropertyName.Level) && reader.TokenType == JsonTokenType.String)
-						{
-							level = ParseLevel(reader.ValueSpan);
-						}
-						else if (propertyName.SequenceEqual(LogEventPropertyName.Id) && reader.TokenType == JsonTokenType.Number)
-						{
-							eventId = reader.GetInt32();
-						}
-						else if (propertyName.SequenceEqual(LogEventPropertyName.Line) && reader.TokenType == JsonTokenType.Number)
-						{
-							reader.TryGetInt32(out lineIndex);
-						}
-						else if (propertyName.SequenceEqual(LogEventPropertyName.LineCount) && reader.TokenType == JsonTokenType.Number)
-						{
-							reader.TryGetInt32(out lineCount);
-						}
-						reader.Skip();
-					}
-				}
-
-				if (reader.TokenType == JsonTokenType.EndObject && level != LogLevel.None && reader.BytesConsumed == data.Length)
-				{
-					logEvent = new JsonLogEvent(level, new EventId(eventId), lineIndex, lineCount, data.ToArray());
-					return true;
-				}
+				return TryParseInternal(data, out logEvent);
 			}
 			catch
 			{
+				logEvent = default;
+				return false;
+			}
+		}
+
+		static bool TryParseInternal(ReadOnlyMemory<byte> data, out JsonLogEvent logEvent)
+		{
+			LogLevel level = LogLevel.None;
+			int eventId = 0;
+			int lineIndex = 0;
+			int lineCount = 1;
+
+			Utf8JsonReader reader = new Utf8JsonReader(data.Span);
+			if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+			{
+				while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+				{
+					ReadOnlySpan<byte> propertyName = reader.ValueSpan;
+					if (!reader.Read())
+					{
+						break;
+					}
+					else if (propertyName.SequenceEqual(LogEventPropertyName.Level) && reader.TokenType == JsonTokenType.String)
+					{
+						level = ParseLevel(reader.ValueSpan);
+					}
+					else if (propertyName.SequenceEqual(LogEventPropertyName.Id) && reader.TokenType == JsonTokenType.Number)
+					{
+						eventId = reader.GetInt32();
+					}
+					else if (propertyName.SequenceEqual(LogEventPropertyName.Line) && reader.TokenType == JsonTokenType.Number)
+					{
+						reader.TryGetInt32(out lineIndex);
+					}
+					else if (propertyName.SequenceEqual(LogEventPropertyName.LineCount) && reader.TokenType == JsonTokenType.Number)
+					{
+						reader.TryGetInt32(out lineCount);
+					}
+					reader.Skip();
+				}
 			}
 
-			logEvent = default;
-			return false;
+			if (reader.TokenType == JsonTokenType.EndObject && level != LogLevel.None && reader.BytesConsumed == data.Length)
+			{
+				logEvent = new JsonLogEvent(level, new EventId(eventId), lineIndex, lineCount, data.ToArray());
+				return true;
+			}
+			else
+			{
+				logEvent = default;
+				return false;
+			}
 		}
 
 		static readonly sbyte[] s_firstCharToLogLevel;
@@ -184,7 +193,74 @@ namespace EpicGames.Core
 			return (LogLevel)result;
 		}
 
-		static readonly Utf8String s_newlineEscaped = "\\n";
+		static readonly Utf8String s_newlineEscaped = new Utf8String("\\n");
+
+		/// <summary>
+		/// Gets the rendered message from the event data
+		/// </summary>
+		public Utf8String GetRenderedMessage()
+		{
+			Utf8JsonReader reader = new Utf8JsonReader(Data.Span);
+			if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+			{
+				while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+				{
+					ReadOnlySpan<byte> propertyName = reader.ValueSpan;
+					if (!reader.Read())
+					{
+						break;
+					}
+					else if (propertyName.SequenceEqual(LogEventPropertyName.Message) && reader.TokenType == JsonTokenType.String)
+					{
+						return new Utf8String(reader.GetUtf8String().ToArray());
+					}
+				}
+			}
+			return Utf8String.Empty;
+		}
+
+		/// <summary>
+		/// Gets the event data rendered as a legacy unreal log line of the format:
+		/// [timestamp][frame number]LogChannel: LogVerbosity: Message
+		/// </summary>
+		public string GetLegacyLogLine()
+		{
+			Utf8JsonReader reader = new Utf8JsonReader(Data.Span);
+			if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+			{
+				Utf8String? message = null;
+				DateTime? time = null;
+				while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+				{
+					ReadOnlySpan<byte> propertyName = reader.ValueSpan;
+					if (!reader.Read())
+					{
+						break;
+					}
+					else if (propertyName.SequenceEqual(LogEventPropertyName.Time) && reader.TokenType == JsonTokenType.String)
+					{
+						time = reader.GetDateTime();
+					}
+					else if (propertyName.SequenceEqual(LogEventPropertyName.Message) && reader.TokenType == JsonTokenType.String)
+					{
+						message = new Utf8String(reader.GetUtf8String().ToArray());
+					}
+				}
+
+				if (message is not null)
+				{
+					if (time is not null)
+					{
+						return $"[{time:yyyy.MM.dd-HH.mm.ss:fff}][  0]{message}"; // Structured logs currently don't contain frame number
+					}
+					else
+					{
+						return $"{message}";
+					}
+				}
+			}
+			return String.Empty;
+		}
 
 		/// <summary>
 		/// Count the number of lines in the message field of a log event
@@ -242,7 +318,56 @@ namespace EpicGames.Core
 		/// <param name="state"></param>
 		/// <param name="ex"></param>
 		/// <returns></returns>
-		public static string Format(JsonLogEvent state, Exception? ex) => LogEvent.Read(state.Data.Span).ToString();
+		public static string Format(JsonLogEvent state, Exception? ex)
+		{
+			_ = ex;
+			return LogEvent.Read(state.Data.Span).ToString();
+		}
+
+		/// <summary>
+		/// Find all properties of the given type in a particular log line
+		/// </summary>
+		/// <param name="type">Type of property to return</param>
+		/// <returns></returns>
+		public IEnumerable<JsonProperty> FindPropertiesOfType(Utf8String type)
+		{
+			JsonDocument document = JsonDocument.Parse(Data);
+			return FindPropertiesOfType(document.RootElement, type);
+		}
+
+		/// <summary>
+		/// Find all properties of the given type in a particular log line
+		/// </summary>
+		/// <param name="line">Line data</param>
+		/// <param name="type">Type of property to return</param>
+		/// <returns></returns>
+		public static IEnumerable<JsonProperty> FindPropertiesOfType(JsonElement line, Utf8String type)
+		{
+			JsonElement properties;
+			if (line.TryGetProperty("properties", out properties) && properties.ValueKind == JsonValueKind.Object)
+			{
+				foreach (JsonProperty property in properties.EnumerateObject())
+				{
+					if (property.Value.ValueKind == JsonValueKind.Object)
+					{
+						foreach (JsonProperty subProperty in property.Value.EnumerateObject())
+						{
+							if (subProperty.NameEquals(LogEventPropertyName.Type.Span))
+							{
+								if (subProperty.Value.ValueKind == JsonValueKind.String && subProperty.Value.ValueEquals(type.Span))
+								{
+									yield return property;
+								}
+								else
+								{
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 
 		/// <inheritdoc/>
 		public override string ToString() => Encoding.UTF8.GetString(Data.ToArray());

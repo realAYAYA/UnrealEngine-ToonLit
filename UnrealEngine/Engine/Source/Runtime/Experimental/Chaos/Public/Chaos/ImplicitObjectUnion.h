@@ -3,10 +3,10 @@
 
 #include "Chaos/Array.h"
 #include "Chaos/ImplicitObject.h"
+#include "Chaos/ImplicitObjectTransformed.h"
 #include "Chaos/ISpatialAcceleration.h"
 #include "Chaos/GeometryParticles.h"
 
-#include "ImplicitObjectTransformed.h"
 #include "ChaosArchive.h"
 
 namespace Chaos
@@ -14,7 +14,7 @@ namespace Chaos
 
 namespace Private
 {
-	class FImplicitBVH;
+ 	class FImplicitBVH;
 	class FImplicitBVHObject;
 }
 
@@ -28,8 +28,11 @@ class FImplicitObjectUnion : public FImplicitObject
   public:
 
 	using FImplicitObject::GetTypeName;
-
-	CHAOS_API FImplicitObjectUnion(TArray<TUniquePtr<FImplicitObject>>&& Objects);
+	
+	UE_DEPRECATED(5.4, "Constructor no longer used")
+	FImplicitObjectUnion(TArray<TUniquePtr<FImplicitObject>>&& Objects);
+	
+	CHAOS_API FImplicitObjectUnion(TArray<Chaos::FImplicitObjectPtr>&& Objects);
 	FImplicitObjectUnion(const FImplicitObjectUnion& Other) = delete;
 	CHAOS_API FImplicitObjectUnion(FImplicitObjectUnion&& Other);
 	CHAOS_API virtual ~FImplicitObjectUnion();
@@ -38,20 +41,23 @@ class FImplicitObjectUnion : public FImplicitObject
 	{
 		return ImplicitObjectType::Union;
 	}
+	UE_DEPRECATED(5.4, "Please use Combine with an array of implicit object ptrs instead")
+	void Combine(TArray<TUniquePtr<FImplicitObject>>& Objects) {check(false);}
 
-	CHAOS_API void Combine(TArray<TUniquePtr<FImplicitObject>>& Objects);
+	CHAOS_API void Combine(TArray<Chaos::FImplicitObjectPtr>& Objects);
 	CHAOS_API void RemoveAt(int32 RemoveIndex);
+	CHAOS_API void RemoveAtSortedIndices(const TArrayView<const int32>& InIndices);
 
 	// The total number of root objects in the hierarchy (same as GetObjects().Num())
 	int32 GetNumRootObjects() const
 	{
 		return MObjects.Num();
 	}
-
+	
 	// The total number of leaf objects in the hierarchy
 	int32 GetNumLeafObjects() const
 	{
-		return int32(NumLeafObjects);
+		return NumLeafObjects;
 	}
 
 	// Enable BVH suport for this Union. This should only be done for the root Union in a hierarchy
@@ -63,24 +69,25 @@ class FImplicitObjectUnion : public FImplicitObject
 			RebuildBVH();
 		}
 	}
-
-	CHAOS_API virtual TUniquePtr<FImplicitObject> Copy() const;
-	CHAOS_API virtual TUniquePtr<FImplicitObject> CopyWithScale(const FVec3& Scale) const override;
-	CHAOS_API virtual TUniquePtr<FImplicitObject> DeepCopy() const;
-	CHAOS_API virtual TUniquePtr<FImplicitObject> DeepCopyWithScale(const FVec3& Scale) const override;
+	
+	CHAOS_API virtual Chaos::FImplicitObjectPtr CopyGeometry() const;
+	CHAOS_API virtual Chaos::FImplicitObjectPtr CopyGeometryWithScale(const FVec3& Scale) const override;
+	CHAOS_API virtual Chaos::FImplicitObjectPtr DeepCopyGeometry() const;
+	CHAOS_API virtual Chaos::FImplicitObjectPtr DeepCopyGeometryWithScale(const FVec3& Scale) const override;
 	
 	virtual FReal PhiWithNormal(const FVec3& x, FVec3& Normal) const override
 	{
+		const Chaos::FImplicitObjectsArray& Objects = MObjects;
 		FReal Phi = TNumericLimits<FReal>::Max();
 		bool NeedsNormalize = false;
-		for (int32 i = 0; i < MObjects.Num(); ++i)
+		for (int32 i = 0; i < Objects.Num(); ++i)
 		{
-			if(!ensure(MObjects[i]))
+			if(!ensure(Objects[i]))
 			{
 				continue;
 			}
 			FVec3 NextNormal;
-			FReal NextPhi = MObjects[i]->PhiWithNormal(x, NextNormal);
+			FReal NextPhi = Objects[i]->PhiWithNormal(x, NextNormal);
 			if (NextPhi < Phi)
 			{
 				Phi = NextPhi;
@@ -104,22 +111,9 @@ class FImplicitObjectUnion : public FImplicitObject
 
 	virtual void AccumulateAllImplicitObjects(TArray<Pair<const FImplicitObject*, FRigidTransform3>>& Out, const FRigidTransform3& ParentTM) const
 	{
-		for (const TUniquePtr<FImplicitObject>& Object : MObjects)
+		for (const Chaos::FImplicitObjectPtr& Object : GetObjects())
 		{
 			Object->AccumulateAllImplicitObjects(Out, ParentTM);
-		}
-	}
-
-	virtual void AccumulateAllSerializableImplicitObjects(TArray<Pair<TSerializablePtr<FImplicitObject>, FRigidTransform3>>& Out, const FRigidTransform3& ParentTM, TSerializablePtr<FImplicitObject> This) const
-	{
-		AccumulateAllSerializableImplicitObjectsHelper(Out, ParentTM);
-	}
-
-	void AccumulateAllSerializableImplicitObjectsHelper(TArray<Pair<TSerializablePtr<FImplicitObject>, FRigidTransform3>>& Out, const FRigidTransform3& ParentTM) const
-	{
-		for (const TUniquePtr<FImplicitObject>& Object : MObjects)
-		{
-			Object->AccumulateAllSerializableImplicitObjects(Out, ParentTM, MakeSerializable(Object));
 		}
 	}
 
@@ -132,7 +126,7 @@ class FImplicitObjectUnion : public FImplicitObject
 		FReal MinTime = 0;	//initialization not needed, but doing it to avoid warning
 		bool bFound = false;
 
-		for (const TUniquePtr<FImplicitObject>& Obj : MObjects)
+		for (const Chaos::FImplicitObjectPtr& Obj : MObjects)
 		{
 			FVec3 Position;
 			FVec3 Normal;
@@ -157,7 +151,7 @@ class FImplicitObjectUnion : public FImplicitObject
 
 	virtual bool Overlap(const FVec3& Point, const FReal Thickness) const override
 	{
-		for (const TUniquePtr<FImplicitObject>& Obj : MObjects)
+		for (const Chaos::FImplicitObjectPtr& Obj : MObjects)
 		{
 			if (Obj->Overlap(Point, Thickness))
 			{
@@ -173,14 +167,16 @@ class FImplicitObjectUnion : public FImplicitObject
 	virtual bool IsValidGeometry() const
 	{
 		bool bValid = FImplicitObject::IsValidGeometry();
-		bValid = bValid && MObjects.Num();
+		bValid = bValid && GetObjects().Num();
 		return bValid;
 	}
 
-	const TArray<TUniquePtr<FImplicitObject>>& GetObjects() const { return MObjects; }
+	// Return the list of objects that will be part of the union
+	CHAOS_API const TArray<Chaos::FImplicitObjectPtr>& GetObjects() const { return MObjects; }
 
-	TArray<TUniquePtr<FImplicitObject>>& GetObjects() { return MObjects; }
-
+	// Return the const list of objects that will be part of the union
+	CHAOS_API TArray<Chaos::FImplicitObjectPtr>& GetObjects() { return MObjects; }
+	
 	// The lambda returns TRUE if an object was found and iteration should stop.
 	CHAOS_API void ForEachObject(TFunctionRef<bool(const FImplicitObject&, const FRigidTransform3&)> Lambda) const;
 
@@ -189,30 +185,12 @@ class FImplicitObjectUnion : public FImplicitObject
 		uint32 Result = 0;
 
 		// Union hash is just the hash of all internal objects
-		for(const TUniquePtr<FImplicitObject>& InnerObj : MObjects)
+		for(const Chaos::FImplicitObjectPtr& InnerObj : MObjects)
 		{
 			Result = HashCombine(Result, InnerObj->GetTypeHash());
 		}
 
 		return Result;
-	}
-
-	virtual FImplicitObject* Duplicate() const override
-	{
-		TArray<TUniquePtr<FImplicitObject>> NewObjects;
-		NewObjects.Reserve(MObjects.Num());
-
-		for (const TUniquePtr<FImplicitObject>& Obj : MObjects)
-		{
-			if (ensure(Obj->GetType() != ImplicitObjectType::Union))	//can't duplicate unions of unions
-			{
-				NewObjects.Add(TUniquePtr<FImplicitObject>(Obj->Duplicate()));
-			}
-		}
-
-		FImplicitObjectUnion* Union = new FImplicitObjectUnion(MoveTemp(NewObjects));
-		Union->SetAllowBVH(Flags.bAllowBVH);
-		return Union;
 	}
 
 	const Private::FImplicitBVH* GetBVH() const
@@ -233,6 +211,7 @@ class FImplicitObjectUnion : public FImplicitObject
 #endif // #if INTEL_ISPC
 
 protected:
+
 	virtual Pair<FVec3, bool> FindClosestIntersectionImp(const FVec3& StartPoint, const FVec3& EndPoint, const FReal Thickness) const override
 	{
 		check(MObjects.Num());
@@ -252,6 +231,9 @@ protected:
 		}
 		return ClosestIntersection;
 	}
+
+	CHAOS_API virtual int32 CountObjectsInHierarchyImpl() const override final;
+	CHAOS_API virtual int32 CountLeafObjectsInHierarchyImpl() const override final;
 
 	CHAOS_API virtual void VisitOverlappingLeafObjectsImpl(
 		const FAABB3& LocalBounds,
@@ -289,7 +271,7 @@ protected:
 	CHAOS_API void RebuildBVH();
 
 	CHAOS_API void LegacySerializeBVH(FChaosArchive& Ar);
-
+	
 	union FFLags
 	{
 	public:
@@ -303,13 +285,18 @@ protected:
 		uint8 Bits;
 	};
 
-	TArray<TUniquePtr<FImplicitObject>> MObjects;
+	// Check if the BVH could be used and valid
+	bool HasValidBVH() const;
+
+	// list of implicit objects that are part of the union
+	TArray<Chaos::FImplicitObjectPtr> MObjects;
+	
 	FAABB3 MLocalBoundingBox;
 
 	// BVH is only created when there are many objects.
 	// @todo(chaos): consider registering particles that may need BVH updated in evolution instead
 	TUniquePtr<Private::FImplicitBVH> BVH;
-	uint16 NumLeafObjects;
+	int32 NumLeafObjects;
 	FFLags Flags;
 };
 
@@ -331,7 +318,7 @@ class FImplicitObjectUnionClustered: public FImplicitObjectUnion
 {
 public:
 	CHAOS_API FImplicitObjectUnionClustered();
-	CHAOS_API FImplicitObjectUnionClustered(TArray<TUniquePtr<FImplicitObject>>&& Objects, const TArray<FPBDRigidParticleHandle*>& OriginalParticleLookupHack = TArray<FPBDRigidParticleHandle*>());
+	CHAOS_API FImplicitObjectUnionClustered(TArray<Chaos::FImplicitObjectPtr>&& Objects, const TArray<FPBDRigidParticleHandle*>& OriginalParticleLookupHack = TArray<FPBDRigidParticleHandle*>());
 	FImplicitObjectUnionClustered(const FImplicitObjectUnionClustered& Other) = delete;
 	CHAOS_API FImplicitObjectUnionClustered(FImplicitObjectUnionClustered&& Other);
 	virtual ~FImplicitObjectUnionClustered() = default;
@@ -371,6 +358,5 @@ struct TImplicitTypeInfo<FImplicitObjectUnion>
 		return (InType == FImplicitObjectUnion::StaticType()) || TImplicitTypeInfo<FImplicitObjectUnionClustered>::IsBaseOf(InType);
 	}
 };
-
 
 }

@@ -69,7 +69,7 @@ syms_dw_expr__ir_encode_u(SYMS_Arena *arena, SYMS_DwEvalIRGraph *graph, SYMS_U64
     op = SYMS_EvalOp_ConstU32;
   }
   
-  SYMS_DwEvalIRGraphNode *result = syms_dw_expr__ir_push_node(arena, graph, op, syms_op_params(u));
+  SYMS_DwEvalIRGraphNode *result = syms_dw_expr__ir_push_node(arena, graph, op, syms_eval_op_params(u));
   return(result);
 }
 
@@ -91,9 +91,9 @@ syms_dw_expr__ir_encode_s(SYMS_Arena *arena, SYMS_DwEvalIRGraph *graph, SYMS_S64
     size = 32;
   }
   
-  SYMS_DwEvalIRGraphNode *result = syms_dw_expr__ir_push_node(arena, graph, op, syms_op_params(s));
+  SYMS_DwEvalIRGraphNode *result = syms_dw_expr__ir_push_node(arena, graph, op, syms_eval_op_params(s));
   if (size < 64){
-    syms_dw_expr__ir_push_node(arena, graph, SYMS_EvalOp_TruncSigned, syms_op_params(size));
+    syms_dw_expr__ir_push_node(arena, graph, SYMS_EvalOp_TruncSigned, syms_eval_op_params(size));
   }
   return(result);
 }
@@ -185,12 +185,13 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
           SYMS_U64 offset = raw_offset + text_voff;
           
           if (offset < 0xFFFFFFFF){
-            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_ModuleOff, syms_op_params(offset));
+            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_ModuleOff, syms_eval_op_params(offset));
           }
           else{
-            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_ModuleOff, syms_op_params(0xFFFFFFFF));
+            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_ModuleOff,
+                                                  syms_eval_op_params(0xFFFFFFFF));
             syms_dw_expr__ir_encode_u(arena, &graph, offset - 0xFFFFFFFF);
-            syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_op_params(SYMS_EvalTypeGroup_U));
+            syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_eval_op_params(SYMS_EvalTypeGroup_U));
           }
         }break;
         
@@ -217,12 +218,13 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
           step_cursor += syms_based_range_read_sleb128(expr_base, expr_range, step_cursor, (SYMS_S64*)&offset);
           
           if (offset < 256){
-            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_FrameOff, syms_op_params((SYMS_U64)offset));
+            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_FrameOff,
+                                                  syms_eval_op_params((SYMS_U64)offset));
           }
           else{
-            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_FrameOff, syms_op_params(255));
+            new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_FrameOff, syms_eval_op_params(255));
             syms_dw_expr__ir_encode_u(arena, &graph, offset - 255);
-            syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_op_params(SYMS_EvalTypeGroup_U));
+            syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_eval_op_params(SYMS_EvalTypeGroup_U));
           }
         }break;
         
@@ -247,9 +249,9 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
           // TODO(allen): change size based on arch
           SYMS_U8 size = 8;
           
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_RegRead, syms_op_params_2u8(reg_id, size));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_RegRead, syms_eval_op_params_2u8(reg_id, size));
           syms_dw_expr__ir_encode_u(arena, &graph, offset);
-          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_op_params(SYMS_EvalTypeGroup_U));
+          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_BREGX:
@@ -263,22 +265,22 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
           // TODO(allen): change size based on arch
           SYMS_U8 size = 8;
           
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_RegRead, syms_op_params_2u8(reg_id, size));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_RegRead, syms_eval_op_params_2u8(reg_id, size));
           
           syms_dw_expr__ir_encode_u(arena, &graph, offset);
-          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_op_params(SYMS_EvalTypeGroup_U));
+          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         //// stack operations ////
         
         case SYMS_DwOp_DUP:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pick, syms_op_params(0));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pick, syms_eval_op_params(0));
         }break;
         
         case SYMS_DwOp_DROP:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pop, syms_op_params(0));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pop, syms_eval_op_params(0));
         }break;
         
         case SYMS_DwOp_PICK:
@@ -286,27 +288,27 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
           SYMS_U64 idx = 0;
           step_cursor += syms_based_range_read(expr_base, expr_range, step_cursor, 1, &idx);
           // TODO: if (idx >= 256) no-convert
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pick, syms_op_params(idx));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pick, syms_eval_op_params(idx));
         }break;
         
         case SYMS_DwOp_OVER:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pick, syms_op_params(1));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Pick, syms_eval_op_params(1));
         }break;
         
         case SYMS_DwOp_SWAP:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Insert, syms_op_params(1));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Insert, syms_eval_op_params(1));
         }break;
         
         case SYMS_DwOp_ROT:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Insert, syms_op_params(2));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Insert, syms_eval_op_params(2));
         }break;
         
         case SYMS_DwOp_DEREF:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_MemRead, syms_op_params(8));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_MemRead, syms_eval_op_params(8));
         }break;
         
         case SYMS_DwOp_DEREF_SIZE:
@@ -314,7 +316,7 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
           SYMS_U64 raw_size = 0;
           step_cursor += syms_based_range_read(expr_base, expr_range, step_cursor, 1, &raw_size);
           SYMS_U64 size = SYMS_ClampTop(raw_size, 8);
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_MemRead, syms_op_params(size));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_MemRead, syms_eval_op_params(size));
         }break;
         
         case SYMS_DwOp_XDEREF:
@@ -325,7 +327,7 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
         
         case SYMS_DwOp_PUSH_OBJECT_ADDRESS:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_ObjectOff, syms_op_params(0));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_ObjectOff, syms_eval_op_params(0));
         }break;
         
         case SYMS_DwOp_FORM_TLS_ADDRESS:
@@ -335,7 +337,7 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
         
         case SYMS_DwOp_CALL_FRAME_CFA:
         {
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_CFA, syms_op_params(0));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_CFA, syms_eval_op_params(0));
         }break;
         
         //// arithmetic and logical operations ////
@@ -343,60 +345,60 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
         case SYMS_DwOp_ABS:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Abs,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_AND:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_BitAnd,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_DIV:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Div,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_MINUS:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Sub,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_MOD:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Mod,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_MUL:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Mul,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_NEG:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Neg,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_NOT:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_BitNot,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_OR:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_BitOr,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_PLUS:
         {
-          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_op_params(SYMS_EvalTypeGroup_U));
+          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_PLUS_UCONST:
@@ -404,31 +406,31 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
           SYMS_U64 y = 0;
           step_cursor += syms_based_range_read_uleb128(expr_base, expr_range, step_cursor, &y);
           new_node = syms_dw_expr__ir_encode_u(arena, &graph, y);
-          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_op_params(SYMS_EvalTypeGroup_U));
+          syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Add, syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_SHL:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_LShift,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_SHR:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_RShift,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         case SYMS_DwOp_SHRA:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_RShift,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_XOR:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_BitXor,
-                                                syms_op_params(SYMS_EvalTypeGroup_U));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_U));
         }break;
         
         //// control flow operations ////
@@ -436,44 +438,44 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
         case SYMS_DwOp_LE:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_LsEq,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_GE:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_GrEq,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_EQ:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_EqEq,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_LT:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Less,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_GT:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Grtr,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_NE:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_NtEq,
-                                                syms_op_params(SYMS_EvalTypeGroup_S));
+                                                syms_eval_op_params(SYMS_EvalTypeGroup_S));
         }break;
         
         case SYMS_DwOp_SKIP:
         {
           SYMS_S16 d = 0;
           step_cursor += syms_based_range_read(expr_base, expr_range, step_cursor, 2, &d);
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Skip, syms_op_params(0));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Skip, syms_eval_op_params(0));
           
           // save a jump patch
           SYMS_U64 dst_off = step_cursor + d;
@@ -488,7 +490,7 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
         {
           SYMS_S16 d = 0;
           step_cursor += syms_based_range_read(expr_base, expr_range, step_cursor, 2, &d);
-          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Cond, syms_op_params(0));
+          new_node = syms_dw_expr__ir_push_node(arena, &graph, SYMS_EvalOp_Cond, syms_eval_op_params(0));
           
           // save a jump patch
           SYMS_U64 dst_off = step_cursor + d;
@@ -511,7 +513,7 @@ syms_dw_expr__ir_graph_from_dw_expr(SYMS_Arena *arena, SYMS_DwDbgAccel *dbg,
         case SYMS_DwOp_NOP:
         {
           new_node = syms_dw_expr__ir_push_node(arena, &graph, (SYMS_EvalOp)SYMS_EvalIRExtKind_Noop,
-                                                syms_op_params(0));
+                                                syms_eval_op_params(0));
         }break;
         
         //// register location descriptions ////

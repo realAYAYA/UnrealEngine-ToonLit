@@ -27,13 +27,12 @@ class Platform(unreal.Platform):
 
     def _launch(self, exec_context, stage_dir, binary_path, args):
         if stage_dir:
-            bins_index = binary_path.find("/Binaries/Mac/")
-            if bins_index >= 0:
-                base_dir = stage_dir
-                base_dir += os.path.basename(binary_path[:bins_index])
-                base_dir += "/Binaries/Mac/"
-            else:
-                raise EnvironmentError(f"Unable to calculate base directory from '{binary_path}'")
+            midfix = "Engine";
+            if project := self.get_unreal_context().get_project():
+                midfix = project.get_name()
+            base_dir = stage_dir + midfix + "/Binaries/Mac"
+            if not os.path.isdir(base_dir):
+                raise EnvironmentError(f"Failed to find base directory '{base_dir}'")
             args = (*args, "-basedir=" + base_dir)
 
         cmd = exec_context.create_runnable(binary_path, *args)

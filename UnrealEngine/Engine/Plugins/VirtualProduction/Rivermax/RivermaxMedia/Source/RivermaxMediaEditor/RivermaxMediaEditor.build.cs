@@ -17,6 +17,7 @@ public class RivermaxMediaEditor : ModuleRules
 				"AssetTools",
 				"Core",
 				"CoreUObject",
+				"DisplayClusterModularFeaturesEditor",
 				"EditorStyle",
 				"Engine",
 				"InputCore",

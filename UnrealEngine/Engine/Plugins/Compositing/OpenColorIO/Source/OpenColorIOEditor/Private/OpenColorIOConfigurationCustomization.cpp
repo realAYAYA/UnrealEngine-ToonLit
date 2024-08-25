@@ -49,7 +49,7 @@ void FOpenColorIOConfigurationCustomization::CustomizeDetails(IDetailLayoutBuild
 				{
 					OpenColorIOWrapper::ClearAllCaches();
 
-					OpenColorIOConfig->ReloadExistingColorspaces();
+					OpenColorIOConfig->ReloadExistingColorspaces(true);
 				}
 				return FReply::Handled();
 			})

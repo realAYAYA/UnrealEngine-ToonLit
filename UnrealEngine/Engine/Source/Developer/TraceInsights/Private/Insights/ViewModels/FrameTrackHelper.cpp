@@ -169,7 +169,7 @@ void FFrameTrackDrawHelper::DrawCached(const FFrameTrackSeries& Series) const
 
 		NumDrawSamples++;
 
-		const float X = SampleIndex * SampleW;
+		const float X = static_cast<float>(SampleIndex) * SampleW;
 		float ValueY;
 
 		FLinearColor ColorFill = SeriesColor;
@@ -227,7 +227,7 @@ void FFrameTrackDrawHelper::DrawHoveredSample(const FFrameTrackSample& Sample) c
 	const int32 FramesPerSample = Viewport.GetNumFramesPerSample();
 	const int32 FirstFrameIndex = Viewport.GetFirstFrameIndex();
 	const int32 SampleIndex = (Sample.LargestFrameIndex - FirstFrameIndex) / FramesPerSample;
-	const float X = SampleIndex * SampleW;
+	const float X = static_cast<float>(SampleIndex) * SampleW;
 
 	const FAxisViewportDouble& ViewportY = Viewport.GetVerticalAxisViewport();
 
@@ -272,8 +272,8 @@ void FFrameTrackDrawHelper::DrawHighlightedInterval(const FFrameTrackSeries& Ser
 	if (Index1 <= Index2)
 	{
 		const float SampleW = Viewport.GetSampleWidth();
-		float X1 = Index1 * SampleW;
-		float X2 = (Index2 + 1) * SampleW;
+		float X1 = static_cast<float>(Index1) * SampleW;
+		float X2 = static_cast<float>(Index2 + 1) * SampleW;
 
 		constexpr float Y1 = 0.0f; // allows 12px for the horizontal scrollbar (one displayed on top of the track)
 		const float Y2 = Viewport.GetHeight();

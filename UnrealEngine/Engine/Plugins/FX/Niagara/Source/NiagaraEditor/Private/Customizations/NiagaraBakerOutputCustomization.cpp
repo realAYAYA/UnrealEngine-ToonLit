@@ -4,6 +4,7 @@
 #include "NiagaraBakerOutputSimCache.h"
 #include "NiagaraBakerOutputTexture2D.h"
 #include "NiagaraBakerOutputVolumeTexture.h"
+#include "NiagaraBakerOutputSparseVolumeTexture.h"
 
 #include "Editor/EditorEngine.h"
 #include "Widgets/Images/SImage.h"
@@ -353,4 +354,62 @@ void FNiagaraBakerOutputVolumeTextureDetails::CustomizeDetails(IDetailLayoutBuil
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////
+
+TSharedRef<IDetailCustomization> FNiagaraBakerOutputSparseVolumeTextureDetails::MakeInstance()
+{
+	return MakeShared<FNiagaraBakerOutputSparseVolumeTextureDetails>();
+}
+
+FText FNiagaraBakerOutputSparseVolumeTextureDetails::BrowseAtlasToolTipText(TWeakObjectPtr<UNiagaraBakerOutputSparseVolumeTexture> WeakOutput)
+{
+	UNiagaraBakerOutputSparseVolumeTexture* Output = WeakOutput.Get();
+	return FText::Format(LOCTEXT("BrowseAtlasToolTipFormat", "Browse to atlas asset '{0}'"), FText::FromString(Output ? Output->GetAssetPath(Output->SparseVolumeTextureAssetPathFormat, 0) : FString()));
+}
+
+FReply FNiagaraBakerOutputSparseVolumeTextureDetails::BrowseToAtlas(TWeakObjectPtr<UNiagaraBakerOutputSparseVolumeTexture> WeakOutput)
+{
+	if (UNiagaraBakerOutputSparseVolumeTexture* Output = WeakOutput.Get())
+	{
+		const FString AssetPath = Output->GetAssetPath(Output->SparseVolumeTextureAssetPathFormat, 0);
+		FocusContentBrowserToAsset(AssetPath);
+	}
+	return FReply::Handled();
+}
+
+
+void FNiagaraBakerOutputSparseVolumeTextureDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
+{
+	// We only support customization on 1 object
+	TArray<TWeakObjectPtr<UObject>> ObjectsCustomized;
+	DetailBuilder.GetObjectsBeingCustomized(ObjectsCustomized);
+	if (ObjectsCustomized.Num() != 1 || !ObjectsCustomized[0]->IsA<UNiagaraBakerOutputSparseVolumeTexture>())
+	{
+		return;
+	}
+	TWeakObjectPtr<UNiagaraBakerOutputSparseVolumeTexture> WeakOutput = CastChecked<UNiagaraBakerOutputSparseVolumeTexture>(ObjectsCustomized[0]);
+
+	static FName NAME_Settings("Settings");
+	IDetailCategoryBuilder& DetailCategory = DetailBuilder.EditCategory(NAME_Settings);
+
+	TArray<TSharedRef<IPropertyHandle>> CategoryProperties;
+	DetailCategory.GetDefaultProperties(CategoryProperties);
+
+	for (TSharedRef<IPropertyHandle>& PropertyHandle : CategoryProperties)
+	{
+		const FName PropertyName = PropertyHandle->GetProperty() ? PropertyHandle->GetProperty()->GetFName() : NAME_None;
+		if (PropertyName == GET_MEMBER_NAME_CHECKED(UNiagaraBakerOutputSparseVolumeTexture, SparseVolumeTextureAssetPathFormat))
+		{
+			BuildAssetPathWidget(
+				DetailCategory, PropertyHandle,
+				TAttribute<FText>::FGetter::CreateStatic(&FNiagaraBakerOutputSparseVolumeTextureDetails::BrowseAtlasToolTipText, WeakOutput),
+				FOnClicked::CreateStatic(&FNiagaraBakerOutputSparseVolumeTextureDetails::BrowseToAtlas, WeakOutput)
+			);
+		}
+		else
+		{
+			DetailCategory.AddProperty(PropertyHandle);
+		}
+	}
+}
 #undef LOCTEXT_NAMESPACE

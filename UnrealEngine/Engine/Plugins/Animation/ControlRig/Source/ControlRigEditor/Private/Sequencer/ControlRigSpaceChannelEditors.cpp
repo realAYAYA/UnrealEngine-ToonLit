@@ -54,7 +54,6 @@
 #include "ScopedTransaction.h"
 #include "IControlRigEditorModule.h"
 #include "TimerManager.h"
-#include "CommonMovieSceneTools.h"
 #include "SequencerSectionPainter.h"
 #include "Rendering/DrawElements.h"
 #include "Fonts/FontMeasure.h"
@@ -335,6 +334,17 @@ FKeyHandle FControlRigSpaceChannelHelpers::SequencerKeyControlRigSpaceChannel(UC
 	//we only key if the value is different.
 	if (Value != ExistingValue)
 	{
+		FFrameRate TickResolution = Sequencer->GetFocusedTickResolution();
+		FMovieSceneSequenceTransform RootToLocalTransform = Sequencer->GetFocusedMovieSceneSequenceTransform();
+
+		//make sure to evaluate first frame
+		FFrameTime CurrentTime(Time);
+		CurrentTime = CurrentTime * RootToLocalTransform.InverseNoLooping();
+
+		FMovieSceneContext SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(CurrentTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
+		Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext);
+		ControlRig->Evaluate_AnyThread();
+
 		TArray<FFrameNumber> Frames;
 		Frames.Add(Time);
 		
@@ -440,20 +450,23 @@ FKeyHandle FControlRigSpaceChannelHelpers::SequencerKeyControlRigSpaceChannel(UC
 		//do any compensation or previous key adding
 		FRigControlModifiedContext Context;
 		Context.SetKey = EControlRigSetKey::Always;
-		FFrameRate TickResolution = Sequencer->GetFocusedTickResolution();
-		FMovieSceneSequenceTransform RootToLocalTransform = Sequencer->GetFocusedMovieSceneSequenceTransform();
 
 		// set previous key if we're going to switch space
 		if (bSetPreviousKey)
 		{
 			FFrameTime GlobalTime(Time - 1);
-			GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly();
+			GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping();
 
-			FMovieSceneContext SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
-			Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext, *Sequencer);
+			SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
+			Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext);
 
 			Context.LocalTime = TickResolution.AsSeconds(FFrameTime(Time - 1));
 			ControlRig->SetControlGlobalTransform(ControlKey.Name, ControlWorldTransforms[0], true, Context, false /*undo*/, false /*bPrintPython*/, true/* bFixEulerFlips*/);
+			if (ControlRig->IsAdditive())
+			{
+				// We need to evaluate in order to trigger a notification
+				ControlRig->Evaluate_AnyThread();
+			}
 
 			//need to do this after eval
 			FChannelMapInfo* pChannelIndex = nullptr;
@@ -470,22 +483,26 @@ FKeyHandle FControlRigSpaceChannelHelpers::SequencerKeyControlRigSpaceChannel(UC
 		}
 
 		// effectively switch to new space
-		URigHierarchy::TElementDependencyMap Dependencies = ControlRig->GetHierarchy()->GetDependenciesForVM(ControlRig->GetVM());
-		ControlRig->GetHierarchy()->SwitchToParent(ControlKey, SpaceKey, false, true, Dependencies, nullptr);
+		ControlRig->SwitchToParent(ControlKey, SpaceKey, false, true);
 		// add new keys in the new space context
 		int32 FramesIndex = 0;
 		for (const FFrameNumber& Frame : Frames)
 		{
 			FFrameTime GlobalTime(Frame);
-			GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly();
+			GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping();
 
-			FMovieSceneContext SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
-			Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext, *Sequencer);
+			SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
+			Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext);
 
 			ControlRig->Evaluate_AnyThread();
 			Context.LocalTime = TickResolution.AsSeconds(FFrameTime(Frame));
 			ControlRig->SetControlGlobalTransform(ControlKey.Name, ControlWorldTransforms[FramesIndex], true, Context, false /*undo*/, false /*bPrintPython*/, true/* bFixEulerFlips*/);
-
+			if (ControlRig->IsAdditive())
+			{
+				// We need to evaluate in order to trigger a notification
+				ControlRig->Evaluate_AnyThread();
+			}
+			
 			//need to do this after eval
 			FChannelMapInfo* pChannelIndex = nullptr;
 			FRigControlElement* ControlElement = nullptr;
@@ -687,22 +704,21 @@ void  FControlRigSpaceChannelHelpers::SequencerSpaceChannelKeyDeleted(UControlRi
 		{
 			//evaluate sequencer
 			FFrameTime GlobalTime(Frame);
-			GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly();
+			GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping();
 
 			FMovieSceneContext SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
-			Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext, *Sequencer);
+			Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext);
 			//make sure to set rig hierarchy correct since key is not deleted yet
 			switch (PreviousValue.SpaceType)
 			{
 			case EMovieSceneControlRigSpaceType::Parent:
-				RigHierarchy->SwitchToDefaultParent(ControlKey);
+				ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetDefaultParent(ControlKey), false, true);
 				break;
 			case EMovieSceneControlRigSpaceType::World:
-				RigHierarchy->SwitchToWorldSpace(ControlKey);
+				ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetWorldSpaceReferenceKey(), false, true);
 				break;
 			case EMovieSceneControlRigSpaceType::ControlRig:
-				URigHierarchy::TElementDependencyMap Dependencies = RigHierarchy->GetDependenciesForVM(ControlRig->GetVM());
-				RigHierarchy->SwitchToParent(ControlKey, PreviousValue.ControlRigElement, false, true, Dependencies, nullptr);
+				ControlRig->SwitchToParent(ControlKey, PreviousValue.ControlRigElement, false, true);
 				break;
 			}
 			ControlRig->Evaluate_AnyThread();
@@ -1074,8 +1090,7 @@ void FControlRigSpaceChannelHelpers::SequencerBakeControlInSpace(UControlRig* Co
 			FRigControlModifiedContext Context;
 			Context.SetKey = EControlRigSetKey::Always;
 			Context.KeyMask = (uint32)EControlRigContextChannelToKey::AllTransform;
-			URigHierarchy::TElementDependencyMap Dependencies = RigHierarchy->GetDependenciesForVM(ControlRig->GetVM());
-			RigHierarchy->SwitchToParent(ControlKey, Settings.TargetSpace, false, true, Dependencies, nullptr);
+			ControlRig->SwitchToParent(ControlKey, Settings.TargetSpace, false, true);
 			ControlRig->Evaluate_AnyThread();
 
 			FMovieSceneSequenceTransform RootToLocalTransform = Sequencer->GetFocusedMovieSceneSequenceTransform();
@@ -1087,10 +1102,10 @@ void FControlRigSpaceChannelHelpers::SequencerBakeControlInSpace(UControlRig* Co
 
 				//evaluate sequencer
 				FFrameTime GlobalTime(Frame);
-				GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly();
+				GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping();
 
 				FMovieSceneContext SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
-				Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext, *Sequencer);
+				Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext);
 
 				//evaluate control rig
 				ControlRig->Evaluate_AnyThread();
@@ -1115,22 +1130,22 @@ void FControlRigSpaceChannelHelpers::SequencerBakeControlInSpace(UControlRig* Co
 				switch (EndFrameValue.SpaceType)
 				{
 				case EMovieSceneControlRigSpaceType::Parent:
-					RigHierarchy->SwitchToDefaultParent(ControlKey);
+					ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetDefaultParent(ControlKey), false, true);
 					break;
 				case EMovieSceneControlRigSpaceType::World:
-					RigHierarchy->SwitchToWorldSpace(ControlKey);
+					ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetWorldSpaceReferenceKey(), false, true);
 					break;
 				case EMovieSceneControlRigSpaceType::ControlRig:
-					RigHierarchy->SwitchToParent(ControlKey, EndFrameValue.ControlRigElement, false, true, Dependencies, nullptr);
+					ControlRig->SwitchToParent(ControlKey, EndFrameValue.ControlRigElement, false, true);
 					break;
 				}
 
 				//evaluate sequencer
 				FFrameTime GlobalTime(EndFrame);
-				GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly();
+				GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping();
 
 				FMovieSceneContext SceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Sequencer->GetPlaybackStatus()).SetHasJumped(true);
-				Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext, *Sequencer);
+				Sequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(SceneContext);
 		
 				//evaluate control rig
 				ControlRig->Evaluate_AnyThread();
@@ -1303,7 +1318,7 @@ void FControlRigSpaceChannelHelpers::CompensateIfNeeded(
 		if(Control)// ac && Control->GetName() != ControlName)
 		{ 
 			//only if we have a channel
-			if (FSpaceControlNameAndChannel* Channel = Section->GetSpaceChannel(Control->GetName()))
+			if (FSpaceControlNameAndChannel* Channel = Section->GetSpaceChannel(Control->GetFName()))
 			{
 				const TArrayView<const FFrameNumber> FramesToCompensate = GetSpaceTimesToCompensate(Channel);
 				if (FramesToCompensate.Num() > 0)
@@ -1324,29 +1339,29 @@ void FControlRigSpaceChannelHelpers::CompensateIfNeeded(
 							TArray<FTransform> ControlWorldTransforms;
 							FControlRigSnapper Snapper;
 							Snapper.GetControlRigControlTransforms(
-								Sequencer, ControlRig, Control->GetName(),
+								Sequencer, ControlRig, Control->GetFName(),
 								{Time},
 								ControlRigParentWorldTransforms, ControlWorldTransforms);
 
 							//set space to previous space value that's different.
+							const FRigElementKey ControlKey = Control->GetKey();
 							switch (PreviousValue.SpaceType)
 							{
 								case EMovieSceneControlRigSpaceType::Parent:
-									RigHierarchy->SwitchToDefaultParent(Control->GetKey());
+									ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetDefaultParent(ControlKey), false, true);
 									break;
 								case EMovieSceneControlRigSpaceType::World:
-									RigHierarchy->SwitchToWorldSpace(Control->GetKey());
+									ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetWorldSpaceReferenceKey(), false, true);
 									break;
 								case EMovieSceneControlRigSpaceType::ControlRig:
-									URigHierarchy::TElementDependencyMap Dependencies = RigHierarchy->GetDependenciesForVM(ControlRig->GetVM());
-									RigHierarchy->SwitchToParent(Control->GetKey(), PreviousValue.ControlRigElement, false, true, Dependencies, nullptr);
+									ControlRig->SwitchToParent(ControlKey, PreviousValue.ControlRigElement, false, true);
 									break;
 							}
 							
 							//now set time -1 frame value
 							ControlRig->Evaluate_AnyThread();
 							KeyframeContext.LocalTime = TickResolution.AsSeconds(FFrameTime(Time - 1));
-							ControlRig->SetControlGlobalTransform(Control->GetName(), ControlWorldTransforms[0], true, KeyframeContext, false /*undo*/, false /*bPrintPython*/, true/* bFixEulerFlips*/);
+							ControlRig->SetControlGlobalTransform(Control->GetFName(), ControlWorldTransforms[0], true, KeyframeContext, false /*undo*/, false /*bPrintPython*/, true/* bFixEulerFlips*/);
 							
 							bDidIt = true;
 						}

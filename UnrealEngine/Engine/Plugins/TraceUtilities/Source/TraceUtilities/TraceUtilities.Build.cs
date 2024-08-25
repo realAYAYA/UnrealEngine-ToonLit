@@ -6,24 +6,24 @@ public class TraceUtilities : ModuleRules
 {
 	public TraceUtilities(ReadOnlyTargetRules Target) : base(Target)
 	{
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
+
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PublicDependencyModuleNames.AddRange(
-			new string[]
-			{
+			new string[] {
 				"Core",
 				// ... add other public dependencies that you statically link with here ...
 			}
-			);
+		);
 
 		PrivateDependencyModuleNames.AddRange(
-			new string[]
-			{
+			new string[] {
 				"CoreUObject",
 				"Engine",
 				"TraceLog",
-				// ... add private dependencies that you statically link with here ...	
+				// ... add private dependencies that you statically link with here ...
 			}
-			);
+		);
 	}
 }

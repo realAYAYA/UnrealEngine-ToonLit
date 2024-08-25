@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -33,7 +33,7 @@ namespace UnrealGameSync
 	public class ProgressValue
 	{
 		Tuple<string, float> _state = null!;
-		readonly Stack<Tuple<float, float>> _ranges = new Stack<Tuple<float,float>>();
+		readonly Stack<Tuple<float, float>> _ranges = new Stack<Tuple<float, float>>();
 
 		public ProgressValue()
 		{
@@ -42,7 +42,7 @@ namespace UnrealGameSync
 
 		public void Clear()
 		{
-			_state = new Tuple<string,float>("Starting...", 0.0f);
+			_state = new Tuple<string, float>("Starting...", 0.0f);
 
 			_ranges.Clear();
 			_ranges.Push(new Tuple<float, float>(0.0f, 1.0f));
@@ -52,15 +52,15 @@ namespace UnrealGameSync
 
 		public void Set(string message)
 		{
-			if(_ranges.Count == 1)
+			if (_ranges.Count == 1)
 			{
-				_state = new Tuple<string,float>(message, _state.Item2);
+				_state = new Tuple<string, float>(message, _state.Item2);
 			}
 		}
 
 		public void Set(string message, float fraction)
 		{
-			if(_ranges.Count == 1)
+			if (_ranges.Count == 1)
 			{
 				_state = new Tuple<string, float>(message, RelativeToAbsoluteFraction(fraction));
 			}
@@ -82,14 +82,14 @@ namespace UnrealGameSync
 
 		public void Push(float maxFraction)
 		{
-			_ranges.Push(new Tuple<float,float>(_state.Item2, RelativeToAbsoluteFraction(maxFraction)));
+			_ranges.Push(new Tuple<float, float>(_state.Item2, RelativeToAbsoluteFraction(maxFraction)));
 		}
 
 		public void Pop()
 		{
-			if(_ranges.Count > 1)
+			if (_ranges.Count > 1)
 			{
-				_state = new Tuple<string,float>(_state.Item1, _ranges.Pop().Item2);
+				_state = new Tuple<string, float>(_state.Item1, _ranges.Pop().Item2);
 			}
 		}
 
@@ -107,7 +107,7 @@ namespace UnrealGameSync
 		public static string? ParseLine(string line, ProgressValue value)
 		{
 			string trimLine = line.Trim();
-			if(trimLine.StartsWith(DirectivePrefix, StringComparison.Ordinal))
+			if (trimLine.StartsWith(DirectivePrefix, StringComparison.Ordinal))
 			{
 				// Line that just contains a progress directive
 				bool skipLine = false;
@@ -120,14 +120,14 @@ namespace UnrealGameSync
 				string remainingLine = line;
 
 				// Look for a progress directive at the end of a line, in square brackets
-				if(trimLine.EndsWith("]", StringComparison.Ordinal))
+				if (trimLine.EndsWith("]", StringComparison.Ordinal))
 				{
-					for(int lastIdx = trimLine.Length - 2; lastIdx >= 0 && trimLine[lastIdx] != ']'; lastIdx--)
+					for (int lastIdx = trimLine.Length - 2; lastIdx >= 0 && trimLine[lastIdx] != ']'; lastIdx--)
 					{
-						if(trimLine[lastIdx] == '[')
+						if (trimLine[lastIdx] == '[')
 						{
 							string directiveSubstring = trimLine.Substring(lastIdx + 1, trimLine.Length - lastIdx - 2);
-							if(directiveSubstring.StartsWith(DirectivePrefix, StringComparison.Ordinal))
+							if (directiveSubstring.StartsWith(DirectivePrefix, StringComparison.Ordinal))
 							{
 								ProcessInternal(directiveSubstring.Substring(DirectivePrefix.Length), ref skipLine, value);
 								remainingLine = line.Substring(0, lastIdx).TrimEnd();
@@ -151,40 +151,40 @@ namespace UnrealGameSync
 		static void ProcessInternal(string line, ref bool skipLine, ProgressValue value)
 		{
 			List<string> tokens = ParseTokens(line);
-			for(int tokenIdx = 0; tokenIdx < tokens.Count; )
+			for (int tokenIdx = 0; tokenIdx < tokens.Count;)
 			{
 				float fraction;
-				if(ReadFraction(tokens, ref tokenIdx, out fraction))
+				if (ReadFraction(tokens, ref tokenIdx, out fraction))
 				{
 					value.Set(fraction);
 				}
-				else if(tokens[tokenIdx] == "push")
+				else if (tokens[tokenIdx] == "push")
 				{
 					tokenIdx++;
-					if(ReadFraction(tokens, ref tokenIdx, out fraction))
+					if (ReadFraction(tokens, ref tokenIdx, out fraction))
 					{
 						value.Push(fraction);
 					}
 				}
-				else if(tokens[tokenIdx] == "pop")
+				else if (tokens[tokenIdx] == "pop")
 				{
 					tokenIdx++;
 					value.Pop();
 				}
-				else if(tokens[tokenIdx] == "increment")
+				else if (tokens[tokenIdx] == "increment")
 				{
 					tokenIdx++;
-					if(ReadFraction(tokens, ref tokenIdx, out fraction))
+					if (ReadFraction(tokens, ref tokenIdx, out fraction))
 					{
 						value.Increment(fraction);
 					}
 				}
-				else if(tokens[tokenIdx] == "skipline")
+				else if (tokens[tokenIdx] == "skipline")
 				{
 					tokenIdx++;
 					skipLine = true;
 				}
-				else if(tokens[tokenIdx].Length >= 2 && (tokens[tokenIdx][0] == '\'' || tokens[tokenIdx][0] == '\"') && tokens[tokenIdx].Last() == tokens[tokenIdx].First())
+				else if (tokens[tokenIdx].Length >= 2 && (tokens[tokenIdx][0] == '\'' || tokens[tokenIdx][0] == '\"') && tokens[tokenIdx].Last() == tokens[tokenIdx].First())
 				{
 					string message = tokens[tokenIdx++];
 					value.Set(message.Substring(1, message.Length - 2));
@@ -199,32 +199,32 @@ namespace UnrealGameSync
 		static List<string> ParseTokens(string line)
 		{
 			List<string> tokens = new List<string>();
-			for(int idx = 0;;)
+			for (int idx = 0; ;)
 			{
 				// Skip whitespace
-				while(idx < line.Length && Char.IsWhiteSpace(line[idx]))
+				while (idx < line.Length && Char.IsWhiteSpace(line[idx]))
 				{
 					idx++;
 				}
-				if(idx == line.Length)
+				if (idx == line.Length)
 				{
 					break;
 				}
 
 				// Read the next token
-				if(Char.IsLetterOrDigit(line[idx]))
+				if (Char.IsLetterOrDigit(line[idx]))
 				{
 					int startIdx = idx++;
-					while(idx < line.Length && Char.IsLetterOrDigit(line[idx]))
+					while (idx < line.Length && Char.IsLetterOrDigit(line[idx]))
 					{
 						idx++;
 					}
 					tokens.Add(line.Substring(startIdx, idx - startIdx));
 				}
-				else if(line[idx] == '\'' || line[idx] == '\"')
+				else if (line[idx] == '\'' || line[idx] == '\"')
 				{
 					int startIdx = idx++;
-					while(idx < line.Length && line[idx] != line[startIdx])
+					while (idx < line.Length && line[idx] != line[startIdx])
 					{
 						idx++;
 					}
@@ -241,22 +241,22 @@ namespace UnrealGameSync
 		static bool ReadFraction(List<string> tokens, ref int tokenIdx, out float fraction)
 		{
 			// Read a fraction in the form x%
-			if(tokenIdx + 2 <= tokens.Count && tokens[tokenIdx + 1] == "%")
+			if (tokenIdx + 2 <= tokens.Count && tokens[tokenIdx + 1] == "%")
 			{
 				int numerator;
-				if(Int32.TryParse(tokens[tokenIdx], out numerator))
+				if (Int32.TryParse(tokens[tokenIdx], out numerator))
 				{
 					fraction = (float)numerator / 100.0f;
 					tokenIdx += 2;
 					return true;
 				}
 			}
-			
+
 			// Read a fraction in the form x/y
-			if(tokenIdx + 3 <= tokens.Count && tokens[tokenIdx + 1] == "/")
+			if (tokenIdx + 3 <= tokens.Count && tokens[tokenIdx + 1] == "/")
 			{
 				int numerator, denominator;
-				if(Int32.TryParse(tokens[tokenIdx], out numerator) && Int32.TryParse(tokens[tokenIdx + 2], out denominator))
+				if (Int32.TryParse(tokens[tokenIdx], out numerator) && Int32.TryParse(tokens[tokenIdx + 2], out denominator))
 				{
 					fraction = (float)numerator / (float)denominator;
 					tokenIdx += 3;

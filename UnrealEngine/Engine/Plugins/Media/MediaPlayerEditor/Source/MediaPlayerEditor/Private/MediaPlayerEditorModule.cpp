@@ -45,6 +45,7 @@
 #include "Visualizers/MediaSoundComponentVisualizer.h"
 #include "ToolMenus.h"
 #include "Widgets/SMediaPlayerEditorMedia.h"
+#include "Widgets/SMediaPlayerSlider.h"
 
 #include "MediaPlayerEditorLog.h"
 
@@ -86,6 +87,12 @@ public:
 	virtual TSharedPtr<ISlateStyle> GetStyle()
 	{
 		return Style;
+	}
+
+	virtual TSharedRef<IMediaPlayerSlider> CreateMediaPlayerSliderWidget(UMediaPlayer* InMediaPlayer, const FSliderStyle& InStyle) override
+	{
+		return SNew(SMediaPlayerSlider, InMediaPlayer)
+		.Style(&InStyle);
 	}
 
 	//~ IModuleInterface interface

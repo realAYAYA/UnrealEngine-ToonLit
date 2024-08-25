@@ -59,7 +59,7 @@ struct FCustomizableObjectBoolParameterValue
 	bool ParameterValue = true;
 
 	UPROPERTY(Category = CustomizableObjectBoolParameterValue, VisibleAnywhere)
-	FString Uid;
+	FGuid Id;
 };
 
 
@@ -87,7 +87,7 @@ struct FCustomizableObjectIntParameterValue
 	FString ParameterValueName;
 
 	UPROPERTY(Category = CustomizableObjectIntParameterValue, VisibleAnywhere)
-	FString Uid;
+	FGuid Id;
 
 	// Same as ParameterValueName but for multidimensional params
 	UPROPERTY()
@@ -97,8 +97,8 @@ struct FCustomizableObjectIntParameterValue
 	{
 	}
 
-	FCustomizableObjectIntParameterValue(const FString & InParamName, const FString & InParameterValueName, const FString & InUid, const TArray<FString>& InParameterRangeValueNames)
-		: ParameterName(InParamName), ParameterValueName(InParameterValueName), Uid(InUid)
+	FCustomizableObjectIntParameterValue(const FString & InParamName, const FString & InParameterValueName, const FGuid & InUid, const TArray<FString>& InParameterRangeValueNames)
+		: ParameterName(InParamName), ParameterValueName(InParameterValueName), Id(InUid)
 	{
 		ParameterRangeValueNames = InParameterRangeValueNames;
 	}
@@ -133,7 +133,7 @@ struct FCustomizableObjectFloatParameterValue
 	float ParameterValue = 0.0f;
 
 	UPROPERTY(Category = CustomizableObjectFloatParameterValue, VisibleAnywhere)
-	FString Uid;
+	FGuid Id;
 
 	UPROPERTY(Category = CustomizableObjectFloatParameterValue, VisibleAnywhere)
 	TArray<float> ParameterRangeValues;
@@ -158,6 +158,8 @@ USTRUCT(BlueprintType)
 struct FCustomizableObjectTextureParameterValue
 {
 	GENERATED_USTRUCT_BODY()
+
+	inline static const FName DEFAULT_PARAMETER_VALUE = FName();
 	
 	UPROPERTY(Category = CustomizableObjectTextureParameterValue, VisibleAnywhere)
 	FString ParameterName;
@@ -166,7 +168,7 @@ struct FCustomizableObjectTextureParameterValue
 	FName ParameterValue;
 
 	UPROPERTY(Category = CustomizableObjectTextureParameterValue, VisibleAnywhere)
-	FString Uid;
+	FGuid Id;
 
 	UPROPERTY(Category = CustomizableObjectTextureParameterValue, VisibleAnywhere)
 	TArray<FName> ParameterRangeValues;
@@ -201,7 +203,7 @@ struct FCustomizableObjectVectorParameterValue
 	FLinearColor ParameterValue = FLinearColor(ForceInit);
 
 	UPROPERTY(Category = CustomizableObjectVectorParameterValue, VisibleAnywhere)
-	FString Uid;
+	FGuid Id;
 };
 
 
@@ -228,23 +230,23 @@ struct CUSTOMIZABLEOBJECT_API FCustomizableObjectProjector
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	UPROPERTY()
 	FVector3f Position = FVector3f(0, 0, 0);
 
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	UPROPERTY()
 	FVector3f Direction = FVector3f(1, 0, 0);
 
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	UPROPERTY()
 	FVector3f Up = FVector3f(0, 1, 0);
 
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	UPROPERTY()
 	FVector3f Scale = FVector3f(10, 10, 100);
 
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	ECustomizableObjectProjectorType ProjectionType = ECustomizableObjectProjectorType::Planar;
 
 	// Just for cylindrical projectors, in radians
-	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	UPROPERTY()
 	float Angle = 2.0f * PI;
 };
 
@@ -288,7 +290,7 @@ struct FCustomizableObjectProjectorParameterValue
 	FCustomizableObjectProjector Value;
 
 	UPROPERTY(Category = CustomizableObjectVectorParameterValue, VisibleAnywhere)
-	FString Uid;
+	FGuid Id;
 
 	UPROPERTY(Category = CustomizableObjectVectorParameterValue, VisibleAnywhere)
 	TArray<FCustomizableObjectProjector> RangeValues;

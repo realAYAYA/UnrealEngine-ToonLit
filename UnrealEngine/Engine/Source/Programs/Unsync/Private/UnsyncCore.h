@@ -8,8 +8,12 @@
 #include "UnsyncProtocol.h"
 #include "UnsyncSocket.h"
 #include "UnsyncUtil.h"
+#include "UnsyncManifest.h"
+#include "UnsyncHashTable.h"
 
 #include <stdint.h>
+#include <deque>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -17,6 +21,8 @@
 namespace unsync {
 
 extern bool GDryRun;
+
+static constexpr uint32 MAX_ACTIVE_READERS = 64;
 
 class FProxy;
 class FProxyPool;
@@ -26,7 +32,6 @@ struct FRemoteDesc;
 struct FIOReader;
 struct FIOWriter;
 struct FIOReaderWriter;
-struct FComputeMacroBlockParams;
 
 struct FIdentityHash32
 {
@@ -72,6 +77,21 @@ struct FNeedBlock : FCopyCommand
 	FGenericHash Hash = {};
 };
 
+struct FReadSchedule
+{
+	std::vector<FCopyCommand> Blocks;
+	std::deque<uint64>		  Requests;	 // unique block request indices sorted small to large
+};
+
+FReadSchedule BuildReadSchedule(const std::vector<FNeedBlock>& Blocks);
+
+class FBlockCache
+{
+public:
+	FBuffer							BlockData;
+	THashMap<FHash128, FBufferView> BlockMap;  // Decompressed block data by hash
+};
+
 inline uint64
 ComputeSize(const std::vector<FNeedBlock>& NeedBlocks)
 {
@@ -106,112 +126,44 @@ struct FNeedListSize
 
 FNeedListSize ComputeNeedListSize(const FNeedList& NeedList);
 
-using FGenericBlockArray = std::vector<FGenericBlock>;
-
-struct FComputeMacroBlockParams
-{
-	// Inputs
-	uint64 TargetBlockSize = 3_MB;
-	uint64 MaxBlockSize	   = 5_MB;	// Maximum allowed by Jupiter
-
-	// Outputs
-	FGenericBlockArray Output;
-};
-
-struct FFileManifest
-{
-	uint64 Mtime	 = 0;
-	uint64 Size		 = 0;
-	uint32 BlockSize = 0;
-
-	// runtime-only data:
-	FGenericBlockArray Blocks;
-	FGenericBlockArray MacroBlocks;
-	FPath			   CurrentPath;
-};
-
-struct FAlgorithmOptionsV5
-{
-	static constexpr uint64 MAGIC	= 0x96FF3B56283EC7DBull;
-	static constexpr uint64 VERSION = 1;
-
-	EChunkingAlgorithmID   ChunkingAlgorithmId	 = EChunkingAlgorithmID::VariableBlocks;
-	EWeakHashAlgorithmID   WeakHashAlgorithmId	 = EWeakHashAlgorithmID::BuzHash;
-	EStrongHashAlgorithmID StrongHashAlgorithmId = EStrongHashAlgorithmID::Blake3_128;
-};
-
-struct FAlgorithmOptions : FAlgorithmOptionsV5
-{
-};
-
-struct FDirectoryManifest
-{
-	enum EVersions : uint64
-	{
-		Invalid = 0,
-		V1_Unsupported,
-		V2_Unsupported,
-		V3_Unsupported,
-		V4,					  // unsync v1.0.7
-		V5,					  // unsync v1.0.8: added options
-		V6_VariableHash,	  // unsync v1.0.32-iohash: added variable size hashes, moved options section before files
-		V7_OptionalSections,  // unsync v1.0.32-iohash
-
-		Latest = V7_OptionalSections
-	};
-
-	static constexpr uint64 MAGIC	= 0x80F4CC2A414F4E41ull;
-	static constexpr uint64 VERSION = EVersions::Latest;
-
-	// wide string at runtime, utf8 serialized
-	// TODO: keep paths in canonical form (utf-8, unix-style separators)
-	std::unordered_map<std::wstring, FFileManifest> Files;
-
-	// runtime data
-	FAlgorithmOptions Options = {};
-	uint64			  Version = 0;
-
-	bool IsValid() const
-	{
-		return Version != EVersions::Invalid;
-	}
-};
-
-struct FDirectoryManifestInfo
-{
-	uint64	 TotalSize		= 0;
-	uint64	 UniqueSize		= 0;
-	uint64	 NumBlocks		= 0;
-	uint64	 NumMacroBlocks = 0;
-	uint64	 NumFiles		= 0;
-	FHash256 SerializedHash = {};
-	FHash256 Signature		= {};
-
-	FAlgorithmOptions Algorithm = {};
-};
-
-FDirectoryManifestInfo GetManifestInfo(const FDirectoryManifest& Manifest);
-void				   LogManifestInfo(ELogLevel LogLevel, const FDirectoryManifestInfo& Info);
-void				   LogManifestFiles(ELogLevel LogLevel, const FDirectoryManifestInfo& Info);
-
 const std::string& GetVersionString();
 
-FGenericBlockArray ComputeBlocks(FIOReader&				   Reader,
-								 uint32					   BlockSize,
-								 FAlgorithmOptions		   Algorithm,
-								 FComputeMacroBlockParams* OutMacroBlocks = nullptr);
+using FOnBlockGenerated = std::function<void(const FGenericBlock& Block, FBufferView Data)>;
 
-FGenericBlockArray ComputeBlocks(const uint8*			   Data,
-								 uint64					   Size,
-								 uint32					   BlockSize,
-								 FAlgorithmOptions		   Algorithm,
-								 FComputeMacroBlockParams* OutMacroBlocks = nullptr);
+struct FComputeBlocksParams
+{
+	bool			  bNeedBlocks = true;
+	uint32			  BlockSize	  = uint32(64_KB);
+	FAlgorithmOptions Algorithm;
 
-FGenericBlockArray ComputeBlocksVariable(FIOReader&				   Reader,
-										 uint32					   BlockSize,
-										 EWeakHashAlgorithmID	   WeakHasher,
-										 EStrongHashAlgorithmID	   StrongHasher,
-										 FComputeMacroBlockParams* OutMacroBlocks = nullptr);
+	bool   bNeedMacroBlocks		= false;
+	uint64 MacroBlockTargetSize = 3_MB;
+	uint64 MacroBlockMaxSize	= 5_MB;	 // Maximum allowed by Jupiter
+
+	// Callbacks may be called from worker threads
+	FOnBlockGenerated OnBlockGenerated;
+	FOnBlockGenerated OnMacroBlockGenerated;
+
+	bool bAllowThreading = true;
+};
+
+struct FComputeBlocksResult
+{
+	FGenericBlockArray Blocks;
+	FGenericBlockArray MacroBlocks;
+};
+
+FComputeBlocksResult ComputeBlocks(FIOReader& Reader, const FComputeBlocksParams& Params);
+FComputeBlocksResult ComputeBlocks(const uint8* Data, uint64 Size, const FComputeBlocksParams& Params);
+FComputeBlocksResult ComputeBlocksVariable(FIOReader& Reader, const FComputeBlocksParams& Params);
+
+FGenericBlockArray ComputeBlocks(FIOReader& Reader, uint32 BlockSize, FAlgorithmOptions Algorithm);
+FGenericBlockArray ComputeBlocks(const uint8* Data, uint64 Size, uint32 BlockSize, FAlgorithmOptions Algorithm);
+FGenericBlockArray ComputeBlocksVariable(FIOReader&				Reader,
+										 uint32					BlockSize,
+										 EWeakHashAlgorithmID	WeakHasher,
+										 EStrongHashAlgorithmID StrongHasher);
+
 
 FNeedList DiffBlocks(const uint8*			   BaseData,
 					 uint64					   BaseDataSize,
@@ -251,35 +203,6 @@ FNeedList DiffManifestBlocks(const FGenericBlockArray& SourceBlocks, const FGene
 
 std::vector<FCopyCommand> OptimizeNeedList(const std::vector<FNeedBlock>& Input, uint64 MaxMergedBlockSize = 8_MB);
 
-struct FBuildTargetResult
-{
-	bool   bSuccess	   = false;
-	uint64 SourceBytes = 0;
-	uint64 BaseBytes   = 0;
-};
-
-FBuildTargetResult BuildTarget(FIOWriter&			  Result,
-				 FIOReader&				Source,
-				 FIOReader&				Base,
-				 const FNeedList&		NeedList,
-				 EStrongHashAlgorithmID StrongHasher,
-				 FProxyPool*			ProxyPool = nullptr,
-				 FBlockCache*			BlockCache = nullptr,
-				 FScavengeDatabase*		ScavengeDatabase = nullptr);
-
-FBuffer BuildTargetBuffer(FIOReader&			 SourceProvider,
-						  FIOReader&			 BaseProvider,
-						  const FNeedList&		 NeedList,
-						  EStrongHashAlgorithmID StrongHasher);
-
-FBuffer BuildTargetBuffer(const uint8*			 SourceData,
-						  uint64				 SourceSize,
-						  const uint8*			 BaseData,
-						  uint64				 BaseSize,
-						  const FNeedList&		 NeedList,
-						  EStrongHashAlgorithmID StrongHasher);
-
-FBuffer BuildTargetWithPatch(const uint8* PatchData, uint64 PatchSize, const uint8* BaseData, uint64 BaseSize);
 
 FBuffer GeneratePatch(const uint8*			 BaseData,
 					  uint64				 BaseDataSize,
@@ -300,6 +223,7 @@ enum class EFileSyncStatus
 	ErrorValidation,
 	ErrorFinalRename,
 	ErrorTargetFileCreate,
+	ErrorBuildTargetFailed,
 };
 
 const wchar_t* ToString(EFileSyncStatus Status);
@@ -385,43 +309,30 @@ enum class ESyncSourceType
 	Unknown,
 	FileSystem,
 	Server,
+	ServerWithManifestHash,
 };
 
 struct FSyncDirectoryOptions
 {
 	ESyncSourceType	   SourceType;
-	FPath			   Source;	  // remote data location
-	FPath			   Target;	  // output target location
-	FPath			   Base;	  // base data location, which typically is the same as sync target
-	FPath			   ScavengeRoot; // base directory where we may want to find reusable blocks
-	uint32			   ScavengeDepth = 5; // how deep to look for unsync manifests
-	std::vector<FPath> Overlays;  // extra source directories to overlay over primary (add extra files, replace existing files)
+	FPath			   Source;			   // remote data location
+	FPath			   Target;			   // output target location
+	FPath			   Base;			   // base data location, which typically is the same as sync target
+	FPath			   ScavengeRoot;	   // base directory where we may want to find reusable blocks
+	uint32			   ScavengeDepth = 5;  // how deep to look for unsync manifests
+	std::vector<FPath> Overlays;		   // extra source directories to overlay over primary (add extra files, replace existing files)
 	FPath			   SourceManifestOverride;	// force the manifest to be read from a specified file instead of source directory
 	FSyncFilter*	   SyncFilter = nullptr;	// filter callback for partial sync support
-	const FRemoteDesc* Remote	  = nullptr;	// unsync proxy server connection settings
+	FProxyPool*		   ProxyPool  = nullptr;
 	bool			   bCleanup	  = false;	// whether to cleanup any files in the target directory that are not in the source manifest file
 	bool			   bValidateSourceFiles = true;	 // whether to check that all source files declared in the manifest are present/valid
 	bool			   bValidateTargetFiles = true;	 // WARNING: turning this off is intended only for testing/profiling
 	bool			   bFullDifference = true;	// whether to run full file difference algorithm, even when there is an existing manifest
-	bool			   bCheckAvailableSpace = true;	 // whether to abort the sync if target path does not have enough available space
+	bool			   bCheckAvailableSpace		  = true;  // whether to abort the sync if target path does not have enough available space
+	uint64			   BackgroundTaskMemoryBudget = 2_GB;
 };
 
 bool SyncDirectory(const FSyncDirectoryOptions& SyncOptions);
-
-void UpdateDirectoryManifestBlocks(FDirectoryManifest& Result, const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm);
-FDirectoryManifest CreateDirectoryManifest(const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm);
-FDirectoryManifest CreateDirectoryManifestIncremental(const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm);
-bool LoadOrCreateDirectoryManifest(FDirectoryManifest& Result, const FPath& Root, uint32 BlockSize, FAlgorithmOptions Algorithm);
-
-// Computes a Blake3 hash of the manifest blocks and file metadata, ignoring any other metadata.
-// Files are processed in sorted order, with file names treated as utf-8.
-// This produces a relatively stable manifest key that does not depend on the serialization differences between versions.
-FHash256 ComputeManifestStableSignature(const FDirectoryManifest& Manifest);
-FHash160 ComputeManifestStableSignature160(const FDirectoryManifest& Manifest);
-
-// Computes a Blake3 hash of the serialized manifest data
-FHash256 ComputeSerializedManifestHash(const FDirectoryManifest& Manifest);
-FHash160 ComputeSerializedManifestHash160(const FDirectoryManifest& Manifest);
 
 // #wip-widehash -- temporary helper functions
 FBlock128			   ToBlock128(const FGenericBlock& GenericBlock);

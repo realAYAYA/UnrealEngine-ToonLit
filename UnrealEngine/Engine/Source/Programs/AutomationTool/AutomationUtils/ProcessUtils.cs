@@ -247,6 +247,8 @@ namespace AutomationTool
 		private Process Proc = null;
 		private AutoResetEvent OutputWaitHandle = new AutoResetEvent(false);
 		private AutoResetEvent ErrorWaitHandle = new AutoResetEvent(false);
+		private bool bStdOutSignalReceived = false;
+		private bool bStdErrSignalReceived = false;
 		private object ProcSyncObject;
 
 		public ProcessResult(string InAppName, Process InProc, bool bAllowSpew, bool bCaptureSpew = true, LogEventType SpewVerbosity = LogEventType.Console, SpewFilterCallbackType InSpewFilterCallback = null)
@@ -478,59 +480,71 @@ namespace AutomationTool
 		public void WaitForExit()
 		{
 			bool bProcTerminated = false;
-			bool bStdOutSignalReceived = false;
-			bool bStdErrSignalReceived = false;
 			// Make sure the process objeect is valid.
 			lock (ProcSyncObject)
 			{
-				bProcTerminated = (Proc == null);
+				bProcTerminated = (Proc == null) || Proc.HasExited;
 			}
 			// Keep checking if we got all output messages until the process terminates.
-			if (!bProcTerminated)
+			Stopwatch Watch = Stopwatch.StartNew();
+			int MaxWaitUntilMessagesReceived = 60 * 1000;
+			int WaitTimeout = 500;
+			if (GlobalCommandLine.WaitForStdStreams >= 0)
 			{
-				// Check messages
-				int MaxWaitUntilMessagesReceived = 120;
-				while (MaxWaitUntilMessagesReceived > 0 && !(bStdOutSignalReceived && bStdErrSignalReceived))
+				MaxWaitUntilMessagesReceived = GlobalCommandLine.WaitForStdStreams;
+			}
+			if (MaxWaitUntilMessagesReceived > WaitTimeout)
+			{
+				WaitTimeout = 1 + (MaxWaitUntilMessagesReceived / 10);
+			}
+			while (!(bStdOutSignalReceived && bStdErrSignalReceived))
+			{
+				if (!bStdOutSignalReceived)
 				{
-					if (!bStdOutSignalReceived)
-					{
-						bStdOutSignalReceived = OutputWaitHandle.WaitOne(500);
-					}
-					if (!bStdErrSignalReceived)
-					{
-						bStdErrSignalReceived = ErrorWaitHandle.WaitOne(500);
-					}
-					// Check if the process terminated
-					lock (ProcSyncObject)
-					{
-						bProcTerminated = (Proc == null) || Proc.HasExited;
-					}
-					if (bProcTerminated)
-					{
-						// Process terminated but make sure we got all messages, don't wait forever though
-						MaxWaitUntilMessagesReceived--;
-					}
+					bStdOutSignalReceived = OutputWaitHandle.WaitOne(WaitTimeout);
 				}
-				if (!(bStdOutSignalReceived && bStdErrSignalReceived))
+				if (!bStdErrSignalReceived)
 				{
-					Logger.LogDebug("Waited for a long time for output of {AppName}, some output may be missing; we gave up.", AppName);
+					bStdErrSignalReceived = ErrorWaitHandle.WaitOne(WaitTimeout);
 				}
-
-				// Double-check if the process terminated
+				// Check if the process terminated
 				lock (ProcSyncObject)
 				{
 					bProcTerminated = (Proc == null) || Proc.HasExited;
-
-					if (Proc != null)
+				}
+				if (!bProcTerminated)
+				{
+					// Timeout starts when process has terminated
+					Watch.Restart();
+				}
+				else
+				{
+					if (Watch.ElapsedMilliseconds > MaxWaitUntilMessagesReceived)
 					{
-						if (!bProcTerminated)
-						{
-							// The process did not terminate yet but we've read all output messages, wait until the process terminates
-							Proc.WaitForExit();
-						}
-
-						ExitCode = Proc.ExitCode;
+						// Timeout passed, do not wait any longer
+						break;
 					}
+				}
+			}
+			if (!(bStdOutSignalReceived && bStdErrSignalReceived))
+			{
+				Logger.LogInformation("Waited for {0:n2}s for output of {AppName}, some output may be missing; we gave up.", Watch.Elapsed.TotalSeconds, AppName);
+			}
+
+			// Double-check if the process terminated
+			lock (ProcSyncObject)
+			{
+				bProcTerminated = (Proc == null) || Proc.HasExited;
+
+				if (Proc != null)
+				{
+					if (!bProcTerminated)
+					{
+						// The process did not terminate yet but we've read all output messages, wait until the process terminates
+						Proc.WaitForExit();
+					}
+
+					ExitCode = Proc.ExitCode;
 				}
 			}
 		}
@@ -559,15 +573,18 @@ namespace AutomationTool
 			{
 				VisitedPids.Add(PossiblyRelatedId);
 				Process Parent = null;
-				using (ManagementObject ManObj = new ManagementObject(string.Format("win32_process.handle='{0}'", PossiblyRelatedId)))
+				if (OperatingSystem.IsWindows())
 				{
-					ManObj.Get();
-					int ParentId = Convert.ToInt32(ManObj["ParentProcessId"]);
-					if (ParentId == 0 || VisitedPids.Contains(ParentId))
+					using (ManagementObject ManObj = new ManagementObject(string.Format("win32_process.handle='{0}'", PossiblyRelatedId)))
 					{
-						return false;
+						ManObj.Get();
+						int ParentId = Convert.ToInt32(ManObj["ParentProcessId"]);
+						if (ParentId == 0 || VisitedPids.Contains(ParentId))
+						{
+							return false;
+						}
+						Parent = Process.GetProcessById(ParentId);  // will throw an exception if not spawned by us or not running
 					}
-					Parent = Process.GetProcessById(ParentId);  // will throw an exception if not spawned by us or not running
 				}
 				if (Parent != null)
 				{
@@ -908,7 +925,24 @@ namespace AutomationTool
 					Proc.OutputDataReceived += Result.StdOut;
 					Proc.ErrorDataReceived += Result.StdErr;
 				}
-				Proc.StartInfo.RedirectStandardInput = Input != null;
+
+				// By default the standard input stream uses the current terminal input encoding (`Console.InputEncoding`),
+				// so let's make sure to set an explicit known input encoding (that doesn't produce a BOM).
+				if (Input != null)
+				{
+					Proc.StartInfo.RedirectStandardInput = true;
+
+					// Assume that if the application produces UTF-16, it also consumes UTF-16.
+					if ((Options & ERunOptions.UTF16Output) == ERunOptions.UTF16Output)
+					{
+						Proc.StartInfo.StandardInputEncoding = new UnicodeEncoding(false, false, false);
+					}
+					else
+					{
+						Proc.StartInfo.StandardInputEncoding = new UTF8Encoding(false);
+					}
+				}
+
 				Proc.StartInfo.CreateNoWindow = (Options & ERunOptions.NoHideWindow) == 0;
 				if ((Options & ERunOptions.UTF8Output) == ERunOptions.UTF8Output)
 				{

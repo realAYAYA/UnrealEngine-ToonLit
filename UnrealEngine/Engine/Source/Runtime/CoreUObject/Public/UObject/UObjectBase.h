@@ -18,12 +18,19 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealNames.h"
+#include "UObject/ObjectPtr.h"
 
 class UClass;
 class UEnum;
 class UObject;
 class UPackage;
 class UScriptStruct;
+
+// If FName is 4 bytes than we can use padding after it to store internal object list index and use array instead of a hash map for lookup in UObjectHash.cpp
+// This might change the each UClass' object list iteration order
+#if !defined(UE_STORE_OBJECT_LIST_INTERNAL_INDEX)
+#	define UE_STORE_OBJECT_LIST_INTERNAL_INDEX 0
+#endif
 
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("STAT_UObjectsStatGroupTester"), STAT_UObjectsStatGroupTester, STATGROUP_UObjects, COREUOBJECT_API);
 
@@ -47,7 +54,9 @@ class UObjectBase
 		);
 protected:
 	UObjectBase() :
-		 NamePrivate(NoInit)  // screwy, but the name was already set and we don't want to set it again
+		ClassPrivate(NoInit),
+		NamePrivate(NoInit),  // screwy, but the name was already set and we don't want to set it again
+		OuterPrivate(NoInit)
 	{
 	}
 
@@ -172,6 +181,11 @@ public:
 	/** Returns the external UPackage for this object, if any, NOT THREAD SAFE, used by internal gc reference collecting. */
 	COREUOBJECT_API UPackage* GetExternalPackageInternal() const;
 
+	/**
+	 * Marks the object as Reachable if it's currently marked as MaybeUnreachable by incremental GC.
+	*/
+	COREUOBJECT_API void MarkAsReachable() const;
+
 protected:
 	/**
 	 * Set the object flags directly
@@ -249,17 +263,27 @@ private:
 	int32							InternalIndex;
 
 	/** Class the object belongs to. */
-	UClass*							ClassPrivate;
+	ObjectPtr_Private::TNonAccessTrackedObjectPtr<UClass>							ClassPrivate;
 
 	/** Name of this object */
 	FName							NamePrivate;
 
+#if UE_STORE_OBJECT_LIST_INTERNAL_INDEX
+	/** Internal index into an array that stores all objects.
+	 It's used for registering and unregistering of UObjects in a global hash map.
+	 This optimization uses array instead of a hash map for reduced memory usage
+	*/
+	int32							ObjectListInternalIndex;
+#endif
+
 	/** Object this object resides in. */
-	UObject*						OuterPrivate;
+	ObjectPtr_Private::TNonAccessTrackedObjectPtr<UObject>						OuterPrivate;
 	
 	friend class FBlueprintCompileReinstancer;
 	friend class FVerseObjectClassReplacer;
 	friend class FContextObjectManager;
+	friend void AddToClassMap(class FUObjectHashTables& ThreadHash, UObjectBase* Object);
+	friend void RemoveFromClassMap(class FUObjectHashTables& ThreadHash, UObjectBase* Object);
 
 #if WITH_EDITOR
 	/** This is used by the reinstancer to re-class and re-archetype the current instances of a class before recompiling */
@@ -439,16 +463,6 @@ COREUOBJECT_API void RegisterCompiledInInfo(UPackage* (*InOuterRegister)(), cons
  * Register compiled in information for multiple classes, structures, and enumerations
  */
 COREUOBJECT_API void RegisterCompiledInInfo(const TCHAR* PackageName, const FClassRegisterCompiledInInfo* ClassInfo, size_t NumClassInfo, const FStructRegisterCompiledInInfo* StructInfo, size_t NumStructInfo, const FEnumRegisterCompiledInInfo* EnumInfo, size_t NumEnumInfo);
-
-// @todo: BP2CPP_remove
-/** Called during HotReload to hook up an existing structure */
-UE_DEPRECATED(5.0, "This API is no longer in use and will be removed.")
-COREUOBJECT_API class UScriptStruct* FindExistingStructIfHotReloadOrDynamic(UObject* Outer, const TCHAR* StructName, SIZE_T Size, uint32 Crc, bool bIsDynamic);
-
-// @todo: BP2CPP_remove
-/** Called during HotReload to hook up an existing enum */
-UE_DEPRECATED(5.0, "This API is no longer in use and will be removed.")
-COREUOBJECT_API class UEnum* FindExistingEnumIfHotReloadOrDynamic(UObject* Outer, const TCHAR* EnumName, SIZE_T Size, uint32 Crc, bool bIsDynamic);
 
 /** Must be called after a module has been loaded that contains UObject classes */
 COREUOBJECT_API void ProcessNewlyLoadedUObjects(FName Package = NAME_None, bool bCanProcessNewlyLoadedObjects = true);

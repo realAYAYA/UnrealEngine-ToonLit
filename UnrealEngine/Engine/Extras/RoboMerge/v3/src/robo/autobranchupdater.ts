@@ -117,7 +117,7 @@ export class AutoBranchUpdater implements Bot {
 			}
 		}
 		catch (err) {
-			// if we're in devmode we support files open for add or not in perforce so absord the exception
+			// if we're in devmode we support files open for add or not in perforce so absorb the exception
 			if (!AutoBranchUpdater.config.devMode) {
 				this.abuLogger.printException(err, 'Branch specs: error while querying P4 for changes');
 				return false
@@ -232,7 +232,7 @@ export class AutoBranchUpdater implements Bot {
 		const {depotpath, realFilepath, mirrorFilepath} = workspace
 
 		await this.p4.sync(workspace, depotpath, {opts:[P4_FORCE]})
-		const cl = await this.p4.new_cl(workspace, "Updating mirror file\n#jira none\n#robomerge ignore\n")
+		const cl = await this.p4.new_cl(workspace, "Updating mirror file\n#jira none\n")
 		await this.p4.edit(workspace, cl, depotpath)
 		await new Promise((done, _) => fs.copyFile(realFilepath, mirrorFilepath, done))
 		await this.p4.submit(workspace, cl)

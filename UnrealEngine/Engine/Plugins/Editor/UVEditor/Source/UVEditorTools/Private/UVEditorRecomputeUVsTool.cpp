@@ -145,7 +145,7 @@ void UUVEditorRecomputeUVsTool::OnPropertyModified(UObject* PropertySet, FProper
 	if (PropertySet == Settings )
 	{
 		// One of the UV generation properties must have changed.  Dirty the result to force a recompute
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			Target->AppliedPreview->InvalidateResult();
 		}
@@ -166,7 +166,7 @@ void UUVEditorRecomputeUVsTool::Shutdown(EToolShutdownType ShutdownType)
 
 		const FText TransactionName(LOCTEXT("RecomputeUVsTransactionName", "Recompute UVs"));
 		ChangeAPI->BeginUndoTransaction(TransactionName);
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Set things up for undo. 
 			FDynamicMeshChangeTracker ChangeTracker(Target->UnwrapCanonical.Get());
@@ -190,13 +190,13 @@ void UUVEditorRecomputeUVsTool::Shutdown(EToolShutdownType ShutdownType)
 	else
 	{
 		// Reset the inputs
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			Target->UpdatePreviewsFromCanonical();
 		}
 	}
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->ClearOpFactory();
 	}
@@ -210,7 +210,7 @@ void UUVEditorRecomputeUVsTool::Shutdown(EToolShutdownType ShutdownType)
 
 void UUVEditorRecomputeUVsTool::OnTick(float DeltaTime)
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->Tick(DeltaTime);
 	}
@@ -224,19 +224,34 @@ void UUVEditorRecomputeUVsTool::Render(IToolsContextRenderAPI* RenderAPI)
 
 bool UUVEditorRecomputeUVsTool::CanAccept() const
 {
-	bool bPreviewsHaveValidResults = true;
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	if (UVToolSelectionAPI->HaveSelections())
 	{
-		bPreviewsHaveValidResults = bPreviewsHaveValidResults && Target->AppliedPreview->HaveValidResult();
+		for (FUVToolSelection Selection : UVToolSelectionAPI->GetSelections())
+		{
+			if (!Selection.Target->AppliedPreview->HaveValidResult())
+			{
+				return false;
+			}
+		}
 	}
-	return bPreviewsHaveValidResults;
+	else
+	{
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
+		{
+			if (!Target->AppliedPreview->HaveValidResult())
+			{
+				return false;
+			}
+		}
+	}
+	return true;
 }
 
 
 void UUVEditorRecomputeUVsTool::OnSelectedGroupLayerChanged()
 {
 	UpdateActiveGroupLayer();
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->InvalidateResult();
 	}
@@ -297,7 +312,7 @@ void UUVEditorRecomputeUVsTool::RecordAnalytics()
 	if (CanAccept())
 	{
 		TArray<double> PerAssetValidResultComputeTimes;
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Note: This would log -1 if the result was invalid, but checking CanAccept above ensures results are valid
 			PerAssetValidResultComputeTimes.Add(Target->AppliedPreview->GetValidResultComputeTime());

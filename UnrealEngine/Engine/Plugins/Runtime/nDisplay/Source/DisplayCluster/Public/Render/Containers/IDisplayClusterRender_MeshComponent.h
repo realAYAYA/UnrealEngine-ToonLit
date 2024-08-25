@@ -7,6 +7,7 @@
 #include "Render/Containers/DisplayClusterRender_MeshGeometry.h"
 
 class USceneComponent;
+class UMeshComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 class UProceduralMeshComponent;
@@ -97,6 +98,13 @@ public:
 	* @return - pointer to the Origin component
 	*/
 	virtual USceneComponent* GetOriginComponent() const = 0;
+
+	/**
+	* Get referenced Mesh component object
+	*
+	* @return - pointer to the Mesh component
+	*/
+	virtual UMeshComponent* GetMeshComponent() const = 0;
 
 	/**
 	* Get referenced StaticMesh component object

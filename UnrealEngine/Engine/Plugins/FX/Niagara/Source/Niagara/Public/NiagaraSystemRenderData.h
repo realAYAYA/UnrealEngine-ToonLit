@@ -7,16 +7,16 @@
 #include "PrimitiveUniformShaderParameters.h"
 #include "PrimitiveViewRelevance.h"
 
-#if RHI_RAYTRACING
-#include "RayTracingInstance.h"
-#endif
-
 class FNiagaraSystemInstance;
 class FNiagaraSystemRenderData;
 class FMeshElementCollector;
 struct FNiagaraDynamicDataBase;
 class FNiagaraSceneProxy;
 class FSceneView;
+
+#if RHI_RAYTRACING
+struct FRayTracingInstance;
+#endif
 
 /**
  * This class wraps all data and functionality needed by a scene render proxy to render a single Niagara System Instance.
@@ -51,7 +51,7 @@ public:
 	~FNiagaraSystemRenderData();
 
 	/** Called from the render thread to give renderers an opportunity to create resources needed for rendering. */
-	void CreateRenderThreadResources();
+	void CreateRenderThreadResources(FRHICommandListBase& RHICmdList);
 	/** Called from the render thread to give renderers an opportunity to release their resources. */
 	void ReleaseRenderThreadResources();
 	/** Gives the system's renderers an opportunity to free resources */
@@ -76,8 +76,10 @@ public:
 	void OnSystemComplete(const FNiagaraSystemInstance& SystemInstance);
 	void RecacheRenderers(const FNiagaraSystemInstance& SystemInstance, const FNiagaraSystemInstanceController& Controller);
 
-	FORCEINLINE bool IsRenderingEnabled() const { return bRenderingEnabled && (IsInRenderingThread() ? EmitterRenderers_RT.Num() > 0 : EmitterRenderers_GT.Num() > 0); }
-	FORCEINLINE void SetRenderingEnabled(bool bInEnabled) { bRenderingEnabled = bInEnabled; }
+	void SetRenderingEnabled_GT(bool bInEnabled);
+	FORCEINLINE bool IsRenderingEnabled_GT() const { return bRenderingEnabled_GT && EmitterRenderers_GT.Num() > 0; }
+	FORCEINLINE bool IsRenderingEnabled_RT() const { return bRenderingEnabled_RT && EmitterRenderers_RT.Num() > 0; }
+
 	FORCEINLINE bool HasAnyMotionBlurEnabled() const { return bAnyMotionBlurEnabled; }
 	FORCEINLINE bool HasAnyHeterogeneousVolumesEnabled() const { return bAnyHeterogeneousVolumesEnabled; }
 
@@ -93,7 +95,8 @@ private:
 	/** Indices of renderers in the order they should be rendered. */
 	TArray<int32> RendererDrawOrder;
 
-	bool bRenderingEnabled = true;
+	bool bRenderingEnabled_GT = true;
+	bool bRenderingEnabled_RT = true;
 	bool bAnyMotionBlurEnabled = false;
 	bool bAnyHeterogeneousVolumesEnabled = false;
 

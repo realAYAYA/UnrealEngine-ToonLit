@@ -19,6 +19,6 @@ public:
 	// This is set to true so that the node is deserialized on paste, required for CanPasteHere to be called.
 	virtual bool CanDuplicateNode() const override { return true; } 
 	// And this is set to false so the paste doesn't actually go through, and instead we get the editor prompt notifying user.
-	virtual bool CanPasteHere(const UEdGraph* TargetGraph) const { return false; }
+	virtual bool CanPasteHere(const UEdGraph* TargetGraph) const override { return false; }
 	// ~End UEdGraphNode interface
 };

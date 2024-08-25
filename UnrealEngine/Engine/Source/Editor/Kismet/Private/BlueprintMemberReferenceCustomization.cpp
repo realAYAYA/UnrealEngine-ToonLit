@@ -33,7 +33,6 @@
 #include "Styling/SlateColor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Types/SlateStructs.h"
 #include "UObject/Class.h"

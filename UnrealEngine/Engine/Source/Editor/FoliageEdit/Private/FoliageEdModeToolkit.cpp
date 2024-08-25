@@ -57,6 +57,11 @@ void FFoliageEdModeToolkit::NotifyFoliageTypeMeshChanged(class UFoliageType* Fol
 	FoliageEdWidget->NotifyFoliageTypeMeshChanged(FoliageType);
 }
 
+void FFoliageEdModeToolkit::ReflectSelectionInPalette()
+{
+	FoliageEdWidget->ReflectSelectionInPalette();
+}
+
 void FFoliageEdModeToolkit::GetToolPaletteNames(TArray<FName>& InPaletteName) const
 {
 	InPaletteName = FoliagePaletteNames;

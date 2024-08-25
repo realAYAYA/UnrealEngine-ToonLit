@@ -37,12 +37,18 @@ static FAutoConsoleVariableRef CVarDisplayClusterSharedMemoryLatency(
 );
 
 
-TSet<FString> FSharedMemoryMediaPlayer::UniqueNamesRegistered;
 
 FSharedMemoryMediaPlayer::FSharedMemoryMediaPlayer()
 	: Super()
 {
 	Samples = new FSharedMemoryMediaSamples();
+
+	// Invalidate the receiver indices, indicating that we need to find a spot in the shared metadata
+	// to interact with the sender.
+	for (int32 Idx = 0; Idx < NUMSHAREDMEM; ++Idx)
+	{
+		ReceiverIndex[Idx] = INDEX_NONE;
+	}
 }
 
 FSharedMemoryMediaPlayer::~FSharedMemoryMediaPlayer()
@@ -51,25 +57,6 @@ FSharedMemoryMediaPlayer::~FSharedMemoryMediaPlayer()
 	delete Samples;
 }
 
-bool FSharedMemoryMediaPlayer::RegisterUniqueName(FString& InUniqueName)
-{
-	// We don't allow empty unique names
-	if (!InUniqueName.Len())
-	{
-		return false;
-	}
-
-	bool bIsAlreadyInSet = false;
-
-	UniqueNamesRegistered.Add(InUniqueName, &bIsAlreadyInSet);
-
-	return !bIsAlreadyInSet;
-}
-
-void FSharedMemoryMediaPlayer::UnregisterUniqueName(FString& InUniqueName)
-{
-	UniqueNamesRegistered.Remove(InUniqueName);
-}
 
 bool FSharedMemoryMediaPlayer::Open(const FString& Url, const IMediaOptions* Options)
 {
@@ -125,14 +112,6 @@ bool FSharedMemoryMediaPlayer::Open(const FString& Url, const IMediaOptions* Opt
 		}
 	}
 
-	if (!RegisterUniqueName(UniqueName))
-	{
-		UE_LOG(LogSharedMemoryMedia, Error, TEXT("Only one SharedMemoryMediaPlayer the UniqueName '%s' can play at a time"), *UniqueName);
-		UniqueName.Reset(); // Reset the unique name to avoid unregistering when not open
-		Close();
-		return true;
-	}
-
 	// Set a playing state.
 	PlayerState = EMediaState::Playing;
 
@@ -168,19 +147,21 @@ void FSharedMemoryMediaPlayer::Close()
 		if (SharedMemory[BufferIdx])
 		{
 			// Let the sender know that we're not monitoring this and that it should not wait for acks
-			{
-				FSharedMemoryMediaFrameMetadata* Data = static_cast<FSharedMemoryMediaFrameMetadata*>(SharedMemory[BufferIdx]->GetAddress());
 
-				if (Data)
-				{
-					Data->Receiver.KeepAliveShiftRegister = 0;
-				}
+			FSharedMemoryMediaFrameMetadata* Data = static_cast<FSharedMemoryMediaFrameMetadata*>(SharedMemory[BufferIdx]->GetAddress());
+
+			if (Data)
+			{
+				Data->DisconnectReceiverFromSlot(ReceiverId, ReceiverIndex[BufferIdx]); // Internally checks for INDEX_NONE
 			}
 
 			// Close the shared memory
 			FPlatformMemory::UnmapNamedSharedMemoryRegion(SharedMemory[BufferIdx]);
 			SharedMemory[BufferIdx] = nullptr;
 		}
+
+		// Unconditionally invalidate the receiver indices
+		ReceiverIndex[BufferIdx] = INDEX_NONE;
 
 		// Free gpu fences
 		{
@@ -200,12 +181,8 @@ void FSharedMemoryMediaPlayer::Close()
 	// Reset our state variables
 	ModeState.Reset();
 
-	// Allow this or other players with the given UniqueName to play
-	UnregisterUniqueName(UniqueName);
-
 	// Update our player state
 	PlayerState = EMediaState::Closed;
-
 }
 
 FGuid FSharedMemoryMediaPlayer::GetPlayerPluginGUID() const
@@ -345,7 +322,8 @@ void FSharedMemoryMediaPlayer::TickFetch(FTimespan DeltaTime, FTimespan Timecode
 			SampleCommonTexture = nullptr;
 
 			// No need for the sender to wait for us while we figure out the new textures.
-			SharedMemoryMetadataPtr->Receiver.KeepAliveShiftRegister = 0;
+			SharedMemoryMetadataPtr->DisconnectReceiverFromSlot(ReceiverId, ReceiverIndex[MemIdx]); // Already checks for INDEX_NONE
+			ReceiverIndex[MemIdx] = INDEX_NONE;
 
 			// We now exit this block, which will treat the invalid gpu texture case.
 		}
@@ -366,7 +344,7 @@ void FSharedMemoryMediaPlayer::TickFetch(FTimespan DeltaTime, FTimespan Timecode
 
 		// Now that we have the shared texture guid from the sender, use it to open the associated texture
 
-		SharedCrossGpuTextures[MemIdx] = PlatformData->OpenSharedCrossGpuTextureByGuid(SharedGpuTextureGuid, SharedCrossGpuTextureDescriptions[MemIdx]);
+		SharedCrossGpuTextures[MemIdx] = PlatformData->OpenSharedTextureByGuid(SharedGpuTextureGuid, SharedCrossGpuTextureDescriptions[MemIdx]);
 
 		if (!SharedCrossGpuTextures[MemIdx].IsValid())
 		{
@@ -418,14 +396,38 @@ void FSharedMemoryMediaPlayer::TickFetch(FTimespan DeltaTime, FTimespan Timecode
 		return;
 	}
 
-	// Let sender know that we're monitoring the shared memory by setting the Keepalive shift register
+	// Make sure that we have a receiver slot, and keep it alive.
 	for (int32 MemIdx = 0; MemIdx < NUMSHAREDMEM; ++MemIdx)
 	{
-		FSharedMemoryMediaFrameMetadata* SharedMetadataPtr = static_cast<FSharedMemoryMediaFrameMetadata*>(SharedMemory[MemIdx]->GetAddress());
+		FSharedMemoryMediaFrameMetadata* SharedMemoryMetadataPtr = static_cast<FSharedMemoryMediaFrameMetadata*>(SharedMemory[MemIdx]->GetAddress());
+
+		// Make sure our current index is valid
+		if (!SharedMemoryMetadataPtr->IsReceiverConnectedToSlot(ReceiverId, ReceiverIndex[MemIdx]))
+		{
+			ReceiverIndex[MemIdx] = INDEX_NONE;
+		}
+
+		// Find a slot if we don't have one
+		
+		if (ReceiverIndex[MemIdx] == INDEX_NONE)
+		{
+			ReceiverIndex[MemIdx] = SharedMemoryMetadataPtr->ConnectToSlot(ReceiverId);
+
+			// If we don't have a valid slot at this point, we must return and try again later.
+			if (ReceiverIndex[MemIdx] == INDEX_NONE)
+			{
+				return;
+			}
+		}
 
 		// Let sender know that we're monitoring this shared memory.
 		// We expect the sender to not wait for acks if nobody is monitoring it.
-		SharedMetadataPtr->Receiver.KeepAliveShiftRegister = ~0; // all ones
+		if (!SharedMemoryMetadataPtr->KeepAlive(ReceiverIndex[MemIdx]))
+		{
+			// If keep alive failed, it means that we're not connected anymore.
+			ReceiverIndex[MemIdx] = INDEX_NONE;
+			return;
+		}
 	}
 
 	// Create a new media sample and populate it with any needed data
@@ -669,7 +671,9 @@ bool FSharedMemoryMediaPlayer::DetermineNextSourceFrameFreerunMode(uint64 FrameN
 		// Ack the skipped frames (that haven't been considered and therefore acked before)
 		if (LastSourceFrameNumberConsideredAtThisIdx < SenderMetadata[MemIdx].FrameNumber)
 		{
-			SharedMemoryData[MemIdx]->Receiver.FrameNumberAcked = SenderMetadata[MemIdx].FrameNumber;
+			check(ReceiverIndex[MemIdx] != INDEX_NONE); // We don't expect this function to be called if we didn't have a valid slot.
+
+			SharedMemoryData[MemIdx]->Receivers[ReceiverIndex[MemIdx]].FrameNumberAcked = SenderMetadata[MemIdx].FrameNumber;
 		}
 	}
 
@@ -762,7 +766,7 @@ void FSharedMemoryMediaPlayer::JustInTimeSampleRender()
 				FrameNumber = GFrameCounterRenderThread, 
 				SharedMemoryIdx, 
 				ExpectedFrameNumber, 
-				SharedMemoryData, 
+				SharedMemoryData,
 				this
 			](FRHICommandListImmediate& RHICmdList)
 			{
@@ -853,8 +857,14 @@ void FSharedMemoryMediaPlayer::JustInTimeSampleRender()
 
 	RunningTasksCount++;
 
-	UE::Tasks::Launch(UE_SOURCE_LOCATION,
-		[SharedMemoryData, ExpectedFrameNumber, SharedMemoryIdx, this]()
+	UE::Tasks::Launch(UE_SOURCE_LOCATION, 
+		[
+			SharedMemoryData, 
+			ExpectedFrameNumber, 
+			SharedMemoryIdx, 
+			ReceiverIdx = ReceiverIndex[SharedMemoryIdx], 
+			this
+	    ]()
 		{
 			TRACE_CPUPROFILER_EVENT_SCOPE(SharedMemoryMediaFrameAckTask);
 
@@ -882,7 +892,7 @@ void FSharedMemoryMediaPlayer::JustInTimeSampleRender()
 			bFrameAckFenceBusy[SharedMemoryIdx] = false;
 
 			// Ack the frame to the Media Capture, indicating that the cross gpu texture can be re-used.
-			SharedMemoryData->Receiver.FrameNumberAcked = ExpectedFrameNumber;
+			SharedMemoryData->Receivers[ReceiverIdx].FrameNumberAcked = ExpectedFrameNumber;
 		}
 	);
 }

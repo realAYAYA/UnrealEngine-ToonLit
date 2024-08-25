@@ -6,6 +6,8 @@
 
 #if WITH_EDITOR
 
+#include "AsyncCompilationHelpers.h"
+#include "AssetCompilingManager.h"
 #include "Engine/Level.h"
 #include "Engine/StaticMesh.h"
 #include "Logging/LogMacros.h"
@@ -38,7 +40,7 @@ void FActorDeferredScriptManager::Shutdown()
 }
 
 FActorDeferredScriptManager::FActorDeferredScriptManager()
-	: Notification(GetAssetNameFormat())
+	: Notification(MakeUnique<FAsyncCompilationNotification>(GetAssetNameFormat()))
 {
 	OnWorldCleanupDelegateHandle = FWorldDelegates::OnWorldCleanup.AddRaw(this, &FActorDeferredScriptManager::OnWorldCleanup);
 }
@@ -257,9 +259,9 @@ void FActorDeferredScriptManager::ProcessAsyncTasks(bool bLimitExecutionTime)
 			}
 
 			// Reduce reallocations by only shrinking when removing last item
-			const bool bAllowShrinking = PendingConstructionScriptActors.Num() == 1;
+			const EAllowShrinking AllowShrinking = (PendingConstructionScriptActors.Num() == 1) ? EAllowShrinking::Yes : EAllowShrinking::No;
 			UE_LOG(LogActorDeferredScriptManager, VeryVerbose, TEXT("Removing index %d"), CircularIndex);
-			PendingConstructionScriptActors.RemoveAtSwap(CircularIndex, 1, bAllowShrinking);
+			PendingConstructionScriptActors.RemoveAtSwap(CircularIndex, 1, AllowShrinking);
 			CurrentIndex--;
 
 			if (PendingConstructionScriptActors.IsEmpty())
@@ -280,7 +282,7 @@ TRACE_DECLARE_INT_COUNTER(QueuedConstructionScripts, TEXT("AsyncCompilation/Queu
 void FActorDeferredScriptManager::UpdateCompilationNotification()
 {
 	TRACE_COUNTER_SET(QueuedConstructionScripts, GetNumRemainingAssets());
-	Notification.Update(GetNumRemainingAssets());
+	Notification->Update(GetNumRemainingAssets());
 }
 
 #undef LOCTEXT_NAMESPACE

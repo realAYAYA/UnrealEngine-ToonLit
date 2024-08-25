@@ -45,6 +45,7 @@ FActorPerceptionBlueprintInfo::FActorPerceptionBlueprintInfo(const FActorPercept
 	Target = Info.Target.Get();
 	LastSensedStimuli = Info.LastSensedStimuli;
 	bIsHostile = Info.bIsHostile;
+	bIsFriendly = Info.bIsFriendly;
 }
 
 //----------------------------------------------------------------------//
@@ -73,7 +74,7 @@ UAIPerceptionComponent::UAIPerceptionComponent(const FObjectInitializer& ObjectI
 void UAIPerceptionComponent::RequestStimuliListenerUpdate()
 {
 	UAIPerceptionSystem* AIPerceptionSys = UAIPerceptionSystem::GetCurrent(GetWorld());
-	if (AIPerceptionSys != NULL)
+	if (AIPerceptionSys != nullptr)
 	{
 		AIPerceptionSys->UpdateListener(*this);
 	}
@@ -161,7 +162,7 @@ UAIPerceptionComponent::TAISenseConfigConstIterator UAIPerceptionComponent::GetS
 	return ToRawPtrTArrayUnsafe(SensesConfig).CreateConstIterator();
 }
 
-void UAIPerceptionComponent::SetMaxStimulusAge(FAISenseID SenseID, float MaxAge)
+void UAIPerceptionComponent::SetMaxStimulusAge(const FAISenseID SenseID, float MaxAge)
 {
 	if (!ensureMsgf(SenseID.IsValid(), TEXT("Sense must exist to update max age")))
 	{
@@ -214,7 +215,7 @@ void UAIPerceptionComponent::OnRegister()
 		}
 	}
 
-	// this should not be needed but aparently AAIController::PostRegisterAllComponents
+	// this should not be needed but apparently AAIController::PostRegisterAllComponents
 	// gets called component's OnRegister
 	AIOwner = Cast<AAIController>(GetOwner());
 	ensure(AIOwner == nullptr || AIOwner->GetAIPerceptionComponent() == nullptr || AIOwner->GetAIPerceptionComponent() == this
@@ -225,7 +226,7 @@ void UAIPerceptionComponent::OnRegister()
 	}
 }
 
-void UAIPerceptionComponent::RegisterSenseConfig(UAISenseConfig& SenseConfig, UAIPerceptionSystem& AIPerceptionSys)
+void UAIPerceptionComponent::RegisterSenseConfig(const UAISenseConfig& SenseConfig, UAIPerceptionSystem& AIPerceptionSys)
 {
 	const TSubclassOf<UAISense> SenseImplementation = SenseConfig.GetSenseImplementation();
 	if (SenseImplementation)
@@ -234,7 +235,7 @@ void UAIPerceptionComponent::RegisterSenseConfig(UAISenseConfig& SenseConfig, UA
 		const FAISenseID SenseID = AIPerceptionSys.RegisterSenseClass(SenseImplementation);
 		check(SenseID.IsValid());
 
-		if (SenseConfig.IsEnabled())
+		if (SenseConfig.GetStartsEnabled())
 		{
 			PerceptionFilter.AcceptChannel(SenseID);
 		}
@@ -314,7 +315,7 @@ void UAIPerceptionComponent::UpdatePerceptionAllowList(const FAISenseID Channel,
 	}
 }
 
-bool UAIPerceptionComponent::GetFilteredActors(TFunctionRef<bool(const FActorPerceptionInfo&)> Predicate, TArray<AActor*>& OutActors) const
+bool UAIPerceptionComponent::GetFilteredActors(const TFunctionRef<bool(const FActorPerceptionInfo&)>& Predicate, TArray<AActor*>& OutActors) const
 {
 	bool bDeadDataFound = false;
 
@@ -347,7 +348,7 @@ void UAIPerceptionComponent::GetHostileActors(TArray<AActor*>& OutActors) const
 	{
 		FSimpleDelegateGraphTask::CreateAndDispatchWhenReady(
 			FSimpleDelegateGraphTask::FDelegate::CreateUObject(const_cast<UAIPerceptionComponent*>(this), &UAIPerceptionComponent::RemoveDeadData),
-			GET_STATID(STAT_FSimpleDelegateGraphTask_RequestingRemovalOfDeadPerceptionData), NULL, ENamedThreads::GameThread);
+			GET_STATID(STAT_FSimpleDelegateGraphTask_RequestingRemovalOfDeadPerceptionData), nullptr, ENamedThreads::GameThread);
 	}
 }
 
@@ -369,7 +370,7 @@ void UAIPerceptionComponent::GetHostileActorsBySense(TSubclassOf<UAISense> Sense
 	{
 		FSimpleDelegateGraphTask::CreateAndDispatchWhenReady(
 			FSimpleDelegateGraphTask::FDelegate::CreateUObject(const_cast<UAIPerceptionComponent*>(this), &UAIPerceptionComponent::RemoveDeadData),
-			GET_STATID(STAT_FSimpleDelegateGraphTask_RequestingRemovalOfDeadPerceptionData), NULL, ENamedThreads::GameThread);
+			GET_STATID(STAT_FSimpleDelegateGraphTask_RequestingRemovalOfDeadPerceptionData), nullptr, ENamedThreads::GameThread);
 	}
 }
 
@@ -377,7 +378,7 @@ const FActorPerceptionInfo* UAIPerceptionComponent::GetFreshestTrace(const FAISe
 {
 	// @note will stop on first age 0 stimulus
 	float BestAge = FAIStimulus::NeverHappenedAge;
-	const FActorPerceptionInfo* Result = NULL;
+	const FActorPerceptionInfo* Result = nullptr;
 
 	bool bDeadDataFound = false;
 	
@@ -408,7 +409,7 @@ const FActorPerceptionInfo* UAIPerceptionComponent::GetFreshestTrace(const FAISe
 	{
 		FSimpleDelegateGraphTask::CreateAndDispatchWhenReady(
 			FSimpleDelegateGraphTask::FDelegate::CreateUObject(const_cast<UAIPerceptionComponent*>(this), &UAIPerceptionComponent::RemoveDeadData),
-			GET_STATID(STAT_FSimpleDelegateGraphTask_RequestingRemovalOfDeadPerceptionData), NULL, ENamedThreads::GameThread);
+			GET_STATID(STAT_FSimpleDelegateGraphTask_RequestingRemovalOfDeadPerceptionData), nullptr, ENamedThreads::GameThread);
 	}
 
 	return Result;
@@ -453,8 +454,8 @@ void UAIPerceptionComponent::GetLocationAndDirection(FVector& Location, FVector&
 
 const AActor* UAIPerceptionComponent::GetBodyActor() const
 {
-	AController* OwnerController = Cast<AController>(GetOuter());
-	if (OwnerController != NULL)
+	const AController* OwnerController = Cast<AController>(GetOuter());
+	if (OwnerController != nullptr)
 	{
 		return OwnerController->GetPawn();
 	}
@@ -500,7 +501,7 @@ void UAIPerceptionComponent::ProcessStimuli()
 		FActorPerceptionInfo* PerceptualInfo = PerceptualData.Find(SourceKey);
 		AActor* SourceActor = nullptr;
 
-		if (PerceptualInfo == NULL)
+		if (PerceptualInfo == nullptr)
 		{
 			if (SourcedStimulus.Stimulus.WasSuccessfullySensed() == false)
 			{
@@ -524,6 +525,7 @@ void UAIPerceptionComponent::ProcessStimuli()
 				PerceptualInfo->DominantSense = DominantSenseID;
 
 				PerceptualInfo->bIsHostile = (FGenericTeamId::GetAttitude(GetOwner(), SourceActor) == ETeamAttitude::Hostile);
+				PerceptualInfo->bIsFriendly = PerceptualInfo->bIsHostile ? false : (FGenericTeamId::GetAttitude(GetOwner(), SourceActor) == ETeamAttitude::Friendly);
 			}
 		}
 
@@ -627,7 +629,7 @@ void UAIPerceptionComponent::RefreshStimulus(FAIStimulus& StimulusStore, const F
 {
 	// if new stimulus is younger or stronger
 	// note that stimulus Age depends on PerceptionSystem::PerceptionAgingRate. It's possible that 
-	// both already stored and the new stimulus have Age of 0, but stored stimulus' acctual age is in [0, PerceptionSystem::PerceptionAgingRate)
+	// both already stored and the new stimulus have Age of 0, but stored stimulus' actual age is in [0, PerceptionSystem::PerceptionAgingRate)
 	if (NewStimulus.GetAge() <= StimulusStore.GetAge() || StimulusStore.Strength < NewStimulus.Strength)
 	{
 		StimulusStore = NewStimulus;
@@ -700,7 +702,7 @@ void UAIPerceptionComponent::ForgetAll()
 float UAIPerceptionComponent::GetYoungestStimulusAge(const AActor& Source) const
 {
 	const FActorPerceptionInfo* Info = GetActorInfo(Source);
-	if (Info == NULL)
+	if (Info == nullptr)
 	{
 		return FAIStimulus::NeverHappenedAge;
 	}
@@ -724,7 +726,7 @@ float UAIPerceptionComponent::GetYoungestStimulusAge(const AActor& Source) const
 bool UAIPerceptionComponent::HasAnyActiveStimulus(const AActor& Source) const
 {
 	const FActorPerceptionInfo* Info = GetActorInfo(Source);
-	if (Info == NULL)
+	if (Info == nullptr)
 	{
 		return false;
 	}
@@ -735,7 +737,7 @@ bool UAIPerceptionComponent::HasAnyActiveStimulus(const AActor& Source) const
 bool UAIPerceptionComponent::HasAnyCurrentStimulus(const AActor& Source) const
 {
 	const FActorPerceptionInfo* Info = GetActorInfo(Source);
-	if (Info == NULL)
+	if (Info == nullptr)
 	{
 		return false;
 	}
@@ -743,7 +745,7 @@ bool UAIPerceptionComponent::HasAnyCurrentStimulus(const AActor& Source) const
 	return Info->HasAnyCurrentStimulus();
 }
 
-bool UAIPerceptionComponent::HasActiveStimulus(const AActor& Source, FAISenseID Sense) const
+bool UAIPerceptionComponent::HasActiveStimulus(const AActor& Source, const FAISenseID Sense) const
 {
 	const FActorPerceptionInfo* Info = GetActorInfo(Source);
 	return (Info 
@@ -838,6 +840,17 @@ void UAIPerceptionComponent::SetSenseEnabled(TSubclassOf<UAISense> SenseClass, c
 	}
 }
 
+bool UAIPerceptionComponent::IsSenseEnabled(TSubclassOf<UAISense> SenseClass) const
+{
+	const FAISenseID SenseID = UAISense::GetSenseID(SenseClass);
+	if (!SenseID.IsValid() || GetSenseConfig(SenseID) == nullptr)
+	{
+		return false;
+	}
+
+	return PerceptionFilter.ShouldRespondToChannel(SenseID);
+}
+
 //----------------------------------------------------------------------//
 // debug
 //----------------------------------------------------------------------//
@@ -872,7 +885,7 @@ void UAIPerceptionComponent::DescribeSelfToGameplayDebugger(FGameplayDebuggerCat
 		}
 	}
 
-	for (UAISenseConfig* SenseConfig : SensesConfig)
+	for (const UAISenseConfig* SenseConfig : SensesConfig)
 	{
 		if (SenseConfig)
 		{

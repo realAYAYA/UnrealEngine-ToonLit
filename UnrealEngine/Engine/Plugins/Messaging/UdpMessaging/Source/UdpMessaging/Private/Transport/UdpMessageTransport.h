@@ -44,13 +44,13 @@ public:
 	 * @param InLocalEndpoint The local IP endpoint to receive messages on.
 	 * @param InMulticastEndpoint The multicast group endpoint to transport messages to.
 	 * @param InStaticEndpoints array of endpoints to include in communication
-	 * @param InExcludedEndpoints array of endpoints to exclude in communication
+	 * @param InExcludedEndpoints array of string formatted endpoints to exclude in communication.
 	 * @param InMulticastTtl The multicast time-to-live.
 	 */
 	FUdpMessageTransport(const FIPv4Endpoint& InLocalEndpoint,
 						 const FIPv4Endpoint& InMulticastEndpoint,
 						 TArray<FIPv4Endpoint> InStaticEndpoints,
-						 TArray<FIPv4Endpoint> InExcludedEndpoints,
+						 TArray<FString> InExcludedEndpointsAsString,
 						 uint8 InMulticastTtl);
 
 	/** Virtual destructor. */
@@ -58,6 +58,12 @@ public:
 
 	/** Notifies the transport that the application is about to exit. */
 	void OnAppPreExit();
+
+	/**
+	 *  Helper method to detect if a given target endpoint matches the wildcard deliminted source endpoint. The source endpoint should be in
+	 *  IPv4 format.  A.B.C.D:<OptionalPortNumber>.  Wildcard characters are allowed.
+	 */
+	static bool MatchesEndpoint(const FString& SourceEndpoint, const FIPv4Endpoint& TargetEndpoint);
 
 public:
 	/**
@@ -174,6 +180,6 @@ private:
 	/** Holds the static endpoints. */
 	TSet<FIPv4Endpoint> StaticEndpoints;
 
-	/** Excluded list of IP addresses not allowed to talk to UDP processor */
-	TArray<FIPv4Endpoint> ExcludedEndpoints;
+	/** Excluded list of IP addresses as string value (can contain wildcards) not allowed to talk to UDP processor */
+	TArray<FString> ExcludedEndpoints;
 };

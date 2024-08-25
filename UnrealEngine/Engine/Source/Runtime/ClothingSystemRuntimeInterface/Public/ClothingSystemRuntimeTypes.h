@@ -19,11 +19,11 @@ struct FClothSimulData
 		LODIndex = INDEX_NONE;
 	}
 
-	// Positions of the simulation mesh particles
-	TArray<FVector3f> Positions;
+	// Positions of the simulation mesh particles (aligned for SIMD loads)
+	TArray<FVector3f, TAlignedHeapAllocator<16>> Positions;
 
-	// Normals at the simulation mesh particles
-	TArray<FVector3f> Normals;
+	// Normals at the simulation mesh particles (aligned for SIMD loads)
+	TArray<FVector3f, TAlignedHeapAllocator<16>> Normals;
 
 	// Transform applied per position/normal element when loaded
 	FTransform Transform;

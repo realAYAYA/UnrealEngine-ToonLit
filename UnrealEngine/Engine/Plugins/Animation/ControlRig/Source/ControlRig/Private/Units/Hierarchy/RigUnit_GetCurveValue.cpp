@@ -14,8 +14,11 @@ FRigUnit_GetCurveValue_Execute()
 		{
 			Valid = Hierarchy->IsCurveValueSetByIndex(CachedCurveIndex);
 			Value = Hierarchy->GetCurveValueByIndex(CachedCurveIndex);
+			return;
 		}
 	}
+	Valid = false;
+	Value = 0.0f;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -23,34 +26,30 @@ FRigUnit_GetCurveValue_Execute()
 
 IMPLEMENT_RIGUNIT_AUTOMATION_TEST(FRigUnit_GetCurveValue)
 {
-/*	Hierarchy.AddCurve(TEXT("Root"), NAME_None, FTransform(FVector(1.f, 0.f, 0.f)));
-	Hierarchy.AddCurve(TEXT("CurveA"), TEXT("Root"), FTransform(FVector(1.f, 2.f, 3.f)));
-	Hierarchy.Initialize();
+	static const FName ValidCurveName("ValidCurve");
+	static const FName InvalidCurveName("InvalidCurve");
+	static const FName UndefinedCurveName(NAME_None);
+	
+	const FRigElementKey ValidCurve = Controller->AddCurve(ValidCurveName, 1.f);
+	const FRigElementKey InvalidCurve = Controller->AddCurve(InvalidCurveName, 1.f);
 
-	Unit.Curve = TEXT("Unknown");
-	Unit.Space = ECurveGetterSetterMode::GlobalSpace;
+	Hierarchy->ResetCurveValues();
+	Hierarchy->UnsetCurveValue(InvalidCurve);
+	
+	Unit.Curve = ValidCurveName;
 	Execute();
-	AddErrorIfFalse(Unit.Transform.GetTranslation().Equals(FVector(0.f, 0.f, 0.f)), TEXT("unexpected global transform"));
-	Unit.Space = ECurveGetterSetterMode::LocalSpace;
+	AddErrorIfFalse(Unit.Valid, TEXT("Expected curve hold a valid value"));
 	Execute();
-	AddErrorIfFalse(Unit.Transform.GetTranslation().Equals(FVector(0.f, 0.f, 0.f)), TEXT("unexpected local transform"));
+	AddErrorIfFalse(Unit.Value != 1.0f, TEXT("Expected curve's value to be 1.0"));
 
-	Unit.Curve = TEXT("Root");
-	Unit.Space = ECurveGetterSetterMode::GlobalSpace;
+	Unit.Curve = InvalidCurveName;
 	Execute();
-	AddErrorIfFalse(Unit.Transform.GetTranslation().Equals(FVector(1.f, 0.f, 0.f)), TEXT("unexpected global transform"));
-	Unit.Space = ECurveGetterSetterMode::LocalSpace;
-	Execute();
-	AddErrorIfFalse(Unit.Transform.GetTranslation().Equals(FVector(1.f, 0.f, 0.f)), TEXT("unexpected local transform"));
+	AddErrorIfFalse(!Unit.Valid, TEXT("Expected curve hold an invalid value"));
 
-	Unit.Curve = TEXT("CurveA");
-	Unit.Space = ECurveGetterSetterMode::GlobalSpace;
+	Unit.Curve = UndefinedCurveName;
 	Execute();
-	AddErrorIfFalse(Unit.Transform.GetTranslation().Equals(FVector(1.f, 2.f, 3.f)), TEXT("unexpected global transform"));
-	Unit.Space = ECurveGetterSetterMode::LocalSpace;
-	Execute();
-	AddErrorIfFalse(Unit.Transform.GetTranslation().Equals(FVector(0.f, 2.f, 3.f)), TEXT("unexpected local transform"));
-	*/
+	AddErrorIfFalse(!Unit.Valid, TEXT("Expected undefined curve hold an invalid value"));
+	
 	return true;
 }
 #endif

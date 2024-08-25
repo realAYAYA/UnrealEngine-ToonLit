@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NiagaraCollision.h"
+#include "Engine/HitResult.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "NiagaraStats.h"

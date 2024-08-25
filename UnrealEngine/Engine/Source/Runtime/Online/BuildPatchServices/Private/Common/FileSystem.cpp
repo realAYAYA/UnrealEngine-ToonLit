@@ -11,7 +11,6 @@
 
 #if PLATFORM_WINDOWS
 // Start of region that uses windows types.
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 THIRD_PARTY_INCLUDES_START
 #include <wtypes.h>
@@ -219,7 +218,7 @@ namespace BuildPatchServices
 			TFuture<void> Future;
 			while (DirectoryFutures.Dequeue(Future)) { Future.Wait(); }
 			while (FoundFilesQueue.Dequeue(Results.AddDefaulted_GetRef())) {}
-			Results.Pop(false);
+			Results.Pop(EAllowShrinking::No);
 			Results.Sort();
 		}
 

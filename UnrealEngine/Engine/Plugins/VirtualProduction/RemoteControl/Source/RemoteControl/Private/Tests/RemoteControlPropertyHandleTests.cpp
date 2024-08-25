@@ -1054,31 +1054,67 @@ namespace RemoteControlAPIIntegrationTest
 	}
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRemoteControlAPIIntegrationTest, "Plugin.RemoteControl.PropertyHandle", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FRemoteControlAPIIntegrationTest::RunTest(const FString& Parameters)
+DEFINE_SPEC(FRemoteControlAPIIntegrationTest, "Plugins.RemoteControl.PropertyHandle", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+void FRemoteControlAPIIntegrationTest::Define()
 {
 	// Test expose whole container
-	RemoteControlAPIIntegrationTest::TestIntPropertyHandle(*this);
-	RemoteControlAPIIntegrationTest::TestCreatePropertyHandleStruct(*this);
-	RemoteControlAPIIntegrationTest::TestCreatePropertyHandleArray(*this);
-	RemoteControlAPIIntegrationTest::TestCreatePropertyHandleSet(*this);
-	RemoteControlAPIIntegrationTest::TestCreatePropertyHandleMap(*this);
-	RemoteControlAPIIntegrationTest::TestFloatProperty(*this);
-	RemoteControlAPIIntegrationTest::TestDoubleProperty(*this);
-	RemoteControlAPIIntegrationTest::TestStringProperty(*this);
-	RemoteControlAPIIntegrationTest::TestNameProperty(*this);
-	RemoteControlAPIIntegrationTest::TestBoolProperty(*this);
-	RemoteControlAPIIntegrationTest::TestByteProperty(*this);
-	RemoteControlAPIIntegrationTest::TestTextProperty(*this);
-	RemoteControlAPIIntegrationTest::TestVectorProperty(*this);
-	RemoteControlAPIIntegrationTest::TestRotatorProperty(*this);
-	RemoteControlAPIIntegrationTest::TestColorProperty(*this);
-	RemoteControlAPIIntegrationTest::TestLinearColorProperty(*this);
-	RemoteControlAPIIntegrationTest::TestComplexPath(*this);
-	RemoteControlAPIIntegrationTest::TestGetPropertyHandleByFieldPath(*this);
-	RemoteControlAPIIntegrationTest::TestStructInObjectProperty(*this);
-
-	return true;
+	It("IntPropertyHandle", [this]() {
+		RemoteControlAPIIntegrationTest::TestIntPropertyHandle(*this);
+	});
+	It("CreatePropertyHandleStruct", [this]() {
+		RemoteControlAPIIntegrationTest::TestCreatePropertyHandleStruct(*this);
+	});
+	It("CreatePropertyHandleArray", [this]() {
+		RemoteControlAPIIntegrationTest::TestCreatePropertyHandleArray(*this);
+	});
+	It("CreatePropertyHandleSet", [this]() {
+		RemoteControlAPIIntegrationTest::TestCreatePropertyHandleSet(*this);
+	});
+	It("CreatePropertyHandleMap", [this]() {
+		RemoteControlAPIIntegrationTest::TestCreatePropertyHandleMap(*this);
+	});
+	It("FloatProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestFloatProperty(*this);
+	});
+	It("DoubleProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestDoubleProperty(*this);
+	});
+	It("StringProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestStringProperty(*this);
+	});
+	It("NameProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestNameProperty(*this);
+	});
+	It("BoolProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestBoolProperty(*this);
+	});
+	It("ByteProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestByteProperty(*this);
+	});
+	It("TextProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestTextProperty(*this);
+	});
+	It("VectorProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestVectorProperty(*this);
+	});
+	It("RotatorProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestRotatorProperty(*this);
+	});
+	It("ColorProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestColorProperty(*this);
+	});
+	It("LinearColorProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestLinearColorProperty(*this);
+	});
+	It("ComplexPath", [this]() {
+		RemoteControlAPIIntegrationTest::TestComplexPath(*this);
+	});
+	It("GetPropertyHandleByFieldPath", [this]() {
+		RemoteControlAPIIntegrationTest::TestGetPropertyHandleByFieldPath(*this);
+	});
+	It("StructInObjectProperty", [this]() {
+		RemoteControlAPIIntegrationTest::TestStructInObjectProperty(*this);
+	});
 }
 
 #undef GET_TEST_PROP

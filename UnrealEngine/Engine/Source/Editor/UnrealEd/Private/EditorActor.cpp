@@ -158,6 +158,8 @@ void UUnrealEdEngine::CopyActors(const TArray<AActor*>& InActorsToCopy, UWorld* 
 			return false;
 		});
 	}
+	// Filter out other actors.
+	OnFilterCopiedActors().Broadcast(ActorsToCopy);
 
 	// Export the actors.
 	FStringOutputDevice Ar;
@@ -886,8 +888,6 @@ bool UUnrealEdEngine::DeleteActors(const TArray<AActor*>& InActorsToDelete, UWor
 	// Aggregate the time we waited on user input to remove it from the total time
 	double DialogWaitingSeconds = 0;
 
-	FSlateApplication::Get().CancelDragDrop();
-
 	// Fire ULevel::LevelDirtiedEvent when falling out of scope.
 	FScopedLevelDirtied LevelDirtyCallback;
 
@@ -992,12 +992,20 @@ bool UUnrealEdEngine::DeleteActors(const TArray<AActor*>& InActorsToDelete, UWor
 				// Remove any references from object types marked to be ignored
 				for (int32 i = SoftReferencingObjects->Num() - 1; i >= 0; --i)
 				{
-					for (const TObjectPtr<UClass>& ClassToIgnore : ClassesToIgnoreDeleteReferenceWarning)
+					const UObject* SoftReferencingObject = (*SoftReferencingObjects)[i];
+					if (const AActor* ReferencingActor = Cast<AActor>(SoftReferencingObject); ReferencingActor && ActorsToDelete.Contains(ReferencingActor))
 					{
-						if ((*SoftReferencingObjects)[i]->IsA(ClassToIgnore))
+						SoftReferencingObjects->RemoveAt(i);
+					}
+					else
+					{
+						for (const TObjectPtr<UClass>& ClassToIgnore : ClassesToIgnoreDeleteReferenceWarning)
 						{
-							SoftReferencingObjects->RemoveAt(i);
-							break;
+							if (SoftReferencingObject->IsA(ClassToIgnore))
+							{
+								SoftReferencingObjects->RemoveAt(i);
+								break;
+							}
 						}
 					}
 				}
@@ -1012,7 +1020,7 @@ bool UUnrealEdEngine::DeleteActors(const TArray<AActor*>& InActorsToDelete, UWor
 			for (AActor* ReferencingActor : *ReferencingActors)
 			{
 				// Skip to next if we are referencing ourselves
-				if (ReferencingActor == Actor)
+				if (ReferencingActor == Actor || ActorsToDelete.Contains(ReferencingActor))
 				{
 					continue;
 				}
@@ -1052,7 +1060,7 @@ bool UUnrealEdEngine::DeleteActors(const TArray<AActor*>& InActorsToDelete, UWor
 
 				for (UK2Node* Node : ReferencedToActorsFromLevelScriptArray)
 				{
-					LevelScriptReferenceString += Node->GetFindReferenceSearchString();
+					LevelScriptReferenceString += Node->GetFindReferenceSearchString(EGetFindReferenceSearchStringFlags::None);
 
 					if (bReferencedByLevelScript && bReferencedByActor)
 					{
@@ -1173,7 +1181,7 @@ bool UUnrealEdEngine::DeleteActors(const TArray<AActor*>& InActorsToDelete, UWor
 			ULevel* BrushLevel = Actor->GetLevel();
 			if (BrushLevel && !Brush->IsVolumeBrush())
 			{
-				BrushLevel->Model->Modify();
+				BrushLevel->Model->Modify(false);
 				LevelsToRebuildBSP.Add(BrushLevel);
 				// Rebuilding bsp will also take care of navigation
 				LevelsToRebuildNavigation.Remove(BrushLevel);
@@ -1339,7 +1347,7 @@ void UUnrealEdEngine::edactReplaceSelectedBrush( UWorld* InWorld )
 
 			LevelDirtyCallback.Request();
 
-			NewBrush->Modify();
+			NewBrush->Modify(false);
 
 			NewBrush->Layers.Append( SrcBrush->Layers );
 
@@ -1646,7 +1654,7 @@ void UUnrealEdEngine::edactHideSelectedStartup( UWorld* InWorld )
 				const bool bSelected = CurSurface.Actor->IsActorOrSelectionParentSelected() || (CurSurface.PolyFlags & PF_Selected);
 				if (bSelected && !CurSurface.IsHiddenEdAtStartup() && !CurSurface.IsHiddenEd())
 				{
-					CurLevelModel.Modify();
+					CurLevelModel.Modify(false);
 					CurLevelModel.ModifySurf( SurfaceIterator.GetIndex(), false );
 					CurSurface.PolyFlags |= PF_HiddenEd;
 					LevelDirtyCallback.Request();
@@ -1691,7 +1699,7 @@ void UUnrealEdEngine::edactUnHideAllStartup( UWorld* InWorld )
 				// If the BSP surface is set to be hidden at editor startup, change it so that it will be shown at startup
 				if ( CurSurface.IsHiddenEdAtStartup() )
 				{
-					CurLevelModel.Modify();
+					CurLevelModel.Modify(false);
 					CurLevelModel.ModifySurf( SurfaceIterator.GetIndex(), false );
 					CurSurface.PolyFlags &= ~PF_HiddenEd;
 					LevelDirtyCallback.Request();
@@ -1737,7 +1745,7 @@ void UUnrealEdEngine::edactUnHideSelectedStartup( UWorld* InWorld )
 				const bool bSelected = CurSurface.Actor->IsActorOrSelectionParentSelected() || (CurSurface.PolyFlags & PF_Selected);
 				if (bSelected && CurSurface.IsHiddenEdAtStartup())
 				{
-					CurLevelModel.Modify();
+					CurLevelModel.Modify(false);
 					CurLevelModel.ModifySurf( SurfaceIterator.GetIndex(), false );
 					CurSurface.PolyFlags &= ~PF_HiddenEd;
 					LevelDirtyCallback.Request();
@@ -2670,7 +2678,7 @@ void UUnrealEdEngine::edactAlignOrigin()
 			LevelDirtyCallback.Request();
 
 			Brush->PreEditChange(NULL);
-			Brush->Modify();
+			Brush->Modify(false);
 
 			//Snap the location of the brush to the grid
 			FVector BrushLocation = Brush->GetActorLocation();
@@ -2709,7 +2717,7 @@ void UUnrealEdEngine::edactAlignVertices()
 			LevelDirtyCallback.Request();
 
 			Brush->PreEditChange(NULL);
-			Brush->Modify();
+			Brush->Modify(false);
 			FVector BrushLocation = Brush->GetActorLocation();
 			const FTransform BrushTransform = Brush->GetRootComponent()->GetComponentTransform();
 

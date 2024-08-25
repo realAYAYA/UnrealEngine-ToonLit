@@ -130,11 +130,11 @@ public:
 	virtual void PostInitProperties() override;
 
 public:
-	UPROPERTY(EditAnywhere, config, Category = Compiler)
+	UPROPERTY(EditAnywhere, config, Category = "Compiler")
 	FWidgetCompilerOptions DefaultCompilerOptions;
 
 protected:
-	UPROPERTY(EditAnywhere, config, Category = Compiler)
+	UPROPERTY(EditAnywhere, config, Category = "Compiler")
 	TArray<FDirectoryWidgetCompilerOptions> DirectoryCompilerOptions;
 
 public:
@@ -154,56 +154,60 @@ public:
 public:
 
 	/** Enables a dialog that lets you select a root widget before creating a widget blueprint */
-	UPROPERTY(EditAnywhere, config, Category = Designer)
+	UPROPERTY(EditAnywhere, config, Category = "Designer")
 	bool bUseWidgetTemplateSelector;
 
 	/** This list populates the common class section of the root widget selection dialog */
-	UPROPERTY(EditAnywhere, config, Category = Designer, meta = (EditCondition = "bUseWidgetTemplateSelector"))
+	UPROPERTY(EditAnywhere, config, Category = "Designer", meta = (EditCondition = "bUseWidgetTemplateSelector"))
 	TArray<TSoftClassPtr<UPanelWidget>> CommonRootWidgetClasses;
 
 	/** The panel widget to place at the root of all newly constructed widget blueprints. Can be empty. */
-	UPROPERTY(EditAnywhere, config, Category = Designer)
+	UPROPERTY(EditAnywhere, config, Category = "Designer")
 	TSubclassOf<UPanelWidget> DefaultRootWidget;
 
-	/** Set true to enable the Is Variable checkbox in the UMG editor DetailView. */
-	UPROPERTY(EditAnywhere, Category = "Designer | Window")
-	bool bEnableMakeVariable;
-
-	/** Set true to hide widget animation related elements in the UMG editor. */
-	UPROPERTY(EditAnywhere, Category = "Designer | Window")
-	bool bEnableWidgetAnimationEditor;
-
-	/** Set true to enabled the Palette window in the UMG editor. */
-	UPROPERTY(EditAnywhere, Category = "Designer | Window")
-	bool bEnablePaletteWindow;
-
-	/** Set true to enabled the LIbrary window in the UMG editor. */
-	UPROPERTY(EditAnywhere, Category = "Designer | Window")
-	bool bEnableLibraryWindow;
-
-	/** Set true to enabled the Widget Hierarchy window in the UMG editor. */
-	UPROPERTY(EditAnywhere, Category = "Designer | Window")
-	bool bEnableHierarchyWindow;
-	
-	/** Set true to enabled the Bind Widget window in the UMG editor. */
-	UPROPERTY(EditAnywhere, Category = "Designer | Window")
-	bool bEnableBindWidgetWindow;
-
-	/** Set true to enabled the Navigation Simulation window in the UMG editor. */
-	UPROPERTY(EditAnywhere, Category = "Designer | Window")
-	bool bEnableNavigationSimulationWindow;
-
 	/** Set true to filter all categories and widgets out in the palette, selectively enabling them later via permission lists. */
-	UPROPERTY(EditAnywhere, config, Category = Designer)
+	UPROPERTY(EditAnywhere, config, Category = "Designer")
 	bool bUseEditorConfigPaletteFiltering;
 
 	/** Enables a dialog that lets you select the parent class in a tree view. */
-	UPROPERTY(EditAnywhere, config, Category = Designer)
+	UPROPERTY(EditAnywhere, config, Category = "Designer")
 	bool bUseUserWidgetParentClassViewerSelector;
 
 	/** Enables a dialog that lets you select the parent class in a default view. */
-	UPROPERTY(EditAnywhere, config, Category = Designer)
+	UPROPERTY(EditAnywhere, config, Category = "Designer")
 	bool bUseUserWidgetParentDefaultClassViewerSelector;
+
+	/** Set true to enable the Is Variable checkbox in the UMG editor DetailView. */
+	UPROPERTY(EditAnywhere, Category = "Designer|Window")
+	bool bEnableMakeVariable;
+
+	/** Set true to hide widget animation related elements in the UMG editor. */
+	UPROPERTY(EditAnywhere, Category = "Designer|Window")
+	bool bEnableWidgetAnimationEditor;
+
+	/** Set true to enabled the Palette window in the UMG editor. */
+	UPROPERTY(EditAnywhere, Category = "Designer|Window")
+	bool bEnablePaletteWindow;
+
+	/** Set true to enabled the LIbrary window in the UMG editor. */
+	UPROPERTY(EditAnywhere, Category = "Designer|Window")
+	bool bEnableLibraryWindow;
+
+	/** Set true to enabled the Widget Hierarchy window in the UMG editor. */
+	UPROPERTY(EditAnywhere, Category = "Designer|Window")
+	bool bEnableHierarchyWindow;
+	
+	/** Set true to enabled the Bind Widget window in the UMG editor. */
+	UPROPERTY(EditAnywhere, Category = "Designer|Window")
+	bool bEnableBindWidgetWindow;
+
+	/** Set true to enabled the Navigation Simulation window in the UMG editor. */
+	UPROPERTY(EditAnywhere, Category = "Designer|Window")
+	bool bEnableNavigationSimulationWindow;
+	
+	/** The default value of bCanCallInitializedWithoutPlayerContext. */
+	UPROPERTY(EditAnywhere, Category = "Class Settings")
+	bool bCanCallInitializedWithoutPlayerContext;
 
 	/**
 	 * The list of parent classes to choose from for newly constructed widget blueprints.

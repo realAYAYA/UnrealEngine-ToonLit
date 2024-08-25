@@ -31,5 +31,12 @@
 			"Type" : "Editor",
 			"LoadingPhase" : "PostEngineInit"
 		}
+	],
+	"Plugins" :
+	[
+		{
+			"Name": "StructUtils",
+			"Enabled": true
+		}
 	]
 }

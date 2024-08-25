@@ -25,23 +25,33 @@ IPixelCaptureOutputFrame* FPixelCaptureCapturerRHI::CreateOutputBuffer(int32 Inp
 	const int32 Width = InputWidth * Scale;
 	const int32 Height = InputHeight * Scale;
 
-	FRHITextureCreateDesc TextureDesc =
-		FRHITextureCreateDesc::Create2D(TEXT("FFrameDataH264 Texture"), Width, Height, EPixelFormat::PF_B8G8R8A8)
-			.SetClearValue(FClearValueBinding::None)
+	FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("FPixelCaptureCapturerRHI Texture"), Width, Height, EPixelFormat::PF_B8G8R8A8);
+
+	if (RHIGetInterfaceType() == ERHIInterfaceType::Metal)
+	{
+		TextureDesc.SetClearValue(FClearValueBinding::None)
+			.SetFlags(ETextureCreateFlags::CPUReadback)
+			.SetInitialState(ERHIAccess::CPURead);
+	}
+	else if (RHIGetInterfaceType() == ERHIInterfaceType::D3D11 || RHIGetInterfaceType() == ERHIInterfaceType::D3D12 || RHIGetInterfaceType() == ERHIInterfaceType::Vulkan)
+	{
+		TextureDesc.SetClearValue(FClearValueBinding::None)
 			.SetFlags(ETextureCreateFlags::RenderTargetable)
-			.SetInitialState(ERHIAccess::Present)
-			.DetermineInititialState();
+			.SetInitialState(ERHIAccess::Present);
+	}
+
+	TextureDesc.DetermineInititialState();		
 
 	if (RHIGetInterfaceType() == ERHIInterfaceType::Vulkan)
 	{
 		TextureDesc.AddFlags(ETextureCreateFlags::External);
 	}
-	else
+	else if (RHIGetInterfaceType() == ERHIInterfaceType::D3D11 || RHIGetInterfaceType() == ERHIInterfaceType::D3D12)
 	{
 		TextureDesc.AddFlags(ETextureCreateFlags::Shared);
 	}
 
-	return new FPixelCaptureOutputFrameRHI(GDynamicRHI->RHICreateTexture(TextureDesc));
+	return new FPixelCaptureOutputFrameRHI(RHICreateTexture(TextureDesc));
 }
 
 void FPixelCaptureCapturerRHI::BeginProcess(const IPixelCaptureInputFrame& InputFrame, IPixelCaptureOutputFrame* OutputBuffer)

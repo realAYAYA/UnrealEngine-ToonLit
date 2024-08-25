@@ -32,8 +32,10 @@ public:
 
 public:
     // Begin UObject
-    virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
-    // End UObject
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
+	// End UObject
 	
 private:
 	/**

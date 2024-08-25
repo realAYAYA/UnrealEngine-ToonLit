@@ -2,6 +2,7 @@
 
 #include "GeoReferencingEditorBPLibrary.h"
 
+#include "Engine/HitResult.h"
 #include <LevelEditorViewport.h>
 #include <PhysicsEngine/PhysicsSettings.h>
 

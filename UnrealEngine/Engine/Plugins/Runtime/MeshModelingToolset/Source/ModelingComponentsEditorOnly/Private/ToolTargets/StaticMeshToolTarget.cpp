@@ -12,6 +12,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "StaticMeshAttributes.h"
+#include "StaticMeshOperations.h"
 #include "UObject/Package.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(StaticMeshToolTarget)
@@ -260,15 +261,6 @@ bool UStaticMeshToolTarget::CommitMaterialSetUpdate(UStaticMesh* StaticMeshIn,
 
 const FMeshDescription* UStaticMeshToolTarget::GetMeshDescription(const FGetMeshParameters& GetMeshParams)
 {
-	static FMeshDescription EmptyMeshDescription;
-	static bool bFirst = true;
-	if (bFirst)
-	{
-		FStaticMeshAttributes Attributes(EmptyMeshDescription);
-		Attributes.Register();
-		bFirst = false;
-	}
-
 	if (ensure(IsValid()))
 	{
 		EMeshLODIdentifier UseLOD = EditingLOD;
@@ -278,12 +270,67 @@ const FMeshDescription* UStaticMeshToolTarget::GetMeshDescription(const FGetMesh
 			ensure(UseLOD == GetMeshParams.RequestLOD);		// probably a bug somewhere if this is not true
 		}
 
-		FMeshDescription* FoundMeshDescription = (UseLOD == EMeshLODIdentifier::HiResSource) ?
-			StaticMesh->GetHiResMeshDescription() : StaticMesh->GetMeshDescription((int32)UseLOD);
-
-		return (FoundMeshDescription != nullptr) ? FoundMeshDescription : &EmptyMeshDescription;
+		return GetMeshDescriptionWithScaleApplied(StaticMesh.Get(), (int32)UseLOD, CachedMeshDescriptions);
 	}
 	return nullptr;
+}
+
+const FMeshDescription* UStaticMeshToolTarget::GetMeshDescriptionWithScaleApplied(UStaticMesh* StaticMesh, int32 UseLOD, FMeshDescriptionCache& CachedMeshDescriptions)
+{
+	static FMeshDescription EmptyMeshDescription;
+	static bool bFirst = true;
+	if (bFirst)
+	{
+		FStaticMeshAttributes Attributes(EmptyMeshDescription);
+		Attributes.Register();
+		bFirst = false;
+	}
+
+	if (!StaticMesh)
+	{
+		return &EmptyMeshDescription;
+	}
+
+	FMeshDescription* FoundMeshDescription = nullptr;
+	FVector BuildScale = FVector::One();
+	if (UseLOD == (int32)EMeshLODIdentifier::HiResSource)
+	{
+		FoundMeshDescription = StaticMesh->GetHiResMeshDescription();
+		BuildScale = StaticMesh->GetHiResSourceModel().BuildSettings.BuildScale3D;
+	}
+	else
+	{
+		FoundMeshDescription = StaticMesh->GetMeshDescription(UseLOD);
+		if (FoundMeshDescription)
+		{
+			BuildScale = StaticMesh->GetSourceModel(UseLOD).BuildSettings.BuildScale3D;
+		}
+	}
+
+	if (CachedMeshDescriptions.Contains(UseLOD))
+	{
+		if (CachedMeshDescriptions[UseLOD].Source == FoundMeshDescription)
+		{
+			return CachedMeshDescriptions[UseLOD].Copy.Get();
+		}
+		else // cache was stale; clear it
+		{
+			CachedMeshDescriptions.Remove(UseLOD);
+		}
+	}
+
+	if (FoundMeshDescription && !BuildScale.Equals(FVector::OneVector))
+	{
+		FCachedMeshDescription& Cache = CachedMeshDescriptions.Emplace(UseLOD);
+		Cache.Source = FoundMeshDescription;
+		Cache.Copy = MakeUnique<FMeshDescription>(*FoundMeshDescription);
+		FTransform ScaleTransform = FTransform::Identity;
+		ScaleTransform.SetScale3D(BuildScale);
+		FStaticMeshOperations::ApplyTransform(*Cache.Copy, ScaleTransform, true);
+		FoundMeshDescription = Cache.Copy.Get();
+	}
+
+	return (FoundMeshDescription != nullptr) ? FoundMeshDescription : &EmptyMeshDescription;
 }
 
 FMeshDescription UStaticMeshToolTarget::GetEmptyMeshDescription()
@@ -359,19 +406,37 @@ void UStaticMeshToolTarget::CommitMeshDescription(UStaticMesh* StaticMeshIn, con
 	}
 	// do we need to configure build settings for highres LOD?
 
+	FVector BuildScale = FVector::OneVector;
 	if (EditingLODIn == EMeshLODIdentifier::HiResSource)
 	{
 		StaticMeshIn->ModifyHiResMeshDescription();
+		BuildScale = StaticMeshIn->GetHiResSourceModel().BuildSettings.BuildScale3D;
 	}
 	else
 	{
 		StaticMeshIn->ModifyMeshDescription((int32)EditingLODIn);
+		if (StaticMeshIn->IsSourceModelValid((int32)EditingLODIn))
+		{
+			BuildScale = StaticMeshIn->GetSourceModel((int32)EditingLODIn).BuildSettings.BuildScale3D;
+		}
 	}
 
 	FCommitterParams CommitterParams;
 	CommitterParams.MeshDescriptionOut = UpdateMeshDescription;
 
 	Committer(CommitterParams);
+	if (!BuildScale.Equals(FVector::OneVector))
+	{
+		FTransform InverseBuildScaleTransform = FTransform::Identity;
+		FVector InverseBuildScale;
+		// Safely invert BuildScale
+		for (int32 Idx = 0; Idx < 3; ++Idx)
+		{
+			InverseBuildScale[Idx] = FMath::IsNearlyZero(BuildScale[Idx], FMathd::Epsilon) ? 1.0 : 1.0 / BuildScale[Idx];
+		}
+		InverseBuildScaleTransform.SetScale3D(InverseBuildScale);
+		FStaticMeshOperations::ApplyTransform(*UpdateMeshDescription, InverseBuildScaleTransform, true);
+	}
 
 	if (EditingLODIn == EMeshLODIdentifier::HiResSource)
 	{
@@ -392,6 +457,11 @@ void UStaticMeshToolTarget::CommitMeshDescription(UStaticMesh* StaticMeshIn, con
 FDynamicMesh3 UStaticMeshToolTarget::GetDynamicMesh()
 {
 	return GetDynamicMeshViaMeshDescription(*this);
+}
+
+FDynamicMesh3 UStaticMeshToolTarget::GetDynamicMesh(bool bRequestTangents)
+{
+	return GetDynamicMeshViaMeshDescription(*this, bRequestTangents);
 }
 
 void UStaticMeshToolTarget::CommitDynamicMesh(const FDynamicMesh3& Mesh, const FDynamicMeshCommitInfo& CommitInfo)

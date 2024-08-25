@@ -1,0 +1,69 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "TSRCommon.ush"
+
+
+//------------------------------------------------------- CONFIG
+
+#define TILE_SIZE 8
+
+#define TILE_ROWS 2
+
+
+//------------------------------------------------------- PARAMETERS
+
+float PerceptionAdd;
+
+Texture2D<tsr_half3> SceneColorTexture;
+RWTexture2D<tsr_half> FlickeringLumaOutput;
+
+
+//------------------------------------------------------- ENTRY POINT
+
+[numthreads(TILE_SIZE * TILE_SIZE, 1, 1)]
+void MainCS(
+	uint2 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	uint2 GroupThreadId = uint2(GroupThreadIndex % TILE_SIZE, GroupThreadIndex / TILE_SIZE);
+	uint2 OutputPixelOrigin = (InputInfo_ViewportMin + GroupId * uint(TILE_SIZE * TILE_ROWS)) + GroupThreadId;
+
+	tsr_half3 ColorArray[TILE_ROWS * TILE_ROWS];
+
+	ISOLATE
+	{
+		UNROLL_N(TILE_ROWS)
+		for (uint y = 0; y < TILE_ROWS; y++)
+		{
+			UNROLL_N(TILE_ROWS)
+			for (uint x = 0; x < TILE_ROWS; x++)
+			{
+				const uint2 PixelOffset = uint2(x, y) * TILE_SIZE;
+				uint2 InputPixelPos = OutputPixelOrigin + PixelOffset;
+			
+				ColorArray[x + y * TILE_ROWS] = SceneColorTexture[InputPixelPos];
+			}
+		}
+	}
+
+	ISOLATE
+	{
+		UNROLL_N(TILE_ROWS)
+		for (uint y = 0; y < TILE_ROWS; y++)
+		{
+			UNROLL_N(TILE_ROWS)
+			for (uint x = 0; x < TILE_ROWS; x++)
+			{
+				const uint2 PixelOffset = uint2(x, y) * TILE_SIZE;
+				uint2 InputPixelPos = OutputPixelOrigin + PixelOffset;
+			
+				tsr_half3 Color = ColorArray[x + y * TILE_ROWS];
+				Color *= rcp(tsr_half(PerceptionAdd) + Color);
+
+				InputPixelPos.x = select(all(InputPixelPos < InputInfo_ViewportMax), InputPixelPos.x, uint(~0));
+				
+				FlickeringLumaOutput[InputPixelPos] = dot(Color, kMoireLumaWeights);
+			}
+		}
+	}
+}

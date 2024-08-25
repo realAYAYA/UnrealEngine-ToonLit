@@ -107,7 +107,7 @@ void ComputeHeterogeneousVolumeBakeMaterial(
 	// Object data
 	const IHeterogeneousVolumeInterface* HeterogeneousVolumeInterface,
 	const FMaterialRenderProxy* MaterialRenderProxy,
-	const int32 PrimitiveId,
+	const FPersistentPrimitiveIndex &PersistentPrimitiveIndex,
 	const FBoxSphereBounds LocalBoxSphereBounds,
 	// Volume data
 	FIntVector VolumeResolution,
@@ -138,12 +138,19 @@ void ComputeHeterogeneousVolumeBakeMaterial(
 		PassParameters->Scene = View.GetSceneUniforms().GetBuffer(GraphBuilder);
 
 		// Object data
-		FMatrix44f LocalToWorld = FMatrix44f(HeterogeneousVolumeInterface->GetLocalToWorld());
-		PassParameters->LocalToWorld = LocalToWorld;
-		PassParameters->WorldToLocal = LocalToWorld.Inverse();
-		PassParameters->LocalBoundsOrigin = FVector3f(LocalBoxSphereBounds.Origin);
-		PassParameters->LocalBoundsExtent = FVector3f(LocalBoxSphereBounds.BoxExtent);
-		PassParameters->PrimitiveId = PrimitiveId;
+		// TODO: Convert to relative-local space
+		//FVector3f ViewOriginHigh = FDFVector3(View.ViewMatrices.GetViewOrigin()).High;
+		//FMatrix44f RelativeLocalToWorld = FDFMatrix::MakeToRelativeWorldMatrix(ViewOriginHigh, HeterogeneousVolumeInterface->GetLocalToWorld()).M;
+		FMatrix InstanceToLocal = HeterogeneousVolumeInterface->GetInstanceToLocal();
+		FMatrix LocalToWorld = HeterogeneousVolumeInterface->GetLocalToWorld();
+		PassParameters->LocalToWorld = FMatrix44f(InstanceToLocal * LocalToWorld);
+		PassParameters->WorldToLocal = PassParameters->LocalToWorld.Inverse();
+
+		FMatrix LocalToInstance = InstanceToLocal.Inverse();
+		FBoxSphereBounds InstanceBoxSphereBounds = LocalBoxSphereBounds.TransformBy(LocalToInstance);
+		PassParameters->LocalBoundsOrigin = FVector3f(InstanceBoxSphereBounds.Origin);
+		PassParameters->LocalBoundsExtent = FVector3f(InstanceBoxSphereBounds.BoxExtent);
+		PassParameters->PrimitiveId = PersistentPrimitiveIndex.Index;
 
 		// Volume data
 		PassParameters->VolumeResolution = VolumeResolution;
@@ -172,25 +179,8 @@ void ComputeHeterogeneousVolumeBakeMaterial(
 
 			if (!ComputeShader.IsNull())
 			{
-				FMeshPassProcessorRenderState DrawRenderState;
-
-				FMeshMaterialShaderElementData ShaderElementData;
-				ShaderElementData.FadeUniformBuffer = GDistanceCullFadedInUniformBuffer.GetUniformBufferRHI();
-				ShaderElementData.DitherUniformBuffer = GDitherFadedInUniformBuffer.GetUniformBufferRHI();
-
-				FMeshProcessorShaders PassShaders;
-				PassShaders.ComputeShader = ComputeShader;
-
 				FMeshDrawShaderBindings ShaderBindings;
-				{
-					ShaderBindings.Initialize(PassShaders);
-
-					int32 DataOffset = 0;
-					FMeshDrawSingleShaderBindings SingleShaderBindings = ShaderBindings.GetSingleShaderBindings(SF_Compute, DataOffset);
-					ComputeShader->GetShaderBindings(LocalScene, LocalScene->GetFeatureLevel(), nullptr, *MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, SingleShaderBindings);
-
-					ShaderBindings.Finalize(&PassShaders);
-				}
+				UE::MeshPassUtils::SetupComputeBindings(ComputeShader, LocalScene, LocalScene->GetFeatureLevel(), nullptr, *MaterialRenderProxy, Material, ShaderBindings);
 
 				UE::MeshPassUtils::Dispatch(RHICmdList, ComputeShader, ShaderBindings, *PassParameters, GroupCount);
 			}

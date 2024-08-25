@@ -20,6 +20,7 @@
 struct FMeshDescription;
 class USkinWeightsPaintTool;
 class UPolygonSelectionMechanic;
+class UPersonaEditorModeManagerContext;
 
 namespace UE::Geometry 
 {
@@ -35,7 +36,8 @@ UENUM()
 enum class EWeightEditMode : uint8
 {
 	Brush,
-	Vertices
+	Vertices,
+	Bones,
 };
 
 // weight color mode
@@ -106,6 +108,8 @@ namespace SkinPaintTool
 		TArray<FVector> RefPoseVertexPositions;
 		// inverted, component space ref pose transform of each bone
 		TArray<FTransform> InvCSRefPoseTransforms;
+		// bones transforms used in last deformation update
+		TArray<FTransform> PrevBoneTransforms;
 		// bone index to bone name
 		TArray<FName> BoneNames;
 		TMap<FName, BoneIndex> BoneNameToIndexMap;
@@ -182,11 +186,13 @@ namespace SkinPaintTool
 			const float Weight,
 			TArray<VertexWeights>& InOutVertexData);
 
-		void ResetAfterChange();
+		void SwapAfterChange();
 
 		float SetCurrentFalloffAndGetMaxFalloffThisStroke(int32 VertexID, float CurrentStrength);
 
-		void ApplyEditsToWeightMap(const FMultiBoneWeightEdits& Edits, TArray<VertexWeights>& InOutWeights);
+		void ApplyEditsToCurrentWeights(const FMultiBoneWeightEdits& Edits);
+
+		void UpdateIsBoneWeighted(BoneIndex BoneToUpdate);
 		
 		// double-buffer of the entire weight matrix (stored sparsely for fast deformation)
 		// "Pre" is state of weights at stroke start
@@ -199,6 +205,9 @@ namespace SkinPaintTool
 		// values range from 0-1, this allows brushes to sweep over the same vertex, and apply only the maximum amount
 		// of modification (add/replace/relax etc) that was encountered for the duration of the stroke.
 		TArray<float> MaxFalloffPerVertexThisStroke;
+
+		// record which bones have any weight assigned to them
+		TArray<bool> IsBoneWeighted;
 
 		// update deformation when vertex weights are modified
 		FSkinToolDeformer Deformer;
@@ -341,6 +350,7 @@ public:
 	virtual bool SupportsWorldSpaceFocusBox() override { return true; }
 	virtual FBox GetWorldSpaceFocusBox() override;
 
+	// using when ToolChange is applied via Undo/Redo
 	void ExternalUpdateWeights(const int32 BoneIndex, const TMap<int32, float>& IndexValues);
 
 	// weight editing operations (selection based)
@@ -349,9 +359,58 @@ public:
 	void PruneWeights(const float Threshold);
 	void AverageWeights();
 	void NormalizeWeights();
+	
+	// method to set weights directly (numeric input, for example)
+	void SetBoneWeightOnVertices(
+		BoneIndex Bone,
+		const float Weight,
+		const TArray<VertexIndex>& VerticesToEdit,
+		const bool bShouldTransact);
 
 	// toggle brush / selection mode
 	void ToggleEditingMode();
+
+	// edit selection
+	TObjectPtr<UPolygonSelectionMechanic> GetSelectionMechanic();
+
+	// get a list of currently selected vertices
+	void GetSelectedVertices(TArray<int32>& OutVertexIndices) const;
+
+	// get the average weight value of each influence on the given vertices
+	void GetInfluences(const TArray<int32>& VertexIndices, TArray<BoneIndex>& OutBoneIndices);
+
+	// get the average weight value of a single bone on the given vertices
+	float GetAverageWeightOnBone(const BoneIndex InBoneIndex, const TArray<int32>& VertexIndices);
+
+	// convert an index to a name
+	FName GetBoneNameFromIndex(BoneIndex InIndex) const;
+
+	// HOW TO EDIT WEIGHTS WITH UNDO/REDO:
+	//
+	// Live Edits:
+	// For multiple weight editing operations that need to be grouped into a single transaction, like dragging a slider or
+	// dragging a brush, you must call BeginChange(), then ApplyWeightsEditsToMesh(bShouldTransact=false), then EndChange().
+	// All the edits are stored into the "ActiveChange" and applied as a single transaction. Deformations and vertex
+	// colors will be updated throughout the duration of the change.
+	//
+	// Single Edits:
+	// For all one-and-done edits, you can call ApplyWeightEditsToMesh(bShouldTransact=True).
+	// It will Begin/End the change and create a transaction for it.
+	//
+	void BeginChange();
+	void EndChange(const FText& TransactionLabel);
+	void ApplyWeightEditsToMesh(
+		const SkinPaintTool::FMultiBoneWeightEdits& WeightEdits,
+		const FText& TransactionLabel,
+		const bool bShouldTransact);
+
+	// called whenever the selection is modified
+	DECLARE_MULTICAST_DELEGATE(FOnSelectionChanged);
+	FOnSelectionChanged OnSelectionChanged;
+
+	// called whenever the weights are modified
+	DECLARE_MULTICAST_DELEGATE(FOnWeightsChanged);
+	FOnWeightsChanged OnWeightsChanged;
 
 protected:
 
@@ -376,8 +435,9 @@ protected:
 
 	// modify vertex weights according to the specified operation,
 	// generating bone weight edits to be stored in a transaction
-	void EditWeightOnVertices(
+	void EditWeightOfBoneOnVertices(
 		EWeightEditOperation EditOperation,
+		const BoneIndex Bone,
 		const TArray<int32>& VerticesToEdit,
 		const TArray<float>& VertexFalloffs,
 		const float UseStrength,
@@ -409,6 +469,9 @@ protected:
 	// cached mirror data
 	SkinPaintTool::FSkinMirrorData MirrorData;
 
+	// storage for weight edits in the current transaction
+	TUniquePtr<SkinPaintTool::FMeshSkinWeightsChange> ActiveChange;
+
 	// Smooth weights data source and operator
 	TUniquePtr<UE::Geometry::TBoneWeightsDataSource<int32, float>> SmoothWeightsDataSource;
 	TUniquePtr<UE::Geometry::TSmoothBoneWeights<int32, float>> SmoothWeightsOp;
@@ -417,13 +480,6 @@ protected:
 	void UpdateCurrentBoneVertexColors();
 	FVector4f WeightToColor(float Value) const;
 	bool bVisibleWeightsValid = false;
-
-	// weight editing transactions
-	void BeginChange();
-	TUniquePtr<SkinPaintTool::FMeshSkinWeightsChange> EndChange();
-	TUniquePtr<SkinPaintTool::FMeshSkinWeightsChange> ActiveChange;
-	// used to apply manual weight modifications (not from the brush)
-	void ApplyWeightEditsToMesh(const FText& TransactionLabel, const SkinPaintTool::FMultiBoneWeightEdits& WeightEdits);
 
 	// which bone are we currently painting?
 	void UpdateCurrentBone(const FName &BoneName);
@@ -445,10 +501,11 @@ protected:
 	TObjectPtr<UPolygonSelectionMechanic> PolygonSelectionMechanic;
 	TUniquePtr<UE::Geometry::FDynamicMeshAABBTree3> MeshSpatial = nullptr;
 	TUniquePtr<UE::Geometry::FTriangleGroupTopology> SelectionTopology = nullptr;
-	void OnSelectionModified();
 
 	UPROPERTY()
 	TWeakObjectPtr<USkeletalMeshEditorContextObjectBase> EditorContext = nullptr;
+	UPROPERTY()
+	TWeakObjectPtr<UPersonaEditorModeManagerContext> PersonaModeManagerContext = nullptr;
 
 	friend SkinPaintTool::FSkinToolDeformer;
 };

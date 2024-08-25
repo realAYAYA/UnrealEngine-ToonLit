@@ -24,11 +24,14 @@ void UMassEntitySubsystem::GetResourceSizeEx(FResourceSizeEx& CumulativeResource
 
 void UMassEntitySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
+	Super::Initialize(Collection);
 	EntityManager->Initialize();
+	HandleLateCreation();
 }
 
 void UMassEntitySubsystem::PostInitialize()
 {
+	Super::PostInitialize();
 	// this needs to be done after all the subsystems have been initialized since some processors might want to access
 	// them during processors' initialization
 	EntityManager->PostInitialize();
@@ -38,6 +41,7 @@ void UMassEntitySubsystem::Deinitialize()
 {
 	EntityManager->Deinitialize();
 	EntityManager.Reset();
+	Super::Deinitialize();
 }
 
 #if WITH_MASSENTITY_DEBUG

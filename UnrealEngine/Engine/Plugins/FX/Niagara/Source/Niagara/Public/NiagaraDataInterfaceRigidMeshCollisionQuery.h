@@ -43,6 +43,9 @@ struct FNDIRigidMeshCollisionArrays
 	TArray<int32> ComponentIdIndex;
 	TArray<FPrimitiveComponentId> UniqueCompnentId;
 
+	FVector3f CombinedBBoxWorldMin;
+	FVector3f CombinedBBoxWorldMax;
+
 	FNDIRigidMeshCollisionArrays() = delete;
 	FNDIRigidMeshCollisionArrays(uint32 Num)
 		: MaxPrimitives(Num)
@@ -167,6 +170,9 @@ struct FNDIRigidMeshCollisionData
 
 	/** Indicates that a full update of the arrays is required */
 	bool bRequiresFullUpdate = false;
+
+	/** Indicates that we are currently in a failure state because we've found more components in the actors than we can support */
+	bool bExceedingComponentLimits = false;
 };
 
 /** Data Interface used to collide against static meshes - whether it is the mesh distance field or a physics asset's collision primitive */
@@ -203,7 +209,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Source")
 	bool UseComplexCollisions = false;
 
-	/** If enabled the global search can be executed dependeing on GlobalSearchForced and GlobalSearchFallback_Unscripted */
+	/** If enabled, FindActors will use filtering based on ObjectType instead of Channel. */
+	UPROPERTY(EditAnywhere, Category = "Source")
+	bool bFilterByObjectType = false;
+
+	/** If enabled the global search can be executed depending on GlobalSearchForced and GlobalSearchFallback_Unscripted */
 	UE_DEPRECATED(5.2, "Global search will be deprecated in favor of using a spatial search through the FindActors function.")
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Source", meta = (DisplayName = "Global Search Allowed"))
 	bool GlobalSearchAllowed = false;
@@ -227,7 +237,6 @@ public:
 	virtual void PostLoad() override;
 
 	/** UNiagaraDataInterface Interface */
-	virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return Target == ENiagaraSimTarget::GPUComputeSim; }
 #if WITH_NIAGARA_DEBUGGER
@@ -242,7 +251,7 @@ public:
 	virtual bool HasTickGroupPrereqs() const override { return true; }
 	virtual ETickingGroup CalculateTickGroup(const void* PerInstanceData) const override;
 
-	virtual bool RequiresDistanceFieldData() const override { return true; }
+	virtual bool RequiresEarlyViewData() const override { return true; }
 
 	/** GPU simulation  functionality */
 #if WITH_EDITORONLY_DATA
@@ -264,17 +273,22 @@ public:
 
 	bool GetExplicitActors(FNDIRigidMeshCollisionData& InstanceData);
 	bool FindActors(UWorld* World, FNDIRigidMeshCollisionData& InstanceData, ECollisionChannel Channel, const FVector& OverlapLocation, const FVector& OverlapExtent, const FQuat& OverlapRotation) const;
-
+	
 	UE_DEPRECATED(5.2, "Global search will be deprecated in favor of using a spatial search through the FindActors function.")
 	bool GlobalFindActors(UWorld* World, FNDIRigidMeshCollisionData& InstanceData) const;
 
 	void FindActorsCPU(FVectorVMExternalFunctionContext& Context);
+	void GetNumElementsCPU(FVectorVMExternalFunctionContext& Context);
+	void IsWorldPositionInsideCombinedBoundsCPU(FVectorVMExternalFunctionContext& Context);
 
 #if WITH_EDITOR
 	virtual void GetFeedback(UNiagaraSystem* InAsset, UNiagaraComponent* InComponent, TArray<FNiagaraDataInterfaceError>& OutErrors, TArray<FNiagaraDataInterfaceFeedback>& OutWarnings, TArray<FNiagaraDataInterfaceFeedback>& OutInfo) override;
 #endif
 
 protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 	/** Copy one niagara DI to this */
 	virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 

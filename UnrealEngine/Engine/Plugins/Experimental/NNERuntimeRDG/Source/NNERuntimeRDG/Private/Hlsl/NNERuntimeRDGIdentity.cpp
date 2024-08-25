@@ -21,7 +21,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 1);
 			check(OutputTensors.Num() == 1);
@@ -66,8 +66,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
-		//This match version 16 of the Identity operator
-		//https://github.com/onnx/onnx/blob/main/docs/Operators.md#Identity
 		FAttributeValidator AttributeValidator;
 		bIsValid &= AttributeValidator.Validate(AttributeMap);
 
@@ -97,7 +95,12 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterIdentityOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Identity"), CreateIdentityOperator, ValidateIdentityOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Identity"), TEXT("Onnx")}, 1}, CreateIdentityOperator, ValidateIdentityOperator);
+		Registry.OpAdd({{TEXT("Identity"), TEXT("Onnx")}, 13}, CreateIdentityOperator, ValidateIdentityOperator);
+		Registry.OpAdd({{TEXT("Identity"), TEXT("Onnx")}, 14}, CreateIdentityOperator, ValidateIdentityOperator);
+		Registry.OpAdd({{TEXT("Identity"), TEXT("Onnx")}, 16}, CreateIdentityOperator, ValidateIdentityOperator);
+		Registry.OpAdd({{TEXT("Identity"), TEXT("Onnx")}, 19}, CreateIdentityOperator, ValidateIdentityOperator);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

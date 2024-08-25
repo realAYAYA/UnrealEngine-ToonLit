@@ -9,6 +9,8 @@
 #include "HttpRequestHandler.h"
 #include "HttpRequestHandlerIterator.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogHttpRouter, Log, All);
+
 bool FHttpRouter::Query(const TSharedPtr<FHttpServerRequest>& Request, const FHttpResultCallback& OnProcessingComplete)
 {
 	bool bRequestHandled = false;
@@ -18,8 +20,13 @@ bool FHttpRouter::Query(const TSharedPtr<FHttpServerRequest>& Request, const FHt
 	FHttpRequestHandlerIterator Iterator(Request, RequestHandlerRegistrar, MoveTemp(PreprocessorsArray));
 	while (const FHttpRequestHandler* RequestHandlerPtr = Iterator.Next())
 	{
-		(*RequestHandlerPtr).CheckCallable();
-		bRequestHandled = (*RequestHandlerPtr)(*Request, OnProcessingComplete);
+		if (!RequestHandlerPtr->IsBound())
+		{
+			UE_LOG(LogHttpRouter, Verbose, TEXT("Skipping an unbound FHttpRequestHandler."));
+			continue;
+		}
+
+		bRequestHandled = RequestHandlerPtr->Execute(*Request, OnProcessingComplete);
 		if (bRequestHandled)
 		{
 			break;

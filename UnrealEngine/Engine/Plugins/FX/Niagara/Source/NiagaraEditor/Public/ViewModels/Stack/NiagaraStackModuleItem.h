@@ -114,21 +114,8 @@ public:
 		SetIsEnabledInternal(bEnabled);
 	}
 
-	void SetNoteMode(bool bEnabled)
-	{
-		bIsNoteModeActive = bEnabled;
-		OnNoteModeSet().ExecuteIfBound(bIsNoteModeActive);
-	}
-
-	bool GetNoteMode() const
-	{
-		return bIsNoteModeActive;
-	}
-
 	NIAGARAEDITOR_API bool IsDebugDrawEnabled() const;
 	NIAGARAEDITOR_API void SetDebugDrawEnabled(bool bInEnabled);
-
-	FOnNoteModeSet& OnNoteModeSet() { return OnNoteModeSetDelegate;}
 
 	NIAGARAEDITOR_API bool OpenSourceAsset() const;
 
@@ -153,6 +140,7 @@ private:
 	NIAGARAEDITOR_API void RefreshIsEnabled();
 	NIAGARAEDITOR_API void OnMessageManagerRefresh(const TArray<TSharedRef<const INiagaraMessage>>& NewMessages);
 	NIAGARAEDITOR_API FStackIssueFixDelegate GetUpgradeVersionFix();
+	void ReportScriptVersionChange() const;
 
 private:
 	UNiagaraNodeOutput* OutputNode;
@@ -174,8 +162,6 @@ private:
 	INiagaraStackItemGroupAddUtilities* GroupAddUtilities;
 
 	mutable TOptional<bool> bIsScratchModuleCache;
-
-	bool bIsNoteModeActive = false;
 	
 	bool bIsModuleScriptReassignmentPending;
 
@@ -185,6 +171,4 @@ private:
 	TArray<FStackIssue> MessageManagerIssues;
 
 	FGuid MessageLogGuid;
-	
-	FOnNoteModeSet OnNoteModeSetDelegate;
 };

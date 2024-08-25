@@ -6,6 +6,16 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "MultiUserClientStatics.generated.h"
 
+#if WITH_CONCERT
+class UConcertClientConfig;
+enum class EConcertClientStatus : uint8;
+enum class EConcertConnectionStatus : uint8;
+struct FConcertServerInfo;
+struct FConcertSessionInfo;
+struct FConcertClientInfo;
+struct FConcertConnectionError;
+#endif
+
 /** Delegate that is invoked when a package is saved. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPackageSavedSignature, FName, PackageName);
 
@@ -152,6 +162,30 @@ enum class EMultiUserConnectionStatus : uint8
 	/** Disconnected */
 	Disconnected,
 };
+
+/** Exposes EConcertClientStatus */
+UENUM(BlueprintType)
+enum class EMultiUserClientStatus : uint8
+{
+	/** Client connected */
+	Connected,
+	/** Client disconnected */
+	Disconnected,
+	/** Client state updated */
+	Updated,
+};
+
+namespace UE::MultiUserClientLibrary
+{
+#if WITH_CONCERT
+	MULTIUSERCLIENTLIBRARY_API FMultiUserClientInfo ConvertClientInfo(const FGuid& ClientEndpointId, const FConcertClientInfo& ClientInfo);
+	MULTIUSERCLIENTLIBRARY_API FMultiUserConnectionError ConvertConnectionError(FConcertConnectionError Error);
+	MULTIUSERCLIENTLIBRARY_API UConcertClientConfig* ModifyClientConfig(const FMultiUserClientConfig& InClientConfig);
+	MULTIUSERCLIENTLIBRARY_API EMultiUserConnectionStatus ConvertConnectionStatus(EConcertConnectionStatus ConnectionStatus);
+	MULTIUSERCLIENTLIBRARY_API FMultiUserSessionInfo ConvertSessionInfo(const FConcertSessionInfo& InSessionInfo, const FConcertServerInfo& InServerInfo);
+	MULTIUSERCLIENTLIBRARY_API EMultiUserClientStatus ConvertClientStatus(EConcertClientStatus Status);
+#endif
+}
 
 UCLASS()
 class MULTIUSERCLIENTLIBRARY_API UMultiUserClientStatics : public UBlueprintFunctionLibrary

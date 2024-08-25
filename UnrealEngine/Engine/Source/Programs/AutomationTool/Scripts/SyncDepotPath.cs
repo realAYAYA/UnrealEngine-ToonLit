@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using AutomationTool;
+using UnrealBuildBase;
 
 namespace AutomationTool
 {
@@ -30,7 +31,7 @@ namespace AutomationTool
 			}
 
 			// Create a temporary client to sync down the folder
-			string ClientName = String.Format("{0}_{1}_SyncDepotPath_Temp", P4Env.User, Environment.MachineName);
+			string ClientName = String.Format("{0}_{1}_SyncDepotPath_Temp", P4Env.User, Unreal.MachineName);
 
 			List<KeyValuePair<string, string>> RequiredView = new List<KeyValuePair<string, string>>();
 			RequiredView.Add(new KeyValuePair<string, string>(DepotPath, "/..."));
@@ -42,7 +43,7 @@ namespace AutomationTool
 
 			P4ClientInfo Client = new P4ClientInfo();
 			Client.Owner = P4Env.User;
-			Client.Host = Environment.MachineName;
+			Client.Host = Unreal.MachineName;
 			Client.RootPath = OutputDir;
 			Client.Name = ClientName;
 			Client.View = RequiredView;

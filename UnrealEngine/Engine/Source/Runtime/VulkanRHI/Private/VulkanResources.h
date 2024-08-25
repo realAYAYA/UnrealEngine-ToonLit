@@ -67,8 +67,9 @@ class FVulkanVertexDeclaration : public FRHIVertexDeclaration
 public:
 	FVertexDeclarationElementList Elements;
 	uint32 Hash;
+	uint32 HashNoStrides;
 
-	FVulkanVertexDeclaration(const FVertexDeclarationElementList& InElements, uint32 InHash);
+	FVulkanVertexDeclaration(const FVertexDeclarationElementList& InElements, uint32 InHash, uint32 InHashNoStrides);
 
 	virtual bool GetInitializer(FVertexDeclarationElementList& Out) final override
 	{
@@ -78,7 +79,7 @@ public:
 
 	static void EmptyCache();
 
-	virtual uint32 GetPrecachePSOHash() const final override { return Hash; }
+	virtual uint32 GetPrecachePSOHash() const final override { return HashNoStrides; }
 };
 
 struct FGfxPipelineDesc;
@@ -99,6 +100,8 @@ public:
 
 class FVulkanShader : public IRefCountedObject
 {
+protected:
+
 	static FCriticalSection VulkanShaderModulesMapCS;
 
 public:
@@ -180,9 +183,15 @@ public:
 	public:
 		TArrayView<uint32> GetCodeView() {return CodeView;}
 	};
-	FSpirvCode GetSpirvCode();
+
+	inline FSpirvCode GetSpirvCode()
+	{
+		return GetSpirvCode(SpirvContainer);
+	}
+	
 	FSpirvCode GetPatchedSpirvCode(const FGfxPipelineDesc& Desc, const FVulkanLayout* Layout);
 protected:
+
 #if UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT
 	FString							DebugEntryPoint;
 #endif
@@ -197,7 +206,7 @@ protected:
 
 	FShaderResourceTable			ShaderResourceTable;
 
-private:
+protected:
 	class FSpirvContainer
 	{
 		friend class FVulkanShader;
@@ -211,6 +220,8 @@ private:
 
 	friend FArchive& operator<<(FArchive& Ar, class FVulkanShader::FSpirvContainer& SpirvContainer);
 	static FSpirvCode PatchSpirvInputAttachments(FSpirvCode& SpirvCode);
+
+	static FSpirvCode GetSpirvCode(const FSpirvContainer& Container);
 
 protected:
 	void Setup(FVulkanShaderHeader&& InCodeHeader, FShaderResourceTable&& InSRT, FSpirvContainer&& InSpirvContainer, uint64 InShaderKey);
@@ -271,9 +282,20 @@ private:
 		, FVulkanShader(InDevice, InFrequency)
 	{
 	}
+
+	FSpirvContainer AnyHitSpirvContainer;
+	FSpirvContainer IntersectionSpirvContainer;
+
 	friend class FVulkanShaderFactory;
 
 public:
+	static const uint32 MainModuleIdentifier = 0;
+	static const uint32 ClosestHitModuleIdentifier = MainModuleIdentifier;
+	static const uint32 AnyHitModuleIdentifier = 1;
+	static const uint32 IntersectionModuleIdentifier = 2;
+
+	TRefCountPtr<FVulkanShaderModule> GetOrCreateHandle(uint32 ModuleIdentifier);
+
 	// IRefCountedObject interface.
 	virtual uint32 AddRef() const override final
 	{
@@ -552,7 +574,11 @@ class FVulkanTexture : public FRHITexture, public FVulkanEvictable, public FVulk
 {
 public:
 	// Regular constructor.
-	FVulkanTexture(FVulkanDevice& InDevice, const FRHITextureCreateDesc& InCreateDesc, const FRHITransientHeapAllocation* InTransientHeapAllocation);
+	FVulkanTexture(FRHICommandListBase* RHICmdList, FVulkanDevice& InDevice, const FRHITextureCreateDesc& InCreateDesc, const FRHITransientHeapAllocation* InTransientHeapAllocation);
+
+	FVulkanTexture(FVulkanDevice& InDevice, const FRHITextureCreateDesc& InCreateDesc, const FRHITransientHeapAllocation* InTransientHeapAllocation)
+		: FVulkanTexture(nullptr, InDevice, InCreateDesc, InTransientHeapAllocation)
+	{}
 
 	// Construct from external resource.
 	// FIXME: HUGE HACK: the bUnused argument is there to disambiguate this overload from the one above when passing nullptr, since nullptr is a valid VkImage. Get rid of this code smell when unifying FVulkanSurface and FVulkanTexture.
@@ -606,7 +632,8 @@ public:
 		VkImageFormatListCreateInfoKHR ImageFormatListCreateInfo;
 		//used when TexCreate_External is given
 		VkExternalMemoryImageCreateInfoKHR ExternalMemImageCreateInfo;
-		VkFormat FormatsUsed[2];
+		// Array of formats used for mutable formats
+		TArray<VkFormat, TInlineAllocator<2>> FormatsUsed;
 	};
 
 	// Seperate method for creating VkImageCreateInfo
@@ -716,6 +743,7 @@ public:
 
 	FVulkanDevice* Device;
 	VkImage Image;
+	VkImageUsageFlags ImageUsageFlags;
 	VkFormat StorageFormat;  // Removes SRGB if requested, used to upload data
 	VkFormat ViewFormat;  // Format for SRVs, render targets
 	VkMemoryPropertyFlags MemProps;
@@ -1180,12 +1208,20 @@ public:
 		NewAlloc.Swap(Allocation);
 	}
 	
+	FRHIDescriptorHandle GetBindlessHandle();
 	VkDeviceAddress GetDeviceAddress() const;
+
+protected:
+	bool SetupUniformBufferView(const FRHIUniformBufferLayout* InLayout, const void* Contents);
 
 public:
 	FVulkanDevice* Device;
 	VulkanRHI::FVulkanAllocation Allocation;
 	EUniformBufferUsage Usage;
+
+	FRHIDescriptorHandle BindlessHandle;
+	VkDeviceAddress CachedDeviceAddress = 0;
+	bool bUniformView = false;
 };
 
 class FVulkanUnorderedAccessView final : public FRHIUnorderedAccessView, public FVulkanLinkedView

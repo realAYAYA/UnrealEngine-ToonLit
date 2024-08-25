@@ -18,13 +18,19 @@ public:
 	~FPerParticleDampVelocity() {}
 
 	void UpdatePositionBasedState(const FSolverParticles& Particles, const int32 Offset, const int32 Range);
+	void UpdatePositionBasedState(const FSolverParticlesRange& Particles);
 
 	// Apply damping without first checking for kinematic particles
-	inline void ApplyFast(FSolverParticles& Particles, const FSolverReal /*Dt*/, const int32 Index) const
+	void ApplyFast(FSolverParticles& Particles, const FSolverReal /*Dt*/, const int32 Index) const
 	{
-		const FSolverVec3 R = Particles.X(Index) - Xcm;
-		const FSolverVec3 Dv = Vcm - Particles.V(Index) + FSolverVec3::CrossProduct(R, Omega);
-		Particles.V(Index) += Coefficient * Dv;
+		Apply(Particles.GetX(Index), Particles.V(Index));
+	}
+
+	void Apply(const FSolverVec3& X, FSolverVec3& V) const
+	{
+		const FSolverVec3 R = X - Xcm;
+		const FSolverVec3 Dv = Vcm - V + FSolverVec3::CrossProduct(R, Omega);
+		V += Coefficient * Dv;
 	}
 
 private:

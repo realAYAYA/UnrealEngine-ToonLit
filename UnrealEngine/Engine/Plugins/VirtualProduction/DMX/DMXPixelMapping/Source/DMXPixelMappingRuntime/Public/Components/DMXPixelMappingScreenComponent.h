@@ -42,7 +42,6 @@ public:
 
 	//~ Begin UDMXPixelMappingBaseComponent implementation
 	virtual const FName& GetNamePrefix() override;
-	virtual void ResetDMX() override;
 	virtual void SendDMX() override;
 	//~ End UDMXPixelMappingBaseComponent implementation
 
@@ -50,12 +49,7 @@ public:
 #if WITH_EDITOR
 	virtual const FText GetPaletteCategory() override;
 	virtual bool IsExposedToTemplate() { return true; }
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // FDMXPixelMappingComponentWidget is deprecated
-	virtual TSharedRef<FDMXPixelMappingComponentWidget> BuildSlot(TSharedRef<SConstraintCanvas> InCanvas) override;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif // WITH_EDITOR
-	virtual void SetPosition(const FVector2D& NewPosition) override;
-	virtual void SetSize(const FVector2D& NewSize) override;
 	//~ End UDMXPixelMappingOutputComponent implementation
 
 public:

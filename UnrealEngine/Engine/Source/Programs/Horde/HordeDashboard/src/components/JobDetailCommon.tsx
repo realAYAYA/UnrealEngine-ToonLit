@@ -123,8 +123,16 @@ export const getBatchText = (item: StepItem): string | undefined => {
       }
 
       if (batch.error === JobStepBatchError.Incomplete) {
-         statusText = `${item.agentId} : Lease terminated prematurely`;
+         statusText = `${item.agentId} : Lease incomplete`;
       }
+
+      if (batch.error === JobStepBatchError.NoLongerNeeded) {
+         statusText = `${item.agentId} : No longer needed`;
+      }
+
+      if (batch.error === JobStepBatchError.SyncingFailed) {
+         statusText = `${item.agentId} : Syncing failed`;
+      }      
 
       if (batch.error === JobStepBatchError.Cancelled) {
          if (item.agentId) {
@@ -145,7 +153,7 @@ export const getBatchText = (item: StepItem): string | undefined => {
 
 
       if (!statusText && batch.error !== undefined && batch.error !== JobStepBatchError.None) {
-         statusText = `Batch error: ${batch.error}`;
+         statusText = `${item.agentId} : ${batch.error}`;
       }
 
       if (!statusText) {

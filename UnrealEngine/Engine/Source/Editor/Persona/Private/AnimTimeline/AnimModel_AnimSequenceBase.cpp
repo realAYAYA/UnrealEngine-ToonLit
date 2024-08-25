@@ -385,7 +385,7 @@ void FAnimModel_AnimSequenceBase::EditSelectedCurves()
 		if(SelectedTrack->IsA<FAnimTimelineTrack_Curve>())
 		{
 			TSharedRef<FAnimTimelineTrack_Curve> CurveTrack = StaticCastSharedRef<FAnimTimelineTrack_Curve>(SelectedTrack);
-			const TArray<const FRichCurve*> Curves = CurveTrack->GetCurves();
+			const TArray<const FRichCurve*>& Curves = CurveTrack->GetCurves();
 			int32 NumCurves = Curves.Num();
 			for(int32 CurveIndex = 0; CurveIndex < NumCurves; ++CurveIndex)
 			{

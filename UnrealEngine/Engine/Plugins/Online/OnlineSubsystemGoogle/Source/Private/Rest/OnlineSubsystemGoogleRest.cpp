@@ -10,6 +10,9 @@
 FOnlineSubsystemGoogle::FOnlineSubsystemGoogle(FName InInstanceName)
 	: FOnlineSubsystemGoogleCommon(InInstanceName)
 {
+	bPlatformRequiresClientId = true;
+	bPlatformAllowsClientIdOverride = true;
+	bPlatformRequiresServerClientId = false;
 }
 
 FOnlineSubsystemGoogle::~FOnlineSubsystemGoogle()

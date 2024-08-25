@@ -38,7 +38,8 @@ public:
 	virtual void EndRead() override;
 
 	bool DoesPackageExist(FPackageId PackageId);
-	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FPackageStoreEntry& OutPackageStoreEntry) override;
+	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FName PackageName,
+		FPackageStoreEntry& OutPackageStoreEntry) override;
 	
 	virtual bool GetPackageRedirectInfo(FPackageId PackageId, FName& OutSourcePackageName, FPackageId& OutRedirectedToPackageId) override
 	{
@@ -46,9 +47,10 @@ public:
 	}
 	
 private:
-	void SendCookRequest(TArray<FPackageId> PackageIds);
+	void SendCookRequest(TArray<TPair<FPackageId, FName>> PackageIds);
 	EPackageStoreEntryStatus CreatePackageStoreEntry(const FEntryInfo& EntryInfo, FPackageStoreEntry& OutPackageStoreEntry);
-	void AddPackages(TArray<FPackageStoreEntryResource> Entries, TArray<FPackageId> FailedPackageIds);
+	void AddPackages(TArray<FPackageStoreEntryResource> Entries, TArray<FPackageId> FailedPackageIds,
+		TArray<TPair<FPackageId, FName>> PackageIdsAndNames);
 	void OnCookOnTheFlyMessage(const UE::Cook::FCookOnTheFlyMessage& Message);
 	void CheckActivity();
 
@@ -57,7 +59,7 @@ private:
 	FRWLock EntriesLock;
 	TMap<FPackageId, FEntryInfo> PackageIdToEntryInfo;
 	TChunkedArray<FPackageStoreEntryResource> PackageEntries;
-	TArray<FPackageId> RequestedPackageIds;
+	TArray<TPair<FPackageId, FName>> RequestedPackageIds;
 	FPackageStats PackageStats;
 
 	const double MaxInactivityTime = 20;

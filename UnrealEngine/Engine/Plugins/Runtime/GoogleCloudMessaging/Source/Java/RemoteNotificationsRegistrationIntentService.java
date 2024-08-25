@@ -25,22 +25,22 @@ public class RemoteNotificationsRegistrationIntentService extends IntentService
   {
     try
     {
-      InstanceID instanceID = InstanceID.getInstance( GameActivity._activity.getApplicationContext() );
-      String Token = instanceID.getToken( GameActivity._activity.GCMSenderId, GoogleCloudMessaging.INSTANCE_ID_SCOPE, null );
+      InstanceID instanceID = InstanceID.getInstance( GameActivity.Get().getApplicationContext() );
+      String Token = instanceID.getToken( GameActivity.Get().GCMSenderId, GoogleCloudMessaging.INSTANCE_ID_SCOPE, null );
 
       // subscribe to default topic: /topics/global
       subscribeTopics( Token );
 
-      GameActivity._activity.nativeGCMRegisteredForRemoteNotifications( Token );
+      GameActivity.Get().nativeGCMRegisteredForRemoteNotifications( Token );
     }
     catch( Exception e )
     {
-      GameActivity._activity.nativeGCMFailedToRegisterForRemoteNotifications( "Failed to complete token refresh" );
+      GameActivity.Get().nativeGCMFailedToRegisterForRemoteNotifications( "Failed to complete token refresh" );
     }
   }
 
   private void subscribeTopics( String token ) throws IOException {
-    GcmPubSub pubSub = GcmPubSub.getInstance( GameActivity._activity.getApplicationContext() );
+    GcmPubSub pubSub = GcmPubSub.getInstance( GameActivity.Get().getApplicationContext() );
     pubSub.subscribe( token, "/topics/global", null );
   }
 }

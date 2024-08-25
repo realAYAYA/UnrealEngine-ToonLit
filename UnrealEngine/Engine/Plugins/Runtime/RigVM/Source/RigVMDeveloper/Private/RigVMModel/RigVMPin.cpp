@@ -14,6 +14,7 @@
 #include "Misc/DefaultValueHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/OutputDevice.h"
+#include "Misc/ScopeRWLock.h"
 #include "Misc/StringBuilder.h"
 #include "Logging/LogScopedVerbosityOverride.h"
 #include "RigVMModel/Nodes/RigVMCollapseNode.h"
@@ -107,6 +108,7 @@ URigVMPin::URigVMPin()
 	, bIsConstant(false)
 	, bRequiresWatch(false)
 	, bIsDynamicArray(false)
+	, bIsLazy(false)
 	, CPPType(FString())
 	, CPPTypeObject(nullptr)
 	, CPPTypeObjectPath(NAME_None)
@@ -145,8 +147,10 @@ bool URigVMPin::NameEquals(const FString& InName, bool bFollowCoreRedirectors) c
 		{
 			typedef TPair<FName, FString> FRedirectPinPair;
 			const FRedirectPinPair Key(Struct->GetFName(), InName);
+			static FRWLock RedirectedPinNamesLock;
 			static TMap<FRedirectPinPair, FName> RedirectedPinNames;
 
+			FWriteScopeLock ScopeLock(RedirectedPinNamesLock);
 			if(const FName* RedirectedNamePtr = RedirectedPinNames.Find(Key))
 			{
 				if(RedirectedNamePtr->IsNone())
@@ -180,7 +184,7 @@ FString URigVMPin::GetPinPath(bool bUseNodePath) const
 	URigVMPin* ParentPin = GetParentPin();
 	if (ParentPin)
 	{
-		PinPath = JoinPinPath(ParentPin->GetPinPath(), GetName());
+		PinPath = JoinPinPath(ParentPin->GetPinPath(bUseNodePath), GetName());
 	}
 	else
 	{
@@ -498,24 +502,7 @@ bool URigVMPin::IsDynamicArray() const
 
 bool URigVMPin::IsLazy() const
 {
-	// fixed array elements are treated as lazy elements
-	// if the original argument is also marked as lazy
-	if(const URigVMPin* ParentPin = GetParentPin())
-	{
-		if(ParentPin->IsFixedSizeArray())
-		{
-			return ParentPin->IsLazy();
-		}
-	}
-	
-	if(GetDirection() == ERigVMPinDirection::Input)
-	{
-		if(const URigVMNode* Node = GetNode())
-		{
-			return Node->ShouldInputPinComputeLazily(this);
-		}
-	}
-	return false;
+	return bIsLazy;
 }
 
 int32 URigVMPin::GetPinIndex() const
@@ -760,10 +747,10 @@ bool URigVMPin::ShouldHideSubPins() const
 
 FString URigVMPin::GetDefaultValue() const
 {
-	return GetDefaultValue(EmptyPinOverride);
+	return GetDefaultValue(EmptyPinOverride, true);
 }
 
-FString URigVMPin::GetDefaultValue(const URigVMPin::FPinOverride& InOverride) const
+FString URigVMPin::GetDefaultValue(const URigVMPin::FPinOverride& InOverride, bool bAdaptValueForPinType) const
 {
 	if (FPinOverrideValue const* OverrideValuePtr = InOverride.Value.Find(InOverride.Key.GetSibling((URigVMPin*)this)))
 	{
@@ -788,7 +775,7 @@ FString URigVMPin::GetDefaultValue(const URigVMPin::FPinOverride& InOverride) co
 				{
 					return TEXT("()");
 				}
-				FString ElementDefaultValue = SubPin->GetDefaultValue(InOverride);
+				FString ElementDefaultValue = SubPin->GetDefaultValue(InOverride, bAdaptValueForPinType);
 				if (SubPin->IsStringType())
 				{
 					ElementDefaultValue = TEXT("\"") + ElementDefaultValue + TEXT("\"");
@@ -817,7 +804,7 @@ FString URigVMPin::GetDefaultValue(const URigVMPin::FPinOverride& InOverride) co
 			TArray<FString> MemberDefaultValues;
 			for (const URigVMPin* SubPin : SubPins)
 			{
-				FString MemberDefaultValue = SubPin->GetDefaultValue(InOverride);
+				FString MemberDefaultValue = SubPin->GetDefaultValue(InOverride, bAdaptValueForPinType);
 				if (SubPin->IsStringType() && !MemberDefaultValue.IsEmpty())
 				{
 					MemberDefaultValue = TEXT("\"") + MemberDefaultValue + TEXT("\"");
@@ -835,7 +822,29 @@ FString URigVMPin::GetDefaultValue(const URigVMPin::FPinOverride& InOverride) co
 			return FString::Printf(TEXT("(%s)"), *FString::Join(MemberDefaultValues, TEXT(",")));
 		}
 
-		return DefaultValue.IsEmpty() ? TEXT("()") : DefaultValue;
+		// special case certain pin types to adapt their values from
+		// alternative representations.
+		static const FString EmptyStructDefaultValue = TEXT("()");
+		if(bAdaptValueForPinType && !DefaultValue.IsEmpty() && DefaultValue != EmptyStructDefaultValue)
+		{
+			if(GetScriptStruct() == TBaseStructure<FQuat>::Get())
+			{
+				// quaternions also allow default values stored as rotators
+				FRigVMPinDefaultValueImportErrorContext ErrorPipe;
+				FRotator Rotator = FRotator::ZeroRotator;
+				LOG_SCOPE_VERBOSITY_OVERRIDE(LogExec, ELogVerbosity::Verbose); 
+				TBaseStructure<FRotator>::Get()->ImportText(*DefaultValue, &Rotator, nullptr, PPF_None, &ErrorPipe, TBaseStructure<FRotator>::Get()->GetName());
+				if(ErrorPipe.NumErrors == 0)
+				{
+					const FQuat Quat = FQuat::MakeFromRotator(Rotator);
+					FString AdaptedDefaultValue;	
+					TBaseStructure<FQuat>::Get()->ExportText(AdaptedDefaultValue, &Quat, &Quat, nullptr, PPF_None, nullptr);
+					return AdaptedDefaultValue;
+				}
+			}
+		}
+		
+		return DefaultValue.IsEmpty() ? EmptyStructDefaultValue : DefaultValue;
 	}
 	else if (IsArrayElement() && DefaultValue.IsEmpty())
 	{
@@ -851,6 +860,11 @@ FString URigVMPin::GetDefaultValue(const URigVMPin::FPinOverride& InOverride) co
 	}
 
 	return DefaultValue;
+}
+
+FString URigVMPin::GetDefaultValueStoredByUserInterface() const
+{
+	return GetDefaultValue(EmptyPinOverride, false);
 }
 
 template< typename Type>
@@ -938,11 +952,25 @@ bool URigVMPin::IsValidDefaultValue(const FString& InDefaultValue) const
 		} 
 		else if (UScriptStruct* ScriptStruct = Cast<UScriptStruct>(GetCPPTypeObject()))
 		{
-			FRigVMPinDefaultValueImportErrorContext ErrorPipe;
+			// special case alternative representations 
+			if(ScriptStruct == TBaseStructure<FQuat>::Get())
+			{
+				// quaternions also allow default values stored as rotators
+				FRigVMPinDefaultValueImportErrorContext ErrorPipe;
+				FRotator Rotator = FRotator::ZeroRotator;
+				LOG_SCOPE_VERBOSITY_OVERRIDE(LogExec, ELogVerbosity::Verbose); 
+				TBaseStructure<FRotator>::Get()->ImportText(*Value, &Rotator, nullptr, PPF_None, &ErrorPipe, TBaseStructure<FRotator>::Get()->GetName());
+				if(ErrorPipe.NumErrors == 0)
+				{
+					return true;
+				}
+			}
+			
 			TArray<uint8> TempStructBuffer;
 			TempStructBuffer.AddUninitialized(ScriptStruct->GetStructureSize());
 			ScriptStruct->InitializeDefaultValue(TempStructBuffer.GetData());
 
+			FRigVMPinDefaultValueImportErrorContext ErrorPipe;
 			{
 				// force logging to the error pipe for error detection
 				LOG_SCOPE_VERBOSITY_OVERRIDE(LogExec, ELogVerbosity::Verbose); 
@@ -1100,13 +1128,62 @@ FName URigVMPin::GetCustomWidgetName() const
 #if WITH_EDITOR
 	if(CustomWidgetName.IsNone())
 	{
-		if(const URigVMUnitNode* UnitNode = Cast<URigVMUnitNode>(GetNode()))
+		return FName(GetMetaData(FRigVMStruct::CustomWidgetMetaName));
+	}
+#endif
+	return CustomWidgetName;
+}
+
+FString URigVMPin::GetMetaData(FName InKey) const
+{
+	if (IsArrayElement())
+	{
+		return GetParentPin()->GetMetaData(InKey);
+	}
+
+#if WITH_EDITOR
+	if(const URigVMUnitNode* UnitNode = Cast<URigVMUnitNode>(GetNode()))
+	{
+		if(IsDecoratorPin())
+		{
+			if(const UScriptStruct* Struct = GetDecoratorScriptStruct())
+			{
+				if(const FProperty* Property = Struct->FindPropertyByName(GetFName()))
+				{
+					const FString MetaData = Property->GetMetaData(InKey);
+					if(!MetaData.IsEmpty())
+					{
+						return *MetaData;
+					}
+				}
+				else
+				{
+					// Possible the pin was programmatically generated from the decorator's shared struct
+					TSharedPtr<FStructOnScope> DecoratorScope = GetDecoratorInstance();
+					if(DecoratorScope.IsValid())
+					{
+						const FRigVMDecorator* VMDecorator = (FRigVMDecorator*)DecoratorScope->GetStructMemory();
+						Struct = VMDecorator->GetDecoratorSharedDataStruct();
+						Property = Struct->FindPropertyByName(GetFName());
+						if(Property)
+						{
+							const FString MetaData = Property->GetMetaData(InKey);
+							if(!MetaData.IsEmpty())
+							{
+								return *MetaData;
+							}
+						}
+					}
+				}
+			}
+		}
+		else
 		{
 			if(const UScriptStruct* Struct = UnitNode->GetScriptStruct())
 			{
 				if(const FProperty* Property = Struct->FindPropertyByName(GetFName()))
 				{
-					const FString MetaData = Property->GetMetaData(FRigVMStruct::CustomWidgetMetaName);
+					const FString MetaData = Property->GetMetaData(InKey);
 					if(!MetaData.IsEmpty())
 					{
 						return *MetaData;
@@ -1114,21 +1191,21 @@ FName URigVMPin::GetCustomWidgetName() const
 				}
 			}
 		}
-		else if(const URigVMTemplateNode* TemplateNode = Cast<URigVMTemplateNode>(GetNode()))
+	}
+	else if(const URigVMTemplateNode* TemplateNode = Cast<URigVMTemplateNode>(GetNode()))
+	{
+		if(const FRigVMTemplate* Template = TemplateNode->GetTemplate())
 		{
-			if(const FRigVMTemplate* Template = TemplateNode->GetTemplate())
+			const FString MetaData = Template->GetArgumentMetaData(GetFName(), InKey);
+			if(!MetaData.IsEmpty())
 			{
-				const FString MetaData = Template->GetArgumentMetaData(GetFName(), FRigVMStruct::CustomWidgetMetaName);
-				if(!MetaData.IsEmpty())
-				{
-					return *MetaData;
-				}
+				return *MetaData;
 			}
 		}
 	}
 #endif
-	
-	return CustomWidgetName;
+
+	return FString();
 }
 
 FText URigVMPin::GetToolTipText() const
@@ -1142,7 +1219,7 @@ FText URigVMPin::GetToolTipText() const
 
 URigVMVariableNode* URigVMPin::GetBoundVariableNode() const
 {
-	for (TObjectPtr<URigVMInjectionInfo> InjectionInfo : InjectionInfos)
+	for (const TObjectPtr<URigVMInjectionInfo>& InjectionInfo : InjectionInfos)
 	{
 		if (URigVMVariableNode* VariableNode = Cast<URigVMVariableNode>(InjectionInfo->Node))
 		{
@@ -1167,7 +1244,7 @@ const FString URigVMPin::GetBoundVariablePath(const URigVMPin::FPinOverride& InO
 		return OverrideValuePtr->BoundVariablePath;
 	}
 
-	for (TObjectPtr<URigVMInjectionInfo> InjectionInfo : InjectionInfos)
+	for (const TObjectPtr<URigVMInjectionInfo>& InjectionInfo : InjectionInfos)
 	{
 		if (URigVMVariableNode* VariableNode = Cast<URigVMVariableNode>(InjectionInfo->Node))
 		{
@@ -1306,7 +1383,7 @@ bool URigVMPin::CanBeBoundToVariable(const FRigVMExternalVariable& InExternalVar
 		const FRigVMPropertyPath PropertyPath(Property, InSegmentPath);
 		Property = PropertyPath.GetTailProperty();
 
-		FRigVMExternalVariable::GetTypeFromProperty(Property, ExternalCPPType, ExternalCPPTypeObject);
+		RigVMPropertyUtils::GetTypeFromProperty(Property, ExternalCPPType, ExternalCPPTypeObject);
 	}
 
 	const FString CPPBaseType = IsArray() ? GetArrayElementCppType() : GetCPPType();
@@ -1408,6 +1485,16 @@ TSharedPtr<FStructOnScope> URigVMPin::GetDecoratorInstance(bool bUseDefaultValue
 
 	static const TSharedPtr<FStructOnScope> EmptyDecorator;
 	return EmptyDecorator;
+}
+
+UScriptStruct* URigVMPin::GetDecoratorScriptStruct() const
+{
+	if(const URigVMNode* Node = GetNode())
+	{
+		return Node->GetDecoratorScriptStruct(GetRootPin());
+	}
+
+	return nullptr;
 }
 
 void URigVMPin::UpdateTypeInformationIfRequired() const
@@ -1910,7 +1997,7 @@ bool URigVMPin::CanLink(const URigVMPin* InSourcePin, const URigVMPin* InTargetP
 					FRigVMRegistry& Registry = FRigVMRegistry::Get();
 					for (int32 Permutation : SourcePermutations)
 					{
-						TRigVMTypeIndex Type = SourceRootArgument->GetTypeIndices()[Permutation];
+						TRigVMTypeIndex Type = SourceRootArgument->GetTypeIndex(Permutation);
 						for (int32 i=0; i<SourceLevels; ++i)
 						{
 							check(Registry.IsArrayType(Type));
@@ -1920,7 +2007,7 @@ bool URigVMPin::CanLink(const URigVMPin* InSourcePin, const URigVMPin* InTargetP
 					}
 					for (int32 Permutation : TargetPermutations)
 					{
-						TRigVMTypeIndex Type = TargetRootArgument->GetTypeIndices()[Permutation];
+						TRigVMTypeIndex Type = TargetRootArgument->GetTypeIndex(Permutation);
 						for (int32 i=0; i<TargetLevels; ++i)
 						{
 							check(Registry.IsArrayType(Type));
@@ -1941,6 +2028,43 @@ bool URigVMPin::CanLink(const URigVMPin* InSourcePin, const URigVMPin* InTargetP
 			if (OutFailureReason)
 			{
 				*OutFailureReason = TEXT("Source and target pin types are not compatible.");
+
+				const URigVMPin* TemplatePinToCheck = nullptr;
+				switch(InUserLinkDirection)
+				{
+					case ERigVMPinDirection::Input:
+					{
+						TemplatePinToCheck = InSourcePin;
+						break;
+					}
+					case ERigVMPinDirection::Output:
+					{
+						TemplatePinToCheck = InTargetPin;
+						break;
+					}
+					default:
+					{
+						break;
+					}
+				}
+
+				if(TemplatePinToCheck)
+				{
+					if(const URigVMTemplateNode* TemplateNode = Cast<URigVMTemplateNode>(TemplatePinToCheck->GetNode()))
+					{
+						if(const FRigVMTemplate* Template = TemplateNode->GetTemplate())
+						{
+							if(const FRigVMTemplateArgument* Argument = Template->FindArgument(TemplatePinToCheck->GetFName()))
+							{
+								const URigVMPin* OtherPin = TemplatePinToCheck == InSourcePin ? InTargetPin : InSourcePin;
+								if(Argument->SupportsTypeIndex(OtherPin->GetTypeIndex()))
+								{
+									*OutFailureReason = TEXT("Link supported - please unresolve template node.");
+								}
+							}
+						}
+					}
+				}
 			}
 			return false;
 		}

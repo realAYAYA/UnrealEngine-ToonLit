@@ -164,8 +164,8 @@ void SPropertyMenuAssetPicker::Construct( const FArguments& InArgs )
 
 		TSharedRef<SWidget> MenuContent =
 			SNew(SBox)
-			.WidthOverride(PropertyEditorAssetConstants::ContentBrowserWindowSize.X)
-			.HeightOverride(PropertyEditorAssetConstants::ContentBrowserWindowSize.Y)
+			.WidthOverride(static_cast<float>(PropertyEditorAssetConstants::ContentBrowserWindowSize.X))
+			.HeightOverride(static_cast<float>(PropertyEditorAssetConstants::ContentBrowserWindowSize.Y))
 			[
 				AssetPickerWidget.ToSharedRef()
 			];
@@ -319,7 +319,7 @@ bool SPropertyMenuAssetPicker::CanPasteFromText(const FString& InTag, const FStr
 	if( InText.Split( TEXT("'"), &Class, &PossibleObjectPath, ESearchCase::CaseSensitive) )
 	{
 		// Remove the last item
-		PossibleObjectPath.LeftChopInline( 1, false );
+		PossibleObjectPath.LeftChopInline( 1, EAllowShrinking::No );
 	}
 
 	bool bCanPaste = false;

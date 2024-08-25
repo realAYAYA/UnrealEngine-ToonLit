@@ -59,6 +59,21 @@ void SSceneOutliner::Construct(const FArguments& InArgs, const FSceneOutlinerIni
 
 	OutlinerIdentifier = InInitOptions.OutlinerIdentifier;
 	
+	// Setup the SearchBox
+	// Modes can add filters on init so we do the widget creation before initing the mode
+	{
+		SearchBoxFilter = CreateTextFilter();
+		
+		FilterTextBoxWidget = SNew(SFilterSearchBox)
+		.Visibility( InInitOptions.bShowSearchBox ? EVisibility::Visible : EVisibility::Collapsed )
+		.HintText( LOCTEXT( "FilterSearch", "Search..." ) )
+		.ToolTipText( LOCTEXT("FilterSearchHint", "Type here to search (pressing enter selects the results)") )
+		.OnTextChanged( this, &SSceneOutliner::OnFilterTextChanged )
+		.OnTextCommitted( this, &SSceneOutliner::OnFilterTextCommitted );
+	}
+	
+	CreateFilterBar(InInitOptions.FilterBarOptions);
+	
 	check(InInitOptions.ModeFactory.IsBound());
 	Mode = InInitOptions.ModeFactory.Execute(this);
 	check(Mode);
@@ -68,6 +83,7 @@ void SSceneOutliner::Construct(const FArguments& InArgs, const FSceneOutlinerIni
 	bNeedsRefresh = true;
 	bNeedsColumRefresh = true;
 	bShouldCacheColumnVisibility = true;
+	bForceParentItemsExpanded = false;
 	bIsReentrant = false;
 	bSortDirty = true;
 	bSelectionDirty = true;
@@ -90,21 +106,7 @@ void SSceneOutliner::Construct(const FArguments& InArgs, const FSceneOutlinerIni
 
 	// @todo outliner: Should probably save this in layout!
 	// @todo outliner: Should save spacing for list view in layout
-
-	// Setup the SearchBox
-	{
-		SearchBoxFilter = CreateTextFilter();
-		
-		FilterTextBoxWidget = SNew(SFilterSearchBox)
-		.Visibility( InInitOptions.bShowSearchBox ? EVisibility::Visible : EVisibility::Collapsed )
-		.HintText( LOCTEXT( "FilterSearch", "Search..." ) )
-		.ToolTipText( LOCTEXT("FilterSearchHint", "Type here to search (pressing enter selects the results)") )
-		.OnTextChanged( this, &SSceneOutliner::OnFilterTextChanged )
-		.OnTextCommitted( this, &SSceneOutliner::OnFilterTextCommitted );
-	}
 	
-	CreateFilterBar(InInitOptions.FilterBarOptions);
-
 	FSceneOutlinerModule& SceneOutlinerModule = FModuleManager::LoadModuleChecked<FSceneOutlinerModule>("SceneOutliner");
 	SceneOutlinerModule.OnColumnPermissionListChanged().AddSP(this, &SSceneOutliner::OnColumnPermissionListChanged);
 
@@ -609,9 +611,11 @@ FSlateColor SSceneOutliner::GetViewButtonForegroundColor() const
 TSharedRef<SWidget> SSceneOutliner::GetViewButtonContent(bool bShowFilters)
 {
 	// Menu should stay open on selection if filters are not being shown
-	FMenuBuilder MenuBuilder(bShowFilters, NULL);
+	TSharedPtr<FExtender> MenuExtender = MakeShared<FExtender>();
+	Mode->InitializeViewMenuExtender(MenuExtender);
+	FMenuBuilder MenuBuilder(bShowFilters, nullptr, MenuExtender);
 
-	MenuBuilder.BeginSection("OutlinerSettings", LOCTEXT("HierarchyHeading", "Hierarchy"));
+	MenuBuilder.BeginSection(SceneOutliner::ExtensionHooks::Hierarchy, LOCTEXT("HierarchyHeading", "Hierarchy"));
 	{
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("ExpandAll", "Expand All"),
@@ -642,7 +646,7 @@ TSharedRef<SWidget> SSceneOutliner::GetViewButtonContent(bool bShowFilters)
 
 	if (bShowFilters)
 	{
-		MenuBuilder.BeginSection("AssetThumbnails", LOCTEXT("ShowHeading", "Show"));
+		MenuBuilder.BeginSection(SceneOutliner::ExtensionHooks::Show, LOCTEXT("ShowHeading", "Show"));
 		{
 			// Add mode filters
 			for (auto& ModeFilterInfo : Mode->GetFilterInfos())
@@ -691,6 +695,16 @@ void SSceneOutliner::Populate()
 	bool bMadeAnySignificantChanges = false;
 	if (bFullRefresh)
 	{
+		// Remember the selected folders
+		TArray<TSharedPtr<ISceneOutlinerTreeItem>> SelectedItems = OutlinerTreeView->GetSelectedItems();
+		for (const TSharedPtr<ISceneOutlinerTreeItem>& SelectedItem : SelectedItems)
+		{
+			if (const FFolderTreeItem* FolderItem = SelectedItem->CastTo<FFolderTreeItem>())
+			{
+				PendingFoldersSelect.Add(FolderItem->GetFolder());
+			}
+		}
+
 		// Clear the selection here - RepopulateEntireTree will reconstruct it.
 		OutlinerTreeView->ClearSelection();
 
@@ -863,10 +877,13 @@ void SSceneOutliner::RepopulateEntireTree()
 
 void SSceneOutliner::OnChildRemovedFromParent(ISceneOutlinerTreeItem& Parent)
 {
-	if (Parent.Flags.bIsFilteredOut && !Parent.GetChildren().Num())
+	if (!Parent.GetChildren().Num())
 	{
-		// The parent no longer has any children that match the current search terms. Remove it.
-		RemoveItemFromTree(Parent.AsShared());
+		if (Parent.ShouldRemoveOnceLastChildRemoved())
+		{
+			// The parent no longer has any children that match the current search terms. Remove it.
+			RemoveItemFromTree(Parent.AsShared());
+		}
 	}
 }
 
@@ -940,6 +957,8 @@ void SSceneOutliner::RemoveItemFromTree(FSceneOutlinerTreeItemRef ReferenceItem)
 		{
 			RootTreeItems.Remove(Item);
 		}
+
+		PendingTreeItemMap_Removal.Remove(Item->GetID());
 
 		TreeItemMap.Remove(Item->GetID());
 
@@ -1050,12 +1069,15 @@ void SSceneOutliner::AddUnfilteredItemToTree(FSceneOutlinerTreeItemRef Item)
 
 void SSceneOutliner::SetParentsExpansionState() const
 {
+	// If we have an active search filter, auto expand parents of items that passes the filter so they appear automatically in the outliner
+	bForceParentItemsExpanded = !SearchBoxFilter->GetRawFilterText().IsEmpty();
+
 	for (const auto& Pair : TreeItemMap)
 	{
 		auto& Item = Pair.Value;
 		if (Item->GetChildren().Num())
 		{
-			OutlinerTreeView->SetItemExpansion(Item, Item->Flags.bIsExpanded);
+			OutlinerTreeView->SetItemExpansion(Item, bForceParentItemsExpanded || Item->Flags.bIsExpanded);
 		}
 	}
 }
@@ -1140,6 +1162,15 @@ bool SSceneOutliner::CanExecuteRenameRequest(const ISceneOutlinerTreeItem& ItemP
 int32 SSceneOutliner::AddFilter(const TSharedRef<FSceneOutlinerFilter>& Filter)
 {
 	return Filters->Add(Filter);
+}
+
+void SSceneOutliner::AddFilterToFilterBar(const TSharedRef<FFilterBase<SceneOutliner::FilterBarType>>& InFilter)
+{
+	if(FilterBar)
+	{
+		FilterBar->AddFilter(InFilter);
+	}
+	
 }
 
 bool SSceneOutliner::RemoveFilter(const TSharedRef<FSceneOutlinerFilter>& Filter)
@@ -1308,7 +1339,10 @@ TSharedRef<TSet<FFolder>> SSceneOutliner::GatherInvalidMoveToDestinations() cons
 
 	for (const auto& Item : OutlinerTreeView->GetSelectedItems())
 	{
-		if (FFolderTreeItem* ParentFolderItem = Item->GetParent()->CastTo<FFolderTreeItem>())
+		const FSceneOutlinerTreeItemPtr Parent = Item->GetParent();
+		const FFolderTreeItem* ParentFolderItem = Parent.IsValid() ? Parent->CastTo<FFolderTreeItem>() : nullptr;
+
+		if (ParentFolderItem)
 		{
 			auto FolderHasOtherSubFolders = [&Item](const TWeakPtr<ISceneOutlinerTreeItem>& WeakItem)
 			{
@@ -1925,9 +1959,12 @@ void SSceneOutliner::OnOutlinerTreeSelectionChanged( FSceneOutlinerTreeItemPtr T
 
 void SSceneOutliner::OnOutlinerTreeDoubleClick( FSceneOutlinerTreeItemPtr TreeItem )
 {
-	if (TreeItem->IsA<FFolderTreeItem>())
+	if (!Mode->HasCustomFolderDoubleClick())
 	{
-		SetItemExpansion(TreeItem, !IsItemExpanded(TreeItem));
+		if (TreeItem->IsA<FFolderTreeItem>())
+		{
+			SetItemExpansion(TreeItem, !IsItemExpanded(TreeItem));
+		}
 	}
 
 	Mode->OnItemDoubleClick(TreeItem);
@@ -1946,6 +1983,11 @@ void SSceneOutliner::OnOutlinerTreeItemScrolledIntoView( FSceneOutlinerTreeItemP
 	
 void SSceneOutliner::OnItemExpansionChanged(FSceneOutlinerTreeItemPtr TreeItem, bool bIsExpanded) const
 {
+	if (bForceParentItemsExpanded)
+	{
+		return;
+	}
+
 	TreeItem->Flags.bIsExpanded = bIsExpanded;
 	TreeItem->OnExpansionChanged();
 
@@ -1969,7 +2011,13 @@ void SSceneOutliner::OnHierarchyChangedEvent(FSceneOutlinerHierarchyChangedData 
 	{
 		for (const auto& TreeItemPtr : Event.Items)
 		{
-			if (TreeItemPtr.IsValid() && !TreeItemMap.Find(TreeItemPtr->GetID()))
+			if(!TreeItemPtr.IsValid())
+			{
+				continue;
+			}
+
+			// If the item doesn't exist in the tree, or is being removed and re-added in the same frame - it is not a duplicate and can be added
+			if(!TreeItemMap.Find(TreeItemPtr->GetID()) || PendingTreeItemMap_Removal.Find(TreeItemPtr->GetID()))
 			{
 				AddPendingItemAndChildren(TreeItemPtr);
 				if (Event.ItemActions)
@@ -1992,6 +2040,7 @@ void SSceneOutliner::OnHierarchyChangedEvent(FSceneOutlinerHierarchyChangedData 
 			if (Item)
 			{
 				PendingOperations.Emplace(SceneOutliner::FPendingTreeOperation::Removed, Item->ToSharedRef());
+				PendingTreeItemMap_Removal.Add(TreeItemID, Item->ToSharedRef());
 			}
 		}
 		Refresh();
@@ -2077,6 +2126,7 @@ void SSceneOutliner::OnItemLabelChanged(FSceneOutlinerTreeItemPtr ChangedItem)
 		{
 			// No longer matches the filters, remove it
 			PendingOperations.Emplace(SceneOutliner::FPendingTreeOperation::Removed, ExistingItem->ToSharedRef());
+			PendingTreeItemMap_Removal.Add(ChangedItem->GetID(), ExistingItem->ToSharedRef());
 			Refresh();
 		}
 	}
@@ -2441,6 +2491,15 @@ bool SSceneOutliner::CanUnpinSelectedItems() const
 	TArray<FSceneOutlinerTreeItemPtr> SelectedItems;
 	GetSelection().Get(SelectedItems);
 	return CanUnpinItems(SelectedItems);
+}
+
+void SSceneOutliner::FrameSelectedItems()
+{
+	TArray<TSharedPtr<ISceneOutlinerTreeItem>> SelectedItems = GetSelectedItems();
+	if (!SelectedItems.IsEmpty())
+	{
+		ScrollItemIntoView(SelectedItems.Last());
+	}
 }
 
 FSceneOutlinerTreeItemPtr SSceneOutliner::FindParent(const ISceneOutlinerTreeItem& InItem) const

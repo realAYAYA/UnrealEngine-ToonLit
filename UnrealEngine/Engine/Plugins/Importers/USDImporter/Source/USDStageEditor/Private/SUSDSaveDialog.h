@@ -25,10 +25,12 @@ struct FUsdSaveDialogRowData
 class SUsdSaveDialog : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS( SUsdSaveDialog ){}
-		SLATE_ARGUMENT( TArray<FUsdSaveDialogRowData>, Rows )
-		SLATE_ARGUMENT( FText, DescriptionText )
-		SLATE_ARGUMENT( TSharedPtr<SWindow>, WidgetWindow )
+	SLATE_BEGIN_ARGS(SUsdSaveDialog)
+	{
+	}
+	SLATE_ARGUMENT(TArray<FUsdSaveDialogRowData>, Rows)
+	SLATE_ARGUMENT(FText, DescriptionText)
+	SLATE_ARGUMENT(TSharedPtr<SWindow>, WidgetWindow)
 	SLATE_END_ARGS()
 
 	// Returns the data describing which layers should be saved
@@ -40,23 +42,26 @@ public:
 		bool* OutShouldPromptAgain = nullptr
 	);
 
-	void Construct( const FArguments& InArgs );
-	bool ShouldSave() const { return bProceed; }
-	bool ShouldPromptAgain() const { return bPromptAgain; }
+	void Construct(const FArguments& InArgs);
+	bool ShouldSave() const
+	{
+		return bProceed;
+	}
+	bool ShouldPromptAgain() const
+	{
+		return bPromptAgain;
+	}
 
 private:
-    virtual bool SupportsKeyboardFocus() const override;
-	virtual FReply OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent ) override;
+	virtual bool SupportsKeyboardFocus() const override;
+	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
-	TSharedRef<ITableRow> OnGenerateListRow(
-		TSharedPtr<FUsdSaveDialogRowData> Item,
-		const TSharedRef<STableViewBase>& OwnerTable
-	);
+	TSharedRef<ITableRow> OnGenerateListRow(TSharedPtr<FUsdSaveDialogRowData> Item, const TSharedRef<STableViewBase>& OwnerTable);
 
-	FReply Close( bool bProceed );
+	FReply Close(bool bProceed);
 
 private:
-	TWeakPtr< SWindow > Window;
+	TWeakPtr<SWindow> Window;
 	TArray<TSharedPtr<FUsdSaveDialogRowData>> Rows;
 
 	bool bPromptAgain = true;

@@ -5,7 +5,7 @@
 #include "../Common.ush"
 #include "HairStrandsVisibilityCommon.ush"
 
-Texture2D<uint> CounterTexture;
+StructuredBuffer<uint> CounterBuffer;
 RWBuffer<uint> OutArgBuffer;
 uint ThreadGroupSize;
 uint ItemCountPerGroup;
@@ -13,7 +13,7 @@ uint ItemCountPerGroup;
 [numthreads(1, 1, 1)]
 void CopyCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	const uint NodeCount  = CounterTexture.Load(uint3(0,0,0)) * ItemCountPerGroup;
+	const uint NodeCount  = CounterBuffer[0] * ItemCountPerGroup;
 	const uint TotalGroup = (NodeCount + ThreadGroupSize-1) / ThreadGroupSize;
 	uint3 OutArgs;
 #if 0

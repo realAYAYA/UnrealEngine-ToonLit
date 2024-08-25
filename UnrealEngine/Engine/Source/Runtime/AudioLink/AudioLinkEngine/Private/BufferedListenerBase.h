@@ -35,7 +35,7 @@ public:
 		}
 
 		FScopeLock Lock(&CS);
-		Buffer.SetNumZeroed(InCapacity, true /* Allow shrinking */);
+		Buffer.SetNumZeroed(InCapacity, EAllowShrinking::Yes);
 		Mask = InCapacity-1;
 		Read = 0; // Empty.
 		Write = 0;

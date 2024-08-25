@@ -18,6 +18,9 @@
 
 #include "stdint.h"
 
+#pragma warning(push)
+#pragma warning(disable: 4201)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,8 +62,8 @@ extern "C" {
         INTCExtensionVersion    RequestedExtensionVersion;  ///< [in] Intel Extension Framework interface version requested
 
         INTCDeviceInfo          IntelDeviceInfo;            ///< [out] Intel Graphics Device detailed information
-        const wchar_t* pDeviceDriverDesc;          ///< [out] Intel Graphics Driver description
-        const wchar_t* pDeviceDriverVersion;       ///< [out] Intel Graphics Driver version string
+        const wchar_t*          pDeviceDriverDesc;          ///< [out] Intel Graphics Driver description
+        const wchar_t*          pDeviceDriverVersion;       ///< [out] Intel Graphics Driver version string
         uint32_t                DeviceDriverBuildNumber;    ///< [out] Intel Graphics Driver build number
     };
 
@@ -68,10 +71,31 @@ extern "C" {
     // @brief INTCExtensionAppInfo is an optional input structure; can be used for specific apps and engine code paths
     struct INTCExtensionAppInfo
     {
-        const wchar_t* pApplicationName;                   ///< [in] Application name
+        const wchar_t*  pApplicationName;                   ///< [in] Application name
         uint32_t        ApplicationVersion;                 ///< [in] Application version
-        const wchar_t* pEngineName;                        ///< [in] Engine name
+        const wchar_t*  pEngineName;                        ///< [in] Engine name
         uint32_t        EngineVersion;                      ///< [in] Engine version
+    };
+
+    struct INTCAppInfoVersion
+    {
+        union {
+            struct {
+                uint32_t major;
+                uint32_t minor;
+                uint32_t patch;
+                uint32_t reserved;
+            };
+            uint8_t  raw[16];
+        };
+    };
+
+    struct INTCExtensionAppInfo1
+    {
+        const wchar_t*      pApplicationName;                   ///< [in] Application name
+        INTCAppInfoVersion  ApplicationVersion;                 ///< [in] Application version
+        const wchar_t*      pEngineName;                        ///< [in] Engine name
+        INTCAppInfoVersion  EngineVersion;                      ///< [in] Engine version
     };
 
     //////////////////////////////////////////////////////////////////////////
@@ -127,6 +151,7 @@ extern "C" {
         HLSL        = 5,            // ??
         CL_BIN      = 6,            // CL FE/BE generated Binary
         ESIMD_SPIRV = 7,            // input is ESIMD SPIRV
+        ZEBIN_ELF   = 8             // ZEBIN_ELF format shader binary
     };
 
     //////////////////////////////////////////////////////////////////////////
@@ -241,7 +266,8 @@ extern "C" {
 
     // List of Intel D3D12 Features
     enum INTC_D3D12_FEATURES {
-        INTC_D3D12_FEATURE_D3D12_OPTIONS1
+        INTC_D3D12_FEATURE_D3D12_OPTIONS1,
+        INTC_D3D12_FEATURE_D3D12_OPTIONS2
     };
 
     struct INTC_D3D12_FEATURE_DATA_D3D12_OPTIONS1
@@ -251,6 +277,13 @@ extern "C" {
         BOOL                                        EmulatedTyped64bitAtomics;
     };
 
+    struct INTC_D3D12_FEATURE_DATA_D3D12_OPTIONS2
+    {
+        BOOL                                        SIMD16Required;
+        BOOL                                        LSCSupported;
+        BOOL                                        LegacyTranslationRequired;
+    };
+    
 #endif //INTC_IGDEXT_D3D12
 
     //////////////////////////////////////////////////////////////////////////
@@ -686,6 +719,42 @@ extern "C" {
         void*                                       pFeatureSupportData,
         UINT                                        FeatureSupportDataSize );
 
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /// @brief Sets a custom shader cache file path
+    /// @param pExtensionContext A pointer to the extension context associated with the current Device.
+    /// @param filePath path to a pre-built shader cache file
+    /// @returns HRESULT S_OK if it was successful
+    HRESULT INTC_D3D12_AddShaderCachePath(
+        INTCExtensionContext*                       pExtensionContext,
+        const wchar_t*                              filePath );
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /// @brief Removes a custom shader cache file path
+    /// @param pExtensionContext A pointer to the extension context associated with the current Device.
+    /// @param filePath path to a pre-built shader cache file
+    /// @returns HRESULT S_OK if it was successful
+    HRESULT INTC_D3D12_RemoveShaderCachePath(
+        INTCExtensionContext*                       pExtensionContext,
+        const wchar_t*                              filePath );
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /// @brief Register Application Info in the graphics driver
+    /// @details
+    ///     This function needs to be invoked before a D3D12 device has been created.
+    ///     Prior to this function call, INTC_LoadExtensionsLibrary() has to be invoked with Vendor and Device ID information, to load the appropriate UMD dll.
+    /// @param pExtensionAppInfo Application Info to be passed to the driver
+    /// @returns HRESULT S_OK if it was successful
+    HRESULT INTC_D3D12_SetApplicationInfo(
+        INTCExtensionAppInfo1*                      pExtensionAppInfo );
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /// @brief Internal use - Helps to retrieve previously set the Application Info
+    /// @param pExtensionAppInfo Application Info returned the extension DLL
+    /// @returns HRESULT S_OK if it was successful
+    HRESULT INTC_D3D12_GetApplicationInfo(
+        INTCExtensionAppInfo1*                      pExtensionAppInfo );
+
+
 #endif //INTC_IGDEXT_D3D12
 
     //////////////////////////////////////////////////////////////////////////
@@ -704,14 +773,18 @@ extern "C" {
     /// @param useCurrentProcessDir If true, this function attempts to load the Extensions Framework DLL
     ///        from the current process directory. If false, this fnction attempts to load the Extensions
     ///        Framework DLL from the installed graphics driver directory. 
+    /// @param VendorID The Vendor ID of the graphics adapter
+    /// @param DeviceID The Device ID of the graphics adapter
     ///        NOTE: This function determines the path to the installed Intel graphics driver directory using 
     ///        Intel's D3D11 or D3D12 user mode driver DLL, which is expected to already be loaded by the 
-    ///        current process. If this function is called before one of those DLLs is loaded (i.e. before 
-    ///        the application has called CreateDevice(...)), then it will fail and return E_FAIL.
+    ///        current process. If this function is called before one of those DLLs is loaded, then the
+    ///        Vendor and Device ID need to be supplied.
     /// @returns HRESULT Returns S_OK if it was successful.
     ////////////////////////////////////////////////////////////////////////////////////////
     HRESULT INTC_LoadExtensionsLibrary(
-        bool                                        useCurrentProcessDir = false );
+        bool                                        useCurrentProcessDir = false,
+        size_t                                      VendorID = 0,
+        size_t                                      DeviceID = 0 );
 
     ////////////////////////////////////////////////////////////////////////////////////////
     /// @brief Extension library loading helper function.
@@ -794,6 +867,24 @@ extern "C" {
         INTCExtensionInfo*                          pExtensionInfo,
         INTCExtensionAppInfo*                       pExtensionAppInfo );
 
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /// @brief Creates D3D12 Intel Extensions Device Context and returns ppfnExtensionContext Extension Context object and
+    ///        ppfnExtensionFuncs extension function pointers table. This function must be called prior to using extensions.
+    /// @param pDevice A pointer to the current Device.
+    /// @param ppExtensionContext A pointer to a pointer to the extension context associated with the current Device.
+    /// @param pExtensionInfo A pointer to the ExtensionInfo structure. The requestedExtensionVersion member must be set prior to 
+    ///        calling this function. The remaining members are filled in with device info about the Intel GPU and info about the graphics driver version.
+    /// @param pExtensionAppInfo A pointer to the ExtensionAppInfo1 structure that can optionally be used in the driver to identify workload.
+	/// @returns HRESULT Returns S_OK - successful.
+	///                  Returns E_ABORT - Device Extension Context was already created in the current process.
+	///                  Returns E_INVALIDARG - invalid arguments passed.
+	///                  Returns E_OUTOFMEMORY - no driver support.
+    HRESULT INTC_D3D12_CreateDeviceExtensionContext1(
+        ID3D12Device*                               pDevice,
+        INTCExtensionContext**                      ppExtensionContext,
+        INTCExtensionInfo*                          pExtensionInfo,
+        INTCExtensionAppInfo1*                      pExtensionAppInfo );
+
 #endif //INTC_IGDEXT_D3D12
 
 #if defined(INTC_IGDEXT_D3D11) && defined(INTC_IGDEXT_D3D12)
@@ -836,5 +927,7 @@ extern "C" {
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
+#pragma warning(pop)
 
 #endif //_IGDEXTAPI_H_

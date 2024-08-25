@@ -34,6 +34,7 @@ public:
 	virtual class UBlendProfile* GetBlendProfile(const FName& InBlendProfileName) override;
 	virtual class UBlendProfile* CreateNewBlendProfile(const FName& InBlendProfileName) override;
 	virtual void RemoveBlendProfile(UBlendProfile* InBlendProfile) override;
+	virtual UBlendProfile* RenameBlendProfile(const FName& InBlendProfileName, const FName& InNewBlendProfileName) override;
 	virtual void SetBlendProfileScale(const FName& InBlendProfileName, const FName& InBoneName, float InNewScale, bool bInRecurse) override;
 	virtual void SetBlendProfileMode(FName InBlendProfileName, EBlendProfileMode ProfileMode);
 	virtual USkeletalMeshSocket* DuplicateSocket(const FSelectedSocketInfo& SocketInfoToDuplicate, const FName& NewParentBoneName, USkeletalMesh* InSkeletalMesh) override;
@@ -60,10 +61,6 @@ public:
 	virtual void RefreshRetargetSources(const TArray<FName>& InRetargetSourceNames) override;
 	virtual void AddCompatibleSkeleton(const USkeleton* InCompatibleSkeleton) override;
 	virtual void RemoveCompatibleSkeleton(const USkeleton* InCompatibleSkeleton) override;
-	virtual void RefreshRigConfig() override;
-	virtual void SetRigConfig(URig* InRig) override;
-	virtual void SetRigBoneMapping(const FName& InNodeName, const FName& InBoneName) override;
-	virtual void SetRigBoneMappings(const TMap<FName, FName>& InMappings) override;
 	virtual void RemoveUnusedBones() override;
 	virtual void UpdateSkeletonReferencePose(USkeletalMesh* InSkeletalMesh) override;
 	virtual void RegisterSlotNode(const FName& InSlotName) override;

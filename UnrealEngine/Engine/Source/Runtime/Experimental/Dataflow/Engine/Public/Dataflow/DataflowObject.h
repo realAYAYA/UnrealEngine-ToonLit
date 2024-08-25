@@ -89,6 +89,8 @@ public:
 
 public:
 	/** UObject Interface */
+	static DATAFLOWENGINE_API void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
+
 #if WITH_EDITOR
 	DATAFLOWENGINE_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif

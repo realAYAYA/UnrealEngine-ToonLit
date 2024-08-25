@@ -170,7 +170,7 @@ bool FCollection::Load(FText& OutError)
 	return true;
 }
 
-bool FCollection::Save(const TArray<FText>& AdditionalChangelistText, FText& OutError)
+bool FCollection::Save(const TArray<FText>& AdditionalChangelistText, FText& OutError, bool bForceCommitToRevisionControl)
 {
 	if ( !ensure(SourceFilename.Len()) )
 	{
@@ -257,7 +257,7 @@ bool FCollection::Save(const TArray<FText>& AdditionalChangelistText, FText& Out
 
 	if ( bSaveSuccessful )
 	{
-		if ( bUseSCC && GetDefault<UCollectionSettings>()->bAutoCommitOnSave)
+		if ( bUseSCC && (bForceCommitToRevisionControl || GetDefault<UCollectionSettings>()->bAutoCommitOnSave))
 		{
 			// Check in the file if the save was successful
 			if ( bSaveSuccessful )

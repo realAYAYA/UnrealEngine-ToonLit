@@ -1,9 +1,10 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Action/RCActionContainer.h"
 
 #include "Action/RCAction.h"
 #include "Action/RCFunctionAction.h"
+#include "Action/RCPropertyIdAction.h"
 #include "Action/RCPropertyAction.h"
 #include "Behaviour/Builtin/Path/RCSetAssetByPathBehaviour.h"
 #include "Behaviour/RCBehaviour.h"
@@ -41,6 +42,31 @@ TRCActionUniquenessTest URCActionContainer::GetDefaultActionUniquenessTest(const
 	};
 }
 
+URCAction* URCActionContainer::AddAction()
+{
+	// Create new PropertyIdAction
+	URCPropertyIdAction* NewPropertyIdAction = NewObject<URCPropertyIdAction>(this);
+	NewPropertyIdAction->PresetWeakPtr = PresetWeakPtr;
+	NewPropertyIdAction->Id = FGuid::NewGuid();
+	NewPropertyIdAction->Initialize();
+	NewPropertyIdAction->UpdatePropertyId();
+	AddAction(NewPropertyIdAction);
+	return NewPropertyIdAction;
+}
+
+URCAction* URCActionContainer::AddAction(FName InFieldId)
+{
+	// Create new PropertyIdAction
+	URCPropertyIdAction* NewPropertyIdAction = NewObject<URCPropertyIdAction>(this);
+	NewPropertyIdAction->PresetWeakPtr = PresetWeakPtr;
+	NewPropertyIdAction->Id = FGuid::NewGuid();
+	NewPropertyIdAction->PropertyId = InFieldId;
+	NewPropertyIdAction->Initialize();
+	NewPropertyIdAction->UpdatePropertyId();
+	AddAction(NewPropertyIdAction);
+	return NewPropertyIdAction;
+}
+
 URCAction* URCActionContainer::AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField)
 {
 	return AddAction(GetDefaultActionUniquenessTest(InRemoteControlField), InRemoteControlField);
@@ -71,6 +97,28 @@ URCAction* URCActionContainer::AddAction(TRCActionUniquenessTest InUniquenessTes
 URCBehaviour* URCActionContainer::GetParentBehaviour()
 {
 	return Cast<URCBehaviour>(GetOuter());
+}
+
+void URCActionContainer::ForEachAction(TFunctionRef<void(URCAction*)> InActionFunction, bool bInRecursive)
+{
+	for (URCAction* Action : GetActions())
+	{
+		if (Action)
+		{
+			InActionFunction(Action);
+		}
+	}
+
+	if (bInRecursive)
+	{
+		for (URCActionContainer* ChildActionContainer : ActionContainers)
+		{
+			if (ChildActionContainer)
+			{
+				ChildActionContainer->ForEachAction(InActionFunction, bInRecursive);
+			}
+		}
+	}
 }
 
 TArray<const URCPropertyAction*> URCActionContainer::GetPropertyActions() const
@@ -132,11 +180,19 @@ URCPropertyAction* URCActionContainer::AddPropertyAction(const TSharedRef<const 
 
 	if(!bFoundMatchingContainer)
 	{
+		// Check both Reading and Writing since if one of the two is not valid then the action won't work
+		FRCObjectReference ObjectRefReading;
+		const bool bResolveForReading = IRemoteControlModule::Get().ResolveObjectProperty(ERCAccess::READ_ACCESS, InRemoteControlProperty->GetBoundObjects()[0], InRemoteControlProperty->FieldPathInfo.ToString(), ObjectRefReading);
+
+		FRCObjectReference ObjectRefWriting;
+		const bool bResolveForWriting = IRemoteControlModule::Get().ResolveObjectProperty(ERCAccess::WRITE_ACCESS, InRemoteControlProperty->GetBoundObjects()[0], InRemoteControlProperty->FieldPathInfo.ToString(), ObjectRefWriting);
+
 		// Create an input field for the Action by duplicating the Remote Control Property associated with it
-		if (FRCObjectReference ObjectRef; IRemoteControlModule::Get().ResolveObjectProperty(ERCAccess::READ_ACCESS, InRemoteControlProperty->GetBoundObjects()[0], InRemoteControlProperty->FieldPathInfo.ToString(), ObjectRef))
+		if (bResolveForReading && bResolveForWriting)
 		{
 			const FName& PropertyName = InRemoteControlProperty->GetProperty()->GetFName();
-			NewPropertyAction->PropertySelfContainer->DuplicatePropertyWithCopy(PropertyName, InRemoteControlProperty->GetProperty(), (uint8*)ObjectRef.ContainerAdress);
+			NewPropertyAction->PropertySelfContainer->DuplicatePropertyWithCopy(PropertyName, InRemoteControlProperty->GetProperty(), (uint8*)ObjectRefReading.ContainerAdress);
+			NewPropertyAction->PropertySelfContainer->PresetWeakPtr = PresetWeakPtr;
 		}
 	}
 
@@ -171,51 +227,6 @@ void URCActionContainer::PostEditUndo()
 	OnActionsListModified.Broadcast();
 }
 #endif
-
-void URCActionContainer::ExecuteActionsOnLoad()
-{
-	// In some cases, external resources are referenced, so we need to execute Controllers actions while loading
-	if (URCBehaviour* ParentBehaviour = GetParentBehaviour())
-	{
-		if (URCController* Controller = ParentBehaviour->ControllerWeakPtr.Get())
-		{
-			if (UE::RCCustomControllers::CustomControllerExecutesOnLoad(Controller))
-			{
-				Controller->ExecuteBehaviours();
-				return;
-			}
-		}
-
-		if (URCSetAssetByPathBehaviour* AssetPathBehaviour = Cast<URCSetAssetByPathBehaviour>(ParentBehaviour))
-		{
-			if (!AssetPathBehaviour->bInternal)
-			{
-				// Target entity might not be set up yet, we need it to be set in order for execution to work
-				AssetPathBehaviour->UpdateTargetEntity();
-				ParentBehaviour->Execute();
-			}
-		}
-	}
-}
-
-void URCActionContainer::PostLoad()
-{
-	UObject::PostLoad();
-
-	TWeakObjectPtr<URCActionContainer> ThisWeak(this);
-
-	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
-		[ThisWeak](float InDeltaTime)->bool
-		{
-			if (URCActionContainer* const This = ThisWeak.Get())
-			{
-				This->ExecuteActionsOnLoad();
-			}
-
-			// Return false for one time execution
-			return false;
-		}));
-}
 
 URCAction* URCActionContainer::FindActionByFieldId(const FGuid InId) const
 {

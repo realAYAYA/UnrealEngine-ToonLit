@@ -28,10 +28,15 @@ FAutoConsoleVariableRef FMaterialShader::CVarAllowCachedUniformExpressions(
 	TEXT("Allow uniform expressions to be cached."),
 	ECVF_RenderThreadSafe);
 
-void FMeshMaterialShaderElementData::InitializeMeshMaterialData(const FSceneView* SceneView, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, int32 StaticMeshId, bool bDitheredLODTransition, bool bAllowStencilDither)
+void FMeshMaterialShaderElementData::InitializeMeshMaterialData()
 {
 	FadeUniformBuffer = GDistanceCullFadedInUniformBuffer.GetUniformBufferRHI();
 	DitherUniformBuffer = GDitherFadedInUniformBuffer.GetUniformBufferRHI();
+}
+
+void FMeshMaterialShaderElementData::InitializeMeshMaterialData(const FSceneView* SceneView, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, int32 StaticMeshId, bool bDitheredLODTransition, bool bAllowStencilDither)
+{
+	InitializeMeshMaterialData();
 
 	if (SceneView)
 	{
@@ -263,7 +268,7 @@ void FMaterialShader::SetParameters(
 	const ERHIFeatureLevel::Type FeatureLevel = View.GetFeatureLevel();
 	FMaterialShaderMap* ShaderMap = Material.GetRenderingThreadShaderMap();
 	checkf(ShaderMap, TEXT("RenderingThreadShaderMap: %i"), ShaderMap ? 1 : 0);
-	checkf(ShaderMap->IsValidForRendering(true) && Material.GetFeatureLevel() == FeatureLevel, TEXT("IsValid:%i, MaterialFeatureLevel:%i, FeatureLevel:%i"), ShaderMap->IsValidForRendering() ? 1 : 0, Material.GetFeatureLevel(), FeatureLevel);
+	checkf(ShaderMap->IsValidForRendering(true) && Material.GetFeatureLevel() == FeatureLevel, TEXT("IsValid:%i, MaterialFeatureLevel:%i, FeatureLevel:%i"), ShaderMap->IsValidForRendering() ? 1 : 0, (ERHIFeatureLevel::Type)Material.GetFeatureLevel(), FeatureLevel);
 
 	FUniformExpressionCache* UniformExpressionCache = &MaterialRenderProxy->UniformExpressionCache[FeatureLevel];
 	bool bUniformExpressionCacheNeedsDelete = false;
@@ -297,7 +302,7 @@ void FMaterialShader::SetParameters(
 		FMaterialRenderContext MaterialRenderContext(MaterialRenderProxy, Material, &View);
 		bUniformExpressionCacheNeedsDelete = true;
 		UniformExpressionCache = new FUniformExpressionCache();
-		MaterialRenderProxy->EvaluateUniformExpressions(*UniformExpressionCache, MaterialRenderContext);
+		MaterialRenderProxy->EvaluateUniformExpressions(FRHICommandListImmediate::Get(), *UniformExpressionCache, MaterialRenderContext);
 	}
 
 	SetUniformBufferParameter(BatchedParameters, MaterialUniformBuffer, UniformExpressionCache->UniformBuffer);
@@ -479,7 +484,6 @@ void FMeshMaterialShader::GetShaderBindings(
 	const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 	const FMaterialRenderProxy& MaterialRenderProxy,
 	const FMaterial& Material,
-	const FMeshPassProcessorRenderState& DrawRenderState,
 	const FMeshMaterialShaderElementData& ShaderElementData,
 	FMeshDrawSingleShaderBindings& ShaderBindings) const
 {
@@ -511,14 +515,15 @@ void FMeshMaterialShader::GetElementShaderBindings(
 			VertexFactoryType->GetShaderParameterElementShaderBindings(GetFrequency(), VFParameters, Scene, ViewIfDynamicMeshCommand, this, InputStreamType, FeatureLevel, VertexFactory, BatchElement, ShaderBindings, VertexStreams);
 		}
 	}
-		
-	if (UseGPUScene(GMaxRHIShaderPlatform, FeatureLevel) && VertexFactory->GetPrimitiveIdStreamIndex(FeatureLevel, InputStreamType) >= 0 
-		&& !(FeatureLevel == ERHIFeatureLevel::ES3_1 && GetFrequency() == SF_Vertex)) // Allow Primitive UB for VS on mobile
+
+	EShaderPlatform ShaderPlatform = Scene ? Scene->GetShaderPlatform() : GMaxRHIShaderPlatform;
+	bool PlatformUsesPrimitiveUB = (BatchElement.bForceInstanceCulling && PlatformGPUSceneUsesUniformBufferView(ShaderPlatform));
+	if (UseGPUScene(ShaderPlatform, FeatureLevel) && VertexFactory->GetPrimitiveIdStreamIndex(FeatureLevel, InputStreamType) >= 0 && !PlatformUsesPrimitiveUB)
 	{
 		const FShaderType* ShaderType = GetType(PointerTable);
 		ensureMsgf(!GetUniformBufferParameter<FPrimitiveUniformShaderParameters>().IsBound(), TEXT("Shader %s attempted to bind the Primitive uniform buffer even though Vertex Factory computes a PrimitiveId per-instance.  This will break auto-instancing.  Shaders should use GetPrimitiveData(PrimitiveId).Member instead of Primitive.Member."), ShaderType->GetName());
 		// Some primitives may use several VFs with a mixed support for a GPUScene. In this case all mesh batches get Primitive UB assigned regardless of VF type 
-		ensureMsgf(!BatchElement.PrimitiveUniformBuffer || (FeatureLevel == ERHIFeatureLevel::ES3_1 || PrimitiveSceneProxy->DoesVFRequirePrimitiveUniformBuffer()), TEXT("FMeshBatchElement was assigned a PrimitiveUniformBuffer even though Vertex Factory %s fetches primitive shader data through a Scene buffer.  The assigned PrimitiveUniformBuffer cannot be respected.  Use PrimitiveUniformBufferResource instead for dynamic primitive data."), ShaderType->GetName());
+		ensureMsgf(!BatchElement.PrimitiveUniformBuffer || (PrimitiveSceneProxy->DoesVFRequirePrimitiveUniformBuffer()), TEXT("FMeshBatchElement was assigned a PrimitiveUniformBuffer even though Vertex Factory %s fetches primitive shader data through a Scene buffer.  The assigned PrimitiveUniformBuffer cannot be respected.  Use PrimitiveUniformBufferResource instead for dynamic primitive data."), ShaderType->GetName());
 	}
 	else
 	{

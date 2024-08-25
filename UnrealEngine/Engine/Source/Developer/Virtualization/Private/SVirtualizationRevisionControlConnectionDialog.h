@@ -37,17 +37,13 @@ public:
 		FString UserName;
 	};
 
-	static FResult RunDialog(FStringView CurrentPort, FStringView CurrentUsername);
-	static void RunDialogCvar()
-	{
-		RunDialog(TEXT("<P4PORT Here>"), TEXT("<P4USER Here>"));
-	}
+	static FResult RunDialog(FStringView RevisionControlName, FStringView ConfigSectionName, FStringView CurrentPort, FStringView CurrentUsername, const FText& ErrorMessage);
 
 	SLATE_BEGIN_ARGS(SRevisionControlConnectionDialog) {}
 		SLATE_ARGUMENT(TSharedPtr<SWindow>, Window)
 	SLATE_END_ARGS()
 
-	void Construct(const FArguments& InArgs, FStringView CurrentPort, FStringView CurrentUsername);
+	void Construct(const FArguments& InArgs, FStringView RevisionControlName, FStringView ConfigSectionName, FStringView CurrentPort, FStringView CurrentUsername, const FText& ErrorMessage);
 
 	enum class EResult : uint8
 	{
@@ -78,12 +74,16 @@ private:
 	FReply OnRetryConnection();
 	FReply OnSkip();
 
+	void OnUrlClicked() const;
+
 	TWeakPtr<SWindow> WindowWidget;
 
 	TSharedPtr<SEditableTextBox> PortTextWidget;
 	TSharedPtr<SEditableTextBox> UsernameTextWidget;
 
 	EResult Result = EResult::Skip;
+
+	FString ConfigSectionName;
 
 	FString Port;
 	FString UserName;

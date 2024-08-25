@@ -50,15 +50,15 @@ namespace Chaos
 			if (bIsRigidDynamic0)
 			{
 				Jr0 = FVec3::CrossProduct(VectorToPoint1, Impulse);
-				IInvJr0 = PBDRigid0->Q().RotateVector(FVec3(PBDRigid0->InvI()) * PBDRigid0->Q().UnrotateVector(Jr0));
-				ImpulseRatioNumerator0 = FVec3::DotProduct(Impulse, PBDRigid0->V() - KinematicVelocity) + FVec3::DotProduct(Jr0, PBDRigid0->W());
+				IInvJr0 = PBDRigid0->GetQ().RotateVector(FVec3(PBDRigid0->InvI()) * PBDRigid0->GetQ().UnrotateVector(Jr0));
+				ImpulseRatioNumerator0 = FVec3::DotProduct(Impulse, PBDRigid0->GetV() - KinematicVelocity) + FVec3::DotProduct(Jr0, PBDRigid0->GetW());
 				ImpulseRatioDenom0 = ImpulseSizeSQ / PBDRigid0->M() + FVec3::DotProduct(Jr0, IInvJr0);
 			}
 			if (bIsRigidDynamic1)
 			{
 				Jr1 = FVec3::CrossProduct(VectorToPoint2, Impulse);
-				IInvJr1 = PBDRigid1->Q().RotateVector(FVec3(PBDRigid1->InvI()) * PBDRigid1->Q().UnrotateVector(Jr1));
-				ImpulseRatioNumerator1 = FVec3::DotProduct(Impulse, PBDRigid1->V() - KinematicVelocity) + FVec3::DotProduct(Jr1, PBDRigid1->W());
+				IInvJr1 = PBDRigid1->GetQ().RotateVector(FVec3(PBDRigid1->InvI()) * PBDRigid1->GetQ().UnrotateVector(Jr1));
+				ImpulseRatioNumerator1 = FVec3::DotProduct(Impulse, PBDRigid1->GetV() - KinematicVelocity) + FVec3::DotProduct(Jr1, PBDRigid1->GetW());
 				ImpulseRatioDenom1 = ImpulseSizeSQ / PBDRigid1->M() + FVec3::DotProduct(Jr1, IInvJr1);
 			}
 			FReal Numerator = -2 * (ImpulseRatioNumerator0 - ImpulseRatioNumerator1);
@@ -555,11 +555,11 @@ namespace Chaos
 					{
 						if (NormalAveraging && UpdateType != ECollisionUpdateType::Any)	//if we just want one don't bother with normal
 						{
-							SampleObjectNormalAverageHelper(Object, ObjectTransform, SampleToObjectTM, SampleParticles.X(i), CullingDistance, WeightSum, AvgContact);
+							SampleObjectNormalAverageHelper(Object, ObjectTransform, SampleToObjectTM, SampleParticles.GetX(i), CullingDistance, WeightSum, AvgContact);
 						}
 						else
 						{
-							if (SampleObjectNoNormal(Object, ObjectTransform, SampleToObjectTM, SampleParticles.X(i), CullingDistance, AvgContact))
+							if (SampleObjectNoNormal(Object, ObjectTransform, SampleToObjectTM, SampleParticles.GetX(i), CullingDistance, AvgContact))
 							{
 								DeepestParticle = i;
 								if (UpdateType == ECollisionUpdateType::Any)
@@ -579,11 +579,11 @@ namespace Chaos
 				{
 					if (NormalAveraging && UpdateType != ECollisionUpdateType::Any)	//if we just want one don't bother with normal
 					{
-						const bool bInside = SampleObjectNormalAverageHelper(Object, ObjectTransform, SampleToObjectTM, SampleParticles.X(i), CullingDistance, WeightSum, AvgContact);
+						const bool bInside = SampleObjectNormalAverageHelper(Object, ObjectTransform, SampleToObjectTM, SampleParticles.GetX(i), CullingDistance, WeightSum, AvgContact);
 					}
 					else
 					{
-						if (SampleObjectNoNormal(Object, ObjectTransform, SampleToObjectTM, SampleParticles.X(i), CullingDistance, AvgContact))
+						if (SampleObjectNoNormal(Object, ObjectTransform, SampleToObjectTM, SampleParticles.GetX(i), CullingDistance, AvgContact))
 						{
 							DeepestParticle = i;
 							if (UpdateType == ECollisionUpdateType::Any)
@@ -619,10 +619,10 @@ namespace Chaos
 			else if (AvgContact.Phi < CullingDistance)
 			{
 				check(DeepestParticle >= 0);
-				FVec3 LocalPoint = SampleToObjectTM.TransformPositionNoScale(SampleParticles.X(DeepestParticle));
+				FVec3 LocalPoint = SampleToObjectTM.TransformPositionNoScale(SampleParticles.GetX(DeepestParticle));
 				FVec3 LocalNormal;
 				Contact.Phi = Object.PhiWithNormal(LocalPoint, LocalNormal);
-				Contact.ShapeContactPoints[0] = SampleParticles.X(DeepestParticle);
+				Contact.ShapeContactPoints[0] = SampleParticles.GetX(DeepestParticle);
 				Contact.ShapeContactPoints[1] = LocalPoint - Contact.Phi * LocalNormal;
 				Contact.ShapeContactNormal = LocalNormal;
 			}

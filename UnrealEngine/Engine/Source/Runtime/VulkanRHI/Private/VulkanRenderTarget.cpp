@@ -87,6 +87,10 @@ static void ConvertRawDataToFColor(VkFormat VulkanFormat, uint32 DestWidth, uint
 		ConvertRawR16G16B16A16FDataToFColor(DestWidth, DestHeight, In, SrcPitch, Dest, bLinearToGamma);
 		break;
 
+	case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+		ConvertRawR11G11B10DataToFColor(DestWidth, DestHeight, In, SrcPitch, Dest, bLinearToGamma);
+		break;
+
 	case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
 		ConvertRawR10G10B10A2DataToFColor(DestWidth, DestHeight, In, SrcPitch, Dest);
 		break;
@@ -105,6 +109,10 @@ static void ConvertRawDataToFColor(VkFormat VulkanFormat, uint32 DestWidth, uint
 
 	case VK_FORMAT_R8_UNORM:
 		ConvertRawR8DataToFColor(DestWidth, DestHeight, In, SrcPitch, Dest);
+		break;
+
+	case VK_FORMAT_R8G8_UNORM:
+		ConvertRawR8G8DataToFColor(DestWidth, DestHeight, In, SrcPitch, Dest);
 		break;
 
 	case VK_FORMAT_R16_UNORM:
@@ -308,14 +316,14 @@ void FVulkanDynamicRHI::RHIReadSurfaceFloatData(FRHITexture* TextureRHI, FIntRec
 			VkBufferImageCopy CopyRegion;
 			FMemory::Memzero(CopyRegion);
 			//Region.bufferOffset = 0;
-			CopyRegion.bufferRowLength = Desc.Extent.X >> InMipIndex;
-			CopyRegion.bufferImageHeight = Desc.Extent.Y >> InMipIndex;
+			CopyRegion.bufferRowLength = FMath::Max(1, Desc.Extent.X >> InMipIndex);
+			CopyRegion.bufferImageHeight = FMath::Max(1, Desc.Extent.Y >> InMipIndex);
 			CopyRegion.imageSubresource.aspectMask = Surface.GetFullAspectMask();
 			CopyRegion.imageSubresource.mipLevel = InMipIndex;
 			CopyRegion.imageSubresource.baseArrayLayer = SrcBaseArrayLayer;
 			CopyRegion.imageSubresource.layerCount = 1;
-			CopyRegion.imageExtent.width = Desc.Extent.X >> InMipIndex;
-			CopyRegion.imageExtent.height = Desc.Extent.Y >> InMipIndex;
+			CopyRegion.imageExtent.width = FMath::Max(1, Desc.Extent.X >> InMipIndex);
+			CopyRegion.imageExtent.height = FMath::Max(1, Desc.Extent.Y >> InMipIndex);
 			CopyRegion.imageExtent.depth = 1;
 
 			const VkImageLayout OriginalLayout = FVulkanLayoutManager::SetExpectedLayout(InCmdBuffer, Surface, ERHIAccess::CopySrc);
@@ -747,12 +755,10 @@ struct FRenderPassFullHashableStruct
 	// +1 for Depth, +1 for Stencil, +1 for Fragment Density
 	TEnumAsByte<VkAttachmentLoadOp>		LoadOps[MaxSimultaneousRenderTargets + 3];
 	TEnumAsByte<VkAttachmentStoreOp>	StoreOps[MaxSimultaneousRenderTargets + 3];
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 	// If the initial != final we need to add FinalLayout and potentially RefLayout
 	VkImageLayout						InitialLayout[MaxSimultaneousRenderTargets + 3];
 	//VkImageLayout						FinalLayout[MaxSimultaneousRenderTargets + 3];
 	//VkImageLayout						RefLayout[MaxSimultaneousRenderTargets + 3];
-#endif
 };
 
 VkImageLayout FVulkanRenderTargetLayout::GetVRSImageLayout() const
@@ -859,9 +865,7 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 			CompatibleHashInfo.Formats[NumColorAttachments] = CurrDesc.format;
 			FullHashInfo.LoadOps[NumColorAttachments] = CurrDesc.loadOp;
 			FullHashInfo.StoreOps[NumColorAttachments] = CurrDesc.storeOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 			FullHashInfo.InitialLayout[NumColorAttachments] = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-#endif
 			++CompatibleHashInfo.NumAttachments;
 
 			++NumAttachmentDescriptions;
@@ -921,10 +925,8 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 		FullHashInfo.LoadOps[MaxSimultaneousRenderTargets + 1] = CurrDesc.stencilLoadOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets] = CurrDesc.storeOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets + 1] = CurrDesc.stencilStoreOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets] = DepthLayout;
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets + 1] = StencilLayout;
-#endif
 		CompatibleHashInfo.Formats[MaxSimultaneousRenderTargets] = CurrDesc.format;
 
 		++NumAttachmentDescriptions;
@@ -971,9 +973,7 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 
 		FullHashInfo.LoadOps[MaxSimultaneousRenderTargets + 2] = CurrDesc.stencilLoadOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets + 2] = CurrDesc.stencilStoreOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets + 2] = VRSLayout;
-#endif
 		CompatibleHashInfo.Formats[MaxSimultaneousRenderTargets + 1] = CurrDesc.format;
 
 		++NumAttachmentDescriptions;
@@ -1042,14 +1042,17 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 			Extent.Extent3D.depth = TextureDesc.Depth;
 		}
 
-		ensure(!NumSamples || NumSamples == ColorEntry.RenderTarget->GetNumSamples());
+		// CustomResolveSubpass can have targets with a different NumSamples
+		ensure(!NumSamples || NumSamples == ColorEntry.RenderTarget->GetNumSamples() || RPInfo.SubpassHint == ESubpassHint::CustomResolveSubpass);
 		NumSamples = ColorEntry.RenderTarget->GetNumSamples();
 
 		ensure(!GetIsMultiView() || !bMultiviewRenderTargets || Texture->GetNumberOfArrayLevels() > 1);
 		bMultiviewRenderTargets = Texture->GetNumberOfArrayLevels() > 1;
+		// With a CustomResolveSubpass last color attachment is a resolve target
+		bool bCustomResolveAttachment = (Index == (NumColorRenderTargets - 1)) && RPInfo.SubpassHint == ESubpassHint::CustomResolveSubpass;
 
 		VkAttachmentDescription& CurrDesc = Desc[NumAttachmentDescriptions];
-		CurrDesc.samples = static_cast<VkSampleCountFlagBits>(NumSamples);
+		CurrDesc.samples = bCustomResolveAttachment ? VK_SAMPLE_COUNT_1_BIT : static_cast<VkSampleCountFlagBits>(NumSamples);
 		CurrDesc.format = UEToVkTextureFormat(ColorEntry.RenderTarget->GetFormat(), EnumHasAllFlags(Texture->GetDesc().Flags, TexCreate_SRGB));
 		CurrDesc.loadOp = RenderTargetLoadActionToVulkan(GetLoadAction(ColorEntry.Action));
 		bFoundClearOp = bFoundClearOp || (CurrDesc.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR);
@@ -1084,9 +1087,7 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 
 		CompatibleHashInfo.Formats[NumColorAttachments] = CurrDesc.format;
 		FullHashInfo.LoadOps[NumColorAttachments] = CurrDesc.loadOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 		FullHashInfo.InitialLayout[NumColorAttachments] = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-#endif
 		FullHashInfo.StoreOps[NumColorAttachments] = CurrDesc.storeOp;
 		++CompatibleHashInfo.NumAttachments;
 
@@ -1103,7 +1104,8 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 		const FRHITextureDesc& TextureDesc = Texture->GetDesc();
 
 		CurrDesc.samples = static_cast<VkSampleCountFlagBits>(RPInfo.DepthStencilRenderTarget.DepthStencilTarget->GetNumSamples());
-		ensure(!NumSamples || CurrDesc.samples == NumSamples);
+		// CustomResolveSubpass can have targets with a different NumSamples
+		ensure(!NumSamples || CurrDesc.samples == NumSamples || RPInfo.SubpassHint == ESubpassHint::CustomResolveSubpass);
 		NumSamples = CurrDesc.samples;
 		CurrDesc.format = UEToVkTextureFormat(RPInfo.DepthStencilRenderTarget.DepthStencilTarget->GetFormat(), false);
 		CurrDesc.loadOp = RenderTargetLoadActionToVulkan(GetLoadAction(GetDepthActions(RPInfo.DepthStencilRenderTarget.Action)));
@@ -1164,10 +1166,8 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 		FullHashInfo.LoadOps[MaxSimultaneousRenderTargets + 1] = CurrDesc.stencilLoadOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets] = CurrDesc.storeOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets + 1] = CurrDesc.stencilStoreOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets] = CurrentDepthLayout;
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets + 1] = CurrentStencilLayout;
-#endif
 		CompatibleHashInfo.Formats[MaxSimultaneousRenderTargets] = CurrDesc.format;
 
 
@@ -1225,9 +1225,7 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(FVulkanDevice& InDevice, co
 
 		FullHashInfo.LoadOps[MaxSimultaneousRenderTargets + 2] = CurrDesc.stencilLoadOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets + 2] = CurrDesc.stencilStoreOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets + 2] = VRSLayout;
-#endif
 		CompatibleHashInfo.Formats[MaxSimultaneousRenderTargets + 1] = CurrDesc.format;
 
 		++NumAttachmentDescriptions;
@@ -1276,8 +1274,11 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(const FGraphicsPipelineStat
 		EPixelFormat UEFormat = (EPixelFormat)Initializer.RenderTargetFormats[Index];
 		if (UEFormat != PF_Unknown)
 		{
+			// With a CustomResolveSubpass last color attachment is a resolve target
+			bool bCustomResolveAttachment = (Index == (Initializer.RenderTargetsEnabled - 1)) && Initializer.SubpassHint == ESubpassHint::CustomResolveSubpass;
+			
 			VkAttachmentDescription& CurrDesc = Desc[NumAttachmentDescriptions];
-			CurrDesc.samples = static_cast<VkSampleCountFlagBits>(NumSamples);
+			CurrDesc.samples = bCustomResolveAttachment ? VK_SAMPLE_COUNT_1_BIT : static_cast<VkSampleCountFlagBits>(NumSamples);
 			CurrDesc.format = UEToVkTextureFormat(UEFormat, EnumHasAllFlags(Initializer.RenderTargetFlags[Index], TexCreate_SRGB));
 			CurrDesc.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 			CurrDesc.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -1307,9 +1308,7 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(const FGraphicsPipelineStat
 			CompatibleHashInfo.Formats[NumColorAttachments] = CurrDesc.format;
 			FullHashInfo.LoadOps[NumColorAttachments] = CurrDesc.loadOp;
 			FullHashInfo.StoreOps[NumColorAttachments] = CurrDesc.storeOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 			FullHashInfo.InitialLayout[NumColorAttachments] = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-#endif
 			++CompatibleHashInfo.NumAttachments;
 
 			++NumAttachmentDescriptions;
@@ -1356,10 +1355,8 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(const FGraphicsPipelineStat
 		FullHashInfo.LoadOps[MaxSimultaneousRenderTargets + 1] = CurrDesc.stencilLoadOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets] = CurrDesc.storeOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets + 1] = CurrDesc.stencilStoreOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets] = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets + 1] = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
-#endif
 		CompatibleHashInfo.Formats[MaxSimultaneousRenderTargets] = CurrDesc.format;
 
 		++NumAttachmentDescriptions;
@@ -1390,9 +1387,7 @@ FVulkanRenderTargetLayout::FVulkanRenderTargetLayout(const FGraphicsPipelineStat
 
 		FullHashInfo.LoadOps[MaxSimultaneousRenderTargets + 2] = CurrDesc.stencilLoadOp;
 		FullHashInfo.StoreOps[MaxSimultaneousRenderTargets + 2] = CurrDesc.stencilStoreOp;
-#if VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
 		FullHashInfo.InitialLayout[MaxSimultaneousRenderTargets + 2] = VRSLayout;
-#endif
 		CompatibleHashInfo.Formats[MaxSimultaneousRenderTargets + 1] = CurrDesc.format;
 
 		++NumAttachmentDescriptions;

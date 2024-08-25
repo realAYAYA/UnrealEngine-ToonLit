@@ -4,6 +4,7 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformMath.h"
 #include "Misc/AssetRegistryInterface.h"
 #include "Misc/ITransaction.h"
 #include "Misc/PackageName.h"
@@ -381,16 +382,6 @@ bool UPackage::IsPostLoadThreadSafe() const
 	return true;
 }
 
-// UE-21181 - Tracking where the loaded editor level's package gets flagged as a PIE object
-#if WITH_EDITOR
-UPackage* UPackage::EditorPackage = nullptr;
-void UPackage::SetPackageFlagsTo( uint32 NewFlags )
-{
-	PackageFlagsPrivate = NewFlags;
-	ensure(((NewFlags & PKG_PlayInEditor) == 0) || (this != EditorPackage));
-}
-#endif
-
 #if WITH_EDITORONLY_DATA
 void FixupPackageEditorOnlyFlag(FName PackageThatGotEditorOnlyFlagCleared, bool bRecursive);
 
@@ -402,6 +393,32 @@ void UPackage::SetLoadedByEditorPropertiesOnly(bool bIsEditorOnly, bool bRecursi
 		FixupPackageEditorOnlyFlag(GetFName(), bRecursive);
 	}
 }
+
+FIoHash UPackage::GetSavedHash()
+{
+#if UE_STRIP_DEPRECATED_PROPERTIES
+	return FIoHash();
+#else
+	FIoHash Result;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	FMemory::Memcpy(&Result.GetBytes(), &Guid,
+		FMath::Min(sizeof(decltype(Result.GetBytes())), sizeof(Guid)));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+	return Result;
+#endif
+}
+
+void UPackage::SetSavedHash(const FIoHash& InSavedHash)
+{
+#if !UE_STRIP_DEPRECATED_PROPERTIES
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Guid = FGuid();
+	FMemory::Memcpy(&Guid, &InSavedHash.GetBytes(),
+		FMath::Min(sizeof(Guid), sizeof(decltype(InSavedHash.GetBytes()))));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+#endif
+}
+
 #endif
 
 #if WITH_EDITORONLY_DATA

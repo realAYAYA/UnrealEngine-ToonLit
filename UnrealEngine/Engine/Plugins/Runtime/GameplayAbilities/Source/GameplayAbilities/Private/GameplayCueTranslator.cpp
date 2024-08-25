@@ -162,7 +162,7 @@ void FGameplayCueTranslationManager::RefreshNameSwaps()
 		}
 		else
 		{
-			AllNameSwaps.Pop(false);
+			AllNameSwaps.Pop(EAllowShrinking::No);
 		}
 	}
 
@@ -286,7 +286,7 @@ bool FGameplayCueTranslationManager::BuildTagTranslationTable_r(const FName& Tag
 							int32 RemoveAtIdx = TagIdx - (SwapRule.ToNames.Num() - 1);
 							check(SwappedNames.IsValidIndex(RemoveAtIdx));
 
-							SwappedNames.RemoveAt(RemoveAtIdx, NumRemoves, false);
+							SwappedNames.RemoveAt(RemoveAtIdx, NumRemoves, EAllowShrinking::No);
 							SwappedNames.Insert(SwapRule.FromName, RemoveAtIdx);
 
 							// Compose a string from the new name
@@ -457,7 +457,7 @@ void FGameplayCueTranslationManager::BuildTagTranslationTable_Forward_r(const FN
 
 					// Possible match!
 					// Done - full match found
-					SwappedNames.RemoveAt(TagIdx, 1, false);
+					SwappedNames.RemoveAt(TagIdx, 1, EAllowShrinking::No);
 					for (int32 ToIdx=0; ToIdx < SwapRule.ToNames.Num(); ++ToIdx)
 					{
 						SwappedNames.Insert(SwapRule.ToNames[ToIdx], TagIdx + ToIdx);

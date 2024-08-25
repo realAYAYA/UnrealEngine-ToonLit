@@ -24,7 +24,8 @@ namespace UnrealBuildTool.Rules
 					"UnrealEd",
 					"EditorFramework",
 					"Projects",
-					"DataValidation"
+					"DataValidation",
+					"Json"
 				}
 			);
 		}

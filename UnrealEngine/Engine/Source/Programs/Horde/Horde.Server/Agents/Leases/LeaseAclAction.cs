@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Acls;
+using EpicGames.Horde.Acls;
 
 namespace Horde.Server.Agents.Leases
 {
@@ -13,5 +13,10 @@ namespace Horde.Server.Agents.Leases
 		/// View all the leases that an agent has worked on
 		/// </summary>
 		public static AclAction ViewLeases { get; } = new AclAction("ViewLeases");
+
+		/// <summary>
+		/// View the task data for a lease
+		/// </summary>
+		public static AclAction ViewLeaseTasks { get; } = new AclAction("ViewLeaseTasks");
 	}
 }

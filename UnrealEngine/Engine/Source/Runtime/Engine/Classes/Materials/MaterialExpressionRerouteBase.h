@@ -27,9 +27,9 @@ class UMaterialExpressionRerouteBase : public UMaterialExpression
 	ENGINE_API virtual uint32 GetInputType(int32 InputIndex) override;
 	ENGINE_API virtual uint32 GetOutputType(int32 OutputIndex) override;
 	ENGINE_API virtual bool IsResultMaterialAttributes(int32 OutputIndex) override;
-	ENGINE_API virtual bool IsResultStrataMaterial(int32 OutputIndex) override;
-	ENGINE_API void GatherStrataMaterialInfo(FStrataMaterialInfo& StrataMaterialInfo, int32 OutputIndex) override;
-	ENGINE_API FStrataOperator* StrataGenerateMaterialTopologyTree(class FMaterialCompiler* Compiler, class UMaterialExpression* Parent, int32 OutputIndex) override;
+	ENGINE_API virtual bool IsResultSubstrateMaterial(int32 OutputIndex) override;
+	ENGINE_API void GatherSubstrateMaterialInfo(FSubstrateMaterialInfo& SubstrateMaterialInfo, int32 OutputIndex) override;
+	ENGINE_API FSubstrateOperator* SubstrateGenerateMaterialTopologyTree(class FMaterialCompiler* Compiler, class UMaterialExpression* Parent, int32 OutputIndex) override;
 #endif
 	//~ End UMaterialExpression Interface
 

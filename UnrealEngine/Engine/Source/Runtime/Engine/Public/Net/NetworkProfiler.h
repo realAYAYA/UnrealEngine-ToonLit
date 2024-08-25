@@ -30,6 +30,7 @@ CSV_DECLARE_CATEGORY_EXTERN(NetworkProfiler);
 		x; \
 	}
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnNetworkProfileStarted, const FString& /*Filename */);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnNetworkProfileFinished, const FString& /*Filename */);
 
 enum class ENetworkProfilerVersionHistory : uint32;
@@ -117,6 +118,9 @@ private:
 
 	/** Last known address																			*/
 	TSharedPtr<const FInternetAddr>			LastAddress;
+
+	/** Delegate that's fired when tracking starts on the current network profile */
+	FOnNetworkProfileStarted				OnNetworkProfileStartedDelegate;
 
 	/** Delegate that's fired when tracking stops on the current network profile */
 	FOnNetworkProfileFinished				OnNetworkProfileFinishedDelegate;
@@ -488,6 +492,9 @@ public:
 
 	bool FORCEINLINE IsTrackingEnabled() const { return bIsTrackingEnabled || bShouldTrackingBeEnabled; }
 	bool IsComparisonTrackingEnabled() const { return (bIsTrackingEnabled || bShouldTrackingBeEnabled) && bIsComparisonTrackingEnabled; }
+
+	/** Return the network profile started delegate */
+	FOnNetworkProfileStarted& OnNetworkProfileStarted() { return OnNetworkProfileStartedDelegate; }
 
 	/** Return the network profile finished delegate */
 	FOnNetworkProfileFinished& OnNetworkProfileFinished() { return OnNetworkProfileFinishedDelegate; }

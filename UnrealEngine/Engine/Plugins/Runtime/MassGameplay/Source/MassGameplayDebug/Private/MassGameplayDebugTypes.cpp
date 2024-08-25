@@ -4,9 +4,9 @@
 #include "MassCommonTypes.h"
 #include "MassCommonFragments.h"
 #include "MassEntityManager.h"
-
-
 #if WITH_MASSGAMEPLAY_DEBUG
+#include "MassDebugger.h"
+
 
 namespace UE::Mass::Debug
 {

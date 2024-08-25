@@ -55,6 +55,8 @@
 #include "ContentBrowserFileDataCore.h"
 #include "ContentBrowserFileDataSource.h"
 #include "Toolkits/GlobalEditorCommonCommands.h"
+#include "Misc/FeedbackContext.h"
+#include "PipInstall.h"
 #endif	// WITH_EDITOR
 
 #if PLATFORM_WINDOWS
@@ -68,8 +70,21 @@
 
 #if WITH_PYTHON
 
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 11
+	PyUtil::FPyApiBuffer FPythonScriptPlugin::Utf8String= PyUtil::TCHARToPyApiBuffer(TEXT("utf-8"));
+#endif
+
 static PyUtil::FPyApiBuffer NullPyArg = PyUtil::TCHARToPyApiBuffer(TEXT(""));
 static PyUtil::FPyApiChar* NullPyArgPtrs[] = { NullPyArg.GetData() };
+
+FPyObjectPtr MakeEmptyArgvList()
+{
+	// Make a list = [""]
+	FPyObjectPtr PyArgvList = FPyObjectPtr::StealReference(PyList_New(1));
+	PyList_SetItem(PyArgvList.Get(), 0, PyUnicode_FromString(""));
+
+	return PyArgvList;
+}
 
 /** Util struct to set the sys.argv data for Python when executing a file with arguments */
 struct FPythonScopedArgv
@@ -78,6 +93,20 @@ struct FPythonScopedArgv
 	{
 		if (InArgs && *InArgs)
 		{
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 11
+			// Moved argv changes to direct sys.argv object access since PySys_SetArgv is deprecated
+			// Make new list and set it to sys.argv
+			FPyObjectPtr PyArgvList = FPyObjectPtr::StealReference(PyList_New(0));
+			FString NextToken;
+			while (FParse::Token(InArgs, NextToken, false))
+			{
+				FPyObjectPtr PyArg;
+				PyConversion::Pythonize(NextToken, PyArg.Get(), PyConversion::ESetErrorState::No);
+				PyList_Append(PyArgvList.Get(), PyArg.Get());
+			}
+
+			PySys_SetObject("argv", PyArgvList.Get());
+#else
 			FString NextToken;
 			while (FParse::Token(InArgs, NextToken, false))
 			{
@@ -89,13 +118,20 @@ struct FPythonScopedArgv
 			{
 				PyCommandLineArgPtrs.Add(PyCommandLineArg.GetData());
 			}
+
+			PySys_SetArgvEx(PyCommandLineArgPtrs.Num(), PyCommandLineArgPtrs.GetData(), 0);
+#endif 
 		}
-		PySys_SetArgvEx(PyCommandLineArgPtrs.Num(), PyCommandLineArgPtrs.GetData(), 0);
 	}
 
 	~FPythonScopedArgv()
 	{
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 11
+		FPyObjectPtr PyArgvList = MakeEmptyArgvList();
+		PySys_SetObject("argv", PyArgvList.Get());
+#else
 		PySys_SetArgvEx(1, NullPyArgPtrs, 0);
+#endif
 	}
 
 	TArray<PyUtil::FPyApiBuffer> PyCommandLineArgs;
@@ -337,7 +373,7 @@ private:
 
 		GConfig->GetString(STR_ConfigSection, STR_ConfigDirectoryKey, LastDirectory, GEditorPerProjectIni);
 
-		FConfigSection* Sec = GConfig->GetSectionPrivate(STR_ConfigSection, false, true, GEditorPerProjectIni);
+		const FConfigSection* Sec = GConfig->GetSection(STR_ConfigSection, false, GEditorPerProjectIni);
 		if (Sec)
 		{
 			TArray<FConfigValue> List;
@@ -357,14 +393,10 @@ private:
 	{
 		GConfig->SetString(STR_ConfigSection, STR_ConfigDirectoryKey, *LastDirectory, GEditorPerProjectIni);
 
-		FConfigSection* Sec = GConfig->GetSectionPrivate(STR_ConfigSection, true, false, GEditorPerProjectIni);
-		if (Sec)
+		GConfig->RemoveKeyFromSection(STR_ConfigSection, NAME_ConfigRecentsFilesyKey, GEditorPerProjectIni);
+		for (int32 Index = RecentsFiles.Num() - 1; Index >= 0; --Index)
 		{
-			Sec->Remove(NAME_ConfigRecentsFilesyKey);
-			for (int32 Index = RecentsFiles.Num() - 1; Index >= 0; --Index)
-			{
-				Sec->Add(NAME_ConfigRecentsFilesyKey, *RecentsFiles[Index]);
-			}
+			GConfig->AddToSection(STR_ConfigSection, NAME_ConfigRecentsFilesyKey, RecentsFiles[Index], GEditorPerProjectIni);
 		}
 
 		GConfig->Flush(false);
@@ -489,8 +521,52 @@ FPythonScriptPlugin::FPythonScriptPlugin()
 
 bool FPythonScriptPlugin::IsPythonAvailable() const
 {
-	static const bool bDisablePython = FParse::Param(FCommandLine::Get(), TEXT("DisablePython"));
-	return WITH_PYTHON && !bDisablePython;
+#if WITH_PYTHON
+	auto IsPythonEnabled = []()
+	{
+		if (FParse::Param(FCommandLine::Get(), TEXT("DisablePython")))
+		{
+			UE_LOG(LogPython, Log, TEXT("Python disabled via command-line flag '-DisablePython'"));
+			return false;
+		}
+
+		if (IsRunningCommandlet())
+		{
+			TArray<FString> DisablePythonForCommandlets;
+			GConfig->GetArray(TEXT("PythonScriptPlugin"), TEXT("DisablePythonForCommandlet"), DisablePythonForCommandlets, GEditorIni);
+
+			FString RunningCommandletName;
+			if (!DisablePythonForCommandlets.IsEmpty() && FParse::Value(FCommandLine::Get(), TEXT("-run="), RunningCommandletName))
+			{
+				auto CleanCommandletName = [](FString& InOutCommandletName)
+				{
+					const FStringView CommandletSuffix = TEXTVIEW("Commandlet");
+					if (InOutCommandletName.EndsWith(CommandletSuffix))
+					{
+						InOutCommandletName.LeftChopInline(CommandletSuffix.Len(), EAllowShrinking::No);
+					}
+				};
+
+				CleanCommandletName(RunningCommandletName);
+				for (FString& DisablePythonForCommandlet : DisablePythonForCommandlets)
+				{
+					CleanCommandletName(DisablePythonForCommandlet);
+					if (DisablePythonForCommandlet == RunningCommandletName)
+					{
+						UE_LOG(LogPython, Log, TEXT("Python disabled via config setting 'DisablePythonForCommandlet'"));
+						return false;
+					}
+				}
+			}
+		}
+
+		return true;
+	};
+	static const bool bEnablePython = IsPythonEnabled();
+	return bEnablePython;
+#else
+	return false;
+#endif
 }
 
 bool FPythonScriptPlugin::ExecPythonCommand(const TCHAR* InPythonCommand)
@@ -738,6 +814,9 @@ void FPythonScriptPlugin::InitializePython()
 
 	const UPythonScriptPluginSettings* PythonPluginSettings = GetDefault<UPythonScriptPluginSettings>();
 
+	// HACK: This env var must be cleared or it carries into python subprocesses and python sys.executable detection breaking venvs
+	FPlatformMisc::SetEnvironmentVar(TEXT("PYTHONEXECUTABLE"),TEXT(""));
+
 	// Set-up the correct program name
 	{
 		FString ProgramName = FPlatformProcess::GetCurrentWorkingDirectory() / FPlatformProcess::ExecutableName(false);
@@ -787,15 +866,45 @@ void FPythonScriptPlugin::InitializePython()
 
 		// Check if the interpreter is should run in isolation mode.
 		int IsolatedInterpreterFlag = PythonPluginSettings->bIsolateInterpreterEnvironment ? 1 : 0;
-		Py_IgnoreEnvironmentFlag = IsolatedInterpreterFlag; // If not zero, ignore all PYTHON* environment variables, e.g. PYTHONPATH, PYTHONHOME, that might be set.
 
-#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 4
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 11
+		// Pre-initialize python with utf-8 encoding and possibly isolated mode
+		PyPreConfig PreConfig;
+		PyPreConfig_InitIsolatedConfig(&PreConfig);
+
+		PreConfig.parse_argv = 0;
+		PreConfig.utf8_mode = 1;
+		PreConfig.isolated = IsolatedInterpreterFlag;
+		PreConfig.use_environment = !IsolatedInterpreterFlag;
+
+		Py_PreInitialize(&PreConfig);
+
+		// Create empty init config
+		PyConfig_InitIsolatedConfig(&ModulePyConfig);
+		ModulePyConfig.use_environment = !IsolatedInterpreterFlag;
+#else
+		Py_IgnoreEnvironmentFlag = IsolatedInterpreterFlag; // If not zero, ignore all PYTHON* environment variables, e.g. PYTHONPATH, PYTHONHOME, that might be set.
+#endif
+
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 11
+		ModulePyConfig.isolated = IsolatedInterpreterFlag;
+#elif PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 4
 		Py_IsolatedFlag = IsolatedInterpreterFlag; // If not zero, sys.path contains neither the script's directory nor the user's site-packages directory.
 		Py_SetStandardStreamEncoding("utf-8", nullptr);
 #endif	// PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 4
+
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 11
+		ModulePyConfig.program_name = PyProgramName.GetData();
+		ModulePyConfig.home = PyHomePath.GetData();
+		ModulePyConfig.install_signal_handlers = 0;
+		ModulePyConfig.safe_path = 0;
+
+		Py_InitializeFromConfig(&ModulePyConfig);
+#else
 		Py_SetProgramName(PyProgramName.GetData());
 		Py_SetPythonHome(PyHomePath.GetData());
 		Py_InitializeEx(0); // 0 so Python doesn't override any signal handling
+#endif
 
 #if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION < 7
 		// NOTE: Since 3.7, those functions are called by Py_InitializeEx()
@@ -841,7 +950,13 @@ void FPythonScriptPlugin::InitializePython()
 		}
 #endif	// PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 7
 
+#if PY_MAJOR_VERSION >=3 && PY_MINOR_VERSION >= 11
+		// Set default argv to [""]
+		FPyObjectPtr PyArgvList = MakeEmptyArgvList();
+		PySys_SetObject("argv", PyArgvList.Get());
+#else
 		PySys_SetArgvEx(1, NullPyArgPtrs, 0);
+#endif
 
 		// Enable developer warnings if requested
 		if (IsDeveloperModeEnabled())
@@ -934,6 +1049,19 @@ void FPythonScriptPlugin::InitializePython()
 
 		// Initialize the wrapped types
 		FPyWrapperTypeRegistry::Get().GenerateWrappedTypes();
+
+#if WITH_EDITOR
+		// Init PipInstall task
+		InitPipInstaller();
+		RunPipInstaller();
+#endif // WITH_EDITOR
+
+		// Add Pip UBT install path to site-packages if it exists
+		const FString PipSitePackagePath = FPipInstall::Get().GetPipSitePackagesPath();
+		if (FPaths::DirectoryExists(PipSitePackagePath))
+		{
+			PyUtil::AddSitePackagesPath(PipSitePackagePath);
+		}
 
 		// Initialize the tick handler
 		TickHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([this](float DeltaTime)
@@ -1069,6 +1197,92 @@ void FPythonScriptPlugin::ShutdownPython()
 
 	bInitialized = false;
 	bRanStartupScripts = false;
+}
+
+void FPythonScriptPlugin::InitPipInstaller()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(FPythonScriptPlugin::InitPipInstaller);
+
+	// Init Pip installer for python dependencies (if any)
+	FFeedbackContext* Context = GWarn;
+	FScopedSlowTask PipInstallTask(0, LOCTEXT("PipInstall.RunInit", "Running Pip Init Tasks..."), true, *Context);
+
+	FPipInstall& PipInstaller = FPipInstall::Get();
+	PipInstaller.CheckInvalidPipEnv();
+
+	// Generate the input listing files of plugins with python dependencies and the listing of all requirements (installed or not)
+	TArray<TSharedRef<IPlugin>> PythonPlugins;
+	PipInstaller.WritePluginsListing(PythonPlugins);
+
+	for (const TSharedRef<IPlugin>& PyPlugin : PythonPlugins)
+	{
+		// Remove leftover __pycache__ folders from plugins that use pip, but previously used packaged dependencies
+		const FString LibDir = PyPlugin->GetContentDir() / TEXT("Python") / TEXT("Lib");
+		PipInstaller.CheckRemoveOrphanedPackages(LibDir / TEXT("site-packages"));
+		PipInstaller.CheckRemoveOrphanedPackages(LibDir / FPlatformMisc::GetUBTPlatform() / TEXT("site-packages"));
+	}
+
+	TArray<FString> ReqInLines;
+	TArray<FString> ExtraUrls;
+	const FString ReqsInFile = PipInstaller.WritePluginDependencies(PythonPlugins, ReqInLines, ExtraUrls);
+
+	bool EnabledOnStart = PipInstaller.IsEnabled();
+	if (ReqInLines.IsEmpty())
+	{
+		UE_CLOG(EnabledOnStart, LogPython, Display, TEXT("No enabled plugins with python dependencies found, skipping"));
+		// Remove older parsed dependency files if there's nothing to install
+		PipInstaller.RemoveParsedDependencyFiles();
+		return;
+	}
+
+	// Just return immediately with warning if some python dependencies exist and pip install is disabled
+	const FString PipSitePackagePath = FPaths::ConvertRelativePathToFull(PipInstaller.GetPipSitePackagesPath());
+	if (!EnabledOnStart)
+	{
+		if (PipInstaller.IsCmdLineDisabled() || GIsBuildMachine)
+		{
+			// Don't warn if disabled on cmd-line or is build process
+			UE_LOG(LogPython, Display, TEXT("Enabled plugins have python dependencies, install manually to: %s"), *PipSitePackagePath);
+			UE_LOG(LogPython, Display, TEXT("  See package requirements: %s"), *ReqsInFile);
+		}
+		else
+		{
+			UE_LOG(LogPython, Warning, TEXT("Enabled plugins have python dependencies, enable 'Run Pip Install On Startup' or install manually to: %s"), *PipSitePackagePath);
+			UE_LOG(LogPython, Warning, TEXT("  See package requirements: %s"), *ReqsInFile);
+		}
+		return;
+	}
+
+	UE_LOG(LogPython, Display, TEXT("Preparing to install python dependencies into: %s"), *PipSitePackagePath);
+
+	PipInstaller.SetupPipEnv(Context);
+	PipInstaller.ParsePluginDependencies(ReqsInFile, Context);
+}
+
+void FPythonScriptPlugin::RunPipInstaller()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(FPythonScriptPlugin::RunPipInstaller);
+
+	FPipInstall& PipInstaller = FPipInstall::Get();
+	if (!PipInstaller.IsEnabled())
+	{
+		return;
+	}
+
+	if (PipInstaller.NumPackagesToInstall() == 0)
+	{
+		// Nothing to install
+		return;
+	}
+
+	FFeedbackContext* Context = GWarn;
+
+	// Run install of all python dependencies for enabled plugins
+	if (!PipInstaller.RunPipInstall(Context))
+	{
+		UE_LOG(LogPython, Warning, TEXT("Unable to install plugin python dependencies"));
+		return;
+	}
 }
 
 void FPythonScriptPlugin::RequestStubCodeGeneration()

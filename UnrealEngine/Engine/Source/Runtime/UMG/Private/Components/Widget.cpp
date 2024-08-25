@@ -13,6 +13,7 @@
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
+#include "UObject/Package.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/UserInterfaceSettings.h"
 #include "Framework/Application/SlateApplication.h"
@@ -36,6 +37,8 @@
 #include "Trace/SlateMemoryTags.h"
 #include "Serialization/PropertyLocalizationDataGathering.h"
 #include "Components/NamedSlotInterface.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
+#include "HAL/LowLevelMemStats.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(Widget)
 
@@ -315,7 +318,6 @@ void UWidget::SetIsEnabled(bool bInIsEnabled)
 	if (bIsEnabled != bInIsEnabled)
 	{
 		bIsEnabled = bInIsEnabled;
-		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::bIsEnabled);
 		bValueChanged = true;
 	}
 
@@ -327,6 +329,7 @@ void UWidget::SetIsEnabled(bool bInIsEnabled)
 
 	if (bValueChanged)
 	{
+		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::bIsEnabled);
 		// Note: State is disabled, so we broadcast !bIsEnabled
 		BroadcastBinaryPostStateChange(UWidgetDisabledStateRegistration::Bit, !bIsEnabled);
 	}
@@ -957,6 +960,13 @@ TSharedRef<SWidget> UWidget::TakeWidget()
 
 TSharedRef<SWidget> UWidget::TakeWidget_Private(ConstructMethodType ConstructMethod)
 {
+#if WIDGET_INCLUDE_RELFECTION_METADATA
+	UObject* SourceAsset = GetSourceAssetOrClass();
+	UClass* WidgetClass = GetClass();
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(SourceAsset->GetPackage(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(WidgetClass, ELLMTagSet::AssetClasses);
+	UE_TRACE_METADATA_SCOPE_ASSET(SourceAsset, WidgetClass);
+#endif
 	bool bNewlyCreated = false;
 	TSharedPtr<SWidget> PublicWidget;
 
@@ -1025,7 +1035,7 @@ TSharedRef<SWidget> UWidget::TakeWidget_Private(ConstructMethodType ConstructMet
 
 #if WIDGET_INCLUDE_RELFECTION_METADATA
 		// We only need to do this once, when the slate widget is created.
-		PublicWidget->AddMetadata<FReflectionMetaData>(MakeShared<FReflectionMetaData>(GetFName(), GetClass(), this, GetSourceAssetOrClass()));
+		PublicWidget->AddMetadata<FReflectionMetaData>(MakeShared<FReflectionMetaData>(GetFName(), WidgetClass, this, SourceAsset));
 #endif
 
 		SynchronizeProperties();
@@ -1663,8 +1673,6 @@ FSizeParam UWidget::ConvertSerializedSizeParamToRuntime(const FSlateChildSize& I
 	case ESlateSizeRule::Fill:
 		return FStretch(Input.Value);
 	}
-
-	return FAuto();
 }
 
 UWidget* UWidget::FindChildContainingDescendant(UWidget* Root, UWidget* Descendant)
@@ -1715,22 +1723,22 @@ FString UWidget::GetDefaultFontName()
 
 TSubclassOf<UPropertyBinding> UWidget::FindBinderClassForDestination(FProperty* Property)
 {
-	if ( BinderClasses.Num() == 0 )
+	if (BinderClasses.IsEmpty())
 	{
-		for ( TObjectIterator<UClass> ClassIt; ClassIt; ++ClassIt )
+		TArray<UClass*> PropertyBindingClasses;
+		GetDerivedClasses(UPropertyBinding::StaticClass(), PropertyBindingClasses);
+		BinderClasses.Reserve(PropertyBindingClasses.Num());
+		for (UClass* PropertyBindingClass : PropertyBindingClasses)
 		{
-			if ( ClassIt->IsChildOf(UPropertyBinding::StaticClass()) )
-			{
-				BinderClasses.Add(*ClassIt);
-			}
+			BinderClasses.Emplace(PropertyBindingClass);
 		}
 	}
 
-	for ( int32 ClassIndex = 0; ClassIndex < BinderClasses.Num(); ClassIndex++ )
+	for (TSubclassOf<UPropertyBinding>& BinderClass : BinderClasses)
 	{
-		if ( GetDefault<UPropertyBinding>(BinderClasses[ClassIndex])->IsSupportedDestination(Property))
+		if (BinderClass.GetDefaultObject()->IsSupportedDestination(Property))
 		{
-			return BinderClasses[ClassIndex];
+			return BinderClass;
 		}
 	}
 

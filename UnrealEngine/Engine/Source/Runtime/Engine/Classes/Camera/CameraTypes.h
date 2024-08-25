@@ -57,6 +57,22 @@ struct FMinimalViewInfo
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Camera)
 	float OrthoWidth;
 
+	/** Option for the Ortho camera to automatically calculated the near/far plane */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Camera)
+	bool bAutoCalculateOrthoPlanes;
+
+	/** Manually adjusts the planes of this camera, maintaining the distance between them. Positive moves out to the farplane, negative towards the near plane */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Camera)
+	float AutoPlaneShift;
+
+	/** Adjusts the near/far planes and the view origin of the current camera automatically to avoid clipping and light artefacting*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Camera)
+	bool bUpdateOrthoPlanes;
+
+	/** If UpdateOrthoPlanes is enabled, this setting will use the cameras current height to compensate the distance to the general view (as a pseudo distance to view target when one isn't present) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Camera)
+	bool bUseCameraHeightAsViewTarget;
+
 	/** The near plane distance of the orthographic view (in world units) */
 	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category=Camera)
 	float OrthoNearClipPlane;
@@ -103,12 +119,22 @@ struct FMinimalViewInfo
 	/** Optional transform to be considered as this view's previous transform */
 	TOptional<FTransform> PreviousViewTransform;
 
+private:
+	// Only used for Ortho camera auto plane calculations, tells the Near plane of the extra distance that needs to be added.
+	FVector CameraToViewTarget;
+
+public:
+
 	FMinimalViewInfo()
 		: Location(ForceInit)
 		, Rotation(ForceInit)
 		, FOV(90.0f)
 		, DesiredFOV(90.0f)
 		, OrthoWidth(512.0f)
+		, bAutoCalculateOrthoPlanes(true)
+		, AutoPlaneShift(0.0f)
+		, bUpdateOrthoPlanes(false)
+		, bUseCameraHeightAsViewTarget(false)
 		, OrthoNearClipPlane(0.0f)
 		, OrthoFarClipPlane(UE_OLD_WORLD_MAX)
 		, PerspectiveNearClipPlane(-1.0f)
@@ -118,6 +144,7 @@ struct FMinimalViewInfo
 		, ProjectionMode(ECameraProjectionMode::Perspective)
 		, PostProcessBlendWeight(0.0f)
 		, OffCenterProjectionOffset(ForceInitToZero)
+		, CameraToViewTarget(FVector::ZeroVector)
 	{
 	}
 
@@ -138,14 +165,23 @@ struct FMinimalViewInfo
 	ENGINE_API FMatrix CalculateProjectionMatrix() const;
 
 	/** Calculates the projection matrix (and potentially a constrained view rectangle) given a FMinimalViewInfo and partially configured projection data (must have the view rect already set) */
-	ENGINE_API static void CalculateProjectionMatrixGivenView(const FMinimalViewInfo& ViewInfo, TEnumAsByte<enum EAspectRatioAxisConstraint> AspectRatioAxisConstraint, class FViewport* Viewport, struct FSceneViewProjectionData& InOutProjectionData);
+	ENGINE_API static void CalculateProjectionMatrixGivenView(FMinimalViewInfo& ViewInfo, TEnumAsByte<enum EAspectRatioAxisConstraint> AspectRatioAxisConstraint, class FViewport* Viewport, struct FSceneViewProjectionData& InOutProjectionData);
 	/** Calculates the projection matrix (and potentially a constrained view rectangle) given a FMinimalViewInfo and partially configured projection data (must have the view rect already set). ConstrainedViewRectangle is only used if the ViewInfo.bConstrainAspectRatio is set. */
-	ENGINE_API static void CalculateProjectionMatrixGivenViewRectangle(const FMinimalViewInfo& ViewInfo, TEnumAsByte<enum EAspectRatioAxisConstraint> AspectRatioAxisConstraint, const FIntRect& ConstrainedViewRectangle, FSceneViewProjectionData& InOutProjectionData);
+	ENGINE_API static void CalculateProjectionMatrixGivenViewRectangle(FMinimalViewInfo& ViewInfo, TEnumAsByte<enum EAspectRatioAxisConstraint> AspectRatioAxisConstraint, const FIntRect& ConstrainedViewRectangle, FSceneViewProjectionData& InOutProjectionData);
 
 	/** The near plane distance of the perspective view (in world units). Returns the value of PerspectiveNearClipPlane if positive, and GNearClippingPlane otherwise */
 	FORCEINLINE float GetFinalPerspectiveNearClipPlane() const
 	{
 		return PerspectiveNearClipPlane > 0.0f ? PerspectiveNearClipPlane : GNearClippingPlane;
+	}
+
+	/** Automatically calculates the Near/Far plane values for an Ortho camera */
+	ENGINE_API bool AutoCalculateOrthoPlanes(FSceneViewProjectionData& InOutProjectionData);
+
+	/** Sets the camera distance from view target for AutoCalculateOrthoPlanes */
+	ENGINE_API inline void SetCameraToViewTarget(const FVector ActorLocation)
+	{
+		CameraToViewTarget = ActorLocation - Location;
 	}
 };
 

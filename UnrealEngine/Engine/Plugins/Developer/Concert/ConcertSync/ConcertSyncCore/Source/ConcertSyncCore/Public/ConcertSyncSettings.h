@@ -110,6 +110,12 @@ public:
 	TArray<TFieldPath<FProperty>> ExcludedProperties;
 
 	/**
+	 * Array of property types that we should filtered out.
+	 */
+	UPROPERTY(config, EditAnywhere, Category="Transaction Settings")
+	TArray<FName> ExcludedPropertyTypes;
+
+	/**
 	 * Array of package class filter.
 	 * Packages that matches those filters, will be excluded from propagating to the server when saved.
 	 */

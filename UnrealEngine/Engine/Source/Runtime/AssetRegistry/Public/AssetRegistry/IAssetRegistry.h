@@ -27,6 +27,7 @@ class FAssetRegistryState;
 class FCbFieldView;
 class FCbWriter;
 class FDependsNode;
+enum class EAssetRegistryTagsCaller : uint8;
 struct FARFilter;
 struct FARCompiledFilter;
 struct FAssetData;
@@ -58,6 +59,7 @@ namespace EAssetAvailabilityProgressReportingType
 namespace UE::AssetRegistry
 {
 
+	// Please update LexToString when modifying this enum
 enum class EScanFlags : uint32
 {
 	None = 0,
@@ -66,6 +68,8 @@ enum class EScanFlags : uint32
 	WaitForInMemoryObjects = 1 << 2,	// update the tags of all assets that have loaded into memory before returning from the scan
 };
 ENUM_CLASS_FLAGS(EScanFlags);
+
+ASSETREGISTRY_API FString LexToString(EScanFlags Flags);
 
 } // namespace UE::AssetRegistry
 
@@ -147,6 +151,29 @@ class UAssetRegistry : public UInterface
 	GENERATED_UINTERFACE_BODY()
 };
 
+/**
+ * Global singleton interface for accessing a catalog of all packages (and some other content file types) that are
+ * stored in any mounted directory. In editor this information is gathered from the package files on disk during a
+ * gather step at editor startup. In cooked runtimes this information was calculated during cook and is serialized out
+ * of a single file (after pruning information not necessary at runtime.)
+ * 
+ * Some API notes:
+ *
+ * bIncludeOnlyOnDiskAssets
+ *     Most query functions that return FAssetData take this argument. If true, only data collected from disk and
+ *     stored in the AssetRegistry will be returned. If false, and the object is loaded in memory, the returned
+ *     AssetData will be calculated from the object in memory because the InMemoryData is more likely to be
+ *     up-to-date. The InMemory data will sometimes vary from the DiskGatheredData.
+ * 
+ *     When InMemoryData is returned some categories of data that are always missing from the object in memory (e.g.
+ *     GetAssetRegistryTags(EAssetRegistryTagsCaller::SavePackage)) are read from the DiskGatheredData and added to
+ *     the InMemoryData.
+ * 
+ *     Setting this value to true will always be faster than setting it to false, because the same registry
+ *     lookups are performed in either case, but the InMemoryData lookup is skipped in the true case.
+ * 
+ *     The default is usually false.
+ */
 class IAssetRegistry
 {
 	GENERATED_IINTERFACE_BODY()
@@ -176,30 +203,39 @@ public:
 	 *
 	 * @param PackageName the package name for the requested assets (eg, /Game/MyFolder/MyAsset)
 	 * @param OutAssetData the list of assets in this path
+	 * @param bIncludeOnlyOnDiskAssets If true, use only DiskGatheredData, do not calculate from UObjects.
+	 *        @see IAssetRegistry class header for bIncludeOnlyOnDiskAssets.
 	 * @param bSkipARFilteredAssets If true, skips Objects that return true for IsAsset but are not assets in the current platform.
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category="AssetRegistry")
-	virtual bool GetAssetsByPackageName(FName PackageName, TArray<FAssetData>& OutAssetData, bool bIncludeOnlyOnDiskAssets = false, bool bSkipARFilteredAssets=true) const = 0;
+	virtual bool GetAssetsByPackageName(FName PackageName, TArray<FAssetData>& OutAssetData,
+		bool bIncludeOnlyOnDiskAssets = false, bool bSkipARFilteredAssets=true) const = 0;
 
 	/**
 	 * Gets asset data for all assets in the supplied folder path
 	 *
 	 * @param PackagePath the path to query asset data in (eg, /Game/MyFolder)
 	 * @param OutAssetData the list of assets in this path
+	 * @param bIncludeOnlyOnDiskAssets If true, use only DiskGatheredData, do not calculate from UObjects.
+	 *        @see IAssetRegistry class header for bIncludeOnlyOnDiskAssets.
 	 * @param bRecursive if true, all supplied paths will be searched recursively
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category = "AssetRegistry")
-	virtual bool GetAssetsByPath(FName PackagePath, TArray<FAssetData>& OutAssetData, bool bRecursive = false, bool bIncludeOnlyOnDiskAssets = false) const = 0;
+	virtual bool GetAssetsByPath(FName PackagePath, TArray<FAssetData>& OutAssetData, bool bRecursive = false,
+		bool bIncludeOnlyOnDiskAssets = false) const = 0;
 
 	/**
 	 * Gets asset data for all assets in any of the supplied folder paths
 	 *
 	 * @param PackagePaths the paths to query asset data in (eg, /Game/MyFolder)
 	 * @param OutAssetData the list of assets in this path
+	 * @param bIncludeOnlyOnDiskAssets If true, use only DiskGatheredData, do not calculate from UObjects.
+	 *        @see IAssetRegistry class header for bIncludeOnlyOnDiskAssets.
 	 * @param bRecursive if true, all supplied paths will be searched recursively
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "AssetRegistry")
-	virtual bool GetAssetsByPaths(TArray<FName> PackagePaths, TArray<FAssetData>& OutAssetData, bool bRecursive = false, bool bIncludeOnlyOnDiskAssets = false) const = 0;
+	virtual bool GetAssetsByPaths(TArray<FName> PackagePaths, TArray<FAssetData>& OutAssetData, bool bRecursive = false,
+		bool bIncludeOnlyOnDiskAssets = false) const = 0;
 
 	/**
 	 * Gets asset data for all assets with the supplied class
@@ -210,9 +246,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category = "AssetRegistry")
 	virtual bool GetAssetsByClass(FTopLevelAssetPath ClassPathName, TArray<FAssetData>& OutAssetData, bool bSearchSubClasses = false) const = 0;
-
-	UE_DEPRECATED(5.1, "Class names are now represented by path names. Please use a version of this function that uses FTopLevelAssetPath.")
-	virtual bool GetAssetsByClass(FName ClassPathName, TArray<FAssetData>& OutAssetData, bool bSearchSubClasses = false) const = 0;
 
 	/**
 	 * Gets asset data for all assets with the supplied tags, regardless of their value
@@ -260,7 +293,8 @@ public:
 	 * Gets the asset data for the specified object path
 	 *
 	 * @param ObjectPath the path of the object to be looked up
-	 * @param bIncludeOnlyOnDiskAssets if true, in-memory objects will be ignored. The call will be faster.
+	 * @param bIncludeOnlyOnDiskAssets If true, use only DiskGatheredData, do not calculate from UObjects.
+	 *        @see IAssetRegistry class header for bIncludeOnlyOnDiskAssets.
 	 * @return the assets data;Will be invalid if object could not be found
 	 */
 	UE_DEPRECATED(5.1, "Asset path FNames have been deprecated, use Soft Object Path instead.")
@@ -271,22 +305,26 @@ public:
 	 * Gets the asset data for the specified object path
 	 *
 	 * @param ObjectPath the path of the object to be looked up
-	 * @param bIncludeOnlyOnDiskAssets if true, in-memory objects will be ignored. The call will be faster.
+	 * @param bIncludeOnlyOnDiskAssets If true, use only DiskGatheredData, do not calculate from UObjects.
+	 *        @see IAssetRegistry class header for bIncludeOnlyOnDiskAssets.
 	 * @param bSkipARFilteredAssets If true, skips Objects that return true for IsAsset but are not assets in the current platform.
 	 * @return the assets data;Will be invalid if object could not be found
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category = "AssetRegistry", DisplayName="Get Asset By Object Path")
-	ASSETREGISTRY_API virtual FAssetData K2_GetAssetByObjectPath(const FSoftObjectPath& ObjectPath, bool bIncludeOnlyOnDiskAssets = false, bool bSkipARFilteredAssets = true) const;
+	ASSETREGISTRY_API virtual FAssetData K2_GetAssetByObjectPath(const FSoftObjectPath& ObjectPath,
+		bool bIncludeOnlyOnDiskAssets = false, bool bSkipARFilteredAssets = true) const;
 
 	/**
 	 * Gets the asset data for the specified object path
 	 *
 	 * @param ObjectPath the path of the object to be looked up
-	 * @param bIncludeOnlyOnDiskAssets if true, in-memory objects will be ignored. The call will be faster.
+	 * @param bIncludeOnlyOnDiskAssets If true, use only DiskGatheredData, do not calculate from UObjects.
+	 *        @see IAssetRegistry class header for bIncludeOnlyOnDiskAssets.
 	 * @param bSkipARFilteredAssets If true, skips Objects that return true for IsAsset but are not assets in the current platform.
 	 * @return the assets data;Will be invalid if object could not be found
 	 */
-	virtual FAssetData GetAssetByObjectPath(const FSoftObjectPath& ObjectPath, bool bIncludeOnlyOnDiskAssets = false, bool bSkipARFilteredAssets = true) const = 0;
+	virtual FAssetData GetAssetByObjectPath(const FSoftObjectPath& ObjectPath,
+		bool bIncludeOnlyOnDiskAssets = false, bool bSkipARFilteredAssets = true) const = 0;
 
 	/**
 	 * Tries to get the asset data for the specified object path
@@ -320,8 +358,11 @@ public:
 	 * This method may be slow, use a filter if possible to avoid iterating over the entire registry.
 	 *
 	 * @param Callback function to call for each asset data enumerated
+	 * @param bIncludeOnlyOnDiskAssets If true, use only DiskGatheredData, do not calculate from UObjects.
+	 *        @see IAssetRegistry class header for bIncludeOnlyOnDiskAssets.
 	 */
-	virtual bool EnumerateAllAssets(TFunctionRef<bool(const FAssetData&)> Callback, bool bIncludeOnlyOnDiskAssets = false) const = 0;
+	virtual bool EnumerateAllAssets(TFunctionRef<bool(const FAssetData&)> Callback,
+		bool bIncludeOnlyOnDiskAssets = false) const = 0;
 
 	/**
 	 * Gets the LongPackageName for all packages with the given PackageName.
@@ -416,25 +457,16 @@ public:
 	virtual bool DoesPackageExistOnDisk(FName PackageName, FString* OutCorrectCasePackageName = nullptr, FString* OutExtension = nullptr) const = 0;
 
 	/** Uses the asset registry to look for ObjectRedirectors. This will follow the chain of redirectors. It will return the original path if no redirectors are found */
-	virtual FSoftObjectPath GetRedirectedObjectPath(const FSoftObjectPath& ObjectPath) const = 0;
-
-	UE_DEPRECATED(5.1, "Asset path FNames have been deprecated, use FSoftObjectPath instead.")
-	virtual FName GetRedirectedObjectPath(const FName ObjectPath) const = 0;
+	virtual FSoftObjectPath GetRedirectedObjectPath(const FSoftObjectPath& ObjectPath) = 0;
 
 	/** Returns true if the specified ClassName's ancestors could be found. If so, OutAncestorClassNames is a list of all its ancestors. This can be slow if temporary caching mode is not on */
 	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "AssetRegistry", meta = (DisplayName = "GetAncestorClassNames", ScriptName = "GetAncestorClassNames"))
 	virtual bool GetAncestorClassNames(FTopLevelAssetPath ClassPathName, TArray<FTopLevelAssetPath>& OutAncestorClassNames) const = 0;
 
-	UE_DEPRECATED(5.1, "Class names are now represented by path names. Please use a version of this function that uses FTopLevelAssetPath.")
-	virtual bool GetAncestorClassNames(FName ClassName, TArray<FName>& OutAncestorClassNames) const = 0;
-
 	/** Returns the names of all classes derived by the supplied class names, excluding any classes matching the excluded class names. This can be slow if temporary caching mode is not on */
 	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "AssetRegistry", meta = (DisplayName = "GetDerivedClassNames", ScriptName = "GetDerivedClassNames"))
 	virtual void GetDerivedClassNames(const TArray<FTopLevelAssetPath>& ClassNames, const TSet<FTopLevelAssetPath>& ExcludedClassNames, TSet<FTopLevelAssetPath>& OutDerivedClassNames) const = 0;
 	
-	UE_DEPRECATED(5.1, "Class names are now represented by path names. Please use a version of this function that uses FTopLevelAssetPath.")
-	virtual void GetDerivedClassNames(const TArray<FName>& ClassNames, const TSet<FName>& ExcludedClassNames, TSet<FName>& OutDerivedClassNames) const = 0;
-
 	/** Gets a list of all paths that are currently cached */
 	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category = "AssetRegistry")
 	virtual void GetAllCachedPaths(TArray<FString>& OutPathList) const = 0;
@@ -579,6 +611,12 @@ public:
 	virtual void WaitForCompletion() = 0;
 
 	/**
+	 * Wait for premade asset registry load to be completed, for use when querying the asset registry prior to flushing in ScanPathSynchronous.
+	 * Will no-op if no such asset registry exists.
+	 */
+	virtual void WaitForPremadeAssetRegistry() = 0;
+
+	/**
 	 * Empty the global gatherer's cache and disable further caching of scans from disk.
 	 * Used to save memory when cooking after the scan is complete.
 	*/
@@ -600,12 +638,17 @@ public:
 	DECLARE_EVENT_OneParam( IAssetRegistry, FFilesBlockedEvent, const TArray<FString>& /*Files*/ );
 	virtual FFilesBlockedEvent& OnFilesBlocked() = 0;
 
-	/** Event for when paths are added to the registry */
+	/**
+	 * Events for when paths (folders/directories) are added to and removed from the asset registry.
+	 * Both batch and singular events will be called for the same set of paths in all cases.
+	 * Prefer the batched versions as the singular versions will be deprecated in a future release.
+	 */
+	DECLARE_TS_MULTICAST_DELEGATE_OneParam( FPathsEvent, TConstArrayView<FStringView> /* Paths */);
 	DECLARE_TS_MULTICAST_DELEGATE_OneParam( FPathAddedEvent, const FString& /*Path*/ );
-	virtual FPathAddedEvent& OnPathAdded() = 0;
-
-	/** Event for when paths are removed from the registry */
 	DECLARE_EVENT_OneParam( IAssetRegistry, FPathRemovedEvent, const FString& /*Path*/ );
+	virtual FPathsEvent& OnPathsAdded() = 0;
+	virtual FPathsEvent& OnPathsRemoved() = 0;
+	virtual FPathAddedEvent& OnPathAdded() = 0;
 	virtual FPathRemovedEvent& OnPathRemoved() = 0;
 
 	/** Informs the asset registry that an in-memory asset has been created */
@@ -626,13 +669,24 @@ public:
 
 	/**
 	 * Called on demand from systems that need to fully update an AssetData's tags. When an Asset is loaded its tags
-	 * are updated by calling UObject::GetAssetRegistryTags, but GetAssetRegistryTagsExtended is not called, and tags
-	 * that exist in the Old AssetData but not in the results from GetAssetRegistryTags are kept because they might be
-	 * extended tags. When an asset is saved, GetAssetRegistryTagsExtended is called and all old tags are deleted in
-	 * favor of the new list. AssetFullyUpdated allows a manual trigger of the on-SavePackage behavior:
-	 * GetAssetRegistryTagsExtended is called and all old tags are deleted in favor of the new list.
+	 * are updated by calling GetAssetRegistryTags(EAssetRegistryTagsCaller::AssetRegistryLoad), but that version of
+	 * the function is allowed to skip writing expensive tags, so tags that exist in the old AssetData but not in the
+	 * results from GetAssetRegistryTags(EAssetRegistryTagsCaller::AssetRegistryLoad) are kept because they might be
+	 * skipped expensive tags. When an asset is saved, all old tags are deleted and 
+	 * GetAssetRegistryTags(EAssetRegistryTagsCaller::SavePackage) is called. AssetUpdateTags allows a manual trigger
+	 * of the on-SavePackage behavior: all old tags are deleted and
+	 * GetAssetRegistryTags(Caller) is called. Pass in EAssetRegistryTagsCaller::FullUpdate to behave the same as
+	 * SavePackage.
 	 */
+	virtual void AssetUpdateTags(UObject* Object, EAssetRegistryTagsCaller Caller) = 0;
+	UE_DEPRECATED(5.4, "Call AssetUpdateTags with EAssetRegistryTagsCaller::Fast")
 	virtual void AssetFullyUpdateTags(UObject* Object) = 0;
+
+	/** Informs the asset registry that a Verse file has been created on disk */
+	virtual bool VerseCreated(const FString& FilePathOnDisk) = 0;
+
+	/** Informs the asset registry that a Verse file has been deleted from disk */
+	virtual bool VerseDeleted(const FString& FilePathOnDisk) = 0;
 
 	/** Informs the asset registry that an in-memory package has been deleted, and all associated assets should be removed */
 	virtual void PackageDeleted (UPackage* DeletedPackage) = 0;
@@ -717,6 +771,9 @@ public:
 	/** Returns true if the asset registry is currently loading files and does not yet know about all assets */
 	UFUNCTION(BlueprintCallable, Category = "AssetRegistry")
 	virtual bool IsLoadingAssets() const = 0;
+
+	/** If true, the AssetRegistry updates its on-disk information for an Asset whenever that Asset loads. */
+	virtual bool ShouldUpdateDiskCacheAfterLoad() const = 0;
 
 	/** Tick the asset registry */
 	virtual void Tick (float DeltaTime) = 0;
@@ -827,8 +884,6 @@ protected:
 	virtual void SetManageReferences(const TMultiMap<FAssetIdentifier, FAssetIdentifier>& ManagerMap, bool bClearExisting, UE::AssetRegistry::EDependencyCategory RecurseType, TSet<FDependsNode*>& ExistingManagedNodes, ShouldSetManagerPredicate ShouldSetManager = nullptr) = 0;
 
 	/** Sets the PrimaryAssetId for a specific asset. This should only be called by the AssetManager, and is needed when the AssetManager is more up to date than the on disk Registry */
-	UE_DEPRECATED(5.1, "Asset path FNames have been deprecated, use FSoftObjectPath instead.")
-	virtual bool SetPrimaryAssetIdForObjectPath(const FName ObjectPath, FPrimaryAssetId PrimaryAssetId) = 0;
 	virtual bool SetPrimaryAssetIdForObjectPath(const FSoftObjectPath& ObjectPath, FPrimaryAssetId PrimaryAssetId) = 0;
 };
 
@@ -923,6 +978,30 @@ namespace AssetRegistry
 	extern ASSETREGISTRY_API const FName WildcardFName;
 	extern ASSETREGISTRY_API const FTopLevelAssetPath WildcardPathName;
 
+
+	/*
+	* Various FNames for asset tags that get added during staging if asset registry writeback is enabled.
+	* Note that these sizes refer to the package as a whole, and some packages have more than one asset per
+	* package. In that case, the data is stored on the asset returned by GetMostImportantAsset with IgnoreSkipClasses.
+	* 
+	* NOTE some platforms do not compress in UnrealPak. For those platforms, all compressed sizes are actually
+	* uncompressed!
+	* 
+	* Stage_ChunkCountFName						Total iostore chunks in the package.
+	* Stage_ChunkSizeFName						The total uncompressed size of the chunks in the package.
+	* Stage_ChunkCompressedSizeFName			The total compressed size of the chunks in the package. SEE NOTE ABOVE!
+	* Stage_ChunkInstalledSizeFName				The compressed size of all chunks that must be installed with the game/plugin.
+	* Stage_ChunkStreamingSizeFName				The compressed size of all chunks that are delivered using IAS.
+	* Stage_ChunkOptionalSizeFName				The compressed size of all chunks that are placed in an optional container.
+	* 
+	* See CookMetadata.h - UE::Cook::EPluginSizeTypes for more information on size types.
+	*/
+	extern ASSETREGISTRY_API const FName Stage_ChunkCountFName;
+	extern ASSETREGISTRY_API const FName Stage_ChunkSizeFName;
+	extern ASSETREGISTRY_API const FName Stage_ChunkCompressedSizeFName;
+	extern ASSETREGISTRY_API const FName Stage_ChunkInstalledSizeFName;
+	extern ASSETREGISTRY_API const FName Stage_ChunkStreamingSizeFName;
+	extern ASSETREGISTRY_API const FName Stage_ChunkOptionalSizeFName;
 } // namespace AssetRegistry
 } // namespace UE
 

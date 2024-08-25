@@ -12,14 +12,14 @@
 #include "../ForwardShadowingCommon.ush"
 #include "LumenSceneDirectLighting.ush"
 
-FDeferredLightData GetLumenDirectLightingLightData(uint LightIndex, float3 PreViewTranslation)
+FDeferredLightData GetLumenDirectLightingLightData(uint LightIndex, float3 PreViewTranslation, float Exposure)
 {
 	FDeferredLightData Out;
 
 #if USE_LIGHT_UNIFORM_BUFFER
 	Out = InitDeferredLightFromUniforms(LIGHT_TYPE);
 #else
-	FLumenLight LumenLight = LoadLumenLight(LightIndex, PreViewTranslation);
+	FLumenLight LumenLight = LoadLumenLight(LightIndex, PreViewTranslation, Exposure);
 	Out = LumenLight.DeferredLightData;
 	Out.bRectLight = HAS_RECT_LIGHTS && Out.bRectLight;
 #endif
@@ -30,9 +30,10 @@ float3 GetIrradianceForLight(
 	uint LightIndex,
 	FLumenSurfaceCacheData SurfaceCacheData,
 	float3 PreViewTranslation, // LUMEN_LWC_TODO
+	float Exposure,
 	float ShadowFactor)
 {
-	FDeferredLightData LightData = GetLumenDirectLightingLightData(LightIndex, PreViewTranslation);
+	FDeferredLightData LightData = GetLumenDirectLightingLightData(LightIndex, PreViewTranslation, Exposure);
 
 	float3 WorldNormal = SurfaceCacheData.WorldNormal;
 	float3 WorldPosition = SurfaceCacheData.WorldPosition; // LUMEN_LWC_TODO
@@ -140,7 +141,7 @@ void LumenCardBatchDirectLightingCS(
 		if (ShadowMaskRay.ShadowFactor > 0.0f)
 		{
 			uint ViewIndex = HAS_MULTIPLE_VIEWS ? LightTile.ViewIndex : 0;
-			Irradiance += GetIrradianceForLight(LightTile.LightIndex, SurfaceCacheData, LWCHackToFloat(PreViewTranslation[ViewIndex]).xyz, ShadowMaskRay.ShadowFactor);
+			Irradiance += GetIrradianceForLight(LightTile.LightIndex, SurfaceCacheData, PreViewTranslation[ViewIndex].xyz, ViewExposure[ViewIndex], ShadowMaskRay.ShadowFactor);
 
 			//Irradiance += bShadowFactorValid ? float3(0, 1, 0) : float3(0.2f, 0.0f, 0.0f);
 		}

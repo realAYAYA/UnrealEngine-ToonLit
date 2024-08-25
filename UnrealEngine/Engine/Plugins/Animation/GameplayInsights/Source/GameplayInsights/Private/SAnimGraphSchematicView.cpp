@@ -28,6 +28,7 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Editor.h"
 #include "IAnimationBlueprintEditor.h"
+#include "ObjectTrace.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "SAnimGraphSchematicView"
@@ -44,6 +45,7 @@ namespace AnimGraphSchematicColumns
 {
 	static const FName Type("Type");
 	static const FName Name("Name");
+	static const FName Asset("Asset");
 	static const FName Weight("Weight");
 	static const FName RootMotionWeight("Root Motion Weight");
 };
@@ -244,6 +246,7 @@ class SAnimGraphSchematicNode : public SMultiColumnTableRow<TSharedRef<FAnimGrap
 					const FObjectInfo* ObjectInfo = GameplayProvider->FindObjectInfo(Node->AnimInstanceId);
 					const FClassInfo* AnimInstanceClassInfo = ObjectInfo ? GameplayProvider->FindClassInfo(ObjectInfo->ClassId) : nullptr;
 					const int32 AnimNodeId = Node->NodeId;
+					const uint64 AnimInstanceId = Node->AnimInstanceId;
 
 					if (ObjectInfo && AnimInstanceClassInfo)
 					{
@@ -270,7 +273,7 @@ class SAnimGraphSchematicNode : public SMultiColumnTableRow<TSharedRef<FAnimGrap
 									.TextStyle(&FCoreStyle::Get().GetWidgetStyle<FTextBlockStyle>("SmallText"))
 									.ToolTipText(FText::Format(LOCTEXT("AssetHyperlinkTooltipFormat", "Open node '{0}'"), Node->Type))
 									.HighlightText(FilterText)
-									.OnNavigate_Lambda([AnimNodeId, AnimInstanceClassInfo]()
+									.OnNavigate_Lambda([AnimNodeId, AnimInstanceClassInfo, AnimInstanceId]()
 									{
 										TSoftObjectPtr<UAnimBlueprintGeneratedClass> InstanceClass;
 										InstanceClass = FSoftObjectPath(AnimInstanceClassInfo->PathName);
@@ -280,6 +283,11 @@ class SAnimGraphSchematicNode : public SMultiColumnTableRow<TSharedRef<FAnimGrap
 											if (UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(InstanceClass.Get()->ClassGeneratedBy))
 											{
 												GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AnimBlueprint);
+												
+												if (UObject* SelectedInstance = FObjectTrace::GetObjectFromId(AnimInstanceId))
+												{
+													AnimBlueprint->SetObjectBeingDebugged(SelectedInstance);
+												}
 
 												if (IAnimationBlueprintEditor* AnimBlueprintEditor = static_cast<IAnimationBlueprintEditor*>(GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(AnimBlueprint, true)))
 												{
@@ -393,6 +401,7 @@ void SAnimGraphSchematicView::Construct(const FArguments& InArgs, uint64 InAnimI
 	// Make default columns
 	Columns.Add(AnimGraphSchematicColumns::Type, { 0, true });
 	Columns.Add(AnimGraphSchematicColumns::Name, { 1, true });
+	Columns.Add(AnimGraphSchematicColumns::Asset, { 2, true });
 	Columns.Add(AnimGraphSchematicColumns::Weight, { 99999, true });
 	Columns.Add(AnimGraphSchematicColumns::RootMotionWeight, { 100000, false });
 
@@ -937,23 +946,38 @@ void SAnimGraphSchematicView::RefreshDetails(const TArray<TSharedRef<FAnimGraphS
 	}
 }
 
-FName FAnimGraphSchematicViewCreator::GetTargetTypeName() const
+FName FAnimGraphSchematicTrackCreator::GetTargetTypeNameInternal() const
 {
 	static FName TargetTypeName = "AnimInstance";
 	return TargetTypeName;
 }
 
-FName FAnimGraphSchematicViewCreator::GetName() const
+FName FAnimGraphSchematicTrackCreator::GetNameInternal() const
 {
 	return AnimGraphSchematicName;
 }
 
-FText FAnimGraphSchematicViewCreator::GetTitle() const
+void FAnimGraphSchematicTrackCreator::GetTrackTypesInternal(TArray<RewindDebugger::FRewindDebuggerTrackType>& Types) const
+{
+	Types.Add({AnimGraphSchematicName, LOCTEXT("Anim Graph", "Anim Graph")});
+}
+
+TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FAnimGraphSchematicTrackCreator::CreateTrackInternal(uint64 ObjectId) const
+{
+	return MakeShared<FAnimGraphSchematicTrack>(ObjectId);
+}
+
+FText FAnimGraphSchematicTrack::GetDisplayNameInternal() const
 {
 	return LOCTEXT("Anim Graph Update", "Anim Graph");
 }
 
-FSlateIcon FAnimGraphSchematicViewCreator::GetIcon() const
+FName FAnimGraphSchematicTrack::GetNameInternal() const
+{
+	return AnimGraphSchematicName;
+}
+
+FSlateIcon FAnimGraphSchematicTrack::GetIconInternal()
 {
 #if WITH_EDITOR
 	return FSlateIconFinder::FindIconForClass(UAnimInstance::StaticClass());
@@ -962,12 +986,38 @@ FSlateIcon FAnimGraphSchematicViewCreator::GetIcon() const
 #endif
 }
 
-TSharedPtr<IRewindDebuggerView> FAnimGraphSchematicViewCreator::CreateDebugView(uint64 ObjectId, double CurrentTime, const TraceServices::IAnalysisSession& AnalysisSession) const
+TSharedPtr<SWidget> FAnimGraphSchematicTrack::GetDetailsViewInternal()
 {
-	return SNew(SAnimGraphSchematicView, ObjectId, CurrentTime, AnalysisSession);
+	TSharedPtr<SAnimGraphSchematicView> NewView;
+	
+	if (IRewindDebugger* RewindDebugger = IRewindDebugger::Instance())
+	{
+		if (const TraceServices::IAnalysisSession* AnalysisSession = RewindDebugger->GetAnalysisSession())
+		{
+			if (!View.IsValid())
+			{
+				NewView = SNew(SAnimGraphSchematicView, AnimInstanceId, RewindDebugger->CurrentTraceTime(), *AnalysisSession);
+				View = NewView.ToWeakPtr();
+			}
+		}
+	}
+
+	return NewView;
 }
 
-bool FAnimGraphSchematicViewCreator::HasDebugInfo(uint64 ObjectId) const
+bool FAnimGraphSchematicTrack::UpdateInternal()
+{
+	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
+	TSharedPtr<IRewindDebuggerView> PinnedView = View.Pin();
+	if (PinnedView.IsValid())
+	{
+		PinnedView->SetTimeMarker(RewindDebugger->CurrentTraceTime());
+	}
+
+	return false;
+}
+
+bool FAnimGraphSchematicTrackCreator::HasDebugInfoInternal(uint64 ObjectId) const
 {
 	const TraceServices::IAnalysisSession* AnalysisSession = IRewindDebugger::Instance()->GetAnalysisSession();
 	

@@ -6,23 +6,25 @@
 #include "ISourceControlState.h"
 #include "ISourceControlRevision.h"
 #include "PlasticSourceControlRevision.h"
+
 #include "PlasticSourceControlChangelist.h"
 
 enum class EWorkspaceState
 {
-		Unknown,
-		Ignored,
-		Controlled, // called "Pristine" in Perforce, "Unchanged" in Git, "Clean" in SVN
-		CheckedOut,
-		Added,
-		Moved, // Renamed
-		Copied,
-		Replaced, // Replaced / Merged
-		Deleted,
-		LocallyDeleted, // Missing
-		Changed, // Modified but not CheckedOut
-		Conflicted,
-		Private, // "Not Controlled"/"Not In Depot"/"Untracked"
+	Unknown,
+	Ignored,
+	Controlled, // called "Pristine" in Perforce, "Unchanged" in Git, "Clean" in SVN
+	CheckedOutChanged, // Checked-out, with changes (or without knowing for older version of Unity Version Control)
+	CheckedOutUnchanged, // Checked-out with no changes (cannot be checked-in and can be reverted by UndoUnchanged)
+	Added,
+	Moved, // Renamed
+	Copied,
+	Replaced, // Replaced / Merged
+	Deleted,
+	LocallyDeleted, // Missing
+	Changed, // Locally Changed but not CheckedOut
+	Conflicted,
+	Private, // "Not Controlled"/"Not In Depot"/"Untracked"
 };
 
 class FPlasticSourceControlState : public ISourceControlState
@@ -67,6 +69,10 @@ public:
 		{
 			LockedBy = MoveTemp(InState.LockedBy);
 			LockedWhere = MoveTemp(InState.LockedWhere);
+			LockedBranch = MoveTemp(InState.LockedBranch);
+			LockedId = MoveTemp(InState.LockedId);
+			LockedDate = MoveTemp(InState.LockedDate);
+			RetainedBy = MoveTemp(InState.RetainedBy);
 			RepSpec = MoveTemp(InState.RepSpec);
 			DepotRevisionChangeset = InState.DepotRevisionChangeset;
 			LocalRevisionChangeset = InState.LocalRevisionChangeset;
@@ -97,7 +103,9 @@ public:
 	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> FindHistoryRevision(const FString& InRevision) const override;
 	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> GetCurrentRevision() const override;
 	virtual FResolveInfo GetResolveInfo() const override;
+#if SOURCE_CONTROL_WITH_SLATE
 	virtual FSlateIcon GetIcon() const override;
+#endif // SOURCE_CONTROL_WITH_SLATE
 	virtual FText GetDisplayName() const override;
 	virtual FText GetDisplayTooltip() const override;
 	virtual const FString& GetFilename() const override;
@@ -125,6 +133,10 @@ public:
 	virtual bool IsConflicted() const override;
 	virtual bool CanRevert() const override;
 
+	bool IsCheckedOutImplementation() const;
+	bool IsLocked() const;
+	bool IsRetainedInOtherBranch() const;
+
 public:
 	/** History of the item, if any */
 	TPlasticSourceControlHistory History;
@@ -138,32 +150,35 @@ public:
 	/** Pending rev info with which a file must be resolved, invalid if no resolve pending */
 	FResolveInfo PendingResolveInfo;
 
-	UE_DEPRECATED(5.3, "Use PendingResolveInfo.BaseFile instead")
-	FString PendingMergeFilename;
-
-	UE_DEPRECATED(5.3, "Use PendingResolveInfo.BaseRevision instead")
-	int32 PendingMergeBaseChangeset = INVALID_REVISION;
-
-	UE_DEPRECATED(5.3, "Use PendingResolveInfo.RemoteRevision instead")
-	int32 PendingMergeSourceChangeset = INVALID_REVISION;
-
-	/** Plastic SCM Parameters of the merge in progress */
+	/** Unity Version Control Parameters of the merge in progress */
 	TArray<FString> PendingMergeParameters;
 
 	/** If a user (another or ourself) has this file locked, this contains their name. */
 	FString LockedBy;
 
-	/** Location of the locked file. */
+	/** Location (Workspace) where the file was exclusively checked-out. */
 	FString LockedWhere;
+
+	/** Branch where the file was Locked or is Retained. */
+	FString LockedBranch;
+
+	/** Item id of the locked file (for an admin to unlock it). */
+	int32 LockedId = INVALID_REVISION;
+
+	/** Date when the file was Locked. */
+	FDateTime LockedDate = 0;
+
+	/** If a user (another or ourself) has this file Retained on another branch, this contains their name. */
+	FString RetainedBy;
 
 	/** State of the workspace */
 	EWorkspaceState WorkspaceState = EWorkspaceState::Unknown;
 
 	/** Latest revision number of the file in the depot (on the current branch) */
-	int DepotRevisionChangeset = INVALID_REVISION;
+	int32 DepotRevisionChangeset = INVALID_REVISION;
 
 	/** Latest revision number at which a file was synced to before being edited */
-	int LocalRevisionChangeset = INVALID_REVISION;
+	int32 LocalRevisionChangeset = INVALID_REVISION;
 
 	/** Original name in case of a Moved/Renamed file */
 	FString MovedFrom;

@@ -14,15 +14,15 @@ FColliderMesh::FColliderMesh(const FDynamicMesh3& SourceMesh, const FBuildOption
 
 FColliderMesh::FColliderMesh()
 {
-	Reset(false);
+	Reset(EAllowShrinking::No);
 }
 
-void FColliderMesh::Reset(bool bReleaseMemory)
+void FColliderMesh::Reset(EAllowShrinking AllowShrinking)
 {
-	Vertices.SetNum(0, bReleaseMemory);
-	SourceVertexIDs.SetNum(0, bReleaseMemory);
-	Triangles.SetNum(0, bReleaseMemory);
-	SourceTriangleIDs.SetNum(0, bReleaseMemory);
+	Vertices.SetNum(0, AllowShrinking);
+	SourceVertexIDs.SetNum(0, AllowShrinking);
+	Triangles.SetNum(0, AllowShrinking);
+	SourceTriangleIDs.SetNum(0, AllowShrinking);
 
 	bSourceWasCompactV = bSourceWasCompactT = true;
 

@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 /*=============================================================================
- UDataLayerToAssetCommandlet.cpp: Commandlet used to convert a partionned ULevel's data layers to assets
+ UDataLayerToAssetCommandlet.cpp: Commandlet used to convert a partitioned ULevel's data layers to assets
 =============================================================================*/
 
 #include "Commandlets/WorldPartitionDataLayerToAssetCommandLet.h"
@@ -17,13 +17,10 @@
 #include "ProfilingDebugging/ScopedTimers.h"
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
-#include "WorldPartition/WorldPartitionActorDesc.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
 
 DEFINE_LOG_CATEGORY(LogDataLayerToAssetCommandlet);
-
-// The CommandLet uses deprecated function in AACtor & AWorldDataLayers to perform the conversion of UDEPRECATED_DataLayer -> UDataInstance/UDataLayerAsset
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
 void UDataLayerConversionInfo::SetDataLayerToConvert(const UDeprecatedDataLayerInstance* InDataLayerToConvert)
 {
@@ -263,7 +260,7 @@ int32 UDataLayerToAssetCommandlet::Main(const FString& Params)
 		return EReturnCode::CommandletInitializationError;
 	}
 
-	ConversionFolder = DestinationFolder + "/" + MainWorld->GetName();
+	ConversionFolder = DestinationFolder + "/" + MainWorld->GetName() + "/";
 
 	TStrongObjectPtr<UDataLayerToAssetCommandletContext> Context(NewObject<UDataLayerToAssetCommandletContext>());
 
@@ -323,7 +320,7 @@ bool UDataLayerToAssetCommandlet::InitializeFromCommandLine(TArray<FString>& Tok
 	if (Switches.Contains(TEXT("Verbose")))
 	{
 		LogDataLayerToAssetCommandlet.SetVerbosity(ELogVerbosity::Verbose);
-		WorldPartitionCommandletHelpers::LogWorldParitionCommandletUtils.SetVerbosity(ELogVerbosity::Verbose);
+		WorldPartitionCommandletHelpers::LogWorldPartitionCommandletUtils.SetVerbosity(ELogVerbosity::Verbose);
 	}
 
 	bPerformSavePackages = Switches.Contains(TEXT("NoSave")) == false;
@@ -345,10 +342,13 @@ bool UDataLayerToAssetCommandlet::BuildConversionInfos(TStrongObjectPtr<UDataLay
 
 	TArray<FAssetData> ExistingDataLayerAssets;
 	IAssetRegistry& AssetRegistry = FAssetRegistryModule::GetRegistry();
-	AssetRegistry.GetAssetsByClass(UDataLayerAsset::StaticClass()->GetFName(), ExistingDataLayerAssets);
+	AssetRegistry.GetAssetsByClass(FTopLevelAssetPath(UDataLayerAsset::StaticClass()), ExistingDataLayerAssets);
 	for (FAssetData& AssetData : ExistingDataLayerAssets)
 	{
-		CommandletContext->StoreExistingDataLayer(AssetData);
+		if (IsAssetInConversionFolder(AssetData.GetSoftObjectPath()))
+		{
+			CommandletContext->StoreExistingDataLayer(AssetData);
+		}
 	}
 
 	AWorldDataLayers* WorldDataLayers = MainWorld->GetWorldDataLayers();
@@ -478,10 +478,10 @@ bool UDataLayerToAssetCommandlet::RemapActorDataLayersToAssets(TStrongObjectPtr<
 	UE_LOG(LogDataLayerToAssetCommandlet, Log, TEXT("Starting Actor Data Layer Remapping To Data Layer Asset. This can take a while."));
 
 	uint32 ErrorCount = 0;
-	FWorldPartitionHelpers::ForEachActorWithLoading(MainWorld->GetWorldPartition(), [&ErrorCount, &CommandletContext, this, &PackageHelper](const FWorldPartitionActorDesc* ActorDesc)
+	FWorldPartitionHelpers::ForEachActorWithLoading(MainWorld->GetWorldPartition(), [&ErrorCount, &CommandletContext, this, &PackageHelper](const FWorldPartitionActorDescInstance* ActorDescInstance)
 	{
 		uint32 ActorConversionErrors = 0;
-		if (AActor* Actor = ActorDesc->GetActor())
+		if (AActor* Actor = ActorDescInstance->GetActor())
 		{
 			ActorConversionErrors += RemapDataLayersAssetsFromPreviousConversions(CommandletContext, Actor);
 			ActorConversionErrors += RemapActorDataLayers(CommandletContext, Actor);
@@ -504,13 +504,13 @@ bool UDataLayerToAssetCommandlet::RemapActorDataLayersToAssets(TStrongObjectPtr<
 		}
 		else
 		{
-			const TArray<FName>& ActDescDataLayers = ActorDesc->GetDataLayerInstanceNames();
+			const FDataLayerInstanceNames& ActDescDataLayers = ActorDescInstance->GetDataLayerInstanceNames();
 			if (!ActDescDataLayers.IsEmpty())
 			{
-				FString DataLayerString = FString::JoinBy(ActDescDataLayers, TEXT(", "), [](const FName& DataLayerName) { return DataLayerName.ToString(); });
+				FString DataLayerString = FString::JoinBy(ActDescDataLayers.ToArray(), TEXT(", "), [](const FName& DataLayerName) { return DataLayerName.ToString(); });
 
 				UE_LOG(LogDataLayerToAssetCommandlet, Error, TEXT("Actor %s failed to load. Its data layers %s will not be remapped to a data layer asset."),
-					*ActorDesc->GetActorName().ToString(), *DataLayerString);
+					*ActorDescInstance->GetActorName().ToString(), *DataLayerString);
 				if (!bIgnoreActorLoadingErrors)
 				{
 					ActorConversionErrors++;
@@ -529,6 +529,7 @@ bool UDataLayerToAssetCommandlet::RemapActorDataLayersToAssets(TStrongObjectPtr<
 
 uint32 UDataLayerToAssetCommandlet::RemapActorDataLayers(TStrongObjectPtr<UDataLayerToAssetCommandletContext>& CommandletContext, AActor* Actor)
 {
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	uint32 ErrorCount = 0;
 
 	const TArray<FActorDataLayer>& ActorDataLayers = Actor->GetActorDataLayers();
@@ -566,6 +567,7 @@ uint32 UDataLayerToAssetCommandlet::RemapActorDataLayers(TStrongObjectPtr<UDataL
 	}
 
 	return ErrorCount;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 // Multiple run of the commandlet can lead to Actors referencing Data Layer Assets in different folders. Always remap to the newly created asset.
@@ -749,9 +751,7 @@ bool UDataLayerToAssetCommandlet::CommitConversion(TStrongObjectPtr<UDataLayerTo
 	return true;
 }
 
-bool UDataLayerToAssetCommandlet::IsAssetInConversionFolder(const TObjectPtr<UDataLayerAsset> DataLayerAsset)
+bool UDataLayerToAssetCommandlet::IsAssetInConversionFolder(const FSoftObjectPath& DataLayerAsset)
 {
-	return FCString::Stristr(*DataLayerAsset->GetPackage()->GetName(), *ConversionFolder) != nullptr;
+	return DataLayerAsset.GetAssetPathString().StartsWith(ConversionFolder);
 }
-
-PRAGMA_ENABLE_DEPRECATION_WARNINGS

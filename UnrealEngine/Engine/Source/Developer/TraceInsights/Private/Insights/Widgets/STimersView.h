@@ -91,6 +91,10 @@ public:
 
 	ETraceFrameType GetFrameTypeMode() { return ModeFrameType; }
 
+	void OnTimingViewTrackListChanged();
+
+	void ToggleTimingViewMainGraphEventSeries(FTimerNodePtr TimerNode) const;
+
 private:
 	void InitCommandList();
 
@@ -148,6 +152,12 @@ private:
 	bool ContextMenu_OpenSource_CanExecute() const;
 	void ContextMenu_OpenSource_Execute() const;
 
+	bool ContextMenu_FindInstance_CanExecute() const;
+	void ContextMenu_FindInstance_Execute(bool bFindMax) const;
+
+	bool ContextMenu_FindInstanceInSelection_CanExecute() const;
+	void ContextMenu_FindInstanceInSelection_Execute(bool bFindMax) const;
+
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Tree View - Columns' Header
 
@@ -171,6 +181,8 @@ private:
 
 	/** Called by STreeView when selection has changed. */
 	void TreeView_OnSelectionChanged(FTimerNodePtr SelectedItem, ESelectInfo::Type SelectInfo);
+
+	FTimerNodePtr GetSingleSelectedTimerNode() const;
 
 	/** Called by STreeView when a tree item is double clicked. */
 	void TreeView_OnMouseButtonDoubleClick(FTimerNodePtr TreeNode);
@@ -304,12 +316,14 @@ private:
 
 	void TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder);
 
+	void TreeView_FindMenu(FMenuBuilder& MenuBuilder);
+
 	TSharedPtr<FTimingGraphTrack> GetTimingViewMainGraphTrack() const;
 	TSharedPtr<SFrameTrack> GetFrameTrack() const;
 
-	void ToggleGraphSeries(TSharedRef<FTimingGraphTrack> GraphTrack, FTimerNodeRef NodePtr) const;
-	bool IsSeriesInTimingViewMainGraph(FTimerNodePtr TimerNode) const;
-	void ToggleTimingViewMainGraphEventSeries(FTimerNodePtr TimerNode) const;
+	void ToggleGraphInstanceSeries(TSharedRef<FTimingGraphTrack> GraphTrack, FTimerNodeRef NodePtr) const;
+	bool IsInstanceSeriesInTimingViewMainGraph(FTimerNodePtr TimerNode) const;
+	void ToggleTimingViewMainGraphEventInstanceSeries(FTimerNodePtr TimerNode) const;
 
 	void ToggleGraphFrameStatsSeries(TSharedRef<FTimingGraphTrack> GraphTrack, FTimerNodeRef NodePtr, ETraceFrameType FrameType) const;
 	bool IsFrameStatsSeriesInTimingViewMainGraph(FTimerNodePtr TimerNode, ETraceFrameType FrameType) const;

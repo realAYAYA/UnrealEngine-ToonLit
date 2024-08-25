@@ -39,12 +39,21 @@
 #include "Serialization/BulkData.h"
 #include "WeightedRandomSampler.h"
 #include "PerPlatformProperties.h"
-#include "RayTracingInstance.h"
 #include "RayTracingGeometry.h"
+#if WITH_EDITORONLY_DATA
+#include "Interface_CollisionDataProviderCore.h"
+#endif
 
 class FDistanceFieldVolumeData;
 class UBodySetup;
 class USimpleConstructionScript;
+
+#if RHI_RAYTRACING
+namespace RayTracing
+{
+	using GeometryGroupHandle = int32;
+}
+#endif
 
 /** The maximum number of static mesh LODs allowed. */
 #define MAX_STATIC_MESH_LODS 8
@@ -150,6 +159,7 @@ public:
 	 * @param IniFile Preloaded ini file object to load from
 	 */
 	ENGINE_API void Initialize(const ITargetPlatform* TargetPlatform);
+	ENGINE_API void Initialize(const class ITargetPlatformSettings* TargetPlatform);
 
 	/** Retrieve the settings for the specified LOD group. */
 	const FStaticMeshLODGroup& GetLODGroup(FName LODGroup) const
@@ -315,19 +325,59 @@ struct FStaticMeshVertexBuffers
 	/** The buffer containing the vertex color data. */
 	FColorVertexBuffer ColorVertexBuffer;
 
-	/* This is a temporary function to refactor and convert old code, do not copy this as is and try to build your data as SoA from the beginning.*/
-	void ENGINE_API InitWithDummyData(FLocalVertexFactory* VertexFactory, uint32 NumVerticies, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0);
+	void inline InitWithDummyData(FRHICommandListBase& RHICmdList, FLocalVertexFactory* VertexFactory, uint32 NumVertices, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0)
+	{
+		InitWithDummyData(&RHICmdList, nullptr, VertexFactory, NumVertices, NumTexCoords, LightMapIndex);
+	}
 
-	/* This is a temporary function to refactor and convert old code, do not copy this as is and try to build your data as SoA from the beginning.*/
-	void ENGINE_API InitFromDynamicVertex(FLocalVertexFactory* VertexFactory, TArray<FDynamicMeshVertex>& Vertices, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0);
+	void inline InitWithDummyData(FRenderCommandPipe* RenderCommandPipe, FLocalVertexFactory* VertexFactory, uint32 NumVertices, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0)
+	{
+		InitWithDummyData(nullptr, RenderCommandPipe, VertexFactory, NumVertices, NumTexCoords, LightMapIndex);
+	}
 
-	/* This is a temporary function to refactor and convert old code, do not copy this as is and try to build your data as SoA from the beginning.*/
+	void inline InitWithDummyData(FLocalVertexFactory* VertexFactory, uint32 NumVertices, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0)
+	{
+		InitWithDummyData(nullptr, nullptr, VertexFactory, NumVertices, NumTexCoords, LightMapIndex);
+	}
+
+	inline void InitFromDynamicVertex(FRHICommandListBase& RHICmdList, FLocalVertexFactory* VertexFactory, TArray<FDynamicMeshVertex>& Vertices, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0)
+	{
+		InitFromDynamicVertex(&RHICmdList, nullptr, VertexFactory, Vertices, NumTexCoords, LightMapIndex);
+	}
+
+	inline void InitFromDynamicVertex(FRenderCommandPipe* RenderCommandPipe, FLocalVertexFactory* VertexFactory, TArray<FDynamicMeshVertex>& Vertices, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0)
+	{
+		InitFromDynamicVertex(nullptr, RenderCommandPipe, VertexFactory, Vertices, NumTexCoords, LightMapIndex);
+	}
+
+	inline void InitFromDynamicVertex(FLocalVertexFactory* VertexFactory, TArray<FDynamicMeshVertex>& Vertices, uint32 NumTexCoords = 1, uint32 LightMapIndex = 0)
+	{
+		InitFromDynamicVertex(nullptr, nullptr, VertexFactory, Vertices, NumTexCoords, LightMapIndex);
+	}
+
 	void ENGINE_API InitModelBuffers(TArray<FModelVertex>& Vertices);
 
-	/* This is a temporary function to refactor and convert old code, do not copy this as is and try to build your data as SoA from the beginning.*/
-	void ENGINE_API InitModelVF(FLocalVertexFactory* VertexFactory);
+	inline void ENGINE_API InitModelVF(FRHICommandListBase& RHICmdList, FLocalVertexFactory* VertexFactory)
+	{
+		InitModelVF(&RHICmdList, nullptr, VertexFactory);
+	}
+
+	inline void ENGINE_API InitModelVF(FRenderCommandPipe* RenderCommandPipe, FLocalVertexFactory* VertexFactory)
+	{
+		InitModelVF(nullptr, RenderCommandPipe, VertexFactory);
+	}
+
+	inline void ENGINE_API InitModelVF(FLocalVertexFactory* VertexFactory)
+	{
+		InitModelVF(nullptr, nullptr, VertexFactory);
+	}
 
 	void ENGINE_API SetOwnerName(const FName& OwnerName);
+
+private:
+	void ENGINE_API InitWithDummyData(FRHICommandListBase* RHICmdList, FRenderCommandPipe* RenderCommandPipe, FLocalVertexFactory* VertexFactory, uint32 NumVertices, uint32 NumTexCoords, uint32 LightMapIndex);
+	void ENGINE_API InitFromDynamicVertex(FRHICommandListBase* RHICmdList, FRenderCommandPipe* RenderCommandPipe, FLocalVertexFactory* VertexFactory, TArray<FDynamicMeshVertex>& Vertices, uint32 NumTexCoords, uint32 LightMapIndex);
+	void ENGINE_API InitModelVF(FRHICommandListBase* RHICmdList, FRenderCommandPipe* RenderCommandPipe, FLocalVertexFactory* VertexFactory);
 };
 
 struct FAdditionalStaticMeshIndexBuffers
@@ -472,11 +522,10 @@ public:
 	/** Serialize. */
 	void Serialize(FArchive& Ar, UObject* Owner, int32 Idx);
 
-	void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) const;
+	ENGINE_API void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) const;
 
 #if RHI_RAYTRACING
-	void SetupRayTracingGeometryInitializer(FRayTracingGeometryInitializer& Initializer, const FName& DebugName, const FName& OwnerName);
-	static void SetupRayTracingProceduralGeometryInitializer(FRayTracingGeometryInitializer& Initializer, const FName& DebugName, const FName& OwnerName);
+	void SetupRayTracingGeometryInitializer(FRayTracingGeometryInitializer& Initializer, const FName& DebugName, const FName& OwnerName) const;
 #endif // RHI_RAYTRACING
 
 	/** Get the estimated memory overhead of buffers marked as NeedsCPUAccess. */
@@ -649,6 +698,10 @@ public:
 	/** Bounds of the renderable mesh. */
 	FBoxSphereBounds Bounds;
 
+#if RHI_RAYTRACING
+	RayTracing::GeometryGroupHandle RayTracingGeometryGroupHandle = INDEX_NONE;
+#endif
+
 	bool IsInitialized() const
 	{
 		return bIsInitialized;
@@ -681,6 +734,12 @@ public:
 
 	/** The next cached derived data in the list. */
 	TUniquePtr<class FStaticMeshRenderData> NextCachedRenderData;
+
+	/**
+	 * Canned FTriMeshCollisionData for static meshes cooked for CookedCooker platform (see TCookedCookerTargetPlatform).
+	 * It is needed because the "cooked cooker" can be cooking a new spline mesh that is deforming a cooked static mesh, so it will request the SM's collision data.
+	 */
+	TUniquePtr<FTriMeshCollisionData> CollisionDataForCookedCooker;
 
 	/** Estimate of total compressed size of all rendering data, including Nanite data. */
 	uint64 EstimatedCompressedSize = 0;
@@ -721,7 +780,7 @@ public:
 	ENGINE_API void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) const;
 
 	/** Get the estimated memory overhead of buffers marked as NeedsCPUAccess. */
-	SIZE_T GetCPUAccessMemoryOverhead() const;
+	ENGINE_API SIZE_T GetCPUAccessMemoryOverhead() const;
 
 	/** Allocate LOD resources. */
 	ENGINE_API void AllocateLODResources(int32 NumLODs);
@@ -1000,9 +1059,9 @@ public:
 		GetInstanceLightMapDataInternal(InstanceIndex, InstanceLightmapAndShadowMapUVBias);
 	}
 
-	FORCEINLINE_DEBUGGABLE void GetInstanceCustomDataValues(int32 InstanceIndex, TArray<float>& CustomData) const
+	FORCEINLINE_DEBUGGABLE void GetInstanceCustomDataValues(int32 InstanceIndex, TArrayView<float> OutCustomData) const
 	{
-		GetInstanceCustomDataInternal(InstanceIndex, CustomData);
+		GetInstanceCustomDataInternal(InstanceIndex, OutCustomData);
 	}
 	
 	FORCEINLINE_DEBUGGABLE void SetInstance(int32 InstanceIndex, const FMatrix44f& Transform, float RandomInstanceID, const FVector2D& LightmapUVBias, const FVector2D& ShadowmapUVBias)
@@ -1361,9 +1420,9 @@ private:
 		}
 	}
 
-	FORCEINLINE_DEBUGGABLE void GetInstanceCustomDataInternal(int32 InstanceIndex, TArray<float>& CustomData) const
+	FORCEINLINE_DEBUGGABLE void GetInstanceCustomDataInternal(int32 InstanceIndex, TArrayView<float> OutCustomData) const
 	{
-		check(CustomData.Num() == NumCustomDataFloats);
+		check(OutCustomData.Num() == NumCustomDataFloats);
 
 		float* ElementData = reinterpret_cast<float*>(InstanceCustomDataPtr);
 		const uint32 CurrentSize = InstanceCustomData->Num() * InstanceCustomData->GetStride();
@@ -1375,7 +1434,7 @@ private:
 			if (ensure((void*)((&ElementData[CustomDataIndex]) + 1) <= (void*)(InstanceCustomDataPtr + CurrentSize))
 				&& ensure((void*)((&ElementData[CustomDataIndex]) + 0) >= (void*)(InstanceCustomDataPtr)))
 			{
-				CustomData[i] = ElementData[CustomDataIndex];
+				OutCustomData[i] = ElementData[CustomDataIndex];
 			}
 		}
 	}

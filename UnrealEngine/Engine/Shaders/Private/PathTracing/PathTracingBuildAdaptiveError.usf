@@ -1,0 +1,42 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+int2 InputResolution;
+int2 OutputResolution;
+SamplerState InputMipSampler;
+Texture2D<float4>   InputMip;
+RWTexture2D<float4> OutputMip;
+
+[numthreads(THREADGROUPSIZE_X, THREADGROUPSIZE_Y, 1)]
+void PathTracingBuildAdaptiveErrorTextureCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	int2 OutPixelCoord = int2(DispatchThreadId);
+	if (any(OutPixelCoord >= OutputResolution))
+	{
+		return;
+	}
+
+	float2 UV = (OutPixelCoord + 0.5) / float2(OutputResolution);
+	float2 InvInputResolution = rcp(float2(InputResolution));
+
+#if 0
+	// single tap mipmap
+	float4 Result = InputMip.SampleLevel(InputMipSampler, UV, 0);
+#elif 1
+	float4 Result = 0.0;
+	float FilterSum = 0.0;
+	const int R = 2;
+	for (int dy = -R; dy <= R; dy++)
+	for (int dx = -R; dx <= R; dx++)
+	{
+		float2 Offset = float2(dx, dy);
+		float Filter = exp(-0.5 * length2(Offset));
+		float4 Pixel = InputMip.SampleLevel(InputMipSampler, UV + Offset * InvInputResolution, 0);
+		FilterSum += Filter;
+		Result = lerp(Result, Pixel, Filter / FilterSum);
+	}
+#endif
+	//Result.z *= 4.0; // we are downsampling by 2x in each direction, so the overal normalization in the number of samples should be 4x
+	OutputMip[OutPixelCoord] = Result;
+}

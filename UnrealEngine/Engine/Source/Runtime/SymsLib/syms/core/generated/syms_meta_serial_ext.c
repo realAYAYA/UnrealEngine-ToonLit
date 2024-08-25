@@ -83,12 +83,14 @@ SYMS_SerialValue _syms_serial_members_for_SYMS_Language[] = {
 { { (SYMS_U8*)"RenderScript", 12 }, (SYMS_U64)SYMS_Language_RenderScript },
 { { (SYMS_U8*)"Haskell", 7 }, (SYMS_U64)SYMS_Language_Haskell },
 { { (SYMS_U8*)"OCaml", 5 }, (SYMS_U64)SYMS_Language_OCaml },
+{ { (SYMS_U8*)"MipsAssembler", 13 }, (SYMS_U64)SYMS_Language_MipsAssembler },
+{ { (SYMS_U8*)"GoogleRenderScript", 18 }, (SYMS_U64)SYMS_Language_GoogleRenderScript },
+{ { (SYMS_U8*)"SunAssembler", 12 }, (SYMS_U64)SYMS_Language_SunAssembler },
+{ { (SYMS_U8*)"BorlandDelphi", 13 }, (SYMS_U64)SYMS_Language_BorlandDelphi },
 };
 SYMS_SerialValue _syms_serial_members_for_SYMS_FileFormat[] = {
 { { (SYMS_U8*)"NULL", 4 }, (SYMS_U64)SYMS_FileFormat_Null },
 { { (SYMS_U8*)"PE", 2 }, (SYMS_U64)SYMS_FileFormat_PE },
-{ { (SYMS_U8*)"COFF16", 6 }, (SYMS_U64)SYMS_FileFormat_COFF16 },
-{ { (SYMS_U8*)"COFF32", 6 }, (SYMS_U64)SYMS_FileFormat_COFF32 },
 { { (SYMS_U8*)"ELF", 3 }, (SYMS_U64)SYMS_FileFormat_ELF },
 { { (SYMS_U8*)"MACH", 4 }, (SYMS_U64)SYMS_FileFormat_MACH },
 { { (SYMS_U8*)"PDB", 3 }, (SYMS_U64)SYMS_FileFormat_PDB },
@@ -286,7 +288,31 @@ case SYMS_CoffRelocTypeARM_PAIR: result = 19; break;
 }
 return(result);
 }
-// syms_enum_index_from_coffreloctypearm64 - skipped identity mapping
+SYMS_API SYMS_U64
+syms_enum_index_from_coffreloctypearm64(SYMS_U64 v){
+SYMS_U64 result = 0;
+switch ((SYMS_U16)v){
+default: break;
+case SYMS_CoffRelocTypeARM64_ABS: result = 0; break;
+case SYMS_CoffRelocTypeARM64_ADDR32: result = 1; break;
+case SYMS_CoffRelocTypeARM64_ADDR32NB: result = 2; break;
+case SYMS_CoffRelocTypeARM64_BRANCH26: result = 3; break;
+case SYMS_CoffRelocTypeARM64_PAGEBASE_REL21: result = 4; break;
+case SYMS_CoffRelocTypeARM64_REL21: result = 5; break;
+case SYMS_CoffRelocTypeARM64_PAGEOFFSET_12A: result = 6; break;
+case SYMS_CoffRelocTypeARM64_SECREL: result = 7; break;
+case SYMS_CoffRelocTypeARM64_SECREL_LOW12A: result = 8; break;
+case SYMS_CoffRelocTypeARM64_SECREL_HIGH12A: result = 9; break;
+case SYMS_CoffRelocTypeARM64_SECREL_LOW12L: result = 10; break;
+case SYMS_CoffRelocTypeARM64_TOKEN: result = 11; break;
+case SYMS_CoffRelocTypeARM64_SECTION: result = 12; break;
+case SYMS_CoffRelocTypeARM64_ADDR64: result = 13; break;
+case SYMS_CoffRelocTypeARM64_BRANCH19: result = 14; break;
+case SYMS_CoffRelocTypeARM64_BRANCH14: result = 15; break;
+case SYMS_CoffRelocTypeARM64_REL32: result = 16; break;
+}
+return(result);
+}
 // syms_enum_index_from_coffsymtype - skipped identity mapping
 SYMS_API SYMS_U64
 syms_enum_index_from_coffsymstorageclass(SYMS_U64 v){
@@ -359,6 +385,7 @@ return(result);
 }
 // syms_enum_index_from_coff_import_header_type - skipped identity mapping
 // syms_enum_index_from_coff_import_header_name_type - skipped identity mapping
+// syms_enum_index_from_coff_comdat_select_type - skipped identity mapping
 
 //~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:1322
 SYMS_SerialFlag _syms_serial_members_for_SYMS_CoffFlags[] = {
@@ -441,6 +468,9 @@ SYMS_SerialFlag _syms_serial_members_for_SYMS_CoffSectionFlags[] = {
 { { (SYMS_U8*)"LNK_REMOVE", 10 }, &_syms_serial_type_SYMS_U32, 0x1, 11 },
 { { (SYMS_U8*)"COMDAT", 6 }, &_syms_serial_type_SYMS_U32, 0x1, 12 },
 { { (SYMS_U8*)"GPREL", 5 }, &_syms_serial_type_SYMS_U32, 0x1, 15 },
+{ { (SYMS_U8*)"16-bit MODE", 11 }, &_syms_serial_type_SYMS_U32, 0x1, 17 },
+{ { (SYMS_U8*)"Locked", 6 }, &_syms_serial_type_SYMS_U32, 0x1, 18 },
+{ { (SYMS_U8*)"Preload", 7 }, &_syms_serial_type_SYMS_U32, 0x1, 19 },
 { { (SYMS_U8*)"ALIGN", 5 }, &_syms_serial_type_SYMS_CoffSectionAlign, 0xf, 20 },
 { { (SYMS_U8*)"NRELOC OVFL", 11 }, &_syms_serial_type_SYMS_U32, 0x1, 24 },
 { { (SYMS_U8*)"Discardable", 11 }, &_syms_serial_type_SYMS_U32, 0x1, 25 },
@@ -451,16 +481,16 @@ SYMS_SerialFlag _syms_serial_members_for_SYMS_CoffSectionFlags[] = {
 { { (SYMS_U8*)"Read", 4 }, &_syms_serial_type_SYMS_U32, 0x1, 30 },
 { { (SYMS_U8*)"Write", 5 }, &_syms_serial_type_SYMS_U32, 0x1, 31 },
 };
-static SYMS_SerialField _syms_serial_members_for_SYMS_CoffSection[] = {
+static SYMS_SerialField _syms_serial_members_for_SYMS_CoffSectionHeader[] = {
 { {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_Fixed, 8 },
 { {(SYMS_U8*)"virt_size", 9}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"virt_off", 8}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"file_size", 9}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"file_off", 8}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"relocs_file_offset", 18}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"line_nums_file_offset", 21}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"relocs_count", 12}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"line_nums_count", 15}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"relocs_file_off", 15}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"lines_file_off", 14}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"reloc_count", 11}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"line_count", 10}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"flags", 5}, &_syms_serial_type_SYMS_CoffSectionFlags, SYMS_SerialWidthKind_Null, 0 },
 };
 SYMS_SerialValue _syms_serial_members_for_SYMS_CoffRelocTypeX64[] = {
@@ -525,6 +555,25 @@ SYMS_SerialValue _syms_serial_members_for_SYMS_CoffRelocTypeARM[] = {
 { { (SYMS_U8*)"THUMB_BRANCH24", 14 }, (SYMS_U64)SYMS_CoffRelocTypeARM_THUMB_BRANCH24 },
 { { (SYMS_U8*)"THUMB_BLX23", 11 }, (SYMS_U64)SYMS_CoffRelocTypeARM_THUMB_BLX23 },
 { { (SYMS_U8*)"PAIR", 4 }, (SYMS_U64)SYMS_CoffRelocTypeARM_PAIR },
+};
+SYMS_SerialValue _syms_serial_members_for_SYMS_CoffRelocTypeARM64[] = {
+{ { (SYMS_U8*)"ABS", 3 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_ABS },
+{ { (SYMS_U8*)"ADDR32", 6 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_ADDR32 },
+{ { (SYMS_U8*)"ADDR32NB", 8 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_ADDR32NB },
+{ { (SYMS_U8*)"BRANCH26", 8 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_BRANCH26 },
+{ { (SYMS_U8*)"PAGEBASE_REL21", 14 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_PAGEBASE_REL21 },
+{ { (SYMS_U8*)"REL21", 5 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_REL21 },
+{ { (SYMS_U8*)"PAGEOFFSET_12A", 14 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_PAGEOFFSET_12A },
+{ { (SYMS_U8*)"SECREL", 6 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_SECREL },
+{ { (SYMS_U8*)"SECREL_LOW12A", 13 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_SECREL_LOW12A },
+{ { (SYMS_U8*)"SECREL_HIGH12A", 14 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_SECREL_HIGH12A },
+{ { (SYMS_U8*)"SECREL_LOW12L", 13 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_SECREL_LOW12L },
+{ { (SYMS_U8*)"TOKEN", 5 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_TOKEN },
+{ { (SYMS_U8*)"SECTION", 7 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_SECTION },
+{ { (SYMS_U8*)"ADDR64", 6 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_ADDR64 },
+{ { (SYMS_U8*)"BRANCH19", 8 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_BRANCH19 },
+{ { (SYMS_U8*)"BRANCH14", 8 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_BRANCH14 },
+{ { (SYMS_U8*)"REL32", 5 }, (SYMS_U64)SYMS_CoffRelocTypeARM64_REL32 },
 };
 SYMS_SerialValue _syms_serial_members_for_SYMS_CoffSymType[] = {
 { { (SYMS_U8*)"NULL", 4 }, (SYMS_U64)SYMS_CoffSymType_NULL },
@@ -600,6 +649,15 @@ SYMS_SerialValue _syms_serial_members_for_SYMS_CoffImportHeaderNameType[] = {
 { { (SYMS_U8*)"NAME_NOPREFIX", 13 }, (SYMS_U64)SYMS_CoffImportHeaderNameType_NAME_NOPREFIX },
 { { (SYMS_U8*)"UNDECORATE", 10 }, (SYMS_U64)SYMS_CoffImportHeaderNameType_UNDECORATE },
 };
+SYMS_SerialValue _syms_serial_members_for_SYMS_CoffComdatSelectType[] = {
+{ { (SYMS_U8*)"NULL", 4 }, (SYMS_U64)SYMS_CoffComdatSelectType_NULL },
+{ { (SYMS_U8*)"NODUPLICATES", 12 }, (SYMS_U64)SYMS_CoffComdatSelectType_NODUPLICATES },
+{ { (SYMS_U8*)"ANY", 3 }, (SYMS_U64)SYMS_CoffComdatSelectType_ANY },
+{ { (SYMS_U8*)"SAME_SIZE", 9 }, (SYMS_U64)SYMS_CoffComdatSelectType_SAME_SIZE },
+{ { (SYMS_U8*)"EXACT_MATCH", 11 }, (SYMS_U64)SYMS_CoffComdatSelectType_EXACT_MATCH },
+{ { (SYMS_U8*)"ASSOCIATIVE", 11 }, (SYMS_U64)SYMS_CoffComdatSelectType_ASSOCIATIVE },
+{ { (SYMS_U8*)"LARGEST", 7 }, (SYMS_U64)SYMS_CoffComdatSelectType_LARGEST },
+};
 
 //~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:1458
 SYMS_SerialType _syms_serial_type_SYMS_CoffFlags = {
@@ -617,8 +675,8 @@ SYMS_SerialType _syms_serial_type_SYMS_CoffSectionAlign = {
 SYMS_SerialType _syms_serial_type_SYMS_CoffSectionFlags = {
 {(SYMS_U8*)"SYMS_CoffSectionFlags", 21}, SYMS_SerialTypeKind_Flags, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffSectionFlags), _syms_serial_members_for_SYMS_CoffSectionFlags, sizeof(SYMS_CoffSectionFlags), 0
 };
-SYMS_SerialType _syms_serial_type_SYMS_CoffSection = {
-{(SYMS_U8*)"CoffSection", 11}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffSection), _syms_serial_members_for_SYMS_CoffSection, sizeof(SYMS_CoffSection), 0
+SYMS_SerialType _syms_serial_type_SYMS_CoffSectionHeader = {
+{(SYMS_U8*)"CoffSectionHeader", 17}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffSectionHeader), _syms_serial_members_for_SYMS_CoffSectionHeader, sizeof(SYMS_CoffSectionHeader), 0
 };
 SYMS_SerialType _syms_serial_type_SYMS_CoffRelocTypeX64 = {
 {(SYMS_U8*)"SYMS_CoffRelocTypeX64", 21}, SYMS_SerialTypeKind_Enum, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffRelocTypeX64), _syms_serial_members_for_SYMS_CoffRelocTypeX64, sizeof(SYMS_CoffRelocTypeX64), syms_enum_index_from_value_identity
@@ -630,7 +688,7 @@ SYMS_SerialType _syms_serial_type_SYMS_CoffRelocTypeARM = {
 {(SYMS_U8*)"SYMS_CoffRelocTypeARM", 21}, SYMS_SerialTypeKind_Enum, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffRelocTypeARM), _syms_serial_members_for_SYMS_CoffRelocTypeARM, sizeof(SYMS_CoffRelocTypeARM), syms_enum_index_from_coffreloctypearm
 };
 SYMS_SerialType _syms_serial_type_SYMS_CoffRelocTypeARM64 = {
-{(SYMS_U8*)"SYMS_CoffRelocTypeARM64", 23}, SYMS_SerialTypeKind_Enum, 0, 0, sizeof(SYMS_CoffRelocTypeARM64), syms_enum_index_from_value_identity
+{(SYMS_U8*)"SYMS_CoffRelocTypeARM64", 23}, SYMS_SerialTypeKind_Enum, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffRelocTypeARM64), _syms_serial_members_for_SYMS_CoffRelocTypeARM64, sizeof(SYMS_CoffRelocTypeARM64), syms_enum_index_from_coffreloctypearm64
 };
 SYMS_SerialType _syms_serial_type_SYMS_CoffSymType = {
 {(SYMS_U8*)"SYMS_CoffSymType", 16}, SYMS_SerialTypeKind_Enum, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffSymType), _syms_serial_members_for_SYMS_CoffSymType, sizeof(SYMS_CoffSymType), syms_enum_index_from_value_identity
@@ -652,6 +710,9 @@ SYMS_SerialType _syms_serial_type_SYMS_CoffImportHeaderType = {
 };
 SYMS_SerialType _syms_serial_type_SYMS_CoffImportHeaderNameType = {
 {(SYMS_U8*)"SYMS_CoffImportHeaderNameType", 29}, SYMS_SerialTypeKind_Enum, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffImportHeaderNameType), _syms_serial_members_for_SYMS_CoffImportHeaderNameType, sizeof(SYMS_CoffImportHeaderNameType), syms_enum_index_from_value_identity
+};
+SYMS_SerialType _syms_serial_type_SYMS_CoffComdatSelectType = {
+{(SYMS_U8*)"SYMS_CoffComdatSelectType", 25}, SYMS_SerialTypeKind_Enum, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CoffComdatSelectType), _syms_serial_members_for_SYMS_CoffComdatSelectType, sizeof(SYMS_CoffComdatSelectType), syms_enum_index_from_value_identity
 };
 
 #endif // defined(SYMS_ENABLE_COFF_SERIAL_INFO)
@@ -2079,6 +2140,8 @@ case SYMS_CvSubSectionKind_FUNC_MDTOKEN_MAP: result = 9; break;
 case SYMS_CvSubSectionKind_TYPE_MDTOKEN_MAP: result = 10; break;
 case SYMS_CvSubSectionKind_MERGED_ASSEMBLY_INPUT: result = 11; break;
 case SYMS_CvSubSectionKind_COFF_SYMBOL_RVA: result = 12; break;
+case SYMS_CvSubSectionKind_XFG_HASH_TYPE: result = 13; break;
+case SYMS_CvSubSectionKind_XFG_HASH_VRITUAL: result = 14; break;
 }
 return(result);
 }
@@ -2156,6 +2219,7 @@ SYMS_SerialType* result = 0;
 switch (v){
 default: break;
 case SYMS_CvLeaf_PRECOMP: result = &_syms_serial_type_SYMS_CvLeafPreComp; break;
+case SYMS_CvLeaf_TYPESERVER: result = &_syms_serial_type_SYMS_CvLeafTypeServer; break;
 case SYMS_CvLeaf_TYPESERVER2: result = &_syms_serial_type_SYMS_CvLeafTypeServer2; break;
 case SYMS_CvLeaf_BUILDINFO: result = &_syms_serial_type_SYMS_CvLeafBuildInfo; break;
 case SYMS_CvLeaf_SKIP_16t: result = &_syms_serial_type_SYMS_CvLeafSkip_16t; break;
@@ -2188,6 +2252,7 @@ result = &_syms_serial_type_SYMS_CvLeafVBClass; break;
 case SYMS_CvLeaf_VFUNCTAB: result = &_syms_serial_type_SYMS_CvLeafVFuncTab; break;
 case SYMS_CvLeaf_VFUNCOFF: result = &_syms_serial_type_SYMS_CvLeafVFuncOff; break;
 case SYMS_CvLeaf_VFTABLE: result = &_syms_serial_type_SYMS_CvLeafVFTable; break;
+case SYMS_CvLeaf_VFTPATH: result = &_syms_serial_type_SYMS_CvLeafVFPath; break;
 case SYMS_CvLeaf_FUNC_ID: result = &_syms_serial_type_SYMS_CvLeafFuncId; break;
 case SYMS_CvLeaf_MFUNC_ID: result = &_syms_serial_type_SYMS_CvLeafMFuncId; break;
 case SYMS_CvLeaf_STRING_ID: result = &_syms_serial_type_SYMS_CvLeafStringId; break;
@@ -3475,19 +3540,18 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvCompile2[] = {
 };
 SYMS_SerialFlag _syms_serial_members_for_SYMS_CvCompile3Flags[] = {
 { { (SYMS_U8*)"Language", 8 }, &_syms_serial_type_SYMS_CvLanguage, 0xff, 0 },
-{ { (SYMS_U8*)"unused_1", 8 }, &_syms_serial_type_SYMS_U32, 0x1, 8 },
-{ { (SYMS_U8*)"Compiled for edit and continue", 30 }, &_syms_serial_type_SYMS_U32, 0x1, 9 },
-{ { (SYMS_U8*)"Does not have debug info", 24 }, &_syms_serial_type_SYMS_U32, 0x1, 10 },
-{ { (SYMS_U8*)"Compiled with /LTCG", 19 }, &_syms_serial_type_SYMS_U32, 0x1, 11 },
-{ { (SYMS_U8*)"Compiled with /bzalign", 22 }, &_syms_serial_type_SYMS_U32, 0x1, 12 },
-{ { (SYMS_U8*)"Managed code present", 20 }, &_syms_serial_type_SYMS_U32, 0x1, 13 },
-{ { (SYMS_U8*)"Compiled with /GS", 17 }, &_syms_serial_type_SYMS_U32, 0x1, 14 },
-{ { (SYMS_U8*)"Compiled with /hotpatch", 23 }, &_syms_serial_type_SYMS_U32, 0x1, 15 },
-{ { (SYMS_U8*)"Converted by CVTCIL", 19 }, &_syms_serial_type_SYMS_U32, 0x1, 16 },
-{ { (SYMS_U8*)"MSIL Module", 11 }, &_syms_serial_type_SYMS_U32, 0x1, 17 },
-{ { (SYMS_U8*)"Compiled with /sdl", 18 }, &_syms_serial_type_SYMS_U32, 0x1, 18 },
-{ { (SYMS_U8*)"Compiled with pgo", 17 }, &_syms_serial_type_SYMS_U32, 0x1, 19 },
-{ { (SYMS_U8*)".EXP Module", 11 }, &_syms_serial_type_SYMS_U32, 0x1, 20 },
+{ { (SYMS_U8*)"Compiled for edit and continue", 30 }, &_syms_serial_type_SYMS_U32, 0x1, 8 },
+{ { (SYMS_U8*)"Does not have debug info", 24 }, &_syms_serial_type_SYMS_U32, 0x1, 9 },
+{ { (SYMS_U8*)"Compiled with /LTCG", 19 }, &_syms_serial_type_SYMS_U32, 0x1, 10 },
+{ { (SYMS_U8*)"Compiled with /bzalign", 22 }, &_syms_serial_type_SYMS_U32, 0x1, 11 },
+{ { (SYMS_U8*)"Managed code present", 20 }, &_syms_serial_type_SYMS_U32, 0x1, 12 },
+{ { (SYMS_U8*)"Compiled with /GS", 17 }, &_syms_serial_type_SYMS_U32, 0x1, 13 },
+{ { (SYMS_U8*)"Compiled with /hotpatch", 23 }, &_syms_serial_type_SYMS_U32, 0x1, 14 },
+{ { (SYMS_U8*)"Converted by CVTCIL", 19 }, &_syms_serial_type_SYMS_U32, 0x1, 15 },
+{ { (SYMS_U8*)"MSIL Module", 11 }, &_syms_serial_type_SYMS_U32, 0x1, 16 },
+{ { (SYMS_U8*)"Compiled with /sdl", 18 }, &_syms_serial_type_SYMS_U32, 0x1, 17 },
+{ { (SYMS_U8*)"Compiled with pgo", 17 }, &_syms_serial_type_SYMS_U32, 0x1, 18 },
+{ { (SYMS_U8*)".EXP Module", 11 }, &_syms_serial_type_SYMS_U32, 0x1, 19 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvCompile3[] = {
 { {(SYMS_U8*)"flags", 5}, &_syms_serial_type_SYMS_CvCompile3Flags, SYMS_SerialWidthKind_Null, 0 },
@@ -3904,8 +3968,6 @@ SYMS_SerialFlag _syms_serial_members_for_SYMS_CvFastLinkFlags[] = {
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvFastLink[] = {
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"flags", 5}, &_syms_serial_type_SYMS_CvFastLinkFlags, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
-{ {(SYMS_U8*)"padding", 7}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 };
 SYMS_SerialValue _syms_serial_members_for_SYMS_CvArmSwitchType[] = {
 { { (SYMS_U8*)"INT1", 4 }, (SYMS_U64)SYMS_CvArmSwitchType_INT1 },
@@ -4309,6 +4371,11 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafPreComp[] = {
 { {(SYMS_U8*)"signature", 9}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
+static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafTypeServer[] = {
+{ {(SYMS_U8*)"sig", 3}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"age", 3}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
+};
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafTypeServer2[] = {
 { {(SYMS_U8*)"sig70", 5}, &_syms_serial_type_SYMS_CvGuid, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"age", 3}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
@@ -4316,7 +4383,7 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafTypeServer2[] = {
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafBuildInfo[] = {
 { {(SYMS_U8*)"count", 5}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"arg", 3}, &_syms_serial_type_SYMS_CvItemId, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"arg", 3}, &_syms_serial_type_SYMS_CvItemId, SYMS_SerialWidthKind_Array, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafSkip_16t[] = {
 { {(SYMS_U8*)"type", 4}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
@@ -4357,7 +4424,6 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafMFunction[] = {
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafArgList[] = {
 { {(SYMS_U8*)"count", 5}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"itypes", 6}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Array, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafBitField[] = {
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
@@ -4371,7 +4437,6 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafIndex[] = {
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafArray[] = {
 { {(SYMS_U8*)"entry_itype", 11}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"index_itype", 11}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"val", 3}, &_syms_serial_type_SYMS_PdbNumeric, SYMS_SerialWidthKind_PdbNumeric, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafStruct[] = {
 { {(SYMS_U8*)"count", 5}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
@@ -4379,26 +4444,20 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafStruct[] = {
 { {(SYMS_U8*)"field", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"derived", 7}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"vshape", 6}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"size", 4}, &_syms_serial_type_SYMS_PdbNumeric, SYMS_SerialWidthKind_PdbNumeric, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafUnion[] = {
 { {(SYMS_U8*)"count", 5}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"props", 5}, &_syms_serial_type_SYMS_CvTypeProps, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"field", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"size", 4}, &_syms_serial_type_SYMS_PdbNumeric, SYMS_SerialWidthKind_PdbNumeric, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafEnum[] = {
 { {(SYMS_U8*)"count", 5}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"props", 5}, &_syms_serial_type_SYMS_CvTypeProps, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"field", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafAlias[] = {
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafMember[] = {
 { {(SYMS_U8*)"attribs", 7}, &_syms_serial_type_SYMS_CvFieldAttribs, SYMS_SerialWidthKind_Null, 0 },
@@ -4411,10 +4470,14 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafStMember[] = {
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
+static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafMethodListMember[] = {
+{ {(SYMS_U8*)"attribs", 7}, &_syms_serial_type_SYMS_CvFieldAttribs, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"pad", 3}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"index", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
+};
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafMethod[] = {
 { {(SYMS_U8*)"count", 5}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"itype_list", 10}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafOneMethod[] = {
 { {(SYMS_U8*)"attribs", 7}, &_syms_serial_type_SYMS_CvFieldAttribs, SYMS_SerialWidthKind_Null, 0 },
@@ -4422,29 +4485,23 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafOneMethod[] = {
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafEnumerate[] = {
 { {(SYMS_U8*)"attribs", 7}, &_syms_serial_type_SYMS_CvFieldAttribs, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"val", 3}, &_syms_serial_type_SYMS_PdbNumeric, SYMS_SerialWidthKind_PdbNumeric, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafNestType[] = {
 { {(SYMS_U8*)"pad", 3}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"index", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafNestTypeEx[] = {
 { {(SYMS_U8*)"attribs", 7}, &_syms_serial_type_SYMS_CvFieldAttribs, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafBClass[] = {
 { {(SYMS_U8*)"attribs", 7}, &_syms_serial_type_SYMS_CvFieldAttribs, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"offset", 6}, &_syms_serial_type_SYMS_PdbNumeric, SYMS_SerialWidthKind_PdbNumeric, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafVBClass[] = {
 { {(SYMS_U8*)"attribs", 7}, &_syms_serial_type_SYMS_CvFieldAttribs, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"vbptr_itype", 11}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"vbptr_off", 9}, &_syms_serial_type_SYMS_PdbNumeric, SYMS_SerialWidthKind_PdbNumeric, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafVFuncTab[] = {
 { {(SYMS_U8*)"pad", 3}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
@@ -4460,17 +4517,17 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafVFTable[] = {
 { {(SYMS_U8*)"base_table_itype", 16}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"offset_in_object_layout", 23}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"names_len", 9}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
+};
+static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafVFPath[] = {
+{ {(SYMS_U8*)"count", 5}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafFuncId[] = {
 { {(SYMS_U8*)"scope_id", 8}, &_syms_serial_type_SYMS_CvItemId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvTypeId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafMFuncId[] = {
 { {(SYMS_U8*)"parent_itype", 12}, &_syms_serial_type_SYMS_CvItemId, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"itype", 5}, &_syms_serial_type_SYMS_CvItemId, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"name", 4}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_NullTerminated, 0 },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvLeafStringId[] = {
 { {(SYMS_U8*)"id", 2}, &_syms_serial_type_SYMS_CvItemId, SYMS_SerialWidthKind_Null, 0 },
@@ -4509,6 +4566,8 @@ SYMS_SerialValue _syms_serial_members_for_SYMS_CvSubSectionKind[] = {
 { { (SYMS_U8*)"TYPE_MDTOKEN_MAP", 16 }, (SYMS_U64)SYMS_CvSubSectionKind_TYPE_MDTOKEN_MAP },
 { { (SYMS_U8*)"MERGED_ASSEMBLY_INPUT", 21 }, (SYMS_U64)SYMS_CvSubSectionKind_MERGED_ASSEMBLY_INPUT },
 { { (SYMS_U8*)"COFF_SYMBOL_RVA", 15 }, (SYMS_U64)SYMS_CvSubSectionKind_COFF_SYMBOL_RVA },
+{ { (SYMS_U8*)"XFG_HASH_TYPE", 13 }, (SYMS_U64)SYMS_CvSubSectionKind_XFG_HASH_TYPE },
+{ { (SYMS_U8*)"XFG_HASH_VRITUAL", 16 }, (SYMS_U64)SYMS_CvSubSectionKind_XFG_HASH_VRITUAL },
 };
 static SYMS_SerialField _syms_serial_members_for_SYMS_CvSubSectionHeader[] = {
 { {(SYMS_U8*)"kind", 4}, &_syms_serial_type_SYMS_CvSubSectionKind, SYMS_SerialWidthKind_Null, 0 },
@@ -4892,6 +4951,9 @@ SYMS_SerialType _syms_serial_type_SYMS_CvCallKind = {
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafPreComp = {
 {(SYMS_U8*)"CvLeafPreComp", 13}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafPreComp), _syms_serial_members_for_SYMS_CvLeafPreComp, sizeof(SYMS_CvLeafPreComp), 0
 };
+SYMS_SerialType _syms_serial_type_SYMS_CvLeafTypeServer = {
+{(SYMS_U8*)"CvLeafTypeServer", 16}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafTypeServer), _syms_serial_members_for_SYMS_CvLeafTypeServer, sizeof(SYMS_CvLeafTypeServer), 0
+};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafTypeServer2 = {
 {(SYMS_U8*)"CvLeafTypeServer2", 17}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafTypeServer2), _syms_serial_members_for_SYMS_CvLeafTypeServer2, sizeof(SYMS_CvLeafTypeServer2), 0
 };
@@ -4952,6 +5014,9 @@ SYMS_SerialType _syms_serial_type_SYMS_CvLeafMember = {
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafStMember = {
 {(SYMS_U8*)"CvLeafStMember", 14}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafStMember), _syms_serial_members_for_SYMS_CvLeafStMember, sizeof(SYMS_CvLeafStMember), 0
 };
+SYMS_SerialType _syms_serial_type_SYMS_CvLeafMethodListMember = {
+{(SYMS_U8*)"CvLeafMethodListMember", 22}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafMethodListMember), _syms_serial_members_for_SYMS_CvLeafMethodListMember, sizeof(SYMS_CvLeafMethodListMember), 0
+};
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafMethod = {
 {(SYMS_U8*)"CvLeafMethod", 12}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafMethod), _syms_serial_members_for_SYMS_CvLeafMethod, sizeof(SYMS_CvLeafMethod), 0
 };
@@ -4981,6 +5046,9 @@ SYMS_SerialType _syms_serial_type_SYMS_CvLeafVFuncOff = {
 };
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafVFTable = {
 {(SYMS_U8*)"CvLeafVFTable", 13}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafVFTable), _syms_serial_members_for_SYMS_CvLeafVFTable, sizeof(SYMS_CvLeafVFTable), 0
+};
+SYMS_SerialType _syms_serial_type_SYMS_CvLeafVFPath = {
+{(SYMS_U8*)"CvLeafVFPath", 12}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafVFPath), _syms_serial_members_for_SYMS_CvLeafVFPath, sizeof(SYMS_CvLeafVFPath), 0
 };
 SYMS_SerialType _syms_serial_type_SYMS_CvLeafFuncId = {
 {(SYMS_U8*)"CvLeafFuncId", 12}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_CvLeafFuncId), _syms_serial_members_for_SYMS_CvLeafFuncId, sizeof(SYMS_CvLeafFuncId), 0
@@ -5095,7 +5163,7 @@ syms_enum_index_from_dwlanguage(SYMS_U64 v){
 SYMS_U64 result = 0;
 switch ((SYMS_U64)v){
 default: break;
-case SYMS_DwLanguage_INVALID: result = 0; break;
+case SYMS_DwLanguage_NULL: result = 0; break;
 case SYMS_DwLanguage_C89: result = 1; break;
 case SYMS_DwLanguage_C: result = 2; break;
 case SYMS_DwLanguage_Ada83: result = 3; break;
@@ -5133,8 +5201,12 @@ case SYMS_DwLanguage_Fortran03: result = 34; break;
 case SYMS_DwLanguage_Fortran08: result = 35; break;
 case SYMS_DwLanguage_RenderScript: result = 36; break;
 case SYMS_DwLanguage_BLISS: result = 37; break;
-case SYMS_DwLanguage_LO_USER: result = 38; break;
-case SYMS_DwLanguage_HI_USER: result = 39; break;
+case SYMS_DwLanguage_MIPS_ASSEMBLER: result = 38; break;
+case SYMS_DwLanguage_GOOGLE_RENDER_SCRIPT: result = 39; break;
+case SYMS_DwLanguage_SUN_ASSEMBLER: result = 40; break;
+case SYMS_DwLanguage_BORLAND_DELPHI: result = 41; break;
+case SYMS_DwLanguage_LO_USER: result = 42; break;
+case SYMS_DwLanguage_HI_USER: result = 43; break;
 }
 return(result);
 }
@@ -5473,8 +5545,25 @@ case SYMS_DwAttribKind_APPLE_OBJC_COMPLETE_TYPE: result = 176; break;
 case SYMS_DwAttribKind_APPLE_PROPERTY: result = 177; break;
 case SYMS_DwAttribKind_APPLE_OBJ_DIRECT: result = 178; break;
 case SYMS_DwAttribKind_APPLE_SDK: result = 179; break;
-case SYMS_DwAttribKind_LO_USER: result = 180; break;
-case SYMS_DwAttribKind_HI_USER: result = 181; break;
+case SYMS_DwAttribKind_MIPS_FDE: result = 180; break;
+case SYMS_DwAttribKind_MIPS_LOOP_BEGIN: result = 181; break;
+case SYMS_DwAttribKind_MIPS_TAIL_LOOP_BEGIN: result = 182; break;
+case SYMS_DwAttribKind_MIPS_EPILOG_BEGIN: result = 183; break;
+case SYMS_DwAttribKind_MIPS_LOOP_UNROLL_FACTOR: result = 184; break;
+case SYMS_DwAttribKind_MIPS_SOFTWARE_PIPELINE_DEPTH: result = 185; break;
+case SYMS_DwAttribKind_MIPS_LINKAGE_NAME: result = 186; break;
+case SYMS_DwAttribKind_MIPS_STRIDE: result = 187; break;
+case SYMS_DwAttribKind_MIPS_ABSTRACT_NAME: result = 188; break;
+case SYMS_DwAttribKind_MIPS_CLONE_ORIGIN: result = 189; break;
+case SYMS_DwAttribKind_MIPS_HAS_INLINES: result = 190; break;
+case SYMS_DwAttribKind_MIPS_STRIDE_BYTE: result = 191; break;
+case SYMS_DwAttribKind_MIPS_STRIDE_ELEM: result = 192; break;
+case SYMS_DwAttribKind_MIPS_PTR_DOPETYPE: result = 193; break;
+case SYMS_DwAttribKind_MIPS_ALLOCATABLE_DOPETYPE: result = 194; break;
+case SYMS_DwAttribKind_MIPS_ASSUMED_SHAPE_DOPETYPE: result = 195; break;
+case SYMS_DwAttribKind_MIPS_ASSUMED_SIZE: result = 196; break;
+case SYMS_DwAttribKind_LO_USER: result = 197; break;
+case SYMS_DwAttribKind_HI_USER: result = 198; break;
 }
 return(result);
 }
@@ -5547,7 +5636,7 @@ SYMS_SerialValue _syms_serial_members_for_SYMS_DwSectionKind[] = {
 { { (SYMS_U8*)"Names", 5 }, (SYMS_U64)SYMS_DwSectionKind_Names },
 };
 SYMS_SerialValue _syms_serial_members_for_SYMS_DwLanguage[] = {
-{ { (SYMS_U8*)"INVALID", 7 }, (SYMS_U64)SYMS_DwLanguage_INVALID },
+{ { (SYMS_U8*)"NULL", 4 }, (SYMS_U64)SYMS_DwLanguage_NULL },
 { { (SYMS_U8*)"C89", 3 }, (SYMS_U64)SYMS_DwLanguage_C89 },
 { { (SYMS_U8*)"C", 1 }, (SYMS_U64)SYMS_DwLanguage_C },
 { { (SYMS_U8*)"ADA83", 5 }, (SYMS_U64)SYMS_DwLanguage_Ada83 },
@@ -5585,6 +5674,10 @@ SYMS_SerialValue _syms_serial_members_for_SYMS_DwLanguage[] = {
 { { (SYMS_U8*)"FORTRAN08", 9 }, (SYMS_U64)SYMS_DwLanguage_Fortran08 },
 { { (SYMS_U8*)"RENDERSCRIPT", 12 }, (SYMS_U64)SYMS_DwLanguage_RenderScript },
 { { (SYMS_U8*)"BLISS", 5 }, (SYMS_U64)SYMS_DwLanguage_BLISS },
+{ { (SYMS_U8*)"MIPS Assembler", 14 }, (SYMS_U64)SYMS_DwLanguage_MIPS_ASSEMBLER },
+{ { (SYMS_U8*)"Google Render Script", 20 }, (SYMS_U64)SYMS_DwLanguage_GOOGLE_RENDER_SCRIPT },
+{ { (SYMS_U8*)"Sun Assembler", 13 }, (SYMS_U64)SYMS_DwLanguage_SUN_ASSEMBLER },
+{ { (SYMS_U8*)"Borland Delphi", 14 }, (SYMS_U64)SYMS_DwLanguage_BORLAND_DELPHI },
 { { (SYMS_U8*)"LO_USER", 7 }, (SYMS_U64)SYMS_DwLanguage_LO_USER },
 { { (SYMS_U8*)"HI_USER", 7 }, (SYMS_U64)SYMS_DwLanguage_HI_USER },
 };
@@ -5938,6 +6031,23 @@ SYMS_SerialValue _syms_serial_members_for_SYMS_DwAttribKind[] = {
 { { (SYMS_U8*)"APPLE_PROPERTY", 14 }, (SYMS_U64)SYMS_DwAttribKind_APPLE_PROPERTY },
 { { (SYMS_U8*)"APPLE_OBJ_DIRECT", 16 }, (SYMS_U64)SYMS_DwAttribKind_APPLE_OBJ_DIRECT },
 { { (SYMS_U8*)"APPLE_SDK", 9 }, (SYMS_U64)SYMS_DwAttribKind_APPLE_SDK },
+{ { (SYMS_U8*)"MIPS_FDE", 8 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_FDE },
+{ { (SYMS_U8*)"MIPS_LOOP_BEGIN", 15 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_LOOP_BEGIN },
+{ { (SYMS_U8*)"MIPS_TAIL_LOOP_BEGIN", 20 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_TAIL_LOOP_BEGIN },
+{ { (SYMS_U8*)"MIPS_EPILOG_BEGIN", 17 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_EPILOG_BEGIN },
+{ { (SYMS_U8*)"MIPS_LOOP_UNROLL_FACTOR", 23 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_LOOP_UNROLL_FACTOR },
+{ { (SYMS_U8*)"MIPS_SOFTWARE_PIPELINE_DEPTH", 28 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_SOFTWARE_PIPELINE_DEPTH },
+{ { (SYMS_U8*)"MIPS_LINKAGE_NAME", 17 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_LINKAGE_NAME },
+{ { (SYMS_U8*)"MIPS_STRIDE", 11 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_STRIDE },
+{ { (SYMS_U8*)"MIPS_ABSTRACT_NAME", 18 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_ABSTRACT_NAME },
+{ { (SYMS_U8*)"MIPS_CLONE_ORIGIN", 17 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_CLONE_ORIGIN },
+{ { (SYMS_U8*)"MIPS_HAS_INLINES", 16 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_HAS_INLINES },
+{ { (SYMS_U8*)"MIPS_STRIDE_BYTE", 16 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_STRIDE_BYTE },
+{ { (SYMS_U8*)"MIPS_STRIDE_ELEM", 16 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_STRIDE_ELEM },
+{ { (SYMS_U8*)"MIPS_PTR_DOPETYPE", 17 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_PTR_DOPETYPE },
+{ { (SYMS_U8*)"MIPS_ALLOCATABLE_DOPETYPE", 25 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_ALLOCATABLE_DOPETYPE },
+{ { (SYMS_U8*)"MIPS_ASSUMED_SHAPE_DOPETYPE", 27 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_ASSUMED_SHAPE_DOPETYPE },
+{ { (SYMS_U8*)"MIPS_ASSUMED_SIZE", 17 }, (SYMS_U64)SYMS_DwAttribKind_MIPS_ASSUMED_SIZE },
 { { (SYMS_U8*)"LO_USER", 7 }, (SYMS_U64)SYMS_DwAttribKind_LO_USER },
 { { (SYMS_U8*)"HI_USER", 7 }, (SYMS_U64)SYMS_DwAttribKind_HI_USER },
 };
@@ -9283,7 +9393,7 @@ SYMS_SerialFlag _syms_serial_members_for_SYMS_DllCharacteristics[] = {
 { { (SYMS_U8*)"Guard CF", 8 }, &_syms_serial_type_SYMS_U16, 0x1, 14 },
 { { (SYMS_U8*)"Terminal Server Aware", 21 }, &_syms_serial_type_SYMS_U16, 0x1, 15 },
 };
-static SYMS_SerialField _syms_serial_members_for_SYMS_PeOptionalPe32[] = {
+static SYMS_SerialField _syms_serial_members_for_SYMS_PeOptionalHeader32[] = {
 { {(SYMS_U8*)"magic", 5}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"major_linker_version", 20}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"minor_linker_version", 20}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_Null, 0 },
@@ -9315,7 +9425,7 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_PeOptionalPe32[] = {
 { {(SYMS_U8*)"loader_flags", 12}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"data_dir_count", 14}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 };
-static SYMS_SerialField _syms_serial_members_for_SYMS_PeOptionalPe32Plus[] = {
+static SYMS_SerialField _syms_serial_members_for_SYMS_PeOptionalHeader32Plus[] = {
 { {(SYMS_U8*)"magic", 5}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"major_linker_version", 20}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"minor_linker_version", 20}, &_syms_serial_type_SYMS_U8, SYMS_SerialWidthKind_Null, 0 },
@@ -9337,7 +9447,7 @@ static SYMS_SerialField _syms_serial_members_for_SYMS_PeOptionalPe32Plus[] = {
 { {(SYMS_U8*)"sizeof_image", 12}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"sizeof_headers", 14}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"check_sum", 9}, &_syms_serial_type_SYMS_U32, SYMS_SerialWidthKind_Null, 0 },
-{ {(SYMS_U8*)"subsystem", 9}, &_syms_serial_type_SYMS_U16, SYMS_SerialWidthKind_Null, 0 },
+{ {(SYMS_U8*)"subsystem", 9}, &_syms_serial_type_SYMS_PeWindowsSubsystem, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"dll_characteristics", 19}, &_syms_serial_type_SYMS_DllCharacteristics, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"sizeof_stack_reserve", 20}, &_syms_serial_type_SYMS_U64, SYMS_SerialWidthKind_Null, 0 },
 { {(SYMS_U8*)"sizeof_stack_commit", 19}, &_syms_serial_type_SYMS_U64, SYMS_SerialWidthKind_Null, 0 },
@@ -9462,7 +9572,8 @@ SYMS_SerialFlag _syms_serial_members_for_SYMS_PeLoadConfigGuardFlags[] = {
 { { (SYMS_U8*)"CF_EXPORT_SUPPRESSION_INFO_PRESENT", 34 }, &_syms_serial_type_SYMS_U32, 0x1, 14 },
 { { (SYMS_U8*)"CF_ENABLE_EXPORT_SUPPRESSION", 28 }, &_syms_serial_type_SYMS_U32, 0x1, 15 },
 { { (SYMS_U8*)"CF_LONGJUMP_TABLE_PRESENT", 25 }, &_syms_serial_type_SYMS_U32, 0x1, 16 },
-{ { (SYMS_U8*)"CF_FUNCTION_TABLE_SIZE", 22 }, &_syms_serial_type_SYMS_U32, 0xf, 20 },
+{ { (SYMS_U8*)"EH_CONTINUATION_TABLE_PRESENT", 29 }, &_syms_serial_type_SYMS_U32, 0x1, 22 },
+{ { (SYMS_U8*)"CF_FUNCTION_TABLE_SIZE", 22 }, &_syms_serial_type_SYMS_U32, 0xf, 28 },
 };
 
 //~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:1458
@@ -9478,11 +9589,11 @@ SYMS_SerialType _syms_serial_type_SYMS_ImageFileCharacteristics = {
 SYMS_SerialType _syms_serial_type_SYMS_DllCharacteristics = {
 {(SYMS_U8*)"SYMS_DllCharacteristics", 23}, SYMS_SerialTypeKind_Flags, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_DllCharacteristics), _syms_serial_members_for_SYMS_DllCharacteristics, sizeof(SYMS_DllCharacteristics), 0
 };
-SYMS_SerialType _syms_serial_type_SYMS_PeOptionalPe32 = {
-{(SYMS_U8*)"PeOptionalPe32", 14}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_PeOptionalPe32), _syms_serial_members_for_SYMS_PeOptionalPe32, sizeof(SYMS_PeOptionalPe32), 0
+SYMS_SerialType _syms_serial_type_SYMS_PeOptionalHeader32 = {
+{(SYMS_U8*)"PeOptionalHeader32", 18}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_PeOptionalHeader32), _syms_serial_members_for_SYMS_PeOptionalHeader32, sizeof(SYMS_PeOptionalHeader32), 0
 };
-SYMS_SerialType _syms_serial_type_SYMS_PeOptionalPe32Plus = {
-{(SYMS_U8*)"PeOptionalPe32Plus", 18}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_PeOptionalPe32Plus), _syms_serial_members_for_SYMS_PeOptionalPe32Plus, sizeof(SYMS_PeOptionalPe32Plus), 0
+SYMS_SerialType _syms_serial_type_SYMS_PeOptionalHeader32Plus = {
+{(SYMS_U8*)"PeOptionalHeader32Plus", 22}, SYMS_SerialTypeKind_Struct, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_PeOptionalHeader32Plus), _syms_serial_members_for_SYMS_PeOptionalHeader32Plus, sizeof(SYMS_PeOptionalHeader32Plus), 0
 };
 SYMS_SerialType _syms_serial_type_SYMS_PeDataDirectoryIndex = {
 {(SYMS_U8*)"SYMS_PeDataDirectoryIndex", 25}, SYMS_SerialTypeKind_Enum, SYMS_ARRAY_SIZE(_syms_serial_members_for_SYMS_PeDataDirectoryIndex), _syms_serial_members_for_SYMS_PeDataDirectoryIndex, sizeof(SYMS_PeDataDirectoryIndex), syms_enum_index_from_value_identity

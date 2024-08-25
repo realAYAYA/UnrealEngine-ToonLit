@@ -3,6 +3,7 @@
 #include "Online/AchievementsEOSGS.h"
 
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/AchievementsErrors.h"
 #include "Online/AuthEOSGS.h"
 #include "Online/OnlineErrorEOSGS.h"
@@ -22,7 +23,7 @@ void FAchievementsEOSGS::Initialize()
 {
 	Super::Initialize();
 
-	AchievementsHandle = EOS_Platform_GetAchievementsInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	AchievementsHandle = EOS_Platform_GetAchievementsInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(AchievementsHandle);
 
 	// Register for achievement unlocked events

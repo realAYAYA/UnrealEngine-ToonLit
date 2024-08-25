@@ -17,13 +17,7 @@
 // reflects some kind of structure in the format.
 
 ////////////////////////////////
-//~ NOTE(allen): PDB's Prerequisite Formats
-
-#include "syms/core/pdb/syms_cv.h"
-#include "syms/core/pdb/syms_msf.h"
-
-////////////////////////////////
-//~ NOTE(allen): PDB Format Types
+//~ allen: PDB Format Types
 
 typedef SYMS_U32 SYMS_PdbVersion;
 enum{
@@ -70,9 +64,13 @@ typedef struct SYMS_PdbInfoHeader{
 } SYMS_PdbInfoHeader;
 
 ////////////////////////////////
-//~ NOTE(allen): PDB DBI Format Types
+//~ allen: PDB DBI Format Types
 
 //- "STRTABLE" named stream contains a string table
+
+enum{
+  SYMS_PdbDbiStrTableHeader_MAGIC = 0xEFFEEFFE
+};
 
 typedef struct SYMS_PdbDbiStrTableHeader{
   SYMS_U32 magic;
@@ -112,9 +110,12 @@ enum{
 };
 
 typedef SYMS_U16 SYMS_PdbDbiBuildNumber;
+#define SYMS_PdbDbiBuildNumberNewFormatFlag 0x8000
 #define SYMS_PdbDbiBuildNumberMinor(bn) ((bn)&0xFF)
 #define SYMS_PdbDbiBuildNumberMajor(bn) (((bn) >> 8)&0x7F)
-#define SYMS_PdbDbiBuildNumberNewFormat(bn) (!!((bn)&0x8000))
+#define SYMS_PdbDbiBuildNumberNewFormat(bn) (!!((bn)&SYMS_PdbDbiBuildNumberNewFormatFlag))
+#define SYMS_PdbDbiBuildNumber(maj, min) \
+((SYMS_PdbDbiBuildNumber)(SYMS_PdbDbiBuildNumberNewFormatFlag | ((min)&0xFF) | (((maj)&0x7F) << 16)))
 
 typedef SYMS_U16 SYMS_PdbDbiHeaderFlags;
 enum{
@@ -228,7 +229,7 @@ typedef enum SYMS_PdbCompUnitRange{
 } SYMS_PdbCompUnitRange;
 
 ////////////////////////////////
-//~ NOTE(allen): PDB TPI Format Types
+//~ allen: PDB TPI Format Types
 
 // "TPI" and "IPI" fixed streams contain type/information in these structures
 
@@ -267,7 +268,7 @@ typedef struct SYMS_PdbTpiOffHint{
 } SYMS_PdbTpiOffHint;
 
 ////////////////////////////////
-//~ NOTE(allen): PDB GSI Format Types
+//~ allen: PDB GSI Format Types
 
 // "gsi" and "psi" streams contain symbol lookup tables in these types
 
@@ -293,6 +294,7 @@ typedef struct SYMS_PdbGsiHashRecord{
   SYMS_U32 cref;
 } SYMS_PdbGsiHashRecord;
 
+// TODO(allen): ?
 // NOTE(nick): This is a crutch that helps serialize in-memory GSI buckets that use 64bit pointers for next HR.
 typedef struct SYMS_PdbGsiHrOffsetCalc{
   SYMS_U32 next;
@@ -312,7 +314,7 @@ typedef struct SYMS_PdbPsiHeader{
 } SYMS_PdbPsiHeader;
 
 ////////////////////////////////
-//~ NOTE(allen): PDB Hash Function
+//~ allen: PDB Hash Function
 
 SYMS_API SYMS_U32 syms_pdb_hashV1(SYMS_String8 string);
 

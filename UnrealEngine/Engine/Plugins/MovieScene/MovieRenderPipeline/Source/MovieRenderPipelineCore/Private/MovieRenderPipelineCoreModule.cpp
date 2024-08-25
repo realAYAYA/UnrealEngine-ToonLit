@@ -8,6 +8,8 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "MoviePipeline.h"
+#include "Graph/MovieGraphPipeline.h"
+#include "Graph/Nodes/MovieGraphBurnInNode.h"
 
 FName IMoviePipelineBurnInExtension::ModularFeatureName = "ModularFeature_MoviePipelineBurnInExt";
 
@@ -18,13 +20,14 @@ void FMovieRenderPipelineCoreModule::StartupModule()
 	{
 		TArray<FString> Assets;
 		Assets.Add(UMoviePipeline::DefaultDebugWidgetAsset);
+		Assets.Add(UMovieGraphPipeline::DefaultPreviewWidgetAsset);
+		Assets.Add(UMovieGraphBurnInNode::DefaultBurnInWidgetAsset);
 
 		for (const FString& Asset : Assets)
 		{
 			TSoftObjectPtr<UObject> AssetRef = TSoftObjectPtr<UObject>(FSoftObjectPath(Asset));
 			AssetRef.LoadSynchronous();
 		}
-
 	}
 #endif
 
@@ -60,6 +63,12 @@ void FMovieRenderPipelineCoreModule::QueueInitialize(UWorld* InWorld)
 
 void FMovieRenderPipelineCoreModule::ShutdownModule()
 {
+}
+
+void FMovieRenderPipelineCoreModule::SetTickInfo(const FMoviePipelineLightweightTickInfo& InTickInfo)
+{
+	FMovieRenderPipelineCoreModule& MRQModule = FModuleManager::Get().GetModuleChecked<FMovieRenderPipelineCoreModule>("MovieRenderPipelineCore");
+	MRQModule.TickInfo = InTickInfo;
 }
 
 IMPLEMENT_MODULE(FMovieRenderPipelineCoreModule, MovieRenderPipelineCore);

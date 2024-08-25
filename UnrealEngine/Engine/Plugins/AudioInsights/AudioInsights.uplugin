@@ -1,0 +1,41 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "AudioInsights",
+	"Description": "Suite of tools to profile, debug, and monitor aspects of audio in the Unreal Engine.",
+	"Category": "Audio",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules":
+	[
+		{
+			"Name": "AudioInsights",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformAllowList":
+			[
+				"Win64",
+				"Mac"
+			]
+		}
+	],
+	"Plugins":
+	[
+		{
+			"Name": "AudioWidgets",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayInsights",
+			"Enabled": true
+		}
+	]
+}

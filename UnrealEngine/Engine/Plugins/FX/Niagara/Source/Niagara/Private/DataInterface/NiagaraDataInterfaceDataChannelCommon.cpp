@@ -206,6 +206,12 @@ void FNDIDataChannelCompiledData::GatherAccessInfo(UNiagaraSystem* System, UNiag
 			}
 		}
 		bUsedByCPU = true;
+
+		if(BindingInfo.Name == NDIDataChannelUtilities::GetNDCSpawnDataName)
+		{
+			bNeedsSpawnDataTable = true;
+		}
+
 		return true;
 	};
 	FNiagaraDataInterfaceUtilities::ForEachVMFunction(Owner, System, HandleVMFunc);
@@ -232,6 +238,11 @@ void FNDIDataChannelCompiledData::GatherAccessInfo(UNiagaraSystem* System, UNiag
 			}
 		}
 		bUsedByGPU = true;
+
+		if (BindingInfo.DefinitionName == TEXT("GetNDCSpawnData"))
+		{
+			bNeedsSpawnDataTable = true;
+		}
 		return true;
 	};
 	FNiagaraDataInterfaceUtilities::ForEachGpuFunction(Owner, System, HandleGpuFunc);
@@ -276,6 +287,8 @@ int32 FNDIDataChannelCompiledData::FindFunctionInfoIndex(FName Name, const TArra
 
 namespace NDIDataChannelUtilities
 {
+	const FName GetNDCSpawnDataName(TEXT("GetNDCSpawnData"));
+
 	void SortParameters(TArray<FNiagaraVariableBase>& Parameters)
 	{
 		Parameters.Sort([](const FNiagaraVariableBase& Lhs, const FNiagaraVariableBase& Rhs)

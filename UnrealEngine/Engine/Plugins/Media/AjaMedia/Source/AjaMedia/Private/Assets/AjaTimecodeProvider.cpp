@@ -186,8 +186,9 @@ ETickableTickType UAjaTimecodeProvider::GetTickableTickType() const
 {
 #if WITH_EDITORONLY_DATA && WITH_EDITOR
 	return ETickableTickType::Conditional;
-#endif
+#else
 	return ETickableTickType::Never;
+#endif
 }
 
 bool UAjaTimecodeProvider::IsTickable() const

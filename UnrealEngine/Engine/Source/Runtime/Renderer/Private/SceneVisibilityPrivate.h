@@ -18,15 +18,7 @@ class FGPUOcclusionParallel;
 class FGPUOcclusionParallelPacket;
 class FRelevancePacket;
 class FVisibilityTaskData;
-
-enum class ECommandPipeFlushMode : uint8
-{
-	// Launches tasks onto the pipe immediately.
-	Automatic,
-
-	// Requires an explicit call to Flush to process elements.
-	Manual
-};
+class FVirtualTextureUpdater;
 
 /** An async MPSC queue that can schedule serialized tasks onto the render thread or a task thread. When a new command is enqueued into an empty queue, a
  *  task is launched to process all pending elements in the queue as soon as possible. Each command must be reserved with AddNumCommands,
@@ -40,12 +32,9 @@ public:
 	using CommandFunctionType = TFunction<void(CommandType&&)>;
 	using EmptyFunctionType = TFunction<void()>;
 
-	TCommandPipe(const TCHAR* InName, ENamedThreads::Type InDesiredThread = ENamedThreads::AnyHiPriThreadHiPriTask)
-		: Name(InName)
-		, DesiredThread(InDesiredThread)
-	{
-		checkf(!EnumHasAnyFlags(DesiredThread, ENamedThreads::LocalQueue) || DesiredThread == ENamedThreads::GetRenderThread_Local(), TEXT("The only supported local queue is on the render thread."));
-	}
+	TCommandPipe(const TCHAR* InName)
+		: Pipe(InName)
+	{}
 
 	~TCommandPipe()
 	{
@@ -63,12 +52,7 @@ public:
 		EmptyFunction = Forward<EmptyFunctionType&&>(InEmptyFunction);
 	}
 
-	void SetEmptyTaskEvent(const FGraphEventRef& InEmptyTaskEvent)
-	{
-		EmptyTaskEvent = InEmptyTaskEvent;
-	}
-
-	void SetPrerequisiteTask(const FGraphEventRef& InPrerequisiteTask)
+	void SetPrerequisiteTask(const UE::Tasks::FTask& InPrerequisiteTask)
 	{
 		PrerequisiteTask = InPrerequisiteTask;
 	}
@@ -90,12 +74,6 @@ public:
 				EmptyFunction();
 			}
 
-			if (EmptyTaskEvent)
-			{
-				EmptyTaskEvent->DispatchSubsequents();
-				EmptyTaskEvent = nullptr;
-			}
-
 			NumEmptyEvents.fetch_add(1, std::memory_order_relaxed);
 		}
 	}
@@ -105,11 +83,38 @@ public:
 	{
 		check(CommandFunction);
 
-		const UE::EConsumeAllMpmcQueueResult Result = Queue.ProduceItem(Forward<ArgTypes>(Args)...);
+		QueueMutex.Lock();
+		const bool bWasEmpty = Queue.IsEmpty();
+		Queue.Emplace(Forward<ArgTypes>(Args)...);
+		QueueMutex.Unlock();
 
-		if (Result == UE::EConsumeAllMpmcQueueResult::WasEmpty)
+		if (bWasEmpty)
 		{
-			Launch();
+			Pipe.Launch(Pipe.GetDebugName(), [this]
+			{
+				FOptionalTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
+				SCOPED_NAMED_EVENT_TCHAR(Pipe.GetDebugName(), FColor::Magenta);
+
+				TArray<CommandType, SceneRenderingAllocator> Commands;
+
+				QueueMutex.Lock();
+				Commands = MoveTemp(Queue);
+				QueueMutex.Unlock();
+
+				int32 NumProcessedCommands = 0;
+
+				for (CommandType& Command : Commands)
+				{
+					CommandFunction(MoveTemp(Command));
+					NumProcessedCommands++;
+				}
+
+				if (NumProcessedCommands)
+				{
+					ReleaseNumCommands(NumProcessedCommands);
+				}
+
+			}, PrerequisiteTask);
 		}
 	}
 
@@ -120,67 +125,18 @@ public:
 
 	void Wait()
 	{
-		if (CurrentTask)
-		{
-			check(IsInRenderingThread());
-			CurrentTask->Wait(ENamedThreads::GetRenderThread_Local());
-			CurrentTask = nullptr;
-		}
+		Pipe.WaitUntilEmpty();
 	}
 
 private:
-	void Launch()
-	{
-		UE::TUniqueLock Lock(LaunchMutex);
-		FGraphEventArray Prereqs;
-
-		if (CurrentTask)
-		{
-			Prereqs.Add(CurrentTask);
-		}
-
-		if (PrerequisiteTask)
-		{
-			Prereqs.Add(PrerequisiteTask);
-		}
-
-		CurrentTask = FFunctionGraphTask::CreateAndDispatchWhenReady([this]
-		{
-			FOptionalTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
-			Process();
-
-		}, TStatId(), &Prereqs, DesiredThread);
-	}
-
-	void Process()
-	{
-		SCOPED_NAMED_EVENT_TCHAR(Name, FColor::Magenta);
-
-		int32 NumProcessedCommands = 0;
-
-		const UE::EConsumeAllMpmcQueueResult Result = Queue.ConsumeAllLifo([&](CommandType&& Command)
-		{
-			CommandFunction(MoveTemp(Command));
-			NumProcessedCommands++;
-		});
-
-		if (NumProcessedCommands)
-		{
-			ReleaseNumCommands(NumProcessedCommands);
-		}
-	}
-
-	const TCHAR* Name;
-	FGraphEventRef CurrentTask;
-	FGraphEventRef PrerequisiteTask;
-	FGraphEventRef EmptyTaskEvent;
+	UE::Tasks::FTask PrerequisiteTask;
 	CommandFunctionType CommandFunction;
 	EmptyFunctionType EmptyFunction;
-	UE::TConsumeAllMpmcQueue<CommandType, FConcurrentLinearAllocator> Queue;
+	UE::FMutex QueueMutex;
+	TArray<CommandType, SceneRenderingAllocator> Queue;
+	UE::Tasks::FPipe Pipe;
 	std::atomic_int32_t NumCommands{ 0 };
 	std::atomic_int32_t NumEmptyEvents{ 0 };
-	UE::FMutex LaunchMutex;
-	ENamedThreads::Type DesiredThread;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -189,6 +145,8 @@ inline UE::Tasks::EExtendedTaskPriority GetExtendedTaskPriority(bool bExecuteInP
 {
 	return bExecuteInParallel ? UE::Tasks::EExtendedTaskPriority::None : UE::Tasks::EExtendedTaskPriority::Inline;
 }
+
+using FPrimitiveIndexList = TArray<int32, SceneRenderingAllocator>;
 
 struct FPrimitiveRange
 {
@@ -204,10 +162,23 @@ struct FDynamicPrimitive
 	int32 EndElementIndex;
 };
 
-using FPrimitiveIndexList = TArray<int32, SceneRenderingAllocator>;
+struct FDynamicPrimitiveIndex
+{
+	FDynamicPrimitiveIndex() = default;
+
+	FDynamicPrimitiveIndex(int32 InIndex, uint8 InViewMask)
+		: Index(InIndex)
+		, ViewMask(InViewMask)
+	{}
+
+	uint32 Index    : 24;
+	uint32 ViewMask : 8;
+};
 
 struct FDynamicPrimitiveIndexList
 {
+	using FList = TArray<FDynamicPrimitiveIndex, SceneRenderingAllocator>;
+
 	bool IsEmpty() const
 	{
 		return Primitives.IsEmpty()
@@ -217,10 +188,49 @@ struct FDynamicPrimitiveIndexList
 			;
 	}
 
-	FPrimitiveIndexList Primitives;
+	FList Primitives;
 
 #if WITH_EDITOR
-	FPrimitiveIndexList EditorPrimitives;
+	FList EditorPrimitives;
+#endif
+};
+
+class FDynamicPrimitiveIndexQueue
+{
+public:
+	FDynamicPrimitiveIndexQueue(FDynamicPrimitiveIndexList&& InList)
+		: List(InList)
+	{}
+
+	bool Pop(FDynamicPrimitiveIndex& PrimitiveIndex)
+	{
+		const int32 Index = NextIndex.fetch_add(1, std::memory_order_relaxed);
+		if (Index < List.Primitives.Num())
+		{
+			PrimitiveIndex = List.Primitives[Index];
+			return true;
+		}
+		return false;
+	}
+
+#if WITH_EDITOR
+	bool PopEditor(FDynamicPrimitiveIndex& PrimitiveIndex)
+	{
+		const int32 Index = NextEditorIndex.fetch_add(1, std::memory_order_relaxed);
+		if (Index < List.EditorPrimitives.Num())
+		{
+			PrimitiveIndex = List.EditorPrimitives[Index];
+			return true;
+		}
+		return false;
+	}
+#endif
+
+private:
+	FDynamicPrimitiveIndexList List;
+	std::atomic_int32_t NextIndex = { 0 };
+#if WITH_EDITOR
+	std::atomic_int32_t NextEditorIndex = { 0 };
 #endif
 };
 
@@ -232,6 +242,93 @@ struct FDynamicPrimitiveViewMasks
 	FPrimitiveViewMasks EditorPrimitives;
 #endif
 };
+
+///////////////////////////////////////////////////////////////////////////////
+
+class FDynamicMeshElementContext
+{
+public:
+	FDynamicMeshElementContext(FSceneRenderer& SceneRenderer);
+
+	FGraphEventRef LaunchRenderThreadTask(FDynamicPrimitiveIndexList&& PrimitiveIndexList);
+
+	UE::Tasks::FTask LaunchAsyncTask(FDynamicPrimitiveIndexQueue* PrimitiveIndexQueue, UE::Tasks::ETaskPriority TaskPriority);
+
+	void GatherDynamicMeshElementsForPrimitive(FPrimitiveSceneInfo* Primitive, uint8 ViewMask);
+
+	void GatherDynamicMeshElementsForEditorPrimitive(FPrimitiveSceneInfo* Primitive, uint8 ViewMask);
+
+private:
+	void Finish();
+
+	struct FViewMeshArrays
+	{
+		TArray<FMeshBatchAndRelevance, SceneRenderingAllocator> DynamicMeshElements;
+		FSimpleElementCollector SimpleElementCollector;
+
+#if WITH_EDITOR
+		TArray<FMeshBatchAndRelevance, SceneRenderingAllocator> DynamicEditorMeshElements;
+		FSimpleElementCollector EditorSimpleElementCollector;
+#endif
+
+#if UE_ENABLE_DEBUG_DRAWING
+		FSimpleElementCollector DebugSimpleElementCollector;
+#endif
+	};
+
+	const FSceneViewFamily& ViewFamily;
+	TArrayView<FViewInfo*> Views;
+	TArrayView<FPrimitiveSceneInfo*> Primitives;
+	TArray<FViewMeshArrays, TInlineAllocator<2>> ViewMeshArraysPerView;
+	TArray<FDynamicPrimitive, SceneRenderingAllocator> DynamicPrimitives;
+	FMeshElementCollector MeshCollector;
+#if WITH_EDITOR
+	FMeshElementCollector EditorMeshCollector;
+#endif
+	FRHICommandList* RHICmdList;
+	FGlobalDynamicVertexBuffer DynamicVertexBuffer;
+	FGlobalDynamicIndexBuffer DynamicIndexBuffer;
+	UE::Tasks::FPipe Pipe{UE_SOURCE_LOCATION};
+
+	friend class FDynamicMeshElementContextContainer;
+};
+
+class FDynamicMeshElementContextContainer
+{
+public:
+	~FDynamicMeshElementContextContainer();
+
+	int32 GetNumAsyncContexts() const
+	{
+		return Contexts.Num() - 1;
+	}
+
+	FDynamicMeshElementContext* GetRenderThreadContext() const
+	{
+		check(!bFinished);
+		return Contexts.Last();
+	}
+
+	FGraphEventRef LaunchRenderThreadTask(FDynamicPrimitiveIndexList&& PrimitiveIndexList);
+
+	UE::Tasks::FTask LaunchAsyncTask(FDynamicPrimitiveIndexQueue* PrimitiveIndexQueue, int32 Index, UE::Tasks::ETaskPriority TaskPriority);
+
+	void Init(FSceneRenderer& InSceneRenderer, int32 NumAsyncContexts);
+
+	void MergeContexts(TArray<FDynamicPrimitive, SceneRenderingAllocator>& OutDynamicPrimitives);
+
+	void Submit(FRHICommandListImmediate& RHICmdList);
+
+private:
+	using FDynamicMeshElementContextArray = TArray<FDynamicMeshElementContext*>;
+
+	TArrayView<FViewInfo*> Views;
+	FDynamicMeshElementContextArray Contexts;
+	TArray<FRHICommandListImmediate::FQueuedCommandList, FConcurrentLinearArrayAllocator> CommandLists;
+	bool bFinished = false;
+};
+
+///////////////////////////////////////////////////////////////////////////////
 
 enum class EVisibilityTaskSchedule
 {
@@ -248,12 +345,28 @@ enum class EVisibilityTaskSchedule
 class FVisibilityTaskConfig
 {
 public:
-	FVisibilityTaskConfig(const FScene& Scene, TConstArrayView<FViewInfo> Views);
+	FVisibilityTaskConfig(const FScene& Scene, TConstArrayView<FViewInfo*> Views);
 
 	EVisibilityTaskSchedule Schedule;
 
 	// Task priorities for non-specific tasks related to visibility.
 	UE::Tasks::ETaskPriority TaskPriority = UE::Tasks::ETaskPriority::High;
+
+	uint32 NumVisiblePrimitives = 0;
+	uint32 NumTestedPrimitives  = 0;
+
+	struct FAlwaysVisible
+	{
+		static constexpr uint32 MinWordsPerTask = 32;
+
+		const UE::Tasks::ETaskPriority TaskPriority = UE::Tasks::ETaskPriority::High;
+
+		// Always visible tasks are fixed size and process the same number of primitives.
+		uint32 NumTasks = 0;
+		uint32 NumWordsPerTask = 0;
+		uint32 NumPrimitivesPerTask = 0;
+
+	} AlwaysVisible;
 
 	struct FFrustumCull
 	{
@@ -311,13 +424,6 @@ class FVisibilityViewPacket
 public:
 	FVisibilityViewPacket(FVisibilityTaskData& TaskData, FScene& InScene, FViewInfo& InView, int32 ViewIndex);
 
-	~FVisibilityViewPacket()
-	{
-		check(Tasks.FrustumCull.IsCompleted());
-		check(Tasks.OcclusionCull.IsCompleted());
-		check(Tasks.ComputeRelevance.IsCompleted());
-	}
-
 	FVisibilityTaskData& TaskData;
 	FVisibilityTaskConfig& TaskConfig;
 	FScene& Scene;
@@ -347,6 +453,7 @@ private:
 
 	struct FTasks
 	{
+		UE::Tasks::FTaskEvent AlwaysVisible{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTaskEvent FrustumCull{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTaskEvent OcclusionCull{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTaskEvent ComputeRelevance{ UE_SOURCE_LOCATION };
@@ -395,15 +502,28 @@ class FVisibilityTaskData : public IVisibilityTaskData
 	friend FRelevancePacket;
 	friend FComputeAndMarkRelevance;
 public:
-	FVisibilityTaskData(FRHICommandListImmediate& RHICmdList, FSceneRenderer& SceneRenderer, FGlobalDynamicBuffers GlobalDynamicBuffers);
+	FVisibilityTaskData(FRHICommandListImmediate& RHICmdList, FSceneRenderer& SceneRenderer);
 
 	~FVisibilityTaskData() override
 	{
 		check(bFinished);
 	}
 
-	void LaunchVisibilityTasks();
-	void ProcessRenderThreadTasks(FExclusiveDepthStencil::Type BasePassDepthStencilAccess, FInstanceCullingManager& InstanceCullingManager, FVirtualTextureUpdater* VirtualTextureUpdater) override;
+	void LaunchVisibilityTasks(const UE::Tasks::FTask& BeginInitVisibilityPrerequisites);
+
+	void ProcessRenderThreadTasks() override;
+
+	void StartGatherDynamicMeshElements() override
+	{
+		if (!Tasks.bDynamicMeshElementsPrerequisitesTriggered)
+		{
+			Tasks.DynamicMeshElementsPrerequisites.Trigger();
+			Tasks.bDynamicMeshElementsPrerequisitesTriggered = true;
+		}
+	}
+
+	void FinishGatherDynamicMeshElements(FExclusiveDepthStencil::Type BasePassDepthStencilAccess, FInstanceCullingManager& InstanceCullingManager, FVirtualTextureUpdater* VirtualTextureUpdater) override;
+
 	void Finish() override;
 
 	TArrayView<FViewCommands> GetViewCommandsPerView() override
@@ -418,7 +538,7 @@ public:
 
 	UE::Tasks::FTask GetComputeRelevanceTask() const override
 	{
-		return Tasks.ComputeRelevance;
+		return Tasks.FinalizeRelevance;
 	}
 
 	UE::Tasks::FTask GetLightVisibilityTask() const override
@@ -431,48 +551,35 @@ public:
 		return Tasks.bWaitingAllowed;
 	}
 
-	inline FGlobalDynamicVertexBuffer* GetDynamicVertexBuffer()
-	{
-		return GlobalDynamicBuffers.Vertex;
-	}
-
 private:
 	void MergeSecondaryViewVisibility();
 
-	void GatherDynamicMeshElements();
-
-	void GatherDynamicMeshElements(const FDynamicPrimitiveIndexList& Primitives);
+	void GatherDynamicMeshElements(FDynamicPrimitiveIndexList&& Primitives);
 	void GatherDynamicMeshElements(const FDynamicPrimitiveViewMasks& Primitives);
-
-	void GatherDynamicMeshElementsForPrimitive(int32 PrimitiveIndex, uint8 ViewMask);
-	void GatherDynamicMeshElementsForEditorPrimitive(int32 PrimitiveIndex, uint8 ViewMask);
 
 	void SetupMeshPasses(FExclusiveDepthStencil::Type BasePassDepthStencilAccess, FInstanceCullingManager& InstanceCullingManager);
 
 	FRHICommandListImmediate& RHICmdList;
 	FSceneRenderer& SceneRenderer;
 	FScene& Scene;
-	TArrayView<FViewInfo> Views;
+	TArrayView<FViewInfo*> Views;
 	FViewFamilyInfo& ViewFamily;
 	EShadingPath ShadingPath;
-	FGlobalDynamicBuffers GlobalDynamicBuffers;
-	FMeshElementCollector& MeshCollector;
-	FMeshElementCollector& EditorMeshCollector;
 	FSceneRenderingBulkObjectAllocator Allocator;
 	TArray<FVisibilityViewPacket, SceneRenderingAllocator> ViewPackets;
 
 	struct FDynamicMeshElements
 	{
 		// The command pipe and event are only non-null when in single-view mode.
-		FGraphEventRef CommandPipeCompleteEvent;
 		TCommandPipe<FDynamicPrimitiveIndexList>* CommandPipe = nullptr;
 
 		// Primitive view masks are only non-null when in multi-view mode.
 		FDynamicPrimitiveViewMasks* PrimitiveViewMasks = nullptr;
 
+		FDynamicMeshElementContextContainer ContextContainer;
 		TArray<FViewCommands, TInlineAllocator<4>> ViewCommandsPerView;
-		TArray<uint32, TInlineAllocator<4, SceneRenderingAllocator>> LastElementPerView;
 		TArray<FDynamicPrimitive, SceneRenderingAllocator> DynamicPrimitives;
+		TArray<UE::Tasks::FPipe, SceneRenderingAllocator> DynamicPrimitiveTaskPipes;
 
 	} DynamicMeshElements;
 
@@ -482,20 +589,27 @@ private:
 		FGraphEventRef FrustumCullLegacyTask;
 		FGraphEventRef ComputeRelevanceLegacyTask;
 
+		FGraphEventRef DynamicMeshElementsPipe;
+		FGraphEventRef DynamicMeshElementsRenderThread;
+
 		UE::Tasks::FTaskEvent LightVisibility{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTaskEvent BeginInitVisibility{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTaskEvent FrustumCull{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTaskEvent OcclusionCull{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTaskEvent ComputeRelevance{ UE_SOURCE_LOCATION };
+		UE::Tasks::FTaskEvent DynamicMeshElementsPrerequisites{ UE_SOURCE_LOCATION };
+		UE::Tasks::FTaskEvent DynamicMeshElements{ UE_SOURCE_LOCATION };
 		UE::Tasks::FTask FinalizeRelevance;
 		UE::Tasks::FTask MeshPassSetup;
 
+		bool bDynamicMeshElementsPrerequisitesTriggered = false;
 		bool bWaitingAllowed = false;
 
 	} Tasks;
 
 	FVisibilityTaskConfig TaskConfig;
 
+	const bool bAddNaniteRelevance;
 	const bool bAddLightmapDensityCommands;
 	bool bFinished = false;
 };
@@ -560,6 +674,7 @@ namespace EMarkMaskBits
 
 using FPassDrawCommandArray = TArray<FVisibleMeshDrawCommand>;
 using FPassDrawCommandBuildRequestArray = TArray<const FStaticMeshBatch*>;
+using FPassDrawCommandBuildFlagsArray = TArray<EMeshDrawCommandCullingPayloadFlags>;
 
 struct FDrawCommandRelevancePacket
 {
@@ -567,6 +682,7 @@ struct FDrawCommandRelevancePacket
 
 	FPassDrawCommandArray VisibleCachedDrawCommands[EMeshPass::Num];
 	FPassDrawCommandBuildRequestArray DynamicBuildRequests[EMeshPass::Num];
+	FPassDrawCommandBuildFlagsArray DynamicBuildFlags[EMeshPass::Num];
 	int32 NumDynamicBuildRequestElements[EMeshPass::Num];
 	bool bUseCachedMeshDrawCommands;
 
@@ -575,6 +691,7 @@ struct FDrawCommandRelevancePacket
 		const FPrimitiveSceneInfo* InPrimitiveSceneInfo,
 		const FStaticMeshBatchRelevance& RESTRICT StaticMeshRelevance,
 		const FStaticMeshBatch& RESTRICT StaticMesh,
+		EMeshDrawCommandCullingPayloadFlags CullingPayloadFlags,
 		const FScene& Scene,
 		bool bCanCache,
 		EMeshPass::Type PassType);
@@ -655,11 +772,12 @@ private:
 
 	UE::Tasks::FTask ComputeRelevanceTask;
 	uint16 CombinedShadingModelMask = 0;
-	uint8 StrataUintPerPixel = 0;
-	uint8 StrataBSDFCountMask = 0;
+	uint8 SubstrateUintPerPixel = 0;
+	uint8 SubstrateClosureCountMask = 0;
 	bool bUsesComplexSpecialRenderPath = false;
 	bool bHasDistortionPrimitives = false;
 	bool bHasCustomDepthPrimitives = false;
+	bool bUsesGlobalDistanceField = false;
 	bool bUsesLightingChannels = false;
 	bool bTranslucentSurfaceLighting = false;
 	bool bUsesCustomDepth = false;
@@ -702,6 +820,7 @@ private:
 	FScene& Scene;
 	FViewInfo& View;
 	FViewCommands& ViewCommands;
+	FSceneBitArray InstancedPrimitiveAddedMap;
 	int32 ViewIndex;
 	const FFilterStaticMeshesForViewData ViewData;
 	const uint32 NumMeshes;
@@ -711,7 +830,6 @@ private:
 	const bool bLaunchOnAddPrimitive;
 	bool bFinished = false;
 	bool bFinalized = false;
-	FSceneBitArray InstancedPrimitiveAddedMap;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -825,7 +943,7 @@ public:
 		TaskConfig.OcclusionCull.NumTestedQueries.fetch_add(Result.NumTestedQueries, std::memory_order_relaxed);
 	}
 
-	template <typename VisitorType>
+	template <bool bIsParallel, typename VisitorType>
 	bool OcclusionCullPrimitive(VisitorType& Visitor, FOcclusionCullResult& Result, int32 Index);
 
 	//////////////////////////////////////////////////////////////////////////////
@@ -895,7 +1013,7 @@ public:
 
 		void AddOcclusionFeedback(const FOcclusionFeedbackEntry& Entry)
 		{
-			Packet.OcclusionFeedback.AddPrimitive(RHICmdList, Entry.PrimitiveKey, Entry.Bounds.Origin, Entry.Bounds.Extent, DynamicVertexBuffer);
+			Packet.OcclusionFeedback.AddPrimitive(Entry.PrimitiveKey, Entry.Bounds.Origin, Entry.Bounds.Extent, DynamicVertexBuffer);
 		}
 
 		void AddVisualizeQuery(const FBox& Box)
@@ -983,6 +1101,7 @@ public:
 protected:
 	void WaitForLastOcclusionQuery();
 
+	FGlobalDynamicVertexBuffer DynamicVertexBuffer;
 	FVisibilityViewPacket& ViewPacket;
 	const FScene& Scene;
 	FViewInfo& View;
@@ -1058,7 +1177,6 @@ private:
 	const uint32 MaxNonOccludedPrimitives;
 	TArray<FGPUOcclusionParallelPacket*, SceneRenderingAllocator> Packets;
 	FPrimitiveIndexList NonOccludedPrimitives;
-	FGlobalDynamicVertexBuffer DynamicVertexBuffer;
 	FRHICommandList* RHICmdList = nullptr;
 	UE::Tasks::FTaskEvent FinalizeTask{ UE_SOURCE_LOCATION };
 	bool bFinished = false;
@@ -1071,10 +1189,11 @@ public:
 	FGPUOcclusionSerial(FVisibilityViewPacket& InViewPacket)
 		: FGPUOcclusion(InViewPacket)
 		, Packet(InViewPacket, State)
-		, ProcessVisitor(Packet, FRHICommandListExecutor::GetImmediateCommandList(), *InViewPacket.TaskData.GetDynamicVertexBuffer())
+		, ProcessVisitor(Packet, FRHICommandListExecutor::GetImmediateCommandList(), DynamicVertexBuffer)
 	{}
 
 	void AddPrimitives(FPrimitiveRange PrimitiveRange) override;
+	void Map(FRHICommandListImmediate& RHICmdListImmediate) override;
 	void Unmap(FRHICommandListImmediate& RHICmdListImmediate) override;
 
 private:

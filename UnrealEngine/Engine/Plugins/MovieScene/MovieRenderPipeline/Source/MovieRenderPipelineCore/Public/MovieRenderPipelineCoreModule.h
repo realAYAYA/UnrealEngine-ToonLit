@@ -12,9 +12,30 @@ class UMoviePipelineExecutorBase;
 class UMoviePipelineQueue;
 class ULevelSequence;
 class UMoviePipeline;
+struct FMoviePipelineFrameOutputState;
 
 // Declare a stat-group for our performance stats to be counted under, readable in game by "stat MovieRenderPipeline".
 DECLARE_STATS_GROUP(TEXT("MovieRenderPipeline"), STATGROUP_MoviePipeline, STATCAT_Advanced);
+
+/**
+* Movie pipeline tick information
+* Used by external consumers, like Niagara, to query information
+*/
+struct FMoviePipelineLightweightTickInfo
+{
+	FMoviePipelineLightweightTickInfo()
+		: bIsActive(false)
+		, TemporalSampleCount(1)
+		, TemporalSampleIndex(0)
+		, SequenceFPS(0.0)
+	{
+	}
+
+	bool	bIsActive;
+	int32	TemporalSampleCount;
+	int32	TemporalSampleIndex;
+	double	SequenceFPS;
+};
 
 namespace MoviePipelineErrorCodes
 {
@@ -26,15 +47,16 @@ namespace MoviePipelineErrorCodes
 	constexpr uint8 NoAsset = 2;
 	/** The specified pipeline configuration asset could not be found. Check the logs for details on what it looked for. */
 	constexpr uint8 NoConfig = 3;
-
 }
-
 
 class MOVIERENDERPIPELINECORE_API FMovieRenderPipelineCoreModule : public IModuleInterface
 {
 public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
+
+	static void SetTickInfo(const FMoviePipelineLightweightTickInfo& InTickInfo);
+	const FMoviePipelineLightweightTickInfo& GetTickInfo() const { return TickInfo; }
 
 private:
 	bool IsTryingToRenderMovieFromCommandLine(FString& OutSequenceAssetPath, FString& OutConfigAssetPath, FString& OutExecutorType, FString& OutPipelineType) const;
@@ -49,6 +71,7 @@ private:
 		UMoviePipelineQueue*& OutQueue, UMoviePipelineExecutorBase*& OutExecutor) const;
 
 private:
+	FMoviePipelineLightweightTickInfo TickInfo;
 	FString MoviePipelineLocalExecutorClassType;
 	FString MoviePipelineClassType;
 	FString SequenceAssetValue;
@@ -63,7 +86,6 @@ public:
 
 	virtual FText GetEngineChangelistLabel() const { return FText(); }
 };
-
 
 MOVIERENDERPIPELINECORE_API DECLARE_LOG_CATEGORY_EXTERN(LogMovieRenderPipeline, Log, All);
 MOVIERENDERPIPELINECORE_API DECLARE_LOG_CATEGORY_EXTERN(LogMovieRenderPipelineIO, Log, All);

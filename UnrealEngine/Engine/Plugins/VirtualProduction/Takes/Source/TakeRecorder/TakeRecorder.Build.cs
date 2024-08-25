@@ -22,6 +22,7 @@ public class TakeRecorder : ModuleRules
 				"LevelSequence",
 				"MovieScene",
 				"MovieSceneTools",
+				"Projects",
 				"PropertyEditor",
 				"TakesCore",
 				"TakeMovieScene",
@@ -40,16 +41,11 @@ public class TakeRecorder : ModuleRules
 
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
+				"EditorSubsystem",
 				"UMG",
                 "TakeTrackRecorders",
                 "SerializedRecorderInterface",
                 "Sequencer",
-            }
-        );
-
-		PrivateIncludePaths.AddRange(
-			new string[] {
-                "TakeRecorderSources/Private",
             }
         );
     }

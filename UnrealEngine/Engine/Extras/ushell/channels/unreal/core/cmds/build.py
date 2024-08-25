@@ -273,6 +273,7 @@ class _BuildCmd(unrealcmd.Cmd):
                         break
 
         builder.add_args("-SingleFile=" + file_or_module)
+        builder.add_args("-SkipDeploy")
 
     def is_constrained_build(self):
         return getattr(self, "_constrained_build", False)
@@ -344,8 +345,26 @@ class Build(_BuildCmd, unrealcmd.MultiPlatformCmd):
 
     def complete_target(self, prefix):
         ue_context = self.get_unreal_context()
-        yield from (x.name[:-10] for x in ue_context.glob("Source/*.Target.cs"))
-        yield from (x.name[:-10] for x in ue_context.glob("Source/Programs/**/*.Target.cs"))
+        ubt_manifests = list(ue_context.glob("Intermediate/Build/BuildRules/*RulesManifest.json"))
+        if not ubt_manifests:
+            yield from (x.name[:-10] for x in ue_context.glob("Source/*.Target.cs"))
+            yield from (x.name[:-10] for x in ue_context.glob("Source/Programs/*/*.Target.cs"))
+
+        for item in ubt_manifests:
+            with item.open("rt") as inp:
+                for line in inp:
+                    if ".Target.cs" not in line:
+                        continue
+
+                    slash = line.rfind("\\")
+                    if -1 == (slash := slash if slash != -1 else line.rfind("/")):
+                        continue
+
+                    line = line[slash + 1:]
+                    if -1 == (dot := line.find(".")):
+                        continue
+
+                    yield line[:dot]
 
     @unrealcmd.Cmd.summarise
     def main(self):
@@ -365,8 +384,33 @@ class Build(_BuildCmd, unrealcmd.MultiPlatformCmd):
         return self.run_build(builder)
 
 
+#-------------------------------------------------------------------------------
+def _add_clean_cmd(cmd_class):
+    # Create a class for a CleanX command
+    class _Clean(object):
+        def main(self):
+            self.args.clean = True
+            return super().main()
+
+    clean_name = "Clean" + cmd_class.__name__
+    clean_class = type(clean_name, (_Clean, cmd_class), {})
+    globals()[clean_name] = clean_class
+
+    # Rather crudely change the first work from Build to Clean
+    doc = cmd_class.__doc__.lstrip()
+    if doc.startswith("Builds"):
+        new_cmd_class = type(cmd_class.__name__, (cmd_class,), {})
+        new_cmd_class.__doc__ = doc
+        cmd_class.__doc__ = None
+        cmd_class = new_cmd_class
+
+        doc = "Cleans" + doc[6:]
+        clean_class.__doc__ = doc
+
+    return cmd_class
 
 #-------------------------------------------------------------------------------
+@_add_clean_cmd
 class Editor(_BuildCmd, unrealcmd.MultiPlatformCmd):
     """ Builds the editor. By default the current host platform is targeted. This
     can be overridden using the '--platform' option to cross-compile the editor."""
@@ -395,12 +439,17 @@ class Editor(_BuildCmd, unrealcmd.MultiPlatformCmd):
         editor_only |= bool(self.args.analyze)
         editor_only |= self.args.variant != "development"
         if not editor_only:
+
+            targets_to_add = []
             if not self.args.noscw:
-                targets = (*targets, ue_context.get_target_by_name("ShaderCompileWorker"))
+                targets_to_add.append("ShaderCompileWorker")
             if not self.args.nopak:
-                targets = (*targets, ue_context.get_target_by_name("UnrealPak"))
+                targets_to_add.append("UnrealPak")
             if not self.args.nointworker:
-                prog_target = ue_context.get_target_by_name("InterchangeWorker")
+                targets_to_add.append("InterchangeWorker")
+
+            for name in targets_to_add:
+                prog_target = ue_context.get_target_by_name(name)
                 if prog_target.get_type() == unreal.TargetType.PROGRAM:
                     targets = (*targets, prog_target)
 
@@ -411,6 +460,7 @@ class Editor(_BuildCmd, unrealcmd.MultiPlatformCmd):
 
 
 #-------------------------------------------------------------------------------
+@_add_clean_cmd
 class Program(_BuildCmd, unrealcmd.MultiPlatformCmd):
     """ Builds a program for the current host platform (unless the --platform
     argument is provided) """
@@ -445,6 +495,7 @@ class Program(_BuildCmd, unrealcmd.MultiPlatformCmd):
 
 
 #-------------------------------------------------------------------------------
+@_add_clean_cmd
 class Server(_BuildCmd, unrealcmd.MultiPlatformCmd):
     """ Builds the server target for the host platform """
     platform = unrealcmd.Arg("", "Platform to build the server for")
@@ -496,6 +547,7 @@ class _Runtime(_BuildCmd, unrealcmd.MultiPlatformCmd):
         return self.run_build(builder)
 
 #-------------------------------------------------------------------------------
+@_add_clean_cmd
 class Client(_Runtime):
     """ Builds the client runtime """
     def main(self):
@@ -504,6 +556,7 @@ class Client(_Runtime):
         return super()._main_impl(target)
 
 #-------------------------------------------------------------------------------
+@_add_clean_cmd
 class Game(_Runtime):
     """ Builds the game runtime target binary executable """
     def main(self):
@@ -511,22 +564,6 @@ class Game(_Runtime):
         target = ue_context.get_target_by_type(unreal.TargetType.GAME)
         return super()._main_impl(target)
 
-
-
-#-------------------------------------------------------------------------------
-class _CleanImpl(object):
-    def main(self):
-        self.args.clean = True
-        return super().main()
-
-def _make_clean_command(base):
-    return type("CleanImpl", (_CleanImpl, base), {})
-
-CleanEditor  = _make_clean_command(Editor)
-CleanProgram = _make_clean_command(Program)
-CleanServer  = _make_clean_command(Server)
-CleanClient  = _make_clean_command(Client)
-CleanGame    = _make_clean_command(Game)
 
 
 #-------------------------------------------------------------------------------

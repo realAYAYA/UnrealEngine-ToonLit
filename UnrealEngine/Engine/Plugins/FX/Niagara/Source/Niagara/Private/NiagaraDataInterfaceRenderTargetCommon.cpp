@@ -100,4 +100,27 @@ namespace NiagaraDataInterfaceRenderTargetCommon
 
 		return true;
 	}
+
+	const ETextureRenderTargetFormat GetRenderTargetFormatFromPixelFormat(EPixelFormat InPixelFormat)
+	{
+		switch (InPixelFormat)
+		{
+		case PF_G8:				return ETextureRenderTargetFormat::RTF_R8;
+		case PF_R8G8:			return ETextureRenderTargetFormat::RTF_RG8;
+		case PF_B8G8R8A8:		return ETextureRenderTargetFormat::RTF_RGBA8;
+		case PF_R16F:			return ETextureRenderTargetFormat::RTF_R16f;
+		case PF_G16R16F:		return ETextureRenderTargetFormat::RTF_RG16f;
+		case PF_R32_FLOAT:		return ETextureRenderTargetFormat::RTF_R32f;
+		case PF_G32R32F:		return ETextureRenderTargetFormat::RTF_RG32f;
+		case PF_A32B32G32R32F:	return ETextureRenderTargetFormat::RTF_RGBA32f;
+		case PF_A2B10G10R10:	return ETextureRenderTargetFormat::RTF_RGB10A2;
+		case PF_FloatRGBA:		return ETextureRenderTargetFormat::RTF_RGBA16f;
+		default:
+			break;
+		}
+
+		UE_LOG(LogNiagara, Error, TEXT("No mapping from pixel format to render target format is possible"));
+		return ETextureRenderTargetFormat::RTF_RGBA8;
+	}
+
 }

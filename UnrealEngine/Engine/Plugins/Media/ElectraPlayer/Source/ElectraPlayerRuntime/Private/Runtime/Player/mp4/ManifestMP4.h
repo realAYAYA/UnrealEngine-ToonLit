@@ -42,7 +42,7 @@ public:
 		// For the time being the seekable range equals the total range.
 		return GetTotalTimeRange();
 	}
-	FTimeRange GetPlaybackRange() const override;
+	FTimeRange GetPlaybackRange(EPlaybackRangeType InRangeType) const override;
 	void GetSeekablePositions(TArray<FTimespan>& OutPositions) const override
 	{
 		// For the time being we do not return anything here as that would require to iterate the tracks.
@@ -53,6 +53,10 @@ public:
 	{ return DefaultStartTime; }
 	void ClearDefaultStartTime() override
 	{ DefaultStartTime.SetToInvalid(); }
+	FTimeValue GetDefaultEndTime() const override
+	{ return DefaultEndTime; }
+	void ClearDefaultEndTime() override
+	{ DefaultEndTime.SetToInvalid(); }
 	void GetTrackMetadata(TArray<FTrackMetadata>& OutMetadata, EStreamType StreamType) const override;
 	FTimeValue GetMinBufferTime() const override;
 	FTimeValue GetDesiredLiveLatency() const override
@@ -181,8 +185,6 @@ public:
 					return AdaptationSetIndex < AudioAdaptationSets.Num() ? AudioAdaptationSets[AdaptationSetIndex] : TSharedPtrTS<IPlaybackAssetAdaptationSet>();
 				case EStreamType::Subtitle:
 					return AdaptationSetIndex < SubtitleAdaptationSets.Num() ? SubtitleAdaptationSets[AdaptationSetIndex] : TSharedPtrTS<IPlaybackAssetAdaptationSet>();
-				default:
-					return 0;
 			}
 			return TSharedPtrTS<IPlaybackAssetAdaptationSet>();
 		}
@@ -328,10 +330,10 @@ public:
 
 	IPlayerSessionServices* 			PlayerSessionServices;
 	TSharedPtrTS<FTimelineAssetMP4>		MediaAsset;
-	HTTP::FConnectionInfo				ConnectionInfo;
 	// The MPD URL fragment components
 	TArray<FURL_RFC3986::FQueryParam>	URLFragmentComponents;
 	FTimeValue							DefaultStartTime;
+	FTimeValue							DefaultEndTime;
 };
 
 

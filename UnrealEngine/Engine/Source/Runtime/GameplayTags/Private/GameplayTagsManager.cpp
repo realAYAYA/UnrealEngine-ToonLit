@@ -21,6 +21,7 @@
 #include "Misc/CoreDelegates.h"
 #include "HAL/IConsoleManager.h"
 #include "NativeGameplayTags.h"
+#include "AutoRTFM/AutoRTFM.h"
 
 #if WITH_EDITOR
 #include "SourceControlHelpers.h"
@@ -539,9 +540,13 @@ void UGameplayTagsManager::ConstructGameplayTagTree()
 			CommonlyReplicatedTags.Empty();
 			for (FName TagName : MutableDefault->CommonlyReplicatedTags)
 			{
-				CommonlyReplicatedTags.Add(FGameplayTag(TagName));
+				if (TagName.IsNone())
+				{
+					// Still being added to the UI
+					continue;
+				}
 
-				FGameplayTag Tag = RequestGameplayTag(TagName);
+				FGameplayTag Tag = RequestGameplayTag(TagName, false);
 				if (Tag.IsValid())
 				{
 					CommonlyReplicatedTags.Add(Tag);
@@ -588,6 +593,8 @@ int32 PrintNetIndiceAssignment = 0;
 static FAutoConsoleVariableRef CVarPrintNetIndiceAssignment(TEXT("GameplayTags.PrintNetIndiceAssignment"), PrintNetIndiceAssignment, TEXT("Logs GameplayTag NetIndice assignment"), ECVF_Default );
 void UGameplayTagsManager::ConstructNetIndex()
 {
+	FScopeLock Lock(&GameplayTagMapCritical);
+
 	bNetworkIndexInvalidated = false;
 
 	NetworkGameplayTagNodeIndex.Empty();
@@ -733,7 +740,37 @@ bool UGameplayTagsManager::ShouldUnloadTags() const
 	}
 #endif
 
+	if (ShouldAllowUnloadingTagsOverride.IsSet())
+	{
+		return ShouldAllowUnloadingTagsOverride.GetValue();
+	}
+
 	return bShouldAllowUnloadingTags;
+}
+
+void UGameplayTagsManager::SetShouldUnloadTagsOverride(bool bShouldUnloadTags)
+{
+	ShouldAllowUnloadingTagsOverride = bShouldUnloadTags;
+}
+
+void UGameplayTagsManager::ClearShouldUnloadTagsOverride()
+{
+	ShouldAllowUnloadingTagsOverride.Reset();
+}
+
+void UGameplayTagsManager::SetShouldDeferGameplayTagTreeRebuilds(bool bShouldDeferRebuilds)
+{
+	ShouldDeferGameplayTagTreeRebuilds = bShouldDeferRebuilds;
+}
+
+void UGameplayTagsManager::ClearShouldDeferGameplayTagTreeRebuilds(bool bRebuildTree)
+{
+	ShouldDeferGameplayTagTreeRebuilds.Reset();
+
+	if (bRebuildTree)
+	{
+		HandleGameplayTagTreeChanged(true);
+	}
 }
 
 void UGameplayTagsManager::GetRestrictedTagConfigFiles(TArray<FString>& RestrictedConfigFiles) const
@@ -1163,7 +1200,7 @@ void UGameplayTagsManager::HandleGameplayTagTreeChanged(bool bRecreateTree)
 	// Don't do anything during a reconstruct or before initial native tags are done loading
 	if (!bIsConstructingGameplayTagTree && bDoneAddingNativeTags)
 	{
-		if (bRecreateTree)
+		if (bRecreateTree && (!ShouldDeferGameplayTagTreeRebuilds.IsSet() || !ShouldDeferGameplayTagTreeRebuilds.GetValue()))
 		{
 #if WITH_EDITOR
 			if (GIsEditor)
@@ -1197,6 +1234,8 @@ UGameplayTagsManager::~UGameplayTagsManager()
 
 void UGameplayTagsManager::DestroyGameplayTagTree()
 {
+	FScopeLock Lock(&GameplayTagMapCritical);
+
 	if (GameplayRootTag.IsValid())
 	{
 		GameplayRootTag->ResetNode();
@@ -1304,6 +1343,8 @@ void UGameplayTagsManager::PrintReplicationIndices()
 	VerifyNetworkIndex();
 
 	UE_LOG(LogGameplayTags, Display, TEXT("::PrintReplicationIndices (TOTAL %d)"), GameplayTagNodeMap.Num());
+
+	FScopeLock Lock(&GameplayTagMapCritical);
 
 	for (auto It : GameplayTagNodeMap)
 	{
@@ -1449,7 +1490,7 @@ static void RecursiveRootTagSearch(const FString& InFilterString, const TArray<T
 	{
 		FString RootTagName = GameplayRootTags[iTag].Get()->GetSimpleTagName().ToString();
 
-		if (RootTagName.Equals(CurrentFilter) == true)
+		if (RootTagName == CurrentFilter)
 		{
 			if (RestOfFilter.IsEmpty())
 			{
@@ -1531,28 +1572,6 @@ FString UGameplayTagsManager::StaticGetCategoriesMetaFromPropertyHandle(TSharedP
 {
 	FString Categories;
 
-	auto GetFieldMetaData = ([&](FField* Field)
-	{
-		if (Field->HasMetaData(NAME_Categories))
-		{
-			Categories = Field->GetMetaData(NAME_Categories);
-			return true;
-		}
-
-		return false;
-	});
-
-	auto GetMetaData = ([&](UField* Field)
-	{
-		if (Field->HasMetaData(NAME_Categories))
-		{
-			Categories = Field->GetMetaData(NAME_Categories);
-			return true;
-		}
-
-		return false;
-	});
-	
 	while(PropertyHandle.IsValid())
 	{
 		if (FProperty* Property = PropertyHandle->GetProperty())
@@ -1561,7 +1580,8 @@ FString UGameplayTagsManager::StaticGetCategoriesMetaFromPropertyHandle(TSharedP
 			 *	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (Categories="GameplayCue"))
 			 *	FGameplayTag GameplayCueTag;
 			 */
-			if (GetFieldMetaData(Property))
+			Categories = GetCategoriesMetaFromField(Property);
+			if (!Categories.IsEmpty())
 			{
 				break;
 			}
@@ -1572,7 +1592,8 @@ FString UGameplayTagsManager::StaticGetCategoriesMetaFromPropertyHandle(TSharedP
 			 */
 			if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
 			{
-				if (GetMetaData(StructProperty->Struct))
+				Categories = GetCategoriesMetaFromField<UScriptStruct>(StructProperty->Struct);
+				if (!Categories.IsEmpty())
 				{
 					break;
 				}
@@ -1581,7 +1602,8 @@ FString UGameplayTagsManager::StaticGetCategoriesMetaFromPropertyHandle(TSharedP
 			/**	TArray<FGameplayEventKeywordTag> QualifierTagTestList; */
 			if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
 			{
-				if (GetFieldMetaData(ArrayProperty->Inner))
+				Categories = GetCategoriesMetaFromField(ArrayProperty->Inner);
+				if (!Categories.IsEmpty())
 				{
 					break;
 				}
@@ -1590,19 +1612,33 @@ FString UGameplayTagsManager::StaticGetCategoriesMetaFromPropertyHandle(TSharedP
 			/**	TMap<FGameplayTag, ValueType> GameplayTagMap; */
 			if (FMapProperty* MapProperty = CastField<FMapProperty>(Property))
 			{
-				if (GetFieldMetaData(MapProperty->KeyProp))
+				Categories = GetCategoriesMetaFromField(MapProperty->KeyProp);
+				if (!Categories.IsEmpty())
 				{
 					break;
 				}
 			}
 		}
-		PropertyHandle = PropertyHandle->GetParentHandle();
+
+		TSharedPtr<IPropertyHandle> ParentHandle = PropertyHandle->GetParentHandle();
+		
+		if (ParentHandle.IsValid())
+		{
+			/** Check if the parent handle's base class is of the same class. It's possible the current child property is from a subobject which in that case we probably want to ignore
+			  * any meta category restrictions coming from any parent properties. A subobject's gameplay tag property without any declared meta categories should stay that way. */
+			if (PropertyHandle->GetOuterBaseClass() != ParentHandle->GetOuterBaseClass())
+			{
+				break;
+			}
+		}
+
+		PropertyHandle = ParentHandle;
 	}
 	
 	return Categories;
 }
 
-FString UGameplayTagsManager::GetCategoriesMetaFromFunction(const UFunction* ThisFunction, FName ParamName /** = NAME_None */) const
+FString UGameplayTagsManager::GetCategoriesMetaFromFunction(const UFunction* ThisFunction, FName ParamName /** = NAME_None */)
 {
 	FString FilterString;
 	if (ThisFunction)
@@ -1613,14 +1649,14 @@ FString UGameplayTagsManager::GetCategoriesMetaFromFunction(const UFunction* Thi
 			FProperty* ParamProp = FindFProperty<FProperty>(ThisFunction, ParamName);
 			if (ParamProp)
 			{
-				FilterString = UGameplayTagsManager::Get().GetCategoriesMetaFromField(ParamProp);
+				FilterString = GetCategoriesMetaFromField(ParamProp);
 			}
 		}
 
 		// No filter found so far, fall back to UFUNCTION-level
-		if (FilterString.IsEmpty() && ThisFunction->HasMetaData(NAME_GameplayTagFilter))
+		if (FilterString.IsEmpty())
 		{
-			FilterString = ThisFunction->GetMetaData(NAME_GameplayTagFilter);
+			FilterString = GetCategoriesMetaFromField(ThisFunction);
 		}
 	}
 
@@ -1629,6 +1665,8 @@ FString UGameplayTagsManager::GetCategoriesMetaFromFunction(const UFunction* Thi
 
 void UGameplayTagsManager::GetAllTagsFromSource(FName TagSource, TArray< TSharedPtr<FGameplayTagNode> >& OutTagArray) const
 {
+	FScopeLock Lock(&GameplayTagMapCritical);
+
 	for (const TPair<FGameplayTag, TSharedPtr<FGameplayTagNode>>& NodePair : GameplayTagNodeMap)
 	{
 		if (NodePair.Value->SourceNames.Contains(TagSource))
@@ -1951,13 +1989,42 @@ FGameplayTag UGameplayTagsManager::RequestGameplayTag(FName TagName, bool ErrorI
 	// This function is not generically threadsafe.
 	FScopeLock Lock(&GameplayTagMapCritical);
 
-	FGameplayTag PossibleTag(TagName);
+	// Check if there are redirects for this tag. If so and the redirected tag is in the node map, return it.
+	// Redirects take priority, even if the tag itself may exist.
+	if (const FGameplayTag* RedirectedTag = FGameplayTagRedirectors::Get().RedirectTag(TagName))
+	{
+		// Check if the redirected tag exists in the node map
+		if (GameplayTagNodeMap.Contains(*RedirectedTag))
+		{
+			return *RedirectedTag;
+		}
 
+		// The tag that was redirected to was not found. Error if that was requested.
+		if (ErrorIfNotFound)
+		{
+			static TSet<FName> MissingRedirectedTagNames;
+			if (!MissingRedirectedTagNames.Contains(TagName))
+			{
+				const FString RedirectedToName = RedirectedTag->GetTagName().ToString();
+				ensureAlwaysMsgf(false, TEXT("Requested Gameplay Tag %s was redirected to %s but %s was not found. Fix or remove the redirect from config."), *TagName.ToString(), *RedirectedToName, *RedirectedToName);
+				MissingRedirectedTagNames.Add(TagName);
+			}
+		}
+		
+		// TagName got redirected to a non-existent tag. We'll return an empty tag rather than falling through
+		// and trying to resolve the original tag name. Stale redirects should be fixed.
+		return FGameplayTag();
+	}
+
+	// Check if the tag itself exists in the node map. If so, return it.
+	const FGameplayTag PossibleTag(TagName);
 	if (GameplayTagNodeMap.Contains(PossibleTag))
 	{
 		return PossibleTag;
 	}
-	else if (ErrorIfNotFound)
+
+	// The tag is not found. Error if that was requested.
+	if (ErrorIfNotFound)
 	{
 		static TSet<FName> MissingTagName;
 		if (!MissingTagName.Contains(TagName))
@@ -2172,7 +2239,9 @@ void UGameplayTagsManager::DoneAddingNativeTags()
 
 FGameplayTagContainer UGameplayTagsManager::RequestGameplayTagParents(const FGameplayTag& GameplayTag) const
 {
-	const FGameplayTagContainer* ParentTags = GetSingleTagContainer(GameplayTag);
+	FScopeLock Lock(&GameplayTagMapCritical);
+
+	const FGameplayTagContainer* ParentTags = GetSingleTagContainerPtr(GameplayTag);
 
 	if (ParentTags)
 	{
@@ -2181,22 +2250,69 @@ FGameplayTagContainer UGameplayTagsManager::RequestGameplayTagParents(const FGam
 	return FGameplayTagContainer();
 }
 
+// If true, verify that the node lookup and manual methods give identical results
+#define VALIDATE_EXTRACT_PARENT_TAGS 0
+
+bool UGameplayTagsManager::ExtractParentTags(const FGameplayTag& GameplayTag, TArray<FGameplayTag>& UniqueParentTags) const
+{
+	// This gets called during GameplayTagContainer serialization so needs to be efficient
+	if (!GameplayTag.IsValid())
+	{
+		return false;
+	}
+
+	TArray<FGameplayTag> ValidationCopy;
+
+	if constexpr (0 != VALIDATE_EXTRACT_PARENT_TAGS)
+	{
+		ValidationCopy = UniqueParentTags;
+	}
+
+	int32 OldSize = UniqueParentTags.Num();
+	FName RawTag = GameplayTag.GetTagName();
+
+	// Need to run in the open as it takes a lock. 
+	UE_AUTORTFM_OPEN(
+		{
+			FScopeLock Lock(&GameplayTagMapCritical);
+
+			// This code does not check redirectors because that was already handled by GameplayTagContainerLoaded
+			const TSharedPtr<FGameplayTagNode>*Node = GameplayTagNodeMap.Find(GameplayTag);
+			if (Node)
+			{
+				// Use the registered tag container if it exists
+				const FGameplayTagContainer& SingleContainer = (*Node)->GetSingleTagContainer();
+				for (const FGameplayTag& ParentTag : SingleContainer.ParentTags)
+				{
+					UniqueParentTags.AddUnique(ParentTag);
+				}
+
+				if constexpr (0 != VALIDATE_EXTRACT_PARENT_TAGS)
+				{
+					GameplayTag.ParseParentTags(ValidationCopy);
+					ensureAlwaysMsgf(ValidationCopy == UniqueParentTags, TEXT("ExtractParentTags results are inconsistent for tag %s"), *GameplayTag.ToString());
+				}
+			}
+			else if (!ShouldClearInvalidTags())
+			{
+				// If we don't clear invalid tags, we need to extract the parents now in case they get registered later
+				GameplayTag.ParseParentTags(UniqueParentTags);
+			}
+		});
+
+	return UniqueParentTags.Num() != OldSize;
+}
+
 void UGameplayTagsManager::RequestAllGameplayTags(FGameplayTagContainer& TagContainer, bool OnlyIncludeDictionaryTags) const
 {
-	TArray<TSharedPtr<FGameplayTagNode>> ValueArray;
-	GameplayTagNodeMap.GenerateValueArray(ValueArray);
-	for (const TSharedPtr<FGameplayTagNode>& TagNode : ValueArray)
+	FScopeLock Lock(&GameplayTagMapCritical);
+
+	for (const TPair<FGameplayTag, TSharedPtr<FGameplayTagNode>>& NodePair : GameplayTagNodeMap)
 	{
-#if WITH_EDITOR
-		bool DictTag = IsDictionaryTag(TagNode->GetCompleteTagName());
-#else
-		bool DictTag = false;
-#endif 
-		if (!OnlyIncludeDictionaryTags || DictTag)
+		const TSharedPtr<FGameplayTagNode>& TagNode = NodePair.Value;
+		if (!OnlyIncludeDictionaryTags || TagNode->IsExplicitTag())
 		{
-			const FGameplayTag* Tag = GameplayTagNodeMap.FindKey(TagNode);
-			check(Tag);
-			TagContainer.AddTagFast(*Tag);
+			TagContainer.AddTagFast(TagNode->GetCompleteTag());
 		}
 	}
 }
@@ -2272,22 +2388,39 @@ void UGameplayTagsManager::SplitGameplayTagFName(const FGameplayTag& Tag, TArray
 
 int32 UGameplayTagsManager::GameplayTagsMatchDepth(const FGameplayTag& GameplayTagOne, const FGameplayTag& GameplayTagTwo) const
 {
-	TSet<FName> Tags1;
-	TSet<FName> Tags2;
+	using FTagsArray = TArray<FName, TInlineAllocator<32>>;
 
-	TSharedPtr<FGameplayTagNode> TagNode = FindTagNode(GameplayTagOne);
-	if (TagNode.IsValid())
+	auto GetTags = [this](FTagsArray& Tags, const FGameplayTag& GameplayTag)
 	{
-		GetAllParentNodeNames(Tags1, TagNode);
+		for (TSharedPtr<FGameplayTagNode> TagNode = FindTagNode(GameplayTag); TagNode.IsValid(); TagNode = TagNode->GetParentTagNode())
+		{
+			Tags.Add(TagNode->Tag);
+		}
+	};
+
+	FTagsArray Tags1, Tags2;
+	GetTags(Tags1, GameplayTagOne);
+	GetTags(Tags2, GameplayTagTwo);
+
+	// Get Tags returns tail to head, so compare in reverse order
+	int32 Index1 = Tags1.Num() - 1;
+	int32 Index2 = Tags2.Num() - 1;
+
+	int32 Depth = 0;
+
+	for (; Index1 >= 0 && Index2 >= 0; --Index1, --Index2)
+	{
+		if (Tags1[Index1] == Tags2[Index2])
+		{
+			++Depth;
+		}
+		else
+		{
+			break;
+		}
 	}
 
-	TagNode = FindTagNode(GameplayTagTwo);
-	if (TagNode.IsValid())
-	{
-		GetAllParentNodeNames(Tags2, TagNode);
-	}
-
-	return Tags1.Intersect(Tags2).Num();
+	return Depth;
 }
 
 int32 UGameplayTagsManager::GetNumberOfTagNodes(const FGameplayTag& GameplayTag) const

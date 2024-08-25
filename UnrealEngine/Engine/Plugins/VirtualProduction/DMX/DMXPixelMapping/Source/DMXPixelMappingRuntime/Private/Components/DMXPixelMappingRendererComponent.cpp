@@ -4,16 +4,19 @@
 
 #include "Async/Async.h"
 #include "Blueprint/UserWidget.h"
+#include "Components/DMXPixelMappingComponentGeometryCache.h"
 #include "Components/DMXPixelMappingFixtureGroupComponent.h"
 #include "Components/DMXPixelMappingFixtureGroupItemComponent.h"
 #include "Components/DMXPixelMappingMatrixComponent.h"
 #include "Components/DMXPixelMappingRootComponent.h"
 #include "Components/DMXPixelMappingScreenComponent.h"
+#include "DMXPixelMapping.h"
 #include "DMXPixelMappingPixelMapRenderer.h"
 #include "DMXPixelMappingPreprocessRenderer.h"
 #include "DMXPixelMappingMainStreamObjectVersion.h"
 #include "DMXPixelMappingTypes.h"
 #include "DMXStats.h"
+#include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "IDMXPixelMappingRenderer.h"
 #include "IDMXPixelMappingRendererModule.h"
@@ -38,22 +41,13 @@ DECLARE_CYCLE_STAT(TEXT("PixelMapping RenderInputTexture"), STAT_DMXPixelMapping
 
 UDMXPixelMappingRendererComponent::UDMXPixelMappingRendererComponent()
 {
-	SetSize(FVector2D(100.f, 100.f));
-	
-#if WITH_EDITOR
 	ConstructorHelpers::FObjectFinder<UTexture> DefaultTexture(TEXT("Texture2D'/Engine/VREditor/Devices/Vive/UE4_Logo.UE4_Logo'"), LOAD_NoWarn);
 	if (ensureAlwaysMsgf(DefaultTexture.Succeeded(), TEXT("Failed to load Texture2D'/Engine/VREditor/Devices/Vive/UE4_Logo.UE4_Logo'")))
 	{
 		InputTexture = DefaultTexture.Object;
 		RendererType = EDMXPixelMappingRendererType::Texture;
-
-		if (FTextureResource* Resource = InputTexture->GetResource())
-		{
-			SetSize(FVector2D(Resource->GetSizeX(), Resource->GetSizeY()));
-		}
 	}
-#endif
-	
+
 	PreprocessRenderer = CreateDefaultSubobject<UDMXPixelMappingPreprocessRenderer>("PreprocessRenderer");
 	PixelMapRenderer = CreateDefaultSubobject<UDMXPixelMappingPixelMapRenderer>("PixelMapRenderer");
 
@@ -81,6 +75,21 @@ void UDMXPixelMappingRendererComponent::PostInitProperties()
 	if (!IsTemplate())
 	{
 		UpdatePreprocessRenderer();
+	}
+}
+
+void UDMXPixelMappingRendererComponent::Serialize(FArchive& Ar)
+{
+	Super::Serialize(Ar);
+
+	Ar.UsingCustomVersion(FDMXPixelMappingMainStreamObjectVersion::GUID);
+	if (Ar.IsLoading())
+	{
+		if (Ar.CustomVer(FDMXPixelMappingMainStreamObjectVersion::GUID) < FDMXPixelMappingMainStreamObjectVersion::RendererComponentHoldsLayoutRect)
+		{	
+			// Assets created before 5.4 do not store the layout rect, so they cannot follow the texture size by default
+			bChildrenFollowSize = false;
+		}
 	}
 }
 
@@ -112,10 +121,16 @@ void UDMXPixelMappingRendererComponent::PostEditChangeChainProperty(FPropertyCha
 	if (PropertyChangedChainEvent.ChangeType != EPropertyChangeType::Interactive)
 	{
 		UpdatePreprocessRenderer();
+		LetChildrenFollowSize();
+	}	
+	
+	const FName PropertyName = PropertyChangedChainEvent.GetPropertyName();
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingRendererComponent, PixelFormat))
+	{
+		InvalidatePixelMapRenderer();
 	}
 
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	const FName PropertyName = PropertyChangedChainEvent.GetPropertyName();
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingRendererComponent, Brightness))
 	{
 		const TSharedPtr<IDMXPixelMappingRenderer>& Renderer = GetRenderer();
@@ -140,19 +155,21 @@ void UDMXPixelMappingRendererComponent::UpdatePreprocessRenderer()
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	UserWidget = nullptr;
+
+	const EPixelFormat Format = GetFormatFromDynamicRange();
 	switch (RendererType)
 	{
 	case(EDMXPixelMappingRendererType::Texture):
-		PreprocessRenderer->SetInputTexture(InputTexture.Get());
+		PreprocessRenderer->SetInputTexture(InputTexture.Get(), Format);
 		break;
 
 	case(EDMXPixelMappingRendererType::Material):
-		PreprocessRenderer->SetInputMaterial(InputMaterial.Get());
+		PreprocessRenderer->SetInputMaterial(InputMaterial.Get(), Format);
 		break;
 
 	case(EDMXPixelMappingRendererType::UMG):
 		UserWidget = CreateWidget(TryGetWorld(), InputWidget);
-		PreprocessRenderer->SetInputUserWidget(UserWidget.Get());
+		PreprocessRenderer->SetInputUserWidget(UserWidget.Get(), Format);
 		break;
 
 	default:
@@ -201,13 +218,13 @@ TArray<TSharedRef<UE::DMXPixelMapping::Rendering::FPixelMapRenderElement>> UDMXP
 	return PixelMapRenderElements;
 }
 
-void UDMXPixelMappingRendererComponent::ResetDMX()
+void UDMXPixelMappingRendererComponent::ResetDMX(EDMXPixelMappingResetDMXMode ResetMode)
 {
 	ForEachChild([&](UDMXPixelMappingBaseComponent* InComponent)
 		{
 			if (UDMXPixelMappingOutputComponent* Component = Cast<UDMXPixelMappingOutputComponent>(InComponent))
 			{
-				Component->ResetDMX();
+				Component->ResetDMX(ResetMode);
 			}
 		}, false);
 }
@@ -228,24 +245,23 @@ void UDMXPixelMappingRendererComponent::SendDMX()
 void UDMXPixelMappingRendererComponent::Render()
 {
 	SCOPE_CYCLE_COUNTER(STAT_DMXPixelMappingRender);
-
-	// Always size to texture
-	if (UTexture* Texture = PreprocessRenderer->GetRenderedTexture())
-	{
-		const FVector2D TextureSize(Texture->GetSurfaceWidth(), Texture->GetSurfaceHeight());
-		if (GetSize() != TextureSize)
-		{
-			SetSize(TextureSize);
-			bInvalidatePixelMap = true;
-		}
-	}
-
+	
 	PreprocessRenderer->Render();
 
-	UTexture* RenderedInputTexture = PreprocessRenderer->GetRenderedTexture();
-	if (!RenderedInputTexture)
+	UTexture* PreprocessedTexture = PreprocessRenderer->GetRenderedTexture();
+	if (!PreprocessedTexture)
 	{
 		return;
+	}
+
+	// Always size to texture
+	const FVector2D TextureSize(PreprocessedTexture->GetSurfaceWidth(), PreprocessedTexture->GetSurfaceHeight());
+	if (GetSize() != TextureSize)
+	{
+		SetSize(TextureSize);
+		LetChildrenFollowSize();
+
+		bInvalidatePixelMap = true;
 	}
 
 	// Update render elements if invalidated
@@ -256,7 +272,7 @@ void UDMXPixelMappingRendererComponent::Render()
 		constexpr bool bRecursive = true;
 		ForEachChild([this](UDMXPixelMappingBaseComponent* Component)
 			{
-				if (UDMXPixelMappingFixtureGroupItemComponent* FixtureGroupItemComponent = Cast< UDMXPixelMappingFixtureGroupItemComponent>(Component))
+				if (UDMXPixelMappingFixtureGroupItemComponent* FixtureGroupItemComponent = Cast<UDMXPixelMappingFixtureGroupItemComponent>(Component))
 				{
 					PixelMapRenderElements.Add(FixtureGroupItemComponent->GetOrCreatePixelMapRenderElement());
 				}
@@ -266,12 +282,13 @@ void UDMXPixelMappingRendererComponent::Render()
 				}
 			}, bRecursive);
 
-		PixelMapRenderer->SetElements(PixelMapRenderElements);
+		const EPixelFormat Format = GetFormatFromDynamicRange();
+		PixelMapRenderer->SetElements(PixelMapRenderElements, Format);
 
 		bInvalidatePixelMap = false;
 	}
 
-	PixelMapRenderer->Render(RenderedInputTexture, Brightness);
+	PixelMapRenderer->Render(PreprocessedTexture, Brightness);
 }
 
 void UDMXPixelMappingRendererComponent::RenderAndSendDMX()
@@ -311,12 +328,108 @@ FString UDMXPixelMappingRendererComponent::GetUserName() const
 
 UTexture* UDMXPixelMappingRendererComponent::GetRenderedInputTexture() const
 {
-	return  PreprocessRenderer ? PreprocessRenderer->GetRenderedTexture() : nullptr;
+	return PreprocessRenderer ? PreprocessRenderer->GetRenderedTexture() : nullptr;
 }
 
 void UDMXPixelMappingRendererComponent::OnComponentAddedOrRemoved(UDMXPixelMapping* PixelMapping, UDMXPixelMappingBaseComponent* Component)
 {
 	InvalidatePixelMapRenderer();
+}
+
+void UDMXPixelMappingRendererComponent::LetChildrenFollowSize()
+{
+	UDMXPixelMapping* PixelMapping = GetPixelMapping();
+	if (!PixelMapping || !bChildrenFollowSize || !PreprocessRenderer)
+	{
+		return;
+	}
+
+	const FVector2D NewSize = PreprocessRenderer->GetResultingSize2D();
+	
+	// Handle the case where the layout rect was never stored (new assets, and assets created before 5.4).
+	// In this case, simply initialize the LayoutRect member.
+	if (LayoutRect == FVector2D::ZeroVector)
+	{
+		LayoutRect = NewSize;
+		return;
+	}
+	
+	// Skip unchanged values, or if the current size is zero (no texture).
+	if (NewSize == LayoutRect ||
+		NewSize == FVector2D::ZeroVector)
+	{
+		return;
+	}
+
+#if WITH_EDITOR
+	// In editor, temporarily disable scale children with parent
+	TGuardValue Guard(PixelMapping->bEditorScaleChildrenWithParent, false);
+#endif 
+
+	// Scale position and size of all children
+	const FVector2D Scalar = NewSize / LayoutRect;
+
+	constexpr bool bRecursive = true;
+	ForEachChild(
+		[&Scalar](UDMXPixelMappingBaseComponent* Component)
+		{
+			if (UDMXPixelMappingOutputComponent* OutputComponent = Cast<UDMXPixelMappingOutputComponent>(Component))
+			{
+				if (OutputComponent->GetClass() == UDMXPixelMappingFixtureGroupComponent::StaticClass() ||
+					OutputComponent->GetClass() == UDMXPixelMappingFixtureGroupItemComponent::StaticClass() ||
+					OutputComponent->GetClass() == UDMXPixelMappingMatrixComponent::StaticClass())
+				{
+					OutputComponent->Modify();
+
+					const FVector2D NewPosition = OutputComponent->GetPosition() * Scalar;
+					OutputComponent->SetPosition(NewPosition);
+
+					const FVector2D NewSize = OutputComponent->GetSize() * Scalar;
+					OutputComponent->SetSize(NewSize);
+				}
+
+			}
+		}, 
+		bRecursive);
+
+	// Remember the new layout rect
+	Modify();
+	LayoutRect = NewSize;
+}
+
+EPixelFormat UDMXPixelMappingRendererComponent::GetFormatFromDynamicRange() const
+{
+	UTexture2D* InputTexture2D = Cast<UTexture2D>(InputTexture);
+
+	if (PixelFormat == EDMXPixelMappingRendererPixelFormat::Auto &&
+		RendererType == EDMXPixelMappingRendererType::Texture &&
+		InputTexture2D)
+	{
+		const EPixelFormat TexturePixelFormat = InputTexture2D->GetPixelFormat();
+	
+		// Propagonate the pixel format, if it is supported by render targets. 
+		// As there doesn't seem to be an engine call to do this conversion,
+		// use (the opposite) logic of GetPixelFormatFromRenderTargetFormat in TextureRenderTarget2D.h (5.4).
+		if (TexturePixelFormat == PF_G8 ||
+			TexturePixelFormat == PF_R8G8 ||
+			TexturePixelFormat == PF_B8G8R8A8 ||
+			TexturePixelFormat == PF_R16F ||
+			TexturePixelFormat == PF_G16R16F ||
+			TexturePixelFormat == PF_FloatRGBA ||
+			TexturePixelFormat == PF_R32_FLOAT ||
+			TexturePixelFormat == PF_G32R32F ||
+			TexturePixelFormat == PF_A32B32G32R32F ||
+			TexturePixelFormat == PF_A2B10G10R10)
+		{
+			return TexturePixelFormat;
+		}
+	}
+	else if (PixelFormat == EDMXPixelMappingRendererPixelFormat::RGBA16F)
+	{
+		return PF_FloatRGBA;
+	}
+
+	return PF_B8G8R8A8;
 }
 
 UWorld* UDMXPixelMappingRendererComponent::TryGetWorld() const
@@ -616,31 +729,6 @@ void UDMXPixelMappingRendererComponent::EmptyDownsampleBuffer()
 
 	DownsampleBuffer_DEPRECATED.Empty();
 }
-
-#if WITH_EDITOR
-TSharedRef<SWidget> UDMXPixelMappingRendererComponent::TakeWidget()
-{	
-	// DEPRECATED 5.3
-
-	if (!ComponentsCanvas_DEPRECATED.IsValid())
-	{
-		ComponentsCanvas_DEPRECATED =
-			SNew(SConstraintCanvas);
-	}
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	ForEachChild([&](UDMXPixelMappingBaseComponent* InComponent) {
-			if (UDMXPixelMappingOutputComponent* Component = Cast<UDMXPixelMappingOutputComponent>(InComponent))
-			{
-				// Build all child DMX pixel mapping slots
-				Component->BuildSlot(ComponentsCanvas_DEPRECATED.ToSharedRef());
-			}
-		}, true);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-	return ComponentsCanvas_DEPRECATED.ToSharedRef();
-}
-#endif // WITH_EDITOR
 
 int32 UDMXPixelMappingRendererComponent::GetTotalDownsamplePixelCount()
 {

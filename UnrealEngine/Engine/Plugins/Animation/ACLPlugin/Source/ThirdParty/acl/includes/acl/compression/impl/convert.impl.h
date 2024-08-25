@@ -26,6 +26,7 @@
 
 // Included only once from convert.h
 
+#include "acl/version.h"
 #include "acl/compression/compress.h"
 #include "acl/compression/track_array.h"
 #include "acl/core/compressed_tracks.h"
@@ -39,12 +40,14 @@
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 		struct raw_sampling_decompression_settings final : public decompression_settings
 		{
 			// Disable normalization. This is only safe if we know the input data is already normalized!
-			static constexpr bool normalize_rotations() { return false; }
+			static constexpr rotation_normalization_policy_t get_rotation_normalization_policy() { return rotation_normalization_policy_t::never; }
 
 			// Only support raw formats. This ensures we don't interpolate when we can avoid it to maintain the original
 			// accuracy and it strips the code we don't need for faster decompression.
@@ -81,7 +84,7 @@ namespace acl
 		const track_type8 track_type = tracks.get_track_type();
 		const uint32_t num_samples = tracks.get_num_samples_per_track();
 		const float sample_rate = tracks.get_sample_rate();
-		const float duration = tracks.get_duration();
+		const float duration = tracks.get_finite_duration();
 
 		track_array result(allocator, num_tracks);
 		result.set_name(string(allocator, tracks.get_name()));
@@ -140,13 +143,17 @@ namespace acl
 
 		// Decompress and populate our track data
 		const acl_impl::tracks_header& header = acl_impl::get_tracks_header(tracks);
-		if (header.get_rotation_format() == rotation_format8::quatf_full && header.get_translation_format() == vector_format8::vector3f_full && header.get_scale_format() == vector_format8::vector3f_full)
+		if (track_type == track_type8::qvvf &&
+			header.get_rotation_format() == rotation_format8::quatf_full &&
+			header.get_translation_format() == vector_format8::vector3f_full &&
+			header.get_scale_format() == vector_format8::vector3f_full)
 		{
-			// Our input data uses full precision, retain it
+			// Our input transform data uses full precision, retain it
 			decompression_context<acl_impl::raw_sampling_decompression_settings> context;
 			context.initialize(tracks);
 
 			acl_impl::debug_track_writer writer(allocator, track_type, num_tracks);
+			writer.initialize_with_defaults(result);
 
 			for (uint32_t sample_index = 0; sample_index < num_samples; ++sample_index)
 			{
@@ -195,6 +202,9 @@ namespace acl
 
 			acl_impl::debug_track_writer writer(allocator, track_type, num_tracks);
 
+			if (track_type == track_type8::qvvf)
+				writer.initialize_with_defaults(result);
+
 			for (uint32_t sample_index = 0; sample_index < num_samples; ++sample_index)
 			{
 				const float sample_time = rtm::scalar_min(float(sample_index) / sample_rate, duration);
@@ -239,4 +249,6 @@ namespace acl
 		out_track_list = std::move(result);
 		return error_result();
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }

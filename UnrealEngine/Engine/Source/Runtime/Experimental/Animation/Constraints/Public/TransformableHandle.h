@@ -26,6 +26,7 @@ enum class EHandleEvent : uint8
 	LocalTransformUpdated,
 	GlobalTransformUpdated,
 	ComponentUpdated,
+	UpperDependencyUpdated,
 
 	/** MAX - invalid */
 	Max UMETA(Hidden),
@@ -46,8 +47,13 @@ public:
 	
 	CONSTRAINTS_API virtual ~UTransformableHandle();
 	
-	/** Sanity check to ensure the handle is safe to use. */
-	CONSTRAINTS_API virtual bool IsValid() const PURE_VIRTUAL(IsValid, return false;);
+	/** Sanity check to ensure the handle is safe to use.
+	 * @param bDeepCheck to check that the transformable object it wraps is valid AND can be transformed. Default is true.
+	 * Some handles, such as control handles, will only be bound to a skeletal mesh once the level sequence has been opened, but their control rig
+	 * pointer and control name are valid, so they must be fully loaded so that the constraint can be updated later. bDeepCheck = false will be used
+	 * for that purpose.
+	 */
+	CONSTRAINTS_API virtual bool IsValid(const bool bDeepCheck = true) const PURE_VIRTUAL(IsValid, return false;);
 	
 	/** Sets the global transform of the underlying transformable object. */
 	CONSTRAINTS_API virtual void SetGlobalTransform(const FTransform& InGlobal) const PURE_VIRTUAL(SetGlobalTransform, );
@@ -61,7 +67,7 @@ public:
 	/** If true it contains objects bound to an external system, like sequencer so we don't do certain things, like remove constraints when they don't resolve*/
 	CONSTRAINTS_API virtual bool HasBoundObjects() const;
 
-	/** Resolve the bound objects so that any object it references are resovled and correctly set up*/
+	/** Resolve the bound objects so that any object it references are resolved and correctly set up*/
 	CONSTRAINTS_API virtual void ResolveBoundObjects(FMovieSceneSequenceID LocalSequenceID, IMovieScenePlayer& Player, UObject* SubObject = nullptr) PURE_VIRTUAL(ResolveBoundObjects);
 
 	/** Make a duplicate of myself with this outer*/
@@ -72,7 +78,14 @@ public:
 	CONSTRAINTS_API void OnBindingIDsUpdated(const TMap<UE::MovieScene::FFixedObjectBindingID, UE::MovieScene::FFixedObjectBindingID>& OldFixedToNewFixedMap, FMovieSceneSequenceID LocalSequenceID, const FMovieSceneSequenceHierarchy* Hierarchy, IMovieScenePlayer& Player);
 	
 	/** Perform any special ticking needed for this handle, by default it does nothing, todo need to see if we need to tick control rig also*/
-	virtual void TickForBaking() {};
+	virtual void TickTarget() const {};
+
+	/**
+	 * Perform any pre-evaluation of the handle to ensure that the transform data are up to date.
+	 * @param bTick to force any pre-evaluation ticking. Default is false.
+	*/
+	virtual void PreEvaluate(const bool bTick = false) const;
+	
 	/** Get the array of float channels for the specified section*/
 	CONSTRAINTS_API virtual TArrayView<FMovieSceneFloatChannel*>  GetFloatChannels(const UMovieSceneSection* InSection) const PURE_VIRTUAL(GetFloatChannels, return TArrayView<FMovieSceneFloatChannel*>(); );
 	/** Get the array of double channels for the specified section*/
@@ -109,6 +122,8 @@ public:
 	CONSTRAINTS_API virtual FTickPrerequisite GetPrimaryPrerequisite() const PURE_VIRTUAL(GetPrimaryPrerequisite, return FTickPrerequisite(););
 	
 	CONSTRAINTS_API FHandleModifiedEvent& HandleModified();
+	CONSTRAINTS_API void Notify(EHandleEvent InEvent, const bool bPreTickTarget = false) const;
+	mutable bool bNotifying = false;
 
 #if WITH_EDITOR
 	CONSTRAINTS_API virtual FString GetLabel() const PURE_VIRTUAL(GetLabel, return FString(););
@@ -118,13 +133,20 @@ public:
 	//possible bindingID
 	UPROPERTY(BlueprintReadOnly, Category = "Binding")
 	FMovieSceneObjectBindingID ConstraintBindingID;
-protected:
+
+private:
 	FHandleModifiedEvent OnHandleModified;
 };
 
 /**
  * UTransformableComponentHandle
  */
+
+struct FComponentEvaluationGraphBinding
+{
+	void OnActorMoving(AActor* InActor);
+	bool bPendingFlush = false;
+};
 
 UCLASS(Blueprintable, MinimalAPI)
 class UTransformableComponentHandle : public UTransformableHandle 
@@ -138,7 +160,7 @@ public:
 	CONSTRAINTS_API virtual void PostLoad() override;
 	
 	/** Sanity check to ensure that Component. */
-	CONSTRAINTS_API virtual bool IsValid() const override;
+	CONSTRAINTS_API virtual bool IsValid(const bool bDeepCheck = true) const override;
 	
 	/** Sets the global transform of Component. */
 	CONSTRAINTS_API virtual void SetGlobalTransform(const FTransform& InGlobal) const override;
@@ -148,8 +170,8 @@ public:
 	CONSTRAINTS_API virtual FTransform GetGlobalTransform() const override;
 	/** Gets the local transform of Component in it's attachment. */
 	CONSTRAINTS_API virtual FTransform GetLocalTransform() const override;
-	/** Tick the component*/
-	CONSTRAINTS_API virtual void TickForBaking() override;
+	/** Tick any skeletal mesh related to the component. */
+	CONSTRAINTS_API virtual void TickTarget() const override;
 	/** Returns the target object containing the tick function (e.i. Component). */
 	CONSTRAINTS_API virtual UObject* GetPrerequisiteObject() const override;
 	/** Returns Component's tick function. */
@@ -208,4 +230,8 @@ public:
 	CONSTRAINTS_API void OnPostPropertyChanged(UObject* InObject, FPropertyChangedEvent& InPropertyChangedEvent);
 	CONSTRAINTS_API void OnObjectsReplaced(const TMap<UObject*, UObject*>& InOldToNewInstances);
 #endif
+
+protected:
+
+	static FComponentEvaluationGraphBinding& GetEvaluationBinding();
 };

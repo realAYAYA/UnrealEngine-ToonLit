@@ -141,14 +141,13 @@ void UNiagaraDataInterfaceMousePosition::PostInitProperties()
 	}
 }
 
+#if WITH_EDITORONLY_DATA
 // this lists all the functions our DI provides (currently only one)
-void UNiagaraDataInterfaceMousePosition::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+void UNiagaraDataInterfaceMousePosition::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature Sig;
 	Sig.Name = GetMousePositionName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("GetMousePositionNameFunctionDescription", "Returns the mouse position in screen space.");
-#endif
 	Sig.bMemberFunction = true;
 	Sig.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("MousePosition interface")));
 	Sig.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("Normalized")));
@@ -156,6 +155,7 @@ void UNiagaraDataInterfaceMousePosition::GetFunctions(TArray<FNiagaraFunctionSig
 	Sig.AddOutput(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("PosY")), LOCTEXT("MousePosYDescription", "Returns the y coordinates in pixels or 0-1 range if normalized"));
 	OutFunctions.Add(Sig);
 }
+#endif
 
 // this provides the cpu vm with the correct function to call
 void UNiagaraDataInterfaceMousePosition::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)

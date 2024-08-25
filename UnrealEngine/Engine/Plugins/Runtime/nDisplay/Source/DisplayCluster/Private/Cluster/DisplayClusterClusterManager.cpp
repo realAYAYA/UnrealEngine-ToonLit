@@ -308,9 +308,10 @@ void FDisplayClusterClusterManager::UnregisterSyncObject(IDisplayClusterClusterS
 	}
 }
 
-TUniquePtr<IDisplayClusterGenericBarriersClient> FDisplayClusterClusterManager::CreateGenericBarriersClient(const FString& ClientName)
+TUniquePtr<IDisplayClusterGenericBarriersClient, FDisplayClusterGenericBarriersClientDeleter> FDisplayClusterClusterManager::CreateGenericBarriersClient(const FString& ClientName)
 {
-	return MakeUnique<FDisplayClusterGenericBarrierClient>(ClientName);
+	return TUniquePtr<FDisplayClusterGenericBarrierClient, FDisplayClusterGenericBarriersClientDeleter>(
+		new FDisplayClusterGenericBarrierClient(ClientName), FDisplayClusterGenericBarriersClientDeleter());
 }
 
 void FDisplayClusterClusterManager::AddClusterEventListener(TScriptInterface<IDisplayClusterClusterEventListener> Listener)

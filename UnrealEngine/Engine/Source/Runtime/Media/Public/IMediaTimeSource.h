@@ -28,8 +28,8 @@ class FMediaTimeStamp
 {
 public:
 	FMediaTimeStamp() : Time(FTimespan::MinValue()), SequenceIndex(0) {}
-	FMediaTimeStamp(const FTimespan & InTime) : Time(InTime), SequenceIndex(0) {}
-	FMediaTimeStamp(const FTimespan & InTime, int64 InSequenceIndex) : Time(InTime), SequenceIndex(InSequenceIndex) {}
+	explicit FMediaTimeStamp(const FTimespan & InTime) : Time(InTime), SequenceIndex(0) {}
+	explicit FMediaTimeStamp(const FTimespan & InTime, int64 InSequenceIndex) : Time(InTime), SequenceIndex(InSequenceIndex) {}
 
 	void Invalidate() { Time = FTimespan::MinValue(); }
 	bool IsValid() const { return Time != FTimespan::MinValue(); }

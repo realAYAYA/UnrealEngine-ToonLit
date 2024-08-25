@@ -379,7 +379,7 @@ public:
 	{
 		check(ElementStack.Num());
 		check(StringHelpers::StringEquals(ElementName, *ElementStack.Last()->GetName()));
-		ElementStack.Pop(false);
+		ElementStack.Pop(EAllowShrinking::No);
 	}
 
 	const TSharedPtrTS<FTimeline_S_ElementBuilder>& GetSBuilder()
@@ -690,7 +690,6 @@ bool FManifestParserDASH::ProcessClose(const TCHAR* ElementName)
 		PopLastElement(ElementName);
 		return bContinue;
 	}
-	return true;
 }
 
 /**
@@ -2867,7 +2866,6 @@ bool FDashMPD_SegmentTimelineType::ProcessElement(FManifestParserDASH* Builder, 
 	{
 		return Super::ProcessElement(Builder, ElementName, ElementData, XmlFileLineNumber);
 	}
-	return true;
 }
 
 bool FDashMPD_SegmentTimelineType::ProcessAttribute(FManifestParserDASH* Builder, const TCHAR* AttributeName, const TCHAR* AttributeValue)
@@ -3054,15 +3052,15 @@ static bool RemoveXMLEntities(FManifestParserDASH* Builder, FString& InOutString
 			}
 			else if (Entity.Len() > 0 && Entity[0] == TCHAR('#'))
 			{
-				Entity.RightChopInline(1, false);
+				Entity.RightChopInline(1, EAllowShrinking::No);
 				// Decimal or hex?
 				if (Entity.Len() > 0 && Entity[0] == TCHAR('x'))
 				{
 					// Hex.
-					Entity.RightChopInline(1, false);
+					Entity.RightChopInline(1, EAllowShrinking::No);
 					while(Entity.Len() > 1 && Entity[0] == TCHAR('0'))
 					{
-						Entity.RightChopInline(1, false);
+						Entity.RightChopInline(1, EAllowShrinking::No);
 					}
 					int32 v=0;
 					LexFromStringHex(v, *Entity);
@@ -3071,10 +3069,10 @@ static bool RemoveXMLEntities(FManifestParserDASH* Builder, FString& InOutString
 				else
 				{
 					// Decimal.
-					Entity.RightChopInline(1, false);
+					Entity.RightChopInline(1, EAllowShrinking::No);
 					while(Entity.Len() > 1 && Entity[0] == TCHAR('0'))
 					{
-						Entity.RightChopInline(1, false);
+						Entity.RightChopInline(1, EAllowShrinking::No);
 					}
 					int32 v=0;
 					LexFromString(v, *Entity);

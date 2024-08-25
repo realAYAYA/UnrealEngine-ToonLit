@@ -78,7 +78,7 @@ FD3D12TransientHeap::FD3D12TransientHeap(const FInitializer& Initializer, FD3D12
 #if PLATFORM_WINDOWS
 		// On Windows there is no way to hook into the low level d3d allocations and frees.
 		// This means that we must manually add the tracking here.
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, D3DHeap, Desc.SizeInBytes, ELLMTag::GraphicsPlatform));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, D3DHeap, Desc.SizeInBytes, ELLMTag::GraphicsPlatform));
 		MemoryTrace_Alloc((uint64)D3DHeap, Desc.SizeInBytes, 0, EMemoryTraceRootHeap::VideoMemory);
 		// Boost priority to make sure it's not paged out
 		TRefCountPtr<ID3D12Device5> D3DDevice5;
@@ -92,7 +92,18 @@ FD3D12TransientHeap::FD3D12TransientHeap(const FInitializer& Initializer, FD3D12
 	Heap = new FD3D12Heap(Device, VisibleNodeMask);
 	Heap->SetHeap(D3DHeap, TEXT("TransientResourceAllocator Backing Heap"), true, true);
 	Heap->SetIsTransient(true);
-	Heap->BeginTrackingResidency(Desc.SizeInBytes);
+
+	// UE-174791: we seem to have a bug related to residency where transient heaps are evicted, but are not restored correctly before a resource
+	// is needed, leading to GPU page faults like this one:
+	// 
+	// PageFault: Found 1 active heaps containing page fault address
+	//  	GPU Address : "0x1008800000" - Size : 128.00 MB - Name : TransientResourceAllocator Backing Heap
+	// 
+	// We don't really need to evict these heaps anyway, since they are used throughout the frame, and are garbage-collected after a few frames
+	// when they're no longer needed. Disabling residency tracking will not fix the underlying bug, but should make it less likely to occur,
+	// and might make the GPU crash data more useful when it does happen.
+	//Heap->BeginTrackingResidency(Desc.SizeInBytes);
+	Heap->DisallowTrackingResidency(); // Remove this when the above workaround is not needed
 
 	SetGpuVirtualAddress(Heap->GetGPUVirtualAddress());
 
@@ -108,12 +119,10 @@ FD3D12TransientHeap::~FD3D12TransientHeap()
 		DEC_MEMORY_STAT_BY(STAT_D3D12TransientHeaps, Desc.SizeInBytes);
 		DEC_MEMORY_STAT_BY(STAT_D3D12MemoryCurrentTotal, Desc.SizeInBytes);
 #if PLATFORM_WINDOWS
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Heap->GetHeap()));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Heap->GetHeap()));
 		MemoryTrace_Free((uint64)Heap->GetHeap(), EMemoryTraceRootHeap::VideoMemory);
 #endif
 
-		// Add a reference to the underlying to heap to be deferred released later.
-		Heap->AddRef();
 		Heap->DeferDelete();
 	}
 }

@@ -17,6 +17,7 @@ public class EpicStageApp : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
 				"DeveloperSettings",
+				"DiscoveryBeaconReceiver",
 				"DisplayCluster",
 				"DisplayClusterLightCardEditorShaders",
 				"DisplayClusterLightCardExtender",

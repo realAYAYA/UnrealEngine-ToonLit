@@ -534,8 +534,8 @@ void UAnimationSharingManager::UnregisterActor(AActor* InActor)
 				SkeletonData->PerActorData[SwapIndex].UpdateActorHandleDelegate.ExecuteIfBound(CreateActorHandle(IntCastChecked<uint8>(SkeletonIndex), ActorIndex));
 			}			
 
-			SkeletonData->PerActorData.RemoveAtSwap(ActorIndex, 1, false);
-			SkeletonData->RegisteredActors.RemoveAtSwap(ActorIndex, 1, false);
+			SkeletonData->PerActorData.RemoveAtSwap(ActorIndex, 1, EAllowShrinking::No);
+			SkeletonData->RegisteredActors.RemoveAtSwap(ActorIndex, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -2114,7 +2114,7 @@ void UAnimSharingInstance::RemoveComponent(int32 ComponentIndex)
 		}
 	}
 
-	PerComponentData.RemoveAtSwap(ComponentIndex, 1, false);
+	PerComponentData.RemoveAtSwap(ComponentIndex, 1, EAllowShrinking::No);
 }
 
 void UAnimSharingInstance::RemoveBlendInstance(int32 InstanceIndex)
@@ -2133,7 +2133,7 @@ void UAnimSharingInstance::RemoveBlendInstance(int32 InstanceIndex)
 		}
 	}
 
-	BlendInstances.RemoveAtSwap(InstanceIndex, 1, false);
+	BlendInstances.RemoveAtSwap(InstanceIndex, 1, EAllowShrinking::No);
 }
 
 void UAnimSharingInstance::RemoveOnDemandInstance(int32 InstanceIndex)
@@ -2161,7 +2161,7 @@ void UAnimSharingInstance::RemoveOnDemandInstance(int32 InstanceIndex)
 	}
 
 	// Remove and swap 
-	OnDemandInstances.RemoveAtSwap(InstanceIndex, 1, false);
+	OnDemandInstances.RemoveAtSwap(InstanceIndex, 1, EAllowShrinking::No);
 }
 
 void UAnimSharingInstance::RemoveAdditiveInstance(int32 InstanceIndex)
@@ -2180,5 +2180,5 @@ void UAnimSharingInstance::RemoveAdditiveInstance(int32 InstanceIndex)
 		}
 	}
 
-	AdditiveInstances.RemoveAtSwap(InstanceIndex, 1, false);
+	AdditiveInstances.RemoveAtSwap(InstanceIndex, 1, EAllowShrinking::No);
 }

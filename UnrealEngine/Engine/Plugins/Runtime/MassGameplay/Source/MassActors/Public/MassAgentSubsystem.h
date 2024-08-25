@@ -5,7 +5,7 @@
 #include "MassEntityTypes.h"
 #include "MassProcessingTypes.h"
 #include "MassEntityTemplate.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassAgentSubsystem.generated.h"
 
 class AActor;
@@ -36,7 +36,7 @@ struct MASSACTORS_API FMassAgentInitializationQueue
  * A subsystem managing communication between Actors and Mass
  */
 UCLASS()
-class MASSACTORS_API UMassAgentSubsystem : public UWorldSubsystem
+class MASSACTORS_API UMassAgentSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 

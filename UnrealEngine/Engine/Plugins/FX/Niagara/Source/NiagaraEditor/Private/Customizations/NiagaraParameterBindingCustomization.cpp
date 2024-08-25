@@ -23,6 +23,7 @@
 #include "NiagaraScriptSource.h"
 #include "NiagaraSimulationStageBase.h"
 #include "NiagaraSystem.h"
+#include "NiagaraVariableMetaData.h"
 #include "NiagaraParameterBinding.h"
 #include "SNiagaraParameterEditor.h"
 #include "Customizations/NiagaraTypeCustomizations.h"
@@ -541,6 +542,9 @@ FReply FNiagaraParameterBindingCustomization::OnResetToDefaultsClicked()
 			FMemory::Memcpy(DefaultValueStructOnScope->GetStructMemory(), DefaultValue.GetData(), DefaultValue.Num());
 			DefaultValueParameterEditor->UpdateInternalValueFromStruct(DefaultValueStructOnScope.ToSharedRef());
 		}
+
+		PropertyHandle->NotifyPostChange(EPropertyChangeType::ValueSet);
+		PropertyHandle->NotifyFinishedChangingProperties();
 	}
 
 	return FReply::Handled();

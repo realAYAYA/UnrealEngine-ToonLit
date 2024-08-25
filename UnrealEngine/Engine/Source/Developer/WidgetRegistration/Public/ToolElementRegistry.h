@@ -11,7 +11,8 @@ enum class EToolElement : uint32
 {
 	Toolbar = 0,
 	Toolkit,
-	Separator
+	Separator,
+	Section
 };
 
 /** A class which provides the data necessary to generate a widget. This class should be
@@ -25,6 +26,9 @@ public:
 
 	/** The constructor, which takes an EToolElement which will define the type of Tool Element*/
 	FToolElementRegistrationArgs(EToolElement InToolElementType);
+
+	/** The constructor, which takes an EToolElement which will define the type of Tool Element*/
+	FToolElementRegistrationArgs(FName InStyleClassName);
 
 	/** default destructor in case any subclasses need to provide a destructor*/
 	virtual ~FToolElementRegistrationArgs() = default;
@@ -40,6 +44,9 @@ public:
 
 	/** The type of tool element this is Registration args for */
 	const EToolElement ToolElementType;
+
+	/** The style class name */
+	const FName StyleClassName;
 };
 
 /** Serves as a key into the FToolElementRegistry of FToolElements */

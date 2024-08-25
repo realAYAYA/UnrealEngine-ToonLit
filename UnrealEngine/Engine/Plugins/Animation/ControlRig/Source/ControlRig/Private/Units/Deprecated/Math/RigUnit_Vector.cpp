@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "RigUnit_Vector.h"
+#include "Units/Deprecated/Math/RigUnit_Vector.h"
 #include "RigVMFunctions/Math/RigVMFunction_MathVector.h"
 #include "Math/ControlRigMathLibrary.h"
 

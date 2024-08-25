@@ -105,8 +105,8 @@ void FChangeMaskCache::PopLastEntry()
 {
 	const FCachedInfo& Info = Indices.Last();
 
-	Storage.SetNum(Info.StorageOffset, false);
-	Indices.Pop(false);
+	Storage.SetNum(Info.StorageOffset, EAllowShrinking::No);
+	Indices.Pop(EAllowShrinking::No);
 }
 
 inline FChangeMaskCache::FCachedInfo& FChangeMaskCache::AddSubObjectOwnerDirty(uint32 InternalIndex)

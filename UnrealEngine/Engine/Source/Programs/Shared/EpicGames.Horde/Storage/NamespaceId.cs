@@ -12,6 +12,7 @@ namespace EpicGames.Horde.Storage
 	/// <summary>
 	/// Identifier for a storage namespace
 	/// </summary>
+	[LogValueType]
 	[JsonSchemaString]
 	[JsonConverter(typeof(NamespaceIdJsonConverter))]
 	[TypeConverter(typeof(NamespaceIdTypeConverter))]
@@ -21,6 +22,15 @@ namespace EpicGames.Horde.Storage
 		/// The text representing this id
 		/// </summary>
 		public StringId Text { get; }
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="text">Unique id for the namespace</param>
+		public NamespaceId(string text)
+			: this(new Utf8String(text))
+		{
+		}
 
 		/// <summary>
 		/// Constructor
@@ -71,6 +81,6 @@ namespace EpicGames.Horde.Storage
 		public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType) => sourceType == typeof(string);
 
 		/// <inheritdoc/>
-		public override object ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value) => new NamespaceId((string)value);
+		public override object ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value) => new NamespaceId(new Utf8String((string)value));
 	}
 }

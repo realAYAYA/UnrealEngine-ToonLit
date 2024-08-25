@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/StaticMesh.h"
-#include "GameFramework/LightWeightInstanceManager.h"
+#include "LightWeightInstanceManager.h"
 #include "Elements/SMInstance/SMInstanceManager.h"
 
 #include "LightWeightInstanceStaticMeshManager.generated.h"
@@ -24,9 +24,7 @@ class ALightWeightInstanceStaticMeshManager : public ALightWeightInstanceManager
 	// Clears the static mesh used for rendering instances
 	ENGINE_API void ClearStaticMesh();
 
-	ENGINE_API virtual int32 ConvertCollisionIndexToLightWeightIndex(int32 InIndex) const override;
-
-	ENGINE_API virtual int32 ConvertLightWeightIndexToCollisionIndex(int32 InIndex) const override;
+	ENGINE_API virtual int32 ConvertCollisionIndexToInstanceIndex(int32 InIndex, const UPrimitiveComponent* RelevantComponent) const override;
 
 protected:
 	ENGINE_API virtual void AddNewInstanceAt(FLWIData* InitData, int32 Index) override;
@@ -50,6 +48,10 @@ protected:
 public:
 
 	ENGINE_API virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+#if WITH_EDITORONLY_DATA
+	ENGINE_API virtual void PostLoad() override;
+#endif
 
 protected:
 
@@ -80,8 +82,16 @@ protected:
 	UFUNCTION()
 	ENGINE_API void OnRep_StaticMesh();
 
+#if WITH_EDITORONLY_DATA
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.4, "Doesn't need a UHierarchicalInstancedStaticMeshComponent anymore but is replaced by UInstancedStaticMeshComponent (see ISMComponent property).")
+	UPROPERTY()
+	TObjectPtr<class UHierarchicalInstancedStaticMeshComponent> InstancedStaticMeshComponent_DEPRECATED;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+#endif
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Debug, AdvancedDisplay, meta = (BlueprintProtected = "true", AllowPrivateAccess = "true"))
-	TObjectPtr<class UHierarchicalInstancedStaticMeshComponent> InstancedStaticMeshComponent;
+	TObjectPtr<class UInstancedStaticMeshComponent> ISMComponent;
 
 	//
 	// Bookkeeping info

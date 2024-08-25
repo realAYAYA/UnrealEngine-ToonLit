@@ -27,33 +27,25 @@ class UAnimBoneCompressionCodec_ACLCustom : public UAnimBoneCompressionCodec_ACL
 	UPROPERTY(EditAnywhere, Category = Clip)
 	TEnumAsByte<ACLVectorFormat> ScaleFormat;
 
-	/** The threshold used to detect constant rotation tracks. */
-	UPROPERTY(EditAnywhere, Category = Clip, meta = (ClampMin = "0"))
-	float ConstantRotationThresholdAngle;
-
-	/** The threshold used to detect constant translation tracks. */
-	UPROPERTY(EditAnywhere, Category = Clip, meta = (ClampMin = "0"))
-	float ConstantTranslationThreshold;
-
-	/** The threshold used to detect constant scale tracks. */
-	UPROPERTY(EditAnywhere, Category = Clip, meta = (ClampMin = "0"))
-	float ConstantScaleThreshold;
-
 	/** The skeletal meshes used to estimate the skinning deformation during compression. */
 	UPROPERTY(EditAnywhere, Category = "ACL Options")
-	TArray<TObjectPtr<class USkeletalMesh>> OptimizationTargets;
+	TArray<class USkeletalMesh*> OptimizationTargets;
+
+	/** The minimum proportion of keyframes that should be stripped. */
+	UPROPERTY(EditAnywhere, Category = "ACL Destructive Options", meta = (ClampMin = "0", ClampMax = "1"))
+	FPerPlatformFloat KeyframeStrippingProportion;
+
+	/** The error threshold below which to strip keyframes. If a keyframe can be reconstructed with an error below the threshold, it is stripped. */
+	UPROPERTY(EditAnywhere, Category = "ACL Destructive Options", meta = (ClampMin = "0"))
+	FPerPlatformFloat KeyframeStrippingThreshold;
 
 	//////////////////////////////////////////////////////////////////////////
 
 	// UAnimBoneCompressionCodec implementation
-// @third party code - Epic Games Begin
 	virtual void PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar) override;
-// @third party code - Epic Games End
 
 	// UAnimBoneCompressionCodec_ACLBase implementation
-// @third party code - Epic Games Begin
-	virtual void GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const override;
-// @third party code - Epic Games End
+	virtual void GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const override;
 	virtual TArray<class USkeletalMesh*> GetOptimizationTargets() const override { return OptimizationTargets; }
 #endif
 

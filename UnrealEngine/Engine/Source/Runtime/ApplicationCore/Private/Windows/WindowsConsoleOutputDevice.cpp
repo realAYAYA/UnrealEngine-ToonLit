@@ -19,7 +19,6 @@
 #include "Misc/App.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "HAL/ThreadHeartBeat.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "String/Find.h"
 

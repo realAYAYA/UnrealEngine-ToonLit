@@ -65,13 +65,13 @@ FLumenCardData GetLumenCardData(uint CardId)
 	float4 Vector8 = LumenCardDataBuffer[BaseOffset + 8];
 	float4 Vector9 = LumenCardDataBuffer[BaseOffset + 9];
 
-	float3 TilePosition = Vector0.xyz;
-	float3 RelativeWorldPosition = float3(Vector1.w, Vector2.w, Vector3.w);
+	float3 PositionHigh = Vector0.xyz;
+	float3 PositionLow = float3(Vector1.w, Vector2.w, Vector3.w);
 
 	CardData.WorldToLocalRotation[0] = Vector1.xyz;
 	CardData.WorldToLocalRotation[1] = Vector2.xyz;
 	CardData.WorldToLocalRotation[2] = Vector3.xyz;
-	CardData.Origin = LWCHackToFloat(MakeLWCVector3(TilePosition, RelativeWorldPosition)); // LUMEN_LWC_TODO
+	CardData.Origin = DFHackToFloat(MakeDFVector3(PositionHigh, PositionLow)); // LUMEN_LWC_TODO
 
 	CardData.LocalExtent = abs(Vector4.xyz);
 
@@ -218,13 +218,13 @@ FLumenMeshCardsData GetLumenMeshCardsData(uint MeshCardsId)
 	float4 V2 = LumenCardScene.MeshCardsData[BaseOffset + 2];
 	float4 V3 = LumenCardScene.MeshCardsData[BaseOffset + 3];
 
-	float3 TilePosition = V0.xyz;
-	float3 RelativeWorldPosition = float3(V1.w, V2.w, V3.w);
+	float3 PositionHigh = V0.xyz;
+	float3 PositionLow = float3(V1.w, V2.w, V3.w);
 
 	MeshCardsData.WorldToLocalRotation[0] = V1.xyz;
 	MeshCardsData.WorldToLocalRotation[1] = V2.xyz;
 	MeshCardsData.WorldToLocalRotation[2] = V3.xyz;
-	MeshCardsData.WorldOrigin = LWCHackToFloat(MakeLWCVector3(TilePosition, RelativeWorldPosition)); // LUMEN_LWC_TODO
+	MeshCardsData.WorldOrigin = DFHackToFloat(MakeDFVector3(PositionHigh, PositionLow)); // LUMEN_LWC_TODO
 
 	uint4 V4 = asuint(LumenCardScene.MeshCardsData[BaseOffset + 4]);
 	uint4 V5 = asuint(LumenCardScene.MeshCardsData[BaseOffset + 5]);
@@ -248,7 +248,7 @@ FLumenMeshCardsData GetLumenMeshCardsData(uint MeshCardsId)
 
 struct FLumenHeightfieldData
 {
-	FLWCVector3 BoundsCenter;	// World space AABB center
+	FDFVector3 BoundsCenter;	// World space AABB center
 	float3 BoundsExtent;		// World space AABB extent
 	uint MeshCardsIndex;
 	bool bValid;
@@ -265,7 +265,7 @@ FLumenHeightfieldData GetLumenHeightfieldData(uint HeightfieldId)
 	float4 V1 = LumenCardScene.HeightfieldData[BaseOffset + 1];
 	float4 V2 = LumenCardScene.HeightfieldData[BaseOffset + 2];
 
-	LumenHeightfield.BoundsCenter = MakeLWCVector3(V0.xyz, V1.xyz);
+	LumenHeightfield.BoundsCenter = MakeDFVector3(V0.xyz, V1.xyz);
 	LumenHeightfield.BoundsExtent = V2.xyz;
 
 	LumenHeightfield.MeshCardsIndex = asuint(V0.w);

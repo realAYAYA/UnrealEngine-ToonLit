@@ -33,6 +33,17 @@ double UBehaviorTreeComponent::FrameSearchTime = 0.;
 int32 UBehaviorTreeComponent::NumSearchTimeCalls = 0;
 #endif
 
+namespace UE::BehaviorTreeCVars
+{
+	// Note this is defaulted to off for now as it caused a further bug, there is a BT unit test that will fire if this
+	// code is re-enabled, once that is addressed this can be re-enabled by default.
+	static bool bApplyAuxNodesFromFailedSearches = false;
+	static FAutoConsoleVariableRef CVarApplyAuxNodesFromFailedSearches(
+		TEXT("BehaviorTree.ApplyAuxNodesFromFailedSearches"),
+		bApplyAuxNodesFromFailedSearches,
+		TEXT("Apply Aux Nodes From Failed Searches"));
+}
+
 //----------------------------------------------------------------------//
 // UBehaviorTreeComponent
 //----------------------------------------------------------------------//
@@ -158,6 +169,9 @@ void UBehaviorTreeComponent::PauseLogic(const FString& Reason)
 	{
 		BlackboardComp->PauseObserverNotifications();
 	}
+
+	// Store a debugger execution step so debugger is aware we've been paused.
+	StoreDebuggerExecutionStep(EBTExecutionSnap::Regular);
 }
 
 EAILogicResuming::Type UBehaviorTreeComponent::ResumeLogic(const FString& Reason)
@@ -531,6 +545,11 @@ void UBehaviorTreeComponent::OnTaskFinished(const UBTTaskNode* TaskNode, EBTNode
 			if (!bWasAborting)
 			{
 				RequestExecution(TaskResult);
+			}
+			// schedule an update to process a pending execution when task is done aborting
+			else if (PendingExecution.IsSet())
+			{
+				ScheduleExecutionUpdate();
 			}
 		}
 		else if (TaskResult == EBTNodeResult::Aborted && InstanceStack.IsValidIndex(TaskInstanceIdx) && InstanceStack[TaskInstanceIdx].ActiveNode == TaskNode)
@@ -1420,7 +1439,7 @@ void UBehaviorTreeComponent::RequestExecution(const UBTCompositeNode* RequestedO
 	}
 }
 
-void UBehaviorTreeComponent::ApplySearchUpdates(const TArray<FBehaviorTreeSearchUpdate>& UpdateList, int32 NewNodeExecutionIndex, bool bPostUpdate)
+void UBehaviorTreeComponent::ApplySearchUpdatesImpl(const TArray<FBehaviorTreeSearchUpdate>& UpdateList, int32 NewNodeExecutionIndex, bool bPostUpdate, bool bAllowTaskUpdates)
 {
 	for (int32 Index = 0; Index < UpdateList.Num(); Index++)
 	{
@@ -1444,17 +1463,21 @@ void UBehaviorTreeComponent::ApplySearchUpdates(const TArray<FBehaviorTreeSearch
 		{
 			bIsComponentActive = UpdateInstance.GetActiveAuxNodes().Contains(UpdateInfo.AuxNode);
 		}
-		else if (UpdateInfo.TaskNode)
+		else if (bAllowTaskUpdates && UpdateInfo.TaskNode)
 		{
 			ParallelTaskIdx = UpdateInstance.GetParallelTasks().IndexOfByKey(UpdateInfo.TaskNode);
 			bIsComponentActive = (ParallelTaskIdx != INDEX_NONE && UpdateInstance.GetParallelTasks()[ParallelTaskIdx].Status == EBTTaskStatus::Active);
+		}
+		else
+		{
+			continue;
 		}
 
 		const UBTNode* UpdateNode = UpdateInfo.AuxNode ? (const UBTNode*)UpdateInfo.AuxNode : (const UBTNode*)UpdateInfo.TaskNode;
 		checkSlow(UpdateNode);
 
 		if ((UpdateInfo.Mode == EBTNodeUpdateMode::Remove && !bIsComponentActive) ||
-			(UpdateInfo.Mode == EBTNodeUpdateMode::Add && (bIsComponentActive || UpdateNode->GetExecutionIndex() > NewNodeExecutionIndex)) )
+			(UpdateInfo.Mode == EBTNodeUpdateMode::Add && (bIsComponentActive || UpdateNode->GetExecutionIndex() > NewNodeExecutionIndex)))
 		{
 			UpdateInfo.bApplySkipped = true;
 			UE_VLOG(GetOwner(), LogBehaviorTree, Log, TEXT("Skipping: %s for %s: %s (already in the right state)"),
@@ -1488,12 +1511,12 @@ void UBehaviorTreeComponent::ApplySearchUpdates(const TArray<FBehaviorTreeSearch
 			uint8* NodeMemory = (uint8*)UpdateNode->GetNodeMemory<uint8>(UpdateInstance);
 			if (UpdateInfo.Mode == EBTNodeUpdateMode::Remove)
 			{
-				UpdateInstance.RemoveFromActiveAuxNodes(UpdateInfo.AuxNode);
+				UpdateInstance.RemoveFromActiveAuxNodes(*this, UpdateInfo.AuxNode);
 				UpdateInfo.AuxNode->WrappedOnCeaseRelevant(*this, NodeMemory);
 			}
 			else
 			{
-				UpdateInstance.AddToActiveAuxNodes(UpdateInfo.AuxNode);
+				UpdateInstance.AddToActiveAuxNodes(*this, UpdateInfo.AuxNode);
 				UpdateInfo.AuxNode->WrappedOnBecomeRelevant(*this, NodeMemory);
 			}
 		}
@@ -1515,7 +1538,7 @@ void UBehaviorTreeComponent::ApplySearchUpdates(const TArray<FBehaviorTreeSearch
 				const bool bStillValid = InstanceStack.IsValidIndex(UpdateInfo.InstanceIndex) &&
 					InstanceStack[UpdateInfo.InstanceIndex].GetParallelTasks().IsValidIndex(ParallelTaskIdx) &&
 					InstanceStack[UpdateInfo.InstanceIndex].GetParallelTasks()[ParallelTaskIdx] == UpdateInfo.TaskNode;
-				
+
 				if (bStillValid)
 				{
 					// mark as pending abort
@@ -1535,6 +1558,57 @@ void UBehaviorTreeComponent::ApplySearchUpdates(const TArray<FBehaviorTreeSearch
 
 				UpdateInstance.AddToParallelTasks(FBehaviorTreeParallelTask(UpdateInfo.TaskNode, EBTTaskStatus::Active));
 			}
+		}
+	}
+}
+
+void UBehaviorTreeComponent::ApplySearchUpdates(const TArray<FBehaviorTreeSearchUpdate>& UpdateList, int32 NewNodeExecutionIndex, bool bPostUpdate)
+{
+	ApplySearchUpdatesImpl(UpdateList, NewNodeExecutionIndex, bPostUpdate, true);
+}
+
+void UBehaviorTreeComponent::ApplyAllSearchUpdates(const TArray<FBehaviorTreeSearchUpdate>& UpdateList, int32 NewNodeExecutionIndex, bool bDoPostUpdate, bool bAllowTaskUpdates)
+{
+	const int32 NumIterations = bDoPostUpdate ? 2 : 1;
+	constexpr int32 PostUpdateIter = 1;
+
+	for (int32 UpdateIter = 0; UpdateIter < NumIterations; ++UpdateIter)
+	{
+		const bool bPostUpdate = UpdateIter == PostUpdateIter;
+
+		ApplySearchUpdatesImpl(UpdateList, NewNodeExecutionIndex, bPostUpdate, bAllowTaskUpdates);
+	}
+
+#if ENABLE_VISUAL_LOG
+	auto LogAuxNodes = [this]()
+	{
+		UE_VLOG(GetOwner(), LogBehaviorTree, VeryVerbose, TEXT("Logging All Aux Nodes"));
+		for (int32 InstanceIndex = 0; InstanceIndex < InstanceStack.Num(); InstanceIndex++)
+		{
+			FBehaviorTreeInstance& InstanceInfo = InstanceStack[InstanceIndex];
+			InstanceInfo.ExecuteOnEachAuxNode([this](const UBTAuxiliaryNode& AuxNode)
+				{
+					UE_VLOG(GetOwner(), LogBehaviorTree, VeryVerbose, TEXT("%s"), *UBehaviorTreeTypes::DescribeNodeHelper(&AuxNode));
+				});
+		}
+	};
+
+	UE_IFVLOG(LogAuxNodes());
+#endif // ENABLE_VISUAL_LOG
+}
+
+void UBehaviorTreeComponent::TickNewlyAddedAuxNodesHelper()
+{
+	for (const FBehaviorTreeSearchUpdate& UpdateInfo : SearchData.PendingUpdates)
+	{
+		if (!UpdateInfo.bApplySkipped && UpdateInfo.Mode == EBTNodeUpdateMode::Add && UpdateInfo.AuxNode && InstanceStack.IsValidIndex(UpdateInfo.InstanceIndex))
+		{
+			FBehaviorTreeInstance& InstanceInfo = InstanceStack[UpdateInfo.InstanceIndex];
+			uint8* NodeMemory = UpdateInfo.AuxNode->GetNodeMemory<uint8>(InstanceInfo);
+
+			// We do not care about the next needed DeltaTime, it will be recalculated in the tick later.
+			float NextNeededDeltaTime = 0.0f;
+			UpdateInfo.AuxNode->WrappedTickNode(*this, NodeMemory, CurrentFrameDeltaTime, NextNeededDeltaTime);
 		}
 	}
 }
@@ -1561,28 +1635,12 @@ void UBehaviorTreeComponent::ApplySearchData(UBTNode* NewActiveNode)
 
 	SearchData.bFilterOutRequestFromDeactivatedBranch = true;
 
-	ApplySearchUpdates(SearchData.PendingUpdates, NewNodeExecutionIndex);
-	ApplySearchUpdates(SearchData.PendingUpdates, NewNodeExecutionIndex, true);
+	ApplyAllSearchUpdates(SearchData.PendingUpdates, NewNodeExecutionIndex);
 	
 	SearchData.bFilterOutRequestFromDeactivatedBranch = false;
 
 	// tick newly added aux nodes to compensate for tick-search order changes
-	UWorld* MyWorld = GetWorld();
-	const float CurrentFrameDeltaSeconds = MyWorld ? MyWorld->GetDeltaSeconds() : 0.0f;
-
-	for (int32 Idx = 0; Idx < SearchData.PendingUpdates.Num(); Idx++)
-	{
-		const FBehaviorTreeSearchUpdate& UpdateInfo = SearchData.PendingUpdates[Idx];
-		if (!UpdateInfo.bApplySkipped && UpdateInfo.Mode == EBTNodeUpdateMode::Add && UpdateInfo.AuxNode && InstanceStack.IsValidIndex(UpdateInfo.InstanceIndex))
-		{
-			FBehaviorTreeInstance& InstanceInfo = InstanceStack[UpdateInfo.InstanceIndex];
-			uint8* NodeMemory = UpdateInfo.AuxNode->GetNodeMemory<uint8>(InstanceInfo);
-
-			// We do not care about the next needed DeltaTime, it will be recalculated in the tick later.
-			float NextNeededDeltaTime = 0.0f;
-			UpdateInfo.AuxNode->WrappedTickNode(*this, NodeMemory, CurrentFrameDeltaSeconds, NextNeededDeltaTime);
-		}
-	}
+	TickNewlyAddedAuxNodesHelper();
 
 	// clear update list
 	// nothing should be added during application or tick - all changes are supposed to go to ExecutionRequest accumulator first
@@ -1594,27 +1652,46 @@ void UBehaviorTreeComponent::ApplySearchData(UBTNode* NewActiveNode)
 
 void UBehaviorTreeComponent::ApplyDiscardedSearch()
 {
-	// remove everything else
+	if (UE::BehaviorTreeCVars::bApplyAuxNodesFromFailedSearches)
+	{
+		// Apply aux nodes from last search with the currently active node as the 'NewNode'
+		int32 NewNodeExecutionIdx = 0;
+
+		if (InstanceStack.IsValidIndex(ActiveInstanceIdx))
+		{
+			FBehaviorTreeInstance& BTInstance = InstanceStack[ActiveInstanceIdx];
+
+			NewNodeExecutionIdx = BTInstance.ActiveNode ? BTInstance.ActiveNode->GetExecutionIndex() : 0;
+		}
+
+		ApplyAllSearchUpdates(/*UpdateList*/ SearchData.PendingUpdates, /*NewNodeExecutionIndex*/ NewNodeExecutionIdx, /*bDoPostUpdate*/ true, /*bAllowTaskUpdates*/ false);
+
+		// tick newly added aux nodes to compensate for tick-search order changes
+		TickNewlyAddedAuxNodesHelper();
+	}
+
 	SearchData.PendingUpdates.Reset();
 
 	// don't send deactivation notifies
 	SearchData.PendingNotifies.Reset();
 }
 
-void UBehaviorTreeComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction)
+void UBehaviorTreeComponent::TickComponent(float DeltaTime, const ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction)
 {
+	// Tick can be optimized by the tick function to not be called every frame so we need
+	// to set the current frame delta time based on that information for other tick scenarios (e.g. manual ticking in unit tests)
+	const UWorld* World = GetWorld();
+	const bool bUseWorldDTForCurrentFrame = (ThisTickFunction != nullptr && World != nullptr);
+	
+	CurrentFrameDeltaTime = bUseWorldDTForCurrentFrame ? World->GetDeltaSeconds() : DeltaTime;
+
 	// Warn if BT asked to be ticked the next frame and did not.
-	if (bTickedOnce && NextTickDeltaTime == 0.0f)
+	if (bTickedOnce && NextTickDeltaTime == 0.0f && bUseWorldDTForCurrentFrame)
 	{
-		UWorld* MyWorld = GetWorld();
-		if (MyWorld)
+		const double CurrentGameTime = World->GetTimeSeconds();
+		if (CurrentGameTime - LastRequestedDeltaTimeGameTime - CurrentFrameDeltaTime > KINDA_SMALL_NUMBER)
 		{
-			const double CurrentGameTime = MyWorld->GetTimeSeconds();
-			const float CurrentDeltaTime = MyWorld->GetDeltaSeconds();
-			if (CurrentGameTime - LastRequestedDeltaTimeGameTime - CurrentDeltaTime > KINDA_SMALL_NUMBER)
-			{
-				UE_VLOG(GetOwner(), LogBehaviorTree, Error, TEXT("BT(%i) expected to be tick next frame, current deltatime(%f) and calculated deltatime(%f)."), GFrameCounter, CurrentDeltaTime, CurrentGameTime - LastRequestedDeltaTimeGameTime);
-			}
+			UE_VLOG(GetOwner(), LogBehaviorTree, Error, TEXT("BT(%llu) expected to be tick next frame, current deltatime(%f) and calculated deltatime(%f)."), GFrameCounter, CurrentFrameDeltaTime, CurrentGameTime - LastRequestedDeltaTimeGameTime);
 		}
 	}
 
@@ -1624,7 +1701,7 @@ void UBehaviorTreeComponent::TickComponent(float DeltaTime, enum ELevelTick Tick
 	if (NextTickDeltaTime > 0.0f)
 	{
 		// The TickManager is using global time to calculate delta since last ticked time. When the value is big, we can get into float precision errors compare to our calculation.
-		if (NextTickDeltaTime > KINDA_SMALL_NUMBER)
+		if (ThisTickFunction != nullptr && NextTickDeltaTime > KINDA_SMALL_NUMBER)
 		{
 			UE_VLOG(GetOwner(), LogBehaviorTree, Error, TEXT("BT(%i) did not need to be tick, ask deltatime of %fs got %fs with a diff of %fs."), GFrameCounter, NextTickDeltaTime + AccumulatedTickDeltaTime + DeltaTime, DeltaTime + AccumulatedTickDeltaTime, NextTickDeltaTime);
 		}
@@ -1632,8 +1709,14 @@ void UBehaviorTreeComponent::TickComponent(float DeltaTime, enum ELevelTick Tick
 		ScheduleNextTick(NextTickDeltaTime);
 		return;
 	}
-	DeltaTime += AccumulatedTickDeltaTime;
-	AccumulatedTickDeltaTime = 0.0f;
+
+	AccumulatedTickDeltaTime += DeltaTime;
+	ON_SCOPE_EXIT
+	{
+		AccumulatedTickDeltaTime = 0.0f;
+	};
+
+	DeltaTime = AccumulatedTickDeltaTime;
 
 	const bool bWasTickedOnce = bTickedOnce;
 	bTickedOnce = true;
@@ -1867,6 +1950,8 @@ void UBehaviorTreeComponent::ProcessExecutionRequest()
 		return;
 	}
 
+	UE_VLOG(GetOwner(), LogBehaviorTree, VeryVerbose, TEXT("%hs Active Node %s"), __FUNCTION__, *UBehaviorTreeTypes::DescribeNodeHelper(InstanceStack[ActiveInstanceIdx].ActiveNode));
+
 	if (PendingExecution.IsSet())
 	{
 		ProcessPendingExecution();
@@ -1877,6 +1962,9 @@ void UBehaviorTreeComponent::ProcessExecutionRequest()
 	SearchData.RollbackInstanceIdx = ActiveInstanceIdx;
 	SearchData.RollbackDeactivatedBranchStart = SearchData.DeactivatedBranchStart;
 	SearchData.RollbackDeactivatedBranchEnd = SearchData.DeactivatedBranchEnd;
+
+	// Setting search root node here it can be refer to when calling 'DeactivateUpTo'
+	SearchData.SearchRootNode = FBTNodeIndex(ExecutionRequest.ExecuteInstanceIdx, ExecutionRequest.ExecuteNode->GetExecutionIndex());
 
 	EBTNodeResult::Type NodeResult = ExecutionRequest.ContinueWithResult;
 	UBTTaskNode* NextTask = NULL;
@@ -1902,7 +1990,7 @@ void UBehaviorTreeComponent::ProcessExecutionRequest()
 			if (!bDeactivated)
 			{
 				// error occurred and tree will restart, all pending deactivation notifies will be lost
-				// this is should happen
+				// this should never happen
 
 				BT_SEARCHLOG(SearchData, Error, TEXT("Unable to deactivate up to %s. Active node is %s. All pending updates will be lost!"), 
 					*UBehaviorTreeTypes::DescribeNodeHelper(ExecutionRequest.ExecuteNode), 
@@ -1929,7 +2017,6 @@ void UBehaviorTreeComponent::ProcessExecutionRequest()
 		SearchData.AssignSearchId();
 		SearchData.bPostponeSearch = false;
 		SearchData.bSearchInProgress = true;
-		SearchData.SearchRootNode = FBTNodeIndex(ExecutionRequest.ExecuteInstanceIdx, ExecutionRequest.ExecuteNode->GetExecutionIndex());
 
 		// activate root node if needed (can't be handled by parent composite...)
 		if (ActiveInstance.ActiveNode == NULL)
@@ -2116,7 +2203,9 @@ void UBehaviorTreeComponent::ProcessExecutionRequest()
 }
 
 void UBehaviorTreeComponent::ProcessPendingExecution()
-{
+{ 
+	UE_VLOG(GetOwner(), LogBehaviorTree, VeryVerbose, TEXT("%hs"), __FUNCTION__);
+
 	// can't continue if current task is still aborting
 	if (bWaitingForLatentAborts || !PendingExecution.IsSet())
 	{
@@ -2331,7 +2420,7 @@ void UBehaviorTreeComponent::UnregisterAuxNodesInBranch(const UBTCompositeNode* 
 		if (bApplyImmediately)
 		{
 			FBTSuspendBranchActionsScoped ScopedSuspend(*this, EBTBranchAction::All);
-			ApplySearchUpdates(SearchData.PendingUpdates, 0);
+			ApplyAllSearchUpdates(/*UpdateList*/ SearchData.PendingUpdates, /*NewNodeExecutionIndex*/ 0, /*bDoPostUpdate*/ false);
 			SearchData.PendingUpdates = UpdateListCopy;
 		}
 	}
@@ -2354,22 +2443,20 @@ void UBehaviorTreeComponent::ExecuteTask(UBTTaskNode* TaskNode)
 	{
 		uint8* NodeMemory = (uint8*)ServiceNode->GetNodeMemory<uint8>(ActiveInstance);
 
-		ActiveInstance.AddToActiveAuxNodes(ServiceNode);
+		ActiveInstance.AddToActiveAuxNodes(*this, ServiceNode);
 
 		UE_VLOG(GetOwner(), LogBehaviorTree, Log, TEXT("Activating task service: %s"), *UBehaviorTreeTypes::DescribeNodeHelper(ServiceNode));
 		ServiceNode->WrappedOnBecomeRelevant(*this, NodeMemory);
 	}
 
 	// Services were already ticked for this frame, need to tick the new ones. 
-	UWorld* MyWorld = GetWorld();
-	const float CurrentFrameDeltaSeconds = MyWorld ? MyWorld->GetDeltaSeconds() : 0.0f;
 	for (UBTService* ServiceNode : TaskNode->Services)
 	{
 		uint8* NodeMemory = (uint8*)ServiceNode->GetNodeMemory<uint8>(ActiveInstance);
 
 		// We do not care about the next needed DeltaTime, it will be recalculated in the tick later.
 		float NextNeededDeltaTime = 0.0f;
-		ServiceNode->WrappedTickNode(*this, NodeMemory, CurrentFrameDeltaSeconds, NextNeededDeltaTime);
+		ServiceNode->WrappedTickNode(*this, NodeMemory, CurrentFrameDeltaTime, NextNeededDeltaTime);
 	}
 
 	ActiveInstance.ActiveNode = TaskNode;
@@ -2663,7 +2750,7 @@ bool UBehaviorTreeComponent::PushInstance(UBehaviorTree& TreeAsset)
 			// send initial on search start events in case someone is using them for init logic
 			ServiceNode->NotifyParentActivation(SearchData);
 
-			InstanceStack[ActiveInstanceIdx].AddToActiveAuxNodes(ServiceNode);
+			InstanceStack[ActiveInstanceIdx].AddToActiveAuxNodes(*this,ServiceNode);
 			ServiceNode->WrappedOnBecomeRelevant(*this, NodeMemory);
 		}
 
@@ -2798,7 +2885,7 @@ UBTNode* UBehaviorTreeComponent::FindTemplateNode(const UBTNode* Node) const
 	return NULL;
 }
 
-uint8* UBehaviorTreeComponent::GetNodeMemory(UBTNode* Node, int32 InstanceIdx) const
+uint8* UBehaviorTreeComponent::GetNodeMemory(const UBTNode* Node, int32 InstanceIdx) const
 {
 	return InstanceStack.IsValidIndex(InstanceIdx) ? (uint8*)Node->GetNodeMemory<uint8>(InstanceStack[InstanceIdx]) : NULL;
 }
@@ -2957,76 +3044,84 @@ void UBehaviorTreeComponent::AddCooldownTagDuration(FGameplayTag CooldownTag, fl
 	}
 }
 
-bool SetDynamicSubtreeHelper(const UBTCompositeNode* TestComposite,
-	const FBehaviorTreeInstance& InstanceInfo, const UBehaviorTreeComponent* OwnerComp,
-	const FGameplayTag& InjectTag, UBehaviorTree* BehaviorAsset)
+void UBehaviorTreeComponent::SetDynamicSubtree(FGameplayTag InjectTag, UBehaviorTree* BehaviorAsset)
+{
+	SetDynamicSubtree(InjectTag, BehaviorAsset, nullptr);
+}
+
+void UBehaviorTreeComponent::SetDynamicSubtree(FGameplayTag InjectTag, UBehaviorTree* BehaviorAsset, UBTCompositeNode* OptionalStartingNode)
 {
 	bool bInjected = false;
-
-	for (int32 Idx = 0; Idx < TestComposite->Children.Num(); Idx++)
-	{
-		const FBTCompositeChild& ChildInfo = TestComposite->Children[Idx];
-		if (ChildInfo.ChildComposite)
+	auto ReplaceInjectedBehaviorInTask = [InjectTag, BehaviorAsset, this, &bInjected](UBTTaskNode& TaskNode, const FBehaviorTreeInstance& InstanceInfo, int32 InstanceIndex)
 		{
-			bInjected = (SetDynamicSubtreeHelper(ChildInfo.ChildComposite, InstanceInfo, OwnerComp, InjectTag, BehaviorAsset) || bInjected);
-		}
-		else
-		{
-			UBTTask_RunBehaviorDynamic* SubtreeTask = Cast<UBTTask_RunBehaviorDynamic>(ChildInfo.ChildTask);
+			UBTTask_RunBehaviorDynamic* SubtreeTask = Cast<UBTTask_RunBehaviorDynamic>(&TaskNode);
 			if (SubtreeTask && SubtreeTask->HasMatchingTag(InjectTag))
 			{
 				const uint8* NodeMemory = SubtreeTask->GetNodeMemory<uint8>(InstanceInfo);
-				UBTTask_RunBehaviorDynamic* InstancedNode = Cast<UBTTask_RunBehaviorDynamic>(SubtreeTask->GetNodeInstance(*OwnerComp, (uint8*)NodeMemory));
-				if (InstancedNode)
+				if (UBTTask_RunBehaviorDynamic* InstancedNode = Cast<UBTTask_RunBehaviorDynamic>(SubtreeTask->GetNodeInstance(*this, (uint8*)NodeMemory)))
 				{
 					const bool bAssetChanged = InstancedNode->SetBehaviorAsset(BehaviorAsset);
 					if (bAssetChanged)
 					{
-						UE_VLOG(OwnerComp->GetOwner(), LogBehaviorTree, Log, TEXT("Replaced subtree in %s with %s (tag: %s)"),
+						UE_VLOG(GetOwner(), LogBehaviorTree, Log, TEXT("Replaced subtree in %s with %s (tag: %s)"),
 							*UBehaviorTreeTypes::DescribeNodeHelper(SubtreeTask), *GetNameSafe(BehaviorAsset), *InjectTag.ToString());
 						bInjected = true;
+						if (InstanceInfo.ActiveNodeType == EBTActiveNode::ActiveTask && SubtreeTask == InstanceInfo.ActiveNode)
+						{
+							UBTCompositeNode* RestartNode = SubtreeTask->GetParentNode();
+							int32 RestartChildIdx = RestartNode->GetChildIndex(*SubtreeTask);
+							RequestExecution(RestartNode, InstanceIndex, SubtreeTask, RestartChildIdx, EBTNodeResult::Aborted);
+						}
 					}
 				}
 			}
-		}
-	}
+		};
 
-	return bInjected;
-}
-
-void UBehaviorTreeComponent::SetDynamicSubtree(FGameplayTag InjectTag, UBehaviorTree* BehaviorAsset)
-{
-	bool bInjected = false;
-	// replace at matching injection points
-	for (int32 InstanceIndex = 0; InstanceIndex < InstanceStack.Num(); InstanceIndex++)
+	if (OptionalStartingNode)
 	{
-		const FBehaviorTreeInstance& InstanceInfo = InstanceStack[InstanceIndex];
-		bInjected = (SetDynamicSubtreeHelper(InstanceInfo.RootNode, InstanceInfo, this, InjectTag, BehaviorAsset) || bInjected);
-	}
-
-	// restart subtree if it was replaced
-	if (bInjected)
-	{
-		for (int32 InstanceIndex = 0; InstanceIndex < InstanceStack.Num(); InstanceIndex++)
-		{
-			const FBehaviorTreeInstance& InstanceInfo = InstanceStack[InstanceIndex];
-			if (InstanceInfo.ActiveNodeType == EBTActiveNode::ActiveTask)
-			{
-				const UBTTask_RunBehaviorDynamic* SubtreeTask = Cast<const UBTTask_RunBehaviorDynamic>(InstanceInfo.ActiveNode);
-				if (SubtreeTask && SubtreeTask->HasMatchingTag(InjectTag))
-				{
-					UBTCompositeNode* RestartNode = SubtreeTask->GetParentNode();
-					int32 RestartChildIdx = RestartNode->GetChildIndex(*SubtreeTask);
-
-					RequestExecution(RestartNode, InstanceIndex, SubtreeTask, RestartChildIdx, EBTNodeResult::Aborted);
-					break;
-				}
-			}
-		}
+		ForEachChildTask(*OptionalStartingNode, FindInstanceContainingNode(OptionalStartingNode), ReplaceInjectedBehaviorInTask);
 	}
 	else
 	{
+		ForEachChildTask(ReplaceInjectedBehaviorInTask);
+	}
+
+	if (!bInjected)
+	{
 		UE_VLOG(GetOwner(), LogBehaviorTree, Log, TEXT("Failed to inject subtree %s at tag %s"), *GetNameSafe(BehaviorAsset), *InjectTag.ToString());
+	}
+}
+
+void UBehaviorTreeComponent::ForEachChildTask(TFunctionRef<void(class UBTTaskNode&, const FBehaviorTreeInstance&, int32 InstanceIndex)> Functor)
+{
+	for (int32 InstanceIndex = 0; InstanceIndex < InstanceStack.Num(); InstanceIndex++)
+	{
+		const FBehaviorTreeInstance& InstanceInfo = InstanceStack[InstanceIndex];
+		ForEachChildTask(*InstanceInfo.RootNode, InstanceIndex, Functor);
+	}
+}
+
+void UBehaviorTreeComponent::ForEachChildTask(UBTCompositeNode& StartNode, int32 InstanceIndex, TFunctionRef<void(UBTTaskNode&, const FBehaviorTreeInstance&, int32 InstanceIndex)> Functor)
+{
+	if (!InstanceStack.IsValidIndex(InstanceIndex))
+	{
+		return;
+	}
+
+	for (int32 Idx = 0; Idx < StartNode.Children.Num(); Idx++)
+	{
+		const FBTCompositeChild& ChildInfo = StartNode.Children[Idx];
+		if (ChildInfo.ChildComposite)
+		{
+			ForEachChildTask(*ChildInfo.ChildComposite, InstanceIndex, Functor);
+		}
+		else
+		{
+			if (ChildInfo.ChildTask)
+			{
+				Functor(*ChildInfo.ChildTask, InstanceStack[InstanceIndex], InstanceIndex);
+			}
+		}
 	}
 }
 
@@ -3053,7 +3148,7 @@ void UBehaviorTreeComponent::DescribeSelfToVisLog(FVisualLogEntry* Snapshot) con
 			FString ObserversDesc;
 			for (const UBTAuxiliaryNode* AuxNode : InstanceInfo.GetActiveAuxNodes())
 			{
-				ObserversDesc += FString::Printf(TEXT("%d. %s\n"), AuxNode->GetExecutionIndex(), *AuxNode->GetNodeName(), *AuxNode->GetStaticDescription());
+				ObserversDesc += FString::Printf(TEXT("%d. %s: %s\n"), AuxNode->GetExecutionIndex(), *AuxNode->GetNodeName(), *AuxNode->GetStaticDescription());
 			}
 			StatusCategory.Add(TEXT("Observers"), ObserversDesc);
 		}
@@ -3118,6 +3213,7 @@ void UBehaviorTreeComponent::StoreDebuggerExecutionStep(EBTExecutionSnap::Type S
 	}
 
 	FBehaviorTreeExecutionStep CurrentStep;
+	CurrentStep.bIsExecutionPaused = bIsPaused;
 	CurrentStep.ExecutionStepId = DebuggerSteps.Num() ? DebuggerSteps.Last().ExecutionStepId + 1 : 0;
 	CurrentStep.TimeStamp = GetWorld()->GetTimeSeconds();
 	CurrentStep.BlackboardValues = SearchStartBlackboard;
@@ -3143,7 +3239,7 @@ void UBehaviorTreeComponent::StoreDebuggerExecutionStep(EBTExecutionSnap::Type S
 	UBehaviorTreeManager* ManagerCDO = (UBehaviorTreeManager*)UBehaviorTreeManager::StaticClass()->GetDefaultObject();
 	while (DebuggerSteps.Num() >= ManagerCDO->MaxDebuggerSteps)
 	{
-		DebuggerSteps.RemoveAt(0, /*Count=*/1, /*bAllowShrinking=*/false);
+		DebuggerSteps.RemoveAt(0, /*Count=*/1, EAllowShrinking::No);
 	}
 	DebuggerSteps.Add(CurrentStep);
 #endif
@@ -3315,7 +3411,19 @@ void UBehaviorTreeComponent::StoreDebuggerRuntimeValues(TArray<FString>& Runtime
 		uint8* NodeMemory = (uint8*)Node->GetNodeMemory<uint8>(InstanceInfo);
 
 		RuntimeValues.Reset();
-		Node->DescribeRuntimeValues(*this, NodeMemory, EBTDescriptionVerbosity::Basic, RuntimeValues);
+
+		constexpr EBTDescriptionVerbosity::Type DescriptionVerbosity = EBTDescriptionVerbosity::Basic;
+		if (Node->HasInstance())
+		{
+			if (UBTNode* NodeInstance = Node->GetNodeInstance(*this, NodeMemory))
+			{
+				NodeInstance->DescribeRuntimeValues(*this, NodeMemory, DescriptionVerbosity, RuntimeValues);
+			}
+		}
+		else
+		{
+			Node->DescribeRuntimeValues(*this, NodeMemory, DescriptionVerbosity, RuntimeValues);
+		}
 
 		FString ComposedDesc;
 		for (int32 ValueIndex = 0; ValueIndex < RuntimeValues.Num(); ValueIndex++)

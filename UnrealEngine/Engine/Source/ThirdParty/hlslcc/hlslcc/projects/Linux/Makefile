@@ -28,14 +28,14 @@ lib: $(LIB)
 main: $(MAIN)
 
 DEBUG = 0
-CC = clang
-CXX = clang++
-CPPFLAGS = -fPIC -Wno-switch -Wno-unused-value -Wno-deprecated-register -I$(ROOT_DIR)/hlslcc_lib -fvisibility=hidden
-CXXFLAGS = -std=c++11
+CC = $(LINUX_ROOT)/bin/clang
+CXX = $(LINUX_ROOT)/bin/clang++
+CPPFLAGS = -fPIC -Wno-switch -Wno-unused-value -Wno-deprecated-register -target $(TARGET_ARCH) -I$(ROOT_DIR)/hlslcc_lib -fvisibility=hidden
+CXXFLAGS = -std=c++17
 ifeq ($(DEBUG),1)
-CPPFLAGS += -g -O0 -nostdinc++ -I$(ROOT_DIR)/../../../Linux/LibCxx/include/c++/v1
+CPPFLAGS += -g -O0 -nostdinc++ -I$(ROOT_DIR)/../../../Unix/LibCxx/include/c++/v1
 else
-CPPFLAGS += -DNDEBUG -g -O2 -nostdinc++ -I$(ROOT_DIR)/../../../Linux/LibCxx/include/c++/v1
+CPPFLAGS += -DNDEBUG -g -O2 -nostdinc++ -I$(ROOT_DIR)/../../../Unix/LibCxx/include/c++/v1
 endif
 
 

@@ -419,6 +419,9 @@ public:
 
 	/** Tell us if we can moves selected foliage instances to the target level. */
 	bool CanMoveSelectedFoliageToLevel(ULevel* InTargetLevel) const;
+	
+	/** Moves selected foliage instances to the current actor editor context */
+	void MoveSelectedFoliageToActorEditorContext();
 
 	/** Ends tracking and end potential transaction */
 	bool EndTracking();
@@ -485,7 +488,7 @@ public:
 	bool IsModifierButtonPressed(const FEditorViewportClient* ViewportClient) const;
 
 	/** Add a new asset (FoliageType or StaticMesh) */
-	UFoliageType* AddFoliageAsset(UObject* InAsset);
+	UFoliageType* AddFoliageAsset(UObject* InAsset, bool bInPlaceholderAsset = false);
 
 	/** Remove a list of Foliage types */
 	bool RemoveFoliageType(UFoliageType** FoliageTypes, int32 Num);
@@ -509,7 +512,7 @@ public:
 	void ReplaceSettingsObject(UFoliageType* OldSettings, UFoliageType* NewSettings);
 
 	/** Save the foliage type object. If it isn't an asset, will prompt the user for a location to save the new asset. */
-	UFoliageType* SaveFoliageTypeObject(UFoliageType* Settings);
+	UFoliageType* SaveFoliageTypeObject(UFoliageType* Settings, bool bPlaceholderAsset = false);
 
 	void IncludeNonFoliageActors(const TArray<const UFoliageType*>& FoliageTypes, bool bOnlyCurrentLevel);
 
@@ -581,6 +584,9 @@ public:
 
 	/** Sets the tool mode to Place Single Instance*/
 	void OnSetPlace();
+
+	/** Handle reflecting selected foliage types in the FoliagePalette */
+	void OnReflectSelectionInPalette();
 
 	/** Remove currently selected instances*/
 	void RemoveSelectedInstances(UWorld* InWorld);

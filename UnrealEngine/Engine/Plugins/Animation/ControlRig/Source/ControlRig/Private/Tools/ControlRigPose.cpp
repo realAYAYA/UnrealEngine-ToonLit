@@ -2,6 +2,7 @@
 #include "Tools/ControlRigPose.h"
 #include "Tools/ControlRigPoseProjectSettings.h"
 #include "IControlRigObjectBinding.h"
+#include "ControlRig.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigPose)
 
@@ -19,7 +20,7 @@ void FControlRigControlPose::SavePose(UControlRig* ControlRig, bool bUseAll)
 	
 	for (FRigControlElement* ControlElement : CurrentControls)
 	{
-		if (ControlRig->GetHierarchy()->IsAnimatable(ControlElement) && (bUseAll || ControlRig->IsControlSelected(ControlElement->GetName())))
+		if (ControlRig->GetHierarchy()->IsAnimatable(ControlElement) && (bUseAll || ControlRig->IsControlSelected(ControlElement->GetFName())))
 		{
 			//we store poses in default parent space so if not in that space we need to compensate it
 			bool bHasNonDefaultParent = false;
@@ -89,12 +90,12 @@ void FControlRigControlPose::PastePoseInternal(UControlRig* ControlRig, bool bDo
 
 	for (FRigControlElement* ControlElement : SortedControls)
 	{
-		if (!ControlRig->IsControlSelected(ControlElement->GetName()))
+		if (!ControlRig->IsControlSelected(ControlElement->GetFName()))
 		{
 			continue;
 		}
 		
-		FRigControlCopy* CopyRigControl = MirrorTable.GetControl(*this, ControlElement->GetName());
+		FRigControlCopy* CopyRigControl = MirrorTable.GetControl(*this, ControlElement->GetFName());
 		if (CopyRigControl)
 		{
 			//if not in default parent space we need to move it to default parent space first and then reset the global transforms
@@ -120,11 +121,11 @@ void FControlRigControlPose::PastePoseInternal(UControlRig* ControlRig, bool bDo
 				{
 					if (bDoLocal) // -V547  
 					{
-						ControlRig->SetControlLocalTransform(ControlElement->GetName(), CopyRigControl->LocalTransform, true,Context,bSetupUndo, true/* bFixEulerFlips*/);
+						ControlRig->SetControlLocalTransform(ControlElement->GetFName(), CopyRigControl->LocalTransform, true,Context,bSetupUndo, true/* bFixEulerFlips*/);
 					}
 					else
 					{
-						ControlRig->SetControlGlobalTransform(ControlElement->GetName(), CopyRigControl->GlobalTransform, true, Context, bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
+						ControlRig->SetControlGlobalTransform(ControlElement->GetFName(), CopyRigControl->GlobalTransform, true, Context, bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
 					}
 				}
 				else
@@ -133,32 +134,33 @@ void FControlRigControlPose::PastePoseInternal(UControlRig* ControlRig, bool bDo
 					FTransform LocalTransform;
 					bool bIsMatched = MirrorTable.IsMatched(CopyRigControl->Name);
 					MirrorTable.GetMirrorTransform(*CopyRigControl, bDoLocal,bIsMatched,GlobalTransform,LocalTransform);
-					SetControlMirrorTransform(bDoLocal,ControlRig, ControlElement->GetName(), bIsMatched, GlobalTransform,LocalTransform,true,Context,bSetupUndo);
+					SetControlMirrorTransform(bDoLocal,ControlRig, ControlElement->GetFName(), bIsMatched, GlobalTransform,LocalTransform,true,Context,bSetupUndo);
 				}				
 				break;
 			}
 			case ERigControlType::Float:
+			case ERigControlType::ScaleFloat:
 			{
 				float Val = CopyRigControl->Value.Get<float>();
-				ControlRig->SetControlValue<float>(ControlElement->GetName(), Val, true, Context,bSetupUndo);
+				ControlRig->SetControlValue<float>(ControlElement->GetFName(), Val, true, Context,bSetupUndo);
 				break;
 			}
 			case ERigControlType::Bool:
 			{
 				bool Val = CopyRigControl->Value.Get<bool>();
-				ControlRig->SetControlValue<bool>(ControlElement->GetName(), Val, true, Context,bSetupUndo);
+				ControlRig->SetControlValue<bool>(ControlElement->GetFName(), Val, true, Context,bSetupUndo);
 				break;
 			}
 			case ERigControlType::Integer:
 			{
 				int32 Val = CopyRigControl->Value.Get<int32>();
-				ControlRig->SetControlValue<int32>(ControlElement->GetName(), Val, true, Context,bSetupUndo);
+				ControlRig->SetControlValue<int32>(ControlElement->GetFName(), Val, true, Context,bSetupUndo);
 				break;
 			}
 			case ERigControlType::Vector2D:
 			{
 				FVector3f Val = CopyRigControl->Value.Get<FVector3f>();
-				ControlRig->SetControlValue<FVector3f>(ControlElement->GetName(), Val, true, Context,bSetupUndo);
+				ControlRig->SetControlValue<FVector3f>(ControlElement->GetFName(), Val, true, Context,bSetupUndo);
 				break;
 			}
 			default:
@@ -170,7 +172,7 @@ void FControlRigControlPose::PastePoseInternal(UControlRig* ControlRig, bool bDo
 			{
 				FTransform GlobalTransform = ControlRig->GetHierarchy()->GetGlobalTransform(ControlElement->GetKey());
 				ControlRig->GetHierarchy()->SwitchToParent(ControlElement->GetKey(), SpaceKey);
-				ControlRig->SetControlGlobalTransform(ControlElement->GetName(), GlobalTransform, true, Context, bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
+				ControlRig->SetControlGlobalTransform(ControlElement->GetFName(), GlobalTransform, true, Context, bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
 			}
 		}
 	}
@@ -200,11 +202,11 @@ void FControlRigControlPose::BlendWithInitialPoses(FControlRigControlPose& Initi
 	const bool bSetupUndo = false;
 	for (FRigControlElement* ControlElement : SortedControls)
 	{
-		if (!ControlRig->IsControlSelected(ControlElement->GetName()))
+		if (!ControlRig->IsControlSelected(ControlElement->GetFName()))
 		{
 			continue;
 		}
-		FRigControlCopy* CopyRigControl = MirrorTable.GetControl(*this, ControlElement->GetName());
+		FRigControlCopy* CopyRigControl = MirrorTable.GetControl(*this, ControlElement->GetFName());
 		if (CopyRigControl)
 		{
 			FRigControlCopy* InitialFound = nullptr;
@@ -241,7 +243,7 @@ void FControlRigControlPose::BlendWithInitialPoses(FControlRigControlPose& Initi
 							Rotation = FQuat::Slerp(InitialVal.GetRotation(), Val.GetRotation(), BlendValue); //doing slerp here not fast lerp, can be slow this is for content creation
 							Scale = FMath::Lerp(InitialVal.GetScale3D(), Val.GetScale3D(), BlendValue);
 							Val = FTransform(Rotation, Translation, Scale);
-							ControlRig->SetControlLocalTransform(ControlElement->GetName(), Val, bDoKey,Context,bSetupUndo, true/* bFixEulerFlips*/);
+							ControlRig->SetControlLocalTransform(ControlElement->GetFName(), Val, bDoKey,Context,bSetupUndo, true/* bFixEulerFlips*/);
 						}
 						else
 						{
@@ -253,7 +255,7 @@ void FControlRigControlPose::BlendWithInitialPoses(FControlRigControlPose& Initi
 							Rotation = FQuat::Slerp(InitialVal.GetRotation(), Val.GetRotation(), BlendValue); //doing slerp here not fast lerp, can be slow this is for content creation
 							Scale = FMath::Lerp(InitialVal.GetScale3D(), Val.GetScale3D(), BlendValue);
 							Val = FTransform(Rotation, Translation, Scale);
-							ControlRig->SetControlGlobalTransform(ControlElement->GetName(), Val, bDoKey,Context,bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
+							ControlRig->SetControlGlobalTransform(ControlElement->GetFName(), Val, bDoKey,Context,bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
 						}
 					}
 					else
@@ -278,14 +280,29 @@ void FControlRigControlPose::BlendWithInitialPoses(FControlRigControlPose& Initi
 						LocalTransform.SetRotation(FQuat::Slerp(InitialLocationRotation, LocalTransform.GetRotation(), BlendValue)); //doing slerp here not fast lerp, can be slow this is for content creation
 						LocalTransform.SetScale3D(FMath::Lerp(InitialLocalScale, LocalTransform.GetScale3D(), BlendValue));
 
-						SetControlMirrorTransform(bDoLocal,ControlRig, ControlElement->GetName(), bIsMatched, GlobalTransform,LocalTransform,bDoKey,Context,bSetupUndo);							
+						SetControlMirrorTransform(bDoLocal,ControlRig, ControlElement->GetFName(), bIsMatched, GlobalTransform,LocalTransform,bDoKey,Context,bSetupUndo);							
 					}
 					if (bHasNonDefaultParent == true)
 					{
 						FTransform GlobalTransform = ControlRig->GetHierarchy()->GetGlobalTransform(ControlElement->GetKey());
 						ControlRig->GetHierarchy()->SwitchToParent(ControlElement->GetKey(), SpaceKey);
-						ControlRig->SetControlGlobalTransform(ControlElement->GetName(), GlobalTransform, true, Context, bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
+						ControlRig->SetControlGlobalTransform(ControlElement->GetFName(), GlobalTransform, true, Context, bSetupUndo, false /*bPrintPython*/, true/* bFixEulerFlips*/);
 					}
+				}
+				else if(CopyRigControl->ControlType == ERigControlType::Float || 
+						CopyRigControl->ControlType == ERigControlType::ScaleFloat)
+				{
+					float InitialVal = InitialFound->Value.Get<float>();
+					float Val = CopyRigControl->Value.Get<float>();
+					Val = FMath::Lerp(InitialVal, Val, BlendValue);
+					ControlRig->SetControlValue<float>(ControlElement->GetFName(), Val, true, Context, bSetupUndo);
+				}
+				else if (CopyRigControl->ControlType == ERigControlType::Vector2D)
+				{
+					FVector3f InitialVal = InitialFound->Value.Get<FVector3f>();
+					FVector3f Val = CopyRigControl->Value.Get<FVector3f>();
+					Val = FMath::Lerp(InitialVal, Val, BlendValue);
+					ControlRig->SetControlValue<FVector3f>(ControlElement->GetFName(), Val, true, Context, bSetupUndo);
 				}
 			}
 		}

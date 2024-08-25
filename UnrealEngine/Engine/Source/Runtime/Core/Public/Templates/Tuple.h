@@ -4,13 +4,11 @@
 
 #include "CoreTypes.h"
 #include "Templates/UnrealTemplate.h"
-#include "Templates/Decay.h"
 #include "Delegates/IntegerSequence.h"
 #include "Templates/Invoke.h"
 #include "Serialization/StructuredArchive.h"
 #include "Serialization/MemoryLayout.h"
 #include "Templates/TypeHash.h"
-#include "Templates/IsConstructible.h"
 #include <tuple>
 
 // This workaround exists because Visual Studio causes false positives for code like this during static analysis:
@@ -120,7 +118,7 @@ namespace UE::Core::Private::Tuple
 			decltype(auto) Result = (ForwardAsBase<TupleType, TTupleBaseElement<DeducedType, Index, TupleSize>>(Tuple).Value);
 
 			// Keep tuple rvalue references to rvalue reference elements as rvalues, because that's how std::get() works, not how C++ struct member access works.
-			return static_cast<std::conditional_t<TAnd<TNot<TIsReferenceType<TupleType>>, TIsRValueReferenceType<DeducedType>>::Value, DeducedType, decltype(Result)>>(Result);
+			return static_cast<std::conditional_t<!std::is_reference_v<TupleType> && std::is_rvalue_reference_v<DeducedType>, DeducedType, decltype(Result)>>(Result);
 		}
 
 		template <typename TupleType>
@@ -141,7 +139,7 @@ namespace UE::Core::Private::Tuple
 			decltype(auto) Result = (Forward<TupleType>(Tuple).Key);
 
 			// Keep tuple rvalue references to rvalue reference elements as rvalues, because that's how std::get() works, not how C++ struct member access works.
-			return static_cast<std::conditional_t<TAnd<TNot<TIsReferenceType<TupleType>>, TIsRValueReferenceType<decltype(Tuple.Key)>>::Value, decltype(Tuple.Key), decltype(Result)>>(Result);
+			return static_cast<std::conditional_t<!std::is_reference_v<TupleType> && std::is_rvalue_reference_v<decltype(Tuple.Key)>, decltype(Tuple.Key), decltype(Result)>>(Result);
 		}
 	};
 	template <>
@@ -154,7 +152,7 @@ namespace UE::Core::Private::Tuple
 			decltype(auto) Result = (Forward<TupleType>(Tuple).Value);
 
 			// Keep tuple rvalue references to rvalue reference elements as rvalues, because that's how std::get() works, not how C++ struct member access works.
-			return static_cast<std::conditional_t<TAnd<TNot<TIsReferenceType<TupleType>>, TIsRValueReferenceType<decltype(Tuple.Value)>>::Value, decltype(Tuple.Value), decltype(Result)>>(Result);
+			return static_cast<std::conditional_t<!std::is_reference_v<TupleType> && std::is_rvalue_reference_v<decltype(Tuple.Value)>, decltype(Tuple.Value), decltype(Result)>>(Result);
 		}
 	};
 #else
@@ -168,7 +166,7 @@ namespace UE::Core::Private::Tuple
 			decltype(auto) Result = (ForwardAsBase<TupleType, TTupleBaseElement<decltype(Tuple.Key), 0, 2>>(Tuple).Key);
 
 			// Keep tuple rvalue references to rvalue reference elements as rvalues, because that's how std::get() works, not how C++ struct member access works.
-			return static_cast<std::conditional_t<TAnd<TNot<TIsReferenceType<TupleType>>, TIsRValueReferenceType<decltype(Tuple.Key)>>::Value, decltype(Tuple.Key), decltype(Result)>>(Result);
+			return static_cast<std::conditional_t<!std::is_reference_v<TupleType> && std::is_rvalue_reference_v<decltype(Tuple.Key)>, decltype(Tuple.Key), decltype(Result)>>(Result);
 		}
 	};
 #endif
@@ -996,3 +994,8 @@ FORCEINLINE void operator<<(FStructuredArchive::FSlot Slot, TTuple<Types...>& Tu
 {
 	TTuple<Types...>::SerializeStructured(Slot, Tuple);
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/Decay.h"
+#include "Templates/IsConstructible.h"
+#endif

@@ -48,11 +48,17 @@ EActiveTimerReturnType SZenServiceStatus::UpdateState(double InCurrentTime, floa
 		NextState.bIsRunning = UE::Zen::IsLocalServiceRunning(*NextState.RunContext.GetDataPath(), &NextState.LocalPort);
 	}
 
+	NextState.GCStatus = UE::Zen::FGCStatus{};
+	NextState.bHaveStats = false;
 	if (NextState.bIsRunning)
 	{
 		if (TSharedPtr<UE::Zen::FZenServiceInstance> ServiceInstance = ZenServiceInstance.Get())
 		{
 			ServiceInstance->GetGCStatus(NextState.GCStatus);
+			if (ServiceInstance->GetCacheStats(NextState.ZenCacheStats) && ServiceInstance->GetProjectStats(NextState.ZenProjectStats))
+			{
+				NextState.bHaveStats = true;
+			}
 		}
 	}
 
@@ -81,6 +87,11 @@ const SZenServiceStatus::FState& SZenServiceStatus::GetCurrentState() const
 TSharedRef<SWidget> SZenServiceStatus::GetGridPanel()
 {
 	TSharedRef<SGridPanel> Panel = SNew(SGridPanel);
+	
+	const static FNumberFormattingOptions SingleDecimalFormatting = FNumberFormattingOptions()
+		.SetUseGrouping(true)
+		.SetMinimumFractionalDigits(1)
+		.SetMaximumFractionalDigits(1);
 
 	int32 Row = 0;
 
@@ -184,6 +195,29 @@ TSharedRef<SWidget> SZenServiceStatus::GetGridPanel()
 		{
 			const FState& CurrentState = GetCurrentState();
 			return CurrentState.LocalPort == 0 ? LOCTEXT("ServiceStatus_NoGCStatusValue", "-") : FText::FromString(CurrentState.GCStatus.Description);
+		})
+	];
+
+	++Row;
+
+	Panel->AddSlot(0, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.ColorAndOpacity(TitleColor)
+		.Font(TitleFont)
+		.Text(LOCTEXT("ServiceStatus_DiskSpace", "Disk Space"))
+	];
+
+	Panel->AddSlot(1, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text_Lambda([this]
+		{
+			const FState& CurrentState = GetCurrentState();
+			int64 TotalDiskSpace = CurrentState.ZenCacheStats.General.Size.Disk + CurrentState.ZenProjectStats.General.Size.Disk + CurrentState.ZenCacheStats.CID.Size.Total;
+			return CurrentState.bHaveStats ? FText::AsMemory(TotalDiskSpace, (TotalDiskSpace > 1024) ? &SingleDecimalFormatting : nullptr, nullptr, EMemoryUnitStandard::IEC) : LOCTEXT("UnavailableValue", "-");
 		})
 	];
 

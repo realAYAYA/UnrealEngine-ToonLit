@@ -11,11 +11,12 @@
 
 #include "ObjectReplicationBridge.generated.h"
 
+DECLARE_LOG_CATEGORY_EXTERN(LogIrisFilterConfig, Log, All);
+
 namespace UE::Net
 {
 	struct FNetObjectResolveContext;
 	typedef uint32 FNetObjectFilterHandle;
-	typedef uint16 FNetObjectGroupHandle;
 	typedef uint32 FNetObjectPrioritizerHandle;
 	class FNetObjectReference;
 	namespace Private
@@ -43,6 +44,7 @@ class UObjectReplicationBridge : public UReplicationBridge
 
 public:
 	using UReplicationBridge::EndReplication;
+	using EGetRefHandleFlags = UE::Net::EGetRefHandleFlags;
 
 	struct FCreateNetRefHandleParams
 	{
@@ -50,7 +52,22 @@ public:
 		bool bCanReceive = false;
 		bool bNeedsPreUpdate = false;
 		bool bNeedsWorldLocationUpdate = false;
-		bool bAllowDynamicFilter = false;
+
+		/** Whether the object is dormant or not */
+		bool bIsDormant = false;
+
+		/** When true we ask the class config if a dynamic filter was assigned to this class or one of it's parent inherited class. */
+		bool bUseClassConfigDynamicFilter = false;
+
+		/** When enabled we ignore the class config for this object and instead use the one specified in ExplicitDynamicFilter */
+		bool bUseExplicitDynamicFilter = false;
+
+		/** 
+		 * The name of the dynamic filter to use for this object (instead of asking the class config). 
+		 * Can be none so that no dynamic filter is assigned to the object.
+		 * Only used when bUseExplicitDynamicFilter is true.
+		 */
+		FName ExplicitDynamicFilterName;
 
 		/**
 		 * If StaticPriority is > 0 the ReplicationSystem will use that as priority when scheduling objects. 
@@ -73,13 +90,16 @@ public:
 	IRISCORE_API UObject* GetReplicatedObject(FNetRefHandle Handle) const;
 
 	/** Get NetRefHandle from a replicated UObject. */
-	IRISCORE_API FNetRefHandle GetReplicatedRefHandle(const UObject* Object) const;
+	IRISCORE_API FNetRefHandle GetReplicatedRefHandle(const UObject* Object, EGetRefHandleFlags GetRefHandleFlags = EGetRefHandleFlags::None) const;
 
 	/** Get NetRefHandle from a NetHandle. */
 	IRISCORE_API FNetRefHandle GetReplicatedRefHandle(FNetHandle Handle) const;
 
 	/** Try to resolve UObject from NetObjectReference, this function tries to resolve the object by loading if necessary. */
 	IRISCORE_API UObject* ResolveObjectReference(const UE::Net::FNetObjectReference& ObjectRef, const UE::Net::FNetObjectResolveContext& ResolveContext);
+
+	/** Describe the NetObjectReference */
+	IRISCORE_API FString DescribeObjectReference(const UE::Net::FNetObjectReference& ObjectRef, const UE::Net::FNetObjectResolveContext& ResolveContext);
 
 	/** Get or create NetObjectReference for object instance. */
 	IRISCORE_API UE::Net::FNetObjectReference GetOrCreateObjectReference(const UObject* Instance) const;
@@ -99,7 +119,7 @@ public:
 
 	/** Create handle and start replicating the Instance as a SubObject of the OwnerHandle. */
 	/** Begin replicating the Instance as a subobject of the OwnerHandle and return a valid NetRefHandle for the Instance if successful. */
-	FNetRefHandle BeginReplication(FNetRefHandle OwnerHandle, UObject* Instance, const FCreateNetRefHandleParams& Params = DefaultCreateNetRefHandleParams);
+	IRISCORE_API FNetRefHandle BeginReplication(FNetRefHandle OwnerHandle, UObject* Instance, const FCreateNetRefHandleParams& Params = DefaultCreateNetRefHandleParams);
 
 	/** 
 	 * Set NetCondition for a subobject, the condition is used to determine if the SubObject should replicate or not.
@@ -107,6 +127,9 @@ public:
 	 * specific data as filtering can then be done at a higher level.
 	 */
 	IRISCORE_API void SetSubObjectNetCondition(FNetRefHandle SubObjectHandle, ELifetimeCondition Condition);
+
+	/** Get the handle of the root object of any replicated subobject. */
+	IRISCORE_API FNetRefHandle GetRootObjectOfSubObject(FNetRefHandle SubObjectHandle) const;
 
 	/** Stop replicating the object. */
 	IRISCORE_API void EndReplication(UObject* Instance, EEndReplicationFlags EndReplicationFlags = EEndReplicationFlags::Destroy, FEndReplicationParameters* Parameters = nullptr);
@@ -146,6 +169,27 @@ public:
 	/** Trigger replication of dirty state for object wanting to be dormant. */
 	IRISCORE_API void ForceUpdateWantsToBeDormantObject(FNetRefHandle Handle);	
 
+	/** Set poll frequency on root object and its subobjects. They will be polled on the same frame. */
+	IRISCORE_API void SetPollFrequency(FNetRefHandle RootHandle, float PollFrequency);
+
+	/** Set the object filter to use for objects of this class and any derived classes without an explicit config. */
+	IRISCORE_API void SetClassDynamicFilterConfig(FName ClassPathName, const UE::Net::FNetObjectFilterHandle FilterHandle, FName FilterProfile=NAME_None);
+	IRISCORE_API void SetClassDynamicFilterConfig(FName ClassPathName, FName FilterName, FName FilterProfile=NAME_None);
+
+	/** Set the TypeStats to use for specified class and any derived classes without explicit config */
+	IRISCORE_API void SetClassTypeStatsConfig(FName ClassPathName, FName TypeStatsName);
+	IRISCORE_API void SetClassTypeStatsConfig(const FString& ClassPathName, const FString& TypeStatsName);
+
+public:
+
+	// Debug functions exposed that are triggered via console commands
+	void PrintDynamicFilterClassConfig() const;
+	void PrintReplicatedObjects(uint32 ArgTraits) const;
+	void PrintAlwaysRelevantObjects(uint32 ArgTraits) const;
+	void PrintRelevantObjects(uint32 ArgTraits) const;
+	void PrintRelevantObjectsForConnections(const TArray<FString>& Args) const;
+	void PrintNetCullDistances(const TArray<FString>& Args) const;
+
 protected:
 	IRISCORE_API virtual ~UObjectReplicationBridge();
 
@@ -155,14 +199,19 @@ protected:
 	IRISCORE_API virtual void Deinitialize() override;
 	IRISCORE_API virtual void PreSendUpdateSingleHandle(FNetRefHandle RefHandle) override;	
 	IRISCORE_API virtual void PreSendUpdate() override;	
+	IRISCORE_API virtual void OnStartPreSendUpdate() override;
+	IRISCORE_API virtual void OnPostSendUpdate() override;
 	IRISCORE_API virtual void UpdateInstancesWorldLocation() override;
 	IRISCORE_API virtual void PruneStaleObjects() override;	
 	IRISCORE_API virtual bool WriteNetRefHandleCreationInfo(FReplicationBridgeSerializationContext& Context, FNetRefHandle Handle) override;
-	IRISCORE_API virtual FReplicationBridgeCreateNetRefHandleResult CreateNetRefHandleFromRemote(FNetRefHandle SubObjectOwnerNetHandle, FNetRefHandle WantedNetHandle, FReplicationBridgeSerializationContext& Context) override;
+	IRISCORE_API virtual FReplicationBridgeCreateNetRefHandleResult CreateNetRefHandleFromRemote(FNetRefHandle RootObjectNetHandle, FNetRefHandle WantedNetHandle, FReplicationBridgeSerializationContext& Context) override;
+	IRISCORE_API virtual void SubObjectCreatedFromReplication(FNetRefHandle SubObjectHandle) override;
 	IRISCORE_API virtual void PostApplyInitialState(FNetRefHandle Handle) override;
 	IRISCORE_API virtual void DetachInstanceFromRemote(FNetRefHandle Handle, EReplicationBridgeDestroyInstanceReason DestroyReason, EReplicationBridgeDestroyInstanceFlags DestroyFlags) override;
 	IRISCORE_API virtual void DetachInstance(FNetRefHandle Handle) override;
-
+	IRISCORE_API virtual void OnProtocolMismatchReported(FNetRefHandle RefHandle, uint32 ConnectionId) override;
+	IRISCORE_API virtual void OnErrorWithNetRefHandleReported(uint32 ErrorType, FNetRefHandle RefHandle, uint32 ConnectionId) override;
+	
 protected:
 	/**
 	* $IRIS TODO:
@@ -178,16 +227,30 @@ protected:
 	virtual FCreationHeader* ReadCreationHeader(UE::Net::FNetSerializationContext& Context) { return nullptr; };
 
 	/** Called when we instantiate/find object instance requested by remote. */
-	virtual FObjectReplicationBridgeInstantiateResult BeginInstantiateFromRemote(FNetRefHandle SubObjectOwnerHandle, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* Header) { return FObjectReplicationBridgeInstantiateResult(); };
+	virtual FObjectReplicationBridgeInstantiateResult BeginInstantiateFromRemote(FNetRefHandle RootObjectOfSubObject, const UE::Net::FNetObjectResolveContext& ResolveContext, const FCreationHeader* Header) { return FObjectReplicationBridgeInstantiateResult(); };
 
 	/** Invoked before we start applying state data to instance on remote end. */
 	virtual bool OnInstantiatedFromRemote(UObject* Instance, const FCreationHeader* InHeader, uint32 ConnectionId) const { return true; }
 
+	/** Invoked for new replicated SubObjects after state has been applied to owner */
+	virtual void OnSubObjectCreatedFromReplication(FNetRefHandle SubObjectHandle) {};
+
 	/** Invoked after remote NetHandle has been created and initial state is applied. */
 	virtual void EndInstantiateFromRemote(FNetRefHandle Handle) {};
 
+	struct FDestroyInstanceParams
+	{
+		UObject* Instance = nullptr;
+		UObject* RootObject = nullptr;
+		EReplicationBridgeDestroyInstanceReason DestroyReason = EReplicationBridgeDestroyInstanceReason::DoNotDestroy;
+		EReplicationBridgeDestroyInstanceFlags DestroyFlags = EReplicationBridgeDestroyInstanceFlags::None;
+	};
+
 	/** Destroy or tear-off the game instance on request from remote. */
-	virtual void DestroyInstanceFromRemote(UObject* Instance, EReplicationBridgeDestroyInstanceReason DestroyReason, EReplicationBridgeDestroyInstanceFlags DestroyFlags) {}
+	virtual void DestroyInstanceFromRemote(const FDestroyInstanceParams& Params) {}
+
+	/** Called when we found a divergence between the local and remote protocols when trying to instantiate a remote replicated object. */
+	virtual void OnProtocolMismatchDetected(FNetRefHandle ObjectHandle) {}
 
 protected:
 	/** Lookup the UObject associated with the provided Handle. This function will not try to resolve the reference. */
@@ -241,19 +304,43 @@ protected:
 	 */
 	IRISCORE_API bool GetClassPollFrequency(const UClass* Class, float& OutPollPeriod) const;
 
+	/** Returns true if the class is considered critical and we force a disconnection if a protocol mismatch prevents instances of this class from replicating. */
+	IRISCORE_API bool IsClassCritical(const UClass* Class);
+
+	/** Returns the most relevant description of the client tied to this connection id. */
+	[[nodiscard]] IRISCORE_API virtual FString PrintConnectionInfo(uint32 ConnectionId) const;
+
 	/** Current max tick rate set by the engine */
 	float GetMaxTickRate() const { return MaxTickRate; }
 
 	/** Change the max tick rate to match the one from the engine */
 	void SetMaxTickRate(float InMaxTickRate) { MaxTickRate = InMaxTickRate; }
 
+	/**
+	 * Parses a list of arguments and returns a list of Connection's that match them
+	 * Ex: ConnectionId=1 or ConnectionId=1,5,7
+	 */
+	IRISCORE_API virtual TArray<uint32> FindConnectionsFromArgs(const TArray<FString>& Args) const;
+
 private:
 
 	/** Forcibly poll a single replicated object */
 	void ForcePollObject(FNetRefHandle RefHandle);
 
-	/** Pre update and poll all relevant objects who hit their polling period or are force net update. */
-	void PreUpdateAndPoll();
+	/** Build the list of relevant objects who hit their polling period or were flagged ForceNetUpdate. */
+	void BuildPollList(UE::Net::FNetBitArrayView ObjectsConsideredForPolling);
+
+	/** Call the user function PreUpdate (aka PreReplication) on objects about to be polled. */
+	void PreUpdate(const UE::Net::FNetBitArrayView ObjectsConsideredForPolling);
+
+	/** Find any objects that got set dirty by user code during PreUpdate then lock future modifications to the global dirty list */
+	void FinalizeDirtyObjects();
+
+	/** Find any new subobjects created inside PreUpdate and ensure they will be replicated this frame */
+	void ReconcileNewSubObjects(UE::Net::FNetBitArrayView ObjectsConsideredForPolling);
+
+	/** Poll all objects in the list and copy the dirty source data into the ReplicationState buffers*/
+	void PollAndCopy(const UE::Net::FNetBitArrayView ObjectsConsideredForPolling);
 
 	/** Remove mapping between handle and object instance. */
 	void UnregisterInstance(FNetRefHandle RefHandle);
@@ -262,23 +349,32 @@ private:
 
 	void SetNetPushIdOnInstance(UE::Net::FReplicationInstanceProtocol* InstanceProtocol, FNetHandle NetHandle);
 
-
 	/** Tries to load the classes used in poll period overrides. */
 	void FindClassesInPollPeriodOverrides();
 
+protected:
 	/** Retrieves the dynamic filter to set for the given class. Will return an invalid handle if no dynamic filter should be set. */
-	UE::Net::FNetObjectFilterHandle GetDynamicFilter(const UClass* Class);
+	IRISCORE_API UE::Net::FNetObjectFilterHandle GetDynamicFilter(const UClass* Class, bool bRequireForceEnabled, FName& OutFilterProfile);
 
+private:
 	/** Retrieves the prioritizer to set for the given class. If bRequireForceEnabled the config needs to have bForceEnableOnAllInstances set in order for this method to return the configured prioritizer. Returns an invalid handle if no prioritizer should be set. */
 	UE::Net::FNetObjectPrioritizerHandle GetPrioritizer(const UClass* Class, bool bRequireForceEnabled);
+
+	/** Assign the proper dynamic filter to a new object */
+	void AssignDynamicFilter(UObject* Instance, const FCreateNetRefHandleParams& Params, FNetRefHandle RefHandle);
 
 	/** Returns true if instances of this class should be delta compressed */
 	bool ShouldClassBeDeltaCompressed(const UClass* Class);
 
+	/** Marks a spatially filtered object as requiring or not requiring frequent world location updates independent of it having dirty replicated properties */
+	void OptionallySetObjectRequiresFrequentWorldLocationUpdate(FNetRefHandle RefHandle, bool bDesiresFrequentWorldLocationUpdate);
+
+	/** Returns the TypeStatsIndex this class should use */
+	int32 GetTypeStatsIndex(const UClass* Class);
+
 	FInstancePreUpdateFunction PreUpdateInstanceFunction;
 	FInstanceGetWorldObjectInfoFunction GetInstanceWorldObjectInfoFunction;
 	
-
 	FName GetConfigClassPathName(const UClass* Class);
 
 	void InitConditionalPropertyDelegates();
@@ -293,7 +389,15 @@ private:
 	struct FClassPrioritizerInfo
 	{
 		UE::Net::FNetObjectPrioritizerHandle PrioritizerHandle;
-		uint32 bForceEnable : 1;
+		bool bForceEnable = false;
+	};
+	
+	// Filtering
+	struct FClassFilterInfo
+	{
+		UE::Net::FNetObjectFilterHandle FilterHandle;
+		FName FilterProfile;
+		bool bForceEnable = false;
 	};
 
 	// Polling
@@ -317,7 +421,9 @@ private:
 	TSet<FName> ClassesWithoutPollPeriodOverride;
 
 	// Filter mapping
-	TMap<FName, UE::Net::FNetObjectFilterHandle> ClassesWithDynamicFilter;
+	//$IRIS TODO: Look into improving this class map by balancing runtime speed (implicit addition of new classes) with runtime modifications of base classes.
+    //		      Right-now any changes to say APawn's filter will not be read if a APlayerPawn entry was created based on the APawn entry.
+	TMap<FName, FClassFilterInfo> ClassesWithDynamicFilter;
 	TFunction<bool(const UClass*)> ShouldUseDefaultSpatialFilterFunction;
 	TFunction<bool(const UClass*,const UClass*)> ShouldSubclassUseSameFilterFunction;
 
@@ -326,6 +432,12 @@ private:
 
 	// Delta compression
 	TMap<FName, bool> ClassesWithDeltaCompression;
+
+	// Classes that may force a disconnection when a protocol mismatch is detected.
+	TMap<FName, bool> ClassesFlaggedCritical;
+
+	// Type stats
+	TMap<FName, FName> ClassesWithTypeStats;
 
 	// Array of dormant objects that has requested a flush
 	TArray<FNetRefHandle> DormantHandlesPendingFlush;
@@ -342,10 +454,16 @@ private:
 
 	bool bHasPollOverrides = false;
 	bool bHasDirtyClassesInPollPeriodOverrides = false;
+
+	/** Set to true when the system does not allow new objects to begin replication at this moment. Useful when calling into user code and to warn them of illegal operations. */
+	bool bBlockBeginReplication = false;
+
+protected:
+	bool bSuppressCreateInstanceFailedEnsure = false;
 };
 
 
 inline UE::Net::FNetRefHandle UObjectReplicationBridge::BeginReplication(UE::Net::FNetRefHandle OwnerHandle, UObject* Instance, const FCreateNetRefHandleParams& Params)
 {
-	return BeginReplication(OwnerHandle, Instance, FNetRefHandle(), ESubObjectInsertionOrder::None, Params);
+	return BeginReplication(OwnerHandle, Instance, FNetRefHandle::GetInvalid(), ESubObjectInsertionOrder::None, Params);
 }

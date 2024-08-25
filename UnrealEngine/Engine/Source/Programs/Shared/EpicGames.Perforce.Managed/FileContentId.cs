@@ -6,30 +6,44 @@ using EpicGames.Core;
 
 namespace EpicGames.Perforce.Managed
 {
+	/// <summary>
+	/// Unique identifier for the content of a file
+	/// </summary>
 	[DebuggerDisplay("{Digest} ({Type})")]
 	public class FileContentId
 	{
+		/// <summary>
+		/// MD5 digest of the file
+		/// </summary>
 		public Md5Hash Digest
 		{
 			get;
 		}
 
+		/// <summary>
+		/// Type of the file
+		/// </summary>
 		public Utf8String Type
 		{
 			get;
 		}
 
+		/// <summary>
+		/// Constructor
+		/// </summary>
 		public FileContentId(Md5Hash digest, Utf8String type)
 		{
 			Digest = digest;
 			Type = type;
 		}
 
+		/// <inheritdoc/>
 		public override bool Equals(object? other)
 		{
 			return (other is FileContentId otherFile) && Digest == otherFile.Digest && Type == otherFile.Type;
 		}
 
+		/// <inheritdoc/>
 		public override int GetHashCode()
 		{
 			return HashCode.Combine(Digest.GetHashCode(), Type.GetHashCode());

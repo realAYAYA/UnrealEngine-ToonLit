@@ -16,6 +16,7 @@
 #include "Framework/Commands/UIAction.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "SMediaPlayerSlider.h"
 #include "Styling/CoreStyle.h"
 #include "Textures/SlateIcon.h"
 #include "Widgets/SBoxPanel.h"
@@ -25,7 +26,6 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
-#include "Widgets/Input/SSlider.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SSpacer.h"
@@ -368,62 +368,15 @@ void SMediaPlayerEditorViewer::Construct(const FArguments& InArgs, UMediaPlayer&
 											[
 												// cache visualization
 												SNew(SMediaPlayerEditorCache, InMediaPlayer, InStyle)
-											]												
+											]
 
 										+ SOverlay::Slot()
 											.VAlign(VAlign_Top)
 											[
 												// time slider
-												SAssignNew(ScrubberSlider, SSlider)
-													.IsEnabled_Lambda([this]() -> bool
-													{
-														return MediaPlayer->SupportsSeeking();
-													})
-													.OnMouseCaptureBegin_Lambda([this]()
-													{
-														ScrubValue = static_cast<float>(FTimespan::Ratio(MediaPlayer->GetDisplayTime(), MediaPlayer->GetDuration()));
-
-														if (MediaPlayer->SupportsScrubbing())
-														{
-															PreScrubRate = MediaPlayer->GetRate();
-															MediaPlayer->SetRate(0.0f);
-														}
-													})
-													.OnMouseCaptureEnd_Lambda([this]()
-													{
-														if (MediaPlayer->SupportsScrubbing())
-														{
-															MediaPlayer->SetRate(PreScrubRate);
-														}
-													})
-													.OnValueChanged_Lambda([this](float NewValue)
-													{
-														ScrubValue = NewValue;
-
-														if (!ScrubberSlider->HasMouseCapture() || MediaPlayer->SupportsScrubbing())
-														{
-															MediaPlayer->Seek(MediaPlayer->GetDuration() * NewValue);
-														}
-													})
-													.Orientation(Orient_Horizontal)
-													.SliderBarColor(FLinearColor::Transparent)
-													.Style(&InStyle->GetWidgetStyle<FSliderStyle>("MediaPlayerEditor.Scrubber"))
-													.Value_Lambda([this]() -> float
-													{
-														if (ScrubberSlider->HasMouseCapture())
-														{
-															return ScrubValue;
-														}
-
-														return (MediaPlayer->GetDuration() > FTimespan::Zero())
-															? static_cast<float>(FTimespan::Ratio(MediaPlayer->GetDisplayTime(), MediaPlayer->GetDuration()))
-															: 0.0f;
-													})
-													.Visibility_Lambda([this]() -> EVisibility {
-														return (MediaPlayer->SupportsScrubbing() || MediaPlayer->SupportsSeeking())
-															? EVisibility::Visible
-															: EVisibility::Hidden;
-													})
+												SNew(SMediaPlayerSlider, MediaPlayer)
+												.ToolTipText( LOCTEXT("PlaybackPosition", "Current Playback Position"))
+												.Style(&InStyle->GetWidgetStyle<FSliderStyle>("MediaPlayerEditor.Scrubber"))
 											]
 
 										+ SOverlay::Slot()

@@ -1,15 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DMXAttribute.h"
+
 #include "DMXProtocolModule.h"
 #include "DMXProtocolSettings.h"
-
 #include "Modules/ModuleManager.h"
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-const bool FDMXAttributeName::bCanBeNone = true;
-FSimpleMulticastDelegate FDMXAttributeName::OnValuesChanged;
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 FDMXAttributeName::FDMXAttributeName()
 {
@@ -44,28 +40,6 @@ void FDMXAttributeName::SetFromName(const FName& InName)
 	*this = InName;
 }
 
-FDMXAttribute FDMXAttributeName::GetAttribute() const
-{
-	FDMXAttribute Attribute;
-	Attribute.Name = Name;
-	return Attribute;
-	const UDMXProtocolSettings* DMXSettings = GetDefault<UDMXProtocolSettings>();
-	if (!DMXSettings)
-	{
-		return Attribute;
-	}
-
-	for (const FDMXAttribute& SettingsAttribute : DMXSettings->Attributes)
-	{
-		if (SettingsAttribute.Name.IsEqual(Name))
-		{
-			return SettingsAttribute;
-		}
-	}
-
-	return Attribute;
-}
-
 TArray<FName> FDMXAttributeName::GetPredefinedValues()
 {
 	TArray<FName> Result;
@@ -80,11 +54,6 @@ TArray<FName> FDMXAttributeName::GetPredefinedValues()
 		Result.Add(Attribute.Name);
 	}
 	return Result;
-}
-
-TArray<FName> FDMXAttributeName::GetPossibleValues()
-{
-	return GetPredefinedValues();
 }
 
 FString UDMXAttributeNameConversions::Conv_DMXAttributeToString(const FDMXAttributeName& InAttribute)

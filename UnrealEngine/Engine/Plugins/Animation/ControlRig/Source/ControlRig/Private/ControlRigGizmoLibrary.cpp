@@ -110,7 +110,7 @@ const FControlRigShapeDefinition* UControlRigShapeLibrary::GetShapeByName(const 
 	return nullptr;
 }
 
-const FControlRigShapeDefinition* UControlRigShapeLibrary::GetShapeByName(const FName& InName, const TArray<TSoftObjectPtr<UControlRigShapeLibrary>>& InShapeLibraries, const TMap<FString, FString>& InLibraryNameMap)
+const FControlRigShapeDefinition* UControlRigShapeLibrary::GetShapeByName(const FName& InName, const TArray<TSoftObjectPtr<UControlRigShapeLibrary>>& InShapeLibraries, const TMap<FString, FString>& InLibraryNameMap, bool bUseDefaultIfNotFound)
 {
 	const FString InString = InName.ToString();
 	FString Left, Right;
@@ -126,26 +126,39 @@ const FControlRigShapeDefinition* UControlRigShapeLibrary::GetShapeByName(const 
 		RightName = *Right;
 	}
 
-	for(const TSoftObjectPtr<UControlRigShapeLibrary>& ShapeLibrary : InShapeLibraries)
+	// we'll do this in two passes - first with the whole namespace
+	// and then without - to allow to find a shape also if it has been specified
+	// without a namespace all-together.
+	for(int32 Pass = 0; Pass < 2; Pass++)
 	{
-		if(!ShapeLibrary.IsValid())
+		// we need to walk backwards since shape libraries added later need to take precedence
+		for(int32 Index = InShapeLibraries.Num() - 1; Index >= 0; Index--)
 		{
-			continue;
-		}
-
-		FString ShapeLibraryName = ShapeLibrary->GetName();
-		if(const FString* RemappedName = InLibraryNameMap.Find(ShapeLibraryName))
-		{
-			ShapeLibraryName = *RemappedName;
-		}
-
-		if(ShapeLibraryName.Equals(Left) || Left.IsEmpty())
-		{
-			if(const FControlRigShapeDefinition* Shape = ShapeLibrary->GetShapeByName(RightName))
+			const TSoftObjectPtr<UControlRigShapeLibrary>& ShapeLibrary = InShapeLibraries[Index];
+			if(!ShapeLibrary.IsValid())
 			{
-				return Shape;
+				continue;
+			}
+
+			FString ShapeLibraryName = ShapeLibrary->GetName();
+			if(const FString* RemappedName = InLibraryNameMap.Find(ShapeLibraryName))
+			{
+				ShapeLibraryName = *RemappedName;
+			}
+
+			if(ShapeLibraryName.Equals(Left) || Left.IsEmpty())
+			{
+				// only fall back on the default shape for the very last shape library
+				const bool bFallBackToDefaultShape = (Pass > 0) && (Index == 0) && bUseDefaultIfNotFound;
+				if(const FControlRigShapeDefinition* Shape = ShapeLibrary->GetShapeByName(RightName, bFallBackToDefaultShape))
+				{
+					return Shape;
+				}
 			}
 		}
+
+		// remove the namespace for the next pass
+		Left.Reset();
 	}
 
 	return nullptr;

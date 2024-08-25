@@ -77,6 +77,8 @@ class EDITORWIDGETS_API UAssetFilterBarContext : public UObject
 public:
 	TSharedPtr<FFilterCategory> MenuExpansion;
 	FOnPopulateAddAssetFilterMenu PopulateFilterMenu;
+	FOnFilterAssetType OnFilterAssetType;
+	FOnExtendAddFilterMenu OnExtendAddFilterMenu;
 };
 
 /** A non-templated base class for SAssetFilterBar, where functionality that does not depend on the type of item
@@ -144,14 +146,16 @@ class SAssetFilterBar : public SBasicFilterBar<FilterType>, public FFilterBarBas
 public:
 	
 	using FOnFilterChanged = typename SBasicFilterBar<FilterType>::FOnFilterChanged;
-	using FOnExtendAddFilterMenu = typename SBasicFilterBar<FilterType>::FOnExtendAddFilterMenu;
 	using FCreateTextFilter = typename SBasicFilterBar<FilterType>::FCreateTextFilter;
 	
 	SLATE_BEGIN_ARGS( SAssetFilterBar<FilterType> )
-		: _UseDefaultAssetFilters(true)
+		: _FilterMenuName(FName("FilterBar.FilterMenu"))
+		, _UseDefaultAssetFilters(true)
 		, _FilterBarLayout(EFilterBarLayout::Horizontal)
 		, _CanChangeOrientation(false)
 		, _FilterPillStyle(EFilterPillStyle::Default)
+		, _DefaultMenuExpansionCategory(EAssetCategoryPaths::Basic)
+		, _bUseSectionsForCustomCategories(false)
 		{
 		
 		}
@@ -179,6 +183,9 @@ public:
 		 */
 		SLATE_ARGUMENT(TSharedPtr<SFilterSearchBox>, FilterSearchBox)
 
+		/** The filter menu name. Will register a menu using this name, if not already registered. */
+		SLATE_ARGUMENT(FName, FilterMenuName)
+	
 		/** A unique identifier for this filter bar needed to enable saving settings in a config file */
 		SLATE_ARGUMENT(FName, FilterBarIdentifier)
 	
@@ -193,6 +200,12 @@ public:
 
 		/** Determines how each individual filter pill looks like */
 		SLATE_ARGUMENT(EFilterPillStyle, FilterPillStyle)
+
+		/** Expands the specified asset category, if specified. If not, it will expand Basic/Common instead. */
+		SLATE_ARGUMENT(TOptional<FAssetCategoryPath>, DefaultMenuExpansionCategory)
+
+		/** If true, adds custom categories as sections (expanded) vs. as sub-menus */
+		SLATE_ARGUMENT(bool, bUseSectionsForCustomCategories)
 	
 	SLATE_END_ARGS()
 
@@ -202,7 +215,9 @@ public:
 		bUseDefaultAssetFilters = InArgs._UseDefaultAssetFilters;
 		CustomClassFilters = InArgs._CustomClassFilters;
 		UserCustomClassFilters = InArgs._CustomClassFilters;
+		FilterMenuName = InArgs._FilterMenuName;
 		FilterBarIdentifier = InArgs._FilterBarIdentifier;
+		DefaultMenuExpansionCategory = InArgs._DefaultMenuExpansionCategory;
 		
 		typename SBasicFilterBar<FilterType>::FArguments Args;
 		Args._OnFilterChanged = InArgs._OnFilterChanged;
@@ -213,6 +228,7 @@ public:
 		Args._FilterBarLayout = InArgs._FilterBarLayout;
 		Args._CanChangeOrientation = InArgs._CanChangeOrientation;
 		Args._FilterPillStyle = InArgs._FilterPillStyle;
+		Args._UseSectionsForCategories = InArgs._bUseSectionsForCustomCategories;
 		
 		SBasicFilterBar<FilterType>::Construct(Args);
 
@@ -285,6 +301,27 @@ public:
 
 protected:
 
+	virtual FReply OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		if(MouseEvent.GetEffectingButton() == EKeys::RightMouseButton )
+		{
+			FReply Reply = FReply::Handled().ReleaseMouseCapture();
+			
+			TSharedPtr<SWidget> MenuContent = MakeAddFilterMenu();
+
+			if(MenuContent.IsValid())
+			{
+				FVector2D SummonLocation = MouseEvent.GetScreenSpacePosition();
+				FWidgetPath WidgetPath = MouseEvent.GetEventPath() != nullptr ? *MouseEvent.GetEventPath() : FWidgetPath();
+				FSlateApplication::Get().PushMenu(this->AsShared(), WidgetPath, MenuContent.ToSharedRef(), SummonLocation, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+			}
+
+			return Reply;
+		}
+
+		return FReply::Unhandled();
+	}
+	
 	/** Save all the custom class filters (created by the user) into the specified config */
 	void SaveCustomTextFilters(FFilterBarSettings* FilterBarConfig)
 	{
@@ -815,9 +852,6 @@ protected:
 			// Add the Basic category
 			TSharedPtr<FFilterCategory> BasicCategory = MakeShareable(new FFilterCategory(LOCTEXT("BasicFilter", "Common"), LOCTEXT("BasicFilterTooltip", "Filter by Common assets.")));
 			AssetFilterCategories.Add(EAssetCategoryPaths::Basic.GetCategory(), BasicCategory);
-
-			// We expand the basic category by default if we are creating it
-			CategoryToExpand = BasicCategory;
 		}
 
 		{
@@ -917,10 +951,26 @@ protected:
 		CreateFiltersMenuCategory(InMenu->AddSection("Section"), CustomClassFilterDatas);
 	}
 
-	/** Handler for when the add filter button was clicked */
-	virtual TSharedRef<SWidget> MakeAddFilterMenu() override
+	/** Override this if you want to change aspects on the add filter menu.
+	 *  You can opt to only override the OnFilterAssetType member to exclude assets, or choose to override the entire populate callback
+	 */
+	virtual UAssetFilterBarContext* CreateAssetFilterBarContext()
 	{
-		const FName FilterMenuName = "FilterBar.FilterMenu";
+		UAssetFilterBarContext* FilterBarContext = NewObject<UAssetFilterBarContext>();
+		FilterBarContext->PopulateFilterMenu = FOnPopulateAddAssetFilterMenu::CreateSP(this, &SAssetFilterBar<FilterType>::PopulateAddFilterMenu);
+		FilterBarContext->OnExtendAddFilterMenu = this->OnExtendAddFilterMenu;
+		
+		if(DefaultMenuExpansionCategory.IsSet() && AssetFilterCategories.Contains(DefaultMenuExpansionCategory->GetCategory()))
+		{
+			FilterBarContext->MenuExpansion = AssetFilterCategories[DefaultMenuExpansionCategory->GetCategory()];
+		};
+
+		return FilterBarContext;
+	}
+	
+	/** Handler for when the add filter button was clicked */
+	virtual TSharedRef<SWidget> MakeAddFilterMenu() override final
+	{
 		if (!UToolMenus::Get()->IsMenuRegistered(FilterMenuName))
 		{
 			UToolMenu* Menu = UToolMenus::Get()->RegisterMenu(FilterMenuName);
@@ -931,28 +981,18 @@ protected:
 			{
 				if (UAssetFilterBarContext* Context = InMenu->FindContext<UAssetFilterBarContext>())
 				{
-					Context->PopulateFilterMenu.ExecuteIfBound(InMenu, Context->MenuExpansion, FOnFilterAssetType());
+					Context->PopulateFilterMenu.ExecuteIfBound(InMenu, Context->MenuExpansion, Context->OnFilterAssetType);
+					Context->OnExtendAddFilterMenu.ExecuteIfBound(InMenu);
 				}
 			}));
 		}
-
-		UAssetFilterBarContext* FilterBarContext = NewObject<UAssetFilterBarContext>();
-		FilterBarContext->PopulateFilterMenu = FOnPopulateAddAssetFilterMenu::CreateSP(this, &SAssetFilterBar<FilterType>::PopulateAddFilterMenu);
-
-		/** Auto expand the Basic Category if it is present */
-
-		if(CategoryToExpand)
-		{
-			FilterBarContext->MenuExpansion = CategoryToExpand;
-		}
-	
-		FToolMenuContext ToolMenuContext(FilterBarContext);
-
+		
+		FToolMenuContext ToolMenuContext(CreateAssetFilterBarContext());
 		return UToolMenus::Get()->GenerateWidget(FilterMenuName, ToolMenuContext);
 	} 
 	
 	/** Handler to Populate the Add Filter Menu. Use OnFilterAssetType in Subclasses to add classes to the exclusion list */
-	virtual void PopulateAddFilterMenu(UToolMenu* Menu, TSharedPtr<FFilterCategory> MenuExpansion, FOnFilterAssetType OnFilterAssetType)
+	void PopulateAddFilterMenu(UToolMenu* Menu, TSharedPtr<FFilterCategory> MenuExpansion, FOnFilterAssetType OnFilterAssetType)
 	{
 		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 
@@ -1001,8 +1041,8 @@ protected:
 					// Otherwise create a new FCategoryMenu for the category and add it to the map
 					else
 					{
-						const FName ExtensionPoint = NAME_None;
 						const FText SectionHeading = FText::Format(LOCTEXT("WildcardFilterHeadingHeadingTooltip", "{0} Filters"), Category->Title);
+						const FName ExtensionPoint = FName(FText::AsCultureInvariant(SectionHeading).ToString());
 
 						FCategoryMenu NewCategoryMenu(ExtensionPoint, SectionHeading);
 						NewCategoryMenu.Classes.Add(CustomClassFilter);
@@ -1037,6 +1077,7 @@ protected:
 		}
 		
 		// If we want to expand a category
+		// if(MenuExpansion)
 		if(MenuExpansion)
 		{
 			// First add the expanded category, this appears as standard entries in the list (Note: intentionally not using FindChecked here as removing it from the map later would cause the ref to be garbage)
@@ -1047,7 +1088,7 @@ protected:
 				
 				// If we are doing a full menu (i.e expanding basic) we add a menu entry which toggles all other categories
                 Section.AddMenuEntry(
-                	NAME_None,
+                	FName(FText::AsCultureInvariant(ExpandedCategory->SectionHeading).ToString()),
                 	ExpandedCategory->SectionHeading,
                 	MenuExpansion->Tooltip,
                 	FSlateIcon(FAppStyle::Get().GetStyleSetName(), "PlacementBrowser.Icons.Basic"),
@@ -1080,7 +1121,7 @@ protected:
 		for (const TPair<TSharedPtr<FFilterCategory>, FCategoryMenu>& CategoryMenuPair : CategoryToMenuMap)
 		{
 			Section.AddSubMenu(
-				NAME_None,
+				FName(FText::AsCultureInvariant(CategoryMenuPair.Key->Title).ToString()),
 				CategoryMenuPair.Key->Title,
 				CategoryMenuPair.Key->Tooltip,
 				FNewToolMenuDelegate::CreateSP(this, &SAssetFilterBar<FilterType>::CreateFiltersMenuCategory, CategoryMenuPair.Value.Classes),
@@ -1214,10 +1255,9 @@ protected:
 	/** Copy of Custom Class Filters that were provided by the user, and not autopopulated from AssetTypeActions */
 	TArray<TSharedRef<FCustomClassFilterData>> UserCustomClassFilters;
 
-	TMap<FName, TSharedPtr<FFilterCategory>> AssetFilterCategories;
+	FName FilterMenuName;
 
-	/** The category to expand in the filter menu */
-	TSharedPtr<FFilterCategory> CategoryToExpand;
+	TMap<FName, TSharedPtr<FFilterCategory>> AssetFilterCategories;
 	
 	/** Whether the filter bar provides the default Asset Filters */
 	bool bUseDefaultAssetFilters = false;
@@ -1227,8 +1267,11 @@ protected:
 
 	/** A map of any type filters we encounter while calling LoadSettings(), but don't have in this instance of the filter
 	 *  bar. These are stored so we can save these when calling SaveSettings() so that they are not lost */
-	TMap<FString, bool> UnknownTypeFilters; 
+	TMap<FString, bool> UnknownTypeFilters;
 
+private:
+	/** The filter menu category to expand. */
+	TOptional<FAssetCategoryPath> DefaultMenuExpansionCategory;
 };
 
 #undef LOCTEXT_NAMESPACE

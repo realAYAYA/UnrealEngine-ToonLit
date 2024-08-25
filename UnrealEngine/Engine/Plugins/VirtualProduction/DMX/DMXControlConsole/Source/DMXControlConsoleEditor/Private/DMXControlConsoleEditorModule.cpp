@@ -2,47 +2,80 @@
 
 #include "DMXControlConsoleEditorModule.h"
 
-#include "DMXEditorModule.h"
-#include "Commands/DMXControlConsoleEditorCommands.h"
-#include "Layouts/DMXControlConsoleEditorGlobalLayoutDefault.h"
-#include "Models/DMXControlConsoleEditorModel.h"
-#include "Style/DMXControlConsoleEditorStyle.h"
-#include "Views/SDMXControlConsoleEditorView.h"
-
+#include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "Commands/DMXControlConsoleEditorCommands.h"
+#include "DMXControlConsole.h"
+#include "DMXControlConsoleEditorFromLegacyUpgradeHandler.h"
+#include "DMXEditorModule.h"
+#include "DMXEditorSettings.h"
+#include "Factories/DMXControlConsoleFactory.h"
 #include "LevelEditor.h"
-#include "ToolMenu.h"
-#include "Framework/Docking/TabManager.h"
 #include "Misc/CoreDelegates.h"
-#include "Widgets/Docking/SDockTab.h"
+#include "Style/DMXControlConsoleEditorStyle.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
 
 #define LOCTEXT_NAMESPACE "DMXControlConsoleEditorModule"
 
-const FName FDMXControlConsoleEditorModule::ControlConsoleTabName("DMXControlConsoleTabName");
+const FName FDMXControlConsoleEditorModule::ControlConsoleEditorTabName("ControlConsoleTabName");
+const FName FDMXControlConsoleEditorModule::ControlConsoleEditorAppIdentifier(TEXT("ControlConsoleApp"));
+EAssetTypeCategories::Type FDMXControlConsoleEditorModule::DMXEditorAssetCategory;
+
+FDMXControlConsoleEditorModule::FDMXControlConsoleEditorModule()
+	: ControlConsoleCategory(LOCTEXT("ControlConsoleAssetTypeCategory", "DMX"))
+{}
 
 void FDMXControlConsoleEditorModule::StartupModule()
 {
 	FDMXControlConsoleEditorCommands::Register();
 	RegisterLevelEditorCommands();
 
-	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
-		ControlConsoleTabName, 
-		FOnSpawnTab::CreateStatic(&FDMXControlConsoleEditorModule::OnSpawnControlConsoleTab))
-		.SetDisplayName(LOCTEXT("DMXControlConsoleTabTitle", "DMX Control Console"))
-		.SetMenuType(ETabSpawnerMenuType::Hidden)
-		.SetIcon(FSlateIcon(FDMXControlConsoleEditorStyle::Get().GetStyleSetName(), "DMXControlConsole.TabIcon"));
+	// Register Asset Tools for control console
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	DMXEditorAssetCategory = AssetTools.RegisterAdvancedAssetCategory(FName(TEXT("DMX")), LOCTEXT("DmxCategory", "DMX"));
 
-	FCoreDelegates::OnPostEngineInit.AddStatic(&FDMXControlConsoleEditorModule::RegisterDMXMenuExtender);
+	FCoreDelegates::OnPostEngineInit.AddRaw(this, &FDMXControlConsoleEditorModule::OnPostEnginInit);
 }
 
 void FDMXControlConsoleEditorModule::ShutdownModule()
 {
+	FCoreDelegates::OnPostEngineInit.RemoveAll(this);
 }
 
 void FDMXControlConsoleEditorModule::OpenControlConsole()
 {
-	FGlobalTabmanager::Get()->TryInvokeTab(ControlConsoleTabName);
+	UDMXEditorSettings* DMXEditorSettings = GetMutableDefault<UDMXEditorSettings>();
+	if (!DMXEditorSettings)
+	{
+		return;
+	}
+
+	const FString& LastOpenedConsolePath = DMXEditorSettings->LastOpenedControlConsolePath;
+
+	const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	const FAssetData& ControlConsoleAsset = AssetRegistryModule.Get().GetAssetByObjectPath(LastOpenedConsolePath);
+	if (ControlConsoleAsset.IsValid())
+	{
+		// focus last opened asset editor
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(ControlConsoleAsset.GetAsset());
+	}
+	else
+	{
+		// Create unique path for the new control console asset
+		const FString AssetPath = TEXT("/Game");
+		const FString AssetName = TEXT("NewDMXControlConsole");
+		
+		FString UniquePackageName;
+		FString UniqueAssetName;
+		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+		AssetToolsModule.Get().CreateUniqueAssetName(AssetPath / AssetName, TEXT(""), UniquePackageName, UniqueAssetName);
+
+		const UDMXControlConsoleFactory* ControlConsoleFactory = NewObject<UDMXControlConsoleFactory>();
+		UObject* DMXControlConsoleObject = ControlConsoleFactory->CreateConsoleAssetFromData(AssetPath, UniqueAssetName, nullptr);
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(DMXControlConsoleObject);
+	}
 }
 
 void FDMXControlConsoleEditorModule::RegisterLevelEditorCommands()
@@ -50,7 +83,8 @@ void FDMXControlConsoleEditorModule::RegisterLevelEditorCommands()
 	FLevelEditorModule& LevelEditorModule = FModuleManager::Get().LoadModuleChecked<FLevelEditorModule>("LevelEditor");
 	const TSharedRef<FUICommandList> CommandList = LevelEditorModule.GetGlobalLevelEditorActions();
 
-	CommandList->MapAction(
+	CommandList->MapAction
+	(
 		FDMXControlConsoleEditorCommands::Get().OpenControlConsole,
 		FExecuteAction::CreateStatic(&FDMXControlConsoleEditorModule::OpenControlConsole)
 	);
@@ -64,7 +98,7 @@ void FDMXControlConsoleEditorModule::RegisterDMXMenuExtender()
 	FLevelEditorModule& LevelEditorModule = FModuleManager::Get().LoadModuleChecked<FLevelEditorModule>("LevelEditor");
 	TSharedRef<FUICommandList> CommandList = LevelEditorModule.GetGlobalLevelEditorActions();
 
-	LevelEditorToolbarDMXMenuExtender->AddMenuExtension("OpenActivityMonitor", EExtensionHook::Position::After, CommandList, FMenuExtensionDelegate::CreateStatic(&FDMXControlConsoleEditorModule::ExtendDMXMenu));
+	LevelEditorToolbarDMXMenuExtender->AddMenuExtension("ConflictMonitor", EExtensionHook::Position::After, CommandList, FMenuExtensionDelegate::CreateStatic(&FDMXControlConsoleEditorModule::ExtendDMXMenu));
 }
 
 void FDMXControlConsoleEditorModule::ExtendDMXMenu(FMenuBuilder& MenuBuilder)
@@ -72,19 +106,17 @@ void FDMXControlConsoleEditorModule::ExtendDMXMenu(FMenuBuilder& MenuBuilder)
 	MenuBuilder.AddMenuEntry(FDMXControlConsoleEditorCommands::Get().OpenControlConsole,
 		NAME_None,
 		LOCTEXT("DMXControlConsoleMenuLabel", "Control Console"),
-		LOCTEXT("DMXControlConsoleMenuTooltip", "Opens a small console that can send DMX locally or over the network"),
+		LOCTEXT("DMXControlConsoleMenuTooltip", "Opens a control console asset that can send DMX locally or over the network"),
 		FSlateIcon(FDMXControlConsoleEditorStyle::Get().GetStyleSetName(), "DMXControlConsole.TabIcon")
 	);
 }
 
-TSharedRef<SDockTab> FDMXControlConsoleEditorModule::OnSpawnControlConsoleTab(const FSpawnTabArgs& InSpawnTabArgs)
+void FDMXControlConsoleEditorModule::OnPostEnginInit()
 {
-	return SNew(SDockTab)
-		.Label(LOCTEXT("DMXControlConsoleTitle", "DMX ControlConsole"))
-		.TabRole(ETabRole::NomadTab)
-		[
-			SNew(SDMXControlConsoleEditorView)
-		];
+	RegisterDMXMenuExtender();
+
+	// Try UpgradePath if configurations settings have data from Output Consoles, the Console that was used before 5.2.
+	FDMXControlConsoleEditorFromLegacyUpgradeHandler::TryUpgradePathFromLegacy();
 }
 
 #undef LOCTEXT_NAMESPACE

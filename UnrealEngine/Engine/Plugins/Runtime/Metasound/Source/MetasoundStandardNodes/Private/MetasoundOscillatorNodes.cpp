@@ -380,7 +380,6 @@ namespace Metasound
 				case ESineGenerationType::Wavetable: return MakeUnique<TOscillatorOperator<FSineWaveTable, FEnumSineGenerationTypeReadRef>>(OpParams, Type);
 				}
 			} // HasFM
-			return nullptr;
 		}
 	};
 
@@ -507,7 +506,6 @@ namespace Metasound
 			case ESawGenerationType::PolySmooth: return MakeUnique<TOscillatorOperator<FSawPolysmooth, FSawGenerationTypeReadRef>>(OpParams, Type);
 			}
 		}
-		return nullptr;
 	}
 
 	FSawOscilatorNode::FSawOscilatorNode(const FVertexName& InInstanceName, const FGuid& InInstanceID, float InDefaultFrequency, float InDefaultGlideFactor, bool bInDefaultEnablement)
@@ -691,7 +689,6 @@ namespace Metasound
 				case ESquareGenerationType::PolySmooth: return MakeUnique<FSquareOperator<FSquarePolysmooth>>(OpParams, PulseWidth, Type);
 				}
 			}
-			return nullptr;
 		}
 
 		static const FNodeClassMetadata& GetNodeInfo()
@@ -813,7 +810,6 @@ namespace Metasound
 				case ETriangleGenerationType::Trivial: return MakeUnique<TOscillatorOperator<FTriangle, FTriangleGenerationTypeReadRef>>(OpParams, Type);
 				}
 			}
-			return nullptr;
 		}
 
 		static const FNodeClassMetadata& GetNodeInfo()

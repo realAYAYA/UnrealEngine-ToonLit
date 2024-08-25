@@ -3,9 +3,10 @@
 #include "Systems/MovieSceneDataLayerSystem.h"
 #include "EntitySystem/MovieSceneEntitySystemTask.h"
 #include "EntitySystem/MovieSceneSpawnablesSystem.h"
+#include "EntitySystem/MovieSceneBindingLifetimeSystem.h"
 #include "EntitySystem/MovieSceneEntitySystemLinker.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
-#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedEntityCaptureSource.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedObjectStorage.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateStorage.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStorageID.inl"
@@ -18,6 +19,7 @@
 #include "WorldPartition/WorldPartitionSubsystem.h"
 #include "WorldPartition/WorldPartitionRuntimeCell.h"
 #include "WorldPartition/WorldPartitionStreamingSource.h"
+#include "Engine/CoreSettings.h"
 #include "Engine/World.h"
 #include "Misc/EnumClassFlags.h"
 #include "MovieSceneSequence.h"
@@ -41,11 +43,12 @@ enum class EDataLayerUpdateFlags : uint8
 	None						= 0,
 	FlushStreamingVisibility	= 1,
 	FlushStreamingFull			= 2,
+	PerformGarbageCollect		= 4,
 };
 ENUM_CLASS_FLAGS(EDataLayerUpdateFlags)
 
 /** Traits class governing how pre-animated state is (re)stored for data layers */
-struct FPreAnimatedDataLayerStorageTraits : FBoundObjectPreAnimatedStateTraits
+struct FPreAnimatedDataLayerStorageTraits : FPreAnimatedStateTraits
 {
 	using KeyType = TObjectKey<UDataLayerInstance>;
 	using StorageType = EDataLayerRuntimeState;
@@ -54,19 +57,16 @@ struct FPreAnimatedDataLayerStorageTraits : FBoundObjectPreAnimatedStateTraits
 	static void RestorePreAnimatedValue(const TObjectKey<UDataLayerInstance>& InKey, EDataLayerRuntimeState PreviousState, const FRestoreStateParams& Params);
 };
 
+
+
 /** Container class for all pre-animated data layer state */
 struct FPreAnimatedDataLayerStorage
 	: TPreAnimatedStateStorage<FPreAnimatedDataLayerStorageTraits>
-	, IPreAnimatedStateGroupManager
 {
 	static TAutoRegisterPreAnimatedStorageID<FPreAnimatedDataLayerStorage> StorageID;
-	static TAutoRegisterPreAnimatedStorageID<FPreAnimatedDataLayerStorage> GroupManagerID;
-
-	/*~ IPreAnimatedStateGroupManager */
-	void InitializeGroupManager(FPreAnimatedStateExtension* Extension) override;
-	void OnGroupDestroyed(FPreAnimatedStorageGroupHandle Group) override;
 
 	/** Make an entry for the specified data layer */
+	FPreAnimatedStateEntry FindEntry(const UDataLayerInstance* InDataLayer);
 	FPreAnimatedStateEntry MakeEntry(const UDataLayerInstance* InDataLayer);
 
 	/** Save the value of a data layer. Should only be used for runtime / PIE worlds */
@@ -76,10 +76,6 @@ struct FPreAnimatedDataLayerStorage
 	/** Save the value of a data layer. Should only be used for editor worlds */
 	void SavePreAnimatedStateInEditor(const UDataLayerInstance* DataLayer);
 #endif
-
-private:
-
-	FPreAnimatedStorageGroupHandle GroupHandle;
 };
 
 
@@ -87,9 +83,10 @@ struct FDataLayerState
 {
 	void Reset();
 	bool IsEmpty() const;
-	void AddRequest(int16 InBias, EDataLayerRuntimeState RequestedState, bool bRequiresStreamingFlush);
+	void AddRequest(int16 InBias, EDataLayerRuntimeState RequestedState, bool bRequiresStreamingFlush, bool bPerformGC);
 	TOptional<EDataLayerRuntimeState> ComputeDesiredState() const;
 	bool ShouldFlushStreaming(EDataLayerRuntimeState ComputedState) const;
+	bool ShouldPerformGarbageCollect(EDataLayerRuntimeState ComputedState) const;
 
 private:
 
@@ -99,6 +96,7 @@ private:
 	int32 ActivatedCount   = 0;
 	bool  bFlushUnloaded   = false;
 	bool  bFlushActivated  = false;
+	bool  bGCUnloaded      = false;
 };
 
 
@@ -110,7 +108,7 @@ struct FDesiredLayerStates
 #if WITH_EDITOR
 	void ApplyInEditor(FPreAnimatedDataLayerStorage* PreAnimatedStorage, UDataLayerEditorSubsystem* EditorSubSystem);
 #endif
-	void ApplyNewState(const UDataLayerInstance* InDataLayer, int16 HierarchicalBias, EDataLayerRuntimeState DesiredState, bool bRequiresStreamingFlush);
+	void ApplyNewState(const UDataLayerInstance* InDataLayer, int16 HierarchicalBias, EDataLayerRuntimeState DesiredState, bool bRequiresStreamingFlush, bool bPerformGC);
 
 	TMap<TObjectKey<UDataLayerInstance>, FDataLayerState> StatesByInstance;
 };
@@ -146,30 +144,30 @@ void FPreAnimatedDataLayerStorageTraits::RestorePreAnimatedValue(const TObjectKe
 // ---------------------------------------------------------------------
 // FPreAnimatedDataLayerStorage definitions
 TAutoRegisterPreAnimatedStorageID<FPreAnimatedDataLayerStorage> FPreAnimatedDataLayerStorage::StorageID;
-TAutoRegisterPreAnimatedStorageID<FPreAnimatedDataLayerStorage> FPreAnimatedDataLayerStorage::GroupManagerID;
 
-void FPreAnimatedDataLayerStorage::InitializeGroupManager(FPreAnimatedStateExtension* Extension)
-{}
-
-void FPreAnimatedDataLayerStorage::OnGroupDestroyed(FPreAnimatedStorageGroupHandle Group)
+FPreAnimatedStateEntry FPreAnimatedDataLayerStorage::FindEntry(const UDataLayerInstance* InDataLayer)
 {
-	ensure(Group == GroupHandle);
-	GroupHandle = FPreAnimatedStorageGroupHandle();
+	FPreAnimatedStorageIndex StorageIndex = FindStorageIndex(InDataLayer);
+	return FPreAnimatedStateEntry{ FPreAnimatedStorageGroupHandle(), FPreAnimatedStateCachedValueHandle{ StorageID, StorageIndex } };
 }
 
 FPreAnimatedStateEntry FPreAnimatedDataLayerStorage::MakeEntry(const UDataLayerInstance* InDataLayer)
 {
-	if (!GroupHandle)
-	{
-		GroupHandle = ParentExtension->AllocateGroup(SharedThis(this));
-	}
 	FPreAnimatedStorageIndex StorageIndex = GetOrCreateStorageIndex(InDataLayer);
-	return FPreAnimatedStateEntry{ GroupHandle, FPreAnimatedStateCachedValueHandle{ StorageID, StorageIndex } };
+	return FPreAnimatedStateEntry{ FPreAnimatedStorageGroupHandle(), FPreAnimatedStateCachedValueHandle{ StorageID, StorageIndex } };
 }
 
 void FPreAnimatedDataLayerStorage::SavePreAnimatedState(const UDataLayerInstance* DataLayer)
 {
-	FPreAnimatedStateEntry         Entry              = MakeEntry(DataLayer);
+	if (!this->ShouldTrackCaptureSource(EPreAnimatedCaptureSourceTracking::CacheIfTracked, DataLayer))
+	{
+		return;
+	}
+
+	FPreAnimatedStateEntry Entry = MakeEntry(DataLayer);
+
+	this->TrackCaptureSource(Entry, EPreAnimatedCaptureSourceTracking::CacheIfTracked);
+
 	EPreAnimatedStorageRequirement StorageRequirement = this->ParentExtension->GetStorageRequirement(Entry);
 
 	if (!IsStorageRequirementSatisfied(Entry.ValueHandle.StorageIndex, StorageRequirement))
@@ -185,7 +183,14 @@ void FPreAnimatedDataLayerStorage::SavePreAnimatedState(const UDataLayerInstance
 #if WITH_EDITOR
 void FPreAnimatedDataLayerStorage::SavePreAnimatedStateInEditor(const UDataLayerInstance* DataLayer)
 {
-	FPreAnimatedStateEntry         Entry              = MakeEntry(DataLayer);
+	if (!this->ShouldTrackCaptureSource(EPreAnimatedCaptureSourceTracking::CacheIfTracked, DataLayer))
+	{
+		return;
+	}
+
+	FPreAnimatedStateEntry Entry = MakeEntry(DataLayer);
+	this->TrackCaptureSource(Entry, EPreAnimatedCaptureSourceTracking::CacheIfTracked);
+
 	EPreAnimatedStorageRequirement StorageRequirement = this->ParentExtension->GetStorageRequirement(Entry);
 
 	if (!IsStorageRequirementSatisfied(Entry.ValueHandle.StorageIndex, StorageRequirement))
@@ -208,9 +213,10 @@ void FDataLayerState::Reset()
 	ActivatedCount   = 0;
 	bFlushUnloaded   = false;
 	bFlushActivated  = false;
+	bGCUnloaded      = false;
 }
 
-void FDataLayerState::AddRequest(int16 InBias, EDataLayerRuntimeState RequestedState, bool bRequiresStreamingFlush)
+void FDataLayerState::AddRequest(int16 InBias, EDataLayerRuntimeState RequestedState, bool bRequiresStreamingFlush, bool bPerformGC)
 {
 	if (InBias > HierarchicalBias)
 	{
@@ -222,7 +228,7 @@ void FDataLayerState::AddRequest(int16 InBias, EDataLayerRuntimeState RequestedS
 	{
 		switch (RequestedState)
 		{
-		case EDataLayerRuntimeState::Unloaded:  ++UnloadedCount;  bFlushUnloaded |= bRequiresStreamingFlush; break;
+		case EDataLayerRuntimeState::Unloaded:  ++UnloadedCount;  bFlushUnloaded |= bRequiresStreamingFlush; bGCUnloaded |= bPerformGC; break;
 		case EDataLayerRuntimeState::Loaded:    ++LoadedCount;    break;
 		case EDataLayerRuntimeState::Activated: ++ActivatedCount; bFlushActivated |= bRequiresStreamingFlush; break;
 		}
@@ -258,6 +264,16 @@ bool FDataLayerState::ShouldFlushStreaming(EDataLayerRuntimeState ComputedState)
 	{
 	case EDataLayerRuntimeState::Unloaded:  return bFlushUnloaded;
 	case EDataLayerRuntimeState::Activated: return bFlushActivated;
+	}
+
+	return false;
+}
+
+bool FDataLayerState::ShouldPerformGarbageCollect(EDataLayerRuntimeState ComputedState) const
+{
+	switch (ComputedState)
+	{
+	case EDataLayerRuntimeState::Unloaded:  return bGCUnloaded;
 	}
 
 	return false;
@@ -359,6 +375,11 @@ EDataLayerUpdateFlags FDesiredLayerStates::Apply(FPreAnimatedDataLayerStorage* P
 							*StaticEnum<EDataLayerRuntimeState>()->GetDisplayNameTextByValue((int64)DesiredStateValue).ToString());
 					}
 				}
+
+				if (StateValue.ShouldPerformGarbageCollect(DesiredStateValue))
+				{
+					Flags |= EDataLayerUpdateFlags::PerformGarbageCollect;
+				}
 			}
 		}
 	}
@@ -430,7 +451,7 @@ void FDesiredLayerStates::ApplyInEditor(FPreAnimatedDataLayerStorage* PreAnimate
 }
 #endif
 
-void FDesiredLayerStates::ApplyNewState(const UDataLayerInstance* InDataLayer, int16 HierarchicalBias, EDataLayerRuntimeState DesiredState, bool bRequiresStreamingFlush)
+void FDesiredLayerStates::ApplyNewState(const UDataLayerInstance* InDataLayer, int16 HierarchicalBias, EDataLayerRuntimeState DesiredState, bool bRequiresStreamingFlush, bool bPerformGC)
 {
 	using namespace UE::MovieScene;
 
@@ -440,7 +461,7 @@ void FDesiredLayerStates::ApplyNewState(const UDataLayerInstance* InDataLayer, i
 		LayerState = &StatesByInstance.Add(InDataLayer, FDataLayerState());
 	}
 
-	LayerState->AddRequest(HierarchicalBias, DesiredState, bRequiresStreamingFlush);
+	LayerState->AddRequest(HierarchicalBias, DesiredState, bRequiresStreamingFlush, bPerformGC);
 }
 
 } // namespace MovieScene
@@ -459,7 +480,7 @@ UMovieSceneDataLayerSystem::UMovieSceneDataLayerSystem(const FObjectInitializer&
 
 	if (HasAnyFlags(RF_ClassDefaultObject))
 	{
-		DefineImplicitPrerequisite(GetClass(), UMovieSceneSpawnablesSystem::StaticClass());
+		DefineImplicitPrerequisite(GetClass(), UMovieSceneBindingLifetimeSystem::StaticClass());
 	}
 	else
 	{
@@ -543,6 +564,12 @@ void UMovieSceneDataLayerSystem::OnRun(FSystemTaskPrerequisites& InPrerequisites
 				World->FlushLevelStreaming(EFlushLevelStreamingType::Visibility);
 			}
 
+			if (EnumHasAnyFlags(UpdateFlags, EDataLayerUpdateFlags::PerformGarbageCollect))
+			{
+				UE_LOG(LogMovieScene, Warning, TEXT("[UMovieSceneDataLayerSystem] Forcing garbage collection"));
+				GLevelStreamingContinuouslyIncrementalGCWhileLevelsPendingPurgeOverride = 1;
+			}
+
 			UE_SUPPRESS(LogMovieScene, Warning,
 			{
 				if (FlushTypeString)
@@ -619,14 +646,16 @@ void UMovieSceneDataLayerSystem::UpdateDesiredStates()
 			if (DataLayerManager)
 			{
 				EDataLayerRuntimeState DesiredState = bPreroll ? Section->GetPrerollState() : Section->GetDesiredState();
-				const bool bRequiresStreamingFlush = (DesiredState == EDataLayerRuntimeState::Unloaded) ? Section->GetFlushOnUnload() : !bPreroll;
+				const bool bRequiresStreamingFlush = (DesiredState == EDataLayerRuntimeState::Unloaded) ? Section->GetFlushOnUnload() :
+													 (DesiredState == EDataLayerRuntimeState::Activated) ? Section->GetFlushOnActivated() : false;
+				const bool bPerformGC = (DesiredState == EDataLayerRuntimeState::Unloaded) ? Section->GetPerformGCOnUnload() : false;
 
 				for (const UDataLayerAsset* DataLayerAsset : Section->GetDataLayerAssets())
 				{
 					const UDataLayerInstance* DataLayerInstance = DataLayerManager->GetDataLayerInstanceFromAsset(DataLayerAsset);
 					if (DataLayerInstance)
 					{
-						this->DesiredLayerStates->ApplyNewState(DataLayerInstance, OptHBiases ? OptHBiases[Index] : 0, DesiredState, bRequiresStreamingFlush);
+						this->DesiredLayerStates->ApplyNewState(DataLayerInstance, OptHBiases ? OptHBiases[Index] : 0, DesiredState, bRequiresStreamingFlush, bPerformGC);
 					}
 				}
 			}
@@ -664,6 +693,12 @@ void UMovieSceneDataLayerSystem::BeginTrackingEntities()
 		TRead<FMovieSceneDataLayerComponentData> ComponentData)
 	{
 		const bool bRestoreState = Item.GetAllocationType().Contains(FBuiltInComponentTypes::Get()->Tags.RestoreState);
+
+		if (!this->GetLinker()->PreAnimatedState.IsCapturingGlobalState() && !bRestoreState)
+		{
+			return;
+		}
+
 		for (int32 Index = 0; Index < Item.GetAllocation()->Num(); ++Index)
 		{
 			const UMovieSceneDataLayerSection* Section = ComponentData[Index].Section.Get();
@@ -692,11 +727,6 @@ void UMovieSceneDataLayerSystem::BeginTrackingEntities()
 	};
 
 	FComponentMask Filter{ BuiltInComponents->Tags.NeedsLink };
-	if (!Linker->PreAnimatedState.IsCapturingGlobalState())
-	{
-		// If we're not capturing global state, only visit entities with the RestoreState tag
-		Filter.Set(BuiltInComponents->Tags.RestoreState);
-	}
 
 	// Iterate any data layer components that need link
 	FEntityTaskBuilder()

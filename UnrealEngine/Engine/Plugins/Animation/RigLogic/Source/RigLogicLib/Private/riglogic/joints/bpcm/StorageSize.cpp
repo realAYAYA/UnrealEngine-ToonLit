@@ -38,10 +38,17 @@ void StorageSize::computeFrom(const dna::BehaviorReader* src, std::size_t padTo)
         inputIndexCount += columnCount;
         outputIndexCount += (rowCount + padding);
         lodRegionCount += lodCount;
+        #if !defined(__clang__) && defined(__GNUC__)
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wuseless-cast"
+        #endif
         jointGroups.push_back({
                     {static_cast<std::uint32_t>(rowCount), static_cast<std::uint32_t>(columnCount)},
                     {static_cast<std::uint32_t>(rowCount + padding), static_cast<std::uint32_t>(columnCount)}
                 });
+        #if !defined(__clang__) && defined(__GNUC__)
+            #pragma GCC diagnostic pop
+        #endif
     }
 }
 

@@ -73,7 +73,6 @@ DEFINE_ENUM_FLAG_OPERATORS(PIXHUDOptions);
 #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP | WINAPI_PARTITION_SYSTEM | WINAPI_PARTITION_GAMES)
 
 #include <shlobj.h>
-#include <strsafe.h>
 #include <knownfolders.h>
 #include <shellapi.h>
 
@@ -191,14 +190,14 @@ namespace PixImpl
 
         wchar_t pixSearchPath[MAX_PATH];
 
-        if (FAILED(StringCchCopyW(pixSearchPath, MAX_PATH, programFilesPath)))
+        if (FAILED(wcscpy_s(pixSearchPath, MAX_PATH, programFilesPath)))
         {
             PixImpl::CoTaskMemFree(programFilesPath);
             return nullptr;
         }
         PixImpl::CoTaskMemFree(programFilesPath);
 
-        PIXERRORCHECK(StringCchCatW(pixSearchPath, MAX_PATH, L"\\Microsoft PIX\\*"));
+        PIXERRORCHECK(wcscat_s(pixSearchPath, MAX_PATH, L"\\Microsoft PIX\\*"));
 
         WIN32_FIND_DATAW findData;
         bool foundPixInstallation = false;
@@ -217,18 +216,18 @@ namespace PixImpl
                     if (!foundPixInstallation || wcscmp(newestVersionFound, findData.cFileName) <= 0)
                     {
                         // length - 1 to get rid of the wildcard character in the search path
-                        PIXERRORCHECK(StringCchCopyNW(possibleOutput, MAX_PATH, pixSearchPath, wcslen(pixSearchPath) - 1));
-                        PIXERRORCHECK(StringCchCatW(possibleOutput, MAX_PATH, findData.cFileName));
-                        PIXERRORCHECK(StringCchCatW(possibleOutput, MAX_PATH, L"\\"));
-                        PIXERRORCHECK(StringCchCatW(possibleOutput, MAX_PATH, capturerDllName));
+                        PIXERRORCHECK(wcsncpy_s(possibleOutput, MAX_PATH, pixSearchPath, wcslen(pixSearchPath) - 1));
+                        PIXERRORCHECK(wcscat_s(possibleOutput, MAX_PATH, findData.cFileName));
+                        PIXERRORCHECK(wcscat_s(possibleOutput, MAX_PATH, L"\\"));
+                        PIXERRORCHECK(wcscat_s(possibleOutput, MAX_PATH, capturerDllName));
 
                         DWORD result = PixImpl::GetFileAttributesW(possibleOutput);
 
                         if (result != INVALID_FILE_ATTRIBUTES && !(result & FILE_ATTRIBUTE_DIRECTORY))
                         {
                             foundPixInstallation = true;
-                            PIXERRORCHECK(StringCchCopyW(newestVersionFound, _countof(newestVersionFound), findData.cFileName));
-                            PIXERRORCHECK(StringCchCopyW(output, _countof(possibleOutput), possibleOutput));
+                            PIXERRORCHECK(wcscpy_s(newestVersionFound, _countof(newestVersionFound), findData.cFileName));
+                            PIXERRORCHECK(wcscpy_s(output, _countof(possibleOutput), possibleOutput));
                         }
                     }
                 }

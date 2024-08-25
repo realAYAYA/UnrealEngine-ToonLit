@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Kismet/KismetStringLibrary.h"
+#include "Math/Box.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(KismetStringLibrary)
 
@@ -121,6 +122,20 @@ FString UKismetStringLibrary::Conv_TransformToString(const FTransform& InTrans)
 FString UKismetStringLibrary::Conv_ObjectToString(class UObject* InObj)
 {
 	return (InObj != nullptr) ? InObj->GetName() : FString(TEXT("None"));
+}
+
+FString UKismetStringLibrary::Conv_BoxToString(const FBox& Box)
+{
+	return Box.ToString();
+}
+
+FString UKismetStringLibrary::Conv_BoxCenterAndExtentsToString(const FBox& Box)
+{
+	FVector Center = FVector::ZeroVector;
+	FVector Extents = FVector::ZeroVector;
+	Box.GetCenterAndExtents(OUT Center, OUT Extents);
+
+	return FString::Printf(TEXT("Center: %s Extents: %s "), *Center.ToString(), *Extents.ToString());
 }
 
 FString UKismetStringLibrary::Conv_InputDeviceIdToString(FInputDeviceId InDeviceId)

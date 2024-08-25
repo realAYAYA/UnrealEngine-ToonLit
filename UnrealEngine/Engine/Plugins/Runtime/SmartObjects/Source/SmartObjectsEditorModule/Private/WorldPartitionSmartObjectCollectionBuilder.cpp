@@ -15,7 +15,7 @@
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
-#include "WorldPartition/ActorDescContainer.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(WorldPartitionSmartObjectCollectionBuilder)
 
@@ -75,13 +75,13 @@ bool UWorldPartitionSmartObjectCollectionBuilder::PreRun(UWorld* World, FPackage
 
 	// parse the actors meta data to find the ones that contain smart objects
 	TArray<USmartObjectComponent*> ExistingSOComponents;
-	FWorldPartitionHelpers::ForEachActorDesc(WorldPartition, AActor::StaticClass(), [this, WorldPartition, &ExistingSOComponents](const FWorldPartitionActorDesc* ActorDesc)
+	FWorldPartitionHelpers::ForEachActorDescInstance(WorldPartition, AActor::StaticClass(), [this, WorldPartition, &ExistingSOComponents](const FWorldPartitionActorDescInstance* ActorDescInstance)
 	{
-		if (ActorDesc->GetTags().Contains(UE::SmartObjects::WithSmartObjectTag)
-			&& ActorDesc->GetDataLayers().Num() > 0)
+		if (ActorDescInstance->GetTags().Contains(UE::SmartObject::WithSmartObjectTag)
+			&& ActorDescInstance->GetDataLayers().Num() > 0)
 		{
-			FWorldPartitionReference& ActorReference = SmartObjectReferences.Emplace_GetRef(WorldPartition, ActorDesc->GetGuid());
-			if (AActor* Actor = ActorReference->GetActor())
+			FWorldPartitionReference& ActorReference = SmartObjectReferences.Emplace_GetRef(WorldPartition, ActorDescInstance->GetGuid());
+			if (AActor* Actor = ActorReference.GetActor())
 			{
 				if (USmartObjectComponent* SOComponent = Actor->GetComponentByClass<USmartObjectComponent>())
 				{

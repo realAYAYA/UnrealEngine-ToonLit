@@ -18,7 +18,7 @@ namespace UnrealBuildTool
 
 		public static void ValidateTarget(TargetRules Target)
 		{
-			Target.bDisableDebugInfo = true;
+			Target.DebugInfo = DebugInfoMode.None;
 			Target.bDisableLinking = true;
 			Target.bUsePCHFiles = false;
 			Target.bUseSharedPCHs = false;
@@ -71,9 +71,9 @@ namespace UnrealBuildTool
 			return FileName + Extension;
 		}
 
-		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
+		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
 		{
-			if (InputFiles.Count == 0)
+			if (!InputFiles.Any())
 			{
 				return new CPPOutput();
 			}
@@ -199,12 +199,12 @@ namespace UnrealBuildTool
 		}
 
 		// Skip ISPC headers
-		public override CPPOutput GenerateISPCHeaders(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
+		public override CPPOutput GenerateISPCHeaders(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
 		{
 			return new CPPOutput();
 		}
 
-		public override CPPOutput CompileISPCFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
+		public override CPPOutput CompileISPCFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
 		{
 			return new CPPOutput();
 		}

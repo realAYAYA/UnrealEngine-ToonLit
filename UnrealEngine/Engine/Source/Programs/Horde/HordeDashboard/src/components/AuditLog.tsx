@@ -12,24 +12,39 @@ import { AuditLogEntry } from "../backend/Api";
 import dashboard from "../backend/Dashboard";
 import { useWindowSize } from "../base/utilities/hooks";
 import { displayTimeZone } from "../base/utilities/timeUtils";
-import { hordeClasses } from "../styles/Styles";
 import { BreadcrumbItem, Breadcrumbs } from "./Breadcrumbs";
 import { DateTimeRange } from "./DateTimeRange";
 import { HistoryModal } from "./HistoryModal";
 import { IssueModalV2 } from "./IssueViewV2";
-import { logMetricNormal, logStyleNormal } from "./LogStyle";
+import { getLogStyles, logMetricNormal } from "./LogStyle";
 import { TopNav } from "./TopNav";
+import { getHordeStyling } from "../styles/Styles";
+import { getHordeTheme } from "../styles/theme";
 
-export const auditStyleNormal = mergeStyleSets(logStyleNormal, {
 
-   logLine: [
-       {
-         selectors: {
-            '&:hover': { background: dashboard.darktheme ? "#444444" : "#EEEEEE" },
-          },
-       }
-   ]
-});
+let _auditStyleNormal: any;
+
+const getAuditStyleNormal = () => {
+
+   const theme = getHordeTheme();
+   const { logStyleNormal } = getLogStyles();
+
+   const auditStyleNormal = _auditStyleNormal ?? mergeStyleSets(logStyleNormal, {
+
+      logLine: [
+          {
+            selectors: {
+               '&:hover': { background: theme.palette.neutralLight }
+             },
+          }
+      ]
+   });
+
+   _auditStyleNormal = auditStyleNormal;
+
+   return auditStyleNormal;  
+}
+
 
 
 class AuditLogHandler {
@@ -314,6 +329,9 @@ export const AuditLogPanel: React.FC<{ agentId?: string, issueId?: string }> = o
 
    }, []);
 
+   const auditStyleNormal = getAuditStyleNormal();
+   const { modeColors } = getHordeStyling();
+
    if (handler.updated) { }
 
    if (agentId && handler.agentId !== agentId) {
@@ -460,8 +478,8 @@ export const AuditLogPanel: React.FC<{ agentId?: string, issueId?: string }> = o
       <Breadcrumbs items={crumbItems} />
       <Stack tokens={{ childrenGap: 12 }}>
          <Stack horizontal>
-            <div key={`windowsize_logview1_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2) - 230, flexShrink: 0, backgroundColor: '#FFFFFF' }} />
-            <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: "#FFFFFF", margin: "auto", paddingTop: 12, paddingRight: 10 } }}>
+            <div key={`windowsize_logview1_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2) - 230, flexShrink: 0, backgroundColor: modeColors.background }} />
+            <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: modeColors.background, margin: "auto", paddingTop: 12, paddingRight: 10 } }}>
                <Stack horizontal styles={{ root: { paddingLeft: 0, paddingBottom: 4, paddingRight: 12, width: 1440 } }}>
                   <Stack horizontal tokens={{ childrenGap: 12 }}>
                      <Stack>
@@ -555,7 +573,7 @@ export const AuditLogPanel: React.FC<{ agentId?: string, issueId?: string }> = o
             </Stack>
          </Stack>
 
-         <Stack style={{ backgroundColor: "#FFFFFF", paddingLeft: "24px", paddingRight: "24px" }}>
+         <Stack style={{ backgroundColor: modeColors.background, paddingLeft: "24px", paddingRight: "24px" }}>
             <Stack tokens={{ childrenGap: 0 }}>
                {showDatePicker && < DateTimeRange onChange={(minDate, maxDate) => { handler.setTimeRange(minDate, maxDate); setShowDatePicker(false) }} onDismiss={() => { handler.setTimeSelection({ text: "Live Tail", key: "time_live_tail", minutes: 0 }); setShowDatePicker(false) }} />}
                {viewAgent && <HistoryModal agentId={agentId} onDismiss={() => { setViewAgent(false) }} />}
@@ -564,7 +582,7 @@ export const AuditLogPanel: React.FC<{ agentId?: string, issueId?: string }> = o
                   <div className={auditStyleNormal.container} style={{ height: 'calc(100vh - 260px)', position: 'relative' }} data-is-scrollable={true}>
                      <Stack horizontal>
                         <div key={`windowsize_logview2_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2) - 24, flexShrink: 0 }} />
-                        <Stack styles={{ root: { backgroundColor: "#FFFFFF", paddingLeft: "0px", paddingRight: "0px" } }}>
+                        <Stack styles={{ root: { backgroundColor: modeColors.background, paddingLeft: "0px", paddingRight: "0px" } }}>
                            {!handler.haveUpdated && <Spinner size={SpinnerSize.large} />}
                            {!!handler.haveUpdated && !logItems.length && <Stack style={{ paddingLeft: 0 }}><Text variant="mediumPlus">No audit entries found</Text></Stack>}
 
@@ -592,6 +610,8 @@ export const AuditLogPanel: React.FC<{ agentId?: string, issueId?: string }> = o
 });
 
 export const AuditLogView: React.FC = () => {
+
+   const { hordeClasses } = getHordeStyling();
 
    const { agentId, issueId } = useParams<{ agentId: string, issueId: string }>();
    return <Stack className={hordeClasses.horde}>
@@ -750,7 +770,7 @@ class AuditLine {
             const logId = this.properties.get("LogId")?.value;
 
             if (logId && leaseId) {
-               let to = `/log/${logId}?leaseId=${leaseId}`;
+               let to = `/log/${logId}`;
                element = <Link to={to} >{this.highlight(key, leaseId)}</Link>
             }
 
@@ -759,11 +779,10 @@ class AuditLine {
          // LogId
          if (tag === "LogId") {
 
-            const logId = property.value as string;
-            const leaseId = this.properties.get("LeaseId")?.value;
+            const logId = property.value as string;            
 
-            if (logId && leaseId) {
-               let to = `/log/${logId}?leaseId=${leaseId}`;
+            if (logId) {
+               let to = `/log/${logId}`;
                element = <Link to={to} >{this.highlight(key, logId)}</Link>
             }
 

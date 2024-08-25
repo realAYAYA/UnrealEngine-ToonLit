@@ -51,7 +51,7 @@ class TRACEINSIGHTS_API FGraphTrack : public FBaseTimingTrack
 
 private:
 	// Visual size of points (in pixels).
-	static constexpr float PointVisualSize = 5.0f;
+	static constexpr float PointVisualSize = 5.5f;
 
 	// Size of points (in pixels) used in reduction algorithm.
 	static constexpr double PointSizeX = 3.0f;
@@ -123,10 +123,11 @@ protected:
 	// Get the Y value that is used to provide a clipping border between adjacent graph tracks.
 	virtual float GetBorderY() const { return 0.0f; }
 
-private:
 	bool ContextMenu_ToggleOption_CanExecute(EGraphOptions Option);
-	void ContextMenu_ToggleOption_Execute(EGraphOptions Option);
+	virtual void ContextMenu_ToggleOption_Execute(EGraphOptions Option);
 	bool ContextMenu_ToggleOption_IsChecked(EGraphOptions Option);
+
+private:
 	bool ContextMenu_ShowPointsWithBorder_CanExecute();
 	bool ContextMenu_UseEventDuration_CanExecute();
 

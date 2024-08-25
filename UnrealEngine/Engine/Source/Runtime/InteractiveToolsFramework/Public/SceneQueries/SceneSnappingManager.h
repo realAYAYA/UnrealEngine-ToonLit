@@ -6,9 +6,6 @@
 #include "Misc/Optional.h"
 #include "Math/Vector.h"
 #include "Math/Ray.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/EngineTypes.h"
-#endif
 #include "Engine/HitResult.h"
 #include "SceneSnappingManager.generated.h"
 

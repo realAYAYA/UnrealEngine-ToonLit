@@ -7,32 +7,36 @@
 #include "RigVMModel/Nodes/RigVMCollapseNode.h"
 #include "RigVMModel/Nodes/RigVMFunctionReferenceNode.h"
 #include "RigVMModel/Nodes/RigVMLibraryNode.h"
+#include "RigVMModel/RigVMFunctionLibrary.h"
 
 FString FRigVMCallstack::GetCallPath(bool bIncludeLast) const
 {
 	TArray<FString> Segments;
-	for (UObject* Entry : Stack)
+	for (TWeakObjectPtr<UObject> Entry : Stack)
 	{
-		if (URigVMNode* Node = Cast<URigVMNode>(Entry))
+		if (Entry.IsValid())
 		{
-			if (URigVMGraph* Graph = Node->GetGraph())
+			if (URigVMNode* Node = Cast<URigVMNode>(Entry))
 			{
-				if(Graph->IsRootGraph())
+				if (URigVMGraph* Graph = Node->GetGraph())
 				{
-					Segments.Add(Node->GetNodePath(true));
-				}
-				else
-				{
-					Segments.Add(Node->GetName());
+					if(Graph->IsRootGraph())
+					{
+						Segments.Add(Node->GetNodePath(true));
+					}
+					else
+					{
+						Segments.Add(Node->GetName());
+					}
 				}
 			}
-		}
-		else if (URigVMPin* Pin = Cast<URigVMPin>(Entry))
-		{
-			if (URigVMGraph* Graph = Pin->GetGraph())
+			else if (URigVMPin* Pin = Cast<URigVMPin>(Entry))
 			{
-				const bool bUseNodePath = Graph->IsRootGraph();
-				Segments.Add(Pin->GetPinPath(bUseNodePath));
+				if (URigVMGraph* Graph = Pin->GetGraph())
+				{
+					const bool bUseNodePath = Stack.Num() == 1 && !Graph->IsA<URigVMFunctionLibrary>();
+					Segments.Add(Pin->GetPinPath(bUseNodePath));
+				}
 			}
 		}
 	}
@@ -63,21 +67,32 @@ int32 FRigVMCallstack::Num() const
 
 const UObject* FRigVMCallstack::Last() const
 {
-	if(Stack.IsEmpty())
+	if(Stack.IsEmpty() || !Stack.Last().IsValid())
 	{
 		return nullptr;
 	}
-	return Stack.Last();
+	return Stack.Last().Get();
 }
 
 const UObject* FRigVMCallstack::operator[](int32 InIndex) const
 {
-	return Stack[InIndex];
+	if (!Stack[InIndex].IsValid())
+	{
+		return nullptr;
+	}
+	return Stack[InIndex].Get();
 }
 
 bool FRigVMCallstack::Contains(const UObject* InEntry) const
 {
-	return Stack.Contains(InEntry);
+	return Stack.ContainsByPredicate([InEntry](const TWeakObjectPtr<UObject>& Object)
+	{
+		if (Object.IsValid())
+		{
+			return Object.Get() == InEntry;
+		}
+		return false;
+	});
 }
 
 FRigVMCallstack FRigVMCallstack::GetCallStackUpTo(int32 InIndex) const
@@ -211,7 +226,7 @@ FRigVMASTProxy FRigVMASTProxy::MakeFromCallstack(const FRigVMCallstack& InCallst
 	return Proxy;
 }
 
-FRigVMASTProxy FRigVMASTProxy::MakeFromCallstack(const TArray<UObject*>* InCallstack)
+FRigVMASTProxy FRigVMASTProxy::MakeFromCallstack(const TArray<TWeakObjectPtr<UObject>>* InCallstack)
 {
 	check(InCallstack);
 	FRigVMCallstack Callstack;

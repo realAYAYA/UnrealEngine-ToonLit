@@ -160,13 +160,25 @@ public:
 	 *
 	 * @return			False if the input config can't be attached to the session, true otherwise
 	 */
+	UE_DEPRECATED(5.4, "UPlayerMappableInputConfig has been deprecated. Please use SetInputMappingContexts instead.")
 	virtual bool SetPlayerMappableInputConfig(TObjectPtr<class UPlayerMappableInputConfig> InputConfig = nullptr) { return true; };
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	/**
+	 * Add input mapping contexts to the motion controller. This allows the motion controller to support
+	 * Enhanced Input actions.
+	 *
+	 * @param MappingContexts		The set of input mapping contexts used with motion controllers
+	 *
+	 * @return			False if the input mapping contexts can't be attached to the session, true otherwise
+	 */
+	virtual bool AttachInputMappingContexts(const TSet<TObjectPtr<class UInputMappingContext>>& InputMappingContexts) { return true; };
 
 	// explicit source names
 	static HEADMOUNTEDDISPLAY_API FName LeftHandSourceId;
 	static HEADMOUNTEDDISPLAY_API FName RightHandSourceId;
 	static HEADMOUNTEDDISPLAY_API FName HMDSourceId;
+	static HEADMOUNTEDDISPLAY_API FName HeadSourceId; // Note Head and HMD are interchangable.  HMD is the legacy term.
 
 	static HEADMOUNTEDDISPLAY_API bool GetHandEnumForSourceName(const FName Source, EControllerHand& OutHand);
 };

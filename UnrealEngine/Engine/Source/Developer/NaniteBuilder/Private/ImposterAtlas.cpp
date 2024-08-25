@@ -70,7 +70,7 @@ void FImposterAtlas::Rasterize( const FIntPoint& TilePos, const FCluster& Cluste
 	FMatrix44f LocalToImposter = GetLocalToImposter( TilePos );
 
 	TArray< FVector3f, TInlineAllocator<128> > Positions;
-	Positions.SetNum( Cluster.NumVerts, false );
+	Positions.SetNum( Cluster.NumVerts, EAllowShrinking::No );
 
 	for( uint32 VertIndex = 0; VertIndex < Cluster.NumVerts; VertIndex++ )
 	{

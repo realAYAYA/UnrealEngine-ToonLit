@@ -16,10 +16,12 @@ namespace UE::RCCustomControllers
 	
 	/** Returns the Custom Controller Type Name (e.g. Asset Path). Empty string if Controller is not a custom one. */
 	REMOTECONTROLLOGIC_API FString GetCustomControllerTypeName(const URCVirtualPropertyBase* InController);
+	
+	UE_DEPRECATED(5.4, "Custom Controllers execution on load is deprecated. Function will always return false.")
+	REMOTECONTROLLOGIC_API inline bool CustomControllerExecutesOnLoad(const URCVirtualPropertyBase* InController) { return false; }
 
-	REMOTECONTROLLOGIC_API bool CustomControllerExecutesOnLoad(const URCVirtualPropertyBase* InController);
-
-	REMOTECONTROLLOGIC_API bool CustomControllerExecutesOnLoad(const FName& InCustomControllerTypeName);
+	UE_DEPRECATED(5.4, "Custom Controllers execution on load is deprecated. Function will always return false.")
+	REMOTECONTROLLOGIC_API inline bool CustomControllerExecutesOnLoad(const FName& InCustomControllerTypeName) { return false; }
 	
 	/** Returns the type associated to the specified Custom Controller Type Name */
 	REMOTECONTROLLOGIC_API EPropertyBagPropertyType GetCustomControllerType(const FName& InCustomControllerTypeName);

@@ -20,15 +20,6 @@ struct FHairCardsPositionFormat
 	static const EPixelFormat Format = PF_A32B32G32R32F;
 };
 
-struct FHairCardsStrandsAttributeFormat
-{
-	typedef FVector4f Type;
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_Float4;
-	static const EPixelFormat Format = PF_A32B32G32R32F;
-};
-
 struct FHairCardsUVFormat
 {
 	// Store atlas UV and (approximated) root UV
@@ -44,7 +35,7 @@ struct FHairCardsMaterialFormat
 	typedef uint32 Type;
 	static const uint32 ComponentCount = 1;
 	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_UByte4;
+	static const EVertexElementType VertexElementType = VET_UByte4N; 
 	static const EPixelFormat Format = PF_R8G8B8A8;
 };
 
@@ -68,69 +59,6 @@ struct FHairCardsIndexFormat
 	static const EPixelFormat Format = PF_R32_UINT;
 };
 
-struct FHairCardsAtlasRectFormat
-{
-	struct Type { uint16_t X; uint16_t Y; uint16_t Z; uint16_t W; };
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_UShort4;
-	static const EPixelFormat Format = PF_R16G16B16A16_UINT;
-};
-
-struct FHairCardsDimensionFormat
-{
-	typedef float Type;
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_Float1;
-	static const EPixelFormat Format = PF_R32_FLOAT;
-};
-
-struct FHairCardsStrandsPositionFormat
-{
-	typedef FVector4f Type;
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_Float4;
-	static const EPixelFormat Format = PF_A32B32G32R32F;
-}; 
-
-struct FHairCardsOffsetAndCount
-{
-	typedef FUintPoint Type;
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_None;
-	static const EPixelFormat Format = PF_R32G32_UINT;
-};
-
-struct FHairCardsBoundsFormat
-{
-	typedef FVector4f Type;
-	static const uint32 ComponentCount = 4;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_Float4;
-	static const EPixelFormat Format = PF_A32B32G32R32F;
-};
-
-struct FHairCardsVoxelDensityFormat
-{
-	typedef uint32 Type;
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_UInt;
-	static const EPixelFormat Format = PF_R32_UINT;
-};
-
-struct FHairCardsVoxelTangentFormat
-{
-	typedef FVector4f Type;
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_Float4;
-	static const EPixelFormat Format = PF_A32B32G32R32F;
-};
-
 struct FHairCardsInterpolationVertex
 {
 	uint32 VertexIndex : 24;
@@ -146,30 +74,6 @@ struct FHairCardsInterpolationFormat
 	static const uint32 SizeInByte = sizeof(Type);
 	static const EVertexElementType VertexElementType = VET_UInt;
 	static const EPixelFormat Format = PF_R32_UINT;
-};
-
-struct FHairOrientedBound
-{
-	FVector3f Center;
-	FVector3f ExtentX;
-	FVector3f ExtentY;
-	FVector3f ExtentZ;
-
-	FVector3f& Extent(uint8 Axis)
-	{
-		if (Axis == 0) return ExtentX;
-		if (Axis == 1) return ExtentY;
-		if (Axis == 2) return ExtentZ;
-		return ExtentX;
-	}
-
-	const FVector3f& Extent(uint8 Axis) const
-	{
-		if (Axis == 0) return ExtentX;
-		if (Axis == 1) return ExtentY;
-		if (Axis == 2) return ExtentZ;
-		return ExtentX;
-	}
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -285,124 +189,6 @@ struct FHairCardsBulkData
 	FBox BoundingBox = FBox(EForceInit::ForceInit);
 
 	void Serialize(FArchive& Ar);
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-// Hair Cards Data (Procedural generation)
-
-// Internal data structure for computing surface flow. 
-// This structured is exposed only for debug purpose
-struct FHairCardsVoxel
-{
-	FRDGExternalBuffer TangentBuffer;
-	FRDGExternalBuffer NormalBuffer;
-	FRDGExternalBuffer DensityBuffer;
-	FIntVector	Resolution;
-	FVector3f	MinBound;
-	FVector3f	MaxBound;
-	float		VoxelSize;
-};
-
-struct FHairCardsProceduralGeometry : FHairCardsGeometry
-{
-	struct Rect
-	{
-		FIntPoint Offset = FIntPoint(0, 0);
-		FIntPoint Resolution = FIntPoint(0, 0);
-	};
-
-	TArray<uint32> CardIndices; // Store the cards index whose a verex belongs to
-
-	TArray<Rect>   Rects;
-	TArray<float>  Lengths;
-	
-	TArray<FUintPoint> CardIndexToClusterOffsetAndCount;
-	TArray<FUintPoint> ClusterIndexToVertexOffsetAndCount;
-
-	TArray<FHairOrientedBound> Bounds;
-
-	void SetNum(uint32 Count)
-	{
-		FHairCardsGeometry::SetNum(Count);
-		CardIndices.Empty();
-
-		Rects.SetNum(Count);
-		Lengths.SetNum(Count);
-		Bounds.SetNum(Count);
-
-		// Cluster infos (editor only, for texture generation)
-		CardIndexToClusterOffsetAndCount.Empty();
-		ClusterIndexToVertexOffsetAndCount.Empty();
-	}
-
-	uint32 GetNum() const
-	{
-		return Bounds.Num();
-	}
-};
-
-struct FHairCardsProceduralAtlas
-{
-	struct Rect
-	{
-		FIntPoint Offset = FIntPoint(0, 0);
-		FIntPoint Resolution = FIntPoint(0, 0);
-		uint32 VertexOffset = 0;
-		uint32 VertexCount = 0;
-		FVector3f MinBound = FVector3f::ZeroVector;
-		FVector3f MaxBound = FVector3f::ZeroVector;
-
-		FVector3f RasterAxisX = FVector3f::ZeroVector;
-		FVector3f RasterAxisY = FVector3f::ZeroVector;
-		FVector3f RasterAxisZ = FVector3f::ZeroVector;
-
-		float CardWidth = 0;
-		float CardLength = 0;
-	};
-
-	FIntPoint Resolution;
-	TArray<Rect> Rects;
-	TArray<FVector4f> StrandsPositions;
-	TArray<FVector4f> StrandsAttributes;
-	bool bIsDirty = true;
-};
-
-
-// Data structure holding cards geometry information and 
-// intermediate data used for generating cards data based 
-// on strands groom
-struct FHairCardsProceduralDatas
-{
-	FHairStrandsDatas Guides;
-	FHairCardsProceduralGeometry Cards;
-	FHairCardsProceduralAtlas Atlas;
-	FHairCardsVoxel Voxels;
-
-	struct FRenderData
-	{
-		TArray<FHairCardsPositionFormat::Type> Positions;
-		TArray<FHairCardsNormalFormat::Type> Normals;
-		TArray<FHairCardsUVFormat::Type> UVs;
-		TArray<FHairCardsIndexFormat::Type> Indices;
-		TArray<FHairCardsAtlasRectFormat::Type> CardsRect;
-		TArray<FHairCardsDimensionFormat::Type> CardsLengths;
-		TArray<FHairCardsStrandsPositionFormat::Type> CardsStrandsPositions;
-		TArray<FHairCardsStrandsAttributeFormat::Type> CardsStrandsAttributes;
-		
-		TArray<FHairCardsOffsetAndCount::Type> CardItToCluster;		// Offset & Count
-		TArray<FHairCardsOffsetAndCount::Type> ClusterIdToVertices; // Offset & count
-		TArray<FHairCardsBoundsFormat::Type> ClusterBounds;
-
-		TArray<FHairCardsVoxelDensityFormat::Type> VoxelDensity;
-		TArray<FHairCardsVoxelTangentFormat::Type> VoxelTangent;
-		TArray<FHairCardsVoxelTangentFormat::Type> VoxelNormal;
-	} RenderData;
-};
-
-struct HAIRSTRANDSCORE_API FHairCardsSourceData
-{
-	FHairCardsDatas				ImportedData;
-	FHairCardsProceduralDatas	ProceduralData;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////

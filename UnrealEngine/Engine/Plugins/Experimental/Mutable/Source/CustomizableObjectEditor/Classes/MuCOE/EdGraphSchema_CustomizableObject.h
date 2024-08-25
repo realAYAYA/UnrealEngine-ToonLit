@@ -87,8 +87,6 @@ class CUSTOMIZABLEOBJECTEDITOR_API UEdGraphSchema_CustomizableObject : public UE
 public:
 	GENERATED_BODY()
 
-	UEdGraphSchema_CustomizableObject();
-
 	// Allowable PinType.PinCategory values
 	static const FName PC_Object;
 	static const FName PC_Material;
@@ -105,12 +103,6 @@ public:
 	static const FName PC_Stack;
 	static const FName PC_MaterialAsset;
 	static const FName PC_Wildcard;
-
-private:
-	/** List of all node types. */
-	TArray<UClass*> NodeTypes;
-	
-public:
 
 	// EdGraphSchema interface
 	virtual void GetAssetsGraphHoverMessage(const TArray<FAssetData>& Assets, const UEdGraph* HoverGraph, FString& OutTooltipText, bool& OutOkIcon) const override;

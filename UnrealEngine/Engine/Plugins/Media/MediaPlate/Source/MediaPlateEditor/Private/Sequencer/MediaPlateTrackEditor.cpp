@@ -3,6 +3,7 @@
 #include "Sequencer/MediaPlateTrackEditor.h"
 
 #include "ActorTreeItem.h"
+#include "EngineAnalytics.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "ISequencer.h"
 #include "MediaTexture.h"
@@ -120,6 +121,11 @@ void FMediaPlateTrackEditor::HandleActorAdded(AActor* Actor, FGuid TargetObjectG
 {
 	if (Actor)
 	{
+		if (FEngineAnalytics::IsAvailable() && Actor->GetClass() == AMediaPlate::StaticClass())
+		{
+			FEngineAnalytics::GetProvider().RecordEvent(TEXT("Editor.Usage.MediaPlate.AddMediaPlateActorToSequencer"));
+		}
+
 		if (UMediaPlateComponent* MediaPlateComponent = Actor->FindComponentByClass<UMediaPlateComponent>())
 		{
 			AddTrackForComponent(MediaPlateComponent, TargetObjectGuid);

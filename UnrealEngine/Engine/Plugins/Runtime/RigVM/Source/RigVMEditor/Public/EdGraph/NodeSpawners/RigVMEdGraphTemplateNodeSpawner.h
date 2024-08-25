@@ -44,7 +44,9 @@ private:
 	UPROPERTY(Transient)
 	FName TemplateNotation;
 
-	static URigVMEdGraphNode* SpawnNode(UEdGraph* ParentGraph, UBlueprint* Blueprint, const FName& InNotation, FVector2D const Location);
+	const FRigVMTemplate* Template = nullptr;
+
+	static URigVMEdGraphNode* SpawnNode(UEdGraph* ParentGraph, UBlueprint* Blueprint, const FRigVMTemplate* Template, FVector2D const Location);
 
 	friend class UEngineTestControlRig;
 	friend class FRigVMEditor;

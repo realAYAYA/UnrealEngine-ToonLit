@@ -35,53 +35,6 @@ namespace Gauntlet
 				return Path.GetFullPath(Environment.GetEnvironmentVariable("UE_ARTIFACTS_DIR") ?? CommandUtils.CmdEnv.LogFolder);
 			}
 		}
-		/// <summary>
-		/// Is Environement set by Horde Agent 
-		/// </summary>
-		public static bool IsUnderHordeAgent
-		{
-			get
-			{
-				return !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UE_TESTDATA_DIR"));
-			}
-		}
-		/// <summary>
-		/// Default Job Horde link if running under Horde agent, otherwise return an empty string
-		/// </summary>
-		public static string DefaultHordeJobLink
-		{
-			get
-			{
-				string HordeJobId = Environment.GetEnvironmentVariable("UE_HORDE_JOBID");
-				if (!string.IsNullOrEmpty(HordeJobId))
-				{
-					return string.Format("https://horde.devtools.epicgames.com/job/{0}", HordeJobId);
-				}
-
-				return string.Empty;
-			}
-		}
-		/// <summary>
-		/// Default Job Step Horde link if running under Horde agent, otherwise return an empty string
-		/// </summary>
-		public static string DefaultHordeJobStepLink
-		{
-			get
-			{
-				string HordeJobStepId = Environment.GetEnvironmentVariable("UE_HORDE_STEPID");
-				string HordeJobLink = DefaultHordeJobLink;
-				if (!string.IsNullOrEmpty(HordeJobStepId))
-				{
-					return string.Format("{0}?step={1}", HordeJobLink, HordeJobStepId);
-				}
-				else if(!string.IsNullOrEmpty(HordeJobLink))
-				{
-					return HordeJobLink;
-				}
-
-				return string.Empty;
-			}
-		}		
 
 		public abstract class BaseHordeReport : BaseTestReport
 		{

@@ -51,11 +51,13 @@
 #include "ViewModels/Stack/NiagaraStackRoot.h"
 #include "NiagaraStackCommandContext.h"
 #include "NiagaraEditorUtilities.h"
+#include "SNiagaraStackNote.h"
 #include "Framework/Commands/UICommandList.h"
 #include "ViewModels/NiagaraOverviewGraphViewModel.h"
 #include "Widgets/SNiagaraParameterName.h"
 #include "Styling/StyleColors.h"
 #include "SResetToDefaultPropertyEditor.h"
+#include "ViewModels/Stack/NiagaraStackNote.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraStack"
 
@@ -816,10 +818,7 @@ TSharedRef<SNiagaraStackTableRow> SNiagaraStack::ConstructContainerForItem(UNiag
 				break;
 			case EStackIssueSeverity::Info:
 				IndicatorColor = FStyleColors::Foreground;
-				break;
-			case EStackIssueSeverity::CustomNote:
-				IndicatorColor = FStyleColors::Transparent;
-				break;
+				break;	
 			default:
 				checkf(false, TEXT("Issue severity not set for stack issue."));
 		}
@@ -956,6 +955,14 @@ SNiagaraStack::FRowWidgets SNiagaraStack::ConstructNameAndValueWidgetsForItem(UN
 	{
 		return FRowWidgets(SNew(SNiagaraStackErrorItemFix, CastChecked<UNiagaraStackErrorItemFix>(Item), StackViewModel));
 	}
+	else if(UNiagaraStackNote* StackNote = Cast<UNiagaraStackNote>(Item))
+	{
+		TSharedRef<SNiagaraStackNote> ContentWidget = SNew(SNiagaraStackNote, *StackNote)
+			.bShowEditTextButtons(Container, &SNiagaraStackTableRow::IsHovered);
+		
+		Container->AddFillRowContextMenuHandler(SNiagaraStackTableRow::FOnFillRowContextMenu::CreateSP(ContentWidget, &SNiagaraStackNote::FillRowContextMenu));
+		return FRowWidgets(ContentWidget);
+	}
 	else if (Item->IsA<UNiagaraStackItemFooter>())
 	{
 		UNiagaraStackItemFooter* ItemExpander = CastChecked<UNiagaraStackItemFooter>(Item);
@@ -1078,6 +1085,7 @@ SNiagaraStack::FRowWidgets SNiagaraStack::ConstructNameAndValueWidgetsForItem(UN
 
 			TSharedRef<SHorizontalBox> ValueWidget = SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
+			.HAlign(HAlign_Left)
 			[
 				PropertyRowWidgets.ValueWidget.ToSharedRef()
 			];

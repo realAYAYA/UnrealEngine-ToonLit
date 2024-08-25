@@ -11,16 +11,16 @@
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "Engine/Level.h"
 
-TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(const FAssetData& InAssetData, UActorFactory* ActorFactory)
+TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(const FAssetData& InAssetData, TScriptInterface<IAssetFactoryInterface> AssetFactory)
 {
 	TArray<FAssetData> AssetDataArray;
 	AssetDataArray.Emplace(InAssetData);
-	return New(MoveTemp(AssetDataArray), TArray<FString>(), ActorFactory);
+	return New(MoveTemp(AssetDataArray), TArray<FString>(), AssetFactory);
 }
 
-TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(TArray<FAssetData> InAssetData, UActorFactory* ActorFactory)
+TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(TArray<FAssetData> InAssetData, TScriptInterface<IAssetFactoryInterface> AssetFactory)
 {
-	return New(MoveTemp(InAssetData), TArray<FString>(), ActorFactory);
+	return New(MoveTemp(InAssetData), TArray<FString>(), AssetFactory);
 }
 
 TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(FString InAssetPath)
@@ -35,14 +35,39 @@ TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(TArray<FString> InAssetPaths)
 	return New(TArray<FAssetData>(), MoveTemp(InAssetPaths), nullptr);
 }
 
-TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(TArray<FAssetData> InAssetData, TArray<FString> InAssetPaths, UActorFactory* ActorFactory)
+TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(TArray<FAssetData> InAssetData, TArray<FString> InAssetPaths, TScriptInterface<IAssetFactoryInterface> AssetFactory)
 {
 	TSharedRef<FAssetDragDropOp> Operation = MakeShared<FAssetDragDropOp>();
 
-	Operation->Init(MoveTemp(InAssetData), MoveTemp(InAssetPaths), ActorFactory);
+	Operation->Init(MoveTemp(InAssetData), MoveTemp(InAssetPaths), AssetFactory);
 
 	Operation->Construct();
 	return Operation;
+}
+
+TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(const FAssetData& InAssetData, UActorFactory* ActorFactory)
+{
+	return New(InAssetData, TScriptInterface<IAssetFactoryInterface>(ActorFactory));
+}
+
+TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(TArray<FAssetData> InAssetData, UActorFactory* ActorFactory)
+{
+	return New(InAssetData, TScriptInterface<IAssetFactoryInterface>(ActorFactory));
+}
+
+TSharedRef<FAssetDragDropOp> FAssetDragDropOp::New(TArray<FAssetData> InAssetData, TArray<FString> InAssetPaths, UActorFactory* ActorFactory)
+{
+	return New(InAssetData, InAssetPaths, TScriptInterface<IAssetFactoryInterface>(ActorFactory));
+}
+
+UActorFactory* FAssetDragDropOp::GetActorFactory() const
+{
+	return Cast<UActorFactory>(AssetFactory.GetObject());
+}
+
+TScriptInterface<IAssetFactoryInterface> FAssetDragDropOp::GetAssetFactory() const
+{
+	return AssetFactory.GetObject();
 }
 
 FAssetDragDropOp::~FAssetDragDropOp()
@@ -90,10 +115,14 @@ TSharedPtr<SWidget> FAssetDragDropOp::GetDefaultDecorator() const
 		SubTypeBrush = FAppStyle::GetBrush("ContentBrowser.AssetTreeFolderClosed");
 		SubTypeColor = FLinearColor::Gray;
 	}
-	else if (ActorFactory.IsValid() && HasFiles())
+	else if (AssetFactory.IsValid() && HasFiles())
 	{
-		AActor* DefaultActor = ActorFactory->GetDefaultActor(AssetData[0]);
-		SubTypeBrush = FClassIconFinder::FindIconForActor(DefaultActor);
+		// TODO: Probably need to add a function in IAssetFactoryInterface for this and use that.
+		if (UActorFactory* ActorFactory = Cast<UActorFactory>(AssetFactory.GetObject()))
+		{
+			AActor* DefaultActor = ActorFactory->GetDefaultActor(AssetData[0]);
+			SubTypeBrush = FClassIconFinder::FindIconForActor(DefaultActor);
+		}
 	}
 
 	return 
@@ -198,14 +227,14 @@ FText FAssetDragDropOp::GetDecoratorText() const
 	return CurrentHoverText;
 }
 
-void FAssetDragDropOp::Init(TArray<FAssetData> InAssetData, TArray<FString> InAssetPaths, UActorFactory* InActorFactory)
+void FAssetDragDropOp::Init(TArray<FAssetData> InAssetData, TArray<FString> InAssetPaths, TScriptInterface<IAssetFactoryInterface> InAssetFactory)
 {
 	MouseCursor = EMouseCursor::GrabHandClosed;
 	ThumbnailSize = 64;
 
 	AssetData = MoveTemp(InAssetData);
 	AssetPaths = MoveTemp(InAssetPaths);
-	ActorFactory = InActorFactory;
+	AssetFactory = InAssetFactory;
 
 	// Load all assets first so that there is no loading going on while attempting to drag
 	// Can cause unsafe frame reentry 
@@ -215,6 +244,11 @@ void FAssetDragDropOp::Init(TArray<FAssetData> InAssetData, TArray<FString> InAs
 	}
 
 	InitThumbnail();
+}
+
+void FAssetDragDropOp::Init(TArray<FAssetData> InAssetData, TArray<FString> InAssetPaths, UActorFactory* InActorFactory)
+{
+	Init(InAssetData, InAssetPaths, TScriptInterface<IAssetFactoryInterface>(InActorFactory));
 }
 
 void FAssetDragDropOp::InitThumbnail()

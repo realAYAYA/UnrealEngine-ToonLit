@@ -16,7 +16,15 @@ namespace PhysicsObjectInterfaceCVars
 	static FAutoConsoleVariableRef CVarStrainModifier(
 		TEXT("Chaos.Debug.StrainModifier"),
 		StrainModifier,
-		TEXT("Modify the strain by this factor"),
+		TEXT("(Deprecated) When using radial impulse, compute the strain by multiplier the impulse by this factor"),
+		ECVF_Default
+	);
+
+	static bool RadialImpulseDistributeToChildren = true;
+	static FAutoConsoleVariableRef CVarRadialImpulseDistributeToChildren(
+		TEXT("Chaos.Debug.RadialImpulseDistributeToChildren"),
+		RadialImpulseDistributeToChildren,
+		TEXT("When one and applied to a geometry collection cluster, the impulse will be divided equally betweemn all the children"),
 		ECVF_Default
 	);
 }
@@ -79,37 +87,74 @@ namespace
 		}
 	}
 
+	// Apply an impulse based on an origin,radius and falloff parameters
+	// return the fall off value ( between 0 and 1 )
 	template<typename T>
-	float AddRadialImpulseHelper(T ParticleHandle, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, float VelocityRatio = 1.0f, bool bInvalidate = true)
+	float AddRadialImpulseHelper(T ParticleHandle, const FVector& Origin, const float Radius, const float Strength, const enum ERadialImpulseFalloff Falloff, const float VelocityRatio = 1.0f, bool bInvalidate = true, bool bVelChange = false, float MinValue = 0.f, float MaxValue = 1.f)
 	{
 		using namespace Chaos;
 
-		if (ParticleHandle == nullptr)
+		float FalloffAlpha = 0.f;
+
+		if (ParticleHandle)
 		{
-			return 0.0f;
+			FVec3 ParticleX = ParticleHandle->GetX();
+			if (ParticleHandle->Disabled())
+			{
+				if (FPBDRigidClusteredParticleHandle* ClusteredParticle = ParticleHandle->CastToClustered())
+				{
+					if (const FPBDRigidClusteredParticleHandle* ClusteredParent = ClusteredParticle->Parent())
+					{
+						const FTransform ParentTransform(ClusteredParent->GetR(), ClusteredParent->GetX());
+						ParticleX = ParentTransform.TransformPosition(ClusteredParticle->ChildToParent().GetTranslation());
+					}
+				}
+			}
+
+			const FVec3 ParticleToOrigin = ParticleX - Origin;
+			const float DistanceSquared = (float)ParticleToOrigin.SizeSquared();
+			const float RadiusSquared = Radius * Radius;
+
+			if (DistanceSquared < RadiusSquared)
+			{
+				// by default we are within the radius so strength is maximum
+				// equivalent to ERadialImpulseFalloff::RIF_Constant
+				FalloffAlpha = 1.0f;
+
+				if (Falloff == ERadialImpulseFalloff::RIF_Linear)
+				{
+					const float Distance = FMath::Sqrt(DistanceSquared);
+					FalloffAlpha = static_cast<float>(1.0f - Distance / Radius);
+
+					if (FalloffAlpha >= 0)
+					{
+						const float PrevFalloffAlpha = FalloffAlpha;
+						// remap the value within MinValue/MaxValue within the radius
+						FalloffAlpha = FMath::Lerp(MinValue, MaxValue, FalloffAlpha);
+						UE_LOG(LogChaos, Warning, TEXT("FalloffAlpha = %f = Lerp(%f, %f, %f)"), FalloffAlpha, MinValue, MaxValue, PrevFalloffAlpha);
+					}
+					else
+					{
+						// outside of the sphere, clamp to 0
+						FalloffAlpha = 0.f;
+					}
+				}
+
+				// if the strength was still strong enough to consider
+				if (FalloffAlpha > 0)
+				{
+					const FVec3 Normal = ParticleToOrigin.GetSafeNormal();
+					const FVec3 Impulse = Normal * FalloffAlpha * Strength;
+					const FReal InvMass = bVelChange ? 1.0 : ParticleHandle->InvM();
+					const FVec3 Velocity = Impulse * InvMass * VelocityRatio;
+
+					const FVec3 CurrentImpulseVelocity = ParticleHandle->LinearImpulseVelocity();
+
+					ParticleHandle->SetLinearImpulseVelocity(CurrentImpulseVelocity + Velocity, bInvalidate);
+				}
+			}
 		}
-
-		const FVec3 CurrentImpulseVelocity = ParticleHandle->LinearImpulseVelocity();
-
-		float FalloffStrength = Strength;
-		if (Falloff == ERadialImpulseFalloff::RIF_Linear)
-		{
-			//Radius should always be greater than distance - if we get here and it's not, something has gone
-			//wrong with detection
-			double Distance = FVec3::Distance(ParticleHandle->X(), Origin);
-			FalloffStrength = static_cast<float>(FalloffStrength * (1.0f - FMath::Min(1.0f, Distance / Radius)));
-		}
-
-		FVec3 Impulse = ParticleHandle->X() - Origin;
-		Impulse = Impulse.GetSafeNormal();
-		Impulse = Impulse * FalloffStrength;
-		FVec3 Velocity = Impulse * ParticleHandle->InvM() * VelocityRatio;
-
-		FVec3 FinalVeloc = CurrentImpulseVelocity + Velocity;
-
-		ParticleHandle->SetLinearImpulseVelocity(CurrentImpulseVelocity + Velocity, bInvalidate);
-
-		return FalloffStrength;
+		return FalloffAlpha;
 	}
 }
 
@@ -139,6 +184,33 @@ namespace Chaos
 	bool FReadPhysicsObjectInterface<Id>::HasChildren(const FConstPhysicsObjectHandle Object)
 	{
 		return Object ? Object->HasChildren<Id>() : false;
+	}
+
+	template<EThreadContext Id>
+	FChaosUserDefinedEntity* FReadPhysicsObjectInterface<Id>::GetUserDefinedEntity(const FConstPhysicsObjectHandle Object)
+	{
+		if constexpr (Id == EThreadContext::External)
+		{
+			if (!Object)
+			{
+				return nullptr;
+			}
+
+			if (FGeometryParticle* Particle = Object->GetParticle<Id>())
+			{
+				// Do we have a user entity appended?
+				FChaosUserEntityAppend* UserEntityAppend = FChaosUserData::Get<FChaosUserEntityAppend>(Particle->UserData());
+				if (UserEntityAppend)
+				{
+					return UserEntityAppend->UserDefinedEntity;
+				}
+			}
+		}
+		else
+		{
+			ensureMsgf(false, TEXT("User Defined Entities can only be read by the game thread"));
+		}
+		return nullptr;
 	}
 
 	template<EThreadContext Id>
@@ -186,7 +258,7 @@ namespace Chaos
 
 		if (TThreadParticle<Id>* Particle = Object->GetParticle<Id>())
 		{
-			return Particle->X();
+			return Particle->GetX();
 		}
 
 		return FVector::Zero();
@@ -227,7 +299,7 @@ namespace Chaos
 
 		if (TThreadParticle<Id>* Particle = Object->GetParticle<Id>())
 		{
-			return Particle->R();
+			return Particle->GetR();
 		}
 
 		return FQuat::Identity;
@@ -245,13 +317,33 @@ namespace Chaos
 		{
 			if (Chaos::TThreadRigidParticle<Id>* Rigid = Particle->CastToRigidParticle())
 			{
-				return Rigid->V();
+				return Rigid->GetV();
 			}
 		}
 
 		return FVector::Zero();
 	}
 
+	template<EThreadContext Id>
+	FVector FReadPhysicsObjectInterface<Id>::GetVAtPoint(const FConstPhysicsObjectHandle Object, const FVector& Point)
+	{
+		if (!Object)
+		{
+			return FVector::Zero();
+		}
+
+		if (TThreadParticle<Id>* Particle = Object->GetParticle<Id>())
+		{
+			if (TThreadKinematicParticle<Id>* Kinematic = Particle->CastToKinematicParticle())
+			{
+				const FVector CenterOfMass = GetWorldCoM(Object);
+				const FVector Diff = Point - CenterOfMass;
+				return Kinematic->GetV() - FVector::CrossProduct(Diff, Kinematic->GetW());
+			}
+		}
+
+		return FVector::Zero();
+	}
 	template<EThreadContext Id>
 	FVector FReadPhysicsObjectInterface<Id>::GetW(const FConstPhysicsObjectHandle Object)
 	{
@@ -264,7 +356,7 @@ namespace Chaos
 		{
 			if (Chaos::TThreadRigidParticle<Id>* Rigid = Particle->CastToRigidParticle())
 			{
-				return Rigid->W();
+				return Rigid->GetW();
 			}
 		}
 
@@ -295,6 +387,23 @@ namespace Chaos
 			return nullptr;
 		}
 		return Handle->GetParticle<Id>();
+	}
+
+	template<EThreadContext Id>
+	TThreadKinematicParticle<Id>* FReadPhysicsObjectInterface<Id>::GetKinematicParticle(const FConstPhysicsObjectHandle Handle)
+	{
+		if (Handle)
+		{
+			if (TThreadParticle<Id>* Particle = Handle->GetParticle<Id>())
+			{
+				if (TThreadKinematicParticle<Id>* KinematicParticle = Particle->CastToKinematicParticle())
+				{
+					return KinematicParticle;
+				}
+			}
+		}
+
+		return nullptr;
 	}
 
 	template<EThreadContext Id>
@@ -408,6 +517,22 @@ namespace Chaos
 		}
 
 		return AllShapes;
+	}
+
+	template<EThreadContext Id>
+	FImplicitObjectRef FReadPhysicsObjectInterface<Id>::GetGeometry(const FConstPhysicsObjectHandle Handle)
+	{
+		if (!Handle)
+		{
+			return nullptr;
+		}
+
+		if (TThreadParticle<Id>* Particle = Handle->GetParticle<Id>())
+		{
+			return Particle->GetGeometry();
+		}
+
+		return nullptr;
 	}
 
 	template<EThreadContext Id>
@@ -529,6 +654,17 @@ namespace Chaos
 	}
 
 	template<EThreadContext Id>
+	bool FReadPhysicsObjectInterface<Id>::AreAllDynamicOrSleeping(TArrayView<const FConstPhysicsObjectHandle> InObjects)
+	{
+		bool bCheck = !InObjects.IsEmpty();
+		for (const FConstPhysicsObjectHandle Object : InObjects)
+		{
+			bCheck &= (Object && Object->IsValid() && (Object->ObjectState<Id>() == EObjectStateType::Dynamic || Object->ObjectState<Id>() == EObjectStateType::Sleeping));
+		}
+		return bCheck;
+	}
+
+	template<EThreadContext Id>
 	bool FReadPhysicsObjectInterface<Id>::AreAllDisabled(TArrayView<const FConstPhysicsObjectHandle> InObjects)
 	{
 		bool bDisabled = !InObjects.IsEmpty();
@@ -612,7 +748,7 @@ namespace Chaos
 			}
 
 			FBox ParticleBox(ForceInit);
-			if (const FImplicitObject* Geometry = Particle->Geometry().Get(); Geometry && Geometry->HasBoundingBox())
+			if (const FImplicitObjectRef Geometry = Particle->GetGeometry(); Geometry && Geometry->HasBoundingBox())
 			{
 				const Chaos::FAABB3 Box = Geometry->BoundingBox();
 				ParticleBox = FBox{ Box.Min(), Box.Max() };
@@ -643,12 +779,10 @@ namespace Chaos
 				continue;
 			}
 
-			const FTransform WorldTransform = GetTransform(Object);
-
 			FBox ParticleBox(ForceInit);
-			if (const FImplicitObject* Geometry = Particle->Geometry().Get(); Geometry && Geometry->HasBoundingBox())
+			if (const FImplicitObjectRef Geometry = Particle->GetGeometry(); Geometry && Geometry->HasBoundingBox())
 			{
-				const Chaos::FAABB3 WorldBox = Geometry->CalculateTransformedBounds(WorldTransform);
+				const Chaos::FAABB3 WorldBox = Geometry->CalculateTransformedBounds(TRigidTransform<FReal, 3>(Particle->GetX(), Particle->GetR()));
 				ParticleBox = FBox{ WorldBox.Min(), WorldBox.Max() };
 			}
 
@@ -682,7 +816,7 @@ namespace Chaos
 
 			FClosestPhysicsObjectResult Result;
 
-			if (const FImplicitObject* Geometry = Particle->Geometry().Get())
+			if (const FImplicitObjectRef Geometry = Particle->GetGeometry())
 			{
 				Result.PhysicsObject = const_cast<FPhysicsObjectHandle>(Object);
 
@@ -708,6 +842,54 @@ namespace Chaos
 	FAccelerationStructureHandle FReadPhysicsObjectInterface<Id>::CreateAccelerationStructureHandle(const FConstPhysicsObjectHandle InObject)
 	{
 		return FAccelerationStructureHandle{InObject->GetParticle<Id>()};
+	}
+
+	template<EThreadContext Id>
+	void FWritePhysicsObjectInterface<Id>::SetUserDefinedEntity(TArrayView<const FPhysicsObjectHandle> InObjects, FChaosUserDefinedEntity* UserDefinedEntity)
+	{
+		if constexpr (Id == EThreadContext::External)
+		{
+			for (const FPhysicsObjectHandle Object : InObjects)
+			{
+				if (!Object)
+				{
+					continue;
+				}
+
+				if (FGeometryParticle* Particle = Object->GetParticle<Id>())
+				{
+					// Do we already have a user entity appended?
+					FChaosUserEntityAppend* UserEntityAppend = FChaosUserData::Get<FChaosUserEntityAppend>(Particle->UserData());
+					if (!UserEntityAppend)
+					{
+						if (UserDefinedEntity)
+						{
+							UserEntityAppend = new FChaosUserEntityAppend;
+							UserEntityAppend->ChaosUserData = reinterpret_cast<FChaosUserData*>(Particle->UserData());
+							UserEntityAppend->UserDefinedEntity = UserDefinedEntity;
+							Particle->SetUserData(UserEntityAppend);
+						}
+					}
+					else
+					{
+						if (UserDefinedEntity)
+						{
+							UserEntityAppend->UserDefinedEntity = UserDefinedEntity; // Overwrite previous used defined entity
+						}
+						else
+						{
+							// Restore the particle user data and delete unused memory
+							Particle->SetUserData(UserEntityAppend->ChaosUserData);
+							delete UserEntityAppend;
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			ensureMsgf(false, TEXT("User Defined Entities can only be set by the game thread"));
+		}		
 	}
 
 	template<EThreadContext Id>
@@ -751,6 +933,27 @@ namespace Chaos
 							Rigid->ClearEvents();
 						}
 					}
+				}
+			}
+		}
+	}
+
+	template<EThreadContext Id>
+	void FWritePhysicsObjectInterface<Id>::ForceKinematic(TArrayView<const FPhysicsObjectHandle> InObjects)
+	{
+		for (const FPhysicsObjectHandle Object : InObjects)
+		{
+			if (!Object)
+			{
+				continue;
+			}
+
+			if (TThreadParticle<Id>* Particle = Object->GetParticle<Id>())
+			{
+				EObjectStateType State = Object->ObjectState<Id>();
+				if (State != EObjectStateType::Kinematic)
+				{
+					SetParticleStateHelper<Id>(Object, EObjectStateType::Kinematic);
 				}
 			}
 		}
@@ -813,8 +1016,61 @@ namespace Chaos
 	}
 
 	template<EThreadContext Id>
-	void FWritePhysicsObjectInterface<Id>::AddRadialImpulse(TArrayView<const FPhysicsObjectHandle> InObjects, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain, bool bInvalidate)
+	void FWritePhysicsObjectInterface<Id>::SetLinearImpulseVelocity(TArrayView<const FPhysicsObjectHandle> InObjects, const FVector& Impulse, bool bVelChange)
 	{
+		if (InObjects.IsEmpty())
+		{
+			return;
+		}
+
+		for (const FPhysicsObjectHandle Object : InObjects)
+		{
+			if (!Object)
+			{
+				continue;
+			}
+
+			if (TThreadParticle<Id>* Particle = Object->GetParticle<Id>())
+			{
+				if (Chaos::TThreadRigidParticle<Id>* Rigid = Particle->CastToRigidParticle())
+				{
+					if (bVelChange)
+					{
+						Rigid->SetLinearImpulseVelocity(Impulse * Rigid->M(), false);
+					}
+					else
+					{
+						Rigid->SetLinearImpulseVelocity(Impulse, false);
+					}
+				}
+			}
+		}
+
+		if constexpr (Id == EThreadContext::External)
+		{
+			if (Chaos::FPhysicsSolverBase* Solver = FPhysicsObjectInterface::GetSolver(InObjects[0]))
+			{
+				Solver->EnqueueCommandImmediate(
+					[AllObjects = TArray<FPhysicsObjectHandle>{InObjects}, Impulse, bVelChange]() {
+						Chaos::FWritePhysicsObjectInterface_Internal Interface = Chaos::FPhysicsObjectInternalInterface::GetWrite();
+						Interface.SetLinearImpulseVelocity(AllObjects, Impulse, bVelChange);
+					}
+				);
+			}
+		}
+	}
+
+	template<EThreadContext Id>
+	void FWritePhysicsObjectInterface<Id>::AddRadialImpulse(TArrayView<const FPhysicsObjectHandle> InObjects, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain, bool bInvalidate, bool bVelChange)
+	{
+		// passing -1.0f as a strain will make use of the strain modifier instead ( legacy system )
+		AddRadialImpulse(InObjects, Origin, Radius, Strength, Falloff, bApplyStrain, -1.0f, bInvalidate, bVelChange);
+	}
+
+	template<EThreadContext Id>
+	void FWritePhysicsObjectInterface<Id>::AddRadialImpulse(TArrayView<const FPhysicsObjectHandle> InObjects, FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bApplyStrain, float Strain, bool bInvalidate, bool bVelChange, float MinValue, float MaxValue)
+	{
+		//TODO: create a PT version of this, plus the damping functions
 		if (Chaos::FPBDRigidsSolver* RigidSolver = Chaos::FPhysicsObjectInterface::GetSolver(InObjects))
 		{
 			//put onto physics thread
@@ -825,7 +1081,12 @@ namespace Chaos
 				Strength,
 				Falloff,
 				bApplyStrain,
-				bInvalidate]()
+				Strain,
+				bInvalidate,
+				bVelChange,
+				MinValue,
+				MaxValue
+				]()
 				{
 					using namespace Chaos;
 					for (FPhysicsObjectHandle Object : InObjects)
@@ -835,12 +1096,13 @@ namespace Chaos
 							continue;
 						}
 
-						//can apply to clusters or rigid particles
-						TThreadParticle<EThreadContext::Internal>* Particle = Object->GetParticle<EThreadContext::Internal>();
-						if (FPBDRigidClusteredParticleHandle* Cluster = reinterpret_cast<FPBDRigidClusteredParticleHandle*>(Particle))
+						// can apply to clusters or rigid particles
+						if (TThreadParticle<EThreadContext::Internal>* Particle = Object->GetParticle<EThreadContext::Internal>())
 						{
-							if (bApplyStrain)
+							FPBDRigidClusteredParticleHandle* Cluster = Particle->CastToClustered();
+							if (Cluster && bApplyStrain)
 							{
+								// it is a cluster and we are applying strain so we need to get to the children particles
 								FRigidClustering& Clustering = RigidSolver->GetEvolution()->GetRigidClustering();
 								TArray<FPBDRigidParticleHandle*>* ChildrenHandles = Clustering.GetChildrenMap().Find(Cluster);
 
@@ -849,45 +1111,95 @@ namespace Chaos
 									continue;
 								}
 
+								float VelocityRatio = 1.0f;
+								if (PhysicsObjectInterfaceCVars::RadialImpulseDistributeToChildren)
+								{
+									VelocityRatio = 1.0f / static_cast<float>(ChildrenHandles->Num());
+								}
+
 								for (FPBDRigidParticleHandle* ChildHandle : *ChildrenHandles)
 								{
-									float VelocityRatio = 1.0f / static_cast<float>(ChildrenHandles->Num());
+									const float FalloffAlpha = AddRadialImpulseHelper(ChildHandle, Origin, Radius, Strength, Falloff, VelocityRatio, bInvalidate, bVelChange, MinValue, MaxValue);
 
-									float FalloffStrength = AddRadialImpulseHelper(ChildHandle, Origin, Radius, Strength, Falloff, VelocityRatio, bInvalidate);
-
-									//to do: remove cvar when material system is in place and densities are updated
-									FalloffStrength = PhysicsObjectInterfaceCVars::StrainModifier * FalloffStrength;
-
-									Clustering.SetExternalStrain(ChildHandle->CastToClustered(), FalloffStrength);
+									// todo(chaos) : Remove StrainModifier cvar when material system is in place and densities are updated
+									const float StrainToApply =
+										(Strain < 0)
+										? (PhysicsObjectInterfaceCVars::StrainModifier * FalloffAlpha * Strength)
+										: Strain * FalloffAlpha;
+									if (StrainToApply > 0)
+									{
+										Clustering.SetExternalStrain(ChildHandle->CastToClustered(), StrainToApply);
+									}
 								}
 							}
 							else
 							{
-								FPBDRigidParticleHandle* ParticleHandle = Cluster->CastToRigidParticle();
-
+								// apply the impulse to the particle itself 
+								FPBDRigidParticleHandle* ParticleHandle = Particle->CastToRigidParticle();
 								if (ParticleHandle != nullptr && ParticleHandle->IsSleeping())
 								{
 									RigidSolver->GetEvolution()->SetParticleObjectState(ParticleHandle, Chaos::EObjectStateType::Dynamic);
 									RigidSolver->GetEvolution()->GetParticles().MarkTransientDirtyParticle(ParticleHandle);
 								}
-
-								AddRadialImpulseHelper(ParticleHandle, Origin, Radius, Strength, Falloff, bInvalidate);
+								constexpr float VelocityRatio = 1.f;
+								AddRadialImpulseHelper(ParticleHandle, Origin, Radius, Strength, Falloff, VelocityRatio, bInvalidate, bVelChange, MinValue, MaxValue);
 							}
-						}
-						else
-						{
-							FPBDRigidParticleHandle* ParticleHandle = reinterpret_cast<FPBDRigidParticleHandle*>(Particle);
-
-							if (ParticleHandle != nullptr && ParticleHandle->IsSleeping())
-							{
-								RigidSolver->GetEvolution()->SetParticleObjectState(ParticleHandle, Chaos::EObjectStateType::Dynamic);
-								RigidSolver->GetEvolution()->GetParticles().MarkTransientDirtyParticle(ParticleHandle);
-							}
-
-							AddRadialImpulseHelper(ParticleHandle, Origin, Radius, Strength, Falloff, bInvalidate);
 						}
 					}
 				});
+		}
+	}
+
+	template<EThreadContext Id>
+	void Chaos::FWritePhysicsObjectInterface<Id>::SetLinearEtherDrag(TArrayView<const FPhysicsObjectHandle> InObjects, float InLinearDrag)
+	{
+		if (Chaos::FPBDRigidsSolver* RigidSolver = Chaos::FPhysicsObjectInterface::GetSolver(InObjects))
+		{
+			//put onto physics thread
+			RigidSolver->EnqueueCommandImmediate([InObjects = TArray<FPhysicsObjectHandle>{ InObjects }, InLinearDrag, RigidSolver]() {
+				for (const FPhysicsObjectHandle Object : InObjects)
+				{
+					if (!Object)
+					{
+						continue;
+					}
+
+					if (TThreadParticle<EThreadContext::Internal>* Particle = Object->GetParticle<EThreadContext::Internal>())
+					{
+						if (Chaos::TThreadRigidParticle<EThreadContext::Internal>* Rigid = Particle->CastToRigidParticle())
+						{
+							Rigid->SetLinearEtherDrag(InLinearDrag);
+						}
+					}
+				}
+				});
+		}
+	}
+
+
+	template<EThreadContext Id>
+	void Chaos::FWritePhysicsObjectInterface<Id>::SetAngularEtherDrag(TArrayView<const FPhysicsObjectHandle> InObjects, float InAngularDrag)
+	{
+		if (Chaos::FPBDRigidsSolver* RigidSolver = Chaos::FPhysicsObjectInterface::GetSolver(InObjects))
+		{
+			//put onto physics thread
+			RigidSolver->EnqueueCommandImmediate([InObjects = TArray<FPhysicsObjectHandle>{ InObjects }, InAngularDrag, RigidSolver]() {
+				for (const FPhysicsObjectHandle Object : InObjects)
+				{
+					if (!Object)
+					{
+						continue;
+					}
+
+					if (TThreadParticle<EThreadContext::Internal>* Particle = Object->GetParticle<EThreadContext::Internal>())
+					{
+						if (Chaos::TThreadRigidParticle<EThreadContext::Internal>* Rigid = Particle->CastToRigidParticle())
+						{
+							Rigid->SetAngularEtherDrag(InAngularDrag);
+						}
+					}
+				}
+			});
 		}
 	}
 
@@ -1026,11 +1338,7 @@ namespace Chaos
 				continue;
 			}
 
-			FPBDRigidsSolver* Solver = nullptr;
-			if (const IPhysicsProxyBase* Proxy = Object->PhysicsProxy())
-			{
-				Solver = Proxy->GetSolver<FPBDRigidsSolver>();
-			}
+			FPBDRigidsSolver* Solver = GetSolver(Object);
 
 			if (!Solver)
 			{
@@ -1047,6 +1355,23 @@ namespace Chaos
 		}
 		return RetSolver;
 	}
+
+	FPBDRigidsSolver* FPhysicsObjectInterface::GetSolver(const FConstPhysicsObjectHandle InObject)
+	{
+		if (!InObject)
+		{
+			return nullptr;
+		}
+
+		FPBDRigidsSolver* Solver = nullptr;
+		if (const IPhysicsProxyBase* Proxy = InObject->PhysicsProxy())
+		{
+			Solver = Proxy->GetSolver<FPBDRigidsSolver>();
+		}
+
+		return Solver;
+	}
+
 
 	IPhysicsProxyBase* FPhysicsObjectInterface::GetProxy(TArrayView<const FConstPhysicsObjectHandle> InObjects)
 	{

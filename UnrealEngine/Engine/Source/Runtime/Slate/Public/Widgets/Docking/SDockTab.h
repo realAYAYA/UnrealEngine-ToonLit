@@ -401,6 +401,9 @@ private:
 
 	SLATE_API void NotifyTabRelocated();
 
+	/* Closes tab if permissions filter no longer allows this tab to be open. */
+	SLATE_API void CheckTabAllowed();
+
 	/** The handle to the active tab activation tick */
 	TWeakPtr<FActiveTimerHandle> DragDropTimerHandle;
 	TWeakPtr<FActiveTimerHandle> UpdateStyleTimerHandle;

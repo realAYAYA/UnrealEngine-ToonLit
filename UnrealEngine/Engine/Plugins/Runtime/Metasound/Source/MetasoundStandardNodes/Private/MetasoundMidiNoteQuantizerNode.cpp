@@ -50,7 +50,7 @@ namespace Metasound
 
 		// ctor
 		FMidiNoteQuantizerOperator(
-			  const FCreateOperatorParams& InParams
+			  const FBuildOperatorParams& InParams
 			, const FFloatReadRef& InMidiNoteIn
 			, const FFloatReadRef& InRootNote
 			, const FArrayScaleDegreeReadRef& InScale
@@ -60,7 +60,7 @@ namespace Metasound
 		// node interface
 		static const FNodeClassMetadata& GetNodeInfo();
 		static FVertexInterface DeclareVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
 		virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override;
@@ -100,7 +100,7 @@ namespace Metasound
 
 	// ctor
 	FMidiNoteQuantizerOperator::FMidiNoteQuantizerOperator(
-		  const FCreateOperatorParams& InParams
+		  const FBuildOperatorParams& InParams
 		, const FFloatReadRef& InMidiNoteIn
 		, const FFloatReadRef& InRootNote
 		, const FArrayScaleDegreeReadRef& InScale
@@ -159,17 +159,15 @@ namespace Metasound
 	}
 
 
-	TUniquePtr<IOperator> FMidiNoteQuantizerOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FMidiNoteQuantizerOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-
-		const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// inputs
-		FFloatReadRef MidiNoteIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamNoteIn), InParams.OperatorSettings);
-		FFloatReadRef RootNoteIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamRootNote), InParams.OperatorSettings);
-		FArrayScaleDegreeReadRef InScaleArray = InParams.InputDataReferences.GetDataReadReferenceOrConstruct<ScaleDegreeArrayType>(METASOUND_GET_PARAM_NAME(ParamScaleDegrees));
-		FFloatReadRef ScaleRangeIn = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(ParamScaleRange), InParams.OperatorSettings);
+		FFloatReadRef MidiNoteIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamNoteIn), InParams.OperatorSettings);
+		FFloatReadRef RootNoteIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamRootNote), InParams.OperatorSettings);
+		FArrayScaleDegreeReadRef InScaleArray = InputData.GetOrConstructDataReadReference<ScaleDegreeArrayType>(METASOUND_GET_PARAM_NAME(ParamScaleDegrees));
+		FFloatReadRef ScaleRangeIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(ParamScaleRange), InParams.OperatorSettings);
 
 		return MakeUnique <FMidiNoteQuantizerOperator>(
 			  InParams

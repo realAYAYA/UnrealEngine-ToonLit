@@ -20,7 +20,7 @@ public:
 	}
 	virtual void SetString(const TCHAR* const InString, const int32 InStringLength)
 	{
-		SetString(FString(InStringLength, InString));
+		SetString(FString::ConstructFromPtrSize(InString, (!InString || *InString == TEXT('\0')) ? 0 : InStringLength));
 	}
 	virtual void SetString(FString&& InString) = 0;
 	

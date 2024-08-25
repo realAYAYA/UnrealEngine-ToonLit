@@ -2,8 +2,8 @@
 
 #pragma once
 
-#ifndef STRATA_ENABLED
-#error "This header should only be included when Strata is enabled."
+#ifndef SUBSTRATE_ENABLED
+#error "This header should only be included when Substrate is enabled."
 #endif
 
 #include "PathTracingSubstrateCommon.ush"
@@ -45,7 +45,7 @@ struct FSubstrateSolidGlassSlabData
 		Eta = Payload.IsFrontFace() ? Payload.Ior : rcp(Payload.Ior);
 		
 
-		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, STRATA_MIN_FUZZ_ROUGHNESS);
+		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, SUBSTRATE_MIN_FUZZ_ROUGHNESS);
 
 		const float NoV = saturate(V.z);
 		// correct for energy loss by scaling the whole BSDF
@@ -98,7 +98,7 @@ FMaterialSample SubstrateSolidGlass_SampleMaterial(
 			OutRoughness = Payload.RoughnessData.y;
 		}
 
-		H = ImportanceSampleVisibleGGX(RandSample.xy, bUseSpec0 ? Data.Alpha0 : Data.Alpha1, V).xyz;
+		H = ImportanceSampleVisibleGGX(RandSample.xy, bUseSpec0 ? Data.Alpha0 : Data.Alpha1, V, false).xyz;
 
 		// Glass lobe (reflection and refraction)
 		float3 L = 0;
@@ -110,8 +110,8 @@ FMaterialSample SubstrateSolidGlass_SampleMaterial(
 
 		FMaterialSample Result = CreateMaterialSample(L_World, 0.0, 0.0, bRefract ? -1.0 : 1.0, OutRoughness, bRefract ? PATHTRACER_SCATTER_REFRACT : PATHTRACER_SCATTER_SPECULAR);
 
-		const float2 GGXResult0 = bRefract ? GGXEvalRefraction(L, V, H, Data.Alpha0, Data.Eta) : GGXEvalReflection(L, V, H, Data.Alpha0);
-		const float2 GGXResult1 = bRefract ? GGXEvalRefraction(L, V, H, Data.Alpha1, Data.Eta) : GGXEvalReflection(L, V, H, Data.Alpha1);
+		const float2 GGXResult0 = bRefract ? GGXEvalRefraction(L, V, H, Data.Alpha0, Data.Eta) : GGXEvalReflection(L, V, H, Data.Alpha0, false);
+		const float2 GGXResult1 = bRefract ? GGXEvalRefraction(L, V, H, Data.Alpha1, Data.Eta) : GGXEvalReflection(L, V, H, Data.Alpha1, false);
 
 		Result.AddLobeWithMIS((1.0 - Payload.RoughnessData.z) * GGXResult0.x / Data.EGlass0, F * GGXResult0.y, Data.LobePdf.x);
 		Result.AddLobeWithMIS((      Payload.RoughnessData.z) * GGXResult1.x / Data.EGlass1, F * GGXResult1.y, Data.LobePdf.y);
@@ -210,8 +210,8 @@ FMaterialEval SubstrateSolidGlass_EvalMaterial(
 
 		{
 			// Specular Lobes
-			const float2 GGXResult0 = GGXEvalReflection(L, V, H, Data.Alpha0);
-			const float2 GGXResult1 = GGXEvalReflection(L, V, H, Data.Alpha1);
+			const float2 GGXResult0 = GGXEvalReflection(L, V, H, Data.Alpha0, false);
+			const float2 GGXResult1 = GGXEvalReflection(L, V, H, Data.Alpha1, false);
 
 			const float Fg = FresnelReflectance(VoH, Data.Eta, Data.F0);
 			const float3 FTint = SubstrateSpecularTint(Payload, NoV, NoL, VoH, NoH);

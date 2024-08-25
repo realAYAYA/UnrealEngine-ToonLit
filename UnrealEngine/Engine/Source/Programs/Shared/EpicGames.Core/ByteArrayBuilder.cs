@@ -15,7 +15,7 @@ namespace EpicGames.Core
 		{
 			public readonly int RunningIndex;
 			public readonly byte[] Data;
-			public int Length;
+			public int Length { get; set; }
 
 			public Chunk(int runningIndex, int size)
 			{
@@ -104,6 +104,22 @@ namespace EpicGames.Core
 			foreach (Chunk chunk in _chunks)
 			{
 				builder.Append(chunk.WrittenMemory);
+			}
+		}
+
+		/// <summary>
+		/// Gets a contiguous, non-owned buffer containing the current data. Will merge together current chunks if necessary.
+		/// </summary>
+		/// <returns></returns>
+		public ReadOnlyMemory<byte> AsMemory()
+		{
+			if (_chunks.Count == 1)
+			{
+				return _chunks[0].WrittenMemory;
+			}
+			else
+			{
+				return ToByteArray();
 			}
 		}
 

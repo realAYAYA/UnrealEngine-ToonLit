@@ -3,11 +3,13 @@ import { DefaultButton, IconButton, Modal, PrimaryButton, Stack, Text } from '@f
 import React from 'react';
 import backend from '../../backend';
 import { GetJobResponse } from '../../backend/Api';
-import { hordeClasses } from '../../styles/Styles';
 import { JobDetailsV2 } from './JobDetailsViewCommon';
+import { getHordeStyling } from '../../styles/Styles';
 
 
 export const AbortJobModal: React.FC<{ jobDetails?: JobDetailsV2; jobDataIn?: GetJobResponse; stepId?: string, show: boolean; onClose: () => void }> = ({ jobDetails, jobDataIn, stepId, show, onClose }) => {
+
+   const { hordeClasses } = getHordeStyling();
 
    const jobData = jobDetails?.jobData ?? jobDataIn;
    if (!jobData) {

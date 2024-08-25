@@ -414,6 +414,7 @@ void FStageAppRouteHandler::HandleWebSocketNDisplayPreviewRendererCreate(const F
 	if (!Body.RootActorPath.IsEmpty())
 	{
 		PreviewModule.SetRendererRootActorPath(RendererId, Body.RootActorPath, true);
+		BeginForceRootActorPreview(RendererId);
 	}
 
 	ChangePreviewRendererSettings(WebSocketMessage.ClientId, RendererId, Body.Settings);
@@ -435,7 +436,11 @@ void FStageAppRouteHandler::HandleWebSocketNDisplayPreviewRendererSetRoot(const 
 		return;
 	}
 
+	EndForceRootActorPreview(Body.RendererId);
+
 	IDisplayClusterScenePreview::Get().SetRendererRootActorPath(Body.RendererId, Body.RootActorPath, true);
+
+	BeginForceRootActorPreview(Body.RendererId);
 }
 
 void FStageAppRouteHandler::HandleWebSocketNDisplayPreviewRendererConfigure(const FRemoteControlWebSocketMessage& WebSocketMessage)
@@ -474,6 +479,7 @@ void FStageAppRouteHandler::HandleWebSocketNDisplayPreviewRendererDestroy(const 
 		// Check that this client created the renderer
 		if (PerRendererDataMap->Remove(Body.RendererId) > 0)
 		{
+			EndForceRootActorPreview(Body.RendererId);
 			IDisplayClusterScenePreview::Get().DestroyRenderer(Body.RendererId);
 		}
 	}
@@ -1039,6 +1045,8 @@ void FStageAppRouteHandler::HandleClientDisconnected(FGuid ClientId)
 		for (TClientIdToPerRendererDataMap::ElementType& PerRendererDataPair : *PerRendererDataMap)
 		{
 			EndActorDrag(PerRendererDataPair.Value, ClientId, PerRendererDataPair.Key, true);
+
+			EndForceRootActorPreview(PerRendererDataPair.Key);
 			PreviewModule.DestroyRenderer(PerRendererDataPair.Key);
 		}
 
@@ -1187,6 +1195,27 @@ void FStageAppRouteHandler::EndActorDrag(FPerRendererData& PerRendererData, cons
 
 		RemoteControlModule->SendWebsocketMessage(ClientId, Payload);
 	}
+}
+
+void FStageAppRouteHandler::BeginForceRootActorPreview(int32 RendererId)
+{
+#if WITH_EDITOR
+	if (ADisplayClusterRootActor* RootActor = IDisplayClusterScenePreview::Get().GetRendererRootActor(RendererId))
+	{
+		// Force the new root actor to render previews so the app always gets a render of it
+		RootActor->AddPreviewEnableOverride(reinterpret_cast<uint8*>(this));
+	}
+#endif
+}
+
+void FStageAppRouteHandler::EndForceRootActorPreview(int32 RendererId)
+{
+#if WITH_EDITOR
+	if (ADisplayClusterRootActor* RootActor = IDisplayClusterScenePreview::Get().GetRendererRootActor(RendererId))
+	{
+		RootActor->RemovePreviewEnableOverride(reinterpret_cast<uint8*>(this));
+	};
+#endif
 }
 
 #undef LOCTEXT_NAMESPACE

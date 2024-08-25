@@ -6,6 +6,7 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Images/SImage.h"
 #include "ScopedTransaction.h"
+#include "SGameplayTagQueryWidget.h"
 #include "Editor.h"
 #include "GameplayTagEditorUtilities.h"
 #include "GameplayTagsManager.h"
@@ -31,16 +32,9 @@ SGameplayTagQueryEntryBox::SGameplayTagQueryEntryBox()
 {
 }
 
-SGameplayTagQueryEntryBox::~SGameplayTagQueryEntryBox()
-{
-	if (bRegisteredForUndo)
-	{
-		GEditor->UnregisterForUndo(this);
-	}
-}
-
 void SGameplayTagQueryEntryBox::Construct(const FArguments& InArgs)
 {
+	Filter = InArgs._Filter;
 	bIsReadOnly = InArgs._ReadOnly;
 	OnTagQueryChanged = InArgs._OnTagQueryChanged;
 	PropertyHandle = InArgs._PropertyHandle;
@@ -48,8 +42,6 @@ void SGameplayTagQueryEntryBox::Construct(const FArguments& InArgs)
 	if (PropertyHandle.IsValid())
 	{
 		PropertyHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &SGameplayTagQueryEntryBox::CacheQueryList));
-		GEditor->RegisterForUndo(this);
-		bRegisteredForUndo = true;
 		bIsReadOnly = PropertyHandle->IsEditConst();
 
 		if (Filter.IsEmpty())
@@ -74,7 +66,7 @@ void SGameplayTagQueryEntryBox::Construct(const FArguments& InArgs)
 		.MaxWidth(InArgs._DescriptionMaxWidth)
 		[
 			SNew(SButton)
-			.IsEnabled(!bIsReadOnly)
+			.IsEnabled(this, &SGameplayTagQueryEntryBox::IsValueEnabled)
 			.VAlign(VAlign_Center)
 			.HAlign(HAlign_Center)
 			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
@@ -96,7 +88,7 @@ void SGameplayTagQueryEntryBox::Construct(const FArguments& InArgs)
 		.VAlign(VAlign_Top)
 		[
 			SNew(SButton)
-			.IsEnabled(!bIsReadOnly)
+			.IsEnabled(this, &SGameplayTagQueryEntryBox::IsValueEnabled)
 			.ToolTipText(LOCTEXT("GameplayTagQueryEntryBox_Edit", "Edit Gameplay Tag Query."))
 			.VAlign(VAlign_Center)
 			.HAlign(HAlign_Center)
@@ -115,7 +107,7 @@ void SGameplayTagQueryEntryBox::Construct(const FArguments& InArgs)
 		.VAlign(VAlign_Top)
 		[
 			SNew(SButton)
-			.Visibility(bIsReadOnly ? EVisibility::Collapsed : EVisibility::Visible)
+			.IsEnabled(this, &SGameplayTagQueryEntryBox::IsValueEnabled)
 			.ToolTipText(LOCTEXT("GameplayTagQueryEntryBox_Clear", "Clear Query"))
 			.VAlign(VAlign_Center)
 			.HAlign(HAlign_Center)
@@ -128,16 +120,6 @@ void SGameplayTagQueryEntryBox::Construct(const FArguments& InArgs)
 			]
 		]
 	];
-}
-
-void SGameplayTagQueryEntryBox::PostUndo(bool bSuccess)
-{
-	CacheQueryList();
-}
-
-void SGameplayTagQueryEntryBox::PostRedo(bool bSuccess)
-{
-	CacheQueryList();
 }
 
 FText SGameplayTagQueryEntryBox::GetQueryDescText() const
@@ -188,6 +170,16 @@ bool SGameplayTagQueryEntryBox::HasAnyValidQueries() const
 	return false;
 }
 
+bool SGameplayTagQueryEntryBox::IsValueEnabled() const
+{
+	if (PropertyHandle.IsValid())
+	{
+		return !PropertyHandle->IsEditConst();
+	}
+
+	return !bIsReadOnly;
+}
+
 EVisibility SGameplayTagQueryEntryBox::GetQueryDescVisibility() const
 {
 	return HasAnyValidQueries() == true ? EVisibility::Visible : EVisibility::Collapsed;
@@ -199,13 +191,11 @@ FReply SGameplayTagQueryEntryBox::OnEditButtonClicked()
 	Args.OnQueriesCommitted = SGameplayTagQueryWidget::FOnQueriesCommitted::CreateSP(this, &SGameplayTagQueryEntryBox::OnQueriesCommitted);
 	Args.EditableQueries = CachedQueries;
 	Args.AnchorWidget = WidgetContainer;
-	Args.bReadOnly = bIsReadOnly;
+	Args.bReadOnly = !IsValueEnabled();
 	Args.Filter = Filter;
 	
 	if (PropertyHandle.IsValid())
 	{
-		Args.Filter = UGameplayTagsManager::StaticGetCategoriesMetaFromPropertyHandle(PropertyHandle);
-
 		TArray<UObject*> OuterObjects;
 		PropertyHandle->GetOuterObjects(OuterObjects);
 
@@ -242,22 +232,61 @@ FReply SGameplayTagQueryEntryBox::OnEditButtonClicked()
 	return FReply::Handled();
 }
 
+void SGameplayTagQueryEntryBox::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
+{
+	if (!PropertyHandle.IsValid()
+		|| !PropertyHandle->IsValidHandle())
+	{
+		return;
+	}
+
+	// Check if cached data has changed, and update it.
+	bool bShouldUpdate = false;
+	
+	TArray<const void*> RawStructData;
+	PropertyHandle->AccessRawData(RawStructData);
+
+	if (RawStructData.Num() == CachedQueries.Num())
+	{
+		for (int32 Idx = 0; Idx < RawStructData.Num(); ++Idx)
+		{
+			if (RawStructData[Idx])
+			{
+				const FGameplayTagQuery& Query = *(FGameplayTagQuery*)RawStructData[Idx];
+				if (Query != CachedQueries[Idx])
+				{
+					bShouldUpdate = true;
+					break;
+				}
+			}
+		}
+	}
+
+	if (bShouldUpdate)
+	{
+		CacheQueryList();
+	}
+}
+
 void SGameplayTagQueryEntryBox::CacheQueryList()
 {
 	CachedQueries.Empty();
 
 	if (PropertyHandle.IsValid())
 	{
-		// Cache queries from the property handle. Add empty queries even if the instance data is null so that the indices match with the property handle.
-		TArray<void*> RawStructData;
-		PropertyHandle->AccessRawData(RawStructData);
-		
-		for (int32 Idx = 0; Idx < RawStructData.Num(); ++Idx)
+		if (PropertyHandle->IsValidHandle())
 		{
-			FGameplayTagQuery& Query = CachedQueries.AddDefaulted_GetRef();
-			if (RawStructData[Idx])
+			// Cache queries from the property handle. Add empty queries even if the instance data is null so that the indices match with the property handle.
+			TArray<void*> RawStructData;
+			PropertyHandle->AccessRawData(RawStructData);
+			
+			for (int32 Idx = 0; Idx < RawStructData.Num(); ++Idx)
 			{
-				Query = *(FGameplayTagQuery*)RawStructData[Idx]; 
+				FGameplayTagQuery& Query = CachedQueries.AddDefaulted_GetRef();
+				if (RawStructData[Idx])
+				{
+					Query = *(FGameplayTagQuery*)RawStructData[Idx]; 
+				}
 			}
 		}
 	}

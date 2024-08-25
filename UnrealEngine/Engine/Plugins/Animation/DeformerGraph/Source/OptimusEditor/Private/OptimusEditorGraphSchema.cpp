@@ -12,13 +12,17 @@
 #include "OptimusNodeGraph.h"
 #include "OptimusNodePin.h"
 #include "IOptimusNodeAdderPinProvider.h"
+#include "IOptimusUnnamedNodePinProvider.h"
 
 #include "EdGraphSchema_K2.h"
 #include "Editor.h"
 #include "OptimusActionStack.h"
 #include "OptimusComponentSource.h"
 #include "OptimusComputeDataInterface.h"
+#include "OptimusDeformer.h"
 #include "OptimusEditorGraphConnectionDrawingPolicy.h"
+#include "OptimusFunctionNodeGraph.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Styling/SlateIconFinder.h"
 
 #include "Framework/Application/SlateApplication.h"
@@ -159,6 +163,86 @@ void UOptimusEditorGraphSchema::GetGraphActions(
 
 		Action->DataInterfaceClass = Class;
 
+		IoActionBuilder.AddAction(Action);
+	}
+
+	// Private functions
+	{
+		if (const UOptimusEditorGraph* Graph = Cast<UOptimusEditorGraph>(InGraph))
+		{
+			if (UOptimusNodeGraph* ModelGraph = Graph->GetModelGraph())
+			{
+				if (UOptimusDeformer* Deformer = Cast<UOptimusDeformer>(ModelGraph->GetCollectionRoot()))
+				{
+					for (UOptimusFunctionNodeGraph* FunctionNodeGraph : Deformer->GetFunctionGraphs(UOptimusFunctionNodeGraph::AccessSpecifierPrivateName))
+					{
+						FOptimusFunctionNodeGraphHeader Header = FunctionNodeGraph->GetHeader();
+				
+						TSharedPtr< FOptimusGraphSchemaAction_NewFunctionReferenceNode> Action(
+									new FOptimusGraphSchemaAction_NewFunctionReferenceNode(
+										FText::FromName(Header.Category),
+										FText::FromName(Header.FunctionName),
+										/* Tooltip */{}, 0, /* Keywords */{}
+								));
+
+						Action->GraphPath = Header.GraphPath;
+
+						IoActionBuilder.AddAction(Action);
+					}
+				}	
+			}
+		}
+	}
+	
+	// Public functions
+	{
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+
+		TArray<FAssetData> AssetDatas;
+
+		// This triggers the gathering of asset tags across assets
+		AssetRegistryModule.Get().GetAssetsByClass(UOptimusDeformer::StaticClass()->GetClassPathName(), AssetDatas);
+
+		for (FAssetData& AssetData : AssetDatas)
+		{
+			FString PublicFunctionString = AssetData.GetTagValueRef<FString>(UOptimusDeformer::PublicFunctionsAssetTagName);
+
+			if (!PublicFunctionString.IsEmpty())
+			{
+				FOptimusFunctionNodeGraphHeaderArray PublicFunctionHeaderArray;
+
+				FOptimusFunctionNodeGraphHeaderArray::StaticStruct()->ImportText(*PublicFunctionString, &PublicFunctionHeaderArray, nullptr, PPF_None, nullptr, {});
+
+				for (const FOptimusFunctionNodeGraphHeader& Header : PublicFunctionHeaderArray.Headers)
+				{
+					const FText FunctionName = FText::FromName(Header.FunctionName);
+
+					const FText Category = FText::FromName(Header.Category);
+
+					TSharedPtr< FOptimusGraphSchemaAction_NewFunctionReferenceNode> Action(
+						new FOptimusGraphSchemaAction_NewFunctionReferenceNode(
+							Category,
+							FunctionName,
+							/* Tooltip */{}, 0, /* Keywords */{}
+					));
+
+					Action->GraphPath = Header.GraphPath;
+
+					IoActionBuilder.AddAction(Action);	
+				}
+			}
+		}	
+	}
+	
+	// Loop nodes
+	{
+		TSharedPtr< FOptimusGraphSchemaAction_NewLoopTerminalNodes> Action(
+			new FOptimusGraphSchemaAction_NewLoopTerminalNodes(
+				{},
+				FText::FromName(TEXT("Loop")),
+				/* Tooltip */{}, 0, /* Keywords */{}
+		));
+		
 		IoActionBuilder.AddAction(Action);
 	}
 	
@@ -462,6 +546,22 @@ FLinearColor UOptimusEditorGraphSchema::GetColorFromPinType(const FEdGraphPinTyp
 	}
 
 	return GetDefault<UEdGraphSchema_K2>()->GetPinTypeColor(InPinType);
+}
+
+FText UOptimusEditorGraphSchema::GetPinDisplayName(const UEdGraphPin* Pin) const
+{
+	if (UOptimusNodePin* ModelPin = OptimusEditor::GetModelPinFromGraphPin(Pin))
+	{
+		if (const IOptimusUnnamedNodePinProvider* UnnamedNodePinProvider = Cast<const IOptimusUnnamedNodePinProvider>(ModelPin->GetOwningNode()))
+		{
+			if (UnnamedNodePinProvider->IsPinNameHidden(ModelPin))
+			{
+				return FText::GetEmpty();
+			}
+		}
+	}
+	
+	return Super::GetPinDisplayName(Pin);
 }
 
 

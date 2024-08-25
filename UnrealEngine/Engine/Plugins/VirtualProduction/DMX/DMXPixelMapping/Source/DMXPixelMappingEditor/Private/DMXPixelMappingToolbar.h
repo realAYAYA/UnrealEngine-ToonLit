@@ -4,38 +4,24 @@
 
 #include "Templates/SharedPointer.h"
 
-class FExtender;
-class FToolBarBuilder;
 class FDMXPixelMappingToolkit;
 class SWidget;
 
-/**
- * Custom Toolbar for DMX Pixel Mapping Editor
- */
+
+/** Extends the PixelMapping asset editor toolkit toolbar */
 class FDMXPixelMappingToolbar :
 	public TSharedFromThis<FDMXPixelMappingToolbar>
 {
 public:
-	/** Default Constructor */
 	FDMXPixelMappingToolbar(TSharedPtr<FDMXPixelMappingToolkit> InToolkit);
-
-	/** Virtual Destructor */
 	virtual ~FDMXPixelMappingToolbar() {}
 
-	/** Builds the toolbar */
-	void BuildToolbar(TSharedPtr<FExtender> Extender);
+	/** Extends the PixelMapping asset editor toolkit toolbar  */
+	void ExtendToolbar();
 
 private:
-	/** Callback, raised when the menu extender requests to build the toolbar */
-	void BuildToolbarCallback(FToolBarBuilder& ToolbarBuilder);
+	/** Generates the playback settings submenu */
+	TSharedRef<SWidget> GeneratePlaybackSettingsMenu(FName ParentMenuName) const;
 
-	/** Generates a widget with play options (play, stop) */
-	TSharedRef<SWidget> GeneratesPlayOptionsWidget();
-
-	/** Generates a layout settings menu for the pixelmapping toolbar */
-	TSharedRef<SWidget> GenerateLayoutMenu();
-
-public:
-	TWeakPtr<FDMXPixelMappingToolkit> ToolkitWeakPtr;
+	TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
 };
-

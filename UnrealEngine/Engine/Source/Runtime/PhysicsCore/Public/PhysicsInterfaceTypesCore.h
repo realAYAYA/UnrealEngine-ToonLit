@@ -174,6 +174,8 @@ struct FKShapeElem;
 /** Forward declarations */
 struct FKShapeElem;
 struct FCustomChaosPayload;
+struct FPhysicsObject;
+struct FChaosUserEntityAppend;
 
 namespace EChaosUserDataType
 {
@@ -186,6 +188,8 @@ namespace EChaosUserDataType
 		ConstraintInstance,
 		PrimitiveComponent,
 		AggShape,
+		PhysicsObject,    // This will replace BodyInstances in the future
+		ChaosUserEntity,  // This is used for adding custom user entities (unknown to UE)
 		CustomPayload,	//This is intended for plugins
 	};
 };
@@ -205,6 +209,8 @@ public:
 	FChaosUserData(FConstraintInstance* InPayload)		:Type(EChaosUserDataType::ConstraintInstance), Payload(InPayload) {}
 	FChaosUserData(UPrimitiveComponent* InPayload)		:Type(EChaosUserDataType::PrimitiveComponent), Payload(InPayload) {}
 	FChaosUserData(FKShapeElem* InPayload)				:Type(EChaosUserDataType::AggShape), Payload(InPayload) {}
+	FChaosUserData(FPhysicsObject* InPayload)			:Type(EChaosUserDataType::PhysicsObject), Payload(InPayload) {}
+	FChaosUserData(FChaosUserEntityAppend* InPayload)	:Type(EChaosUserDataType::ChaosUserEntity), Payload(InPayload) {}
 	FChaosUserData(FCustomChaosPayload* InPayload)		:Type(EChaosUserDataType::CustomPayload), Payload(InPayload) {}
 	
 	template <class T> static T* Get(void* UserData);
@@ -223,6 +229,8 @@ template <> FORCEINLINE FPhysScene* FChaosUserData::Get(void* UserData)				{ if 
 template <> FORCEINLINE FConstraintInstance* FChaosUserData::Get(void* UserData)	{ if (!UserData || ((FChaosUserData*)UserData)->Type != EChaosUserDataType::ConstraintInstance) { return nullptr; } return (FConstraintInstance*)((FChaosUserData*)UserData)->Payload; }
 template <> FORCEINLINE UPrimitiveComponent* FChaosUserData::Get(void* UserData)	{ if (!UserData || ((FChaosUserData*)UserData)->Type != EChaosUserDataType::PrimitiveComponent) { return nullptr; } return (UPrimitiveComponent*)((FChaosUserData*)UserData)->Payload; }
 template <> FORCEINLINE FKShapeElem* FChaosUserData::Get(void* UserData)	{ if (!UserData || ((FChaosUserData*)UserData)->Type != EChaosUserDataType::AggShape) { return nullptr; } return (FKShapeElem*)((FChaosUserData*)UserData)->Payload; }
+template <> FORCEINLINE FPhysicsObject* FChaosUserData::Get(void* UserData) { if (!UserData || ((FChaosUserData*)UserData)->Type != EChaosUserDataType::PhysicsObject) { return nullptr; } return (FPhysicsObject*)((FChaosUserData*)UserData)->Payload; }
+template <> FORCEINLINE FChaosUserEntityAppend* FChaosUserData::Get(void* UserData) { if (!UserData || ((FChaosUserData*)UserData)->Type != EChaosUserDataType::ChaosUserEntity) { return nullptr; } return (FChaosUserEntityAppend*)((FChaosUserData*)UserData)->Payload; }
 template <> FORCEINLINE FCustomChaosPayload* FChaosUserData::Get(void* UserData) { if (!UserData || ((FChaosUserData*)UserData)->Type != EChaosUserDataType::CustomPayload) { return nullptr; } return (FCustomChaosPayload*)((FChaosUserData*)UserData)->Payload; }
 
 template <> FORCEINLINE void FChaosUserData::Set(void* UserData, FBodyInstance* Payload)			{ check(UserData); ((FChaosUserData*)UserData)->Type = EChaosUserDataType::BodyInstance; ((FChaosUserData*)UserData)->Payload = Payload; }
@@ -231,6 +239,8 @@ template <> FORCEINLINE void FChaosUserData::Set(void* UserData, FPhysScene* Pay
 template <> FORCEINLINE void FChaosUserData::Set(void* UserData, FConstraintInstance* Payload)		{ check(UserData); ((FChaosUserData*)UserData)->Type = EChaosUserDataType::ConstraintInstance; ((FChaosUserData*)UserData)->Payload = Payload; }
 template <> FORCEINLINE void FChaosUserData::Set(void* UserData, UPrimitiveComponent* Payload)		{ check(UserData); ((FChaosUserData*)UserData)->Type = EChaosUserDataType::PrimitiveComponent; ((FChaosUserData*)UserData)->Payload = Payload; }
 template <> FORCEINLINE void FChaosUserData::Set(void* UserData, FKShapeElem* Payload)	{ check(UserData); ((FChaosUserData*)UserData)->Type = EChaosUserDataType::AggShape; ((FChaosUserData*)UserData)->Payload = Payload; }
+template <> FORCEINLINE void FChaosUserData::Set(void* UserData, FPhysicsObject* Payload) { check(UserData); ((FChaosUserData*)UserData)->Type = EChaosUserDataType::PhysicsObject; ((FChaosUserData*)UserData)->Payload = Payload; }
+template <> FORCEINLINE void FChaosUserData::Set(void* UserData, FChaosUserEntityAppend* Payload) { check(UserData); ((FChaosUserData*)UserData)->Type = EChaosUserDataType::ChaosUserEntity; ((FChaosUserData*)UserData)->Payload = Payload; }
 template <> FORCEINLINE void FChaosUserData::Set(void* UserData, FCustomChaosPayload* Payload) { check(UserData); ((FChaosUserData*)UserData)->Type = EChaosUserDataType::CustomPayload; ((FChaosUserData*)UserData)->Payload = Payload; }
 
 struct FChaosFilterData

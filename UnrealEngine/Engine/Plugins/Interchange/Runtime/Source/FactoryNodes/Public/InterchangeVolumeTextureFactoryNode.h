@@ -12,7 +12,7 @@
 
 #include "InterchangeVolumeTextureFactoryNode.generated.h"
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGEFACTORYNODES_API UInterchangeVolumeTextureFactoryNode : public UInterchangeTextureFactoryNode
 {
 	GENERATED_BODY()

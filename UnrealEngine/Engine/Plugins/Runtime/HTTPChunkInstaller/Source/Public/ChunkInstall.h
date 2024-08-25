@@ -105,7 +105,7 @@ public:
 		// Find all pak files.
 		FPakSearchVisitor Visitor(PakFiles);
 		PlatformFile.IterateDirectoryRecursively(*DestDir, Visitor);
-		auto PakReadOrderField = BuildManifest->GetCustomField("PakReadOrdering");
+		auto PakReadOrderField = BuildManifest->GetCustomField(TEXT("PakReadOrdering"));
 		uint32 PakReadOrder = PakReadOrderField.IsValid() ? (uint32)PakReadOrderField->AsInteger() : 0;
 		for (uint32 PakIndex = 0, PakCount = PakFiles.Num(); PakIndex < PakCount; ++PakIndex)
 		{

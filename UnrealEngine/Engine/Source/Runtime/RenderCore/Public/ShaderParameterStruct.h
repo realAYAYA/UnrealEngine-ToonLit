@@ -192,27 +192,36 @@ inline void UnsetShaderSRVs(FRHIBatchedShaderUnbinds& BatchedUnbinds, const TSha
 template<typename TRHICmdList, typename TShaderClass>
 inline void UnsetShaderUAVs(TRHICmdList& RHICmdList, const TShaderRef<TShaderClass>& Shader, FRHIComputeShader* ShaderRHI)
 {
-	FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
-	UnsetShaderUAVs(BatchedUnbinds, Shader);
-	RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	if (RHICmdList.NeedsShaderUnbinds())
+	{
+		FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
+		UnsetShaderUAVs(BatchedUnbinds, Shader);
+		RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	}
 }
 
 /** Unset compute shader SRVs. */
 template<typename TRHICmdList, typename TShaderClass>
 inline void UnsetShaderSRVs(TRHICmdList& RHICmdList, const TShaderRef<TShaderClass>& Shader, FRHIComputeShader* ShaderRHI)
 {
-	FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
-	UnsetShaderSRVs(BatchedUnbinds, Shader);
-	RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	if (RHICmdList.NeedsShaderUnbinds())
+	{
+		FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
+		UnsetShaderSRVs(BatchedUnbinds, Shader);
+		RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	}
 }
 
 /** Unset compute shader SRVs. */
 template<typename TRHICmdList, typename TShaderClass>
 inline void UnsetShaderSRVs(TRHICmdList& RHICmdList, const TShaderRef<TShaderClass>& Shader, FRHIGraphicsShader* ShaderRHI)
 {
-	FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
-	UnsetShaderSRVs(BatchedUnbinds, Shader);
-	RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	if (RHICmdList.NeedsShaderUnbinds())
+	{
+		FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
+		UnsetShaderSRVs(BatchedUnbinds, Shader);
+		RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	}
 }
 
 RENDERCORE_API void SetShaderParameters(

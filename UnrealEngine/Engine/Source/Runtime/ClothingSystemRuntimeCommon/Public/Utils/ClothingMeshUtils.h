@@ -12,6 +12,12 @@ struct FPointWeightMap;
 
 namespace ClothingMeshUtils
 {
+	struct FMeshToMeshFilterSet
+	{
+		TSet<int32> SourceTriangles;  // Set of triangle index in the source ClothMeshDesc
+		TSet<int32> TargetVertices;  // Set of vertex index in the target ClothMeshDesc
+	};
+
 	class ClothMeshDesc
 	{
 	public:
@@ -59,6 +65,12 @@ namespace ClothingMeshUtils
 		/** Find the distance to the specified triangle from a point. */
 		CLOTHINGSYSTEMRUNTIMECOMMON_API float DistanceToTriangle(const FVector& Position, int32 TriangleBaseIndex) const;
 
+		/** Return the current list of filtered triangles. */
+		TArray<int32>& GetFilteredTriangles() const { return FilteredTriangles; }
+
+		/** Create an array with all source triangles whose filter set from the given array containts the specified target vertex. */
+		void GatherAllSourceTrianglesForTargetVertex(const TArray<FMeshToMeshFilterSet>& FilterSets, int32 TargetVertex) const;
+
 		/** Find the closest triangles from the specified point. */
 		CLOTHINGSYSTEMRUNTIMECOMMON_API TArray<int32> FindCandidateTriangles(const FVector& InPoint, float InTolerance = KINDA_SMALL_NUMBER) const;
 
@@ -84,6 +96,7 @@ namespace ClothingMeshUtils
 		mutable Chaos::TAABBTree<int32, Chaos::TAABBTreeLeafArray<int32, false>, false> BVH;
 
 		mutable TArray<float> MaxEdgeLengths;
+		mutable TArray<int32> FilteredTriangles;
 	};
 
 	/**
@@ -99,24 +112,6 @@ namespace ClothingMeshUtils
 		TArray<FVector3f>& OutNormals);
 
 	/**
-	 * Static method for calculating a skinned mesh result from source data
-	 * The bInPlaceOutput allows us to directly populate arrays that are already allocated
-	 * bRemoveScaleAndInvertPostTransform will determine if the PostTransform should be inverted and the scale removed (NvCloth uses this).
-	 * It is templated to remove branches at compile time
-	 */
-	template<bool bInPlaceOutput = false, bool bRemoveScaleAndInvertPostTransform = true>
-	UE_DEPRECATED(5.0, "Use non templated version of SkinPhysicsMesh instead.")
-	void CLOTHINGSYSTEMRUNTIMECOMMON_API SkinPhysicsMesh(
-		const TArray<int32>& BoneMap,
-		const FClothPhysicalMeshData& InMesh,
-		const FTransform& PostTransform,
-		const FMatrix44f* InBoneMatrices,
-		const int32 InNumBoneMatrices,
-		TArray<FVector3f>& OutPositions,
-		TArray<FVector3f>& OutNormals,
-		uint32 ArrayOffset);
-
-	/**
 	* Given mesh information for two meshes, generate a list of skinning data to embed TargetMesh in SourceMesh
 	* 
 	* @param OutMeshToMeshVertData      - Final skinning data
@@ -126,6 +121,7 @@ namespace ClothingMeshUtils
 	* @param bUseSmoothTransitions      - Set blend weight to smoothen transitions between the fixed and deformed vertices when updating the vertex contributions
 	* @param bUseMultipleInfluences     - Whether to take a weighted average of influences from multiple source triangles
 	* @param KernelMaxDistance          - Max distance parameter for weighting kernel for when using multiple influences
+	* @param FilterSets                 - A set of source triangle indices to filter the search from, will use all source triangles if empty
 	*/
 	void CLOTHINGSYSTEMRUNTIMECOMMON_API GenerateMeshToMeshVertData(
 		TArray<FMeshToMeshVertData>& OutMeshToMeshVertData,
@@ -134,58 +130,8 @@ namespace ClothingMeshUtils
 		const FPointWeightMap* MaxDistances,
 		bool bUseSmoothTransitions,
 		bool bUseMultipleInfluences,
-		float KernelMaxDistance);
-
-	/**
-	 * Compute the max edge length for each edge coming out of a mesh vertex. Useful for guiding the search radius when
-	 * searching for nearest triangles.
-	 */
-	UE_DEPRECATED(5.0, "Superseded by GenerateMeshToMeshVertData.")
-	inline void ComputeMaxEdgeLength(const ClothMeshDesc& TargetMesh, TArray<float>& OutMaxEdgeLength)
-	{
-		OutMaxEdgeLength = TargetMesh.GetMaxEdgeLengths();
-	}
-
-	/**
-	* Given mesh information for two meshes, generate a list of skinning data to embed TargetMesh in SourceMesh
-	* 
-	* @param OutSkinningData            - Final skinning data
-	* @param TargetMesh                 - Mesh data for the mesh we are embedding
-	* @param TargetTangents             - Optional Tangents for the mesh we are embedding
-	* @param SourceMesh                 - Mesh data for the mesh we are embedding into
-	* @param TargetMaxEdgeLength        - Per-vertex longest incident edge length, as returned by ComputeMaxEdgeLength()
-	* @param bUseMultipleInfluences     - Whether to take a weighted average of influences from multiple source triangles
-	* @param KernelMaxDistance          - Max distance parameter for weighting kernel
-	*/
-	UE_DEPRECATED(5.0, "Superseded by GenerateMeshToMeshVertData.")
-	inline void GenerateMeshToMeshSkinningData(
-		TArray<FMeshToMeshVertData>& OutSkinningData,
-		const ClothMeshDesc& TargetMesh,
-		const TArray<FVector3f>* TargetTangents,
-		const ClothMeshDesc& SourceMesh,
-		const TArray<float>& TargetMaxEdgeLength,
-		bool bUseMultipleInfluences,
-		float KernelMaxDistance)
-	{
-		const FPointWeightMap* const MaxDistances = nullptr;  // Disables compute vertex contributions
-		constexpr bool bUseSmoothTransitions = false;
-		
-		GenerateMeshToMeshVertData(OutSkinningData, TargetMesh, SourceMesh, MaxDistances, bUseSmoothTransitions, bUseMultipleInfluences, KernelMaxDistance);
-	}
-
-	/** 
-	 * Embeds a list of positions into a source mesh
-	 * @param SourceMesh The mesh to embed in
-	 * @param Positions The positions to embed in SourceMesh
-	 * @param OutEmbeddedPositions Embedded version of the original positions, a barycentric coordinate and distance along the normal of the triangle
-	 * @param OutSourceIndices Source index list for the embedded positions, 3 per position to denote the source triangle
-	 */
-	UE_DEPRECATED(5.0, "Use FVertexParameterMapper::GenerateEmbeddedPositions instead.")
-	void CLOTHINGSYSTEMRUNTIMECOMMON_API GenerateEmbeddedPositions(
-		const ClothMeshDesc& SourceMesh, 
-		TConstArrayView<FVector3f> Positions, 
-		TArray<FVector4>& OutEmbeddedPositions, 
-		TArray<int32>& OutSourceIndices);
+		float KernelMaxDistance,
+		const TArray<FMeshToMeshFilterSet>& FilterSets = TArray<FMeshToMeshFilterSet>());
 
 	/**
 	 * Computes how much each vertex contributes to the final mesh. The final mesh is a blend
@@ -196,18 +142,6 @@ namespace ClothingMeshUtils
 		const FPointWeightMap* const InMaxDistances,
 		const bool bInSmoothTransition,
 		const bool bInUseMultipleInfluences = false);
-
-	/**
-	 * Identify vertices that are not influenced by any triangles, and compute a new single attachment for the
-	 * vertex.
-	 */
-	UE_DEPRECATED(5.0, "Superseded by GenerateMeshToMeshVertData.")
-	void CLOTHINGSYSTEMRUNTIMECOMMON_API FixZeroWeightVertices(
-		TArray<FMeshToMeshVertData>& InOutSkinningData,
-		const ClothMeshDesc& TargetMesh,
-		const TArray<FVector3f>* TargetTangents,
-		const ClothMeshDesc& SourceMesh,
-		const TArray<float>& TargetMaxEdgeLength);
 
 	/**
 	* Given a triangle ABC with normals at each vertex NA, NB and NC, get a barycentric coordinate

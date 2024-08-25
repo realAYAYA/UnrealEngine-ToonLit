@@ -1,20 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "LearningAgentsManager.h"
-#include "LearningAgentsManagerComponent.h"
+#include "LearningAgentsManagerListener.h"
 
 #include "LearningArray.h"
-#include "LearningArrayMap.h"
 #include "LearningLog.h"
 
 #include "UObject/ScriptInterface.h"
 #include "EngineDefines.h"
 
-ALearningAgentsManager::ALearningAgentsManager() : Super(FObjectInitializer::Get()) {}
-ALearningAgentsManager::ALearningAgentsManager(FVTableHelper& Helper) : Super(Helper) {}
-ALearningAgentsManager::~ALearningAgentsManager() = default;
+ULearningAgentsManager::ULearningAgentsManager() : Super(FObjectInitializer::Get()) { PrimaryComponentTick.bCanEverTick = true; }
+ULearningAgentsManager::ULearningAgentsManager(FVTableHelper& Helper) : Super(Helper) {}
+ULearningAgentsManager::~ULearningAgentsManager() = default;
 
-void ALearningAgentsManager::PostInitProperties()
+void ULearningAgentsManager::PostInitProperties()
 {
 	Super::PostInitProperties();
 
@@ -23,29 +22,40 @@ void ALearningAgentsManager::PostInitProperties()
 		return;
 	}
 
-	// Allocate Instance Data
-	InstanceData = MakeShared<UE::Learning::FArrayMap>();
-
 	// Pre-populate the vacant ids
 	OnEventAgentIds.Reserve(MaxAgentNum);
 	OccupiedAgentIds.Reserve(MaxAgentNum);
 	VacantAgentIds.Reserve(MaxAgentNum);
 	Agents.Reserve(MaxAgentNum);
-	for (int32 i = MaxAgentNum - 1; i >= 0; i--)
+	for (int32 AgentId = MaxAgentNum - 1; AgentId >= 0; AgentId--)
 	{
-		VacantAgentIds.Push(i);
+		VacantAgentIds.Push(AgentId);
 		Agents.Add(nullptr);
 	}
 
 	UpdateAgentSets();
 }
 
-int32 ALearningAgentsManager::GetMaxAgentNum() const
+void ULearningAgentsManager::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	// We only want to give agent tick events when the actual level is ticking - not when paused or just the viewport is ticking.
+	if (TickType == ELevelTick::LEVELTICK_All)
+	{
+		for (ULearningAgentsManagerListener* Listener : Listeners)
+		{
+			Listener->OnAgentsManagerTick(OccupiedAgentIds, DeltaTime);
+		}
+	}
+}
+
+int32 ULearningAgentsManager::GetMaxAgentNum() const
 {
 	return MaxAgentNum;
 }
 
-int32 ALearningAgentsManager::AddAgent(UObject* Agent)
+int32 ULearningAgentsManager::AddAgent(UObject* Agent)
 {
 	if (Agent == nullptr)
 	{
@@ -66,19 +76,16 @@ int32 ALearningAgentsManager::AddAgent(UObject* Agent)
 	OccupiedAgentIds.Add(AgentId);
 	UpdateAgentSets();
 
-	OnEventAgentIds.SetNumUninitialized(0, false);
+	OnEventAgentIds.Reset();
 	OnEventAgentIds.Add(AgentId);
 
 	// Call OnAgentsAdded Event
 
 	UE_LOG(LogLearning, Display, TEXT("%s: Adding Agent %s with id %i."), *GetName(), *Agent->GetName(), AgentId);
 
-	TInlineComponentArray<ULearningAgentsManagerComponent*> ManagerComponents;
-	GetComponents<ULearningAgentsManagerComponent>(ManagerComponents);
-
-	for (ULearningAgentsManagerComponent* ManagerComponent : ManagerComponents)
+	for (ULearningAgentsManagerListener* Listener : Listeners)
 	{
-		ManagerComponent->OnAgentsAdded(OnEventAgentIds);
+		Listener->OnAgentsAdded(OnEventAgentIds);
 	}
 
 	// Return new id
@@ -86,9 +93,9 @@ int32 ALearningAgentsManager::AddAgent(UObject* Agent)
 	return AgentId;
 }
 
-void ALearningAgentsManager::AddAgents(TArray<int32>& OutAgentIds, const TArray<UObject*>& InAgents)
+void ULearningAgentsManager::AddAgents(TArray<int32>& OutAgentIds, const TArray<UObject*>& InAgents)
 {
-	OnEventAgentIds.SetNumUninitialized(0, false);
+	OnEventAgentIds.Reset();
 	OutAgentIds.SetNumUninitialized(InAgents.Num());
 
 	for (int32 AgentIdx = 0; AgentIdx < InAgents.Num(); AgentIdx++)
@@ -121,16 +128,13 @@ void ALearningAgentsManager::AddAgents(TArray<int32>& OutAgentIds, const TArray<
 
 	UE_LOG(LogLearning, Display, TEXT("%s: Adding Agents %s."), *GetName(), *UE::Learning::Array::FormatInt32(OnEventAgentIds));
 
-	TInlineComponentArray<ULearningAgentsManagerComponent*> ManagerComponents;
-	GetComponents<ULearningAgentsManagerComponent>(ManagerComponents);
-
-	for (ULearningAgentsManagerComponent* ManagerComponent : ManagerComponents)
+	for (ULearningAgentsManagerListener* Listener : Listeners)
 	{
-		ManagerComponent->OnAgentsAdded(OnEventAgentIds);
+		Listener->OnAgentsAdded(OnEventAgentIds);
 	}
 }
 
-void ALearningAgentsManager::RemoveAgent(const int32 AgentId)
+void ULearningAgentsManager::RemoveAgent(const int32 AgentId)
 {
 	if (AgentId == INDEX_NONE)
 	{
@@ -138,7 +142,7 @@ void ALearningAgentsManager::RemoveAgent(const int32 AgentId)
 		return;
 	}
 
-	const int32 RemovedCount = OccupiedAgentIds.RemoveSingleSwap(AgentId, false);
+	const int32 RemovedCount = OccupiedAgentIds.RemoveSingleSwap(AgentId, EAllowShrinking::No);
 
 	if (RemovedCount == 0)
 	{
@@ -154,25 +158,22 @@ void ALearningAgentsManager::RemoveAgent(const int32 AgentId)
 	Agents[AgentId] = nullptr;
 	UpdateAgentSets();
 
-	OnEventAgentIds.SetNumUninitialized(0, false);
+	OnEventAgentIds.Reset();
 	OnEventAgentIds.Add(AgentId);
 
 	// Call OnAgentsRemoved Event
 
 	UE_LOG(LogLearning, Display, TEXT("%s: Removing Agent %i."), *GetName(), AgentId);
 
-	TInlineComponentArray<ULearningAgentsManagerComponent*> ManagerComponents;
-	GetComponents<ULearningAgentsManagerComponent>(ManagerComponents);
-
-	for (ULearningAgentsManagerComponent* ManagerComponent : ManagerComponents)
+	for (ULearningAgentsManagerListener* Listener : Listeners)
 	{
-		ManagerComponent->OnAgentsRemoved(OnEventAgentIds);
+		Listener->OnAgentsRemoved(OnEventAgentIds);
 	}
 }
 
-void ALearningAgentsManager::RemoveAgents(const TArray<int32>& AgentIds)
+void ULearningAgentsManager::RemoveAgents(const TArray<int32>& AgentIds)
 {
-	OnEventAgentIds.SetNumUninitialized(0, false);
+	OnEventAgentIds.Reset();
 
 	for (int32 AgentIdx = 0; AgentIdx < AgentIds.Num(); AgentIdx++)
 	{
@@ -182,7 +183,7 @@ void ALearningAgentsManager::RemoveAgents(const TArray<int32>& AgentIds)
 			continue;
 		}
 
-		const int32 RemovedCount = OccupiedAgentIds.RemoveSingleSwap(AgentIds[AgentIdx], false);
+		const int32 RemovedCount = OccupiedAgentIds.RemoveSingleSwap(AgentIds[AgentIdx], EAllowShrinking::No);
 
 		if (RemovedCount == 0)
 		{
@@ -205,23 +206,20 @@ void ALearningAgentsManager::RemoveAgents(const TArray<int32>& AgentIds)
 
 	UE_LOG(LogLearning, Display, TEXT("%s: Removing Agents %s."), *GetName(), *UE::Learning::Array::FormatInt32(OnEventAgentIds));
 
-	TInlineComponentArray<ULearningAgentsManagerComponent*> ManagerComponents;
-	GetComponents<ULearningAgentsManagerComponent>(ManagerComponents);
-
-	for (ULearningAgentsManagerComponent* ManagerComponent : ManagerComponents)
+	for (ULearningAgentsManagerListener* Listener : Listeners)
 	{
-		ManagerComponent->OnAgentsRemoved(OnEventAgentIds);
+		Listener->OnAgentsRemoved(OnEventAgentIds);
 	}
 }
 
-void ALearningAgentsManager::RemoveAllAgents()
+void ULearningAgentsManager::RemoveAllAgents()
 {
 	// We need to make a copy as OccupiedAgentIds will be modified during removal.
 	const TArray<int32> RemoveAgentIds = OccupiedAgentIds;
 	RemoveAgents(RemoveAgentIds);
 }
 
-void ALearningAgentsManager::ResetAgent(const int32 AgentId)
+void ULearningAgentsManager::ResetAgent(const int32 AgentId)
 {
 	if (AgentId == INDEX_NONE)
 	{
@@ -235,25 +233,22 @@ void ALearningAgentsManager::ResetAgent(const int32 AgentId)
 		return;
 	}
 
-	OnEventAgentIds.SetNumUninitialized(0, false);
+	OnEventAgentIds.Reset();
 	OnEventAgentIds.Add(AgentId);
 
 	// Call OnAgentsReset Event
 
 	UE_LOG(LogLearning, Display, TEXT("%s: Resetting Agent %i."), *GetName(), AgentId);
 
-	TInlineComponentArray<ULearningAgentsManagerComponent*> ManagerComponents;
-	GetComponents<ULearningAgentsManagerComponent>(ManagerComponents);
-
-	for (ULearningAgentsManagerComponent* ManagerComponent : ManagerComponents)
+	for (ULearningAgentsManagerListener* Listener : Listeners)
 	{
-		ManagerComponent->OnAgentsReset(OnEventAgentIds);
+		Listener->OnAgentsReset(OnEventAgentIds);
 	}
 }
 
-void ALearningAgentsManager::ResetAgents(const TArray<int32>& AgentIds)
+void ULearningAgentsManager::ResetAgents(const TArray<int32>& AgentIds)
 {
-	OnEventAgentIds.SetNumUninitialized(0, false);
+	OnEventAgentIds.Reset();
 
 	for (int32 AgentIdx = 0; AgentIdx < AgentIds.Num(); AgentIdx++)
 	{
@@ -276,34 +271,41 @@ void ALearningAgentsManager::ResetAgents(const TArray<int32>& AgentIds)
 
 	UE_LOG(LogLearning, Display, TEXT("%s: Resetting Agents %s."), *GetName(), *UE::Learning::Array::FormatInt32(OnEventAgentIds));
 
-	TInlineComponentArray<ULearningAgentsManagerComponent*> ManagerComponents;
-	GetComponents<ULearningAgentsManagerComponent>(ManagerComponents);
-
-	for (ULearningAgentsManagerComponent* ManagerComponent : ManagerComponents)
+	for (ULearningAgentsManagerListener* Listener : Listeners)
 	{
-		ManagerComponent->OnAgentsReset(OnEventAgentIds);
+		Listener->OnAgentsReset(OnEventAgentIds);
 	}
 }
 
-void ALearningAgentsManager::ResetAllAgents()
+void ULearningAgentsManager::ResetAllAgents()
 {
 	ResetAgents(OccupiedAgentIds);
 }
 
-UObject* ALearningAgentsManager::GetAgent(const int32 AgentId, const TSubclassOf<UObject> AgentClass) const
+UObject* ULearningAgentsManager::GetAgent(const int32 AgentId, const TSubclassOf<UObject> AgentClass) const
 {
 	if (!HasAgent(AgentId))
 	{
 		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found. Be sure to only use AgentIds returned by AddAgent and check that the agent has not be removed."), *GetName(), AgentId);
 		return nullptr;
 	}
-	else
+	
+	if (Agents[AgentId] == nullptr)
 	{
-		return Agents[AgentId];
+		UE_LOG(LogLearning, Warning, TEXT("%s: AgentId %d object is nullptr."), *GetName(), AgentId);
+		return nullptr;
 	}
+	
+	if (!Agents[AgentId].IsA(AgentClass))
+	{
+		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d cast invalid. Agent was of class '%s', not '%s'."), *GetName(), AgentId, *Agents[AgentId]->GetClass()->GetName(), *AgentClass->GetName());
+		return nullptr;
+	}
+	
+	return Agents[AgentId];
 }
 
-void ALearningAgentsManager::GetAgents(TArray<UObject*>& OutAgents, const TArray<int32>& AgentIds, const TSubclassOf<UObject> AgentClass) const
+void ULearningAgentsManager::GetAgents(TArray<UObject*>& OutAgents, const TArray<int32>& AgentIds, const TSubclassOf<UObject> AgentClass) const
 {
 	OutAgents.SetNumUninitialized(AgentIds.Num());
 
@@ -313,21 +315,34 @@ void ALearningAgentsManager::GetAgents(TArray<UObject*>& OutAgents, const TArray
 		{
 			UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found. Be sure to only use AgentIds returned by AddAgent and check that the agent has not be removed."), *GetName(), AgentIds[AgentIdIdx]);
 			OutAgents[AgentIdIdx] = nullptr;
+			continue;
 		}
-		else
+		
+		if (Agents[AgentIds[AgentIdIdx]] == nullptr)
 		{
-			OutAgents[AgentIdIdx] = Agents[AgentIds[AgentIdIdx]];
+			UE_LOG(LogLearning, Warning, TEXT("%s: AgentId %d object is nullptr."), *GetName(), AgentIds[AgentIdIdx]);
+			OutAgents[AgentIdIdx] = nullptr;
+			continue;
 		}
+		
+		if (!Agents[AgentIds[AgentIdIdx]].IsA(AgentClass))
+		{
+			UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d cast invalid. Agent was of class '%s', not '%s'."), *GetName(), AgentIds[AgentIdIdx], *Agents[AgentIds[AgentIdIdx]]->GetClass()->GetName(), *AgentClass->GetName());
+			OutAgents[AgentIdIdx] = nullptr;
+			continue;
+		}
+		
+		OutAgents[AgentIdIdx] = Agents[AgentIds[AgentIdIdx]];
 	}
 }
 
-void ALearningAgentsManager::GetAllAgents(TArray<UObject*>& OutAgents, TArray<int32>& OutAgentIds, const TSubclassOf<UObject> AgentClass) const
+void ULearningAgentsManager::GetAllAgents(TArray<UObject*>& OutAgents, TArray<int32>& OutAgentIds, const TSubclassOf<UObject> AgentClass) const
 {
 	OutAgentIds = OccupiedAgentIds;
 	GetAgents(OutAgents, OutAgentIds, AgentClass);
 }
 
-int32 ALearningAgentsManager::GetAgentId(UObject* Agent) const
+int32 ULearningAgentsManager::GetAgentId(UObject* Agent) const
 {
 	const int32 AgentId = Agents.Find(Agent);
 
@@ -342,7 +357,7 @@ int32 ALearningAgentsManager::GetAgentId(UObject* Agent) const
 	}
 }
 
-void ALearningAgentsManager::GetAgentIds(TArray<int32>& OutAgentIds, const TArray<UObject*>& InAgents) const
+void ULearningAgentsManager::GetAgentIds(TArray<int32>& OutAgentIds, const TArray<UObject*>& InAgents) const
 {
 	OutAgentIds.SetNumUninitialized(InAgents.Num());
 
@@ -362,70 +377,63 @@ void ALearningAgentsManager::GetAgentIds(TArray<int32>& OutAgentIds, const TArra
 	}
 }
 
-int32 ALearningAgentsManager::GetAgentNum() const
+int32 ULearningAgentsManager::GetAgentNum() const
 {
 	return OccupiedAgentIds.Num();
 }
 
-bool ALearningAgentsManager::HasAgentObject(UObject* Agent) const
+bool ULearningAgentsManager::HasAgentObject(UObject* Agent) const
 {
 	return Agents.Contains(Agent);
 }
 
-bool ALearningAgentsManager::HasAgent(const int32 AgentId) const
+bool ULearningAgentsManager::HasAgent(const int32 AgentId) const
 {
 	return OccupiedAgentSet.Contains(AgentId);
 }
 
-void ALearningAgentsManager::AddManagerAsTickPrerequisiteOfAgents(const TArray<AActor*>& InAgents)
-{
-	for (AActor* Agent : InAgents)
-	{
-		Agent->AddTickPrerequisiteActor(this);
-	}
-}
-
-void ALearningAgentsManager::AddAgentsAsTickPrerequisiteOfManager(const TArray<AActor*>& InAgents)
-{
-	for (AActor* Agent : InAgents)
-	{
-		this->AddTickPrerequisiteActor(Agent);
-	}
-}
-
-const UObject* ALearningAgentsManager::GetAgent(const int32 AgentId) const
+const UObject* ULearningAgentsManager::GetAgent(const int32 AgentId) const
 {
 	UE_LEARNING_CHECK(HasAgent(AgentId));
 	return Agents[AgentId];
 }
 
-UObject* ALearningAgentsManager::GetAgent(const int32 AgentId)
+UObject* ULearningAgentsManager::GetAgent(const int32 AgentId)
 {
 	UE_LEARNING_CHECK(HasAgent(AgentId));
 	return Agents[AgentId];
 }
 
-const TArray<int32>& ALearningAgentsManager::GetAllAgentIds() const
+const TArray<int32>& ULearningAgentsManager::GetAllAgentIds() const
 {
 	return OccupiedAgentIds;
 }
 
-UE::Learning::FIndexSet ALearningAgentsManager::GetAllAgentSet() const
+UE::Learning::FIndexSet ULearningAgentsManager::GetAllAgentSet() const
 {
 	return OccupiedAgentSet;
 }
 
-const TSharedPtr<UE::Learning::FArrayMap>& ALearningAgentsManager::GetInstanceData() const
-{
-	return InstanceData;
-}
-
-TConstArrayView<TObjectPtr<UObject>> ALearningAgentsManager::GetAgents() const
+TConstArrayView<TObjectPtr<UObject>> ULearningAgentsManager::GetAgents() const
 {
 	return Agents;
 }
 
-void ALearningAgentsManager::UpdateAgentSets()
+void ULearningAgentsManager::AddListener(ULearningAgentsManagerListener* Listener)
+{
+	Listeners.Add(Listener);
+	OnEventAgentIds = OccupiedAgentIds;
+	Listener->OnAgentsAdded(OnEventAgentIds);
+}
+
+void ULearningAgentsManager::RemoveListener(ULearningAgentsManagerListener* Listener)
+{
+	OnEventAgentIds = OccupiedAgentIds;
+	Listener->OnAgentsRemoved(OnEventAgentIds);
+	Listeners.Remove(Listener);
+}
+
+void ULearningAgentsManager::UpdateAgentSets()
 {
 	// Keep OccupiedAgentIds sorted in ascending order for better memory access patterns.
 	OccupiedAgentIds.Sort();

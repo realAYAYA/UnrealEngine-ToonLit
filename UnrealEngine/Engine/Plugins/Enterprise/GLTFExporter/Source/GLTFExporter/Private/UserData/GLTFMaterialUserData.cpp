@@ -6,9 +6,11 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GLTFMaterialUserData)
 
+FGLTFMaterialBakeSize FGLTFMaterialBakeSize::Default = { 1024, 1024, true };
+
 FGLTFOverrideMaterialBakeSettings::FGLTFOverrideMaterialBakeSettings()
 	: bOverrideSize(false)
-	, Size(EGLTFMaterialBakeSizePOT::POT_1024)
+	, Size(FGLTFMaterialBakeSize::Default)
 	, bOverrideFilter(false)
 	, Filter(TF_Trilinear)
 	, bOverrideTiling(false)
@@ -50,7 +52,7 @@ const UMaterialInterface* UGLTFMaterialExportOptions::ResolveProxy(const UMateri
 	}
 }
 
-EGLTFMaterialBakeSizePOT UGLTFMaterialExportOptions::GetBakeSizeForPropertyGroup(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup, EGLTFMaterialBakeSizePOT DefaultValue)
+FGLTFMaterialBakeSize UGLTFMaterialExportOptions::GetBakeSizeForPropertyGroup(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup, FGLTFMaterialBakeSize DefaultValue)
 {
 	if (const FGLTFOverrideMaterialBakeSettings* BakeSettings = GetBakeSettingsByPredicate(Material, PropertyGroup, [](const FGLTFOverrideMaterialBakeSettings& Settings) { return Settings.bOverrideSize; }))
 	{

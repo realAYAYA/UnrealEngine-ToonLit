@@ -63,7 +63,10 @@ namespace UnrealBuildTool.Matchers
 		static readonly Regex s_clangNotePattern = new Regex($"^\\s*{FilePattern}\\s*{ClangLocationPattern}:\\s*note:");
 		static readonly Regex s_clangMarkerPattern = new Regex(@"^(\s*)[\^~][\s\^~]*$");
 		static readonly Regex s_xcodeIDEWatchExtensionPattern = new Regex(@"xcodebuild.*Requested but did not find extension point with identifier.*for extension.*\.watchOS of plug-in com\.apple\.dt\.IDEWatchSupportCore");
-
+		static readonly Regex s_scriptCompilePattern = new Regex(@"^\s*[A-Za-z0-9_\.]+ ERROR:.* [A-Za-z_]+ failed to compile\.");
+		static readonly Regex s_cscSummaryPattern = new Regex(@"^\s+\d+ (?:Warning|Error)\(s\)");
+		static readonly Regex s_cscOutputPattern = new Regex(@"^  [^ ]+ -> ");
+	
 		static readonly string[] s_invalidExtensions =
 		{
 			".obj",
@@ -111,7 +114,7 @@ namespace UnrealBuildTool.Matchers
 
 					// If warnings as errors is enabled, upgrade any following warnings to errors.
 					LogValue? code;
-					if (newEvent.Properties != null && newEvent.TryGetProperty("code", out code) && code.Text == "C2220")
+					if (newEvent.Properties != null && newEvent.TryGetProperty("code", out code) && code.Text.Equals("C2220", StringComparison.Ordinal))
 					{
 						ILogCursor nextCursor = builder.Next;
 						while (nextCursor.CurrentLine != null)
@@ -174,17 +177,22 @@ namespace UnrealBuildTool.Matchers
 					return eventMatch;
 				}
 			}
-			else if (input.TryMatch(s_xcodeIDEWatchExtensionPattern, out Match? match))
+			else if (input.IsMatch(s_xcodeIDEWatchExtensionPattern))
 			{
 				LogEventBuilder builder = new LogEventBuilder(input);
 				return builder.ToMatch(LogEventPriority.Normal, LogLevel.Information, KnownLogEvents.Systemic_XCode);
+			}
+			else if (input.IsMatch(s_scriptCompilePattern))
+			{
+				LogEventBuilder builder = new LogEventBuilder(input);
+				return builder.ToMatch(LogEventPriority.High, LogLevel.Error, KnownLogEvents.Compiler_Summary);
 			}
 			return null;
 		}
 
 		static readonly Regex s_xcodeRebuildPCHPattern = new Regex(@"(?<severity>(?:[Ff]atal )?[Ee]rror): file '(?<file>.*)' has been modified since the precompiled header '(?<pch>.*)' was built");
 
-		bool TryMatchXcodeCppEvent(LogEventBuilder builder, [NotNullWhen(true)] out LogEventMatch? outEvent)
+		static bool TryMatchXcodeCppEvent(LogEventBuilder builder, [NotNullWhen(true)] out LogEventMatch? outEvent)
 		{
 			Match? match;
 			if (builder.Current.TryMatch(s_xcodeRebuildPCHPattern, out match))
@@ -203,7 +211,7 @@ namespace UnrealBuildTool.Matchers
 		static readonly Regex s_msvcNotePattern = new Regex($"^\\s*{FilePattern}(?:{VisualCppLocationPattern})?\\s*: note:");
 		static readonly Regex s_projectPattern = new Regex(@"\[(?<project>[^[\]]+)]\s*$");
 
-		bool TryMatchVisualCppEvent(LogEventBuilder builder, [NotNullWhen(true)] out LogEventMatch? outEvent)
+		static bool TryMatchVisualCppEvent(LogEventBuilder builder, [NotNullWhen(true)] out LogEventMatch? outEvent)
 		{
 			Match? match;
 			if (!builder.Current.TryMatch(s_msvcPattern, out match) || !IsSourceFile(match))
@@ -260,7 +268,7 @@ namespace UnrealBuildTool.Matchers
 
 			for (; ; )
 			{
-				while (builder.Current.StartsWith(1, nextIndent))
+				while (builder.Current.StartsWith(1, nextIndent) && !builder.Current.IsMatch(1, s_cscSummaryPattern) && !builder.Current.IsMatch(1, s_cscOutputPattern))
 				{
 					builder.MoveNext();
 				}
@@ -292,7 +300,7 @@ namespace UnrealBuildTool.Matchers
 			return true;
 		}
 
-		void SkipClangMarker(LogEventBuilder builder)
+		static void SkipClangMarker(LogEventBuilder builder)
 		{
 			Match? match;
 			if (builder.Current.TryMatch(2, s_clangMarkerPattern, out match))
@@ -300,7 +308,7 @@ namespace UnrealBuildTool.Matchers
 				string indent = match.Groups[1].Value;
 
 				int length = 2;
-				if (indent.Length > 0 && builder.Current.TryGetLine(3, out string? suggestLine) && suggestLine.Length > indent.Length && suggestLine.StartsWith(indent) && !Char.IsWhiteSpace(suggestLine[indent.Length]))
+				if (indent.Length > 0 && builder.Current.TryGetLine(3, out string? suggestLine) && suggestLine.Length > indent.Length && suggestLine.StartsWith(indent, StringComparison.Ordinal) && !Char.IsWhiteSpace(suggestLine[indent.Length]))
 				{
 					length++;
 				}
@@ -317,11 +325,11 @@ namespace UnrealBuildTool.Matchers
 			}
 			else
 			{
-				return fileName.Substring(0, index);
+				return fileName[..index];
 			}
 		}
 
-		bool IsSourceFile(Match match)
+		static bool IsSourceFile(Match match)
 		{
 			Group group = match.Groups["file"];
 			if (!group.Success)
@@ -341,7 +349,7 @@ namespace UnrealBuildTool.Matchers
 		static LogLevel GetLogLevelFromSeverity(Match match)
 		{
 			string severity = match.Groups["severity"].Value;
-			if (severity.Equals("warning", StringComparison.Ordinal))
+			if (severity.Equals("warning", StringComparison.OrdinalIgnoreCase))
 			{
 				return LogLevel.Warning;
 			}

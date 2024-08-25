@@ -20,6 +20,7 @@
 #include "MVVM/Extensions/IResizableExtension.h"
 #include "MVVM/Extensions/ISelectableExtension.h"
 #include "MVVM/Extensions/ISoloableExtension.h"
+#include "MVVM/Extensions/ILockableExtension.h"
 #include "MVVM/Extensions/ISortableExtension.h"
 #include "MVVM/Extensions/IStretchableExtension.h"
 #include "MVVM/Extensions/ITrackAreaExtension.h"
@@ -32,6 +33,7 @@
 #include "MVVM/ViewModels/OutlinerViewModel.h"
 #include "MVVM/ViewModels/TrackAreaViewModel.h"
 #include "MVVM/ViewModels/ViewModel.h"
+#include "MVVM/ViewModels/EditorSharedViewModelData.h"
 #include "MVVM/Views/ITrackAreaHotspot.h"
 
 namespace UE
@@ -51,7 +53,9 @@ UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IHotspotExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IHoveredExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(ILayerBarExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IMutableExtension);
+UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(ILockableExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IOutlinerDropTargetOutlinerExtension);
+UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IHierarchicalCache);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IOutlinerExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IPinnableExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IRecyclableExtension);
@@ -70,6 +74,9 @@ UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IKeyExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(IDynamicExtension);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(FDynamicExtensionContainer);
 UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(FLinkedOutlinerExtension);
+UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(FMuteStateCacheExtension);
+UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(FSoloStateCacheExtension);
+UE_SEQUENCER_DEFINE_VIEW_MODEL_TYPE_ID(FLockStateCacheExtension);
 
 // View models
 UE_SEQUENCER_DEFINE_CASTABLE(FEditorViewModel);
@@ -77,6 +84,8 @@ UE_SEQUENCER_DEFINE_CASTABLE(FOutlinerSpacer);
 UE_SEQUENCER_DEFINE_CASTABLE(FOutlinerViewModel);
 UE_SEQUENCER_DEFINE_CASTABLE(FTrackAreaViewModel);
 UE_SEQUENCER_DEFINE_CASTABLE(FViewModel);
+UE_SEQUENCER_DEFINE_CASTABLE(FSharedViewModelData);
+UE_SEQUENCER_DEFINE_CASTABLE(FEditorSharedViewModelData);
 
 // Views
 UE_SEQUENCER_DEFINE_CASTABLE(ITrackAreaHotspot);

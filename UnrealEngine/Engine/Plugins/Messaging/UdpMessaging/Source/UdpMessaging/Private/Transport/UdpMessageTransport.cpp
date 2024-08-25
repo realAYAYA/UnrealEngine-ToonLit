@@ -101,7 +101,7 @@ struct FDenyList
 static FDenyList GlobalDenyCandidateTable;
 }
 
-FUdpMessageTransport::FUdpMessageTransport(const FIPv4Endpoint& InUnicastEndpoint, const FIPv4Endpoint& InMulticastEndpoint, TArray<FIPv4Endpoint> InStaticEndpoints, TArray<FIPv4Endpoint> InExcludedEndpoints, uint8 InMulticastTtl)
+FUdpMessageTransport::FUdpMessageTransport(const FIPv4Endpoint& InUnicastEndpoint, const FIPv4Endpoint& InMulticastEndpoint, TArray<FIPv4Endpoint> InStaticEndpoints, TArray<FString> InExcludedEndpointsAsString, uint8 InMulticastTtl)
 	: MessageProcessor(nullptr)
 	, MulticastEndpoint(InMulticastEndpoint)
 	, MulticastReceiver(nullptr)
@@ -115,7 +115,7 @@ FUdpMessageTransport::FUdpMessageTransport(const FIPv4Endpoint& InUnicastEndpoin
 	, UnicastSocket(nullptr)
 #endif
 	, StaticEndpoints(MoveTemp(InStaticEndpoints))
-	, ExcludedEndpoints(MoveTemp(InExcludedEndpoints))
+	, ExcludedEndpoints(MoveTemp(InExcludedEndpointsAsString))
 {
 }
 
@@ -266,8 +266,12 @@ bool FUdpMessageTransport::StartTransport(IMessageTransportHandler& Handler)
 	if (UnicastSocket == nullptr)
 	{
 		UE_LOG(LogUdpMessaging, Error, TEXT("StartTransport failed to create unicast socket on %s"), *UnicastEndpoint.ToString());
-
 		return false;
+	}
+	else
+	{
+		int32 PortNo = UnicastSocket->GetPortNo();
+		UE_LOG(LogUdpMessaging, Display, TEXT("Unicast socket bound to '%s:%d'."), *UnicastEndpoint.Address.ToString(), PortNo);
 	}
 #endif
 
@@ -441,7 +445,95 @@ void FUdpMessageTransport::HandleProcessorNodeLost(const FGuid& LostNodeId)
 	TransportHandler->ForgetTransportNode(LostNodeId);
 }
 
-bool FUdpMessageTransport::HandleProcessorEndpointCheck(const FGuid& EndpointNodeId, const FIPv4Endpoint& SenderIpAddress)
+namespace UE::UdpMessageTransport::Private
+{
+	TArray<FString> TokenizeStringAddress(const FString &Address)
+	{
+		TArray<FString> Tokens;
+		bool bIsValid = Address.ParseIntoArray(Tokens, TEXT("."), false /*CullEmpty*/) == 4;
+		if (bIsValid)
+		{
+			for (const FString& Token : Tokens)
+			{
+				if (!FCString::IsNumeric(*Token))
+				{
+					// If it's not a pure number, look for individual characters
+					for (int32 Index = 0; Index < Token.Len(); ++Index)
+					{
+						const TCHAR& Character = Token[Index];
+						if (!(FChar::IsDigit(Character) || Character == '*' || Character == '?'))
+						{
+							bIsValid = false;
+							break;
+						}
+					}
+
+					if (!bIsValid)
+					{
+						break;
+					}
+				}
+			}
+		}
+		return Tokens;
+	}
+
+	bool MatchesIPv4Address(const FString& SourceAddress, const FIPv4Address& TargetAddress)
+	{
+		FString TargetAsString = TargetAddress.ToString();
+		TArray<FString> SourceTokenized = TokenizeStringAddress(SourceAddress);
+		TArray<FString> TargetTokenized =  TokenizeStringAddress(TargetAsString);
+		if (SourceTokenized.Num() == 4 && SourceTokenized.Num() == TargetTokenized.Num())
+		{
+			for (int32 TokenIndex = 0; TokenIndex < 4; ++TokenIndex)
+			{
+				const FString& Source = SourceTokenized[TokenIndex];
+				const FString& Target = TargetTokenized[TokenIndex];
+				if (!Target.MatchesWildcard(Source))
+				{
+					return false;
+				}
+			}
+
+			// It must have passed all tokens.
+			return true;
+		}
+		return true;
+	}
+
+	int32 GetPortNumber(const FString& InPortAsString)
+	{
+		if (InPortAsString.IsNumeric())
+		{
+			return FCString::Atoi(*InPortAsString);
+		}
+		return -1;
+	}
+
+
+}
+
+bool FUdpMessageTransport::MatchesEndpoint(const FString& SourceEndpoint, const FIPv4Endpoint& TargetEndpoint)
+{
+	using namespace UE::UdpMessageTransport::Private;
+	if (SourceEndpoint.IsEmpty())
+	{
+		return false;
+	}
+
+	TArray<FString> IpPortTokens;
+	const int32 Items = SourceEndpoint.ParseIntoArray(IpPortTokens, TEXT(":"));
+	if (Items <= 0)
+	{
+		return false;
+	}
+
+	const int32 Port = Items == 1 ? 0 : GetPortNumber(IpPortTokens[1]);
+	return (Port == 0 || Port == TargetEndpoint.Port)
+		&& MatchesIPv4Address(IpPortTokens[0], TargetEndpoint.Address);
+}
+
+bool FUdpMessageTransport::HandleProcessorEndpointCheck(const FGuid& EndpointNodeId, const FIPv4Endpoint& SenderEndpoint)
 {
 	if (CVarEndpointDenyListEnabled.GetValueOnAnyThread())
 	{
@@ -451,10 +543,9 @@ bool FUdpMessageTransport::HandleProcessorEndpointCheck(const FGuid& EndpointNod
 		}
 	}
 
-	for (const FIPv4Endpoint& Endpoint : ExcludedEndpoints)
+	for (const FString& Endpoint : ExcludedEndpoints)
 	{
-		if ((Endpoint.Port == 0 && SenderIpAddress.Address == Endpoint.Address)
-			|| SenderIpAddress == Endpoint)
+		if (MatchesEndpoint(Endpoint, SenderEndpoint))
 		{
 			return false;
 		}

@@ -122,6 +122,7 @@ FPrimitiveSceneProxy* USphereComponent::CreateSceneProxy()
 			,	bDrawOnlyIfSelected( InComponent->bDrawOnlyIfSelected )
 			,	SphereColor(InComponent->ShapeColor)
 			,	SphereRadius(InComponent->SphereRadius)
+			,	LineThickness(InComponent->LineThickness)
 		{
 			bWillEverBeLit = false;
 		}
@@ -159,9 +160,9 @@ FPrimitiveSceneProxy* USphereComponent::CreateSceneProxy()
 					FVector ScaledZ = LocalToWorld.GetUnitAxis(EAxis::Z) * MinAbsScale;
 
 					const int32 SphereSides = FMath::Clamp<int32>(SphereRadius / 4.f, 16, 64);
-					DrawCircle(PDI, LocalToWorld.GetOrigin(), ScaledX, ScaledY, DrawSphereColor, SphereRadius, SphereSides, SDPG_World);
-					DrawCircle(PDI, LocalToWorld.GetOrigin(), ScaledX, ScaledZ, DrawSphereColor, SphereRadius, SphereSides, SDPG_World);
-					DrawCircle(PDI, LocalToWorld.GetOrigin(), ScaledY, ScaledZ, DrawSphereColor, SphereRadius, SphereSides, SDPG_World);
+					DrawCircle(PDI, LocalToWorld.GetOrigin(), ScaledX, ScaledY, DrawSphereColor, SphereRadius, SphereSides, SDPG_World, LineThickness);
+					DrawCircle(PDI, LocalToWorld.GetOrigin(), ScaledX, ScaledZ, DrawSphereColor, SphereRadius, SphereSides, SDPG_World, LineThickness);
+					DrawCircle(PDI, LocalToWorld.GetOrigin(), ScaledY, ScaledZ, DrawSphereColor, SphereRadius, SphereSides, SDPG_World, LineThickness);
 				}
 			}
 		}
@@ -189,6 +190,7 @@ FPrimitiveSceneProxy* USphereComponent::CreateSceneProxy()
 		const uint32				bDrawOnlyIfSelected:1;
 		const FColor				SphereColor;
 		const float					SphereRadius;
+		const float					LineThickness;
 	};
 
 	return new FSphereSceneProxy( this );

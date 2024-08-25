@@ -17,6 +17,62 @@ FString FRigUnit_SetTransform::GetUnitLabel() const
 	return FString::Printf(TEXT("Set Transform - %s%s"), *Type, *Initial);
 }
 
+#if WITH_EDITOR
+
+bool FRigUnit_SetTransform::UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetTransform, Value))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			const FTransform ParentTransform = Hierarchy->GetParentTransform(Item, false);
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		}
+		else
+		{
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, FTransform::Identity, false);
+		}
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, Value, false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, Value, true);
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateHierarchyForDirectManipulation(InNode, InInstance, InContext, InInfo);
+}
+
+bool FRigUnit_SetTransform::UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetTransform, Value))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			Value = Hierarchy->GetLocalTransform(InInfo->ControlKey, false);
+		}
+		else
+		{
+			Value = Hierarchy->GetGlobalTransform(InInfo->ControlKey, false);
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateDirectManipulationFromHierarchy(InNode, InInstance, InContext, InInfo);
+}
+
+#endif
+
 FRigUnit_SetTransform_Execute()
 {
     DECLARE_SCOPE_HIERARCHICAL_COUNTER_RIGUNIT()
@@ -120,6 +176,64 @@ FString FRigUnit_SetTranslation::GetUnitLabel() const
 	return FString::Printf(TEXT("Set Translation - %s"), *Type);
 }
 
+#if WITH_EDITOR
+
+bool FRigUnit_SetTranslation::UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetTranslation, Value))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			const FTransform ParentTransform = Hierarchy->GetParentTransform(Item, false);
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		}
+		else
+		{
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, FTransform::Identity, false);
+		}
+		FTransform Transform = FTransform::Identity;
+		Transform.SetTranslation(Value);
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, Transform, false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, Transform, true);
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateHierarchyForDirectManipulation(InNode, InInstance, InContext, InInfo);
+}
+
+bool FRigUnit_SetTranslation::UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetTranslation, Value))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			Value = Hierarchy->GetLocalTransform(InInfo->ControlKey, false).GetTranslation();
+		}
+		else
+		{
+			Value = Hierarchy->GetGlobalTransform(InInfo->ControlKey, false).GetTranslation();
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateDirectManipulationFromHierarchy(InNode, InInstance, InContext, InInfo);
+}
+
+#endif
+
 FRigUnit_SetTranslation_Execute()
 {
 	FTransform Transform = FTransform::Identity;
@@ -134,6 +248,66 @@ FString FRigUnit_SetRotation::GetUnitLabel() const
 	return FString::Printf(TEXT("Set Rotation - %s"), *Type);
 }
 
+#if WITH_EDITOR
+
+bool FRigUnit_SetRotation::UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetRotation, Value))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			const FTransform ParentTransform = Hierarchy->GetParentTransform(Item, false);
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		}
+		else
+		{
+			FTransform OffsetTransform = FTransform::Identity;
+			OffsetTransform.SetTranslation(Hierarchy->GetGlobalTransform(Item, false).GetTranslation());
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, OffsetTransform, false);
+		}
+		FTransform Transform = FTransform::Identity;
+		Transform.SetRotation(Value);
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, Transform, false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, Transform, true);
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateHierarchyForDirectManipulation(InNode, InInstance, InContext, InInfo);
+}
+
+bool FRigUnit_SetRotation::UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetRotation, Value))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			Value = Hierarchy->GetLocalTransform(InInfo->ControlKey, false).GetRotation();
+		}
+		else
+		{
+			Value = Hierarchy->GetGlobalTransform(InInfo->ControlKey, false).GetRotation();
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateDirectManipulationFromHierarchy(InNode, InInstance, InContext, InInfo);
+}
+
+#endif
+
 FRigUnit_SetRotation_Execute()
 {
 	FTransform Transform = FTransform::Identity;
@@ -147,6 +321,66 @@ FString FRigUnit_SetScale::GetUnitLabel() const
 	FString Type = StaticEnum<ERigElementType>()->GetDisplayNameTextByValue((int64)Item.Type).ToString();
 	return FString::Printf(TEXT("Set Scale - %s"), *Type);
 }
+
+#if WITH_EDITOR
+
+bool FRigUnit_SetScale::UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetScale, Scale))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			const FTransform ParentTransform = Hierarchy->GetParentTransform(Item, false);
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		}
+		else
+		{
+			FTransform OffsetTransform = FTransform::Identity;
+			OffsetTransform.SetTranslation(Hierarchy->GetGlobalTransform(Item, false).GetTranslation());
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, OffsetTransform, false);
+		}
+		FTransform Transform = FTransform::Identity;
+		Transform.SetScale3D(Scale);
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, Transform, false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, Transform, true);
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateHierarchyForDirectManipulation(InNode, InInstance, InContext, InInfo);
+}
+
+bool FRigUnit_SetScale::UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SetScale, Scale))
+	{
+		if(Space == ERigVMTransformSpace::LocalSpace)
+		{
+			Scale = Hierarchy->GetLocalTransform(InInfo->ControlKey, false).GetScale3D();
+		}
+		else
+		{
+			Scale = Hierarchy->GetGlobalTransform(InInfo->ControlKey, false).GetScale3D();
+		}
+		return true;
+	}
+	return FRigUnitMutable::UpdateDirectManipulationFromHierarchy(InNode, InInstance, InContext, InInfo);
+}
+
+#endif
 
 FRigUnit_SetScale_Execute()
 {

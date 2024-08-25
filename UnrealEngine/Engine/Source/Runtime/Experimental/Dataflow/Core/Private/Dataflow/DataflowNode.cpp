@@ -84,6 +84,19 @@ FDataflowInput* FDataflowNode::FindInput(void* Reference)
 	return nullptr;
 }
 
+const FDataflowInput* FDataflowNode::FindInput(const FGuid& InGuid) const
+{
+	for (TPair<uint32, FDataflowInput*> Elem : Inputs)
+	{
+		FDataflowInput* Con = Elem.Value;
+		if (Con->GetGuid() == InGuid)
+		{
+			return Con;
+		}
+	}
+	return nullptr;
+}
+
 TArray< FDataflowInput* > FDataflowNode::GetInputs() const
 {
 	TArray< FDataflowInput* > Result;
@@ -181,6 +194,19 @@ FDataflowOutput* FDataflowNode::FindOutput(void* Reference)
 	return nullptr;
 }
 
+const FDataflowOutput* FDataflowNode::FindOutput(const FGuid& InGuid) const
+{
+	for (TPair<uint32, FDataflowOutput*> Elem : Outputs)
+	{
+		FDataflowOutput* Con = Elem.Value;
+		if (Con->GetGuid() == InGuid)
+		{
+			return Con;
+		}
+	}
+	return nullptr;
+}
+
 int32 FDataflowNode::NumOutputs() const
 {
 	return Outputs.Num();
@@ -220,6 +246,42 @@ TArray<Dataflow::FPin> FDataflowNode::GetPins() const
 		RetVal.Add({ Dataflow::FPin::EDirection::OUTPUT,Con->GetType(), Con->GetName() });
 	}
 	return RetVal;
+}
+
+void FDataflowNode::UnregisterPinConnection(const Dataflow::FPin& Pin)
+{
+	if (Pin.Direction == Dataflow::FPin::EDirection::INPUT)
+	{
+		for (TMap< int32, FDataflowInput*>::TIterator Iter = Inputs.CreateIterator(); Iter; ++Iter)
+		{
+			FDataflowInput* Con = Iter.Value();
+			if (Con->GetName().IsEqual(Pin.Name) && Con->GetType().IsEqual(Pin.Type))
+			{
+				Iter.RemoveCurrent();
+				delete Con;
+
+				// Invalidate graph as this input might have had connections
+				Invalidate();
+				break;
+			}
+		}
+	}
+	else if (Pin.Direction == Dataflow::FPin::EDirection::OUTPUT)
+	{
+		for (TMap<int32, FDataflowOutput*>::TIterator Iter = Outputs.CreateIterator(); Iter; ++Iter)
+		{
+			FDataflowOutput* Con = Iter.Value();
+			if (Con->GetName().IsEqual(Pin.Name) && Con->GetType().IsEqual(Pin.Type))
+			{
+				Iter.RemoveCurrent();
+				delete Con;
+
+				// Invalidate graph as this input might have had connections
+				Invalidate();
+				break;
+			}
+		}
+	}
 }
 
 void FDataflowNode::Invalidate(const Dataflow::FTimestamp& InModifiedTimestamp)
@@ -304,7 +366,7 @@ uint32 FDataflowNode::GetPropertyOffset(const FName& PropertyFullName) const
 	return Offset;
 }
 
-FName FDataflowNode::GetPropertyFullName(const TArray<const FProperty*>& PropertyChain)
+FString FDataflowNode::GetPropertyFullNameString(const TConstArrayView<const FProperty*>& PropertyChain)
 {
 	FString PropertyFullName;
 	for (const FProperty* const Property : PropertyChain)
@@ -314,6 +376,12 @@ FName FDataflowNode::GetPropertyFullName(const TArray<const FProperty*>& Propert
 			PropertyName :
 			FString::Format(TEXT("{0}.{1}"), { PropertyName, PropertyFullName });
 	}
+	return PropertyFullName;
+}
+
+FName FDataflowNode::GetPropertyFullName(const TArray<const FProperty*>& PropertyChain)
+{
+	const FString PropertyFullName = GetPropertyFullNameString(TConstArrayView<const FProperty*>(PropertyChain));
 	return FName(*PropertyFullName);
 }
 
@@ -447,13 +515,24 @@ bool FDataflowNode::ValidateConnections()
 					else if (const FString* PassthroughName = Property->FindMetaData(FDataflowNode::DataflowPassthrough))
 					{
 						void* PassthroughConnectionAddress = OutputConnection->GetPassthroughRealAddress();
-						if(PassthroughConnectionAddress == nullptr)
+						if (PassthroughConnectionAddress == nullptr)
 						{
-							UE_LOG(LogChaos, Warning, TEXT("Missing DataflowPassthrough registration for (%s:%s)"), *GetName().ToString(),*PropName.ToString());
+							UE_LOG(LogChaos, Warning, TEXT("Missing DataflowPassthrough registration for (%s:%s)"), *GetName().ToString(), *PropName.ToString());
 							bHasValidConnections = false;
 						}
 
-						const FDataflowInput* PassthroughConnectionInput = FindInput(FName(*PassthroughName));
+						// Assume passthrough name is relative to current property name.
+						FString FullPassthroughName;
+						if (PropertyChain.Num() <= 1)
+						{
+							FullPassthroughName = *PassthroughName;
+						}
+						else
+						{
+							FullPassthroughName = FString::Format(TEXT("{0}.{1}"), { GetPropertyFullNameString(TConstArrayView<const FProperty*>(&PropertyChain[1], PropertyChain.Num() - 1)), *PassthroughName});
+						}
+
+						const FDataflowInput* PassthroughConnectionInput = FindInput(FName(FullPassthroughName));
 						const FDataflowInput* PassthroughConnectionInputFromArg = FindInput(PassthroughConnectionAddress);
 
 						if(PassthroughConnectionInputFromArg != PassthroughConnectionInput)

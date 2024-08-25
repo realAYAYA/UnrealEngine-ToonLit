@@ -1,23 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "AssetCompilingManager.h"
 #include "AssetRegistry/ARFilter.h"
-#include "HAL/FileManager.h"
-#include "Misc/AutomationTest.h"
-#include "InterchangeDispatcher.h"
-#include "InterchangeImportTestData.h"
-#include "InterchangeImportTestPlan.h"
-#include "InterchangeImportTestStepBase.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Editor.h"
 #include "Editor/Transactor.h"
-
+#include "HAL/FileManager.h"
+#include "Misc/AutomationTest.h"
+#include "InterchangeHelper.h"
+#include "InterchangeImportTestData.h"
+#include "InterchangeImportTestPlan.h"
+#include "InterchangeImportTestStepBase.h"
 #include "Modules/ModuleManager.h"
 #include "ObjectTools.h"
 
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FInterchangeImportTest, FAutomationTestBase, "Editor.Interchange", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-
-IMPLEMENT_COMPLEX_AUTOMATION_TEST(FInterchangeImportTest, "Editor.Interchange.Import", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
+const FString InterchangeTestsRootGameFolder = TEXT("/Game/Tests/Interchange/");
 
 void FInterchangeImportTest::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
 {
@@ -26,12 +25,6 @@ void FInterchangeImportTest::GetTests(TArray<FString>& OutBeautifiedNames, TArra
 #if PLATFORM_MAC || PLATFORM_LINUX
 	return;
 #endif
-
-	//Make sure interchange worker is available, do not run the test if unavailable
-	if (!UE::Interchange::FInterchangeDispatcher::IsInterchangeWorkerAvailable())
-	{
-		return;
-	}
 
 	const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 	TArray<FAssetData> AllTestPlans;
@@ -54,7 +47,13 @@ void FInterchangeImportTest::GetTests(TArray<FString>& OutBeautifiedNames, TArra
 	{
 		FString PathAsString = Path.ToString();
 		OutTestCommands.Add(PathAsString);
-		OutBeautifiedNames.Add(FPaths::GetBaseFilename(PathAsString));
+
+		FString BeautifiedName = PathAsString;
+		FPaths::MakePathRelativeTo(BeautifiedName, *InterchangeTestsRootGameFolder);
+		BeautifiedName.ReplaceCharInline(TEXT('/'), TEXT('.'));
+		BeautifiedName.ReplaceCharInline(TEXT('\\'), TEXT('.'));
+
+		OutBeautifiedNames.Add(BeautifiedName);
 	}
 }
 
@@ -67,10 +66,17 @@ bool FInterchangeImportTest::RunTest(const FString& Path)
 	return true;
 #endif
 
+	static const auto CVarInterchangeFbx = IConsoleManager::Get().FindConsoleVariable(TEXT("Interchange.FeatureFlags.Import.FBX"));
+	bool IsInterchangeFbxEnabled = CVarInterchangeFbx->GetBool();
+	UE::Interchange::FScopedLambda IsInterchangeEnabledGuard([&IsInterchangeFbxEnabled]()
+		{
+			CVarInterchangeFbx->Set(IsInterchangeFbxEnabled, ECVF_SetByConsole);
+		});
+	//Make sure interchange is enabled for fbx
+	CVarInterchangeFbx->Set(true, ECVF_SetByConsole);
+
 	// Determine the test plan assets within the given path which will be run in parallel
-
 	TArray<FInterchangeImportTestData> TestPlans;
-
 	if (Path.Contains(TEXT(".")))
 	{
 		// Run test on a single TestPlan asset
@@ -296,15 +302,21 @@ bool FInterchangeImportTest::RunTest(const FString& Path)
 		{
 			if (AActor* Actor = Cast<AActor>(ResultObject))
 			{
-				constexpr bool bShouldModifyLevel = false;
-				Actor->GetWorld()->RemoveActor(Actor, bShouldModifyLevel);
+				constexpr bool bShouldModifyLevel = true;
+				Actor->GetWorld()->EditorDestroyActor(Actor, bShouldModifyLevel);
+				// Call UObject::Rename directly on actor to avoid AActor::Rename which unnecessarily unregister and re-register components
+				Actor->UObject::Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
 			}
 			else
 			{
+
 				ObjectsToDelete.Add(ResultObject);
 			}
 		}
 	}
+
+	//Make sure all compilation is done before deleting some objects
+	FAssetCompilingManager::Get().FinishAllCompilation();
 
 	constexpr bool bShowConfirmation = false;
 	ObjectTools::ForceDeleteObjects(ObjectsToDelete, bShowConfirmation);

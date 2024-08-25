@@ -16,12 +16,12 @@ class FViewInfo;
 struct FEngineShowFlags;
 
 extern bool ShouldRenderLumenDiffuseGI(const FScene* Scene, const FSceneView& View, bool bSkipTracingDataCheck = false, bool bSkipProjectCheck = false);
-extern bool ShouldRenderLumenReflections(const FViewInfo& View, bool bSkipTracingDataCheck = false, bool bSkipProjectCheck = false, bool bIncludeStandalone = true);
+extern bool ShouldRenderLumenReflections(const FSceneView& View, bool bSkipTracingDataCheck = false, bool bSkipProjectCheck = false, bool bIncludeStandalone = true);
 extern bool ShouldRenderLumenReflectionsWater(const FViewInfo& View, bool bSkipTracingDataCheck = false, bool bSkipProjectCheck = false);
 extern bool ShouldRenderLumenDirectLighting(const FScene* Scene, const FSceneView& View);
 extern bool ShouldRenderAOWithLumenGI();
 extern bool ShouldUseStereoLumenOptimizations();
-extern bool DoesPlatformSupportLumenGI(EShaderPlatform Platform, bool bSkipProjectCheck = false);
+
 
 class FLumenSceneData;
 
@@ -41,6 +41,7 @@ namespace Lumen
 	constexpr uint32 SubAllocationResLevel = 7; // log2(PHYSICAL_PAGE_SIZE)
 	constexpr uint32 NumResLevels = MaxResLevel - MinResLevel + 1;
 	constexpr uint32 CardTileSize = 8;
+	constexpr uint32 NumDistanceBuckets = 16;
 
 	constexpr float MaxTraceDistance = 0.5f * UE_OLD_WORLD_MAX;
 
@@ -71,8 +72,6 @@ namespace Lumen
 	// Features
 	bool UseAsyncCompute(const FViewFamilyInfo& ViewFamily);
 	bool UseThreadGroupSize32();
-	bool IsRadiosityEnabled(const FSceneViewFamily& ViewFamily);
-	uint32 GetRadiosityAtlasDownsampleFactor();
 
 	// Surface cache
 	bool IsSurfaceCacheFrozen();
@@ -95,11 +94,13 @@ namespace Lumen
 	bool UseHardwareRayTracedSceneLighting(const FSceneViewFamily& ViewFamily);
 	bool UseHardwareRayTracedDirectLighting(const FSceneViewFamily& ViewFamily);
 	bool UseHardwareRayTracedReflections(const FSceneViewFamily& ViewFamily);
+	bool UseReSTIRGather(const FSceneViewFamily& ViewFamily, EShaderPlatform ShaderPlatform);
 	bool UseHardwareRayTracedScreenProbeGather(const FSceneViewFamily& ViewFamily);
 	bool UseHardwareRayTracedShortRangeAO(const FSceneViewFamily& ViewFamily);
 	bool UseHardwareRayTracedRadianceCache(const FSceneViewFamily& ViewFamily);
 	bool UseHardwareRayTracedRadiosity(const FSceneViewFamily& ViewFamily);
 	bool UseHardwareRayTracedVisualize(const FSceneViewFamily& ViewFamily);
+	bool IsUsingRayTracingLightingGrid(const FSceneViewFamily& ViewFamily, const FViewInfo& View, bool bLumenGIEnabled);
 
 	bool ShouldRenderRadiosityHardwareRayTracing(const FSceneViewFamily& ViewFamily);
 	bool ShouldVisualizeHardwareRayTracing(const FSceneViewFamily& ViewFamily);
@@ -133,6 +134,8 @@ namespace Lumen
 	float GetNearFieldMaxTraceDistanceDitherScale(bool bUseFarField);
 	float GetNearFieldSceneRadius(const FViewInfo& View, bool bUseFarField);
 	FVector GetFarFieldReferencePos();
+
+	uint32 GetMeshCardDistanceBin(float Distance);
 
 	float GetHeightfieldReceiverBias();
 	void Shutdown();

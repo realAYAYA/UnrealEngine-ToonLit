@@ -20,6 +20,7 @@ namespace UE::PixelStreamingServers
 		/* Begin IServer */
 		virtual void Stop() override;
 		virtual FString GetPathOnDisk() override;
+		virtual void GetNumStreamers(TFunction<void(uint16)> OnNumStreamersReceived) override;
 		/* End IServer */
 
 	protected:

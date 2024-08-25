@@ -79,7 +79,9 @@ void SWidgetBlock::Construct( const FArguments& InArgs )
  */
 void SWidgetBlock::BuildMultiBlockWidget(const ISlateStyle* StyleSet, const FName& StyleName)
 {
-	TSharedPtr< const FMultiBox > MultiBox = OwnerMultiBoxWidget.Pin()->GetMultiBox();
+	TSharedPtr<SMultiBoxWidget> OwnerMultiBoxWidgetPinned = OwnerMultiBoxWidget.Pin();
+
+	TSharedPtr< const FMultiBox > MultiBox = OwnerMultiBoxWidgetPinned->GetMultiBox();
 	TSharedRef< const FWidgetBlock > WidgetBlock = StaticCastSharedRef< const FWidgetBlock >( MultiBlock.ToSharedRef() );
 
 	// Support menus which do not have a defined widget style yet
@@ -101,8 +103,6 @@ void SWidgetBlock::BuildMultiBlockWidget(const ISlateStyle* StyleSet, const FNam
 		LabelStyle = &StyleSet->GetWidgetStyle<FTextBlockStyle>(ISlateStyle::Join(StyleName, ".Label"));
 	}
 
-	TSharedPtr<SMultiBoxWidget> OwnerMultiBoxWidgetPinned = OwnerMultiBoxWidget.Pin();
-
 	if(OwnerMultiBoxWidgetPinned->GetMultiBox()->GetType() == EMultiBoxType::Menu)
 	{
 		// Account for checkmark used in other menu blocks but not used in for widget rows
@@ -111,7 +111,7 @@ void SWidgetBlock::BuildMultiBlockWidget(const ISlateStyle* StyleSet, const FNam
 		// If there is no label, allow the custom menu widget to consume the entire space
 		if (!bHasLabel)
 		{
-			// Wee use 1 pixel of padding to ensure the menu border shows up
+			// We use 1 pixel of padding to ensure the menu border shows up
 			Padding = FMargin(1);
 		}
 	}
@@ -143,10 +143,15 @@ void SWidgetBlock::BuildMultiBlockWidget(const ISlateStyle* StyleSet, const FNam
 	OwnerMultiBoxWidgetPinned->AddElement(this->AsWidget(), SearchLabel, MultiBlock->GetSearchable());
 
 	// This widget holds the search text, set it as the search block widget
-	if (OwnerMultiBoxWidgetPinned->GetSearchTextWidget() == WidgetBlock->ContentWidget)
+	if (OwnerMultiBoxWidgetPinned->GetSearchTextWidget() && OwnerMultiBoxWidgetPinned->GetSearchTextWidget()->GetParentWidget() == WidgetBlock->ContentWidget)
 	{
 		OwnerMultiBoxWidgetPinned->SetSearchBlockWidget(this->AsWidget());
-		this->AsWidget()->SetVisibility(EVisibility::Collapsed);
+
+		// When we are always showing the search widget, we should not hide it here.
+		if (!OwnerMultiBoxWidgetPinned->ShouldShowMenuSearchField())
+		{
+			this->AsWidget()->SetVisibility(EVisibility::Collapsed);
+		}
 	}
 
 	ChildSlot

@@ -270,7 +270,7 @@ bool SDeviceManager::HandleConnectActionCanExecute()
 	{
 		ITargetDevicePtr TargetDevice = DeviceService->GetDevice();
 
-		if (TargetDevice.IsValid() && TargetDevice->GetTargetPlatform().SupportsFeature(ETargetPlatformFeatures::SdkConnectDisconnect))
+		if (TargetDevice.IsValid() && TargetDevice->GetPlatformSettings().SupportsFeature(ETargetPlatformFeatures::SdkConnectDisconnect))
 		{
 			return !TargetDevice->IsConnected();
 		}
@@ -307,7 +307,7 @@ bool SDeviceManager::HandleDisconnectActionCanExecute()
 	{
 		ITargetDevicePtr TargetDevice = DeviceService->GetDevice();
 
-		if (TargetDevice.IsValid() && TargetDevice->GetTargetPlatform().SupportsFeature(ETargetPlatformFeatures::SdkConnectDisconnect))
+		if (TargetDevice.IsValid() && TargetDevice->GetPlatformSettings().SupportsFeature(ETargetPlatformFeatures::SdkConnectDisconnect))
 		{
 			return TargetDevice->IsConnected();
 		}

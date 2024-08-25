@@ -81,6 +81,7 @@ private:
 	void RebuildFromScratch();
 	
 	void BuildDomainFromPlugin(TSharedRef<IPlugin> Plugin);
+	void BuildUnrestrictedDomainFromPlugin(TSharedRef<IPlugin> Plugin);
 
 	void AddDomainVisibilityList(TSharedPtr<FDomainData> Domain, const TArray<FString>& VisibilityList);
 private:

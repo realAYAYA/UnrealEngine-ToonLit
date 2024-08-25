@@ -5,6 +5,7 @@
 [![Sonar Status](https://sonarcloud.io/api/project_badges/measure?project=nfrechette_rtm&metric=alert_status)](https://sonarcloud.io/dashboard?id=nfrechette_rtm)
 [![GitHub release](https://img.shields.io/github/release/nfrechette/rtm.svg)](https://github.com/nfrechette/rtm/releases)
 [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/nfrechette/rtm/master/LICENSE)
+[![Conan](https://img.shields.io/badge/on-conan-blue.svg)](https://conan.io/center/rtm)
 [![Discord](https://img.shields.io/discord/691048241864769647?label=discord)](https://discord.gg/UERt4bS)
 
 # Realtime Math
@@ -26,23 +27,23 @@ Much thought was put into designing the library for it to be as flexible and pow
 ## Supported platforms
 
 *  Windows VS2015 x86 and x64
-*  Windows (VS2017, VS2019) x86, x64, and ARM64
-*  Windows VS2019 with clang9 x86 and x64
-*  Linux (gcc 5 to 10) x86 and x64
-*  Linux (clang 4 to 11) x86 and x64
+*  Windows (VS2017 to VS2022) x86, x64, and ARM64
+*  Windows (VS2017 to VS2022) with clang x86 and x64
+*  Linux (gcc 5 to 11) x86 and x64
+*  Linux (clang 4 to 14) x86 and x64
 *  OS X (Xcode 10.3) x86 and x64
-*  OS X (Xcode 11.2) x64
+*  OS X (Xcode 11.7, 12.5, 13.2) x64 and ARM64
 *  Android (NDK 21) ARMv7-A and ARM64
-*  iOS (Xcode 10.3, 11.2) ARM64
+*  iOS (Xcode 10.3, 11.7, 12.5, 13.2) ARM64
 *  Emscripten (1.39.11) WASM
 
 The above supported platform list is only what is tested every release but if it compiles, it should work just fine.
 
-Note: *VS2017* and *VS2019* compile with *ARM64* on *AppVeyor* but I have no device to test them with.
-
 ## Getting started
 
 This library is **100%** headers as such you just need to include them in your own project to start using it. However, if you wish to run the unit tests or to contribute to RTM head on over to the [getting started](./docs/getting_started.md) section in order to setup your environment and make sure to check out the [contributing guidelines](CONTRIBUTING.md).
+
+You can install `rtm` with [Conan](https://conan.io/center/rtm).
 
 ## External dependencies
 
@@ -70,6 +71,8 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
   <tr>
     <td align="center"><a href="https://github.com/CodyDWJones"><img src="https://avatars.githubusercontent.com/u/28773740?v=4?s=100" width="100px;" alt=""/><br /><sub><b>CodyDWJones</b></sub></a><br /><a href="https://github.com/nfrechette/rtm/commits?author=CodyDWJones" title="Code">💻</a> <a href="#platform-CodyDWJones" title="Packaging/porting to new platform">📦</a> <a href="#infra-CodyDWJones" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
     <td align="center"><a href="https://github.com/mwerschy"><img src="https://avatars.githubusercontent.com/u/6616804?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Malte Werschy</b></sub></a><br /><a href="https://github.com/nfrechette/rtm/commits?author=mwerschy" title="Code">💻</a> <a href="#platform-mwerschy" title="Packaging/porting to new platform">📦</a></td>
+    <td align="center"><a href="https://gitlab.com/intelligide"><img src="https://avatars.githubusercontent.com/u/12529837?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Yoann Potinet</b></sub></a><br /><a href="#infra-intelligide" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+    <td align="center"><a href="https://github.com/operasfantom"><img src="https://avatars.githubusercontent.com/u/31903947?v=4?s=100" width="100px;" alt=""/><br /><sub><b>Pavel Iatchenii</b></sub></a><br /><a href="https://github.com/nfrechette/rtm/commits?author=operasfantom" title="Code">💻</a> <a href="#maintenance-operasfantom" title="Maintenance">🚧</a></td>
   </tr>
 </table>
 

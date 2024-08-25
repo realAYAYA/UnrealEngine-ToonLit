@@ -2,7 +2,6 @@
 
 #include "Engine/HitResult.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
-#include "GameFramework/LightWeightInstanceSubsystem.h"
 #include "Components/PrimitiveComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(HitResult)
@@ -158,7 +157,7 @@ FString FHitResult::ToString() const
 		PenetrationDepth,
 		Item,
 		PhysMaterial.IsValid() ? *PhysMaterial->GetName() : TEXT("None"),
-		HitObjectHandle.IsValid() ? *FLightWeightInstanceSubsystem::Get().GetName(HitObjectHandle) : TEXT("None"),
+		HitObjectHandle.IsValid() ? *HitObjectHandle.GetName() : TEXT("None"),
 		Component.IsValid() ? *Component->GetName() : TEXT("None"),
 		BoneName.IsValid() ? *BoneName.ToString() : TEXT("None"),
 		FaceIndex);

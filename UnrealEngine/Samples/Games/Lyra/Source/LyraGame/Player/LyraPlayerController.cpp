@@ -453,7 +453,7 @@ void ALyraPlayerController::UpdateHiddenComponents(const FVector& ViewLocation, 
 				{
 					if (Comp->IsRegistered())
 					{
-						OutHiddenComponents.Add(Comp->ComponentId);
+						OutHiddenComponents.Add(Comp->GetPrimitiveSceneId());
 
 						for (USceneComponent* AttachedChild : Comp->GetAttachChildren())
 						{
@@ -461,7 +461,7 @@ void ALyraPlayerController::UpdateHiddenComponents(const FVector& ViewLocation, 
 							UPrimitiveComponent* AttachChildPC = Cast<UPrimitiveComponent>(AttachedChild);
 							if (AttachChildPC && AttachChildPC->IsRegistered() && !AttachChildPC->ComponentTags.Contains(NAME_NoParentAutoHide))
 							{
-								OutHiddenComponents.Add(AttachChildPC->ComponentId);
+								OutHiddenComponents.Add(AttachChildPC->GetPrimitiveSceneId());
 							}
 						}
 					}

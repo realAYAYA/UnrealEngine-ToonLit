@@ -35,7 +35,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = PrimaryAssetLabel)
 	uint32 bIsRuntimeLabel : 1;
 
-	/** Set to true if the label asset itself should be cooked and available at runtime. This does not affect the assets that are labeled, they are set with cook rule */
+	/** If true, redirectors found by the AssetLabel's explicit assets or directory will be labeled. If false, redirectors will be skipped. */
 	UPROPERTY(EditAnywhere, Category = PrimaryAssetLabel)
 	uint32 bIncludeRedirectors : 1;
 
@@ -52,7 +52,7 @@ public:
 	FCollectionReference AssetCollection;
 
 	/** Set to editor only if this is not available in a cooked build */
-	virtual bool IsEditorOnly() const
+	virtual bool IsEditorOnly() const override
 	{
 		return !bIsRuntimeLabel && !IsTemplate();
 	}

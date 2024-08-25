@@ -134,6 +134,11 @@ static void PicpBlurPostProcess_RenderThread(
 
 	TShaderMapRef<FDirectProjectionVS>                VertexShader(GlobalShaderMap);
 	TShaderMapRef<TPicpBlurPostProcessPS<ShaderType>> PixelShader(GlobalShaderMap);
+	if (!VertexShader.IsValid() || !PixelShader.IsValid())
+	{
+		// Always check if shaders are available on the current platform and hardware
+		return;
+	}
 
 	FPicpBlurPostProcessPS::FParameters PsParameters{};
 	PsParameters.SrcTexture = InShaderTexture;

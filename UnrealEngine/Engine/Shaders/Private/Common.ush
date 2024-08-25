@@ -366,6 +366,10 @@ MaterialFloat4 Texture3DSampleGrad(Texture3D Tex, SamplerState Sampler, float3 U
 {
 	return Tex.SampleGrad(Sampler, UV, DDX, DDY);
 }
+MaterialFloat4 Texture2DArraySampleLevel(Texture2DArray Tex, SamplerState Sampler, float3 UV, MaterialFloat Mip)
+{
+	return Tex.SampleLevel(Sampler, UV, Mip);
+}
 MaterialFloat4 TextureCubeSampleLevel(TextureCube Tex, SamplerState Sampler, float3 UV, MaterialFloat Mip)
 {
 	return Tex.SampleLevel(Sampler, UV, Mip);
@@ -434,6 +438,14 @@ MaterialFloat4 Texture3DSample_Decal(Texture3D Tex, SamplerState Sampler, float3
 	return Texture3DSample(Tex, Sampler, UV);
 #endif
 }
+MaterialFloat4 Texture2DArraySample_Decal(Texture2DArray Tex, SamplerState Sampler, float3 UV)
+{
+#if METAL_PROFILE || COMPILER_GLSL_ES3_1
+	return Texture2DArraySampleLevel(Tex, Sampler, UV, 0);
+#else
+	return Texture2DArraySample(Tex, Sampler, UV);
+#endif
+}
 MaterialFloat4 TextureCubeSample_Decal(TextureCube Tex, SamplerState Sampler, float3 UV)
 {
 #if METAL_PROFILE || COMPILER_GLSL_ES3_1
@@ -451,10 +463,6 @@ MaterialFloat4 TextureExternalSample_Decal(TextureExternal Tex, SamplerState Sam
 #endif
 }
 
-MaterialFloat4 Texture2DArraySampleLevel(Texture2DArray Tex, SamplerState Sampler, float3 UV, MaterialFloat Mip)
-{
-	return Tex.SampleLevel(Sampler, UV, Mip);
-}
 MaterialFloat4 Texture2DArraySampleBias(Texture2DArray Tex, SamplerState Sampler, float3 UV, MaterialFloat MipBias)
 {
 #if USE_FORCE_TEXTURE_MIP
@@ -657,10 +665,11 @@ MaterialFloat4 ClampedPow(MaterialFloat4 X,MaterialFloat4 Y)
 	return pow(max(abs(X),MaterialFloat4(POW_CLAMP,POW_CLAMP,POW_CLAMP,POW_CLAMP)),Y);
 } 
 
-/* Pow function that will return 0 if Base is <=0. This ensures that no compiler expands pow into exp(Exponent * log(Base)) with Base=0 */
+// Pow function that will return 0 if Base is <= 0 (or small enough to yield a floating point special).
+// This is done to prevent floating point specials when compilers expands pow into exp(Exponent * log(Base)).
 MaterialFloat PositiveClampedPow(MaterialFloat Base, MaterialFloat Exponent)
 {
-	return (Base <= 0.0f) ? 0.0f : pow(Base, Exponent);
+	return (Base <= 2.980233e-8f) ? 0.0f : pow(Base, Exponent);
 }
 MaterialFloat2 PositiveClampedPow(MaterialFloat2 Base, MaterialFloat2 Exponent)
 {
@@ -1183,16 +1192,28 @@ float ConvertFromDeviceZ(float DeviceZ)
 }
 
 // Returns whether or not the given projection matrix is orthographic
-// Utilises asuint call to reduce compare to 1ALU cost
 bool IsOrthoProjection(float4x4 ViewToClip)
 {
-	return asuint(ViewToClip._44);
+	return ViewToClip._44 >= 1.0f;
 }
+
+// Return whether View has ortho or perspective projection
+bool IsOrthoProjection(ViewState InView)
+{
+	return IsOrthoProjection(InView.ViewToClip);
+}
+
 
 // Returns whether or not the default view is orthographic
 bool IsOrthoProjection()
 {
 	return IsOrthoProjection(View.ViewToClip);
+}
+
+// Returns whether or not the given projection matrix is orthographic via float
+float IsOrthoProjectionFloat()
+{
+	return select(IsOrthoProjection(), 1.0f, 0.0f);
 }
 
 // inverse operation of ConvertFromDeviceZ()
@@ -1213,17 +1234,43 @@ float ConvertToDeviceZ(float SceneDepth)
 	}
 }
 
+float3 GetCameraVector(float3 Position, float3 CameraPosition)
+{
+	return select(IsOrthoProjection(), View.ViewForward, normalize(Position - CameraPosition));
+}
+
 float3 GetCameraVectorFromWorldPosition(float3 WorldPosition)
 {
+	return GetCameraVector(WorldPosition, DFHackToFloat(PrimaryView.WorldCameraOrigin));
+}
+
+float3 GetCameraVectorFromTranslatedWorldPosition(float3 TranslatedWorldPosition)
+{
+	return GetCameraVector(TranslatedWorldPosition, PrimaryView.TranslatedWorldCameraOrigin);
+}
+
+float GetDistanceToCameraFromViewVector(float3 DistanceVector)
+{
+	float DistanceToCamera = length(DistanceVector);
 	if (IsOrthoProjection())
 	{
-		// CameraVector is just ViewForward in an ortho mode
-		return View.ViewForward;
+		/**
+		* Position to camera length is not the correct value here, ortho projection needs the distance
+		* as the view forward "plane" to the position instead. This length is recalculated here.
+		*/
+		DistanceToCamera *= DistanceToCamera / dot(DistanceVector, View.ViewForward);
 	}
-	else
+	return DistanceToCamera;
+}
+
+float GetDistanceToCameraFromViewVectorSqr(float3 DistanceVector)
+{
+	if(IsOrthoProjection())
 	{
-		return normalize(WorldPosition - LWCHackToFloat(PrimaryView.WorldCameraOrigin));
+		float Distance = GetDistanceToCameraFromViewVector(DistanceVector);
+		return Distance * Distance;
 	}
+	return dot(DistanceVector, DistanceVector);
 }
 
 float2 ScreenPositionToBufferUV(float4 ScreenPosition)
@@ -1234,8 +1281,9 @@ float2 ScreenPositionToBufferUV(float4 ScreenPosition)
 float3 ScreenVectorFromScreenRect(float4 Position)
 {
 	//Screen rect does not include scene depth. Perspective projection requires ScreenToTranslated world matrix
-	//Ortho Screen to View in this context is 1:1 so uses the ViewToTranslatedMatrix only
-	return select(IsOrthoProjection(), mul(Position, View.ViewToTranslatedWorld), mul(Position,View.ScreenToTranslatedWorld)).xyz;
+	//Ortho Screen does not need the calculation as the screenvector is always the camera direction, so uses ViewForward
+
+	return select(IsOrthoProjection(), View.ViewForward, mul(Position,View.ScreenToTranslatedWorld).xyz);
 }
 
 // Returns the screen position for projection matrix calculations depending on the type of projection the view is using
@@ -1244,6 +1292,23 @@ float2 GetScreenPositionForProjectionType(float2 ScreenPosition, float SceneDept
 	// For perspective projection matrix, the scene depth is required as part of the clip to view calculations
 	// For orthogonal projection matrix, scene depth should not be used
 	return select(IsOrthoProjection(), ScreenPosition, ScreenPosition * SceneDepth);
+}
+
+float ConvertGivenDepthRadiusForProjectionType(float Radius, float SceneDepth, bool bForceOrthoView = false)
+{
+	return select(IsOrthoProjection() || bForceOrthoView, Radius, Radius * SceneDepth);
+}
+
+float GetDepthPixelRadiusForProjectionType(float SceneDepth)
+{
+	return View.WorldDepthToPixelWorldRadius.x * SceneDepth + View.WorldDepthToPixelWorldRadius.y;
+}
+
+// In many locations we calculate screen ray length using scene depth, this does not work for Ortho
+// This code moves that calculation to the view buffer and reduces the SceneDepth option to 1 MAD
+float2 GetScreenRayLengthMultiplierForProjectionType(float SceneDepth)
+{
+	return View.ScreenRayLengthMultiplier.xy * SceneDepth + View.ScreenRayLengthMultiplier.zw;
 }
 
 float2 SvPositionToBufferUV(float4 SvPosition)
@@ -1268,10 +1333,10 @@ float3 SvPositionToResolvedTranslatedWorld(float4 SvPosition)
 }
 
 // prefer to use SvPositionToTranslatedWorld() for better quality
-FLWCVector3 SvPositionToWorld(float4 SvPosition)
+FDFVector3 SvPositionToWorld(float4 SvPosition)
 {
 	float3 TranslatedWorldPosition = SvPositionToTranslatedWorld(SvPosition);
-	return LWCSubtract(TranslatedWorldPosition, PrimaryView.PreViewTranslation);
+	return DFFastSubtract(TranslatedWorldPosition, PrimaryView.PreViewTranslation);
 }
 
 // investigate: doesn't work for usage with PrimaryView.ScreenToWorld, see SvPositionToScreenPosition2()
@@ -1515,6 +1580,18 @@ MaterialFloat MaterialExpressionNoise(float3 Position, float Scale, int Quality,
 	return lerp(OutputMin, OutputMax, Out);
 }
 
+MaterialFloat MaterialExpressionNoise(FDFVector3 LWCPosition, float Scale, int Quality, int Function, bool bTurbulence, uint Levels, float OutputMin, float OutputMax, float LevelScale, float FilterWidth, bool bTiling, float RepeatSize)
+{
+	const float TileSize = 65536;
+	float3 Position = abs(TileSize * DFFracDemote(DFDivideByPow2(LWCPosition, TileSize))); // Mirror and repeat every TileSize
+	return MaterialExpressionNoise(Position, Scale, Quality, Function, bTurbulence, Levels, OutputMin, OutputMax, LevelScale, FilterWidth, bTiling, RepeatSize);
+}
+
+MaterialFloat MaterialExpressionNoise(FLWCVector3 LWCPosition, float Scale, int Quality, int Function, bool bTurbulence, uint Levels, float OutputMin, float OutputMax, float LevelScale, float FilterWidth, bool bTiling, float RepeatSize)
+{
+	float3 Position = LWCNormalizeTile(LWCPosition).Offset;
+	return MaterialExpressionNoise(Position, Scale, Quality, Function, bTurbulence, Levels, OutputMin, OutputMax, LevelScale, FilterWidth, bTiling, RepeatSize);
+}
 
 // Material node for noise functions returning a vector value
 // @param LevelScale usually 2 but higher values allow efficient use of few levels
@@ -1714,10 +1791,13 @@ struct FScreenVertexOutput
 	float4 Position : SV_POSITION;
 };
 
+/** Whether HasPixelAnimation is encoded in the velocity texture. Matches VelocityEncodeHasPixelAnimation() */
+#define VELOCITY_ENCODE_HAS_PIXEL_ANIMATION VELOCITY_ENCODE_DEPTH
+
 // for velocity rendering, motionblur and temporal AA
 // velocity needs to support -2..2 screen space range for x and y
 // texture is 16bit 0..1 range per channel
-ENCODED_VELOCITY_TYPE EncodeVelocityToTexture(float3 V)
+ENCODED_VELOCITY_TYPE EncodeVelocityToTexture(float3 V, bool bHasPixelAnimation)
 {
 	#if VELOCITY_ENCODE_GAMMA
 		V.xy = sign(V.xy) * sqrt(abs(V.xy)) * (2.0 / sqrt(2.0));
@@ -1732,7 +1812,7 @@ ENCODED_VELOCITY_TYPE EncodeVelocityToTexture(float3 V)
 		uint Vz = asuint(V.z);
 
 		EncodedV.z = saturate(float((Vz >> 16) & 0xFFFF) * rcp(65535.0f) + (0.1 / 65535.0f));
-		EncodedV.w = saturate(float((Vz >>  0) & 0xFFFF) * rcp(65535.0f) + (0.1 / 65535.0f));
+		EncodedV.w = saturate(float(((Vz >>  0) & 0xFFFE) | uint(bHasPixelAnimation)) * rcp(65535.0f) + (0.1 / 65535.0f));
 	#else
 		EncodedV.zw = 0.0;
 	#endif
@@ -1743,6 +1823,12 @@ ENCODED_VELOCITY_TYPE EncodeVelocityToTexture(float3 V)
 	return EncodedV;
 #endif
 }
+
+ENCODED_VELOCITY_TYPE EncodeVelocityToTexture(float3 V)
+{
+	return EncodeVelocityToTexture(V, /* bHasPixelAnimation = */ false);
+}
+
 // see EncodeVelocityToTexture()
 float3 DecodeVelocityFromTexture(ENCODED_VELOCITY_TYPE InEncodedV)
 {
@@ -1757,7 +1843,7 @@ float3 DecodeVelocityFromTexture(ENCODED_VELOCITY_TYPE InEncodedV)
 	V.xy = EncodedV.xy * InvDiv - 32767.0f / 65535.0f * InvDiv;
 
 	#if VELOCITY_ENCODE_DEPTH
-		V.z = asfloat((uint(round(EncodedV.z * 65535.0f)) << 16) | uint(round(EncodedV.w * 65535.0f)));
+		V.z = asfloat((uint(round(EncodedV.z * 65535.0f)) << 16) | (uint(round(EncodedV.w * 65535.0f)) & 0xFFFE));
 	#else
 		V.z = 0.0;
 	#endif
@@ -1768,6 +1854,14 @@ float3 DecodeVelocityFromTexture(ENCODED_VELOCITY_TYPE InEncodedV)
 
 	return V;
 }
+
+/** Returns whether the opaque material drawing velocity had the UMaterial::bHasPixelAnimation, which means the geometric velocity might not accurately represent how the pixel moves. */
+#if VELOCITY_ENCODE_HAS_PIXEL_ANIMATION
+bool DecodeHasPixelAnimationFromVelocityTexture(ENCODED_VELOCITY_TYPE EncodedV)
+{
+	return (uint(round(EncodedV.w * 65535.0f)) & 0x1) != 0x0;
+}
+#endif
 
 // Used for the Global Illumination in the GIReplace material expression
 bool GetGIReplaceState()
@@ -2064,9 +2158,9 @@ struct FPixelShaderOut
 	// [0..7], only usable if PIXELSHADEROUTPUT_MRT0, PIXELSHADEROUTPUT_MRT1, ... is 1
 	float4 MRT[8];
 	
-	// Explicit uint output specific to strata.
-	uint StrataOutput[3];
-	STRATA_TOP_LAYER_TYPE StrataTopLayerData;
+	// Explicit uint output specific to Substrate.
+	uint SubstrateOutput[3];
+	SUBSTRATE_TOP_LAYER_TYPE SubstrateTopLayerData;
 
 	// Pixel Shader OutCoverage, only usable if PIXELSHADEROUTPUT_COVERAGE is 1
 	uint Coverage;

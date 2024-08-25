@@ -138,8 +138,6 @@ bool FDesktopPlatformNull::RegisterEngineInstallation(const FString &RootDir, FS
 		FString ConfigPath = FString(FPlatformProcess::ApplicationSettingsDir()) / FString(TEXT("UnrealEngine")) / FString(TEXT("Install.ini"));
 		ConfigFile.Read(ConfigPath);
 
-		FConfigSection &Section = ConfigFile.FindOrAdd(TEXT("Installations"));
-
 		// If this is an installed build, use that Guid instead of generating a new one
 		FString InstallationIdPath = FString(RootDir / "Engine" / "Build" / "InstalledBuild.txt");
 		FArchive* File = IFileManager::Get().CreateFileReader(*InstallationIdPath, FILEREAD_Silent);
@@ -159,10 +157,8 @@ bool FDesktopPlatformNull::RegisterEngineInstallation(const FString &RootDir, FS
 		{
 			OutIdentifier = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
 		}
-
-		Section.AddUnique(*OutIdentifier, RootDir);
-
-		ConfigFile.Dirty = true;
+		
+		ConfigFile.AddUniqueToSection(TEXT("Installations"), *OutIdentifier, RootDir);
 		ConfigFile.Write(ConfigPath);
 		bRes = true;
 	}

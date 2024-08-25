@@ -13,7 +13,12 @@ namespace Insights
 	struct FFrameStatsCachedEvent;
 }
 
+class STimingView;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/** The delegate to be invoked when a series visibility is changed. */
+DECLARE_MULTICAST_DELEGATE_OneParam(FSeriesVisibilityChangedDelegate, bool bOnOff);
 
 class FTimingGraphSeries : public FGraphSeries
 {
@@ -43,6 +48,8 @@ public:
 		return EventA.StartTime < EventB.StartTime;
 	}
 
+	virtual void SetVisibility(bool bOnOff) override;
+
 public:
 	ESeriesType Type;
 	union
@@ -60,6 +67,8 @@ public:
 	bool bIsTime; // the unit for values is [second]
 	bool bIsMemory; // the unit for value is [byte]
 	bool bIsFloatingPoint; // for stats counters
+
+	FSeriesVisibilityChangedDelegate VisibilityChangedDelegate;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -69,12 +78,14 @@ class FTimingGraphTrack : public FGraphTrack
 	INSIGHTS_DECLARE_RTTI(FTimingGraphTrack, FGraphTrack)
 
 public:
-	FTimingGraphTrack();
+	FTimingGraphTrack(TSharedPtr<STimingView> InTimingView);
 	virtual ~FTimingGraphTrack();
 
 	virtual void Update(const ITimingTrackUpdateContext& Context) override;
 
 	void AddDefaultFrameSeries();
+
+	TSharedPtr<FTimingGraphSeries> GetFrameSeries(ETraceFrameType FrameType);
 
 	TSharedPtr<FTimingGraphSeries> GetTimerSeries(uint32 TimerId);
 	TSharedPtr<FTimingGraphSeries> AddTimerSeries(uint32 TimerId, FLinearColor Color);
@@ -88,6 +99,8 @@ public:
 	TSharedPtr<FTimingGraphSeries> AddStatsCounterSeries(uint32 CounterId, FLinearColor Color);
 	void RemoveStatsCounterSeries(uint32 CounterId);
 
+	uint32 GetNumSeriesForTimer(uint32 TimerId);
+
 protected:
 	void UpdateFrameSeries(FTimingGraphSeries& Series, const FTimingTrackViewport& Viewport);
 	void UpdateTimerSeries(FTimingGraphSeries& Series, const FTimingTrackViewport& Viewport);
@@ -98,10 +111,21 @@ protected:
 
 	virtual void DrawVerticalAxisGrid(const ITimingTrackDrawContext& Context) const override;
 
+	void LoadDefaultSettings();
+
+private:
+	virtual void ContextMenu_ToggleOption_Execute(EGraphOptions Option);
+
 private:
 	FDelegateHandle OnTrackVisibilityChangedHandle;
 	FDelegateHandle OnTrackAddedHandle;
 	FDelegateHandle OnTrackRemovedHandle;
+
+	FDelegateHandle GameFrameSeriesVisibilityHandle;
+	FDelegateHandle RenderingFrameSeriesVisibilityHandle;
+
+	TWeakPtr<STimingView> TimingView;
+	bool bNotifyTimersOnDestruction;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

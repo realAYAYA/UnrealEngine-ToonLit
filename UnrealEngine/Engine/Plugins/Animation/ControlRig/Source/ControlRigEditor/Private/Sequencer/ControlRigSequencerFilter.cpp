@@ -177,7 +177,7 @@ public:
 				TArray<const FRigBaseElement*> SelectedControls = ControlRig->GetHierarchy()->GetSelectedElements(ERigElementType::Control);
 				for (const FRigBaseElement* SelectedControl : SelectedControls)
 				{
-					if (Name == SelectedControl->GetName())
+					if (Name == SelectedControl->GetFName())
 					{
 						return true;
 					}

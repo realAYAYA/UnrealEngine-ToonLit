@@ -1,0 +1,5 @@
+{
+	"ParentSDKFile": "../Apple/Apple_SDK.json",
+
+	"MinSoftwareVersion":  "15.0",
+}

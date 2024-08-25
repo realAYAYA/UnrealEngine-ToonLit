@@ -10,6 +10,7 @@
 #include "WorldPartition/LoaderAdapter/LoaderAdapterActorList.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "Editor.h"
 #endif
 
@@ -21,7 +22,7 @@ FActorDesc::FActorDesc()
 {}
 
 #if WITH_EDITOR
-FActorDesc::FActorDesc(const FWorldPartitionActorDesc& InActorDesc, const FTransform& InTransform)
+FActorDesc::FActorDesc(const FWorldPartitionActorDescInstance& InActorDesc)
 {
 	Guid = InActorDesc.GetGuid();
 
@@ -38,7 +39,7 @@ FActorDesc::FActorDesc(const FWorldPartitionActorDesc& InActorDesc, const FTrans
 
 	Name = InActorDesc.GetActorName();
 	Label = InActorDesc.GetActorLabel();
-	Bounds = InActorDesc.GetEditorBounds().TransformBy(InTransform);
+	Bounds = InActorDesc.GetEditorBounds();
 	RuntimeGrid = InActorDesc.GetRuntimeGrid();
 	bIsSpatiallyLoaded = InActorDesc.GetIsSpatiallyLoaded();
 	bActorIsEditorOnly = InActorDesc.GetActorIsEditorOnly();
@@ -81,30 +82,30 @@ void UWorldPartitionBlueprintLibrary::OnWorldPartitionUninitialized(UWorldPartit
 	}
 }
 
-bool UWorldPartitionBlueprintLibrary::GetActorDescs(const UWorldPartition* WorldPartiton, TArray<FActorDesc>& OutActorDescs)
+bool UWorldPartitionBlueprintLibrary::GetActorDescs(const UWorldPartition* InWorldPartition, TArray<FActorDesc>& OutActorDescs)
 {
 	bool bResult = true;
 
-	WorldPartiton->ForEachActorDescContainer([&](const UActorDescContainer* ActorDescContainer)
+	InWorldPartition->ForEachActorDescContainerInstance([&](const UActorDescContainerInstance* InContainerInstance)
 	{
-		bResult &= GetActorDescs(ActorDescContainer, FTransform::Identity, OutActorDescs);
+		bResult &= GetActorDescs(InContainerInstance, OutActorDescs);
 	});
 	
 	return bResult;
 }
 
-bool UWorldPartitionBlueprintLibrary::GetActorDescs(const UActorDescContainer* InContainer, const FTransform& InTransform, TArray<FActorDesc>& OutActorDescs)
+bool UWorldPartitionBlueprintLibrary::GetActorDescs(const UActorDescContainerInstance* InContainerInstance, TArray<FActorDesc>& OutActorDescs)
 {
 	bool bResult = true;
 
-	for (FActorDescList::TConstIterator<> ActorDescIt(InContainer); ActorDescIt; ++ActorDescIt)
+	for (UActorDescContainerInstance::TConstIterator<> Iterator(InContainerInstance); Iterator; ++Iterator)
 	{
-		if (ActorDescIt->IsContainerInstance())
+		if (Iterator->IsChildContainerInstance())
 		{
 			FWorldPartitionActorDesc::FContainerInstance ContainerInstance;
-			if (ActorDescIt->GetContainerInstance(ContainerInstance))
+			if (Iterator->GetChildContainerInstance(ContainerInstance))
 			{
-				bResult &= GetActorDescs(ContainerInstance.Container, ContainerInstance.Transform * InTransform, OutActorDescs);
+				bResult &= GetActorDescs(ContainerInstance.ContainerInstance, OutActorDescs);
 			}
 			else
 			{
@@ -113,23 +114,23 @@ bool UWorldPartitionBlueprintLibrary::GetActorDescs(const UActorDescContainer* I
 		}
 		else
 		{
-			OutActorDescs.Emplace(**ActorDescIt, InTransform);
+			OutActorDescs.Emplace(**Iterator);
 		}
 	}
 
 	return bResult;
 }
 
-bool UWorldPartitionBlueprintLibrary::HandleIntersectingActorDesc(const FWorldPartitionActorDesc* ActorDesc, const FBox& InBox, const FTransform& InTransform, TArray<FActorDesc>& OutActorDescs)
+bool UWorldPartitionBlueprintLibrary::HandleIntersectingActorDesc(const FWorldPartitionActorDescInstance* ActorDescInstance, const FBox& InBox, TArray<FActorDesc>& OutActorDescs)
 {
 	bool bResult = true;
 
-	if (ActorDesc->IsContainerInstance())
+	if (ActorDescInstance->IsChildContainerInstance())
 	{
 		FWorldPartitionActorDesc::FContainerInstance ContainerInstance;
-		if (ActorDesc->GetContainerInstance(ContainerInstance))
+		if (ActorDescInstance->GetChildContainerInstance(ContainerInstance))
 		{
-			bResult &= GetIntersectingActorDescs(ContainerInstance.Container, InBox, ContainerInstance.Transform * InTransform, OutActorDescs);
+			bResult &= GetIntersectingActorDescs(ContainerInstance.ContainerInstance, InBox, OutActorDescs);
 		}
 		else
 		{
@@ -138,7 +139,7 @@ bool UWorldPartitionBlueprintLibrary::HandleIntersectingActorDesc(const FWorldPa
 	}
 	else
 	{
-		OutActorDescs.Emplace(*ActorDesc, InTransform);
+		OutActorDescs.Emplace(*ActorDescInstance);
 	}
 
 	return bResult;
@@ -148,24 +149,24 @@ bool UWorldPartitionBlueprintLibrary::GetIntersectingActorDescs(UWorldPartition*
 {
 	bool bResult = true;
 
-	FWorldPartitionHelpers::ForEachIntersectingActorDesc(WorldPartition, InBox, [&bResult, &InBox, &OutActorDescs](const FWorldPartitionActorDesc* ActorDesc)
+	FWorldPartitionHelpers::ForEachIntersectingActorDescInstance(WorldPartition, InBox, [&bResult, &InBox, &OutActorDescs](const FWorldPartitionActorDescInstance* ActorDesc)
 	{
-		bResult &= HandleIntersectingActorDesc(ActorDesc, InBox, FTransform::Identity, OutActorDescs);
+		bResult &= HandleIntersectingActorDesc(ActorDesc, InBox, OutActorDescs);
 		return true;
 	});
 
 	return bResult;
 }
 
-bool UWorldPartitionBlueprintLibrary::GetIntersectingActorDescs(const UActorDescContainer* InContainer, const FBox& InBox, const FTransform& InTransform, TArray<FActorDesc>& OutActorDescs)
+bool UWorldPartitionBlueprintLibrary::GetIntersectingActorDescs(const UActorDescContainerInstance* InContainerInstance, const FBox& InBox, TArray<FActorDesc>& OutActorDescs)
 {
 	bool bResult = true;
 
-	for (FActorDescList::TConstIterator<> ActorDescIt(InContainer); ActorDescIt; ++ActorDescIt)
+	for (UActorDescContainerInstance::TConstIterator<> Iterator(InContainerInstance); Iterator; ++Iterator)
 	{
-		if (ActorDescIt->GetEditorBounds().Intersect(InBox))
+		if (Iterator->GetEditorBounds().Intersect(InBox))
 		{
-			bResult &= HandleIntersectingActorDesc(*ActorDescIt, InBox, InTransform, OutActorDescs);
+			bResult &= HandleIntersectingActorDesc(*Iterator, InBox, OutActorDescs);
 		}
 	}
 
@@ -262,6 +263,20 @@ bool UWorldPartitionBlueprintLibrary::GetIntersectingActorDescs(const FBox& InBo
 	if (UWorldPartition* WorldPartition = GetWorldPartition())
 	{
 		return GetIntersectingActorDescs(WorldPartition, InBox, OutActorDescs);
+	}
+#endif
+	return false;
+}
+
+bool UWorldPartitionBlueprintLibrary::GetActorDescsForActors(const TArray<AActor*>& InActors, TArray<FActorDesc>& OutActorDescs)
+{
+#if WITH_EDITOR
+	if (UWorldPartition* WorldPartition = GetWorldPartition())
+	{
+		for (AActor* Actor : InActors)
+		{
+			OutActorDescs.Emplace(*WorldPartition->GetActorDescInstance(Actor->GetActorGuid()));
+		}
 	}
 #endif
 	return false;

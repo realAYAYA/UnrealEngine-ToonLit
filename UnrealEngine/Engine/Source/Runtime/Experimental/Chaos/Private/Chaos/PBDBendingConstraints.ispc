@@ -17,6 +17,23 @@ static inline varying float SafeDivide(const varying float Numerator, const vary
 	return select(Denominator <= FLOAT_SMALL_NUMBER, (uniform float)0, Numerator / Denominator);
 }
 
+static inline float CalcAngle(const FVector3f& P1, const FVector3f& P2, const FVector3f& P3, const FVector3f& P4)
+{
+	const FVector3f SharedEdgeNormalized = VectorGetSafeNormal(P2 - P1);
+	const FVector3f P13CrossP23 = VectorCross(P1 - P3, P2 - P3);
+	const float Normal1Len = VectorSize(P13CrossP23);
+	const FVector3f Normal1 = SafeDivide(P13CrossP23, Normal1Len);
+	const FVector3f P24CrossP14 = VectorCross(P2 - P4, P1 - P4);
+	const float Normal2Len = VectorSize(P24CrossP14);
+	const FVector3f Normal2 = SafeDivide(P24CrossP14, Normal2Len);
+
+	const FVector3f N2CrossN1 = VectorCross(Normal2, Normal1);
+
+	const float CosPhi = clamp(VectorDot(Normal1, Normal2), (uniform float)(-1), (uniform float)(1));
+	const float SinPhi = clamp(VectorDot(N2CrossN1, SharedEdgeNormalized), (uniform float)(-1), (uniform float)(1));
+	return atan2(SinPhi, CosPhi);
+}
+
 // Returns Angle
 static inline float CalcGradientsAndAngle(const FVector3f& P1, const FVector3f& P2, const FVector3f& P3, const FVector3f& P4, FVector3f& Grad1, FVector3f& Grad2, FVector3f& Grad3, FVector3f& Grad4)
 {
@@ -49,6 +66,34 @@ static inline float CalcGradientsAndAngle(const FVector3f& P1, const FVector3f& 
 	return atan2(SinPhi, CosPhi);
 }
 
+export void InitBendingConstraintsIsBuckled(const uniform FVector3f X[],
+									const uniform FIntVector4 Constraints[],
+									const uniform float RestAngles[],
+									uniform bool IsBuckled[],
+									const uniform float BucklingRatio,
+									const uniform int32 NumConstraints)
+{
+	foreach(i = 0 ... NumConstraints)
+	{
+		const varying FIntVector4 Constraint = VectorLoad(&Constraints[extract(i,0)]);
+
+		const varying int32 Index1 = Constraint.V[0];
+		const varying int32 Index2 = Constraint.V[1];
+		const varying int32 Index3 = Constraint.V[2];
+		const varying int32 Index4 = Constraint.V[3];
+
+		const varying FVector3f X1 = VectorGather(&X[Index1]);
+		const varying FVector3f X2 = VectorGather(&X[Index2]);
+		const varying FVector3f X3 = VectorGather(&X[Index3]);
+		const varying FVector3f X4 = VectorGather(&X[Index4]);
+
+		const varying float RestAngle = RestAngles[i];
+		const varying float BucklingAngle = BucklingRatio * (FLOAT_PI - abs(RestAngle));
+
+		const varying float Angle = CalcAngle(X1, X2, X3, X4);
+		IsBuckled[i] = FLOAT_PI - abs(Angle) < BucklingAngle;
+	}
+}
 
 export void ApplyBendingConstraints(uniform FVector4f PandInvM[],
 									const uniform FIntVector4 Constraints[],

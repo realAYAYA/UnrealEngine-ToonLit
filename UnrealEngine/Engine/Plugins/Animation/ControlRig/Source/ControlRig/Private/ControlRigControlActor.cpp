@@ -5,6 +5,7 @@
 #include "ControlRigGizmoLibrary.h"
 #include "IControlRigObjectBinding.h"
 #include "Sequencer/MovieSceneControlRigParameterTrack.h"
+#include "ControlRig.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigControlActor)
 
@@ -197,6 +198,7 @@ void AControlRigControlActor::Refresh()
 			switch (ControlElement->Settings.ControlType)
 			{
 				case ERigControlType::Float:
+				case ERigControlType::ScaleFloat:
 				case ERigControlType::Integer:
 				case ERigControlType::Vector2D:
 				case ERigControlType::Position:
@@ -247,7 +249,7 @@ void AControlRigControlActor::Refresh()
 							Component->SetMaterial(i, MaterialInstance);
 						}
 
-						ControlNames.Add(ControlElement->GetName());
+						ControlNames.Add(ControlElement->GetFName());
 						ShapeTransforms.Add(ShapeDef->Transform * Hierarchy->GetControlShapeTransform(ControlElement, ERigTransformType::CurrentLocal));
 						Components.Add(Component);
 						Materials.Add(MaterialInstance);
@@ -266,16 +268,22 @@ void AControlRigControlActor::Refresh()
 	{
 		URigHierarchy* Hierarchy = ControlRig->GetHierarchy();
 
+		UStaticMeshComponent* Component = Components[GizmoIndex];
 		const FRigElementKey ControlKey(ControlNames[GizmoIndex], ERigElementType::Control);
 		const FRigControlElement* ControlElement = Hierarchy->Find<FRigControlElement>(ControlKey);
-		if(ControlElement == nullptr)
+		const bool bVisible = ControlElement && ControlElement->Settings.IsVisible();
+
+		if (Component && Component->IsVisible() != bVisible)
 		{
-			Components[GizmoIndex]->SetVisibility(false);
+			Component->SetVisibility(bVisible);
+		}
+		if (Component == nullptr || ControlElement == nullptr)
+		{
 			continue;
 		}
 
 		FTransform ControlTransform = ControlRig->GetControlGlobalTransform(ControlNames[GizmoIndex]);
-		Components[GizmoIndex]->SetRelativeTransform(ShapeTransforms[GizmoIndex] * ControlTransform);
+		Component->SetRelativeTransform(ShapeTransforms[GizmoIndex] * ControlTransform);
 		Materials[GizmoIndex]->SetVectorParameterValue(ColorParameterName, FVector(ControlElement->Settings.ShapeColor));
 	}
 }

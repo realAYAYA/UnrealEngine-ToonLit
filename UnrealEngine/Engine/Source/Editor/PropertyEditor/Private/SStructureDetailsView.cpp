@@ -147,7 +147,7 @@ void SStructureDetailsView::Construct(const FArguments& InArgs)
 			.AutoWidth()
 			[
 				SNew( SComboButton )
-				.ContentPadding(0)
+				.ContentPadding(0.0f)
 				.ForegroundColor( FSlateColor::UseForeground() )
 				.ButtonStyle( FAppStyle::Get(), "ToggleButton" )
 				.MenuContent()
@@ -185,8 +185,8 @@ void SStructureDetailsView::Construct(const FArguments& InArgs)
 				FilterBoxRow
 			]
 			+ SVerticalBox::Slot()
-			.FillHeight(1)
-			.Padding(0)
+			.FillHeight(1.0f)
+			.Padding(0.0f)
 			[
 				SNew( SOverlay )
 				+ SOverlay::Slot()
@@ -271,6 +271,8 @@ void SStructureDetailsView::SetCustomName(const FText& Text)
 
 void SStructureDetailsView::ForceRefresh()
 {
+	ClearPendingRefreshTimer();
+
 	SetStructureProvider(StructProvider);
 }
 

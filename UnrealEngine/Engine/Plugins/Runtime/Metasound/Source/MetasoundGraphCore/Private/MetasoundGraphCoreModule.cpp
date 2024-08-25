@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "MetasoundLog.h"
+#include "MetasoundProfilingOperator.h"
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
 
@@ -13,6 +14,11 @@ namespace Metasound
 {
 	class FMetasoundGraphCoreModule : public IMetasoundGraphCoreModule
 	{
+	public:
+		virtual void StartupModule() override
+		{
+			Profiling::Init();
+		}
 	};
 }
 

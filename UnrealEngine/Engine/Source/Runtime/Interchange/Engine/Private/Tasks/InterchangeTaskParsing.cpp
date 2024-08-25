@@ -35,7 +35,7 @@ struct FNodeDependencyCache
 {
 	const TSet<FString>& GetAccumulatedDependencies(const UInterchangeBaseNodeContainer* NodeContainer, const FString& NodeID)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("FNodeDependencyCache::GetAccumulatedDependencies")
+		TRACE_CPUPROFILER_EVENT_SCOPE(FNodeDependencyCache::GetAccumulatedDependencies)
 		TSet<FString> NodeStack;
 		return GetAccumulatedDependencies(NodeContainer, NodeID, NodeStack);
 	}
@@ -89,10 +89,12 @@ private:
 
 void UE::Interchange::FTaskParsing::DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FTaskParsing::DoTask")
+	TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FTaskParsing::DoTask)
 #if INTERCHANGE_TRACE_ASYNCHRONOUS_TASK_ENABLED
 	INTERCHANGE_TRACE_ASYNCHRONOUS_TASK(ParsingGraph)
 #endif
+	LLM_SCOPE_BYNAME(TEXT("Interchange"));
+
 	FGCScopeGuard GCScopeGuard;
 
 	TSharedPtr<FImportAsyncHelper, ESPMode::ThreadSafe> AsyncHelper = WeakAsyncHelper.Pin();
@@ -240,6 +242,7 @@ void UE::Interchange::FTaskParsing::DoTask(ENamedThreads::Type CurrentThread, co
 	TSet<FString> CreatedTasksAssetNames; // Tracks for which asset name we have created a task so that we don't have 2 tasks for the same asset name
 	TFunction<FGraphEventRef(FTaskData&)> CreateTasksFromData = [this, &AsyncHelper, &RenameAssets, &CreatedTasksAssetNames](FTaskData& TaskData)
 	{
+		LLM_SCOPE_BYNAME(TEXT("Interchange"));
 		check(TaskData.Nodes.Num() == 1); //We expect 1 node per asset task
 
 		const int32 SourceIndex = TaskData.SourceIndex;
@@ -250,14 +253,14 @@ void UE::Interchange::FTaskParsing::DoTask(ENamedThreads::Type CurrentThread, co
 		{
 			return AsyncHelper->SceneTasks.Add_GetRef(
 				TGraphTask<FTaskCreateSceneObjects>::CreateTask(&(TaskData.Prerequisites))
-				.ConstructAndDispatchWhenReady(PackageBasePath, SourceIndex, WeakAsyncHelper, TaskData.Nodes, FactoryClass));
+				.ConstructAndDispatchWhenReady(AsyncHelper->ContentBasePath, SourceIndex, WeakAsyncHelper, TaskData.Nodes, FactoryClass));
 		}
 		else
 		{
 			FString PackageSubPath;
 			FactoryNode->GetCustomSubPath(PackageSubPath);
 
-			FString AssetFullPath = FPaths::Combine(PackageBasePath, PackageSubPath, FactoryNode->GetAssetName());
+			FString AssetFullPath = FPaths::Combine(AsyncHelper->ContentBasePath, PackageSubPath, FactoryNode->GetAssetName());
 
 			//Make sure there is no duplicate name full path
 			uint32 NameIndex = 1;
@@ -292,21 +295,22 @@ void UE::Interchange::FTaskParsing::DoTask(ENamedThreads::Type CurrentThread, co
 			if (ensureMsgf(!CreatedTasksAssetNames.Contains(AssetFullPath),
 				TEXT("Found multiple task data with the same asset name (%s). Only one will be executed."), *AssetFullPath))
 			{
+				LLM_SCOPE_BYNAME(TEXT("Interchange"));
 				FGraphEventArray ImportObjectTasksPrerequistes;
 				int32 BeginImportObjectTaskIndex = AsyncHelper->BeginImportObjectTasks.Add(
-					TGraphTask<FTaskImportObject_GameThread>::CreateTask(&(TaskData.Prerequisites)).ConstructAndDispatchWhenReady(PackageBasePath, SourceIndex, WeakAsyncHelper, FactoryNode, FactoryClass)
+					TGraphTask<FTaskImportObject_GameThread>::CreateTask(&(TaskData.Prerequisites)).ConstructAndDispatchWhenReady(AsyncHelper->ContentBasePath, SourceIndex, WeakAsyncHelper, FactoryNode, FactoryClass)
 				);
 				ImportObjectTasksPrerequistes.Add(AsyncHelper->BeginImportObjectTasks[BeginImportObjectTaskIndex]);
 
 				int32 ImportObjectTaskIndex = AsyncHelper->ImportObjectTasks.Add(
-					TGraphTask<FTaskImportObject_Async>::CreateTask(&(ImportObjectTasksPrerequistes)).ConstructAndDispatchWhenReady(PackageBasePath, SourceIndex, WeakAsyncHelper, FactoryNode)
+					TGraphTask<FTaskImportObject_Async>::CreateTask(&(ImportObjectTasksPrerequistes)).ConstructAndDispatchWhenReady(AsyncHelper->ContentBasePath, SourceIndex, WeakAsyncHelper, FactoryNode)
 				);
 
 				FGraphEventArray FinalizeImportObjectTasksPrerequistes;
 				FinalizeImportObjectTasksPrerequistes.Add(AsyncHelper->ImportObjectTasks[ImportObjectTaskIndex]);
 
 				int32 FinalizeCreateTaskIndex = AsyncHelper->FinalizeImportObjectTasks.Add(
-					TGraphTask<FTaskImportObjectFinalize_GameThread>::CreateTask(&(FinalizeImportObjectTasksPrerequistes)).ConstructAndDispatchWhenReady(PackageBasePath, SourceIndex, WeakAsyncHelper, FactoryNode)
+					TGraphTask<FTaskImportObjectFinalize_GameThread>::CreateTask(&(FinalizeImportObjectTasksPrerequistes)).ConstructAndDispatchWhenReady(AsyncHelper->ContentBasePath, SourceIndex, WeakAsyncHelper, FactoryNode)
 				);
 
 				CreatedTasksAssetNames.Add(AssetFullPath);
@@ -328,7 +332,7 @@ void UE::Interchange::FTaskParsing::DoTask(ENamedThreads::Type CurrentThread, co
 		for(TObjectPtr<UInterchangeTranslatorBase> Translator : AsyncHelper->Translators)
 		{
 			//We need a valid translator to add a result message
-			if (!Translator)
+			if (!Translator || AsyncHelper->bCancel)
 			{
 				continue;
 			}
@@ -406,28 +410,28 @@ void UE::Interchange::FTaskParsing::DoTask(ENamedThreads::Type CurrentThread, co
 	}
 
 	//Add an async task for pre completion
-	
 	FGraphEventArray PreCompletionPrerequistes;
 	AsyncHelper->PreCompletionTask = TGraphTask<FTaskPreCompletion>::CreateTask(&CompletionPrerequistes).ConstructAndDispatchWhenReady(InterchangeManager, WeakAsyncHelper);
 	PreCompletionPrerequistes.Add(AsyncHelper->PreCompletionTask);
 
+	FGraphEventArray AssetCompilationPrerequistes;
+	//Start the wait for asset compilation task on a async task
+	for (int32 SourceIndex = 0; SourceIndex < AsyncHelper->SourceDatas.Num(); ++SourceIndex)
+	{
+		AsyncHelper->WaitAssetCompilationTask = TGraphTask<FTaskWaitAssetCompilation>::CreateTask(&PreCompletionPrerequistes).ConstructAndDispatchWhenReady(SourceIndex, WeakAsyncHelper);
+		AssetCompilationPrerequistes.Add(AsyncHelper->WaitAssetCompilationTask);
+	}
+
 	//Start the Post pipeline task
 	for (int32 SourceIndex = 0; SourceIndex < AsyncHelper->SourceDatas.Num(); ++SourceIndex)
 	{
-		for (int32 GraphPipelineIndex = 0; GraphPipelineIndex < AsyncHelper->Pipelines.Num(); ++GraphPipelineIndex)
-		{
-			int32 GraphPipelineTaskIndex = AsyncHelper->PipelinePostImportTasks.Add(
-				TGraphTask<FTaskPipelinePostImport>::CreateTask(&(PreCompletionPrerequistes)).ConstructAndDispatchWhenReady(SourceIndex, GraphPipelineIndex, WeakAsyncHelper)
-			);
-			//Ensure we run the pipeline in the same order we create the task, since the pipeline modifies the node container, its important that its not processed in parallel, Adding the one we start to the prerequisites
-			//is the way to go here
-			PreCompletionPrerequistes.Add(AsyncHelper->PipelinePostImportTasks[GraphPipelineTaskIndex]);
-		}
+		int32 GraphTaskIndex = AsyncHelper->PostImportTasks.Add(
+			TGraphTask<FTaskPostImport>::CreateTask(&(AssetCompilationPrerequistes)).ConstructAndDispatchWhenReady(SourceIndex, WeakAsyncHelper)
+		);
+		//Ensure we run the pipeline in the same order we create the task, since the pipeline modifies the node container, its important that its not processed in parallel, Adding the one we start to the prerequisites
+		//is the way to go here
+		AssetCompilationPrerequistes.Add(AsyncHelper->PostImportTasks[GraphTaskIndex]);
 	}
 
-	FGraphEventArray PreAsyncCompletionPrerequistes;
-	AsyncHelper->PreAsyncCompletionTask = TGraphTask<FTaskPreAsyncCompletion>::CreateTask(&PreCompletionPrerequistes).ConstructAndDispatchWhenReady(InterchangeManager, WeakAsyncHelper);
-	PreAsyncCompletionPrerequistes.Add(AsyncHelper->PreAsyncCompletionTask);
-
-	AsyncHelper->CompletionTask = TGraphTask<FTaskCompletion>::CreateTask(&PreAsyncCompletionPrerequistes).ConstructAndDispatchWhenReady(InterchangeManager, WeakAsyncHelper);
+	AsyncHelper->CompletionTask = TGraphTask<FTaskCompletion>::CreateTask(&AssetCompilationPrerequistes).ConstructAndDispatchWhenReady(InterchangeManager, WeakAsyncHelper);
 }

@@ -177,11 +177,18 @@ public:
 	virtual TArray<FString> GetBuildFileList(const TSet<FString>& Tags) const = 0;
 
 	/**
+	 * Get the list of files in this build which match a tag from a given set. Filenames are all relative to an install directory
+	 * Filenames returned are a view over memory owned by the BuildManifest
+	 * @return an array containing build files
+	 */
+	virtual TArray<FStringView> GetBuildFileListView(const TSet<FString>& Tags) const = 0;
+
+	/**
 	 * Returns the size of a particular file in the build
 	 * @param Filename      The file.
 	 * @return the file size.
 	 */
-	virtual int64 GetFileSize(const FString& Filename) const = 0;
+	virtual int64 GetFileSize(FStringView Filename) const = 0;
 
 	/**
 	 * Returns the total size of all files in the array

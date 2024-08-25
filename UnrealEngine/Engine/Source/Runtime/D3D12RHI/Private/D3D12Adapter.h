@@ -145,6 +145,7 @@ public:
 	void CleanupResources();
 
 	void InitializeDevices();
+	void InitializeExplicitDescriptorHeap();
 	void InitializeRayTracing();
 
 	// Getters
@@ -614,7 +615,9 @@ protected:
 
 #if USE_STATIC_ROOT_SIGNATURE
 	FD3D12RootSignature StaticGraphicsRootSignature;
+	FD3D12RootSignature StaticGraphicsWithConstantsRootSignature;
 	FD3D12RootSignature StaticComputeRootSignature;
+	FD3D12RootSignature StaticComputeWithConstantsRootSignature;
 	FD3D12RootSignature StaticRayTracingGlobalRootSignature;
 	FD3D12RootSignature StaticRayTracingLocalRootSignature;
 #endif

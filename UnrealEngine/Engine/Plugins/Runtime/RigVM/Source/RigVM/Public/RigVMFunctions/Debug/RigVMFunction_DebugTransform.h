@@ -5,7 +5,7 @@
 #include "RigVMFunction_DebugBase.h"
 #include "RigVMFunction_DebugTransform.generated.h"
 
-UENUM()
+UENUM(meta = (RigVMTypeAllowed))
 enum class ERigUnitDebugTransformMode : uint8
 {
 	/** Draw as point */

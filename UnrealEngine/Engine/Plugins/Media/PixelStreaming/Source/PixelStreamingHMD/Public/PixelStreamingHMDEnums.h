@@ -2,7 +2,9 @@
 
 #pragma once
 
-enum class PIXELSTREAMINGHMD_API EPixelStreamingXRSystem : uint8
+#include "HAL/Platform.h"
+
+enum class EPixelStreamingXRSystem : uint8
 {
 	Unknown,
 	HTCVive,

@@ -2,363 +2,414 @@
 
 #include "LearningAgentsCompletions.h"
 
-#include "LearningAgentsTrainer.h"
-#include "LearningAgentsManager.h"
-#include "LearningArray.h"
-#include "LearningArrayMap.h"
+#include "LearningAgentsManagerListener.h"
+#include "LearningAgentsDebug.h"
+
 #include "LearningCompletion.h"
-#include "LearningCompletionObject.h"
 #include "LearningLog.h"
 
-#include "GameFramework/Actor.h"
-
-namespace UE::Learning::Agents::Completions::Private
+namespace UE::Learning::Agents
 {
-	template<typename CompletionUObject, typename CompletionFObject, typename... InArgTypes>
-	CompletionUObject* AddCompletion(ULearningAgentsTrainer* InAgentTrainer, const FName Name, const TCHAR* FunctionName, InArgTypes&& ...Args)
+	ELearningAgentsCompletion GetLearningAgentsCompletion(const ECompletionMode CompletionMode)
 	{
-		if (!InAgentTrainer)
+		switch (CompletionMode)
 		{
-			UE_LOG(LogLearning, Error, TEXT("%s: InAgentTrainer is nullptr."), FunctionName);
-			return nullptr;
+		case ECompletionMode::Running: return ELearningAgentsCompletion::Running;
+		case ECompletionMode::Terminated: return ELearningAgentsCompletion::Termination;
+		case ECompletionMode::Truncated: return ELearningAgentsCompletion::Truncation;
+		default: UE_LOG(LogLearning, Error, TEXT("Unknown Completion Mode.")); return ELearningAgentsCompletion::Running;
 		}
+	}
 
-		if (!InAgentTrainer->HasAgentManager())
+	ECompletionMode GetCompletionMode(const ELearningAgentsCompletion Completion)
+	{
+		switch (Completion)
 		{
-			UE_LOG(LogLearning, Error, TEXT("%s: Must be attached to a LearningAgentsManager Actor."), *InAgentTrainer->GetName());
-			return nullptr;
+		case ELearningAgentsCompletion::Running: return ECompletionMode::Running;
+		case ELearningAgentsCompletion::Termination: return ECompletionMode::Terminated;
+		case ELearningAgentsCompletion::Truncation: return ECompletionMode::Truncated;
+		default: UE_LOG(LogLearning, Error, TEXT("Unknown Completion.")); return ECompletionMode::Running;
 		}
+	}
 
-		const FName UniqueName = MakeUniqueObjectName(InAgentTrainer, CompletionUObject::StaticClass(), Name, EUniqueObjectNameOptions::GloballyUnique);
-
-		CompletionUObject* Completion = NewObject<CompletionUObject>(InAgentTrainer, UniqueName);
-		Completion->Init(InAgentTrainer->GetAgentManager()->GetMaxAgentNum());
-		Completion->AgentTrainer = InAgentTrainer;
-		Completion->CompletionObject = MakeShared<CompletionFObject>(
-			Completion->GetFName(),
-			InAgentTrainer->GetAgentManager()->GetInstanceData().ToSharedRef(),
-			InAgentTrainer->GetAgentManager()->GetMaxAgentNum(),
-			Forward<InArgTypes>(Args)...);
-
-		InAgentTrainer->AddCompletion(Completion, Completion->CompletionObject.ToSharedRef());
-
-		return Completion;
+	namespace Private
+	{
+		const TCHAR* GetCompletionName(const ELearningAgentsCompletion Completion)
+		{
+			switch (Completion)
+			{
+			case ELearningAgentsCompletion::Running: return TEXT("Running");
+			case ELearningAgentsCompletion::Termination: return TEXT("Termination");
+			case ELearningAgentsCompletion::Truncation: return TEXT("Truncation");
+			default: return TEXT("Error");
+			}
+		}
 	}
 }
 
-//------------------------------------------------------------------
 
-void ULearningAgentsCompletion::Init(const int32 MaxAgentNum)
+bool ULearningAgentsCompletions::IsCompletionRunning(const ELearningAgentsCompletion Completion)
 {
-	AgentIteration.SetNumUninitialized({ MaxAgentNum });
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, INDEX_NONE);
+	return Completion == ELearningAgentsCompletion::Running;
 }
 
-void ULearningAgentsCompletion::OnAgentsAdded(const TArray<int32>& AgentIds)
+bool ULearningAgentsCompletions::IsCompletionCompleted(const ELearningAgentsCompletion Completion)
 {
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, 0, AgentIds);
+	return Completion == ELearningAgentsCompletion::Truncation || Completion == ELearningAgentsCompletion::Termination;
 }
 
-void ULearningAgentsCompletion::OnAgentsRemoved(const TArray<int32>& AgentIds)
+bool ULearningAgentsCompletions::IsCompletionTruncation(const ELearningAgentsCompletion Completion)
 {
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, INDEX_NONE, AgentIds);
+	return Completion == ELearningAgentsCompletion::Truncation;
 }
 
-void ULearningAgentsCompletion::OnAgentsReset(const TArray<int32>& AgentIds)
+bool ULearningAgentsCompletions::IsCompletionTermination(const ELearningAgentsCompletion Completion)
 {
-	UE::Learning::Array::Set<1, uint64>(AgentIteration, 0, AgentIds);
+	return Completion == ELearningAgentsCompletion::Termination;
 }
 
-uint64 ULearningAgentsCompletion::GetAgentIteration(const int32 AgentId) const
-{
-	return AgentIteration[AgentId];
-}
 
-//------------------------------------------------------------------
-
-UConditionalCompletion* UConditionalCompletion::AddConditionalCompletion(ULearningAgentsTrainer* InAgentTrainer, const FName Name, const ELearningAgentsCompletion InCompletionMode)
+ELearningAgentsCompletion ULearningAgentsCompletions::CompletionOr(ELearningAgentsCompletion A, ELearningAgentsCompletion B)
 {
-	return UE::Learning::Agents::Completions::Private::AddCompletion<UConditionalCompletion, UE::Learning::FConditionalCompletion>(InAgentTrainer, Name, TEXT("AddConditionalCompletion"), UE::Learning::Agents::GetCompletionMode(InCompletionMode));
-}
-
-void UConditionalCompletion::SetConditionalCompletion(const int32 AgentId, const bool bIsComplete)
-{
-	if (!AgentTrainer->HasAgent(AgentId))
+	if ((A == ELearningAgentsCompletion::Running && B != ELearningAgentsCompletion::Running) ||
+		(A == ELearningAgentsCompletion::Truncation && B == ELearningAgentsCompletion::Termination))
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
+		return B;
 	}
-
-	CompletionObject->InstanceData->View(CompletionObject->ConditionHandle)[AgentId] = bIsComplete;
-	AgentIteration[AgentId]++;
+	else
+	{
+		return A;
+	}
 }
+
+ELearningAgentsCompletion ULearningAgentsCompletions::CompletionAnd(ELearningAgentsCompletion A, ELearningAgentsCompletion B)
+{
+	if (A == ELearningAgentsCompletion::Running ||
+		(A == ELearningAgentsCompletion::Truncation && B != ELearningAgentsCompletion::Running))
+	{
+		return A;
+	}
+	else
+	{
+		return B;
+	}
+}
+
+ELearningAgentsCompletion ULearningAgentsCompletions::CompletionNot(ELearningAgentsCompletion A, ELearningAgentsCompletion NotRunningType)
+{
+	return A == ELearningAgentsCompletion::Running ? NotRunningType : ELearningAgentsCompletion::Running;
+}
+
+
+ELearningAgentsCompletion ULearningAgentsCompletions::MakeCompletion(
+	const ELearningAgentsCompletion CompletionType,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UConditionalCompletion::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UConditionalCompletion::VisualLog);
-
-	const TLearningArrayView<1, const bool> ConditionView = CompletionObject->InstanceData->ConstView(CompletionObject->ConditionHandle);
-	const TLearningArrayView<1, const UE::Learning::ECompletionMode> CompletionView = CompletionObject->InstanceData->ConstView(CompletionObject->CompletionHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(AgentTrainer->GetAgent(Instance)))
-		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nCondition: %s\nCompletion: %s"),
-				Instance,
-				ConditionView[Instance] ? TEXT("true") : TEXT("false"),
-				UE::Learning::Completion::CompletionModeString(CompletionView[Instance]));
-		}
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nCompletion: [%s]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			UE::Learning::Agents::Private::GetCompletionName(CompletionType));
 	}
-}
 #endif
 
-//------------------------------------------------------------------
-
-UTimeElapsedCompletion* UTimeElapsedCompletion::AddTimeElapsedCompletion(ULearningAgentsTrainer* InAgentTrainer, const FName Name, const float Threshold, const ELearningAgentsCompletion InCompletionMode)
-{
-	return UE::Learning::Agents::Completions::Private::AddCompletion<UTimeElapsedCompletion, UE::Learning::FTimeElapsedCompletion>(InAgentTrainer, Name, TEXT("AddTimeElapsedCompletion"), Threshold, UE::Learning::Agents::GetCompletionMode(InCompletionMode));
+	return CompletionType;
 }
 
-void UTimeElapsedCompletion::SetTimeElapsedCompletion(const int32 AgentId, const float Time)
+ELearningAgentsCompletion ULearningAgentsCompletions::MakeCompletionOnCondition(
+	const bool bCondition, 
+	const ELearningAgentsCompletion CompletionType,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!AgentTrainer->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	CompletionObject->InstanceData->View(CompletionObject->TimeHandle)[AgentId] = Time;
-	AgentIteration[AgentId]++;
-}
+	const ELearningAgentsCompletion Completion = bCondition ? CompletionType : ELearningAgentsCompletion::Running;
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UTimeElapsedCompletion::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UTimeElapsedCompletion::VisualLog);
-
-	const TLearningArrayView<1, const float> TimeView = CompletionObject->InstanceData->ConstView(CompletionObject->TimeHandle);
-	const TLearningArrayView<1, const float> ThresholdView = CompletionObject->InstanceData->ConstView(CompletionObject->ThresholdHandle);
-	const TLearningArrayView<1, const UE::Learning::ECompletionMode> CompletionView = CompletionObject->InstanceData->ConstView(CompletionObject->CompletionHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(AgentTrainer->GetAgent(Instance)))
-		{
-			UE_LEARNING_AGENTS_VLOG_STRING(this, LogLearning, Display,
-				Actor->GetActorLocation(),
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nThreshold: [%6.3f]\nTime: [%6.3f]\nCompletion: %s"),
-				Instance,
-				ThresholdView[Instance],
-				TimeView[Instance],
-				UE::Learning::Completion::CompletionModeString(CompletionView[Instance]));
-		}
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nCondition: [%s]\nCompletion Type: [%s]\nCompletion: [%s]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			bCondition ? TEXT("true") : TEXT("false"),
+			UE::Learning::Agents::Private::GetCompletionName(CompletionType),
+			UE::Learning::Agents::Private::GetCompletionName(Completion));
 	}
-}
 #endif
 
-//------------------------------------------------------------------
-
-UPlanarPositionDifferenceCompletion* UPlanarPositionDifferenceCompletion::AddPlanarPositionDifferenceCompletion(
-	ULearningAgentsTrainer* InAgentTrainer,
-	const FName Name,
-	const float Threshold,
-	const ELearningAgentsCompletion InCompletionMode,
-	const FVector Axis0,
-	const FVector Axis1)
-{
-	return UE::Learning::Agents::Completions::Private::AddCompletion<UPlanarPositionDifferenceCompletion, UE::Learning::FPlanarPositionDifferenceCompletion>(
-		InAgentTrainer,
-		Name,
-		TEXT("AddPlanarPositionDifferenceCompletion"),
-		1,
-		Threshold,
-		UE::Learning::Agents::GetCompletionMode(InCompletionMode),
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector),
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
+	return Completion;
 }
 
-void UPlanarPositionDifferenceCompletion::SetPlanarPositionDifferenceCompletion(const int32 AgentId, const FVector Position0, const FVector Position1)
+ELearningAgentsCompletion ULearningAgentsCompletions::MakeCompletionOnTimeElapsed(
+	const float Time, 
+	const float TimeThreshold, 
+	const ELearningAgentsCompletion CompletionType,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!AgentTrainer->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	CompletionObject->InstanceData->View(CompletionObject->Position0Handle)[AgentId][0] = Position0;
-	CompletionObject->InstanceData->View(CompletionObject->Position1Handle)[AgentId][0] = Position1;
-	AgentIteration[AgentId]++;
-}
+	const bool bCondition = Time > TimeThreshold;
+	const ELearningAgentsCompletion Completion = MakeCompletionOnCondition(bCondition, CompletionType);
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarPositionDifferenceCompletion::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarPositionDifferenceCompletion::VisualLog);
-
-	const TLearningArrayView<2, const FVector> Position0View = CompletionObject->InstanceData->ConstView(CompletionObject->Position0Handle);
-	const TLearningArrayView<2, const FVector> Position1View = CompletionObject->InstanceData->ConstView(CompletionObject->Position1Handle);
-	const TLearningArrayView<1, const float> ThresholdView = CompletionObject->InstanceData->ConstView(CompletionObject->ThresholdHandle);
-	const TLearningArrayView<1, const UE::Learning::ECompletionMode> CompletionView = CompletionObject->InstanceData->ConstView(CompletionObject->CompletionHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(AgentTrainer->GetAgent(Instance)))
-		{
-			const FVector Position0 = Position0View[Instance][0];
-			const FVector Position1 = Position1View[Instance][0];
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			const FVector PlanarPosition0 = FVector(CompletionObject->Axis0.Dot(Position0), CompletionObject->Axis1.Dot(Position0), 0.0f);
-			const FVector PlanarPosition1 = FVector(CompletionObject->Axis0.Dot(Position1), CompletionObject->Axis1.Dot(Position1), 0.0f);
-
-			UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-				Position0,
-				10.0f,
-				VisualLogColor.ToFColor(true),
-				TEXT("Position0: [% 6.1f % 6.1f % 6.1f]\nPlanar Position0: [% 6.1f % 6.1f]"),
-				Position0.X, Position0.Y, Position0.Z,
-				PlanarPosition0.X, PlanarPosition0.Y);
-
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Position0,
-				FQuat::Identity,
-				CompletionObject->Axis0,
-				CompletionObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-				Position1,
-				10.0f,
-				VisualLogColor.ToFColor(true),
-				TEXT("Position1: [% 6.1f % 6.1f % 6.1f]\nPlanar Position1: [% 6.1f % 6.1f]"),
-				Position1.X, Position1.Y, Position1.Z,
-				PlanarPosition1.X, PlanarPosition1.Y);
-
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Position1,
-				FQuat::Identity,
-				CompletionObject->Axis0,
-				CompletionObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_SEGMENT(this, LogLearning, Display,
-				Position0,
-				Position1,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nDistance: [% 6.3f]\nPlanar Distance: [% 6.3f]\nThreshold: [% 6.2f]\nCompletion: %s"),
-				Instance,
-				FVector::Distance(Position0, Position1),
-				FVector::Distance(PlanarPosition0, PlanarPosition1),
-				ThresholdView[Instance],
-				UE::Learning::Completion::CompletionModeString(CompletionView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nTime: [% 6.2f]\nThreshold: [% 6.2f]\nCondition: [%s]\nCompletion Type: [%s]\nCompletion: [%s]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Time,
+			TimeThreshold,
+			bCondition ? TEXT("true") : TEXT("false"),
+			UE::Learning::Agents::Private::GetCompletionName(CompletionType),
+			UE::Learning::Agents::Private::GetCompletionName(Completion));
 	}
-}
 #endif
 
-
-UPlanarPositionSimilarityCompletion* UPlanarPositionSimilarityCompletion::AddPlanarPositionSimilarityCompletion(
-	ULearningAgentsTrainer* InAgentTrainer,
-	const FName Name,
-	const float Threshold,
-	const ELearningAgentsCompletion InCompletionMode,
-	const FVector Axis0,
-	const FVector Axis1)
-{
-	return UE::Learning::Agents::Completions::Private::AddCompletion<UPlanarPositionSimilarityCompletion, UE::Learning::FPlanarPositionSimilarityCompletion>(
-		InAgentTrainer,
-		Name,
-		TEXT("AddPlanarPositionSimilarityCompletion"),
-		1,
-		Threshold,
-		UE::Learning::Agents::GetCompletionMode(InCompletionMode),
-		Axis0.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector),
-		Axis1.GetSafeNormal(UE_SMALL_NUMBER, FVector::RightVector));
+	return Completion;
 }
 
-void UPlanarPositionSimilarityCompletion::SetPlanarPositionSimilarityCompletion(const int32 AgentId, const FVector Position0, const FVector Position1)
+ELearningAgentsCompletion ULearningAgentsCompletions::MakeCompletionOnEpisodeStepsRecorded(
+	const int32 EpisodeSteps, 
+	const int32 MaxEpisodeSteps, 
+	const ELearningAgentsCompletion CompletionType,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
 {
-	if (!AgentTrainer->HasAgent(AgentId))
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: AgentId %d not found in the agents set."), *GetName(), AgentId);
-		return;
-	}
-
-	CompletionObject->InstanceData->View(CompletionObject->Position0Handle)[AgentId][0] = Position0;
-	CompletionObject->InstanceData->View(CompletionObject->Position1Handle)[AgentId][0] = Position1;
-	AgentIteration[AgentId]++;
-}
+	const bool bCondition = EpisodeSteps >= MaxEpisodeSteps;
+	const ELearningAgentsCompletion Completion = MakeCompletionOnCondition(bCondition, CompletionType);
 
 #if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-void UPlanarPositionSimilarityCompletion::VisualLog(const UE::Learning::FIndexSet Instances) const
-{
-	UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(UPlanarPositionSimilarityCompletion::VisualLog);
-
-	const TLearningArrayView<2, const FVector> Position0View = CompletionObject->InstanceData->ConstView(CompletionObject->Position0Handle);
-	const TLearningArrayView<2, const FVector> Position1View = CompletionObject->InstanceData->ConstView(CompletionObject->Position1Handle);
-	const TLearningArrayView<1, const float> ThresholdView = CompletionObject->InstanceData->ConstView(CompletionObject->ThresholdHandle);
-	const TLearningArrayView<1, const UE::Learning::ECompletionMode> CompletionView = CompletionObject->InstanceData->ConstView(CompletionObject->CompletionHandle);
-
-	for (const int32 Instance : Instances)
+	if (bVisualLoggerEnabled && VisualLoggerListener)
 	{
-		if (const AActor* Actor = Cast<AActor>(AgentTrainer->GetAgent(Instance)))
-		{
-			const FVector Position0 = Position0View[Instance][0];
-			const FVector Position1 = Position1View[Instance][0];
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
 
-			const FVector PlanarPosition0 = FVector(CompletionObject->Axis0.Dot(Position0), CompletionObject->Axis1.Dot(Position0), 0.0f);
-			const FVector PlanarPosition1 = FVector(CompletionObject->Axis0.Dot(Position1), CompletionObject->Axis1.Dot(Position1), 0.0f);
-
-			UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-				Position0,
-				10.0f,
-				VisualLogColor.ToFColor(true),
-				TEXT("Position0: [% 6.1f % 6.1f % 6.1f]\nPlanar Position0: [% 6.1f % 6.1f]"),
-				Position0.X, Position0.Y, Position0.Z,
-				PlanarPosition0.X, PlanarPosition0.Y);
-
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Position0,
-				FQuat::Identity,
-				CompletionObject->Axis0,
-				CompletionObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_LOCATION(this, LogLearning, Display,
-				Position1,
-				10.0f,
-				VisualLogColor.ToFColor(true),
-				TEXT("Position1: [% 6.1f % 6.1f % 6.1f]\nPlanar Position1: [% 6.1f % 6.1f]"),
-				Position1.X, Position1.Y, Position1.Z,
-				PlanarPosition1.X, PlanarPosition1.Y);
-
-			UE_LEARNING_AGENTS_VLOG_PLANE(this, LogLearning, Display,
-				Position1,
-				FQuat::Identity,
-				CompletionObject->Axis0,
-				CompletionObject->Axis1,
-				VisualLogColor.ToFColor(true),
-				TEXT(""));
-
-			UE_LEARNING_AGENTS_VLOG_SEGMENT(this, LogLearning, Display,
-				Position0,
-				Position1,
-				VisualLogColor.ToFColor(true),
-				TEXT("Agent %i\nDistance: [% 6.3f]\nPlanar Distance: [% 6.3f]\nThreshold: [% 6.2f]\nCompletion: %s"),
-				Instance,
-				FVector::Distance(Position0, Position1),
-				FVector::Distance(PlanarPosition0, PlanarPosition1),
-				ThresholdView[Instance],
-				UE::Learning::Completion::CompletionModeString(CompletionView[Instance]));
-		}
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nEpisodeSteps: [% 4i]\nMaxEpisodeSteps: [% 4i]\nCondition: [%s]\nCompletion Type: [%s]\nCompletion: [%s]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			EpisodeSteps,
+			MaxEpisodeSteps,
+			bCondition ? TEXT("true") : TEXT("false"),
+			UE::Learning::Agents::Private::GetCompletionName(CompletionType),
+			UE::Learning::Agents::Private::GetCompletionName(Completion));
 	}
-}
 #endif
+
+	return Completion;
+}
+
+ELearningAgentsCompletion ULearningAgentsCompletions::MakeCompletionOnLocationDifferenceBelowThreshold(
+	const FVector LocationA, 
+	const FVector LocationB, 
+	const float DistanceThreshold, 
+	const ELearningAgentsCompletion CompletionType,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	const float Distance = FVector::Distance(LocationA, LocationB);
+	const bool bCondition = Distance < DistanceThreshold;
+	const ELearningAgentsCompletion Completion = MakeCompletionOnCondition(bCondition, CompletionType);
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_LOCATION(VisualLoggerObject, LogLearning, Display,
+			LocationA,
+			10,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_SEGMENT(VisualLoggerObject, LogLearning, Display,
+			LocationA,
+			LocationB,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_LOCATION(VisualLoggerObject, LogLearning, Display,
+			LocationB,
+			10,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nLocationA: [% 6.1f % 6.1f % 6.1f]\nLocationB: [% 6.1f % 6.1f % 6.1f]\nDistance: [% 6.2f]\nThreshold: [% 6.2f]\nCondition: [%s]\nCompletion Type: [%s]\nCompletion: [%s]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			LocationA.X, LocationA.Y, LocationA.Z,
+			LocationB.X, LocationB.Y, LocationB.Z,
+			Distance,
+			DistanceThreshold,
+			bCondition ? TEXT("true") : TEXT("false"),
+			UE::Learning::Agents::Private::GetCompletionName(CompletionType),
+			UE::Learning::Agents::Private::GetCompletionName(Completion));
+	}
+#endif
+
+	return Completion;
+}
+
+ELearningAgentsCompletion ULearningAgentsCompletions::MakeCompletionOnLocationDifferenceAboveThreshold(
+	const FVector LocationA, 
+	const FVector LocationB, 
+	const float DistanceThreshold, 
+	const ELearningAgentsCompletion CompletionType,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	const float Distance = FVector::Distance(LocationA, LocationB);
+	const bool bCondition = Distance > DistanceThreshold;
+	const ELearningAgentsCompletion Completion = MakeCompletionOnCondition(bCondition, CompletionType);
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_LOCATION(VisualLoggerObject, LogLearning, Display,
+			LocationA,
+			10,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_SEGMENT(VisualLoggerObject, LogLearning, Display,
+			LocationA,
+			LocationB,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_LOCATION(VisualLoggerObject, LogLearning, Display,
+			LocationB,
+			10,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nLocationA: [% 6.1f % 6.1f % 6.1f]\nLocationB: [% 6.1f % 6.1f % 6.1f]\nDistance: [% 6.2f]\nThreshold: [% 6.2f]\nCondition: [%s]\nCompletion Type: [%s]\nCompletion: [%s]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			LocationA.X, LocationA.Y, LocationA.Z,
+			LocationB.X, LocationB.Y, LocationB.Z,
+			Distance,
+			DistanceThreshold,
+			bCondition ? TEXT("true") : TEXT("false"),
+			UE::Learning::Agents::Private::GetCompletionName(CompletionType),
+			UE::Learning::Agents::Private::GetCompletionName(Completion));
+	}
+#endif
+
+	return Completion;
+}
+
+ELearningAgentsCompletion ULearningAgentsCompletions::MakeCompletionOnLocationOutsideBounds(
+	const FVector Location,
+	const FTransform BoundsTransform,
+	const FVector BoundsMins,
+	const FVector BoundsMaxs,
+	const ELearningAgentsCompletion CompletionType,
+	const FName Tag,
+	const bool bVisualLoggerEnabled,
+	ULearningAgentsManagerListener* VisualLoggerListener,
+	const int32 VisualLoggerAgentId,
+	const FVector VisualLoggerLocation,
+	const FLinearColor VisualLoggerColor)
+{
+	const FVector LocalLocation = BoundsTransform.InverseTransformPosition(Location);
+	
+	const bool bCondition = (
+		LocalLocation.X < BoundsMins.X || LocalLocation.X > BoundsMaxs.X ||
+		LocalLocation.Y < BoundsMins.Y || LocalLocation.Y > BoundsMaxs.Y ||
+		LocalLocation.Z < BoundsMins.Z || LocalLocation.Z > BoundsMaxs.Z);
+
+	const ELearningAgentsCompletion Completion = MakeCompletionOnCondition(bCondition, CompletionType);
+
+#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
+	if (bVisualLoggerEnabled && VisualLoggerListener)
+	{
+		const ULearningAgentsVisualLoggerObject* VisualLoggerObject = VisualLoggerListener->GetOrAddVisualLoggerObject(Tag);
+
+		UE_LEARNING_AGENTS_VLOG_LOCATION(VisualLoggerObject, LogLearning, Display,
+			Location,
+			10,
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_SEGMENT(VisualLoggerObject, LogLearning, Display,
+			Location,
+			BoundsTransform.GetLocation(),
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_OBOX(VisualLoggerObject, LogLearning, Display,
+			FBox(BoundsMins, BoundsMaxs),
+			BoundsTransform.ToMatrixWithScale(),
+			VisualLoggerColor.ToFColor(true),
+			TEXT(""));
+
+		UE_LEARNING_AGENTS_VLOG_STRING(VisualLoggerObject, LogLearning, Display, VisualLoggerLocation,
+			VisualLoggerColor.ToFColor(true),
+			TEXT("Listener: %s\nTag: %s\nAgent Id: % 3i\nLocation: [% 6.1f % 6.1f % 6.1f]\nLocal Location: [% 6.1f % 6.1f % 6.1f]\nBounds Mins: [% 6.1f % 6.1f % 6.1f]\nBounds Maxs: [% 6.1f % 6.1f % 6.1f]\nCondition: [%s]\nCompletion Type: [%s]\nCompletion: [%s]"),
+			*VisualLoggerListener->GetName(),
+			*Tag.ToString(),
+			VisualLoggerAgentId,
+			Location.X, Location.Y, Location.Z,
+			LocalLocation.X, LocalLocation.Y, LocalLocation.Z,
+			BoundsMins.X, BoundsMins.Y, BoundsMins.Z,
+			BoundsMaxs.X, BoundsMaxs.Y, BoundsMaxs.Z,
+			bCondition ? TEXT("true") : TEXT("false"),
+			UE::Learning::Agents::Private::GetCompletionName(CompletionType),
+			UE::Learning::Agents::Private::GetCompletionName(Completion));
+	}
+#endif
+
+	return Completion;
+}
+

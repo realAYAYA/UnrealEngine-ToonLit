@@ -9,8 +9,6 @@ public class Engine : ModuleRules
 	{
 		NumIncludedBytesPerUnityCPPOverride = 589824; // best unity size found from using UBT ProfileUnitySizes mode
 
-		PublicIncludePaths.Add("../Shaders/Shared");
-		
 		PrivatePCHHeaderFile = "Private/EnginePrivatePCH.h";
 
 		SharedPCHHeaderFile = "Public/EngineSharedPCH.h";
@@ -26,6 +24,7 @@ public class Engine : ModuleRules
 				"PacketHandler", 
 				"Renderer",
 				"RHI",
+				"Shaders"
 			}
 		);
 
@@ -158,6 +157,7 @@ public class Engine : ModuleRules
 				"TraceLog",
 				"ColorManagement",
 				"Icmp",
+				"UniversalObjectLocator",
 				"XmlParser",
 			}
 		);
@@ -166,16 +166,18 @@ public class Engine : ModuleRules
 		{
 			// The SparseVolumeTexture module containing the importer is only loaded and used in the editor.
 			DynamicallyLoadedModuleNames.Add("SparseVolumeTexture");
+			AddEngineThirdPartyPrivateStaticDependencies(Target,
+				"UEWavComp"
+				);
 		}
 
-		// Cross platform Audio Codecs:
-		AddEngineThirdPartyPrivateStaticDependencies(Target,
-			"UEOgg",
-			"Vorbis",
-			"VorbisFile",
-			"libOpus"
-			);
-
+		// Cross platform Audio Codecs: (we build here, but don't depend on them directly)
+		DynamicallyLoadedModuleNames.Add("RadAudioDecoder");
+		DynamicallyLoadedModuleNames.Add("BinkAudioDecoder");
+		DynamicallyLoadedModuleNames.Add("VorbisAudioDecoder");
+		DynamicallyLoadedModuleNames.Add("OpusAudioDecoder");
+		DynamicallyLoadedModuleNames.Add("AdpcmAudioDecoder");
+		
 		DynamicallyLoadedModuleNames.Add("EyeTracker");
 
 		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
@@ -230,6 +232,7 @@ public class Engine : ModuleRules
 		CircularlyReferencedDependentModules.Add("MaterialShaderQualitySettings");
 		CircularlyReferencedDependentModules.Add("CinematicCamera");
 		CircularlyReferencedDependentModules.Add("AudioMixer");
+		
 
 		if (Target.bCompileAgainstEditor)
 		{
@@ -289,6 +292,9 @@ public class Engine : ModuleRules
 
 			PublicIncludePathModuleNames.Add("AnimationDataController");
 			DynamicallyLoadedModuleNames.Add("AnimationDataController");
+
+			PublicIncludePathModuleNames.Add("AnimationBlueprintEditor");
+			DynamicallyLoadedModuleNames.Add("AnimationBlueprintEditor");
 
 			PrivateDependencyModuleNames.AddRange(
 				new string[] {
@@ -444,29 +450,13 @@ public class Engine : ModuleRules
 
 		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Android))
 		{
-			AddEngineThirdPartyPrivateStaticDependencies(Target,
-				"UEOgg",
-				"Vorbis",
-				"VorbisFile"
-				);
-
 			PrivateIncludePathModuleNames.Add("AndroidRuntimeSettings");
 		}
 
-		if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			PublicIncludePathModuleNames.Add("IOSPlatformFeatures");
 			PrivateIncludePathModuleNames.Add("IOSRuntimeSettings");
-		}
-
-		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))
-		{
-			AddEngineThirdPartyPrivateStaticDependencies(Target,
-				"UEOgg",
-				"Vorbis",
-				"VorbisFile",
-				"libOpus"
-				);
 		}
 
 		PublicDefinitions.Add("GPUPARTICLE_LOCAL_VF_ONLY=0");
@@ -490,5 +480,7 @@ public class Engine : ModuleRules
 		SetupIrisSupport(Target, bIrisAddAsPublicDepedency);
 
 		PrivateDefinitions.Add("UE_DEPRECATE_LEGACY_MATH_CONSTANT_MACRO_NAMES=1");
+
+		bAllowAutoRTFMInstrumentation = true;
 	}
 }

@@ -17,8 +17,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeSurfaceVariation::Private::s_type =
-            NODE_TYPE( "SurfaceVariation", NodeSurface::GetStaticType() );
+    FNodeType NodeSurfaceVariation::Private::s_type =
+            FNodeType( "SurfaceVariation", NodeSurface::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,98 +26,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeSurfaceVariation, EType::Variation, Node, Node::EType::Surface)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeSurfaceVariation::GetInputCount() const
-	{
-        int32 c = m_pD->m_defaultSurfaces.Num();
-        c += m_pD->m_defaultModifiers.Num();
-        for (const auto& v : m_pD->m_variations)
-		{
-            c += v.m_surfaces.Num();
-            c += v.m_modifiers.Num();
-        }
-
-		return (int)c;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeSurfaceVariation::GetInputNode( int i ) const
-	{
-		check( i >=0 && i < GetInputCount() );
-
-        if ( i<m_pD->m_defaultSurfaces.Num())
-		{
-            return m_pD->m_defaultSurfaces[i].get();
-		}
-        i -= m_pD->m_defaultSurfaces.Num();
-
-        if ( i<m_pD->m_defaultModifiers.Num())
-        {
-            return m_pD->m_defaultModifiers[i].get();
-        }
-        i -= m_pD->m_defaultModifiers.Num();
-
-        for (const auto& v : m_pD->m_variations)
-        {
-            if (i < (int)v.m_surfaces.Num())
-            {
-                return v.m_surfaces[i].get();
-            }
-            i -= (int)v.m_surfaces.Num();
-
-            if (i < (int)v.m_modifiers.Num())
-            {
-                return v.m_modifiers[i].get();
-            }
-            i -= (int)v.m_modifiers.Num();
-        }
-
-		return nullptr;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeSurfaceVariation::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i >=0 && i <  GetInputCount());
-
-        if (i<m_pD->m_defaultSurfaces.Num())
-		{
-            m_pD->m_defaultSurfaces[i] = dynamic_cast<NodeSurface*>(pNode.get());
-			return;
-		}
-
-        i -= m_pD->m_defaultSurfaces.Num();
-        if (i<m_pD->m_defaultModifiers.Num())
-        {
-
-            m_pD->m_defaultModifiers[i] = dynamic_cast<NodeModifier*>(pNode.get());
-            return;
-        }
-        i -= m_pD->m_defaultModifiers.Num();
-
-        for (auto& v : m_pD->m_variations)
-        {
-            if (i < (int)v.m_surfaces.Num())
-            {
-                v.m_surfaces[i] = dynamic_cast<NodeSurface*>(pNode.get());
-                return;
-            }
-            i -= (int)v.m_surfaces.Num();
-
-            if (i < (int)v.m_modifiers.Num())
-            {
-                v.m_modifiers[i] = dynamic_cast<NodeModifier*>(pNode.get());
-                return;
-            }
-            i -= (int)v.m_modifiers.Num();
-        }
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -159,19 +67,11 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeSurfaceVariation::SetVariationTag(int index, const char* strTag)
+	void NodeSurfaceVariation::SetVariationTag(int index, const FString& Tag)
 	{
 		check(index >= 0 && index < m_pD->m_variations.Num());
-		check(strTag);
 
-        if (strTag)
-        {
-            m_pD->m_variations[index].m_tag = strTag;
-        }
-        else
-        {
-            m_pD->m_variations[index].m_tag = "";
-        }
+		m_pD->m_variations[index].m_tag = Tag;
 	}
 
 

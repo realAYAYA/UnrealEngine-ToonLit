@@ -100,23 +100,19 @@ private:
 	FVector PinPointLocalToA;
 	float Alpha = 1.0;
 	FQuat ARotLocalToPin;
-	bool bPinRotation = false;
 
 public:
 	
 	FPinConstraint(
 		FRigidBody* InBody,
 		const FVector& InPinPositionOrig,
-		const FQuat& InPinRotationOrig,
-		const bool bInPinRotation);
+		const FQuat& InPinRotationOrig);
 
 	virtual ~FPinConstraint() {};
 
 	virtual void Solve(const FPBIKSolverSettings& Settings) override;
 
 	void SetGoal(const FVector& InGoalPosition, const FQuat& InGoalRotation, const float InAlpha);
-
-	void EnableInCurrentState();
 
 private:
 

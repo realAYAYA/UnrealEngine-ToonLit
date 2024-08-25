@@ -8,9 +8,6 @@ public class AudioCaptureRtAudio : ModuleRules
 
 	public AudioCaptureRtAudio(ReadOnlyTargetRules Target) : base(Target)
 	{
-		// warning C5056: operator '!=': deprecated for array types
-		CppStandard = CppStandardVersion.Cpp17;
-
 		// RtAudio throws exceptions for errors.
 		bEnableExceptions = true;
 

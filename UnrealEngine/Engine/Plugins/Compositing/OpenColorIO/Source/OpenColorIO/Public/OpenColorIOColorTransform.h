@@ -16,6 +16,7 @@
 
 
 struct FImageView;
+class FOpenColorIOWrapperProcessor;
 class UOpenColorIOConfiguration;
 
 
@@ -37,15 +38,16 @@ public:
 	bool Initialize(UOpenColorIOConfiguration* InOwner, const FString& InSourceColorSpace, const FString& InDestinationColorSpace, const TMap<FString, FString>& InContextKeyValues = {});
 	UE_DEPRECATED(5.3, "This method is deprecated, please use Initialize without the owner argument.")
 	bool Initialize(UOpenColorIOConfiguration* InOwner, const FString& InSourceColorSpace, const FString& InDisplay, const FString& InView, EOpenColorIOViewTransformDirection InDirection, const TMap<FString, FString>& InContextKeyValues = {});
+	UE_DEPRECATED(5.4, "This method is deprecated, please use Initialize without the context argument.")
+	bool Initialize(const FString& InSourceColorSpace, const FString& InDestinationColorSpace, const TMap<FString, FString>& InContextKeyValues);
+	UE_DEPRECATED(5.4, "This method is deprecated, please use Initialize without the context argument.")
+	bool Initialize(const FString& InSourceColorSpace, const FString& InDisplay, const FString& InView, EOpenColorIOViewTransformDirection InDirection, const TMap<FString, FString>& InContextKeyValues);
 
-#if WITH_EDITOR
-	/**
-	 * Initialize resources for color space transform. */
-	bool Initialize(const FString& InSourceColorSpace, const FString& InDestinationColorSpace, const TMap<FString, FString>& InContextKeyValues = {});
+	/** Initialize resources for color space transform. */
+	bool Initialize(const FString& InSourceColorSpace, const FString& InDestinationColorSpace);
 	
 	/** Initialize resources for display-view transform. */
-	bool Initialize(const FString& InSourceColorSpace, const FString& InDisplay, const FString& InView, EOpenColorIOViewTransformDirection InDirection, const TMap<FString, FString>& InContextKeyValues = {});
-#endif
+	bool Initialize(const FString& InSourceColorSpace, const FString& InDisplay, const FString& InView, EOpenColorIOViewTransformDirection InDirection);
 
 	/**
 	 * Serialize LUT data. This will effectively serialize the LUT only when cooking
@@ -60,7 +62,10 @@ public:
 	 * Cache resource shaders for rendering.
 	 * If a matching shader map is not found in memory or the DDC, a new one will be compiled.
 	 */
-	void CacheResourceShadersForRendering(bool bRegenerateId);
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
+	void CacheResourceShadersForRendering(bool bRegenerateId = false);
+	
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	void CacheShadersForResources(EShaderPlatform InShaderPlatform, FOpenColorIOTransformResource* InResourcesToCache, bool bApplyCompletedShaderMapForRendering, bool bIsCooking, const ITargetPlatform* TargetPlatform = nullptr);
 
 	UE_DEPRECATED(5.3, "This method is deprecated.")
@@ -69,23 +74,48 @@ public:
 	/**
 	 * Returns the desired resources required to apply this transform during rendering.
 	 */
-	bool GetRenderResources(ERHIFeatureLevel::Type InFeatureLevel, FOpenColorIOTransformResource*& OutShaderResource, TSortedMap<int32, FTextureResource*>& OutTextureResources);
+	UE_DEPRECATED(5.4, "This method is deprecated.")
+	bool GetRenderResources(ERHIFeatureLevel::Type InFeatureLevel, FOpenColorIOTransformResource*& OutShaderResource, TSortedMap<int32, FTextureResource*>& OutTextureResources) const
+	{
+		return false;
+	}
+
+	/**
+	 * Returns the desired resources required to apply this transform during rendering.
+	 */
+	bool GetRenderResources(ERHIFeatureLevel::Type InFeatureLevel, FOpenColorIOTransformResource*& OutShaderResource, TSortedMap<int32, TWeakObjectPtr<UTexture>>& OutTextureResources) const;
 
 	/**
 	 * Returns true if shader/texture resources have finished compiling and are ready for use (to be called on the game thread).
 	 */
 	bool AreRenderResourcesReady() const;
 
+	/**
+	 * Returns true if the current transform corresponds to the specified color spaces.
+	 */
 	bool IsTransform(const FString& InSourceColorSpace, const FString& InDestinationColorSpace) const;
+
+	/**
+	 * Returns true if the current transform corresponds to the specified color space and display/view & direction.
+	 */
 	bool IsTransform(const FString& InSourceColorSpace, const FString& InDisplay, const FString& InView, EOpenColorIOViewTransformDirection InDirection) const;
 
-#if WITH_EDITOR
+	/**
+	 * Get the transform processor.
+	 *
+	 * @param OutProcessor Processor wrapper for the current transform.
+	 * @return True if the processor was created and is valid.
+	 */
+	bool GetTransformProcessor(FOpenColorIOWrapperProcessor& OutProcessor) const;
+
+	/** Apply the color transform in-place to the specified color. */
+	bool TransformColor(FLinearColor& InOutColor) const;
+		
 	/** Apply the color transform in-place to the specified image. */
 	bool TransformImage(const FImageView& InOutImage) const;
 	
 	/** Apply the color transform from the source image to the destination image. (The destination FImageView is const but what it points at is not.) */
 	bool TransformImage(const FImageView& SrcImage, const FImageView& DestImage) const;
-#endif
 
 	/**
 	 * Get the display view direction type, when applicable.
@@ -98,25 +128,27 @@ public:
 	// For all ColorTransforms, UOpenColorIOColorTransform::CacheResourceShadersForRendering
 	static void AllColorTransformsCacheResourceShadersForRendering();
 
-	// Get the context key-values.
-	const TMap<FString, FString>& GetContextKeyValues() const { return ContextKeyValues; }
-
+	// Get the owner config's context key-values.
+	TMap<FString, FString> GetContextKeyValues() const;
 
 protected:
 
 	/**
 	 * Helper function to serialize shader maps for the given color transform resources.
 	 */
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	static void SerializeOpenColorIOShaderMaps(const TMap<const ITargetPlatform*, TArray<FOpenColorIOTransformResource*>>* PlatformColorTransformResourcesToSavePtr, FArchive& Ar, TArray<FOpenColorIOTransformResource>&  OutLoadedResources);
 	
 	/**
 	 * Helper function to register serialized shader maps for the given color transform resources
 	 */
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	static void ProcessSerializedShaderMaps(UOpenColorIOColorTransform* Owner, TArray<FOpenColorIOTransformResource>& LoadedResources, FOpenColorIOTransformResource* (&OutColorTransformResourcesLoaded)[ERHIFeatureLevel::Num]);
 	
 	/**
 	 * Returns a Guid for the LUT based on its unique identifier, name and the OCIO DDC key.
 	 */
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	static void GetOpenColorIOLUTKeyGuid(const FString& InProcessorIdentifier, const FName& InName, FGuid& OutLutGuid );
 
 	UE_DEPRECATED(5.3, "This method is deprecated.")
@@ -128,6 +160,7 @@ protected:
 	/**
 	 * Helper function returning the color space transform name based on source and destination color spaces.
 	 */
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	FString GetTransformFriendlyName() const;
 
 #if WITH_EDITOR
@@ -135,26 +168,29 @@ protected:
 	 * Fetch shader code and hash from the OCIO library
 	 * @return: true if shader could be generated from the library
 	 */
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	bool UpdateShaderInfo(FString& OutShaderCodeHash, FString& OutShaderCode, FString& OutRawConfigHash);
 
 	/**
 	 * Helper function taking raw 3D LUT data coming from the library and initializing a UVolumeTexture with it.
 	 */
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	TObjectPtr<UTexture> CreateTexture3DLUT(const FString& InProcessorIdentifier, const FName& InName, uint32 InLutLength, TextureFilter InFilter, const float* InSourceData);
 
 	/**
 	 * Helper function taking raw 1D LUT data coming from the library and initializing a UTexture with it.
 	 */
+	UE_DEPRECATED_FORGAME(5.4, "Do not use. Will be made private in 5.5")
 	TObjectPtr<UTexture> CreateTexture1DLUT(const FString& InProcessorIdentifier, const FName& InName, uint32 InTextureWidth, uint32 InTextureHeight, TextureFilter InFilter, bool bRedChannelOnly, const float* InSourceData );
 #endif //WITH_EDITOR
 
 private:
 #if WITH_EDITOR
 	/**
-	 * Create the transform processor(s) and generate its resources.
+	 * Create the transform processor(s) and generate its resources. Editor-only, in game mode GPU resources are already present.
 	 */
-	void ProcessTransform();
-#endif //WITH_EDITOR
+	void ProcessTransformForGPU();
+#endif
 
 	void FlushResourceShaderMaps();
 
@@ -240,12 +276,6 @@ private:
 	TArray<FOpenColorIOTransformResource> LoadedTransformResources;
 	
 	FOpenColorIOTransformResource* ColorTransformResources[ERHIFeatureLevel::Num];
-
-	/** Key-value string pairs used to define the processor's context. */
-	TMap<FString, FString> ContextKeyValues;
-
-	/** Enum used to indicate whether the working color space should be used as a source or destination. */
-	EOpenColorIOWorkingColorSpaceTransform WorkingColorSpaceTransformType;
 
 	FRenderCommandFence ReleaseFence;
 

@@ -11,7 +11,7 @@
 	"MarketplaceURL" : "",
 	"SupportURL" : "",
 	"EnabledByDefault" : true,
-	"CanContainContent" : false,
+	"CanContainContent" : true,
 	"IsBetaVersion" : true,
 	"Installed" : false,
 	"Plugins":
@@ -27,6 +27,11 @@
 			"Name" : "GameplayCameras",
 			"Type" : "Runtime",
 			"LoadingPhase" : "PreDefault"
+		},
+		{
+			"Name": "GameplayCamerasEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
 		}
 	]
 }

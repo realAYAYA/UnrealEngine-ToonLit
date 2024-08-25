@@ -6,13 +6,13 @@ import moment from 'moment';
 import React, { useState } from 'react';
 import backend, { useBackend } from '../backend';
 import { BoolParameterData, CreateJobRequest, GetJobsTabResponse, GroupParameterData, JobsTabData, ListParameterData, ListParameterItemData, ListParameterStyle, ParameterData, ParameterType, Priority, TabType, GetTemplateRefResponse, TextParameterData, ChangeQueryConfig } from '../backend/Api';
-
 import templateCache from '../backend/TemplateCache';
 import { ErrorHandler } from "../components/ErrorHandler";
-import { hordeClasses, modeColors } from '../styles/Styles';
 import { useQuery } from './JobDetailCommon';
 import { JobDetailsV2 } from './jobDetailsV2/JobDetailsViewCommon';
 import dashboard from '../backend/Dashboard';
+import { getHordeStyling } from '../styles/Styles';
+import { Markdown } from '../base/components/Markdown';
 
 let toolTipId = 0;
 
@@ -74,9 +74,40 @@ class BuildParameters {
 
          const job = jobDetails.jobData!;
 
+         // capture what args are part of a multi-argument
+         const multiArgs = new Set<string>();
+         parameters.forEach((p) => {
+            if (p.type === ParameterType.Bool) {
+               const param = p as BoolParameterData;
+
+               param.argumentsIfDisabled?.forEach(a => {
+                  multiArgs.add(a.toLowerCase().trim());
+               })
+               param.argumentsIfEnabled?.forEach(a => {
+                  multiArgs.add(a.toLowerCase().trim());
+               })
+            }
+
+            if (p.type === ParameterType.List) {
+               const param = p as ListParameterData;
+               param.items.forEach(item => {
+                  item.argumentsIfDisabled?.forEach(a => {
+                     multiArgs.add(a.toLowerCase().trim());
+                  })
+                  item.argumentsIfEnabled?.forEach(a => {
+                     multiArgs.add(a.toLowerCase().trim());
+                  })
+               });
+            }
+         });
+
          const args = job.arguments.filter(arg => {
 
             arg = arg.toLowerCase().trim();
+
+            if (multiArgs.has(arg)) {
+               return false;
+            }
 
             if (this.template.arguments?.find(targ => {
                return targ.toLowerCase().trim() === arg;
@@ -151,7 +182,7 @@ class BuildParameters {
    }
 
    addTarget(target: string, updateChanged = true) {
-      target = target?.trim();
+      target = target.trim();
       const unique = new Set<string>(this.targets);
       unique.add(target);
       this.targets = Array.from(unique);
@@ -176,25 +207,36 @@ class BuildParameters {
 
             const data = p as BoolParameterData;
 
-            let enabledTarget = "";
-            let disabledTarget = "";
+            let enabledTargets:string[] = [];
+            let disabledTargets:string[] = [];
 
             if (data.argumentIfEnabled?.toLowerCase().startsWith("-target=")) {
-               enabledTarget = data.argumentIfEnabled.slice(8);
+               enabledTargets.push(data.argumentIfEnabled.slice(8));
             }
+
+            data.argumentsIfEnabled?.forEach(a => {
+               if (a.toLowerCase().startsWith("-target=")) {
+                  enabledTargets.push(a.slice(8));
+               }
+            });
 
             if (data.argumentIfDisabled?.toLowerCase().startsWith("-target=")) {
-               disabledTarget = data.argumentIfDisabled.slice(8);
+               disabledTargets.push(data.argumentIfDisabled.slice(8));
+            }            
+
+            data.argumentsIfDisabled?.forEach(a => {
+               if (a.toLowerCase().startsWith("-target=")) {
+                  disabledTargets.push(a.slice(8));
+               }
+            });
+
+            if (enabledTargets.length) {
+               this.values[p.parameterKey] = !enabledTargets.find(t => !unique.has(t));
             }
 
-            if (target.toLowerCase() === enabledTarget.toLowerCase()) {
-               this.values[p.parameterKey] = true;
-            }
-
-            if (target.toLowerCase() === disabledTarget.toLowerCase()) {
+            if (disabledTargets.length && disabledTargets.find(t => unique.has(t))) {
                this.values[p.parameterKey] = false;
             }
-
          }
 
       })
@@ -206,10 +248,10 @@ class BuildParameters {
    }
 
    removeTarget(target: string, updateChanged = true) {
-      target = target?.trim();
-      this.targets = this.targets.filter(t => t !== target).sort((a, b) => {
-         return a.localeCompare(b);
-      });
+
+      target = target.trim();
+      const unique = new Set<string>(this.targets.filter(t => t !== target));      
+      this.targets = Array.from(unique);
 
       const parameters: ParameterData[] = [];
       this.template.parameters.forEach(p => {
@@ -231,23 +273,35 @@ class BuildParameters {
 
             const data = p as BoolParameterData;
 
-            let enabledTarget = "";
-            let disabledTarget = "";
+            let enabledTargets:string[] = [];
+            let disabledTargets:string[] = [];
 
             if (data.argumentIfEnabled?.toLowerCase().startsWith("-target=")) {
-               enabledTarget = data.argumentIfEnabled.slice(8);
+               enabledTargets.push(data.argumentIfEnabled.slice(8));
             }
+
+            data.argumentsIfEnabled?.forEach(a => {
+               if (a.toLowerCase().startsWith("-target=")) {
+                  enabledTargets.push(a.slice(8));
+               }
+            });
 
             if (data.argumentIfDisabled?.toLowerCase().startsWith("-target=")) {
-               disabledTarget = data.argumentIfDisabled.slice(8);
+               disabledTargets.push(data.argumentIfDisabled.slice(8));
+            }    
+
+            data.argumentsIfDisabled?.forEach(a => {
+               if (a.toLowerCase().startsWith("-target=")) {
+                  disabledTargets.push(a.slice(8));
+               }
+            });
+
+            if (enabledTargets.length) {
+               this.values[p.parameterKey] = !enabledTargets.find(t => !unique.has(t));
             }
 
-            if (target.toLowerCase() === enabledTarget.toLowerCase()) {
+            if (disabledTargets.length && disabledTargets.find(t => unique.has(t))) {
                this.values[p.parameterKey] = false;
-            }
-
-            if (target.toLowerCase() === disabledTarget.toLowerCase()) {
-               this.values[p.parameterKey] = true;
             }
 
          }
@@ -313,11 +367,29 @@ class BuildParameters {
 
          let value = this.jobDetails ? false : param.default;
 
-         if (detailSet.has(param.argumentIfEnabled!)) {
-            value = true;
+         if (param.argumentsIfEnabled) {
+
+            if (!param.argumentsIfEnabled.find(a => !detailSet.has(a))) {
+               value = true;
+            }
+
+         } else if (param.argumentIfEnabled) {
+
+            if (detailSet.has(param.argumentIfEnabled!)) {
+               value = true;
+            }
          }
-         if (detailSet.has(param.argumentIfDisabled!)) {
-            value = false;
+
+         if (param.argumentsIfDisabled) {
+
+            if (param.argumentsIfDisabled.find(a => detailSet.has(a))) {
+               value = false;
+            }
+
+         } else if (param.argumentIfDisabled) {
+            if (detailSet.has(param.argumentIfDisabled!)) {
+               value = false;
+            }
          }
 
          if (value) {
@@ -329,11 +401,28 @@ class BuildParameters {
 
             let value = this.jobDetails ? false : item.default;
 
-            if (detailSet.has(item.argumentIfEnabled!)) {
-               value = true;
+            if (item.argumentsIfEnabled) {
+
+               if (!item.argumentsIfEnabled.find(a => !detailSet.has(a))) {
+                  value = true;
+               }
+
+            } else if (item.argumentIfEnabled) {
+               if (detailSet.has(item.argumentIfEnabled)) {
+                  value = true;
+               }
             }
-            if (detailSet.has(item.argumentIfDisabled!)) {
-               value = false;
+
+            if (item.argumentsIfDisabled) {
+
+               if (item.argumentsIfDisabled.find(a => detailSet.has(a))) {
+                  value = false;
+               }
+
+            } else if (item.argumentIfDisabled) {
+               if (detailSet.has(item.argumentIfDisabled)) {
+                  value = false;
+               }
             }
 
             if (value) {
@@ -384,23 +473,37 @@ class BuildParameters {
             if (param.argumentIfEnabled) {
                args.push(param.argumentIfEnabled);
             }
+            if (param.argumentsIfEnabled) {
+               args.push(...param.argumentsIfEnabled);
+            }
+
          } else {
             if (param.argumentIfDisabled) {
                args.push(param.argumentIfDisabled);
+            }
+            if (param.argumentsIfDisabled) {
+               args.push(...param.argumentsIfDisabled);
             }
          }
       } else if (p.type === ParameterType.List) {
          const param = p as ListParameterData;
          param.items.forEach(item => {
 
-            const argument = this.values[this.paramKey(p, item)] ? item.argumentIfEnabled : item.argumentIfDisabled;
-
-            if (!argument) {
-               return;
+            if (this.values[this.paramKey(p, item)]) {
+               if (item.argumentIfEnabled) {
+                  args.push(item.argumentIfEnabled);
+               }
+               if (item.argumentsIfEnabled) {
+                  args.push(...item.argumentsIfEnabled);
+               }
+            } else {
+               if (item.argumentIfDisabled) {
+                  args.push(item.argumentIfDisabled);
+               }
+               if (item.argumentsIfDisabled) {
+                  args.push(...item.argumentsIfDisabled);
+               }
             }
-
-            args.push(argument);
-
          });
       } else if (p.type === ParameterType.Text) {
 
@@ -442,12 +545,22 @@ class BuildParameters {
 
    generateArguments(): string[] {
 
-      const args: string[] = [];
+      let args: string[] = [];
 
       // gather parameters
       this.template.parameters.forEach(p => {
 
          this.generateArgument(p, args);
+      });
+
+      const filter = new Set<string>();
+
+      args = args.filter(a => {
+         if (filter.has(a)) {
+            return false;
+         }
+         filter.add(a);
+         return true;
       });
 
       return args;
@@ -621,6 +734,7 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
    const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
 
    const targetPicker = React.useRef(null)
+   const { hordeClasses, modeColors } = getHordeStyling();
 
    const stream = projectStore.streamById(streamId);
 
@@ -643,6 +757,7 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
    // @todo: better way of checking whether we are in a preflight submit
    const isPreflightSubmit = !!query.get("shelvedchange");
    const isFromP4V = !!query.get("p4v");
+   const queryTemplateId = !query.get("templateId") ? "" : query.get("templateId")!;
 
    let defaultShelvedChange: string | undefined = query.get("shelvedchange") ? query.get("shelvedchange")! : undefined;
 
@@ -746,15 +861,15 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
             const defaultTemplate = templateData.templates.find(t => t.id === defaultChange.templateId);
             if (defaultTemplate) {
                defaultChange.name = "Latest Success - " + defaultTemplate.name;
-            }          
+            }
          }
-         
+
          if (defaultChange.name) {
             defaultPreflightQuery = [defaultChange];
-         }         
-      }      
+         }
+      }
    }
-   
+
    const defaultStreamPreflightTemplate = stream.templates.find(t => t.id === stream.defaultPreflight?.templateId);
 
    if (!defaultPreflightQuery && stream.defaultPreflight?.templateId) {
@@ -766,7 +881,7 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
       if (!defaultPreflightQuery) {
          console.error(`Unable to find default stream preflight template ${stream.defaultPreflight?.templateId} in stream templates`);
       }
-   }   
+   }
 
    if (buildParams?.preflight) {
       templates = templates.filter(t => t.allowPreflights);
@@ -783,9 +898,33 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
       // handle preflight redirect case
       if (!t && defaultShelvedChange && !jobDetails) {
 
-         t = defaultStreamPreflightTemplate;
+         if (queryTemplateId) {
+            let errorReason = "";
+            t = templateData.templates?.find(t => t.id === queryTemplateId);
+            if (!t) {
+               errorReason = `Unable to find queryTemplateId ${queryTemplateId} in stream ${streamId}`;
+               console.error(errorReason);
+
+            } else if (!t.allowPreflights) {
+               errorReason = `Template does not allow preflights: queryTemplateId ${queryTemplateId} in stream ${streamId}`;
+               console.error(errorReason);
+               t = undefined;
+            }
+
+            if (errorReason) {
+               ErrorHandler.set({
+                  reason: `${errorReason}`,
+                  title: `Preflight Template Error`,
+                  message: `There was an issue with the specified preflight template.\n\nReason: ${errorReason}\n\nTime: ${moment.utc().format("MMM Do, HH:mm z")}`
+               }, true);
+            }
+         }
+
          if (!t) {
-            console.error(`Stream default preflight template cannot be found for stream ${stream.fullname} : stream defaultPreflightTemplate ${stream.defaultPreflight?.templateId}, will use first template in list`);
+            t = defaultStreamPreflightTemplate;
+            if (!t) {
+               console.error(`Stream default preflight template cannot be found for stream ${stream.fullname} : stream defaultPreflightTemplate ${stream.defaultPreflight?.templateId}, will use first template in list`);
+            }
          }
       }
 
@@ -916,8 +1055,6 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
       items: templateOptions,
    };
 
-   const cwidth = 596;
-
    const renderBoolParam = (param: BoolParameterData) => {
       const key = buildParams.paramKey(param);
       return <Checkbox key={key}
@@ -927,27 +1064,39 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
          onChange={(ev, value) => {
 
             const enabled = !!value;
-            let enabledTarget = "";
-            let disabledTarget = "";
+            let enabledTargets: string[] = [];
+            let disabledTargets: string[] = [];
 
             if (param.argumentIfEnabled?.toLowerCase().startsWith("-target=")) {
-               enabledTarget = param.argumentIfEnabled.slice(8);
+               enabledTargets.push(param.argumentIfEnabled.slice(8));
             }
+
+            param.argumentsIfEnabled?.forEach(a => {
+               if (a.toLowerCase().startsWith("-target=")) {
+                  enabledTargets.push(a.slice(8));
+               }
+            })
 
             if (param.argumentIfDisabled?.toLowerCase().startsWith("-target=")) {
-               disabledTarget = param.argumentIfDisabled.slice(8);
+               disabledTargets.push(param.argumentIfDisabled.slice(8));
             }
 
-            let curTarget = enabled ? disabledTarget : enabledTarget;
-            let newTarget = enabled ? enabledTarget : disabledTarget;
+            param.argumentsIfDisabled?.forEach(a => {
+               if (a.toLowerCase().startsWith("-target=")) {
+                  disabledTargets.push(a.slice(8));
+               }
+            })
 
-            if (curTarget) {
-               buildParams.removeTarget(curTarget, false);
-            }
+            let curTargets = enabled ? disabledTargets : enabledTargets;
+            let newTargets = enabled ? enabledTargets : disabledTargets;
 
-            if (newTarget) {
-               buildParams.addTarget(newTarget, false);
-            }
+            curTargets.forEach(t => {
+               buildParams.removeTarget(t, false);
+            })
+
+            newTargets.forEach(t => {
+               buildParams.addTarget(t, false);
+            })
 
             buildParams!.values[key] = enabled;
             buildParams!.setChanged();
@@ -963,11 +1112,6 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
          spellCheck={false}
          defaultValue={(buildParams!.values[buildParams.paramKey(param)] as string) ?? ""}
          disabled={readOnly}
-         styles={{
-            root: {
-               width: cwidth
-            }
-         }}
          onChange={(ev, value) => {
 
             const target = param.argument.toLowerCase().startsWith("-target=");
@@ -1010,10 +1154,6 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
       });
 
       return <Dropdown key={key}
-         styles={{
-            dropdown: { width: cwidth }
-         }}
-
          label={param.label}
          options={options}
          disabled={readOnly}
@@ -1087,7 +1227,6 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
          disabled={readOnly}
          placeholder={jobDetails ? "" : "Select options"}
          styles={{
-            dropdown: { width: cwidth },
             callout: {
                selectors: {
                   ".ms-Callout-main": {
@@ -1401,7 +1540,7 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
                   if (user.jobTemplateSettings) {
                      dashboard.jobTemplateSettings = user.jobTemplateSettings;
                   }
-                  
+
                } catch (reason) {
                   console.log(`Error on updating notifications: ${reason}`);
                }
@@ -1422,6 +1561,10 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
                   onClose(undefined);
 
                   if (errorReason) {
+
+                     if (errorReason?.trim().endsWith("does not exist")) {
+                        errorReason += ".  Perforce edge server replication for the change may be in progress."
+                     }
 
                      ErrorHandler.set({
 
@@ -1623,12 +1766,20 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
 
                      </Stack>
                   </Stack>
+                  {!!template?.description && <Stack>
+                     <Stack style={{ width: 767 }}>
+                        <Stack style={{ marginTop: "-8px", paddingTop: "4px", paddingBottom: "20px" }}>
+                           <Markdown styles={{ root: { maxHeight: 240, overflow: "auto", th: { fontSize: 12 } } }}>{template.description}</Markdown>
+                        </Stack>
+                     </Stack>
+                  </Stack>}
 
                   <Stack>
 
                      {mode === "Basic" && <Stack style={{
                         height: estimatedHeight,
                         position: 'relative',
+                        width: 767,
                         maxHeight: 'calc(100vh - 360px)'
                      }}><ScrollablePane scrollbarVisibility={ScrollbarVisibility.auto}>
                            <Stack tokens={{ childrenGap: parameterGap }}>
@@ -1654,7 +1805,7 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
                         </ScrollablePane>
                      </Stack>}
 
-                     {mode === "Advanced" && <Stack style={{ paddingBottom: 12 }} tokens={{ childrenGap: 12 }}>
+                     {mode === "Advanced" && <Stack style={{ paddingBottom: 12, width: 767, }} tokens={{ childrenGap: 12 }}>
                         {!!stream.configRevision && <Stack>
                            <TextField label="Template Path" readOnly={true} value={stream.configPath ?? ""} />
                         </Stack>
@@ -1778,6 +1929,8 @@ export const NewBuild: React.FC<{ streamId: string; show: boolean; onClose: (new
 
 
 export const ValidationErrorModal: React.FC<{ errors: ValidationError[], show: boolean; onClose: () => void }> = ({ errors, show, onClose }) => {
+
+   const { hordeClasses } = getHordeStyling();
 
    const close = () => {
       onClose();

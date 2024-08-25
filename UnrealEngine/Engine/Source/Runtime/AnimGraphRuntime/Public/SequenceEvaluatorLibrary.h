@@ -44,6 +44,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Animation|Sequences", meta=(BlueprintThreadSafe))
 	static ANIMGRAPHRUNTIME_API FSequenceEvaluatorReference SetExplicitTime(const FSequenceEvaluatorReference& SequenceEvaluator, float Time);
 
+	/** Set the current accumulated time, using a frame number, of the sequence evaluator */
+	UFUNCTION(BlueprintCallable, Category = "Animation|Sequences", meta=(BlueprintThreadSafe))
+	static ANIMGRAPHRUNTIME_API FSequenceEvaluatorReference SetExplicitFrame(const FSequenceEvaluatorReference& SequenceEvaluator, int32 Frame);
+
 	/** Advance the current accumulated time of the sequence evaluator */
 	UFUNCTION(BlueprintCallable, Category = "Animation|Sequences", meta = (BlueprintThreadSafe))
 	static ANIMGRAPHRUNTIME_API FSequenceEvaluatorReference AdvanceTime(const FAnimUpdateContext& UpdateContext, const FSequenceEvaluatorReference& SequenceEvaluator, float PlayRate = 1.0f);

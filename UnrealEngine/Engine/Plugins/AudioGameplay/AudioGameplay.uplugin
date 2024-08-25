@@ -10,13 +10,18 @@
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
-	"CanContainContent": false,
+	"CanContainContent": true,
 	"IsBetaVersion": true,
 	"Installed": false,
 	"Modules": [
 		{
 			"Name": "AudioGameplay",
 			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "AudioGameplayTests",
+			"Type": "Editor",
 			"LoadingPhase": "Default"
 		}
 	]

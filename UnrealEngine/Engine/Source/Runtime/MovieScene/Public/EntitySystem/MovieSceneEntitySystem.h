@@ -16,10 +16,6 @@
 #include "UObject/ObjectPtr.h"
 #include "UObject/UObjectGlobals.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-	#include "EntitySystem/MovieSceneEntitySystemLinker.h"
-#endif
-
 #include "MovieSceneEntitySystem.generated.h"
 
 class UMovieSceneEntitySystemLinker;

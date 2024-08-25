@@ -92,6 +92,9 @@ class FMeshClass
 	// Set Mesh Element to the sync data
 	void SetWaitingInstanceMesh(FSyncDatabase* IOSyncDatabase);
 
+	FVector Translation;
+	FQuat Rotation;
+
   private:
 	typedef TList< FSyncData* > FSyncDataList;
 	FSyncDataList*				HeadInstances;
@@ -187,6 +190,12 @@ class FSyncDatabase
 
 	// Return layer sync data (Create it if not present)
 	FSyncData& GetLayerSyncData(short InLayer);
+#if AC_VERSION > 26
+	FSyncData& GetLayerSyncData(const API_AttributeIndex& InLayer)
+	{
+		return GetLayerSyncData(short(InLayer.ToInt32_Deprecated()));
+	}
+#endif
 
 	// Delete obsolete syncdata (and it's Datasmith Element)
 	void DeleteSyncData(const GS::Guid& InGuid);

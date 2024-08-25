@@ -819,14 +819,14 @@ public:
 
 /**
  *
- * Branch between two inputs based on boolean condition
+ * Branch between two mesh inputs based on boolean condition
  *
  */
 USTRUCT()
-struct FBranchDataflowNode : public FDataflowNode
+struct FBranchMeshDataflowNode : public FDataflowNode
 {
 	GENERATED_USTRUCT_BODY()
-	DATAFLOW_NODE_DEFINE_INTERNAL(FBranchDataflowNode, "Branch", "Utilities|FlowControl", "")
+	DATAFLOW_NODE_DEFINE_INTERNAL(FBranchMeshDataflowNode, "BranchMesh", "Utilities|FlowControl", "")
 
 public:
 	/** Mesh input */
@@ -845,7 +845,7 @@ public:
 	UPROPERTY(meta = (DataflowOutput))
 	TObjectPtr<UDynamicMesh> Mesh;
 
-	FBranchDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
+	FBranchMeshDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
 		: FDataflowNode(InParam, InGuid)
 	{
 		RegisterInputConnection(&MeshA);
@@ -1089,12 +1089,12 @@ public:
 	EProximityMethodEnum ProximityMethod = EProximityMethodEnum::Dataflow_ProximityMethod_Precise;
 
 	/** If hull-based proximity detection is enabled, amount to expand hulls when searching for overlapping neighbors */
-	UPROPERTY(EditAnywhere, Category = "Proximity", meta = (ClampMin = "0", 
+	UPROPERTY(EditAnywhere, Category = "Proximity", meta = (DataflowInput, ClampMin = "0", Units = cm,
 		EditCondition = "ProximityMethod == EProximityMethodEnum::Dataflow_ProximityMethod_ConvexHull || FilterContactMethod == EProximityContactFilteringMethodEnum::Dataflow_ProximityContactFilteringMethod_ConvexHullSharp || FilterContactMethod == EProximityContactFilteringMethodEnum::Dataflow_ProximityContactFilteringMethod_ConvexHullArea || ContactAreaMethod = EConnectionContactAreaMethodEnum::Dataflow_ProximityContactFilteringMethod_ConvexHullArea"))
 	float DistanceThreshold = 1;
 
 	// If greater than zero, proximity will be additionally filtered by a 'contact' threshold, in cm, to exclude grazing / corner proximity
-	UPROPERTY(EditAnywhere, Category = "Proximity", meta = (ClampMin = "0"))
+	UPROPERTY(EditAnywhere, Category = "Proximity", meta = (DataflowInput, ClampMin = "0", Units = cm))
 	float ContactThreshold = 0;
 
 	/** How to use the Contact Threshold (if > 0) to filter out unwanted small or corner contacts from the proximity graph. If contact threshold is zero, no filtering is applied. */
@@ -1109,6 +1109,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Proximity")
 	EConnectionContactAreaMethodEnum ContactAreaMethod = EConnectionContactAreaMethodEnum::Dataflow_ConnectionContactAreaMethod_None;
 
+	/** Whether to compute new convex hulls for proximity, or use the pre-existing hulls on the Collection, when using convex hulls to determine proximity */
+	UPROPERTY(EditAnywhere, Category = "Proximity", meta = (
+		EditCondition = "ProximityMethod == EProximityMethodEnum::Dataflow_ProximityMethod_ConvexHull || FilterContactMethod == EProximityContactFilteringMethodEnum::Dataflow_ProximityContactFilteringMethod_ConvexHullSharp || FilterContactMethod == EProximityContactFilteringMethodEnum::Dataflow_ProximityContactFilteringMethod_ConvexHullArea || ContactAreaMethod = EConnectionContactAreaMethodEnum::Dataflow_ProximityContactFilteringMethod_ConvexHullArea"))
+	bool bRecomputeConvexHulls = true;
+
 	/** GeometryCollection to update the proximity graph on */
 	UPROPERTY(meta = (DataflowInput, DataflowOutput, DataflowPassthrough = "Collection", DataflowIntrinsic))
 	FManagedArrayCollection Collection;
@@ -1117,6 +1122,8 @@ public:
 		: FDataflowNode(InParam, InGuid)
 	{
 		RegisterInputConnection(&Collection);
+		RegisterInputConnection(&DistanceThreshold);
+		RegisterInputConnection(&ContactThreshold);
 		RegisterOutputConnection(&Collection, &Collection);
 	}
 
@@ -1613,6 +1620,88 @@ public:
 	}
 
 	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+};
+
+/**
+ *
+ * Branch between two float inputs based on boolean condition
+ *
+ */
+USTRUCT()
+struct FBranchFloatDataflowNode : public FDataflowNode
+{
+	GENERATED_USTRUCT_BODY()
+	DATAFLOW_NODE_DEFINE_INTERNAL(FBranchFloatDataflowNode, "BranchFloat", "Utilities|FlowControl", "")
+
+public:
+	/** Float input */
+	UPROPERTY(EditAnywhere, Category = "Branch", meta = (DataflowInput));
+	float A = 0.f;
+
+	/** Float input */
+	UPROPERTY(EditAnywhere, Category = "Branch", meta = (DataflowInput));
+	float B = 0.f;
+
+	/** If true, Output = A, otherwise Output = B */
+	UPROPERTY(EditAnywhere, Category = "Branch");
+	bool bCondition = false;
+
+	/** Output */
+	UPROPERTY(meta = (DataflowOutput))
+	float ReturnValue = 0.f;
+
+	FBranchFloatDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
+		: FDataflowNode(InParam, InGuid)
+	{
+		RegisterInputConnection(&A);
+		RegisterInputConnection(&B);
+		RegisterInputConnection(&bCondition);
+		RegisterOutputConnection(&ReturnValue);
+	}
+
+	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+
+};
+
+/**
+ *
+ * Branch between two int inputs based on boolean condition
+ *
+ */
+USTRUCT()
+struct FBranchIntDataflowNode : public FDataflowNode
+{
+	GENERATED_USTRUCT_BODY()
+	DATAFLOW_NODE_DEFINE_INTERNAL(FBranchIntDataflowNode, "BranchInt", "Utilities|FlowControl", "")
+
+public:
+	/** Int input */
+	UPROPERTY(EditAnywhere, Category = "Branch", meta = (DataflowInput));
+	int32 A = 0;
+
+	/** Int input */
+	UPROPERTY(EditAnywhere, Category = "Branch", meta = (DataflowInput));
+	int32 B = 0;
+
+	/** If true, Output = A, otherwise Output = B */
+	UPROPERTY(EditAnywhere, Category = "Branch");
+	bool bCondition = false;
+
+	/** Output */
+	UPROPERTY(meta = (DataflowOutput))
+	int32 ReturnValue = 0;
+
+	FBranchIntDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
+		: FDataflowNode(InParam, InGuid)
+	{
+		RegisterInputConnection(&A);
+		RegisterInputConnection(&B);
+		RegisterInputConnection(&bCondition);
+		RegisterOutputConnection(&ReturnValue);
+	}
+
+	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+
 };
 
 

@@ -10,6 +10,7 @@
 #include "Spatial/GeometrySet3.h"
 #include "ToolContextInterfaces.h" //FViewCameraState
 #include "IntVectorTypes.h"
+#include "TransactionUtil.h"
 
 #include "LatticeControlPointsMechanic.generated.h"
 
@@ -203,6 +204,9 @@ protected:
 
 	friend class FLatticeControlPointsMechanicSelectionChange;
 	friend class FLatticeControlPointsMechanicMovementChange;
+
+private:
+	UE::TransactionUtil::FLongTransactionTracker LongTransactions;
 };
 
 

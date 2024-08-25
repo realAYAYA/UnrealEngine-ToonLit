@@ -98,6 +98,22 @@ void UCommonVideoPlayer::SetIsMuted(bool bInIsMuted)
 	}
 }
 
+void UCommonVideoPlayer::SetShouldMatchSize(bool bInMatchSize)
+{
+	if (bMatchSize != bInMatchSize)
+	{
+		bMatchSize = bInMatchSize;
+		if (bMatchSize && MediaPlayer->IsReady())
+		{
+			VideoBrush.ImageSize = MediaPlayer->GetVideoTrackDimensions(INDEX_NONE, INDEX_NONE);
+			if (MyImage)
+			{
+				MyImage->InvalidateImage();
+			}
+		}
+	}
+}
+
 void UCommonVideoPlayer::Play()
 {
 	SetPlaybackRate(1.f);
@@ -180,6 +196,17 @@ void UCommonVideoPlayer::HandleMediaPlayerEvent(EMediaEvent EventType)
 {
 	switch (EventType)
 	{
+	case EMediaEvent::TracksChanged:
+	case EMediaEvent::MediaOpened:
+		if (bMatchSize)
+		{
+			VideoBrush.ImageSize = MediaPlayer->GetVideoTrackDimensions(INDEX_NONE, INDEX_NONE);
+			if (MyImage)
+			{
+				MyImage->InvalidateImage();
+			}
+		}
+		break;
 	case EMediaEvent::MediaClosed:
 		Close();
 		break;

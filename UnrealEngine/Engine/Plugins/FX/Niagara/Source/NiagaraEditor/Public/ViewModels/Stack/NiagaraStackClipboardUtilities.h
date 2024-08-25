@@ -22,5 +22,7 @@ namespace FNiagaraStackClipboardUtilities
 
 	NIAGARAEDITOR_API bool TestCanDeleteSelectionWithMessage(const TArray<UNiagaraStackEntry*>& SelectedEntries, FText& OutMessage);
 
+	NIAGARAEDITOR_API void CopyNote(const UNiagaraStackEntry* StackEntry);
+	
 	NIAGARAEDITOR_API void DeleteSelection(const TArray<UNiagaraStackEntry*>& SelectedEntries);
 }

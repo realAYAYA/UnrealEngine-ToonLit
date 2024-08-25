@@ -4,9 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
-using Horde.Server.Streams;
-using Horde.Server.Utilities;
-using MongoDB.Bson;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Streams;
 using MongoDB.Bson.Serialization;
 
 namespace Horde.Server.Jobs.TestData
@@ -20,13 +19,13 @@ namespace Horde.Server.Jobs.TestData
 		/// The job which produced the data
 		/// </summary>
 		[Required]
-		public string JobId { get; set; } = String.Empty;
+		public JobId JobId { get; set; }
 
 		/// <summary>
 		/// The step that ran
 		/// </summary>
 		[Required]
-		public string StepId { get; set; } = String.Empty;
+		public JobStepId StepId { get; set; }
 
 		/// <summary>
 		/// Key used to identify the particular data
@@ -222,7 +221,7 @@ namespace Horde.Server.Jobs.TestData
 		/// <summary>
 		/// Test ids to get
 		/// </summary>
-		public List<string> testIds { get; set; } = new List<string>();
+		public List<string> TestIds { get; set; } = new List<string>();
 	}
 
 	/// <summary>
@@ -469,7 +468,7 @@ namespace Horde.Server.Jobs.TestData
 			if (testData.TestId != null)
 			{
 				Outcome = testData.Outcome;
-			}			
+			}
 			SuiteId = testData.SuiteId?.ToString();
 			SuiteSkipCount = testData.SuiteSkipCount;
 			SuiteWarningCount = testData.SuiteWarningCount;

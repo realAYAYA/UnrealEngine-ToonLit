@@ -30,6 +30,7 @@ void UMassDebuggerSubsystem::Deinitialize()
 #if WITH_MASSENTITY_DEBUG
 	FMassDebugger::OnEntitySelectedDelegate.Remove(OnEntitySelectedHandle);
 #endif // WITH_MASSENTITY_DEBUG
+	Super::Deinitialize();
 }
 
 #if WITH_MASSENTITY_DEBUG

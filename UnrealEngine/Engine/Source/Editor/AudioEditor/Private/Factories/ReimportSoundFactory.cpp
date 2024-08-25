@@ -20,6 +20,8 @@ UReimportSoundFactory::UReimportSoundFactory(const FObjectInitializer& ObjectIni
 	Formats.Add(TEXT("aiff;Audio Interchange File Format"));
 	Formats.Add(TEXT("ogg;OGG Vorbis bitstream format"));
 	Formats.Add(TEXT("flac;Free Lossless Audio Codec"));
+	Formats.Add(TEXT("opus;OGG OPUS bitstream format"));
+	Formats.Add(TEXT("mp3;MPEG Layer 3 Audio"));
 #endif // WITH_SNDFILE_IO
 
 	OverwriteOtherAssetTypes = -1;
@@ -84,7 +86,9 @@ EReimportResult::Type UReimportSoundFactory::Reimport(UObject* Obj)
 	const bool bIsSupportedExtension = FCString::Stricmp(*FileExtension, TEXT("WAV")) == 0
 		|| FCString::Stricmp(*FileExtension, TEXT("AIF")) == 0
 		|| FCString::Stricmp(*FileExtension, TEXT("FLAC")) == 0
-		|| FCString::Stricmp(*FileExtension, TEXT("OGG")) == 0;
+		|| FCString::Stricmp(*FileExtension, TEXT("OGG")) == 0
+		|| FCString::Stricmp(*FileExtension, TEXT("OPUS")) == 0
+		|| FCString::Stricmp(*FileExtension, TEXT("MP3")) == 0;
 #else
 	const bool bIsSupportedExtension = FCString::Stricmp(*FileExtension, TEXT("WAV")) == 0;
 #endif //WITH_SNDFILE_IO

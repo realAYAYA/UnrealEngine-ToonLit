@@ -15,6 +15,11 @@ class USequencerSettings;
 class UActorFactory;
 struct FTransformData;
 
+namespace UE::MovieScene
+{
+	struct FSharedPlaybackState;
+}
+
 /** A delegate which will create an object spawner */
 DECLARE_DELEGATE_RetVal(TSharedRef<IMovieSceneObjectSpawner>, FOnCreateMovieSceneObjectSpawner);
 
@@ -51,7 +56,7 @@ public:
 	 * @param Player 		Movie scene player that is ultimately responsible for spawning the object
 	 * @return the spawned object, or nullptr on failure
 	 */
-	virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player) = 0;
+	virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState) = 0;
 
 	/**
 	 * Destroy a specific previously spawned object

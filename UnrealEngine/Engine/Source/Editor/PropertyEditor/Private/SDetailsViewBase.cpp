@@ -44,8 +44,9 @@ SDetailsViewBase::SDetailsViewBase() :
 		CurrentFilter.bShowOnlyModified = ViewConfig->bShowOnlyModified;
 	}
 
-	PropertyPermissionListChangedDelegate = FPropertyEditorPermissionList::Get().PermissionListUpdatedDelegate.AddLambda([this](TSoftObjectPtr<UStruct> Struct, FName Owner) { ForceRefresh(); });
-	PropertyPermissionListEnabledDelegate = FPropertyEditorPermissionList::Get().PermissionListEnabledDelegate.AddRaw(this, &SDetailsViewBase::ForceRefresh);
+	// RequestForceRefresh is deferred until next tick to avoid the editor locking up for several minutes in one frame when refreshing multiple times
+	PropertyPermissionListChangedDelegate = FPropertyEditorPermissionList::Get().PermissionListUpdatedDelegate.AddLambda([this](TSoftObjectPtr<UStruct> Struct, FName Owner) { RequestForceRefresh(); });
+	PropertyPermissionListEnabledDelegate = FPropertyEditorPermissionList::Get().PermissionListEnabledDelegate.AddRaw(this, &SDetailsViewBase::RequestForceRefresh);
 }
 
 SDetailsViewBase::~SDetailsViewBase()
@@ -324,6 +325,34 @@ void SDetailsViewBase::HighlightProperty(const FPropertyPath& Property)
 	CurrentlyHighlightedNode = TreeNode;
 }
 
+void SDetailsViewBase::ScrollPropertyIntoView(const FPropertyPath& Property, const bool bExpandProperty)
+{
+	if (!Property.IsValid())
+	{
+		return;
+	}
+
+	const TSharedPtr<FDetailTreeNode> TreeNode = FindBestFitTreeNodeFromProperty(RootTreeNodes, Property);
+	if (TreeNode.IsValid())
+	{
+		// make sure all ancestors are expanded so we can see the found node
+		TSharedPtr<FDetailTreeNode> Ancestor = TreeNode;
+		while(Ancestor->GetParentNode().IsValid())
+		{
+			Ancestor = Ancestor->GetParentNode().Pin();
+			DetailTree->SetItemExpansion(Ancestor.ToSharedRef(), true);
+		}
+
+		if (bExpandProperty)
+		{
+			DetailTree->SetItemExpansion(TreeNode.ToSharedRef(), true);
+		}
+		
+		// scroll to the found node
+		DetailTree->RequestScrollIntoView(TreeNode.ToSharedRef());
+	}
+}
+
 static void ExpandPaintSpacePropertyBoundsRecursive(const TArray<TSharedRef<FDetailTreeNode>>& TreeNodes, TSharedPtr<SDetailTree> DetailTree, FSlateRect& InOutRect)
 {
 	for(const TSharedRef<FDetailTreeNode>& TreeNode : TreeNodes)
@@ -465,7 +494,8 @@ EVisibility SDetailsViewBase::GetTreeVisibility() const
 EVisibility SDetailsViewBase::GetScrollBarVisibility() const
 {
 	const bool bHasAnythingToShow = RootTreeNodes.Num() > 0;
-	const bool bShowScrollBar = DetailsViewArgs.bShowScrollBar && bHasAnythingToShow;
+	const bool bIsScrollbarNeeded = DisplayManager.IsValid() ? DisplayManager->GetIsScrollBarNeeded() : true;
+	const bool bShowScrollBar = DetailsViewArgs.bShowScrollBar && bHasAnythingToShow && bIsScrollbarNeeded;
 	return bShowScrollBar ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
@@ -630,6 +660,8 @@ void SDetailsViewBase::UpdateSinglePropertyMap(TSharedPtr<FComplexPropertyNode> 
 	Args.bUpdateFavoriteSystemOnly = false;
 	DetailLayoutHelpers::UpdateSinglePropertyMapRecursive(*RootPropertyNode, NAME_None, RootPropertyNode.Get(), Args);
 
+	DetailLayout->AddEmptyCategoryIfNeeded(RootPropertyNode);
+	
 	CustomUpdatePropertyMap(LayoutData.DetailLayout);
 
 	// Ask for custom detail layouts, unless disabled. One reason for disabling custom layouts is that the custom layouts
@@ -767,6 +799,11 @@ void SDetailsViewBase::RefreshTree()
 	}
 
 	DetailTree->RequestTreeRefresh();
+}
+
+void SDetailsViewBase::RequestForceRefresh()
+{
+	SetPendingRefreshTimer();
 }
 
 void SDetailsViewBase::SaveCustomExpansionState(const FString& NodePath, bool bIsExpanded)
@@ -1082,6 +1119,35 @@ void SDetailsViewBase::HandlePendingCleanup()
 	DetailLayoutsPendingDelete.Empty();
 }
 
+void SDetailsViewBase::SetPendingRefreshTimer()
+{
+	if (!PendingRefreshTimerHandle.IsValid())
+	{
+		if (GEditor && GEditor->IsTimerManagerValid())
+		{
+			PendingRefreshTimerHandle = GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateSP(this, &SDetailsViewBase::HandlePendingRefreshTimer));
+		}
+	}
+}
+
+void SDetailsViewBase::ClearPendingRefreshTimer()
+{
+	if (PendingRefreshTimerHandle.IsValid())
+	{
+		if (GEditor && GEditor->IsTimerManagerValid())
+		{
+			GEditor->GetTimerManager()->ClearTimer(PendingRefreshTimerHandle);
+		}
+		PendingRefreshTimerHandle.Invalidate();
+	}
+}
+
+void SDetailsViewBase::HandlePendingRefreshTimer()
+{
+	PendingRefreshTimerHandle.Invalidate();
+	ForceRefresh();
+}
+
 /** Ticks the property view.  This function performs a data consistency check */
 void SDetailsViewBase::Tick( const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime )
 {
@@ -1216,29 +1282,24 @@ void SDetailsViewBase::Tick( const FGeometry& AllottedGeometry, const double InC
 
 	if (bValidateExternalNodes)
 	{
-		for (FDetailLayoutData& LayoutData : DetailLayouts)
+		for (const FDetailLayoutData& LayoutData : DetailLayouts)
 		{
-			FRootPropertyNodeList& ExternalRootPropertyNodes = LayoutData.DetailLayout->GetExternalRootPropertyNodes();
-
-			for (int32 NodeIndex = 0; NodeIndex < ExternalRootPropertyNodes.Num(); ++NodeIndex)
+			for (const TSharedPtr<FComplexPropertyNode>& PropertyNode : LayoutData.DetailLayout->GetExternalRootPropertyNodes())
 			{
-				TSharedPtr<FPropertyNode> PropertyNode = ExternalRootPropertyNodes[NodeIndex];
+				EPropertyDataValidationResult Result = PropertyNode->EnsureDataIsValid();
+				if (Result == EPropertyDataValidationResult::PropertiesChanged || Result == EPropertyDataValidationResult::EditInlineNewValueChanged)
 				{
-					EPropertyDataValidationResult Result = PropertyNode->EnsureDataIsValid();
-					if (Result == EPropertyDataValidationResult::PropertiesChanged || Result == EPropertyDataValidationResult::EditInlineNewValueChanged)
-					{
-						// Note this will invalidate all the external root nodes so there is no need to continue
-						ExternalRootPropertyNodes.Empty();
+					// Note this will invalidate all the external root nodes so there is no need to continue
+					LayoutData.DetailLayout->ClearExternalRootPropertyNodes();
 
-						UpdatePropertyMaps();
-						bUpdateFilteredDetails = true;
+					UpdatePropertyMaps();
+					bUpdateFilteredDetails = true;
 
-						break;
-					}
-					else if (Result == EPropertyDataValidationResult::ArraySizeChanged || Result == EPropertyDataValidationResult::ChildrenRebuilt)
-					{
-						bUpdateFilteredDetails = true;
-					}
+					break;
+				}
+				else if (Result == EPropertyDataValidationResult::ArraySizeChanged || Result == EPropertyDataValidationResult::ChildrenRebuilt)
+				{
+					bUpdateFilteredDetails = true;
 				}
 			}
 		}
@@ -1751,4 +1812,13 @@ void SDetailsViewBase::UnregisterInstancedCustomPropertyTypeLayout(FName Propert
 	{
 		LayoutCallbacks->Remove(Identifier);
 	}
+}
+
+TSharedPtr<FDetailsDisplayManager> SDetailsViewBase::GetDisplayManager()
+{
+	if (!DisplayManager.IsValid())
+	{
+		DisplayManager = MakeShared<FDetailsDisplayManager>();
+	}
+	return DisplayManager;
 }

@@ -9,15 +9,17 @@
 #include "ConcertActionDefinition.h"
 #include "ConcertSyncSessionFlags.h"
 
-class UConcertClientConfig;
-class IConcertClientWorkspace;
-class IConcertClientPresenceManager;
-class IConcertClientSequencerManager;
-struct FConcertSessionClientInfo;
-class IConcertClientTransactionBridge;
-class IConcertClientPackageBridge;
-class IConcertSyncClient;
 class IConcertFileSharingService;
+class IConcertClientPackageBridge;
+class IConcertClientPresenceManager;
+class IConcertClientReplicationManager;
+class IConcertClientReplicationBridge;
+class IConcertClientSequencerManager;
+class IConcertClientTransactionBridge;
+class IConcertClientWorkspace;
+class IConcertSyncClient;
+class UConcertClientConfig;
+struct FConcertSessionClientInfo;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnConcertClientWorkspaceStartupOrShutdown, const TSharedPtr<IConcertClientWorkspace>& /** InClientWorkspace */ );
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnConcertClientSyncSessionStartupOrShutdown, const IConcertSyncClient* /* InSyncClient */ );
@@ -55,6 +57,8 @@ public:
 	/** Get the current session client workspace, if any. */
 	virtual TSharedPtr<IConcertClientWorkspace> GetWorkspace() const = 0;
 
+
+	
 	/** 
 	 * Get the current session presence manager, if any.
 	 * @note that pointer shouldn't be stored and always accessed through this client.
@@ -67,6 +71,14 @@ public:
 	 */
 	virtual IConcertClientSequencerManager* GetSequencerManager() const = 0;
 
+	/**
+	 * Get the current session replication manager, if any.
+	 * @note that pointer shouldn't be stored and always accessed through this client.
+	 */
+	virtual IConcertClientReplicationManager* GetReplicationManager() const = 0;
+
+
+	
 	/** Get the delegate called on every workspace startup. */
 	virtual FOnConcertClientWorkspaceStartupOrShutdown& OnWorkspaceStartup() = 0;
 
@@ -79,6 +91,8 @@ public:
 	/** Get the delegate called just after the workspace gets deleted. */
 	virtual FOnConcertClientSyncSessionStartupOrShutdown& OnSyncSessionShutdown() = 0;
 
+
+	
 	/** Persist specific packages */
 	virtual void PersistSpecificChanges(TArrayView<const FName> Packages) = 0;
 
@@ -96,9 +110,14 @@ public:
 	/** Set the file sharing service, enabling the server to work with large files. The client and the server must use compatible sharing services. The service must be set prior establishing a connection. */
 	virtual void SetFileSharingService(TSharedPtr<IConcertFileSharingService> InFileSharingService) = 0;
 
+
+	
 	/** Get the current transaction bridge for this client */
 	virtual IConcertClientTransactionBridge* GetTransactionBridge() const = 0;
 
 	/** Get the current package bridge for this client. */
 	virtual IConcertClientPackageBridge* GetPackageBridge() const = 0;
+
+	/** Get the current replication bridge for this client. */
+	virtual IConcertClientReplicationBridge* GetReplicationBridge() const = 0;
 };

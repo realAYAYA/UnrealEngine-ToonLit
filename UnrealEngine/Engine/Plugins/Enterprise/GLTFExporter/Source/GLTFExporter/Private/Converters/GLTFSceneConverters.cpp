@@ -18,8 +18,9 @@ FGLTFJsonScene* FGLTFSceneConverter::Convert(const UWorld* World)
 	{
 		for (const ULevel* Level : Levels)
 		{
-			if (Level == nullptr)
+			if (Level == nullptr || (Level->IsInstancedLevel() && !Level->IsCurrentLevel()))
 			{
+				//LevelInstances are handled in FGLTFComponentConverter::ConvertComponentSpecialization in the ULevelInstanceComponent handling branch.
 				continue;
 			}
 
@@ -52,13 +53,18 @@ FGLTFJsonScene* FGLTFSceneConverter::Convert(const UWorld* World)
 
 			for (const AActor* Actor : LevelActors)
 			{
-				FGLTFJsonNode* JsonNode = Builder.AddUniqueNode(Actor);
-				if (JsonNode != nullptr && Builder.IsRootActor(Actor))
+				FGLTFJsonNode* Node = Builder.AddUniqueNode(Actor);
+				if (Node != nullptr && Builder.IsRootActor(Actor))
 				{
 					// TODO: to avoid having to add irrelevant actors/components let GLTFComponentConverter decide and add root nodes to Scene->
 					// This change may require node converters to support cyclic calls.
-					Scene->Nodes.Add(JsonNode);
+					Scene->Nodes.Add(Node);
 				}
+			}
+
+			if (Builder.ExportOptions->bMakeSkinnedMeshesRoot)
+			{
+				MakeSkinnedMeshesRoot(Scene);
 			}
 		}
 	}
@@ -70,4 +76,37 @@ FGLTFJsonScene* FGLTFSceneConverter::Convert(const UWorld* World)
 	}
 
 	return Scene;
+}
+
+void FGLTFSceneConverter::MakeSkinnedMeshesRoot(FGLTFJsonScene* Scene)
+{
+	TArray<FGLTFJsonNode*> OriginalRootNodes = Scene->Nodes;
+
+	for (FGLTFJsonNode* RootNode : OriginalRootNodes)
+	{
+		MakeSkinnedMeshesRoot(RootNode, true, Scene);
+	}
+}
+
+void FGLTFSceneConverter::MakeSkinnedMeshesRoot(FGLTFJsonNode* Node, bool bIsRootNode, FGLTFJsonScene* Scene)
+{
+	if (Node->Mesh != nullptr && Node->Skin != nullptr && (!bIsRootNode || *Node != FGLTFJsonTransform::Identity))
+	{
+		// The glTF spec states "the transform of the skinned mesh node MUST be ignored" (only joint transforms are applied).
+		// To comply with this requirement we can move the skinned mesh to a unique root node that doesn't have any transform.
+		// The end result will be the same, since final joint transforms are unaffected and still applied to the skinned mesh.
+
+		FGLTFJsonNode* SkinnedMeshNode = Builder.AddNode();
+		SkinnedMeshNode->Mesh = Node->Mesh;
+		SkinnedMeshNode->Skin = Node->Skin;
+
+		Node->Mesh = nullptr;
+		Node->Skin = nullptr;
+		Scene->Nodes.Add(SkinnedMeshNode);
+	}
+
+	for (FGLTFJsonNode* ChildNode : Node->Children)
+	{
+		MakeSkinnedMeshesRoot(ChildNode, false, Scene);
+	}
 }

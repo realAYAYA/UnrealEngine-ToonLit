@@ -14,6 +14,7 @@ namespace Audio
 
 	FParameterTransmitterBase::FParameterTransmitterBase(TArray<FAudioParameter>&& InDefaultParams)
 		: AudioParameters(MoveTemp(InDefaultParams))
+		, bIsVirtualized(false)
 	{
 	}
 
@@ -49,4 +50,16 @@ namespace Audio
 		FAudioParameter::Merge(MoveTemp(InParameters), AudioParameters);
 		return true;
 	}
+
+	void FParameterTransmitterBase::OnVirtualizeActiveSound()
+	{ 
+		bIsVirtualized = true;
+		ResetParameters();
+	}
+
+	 void FParameterTransmitterBase::OnRealizeVirtualizedActiveSound(TArray<FAudioParameter>&& InParameters)
+	 { 
+		 bIsVirtualized = false;
+		 SetParameters(MoveTemp(InParameters));
+	 }
 } // namespace Audio

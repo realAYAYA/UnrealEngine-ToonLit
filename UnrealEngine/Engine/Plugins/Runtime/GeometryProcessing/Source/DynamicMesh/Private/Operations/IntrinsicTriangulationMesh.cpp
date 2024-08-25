@@ -120,7 +120,7 @@ namespace
 
 	/**
 	* Return the location of third vertex in a triangle in R2 with prescribed lengths
-	* such that the resulting triangle could be constructed as { (0,0),  (L1, 0), Result}.
+	* such that the resulting triangle could be constructed as { (0,0),  (L0, 0), Result}.
 	* 
 	* NB: this assumes, but does not check, that the lengths satisfy the triangle inequality
 	*/
@@ -142,12 +142,12 @@ namespace
 	* Given three side lengths that satisfy the triangle inequality,
 	* this updates the 2d positions to be the vertices of a triangle, 
 	* the edge lengths of which ( when in CCW order)  match the prescribed lengths.  
-	* with vertices { (0,0),  (L1, 0), (X, Y)} where Y > 0
+	* with vertices { (0,0),  (L0, 0), (X, Y)} where Y > 0
 	*/
 	void TriangleFromLengths(const double L0, const double L1, const double L2, FVector2d& p0, FVector2d& p1, FVector2d& p3)
 	{
 		p0 = FVector2d(0., 0.);
-		p1 = FVector2d(L1, 0.);
+		p1 = FVector2d(L0, 0.);
 		p3 = ComputeOpposingVert2d(L0, L1, L2);
 	}
 
@@ -203,7 +203,7 @@ namespace
 		{
 			if (IDs.Num())
 			{
-				IDOut = IDs.Pop(false);
+				IDOut = IDs.Pop(EAllowShrinking::No);
 				IsEnqueued[IDOut] = false;
 				return true;
 			}
@@ -1919,16 +1919,21 @@ EMeshResult FSimpleIntrinsicEdgeFlipMesh::FlipEdgeTopology(int32 eab, FEdgeFlipI
 	const int32 ebc = T0te[AddOneModThree[T0IndexOf]];
 	const int32 eca = T0te[AddTwoModThree[T0IndexOf]];
 
-	const int32 ead = T1te[AddOneModThree[T1IndexOf]];
-	const int32 edb = T1te[AddTwoModThree[T1IndexOf]];
+	int32 ead = T1te[AddOneModThree[T1IndexOf]];
+	int32 edb = T1te[AddTwoModThree[T1IndexOf]];
+	if (!FlipInfo.bHadSameOrientations)
+	{
+		Swap(ead,edb);
+	}
+	
 
 	// update triangles
 	Triangles[t0] = FIndex3i(c, d, b);
 	Triangles[t1] = FIndex3i(d, c, a);
 
 	// update edge AB, which becomes flipped edge CD
-	SetEdgeVerticesInternal(eab, c, d);
-	SetEdgeTrianglesInternal(eab, t0, t1);
+	SetEdgeVerticesInternal(eab, c, d);     // Edge.Vert = (c, d) or (d, c)   
+	SetEdgeTrianglesInternal(eab, t0, t1);  // Edge.Tri = (t0, t1)
 	const int32 ecd = eab;
 
 	// update the two other edges whose triangle nbrs have changed
@@ -2002,6 +2007,8 @@ FVector3d FSimpleIntrinsicEdgeFlipMesh::ComputeTriInternalAnglesR(const int32 TI
 
 double FSimpleIntrinsicEdgeFlipMesh::GetOpposingVerticesDistance(int32 EID) const
 {
+	const bool bHasSameOrientation = AreSameOrientation(EID);
+
 	const double OrgLength  = GetEdgeLength(EID);
 	const FIndex2i EdgeTris = GetEdgeT(EID);
 	checkSlow(EdgeTris[1] != FDynamicMesh3::InvalidID);
@@ -2018,8 +2025,11 @@ double FSimpleIntrinsicEdgeFlipMesh::GetOpposingVerticesDistance(int32 EID) cons
 	}
 	// rotate second tri so the shared edge aligns
 	Opp2dVerts[1].Y = -Opp2dVerts[1].Y;
-	Opp2dVerts[1].X = OrgLength - Opp2dVerts[1].X;
-
+	if (bHasSameOrientation)
+	{ 
+		Opp2dVerts[1].X = OrgLength - Opp2dVerts[1].X;
+	}
+	
 	return (Opp2dVerts[0] - Opp2dVerts[1]).Length();
 }
 
@@ -2036,19 +2046,41 @@ EMeshResult FSimpleIntrinsicEdgeFlipMesh::FlipEdge(int32 EID, FEdgeFlipInfo& Edg
 		return EMeshResult::Failed_IsBoundaryEdge;
 	}
 
+	const bool bHasSameOrientation = AreSameOrientation(EID);
+	EdgeFlipInfo.bHadSameOrientations = bHasSameOrientation;
+
 	// prohibit case where the edge is shared by a non-convex pair of triangles.
 	{
 		// original triangles
 		FDynamicMesh3::FEdge OrgEdge = GetEdge(EID);
 
-		// Assumes both triangles have same orientation
+
+
+		// total interior angles at the edge vertices as ordered by the first triangle.
 		double TotalAngleAtOrgVert[2] = { 0., 0. };
-		for (int32 i = 0; i < 2; ++i)
-		{	
-			int32 TriID = OrgEdge.Tri[i];
-			int32 IndexOf = GetTriEdges(TriID).IndexOf(EID);
-			TotalAngleAtOrgVert[i] += InternalAngles[TriID][IndexOf];
-			TotalAngleAtOrgVert[(i+1) % 2] += InternalAngles[TriID][AddOneModThree[IndexOf]];
+		{
+			// accumulate interior angles at edge vertices in first triangle. 
+			{
+				const int32 TriID = OrgEdge.Tri[0];
+				const int32 IndexOf = GetTriEdges(TriID).IndexOf(EID);
+				TotalAngleAtOrgVert[0] += InternalAngles[TriID][IndexOf];
+				TotalAngleAtOrgVert[1] += InternalAngles[TriID][AddOneModThree[IndexOf]];
+			}
+			// accumulate interior angles at the edge vertices in the second triangle
+			{
+				const int32 TriID = OrgEdge.Tri[1];
+				const int32 IndexOf = GetTriEdges(TriID).IndexOf(EID);
+				if (bHasSameOrientation)
+				{ 
+					TotalAngleAtOrgVert[1] += InternalAngles[TriID][IndexOf];
+					TotalAngleAtOrgVert[0] += InternalAngles[TriID][AddOneModThree[IndexOf]];
+				}
+				else
+				{
+					TotalAngleAtOrgVert[0] += InternalAngles[TriID][IndexOf];
+					TotalAngleAtOrgVert[1] += InternalAngles[TriID][AddOneModThree[IndexOf]];
+				}
+			}
 		}
 
 		if (TotalAngleAtOrgVert[0] > TMathUtilConstants<double>::Pi - TMathUtilConstants<double>::ZeroTolerance || TotalAngleAtOrgVert[1] > TMathUtilConstants<double>::Pi - TMathUtilConstants<double>::ZeroTolerance)

@@ -19,7 +19,6 @@
 #include "LumenScreenProbeGather.h"
 
 #if RHI_RAYTRACING
-#include "RayTracing/RayTracingDeferredMaterials.h"
 #include "RayTracing/RaytracingOptions.h"
 #include "RayTracing/RayTracingLighting.h"
 #include "LumenHardwareRayTracingCommon.h"
@@ -132,7 +131,15 @@ namespace LumenVisualize
 
 	bool UseHitLighting(const FViewInfo& View, bool bLumenGIEnabled)
 	{
-		return LumenVisualize::IsHitLightingForceEnabled(View, bLumenGIEnabled) || CVarLumenVisualizeHardwareRayTracingRetraceHitLighting.GetValueOnRenderThread() != 0;
+		#if RHI_RAYTRACING
+		if (LumenHardwareRayTracing::IsRayGenSupported())
+		{
+			return LumenVisualize::IsHitLightingForceEnabled(View, bLumenGIEnabled)
+				|| CVarLumenVisualizeHardwareRayTracingRetraceHitLighting.GetValueOnRenderThread() != 0;
+		}
+		#endif
+
+		return false;
 	}
 }
 
@@ -166,10 +173,6 @@ namespace LumenVisualize
 
 } // namespace LumenVisualize
 
-void FDeferredShadingSceneRenderer::PrepareLumenHardwareRayTracingVisualizeDeferredMaterial(const FViewInfo& View, TArray<FRHIRayTracingShader*>& OutRayGenShaders)
-{
-}
-
 class FLumenVisualizeCreateTilesCS : public FGlobalShader
 {
 	DECLARE_GLOBAL_SHADER(FLumenVisualizeCreateTilesCS)
@@ -178,7 +181,7 @@ class FLumenVisualizeCreateTilesCS : public FGlobalShader
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		// Input
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
-		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenVisualizeSceneParameters, VisualizeParameters)
+		SHADER_PARAMETER_STRUCT_INCLUDE(LumenVisualize::FSceneParameters, VisualizeParameters)
 
 		// Output
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, RWTileAllocator)
@@ -215,7 +218,7 @@ class FLumenVisualizeCreateRaysCS : public FGlobalShader
 		// Input
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
-		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenVisualizeSceneParameters, VisualizeParameters)
+		SHADER_PARAMETER_STRUCT_INCLUDE(LumenVisualize::FSceneParameters, VisualizeParameters)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, TileAllocator)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<LumenVisualize::FTileDataPacked>, TileDataPacked)
 		SHADER_PARAMETER(float, MaxTraceDistance)
@@ -395,12 +398,13 @@ class FLumenVisualizeHardwareRayTracing : public FLumenHardwareRayTracingShaderB
 	class FHitLightingDim : SHADER_PERMUTATION_BOOL("DIM_HIT_LIGHTING");
 	class FHairStrandsOcclusionDim : SHADER_PERMUTATION_BOOL("DIM_HAIRSTRANDS_VOXEL");
 	class FFarFieldDim : SHADER_PERMUTATION_BOOL("ENABLE_FAR_FIELD_TRACING");
-	using FPermutationDomain = TShaderPermutationDomain<FHitLightingDim, FHairStrandsOcclusionDim, FFarFieldDim>;
+	class FRecursiveRefractionTraces : SHADER_PERMUTATION_BOOL("RECURSIVE_REFRACTION_TRACES");
+	using FPermutationDomain = TShaderPermutationDomain<FLumenHardwareRayTracingShaderBase::FBasePermutationDomain, FHitLightingDim, FHairStrandsOcclusionDim, FFarFieldDim, FRecursiveRefractionTraces>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		// Input
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenHardwareRayTracingShaderBase::FSharedParameters, SharedParameters)
-		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenVisualizeSceneParameters, VisualizeParameters)
+		SHADER_PARAMETER_STRUCT_INCLUDE(LumenVisualize::FSceneParameters, VisualizeParameters)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, RayAllocator)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<LumenVisualize::FRayDataPacked>, RayDataPacked)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<LumenVisualize::FTraceDataPacked>, TraceDataPacked)
@@ -429,8 +433,6 @@ class FLumenVisualizeHardwareRayTracing : public FLumenHardwareRayTracingShaderB
 		FLumenHardwareRayTracingShaderBase::ModifyCompilationEnvironment(Parameters, ShaderDispatchType, Lumen::ESurfaceCacheSampling::HighResPages, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("ENABLE_VISUALIZE_MODE"), 1);
 		OutEnvironment.SetDefine(TEXT("RECURSIVE_REFLECTION_TRACES"), 1);
-
-		FPermutationDomain PermutationVector(Parameters.PermutationId);
 	}
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters, Lumen::ERayTracingShaderDispatchType ShaderDispatchType)
@@ -476,12 +478,16 @@ void FDeferredShadingSceneRenderer::PrepareLumenHardwareRayTracingVisualize(cons
 	{
 		for (int32 HairOcclusion = 0; HairOcclusion < 2; HairOcclusion++)
 		{
-			FLumenVisualizeHardwareRayTracingRGS::FPermutationDomain PermutationVector;
-			PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHitLightingDim>(true);
-			PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHairStrandsOcclusionDim>(HairOcclusion == 0);
-			PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FFarFieldDim>(false);
-			TShaderRef<FLumenVisualizeHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenVisualizeHardwareRayTracingRGS>(PermutationVector);
-			OutRayGenShaders.Add(RayGenerationShader.GetRayTracingShader());
+			for (int32 RayTracingTranslucent = 0; RayTracingTranslucent < 2; RayTracingTranslucent++)
+			{
+				FLumenVisualizeHardwareRayTracingRGS::FPermutationDomain PermutationVector;
+				PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHitLightingDim>(true);
+				PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHairStrandsOcclusionDim>(HairOcclusion == 0);
+				PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FFarFieldDim>(false);
+				PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FRecursiveRefractionTraces>(RayTracingTranslucent > 0);
+				TShaderRef<FLumenVisualizeHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenVisualizeHardwareRayTracingRGS>(PermutationVector);
+				OutRayGenShaders.Add(RayGenerationShader.GetRayTracingShader());
+			}
 		}
 	}
 }
@@ -498,12 +504,16 @@ void FDeferredShadingSceneRenderer::PrepareLumenHardwareRayTracingVisualizeLumen
 		{
 			for (int32 HairOcclusion = 0; HairOcclusion < 2; HairOcclusion++)
 			{
-				FLumenVisualizeHardwareRayTracingRGS::FPermutationDomain PermutationVector;
-				PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHitLightingDim>(false);
-				PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHairStrandsOcclusionDim>(HairOcclusion == 0);
-				PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FFarFieldDim>(FarField == 0);
-				TShaderRef<FLumenVisualizeHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenVisualizeHardwareRayTracingRGS>(PermutationVector);
-				OutRayGenShaders.Add(RayGenerationShader.GetRayTracingShader());
+				for (int32 RayTracingTranslucent = 0; RayTracingTranslucent < 2; RayTracingTranslucent++)
+				{
+					FLumenVisualizeHardwareRayTracingRGS::FPermutationDomain PermutationVector;
+					PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHitLightingDim>(false);
+					PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHairStrandsOcclusionDim>(HairOcclusion == 0);
+					PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FFarFieldDim>(FarField == 0);
+					PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FRecursiveRefractionTraces>(RayTracingTranslucent > 0);
+					TShaderRef<FLumenVisualizeHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenVisualizeHardwareRayTracingRGS>(PermutationVector);
+					OutRayGenShaders.Add(RayGenerationShader.GetRayTracingShader());
+				}
 			}
 		}
 	}
@@ -521,7 +531,7 @@ void LumenVisualize::VisualizeHardwareRayTracing(
 	const FLumenSceneFrameTemporaries& FrameTemporaries,
 	const FLumenCardTracingParameters& TracingParameters,
 	FLumenIndirectTracingParameters& IndirectTracingParameters,
-	FLumenVisualizeSceneParameters& VisualizeParameters,
+	LumenVisualize::FSceneParameters& VisualizeParameters,
 	FRDGTextureRef SceneColor,
 	bool bVisualizeModeWithHitLighting,
 	bool bLumenGIEnabled)
@@ -532,6 +542,7 @@ void LumenVisualize::VisualizeHardwareRayTracing(
 	bool bForceHitLighting = LumenVisualize::IsHitLightingForceEnabled(View, bLumenGIEnabled);
 	bool bInlineRayTracing = Lumen::UseHardwareInlineRayTracing(*View.Family);
 	const bool bNeedTraceHairVoxel = HairStrands::HasViewHairStrandsVoxelData(View) && GLumenReflectionHairStrands_VoxelTrace > 0;
+	const bool bTraceTranslucent = LumenReflections::UseTranslucentRayTracing(View);
 
 	// Reflection scene view uses reflection setup
 	if (VisualizeParameters.VisualizeMode == VISUALIZE_MODE_REFLECTION_VIEW)
@@ -661,30 +672,30 @@ void LumenVisualize::VisualizeHardwareRayTracing(
 		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHitLightingDim>(false);
 		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FFarFieldDim>(bTraceFarField);
 		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHairStrandsOcclusionDim>(bNeedTraceHairVoxel);
+		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FRecursiveRefractionTraces>(bTraceTranslucent);
 
 		FIntPoint DispatchResolution = FIntPoint(RayGenThreadCount, RayGenGroupCount);
 		if (bInlineRayTracing)
 		{
-			const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(DispatchResolution, FLumenVisualizeHardwareRayTracingCS::GetThreadGroupSize());
-
-			TShaderRef<FLumenVisualizeHardwareRayTracingCS> ComputeShader = View.ShaderMap->GetShader<FLumenVisualizeHardwareRayTracingCS>(PermutationVector);
-			FComputeShaderUtils::AddPass(
+			const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(DispatchResolution, FLumenVisualizeHardwareRayTracingCS::GetThreadGroupSize(View.GetShaderPlatform()));
+			FLumenVisualizeHardwareRayTracingCS::AddLumenRayTracingDispatch(
 				GraphBuilder,
 				RDG_EVENT_NAME("VisualizeHardwareRayTracing (inline) %ux%u", DispatchResolution.X, DispatchResolution.Y),
-				ComputeShader,
+				View,
+				PermutationVector,
 				PassParameters,
-				GroupCount);
+				GroupCount,
+				ERDGPassFlags::Compute);
 		}
 		else
 		{
-			TShaderRef<FLumenVisualizeHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenVisualizeHardwareRayTracingRGS>(PermutationVector);
-			AddLumenRayTraceDispatchPass(
+			FLumenVisualizeHardwareRayTracingRGS::AddLumenRayTracingDispatch(
 				GraphBuilder,
-				RDG_EVENT_NAME("VisualizeHardwareRayTracing (raygen) %ux%u", DispatchResolution.X, DispatchResolution.Y),
-				RayGenerationShader,
+				RDG_EVENT_NAME("VisualizeHardwareRayTracing (raygen) %ux%u", DispatchResolution.X, DispatchResolution.Y), 
+				View,
+				PermutationVector,
 				PassParameters,
 				DispatchResolution,
-				View,
 				true);
 		}
 	}
@@ -846,6 +857,7 @@ void LumenVisualize::VisualizeHardwareRayTracing(
 		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHitLightingDim>(true);
 		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FFarFieldDim>(false);
 		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FHairStrandsOcclusionDim>(bNeedTraceHairVoxel);
+		PermutationVector.Set<FLumenVisualizeHardwareRayTracingRGS::FRecursiveRefractionTraces>(bTraceTranslucent);
 		TShaderRef<FLumenVisualizeHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenVisualizeHardwareRayTracingRGS>(PermutationVector);
 
 		FIntPoint DispatchResolution = FIntPoint(RayGenThreadCount, RayGenGroupCount);

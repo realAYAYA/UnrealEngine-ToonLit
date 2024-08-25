@@ -6,6 +6,7 @@
 #include "HAL/Platform.h"
 #include "ISequencer.h"
 #include "Internationalization/Internationalization.h"
+#include "MVVM/Extensions/IRecyclableExtension.h"
 #include "MVVM/ViewModels/SequenceModel.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
 #include "Misc/AssertionMacros.h"
@@ -17,6 +18,7 @@
 #include "Styling/AppStyle.h"
 #include "Templates/SharedPointer.h"
 #include "UObject/Object.h"
+#include "MovieSceneBindingReferences.h"
 
 class UClass;
 struct FSlateBrush;
@@ -63,7 +65,21 @@ void FPossessableModel::OnConstruct()
 	const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(ObjectBindingID);
 	check(Possessable);
 
+	FScopedViewModelListHead RecycledHead(AsShared(), EViewModelListType::Recycled);
+	GetChildrenForList(&OutlinerChildList).MoveChildrenTo<IRecyclableExtension>(RecycledHead.GetChildren(), IRecyclableExtension::CallOnRecycle);
+
 	FObjectBindingModel::OnConstruct();
+
+	// Preserve objectbindings since those are always added by the object model storage
+	// on reinitialize or in response to an object event.
+	FViewModelChildren OutlinerChildren = GetChildrenForList(&OutlinerChildList);
+	for (TViewModelPtr<FObjectBindingModel> Child : RecycledHead.GetChildren().IterateSubList<FObjectBindingModel>().ToArray())
+	{
+		if (Child)
+		{
+			OutlinerChildren.AddChild(Child);
+		}
+	}
 }
 
 FText FPossessableModel::GetIconToolTipText() const
@@ -123,6 +139,33 @@ void FPossessableModel::Delete()
 			Sequence->UnbindPossessableObjects(ObjectBindingID);
 		}
 	}
+}
+
+FSlateColor FPossessableModel::GetInvalidBindingLabelColor() const
+{
+	UMovieSceneSequence* Sequence = OwnerModel ? OwnerModel->GetSequence() : nullptr;
+	UMovieScene* MovieScene = (OwnerModel && Sequence) ? OwnerModel->GetMovieScene() : nullptr;
+	FMovieScenePossessable* Possessable = MovieScene ? MovieScene->FindPossessable(ObjectBindingID) : nullptr;
+	if (Possessable)
+	{
+		if (Possessable->GetSpawnableObjectBindingID().IsValid())
+		{
+			return FSlateColor::UseSubduedForeground();
+		}
+		if (const FMovieSceneBindingReferences* BindingReferences = Sequence->GetBindingReferences())
+		{
+			for (const FMovieSceneBindingReference& BindingReference : BindingReferences->GetReferences(ObjectBindingID))
+			{
+				if (BindingReference.Locator.IsEmpty())
+				{
+					// Show empty bindings as yellow rather than red
+					return FLinearColor::Yellow;
+				}
+			}
+
+		}
+	}
+	return FLinearColor::Red;
 }
 
 } // namespace Sequencer

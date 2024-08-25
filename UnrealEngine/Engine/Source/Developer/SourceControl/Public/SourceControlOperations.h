@@ -691,6 +691,101 @@ public:
 	{
 		return LOCTEXT("SourceControl_GetSubmittedChangelists", "Retrieving submitted changelist(s) from Revision Control...");
 	}
+
+public:
+	void SetDateFromFilter(const FDateTime& InDateFrom)
+	{
+		DateFrom = InDateFrom;
+	}
+
+	void SetDateToFilter(const FDateTime& InDateTo)
+	{
+		DateTo = InDateTo;
+	}
+
+	void SetOwnedFilter(bool InOwned)
+	{
+		Owned = InOwned;
+	}
+
+	void SetPaginationLimit(int32 InLimit)
+	{
+		if (InLimit > 0)
+		{
+			PaginationLimit = InLimit;
+		}
+	}
+
+	void SetPaginationOffset(int32 InOffset)
+	{
+		if (InOffset >= 0)
+		{
+			PaginationOffset = InOffset;
+		}
+	}
+
+	bool ShouldFilterByDateFrom(FDateTime& OutDateFrom)
+	{
+		if (DateFrom != FDateTime::MinValue())
+		{
+			OutDateFrom = DateFrom;
+			return true;
+		}
+		return false;
+	}
+
+	bool ShouldFilterByDateTo(FDateTime& OutDateTo)
+	{
+		if (DateTo != FDateTime::MinValue())
+		{
+			OutDateTo = DateTo;
+			return true;
+		}
+		return false;
+	}
+
+	bool ShouldFilterByOwned()
+	{
+		return Owned;
+	}
+
+	bool ShouldUsePaginationLimit(int32& OutPaginationLimit)
+	{
+		if (PaginationLimit != -1)
+		{
+			OutPaginationLimit = PaginationLimit;
+			return true;
+		}
+		return false;
+	}
+
+	bool ShouldUsePaginationOffset(int32& OutPaginationOffset)
+	{
+		if (PaginationOffset != -1)
+		{
+			OutPaginationOffset = PaginationOffset;
+			return true;
+		}
+		return false;
+	}
+
+public:
+	const TArray<FSourceControlChangelistRef>& GetSubmittedChangelists() const { return Changelists; }
+
+	void AddSubmittedChangelist(FSourceControlChangelistRef Changelist)
+	{
+		Changelists.Add(Changelist);
+	}
+
+private:
+	FDateTime DateFrom = FDateTime::MinValue();
+	FDateTime DateTo = FDateTime::MinValue();
+	bool Owned = false;
+
+	int32 PaginationLimit = -1;
+	int32 PaginationOffset = -1;
+
+	TArray<FSourceControlChangelistRef> Changelists;
 };
 
 /**

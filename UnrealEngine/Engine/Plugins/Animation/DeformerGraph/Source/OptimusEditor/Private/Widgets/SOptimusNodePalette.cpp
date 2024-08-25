@@ -86,9 +86,14 @@ FText SOptimusNodePaletteItem::GetItemTooltip() const
 SOptimusNodePalette::~SOptimusNodePalette()
 {
 	const TSharedPtr<FOptimusEditor> Editor = OwningEditor.Pin();
-	if (Editor && Editor->GetDeformer())
+	if (Editor)
 	{
-		Editor->GetDeformer()->GetNotifyDelegate().RemoveAll(this);
+		Editor->OnRefresh().RemoveAll(this);
+		
+		if (Editor->GetDeformer())
+		{
+			Editor->GetDeformer()->GetNotifyDelegate().RemoveAll(this);
+		}
 	}
 }
 
@@ -112,10 +117,20 @@ void SOptimusNodePalette::Construct(const FArguments& InArgs, TWeakPtr<FOptimusE
 	];
 
 	const TSharedPtr<FOptimusEditor> Editor = OwningEditor.Pin();
-	if (ensure(Editor) && Editor->GetDeformer())
+	if (ensure(Editor))
 	{
-		Editor->GetDeformer()->GetNotifyDelegate().AddSP(this, &SOptimusNodePalette::GraphCollectionNotify);
+		Editor->OnRefresh().AddRaw(this, &SOptimusNodePalette::Refresh);
+		
+		if (Editor->GetDeformer())
+		{
+			Editor->GetDeformer()->GetNotifyDelegate().AddSP(this, &SOptimusNodePalette::GraphCollectionNotify);
+		}
 	}
+}
+
+void SOptimusNodePalette::Refresh()
+{
+	GraphActionMenu->RefreshAllActions(true);
 }
 
 
@@ -131,7 +146,7 @@ void SOptimusNodePalette::CollectAllActions(FGraphActionListBuilderBase& OutAllA
 	{
 		const UOptimusEditorGraphSchema* Schema = Cast<UOptimusEditorGraphSchema>(Editor->GetGraph()->GetSchema());
 
-		Schema->GetGraphActions(OutAllActions, nullptr, nullptr);
+		Schema->GetGraphActions(OutAllActions, nullptr, Editor->GetGraph());
 	}
 }
 

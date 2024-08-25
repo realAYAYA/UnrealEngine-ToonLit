@@ -161,7 +161,7 @@ bool FSceneVolumeSpatial::GetGeometry(EGeometryPointType GeometryType, int32 Geo
 
 void FSceneVolumeSpatial::OnGeometryModified(bool bDeferSpatialRebuild)
 {
-	ColliderMesh.Reset(false);
+	ColliderMesh.Reset(EAllowShrinking::No);
 	if (IsValid() == false)
 	{
 		return;

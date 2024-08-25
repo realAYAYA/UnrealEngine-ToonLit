@@ -81,19 +81,17 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace AdditiveSynthVertexNames;
 
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-			FVertexInterface Interface = GetVertexInterface();
-			const FInputVertexInterface& InputInterface = Interface.GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FFloatReadRef InputBaseFrequency = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(BaseFrequency), InParams.OperatorSettings);
-			FInputFloatArrayReadRef InputHarmonicMultipliers = InputCollection.GetDataReadReferenceOrConstruct<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(HarmonicMultipliers));
-			FInputFloatArrayReadRef InputAmplitudes = InputCollection.GetDataReadReferenceOrConstruct<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(Amplitudes));
-			FInputFloatArrayReadRef InputPhases = InputCollection.GetDataReadReferenceOrConstruct<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(Phases));
-			FInputFloatArrayReadRef InputPanAmounts = InputCollection.GetDataReadReferenceOrConstruct<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(PanAmounts));
+			FFloatReadRef InputBaseFrequency = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(BaseFrequency), InParams.OperatorSettings);
+			FInputFloatArrayReadRef InputHarmonicMultipliers = InputData.GetOrConstructDataReadReference<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(HarmonicMultipliers));
+			FInputFloatArrayReadRef InputAmplitudes = InputData.GetOrConstructDataReadReference<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(Amplitudes));
+			FInputFloatArrayReadRef InputPhases = InputData.GetOrConstructDataReadReference<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(Phases));
+			FInputFloatArrayReadRef InputPanAmounts = InputData.GetOrConstructDataReadReference<FInputFloatArrayType>(METASOUND_GET_PARAM_NAME(PanAmounts));
 
 			return MakeUnique<FAdditiveSynthOperator>(InParams.OperatorSettings, InputBaseFrequency, InputHarmonicMultipliers, InputAmplitudes, InputPhases, InputPanAmounts);
 		}

@@ -293,8 +293,7 @@ void FMeshElementIndexer::RebuildIndex(int32 Index)
 				}
 
 				// Preallocate data buffer for each chunk
-				const bool bAllowShrinking = false;
-				Chunk.Data.SetNumUninitialized(CurrentStartIndex, bAllowShrinking);
+				Chunk.Data.SetNumUninitialized(CurrentStartIndex, EAllowShrinking::No);
 			}
 		}
 
@@ -353,8 +352,7 @@ void FMeshElementIndexer::BuildIndex(int32 Index)
 	FIndexPerChannel& PerChannelIndex = PerChannelIndices[Index];
 
 	// A list of all the keys which will be updated
-	TArray<int32> KeysToUpdate;
-	KeysToUpdate.Reserve(PerChannelIndex.StaleReferencerIndices.Num());
+	TArray<int32, TInlineAllocator<256>> KeysToUpdate;
 
 	// Ensure we have enough chunks to accommodate the current number of keys.
 	// Any new ones will be default initialized to appropriate values.
@@ -372,8 +370,7 @@ void FMeshElementIndexer::BuildIndex(int32 Index)
 	// Remove extra chunks if too many
 	if (PerChannelIndex.Chunks.Num() > NumChunks)
 	{
-		const bool bAllowShrinking = false;
-		PerChannelIndex.Chunks.RemoveAt(NumChunks, PerChannelIndex.Chunks.Num() - NumChunks, bAllowShrinking);
+		PerChannelIndex.Chunks.RemoveAt(NumChunks, PerChannelIndex.Chunks.Num() - NumChunks, EAllowShrinking::No);
 	}
 
 	// First pass to determine the keys which need updating
@@ -549,8 +546,7 @@ void FMeshElementIndexer::AddUnchunked(int32 KeyIndex, int32 ReferenceIndex, int
 	// Remove extra chunks if too many
 	if (PerChannelIndex.Chunks.Num() > NumReferencedElements)
 	{
-		const bool bAllowShrinking = false;
-		PerChannelIndex.Chunks.RemoveAt(NumReferencedElements, PerChannelIndex.Chunks.Num() - NumReferencedElements, bAllowShrinking);
+		PerChannelIndex.Chunks.RemoveAt(NumReferencedElements, PerChannelIndex.Chunks.Num() - NumReferencedElements, EAllowShrinking::No);
 	}
 
 	FChunk& Chunk = PerChannelIndex.Chunks[KeyIndex];

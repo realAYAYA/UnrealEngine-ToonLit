@@ -4,6 +4,8 @@
 #include "Render/Viewport/RenderTarget/DisplayClusterRenderTargetResource.h"
 #include "Render/Viewport/RenderFrame/DisplayClusterRenderFrameSettings.h"
 
+#include "Misc/DisplayClusterLog.h"
+
 #include "Engine/TextureRenderTarget2D.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -23,17 +25,6 @@ static FAutoConsoleVariableRef CVarDisplayClusterOverrideMinTextureDimension(
 	ECVF_RenderThreadSafe
 );
 
-int32 GDisplayClusterDefaultPreviewPixelFormat = 1;
-static FAutoConsoleVariableRef CVarDisplayClusterDefaultPreviewPixelFormat(
-	TEXT("DC.Preview.DefaultPixelFormat"),
-	GDisplayClusterDefaultPreviewPixelFormat,
-	TEXT("Defines the default preview RTT pixel format.\n")
-	TEXT(" 0: 8bit fixed point RGBA\n")
-	TEXT(" 1: 16bit Float RGBA\n")
-	TEXT(" 2: 10bit fixed point RGB and 2bit Alpha\n"),
-	ECVF_RenderThreadSafe
-);
-
 int32 GDisplayClusterMaxNumMips = -1;
 static FAutoConsoleVariableRef CVarDisplayClusterMaxNumMips(
 	TEXT("DC.TextureMaxNumMips"),
@@ -45,45 +36,45 @@ static FAutoConsoleVariableRef CVarDisplayClusterMaxNumMips(
 	ECVF_RenderThreadSafe
 );
 
-namespace PreviewPixelFormat
+// Default pixel format for preview rendering
+int32 GDisplayClusterPreviewDefaultPixelFormat = 1;
+static FAutoConsoleVariableRef CVarDisplayClusterPreviewDefaultPixelFormat(
+	TEXT("nDisplay.preview.DefaultPixelFormat"),
+	GDisplayClusterPreviewDefaultPixelFormat,
+	TEXT("Defines the default preview RTT pixel format.\n")
+	TEXT(" 0: 8bit fixed point RGBA\n")
+	TEXT(" 1: 16bit Float RGBA\n")
+	TEXT(" 2: 10bit fixed point RGB and 2bit Alpha\n"),
+	ECVF_RenderThreadSafe
+);
+
+////////////////////////////////////////////////////////////////////////////////
+namespace UE::DisplayCluster::ViewportHelpers
 {
-	static ETextureRenderTargetFormat ImplGetRenderTargetFormatFromInt(const int32 InDefaultPreviewPixelFormat)
+	static inline ETextureRenderTargetFormat ImplGetRenderTargetFormatFromInt(const int32 InDefaultPreviewPixelFormat)
 	{
 		const int32 ValidIndex = FMath::Clamp(InDefaultPreviewPixelFormat, 0, 2);
 		static const ETextureRenderTargetFormat SPixelFormat[] = { RTF_RGBA8, RTF_RGBA16f, RTF_RGB10A2 };
 
 		return SPixelFormat[ValidIndex];
 	}
-
-	static EPixelFormat GetPreviewPixelFormat()
-	{
-		const ETextureRenderTargetFormat RenderTargetFormat = ImplGetRenderTargetFormatFromInt(GDisplayClusterDefaultPreviewPixelFormat);
-		
-		return GetPixelFormatFromRenderTargetFormat(RenderTargetFormat);
-	}
 };
+using namespace UE::DisplayCluster::ViewportHelpers;
 
 ////////////////////////////////////////////////////////////////////////////////
-int32 DisplayClusterViewportHelpers::GetMaxTextureNumMips(const FDisplayClusterRenderFrameSettings& InRenderFrameSettings, const int32 InNumMips)
+// FDisplayClusterViewportHelpers
+////////////////////////////////////////////////////////////////////////////////
+int32 FDisplayClusterViewportHelpers::GetMaxTextureNumMips(const FDisplayClusterRenderFrameSettings& InRenderFrameSettings, const int32 InNumMips)
 {
 	int32 NumMips = InNumMips;
 
-#if WITH_EDITOR
-	switch (InRenderFrameSettings.RenderMode)
+	if(GDisplayClusterPreviewDefaultPixelFormat != 0 && InRenderFrameSettings.IsPreviewRendering())
 	{
-	case EDisplayClusterRenderFrameMode::PreviewInScene:
-		if (GDisplayClusterDefaultPreviewPixelFormat != 0)
-		{
-			//@todo: now UE support mips generation only for fixed point textures (8bit RGBA)
-			// Remove this hack latter
-			// Disable preview mips generation in case of unsupported RTT texture format.
-			NumMips = 0;
-		}
-		break;
-	default:
-		break;
+		//@todo: now UE support mips generation only for fixed point textures (8bit RGBA)
+		// Remove this hack latter
+		// Disable preview mips generation in case of unsupported RTT texture format.
+		NumMips = 0;
 	}
-#endif
 
 	if (GDisplayClusterMaxNumMips >= 0)
 	{
@@ -93,7 +84,7 @@ int32 DisplayClusterViewportHelpers::GetMaxTextureNumMips(const FDisplayClusterR
 	return NumMips;
 }
 
-int32 DisplayClusterViewportHelpers::GetMaxTextureDimension()
+int32 FDisplayClusterViewportHelpers::GetMaxTextureDimension()
 {
 	// The target always needs be within GMaxTextureDimensions, larger dimensions are not supported by the engine
 	static const int32 MaxTextureDimension = 1 << (GMaxTextureMipCount - 1);
@@ -111,7 +102,7 @@ int32 DisplayClusterViewportHelpers::GetMaxTextureDimension()
 	return MaxTextureDimension;
 }
 
-int32 DisplayClusterViewportHelpers::GetMinTextureDimension()
+int32 FDisplayClusterViewportHelpers::GetMinTextureDimension()
 {
 	static const int32 MinTextureDimension = 16;
 
@@ -128,24 +119,45 @@ int32 DisplayClusterViewportHelpers::GetMinTextureDimension()
 	return MinTextureDimension;
 }
 
-void DisplayClusterViewportHelpers::FreezeRenderingOfViewportTextureResources(TArray<FDisplayClusterViewportTextureResource*>& TextureResources)
+FIntRect FDisplayClusterViewportHelpers::GetValidViewportRect(const FIntRect& InRect, const FString& InViewportId, const TCHAR* InResourceName)
 {
-	for (FDisplayClusterViewportTextureResource* TextureResource : TextureResources)
+	// The target always needs be within GMaxTextureDimensions, larger dimensions are not supported by the engine
+	const int32 MaxTextureSize = FDisplayClusterViewportHelpers::GetMaxTextureDimension();
+	const int32 MinTextureSize = FDisplayClusterViewportHelpers::GetMinTextureDimension();
+
+	int32 Width = FMath::Max(MinTextureSize, InRect.Width());
+	int32 Height = FMath::Max(MinTextureSize, InRect.Height());
+
+	FIntRect OutRect(InRect.Min, InRect.Min + FIntPoint(Width, Height));
+
+	float RectScale = 1;
+
+	// Make sure the rect doesn't exceed the maximum resolution, and preserve its aspect ratio if it needs to be clamped
+	int32 RectMaxSize = OutRect.Max.GetMax();
+	if (RectMaxSize > MaxTextureSize)
 	{
-		if (TextureResource != nullptr)
-		{
-			TextureResource->RaiseViewportResourceState(EDisplayClusterViewportResourceState::DisableReallocate);
-		}
+		RectScale = float(MaxTextureSize) / RectMaxSize;
+		UE_LOG(LogDisplayClusterViewport, Error, TEXT("The viewport '%s' rect '%s' size %dx%d clamped: max texture dimensions is %d"), *InViewportId, (InResourceName == nullptr) ? TEXT("none") : InResourceName, InRect.Max.X, InRect.Max.Y, MaxTextureSize);
 	}
+
+	OutRect.Min.X = FMath::Min(OutRect.Min.X, MaxTextureSize);
+	OutRect.Min.Y = FMath::Min(OutRect.Min.Y, MaxTextureSize);
+
+	const FIntPoint ScaledRectMax = FDisplayClusterViewportHelpers::ScaleTextureSize(OutRect.Max, RectScale);
+
+	OutRect.Max.X = FMath::Clamp(ScaledRectMax.X, OutRect.Min.X, MaxTextureSize);
+	OutRect.Max.Y = FMath::Clamp(ScaledRectMax.Y, OutRect.Min.Y, MaxTextureSize);
+
+	return OutRect;
 }
 
-bool DisplayClusterViewportHelpers::IsValidTextureSize(const FIntPoint& InSize)
+bool FDisplayClusterViewportHelpers::IsValidTextureSize(const FIntPoint& InSize)
 {
 	return InSize.GetMin() >= GetMinTextureDimension() && InSize.GetMax() <= GetMaxTextureDimension();
 }
 
 // Return size less than max texture dimension. Aspect ratio not changed
-FIntPoint DisplayClusterViewportHelpers::GetTextureSizeLessThanMax(const FIntPoint& InSize, const int32 InMaxTextureDimension)
+FIntPoint FDisplayClusterViewportHelpers::GetTextureSizeLessThanMax(const FIntPoint& InSize, const int32 InMaxTextureDimension)
 {
 	if (InSize.GetMax() > InMaxTextureDimension)
 	{
@@ -157,7 +169,7 @@ FIntPoint DisplayClusterViewportHelpers::GetTextureSizeLessThanMax(const FIntPoi
 	return InSize;
 }
 
-FIntPoint DisplayClusterViewportHelpers::ScaleTextureSize(const FIntPoint& InSize, float InMult)
+FIntPoint FDisplayClusterViewportHelpers::ScaleTextureSize(const FIntPoint& InSize, float InMult)
 {
 	const int32 ScaledX = FMath::CeilToInt(InSize.X * InMult);
 	const int32 ScaledY = FMath::CeilToInt(InSize.Y * InMult);
@@ -165,19 +177,19 @@ FIntPoint DisplayClusterViewportHelpers::ScaleTextureSize(const FIntPoint& InSiz
 	return FIntPoint(ScaledX, ScaledY);
 }
 
-float DisplayClusterViewportHelpers::GetValidSizeMultiplier(const FIntPoint& InSize, const float InSizeMult, const float InBaseSizeMult)
+float FDisplayClusterViewportHelpers::GetValidSizeMultiplier(const FIntPoint& InSize, const float InSizeMult, const float InBaseSizeMult)
 {
 	// find best possible size mult in range 1..InSizeMult
 	if (InSizeMult > 1.f)
 	{
 		const FIntPoint ScaledSize = ScaleTextureSize(InSize, FMath::Max(InSizeMult * InBaseSizeMult, 0.f));
-		if (DisplayClusterViewportHelpers::IsValidTextureSize(ScaledSize) == false)
+		if (FDisplayClusterViewportHelpers::IsValidTextureSize(ScaledSize) == false)
 		{
 			// Try change 'RenderTargetAdaptRatio' to min possible value
 			const float BaseMult = FMath::Max(InBaseSizeMult, 0.f);
 			const FIntPoint MinScaledSize = ScaleTextureSize(InSize, BaseMult);
 
-			if (DisplayClusterViewportHelpers::IsValidTextureSize(MinScaledSize) == false)
+			if (FDisplayClusterViewportHelpers::IsValidTextureSize(MinScaledSize) == false)
 			{
 				// BaseSizeMult to big. Disable size mult
 				return 1.f;
@@ -193,7 +205,7 @@ float DisplayClusterViewportHelpers::GetValidSizeMultiplier(const FIntPoint& InS
 #if UE_BUILD_DEBUG
 				// debug purpose
 				const FIntPoint FinalSize = ScaleTextureSize(InSize, FMath::Max(OutMult * InBaseSizeMult, 0.f));
-				check(DisplayClusterViewportHelpers::IsValidTextureSize(FinalSize));
+				check(FDisplayClusterViewportHelpers::IsValidTextureSize(FinalSize));
 #endif
 
 				return OutMult;
@@ -204,29 +216,14 @@ float DisplayClusterViewportHelpers::GetValidSizeMultiplier(const FIntPoint& InS
 	return InSizeMult;
 }
 
-#if WITH_EDITOR
-void DisplayClusterViewportHelpers::GetPreviewRenderTargetDesc_Editor(const FDisplayClusterRenderFrameSettings& InRenderFrameSettings, EPixelFormat& OutPixelFormat, float& OutDisplayGamma, bool& bOutSRGB)
+EPixelFormat FDisplayClusterViewportHelpers::GetPreviewDefaultPixelFormat()
 {
-	OutPixelFormat = PreviewPixelFormat::GetPreviewPixelFormat();
+	const ETextureRenderTargetFormat RenderTargetFormat = ImplGetRenderTargetFormatFromInt(GDisplayClusterPreviewDefaultPixelFormat);
 
-	// Default gamma value
-	OutDisplayGamma = 2.2f;
-
-	//!
-	bOutSRGB = true;
-
-	switch (InRenderFrameSettings.RenderMode)
-	{
-	case EDisplayClusterRenderFrameMode::PreviewInScene:
-		if (InRenderFrameSettings.bPreviewEnablePostProcess == false)
-		{
-			// Disable postprocess for preview. Use Gamma 1.f
-			OutDisplayGamma = 1.f;
-		}
-		break;
-	default:
-		break;
-	}
+	return GetPixelFormatFromRenderTargetFormat(RenderTargetFormat);
 }
-#endif
 
+EPixelFormat FDisplayClusterViewportHelpers::GetDefaultPixelFormat()
+{
+	return EPixelFormat::PF_FloatRGBA;
+}

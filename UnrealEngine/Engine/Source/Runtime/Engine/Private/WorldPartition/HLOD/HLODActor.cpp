@@ -2,7 +2,7 @@
 
 #include "WorldPartition/HLOD/HLODActor.h"
 #include "Engine/World.h"
-#include "WorldPartition/HLOD/HLODSubsystem.h"
+#include "WorldPartition/HLOD/HLODRuntimeSubsystem.h"
 #include "Components/PrimitiveComponent.h"
 #include "Misc/PackageName.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
@@ -16,9 +16,12 @@
 #include "WorldPartition/WorldPartitionHelpers.h"
 
 #if WITH_EDITOR
+#include "Components/StaticMeshComponent.h"
 #include "Editor.h"
+#include "HAL/FileManager.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/ArchiveMD5.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
 #include "WorldPartition/HLOD/HLODActorDesc.h"
@@ -29,9 +32,7 @@
 #include "WorldPartition/HLOD/HLODSourceActorsFromCell.h"
 #endif
 
-
 DEFINE_LOG_CATEGORY(LogHLODHash);
-
 
 static int32 GWorldPartitionHLODForceDisableShadows = 0;
 static FAutoConsoleVariableRef CVarWorldPartitionHLODForceDisableShadows(
@@ -52,7 +53,7 @@ AWorldPartitionHLOD::AWorldPartitionHLOD(const FObjectInitializer& ObjectInitial
 	// needs to be replicated.
 	bReplicates = true;
 
-	NetDormancy = DORM_DormantAll;
+	NetDormancy = DORM_Initial;
 	NetUpdateFrequency = 1.f;
 
 #if WITH_EDITORONLY_DATA
@@ -94,12 +95,12 @@ void AWorldPartitionHLOD::SetVisibility(bool bInVisible)
 void AWorldPartitionHLOD::BeginPlay()
 {
 	Super::BeginPlay();
-	GetWorld()->GetSubsystem<UHLODSubsystem>()->RegisterHLODActor(this);
+	GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>()->RegisterHLODActor(this);
 }
 
 void AWorldPartitionHLOD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	GetWorld()->GetSubsystem<UHLODSubsystem>()->UnregisterHLODActor(this);
+	GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>()->UnregisterHLODActor(this);
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -136,12 +137,23 @@ void AWorldPartitionHLOD::Serialize(FArchive& Ar)
 		{
 			check(!SourceActors)
 			UWorldPartitionHLODSourceActorsFromCell* SourceActorsFromCell = NewObject<UWorldPartitionHLODSourceActorsFromCell>(this);
-			SourceActorsFromCell->SetActors(HLODSubActors_DEPRECATED);
+			SourceActorsFromCell->SetActors(MoveTemp(HLODSubActors_DEPRECATED));
 			SourceActorsFromCell->SetHLODLayer(SubActorsHLODLayer_DEPRECATED);
 			SourceActors = SourceActorsFromCell;
 		}
 	}
 #endif
+}
+
+bool AWorldPartitionHLOD::IsEditorOnly() const
+{
+	// Treat HLOD actors which were never built (or failed to build components for various reasons) as editor only.
+	if (!IsTemplate() && GetRootComponent() == nullptr)
+	{
+		return true;
+	}
+
+	return Super::IsEditorOnly();
 }
 
 bool AWorldPartitionHLOD::NeedsLoadForServer() const
@@ -153,13 +165,6 @@ bool AWorldPartitionHLOD::NeedsLoadForServer() const
 void AWorldPartitionHLOD::PostLoad()
 {
 	Super::PostLoad();
-
-	// If world is instanced, we need to recompute our bounds since they are in the instanced-world space
-	ForEachComponent<USceneComponent>(false, [](USceneComponent* SceneComponent)
-	{
-		// Clear bComputedBoundsOnceForGame so that the bounds are recomputed once
-		SceneComponent->bComputedBoundsOnceForGame = false;
-	});
 
 #if WITH_EDITOR
 	if (GetLinkerCustomVersion(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::WorldPartitionStreamingCellsNamingShortened)
@@ -243,11 +248,49 @@ void AWorldPartitionHLOD::PostLoad()
 			check(SourceCellGuid.IsValid());
 		}
 	}
-
-	// Update the disk size stat on load, as we can't really know it when saving
-	HLODStats.Add(FWorldPartitionHLODStats::MemoryDiskSizeBytes, FHLODActorDesc::GetPackageSize(this));
 #endif
 }
+
+#if WITH_EDITOR
+void AWorldPartitionHLOD::PreSave(FObjectPreSaveContext ObjectSaveContext)
+{
+	Super::PreSave(ObjectSaveContext);
+
+	// Always disable collisions on HLODs
+	SetActorEnableCollision(false);
+
+	ForEachComponent<UPrimitiveComponent>(false, [this, &ObjectSaveContext](UPrimitiveComponent* PrimitiveComponent)
+	{
+		// Disable collision on HLOD components
+		PrimitiveComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+		// When cooking, get rid of collision data
+		if (ObjectSaveContext.IsCooking())
+		{
+			if (UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(PrimitiveComponent))
+			{
+				if (UStaticMesh* StaticMesh = StaticMeshComponent->GetStaticMesh())
+				{
+					// If the HLOD process did create this static mesh
+					if (StaticMesh->GetPackage() == GetPackage())
+					{
+						if (UBodySetup* BodySetup = StaticMesh->GetBodySetup())
+						{
+ 							// To ensure a deterministic cook, save the current GUID and restore it below
+							FGuid PreviousBodySetupGuid = BodySetup->BodySetupGuid;
+							BodySetup->DefaultInstance.SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+							BodySetup->bNeverNeedsCookedCollisionData = true;
+							BodySetup->bHasCookedCollisionData = false;
+							BodySetup->InvalidatePhysicsData();
+							BodySetup->BodySetupGuid = PreviousBodySetupGuid;
+						}
+					}
+				}
+			}
+		}
+	});
+}
+#endif
 
 void AWorldPartitionHLOD::PreRegisterAllComponents()
 {
@@ -260,6 +303,26 @@ void AWorldPartitionHLOD::PreRegisterAllComponents()
 			PrimitiveComponent->SetCastShadow(false);
 		});
 	}
+
+#if WITH_EDITOR
+	// In editor, turn on collision on HLODs in order to enable some useful editor features on HLODs (Actor placement, Play from here, Go Here, etc)
+	// In PIE, collisions should be disabled
+	if (GetWorld() && !IsRunningCommandlet() && !FApp::IsUnattended())
+	{
+		bool bShouldEnableCollision = !GetWorld()->IsGameWorld();
+		if (GetActorEnableCollision() != bShouldEnableCollision)
+		{
+			SetActorEnableCollision(bShouldEnableCollision);
+			ForEachComponent<UPrimitiveComponent>(false, [bShouldEnableCollision](UPrimitiveComponent* PrimitiveComponent)
+			{
+				PrimitiveComponent->SetCollisionEnabled(bShouldEnableCollision ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+				PrimitiveComponent->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Ignore);
+				PrimitiveComponent->SetCollisionResponseToChannel(ECC_Visibility, bShouldEnableCollision ? ECR_Block : ECR_Ignore);
+				PrimitiveComponent->SetCollisionResponseToChannel(ECC_Camera, bShouldEnableCollision ? ECR_Block : ECR_Ignore);
+			});
+		}
+	}	
+#endif
 
 	// If world is instanced, we need to recompute our bounds since they are in the instanced-world space
 	if (UWorldPartition* WorldPartition = FWorldPartitionHelpers::GetWorldPartition(this))
@@ -277,10 +340,8 @@ void AWorldPartitionHLOD::PreRegisterAllComponents()
 }
 
 #if WITH_EDITOR
-
 void AWorldPartitionHLOD::RerunConstructionScripts()
-{
-}
+{}
 
 void AWorldPartitionHLOD::OnWorldCleanup(UWorld* InWorld, bool bSessionEnded, bool bCleanupResources)
 {
@@ -396,14 +457,19 @@ void AWorldPartitionHLOD::SetHLODBounds(const FBox& InBounds)
 	HLODBounds = InBounds;
 }
 
-void AWorldPartitionHLOD::GetActorBounds(bool bOnlyCollidingComponents, FVector& Origin, FVector& BoxExtent, bool bIncludeFromChildActors) const
-{
-	HLODBounds.GetCenterAndExtents(Origin, BoxExtent);
-}
-
 FBox AWorldPartitionHLOD::GetStreamingBounds() const
 {
 	return HLODBounds;
+}
+
+int64 AWorldPartitionHLOD::GetStat(FName InStatName) const
+{
+	if (InStatName == FWorldPartitionHLODStats::MemoryDiskSizeBytes)
+	{
+		const FString PackageFileName = GetPackage()->GetLoadedPath().GetLocalFullPath();
+		return IFileManager::Get().FileSize(*PackageFileName);
+	}
+	return HLODStats.FindRef(InStatName);
 }
 
 uint32 AWorldPartitionHLOD::GetHLODHash() const
@@ -413,8 +479,8 @@ uint32 AWorldPartitionHLOD::GetHLODHash() const
 
 void AWorldPartitionHLOD::BuildHLOD(bool bForceBuild)
 {
-	IWorldPartitionHLODUtilities* WPHLODUtilities = FModuleManager::Get().LoadModuleChecked<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities").GetUtilities();
-	if (WPHLODUtilities)
+	IWorldPartitionHLODUtilitiesModule* WPHLODUtilitiesModule = FModuleManager::Get().LoadModulePtr<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities");
+	if (IWorldPartitionHLODUtilities* WPHLODUtilities = WPHLODUtilitiesModule != nullptr ? WPHLODUtilitiesModule->GetUtilities() : nullptr)
 	{
 		if (bForceBuild)
 		{

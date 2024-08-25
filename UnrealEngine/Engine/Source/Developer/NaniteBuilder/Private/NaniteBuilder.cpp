@@ -22,6 +22,7 @@
 #endif
 
 #define NANITE_LOG_COMPRESSED_SIZES		0
+#define NANITE_STRIP_DATA				0
 
 #if NANITE_IMPOSTERS_SUPPORTED
 static TAutoConsoleVariable<bool> CVarBuildImposters(
@@ -88,12 +89,16 @@ const FString& FBuilderModule::GetVersionString() const
 
 		VersionString.Appendf( TEXT("%i"), CVarFallbackThreshold.GetValueOnAnyThread() );
 
-#if PLATFORM_CPU_ARM_FAMILY
+	#if NANITE_STRIP_DATA
+		VersionString.Append(TEXT("_STRIP"));
+	#endif
+
+	#if PLATFORM_CPU_ARM_FAMILY
 		// Separate out arm keys as x64 and arm64 clang do not generate the same data for a given
 		// input. Add the arm specifically so that a) we avoid rebuilding the current DDC and
 		// b) we can remove it once we get arm64 to be consistent.
 		VersionString.Append(TEXT("_arm64"));
-#endif
+	#endif
 	}
 
 	return VersionString;
@@ -220,12 +225,16 @@ static float BuildCoarseRepresentation(
 	FCluster CoarseRepresentation( MergeList );
 	// FindDAGCut also produces error when TargetError is non-zero but this only happens for LOD0 whose MaxDeviation is always zero.
 	// Don't use the old weights for LOD0 since they change the error calculation and hence, change the meaning of TargetError.
-	float OutError = CoarseRepresentation.Simplify( TargetNumTris, TargetError, FMath::Min( TargetNumTris, 256u ), FallbackLODIndex > 0 );
+	float OutError;
+	if( FallbackLODIndex > 0 )
+		OutError = CoarseRepresentation.SimplifyFallback( TargetNumTris, TargetError, FMath::Min( TargetNumTris, 256u ) );
+	else
+		OutError = CoarseRepresentation.Simplify( TargetNumTris, TargetError, FMath::Min( TargetNumTris, 256u ) );
 
 	TArray< FStaticMeshSection, TInlineAllocator<1> > OldSections = Sections;
 
 	// Need to update coarse representation UV count to match new data.
-	NumTexCoords = CoarseRepresentation.NumTexCoords;
+	NumTexCoords = CoarseRepresentation.Settings.NumTexCoords;
 
 	// Rebuild vertex data
 	Verts.Empty(CoarseRepresentation.NumVerts, NumTexCoords);
@@ -243,7 +252,7 @@ static float BuildCoarseRepresentation(
 			Verts.UVs[UVIndex].Emplace(UVs[UVIndex].ContainsNaN() ? FVector2f::ZeroVector : UVs[UVIndex]);
 		}
 		
-		if (CoarseRepresentation.bHasColors)
+		if (CoarseRepresentation.Settings.bHasColors)
 		{
 			Verts.Color.Emplace(CoarseRepresentation.GetColor(Iter).ToFColor(false /* sRGB */));
 		}
@@ -320,10 +329,7 @@ static void ClusterTriangles(
 	const TConstArrayView< const int32 >& MaterialIndexes,
 	TArray< FCluster >& Clusters,	// Append
 	const FBounds3f& MeshBounds,
-	uint32 NumTexCoords,
-	bool bHasTangents,
-	bool bHasColors,
-	bool bPreserveArea )
+	FBuilderSettings& Settings )
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Nanite::Build::ClusterTriangles);
 
@@ -402,9 +408,9 @@ static void ClusterTriangles(
 		TEXT("Adjacency [%.2fs], tris: %i, UVs %i%s%s"),
 		FPlatformTime::ToMilliseconds( BoundaryTime - Time0 ) / 1000.0f,
 		Indexes.Num() / 3,
-		NumTexCoords,
-		bHasTangents ? TEXT(", Tangents") : TEXT(""),
-		bHasColors ? TEXT(", Color") : TEXT("") );
+		Settings.NumTexCoords,
+		Settings.bHasTangents ? TEXT(", Tangents") : TEXT(""),
+		Settings.bHasColors ? TEXT(", Color") : TEXT("") );
 
 	FGraphPartitioner Partitioner( NumTriangles );
 
@@ -469,7 +475,7 @@ static void ClusterTriangles(
 					Verts,
 					Indexes,
 					MaterialIndexes,
-					NumTexCoords, bHasTangents, bHasColors, bPreserveArea,
+					Settings,
 					Range.Begin, Range.End, Partitioner, Adjacency );
 
 				// Negative notes it's a leaf
@@ -563,6 +569,14 @@ bool FBuilderModule::Build(
 	}
 #endif
 
+	FBuilderSettings BuilderSettings;
+	BuilderSettings.NumTexCoords		= InputMeshData.NumTexCoords;
+	BuilderSettings.MaxEdgeLengthFactor	= Settings.MaxEdgeLengthFactor;
+	BuilderSettings.bHasTangents		= Settings.bExplicitTangents;
+	BuilderSettings.bHasColors			= bHasVertexColor;
+	BuilderSettings.bPreserveArea		= Settings.bPreserveArea;
+	BuilderSettings.bLerpUVs			= Settings.bLerpUVs;
+
 	TArray< uint32 > ClusterCountPerMesh;
 	TArray< FCluster > Clusters;
 	{
@@ -578,7 +592,7 @@ bool FBuilderModule::Build(
 					VertexView,
 					TConstArrayView<const uint32>( &InputMeshData.TriangleIndices[BaseTriangle * 3], NumTriangles * 3 ),
 					TConstArrayView<const int32>( &InputMeshData.MaterialIndices[BaseTriangle], NumTriangles ),
-					Clusters, InputMeshData.VertexBounds, InputMeshData.NumTexCoords, Settings.bExplicitTangents, bHasVertexColor, Settings.bPreserveArea );
+					Clusters, InputMeshData.VertexBounds, BuilderSettings );
 			}
 			ClusterCountPerMesh.Add(Clusters.Num() - NumClustersBefore);
 			BaseTriangle += NumTriangles;
@@ -726,7 +740,8 @@ bool FBuilderModule::Build(
 
 	uint32 EncodeTime0 = FPlatformTime::Cycles();
 
-	Encode( Resources, Settings, Clusters, Groups, MeshBounds, Resources.NumInputMeshes, InputMeshData.NumTexCoords, Settings.bExplicitTangents, bHasVertexColor );
+	uint32 TotalGPUSize;
+	Encode(Resources, Settings, Clusters, Groups, MeshBounds, Resources.NumInputMeshes, InputMeshData.NumTexCoords, Settings.bExplicitTangents, bHasVertexColor, &TotalGPUSize);
 
 	uint32 EncodeTime1 = FPlatformTime::Cycles();
 	UE_LOG( LogStaticMesh, Log, TEXT("Encode [%.2fs]"), FPlatformTime::ToMilliseconds( EncodeTime1 - EncodeTime0 ) / 1000.0f );
@@ -756,6 +771,10 @@ bool FBuilderModule::Build(
 	}
 #endif
 
+#if NANITE_STRIP_DATA
+	Resources = FResources();
+#endif
+
 #if NANITE_LOG_COMPRESSED_SIZES
 	int32 UncompressedSize, CompressedSize;
 	CalculateCompressedNaniteDiskSize(Resources, UncompressedSize, CompressedSize);
@@ -767,11 +786,13 @@ bool FBuilderModule::Build(
 		static uint32 TotalMeshes = 0;
 		static uint64 TotalMeshUncompressedSize = 0;
 		static uint64 TotalMeshCompressedSize = 0;
+		static uint64 TotalMeshGPUSize = 0;
 
 		TotalMeshes++;
 		TotalMeshUncompressedSize += UncompressedSize;
 		TotalMeshCompressedSize += CompressedSize;
-		UE_LOG(LogStaticMesh, Log, TEXT("Total: %d Meshes, Uncompressed: %.2fMB, Compressed: %.2fMB"), TotalMeshes, TotalMeshUncompressedSize / 1048576.0f, TotalMeshCompressedSize / 1048576.0f);
+		TotalMeshGPUSize += TotalGPUSize;
+		UE_LOG(LogStaticMesh, Log, TEXT("Total: %d Meshes, GPU: %.2fMB, Uncompressed: %.2fMB, Compressed: %.2fMB"), TotalMeshes, TotalMeshGPUSize / 1048576.0f, TotalMeshUncompressedSize / 1048576.0f, TotalMeshCompressedSize / 1048576.0f);
 	}
 #endif
 

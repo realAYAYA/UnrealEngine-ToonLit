@@ -87,7 +87,6 @@
 #include "Styling/SlateTypes.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Less.h"
 #include "Templates/SubclassOf.h"
 #include "Templates/Tuple.h"
@@ -138,7 +137,7 @@ void FMyBlueprintCommands::RegisterCommands()
 	UI_COMMAND( FocusNode, "Focus", "Focuses on the associated node", EUserInterfaceActionType::Button, FInputChord() );
 	UI_COMMAND( FocusNodeInNewTab, "Focus in New Tab", "Focuses on the associated node in a new tab", EUserInterfaceActionType::Button, FInputChord() );
 	UI_COMMAND( ImplementFunction, "Implement event", "Implements this overridable function as a new event.", EUserInterfaceActionType::Button, FInputChord() );
-	UI_COMMAND( DeleteEntry, "Delete", "Deletes this function or variable from this blueprint.", EUserInterfaceActionType::Button, FInputChord(EKeys::Platform_Delete));
+	UI_COMMAND( DeleteEntry, "Delete", "Deletes this function or variable from this blueprint.", EUserInterfaceActionType::Button, FInputChord(EKeys::Delete), FInputChord(EKeys::BackSpace));
 	UI_COMMAND( PasteVariable, "Paste Variable", "Pastes the variable to this blueprint.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND( PasteLocalVariable, "Paste Local Variable", "Pastes the variable to this scope.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND( PasteFunction, "Paste Function", "Pastes the function to this blueprint.", EUserInterfaceActionType::Button, FInputChord());
@@ -356,9 +355,34 @@ void SMyBlueprint::Construct(const FArguments& InArgs, TWeakPtr<FBlueprintEditor
 			FExecuteAction::CreateSP(this, &SMyBlueprint::OnImplementFunction),
 			FCanExecuteAction(), FIsActionChecked(),
 			FIsActionButtonVisible::CreateSP(this, &SMyBlueprint::CanImplementFunction) );
-	
+		
 		CommandList->MapAction( FGraphEditorCommands::Get().FindReferences,
-			FExecuteAction::CreateSP(this, &SMyBlueprint::OnFindReference),
+			FExecuteAction::CreateSP(this, &SMyBlueprint::OnFindReference, /*bSearchAllBlueprints=*/false, EGetFindReferenceSearchStringFlags::Legacy),
+			FCanExecuteAction(),
+			FIsActionChecked(),
+			FIsActionButtonVisible::CreateSP(this, &SMyBlueprint::CanFindReference) );
+		
+		CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByNameLocal,
+			FExecuteAction::CreateSP(this, &SMyBlueprint::OnFindReference, /*bSearchAllBlueprints=*/false, EGetFindReferenceSearchStringFlags::None),
+			FCanExecuteAction(),
+			FIsActionChecked(),
+			FIsActionButtonVisible::CreateSP(this, &SMyBlueprint::CanFindReference) );
+
+		
+		CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByNameGlobal,
+			FExecuteAction::CreateSP(this, &SMyBlueprint::OnFindReference, /*bSearchAllBlueprints=*/true, EGetFindReferenceSearchStringFlags::None),
+			FCanExecuteAction(),
+			FIsActionChecked(),
+			FIsActionButtonVisible::CreateSP(this, &SMyBlueprint::CanFindReference) );
+		
+		CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberLocal,
+			FExecuteAction::CreateSP(this, &SMyBlueprint::OnFindReference, /*bSearchAllBlueprints=*/false, EGetFindReferenceSearchStringFlags::UseSearchSyntax),
+			FCanExecuteAction(),
+			FIsActionChecked(),
+			FIsActionButtonVisible::CreateSP(this, &SMyBlueprint::CanFindReference) );
+		
+		CommandList->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberGlobal,
+			FExecuteAction::CreateSP(this, &SMyBlueprint::OnFindReference, /*bSearchAllBlueprints=*/true, EGetFindReferenceSearchStringFlags::UseSearchSyntax),
 			FCanExecuteAction(),
 			FIsActionChecked(),
 			FIsActionButtonVisible::CreateSP(this, &SMyBlueprint::CanFindReference) );
@@ -542,6 +566,7 @@ void SMyBlueprint::Construct(const FArguments& InArgs, TWeakPtr<FBlueprintEditor
 		.OnGetSectionTitle(this, &SMyBlueprint::OnGetSectionTitle)
 		.OnGetSectionWidget(this, &SMyBlueprint::OnGetSectionWidget)
 		.OnActionMatchesName(this, &SMyBlueprint::HandleActionMatchesName)
+		.DefaultRowExpanderBaseIndentLevel(1)
 		.AlphaSortItems(false)
 		.UseSectionStyling(true);
 
@@ -2437,6 +2462,11 @@ TSharedPtr<SWidget> SMyBlueprint::OnContextMenuOpening()
 	// Check if the selected action is valid for a context menu
 	if (SelectionHasContextMenu())
 	{
+		FEdGraphSchemaAction_K2Var* Var = SelectionAsVar();
+		FEdGraphSchemaAction_K2Graph* Graph = SelectionAsGraph();
+		FEdGraphSchemaAction_K2Event* Event = SelectionAsEvent();
+		const bool bExpandFindReferences = Graph || Event || Var;
+		
 		MenuBuilder.BeginSection("BasicOperations");
 		{
 			MenuBuilder.AddMenuEntry(FMyBlueprintCommands::Get().OpenGraph);
@@ -2446,7 +2476,26 @@ TSharedPtr<SWidget> SMyBlueprint::OnContextMenuOpening()
 			MenuBuilder.AddMenuEntry(FMyBlueprintCommands::Get().FocusNodeInNewTab);
 			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Rename, NAME_None, LOCTEXT("Rename", "Rename"), LOCTEXT("Rename_Tooltip", "Renames this function or variable from blueprint.") );
 			MenuBuilder.AddMenuEntry(FMyBlueprintCommands::Get().ImplementFunction);
-			MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindReferences);
+
+			// Depending on context, FindReferences can be a button or an expandable menu. For example, the context menu
+			// for functions now lets you choose whether to do search by-name (fast) or by-function (smart).
+			if (!bExpandFindReferences)
+			{
+				// No expandable menu: display the simple 'Find References' action
+				MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindReferences);
+			}
+			else
+			{
+				// Insert "Find References" sub-menu here
+				MenuBuilder.AddSubMenu(
+					LOCTEXT("FindReferences_Label", "Find References"),
+					LOCTEXT("FindReferences_Tooltip", "Options for finding references to class members"),
+					FNewMenuDelegate::CreateStatic(&FGraphEditorCommands::BuildFindReferencesMenu),
+					false,
+					FSlateIcon()
+				);
+			}
+			
 			MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindAndReplaceReferences);
 			MenuBuilder.AddMenuEntry(FMyBlueprintCommands::Get().GotoNativeVarDefinition);
 			MenuBuilder.AddMenuEntry(FGenericCommands::Get().Cut);
@@ -2457,10 +2506,6 @@ TSharedPtr<SWidget> SMyBlueprint::OnContextMenuOpening()
 			MenuBuilder.AddMenuEntry(FMyBlueprintCommands::Get().DeleteEntry);
 		}
 		MenuBuilder.EndSection();
-
-		FEdGraphSchemaAction_K2Var* Var = SelectionAsVar();
-		FEdGraphSchemaAction_K2Graph* Graph = SelectionAsGraph();
-		FEdGraphSchemaAction_K2Event* Event = SelectionAsEvent();
 
 		if ( Var && BlueprintEditorPtr.IsValid() && FBlueprintEditorUtils::DoesSupportEventGraphs(GetBlueprintObj()) )
 		{
@@ -2848,7 +2893,7 @@ bool SMyBlueprint::IsImplementationDesiredAsFunction(const UFunction* OverrideFu
 	return false;
 }
 
-void SMyBlueprint::OnFindReference()
+void SMyBlueprint::OnFindReference(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags)
 {
 	FString SearchTerm;
 	for(const UEdGraph* UberGraph : GetBlueprintObj()->UbergraphPages)
@@ -2876,21 +2921,48 @@ void SMyBlueprint::OnFindReference()
 
 	if (FEdGraphSchemaAction_K2Graph* GraphAction = SelectionAsGraph())
 	{
-		SearchTerm = GraphAction->FuncName.ToString();
+		bool bSearchTermGenerated = false;
+		if (EnumHasAnyFlags(Flags, EGetFindReferenceSearchStringFlags::UseSearchSyntax))
+		{
+			// Attempt to resolve function, then attempt to generate search term from it
+			if (const UFunction* Function = GraphAction->GetFunction())
+			{
+				if (FindInBlueprintsHelpers::ConstructSearchTermFromFunction(Function, SearchTerm))
+				{
+					bSearchTermGenerated = true;
+					bUseQuotes = false;	
+				}
+			}
+		}
+
+		// If a search term was not generated yet, just search by name. Either the graph doesn't represent a
+		// function or we failed to resolve a dependency for generating a query.
+		if (!bSearchTermGenerated)
+		{
+			SearchTerm = GraphAction->FuncName.ToString();
+		}
 	}
 	else if (FEdGraphSchemaAction_K2Var* VarAction = SelectionAsVar())
 	{
-		if(FProperty* Property = VarAction->GetProperty())
+		bool bSearchTermGenerated = false;
+		if (EnumHasAnyFlags(Flags, EGetFindReferenceSearchStringFlags::UseSearchSyntax))
 		{
-			FMemberReference MemberReference;
-			MemberReference.SetFromField<FProperty>(Property, true, Property->GetOwnerClass());
-			SearchTerm = MemberReference.GetReferenceSearchString(Property->GetOwnerClass());
+			// Attempt to resolve property, then generate search term from it
+			if (const FProperty* Property = VarAction->GetProperty())
+			{
+				FMemberReference MemberReference;
+				MemberReference.SetFromField<FProperty>(Property, true, Property->GetOwnerClass());
+				SearchTerm = MemberReference.GetReferenceSearchString(Property->GetOwnerClass());
+				bSearchTermGenerated = true;
+				bUseQuotes = false;
+			}
 		}
-		else
+
+		// If a search term was not generated yet, just search by variable name
+		if (!bSearchTermGenerated)
 		{
 			SearchTerm = VarAction->GetVariableName().ToString();
 		}
-		bUseQuotes = false;
 	}
 	else if (FEdGraphSchemaAction_K2LocalVar* LocalVarAction = SelectionAsLocalVar())
 	{
@@ -2911,7 +2983,21 @@ void SMyBlueprint::OnFindReference()
 	}
 	else if (FEdGraphSchemaAction_K2Event* EventAction = SelectionAsEvent())
 	{
-		SearchTerm = EventAction->NodeTemplate->GetFindReferenceSearchString();
+		bool bSearchTermGenerated = false;
+		if (EnumHasAnyFlags(Flags, EGetFindReferenceSearchStringFlags::UseSearchSyntax))
+		{
+			if (const UK2Node_Event* EventNode = Cast<UK2Node_Event>(EventAction->NodeTemplate))
+			{
+				SearchTerm = EventNode->GetFindReferenceSearchString(Flags);
+				bSearchTermGenerated = true;
+				bUseQuotes = false;
+			}
+		}
+
+		if (!bSearchTermGenerated)
+		{
+			SearchTerm = EventAction->NodeTemplate->GetFindReferenceSearchString(EGetFindReferenceSearchStringFlags::None);
+		}
 	}
 	else if (FEdGraphSchemaAction_K2InputAction* InputAction = SelectionAsInputAction())
 	{
@@ -2920,13 +3006,15 @@ void SMyBlueprint::OnFindReference()
 			InputAction->GetMenuDescription().ToString();
 	}
 
-	if(!SearchTerm.IsEmpty())
+	if (!SearchTerm.IsEmpty())
 	{
 		if (bUseQuotes)
 		{
 			SearchTerm = FString::Printf(TEXT("\"%s\""), *SearchTerm);
 		}
-		BlueprintEditorPtr.Pin()->SummonSearchUI(true, SearchTerm);
+		
+		const bool bSetFindWithinBlueprint = !bSearchAllBlueprints;
+		BlueprintEditorPtr.Pin()->SummonSearchUI(bSetFindWithinBlueprint, SearchTerm);
 	}
 }
 

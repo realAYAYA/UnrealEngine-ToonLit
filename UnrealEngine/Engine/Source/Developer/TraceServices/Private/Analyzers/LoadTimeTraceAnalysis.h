@@ -26,8 +26,9 @@ public:
 	virtual ~FAsyncLoadingTraceAnalyzer();
 
 	virtual void OnAnalysisBegin(const FOnAnalysisContext& Context) override;
+	virtual void OnAnalysisEnd() override;
 	virtual bool OnEvent(uint16 RouteId, EStyle Style, const FOnEventContext& Context) override;
-	
+
 private:
 	struct FRequestState;
 	struct FAsyncPackageState;
@@ -57,6 +58,7 @@ private:
 		FRequestState* Request = nullptr;
 		FLinkerLoadState* Linker = nullptr;
 		TSet<FAsyncPackageState*> ImportedAsyncPackages;
+		TSet<FAsyncPackageState*> ImportedByAsyncPackages;
 	};
 
 	struct FLinkerLoadState
@@ -79,7 +81,7 @@ private:
 		int64 PostLoadScopeDepth = 0;
 		FLoadTimeProfilerCpuEvent CurrentEvent;
 		TArray<TSharedPtr<FRequestGroupState>> RequestGroupStack;
-		
+
 		FLoadTimeProfilerProvider::CpuTimelineInternal* CpuTimeline;
 
 		void EnterScope(double Time, const FPackageInfo* PackageInfo);
@@ -177,6 +179,9 @@ private:
 	TPointerMap<uint64> ActiveBatchesMap;
 	TMap<uint32, FThreadState*> ThreadStatesMap;
 	TPointerMap<const FClassInfo*> ClassInfosMap;
+	FPackageInfo* UnknownPackageInfo = nullptr;
+	uint64 ErrorCount = 0;
+	uint64 WarningCount = 0;
 };
 
 } // namespace TraceServices

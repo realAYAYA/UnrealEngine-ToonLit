@@ -123,32 +123,35 @@ namespace Metasound
 					{
 						// Type None implies forwarding to the node instance to default construct the literal 
 						// so setting to/from that class default literal is an exception to requiring a type match
-						const bool bIsMatchingType = VertexLiteral.Value.GetType() == InVertexLiteral.Value.GetType();
 						bool bSettingToClassDefaultLiteral = false;
 						bool bSettingFromClassDefaultLiteralToMatchingType = false;
 
-						if (!bIsMatchingType)
+						auto GetInputWithVertexID = [InVertexID = VertexLiteral.VertexID](const FMetasoundFrontendClassInput& ClassInput)
 						{
-							auto GetInputWithVertexID = [InVertexID = VertexLiteral.VertexID](const FMetasoundFrontendClassInput& ClassInput)
-							{
-								return ClassInput.VertexID == InVertexID;
-							};
-							const FMetasoundFrontendClassInput* ClassInput = ClassPtr.Get()->Interface.Inputs.FindByPredicate(GetInputWithVertexID);
-							if (ClassInput)
-							{
-								// Check if setting back to class default literal
-								const FMetasoundFrontendLiteral& ClassDefaultLiteral = ClassInput->DefaultLiteral;
-								bSettingToClassDefaultLiteral = ClassDefaultLiteral.IsEqual(InVertexLiteral.Value);
+							return ClassInput.VertexID == InVertexID;
+						};
+						const FMetasoundFrontendClassInput* ClassInput = ClassPtr.Get()->Interface.Inputs.FindByPredicate(GetInputWithVertexID);
+						if (ClassInput)
+						{
+							// Check if setting back to class default literal
+							const FMetasoundFrontendLiteral& ClassDefaultLiteral = ClassInput->DefaultLiteral;
+							bSettingToClassDefaultLiteral = ClassDefaultLiteral.IsEqual(InVertexLiteral.Value);
 
-								// Check if setting from class default literal (which may have a None type) to an appropriate type 
-								FDataTypeRegistryInfo DataTypeInfo;
-								IDataTypeRegistry::Get().GetDataTypeInfo(ClassInput->TypeName, DataTypeInfo);
-								const EMetasoundFrontendLiteralType ClassInputLiteralType = static_cast<EMetasoundFrontendLiteralType>(DataTypeInfo.PreferredLiteralType);
-								bSettingFromClassDefaultLiteralToMatchingType |= ClassDefaultLiteral.IsEqual(VertexLiteral.Value) && ClassInputLiteralType == InVertexLiteral.Value.GetType();
-							}
+							// Check if setting from class default literal (which may have a None type) to an appropriate type 
+							FDataTypeRegistryInfo DataTypeInfo;
+							IDataTypeRegistry::Get().GetDataTypeInfo(ClassInput->TypeName, DataTypeInfo);
+							const EMetasoundFrontendLiteralType ClassInputLiteralType = static_cast<EMetasoundFrontendLiteralType>(DataTypeInfo.PreferredLiteralType);
+							bSettingFromClassDefaultLiteralToMatchingType |= ClassDefaultLiteral.IsEqual(VertexLiteral.Value) && ClassInputLiteralType == InVertexLiteral.Value.GetType();
 						}
 
-						if (ensure(bIsMatchingType || bSettingToClassDefaultLiteral || bSettingFromClassDefaultLiteralToMatchingType))
+						if (bSettingToClassDefaultLiteral)
+						{
+							ClearInputLiteral(VertexLiteral.VertexID);
+							return;
+						}
+						
+						const bool bIsMatchingType = VertexLiteral.Value.GetType() == InVertexLiteral.Value.GetType();
+						if (ensure(bIsMatchingType || bSettingFromClassDefaultLiteralToMatchingType))
 						{
 							VertexLiteral = InVertexLiteral;
 						}
@@ -169,7 +172,7 @@ namespace Metasound
 					return InVertexID == VertexLiteral.VertexID;
 				};
 
-				return Node->InputLiterals.RemoveAllSwap(IsInputVertex, false) > 0;
+				return Node->InputLiterals.RemoveAllSwap(IsInputVertex, EAllowShrinking::No) > 0;
 			}
 
 			return false;
@@ -737,7 +740,7 @@ namespace Metasound
 			const FMetasoundFrontendClassMetadata Metadata = GetClassMetadata();
 
 			// Lookup new version in node registry
-			FNodeRegistryKey NewVersionRegistryKey = NodeRegistryKey::CreateKey(Metadata.GetType(), Metadata.GetClassName().ToString(), InNewVersion.Major, InNewVersion.Minor);
+			FNodeRegistryKey NewVersionRegistryKey = FNodeRegistryKey(Metadata.GetType(), Metadata.GetClassName(), InNewVersion);
 			FMetasoundFrontendRegistryContainer* Registry = FMetasoundFrontendRegistryContainer::Get();
 			checkf(nullptr != Registry, TEXT("The metasound node registry should always be available if the metasound plugin is loaded"));
 
@@ -827,7 +830,7 @@ namespace Metasound
 			// Make sure classes are up-to-date with registered versions of class.
 			// Note that this may break other nodes in the graph that have stale
 			// class API, but that's on the caller to fix-up or report invalid state.
-			const FNodeRegistryKey RegistryKey = NodeRegistryKey::CreateKey(NewMetasoundClass.Metadata);
+			const FNodeRegistryKey RegistryKey = FNodeRegistryKey(NewMetasoundClass.Metadata);
 			FDocumentHandle Document = GetOwningGraph()->GetOwningDocument();
 
 			constexpr bool bRefreshFromRegistry = true;
@@ -946,7 +949,7 @@ namespace Metasound
 				FMetasoundFrontendRegistryContainer* Registry = FMetasoundFrontendRegistryContainer::Get();
 				checkf(nullptr != Registry, TEXT("The metasound node registry should always be available if the metasound plugin is loaded"));
 				FMetasoundFrontendClass RegisteredClass;
-				bool bFoundRegisteredClass = Registry->FindFrontendClassFromRegistered(NodeRegistryKey::CreateKey(GetClassMetadata()), OutInterfaceUpdates.RegistryClass);
+				bool bFoundRegisteredClass = Registry->FindFrontendClassFromRegistered(FNodeRegistryKey(GetClassMetadata()), OutInterfaceUpdates.RegistryClass);
 
 				if (!bFoundRegisteredClass)
 				{
@@ -978,7 +981,7 @@ namespace Metasound
 				}
 				else
 				{
-					OutInterfaceUpdates.AddedInputs.RemoveAtSwap(Index, 1, false /* bAllowShrinking */);
+					OutInterfaceUpdates.AddedInputs.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				}
 			}
 
@@ -997,7 +1000,7 @@ namespace Metasound
 				}
 				else
 				{
-					OutInterfaceUpdates.AddedOutputs.RemoveAtSwap(Index, 1, false /* bAllowShrinking */);
+					OutInterfaceUpdates.AddedOutputs.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				}
 			}
 
@@ -1039,7 +1042,7 @@ namespace Metasound
 				// define changes in native vs asset class definitions. Need to
 				// hash a changeID from natively defined node classes in order to
 				// merge branches.
-				const FNodeRegistryKey RegistryKey = NodeRegistryKey::CreateKey(RegistryClass.Metadata);
+				const FNodeRegistryKey RegistryKey = FNodeRegistryKey(RegistryClass.Metadata);
 				const bool bIsClassNative = FMetasoundFrontendRegistryContainer::Get()->IsNodeNative(RegistryKey);
 				if (bIsClassNative)
 				{

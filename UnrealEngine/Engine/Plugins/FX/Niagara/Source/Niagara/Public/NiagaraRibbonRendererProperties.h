@@ -219,7 +219,7 @@ public:
 	NIAGARA_API virtual bool IsBackfaceCullingDisabled() const override;
 	virtual bool IsSimTargetSupported(ENiagaraSimTarget InSimTarget) const override { return true; };
 	NIAGARA_API virtual bool PopulateRequiredBindings(FNiagaraParameterStore& InParameterStore) override;
-	NIAGARA_API virtual void CollectPSOPrecacheData(FPSOPrecacheParamsList& OutParams) override;
+	NIAGARA_API virtual void CollectPSOPrecacheData(const FNiagaraEmitterInstance* InEmitter, FPSOPrecacheParamsList& OutParams) const override;
 
 #if WITH_EDITOR
 	NIAGARA_API virtual const TArray<FNiagaraVariable>& GetOptionalAttributes() override;
@@ -286,12 +286,11 @@ private:
 #endif
 
 public:
-
 	UPROPERTY(EditAnywhere, Category = "Ribbon Rendering")	
 	int32 MaxNumRibbons;
 	
-	/** If true, the particles are only sorted when using a translucent material. */
-	UPROPERTY(EditAnywhere, Category = "Ribbon Rendering")
+	/** Controls the order the ribbon segments will be rendered. */
+	UPROPERTY(EditAnywhere, Category = "Sorting")
 	ENiagaraRibbonDrawDirection DrawDirection;
 
 	/** Shape of the ribbon, from flat plane, multiplane, 3d tube, and custom shapes. */
@@ -308,6 +307,10 @@ public:
 	/** When enabled the ribbons renderer will not override how backface culling works depending on shape type, but instad use the material culling mode */
 	UPROPERTY(EditAnywhere, Category = "Ribbon Shape")
 	uint8 bUseMaterialBackfaceCulling : 1;
+
+	/** When enabled the ribbons normals will follow the shape of the geometry rather than being aligned to screen / custom facing. */
+	UPROPERTY(EditAnywhere, Category = "Ribbon Shape", meta = (EditCondition = "Shape == ENiagaraRibbonShapeMode::Plane", EditConditionHides))
+	uint8 bUseGeometryNormals : 1;
 
 	/**
 	*	Whether we use the CPU or GPU to generate ribbon geometry for CPU systems.
@@ -327,6 +330,13 @@ public:
 
 	UPROPERTY()
 	uint8 bLinkOrderUseUniqueID : 1;
+
+	/**
+	When disabled the renderer will not cast shadows.
+	The component controls if shadows are enabled, this flag allows you to disable the renderer casting shadows.
+	*/
+	UPROPERTY(EditAnywhere, Category = "Rendering")
+	uint8 bCastShadows : 1 = 1; //-V570
 
 	/** Tessellation factor to apply to the width of the ribbon.
 	* Ranges from 1 to 16. Greater values increase amount of tessellation.

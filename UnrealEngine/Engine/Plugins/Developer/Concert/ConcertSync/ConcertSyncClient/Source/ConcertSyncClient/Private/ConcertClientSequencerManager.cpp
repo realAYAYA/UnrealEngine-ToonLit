@@ -665,9 +665,9 @@ void FConcertClientSequencerManager::ApplyCloseEventToPlayers(const FConcertSequ
 
 	ALevelSequenceActor* LevelSequenceActor = *Player;
 
-	if (CloseEvent.bControllerClose && LevelSequenceActor && LevelSequenceActor->SequencePlayer)
+	if (CloseEvent.bControllerClose && LevelSequenceActor && LevelSequenceActor->GetSequencePlayer())
 	{
-		LevelSequenceActor->SequencePlayer->Stop();
+		LevelSequenceActor->GetSequencePlayer()->Stop();
 	}
 
 	if (!CanClose(CloseEvent))
@@ -767,15 +767,23 @@ void FConcertClientSequencerManager::ApplyOpenEvent(const FConcertSequencerOpenE
 		FConcertSyncEncounteredMissingObject MissingObjectDelegate;
 		MissingObjectDelegate.BindLambda([](const FStringView MissingObject)
 			{
-				UE_LOG(LogConcertSequencerSync, Display, TEXT("Missing Object %s when loading PendingTake"), MissingObject);
+				UE_LOG(LogConcertSequencerSync, Display, TEXT("Missing Object %s when loading PendingTake"), *FString(MissingObject));
 			});
 
-		FConcertSyncWorldRemapper Remapper(
-			TEXT("/Engine/Transient.__PendingLevelSequence__"), PendingLevelSequence->GetPathName());
-		FConcertSyncObjectReader Reader(nullptr, MoveTemp(Remapper), nullptr, PendingLevelSequence, InOpenEvent.TakeData.Bytes,
-										MissingObjectDelegate);
-		Reader.SetSerializeNestedObjects(true);
-		Reader.SerializeObject(PendingLevelSequence);
+		if (InOpenEvent.TakeData.Bytes.Num() > 0)
+		{
+			FConcertSyncWorldRemapper Remapper(
+				TEXT("/Engine/Transient.__PendingLevelSequence__"), PendingLevelSequence->GetPathName());
+			FConcertSyncObjectReader Reader(nullptr, MoveTemp(Remapper), nullptr, PendingLevelSequence, InOpenEvent.TakeData.Bytes,
+											MissingObjectDelegate);
+			Reader.SetSerializeNestedObjects(true);
+			Reader.SerializeObject(PendingLevelSequence);
+		}
+		else
+		{
+			UE_LOG(LogConcertSequencerSync, Display, TEXT("Missing take data on pending take."));
+		}
+
 		#if WITH_EDITOR
 		if (GIsEditor)
 		{
@@ -833,13 +841,12 @@ bool FConcertClientSequencerManager::CanClose(const FConcertSequencerCloseEvent&
 
 void FConcertClientSequencerManager::DestroyPlayer(ALevelSequenceActor* LevelSequenceActor)
 {
-	if (LevelSequenceActor && LevelSequenceActor->SequencePlayer)
+	if (LevelSequenceActor && LevelSequenceActor->GetSequencePlayer())
 	{
 		UE_LOG(LogConcertSequencerSync, VeryVerbose, TEXT("Destroying LevelSequenceActor: %s"), *LevelSequenceActor->GetPathName());
-		LevelSequenceActor->SequencePlayer->Stop();
+		LevelSequenceActor->GetSequencePlayer()->Stop();
 
 		LevelSequenceActor->SetSequence(nullptr);
-		LevelSequenceActor->SequencePlayer = nullptr;
 		LevelSequenceActor->Destroy(false, false);
 	}
 }
@@ -939,7 +946,7 @@ void FConcertClientSequencerManager::ApplyTimeAdjustmentToPlayers(const FConcert
 	}
 
 	ALevelSequenceActor* LevelSequenceActor = *SeqPlayer;
-	if (LevelSequenceActor && LevelSequenceActor->SequencePlayer)
+	if (LevelSequenceActor && LevelSequenceActor->GetSequencePlayer())
 	{
 		UMovieScene* MovieScene = LevelSequenceActor->LevelSequenceAsset->GetMovieScene();
 		if (MovieScene)
@@ -1191,9 +1198,9 @@ void FConcertClientSequencerManager::ApplyEventToPlayers(const FConcertSequencer
 	}
 
 	ALevelSequenceActor* LevelSequenceActor = *SeqPlayer;
-	if (LevelSequenceActor && LevelSequenceActor->SequencePlayer)
+	if (LevelSequenceActor && LevelSequenceActor->GetSequencePlayer())
 	{
-		ULevelSequencePlayer* Player = LevelSequenceActor->SequencePlayer;
+		ULevelSequencePlayer* Player = LevelSequenceActor->GetSequencePlayer();
 		float LatencyCompensationMs = GetLatencyCompensationMs();
 
 		FFrameRate SequenceRate = Player->GetFrameRate();

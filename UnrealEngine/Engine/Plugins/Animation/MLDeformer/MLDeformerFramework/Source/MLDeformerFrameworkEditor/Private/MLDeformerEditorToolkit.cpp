@@ -13,6 +13,8 @@
 #include "MLDeformerEditorStyle.h"
 #include "MLDeformerVizSettings.h"
 #include "MLDeformerSampler.h"
+#include "SMLDeformerTimeline.h"
+#include "SMLDeformerDebugSelectionWidget.h"
 #include "AnimationEditorViewportClient.h"
 #include "EditorModeManager.h"
 #include "EditorViewportClient.h"
@@ -24,7 +26,6 @@
 #include "Preferences/PersonaOptions.h"
 #include "UObject/Object.h"
 #include "SSimpleTimeSlider.h"
-#include "SMLDeformerTimeline.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Misc/MessageDialog.h"
@@ -60,16 +61,7 @@ namespace UE::MLDeformer
 
 		// Create a new model if none was selected yet.
 		UMLDeformerModel* DeformerModel = DeformerAsset->GetModel();
-		if (DeformerModel == nullptr)
-		{
-			if (ModelRegistry.GetNumRegisteredModels() > 0)
-			{
-				const int32 HighestPriorityIndex = ModelRegistry.GetHighestPriorityModelIndex();
-				OnModelChanged(HighestPriorityIndex, true);
-				DeformerModel = DeformerAsset->GetModel();
-			}
-		}
-		else
+		if (DeformerModel)
 		{
 			DeformerModel->Init(DeformerAsset);
 			FMLDeformerEditorModel* EditorModel = ModelRegistry.CreateEditorModel(DeformerModel);
@@ -106,6 +98,10 @@ namespace UE::MLDeformer
 		FMLDeformerEditorMode* EditorMode = static_cast<FMLDeformerEditorMode*>(GetEditorModeManager().GetActiveMode(FMLDeformerEditorMode::ModeName));
 		EditorMode->SetEditorToolkit(this);
 
+		SAssignNew(DebugWidget, SMLDeformerDebugSelectionWidget)
+			.MLDeformerEditor(this)
+			.Visibility(this, &FMLDeformerEditorToolkit::GetDebuggingVisibility);
+
 		ExtendToolbar();
 		RegenerateMenusAndToolbars();
 
@@ -115,12 +111,18 @@ namespace UE::MLDeformer
 			ActiveModel->UpdateIsReadyForTrainingState();
 			ActiveModel->SetTrainingFrame(ActiveModel->GetModel()->GetVizSettings()->GetTrainingFrameNumber());
 			ActiveModel->SetTestFrame(ActiveModel->GetModel()->GetVizSettings()->GetTestingFrameNumber());
+			ActiveModel->InvalidateDeltas();
 		}
 
 		if (DeformerModel)
 		{
 			GetModelDetailsView()->SetObject(DeformerModel);
 			GetVizSettingsDetailsView()->SetObject(DeformerModel->GetVizSettings());
+		}
+
+		if (DebugWidget.IsValid())
+		{
+			DebugWidget->Refresh();
 		}
 
 		GetModelDetailsView()->ForceRefresh();
@@ -278,7 +280,7 @@ namespace UE::MLDeformer
 		{
 			const EAppReturnType::Type ReturnType = FMessageDialog::Open(
 				EAppMsgType::YesNo, 
-				LOCTEXT("SwitchModelConfirmMessage", "Are you sure you want to switch the current model?\nYou will lose your current setup."),
+				LOCTEXT("SwitchModelConfirmMessage", "Are you sure you want to switch the current model?\nYou will lose your current setup.\n"),
 				LOCTEXT("SwitchModelConfirmTitle", "Switch current model?"));
 
 			if (ReturnType == EAppReturnType::No)
@@ -294,6 +296,19 @@ namespace UE::MLDeformer
 		if (ActiveModel)
 		{
 			ActiveModel->ClearWorldAndPersonaPreviewScene();
+			ActiveModel.Reset();
+
+			if (ModelDetailsView)
+			{
+				ModelDetailsView->SetObject(nullptr);
+				ModelDetailsView->ForceRefresh();
+			}
+
+			if (VizSettingsDetailsView)
+			{
+				VizSettingsDetailsView->SetObject(nullptr);
+				VizSettingsDetailsView->ForceRefresh();
+			}
 		}
 
 		// Get the runtime model type based on the index, and create an instance of it.
@@ -312,11 +327,10 @@ namespace UE::MLDeformer
 		EditorModel->Init(InitSettings);
 
 		// Tell the editor we use this model now.
-		FMLDeformerEditorModel* OldActiveModel = ActiveModel.Get();
 		ActiveModel = TSharedPtr<FMLDeformerEditorModel>(EditorModel);
 
 		// Create the new scene for this model.
-		if (OldActiveModel)
+		if (PersonaToolkit)
 		{
 			HandlePreviewSceneCreated(PersonaToolkit->GetPreviewScene());
 		}
@@ -387,6 +401,11 @@ namespace UE::MLDeformer
 		return bIsTraining;
 	}
 
+	AActor* FMLDeformerEditorToolkit::GetDebugActor() const
+	{
+		return DebugWidget.IsValid() ? DebugWidget->GetDebugActor() : nullptr;
+	}
+
 	bool FMLDeformerEditorToolkit::Train(bool bSuppressDialogs)
 	{
 		check(ActiveModel);
@@ -398,7 +417,7 @@ namespace UE::MLDeformer
 		{
 			const EAppReturnType::Type ConfirmReturnType = FMessageDialog::Open(
 				EAppMsgType::YesNo, 
-				LOCTEXT("RetrainConfirmationMessage", "This asset already has been trained.\n\nAre you sure you would like to re-train the network with your current settings?"),
+				LOCTEXT("RetrainConfirmationMessage", "This asset already has been trained.\n\nAre you sure you would like to re-train the network with your current settings?\n"),
 				LOCTEXT("RetrainConfirmationTitle", "Re-train the network?"));
 
 			if (ConfirmReturnType == EAppReturnType::No || ConfirmReturnType == EAppReturnType::Cancel)
@@ -411,12 +430,6 @@ namespace UE::MLDeformer
 		ShowNotification(LOCTEXT("StartTraining", "Starting training process"), SNotificationItem::ECompletionState::CS_Pending, true);
 
 		ActiveModel->OnPreTraining();
-
-		// Change the interpolation type for the training sequence to step.
-		if (UAnimSequence* AnimSequence = Model->GetAnimSequence())
-		{
-			AnimSequence->Interpolation = EAnimInterpolationType::Step;
-		}
 
 		// Initialize the training inputs.
 		ActiveModel->UpdateEditorInputInfo();
@@ -458,12 +471,12 @@ namespace UE::MLDeformer
 
 	void FMLDeformerEditorToolkit::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 	{
+		// Training button and model selection.
 		ToolbarBuilder.BeginSection("Training");
 		{
 			ToolbarBuilder.AddToolBarButton(
 				FUIAction
 				(
-					//FExecuteAction::CreateRaw(this, &FMLDeformerEditorToolkit::Train, false),
 					FExecuteAction::CreateLambda
 					(
 						[this]()
@@ -493,12 +506,13 @@ namespace UE::MLDeformer
 				FUIAction(),
 				FOnGetContent::CreateRaw(this, &FMLDeformerEditorToolkit::GenerateVizModeButtonContents, CommandList.ToSharedRef()),
 				TAttribute<FText>::CreateRaw(this, &FMLDeformerEditorToolkit::GetCurrentVizModeName),			
-				LOCTEXT("VizModeModeTooltip", "The visualization mode, specifying whether you are working on training on testing."),
+				LOCTEXT("VizModeModeTooltip", "The visualization mode, specifying whether you are working on training or testing."),
 				FSlateIcon(FMLDeformerEditorStyle::Get().GetStyleSetName(), "MLDeformer.VizSettings.TabIcon")
 			);
 		}
 		ToolbarBuilder.EndSection();
 
+		// Tools.
 		if (!ToolsMenuExtenders.IsEmpty())
 		{
 			ToolbarBuilder.BeginSection("Tools");
@@ -519,6 +533,44 @@ namespace UE::MLDeformer
 			}
 			ToolbarBuilder.EndSection();
 		}
+
+		// Debugging.
+		ToolbarBuilder.BeginSection("Debugging");
+		{
+			ToolbarBuilder.AddWidget(DebugWidget.ToSharedRef());
+			ToolbarBuilder.AddToolBarButton
+			(
+				FUIAction
+				(
+					FExecuteAction::CreateLambda([this]() { if (DebugWidget.IsValid()) { DebugWidget->Refresh(); } }),
+					FCanExecuteAction::CreateLambda([](){ return true; }),
+					FGetActionCheckState::CreateLambda([](){ return ECheckBoxState::Checked; }),
+					FIsActionButtonVisible::CreateLambda([this](){ return GetDebuggingVisibility() == EVisibility::Visible; })
+				),
+				NAME_None,
+				FText(),
+				LOCTEXT("RefreshDebugTooltip", "Refresh the list of debuggable actors."),
+				FSlateIcon(FMLDeformerEditorStyle::Get().GetStyleSetName(), "MLDeformer.Debug.RefreshIcon"),
+				EUserInterfaceActionType::Button
+			);
+		}
+		ToolbarBuilder.EndSection();
+	}
+
+	EVisibility FMLDeformerEditorToolkit::GetDebuggingVisibility() const
+	{
+		if (ActiveModel && ActiveModel->GetModel() && ActiveModel->GetModel()->GetVizSettings())
+		{
+			if (ActiveModel->GetModel()->GetVizSettings()->GetVisualizationMode() == EMLDeformerVizMode::TestData)
+			{
+				return EVisibility::Visible;
+			}
+			else
+			{
+				return EVisibility::Hidden;
+			}
+		}
+		return EVisibility::Visible;
 	}
 
 	bool FMLDeformerEditorToolkit::HandleTrainingResult(ETrainingResult TrainingResult, double TrainingDuration, bool& bOutUsePartiallyTrained, bool bSuppressDialogs, bool& bOutSuccess)
@@ -557,14 +609,14 @@ namespace UE::MLDeformer
 				if (!ActiveModel->LoadTrainedNetwork())
 				{
 					GEditor->PlayEditorSound(TEXT("/Engine/EditorSounds/Notifications/CompileFailed_Cue.CompileFailed_Cue"));
-					WindowMessage = LOCTEXT("TrainingOnnxLoadFailed", "Training completed but resulting network couldn't be loaded!");
+					WindowMessage = LOCTEXT("TrainingOnnxLoadFailed", "Training completed but resulting network couldn't be loaded!\n");
 				}
 				else
 				{
 					GEditor->PlayEditorSound(TEXT("/Engine/EditorSounds/Notifications/CompileSuccess_Cue.CompileSuccess_Cue"));
 					FFormatNamedArguments SuccessArgs;
 					SuccessArgs.Add(TEXT("Duration"), TrainingDurationText);
-					WindowMessage = FText::Format(LOCTEXT("TrainingSuccess", "Training completed successfully!\n\nTraining time: {Duration}"), SuccessArgs);
+					WindowMessage = FText::Format(LOCTEXT("TrainingSuccess", "Training completed successfully!\n\nTraining time: {Duration}\n"), SuccessArgs);
 					ActiveModel->InitInputInfo(ActiveModel->GetModel()->GetInputInfo());
 					bMarkDirty = true;
 					bOutSuccess = true;
@@ -582,7 +634,7 @@ namespace UE::MLDeformer
 				{
 					ReturnType = FMessageDialog::Open(
 						EAppMsgType::YesNo, 
-						LOCTEXT("TrainingAbortedMessage", "Training has been aborted.\nThe neural network has only been partially trained.\nWould you like to use this partially trained network?"),
+						LOCTEXT("TrainingAbortedMessage", "Training has been aborted.\nThe neural network has only been partially trained.\nWould you like to use this partially trained network?\n"),
 						LOCTEXT("TrainingAbortedMessageTitle", "Use partially trained network?"));
 				}
 
@@ -613,7 +665,7 @@ namespace UE::MLDeformer
 			case ETrainingResult::AbortedCantUse:
 			{
 				ShowNotification(LOCTEXT("TrainingAborted", "Training aborted!"), SNotificationItem::ECompletionState::CS_None, true);
-				WindowMessage = LOCTEXT("TrainingAbortedCantUse", "Training aborted by user.");
+				WindowMessage = LOCTEXT("TrainingAbortedCantUse", "Training aborted by user.\n");
 			}
 			break;
 
@@ -621,7 +673,7 @@ namespace UE::MLDeformer
 			case ETrainingResult::FailOnData:
 			{
 				GEditor->PlayEditorSound(TEXT("/Engine/EditorSounds/Notifications/CompileFailed_Cue.CompileFailed_Cue"));
-				WindowMessage = LOCTEXT("TrainingFailedOnData", "Training failed!\nCheck input parameters or sequence length.");
+				WindowMessage = LOCTEXT("TrainingFailedOnData", "Training failed!\nCheck input parameters or sequence length.\n");
 			}
 			break;
 
@@ -629,7 +681,7 @@ namespace UE::MLDeformer
 			case ETrainingResult::FailPythonError:
 			{
 				GEditor->PlayEditorSound(TEXT("/Engine/EditorSounds/Notifications/CompileFailed_Cue.CompileFailed_Cue"));
-				WindowMessage = LOCTEXT("TrainingPythonError", "Training failed!\nThere is a python error, please check the output log.");
+				WindowMessage = LOCTEXT("TrainingPythonError", "Training failed!\nThere is a python error, please check the output log.\n");
 			}
 			break;
 
@@ -773,7 +825,6 @@ namespace UE::MLDeformer
 					ActiveModel->ClampCurrentTrainingFrameIndex();
 					const int32 CurrentFrameNumber = ActiveModel->GetModel()->GetVizSettings()->GetTrainingFrameNumber();
 					ActiveModel->SetTrainingFrame(CurrentFrameNumber);
-					ActiveModel->GetSampler()->SetVertexDeltaSpace(EVertexDeltaSpace::PostSkinning);
 					ActiveModel->SampleDeltas();
 				}
 				else if (VizSettings->GetVisualizationMode() == EMLDeformerVizMode::TestData)
@@ -794,6 +845,68 @@ namespace UE::MLDeformer
 			}
 		}
 		ZoomOnActors();
+	}
+
+	TArray<FTransform> FMLDeformerEditorToolkit::GetDebugActorComponentSpaceTransforms() const
+	{
+		const FMLDeformerEditorModel* EditorModel = GetActiveModel();
+		if (EditorModel)
+		{
+			const AActor* DebugActor = GetDebugActor();
+			if (DebugActor && EditorModel->GetModel())
+			{				
+				const USkeletalMesh* ModelSkelMesh = EditorModel->GetModel()->GetSkeletalMesh();
+				if (ModelSkelMesh)
+				{
+					for (const UActorComponent* Component : DebugActor->GetComponents())
+					{
+						const USkeletalMeshComponent* DebugActorSkelMeshComponent = Cast<USkeletalMeshComponent>(Component);
+						if (DebugActorSkelMeshComponent)
+						{
+							if (DebugActorSkelMeshComponent->GetSkeletalMeshAsset() != ModelSkelMesh)
+							{
+								continue;
+							}
+
+							const USkinnedMeshComponent* LeaderPoseComponent = DebugActorSkelMeshComponent->LeaderPoseComponent.Get();
+							if (LeaderPoseComponent && !LeaderPoseComponent->GetComponentSpaceTransforms().IsEmpty())
+							{
+								const FReferenceSkeleton& RefSkel = ModelSkelMesh->GetRefSkeleton();
+								const int32 NumBones = RefSkel.GetNum();
+
+								TArray<FTransform> OutTransforms;	// TODO: Create some cached reusable buffer?
+								OutTransforms.SetNumUninitialized(NumBones);
+
+								const TArray<FTransform>& FollowerComponentTransforms = DebugActorSkelMeshComponent->GetComponentSpaceTransforms();
+								const TArray<FTransform>& LeaderComponentTransforms = LeaderPoseComponent->GetComponentSpaceTransforms();
+
+								const TArray<int32>& BoneMap = DebugActorSkelMeshComponent->GetLeaderBoneMap();
+								for (int32 Index = 0; Index < NumBones; ++Index)
+								{									
+									const int32 LeaderTransformIndex = BoneMap[Index];
+									if (LeaderTransformIndex != INDEX_NONE)
+									{
+										OutTransforms[Index] = LeaderComponentTransforms[LeaderTransformIndex];
+									}
+									else
+									{
+										OutTransforms[Index] = FollowerComponentTransforms[Index];
+									}
+								}
+
+								return MoveTemp(OutTransforms);
+							}
+							else
+							{
+								return DebugActorSkelMeshComponent->GetComponentSpaceTransforms();
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return TArray<FTransform>();
 	}
 
 	void FMLDeformerEditorToolkit::ZoomOnActors()
@@ -898,7 +1011,7 @@ namespace UE::MLDeformer
 		const UMLDeformerVizSettings* VizSettings = ActiveModel->GetModel()->GetVizSettings();
 		if (VizSettings->GetVisualizationMode() == EMLDeformerVizMode::TrainingData)
 		{
-			const UAnimSequence* AnimSeq = ActiveModel.Get() ? ActiveModel->GetModel()->GetAnimSequence() : nullptr;
+			const UAnimSequence* AnimSeq = ActiveModel.Get() ? ActiveModel->GetActiveTrainingInputAnimSequence() : nullptr;
 			const double Duration = AnimSeq ? AnimSeq->GetPlayLength() : 0.0;
 			SetTimeSliderRange(0.0, Duration);
 		}

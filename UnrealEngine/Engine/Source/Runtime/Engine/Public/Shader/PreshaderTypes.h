@@ -82,8 +82,8 @@ public:
 	/** Merge top two values (after an in place binary operation) */
 	inline void MergeTopTwoValues(EValueType ValueType, int32 ComponentsConsumed)
 	{
-		Values.RemoveAt(Values.Num() - 1, 1, false);
-		Components.RemoveAt(Components.Num() - ComponentsConsumed, ComponentsConsumed, false);
+		Values.RemoveAt(Values.Num() - 1, 1, EAllowShrinking::No);
+		Components.RemoveAt(Components.Num() - ComponentsConsumed, ComponentsConsumed, EAllowShrinking::No);
 		Values.Last().ValueType = ValueType;
 	}
 
@@ -96,7 +96,7 @@ public:
 		}
 		else if (NumComponentChange < 0)
 		{
-			Components.RemoveAt(Components.Num() + NumComponentChange, -NumComponentChange, false);
+			Components.RemoveAt(Components.Num() + NumComponentChange, -NumComponentChange, EAllowShrinking::No);
 		}
 	}
 

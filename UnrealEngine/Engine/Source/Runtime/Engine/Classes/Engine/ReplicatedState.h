@@ -76,6 +76,7 @@ namespace ERigidBodyFlags
 		None = 0x00,
 		Sleeping = 0x01,
 		NeedsUpdate = 0x02,
+		RepPhysics = 0x04 // This RigidBody was replicated from the server with simulating physics
 	};
 }
 
@@ -185,7 +186,10 @@ struct FRepMovement
 		RBState.Quaternion = Rotation.Quaternion();
 		RBState.LinVel = LinearVelocity;
 		RBState.AngVel = AngularVelocity;
-		RBState.Flags = (decltype(FRigidBodyState::Flags))(bSimulatedPhysicSleep ? ERigidBodyFlags::Sleeping : ERigidBodyFlags::None) | ERigidBodyFlags::NeedsUpdate;
+		RBState.Flags = 
+			(decltype(FRigidBodyState::Flags))(bSimulatedPhysicSleep ? ERigidBodyFlags::Sleeping : ERigidBodyFlags::None)
+			| ERigidBodyFlags::NeedsUpdate
+			| (decltype(FRigidBodyState::Flags))(bRepPhysics ? ERigidBodyFlags::RepPhysics : ERigidBodyFlags::None);
 	}
 
 	bool operator==(const FRepMovement& Other) const

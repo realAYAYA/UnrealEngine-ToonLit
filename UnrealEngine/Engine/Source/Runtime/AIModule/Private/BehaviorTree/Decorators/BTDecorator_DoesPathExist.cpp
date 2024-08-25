@@ -4,6 +4,7 @@
 #include "UObject/Package.h"
 #include "GameFramework/Actor.h"
 #include "NavigationSystem.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "NavMesh/RecastNavMesh.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "AIController.h"

@@ -1,18 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
+#if WITH_EDITOR
+
 #include "WorldPartitionActorDescView.h"
 
-#if WITH_EDITOR
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 /**
  * A view on top of an actor desc, which reverts to the actor if its loaded and dirty.
  */
-class FWorldPartitionActorViewProxy : public FWorldPartitionActorDescView
+class ENGINE_API UE_DEPRECATED(5.4, "Class is deprecated") FWorldPartitionActorViewProxy : public FWorldPartitionActorDescView
 {
 public:
-	ENGINE_API FWorldPartitionActorViewProxy(const FWorldPartitionActorDesc* InActorDesc);
+	FWorldPartitionActorViewProxy(const FWorldPartitionActorDesc* InActorDesc);
 
 private:
 	TUniquePtr<FWorldPartitionActorDesc> CachedActorDesc;
 };
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 #endif

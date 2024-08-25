@@ -4,16 +4,13 @@
 #include "ViewModels/NiagaraSimCacheViewModel.h"
 
 #include "CoreMinimal.h"
+#include "NiagaraEditorModule.h"
 
-#include "Widgets/Input/SSpinBox.h"
 #include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
 #include "Widgets/Views/SListView.h"
 #include "Widgets/Views/STableRow.h"
 #include "Widgets/Views/SHeaderRow.h"
-
-#include "IContentBrowserSingleton.h"
-#include "ContentBrowserModule.h"
-#include "SNiagaraSimCacheTreeView.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraSimCacheView"
 
@@ -90,38 +87,65 @@ void SNiagaraSimCacheView::Construct(const FArguments& InArgs)
 		.AlwaysShowScrollbar(true)
 		.Thickness(12.0f)
 		.Orientation(Orient_Vertical);
-	
+	DataInterfaceScrollBar =
+		SNew(SScrollBar)
+		.AlwaysShowScrollbar(false)
+		.Thickness(12.0f)
+		.Orientation(Orient_Vertical);
+
+	//// Main Spreadsheet View
+	SAssignNew(ListViewWidget, SListView<TSharedPtr<int32>>)
+		.ListItemsSource(&RowItems)
+		.OnGenerateRow(this, &SNiagaraSimCacheView::MakeRowWidget)
+		.Visibility(EVisibility::Visible)
+		.SelectionMode(ESelectionMode::Single)
+		.ExternalScrollbar(VerticalScrollBar)
+		.ConsumeMouseWheel(EConsumeMouseWheel::Always)
+		.AllowOverscroll(EAllowOverscroll::No)
+		.HeaderRow(HeaderRowWidget);
+
 	// Widget
 	ChildSlot
 	[
 		SNew(SVerticalBox)
-		//// Main Spreadsheet View
+		
 		+ SVerticalBox::Slot()
 		.FillHeight(1.0f)
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
 			[
-				 SNew(SScrollBox)
-				 .Orientation(Orient_Horizontal)
-				 .ExternalScrollbar(HorizontalScrollBar)
-				 + SScrollBox::Slot()
+				SNew(SScrollBox)
+				.Orientation(Orient_Horizontal)
+				.ExternalScrollbar(HorizontalScrollBar)
+				+ SScrollBox::Slot()
 				[
-					SAssignNew(ListViewWidget, SListView<TSharedPtr<int32>>)
-					.ListItemsSource(&RowItems)
-					.OnGenerateRow(this, &SNiagaraSimCacheView::MakeRowWidget)
-					.Visibility(EVisibility::Visible)
-					.SelectionMode(ESelectionMode::Single)
-					.ExternalScrollbar(VerticalScrollBar)
-					.ConsumeMouseWheel(EConsumeMouseWheel::Always)
-					.AllowOverscroll(EAllowOverscroll::No)
-					.HeaderRow(HeaderRowWidget)
+					// switcher for spreadsheet / data interfaces
+					SAssignNew(SwitchWidget, SWidgetSwitcher)
+					.WidgetIndex_Lambda([this] { return SimCacheViewModel->GetActiveDataInterface().IsValid() ? 1 : 0; })
+					+SWidgetSwitcher::Slot()
+					[
+						ListViewWidget.ToSharedRef()
+					]
+					+SWidgetSwitcher::Slot()
+					[
+						SNullWidget::NullWidget
+					]
 				]
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
 			[
-				VerticalScrollBar
+				SNew(SWidgetSwitcher)
+				.WidgetIndex_Lambda([this] { return SimCacheViewModel->GetActiveDataInterface().IsValid() ? 1 : 0; })
+				+SWidgetSwitcher::Slot()
+				[
+					VerticalScrollBar
+				]
+				+SWidgetSwitcher::Slot()
+				[
+					DataInterfaceScrollBar.ToSharedRef()
+				]
 			]
 		]
 		+ SVerticalBox::Slot()
@@ -182,6 +206,52 @@ void SNiagaraSimCacheView::GenerateColumns()
 
 }
 
+void SNiagaraSimCacheView::UpdateDIWidget()
+{
+	for (TSharedPtr<SWidget> Widget : DIVisualizerWidgets)
+	{
+		SwitchWidget->RemoveSlot(Widget.ToSharedRef());
+	}
+	DIVisualizerWidgets.Empty();
+	TSharedRef<SVerticalBox> WidgetBox = SNew(SVerticalBox);
+	if (SimCacheViewModel->GetActiveDataInterface().IsValid())
+	{
+		FNiagaraEditorModule& NiagaraEditorModule = FModuleManager::GetModuleChecked<FNiagaraEditorModule>("NiagaraEditor");
+		for (TSharedRef<INiagaraDataInterfaceSimCacheVisualizer> Visualizer : NiagaraEditorModule.FindDataInterfaceCacheVisualizer(SimCacheViewModel->GetActiveDataInterface().GetType().GetClass()))
+		{
+			if (UObject* DataObject = SimCacheViewModel->GetActiveDataInterfaceStorage())
+			{
+				TSharedPtr<SWidget> DIVisualizerWidget = Visualizer->CreateWidgetFor(DataObject, SimCacheViewModel);
+				DIVisualizerWidgets.Add(DIVisualizerWidget);
+				WidgetBox->AddSlot()
+					.AutoHeight()
+					.AttachWidget(DIVisualizerWidget.ToSharedRef());
+			}
+		}
+	}
+	if (DIVisualizerWidgets.Num() == 0)
+	{
+		TSharedPtr<SWidget> DIVisualizerWidget = SNew(SBox)
+		   .Padding(10)
+		   [
+			   SNew(STextBlock)
+			   .Text(LOCTEXT("NoDataInterface", "No valid visualizer found for data interface"))
+		   ];
+		DIVisualizerWidgets.Add(DIVisualizerWidget);
+		WidgetBox->AddSlot()
+			.AutoHeight()
+			.AttachWidget(DIVisualizerWidget.ToSharedRef());
+	}
+	SwitchWidget->AddSlot(1).AttachWidget(
+		SNew(SScrollBox)
+		.Orientation(Orient_Vertical)
+		.ExternalScrollbar(DataInterfaceScrollBar)
+		 + SScrollBox::Slot()
+		[
+			WidgetBox
+		]);
+}
+
 void SNiagaraSimCacheView::UpdateColumns(const bool bReset)
 {
 	if(bReset)
@@ -211,6 +281,7 @@ void SNiagaraSimCacheView::OnSimCacheChanged()
 {
 	UpdateRows(true);
 	UpdateColumns(true);
+	UpdateDIWidget();
 }
 
 void SNiagaraSimCacheView::OnViewDataChanged(const bool bFullRefresh)
@@ -226,6 +297,7 @@ void SNiagaraSimCacheView::OnBufferChanged()
 {
 	UpdateRows(true);
 	UpdateColumns(true);
+	UpdateDIWidget();
 }
 
 bool SNiagaraSimCacheView::GetShouldGenerateWidget(FName Name)

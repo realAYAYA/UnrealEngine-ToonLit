@@ -60,8 +60,8 @@ public:
 
 	// IMemoryCacheStore Interface
 
-	void Delete(const FCacheKey& Key) final;
-	void DeleteValue(const FCacheKey& Key) final;
+	void Delete(const FCacheKey& Key, const FSharedString& Name) final;
+	void DeleteValue(const FCacheKey& Key, const FSharedString& Name) final;
 
 	void Disable() final;
 
@@ -147,6 +147,10 @@ FMemoryCacheStore::FMemoryCacheStore(
 		if (!FParse::Param(InConfig, TEXT("ReadOnly")))
 		{
 			Flags |= ECacheStoreFlags::Store;
+		}
+		if (FParse::Param(InConfig, TEXT("StopGetStore")))
+		{
+			Flags |= ECacheStoreFlags::StopGetStore;
 		}
 		StoreOwner->Add(this, Flags);
 		if (!FParse::Param(InConfig, TEXT("NoStats")))
@@ -474,7 +478,7 @@ void FMemoryCacheStore::Get(
 	}
 }
 
-void FMemoryCacheStore::Delete(const FCacheKey& Key)
+void FMemoryCacheStore::Delete(const FCacheKey& Key, const FSharedString& DebugName)
 {
 	FWriteScopeLock ScopeLock(SynchronizationObject);
 	FCacheRecordComponents Components;
@@ -634,7 +638,7 @@ void FMemoryCacheStore::GetValue(
 	}
 }
 
-void FMemoryCacheStore::DeleteValue(const FCacheKey& Key)
+void FMemoryCacheStore::DeleteValue(const FCacheKey& Key, const FSharedString& DebugName)
 {
 	FWriteScopeLock ScopeLock(SynchronizationObject);
 	FValue Value;

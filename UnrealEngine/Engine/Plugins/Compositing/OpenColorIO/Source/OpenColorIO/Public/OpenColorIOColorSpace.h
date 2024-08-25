@@ -2,7 +2,9 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 
 #include "OpenColorIOColorSpace.generated.h"
 
@@ -225,7 +227,7 @@ public:
 	 *  Since display look are applied on viewports, this will 
 	 * dictate whether it's applied or not to it
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ColorSpace)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ColorSpace, DisplayName = "Enable OCIO")
 	bool bIsEnabled = false;
 	
 	/** Conversion to apply when this display is enabled */

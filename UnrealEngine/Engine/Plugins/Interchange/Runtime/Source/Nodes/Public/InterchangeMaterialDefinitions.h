@@ -279,6 +279,33 @@ namespace Interchange
 				{
 					const FName Name = TEXT("VertexColor");
 				}
+
+				namespace ScalarParameter
+				{
+					const FName Name = TEXT("ScalarParameter");
+					namespace Attributes
+					{
+						const FName DefaultValue = TEXT("DefaultValue");
+					}
+				}
+
+				namespace VectorParameter
+				{
+					const FName Name = TEXT("VectorParameter");
+					namespace Attributes
+					{
+						const FName DefaultValue = TEXT("DefaultValue");
+					}
+				}
+
+				namespace StaticBoolParameter
+				{
+					const FName Name = TEXT("StaticBoolParameter");
+					namespace Attributes
+					{
+						const FName DefaultValue = TEXT("DefaultValue");
+					}
+				}
 			}
 		}
 
@@ -306,6 +333,66 @@ namespace Interchange
 				using namespace Common::Parameters;
 
 				const FName DiffuseColor = TEXT("DiffuseColor"); // Type: linear color
+			}
+		}
+
+		namespace OpenPBRSurface
+		{
+			const FName Name = TEXT("open_pbr_surface");
+
+			namespace Parameters
+			{
+				const FName BaseWeight = TEXT("base_weight");
+				const FName BaseColor = TEXT("base_color");
+				const FName BaseRoughness = TEXT("base_roughness");
+				const FName BaseMetalness = TEXT("base_metalness");
+				const FName SpecularWeight = TEXT("specular_weight");
+				const FName SpecularColor = TEXT("specular_color");
+				const FName SpecularRoughness = TEXT("specular_roughness");
+				const FName SpecularIOR = TEXT("specular_ior");
+				const FName SpecularIORLevel = TEXT("specular_ior_level");
+				const FName SpecularAnisotropy = TEXT("specular_anisotropy");
+				const FName SpecularRotation = TEXT("specular_rotation");
+				const FName TransmissionWeight = TEXT("transmission_weight");
+				const FName TransmissionColor = TEXT("transmission_color");
+				const FName TransmissionDepth = TEXT("transmission_depth");
+				const FName TransmissionScatter = TEXT("transmission_scatter");
+				const FName TransmissionScatterAnisotropy = TEXT("transmission_scatter_anisotropy");
+				const FName TransmissionDispersionScale = TEXT("transmission_dispersion_scale");
+				const FName TransmissionDispersionAbbeNumber = TEXT("transmission_dispersion_abbe_number");
+				const FName SubsurfaceWeight = TEXT("subsurface_weight");
+				const FName SubsurfaceColor = TEXT("subsurface_color");
+				const FName SubsurfaceRadius = TEXT("subsurface_radius");
+				const FName SubsurfaceRadiusScale = TEXT("subsurface_radius_scale");
+				const FName SubsurfaceAnisotropy = TEXT("subsurface_anisotropy");
+				const FName FuzzWeight = TEXT("fuzz_weight");
+				const FName FuzzColor = TEXT("fuzz_color");
+				const FName FuzzRoughness = TEXT("fuzz_roughness");
+				const FName CoatWeight = TEXT("coat_weight");
+				const FName CoatColor = TEXT("coat_color");
+				const FName CoatRoughness = TEXT("coat_roughness");
+				const FName CoatAnisotropy = TEXT("coat_anisotropy");
+				const FName CoatRotation = TEXT("coat_rotation");
+				const FName CoatIOR = TEXT("coat_ior");
+				const FName CoatIORLevel = TEXT("coat_ior_level");
+				const FName ThinFilmThickness = TEXT("thin_film_thickness");
+				const FName ThinFilmIOR = TEXT("thin_film_ior");
+				const FName EmissionLuminance = TEXT("emission_luminance");
+				const FName EmissionColor = TEXT("emission_color");
+				const FName GeometryOpacity = TEXT("geometry_opacity");
+				const FName GeometryThinWalled = TEXT("geometry_thin_walled");
+				const FName GeometryNormal = TEXT("geometry_normal");
+				const FName GeometryCoatNormal = TEXT("geometry_coat_normal");
+				const FName GeometryTangent = TEXT("geometry_tangent");
+			}
+
+			namespace SubstrateMaterial
+			{
+				namespace Outputs
+				{
+					const FName FrontMaterial = TEXT("OpenPBR_FrontMaterial");
+					const FName OpacityMask = TEXT("OpacityMask");
+				}
 			}
 		}
 
@@ -432,6 +519,43 @@ namespace Interchange
 				const FName Normal = TEXT("normal");
 				const FName Tangent = TEXT("tangent");
 			}
+
+			// These outputs are only used for Substrate
+			namespace SubstrateMaterial
+			{
+				namespace Outputs
+				{
+					const FName Opaque = TEXT("Substrate StandardSurface Opaque");
+					const FName Translucent = TEXT("Substrate StandardSurface Translucent");
+					const FName Opacity = TEXT("Geometry Opacity");
+				}
+			}
+		}
+
+		namespace Surface
+		{
+			const FName Name = TEXT("surface");
+
+			namespace Parameters
+			{
+				const FName BSDF = TEXT("bsdf");
+				const FName EDF = TEXT("edf");
+				const FName Opacity = TEXT("opacity");
+			}
+
+			namespace Outputs
+			{
+				const FName Surface = TEXT("Surface");
+			}
+
+			namespace Substrate
+			{
+				namespace Outputs
+				{
+					using namespace Surface::Outputs;
+					const FName Opacity = TEXT("Opacity");
+				}
+			}
 		}
 
 		namespace SurfaceUnlit
@@ -445,6 +569,20 @@ namespace Interchange
 				const FName Transmission = TEXT("transmission");
 				const FName TransmissionColor = TEXT("transmission_color");
 				const FName Opacity = TEXT("opacity");
+			}
+
+			namespace Outputs
+			{
+				const FName OpacityMask = TEXT("OpacityMask");
+			}
+
+			namespace Substrate
+			{
+				namespace Outputs
+				{
+					using namespace SurfaceUnlit::Outputs;
+					const FName SurfaceUnlit = TEXT("Surface Unlit");
+				}
 			}
 		}
 
@@ -476,6 +614,16 @@ namespace Interchange
 			{
 				const FName UnlitColor = TEXT("UnlitColor"); // Type: linear color
 			}
+		}
+
+		namespace SubstrateMaterial
+		{
+			namespace Parameters
+			{
+				const FName FrontMaterial = TEXT("Front Material");
+				const FName OpacityMask = TEXT("Opacity Mask");
+			}
+			
 		}
 	}
 }

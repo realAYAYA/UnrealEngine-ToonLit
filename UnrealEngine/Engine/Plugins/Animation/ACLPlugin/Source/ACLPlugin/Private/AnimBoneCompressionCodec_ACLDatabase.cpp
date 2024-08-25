@@ -63,7 +63,7 @@ void FACLDatabaseCompressedAnimData::Bind(const TArrayView<uint8> BulkData)
 		const uint32 CompressedSize = CompressedClipData->get_size();
 
 		CompressedByteStream = TArrayView<uint8>(CompressedBytes, CompressedSize);
-		DatabaseContext = &Codec->DatabaseAsset->GetDatabaseContext();
+		DatabaseContext = &Codec->DatabaseAsset->DatabaseContext;
 	}
 	else
 	{
@@ -141,14 +141,14 @@ void UAnimBoneCompressionCodec_ACLDatabase::PreSave(FObjectPreSaveContext Object
 	}
 }
 
-void UAnimBoneCompressionCodec_ACLDatabase::RegisterWithDatabase(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
+void UAnimBoneCompressionCodec_ACLDatabase::PostCompression(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult) const
 {
 	// After we are done compressing our animation sequence, it will contain the necessary metadata needed to build our
 	// streaming database. The anim sequence will contain every sample and it will be used as-is in the editor where we
 	// show the highest quality by default.
 	//
 	// However, the anim sequence data that we just compressed will not be used in a cooked build. When we build our
-	// database, the sequence data will be modifier since we'll remove key frames from it. Its hash will change.
+	// database, the sequence data will be modified since we'll remove key frames from it. Its hash will change.
 	// The new compressed data will live in the database asset next to the compressed database data. This has the benefit
 	// that every compressed clip and the database now live in the same region of virtual memory, reducing the TLB miss
 	// rate (when large pages are used on console and mobile since multiple clips fit within a page) and when we do miss
@@ -170,13 +170,15 @@ void UAnimBoneCompressionCodec_ACLDatabase::RegisterWithDatabase(const FCompress
 	OutResult.CompressedByteStream.Empty(0);
 }
 
-// @third party code - Epic Games Begin
-void UAnimBoneCompressionCodec_ACLDatabase::GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const
-// @third party code - Epic Games End
+void UAnimBoneCompressionCodec_ACLDatabase::GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const
 {
 	OutSettings = acl::get_default_compression_settings();
 
 	OutSettings.level = GetCompressionLevel(CompressionLevel);
+	OutSettings.enable_database_support = true;
+
+	// Disable keyframe stripping, even the trivial one as it currently isn't supported
+	OutSettings.keyframe_stripping.strip_trivial = false;
 }
 
 // @third party code - Epic Games Begin
@@ -185,8 +187,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::PopulateDDCKey(const UE::Anim::Compr
 	Super::PopulateDDCKey(KeyArgs, Ar);
 
 	acl::compression_settings Settings;
-	GetCompressionSettings(Settings, KeyArgs.TargetPlatform);
-// @third party code - Epic Games End
+	GetCompressionSettings(KeyArgs.TargetPlatform, Settings);
 
 	uint32 ForceRebuildVersion = 4;
 	uint32 SettingsHash = Settings.get_hash();
@@ -258,7 +259,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 	acl::decompression_context<UE4DefaultDBDecompressionSettings> ACLContext;
 
 #if WITH_EDITORONLY_DATA
-	acl::database_context<UE4DefaultDatabaseSettings>* DatabaseContext = DatabaseAsset != nullptr ? &DatabaseAsset->GetDatabaseContext() : nullptr;
+	acl::database_context<UE4DefaultDatabaseSettings>* DatabaseContext = DatabaseAsset != nullptr ? &DatabaseAsset->DatabaseContext : nullptr;
 	if (DatabaseContext != nullptr && DatabaseContext->is_initialized())
 	{
 		// We are previewing, use the database and the anim sequence data contained within it
@@ -314,7 +315,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 	acl::decompression_context<UE4DefaultDBDecompressionSettings> ACLContext;
 
 #if WITH_EDITORONLY_DATA
-	acl::database_context<UE4DefaultDatabaseSettings>* DatabaseContext = DatabaseAsset != nullptr ? &DatabaseAsset->GetDatabaseContext() : nullptr;
+	acl::database_context<UE4DefaultDatabaseSettings>* DatabaseContext = DatabaseAsset != nullptr ? &DatabaseAsset->DatabaseContext : nullptr;
 	if (DatabaseContext != nullptr && DatabaseContext->is_initialized())
 	{
 		// We are previewing, use the database and the anim sequence data contained within it
@@ -362,4 +363,3 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 
 	::DecompressBone(DecompContext, ACLContext, TrackIndex, OutAtom);
 }
-

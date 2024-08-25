@@ -93,7 +93,7 @@ Copyright (c) 2012 Brandon Pelfrey
 #endif
 
 #ifndef XA_MULTITHREADED
-#define XA_MULTITHREADED 1
+#define XA_MULTITHREADED 0
 #endif
 
 #define XA_STR(x) #x

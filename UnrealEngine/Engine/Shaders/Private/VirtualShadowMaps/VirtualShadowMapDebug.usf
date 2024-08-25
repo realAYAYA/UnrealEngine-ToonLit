@@ -42,7 +42,7 @@ float3 DebugVisualizeClipmap(float2 PixelUV, FVirtualShadowMapProjectionShaderDa
 		{
 			FVirtualShadowMapProjectionShaderData Level = GetVirtualShadowMapProjectionData(LevelSmId);
 
-			float3 OriginTranslatedWorld = LWCToFloat(LWCAdd(Level.ClipmapWorldOrigin, Level.PreViewTranslation));
+			float3 OriginTranslatedWorld = Level.ClipmapWorldOriginOffset;
 			float4 ShadowUVz = mul(float4(OriginTranslatedWorld, 1.0f), Level.TranslatedWorldToShadowUVMatrix);
 			const float2 PageCenter = ShadowUVz.xy * float(VSM_LEVEL0_DIM_PAGES_XY);
 			float2 AllocatedExtentPages = max(abs(float2(AllocatedBounds.xy) - PageCenter), abs(float2(AllocatedBounds.zw) - PageCenter));
@@ -78,7 +78,7 @@ float3 DebugVisualizeClipmap(float2 PixelUV, FVirtualShadowMapProjectionShaderDa
 
 		FVirtualShadowMapProjectionShaderData Level = GetVirtualShadowMapProjectionData(LevelSmId);
 
-		float3 OriginTranslatedWorld = LWCToFloat(LWCAdd(Level.ClipmapWorldOrigin, Level.PreViewTranslation));
+		float3 OriginTranslatedWorld = Level.ClipmapWorldOriginOffset;
 		float4 ShadowUVz = mul(float4(OriginTranslatedWorld, 1.0f), Level.TranslatedWorldToShadowUVMatrix);
 
 		int2 vPage = int2((CenteredPixelUV * UVScale + ShadowUVz.xy) * float(VSM_LEVEL0_DIM_PAGES_XY));

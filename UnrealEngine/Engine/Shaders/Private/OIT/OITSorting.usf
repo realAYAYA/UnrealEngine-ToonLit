@@ -2,6 +2,9 @@
 
 #pragma once
 
+// RECOMPILE HASH
+#pragma message("UESHADERMETADATA_VERSION 78C3EBBB-59EA-459D-A2D4-67170905D7FC")
+
 #include "../Common.ush"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -61,6 +64,10 @@ bool IsValid(FTriIndex InTri, uint InNumIndices)
 	return InTri.I0 < InNumIndices && InTri.I1 < InNumIndices && InTri.I2 < InNumIndices;
 }
 
+#if SORTING_SLICE_COUNT > 256
+#error Slice index is encoded onto 8bits and no longer fit into stored data
+#endif
+
 FPackedSliceAndOffset PackSliceAndOffset(uint InSliceIndex, uint InLocalOffset)
 {
 #if ENCODING_TYPE
@@ -90,17 +97,27 @@ struct FOITDebugData
 	uint PrimitiveCount;
 	uint Type;
 	uint SizeInBytes;
+
+	uint FirstIndex;
+	uint BaseVertexIndex;
+	uint MinVertexIndex;
+	uint MaxVertexIndex;
 };
 
 void AddDebugInfo(RWBuffer<uint> InDebugData, FOITDebugData In)
 {
-	uint Index = 1;
+	uint Index = 0;
 	InterlockedAdd(InDebugData[0], 1, Index);
 
-	const uint Index3 = 1 + Index * 3;		
+	const uint Index3 = 1 + Index * 7u;
 	InDebugData[Index3 + 0] = In.PrimitiveCount;
 	InDebugData[Index3 + 1] = In.Type;
 	InDebugData[Index3 + 2] = In.SizeInBytes;
+
+	InDebugData[Index3 + 3] = In.FirstIndex;
+	InDebugData[Index3 + 4] = In.BaseVertexIndex;
+	InDebugData[Index3 + 5] = In.MinVertexIndex;
+	InDebugData[Index3 + 6] = In.MaxVertexIndex;
 }
 
 uint GetDebugInfoCount(Buffer<uint> InDebugData)
@@ -113,11 +130,16 @@ FOITDebugData GetDebugInfo(Buffer<uint> InDebugData, uint Index)
 	FOITDebugData Out;
 	if (Index < InDebugData[0])
 	{
-		const uint Index3 = 1 + Index * 3;
+		const uint Index3 = 1 + Index * 7u;
 		Out.Index			= Index;
 		Out.PrimitiveCount	= InDebugData[Index3 + 0];
 		Out.Type			= InDebugData[Index3 + 1];
-		Out.SizeInBytes		= InDebugData[Index3 + 2];
+		Out.SizeInBytes	= InDebugData[Index3 + 2];
+
+		Out.FirstIndex		= InDebugData[Index3 + 3];
+		Out.BaseVertexIndex	= InDebugData[Index3 + 4];
+		Out.MinVertexIndex	= InDebugData[Index3 + 5];
+		Out.MaxVertexIndex	= InDebugData[Index3 + 6];
 	}
 
 	return Out;
@@ -136,13 +158,15 @@ float3 ViewBound_Max;
 #endif
 
 float4x4 LocalToWorld; // GPU scene buffer instead? How?
-float4x4 WorldToView;
 float4x4 LocalToView;
 
 uint SourcePrimitiveType;
 uint NumPrimitives;
 uint NumIndices;
 uint SourceFirstIndex;
+uint SourceBaseVertexIndex;
+uint SourceMinVertexIndex;
+uint SourceMaxVertexIndex;
 uint SortType;
 uint SortedIndexBufferSizeInByte;
 
@@ -181,9 +205,9 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupThreadId : S
 	if (bIsValid)
 	{
 		const FTriIndex Tri = GetTriangleIndices(PrimitiveId, SourceFirstIndex, SourcePrimitiveType);
-		const uint I0 = 3 * IndexBuffer[Tri.I0];
-		const uint I1 = 3 * IndexBuffer[Tri.I1];
-		const uint I2 = 3 * IndexBuffer[Tri.I2];
+		const uint I0 = 3 * clamp(IndexBuffer[Tri.I0] + SourceBaseVertexIndex, SourceMinVertexIndex, SourceMaxVertexIndex);
+		const uint I1 = 3 * clamp(IndexBuffer[Tri.I1] + SourceBaseVertexIndex, SourceMinVertexIndex, SourceMaxVertexIndex);
+		const uint I2 = 3 * clamp(IndexBuffer[Tri.I2] + SourceBaseVertexIndex, SourceMinVertexIndex, SourceMaxVertexIndex);
 
 		// Position buffer store data as a float, not float3
 		const float3 P0 = float3(PositionBuffer[I0], PositionBuffer[I0+1], PositionBuffer[I0+2]);
@@ -200,12 +224,13 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupThreadId : S
 
 		#if PERMUTATION_DEBUG
 		{
+			FShaderPrintContext Ctx = InitShaderPrintContext();
 			const float4 TriColor = float4(ColorMapViridis(SliceIndex / float(SORTING_SLICE_COUNT - 1)), 1);
 
 			const float3 WP0 = mul(float4(P0, 1), LocalToWorld).xyz;
 			const float3 WP1 = mul(float4(P1, 1), LocalToWorld).xyz;
 			const float3 WP2 = mul(float4(P2, 1), LocalToWorld).xyz;
-			AddLineTriangleWS(WP0, WP1, WP2, TriColor);
+			AddLineTriangleWS(Ctx, WP0, WP1, WP2, TriColor);
 		}
 		#endif
 
@@ -219,9 +244,15 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint GroupThreadId : S
 		AddOBBWS(ViewBound_Min, ViewBound_Max, ColorCyan, ViewToWorld);
 
 		FOITDebugData DebugData;
-		DebugData.PrimitiveCount= NumPrimitives;
-		DebugData.Type			= SourcePrimitiveType;
-		DebugData.SizeInBytes	= SortedIndexBufferSizeInByte;
+		DebugData.PrimitiveCount	= NumPrimitives;
+		DebugData.Type				= SourcePrimitiveType;
+		DebugData.SizeInBytes		= SortedIndexBufferSizeInByte;
+
+		DebugData.FirstIndex		= SourceFirstIndex;
+		DebugData.BaseVertexIndex	= SourceBaseVertexIndex;
+		DebugData.MinVertexIndex	= SourceMinVertexIndex;
+		DebugData.MaxVertexIndex	= SourceMaxVertexIndex;
+
 		AddDebugInfo(OutDebugData, DebugData);
 	}
 	#endif
@@ -364,18 +395,18 @@ void PrintSize(inout FShaderPrintContext Context, uint SizeInBytes, FFontColor C
 {
 	if (SizeInBytes < 1000)
 	{
-		Print(Context, SizeInBytes / 1000.f, Color);
-		Print(Context, TEXT("bytes"), Color);
+		Print(Context, SizeInBytes, Color, 5, 2);
+		Print(Context, TEXT("   bytes "), Color);
 	}
 	else if (SizeInBytes < 1000000)
 	{
-		Print(Context, SizeInBytes / 1000.f, Color);
-		Print(Context, TEXT("Kbytes"), Color);
+		Print(Context, SizeInBytes / 1000.f, Color, 5, 2);
+		Print(Context, TEXT("  Kbytes "), Color);
 	}
 	else
 	{
-		Print(Context, SizeInBytes / 1000.f, Color);
-		Print(Context, TEXT("Mbytes"), Color);
+		Print(Context, SizeInBytes / 1000000.f, Color, 5, 2);
+		Print(Context, TEXT("  Mbytes "), Color);
 	}
 }
 
@@ -389,37 +420,22 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 	// Visible
 	{
 		Print(Context, TEXT("Visible"), FontOrange); Newline(Context);
+		Print(Context, TEXT("#Sort slices   : "), FontWhite); Print(Context, uint(SORTING_SLICE_COUNT), FontSilver); Newline(Context);
 		Print(Context, TEXT("Instances      : "), FontWhite); Print(Context, VisibleInstances, FontSilver); Newline(Context);
 		Print(Context, TEXT("Primitives     : "), FontWhite); Print(Context, VisiblePrimitives, FontSilver); Newline(Context);
 		Print(Context, TEXT("Size           : "), FontYellow); PrintSize(Context, VisibleIndexSizeInBytes, FontYellow); Newline(Context);
 	}
-
 	Newline(Context);
 
-	// Allocated
+	// Memory
 	{
-		Print(Context, TEXT("Allocated"), FontOrange); Newline(Context);
-		Print(Context, TEXT("Buffers        : "), FontWhite); Print(Context, AllocatedBuffers, FontSilver); Newline(Context);
-		Print(Context, TEXT("Size           : "), FontYellow); PrintSize(Context, AllocatedIndexSizeInBytes, FontYellow); Newline(Context);
+		Print(Context, TEXT("Memory"), FontOrange); Newline(Context);
+		Print(Context, TEXT("Alloc. Buffers : "), FontWhite); Print(Context, AllocatedBuffers, FontSilver, 3, 0); Print(Context, TEXT("/"), FontSilver); Print(Context, TotalEntries, FontSilver, 3, 0); Newline(Context);
+		Print(Context, TEXT("Alloc. Size    : "), FontWhite); PrintSize(Context, AllocatedIndexSizeInBytes, FontSilver); Newline(Context);
+		Print(Context, TEXT("Unused Buffers : "), FontWhite); Print(Context, UnusedBuffers, FontSilver); Newline(Context);
+		Print(Context, TEXT("Unused Size    : "), FontWhite); PrintSize(Context, UnusedIndexSizeInBytes, FontSilver); Newline(Context);
+		Print(Context, TEXT("Total Size     : "), FontYellow); PrintSize(Context, AllocatedIndexSizeInBytes + UnusedIndexSizeInBytes, FontYellow); Newline(Context);
 	}
-
-	Newline(Context);
-
-	// Unused
-	{
-		Print(Context, TEXT("Unused"), FontOrange); Newline(Context);
-		Print(Context, TEXT("Buffers        : "), FontWhite); Print(Context, UnusedBuffers, FontSilver); Newline(Context);
-		Print(Context, TEXT("Size           : "), FontYellow); PrintSize(Context, UnusedIndexSizeInBytes, FontYellow); Newline(Context);
-	}
-
-	Newline(Context);
-
-	{
-		Print(Context, TEXT("Total"), FontOrange); Newline(Context);
-		Print(Context, TEXT("Entries        : "), FontWhite); Print(Context, TotalEntries, FontWhite); Newline(Context);
-		Print(Context, TEXT("Size           : "), FontOrange); PrintSize(Context, AllocatedIndexSizeInBytes + UnusedIndexSizeInBytes, FontOrange); Newline(Context);
-	}
-
 	Newline(Context);
 
 	// 1: NumPrimitive | PrimitiveType | 0.4 Mb
@@ -430,7 +446,13 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 		Print(Context, TEXT("Index       "));
 		Print(Context, TEXT("Primitive   ")); 
 		Print(Context, TEXT("Type  "));
-		Print(Context, TEXT("Size"));
+		Print(Context, TEXT("Size          "));
+
+		Print(Context, TEXT("FirstIdx    "));
+		Print(Context, TEXT("BaseIdx     "));
+		Print(Context, TEXT("MinVtxIdx   "));
+		Print(Context, TEXT("MaxVtxIdx   "));
+		Print(Context, TEXT("#Vertex     "));
 		Newline(Context);
 
 		for (uint Index = 0; Index < VisibleInstances; ++Index)
@@ -445,6 +467,12 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 				Print(Context, TEXT("Strip "), FontSilver);
 
 			PrintSize(Context, Data.SizeInBytes, FontYellow);
+
+			Print(Context, Data.FirstIndex, FontSilver);
+			Print(Context, Data.BaseVertexIndex, FontSilver);
+			Print(Context, Data.MinVertexIndex, FontSilver);
+			Print(Context, Data.MaxVertexIndex, FontSilver);
+			Print(Context, Data.MaxVertexIndex - Data.MinVertexIndex + 1, FontSilver);
 
 			Newline(Context);
 		}

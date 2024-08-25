@@ -11,7 +11,7 @@
 PREDECLARE_USE_GEOMETRY_CLASS(FDynamicMesh3);
 
 /**
- * FMeshVertexChange represents an reversible change to a set of vertex positions.
+ * FMeshVertexChange represents an reversible change to a set of vertex positions, normals, colors and UVs
  * Currently only a UDynamicMeshComponent target is supported.
  * 
  * @todo support optionally storing old/new normals and tangents
@@ -33,6 +33,11 @@ public:
 	TArray<FVector3f> OldNormals;
 	TArray<FVector3f> NewNormals;
 
+	bool bHaveOverlayUVs = false;
+	TArray<int32> UVs;
+	TArray<FVector2f> OldUVs;
+	TArray<FVector2f> NewUVs;
+
 	/** Makes the change to the object */
 	GEOMETRYFRAMEWORK_API virtual void Apply(UObject* Object) override;
 
@@ -49,6 +54,7 @@ enum class EMeshVertexChangeComponents : uint8
 	None = 0,
 	VertexPositions = 1,
 	VertexColors = 2,
+	OverylayUVs = 4,
 	OverlayNormals = 16
 };
 ENUM_CLASS_FLAGS(EMeshVertexChangeComponents);
@@ -68,6 +74,9 @@ public:
 	bool bSaveOverlayNormals = false;
 	TMap<int32, int32> SavedNormalElements;
 
+	bool bSaveOverlayUVs = false;
+	TMap<int32, int32> SavedUVElements;
+
 	/** If set, this function is called whenever a newly-seen VertexID is saved, parameters are (VertexID, Index) into saved-vertices array */
 	TUniqueFunction<void(int32, int32)> OnNewVertexSaved = nullptr;
 
@@ -83,6 +92,8 @@ public:
 	GEOMETRYFRAMEWORK_API void SaveOverlayNormals(const FDynamicMesh3* Mesh, const TArray<int32>& ElementIDs, bool bInitial);
 	GEOMETRYFRAMEWORK_API void SaveOverlayNormals(const FDynamicMesh3* Mesh, const TSet<int32>& ElementIDs, bool bInitial);
 
+	GEOMETRYFRAMEWORK_API void SaveOverlayUVs(const FDynamicMesh3* Mesh, const TArray<int32>& ElementIDs, bool bInitial);
+	GEOMETRYFRAMEWORK_API void SaveOverlayUVs(const FDynamicMesh3* Mesh, const TSet<int32>& ElementIDs, bool bInitial);
 
 public:
 	// currently only used in vertex sculpt tool. cannot be used if bSaveColors = true
@@ -96,6 +107,9 @@ protected:
 
 	GEOMETRYFRAMEWORK_API void UpdateOverlayNormal(int32 ElementID, const FVector3f& OldNormal, const FVector3f& NewNormal);
 	GEOMETRYFRAMEWORK_API void UpdateOverlayNormalFinal(int32 ElementID, const FVector3f& NewNormal);
+
+	GEOMETRYFRAMEWORK_API void UpdateOverlayUV(int32 ElementID, const FVector2f& OldUV, const FVector2f& NewUV);
+	GEOMETRYFRAMEWORK_API void UpdateOverlayUVFinal(int32 ElementID, const FVector2f& NewUV);
 };
 
 

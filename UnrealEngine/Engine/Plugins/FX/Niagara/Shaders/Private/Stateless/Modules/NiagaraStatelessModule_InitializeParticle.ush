@@ -1,0 +1,52 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+static const uint EInitializeParticleModuleFlag_UniformSpriteSize	= 1 << 0;
+static const uint EInitializeParticleModuleFlag_UniformMeshScale	= 1 << 1;
+
+uint	InitializeParticle_ModuleFlags;
+uint3	InitializeParticle_InitialPosition;
+float4	InitializeParticle_ColorScale;
+float4	InitializeParticle_ColorBias;
+float2	InitializeParticle_SpriteSizeScale;
+float2	InitializeParticle_SpriteSizeBias;
+float	InitializeParticle_SpriteRotationScale;
+float	InitializeParticle_SpriteRotationBias;
+
+float3	InitializeParticle_MeshScaleScale;
+float3	InitializeParticle_MeshScaleBias;
+
+float	InitializeParticle_RibbonWidthScale;
+float	InitializeParticle_RibbonWidthBias;
+	
+struct FStatelessModule_InitializeParticle
+{
+};
+
+void InitializeParticle_Initialize(inout FStatelessModule_InitializeParticle ModuleData, inout FStatelessParticle Particle)
+{  
+	const bool bUniformSpriteSize = (InitializeParticle_ModuleFlags & EInitializeParticleModuleFlag_UniformSpriteSize) != 0;
+	const bool bUniformMeshScale  = (InitializeParticle_ModuleFlags & EInitializeParticleModuleFlag_UniformMeshScale) != 0;
+
+	FStatelessDistributionFloat3 InitialPosition;
+	InitialPosition.Init(Particle, InitializeParticle_InitialPosition);
+		
+	Particle.UniqueID		= Particle.UniqueIndex;
+	Particle.Position		= InitialPosition.GetValue(0.0f);
+	Particle.Color			= RandomScaleBiasFloat(Particle, InitializeParticle_ColorScale, InitializeParticle_ColorBias);
+	Particle.RibbonWidth	= RandomScaleBiasFloat(Particle, InitializeParticle_RibbonWidthScale, InitializeParticle_RibbonWidthBias);
+	Particle.SpriteSize		= RandomScaleBiasFloat(Particle, InitializeParticle_SpriteSizeScale, InitializeParticle_SpriteSizeBias, bUniformSpriteSize);
+	Particle.SpriteRotation	= RandomScaleBiasFloat(Particle, InitializeParticle_SpriteRotationScale, InitializeParticle_SpriteRotationBias);
+	Particle.Scale			= RandomScaleBiasFloat(Particle, InitializeParticle_MeshScaleScale, InitializeParticle_MeshScaleBias, bUniformMeshScale);
+
+	Particle.PreviousPosition		= Particle.Position;
+	Particle.PreviousRibbonWidth	= Particle.RibbonWidth;
+	Particle.PreviousSpriteSize		= Particle.SpriteSize;
+	Particle.PreviousScale			= Particle.Scale;
+	Particle.PreviousSpriteRotation	= Particle.SpriteRotation;
+}
+
+void InitializeParticle_Simulate(in FStatelessModule_InitializeParticle ModuleData, inout FStatelessParticle Particle)
+{  
+}

@@ -7,7 +7,6 @@
 #if WITH_SSL
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #endif
 

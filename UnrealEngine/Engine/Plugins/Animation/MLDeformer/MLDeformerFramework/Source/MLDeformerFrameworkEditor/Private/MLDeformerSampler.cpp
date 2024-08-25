@@ -1,11 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MLDeformerSampler.h"
-
 #include "MLDeformerInputInfo.h"
 #include "MLDeformerModel.h"
 #include "MLDeformerEditorToolkit.h"
-
+#include "MLDeformerTrainingInputAnim.h"
 #include "Animation/DebugSkelMeshComponent.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimInstance.h"
@@ -34,8 +33,13 @@ namespace UE::MLDeformer
 		}
 	}
 
-	// Initializer a sampler item.
 	void FMLDeformerSampler::Init(FMLDeformerEditorModel* InEditorModel)
+	{
+		Init(InEditorModel, 0);
+	}
+
+	// Initializer a sampler item.
+	void FMLDeformerSampler::Init(FMLDeformerEditorModel* InEditorModel, int32 InAnimIndex)
 	{
 		check(InEditorModel);
 		if (InEditorModel->GetEditor()->GetPersonaToolkitPointer() == nullptr)
@@ -47,13 +51,13 @@ namespace UE::MLDeformer
 		Model = EditorModel->GetModel();
 		NumImportedVertices = UMLDeformerModel::ExtractNumImportedSkinnedVertices(Model->GetSkeletalMesh());
 		AnimFrameIndex = 0;
+		AnimIndex = InAnimIndex;
 		SampleTime = 0.0f;
 		NumFloatsPerCurve = 1;
 
 		// Create the actors and components.
 		// This internally skips creating them if they already exist.
 		CreateActors();
-		RegisterTargetComponents();
 
 		SkinnedVertexPositions.Reset();
 		SkinnedVertexPositions.AddUninitialized(NumImportedVertices);
@@ -102,6 +106,16 @@ namespace UE::MLDeformer
 
 	void FMLDeformerSampler::Sample(int32 InAnimFrameIndex)
 	{
+		FMLDeformerTrainingInputAnim* TrainingInputAnim = EditorModel->GetTrainingInputAnim(AnimIndex);
+		if (!TrainingInputAnim || !TrainingInputAnim->IsValid())
+		{
+			return;
+		}
+		UAnimSequence* TrainingAnimSequence = EditorModel->GetTrainingInputAnim(AnimIndex)->GetAnimSequence();
+		check(TrainingAnimSequence);
+		const EAnimInterpolationType InterpolationTypeBackup = TrainingAnimSequence->Interpolation;
+		TrainingAnimSequence->Interpolation = EAnimInterpolationType::Step;
+
 		AnimFrameIndex = InAnimFrameIndex;
 		SampleTime = GetTimeAtFrame(InAnimFrameIndex);
 
@@ -121,6 +135,8 @@ namespace UE::MLDeformer
 			VertexDeltas.Reset(NumFloats);
 			VertexDeltas.AddZeroed(NumFloats);
 		}
+
+		TrainingAnimSequence->Interpolation = InterpolationTypeBackup;
 	}
 
 	// Calculate the inverse skinning transform. This is basically inv(sum(BoneTransform_i * inv(BoneRestTransform_i) * Weight_i)), where i is for each skinning influence for the given vertex.
@@ -193,6 +209,11 @@ namespace UE::MLDeformer
 		}
 	}
 
+	void FMLDeformerSampler::ExtractSkinnedPositions(int32 LODIndex, TArray<FVector3f>& OutPositions)
+	{
+		ExtractSkinnedPositions(LODIndex, BoneMatrices, TempVertexPositions, OutPositions);
+	}
+
 	void FMLDeformerSampler::ExtractSkinnedPositions(int32 LODIndex, TArray<FMatrix44f>& InBoneMatrices, TArray<FVector3f>& TempPositions, TArray<FVector3f>& OutPositions) const
 	{
 		OutPositions.Reset();
@@ -245,7 +266,7 @@ namespace UE::MLDeformer
 
 		// Create the skeletal mesh component.
 		USkeletalMesh* SkeletalMesh = Model->GetSkeletalMesh();
-		UAnimSequence* TrainingAnimSequence = Model->GetAnimSequence();
+		UAnimSequence* TrainingAnimSequence = EditorModel->GetTrainingInputAnim(AnimIndex)->GetAnimSequence();
 		if (SkeletalMeshComponent.Get() == nullptr)
 		{
 			SkeletalMeshComponent = NewObject<UDebugSkelMeshComponent>(SkelMeshActor);
@@ -275,7 +296,7 @@ namespace UE::MLDeformer
 	AActor* FMLDeformerSampler::CreateNewActor(UWorld* InWorld, const FName& Name) const
 	{
 		FActorSpawnParameters SpawnParams;
-		SpawnParams.Name = NAME_None;
+		SpawnParams.Name = MakeUniqueObjectName(InWorld, AActor::StaticClass(), Name);
 		AActor* Actor = InWorld->SpawnActor<AActor>(SpawnParams);
 		Actor->SetFlags(RF_Transient);
 		return Actor;

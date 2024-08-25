@@ -355,7 +355,7 @@ void FImageWriteQueue::DecrementFence(uint32 FenceID)
 			}
 		}
 
-		PendingFences.RemoveAt(0, LastCompletedFenceIndex+1, false);
+		PendingFences.RemoveAt(0, LastCompletedFenceIndex+1, EAllowShrinking::No);
 	}
 }
 

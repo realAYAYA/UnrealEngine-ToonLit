@@ -2,19 +2,14 @@
 
 #include "SkeletalMeshExporterUSD.h"
 
-#include "Engine/SkinnedAssetCommon.h"
-#include "EngineAnalytics.h"
-#include "MaterialExporterUSD.h"
-#include "Misc/EngineVersion.h"
-#include "Misc/PackageName.h"
-#include "Rendering/SkeletalMeshRenderData.h"
 #include "SkeletalMeshExporterUSDOptions.h"
+#include "USDAssetUserData.h"
 #include "USDClassesModule.h"
 #include "USDConversionUtils.h"
 #include "USDExporterModule.h"
 #include "USDLog.h"
-#include "USDMemory.h"
 #include "USDOptionsWindow.h"
+#include "USDPrimConversion.h"
 #include "USDSkeletalDataConversion.h"
 #include "USDTypesConversion.h"
 #include "USDUnrealAssetInfo.h"
@@ -26,6 +21,11 @@
 
 #include "AssetExportTask.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkinnedAssetCommon.h"
+#include "EngineAnalytics.h"
+#include "MaterialExporterUSD.h"
+#include "Misc/EngineVersion.h"
+#include "Rendering/SkeletalMeshRenderData.h"
 
 namespace UE::SkeletalMeshExporterUSD::Private
 {
@@ -38,7 +38,7 @@ namespace UE::SkeletalMeshExporterUSD::Private
 		const FString& Extension
 	)
 	{
-		if ( !Asset || !FEngineAnalytics::IsAvailable() )
+		if (!Asset || !FEngineAnalytics::IsAvailable())
 		{
 			return;
 		}
@@ -46,74 +46,96 @@ namespace UE::SkeletalMeshExporterUSD::Private
 		FString ClassName = Asset->GetClass()->GetName();
 
 		TArray<FAnalyticsEventAttribute> EventAttributes;
-		EventAttributes.Emplace( TEXT( "AssetType" ), ClassName );
+		EventAttributes.Emplace(TEXT("AssetType"), ClassName);
 
-		if ( Options )
+		if (Options)
 		{
-			UsdUtils::AddAnalyticsAttributes( *Options, EventAttributes );
+			UsdUtils::AddAnalyticsAttributes(*Options, EventAttributes);
 		}
 
 		IUsdClassesModule::SendAnalytics(
-			MoveTemp( EventAttributes ),
-			FString::Printf( TEXT( "Export.%s" ), *ClassName ),
+			MoveTemp(EventAttributes),
+			FString::Printf(TEXT("Export.%s"), *ClassName),
 			bAutomated,
 			ElapsedSeconds,
 			NumberOfFrames,
 			Extension
 		);
 	}
+
+	void HashSkeletalMesh(const USkeletalMesh* SkeletalMesh, FSHA1& InOutHashToUpdate)
+	{
+		if (const FSkeletalMeshRenderData* RenderData = SkeletalMesh->GetResourceForRendering())
+		{
+			const FString& DDCKey = RenderData->DerivedDataKey;
+			InOutHashToUpdate.UpdateWithString(*DDCKey, DDCKey.Len());
+		}
+
+		for (const FSkeletalMaterial& SkeletalMaterial : SkeletalMesh->GetMaterials())
+		{
+			FString MaterialPath = TEXT("None");
+			if (SkeletalMaterial.MaterialInterface)
+			{
+				MaterialPath = SkeletalMaterial.MaterialInterface->GetPathName();
+			}
+			InOutHashToUpdate.UpdateWithString(*MaterialPath, MaterialPath.Len());
+
+			// Note that we could hash the material slot name here too, but we don't because we always
+			// just write out the slots with UsdGeomSubsets named "Section0", "Section1", ..., "SectionN" anyway
+		}
+	}
 }
 
 USkeletalMeshExporterUsd::USkeletalMeshExporterUsd()
 {
 #if USE_USD_SDK
-	for ( const FString& Extension : UnrealUSDWrapper::GetNativeFileFormats() )
-	{
-		// USDZ is not supported for writing for now
-		if ( Extension.Equals( TEXT( "usdz" ) ) )
-		{
-			continue;
-		}
-
-		FormatExtension.Add(Extension);
-		FormatDescription.Add(TEXT("Universal Scene Description file"));
-	}
+	UnrealUSDWrapper::AddUsdExportFileFormatDescriptions(FormatExtension, FormatDescription);
 	SupportedClass = USkeletalMesh::StaticClass();
 	bText = false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }
 
-bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, FArchive& Ar, FFeedbackContext* Warn, int32 FileIndex, uint32 PortFlags )
+bool USkeletalMeshExporterUsd::ExportBinary(
+	UObject* Object,
+	const TCHAR* Type,
+	FArchive& Ar,
+	FFeedbackContext* Warn,
+	int32 FileIndex,
+	uint32 PortFlags
+)
 {
 #if USE_USD_SDK
-	USkeletalMesh* SkeletalMesh = CastChecked< USkeletalMesh >( Object );
-	if ( !SkeletalMesh )
+	USkeletalMesh* SkeletalMesh = CastChecked<USkeletalMesh>(Object);
+	if (!SkeletalMesh)
 	{
 		return false;
 	}
 
 	USkeletalMeshExporterUSDOptions* Options = nullptr;
-	if ( ExportTask )
+	if (ExportTask)
 	{
-		Options = Cast<USkeletalMeshExporterUSDOptions>( ExportTask->Options );
+		Options = Cast<USkeletalMeshExporterUSDOptions>(ExportTask->Options);
 	}
-	if ( !Options )
+	if (!Options)
 	{
 		Options = GetMutableDefault<USkeletalMeshExporterUSDOptions>();
 
 		// Prompt with an options dialog if we can
-		if ( Options && ( !ExportTask || !ExportTask->bAutomated ) )
+		if (Options && (!ExportTask || !ExportTask->bAutomated))
 		{
-			Options->MeshAssetOptions.MaterialBakingOptions.TexturesDir.Path = FPaths::Combine( FPaths::GetPath( UExporter::CurrentFilename ), TEXT( "Textures" ) );
+			Options->MeshAssetOptions.MaterialBakingOptions.TexturesDir.Path = FPaths::Combine(
+				FPaths::GetPath(UExporter::CurrentFilename),
+				TEXT("Textures")
+			);
 
-			const bool bContinue = SUsdOptionsWindow::ShowExportOptions( *Options );
-			if ( !bContinue )
+			const bool bContinue = SUsdOptionsWindow::ShowExportOptions(*Options);
+			if (!bContinue)
 			{
 				return false;
 			}
 		}
 	}
-	if ( !Options )
+	if (!Options)
 	{
 		return false;
 	}
@@ -125,55 +147,52 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 	// "C:/MyFolder/file_payload.usda" and create an "asset" file "C:/MyFolder/file.usda" that uses it
 	// as a payload, pointing at the default prim
 	FString PayloadFilename = UExporter::CurrentFilename;
-	if ( Options && Options->MeshAssetOptions.bUsePayload )
+	if (Options && Options->MeshAssetOptions.bUsePayload)
 	{
 		FString PathPart;
 		FString FilenamePart;
 		FString ExtensionPart;
-		FPaths::Split( PayloadFilename, PathPart, FilenamePart, ExtensionPart );
+		FPaths::Split(PayloadFilename, PathPart, FilenamePart, ExtensionPart);
 
-		if ( FormatExtension.Contains( Options->MeshAssetOptions.PayloadFormat ) )
+		if (FormatExtension.Contains(Options->MeshAssetOptions.PayloadFormat))
 		{
 			ExtensionPart = Options->MeshAssetOptions.PayloadFormat;
 		}
 
-		PayloadFilename = FPaths::Combine( PathPart, FilenamePart + TEXT( "_payload." ) + ExtensionPart );
+		PayloadFilename = FPaths::Combine(PathPart, FilenamePart + TEXT("_payload.") + ExtensionPart);
 	}
 
-	if ( !IUsdExporterModule::CanExportToLayer( UExporter::CurrentFilename ) ||
-		( Options->MeshAssetOptions.bUsePayload && !IUsdExporterModule::CanExportToLayer( PayloadFilename ) ) )
+	if (!IUsdExporterModule::CanExportToLayer(UExporter::CurrentFilename)
+		|| (Options->MeshAssetOptions.bUsePayload && !IUsdExporterModule::CanExportToLayer(PayloadFilename)))
 	{
 		return false;
 	}
 
 	// Get a simple GUID hash/identifier of our mesh
-	FString DDCKeyHash;
-	if( FSkeletalMeshRenderData* RenderData = SkeletalMesh->GetResourceForRendering() )
-	{
-		const FString& DDCKey = RenderData->DerivedDataKey;
-		FSHA1 SHA1;
-		SHA1.UpdateWithString( *DDCKey, DDCKey.Len() );
-		UsdUtils::HashForSkeletalMeshExport( *Options, SHA1 );
-		SHA1.Final();
-		FSHAHash Hash;
-		SHA1.GetHash( &Hash.Hash[ 0 ] );
-		DDCKeyHash = Hash.ToString();
-	}
+	FSHA1 SHA1;
+	UE::SkeletalMeshExporterUSD::Private::HashSkeletalMesh(SkeletalMesh, SHA1);
+	UsdUtils::HashForSkeletalMeshExport(*Options, SHA1);
+	SHA1.Final();
+	FSHAHash Hash;
+	SHA1.GetHash(&Hash.Hash[0]);
+	FString CurrentHashString = Hash.ToString();
 
 	// Check if we already have exported what we plan on exporting anyway
-	if ( FPaths::FileExists( UExporter::CurrentFilename ) && FPaths::FileExists( PayloadFilename ) )
+	if (FPaths::FileExists(UExporter::CurrentFilename) && FPaths::FileExists(PayloadFilename))
 	{
-		if ( !ExportTask->bReplaceIdentical )
+		if (!ExportTask->bReplaceIdentical)
 		{
-			UE_LOG( LogUsd, Log,
-				TEXT( "Skipping export of asset '%s' as the target file '%s' already exists." ),
+			UE_LOG(
+				LogUsd,
+				Log,
+				TEXT("Skipping export of asset '%s' as the target file '%s' already exists."),
 				*Object->GetPathName(),
 				*UExporter::CurrentFilename
 			);
 			return false;
 		}
 		// If we don't want to re-export this asset we need to check if its the same version
-		else if ( !Options->bReExportIdenticalAssets )
+		else if (!Options->bReExportIdenticalAssets)
 		{
 			bool bSkipMeshExport = false;
 
@@ -181,21 +200,22 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 			// we have to overwrite its files due to e.g. missing payload or anything like that
 			const bool bUseStageCache = false;
 			const EUsdInitialLoadSet InitialLoadSet = EUsdInitialLoadSet::LoadNone;
-			if ( UE::FUsdStage TempStage = UnrealUSDWrapper::OpenStage( *UExporter::CurrentFilename, InitialLoadSet, bUseStageCache ) )
+			if (UE::FUsdStage TempStage = UnrealUSDWrapper::OpenStage(*UExporter::CurrentFilename, InitialLoadSet, bUseStageCache))
 			{
-				if ( UE::FUsdPrim DefaultPrim = TempStage.GetDefaultPrim() )
+				if (UE::FUsdPrim DefaultPrim = TempStage.GetDefaultPrim())
 				{
-					FUsdUnrealAssetInfo Info = UsdUtils::GetPrimAssetInfo( DefaultPrim );
+					FUsdUnrealAssetInfo Info = UsdUtils::GetPrimAssetInfo(DefaultPrim);
 
-					const bool bVersionMatches = !Info.Version.IsEmpty() && Info.Version == DDCKeyHash;
+					const bool bVersionMatches = !Info.Version.IsEmpty() && Info.Version == CurrentHashString;
 
-					const bool bAssetTypeMatches = !Info.UnrealAssetType.IsEmpty()
-						&& Info.UnrealAssetType == SkeletalMesh->GetClass()->GetName();
+					const bool bAssetTypeMatches = !Info.UnrealAssetType.IsEmpty() && Info.UnrealAssetType == SkeletalMesh->GetClass()->GetName();
 
-					if ( bVersionMatches && bAssetTypeMatches )
+					if (bVersionMatches && bAssetTypeMatches)
 					{
-						UE_LOG( LogUsd, Log,
-							TEXT( "Skipping export of asset '%s' as the target file '%s' already contains up-to-date exported data." ),
+						UE_LOG(
+							LogUsd,
+							Log,
+							TEXT("Skipping export of asset '%s' as the target file '%s' already contains up-to-date exported data."),
 							*SkeletalMesh->GetPathName(),
 							*UExporter::CurrentFilename
 						);
@@ -205,21 +225,22 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 				}
 			}
 
-			if ( bSkipMeshExport )
+			if (bSkipMeshExport)
 			{
 				// Even if we're not going to export the mesh, we may still need to re-bake materials
-				if ( Options->MeshAssetOptions.bBakeMaterials )
+				if (Options->MeshAssetOptions.bBakeMaterials)
 				{
 					TSet<UMaterialInterface*> MaterialsToBake;
-					for ( const FSkeletalMaterial& SkeletalMaterial : SkeletalMesh->GetMaterials() )
+					for (const FSkeletalMaterial& SkeletalMaterial : SkeletalMesh->GetMaterials())
 					{
-						MaterialsToBake.Add( SkeletalMaterial.MaterialInterface );
+						MaterialsToBake.Add(SkeletalMaterial.MaterialInterface);
 					}
 
 					const bool bIsAssetLayer = true;
 					UMaterialExporterUsd::ExportMaterialsForStage(
 						MaterialsToBake.Array(),
 						Options->MeshAssetOptions.MaterialBakingOptions,
+						Options->MetadataOptions,
 						UExporter::CurrentFilename,
 						bIsAssetLayer,
 						Options->MeshAssetOptions.bUsePayload,
@@ -237,45 +258,45 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 	double StartTime = FPlatformTime::Cycles64();
 
 	// UsdStage is the payload stage when exporting with payloads, or just the single stage otherwise
-	UE::FUsdStage UsdStage = UnrealUSDWrapper::NewStage( *PayloadFilename );
-	if ( !UsdStage )
+	UE::FUsdStage UsdStage = UnrealUSDWrapper::NewStage(*PayloadFilename);
+	if (!UsdStage)
 	{
 		return false;
 	}
 
-	if ( Options )
+	if (Options)
 	{
-		UsdUtils::SetUsdStageMetersPerUnit( UsdStage, Options->StageOptions.MetersPerUnit );
-		UsdUtils::SetUsdStageUpAxis( UsdStage, Options->StageOptions.UpAxis );
+		UsdUtils::SetUsdStageMetersPerUnit(UsdStage, Options->StageOptions.MetersPerUnit);
+		UsdUtils::SetUsdStageUpAxis(UsdStage, Options->StageOptions.UpAxis);
 	}
 
-	FString RootPrimPath = ( TEXT( "/" ) + UsdUtils::SanitizeUsdIdentifier( *SkeletalMesh->GetName() ) );
+	FString RootPrimPath = (TEXT("/") + UsdUtils::SanitizeUsdIdentifier(*SkeletalMesh->GetName()));
 
-	UE::FUsdPrim RootPrim = UsdStage.DefinePrim( UE::FSdfPath( *RootPrimPath ), TEXT("SkelRoot") );
-	if ( !RootPrim )
+	UE::FUsdPrim RootPrim = UsdStage.DefinePrim(UE::FSdfPath(*RootPrimPath), TEXT("SkelRoot"));
+	if (!RootPrim)
 	{
 		return false;
 	}
 
-	UsdStage.SetDefaultPrim( RootPrim );
+	UsdStage.SetDefaultPrim(RootPrim);
 
 	// Asset stage always the stage where we write the material assignments
 	UE::FUsdStage AssetStage;
 
 	// Using payload: Convert mesh data through the asset stage (that references the payload) so that we can
 	// author mesh data on the payload layer and material data on the asset layer
-	if ( Options && Options->MeshAssetOptions.bUsePayload )
+	if (Options && Options->MeshAssetOptions.bUsePayload)
 	{
-		AssetStage = UnrealUSDWrapper::NewStage( *UExporter::CurrentFilename );
-		if ( AssetStage )
+		AssetStage = UnrealUSDWrapper::NewStage(*UExporter::CurrentFilename);
+		if (AssetStage)
 		{
-			UsdUtils::SetUsdStageMetersPerUnit( AssetStage, Options->StageOptions.MetersPerUnit );
-			UsdUtils::SetUsdStageUpAxis( AssetStage, Options->StageOptions.UpAxis );
+			UsdUtils::SetUsdStageMetersPerUnit(AssetStage, Options->StageOptions.MetersPerUnit);
+			UsdUtils::SetUsdStageUpAxis(AssetStage, Options->StageOptions.UpAxis);
 
-			if ( UE::FUsdPrim AssetRootPrim = AssetStage.DefinePrim( UE::FSdfPath( *RootPrimPath ) ) )
+			if (UE::FUsdPrim AssetRootPrim = AssetStage.DefinePrim(UE::FSdfPath(*RootPrimPath)))
 			{
-				AssetStage.SetDefaultPrim( AssetRootPrim );
-				UsdUtils::AddPayload( AssetRootPrim, *PayloadFilename );
+				AssetStage.SetDefaultPrim(AssetRootPrim);
+				UsdUtils::AddPayload(AssetRootPrim, *PayloadFilename);
 			}
 		}
 	}
@@ -285,36 +306,78 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 		AssetStage = UsdStage;
 	}
 
-	UnrealToUsd::ConvertSkeletalMesh( SkeletalMesh, RootPrim, UsdUtils::GetDefaultTimeCode(), &AssetStage, Options->MeshAssetOptions.LowestMeshLOD, Options->MeshAssetOptions.HighestMeshLOD );
+	UnrealToUsd::ConvertSkeletalMesh(
+		SkeletalMesh,
+		RootPrim,
+		UsdUtils::GetDefaultTimeCode(),
+		&AssetStage,
+		Options->MeshAssetOptions.LowestMeshLOD,
+		Options->MeshAssetOptions.HighestMeshLOD
+	);
 
-	// Write asset info now that we finished exporting
-	if ( UE::FUsdPrim AssetDefaultPrim = AssetStage.GetDefaultPrim() )
+	if (UE::FUsdPrim AssetDefaultPrim = AssetStage.GetDefaultPrim())
 	{
-		FUsdUnrealAssetInfo Info;
-		Info.Name = SkeletalMesh->GetName();
-		Info.Identifier = UExporter::CurrentFilename;
-		Info.Version = DDCKeyHash;
-		Info.UnrealContentPath = SkeletalMesh->GetPathName();
-		Info.UnrealAssetType = SkeletalMesh->GetClass()->GetName();
-		Info.UnrealExportTime = FDateTime::Now().ToString();
-		Info.UnrealEngineVersion = FEngineVersion::Current().ToString();
+		if (Options->MetadataOptions.bExportAssetInfo)
+		{
+			FUsdUnrealAssetInfo Info;
+			Info.Name = SkeletalMesh->GetName();
+			Info.Identifier = UExporter::CurrentFilename;
+			Info.Version = CurrentHashString;
+			Info.UnrealContentPath = SkeletalMesh->GetPathName();
+			Info.UnrealAssetType = SkeletalMesh->GetClass()->GetName();
+			Info.UnrealExportTime = FDateTime::Now().ToString();
+			Info.UnrealEngineVersion = FEngineVersion::Current().ToString();
 
-		UsdUtils::SetPrimAssetInfo( AssetDefaultPrim, Info );
+			UsdUtils::SetPrimAssetInfo(AssetDefaultPrim, Info);
+		}
+
+		if (Options->MetadataOptions.bExportAssetMetadata)
+		{
+			if (UUsdAssetUserData* UserData = UsdUtils::GetAssetUserData(SkeletalMesh))
+			{
+				UnrealToUsd::ConvertMetadata(
+					UserData,
+					AssetDefaultPrim,
+					Options->MetadataOptions.BlockedPrefixFilters,
+					Options->MetadataOptions.bInvertFilters
+				);
+			}
+
+			if (USkeleton* Skeleton = SkeletalMesh->GetSkeleton())
+			{
+				if (UUsdAssetUserData* UserData = UsdUtils::GetAssetUserData(Skeleton))
+				{
+					if (UserData->StageIdentifierToMetadata.Num() > 0)
+					{
+						UE::FUsdPrim SkelPrim = AssetStage.OverridePrim(
+							UE::FSdfPath(*RootPrimPath).AppendChild(UnrealIdentifiers::ExportedSkeletonPrimName)
+						);
+						UnrealToUsd::ConvertMetadata(
+							UserData,
+							SkelPrim,
+							Options->MetadataOptions.BlockedPrefixFilters,
+							Options->MetadataOptions.bInvertFilters
+						);
+					}
+				}
+			}
+		}
 	}
 
 	// Bake materials and replace unrealMaterials with references to the baked files.
-	if ( Options->MeshAssetOptions.bBakeMaterials )
+	if (Options->MeshAssetOptions.bBakeMaterials)
 	{
 		TSet<UMaterialInterface*> MaterialsToBake;
-		for ( const FSkeletalMaterial& SkeletalMaterial : SkeletalMesh->GetMaterials() )
+		for (const FSkeletalMaterial& SkeletalMaterial : SkeletalMesh->GetMaterials())
 		{
-			MaterialsToBake.Add( SkeletalMaterial.MaterialInterface );
+			MaterialsToBake.Add(SkeletalMaterial.MaterialInterface);
 		}
 
 		const bool bIsAssetLayer = true;
 		UMaterialExporterUsd::ExportMaterialsForStage(
 			MaterialsToBake.Array(),
 			Options->MeshAssetOptions.MaterialBakingOptions,
+			Options->MetadataOptions,
 			AssetStage.GetRootLayer().GetRealPath(),
 			bIsAssetLayer,
 			Options->MeshAssetOptions.bUsePayload,
@@ -324,7 +387,7 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 		);
 	}
 
-	if ( AssetStage && UsdStage != AssetStage )
+	if (AssetStage && UsdStage != AssetStage)
 	{
 		AssetStage.GetRootLayer().Save();
 	}
@@ -333,16 +396,15 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 	// Analytics
 	{
 		bool bAutomated = ExportTask ? ExportTask->bAutomated : false;
-		double ElapsedSeconds = FPlatformTime::ToSeconds64( FPlatformTime::Cycles64() - StartTime );
-		FString Extension = FPaths::GetExtension( UExporter::CurrentFilename );
-		double NumberOfFrames = 1 + UsdStage.GetEndTimeCode() - UsdStage.GetStartTimeCode();
+		double ElapsedSeconds = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - StartTime);
+		FString Extension = FPaths::GetExtension(UExporter::CurrentFilename);
 
 		UE::SkeletalMeshExporterUSD::Private::SendAnalytics(
 			Object,
 			Options,
 			bAutomated,
 			ElapsedSeconds,
-			UsdUtils::GetUsdStageNumFrames( AssetStage ),
+			UsdUtils::GetUsdStageNumFrames(AssetStage),
 			Extension
 		);
 	}
@@ -350,5 +412,5 @@ bool USkeletalMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type,
 	return true;
 #else
 	return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }

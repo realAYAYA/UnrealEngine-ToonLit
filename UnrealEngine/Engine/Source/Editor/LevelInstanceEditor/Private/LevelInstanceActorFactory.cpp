@@ -26,11 +26,29 @@ bool ULevelInstanceActorFactory::CanCreateActorFrom(const FAssetData& AssetData,
 		return false;
 	}
 
-	// If asset is valid it needs to be of type: UWorld
-	if (AssetData.IsValid() && !AssetData.IsInstanceOf(UWorld::StaticClass()))
+	if (AssetData.IsValid())
 	{
-		OutErrorMsg = NSLOCTEXT("LevelInstanceActorFactory", "NoWorld", "A valid world must be specified.");
-		return false;
+		// Only allow creating level instance actors from actor classes
+		if (AssetData.IsInstanceOf<UClass>())
+		{
+			if (UClass* Class = Cast<UClass>(AssetData.GetAsset()))
+			{
+				if (!Class->IsChildOf<AActor>() || !Cast<ILevelInstanceInterface>(Class->GetDefaultObject()))
+				{
+					OutErrorMsg = NSLOCTEXT("LevelInstanceActorFactory", "InvalidClass", "A valid actor class must be specified.");
+					return false;
+				}
+			
+				return true;
+			}
+		}
+
+		// Only allow creating level instance actors from world assets
+		if (!AssetData.IsInstanceOf<UWorld>())
+		{
+			OutErrorMsg = NSLOCTEXT("LevelInstanceActorFactory", "NoWorld", "A valid world must be specified.");
+			return false;
+		}
 	}
 
 	return true;

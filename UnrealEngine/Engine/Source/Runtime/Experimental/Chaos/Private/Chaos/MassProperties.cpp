@@ -340,9 +340,9 @@ namespace Chaos
 		Chaos::FReal TotalVolume = 0;
 		Chaos::FVec3 TotalCenterOfMass(0);
 		TArray< Chaos::FMassProperties > MassPropertiesList;
-		for (const TUniquePtr<FImplicitObject>& ImplicitObjectUniquePtr: ImplicitUnion.GetObjects())
+		for (const Chaos::FImplicitObjectPtr& ImplicitObjectUniquePtr: ImplicitUnion.GetObjects())
 		{
-			if (const Chaos::FImplicitObject* ImplicitObject = ImplicitObjectUniquePtr.Get())
+			if (const Chaos::FImplicitObject* ImplicitObject = ImplicitObjectUniquePtr.GetReference())
 			{
 				Chaos::FMassProperties MassProperties;
 				if (CalculateMassPropertiesOfImplicitType(MassProperties, FTransform::Identity, ImplicitObject, InDensityKGPerCM))
@@ -455,7 +455,7 @@ namespace Chaos
 			const bool bHassMass = (ShapeIndex < bContributesToMass.Num()) ? bContributesToMass[ShapeIndex] : true;
 			if (bHassMass)
 			{
-				if (const Chaos::FImplicitObject* ImplicitObject = Shape->GetGeometry().Get())
+				if (const Chaos::FImplicitObject* ImplicitObject = Shape->GetGeometry())
 				{
 					Chaos::FMassProperties MassProperties;
 					if (CalculateMassPropertiesOfImplicitType(MassProperties, FTransform::Identity, ImplicitObject, InDensityKGPerCM))

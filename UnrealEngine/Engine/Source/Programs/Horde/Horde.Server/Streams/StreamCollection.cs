@@ -4,12 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using EpicGames.Core;
-using Horde.Server.Jobs;
-using Horde.Server.Projects;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using Horde.Server.Server;
-using Horde.Server.Users;
 using Horde.Server.Utilities;
 using HordeCommon;
 using MongoDB.Bson.Serialization.Attributes;
@@ -222,9 +223,10 @@ namespace Horde.Server.Streams
 		}
 
 		/// <inheritdoc/>
-		public async Task<IStream> GetAsync(StreamConfig streamConfig) => await GetInternalAsync(streamConfig);
+		public async Task<IStream> GetAsync(StreamConfig streamConfig, CancellationToken cancellationToken)
+			=> await GetInternalAsync(streamConfig, cancellationToken);
 
-		async Task<StreamDoc> GetInternalAsync(StreamConfig streamConfig)
+		async Task<StreamDoc> GetInternalAsync(StreamConfig streamConfig, CancellationToken cancellationToken)
 		{
 			FindOneAndUpdateOptions<StreamDoc, StreamDoc> options = new FindOneAndUpdateOptions<StreamDoc, StreamDoc>();
 			options.IsUpsert = true;
@@ -232,8 +234,8 @@ namespace Horde.Server.Streams
 
 			for (; ; )
 			{
-				StreamDoc stream = await _streams.FindOneAndUpdateAsync<StreamDoc>(x => x.Id == streamConfig.Id, Builders<StreamDoc>.Update.SetOnInsert(x => x.UpdateIndex, 0), options);
-				if (await PostLoadAsync(stream, streamConfig))
+				StreamDoc stream = await _streams.FindOneAndUpdateAsync<StreamDoc>(x => x.Id == streamConfig.Id, Builders<StreamDoc>.Update.SetOnInsert(x => x.UpdateIndex, 0), options, cancellationToken);
+				if (await PostLoadAsync(stream, streamConfig, cancellationToken))
 				{
 					return stream;
 				}
@@ -241,12 +243,13 @@ namespace Horde.Server.Streams
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IStream>> GetAsync(IReadOnlyList<StreamConfig> streamConfigs) => await GetInternalAsync(streamConfigs).ConvertAllAsync<StreamDoc, IStream>();
+		public async Task<IReadOnlyList<IStream>> GetAsync(IReadOnlyList<StreamConfig> streamConfigs, CancellationToken cancellationToken)
+			=> await GetInternalAsync(streamConfigs, cancellationToken);
 
-		async Task<List<StreamDoc>> GetInternalAsync(IReadOnlyList<StreamConfig> streamConfigs)
+		async Task<List<StreamDoc>> GetInternalAsync(IReadOnlyList<StreamConfig> streamConfigs, CancellationToken cancellationToken)
 		{
 			FilterDefinition<StreamDoc> filter = Builders<StreamDoc>.Filter.In(x => x.Id, streamConfigs.Select(x => x.Id));
-			List<StreamDoc> matches = await _streams.Find(filter).ToListAsync();
+			List<StreamDoc> matches = await _streams.Find(filter).ToListAsync(cancellationToken);
 
 			List<StreamDoc> results = new List<StreamDoc>(streamConfigs.Count);
 			foreach (StreamConfig streamConfig in streamConfigs)
@@ -254,7 +257,7 @@ namespace Horde.Server.Streams
 				StreamDoc? stream = matches.FirstOrDefault(x => x.Id == streamConfig.Id);
 				if (stream == null)
 				{
-					stream = await GetInternalAsync(streamConfig);
+					stream = await GetInternalAsync(streamConfig, cancellationToken);
 				}
 				else
 				{
@@ -265,13 +268,13 @@ namespace Horde.Server.Streams
 			return results;
 		}
 
-		async ValueTask<bool> PostLoadAsync(StreamDoc streamDoc, StreamConfig streamConfig)
+		async ValueTask<bool> PostLoadAsync(StreamDoc streamDoc, StreamConfig streamConfig, CancellationToken cancellationToken)
 		{
 			if (streamDoc.PostLoad(streamConfig, _clock.UtcNow))
 			{
 				int updateIndex = streamDoc.UpdateIndex++;
 
-				ReplaceOneResult result = await _streams.ReplaceOneAsync(x => x.Id == streamDoc.Id && x.UpdateIndex == updateIndex, streamDoc);
+				ReplaceOneResult result = await _streams.ReplaceOneAsync(x => x.Id == streamDoc.Id && x.UpdateIndex == updateIndex, streamDoc, cancellationToken: cancellationToken);
 				if (result.MatchedCount != 1)
 				{
 					return false;
@@ -281,7 +284,7 @@ namespace Horde.Server.Streams
 		}
 
 		/// <inheritdoc/>
-		public async Task<IStream?> TryUpdateTemplateRefAsync(IStream streamInterface, TemplateId templateId, List<UpdateStepStateRequest>? stepStates = null)
+		public async Task<IStream?> TryUpdateTemplateRefAsync(IStream streamInterface, TemplateId templateId, List<UpdateStepStateRequest>? stepStates = null, CancellationToken cancellationToken = default)
 		{
 			StreamDoc stream = (StreamDoc)streamInterface;
 
@@ -364,12 +367,12 @@ namespace Horde.Server.Streams
 				return streamInterface;
 			}
 
-			return await TryUpdateStreamAsync(stream, updateBuilder.Combine(updates));
+			return await TryUpdateStreamAsync(stream, updateBuilder.Combine(updates), cancellationToken);
 
 		}
 
 		/// <inheritdoc/>
-		public async Task<IStream?> TryUpdatePauseStateAsync(IStream streamInterface, DateTime? newPausedUntil, string? newPauseComment)
+		public async Task<IStream?> TryUpdatePauseStateAsync(IStream streamInterface, DateTime? newPausedUntil, string? newPauseComment, CancellationToken cancellationToken)
 		{
 			StreamDoc stream = (StreamDoc)streamInterface;
 
@@ -381,11 +384,11 @@ namespace Horde.Server.Streams
 			updates.Add(updateBuilder.Set(x => x.PausedUntil, newPausedUntil));
 			updates.Add(updateBuilder.Set(x => x.PauseComment, newPauseComment));
 
-			return await TryUpdateStreamAsync(stream, updateBuilder.Combine(updates));
+			return await TryUpdateStreamAsync(stream, updateBuilder.Combine(updates), cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<IStream?> TryUpdateScheduleTriggerAsync(IStream streamInterface, TemplateId templateId, DateTime? lastTriggerTimeUtc, int? lastTriggerChange, List<JobId> newActiveJobs)
+		public async Task<IStream?> TryUpdateScheduleTriggerAsync(IStream streamInterface, TemplateId templateId, DateTime? lastTriggerTimeUtc, int? lastTriggerChange, List<JobId> newActiveJobs, CancellationToken cancellationToken)
 		{
 			StreamDoc stream = (StreamDoc)streamInterface;
 			TemplateRefDoc template = stream.Templates[templateId];
@@ -412,7 +415,7 @@ namespace Horde.Server.Streams
 				schedule.ActiveJobs = newActiveJobs;
 			}
 
-			return (updates.Count == 0)? streamInterface : await TryUpdateStreamAsync(stream, Builders<StreamDoc>.Update.Combine(updates));
+			return (updates.Count == 0) ? streamInterface : await TryUpdateStreamAsync(stream, Builders<StreamDoc>.Update.Combine(updates), cancellationToken);
 		}
 
 		/// <summary>
@@ -420,15 +423,16 @@ namespace Horde.Server.Streams
 		/// </summary>
 		/// <param name="stream">The stream to update</param>
 		/// <param name="update">The update definition</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The updated document, or null the update failed</returns>
-		private async Task<StreamDoc?> TryUpdateStreamAsync(StreamDoc stream, UpdateDefinition<StreamDoc> update)
+		private async Task<StreamDoc?> TryUpdateStreamAsync(StreamDoc stream, UpdateDefinition<StreamDoc> update, CancellationToken cancellationToken)
 		{
 			FilterDefinition<StreamDoc> filter = Builders<StreamDoc>.Filter.Expr(x => x.Id == stream.Id && x.UpdateIndex == stream.UpdateIndex);
 			update = update.Set(x => x.UpdateIndex, stream.UpdateIndex + 1);
 
 			FindOneAndUpdateOptions<StreamDoc> options = new FindOneAndUpdateOptions<StreamDoc> { ReturnDocument = ReturnDocument.After };
 
-			StreamDoc? result = await _streams.FindOneAndUpdateAsync(filter, update, options);
+			StreamDoc? result = await _streams.FindOneAndUpdateAsync(filter, update, options, cancellationToken);
 			if (result != null)
 			{
 				result.PostLoad(stream.Config, _clock.UtcNow);
@@ -467,21 +471,20 @@ namespace Horde.Server.Streams
 				}
 			}
 
-			HashSet<TemplateId> undefinedTemplates = new();
 			// Check that all the templates are referenced by a tab
-			foreach (JobsTabConfig jobsTab in config.Tabs.OfType<JobsTabConfig>())
+			HashSet<TemplateId> undefinedTemplates = new();
+			foreach (TabConfig tab in config.Tabs)
 			{
-				if (jobsTab.Templates != null)
+				if (tab.Templates != null)
 				{
-					remainingTemplates.ExceptWith(jobsTab.Templates);
-					foreach (TemplateId templateId in jobsTab.Templates)
+					remainingTemplates.ExceptWith(tab.Templates);
+					foreach (TemplateId templateId in tab.Templates)
 					{
 						if (config.Templates.Find(x => x.Id == templateId) == null)
 						{
 							undefinedTemplates.Add(templateId);
 						}
 					}
-					
 				}
 			}
 			if (remainingTemplates.Count > 0)

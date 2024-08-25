@@ -10,14 +10,13 @@
 #include "PostProcess/SceneRenderTargets.h"
 #include "PostProcess/TemporalAA.h"
 #include "RayTracing/RaytracingOptions.h"
-#include "RayTracing/RayTracingReflections.h"
 #include "VolumetricRenderTarget.h"
 #include "RenderGraph.h"
 #include "ScenePrivate.h"
 #include "SceneRendering.h"
 #include "ScreenSpaceRayTracing.h"
 #include "SceneTextureParameters.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "VirtualShadowMaps/VirtualShadowMapArray.h"
 #include "VirtualShadowMaps/VirtualShadowMapProjection.h"
 #include "Lumen/LumenSceneData.h"
@@ -141,7 +140,7 @@ bool ShouldRenderSingleLayerWater(TArrayView<const FViewInfo> Views)
 	{
 		for (const FViewInfo& View : Views)
 		{
-			if (View.bHasSingleLayerWaterMaterial)
+			if (View.bHasSingleLayerWaterMaterial && View.ParallelMeshDrawCommandPasses[EMeshPass::SingleLayerWaterPass].HasAnyDraw())
 			{
 				return true;
 			}
@@ -205,18 +204,6 @@ bool ShouldRenderScreenSpaceReflectionsWater(const FViewInfo& View)
 }
 }
 
-#if RHI_RAYTRACING
-bool ShouldRenderRayTracingReflectionsWater(const FViewInfo& View)
-{
-	// This only returns true if using the default reflections method and having RTR enabled in the scene. It can't be forced with r.Water.SingleLayer.Reflection.
-	const bool bEffectEnabled = !View.bIsReflectionCapture 
-		&& GetSingleLayerWaterReflectionTechnique() == ESingleLayerWaterReflections::Enabled
-		&& ShouldRenderRayTracingReflections(View)
-		&& FDataDrivenShaderPlatformInfo::GetSupportsHighEndRayTracingReflections(View.GetShaderPlatform());
-	return ShouldRenderRayTracingEffect(bEffectEnabled, ERayTracingPipelineCompatibilityFlags::FullPipeline, nullptr);
-}
-#endif // RHI_RAYTRACING
-
 bool ShouldRenderLumenReflectionsWater(const FViewInfo& View, bool bSkipTracingDataCheck, bool bSkipProjectCheck)
 {
 	// This only returns true if using the default reflections method and having Lumen enabled in the scene. It can't be forced with r.Water.SingleLayer.Reflection.
@@ -263,7 +250,7 @@ bool NeedsSeparatedMainDirectionalLightTexture_Runtime(const FStaticShaderPlatfo
 }
 
 BEGIN_SHADER_PARAMETER_STRUCT(FSingleLayerWaterCommonShaderParameters, )
-	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ScreenSpaceReflectionsTexture)
+	SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, ScreenSpaceReflectionsTexture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, ScreenSpaceReflectionsSampler)
 	SHADER_PARAMETER_TEXTURE(Texture2D, PreIntegratedGF)
 	SHADER_PARAMETER_SAMPLER(SamplerState, PreIntegratedGFSampler)
@@ -279,7 +266,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FSingleLayerWaterCommonShaderParameters, )
 	SHADER_PARAMETER_STRUCT_REF(FReflectionCaptureShaderData, ReflectionCaptureData)
 	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FReflectionUniformParameters, ReflectionsParameters)
 	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FForwardLightData, ForwardLightData)
-	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 END_SHADER_PARAMETER_STRUCT()
 
 class FSingleLayerWaterCompositePS : public FGlobalShader
@@ -324,7 +311,7 @@ class FWaterTileCategorisationMarkCS : public FGlobalShader
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)	// Water scene texture
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, WaterDepthStencilTexture)
 		SHADER_PARAMETER(FIntPoint, TiledViewRes)
@@ -425,6 +412,7 @@ class FWaterRefractionCopyPS : public FGlobalShader
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetRenderTargetOutputFormat(0, PF_R32_FLOAT);
 	}
 };
 
@@ -508,7 +496,7 @@ static FSingleLayerWaterTileClassification ClassifyTiles(FRDGBuilder& GraphBuild
 
 			PassParameters->SceneTextures = GetSceneTextureParameters(GraphBuilder, SceneTextures);
 			PassParameters->View = View.GetShaderParameters();
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 			PassParameters->TiledViewRes = Result.TiledViewRes;
 			PassParameters->WaterDepthStencilTexture = DepthPrepassTexture ? GraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateWithPixelFormat(DepthPrepassTexture, PF_X24_G8)) : nullptr;
 			PassParameters->TileMaskBufferOut = TileMaskBufferUAV;
@@ -721,6 +709,7 @@ static FSceneWithoutWaterTextures AddCopySceneWithoutWaterPass(
 		SceneColorWithoutSingleLayerWaterTexture = GraphBuilder.CreateTexture(ColorDesc, TEXT("SLW.SceneColorWithout"));
 	}
 
+	// Note: if changing format, also update FWaterRefractionCopyPS::ModifyCompilationEnvironment accordingly
 	const FRDGTextureDesc DepthDesc(FRDGTextureDesc::Create2D(RefractionResolution, PF_R32_FLOAT, SceneDepthDesc.ClearValue, TexCreate_ShaderResource | TexCreate_RenderTargetable));
 	FRDGTextureRef SceneDepthWithoutSingleLayerWaterTexture = GraphBuilder.CreateTexture(DepthDesc, TEXT("SLW.SceneDepthWithout"));
 
@@ -858,7 +847,16 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWaterReflections(
 
 			const bool bIsInstancedStereoSideBySide = View.bIsInstancedStereoEnabled && !View.bIsMobileMultiViewEnabled && IStereoRendering::IsStereoEyeView(View);
 
-			Parameters.ScreenSpaceReflectionsTexture = ReflectionsColor ? ReflectionsColor : BlackDummyTexture;
+			FRDGTextureRef ScreenSpaceReflectionsTexture = ReflectionsColor ? ReflectionsColor : BlackDummyTexture;
+			if (ReflectionsColor && ReflectionsColor->Desc.Dimension == ETextureDimension::Texture2DArray)
+			{
+				Parameters.ScreenSpaceReflectionsTexture = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForSlice(ScreenSpaceReflectionsTexture, 0));
+			}
+			else
+			{
+				Parameters.ScreenSpaceReflectionsTexture = GraphBuilder.CreateSRV(ScreenSpaceReflectionsTexture);
+			}
+
 			Parameters.ScreenSpaceReflectionsSampler = TStaticSamplerState<SF_Point>::GetRHI();
 			Parameters.PreIntegratedGF = GSystemTextures.PreintegratedGF->GetRHI();
 			Parameters.PreIntegratedGFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
@@ -874,7 +872,7 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWaterReflections(
 			Parameters.ReflectionCaptureData = View.ReflectionCaptureUniformBuffer;
 			Parameters.ReflectionsParameters = CreateReflectionUniformBuffer(GraphBuilder, View);
 			Parameters.ForwardLightData = View.ForwardLightingResources.ForwardLightUniformBuffer;
-			Parameters.Strata = Strata::BindStrataGlobalUniformParameters(View);
+			Parameters.Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 		};
 
 		const bool bRunTiled = UseSingleLayerWaterIndirectDraw(View.GetShaderPlatform()) && CVarWaterSingleLayerTiledComposite.GetValueOnRenderThread();
@@ -979,6 +977,7 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWaterReflections(
 						TiledShadowRendering.DrawIndirectParametersBuffer = TiledScreenSpaceReflection.DrawIndirectParametersBuffer;
 						TiledShadowRendering.TileListDataBufferSRV = TiledScreenSpaceReflection.TileListDataBufferSRV;
 						TiledShadowRendering.TileSize = TiledScreenSpaceReflection.TileSize;
+						TiledShadowRendering.TileType = FTiledShadowRendering::ETileType::Tile12bits;
 					}
 
 					const bool bProjectingForForwardShading = false;
@@ -1021,86 +1020,6 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWaterReflections(
 				&TiledScreenSpaceReflection,
 				nullptr,
 				ERDGPassFlags::Compute);
-		}
-		else if (ViewPipelineState.ReflectionsMethodWater == EReflectionsMethod::RTR)
-		{
-			check(ShouldRenderRayTracingReflectionsWater(View));
-			RDG_EVENT_SCOPE(GraphBuilder, "SLW::RayTracingReflections");
-			RDG_GPU_STAT_SCOPE(GraphBuilder, RayTracingWaterReflections);
-
-			IScreenSpaceDenoiser::FReflectionsInputs DenoiserInputs;
-			IScreenSpaceDenoiser::FReflectionsRayTracingConfig RayTracingConfig;
-
-			//RayTracingConfig.ResolutionFraction = FMath::Clamp(GetRayTracingReflectionsScreenPercentage() / 100.0f, 0.25f, 1.0f);
-			RayTracingConfig.ResolutionFraction = 1.0f;
-			//RayTracingConfig.RayCountPerPixel = GetRayTracingReflectionsSamplesPerPixel(View) > -1 ? GetRayTracingReflectionsSamplesPerPixel(View) : View.FinalPostProcessSettings.RayTracingReflectionsSamplesPerPixel;
-			RayTracingConfig.RayCountPerPixel = 1;
-
-			// Water is assumed to have zero roughness and is not currently denoised.
-			//int32 DenoiserMode = GetReflectionsDenoiserMode();
-			//bool bDenoise = DenoiserMode != 0;
-			int32 DenoiserMode = 0;
-			bool bDenoise = false;
-
-			if (!bDenoise)
-			{
-				RayTracingConfig.ResolutionFraction = 1.0f;
-			}
-
-			FRayTracingReflectionOptions Options;
-			Options.Algorithm = FRayTracingReflectionOptions::BruteForce;
-			Options.SamplesPerPixel = 1;
-			Options.ResolutionFraction = 1.0;
-			Options.bReflectOnlyWater = true;
-
-			{
-				float UpscaleFactor = 1.0;
-				FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(
-					SceneTextures.Config.Extent / UpscaleFactor,
-					PF_FloatRGBA,
-					FClearValueBinding::None,
-					TexCreate_ShaderResource | TexCreate_RenderTargetable | TexCreate_UAV);
-
-				DenoiserInputs.Color = GraphBuilder.CreateTexture(Desc, TEXT("SLW.RayTracingReflections"));
-
-				Desc.Format = PF_R16F;
-				DenoiserInputs.RayHitDistance = GraphBuilder.CreateTexture(Desc, TEXT("SLW.RayTracingReflectionsHitDistance"));
-				DenoiserInputs.RayImaginaryDepth = GraphBuilder.CreateTexture(Desc, TEXT("SLW.RayTracingReflectionsImaginaryDepth"));
-			}
-
-			RenderRayTracingReflections(
-				GraphBuilder,
-				SceneTextures,
-				View,
-				DenoiserMode,
-				Options,
-				&DenoiserInputs);
-
-			if (bDenoise)
-			{
-				const IScreenSpaceDenoiser* DefaultDenoiser = IScreenSpaceDenoiser::GetDefaultDenoiser();
-				const IScreenSpaceDenoiser* DenoiserToUse = DenoiserMode == 1 ? DefaultDenoiser : GScreenSpaceDenoiser;
-
-				// Standard event scope for denoiser to have all profiling information not matter what, and with explicit detection of third party.
-				RDG_EVENT_SCOPE(GraphBuilder, "%s%s(WaterReflections) %dx%d",
-					DenoiserToUse != DefaultDenoiser ? TEXT("ThirdParty ") : TEXT(""),
-					DenoiserToUse->GetDebugName(),
-					View.ViewRect.Width(), View.ViewRect.Height());
-
-				IScreenSpaceDenoiser::FReflectionsOutputs DenoiserOutputs = DenoiserToUse->DenoiseWaterReflections(
-					GraphBuilder,
-					View,
-					&View.PrevViewInfo,
-					SceneTextureParameters,
-					DenoiserInputs,
-					RayTracingConfig);
-
-				ReflectionsColor = DenoiserOutputs.Color;
-			}
-			else
-			{
-				ReflectionsColor = DenoiserInputs.Color;
-			}
 		}
 		else if (ViewPipelineState.ReflectionsMethodWater == EReflectionsMethod::SSR)
 		{
@@ -1175,11 +1094,7 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWaterReflections(
 
 			if (bRunTiled)
 			{
-				const bool bUseTileCoord16bitsEncoding = true;
-
-				FWaterTileVS::FPermutationDomain VsPermutationVector;
-				VsPermutationVector.Set<FWaterTileVS::ETileEncoding>(bUseTileCoord16bitsEncoding ? 0 : 1);
-				TShaderMapRef<FWaterTileVS> VertexShader(View.ShaderMap, VsPermutationVector);
+				TShaderMapRef<FWaterTileVS> VertexShader(View.ShaderMap);
 				ValidateShaderParameters(VertexShader, PassParameters->VS);
 				ClearUnusedGraphResources(VertexShader, &PassParameters->VS);
 
@@ -1239,7 +1154,8 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWater(
 	const FSingleLayerWaterPrePassResult* SingleLayerWaterPrePassResult,
 	bool bShouldRenderVolumetricCloud,
 	FSceneWithoutWaterTextures& SceneWithoutWaterTextures,
-	FLumenSceneFrameTemporaries& LumenFrameTemporaries)
+	FLumenSceneFrameTemporaries& LumenFrameTemporaries,
+	bool bIsCameraUnderWater)
 {
 	RDG_EVENT_SCOPE(GraphBuilder, "SingleLayerWater");
 	RDG_GPU_STAT_SCOPE(GraphBuilder, SingleLayerWater);
@@ -1249,11 +1165,11 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWater(
 	SceneWithoutWaterTextures = AddCopySceneWithoutWaterPass(GraphBuilder, ViewFamily, Views, SceneTextures.Color.Resolve, SceneTextures.Depth.Resolve);
 
 	// Render height fog over the color buffer if it is allocated, e.g. SingleLayerWaterUsesSimpleShading is true.
-	if (SceneWithoutWaterTextures.ColorTexture && ShouldRenderFog(ViewFamily))
+	if (!bIsCameraUnderWater && SceneWithoutWaterTextures.ColorTexture && ShouldRenderFog(ViewFamily))
 	{
 		RenderUnderWaterFog(GraphBuilder, SceneWithoutWaterTextures, SceneTextures.UniformBuffer);
 	}
-	if (SceneWithoutWaterTextures.ColorTexture && bShouldRenderVolumetricCloud)
+	if (!bIsCameraUnderWater && SceneWithoutWaterTextures.ColorTexture && bShouldRenderVolumetricCloud)
 	{
 		// This path is only taken when rendering the clouds in a render target that can be composited
 		ComposeVolumetricRenderTargetOverSceneUnderWater(GraphBuilder, Views, SceneWithoutWaterTextures, SceneTextures);
@@ -1335,7 +1251,7 @@ void FDeferredShadingSceneRenderer::RenderSingleLayerWaterInner(
 		const bool bNeverClear = true;
 		BasePassTextures[BasePassTextureCount++] = FTextureRenderTargetBinding(SceneWithoutWaterTextures.SeparatedMainDirLightTexture, bNeverClear);
 	}
-	Strata::AppendStrataMRTs(*this, BasePassTextureCount, BasePassTextures);
+	Substrate::AppendSubstrateMRTs(*this, BasePassTextureCount, BasePassTextures);
 	TArrayView<FTextureRenderTargetBinding> BasePassTexturesView = MakeArrayView(BasePassTextures.GetData(), BasePassTextureCount);
 
 	FRDGTextureRef WhiteForwardScreenSpaceShadowMask = SystemTextures.White;
@@ -1616,7 +1532,8 @@ void FSingleLayerWaterPassMeshProcessor::CollectPSOInitializers(const FSceneText
 		const bool bHasDepthPrepass = IsSingleLayerWaterDepthPrepassEnabled(GetFeatureLevelShaderPlatform(FeatureLevel), FeatureLevel);
 		RenderTargetsInfo.DepthStencilAccess = bHasDepthPrepass ? FExclusiveDepthStencil::DepthRead_StencilRead : FExclusiveDepthStencil::DepthRead_StencilNop;
 
-		AddGraphicsPipelineStateInitializer(
+		FBasePassMeshProcessor::AddBasePassGraphicsPipelineStateInitializer(
+			FeatureLevel,
 			VertexFactoryData,
 			Material,
 			PassDrawRenderState,
@@ -1625,8 +1542,8 @@ void FSingleLayerWaterPassMeshProcessor::CollectPSOInitializers(const FSceneText
 			MeshFillMode,
 			MeshCullMode,
 			(EPrimitiveType)PreCacheParams.PrimitiveType,
-			EMeshPassFeatures::Default, 
-			true /*bRequired*/,
+			true /*bPrecacheAlphaColorChannel*/,
+			PSOCollectorIndex,
 			PSOInitializers);
 	}
 }
@@ -1701,7 +1618,7 @@ private:
 };
 
 FSingleLayerWaterDepthPrepassMeshProcessor::FSingleLayerWaterDepthPrepassMeshProcessor(const FScene* Scene, ERHIFeatureLevel::Type FeatureLevel, const FSceneView* InViewIfDynamicMeshCommand, const FMeshPassProcessorRenderState& InPassDrawRenderState, FMeshPassDrawListContext* InDrawListContext)
-	: FMeshPassProcessor(EMeshPass::SingleLayerWaterPass, Scene, FeatureLevel, InViewIfDynamicMeshCommand, InDrawListContext)
+	: FMeshPassProcessor(EMeshPass::SingleLayerWaterDepthPrepass, Scene, FeatureLevel, InViewIfDynamicMeshCommand, InDrawListContext)
 	, PassDrawRenderState(InPassDrawRenderState)
 {
 
@@ -1844,10 +1761,11 @@ void FSingleLayerWaterDepthPrepassMeshProcessor::CollectPSOInitializers(const FS
 			&& !Material.MaterialModifiesMeshPosition_GameThread()
 			&& Material.WritesEveryPixel(false, bVFTypeSupportsNullPixelShader))
 		{
-			const FMaterialRenderProxy& DefaultProxy = *UMaterial::GetDefaultMaterial(MD_Surface)->GetRenderProxy();
-			const FMaterial& DefaultMaterial = *DefaultProxy.GetMaterialNoFallback(FeatureLevel);
+			EMaterialQualityLevel::Type ActiveQualityLevel = GetCachedScalabilityCVars().MaterialQualityLevel;
+			const FMaterial* DefaultMaterial = UMaterial::GetDefaultMaterial(MD_Surface)->GetMaterialResource(FeatureLevel, ActiveQualityLevel);
+			check(DefaultMaterial);
 
-			CollectPSOInitializersInternal<true>(SceneTexturesConfig, VertexFactoryData, DefaultMaterial, MeshFillMode, MeshCullMode, PreCacheParams, PSOInitializers);
+			CollectPSOInitializersInternal<true>(SceneTexturesConfig, VertexFactoryData, *DefaultMaterial, MeshFillMode, MeshCullMode, PreCacheParams, PSOInitializers);
 		}
 		else
 		{

@@ -1,13 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "../Common.ush"
+#include "HairStrandsVisibilityCommon.ush"
 
 ///////////////////////////////////////////////////////////////////////////
 
 #if SHADER_VERTEX
 
 int2 MaxViewportResolution;
-Texture2D<uint> HairNodeCountTexture;
+StructuredBuffer<uint> HairNodeCountBuffer;
 
 void MainVS(
 	in uint InVertexId : SV_VertexID,
@@ -15,9 +16,8 @@ void MainVS(
 	nointerpolation out uint OutNodeCount : DISPATCH_NODECOUNT,
 	nointerpolation out uint2 OutResolution : DISPATCH_RESOLUTION)
 {
-	OutNodeCount = HairNodeCountTexture.Load(uint3(0, 0, 0));
-	OutResolution.x = ceil(sqrt(OutNodeCount));
-	OutResolution.y = OutResolution.x;
+	OutNodeCount = HairNodeCountBuffer[0];
+	OutResolution = GetHairSampleResolution(OutNodeCount);
 
 	const float2 ClipCoord = ((OutResolution + 0.5f) / float2(MaxViewportResolution)) * 2;
 

@@ -177,7 +177,7 @@ void OutputHierarchyTimers(const FHierarchicalTimerInfo* TimerInfo, int32 Depth)
 	static const TCHAR LeftPad[] = TEXT("                                ");
 	const SIZE_T PadOffset = FMath::Max<int>(UE_ARRAY_COUNT(LeftPad) - 1 - Depth * 2, 0);
 
-	UE_LOG(LogCook, Display, TEXT("  %s%s: %.3fs (%u)"), &LeftPad[PadOffset], *TimerName, TimerInfo->Length, TimerInfo->HitCount);
+	UE_LOG(LogCookStats, Display, TEXT("  %s%s: %.3fs (%u)"), &LeftPad[PadOffset], *TimerName, TimerInfo->Length, TimerInfo->HitCount);
 
 	// We need to print in reverse order since the child list begins with the most recently added child
 
@@ -198,7 +198,7 @@ void OutputHierarchyTimers(const FHierarchicalTimerInfo* TimerInfo, int32 Depth)
 
 void OutputHierarchyTimers()
 {
-	UE_LOG(LogCook, Display, TEXT("Hierarchy Timer Information:"));
+	UE_LOG(LogCookStats, Display, TEXT("Hierarchy Timer Information:"));
 
 	OutputHierarchyTimers(&RootTimerInfo, 0);
 }
@@ -220,7 +220,6 @@ namespace DetailedCookStats
 	double CookStartTime = 0.0;
 	double CookWallTimeSec = 0.0;
 	double StartupWallTimeSec = 0.0;
-	double CookByTheBookTimeSec = 0.0;
 	double StartCookByTheBookTimeSec = 0.0;
 	double TickCookOnTheSideTimeSec = 0.0;
 	double TickCookOnTheSideLoadPackagesTimeSec = 0.0;
@@ -252,6 +251,8 @@ namespace DetailedCookStats
 	FCookStatsManager::FAutoRegisterCallback RegisterCookOnTheFlyServerStats([](FCookStatsManager::AddStatFuncRef AddStat)
 		{
 			AddStat(TEXT("Package.Load"), FCookStatsManager::CreateKeyValueArray(
+				TEXT("NumRequestedLoads"), NumRequestedLoads,
+				TEXT("NumPackagesLoaded"), NumDetectedLoads.load(),
 				TEXT("NumInlineLoads"), NumDetectedLoads - NumRequestedLoads));
 			AddStat(TEXT("Package.Save"), FCookStatsManager::CreateKeyValueArray(TEXT("NumPackagesIterativelySkipped"), NumPackagesIterativelySkipped));
 			AddStat(TEXT("CookOnTheFlyServer"), FCookStatsManager::CreateKeyValueArray(
@@ -518,7 +519,7 @@ void ConstructObjectGraph(TConstArrayView<UObject*> AllObjects,
 		if (TargetObjects.Num())
 		{
 			Algo::Sort(TargetObjects);
-			TargetObjects.SetNum(Algo::Unique(TargetObjects), false /* bAllowShrinking */);
+			TargetObjects.SetNum(Algo::Unique(TargetObjects), EAllowShrinking::No);
 			TArray<FVertex>& TargetVertices = LooseEdges[SourceVertex];
 			TargetVertices.Reserve(TargetObjects.Num());
 			for (UObject* TargetObject : TargetObjects)
@@ -661,7 +662,7 @@ void ConstructObjectGraphProfileData(TConstArrayView<FWeakObjectPtr> InitialObje
 		Stack.Add(PotentialRoot);
 		while (!Stack.IsEmpty())
 		{
-			FVertex SourceVertex = Stack.Pop(false /* bAllowShrinking */);
+			FVertex SourceVertex = Stack.Pop(EAllowShrinking::No);
 			for (FVertex TargetVertex : OutProfileData.ObjectGraph[SourceVertex])
 			{
 				if (OutProfileData.AliveReason[TargetVertex].GetLinkType() == EObjectReferencerType::Unknown)
@@ -750,7 +751,7 @@ void DumpObjClassList(TConstArrayView<FWeakObjectPtr> InitialObjects)
 			}
 			if (MaxRoots.Num() > MaxRootCount)
 			{
-				MaxRoots.Pop(false /* bAllowShrinking */);
+				MaxRoots.Pop(EAllowShrinking::No);
 			}
 		}
 		LogAr.Logf(TEXT("\t%6d %s"), ClassInfo.Count, *ClassInfo.Class->GetPathName());
@@ -871,35 +872,36 @@ FCookStatsManager::FAutoRegisterCallback RegisterCookStats([](FCookStatsManager:
 	#define ADD_COOK_STAT_FLT(Path, Name) AddStat(StatName, FCookStatsManager::CreateKeyValueArray(TEXT("Path"), TEXT(Path), TEXT(#Name), Name))
 	ADD_COOK_STAT_FLT(" 0", CookWallTimeSec);
 	ADD_COOK_STAT_FLT(" 0. 0", StartupWallTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1", CookByTheBookTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 0", StartCookByTheBookTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 0. 0", BlockOnAssetRegistryTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 0. 1", GameCookModificationDelegateTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 1", TickCookOnTheSideTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 1. 0", TickCookOnTheSideLoadPackagesTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 1. 1", TickCookOnTheSideSaveCookedPackageTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 1. 1. 0", TickCookOnTheSideResolveRedirectorsTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 1. 2", TickCookOnTheSidePrepareSaveTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 2", TickLoopGCTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 3", TickLoopRecompileShaderRequestsTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 4", TickLoopShaderProcessAsyncResultsTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 5", TickLoopProcessDeferredCommandsTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 6", TickLoopTickCommandletStatsTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 7", TickLoopFlushRenderingCommandsTimeSec);
-	ADD_COOK_STAT_FLT(" 0. 1. 8", TargetPlatforms);
-	ADD_COOK_STAT_FLT(" 0. 1. 9", CookProject);
-	ADD_COOK_STAT_FLT(" 0. 1. 10", CookCultures);
-	ADD_COOK_STAT_FLT(" 0. 1. 11", IsCookAll);
-	ADD_COOK_STAT_FLT(" 0. 1. 12", IsCookOnTheFly);
-	ADD_COOK_STAT_FLT(" 0. 1. 13", IsIterativeCook);
-	ADD_COOK_STAT_FLT(" 0. 1. 14", IsUnversioned);
-	ADD_COOK_STAT_FLT(" 0. 1. 15", CookLabel);
-	ADD_COOK_STAT_FLT(" 0. 1. 16", IsFastCook);
+	ADD_COOK_STAT_FLT(" 0. 1", StartCookByTheBookTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 1. 0", BlockOnAssetRegistryTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 1. 1", GameCookModificationDelegateTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 2", TickCookOnTheSideTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 2. 0", TickCookOnTheSideLoadPackagesTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 2. 1", TickCookOnTheSideSaveCookedPackageTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 2. 1. 0", TickCookOnTheSideResolveRedirectorsTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 2. 2", TickCookOnTheSidePrepareSaveTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 3", TickLoopGCTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 4", TickLoopRecompileShaderRequestsTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 5", TickLoopShaderProcessAsyncResultsTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 6", TickLoopProcessDeferredCommandsTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 7", TickLoopTickCommandletStatsTimeSec);
+	ADD_COOK_STAT_FLT(" 0. 8", TickLoopFlushRenderingCommandsTimeSec);
+	FString CookParameters; // Empty value to write a header with name "CookParameters"
+	ADD_COOK_STAT_FLT(" 1", CookParameters);
+	ADD_COOK_STAT_FLT(" 1. 0", TargetPlatforms);
+	ADD_COOK_STAT_FLT(" 1. 1", CookProject);
+	ADD_COOK_STAT_FLT(" 1. 2", CookCultures);
+	ADD_COOK_STAT_FLT(" 1. 3", IsCookAll);
+	ADD_COOK_STAT_FLT(" 1. 4", IsCookOnTheFly);
+	ADD_COOK_STAT_FLT(" 1. 5", IsIterativeCook);
+	ADD_COOK_STAT_FLT(" 1. 6", IsUnversioned);
+	ADD_COOK_STAT_FLT(" 1. 7", CookLabel);
+	ADD_COOK_STAT_FLT(" 1. 8", IsFastCook);
 		
 	#undef ADD_COOK_STAT_FLT
 });
 
-void LogCookStats(ECookMode::Type CookMode)
+void SendLogCookStats(ECookMode::Type CookMode)
 {
 	if (IsCookingInEditor(CookMode))
 	{
@@ -970,36 +972,35 @@ void LogCookStats(ECookMode::Type CookMode)
 
 	FCookStatsManager::LogCookStats(LogStatsFunc);
 
-	UE_LOG(LogCook, Display, TEXT("Misc Cook Stats"));
-	UE_LOG(LogCook, Display, TEXT("==============="));
+	UE_LOG(LogCookStats, Display, TEXT("Misc Cook Stats"));
+	UE_LOG(LogCookStats, Display, TEXT("==============="));
 	for (FString& StatCategory : StatCategories)
 	{
-		UE_LOG(LogCook, Display, TEXT("%s"), *StatCategory);
+		UE_LOG(LogCookStats, Display, TEXT("%s"), *StatCategory);
 		TArray<FCookStatsManager::StringKeyValue>& StatsInCategory = StatsInCategories.FindOrAdd(StatCategory);
 
 		// log each key/value pair, with the equal signs lined up.
 		for (const FCookStatsManager::StringKeyValue& StatKeyValue : StatsInCategory)
 		{
-			UE_LOG(LogCook, Display, TEXT("    %s=%s"), *StatKeyValue.Key, *StatKeyValue.Value);
+			UE_LOG(LogCookStats, Display, TEXT("    %s=%s"), *StatKeyValue.Key, *StatKeyValue.Value);
 		}
 	}
 
 	// DDC Usage stats are custom formatted, and the above code just accumulated them into a TSet. Now log it with our special formatting for readability.
 	if (CookProfileData.Num() > 0)
 	{
-		UE_LOG(LogCook, Display, TEXT(""));
-		UE_LOG(LogCook, Display, TEXT("Cook Profile"));
-		UE_LOG(LogCook, Display, TEXT("============"));
+		UE_LOG(LogCookStats, Display, TEXT(""));
+		UE_LOG(LogCookStats, Display, TEXT("Cook Profile"));
+		UE_LOG(LogCookStats, Display, TEXT("============"));
 		for (const auto& ProfileEntry : CookProfileData)
 		{
-			UE_LOG(LogCook, Display, TEXT("%s.%s=%s"), *ProfileEntry.Path, *ProfileEntry.Key, *ProfileEntry.Value);
+			UE_LOG(LogCookStats, Display, TEXT("%s.%s=%s"), *ProfileEntry.Path, *ProfileEntry.Key, *ProfileEntry.Value);
 		}
 
 		FString CookStatsFileName;
 		if (FParse::Value(FCommandLine::Get(), TEXT("-CookStatsFile="), CookStatsFileName))
 		{
-			uint32 MultiprocessId = 0;
-			FParse::Value(FCommandLine::Get(), TEXT("-MultiprocessId="), MultiprocessId);
+			uint32 MultiprocessId = UE::GetMultiprocessId();
 			if (MultiprocessId != 0)
 			{
 				// Suppress the file creation on CookWorkers
@@ -1025,7 +1026,7 @@ void LogCookStats(ECookMode::Type CookMode)
 			TUniquePtr<FArchive> JsonFile(IFileManager::Get().CreateFileWriter(*CookStatsFileName));
 			if (!JsonFile)
 			{
-				UE_LOG(LogCook, Warning, TEXT("Could not write to CookStatsFile %s."), *CookStatsFileName);
+				UE_LOG(LogCookStats, Warning, TEXT("Could not write to CookStatsFile %s."), *CookStatsFileName);
 			}
 			else
 			{
@@ -1037,12 +1038,12 @@ void LogCookStats(ECookMode::Type CookMode)
 	}
 	if (DDCSummaryStats.Num() > 0)
 	{
-		UE_LOG(LogCook, Display, TEXT(""));
-		UE_LOG(LogCook, Display, TEXT("DDC Summary Stats"));
-		UE_LOG(LogCook, Display, TEXT("================="));
+		UE_LOG(LogCookStats, Display, TEXT(""));
+		UE_LOG(LogCookStats, Display, TEXT("DDC Summary Stats"));
+		UE_LOG(LogCookStats, Display, TEXT("================="));
 		for (const auto& Attr : DDCSummaryStats)
 		{
-			UE_LOG(LogCook, Display, TEXT("%-16s=%10s"), *Attr.Key, *Attr.Value);
+			UE_LOG(LogCookStats, Display, TEXT("%-16s=%10s"), *Attr.Key, *Attr.Value);
 		}
 	}
 
@@ -1052,14 +1053,14 @@ void LogCookStats(ECookMode::Type CookMode)
 	{
 		Algo::SortBy(DDCResourceUsageStats, [](const FDerivedDataCacheResourceStat& Stat) { return Stat.BuildTimeSec + Stat.LoadTimeSec; }, TGreater());
 
-		UE_LOG(LogCook, Display, TEXT(""));
-		UE_LOG(LogCook, Display, TEXT("DDC Resource Stats"));
-		UE_LOG(LogCook, Display, TEXT("======================================================================================================="));
-		UE_LOG(LogCook, Display, TEXT("Asset Type                          Total Time (Sec)  GameThread Time (Sec)  Assets Built  MB Processed"));
-		UE_LOG(LogCook, Display, TEXT("----------------------------------  ----------------  ---------------------  ------------  ------------"));
+		UE_LOG(LogCookStats, Display, TEXT(""));
+		UE_LOG(LogCookStats, Display, TEXT("DDC Resource Stats"));
+		UE_LOG(LogCookStats, Display, TEXT("======================================================================================================="));
+		UE_LOG(LogCookStats, Display, TEXT("Asset Type                          Total Time (Sec)  GameThread Time (Sec)  Assets Built  MB Processed"));
+		UE_LOG(LogCookStats, Display, TEXT("----------------------------------  ----------------  ---------------------  ------------  ------------"));
 		for (const FDerivedDataCacheResourceStat& Stat : DDCResourceUsageStats)
 		{
-			UE_LOG(LogCook, Display, TEXT("%-34s  %16.2f  %21.2f  %12d  %12.2f"),
+			UE_LOG(LogCookStats, Display, TEXT("%-34s  %16.2f  %21.2f  %12d  %12.2f"),
 				*Stat.AssetType, Stat.LoadTimeSec + Stat.BuildTimeSec, Stat.GameThreadTimeSec,
 				Stat.BuildCount, Stat.LoadSizeMB + Stat.BuildSizeMB);
 		}

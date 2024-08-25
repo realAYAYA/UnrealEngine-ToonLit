@@ -302,6 +302,11 @@ public:
 		return FRenderBounds(*this) += Other;
 	}
 
+	FORCEINLINE bool Equals(const FRenderBounds& Other, float Tolerance = UE_KINDA_SMALL_NUMBER) const
+	{
+		return Min.Equals(Other.Min, Tolerance) && Max.Equals(Other.Max, Tolerance);
+	}
+
 	FORCEINLINE const FVector3f& GetMin() const
 	{
 		return Min;

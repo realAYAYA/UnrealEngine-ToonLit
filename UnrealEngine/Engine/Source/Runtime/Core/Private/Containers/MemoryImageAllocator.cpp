@@ -11,7 +11,7 @@ IMPLEMENT_ABSTRACT_TYPE_LAYOUT(FResourceArrayInterface);
 
 namespace UE::Core::Private
 {
-	[[noreturn]] FORCENOINLINE void OnInvalidMemoryImageAllocatorNum(int32 NewNum, SIZE_T NumBytesPerElement)
+	[[noreturn]] FORCENOINLINE void OnInvalidMemoryImageAllocatorNum(int32 NewNum, SIZE_T NumBytesPerElement) //-V1082
 	{
 		UE_LOG(LogCore, Fatal, TEXT("Trying to resize TMemoryImageAllocator to an invalid size of %d with element size %" SIZE_T_FMT), NewNum, NumBytesPerElement);
 		for (;;);

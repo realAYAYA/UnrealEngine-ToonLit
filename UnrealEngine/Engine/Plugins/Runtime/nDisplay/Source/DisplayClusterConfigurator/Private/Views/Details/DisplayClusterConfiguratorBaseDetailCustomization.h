@@ -45,7 +45,7 @@ protected:
 	 * this details customization is applied to. Override to add additional processing for the object's child properties.
 	 * 
 	 * @param InPropertyHandle - The property handle to process metadata specifiers on.
-	 * @oaram InLayoutBuilder - The detail customization's layout builder.
+	 * @param InLayoutBuilder - The detail customization's layout builder.
 	 */
 	virtual void ProcessPropertyMetaData(const TSharedRef<IPropertyHandle>& InPropertyHandle, IDetailLayoutBuilder& InLayoutBuilder);
 

@@ -176,8 +176,8 @@ float3 TransformPoint(float3 P, float3 B, const FHairMeshTriangle RestTriangle, 
 float3 ApplyRBF(
 	float3 RestControlPoint,
 	int InMaxSampleCount,
-	Buffer<float4> InRestSamplePositionsBuffer,
-	Buffer<float4> InMeshSampleWeightsBuffer)
+	StructuredBuffer<float4> InRestSamplePositionsBuffer,
+	StructuredBuffer<float4> InMeshSampleWeightsBuffer)
 {
 	float3 ControlPoint = RestControlPoint;
 	// Apply rbf interpolation from the samples set

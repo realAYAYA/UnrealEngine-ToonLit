@@ -20,9 +20,6 @@
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 namespace mu
 {
 
@@ -46,8 +43,9 @@ namespace mu
 
 	bool ASTOpImagePixelFormat::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpImagePixelFormat* other = dynamic_cast<const ASTOpImagePixelFormat*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpImagePixelFormat* other = static_cast<const ASTOpImagePixelFormat*>(&otherUntyped);
 			return Source == other->Source && Format == other->Format && FormatIfAlpha == other->FormatIfAlpha;
 		}
 		return false;
@@ -135,7 +133,7 @@ namespace mu
 		case OP_TYPE::IM_PIXELFORMAT:
 		{
 			// Keep only the top pixel format
-			const ASTOpImagePixelFormat* typedSource = dynamic_cast<const ASTOpImagePixelFormat*>(sourceAt.get());
+			const ASTOpImagePixelFormat* typedSource = static_cast<const ASTOpImagePixelFormat*>(sourceAt.get());
 			mu::Ptr<ASTOpImagePixelFormat> formatOp = mu::Clone<ASTOpImagePixelFormat>(this);
 			formatOp->Source = typedSource->Source.child();
 			at = formatOp;
@@ -179,7 +177,7 @@ namespace mu
 			// This op doesn't support compressed formats
 			if (!bIsCompressedFormat
 				&&
-				dynamic_cast<const ASTOpImageRasterMesh*>(sourceAt.get())->image)
+				static_cast<const ASTOpImageRasterMesh*>(sourceAt.get())->image)
 			{
 				Ptr<ASTOpImageRasterMesh> newOp = mu::Clone<ASTOpImageRasterMesh>(sourceAt);
 
@@ -328,10 +326,10 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
-	mu::Ptr<ASTOp> Sink_ImagePixelFormatAST::Apply(const ASTOp* root)
+	mu::Ptr<ASTOp> Sink_ImagePixelFormatAST::Apply(const ASTOpImagePixelFormat* root)
 	{
-		m_root = dynamic_cast<const ASTOpImagePixelFormat*>(root);
-		OldToNew.Empty();
+		m_root = root;
+		OldToNew.Reset();
 
 		check(root->GetOpType() == OP_TYPE::IM_PIXELFORMAT);
 
@@ -405,7 +403,7 @@ namespace mu
 
 				if (!acceptable)
 				{
-					const ASTOpImageCompose* typedAt = dynamic_cast<const ASTOpImageCompose*>(at.get());
+					const ASTOpImageCompose* typedAt = static_cast<const ASTOpImageCompose*>(at.get());
 					auto originalBaseOp = typedAt->Base.child();
 
 					int layoutBlockPixelsX = 0;
@@ -459,7 +457,7 @@ namespace mu
 
 		case OP_TYPE::IM_MIPMAP:
 		{
-			const ASTOpImageMipmap* typedSource = dynamic_cast<const ASTOpImageMipmap*>(at.get());
+			const ASTOpImageMipmap* typedSource = static_cast<const ASTOpImageMipmap*>(at.get());
 
 			// If its a compressed format, only sink formats on mipmap operations that
 			// generate the tail. To avoid optimization loop.

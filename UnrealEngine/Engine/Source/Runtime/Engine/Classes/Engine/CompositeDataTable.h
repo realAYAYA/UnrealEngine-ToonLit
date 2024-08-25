@@ -56,6 +56,9 @@ class UCompositeDataTable
 	// Support for runtime modification of parent tables
 	// Be aware this can be slow and can cause hitches during gameplay
 	ENGINE_API void AppendParentTables(const TArray<UDataTable*>& NewTables);
+	ENGINE_API void RemoveParentTables(const TArray<UDataTable*>& TablesToRemove);
+	ENGINE_API void AddParentTable(const TObjectPtr<UDataTable>& TableToAdd);
+	ENGINE_API void RemoveParentTable(const TObjectPtr<UDataTable>& TableToRemove);
 
 protected:
 

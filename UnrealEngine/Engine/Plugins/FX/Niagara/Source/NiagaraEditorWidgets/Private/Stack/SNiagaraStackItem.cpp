@@ -3,23 +3,176 @@
 #include "Stack/SNiagaraStackItem.h"
 
 #include "EditorFontGlyphs.h"
-#include "NiagaraEditorWidgetsStyle.h"
 #include "NiagaraEditorStyle.h"
+#include "NiagaraEditorWidgetsStyle.h"
+#include "SEnumCombo.h"
+#include "Stack/SNiagaraStackInheritanceIcon.h"
 #include "Styling/AppStyle.h"
+#include "Styling/StyleColors.h"
+#include "ViewModels/Stack/NiagaraStackClipboardUtilities.h"
 #include "ViewModels/Stack/NiagaraStackItem.h"
 #include "ViewModels/Stack/NiagaraStackViewModel.h"
-#include "Widgets/SBoxPanel.h"
+#include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
-#include "Widgets/Images/SImage.h"
-#include "Widgets/Text/STextBlock.h"
-#include "Widgets/Images/SImage.h"
 #include "Widgets/Layout/SBox.h"
-#include "ViewModels/Stack/NiagaraStackClipboardUtilities.h"
-#include "Styling/StyleColors.h"
-#include "Stack/SNiagaraStackInheritanceIcon.h"
+#include "Widgets/Layout/SSpacer.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraStackItem"
+
+class SNiagaraStackItemHeaderValue : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SNiagaraStackItemHeaderValue) { }
+	SLATE_END_ARGS();
+
+	void Construct(const FArguments& InArgs, TSharedRef<INiagaraStackItemHeaderValueHandler> InHeaderValueHandler)
+	{
+		HeaderValueHandler = InHeaderValueHandler;
+
+		TSharedPtr<SWidget> ChildWidget;
+		if (HeaderValueHandler->GetMode() == INiagaraStackItemHeaderValueHandler::EValueMode::BoolToggle)
+		{
+			ChildWidget = ConstructBoolToggle();
+		}
+		else if (HeaderValueHandler->GetMode() == INiagaraStackItemHeaderValueHandler::EValueMode::EnumDropDown)
+		{
+			ChildWidget = ConstructEnumDropDown();
+		}
+		else
+		{
+			ChildWidget = SNullWidget::NullWidget;
+		}
+
+		ChildSlot
+		[
+			ChildWidget.ToSharedRef()
+		];
+	}
+
+private:
+	TSharedRef<SWidget> ConstructEnumDropDown()
+	{
+		TSharedRef<SWidget> EnumWidget = SNew(SEnumComboBox, HeaderValueHandler->GetEnum())
+			.ComboButtonStyle(&FNiagaraEditorWidgetsStyle::Get().GetWidgetStyle<FComboButtonStyle>("NiagaraEditor.Stack.CompactComboButton"))
+			.CurrentValue(HeaderValueHandler.ToSharedRef(), &INiagaraStackItemHeaderValueHandler::GetEnumValue)
+			.ContentPadding(FMargin(2, 0))
+			.TextStyle(FNiagaraEditorWidgetsStyle::Get(), "NiagaraEditor.Stack.ItemHeaderValueText")
+			.OnEnumSelectionChanged(SEnumComboBox::FOnEnumSelectionChanged::CreateSP(this, &SNiagaraStackItemHeaderValue::EnumValueChanged));
+
+		TSharedPtr<SWidget> IconWidget;
+		if (HeaderValueHandler->GetIconBrush() != nullptr)
+		{
+			IconWidget = SNew(SImage)
+				.Image(HeaderValueHandler->GetIconBrush())
+				.DesiredSizeOverride(FVector2D(14.0f, 14.0f));
+		}
+
+		TSharedPtr<SWidget> LabelWidget;
+		if (HeaderValueHandler->GetLabelText().IsEmpty() == false)
+		{
+			LabelWidget = SNew(STextBlock)
+				.TextStyle(FNiagaraEditorWidgetsStyle::Get(), "NiagaraEditor.Stack.ItemHeaderValueLabelText")
+				.Text(HeaderValueHandler->GetLabelText());
+		}
+
+		if (IconWidget.IsValid() || LabelWidget.IsValid())
+		{
+			TSharedRef<SHorizontalBox> ContentBox = SNew(SHorizontalBox);
+			if (IconWidget.IsValid())
+			{
+				ContentBox->AddSlot()
+					.VAlign(VAlign_Center)
+					.AutoWidth()
+					.Padding(0, 0, 5, 0)
+					[
+						IconWidget.ToSharedRef()
+					];
+			}
+
+			if (LabelWidget.IsValid())
+			{
+				ContentBox->AddSlot()
+					.VAlign(VAlign_Center)
+					.AutoWidth()
+					.Padding(0, 0, 5, 0)
+					[
+						LabelWidget.ToSharedRef()
+					];
+			}
+
+			ContentBox->AddSlot()
+				.AutoWidth()
+				[
+					EnumWidget
+				];
+
+			return SNew(SBorder)
+				.BorderImage(FNiagaraEditorWidgetsStyle::Get().GetBrush(TEXT("NiagaraEditor.Stack.ItemHeaderValue.BackgroundBrush")))
+				.Padding(7, 2, 2, 2)
+				[
+					ContentBox
+				];
+		}
+		else
+		{
+			return EnumWidget;
+		}
+	}
+
+	TSharedRef<SWidget> ConstructBoolToggle()
+	{
+		if (HeaderValueHandler->GetIconBrush() != nullptr)
+		{
+			return SNew(SCheckBox)
+				.Style(FAppStyle::Get(), "DetailsView.SectionButton")
+				.ToolTipText(HeaderValueHandler->GetLabelText())
+				.OnCheckStateChanged(this, &SNiagaraStackItemHeaderValue::BoolCheckStateChanged)
+				.IsChecked(this, &SNiagaraStackItemHeaderValue::GetBoolCheckState)
+				.Padding(FMargin(4, 2))
+				[
+					SNew(SImage)
+					.Image(HeaderValueHandler->GetIconBrush())
+					.DesiredSizeOverride(FVector2D(14.0f, 14.0f))
+				];
+		}
+
+		if (HeaderValueHandler->GetLabelText().IsEmpty() == false)
+		{
+			return SNew(SCheckBox)
+				.Style(FAppStyle::Get(), "DetailsView.SectionButton")
+				.OnCheckStateChanged(this, &SNiagaraStackItemHeaderValue::BoolCheckStateChanged)
+				.IsChecked(this, &SNiagaraStackItemHeaderValue::GetBoolCheckState)
+				[
+					SNew(STextBlock)
+					.Text(HeaderValueHandler->GetLabelText())
+					.TextStyle(FNiagaraEditorStyle::Get(), "NiagaraEditor.ParameterText")
+				];
+		}
+
+		return SNullWidget::NullWidget;
+	}
+
+	void EnumValueChanged(int32 Value, ESelectInfo::Type SelectionType)
+	{
+		HeaderValueHandler->NotifyEnumValueChanged(Value);
+	}
+
+	ECheckBoxState GetBoolCheckState() const
+	{
+		return HeaderValueHandler->GetBoolValue() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	}
+
+	void BoolCheckStateChanged(ECheckBoxState InCheckState)
+	{
+		HeaderValueHandler->NotifyBoolValueChanged(InCheckState == ECheckBoxState::Checked);
+	}
+
+private:
+	TSharedPtr<INiagaraStackItemHeaderValueHandler> HeaderValueHandler;
+};
 
 void SNiagaraStackItem::Construct(const FArguments& InArgs, UNiagaraStackItem& InItem, UNiagaraStackViewModel* InStackViewModel)
 {
@@ -58,13 +211,17 @@ void SNiagaraStackItem::Construct(const FArguments& InArgs, UNiagaraStackItem& I
 
 	// Display name
 	RowBox->AddSlot()
-		.Padding(2, 0, 2, 0)
+		.Padding(2, 0, 10, 0)
+		.AutoWidth()
 		.VAlign(VAlign_Center)
 		[
 			SAssignNew(DisplayNameWidget, SNiagaraStackDisplayName, InItem, *InStackViewModel)
 			.NameStyle(FNiagaraEditorWidgetsStyle::Get(), "NiagaraEditor.Stack.ItemText")
 			.EditableNameStyle(FNiagaraEditorWidgetsStyle::Get(), "NiagaraEditor.Stack.EditableItemText")
 		];
+
+	// Entry based header values.
+	ConstructHeaderValues(RowBox);
 
 	// Allow derived classes to add additional widgets.
 	AddCustomRowWidgets(RowBox);
@@ -204,6 +361,68 @@ TSharedRef<SWidget> SNiagaraStackItem::AddContainerForRowWidgets(TSharedRef<SWid
 	return RowWidgets;
 }
 
+void SNiagaraStackItem::ConstructHeaderValues(TSharedRef<SHorizontalBox> HorizontalBox)
+{
+	TArray<TSharedRef<INiagaraStackItemHeaderValueHandler>> HeaderValueHandlers;
+
+	if (Item->SupportsHeaderValues())
+	{
+		Item->GetHeaderValueHandlers(HeaderValueHandlers);
+	}
+
+	TArray<TSharedRef<SWidget>> AlignLeft;
+	TArray<TSharedRef<SWidget>> AlignCenterAlignFill;
+	TArray<TSharedRef<SWidget>> AlignRight;
+
+	for (TSharedRef<INiagaraStackItemHeaderValueHandler> HeaderValueHandler : HeaderValueHandlers)
+	{
+		TSharedRef<SWidget> HeaderValueWidget = SNew(SNiagaraStackItemHeaderValue, HeaderValueHandler)
+			.IsEnabled(this, &SNiagaraStackItem::GetEntryIsEnabled);
+		if (HeaderValueHandler->GetHAlign() == HAlign_Left)
+		{
+			AlignLeft.Add(HeaderValueWidget);
+		}
+		else if (HeaderValueHandler->GetHAlign() == HAlign_Right)
+		{
+			AlignRight.Add(HeaderValueWidget);
+		}
+		else
+		{
+			AlignCenterAlignFill.Add_GetRef(HeaderValueWidget);
+		}
+	}
+
+	if (AlignCenterAlignFill.Num() == 0)
+	{
+		AlignCenterAlignFill.Add(SNew(SSpacer));
+	}
+
+	auto AddWidgets = [](TSharedRef<SHorizontalBox> HorizontalBox, TArray<TSharedRef<SWidget>> Widgets, EHorizontalAlignment HorizontalAlignment, bool bAutoWidth)
+	{
+		for (TSharedRef<SWidget> Widget : Widgets)
+		{
+			SHorizontalBox::FScopedWidgetSlotArguments Slot = HorizontalBox->AddSlot();
+
+			Slot
+				.HAlign(HorizontalAlignment)
+				.VAlign(VAlign_Center)
+				.Padding(5, 0)
+				[
+					Widget
+				];
+			
+			if (bAutoWidth)
+			{
+				Slot.AutoWidth();
+			}
+		}
+	};
+
+	AddWidgets(HorizontalBox, AlignLeft, HAlign_Left, true);
+	AddWidgets(HorizontalBox, AlignCenterAlignFill, HAlign_Fill, false);
+	AddWidgets(HorizontalBox, AlignRight, HAlign_Right, true);
+}
+
 FText SNiagaraStackItem::GetEditModeButtonToolTipText() const
 {
 	return Item->GetEditModeButtonTooltip().IsSet() ? Item->GetEditModeButtonTooltip().GetValue() : LOCTEXT("EditButtonDefaultTooltip", "Activate Edit Mode");
@@ -280,7 +499,12 @@ ECheckBoxState SNiagaraStackItem::CheckEnabledStatus() const
 
 bool SNiagaraStackItem::GetEnabledCheckBoxEnabled() const
 {
-	return Item->GetOwnerIsEnabled();
+	return Item->IsFinalized() == false && Item->GetOwnerIsEnabled();
+}
+
+bool SNiagaraStackItem::GetEntryIsEnabled() const
+{
+	return Item->IsFinalized() == false && Item->GetIsEnabledAndOwnerIsEnabled();
 }
 
 #undef LOCTEXT_NAMESPACE

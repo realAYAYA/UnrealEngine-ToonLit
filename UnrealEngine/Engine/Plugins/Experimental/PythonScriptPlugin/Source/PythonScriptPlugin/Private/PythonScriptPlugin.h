@@ -162,6 +162,10 @@ private:
 
 	void ShutdownPython();
 
+	void InitPipInstaller();
+
+	void RunPipInstaller();
+
 	void RequestStubCodeGeneration();
 
 	void GenerateStubCode();
@@ -217,6 +221,11 @@ private:
 	PyThreadState* PyMainThreadState = nullptr;
 	bool bInitialized;
 	bool bRanStartupScripts;
+
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 11
+	PyConfig ModulePyConfig;
+	static PyUtil::FPyApiBuffer Utf8String;
+#endif // 3.11 upgrade
 #endif	// WITH_PYTHON
 
 	FSimpleMulticastDelegate OnPythonInitializedDelegate;

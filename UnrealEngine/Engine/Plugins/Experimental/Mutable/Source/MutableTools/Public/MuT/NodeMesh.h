@@ -59,8 +59,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		inline EType GetMeshNodeType() const { return Type; }
 

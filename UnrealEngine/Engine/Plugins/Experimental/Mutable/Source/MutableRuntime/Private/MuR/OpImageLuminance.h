@@ -5,55 +5,77 @@
 #include "MuR/ImagePrivate.h"
 #include "MuR/Platform.h"
 
+#include "Async/ParallelFor.h"
+
 namespace mu
 {
 
-	inline void ImageLuminance( Image* pDest, const Image* pA )
+	inline void ImageLuminance(Image* DestImage, const Image* AImage)
 	{
-		check(pDest && pA && pDest->GetFormat()==EImageFormat::IF_L_UBYTE);
+		check(DestImage && AImage && DestImage->GetFormat() == EImageFormat::IF_L_UBYTE);
 
-        uint8_t* pDestBuf = pDest->GetData();
-        const uint8_t* pABuf = pA->GetData();
+		const int32 BytesPerElem = GetImageFormatData(AImage->GetFormat()).BytesPerBlock;
+		constexpr int32 NumBatchElems = 1 << 14;
 
-		// Generic implementation
-		int pixelCount = (int)pA->CalculatePixelCount();
+		const int32 NumBatches = DestImage->DataStorage.GetNumBatches(NumBatchElems, 1); 
+		check(NumBatches == AImage->DataStorage.GetNumBatches(NumBatchElems, BytesPerElem)); 
 
-		switch ( pA->GetFormat() )
-		{
-		case EImageFormat::IF_RGB_UBYTE:
-		{
-			for ( int i=0; i<pixelCount; ++i )
-			{
-                uint32_t l_16 = 76 * pABuf[3*i+0] + 150 * pABuf[3*i+1] + 29 * pABuf[3*i+2];
-                pDestBuf[i] = (uint8_t)FMath::Min( l_16>>8, 255u );
-			}
-			break;
-		}
-
-        case EImageFormat::IF_RGBA_UBYTE:
+        auto ProcessBatch = [DestImage, AImage, NumBatchElems, BytesPerElem](int32 BatchId)
         {
-            for ( int i=0; i<pixelCount; ++i )
-            {
-                uint32_t l_16 = 76 * pABuf[4*i+0] + 150 * pABuf[4*i+1] + 29 * pABuf[4*i+2];
-                pDestBuf[i] = (uint8_t)FMath::Min( l_16>>8, 255u );
-            }
-            break;
-        }
+			TArrayView<uint8> DestView = DestImage->DataStorage.GetBatch(BatchId, NumBatchElems, 1);
+			TArrayView<const uint8> AView = AImage->DataStorage.GetBatch(BatchId, NumBatchElems, BytesPerElem);
 
-        case EImageFormat::IF_BGRA_UBYTE:
+			uint8* DestBuf = DestView.GetData(); 
+			const uint8* ABuf = AView.GetData(); 
+			
+            const int32 NumElems = DestView.Num() / 1;
+
+            switch (AImage->GetFormat())
+            {
+            case EImageFormat::IF_RGB_UBYTE:
+            {
+                for (int32 I = 0; I < NumElems; ++I)
+                {
+                    const uint16 L = (76*ABuf[3*I + 0] + 150*ABuf[3*I + 1] + 29*ABuf[3*I + 2]);
+                    DestBuf[I] = uint8(L / 255);
+                }
+                break;
+            }
+
+            case EImageFormat::IF_RGBA_UBYTE:
+            {
+                for (int32 I = 0; I < NumElems; ++I)
+                {
+                    const uint16 L = (76*ABuf[4*I + 0] + 150*ABuf[4*I + 1] + 29*ABuf[4*I + 2]);
+                    DestBuf[I] = uint8(L / 255);
+                }
+                break;
+            }
+
+            case EImageFormat::IF_BGRA_UBYTE:
+            {
+                for (int32 I = 0; I < NumElems; ++I)
+                {
+                    const uint16 L = (76*ABuf[4*I + 2] + 150*ABuf[4*I + 1] + 29*ABuf[4*I + 0]);
+                    DestBuf[I] = uint8(L / 255);
+                }
+                break;
+            }
+
+            default:
+                check(false);
+                break;
+            }
+        };
+
+        if (NumBatches == 1)
         {
-            for ( int i=0; i<pixelCount; ++i )
-            {
-                uint32_t l_16 = 76 * pABuf[4*i+2] + 150 * pABuf[4*i+1] + 29 * pABuf[4*i+0];
-                pDestBuf[i] = (uint8_t)FMath::Min( l_16>>8, 255u );
-            }
-            break;
+            ProcessBatch(0);
         }
-
-		default:
-			check(false);
-			break;
-		}
+        else
+        {
+            ParallelFor(NumBatches, ProcessBatch);
+        }
 	}
 
 }

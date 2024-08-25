@@ -258,6 +258,12 @@ public:
 	/** Delegate used on message log AActor token activation */
 	UNREALED_API void OnActorTokenActivated(const TSharedRef<class IMessageToken>& Token);
 
+	/** Delegate used to get a display name for a message log FAssetData token  */
+	UNREALED_API FText OnGetAssetDataDisplayName(const FAssetData& InObject, const bool bFullPath);
+
+	/** Delegate used on message log FAssetData token activation */
+	UNREALED_API void OnAssetDataTokenActivated(const TSharedRef<class IMessageToken>& Token);
+
 	/** Delegate used to update the map of asset update counts */
 	UNREALED_API void OnObjectSaved(UObject* SavedObject, FObjectPreSaveContext SaveContext);
 

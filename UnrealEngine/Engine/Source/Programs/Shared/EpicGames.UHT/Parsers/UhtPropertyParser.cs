@@ -797,6 +797,7 @@ namespace EpicGames.UHT.Parsers
 				if (compilerDirective.HasAnyFlags(UhtCompilerDirective.WithEditorOnlyData))
 				{
 					propertySettings.PropertyFlags |= EPropertyFlags.EditorOnly;
+					propertySettings.DefineScope |= UhtDefineScope.EditorOnlyData;
 				}
 				else if (compilerDirective.HasAnyFlags(UhtCompilerDirective.WithEditor))
 				{
@@ -814,6 +815,10 @@ namespace EpicGames.UHT.Parsers
 					{
 						tokenReader.LogError("UProperties should not be wrapped by WITH_EDITOR, use WITH_EDITORONLY_DATA instead.");
 					}
+				}
+				else if (compilerDirective.HasAnyFlags(UhtCompilerDirective.WithVerseVM))
+				{
+					propertySettings.DefineScope |= UhtDefineScope.VerseVM;
 				}
 			}
 
@@ -845,6 +850,7 @@ namespace EpicGames.UHT.Parsers
 						if (layoutMacroType.IsEditorOnly())
 						{
 							propertySettings.PropertyFlags |= EPropertyFlags.EditorOnly;
+							propertySettings.DefineScope |= UhtDefineScope.EditorOnlyData;
 						}
 					}
 				}
@@ -898,17 +904,23 @@ namespace EpicGames.UHT.Parsers
 				{
 					tokenReader.Require(',');
 					RequireArray(tokenReader, propertySettings, ref nameToken, ')');
+					tokenReader.Require(')');
 				}
 				else if (layoutMacroType.IsBitfield())
 				{
 					tokenReader.Require(',');
 					RequireBitfield(tokenReader, propertySettings, ref nameToken);
+					tokenReader.Require(')');
 				}
 				else if (layoutMacroType.HasInitializer())
 				{
-					tokenReader.SkipBrackets('(', ')', 1);
+					tokenReader.Require(',');
+					tokenReader.SkipBrackets('(', ')', 1); // consumes ending ) too
 				}
-				tokenReader.Require(')');
+				else
+				{
+					tokenReader.Require(')');
+				}
 
 				Finalize(topScope, specifierContext, ref nameToken, new ReadOnlyMemory<UhtToken>(_currentTypeTokens.ToArray()), layoutMacroType, propertyDelegate);
 			}
@@ -1299,7 +1311,7 @@ namespace EpicGames.UHT.Parsers
 		[SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Attribute accessed method")]
 		private static UhtProperty? DefaultProperty(UhtPropertyResolvePhase resolvePhase, UhtPropertySettings propertySettings, IUhtTokenReader tokenReader, UhtToken matchedToken)
 		{
-			UhtProperty? property = null;
+			UhtProperty? property;
 			UhtSession session = propertySettings.Outer.Session;
 			int typeStartPos = tokenReader.PeekToken().InputStartPos;
 

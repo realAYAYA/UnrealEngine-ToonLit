@@ -34,6 +34,7 @@ class AGameplayAbilityTargetActor;
 class AHUD;
 class FDebugDisplayInfo;
 class UAnimMontage;
+class UAnimSequenceBase;
 class UCanvas;
 class UInputComponent;
 
@@ -90,6 +91,22 @@ enum class EGameplayEffectReplicationMode : uint8
 	/** Replicate full gameplay info to all */
 	Full,
 };
+
+/** When performing actions (such as gathering activatable abilities), how do we deal with Pending items (e.g. abilities not yet added or removed) */
+enum class EConsiderPending : uint8
+{
+	/** Don't consider any Pending actions (such as Pending Abilities Added or Removed) */
+	None = 0,
+
+	/** Consider Pending Adds when performing the action */
+	PendingAdd = (1 << 0),
+
+	/** Consider Pending Removes when performing the action */
+	PendingRemove = (1 << 1),
+
+	All = PendingAdd | PendingRemove
+};
+ENUM_CLASS_FLAGS(EConsiderPending)
 
 /** The core ActorComponent for interfacing with the GameplayAbilities System */
 UCLASS(ClassGroup=AbilitySystem, hidecategories=(Object,LOD,Lighting,Transform,Sockets,TextureStreaming), editinlinenew, meta=(BlueprintSpawnableComponent))
@@ -266,7 +283,7 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 		return ScopedPredictionKey.IsValidForMorePrediction();
 	}
 
-	/** Returns true if this is running on the server or has a valid prediciton key */
+	/** Returns true if this is running on the server or has a valid prediction key */
 	bool HasAuthorityOrPredictionKey(const FGameplayAbilityActivationInfo* ActivationInfo) const;
 
 	/** Returns true if this component's actor has authority */
@@ -409,7 +426,15 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	virtual void SetActiveGameplayEffectLevelUsingQuery(FGameplayEffectQuery Query, int32 NewLevel);
 
 	/** Inhibit an active gameplay effect so that it is disabled, but not removed */
+	UE_DEPRECATED(5.4, "Use SetActiveGameplayEffectInhibit with a MoveTemp(ActiveGEHandle) so it's clear the Handle is no longer valid. Check (then use) the returned FActiveGameplayEffectHandle to continue your operation.")
 	virtual void InhibitActiveGameplayEffect(FActiveGameplayEffectHandle ActiveGEHandle, bool bInhibit, bool bInvokeGameplayCueEvents);
+
+	/**
+	 * (Un-)Inhibit an Active Gameplay Effect so it may be disabled (and perform some disabling actions, such as removing tags).
+	 * An inhibited Active Gameplay Effect will lay dormant for re-enabling on some condition (usually tags).  When it's uninhibited, it will reapply some of its functionality.
+	 * NOTE:  The passed-in ActiveGEHandle is no longer valid.  Use the returned FActiveGameplayEffectHandle to determine if the Active GE Handle is still active.
+	 */
+	virtual FActiveGameplayEffectHandle SetActiveGameplayEffectInhibit(FActiveGameplayEffectHandle&& ActiveGEHandle, bool bInhibit, bool bInvokeGameplayCueEvents);
 
 	/**
 	 * Raw accessor to ask the magnitude of a gameplay effect, not necessarily always correct. How should outside code (UI, etc) ask things like 'how much is this gameplay effect modifying my damage by'
@@ -481,7 +506,7 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	void OnPeriodicGameplayEffectExecuteOnTarget(UAbilitySystemComponent* Target, const FGameplayEffectSpec& SpecExecuted, FActiveGameplayEffectHandle ActiveHandle);
 	void OnPeriodicGameplayEffectExecuteOnSelf(UAbilitySystemComponent* Source, const FGameplayEffectSpec& SpecExecuted, FActiveGameplayEffectHandle ActiveHandle);
 
-	/** Called when the duration of a gamepaly effect has changed */
+	/** Called when the duration of a gameplay effect has changed */
 	virtual void OnGameplayEffectDurationChange(struct FActiveGameplayEffect& ActiveEffect);
 
 	/** Called on server whenever a GE is applied to self. This includes instant and duration based GEs. */
@@ -490,7 +515,7 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	/** Called on server whenever a GE is applied to someone else. This includes instant and duration based GEs. */
 	FOnGameplayEffectAppliedDelegate OnGameplayEffectAppliedDelegateToTarget;
 
-	/** Called on both client and server whenever a duraton based GE is added (E.g., instant GEs do not trigger this). */
+	/** Called on both client and server whenever a duration based GE is added (E.g., instant GEs do not trigger this). */
 	FOnGameplayEffectAppliedDelegate OnActiveGameplayEffectAddedDelegateToSelf;
 
 	/** Called on server whenever a periodic GE executes on self */
@@ -542,6 +567,7 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	FOnActiveGameplayEffectRemoved_Info* OnGameplayEffectRemoved_InfoDelegate(FActiveGameplayEffectHandle Handle);
 	FOnActiveGameplayEffectStackChange* OnGameplayEffectStackChangeDelegate(FActiveGameplayEffectHandle Handle);
 	FOnActiveGameplayEffectTimeChange* OnGameplayEffectTimeChangeDelegate(FActiveGameplayEffectHandle Handle);
+	FOnActiveGameplayEffectInhibitionChanged* OnGameplayEffectInhibitionChangedDelegate(FActiveGameplayEffectHandle Handle);
 
 	// ----------------------------------------------------------------------------------------------------------------
 	//  Gameplay tag operations
@@ -565,7 +591,18 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	FORCEINLINE void GetOwnedGameplayTags(FGameplayTagContainer& TagContainer) const override
 	{
 		TagContainer.Reset();
-		TagContainer.AppendTags(GameplayTagCountContainer.GetExplicitGameplayTags());
+		TagContainer.AppendTags(GetOwnedGameplayTags());
+	}
+
+	[[nodiscard]] FORCEINLINE const FGameplayTagContainer& GetOwnedGameplayTags() const
+	{
+		return GameplayTagCountContainer.GetExplicitGameplayTags();
+	}
+
+	/** Checks whether the query matches the owned GameplayTags */
+	FORCEINLINE bool MatchesGameplayTagQuery(const FGameplayTagQuery& TagQuery) const
+	{
+		return TagQuery.Matches(GameplayTagCountContainer.GetExplicitGameplayTags());
 	}
 
 	/** Returns the number of instances of a given tag */
@@ -601,7 +638,12 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	/** Fills TagContainer with BlockedAbilityTags */
 	FORCEINLINE void GetBlockedAbilityTags(FGameplayTagContainer& TagContainer) const
 	{
-		TagContainer.AppendTags(BlockedAbilityTags.GetExplicitGameplayTags());
+		TagContainer.AppendTags(GetBlockedAbilityTags());
+	}
+
+	[[nodiscard]] FORCEINLINE const FGameplayTagContainer& GetBlockedAbilityTags() const
+	{
+		return BlockedAbilityTags.GetExplicitGameplayTags();
 	}
 
 	/** 	 
@@ -890,7 +932,7 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	void InvokeGameplayCueEvent(const FGameplayTag GameplayCueTag, EGameplayCueEvent::Type EventType, FGameplayEffectContextHandle EffectContext = FGameplayEffectContextHandle());
 	void InvokeGameplayCueEvent(const FGameplayTag GameplayCueTag, EGameplayCueEvent::Type EventType, const FGameplayCueParameters& GameplayCueParameters);
 
-	/** Allows polling to see if a GameplayCue is active. We expect most GameplayCue handling to be event based, but some cases we may need to check if a GamepalyCue is active (Animation Blueprint for example) */
+	/** Allows polling to see if a GameplayCue is active. We expect most GameplayCue handling to be event based, but some cases we may need to check if a GameplayCue is active (Animation Blueprint for example) */
 	UFUNCTION(BlueprintCallable, Category="GameplayCue", meta=(GameplayTagFilter="GameplayCue"))
 	bool IsGameplayCueActive(const FGameplayTag GameplayCueTag) const
 	{
@@ -907,6 +949,7 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	virtual void HandleDeferredGameplayCues(const FActiveGameplayEffectsContainer* GameplayEffectsContainer);
 
 	/** Invokes the WhileActive event for all GCs on active, non inhibited, GEs. This would typically be used on "respawn" or something where the mesh/avatar has changed */
+	UE_DEPRECATED(5.4, "ReinvokeActiveGameplayCues was unused and had logic inconsistent with predicting Gameplay Effects.  You can implement it in your own project if desired.")
 	virtual void ReinvokeActiveGameplayCues();
 
 	/**
@@ -1096,12 +1139,20 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	/** Returns local world time that an ability was activated. Valid on authority (server) and autonomous proxy (controlling client).  */
 	float GetAbilityLastActivatedTime() const { return AbilityLastActivatedTime; }
 
-	/** Returns an ability spec from a handle. If modifying call MarkAbilitySpecDirty */
-	FGameplayAbilitySpec* FindAbilitySpecFromHandle(FGameplayAbilitySpecHandle Handle) const;
+	/** Returns an ability spec from a handle. If modifying call MarkAbilitySpecDirty. Treat the return value as ephemeral as the pointer will potentially be invalidated on any subsequent call into AbilitySystemComponent. */
+	FGameplayAbilitySpec* FindAbilitySpecFromHandle(FGameplayAbilitySpecHandle Handle, EConsiderPending ConsiderPending = EConsiderPending::PendingRemove) const;
 	
 	/** Returns an ability spec from a GE handle. If modifying call MarkAbilitySpecDirty */
 	UE_DEPRECATED(5.3, "FindAbilitySpecFromGEHandle was never accurate because a GameplayEffect can grant multiple GameplayAbilities. It now returns nullptr.")
 	FGameplayAbilitySpec* FindAbilitySpecFromGEHandle(FActiveGameplayEffectHandle Handle) const;
+
+	/**
+	* Returns all ability spec handles granted from a GE handle. Only the server may call this function.
+	* @param ScopeLock - The lock to communicate to the caller that the return value is only valid for as long as this lock is in scope
+	* @param Handle - The handle of the Active Gameplay Effect which granted the abilities we are looking for
+	* @param ConsiderPending - Are we returning AbilitySpecs that are pending for addition/removal?
+	*/
+	TArray<const FGameplayAbilitySpec*> FindAbilitySpecsFromGEHandle(const FScopedAbilityListLock& ScopeLock, FActiveGameplayEffectHandle Handle, EConsiderPending ConsiderPending = EConsiderPending::PendingRemove) const;
 
 	/** Returns an ability spec corresponding to given ability class. If modifying call MarkAbilitySpecDirty */
 	FGameplayAbilitySpec* FindAbilitySpecFromClass(TSubclassOf<UGameplayAbility> InAbilityClass) const;
@@ -1136,7 +1187,7 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 	 *
 	 * @param OutAbilityHandles This array will be filled with matching Ability Spec Handles
 	 * @param Tags Gameplay Tags to match
-	 * @param bMatchAll If true, tags must be matched exactly. Otherwise, abilities matching any of the tags will be returned
+	 * @param bExactMatch If true, tags must be matched exactly. Otherwise, abilities matching any of the tags will be returned
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "Gameplay Abilities")
 	void FindAllAbilitiesWithTags(TArray<FGameplayAbilitySpecHandle>& OutAbilityHandles, FGameplayTagContainer Tags, bool bExactMatch = true) const;
@@ -1246,6 +1297,8 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 
 #if ENABLE_VISUAL_LOG
 	void ClearDebugInstantEffects();
+	
+	virtual void GrabDebugSnapshot(FVisualLogEntry* Snapshot) const override;
 #endif // ENABLE_VISUAL_LOG
 
 	UE_DEPRECATED(4.26, "This will be made private in future engine versions. Use SetClientDebugStrings, GetClientDebugStrings, or GetClientDebugStrings_Mutable instead.")
@@ -1399,9 +1452,13 @@ class GAMEPLAYABILITIES_API UAbilitySystemComponent : public UGameplayTasksCompo
 
 	/** Plays a montage and handles replication and prediction based on passed in ability/activation info */
 	virtual float PlayMontage(UGameplayAbility* AnimatingAbility, FGameplayAbilityActivationInfo ActivationInfo, UAnimMontage* Montage, float InPlayRate, FName StartSectionName = NAME_None, float StartTimeSeconds = 0.0f);
+	
+	virtual UAnimMontage* PlaySlotAnimationAsDynamicMontage(UGameplayAbility* AnimatingAbility, FGameplayAbilityActivationInfo ActivationInfo, UAnimSequenceBase* AnimAsset, FName SlotName, float BlendInTime, float BlendOutTime, float InPlayRate = 1.f, float StartTimeSeconds = 0.0f);
 
 	/** Plays a montage without updating replication/prediction structures. Used by simulated proxies when replication tells them to play a montage. */
 	virtual float PlayMontageSimulated(UAnimMontage* Montage, float InPlayRate, FName StartSectionName = NAME_None);
+	
+	virtual UAnimMontage* PlaySlotAnimationAsDynamicMontageSimulated(UAnimSequenceBase* AnimAsset, FName SlotName, float BlendInTime, float BlendOutTime, float InPlayRate = 1.f);
 
 	/** Stops whatever montage is currently playing. Expectation is caller should only be stopping it if they are the current animating ability (or have good reason not to check) */
 	virtual void CurrentMontageStop(float OverrideBlendOutTime = -1.0f);
@@ -1674,9 +1731,14 @@ protected:
 	/** Creates a new instance of an ability, storing it in the spec */
 	virtual UGameplayAbility* CreateNewInstanceOfAbility(FGameplayAbilitySpec& Spec, const UGameplayAbility* Ability);
 
+	/** Indicates how many levels of ABILITY_SCOPE_LOCK() we are in. The ability list may not be modified while AbilityScopeLockCount > 0. */
 	int32 AbilityScopeLockCount;
+	/** Abilities that will be removed when exiting the current ability scope lock. */
 	TArray<FGameplayAbilitySpecHandle, TInlineAllocator<2> > AbilityPendingRemoves;
+	/** Abilities that will be added when exiting the current ability scope lock. */
 	TArray<FGameplayAbilitySpec, TInlineAllocator<2> > AbilityPendingAdds;
+	/** Whether all abilities should be removed when exiting the current ability scope lock. Will be prioritized over pending adds. */
+	bool bAbilityPendingClearAll;
 
 	/** Local World time of the last ability activation. This is used for AFK/idle detection */
 	float AbilityLastActivatedTime;
@@ -1762,17 +1824,17 @@ protected:
 	/** Returns true if we are ready to handle replicated montage information */
 	virtual bool IsReadyForReplicatedMontage();
 
-	/** RPC function called from CurrentMontageSetNextSectopnName, replicates to other clients */
+	/** RPC function called from CurrentMontageSetNextSectionName, replicates to other clients */
 	UFUNCTION(reliable, server, WithValidation)
-	void ServerCurrentMontageSetNextSectionName(UAnimMontage* ClientAnimMontage, float ClientPosition, FName SectionName, FName NextSectionName);
+	void ServerCurrentMontageSetNextSectionName(UAnimSequenceBase* ClientAnimation, float ClientPosition, FName SectionName, FName NextSectionName);
 
 	/** RPC function called from CurrentMontageJumpToSection, replicates to other clients */
 	UFUNCTION(reliable, server, WithValidation)
-	void ServerCurrentMontageJumpToSectionName(UAnimMontage* ClientAnimMontage, FName SectionName);
+	void ServerCurrentMontageJumpToSectionName(UAnimSequenceBase* ClientAnimation, FName SectionName);
 
 	/** RPC function called from CurrentMontageSetPlayRate, replicates to other clients */
 	UFUNCTION(reliable, server, WithValidation)
-	void ServerCurrentMontageSetPlayRate(UAnimMontage* ClientAnimMontage, float InPlayRate);
+	void ServerCurrentMontageSetPlayRate(UAnimSequenceBase* ClientAnimation, float InPlayRate);
 
 	/** Abilities that are triggered from a gameplay event */
 	TMap<FGameplayTag, TArray<FGameplayAbilitySpecHandle > > GameplayEventTriggeredAbilities;
@@ -1811,11 +1873,11 @@ protected:
 	UPROPERTY(Replicated)
 	FActiveGameplayEffectsContainer ActiveGameplayEffects;
 
-	/** List of all active gameplay cues, including ones applied manually */
+	/** List of all active gameplay cues (executed outside of Gameplay Effects) */
 	UPROPERTY(Replicated)
 	FActiveGameplayCueContainer ActiveGameplayCues;
 
-	/** Replicated gameplaycues when in minimal replication mode. These are cues that would come normally come from ActiveGameplayEffects */
+	/** Replicated gameplaycues when in minimal replication mode. These are cues that would come normally come from ActiveGameplayEffects (but since we do not replicate AGE in minimal mode, they must be replicated through here) */
 	UPROPERTY(Replicated)
 	FActiveGameplayCueContainer MinimalReplicationGameplayCues;
 

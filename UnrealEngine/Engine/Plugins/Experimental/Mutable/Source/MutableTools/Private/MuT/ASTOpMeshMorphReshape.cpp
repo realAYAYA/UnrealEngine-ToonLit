@@ -8,10 +8,6 @@
 #include "MuR/Types.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
-
 namespace mu
 {
 
@@ -32,8 +28,9 @@ namespace mu
 
 	bool ASTOpMeshMorphReshape::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpMeshMorphReshape*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpMeshMorphReshape* other = static_cast<const ASTOpMeshMorphReshape*>(&otherUntyped);
 			return Morph == other->Morph && Reshape == other->Reshape;
 		}
 

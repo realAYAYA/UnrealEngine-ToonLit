@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -8,11 +10,7 @@ import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 import '../../models/settings/recent_actor_settings.dart';
 import '../../models/unreal_actor_creator.dart';
 import '../../models/unreal_types.dart';
-import '../../utilities/unreal_colors.dart';
 import 'dropdown_button.dart';
-import 'dropdown_list_menu.dart';
-import 'epic_icon_button.dart';
-import 'list_menu.dart';
 import 'template_menu.dart';
 
 /// Button that opens the actor placement menu.
@@ -67,7 +65,7 @@ class _PlaceActorButtonContents extends StatelessWidget {
         widthFactor: 1,
         child: EpicWideButton(
           text: AppLocalizations.of(context)!.addActorButton,
-          iconPath: 'assets/images/icons/plus.svg',
+          iconPath: 'packages/epic_common/assets/icons/plus.svg',
           color: bIsActive ? UnrealColors.highlightGreen : Theme.of(context).colorScheme.surfaceTint,
           iconColor: bIsActive ? null : UnrealColors.highlightGreen,
           border: Border.all(
@@ -110,7 +108,7 @@ class PlaceActorDropDownMenu extends StatelessWidget {
       children: [
         ListMenuSimpleItem(
           title: AppLocalizations.of(context)!.actorNameLightCard,
-          iconPath: 'assets/images/icons/light_card.svg',
+          iconPath: 'packages/epic_common/assets/icons/light_card.svg',
           onTap: () {
             actorCreator.createLightcard(actorCreationSettings);
             _closeMenu(context);
@@ -118,7 +116,7 @@ class PlaceActorDropDownMenu extends StatelessWidget {
         ),
         ListMenuSimpleItem(
           title: AppLocalizations.of(context)!.actorNameFlag,
-          iconPath: 'assets/images/icons/light_card_flag.svg',
+          iconPath: 'packages/epic_common/assets/icons/light_card_flag.svg',
           onTap: () {
             actorCreator.createFlag(actorCreationSettings);
             _closeMenu(context);
@@ -126,7 +124,7 @@ class PlaceActorDropDownMenu extends StatelessWidget {
         ),
         ListMenuSimpleItem(
           title: AppLocalizations.of(context)!.actorNameChromakeyCard,
-          iconPath: 'assets/images/icons/chromakey_card.svg',
+          iconPath: 'packages/epic_common/assets/icons/chromakey_card.svg',
           onTap: () {
             actorCreator.createChromakeyCard(actorCreationSettings);
             _closeMenu(context);
@@ -134,7 +132,7 @@ class PlaceActorDropDownMenu extends StatelessWidget {
         ),
         ListMenuSimpleItem(
           title: AppLocalizations.of(context)!.actorNameColorCorrectWindow,
-          iconPath: 'assets/images/icons/color_correct_window.svg',
+          iconPath: 'packages/epic_common/assets/icons/color_correct_window.svg',
           onTap: () {
             actorCreator.createColorCorrectionWindow(actorCreationSettings);
             _closeMenu(context);
@@ -142,7 +140,7 @@ class PlaceActorDropDownMenu extends StatelessWidget {
         ),
         ListMenuSimpleItem(
           title: AppLocalizations.of(context)!.placeActorMenuAllTemplates,
-          iconPath: 'assets/images/icons/template.svg',
+          iconPath: 'packages/epic_common/assets/icons/template.svg',
           bShowArrow: true,
           onTap: () {
             _closeMenu(context);
@@ -190,21 +188,21 @@ class _RecentlyPlacedMenuItem extends StatelessWidget {
   /// The path of the icon to display for this item.
   String? get _iconPath {
     if (actorData.templatePath != null) {
-      return 'assets/images/icons/template.svg';
+      return 'packages/epic_common/assets/icons/template.svg';
     }
 
     switch (actorData.type) {
       case RecentlyPlacedActorType.lightCard:
-        return 'assets/images/icons/light_card.svg';
+        return 'packages/epic_common/assets/icons/light_card.svg';
 
       case RecentlyPlacedActorType.flag:
-        return 'assets/images/icons/light_card_flag.svg';
+        return 'packages/epic_common/assets/icons/light_card_flag.svg';
 
       case RecentlyPlacedActorType.chromakeyCard:
-        return 'assets/images/icons/chromakey_card.svg';
+        return 'packages/epic_common/assets/icons/chromakey_card.svg';
 
       case RecentlyPlacedActorType.colorCorrectWindow:
-        return 'assets/images/icons/color_correct_window.svg';
+        return 'packages/epic_common/assets/icons/color_correct_window.svg';
 
       default:
         return null;

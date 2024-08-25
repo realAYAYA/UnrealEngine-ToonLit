@@ -20,6 +20,16 @@ UBTTask_FindAndUseGameplayBehaviorSmartObject::UBTTask_FindAndUseGameplayBehavio
 	bNotifyTaskFinished = true;
 }
 
+void UBTTask_FindAndUseGameplayBehaviorSmartObject::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTUseSOTaskMemory>(NodeMemory, InitType);
+}
+
+void UBTTask_FindAndUseGameplayBehaviorSmartObject::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTUseSOTaskMemory>(NodeMemory, CleanupType);
+}
+
 EBTNodeResult::Type UBTTask_FindAndUseGameplayBehaviorSmartObject::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
 	EBTNodeResult::Type NodeResult = EBTNodeResult::Failed;
@@ -73,7 +83,7 @@ EBTNodeResult::Type UBTTask_FindAndUseGameplayBehaviorSmartObject::ExecuteTask(U
 		{
 			for (const FSmartObjectRequestResult& Result : Results)
 			{
-				FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem->MarkSlotAsClaimed(Result.SlotHandle, ActorUserDataView);
+				FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem->MarkSlotAsClaimed(Result.SlotHandle, ClaimPriority, ActorUserDataView);
 				if (ClaimHandle.IsValid())
 				{
 					UseClaimedSmartObject(OwnerComp, ClaimHandle, *MyMemory);
@@ -219,7 +229,7 @@ void UBTTask_FindAndUseGameplayBehaviorSmartObject::OnQueryFinished(TSharedPtr<F
 			for (int i = 0; i < QueryResult.Items.Num(); ++i)
 			{
 				const FSmartObjectSlotEQSItem& Item = UEnvQueryItemType_SmartObject::GetValue(QueryResult.GetItemRawMemory(i));
-				const FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem->MarkSlotAsClaimed(Item.SlotHandle, ActorUserDataView);
+				const FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem->MarkSlotAsClaimed(Item.SlotHandle, ClaimPriority, ActorUserDataView);
 				if (ClaimHandle.IsValid())
 				{
 					UseClaimedSmartObject(*BTComponent, ClaimHandle, *MyMemory);
@@ -243,6 +253,7 @@ void UBTTask_FindAndUseGameplayBehaviorSmartObject::UseClaimedSmartObject(UBehav
 	checkSlow(ClaimHandle.IsValid());
 	UAITask_UseGameplayBehaviorSmartObject* UseSOTask = NewBTAITask<UAITask_UseGameplayBehaviorSmartObject>(OwnerComp);
 	UseSOTask->SetClaimHandle(ClaimHandle);
+	UseSOTask->SetShouldReachSlotLocation(true);
 	UseSOTask->ReadyForActivation();
 
 	MyMemory.TaskInstance = UseSOTask;

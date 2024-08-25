@@ -37,7 +37,12 @@ private:
 class FStaticMeshBatchRelevance
 {
 public:
-	FStaticMeshBatchRelevance(const FStaticMeshBatch& StaticMesh, float InScreenSize, bool InbSupportsCachingMeshDrawCommands, bool InbUseSkyMaterial, bool bInUseSingleLayerWaterMaterial, bool bInUseAnisotropy, bool bInSupportsNaniteRendering, bool bInSupportsGPUScene, ERHIFeatureLevel::Type FeatureLevel);
+
+	FStaticMeshBatchRelevance(const FStaticMeshBatch& StaticMesh, float InScreenSize, bool InbSupportsCachingMeshDrawCommands, bool InbUseSkyMaterial, bool bInUseSingleLayerWaterMaterial, bool bInUseAnisotropy, bool bInSupportsNaniteRendering, bool bInSupportsGPUScene, bool bInUseForWaterInfoTextureDepth, bool bInUseForLumenSceneCapture, ERHIFeatureLevel::Type FeatureLevel);
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	int8 GetLODIndex() const { return LODIndex; }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/** Starting offset into continuous array of command infos for this mesh in FPrimitiveSceneInfo::CachedMeshDrawCommandInfos. */
 	FMeshPassMask CommandInfosMask;
@@ -55,6 +60,7 @@ public:
 	uint16 CommandInfosBase;
 
 	/** LOD index of the mesh, used for fading LOD transitions. */
+	UE_DEPRECATED(5.4, "Public LODIndex member is deprecated, use GetLODIndex() function instead.")
 	int8 LODIndex;
 
 	/** Whether the mesh batch should apply dithered LOD. */
@@ -86,6 +92,12 @@ public:
 
 	/** Cached from vertex factory to avoid dereferencing VF in shadow depth rendering. */
 	uint8 bSupportsGPUScene : 1;
+
+	/** Whether the mesh batch should be used in the depth-only passes of rendering the water info texture for the water plugin */
+	uint8 bUseForWaterInfoTextureDepth : 1;
+
+	/** Cached from lumen scene card capture */
+	uint8 bUseForLumenSceneCapture : 1;
 
 	/** Computes index of cached mesh draw command in FPrimitiveSceneInfo::CachedMeshDrawCommandInfos, for a given mesh pass. */
 	int32 GetStaticMeshCommandInfoIndex(EMeshPass::Type MeshPass) const;

@@ -11,11 +11,20 @@ struct FVulkanVertexDeclarationKey
 	FVertexDeclarationElementList VertexElements;
 
 	uint32 Hash;
+	uint32 HashNoStride;
 
 	explicit FVulkanVertexDeclarationKey(const FVertexDeclarationElementList& InElements)
 		: VertexElements(InElements)
 	{
 		Hash = FCrc::MemCrc_DEPRECATED(VertexElements.GetData(), VertexElements.Num()*sizeof(FVertexElement));
+
+		HashNoStride = 0;
+		for (int32 ElementIndex = 0; ElementIndex < VertexElements.Num(); ElementIndex++)
+		{
+			FVertexElement Element = VertexElements[ElementIndex];
+			Element.Stride = 0;
+			HashNoStride = FCrc::MemCrc32(&Element, sizeof(Element), HashNoStride);
+		}
 	}
 };
 
@@ -30,9 +39,10 @@ bool operator==(const FVulkanVertexDeclarationKey& A, const FVulkanVertexDeclara
 			&& !memcmp(A.VertexElements.GetData(), B.VertexElements.GetData(), A.VertexElements.Num() * sizeof(FVertexElement)));
 }
 
-FVulkanVertexDeclaration::FVulkanVertexDeclaration(const FVertexDeclarationElementList& InElements, uint32 InHash) 
+FVulkanVertexDeclaration::FVulkanVertexDeclaration(const FVertexDeclarationElementList& InElements, uint32 InHash, uint32 InHashNoStrides) 
 	: Elements(InElements)
 	, Hash(InHash)
+	, HashNoStrides(InHashNoStrides)
 {
 }
 
@@ -52,7 +62,7 @@ FVertexDeclarationRHIRef FVulkanDynamicRHI::RHICreateVertexDeclaration(const FVe
 	FVertexDeclarationRHIRef* VertexDeclarationRefPtr = GVertexDeclarationCache.Find(Key);
 	if (VertexDeclarationRefPtr == nullptr)
 	{
-		VertexDeclarationRefPtr = &GVertexDeclarationCache.Add(Key, new FVulkanVertexDeclaration(Elements, Key.Hash));
+		VertexDeclarationRefPtr = &GVertexDeclarationCache.Add(Key, new FVulkanVertexDeclaration(Elements, Key.Hash, Key.HashNoStride));
 	}
 
 	check(VertexDeclarationRefPtr);

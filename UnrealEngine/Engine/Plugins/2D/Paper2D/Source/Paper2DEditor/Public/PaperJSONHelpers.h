@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Math/Vector2D.h"
+#include "Templates/SharedPointer.h"
 
 class FJsonValue;
 

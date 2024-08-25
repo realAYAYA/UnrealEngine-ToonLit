@@ -303,11 +303,11 @@ void USignificanceManager::UnregisterObject(UObject* Object)
 			const int32 Index = ObjWithSequentialPostWork.IndexOfByPredicate([ObjectInfo](const FSequentialPostWorkPair& WorkPair) { return WorkPair.ObjectInfo == ObjectInfo; });
 			if (Index != -1)
 			{
-				ObjWithSequentialPostWork.RemoveAtSwap(Index, 1, false);
+				ObjWithSequentialPostWork.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 		}
 
-		ObjArray.RemoveSwap(ObjectInfo, false);
+		ObjArray.RemoveSwap(ObjectInfo, EAllowShrinking::No);
 
 		TArray<FManagedObjectInfo*>& ObjectsWithTag = ManagedObjectsByTag.FindChecked(ObjectInfo->GetTag());
 		if (ObjectsWithTag.Num() == 1)
@@ -340,11 +340,11 @@ void USignificanceManager::UnregisterAll(FName Tag)
 				const int32 Index = ObjWithSequentialPostWork.IndexOfByPredicate([ManagedObj](const FSequentialPostWorkPair& WorkPair) { return WorkPair.ObjectInfo == ManagedObj; });
 				if (Index != -1)
 				{
-					ObjWithSequentialPostWork.RemoveAtSwap(Index, 1, false);
+					ObjWithSequentialPostWork.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				}
 			}
 
-			ObjArray.RemoveSwap(ManagedObj, false);
+			ObjArray.RemoveSwap(ManagedObj, EAllowShrinking::No);
 			ManagedObjects.Remove(ManagedObj->GetObject());
 			if (ManagedObj->PostSignificanceFunction != nullptr)
 			{

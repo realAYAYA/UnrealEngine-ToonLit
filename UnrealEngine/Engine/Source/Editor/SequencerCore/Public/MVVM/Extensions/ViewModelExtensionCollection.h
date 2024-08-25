@@ -110,7 +110,7 @@ struct TViewModelExtensionCollection : FViewModelExtensionCollection
 		{
 			if (!InPredicate(static_cast<T*>(ExtensionContainer[Index])))
 			{
-				ExtensionContainer.RemoveAt(Index, 1, false);
+				ExtensionContainer.RemoveAt(Index, 1, EAllowShrinking::No);
 			}
 		}
 	}

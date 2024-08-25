@@ -19,11 +19,18 @@ public class PhysicsControl : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AnimationCore",
+				"AnimGraphRuntime",
+				"Chaos",
+				"ChaosCore",
+				"Core",
 				"CoreUObject",
-				"PhysicsCore",
-				"Engine"
+				"Engine",
+				"PhysicsCore"
 			}
 		);
-		
+
+		SetupModulePhysicsSupport(Target);
+		PrivateDefinitions.Add("CHAOS_INCLUDE_LEVEL_1=1");
 	}
 }

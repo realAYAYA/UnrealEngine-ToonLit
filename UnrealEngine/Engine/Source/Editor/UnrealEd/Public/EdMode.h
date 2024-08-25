@@ -32,6 +32,7 @@ struct FViewportClick;
 class FModeTool;
 class FEditorViewportClient;
 struct FViewportClick;
+struct FGizmoState;
 
 /**
  * Base class for all editor modes.
@@ -89,6 +90,9 @@ public:
 	virtual bool ProcessEditCopy() { return false; }
 	virtual bool ProcessEditPaste() { return false; }
 
+	virtual bool BeginTransform(const FGizmoState& InState) { return false; }
+	virtual bool EndTransform(const FGizmoState& InState) { return false; }
+	
 	UNREALED_API virtual void Tick(FEditorViewportClient* ViewportClient,float DeltaTime);
 
 	virtual bool IsCompatibleWith(FEditorModeID OtherModeID) const { return false; }

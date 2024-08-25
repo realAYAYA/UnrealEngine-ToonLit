@@ -12,6 +12,10 @@
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 
+#ifndef WITH_SNDFILE_IO
+#define WITH_SNDFILE_IO (0)
+#endif //WITH_SNDFILE_IO
+
 
 namespace Audio
 {
@@ -94,17 +98,28 @@ namespace Audio
 	static void* GetSoundFileDllHandle()
 	{
 		void* DllHandle = nullptr;
-#if PLATFORM_WINDOWS
-		FString Path = FPaths::EngineDir() / FString(TEXT("Binaries/ThirdParty/libsndfile/Win64/"));
+#if WITH_SNDFILE_IO 
+	#if PLATFORM_WINDOWS
+		const FString PlatformPath = TEXT("Win64/");
+		const FString DllName = TEXT("libsndfile-1.dll");
+	#elif PLATFORM_MAC //PLATFORM_WINDOWS
+		const FString PlatformPath = TEXT("Mac/");
+		const FString DllName = TEXT("libsndfile.1.dylib");
+	#elif PLATFORM_LINUX //PLATFORM_MAC
+		const FString PlatformPath = TEXT("Linux/");
+		const FString DllName = ("libsndfile.so.1");
+	#else //PLATFORM_LINUX
+		#pragma message ("Platform not supported");
+		const FString PlatformPath;
+		const FString DllName;
+	#endif //PLATFORM_LINUX
+
+		const FString Path = FPaths::EngineDir() / FString(TEXT("Binaries/ThirdParty/libsndfile/")) / PlatformPath;
 		FPlatformProcess::PushDllDirectory(*Path);
-		DllHandle = FPlatformProcess::GetDllHandle(*(Path + "libsndfile-1.dll"));
+		DllHandle = FPlatformProcess::GetDllHandle(*(Path + DllName));
 		FPlatformProcess::PopDllDirectory(*Path);
-#elif PLATFORM_MAC
-		//		FString Path = FPaths::EngineDir() / FString(TEXT("Binaries/ThirdParty/libsndfile/Mac/"));
-		//		FPlatformProcess::PushDllDirectory(*Path);
-		DllHandle = FPlatformProcess::GetDllHandle(TEXT("libsndfile.1.dylib"));
-		//		FPlatformProcess::PopDllDirectory(*Path);
-#endif
+
+#endif //WITH_SNDFILE_IO
 		return DllHandle;
 	}
 
@@ -378,9 +393,13 @@ namespace Audio
 
 			for (const uint32 Id : OptionalChunkIds)
 			{
-				FSoundFileChunkInfo ChunkLookup;
-				ChunkLookup.ChunkIdSize = sizeof(Id);
-				FCStringAnsi::Strncpy(ChunkLookup.ChunkId, (ANSICHAR*)&(INTEL_ORDER32(Id)), ChunkLookup.ChunkIdSize + 1);
+				FSoundFileChunkInfo ChunkLookup;				
+				// Copy chunk ID over. DWORD (4 bytes, each is ANSI char)
+				*reinterpret_cast<uint32*>(ChunkLookup.ChunkId) = Id;
+				ChunkLookup.ChunkId[4] = 0;		// Null terminate the string just in case.
+				
+				ChunkLookup.ChunkIdSize = 5;	// 4 bytes, + null.
+				
 
 				// Lookup chunk of given Id. Multiple chunks can exist of a given type
 				// so we loop here.

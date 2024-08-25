@@ -89,7 +89,7 @@ namespace Metasound
 
 		// ctor
 		FMusicalScaleToNoteArrayOperator(
-			  const FCreateOperatorParams& InParams
+			  const FBuildOperatorParams& InParams
 			, const FEnumMusicalScaleReadRef& InScale
 			, const FBoolReadRef& InChordTonesOnly
 		);
@@ -97,7 +97,7 @@ namespace Metasound
 		// node interface
 		static const FNodeClassMetadata& GetNodeInfo();
 		static FVertexInterface DeclareVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
 		virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override;
 		virtual FDataReferenceCollection GetInputs() const override;
@@ -126,7 +126,7 @@ namespace Metasound
 
 	// ctor
 	FMusicalScaleToNoteArrayOperator::FMusicalScaleToNoteArrayOperator(
-		  const FCreateOperatorParams& InParams
+		  const FBuildOperatorParams& InParams
 		, const FEnumMusicalScaleReadRef& InScale
 		, const FBoolReadRef& InChordTonesOnly
 		)
@@ -181,14 +181,13 @@ namespace Metasound
 	}
 
 
-	TUniquePtr<IOperator> FMusicalScaleToNoteArrayOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FMusicalScaleToNoteArrayOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
-		const FDataReferenceCollection& InputDataRefs = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// inputs
-		FEnumMusicalScaleReadRef Scale = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<FEnumEMusicalScale>(InputInterface, METASOUND_GET_PARAM_NAME(ParamScaleDegreesPreset), InParams.OperatorSettings);
-		FBoolReadRef ChordTonesOnly = InputDataRefs.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(ParamChordTonesOnly), InParams.OperatorSettings);
+		FEnumMusicalScaleReadRef Scale = InputData.GetOrCreateDefaultDataReadReference<FEnumEMusicalScale>(METASOUND_GET_PARAM_NAME(ParamScaleDegreesPreset), InParams.OperatorSettings);
+		FBoolReadRef ChordTonesOnly = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(ParamChordTonesOnly), InParams.OperatorSettings);
 
 		return MakeUnique <FMusicalScaleToNoteArrayOperator>(
 			  InParams

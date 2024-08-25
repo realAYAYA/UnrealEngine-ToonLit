@@ -2,7 +2,7 @@ import * as React from 'react';
 import type MarkdownComponentType from 'markdown-to-jsx';
 import type { MarkdownToJSX } from 'markdown-to-jsx';
 import * as MarkdownModule from 'markdown-to-jsx';
-import { Image, IImageStyles, classNamesFunction, IStyleFunction, styled } from '@fluentui/react';
+import { IImageStyles, classNamesFunction, IStyleFunction, styled } from '@fluentui/react';
 import { DefaultButton } from '@fluentui/react/lib/Button';
 import * as MDTable from '../MarkdownTable/index';
 import { MarkdownHeader } from './MarkdownHeader';
@@ -11,8 +11,9 @@ import { IMarkdownProps, IMarkdownSubComponentStyles, IMarkdownStyleProps, IMark
 import { MarkdownLink } from './MarkdownLink';
 import { MarkdownPre } from './MarkdownPre';
 import { PropsWithChildren } from 'react';
-import { modeColors } from '../../../styles/Styles';
 import dashboard from '../../../backend/Dashboard';
+import { getHordeStyling } from '../../../styles/Styles';
+import { MarkdownImage } from './MarkdownImage';
 
 // This is to work around inconsistency between the way markdown-to-jsx declares its types
 // (as having a default export) and the way it actually builds its files (for its cjs `main` file,
@@ -22,6 +23,9 @@ const MarkdownComponent: typeof MarkdownComponentType =
    (MarkdownModule as any).default || (MarkdownModule as any);
 
 const getStyles: IStyleFunction<IMarkdownStyleProps, IMarkdownStyles> = () => {
+
+   const { modeColors } = getHordeStyling();
+
    const imageStyles: Partial<IImageStyles> = {
       root: {
          maxWidth: '100%',
@@ -34,7 +38,7 @@ const getStyles: IStyleFunction<IMarkdownStyleProps, IMarkdownStyles> = () => {
          fontSize: "13px", fontFamily: "Horde Open Sans Regular", selectors: {
             'li': {
                margin: "4px 0px 8px 0px",
-               lineHeight:"1.6"
+               lineHeight: "1.6"
             },
             'ul': {
                margin: "8px 0px 16px 0px"
@@ -44,12 +48,26 @@ const getStyles: IStyleFunction<IMarkdownStyleProps, IMarkdownStyles> = () => {
                padding: 16,
                backgroundColor: dashboard.darktheme ? modeColors.header : modeColors.crumbs
             },
+            'p > code': {
+
+               padding: "3px 6px !important"
+
+            },
+            'a > code': {
+
+               padding: "3px 6px !important"
+
+            },
+            'td > code': {
+
+               padding: "3px 6px !important"
+
+            },
             'code': {
                whiteSpace: "pre-wrap",
                fontFamily: "Horde Cousine Regular",
                fontSize: "12px",
-               padding: "3px 6px",
-               backgroundColor: dashboard.darktheme ? modeColors.header : "#f2f2f2"
+               backgroundColor: dashboard.darktheme ? "#25282A" : "#f2f2f2"
             }
 
          }
@@ -113,7 +131,7 @@ function getOverrides(subComponentStyles: IMarkdownSubComponentStyles, props: IM
          props: { className: 'ms-mdLink', styles: subComponentStyles.link },
       },
       img: {
-         component: Image,
+         component: MarkdownImage,
          props: { className: 'ms-mdImage', styles: subComponentStyles.image },
       },
       button: {

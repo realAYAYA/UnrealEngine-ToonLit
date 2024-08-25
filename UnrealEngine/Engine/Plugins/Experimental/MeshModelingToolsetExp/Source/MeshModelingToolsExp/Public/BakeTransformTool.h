@@ -80,7 +80,7 @@ public:
  * Simple tool to bake scene transform on meshes into the mesh assets
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UBakeTransformTool : public UMultiSelectionMeshEditingTool
+class MESHMODELINGTOOLSEXP_API UBakeTransformTool : public UMultiSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -92,6 +92,12 @@ public:
 
 	virtual bool HasCancel() const override { return true; }
 	virtual bool HasAccept() const override { return true; }
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 

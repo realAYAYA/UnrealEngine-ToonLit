@@ -54,6 +54,15 @@ public:
 #endif
 	//~End UObject Interface
 
+	/**
+	 * Allows users to override the target timecode provider subject key. Live
+	 * Link Hub will send subject name to the host but the host has to "lookup"
+	 * and match it with the available subject keys on the local machine.
+	 */
+	void SetTargetSubjectKey(const FLiveLinkSubjectKey& InKey)
+	{
+		SubjectKey = InKey;
+	}
 private:
 	FQualifiedFrameTime ConvertTo(FQualifiedFrameTime Value) const;
 	FQualifiedFrameTime LerpBetweenFrames(double Seconds, int32 IndexA, int32 IndexB) const;

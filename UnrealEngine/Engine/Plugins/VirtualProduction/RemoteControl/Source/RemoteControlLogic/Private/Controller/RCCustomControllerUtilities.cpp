@@ -9,10 +9,6 @@ namespace UE::RCCustomControllers
 	// A Map to associate a custom controller name to its underlying type
 	inline static TMap<FString, EPropertyBagPropertyType> CustomControllerTypes =
 		{{CustomTextureControllerName, EPropertyBagPropertyType::String}};
-
-	// A Map to associate a custom controller name to its underlying type
-	inline static TSet<FString> ExecuteOnLoadControllers =
-		{CustomTextureControllerName};
 }
 
 bool UE::RCCustomControllers::IsCustomController(const URCVirtualPropertyBase* InController)
@@ -23,16 +19,6 @@ bool UE::RCCustomControllers::IsCustomController(const URCVirtualPropertyBase* I
 FString UE::RCCustomControllers::GetCustomControllerTypeName(const URCVirtualPropertyBase* InController)
 {
 	return InController->GetMetadataValue(CustomControllerNameKey);
-}
-
-bool UE::RCCustomControllers::CustomControllerExecutesOnLoad(const URCVirtualPropertyBase* InController)
-{
-	return InController->GetMetadataValue(CustomControllerExecuteOnLoadNameKey).ToBool();
-}
-
-bool UE::RCCustomControllers::CustomControllerExecutesOnLoad(const FName& InCustomControllerTypeName)
-{
-	return ExecuteOnLoadControllers.Contains(InCustomControllerTypeName.ToString());
 }
 
 bool UE::RCCustomControllers::IsValidCustomController(const FName& InCustomControllerTypeName)
@@ -60,11 +46,8 @@ TMap<FName, FString> UE::RCCustomControllers::GetCustomControllerMetaData(const 
 	TMap<FName, FString> OutMetaData;
 	OutMetaData.Emplace(UE::RCCustomControllers::CustomControllerNameKey, InCustomControllerTypeName);
 
-	if (UE::RCCustomControllers::CustomControllerExecutesOnLoad(FName(*InCustomControllerTypeName)))
-	{
-		OutMetaData.Emplace(UE::RCCustomControllers::CustomControllerExecuteOnLoadNameKey, TEXT("true"));
-	}
-
+	// Note: this is a good place to additionally edit OutMetaData by manually adding elements here if custom logic is needed
+	
 	return OutMetaData;
 }
 

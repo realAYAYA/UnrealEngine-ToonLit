@@ -5,6 +5,7 @@
 =============================================================================*/
 #include "WorldPartition/WorldPartition.h"
 #include "Misc/PackageName.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/UObjectIterator.h"
 #include "Misc/Paths.h"
 #include "WorldPartition/WorldPartitionLog.h"
@@ -12,11 +13,14 @@
 #include "WorldPartition/WorldPartitionLevelStreamingPolicy.h"
 #include "WorldPartition/WorldPartitionReplay.h"
 #include "WorldPartition/WorldPartitionSubsystem.h"
-#include "WorldPartition/HLOD/HLODSubsystem.h"
+#include "WorldPartition/HLOD/HLODRuntimeSubsystem.h"
 #include "WorldPartition/DataLayer/DataLayerManager.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerManager.h"
+#include "WorldPartition/WorldPartitionSettings.h"
 #include "GameFramework/WorldSettings.h"
 #include "ProfilingDebugging/ScopedTimers.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 #include "LandscapeProxy.h"
 #include "Engine/LevelStreaming.h"
 
@@ -42,9 +46,12 @@
 #include "WorldPartition/LoaderAdapter/LoaderAdapterShape.h"
 #include "WorldPartition/LoaderAdapter/LoaderAdapterPinnedActors.h"
 #include "WorldPartition/HLOD/HLODLayer.h"
+#include "WorldPartition/HLOD/HLODActor.h"
 #include "WorldPartition/Cook/WorldPartitionCookPackageContextInterface.h"
-#include "WorldPartition/ContentBundle/ContentBundleEditorSubsystemInterface.h"
-#include "WorldPartition/ContentBundle/ContentBundleEditor.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
+#include "WorldPartition/ErrorHandling/WorldPartitionStreamingGenerationLogErrorHandler.h"
+#include "WorldPartition/ErrorHandling/WorldPartitionStreamingGenerationMapCheckErrorHandler.h"
 #include "Modules/ModuleManager.h"
 #include "GameDelegates.h"
 #else
@@ -138,7 +145,7 @@ TMap<FName, FString> GetDataLayersDumpString(const UWorldPartition* WorldPartiti
 	return DataLayersDumpString;
 }
 
-FString GetActorDescDumpString(const FWorldPartitionActorDesc* ActorDesc, const TMap<FName, FString>& DataLayersDumpString)
+FString GetActorDescDumpString(const FWorldPartitionActorDescInstance* ActorDescInstance, const TMap<FName, FString>& DataLayersDumpString)
 {
 	auto GetDataLayerString = [&DataLayersDumpString](const TArray<FName>& DataLayerNames)
 	{
@@ -157,11 +164,11 @@ FString GetActorDescDumpString(const FWorldPartitionActorDesc* ActorDesc, const 
 		});
 	};
 
-	check(ActorDesc);
+	check(ActorDescInstance);
 	return FString::Printf(
 		TEXT("%s DataLayerNames:%s") LINE_TERMINATOR, 
-		*ActorDesc->ToString(FWorldPartitionActorDesc::EToStringMode::Full), 
-		*GetDataLayerString(ActorDesc->GetDataLayerInstanceNames())
+		*ActorDescInstance->ToString(FWorldPartitionActorDesc::EToStringMode::Full),
+		*GetDataLayerString(ActorDescInstance->GetDataLayerInstanceNames().ToArray())
 	);
 }
 
@@ -197,9 +204,9 @@ static FAutoConsoleCommand DumpActorDesc(
 						TMap<FName, FString> DataLayersDumpString = GetDataLayersDumpString(WorldPartition);
 						for (const FString& ActorPath : ActorPaths)
 						{
-							if (const FWorldPartitionActorDesc* ActorDesc = WorldPartition->GetActorDescByName(ActorPath))
+							if (const FWorldPartitionActorDescInstance* ActorDescInstance = WorldPartition->GetActorDescInstanceByPath(ActorPath))
 							{
-								UE_LOG(LogWorldPartition, Log, TEXT("%s"), *GetActorDescDumpString(ActorDesc, DataLayersDumpString));
+								UE_LOG(LogWorldPartition, Log, TEXT("%s"), *GetActorDescDumpString(ActorDescInstance, DataLayersDumpString));
 							}
 						}
 					}
@@ -230,9 +237,65 @@ static FAutoConsoleCommand DumpActorDescs(
 	})
 );
 
+class FLoaderAdapterAlwaysLoadedActors : public FLoaderAdapterShape
+{
+public:
+	FLoaderAdapterAlwaysLoadedActors(UWorld* InWorld)
+		: FLoaderAdapterShape(InWorld, FBox(FVector(-HALF_WORLD_MAX, -HALF_WORLD_MAX, -HALF_WORLD_MAX), FVector(HALF_WORLD_MAX, HALF_WORLD_MAX, HALF_WORLD_MAX)), TEXT("Always Loaded"))
+	{
+		bIncludeSpatiallyLoadedActors = false;
+		bIncludeNonSpatiallyLoadedActors = true;
+	}
+
+	void RefreshLoadedState()
+	{
+		FLoaderAdapterShape::RefreshLoadedState();
+	}
+};
+
+UWorldPartition::FWorldPartitionExternalDirtyActorsTracker::FWorldPartitionExternalDirtyActorsTracker()
+	: Super(nullptr, nullptr)
+{}
+
+UWorldPartition::FWorldPartitionExternalDirtyActorsTracker::FWorldPartitionExternalDirtyActorsTracker(UWorldPartition* InWorldPartition)
+	: Super(InWorldPartition->GetTypedOuter<ULevel>(), InWorldPartition)
+{}
+
+void UWorldPartition::FWorldPartitionExternalDirtyActorsTracker::OnRemoveNonDirtyActor(TWeakObjectPtr<AActor> InActor, FWorldPartitionReference& InValue)
+{
+	check(InActor.IsValid());
+	NonDirtyActors.Emplace(InActor, InValue);
+}
+
+void UWorldPartition::FWorldPartitionExternalDirtyActorsTracker::Tick(float InDeltaSeconds)
+{
+	Super::Tick(InDeltaSeconds);
+
+	for (auto& [Actor, Reference] : NonDirtyActors)
+	{
+		// Resolve reference for newly added actors
+		if (!Reference.IsValid() && Actor.IsValid())
+		{
+			Reference = FWorldPartitionReference(Owner, Actor->GetActorGuid());
+		}
+
+		// Transfer ownership of our last ref if actor can be pinned
+		if (Reference.IsValid() && Reference->GetHardRefCount() <= 1 && Owner->PinnedActors && FLoaderAdapterPinnedActors::SupportsPinning(*Reference))
+		{
+			Owner->PinnedActors->AddActors({ Reference.ToHandle() });
+		}
+	}
+
+	NonDirtyActors.Empty();
+}
+
+UWorldPartition::FWorldPartitionChangedEvent UWorldPartition::WorldPartitionChangedEvent;
+#endif
+
+#if !NO_LOGGING
 static FAutoConsoleCommand SetLogWorldPartitionVerbosity(
-	TEXT("wp.Editor.SetLogWorldPartitionVerbosity"),
-	TEXT("Change the WorldPartition verbosity log verbosity."),
+	TEXT("wp.Runtime.SetLogWorldPartitionVerbosity"),
+	TEXT("Change the WorldPartition log verbosity."),
 	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
 	{
 		if (Args.Num() == 1)
@@ -248,18 +311,6 @@ static FAutoConsoleCommand SetLogWorldPartitionVerbosity(
 		}
 	})
 );
-
-class FLoaderAdapterAlwaysLoadedActors : public FLoaderAdapterShape
-{
-public:
-	FLoaderAdapterAlwaysLoadedActors(UWorld* InWorld)
-		: FLoaderAdapterShape(InWorld, FBox(FVector(-HALF_WORLD_MAX, -HALF_WORLD_MAX, -HALF_WORLD_MAX), FVector(HALF_WORLD_MAX, HALF_WORLD_MAX, HALF_WORLD_MAX)), TEXT("Always Loaded"))
-	{
-		bIncludeSpatiallyLoadedActors = false;
-		bIncludeNonSpatiallyLoadedActors = true;
-	}
-};
-UWorldPartition::FWorldPartitionChangedEvent UWorldPartition::WorldPartitionChangedEvent;
 #endif
 
 UWorldPartition::UWorldPartition(const FObjectInitializer& ObjectInitializer)
@@ -287,9 +338,11 @@ UWorldPartition::UWorldPartition(const FObjectInitializer& ObjectInitializer)
 	bEnableStreaming = true;
 	ServerStreamingMode = EWorldPartitionServerStreamingMode::ProjectDefault;
 	ServerStreamingOutMode = EWorldPartitionServerStreamingOutMode::ProjectDefault;
+	DataLayersLogicOperator = EWorldPartitionDataLayersLogicOperator::Or;
 	StreamingStateEpoch = 0;
 
 #if WITH_EDITOR
+	bAllowShowingHLODsInEditor = true;
 	WorldPartitionStreamingPolicyClass = UWorldPartitionLevelStreamingPolicy::StaticClass();
 #endif
 }
@@ -333,37 +386,6 @@ void UWorldPartition::OnGCPostReachabilityAnalysis()
 	}
 }
 
-void UWorldPartition::OnPackageDirtyStateChanged(UPackage* Package)
-{	
-	auto ShouldHandleActor = [this](AActor* Actor)
-	{
-		if (Actor && Actor->IsMainPackageActor())
-		{
-			if (ULevel* OuterLevel = Actor->GetTypedOuter<ULevel>())
-			{
-				return OuterLevel->GetWorldPartition() == this;
-			}
-		}
-		return false;
-	};
-
-	if (AActor* Actor = AActor::FindActorInPackage(Package); ShouldHandleActor(Actor))
-	{
-		if (FWorldPartitionHandle ActorHandle(this, Actor->GetActorGuid()); ActorHandle.IsValid())
-		{
-			if (Package->IsDirty())
-			{
-				DirtyActors.Add(FDirtyActor(ActorHandle.ToReference(), Actor));
-			}
-		}
-		else
-		{
-			// This is handling a new actor (unsaved).
-			DirtyActors.Add(FDirtyActor(Actor));
-		}
-	}
-}
-
 // Returns whether the memory package is part of the known/valid package names
 // used by World Partition for PIE/-game streaming.
 bool UWorldPartition::IsValidPackageName(const FString& InPackageName)
@@ -373,7 +395,7 @@ bool UWorldPartition::IsValidPackageName(const FString& InPackageName)
 		// Remove PIE prefix
 		FString PackageName = UWorld::RemovePIEPrefix(InPackageName);
 		// Test if package is a valid world partition PIE package
-		return GeneratedStreamingPackageNames.Contains(PackageName);
+		return GeneratedLevelStreamingPackageNames.Contains(PackageName);
 	}
 	return false;
 }
@@ -391,26 +413,33 @@ void UWorldPartition::OnPrePIEEnded(bool bWasSimulatingInEditor)
 void UWorldPartition::OnBeginPlay()
 {
 	check(!bIsPIE);
-	bIsPIE = true;
+	bIsPIE = !IsRunningGame();
 
-	FGenerateStreamingParams Params;
+	// In PIE, we always want to populate the map check dialog
+	FStreamingGenerationMapCheckErrorHandler MapCheckErrorHandler;
+	FStreamingGenerationLogErrorHandler LogErrorHandler;
+	
+	FGenerateStreamingParams Params = FGenerateStreamingParams()
+		.SetErrorHandler(bIsPIE ? (IStreamingGenerationErrorHandler*)&MapCheckErrorHandler : (IStreamingGenerationErrorHandler*)&LogErrorHandler);
 
-	TArray<FString> OutGeneratedStreamingPackageNames;
+	TArray<FString> OutGeneratedLevelStreamingPackageNames;
 	FGenerateStreamingContext Context = FGenerateStreamingContext()
-		.SetPackagesToGenerate((bIsPIE || IsRunningGame()) ? &OutGeneratedStreamingPackageNames : nullptr);
+		.SetLevelPackagesToGenerate((bIsPIE || IsRunningGame()) ? &OutGeneratedLevelStreamingPackageNames : nullptr);
 
 	GenerateStreaming(Params, Context);
 
 	// Prepare GeneratedStreamingPackages
-	check(GeneratedStreamingPackageNames.IsEmpty());
-	for (const FString& PackageName : OutGeneratedStreamingPackageNames)
+	check(GeneratedLevelStreamingPackageNames.IsEmpty());
+	for (const FString& PackageName : OutGeneratedLevelStreamingPackageNames)
 	{
 		// Set as memory package to avoid wasting time in UWorldPartition::IsValidPackageName (GenerateStreaming for PIE runs on the editor world)
 		FString Package = FPaths::RemoveDuplicateSlashes(FPackageName::IsMemoryPackage(PackageName) ? PackageName : TEXT("/Memory/") + PackageName);
-		GeneratedStreamingPackageNames.Add(Package);
+		GeneratedLevelStreamingPackageNames.Add(Package);
 	}
 
 	RuntimeHash->OnBeginPlay();
+
+	ExternalDataLayerManager->OnBeginPlay();
 }
 
 void UWorldPartition::OnCancelPIE()
@@ -425,6 +454,7 @@ void UWorldPartition::OnEndPlay()
 	if (bIsPIE)
 	{
 		FlushStreaming();
+		ExternalDataLayerManager->OnEndPlay();
 		RuntimeHash->OnEndPlay();
 		bIsPIE = false;
 	}
@@ -520,7 +550,7 @@ void UWorldPartition::Initialize(UWorld* InWorld, const FTransform& InTransform)
 	const bool bIsDedicatedServer = IsRunningDedicatedServer();
 
 	UE_LOG(LogWorldPartition, Log, TEXT("UWorldPartition::Initialize : World = %s, World Type = %s, IsMainWorldPartition = %d, Location = %s, Rotation = %s, IsEditor = %d, IsGame = %d, IsPIEWorldTravel = %d, IsCooking = %d"),
-		*OuterWorld->GetName(),
+		*OuterWorld->GetPathName(),
 		LexToString(World->WorldType),
 		IsMainWorldPartition() ? 1 : 0,
 		*InTransform.GetLocation().ToCompactString(),
@@ -541,6 +571,13 @@ void UWorldPartition::Initialize(UWorld* InWorld, const FTransform& InTransform)
 			UseMakingVisibleTransactionRequests() ? 1 : 0, 
 			UseMakingInvisibleTransactionRequests() ? 1 : 0);
 	}
+
+	auto CreateAndInitializeDataLayerManager = [this]()
+	{
+		check(!DataLayerManager);
+		DataLayerManager = NewObject<UDataLayerManager>(this, TEXT("DataLayerManager"), RF_Transient);
+		DataLayerManager->Initialize();
+	};
 
 #if WITH_EDITOR
 	if (bEnableStreaming)
@@ -570,96 +607,41 @@ void UWorldPartition::Initialize(UWorld* InWorld, const FTransform& InTransform)
 			PinnedActors = new FLoaderAdapterPinnedActors(OuterWorld);
 		
 			IWorldPartitionEditorModule& WorldPartitionEditorModule = FModuleManager::LoadModuleChecked<IWorldPartitionEditorModule>("WorldPartitionEditor");
-			ForceLoadedActors = WorldPartitionEditorModule.GetDisableLoadingInEditor() ? new FLoaderAdapterActorList(OuterWorld) : nullptr;
+			ForceLoadedActors = WorldPartitionEditorModule.GetEnableLoadingInEditor() ? nullptr : new FLoaderAdapterActorList(OuterWorld);
 		}
 	}
 
 	check(RuntimeHash);
 	RuntimeHash->SetFlags(RF_Transactional);
 
-	TArray<FGuid> ForceLoadedActorGuids;
 	if (bIsEditor || bIsGame || bIsPIEWorldTravel || bIsDedicatedServer)
 	{
-		UPackage* LevelPackage = OuterWorld->PersistentLevel->GetOutermost();
-
-		// Duplicated worlds (ex: WorldPartitionRenameDuplicateBuilder) will not have a loaded path 
-		const FName PackageName = LevelPackage->GetLoadedPath().GetPackageFName().IsNone() ? LevelPackage->GetFName() : LevelPackage->GetLoadedPath().GetPackageFName();
-
-		// Currently known Instancing use cases:
-		//	- World Partition map template (New Level)
-		//	- PIE World Travel
-		FString SourceWorldPath, RemappedWorldPath;
-		const bool bIsInstanced = OuterWorld->GetSoftObjectPathMapping(SourceWorldPath, RemappedWorldPath);
-
-		// Follow the world's streaming enabled value most of the times, except:
-		//	- World is instanced and from a Level Instance that supports partial loading
-		const bool bIsStreamingEnabled = IsStreamingEnabledInEditor();
-
-		if (bIsInstanced)
-		{
-			InstancingContext.AddPackageMapping(PackageName, LevelPackage->GetFName());
-
-			// SoftObjectPaths: Specific case for new maps (/Temp/Untitled) where we need to remap the AssetPath and not just the Package name because the World gets renamed (See UWorld::PostLoad)
-			InstancingContext.AddPathMapping(
-				FSoftObjectPath(*FString::Format(TEXT("{0}.{1}"), {PackageName.ToString(), FPackageName::GetShortName(PackageName)})),
-				FSoftObjectPath(OuterWorld)
-			);
-		}
-
-		FContainerRegistrationParams ContainerInitParams(PackageName);
-		ActorDescContainer = RegisterActorDescContainer(ContainerInitParams);
-
-		{
-			// If a Valid Actor references an Invalid Actor:
-			// Make sure Invalid Actors do not load their imports (ex: outer non instanced world).
-			if (bIsInstanced)
-			{
-				for (const FAssetData& InvalidActor : ActorDescContainer->InvalidActors)
-				{
-					InstancingContext.AddPackageMapping(InvalidActor.PackageName, NAME_None);
-				}
-			}
-
-			TRACE_CPUPROFILER_EVENT_SCOPE(UActorDescContainer::Hash);
-			for (FActorDescContainerCollection::TIterator<> ActorDescIterator(this); ActorDescIterator; ++ActorDescIterator)
-			{
-				if (bIsInstanced)
-				{
-					const FString LongActorPackageName = ActorDescIterator->GetActorPackage().ToString();
-					const FString InstancedName = ULevel::GetExternalActorPackageInstanceName(LevelPackage->GetName(), LongActorPackageName);
-
-					InstancingContext.AddPackageMapping(*LongActorPackageName, *InstancedName);
-
-					ActorDescIterator->TransformInstance(SourceWorldPath, RemappedWorldPath);
-				}
-
-				ActorDescIterator->bIsForcedNonSpatiallyLoaded = !bIsStreamingEnabled;
-
-				if (ForceLoadedActors)
-				{
-					ForceLoadedActorGuids.Add(ActorDescIterator->GetGuid());
-				}
-
-				if (bIsEditor && !bIsCooking)
-				{
-					HashActorDesc(*ActorDescIterator);
-				}
-			}
-		}
+		FName ContainerPackageName = UActorDescContainerInstance::GetContainerPackageNameFromWorld(OuterWorld);
+		ActorDescContainerInstance = RegisterActorDescContainerInstance(UActorDescContainerInstance::FInitializeParams(ContainerPackageName));
+		CreateAndInitializeDataLayerManager();
+		InitializeActorDescContainerEditorStreaming(ActorDescContainerInstance);
 	}
 #endif
 
-	// Here's it's safe to initialize the DataLayerManager
-	DataLayerManager = NewObject<UDataLayerManager>(this, TEXT("DataLayerManager"), RF_Transient);
-	DataLayerManager->Initialize();
+#if !WITH_EDITOR
+	check(!DataLayerManager);
+	check(!ExternalDataLayerManager);
+#endif
 
-#if WITH_EDITOR
-	if (ForceLoadedActors && ForceLoadedActorGuids.Num() > 0)
+	// Create and initialize the DataLayerManager (When WorldPartition's ActorDescContainerInstance is created, we create/initialize the DataLayerManager before calling InitializeActorDescContainerEditorStreaming)
+	if (!DataLayerManager)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(UActorDescContainer::ForceLoadedActors);
-		ForceLoadedActors->AddActors(ForceLoadedActorGuids);
+		CreateAndInitializeDataLayerManager();
 	}
+
+	// Create and initialize the ExternalDataLayerManager (In PIE, we use the exiting/duplicated ExternalDataLayerManager containing the duplicated ExternalStreamingObjects)
+	if (!ExternalDataLayerManager)
+	{
+		ExternalDataLayerManager = NewObject<UExternalDataLayerManager>(this, TEXT("ExternalDataLayerManager"), RF_Transient | RF_Transactional);
+	}
+	ExternalDataLayerManager->Initialize();
 	
+#if WITH_EDITOR
 	if (bIsEditor)
 	{
 		// Apply level transform on actors already part of the level
@@ -733,6 +715,8 @@ void UWorldPartition::Uninitialize()
 	{
 		check(World);
 
+		UE_LOG(LogWorldPartition, Log, TEXT("UWorldPartition::Uninitialize : World = %s"), *GetTypedOuter<UWorld>()->GetPathName());
+
 		InitState = EWorldPartitionInitState::Uninitializing;
 
 		if (IsMainWorldPartition())
@@ -787,20 +771,27 @@ void UWorldPartition::Uninitialize()
 			RegisteredEditorLoaderAdapters.Empty();
 		}
 
-		DirtyActors.Empty();
+#endif
 
-		UninitializeActorDescContainers();
-		ActorDescContainer = nullptr;
-
-		EditorHash = nullptr;
-		bIsPIE = false;
-#endif		
+		if (ExternalDataLayerManager)
+		{
+			ExternalDataLayerManager->DeInitialize();
+			ExternalDataLayerManager = nullptr;
+		}
 
 		if (DataLayerManager)
 		{
 			DataLayerManager->DeInitialize();
 			DataLayerManager = nullptr;
 		}
+
+#if WITH_EDITOR
+		UninitializeActorDescContainers();
+		ActorDescContainerInstance = nullptr;
+
+		EditorHash = nullptr;
+		bIsPIE = false;
+#endif		
 
 		InitState = EWorldPartitionInitState::Uninitialized;
 
@@ -815,23 +806,26 @@ UDataLayerManager* UWorldPartition::GetDataLayerManager() const
 	return DataLayerManager;
 }
 
+UDataLayerManager* UWorldPartition::GetResolvingDataLayerManager() const
+{
+	if (UWorld* OwningWorld = GetWorld(); OwningWorld && !OwningWorld->IsGameWorld())
+	{
+		if (UWorldPartition* OwningWorldPartition = OwningWorld->GetWorldPartition())
+		{
+			return UDataLayerManager::GetDataLayerManager(OwningWorldPartition);
+		}
+	}
+	return GetDataLayerManager();
+}
+
+UExternalDataLayerManager* UWorldPartition::GetExternalDataLayerManager() const
+{
+	return ExternalDataLayerManager;
+}
+
 bool UWorldPartition::IsInitialized() const
 {
 	return InitState == EWorldPartitionInitState::Initialized;
-}
-
-void UWorldPartition::Update()
-{
-#if WITH_EDITOR
-	UWorld* OuterWorld = GetTypedOuter<UWorld>();
-	check(OuterWorld);
-	check(!OuterWorld->IsInstanced());
-
-	ForEachActorDescContainer([](UActorDescContainer* InActorDescContainer)
-	{
-		InActorDescContainer->Update();
-	});
-#endif
 }
 
 bool UWorldPartition::SupportsStreaming() const
@@ -874,16 +868,27 @@ bool UWorldPartition::IsMainWorldPartition() const
 	return World == GetTypedOuter<UWorld>();
 }
 
+#if WITH_EDITOR
+void UWorldPartition::OnLevelActorDeleted(AActor* Actor)
+{
+	if (GIsEditorLoadingPackage)
+	{
+		if (UActorDescContainerInstance* DescContainerInstance = GetActorDescContainerInstance())
+		{
+			DescContainerInstance->RemoveActor(Actor->GetActorGuid());
+		}
+	}
+}
+
 void UWorldPartition::OnPostBugItGoCalled(const FVector& Loc, const FRotator& Rot)
 {
-#if WITH_EDITOR
 	if (GetMutableDefault<UWorldPartitionEditorPerProjectUserSettings>()->GetBugItGoLoadRegion())
 	{
 		const FVector LoadExtent(UWorldPartition::LoadingRangeBugItGo, UWorldPartition::LoadingRangeBugItGo, HALF_WORLD_MAX);
 		const FBox LoadCellsBox(Loc - LoadExtent, Loc + LoadExtent);
 
 		IWorldPartitionEditorModule& WorldPartitionEditorModule = FModuleManager::LoadModuleChecked<IWorldPartitionEditorModule>("WorldPartitionEditor");
-		if (!WorldPartitionEditorModule.GetDisableLoadingInEditor())
+		if (WorldPartitionEditorModule.GetEnableLoadingInEditor())
 		{
 			UWorldPartitionEditorLoaderAdapter* EditorLoaderAdapter = CreateEditorLoaderAdapter<FLoaderAdapterShape>(World, LoadCellsBox, TEXT("BugItGo"));
 			EditorLoaderAdapter->GetLoaderAdapter()->Load();
@@ -894,8 +899,8 @@ void UWorldPartition::OnPostBugItGoCalled(const FVector& Loc, const FRotator& Ro
 			WorldPartitionEditor->FocusBox(LoadCellsBox);
 		}
 	}
-#endif
 }
+#endif
 
 void UWorldPartition::RegisterDelegates()
 {
@@ -911,15 +916,15 @@ void UWorldPartition::RegisterDelegates()
 			FEditorDelegates::CancelPIE.AddUObject(this, &UWorldPartition::OnCancelPIE);
 			FGameDelegates::Get().GetEndPlayMapDelegate().AddUObject(this, &UWorldPartition::OnEndPlay);
 			FCoreUObjectDelegates::PostReachabilityAnalysis.AddUObject(this, &UWorldPartition::OnGCPostReachabilityAnalysis);
+			GEditor->OnLevelActorDeleted().AddUObject(this, &UWorldPartition::OnLevelActorDeleted);
 			GEditor->OnPostBugItGoCalled().AddUObject(this, &UWorldPartition::OnPostBugItGoCalled);
 			GEditor->OnEditorClose().AddUObject(this, &UWorldPartition::SavePerUserSettings);
-			FWorldDelegates::OnPostWorldRename.AddUObject(this, &UWorldPartition::OnWorldRenamed);
-			IContentBundleEditorSubsystemInterface::Get()->OnContentBundleRemovedContent().AddUObject(this, &UWorldPartition::OnContentBundleRemovedContent);
+			FWorldDelegates::OnPostWorldRename.AddUObject(this, &UWorldPartition::OnWorldRenamed);			
 		}
 
 		if (!IsRunningCommandlet())
 		{
-			UPackage::PackageDirtyStateChangedEvent.AddUObject(this, &UWorldPartition::OnPackageDirtyStateChanged);
+			ExternalDirtyActorsTracker = MakeUnique<FWorldPartitionExternalDirtyActorsTracker>(this);
 		}
 	}
 #endif
@@ -946,11 +951,6 @@ void UWorldPartition::UnregisterDelegates()
 	{
 		if (IsMainWorldPartition())
 		{
-			if (IContentBundleEditorSubsystemInterface* ContentBundleEditorSubsystem = IContentBundleEditorSubsystemInterface::Get())
-			{
-				ContentBundleEditorSubsystem->OnContentBundleRemovedContent().RemoveAll(this);
-			}
-
 			FWorldDelegates::OnPostWorldRename.RemoveAll(this);
 			FEditorDelegates::PreBeginPIE.RemoveAll(this);
 			FEditorDelegates::PrePIEEnded.RemoveAll(this);
@@ -962,13 +962,14 @@ void UWorldPartition::UnregisterDelegates()
 				FCoreUObjectDelegates::PostReachabilityAnalysis.RemoveAll(this);
 			}
 
+			GEditor->OnLevelActorDeleted().RemoveAll(this);
 			GEditor->OnPostBugItGoCalled().RemoveAll(this);
 			GEditor->OnEditorClose().RemoveAll(this);
 		}
 
 		if (!IsRunningCommandlet())
 		{
-			UPackage::PackageDirtyStateChangedEvent.RemoveAll(this);
+			ExternalDirtyActorsTracker.Reset();
 		}
 	}
 #endif
@@ -1036,15 +1037,18 @@ UWorldPartition* UWorldPartition::CreateOrRepairWorldPartition(AWorldSettings* W
 		}
 
 		FWorldPartitionMiniMapHelper::GetWorldPartitionMiniMap(OuterWorld, true);
+
+		WorldPartition->DataLayersLogicOperator = UWorldPartitionSettings::Get()->GetNewMapsDataLayersLogicOperator();
 	}
 
 	if (!WorldPartition->EditorHash)
 	{
 		if (!EditorHashClass)
 		{
-			EditorHashClass = FindObject<UClass>(nullptr, TEXT("/Script/Engine.WorldPartitionEditorSpatialHash"));
+			EditorHashClass = UWorldPartitionSettings::Get()->GetEditorHashDefaultClass();
 		}
 
+		check(EditorHashClass);
 		WorldPartition->EditorHash = NewObject<UWorldPartitionEditorHash>(WorldPartition, EditorHashClass);
 		WorldPartition->EditorHash->SetDefaultValues();
 	}
@@ -1053,9 +1057,10 @@ UWorldPartition* UWorldPartition::CreateOrRepairWorldPartition(AWorldSettings* W
 	{
 		if (!RuntimeHashClass)
 		{
-			RuntimeHashClass = FindObject<UClass>(nullptr, TEXT("/Script/Engine.WorldPartitionRuntimeSpatialHash"));
+			RuntimeHashClass = UWorldPartitionSettings::Get()->GetRuntimeHashDefaultClass();
 		}
 
+		check(RuntimeHashClass);
 		WorldPartition->RuntimeHash = NewObject<UWorldPartitionRuntimeHash>(WorldPartition, RuntimeHashClass, NAME_None, RF_Transactional);
 		WorldPartition->RuntimeHash->SetDefaultValues();
 	}
@@ -1071,16 +1076,25 @@ bool UWorldPartition::RemoveWorldPartition(AWorldSettings* WorldSettings)
 	{
 		if (!WorldPartition->IsStreamingEnabled())
 		{
-			FWorldPartitionLoadingContext::FNull LoadingContext;
+			ULevel* PersistentLevel = WorldSettings->GetLevel();
+
+			TArray<FWorldPartitionReference> ActorReferences;
+			ActorReferences.Reserve(PersistentLevel->Actors.Num());
 
 			WorldSettings->Modify();
 			
-			ULevel* PersistentLevel = WorldSettings->GetLevel();
 			for (AActor* Actor : PersistentLevel->Actors)
 			{
-				if (Actor && (Cast<AWorldDataLayers>(Actor) || Cast<AWorldPartitionMiniMap>(Actor)))
+				if (Actor)
 				{
-					Actor->Destroy();
+					if (Cast<AWorldDataLayers>(Actor) || Cast<AWorldPartitionMiniMap>(Actor) || Cast<AWorldPartitionHLOD>(Actor))
+					{
+						Actor->Destroy();
+					}
+					else if(Actor->GetExternalPackage())
+					{
+						ActorReferences.Emplace(WorldPartition, Actor->GetActorGuid());
+					}
 				}
 			}
 
@@ -1141,9 +1155,13 @@ bool UWorldPartition::IsServerStreamingEnabled() const
 				{
 					switch (UWorldPartition::GlobalEnableServerStreaming)
 					{
-					case 1:	bIsEnabled = true;
+					case 1:
+						bIsEnabled = true;
+						break;
 #if WITH_EDITOR
-					case 2: bIsEnabled = bIsPIE;
+					case 2:
+						bIsEnabled = bIsPIE;
+						break;
 #endif
 					}
 				}
@@ -1221,6 +1239,14 @@ bool UWorldPartition::UseMakingInvisibleTransactionRequests() const
 	return bCachedUseMakingInvisibleTransactionRequests.Get(false);
 }
 
+int32 UWorldPartition::GetStreamingStateEpoch() const
+{
+	// Merge WorldPartition's StreamingStateEpoch and AWorldDataLayers DataLayersStateEpoch
+	const UWorld* OuterWorld = GetTypedOuter<UWorld>();
+	const AWorldDataLayers* WorldDataLayers = OuterWorld->GetWorldDataLayers();
+	return HashCombineFast(StreamingStateEpoch, WorldDataLayers ? WorldDataLayers->GetDataLayersStateEpoch() : 0);
+}
+
 bool UWorldPartition::IsSimulating(bool bIncludeTestEnableSimulationStreamingSource)
 {
 #if WITH_EDITOR
@@ -1231,20 +1257,25 @@ bool UWorldPartition::IsSimulating(bool bIncludeTestEnableSimulationStreamingSou
 }
 
 #if WITH_EDITOR
-void UWorldPartition::OnActorDescAdded(FWorldPartitionActorDesc* NewActorDesc)
+void UWorldPartition::OnActorDescInstanceAdded(FWorldPartitionActorDescInstance* NewActorDescInstance)
 {
-	NewActorDesc->bIsForcedNonSpatiallyLoaded = !IsStreamingEnabledInEditor();
-
-	HashActorDesc(NewActorDesc);
-
-	if (AActor* NewActor = NewActorDesc->GetActor())
+	if (const UDataLayerManager* ResolvingDataLayerManager = GetResolvingDataLayerManager())
 	{
-		DirtyActors.Add(FDirtyActor(FWorldPartitionReference(NewActorDesc->GetContainer(), NewActorDesc->GetGuid()), NewActor));
+		ResolvingDataLayerManager->ResolveActorDescInstanceDataLayers(NewActorDescInstance);
 	}
+
+	NewActorDescInstance->SetForceNonSpatiallyLoaded(!IsStreamingEnabledInEditor());
+
+	HashActorDescInstance(NewActorDescInstance);
 
 	if (ForceLoadedActors)
 	{
-		ForceLoadedActors->AddActors({ NewActorDesc->GetGuid() });
+		ForceLoadedActors->AddActors({ NewActorDescInstance->GetGuid() });
+	}
+
+	if (AlwaysLoadedActors && !NewActorDescInstance->GetIsSpatiallyLoaded())
+	{
+		AlwaysLoadedActors->RefreshLoadedState();
 	}
 
 	if (WorldPartitionEditor)
@@ -1253,34 +1284,24 @@ void UWorldPartition::OnActorDescAdded(FWorldPartitionActorDesc* NewActorDesc)
 	}
 }
 
-void UWorldPartition::OnActorDescRemoved(FWorldPartitionActorDesc* ActorDesc)
+void UWorldPartition::OnActorDescInstanceRemoved(FWorldPartitionActorDescInstance* ActorDescInstance)
 {
 	if (PinnedActors)
 	{
-		PinnedActors->RemoveActors({ FWorldPartitionHandle(ActorDesc->GetContainer(), ActorDesc->GetGuid()) });
+		PinnedActors->RemoveActors({ FWorldPartitionHandle(ActorDescInstance->GetContainerInstance(), ActorDescInstance->GetGuid()) });
 	}
 
-	UnhashActorDesc(ActorDesc);
+	UnhashActorDescInstance(ActorDescInstance);
 
 	if (ForceLoadedActors)
 	{
-		ForceLoadedActors->RemoveActors({ ActorDesc->GetGuid() });
+		ForceLoadedActors->RemoveActors({ ActorDescInstance->GetGuid() });
 	}
-		
-	if (WorldPartitionEditor)
+
+	if (AlwaysLoadedActors && !ActorDescInstance->GetIsSpatiallyLoaded())
 	{
-		WorldPartitionEditor->Refresh();
+		AlwaysLoadedActors->RefreshLoadedState();
 	}
-}
-
-void UWorldPartition::OnActorDescUpdating(FWorldPartitionActorDesc* ActorDesc)
-{
-	UnhashActorDesc(ActorDesc);
-}
-
-void UWorldPartition::OnActorDescUpdated(FWorldPartitionActorDesc* ActorDesc)
-{
-	HashActorDesc(ActorDesc);
 
 	if (WorldPartitionEditor)
 	{
@@ -1288,14 +1309,62 @@ void UWorldPartition::OnActorDescUpdated(FWorldPartitionActorDesc* ActorDesc)
 	}
 }
 
-bool UWorldPartition::GetInstancingContext(const FLinkerInstancingContext*& OutInstancingContext) const
+void UWorldPartition::OnActorDescInstanceUpdating(FWorldPartitionActorDescInstance* ActorDescInstance)
 {
-	if (InstancingContext.IsInstanced())
+	UnhashActorDescInstance(ActorDescInstance);
+}
+
+void UWorldPartition::OnActorDescInstanceUpdated(FWorldPartitionActorDescInstance* ActorDescInstance)
+{
+	if (const UDataLayerManager* ResolvingDataLayerManager = GetResolvingDataLayerManager())
 	{
-		OutInstancingContext = &InstancingContext;
-		return true;
+		ResolvingDataLayerManager->ResolveActorDescInstanceDataLayers(ActorDescInstance);
 	}
-	return false;
+
+	HashActorDescInstance(ActorDescInstance);
+
+	if (WorldPartitionEditor)
+	{
+		WorldPartitionEditor->Refresh();
+	}
+}
+
+bool UWorldPartition::ShouldHashUnhashActorDescInstances() const
+{
+	const bool bIsEditor = !GetWorld()->IsGameWorld();
+	const bool bIsCooking = IsRunningCookCommandlet();
+	const bool bHashActorDescs = EditorHash && bIsEditor && !bIsCooking;
+	return bHashActorDescs;
+}
+
+void UWorldPartition::InitializeActorDescContainerEditorStreaming(UActorDescContainerInstance* InActorDescContainerInstance)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(InitializeActorDescContainerEditorStreaming);
+
+	const bool bHashActorDescs = ShouldHashUnhashActorDescInstances();
+	const bool bIsStreamingEnabled = IsStreamingEnabledInEditor();
+
+	TArray<FGuid> ForceLoadedActorGuids;
+	for (UActorDescContainerInstance::TIterator<> It(InActorDescContainerInstance); It; ++It)
+	{
+		It->SetForceNonSpatiallyLoaded(!bIsStreamingEnabled);
+
+		if (ForceLoadedActors)
+		{
+			ForceLoadedActorGuids.Add(It->GetGuid());
+		}
+
+		if (bHashActorDescs)
+		{
+			HashActorDescInstance(*It);
+		}
+	}
+
+	if (ForceLoadedActorGuids.Num())
+	{
+		check(ForceLoadedActors);
+		ForceLoadedActors->AddActors(ForceLoadedActorGuids);
+	}
 }
 #endif
 
@@ -1320,11 +1389,11 @@ void UWorldPartition::SetEnableStreaming(bool bInEnableStreaming)
 
 void UWorldPartition::OnEnableStreamingChanged()
 {
-	for (FActorDescContainerCollection::TIterator<> ActorDescIterator(this); ActorDescIterator; ++ActorDescIterator)
+	for (FActorDescContainerInstanceCollection::TIterator<> Iterator(this); Iterator; ++Iterator)
 	{
-		UnhashActorDesc(*ActorDescIterator);
-		ActorDescIterator->bIsForcedNonSpatiallyLoaded = !IsStreamingEnabledInEditor();
-		HashActorDesc(*ActorDescIterator);
+		UnhashActorDescInstance(*Iterator);
+		Iterator->SetForceNonSpatiallyLoaded(!IsStreamingEnabledInEditor());
+		HashActorDescInstance(*Iterator);
 	}
 
 	FLoaderAdapterAlwaysLoadedActors* OldAlwaysLoadedActors = AlwaysLoadedActors;
@@ -1341,51 +1410,54 @@ void UWorldPartition::OnEnableStreamingChanged()
 	}
 }
 
-void UWorldPartition::HashActorDesc(FWorldPartitionActorDesc* ActorDesc)
+void UWorldPartition::OnEnableLoadingInEditorChanged()
 {
-	check(ActorDesc);
+	if (ForceLoadedActors)
+	{
+		delete ForceLoadedActors;
+		ForceLoadedActors = nullptr;
+	}
+
+	IWorldPartitionEditorModule& WorldPartitionEditorModule = FModuleManager::LoadModuleChecked<IWorldPartitionEditorModule>("WorldPartitionEditor");
+
+	if (!WorldPartitionEditorModule.GetEnableLoadingInEditor())
+	{
+		UWorld* OuterWorld = GetTypedOuter<UWorld>();
+		check(OuterWorld);
+
+		ForceLoadedActors = new FLoaderAdapterActorList(OuterWorld);
+
+		TArray<FGuid> ForceLoadedActorGuids;
+		for (FActorDescContainerInstanceCollection::TIterator<> Iterator(this); Iterator; ++Iterator)
+		{
+			ForceLoadedActorGuids.Add(Iterator->GetGuid());
+		}
+
+		if (ForceLoadedActorGuids.Num())
+		{
+			ForceLoadedActors->AddActors(ForceLoadedActorGuids);
+		}
+	}
+}
+
+void UWorldPartition::HashActorDescInstance(FWorldPartitionActorDescInstance* ActorDescInstance)
+{
+	check(ActorDescInstance);
 	check(EditorHash);
 
-	FWorldPartitionHandle ActorHandle(this, ActorDesc->GetGuid());
+	FWorldPartitionHandle ActorHandle(ActorDescInstance);
 	EditorHash->HashActor(ActorHandle);
 
 	bShouldCheckEnableStreamingWarning = IsMainWorldPartition();
 }
 
-void UWorldPartition::UnhashActorDesc(FWorldPartitionActorDesc* ActorDesc)
+void UWorldPartition::UnhashActorDescInstance(FWorldPartitionActorDescInstance* ActorDescInstance)
 {
-	check(ActorDesc);
+	check(ActorDescInstance);
 	check(EditorHash);
 
-	FWorldPartitionHandle ActorHandle(this, ActorDesc->GetGuid());
+	FWorldPartitionHandle ActorHandle(ActorDescInstance);
 	EditorHash->UnhashActor(ActorHandle);
-}
-
-void UWorldPartition::OnContentBundleRemovedContent(const FContentBundleEditor* ContentBundle)
-{
-	check(ContentBundle);
-	
-	const TWeakObjectPtr<UActorDescContainer>& ContentBundleActorDescContainer = ContentBundle->GetActorDescContainer();
-	if (!ContentBundleActorDescContainer.IsValid())
-	{
-		return;
-	}
-
-	if (Contains(ContentBundleActorDescContainer.Get()->GetContainerPackage()))
-	{
-		// This is handling a new actor (unsaved) from Content Bundle.
-		for (TSet<FDirtyActor>::TIterator DirtyActorIt(DirtyActors); DirtyActorIt; ++DirtyActorIt)
-		{
-			const FDirtyActor& DirtyActor = *DirtyActorIt;
-			if (!DirtyActor.WorldPartitionRef.IsSet())
-			{
-				if (DirtyActor.ActorPtr.IsValid() && DirtyActor.ActorPtr->GetContentBundleGuid() == ContentBundleActorDescContainer.Get()->GetContentBundleGuid())
-				{
-					DirtyActorIt.RemoveCurrent();
-				}
-			}
-		}
-	}
 }
 
 bool UWorldPartition::IsStreamingEnabledInEditor() const
@@ -1397,29 +1469,35 @@ bool UWorldPartition::IsStreamingEnabledInEditor() const
 void UWorldPartition::Serialize(FArchive& Ar)
 {
 	Ar.UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
 
 	Super::Serialize(Ar);
 
+#if WITH_EDITOR
 	if (Ar.GetPortFlags() & PPF_DuplicateForPIE)
 	{
+		Ar << ExternalDataLayerManager;
 		Ar << StreamingPolicy;
-
-#if WITH_EDITORONLY_DATA
-		Ar << GeneratedStreamingPackageNames;
-#endif
-
-#if WITH_EDITOR
+		Ar << GeneratedLevelStreamingPackageNames;
 		Ar << bIsPIE;
-#endif
 	}
-	else if (Ar.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::WorldPartitionSerializeStreamingPolicyOnCook)
+	else
+#endif
 	{
-		bool bCooked = Ar.IsCooking();
-		Ar << bCooked;
-
-		if (bCooked)
+		if (Ar.CustomVer(FUE5MainStreamObjectVersion::GUID) >= FUE5MainStreamObjectVersion::WorldPartitionSerializeStreamingPolicyOnCook)
 		{
-			Ar << StreamingPolicy;
+			bool bCooked = Ar.IsCooking();
+			Ar << bCooked;
+
+			if (bCooked)
+			{
+				Ar << StreamingPolicy;
+			}
+		}
+	
+		if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::WorldPartitionDataLayersLogicOperatorAdded)
+		{
+			DataLayersLogicOperator = EWorldPartitionDataLayersLogicOperator::Or;
 		}
 	}
 }
@@ -1463,11 +1541,11 @@ bool UWorldPartition::ResolveSubobject(const TCHAR* SubObjectPath, UObject*& Out
 				SubObjectName = SubObjectPath;
 			}
 
-			if (const FWorldPartitionActorDesc* ActorDesc = GetActorDescByName(SubObjectName))
+			if (const FWorldPartitionActorDescInstance* ActorDescInstance = GetActorDescInstanceByPath(SubObjectName))
 			{
 				if (bLoadIfExists)
 				{
-					LoadedSubobjects.Emplace(this, ActorDesc->GetGuid());
+					LoadedSubobjects.Emplace(this, ActorDescInstance->GetGuid());
 				}
 
 				OutObject = StaticFindObject(UObject::StaticClass(), GetWorld()->PersistentLevel, SubObjectPath);
@@ -1495,12 +1573,12 @@ void UWorldPartition::AddReferencedObjects(UObject* InThis, FReferenceCollector&
 	// by the transaction buffer, but we clear it when unloading regions, etc. and we don't want these actors to die.
 	// Also, we must avoid reporting these references when not collecting garbage, as code such as package deletion
 	// will skip packages with actors still referenced (via GatherObjectReferencersForDeletion).
-	if (IsGarbageCollecting())
+	if (This->ExternalDirtyActorsTracker.IsValid() && IsGarbageCollecting())
 	{
 		Collector.AllowEliminatingReferences(false);
-		for (auto& [ActorReference, Actor] : This->DirtyActors)
+		for (auto& [WeakActor, Value] : This->ExternalDirtyActorsTracker->GetDirtyActors())
 		{
-			if (ActorReference.IsSet() || Actor.IsValid())
+			if (TObjectPtr<AActor> Actor = WeakActor.Get(true))
 			{
 				Collector.AddReferencedObject(Actor);
 			}
@@ -1508,9 +1586,9 @@ void UWorldPartition::AddReferencedObjects(UObject* InThis, FReferenceCollector&
 		Collector.AllowEliminatingReferences(true);
 	}
 
-	for (const UActorDescContainer* Container : This->ActorDescContainerCollection)
+	for (TObjectPtr<UActorDescContainerInstance>& ContainerInstance : This->ActorDescContainerInstanceCollection)
 	{
-		Collector.AddReferencedObject(Container);
+		Collector.AddReferencedObject(ContainerInstance);
 	}
 #endif
 
@@ -1525,66 +1603,11 @@ void UWorldPartition::Tick(float DeltaSeconds)
 		EditorHash->Tick(DeltaSeconds);
 	}
 
-	TArray<FWorldPartitionReference> ActorReferences;
-	for (TSet<FDirtyActor>::TIterator DirtyActorIt(DirtyActors); DirtyActorIt; ++DirtyActorIt)
+	if (ExternalDirtyActorsTracker)
 	{
-		const FDirtyActor& DirtyActor = *DirtyActorIt;
-		if (DirtyActor.WorldPartitionRef.IsSet())
-		{
-			const FWorldPartitionReference& Ref = DirtyActor.WorldPartitionRef.GetValue();
-
-			if (!Ref.IsValid())
-			{
-				DirtyActorIt.RemoveCurrent();
-			}
-			else if (DirtyActor.ActorPtr.IsValid() && !DirtyActor.ActorPtr->GetPackage()->IsDirty())
-			{
-				// Transfer ownership of the last ref if actor can be pinned, if not keep a temp ref so that we can refresh loaded states (which should take a add ref on unpinnable actors and prevent unloading)
-				if (Ref->GetHardRefCount() <= 1)
-				{
-					if (PinnedActors && FLoaderAdapterPinnedActors::SupportsPinning(Ref.Get()))
-					{
-						PinnedActors->AddActors({ Ref.ToHandle() });
-					}
-					else
-					{
-						ActorReferences.Add(Ref);
-					}
-				} 
-				DirtyActorIt.RemoveCurrent();
-			}
-		}
-		else
-		{
-			// This is handling a new actor (unsaved).
-			if (DirtyActor.ActorPtr.IsValid())
-			{
-				if (!DirtyActor.ActorPtr->GetPackage()->IsDirty())
-				{
-					DirtyActorIt.RemoveCurrent();
-				}
-			}
-			// In this case, we know that the DirtyActor is not in the transaction buffer anymore and this is fine removing it.
-			else if ((!DirtyActor.ActorPtr.IsValid(true)))
-			{
-				DirtyActorIt.RemoveCurrent();
-			}
-		}
+		ExternalDirtyActorsTracker->Tick(DeltaSeconds);
 	}
 
-	if (ActorReferences.Num() > 0)
-	{
-		// Before ActorReferences get released, refresh the Loaders so that they take a reference on actors they should load.
-		IWorldPartitionActorLoaderInterface::RefreshLoadedState(false);
-
-		for (const FWorldPartitionReference& ActorReference : ActorReferences)
-		{
-			UE_CLOG(ActorReference->GetHardRefCount() <= 1, LogWorldPartition, Warning, TEXT("Releasing reference on saved actor '%s' from the DirtyActors without a loader reference."), *ActorReference->GetActor()->GetPathName());
-		}
-		// Actors should be loaded by a Loader at this point and we can release the references
-		ActorReferences.Empty();
-	}
-		
 	if (bForceGarbageCollection)
 	{
 		GEngine->ForceGarbageCollection(bForceGarbageCollectionPurge);
@@ -1602,11 +1625,11 @@ void UWorldPartition::Tick(float DeltaSeconds)
 			bEnablingStreamingJustified = false;
 
 			FBox AllActorsBounds(ForceInit);
-			for (FActorDescContainerCollection::TConstIterator<> ActorDescIterator(this); ActorDescIterator; ++ActorDescIterator)
+			for (FActorDescContainerInstanceCollection::TConstIterator<> Iterator(this); Iterator; ++Iterator)
 			{
-				if (ActorDescIterator->GetIsSpatiallyLoadedRaw() || ActorDescIterator->GetActorNativeClass()->IsChildOf<ALandscapeProxy>())
+				if (Iterator->GetActorDesc()->GetIsSpatiallyLoadedRaw() || Iterator->GetActorNativeClass()->IsChildOf<ALandscapeProxy>())
 				{
-					const FBox EditorBounds = ActorDescIterator->GetEditorBounds();
+					const FBox EditorBounds = Iterator->GetEditorBounds();
 					if (EditorBounds.IsValid)
 					{
 						AllActorsBounds += EditorBounds;
@@ -1625,6 +1648,11 @@ void UWorldPartition::Tick(float DeltaSeconds)
 #endif
 }
 
+bool UWorldPartition::IsExternalStreamingObjectInjected(URuntimeHashExternalStreamingObjectBase* InExternalStreamingObject) const
+{
+	return RuntimeHash->IsExternalStreamingObjectInjected(InExternalStreamingObject);
+}
+
 bool UWorldPartition::InjectExternalStreamingObject(URuntimeHashExternalStreamingObjectBase* InExternalStreamingObject)
 {
 	bool bInjected = RuntimeHash->InjectExternalStreamingObject(InExternalStreamingObject);
@@ -1634,8 +1662,13 @@ bool UWorldPartition::InjectExternalStreamingObject(URuntimeHashExternalStreamin
 		{
 			StreamingPolicy->InjectExternalStreamingObject(InExternalStreamingObject);
 		}
-		GetWorld()->GetSubsystem<UHLODSubsystem>()->OnExternalStreamingObjectInjected(InExternalStreamingObject);
+		GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>()->OnExternalStreamingObjectInjected(InExternalStreamingObject);
 		++StreamingStateEpoch;
+
+#if DO_CHECK
+		check(InExternalStreamingObject->TargetInjectedWorldPartition.IsExplicitlyNull());
+		InExternalStreamingObject->TargetInjectedWorldPartition = this;
+#endif
 	}
 
 	return bInjected;
@@ -1646,12 +1679,17 @@ bool UWorldPartition::RemoveExternalStreamingObject(URuntimeHashExternalStreamin
 	bool bRemoved = RuntimeHash->RemoveExternalStreamingObject(InExternalStreamingObject);
 	if (bRemoved)
 	{
+#if DO_CHECK
+		check(InExternalStreamingObject->TargetInjectedWorldPartition.IsValid());
+		InExternalStreamingObject->TargetInjectedWorldPartition = nullptr;
+#endif
+
 		if (StreamingPolicy)
 		{
 			StreamingPolicy->RemoveExternalStreamingObject(InExternalStreamingObject);
 		}
 		
-		GetWorld()->GetSubsystem<UHLODSubsystem>()->OnExternalStreamingObjectRemoved(InExternalStreamingObject);
+		GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>()->OnExternalStreamingObjectRemoved(InExternalStreamingObject);
 		++StreamingStateEpoch;
 	}
 
@@ -1683,6 +1721,7 @@ bool UWorldPartition::IsStreamingCompleted(const TArray<FWorldPartitionStreaming
 {
 	if (GetWorld()->IsGameWorld() && StreamingPolicy)
 	{
+		++StreamingStateEpoch; // Update streaming state epoch to make sure we reevaluate streaming sources
 		return StreamingPolicy->IsStreamingCompleted(InStreamingSources);
 	}
 	return true;
@@ -1692,6 +1731,7 @@ bool UWorldPartition::IsStreamingCompleted(EWorldPartitionRuntimeCellState Query
 {
 	if (GetWorld()->IsGameWorld() && StreamingPolicy)
 	{
+		++StreamingStateEpoch; // Update streaming state epoch to make sure we reevaluate streaming sources
 		return StreamingPolicy->IsStreamingCompleted(QueryState, QuerySources, bExactState);
 	}
 
@@ -1706,7 +1746,7 @@ void UWorldPartition::OnCellShown(const UWorldPartitionRuntimeCell* InCell)
 	{
 		if (IsStreamingEnabled())
 		{
-			GetWorld()->GetSubsystem<UHLODSubsystem>()->OnCellShown(InCell);
+			GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>()->OnCellShown(InCell);
 		}
 		StreamingPolicy->OnCellShown(InCell);
 	}
@@ -1720,7 +1760,7 @@ void UWorldPartition::OnCellHidden(const UWorldPartitionRuntimeCell* InCell)
 	{
 		if (IsStreamingEnabled())
 		{
-			GetWorld()->GetSubsystem<UHLODSubsystem>()->OnCellHidden(InCell);
+			GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>()->OnCellHidden(InCell);
 		}
 		StreamingPolicy->OnCellHidden(InCell);
 	}
@@ -1757,13 +1797,13 @@ bool UWorldPartition::IsStreamingInEnabled() const
 
 void UWorldPartition::DisableStreamingIn()
 {
-	check(bStreamingInEnabled);
+	UE_CLOG(!bStreamingInEnabled, LogWorldPartition, Warning, TEXT("UWorldPartition::DisableStreamingIn called while streaming was already disabled."));
 	bStreamingInEnabled = false;
 }
 
 void UWorldPartition::EnableStreamingIn()
 {
-	check(!bStreamingInEnabled);
+	UE_CLOG(bStreamingInEnabled, LogWorldPartition, Warning, TEXT("UWorldPartition::EnableStreamingIn called while streaming was already enabled."));
 	bStreamingInEnabled = true;
 }
 
@@ -1776,60 +1816,6 @@ bool UWorldPartition::ConvertEditorPathToRuntimePath(const FSoftObjectPath& InPa
 void UWorldPartition::DrawRuntimeHashPreview()
 {
 	RuntimeHash->DrawPreview();
-}
-
-void UWorldPartition::BeginCook(IWorldPartitionCookPackageContext& CookContext)
-{
-	OnBeginCook.Broadcast(CookContext);
-
-	CookContext.RegisterPackageCookPackageGenerator(this);
-}
-
-bool UWorldPartition::GatherPackagesToCook(IWorldPartitionCookPackageContext& CookContext)
-{
-	FGenerateStreamingParams Params = FGenerateStreamingParams()
-		.SetActorDescContainer(ActorDescContainer);
-
-	TArray<FString> PackagesToCook;
-	FGenerateStreamingContext Context = FGenerateStreamingContext()
-		.SetPackagesToGenerate(&PackagesToCook);
-
-	if (GenerateContainerStreaming(Params, Context))
-	{
-		FString PackageName = GetPackage()->GetName();
-		for (const FString& PackageToCook : PackagesToCook)
-		{
-			CookContext.AddLevelStreamingPackageToGenerate(this, PackageName, PackageToCook);
-		}
-	
-		return true;
-	}
-
-	return false;
-}
-
-bool UWorldPartition::PrepareGeneratorPackageForCook(IWorldPartitionCookPackageContext& CookContext, TArray<UPackage*>& OutModifiedPackages)
-{
-	check(RuntimeHash);
-	return RuntimeHash->PrepareGeneratorPackageForCook(OutModifiedPackages);
-}
-
-bool UWorldPartition::PopulateGeneratorPackageForCook(IWorldPartitionCookPackageContext& CookContext, const TArray<FWorldPartitionCookPackage*>& InPackagesToCook, TArray<UPackage*>& OutModifiedPackages)
-{
-	check(RuntimeHash);
-	return RuntimeHash->PopulateGeneratorPackageForCook(InPackagesToCook, OutModifiedPackages);
-}
-
-bool UWorldPartition::PopulateGeneratedPackageForCook(IWorldPartitionCookPackageContext& CookContext, const FWorldPartitionCookPackage& InPackagesToCook, TArray<UPackage*>& OutModifiedPackages)
-{
-	check(RuntimeHash);
-	return RuntimeHash->PopulateGeneratedPackageForCook(InPackagesToCook, OutModifiedPackages);
-}
-
-UWorldPartitionRuntimeCell* UWorldPartition::GetCellForPackage(const FWorldPartitionCookPackage& PackageToCook) const
-{
-	check(RuntimeHash);
-	return RuntimeHash->GetCellForPackage(PackageToCook);
 }
 
 TArray<FBox> UWorldPartition::GetUserLoadedEditorRegions() const
@@ -1858,9 +1844,9 @@ void UWorldPartition::SavePerUserSettings()
 		GetMutableDefault<UWorldPartitionEditorPerProjectUserSettings>()->SetEditorLoadedRegions(GetWorld(), GetUserLoadedEditorRegions());
 
 		TArray<FName> EditorLoadedLocationVolumes;
-		for (FActorDescContainerCollection::TConstIterator<> ActorDescIterator(this); ActorDescIterator; ++ActorDescIterator)
+		for (FActorDescContainerInstanceCollection::TConstIterator<> Iterator(this); Iterator; ++Iterator)
 		{
-			if (ALocationVolume* LocationVolume = Cast<ALocationVolume>(ActorDescIterator->GetActor()); IsValid(LocationVolume))
+			if (ALocationVolume* LocationVolume = Cast<ALocationVolume>(Iterator->GetActor()); IsValid(LocationVolume))
 			{
 				check(LocationVolume->GetClass()->ImplementsInterface(UWorldPartitionActorLoaderInterface::StaticClass()));
 
@@ -1881,19 +1867,19 @@ void UWorldPartition::DumpActorDescs(const FString& Path)
 {
 	if (FArchive* LogFile = IFileManager::Get().CreateFileWriter(*Path))
 	{
-		TArray<const FWorldPartitionActorDesc*> ActorDescs;
+		TArray<const FWorldPartitionActorDescInstance*> ActorDescInstances;
 		TMap<FName, FString> DataLayersDumpString = GetDataLayersDumpString(this);
-		for (FActorDescContainerCollection::TConstIterator<> ActorDescIterator(this); ActorDescIterator; ++ActorDescIterator)
+		for (FActorDescContainerInstanceCollection::TConstIterator<> Iterator(this); Iterator; ++Iterator)
 		{
-			ActorDescs.Add(*ActorDescIterator);
+			ActorDescInstances.Add(*Iterator);
 		}
-		ActorDescs.Sort([](const FWorldPartitionActorDesc& A, const FWorldPartitionActorDesc& B)
+		ActorDescInstances.Sort([](const FWorldPartitionActorDescInstance& A, const FWorldPartitionActorDescInstance& B)
 		{
 			return A.GetGuid() < B.GetGuid();
 		});
-		for (const FWorldPartitionActorDesc* ActorDescIterator : ActorDescs)
+		for (const FWorldPartitionActorDescInstance* Iterator : ActorDescInstances)
 		{
-			FString LineEntry = GetActorDescDumpString(ActorDescIterator, DataLayersDumpString);
+			FString LineEntry = GetActorDescDumpString(Iterator, DataLayersDumpString);
 			LogFile->Serialize(TCHAR_TO_ANSI(*LineEntry), LineEntry.Len());
 		}
 
@@ -1904,48 +1890,65 @@ void UWorldPartition::DumpActorDescs(const FString& Path)
 
 void UWorldPartition::AppendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	FAssetRegistryTagsContextData Context(this, EAssetRegistryTagsCaller::Uncategorized);
+	AppendAssetRegistryTags(Context);
+	for (TPair<FName, FAssetRegistryTag>& Pair : Context.Tags)
+	{
+		OutTags.Add(MoveTemp(Pair.Value));
+	}
+}
+
+void UWorldPartition::AppendAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	static const FName NAME_LevelIsPartitioned(TEXT("LevelIsPartitioned"));
-	OutTags.Add(FAssetRegistryTag(NAME_LevelIsPartitioned, TEXT("1"), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(NAME_LevelIsPartitioned, TEXT("1"), FAssetRegistryTag::TT_Hidden));
 
 	if (!IsStreamingEnabled())
 	{
 		static const FName NAME_LevelHasStreamingDisabled(TEXT("LevelHasStreamingDisabled"));
-		OutTags.Add(FAssetRegistryTag(NAME_LevelHasStreamingDisabled, TEXT("1"), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(NAME_LevelHasStreamingDisabled, TEXT("1"), FAssetRegistryTag::TT_Hidden));
 	}
 
-	// Append level script references so we can perform changelists validations without loading the world
-	if (const ULevelScriptBlueprint* LevelScriptBlueprint = GetWorld()->PersistentLevel->GetLevelScriptBlueprint(true))
-	{
-		const ActorsReferencesUtils::FGetActorReferencesParams Params = ActorsReferencesUtils::FGetActorReferencesParams((UObject*)LevelScriptBlueprint)
-			.SetRequiredFlags(RF_HasExternalPackage);
-		TArray<ActorsReferencesUtils::FActorReference> LevelScriptExternalActorReferences = ActorsReferencesUtils::GetActorReferences(Params);
+	// Append world references so we can perform changelists validations without loading it
+	const ActorsReferencesUtils::FGetActorReferencesParams Params = ActorsReferencesUtils::FGetActorReferencesParams(GetWorld())
+		.SetRequiredFlags(RF_HasExternalPackage);
+	TArray<ActorsReferencesUtils::FActorReference> WorldExternalActorReferences = ActorsReferencesUtils::GetActorReferences(Params);
 		
-		if (LevelScriptExternalActorReferences.Num())
+	if (WorldExternalActorReferences.Num())
+	{
+		FStringBuilderBase StringBuilder;
+		for (const ActorsReferencesUtils::FActorReference& ActorReference : WorldExternalActorReferences)
 		{
-			FStringBuilderBase StringBuilder;
-			for (const ActorsReferencesUtils::FActorReference& ActorReference : LevelScriptExternalActorReferences)
-			{
-				StringBuilder.Append(ActorReference.Actor->GetActorGuid().ToString(EGuidFormats::Short));
-				StringBuilder.AppendChar(TEXT(','));
-			}
-			StringBuilder.RemoveSuffix(1);
-
-			static const FName NAME_LevelScriptExternalActorsReferences(TEXT("LevelScriptExternalActorsReferences"));
-			OutTags.Add(FAssetRegistryTag(NAME_LevelScriptExternalActorsReferences, StringBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
+			StringBuilder.Append(ActorReference.Actor->GetActorGuid().ToString(EGuidFormats::Short));
+			StringBuilder.AppendChar(TEXT(','));
 		}
+		StringBuilder.RemoveSuffix(1);
+
+		static const FName NAME_WorldExternalActorsReferences(TEXT("WorldExternalActorsReferences"));
+		Context.AddTag(FAssetRegistryTag(NAME_WorldExternalActorsReferences, StringBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
 	}
 }
 
-UActorDescContainer* UWorldPartition::RegisterActorDescContainer(const FContainerRegistrationParams& InRegistrationParameters)
+UActorDescContainerInstance* UWorldPartition::RegisterActorDescContainerInstance(const UActorDescContainerInstance::FInitializeParams& InParams)
 {
-	if (!Contains(InRegistrationParameters.PackageName))
+	TRACE_CPUPROFILER_EVENT_SCOPE(UWorldPartition::RegisterActorDescContainer);
+	const bool bIsEditor = !World->IsGameWorld();
+	const bool bIsGameWorld = !bIsEditor;
+	const bool bIsCooking = IsRunningCookCommandlet();
+	const bool bIsStreamedLevel = ULevelStreaming::FindStreamingLevel(GetTypedOuter<ULevel>()) != nullptr;
+	
+	if (!Contains(InParams.ContainerPackageName))
 	{	
-		UActorDescContainer::FInitializeParams ContainerInitParams(GetWorld(), InRegistrationParameters.PackageName);
-
+		// Initialize ContainerInstance hierarchy if we are the main world partition or if we are a game streamed world partition which means we have our own generate streaming
+		const bool bCreateContainerInstanceHierarchy = IsMainWorldPartition() || (bIsGameWorld && bIsStreamedLevel) || InParams.bCreateContainerInstanceHierarchy;
+		UActorDescContainerInstance::FInitializeParams InitParams(InParams.ContainerPackageName, bCreateContainerInstanceHierarchy);
+		InitParams.ContentBundleGuid = InParams.ContentBundleGuid;
+		InitParams.ExternalDataLayerAsset = InParams.ExternalDataLayerAsset;
+		
 		const FWorldDataLayersActorDesc* WorldDataLayerActorsDesc = nullptr;
-		ContainerInitParams.FilterActorDesc = [this, &WorldDataLayerActorsDesc, &InRegistrationParameters](const FWorldPartitionActorDesc* ActorDesc)
+		InitParams.FilterActorDescFunc = [this, &WorldDataLayerActorsDesc, &InParams](const FWorldPartitionActorDesc* ActorDesc)
 		{
-			if (InRegistrationParameters.FilterActorDescFunc && !InRegistrationParameters.FilterActorDescFunc(ActorDesc))
+			if (InParams.FilterActorDescFunc && !InParams.FilterActorDescFunc(ActorDesc))
 			{
 				return false;
 			}
@@ -1963,64 +1966,63 @@ UActorDescContainer* UWorldPartition::RegisterActorDescContainer(const FContaine
 				WorldDataLayerActorsDesc = FoundWorldDataLayerActorsDesc;
 			}
 
-			// Filter actors with duplicated GUID in WorldPartition
-			return !GetActorDesc(ActorDesc->GetGuid());
+			// Filter actors with duplicated GUID in WorldPartition (across containers):
+			// difference with the duplicate check in UActorDescContainerInstance is that WorldPartition is a collection of containers so same Guid could exist across those containers
+			// which wouldn't be validated by the container itself.
+			if (GetActorDescInstance(ActorDesc->GetGuid()))
+			{
+				UE_LOG(LogWorldPartition, Warning, TEXT("Found existing actor descriptor guid `%s`: Actor: '%s' from package '%s'"),
+					*ActorDesc->GetGuid().ToString(),
+					*ActorDesc->GetActorName().ToString(),
+					*ActorDesc->GetActorPackage().ToString());
+				return false;
+			}
+
+			return true;
 		};
 
-		UActorDescContainer* ContainerToRegister = NewObject<UActorDescContainer>(this);
-		ContainerToRegister->Initialize(ContainerInitParams);
-
-		AddContainer(ContainerToRegister);
-
-		if (IsInitialized() && EditorHash != nullptr)
+		InitParams.OnInitializedFunc = [&InParams](UActorDescContainerInstance* InActorDescContainerInstance)
 		{
-			FWorldPartitionReference WDLReference;
-			for (FActorDescList::TIterator<> ActorDescIterator(ContainerToRegister); ActorDescIterator; ++ActorDescIterator)
+			if (InParams.OnInitializedFunc)
 			{
-				if (ActorDescIterator->GetActorNativeClass()->IsChildOf<AWorldDataLayers>())
-				{
-					WDLReference = FWorldPartitionReference(this, ActorDescIterator->GetGuid());
-					break;
-				}
+				InParams.OnInitializedFunc(InActorDescContainerInstance);
 			}
+		};
 
-			for (UActorDescContainer::TIterator<> It(ContainerToRegister); It; ++It)
-			{
-				HashActorDesc(*It);
-			}
+		UActorDescContainerInstance* ContainerInstanceToRegister = NewObject<UActorDescContainerInstance>(this, UActorDescContainerInstance::StaticClass(), NAME_None, RF_Transient);
+		
+		OnActorDescContainerInstancePreInitialize.ExecuteIfBound(InitParams, ContainerInstanceToRegister);
+
+		ContainerInstanceToRegister->Initialize(InitParams);
+			
+		AddContainer(ContainerInstanceToRegister);
+
+		if (ActorDescContainerInstance && EditorHash)
+		{
+			check(ActorDescContainerInstance->IsInitialized());
+			// When world partition is already initialized, it's safe to call InitializeActorDescContainerEditorStreaming as the DataLayerManager is created
+			InitializeActorDescContainerEditorStreaming(ContainerInstanceToRegister);
 		}
 
-		OnActorDescContainerRegistered.Broadcast(ContainerToRegister);
+		OnActorDescContainerInstanceRegistered.Broadcast(ContainerInstanceToRegister);
 
-		return ContainerToRegister;
+		return ContainerInstanceToRegister;
 	}
 	
 	return nullptr;
 }
 
-bool UWorldPartition::UnregisterActorDescContainer(UActorDescContainer* InActorDescContainer)
+bool UWorldPartition::UnregisterActorDescContainerInstance(UActorDescContainerInstance* InActorDescContainerInstance)
 {
-	if (Contains(InActorDescContainer->GetContainerPackage()))
+	if (Contains(InActorDescContainerInstance->GetContainerPackage()))
 	{
 		TArray<FGuid> ActorGuids;
-		for (UActorDescContainer::TIterator<> It(InActorDescContainer); It; ++It)
+		for (UActorDescContainerInstance::TIterator<> It(InActorDescContainerInstance); It; ++It)
 		{
 			FWorldPartitionHandle ActorHandle(this, It->GetGuid());
 			if (ActorHandle.IsValid())
 			{
 				ActorGuids.Add(It->GetGuid());
-
-				for (TSet<FDirtyActor>::TIterator DirtyActorIt(DirtyActors); DirtyActorIt; ++DirtyActorIt)
-				{
-					const FDirtyActor& DirtyActor = *DirtyActorIt;
-					if (DirtyActor.WorldPartitionRef.IsSet())
-					{
-						if (DirtyActor.WorldPartitionRef.GetValue() == ActorHandle)
-						{
-							DirtyActorIt.RemoveCurrent();
-						}
-					}
-				}
 			}
 		}
 
@@ -2031,19 +2033,20 @@ bool UWorldPartition::UnregisterActorDescContainer(UActorDescContainer* InActorD
 			ForceLoadedActors->RemoveActors(ActorGuids);
 		}
 
-		OnActorDescContainerUnregistered.Broadcast(InActorDescContainer);
+		OnActorDescContainerInstanceUnregistered.Broadcast(InActorDescContainerInstance);
 
-		if (IsInitialized() && EditorHash != nullptr)
+		// Un-hashing needs to be done for an initialized container instance that was previously hashed (even if WorldPartition is being uninitialized)
+		if (ShouldHashUnhashActorDescInstances() && (IsInitialized() || InActorDescContainerInstance->IsInitialized()))
 		{
-			for (UActorDescContainer::TIterator<> It(InActorDescContainer); It; ++It)
+			for (UActorDescContainerInstance::TIterator<> It(InActorDescContainerInstance); It; ++It)
 			{
-				UnhashActorDesc(*It);
+				UnhashActorDescInstance(*It);
 			}
 		}
 
-		InActorDescContainer->Uninitialize();
+		InActorDescContainerInstance->Uninitialize();
 
-		verify(RemoveContainer(InActorDescContainer));
+		verify(RemoveContainer(InActorDescContainerInstance));
 
 		return true;
 	}
@@ -2053,9 +2056,9 @@ bool UWorldPartition::UnregisterActorDescContainer(UActorDescContainer* InActorD
 
 void UWorldPartition::UninitializeActorDescContainers()
 {
-	for (UActorDescContainer* Container : ActorDescContainerCollection)
+	for (UActorDescContainerInstance* ContainerInstance : ActorDescContainerInstanceCollection)
 	{
-		Container->Uninitialize();
+		ContainerInstance->Uninitialize();
 	}
 
 	Empty();
@@ -2118,14 +2121,21 @@ void UWorldPartition::LoadLastLoadedRegions()
 	}
 }
 
+void UWorldPartition::OnLoaderAdapterStateChanged(IWorldPartitionActorLoaderInterface::ILoaderAdapter* InLoaderAdapter)
+{
+	if (InLoaderAdapter->GetUserCreated())
+	{
+		NumUserCreatedLoadedRegions += InLoaderAdapter->IsLoaded() ? 1 : -1;
+	}
+
+	LoaderAdapterStateChanged.Broadcast(InLoaderAdapter);
+}
+
 void UWorldPartition::OnWorldRenamed(UWorld* RenamedWorld)
 {
 	if (GetWorld() == RenamedWorld)
 	{
-		ActorDescContainer->SetContainerPackage(GetWorld()->GetPackage()->GetFName());
-
-		// World was renamed so existing context is invalid.
-		InstancingContext = FLinkerInstancingContext();
+		ActorDescContainerInstance->SetContainerPackage(GetWorld()->GetPackage()->GetFName());
 	}
 }
 
@@ -2135,6 +2145,11 @@ void UWorldPartition::RemapSoftObjectPath(FSoftObjectPath& ObjectPath) const
 	{
 		StreamingPolicy->RemapSoftObjectPath(ObjectPath);
 	}
+}
+
+bool UWorldPartition::ConvertContainerPathToEditorPath(const FActorContainerID& InContainerID, const FSoftObjectPath& InPath, FSoftObjectPath& OutPath) const
+{
+	return StreamingPolicy ? StreamingPolicy->ConvertContainerPathToEditorPath(InContainerID, InPath, OutPath) : false;
 }
 
 FBox UWorldPartition::GetEditorWorldBounds() const

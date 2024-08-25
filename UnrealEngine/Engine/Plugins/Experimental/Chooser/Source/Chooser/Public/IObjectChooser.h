@@ -6,7 +6,16 @@
 #include "UObject/Object.h"
 #include "UObject/Interface.h"
 #include "InstancedStruct.h"
+#include "StructView.h"
 #include "IObjectChooser.generated.h"
+
+#if UE_TRACE_ENABLED && !IS_PROGRAM && !UE_BUILD_SHIPPING && !UE_BUILD_TEST
+#define CHOOSER_TRACE_ENABLED 1
+#else
+#define CHOOSER_TRACE_ENABLED 0
+#endif
+
+#define CHOOSER_DEBUGGING_ENABLED ((CHOOSER_TRACE_ENABLED) || (WITH_EDITOR))
 
 UINTERFACE(NotBlueprintType, meta = (CannotImplementInterfaceInBlueprint))
 class CHOOSER_API UObjectChooser : public UInterface
@@ -21,9 +30,10 @@ public:
 	virtual void ConvertToInstancedStruct(FInstancedStruct& OutInstancedStruct) const { }
 };
 
-#if WITH_EDITOR
+#if CHOOSER_DEBUGGING_ENABLED
 struct CHOOSER_API FChooserDebuggingInfo
 {
+	const UObject* CurrentChooser = nullptr;
 	bool bCurrentDebugTarget = false;
 };
 #endif
@@ -33,18 +43,44 @@ USTRUCT()
 struct CHOOSER_API FChooserEvaluationInputObject
 {
 	GENERATED_BODY()
+	FChooserEvaluationInputObject() {}
+	FChooserEvaluationInputObject (UObject* InObject) : Object(InObject) {}
 	TObjectPtr<UObject> Object;
 };
 
 USTRUCT(BlueprintType)
 struct CHOOSER_API FChooserEvaluationContext
 {
-	#if WITH_EDITOR
+	FChooserEvaluationContext() {}
+	FChooserEvaluationContext(UObject* ContextObject)
+	{
+		AddObjectParam(ContextObject);
+	}
+
+	// Add a UObject Parameter to the context
+	void AddObjectParam(UObject* Param)
+	{
+		ObjectParams.Add(Param);
+		AddStructParam(ObjectParams.Last());
+	}
+
+	// Add a struct Parameter to the Context
+	// the struct will be referred to by reference, and so must have a lifetime that is longer than this context
+	template <class T>
+	void AddStructParam(T& Param)
+	{
+		Params.Add(FStructView::Make(Param));
+	}
+
+	#if CHOOSER_DEBUGGING_ENABLED
     	FChooserDebuggingInfo DebuggingInfo;
     #endif
 	
 	GENERATED_BODY()
-	TArray<FInstancedStruct, TInlineAllocator<4>> Params;
+	TArray<FStructView, TInlineAllocator<4>> Params;
+
+	// storage for Object Params, call AddObjectParam to allocate one FChooserEvaluationInputObject in this array and then add a StructView of it to the Params array
+	TArray<FChooserEvaluationInputObject, TFixedAllocator<4>> ObjectParams;
 };
 
 USTRUCT()
@@ -59,6 +95,8 @@ public:
 
 	DECLARE_DELEGATE_RetVal_OneParam( EIteratorStatus, FObjectChooserIteratorCallback, UObject*);
 
+	virtual void Compile(class IHasContextClass* HasContext, bool bForce) {};
+
 	virtual UObject* ChooseObject(FChooserEvaluationContext& Context) const { return nullptr; };
 	virtual EIteratorStatus ChooseMulti(FChooserEvaluationContext& ContextData, FObjectChooserIteratorCallback Callback) const
 	{
@@ -69,4 +107,6 @@ public:
 		}
 		return EIteratorStatus::Continue;
 	}
+
+	virtual void GetDebugName(FString& OutDebugName) const {};
 };

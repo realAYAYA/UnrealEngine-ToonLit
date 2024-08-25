@@ -7,10 +7,6 @@
 #include "Logging/LogVerbosity.h"
 #include "Misc/OutputDevice.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Containers/UnrealString.h"
-#endif
-
 class FArchive;
 class FName;
 class FString;

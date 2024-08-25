@@ -7,10 +7,8 @@
 #include "Internationalization/Text.h"
 #include "Math/NumericLimits.h"
 #include "Misc/CString.h"
-#include "Templates/EnableIf.h"
-#include "Templates/IsFloatingPoint.h"
-#include "Templates/IsIntegral.h"
-#include "Templates/IsSigned.h"
+
+#include <type_traits>
 
 /** Rules used to format or parse a decimal number */
 struct FDecimalNumberFormattingRules
@@ -79,13 +77,13 @@ struct FDecimalNumberIntegralLimits
 	uint64 NumericLimitMax;
 	bool bIsNumericSigned;
 
-	template<
-		typename IntegralType,
-		typename TEnableIf<TIsIntegral<IntegralType>::Value>::Type * = nullptr
+	template <
+		typename IntegralType
+		UE_REQUIRES(std::is_integral_v<IntegralType>)
 	>
 	static FDecimalNumberIntegralLimits FromNumericLimits()
 	{
-		return FDecimalNumberIntegralLimits(TNumericLimits<IntegralType>::Lowest(), TNumericLimits<IntegralType>::Max(), TIsSigned<IntegralType>::Value);
+		return FDecimalNumberIntegralLimits(TNumericLimits<IntegralType>::Lowest(), TNumericLimits<IntegralType>::Max(), std::is_signed_v<IntegralType>);
 	}
 };
 
@@ -98,9 +96,9 @@ struct FDecimalNumberFractionalLimits
 	double NumericLimitLowest;
 	double NumericLimitMax;
 
-	template<
-		typename FloatingType,
-		typename TEnableIf<TIsFloatingPoint<FloatingType>::Value>::Type * = nullptr
+	template <
+		typename FloatingType
+		UE_REQUIRES(std::is_floating_point_v<FloatingType>)
 	>
 	static FDecimalNumberFractionalLimits FromNumericLimits()
 	{
@@ -113,42 +111,42 @@ CORE_API bool StringToFractional(const TCHAR* InStr, const int32 InStrLen, const
 
 } // namespace Internal
 
-#define FAST_DECIMAL_FORMAT_SIGNED_IMPL(NUMBER_TYPE)																																				\
-	FORCEINLINE void NumberToString(const NUMBER_TYPE InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions, FString& OutString)		\
-	{																																																\
-		const bool bIsNegative = InVal < 0;																																							\
-		Internal::IntegralToString(bIsNegative, (bIsNegative) ? -static_cast<uint64>(InVal) : static_cast<uint64>(InVal), InFormattingRules, InFormattingOptions, OutString);						\
-	}																																																\
-	FORCEINLINE FString NumberToString(const NUMBER_TYPE InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions)						\
-	{																																																\
-		FString Result;																																												\
-		NumberToString(InVal, InFormattingRules, InFormattingOptions, Result);																														\
-		return Result;																																												\
+template<typename T>
+FORCEINLINE void NumberToString(const T InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions, FString& OutString)
+{
+	if constexpr (std::is_same_v<T, int8> || std::is_same_v<T, int16> || std::is_same_v<T, int32> || std::is_same_v<T, int64>)
+	{
+		#ifdef _MSC_VER
+		#pragma warning (push)
+		#pragma warning (disable : 4146) // unary minus operator applied to unsigned type, result still unsigned
+		#endif
+		const bool bIsNegative = InVal < 0;
+		Internal::IntegralToString(bIsNegative, (bIsNegative) ? -static_cast<uint64>(InVal) : static_cast<uint64>(InVal), InFormattingRules, InFormattingOptions, OutString);
+		#ifdef _MSC_VER
+		#pragma warning (pop)
+		#endif
 	}
+	else if constexpr (std::is_same_v<T, uint8> || std::is_same_v<T, uint16> || std::is_same_v<T, uint32> || std::is_same_v<T, uint64>)
+	{
+		Internal::IntegralToString(false, static_cast<uint64>(InVal), InFormattingRules, InFormattingOptions, OutString);
+	}
+	else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>)
+	{
+		Internal::FractionalToString(static_cast<double>(InVal), InFormattingRules, InFormattingOptions, OutString);
+	}
+	else
+	{
+		static_assert(sizeof(T) == 0, "Not supported");
+	}
+}
 
-#define FAST_DECIMAL_FORMAT_UNSIGNED_IMPL(NUMBER_TYPE)																																				\
-	FORCEINLINE void NumberToString(const NUMBER_TYPE InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions, FString& OutString)		\
-	{																																																\
-		Internal::IntegralToString(false, static_cast<uint64>(InVal), InFormattingRules, InFormattingOptions, OutString);																			\
-	}																																																\
-	FORCEINLINE FString NumberToString(const NUMBER_TYPE InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions)						\
-	{																																																\
-		FString Result;																																												\
-		NumberToString(InVal, InFormattingRules, InFormattingOptions, Result);																														\
-		return Result;																																												\
-	}
-
-#define FAST_DECIMAL_FORMAT_FRACTIONAL_IMPL(NUMBER_TYPE)																																			\
-	FORCEINLINE void NumberToString(const NUMBER_TYPE InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions, FString& OutString)		\
-	{																																																\
-		Internal::FractionalToString(static_cast<double>(InVal), InFormattingRules, InFormattingOptions, OutString);																				\
-	}																																																\
-	FORCEINLINE FString NumberToString(const NUMBER_TYPE InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions)						\
-	{																																																\
-		FString Result;																																												\
-		NumberToString(InVal, InFormattingRules, InFormattingOptions, Result);																														\
-		return Result;																																												\
-	}
+template<typename T>
+FORCEINLINE FString NumberToString(const T InVal, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberFormattingOptions& InFormattingOptions)						\
+{
+	FString Result;																																												\
+	NumberToString(InVal, InFormattingRules, InFormattingOptions, Result);																														\
+	return Result;																																												\
+}
 
 #define FAST_DECIMAL_PARSE_INTEGER_IMPL(NUMBER_TYPE)																																														\
 	FORCEINLINE bool StringToNumber(const TCHAR* InStr, const int32 InStrLen, const FDecimalNumberFormattingRules& InFormattingRules, const FNumberParsingOptions& InParsingOptions, NUMBER_TYPE& OutVal, int32* OutParsedLen = nullptr)	\
@@ -178,26 +176,6 @@ CORE_API bool StringToFractional(const TCHAR* InStr, const int32 InStrLen, const
 		return StringToNumber(InStr, FCString::Strlen(InStr), InFormattingRules, InParsingOptions, OutVal, OutParsedLen);																													\
 	}
 
-#ifdef _MSC_VER
-#pragma warning (push)
-#pragma warning (disable : 4146) // unary minus operator applied to unsigned type, result still unsigned
-#endif
-FAST_DECIMAL_FORMAT_SIGNED_IMPL(int8)
-FAST_DECIMAL_FORMAT_SIGNED_IMPL(int16)
-FAST_DECIMAL_FORMAT_SIGNED_IMPL(int32)
-FAST_DECIMAL_FORMAT_SIGNED_IMPL(int64)
-#ifdef _MSC_VER
-#pragma warning (pop)
-#endif
-
-FAST_DECIMAL_FORMAT_UNSIGNED_IMPL(uint8)
-FAST_DECIMAL_FORMAT_UNSIGNED_IMPL(uint16)
-FAST_DECIMAL_FORMAT_UNSIGNED_IMPL(uint32)
-FAST_DECIMAL_FORMAT_UNSIGNED_IMPL(uint64)
-
-FAST_DECIMAL_FORMAT_FRACTIONAL_IMPL(float)
-FAST_DECIMAL_FORMAT_FRACTIONAL_IMPL(double)
-
 FAST_DECIMAL_PARSE_INTEGER_IMPL(int8)
 FAST_DECIMAL_PARSE_INTEGER_IMPL(int16)
 FAST_DECIMAL_PARSE_INTEGER_IMPL(int32)
@@ -211,9 +189,6 @@ FAST_DECIMAL_PARSE_INTEGER_IMPL(uint64)
 FAST_DECIMAL_PARSE_FRACTIONAL_IMPL(float)
 FAST_DECIMAL_PARSE_FRACTIONAL_IMPL(double)
 
-#undef FAST_DECIMAL_FORMAT_SIGNED_IMPL
-#undef FAST_DECIMAL_FORMAT_UNSIGNED_IMPL
-#undef FAST_DECIMAL_FORMAT_FRACTIONAL_IMPL
 #undef FAST_DECIMAL_PARSE_INTEGER_IMPL
 #undef FAST_DECIMAL_PARSE_FRACTIONAL_IMPL
 
@@ -229,3 +204,10 @@ CORE_API const FDecimalNumberFormattingRules& GetCultureAgnosticFormattingRules(
 CORE_API uint64 Pow10(const int32 InExponent);
 
 } // namespace FastDecimalFormat
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/EnableIf.h"
+#include "Templates/IsFloatingPoint.h"
+#include "Templates/IsIntegral.h"
+#include "Templates/IsSigned.h"
+#endif

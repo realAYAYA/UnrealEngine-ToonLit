@@ -92,16 +92,18 @@ CORE_API HeapId MemoryTrace_RootHeapSpec(const TCHAR* Name, EMemoryTraceHeapFlag
  * @param Address Address of the allocation
  * @param Heap Heap id, see /ref MemoryTrace_HeapSpec. If no specific heap spec has been created the correct root heap needs to be given.
  * @param Flags Additional properties of the heap allocation. Note that \ref EMemoryTraceHeapAllocationFlags::Heap is implicit.
+ * @param ExternalCallstackId CallstackId to use, if 0 will use current callstack id.
  */
-CORE_API void MemoryTrace_MarkAllocAsHeap(uint64 Address, HeapId Heap, EMemoryTraceHeapAllocationFlags Flags = EMemoryTraceHeapAllocationFlags::None);
+CORE_API void MemoryTrace_MarkAllocAsHeap(uint64 Address, HeapId Heap, EMemoryTraceHeapAllocationFlags Flags = EMemoryTraceHeapAllocationFlags::None, uint32 ExternalCallstackId = 0);
 
 /**
  * Unmark an allocation as a heap. When an allocation that has previously been used as a heap is reused as a regular
  * allocation.
  * @param Address Address of the allocation
  * @param Heap Heap id
+ * @param ExternalCallstackId CallstackId to use, if 0 will use current callstack id.
  */
-CORE_API void MemoryTrace_UnmarkAllocAsHeap(uint64 Address, HeapId Heap);
+CORE_API void MemoryTrace_UnmarkAllocAsHeap(uint64 Address, HeapId Heap, uint32 ExternalCallstackId = 0);
 
 /**
  * Trace an allocation event.
@@ -109,30 +111,34 @@ CORE_API void MemoryTrace_UnmarkAllocAsHeap(uint64 Address, HeapId Heap);
  * @param Size Size of allocation
  * @param Alignment Alignment of the allocation
  * @param RootHeap Which root heap this belongs to (system memory, video memory etc)
+ * @param ExternalCallstackId CallstackId to use, if 0 will use current callstack id.
  */
-CORE_API void MemoryTrace_Alloc(uint64 Address, uint64 Size, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory);
+CORE_API void MemoryTrace_Alloc(uint64 Address, uint64 Size, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0);
 
 /**
  * Trace a free event.
  * @param Address Address of the allocation being freed
  * @param RootHeap Which root heap this belongs to (system memory, video memory etc)
+ * @param ExternalCallstackId CallstackId to use, if 0 will use current callstack id.
  */
-CORE_API void MemoryTrace_Free(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory);
+CORE_API void MemoryTrace_Free(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0);
 
 /**
  * Trace a free related to a reallocation event.
  * @param Address Address of the allocation being freed
  * @param RootHeap Which root heap this belongs to (system memory, video memory etc)
+ * @param ExternalCallstackId CallstackId to use, if 0 will use current callstack id.
  */
-CORE_API void MemoryTrace_ReallocFree(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory);
+CORE_API void MemoryTrace_ReallocFree(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0);
 
 /** Trace an allocation related to a reallocation event.
  * @param Address Address of allocation
  * @param NewSize Size of allocation
  * @param Alignment Alignment of the allocation
  * @param RootHeap Which root heap this belongs to (system memory, video memory etc)
+ * @param ExternalCallstackId CallstackId to use, if 0 will use current callstack id.
  */
-CORE_API void MemoryTrace_ReallocAlloc(uint64 Address, uint64 NewSize, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory);
+CORE_API void MemoryTrace_ReallocAlloc(uint64 Address, uint64 NewSize, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0);
 
 ////////////////////////////////////////////////////////////////////////////////
 #else // UE_MEMORY_TRACE_ENABLED
@@ -142,9 +148,9 @@ inline HeapId MemoryTrace_RootHeapSpec(const TCHAR* Name, EMemoryTraceHeapFlags 
 inline HeapId MemoryTrace_HeapSpec(HeapId ParentId, const TCHAR* Name, EMemoryTraceHeapFlags Flags = EMemoryTraceHeapFlags::None) { return ~0; }
 inline void MemoryTrace_MarkAllocAsHeap(uint64 Address, HeapId Heap) {}
 inline void MemoryTrace_UnmarkAllocAsHeap(uint64 Address, HeapId Heap) {}
-inline void MemoryTrace_Alloc(uint64 Address, uint64 Size, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory) {}
-inline void MemoryTrace_Free(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory) {}
-inline void MemoryTrace_ReallocFree(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory) {}
-inline void MemoryTrace_ReallocAlloc(uint64 Address, uint64 NewSize, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory) {}
+inline void MemoryTrace_Alloc(uint64 Address, uint64 Size, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0) {}
+inline void MemoryTrace_Free(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0) {}
+inline void MemoryTrace_ReallocFree(uint64 Address, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0) {}
+inline void MemoryTrace_ReallocAlloc(uint64 Address, uint64 NewSize, uint32 Alignment, HeapId RootHeap = EMemoryTraceRootHeap::SystemMemory, uint32 ExternalCallstackId = 0) {}
 
 #endif // UE_MEMORY_TRACE_ENABLED

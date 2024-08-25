@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-// Core includes.
 #include "Misc/CoreDelegates.h"
-#include "Math/Vector.h"
-#include "Misc/Fork.h"
 
+#include "Misc/CoreDelegatesInternal.h"
+#include "Misc/Fork.h"
+#include "Math/Vector.h"
 
 //////////////////////////////////////////////////////////////////////////
 // FCoreDelegates
@@ -54,6 +54,23 @@ TTSMulticastDelegate<void(const TCHAR*, const TCHAR*)>& FCoreDelegates::GetOnFil
 	static TTSMulticastDelegate<void(const TCHAR*, const TCHAR*)> Singleton;
 	return Singleton;
 }
+
+//namespace UE::Core
+//{
+
+FMountOperationPak& FCoreInternalDelegates::GetOnPakMountOperation()
+{
+	static FMountOperationPak Delegate;
+	return Delegate;
+}
+
+FCurrentlyMountedPaksDelegate& FCoreInternalDelegates::GetCurrentlyMountedPaksDelegate()
+{
+	static FCurrentlyMountedPaksDelegate Delegate;
+	return Delegate;
+}
+
+//} // namespace UE::Core
 
 TMulticastDelegate<void(bool, int32, int32)> FCoreDelegates::OnUserLoginChangedEvent;
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -247,7 +264,17 @@ TMulticastDelegate<void(bool)> FCoreDelegates::IsVanillaProductChanged;
 
 TMulticastDelegate<void()> FCoreDelegates::OnAsyncLoadingFlush;
 TMulticastDelegate<void()> FCoreDelegates::OnAsyncLoadingFlushUpdate;
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 TMulticastDelegate<void(const FString&)> FCoreDelegates::OnAsyncLoadPackage;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+TTSMulticastDelegate<void(FStringView)>& FCoreDelegates::GetOnAsyncLoadPackage()
+{
+	static TTSMulticastDelegate<void(FStringView)> Singleton;
+	return Singleton;
+}
+
 TMulticastDelegate<void(const FString&)> FCoreDelegates::OnSyncLoadPackage;
 TMulticastDelegate<void()> FCoreDelegates::PostRenderingThreadCreated;
 TMulticastDelegate<void()> FCoreDelegates::PreRenderingThreadDestroyed;
@@ -348,6 +375,11 @@ CORE_API void RegisterEncryptionKeyCallback(TEncryptionKeyFunc InCallback)
 
 TDelegate<const TCHAR*(void)> FCoreDelegates::OnGetBuildURL;
 TDelegate<const TCHAR*(void)> FCoreDelegates::OnGetExecutingJobURL;
+
+#if WITH_EDITOR
+TMulticastDelegate<void(const UE::FMultiprocessCreatedContext&)> FCoreDelegates::OnMultiprocessWorkerCreated;
+TMulticastDelegate<void(const UE::FMultiprocessDetachedContext&)> FCoreDelegates::OnMultiprocessWorkerDetached;
+#endif
 
 FSimpleMulticastDelegate FCoreDelegates::OnParentBeginFork;
 FSimpleMulticastDelegate FCoreDelegates::OnParentPreFork;

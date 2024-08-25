@@ -2,6 +2,12 @@
 
 #if defined(PLATFORM_LINUX)
 #include "TestRunner.h"
+
+#include "Misc/OutputDeviceDebug.h"
+#include "Misc/OutputDeviceRedirector.h"
+#include "HAL/PlatformOutputDevices.h"
+#include "CoreGlobals.h"
+
 #include <unistd.h>
 
 const char* GetProcessExecutablePath()
@@ -33,8 +39,14 @@ const char* GetCacheDirectory()
 	return "/var/tmp/playground_test_pds_cache";
 }
 
+void InitializeLinuxPlatform()
+{
+	GLog->AddOutputDevice(new FOutputDeviceDebug());
+}
+
 int main(int argc, const char* argv[])
 {
+	FTestDelegates::GetGlobalPlatformSetup().BindStatic(&InitializeLinuxPlatform);
 	return RunTests(argc, argv);
 }
 #endif

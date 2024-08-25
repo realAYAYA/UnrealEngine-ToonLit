@@ -17,7 +17,8 @@ public class DataValidation : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"TargetPlatform",
-				"EditorSubsystem"
+				"EditorSubsystem",
+				"DeveloperSettings"
 			}
 		);
 //		goto through these one by one and remove extra ones

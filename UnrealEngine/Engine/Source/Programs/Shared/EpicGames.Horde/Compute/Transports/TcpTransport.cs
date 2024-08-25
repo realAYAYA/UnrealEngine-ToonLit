@@ -10,9 +10,9 @@ using EpicGames.Core;
 namespace EpicGames.Horde.Compute.Transports
 {
 	/// <summary>
-	/// Implementation of <see cref="IComputeTransport"/> for communicating over a socket
+	/// Implementation of <see cref="ComputeTransport"/> for communicating over a socket
 	/// </summary>
-	public sealed class TcpTransport : IComputeTransport
+	public sealed class TcpTransport : ComputeTransport
 	{
 		readonly Socket _socket;
 
@@ -26,7 +26,13 @@ namespace EpicGames.Horde.Compute.Transports
 		public TcpTransport(Socket socket) => _socket = socket;
 
 		/// <inheritdoc/>
-		public async ValueTask<int> ReadPartialAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+		public override ValueTask DisposeAsync()
+		{
+			return ValueTask.CompletedTask;
+		}
+
+		/// <inheritdoc/>
+		public override async ValueTask<int> RecvAsync(Memory<byte> buffer, CancellationToken cancellationToken)
 		{
 			int read = await _socket.ReceiveAsync(buffer, SocketFlags.None, cancellationToken);
 			Position += read;
@@ -34,19 +40,21 @@ namespace EpicGames.Horde.Compute.Transports
 		}
 
 		/// <inheritdoc/>
-		public async ValueTask WriteAsync(ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
+		public override async ValueTask SendAsync(ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
 		{
+			int offset = 0;
 			foreach (ReadOnlyMemory<byte> memory in buffer)
 			{
+				_socket.NoDelay = (offset + memory.Length == buffer.Length);
 				await _socket.SendMessageAsync(memory, SocketFlags.None, cancellationToken);
 				Position += memory.Length;
 			}
 		}
 
 		/// <inheritdoc/>
-		public ValueTask MarkCompleteAsync(CancellationToken cancelationToken)
+		public override ValueTask MarkCompleteAsync(CancellationToken cancelationToken)
 		{
-			_socket.Shutdown(SocketShutdown.Send);
+			_socket.Shutdown(SocketShutdown.Both);
 			return new ValueTask();
 		}
 	}

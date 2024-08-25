@@ -112,7 +112,7 @@ void FAIModule::ShutdownModule()
 
 UAISystemBase* FAIModule::CreateAISystemInstance(UWorld* World)
 {
-	UE_LOG(LogAIModule, Log, TEXT("Creating AISystem for world %s"), *GetNameSafe(World));
+	UE_LOG(LogAIModule, Verbose, TEXT("Creating AISystem for world %s"), *GetNameSafe(World));
 	
 	FSoftClassPath AISystemClassName = UAISystemBase::GetAISystemClassName();
 

@@ -11,6 +11,7 @@
 ------------------------------------------------------------------------------*/
 
 #include "Common.ush"
+#include "ParticleSimulationCommon.ush"
 
 /** The number of threads with which to perform raking. */
 #define RAKING_THREADS 32
@@ -22,7 +23,9 @@
 #define MIN_FLT (-3.402823466e+38f)
 
 /** Input buffer containing particle indices. */
-Buffer<float2> InParticleIndices;
+Buffer<float4> InParticleIndices;
+float2 TilePageScale;
+
 /** Texture containing particle positions. */
 Texture2D PositionTexture;
 
@@ -82,7 +85,8 @@ void ComputeParticleBounds(
 		if ( InputIndex < ParticleBounds.ParticleCount )
 		{
 			// Read in the particle index and its position.
-			const float2 ParticleIndex = float2(InParticleIndices[InputIndex]);
+			float3 ParticleIndices = InParticleIndices[InputIndex].xyz;
+			const float2 ParticleIndex = ParticleIndices.xy * TilePageScale.xy + GetTilePageOffset(ParticleIndices.z, TilePageScale);
 			int3 ParticleTexel = int3(ParticleIndex.xy * int2(TextureSizeX, TextureSizeY), 0);
 			const float4 ParticlePosition = PositionTexture.Load(ParticleTexel);
 			if ( ParticlePosition.w <= 1.0f )

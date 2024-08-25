@@ -13,6 +13,26 @@ class UMassRepresentationSubsystem;
 class UMassActorSubsystem;
 struct FMassActorFragment;
 
+
+namespace UE::Mass::Representation
+{
+	extern MASSREPRESENTATION_API int32 bAllowKeepActorExtraFrame;
+}
+
+USTRUCT()
+struct FMassRepresentationUpdateParams
+{
+	GENERATED_BODY()
+
+	/** 
+	 * Controls whether UpdateRepresentation run will ask the RepresentationSubsystem whether the relevant world 
+	 * collision has been already loaded while considering switching an entity to a actor-level representation. Note that
+	 * the test is unnecessary for static nor stationary entities.
+	 */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Mass")
+	bool bTestCollisionAvailibilityForActorVisualization = true;
+};
+
 UCLASS()
 class MASSREPRESENTATION_API UMassRepresentationProcessor : public UMassProcessor
 {
@@ -21,6 +41,12 @@ class MASSREPRESENTATION_API UMassRepresentationProcessor : public UMassProcesso
 public:
 	UMassRepresentationProcessor();
 
+	/*
+	 * Update representation type for each entity, must be called within a ForEachEntityChunk
+	 * @param Context of the execution from the entity sub system
+	 */
+	static void UpdateRepresentation(FMassExecutionContext& Context, const FMassRepresentationUpdateParams& Params);
+
 protected:
 
 	/** Configure the owned FMassEntityQuery instances to express processor's requirements */
@@ -28,7 +54,7 @@ protected:
 
 	/** 
 	 * Execution method for this processor 
-	 * @param EntitySubsystem is the system to execute the lambdas on each entity chunk
+	 * @param EntityManager is the system to execute the lambdas on each entity chunk
 	 * @param Context is the execution context to be passed when executing the lambdas
 	 */
 	virtual void Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context) override;
@@ -44,17 +70,25 @@ protected:
 	 * @param bCancelSpawningOnly tell to only cancel the existing spawning request and to not release the associated actor it any.
 	 * @return if the actor was release or the spawning was canceled.
 	 */
-	bool ReleaseActorOrCancelSpawning(UMassRepresentationSubsystem& RepresentationSubsystem, UMassActorSubsystem* MassActorSubsystem
+	static bool ReleaseActorOrCancelSpawning(UMassRepresentationSubsystem& RepresentationSubsystem, UMassActorSubsystem* MassActorSubsystem
 		, const FMassEntityHandle MassAgent, FMassActorFragment& ActorInfo, const int16 TemplateActorIndex, FMassActorSpawnRequestHandle& SpawnRequestHandle
 		, FMassCommandBuffer& CommandBuffer, const bool bCancelSpawningOnly = false);
 
-	/*
-	 * Update representation type for each entity, must be called within a ForEachEntityChunk
-	 * @param Context of the execution from the entity sub system
-	 */
-	void UpdateRepresentation(FMassExecutionContext& Context);
-
 	FMassEntityQuery EntityQuery;
+
+	UPROPERTY(config, EditDefaultsOnly, Category = "Mass")
+	FMassRepresentationUpdateParams UpdateParams;
+};
+
+	
+/**
+ * Tag required by Visualization Processor to process given archetype. Removing the tag allows to support temporary
+ * disabling of processing for individual entities of given archetype.
+ */
+USTRUCT()
+struct MASSREPRESENTATION_API FMassVisualizationProcessorTag : public FMassTag
+{
+	GENERATED_BODY();
 };
 
 UCLASS()
@@ -69,7 +103,7 @@ protected:
 
 	/**
 	 * Execution method for this processor
-	 * @param EntitySubsystem is the system to execute the lambdas on each entity chunk
+	 * @param EntityManager is the system to execute the lambdas on each entity chunk
 	 * @param Context is the execution context to be passed when executing the lambdas
 	 */
 	virtual void Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context) override;

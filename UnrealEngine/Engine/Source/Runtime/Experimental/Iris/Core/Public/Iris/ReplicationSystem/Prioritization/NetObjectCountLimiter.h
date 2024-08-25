@@ -23,6 +23,7 @@ enum class ENetObjectCountLimiterMode : uint32
 	Fill,
 };
 
+//TODO $IRIS: Document class usage
 UCLASS(transient, config=Engine, MinimalAPI)
 class UNetObjectCountLimiterConfig : public UNetObjectPrioritizerConfig
 {

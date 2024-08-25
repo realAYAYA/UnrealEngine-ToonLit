@@ -3,13 +3,9 @@
 #pragma once
 
 #include "MuR/Operations.h"
-#include "MuR/ModelPrivate.h"
-#include "MuR/ImagePrivate.h"
 #include "MuR/CodeVisitor.h"
 #include "MuT/CompilerPrivate.h"
 #include "MuT/AST.h"
-
-#include <memory>
 
 namespace mu
 {
@@ -17,20 +13,20 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     //! Code optimiser
     //---------------------------------------------------------------------------------------------
-    class CodeOptimiser : public Base
+    class CodeOptimiser
     {
     public:
-        CodeOptimiser( CompilerOptionsPtr options, vector<STATE_COMPILATION_DATA>& states );
+        CodeOptimiser( Ptr<CompilerOptions> options, TArray<FStateCompilationData>& states );
 
         //! Optimise the virtual machine code, using several transforms.
         void OptimiseAST();
 
     private:
 
-        CompilerOptionsPtr m_options;
+		Ptr<CompilerOptions> m_options;
 
         //!
-        vector<STATE_COMPILATION_DATA>& m_states;
+		TArray<FStateCompilationData>& m_states;
 
         //! The max number of optimize iterations is shared across several stages now.
         //! This is how many are left
@@ -56,7 +52,7 @@ namespace mu
     {
     public:
 
-        FindOpTypeVisitor(const vector<OP_TYPE>& types)
+        FindOpTypeVisitor(const TArray<OP_TYPE>& types)
             : m_typesToFind(types)
         {
         }
@@ -66,15 +62,15 @@ namespace mu
 
     private:
 
-        vector<OP_TYPE> m_typesToFind;
+        TArray<OP_TYPE> m_typesToFind;
 
-        vector< std::pair<bool,OP::ADDRESS> > m_pending;
+		TArray< TPair<bool,OP::ADDRESS> > m_pending;
 
         // 0 not visited
         // 1 children pending
         // 2 visited and not found
         // 3 visited and found
-        vector<uint8_t> m_visited;
+		TArray<uint8> m_visited;
     };
 
 
@@ -92,7 +88,7 @@ namespace mu
 
     private:
 
-        std::unique_ptr<FindOpTypeVisitor> m_findOpTypeVisitor;
+        TUniquePtr<FindOpTypeVisitor> m_findOpTypeVisitor;
     };
 
 
@@ -100,7 +96,7 @@ namespace mu
     //! ConstantGenerator replaces constant subtrees of operations with an equivalent single
 	//! constant value operation. 
     //---------------------------------------------------------------------------------------------
-    extern bool ConstantGeneratorAST( const CompilerOptions::Private* options, Ptr<ASTOp>& root );
+    extern bool ConstantGeneratorAST( const CompilerOptions::Private* options, Ptr<ASTOp>& root, int32 Pass );
 
     //---------------------------------------------------------------------------------------------
     //! \TODO: shapes, projectors, others? but not switches (they must be unique)
@@ -163,13 +159,13 @@ namespace mu
     {
     public:
 
-        RuntimeParameterVisitorAST(const STATE_COMPILATION_DATA* pState);
+        RuntimeParameterVisitorAST(const FStateCompilationData* pState);
 
         bool HasAny( const Ptr<ASTOp>& root );
 
     private:
 
-        const STATE_COMPILATION_DATA* m_pState;
+        const FStateCompilationData* m_pState;
 
         //!
         struct PENDING_ITEM
@@ -215,7 +211,7 @@ namespace mu
     {
     public:
 
-        RuntimeTextureCompressionRemoverAST( STATE_COMPILATION_DATA* state, bool bInAlwaysUncompress );
+        RuntimeTextureCompressionRemoverAST(FStateCompilationData* state, bool bInAlwaysUncompress );
 
     protected:
 
@@ -236,12 +232,12 @@ namespace mu
     {
     private:
 
-        STATE_COMPILATION_DATA& m_stateProps;
+		FStateCompilationData& m_stateProps;
         // unused const GPU_PLATFORM_PROPS& m_gpuPlatformProps;
 
     public:
 
-        ParameterOptimiserAST( STATE_COMPILATION_DATA &s,
+        ParameterOptimiserAST(FStateCompilationData&s,
                                const FModelOptimizationOptions& optimisationOptions );
 
         bool Apply();
@@ -266,11 +262,6 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     extern Ptr<ASTOp> EnsureValidMask( Ptr<ASTOp> mask, Ptr<ASTOp> base );
 
-    //---------------------------------------------------------------------------------------------
-    //! Return true if two non-zero pixels of the masks overlap.
-    //---------------------------------------------------------------------------------------------
-    extern bool AreMasksOverlapping( const FProgram& program, OP::ADDRESS a, OP::ADDRESS b );
-
 
     //---------------------------------------------------------------------------------------------
     //! Calculate all the parameters found relevant under a particular operation. This may not
@@ -278,42 +269,43 @@ namespace mu
     //! relevant)
     //! It has an internal cache, so don't reuse if the program changes.
     //---------------------------------------------------------------------------------------------
-    class SubtreeRelevantParametersVisitorAST : public Base
+    class SubtreeRelevantParametersVisitorAST
     {
     public:
 
         void Run( Ptr<ASTOp> root );
 
         //! After Run, list of relevant parameters.
-        std::unordered_set< string > m_params;
+        TSet< FString > m_params;
 
     private:
 
-        struct STATE
+        struct FState
         {
             Ptr<ASTOp> op;
-            bool onlyLayoutIsRelevant=false;
+            bool bOnlyLayoutIsRelevant=false;
 
-            STATE( Ptr<ASTOp> o=nullptr, bool l=false) : op(o), onlyLayoutIsRelevant(l) {}
+			FState( Ptr<ASTOp> o=nullptr, bool l=false) : op(o), bOnlyLayoutIsRelevant(l) {}
 
-            bool operator==(const STATE& o) const
+            bool operator==(const FState& o) const
             {
                 return  op == o.op &&
-                        onlyLayoutIsRelevant == o.onlyLayoutIsRelevant;
+					bOnlyLayoutIsRelevant == o.bOnlyLayoutIsRelevant;
             }
-        };
 
-        struct state_hash
-        {
-            std::size_t operator()(const STATE& k) const
-            {
-                return std::hash<const void*>()(k.op.get());
-            }
-        };
+			friend FORCEINLINE uint32 GetTypeHash(const FState& InKey)
+			{
+				uint32 KeyHash = 0;
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.op.get()));
+				KeyHash = HashCombineFast(KeyHash, ::GetTypeHash(InKey.bOnlyLayoutIsRelevant));
+				return KeyHash;
+			}
+		};
+
 
         // Result cache
         // \todo optimise by storing unique lists separately and an index here.
-        std::unordered_map< STATE, std::unordered_set< string >, state_hash > m_resultCache;
+        TMap< FState, TSet<FString> > m_resultCache;
     };
 
 }

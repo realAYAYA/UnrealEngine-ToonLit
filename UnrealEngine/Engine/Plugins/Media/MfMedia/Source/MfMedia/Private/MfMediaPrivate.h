@@ -19,10 +19,6 @@
 	#include "MfMediaPlatformPrivate.h"
 
 #elif MFMEDIA_SUPPORTED_PLATFORM
-	#if PLATFORM_WINDOWS
-		#include "Microsoft/WindowsHWrapper.h"
-	#endif
-
 	#include "Microsoft/AllowMicrosoftPlatformTypes.h"
 
 	#if PLATFORM_WINDOWS

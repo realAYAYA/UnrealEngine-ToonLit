@@ -24,12 +24,24 @@ class DMXPIXELMAPPINGRUNTIME_API UDMXPixelMappingOutputDMXComponent
 	GENERATED_BODY()
 
 public:
+	//~ Begin UDMXPixelMappingOutputComponent interface
+#if WITH_EDITOR
+	virtual FLinearColor GetEditorColor() const override;
+#endif // WITH_EDITOR	
+	//~ End UDMXPixelMappingOutputComponent interface
+
 	/** The quality level to use when averaging colors during downsampling. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quality")
 	EDMXPixelBlendingQuality CellBlendingQuality;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fixture Patch", Meta = (ShowOnlyInnerProperties))
 	FDMXEntityFixturePatchRef FixturePatchRef;
+
+#if WITH_EDITORONLY_DATA
+	/** If set, the color of the patch is displayed, instead of a custom editor color */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Editor Settings", Meta = (AllowPrivateAccess = true))
+	bool bUsePatchColor = false;
+#endif
 
 	/** Sets which color space Pixel Mapping sends */
 	UPROPERTY(Transient, EditAnywhere, NoClear, Category = "Color Space", Meta = (DisplayPriority = 2, DisplayName = "Output Mode", ShowDisplayNames))

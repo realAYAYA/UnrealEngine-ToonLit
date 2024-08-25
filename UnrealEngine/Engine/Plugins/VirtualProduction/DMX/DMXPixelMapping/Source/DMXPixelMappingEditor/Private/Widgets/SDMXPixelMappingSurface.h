@@ -2,14 +2,14 @@
 
 #pragma once
 
-#include "SNodePanel.h" // IWYU pragma: keep
-
-struct FZoomLevelsContainer;
-
+#include "Animation/CurveSequence.h"
+#include "SNodePanel.h"
+#include "Widgets/SCompoundWidget.h"
 
 class FActiveTimerHandle;
 class FDMXPixelMappingToolkit;
 class FSlateWindowElementList;
+
 
 /**
  * Most of the logic copied from a private class Engine/Source/Editor/UMGEditor/Private/Designer/SPaintSurface.h
@@ -82,7 +82,7 @@ protected:
 	virtual FSlateRect ComputeAreaBounds() const;
 	virtual float GetGridScaleAmount() const;
 	virtual int32 GetGraphRulePeriod() const;
-	virtual int32 GetSnapGridSize() const = 0;
+	virtual int32 GetGridSize() const = 0;
 
 protected:
 	/** The position within the graph at which the user is looking */
@@ -101,10 +101,10 @@ protected:
 	int32 ZoomLevel;
 
 	/** Are we panning the view at the moment? */
-	bool bIsPanning;
+	bool bIsPanning = false;
 
 	/** Are we zooming the view with trackpad at the moment? */
-	bool bIsZooming;
+	bool bIsZooming = false;
 
 	/** Allow continuous zoom interpolation? */
 	TAttribute<bool> AllowContinousZoomInterpolation;

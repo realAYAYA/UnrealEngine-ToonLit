@@ -73,22 +73,10 @@ public:
 		DisplayEngineFolder = bInDisplayEngineFolder;
 	}
 
-	UE_DEPRECATED(5.2, "The bOverride flag is no longer necessary. The override can now be set on SAssetView::OverrideShowEngineFolder().")
-	void SetDisplayEngineFolder( bool bInDisplayEngineFolder, bool bOverride )
-	{ 
-		SetDisplayEngineFolder(bInDisplayEngineFolder);
-	}
-
 	/** Gets whether we are allowed to display the engine folder or not, optional flag ignoring the override */
 	bool GetDisplayEngineFolder() const
 	{
 		return DisplayEngineFolder;
-	}
-
-	UE_DEPRECATED(5.2, "The bOverride flag is no longer necessary. The override can now be set on SAssetView::OverrideShowEngineFolder().")
-	bool GetDisplayEngineFolder( bool bExcludeOverride ) const
-	{ 
-		return GetDisplayEngineFolder();
 	}
 
 	/** Sets whether we are allowed to display the developers folder or not, optional flag for setting override instead */
@@ -97,22 +85,10 @@ public:
 		DisplayDevelopersFolder = bInDisplayDevelopersFolder;
 	}
 
-	UE_DEPRECATED(5.2, "The bOverride flag is no longer necessary. The override can now be set on SAssetView::OverrideShowDeveloperFolders().")
-	void SetDisplayDevelopersFolder( bool bInDisplayDevelopersFolder, bool bOverride )
-	{ 
-		SetDisplayDevelopersFolder(bInDisplayDevelopersFolder);
-	}
-
 	/** Gets whether we are allowed to display the developers folder or not, optional flag ignoring the override */
 	bool GetDisplayDevelopersFolder() const
 	{
 		return DisplayDevelopersFolder;
-	}
-
-	UE_DEPRECATED(5.2, "The bOverride flag is no longer necessary. The override can now be set on SAssetView::OverrideShowDeveloperFolders().")
-	bool GetDisplayDevelopersFolder( bool bExcludeOverride ) const
-	{ 
-		return GetDisplayDevelopersFolder();
 	}
 
 	/** Sets whether we are allowed to display the L10N folder (contains localized assets) or not */
@@ -133,22 +109,10 @@ public:
 		DisplayPluginFolders = bInDisplayPluginFolders;
 	}
 
-	UE_DEPRECATED(5.2, "The bOverride flag is no longer necessary. The override can now be set on SAssetView::OverrideShowPluginFolders().")
-	void SetDisplayPluginFolders( bool bInDisplayPluginFolders, bool bOverride )
-	{ 
-		SetDisplayPluginFolders(bInDisplayPluginFolders);
-	}
-
 	/** Gets whether we are allowed to display the plugin folders or not */
 	bool GetDisplayPluginFolders() const
 	{
 		return DisplayPluginFolders;
-	}
-
-	UE_DEPRECATED(5.2, "The bOverride flag is no longer necessary. The override can now be set on SAssetView::OverrideShowPluginFolders().")
-	bool GetDisplayPluginFolders( bool bExcludeOverride ) const
-	{ 
-		return GetDisplayPluginFolders();
 	}
 
 	/** Sets whether we are allowed to display favorite folders or not */

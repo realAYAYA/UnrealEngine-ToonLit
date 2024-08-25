@@ -16,6 +16,9 @@ struct FEditorDialogLibraryObjectDetailsViewOptions
 	
 	UPROPERTY(BlueprintReadWrite, Category = "Editor Scripting | Object Dialog")
 	bool bAllowSearch = true;
+	
+	UPROPERTY(BlueprintReadWrite, Category = "Editor Scripting | Object Dialog")
+	bool bAllowResizing = false;
 
 	/** The minimum dialog width. If zero, default to the medium window width defined by the Editor style. */
 	UPROPERTY(BlueprintReadWrite, Category = "Editor Scripting | Object Dialog")

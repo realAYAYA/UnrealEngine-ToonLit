@@ -1162,7 +1162,7 @@ void FHotReloadModule::StripModuleSuffixFromFilename(FString& InOutModuleFilenam
 				FString HotReloadedModuleName = InOutModuleFilename.Mid(FirstHyphenIndex + 1, SecondHyphenIndex - FirstHyphenIndex - 1);
 				if (HotReloadedModuleName == ModuleName)
 				{
-					InOutModuleFilename.MidInline(0, SecondHyphenIndex, false);
+					InOutModuleFilename.MidInline(0, SecondHyphenIndex, EAllowShrinking::No);
 					SecondHyphenIndex = INDEX_NONE;
 				}
 			}

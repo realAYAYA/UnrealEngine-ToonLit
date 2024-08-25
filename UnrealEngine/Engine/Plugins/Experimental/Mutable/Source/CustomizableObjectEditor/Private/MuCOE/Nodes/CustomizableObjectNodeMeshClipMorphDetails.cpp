@@ -11,6 +11,7 @@
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipMorph.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "PropertyCustomizationHelpers.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/STextComboBox.h"
 
@@ -57,7 +58,7 @@ void FCustomizableObjectNodeMeshClipMorphDetails::CustomizeDetails(IDetailLayout
 
 		if (CustomizableObject)
 		{
-			if (CustomizableObject->bIsChildObject)
+			if (CustomizableObject->IsChildObject())
 			{
 				bool bMultipleBaseObjects;
 				UCustomizableObjectNodeObject* RootNode = GetRootNode(CustomizableObject, bMultipleBaseObjects);

@@ -8,6 +8,8 @@
 
 #if WITH_EDITOR
 
+#include "AsyncCompilationHelpers.h"
+#include "AssetCompilingManager.h"
 #include "ObjectCacheContext.h"
 #include "UObject/Package.h"
 #include "Animation/Skeleton.h"
@@ -25,7 +27,7 @@ namespace UE::Anim
 	}
 
 	FAnimSequenceCompilingManager::FAnimSequenceCompilingManager()
-		: Notification(FAnimSequenceCompilingManager::GetAssetNameFormat())
+		: Notification(MakeUnique<FAsyncCompilationNotification>(FAnimSequenceCompilingManager::GetAssetNameFormat()))
 	{
 		PostReachabilityAnalysisHandle = FCoreUObjectDelegates::PostReachabilityAnalysis.AddRaw(this, &FAnimSequenceCompilingManager::OnPostReachabilityAnalysis);
 	}
@@ -166,13 +168,19 @@ namespace UE::Anim
 				virtual bool WaitCompletionWithTimeout(float TimeLimitSeconds) override
 				{
 					// Poll for now but we might want to use events to wait instead at some point
-					if (!AnimSequence->IsAsyncTaskComplete())
+					if (AnimSequence->IsAsyncTaskComplete())
 					{
-						FPlatformProcess::Sleep(TimeLimitSeconds);
-						return false;
+						return true;
 					}
 
-					return true;
+					if (TimeLimitSeconds > 0.0f)
+					{
+						FPlatformProcess::Sleep(TimeLimitSeconds);
+						// Since we slept, might as well check again rather than waiting to be polled again
+						return AnimSequence->IsAsyncTaskComplete();
+					}
+
+					return false;
 				}
 
 				TStrongObjectPtr<UAnimSequence> AnimSequence;
@@ -319,7 +327,7 @@ namespace UE::Anim
 	void FAnimSequenceCompilingManager::UpdateCompilationNotification()
 	{
 		TRACE_COUNTER_SET(QueuedAnimationSequenceCompilation, GetNumRemainingAssets());
-		Notification.Update(GetNumRemainingAssets());
+		Notification->Update(GetNumRemainingAssets());
 	}
 
 	void FAnimSequenceCompilingManager::OnPostReachabilityAnalysis()

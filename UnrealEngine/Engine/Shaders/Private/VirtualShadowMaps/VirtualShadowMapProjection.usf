@@ -3,7 +3,7 @@
 #define SUPPORT_CONTACT_SHADOWS 1
 #include "../Common.ush"
 #include "../SceneTexturesCommon.ush"
-#include "../Strata/Strata.ush"
+#include "../Substrate/Substrate.ush"
 #include "../DeferredShadingCommon.ush"
 #include "../DeferredLightingCommon.ush"
 #include "../LightShaderParameters.ush"
@@ -17,6 +17,7 @@
 #include "VirtualShadowMapProjectionDirectional.ush"
 #include "VirtualShadowMapProjectionSpot.ush"
 #include "VirtualShadowMapTransmissionCommon.ush"
+#include "VirtualShadowMapLightGrid.ush"
 #include "/Engine/Shared/VirtualShadowMapDefinitions.h"
 
 #if HAS_HAIR_STRANDS
@@ -24,6 +25,9 @@
 #define VOXEL_TRAVERSAL_DEBUG 0
 #include "../HairStrands/HairStrandsVoxelPageCommon.ush"
 #include "../HairStrands/HairStrandsVoxelPageTraversal.ush"
+#if USE_BLUE_NOISE
+DEFINE_HAIR_BLUE_NOISE_JITTER_FUNCTION
+#endif
 #endif
 
 #ifndef DIRECTIONAL_LIGHT
@@ -48,21 +52,21 @@ struct FProjectionShadingInfo
 FProjectionShadingInfo GetProjectionShadingInfo(uint2 PixelPos)
 {
 	FProjectionShadingInfo Out;
-#if STRATA_ENABLED
-	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-	FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelPos, 0)));
+#if SUBSTRATE_ENABLED
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelPos, 0)));
 
-	const FStrataSubsurfaceHeader SSSHeader = StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelPos);
-	const bool bIsValid = StrataSubSurfaceHeaderGetIsValid(SSSHeader);
-	const bool bIsProfile = StrataSubSurfaceHeaderGetIsProfile(SSSHeader);
+	const FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, PixelPos);
+	const bool bIsValid = SubstrateSubSurfaceHeaderGetIsValid(SSSHeader);
+	const bool bIsProfile = SubstrateSubSurfaceHeaderGetIsProfile(SSSHeader);
 
 	const uint SSSType = SSSHEADER_TYPE(SSSHeader);
-	const bool bHasSSS = StrataPixelHeader.HasSubsurface();
-	const uint BSDFType = StrataPixelHeader.StrataGetBSDFType();
+	const bool bHasSSS = SubstratePixelHeader.HasSubsurface();
+	const uint BSDFType = SubstratePixelHeader.SubstrateGetBSDFType();
 
-	Out.bIsValid = StrataPixelHeader.IsStrataMaterial();
-	Out.bIsHair = BSDFType == STRATA_BSDF_TYPE_HAIR;
+	Out.bIsValid = SubstratePixelHeader.IsSubstrateMaterial();
+	Out.bIsHair = BSDFType == SUBSTRATE_BSDF_TYPE_HAIR;
 	Out.WorldNormal = TopLayerData.WorldNormal;
 	Out.bIsSubsurface = SSSType != SSS_TYPE_INVALID; // legacy IsSubsurfaceModel is true for subsurface profile, eyes, etc.
 
@@ -194,6 +198,7 @@ StructuredBuffer< FPhysicalPageMetaData > PhysicalPageMetaData;
 RWTexture2D< float4 > OutVisualize;
 int VisualizeModeId;
 int VisualizeVirtualShadowMapId;
+float VisualizeNaniteOverdrawScale;
 
 // Type of input data consume by the page allocation (i.e., data read from the source buffer: Gbuffer, HairStrands data, ...)
 #define INPUT_TYPE_GBUFFER 0
@@ -214,8 +219,7 @@ FVirtualShadowMapSampleResult ProjectLight(
 {
 	const bool bIsHairInput = InputType == INPUT_TYPE_HAIRSTRANDS;
 
-	// NOTE: If PrimaryView.PreViewTranslation is guaranteed to be the camera position we can simplify
-	const float DistanceToCamera = length(TranslatedWorldPosition - View.TranslatedWorldCameraOrigin);
+	const float DistanceToCamera = GetDistanceToCameraFromViewVector(TranslatedWorldPosition - View.TranslatedWorldCameraOrigin);
 	const float NormalBiasLength = max(0.02f, NormalBias * DistanceToCamera / GetCotanHalfFieldOfView().x);
 
 #if DIRECTIONAL_LIGHT
@@ -231,6 +235,16 @@ FVirtualShadowMapSampleResult ProjectLight(
 	bool bInLightCone = SpotAttenuationMask(L, -Light.Direction, Light.SpotAngles) > 0.0f;
 
 	bool bInLightRegion = bInLightRadius && bInLightCone;
+
+	const bool bIsRectLight = Light.RectLightBarnLength > -2.0f;
+	if (bIsRectLight)
+	{
+		const bool bIsBehindRectLight = dot(ToLight, Light.Direction) < 0;
+		if (bIsBehindRectLight)
+		{
+			bInLightRegion = false;
+		}
+	}
 #endif // DIRECTIONAL_LIGHT
 
 	FVirtualShadowMapSampleResult Result = InitVirtualShadowMapSampleResult();
@@ -240,8 +254,13 @@ FVirtualShadowMapSampleResult ProjectLight(
 	BRANCH
 	if (bInLightRegion && bValidPixel)
 	{
-		const bool bBackfaceCull = (bCullBackfacingPixels > 0) && !bIsHairInput && !ShadingInfo.bIsSubsurface;
-		
+		bool bBackfaceCull = (bCullBackfacingPixels > 0) && !bIsHairInput && !ShadingInfo.bIsSubsurface;
+#if VISUALIZE
+		// Modes more related to the shadow depth rendering don't want to see the projection culling
+		bBackfaceCull = bBackfaceCull &&
+			VisualizeModeId != VIRTUAL_SHADOW_MAP_VISUALIZE_NANITE_OVERDRAW;
+#endif
+
 		float3 WorldNormal = (bIsHairInput || ShadingInfo.bIsHair) ? L : ShadingInfo.WorldNormal;
 		TranslatedWorldPosition += WorldNormal * NormalBiasLength;
 
@@ -262,9 +281,9 @@ FVirtualShadowMapSampleResult ProjectLight(
 			}
 		}
 
+		#if DIRECTIONAL_LIGHT
 		if (SMRTRayCount > 0)
 		{
-		#if DIRECTIONAL_LIGHT
 			Result = TraceDirectional(
 				VirtualShadowMapId,
 				Light,
@@ -277,11 +296,22 @@ FVirtualShadowMapSampleResult ProjectLight(
 				SMRTRayLengthScale,
 				Noise,
 				bBackfaceCull,
-				half3(WorldNormal),
+				WorldNormal,
 				SMRTTexelDitherScale,
 				SMRTExtrapolateSlope,
 				SMRTAdaptiveRayCount);
-		#else
+		}
+		else
+		{
+			Result = SampleVirtualShadowMapDirectional(
+				VirtualShadowMapId,
+				TranslatedWorldPosition,
+				SMRTRayOffset,
+				WorldNormal);
+		}
+		#else // !DIRECTIONAL_LIGHT
+		if (SMRTRayCount > 0)
+		{
 			Result = TraceLocalLight(
 				VirtualShadowMapId,
 				Light,
@@ -299,16 +329,16 @@ FVirtualShadowMapSampleResult ProjectLight(
 				SMRTExtrapolateSlope,
 				SMRTMaxSlopeBias,
 				SMRTAdaptiveRayCount);
-		#endif // DIRECTIONAL_LIGHT
 		}
 		else
 		{
-			Result = SampleVirtualShadowMapTranslatedWorld(
+			Result = SampleVirtualShadowMapLocal(
 				VirtualShadowMapId,
 				TranslatedWorldPosition,
 				SMRTRayOffset,
 				WorldNormal);
 		}
+		#endif // DIRECTIONAL_LIGHT
 		
 		// Explanation:
 		//	- If bDataIsOpacity = 1: Data stores the surface's SSS opacity. We compute a transmitted color when the surface is not fully opaque (opacity == 1).
@@ -337,7 +367,12 @@ FVirtualShadowMapSampleResult ProjectLight(
 			float4 Random = 0;
 			if (Result.ShadowFactor > 0)
 			{
+				#if USE_BLUE_NOISE
+				Random = GetHairBlueNoiseJitter(PixelPos, 0 /*SampleIndex*/, 1 /*MaxSampleCount*/, View.StateFrameIndexMod8/*TimeIndex*/);
+				#else
 				Random = ComputeRandom4(PixelPos);
+				#endif
+
 				uint RayIndex = min(Random.w * SMRTRayCount, SMRTRayCount - 1);
 
 			#if DIRECTIONAL_LIGHT
@@ -345,7 +380,7 @@ FVirtualShadowMapSampleResult ProjectLight(
 					Light,
 					PixelPos,
 					TranslatedWorldPosition,
-					SMRTRayOffset,		// TODO: Is this actually what we want here?
+					SMRTRayLengthScale * 100,
 					RayIndex,
 					SMRTRayCount,
 					RayStart,
@@ -389,15 +424,14 @@ FVirtualShadowMapSampleResult ProjectLight(
 				TraversalSettings.bDebugEnabled		= false;
 				TraversalSettings.SteppingScale		= VirtualVoxel.SteppingScale_Shadow;
 				TraversalSettings.Random			= Random.xyz;
-				TraversalSettings.PixelRadius		= SceneDepth * VirtualVoxel.HairCoveragePixelRadiusAtDepth1;
+				TraversalSettings.PixelRadius		= ConvertGivenDepthRadiusForProjectionType(VirtualVoxel.HairCoveragePixelRadiusAtDepth1, SceneDepth);
 				TraversalSettings.bUseOpaqueVisibility = false;
 				TraversalSettings.bCastShadow		= true;
 
 				const uint VoxelDescCount = VirtualVoxel.NodeDescCount;
 				for (uint VoxelDescIt=0; VoxelDescIt<VoxelDescCount; ++VoxelDescIt)
 				{
-					const FPackedVirtualVoxelNodeDesc PackedNode = VirtualVoxel.NodeDescBuffer[VoxelDescIt];
-					const FVirtualVoxelNodeDesc NodeDesc = UnpackVoxelNode(PackedNode, VirtualVoxel.PageResolution);
+					const FVirtualVoxelNodeDesc NodeDesc = UnpackVoxelNode(VirtualVoxel.NodeDescBuffer[VoxelDescIt], VirtualVoxel.PageResolution);
 
 					FHairTraversalResult HairResult = InitHairTraversalResult();
 					HairResult = ComputeHairCountVirtualVoxel(
@@ -406,7 +440,6 @@ FVirtualShadowMapSampleResult ProjectLight(
 						CommonDesc,
 						NodeDesc,
 						VirtualVoxel.PageIndexBuffer,
-						VirtualVoxel.PageIndexOccupancyBuffer,
 						VirtualVoxel.PageTexture,
 						TraversalSettings);
 
@@ -422,7 +455,16 @@ FVirtualShadowMapSampleResult ProjectLight(
 	return Result;
 }
 
-void OutputVisualize( uint2 PixelPos, FVirtualShadowMapSampleResult Result )
+float3 GetVirtualPageColor(uint2 VirtualTexelAddress)
+{
+	uint2 vPage = VirtualTexelAddress.xy >> VSM_LOG2_PAGE_SIZE;
+	return IntToColor(vPage.x + (vPage.y << 10U));
+}
+
+void OutputVisualize(
+	uint2 PixelPos,
+	float3 TranslatedWorldPosition,	// Unmodified, raw position before any biasing
+	FVirtualShadowMapSampleResult Result)
 {
 	// NOTE: Important to *not* write output if it isn't a recognized mode, as a different
 	// pass may write that output instead.
@@ -433,7 +475,8 @@ void OutputVisualize( uint2 PixelPos, FVirtualShadowMapSampleResult Result )
 	{
 		bWriteOutput = true;
 
-		uint2 vPage = Result.VirtualTexelAddress.xy >> VSM_LOG2_PAGE_SIZE;
+		const float3 vPageColor = GetVirtualPageColor(Result.VirtualTexelAddress);
+
 		uint2 pPage = Result.PhysicalTexelAddress.xy >> VSM_LOG2_PAGE_SIZE;
 		bool bValidPageAddress = all( pPage < uint2(VirtualShadowMap.PhysicalPoolSizePages) );
 		
@@ -449,14 +492,13 @@ void OutputVisualize( uint2 PixelPos, FVirtualShadowMapSampleResult Result )
 		}
 		else if ( VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_CLIPMAP_OR_MIP )
 		{
-			float3 Color = IntToColor( Result.ClipmapIndexOrMipLevel );
+			float3 Color = IntToColor( Result.ClipmapOrMipLevel );
 			Output = 0.8f*Color + 0.2f*Result.ShadowFactor.xxx;
 		}
 		else if ( VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_VIRTUAL_PAGE && bValidPageAddress )
 		{
-			float3 PageColor = IntToColor( vPage.x + ( vPage.y << 10U ) );
-			float3 MipColor = IntToColor( Result.ClipmapIndexOrMipLevel );
-			Output = 0.4f*PageColor + 0.4f*MipColor + 0.2f*Result.ShadowFactor.xxx;
+			float3 MipColor = IntToColor( Result.ClipmapOrMipLevel );
+			Output = 0.4f*vPageColor + 0.4f*MipColor + 0.2f*Result.ShadowFactor.xxx;
 		}		
 		else if ( VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_SMRT_RAY_COUNT )
 		{
@@ -472,12 +514,11 @@ void OutputVisualize( uint2 PixelPos, FVirtualShadowMapSampleResult Result )
 			{
 				CacheColor = bUncachedStatic ? float3(1, 0, 0) : float3(0, 0, 1);
 			}
-			float3 PageColor = IntToColor(vPage.x + (vPage.y << 10U));
-			Output = 0.55f*CacheColor + 0.25f*PageColor + 0.2f*Result.ShadowFactor.xxx;
+			Output = 0.55f*CacheColor + 0.25f*vPageColor + 0.2f*Result.ShadowFactor.xxx;
 		}
 		else if (VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_DIRTY_PAGE)
 		{
-			float3 PageColor = IntToColor(vPage.x + (vPage.y << 10U)) * 0.4f;
+			float3 PageColor = vPageColor * 0.4f;
 			float3 DirtyColor = PageColor;
 			if (bValidPageAddress)
 			{
@@ -493,7 +534,7 @@ void OutputVisualize( uint2 PixelPos, FVirtualShadowMapSampleResult Result )
 		}
 		else if (VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_GPU_INVALIDATED_PAGE)
 		{
-			float3 PageColor = IntToColor(vPage.x + (vPage.y << 10U)) * 0.4f;
+			float3 PageColor = vPageColor * 0.4f;
 			float3 DirtyColor = PageColor;
 			if (bValidPageAddress)
 			{
@@ -521,28 +562,27 @@ void OutputVisualize( uint2 PixelPos, FVirtualShadowMapSampleResult Result )
 			{
 				Color = float3(1, 0, 0);
 			}
-			float3 PageColor = IntToColor(vPage.x + (vPage.y << 10U));
-			Output = 0.55f * Color + 0.25f * PageColor + 0.2f * Result.ShadowFactor.xxx;
+			Output = 0.55f * Color + 0.25f * vPageColor + 0.2f * Result.ShadowFactor.xxx;
 		}
 		else if ( VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_GENERAL_DEBUG )
 		{
 			Output = 0.8f*Result.GeneralDebug + 0.2f*Result.ShadowFactor.xxx;
 		}
+		else if ( VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_NANITE_OVERDRAW )
+		{
+			// This is just to get the raw physical address
+			FVirtualShadowMapSampleResult RawResult = SampleVirtualShadowMapTranslatedWorld(
+				VisualizeVirtualShadowMapId, TranslatedWorldPosition);
+
+			const float OverdrawScale = clamp(VisualizeNaniteOverdrawScale / 100.0f, 0.0f, 1.0f);
+			const float OverdrawCount = float(VirtualShadowMap.PhysicalPagePool.Load(uint4(RawResult.PhysicalTexelAddress.xy, 2, 0)));
+			const float OverdrawColor = 1 - exp2(-OverdrawCount * OverdrawScale);
+			Output = ColorMapInferno(OverdrawColor);
+		}
 		/* TODO: Enable this and add to menu
 		else if ( VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_OCCLUDER_DISTANCE )
 		{
 			Output = (Result.OccluderDistance / 1000.0f).xxx;
-		}
-		*/
-		/*
-		else if ( VisualizeModeId == VIRTUAL_SHADOW_MAP_VISUALIZE_CACHED_PAGE_AGE && bValidPageAddress )
-		{
-			float3 Color = GreenToRedTurbo( 1.0f - 0.1f * float(pPageMeta.Age) );
-			Output = lerp( Color, Result.ShadowFactor.xxx, 0.15f );
-		}
-		else if ( VisualizeModeId == 6 )	// OccluderDistance
-		{
-			Output = ColorMapViridis( 0.001f * Result.OccluderDistance );
 		}
 		*/
 		else
@@ -568,7 +608,7 @@ void VirtualShadowMapProjection(
 	uint3	DispatchThreadId	: SV_DispatchThreadID )
 {
 #if USE_TILE_LIST
-	const uint2 TileCoord = UnpackTileCoord16bits(TileListData.Load(GroupId.x)); // Need to match SingleLayerWater tile encoding
+	const uint2 TileCoord = UnpackTileCoord12bits(TileListData.Load(GroupId.x)); // Need to match SingleLayerWater tile encoding
 #else
 	const uint2 TileCoord = GroupId.xy;
 #endif // USE_TILE_LIST
@@ -597,7 +637,7 @@ void VirtualShadowMapProjection(
 	const float4 SvPosition = float4( float2( PixelPos ) + 0.5, DeviceZ, 1.0f );
 	const float3 TranslatedWorldPosition = SvPositionToTranslatedWorld( SvPosition );
 
-	const float ScreenRayLengthWorld = ScreenRayLength * GetTanHalfFieldOfView().y * SceneDepth;
+	const float ScreenRayLengthWorld = GetScreenRayLengthMultiplierForProjectionType(ScreenRayLength * SceneDepth).y;
 	const float Noise = InterleavedGradientNoise( SvPosition.xy, View.StateFrameIndexMod8 );
 
 	const FProjectionShadingInfo ShadingInfo = GetProjectionShadingInfo(PixelPos);
@@ -611,19 +651,16 @@ void VirtualShadowMapProjection(
 	FVirtualShadowMapSampleResult VisualizeResult = InitVirtualShadowMapSampleResult();
 
 #if ONE_PASS_PROJECTION
-	uint EyeIndex = 0; // TODO: Instanced stereo
-	uint GridLinearIndex = ComputeLightGridCellIndex( LocalPixelPos, SceneDepth, EyeIndex );
-	const FCulledLightsGridData CulledLightGridData = GetCulledLightsGrid( GridLinearIndex, EyeIndex );
-
+	const FCulledLightsGridData LightGridData = VirtualShadowMapGetLightsGrid(LocalPixelPos, SceneDepth);	
 	// We can only handle so many lights in our output encoding right now, so no purpose in computing more
-	uint LightCount = min(GetPackedShadowMaskMaxLightCount(), CulledLightGridData.NumLocalLights);
+	uint LightCount = min(GetPackedShadowMaskMaxLightCount(), LightGridData.NumLights);
 
 	uint4 ShadowMask = InitializePackedShadowMask();
 
 	LOOP
 	for (uint Index = 0; Index < LightCount; ++Index)
 	{
-		const FLocalLightData LightData = GetLocalLightData( CulledLightGridData.DataStartIndex + Index, EyeIndex );
+		const FLocalLightData LightData = VirtualShadowMapGetLocalLightData(LightGridData, Index);
 		int VirtualShadowMapId = LightData.VirtualShadowMapId;
 
 		if (VirtualShadowMapId != INDEX_NONE)
@@ -650,7 +687,7 @@ void VirtualShadowMapProjection(
 		}
 	}
 
-	OutShadowMaskBits[ PixelPos ] = ~ShadowMask;
+	OutShadowMaskBits[PixelPos] = ShadowMask;
 
 #else // !ONE_PASS_PROJECTION
 	{
@@ -660,7 +697,7 @@ void VirtualShadowMapProjection(
 #if DIRECTIONAL_LIGHT
 		// Increases light source radius for subsurface material as the opacity reduces to emulates light diffusion.
 		// TODO: Does something similar make sense for local lights?
-		// Substrate: this approximation has no concrete fundation so it is currently skipped for Substrate using PerPixel SSS, e.g. when bDataIsOpacity==false and data is MFP.
+		// Substrate: this approximation has no concrete foundation so it is currently skipped for Substrate using PerPixel SSS, e.g. when bDataIsOpacity==false and data is MFP.
 		if (SubsurfaceOpacityMFP.bDataIsOpacity && SubsurfaceOpacityMFP.Data < 1.0f)
 		{
 			const float SubsurfaceOpacity = SubsurfaceOpacityMFP.Data;
@@ -689,9 +726,6 @@ void VirtualShadowMapProjection(
 #endif // ONE_PASS_PROJECTION
 
 #if VISUALIZE_OUTPUT
-	if (InputType == INPUT_TYPE_GBUFFER)
-	{
-		OutputVisualize( PixelPos - View.ViewRectMin.xy, VisualizeResult );
-	}
+	OutputVisualize( PixelPos - View.ViewRectMin.xy, TranslatedWorldPosition, VisualizeResult );
 #endif // VISUALIZE_OUTPUT
 }

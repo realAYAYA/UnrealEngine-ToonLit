@@ -78,6 +78,8 @@ void UMovieSceneTrackInstance::UpdateInputs(TArray<FMovieSceneTrackInstanceInput
 	const int32 OldNum = Inputs.Num();
 	const int32 NewNum = InNewInputs.Num();
 
+	TArray<int32> StopTrackingIndices;
+
 	for ( ; OldIndex < OldNum || NewIndex < NewNum; )
 	{
 		while (OldIndex < OldNum && NewIndex < NewNum && Inputs[OldIndex].IsSameInput(InNewInputs[NewIndex]))
@@ -87,6 +89,9 @@ void UMovieSceneTrackInstance::UpdateInputs(TArray<FMovieSceneTrackInstanceInput
 				// This input is the same as one already existing in the track instance
 				// But it is being reimported - remove it and add it again
 				OnInputRemoved(Inputs[OldIndex]);
+				// We don't delay ending tracking for this input, because it will most likely get tracked
+				// in the call to OnInputAdded, which won't do anything if it's already tracked. And then
+				// later in the delayed end-tracking we would remove it. We don't want that.
 				if (InputMetaData)
 				{
 					InputMetaData->StopTrackingCaptureSource(Inputs[OldIndex]);
@@ -112,10 +117,7 @@ void UMovieSceneTrackInstance::UpdateInputs(TArray<FMovieSceneTrackInstanceInput
 			{
 				// Out with the old
 				OnInputRemoved(Inputs[OldIndex]);
-				if (InputMetaData)
-				{
-					InputMetaData->StopTrackingCaptureSource(Inputs[OldIndex]);
-				}
+				StopTrackingIndices.Add(OldIndex);
 				++OldIndex;
 			}
 			else
@@ -132,10 +134,7 @@ void UMovieSceneTrackInstance::UpdateInputs(TArray<FMovieSceneTrackInstanceInput
 		{
 			// Out with the old
 			OnInputRemoved(Inputs[OldIndex]);
-			if (InputMetaData)
-			{
-				InputMetaData->StopTrackingCaptureSource(Inputs[OldIndex]);
-			}
+			StopTrackingIndices.Add(OldIndex);
 			++OldIndex;
 		}
 		else if (ensure(NewIndex < NewNum))
@@ -146,6 +145,14 @@ void UMovieSceneTrackInstance::UpdateInputs(TArray<FMovieSceneTrackInstanceInput
 			InNewInputs[NewIndex].bInputHasBeenProcessed = true;
 			OnInputAdded(InNewInputs[NewIndex]);
 			++NewIndex;
+		}
+	}
+
+	if (InputMetaData)
+	{
+		for (int32 Index : StopTrackingIndices)
+		{
+			InputMetaData->StopTrackingCaptureSource(Inputs[Index]);
 		}
 	}
 

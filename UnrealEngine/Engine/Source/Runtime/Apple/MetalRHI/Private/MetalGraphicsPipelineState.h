@@ -13,7 +13,7 @@ class FMetalGraphicsPipelineState : public FRHIGraphicsPipelineState
 public:
 	virtual ~FMetalGraphicsPipelineState();
 
-	FMetalShaderPipeline* GetPipeline();
+	FMetalShaderPipelinePtr GetPipeline();
 
 	/** Cached vertex structure */
 	TRefCountPtr<FMetalVertexDeclaration> VertexDeclaration;
@@ -23,6 +23,10 @@ public:
 	TRefCountPtr<FMetalPixelShader> PixelShader;
 #if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
 	TRefCountPtr<FMetalGeometryShader> GeometryShader;
+#endif
+#if PLATFORM_SUPPORTS_MESH_SHADERS
+    TRefCountPtr<FMetalMeshShader>          MeshShader;
+    TRefCountPtr<FMetalAmplificationShader> AmplificationShader;
 #endif
 
 	/** Cached state objects */
@@ -39,6 +43,10 @@ public:
 		return Initializer.bDepthBounds;
 	}
 
+#if METAL_USE_METAL_SHADER_CONVERTER
+    TArray<uint8_t> StageInFunctionBytecode;
+#endif
+
 private:
 	// This can only be created through the RHI to make sure Compile() is called.
 	FMetalGraphicsPipelineState(const FGraphicsPipelineStateInitializer& Init);
@@ -49,5 +57,5 @@ private:
 	// Needed to runtime refine shaders currently.
 	FGraphicsPipelineStateInitializer Initializer;
 
-	FMetalShaderPipeline* PipelineState;
+	FMetalShaderPipelinePtr PipelineState;
 };

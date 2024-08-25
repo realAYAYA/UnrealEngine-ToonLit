@@ -28,7 +28,7 @@ public class ShaderCompileWorker : ModuleRules
 		// Include D3D compiler binaries
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
-			RuntimeDependencies.Add(DirectX.GetDllDir(Target) + "d3dcompiler_47.dll");
+			RuntimeDependencies.Add(Path.Combine(Target.WindowsPlatform.DirectXDllDir, "d3dcompiler_47.dll"));
 		}
 	}
 }

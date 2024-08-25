@@ -55,9 +55,11 @@ public:
 	 */
 	virtual const FDateTime& GetTimeStamp() const override;
 
-	virtual const TArray<FSourceControlStateRef>& GetFilesStates() const override;
+	virtual const TArray<FSourceControlStateRef> GetFilesStates() const override;
+	virtual int32 GetFilesStatesNum() const override;
 
-	virtual const TArray<FSourceControlStateRef>& GetShelvedFilesStates() const override;
+	virtual const TArray<FSourceControlStateRef> GetShelvedFilesStates() const override;
+	virtual int32 GetShelvedFilesStatesNum() const override;
 
 	virtual FSourceControlChangelistRef GetChangelist() const override;
 
@@ -68,7 +70,7 @@ public:
 	bool bHasShelvedFiles;
 
 	TArray<FSourceControlStateRef> Files;
-	TArray<FSourceControlStateRef> ShelvedFiles;
+	TMap<FString, FSourceControlStateRef> ShelvedFiles;
 
 	/** The timestamp of the last update */
 	FDateTime TimeStamp;

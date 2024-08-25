@@ -56,7 +56,7 @@ public:
 
 private:
 	FAnimInstanceProxy* MyAnimInstanceProxy;
-	double MaximumReach;
+	double TotalChainLength;
 	int32 NumLinks;
 	FVector HingeRotationAxis;
 	bool bEnableRotationLimit;
@@ -65,7 +65,7 @@ private:
 public:
 	FIKChain()
 		: MyAnimInstanceProxy(nullptr)
-		, MaximumReach(0.0)
+		, TotalChainLength(0.0)
 		, NumLinks(INDEX_NONE)
 		, HingeRotationAxis(FVector::ZeroVector)
 		, bEnableRotationLimit(false)
@@ -73,12 +73,17 @@ public:
 	{}
 
 	void InitializeFromLegData(FAnimLegIKData& InLegData, FAnimInstanceProxy* InAnimInstanceProxy);
-	void ReachTarget(const FVector& InTargetLocation, double InReachPrecision, int32 InMaxIterations);
+	void ReachTarget(
+		const FVector& InTargetLocation,
+		double InReachPrecision,
+		int32 InMaxIterations,
+		float SoftPercentLength,
+		float SoftAlpha);
 	void ApplyTwistOffset(const float InTwistOffsetDegrees);
 
 	double GetMaximumReach() const
 	{
-		return MaximumReach;
+		return TotalChainLength;
 	}
 
 private:
@@ -190,6 +195,16 @@ struct FAnimNode_LegIK : public FAnimNode_SkeletalControlBase
 	/** Max Number of Iterations. */
 	UPROPERTY(EditAnywhere, Category = "Settings")
 	int32 MaxIterations;
+
+	/** Default is 1.0 (off). Range is 0.1 to 1.0. When set to a value less than 1, will "softly" approach full extension starting when the effector
+	 * distance from the root of the chain is greater than this percent length of the bone chain. Typical values are around 0.97.
+	 * This is useful for preventing the knee from "popping" when approaching full extension. */
+	UPROPERTY(EditAnywhere, Category = "Settings", meta = (PinHiddenByDefault, UIMin = "0.01", UIMax = "1", ClampMin = "0.01", ClampMax = "1"))
+	float SoftPercentLength;
+
+	/** Default is 1.0 (full). Range is 0 to 1. Blends the effect of the "softness" on/off. */
+	UPROPERTY(EditAnywhere, Category = "Settings", meta = (PinHiddenByDefault, UIMin = "0.0", UIMax = "1", ClampMin = "0.0", ClampMax = "1"))
+	float SoftAlpha;
 
 	UPROPERTY(EditAnywhere, Category = "Settings")
 	TArray<FAnimLegIKDefinition> LegsDefinition;

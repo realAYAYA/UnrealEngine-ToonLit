@@ -127,7 +127,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 		if (adWantsToBeShown && !adIsAvailable && !adIsRequested && loadIfNeeded)
 		{
 			AdRequest adRequest = new AdRequest.Builder().build();		// add test devices here
-			_activity.adView.loadAd(adRequest);
+			GameActivity.Get().adView.loadAd(adRequest);
 
 			adIsRequested = true;
 		}
@@ -167,7 +167,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 		if (adInit)
 		{
 			// already created, make it visible
-			_activity.runOnUiThread(new Runnable()
+			activityContext.runOnUiThread(new Runnable()
 			{
 				@Override
 				public void run()
@@ -192,7 +192,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 
 		if (adView != null)
 		{
-			_activity.runOnUiThread(new Runnable()
+			activityContext.runOnUiThread(new Runnable()
 			{
 				@Override
 				public void run()
@@ -220,7 +220,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 					adPopupWindow.setContentView(adLayout);
 
 					// set up our ad callbacks
-					_activity.adView.setAdListener(new AdListener()
+					GameActivity.Get().adView.setAdListener(new AdListener()
 					{
 						 @Override
 						public void onAdLoaded()
@@ -258,7 +258,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 			return;
 		}
 
-		_activity.runOnUiThread(new Runnable()
+		activityContext.runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -279,7 +279,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 		}
 
 		// currently the same as hide.  should we do a full teardown?
-		_activity.runOnUiThread(new Runnable()
+		activityContext.runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -299,7 +299,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 		isInterstitialAdRequested = true;
 		interstitialAd.setAdUnitId(AdMobAdUnitID);
 
-		_activity.runOnUiThread(new Runnable()
+		activityContext.runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -341,7 +341,7 @@ import com.google.android.gms.ads.identifier.AdvertisingIdClient.Info;
 	{
 		if(isInterstitialAdLoaded)
 		{
-			_activity.runOnUiThread(new Runnable()
+			activityContext.runOnUiThread(new Runnable()
 			{
 				@Override
 				public void run()

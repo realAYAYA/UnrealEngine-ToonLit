@@ -24,6 +24,11 @@ namespace MovieScene
 struct FEntityImportSequenceParams;
 struct IMovieScenePerEntityMutation;
 
+enum class EUnlinkEverythingMode
+{
+	Normal,
+	CleanGarbage,
+};
 
 /**
  * An entity ledger is responsible for tracking the entites that have been imported for the currently relevant frame of a sequence instance.
@@ -92,7 +97,7 @@ public:
 	 *
 	 * @param Linker The linker that owns this ledger
 	 */
-	MOVIESCENE_API void UnlinkEverything(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API void UnlinkEverything(UMovieSceneEntitySystemLinker* Linker, EUnlinkEverythingMode Garbage = EUnlinkEverythingMode::Normal);
 
 	/**
 	 * Unlink all imported one-shot linker entities and their children and clear the list of one shots

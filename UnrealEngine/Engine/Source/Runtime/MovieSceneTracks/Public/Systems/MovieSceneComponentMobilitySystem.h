@@ -62,6 +62,7 @@ struct FPreAnimatedComponentMobilityStorage : TPreAnimatedStateStorage_ObjectTra
 {
 	static TAutoRegisterPreAnimatedStorageID<FPreAnimatedComponentMobilityStorage> StorageID;
 
+	FPreAnimatedStateEntry FindEntry(USceneComponent* InSceneComponent);
 	FPreAnimatedStateEntry MakeEntry(USceneComponent* InSceneComponent);
 };
 

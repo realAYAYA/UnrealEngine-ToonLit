@@ -49,66 +49,31 @@ int32 FViewport::PresentAndStopMovieDelay = 0;
 
 static const FName NAME_DummyViewport = FName(TEXT("DummyViewport"));
 
-/**
-* Reads the viewport's displayed pixels into a preallocated color buffer.
-* @param OutImageData - RGBA8 values will be stored in this buffer
-* @param TopLeftX - Top left X pixel to capture
-* @param TopLeftY - Top left Y pixel to capture
-* @param Width - Width of image in pixels to capture
-* @param Height - Height of image in pixels to capture
-* @return True if the read succeeded.
-*/
-bool FRenderTarget::ReadPixels(TArray< FColor >& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InRect)
+bool FRenderTarget::ReadPixels(TArray< FColor >& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
 {
-	if(InRect == FIntRect(0, 0, 0, 0))
+	if(InSrcRect == FIntRect(0, 0, 0, 0))
 	{
-		InRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
+		InSrcRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
 	}
 
-	// Read the render target surface data back.	
-	struct FReadSurfaceContext
-	{
-		FRenderTarget* SrcRenderTarget;
-		TArray<FColor>* OutData;
-		FIntRect Rect;
-		FReadSurfaceDataFlags Flags;
-	};
-
 	OutImageData.Reset();
-	FReadSurfaceContext Context =
-	{
-		this,
-		&OutImageData,
-		InRect,
-		InFlags
-	};
 
+	// Read the render target surface data back.	
 	ENQUEUE_RENDER_COMMAND(ReadSurfaceCommand)(
-		[Context](FRHICommandListImmediate& RHICmdList)
+		[RenderTarget_RT = this, SrcRect_RT = InSrcRect, OutData_RT = &OutImageData, Flags_RT = InFlags](FRHICommandListImmediate& RHICmdList)
 		{
-			RHICmdList.ReadSurfaceData(
-				Context.SrcRenderTarget->GetRenderTargetTexture(),
-				Context.Rect,
-				*Context.OutData,
-				Context.Flags
-				);
+			RHICmdList.ReadSurfaceData(RenderTarget_RT->GetShaderResourceTexture(), SrcRect_RT, *OutData_RT, Flags_RT);
 		});
 	FlushRenderingCommands();
 
 	return OutImageData.Num() > 0;
 }
 
-
-/**
-* Reads the viewport's displayed pixels into a preallocated color buffer.
-* @param OutputBuffer - RGBA8 values will be stored in this buffer
-* @return True if the read succeeded.
-*/
-bool FRenderTarget::ReadPixelsPtr(FColor* OutImageBytes, FReadSurfaceDataFlags InFlags, FIntRect InRect)
+bool FRenderTarget::ReadPixelsPtr(FColor* OutImageBytes, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
 {
 	TArray<FColor> SurfaceData;
 
-	bool bResult = ReadPixels( SurfaceData, InFlags, InRect );
+	bool bResult = ReadPixels( SurfaceData, InFlags, InSrcRect);
 	if( bResult )
 	{
 		FMemory::Memcpy( OutImageBytes, &SurfaceData[ 0 ], SurfaceData.Num() * sizeof(FColor) );
@@ -117,133 +82,63 @@ bool FRenderTarget::ReadPixelsPtr(FColor* OutImageBytes, FReadSurfaceDataFlags I
 	return bResult;
 }
 
-/**
- * Reads the viewport's displayed pixels into a preallocated color buffer.
- * @param OutImageBytes - RGBA16F values will be stored in this buffer.  Buffer must be preallocated with the correct size!
- * @param CubeFace - optional cube face for when reading from a cube render target
- * @return True if the read succeeded.
- */
-bool FRenderTarget::ReadFloat16Pixels(FFloat16Color* OutImageData,ECubeFace CubeFace)
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+bool FRenderTarget::ReadFloat16Pixels(TArray<FFloat16Color>& OutImageData, ECubeFace CubeFace)
 {
-	// Read the render target surface data back.	
-	struct FReadSurfaceFloatContext
-	{
-		FRenderTarget* SrcRenderTarget;
-		TArray<FFloat16Color>* OutData;
-		FIntRect Rect;
-		ECubeFace CubeFace;
-	};
-	
-	TArray<FFloat16Color> SurfaceData;
-	FReadSurfaceFloatContext Context =
-	{
-		this,
-		&SurfaceData,
-		FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y),
-		CubeFace	
-	};
-
-	ENQUEUE_RENDER_COMMAND(ReadSurfaceFloatCommand)(
-		[Context](FRHICommandListImmediate& RHICmdList)
-		{
-			RHICmdList.ReadSurfaceFloatData(
-				Context.SrcRenderTarget->GetRenderTargetTexture(),
-				Context.Rect,
-				*Context.OutData,
-				Context.CubeFace,
-				0,
-				0
-				);
-		});
-	FlushRenderingCommands();
-
-	// Copy the surface data into the output array.
-	FFloat16Color* OutImageColors = reinterpret_cast< FFloat16Color* >(OutImageData);
-
-	// Cache width and height as its very expensive to call these virtuals in inner loop (never inlined)
-	const int32 ImageWidth = GetSizeXY().X;
-	const int32 ImageHeight = GetSizeXY().Y;
-	for (int32 Y = 0; Y < ImageHeight; Y++)
-	{
-		FFloat16Color* SourceData = (FFloat16Color*)SurfaceData.GetData() + Y * ImageWidth;
-		for (int32 X = 0; X < ImageWidth; X++)
-		{
-			OutImageColors[ Y * ImageWidth + X ] = SourceData[X];
-		}
-	}
-
-	return true;
+	return ReadFloat16Pixels(OutImageData, FReadSurfaceDataFlags(RCM_UNorm, CubeFace));
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-/**
- * Reads the viewport's displayed pixels into the given color buffer.
- * @param OutputBuffer - RGBA16F values will be stored in this buffer
- * @param CubeFace - optional cube face for when reading from a cube render target
- * @return True if the read succeeded.
- */
-bool FRenderTarget::ReadFloat16Pixels(TArray<FFloat16Color>& OutputBuffer,ECubeFace CubeFace)
+bool FRenderTarget::ReadFloat16Pixels(TArray<FFloat16Color>& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
 {
-	// Copy the surface data into the output array.
-	OutputBuffer.SetNumUninitialized(GetSizeXY().X * GetSizeXY().Y, true);
-	return ReadFloat16Pixels((FFloat16Color*)&(OutputBuffer[0]), CubeFace);
-}
+	// if the RenderTarget is not EXACTLY PF_FloatRGBA , this will check down in the RHI
+	// (eg. PF_FloatRGB will fail)
+	// this check is correct, but you can't use GetShaderResourceTexture() except from render thread (could be a race)
+	//check( GetShaderResourceTexture()->GetDesc().Format == PF_FloatRGBA );
 
-/**
-* Reads the viewport's displayed pixels into a preallocated color buffer.
-* @param OutImageData - LinearColor array to fill!
-* @param CubeFace - optional cube face for when reading from a cube render target
-* @return True if the read succeeded.
-*/
-bool FRenderTarget::ReadLinearColorPixels(TArray<FLinearColor> &OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InRect)
-{
-	if (InRect == FIntRect(0, 0, 0, 0))
+	if (InSrcRect == FIntRect(0, 0, 0, 0))
 	{
-		InRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
+		InSrcRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
 	}
-
-	// Read the render target surface data back.	
-	struct FReadSurfaceContext
-	{
-		FRenderTarget* SrcRenderTarget;
-		TArray<FLinearColor>* OutData;
-		FIntRect Rect;
-		FReadSurfaceDataFlags Flags;
-	};
 
 	OutImageData.Reset();
-	FReadSurfaceContext Context =
-	{
-		this,
-		&OutImageData,
-		InRect,
-		InFlags
-	};
 
+	// Read the render target surface data back.	
+	ENQUEUE_RENDER_COMMAND(ReadSurfaceFloatCommand)(
+		[RenderTarget_RT = this, SrcRect_RT = InSrcRect, OutData_RT = &OutImageData, Flags_RT = InFlags](FRHICommandListImmediate& RHICmdList)
+	{
+		RHICmdList.ReadSurfaceFloatData(RenderTarget_RT->GetShaderResourceTexture(), SrcRect_RT, *OutData_RT, Flags_RT);
+	});
+	FlushRenderingCommands();
+
+	return OutImageData.Num() > 0;
+}
+
+bool FRenderTarget::ReadLinearColorPixels(TArray<FLinearColor> &OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
+{
+	if (InSrcRect == FIntRect(0, 0, 0, 0))
+	{
+		InSrcRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
+	}
+
+	OutImageData.Reset();
+
+	// Read the render target surface data back.	
 	ENQUEUE_RENDER_COMMAND(ReadSurfaceCommand)(
-		[Context](FRHICommandListImmediate& RHICmdList)
+		[RenderTarget_RT = this, SrcRect_RT = InSrcRect, OutData_RT = &OutImageData, Flags_RT = InFlags](FRHICommandListImmediate& RHICmdList)
 		{
-			RHICmdList.ReadSurfaceData(
-			Context.SrcRenderTarget->GetRenderTargetTexture(),
-				Context.Rect,
-				*Context.OutData,
-				Context.Flags
-				);
+			RHICmdList.ReadSurfaceData(RenderTarget_RT->GetShaderResourceTexture(), SrcRect_RT, *OutData_RT, Flags_RT);
 		});
 	FlushRenderingCommands();
 
 	return OutImageData.Num() > 0;
 }
 
-/**
-* Reads the viewport's displayed pixels into a preallocated color buffer.
-* @param OutputBuffer - RGBA8 values will be stored in this buffer
-* @return True if the read succeeded.
-*/
-bool FRenderTarget::ReadLinearColorPixelsPtr(FLinearColor* OutImageBytes, FReadSurfaceDataFlags InFlags, FIntRect InRect)
+bool FRenderTarget::ReadLinearColorPixelsPtr(FLinearColor* OutImageBytes, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
 {
 	TArray<FLinearColor> SurfaceData;
 
-	bool bResult = ReadLinearColorPixels(SurfaceData, InFlags, InRect);
+	bool bResult = ReadLinearColorPixels(SurfaceData, InFlags, InSrcRect);
 	if (bResult)
 	{
 		check(SurfaceData.Num() != 0);
@@ -253,11 +148,15 @@ bool FRenderTarget::ReadLinearColorPixelsPtr(FLinearColor* OutImageBytes, FReadS
 	return bResult;
 }
 
-/** 
-* @return display gamma expected for rendering to this render target 
-*/
 float FRenderTarget::GetDisplayGamma() const
 {
+	return GetEngineDisplayGamma();
+}
+
+float FRenderTarget::GetEngineDisplayGamma() // static
+{
+	// when we say we want a 2.2 gamma, what we actually mean is that we want SRGB conversion in most cases
+
 	if (GEngine == NULL)
 	{
 		return 2.2f;
@@ -273,10 +172,6 @@ float FRenderTarget::GetDisplayGamma() const
 	}
 }
 
-/**
-* Accessor for the surface RHI when setting this render target
-* @return render target surface RHI resource
-*/
 const FTextureRHIRef& FRenderTarget::GetRenderTargetTexture() const
 {
 	return RenderTargetTextureRHI;
@@ -290,6 +185,11 @@ FRDGTextureRef FRenderTarget::GetRenderTargetTexture(FRDGBuilder& GraphBuilder) 
 FUnorderedAccessViewRHIRef FRenderTarget::GetRenderTargetUAV() const
 {
 	return FUnorderedAccessViewRHIRef();
+}
+
+const FTextureRHIRef& FRenderTarget::GetShaderResourceTexture() const
+{
+	return GetRenderTargetTexture();
 }
 
 void FScreenshotRequest::RequestScreenshot(bool bInShowUI)

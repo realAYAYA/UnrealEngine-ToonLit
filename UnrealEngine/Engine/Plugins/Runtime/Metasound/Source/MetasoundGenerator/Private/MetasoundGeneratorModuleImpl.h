@@ -5,6 +5,7 @@
 #include "MetasoundGeneratorModule.h"
 
 #include "MetasoundOperatorCache.h"
+#include "MetasoundInstanceCounter.h"
 
 namespace Metasound
 {
@@ -15,14 +16,12 @@ namespace Metasound
 		virtual void StartupModule() override;
 		virtual void ShutdownModule() override;
 
-		TSharedPtr<FOperatorCache> GetOperatorCache();
+		virtual TSharedPtr<FOperatorPool> GetOperatorPool() override;
+		virtual TSharedPtr<FConcurrentInstanceCounterManager> GetOperatorInstanceCounterManager() override;
 
 	private:
 
-		TSharedPtr<FOperatorCache> OperatorCache;
+		TSharedPtr<FOperatorPool> OperatorPool;
+		TSharedPtr<FConcurrentInstanceCounterManager> OperatorInstanceCounterManager;
 	};
 }
-
-
-
-

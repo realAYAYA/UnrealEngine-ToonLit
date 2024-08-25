@@ -16,6 +16,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Visualizers", "Visualizers"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DatasmithARCHICAD26Exporter", "VSProj26\DatasmithARCHICAD26Exporter.vcxproj", "{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DatasmithARCHICAD27Exporter", "VSProj27\DatasmithARCHICAD27Exporter.vcxproj", "{9E96B4E7-DD01-421B-A94C-38AE65BA5773}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -56,6 +58,14 @@ Global
 		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
 		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.ReleaseUEWDbg|x64.ActiveCfg = ReleaseUEWDbg|x64
 		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.ReleaseUEWDbg|x64.Build.0 = ReleaseUEWDbg|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.Debug|x64.ActiveCfg = Debug|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.Debug|x64.Build.0 = Debug|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.Release|x64.ActiveCfg = Release|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.Release|x64.Build.0 = Release|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.ReleaseUE|x64.ActiveCfg = ReleaseUE|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.ReleaseUEWDbg|x64.ActiveCfg = ReleaseUEWDbg|x64
+		{9E96B4E7-DD01-421B-A94C-38AE65BA5773}.ReleaseUEWDbg|x64.Build.0 = ReleaseUEWDbg|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

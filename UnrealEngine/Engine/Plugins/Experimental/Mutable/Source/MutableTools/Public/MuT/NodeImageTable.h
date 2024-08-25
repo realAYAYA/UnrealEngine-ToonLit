@@ -22,6 +22,7 @@ namespace mu
 
 	class InputArchive;
 	class OutputArchive;
+	struct FImageDesc;
 
 
 	//! This node provides the meshes stored in the column of a table.
@@ -45,29 +46,35 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        virtual int GetInputCount() const override;
-        virtual Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
 		//-----------------------------------------------------------------------------------------
 
 		//! Set the name of the implicit table parameter.
-		void SetParameterName( const char* strName );
+		void SetParameterName( const FString& strName );
 
 		//!
 		TablePtr GetTable() const;
 		void SetTable( TablePtr );
 
 		//!
-		const char* GetColumn() const;
-		void SetColumn( const char* strName );
+		void SetColumn( const FString& strName );
+
+		//!
+		void SetMaxTextureSize(uint16 Size);
+		uint16 GetMaxTextureSize();
+
+		//! Adds the "None" option to the parameter that represents this table column
+		void SetNoneOption(bool bAddOption);
+		
+		//!
+		void SetReferenceImageDescriptor(const FImageDesc& Descriptor);
+
+		//! Set the row name to be used as default value
+		void SetDefaultRowName(const FString& RowName);
 
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern

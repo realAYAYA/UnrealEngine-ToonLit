@@ -37,6 +37,10 @@ struct SEQUENCER_API FCanKeyPropertyParams
 	*/
 	FCanKeyPropertyParams(const UClass* InObjectClass, const IPropertyHandle& InPropertyHandle);
 
+	/** The owner struct */
+	const UStruct* FindPropertyOwner(const FProperty* ForProperty) const;
+
+	/** The container from which to find setter functions */
 	const UStruct* FindPropertyContainer(const FProperty* ForProperty) const;
 
 	/** The class of the object which has the property to be keyed. */

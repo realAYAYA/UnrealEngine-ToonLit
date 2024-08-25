@@ -1,19 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Xml;
 using EpicGames.BuildGraph.Expressions;
 using EpicGames.Core;
-using EpicGames.Serialization;
 using Microsoft.Extensions.Logging;
 
 namespace EpicGames.BuildGraph
@@ -129,7 +125,7 @@ namespace EpicGames.BuildGraph
 		/// </summary>
 		public IReadOnlyList<BgOptionDef> OptionDefs => _optionDefs;
 
-		static readonly BgOpcodeInfo[] _opcodeTable = CreateOpcodeLookup();
+		static readonly BgOpcodeInfo[] s_opcodeTable = CreateOpcodeLookup();
 
 		static BgOpcodeInfo[] CreateOpcodeLookup()
 		{
@@ -243,7 +239,7 @@ namespace EpicGames.BuildGraph
 		object Evaluate(Frame frame)
 		{
 			BgOpcode opcode = ReadOpcode(frame);
-			BgOpcodeInfo opcodeInfo = _opcodeTable[(int)opcode];
+			BgOpcodeInfo opcodeInfo = s_opcodeTable[(int)opcode];
 
 			object arg0 = ReadArgument(frame, opcodeInfo.Arg0);
 			object arg1 = ReadArgument(frame, opcodeInfo.Arg1);
@@ -844,7 +840,7 @@ namespace EpicGames.BuildGraph
 		void Disassemble(Frame frame, ILogger logger)
 		{
 			BgOpcode opcode = Trace(frame, null, ReadOpcode, logger);
-			BgOpcodeInfo opcodeInfo = _opcodeTable[(int)opcode];
+			BgOpcodeInfo opcodeInfo = s_opcodeTable[(int)opcode];
 
 			for (int idx = 0; idx < opcodeInfo.ArgCount; idx++)
 			{

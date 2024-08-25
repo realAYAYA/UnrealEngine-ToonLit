@@ -70,12 +70,9 @@ FConditionalScopeLogTime::~FConditionalScopeLogTime()
 
 double FConditionalScopeLogTime::GetDisplayScopedTime(double InScopedTime) const
 {
-	switch(Units)
+	if (Units == ScopeLog_Seconds)
 	{
-		case ScopeLog_Seconds: return InScopedTime;
-		case ScopeLog_Milliseconds:
-		default:
-			return InScopedTime * 1000.0f;
+		return InScopedTime;
 	}
 
 	return InScopedTime * 1000.0f;
@@ -83,12 +80,9 @@ double FConditionalScopeLogTime::GetDisplayScopedTime(double InScopedTime) const
 
 FString FConditionalScopeLogTime::GetDisplayUnitsString() const
 {
-	switch (Units)
+	if (Units == ScopeLog_Seconds)
 	{
-		case ScopeLog_Seconds: return TEXT("s");
-		case ScopeLog_Milliseconds:
-		default:
-			return TEXT("ms");
+		return TEXT("s");
 	}
 
 	return TEXT("ms");

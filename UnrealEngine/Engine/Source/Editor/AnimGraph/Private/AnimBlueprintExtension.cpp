@@ -13,6 +13,7 @@
 #include "AnimBlueprintExtension_NodeRelevancy.h"
 #include "AnimBlueprintExtension_SharedLinkedAnimLayers.h"
 #include "AnimBlueprintExtension_Tag.h"
+#include "AnimGraphNodeBinding.h"
 
 // Set used to refresh extensions. Checks that an extension has a reference from an anim node for each refresh.
 static TSet<TSubclassOf<UAnimBlueprintExtension>> RefreshSet;
@@ -101,6 +102,11 @@ void UAnimBlueprintExtension::RequestExtensionsForNode(UAnimGraphNode_Base* InAn
 		}
 		
 		InAnimGraphNode->GetRequiredExtensions(ExtensionClasses);
+
+		if (const UAnimGraphNodeBinding* Binding = InAnimGraphNode->GetBinding())
+		{
+			Binding->GetRequiredExtensions(ExtensionClasses);
+		}
 	
 		for(const TSubclassOf<UAnimBlueprintExtension>& ExtensionClass : ExtensionClasses)
 		{	
@@ -139,7 +145,7 @@ void UAnimBlueprintExtension::RefreshExtensions(UAnimBlueprint* InAnimBlueprint)
 
 void UAnimBlueprintExtension::ForEachExtension(UAnimBlueprint* InAnimBlueprint, TFunctionRef<void(UAnimBlueprintExtension*)> InFunction)
 {
-	for (TObjectPtr<UBlueprintExtension> BlueprintExtension : InAnimBlueprint->GetExtensions())
+	for (const TObjectPtr<UBlueprintExtension>& BlueprintExtension : InAnimBlueprint->GetExtensions())
 	{
 		if(UAnimBlueprintExtension* AnimBlueprintExtension = Cast<UAnimBlueprintExtension>(BlueprintExtension))
 		{

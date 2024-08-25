@@ -25,6 +25,7 @@
 #include "ScopedTransaction.h"
 #include "Serialization/Archive.h"
 #include "Templates/Casts.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Class.h"
 #include "UObject/NameTypes.h"
 #include "UObject/ObjectKey.h"
@@ -303,8 +304,9 @@ FGuid UAnimationModifier::GetLatestRevisionGuid() const
 	return GetDefault<UAnimationModifier>(GetClass())->RevisionGuid;
 }
 
-void UAnimationModifier::GetAssetRegistryTagsForAppliedModifiersFromSkeleton(const UObject* Object, TArray<UObject::FAssetRegistryTag>& OutTags)
+void UAnimationModifier::GetAssetRegistryTagsForAppliedModifiersFromSkeleton(FAssetRegistryTagsContext Context)
 {
+	const UObject* Object = Context.GetObject();
 	FString ModifiersList;
 	if (UAnimSequence* AnimSequence = const_cast<UAnimSequence*>(Cast<UAnimSequence>(Object)))
 	{
@@ -324,7 +326,7 @@ void UAnimationModifier::GetAssetRegistryTagsForAppliedModifiersFromSkeleton(con
 				}
 				if (!ModifiersList.IsEmpty())
 				{
-					OutTags.Emplace(AnimationModifiersTag, ModifiersList, UObject::FAssetRegistryTag::TT_Hidden);
+					Context.AddTag(FAssetRegistryTag(AnimationModifiersTag, ModifiersList, UObject::FAssetRegistryTag::TT_Hidden));
 				}
 			}
 		}

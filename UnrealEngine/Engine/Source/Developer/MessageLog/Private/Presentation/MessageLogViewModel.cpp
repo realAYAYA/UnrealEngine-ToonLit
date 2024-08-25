@@ -146,6 +146,10 @@ void FMessageLogViewModel::UpdateListingViewModelArray()
 		}
 	}
 
+	ViewModelArray.Sort([](const IMessageLogListingPtr& lhs, const IMessageLogListingPtr& rhs) {
+		return lhs->GetLabel().CompareTo(rhs->GetLabel()) <= 0;
+	});
+
 	Update();
 }
 

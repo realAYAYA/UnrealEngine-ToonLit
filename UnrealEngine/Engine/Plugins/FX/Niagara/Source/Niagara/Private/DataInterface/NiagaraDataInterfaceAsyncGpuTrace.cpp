@@ -224,7 +224,8 @@ void UNiagaraDataInterfaceAsyncGpuTrace::PostLoad()
 	MarkRenderDataDirty();
 }
 
-void UNiagaraDataInterfaceAsyncGpuTrace::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceAsyncGpuTrace::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	const FText RayTraceStartWorldDescription = LOCTEXT("TraceStartWorldDescription", "Ray starting point in world space");
 	const FText RayTraceEndWorldDescription = LOCTEXT("TraceEndWorldDescription", "Ray end point in world space");
@@ -269,11 +270,9 @@ void UNiagaraDataInterfaceAsyncGpuTrace::GetFunctions(TArray<FNiagaraFunctionSig
 		CreateRayTrace.bMemberFunction = true;
 		CreateRayTrace.bSupportsCPU = false;
 		CreateRayTrace.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		CreateRayTrace.FunctionVersion = FNiagaraAsyncGpuTraceDIFunctionVersion::LatestVersion;
 		CreateRayTrace.Description = LOCTEXT("CreateAsyncRayTraceDescription", "Creates a GPU raytrace with the result being available the following frame (index is returned)");
 		CreateRayTrace.ExperimentalMessage = ExperimentalMessage;
-#endif
 		CreateRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("AsyncGpuTrace")));
 		CreateRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceStartWorld")), RayTraceStartWorldDescription);
 		CreateRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("TraceEndWorld")), RayTraceEndWorldDescription);
@@ -293,11 +292,9 @@ void UNiagaraDataInterfaceAsyncGpuTrace::GetFunctions(TArray<FNiagaraFunctionSig
 		ReserveRayTrace.bMemberFunction = true;
 		ReserveRayTrace.bSupportsCPU = false;
 		ReserveRayTrace.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		ReserveRayTrace.FunctionVersion = FNiagaraAsyncGpuTraceDIFunctionVersion::LatestVersion;
 		ReserveRayTrace.Description = LOCTEXT("ReserveAsyncRayTraceDescription", "Reserves a number of ray trace request slots");
 		ReserveRayTrace.ExperimentalMessage = ExperimentalMessage;
-#endif
 		ReserveRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("AsyncGpuTrace")));
 		ReserveRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("TraceCount")), TraceCountDescription);
 		ReserveRayTrace.AddOutput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("FirstQueryID")), FirstQueryIDValidDescription);
@@ -313,11 +310,9 @@ void UNiagaraDataInterfaceAsyncGpuTrace::GetFunctions(TArray<FNiagaraFunctionSig
 		ReadRayTrace.bMemberFunction = true;
 		ReadRayTrace.bSupportsCPU = false;
 		ReadRayTrace.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		ReadRayTrace.FunctionVersion = FNiagaraAsyncGpuTraceDIFunctionVersion::LatestVersion;
 		ReadRayTrace.Description = LOCTEXT("ReadAsyncRayTraceDescription", "Reads the results of a previously enqueued GPU ray trace");
 		ReadRayTrace.ExperimentalMessage = ExperimentalMessage;
-#endif
 		ReadRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("AsyncGpuTrace")));
 		ReadRayTrace.AddInput(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("PreviousFrameQueryID")), PreviousFrameQueryIDDescription);
 		ReadRayTrace.AddOutput(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("CollisionValid")), CollisionValidDescription);
@@ -326,10 +321,11 @@ void UNiagaraDataInterfaceAsyncGpuTrace::GetFunctions(TArray<FNiagaraFunctionSig
 		ReadRayTrace.AddOutput(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("CollisionNormal")), CollisionNormalDescription);
 	}
 }
+#endif
 
-bool UNiagaraDataInterfaceAsyncGpuTrace::RequiresDistanceFieldData() const
+bool UNiagaraDataInterfaceAsyncGpuTrace::RequiresGlobalDistanceField() const
 {
-	return FNiagaraAsyncGpuTraceHelper::RequiresDistanceFieldData(TraceProvider);
+	return FNiagaraAsyncGpuTraceHelper::RequiresGlobalDistanceField(TraceProvider);
 }
 
 bool UNiagaraDataInterfaceAsyncGpuTrace::RequiresRayTracingScene() const
@@ -357,7 +353,7 @@ bool UNiagaraDataInterfaceAsyncGpuTrace::UpgradeFunctionCall(FNiagaraFunctionSig
 	if (FunctionSignature.FunctionVersion < FNiagaraAsyncGpuTraceDIFunctionVersion::LatestVersion) // -V547
 	{
 		TArray<FNiagaraFunctionSignature> AllFunctions;
-		GetFunctions(AllFunctions);
+		GetFunctionsInternal(AllFunctions);
 		for (const FNiagaraFunctionSignature& Sig : AllFunctions)
 		{
 			if (FunctionSignature.Name == Sig.Name)

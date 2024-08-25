@@ -15,6 +15,7 @@
 #include "Containers/VersePathFwd.h"
 
 struct FAssetData;
+class FAssetRegistryTagsContext;
 class FConfigCacheIni;
 class FCustomPropertyConditionState;
 class FEditPropertyChain;
@@ -25,6 +26,7 @@ class FObjectPreSaveRootContext;
 class ITargetPlatform;
 class ITransactionObjectAnnotation;
 class FTransactionObjectEvent;
+struct FArchiveCookContext;
 struct FAppendToClassSchemaContext;
 struct FFrame;
 struct FObjectInstancingGraph;
@@ -133,7 +135,7 @@ class UObject : public UObjectBaseUtility
 	}
 
 	/**
-	 * Create a component or subobject.
+	 * Create a component or subobject that will be instanced inside all instances of this class.
 	 * @param	TReturnType					Class of return type, all overrides must be of this type
 	 * @param	SubobjectName				Name of the new component
 	 * @param	bTransient					True if the component is being assigned to a transient property. This does not make the component itself transient, but does stop it from inheriting parent defaults
@@ -159,8 +161,8 @@ class UObject : public UObjectBaseUtility
 	}
 	
 	/**
-	 * Create an optional component or subobject. Optional subobjects will not get created
-	 * if a derived class specified DoNotCreateDefaultSubobject with the subobject's name.
+	 * Create an optional component or subobject.Optional subobjects will not get created.
+	 * if a derived class specifies DoNotCreateDefaultSubobject with the subobject name.
 	 * @param	TReturnType					Class of return type, all overrides must be of this type
 	 * @param	SubobjectName				Name of the new component
 	 * @param	bTransient					True if the component is being assigned to a transient property. This does not make the component itself transient, but does stop it from inheriting parent defaults
@@ -173,8 +175,8 @@ class UObject : public UObjectBaseUtility
 	}
 	
 	/**
-	 * Create an optional component or subobject. Optional subobjects will not get created
-	 * if a derived class specified DoNotCreateDefaultSubobject with the subobject's name.
+	 * Create an optional component or subobject. Optional subobjects will not get created.
+	 * if a derived class specifies DoNotCreateDefaultSubobject with the subobject name.
 	 * @param	TReturnType					Class of return type, all overrides must be of this type
 	 * @param	TClassToConstructByDefault	Class of object to actually construct, must be a subclass of TReturnType
 	 * @param	SubobjectName				Name of the new component
@@ -187,14 +189,14 @@ class UObject : public UObjectBaseUtility
 	}
 
 	/**
-	 * Gets all default subobjects associated with this object instance.
-	 * @param	OutDefaultSubobjects	Array containing all default subobjects of this object.
+	 * Gets all directly nested default subobjects that are associated with this object instance.
+	 * @param	OutDefaultSubobjects	Array containing the directly nested default subobjects of this object.
 	 */
 	COREUOBJECT_API void GetDefaultSubobjects(TArray<UObject*>& OutDefaultSubobjects);
 
 	/**
-	 * Finds a subobject associated with this object instance by its name
-	 * @param	Name	Object name to look for
+	 * Finds a default subobject associated with this object instance by its name.
+	 * @param	Name	Object name to look for matching the SubobjectName used to create the default subobject
 	 */
 	COREUOBJECT_API UObject* GetDefaultSubobjectByName(FName ToFind);
 
@@ -772,6 +774,13 @@ public:
 	 */
 	COREUOBJECT_API void CallAddReferencedObjects(FReferenceCollector& Collector);
 
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+	/**
+	* Coming from verse, marks the object as Reachable if it's currently marked as MaybeUnreachable by incremental GC.
+	*/
+	COREUOBJECT_API void VerseMarkAsReachable() const;
+#endif
+
 	/**
 	 * Save information for StaticAllocateObject in the case of overwriting an existing object.
 	 * StaticAllocateObject will call delete on the result after calling Restore()
@@ -835,23 +844,27 @@ public:
 		FString Value;
 
 		/** Broad description of kind of data represented in Value */
-		ETagType Type;
+		ETagType Type = TT_Alphabetical;
 
 		/** Flags describing more detail for displaying in the UI */
-		uint32 DisplayFlags;
+		uint32 DisplayFlags = TD_None;
 
+		FAssetRegistryTag() = default;
 		FAssetRegistryTag(FName InName, const FString& InValue, ETagType InType, uint32 InDisplayFlags = TD_None)
 			: Name(InName), Value(InValue), Type(InType), DisplayFlags(InDisplayFlags) {}
 		FAssetRegistryTag(FName InName, FString&& InValue, ETagType InType, uint32 InDisplayFlags = TD_None)
 			: Name(InName), Value(MoveTemp(InValue)), Type(InType), DisplayFlags(InDisplayFlags) {}
 
 #if WITH_EDITOR
-		/** Callback  */
-		DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGetObjectAssetRegistryTags, const UObject* /*Object*/, TArray<FAssetRegistryTag>& /*InOutTags*/);
-		COREUOBJECT_API static FOnGetObjectAssetRegistryTags OnGetExtraObjectTags;
+		/** Event for listeners who want to add tags to some UObjects' GetAssetRegistryTags. */
+		DECLARE_MULTICAST_DELEGATE_OneParam(FOnGetObjectAssetRegistryTagsWithContext, FAssetRegistryTagsContext);
+		COREUOBJECT_API static FOnGetObjectAssetRegistryTagsWithContext OnGetExtraObjectTagsWithContext;
 
-		/** Callback for GetExtendedAssetRegistryTagsForSave */
+		DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGetObjectAssetRegistryTags, const UObject* /*Object*/, TArray<FAssetRegistryTag>& /*InOutTags*/);
+		UE_DEPRECATED(5.4, "Subscribe to OnGetExtraObjectTagsWithContext instead")
+		COREUOBJECT_API static FOnGetObjectAssetRegistryTags OnGetExtraObjectTags;
 		DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnGetExtendedAssetRegistryTagsForSave, const UObject* /*Object*/, const ITargetPlatform* TargetPlatform, TArray<FAssetRegistryTag>& /*InOutTags*/);
+		UE_DEPRECATED(5.4, "Subscribe to OnGetExtraObjectTagsWithContext instead, and early exit if !Context.IsSaving")
 		COREUOBJECT_API static FOnGetExtendedAssetRegistryTagsForSave OnGetExtendedAssetRegistryTagsForSave;
 #endif // WITH_EDITOR
 	};
@@ -862,12 +875,17 @@ public:
 	 *
 	 * @param	OutTags		A list of key-value pairs associated with this object and their types
 	 */
+	COREUOBJECT_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	COREUOBJECT_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const;
 
-	UE_DEPRECATED(5.1, "Use the new GetExtendedAssetRegistryTagsForSave that takes a TargetPlatform")
-	virtual void GetExternalActorExtendedAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const {}
-
 #if WITH_EDITOR
+	/**
+	 * Get an additional object that should be added to the AssetDatas stored for a cooked package, to handle
+	 * objects stripped from cooked packages. e.g. UBlueprintGeneratedClass returns its UBlueprint.
+	 */
+	COREUOBJECT_API virtual void GetAdditionalAssetDataObjectsForCook(FArchiveCookContext& CookContext,
+		TArray<UObject*>& OutObjects) const;
 	/**
 	 * Temporary interim solution to gather asset registry data at save time only.  Can depend on the target platform being saved for.
 	 *
@@ -877,16 +895,15 @@ public:
 	COREUOBJECT_API virtual void GetExtendedAssetRegistryTagsForSave(const ITargetPlatform* TargetPlatform, TArray<FAssetRegistryTag>& OutTags) const;
 #endif // WITH_EDITOR
 
-	/** Gathers a list of asset registry tags for an FAssetData  */
 	COREUOBJECT_API void GetAssetRegistryTags(FAssetData& Out) const;
+	/**
+	 * Gathers a list of asset registry tags for an FAssetData. Output data will be removed from the Context and
+	 * moved onto the Out FAssetData.
+	 */
+	COREUOBJECT_API void GetAssetRegistryTags(FAssetRegistryTagsContext Context, FAssetData& Out) const;
 
 	/** Get the common tag name used for all asset source file import paths */
 	static COREUOBJECT_API const FName& SourceFileTagName();
-
-#if UE_USE_VERSE_PATHS
-	/** Get the common tag name used for all asset verse paths */
-	static COREUOBJECT_API const FName& AssetVersePathTagName();
-#endif
 
 #if WITH_EDITOR
 
@@ -1207,13 +1224,11 @@ public:
 	 */
 	COREUOBJECT_API virtual void BuildSubobjectMapping(UObject* OtherObject, TMap<UObject*, UObject*>& ObjectMapping) const;
 
-	/**
-	 * Uses the TArchiveObjectReferenceCollector to build a list of all components referenced by this object which have this object as the outer
-	 *
-	 * @param	OutDefaultSubobjects	the array that should be populated with the default subobjects "owned" by this object
-	 * @param	bIncludeNestedSubobjects	controls whether subobjects which are contained by this object, but do not have this object
-	 *										as its direct Outer should be included
+	/** 
+	 * Gets all subobjects inside this object that return true for IsDefaultSubobject.
+	 * The nested behavior is inconsistent because IsDefaultSubobject does not work reliably for nested subobjects and it is less efficient than GetDefaultSubobjects
 	 */
+	UE_DEPRECATED(5.4, "Call GetDefaultSubobjects for top level subobjects or use ForEachObjectWithOuter with a more precise check")
 	COREUOBJECT_API void CollectDefaultSubobjects( TArray<UObject*>& OutDefaultSubobjects, bool bIncludeNestedSubobjects=false ) const;
 
 	/**
@@ -1288,7 +1303,18 @@ public:
 	 */
 	COREUOBJECT_API FString GetProjectUserConfigFilename() const;
 
-	/** Returns the override config hierarchy platform (if NDAd platforms need defaults to not be in Base*.ini but still want editor to load them) */
+#if WITH_EDITOR
+	/** 
+	 * Delegate to return the current preview platform name, or NAME_None if no preview platform is currently active.
+	 * Used by LoadConfig for CLASS_PerPlatformConfig objects.
+	 */
+	DECLARE_DELEGATE_RetVal_OneParam(bool, FOnGetPreviewPlatform, FName&);
+	COREUOBJECT_API static FOnGetPreviewPlatform OnGetPreviewPlatform;
+#endif
+
+	/** 
+	 * Returns the override config hierarchy platform (if NDAd platforms need defaults to not be in Base*.ini but still want editor to load them) 
+	 */
 	virtual const TCHAR* GetConfigOverridePlatform() const { return nullptr; }
 
 	/**
@@ -1740,10 +1766,8 @@ struct FInternalUObjectBaseUtilityIsValidFlagsChecker
 	FORCEINLINE static bool CheckObjectValidBasedOnItsFlags(const UObject* Test)
 	{
 		// Here we don't really check if the flags match but if the end result is the same
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		checkSlow(GUObjectArray.IndexToObject(Test->InternalIndex)->HasAnyFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage) == Test->HasAnyFlags(RF_InternalPendingKill | RF_InternalGarbage));
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-		return !Test->HasAnyFlags(RF_InternalPendingKill | RF_InternalGarbage);
+		checkSlow(GUObjectArray.IndexToObject(Test->InternalIndex)->HasAnyFlags(EInternalObjectFlags::Garbage) == Test->HasAnyFlags(RF_MirroredGarbage));
+		return !Test->HasAnyFlags(RF_MirroredGarbage);
 	}
 };
 

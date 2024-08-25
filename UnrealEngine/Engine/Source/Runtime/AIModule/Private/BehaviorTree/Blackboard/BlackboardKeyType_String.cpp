@@ -40,6 +40,11 @@ void UBlackboardKeyType_String::CopyValues(UBlackboardComponent& OwnerComp, uint
 	StringValue = ((UBlackboardKeyType_String*)SourceKeyOb)->StringValue;
 }
 
+void UBlackboardKeyType_String::InitializeMemory(UBlackboardComponent& OwnerComp, uint8* MemoryBlock)
+{
+	SetValue(this, MemoryBlock, DefaultValue);
+}
+
 FString UBlackboardKeyType_String::DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const
 {
 	return StringValue;

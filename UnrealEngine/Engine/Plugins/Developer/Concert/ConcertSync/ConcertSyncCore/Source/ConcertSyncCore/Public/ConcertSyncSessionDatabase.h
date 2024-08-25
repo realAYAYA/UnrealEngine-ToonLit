@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Delegates/Delegate.h"
+#include "Misc/EBreakBehavior.h"
 #include "Templates/PimplPtr.h"
 
 class FStructOnScope;
@@ -30,12 +31,6 @@ class FConcertSyncSessionDatabaseStatements;
 
 class FSQLiteDatabase;
 enum class ESQLiteDatabaseOpenMode : uint8;
-
-enum class EBreakBehavior
-{
-	Break,
-	Continue
-};
 
 using FConsumePackageActivityFunc = TFunctionRef<void(FConcertSyncActivity&&/*BasePart*/, FConcertSyncPackageEventData& /*EventPart*/)>;
 using FIteratePackageActivityFunc = TFunctionRef<EBreakBehavior(FConcertSyncActivity&&/*BasePart*/, FConcertSyncPackageEventData& /*EventPart*/)>;

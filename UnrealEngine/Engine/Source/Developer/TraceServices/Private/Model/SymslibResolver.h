@@ -3,12 +3,20 @@
 
 #include "HAL/Platform.h"
 
-#if PLATFORM_WINDOWS
+// We currently only have symslib available on selected platforms.
+#if PLATFORM_DESKTOP
+	#define UE_SYMSLIB_AVAILABLE 1
+#else
+	#define UE_SYMSLIB_AVAILABLE 0
+#endif
+
+#if UE_SYMSLIB_AVAILABLE
 
 #include "Async/MappedFileHandle.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "Common/PagedArray.h"
 #include "HAL/CriticalSection.h"
+#include "HAL/Platform.h"
 #include "TraceServices/Model/AnalysisSession.h"
 #include "TraceServices/Model/Modules.h"
 #include <atomic>
@@ -130,4 +138,4 @@ private:
 
 } // namespace TraceServices
 
-#endif // PLATFORM_WINDOWS
+#endif //UE_SYMSLIB_AVAILABLE

@@ -44,7 +44,7 @@ void FNNERuntimeRDGModule::ShutdownModule()
 
 		UE::NNE::UnregisterRuntime(RuntimeCPUInterface);
 		NNERuntimeRDGHlsl->RemoveFromRoot();
-		NNERuntimeRDGHlsl = TWeakObjectPtr<UNNERuntimeRDGHlslImpl>(nullptr);
+		NNERuntimeRDGHlsl.Reset();
 	}
 
 #ifdef NNE_USE_DIRECTML
@@ -55,7 +55,7 @@ void FNNERuntimeRDGModule::ShutdownModule()
 
 		UE::NNE::UnregisterRuntime(RuntimeDmlInterface);
 		NNERuntimeRDGDml->RemoveFromRoot();
-		NNERuntimeRDGDml = TWeakObjectPtr<UNNERuntimeRDGDmlImpl>(nullptr);
+		NNERuntimeRDGDml.Reset();
 	}
 #endif
 

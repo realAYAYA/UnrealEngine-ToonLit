@@ -6,47 +6,36 @@
 #include "Widgets/SWindow.h"
 #include "AssetRegistry/AssetData.h"
 #include "Widgets/Views/SListView.h"
+#include "Param/ParameterPickerArgs.h"
 
 class SWrapBox;
 class UAnimNextParameterLibrary;
+class UAnimNextParameterBlock_EditorData;
 
 namespace UE::AnimNext::Editor
 {
+	struct FParameterToAdd;
 
-struct FParameterToAdd
-{
-	FParameterToAdd() = default;
-
-	FParameterToAdd(const FAnimNextParamType& InType, FName InName, const FAssetData& InLibrary)
-		: Type(InType)
-		, Name(InName)
-		, Library(InLibrary)
-	{}
-
-	bool IsValid() const
-	{
-		return Name != NAME_None && Type.IsValid() && Library.IsValid(); 
-	}
-	
-	// Type
-	FAnimNextParamType Type;
-
-	// Name for parameter
-	FName Name;
-
-	// Parameter library
-	FAssetData Library;
-};
 
 class SAddParametersDialog : public SWindow
 {
 public:
 	SLATE_BEGIN_ARGS(SAddParametersDialog)
-		: _Library(nullptr)
+		: _Block(nullptr),
+		_AllowMultiple(true)
 	{}
 
-	SLATE_ARGUMENT(UAnimNextParameterLibrary*, Library)
-	
+	SLATE_ARGUMENT(UAnimNextParameterBlock_EditorData*, Block)
+
+	/** Whether we allow multiple parameters to be added or just one at a time */
+	SLATE_ARGUMENT(bool, AllowMultiple)
+
+	/** Delegate called to filter parameters by type for display to the user */
+	SLATE_EVENT(FOnFilterParameterType, OnFilterParameterType)
+
+	/** Initial parameter type to use */
+	SLATE_ARGUMENT(FAnimNextParamType, InitialParamType)
+
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
@@ -54,7 +43,7 @@ public:
 	bool ShowModal(TArray<FParameterToAdd>& OutParameters);
 
 private:
-	void AddEntry();
+	void AddEntry(const FAnimNextParamType& InParamType = FAnimNextParamType());
 
 	void RefreshEntries();
 
@@ -71,9 +60,10 @@ private:
 
 	TArray<TSharedRef<FParameterToAdd>> Entries;
 
-	// The fixed library to use. If this is NULL, any library can be used.
-	UAnimNextParameterLibrary* Library = nullptr;
+	UAnimNextParameterBlock_EditorData* TargetBlock = nullptr;
 	
+	FOnFilterParameterType OnFilterParameterType;
+
 	bool bCancelPressed = false;
 };
 

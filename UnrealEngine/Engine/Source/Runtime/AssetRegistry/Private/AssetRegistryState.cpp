@@ -4,6 +4,7 @@
 
 #include "Algo/Compare.h"
 #include "Algo/Sort.h"
+#include "Algo/Unique.h"
 #include "AssetRegistry/ARFilter.h"
 #include "AssetRegistryArchive.h"
 #include "AssetRegistryImpl.h"
@@ -22,6 +23,7 @@
 #include "Serialization/ArrayReader.h"
 #include "Serialization/LargeMemoryReader.h"
 #include "Serialization/MemoryWriter.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/MetaData.h"
 #include "UObject/NameBatchSerialization.h"
 #include "UObject/PrimaryAssetId.h"
@@ -153,32 +155,44 @@ void FAssetRegistryState::Reset()
 	CachedPackageData.Empty();
 }
 
-void FAssetRegistryState::FilterTags(const FAssetDataTagMapSharedView& InTagsAndValues, FAssetDataTagMap& OutTagsAndValues, const TSet<FName>* ClassSpecificFilterList, const FAssetRegistrySerializationOptions& Options)
+void FAssetRegistryState::FilterTags(const FAssetDataTagMapSharedView& InTagsAndValues, FAssetDataTagMap& OutTagsAndValues,
+	const TSet<FName>* ClassSpecificFilterList, const FAssetRegistrySerializationOptions& Options)
 {
 	const TSet<FName>* AllClassesFilterList = Options.CookFilterlistTagsByClass.Find(UE::AssetRegistry::WildcardPathName);
+
+	TStringBuilder<64> TagNameStr;
 
 	// Exclude denied tags or include only allowed tags, based on how we were configured in ini
 	for (const auto& TagPair : InTagsAndValues)
 	{
-		const bool bInAllClassesList = AllClassesFilterList && (AllClassesFilterList->Contains(TagPair.Key) || AllClassesFilterList->Contains(UE::AssetRegistry::WildcardFName));
-		const bool bInClassSpecificList = ClassSpecificFilterList && (ClassSpecificFilterList->Contains(TagPair.Key) || ClassSpecificFilterList->Contains(UE::AssetRegistry::WildcardFName));
-		if (Options.bUseAssetRegistryTagsAllowListInsteadOfDenyList)
+		bool bKeep = false;
+
+		// Cook_ tags, aka DevelopmentAssetRegistryTags are special; they are kept depending on whether the Options
+		// are development or runtime and they do not use the options' filter list.
+		TagNameStr.Reset();
+		TagNameStr << TagPair.Key;
+		if (FStringView(TagNameStr).StartsWith(UE::AssetRegistry::CookTagPrefix, ESearchCase::IgnoreCase))
 		{
-			// It's an allow list, only include it if it is in the all classes list or in the class specific list
-			if (bInAllClassesList || bInClassSpecificList)
-			{
-				// It is in the allow list. Keep it.
-				OutTagsAndValues.Add(TagPair.Key, TagPair.Value.ToLoose());
-			}
+			bKeep = Options.bKeepDevelopmentAssetRegistryTags;
 		}
 		else
 		{
-			// It's a deny list, include it unless it is in the all classes list or in the class specific list
-			if (!bInAllClassesList && !bInClassSpecificList)
+			const bool bInAllClassesList = AllClassesFilterList && (AllClassesFilterList->Contains(TagPair.Key) || AllClassesFilterList->Contains(UE::AssetRegistry::WildcardFName));
+			const bool bInClassSpecificList = ClassSpecificFilterList && (ClassSpecificFilterList->Contains(TagPair.Key) || ClassSpecificFilterList->Contains(UE::AssetRegistry::WildcardFName));
+			if (Options.bUseAssetRegistryTagsAllowListInsteadOfDenyList)
 			{
-				// It isn't in the deny list. Keep it.
-				OutTagsAndValues.Add(TagPair.Key, TagPair.Value.ToLoose());
+			// It's an allow list, only include it if it is in the all classes list or in the class specific list
+				bKeep = bInAllClassesList || bInClassSpecificList;
 			}
+			else
+			{
+				// It's a deny list, include it unless it is in the all classes list or in the class specific list
+				bKeep = !bInAllClassesList && !bInClassSpecificList;
+			}
+		}
+		if (bKeep)
+		{
+			OutTagsAndValues.Add(TagPair.Key, TagPair.Value.ToLoose());
 		}
 	}
 }
@@ -317,12 +331,7 @@ void FAssetRegistryState::InitializeFromExistingAndPrune(const FAssetRegistrySta
 	}
 
 	// Restore the sortedness that we turned off for performance when creating each DependsNode
-	for (TPair<FAssetIdentifier, FDependsNode*> Pair : CachedDependsNodes)
-	{
-		FDependsNode* DependsNode = Pair.Value;
-		DependsNode->SetIsDependencyListSorted(UE::AssetRegistry::EDependencyCategory::All, true);
-		DependsNode->SetIsReferencersSorted(true);
-	}
+	SetDependencyNodeSorting(true, true);
 }
 
 void FAssetRegistryState::InitializeFromExisting(const FAssetDataMap& AssetDataMap, const TMap<FAssetIdentifier, FDependsNode*>& DependsNodeMap, 
@@ -459,12 +468,7 @@ void FAssetRegistryState::InitializeFromExisting(const FAssetDataMap& AssetDataM
 		}
 
 		// Restore the sortedness that we turned off for performance when creating each DependsNode
-		for (TPair<FAssetIdentifier, FDependsNode*> Pair : CachedDependsNodes)
-		{
-			FDependsNode* DependsNode = Pair.Value;
-			DependsNode->SetIsDependencyListSorted(UE::AssetRegistry::EDependencyCategory::All, true);
-			DependsNode->SetIsReferencersSorted(true);
-		}
+		SetDependencyNodeSorting(true, true);
 	}
 }
 
@@ -640,17 +644,11 @@ bool FAssetRegistryState::HasAssets(const FName PackagePath, bool bSkipARFiltere
 	const TArray<FAssetData*>* FoundAssetArray = CachedAssetsByPath.Find(PackagePath);
 	if (FoundAssetArray)
 	{
-		if (bSkipARFilteredAssets)
+		return FoundAssetArray->ContainsByPredicate([this, bSkipARFilteredAssets](FAssetData* AssetData)
 		{
-			return FoundAssetArray->ContainsByPredicate([](FAssetData* AssetData)
-			{
-				return AssetData && !UE::AssetRegistry::FFiltering::ShouldSkipAsset(AssetData->AssetClassPath, AssetData->PackageFlags);
-			});
-		}
-		else
-		{
-			return FoundAssetArray->Num() > 0;
-		}
+			return AssetData && !IsPackageUnmountedAndFiltered(AssetData->PackageName)
+				&& (!bSkipARFilteredAssets || !UE::AssetRegistry::FFiltering::ShouldSkipAsset(AssetData->AssetClassPath, AssetData->PackageFlags));
+		});
 	}
 	return false;
 }
@@ -665,35 +663,254 @@ bool FAssetRegistryState::GetAssets(const FARCompiledFilter& Filter, const TSet<
 	bSkipARFilteredAssets);
 }
 
-template<class ArrayType, typename KeyType>
-TArray<FAssetData*> FindAssets(const TMap<KeyType, ArrayType>& Map, const TSet<KeyType>& Keys)
+namespace UE::AssetRegistry::Private
 {
-	TArray<TArrayView<FAssetData* const>> Matches;
+
+bool DecideIntersectionMethod(int32 PreviousSize, int32 FilterResultsSize, int32 FilterComplexity)
+{
+	// Cost of intersection of previous results with new results is the cost to construct a TMap of the smaller
+	// set plus the cost to query larger set against the TMap. TMap construction is more expensive than TMap query.
+	constexpr uint64 TMapConstructionCost = 3;
+	uint64 SmallSize;
+	uint64 LargeSize;
+	if (PreviousSize < FilterResultsSize)
+	{
+		SmallSize = (uint64)PreviousSize;
+		LargeSize = (uint64)FilterResultsSize;
+	}
+	else
+	{
+		SmallSize = (uint64)FilterResultsSize;
+		LargeSize = (uint64)PreviousSize;
+	}
+	uint64 ArrayCost = SmallSize * TMapConstructionCost + LargeSize;
+	// Cost of filtering previous results by FilterFunction is filtercomplexity times size of the previous results
+	uint64 FilterCost = ((uint64)FilterComplexity) * ((uint64)PreviousSize);
+
+	// Our two sets of cost calculation are not on the same scale; they are off by some factor that is dependent 
+	// upon ArrayIntersection code, TMap code, and hardware dependent factors. But we assume they are for on the
+	// same scale for simplicity. Despite the invalid assumption, our comparison will still work in the important
+	// cases: a large FilterComplexity will use ArrayIntersection and a large FilterResultsSize will use filtering.
+	return FilterCost < ArrayCost;
+}
+
+void ArrayIntersection(TArray<const FAssetData*>& InOutResults, TConstArrayView<TArrayView<const FAssetData*>> Matches, int32 TotalMatches)
+{
+	if (InOutResults.Num() < TotalMatches)
+	{
+		TMap<const FAssetData*, bool> Exists;
+		Exists.Reserve(InOutResults.Num());
+		for (const FAssetData* Result : InOutResults)
+		{
+			Exists.Add(Result, false);
+		}
+		InOutResults.Empty();
+		for (TArrayView<const FAssetData*> Assets : Matches)
+		{
+			for (const FAssetData* Asset : Assets)
+			{
+				bool* Result = Exists.Find(Asset);
+				if (Result && 
+					!(*Result) // If there are duplicates of an Asset in multiple elements of Matches, only add the first one
+				)
+				{
+					*Result = true;
+					InOutResults.Add(Asset);
+				}
+ 			}
+		}
+	}
+	else
+	{
+		TSet<const FAssetData*> Exists;
+		Exists.Reserve(TotalMatches);
+		for (TArrayView<const FAssetData*> Assets : Matches)
+		{
+			for (const FAssetData* Asset : Assets)
+			{
+				Exists.Add(Asset);
+			}
+		}
+
+		InOutResults.RemoveAllSwap([&Exists](const FAssetData* Asset)
+			{
+				return !Exists.Contains(Asset);
+			});
+	}
+}
+
+template<class ArrayType, typename KeyType, typename CallbackType>
+void FilterAssets(TArray<const FAssetData*>& InOutResults, const TMap<KeyType, ArrayType>& AccelerationMap,
+	const TSet<KeyType>& Keys, CallbackType&& FunctionToKeepAsset, int32 FilterComplexity)
+{
+	TArray<TArrayView<const FAssetData*>, TInlineAllocator<10>> Matches;
 	Matches.Reserve(Keys.Num());
 	uint32 TotalMatches = 0;
 
 	for (const KeyType& Key : Keys)
 	{
-		if (const ArrayType* Assets = Map.Find(Key))
+		if (const ArrayType* Assets = AccelerationMap.Find(Key))
 		{
-			Matches.Add(MakeArrayView(*Assets));
+			const FAssetData** AssetPtr = const_cast<const FAssetData**>(Assets->GetData());
+			Matches.Add(TArrayView<const FAssetData*>(AssetPtr, Assets->Num()));
 			TotalMatches += Assets->Num();
 		}
 	}
 
-	TArray<FAssetData*> Out;
-	Out.Reserve(TotalMatches);
-	for (TArrayView<FAssetData* const> Assets : Matches)
+	// Keys is a TSet and entries in the AccelerationMap do not overlap, so there should be no duplicates to remove in Matches
+	if (InOutResults.IsEmpty())
 	{
-		Out.Append(Assets.GetData(), Assets.Num());
+		// No previous Results; set Results equal to the values found in AccelerationMap
+		InOutResults.Reserve(TotalMatches);
+		for (TArrayView<const FAssetData*> Assets : Matches)
+		{
+			InOutResults.Append(Assets);
+		}
+	}
+	else
+	{
+		bool bUseFiltering = DecideIntersectionMethod(InOutResults.Num(), TotalMatches, FilterComplexity);
+		if (bUseFiltering)
+		{
+			InOutResults.RemoveAllSwap([&FunctionToKeepAsset](const FAssetData* AssetData)
+				{
+					return !FunctionToKeepAsset(AssetData);
+				});
+		}
+		else
+		{
+			ArrayIntersection(InOutResults, TConstArrayView<TArrayView<const FAssetData*>>(Matches), TotalMatches);
+		}
+	}
+}
+
+template<typename CallbackType>
+void FilterAssets(TArray<const FAssetData*>&InOutResults,
+	const UE::AssetRegistry::Private::FAssetDataMap &AccelerationMap, const TSet<FSoftObjectPath>& Keys,
+	CallbackType&& FunctionToKeepAsset, int32 FilterComplexity)
+{
+	TArray<const FAssetData*, TInlineAllocator<10>> Matches;
+	Matches.Reserve(Keys.Num());
+
+	for (const FSoftObjectPath& Key : Keys)
+	{
+		if (FAssetData* const* AssetDataPtr = AccelerationMap.Find(UE::AssetRegistry::Private::FCachedAssetKey(Key)))
+		{
+			Matches.Add(*AssetDataPtr);
+		}
 	}
 
-	return Out;
+	// Keys is a TSet, so there should be no duplicates to remove in Matches
+	if (InOutResults.IsEmpty())
+	{
+		// No previous Results; set Results equal to the values found in AccelerationMap
+		InOutResults = MoveTemp(Matches);
+	}
+	else
+	{
+		bool bUseFiltering = DecideIntersectionMethod(InOutResults.Num(), Matches.Num(), FilterComplexity);
+		if (bUseFiltering)
+		{
+			InOutResults.RemoveAllSwap([&FunctionToKeepAsset](const FAssetData* AssetData)
+				{
+					return !FunctionToKeepAsset(AssetData);
+				});
+		}
+		else
+		{
+			TArrayView<const FAssetData*> ArrayView(Matches);
+			TConstArrayView<TArrayView<const FAssetData*>> ArrayViewOfArrayViews(&ArrayView, 1);
+			ArrayIntersection(InOutResults, ArrayViewOfArrayViews, Matches.Num());
+		}
+	}
+}
+
+bool AssetDataMatchesTag(const FAssetData* AssetData, const TPair<FName, TOptional<FString>>& TagPair)
+{
+	if (!AssetData)
+	{
+		return false;
+	}
+	if (!TagPair.Value.IsSet())
+	{
+		return AssetData->TagsAndValues.Contains(TagPair.Key);
+	}
+	else
+	{
+		return AssetData->TagsAndValues.ContainsKeyValue(TagPair.Key, TagPair.Value.GetValue());
+	}
+}
+
+template<typename CallbackType>
+void FilterAssets(TArray<const FAssetData*>& InOutResults, const TMap<FName, TArray<FAssetData*>>& AccelerationMap,
+	const TMultiMap<FName, TOptional<FString>>& TagsAndValues, CallbackType&& FunctionToKeepAsset, int32 FilterComplexity)
+{
+	TArray<TArray<const FAssetData*>, TInlineAllocator<10>> Matches;
+	Matches.Reserve(TagsAndValues.Num());
+	uint32 TotalMatches = 0;
+
+	for (const TPair<FName, TOptional<FString>>& TagPair : TagsAndValues)
+	{
+		TArray<const FAssetData*>& Results = Matches.Emplace_GetRef();
+		if (const TArray<FAssetData*>* TagAssets = AccelerationMap.Find(TagPair.Key))
+		{
+			Results.Reserve(TagAssets->Num());
+			for (FAssetData* AssetData : *TagAssets)
+			{
+				if (AssetDataMatchesTag(AssetData, TagPair))
+				{
+					Results.Add(AssetData);
+				}
+			}
+		}
+		TotalMatches += Results.Num();
+	}
+
+	if (InOutResults.IsEmpty())
+	{
+		// No previous Results; set Results equal to the values found in AccelerationMap
+		InOutResults.Reserve(TotalMatches);
+		for (TArray<const FAssetData*>& Assets : Matches)
+		{
+			InOutResults.Append(Assets);
+		}
+		// Remove duplicates
+		Algo::Sort(InOutResults);
+		InOutResults.SetNum(Algo::Unique(InOutResults));
+	}
+	else
+	{
+		bool bUseFiltering = DecideIntersectionMethod(InOutResults.Num(), TotalMatches, FilterComplexity);
+		if (bUseFiltering)
+		{
+			InOutResults.RemoveAllSwap([&FunctionToKeepAsset](const FAssetData* AssetData)
+				{
+					return !FunctionToKeepAsset(AssetData);
+				});
+		}
+		else
+		{
+			// Convert Array of Arrays into format required by ArrayIntersection: Array of ArrayViews
+			TArray<TArrayView<const FAssetData*>, TInlineAllocator<10>> ArrayViewMatches;
+			ArrayViewMatches.Reserve(Matches.Num());
+			for (TArray<const FAssetData*>& MatchesElement : Matches)
+			{
+				ArrayViewMatches.Emplace(MatchesElement);
+			}
+
+			// ArrayIntersection handles removing any duplicates from Matches
+			ArrayIntersection(InOutResults, ArrayViewMatches, TotalMatches);
+		}
+	}
+}
+
 }
 
 bool FAssetRegistryState::EnumerateAssets(const FARCompiledFilter& Filter, const TSet<FName>& PackageNamesToSkip,
 	TFunctionRef<bool(const FAssetData&)> Callback, bool bSkipARFilteredAssets) const
 {
+	using namespace UE::AssetRegistry::Private;
+
 	// Verify filter input. If all assets are needed, use EnumerateAllAssets() instead.
 	if (Filter.IsEmpty() || !IsFilterValid(Filter))
 	{
@@ -702,91 +919,18 @@ bool FAssetRegistryState::EnumerateAssets(const FARCompiledFilter& Filter, const
 
 	const uint32 FilterWithoutPackageFlags = Filter.WithoutPackageFlags;
 	const uint32 FilterWithPackageFlags = Filter.WithPackageFlags;
-
-	// The assets that match each filter
-	TArray<TArray<FAssetData*>, TInlineAllocator<5>> FilterResults;
-	
-	// On disk package names
-	if (Filter.PackageNames.Num() > 0)
-	{
-		FilterResults.Emplace(FindAssets(CachedAssetsByPackageName, Filter.PackageNames));
-	}
-
-	// On disk package paths
-	if (Filter.PackagePaths.Num() > 0)
-	{
-		FilterResults.Emplace(FindAssets(CachedAssetsByPath, Filter.PackagePaths));
-	}
-
-	// On disk classes
-	if (Filter.ClassPaths.Num() > 0)
-	{
-		FilterResults.Emplace(FindAssets(CachedAssetsByClass, Filter.ClassPaths));
-	}
-
-	// On disk object paths
-	if (Filter.SoftObjectPaths.Num() > 0)
-	{
-		TArray<FAssetData*>& ObjectPathsFilter = FilterResults.Emplace_GetRef();
-		ObjectPathsFilter.Reserve(Filter.SoftObjectPaths.Num());
-
-		for (const FSoftObjectPath& ObjectPath : Filter.SoftObjectPaths)
+	auto ShouldSkipAssetData =
+		[this, &PackageNamesToSkip, bSkipARFilteredAssets, FilterWithoutPackageFlags, FilterWithPackageFlags]
+		(const FAssetData* AssetData)
 		{
-			if (FAssetData* const* AssetDataPtr = CachedAssets.Find(FCachedAssetKey(ObjectPath)))
-			{
-				ObjectPathsFilter.Add(*AssetDataPtr);
-			}
-		}
-	}
-
-	// On disk tags and values
-	if (Filter.TagsAndValues.Num() > 0)
-	{
-		TArray<FAssetData*>& TagAndValuesFilter = FilterResults.Emplace_GetRef();
-		// Sometimes number of assets matching this filter is correlated to number of assets matching previous filters 
-		if (FilterResults.Num())
-		{
-			TagAndValuesFilter.Reserve(FilterResults[0].Num());
-		}
-
-		for (auto FilterTagIt = Filter.TagsAndValues.CreateConstIterator(); FilterTagIt; ++FilterTagIt)
-		{
-			const FName Tag = FilterTagIt.Key();
-			const TOptional<FString>& Value = FilterTagIt.Value();
-
-			if (const TArray<FAssetData*>* TagAssets = CachedAssetsByTag.Find(Tag))
-			{
-				for (FAssetData* AssetData : *TagAssets)
-				{
-					if (AssetData != nullptr)
-					{
-						bool bAccept;
-						if (!Value.IsSet())
-						{
-							bAccept = AssetData->TagsAndValues.Contains(Tag);
-						}
-						else
-						{
-							bAccept = AssetData->TagsAndValues.ContainsKeyValue(Tag, Value.GetValue());
-						}
-						if (bAccept)
-						{
-							TagAndValuesFilter.Add(AssetData);
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Perform callback for assets that match all filters
-	if (FilterResults.Num() > 0)
-	{
-		auto SkipAssetData = [&](const FAssetData* AssetData) 
-		{ 
 			if (PackageNamesToSkip.Contains(AssetData->PackageName) |			//-V792
 				AssetData->HasAnyPackageFlags(FilterWithoutPackageFlags) |		//-V792
 				!AssetData->HasAllPackageFlags(FilterWithPackageFlags))			//-V792
+			{
+				return true;
+			}
+
+			if (IsPackageUnmountedAndFiltered(AssetData->PackageName))
 			{
 				return true;
 			}
@@ -795,51 +939,104 @@ bool FAssetRegistryState::EnumerateAssets(const FARCompiledFilter& Filter, const
 				UE::AssetRegistry::FFiltering::ShouldSkipAsset(AssetData->AssetClassPath, AssetData->PackageFlags);
 		};
 
-		int32 NumFilterResults = FilterResults.Num();
-		if (NumFilterResults > 1)
-		{
-			// Mark which filters each asset passes
-			uint32 PassAllFiltersValue = (1 << NumFilterResults) - 1; // 1 in every bit for the lowest n bits
-			TMap<FAssetData*, uint32> PassBits;
-			for (int32 FilterIndex = 0; FilterIndex < NumFilterResults; ++FilterIndex)
-			{
-				const TArray<FAssetData*>& FilterEvaluation = FilterResults[FilterIndex];
-				PassBits.Reserve(FilterEvaluation.Num());
-				
-				for (FAssetData* AssetData : FilterEvaluation)
-				{
-					PassBits.FindOrAdd(AssetData) |= (1 << FilterIndex);
-				}
-			}
 
-			// Include assets that pass all filters
-			for (TPair<FAssetData*, uint32> PassPair : PassBits)
+	// Some of our filters are accelerated: we have TMaps that list for each value of the filter all of the assets
+	// that pass that filter. But some of those assets-passing-FilterN-ValueV are very large, and just merging the
+	// lists of FAssetData* can be expensive. So for each new filter we need to decide whether it is more expensive to
+	// merge previous results with the acceleration list or to apply the filter to every element in previous results.
+	// This decision is handled by FilterAssets.
+	// To benefit from the filter method we want to have as small a list of results as possible at each step, so
+	// order the filters from most-likely to have few results to least-likely to have few results.
+	TArray<const FAssetData*> AccumulatedResults;
+
+	if (Filter.SoftObjectPaths.Num() > 0)
+	{
+		FilterAssets(AccumulatedResults, CachedAssets, Filter.SoftObjectPaths,
+			[&Filter](const FAssetData* AssetData)
 			{
-				const FAssetData* AssetData = PassPair.Key;
-				if (PassPair.Value != PassAllFiltersValue || SkipAssetData(AssetData))
-				{
-					continue;
-				}
-				else if (!Callback(*AssetData))
-				{
-					return true;
-				}
-			}
-		}
-		else
+				return Filter.SoftObjectPaths.Contains(AssetData->GetSoftObjectPath());
+			},
+			Filter.SoftObjectPaths.Num());
+		if (AccumulatedResults.IsEmpty())
 		{
-			// All matched assets passed the single filter
-			for (const FAssetData* AssetData : FilterResults[0])
+			return true;
+		}
+	}
+
+	if (Filter.PackageNames.Num() > 0)
+	{
+		FilterAssets(AccumulatedResults, CachedAssetsByPackageName, Filter.PackageNames,
+			[&Filter](const FAssetData* AssetData)
 			{
-				if (SkipAssetData(AssetData))
+				return Filter.PackageNames.Contains(AssetData->PackageName);
+			},
+			Filter.PackageNames.Num());
+		if (AccumulatedResults.IsEmpty())
+		{
+			return true;
+		}
+	}
+
+	if (Filter.PackagePaths.Num() > 0)
+	{
+		FilterAssets(AccumulatedResults, CachedAssetsByPath, Filter.PackagePaths,
+			[&Filter](const FAssetData* AssetData)
+			{
+				return Filter.PackagePaths.Contains(AssetData->PackagePath);
+			},
+			Filter.PackagePaths.Num());
+		if (AccumulatedResults.IsEmpty())
+		{
+			return true;
+		}
+	}
+
+	if (Filter.TagsAndValues.Num() > 0)
+	{
+		FilterAssets(AccumulatedResults, CachedAssetsByTag, Filter.TagsAndValues,
+			[&Filter](const FAssetData* AssetData)
+			{
+				for (const TPair<FName, TOptional<FString>>& TagPair : Filter.TagsAndValues)
 				{
-					continue;
+					if (AssetDataMatchesTag(AssetData, TagPair))
+					{
+						return true; // keep
+					}
 				}
-				else if (!Callback(*AssetData))
-				{
-					return true;
-				}
-			}
+				return false; // remove
+			},
+			Filter.TagsAndValues.Num());
+		if (AccumulatedResults.IsEmpty())
+		{
+			return true;
+		}
+	}
+
+	if (Filter.ClassPaths.Num() > 0)
+	{
+		FilterAssets(AccumulatedResults, CachedAssetsByClass, Filter.ClassPaths,
+			[&Filter](const FAssetData* AssetData)
+			{
+				return Filter.ClassPaths.Contains(AssetData->AssetClassPath);
+			},
+			Filter.ClassPaths.Num());
+		if (AccumulatedResults.IsEmpty())
+		{
+			return true;
+		}
+	}
+
+	// Run the remaining non-accelerated filters on every element of AccumulatedResults
+	for (const FAssetData* AssetData : AccumulatedResults)
+	{
+		if (ShouldSkipAssetData(AssetData))
+		{
+			continue;
+		}
+		bool bContinueFiltering = Callback(*AssetData);
+		if (!bContinueFiltering)
+		{
+			return true;
 		}
 	}
 
@@ -864,6 +1061,7 @@ bool FAssetRegistryState::EnumerateAllAssets(const TSet<FName>& PackageNamesToSk
 	{
 		if (AssetData &&
 			!PackageNamesToSkip.Contains(AssetData->PackageName) &&
+			!IsPackageUnmountedAndFiltered(AssetData->PackageName) &&
 			(!bSkipARFilteredAssets || !UE::AssetRegistry::FFiltering::ShouldSkipAsset(AssetData->AssetClassPath, AssetData->PackageFlags)))
 		{
 			if (!Callback(*AssetData))
@@ -883,6 +1081,14 @@ void FAssetRegistryState::EnumerateAllAssets(TFunctionRef<void(const FAssetData&
 		{
 			Callback(*AssetData);
 		}
+	}
+}
+
+void FAssetRegistryState::EnumerateAllPaths(TFunctionRef<void(FName PathName)> Callback) const
+{
+	for (const TPair<FName, TArray<FAssetData*>>& Pair : CachedAssetsByPath)
+	{
+		Callback(Pair.Key);
 	}
 }
 
@@ -1276,6 +1482,7 @@ bool FAssetRegistryState::Save(FArchive& OriginalAr, const FAssetRegistrySeriali
 
 bool FAssetRegistryState::Load(FArchive& OriginalAr, const FAssetRegistryLoadOptions& Options, FAssetRegistryVersion::Type* OutVersion)
 {
+	LLM_SCOPE(ELLMTag::AssetRegistry);
 	FAssetRegistryHeader Header;
 	Header.SerializeHeader(OriginalAr);
 	if (OutVersion != nullptr)
@@ -1850,15 +2057,32 @@ void FAssetRegistryState::AddTagsToAssetData(const FSoftObjectPath& InObjectPath
 
 void FAssetRegistryState::FilterTags(const FAssetRegistrySerializationOptions& Options)
 {
+	// Calling SetTagsOnExistingAsset for any changed tags is slow because the elements of 
+	// CachedAssetsByTag are unsorted TArrays and removal of the AssetData from its old
+	// CachedAssetsByTag is slow. For cases where many Assets change it is therefore faster
+	// just to recreate CachedAssetsByTag rather than trying to update them.
+	for (TPair<FName, TArray<FAssetData*>>& Pair : CachedAssetsByTag)
+	{
+		Pair.Value.Reset();
+	}
+
 	for (FAssetData* AssetData : CachedAssets) 
 	{
 		check(AssetData);
 
 		FAssetDataTagMap LocalTagsAndValues;
-		FAssetRegistryState::FilterTags(AssetData->TagsAndValues, LocalTagsAndValues, Options.CookFilterlistTagsByClass.Find(AssetData->AssetClassPath), Options);
+		FAssetRegistryState::FilterTags(AssetData->TagsAndValues, LocalTagsAndValues,
+			Options.CookFilterlistTagsByClass.Find(AssetData->AssetClassPath), Options);
 		if (LocalTagsAndValues != AssetData->TagsAndValues)
 		{
-			SetTagsOnExistingAsset(AssetData, MoveTemp(LocalTagsAndValues));
+			AssetData->TagsAndValues = FAssetDataTagMapSharedView(MoveTemp(LocalTagsAndValues));
+		}
+
+		// Add the AssetData to all its CachedAssetsByTag keys even if nothing changed, because
+		// we are reconstructing all CachedAssetsByTag.
+		for (auto TagIt = AssetData->TagsAndValues.CreateConstIterator(); TagIt; ++TagIt)
+		{
+			CachedAssetsByTag.FindOrAdd(TagIt.Key()).Add(AssetData);
 		}
 	}
 }
@@ -1873,7 +2097,10 @@ void FAssetRegistryState::SetTagsOnExistingAsset(FAssetData* AssetData, FAssetDa
 		if (!NewTags.Contains(FNameKey))
 		{
 			TArray<FAssetData*>* OldTagAssets = CachedAssetsByTag.Find(FNameKey);
-			OldTagAssets->RemoveSingleSwap(AssetData);
+			if (OldTagAssets)
+			{
+				OldTagAssets->RemoveSingleSwap(AssetData);
+			}
 		}
 	}
 	// Update the tag cache map to add added tags
@@ -1883,11 +2110,20 @@ void FAssetRegistryState::SetTagsOnExistingAsset(FAssetData* AssetData, FAssetDa
 
 		if (!AssetData->TagsAndValues.Contains(FNameKey))
 		{
-			TArray<FAssetData*>& NewTagAssets = CachedAssetsByTag.FindOrAdd(FNameKey);
-			NewTagAssets.Add(AssetData);
+			CachedAssetsByTag.FindOrAdd(FNameKey).Add(AssetData);
 		}
 	}
 	AssetData->TagsAndValues = FAssetDataTagMapSharedView(MoveTemp(NewTags));
+}
+
+void FAssetRegistryState::SetDependencyNodeSorting(bool bSortDependencies, bool bSortReferencers)
+{
+	for (TPair<FAssetIdentifier, FDependsNode*>& Pair : CachedDependsNodes)
+	{
+		FDependsNode* DependsNode = Pair.Value;
+		DependsNode->SetIsDependencyListSorted(UE::AssetRegistry::EDependencyCategory::All, bSortDependencies);
+		DependsNode->SetIsReferencersSorted(bSortReferencers);
+	}
 }
 
 void FAssetRegistryState::UpdateAssetData(const FAssetData& NewAssetData, bool bCreateIfNotExists)
@@ -2060,22 +2296,46 @@ bool FAssetRegistryState::UpdateAssetDataPackageFlags(FName PackageName, uint32 
 	return false;
 }
 
-void FAssetRegistryState::RemoveAssetData(FAssetData* AssetData, bool bRemoveDependencyData, bool& bOutRemovedAssetData, bool& bOutRemovedPackageData)
+void FAssetRegistryState::RemoveAssetData(FAssetData* AssetData, bool bRemoveDependencyData,
+	bool& bOutRemovedAssetData, bool& bOutRemovedPackageData)
 {
-	bOutRemovedAssetData = false;
-	bOutRemovedPackageData = false;
-
 	if (!ensure(AssetData))
 	{
+		bOutRemovedAssetData = false;
+		bOutRemovedPackageData = false;
 		return;
 	}
-
-	int32 NumRemoved = CachedAssets.Remove(FCachedAssetKey(AssetData));
-	check(NumRemoved <= 1);
-	if (NumRemoved == 0)
+	RemoveAssetData(AssetData, FCachedAssetKey(AssetData), bRemoveDependencyData, bOutRemovedAssetData, bOutRemovedPackageData);
+	if (!bOutRemovedAssetData)
 	{
 		UE_LOG(LogAssetRegistry, Error, TEXT("RemoveAssetData called on AssetData %s that is not present in the AssetRegistry."),
 			*FCachedAssetKey(*AssetData).ToString());
+	}
+}
+
+void FAssetRegistryState::RemoveAssetData(const FSoftObjectPath& AssetPath, bool bRemoveDependencyData,
+	bool& bOutRemovedAssetData, bool& bOutRemovedPackageData)
+{
+	FCachedAssetKey Key(AssetPath);
+	FAssetData** AssetDataPtrPtr = CachedAssets.Find(Key);
+	if (!AssetDataPtrPtr)
+	{
+		bOutRemovedAssetData = false;
+		bOutRemovedPackageData = false;
+		return;
+	}
+	RemoveAssetData(*AssetDataPtrPtr, Key, bRemoveDependencyData, bOutRemovedAssetData, bOutRemovedPackageData);
+}
+
+void FAssetRegistryState::RemoveAssetData(FAssetData* AssetData, const FCachedAssetKey& Key,
+	bool bRemoveDependencyData, bool& bOutRemovedAssetData, bool& bOutRemovedPackageData)
+{
+	bOutRemovedAssetData = false;
+	bOutRemovedPackageData = false;
+	int32 NumRemoved = CachedAssets.Remove(Key);
+	check(NumRemoved <= 1);
+	if (NumRemoved == 0)
+	{
 		return;
 	}
 
@@ -2266,6 +2526,18 @@ const TArray<const FAssetData*>& FAssetRegistryState::GetAssetsByClassName(const
 	return InvalidArray;
 }
 
+bool FAssetRegistryState::IsPackageUnmountedAndFiltered(const FName PackageName) const
+{
+	// TODO: This can be removed once UE-178174 is fixed, as there will no longer be unmounted content to enumerate
+#if WITH_EDITOR
+	// Note: We currently only perform this filtering in the editor; runtime use will have to perform its own filtering 
+	//       via FPackageName::IsValidPath so that it can choose to accept the additional cost of running that filter
+	return bCookedGlobalAssetRegistryState && GIsEditor && !FPackageName::IsValidPath(WriteToString<256>(PackageName));
+#else
+	return false;
+#endif
+}
+
 namespace UE::AssetRegistry::Utils
 {
 
@@ -2326,6 +2598,30 @@ namespace AssetRegistry
 }
 }
 
+bool PrintAssetDataMapKeyIsLess(FName A, FName B)
+{
+	return A.Compare(B) < 0;
+}
+
+bool PrintAssetDataMapKeyIsLess(const FString& A, const FString& B)
+{
+	return A.Compare(B, ESearchCase::IgnoreCase) < 0;
+}
+
+bool PrintAssetDataMapKeyIsLess(const FTopLevelAssetPath& A, const FTopLevelAssetPath& B)
+{
+	return A.Compare(B) < 0;
+}
+
+template <typename KeyType>
+struct FPrintAssetDataMapKeyIsLess
+{
+	bool operator()(const KeyType& A, const KeyType& B) const
+	{
+		return PrintAssetDataMapKeyIsLess(A, B);
+	}
+};
+
 template <typename MapType>
 static void PrintAssetDataMap(FString Name, const MapType& AssetMap, TStringBuilder<16>& PageBuffer, const TFunctionRef<void()>& AddLine,
 	TUniqueFunction<void(const typename MapType::KeyType& Key, const FAssetData& Data)>&& PrintValue = {})
@@ -2336,14 +2632,7 @@ static void PrintAssetDataMap(FString Name, const MapType& AssetMap, TStringBuil
 	TArray<typename MapType::KeyType> Keys;
 	AssetMap.GenerateKeyArray(Keys);
 
-	struct FKeyTypeCompare
-	{
-		FORCEINLINE bool operator()(const typename MapType::KeyType& A, const typename MapType::KeyType& B) const
-		{
-			return A.Compare(B) < 0;
-		}
-	};
-	Keys.Sort(FKeyTypeCompare());
+	Keys.Sort(FPrintAssetDataMapKeyIsLess<typename MapType::KeyType>());
 
 	TArray<FAssetData*> Items;
 	Items.Reserve(1024);
@@ -2451,7 +2740,7 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 			}
 		}
 
-		OutPages.Emplace(PageEndIndex, PageBuffer.GetData());
+		OutPages.Add(FString::ConstructFromPtrSize(PageBuffer.GetData(), PageEndIndex));
 		if (PageEndIndex != PageBuffer.Len())
 		{
 			PageEndIndex += LineTerminatorLen; // Skip the newline
@@ -2472,7 +2761,7 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 	{
 		if (LinesPerPage == 1)
 		{
-			OutPages.Emplace(PageBuffer.Len(), PageBuffer.GetData());
+			OutPages.Add(FString::ConstructFromPtrSize(PageBuffer.GetData(), PageBuffer.Len()));
 			PageBuffer.Reset();
 		}
 		else
@@ -2509,7 +2798,7 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 			Keys.Emplace(FCachedAssetKey(*AssetData));
 		}
 		Keys.Sort([](const FCachedAssetKey& A, const FCachedAssetKey& B) {
-			return WriteToString<1024>(A).ToView().Compare(WriteToString<1024>(B).ToView()) < 0;
+			return WriteToString<1024>(A).ToView().Compare(WriteToString<1024>(B).ToView(), ESearchCase::IgnoreCase) < 0;
 		});
 
 		for (const FCachedAssetKey& Key : Keys)
@@ -2552,6 +2841,18 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 			});
 	}
 
+	TArray<FAssetData*> SortedAssets;
+	auto InitializeSortedAssets = [&SortedAssets, this]()
+	{
+		if (SortedAssets.Num() != CachedAssets.Num())
+		{
+			SortedAssets = CachedAssets.Array();
+			Algo::Sort(SortedAssets, [](const FAssetData* A, FAssetData* B)
+				{ return A->GetSoftObjectPath().LexicalLess(B->GetSoftObjectPath()); }
+			);
+		}
+	};
+
 	if (bAllFields || Arguments.Contains(TEXT("AssetTags")))
 	{
 		int32 Counter = 0;
@@ -2559,7 +2860,9 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 		PageBuffer.Append(TEXT("--- Begin AssetTags ---"));
 		AddLine();
 
-		for (const FAssetData* AssetData : CachedAssets)
+		InitializeSortedAssets();
+		TArray<FName> SortedTagKeys;
+		for (const FAssetData* AssetData : SortedAssets)
 		{
 			if (AssetData->TagsAndValues.Num() == 0)
 			{
@@ -2570,11 +2873,18 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 			PageBuffer << TEXT("  ") << FCachedAssetKey(AssetData);
 			AddLine();
 
-			AssetData->TagsAndValues.ForEach([&](const TPair<FName, FAssetTagValueRef>& TagPair) 
+			SortedTagKeys.Reset();
+			AssetData->TagsAndValues.ForEach([&SortedTagKeys](const TPair<FName, FAssetTagValueRef>& TagPair)
 			{
-				PageBuffer << TEXT("    ") << TagPair.Key << TEXT(" : ") << *TagPair.Value.AsString();
-				AddLine();	
+				SortedTagKeys.Add(TagPair.Key);
 			});
+			Algo::Sort(SortedTagKeys, FNameLexicalLess());
+			for (FName TagKey : SortedTagKeys)
+			{
+				FAssetTagValueRef Value = AssetData->TagsAndValues.FindTag(TagKey);
+				PageBuffer << TEXT("    ") << TagKey << TEXT(" : ") << *Value.AsString();
+				AddLine();
+			}
 		}
 
 		PageBuffer.Appendf(TEXT("--- End AssetTags : %d entries ---"), Counter);
@@ -2748,9 +3058,7 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 			PageBuffer.Append(TEXT("	"));
 			Key.AppendString(PageBuffer);
 			PageBuffer.Append(TEXT(" : "));
-			PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			PageBuffer.Append(PackageData->PackageGuid.ToString());
-			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			PageBuffer << PackageData->GetPackageSavedHash();
 			PageBuffer.Appendf(TEXT(" : %d bytes"), PackageData->DiskSize);
 			AddLine();
 		}
@@ -2766,7 +3074,8 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 		PageBuffer.Append(TEXT("--- Begin AssetBundles ---"));
 		AddLine();
 
-		for (FAssetData* AssetData : CachedAssets)
+		InitializeSortedAssets();
+		for (const FAssetData* AssetData : SortedAssets)
 		{
 			if (AssetData->TaggedAssetBundles.IsValid())
 			{
@@ -2811,7 +3120,7 @@ void FAssetRegistryState::Dump(const TArray<FString>& Arguments, TArray<FString>
 
 #include "Misc/AutomationTest.h"
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRegistryAssetPathStringsTest, "Engine.AssetRegistry.AssetPathStrings", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRegistryAssetPathStringsTest, "System.AssetRegistry.AssetPathStrings", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
 
 // Tests that we can produce correct paths for objects represented by FCachedAssetKey and FAssetData
 // E.g	PackageName.AssetName

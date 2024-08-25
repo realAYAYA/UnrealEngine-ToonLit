@@ -17,6 +17,7 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "EngineUtils.h"
 #include "Components/BrushComponent.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/GCObjectScopeGuard.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "UObject/ObjectSaveContext.h"
@@ -369,10 +370,17 @@ void ULidarPointCloud::PostLoad()
 
 void ULidarPointCloud::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
-	OutTags.Add(FAssetRegistryTag("PointCount", PointCloudAssetRegistryCache.PointCount, FAssetRegistryTag::TT_Numerical));
-	OutTags.Add(FAssetRegistryTag("ApproxSize", PointCloudAssetRegistryCache.ApproxSize, FAssetRegistryTag::TT_Dimensional));
-
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void ULidarPointCloud::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Context.AddTag(FAssetRegistryTag("PointCount", PointCloudAssetRegistryCache.PointCount, FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("ApproxSize", PointCloudAssetRegistryCache.ApproxSize, FAssetRegistryTag::TT_Dimensional));
+
+	Super::GetAssetRegistryTags(Context);
 }
 
 void ULidarPointCloud::BeginDestroy()
@@ -1212,7 +1220,7 @@ void ULidarPointCloud::Merge(TArray<ULidarPointCloud*> PointCloudsToMerge, TFunc
 	{
 		if (!IsValid(PointCloudsToMerge[i]) || PointCloudsToMerge[i] == this)
 		{
-			PointCloudsToMerge.RemoveAtSwap(i--, 1, false);
+			PointCloudsToMerge.RemoveAtSwap(i--, 1, EAllowShrinking::No);
 		}
 	}
 

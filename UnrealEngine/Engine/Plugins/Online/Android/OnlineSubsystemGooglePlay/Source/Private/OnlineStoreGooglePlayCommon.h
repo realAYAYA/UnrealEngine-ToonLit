@@ -14,7 +14,6 @@ struct FGoogleTransactionData;
 enum class EGooglePlayBillingResponseCode : int8
 {
 	CustomLogicError = -127, // Custom value. Should match with GooglePlayStoreHelper.CustomLogicErrorResponse on GooglePlayStoreHelper.java
-	ServiceTimeout = -3,
 	FeatureNotSupported = -2,
 	ServiceDisconnected = -1,
 	Ok = 0,
@@ -42,8 +41,6 @@ inline const TCHAR* const LexToString(EGooglePlayBillingResponseCode InResponseC
 	{
 		case EGooglePlayBillingResponseCode::CustomLogicError:
 			return TEXT("CustomLogicError");
-		case EGooglePlayBillingResponseCode::ServiceTimeout:
-			return TEXT("ServiceTimeout");
 		case EGooglePlayBillingResponseCode::FeatureNotSupported:
 			return TEXT("FeatureNotSupported");
 		case EGooglePlayBillingResponseCode::ServiceDisconnected:
@@ -99,7 +96,6 @@ inline EInAppPurchaseState::Type ConvertGPResponseCodeToIAPState(const EGooglePl
 		case EGooglePlayBillingResponseCode::ItemNotOwned:
 			return EInAppPurchaseState::NotAllowed;
 		case EGooglePlayBillingResponseCode::CustomLogicError:
-		case EGooglePlayBillingResponseCode::ServiceTimeout:
 		case EGooglePlayBillingResponseCode::FeatureNotSupported:
 		case EGooglePlayBillingResponseCode::ServiceDisconnected:
 		case EGooglePlayBillingResponseCode::ServiceUnavailable:
@@ -139,7 +135,6 @@ inline EPurchaseTransactionState ConvertGPResponseToPurchaseTransactionState(con
 		case EGooglePlayBillingResponseCode::ItemNotOwned:
 			return EPurchaseTransactionState::Invalid;
 		case EGooglePlayBillingResponseCode::CustomLogicError:
-		case EGooglePlayBillingResponseCode::ServiceTimeout:
 		case EGooglePlayBillingResponseCode::FeatureNotSupported:
 		case EGooglePlayBillingResponseCode::ServiceDisconnected:
 		case EGooglePlayBillingResponseCode::ServiceUnavailable:

@@ -143,10 +143,14 @@ namespace Audio
 	{
 		using namespace DirectedGraphAlgoPrivate;
 
-		
 		// Initialize side info about which vertices have been visited and which
 		// have not.
 		TMap<int32, FDepthFirstSortInfo> SortInfos;
+
+		const int32 MaxVertexNum = InUniqueVertices.Num();
+		SortInfos.Reserve(SortInfos.Num() + MaxVertexNum);
+		OutVertexOrder.Reserve(OutVertexOrder.Num() + MaxVertexNum);
+
 		for (int32 Vertex : InUniqueVertices)
 		{
 			SortInfos.Add(Vertex);

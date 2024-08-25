@@ -1,17 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Reflection;
+using System.Text.Json;
+using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Redis.Converters;
 using EpicGames.Serialization;
 using ProtoBuf;
 using StackExchange.Redis;
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Reflection;
-using System.Reflection.Emit;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace EpicGames.Redis
 {
@@ -72,6 +71,26 @@ namespace EpicGames.Redis
 		public T FromRedisValue(RedisValue value)
 		{
 			return CbSerializer.Deserialize<T>(new CbField((byte[])value!));
+		}
+	}
+
+	/// <summary>
+	/// Redis serializer that uses JSON to serialize objects
+	/// </summary>
+	public sealed class RedisJsonConverter<T> : IRedisConverter<T>
+	{
+		static readonly JsonSerializerOptions s_options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+		/// <inheritdoc/>
+		public RedisValue ToRedisValue(T value)
+		{
+			return JsonSerializer.Serialize(value, s_options);
+		}
+
+		/// <inheritdoc/>
+		public T FromRedisValue(RedisValue value)
+		{
+			return JsonSerializer.Deserialize<T>((string?)value ?? String.Empty, s_options) ?? throw new FormatException("Expected non-null value");
 		}
 	}
 

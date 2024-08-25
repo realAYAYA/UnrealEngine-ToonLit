@@ -167,6 +167,7 @@ void UComputeKernelFromText::ReparseKernelSourceText()
 
 			FString AllParameters = Matcher.GetCaptureGroup(2);
 			TArray<FString> ParamArray;
+			AllParameters.ParseIntoArray(ParamArray, TEXT(","));
 
 			for(const FString& ParamDecl: ParamArray)
 			{

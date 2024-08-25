@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using EpicGames.Core;
 using UnrealBuildBase;
@@ -16,9 +18,15 @@ namespace AutomationTool
 	[Help("Checks that all source files have balanced macros for enabling/disabling optimization, warnings, etc...")]
 	[Help("Project=<Path>", "Path to an additional project file to consider")]
 	[Help("File=<Path>", "Path to a file to parse in isolation, for testing")]
+	[Help("OverrideFileList=<Path>", "Path to a text file with paths to the files you want to parse")]
 	[Help("Ignore=<Name>", "File name (without path) to exclude from testing")]
 	class CheckBalancedMacros : BuildCommand
 	{
+		/// <summary>
+		/// List of directories relative to the root that can contain source files
+		/// </summary>
+		public static readonly string[] SourceDirectories = { "Platforms", "Plugins", "Restricted", "Shaders", "Source" };
+
 		/// <summary>
 		/// List of macros that should be paired up
 		/// </summary>
@@ -49,6 +57,10 @@ namespace AutomationTool
 				"PRAGMA_RESTORE_UNSAFE_TYPECAST_WARNINGS"
 			},
 			{
+				"PRAGMA_DISABLE_UNREACHABLE_CODE_WARNINGS",
+				"PRAGMA_RESTORE_UNREACHABLE_CODE_WARNINGS"
+			},
+			{
 				"PRAGMA_FORCE_UNSAFE_TYPECAST_WARNINGS",
 				"PRAGMA_RESTORE_UNSAFE_TYPECAST_WARNINGS"
 			},			
@@ -69,6 +81,13 @@ namespace AutomationTool
 				"END_SLATE_FUNCTION_BUILD_OPTIMIZATION"
 			},
 		};
+
+		/// <summary>
+		/// Regexes for LOCTEXT_NAMESPACE preprocessor identification
+		/// This could be generalized like the above if we had other pairings we wanted to manage
+		/// </summary>
+		static readonly Regex OpenLoctextNamespaceRegex = new Regex(@"\G#define\s+LOCTEXT_NAMESPACE");
+		static readonly Regex CloseLoctextNamespaceRegex = new Regex(@"\G#undef\s+LOCTEXT_NAMESPACE");
 
 		/// <summary>
 		/// List of files to ignore for balanced macros. Additional filenames may be specified on the command line via -Ignore=...
@@ -106,15 +125,58 @@ namespace AutomationTool
 
 			// Check if we want to just parse a single file
 			string FileParam = ParseParamValue("File");
-			if(FileParam != null)
+			string OverrideFileList = ParseParamValue("OverrideFileList=", null); // Specify a file list of individual files you want to check instead of the entire directory
+
+			if (FileParam != null && OverrideFileList != null)
+			{
+				throw new AutomationException("File and OverrideFileList parameters cannot be passed at the same time.");
+			}
+
+			if (FileParam != null)
 			{
 				// Check the file exists
 				FileReference File = new FileReference(FileParam);
-				if(!FileReference.Exists(File))
+				if (!FileReference.Exists(File))
 				{
 					throw new AutomationException("File '{0}' does not exist", File);
 				}
 				CheckSourceFile(File, IdentifierToIndex, new object());
+			}
+			else if (OverrideFileList != null)
+			{
+				Logger.LogInformation("Finding files from OverrideFileList {File}", OverrideFileList);
+
+				FileReference FileListToCheck = new FileReference(OverrideFileList);
+				if (!FileReference.Exists(FileListToCheck))
+				{
+					throw new AutomationException("FileList '{0}' does not exist", FileListToCheck);
+				}
+
+				string[] FilesToCheck = FileReference.ReadAllLines(FileListToCheck);
+				List<FileReference> SourceFiles = new List<FileReference>();
+
+				foreach (string File in FilesToCheck.Where(x => !String.IsNullOrWhiteSpace(x) && (x.EndsWith(".h") || x.EndsWith(".cpp"))))
+				{
+					SourceFiles.Add(new FileReference(File));
+				}
+
+				// Loop through all the source files
+				using (ThreadPoolWorkQueue Queue = new ThreadPoolWorkQueue())
+				{
+					object LogLock = new object();
+					foreach (FileReference SourceFile in SourceFiles)
+					{
+						Queue.Enqueue(() => CheckSourceFile(SourceFile, IdentifierToIndex, LogLock));
+					}
+
+					using (LogStatusScope Scope = new LogStatusScope("Checking source files..."))
+					{
+						while (!Queue.Wait(10 * 1000))
+						{
+							Scope.SetProgress("{0}/{1}", SourceFiles.Count - Queue.NumRemaining, SourceFiles.Count);
+						}
+					}
+				}
 			}
 			else
 			{
@@ -154,16 +216,13 @@ namespace AutomationTool
 				{
 					foreach(DirectoryReference RootDir in RootDirs)
 					{
-						DirectoryInfo PluginsDir = new DirectoryInfo(Path.Combine(RootDir.FullName, "Plugins"));
-						if(PluginsDir.Exists)
+						foreach (String Directory in SourceDirectories)
 						{
-							Queue.Enqueue(() => FindSourceFiles(PluginsDir, SourceFiles, Queue));
-						}
-
-						DirectoryInfo SourceDir = new DirectoryInfo(Path.Combine(RootDir.FullName, "Source"));
-						if(SourceDir.Exists)
-						{
-							Queue.Enqueue(() => FindSourceFiles(SourceDir, SourceFiles, Queue));
+							DirectoryInfo SourceDir = new DirectoryInfo(Path.Combine(RootDir.FullName, Directory));
+							if(SourceDir.Exists)
+							{
+								Queue.Enqueue(() => FindSourceFiles(SourceDir, SourceFiles, Queue));
+							}
 						}
 					}
 					Queue.Wait();
@@ -233,6 +292,7 @@ namespace AutomationTool
 
 			// Scan through the file token by token. Each bit in the Flags array indicates an index into the MacroPairs array that is currently active.
 			int Flags = 0;
+			bool LoctextNamespaceOpen = false;
 			for(int Idx = 0; Idx < Text.Length; )
 			{
 				int StartIdx = Idx++;
@@ -313,12 +373,12 @@ namespace AutomationTool
 						}
 					}
 				}
-				else if(Text[StartIdx] == '"' || Text[StartIdx] == '\'')
+				else if(Text[StartIdx] == '"')
 				{
 					// String
 					for(; Idx < Text.Length; Idx++)
 					{
-						if(Text[Idx] == Text[StartIdx])
+						if(Text[Idx] == '"')
 						{
 							Idx++;
 							break;
@@ -329,8 +389,52 @@ namespace AutomationTool
 						}
 					}
 				}
+				else if(Text[StartIdx] == '\'')
+				{
+					// Escaped character (e.g. \n, \', \xAB, \xFFFF)
+					if(Text[StartIdx + 1] == '\\')
+					{
+						Idx += 2;
+						for (; Idx < Text.Length; Idx++)
+						{
+							if (Text[Idx] == '\'')
+							{
+								Idx++;
+								break;
+							}
+						}
+					}
+					// Standard single character
+					else if(Text[StartIdx + 2] == '\'')
+					{
+						Idx += 2;
+					}
+					// Otherwise this is probably a numeric separator and we're going to ignore it
+				}
 				else if(Text[StartIdx] == '#')
 				{
+					// Do detection of LOCTEXT_NAMESPACE directives being properly closed
+					// It is theoretically valid to redefine LOCTEXT_NAMESPACE, so this is simply
+					// ensuring there is a closing #undef 
+
+					// Peek ahead to try and reduce the number of regex comparisons we make
+					if(!LoctextNamespaceOpen && Text[StartIdx + 1] == 'd') 
+					{
+						Match m = OpenLoctextNamespaceRegex.Match(Text, StartIdx);
+						if (m.Success && m.Index == StartIdx)
+						{
+							LoctextNamespaceOpen = true;
+						}
+					}
+					else if(LoctextNamespaceOpen && Text[StartIdx + 1] == 'u')
+					{
+						Match m = CloseLoctextNamespaceRegex.Match(Text, StartIdx);
+						if (m.Success && m.Index == StartIdx)
+						{
+							LoctextNamespaceOpen = false;
+						}
+					}
+
 					// Preprocessor directive (eg. #define)
 					for(; Idx < Text.Length && Text[Idx] != '\n'; Idx++)
 					{
@@ -352,6 +456,10 @@ namespace AutomationTool
 						EpicGames.Core.Log.TraceWarningTask(SourceFile, "{0} macro does not have matching {1} macro", MacroPairs[Idx, 0], MacroPairs[Idx, 1]);
 					}
 				}
+			}
+			if(LoctextNamespaceOpen)
+			{
+				EpicGames.Core.Log.TraceWarningTask(SourceFile, "#define NAMESPACE_LOCTEXT preprocessor directive is missing matching #undef NAMESPACE_LOCTEXT directive");
 			}
 		}
 

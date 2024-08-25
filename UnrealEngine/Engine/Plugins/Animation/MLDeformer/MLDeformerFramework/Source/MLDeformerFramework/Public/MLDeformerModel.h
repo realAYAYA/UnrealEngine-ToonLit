@@ -12,6 +12,7 @@
 #include "RenderResource.h"
 #include "Animation/AnimSequence.h"
 #include "MLDeformerCurveReference.h"
+#include "PerQualityLevelProperties.h"
 #include "MLDeformerModel.generated.h"
 
 class UMLDeformerAsset;
@@ -152,12 +153,20 @@ public:
 	virtual bool DoesSupportCurves() const					{ return true; }
 
 	/**
+	 * Check if this model supports LOD.
+	 * When this returns false, the UI will not show options to setup the maximum number of LOD levels.
+	 * @return Returns true if LOD is supported, otherwise false is returned, which means it only works on LOD0.
+	 */
+	virtual bool DoesSupportLOD() const						{ return false; }
+
+	/**
 	 * Does this model support deformer quality levels?
 	 * For example Morph based models can disable certain morph targets based on this quality level.
 	 * On default this is disabled for models. You can override this method and make it return true to support it.
 	 * Morph based models on enable this on default.
 	 * @return Returns true when Deformer Quality is supported, otherwise false is returned.
 	 */
+	UE_DEPRECATED(5.4, "This method will be removed.")
 	virtual bool DoesSupportQualityLevels() const			{ return false; }
 
 	/**
@@ -187,6 +196,9 @@ public:
 	 */
 	virtual int32 GetNumFloatsPerCurve() const				{ return 1; }
 
+	/** Check whether this model has been trained or not. */
+	virtual bool IsTrained() const							{ ensureMsgf(false, TEXT("Please override the UMLDeformerModel::IsTrained() inside your model.")); return false; }
+
 	/**
 	 * Get the skeletal mesh that is used during training.
 	 * You typically want to apply the ML Deformer on this specific skeletal mesh in your game as well.
@@ -201,6 +213,29 @@ public:
 	 */
 	void SetSkeletalMesh(USkeletalMesh* SkelMesh)			{ SkeletalMesh = SkelMesh; }
 
+	/**
+	 * Check if a given actor would be a compatible debugging actor.
+	 * We check this by checking if it uses the same skeletal mesh and whether it uses the same ML Deformer asset.
+	 * Debugging allows us to copy over the morph weights and pose of a character. But for that to be possible we need to 
+	 * make sure the other actor uses the same skeletal mesh and ML Deformer asset. This method helps us check that easily.
+	 * @param Actor The actor to check compatibility with.
+	 * @param OutDebugComponent A pointer to the ML Deformer component that we would be debugging. Can be set to nullptr to get it ignored.
+	 * @return Returns true when the provided actor is compatible for debugging, otherwise false is returned.
+	 */
+	virtual bool IsCompatibleDebugActor(const AActor* Actor, UMLDeformerComponent** OutDebugComponent = nullptr) const;
+
+	/** 
+	 * Get the maximum number of LOD levels that we will generate.
+ 	 * Some examples:
+	 * A value of 1 means we only store one LOD, which means LOD0. 
+	 * A value of 2 means we support this ML Deformer on LOD0 and LOD1.
+	 * A value of 3 means we support this ML Deformer on LOD0 and LOD1 and LOD2.
+	 * We never generate more LOD levels for the ML Deformer than number of LOD levels in the Skeletal Mesh, so if 
+	 * this value is set to 100, while the Skeletal Mesh has only 4 LOD levels, we will only generate and store 4 ML Deformer LODs.
+	 * The default value of 1 means we do not support this ML Deformer at LOD levels other than LOD0.
+	 * @ return The maximum number of LOD levels we will generate.
+	 */
+	const int32 GetMaxNumLODs() const		{ return MaxNumLODs; }
 
 #if WITH_EDITORONLY_DATA
 	/**
@@ -259,10 +294,30 @@ public:
 	 * @param Flags The memory request flags.
 	 * @return The number of bytes that this model uses.
 	 */
-	uint64 GetMemUsageInBytes(UE::MLDeformer::EMemUsageRequestFlags Flags) const;
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	uint64 GetMemUsageInBytes(UE::MLDeformer::EMemUsageRequestFlags Flags) const { return 0; }
 
 	/**
-	 * Get the GPU memory usage for this model.
+	 * Get the estimated size of the asset on disk. This is the uncooked asset, which is larger than the cooked one.
+	 * @return The size in bytes.
+	 */
+	uint64 GetEditorAssetSizeInBytes() const;
+
+	/**
+	 * Get the estimated size of this asset on disk, when cooked.
+	 * So this is the estimated size of the asset that will be packaged inside your project.
+	 * @return The size in bytes.
+	 */
+	uint64 GetCookedAssetSizeInBytes() const;
+
+	/**
+	 * Get the estimated main memory usage for this model.
+	 * @return The number of bytes that this model uses.
+	 */
+	uint64 GetMainMemUsageInBytes() const;
+
+	/**
+	 * Get the estimated GPU memory usage for this model.
 	 * @return The number of bytes that this model uses.
 	 */
 	uint64 GetGPUMemUsageInBytes() const;
@@ -276,6 +331,9 @@ public:
 	virtual void PostLoad() override;
 	virtual void BeginDestroy() override;
 	virtual bool IsReadyForFinishDestroy() override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	// ~END UObject overrides.
 
 	// IBoneReferenceSkeletonProvider overrides.
@@ -411,15 +469,19 @@ public:
 	 * Each frame of this anim sequence will contain a training pose.
 	 * @return A pointer to the animation sequence used for training.
 	 */
-	const UAnimSequence* GetAnimSequence() const				{ return AnimSequence.LoadSynchronous();  }
-	UAnimSequence* GetAnimSequence()							{ return AnimSequence.LoadSynchronous(); }
+	UE_DEPRECATED(5.4, "This method will be removed. Please look at FMLDeformerEditorModel::GetActiveTrainingInputAnimIndex().")
+	const UAnimSequence* GetAnimSequence() const				{ return nullptr; }
+
+	UE_DEPRECATED(5.4, "This method will be removed. Please look at FMLDeformerEditorModel::GetActiveTrainingInputAnimIndex().")
+	UAnimSequence* GetAnimSequence()							{ return nullptr; }
 
 	/**
 	 * Set the animation sequence object to use for training.
 	 * Keep in mind that the editor still needs to handle a change of this property for things to be initialized correctly.
 	 * @param AnimSeq The animation sequence to use for training.
 	 */
-	void SetAnimSequence(UAnimSequence* AnimSeq)				{ AnimSequence = AnimSeq; }
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	void SetAnimSequence(UAnimSequence* AnimSeq)				{}
 
 	/**
 	 * Get the maximum number of training frames to use during training.
@@ -519,20 +581,22 @@ public:
 	void SetVizSettings(UMLDeformerVizSettings* VizSettingsObject)			{ VizSettings = VizSettingsObject; }
 
 	// Get property names.
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	static FName GetAnimSequencePropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, AnimSequence_DEPRECATED); }
+
 	static FName GetSkeletalMeshPropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, SkeletalMesh); }
-	static FName GetAnimSequencePropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, AnimSequence); }
 	static FName GetAlignmentTransformPropertyName()	{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, AlignmentTransform); }
 	static FName GetBoneIncludeListPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, BoneIncludeList); }
 	static FName GetCurveIncludeListPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, CurveIncludeList); }
 	static FName GetMaxTrainingFramesPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, MaxTrainingFrames); }
 	static FName GetDeltaCutoffLengthPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, DeltaCutoffLength); }
+	static FName GetMaxNumLODsPropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, MaxNumLODs); }
 
 	UE_DEPRECATED(5.3, "This property has been removed and shouldn't be used anymore.")
 	static FName GetShouldIncludeBonesPropertyName()	{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, bIncludeBones_DEPRECATED); }
 
 	UE_DEPRECATED(5.3, "This property has been removed and shouldn't be used anymore.")
 	static FName GetShouldIncludeCurvesPropertyName()	{ return GET_MEMBER_NAME_CHECKED(UMLDeformerModel, bIncludeCurves_DEPRECATED); }
-
 #endif	// #if WITH_EDITORONLY_DATA
 
 protected:
@@ -572,14 +636,30 @@ protected:
 	/** Should we recalculate the memory usage? */
 	bool bInvalidateMemUsage = true;
 
-	/** The computed memory usage. */
+	/** Estimated main memory usage. */
 	uint64 MemUsageInBytes = 0;
 
 	/** The cooked memory usage. */
+	UE_DEPRECATED(5.4, "This member will be removed. You most likely want to store this value inside the CookedAssetSize member.")
 	uint64 CookedMemUsageInBytes = 0;
 
-	/** GPU memory usage. */
+	/** Estimated editor asset size. */
+	uint64 EditorAssetSizeInBytes = 0;
+
+	/** Estimated cooked asset size. */
+	uint64 CookedAssetSizeInBytes = 0;
+
+	/** Estimated GPU memory usage. */
 	uint64 GPUMemUsageInBytes = 0;
+#endif
+
+#if WITH_EDITORONLY_DATA
+	/**
+	 * The animation sequence to apply to the base mesh. This has to match the animation of the target mesh's geometry cache. 
+	 * Internally we force the Interpolation property for this motion to be "Step".
+	 */
+	UPROPERTY(meta=(DeprecatedProperty, DeprecationMessage="Use the training input anims instead."))
+	TSoftObjectPtr<UAnimSequence> AnimSequence_DEPRECATED;
 #endif
 
 private:
@@ -610,10 +690,24 @@ private:
 	int32 NumTargetMeshVerts = 0;
 
 	/** 
+	 * How many Skeletal Mesh LOD levels should we generate MLD lods for at most?
+	 * Some examples:
+	 * A value of 1 means we only store one LOD, which means LOD0. 
+	 * A value of 2 means we support this ML Deformer on LOD0 and LOD1.
+	 * A value of 3 means we support this ML Deformer on LOD0 and LOD1 and LOD2.
+	 * We never generate more LOD levels for the ML Deformer than number of LOD levels in the Skeletal Mesh, so if 
+	 * this value is set to 100, while the Skeletal Mesh has only 4 LOD levels, we will only generate and store 4 ML Deformer LODs.
+	 * The default value of 1 means we do not support this ML Deformer at LOD levels other than LOD0.
+	 * When cooking, the console variable "sg.MLDeformer.MaxLODLevelsOnCook" can be used to set the maximum value per device or platform.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LOD Generation Settings", meta = (ClampMin = "1"))
+	int32 MaxNumLODs = 1;
+
+	/** 
 	 * The information about the neural network inputs. This contains things such as bone names and curve names.
 	 */
 	UPROPERTY()
-	TObjectPtr<UMLDeformerInputInfo> InputInfo = nullptr;
+	TObjectPtr<UMLDeformerInputInfo> InputInfo;
 
 	/** This is an index per vertex in the mesh, indicating the imported vertex number from the source asset. */
 	UPROPERTY()
@@ -621,7 +715,7 @@ private:
 
 	/** The skeletal mesh that represents the linear skinned mesh. */
 	UPROPERTY(EditAnywhere, Category = "Base Mesh")
-	TObjectPtr<USkeletalMesh> SkeletalMesh = nullptr;
+	TObjectPtr<USkeletalMesh> SkeletalMesh;
 
 	/** The number of floats per bone in network input. */
 	UE_DEPRECATED(5.3, "This will be removed")
@@ -633,7 +727,7 @@ private:
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()
-	TObjectPtr<UMLDeformerVizSettings> VizSettings = nullptr;
+	TObjectPtr<UMLDeformerVizSettings> VizSettings;
 
 	/** Specifies whether bone transformations should be included as inputs during the training process. */
 	UPROPERTY()
@@ -643,15 +737,8 @@ private:
 	UPROPERTY()
 	bool bIncludeCurves_DEPRECATED = false;
 
-	/**
-	 * The animation sequence to apply to the base mesh. This has to match the animation of the target mesh's geometry cache. 
-	 * Internally we force the Interpolation property for this motion to be "Step".
-	 */
-	UPROPERTY(EditAnywhere, Category = "Base Mesh")
-	TSoftObjectPtr<UAnimSequence> AnimSequence = nullptr;
-
 	/** The transform that aligns the Geometry Cache to the SkeletalMesh. This will mostly apply some scale and a rotation, but no translation. */
-	UPROPERTY(EditAnywhere, Category = "Target Mesh")
+	UPROPERTY(EditAnywhere, Category = "Inputs", DisplayName = "Target Alignment Transform")
 	FTransform AlignmentTransform = FTransform::Identity;
 
 	/** The bones to include during training. When none are provided, all bones of the Skeleton will be included. */
@@ -663,14 +750,14 @@ private:
 	TArray<FMLDeformerCurveReference> CurveIncludeList;
 
 	/** The maximum numer of training frames (samples) to train on. Use this to train on a sub-section of your full training data. */
-	UPROPERTY(EditAnywhere, Category = "Inputs", meta = (ClampMin = "1"))
+	UPROPERTY(EditAnywhere, Category = "Training Settings", meta = (ClampMin = "1"))
 	int32 MaxTrainingFrames = 1000000;
 
 	/**
 	 * Sometimes there can be some vertices that cause some issues that cause deltas to be very long. We can ignore these deltas by setting a cutoff value. 
 	 * Deltas that are longer than the cutoff value (in units), will be ignored and set to zero length. 
 	 */
-	UPROPERTY(EditAnywhere, Category = "Inputs", meta = (ClampMin = "0.01", ForceUnits="cm"))
+	UPROPERTY(EditAnywhere, Category = "Training Settings", meta = (ClampMin = "0.01", ForceUnits="cm"))
 	float DeltaCutoffLength = 30.0f;
 #endif
 };

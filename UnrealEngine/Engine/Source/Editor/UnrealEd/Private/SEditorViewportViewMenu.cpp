@@ -58,7 +58,7 @@ FText SEditorViewportViewMenu::GetViewMenuLabel() const
 		}
 		else if (ViewMode == VMI_VisualizeSubstrate)
 		{
-			Label = ViewportClient->GetCurrentStrataVisualizationModeDisplayName();
+			Label = ViewportClient->GetCurrentSubstrateVisualizationModeDisplayName();
 		}
 		else if (ViewMode == VMI_VisualizeGroom)
 		{
@@ -144,10 +144,12 @@ void SEditorViewportViewMenu::FillViewMenu(UToolMenu* Menu) const
 			}
 
 #if RHI_RAYTRACING
-			if (IsRayTracingAllowed())
+			if (IsRayTracingEnabled())
 			{
 				static auto PathTracingCvar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.PathTracing"));
-				if (PathTracingCvar && PathTracingCvar->GetValueOnAnyThread() != 0)
+				const bool bPathTracingSupported = FDataDrivenShaderPlatformInfo::GetSupportsPathTracing(GMaxRHIShaderPlatform);
+				const bool bPathTracingEnabled = PathTracingCvar && PathTracingCvar->GetValueOnAnyThread() != 0;
+				if (bPathTracingSupported && bPathTracingEnabled)
 				{
 					Section.AddMenuEntry(BaseViewportActions.PathTracingMode, UViewModeUtils::GetViewModeDisplayName(VMI_PathTracing));
 				}
@@ -170,7 +172,7 @@ void SEditorViewportViewMenu::FillViewMenu(UToolMenu* Menu) const
 							if (FeatureLevel >= ERHIFeatureLevel::SM5)
 							{
 								Section.AddMenuEntry(BaseViewportCommands.LightComplexityMode, UViewModeUtils::GetViewModeDisplayName(VMI_LightComplexity));
-								if (IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"))->GetValueOnAnyThread() != 0)
+								if (IsStaticLightingAllowed())
 								{
 									Section.AddMenuEntry(BaseViewportCommands.LightmapDensityMode, UViewModeUtils::GetViewModeDisplayName(VMI_LightmapDensity));
 								}

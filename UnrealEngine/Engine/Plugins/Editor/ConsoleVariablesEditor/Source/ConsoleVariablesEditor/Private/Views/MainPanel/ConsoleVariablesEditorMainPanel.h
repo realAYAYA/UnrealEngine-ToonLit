@@ -29,6 +29,8 @@ public:
 
 	void UpdateCachedValue(const FString& InConsoleVar, const FString& Value);
 
+	void OnRemoteCvarChanged();
+
 	FReply ValidateConsoleInputAndAddToCurrentPreset(const FText& CommittedText) const;
 
 	/*
@@ -88,7 +90,7 @@ private:
 	TSharedPtr<FConsoleVariablesEditorList> EditorList;
 
 	static void OnConnectionChanged(EConcertConnectionStatus Status);
-	static void OnRemoteCvarChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue);
+	static void OnRemoteCvarChange(ERemoteCVarChangeType InChangeType, FString InName, FString InValue, EConsoleVariableFlags InFlags);
 	static void OnRemoteListItemCheckStateChange(const FString InName, ECheckBoxState InCheckedState);
 	
 	void SendListItemCheckStateChange(const FString& InName, ECheckBoxState InCheckedState);

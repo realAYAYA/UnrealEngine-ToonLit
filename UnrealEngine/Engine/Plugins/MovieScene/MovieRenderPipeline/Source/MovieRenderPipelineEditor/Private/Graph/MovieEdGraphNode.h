@@ -21,6 +21,7 @@ public:
 	void OnRuntimeNodeChanged(const UMovieGraphNode* InChangedNode);
 
 	//~ Begin UEdGraphNode Interface
+	virtual void PostLoad() override;
 	virtual void ReconstructNode() override;
 	virtual void AutowireNewNode(UEdGraphPin* FromPin) override;
 	virtual FLinearColor GetNodeTitleColor() const override;
@@ -33,8 +34,9 @@ public:
 	virtual void GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeContextMenuContext* Context) const override;
 	//~ End UEdGraphNode Interface
 
-	static FEdGraphPinType GetPinType(EMovieGraphValueType ValueType, bool bIsBranch);
+	static FEdGraphPinType GetPinType(EMovieGraphValueType ValueType, bool bIsBranch, const UObject* InValueTypeObject = nullptr);
 	static FEdGraphPinType GetPinType(const UMovieGraphPin* InPin);
+	static EMovieGraphValueType GetValueTypeFromPinType(const FEdGraphPinType& InPinType);
 
 	// Called after PrepareForCopying to restore changes made during preparation. 
 	virtual void PostCopy();
@@ -49,6 +51,9 @@ protected:
 	void RebuildRuntimeEdgesFromPins();
 
 	void CreatePins(const TArray<UMovieGraphPin*>& InInputPins, const TArray<UMovieGraphPin*>& InOutputPins);
+	
+	/** Gets the tooltip for the given pin. */
+	FString GetPinTooltip(const UMovieGraphPin* InPin) const;
 
 	/** Recreate the pins on this node, discarding all existing pins. */
 	void ReconstructPins();
@@ -62,6 +67,14 @@ protected:
 	 */
 	void UpdateCommentBubblePinned() const;
 
+	/**
+	 * Update the enable state of the underlying runtime node to match the editor node.
+	 */
+	void UpdateEnableState() const;
+
+	/** Registers any delegates needed by the node. */
+	void RegisterDelegates();
+
 protected:
 	/** The runtime node that this editor node represents. */
 	UPROPERTY()
@@ -69,6 +82,10 @@ protected:
 
 	/** Should we early out in ReconstructNode(), skipping restoring the connections to other nodes. Set during Copy/Paste. */
 	bool bDisableReconstructNode = false;
+
+	/** The graph that this node originated from during a copy/paste operation. This value should never be used outside of copy/paste logic. */
+	UPROPERTY(SkipSerialization)
+	FSoftObjectPath OriginGraph;
 };
 
 UCLASS()
@@ -89,5 +106,11 @@ protected:
 	void TogglePromotePropertyToPin(const FName PropertyName) const;
 
 private:
-	void GetPropertyPromotionContextMenuActions(UToolMenu* Menu, UGraphNodeContextMenuContext* Context) const;
+	void GetPropertyPromotionContextMenuActions(UToolMenu* Menu, const UGraphNodeContextMenuContext* Context) const;
+
+	/**
+	 * Promote the property identified by TargetProperty to a variable. This means 1) creating a new variable w/ the type associated with the
+	 * target property, 2) creating a new variable node linked to this new variable, and 3) connecting the variable node to TargetProperty's pin.
+	 */
+	void PromotePropertyToVariable(const FMovieGraphPropertyInfo& TargetProperty) const;
 };

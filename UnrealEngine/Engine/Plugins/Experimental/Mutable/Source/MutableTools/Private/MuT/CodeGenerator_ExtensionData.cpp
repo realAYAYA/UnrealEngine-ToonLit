@@ -33,7 +33,7 @@ namespace mu
 class Node;
 
 	//---------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateExtensionData(FExtensionDataGenerationResult& OutResult, const NodeExtensionDataPtrConst& InUntypedNode)
+	void CodeGenerator::GenerateExtensionData(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions& Options, const NodeExtensionDataPtrConst& InUntypedNode)
 	{
 		if (!InUntypedNode)
 		{
@@ -41,12 +41,9 @@ class Node;
 			return;
 		}
 
-		// Clear bottom-up state
-		m_currentBottomUpState.m_address = nullptr;
-
 		// See if it was already generated
 		const FGeneratedExtensionDataCacheKey Key = InUntypedNode.get();
-		GeneratedExtensionDataMap::ValueType* CachedResult = m_generatedExtensionData.Find(Key);
+		FGeneratedExtensionDataMap::ValueType* CachedResult = GeneratedExtensionData.Find(Key);
 		if (CachedResult)
 		{
 			OutResult = *CachedResult;
@@ -58,18 +55,18 @@ class Node;
 		// Generate for each different type of node
 		switch (Node->GetExtensionDataNodeType())
 		{
-			case NodeExtensionData::EType::Constant:  GenerateExtensionData_Constant(OutResult, static_cast<const NodeExtensionDataConstant*>(Node)); break;
-			case NodeExtensionData::EType::Switch:    GenerateExtensionData_Switch(OutResult, static_cast<const NodeExtensionDataSwitch*>(Node)); break;
-			case NodeExtensionData::EType::Variation: GenerateExtensionData_Variation(OutResult, static_cast<const NodeExtensionDataVariation*>(Node)); break;
+			case NodeExtensionData::EType::Constant:  GenerateExtensionData_Constant(OutResult, Options, static_cast<const NodeExtensionDataConstant*>(Node)); break;
+			case NodeExtensionData::EType::Switch:    GenerateExtensionData_Switch(OutResult, Options, static_cast<const NodeExtensionDataSwitch*>(Node)); break;
+			case NodeExtensionData::EType::Variation: GenerateExtensionData_Variation(OutResult, Options, static_cast<const NodeExtensionDataVariation*>(Node)); break;
 			case NodeExtensionData::EType::None: check(false);
 		}
 
 		// Cache the result
-		m_generatedExtensionData.Add(Key, OutResult);
+		GeneratedExtensionData.Add(Key, OutResult);
 	}
 
 	//---------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateExtensionData_Constant(FExtensionDataGenerationResult& OutResult, const NodeExtensionDataConstant* Constant)
+	void CodeGenerator::GenerateExtensionData_Constant(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions& Options, const NodeExtensionDataConstant* Constant)
 	{
 		NodeExtensionDataConstant::Private& Node = *Constant->GetPrivate();
 
@@ -90,7 +87,7 @@ class Node;
 	}
 
 	//---------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateExtensionData_Switch(FExtensionDataGenerationResult& OutResult, const class NodeExtensionDataSwitch* Switch)
+	void CodeGenerator::GenerateExtensionData_Switch(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions& Options, const class NodeExtensionDataSwitch* Switch)
 	{
 		NodeExtensionDataSwitch::Private& Node = *Switch->GetPrivate();
 
@@ -109,7 +106,7 @@ class Node;
 		// Variable name
 		if (Node.Parameter)
 		{
-			Op->variable = Generate(Node.Parameter.get());
+			Op->variable = Generate(Node.Parameter.get(), Options);
 		}
 		else
 		{
@@ -123,10 +120,10 @@ class Node;
 			Ptr<ASTOp> Branch;
 			if (Node.Options[OptionIndex])
 			{
-				NodeExtensionDataPtr Option = Node.Options[OptionIndex];
+				NodeExtensionDataPtr SwitchOption = Node.Options[OptionIndex];
 
 				FExtensionDataGenerationResult OptionResult;
-				GenerateExtensionData(OptionResult, Option);
+				GenerateExtensionData(OptionResult, Options, SwitchOption);
 
 				Branch = OptionResult.Op;
 			}
@@ -142,7 +139,7 @@ class Node;
 	}
 
 	//---------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateExtensionData_Variation(FExtensionDataGenerationResult& OutResult, const class NodeExtensionDataVariation* Variation)
+	void CodeGenerator::GenerateExtensionData_Variation(FExtensionDataGenerationResult& OutResult, const FGenericGenerationOptions& Options, const class NodeExtensionDataVariation* Variation)
 	{
 		const NodeExtensionDataVariation::Private& Node = *Variation->GetPrivate();
 
@@ -152,28 +149,23 @@ class Node;
 		if (Node.DefaultValue)
 		{
 			FExtensionDataGenerationResult DefaultResult;
-			GenerateExtensionData(DefaultResult, Node.DefaultValue);
+			GenerateExtensionData(DefaultResult, Options, Node.DefaultValue);
 
 			CurrentOp = DefaultResult.Op;
-		}
-		else
-		{
-			// This argument is required
-			CurrentOp = GenerateMissingExtensionDataCode(TEXT("Variation default"), Node.m_errorContext);
 		}
 
 		// Process variations in reverse order, since conditionals are built bottom-up.
 		for (int32 VariationIndex = Node.Variations.Num() - 1; VariationIndex >= 0; --VariationIndex)
 		{
-			const string& Tag = Node.Variations[VariationIndex].Tag;
-			const int32 TagIndex = m_firstPass.m_tags.IndexOfByPredicate([Tag](const FirstPassGenerator::TAG& CandidateTag)
+			const FString& Tag = Node.Variations[VariationIndex].Tag;
+			const int32 TagIndex = m_firstPass.m_tags.IndexOfByPredicate([Tag](const FirstPassGenerator::FTag& CandidateTag)
 			{
 				return CandidateTag.tag == Tag;
 			});
 
 			if (TagIndex == INDEX_NONE)
 			{
-				const FString Msg = FString::Printf(TEXT("Unknown tag found in Extension Data variation [%s]"), *FString{ Tag.c_str() });
+				const FString Msg = FString::Printf(TEXT("Unknown tag found in Extension Data variation [%s]"), *Tag);
 				m_pErrorLog->GetPrivate()->Add(Msg, ELMT_WARNING, Node.m_errorContext);
 				continue;
 			}
@@ -182,7 +174,7 @@ class Node;
 			if (NodeExtensionDataPtr VariationValue = Node.Variations[VariationIndex].Value)
 			{
 				FExtensionDataGenerationResult VariationResult;
-				GenerateExtensionData(VariationResult, VariationValue);
+				GenerateExtensionData(VariationResult, Options, VariationValue);
 
 				VariationOp = VariationResult.Op;
 			}
@@ -214,7 +206,8 @@ class Node;
 		NodeExtensionDataConstantPtrConst Node = new NodeExtensionDataConstant;
 
 		FExtensionDataGenerationResult Result;
-		GenerateExtensionData_Constant(Result, Node.get());
+		FGenericGenerationOptions Options;
+		GenerateExtensionData_Constant(Result, Options, Node.get());
 
 		return Result.Op;
 	}

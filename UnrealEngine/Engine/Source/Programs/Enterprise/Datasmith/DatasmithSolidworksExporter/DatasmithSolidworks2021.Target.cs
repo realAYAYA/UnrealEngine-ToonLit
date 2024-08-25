@@ -9,6 +9,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Diagnostics;
+using System;
 
 [SupportedPlatforms("Win64")]
 public abstract class DatasmithSolidworksBaseTarget : TargetRules
@@ -19,25 +20,28 @@ public abstract class DatasmithSolidworksBaseTarget : TargetRules
 	{
 		string result = "";
 
-		RegistryKey lKey202x = Registry.LocalMachine.OpenSubKey("SOFTWARE\\SolidWorks\\" + swKey + "\\Setup");
-		if (lKey202x != null)
+		if (OperatingSystem.IsWindows())
 		{
-			string[] names = lKey202x.GetValueNames();
-			object value = null;
-			foreach (var nn in names)
+			RegistryKey lKey202x = Registry.LocalMachine.OpenSubKey("SOFTWARE\\SolidWorks\\" + swKey + "\\Setup");
+			if (lKey202x != null)
 			{
-				if (nn.ToUpper() == "SOLIDWORKS FOLDER")
+				string[] names = lKey202x.GetValueNames();
+				object value = null;
+				foreach (var nn in names)
 				{
-					value = lKey202x.GetValue("SolidWorks Folder");
-					break;
+					if (nn.ToUpper() == "SOLIDWORKS FOLDER")
+					{
+						value = lKey202x.GetValue("SolidWorks Folder");
+						break;
+					}
 				}
-			}
-			if (value != null)
-			{
-				string fullPath = Path.Combine(value as string, "solidworkstools.dll");
-				if (File.Exists(fullPath))
+				if (value != null)
 				{
-					result = Path.GetDirectoryName(fullPath);
+					string fullPath = Path.Combine(value as string, "solidworkstools.dll");
+					if (File.Exists(fullPath))
+					{
+						result = Path.GetDirectoryName(fullPath);
+					}
 				}
 			}
 		}

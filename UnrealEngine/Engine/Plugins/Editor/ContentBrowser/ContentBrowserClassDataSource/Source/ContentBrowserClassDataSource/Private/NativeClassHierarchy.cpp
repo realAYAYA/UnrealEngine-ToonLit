@@ -14,17 +14,18 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogNativeClassHierarchy, Log, All);
 
-TSharedRef<FNativeClassHierarchyNode> FNativeClassHierarchyNode::MakeFolderEntry(FName InEntryName, FString InEntryPath)
+TSharedRef<FNativeClassHierarchyNode> FNativeClassHierarchyNode::MakeFolderEntry(FName InEntryName, FString InEntryPath, TOptional<EPluginLoadedFrom> LoadedFrom)
 {
 	TSharedRef<FNativeClassHierarchyNode> NewEntry = MakeShareable(new FNativeClassHierarchyNode());
 	NewEntry->Type = ENativeClassHierarchyNodeType::Folder;
 	NewEntry->Class = nullptr;
 	NewEntry->EntryName = InEntryName;
 	NewEntry->EntryPath = MoveTemp(InEntryPath);
+	NewEntry->LoadedFrom = LoadedFrom;
 	return NewEntry;
 }
 
-TSharedRef<FNativeClassHierarchyNode> FNativeClassHierarchyNode::MakeClassEntry(UClass* InClass, FName InClassModuleName, FString InClassModuleRelativePath, FString InEntryPath)
+TSharedRef<FNativeClassHierarchyNode> FNativeClassHierarchyNode::MakeClassEntry(UClass* InClass, FName InClassModuleName, FString InClassModuleRelativePath, FString InEntryPath, TOptional<EPluginLoadedFrom> LoadedFrom)
 {
 	TSharedRef<FNativeClassHierarchyNode> NewEntry = MakeShareable(new FNativeClassHierarchyNode());
 	NewEntry->Type = ENativeClassHierarchyNodeType::Class;
@@ -33,6 +34,7 @@ TSharedRef<FNativeClassHierarchyNode> FNativeClassHierarchyNode::MakeClassEntry(
 	NewEntry->ClassModuleRelativePath = MoveTemp(InClassModuleRelativePath);
 	NewEntry->EntryName = InClass->GetFName();
 	NewEntry->EntryPath = MoveTemp(InEntryPath);
+	NewEntry->LoadedFrom = LoadedFrom;
 	return NewEntry;
 }
 
@@ -404,7 +406,7 @@ void FNativeClassHierarchy::AddClass(UClass* InClass, const TSet<FName>& InGameM
 	}
 
 	// Work out which root this class should go under
-	EPluginLoadedFrom WhereLoadedFrom;
+	TOptional<EPluginLoadedFrom> WhereLoadedFrom;
 	const FName RootNodeName = GetClassPathRootForModule(ClassModuleName, InGameModules, WhereLoadedFrom);
 
 	// Work out the final path to this class within the hierarchy (which isn't the same as the path on disk)
@@ -415,7 +417,7 @@ void FNativeClassHierarchy::AddClass(UClass* InClass, const TSet<FName>& InGameM
 	TSharedPtr<FNativeClassHierarchyNode>& RootNode = RootNodes.FindOrAdd(RootNodeName);
 	if(!RootNode.IsValid())
 	{
-		RootNode = FNativeClassHierarchyNode::MakeFolderEntry(RootNodeName, TEXT("/") + RootNodeName.ToString());
+		RootNode = FNativeClassHierarchyNode::MakeFolderEntry(RootNodeName, TEXT("/") + RootNodeName.ToString(), WhereLoadedFrom);
 		RootNode->LoadedFrom = WhereLoadedFrom;
 		++AddClassMetrics.NumFoldersAdded;
 	}
@@ -430,41 +432,15 @@ void FNativeClassHierarchy::AddClass(UClass* InClass, const TSet<FName>& InGameM
 		TSharedPtr<FNativeClassHierarchyNode>& ChildNode = CurrentNode->Children.FindOrAdd(FNativeClassHierarchyNodeKey(HierarchyPathPartName, ENativeClassHierarchyNodeType::Folder));
 		if(!ChildNode.IsValid())
 		{
-			ChildNode = FNativeClassHierarchyNode::MakeFolderEntry(HierarchyPathPartName, CurrentNode->EntryPath + TEXT("/") + HierarchyPathPart);
+			ChildNode = FNativeClassHierarchyNode::MakeFolderEntry(HierarchyPathPartName, CurrentNode->EntryPath + TEXT("/") + HierarchyPathPart, WhereLoadedFrom);
 			++AddClassMetrics.NumFoldersAdded;
 		}
 		CurrentNode = ChildNode;
 	}
 
 	// Now add the final entry for the class
-	CurrentNode->AddChild(FNativeClassHierarchyNode::MakeClassEntry(InClass, ClassModuleName, ClassModuleRelativePath, CurrentNode->EntryPath + TEXT("/") + InClass->GetName()));
+	CurrentNode->AddChild(FNativeClassHierarchyNode::MakeClassEntry(InClass, ClassModuleName, ClassModuleRelativePath, CurrentNode->EntryPath + TEXT("/") + InClass->GetName(), WhereLoadedFrom));
 	++AddClassMetrics.NumClassesAdded;
-}
-
-void FNativeClassHierarchy::AddFolder(const FString& InClassPath)
-{
-	bool bHasAddedFolder = false;
-
-	// Split the class path and ensure we have nodes for each part
-	TArray<FString> ClassPathParts;
-	InClassPath.ParseIntoArray(ClassPathParts, TEXT("/"), true);
-	TSharedPtr<FNativeClassHierarchyNode> CurrentNode;
-	for(const FString& ClassPathPart : ClassPathParts)
-	{
-		const FName ClassPathPartName = *ClassPathPart;
-		TSharedPtr<FNativeClassHierarchyNode>& ChildNode = (CurrentNode.IsValid()) ? CurrentNode->Children.FindOrAdd(FNativeClassHierarchyNodeKey(ClassPathPartName, ENativeClassHierarchyNodeType::Folder)) : RootNodes.FindOrAdd(ClassPathPartName);
-		if(!ChildNode.IsValid())
-		{
-			ChildNode = FNativeClassHierarchyNode::MakeFolderEntry(ClassPathPartName, CurrentNode->EntryPath + TEXT("/") + ClassPathPart);
-			bHasAddedFolder = true;
-		}
-		CurrentNode = ChildNode;
-	}
-
-	if(bHasAddedFolder)
-	{
-		ClassHierarchyUpdatedDelegate.Broadcast();
-	}
 }
 
 bool FNativeClassHierarchy::GetFileSystemPath(const FString& InClassPath, FString& OutFileSystemPath) const
@@ -527,7 +503,7 @@ bool FNativeClassHierarchy::GetClassPath(const UClass* InClass, FString& OutClas
 	}
 
 	// Work out which root this class should go under
-	EPluginLoadedFrom WhereLoadedFrom;
+	TOptional<EPluginLoadedFrom> WhereLoadedFrom;
 	const FName RootNodeName = GetClassPathRootForModule(ClassModuleName, InCache.GameModules, WhereLoadedFrom);
 
 	// Work out the final path to this class within the hierarchy (which isn't the same as the path on disk)
@@ -581,19 +557,17 @@ FName FNativeClassHierarchy::GetClassModuleName(const UClass* InClass)
 	return NAME_None;
 }
 
-FName FNativeClassHierarchy::GetClassPathRootForModule(const FName& InModuleName, const TSet<FName>& InGameModules, EPluginLoadedFrom& OutWhereLoadedFrom)
+FName FNativeClassHierarchy::GetClassPathRootForModule(const FName& InModuleName, const TSet<FName>& InGameModules, TOptional<EPluginLoadedFrom>& OutWhereLoadedFrom)
 {
 	static const FName EngineRootNodeName = "Classes_Engine";
 	static const FName GameRootNodeName = "Classes_Game";
 
 	// Work out which root this class should go under (anything that isn't a game or plugin module goes under engine)
 	FName RootNodeName = EngineRootNodeName;
-	OutWhereLoadedFrom = EPluginLoadedFrom::Engine;
 
 	if(InGameModules.Contains(InModuleName))
 	{
 		RootNodeName = GameRootNodeName;
-		OutWhereLoadedFrom = EPluginLoadedFrom::Project;
 	}
 	else
 	{

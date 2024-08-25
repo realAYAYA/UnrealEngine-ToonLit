@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "StateTreeModule.h"
+
 #include "StateTreeTypes.h"
 
 #if WITH_STATETREE_DEBUGGER
@@ -10,6 +11,7 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/CoreDelegates.h"
 #include "ProfilingDebugging/TraceAuxiliary.h"
+#include "StateTreeDelegates.h"
 #include "StateTreeSettings.h"
 #include "Trace/StoreClient.h"
 #include "Trace/StoreService.h"
@@ -17,6 +19,10 @@
 #include "TraceServices/ITraceServicesModule.h"
 
 #endif // WITH_STATETREE_DEBUGGER
+
+#if WITH_EDITORONLY_DATA
+#include "StateTreeInstanceData.h"
+#endif // WITH_EDITORONLY_DATA
 
 #define LOCTEXT_NAMESPACE "StateTree"
 
@@ -100,6 +106,10 @@ void FStateTreeModule::StartupModule()
 #endif // !WITH_EDITOR
 
 #endif // WITH_STATETREE_DEBUGGER
+
+#if WITH_EDITORONLY_DATA
+	UE::StateTree::RegisterInstanceDataForLocalization();
+#endif // WITH_EDITORONLY_DATA
 }
 
 void FStateTreeModule::ShutdownModule()
@@ -175,6 +185,12 @@ bool FStateTreeModule::StartTraces(int32& OutTraceId)
 	}
 
 	bIsTracing = true;
+	if (UE::StateTree::Delegates::OnTracingStateChanged.IsBound())
+	{
+		UE_LOG(LogStateTree, Log, TEXT("StateTree traces enabled"));
+		UE::StateTree::Delegates::OnTracingStateChanged.Broadcast(bIsTracing);
+	}
+
 	return bAreTracesStarted;
 #else
 	return false;
@@ -217,6 +233,12 @@ void FStateTreeModule::StopTraces()
 	}
 
 	bIsTracing = false;
+
+	if (UE::StateTree::Delegates::OnTracingStateChanged.IsBound())
+	{
+		UE_LOG(LogStateTree, Log, TEXT("StateTree traces disabled"));
+		UE::StateTree::Delegates::OnTracingStateChanged.Broadcast(bIsTracing);
+	}
 #endif // WITH_STATETREE_DEBUGGER
 }
 

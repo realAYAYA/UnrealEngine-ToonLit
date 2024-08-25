@@ -66,6 +66,61 @@ static TAutoConsoleVariable<int32> CVarMobileUseHWsRGBEncoding(
 	TEXT("1: Use GPU HW to convert linear to sRGB automatically (device must support sRGB write control)\n"),
 	ECVF_RenderThreadSafe);
 
+EMobileTranslucentColorTransmittanceMode MobileDefaultTranslucentColorTransmittanceMode(EShaderPlatform Platform)
+{
+	if (FDataDrivenShaderPlatformInfo::GetSupportsDualSourceBlending(Platform) || IsSimulatedPlatform(Platform))
+	{
+		return EMobileTranslucentColorTransmittanceMode::DUAL_SRC_BLENDING;
+	}
+	if (IsMetalMobilePlatform(Platform) || IsAndroidOpenGLESPlatform(Platform))
+	{
+		return EMobileTranslucentColorTransmittanceMode::PROGRAMMABLE_BLENDING;
+	}
+	return EMobileTranslucentColorTransmittanceMode::SINGLE_SRC_BLENDING;
+}
+
+static bool SupportsTranslucentColorTransmittanceFallback(EShaderPlatform Platform, EMobileTranslucentColorTransmittanceMode Fallback)
+{
+	switch (Fallback)
+	{
+	default:
+		return true;
+	case EMobileTranslucentColorTransmittanceMode::SINGLE_SRC_BLENDING:
+		return IsSimulatedPlatform(Platform) || IsAndroidPlatform(Platform);
+	}
+}
+
+EMobileTranslucentColorTransmittanceMode MobileActiveTranslucentColorTransmittanceMode(EShaderPlatform Platform, bool bExplicitDefaultMode)
+{
+	const EMobileTranslucentColorTransmittanceMode DefaultMode = MobileDefaultTranslucentColorTransmittanceMode(Platform);
+
+	if (DefaultMode == EMobileTranslucentColorTransmittanceMode::DUAL_SRC_BLENDING)
+	{
+		if (!GSupportsDualSrcBlending)
+		{
+			if (SupportsTranslucentColorTransmittanceFallback(Platform, EMobileTranslucentColorTransmittanceMode::PROGRAMMABLE_BLENDING) && GSupportsShaderFramebufferFetch)
+			{
+				return EMobileTranslucentColorTransmittanceMode::PROGRAMMABLE_BLENDING;
+			}
+			else
+			{
+				check(SupportsTranslucentColorTransmittanceFallback(Platform, EMobileTranslucentColorTransmittanceMode::SINGLE_SRC_BLENDING));
+				return EMobileTranslucentColorTransmittanceMode::SINGLE_SRC_BLENDING;
+			}
+		}
+	}
+	else if (DefaultMode == EMobileTranslucentColorTransmittanceMode::PROGRAMMABLE_BLENDING)
+	{
+		if (!GSupportsShaderFramebufferFetch || !GSupportsShaderFramebufferFetchProgrammableBlending)
+		{
+			check(SupportsTranslucentColorTransmittanceFallback(Platform, EMobileTranslucentColorTransmittanceMode::SINGLE_SRC_BLENDING));
+			return EMobileTranslucentColorTransmittanceMode::SINGLE_SRC_BLENDING;
+		}
+	}
+
+	return bExplicitDefaultMode ? DefaultMode : EMobileTranslucentColorTransmittanceMode::DEFAULT;
+}
+
 bool ShouldCacheShaderByPlatformAndOutputFormat(EShaderPlatform Platform, EOutputFormat OutputFormat)
 {
 	bool bSupportsMobileHDR = IsMobileHDR();
@@ -82,21 +137,25 @@ bool ShouldCacheShaderByPlatformAndOutputFormat(EShaderPlatform Platform, EOutpu
 	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassVS##LightMapPolicyName##LDRGamma32, TEXT("/Engine/Private/MobileBasePassVertexShader.usf"), TEXT("Main"), SF_Vertex); \
 	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassVS##LightMapPolicyName##HDRLinear64, TEXT("/Engine/Private/MobileBasePassVertexShader.usf"), TEXT("Main"), SF_Vertex);
 
-#define IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE(LightMapPolicyType,LightMapPolicyName, LocalLightSetting) \
-	typedef TMobileBasePassPS< LightMapPolicyType, LDR_GAMMA_32, false, LocalLightSetting > TMobileBasePassPS##LightMapPolicyName##LDRGamma32##LocalLightSetting; \
-	typedef TMobileBasePassPS< LightMapPolicyType, HDR_LINEAR_64, false, LocalLightSetting > TMobileBasePassPS##LightMapPolicyName##HDRLinear64##LocalLightSetting; \
-	typedef TMobileBasePassPS< LightMapPolicyType, LDR_GAMMA_32, true, LocalLightSetting > TMobileBasePassPS##LightMapPolicyName##LDRGamma32##Skylight##LocalLightSetting; \
-	typedef TMobileBasePassPS< LightMapPolicyType, HDR_LINEAR_64, true, LocalLightSetting > TMobileBasePassPS##LightMapPolicyName##HDRLinear64##Skylight##LocalLightSetting; \
-	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##LDRGamma32##LocalLightSetting, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel); \
-	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##HDRLinear64##LocalLightSetting, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel); \
-	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##LDRGamma32##Skylight##LocalLightSetting, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel); \
-	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##HDRLinear64##Skylight##LocalLightSetting, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel)
+#define IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE2(LightMapPolicyType, LightMapPolicyName, LocalLightSetting, ThinTranslucencyEnum, ThinTranslucencyName) \
+	typedef TMobileBasePassPS< LightMapPolicyType, LDR_GAMMA_32, false, LocalLightSetting, EMobileTranslucentColorTransmittanceMode::ThinTranslucencyEnum > TMobileBasePassPS##LightMapPolicyName##LDRGamma32##LocalLightSetting##ThinTranslucencyName; \
+	typedef TMobileBasePassPS< LightMapPolicyType, HDR_LINEAR_64, false, LocalLightSetting, EMobileTranslucentColorTransmittanceMode::ThinTranslucencyEnum > TMobileBasePassPS##LightMapPolicyName##HDRLinear64##LocalLightSetting##ThinTranslucencyName; \
+	typedef TMobileBasePassPS< LightMapPolicyType, LDR_GAMMA_32, true, LocalLightSetting, EMobileTranslucentColorTransmittanceMode::ThinTranslucencyEnum > TMobileBasePassPS##LightMapPolicyName##LDRGamma32##Skylight##LocalLightSetting##ThinTranslucencyName; \
+	typedef TMobileBasePassPS< LightMapPolicyType, HDR_LINEAR_64, true, LocalLightSetting, EMobileTranslucentColorTransmittanceMode::ThinTranslucencyEnum > TMobileBasePassPS##LightMapPolicyName##HDRLinear64##Skylight##LocalLightSetting##ThinTranslucencyName; \
+	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##LDRGamma32##LocalLightSetting##ThinTranslucencyName, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel); \
+	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##HDRLinear64##LocalLightSetting##ThinTranslucencyName, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel); \
+	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##LDRGamma32##Skylight##LocalLightSetting##ThinTranslucencyName, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel); \
+	IMPLEMENT_MATERIAL_SHADER_TYPE(template<>, TMobileBasePassPS##LightMapPolicyName##HDRLinear64##Skylight##LocalLightSetting##ThinTranslucencyName, TEXT("/Engine/Private/MobileBasePassPixelShader.usf"), TEXT("Main"), SF_Pixel);
 
-#define IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_SHADER_TYPE(LightMapPolicyType,LightMapPolicyName) \
+#define IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE(LightMapPolicyType, LightMapPolicyName, LocalLightSetting) \
+	IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE2(LightMapPolicyType, LightMapPolicyName, LocalLightSetting, DEFAULT,) \
+	IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE2(LightMapPolicyType, LightMapPolicyName, LocalLightSetting, SINGLE_SRC_BLENDING, ThinTranslGrey)
+
+#define IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_SHADER_TYPE(LightMapPolicyType, LightMapPolicyName) \
 	IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_VERTEX_SHADER_TYPE(LightMapPolicyType, LightMapPolicyName) \
 	IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE(LightMapPolicyType, LightMapPolicyName, LOCAL_LIGHTS_DISABLED) \
 	IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE(LightMapPolicyType, LightMapPolicyName, LOCAL_LIGHTS_ENABLED) \
-	IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE(LightMapPolicyType, LightMapPolicyName, LOCAL_LIGHTS_PREPASS_ENABLED)
+	IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_PIXEL_SHADER_TYPE(LightMapPolicyType, LightMapPolicyName, LOCAL_LIGHTS_BUFFER)
 
 // Implement shader types per lightmap policy 
 IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_SHADER_TYPE(TUniformLightMapPolicy<LMP_NO_LIGHTMAP>, FNoLightMapPolicy);
@@ -109,6 +168,26 @@ IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_SHADER_TYPE(TUniformLightMapPolicy
 IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_SHADER_TYPE(TUniformLightMapPolicy<LMP_MOBILE_MOVABLE_DIRECTIONAL_LIGHT_WITH_LIGHTMAP>, FMobileMovableDirectionalLightWithLightmapPolicy);
 IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_SHADER_TYPE(TUniformLightMapPolicy<LMP_MOBILE_MOVABLE_DIRECTIONAL_LIGHT_CSM_WITH_LIGHTMAP>, FMobileMovableDirectionalLightCSMWithLightmapPolicy);
 IMPLEMENT_MOBILE_SHADING_BASEPASS_LIGHTMAPPED_SHADER_TYPE(TUniformLightMapPolicy<LMP_MOBILE_DIRECTIONAL_LIGHT_CSM>, FMobileDirectionalLightAndCSMPolicy);
+
+bool MaterialRequiresColorTransmittanceBlending(const FMaterialShaderParameters& MaterialParameters)
+{
+	return MaterialParameters.ShadingModels.HasShadingModel(MSM_ThinTranslucent) || MaterialParameters.BlendMode == BLEND_TranslucentColoredTransmittance;
+}
+
+bool ShouldCacheShaderForColorTransmittanceFallback(const FMaterialShaderPermutationParameters& Parameters, const EMobileTranslucentColorTransmittanceMode TranslucentColorTransmittanceFallback)
+{
+	if (TranslucentColorTransmittanceFallback == EMobileTranslucentColorTransmittanceMode::DEFAULT)
+	{
+		return true;
+	}
+	
+	if (!MaterialRequiresColorTransmittanceBlending(Parameters.MaterialParameters))
+	{
+		return false;
+	}
+
+	return SupportsTranslucentColorTransmittanceFallback(Parameters.Platform, TranslucentColorTransmittanceFallback);
+}
 
 // shared defines for mobile base pass VS and PS
 void MobileBasePassModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment, EOutputFormat OutputFormat)
@@ -137,6 +216,13 @@ void MobileBasePassModifyCompilationEnvironment(const FMaterialShaderPermutation
 	// translucency is in the same subpass with deferred shading shaders, so it has access to GBuffer
 	const bool bDeferredShadingSubpass = (bDeferredShadingEnabled && bTranslucentMaterial && !Parameters.MaterialParameters.bIsMobileSeparateTranslucencyEnabled);
 	OutEnvironment.SetDefine(TEXT("IS_MOBILE_DEFERREDSHADING_SUBPASS"), bDeferredShadingSubpass ? 1u : 0u);
+
+	// HLSLcc does not support dual source blending, so force DXC if needed
+	if (bTranslucentMaterial && FDataDrivenShaderPlatformInfo::GetSupportsDxc(Parameters.Platform) && IsHlslccShaderPlatform(Parameters.Platform) &&
+		MaterialRequiresColorTransmittanceBlending(Parameters.MaterialParameters) && MobileDefaultTranslucentColorTransmittanceMode(Parameters.Platform) == EMobileTranslucentColorTransmittanceMode::DUAL_SRC_BLENDING)
+	{
+		OutEnvironment.CompilerFlags.Add(CFLAG_ForceDXC);
+	}
 }
 
 template<typename LightMapPolicyType>
@@ -217,6 +303,8 @@ void SetupMobileBasePassUniformParameters(
 	{
 		AmbientOcclusionTexture = MobileBasePassTextures.ScreenSpaceAO;
 	}
+	
+	BasePassParameters.DBuffer = GetDBufferParameters(GraphBuilder, MobileBasePassTextures.DBufferTextures, View.GetShaderPlatform());
 
 	BasePassParameters.AmbientOcclusionTexture = AmbientOcclusionTexture;
 	BasePassParameters.AmbientOcclusionSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
@@ -244,8 +332,10 @@ void SetupMobileBasePassUniformParameters(
 	}
 	BasePassParameters.RWOcclusionBufferUAV = GraphBuilder.CreateUAV(OcclusionBuffer);
 
-	// Strata
-	Strata::BindStrataMobileForwardPasslUniformParameters(GraphBuilder, View, BasePassParameters.Strata);
+	// Substrate
+	Substrate::BindSubstrateMobileForwardPasslUniformParameters(GraphBuilder, View, BasePassParameters.Substrate);
+
+	BasePassParameters.LFV = View.LocalFogVolumeViewData.UniformParametersStruct;
 
 	SetupReflectionUniformParameters(GraphBuilder, View, BasePassParameters.ReflectionsParameters);
 }
@@ -286,9 +376,6 @@ void SetupMobileDirectionalLightUniformParameters(
 	bool bDynamicShadows,
 	FMobileDirectionalLightShaderParameters& Params)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnRenderThread() != 0);
-
 	ERHIFeatureLevel::Type FeatureLevel = Scene.GetFeatureLevel();
 	FLightSceneInfo* Light = Scene.MobileDirectionalLights[ChannelIdx];
 	if (Light)
@@ -301,13 +388,8 @@ void SetupMobileDirectionalLightUniformParameters(
 		Params.DirectionalLightDistanceFadeMADAndSpecularScale.Y = -FadeParams.X * FadeParams.Y;
 		Params.DirectionalLightDistanceFadeMADAndSpecularScale.Z = Light->Proxy->GetSpecularScale();
 
-		int32 ShadowMapChannel = Light->Proxy->GetShadowMapChannel();
+		const int32 ShadowMapChannel = IsStaticLightingAllowed() ? Light->Proxy->GetShadowMapChannel() : INDEX_NONE;
 		int32 DynamicShadowMapChannel = Light->GetDynamicShadowMapChannel();
-
-		if (!bAllowStaticLighting)
-		{
-			ShadowMapChannel = INDEX_NONE;
-		}
 
 		// Static shadowing uses ShadowMapChannel, dynamic shadows are packed into light attenuation using DynamicShadowMapChannel
 		Params.DirectionalLightShadowMapChannelMask =
@@ -345,6 +427,7 @@ void SetupMobileDirectionalLightUniformParameters(
 					}
 					Params.DirectionalLightScreenToShadow[OutShadowIndex] = FMatrix44f(ShadowInfo->GetScreenToShadowMatrix(SceneView));		// LWC_TODO: Precision loss?
 					Params.DirectionalLightShadowDistances[OutShadowIndex] = ShadowInfo->CascadeSettings.SplitFar;
+					Params.DirectionalLightNumCascades++;
 					OutShadowIndex++;
 				}
 			}
@@ -357,22 +440,34 @@ void SetupMobileSkyReflectionUniformParameters(FSkyLightSceneProxy* SkyLight, FM
 	float Brightness = 0.f;
 	float SkyMaxMipIndex = 0.f;
 	FTexture* CaptureTexture = GBlackTextureCube;
+	FTexture* CaptureTextureBlend = GBlackTextureCube;
+	float BlendFraction = 0.f;
 
+	bool bSkyLightIsDynamic = false;
 	if (SkyLight && SkyLight->ProcessedTexture)
 	{
 		check(SkyLight->ProcessedTexture->IsInitialized());
 		CaptureTexture = SkyLight->ProcessedTexture;
 		SkyMaxMipIndex = FMath::Log2(static_cast<float>(CaptureTexture->GetSizeX()));
 		Brightness = SkyLight->AverageBrightness;
+		bSkyLightIsDynamic = !SkyLight->bHasStaticLighting && !SkyLight->bWantsStaticShadowing;
+
+		BlendFraction = SkyLight->BlendFraction;
+		if (BlendFraction > 0.0 && SkyLight->BlendDestinationProcessedTexture)
+		{
+			CaptureTextureBlend = SkyLight->BlendDestinationProcessedTexture;
+		}
 	}
 	
 	//To keep ImageBasedReflectionLighting coherence with PC, use AverageBrightness instead of InvAverageBrightness to calculate the IBL contribution
-	Parameters.Params = FVector4f(Brightness, SkyMaxMipIndex, 0.f, 0.f);
+	Parameters.Params = FVector4f(Brightness, SkyMaxMipIndex, bSkyLightIsDynamic ? 1.0f : 0.0f, BlendFraction);
 	Parameters.Texture = CaptureTexture->TextureRHI;
 	Parameters.TextureSampler = CaptureTexture->SamplerStateRHI;
+	Parameters.TextureBlend = CaptureTextureBlend->TextureRHI;
+	Parameters.TextureBlendSampler = CaptureTextureBlend->SamplerStateRHI;
 }
 
-void FMobileSceneRenderer::RenderMobileBasePass(FRHICommandList& RHICmdList, const FViewInfo& View)
+void FMobileSceneRenderer::RenderMobileBasePass(FRHICommandList& RHICmdList, const FViewInfo& View, const FInstanceCullingDrawParams* InstanceCullingDrawParams)
 {
 	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(RenderBasePass);
 	SCOPED_DRAW_EVENT(RHICmdList, MobileBasePass);
@@ -380,11 +475,11 @@ void FMobileSceneRenderer::RenderMobileBasePass(FRHICommandList& RHICmdList, con
 	SCOPED_GPU_STAT(RHICmdList, Basepass);
 
 	RHICmdList.SetViewport(View.ViewRect.Min.X, View.ViewRect.Min.Y, 0, View.ViewRect.Max.X, View.ViewRect.Max.Y, 1);
-	View.ParallelMeshDrawCommandPasses[EMeshPass::BasePass].DispatchDraw(nullptr, RHICmdList, &MeshPassInstanceCullingDrawParams[EMeshPass::BasePass]);
+	View.ParallelMeshDrawCommandPasses[EMeshPass::BasePass].DispatchDraw(nullptr, RHICmdList, InstanceCullingDrawParams);
 		
 	if (View.Family->EngineShowFlags.Atmosphere)
 	{
-		View.ParallelMeshDrawCommandPasses[EMeshPass::SkyPass].DispatchDraw(nullptr, RHICmdList, &MeshPassInstanceCullingDrawParams[EMeshPass::SkyPass]);
+		View.ParallelMeshDrawCommandPasses[EMeshPass::SkyPass].DispatchDraw(nullptr, RHICmdList, &SkyPassInstanceCullingDrawParams);
 	}
 
 	// editor primitives
@@ -392,10 +487,10 @@ void FMobileSceneRenderer::RenderMobileBasePass(FRHICommandList& RHICmdList, con
 	DrawRenderState.SetBlendState(TStaticBlendStateWriteMask<CW_RGBA>::GetRHI());
 	DrawRenderState.SetDepthStencilAccess(Scene->DefaultBasePassDepthStencilAccess);
 	DrawRenderState.SetDepthStencilState(TStaticDepthStencilState<true, CF_DepthNearOrEqual>::GetRHI());
-	RenderMobileEditorPrimitives(RHICmdList, View, DrawRenderState);
+	RenderMobileEditorPrimitives(RHICmdList, View, DrawRenderState, InstanceCullingDrawParams);
 }
 
-void FMobileSceneRenderer::RenderMobileEditorPrimitives(FRHICommandList& RHICmdList, const FViewInfo& View, const FMeshPassProcessorRenderState& DrawRenderState)
+void FMobileSceneRenderer::RenderMobileEditorPrimitives(FRHICommandList& RHICmdList, const FViewInfo& View, const FMeshPassProcessorRenderState& DrawRenderState, const FInstanceCullingDrawParams* InstanceCullingDrawParams)
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_EditorDynamicPrimitiveDrawTime);
 	SCOPED_DRAW_EVENT(RHICmdList, DynamicEd);
@@ -447,8 +542,35 @@ void FMobileSceneRenderer::RenderMobileEditorPrimitives(FRHICommandList& RHICmdL
 				PassMeshProcessor.AddMeshBatch(MeshBatch, DefaultBatchElementMask, nullptr);
 			}
 		});
+		
+		// DrawDynamicMeshPass may change BatchedPrimitive binding, so we need to restore it
+		FUniformBufferStaticSlot BatchedPrimitiveSlot = FInstanceCullingContext::GetUniformBufferViewStaticSlot(View.GetShaderPlatform());
+		if (IsUniformBufferStaticSlotValid(BatchedPrimitiveSlot) && InstanceCullingDrawParams->BatchedPrimitive)
+		{
+			FRHIUniformBuffer* BatchedPrimitiveBufferRHI = InstanceCullingDrawParams->BatchedPrimitive.GetUniformBuffer()->GetRHI();
+			check(BatchedPrimitiveBufferRHI);
+			RHICmdList.SetStaticUniformBuffer(BatchedPrimitiveSlot, BatchedPrimitiveBufferRHI);
+		}
 
 		// Draw the view's batched simple elements(lines, sprites, etc).
 		View.TopBatchedViewElements.Draw(RHICmdList, DrawRenderState, FeatureLevel, View, false);
 	}
 }
+
+#if UE_ENABLE_DEBUG_DRAWING
+void FMobileSceneRenderer::RenderMobileDebugPrimitives(FRHICommandList& RHICmdList, const FViewInfo& View)
+{
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_DebugDynamicPrimitiveDrawTime);
+	SCOPED_DRAW_EVENT(RHICmdList, DynamicDebug);
+
+	FMeshPassProcessorRenderState DrawRenderState;
+	DrawRenderState.SetDepthStencilAccess(FExclusiveDepthStencil::DepthWrite_StencilWrite);
+	DrawRenderState.SetBlendState(TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_One, BO_Add, BF_One, BF_One>::GetRHI());
+		
+	DrawRenderState.SetDepthStencilState(TStaticDepthStencilState<true, CF_DepthNearOrEqual>::GetRHI());
+	View.DebugSimpleElementCollector.DrawBatchedElements(RHICmdList, DrawRenderState, View, EBlendModeFilter::OpaqueAndMasked, SDPG_World);
+
+	DrawRenderState.SetDepthStencilState(TStaticDepthStencilState<true, CF_Always>::GetRHI());
+	View.DebugSimpleElementCollector.DrawBatchedElements(RHICmdList, DrawRenderState, View, EBlendModeFilter::OpaqueAndMasked, SDPG_Foreground);
+}
+#endif

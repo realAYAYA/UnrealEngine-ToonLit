@@ -1,26 +1,55 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#define SPLIT_WORK_QUEUE 1 							// TODO: Remove once shader rewriter has been fixed (UE-202409)
+#define OCCLUDED_PATCHES_QUEUE (CULLING_PASS == 1)	// TODO: Remove once shader rewriter has been fixed (UE-202409)
+
 #include "../Common.ush"
 #include "../SceneData.ush"
 #include "NaniteAttributeDecode.ush"
 #include "NaniteTessellation.ush"
 #include "NaniteHZBCull.ush"
 #include "NaniteCullingCommon.ush"
+#include "NaniteVertexDeformation.ush"
 #if VIRTUAL_TEXTURE_TARGET
 #include "../VirtualShadowMaps/VirtualShadowMapPageOverlap.ush"
 #endif
 
 #if NANITE_TESSELLATION
+#if PATCHSPLIT_PASS
+
+// [ Nießner and Loop 2021, "Patch-Based Occlusion Culling for Hardware Tessellation" ]
+// Input cone bounds normalized displacement directions
+void DisplaceBounds( float3 ConeCenter, float ConeCos, float DisplacementMin, float DisplacementMax, inout float3 BoundsMin, inout float3 BoundsMax )
+{
+	// A (-/+) B == cos( acos(ConeCenter) (+/-) acos(ConeCos) )
+	float3 A = ConeCos * abs( ConeCenter );
+	float3 B = sqrt( saturate( 1 - Pow2( ConeCos ) ) * saturate( 1 - Pow2( ConeCenter ) ) );
+
+	float3 CapMin = A - B;
+	float3 CapMax = A + B;
+	
+	CapMax = select( abs( ConeCenter ) >= ConeCos, 1.0, CapMax );
+
+	float3 DisplaceMin3 = ( DisplacementMin > 0 ? CapMin : CapMax ) * DisplacementMin;
+	float3 DisplaceMax3 = ( DisplacementMax > 0 ? CapMax : CapMin ) * DisplacementMax;
+
+	BoundsMin += select( ConeCenter >= 0, DisplaceMin3, -DisplaceMax3 );
+	BoundsMax += select( ConeCenter >= 0, DisplaceMax3, -DisplaceMin3 );
+}
 
 uint RegularMaterialRasterSlotCount;
-ByteAddressBuffer MaterialSlotTable;
 StructuredBuffer<FNaniteRasterBinMeta> RasterBinMeta;
+
+#if WRITE_STATS
+RWStructuredBuffer<FNaniteStats> OutStatsBuffer;
+#endif
 
 struct FSplitTask
 {
 	FTessellatedPatch	TessellatedPatch;
 	
 	uint4		Encoded;
+	uint		QueueOffset;
 
 	void		Init( uint VisibleClusterIndex, uint TriIndex );
 
@@ -34,7 +63,7 @@ struct FSplitTask
 	uint		Run();
 
 	FSplitTask	CreateChild( uint ParentLaneIndex );
-	void		RunChild( uint LocalItemIndex );
+	void		RunChild( inout FSplitTask ParentTask, bool bActive, uint LocalItemIndex );
 };
 
 void FSplitTask::Init( uint VisibleClusterIndex, uint TriIndex )
@@ -49,6 +78,7 @@ template< typename QueueType >
 bool FSplitTask::Load( QueueType WorkQueue, uint Offset )
 {
 	checkSlow( Offset < WorkQueue.Size );
+	QueueOffset = Offset;
 	Encoded = WorkQueue.DataBuffer.Load4( Offset * 16 );
 
 	return
@@ -75,16 +105,22 @@ void FSplitTask::Clear( QueueType WorkQueue, uint Offset )
 {
 	// TODO this could be at if( bIsBoundary ) at end of DistributeWork loop if latency is important.
 	WorkQueue.ReleaseTask();
-	WorkQueue.DataBuffer.Store4( Offset * 16, ~0u );
+	if( QueueOffset != ~0u )
+		WorkQueue.DataBuffer.Store4( Offset * 16, ~0u );
 }
 
 uint FSplitTask::Run()
 {
+#if WRITE_STATS
+	WaveInterlockedAddScalar(OutStatsBuffer[0].NumCandidateSplitPatches, 1u);
+#endif
+
 	FSplitPatch Patch;
 	Patch.Decode( Encoded );
 
 	FVisibleCluster VisibleCluster = GetVisibleCluster( Patch.VisibleClusterIndex, VIRTUAL_TEXTURE_TARGET );
 	FInstanceSceneData InstanceData = GetInstanceSceneData( VisibleCluster.InstanceId, false );
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData( InstanceData.PrimitiveId );
 	FNaniteView NaniteView = GetNaniteView( VisibleCluster.ViewId );
 	
 	FInstanceDynamicData InstanceDynamicData = CalculateInstanceDynamicData( NaniteView, InstanceData );
@@ -93,32 +129,19 @@ uint FSplitTask::Run()
 
 	const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
 
-#if ACCURATE_DISPLACEMENT_BOUNDS
-	const bool bSecondaryBin = !bWPOEnabled; // use secondary bin where applicable when WPO disabled
-	const uint RasterBin = GetMaterialRasterBin(Cluster, InstanceData.PrimitiveId, Patch.TriIndex, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryBin, MaterialSlotTable);
-#endif
-
 	uint3 VertIndexes = DecodeTriangleIndices( Cluster, Patch.TriIndex );
-	float3 Verts[3] = 
-	{
-		DecodePosition( VertIndexes.x, Cluster ),
-		DecodePosition( VertIndexes.y, Cluster ),
-		DecodePosition( VertIndexes.z, Cluster ),
-	};
 
-	FNaniteRawAttributeData RawAttributeData[3];
-	GetRawAttributeData3( RawAttributeData, Cluster, VertIndexes, 0 );
+	const uint MaxTexCoords = 0; // UVs are unused here
+	FNanitePostDeformVertex Verts[3];
+	FetchAndDeformLocalNaniteTriangle( PrimitiveData, InstanceData, Cluster, VertIndexes, MaxTexCoords, Verts );
 
-	// TODO: Handle GetPrimitiveData(InstanceData.PrimitiveId).MaxWPOExtent?
+	// TODO: Handle PrimitiveData.MaxWPOExtent?
 #if DISABLE_DISPLACEMENT_BOUNDS
 	const float DisplacementMin = 0.0f;
 	const float DisplacementMax = 0.0f;
-#elif ACCURATE_DISPLACEMENT_BOUNDS
-	const float DisplacementMin = RasterBinMeta[RasterBin].MinMaterialDisplacement;
-	const float DisplacementMax = RasterBinMeta[RasterBin].MaxMaterialDisplacement;
 #else
-	const float DisplacementMin = GetPrimitiveData(InstanceData.PrimitiveId).MinMaterialDisplacement;
-	const float DisplacementMax = GetPrimitiveData(InstanceData.PrimitiveId).MaxMaterialDisplacement;
+	const float DisplacementMin = PrimitiveData.MinMaterialDisplacement;
+	const float DisplacementMax = PrimitiveData.MaxMaterialDisplacement;
 #endif
 
 	float3 BoundsMin = +INFINITE_FLOAT;
@@ -129,21 +152,21 @@ uint FSplitTask::Run()
 	float3 NormalLocal[3];
 	for( int i = 0; i < 3; i++ )
 	{
-		float3 PointLocal = 
-			Verts[0] * Patch.Barycentrics[i].x +
-			Verts[1] * Patch.Barycentrics[i].y +
-			Verts[2] * Patch.Barycentrics[i].z;
+		float3 PointPostDeform = 
+			Verts[0].Position * Patch.Barycentrics[i].x +
+			Verts[1].Position * Patch.Barycentrics[i].y +
+			Verts[2].Position * Patch.Barycentrics[i].z;
 
-		BoundsMin = min( BoundsMin, PointLocal );
-		BoundsMax = max( BoundsMax, PointLocal );
+		BoundsMin = min( BoundsMin, PointPostDeform );
+		BoundsMax = max( BoundsMax, PointPostDeform );
 
-		float3 PointTranslatedWorld = mul( float4( PointLocal, 1 ), InstanceDynamicData.LocalToTranslatedWorld ).xyz;
+		float3 PointTranslatedWorld = mul( float4( PointPostDeform, 1 ), InstanceDynamicData.LocalToTranslatedWorld ).xyz;
 		PointView[i] = mul( float4( PointTranslatedWorld, 1 ), NaniteView.TranslatedWorldToView ).xyz;
 
 		NormalLocal[i] = 
-			RawAttributeData[0].TangentZ * Patch.Barycentrics[i].x +
-			RawAttributeData[1].TangentZ * Patch.Barycentrics[i].y +
-			RawAttributeData[2].TangentZ * Patch.Barycentrics[i].z;
+			Verts[0].Normal * Patch.Barycentrics[i].x +
+			Verts[1].Normal * Patch.Barycentrics[i].y +
+			Verts[2].Normal * Patch.Barycentrics[i].z;
 		NormalLocal[i] = normalize( NormalLocal[i] );
 
 		AvgNormal += NormalLocal[i];
@@ -155,6 +178,8 @@ uint FSplitTask::Run()
 		dot( AvgNormal, NormalLocal[1] ),
 		dot( AvgNormal, NormalLocal[2] ) );
 
+	DisplaceBounds( AvgNormal, ConeCos, DisplacementMin, DisplacementMax, BoundsMin, BoundsMax );
+
 #if 0
 	// Back face cull
 	float3x3 M = { PointView[0], PointView[1], PointView[2] };
@@ -163,23 +188,12 @@ uint FSplitTask::Run()
 		return 0;
 #endif
 
-	// A (-/+) B == cos( acos(AvgNormal) (+/-) acos(ConeCos) )
-	float3 A = ConeCos * abs( AvgNormal );
-	float3 B = sqrt( ( 1 - Pow2( ConeCos ) ) * ( 1 - Pow2( AvgNormal ) ) );
-
-	float3 CapMin = A - B;
-	float3 CapMax = A + B;
-	
-	CapMax = select( abs( AvgNormal ) >= ConeCos, 1.0, CapMax );
-
-	float3 DisplaceMin3 = ( DisplacementMin > 0 ? CapMin : CapMax ) * DisplacementMin;
-	float3 DisplaceMax3 = ( DisplacementMax > 0 ? CapMax : CapMin ) * DisplacementMax;
-
-	BoundsMin += select( AvgNormal >= 0, DisplaceMin3, -DisplaceMax3 );
-	BoundsMax += select( AvgNormal >= 0, DisplaceMax3, -DisplaceMin3 );
-
 	float3 BoundsCenter = 0.5 * ( BoundsMax + BoundsMin );
 	float3 BoundsExtent = 0.5 * ( BoundsMax - BoundsMin );
+
+	// Extend the bounds for WPO
+	// NOTE: always extend the bounds if any material ignores the Enable WPO flag
+	BoundsExtent += GetLocalMaxWPOExtent( PrimitiveData, InstanceData, bWPOEnabled );
 
 	FBoxCull Cull;
 	Cull.Init( NaniteView, BoundsCenter, BoundsExtent, InstanceData.NonUniformScale.xyz, InstanceDynamicData.LocalToTranslatedWorld, InstanceDynamicData.PrevLocalToTranslatedWorld );
@@ -187,8 +201,9 @@ uint FSplitTask::Run()
 	Cull.GlobalClipPlane();
 
 #if VIRTUAL_TEXTURE_TARGET
+	const bool bCacheAsStatic = (VisibleCluster.Flags & NANITE_CULLING_FLAG_CACHE_AS_STATIC) != 0u;
 	const bool bHasMoved = InstanceDynamicData.bHasMoved || bWPOEnabled;
-	Cull.PageFlagMask = GetPageFlagMaskForRendering(InstanceData, NaniteView, bHasMoved);
+	Cull.PageFlagMask = GetPageFlagMaskForRendering(bCacheAsStatic, bHasMoved);
 #endif
 
 	Cull.FrustumHZB( true );
@@ -198,7 +213,16 @@ uint FSplitTask::Run()
 
 	float3 TessFactors = GetTessFactors( NaniteView, PointView );
 
-	bool bNeedsSplitting = max3( TessFactors.x, TessFactors.y, TessFactors.z ) > TessellationTable_Size;
+#if 0 // Avoid infinite recursion
+	for( int i = 0; i < 3; i++ )
+	{
+		float3 Delta = Patch.Barycentrics[i] - Patch.Barycentrics[ (i + 1) % 3 ];
+		bool bEdgeTooShort = min3( Delta.x, Delta.y, Delta.z ) < (2.0 / BarycentricMax);
+		TessFactors[i] = bEdgeTooShort ? 1.0 : TessFactors[i];
+	}
+#endif
+
+	bool bNeedsSplitting = max3( TessFactors.x, TessFactors.y, TessFactors.z ) > NANITE_TESSELLATION_TABLE_SIZE;
 
 	if( Cull.bWasOccluded )
 	{
@@ -210,38 +234,40 @@ uint FSplitTask::Run()
 		}
 	#endif
 	}
-	else if( !bNeedsSplitting )
+	else 
 	{
-		if( Cull.bNeedsClipping )
-			return 0;
+	#if WRITE_STATS
+		WaveInterlockedAddScalar(OutStatsBuffer[0].NumVisibleSplitPatches, 1u);
+	#endif
 
-		uint WriteOffset;
-		WaveInterlockedAddScalar_( RWVisiblePatchesArgs[3], 1, WriteOffset );
-		if( WriteOffset < VisiblePatchesSize )
+		if( bNeedsSplitting )
+			TessFactors = min( GetSplitFactors( TessFactors ), 8 );
+
+		TessellatedPatch.Init( TessFactors, Encoded.yzw, false );
+
+		if( !bNeedsSplitting )
 		{
-			RWVisiblePatches.Store4( WriteOffset * 16, Encoded );
-
-		#if 0
-			uint RasterBin = GetMaterialRasterBin( Cluster, InstanceData.PrimitiveId, Patch.TriIndex, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, /* secondary bin */ false, MaterialSlotTable );
-
-			// Scalarize atomics
-			while( true )
+			uint WriteOffset;
+			WaveInterlockedAddScalar_( RWVisiblePatchesArgs[3], 1, WriteOffset );
+			if( WriteOffset < VisiblePatchesSize )
 			{
-				const uint UniformBinIndex = WaveReadLaneFirst( RasterBin );
-				if( UniformBinIndex == RasterBin )
-				{
-					WaveInterlockedAddScalar( OutRasterBinMeta[ UniformBinIndex ].BinSWCount, 1 );
-					break;
-				}
+			#if NANITE_TESSELLATION_PATCH_REFS
+				RWVisiblePatches.Store2( WriteOffset * 8, uint2( QueueOffset, TessellatedPatch.GetPattern() ) );
+				SplitWorkQueue.DataBuffer.Store4( QueueOffset * 16, Encoded );
+				QueueOffset = ~0u;
+			#else
+				RWVisiblePatches.Store4( WriteOffset * 16, Encoded );
+			#endif
+
+			#if WRITE_STATS
+				WaveInterlockedAddScalar(OutStatsBuffer[0].NumDicedTrianglesPatches, TessellatedPatch.GetNumTris());
+			#endif
 			}
-		#endif
 		}
-	}
-	else
-	{
-		float3 SplitFactors = min( GetSplitFactors( TessFactors ), 8 );
-		TessellatedPatch.Init( SplitFactors, Encoded.yzw );
-		return TessellatedPatch.GetNumTris();
+		else
+		{
+			return TessellatedPatch.GetNumTris();
+		}
 	}
 
 	return 0;
@@ -255,8 +281,11 @@ FSplitTask FSplitTask::CreateChild( uint ParentLaneIndex )
 	return ChildTask;
 }
 
-void FSplitTask::RunChild( uint LocalItemIndex )
+void FSplitTask::RunChild( inout FSplitTask ParentTask, bool bActive, uint LocalItemIndex )
 {
+	if ( !bActive )
+		return;
+
 	FSplitPatch Patch;
 	Patch.Decode( Encoded );
 		
@@ -265,14 +294,17 @@ void FSplitTask::RunChild( uint LocalItemIndex )
 	for( int i = 0; i < 3; i++ )
 	{
 		float3 Barycentrics = TessellatedPatch.GetVert( VertIndexes[i] );
-
-		Barycentrics = 
-			Patch.Barycentrics[0] * Barycentrics.x +
-			Patch.Barycentrics[1] * Barycentrics.y +
-			Patch.Barycentrics[2] * Barycentrics.z;
+		Barycentrics = Patch.TransformBarycentrics( Barycentrics );
 		
 		Encoded[ i + 1 ] = EncodeBarycentrics( Barycentrics );
 	}
+
+#if 0 // Do not emit degenerates
+	if( Encoded[1] == Encoded[2] ||
+		Encoded[2] == Encoded[3] ||
+		Encoded[3] == Encoded[1] )
+		return;
+#endif
 
 	uint WriteOffset = SplitWorkQueue.Add();
 	DeviceMemoryBarrier();
@@ -289,9 +321,34 @@ void FSplitTask::RunChild( uint LocalItemIndex )
 }
 
 [numthreads(THREADGROUP_SIZE, 1, 1)]
-void PatchSplit() 
+void PatchSplit( uint GroupIndex : SV_GroupIndex )
 {
-	GlobalTaskLoopVariable< FSplitTask >( SplitWorkQueue );
+	GlobalTaskLoopVariable< FSplitTask >( SplitWorkQueue, GroupIndex );
 }
 
-#endif
+#else	// PATCHSPLIT_PASS
+
+RWBuffer<uint> OutClearQueueArgs;
+
+[numthreads(1, 1, 1)]
+void InitClearQueueArgs()
+{
+	const uint NumElements = min(SplitWorkQueue.StateBuffer[0].WriteOffset, SplitWorkQueue.Size);
+	OutClearQueueArgs[0] = (NumElements + 63) / 64;
+	OutClearQueueArgs[1] = 1;
+	OutClearQueueArgs[2] = 1;
+}
+
+[numthreads(64, 1, 1)]
+void ClearQueue(uint DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint NumElements = min(SplitWorkQueue.StateBuffer[0].WriteOffset, SplitWorkQueue.Size);
+	if (DispatchThreadID < NumElements)
+	{
+		SplitWorkQueue.DataBuffer.Store4(DispatchThreadID * 16, ~0u);
+	}
+}
+
+#endif	// PATCHSPLIT_PASS
+
+#endif	// NANITE_TESSELLATION

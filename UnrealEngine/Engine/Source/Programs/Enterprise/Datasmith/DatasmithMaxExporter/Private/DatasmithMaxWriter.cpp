@@ -6,7 +6,7 @@
 #include "MaxMaterialsToUEPbr/DatasmithMaxMaterialsToUEPbr.h"
 #include "DatasmithExportOptions.h"
 #include "DatasmithSceneFactory.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxLogger.h"
 #include "Misc/Paths.h"
 

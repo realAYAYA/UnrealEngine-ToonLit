@@ -7,6 +7,7 @@
 #include "Containers/UnrealString.h"
 #include "Containers/Array.h"
 #include <CoreServices/CoreServices.h>
+#include "Misc/ScopeRWLock.h"
 
 class FDirectoryWatchRequestMac
 {
@@ -39,6 +40,7 @@ private:
 	TArray<FWatchDelegate> Delegates;
 	/** Each FFileChangeData tracks whether it is a directory or not */
 	TArray<TPair<FFileChangeData, bool>> FileChanges;
+	FRWLock FileChangesLock;
 
 	friend void DirectoryWatchMacCallback( ConstFSEventStreamRef StreamRef, void* WatchRequestPtr, size_t EventCount, void* EventPaths, const FSEventStreamEventFlags EventFlags[], const FSEventStreamEventId EventIDs[] );
 

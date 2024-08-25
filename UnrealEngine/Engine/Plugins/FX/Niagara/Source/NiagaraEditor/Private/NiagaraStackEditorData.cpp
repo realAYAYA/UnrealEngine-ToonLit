@@ -2,6 +2,9 @@
 
 #include "NiagaraStackEditorData.h"
 
+#include "NiagaraNodeFunctionCall.h"
+#include "ViewModels/Stack/NiagaraStackModuleItem.h"
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraStackEditorData)
 
 bool UNiagaraStackEditorData::GetStackEntryIsRenamePending(const FString& StackEntryKey) const
@@ -70,6 +73,60 @@ void UNiagaraStackEditorData::SetStackEntryWasExpandedPreSearch(const FString& S
 	if (ensureMsgf(StackEntryKey.IsEmpty() == false, TEXT("Can not set the pre-search expanded state with an empty key")))
 	{
 		StackEntryKeyToPreSearchExpandedMap.FindOrAdd(StackEntryKey) = bWasExpandedPreSearch;
+	}
+}
+
+const TMap<FString, FNiagaraStackNoteData>& UNiagaraStackEditorData::GetAllStackNotes()
+{
+	return StackNotes;
+}
+
+TOptional<FNiagaraStackNoteData> UNiagaraStackEditorData::GetStackNote(const FString& StackEntryKey)
+{
+	if(StackNotes.Contains(StackEntryKey))
+	{
+		return StackNotes[StackEntryKey];
+	}
+
+	return {};
+}
+
+bool UNiagaraStackEditorData::HasStackNote(const FString& StackEntryKey)
+{
+	if(StackNotes.Contains(StackEntryKey))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+void UNiagaraStackEditorData::AddOrReplaceStackNote(const FString& StackEntryKey, FNiagaraStackNoteData NewStackMessage, bool bBroadcast)
+{
+	StackNotes.Add(StackEntryKey, NewStackMessage);
+
+	if(bBroadcast)
+	{
+		OnPersistentDataChanged().Broadcast();
+	}
+}
+
+void UNiagaraStackEditorData::DeleteStackNote(const FString& StackEntryKey)
+{
+	if(StackNotes.Contains(StackEntryKey))
+	{
+		StackNotes.Remove(StackEntryKey);
+	}
+}
+
+void UNiagaraStackEditorData::TransferDeprecatedStackNotes(const UNiagaraNodeFunctionCall& FunctionCallNode)
+{
+	for(const FNiagaraStackMessage& StackMessage : FunctionCallNode.GetDeprecatedCustomNotes())
+	{
+		FNiagaraStackNoteData StackNoteData;
+		StackNoteData.MessageHeader = StackMessage.ShortDescription;
+		StackNoteData.Message = StackMessage.MessageText;
+		AddOrReplaceStackNote(FNiagaraStackGraphUtilities::StackKeys::GenerateStackModuleEditorDataKey(FunctionCallNode), StackNoteData, false);
 	}
 }
 
@@ -212,5 +269,17 @@ void UNiagaraStackEditorData::UndismissAllIssues()
 const TArray<FString>& UNiagaraStackEditorData::GetDismissedStackIssueIds()
 {
 	return DismissedStackIssueIds;
+}
+
+bool UNiagaraStackEditorData::GetStatelessModuleShowWhenDisabled(const FString& StackEntryKey) const
+{
+	const FNiagaraStatelessModuleEditorData* StatelessModuleEditorData = StackEntryKeyToStatelessModuleEditorData.Find(StackEntryKey);
+	return StatelessModuleEditorData != nullptr && StatelessModuleEditorData->bShowWhenDisabled;
+}
+
+void UNiagaraStackEditorData::SetStatelessModuleShowWhenDisabled(const FString& StackEntryKey, bool bInShowWhenDisabled)
+{
+	FNiagaraStatelessModuleEditorData& StatelessModuleEditorData = StackEntryKeyToStatelessModuleEditorData.FindOrAdd(StackEntryKey);
+	StatelessModuleEditorData.bShowWhenDisabled = bInShowWhenDisabled;
 }
 

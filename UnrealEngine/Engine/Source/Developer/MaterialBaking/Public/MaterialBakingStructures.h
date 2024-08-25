@@ -150,8 +150,8 @@ struct FMeshData
 	/** Pointer to the LightmapResourceCluster to be passed on the the LightCacheInterface when baking */
 	const FLightmapResourceCluster* LightmapResourceCluster = nullptr;
 
-	/** Pointer to primitive data that is accessible through material expressions, if nullptr default values are used */
-	const FPrimitiveData* PrimitiveData = nullptr;
+	/** Optional primitive data that is accessible through material expressions */
+	TOptional<FPrimitiveData> PrimitiveData;
 };
 
 /** Structure containing data being processed while baking out materials*/

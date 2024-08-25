@@ -27,7 +27,7 @@ TSharedRef<SDockTab> FDMXEditorPropertyTabSummoner::SpawnTab(const FWorkflowTabS
 }
 
 FDMXLibraryEditorTabSummoner::FDMXLibraryEditorTabSummoner(TSharedPtr<FAssetEditorToolkit> InHostingApp)
-	: FDMXEditorPropertyTabSummoner(FDMXEditorTabNames::DMXLibraryEditor, InHostingApp)
+	: FDMXEditorPropertyTabSummoner(UE::DMX::FDMXEditorTabNames::DMXLibraryEditor, InHostingApp)
 {
 	TabLabel = LOCTEXT("DMXLibraryEditorTabName", "Library Settings");
 	TabIcon = FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.DMXLibrarySettings");
@@ -51,7 +51,7 @@ FText FDMXLibraryEditorTabSummoner::GetTabToolTipText(const FWorkflowTabSpawnInf
 }
 
 FDMXEditorFixtureTypesSummoner::FDMXEditorFixtureTypesSummoner(TSharedPtr<FAssetEditorToolkit> InHostingApp)
-	: FDMXEditorPropertyTabSummoner(FDMXEditorTabNames::DMXFixtureTypesEditor, InHostingApp)
+	: FDMXEditorPropertyTabSummoner(UE::DMX::FDMXEditorTabNames::DMXFixtureTypesEditor, InHostingApp)
 {
 	TabLabel = LOCTEXT("DMXFixtureTypesTabLabel", "Fixture Types");
 	TabIcon = FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.FixtureType");
@@ -70,7 +70,7 @@ TSharedRef<SWidget> FDMXEditorFixtureTypesSummoner::CreateTabBody(const FWorkflo
 }
 
 FDMXEditorFixturePatchSummoner::FDMXEditorFixturePatchSummoner(TSharedPtr<FAssetEditorToolkit> InHostingApp)
-	: FDMXEditorPropertyTabSummoner(FDMXEditorTabNames::DMXFixturePatchEditor, InHostingApp)
+	: FDMXEditorPropertyTabSummoner(UE::DMX::FDMXEditorTabNames::DMXFixturePatchEditor, InHostingApp)
 {
 	TabLabel = LOCTEXT("DMXFixturePatchTabLabel", "Fixture Patch");
 	TabIcon = FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.FixturePatch");
@@ -89,4 +89,3 @@ TSharedRef<SWidget> FDMXEditorFixturePatchSummoner::CreateTabBody(const FWorkflo
 }
 
 #undef LOCTEXT_NAMESPACE
-

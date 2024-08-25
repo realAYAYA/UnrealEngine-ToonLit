@@ -20,11 +20,15 @@ class UGameFeatureAction_AddAttributeDefaults final : public UGameFeatureAction
 public:
 	//~UGameFeatureAction interface
 	virtual void OnGameFeatureRegistering() override;
+	virtual void OnGameFeatureUnregistering() override;
 	//~End of UGameFeatureAction interface
 
 	/** List of attribute default tables to add */
 	UPROPERTY(EditAnywhere, Category = Attributes)
 	TArray<FSoftObjectPath> AttribDefaultTableNames;
+
+private:
+	FName AttributeDefaultTablesOwnerName;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

@@ -14,32 +14,44 @@ namespace AVEncoder { class FVideoEncoderInputFrameImpl; }
 
 namespace AVEncoder
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	class FVideoEncoderNVENC_H264 : public FVideoEncoder
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 
 	public:
 		virtual ~FVideoEncoderNVENC_H264() override; 
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		bool Setup(TSharedRef<FVideoEncoderInput> InputFrameFactory, const FLayerConfig& InitConfig) override;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		void Shutdown() override;
 
 		// Query whether or not encoder is supported and available
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		static bool GetIsAvailable(const FVideoEncoderInput& InFrameFactory, FVideoEncoderInfo& OutEncoderInfo);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// Register encoder with video encoder factory
 		static void Register(FVideoEncoderFactory& InFactory);
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		void Encode(const TSharedPtr<FVideoEncoderInputFrame> InFrame, const FEncodeOptions& EncodeOptions) override;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		void Flush();
 
 	protected:
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FLayer* CreateLayer(uint32 InLayerIndex, const FLayerConfig& InLayerConfig) override;
 		void DestroyLayer(FLayer* layer) override;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	private:
 		FVideoEncoderNVENC_H264();
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		class FNVENCLayer : public FLayer
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 
 		public:
@@ -63,7 +75,9 @@ namespace AVEncoder
 				uint64 SubmitTimeCycles;
 			};
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			FNVENCLayer(uint32 layerIdx, FLayerConfig const& config, FVideoEncoderNVENC_H264& encoder);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			~FNVENCLayer();
 			bool Setup();
 			bool CreateSession();
@@ -73,7 +87,9 @@ namespace AVEncoder
 			void MaybeReconfigure();
 			void UpdateConfig();
 			void UpdateLastEncodedQP(uint32 InLastEncodedQP);
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			void Encode(const TSharedPtr<FVideoEncoderInputFrame> InFrame, const FEncodeOptions& EncodeOptions);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			void EncodeBuffer(FInputOutput* Buffer);
 			void ProcessEncodedBuffer(FInputOutput* Buffer);
 			void Flush();
@@ -110,7 +126,9 @@ namespace AVEncoder
 		};
 
 		FNVENCCommon& NVENC;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EVideoFrameFormat FrameFormat = EVideoFrameFormat::Undefined;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// this could be a TRefCountPtr<ID3D11Device>, CUcontext or void*
 		void* EncoderDevice;

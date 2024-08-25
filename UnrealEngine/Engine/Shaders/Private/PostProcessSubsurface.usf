@@ -5,7 +5,7 @@
 =============================================================================*/
 
 #include "Common.ush"
-#include "Strata/Strata.ush"
+#include "Substrate/Substrate.ush"
 #include "PostProcessCommon.ush"
 #include "DeferredShadingCommon.ush"
 #include "SubsurfaceProfileCommon.ush"
@@ -121,26 +121,26 @@ float GetMaskFromDepthInAlpha(float Alpha)
 	return Alpha > 0;
 }
 
-#if STRATA_ENABLED
-FStrataSubsurfaceData LoadStrataSSSData(float2 UV)
+#if SUBSTRATE_ENABLED
+FSubstrateSubsurfaceData LoadSubstrateSSSData(float2 UV)
 {
 	const float2 PixelPos = UV.xy * View.BufferSizeAndInvSize.xy;
-	return StrataLoadSubsurfaceData(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelPos);
+	return SubstrateLoadSubsurfaceData(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, PixelPos);
 }
-FStrataSubsurfaceHeader LoadStrataSSSHeader(float2 UV)
+FSubstrateSubsurfaceHeader LoadSubstrateSSSHeader(float2 UV)
 {
 	const float2 PixelPos = UV.xy * View.BufferSizeAndInvSize.xy;
-	return StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelPos);
+	return SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, PixelPos);
 }
 #endif
 
 // can be optimized
 float GetSubsurfaceStrength(float2 UV)
 {
-#if STRATA_ENABLED
-	const FStrataSubsurfaceHeader SSSHeader = LoadStrataSSSHeader(UV);
-	const float Mask = StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader) ? 1.0f : 0.0f;
-	const float RadiusScale = StrataSubSurfaceHeaderGetProfileRadiusScale(SSSHeader);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceHeader SSSHeader = LoadSubstrateSSSHeader(UV);
+	const float Mask = SubstrateSubSurfaceHeaderGetUseDiffusion(SSSHeader) ? 1.0f : 0.0f;
+	const float RadiusScale = SubstrateSubSurfaceHeaderGetProfileRadiusScale(SSSHeader);
 #else
 	FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(UV);
 	const float Mask = UseSubsurfaceProfile(ScreenSpaceData.GBuffer.ShadingModelID) ? 1.0f : 0.0f;
@@ -152,7 +152,7 @@ float GetSubsurfaceStrength(float2 UV)
 // @return .rgb is the weight for color channel, .a is the sample location
 float4 GetSubsurfaceProfileKernel(uint SampleIndex, uint SubsurfaceProfileInt)
 {
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	if (SubsurfaceProfileInt == SSS_PROFILE_ID_PERPIXEL) return float4(1, 1, 1, 1);
 #endif
 	const float4 TableMax = float4(1, 1, 1, SUBSURFACE_KERNEL_SIZE);
@@ -172,9 +172,9 @@ float3 GetSubsurfaceProfileNormal(float2 BufferUV)
 uint GetSubsurfaceProfileId(float2 BufferUV)
 {
 	BufferUV = clamp(BufferUV, SubsurfaceInput0_UVViewportBilinearMin, SubsurfaceInput0_UVViewportBilinearMax);
-#if STRATA_ENABLED
-	const FStrataSubsurfaceHeader SSSHeader = LoadStrataSSSHeader(BufferUV);
-	return StrataSubSurfaceHeaderGetProfileId(SSSHeader);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceHeader SSSHeader = LoadSubstrateSSSHeader(BufferUV);
+	return SubstrateSubSurfaceHeaderGetProfileId(SSSHeader);
 #else
 	FGBufferData LocalGBufferData = GetGBufferData(BufferUV);
 	return ExtractSubsurfaceProfileInt(LocalGBufferData);
@@ -183,7 +183,7 @@ uint GetSubsurfaceProfileId(float2 BufferUV)
 
 float3 GetSubsurfaceProfileBoundaryColorBleed(uint SubsurfaceProfileInt)
 {
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	if (SubsurfaceProfileInt == SSS_PROFILE_ID_PERPIXEL) return float3(1.f, 1.f, 1.f);
 #endif
 	return GetSubsurfaceProfileKernel(SSSS_BOUNDARY_COLOR_BLEED_OFFSET, SubsurfaceProfileInt).rgb;
@@ -198,7 +198,7 @@ float4 GetSceneColor(float2 BufferUV)
 
 #include "BurleyNormalizedSSSCommon.ush"
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
 // Calculate the Subsurface profile kernel on the fly using integration instead of LUT.
 half4 GetSubsurfaceProfileKernel(int SampleIndex, float3 D, float ScatterRadiusInMM, float WorldUnitScale)
@@ -252,14 +252,14 @@ half4 GetSubsurfaceProfileKernel(int SampleIndex, float3 D, float ScatterRadiusI
 // fetch surface albedo and diffuse mean free path
 // The diffuse mean free path is modulated by world scale and a custom term passed in
 // which is the opacity texture.
-#if STRATA_ENABLED
-FBurleyParameter GetBurleyParameters(FStrataSubsurfaceData SSSData)
+#if SUBSTRATE_ENABLED
+FBurleyParameter GetBurleyParameters(FSubstrateSubsurfaceData SSSData)
 {
 	FBurleyParameter Out = (FBurleyParameter)0;
-	if (StrataSubSurfaceHeaderGetIsProfile(SSSData.Header))
+	if (SubstrateSubSurfaceHeaderGetIsProfile(SSSData.Header))
 	{
-		uint ProfileId = StrataSubSurfaceHeaderGetProfileId(SSSData.Header);
-		float ProfileRadiusScale = StrataSubSurfaceHeaderGetProfileRadiusScale(SSSData.Header);
+		uint ProfileId = SubstrateSubSurfaceHeaderGetProfileId(SSSData.Header);
+		float ProfileRadiusScale = SubstrateSubSurfaceHeaderGetProfileRadiusScale(SSSData.Header);
 
 		Out.SurfaceAlbedo = GetSubsurfaceProfileSurfaceAlbedo(ProfileId);
 		Out.DiffuseMeanFreePath = DecodeDiffuseMeanFreePath(GetSubsurfaceProfileDiffuseMeanFreePath(ProfileId));
@@ -268,10 +268,10 @@ FBurleyParameter GetBurleyParameters(FStrataSubsurfaceData SSSData)
 		Out.SurfaceOpacity = ProfileRadiusScale;
 		Out.DiffuseMeanFreePath *= Out.SurfaceOpacity;
 	}
-	else if (StrataSubSurfaceHeaderGetUseDiffusion(SSSData.Header))
+	else if (SubstrateSubSurfaceHeaderGetUseDiffusion(SSSData.Header))
 	{
-		float3 SSSMFP = StrataSubSurfaceHeaderGetMFP(SSSData.Header);
-		float3 SSSBaseColor = StrataSubsurfaceExtrasGetBaseColor(SSSData.Extras);
+		float3 SSSMFP = SubstrateSubSurfaceHeaderGetMFP(SSSData.Header);
+		float3 SSSBaseColor = SubstrateSubsurfaceExtrasGetBaseColor(SSSData.Extras);
 
 		// Decode the MFP stored as Float111110 in a uint over a RGBA8 unorm
 		const float3 MFP = SSSMFP * BURLEY_CM_2_MM; // Stored DMFP is in cm, converted into mm
@@ -285,7 +285,7 @@ FBurleyParameter GetBurleyParameters(FStrataSubsurfaceData SSSData)
 		Out.DiffuseMeanFreePath = float4(DMFP, DMFP[IndexOfMaxMfp]);
 		Out.WorldUnitScale = 1.0f;	// no world unit scale change.
 
-		// STRATA_TODO smooth transistion based on pixel footprint w.r.t. MFPRadius and pixel footprint
+		// SUBSTRATE_TODO smooth transistion based on pixel footprint w.r.t. MFPRadius and pixel footprint
 		Out.SurfaceOpacity = 1.0f;
 		Out.DiffuseMeanFreePath *= Out.SurfaceOpacity;
 	}
@@ -381,11 +381,11 @@ void VisualizePS(in noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPo
 	{
 		float2 UV = SubsurfaceInput0_ViewportMin * SubsurfaceInput0_ExtentInverse + IDAreaLocalUV * (SubsurfaceInput0_ViewportSize * SubsurfaceInput0_ExtentInverse);
 
-	#if STRATA_ENABLED
-		const FStrataSubsurfaceHeader SSSHeader = LoadStrataSSSHeader(UV);
-		const uint SubsurfaceProfileInt = StrataSubSurfaceHeaderGetProfileId(SSSHeader);
-		const bool bIsProfile = StrataSubSurfaceHeaderGetIsProfile(SSSHeader);
-		const float PixelRadiusScale = StrataSubSurfaceHeaderGetProfileRadiusScale(SSSHeader);
+	#if SUBSTRATE_ENABLED
+		const FSubstrateSubsurfaceHeader SSSHeader = LoadSubstrateSSSHeader(UV);
+		const uint SubsurfaceProfileInt = SubstrateSubSurfaceHeaderGetProfileId(SSSHeader);
+		const bool bIsProfile = SubstrateSubSurfaceHeaderGetIsProfile(SSSHeader);
+		const float PixelRadiusScale = SubstrateSubSurfaceHeaderGetProfileRadiusScale(SSSHeader);
 	#else
 		const FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(UV);
 		const uint SubsurfaceProfileInt = ExtractSubsurfaceProfileInt(ScreenSpaceData.GBuffer);
@@ -456,9 +456,9 @@ bool IsCheckerBoardNeighborSubsurface(float2 SceneUV, int2 PixelOffset)
 {
 	const float2 UV = SceneUV + PixelOffset * View.BufferSizeAndInvSize.zw;
 
-#if STRATA_ENABLED
-	const FStrataSubsurfaceData SSSData = LoadStrataSSSData(UV);
-	const bool bHasSSSProfile = StrataSubSurfaceHeaderGetIsValid(SSSData.Header);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceData SSSData = LoadSubstrateSSSData(UV);
+	const bool bHasSSSProfile = SubstrateSubSurfaceHeaderGetIsValid(SSSData.Header);
 #else
 	FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(UV);
 	const bool bHasSSSProfile = UseSubsurfaceProfile(ScreenSpaceData.GBuffer.ShadingModelID);
@@ -492,7 +492,7 @@ SDiffuseAndSpecular ReconstructLighting(float2 UVSceneColor, uint ReconstructMet
 {
 	SDiffuseAndSpecular Ret;
 
-#if STRATA_OPAQUE_ROUGH_REFRACTION_ENABLED
+#if SUBSTRATE_OPAQUE_ROUGH_REFRACTION_ENABLED
 	// In this mode, we only read isolated diffuse lighting.
 	float3 CenterSample = SubsurfaceInput0_Texture.SampleLevel(SharedSubsurfaceSampler0, UVSceneColor, 0).rgb;
 	Ret.Diffuse = CenterSample;
@@ -581,9 +581,9 @@ SDiffuseAndSpecular ReconstructLighting(float2 UVSceneColor, uint ReconstructMet
 // @return .RGB Color that should be scattared, .A:1 for subsurface scattering material, 0 for not
 float4 SetupSubsurfaceForOnePixel(float2 UVSceneColor)
 {
-#if STRATA_ENABLED
-	const FStrataSubsurfaceHeader SSSHeader = LoadStrataSSSHeader(UVSceneColor);
-	const bool bHasSSSDiffusion = StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceHeader SSSHeader = LoadSubstrateSSSHeader(UVSceneColor);
+	const bool bHasSSSDiffusion = SubstrateSubSurfaceHeaderGetUseDiffusion(SSSHeader);
 #else
 	FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(UVSceneColor);
 	const bool bHasSSSDiffusion = UseSubsurfaceProfile(ScreenSpaceData.GBuffer.ShadingModelID);
@@ -917,9 +917,9 @@ void MainIndirectDispatchCS(
 	float2 BufferUV = ConvertGridPos2UV(Pos);
 	uint2  BufferPos = Pos;
 
-#if STRATA_ENABLED
-	const FStrataSubsurfaceHeader SSSHeader = LoadStrataSSSHeader(BufferUV);
-	const uint bUseBurley = StrataSubSurfaceHeaderGetIsProfile(SSSHeader) ? GetSubsurfaceProfileUseBurley(StrataSubSurfaceHeaderGetProfileId(SSSHeader)) : StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceHeader SSSHeader = LoadSubstrateSSSHeader(BufferUV);
+	const uint bUseBurley = SubstrateSubSurfaceHeaderGetIsProfile(SSSHeader) ? GetSubsurfaceProfileUseBurley(SubstrateSubSurfaceHeaderGetProfileId(SSSHeader)) : SubstrateSubSurfaceHeaderGetUseDiffusion(SSSHeader);
 #else
 	const FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(BufferUV);
 	const uint SubsurfaceProfileInt = ExtractSubsurfaceProfileInt(ScreenSpaceData.GBuffer);
@@ -966,9 +966,9 @@ void SubsurfaceRecombinePS(in FScreenVertexOutput Input, out float4 OutColor : S
 {
 	const float2 BufferUV  = Input.UV.xy;
 
-#if STRATA_ENABLED
-	FStrataSubsurfaceData SSSData = LoadStrataSSSData(BufferUV);
-	const bool bUseSSSDiffusion = StrataSubSurfaceHeaderGetUseDiffusion(SSSData.Header);
+#if SUBSTRATE_ENABLED
+	FSubstrateSubsurfaceData SSSData = LoadSubstrateSSSData(BufferUV);
+	const bool bUseSSSDiffusion = SubstrateSubSurfaceHeaderGetUseDiffusion(SSSData.Header);
 #else
 	FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(BufferUV);
 	const bool bUseSSSDiffusion = UseSubsurfaceProfile(ScreenSpaceData.GBuffer.ShadingModelID);
@@ -980,16 +980,16 @@ void SubsurfaceRecombinePS(in FScreenVertexOutput Input, out float4 OutColor : S
 		return;
 	}
 
-#if STRATA_ENABLED
-	const uint ProfileId			= StrataSubSurfaceHeaderGetProfileId(SSSData.Header);
+#if SUBSTRATE_ENABLED
+	const uint ProfileId			= SubstrateSubSurfaceHeaderGetProfileId(SSSData.Header);
 	// we multiply the base color later in to get more crips human skin textures (scanned data always has Subsurface included)
-	const float3 StoredBaseColor	= StrataSubsurfaceExtrasGetBaseColor(SSSData.Extras);
-	const float PixelRadiusScale	= StrataSubSurfaceHeaderGetProfileRadiusScale(SSSData.Header);
+	const float3 StoredBaseColor	= SubstrateSubsurfaceExtrasGetBaseColor(SSSData.Extras);
+	const float PixelRadiusScale	= SubstrateSubSurfaceHeaderGetProfileRadiusScale(SSSData.Header);
 
 	// asset specific color
 	float3 Tint = 0.0f;
 	float ProfileRadiusScale = 1.0f;
-	if (StrataSubSurfaceHeaderGetIsProfile(SSSData.Header))
+	if (SubstrateSubSurfaceHeaderGetIsProfile(SSSData.Header))
 	{
 		Tint = GetSubsurfaceProfileKernel(SSSS_TINT_SCALE_OFFSET, ProfileId).rgb;
 		ProfileRadiusScale = GetSubsurfaceProfileKernel(SSSS_N_KERNELWEIGHTOFFSET + SSSS_N_KERNELWEIGHTCOUNT - 1, ProfileId).a;
@@ -1038,7 +1038,7 @@ void SubsurfaceRecombinePS(in FScreenVertexOutput Input, out float4 OutColor : S
 	bool bIsHalfResUpsample = false;
 	if (bIsHalfResUpsample && GetSubsurfaceProfileUseBurley(ProfileId))
 	{
-	#if STRATA_ENABLED
+	#if SUBSTRATE_ENABLED
 		FBurleyParameter BurleyParameter = GetBurleyParameters(SSSData);
 	#else
 		FBurleyParameter BurleyParameter = GetBurleyParameters(ProfileId, ScreenSpaceData.GBuffer);

@@ -55,14 +55,7 @@ bool FLauncherPlatformMac::IsLauncherInstalled() const
 {
 	// Otherwise search for it...
 	NSWorkspace* Workspace = [NSWorkspace sharedWorkspace];
-	NSString* Path = [Workspace fullPathForApplication:@"Epic Games Launcher"];
-	if( Path )
-	{
-		return true;
-	}
-
-	// Otherwise search for the old Launcher...
-	Path = [Workspace fullPathForApplication:@"Unreal Engine"];
+	NSURL* Path = [Workspace URLForApplicationWithBundleIdentifier:@"com.epicgames.EpicGamesLauncher"];
 	if( Path )
 	{
 		return true;

@@ -8,7 +8,7 @@
 #include "/Engine/Generated/Material.ush"
 #include "/Engine/Generated/VertexFactory.ush"
 
-static const float FixPointMaxValue = 1000;	// 100m @hair_todo: make this camera relative, and expose a CVAR fix changing this value
+static const float FixPointMaxValue = 1000;	// 100m @hair_todo: make this camera relative, and expose a CVAR fix changing this value 
 static const float FixPointScale	= 100;	// 0.1mm precision
 static const float FixPointRange	= 2 * FixPointMaxValue * FixPointScale;    
 

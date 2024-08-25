@@ -590,7 +590,6 @@ FArchive& FNetBitReader::operator<<(FObjectPtr& Value)
 FArchive& FNetBitReader::operator<<(struct FWeakObjectPtr& WeakObjectPtr)
 {
 	return FArchiveUObject::SerializeWeakObjectPtr(*this, WeakObjectPtr);
-	return *this;
 }
 
 void FNetBitReader::CountMemory(FArchive& Ar) const

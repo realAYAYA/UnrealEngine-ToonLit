@@ -160,8 +160,8 @@ void FArchiveSceneGraph::RemoveLastInstance()
 	ensure(!Instances.IsEmpty());
 	LastEntityId--;
 	ensure(Instances.Last().Id == LastEntityId);
-	Instances.SetNum(Instances.Num() - 1, false);
-	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, false);
+	Instances.SetNum(Instances.Num() - 1, EAllowShrinking::No);
+	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, EAllowShrinking::No);
 }
 
 bool FArchiveSceneGraph::IsAInstance(FCadId CadId) const 
@@ -189,7 +189,7 @@ FArchiveReference& FArchiveSceneGraph::AddReference(FArchiveUnloadedReference& R
 	NewReference.MoveTemp(Reference);
 
 	// do not call here RemoveLastUnloadedReference otherwise the Reference.Id will be delete
-	UnloadedReferences.SetNum(UnloadedReferences.Num() - 1, false);
+	UnloadedReferences.SetNum(UnloadedReferences.Num() - 1, EAllowShrinking::No);
 
 	CADIdToIndex[Reference.Id] = Index;
 
@@ -256,8 +256,8 @@ void FArchiveSceneGraph::RemoveLastReference()
 	LastEntityId--;
 	ensure(References.Last().Id == LastEntityId);
 
-	References.SetNum(References.Num() - 1, false);
-	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, false);
+	References.SetNum(References.Num() - 1, EAllowShrinking::No);
+	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, EAllowShrinking::No);
 }
 
 void FArchiveWithOverridenChildren::AddOverridenChild(const FCadId ChildId)
@@ -375,8 +375,8 @@ void FArchiveSceneGraph::RemoveLastUnloadedReference()
 	LastEntityId--;
 	ensure(UnloadedReferences.Last().Id == LastEntityId);
 
-	UnloadedReferences.SetNum(UnloadedReferences.Num() - 1, false);
-	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, false);
+	UnloadedReferences.SetNum(UnloadedReferences.Num() - 1, EAllowShrinking::No);
+	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, EAllowShrinking::No);
 }
 
 FArchiveBody& FArchiveSceneGraph::AddBody(FArchiveReference& Parent, EMesher InMesher)
@@ -418,8 +418,8 @@ void FArchiveSceneGraph::RemoveLastBody()
 	ensure(!Bodies.IsEmpty());
 	LastEntityId--;
 	ensure(Bodies.Last().Id == LastEntityId);
-	Bodies.SetNum(Bodies.Num() - 1, false);
-	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, false);
+	Bodies.SetNum(Bodies.Num() - 1, EAllowShrinking::No);
+	CADIdToIndex.SetNum(CADIdToIndex.Num() - 1, EAllowShrinking::No);
 }
 
 void FArchiveSceneGraph::AddExternalReferenceFile(const FArchiveUnloadedReference& Reference)

@@ -88,6 +88,7 @@ SLiveLinkMessageBusSourceFactory::~SLiveLinkMessageBusSourceFactory()
 void SLiveLinkMessageBusSourceFactory::Construct(const FArguments& Args)
 {
 	OnSourceSelected = Args._OnSourceSelected;
+	FactoryClass = Args._FactoryClass;
 
 #if WITH_LIVELINK_DISCOVERY_MANAGER_THREAD
 	ILiveLinkModule::Get().GetMessageBusDiscoveryManager().AddDiscoveryMessageRequest();
@@ -136,6 +137,9 @@ void SLiveLinkMessageBusSourceFactory::Tick(const FGeometry& AllottedGeometry, c
 		{
 			return FApp::GetCurrentTime() - Source->LastTimeSincePong > SecondsBeforeSourcesDisappear;
 		});
+
+
+		const TMap<FDelegateHandle, FOnLiveLinkShouldDisplaySource> RegisteredFilters = ILiveLinkModule::Get().GetSourceFilters();
 		
 		for (const FProviderPollResultPtr& PollResult : PollData)
 		{
@@ -146,7 +150,21 @@ void SLiveLinkMessageBusSourceFactory::Tick(const FGeometry& AllottedGeometry, c
 			}
 			else
 			{
-				Sources.Add(MakeShared<FLiveLinkSource>(PollResult));
+				bool bAllowResult = true;
+
+				for (const TPair<FDelegateHandle, FOnLiveLinkShouldDisplaySource>& Filter : RegisteredFilters)
+				{
+					if (!Filter.Value.Execute(FactoryClass, PollResult))
+					{
+						bAllowResult = false;
+						break;
+					}
+				}
+
+				if (bAllowResult)
+				{
+					Sources.Add(MakeShared<FLiveLinkSource>(PollResult));
+				}
 			}
 		}
 
@@ -180,8 +198,11 @@ TSharedRef<ITableRow> SLiveLinkMessageBusSourceFactory::MakeSourceListViewWidget
 
 void SLiveLinkMessageBusSourceFactory::OnSourceListSelectionChanged(TSharedPtr<FLiveLinkSource> Source, ESelectInfo::Type SelectionType)
 {
-	SelectedResult = Source->PollResult;
-	OnSourceSelected.ExecuteIfBound(SelectedResult);
+	if (Source)
+	{
+		SelectedResult = Source->PollResult;
+		OnSourceSelected.ExecuteIfBound(SelectedResult);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -112,17 +112,17 @@ void FNiagaraShaderCompilationManager::ProcessCompiledNiagaraShaderMaps(TMap<int
 	check(IsInGameThread());
 
 	// Keeps shader maps alive as they are passed from the shader compiler and applied to the owning Script
-	TArray<TRefCountPtr<FNiagaraShaderMap> > LocalShaderMapReferences;
+	TArray<FNiagaraShaderMapRef> LocalShaderMapReferences;
 	TMap<FNiagaraShaderScript*, FNiagaraShaderMap*> ScriptsToUpdate;
 
 	// Process compiled shader maps in FIFO order, in case a shader map has been enqueued multiple times,
 	// Which can happen if a script is edited while a background compile is going on
 	for (TMap<int32, FNiagaraShaderMapFinalizeResults>::TIterator ProcessIt(CompiledShaderMaps); ProcessIt; ++ProcessIt)
 	{
-		TRefCountPtr<FNiagaraShaderMap> ShaderMap = NULL;
+		FNiagaraShaderMapRef ShaderMap = NULL;
 		TArray<FNiagaraShaderScript*>* Scripts = NULL;
 
-		for (TMap<TRefCountPtr<FNiagaraShaderMap>, TArray<FNiagaraShaderScript*> >::TIterator ShaderMapIt(FNiagaraShaderMap::GetInFlightShaderMaps()); ShaderMapIt; ++ShaderMapIt)
+		for (TMap<FNiagaraShaderMapRef, TArray<FNiagaraShaderScript*> >::TIterator ShaderMapIt(FNiagaraShaderMap::GetInFlightShaderMaps()); ShaderMapIt; ++ShaderMapIt)
 		{
 			if (ShaderMapIt.Key()->GetCompilingId() == ProcessIt.Key())
 			{
@@ -177,7 +177,7 @@ void FNiagaraShaderCompilationManager::ProcessCompiledNiagaraShaderMaps(TMap<int
 			bool bShaderMapComplete = true;
 			if (bSuccess)
 			{
-				bShaderMapComplete = ShaderMap->ProcessCompilationResults(ResultArray, CompileResults.FinalizeJobIndex, TimeBudget);
+				bShaderMapComplete = ShaderMap->ProcessCompilationResults(ScriptArray, ResultArray, CompileResults.FinalizeJobIndex, TimeBudget);
 			}
 
 			if (bShaderMapComplete)
@@ -307,7 +307,7 @@ void FNiagaraShaderCompilationManager::ProcessCompiledNiagaraShaderMaps(TMap<int
 }
 
 
-void FNiagaraShaderCompilationManager::FinishCompilation(const TCHAR* ScriptName, const TArray<int32>& ShaderMapIdsToFinishCompiling)
+void FNiagaraShaderCompilationManager::FinishCompilation(const TArray<int32>& ShaderMapIdsToFinishCompiling)
 {
 	check(!FPlatformProperties::RequiresCookedData());
 	GShaderCompilingManager->FinishCompilation(NULL, ShaderMapIdsToFinishCompiling);

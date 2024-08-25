@@ -38,9 +38,13 @@ PathTracingSpatialTemporalDenoising.usf: Spatial temporal denoising for path tra
 #define TEMPORAL_FEATURE_FUSION			0
 #endif
 
+// Variance Type
+#define RADIANCE_MULTI_CHANNEL					0
+#define RADIANCE_ALBEDO_NORMAL_SINGLECHANNEL	1
+
 #ifndef TEMPORAL_PREPASS
 #define TEMPORAL_PREPASS				0
-#define VARIANCE_TYPE					0
+#define VARIANCE_TYPE					RADIANCE_MULTI_CHANNEL
 #endif
 
 #define PREPASS_PHASE_INIT				0
@@ -731,7 +735,7 @@ uint MipLevel;
 
 FPixelOffset GetPixelOffsetFromLowerMip(float2 Position, uint MipDiff)
 {
-	uint MipPosMultipler = 1 << (MipDiff);
+	uint MipPosMultipler = 1u << (MipDiff);
 	uint LowerMipLevel = MipLevel + MipDiff;
 
 	float2 LowerMipPosition = 0.0f;
@@ -787,9 +791,6 @@ Texture2D<float4> AlbedoTexture;
 Texture2D<float4> NormalTexture;
 RWStructuredBuffer<FPixelMaterialLightingFingerprint> RWVarianceMap;
 int Iteration;
-
-#define RADIANCE_MULTI_CHANNEL					0
-#define RADIANCE_ALBEDO_NORMAL_SINGLECHANNEL	1
 
 // Note that the radiance, albedo and normal are the mean value.
 float4 GetMeanFromTextures(int2 Position)
@@ -1002,7 +1003,7 @@ uint MipLevel;
 float4 Get3x3Blur(int2 Position)
 {
 	float2 BufferUV = GetBufferUVFromPosition(Position, MipLevel);
-	float2 HalfPixel = 0.5f * (1 << MipLevel) * TargetViewport_ExtentInverse;
+	float2 HalfPixel = 0.5f * (1u << MipLevel) * TargetViewport_ExtentInverse;
 
 #if 0
 	//Sampling pattern and weights
@@ -1373,7 +1374,7 @@ void VisualizePathTracingMotionVector(
 	float4 Velocity = TemporalDenoisingMotionVector.Load(TexCoord);
 
 	// draw the denoised scene
-	OutColor.rgb = DenoisedTexture.Load(TexCoord) * View.PreExposure;
+	OutColor.rgb = DenoisedTexture.Load(TexCoord).rgb * View.PreExposure;
 
 #if VISUALIZE_COLOR_ENCODING
 	float s, h, v;

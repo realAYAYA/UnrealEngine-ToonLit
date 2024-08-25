@@ -1,12 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Horde.Storage;
-using Horde.Server.Acls;
-using Horde.Server.Utilities;
 using System;
 using System.Collections.Generic;
-using System.Security.Claims;
-using System.Threading.Tasks;
+using EpicGames.Horde.Storage;
+using EpicGames.Horde.Tools;
 
 namespace Horde.Server.Tools
 {
@@ -30,32 +27,6 @@ namespace Horde.Server.Tools
 		/// Config object for this tool
 		/// </summary>
 		ToolConfig Config { get; }
-	}
-
-	/// <summary>
-	/// Current state of a tool's deployment
-	/// </summary>
-	public enum ToolDeploymentState
-	{
-		/// <summary>
-		/// The deployment is ongoing
-		/// </summary>
-		Active,
-
-		/// <summary>
-		/// The deployment should be paused at its current state
-		/// </summary>
-		Paused,
-
-		/// <summary>
-		/// Deployment of this version is complete
-		/// </summary>
-		Complete,
-
-		/// <summary>
-		/// The deployment has been cancelled.
-		/// </summary>
-		Cancelled,
 	}
 
 	/// <summary>
@@ -92,6 +63,11 @@ namespace Horde.Server.Tools
 		/// Length of time over which to make the deployment
 		/// </summary>
 		TimeSpan Duration { get; }
+
+		/// <summary>
+		/// Namespace containing the tool
+		/// </summary>
+		NamespaceId NamespaceId { get; }
 
 		/// <summary>
 		/// Reference to this tool in Horde Storage.

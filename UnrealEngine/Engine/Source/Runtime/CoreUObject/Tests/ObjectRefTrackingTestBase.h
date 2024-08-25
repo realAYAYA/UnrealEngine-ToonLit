@@ -120,7 +120,7 @@ private:
 			NumFailedResolves++;
 		}
 	}
-	static void OnRefRead(TArrayView<const UObject* const> Objects)
+	static void OnRefRead(const TArrayView<const UObject* const>& Objects)
 	{
 		NumReads++;
 		for (auto Obj : Objects)

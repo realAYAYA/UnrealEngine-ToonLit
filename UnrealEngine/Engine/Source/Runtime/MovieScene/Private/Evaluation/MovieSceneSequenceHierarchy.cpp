@@ -52,9 +52,9 @@ FMovieSceneSubSequenceData::FMovieSceneSubSequenceData(const UMovieSceneSubSecti
 	// being truly the full transform.
 	OuterToInnerTransform = RootToSequenceTransform = InSubSection.OuterToInnerTransform();
 
-	if (!InSubSection.Parameters.bCanLoop)
+	if (!InSubSection.Parameters.bCanLoop || FMath::IsNearlyZero(RootToSequenceTransform.GetTimeScale()))
 	{
-		PlayRange.Value = SubSectionRange * RootToSequenceTransform.LinearTransform;
+		PlayRange.Value = RootToSequenceTransform.TransformRangeUnwarped(SubSectionRange);
 		UnwarpedPlayRange.Value = PlayRange.Value;
 	}
 	else
@@ -69,13 +69,14 @@ FMovieSceneSubSequenceData::FMovieSceneSubSequenceData(const UMovieSceneSubSecti
 	}
 
 	// Make sure pre/postroll *ranges* are in the inner sequence's time space. Pre/PostRollFrames are in the outer sequence space.
+
 	if (InSubSection.GetPreRollFrames() > 0)
 	{
-		PreRollRange = UE::MovieScene::MakeDiscreteRangeFromUpper( TRangeBound<FFrameNumber>::FlipInclusion(SubSectionRange.GetLowerBound()), InSubSection.GetPreRollFrames() ) * RootToSequenceTransform.LinearTransform;
+		PreRollRange = RootToSequenceTransform.TransformRangeUnwarped(UE::MovieScene::MakeDiscreteRangeFromUpper(TRangeBound<FFrameNumber>::FlipInclusion(SubSectionRange.GetLowerBound()), InSubSection.GetPreRollFrames()));
 	}
 	if (InSubSection.GetPostRollFrames() > 0)
 	{
-		PostRollRange = UE::MovieScene::MakeDiscreteRangeFromLower( TRangeBound<FFrameNumber>::FlipInclusion(SubSectionRange.GetUpperBound()), InSubSection.GetPostRollFrames() ) * RootToSequenceTransform.LinearTransform;
+		PostRollRange = RootToSequenceTransform.TransformRangeUnwarped(UE::MovieScene::MakeDiscreteRangeFromLower(TRangeBound<FFrameNumber>::FlipInclusion(SubSectionRange.GetUpperBound()), InSubSection.GetPostRollFrames()));
 	}
 }
 

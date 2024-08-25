@@ -68,6 +68,7 @@ VkBufferUsageFlags FVulkanResourceMultiBuffer::UEToVKBufferUsageFlags(FVulkanDev
 	TranslateFlag(BUF_VertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 	TranslateFlag(BUF_IndexBuffer, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	TranslateFlag(BUF_StructuredBuffer, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+	TranslateFlag(BUF_UniformBuffer, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
 #if VULKAN_RHI_RAYTRACING
 	TranslateFlag(BUF_AccelerationStructure, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);
@@ -608,7 +609,11 @@ void FVulkanResourceMultiBuffer::ReleaseOwnership()
 
 FBufferRHIRef FVulkanDynamicRHI::RHICreateBuffer(FRHICommandListBase& RHICmdList, FRHIBufferDesc const& Desc, ERHIAccess ResourceState, FRHIResourceCreateInfo& CreateInfo)
 {
+#if VULKAN_USE_LLM
 	LLM_SCOPE_VULKAN(ELLMTagVulkan::VulkanBuffers);
+#else
+	LLM_SCOPE(EnumHasAnyFlags(Desc.Usage, EBufferUsageFlags::VertexBuffer | EBufferUsageFlags::IndexBuffer) ? ELLMTag::Meshes : ELLMTag::RHIMisc);
+#endif
 	return new FVulkanResourceMultiBuffer(Device, Desc, CreateInfo, &RHICmdList);
 }
 
@@ -631,7 +636,7 @@ void FVulkanDynamicRHI::RHICopyBuffer(FRHIBuffer* SourceBufferRHI, FRHIBuffer* D
 	VULKAN_SIGNAL_UNIMPLEMENTED();
 }
 
-void FVulkanDynamicRHI::RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
+void FVulkanDynamicRHI::RHITransferBufferUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
 {
 	FVulkanResourceMultiBuffer* Dst = ResourceCast(DestBuffer);
 	FVulkanResourceMultiBuffer* Src = ResourceCast(SrcBuffer);

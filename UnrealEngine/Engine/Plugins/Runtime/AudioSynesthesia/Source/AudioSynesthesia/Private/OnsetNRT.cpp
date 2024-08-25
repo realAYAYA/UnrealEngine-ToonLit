@@ -219,7 +219,12 @@ UClass* UOnsetNRT::GetSupportedClass() const
 {
 	return UOnsetNRT::StaticClass();
 }
-#endif
+
+bool UOnsetNRT::ShouldEventTriggerAnalysis(FPropertyChangedEvent& PropertyChangeEvent)
+{
+	return Settings != nullptr && Super::ShouldEventTriggerAnalysis(PropertyChangeEvent);
+}
+#endif // WITH_EDITOR
 
 FName UOnsetNRT::GetAnalyzerNRTFactoryName() const
 {

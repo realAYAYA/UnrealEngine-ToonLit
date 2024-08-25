@@ -2,8 +2,6 @@
 
 #pragma once
 
-#include "USDStageActor.h"
-
 #include "CoreMinimal.h"
 
 struct FUsdStageImportContext;

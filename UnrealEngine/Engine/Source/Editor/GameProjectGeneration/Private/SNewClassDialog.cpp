@@ -33,6 +33,7 @@
 #include "Widgets/Input/SHyperlink.h"
 #include "TutorialMetaData.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 
 #include "Framework/Notifications/NotificationManager.h"
@@ -122,6 +123,10 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 	if (ClassDomain == EClassDomain::Blueprint)
 	{
 		NewClassPath = InArgs._InitialPath.IsEmpty() ? TEXT("/Game") : InArgs._InitialPath;
+
+		// Pick a valid default path if the path is not writable
+		FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+		NewClassPath = ContentBrowserModule.Get().GetInitialPathToSaveAsset(FContentBrowserItemPath(NewClassPath, EContentBrowserPathType::Internal)).GetInternalPathString();
 	}
 	else if(!InArgs._InitialPath.IsEmpty())
 	{
@@ -260,11 +265,13 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 	FPathPickerConfig BlueprintPathConfig;
 	if (ClassDomain == EClassDomain::Blueprint)
 	{
-		BlueprintPathConfig.DefaultPath = InArgs._InitialPath;
+		BlueprintPathConfig.DefaultPath = NewClassPath;
 		BlueprintPathConfig.bFocusSearchBoxWhenOpened = false;
 		BlueprintPathConfig.bAllowContextMenu = false;
 		BlueprintPathConfig.bAllowClassesFolder = false;
+		BlueprintPathConfig.bAllowReadOnlyFolders = false;
 		BlueprintPathConfig.OnPathSelected = FOnPathSelected::CreateSP(this, &SNewClassDialog::OnBlueprintPathSelected);
+		BlueprintPathConfig.bNotifyDefaultPathSelected = true;
 	}
 
 	OnAddedToProject = InArgs._OnAddedToProject;
@@ -283,11 +290,11 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 				SAssignNew( MainWizard, SWizard)
 				.ShowPageList(false)
 				.CanFinish(this, &SNewClassDialog::CanFinish)
-				.FinishButtonText( ClassDomain == EClassDomain::Native ? LOCTEXT("FinishButtonText_Native", "Create Class") : LOCTEXT("FinishButtonText_Blueprint", "Create Blueprint Class") )
+				.FinishButtonText( ClassDomain == EClassDomain::Native ? LOCTEXT("FinishButtonText_Native", "Create Class") : FText::Format(LOCTEXT("FinishButtonText_Blueprint", "Create {0} Class"), ParentClassInfo.IsSet() ? ParentClassInfo.GetClassName() : FText::FromStringView(TEXT("Blueprint"))))
 				.FinishButtonToolTip (
 					ClassDomain == EClassDomain::Native ?
 					LOCTEXT("FinishButtonToolTip_Native", "Creates the code files to add your new class.") : 
-					LOCTEXT("FinishButtonToolTip_Blueprint", "Creates the new Blueprint class based on the specified parent class.")
+					FText::Format(LOCTEXT("FinishButtonToolTip_Blueprint", "Creates the new class based on the specified parent {0} class."), ParentClassInfo.IsSet() ? ParentClassInfo.GetClassName() : FText::FromStringView(TEXT("Blueprint")))
 					)
 				.OnCanceled(this, &SNewClassDialog::CancelClicked)
 				.OnFinished(this, &SNewClassDialog::FinishClicked)
@@ -317,6 +324,7 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 						[
 							SNew(STextBlock)
 							.Text( this, &SNewClassDialog::GetGlobalErrorLabelText )
+							.AutoWrapText(true)
 						]
 
 						+SHorizontalBox::Slot()
@@ -369,7 +377,7 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 						.Text(
 							ClassDomain == EClassDomain::Native ?
 							LOCTEXT("ChooseParentClassDescription_Native", "This will add a C++ header and source code file to your game project.") :
-							LOCTEXT("ChooseParentClassDescription_Blueprint", "This will add a new Blueprint class to your game project.")
+							FText::Format(LOCTEXT("ChooseParentClassDescription_Blueprint", "This will add a new class inheriting from {0} to your game project."), ParentClassInfo.IsSet() ? ParentClassInfo.GetClassName() : FText::FromStringView(TEXT("Blueprint")))
 						)
 					]
 
@@ -513,7 +521,7 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 							SNew(STextBlock)
 							.Text( ClassDomain == EClassDomain::Native ?
 								LOCTEXT("ClassNameDetails_Native", "When you click the \"Create\" button below, a header (.h) file and a source (.cpp) file will be made using this name.") :
-								LOCTEXT("ClassNameDetails_Blueprint", "When you click the \"Create\" button below, a new Blueprint class will be created.")
+								FText::Format(LOCTEXT("ClassNameDetails_Blueprint", "When you click the \"Create\" button below, a new class inheriting from {0} will be created."), ParentClassInfo.IsSet() ? ParentClassInfo.GetClassName() : FText::FromStringView(TEXT("Blueprint")))
 								)
 						]
 
@@ -552,6 +560,7 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 									.Padding(0.0f, 0.0f, 12.0f, 0.0f)
 									[
 										SNew(STextBlock)
+										.Visibility(ClassDomain == EClassDomain::Blueprint ? EVisibility::Collapsed : EVisibility::Visible)
 										.Text(LOCTEXT("ClassTypeLabel", "Class Type"))
 									]
 
@@ -641,10 +650,22 @@ void SNewClassDialog::Construct( const FArguments& InArgs )
 										[
 											SNew(SBox)
 											// Height override to force the visibility of a scrollbar (our parent is autoheight)
-											.HeightOverride(200.0f)
+											.HeightOverride(220.0f)
 											.Visibility(ClassDomain == EClassDomain::Blueprint ? EVisibility::Visible : EVisibility::Collapsed)
 											[
-												ContentBrowser.CreatePathPicker(BlueprintPathConfig)
+												SNew(SVerticalBox)
+												
+												+SVerticalBox::Slot()
+												.AutoHeight()
+												[
+													SNew(STextBlock)
+													.Text(this, &SNewClassDialog::OnGetClassPathText)
+												]
+
+												+SVerticalBox::Slot()
+												[
+													ContentBrowser.CreatePathPicker(BlueprintPathConfig)
+												]
 											]
 										]
 
@@ -1080,6 +1101,7 @@ void SNewClassDialog::OnClassPathTextChanged(const FText& NewText)
 
 void SNewClassDialog::OnBlueprintPathSelected(const FString& NewPath)
 {
+	IsBlueprintPathSelected = true;
 	NewClassPath = NewPath;
 	UpdateInputValidity();
 }
@@ -1101,7 +1123,7 @@ void SNewClassDialog::CancelClicked()
 
 bool SNewClassDialog::CanFinish() const
 {
-	return bLastInputValidityCheckSuccessful && ParentClassInfo.IsSet() && (ClassDomain == EClassDomain::Blueprint || FSourceCodeNavigation::IsCompilerAvailable());
+	return bLastInputValidityCheckSuccessful && ParentClassInfo.IsSet() && (ClassDomain == EClassDomain::Blueprint || FSourceCodeNavigation::IsCompilerAvailable()) && (ClassDomain != EClassDomain::Blueprint || IsBlueprintPathSelected);
 }
 
 void SNewClassDialog::FinishClicked()
@@ -1115,12 +1137,12 @@ void SNewClassDialog::FinishClicked()
 		if (!ParentClassInfo.BaseClass)
 		{
 			// @todo show fail reason in error label
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("AddCodeFailed_Blueprint_NoBase", "No parent class has been specified. Failed to generate new Blueprint class."));
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("AddCodeFailed_Blueprint_NoBase", "No parent class has been specified. Failed to generate new {0} class."), FText::FromString(NewClassName)));
 		}
 		else if (FindObject<UBlueprint>(nullptr, *PackagePath))
 		{
 			// @todo show fail reason in error label
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("AddCodeFailed_Blueprint_AlreadyExists", "The chosen Blueprint class already exists, please try again with a different name."));
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("AddCodeFailed_Blueprint_AlreadyExists", "The chosen class name ({0}) already exists, please try again with a different name."), FText::FromString(NewClassName)));
 		}
 		else if (!NewClassPath.IsEmpty() && !NewClassName.IsEmpty())
 		{
@@ -1131,6 +1153,9 @@ void SNewClassDialog::FinishClicked()
 				UBlueprint* NewBP = FKismetEditorUtilities::CreateBlueprint(const_cast<UClass*>(ParentClassInfo.BaseClass), Package, FName(*NewClassName), BPTYPE_Normal);
 				if (NewBP)
 				{
+					// Set the default "IsExternallyReferenceable" state
+					Package->SetIsExternallyReferenceable(IAssetTools::Get().GetCreateAssetsAsExternallyReferenceable());
+
 					// Notify the asset registry
 					FAssetRegistryModule::AssetCreated(NewBP);
 
@@ -1140,10 +1165,7 @@ void SNewClassDialog::FinishClicked()
 					OnAddedToProject.ExecuteIfBound( NewClassName, PackagePath, FString() );
 
 					// Sync the content browser to the new asset
-					TArray<UObject*> SyncAssets;
-					SyncAssets.Add(NewBP);
-					FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
-					ContentBrowserModule.Get().SyncBrowserToAssets(SyncAssets);
+					GEditor->SyncBrowserToObject(NewBP);
 
 					// Open the editor for the new asset
 					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(NewBP);
@@ -1242,10 +1264,7 @@ void SNewClassDialog::FinishClicked()
 				UClass* const NewClass = static_cast<UClass*>(FindObjectWithOuter(ClassPackage, UClass::StaticClass(), *NewClassName));
 				if ( NewClass )
 				{
-					TArray<UObject*> SyncAssets;
-					SyncAssets.Add(NewClass);
-					FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
-					ContentBrowserModule.Get().SyncBrowserToAssets(SyncAssets);
+					GEditor->SyncBrowserToObject(NewClass);
 				}
 			}
 
@@ -1432,7 +1451,8 @@ void SNewClassDialog::UpdateInputValidity()
 		if (bLastInputValidityCheckSuccessful)
 		{
 			IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(AssetRegistryConstants::ModuleName).Get();
-			if (AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(NewClassPath / NewClassName)).IsValid())
+			const FSoftObjectPath ObjectPath(NewClassPath / NewClassName + "." + NewClassName);
+			if (AssetRegistry.GetAssetByObjectPath(ObjectPath).IsValid())
 			{
 				bLastInputValidityCheckSuccessful = false;
 				LastInputValidityErrorText = FText::Format(LOCTEXT("AssetAlreadyExists", "An asset called {0} already exists in {1}."), FText::FromString(NewClassName), FText::FromString(NewClassPath));

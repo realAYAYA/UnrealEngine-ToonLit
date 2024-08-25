@@ -38,7 +38,10 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs, TWeakPtr<FOptimusEditor> InEditor);
-
+	
+	// Forcibly refresh
+	void Refresh();
+	
 protected:
 	// SGraphPalette overrides
 	TSharedRef<SWidget> OnCreateWidgetForAction(FCreateWidgetForActionData* const InCreateData) override;

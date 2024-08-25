@@ -197,7 +197,7 @@ bool FDisplayClusterProjectionDomeprojectionViewAdapterDX11::ApplyWarpBlend_Rend
 
 	// Get output resources with rects
 	// warp result is now inside AdditionalRTT.  Later, from the DC ViewportManagerProxy it will be resolved to FrameRTT
-	if (!InViewportProxy->GetResources_RenderThread(EDisplayClusterViewportResourceType::AdditionalTargetableResource, OutputTextures))
+	if (!InViewportProxy->GetResources_RenderThread(EDisplayClusterViewportResourceType::AfterWarpBlendTargetableResource, OutputTextures))
 	{
 		return false;
 	}

@@ -4,7 +4,6 @@
 #include "Brushes/SlateDynamicImageBrush.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/MessageDialog.h"
-#include "IDesktopPlatform.h"
 #include "Misc/App.h"
 #include "Framework/Application/SlateApplication.h"
 #include "PluginReferenceDescriptor.h"
@@ -13,13 +12,13 @@
 #include "Widgets/Input/SCheckBox.h"
 #include "Interfaces/IPluginManager.h"
 #include "SPluginBrowser.h"
+#include "PluginActions.h"
 #include "PluginStyle.h"
 #include "GameProjectGenerationModule.h"
 #include "SPluginTileList.h"
 #include "Widgets/Input/SHyperlink.h"
 #include "Interfaces/IProjectManager.h"
 #include "PluginBrowserModule.h"
-#include "IUATHelperModule.h"
 #include "DesktopPlatformModule.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Widgets/Layout/SBox.h"
@@ -692,32 +691,10 @@ void SPluginTile::OnEditPluginFinished()
 
 void SPluginTile::OnPackagePlugin()
 {
-	FString DefaultDirectory;
-	FString OutputDirectory;
-
-	if ( !FDesktopPlatformModule::Get()->OpenDirectoryDialog(FSlateApplication::Get().FindBestParentWindowHandleForDialogs(AsShared()), LOCTEXT("PackagePluginDialogTitle", "Package Plugin...").ToString(), DefaultDirectory, OutputDirectory) )
+	if (ensure(Plugin.IsValid()))
 	{
-		return;
+		PluginActions::PackagePlugin(Plugin.ToSharedRef(), AsShared());
 	}
-
-	// Ensure path is full rather than relative (for macs)
-	FString DescriptorFilename = Plugin->GetDescriptorFileName();
-	FString DescriptorFullPath = FPaths::ConvertRelativePathToFull(DescriptorFilename);
-	OutputDirectory = FPaths::Combine(OutputDirectory, Plugin->GetName());
-	FString CommandLine = FString::Printf(TEXT("BuildPlugin -Plugin=\"%s\" -Package=\"%s\" -CreateSubFolder"), *DescriptorFullPath, *OutputDirectory);
-
-#if PLATFORM_WINDOWS
-	FText PlatformName = LOCTEXT("PlatformName_Windows", "Windows");
-#elif PLATFORM_MAC
-	FText PlatformName = LOCTEXT("PlatformName_Mac", "Mac");
-#elif PLATFORM_LINUX
-	FText PlatformName = LOCTEXT("PlatformName_Linux", "Linux");
-#else
-	FText PlatformName = LOCTEXT("PlatformName_Other", "Other OS");
-#endif
-
-	IUATHelperModule::Get().CreateUatTask(CommandLine, PlatformName, LOCTEXT("PackagePluginTaskName", "Packaging Plugin"),
-		LOCTEXT("PackagePluginTaskShortName", "Package Plugin Task"), FAppStyle::GetBrush(TEXT("MainFrame.CookContent")));
 }
 
 void SPluginTile::OnOpenPluginReferenceViewer()

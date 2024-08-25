@@ -116,6 +116,7 @@ public:
 
 	// Begin UObject Interface.
 	virtual void PostLoad() override;
+	virtual void PostEditUndo() override;
 	// End UObject Interface.
 
 	virtual bool NeedsToSpecifyValidTargetClass() const override { return false; }

@@ -807,7 +807,7 @@ void WatchViewer::UpdateInstancedWatchDisplay()
 			FText BlueprintName = FText::FromString(BlueprintObj->GetName());
 
 			// Don't show info for the CDO
-			if (BlueprintInstance->IsDefaultSubobject())
+			if (BlueprintInstance->IsTemplate())
 			{
 				continue;
 			}

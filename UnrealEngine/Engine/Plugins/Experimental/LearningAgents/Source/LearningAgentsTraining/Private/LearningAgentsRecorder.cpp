@@ -5,8 +5,6 @@
 #include "LearningAgentsManager.h"
 #include "LearningAgentsInteractor.h"
 #include "LearningAgentsRecording.h"
-#include "LearningAgentsHelpers.h"
-#include "LearningFeatureObject.h"
 #include "LearningLog.h"
 #include "LearningTrainer.h"
 
@@ -18,6 +16,12 @@ FLearningAgentsRecorderPathSettings::FLearningAgentsRecorderPathSettings()
 {
 	IntermediateRelativePath.Path = FPaths::ProjectIntermediateDir();
 }
+
+ULearningAgentsRecorder::FAgentRecordBuffer::FAgentRecordBuffer() = default;
+
+ULearningAgentsRecorder::FAgentRecordBuffer::FAgentRecordBuffer(const int32 InObservationCompatibilityHash, const int32 InActionCompatibilityHash) 
+	: ObservationCompatibilityHash(InObservationCompatibilityHash)
+	, ActionCompatibilityHash(InActionCompatibilityHash) {};
 
 TLearningArrayView<1, float> ULearningAgentsRecorder::FAgentRecordBuffer::GetObservation(const int32 SampleIdx)
 {
@@ -43,43 +47,48 @@ void ULearningAgentsRecorder::FAgentRecordBuffer::Push(
 	const TLearningArrayView<1, const float> Observation,
 	const TLearningArrayView<1, const float> Action)
 {
-	if (SampleNum / ChunkSize <= Observations.Num())
+	if (StepNum / ChunkSize <= Observations.Num())
 	{
 		Observations.AddDefaulted_GetRef().SetNumUninitialized({ ChunkSize, Observation.Num() });
 		Actions.AddDefaulted_GetRef().SetNumUninitialized({ ChunkSize, Action.Num() });
 	}
 
-	UE::Learning::Array::Copy(GetObservation(SampleNum), Observation);
-	UE::Learning::Array::Copy(GetAction(SampleNum), Action);
-	SampleNum++;
+	UE::Learning::Array::Copy(GetObservation(StepNum), Observation);
+	UE::Learning::Array::Copy(GetAction(StepNum), Action);
+	StepNum++;
 }
 
 bool ULearningAgentsRecorder::FAgentRecordBuffer::IsEmpty() const
 {
-	return SampleNum == 0;
+	return StepNum == 0;
 }
 
 void ULearningAgentsRecorder::FAgentRecordBuffer::Empty()
 {
-	SampleNum = 0;
+	StepNum = 0;
 	Observations.Empty();
 	Actions.Empty();
 }
 
 void ULearningAgentsRecorder::FAgentRecordBuffer::CopyToRecord(FLearningAgentsRecord& Record) const
 {
-	UE_LEARNING_CHECK(SampleNum > 0);
+	UE_LEARNING_CHECK(StepNum > 0);
 
-	Record.SampleNum = SampleNum;
+	Record.StepNum = StepNum;
 	Record.ObservationDimNum = GetObservation(0).Num();
 	Record.ActionDimNum = GetAction(0).Num();
-	Record.Observations.SetNumUninitialized({ SampleNum, Observations[0].Num<1>() });
-	Record.Actions.SetNumUninitialized({ SampleNum, Actions[0].Num<1>() });
+	Record.ObservationCompatibilityHash = ObservationCompatibilityHash;
+	Record.ActionCompatibilityHash = ActionCompatibilityHash;
+	Record.ObservationData.SetNumUninitialized(StepNum * Record.ObservationDimNum);
+	Record.ActionData.SetNumUninitialized(StepNum * Record.ActionDimNum);
 
-	for (int32 SampleIdx = 0; SampleIdx < SampleNum; SampleIdx++)
+	TLearningArrayView<2, float> ObservationsView = TLearningArrayView<2, float>(Record.ObservationData.GetData(), { Record.StepNum, Record.ObservationDimNum });
+	TLearningArrayView<2, float> ActionsView = TLearningArrayView<2, float>(Record.ActionData.GetData(), { Record.StepNum, Record.ActionDimNum });
+
+	for (int32 StepIdx = 0; StepIdx < StepNum; StepIdx++)
 	{
-		UE::Learning::Array::Copy(Record.Observations[SampleIdx], GetObservation(SampleIdx));
-		UE::Learning::Array::Copy(Record.Actions[SampleIdx], GetAction(SampleIdx));
+		UE::Learning::Array::Copy(ObservationsView[StepIdx], GetObservation(StepIdx));
+		UE::Learning::Array::Copy(ActionsView[StepIdx], GetAction(StepIdx));
 	}
 }
 
@@ -87,20 +96,58 @@ ULearningAgentsRecorder::ULearningAgentsRecorder() : Super(FObjectInitializer::G
 ULearningAgentsRecorder::ULearningAgentsRecorder(FVTableHelper& Helper) : Super(Helper) {}
 ULearningAgentsRecorder::~ULearningAgentsRecorder() = default;
 
-void ULearningAgentsRecorder::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void ULearningAgentsRecorder::BeginDestroy()
 {
 	if (IsRecording())
 	{
 		EndRecording();
 	}
 
-	Super::EndPlay(EndPlayReason);
+	Super::BeginDestroy();
+}
+
+ULearningAgentsRecorder* ULearningAgentsRecorder::MakeRecorder(
+	ULearningAgentsManager* InManager,
+	ULearningAgentsInteractor* InInteractor,
+	TSubclassOf<ULearningAgentsRecorder> Class,
+	const FName Name,
+	const FLearningAgentsRecorderPathSettings& RecorderPathSettings,
+	ULearningAgentsRecording* RecordingAsset,
+	bool bReinitializeRecording)
+{
+	if (!InManager)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeRecorder: InManager is nullptr."));
+		return nullptr;
+	}
+
+	if (!Class)
+	{
+		UE_LOG(LogLearning, Error, TEXT("MakeRecorder: Class is nullptr."));
+		return nullptr;
+	}
+
+	const FName UniqueName = MakeUniqueObjectName(InManager, Class, Name, EUniqueObjectNameOptions::GloballyUnique);
+
+	ULearningAgentsRecorder* Recorder = NewObject<ULearningAgentsRecorder>(InManager, Class, UniqueName);
+	if (!Recorder) { return nullptr; }
+
+	Recorder->SetupRecorder(
+		InManager,
+		InInteractor,
+		RecorderPathSettings,
+		RecordingAsset,
+		bReinitializeRecording);
+
+	return Recorder->IsSetup() ? Recorder : nullptr;
 }
 
 void ULearningAgentsRecorder::SetupRecorder(
+	ULearningAgentsManager* InManager,
 	ULearningAgentsInteractor* InInteractor,
 	const FLearningAgentsRecorderPathSettings& RecorderPathSettings,
-	ULearningAgentsRecording* RecordingAsset)
+	ULearningAgentsRecording* RecordingAsset,
+	bool bReinitializeRecording)
 {
 	if (IsSetup())
 	{
@@ -108,9 +155,9 @@ void ULearningAgentsRecorder::SetupRecorder(
 		return;
 	}
 
-	if (!Manager)
+	if (!InManager)
 	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Must be attached to a LearningAgentsManager Actor."), *GetName());
+		UE_LOG(LogLearning, Error, TEXT("%s: InManager is nullptr."), *GetName());
 		return;
 	}
 
@@ -126,6 +173,7 @@ void ULearningAgentsRecorder::SetupRecorder(
 		return;
 	}
 
+	Manager = InManager;
 	Interactor = InInteractor;
 
 	if (RecordingAsset)
@@ -135,61 +183,68 @@ void ULearningAgentsRecorder::SetupRecorder(
 	else
 	{
 		const FName UniqueName = MakeUniqueObjectName(this, ULearningAgentsRecording::StaticClass(), TEXT("Recording"), EUniqueObjectNameOptions::GloballyUnique);
-
 		Recording = NewObject<ULearningAgentsRecording>(this, UniqueName);
+	}
+
+	if (bReinitializeRecording)
+	{
+		Recording->Records.Empty();
+		Recording->ForceMarkDirty();
 	}
 
 	RecordingDirectory = RecorderPathSettings.IntermediateRelativePath.Path / TEXT("LearningAgents") / RecorderPathSettings.RecordingsSubdirectory;
 
-	RecordBuffers.Empty();
-	RecordBuffers.SetNum(Manager->GetMaxAgentNum());
+	// Find Compatibility Hash
+
+	const int32 ObservationCompatibilityHash = UE::Learning::Observation::GetSchemaObjectsCompatibilityHash(Interactor->GetObservationSchema(), Interactor->GetObservationSchemaElement());
+	const int32 ActionCompatibilityHash = UE::Learning::Action::GetSchemaObjectsCompatibilityHash(Interactor->GetActionSchema(), Interactor->GetActionSchemaElement());
+
+	// Create Record Buffers
+
+	RecordBuffers.Empty(Manager->GetMaxAgentNum());
+	for (int32 RecordBufferIdx = 0; RecordBufferIdx < Manager->GetMaxAgentNum(); RecordBufferIdx++)
+	{
+		RecordBuffers.Emplace(ObservationCompatibilityHash, ActionCompatibilityHash);
+	}
 
 	bIsSetup = true;
 
-	OnAgentsAdded(Manager->GetAllAgentIds());
+	Manager->AddListener(this);
 }
 
-void ULearningAgentsRecorder::OnAgentsRemoved(const TArray<int32>& AgentIds)
+void ULearningAgentsRecorder::OnAgentsRemoved_Implementation(const TArray<int32>& AgentIds)
 {
-	if (IsSetup())
+	if (!IsSetup())
 	{
-		for (const int32 AgentId : AgentIds)
-		{
-			if (!RecordBuffers[AgentId].IsEmpty())
-			{
-				RecordBuffers[AgentId].CopyToRecord(Recording->Records.AddDefaulted_GetRef());
-				RecordBuffers[AgentId].Empty();
-			}
-		}
+		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
+		return;
+	}
 
-		for (ULearningAgentsHelper* Helper : HelperObjects)
+	for (const int32 AgentId : AgentIds)
+	{
+		if (!RecordBuffers[AgentId].IsEmpty())
 		{
-			Helper->OnAgentsRemoved(AgentIds);
+			RecordBuffers[AgentId].CopyToRecord(Recording->Records.AddDefaulted_GetRef());
+			RecordBuffers[AgentId].Empty();
 		}
-
-		AgentsRemoved(AgentIds);
 	}
 }
 
-void ULearningAgentsRecorder::OnAgentsReset(const TArray<int32>& AgentIds)
+void ULearningAgentsRecorder::OnAgentsReset_Implementation(const TArray<int32>& AgentIds)
 {
-	if (IsSetup())
+	if (!IsSetup())
 	{
-		for (const int32 AgentId : AgentIds)
-		{
-			if (!RecordBuffers[AgentId].IsEmpty())
-			{
-				RecordBuffers[AgentId].CopyToRecord(Recording->Records.AddDefaulted_GetRef());
-				RecordBuffers[AgentId].Empty();
-			}
-		}
+		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
+		return;
+	}
 
-		for (ULearningAgentsHelper* Helper : HelperObjects)
+	for (const int32 AgentId : AgentIds)
+	{
+		if (!RecordBuffers[AgentId].IsEmpty())
 		{
-			Helper->OnAgentsReset(AgentIds);
+			RecordBuffers[AgentId].CopyToRecord(Recording->Records.AddDefaulted_GetRef());
+			RecordBuffers[AgentId].Empty();
 		}
-
-		AgentsReset(AgentIds);
 	}
 }
 
@@ -207,25 +262,26 @@ void ULearningAgentsRecorder::AddExperience()
 		return;
 	}
 
+	if (Manager->GetAgentNum() == 0)
+	{
+		UE_LOG(LogLearning, Warning, TEXT("%s: No agents added to Manager."), *GetName());
+	}
+
 	for (const int32 AgentId : Manager->GetAllAgentSet())
 	{
-		if (Interactor->GetObservationEncodingAgentIteration()[AgentId] == 0 ||
-			Interactor->GetActionEncodingAgentIteration()[AgentId] == 0)
+		if (Interactor->ObservationVectorIteration[AgentId] == 0 || Interactor->ActionVectorIteration[AgentId] == 0)
 		{
 			UE_LOG(LogLearning, Warning, TEXT("%s: Agent with id %i has not made observations and taken actions so experience will not be recorded for it."), *GetName(), AgentId);
 			continue;
 		}
 
-		if (Interactor->GetObservationEncodingAgentIteration()[AgentId] !=
-			Interactor->GetActionEncodingAgentIteration()[AgentId])
+		if (Interactor->ObservationVectorIteration[AgentId] != Interactor->ActionVectorIteration[AgentId])
 		{
 			UE_LOG(LogLearning, Warning, TEXT("%s: Agent with id %i does not have matching iteration numbers for observations and actions so experience will not be recorded for it."), *GetName(), AgentId);
 			continue;
 		}
 
-		RecordBuffers[AgentId].Push(
-			Interactor->GetObservationFeature().FeatureBuffer()[AgentId],
-			Interactor->GetActionFeature().FeatureBuffer()[AgentId]);
+		RecordBuffers[AgentId].Push(Interactor->ObservationVectors[AgentId], Interactor->ActionVectors[AgentId]);
 	}
 }
 
@@ -262,7 +318,7 @@ void ULearningAgentsRecorder::EndRecording()
 	bIsRecording = false;
 }
 
-void ULearningAgentsRecorder::LoadRecordingFromFile(const FFilePath& File)
+void ULearningAgentsRecorder::EndRecordingAndDiscard()
 {
 	if (!IsSetup())
 	{
@@ -270,88 +326,23 @@ void ULearningAgentsRecorder::LoadRecordingFromFile(const FFilePath& File)
 		return;
 	}
 
-	Recording->LoadRecordingFromFile(File);
+	if (!IsRecording())
+	{
+		UE_LOG(LogLearning, Error, TEXT("%s: Cannot end recording as we are not currently recording!"), *GetName());
+		return;
+	}
+
+	// Discard Records
+
+	for (const int32 AgentId : Manager->GetAllAgentSet())
+	{
+		RecordBuffers[AgentId].Empty();
+	}
+
+	bIsRecording = false;
 }
 
-void ULearningAgentsRecorder::SaveRecordingToFile(const FFilePath& File) const
-{
-	if (!IsSetup())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
-		return;
-	}
-
-	Recording->SaveRecordingToFile(File);
-}
-
-void ULearningAgentsRecorder::AppendRecordingFromFile(const FFilePath& File)
-{
-	if (!IsSetup())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
-		return;
-	}
-
-	Recording->AppendRecordingFromFile(File);
-}
-
-void ULearningAgentsRecorder::UseRecordingAsset(ULearningAgentsRecording* RecordingAsset)
-{
-	if (!IsSetup())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
-		return;
-	}
-
-	if (!RecordingAsset)
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Asset is nullptr."), *GetName());
-		return;
-	}
-
-	if (RecordingAsset == Recording)
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Asset is same as the current recording."), *GetName());
-		return;
-	}
-
-	Recording = RecordingAsset;
-}
-
-void ULearningAgentsRecorder::LoadRecordingFromAsset(ULearningAgentsRecording* RecordingAsset)
-{
-	if (!IsSetup())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
-		return;
-	}
-
-	Recording->LoadRecordingFromAsset(RecordingAsset);
-}
-
-void ULearningAgentsRecorder::SaveRecordingToAsset(ULearningAgentsRecording* RecordingAsset)
-{
-	if (!IsSetup())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
-		return;
-	}
-
-	Recording->SaveRecordingToAsset(RecordingAsset);
-}
-
-void ULearningAgentsRecorder::AppendRecordingToAsset(ULearningAgentsRecording* RecordingAsset)
-{
-	if (!IsSetup())
-	{
-		UE_LOG(LogLearning, Error, TEXT("%s: Setup not complete."), *GetName());
-		return;
-	}
-
-	Recording->AppendRecordingToAsset(RecordingAsset);
-}
-
-void ULearningAgentsRecorder::BeginRecording(bool bReinitializeRecording)
+void ULearningAgentsRecorder::BeginRecording()
 {
 	if (!IsSetup())
 	{
@@ -365,12 +356,6 @@ void ULearningAgentsRecorder::BeginRecording(bool bReinitializeRecording)
 		return;
 	}
 
-	if (bReinitializeRecording)
-	{
-		Recording->Records.Empty();
-		Recording->ForceMarkDirty();
-	}
-
 	for (const int32 AgentId : Manager->GetAllAgentSet())
 	{
 		RecordBuffers[AgentId].Empty();
@@ -379,7 +364,7 @@ void ULearningAgentsRecorder::BeginRecording(bool bReinitializeRecording)
 	bIsRecording = true;
 }
 
-const ULearningAgentsRecording* ULearningAgentsRecorder::GetCurrentRecording() const
+const ULearningAgentsRecording* ULearningAgentsRecorder::GetRecordingAsset() const
 {
 	if (!IsSetup())
 	{

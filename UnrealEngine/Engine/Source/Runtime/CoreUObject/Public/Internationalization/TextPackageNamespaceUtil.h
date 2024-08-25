@@ -8,6 +8,7 @@
 #include "Internationalization/TextNamespaceFwd.h"
 #include "Internationalization/TextNamespaceUtil.h"
 
+class FTextProperty;
 class UObject;
 class UPackage;
 
@@ -91,12 +92,65 @@ COREUOBJECT_API void ForcePackageNamespace(UObject* InObject, const FString& InN
  * @param InText						The current FText instance.
  * @param InPackage/InObject			The package (or object to get the owner package from) to get the namespace for (will call EnsurePackageNamespace).
  * @param InCopyMethod					The method that should be used to copy the FText instance.
- * @param bAlwaysApplyPackageNamespace	If true, this will always apply the package namespace to the text namespace (always treated as Verbatim when USE_STABLE_LOCALIZATION_KEYS is false).
- *										If false, this will only apply the package namespace if the text namespace already contains package namespace makers.
+ * @param bAlwaysApplyPackageNamespace	If true, this will always apply the package namespace to the text namespace (always treated as ETextCopyMethod::Verbatim when USE_STABLE_LOCALIZATION_KEYS is false).
+ *										If false, this will only apply the package namespace if the text namespace already contains package namespace markers.
  *
  * @return A copy of the given text that's valid to use with the given package.
  */
 COREUOBJECT_API FText CopyTextToPackage(const FText& InText, UPackage* InPackage, const ETextCopyMethod InCopyMethod = ETextCopyMethod::NewKey, const bool bAlwaysApplyPackageNamespace = false);
 COREUOBJECT_API FText CopyTextToPackage(const FText& InText, UObject* InObject, const ETextCopyMethod InCopyMethod = ETextCopyMethod::NewKey, const bool bAlwaysApplyPackageNamespace = false);
+
+/**
+ * Generate a random text key.
+ * @note This key will be a GUID.
+ */
+COREUOBJECT_API FString GenerateRandomTextKey();
+
+/**
+ * Generate a deterministic text key based on the given object and property info.
+ * @note This key will be formatted like a GUID, but the value will actually be based on deterministic hashes.
+ *
+ * @param InTextOwner					The object that owns the given TextProperty.
+ * @param InTextProperty				The text property to generate the key for.
+ * @param bApplyPackageNamespace		If true, apply the package namespace to the generated key hash (when USE_STABLE_LOCALIZATION_KEYS is true).
+ */
+COREUOBJECT_API FString GenerateDeterministicTextKey(UObject* InTextOwner, const FTextProperty* InTextProperty, const bool bApplyPackageNamespace = true);
+COREUOBJECT_API FString GenerateDeterministicTextKey(UObject* InTextOwner, const FName InTextPropertyName, const bool bApplyPackageNamespace = true);
+
+enum class ETextEditAction : uint8
+{
+	Namespace,
+	Key,
+	SourceString,
+};
+
+/**
+ * Called when editing a text property to determine the new ID for the text, ideally using the proposed text ID when possible (and when USE_STABLE_LOCALIZATION_KEYS is true).
+ * 
+ * @param InPackage						The package to query the namespace for.
+ * @param InEditAction					How has the given text been edited?
+ * @param InTextSource					The current source string for the text being edited. Can be empty when InEditAction is ETextEditAction::SourceString.
+ * @param InProposedNamespace			The namespace we'd like to assign to the edited text.
+ * @param InProposedKey					The key we'd like to assign to the edited text.
+ * @param OutStableNamespace			The namespace that should be assigned to the edited text.
+ * @param OutStableKey					The key that should be assigned to the edited text.
+ * @param InTextKeyGenerator			Generator for the new text key. Will generate a random key by default.
+ * @param bApplyPackageNamespace		If true, apply the package namespace to the generated text ID (when USE_STABLE_LOCALIZATION_KEYS is true).
+ */
+COREUOBJECT_API void GetTextIdForEdit(UPackage* InPackage, const ETextEditAction InEditAction, const FString& InTextSource, const FString& InProposedNamespace, const FString& InProposedKey, FString& OutStableNamespace, FString& OutStableKey, TFunctionRef<FString()> InTextKeyGenerator = &GenerateRandomTextKey, const bool bApplyPackageNamespace = true);
+
+/**
+ * Edit an attribute of the given text property, akin to what happens when editing a text property in a details panel.
+ *
+ * @param InTextOwner					The object that owns the given TextProperty to be edited.
+ * @param InTextProperty				The text property to edit. This must be a property that exists on TextOwner.
+ * @param InEditAction					How has the given text been edited?
+ * @param InEditValue					The new value of the attribute that was edited.
+ * @param InTextKeyGenerator			Generator for the new text key. Will generate a random key by default.
+ * @param bApplyPackageNamespace		If true, apply the package namespace to the generated text ID (when USE_STABLE_LOCALIZATION_KEYS is true).
+ * 
+ * @return True if edit was possible, or false if not.
+ */
+COREUOBJECT_API bool EditTextProperty(UObject* InTextOwner, const FTextProperty* InTextProperty, const ETextEditAction InEditAction, const FString& InEditValue, TFunctionRef<FString()> InTextKeyGenerator = &GenerateRandomTextKey, const bool bApplyPackageNamespace = true);
 
 }

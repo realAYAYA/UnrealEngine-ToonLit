@@ -6,10 +6,10 @@
 #include "Common.ush"
 #include "PostProcessCommon.ush"
 
-#include "/Engine/Private/Strata/Strata.ush"
+#include "/Engine/Private/Substrate/Substrate.ush"
 
-#if USE_ROUGH_REFRACTION && STRATA_ENABLED
-#include "/Engine/Private/Strata/StrataStatisticalOperators.ush"
+#if USE_ROUGH_REFRACTION && SUBSTRATE_ENABLED
+#include "/Engine/Private/Substrate/SubstrateStatisticalOperators.ush"
 #endif
 
 
@@ -79,7 +79,7 @@ void Main(
 	//Scale by the screen size and a fudge factor to come close to the offset values we would have had under normal circumstances before my changes. Also flip Y and invert the precision bias scale.
 	DistBufferUVOffset *= InvDistortionScaleBias;
 	
-#if USE_ROUGH_REFRACTION && STRATA_ENABLED
+#if USE_ROUGH_REFRACTION && SUBSTRATE_ENABLED
 
 #if USE_MSAA
 	half2 RefractionVarianceCoverage= RefractionVarianceCoverageMSAATexture.Load(int2(TexCoord.xy * View.BufferSizeAndInvSize.xy), SampleIndex).xy;
@@ -115,7 +115,7 @@ void Main(
 	// The correct blured scene mip level is then evaluated to make sure the standard devianttion in pixel matches the one of the projected rough refraction gaussian kernel.
 
 	half FrontSurfaceRefractionDepthCm			= max(0.0f, SceneDepthMeter - RefractionDepthMeter) * METER_TO_CENTIMETER;
-	half RefractionRoughness					= saturate(StrataLobeVarianceToRoughness(RefractionVarianceCoverage.x));
+	half RefractionRoughness					= saturate(SubstrateLobeVarianceToRoughness(RefractionVarianceCoverage.x));
 	const float StandardDeviationCm				= sqrt(GetVarianceFromRoughness(RefractionRoughness));
 	const float StandardDeviationCmForThickness = StandardDeviationCm * FrontSurfaceRefractionDepthCm;
 	const float VarianceAtDepth					= StandardDeviationCmForThickness * StandardDeviationCmForThickness;

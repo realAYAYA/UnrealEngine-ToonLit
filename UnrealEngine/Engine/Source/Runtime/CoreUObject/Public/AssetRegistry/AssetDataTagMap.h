@@ -127,6 +127,7 @@ namespace FixedTagPrivate
 		COREUOBJECT_API bool						AsMarshalledText(FMarshalledText& Out) const;
 		COREUOBJECT_API bool						Equals(FStringView Str) const;
 		COREUOBJECT_API bool						Contains(const TCHAR* Str) const;
+		COREUOBJECT_API int64						GetResourceSize() const;
 
 	private:
 		template <bool bForStorage>
@@ -253,7 +254,7 @@ public:
 	FAssetTagValueRef& operator=(const FAssetTagValueRef&) = default;
 	FAssetTagValueRef& operator=(FAssetTagValueRef&&) = default;
 
-	bool						IsSet() const { return Bits != 0; }
+	bool										IsSet() const { return Bits != 0; }
 
 	COREUOBJECT_API FString						AsString() const;
 	COREUOBJECT_API FName						AsName() const;
@@ -261,15 +262,20 @@ public:
 	COREUOBJECT_API FText						AsText() const;
 	COREUOBJECT_API bool						TryGetAsText(FText& Out) const; // @return false if value isn't a localized string
 
-	FString						GetValue() const { return AsString(); }
+	FString										GetValue() const { return AsString(); }
 	/** Coerce the type to a Complex String capable of representing the type */
-	FString						GetStorageString() const { return ToLoose(); }
+	FString										GetStorageString() const { return ToLoose(); }
+	/**
+	 * Measure how much memory is used by the value. Does not account for deduplication, adding the results
+	 * for keys sharing a duplicated value will overreport how much memory is used.
+	 */
+	COREUOBJECT_API int64						GetResourceSize() const;
 
-	COREUOBJECT_API bool		Equals(FStringView Str) const;
+	COREUOBJECT_API bool						Equals(FStringView Str) const;
 
 private:
 	/** Return whether this's value is a MarshalledFText, and copy it into out parameter if so */
-	bool						TryGetAsMarshalledText(FixedTagPrivate::FMarshalledText& Out) const;
+	bool										TryGetAsMarshalledText(FixedTagPrivate::FMarshalledText& Out) const;
 	/**
 	 * Copy this's value (whether loose or fixed) into the loose format.
 	 * The returned loose value is in StorageFormat (e.g. complex strings) rather than display format.

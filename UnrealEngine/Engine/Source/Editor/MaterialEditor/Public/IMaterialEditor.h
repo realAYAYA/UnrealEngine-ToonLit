@@ -90,6 +90,9 @@ public:
 	 */
 	virtual void UpdateMaterialAfterGraphChange() {};
 
+	/** Marks the material as dirty. */
+	virtual void MarkMaterialDirty() {};
+
 	virtual void UpdateDetailView() {}
 
 	/**
@@ -156,6 +159,9 @@ public:
 
 	/** Fills inheritance drop down menu */
 	virtual void GenerateInheritanceMenu(class UToolMenu* Menu) {};
+
+	/** Updates materials used in material stats */
+	virtual void RefreshStatsMaterials() {};
 private:
 	FMaterialEditorClosedEvent MaterialEditorClosedEvent;
 	FRegisterTabSpawnersEvent RegisterTabSpawnersEvent;

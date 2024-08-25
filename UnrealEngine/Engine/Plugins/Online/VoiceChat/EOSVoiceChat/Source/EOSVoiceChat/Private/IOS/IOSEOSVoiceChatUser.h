@@ -4,7 +4,7 @@
 
 #include "EOSVoiceChatUser.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "IOSEOSVoiceChat.h"
 
@@ -26,4 +26,4 @@ private:
 	void HandleVoiceChatChannelExited(const FString& ChannelName, const FVoiceChatResult& Reason);
 };
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

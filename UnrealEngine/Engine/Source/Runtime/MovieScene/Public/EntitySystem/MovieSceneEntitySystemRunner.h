@@ -28,22 +28,18 @@ struct FInstanceRegistry;
 /** Bit-mask enumeration that defines tasks that need running */
 enum class ERunnerFlushState
 {
-	None           = 0,				// Signifies no evaluation is currently underway
-	Start          = 1 << 0,		// Sets up initial evaluation flags for external players and listeners
-	Import         = 1 << 1,		// Update sequence instances and import entities into the entity manager
-	Spawn          = 1 << 2,		// Perform the Spawn phase in the Entity System Graph
-	Instantiation  = 1 << 3,		// Perform the Instantiation phase in the Entity System Graph
-	Evaluation     = 1 << 4,		// Perform the Evaluation phase in the Entity System Graph
-	Finalization   = 1 << 5,		// Perform the Finalization phase in the Entity System Graph and trigger any external events
-	EventTriggers  = 1 << 6,		// (re-entrant) Triggers any bound event triggers - skipped by Finalization if the delegate is not bound
-	PostEvaluation = 1 << 7,		// (re-entrant) Call post evaluation callbacks on sequence instances
-	End            = 1 << 8,		// Counterpart for Start - resets external players and listeners
-
-	// Signifies that, during the Finalization task, there were still outstanding tasks and we need to perform another iteration
-	LoopEval       = Import | Spawn | Instantiation | Evaluation | Finalization | EventTriggers | PostEvaluation | End,
-
-	// Initial flush state
-	Everything     = Start | LoopEval,
+	None                 = 0,			// Signifies no evaluation is currently underway
+	Start                = 1 << 0,		// Sets up initial evaluation flags for external players and listeners
+	ConditionalRecompile = 1 << 1,		// Conditional recompile of dirtied sequences.
+	Import               = 1 << 2,		// Update sequence instances and import entities into the entity manager
+	ReimportAfterCompile = 1 << 3,		// Re-update sequence instances after a recompile occurred on a partially evaluated sequence. Not normally run.
+	Spawn                = 1 << 4,		// Perform the Spawn phase in the Entity System Graph
+	Instantiation        = 1 << 5,		// Perform the Instantiation phase in the Entity System Graph
+	Evaluation           = 1 << 6,		// Perform the Evaluation phase in the Entity System Graph
+	Finalization         = 1 << 7,		// Perform the Finalization phase in the Entity System Graph and trigger any external events
+	EventTriggers        = 1 << 8,		// (re-entrant) Triggers any bound event triggers - skipped by Finalization if the delegate is not bound
+	PostEvaluation       = 1 << 9,		// (re-entrant) Call post evaluation callbacks on sequence instances
+	End                  = 1 << 10,		// Counterpart for Start - resets external players and listeners
 };
 ENUM_CLASS_FLAGS(ERunnerFlushState)
 
@@ -58,6 +54,17 @@ enum class ERunnerUpdateFlags
 	FinalDissectionMask = Finish|Destroy, // A mask that includes flags that should only ever be included on final (or non-)dissected updates, not intermediate updates
 };
 ENUM_CLASS_FLAGS(ERunnerUpdateFlags)
+
+/** Result from a runner flush state that indicates how to proceed */
+enum class ERunnerFlushResult
+{
+	/** Continue evaluation, allow budgeting */
+	ContinueAllowBudget,
+	/** Continue evaluation without budgeting the next step. */
+	ContinueNoBudgeting,
+	/** Do not continue evaluation and break out of our loop. */
+	Break,
+};
 
 } // namespace UE::MovieScene
 
@@ -113,7 +120,7 @@ public:
 	 *                      and will process the outstanding work on the next call to Flush. A value of 0.0 signifies no budget - the queue
 	 *                      will be fully processed without leaving any outstanding work
 	 */
-	MOVIESCENE_API void Flush(double BudgetMs = 0.f);
+	MOVIESCENE_API void Flush(double BudgetMs = 0.f, UE::MovieScene::ERunnerFlushState TargetState = UE::MovieScene::ERunnerFlushState::None);
 
 	/**
 	 * Flushes any outstanding update tasks in the current evaluation scope with a given budget. Only performs work if this runner is part-way through an evaluation
@@ -146,6 +153,11 @@ public:
 	 * Check whether this runner is currently inside an active evaluation loop
 	 */
 	MOVIESCENE_API bool IsCurrentlyEvaluating() const;
+
+	/**
+	 * Check whether this runner is currently updating a sequence
+	 */
+	MOVIESCENE_API bool IsUpdatingSequence() const;
 
 	/**
 	 * Run a single evaluation phase
@@ -184,24 +196,28 @@ private:
 	 * @param  Linker   The linker we are arrached to
 	 * @return True if the loop is allowed to continue, or false if we should not flush any more
 	 */
-	MOVIESCENE_API bool FlushNext(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult FlushNext(UMovieSceneEntitySystemLinker* Linker);
 
 	/**
 	 * Set up initial state before any evaluation runs. Only called once regardless of the number of pending updates we have to process
 	 * Primarily used for setting up external 'is evaluating' flags for re-entrancy and async checks.
 	 */
-	MOVIESCENE_API bool StartEvaluation(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult StartEvaluation(UMovieSceneEntitySystemLinker* Linker);
 
+	/** Execute any pending conditional recompiles on the currently queued update requests */
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult GameThread_ConditionalRecompile(UMovieSceneEntitySystemLinker* Linker);
 	/** Update sequence instances based on currently queued update requests, or outstanding dissected updates */
-	MOVIESCENE_API bool GameThread_UpdateSequenceInstances(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult GameThread_UpdateSequenceInstances(UMovieSceneEntitySystemLinker* Linker);
+	/** Re-update sequence instances after a recompile on a partially evaluated sequence */
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult GameThread_ReimportSequenceInstances(UMovieSceneEntitySystemLinker* Linker);
 	/** Execute the spawn phase of the entity system graph, if there is anything to do */
-	MOVIESCENE_API bool GameThread_SpawnPhase(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult GameThread_SpawnPhase(UMovieSceneEntitySystemLinker* Linker);
 	/** Execute the instantiation phase of the entity system graph, if there is anything to do */
-	MOVIESCENE_API bool GameThread_InstantiationPhase(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult GameThread_InstantiationPhase(UMovieSceneEntitySystemLinker* Linker);
 	/** Called immediately after instantiation to execute cleanup and bookkeeping tasks. Skipped if instantiation is skipped.*/
-	MOVIESCENE_API bool GameThread_PostInstantiation(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult GameThread_PostInstantiation(UMovieSceneEntitySystemLinker* Linker);
 	/** Main entity-system evaluation phase. Blocks this thread until completion. */
-	MOVIESCENE_API bool GameThread_EvaluationPhase(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API UE::MovieScene::ERunnerFlushResult GameThread_EvaluationPhase(UMovieSceneEntitySystemLinker* Linker);
 	/** Finalization phase for triggering external events and other behavior. */
 	MOVIESCENE_API void GameThread_EvaluationFinalizationPhase(UMovieSceneEntitySystemLinker* Linker);
 	/** Post-evaluation phase for triggering events. */
@@ -284,4 +300,6 @@ private:
 
 	/** True if any update has been queued with the ERunnerUpdateFlags::Flush flag since our last flush */
 	bool bRequireFullFlush;
+
+	bool bIsUpdatingSequence;
 };

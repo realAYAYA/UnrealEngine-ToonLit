@@ -7,6 +7,7 @@
 #include "DataLayer/DataLayerNameEditSink.h"
 #include "DataLayer/DataLayerPropertyTypeCustomization.h"
 #include "DataLayer/SDataLayerBrowser.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
 #include "EditorWidgetsModule.h"
 #include "HAL/Platform.h"
 #include "Modules/ModuleManager.h"
@@ -62,4 +63,9 @@ void FDataLayerEditorModule::SyncDataLayerBrowserToDataLayer(const UDataLayerIns
 bool FDataLayerEditorModule::AddActorToDataLayers(AActor* Actor, const TArray<UDataLayerInstance*>& DataLayers)
 {
 	return UDataLayerEditorSubsystem::Get()->AddActorToDataLayers(Actor, DataLayers);
+}
+
+void FDataLayerEditorModule::SetActorEditorContextCurrentExternalDataLayer(const UExternalDataLayerAsset* InExternalDataLayerAsset)
+{
+	UDataLayerEditorSubsystem::Get()->SetActorEditorContextCurrentExternalDataLayer(InExternalDataLayerAsset);
 }

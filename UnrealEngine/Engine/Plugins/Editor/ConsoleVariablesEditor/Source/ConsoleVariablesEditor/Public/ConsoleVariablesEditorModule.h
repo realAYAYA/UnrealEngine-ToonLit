@@ -25,6 +25,7 @@ public:
 
 	//~ Begin IModuleInterface Interface
 	virtual void StartupModule() override;
+	virtual void PreUnloadCallback() override;
 	virtual void ShutdownModule() override;
 	//~ End IModuleInterface Interface
 
@@ -38,10 +39,7 @@ public:
 	/** Find all console variables and cache their startup values */
 	void QueryAndBeginTrackingConsoleVariables();
 
-	void AddConsoleObjectCommandInfoToMainReference(TSharedRef<FConsoleVariablesEditorCommandInfo> InCommandInfo)
-	{
-		ConsoleObjectsMainReference.Add(InCommandInfo);
-	}
+	void AddConsoleObjectCommandInfoToMainReference(TSharedRef<FConsoleVariablesEditorCommandInfo> InCommandInfo);
 
 	/** Find a tracked console variable by the command string with optional case sensitivity. */
 	CONSOLEVARIABLESEDITOR_API TWeakPtr<FConsoleVariablesEditorCommandInfo> FindCommandInfoByName(
@@ -55,14 +53,6 @@ public:
 	CONSOLEVARIABLESEDITOR_API TArray<TWeakPtr<FConsoleVariablesEditorCommandInfo>> FindCommandInfosMatchingTokens(
 		const TArray<FString>& InTokens, ESearchCase::Type InSearchCase = ESearchCase::IgnoreCase);
 
-	/**
-	 *Find a tracked console variable by its console object reference.
-	 *Note that some commands do not have an associated console object (such as 'stat unit') and will not be found with this method.
-	 *It's normally safer to use FindCommandInfoByName() instead.
-	 */
-	CONSOLEVARIABLESEDITOR_API TWeakPtr<FConsoleVariablesEditorCommandInfo> FindCommandInfoByConsoleObjectReference(
-		IConsoleObject* InConsoleObjectReference);
-	
 	[[nodiscard]] TObjectPtr<UConsoleVariablesAsset> GetPresetAsset() const;
 	[[nodiscard]] TObjectPtr<UConsoleVariablesAsset> GetGlobalSearchAsset() const;
 	
@@ -84,11 +74,13 @@ public:
 	/** Fills Global Search Asset's Saved Commands with variables matching the specified query. Returns false if no matches were found. */
 	bool PopulateGlobalSearchAssetWithVariablesMatchingTokens(const TArray<FString>& InTokens);
 
-	void SendMultiUserConsoleVariableChange(ERemoteCVarChangeType InChangeType, const FString& InVariableName, const FString& InValueAsString);
-	void OnRemoteCvarChanged(ERemoteCVarChangeType InChangeType, FString InName, FString InValue);
+	void SendMultiUserConsoleVariableChange(ERemoteCVarChangeType InChangeType, const FString& InVariableName, const FString& InValueAsString, EConsoleVariableFlags InFlags);
+	void OnRemoteCvarChanged(ERemoteCVarChangeType InChangeType, FString InName, FString InValue, EConsoleVariableFlags InFlags);
 
 	virtual void AddReferencedObjects( FReferenceCollector& Collector )  override;
 	virtual FString GetReferencerName() const override;
+
+	void OnConsoleVariableChanged(FConsoleVariablesEditorCommandInfo& CommandInfo, IConsoleVariable* ChangedVariable);
 
 private:
 	/** Scoped based struct to track inbound cvars set by Multi-user. */
@@ -109,7 +101,7 @@ private:
 			else
 			{
 				int32& NewValue = InboundCommandTable.Add(TrackedCommand);
-				NewValue = 0;
+				NewValue = 1;
 			}
 		}
 
@@ -133,10 +125,7 @@ private:
 
 	void RegisterMenuItem();
 	void RegisterProjectSettings() const;
-
-	void OnConsoleVariableChanged(IConsoleVariable* ChangedVariable);
-	/** In the event a console object is unregistered, this failsafe callback will clean up the associated list item and command info object. */
-	void OnDetectConsoleObjectUnregistered(FString CommandName);
+	void OnConsoleObjectUnregistered(const TCHAR* InName, IConsoleObject* InConsoleObject);
 
 	TObjectPtr<UConsoleVariablesAsset> AllocateTransientPreset(const FName DesiredName) const;
 	void CreateEditingPresets();
@@ -156,7 +145,7 @@ private:
 	TObjectPtr<UConsoleVariablesAsset> EditingGlobalSearchAsset = nullptr;
 
 	/** All tracked variables and their default, startup, and current values */
-	TArray<TSharedPtr<FConsoleVariablesEditorCommandInfo>> ConsoleObjectsMainReference;
+	TMap<FString, TSharedPtr<FConsoleVariablesEditorCommandInfo>> ConsoleObjectsMainReference;
 
 	/**
 	 * A map of commands invoked by Multi-user.  Each command has a corresponding reference count.
@@ -165,6 +154,5 @@ private:
 	 */
 	TMap<FString, int32> CommandsReceivedFromMultiUser;
 
-	/* Have we warned the user about PIE and Console Variable Editor */
-	bool bHaveWarnedAboutPIE = false;
+	FDelegateHandle OnConsoleObjectUnregisteredHandle;
 };

@@ -193,7 +193,7 @@ bool PythonCallableToDelegate(PyObject* InPyCallable, const PyGenUtil::FGenerate
 		const bool bHasSelf = PyMethod_Check(InPyCallable) && PyMethod_GET_SELF(InPyCallable);
 		if (bHasSelf && CallableArgNames.Num() > 0)
 		{
-			CallableArgNames.RemoveAt(0, 1, /*bAllowShrinking*/false);
+			CallableArgNames.RemoveAt(0, 1, EAllowShrinking::No);
 		}
 
 		if (InDelegateSignature.InputParams.Num() != CallableArgNames.Num())
@@ -398,8 +398,8 @@ struct TPyWrapperDelegateImpl
 			return nullptr;
 		}
 
-		FStructOnScope DelegateParams(DelegateSignature.Func);
-		PyGenUtil::ApplyParamDefaults(DelegateParams.GetStructMemory(), DelegateSignature.InputParams);
+		PY_UFUNCTION_STACK(DelegateParams, DelegateSignature.Func);
+		PyGenUtil::ApplyParamDefaults(DelegateParams.GetMemory(), DelegateSignature.InputParams);
 		for (int32 ParamIndex = 0; ParamIndex < Params.Num(); ++ParamIndex)
 		{
 			const PyGenUtil::FGeneratedWrappedMethodParameter& ParamDef = DelegateSignature.InputParams[ParamIndex];
@@ -407,15 +407,15 @@ struct TPyWrapperDelegateImpl
 			PyObject* PyValue = Params[ParamIndex];
 			if (PyValue)
 			{
-				if (!PyConversion::NativizeProperty_InContainer(PyValue, ParamDef.ParamProp, DelegateParams.GetStructMemory(), 0))
+				if (!PyConversion::NativizeProperty_InContainer(PyValue, ParamDef.ParamProp, DelegateParams.GetMemory(), 0))
 				{
 					PyUtil::SetPythonError(PyExc_TypeError, InSelf, *FString::Printf(TEXT("Failed to convert parameter '%s' when calling delegate"), UTF8_TO_TCHAR(ParamDef.ParamName.GetData())));
 					return nullptr;
 				}
 			}
 		}
-		FDelegateInvocation::Call(*InSelf->DelegateInstance, DelegateParams.GetStructMemory());
-		return PyGenUtil::PackReturnValues(DelegateParams.GetStructMemory(), DelegateSignature.OutputParams, *PyUtil::GetErrorContext(InSelf), TEXT("delegate"));
+		FDelegateInvocation::Call(*InSelf->DelegateInstance, DelegateParams.GetMemory());
+		return PyGenUtil::PackReturnValues(DelegateParams.GetMemory(), DelegateSignature.OutputParams, *PyUtil::GetErrorContext(InSelf), TEXT("delegate"));
 	}
 };
 

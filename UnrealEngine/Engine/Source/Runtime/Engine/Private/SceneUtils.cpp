@@ -6,13 +6,42 @@
 #include "Engine/Scene.h"
 #include "RenderUtils.h"
 #include "DataDrivenShaderPlatformInfo.h"
+#include "ComponentReregisterContext.h"
 
 DEFINE_LOG_CATEGORY(LogSceneUtils);
 
-bool IsMobileHDR()
+static int32 GCustomDepthMode = 1;
+static TAutoConsoleVariable<int32> CVarCustomDepth(
+	TEXT("r.CustomDepth"),
+	GCustomDepthMode,
+	TEXT("0: feature is disabled\n")
+	TEXT("1: feature is enabled, texture is created on demand\n")
+	TEXT("2: feature is enabled, texture is not released until required (should be the project setting if the feature should not stall)\n")
+	TEXT("3: feature is enabled, stencil writes are enabled, texture is not released until required (should be the project setting if the feature should not stall)"),
+	ECVF_RenderThreadSafe);
+
+void OnCustomDepthChanged(IConsoleVariable* Var)
 {
-	static auto* MobileHDRCvar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MobileHDR"));
-	return MobileHDRCvar->GetValueOnAnyThread() == 1;
+	// Easiest way to update all static scene proxies is to recreate them
+	FlushRenderingCommands();
+	FGlobalComponentReregisterContext ReregisterContext;
+	GCustomDepthMode = CVarCustomDepth.GetValueOnAnyThread();
+}
+
+void InitCustomDepth()
+{
+	CVarCustomDepth.AsVariable()->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&OnCustomDepthChanged));
+}
+
+ECustomDepthMode GetCustomDepthMode()
+{
+	switch (GCustomDepthMode)
+	{
+	case 1: // Fallthrough.
+	case 2: return ECustomDepthMode::Enabled;
+	case 3: return ECustomDepthMode::EnabledWithStencil;
+	}
+	return ECustomDepthMode::Disabled;
 }
 
 bool IsMobilePropagateAlphaEnabled(EShaderPlatform Platform)
@@ -49,9 +78,8 @@ ENGINE_API EAntiAliasingMethod GetDefaultAntiAliasingMethod(const FStaticFeature
 		static auto* MobileAntiAliasingCvar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Mobile.AntiAliasing"));
 		AntiAliasingMethod = EAntiAliasingMethod(FMath::Clamp<int32>(MobileAntiAliasingCvar->GetValueOnAnyThread(), 0, AAM_MAX));
 
-		static auto* MobileHDRCvar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MobileHDR"));
 		// Disable antialiasing in GammaLDR mode to avoid jittering.
-		if (MobileHDRCvar->GetValueOnAnyThread() == 0 && AntiAliasingMethod != EAntiAliasingMethod::AAM_MSAA)
+		if (!IsMobileHDR() && AntiAliasingMethod != EAntiAliasingMethod::AAM_MSAA)
 		{
 			AntiAliasingMethod = EAntiAliasingMethod::AAM_None;
 		}

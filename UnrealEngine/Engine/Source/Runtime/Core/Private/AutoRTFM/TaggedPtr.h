@@ -35,20 +35,20 @@ namespace AutoRTFM
 		// Assumes little-endian, so top tag is the last 2-bytes in memory.
 		static constexpr size_t OffsetOfTopTag = PointerBits / 8;
 
-		TTaggedPtr()
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr()
 		{
 			Reset();
 		}
 
-		explicit TTaggedPtr(T* const Pointer) : Payload(reinterpret_cast<uintptr_t>(Pointer))
+		UE_AUTORTFM_FORCEINLINE explicit TTaggedPtr(T* const Pointer) : Payload(reinterpret_cast<uintptr_t>(Pointer))
 		{
 			ASSERT(0 == (Payload & ~PointerMask));
 		}
 
-		explicit TTaggedPtr(const TTaggedPtr& Other) : Payload(Other.Payload) {}
-		explicit TTaggedPtr(const TTaggedPtr&& Other) : Payload(Other.Payload) {}
+		UE_AUTORTFM_FORCEINLINE explicit TTaggedPtr(const TTaggedPtr& Other) : Payload(Other.Payload) {}
+		UE_AUTORTFM_FORCEINLINE explicit TTaggedPtr(const TTaggedPtr&& Other) : Payload(Other.Payload) {}
 
-		TTaggedPtr& operator=(T* const Pointer)
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr& operator=(T* const Pointer)
 		{
 			const uintptr_t NewPayload = reinterpret_cast<uintptr_t>(Pointer);
 
@@ -58,49 +58,49 @@ namespace AutoRTFM
 			return *this;
 		}
 
-		TTaggedPtr& operator=(TTaggedPtr& Other)
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr& operator=(TTaggedPtr& Other)
 		{
 			Payload = Other.Payload;
 			return *this;
 		}
 
-		TTaggedPtr& operator=(TTaggedPtr&& Other)
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr& operator=(TTaggedPtr&& Other)
 		{
 			Payload = Other.Payload;
 			return *this;
 		}
 
-		T& operator*() const
+		UE_AUTORTFM_FORCEINLINE T& operator*() const
 	    {
 	    	return *reinterpret_cast<T*>(Payload & PointerMask);
 	    }
 
-	    T* operator->() const
+	    UE_AUTORTFM_FORCEINLINE T* operator->() const
 	    {
 	    	return reinterpret_cast<T*>(Payload & PointerMask);
 	    }
 
-	    T* Get() const
+	    UE_AUTORTFM_FORCEINLINE T* Get() const
 	    {
 	    	return reinterpret_cast<T*>(Payload & PointerMask);
 	    }
 
-	    void SetTopTag(const TopTagT Tag)
+	    UE_AUTORTFM_FORCEINLINE void SetTopTag(const TopTagT Tag)
 	    {
 	    	*reinterpret_cast<TopTagT*>(reinterpret_cast<uint8_t*>(&Payload) + OffsetOfTopTag) = MoveTemp(Tag);
 	    }
 
-	    TopTagT GetTopTag() const
+	    UE_AUTORTFM_FORCEINLINE TopTagT GetTopTag() const
 	    {
 	    	return *reinterpret_cast<const TopTagT*>(reinterpret_cast<const uint8_t*>(&Payload) + OffsetOfTopTag);
 	    }
 
-	    void Reset()
+	    UE_AUTORTFM_FORCEINLINE void Reset()
 	    {
 	    	Payload = 0;
 	    }
 
-	    uintptr_t GetPayload() const
+	    UE_AUTORTFM_FORCEINLINE uintptr_t GetPayload() const
 	    {
 	    	return Payload;
 	    }
@@ -135,20 +135,20 @@ namespace AutoRTFM
 		// Assumes little-endian, so top tag is the last 2-bytes in memory.
 		static constexpr size_t OffsetOfTopTag = PointerBits / 8;
 
-		TTaggedPtr()
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr()
 		{
 			Reset();
 		}
 
-		TTaggedPtr(void* const Pointer) : Payload(reinterpret_cast<uintptr_t>(Pointer))
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr(void* const Pointer) : Payload(reinterpret_cast<uintptr_t>(Pointer))
 		{
 			ASSERT(0 == (Payload & ~PointerMask));
 		}
 
-		TTaggedPtr(const TTaggedPtr& Other) : Payload(Other.Payload) {}
-		TTaggedPtr(const TTaggedPtr&& Other) : Payload(Other.Payload) {}
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr(const TTaggedPtr& Other) : Payload(Other.Payload) {}
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr(const TTaggedPtr&& Other) : Payload(Other.Payload) {}
 
-		TTaggedPtr& operator=(void* const Pointer)
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr& operator=(void* const Pointer)
 		{
 			const uintptr_t NewPayload = reinterpret_cast<uintptr_t>(Pointer);
 
@@ -158,44 +158,44 @@ namespace AutoRTFM
 			return *this;
 		}
 
-		TTaggedPtr& operator=(TTaggedPtr& Other)
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr& operator=(TTaggedPtr& Other)
 		{
 			Payload = Other.Payload;
 			return *this;
 		}
 
-		TTaggedPtr& operator=(TTaggedPtr&& Other)
+		UE_AUTORTFM_FORCEINLINE TTaggedPtr& operator=(TTaggedPtr&& Other)
 		{
 			Payload = Other.Payload;
 			return *this;
 		}
 
-		bool operator==(const TTaggedPtr& Other) const
+		UE_AUTORTFM_FORCEINLINE bool operator==(const TTaggedPtr& Other) const
 		{
 			return Payload == Other.Payload;
 		}
 
-		void* Get() const
+		UE_AUTORTFM_FORCEINLINE void* Get() const
 	    {
 	    	return reinterpret_cast<void*>(Payload & PointerMask);
 	    }
 
-	    void SetTopTag(const TopTagT Tag)
+	    UE_AUTORTFM_FORCEINLINE void SetTopTag(const TopTagT Tag)
 	    {
 	    	*reinterpret_cast<TopTagT*>(reinterpret_cast<uint8_t*>(&Payload) + OffsetOfTopTag) = Tag;
 	    }
 
-	    TopTagT GetTopTag() const
+	    UE_AUTORTFM_FORCEINLINE TopTagT GetTopTag() const
 	    {
 	    	return *reinterpret_cast<const TopTagT*>(reinterpret_cast<const uint8_t*>(&Payload) + OffsetOfTopTag);
 	    }
 
-	    void Reset()
+	    UE_AUTORTFM_FORCEINLINE void Reset()
 	    {
 	    	Payload = 0;
 	    }
 
-	    uintptr_t GetPayload() const
+	    UE_AUTORTFM_FORCEINLINE uintptr_t GetPayload() const
 	    {
 	    	return Payload;
 	    }

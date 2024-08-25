@@ -263,6 +263,11 @@ bool FJsonWebToken::GetAudience(FString& OutValue) const
 	return Payload->TryGetStringField(CLAIM_AUDIENCE, OutValue);
 }
 
+bool FJsonWebToken::GetStringClaim(const FString& InName, FString& OutValue) const
+{
+	return Payload->TryGetStringField(InName, OutValue);
+}
+
 bool FJsonWebToken::GetClaim(const FStringView InName, TSharedPtr<FJsonValue>& OutClaim) const
 {
 	OutClaim = Payload->TryGetField(FString(InName));

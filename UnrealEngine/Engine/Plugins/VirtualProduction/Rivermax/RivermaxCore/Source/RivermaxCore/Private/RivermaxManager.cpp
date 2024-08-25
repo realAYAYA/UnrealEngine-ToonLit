@@ -17,11 +17,9 @@
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 
 #include <ws2tcpip.h>
 
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
@@ -41,6 +39,9 @@ namespace UE::RivermaxCore
 	TMap<uint8, FString> FRivermaxTracingUtils::RmaxInStartingFrameTraceEvents;
 	TMap<uint8, FString> FRivermaxTracingUtils::RmaxInReceivedFrameTraceEvents;
 	TMap<uint8, FString> FRivermaxTracingUtils::RmaxInSelectedFrameTraceEvents;
+
+	// Environment variable used to specify where Rivermax library is located. This enables having an installed version different than the one used by Unreal
+	static const FString RivermaxLibraryEnvironmentVariable = TEXT("RIVERMAX_PATH");
 }
 
 namespace UE::RivermaxCore::Private
@@ -89,8 +90,8 @@ namespace UE::RivermaxCore::Private
 	{
 		if (bIsCleanupRequired)
 		{
-			rmax_status_t Status = GetApi()->rmax_cleanup();
-			if (Status != RMAX_OK)
+			rmx_status Status = GetApi()->rmx_cleanup();
+			if (Status != RMX_OK)
 			{
 				UE_LOG(LogRivermax, Warning, TEXT("Failed to cleanup Rivermax Library. Status: %d"), Status);
 			}
@@ -112,18 +113,54 @@ namespace UE::RivermaxCore::Private
 	bool FRivermaxManager::LoadRivermaxLibrary()
 	{
 #if defined(RIVERMAX_LIBRARY_PLATFORM_PATH) && defined(RIVERMAX_LIBRARY_NAME)
-		const FString LibraryPath = TEXT(PREPROCESSOR_TO_STRING(RIVERMAX_LIBRARY_PLATFORM_PATH));
-		const FString LibraryName = TEXT(PREPROCESSOR_TO_STRING(RIVERMAX_LIBRARY_NAME));
 
-		FPlatformProcess::PushDllDirectory(*LibraryPath);
-		LibraryHandle = FPlatformProcess::GetDllHandle(*LibraryName);
-		FPlatformProcess::PopDllDirectory(*LibraryPath);
+		FString LibraryPath = TEXT(PREPROCESSOR_TO_STRING(RIVERMAX_LIBRARY_PLATFORM_PATH));
+
+		// Look for environment variable defining where the library version we are looking for is located
+
+		FString EnvVarRivermaxPath = FPlatformMisc::GetEnvironmentVariable(*RivermaxLibraryEnvironmentVariable);
+		if (!EnvVarRivermaxPath.IsEmpty())
+		{
+			if (FPaths::DirectoryExists(EnvVarRivermaxPath))
+			{
+				LibraryPath = EnvVarRivermaxPath;
+			}
+		}
+		else
+		{
+			FString MellanoxInstalledPath;
+			static const TCHAR* MLXFolder = TEXT("SOFTWARE\\Mellanox\\MLNX_WinOF2");
+			static const TCHAR* InstalledPathKey = TEXT("InstalledPath");
+			const bool bFoundKey = FWindowsPlatformMisc::QueryRegKey(HKEY_LOCAL_MACHINE, MLXFolder, InstalledPathKey, MellanoxInstalledPath);
+			if (bFoundKey)
+			{
+				// Mellanox installed path will point to OF2 folder. We need to get the parent of it since that's where Rivermax will get installed by default.
+				const FString MellanoxRootDir = FPaths::Combine(MellanoxInstalledPath, TEXT("..\\Rivermax\\lib"));
+				if (FPaths::DirectoryExists(MellanoxRootDir))
+				{
+					// Mellanox based Rivermax directory exists, replace default root dir
+					LibraryPath = MellanoxRootDir;
+				}
+			}
+		}
+
+		if (FPaths::DirectoryExists(LibraryPath))
+		{
+			FPlatformProcess::PushDllDirectory(*LibraryPath);
+			const FString LibraryName = TEXT(PREPROCESSOR_TO_STRING(RIVERMAX_LIBRARY_NAME));
+			LibraryHandle = FPlatformProcess::GetDllHandle(*LibraryName);
+			FPlatformProcess::PopDllDirectory(*LibraryPath);
+		}
 #endif
 
 		const bool bIsLibraryValid = LibraryHandle != nullptr;
 		if(!bIsLibraryValid)
 		{
-			UE_LOG(LogRivermax, Log, TEXT("Failed to load rivermax.dll. Rivermax library will not be functional."));
+			UE_LOG(LogRivermax, Log, TEXT("Failed to load Rivermax library."));
+		}
+		else
+		{
+			UE_LOG(LogRivermax, Display, TEXT("Succesfully loaded Rivermax library from '%s'"), *LibraryPath);
 		}
 
 		return bIsLibraryValid;
@@ -138,7 +175,7 @@ namespace UE::RivermaxCore::Private
 			case ERivermaxTimeSource::PTP:
 			{
 				//Rivermax is usable and configured to read PTP
-				if (GetApi()->rmax_get_time(RMAX_CLOCK_PTP, &Time) != RMAX_OK)
+				if (GetApi()->rmx_get_time(RMX_TIME_PTP, &Time) != RMX_OK)
 				{
 					UE_LOG(LogRivermax, Warning, TEXT("PTP time is the time source but was unavailable"));
 				}
@@ -167,81 +204,12 @@ namespace UE::RivermaxCore::Private
 	bool FRivermaxManager::LoadRivermaxFunctions()
 	{
 		memset(&FuncList, 0, sizeof(RIVERMAX_API_FUNCTION_LIST));
+		bIsLibraryLoaded = UE::RivermaxCore::Private::LoadLibraryFunctions(&FuncList, LibraryHandle);
 
-		FuncList.rmax_get_version = (PFN_RMAX_GET_VERSION)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_get_version")));
-		FuncList.rmax_get_version_string = (PFN_RMAX_GET_VERSION_STRING)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_get_version_string")));
-		FuncList.rmax_init_version = (PFN_RMAX_INIT_VERSION)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_init_version")));
-		FuncList.rmax_cleanup = (PFN_RMAX_CLEANUP)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_cleanup")));
-		FuncList.rmax_device_get_caps = (PFN_RMAX_DEVICE_GET_CAPS)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_device_get_caps")));
-		FuncList.rmax_set_device_config = (PFN_RMAX_SET_DEVICE_CONFIG)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_set_device_config")));
-		FuncList.rmax_unset_device_config = (PFN_RMAX_UNSET_DEVICE_CONFIG)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_unset_device_config")));
-		FuncList.rmax_request_notification = (PFN_RMAX_REQUEST_NOTIFICATION)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_request_notification")));
-		FuncList.rmax_request_notification = (PFN_RMAX_REQUEST_NOTIFICATION)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_request_notification")));
-		FuncList.rmax_get_event_channel = (PFN_RMAX_GET_EVENT_CHANNEL)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_get_event_channel")));
-		FuncList.rmax_register_memory = (PFN_RMAX_REGISTER_MEMORY)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_register_memory")));
-		FuncList.rmax_register_memory_ex = (PFN_RMAX_REGISTER_MEMORY_EX)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_register_memory_ex")));
-		FuncList.rmax_deregister_memory = (PFN_RMAX_DEREGISTER_MEMORY)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_deregister_memory")));
-		FuncList.rmax_out_create_stream = (PFN_RMAX_OUT_CREATE_STREAM)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_create_stream")));
-		FuncList.rmax_out_create_stream_ex = (PFN_RMAX_OUT_CREATE_STREAM_EX)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_create_stream_ex")));
-		FuncList.rmax_out_query_address = (PFN_RMAX_OUT_QUERY_ADDRESS)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_query_address")));
-		FuncList.rmax_out_create_gen_stream = (PFN_RMAX_OUT_CREATE_GEN_STREAM)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_create_gen_stream")));
-		FuncList.rmax_out_modify_gen_stream_rate = (PFN_RMAX_OUT_MODIFY_GEN_STREAM_RATE)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_modify_gen_stream_rate")));
-		FuncList.rmax_out_query_chunk_num = (PFN_RMAX_OUT_QUERY_CHUNK_NUM)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_query_chunk_num")));
-		FuncList.rmax_out_destroy_stream = (PFN_RMAX_OUT_DESTROY_STREAM)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_destroy_stream")));
-		FuncList.rmax_out_commit = (PFN_RMAX_OUT_COMMIT)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_commit")));
-		FuncList.rmax_out_commit_chunk = (PFN_RMAX_OUT_COMMIT_CHUNK)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_commit_chunk")));
-		FuncList.rmax_out_commit_chunk_to = (PFN_RMAX_OUT_COMMIT_CHUNK_TO)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_commit_chunk_to")));
-		FuncList.rmax_out_get_next_chunk = (PFN_RMAX_OUT_GET_NEXT_CHUNK)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_get_next_chunk")));
-		FuncList.rmax_out_get_next_chunk_dynamic = (PFN_RMAX_OUT_GET_NEXT_CHUNK_DYNAMIC)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_get_next_chunk_dynamic")));
-		FuncList.rmax_out_cancel_unsent_chunks = (PFN_RMAX_OUT_CANCEL_UNSENT_CHUNKS)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_cancel_unsent_chunks")));
-		FuncList.rmax_out_skip_chunks = (PFN_RMAX_OUT_SKIP_CHUNKS)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_out_skip_chunks")));
-		FuncList.rmax_in_query_buffer_size = (PFN_RMAX_IN_QUERY_BUFFER_SIZE)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_in_query_buffer_size")));
-		FuncList.rmax_in_create_stream = (PFN_RMAX_IN_CREATE_STREAM)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_in_create_stream")));
-		FuncList.rmax_in_attach_flow = (PFN_RMAX_IN_ATTACH_FLOW)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_in_attach_flow")));
-		FuncList.rmax_in_detach_flow = (PFN_RMAX_IN_DETACH_FLOW)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_in_detach_flow")));
-		FuncList.rmax_in_get_next_chunk = (PFN_RMAX_IN_GET_NEXT_CHUNK)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_in_get_next_chunk")));
-		FuncList.rmax_in_destroy_stream = (PFN_RMAX_IN_DESTROY_STREAM)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_in_destroy_stream")));
-		FuncList.rmax_set_clock = (PFN_RMAX_SET_CLOCK)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_set_clock")));
-		FuncList.rmax_get_time = (PFN_RMAX_GET_TIME)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_get_time")));
-		FuncList.rmax_get_supported_devices_list = (PFN_RMAX_GET_SUPPORTED_DEVICES_LIST)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_get_supported_devices_list")));
-		FuncList.rmax_free_supported_devices_list = (PFN_RMAX_FREE_SUPPORTED_DEVICES_LIST)(FPlatformProcess::GetDllExport(LibraryHandle, TEXT("rmax_free_supported_devices_list")));
-
-		bIsLibraryLoaded = FuncList.rmax_get_version
-			&& FuncList.rmax_get_version_string
-			&& FuncList.rmax_init_version
-			&& FuncList.rmax_cleanup
-			&& FuncList.rmax_device_get_caps
-			&& FuncList.rmax_set_device_config
-			&& FuncList.rmax_unset_device_config
-			&& FuncList.rmax_request_notification
-			&& FuncList.rmax_get_event_channel
-			&& FuncList.rmax_register_memory
-			&& FuncList.rmax_register_memory_ex
-			&& FuncList.rmax_deregister_memory
-			&& FuncList.rmax_out_create_stream
-			&& FuncList.rmax_out_create_stream_ex
-			&& FuncList.rmax_out_query_address
-			&& FuncList.rmax_out_create_gen_stream
-			&& FuncList.rmax_out_modify_gen_stream_rate
-			&& FuncList.rmax_out_query_chunk_num
-			&& FuncList.rmax_out_destroy_stream
-			&& FuncList.rmax_out_commit
-			&& FuncList.rmax_out_commit_chunk
-			&& FuncList.rmax_out_commit_chunk_to
-			&& FuncList.rmax_out_get_next_chunk
-			&& FuncList.rmax_out_get_next_chunk_dynamic
-			&& FuncList.rmax_out_cancel_unsent_chunks
-			&& FuncList.rmax_out_skip_chunks
-			&& FuncList.rmax_in_query_buffer_size
-			&& FuncList.rmax_in_create_stream
-			&& FuncList.rmax_in_attach_flow
-			&& FuncList.rmax_in_detach_flow
-			&& FuncList.rmax_in_get_next_chunk
-			&& FuncList.rmax_in_destroy_stream
-			&& FuncList.rmax_set_clock
-			&& FuncList.rmax_get_time
-			&& FuncList.rmax_get_supported_devices_list
-			&& FuncList.rmax_free_supported_devices_list;
+		if (!bIsLibraryLoaded)
+		{
+			UE_LOG(LogRivermax, Log, TEXT("Failed to load Rivermax library functions."));
+		}
 
 		return bIsLibraryLoaded;
 	}
@@ -272,12 +240,19 @@ namespace UE::RivermaxCore::Private
 
 		if (bCanProceed)
 		{
-			rmax_init_config Config;
-			memset(&Config, 0, sizeof(Config));
+			// Load the specific version we have the API For
+			const rmx_version Policy = 
+			{
+				RMX_VERSION_MAJOR,
+				RMX_VERSION_MINOR,
+				RMX_VERSION_PATCH
+			};
 
-			// @Note: We can't use rmax_init directly here since it would call direcly into the DLL instead of going through the function pointers. 
-			rmax_status_t Status = GetApi()->rmax_init_version(RMAX_API_MAJOR, RMAX_API_MINOR, &Config);
-			if (Status == RMAX_OK)
+			// Bug with 1.31 version where this is required to be called before _init() even though it is optional
+			GetApi()->rmx_enable_system_signal_handling();
+			
+			const rmx_status Status = GetApi()->_rmx_init(&Policy);
+			if (Status == RMX_OK)
 			{
 				bIsCleanupRequired = true;
 
@@ -293,13 +268,8 @@ namespace UE::RivermaxCore::Private
 
 				if (bIsClockConfigured)
 				{
-					uint32 Major = 0;
-					uint32 Minor = 0;
-					uint32 Release = 0;
-					uint32 Build = 0;
-					Status = GetApi()->rmax_get_version(&Major, &Minor, &Release, &Build);
-
-					if (Status == RMAX_OK)
+					const rmx_version* CurrentVersion = GetApi()->rmx_get_version_numbers();
+					if (CurrentVersion)
 					{
 						if (CVarRivermaxEnableGPUDirectCapability.GetValueOnGameThread())
 						{
@@ -310,7 +280,7 @@ namespace UE::RivermaxCore::Private
 
 						bIsLibraryInitialized = true;
 						const TCHAR* GPUDirectSupport = bIsGPUDirectSupported ? TEXT("with GPUDirect support.") : TEXT("without GPUDirect support.");
-						UE_LOG(LogRivermax, Log, TEXT("Rivermax library version %d.%d.%d.%d succesfully initialized, %s"), Major, Minor, Release, Build, GPUDirectSupport);
+						UE_LOG(LogRivermax, Log, TEXT("Rivermax library version %d.%d.%d succesfully initialized, %s"), CurrentVersion->major, CurrentVersion->minor, CurrentVersion->patch, GPUDirectSupport);
 					}
 					else
 					{
@@ -318,14 +288,13 @@ namespace UE::RivermaxCore::Private
 					}
 				}
 			}
-			else if (Status == RMAX_ERR_LICENSE_ISSUE)
+			else if (Status == RMX_LICENSE_ISSUE)
 			{
 				UE_LOG(LogRivermax, Warning, TEXT("Rivermax License could not be found. Have you configured RIVERMAX_LICENSE_PATH environment variable?"));
 			}
-			else if (Status > RMAX_INVALID_PARAMETER_MIX && Status <= RMAX_ERR_INVALID_PARAM_10)
+			else if (Status > RMX_INVALID_PARAM_MIX && Status <= RMX_INVALID_PARAM_10)
 			{
-				constexpr float Version = RMAX_RELEASE_VERSION / 10.f;
-				UE_LOG(LogRivermax, Warning, TEXT("Rivermax initialization error, installed Rivermax SDK must be version %.2f."), Version);
+				UE_LOG(LogRivermax, Warning, TEXT("Rivermax initialization error, installed Rivermax SDK must be version %d.%d.%d."), RMX_VERSION_MAJOR, RMX_VERSION_MINOR, RMX_VERSION_PATCH);
 			}
 
 			if (bIsLibraryInitialized == false)
@@ -426,34 +395,45 @@ namespace UE::RivermaxCore::Private
 
 	bool FRivermaxManager::InitializeClock(ERivermaxTimeSource DesiredTimeSource)
 	{
-		rmax_clock_t ClockConfig;
-		memset(&ClockConfig, 0, sizeof(ClockConfig));
-
 		switch (DesiredTimeSource)
 		{
 			case ERivermaxTimeSource::PTP:
 			{
-				ClockConfig.clock_type = rmax_clock_types::RIVERMAX_PTP_CLOCK;
-
 				FString PTPAddress;
 				const URivermaxSettings* Settings = GetDefault<URivermaxSettings>();
 				if (DeviceFinder->ResolveIP(Settings->PTPInterfaceAddress, PTPAddress))
 				{
-					if (inet_pton(AF_INET, StringCast<ANSICHAR>(*PTPAddress).Get(), &ClockConfig.clock_u.rmax_ptp_clock.device_ip_addr))
+					in_addr DeviceIPAddr;
+					if (inet_pton(AF_INET, StringCast<ANSICHAR>(*PTPAddress).Get(), &DeviceIPAddr))
 					{
 						UE_LOG(LogRivermax, Display, TEXT("Configure Rivermax clock for PTP using device interface %s"), *PTPAddress);
-						rmax_status_t Status = GetApi()->rmax_set_clock(&ClockConfig);
-						if (Status == RMAX_OK)
+						rmx_device_iface DeviceInterface;
+						rmx_ip_addr RmaxDeviceAddr;
+						RmaxDeviceAddr.family = AF_INET;
+						RmaxDeviceAddr.addr.ipv4 = DeviceIPAddr;
+						rmx_status Status = GetApi()->rmx_retrieve_device_iface(&DeviceInterface, &RmaxDeviceAddr);
+						if (Status == RMX_OK)
 						{
-							return true;
-						}
-						else if (Status == RMAX_ERR_CLOCK_TYPE_NOT_SUPPORTED)
-						{
-							UE_LOG(LogRivermax, Warning, TEXT("PTP clock not supported on device interface %s. Falling back to system clock."), *PTPAddress);
+							rmx_ptp_clock_params PTPClockParameters;
+							GetApi()->rmx_init_ptp_clock(&PTPClockParameters);
+							GetApi()->rmx_set_ptp_clock_device(&PTPClockParameters, &DeviceInterface);
+							Status = GetApi()->rmx_use_ptp_clock(&PTPClockParameters);
+							if (Status == RMX_OK)
+							{
+								return true;
+							}
+							else if (Status == RMX_CLOCK_TYPE_NOT_SUPPORTED)
+							{
+								UE_LOG(LogRivermax, Warning, TEXT("PTP clock not supported on device interface %s. Falling back to system clock."), *PTPAddress);
+							}
+							else
+							{
+								UE_LOG(LogRivermax, Warning, TEXT("Failed to configure PTP clock on device interface %s with error '%d'. Falling back to system clock."), *PTPAddress, Status);
+							}
 						}
 						else
 						{
-							UE_LOG(LogRivermax, Warning, TEXT("Failed to configure PTP clock on device interface %s with error '%d'. Falling back to system clock."), *PTPAddress, Status);
+							UE_LOG(LogRivermax, Warning, TEXT("Failed to get device with IP %s during PTP clock configuration, Status: '%d'. Falling back to system clock."), *PTPAddress, Status);
 						}
 
 						return false;
@@ -465,31 +445,24 @@ namespace UE::RivermaxCore::Private
 			}
 			case ERivermaxTimeSource::Engine:
 			{
-				ClockConfig.clock_type = rmax_clock_types::RIVERMAX_USER_CLOCK_HANDLER;
-				ClockConfig.clock_u.rmax_user_clock_handler.clock_handler = RivermaxTimeHandler;
-				ClockConfig.clock_u.rmax_user_clock_handler.ctx = nullptr;
+				rmx_user_clock_params UserClockParameters;
+				FuncList.rmx_init_user_clock(&UserClockParameters);
+				FuncList.rmx_set_user_clock_handler(&UserClockParameters, RivermaxTimeHandler);
 
 				UE_LOG(LogRivermax, Display, TEXT("Configure Rivermax clock for engine time"));
-				rmax_status_t Status = GetApi()->rmax_set_clock(&ClockConfig);
-				if (Status != RMAX_OK)
+				const rmx_status Status = FuncList.rmx_use_user_clock(&UserClockParameters);
+				if (Status != RMX_OK)
 				{
 					UE_LOG(LogRivermax, Warning, TEXT("Failed to configure clock to use engine time with error '%d'."), Status);
 				}
 
-				return Status == RMAX_OK;
+				return Status == RMX_OK;
 			}
 			case ERivermaxTimeSource::System:
 			{
-				ClockConfig.clock_type = rmax_clock_types::RIVERMAX_SYSTEM_CLOCK;
-
+				// System clock is the default Rivermax clock if none others are used.
 				UE_LOG(LogRivermax, Display, TEXT("Configure Rivermax clock for system time"));
-				rmax_status_t Status = GetApi()->rmax_set_clock(&ClockConfig);
-				if (Status != RMAX_OK)
-				{
-					UE_LOG(LogRivermax, Warning, TEXT("Failed to configure clock to use system time with error '%d'."), Status);
-				}
-
-				return Status == RMAX_OK;
+				return true;
 			}
 			default:
 			{
@@ -608,31 +581,41 @@ namespace UE::RivermaxCore::Private
 			return false;
 		}
 
-		uint64_t CapabilityMask = RMAX_DEV_CAP_RTP_DYNAMIC_HDS;
-		rmax_device_caps_t Capabilities;
-		Capabilities.supported_caps = 0;
+		rmx_device_iface DeviceInterface;
+		rmx_ip_addr RmaxDeviceAddr;
+		RmaxDeviceAddr.family = AF_INET;
+		RmaxDeviceAddr.addr.ipv4 = RivermaxDevice.sin_addr;
+		rmx_status Status = GetApi()->rmx_retrieve_device_iface(&DeviceInterface, &RmaxDeviceAddr);
+		if (Status != RMX_OK)
+		{
+			UE_LOG(LogRivermax, Warning, TEXT("Failed to get device for interface '%s'"), *Interface);
+			return false;
+		}
 
-		rmax_status_t Status = GetApi()->rmax_device_get_caps(RivermaxDevice.sin_addr, CapabilityMask, &Capabilities);
-		if (Status != RMAX_OK) 
+		rmx_device_capabilities Capabilities;
+		rmx_clear_device_capabilities_enquiry(&Capabilities);
+		rmx_mark_device_capability_for_enquiry(&Capabilities, RMX_DEVICE_CAP_RTP_DYNAMIC_HDS);
+		Status = GetApi()->rmx_enquire_device_capabilities(&DeviceInterface, &Capabilities);
+		if (Status != RMX_OK) 
 		{
 			UE_LOG(LogRivermax, Warning, TEXT("Failed to query capabilities for device IP '%s'"), *Interface);
 			return false;
 		}
 
-		const bool bIsDynamicHeaderSplitSupported = (Capabilities.supported_caps & RMAX_DEV_CAP_RTP_DYNAMIC_HDS) != 0;
+		const bool bIsDynamicHeaderSplitSupported = rmx_is_device_capability_supported(&Capabilities, RMX_DEVICE_CAP_RTP_DYNAMIC_HDS);
 		if (!bIsDynamicHeaderSplitSupported) 
 		{
-			UE_LOG(LogRivermax, Warning, TEXT("RTP dynamic header data split is not supported for device IP '%s'"), *Interface)
+			UE_LOG(LogRivermax, Warning, TEXT("RTP dynamic header data split is not supported for device IP '%s'.\nMake sure firmware is updated and FLEX_PARSER is configured according to deployment guide."), *Interface)
 			return false;
 		}
 
-		rmax_device_config_t DeviceConfig;
-		FMemory::Memset(&DeviceConfig, 0, sizeof(DeviceConfig));
-		DeviceConfig.config_flags = RMAX_DEV_CONFIG_RTP_SMPTE_2110_20_DYNAMIC_HDS_CONFIG;
-		DeviceConfig.ip_address = RivermaxDevice.sin_addr;
-
-		Status = GetApi()->rmax_set_device_config(&DeviceConfig);
-		if (Status != RMAX_OK)
+		rmx_device_config DeviceConfiguration;
+		rmx_clear_device_config_attributes(&DeviceConfiguration);
+		constexpr rmx_device_config_attribute Attribute = RMX_DEVICE_CONFIG_RTP_SMPTE_2110_20_DYNAMIC_HDS;
+		rmx_set_device_config_attribute(&DeviceConfiguration, Attribute);
+		
+		Status = GetApi()->rmx_apply_device_config(&DeviceInterface, &DeviceConfiguration);
+		if (Status != RMX_OK)
 		{
 			UE_LOG(LogRivermax, Warning, TEXT("Could not enable dynamic header split for device IP '%s'. Error: %d"), *Interface, Status);
 			return false;
@@ -662,15 +645,30 @@ namespace UE::RivermaxCore::Private
 				bCanUnsetDevice = false;
 			}
 
+			rmx_device_iface DeviceInterface;
 			if (bCanUnsetDevice)
 			{
-				rmax_device_config_t DeviceConfig;
-				FMemory::Memset(&DeviceConfig, 0, sizeof(DeviceConfig));
-				DeviceConfig.config_flags = RMAX_DEV_CONFIG_RTP_SMPTE_2110_20_DYNAMIC_HDS_CONFIG;
-				DeviceConfig.ip_address = DeviceToUse.sin_addr;
+				rmx_ip_addr RmaxDeviceAddr;
+				RmaxDeviceAddr.family = AF_INET;
+				RmaxDeviceAddr.addr.ipv4 = DeviceToUse.sin_addr;
+				rmx_status Status = GetApi()->rmx_retrieve_device_iface(&DeviceInterface, &RmaxDeviceAddr);
+				if (Status != RMX_OK)
+				{
+					UE_LOG(LogRivermax, Warning, TEXT("Failed to get device for interface '%s'"), *Interface);
+					bCanUnsetDevice = false;
+				}
+			}
 
-				const rmax_status_t Status = GetApi()->rmax_unset_device_config(&DeviceConfig);
-				if (Status != RMAX_OK)
+			if (bCanUnsetDevice)
+			{
+
+				rmx_device_config DeviceConfiguration;
+				rmx_clear_device_config_attributes(&DeviceConfiguration);
+				constexpr rmx_device_config_attribute Attribute = RMX_DEVICE_CONFIG_RTP_SMPTE_2110_20_DYNAMIC_HDS;
+				rmx_set_device_config_attribute(&DeviceConfiguration, Attribute);
+
+				const rmx_status Status = GetApi()->rmx_revert_device_config(&DeviceInterface, &DeviceConfiguration);
+				if (Status != RMX_OK)
 				{
 					UE_LOG(LogRivermax, Warning, TEXT("Could not disable dynamic header split for device IP '%s'. Error: %d"), *Interface, Status);
 				}
@@ -702,3 +700,4 @@ namespace UE::RivermaxCore::Private
 }
 
 #undef LOCTEXT_NAMESPACE // RivermaxManager
+

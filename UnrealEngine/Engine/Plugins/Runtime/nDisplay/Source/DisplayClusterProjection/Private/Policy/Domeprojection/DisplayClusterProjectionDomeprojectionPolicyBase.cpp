@@ -114,7 +114,7 @@ bool FDisplayClusterProjectionDomeprojectionPolicyBase::CalculateView(IDisplayCl
 	const float FCP = GDisplayClusterProjectionDomeprojectionPolicyEnableNearClippingPlane ? InFCP : 1;
 
 	// Get origin component
-	const USceneComponent* const OriginComp = GetOriginComp();
+	const USceneComponent* const OriginComp = GetOriginComponent();
 	check(OriginComp);
 
 	// Get world-origin matrix

@@ -17,10 +17,10 @@ struct FAnimSubsystem_Base : public FAnimSubsystem
 	// FAnimSubsystem interface
 	ENGINE_API virtual void OnPostLoadDefaults(FAnimSubsystemPostLoadDefaultsContext& InContext) override;
 
-	// Get the exposed value handlers held on this subsystem
 	const TArray<FExposedValueHandler>& GetExposedValueHandlers() const { return ExposedValueHandlers; }
 
+	ENGINE_API void PatchValueHandlers(UClass* InClass);
+
 private:
-	UPROPERTY()
 	TArray<FExposedValueHandler> ExposedValueHandlers;
 };

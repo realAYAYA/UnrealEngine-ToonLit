@@ -3,7 +3,26 @@
 #pragma once
 #include "Iris/ReplicationSystem/NetBlob/NetRPC.h"
 #include "Iris/ReplicationSystem/NetBlob/NetBlobHandler.h"
+#include "Iris/ReplicationSystem/ReplicationSystemTypes.h"
 #include "NetRPCHandler.generated.h"
+
+namespace UE::Net
+{
+
+class FNetRPCCallContext
+{
+public:
+	FNetRPCCallContext(FNetSerializationContext& NetContext, const FForwardNetRPCCallMulticastDelegate& ForwardNetRPCCallDelegate);
+
+	FNetSerializationContext& GetNetSerializationContext();
+	const FForwardNetRPCCallMulticastDelegate& GetForwardNetRPCCallDelegate() const;
+
+private:
+	FNetSerializationContext& NetContext;
+	const FForwardNetRPCCallMulticastDelegate& ForwardNetRPCCallDelegate;
+};
+
+}
 
 UCLASS(transient, MinimalAPI)
 class UNetRPCHandler final : public UNetBlobHandler
@@ -24,5 +43,26 @@ private:
 	virtual TRefCountPtr<FNetBlob> CreateNetBlob(const FNetBlobCreationInfo&) const override;
 	virtual void OnNetBlobReceived(UE::Net::FNetSerializationContext& Context, const TRefCountPtr<FNetBlob>& NetBlob) override;
 
-	UReplicationSystem* ReplicationSystem;
+	UReplicationSystem* ReplicationSystem = nullptr;
 };
+
+namespace UE::Net
+{
+
+inline FNetRPCCallContext::FNetRPCCallContext(FNetSerializationContext& InNetContext, const FForwardNetRPCCallMulticastDelegate& InForwardNetRPCCallDelegate)
+: NetContext(InNetContext)
+, ForwardNetRPCCallDelegate(InForwardNetRPCCallDelegate)
+{
+}
+
+inline FNetSerializationContext& FNetRPCCallContext::GetNetSerializationContext()
+{
+	return NetContext;
+}
+
+inline const FForwardNetRPCCallMulticastDelegate& FNetRPCCallContext::GetForwardNetRPCCallDelegate() const
+{
+	return ForwardNetRPCCallDelegate;
+}
+
+}

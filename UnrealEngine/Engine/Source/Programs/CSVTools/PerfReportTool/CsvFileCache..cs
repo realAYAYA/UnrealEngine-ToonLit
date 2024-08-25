@@ -110,11 +110,19 @@ namespace PerfReportTool
 			}
 			filename = inFilename;
 
-			// Apply metadata mappings if we have metadata. Note: we skip for PRCs, since these already have mappings cached
-			if (dummyCsvStats != null && dummyCsvStats.metaData != null)
+			// Setup initial metadata variable mappings and derived metadata (which can read from the initial variableMappings). 
+			// Note: we skip for PRCs (dummyCsvStats==null), since these already have mappings cached
+			if (dummyCsvStats != null)
 			{
-				metadata = dummyCsvStats.metaData;
-				derivedMetadataMappings.ApplyMapping(metadata);
+				xmlVariableMappings = new XmlVariableMappings();
+
+				// Note: We could apply the global variable set here, but that is slow and leads to complexity and correctness issues
+				if (dummyCsvStats.metaData != null)
+				{
+					metadata = dummyCsvStats.metaData;
+					xmlVariableMappings.SetMetadataVariables(metadata);
+					derivedMetadataMappings.ApplyMapping(metadata, xmlVariableMappings);
+				}
 			}
 		}
 
@@ -123,6 +131,12 @@ namespace PerfReportTool
 			if (fileType == FileType.BinaryCsv)
 			{
 				finalCsv = CsvStats.ReadBinFile(filename);
+				// If we already have metadata then use it. This avoids the need to remap it multiple times
+				if (metadata != null)
+				{
+					finalCsv.metaData = metadata;
+				}
+
 			}
 			else
 			{
@@ -142,6 +156,13 @@ namespace PerfReportTool
 			if (fileType == FileType.TextCsv)
 			{
 				finalCsv = CsvStats.ReadCSVFromLines(textCsvLines, null);
+
+				// If we already have metadata then use it. This avoids the need to remap it multiple times
+				if ( metadata != null )
+				{
+					finalCsv.metaData = metadata;
+				}
+
 				return finalCsv;
 			}
 			return null;
@@ -204,6 +225,7 @@ namespace PerfReportTool
 		public CsvMetadata metadata;
 		public SummaryTableRowData cachedSummaryTableRowData;
 		public ReportTypeInfo reportTypeInfo;
+		public XmlVariableMappings xmlVariableMappings;
 		FileType fileType;
 	};
 
@@ -418,7 +440,7 @@ namespace PerfReportTool
 				else
 				{
 					// If we're not in bulk mode, exceptions are fatal
-					throw e;
+					throw;
 				}
 			}
 		}

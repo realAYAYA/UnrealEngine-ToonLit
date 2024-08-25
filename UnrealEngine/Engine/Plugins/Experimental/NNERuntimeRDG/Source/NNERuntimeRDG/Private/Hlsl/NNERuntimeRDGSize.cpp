@@ -20,7 +20,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 1);
 			check(OutputTensors.Num() == 1);
@@ -55,8 +55,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
-		//This match version 13 of the Size operator, next version are 11 and 13
-		//https://github.com/onnx/onnx/blob/main/docs/Operators.md#Size
 		FAttributeValidator AttributeValidator;
 		bIsValid &= AttributeValidator.Validate(AttributeMap);
 
@@ -86,7 +84,10 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterSizeOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Size"), CreateSizeOperator, ValidateSizeOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Size"), TEXT("Onnx")}, 1}, CreateSizeOperator, ValidateSizeOperator);
+		Registry.OpAdd({{TEXT("Size"), TEXT("Onnx")}, 13}, CreateSizeOperator, ValidateSizeOperator);
+		Registry.OpAdd({{TEXT("Size"), TEXT("Onnx")}, 19}, CreateSizeOperator, ValidateSizeOperator);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

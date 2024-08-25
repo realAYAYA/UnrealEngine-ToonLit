@@ -46,6 +46,14 @@ struct FObjectReplicationBridgeFilterConfig
 	/** The name of the filter to set on the class instances. */
 	UPROPERTY()
 	FName DynamicFilterName;
+
+	/** Optional name to a profile that can further specialize the settings within a dynamic filter */
+	UPROPERTY()
+	FName FilterProfile;
+
+	/** Whether this filter should be used for all instances of this class and subclasses, regardless of bAlwaysRelevant and bOnlyRelevantToOwner settings on instance. */
+	UPROPERTY()
+	bool bForceEnableOnAllInstances = false;
 };
 
 USTRUCT()
@@ -80,6 +88,38 @@ struct FObjectReplicationBridgeDeltaCompressionConfig
 	bool bEnableDeltaCompression = true;
 };
 
+USTRUCT()
+struct FObjectReplicatedBridgeCriticalClassConfig
+{
+	GENERATED_BODY()
+
+	/** Instances of this class or its subclasses will force a client disconnection when it detects a protocol mismatch.*/
+	UPROPERTY()
+	FName ClassName;
+
+	/** When true we force the client to disconnect when a protocol mismatch prevents it from instantiating replicated objects of this class. */
+	UPROPERTY()
+	bool bDisconnectOnProtocolMismatch = true;
+};
+
+USTRUCT()
+struct FObjectReplicationBridgeTypeStatsConfig
+{
+	GENERATED_BODY()
+
+	/** Instances of this class or derived from this class should use delta compression */
+	UPROPERTY()
+	FName ClassName;
+
+	/** The TypeStatsName this class should use. */
+	UPROPERTY()
+	FName TypeStatsName;
+
+	/** If set to true this type will be reported even in configs with minimal stats reporting */
+	UPROPERTY()
+	bool bIncludeInMinimalCSVStats = false;
+};
+
 UCLASS(transient, config=Engine)
 class UObjectReplicationBridgeConfig : public UObject
 {
@@ -93,8 +133,14 @@ public:
 	IRISCORE_API TConstArrayView<FObjectReplicationBridgeFilterConfig> GetFilterConfigs() const;
 	IRISCORE_API TConstArrayView<FObjectReplicationBridgePrioritizerConfig> GetPrioritizerConfigs() const;
 	IRISCORE_API TConstArrayView<FObjectReplicationBridgeDeltaCompressionConfig> GetDeltaCompressionConfigs() const;
+	IRISCORE_API TConstArrayView<FObjectReplicatedBridgeCriticalClassConfig> GetCriticalClassConfigs() const;
+	IRISCORE_API TConstArrayView<FObjectReplicationBridgeTypeStatsConfig> GetTypeStatsConfigs() const;
+
 	FName GetDefaultSpatialFilterName() const;
 	FName GetRequiredNetDriverChannelClassName() const;
+
+	/** When true any class with a protocol mismatch will force a disconnection. */
+	bool AreAllClassesCritical() const { return bAllClassesCritical; }
 
 protected:
 	UObjectReplicationBridgeConfig();
@@ -128,6 +174,20 @@ private:
 	UPROPERTY(Config)
 	TArray<FObjectReplicationBridgeDeltaCompressionConfig> DeltaCompressionConfigs;
 
+	/** Classes that are considered critical and will force a disconnection when a protocol mismatch is detected. */
+	UPROPERTY(Config)
+	TArray<FObjectReplicatedBridgeCriticalClassConfig> CriticalClassConfigs;
+
+	/** Set this to true if you want any class with a protocol mismatch to force a disconnection. */
+	UPROPERTY(Config)
+	bool bAllClassesCritical = false;
+
+	/**
+	 * Which classes should collect TypeStats. Derived classes will get the same behavior unless overidden
+	 */
+	UPROPERTY(Config)
+	TArray<FObjectReplicationBridgeTypeStatsConfig> TypeStatsConfigs;
+
 	/**
 	 * The name of the filter to apply objects that can have spatial filtering applied.
 	 */
@@ -139,6 +199,9 @@ private:
 	 */
 	UPROPERTY(Config)
 	FName RequiredNetDriverChannelClassName;
+
+	UPROPERTY(Config)
+	TArray<FName> CriticalActorClasses;
 };
 
 inline FName UObjectReplicationBridgeConfig::GetDefaultSpatialFilterName() const

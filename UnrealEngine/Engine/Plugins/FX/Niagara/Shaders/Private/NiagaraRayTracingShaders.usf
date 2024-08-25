@@ -25,7 +25,7 @@ uint MaxRetraces;
 #if NIAGARA_SUPPORTS_COLLISION_GROUPS
 bool FindCollisionGroup(int GPUSceneIndexId, out int CollisionGroup)
 {
-	int Index;
+	uint Index = 0;
 	if (HashTableFind(GPUSceneIndexId, Index))
 	{
 		CollisionGroup = HashToCollisionGroups[Index];
@@ -51,7 +51,7 @@ RAY_TRACING_ENTRY_RAYGEN(NiagaraCollisionRayTraceRG)
 	FNiagaraAsyncGpuTrace InputRay = Rays[RayIndex + RaysOffset];
 
 	FRayDesc Ray;
-	Ray.Origin = InputRay.Origin + LWCHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
+	Ray.Origin = InputRay.Origin + DFHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
 	Ray.Direction = InputRay.Direction;
 	Ray.TMin = 0.0f;
 	Ray.TMax = InputRay.TFar;
@@ -118,7 +118,7 @@ RAY_TRACING_ENTRY_RAYGEN(NiagaraCollisionRayTraceRG)
 	CollisionOutput[OutputIndex].HitT = Payload.HitT;
 	if (Payload.IsHit())
 	{
-		CollisionOutput[OutputIndex].WorldPosition = Payload.TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
+		CollisionOutput[OutputIndex].WorldPosition = Payload.TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
 		CollisionOutput[OutputIndex].WorldNormal = Payload.WorldNormal;
 	}
 }

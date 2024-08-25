@@ -11,6 +11,11 @@ class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UMediaPlateComponent;
 
+namespace UE::MediaPlate::Private
+{
+	MEDIAPLATE_API void ApplyTranslucencyScreenPercentageCVar(int32 InBasis);
+}
+
 /**
  * MediaPlate is an actor that can play and show media in the world.
  */
@@ -36,7 +41,7 @@ public:
 #if WITH_EDITOR
 
 	/*
-	 * Call this to change the static mesh to use the default media plate material.
+	 * Call this to change the static mesh to use the default media plate material and reset the overlay material.
 	 */
 	void UseDefaultMaterial();
 
@@ -44,7 +49,16 @@ public:
 	 * Call this after changing the current material to set it up for media plate.
 	 */
 	void ApplyCurrentMaterial();
+	
+	/**
+	 * Setup the material for media plate use. Automatically called by ApplyCurrentMaterial.
+	 */
 	void ApplyMaterial(UMaterialInterface* InMaterial);
+
+	/**
+	 * Setup the overlay material for media plate use. Automatically called by ApplyCurrentMaterial.
+	 */
+	void ApplyOverlayMaterial(UMaterialInterface* InOverlayMaterial);
 
 	/**
 	 * Sets up parameters (like the texture) that we use in the material.
@@ -58,6 +72,9 @@ public:
 	/** Get the current static mesh material, at index 0. */
 	UMaterialInterface* GetCurrentMaterial() const;
 
+	/** Get the current static mesh overlay material, nullptr otherwise. */
+	UMaterialInterface* GetCurrentOverlayMaterial() const;
+
 private:
 	/** Name for our media plate component. */
 	static FLazyName MediaPlateComponentName;
@@ -66,6 +83,7 @@ private:
 
 #if WITH_EDITOR
 	UMaterialInterface* LastMaterial = nullptr;
+	UMaterialInterface* LastOverlayMaterial = nullptr;
 
 	/**
 	 * Called before a level saves
@@ -86,6 +104,11 @@ private:
 	 * Removes our asset user data from the static mesh component.
 	 */
 	void RemoveAssetUserData();
+
+	/**
+	 * Convenience function to apply create a material instance constant for media plate use.
+	 */
+	UMaterialInterface* CreateMaterialInstanceConstant(UMaterialInterface* InMaterial);
 
 #endif // WITH_EDITOR
 };

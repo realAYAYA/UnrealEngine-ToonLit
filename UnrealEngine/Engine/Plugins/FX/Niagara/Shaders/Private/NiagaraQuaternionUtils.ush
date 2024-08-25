@@ -106,7 +106,7 @@ float4 FindQuatBetweenVectors(in float3 VectorA, in float3 VectorB)
 
 float4 QuatFromMatrix(in float3 R[3])
 {
-	float4 Q;
+	float4 Q = 0;
 	float s;
 	float tr = R[0][0] + R[1][1] + R[2][2];
 
@@ -162,4 +162,20 @@ float4 QuatFromMatrix(in float3 R[3])
 		}
 	}
 	return NormalizeQuat(Q);
+}
+
+float4 RotatorToQuat(float3 Rotator)
+{
+	Rotator = frac(Rotator) * 3.1415926535897932f;
+	float SP, CP, SY, CY, SR, CR;
+	sincos(Rotator.x, SR, CR);
+	sincos(Rotator.y, SP, CP);
+	sincos(Rotator.z, SY, CY);
+	
+	return float4(
+		 CR*SP*SY - SR*CP*CY,
+		-CR*SP*CY - SR*CP*SY,
+		 CR*CP*SY - SR*SP*CY,
+		 CR*CP*CY + SR*SP*SY
+	);
 }

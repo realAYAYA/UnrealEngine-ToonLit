@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "BehaviorTree/BTService.h"
+#include "GameFramework/Actor.h"
+#include "VisualLogger/VisualLogger.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BTService)
 
@@ -9,6 +11,9 @@ UBTService::UBTService(const FObjectInitializer& ObjectInitializer) : Super(Obje
 	bNotifyTick = true;
 	bNotifyOnSearch = true;
 	bTickIntervals = true;
+#if WITH_EDITORONLY_DATA
+	bCanTickOnSearchStartBeExposed = true;
+#endif // WITH_EDITORONLY_DATA
 	bCallTickOnSearchStart = false;
 	bRestartTimerOnEachActivation = false;
 
@@ -47,11 +52,13 @@ void UBTService::NotifyParentActivation(FBehaviorTreeSearchData& SearchData)
 
 			if (bNotifyOnSearch)
 			{
+				UE_VLOG(SearchData.OwnerComp.GetOwner(), LogBehaviorTree, VeryVerbose, TEXT("OnSearchStart: %s"), *UBehaviorTreeTypes::DescribeNodeHelper(ServiceNodeOb));
 				ServiceNodeOb->OnSearchStart(SearchData);
 			}
 
 			if (bCallTickOnSearchStart)
 			{
+				UE_VLOG(SearchData.OwnerComp.GetOwner(), LogBehaviorTree, VeryVerbose, TEXT("TickNode (bCallTickOnSearchStart): %s"), *UBehaviorTreeTypes::DescribeNodeHelper(ServiceNodeOb));
 				ServiceNodeOb->TickNode(SearchData.OwnerComp, NodeMemory, 0.0f);
 			}
 		}
@@ -60,11 +67,20 @@ void UBTService::NotifyParentActivation(FBehaviorTreeSearchData& SearchData)
 
 FString UBTService::GetStaticTickIntervalDescription() const
 {
-	FString IntervalDesc = (RandomDeviation > 0.0f) ?
-		FString::Printf(TEXT("%.2fs..%.2fs"), FMath::Max(0.0f, Interval - RandomDeviation), (Interval + RandomDeviation)) :
-		FString::Printf(TEXT("%.2fs"), Interval);
+	if (bNotifyTick)
+	{
+		FString IntervalDesc(TEXT("frame"));
+		if (bTickIntervals)
+		{
+			IntervalDesc = (RandomDeviation > 0.0f)
+				? FString::Printf(TEXT("%.2fs..%.2fs"), FMath::Max(0.0f, Interval - RandomDeviation), (Interval + RandomDeviation))
+				: FString::Printf(TEXT("%.2fs"), Interval);
+		} 
 
-	return FString::Printf(TEXT("tick every %s"), *IntervalDesc);
+		return FString::Printf(TEXT("tick every %s"), *IntervalDesc);
+	}
+
+	return TEXT("never ticks");
 }
 
 FString UBTService::GetStaticServiceDescription() const

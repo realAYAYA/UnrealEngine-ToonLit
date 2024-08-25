@@ -14,7 +14,12 @@ struct FWorldPartitionResolveData
 	GENERATED_USTRUCT_BODY()
 
 	FWorldPartitionResolveData() {}
-	FWorldPartitionResolveData(const FActorContainerID& InContainerID, const FString& InSourceWorldAssetPath) 
+
+	UE_DEPRECATED(5.4, "Please use FTopLevelAssetPath for the asset path directly")
+	FWorldPartitionResolveData(const FActorContainerID& InContainerID, const FString& InSourceWorldAssetPath)
+		: ContainerID(InContainerID), SourceWorldAssetPath(InSourceWorldAssetPath) {}
+
+	FWorldPartitionResolveData(const FActorContainerID& InContainerID, const FTopLevelAssetPath& InSourceWorldAssetPath)
 		: ContainerID(InContainerID), SourceWorldAssetPath(InSourceWorldAssetPath) {}
 
 	bool IsValid() const { return !ContainerID.IsMainContainer(); }
@@ -25,7 +30,7 @@ struct FWorldPartitionResolveData
 	FActorContainerID ContainerID;
 
 	UPROPERTY()
-	FString SourceWorldAssetPath;
+	FTopLevelAssetPath SourceWorldAssetPath;
 };
 
 UINTERFACE(MinimalAPI)

@@ -5,7 +5,9 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "NavFilters/NavigationQueryFilter.h"
+#endif
 #include "BehaviorTree/BehaviorTreeTypes.h"
 #include "BehaviorTree/BTDecorator.h"
 #include "BTDecorator_DoesPathExist.generated.h"
@@ -24,7 +26,7 @@ namespace EPathExistanceQueryType
 }
 
 /**
- * Cooldown decorator node.
+ * Does Path Exist decorator node.
  * A decorator node that bases its condition on whether a path exists between two points from the Blackboard.
  */
 UCLASS(MinimalAPI)

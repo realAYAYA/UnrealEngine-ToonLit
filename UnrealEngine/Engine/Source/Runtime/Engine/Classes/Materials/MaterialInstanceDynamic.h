@@ -153,14 +153,9 @@ class UMaterialInstanceDynamic : public UMaterialInstance
 	ENGINE_API void CopyInterpParameters(UMaterialInstance* Source);
 
 	/**
-	 * Create a material instance dynamic parented to the specified material.
-	 */
-	static ENGINE_API UMaterialInstanceDynamic* Create(class UMaterialInterface* ParentMaterial, class UObject* InOuter);
-
-	/**
-	* Create a material instance dynamic parented to the specified material with the specified name.
+	* Create a material instance dynamic parented to the specified material. [Optional] Specify name.
 	*/
-	static ENGINE_API UMaterialInstanceDynamic* Create( class UMaterialInterface* ParentMaterial, class UObject* InOuter, FName Name );
+	static ENGINE_API UMaterialInstanceDynamic* Create( class UMaterialInterface* ParentMaterial, class UObject* InOuter, FName Name = NAME_None);
 
 	/**
 	 * Set the value of the given font parameter.  
@@ -203,6 +198,7 @@ class UMaterialInstanceDynamic : public UMaterialInstance
 	ENGINE_API virtual bool IsMasked() const override;
 	ENGINE_API virtual FDisplacementScaling GetDisplacementScaling() const override;
 	ENGINE_API virtual float GetMaxWorldPositionOffsetDisplacement() const override;
+	ENGINE_API virtual bool HasPixelAnimation() const override;
 
 	/**
 	 * In order to remap to the correct texture streaming data, we must keep track of each texture renamed.
@@ -214,8 +210,12 @@ class UMaterialInstanceDynamic : public UMaterialInstance
 	// This overrides does the remapping before looking at the parent data.
 	ENGINE_API virtual float GetTextureDensity(FName TextureName, const struct FMeshUVChannelInfo& UVChannelData) const override;
 
-private:
+protected:
+
 	ENGINE_API void InitializeMID(class UMaterialInterface* ParentMaterial);
+
+private:
+	
 	ENGINE_API void UpdateCachedDataDynamic();
 };
 

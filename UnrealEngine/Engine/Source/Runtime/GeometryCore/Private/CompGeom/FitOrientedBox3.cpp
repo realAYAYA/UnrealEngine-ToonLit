@@ -55,7 +55,7 @@ namespace
 
 		while (VisitStack.Num())
 		{
-			FVisit Visit = VisitStack.Pop(false);
+			FVisit Visit = VisitStack.Pop(EAllowShrinking::No);
 			if (Facing[Visit.Tri] != StartFacing)
 			{
 				OutHorizon.Add(Triangles[Visit.Tri][Visit.Edge]);

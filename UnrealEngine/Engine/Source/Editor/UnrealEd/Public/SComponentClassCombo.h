@@ -160,6 +160,7 @@ public:
 	int32 GetSortPriority() const { return CustomizationArgs.SortPriority; }
 
 	void AddReferencedObjects(FReferenceCollector& Collector);
+	bool OnBlueprintGeneratedClassUnloaded(UBlueprintGeneratedClass* BlueprintGeneratedClass);
 
 	// If the component type is not loaded, this stores data that can be used for class filtering.
 	TSharedPtr<IUnloadedBlueprintData> GetUnloadedBlueprintData() const { return UnloadedBlueprintData; }

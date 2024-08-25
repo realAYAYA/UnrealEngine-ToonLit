@@ -20,7 +20,6 @@ class ULightWeightInstanceFactory : public UFactory
 	//~ Begin UFactory Interface
 
 protected:
-	UNREALED_API virtual ALightWeightInstanceManager* MakeNewLightWeightInstanceManager(UObject* InParent, FName Name, EObjectFlags Flags);
 
 	// The parent class of the created blueprint
 	UPROPERTY()

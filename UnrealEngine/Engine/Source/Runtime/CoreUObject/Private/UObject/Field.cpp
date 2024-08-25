@@ -343,10 +343,10 @@ FField::FField(UField* InField)
 		Owner = OriginalOuter;
 	}
 
-	TMap<FName, FString>* FeldMetaDataMap = UMetaData::GetMapForObject(InField);
-	if (FeldMetaDataMap && FeldMetaDataMap->Num())
+	TMap<FName, FString>* FieldMetaDataMap = UMetaData::GetMapForObject(InField);
+	if (FieldMetaDataMap && FieldMetaDataMap->Num())
 	{
-		MetaDataMap = new TMap<FName, FString>(*FeldMetaDataMap);
+		MetaDataMap = new TMap<FName, FString>(*FieldMetaDataMap);
 	}
 }
 #endif // WITH_EDITORONLY_DATA
@@ -418,7 +418,7 @@ void FField::Serialize(FArchive& Ar)
 	if (!Ar.IsCooking())
 	{
 		UPackage* Package = GetOutermost();
-		if (!Package || !Package->bIsCookedForEditor)
+		if (!Package || !Package->HasAnyPackageFlags(PKG_Cooked))
 		{
 			bool bHasMetaData = false;
 			if (Ar.IsLoading())
@@ -459,6 +459,10 @@ void FField::AddReferencedObjects(FReferenceCollector& Collector)
 	if (OwnerUObject)
 	{
 		Collector.AddReferencedObject(OwnerUObject);
+		if (!OwnerUObject)
+		{
+			Owner = FFieldVariant{};
+		}
 	}
 }
 
@@ -968,6 +972,15 @@ FField* FField::Construct(const FName& FieldTypeName, const FFieldVariant& InOwn
 	return Instance;
 }
 
+FField* FField::TryConstruct(const FName& FieldTypeName, const FFieldVariant& InOwner, const FName& InName, EObjectFlags InFlags)
+{
+	if (FFieldClass* FieldClassPtr = FFieldClass::GetNameToFieldClassMap().FindRef(FieldTypeName))
+	{
+		return FieldClassPtr->Construct(InOwner, InName, InFlags);
+	}
+	return nullptr;
+}
+
 FName FField::GenerateFFieldName(FFieldVariant InOwner /** Unused yet */, FFieldClass* InClass)
 {
 	check(InClass);
@@ -1033,13 +1046,11 @@ FField* FField::CreateFromUField(UField* InField)
 	}
 	else if (UFieldClass == UObjectProperty::StaticClass())
 	{
+		FObjectProperty* ObjectProperty = new FObjectProperty(InField);
+		NewField = ObjectProperty;
 		if (FLinkerLoad::IsImportLazyLoadEnabled())
 		{
-			NewField = new FObjectPtrProperty(InField);
-		}
-		else
-		{
-			NewField = new FObjectProperty(InField);
+			ObjectProperty->SetPropertyFlags(CPF_TObjectPtrWrapper);
 		}
 	}
 	else if (UFieldClass == UWeakObjectProperty::StaticClass())

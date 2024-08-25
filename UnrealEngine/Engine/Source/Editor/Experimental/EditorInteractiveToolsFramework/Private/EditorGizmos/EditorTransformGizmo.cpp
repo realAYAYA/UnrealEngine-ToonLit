@@ -14,6 +14,17 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogEditorTransformGizmo, Log, All);
 
+void UEditorTransformGizmo::Render(IToolsContextRenderAPI* RenderAPI)
+{
+	const FSceneView* SceneView = RenderAPI ? RenderAPI->GetSceneView() : nullptr;
+	const bool bEngineShowFlagsModeWidget = SceneView && SceneView->Family &&
+											SceneView->Family->EngineShowFlags.ModeWidgets;
+	if (bEngineShowFlagsModeWidget)
+	{
+		Super::Render(RenderAPI);
+	}
+}
+
 void UEditorTransformGizmo::ApplyTranslateDelta(const FVector& InTranslateDelta)
 {
 	check(ActiveTarget);
@@ -67,6 +78,36 @@ void UEditorTransformGizmo::ApplyScaleDelta(const FVector& InScaleDelta)
 	else
 	{
 		Super::ApplyScaleDelta(InScaleDelta);
+	}
+}
+
+void UEditorTransformGizmo::SetActiveTarget(UTransformProxy* Target, IToolContextTransactionProvider* TransactionProvider, IGizmoStateTarget* InStateTarget)
+{
+	Super::SetActiveTarget(Target, TransactionProvider, InStateTarget);
+
+	Target->OnBeginTransformEdit.AddUObject(this, &UEditorTransformGizmo::OnGizmoTransformBegin);
+	Target->OnEndTransformEdit.AddUObject(this, &UEditorTransformGizmo::OnGizmoTransformEnd);
+}
+
+void UEditorTransformGizmo::OnGizmoTransformBegin(UTransformProxy* InTransformProxy) const
+{
+	const UEditorTransformProxy* EditorTransformProxy = Cast<UEditorTransformProxy>(ActiveTarget);
+	if (InTransformProxy && InTransformProxy == EditorTransformProxy)
+	{
+		// FIXME this is need for some modes (including IKRig) but has side effects for now
+		// has it sets dragging to true. I'll fix this in a next CL
+		
+		// Set legacy widget axis temporarily because FEditorViewportClient overrides may expect it
+		// EditorTransformProxy->SetCurrentAxis(InteractionAxisList);
+	}
+}
+
+void UEditorTransformGizmo::OnGizmoTransformEnd(UTransformProxy* InTransformProxy) const
+{
+	const UEditorTransformProxy* EditorTransformProxy = Cast<UEditorTransformProxy>(ActiveTarget);
+	if (InTransformProxy && InTransformProxy == EditorTransformProxy)
+	{
+		EditorTransformProxy->SetCurrentAxis(EAxisList::None);
 	}
 }
 

@@ -35,15 +35,16 @@ extern uint32 GetShadowQuality();
 
 extern float GetLightFadeFactor(const FSceneView& View, const FLightSceneProxy* Proxy);
 
-extern FDeferredLightUniformStruct GetDeferredLightParameters(const FSceneView& View, const FLightSceneInfo& LightSceneInfo, uint32 LightFlags=0);
+extern FDeferredLightUniformStruct GetDeferredLightParameters(const FSceneView& View, const FLightSceneInfo& LightSceneInfo, bool bUseLightFunctionAtlas=false, uint32 LightFlags=0);
 
 inline void SetDeferredLightParameters(
 	FRHIBatchedShaderParameters& BatchedParameters,
 	const TShaderUniformBufferParameter<FDeferredLightUniformStruct>& DeferredLightUniformBufferParameter, 
 	const FLightSceneInfo* LightSceneInfo,
-	const FSceneView& View)
+	const FSceneView& View,
+	bool bUseLightFunctionAtlas)
 {
-	SetUniformBufferParameterImmediate(BatchedParameters, DeferredLightUniformBufferParameter, GetDeferredLightParameters(View, *LightSceneInfo));
+	SetUniformBufferParameterImmediate(BatchedParameters, DeferredLightUniformBufferParameter, GetDeferredLightParameters(View, *LightSceneInfo, bUseLightFunctionAtlas));
 }
 
 extern FDeferredLightUniformStruct GetSimpleDeferredLightParameters(
@@ -337,6 +338,7 @@ enum class FLightOcclusionType : uint8
 {
 	Shadowmap,
 	Raytraced,
+	ManyLights,
 };
 FLightOcclusionType GetLightOcclusionType(const FLightSceneProxy& Proxy);
 FLightOcclusionType GetLightOcclusionType(const FLightSceneInfoCompact& LightInfo);

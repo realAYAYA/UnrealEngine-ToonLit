@@ -42,6 +42,7 @@ enum class EMediaEvent;
 enum class EMediaCacheState;
 enum class EMediaThreads;
 enum class EMediaTrackType;
+enum class EMediaTimeRangeType;
 
 struct FMediaAudioTrackFormat;
 struct FMediaPlayerOptions;
@@ -178,6 +179,14 @@ public:
 	MEDIAUTILS_API bool CanSeek() const;
 
 	/**
+	 * Check whether the player supports playing back of range within the media.
+	 *
+	 * @return true if playing back a range is supported, false otherwise.
+	 * @see GetPlaybackTimeRange, SetPlaybackTimeRange
+	 */
+	MEDIAUTILS_API bool SupportsPlaybackTimeRange() const;
+
+	/**
 	 * Close the currently open media, if any.
 	 */
 	MEDIAUTILS_API void Close();
@@ -238,7 +247,7 @@ public:
 
 	/**
 	 * Get information about the media that is playing.
-	 * 
+	 *
 	 * @param	InfoName		Name of the information we want.
 	 * @returns					Requested information, or empty if not available.
 	 * @see						UMediaPlayer::GetMediaInfo.
@@ -333,6 +342,32 @@ public:
 	MEDIAUTILS_API TRangeSet<float> GetSupportedRates(bool Unthinned = true) const;
 
 	/**
+	 * Returns the current playback range of the media.
+	 * If playing back a range is not supported, the range returned will be equal
+	 * to [ 0, GetDuration() ).
+	 * The media may have an implicit default range provided by the container format
+	 * or other means without having called SetPlaybackTimeRange().
+	 * The media may have internal time values not starting at 0, which are
+	 * conveyed by the range.
+	 * Since the range may be only a portion of the media, the duration of the
+	 * returned range may be less than the media overall duration returned by
+	 * GetDuration().
+	 * For live video streams the range may change dynamically as new content
+	 * becomes available and old content falls off the timeline.
+	 *
+	 * @param InRangeToGet The type of range to get.
+	 *                     `Absolute` returns the media's smallest and largest timeline values.
+	 *                       Unless continuously changing in a Live stream this is usually the
+	 *                       same as [ 0, GetDuration() ]. The base time does not have to be
+	 *                       zero though.
+	 *                     `Current` returns the currently set range, which is a subset of the
+	 *                       absolute range.
+	 * @return The playback range as queried for or an empty range if there is no open player.
+	 * @see SupportsPlaybackTimeRange, SetPlaybackTimeRange, GetDuration
+	 */
+	MEDIAUTILS_API TRange<FTimespan> GetPlaybackTimeRange(EMediaTimeRangeType InRangeToGet) const;
+
+	/**
 	 * Get the media's current playback time.
 	 *
 	 * @return Playback time.
@@ -351,7 +386,7 @@ public:
 	 * Get the media's current playback time stamp in a "display" version
 	 *
 	 * @return Playback time stamp.
-	 * 
+	 *
 	 * @note The timestamp returned here will reflect a user-logic oriented version.
 	 *       (e.g. during seeks this will return the seek target rather than the last valid frame still displayed)
 	 */
@@ -642,6 +677,21 @@ public:
 	MEDIAUTILS_API bool SetRate(float Rate);
 
 	/**
+	 * Sets a new media playback range.
+	 * Has an effect only if SupportsPlaybackTimeRange() returns true and the media supports it.
+	 * A live stream cannot be constrained to a range.
+	 * The range will be clamped if necessary to be within the media's absolute time range.
+	 * Changing the time range may trigger an implicit Seek() depending on where the current
+	 * playback position is located with regard to the new range.
+	 * Unless prevented by the media a playback range can be cleared by passing an empty range.
+	 *
+	 * @param InTimeRange The new playback range to set.
+	 * @return true if successful, false otherwise.
+	 * @see SupportsPlaybackTimeRange, GetPlaybackTimeRange
+	 */
+	MEDIAUTILS_API bool SetPlaybackTimeRange(const TRange<FTimespan>& InTimeRange);
+
+	/**
 	 * Changes the media's native volume.
 	 *
 	 * @param Rate The volume to set.
@@ -908,6 +958,7 @@ private:
 			LastTimeRange = TRange<FTimespan>::Empty();
 			RangeIsDirty = false;
 			OnBlockPrimaryIndex = 0;
+			OnBlockSecondaryIndexOffset = 0;
 		}
 
 	private:
@@ -926,8 +977,11 @@ private:
 		/** Flag to indicate if internal range is valid or not */
 		mutable bool RangeIsDirty;
 
-		/** Primary sequence index used during blocked playback processing */
+		/** Primary ("seek") sequence index used during blocked playback processing */
 		mutable int32 OnBlockPrimaryIndex;
+
+		/** Secondary (loop) sequence index offset used during blocked playback processing */
+		mutable int32 OnBlockSecondaryIndexOffset;
 	};
 
 	FBlockOnRange BlockOnRange;

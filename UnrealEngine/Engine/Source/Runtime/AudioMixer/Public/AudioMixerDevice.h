@@ -20,6 +20,19 @@ class IAudioMixerPlatformInterface;
 class USoundModulatorBase;
 class IAudioLinkFactory;
 
+#include "AudioMixerDevice.generated.h"
+
+UENUM()
+enum class ERequiredSubmixes : uint8
+{
+	Main = 0,
+	BaseDefault = 1,
+	Reverb = 2,
+	EQ = 3,
+	Count = 4 UMETA(Hidden)
+};
+
+
 namespace Audio
 {
 	// Audio Namespace Forward Declarations
@@ -52,18 +65,28 @@ namespace Audio
 			, AudioRenderThreadTime(0.0)
 			, AudioThreadTimeJitterDelta(0.05)
 		{}
+	};	
+
+	/** Data used to interpolate the audio clock in between buffer callbacks */
+	struct FAudioClockTimingData
+	{
+		/** Time in secods of previous audio clock update */
+		double UpdateTime = 0.0;
+
+		/** Interpolates the given clock based on the amount of platform time that has passed since last update */
+		double GetInterpolatedAudioClock(const double InAudioClock, const double InAudioClockDelta) const;
 	};
 
-	// Master submixes
+	// Deprecated, use ERequiredSubmixes above
 	namespace EMasterSubmixType
 	{
 		enum Type
 		{
-			Master,
-			BaseDefault,
-			Reverb,
-			EQ,
-			Count,
+			Master = static_cast<uint8>(ERequiredSubmixes::Main),
+			BaseDefault = static_cast<uint8>(ERequiredSubmixes::BaseDefault),
+			Reverb = static_cast<uint8>(ERequiredSubmixes::Reverb),
+			EQ = static_cast<uint8>(ERequiredSubmixes::EQ),
+			Count = static_cast<uint8>(ERequiredSubmixes::Count)
 		};
 	}
 
@@ -76,14 +99,14 @@ namespace Audio
 
 		void Add(const FObjectId InObjectId, FMixerSubmixPtr InMixerSubmix);
 		void Iterate(FIterFunc InFunction);
-		FMixerSubmixPtr FindRef(FObjectId InObjectId);
+		FMixerSubmixPtr FindRef(FObjectId InObjectId) const;
 		int32 Remove(const FObjectId InObjectId);
 		void Reset();
-
+		TSet<FSubmixMap::FObjectId> GetKeys() const;
 	private:
 		TMap<FObjectId, FMixerSubmixPtr> SubmixMap;
 
-		FCriticalSection MutationLock;
+		mutable FCriticalSection MutationLock;
 	};
 
 
@@ -106,14 +129,12 @@ namespace Audio
 		AUDIOMIXER_API virtual void UpdateGameThread() override;
 		AUDIOMIXER_API virtual void UpdateHardware() override;
 		AUDIOMIXER_API virtual double GetAudioTime() const override;
+		AUDIOMIXER_API virtual double GetInterpolatedAudioClock() const override;
 		AUDIOMIXER_API virtual FAudioEffectsManager* CreateEffectsManager() override;
 		AUDIOMIXER_API virtual FSoundSource* CreateSoundSource() override;
-		AUDIOMIXER_API virtual FName GetRuntimeFormat(const USoundWave* SoundWave) const override;
 		AUDIOMIXER_API virtual bool HasCompressedAudioInfoClass(USoundWave* SoundWave) override;
 		AUDIOMIXER_API virtual bool SupportsRealtimeDecompression() const override;
 		AUDIOMIXER_API virtual bool DisablePCMAudioCaching() const override;
-		AUDIOMIXER_API virtual class ICompressedAudioInfo* CreateCompressedAudioInfo(const USoundWave* SoundWave) const override;
-		AUDIOMIXER_API virtual class ICompressedAudioInfo* CreateCompressedAudioInfo(const FSoundWaveProxyPtr& SoundWave) const override;
 		AUDIOMIXER_API virtual bool ValidateAPICall(const TCHAR* Function, uint32 ErrorCode) override;
 #if UE_ALLOW_EXEC_COMMANDS
 		AUDIOMIXER_API virtual bool Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar) override;
@@ -125,13 +146,8 @@ namespace Audio
 		AUDIOMIXER_API virtual void EnableDebugAudioOutput() override;
 		AUDIOMIXER_API virtual FAudioPlatformSettings GetPlatformSettings() const override;
 		AUDIOMIXER_API virtual void RegisterSoundSubmix(USoundSubmixBase* SoundSubmix, bool bInit = true) override;
-		AUDIOMIXER_API virtual void UnregisterSoundSubmix(const USoundSubmixBase* SoundSubmix) override;
+		AUDIOMIXER_API virtual void UnregisterSoundSubmix(const USoundSubmixBase* SoundSubmix, const bool bReparentChildren) override;
 
-		AUDIOMIXER_API virtual void InitSoundEffectPresets() override;
-		UE_DEPRECATED(5.2, "The functionality for this has been moved to UAudioBusSubsystem::InitDefaultAudioBuses, which is now automatically called on subsystem creation.")
-		AUDIOMIXER_API virtual void InitDefaultAudioBuses() override;
-		UE_DEPRECATED(5.2, "The functionality for this has been moved to UAudioBusSubsystem::ShutdownDefaultAudioBuses.")
-		AUDIOMIXER_API virtual void ShutdownDefaultAudioBuses() override;
 		AUDIOMIXER_API virtual int32 GetNumActiveSources() const override;
 
 		// Updates the source effect chain (using unique object id). 
@@ -178,8 +194,14 @@ namespace Audio
 		AUDIOMIXER_API virtual void RemoveSpectralAnalysisDelegate(USoundSubmix* InSubmix, const FOnSubmixSpectralAnalysisBP& OnSubmixSpectralAnalysisBP) override;
 
 		// Submix buffer listener callbacks
+		UE_DEPRECATED(5.4, "Use RegisterSubmixBufferListener version that requires a shared reference to a listener and provide explicit reference to a submix: use GetMainSubmixObject to register with the Main Output Submix (rather than nullptr for safety), and instantiate buffer listener via the shared pointer API.")
 		AUDIOMIXER_API virtual void RegisterSubmixBufferListener(ISubmixBufferListener* InSubmixBufferListener, USoundSubmix* InSubmix = nullptr) override;
+
+		UE_DEPRECATED(5.4, "Use UnregisterSubmixBufferListener version that requires a shared reference to a listener and provide explicit reference to a submix: use GetMainSubmixObject to unregister from the Main Output Submix (rather than nullptr for safety), and instantiate buffer listener via the shared pointer API.")
 		AUDIOMIXER_API virtual void UnregisterSubmixBufferListener(ISubmixBufferListener* InSubmixBufferListener, USoundSubmix* InSubmix = nullptr) override;
+
+		AUDIOMIXER_API virtual void RegisterSubmixBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> InSubmixBufferListener, USoundSubmix& InSubmix) override;
+		AUDIOMIXER_API virtual void UnregisterSubmixBufferListener(TSharedRef<ISubmixBufferListener, ESPMode::ThreadSafe> InSubmixBufferListener, USoundSubmix& InSubmix) override;
 
 		AUDIOMIXER_API virtual FPatchOutputStrongPtr AddPatchForSubmix(uint32 InObjectId, float InPatchGain) override;
 
@@ -206,7 +228,7 @@ namespace Audio
 
 		AUDIOMIXER_API FMixerSubmixPtr FindSubmixInstanceByObjectId(uint32 InObjectId);
 
-		AUDIOMIXER_API FMixerSubmixWeakPtr GetSubmixInstance(const USoundSubmixBase* SoundSubmix);
+		AUDIOMIXER_API FMixerSubmixWeakPtr GetSubmixInstance(const USoundSubmixBase* SoundSubmix) const;
 
 		// If SoundSubmix is a soundfield submix, this will return the factory used to encode 
 		// source audio to it's soundfield format.
@@ -251,19 +273,29 @@ namespace Audio
 		AUDIOMIXER_API FMixerSourceManager* GetSourceManager();
 		AUDIOMIXER_API const FMixerSourceManager* GetSourceManager() const;
 
-		AUDIOMIXER_API FMixerSubmixWeakPtr GetMasterSubmix(); 
+		AUDIOMIXER_API virtual USoundSubmix& GetMainSubmixObject() const override;
+
 		AUDIOMIXER_API FMixerSubmixWeakPtr GetBaseDefaultSubmix();
+		AUDIOMIXER_API FMixerSubmixWeakPtr GetMainSubmix();
+		AUDIOMIXER_API FMixerSubmixWeakPtr GetReverbSubmix();
+		AUDIOMIXER_API FMixerSubmixWeakPtr GetEQSubmix();
+
+		// Renamed Main submix: these functions will be deprecated in a future release
+		AUDIOMIXER_API void AddMasterSubmixEffect(FSoundEffectSubmixPtr SoundEffect);
+		AUDIOMIXER_API void RemoveMasterSubmixEffect(uint32 SubmixEffectId);
+		AUDIOMIXER_API void ClearMasterSubmixEffects();
+		AUDIOMIXER_API FMixerSubmixWeakPtr GetMasterSubmix();
 		AUDIOMIXER_API FMixerSubmixWeakPtr GetMasterReverbSubmix();
 		AUDIOMIXER_API FMixerSubmixWeakPtr GetMasterEQSubmix();
 
-		// Add submix effect to master submix
-		AUDIOMIXER_API void AddMasterSubmixEffect(FSoundEffectSubmixPtr SoundEffect);
-		
-		// Remove submix effect from master submix
-		AUDIOMIXER_API void RemoveMasterSubmixEffect(uint32 SubmixEffectId);
-		
-		// Clear all submix effects from master submix
-		AUDIOMIXER_API void ClearMasterSubmixEffects();
+		// Add submix effect to main submix
+		AUDIOMIXER_API void AddMainSubmixEffect(FSoundEffectSubmixPtr SoundEffect);
+
+		// Remove submix effect from main submix
+		AUDIOMIXER_API void RemoveMainSubmixEffect(uint32 SubmixEffectId);
+
+		// Clear all submix effects from main submix
+		AUDIOMIXER_API void ClearMainSubmixEffects();
 
 		// Add submix effect to given submix
 		AUDIOMIXER_API int32 AddSubmixEffect(USoundSubmix* InSoundSubmix, FSoundEffectSubmixPtr SoundEffect);
@@ -300,26 +332,6 @@ namespace Audio
 
 		static AUDIOMIXER_API bool IsEndpointSubmix(const USoundSubmixBase* InSubmix);
 
-		// Audio bus API - these are deprecated. Use corresponding calls in UAudioBusSubsystem instead
-		UE_DEPRECATED(5.2, "This function is deprecated. Use UAudioBusSubsystem::StartAudioBus instead.")
-		AUDIOMIXER_API virtual void StartAudioBus(uint32 InAudioBusId, int32 InNumChannels, bool bInIsAutomatic) override;
-		UE_DEPRECATED(5.2, "This function is deprecated. Use UAudioBusSubsystem::StopAudioBus instead.")
-		AUDIOMIXER_API virtual void StopAudioBus(uint32 InAudioBusId) override;
-		UE_DEPRECATED(5.2, "This function is deprecated. Use UAudioBusSubsystem::IsAudioBusActive instead.")
-		AUDIOMIXER_API virtual bool IsAudioBusActive(uint32 InAudioBusId) const override;
-
-		UE_DEPRECATED(5.2, "AddPatchForAudioBus is deprecated.  Use UAudioBusSubsystem::AddPatchOutputForAudioBus.")
-		AUDIOMIXER_API virtual FPatchOutputStrongPtr AddPatchForAudioBus(uint32 InAudioBusId, float InPatchGain = 1.0f) override;
-
-		UE_DEPRECATED(5.2, "AddPatchForAudioBus_GameThread is deprecated.  Use UAudioBusSubsystem::AddPatchOutputForAudioBus.")
-		AUDIOMIXER_API virtual FPatchOutputStrongPtr AddPatchForAudioBus_GameThread(uint32 InAudioBusId, float InPatchGain = 1.0f) override;
-
-		UE_DEPRECATED(5.2, "This overload of AddPatchInputForAudioBus is deprecated and non-functional.  Use the overload in UAudioBusSubsystem that takes the number of frames and channels as parameters.")
-		AUDIOMIXER_API virtual void AddPatchInputForAudioBus(const FPatchInput& InPatchInput, uint32 InAudioBusId, float InPatchGain = 1.0f) override;
-
-		UE_DEPRECATED(5.2, "AddPatchInputForAudioBus_GameThread is deprecated.  Use UAudioBusSubsystem::AddPatchInputForAudioBus instead.")
-		AUDIOMIXER_API virtual void AddPatchInputForAudioBus_GameThread(const FPatchInput& InPatchInput, uint32 InAudioBusId, float InPatchGain = 1.0f) override;
-
 		AUDIOMIXER_API FPatchOutputStrongPtr MakePatch(int32 InFrames, int32 InChannels, float InGain) const;
 
 		// Clock Manager for quantized event handling on Audio Render Thread
@@ -339,8 +351,10 @@ namespace Audio
 		// Pushes the command to a MPSC queue to be executed on the game thread
 		AUDIOMIXER_API void GameThreadMPSCCommand(TFunction<void()> InCommand);
 
-	protected:
+		// Debug Commands
+		AUDIOMIXER_API void DrawSubmixes(FOutputDevice& InOutput, const TArray<FString>& InArgs) const;
 
+	protected:
 		AUDIOMIXER_API virtual void InitSoundSubmixes() override;
 
 		AUDIOMIXER_API virtual void OnListenerUpdated(const TArray<FListener>& InListeners) override;
@@ -363,26 +377,27 @@ namespace Audio
 
 		bool IsMainAudioDevice() const;
 
-		void LoadMasterSoundSubmix(EMasterSubmixType::Type InType, const FString& InDefaultName, bool bInDefaultMuteWhenBackgrounded, FSoftObjectPath& InOutObjectPath);
+		void LoadRequiredSubmix(ERequiredSubmixes InType, const FString& InDefaultName, bool bInDefaultMuteWhenBackgrounded, FSoftObjectPath& InOutObjectPath);
 		void LoadPluginSoundSubmixes();
 		void LoadSoundSubmix(USoundSubmixBase& SoundSubmix);
 
 		void InitSoundfieldAndEndpointDataForSubmix(const USoundSubmixBase& InSoundSubmix, FMixerSubmixPtr MixerSubmix, bool bAllowReInit);
 
-		void UnloadSoundSubmix(const USoundSubmixBase& SoundSubmix);
+		void UnloadSoundSubmix(const USoundSubmixBase& SoundSubmix, const bool bReparentChildren);
 
-		ICompressedAudioInfo* CreateAudioInfo(FName InFormat) const;
-
-		bool IsMasterSubmixType(const USoundSubmixBase* InSubmix) const;
-		FMixerSubmixPtr GetMasterSubmixInstance(uint32 InSubmixId);
-		FMixerSubmixPtr GetMasterSubmixInstance(const USoundSubmixBase* InSubmix);
+		bool IsRequiredSubmixType(const USoundSubmixBase* InSubmix) const;
+		FMixerSubmixPtr GetRequiredSubmixInstance(uint32 InSubmixId) const;
+		FMixerSubmixPtr GetRequiredSubmixInstance(const USoundSubmixBase* InSubmix) const;
 		
 		// Pumps the audio render thread command queue
 		void PumpCommandQueue();
 		void PumpGameThreadCommandQueue();
+
+		/** Updates the audio clock and the associated timing data */
+		void UpdateAudioClock();
 		
-		TArray<USoundSubmix*> MasterSubmixes;
-		TArray<FMixerSubmixPtr> MasterSubmixInstances;
+		TArray<USoundSubmix*> RequiredSubmixes;
+		TArray<FMixerSubmixPtr> RequiredSubmixInstances;
 
 		TArray<TStrongObjectPtr<UAudioBus>> DefaultAudioBuses;
 		/** Ptr to the platform interface, which handles streaming audio to the hardware device. */
@@ -407,6 +422,9 @@ namespace Audio
 
 		/** The time delta for each callback block. */
 		double AudioClockDelta;
+
+		/** The timing data used to interpolate the audio clock */
+		FAudioClockTimingData AudioClockTimingData;
 
 		/** What the previous master volume was. */
 		float PreviousPrimaryVolume;

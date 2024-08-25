@@ -1174,6 +1174,11 @@ public:
 	GEOMETRYCORE_API void CompactInPlace(FCompactMaps* CompactInfo = nullptr);
 
 	/**
+	 * Remove unused vertices. Note: Does not compact the remaining vertices.
+	 */
+	GEOMETRYCORE_API void RemoveUnusedVertices();
+
+	/**
 	 * Reverse the ccw/cw orientation of all triangles in the mesh, and
 	 * optionally flip the vertex normals if they exist
 	 */
@@ -1265,6 +1270,14 @@ public:
 	 */
 	GEOMETRYCORE_API virtual bool SplitVertexWouldLeaveIsolated(int VertexID, const TArrayView<const int>& TrianglesToUpdate);
 
+	/**
+	 * Tests whether collapsing the specified edge using the CollapseEdge function would succeed
+	 * @param KeepVertID index of the vertex that should be kept
+	 * @param RemoveVertID index of the vertex that should be removed
+	 * @param EdgeParameterT vKeep is moved to Lerp(KeepPos, RemovePos, EdgeParameterT)
+	 * @return Ok if the edge can be collapsed, or enum value indicating why the operation cannot be applied
+	 */
+	GEOMETRYCORE_API virtual EMeshResult CanCollapseEdge(int vKeep, int vRemove, double collapse_t) const;
 
 	/**
 	 * Collapse the edge between the two vertices, if topologically possible.
@@ -1533,6 +1546,9 @@ protected:
 	*/
 	template<int Variant>
 	void SerializeInternal(FArchive& Ar, void* Ptr);
+
+	/* We keep this version of CanCollapseEdge internal because the CollapseInfo struct may only be partially filled out by the function */
+	virtual EMeshResult CanCollapseEdgeInternal(int vKeep, int vRemove, double collapse_t, FEdgeCollapseInfo* OutCollapseInfo) const;
 
 };
 

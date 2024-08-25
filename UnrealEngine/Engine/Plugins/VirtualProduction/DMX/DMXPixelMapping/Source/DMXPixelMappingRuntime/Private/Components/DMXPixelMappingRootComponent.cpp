@@ -47,13 +47,13 @@ void UDMXPixelMappingRootComponent::RemoveChild(UDMXPixelMappingBaseComponent* I
 	CachedRendererComponentsByName.Remove(InComponent->GetFName());
 }
 
-void UDMXPixelMappingRootComponent::ResetDMX()
+void UDMXPixelMappingRootComponent::ResetDMX(EDMXPixelMappingResetDMXMode ResetMode)
 {
 	ForEachChild([&](UDMXPixelMappingBaseComponent* InComponent)
 	{
 		if (UDMXPixelMappingRendererComponent* Component = Cast<UDMXPixelMappingRendererComponent>(InComponent))
 		{
-			Component->ResetDMX();
+			Component->ResetDMX(ResetMode);
 		}
 	}, false);
 }

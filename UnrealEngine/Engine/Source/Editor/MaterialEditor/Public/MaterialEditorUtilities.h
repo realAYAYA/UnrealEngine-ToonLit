@@ -55,6 +55,21 @@ public:
 	static UMaterialExpression* CreateNewMaterialExpression(const class UEdGraph* Graph, UClass* NewExpressionClass, const FVector2D& NodePos, bool bAutoSelect, bool bAutoAssignResource);
 
 	/**
+	 * Creates a new material expression of the specified class on the material represented by a graph.
+	 *
+	 * @param	Graph					Graph representing a material.
+	 * @param	NodePos					Position of the new node.
+	 * @param	bAutoSelect				If true, deselect all expressions and select the newly created one.
+	 * @param	bAutoAssignResource		If true, assign resources to new expression.
+	 */
+	template<typename MaterialExpressionClass>
+	static MaterialExpressionClass* CreateNewMaterialExpression(const UEdGraph* Graph, const FVector2D& NodePos, bool bAutoSelect, bool bAutoAssignResource = false)
+	{
+		static_assert(TIsDerivedFrom<MaterialExpressionClass, UMaterialExpression>::Value, "MaterialExpressionClass needs to inherit from UMaterialExpression");
+		return CastChecked<MaterialExpressionClass>(CreateNewMaterialExpression(Graph, MaterialExpressionClass::StaticClass(), NodePos, bAutoSelect, bAutoAssignResource), ECastCheckedType::NullAllowed);
+	}
+	
+	/**
 	 * Creates a new material expression composite on the material represented by a graph.
 	 *
 	 * @param	Graph	Graph to add comment to
@@ -117,6 +132,9 @@ public:
 	 * @param	Graph	Graph representing a material or material function.
 	 */
 	static void UpdateMaterialAfterGraphChange(const class UEdGraph* Graph);
+
+	/** Mark the material as dirty. */
+	static void MarkMaterialDirty(const class UEdGraph* Graph);
 
 	static void UpdateDetailView(const class UEdGraph* Graph);
 

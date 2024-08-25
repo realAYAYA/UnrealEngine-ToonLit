@@ -1,0 +1,40 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+int		SubUVAnimation_Mode;
+float	SubUVAnimation_NumFrames;
+float	SubUVAnimation_InitialFrameScale;
+float	SubUVAnimation_InitialFrameBias;
+float	SubUVAnimation_InitialFrameRateChange;
+float	SubUVAnimation_AnimFrameStart;
+float	SubUVAnimation_AnimFrameRange;
+float	SubUVAnimation_RateScale;
+
+struct FStatelessModule_SubUVAnimation
+{
+	float InitialFrame;
+};
+
+void SubUVAnimation_Initialize(inout FStatelessModule_SubUVAnimation ModuleData, inout FStatelessParticle Particle)
+{
+	const int Seed = int(floor(Particle.Age * SubUVAnimation_InitialFrameRateChange) * 0xffff) ^ Particle.RandomSeed.x ^ Particle.UniqueIndex;
+	ModuleData.InitialFrame = RandBBSfloat(float(Seed) / 0xffff) * SubUVAnimation_InitialFrameScale + SubUVAnimation_InitialFrameBias;
+	//ModuleData.InitialFrame = RandomScaleBiasFloat(Particle, SubUVAnimation_InitialFrameScale, SubUVAnimation_InitialFrameBias);
+}
+	
+void SubUVAnimation_Simulate(in FStatelessModule_SubUVAnimation ModuleData, inout FStatelessParticle Particle)
+{
+	float Frame = ModuleData.InitialFrame;
+	if ( SubUVAnimation_Mode == 0 )
+	{
+		const float Interp = Particle.Age * SubUVAnimation_RateScale;
+		Frame = frac(Frame + SubUVAnimation_AnimFrameStart + (Interp * SubUVAnimation_AnimFrameRange));
+	}
+	else if ( SubUVAnimation_Mode == 1 )
+	{
+		const float Interp = Particle.NormalizedAge * SubUVAnimation_RateScale;
+		Frame = saturate(Frame + SubUVAnimation_AnimFrameStart + (Interp * SubUVAnimation_AnimFrameRange));
+	}
+	Particle.SubImageIndex = Frame * SubUVAnimation_NumFrames;
+}

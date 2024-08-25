@@ -18,7 +18,11 @@ TSharedRef<SWidget> CreateGameplayTagColumnWidget(UChooserTable* Chooser, FChoos
 {
 	FGameplayTagColumn* GameplayTagColumn = static_cast<struct FGameplayTagColumn*>(Column);
 	
-	if (Row < 0)
+	if (Row == ColumnWidget_SpecialIndex_Fallback)
+	{
+		return SNullWidget::NullWidget;
+	}
+	else if (Row == ColumnWidget_SpecialIndex_Header)
 	{
 		// create column header widget
 		TSharedPtr<SWidget> InputValueWidget = nullptr;
@@ -119,14 +123,7 @@ TSharedRef<SWidget> CreateGameplayTagPropertyWidget(bool bReadOnly, UObject* Tra
 
 	return SNew(SPropertyAccessChainWidget).ContextClassOwner(HasContextClass).AllowFunctions(false).BindingColor("StructPinTypeColor").TypeFilter("FGameplayTagContainer")
 	.PropertyBindingValue(&ContextProperty->Binding)
-	.OnAddBinding_Lambda(
-		[ContextProperty, TransactionObject, ValueChanged](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
-		{
-			const FScopedTransaction Transaction(NSLOCTEXT("ContextPropertyWidget", "Change Property Binding", "Change Property Binding"));
-			TransactionObject->Modify(true);
-			ContextProperty->SetBinding(InBindingChain);
-			ValueChanged.ExecuteIfBound();
-		});
+	.OnValueChanged(ValueChanged);
 }
 	
 void RegisterGameplayTagWidgets()

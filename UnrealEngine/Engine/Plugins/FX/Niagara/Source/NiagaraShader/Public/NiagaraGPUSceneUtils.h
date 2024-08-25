@@ -31,6 +31,7 @@ public:
 
 		SHADER_PARAMETER(FVector3f, LocalBoundingCenter)
 		SHADER_PARAMETER(FVector2f, DistanceCullRangeSquared)
+		SHADER_PARAMETER(FVector4f, LODScreenSize)
 
 		SHADER_PARAMETER(int, bNeedsPrevTransform)
 	END_SHADER_PARAMETER_STRUCT()

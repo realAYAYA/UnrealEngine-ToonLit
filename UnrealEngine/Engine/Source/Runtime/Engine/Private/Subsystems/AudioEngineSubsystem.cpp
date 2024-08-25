@@ -12,14 +12,21 @@ UAudioEngineSubsystem::UAudioEngineSubsystem()
 {
 }
 
-FAudioDeviceHandle UAudioEngineSubsystem::GetAudioDeviceHandle() const
+Audio::FDeviceId UAudioEngineSubsystem::GetAudioDeviceId() const
 {
 	const UAudioSubsystemCollectionRoot* SubsystemRoot = Cast<UAudioSubsystemCollectionRoot>(GetOuter());
 	check(SubsystemRoot);
 
+	return SubsystemRoot->GetAudioDeviceID();
+}
+
+FAudioDeviceHandle UAudioEngineSubsystem::GetAudioDeviceHandle() const
+{
+	Audio::FDeviceId DeviceId = GetAudioDeviceId();
+
 	if (FAudioDeviceManager* AudioDeviceManager = FAudioDeviceManager::Get())
 	{
-		return AudioDeviceManager->GetAudioDevice(SubsystemRoot->GetAudioDeviceID());
+		return AudioDeviceManager->GetAudioDevice(DeviceId);
 	}
 
 	return FAudioDeviceHandle();

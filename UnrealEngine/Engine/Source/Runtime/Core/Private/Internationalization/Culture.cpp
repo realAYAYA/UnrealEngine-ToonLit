@@ -199,7 +199,7 @@ FString FCulture::CreateCultureName(const FString& LanguageCode, const FString& 
 
 FString FCulture::GetCanonicalName(const FString& Name)
 {
-	return FCultureImplementation::GetCanonicalName(Name);
+	return FCultureImplementation::GetCanonicalName(Name, FInternationalization::Get());
 }
 
 const FString& FCulture::GetName() const

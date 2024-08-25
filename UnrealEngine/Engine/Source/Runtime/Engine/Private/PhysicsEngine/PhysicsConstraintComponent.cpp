@@ -596,6 +596,28 @@ void UPhysicsConstraintComponent::SetDisableCollision(bool bDisableCollision)
 	ConstraintInstance.SetDisableCollision(bDisableCollision);
 }
 
+bool UPhysicsConstraintComponent::IsProjectionEnabled() const
+{
+	return ConstraintInstance.IsProjectionEnabled();
+}
+
+void UPhysicsConstraintComponent::SetProjectionEnabled(bool bInEnabled)
+{
+	if (bInEnabled)
+	{
+		ConstraintInstance.EnableProjection();
+	}
+	else
+	{
+		ConstraintInstance.DisableProjection();
+	}
+}
+
+void UPhysicsConstraintComponent::SetProjectionParams(float ProjectionLinearAlpha, float ProjectionAngularAlpha, float ProjectionLinearTolerance, float ProjectionAngularTolerance)
+{
+	ConstraintInstance.SetProjectionParams(IsProjectionEnabled(), ProjectionLinearAlpha, ProjectionAngularAlpha, ProjectionLinearTolerance, ProjectionAngularTolerance);
+}
+
 FConstraintInstanceAccessor UPhysicsConstraintComponent::GetConstraint()
 {
 	return FConstraintInstanceAccessor(this);

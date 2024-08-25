@@ -427,7 +427,7 @@ int32 FGeometryCollectionCommands::EnsureSingleRoot(UGeometryCollection* RestCol
 {
 	if (RestCollection)
 	{
-		TManagedArray<FTransform>& Transform = RestCollection->GetGeometryCollection()->Transform;
+		TManagedArray<FTransform3f>& Transform = RestCollection->GetGeometryCollection()->Transform;
 		TManagedArray<int32>& Parent = RestCollection->GetGeometryCollection()->Parent;
 		int32 NumElements = RestCollection->GetGeometryCollection()->NumElements(FGeometryCollection::TransformGroup);
 		if (GeometryCollectionAlgo::HasMultipleRoots(RestCollection->GetGeometryCollection().Get()))
@@ -441,7 +441,7 @@ int32 FGeometryCollectionCommands::EnsureSingleRoot(UGeometryCollection* RestCol
 				}
 			}
 			int32 RootIndex = RestCollection->GetGeometryCollection()->AddElements(1, FGeometryCollection::TransformGroup);
-			Transform[RootIndex].SetTranslation(GeometryCollectionAlgo::AveragePosition(RestCollection->GetGeometryCollection().Get(), RootIndices));
+			Transform[RootIndex].SetTranslation(FVector3f(GeometryCollectionAlgo::AveragePosition(RestCollection->GetGeometryCollection().Get(), RootIndices)));
 			GeometryCollectionAlgo::ParentTransforms(RestCollection->GetGeometryCollection().Get(), RootIndex, RootIndices);
 			return RootIndex;
 		}
@@ -466,7 +466,7 @@ void SplitAcrossYZPlaneRecursive(uint32 RootIndex, const FTransform & ParentTran
 {
 	TSet<uint32> RootIndices;
 	TManagedArray<TSet<int32>>& Children = Collection->GetGeometryCollection()->Children;
-	TManagedArray<FTransform>& Transform = Collection->GetGeometryCollection()->Transform;
+	TManagedArray<FTransform3f>& Transform = Collection->GetGeometryCollection()->Transform;
 
 	TArray<int32> SelectedBonesA, SelectedBonesB;
 	for (auto& ChildIndex : Children[RootIndex])
@@ -476,7 +476,7 @@ void SplitAcrossYZPlaneRecursive(uint32 RootIndex, const FTransform & ParentTran
 			SplitAcrossYZPlaneRecursive(ChildIndex, ParentTransform, Collection);
 		}
 
-		FVector Translation = (Transform[ChildIndex]*ParentTransform).GetTranslation();
+		FVector Translation = (FTransform(Transform[ChildIndex])*ParentTransform).GetTranslation();
 		UE_LOG(UGeometryCollectionCommandsLogging, Log, TEXT("... [%d] global:(%3.5f,%3.5f,%3.5f) local:(%3.5f,%3.5f,%3.5f)"),
 			ChildIndex, Translation.X, Translation.Y, Translation.Z, Transform[ChildIndex].GetTranslation().X,
 			Transform[ChildIndex].GetTranslation().Y, Transform[ChildIndex].GetTranslation().Z );
@@ -495,12 +495,12 @@ void SplitAcrossYZPlaneRecursive(uint32 RootIndex, const FTransform & ParentTran
 	{
 		int32 BoneAIndex = Collection->GetGeometryCollection()->AddElements(1, FGeometryCollection::TransformGroup);
 		GeometryCollectionAlgo::ParentTransform(Collection->GetGeometryCollection().Get(), RootIndex, BoneAIndex);
-		Transform[BoneAIndex].SetTranslation(GeometryCollectionAlgo::AveragePosition(Collection->GetGeometryCollection().Get(), SelectedBonesA));
+		Transform[BoneAIndex].SetTranslation(FVector3f(GeometryCollectionAlgo::AveragePosition(Collection->GetGeometryCollection().Get(), SelectedBonesA)));
 		GeometryCollectionAlgo::ParentTransforms(Collection->GetGeometryCollection().Get(), BoneAIndex, SelectedBonesA);
 
 		int32 BoneBIndex = Collection->GetGeometryCollection()->AddElements(1, FGeometryCollection::TransformGroup);
 		GeometryCollectionAlgo::ParentTransform(Collection->GetGeometryCollection().Get(), RootIndex, BoneBIndex);
-		Transform[BoneBIndex].SetTranslation(GeometryCollectionAlgo::AveragePosition(Collection->GetGeometryCollection().Get(), SelectedBonesB));
+		Transform[BoneBIndex].SetTranslation(FVector3f(GeometryCollectionAlgo::AveragePosition(Collection->GetGeometryCollection().Get(), SelectedBonesB)));
 		GeometryCollectionAlgo::ParentTransforms(Collection->GetGeometryCollection().Get(), BoneBIndex, SelectedBonesB);
 	}
 }

@@ -402,6 +402,16 @@ class ONLINESUBSYSTEMUTILS_API UPartyBeaconState : public UObject
 	virtual bool DoesReservationFit(const FPartyReservation& ReservationRequest) const;
 
 	/**
+	 * Determine if this reservation fits all rules for fitting in the game
+	 * 
+	 * @param ExistingReservation reservation to test for
+	 * @param NewPlayers players requested to be added
+	 *
+	 * @return true if reservation can be modified to fit this state, false otherwise
+	 */
+	virtual bool DoesModifiedReservationFit(const FPartyReservation& ExistingReservation, const TArray<FPlayerReservation>& NewPlayers) const;
+
+	/**
 	 * @return true if the beacon is currently at max capacity
 	 */
 	virtual bool IsBeaconFull() const { return NumConsumedReservations == MaxReservations; }

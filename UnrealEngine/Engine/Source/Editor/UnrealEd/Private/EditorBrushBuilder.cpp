@@ -80,8 +80,8 @@ bool UEditorBrushBuilder::EndBrush( UWorld* InWorld, ABrush* InBrush )
 		return true;
 	}
 
-	Brush->Modify();
-	BuilderBrush->Modify();
+	Brush->Modify(false);
+	BuilderBrush->Modify(false);
 
 	FRotator Temp(0.0f,0.0f,0.0f);
 	FSnappingUtils::SnapToBSPVertex( Location, FVector::ZeroVector, Temp );
@@ -139,11 +139,11 @@ bool UEditorBrushBuilder::EndBrush( UWorld* InWorld, ABrush* InBrush )
 
 		for( int32 j=0; j<It->VertexIndices.Num(); j++ )
 		{
-			new(Poly.Vertices) FVector3f(Vertices[It->VertexIndices[j]]);
+			Poly.Vertices.Emplace(Vertices[It->VertexIndices[j]]);
 		}
 		if( Poly.Finalize( BuilderBrush, 1 ) == 0 )
 		{
-			new(Brush->Polys->Element)FPoly(Poly);
+			Brush->Polys->Element.Add(Poly);
 		}
 	}
 
@@ -199,7 +199,7 @@ bool UEditorBrushBuilder::BadParameters(const FText& Msg)
 int32 UEditorBrushBuilder::Vertexv(FVector V)
 {
 	int32 Result = Vertices.Num();
-	new(Vertices)FVector(V);
+	Vertices.Add(V);
 
 	return Result;
 }
@@ -207,44 +207,44 @@ int32 UEditorBrushBuilder::Vertexv(FVector V)
 int32 UEditorBrushBuilder::Vertex3f(float X, float Y, float Z)
 {
 	int32 Result = Vertices.Num();
-	new(Vertices)FVector(X,Y,Z);
+	Vertices.Emplace(X,Y,Z);
 	return Result;
 }
 
 void UEditorBrushBuilder::Poly3i(int32 Direction, int32 i, int32 j, int32 k, FName ItemName, bool bIsTwoSidedNonSolid )
 {
-	new(Polys)FBuilderPoly;
-	Polys.Last().Direction=Direction;
-	Polys.Last().ItemName=ItemName;
-	new(Polys.Last().VertexIndices)int32(i);
-	new(Polys.Last().VertexIndices)int32(j);
-	new(Polys.Last().VertexIndices)int32(k);
-	Polys.Last().PolyFlags = PF_DefaultFlags | (bIsTwoSidedNonSolid ? (PF_TwoSided|PF_NotSolid) : 0);
+	FBuilderPoly& Poly = Polys.AddDefaulted_GetRef();
+	Poly.Direction=Direction;
+	Poly.ItemName=ItemName;
+	Poly.VertexIndices.Add(i);
+	Poly.VertexIndices.Add(j);
+	Poly.VertexIndices.Add(k);
+	Poly.PolyFlags = PF_DefaultFlags | (bIsTwoSidedNonSolid ? (PF_TwoSided|PF_NotSolid) : 0);
 }
 
 void UEditorBrushBuilder::Poly4i(int32 Direction, int32 i, int32 j, int32 k, int32 l, FName ItemName, bool bIsTwoSidedNonSolid )
 {
-	new(Polys)FBuilderPoly;
-	Polys.Last().Direction=Direction;
-	Polys.Last().ItemName=ItemName;
-	new(Polys.Last().VertexIndices)int32(i);
-	new(Polys.Last().VertexIndices)int32(j);
-	new(Polys.Last().VertexIndices)int32(k);
-	new(Polys.Last().VertexIndices)int32(l);
-	Polys.Last().PolyFlags = PF_DefaultFlags | (bIsTwoSidedNonSolid ? (PF_TwoSided|PF_NotSolid) : 0);
+	FBuilderPoly& Poly = Polys.AddDefaulted_GetRef();
+	Poly.Direction=Direction;
+	Poly.ItemName=ItemName;
+	Poly.VertexIndices.Add(i);
+	Poly.VertexIndices.Add(j);
+	Poly.VertexIndices.Add(k);
+	Poly.VertexIndices.Add(l);
+	Poly.PolyFlags = PF_DefaultFlags | (bIsTwoSidedNonSolid ? (PF_TwoSided|PF_NotSolid) : 0);
 }
 
 void UEditorBrushBuilder::PolyBegin(int32 Direction, FName ItemName)
 {
-	new(Polys)FBuilderPoly;
-	Polys.Last().ItemName=ItemName;
-	Polys.Last().Direction = Direction;
-	Polys.Last().PolyFlags = PF_DefaultFlags;
+	FBuilderPoly& Poly = Polys.AddDefaulted_GetRef();
+	Poly.ItemName=ItemName;
+	Poly.Direction = Direction;
+	Poly.PolyFlags = PF_DefaultFlags;
 }
 
 void UEditorBrushBuilder::Polyi(int32 i)
 {
-	new(Polys.Last().VertexIndices)int32(i);
+	Polys.Last().VertexIndices.Add(i);
 }
 
 void UEditorBrushBuilder::PolyEnd()

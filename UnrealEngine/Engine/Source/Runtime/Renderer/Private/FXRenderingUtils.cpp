@@ -18,6 +18,7 @@ TConstStridedView<FSceneView> UE::FXRenderingUtils::ConvertViewArray(TConstArray
 
 FIntRect UE::FXRenderingUtils::GetRawViewRectUnsafe(const FSceneView& View)
 {
+	check(View.bIsViewInfo);
 	return static_cast<const FViewInfo&>(View).ViewRect;
 }
 
@@ -26,8 +27,8 @@ bool UE::FXRenderingUtils::CanMaterialRenderBeforeFXPostOpaque(
 	const FPrimitiveSceneProxy& SceneProxy,
 	const FMaterial& Material)
 {
-	// Opaque materials & translucent that write custom depth will always need to render before FFXSystemInterface::PostOpaqueRender
-	if (!IsTranslucentBlendMode(Material) || (SceneProxy.ShouldRenderCustomDepth() && Material.IsTranslucencyWritingCustomDepth()))
+	// Opaque materials, none surface materials & translucent that write custom depth will always need to render before FFXSystemInterface::PostOpaqueRender
+	if (!IsTranslucentBlendMode(Material) || Material.GetMaterialDomain() != MD_Surface || (SceneProxy.ShouldRenderCustomDepth() && Material.IsTranslucencyWritingCustomDepth()))
 	{
 		return true;
 	}
@@ -66,9 +67,17 @@ TRDGUniformBufferRef<FSceneTextureUniformParameters> UE::FXRenderingUtils::GetOr
 	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTexturesUniformParams = nullptr;
 
 	const FViewInfo* View = Views.Num() > 0 ? static_cast<const FViewInfo*>(&Views[0]) : nullptr;
-	if (const FSceneTextures* SceneTextures = View ? static_cast<const FViewFamilyInfo*>(View->Family)->GetSceneTexturesChecked() : nullptr)
+	if (View)
 	{
-		SceneTexturesUniformParams = SceneTextures->UniformBuffer;
+		const FViewFamilyInfo& ViewFamily = *static_cast<const FViewFamilyInfo*>(View->Family);
+
+		if (!HasRayTracedOverlay(ViewFamily))
+		{
+			if (const FSceneTextures* SceneTextures = ViewFamily.GetSceneTexturesChecked())
+			{
+				SceneTexturesUniformParams = SceneTextures->UniformBuffer;
+			}
+		}
 	}
 
 	if (SceneTexturesUniformParams == nullptr)
@@ -211,13 +220,12 @@ void UE::FXRenderingUtils::DistanceFields::SetupAtlasParameters(FRDGBuilder& Gra
 	}
 }
 
-FSceneUniformBuffer &UE::FXRenderingUtils::CreateSceneUniformBuffer(FRDGBuilder& GraphBuilder, const FSceneInterface* InScene)
+FSceneUniformBuffer& UE::FXRenderingUtils::CreateSceneUniformBuffer(FRDGBuilder& GraphBuilder, const FSceneInterface* InScene)
 {
 	FSceneUniformBuffer *Result = GraphBuilder.AllocObject<FSceneUniformBuffer>();
 	if (const FScene* Scene = InScene->GetRenderScene())
 	{
-		FSceneUniformBuffer SceneUniformBuffer;
-		Scene->GPUScene.FillSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);
+		Scene->GPUScene.FillSceneUniformBuffer(GraphBuilder, *Result);
 	}
 	return *Result;
 }

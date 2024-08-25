@@ -3,116 +3,65 @@
 
 #include "AnimNextRuntimeTest.h"
 
+#include "DecoratorBase/DecoratorReader.h"
+#include "Graph/AnimNextGraph.h"
+#include "Graph/RigUnit_AnimNextGraphRoot.h"
 #include "Misc/AutomationTest.h"
+#include "Serialization/MemoryReader.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
-#include "DecoratorBase/Decorator.h"
-#include "DecoratorBase/DecoratorRegistry.h"
-#include "DecoratorBase/NodeDescription.h"
-#include "DecoratorBase/NodeInstance.h"
-
 namespace UE::AnimNext
 {
-	uint32 GetNodeTemplateUID(const TArray<FDecoratorUID>& NodeTemplateDecoratorList)
+	FScopedClearNodeTemplateRegistry::FScopedClearNodeTemplateRegistry()
 	{
-		uint32 NodeTemplateUID = 0;
-		for (const FDecoratorUID DecoratorUID : NodeTemplateDecoratorList)
-		{
-			NodeTemplateUID = HashCombineFast(NodeTemplateUID, DecoratorUID.GetUID());
-		}
-
-		return NodeTemplateUID;
+		FNodeTemplateRegistry& Registry = FNodeTemplateRegistry::Get();
+		Swap(Registry, TmpRegistry);
 	}
 
-	uint32 GetNodeInstanceSize(const TArray<FDecoratorUID>& NodeTemplateDecoratorList)
+	FScopedClearNodeTemplateRegistry::~FScopedClearNodeTemplateRegistry()
 	{
-		const FDecoratorRegistry& Registry = FDecoratorRegistry::Get();
-
-		uint32 NodeInstanceSize = sizeof(FNodeInstance);
-		for (const FDecoratorUID DecoratorUID : NodeTemplateDecoratorList)
-		{
-			const FDecorator* Decorator = Registry.Find(DecoratorUID);
-
-			const FDecoratorMemoryLayout MemoryLayout = Decorator->GetDecoratorMemoryDescription();
-			NodeInstanceSize = Align(NodeInstanceSize, MemoryLayout.InstanceDataAlignment);
-			NodeInstanceSize += MemoryLayout.InstanceDataSize;
-		}
-
-		return NodeInstanceSize;
+		FNodeTemplateRegistry& Registry = FNodeTemplateRegistry::Get();
+		Swap(Registry, TmpRegistry);
 	}
 
-	void AppendTemplateDecorator(const TArray<FDecoratorUID>& NodeTemplateDecoratorList, int32 DecoratorIndex, TArray<uint8>& NodeTemplateBuffer, uint32& SharedDataOffset, uint32& InstanceDataOffset)
+	bool FTestUtils::LoadFromArchiveBuffer(UAnimNextGraph& Graph, TArray<FNodeHandle>& NodeHandles, const TArray<uint8>& SharedDataArchiveBuffer)
 	{
-		const FDecoratorRegistry& Registry = FDecoratorRegistry::Get();
+		FAnimNextGraphEvaluatorExecuteDefinition ExecuteDefinition;
+		ExecuteDefinition.Hash = 0;
+		ExecuteDefinition.MethodName = TEXT("Execute_0");
 
-		const FDecoratorUID DecoratorUID = NodeTemplateDecoratorList[DecoratorIndex];
-		const FDecoratorRegistryHandle DecoratorHandle = Registry.FindHandle(DecoratorUID);
-		const FDecorator* Decorator = Registry.Find(DecoratorHandle);
-		const EDecoratorMode DecoratorMode = Decorator->GetDecoratorMode();
+		FAnimNextGraphEntryPoint& EntryPoint = Graph.EntryPoints.AddDefaulted_GetRef();
+		EntryPoint.EntryPointName = FRigUnit_AnimNextGraphRoot::DefaultEntryPoint;
+		EntryPoint.RootDecoratorHandle = FAnimNextEntryPointHandle(NodeHandles[0]);
+		Graph.ExecuteDefinition = ExecuteDefinition;
+		Graph.SharedDataArchiveBuffer = SharedDataArchiveBuffer;
+		Graph.GraphReferencedObjects.Empty();
 
-		uint32 AdditiveIndexOrNumAdditive;
-		if (DecoratorMode == EDecoratorMode::Base)
+		// Reconstruct our graph shared data
+		FMemoryReader GraphSharedDataArchive(SharedDataArchiveBuffer);
+		FDecoratorReader DecoratorReader(Graph.GraphReferencedObjects, GraphSharedDataArchive);
+
+		const FDecoratorReader::EErrorState ErrorState = DecoratorReader.ReadGraph(Graph.SharedDataBuffer);
+		if (ErrorState == FDecoratorReader::EErrorState::None)
 		{
-			// Find out how many additive decorators we have
-			AdditiveIndexOrNumAdditive = 0;
-			for (int32 Index = DecoratorIndex + 1; Index < NodeTemplateDecoratorList.Num(); ++Index)	// Skip ourself
+			Graph.ResolvedRootDecoratorHandles.Add(FRigUnit_AnimNextGraphRoot::DefaultEntryPoint, DecoratorReader.ResolveEntryPointHandle(Graph.EntryPoints[0].RootDecoratorHandle));
+
+			for (FNodeHandle& NodeHandle : NodeHandles)
 			{
-				const FDecorator* ChildDecorator = Registry.Find(NodeTemplateDecoratorList[Index]);
-				if (ChildDecorator->GetDecoratorMode() == EDecoratorMode::Base)
-				{
-					break;	// Found another base decorator, we are done
-				}
-
-				// We are additive
-				AdditiveIndexOrNumAdditive++;
+				NodeHandle = DecoratorReader.ResolveNodeHandle(NodeHandle);
 			}
+
+			// Make sure our execute method is registered
+			FRigUnit_AnimNextGraphEvaluator::RegisterExecuteMethod(ExecuteDefinition);
+			return true;
 		}
 		else
 		{
-			// Find out our additive index
-			AdditiveIndexOrNumAdditive = 1;	// Skip ourself
-			for (int32 Index = DecoratorIndex - 1; Index >= 0; --Index)
-			{
-				const FDecorator* ParentDecorator = Registry.Find(NodeTemplateDecoratorList[Index]);
-				if (ParentDecorator->GetDecoratorMode() == EDecoratorMode::Base)
-				{
-					break;	// Found our base decorator, we are done
-				}
-
-				// We are additive
-				AdditiveIndexOrNumAdditive++;
-			}
+			Graph.SharedDataBuffer.Empty(0);
+			Graph.ResolvedRootDecoratorHandles.Add(FRigUnit_AnimNextGraphRoot::DefaultEntryPoint, FAnimNextDecoratorHandle());
+			return false;
 		}
-
-		const FDecoratorMemoryLayout MemoryLayout = Decorator->GetDecoratorMemoryDescription();
-
-		// Align our data
-		SharedDataOffset = Align(SharedDataOffset, MemoryLayout.SharedDataAlignment);
-		InstanceDataOffset = Align(InstanceDataOffset, MemoryLayout.InstanceDataAlignment);
-
-		// Append and update our offsets
-		const int32 BufferIndex = NodeTemplateBuffer.AddUninitialized(sizeof(FDecoratorTemplate));
-		new(&NodeTemplateBuffer[BufferIndex]) FDecoratorTemplate(DecoratorUID, DecoratorHandle, DecoratorMode, AdditiveIndexOrNumAdditive, SharedDataOffset, InstanceDataOffset);
-
-		SharedDataOffset += MemoryLayout.SharedDataSize;
-		InstanceDataOffset += MemoryLayout.InstanceDataSize;
-	}
-
-	const FNodeTemplate* BuildNodeTemplate(const TArray<FDecoratorUID>& NodeTemplateDecoratorList, TArray<uint8>& NodeTemplateBuffer)
-	{
-		const int32 BufferIndex = NodeTemplateBuffer.AddUninitialized(sizeof(FNodeTemplate));
-		new(&NodeTemplateBuffer[BufferIndex]) FNodeTemplate(GetNodeTemplateUID(NodeTemplateDecoratorList), GetNodeInstanceSize(NodeTemplateDecoratorList), NodeTemplateDecoratorList.Num());
-
-		uint32 SharedDataOffset = sizeof(FNodeDescription);
-		uint32 InstanceDataOffset = sizeof(FNodeInstance);
-
-		for (int32 DecoratorIndex = 0; DecoratorIndex < NodeTemplateDecoratorList.Num(); ++DecoratorIndex)
-		{
-			AppendTemplateDecorator(NodeTemplateDecoratorList, DecoratorIndex, NodeTemplateBuffer, SharedDataOffset, InstanceDataOffset);
-		}
-
-		return reinterpret_cast<const FNodeTemplate*>(&NodeTemplateBuffer[0]);
 	}
 }
 #endif

@@ -39,6 +39,7 @@ void UEditorInstancedPlacementSettings::Serialize(FArchive& Ar)
 void UEditorInstancedPlacementSettings::RegisterISMDescriptors(AInstancedPlacementPartitionActor* ParentPartitionActor, TSortedMap<int32, TArray<FTransform>>& ISMDefinition) const
 {
 	ISMDefinition.Empty();
+#if 0
 	if (!ParentPartitionActor)
 	{
 		return;
@@ -107,4 +108,5 @@ void UEditorInstancedPlacementSettings::RegisterISMDescriptors(AInstancedPlaceme
 			}
 		}
 	}
+#endif
 }

@@ -1,9 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Point } from '@fluentui/react';
-import { ContextualMenu, ContextualMenuItemType, IContextualMenuItem, Stack, Text } from '@fluentui/react';
+import { ContextualMenu, ContextualMenuItemType, IContextualMenuItem, Point, Stack, Text } from '@fluentui/react';
 import React, { MutableRefObject, useState } from 'react';
-import { GetChangeSummaryResponse, GetJobResponse, GetJobStepRefResponse, JobData, JobStepBatchError, JobStepBatchState, JobStepOutcome, JobStepState } from '../backend/Api';
+import { GetBatchResponse, GetChangeSummaryResponse, GetJobStepRefResponse, GetThinUserInfoResponse, JobStepBatchError, JobStepBatchState, JobStepOutcome, JobStepState } from '../backend/Api';
 import dashboard, { StatusColor } from "../backend/Dashboard";
 import { projectStore } from '../backend/ProjectStore';
 
@@ -14,7 +13,19 @@ export type ChangeContextMenuTarget = {
 
 }
 
-export const ChangeContextMenu: React.FC<{ target: ChangeContextMenuTarget, onDismiss?: () => void, job?: JobData, stepRef?: GetJobStepRefResponse, commit?: GetChangeSummaryResponse, rangeCL?: number }> = ({ target, onDismiss, job, stepRef, commit, rangeCL }) => {
+// partial JobResponse type, so we don't need full job data when presenting change cl's
+export type JobParameters = {
+   id?: string;
+   streamId: string;
+   change?: number;
+   preflightChange?: number;
+   preflightDescription?: string;
+   abortedByUserInfo?: GetThinUserInfoResponse;
+   startedByUserInfo?: GetThinUserInfoResponse;
+   batches?: GetBatchResponse[];
+}
+
+export const ChangeContextMenu: React.FC<{ target: ChangeContextMenuTarget, onDismiss?: () => void, job?: JobParameters, stepRef?: GetJobStepRefResponse, commit?: GetChangeSummaryResponse, rangeCL?: number }> = ({ target, onDismiss, job, stepRef, commit, rangeCL }) => {
 
    if (!job) {
       return null;
@@ -48,7 +59,25 @@ export const ChangeContextMenu: React.FC<{ target: ChangeContextMenuTarget, onDi
 
    const menuItems: IContextualMenuItem[] = [];
 
-   if (commit) {
+   if (job?.preflightDescription) {
+
+      menuItems.push({
+         key: "commit", onRender: () => {
+            return <Stack style={{ padding: 18, paddingTop: 18, paddingBottom: 18, maxWidth: 800 }} tokens={{ childrenGap: 12 }}>
+               <Stack horizontal tokens={{ childrenGap: 12 }}>
+                  <Text variant="small" style={{ fontFamily: "Horde Open Sans Bold" }}>Description:</Text>
+                  <Text variant="small" style={{ whiteSpace: "pre-wrap" }} >{job.preflightDescription}</Text>
+               </Stack>
+            </Stack>
+         }
+      });
+
+      menuItems.push({
+         key: "commit_divider",
+         itemType: ContextualMenuItemType.Divider
+      });
+
+   } else if (commit) {
 
       menuItems.push({
          key: "commit", onRender: () => {
@@ -64,25 +93,7 @@ export const ChangeContextMenu: React.FC<{ target: ChangeContextMenuTarget, onDi
 
                <Stack horizontal tokens={{ childrenGap: 12 }}>
                   <Text variant="small" style={{ fontFamily: "Horde Open Sans Bold" }}>Description:</Text>
-                  <Text variant="small" style={{whiteSpace: "pre-wrap"}}>{commit.description}</Text>
-               </Stack>
-            </Stack>
-         }
-      });
-
-      menuItems.push({
-         key: "commit_divider",
-         itemType: ContextualMenuItemType.Divider
-      });
-
-
-   } else if (job.preflightDescription) {
-      menuItems.push({
-         key: "commit", onRender: () => {
-            return <Stack style={{ padding: 18, paddingTop: 18, paddingBottom: 18, maxWidth: 800 }} tokens={{ childrenGap: 12 }}>
-               <Stack horizontal tokens={{ childrenGap: 12 }}>
-                  <Text variant="small" style={{ fontFamily: "Horde Open Sans Bold" }}>Description:</Text>
-                  <Text variant="small" style={{whiteSpace: "pre-wrap"}} >{job.preflightDescription}</Text>
+                  <Text variant="small" style={{ whiteSpace: "pre-wrap" }}>{commit.description}</Text>
                </Stack>
             </Stack>
          }
@@ -101,7 +112,40 @@ export const ChangeContextMenu: React.FC<{ target: ChangeContextMenuTarget, onDi
       onClick: () => copyToClipboard(change.replace("PF ", ""))
    });
 
+   if (dashboard.swarmUrl) {
+
+      menuItems.push({ key: 'open_in_swarm', text: 'Open CL in Swarm', onClick: (ev) => { window.open(`${dashboard.swarmUrl}/changes/${change.replace("PF ", "")}`) } })
+
+      // range
+      const stream = projectStore.streamById(job.streamId)!;
+      const project = projectStore.byId(stream!.projectId)!;
+      const name = project.name === "Engine" ? "UE4" : project.name;
+
+
+      const historyUrl = `${dashboard.swarmUrl}/files/${name}/${stream.name}?range=@${jobChange}#commits`;
+      menuItems.push({ key: 'open_in_swarm_history', text: "Open CL History in Swarm", onClick: (ev) => { window.open(historyUrl) } })
+
+      let highCL = jobChange;
+      let lowCL = jobChange;
+
+      if (rangeCL !== undefined) {
+         lowCL = Math.min(jobChange, rangeCL);
+         highCL = Math.max(jobChange, rangeCL);
+         const url = `${dashboard.swarmUrl}/files/${name}/${stream.name}?range=@${lowCL},@${highCL}#commits`;
+         const rangeText = `Open CL Range ${lowCL} - ${highCL}`;
+         menuItems.push({ key: 'open_in_swarm_range', text: rangeText, onClick: (ev) => { window.open(url) } })
+      }
+   }
+
    if (job) {
+
+      menuItems.push({
+         key: 'view_job',
+         text: 'Open Job Details',
+         href: window.location.protocol + "//" + window.location.hostname + `/job/${job.id}`
+      });
+
+
       menuItems.push({
          key: 'copy_job_to_clipboard',
          text: 'Copy Job to Clipboard',
@@ -109,29 +153,8 @@ export const ChangeContextMenu: React.FC<{ target: ChangeContextMenuTarget, onDi
       });
    }
 
-   menuItems.push({ key: 'open_in_swarm', text: 'Open CL in Swarm', onClick: (ev) => { window.open(`${dashboard.swarmUrl}/changes/${change.replace("PF ", "")}`) } })
-
-   // range
-   const stream = projectStore.streamById(job.streamId)!;
-   const project = projectStore.byId(stream!.projectId)!;
-   const name = project.name === "Engine" ? "UE4" : project.name;
-   
-   const historyUrl = `${dashboard.swarmUrl}/files/${name}/${stream.name}?range=@${jobChange}#commits`;
-   menuItems.push({ key: 'open_in_swarm_history', text: "Open CL History in Swarm", onClick: (ev) => { window.open(historyUrl) } })
-
-   let highCL = jobChange;
-   let lowCL = jobChange;
-
-   if (rangeCL !== undefined) {
-      lowCL = Math.min(jobChange, rangeCL);
-      highCL = Math.max(jobChange, rangeCL);
-      const url = `${dashboard.swarmUrl}/files/${name}/${stream.name}?range=@${lowCL},@${highCL}#commits`;
-      const rangeText = `Open CL Range ${lowCL} - ${highCL}`;
-      menuItems.push({ key: 'open_in_swarm_range', text: rangeText, onClick: (ev) => { window.open(url) } })
-   }
-   
    return (<ContextualMenu
-      styles={{ root: {paddingBottom: 12, paddingRight: 24, paddingLeft: 8, paddingTop: 12},list: { selectors: { '.ms-ContextualMenu-itemText': { fontSize: "10px", paddingLeft: 8 } } } }}
+      styles={{ root: { paddingBottom: 12, paddingRight: 24, paddingLeft: 8, paddingTop: 12 }, list: { selectors: { '.ms-ContextualMenu-itemText': { fontSize: "10px", paddingLeft: 8 } } } }}
       items={menuItems}
       hidden={false}
       target={target.ref ?? target.point}
@@ -141,7 +164,7 @@ export const ChangeContextMenu: React.FC<{ target: ChangeContextMenuTarget, onDi
 
 }
 
-function getJobSummary(job: GetJobResponse): { text: string, color: string } {
+function getJobSummary(job: JobParameters): { text: string, color: string } {
 
    const colors = dashboard.getStatusColors();
    let color = colors.get(StatusColor.Skipped)!;
@@ -215,7 +238,7 @@ function getJobSummary(job: GetJobResponse): { text: string, color: string } {
 }
 
 
-export const ChangeButton: React.FC<{ job?: JobData, stepRef?: GetJobStepRefResponse, commit?: GetChangeSummaryResponse, hideAborted?: boolean, rangeCL?: number, pinned?: boolean, prefix?: string }> = ({ job, stepRef, commit, hideAborted, rangeCL, pinned, prefix }) => {
+export const ChangeButton: React.FC<{ job?: JobParameters, stepRef?: GetJobStepRefResponse, commit?: GetChangeSummaryResponse, hideAborted?: boolean, rangeCL?: number, pinned?: boolean, prefix?: string, buttonColor?: string }> = ({ job, stepRef, commit, hideAborted, rangeCL, pinned, prefix, buttonColor }) => {
 
    const [menuShown, setMenuShown] = useState(false);
 
@@ -241,10 +264,12 @@ export const ChangeButton: React.FC<{ job?: JobData, stepRef?: GetJobStepRefResp
    if (prefix) {
       change = `${prefix} ${change}`;
    }
-   
+
+   const defaultBackgroundColor = job.startedByUserInfo ? "#0288ee" : "#035ca1";
+
    return (<Stack verticalAlign="center" verticalFill={true} horizontalAlign="start"> <div style={{ paddingBottom: "1px" }}>
       <Stack tokens={{ childrenGap: 4 }}>
-         <span ref={spanRef} style={{ padding: "2px 6px 2px 6px", height: "15px", cursor: "pointer" }} className={job.startedByUserInfo ? "cl-callout-button-user" : "cl-callout-button"} onClick={(ev) => { ev.stopPropagation(); ev.preventDefault(); setMenuShown(!menuShown) }} >{change}</span>
+         <span ref={spanRef} style={{ padding: "2px 6px 2px 6px", height: "15px", cursor: "pointer", color: "#FFFFFF", backgroundColor: buttonColor ? `${buttonColor}` : defaultBackgroundColor }} className={job.startedByUserInfo ? "cl-callout-button-user" : "cl-callout-button"} onClick={(ev) => { ev.stopPropagation(); ev.preventDefault(); setMenuShown(!menuShown) }} >{change}</span>
          {(!!showStatus) && <span ref={spanRef} style={{ padding: "2px 6px 2px 6px", height: "16px", cursor: "pointer", userSelect: "none", fontFamily: "Horde Open Sans SemiBold", fontSize: "10px", backgroundColor: color, color: "rgb(255, 255, 255)" }} onClick={(ev) => { ev.preventDefault(); setMenuShown(!menuShown) }}>{text}</span>}
       </Stack>
       {menuShown && <ChangeContextMenu target={{ ref: spanRef }} job={job} commit={commit} stepRef={stepRef} rangeCL={rangeCL} onDismiss={() => setMenuShown(false)} />}

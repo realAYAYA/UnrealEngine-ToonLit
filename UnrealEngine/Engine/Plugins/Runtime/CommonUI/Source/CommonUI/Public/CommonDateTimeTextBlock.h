@@ -46,6 +46,19 @@ protected:
 	int32 GetLastDaysCount() const { return LastDaysCount; }
 	int32 GetLastHoursCount() const { return LastHoursCount; }
 
+	/*
+	* Supplies a custom timespan format to use if desired
+	* Supported arguments include {Days}, {Hours}, {Minutes}, and {Seconds}
+	*/
+	UPROPERTY(EditAnywhere, Category = "Custom Timespan")
+	FText CustomTimespanFormat;
+
+	/*
+	* If the custom timespan should use a leading zero for values, ie "02"
+	*/
+	UPROPERTY(EditAnywhere, Category = "Custom Timespan")
+	bool bCustomTimespanLeadingZeros = false;
+
 private:
 
 	// Timer handle for timer-based ticking based on InterpolationUpdateInterval.

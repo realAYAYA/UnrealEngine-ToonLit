@@ -181,4 +181,11 @@ namespace Metasound
 		 */
 		virtual FPostExecuteFunction GetPostExecuteFunction() = 0;
 	};
+
+	// todo: better place to put this? needs to be in core
+	struct FOperatorAndInputs
+	{
+		TUniquePtr<IOperator> Operator;
+		FInputVertexInterfaceData Inputs;
+	};
 }

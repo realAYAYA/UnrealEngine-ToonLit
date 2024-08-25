@@ -58,11 +58,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogHierarchicalLODUtilities, Verbose, All);
 
 #define LOCTEXT_NAMESPACE "HierarchicalLODUtils"
 
-void FHierarchicalLODUtilities::ExtractStaticMeshComponentsFromLODActor(AActor* Actor, TArray<UStaticMeshComponent*>& InOutComponents)
-{
-	UHLODProxy::ExtractStaticMeshComponentsFromLODActor(Cast<ALODActor>(Actor), InOutComponents);
-}
-
 void FHierarchicalLODUtilities::ExtractSubActorsFromLODActor(AActor* Actor, TArray<AActor*>& InOutActors)
 {
 	ALODActor* LODActor = CastChecked<ALODActor>(Actor);
@@ -224,39 +219,11 @@ UPackage* FHierarchicalLODUtilities::RetrieveLevelHLODPackage(const ULevel* InLe
 	return nullptr;
 }
 
-UPackage* FHierarchicalLODUtilities::CreateOrRetrieveLevelHLODPackage(const ULevel* InLevel)
-{
-	checkf(InLevel != nullptr, TEXT("Invalid Level supplied"));
-
-	UPackage* HLODPackage = nullptr;
-	UPackage* LevelOuterMost = InLevel->GetOutermost();
-
-	const FString PathName = FPackageName::GetLongPackagePath(LevelOuterMost->GetPathName());
-	const FString BaseName = FPackageName::GetShortName(LevelOuterMost->GetPathName());
-	const FString HLODLevelPackageName = FString::Printf(TEXT("%s/HLOD/%s_HLOD"), *PathName, *BaseName);
-
-	HLODPackage = CreatePackage( *HLODLevelPackageName);
-	HLODPackage->FullyLoad();
-	HLODPackage->Modify();
-	HLODPackage->SetPackageFlags(PKG_ContainsMapData);		// PKG_ContainsMapData required so FEditorFileUtils::GetDirtyContentPackages can treat this as a map package
-
-	// Target PackagePath; this is a hack to avoid save file dialog when we will be saving HLOD map package
-	HLODPackage->SetLoadedPath(FPackagePath::FromPackageNameChecked(HLODLevelPackageName));
-
-	return HLODPackage;
-}
-
 FString FHierarchicalLODUtilities::GetLevelHLODProxyName(const FString& InLevelPackageName, const uint32 InHLODLevelIndex)
 {
 	FString HLODProxyName;
 	FString HLODPackageName = GetHLODPackageName(InLevelPackageName, InHLODLevelIndex, HLODProxyName);
 	return HLODPackageName + TEXT(".") + HLODProxyName;
-}
-
-bool FHierarchicalLODUtilities::BuildStaticMeshForLODActor(ALODActor* LODActor, UPackage* AssetsOuter, const FHierarchicalSimplification& LODSetup, UMaterialInterface* InBaseMaterial)
-{
-	UHLODProxy* Proxy = FindObject<UHLODProxy>(AssetsOuter, *GetHLODProxyName(CastChecked<ULevel>(LODActor->GetOuter()), LODActor->LODLevel - 1));
-	return BuildStaticMeshForLODActor(LODActor, Proxy, LODSetup, InBaseMaterial);
 }
 
 static FString GetImposterMeshName(const UStaticMesh* InImposterMesh)
@@ -570,7 +537,7 @@ FHLODBuildResults GenerateHLODMesh_Approximate(const FHLODBuildParams& InBuildPa
 	Options.MetallicTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Metallic, Options.BakeMaterial));
 	Options.RoughnessTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Roughness, Options.BakeMaterial));
 	Options.SpecularTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Specular, Options.BakeMaterial));
-	Options.EmissiveTexParamName = FName(FMaterialUtilities::GetFlattenMaterialTextureName(EFlattenMaterialProperties::Emissive, Options.BakeMaterial));
+	Options.EmissiveTexParamName = FName("EmissiveHDRTexture"); // TODO - Approximate actors should look up if the material sampler is expecting an HDR texture and capture accordingly
 	Options.bUsePackedMRS = true;
 	Options.PackedMRSTexParamName = FName("PackedTexture");
 
@@ -582,11 +549,11 @@ FHLODBuildResults GenerateHLODMesh_Approximate(const FHLODBuildParams& InBuildPa
 	Options.BasePackagePath = PackagePath / NewAssetNamePrefix + AssetName;
 
 	// run actor approximation computation
-	TSet<AActor*> Actors;
-	Algo::Transform(InBuildParams.Components, Actors, [](UPrimitiveComponent* PrimitiveComponent) { return PrimitiveComponent->GetOwner(); });
+	IGeometryProcessing_ApproximateActors::FInput Input;
+	Algo::Transform(InBuildParams.Components, Input.Components, [](UPrimitiveComponent* PrimitiveComponent) { return PrimitiveComponent; });
 
 	IGeometryProcessing_ApproximateActors::FResults Results;
-	ApproxActorsAPI->ApproximateActors(Actors.Array(), Options, Results);
+	ApproxActorsAPI->ApproximateActors(Input, Options, Results);
 
 	auto RenameNewAsset = [&PackagePath, &NewAssetNamePrefix, &InBuildParams](UObject* NewAsset)
 	{
@@ -652,6 +619,7 @@ FHLODBuildResults GenerateHLODMesh_Approximate(const FHLODBuildParams& InBuildPa
 			SetStaticSwitch("UseMetallic", Options.bBakeMetallic);
 			SetStaticSwitch("UseSpecular", Options.bBakeSpecular);
 			SetStaticSwitch("UseEmissive", Options.bBakeEmissive);
+			SetStaticSwitch("UseEmissiveColor", Options.bBakeEmissive);
 			SetStaticSwitch("UseEmissiveHDR", Options.bBakeEmissive);
 			SetStaticSwitch("UseNormal", Options.bBakeNormalMap);
 			SetStaticSwitch("PackMetallic", Options.bUsePackedMRS);
@@ -881,13 +849,6 @@ bool FHierarchicalLODUtilities::BuildStaticMeshForLODActor(ALODActor* LODActor, 
 	return true;
 }
 
-bool FHierarchicalLODUtilities::BuildStaticMeshForLODActor(ALODActor* LODActor, UPackage* AssetsOuter, const FHierarchicalSimplification& LODSetup)
-{
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	return BuildStaticMeshForLODActor(LODActor, AssetsOuter, LODSetup, GEngine->DefaultHLODFlattenMaterial);
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-}
-
 EClusterGenerationError FHierarchicalLODUtilities::ShouldGenerateCluster(AActor* Actor, const int32 HLODLevelIndex)
 {
 	if (!Actor)
@@ -1014,11 +975,6 @@ void FHierarchicalLODUtilities::DestroyCluster(ALODActor* InActor)
 	{
 		DestroyCluster(ParentLOD);
 	}
-}
-
-void FHierarchicalLODUtilities::DestroyClusterData(ALODActor* InActor)
-{
-
 }
 
 ALODActor* FHierarchicalLODUtilities::CreateNewClusterActor(UWorld* InWorld, const int32 InLODLevel, AWorldSettings* WorldSettings)

@@ -65,7 +65,7 @@ namespace BuildPatchServices
 		FGuid SessionId;
 
 		// Hold a pointer to my thread for easier deleting.
-		FRunnableThread* Thread;
+		IBuildInstallerThread* Thread;
 
 		// The delegates that we will be calling when started.
 		const FBuildPatchInstallerDelegate StartDelegate;
@@ -74,7 +74,7 @@ namespace BuildPatchServices
 		const FBuildPatchInstallerDelegate CompleteDelegate;
 
 		// The installer configuration.
-		const FBuildInstallerConfiguration Configuration;
+		FBuildInstallerConfiguration Configuration;
 
 		// The Configuration.InstallerActions array converted into private class type.
 		TArray<FBuildPatchInstallerAction> InstallerActions;
@@ -182,9 +182,6 @@ namespace BuildPatchServices
 		// The message pump controller.
 		TUniquePtr<IMessagePump> MessagePump;
 
-		// Holds the optimised delta interfaces created during Initialize.
-		TArray<TUniquePtr<IOptimisedDelta>> OptimisedDeltas;
-
 		// The interface for manifest data aggregation.
 		TUniquePtr<IBuildManifestSet> ManifestSet;
 
@@ -193,9 +190,6 @@ namespace BuildPatchServices
 
 		// List of controllable classes that have been constructed.
 		TArray<IControllable*> Controllables;
-
-		// List of message handlers that have been registered.
-		TArray<FMessageHandler*> MessageHandlers;
 
 		// Stage timers for build stats.
 		FProcessTimer InitializeTimer;
@@ -268,11 +262,6 @@ namespace BuildPatchServices
 		 * Tick function called from the module to give us game thread time.
 		 */
 		bool Tick();
-
-		/**
-		 * Only returns once the thread has finished running.
-		 */
-		void WaitForThread() const;
 
 		/**
 		 * Called by the module during shutdown.
@@ -457,6 +446,11 @@ namespace BuildPatchServices
 		 * Builds the cloud source configuration struct.
 		 */
 		FDownloadConnectionCountConfig BuildConnectionCountConfig();
+
+		/**
+		 * Destroys the internal worker thread
+		 */
+		void CleanupThread();
 	};
 }
 

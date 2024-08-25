@@ -59,6 +59,18 @@ UAnimCompress_RemoveLinearKeys::UAnimCompress_RemoveLinearKeys(const FObjectInit
 	bActuallyFilterLinearKeys = true;
 }
 
+#if WITH_EDITORONLY_DATA
+int64 UAnimCompress_RemoveLinearKeys::EstimateCompressionMemoryUsage(const UAnimSequence& AnimSequence) const
+{
+	int64 BaseSize = AnimSequence.GetApproxRawSize();
+	if (const IAnimationDataModel* DataModel = AnimSequence.GetDataModel())
+	{
+		return BaseSize + 3 * DataModel->GetNumberOfKeys() * DataModel->GetNumBoneTracks() * sizeof(FTransform);
+	}
+	return BaseSize;
+}
+#endif // WITH_EDITORONLY_DATA
+
 #if WITH_EDITOR
 struct RotationAdapter
 {

@@ -17,7 +17,7 @@ namespace PerfReportTool
 		{
 			isSet = false;
 		}
-		public OptionalString(XElement element, string Name, bool IsElement = false)
+		public OptionalString(XElement element, string Name, bool IsElement = false, XmlVariableMappings vars = null )
 		{
 			isSet = false;
 			if (IsElement)
@@ -25,7 +25,7 @@ namespace PerfReportTool
 				XElement child = element.Element(Name);
 				if (child != null)
 				{
-					value = child.Value;
+					value = child.GetValue(vars);
 					isSet = true;
 				}
 			}
@@ -34,7 +34,7 @@ namespace PerfReportTool
 				XAttribute child = element.Attribute(Name);
 				if (child != null)
 				{
-					value = child.Value;
+					value = element.GetRequiredAttribute<string>(vars, Name);
 					isSet = true;
 				}
 			}
@@ -45,100 +45,40 @@ namespace PerfReportTool
 		public string value;
 	};
 
-	class OptionalBool
+	class Optional<T>
 	{
-		public OptionalBool(bool valueIn)
+		public Optional(T valueIn)
 		{
 			value = valueIn;
 			isSet = true;
 		}
-		public OptionalBool()
+		public Optional()
 		{
 			isSet = false;
 		}
-		public OptionalBool(XElement element, string AttributeName)
+		public Optional(XElement element, string AttributeName, XmlVariableMappings vars = null)
 		{
 			isSet = false;
 			try
 			{
 				if (element.Attribute(AttributeName) != null)
 				{
-					value = Convert.ToInt32(element.Attribute(AttributeName).Value) == 1;
+					value = element.GetRequiredAttribute<T>(vars, AttributeName);
 					isSet = true;
 				}
 			}
 			catch { }
 		}
-		public void InheritFrom(OptionalBool baseVersion) { if (!isSet) { isSet = baseVersion.isSet; value = baseVersion.value; } }
+		public void InheritFrom(Optional<T> baseVersion) { if (!isSet) { isSet = baseVersion.isSet; value = baseVersion.value; } }
 
+		public T value;
 		public bool isSet;
-		public bool value;
 	};
 
-	class OptionalInt
-	{
-		public OptionalInt(int valueIn)
-		{
-			value = valueIn;
-			isSet = true;
-		}
-		public OptionalInt()
-		{
-			isSet = false;
-		}
-		public OptionalInt(XElement element, string AttributeName)
-		{
-			isSet = false;
-			try
-			{
-				if (element.Attribute(AttributeName) != null)
-				{
-					value = Convert.ToInt32(element.Attribute(AttributeName).Value);
-					isSet = true;
-				}
-			}
-			catch { }
-		}
-		public void InheritFrom(OptionalInt baseVersion) { if (!isSet) { isSet = baseVersion.isSet; value = baseVersion.value; } }
-
-		public bool isSet;
-		public int value;
-	};
-
-	class OptionalDouble
-	{
-		public OptionalDouble(int valueIn)
-		{
-			value = valueIn;
-			isSet = true;
-		}
-		public OptionalDouble()
-		{
-			isSet = false;
-		}
-		public OptionalDouble(XElement element, string AttributeName)
-		{
-			isSet = false;
-			try
-			{
-				if (element.Attribute(AttributeName) != null)
-				{
-					value = Convert.ToDouble(element.Attribute(AttributeName).Value, System.Globalization.CultureInfo.InvariantCulture);
-					isSet = true;
-				}
-			}
-			catch { }
-		}
-
-		public void InheritFrom(OptionalDouble baseVersion) { if (!isSet) { isSet = baseVersion.isSet; value = baseVersion.value; } }
-
-		public bool isSet;
-		public double value;
-	};
 
 	static class OptionalHelper
 	{
-		public static string GetDoubleSetting(OptionalDouble setting, string cmdline)
+		public static string GetDoubleSetting(Optional<double> setting, string cmdline)
 		{
 			return (setting.isSet ? (cmdline + setting.value.ToString()) : "");
 		}
@@ -151,56 +91,70 @@ namespace PerfReportTool
 
 	class ReportGraph
 	{
-		public ReportGraph(XElement element)
+		public ReportGraph(XElement element, XmlVariableMappings vars)
 		{
-			title = element.Attribute("title").Value;
-			budget = new OptionalDouble(element, "budget");
-			inSummary = element.GetSafeAttibute<bool>("inSummary", false);
-			isExternal = element.GetSafeAttibute<bool>("external", false);
+			title = element.GetRequiredAttribute<string>(vars, "title");
+			budget = new Optional<double>(element, "budget", vars);
+			inSummary = element.GetSafeAttribute<bool>(vars, "inSummary", false);
+			isInline = element.GetSafeAttribute<bool>(vars, "inline", false);
+			parent = element.GetSafeAttribute<string>(vars, "parent");
+			minFilterStatValue = new Optional<double>(element, "minFilterStatValue", vars);
 
-			minFilterStatValue = new OptionalDouble(element, "minFilterStatValue");
+			if (!isInline && parent != null)
+			{
+				throw new Exception("Parent can only be specified for inline graphs (inline='1'): " + element.ToString());
+			}
+
+			if (isInline)
+			{
+				// If this is an inline graph then just load the settings directly
+				settings = new GraphSettings(element, vars);
+			}
 		}
 		public string title;
-		public OptionalDouble budget;
+		public Optional<double> budget;
 		public bool inSummary;
-		public bool isExternal;
-		public OptionalDouble minFilterStatValue;
+		public Optional<double> minFilterStatValue;
 		public GraphSettings settings;
+
+		public bool isInline;
+		public string parent;
 	};
 
 	class GraphSettings
 	{
-		public GraphSettings(XElement element)
+		public GraphSettings(XElement element, XmlVariableMappings vars = null)
 		{
-			smooth = new OptionalBool(element, "smooth");
-			thickness = new OptionalDouble(element, "thickness");
-			miny = new OptionalDouble(element, "miny");
-			maxy = new OptionalDouble(element, "maxy");
-			threshold = new OptionalDouble(element, "threshold");
-			averageThreshold = new OptionalDouble(element, "averageThreshold");
-			minFilterStatValue = new OptionalDouble(element, "minFilterStatValue");
-			minFilterStatName = new OptionalString(element, "minFilterStatName");
-			smoothKernelPercent = new OptionalDouble(element, "smoothKernelPercent");
-			smoothKernelSize = new OptionalDouble(element, "smoothKernelSize");
-			compression = new OptionalDouble(element, "compression");
-			width = new OptionalInt(element, "width");
-			height = new OptionalInt(element, "height");
-			stacked = new OptionalBool(element, "stacked");
-			showAverages = new OptionalBool(element, "showAverages");
-			filterOutZeros = new OptionalBool(element, "filterOutZeros");
-			maxHierarchyDepth = new OptionalInt(element, "maxHierarchyDepth");
-			hideStatPrefix = new OptionalString(element, "hideStatPrefix");
-			mainStat = new OptionalString(element, "mainStat");
-			showEvents = new OptionalString(element, "showEvents");
-			requiresDetailedStats = new OptionalBool(element, "requiresDetailedStats");
-			ignoreStats = new OptionalString(element, "ignoreStats");
+			smooth = new Optional<bool>(element, "smooth", vars);
+			thickness = new Optional<double>(element, "thickness", vars);
+			miny = new Optional<double>(element, "miny", vars);
+			maxy = new Optional<double>(element, "maxy", vars);
+			maxAutoMaxY = new Optional<double>(element, "maxAutoMaxY", vars);
+			threshold = new Optional<double>(element, "threshold", vars);
+			averageThreshold = new Optional<double>(element, "averageThreshold", vars);
+			minFilterStatValue = new Optional<double>(element, "minFilterStatValue", vars);
+			minFilterStatName = new OptionalString(element, "minFilterStatName", false, vars);
+			smoothKernelPercent = new Optional<double>(element, "smoothKernelPercent", vars);
+			smoothKernelSize = new Optional<double>(element, "smoothKernelSize", vars);
+			compression = new Optional<double>(element, "compression", vars);
+			width = new Optional<int>(element, "width", vars);
+			height = new Optional<int>(element, "height", vars);
+			stacked = new Optional<bool>(element, "stacked", vars);
+			showAverages = new Optional<bool>(element, "showAverages", vars);
+			filterOutZeros = new Optional<bool>(element, "filterOutZeros", vars);
+			maxHierarchyDepth = new Optional<int>(element, "maxHierarchyDepth", vars);
+			hideStatPrefix = new OptionalString(element, "hideStatPrefix", false, vars);
+			mainStat = new OptionalString(element, "mainStat", false, vars);
+			showEvents = new OptionalString(element, "showEvents", false, vars);
+			requiresDetailedStats = new Optional<bool>(element, "requiresDetailedStats", vars);
+			ignoreStats = new OptionalString(element, "ignoreStats", false, vars);
 
-			statString = new OptionalString(element, "statString", true);
-			//additionalArgs = new OptionalString(element, "additionalArgs", true);
-			statMultiplier = new OptionalDouble(element, "statMultiplier");
-			legendAverageThreshold = new OptionalDouble(element, "legendAverageThreshold");
-			snapToPeaks = new OptionalBool(element, "snapToPeaks");
-			lineDecimalPlaces = new OptionalInt(element, "lineDecimalPlaces");
+			statString = new OptionalString(element, "statString", true, vars);
+			//additionalArgs = new OptionalString(element, "additionalArgs", true, vars);
+			statMultiplier = new	(element, "statMultiplier", vars);
+			legendAverageThreshold = new Optional<double>(element, "legendAverageThreshold", vars);
+			snapToPeaks = new Optional<bool>(element, "snapToPeaks", vars);
+			lineDecimalPlaces = new Optional<int>(element, "lineDecimalPlaces", vars);
 		}
 		public void InheritFrom(GraphSettings baseSettings)
 		{
@@ -209,6 +163,7 @@ namespace PerfReportTool
 			thickness.InheritFrom(baseSettings.thickness);
 			miny.InheritFrom(baseSettings.miny);
 			maxy.InheritFrom(baseSettings.maxy);
+			maxAutoMaxY.InheritFrom(baseSettings.maxAutoMaxY);
 			threshold.InheritFrom(baseSettings.threshold);
 			averageThreshold.InheritFrom(baseSettings.averageThreshold);
 			minFilterStatValue.InheritFrom(baseSettings.minFilterStatValue);
@@ -234,35 +189,36 @@ namespace PerfReportTool
 			lineDecimalPlaces.InheritFrom(baseSettings.lineDecimalPlaces);
 
 		}
-		public OptionalBool smooth;
+		public Optional<bool> smooth;
 		public OptionalString statString;
-		public OptionalDouble thickness;
-		public OptionalDouble miny;
-		public OptionalDouble maxy;
-		public OptionalDouble threshold;
-		public OptionalDouble averageThreshold;
-		public OptionalDouble minFilterStatValue;
+		public Optional<double> thickness;
+		public Optional<double> miny;
+		public Optional<double> maxy;
+		public Optional<double> maxAutoMaxY;
+		public Optional<double> threshold;
+		public Optional<double> averageThreshold;
+		public Optional<double> minFilterStatValue;
 		public OptionalString minFilterStatName;
-		public OptionalDouble smoothKernelSize;
-		public OptionalDouble smoothKernelPercent;
-		public OptionalDouble compression;
-		public OptionalInt width;
-		public OptionalInt height;
+		public Optional<double> smoothKernelSize;
+		public Optional<double> smoothKernelPercent;
+		public Optional<double> compression;
+		public Optional<int> width;
+		public Optional<int> height;
 		//public OptionalString additionalArgs;
-		public OptionalBool stacked;
-		public OptionalBool showAverages;
-		public OptionalBool filterOutZeros;
-		public OptionalInt maxHierarchyDepth;
+		public Optional<bool> stacked;
+		public Optional<bool> showAverages;
+		public Optional<bool> filterOutZeros;
+		public Optional<int> maxHierarchyDepth;
 		public OptionalString hideStatPrefix;
 		public OptionalString mainStat;
 		public OptionalString showEvents;
 		public OptionalString ignoreStats;
-		public OptionalDouble statMultiplier;
-		public OptionalDouble legendAverageThreshold;
+		public Optional<double> statMultiplier;
+		public Optional<double> legendAverageThreshold;
 
-		public OptionalBool requiresDetailedStats;
-		public OptionalBool snapToPeaks;
-		public OptionalInt lineDecimalPlaces;
+		public Optional<bool> requiresDetailedStats;
+		public Optional<bool> snapToPeaks;
+		public Optional<int> lineDecimalPlaces;
 
 	};
 

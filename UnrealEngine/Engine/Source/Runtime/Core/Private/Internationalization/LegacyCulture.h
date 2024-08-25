@@ -10,6 +10,8 @@
 #include "Internationalization/FastDecimalFormat.h"
 
 #if !UE_ENABLE_ICU
+class FInternationalization;
+
 class FLegacyCultureImplementation : public ICultureImplementation
 {
 	friend class FCulture;
@@ -55,7 +57,7 @@ public:
 	virtual ETextPluralForm GetPluralForm(double Val, const ETextPluralType PluralType) const override;
 	virtual const TArray<ETextPluralForm>& GetValidPluralForms(const ETextPluralType PluralType) const override;
 
-	static FString GetCanonicalName(const FString& Name);
+	static FString GetCanonicalName(const FString& Name, FInternationalization& I18N);
 
 private:
 	// Full localized culture name

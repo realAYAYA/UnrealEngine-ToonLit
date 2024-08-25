@@ -2,12 +2,17 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
 #include "NavFilters/NavigationQueryFilter.h"
 #include "AI/NavigationSystemConfig.h"
 #include "AI/Navigation/NavLinkDefinition.h"
 #include "Math/GenericOctreePublic.h"
 #include "AI/NavigationModifier.h"
+#endif
+#include "AI/Navigation/NavigationTypes.h"
+#include "AI/Navigation/NavAgentSelector.h"
+#include "UObject/WeakInterfacePtr.h"
 
 #define NAVSYS_DEBUG (0 && UE_BUILD_DEBUG)
 
@@ -20,6 +25,13 @@ struct FKAggregateGeom;
 class FNavigationOctree;
 class UNavigationPath;
 class ANavigationData;
+class INavigationInvokerInterface;
+struct FCompositeNavModifier;
+struct FNavigationLink;
+struct FNavigationSegmentLink;
+struct FNavigationQueryFilter;
+typedef TSharedPtr<const FNavigationQueryFilter, ESPMode::ThreadSafe> FSharedConstNavQueryFilter;
+typedef TSharedPtr<struct FNavigationPath, ESPMode::ThreadSafe> FNavPathSharedPtr;
 
 struct FPathFindingQueryData
 {
@@ -103,9 +115,13 @@ struct FNavigationInvokerRaw
 	FNavigationInvokerRaw(const FVector& InLocation, float Min, float Max, const FNavAgentSelector& InSupportedAgents, ENavigationInvokerPriority InPriority);
 };
 
+class AActor;
+
 struct FNavigationInvoker
 {
+	/** The Invoker source should be either an Actor or an Object. Thus only 1 of those member should be set. We'll use IsExplicitlyNull to know which one to use */
 	TWeakObjectPtr<AActor> Actor;
+	TWeakInterfacePtr<INavigationInvokerInterface> Object;
 
 	/** tiles GenerationRadius away or close will be generated if they're not already present */
 	float GenerationRadius;
@@ -119,9 +135,13 @@ struct FNavigationInvoker
 
 	/** invoker Priority used when dirtying tiles */
 	ENavigationInvokerPriority Priority;
-	
+
 	FNavigationInvoker();
 	FNavigationInvoker(AActor& InActor, float InGenerationRadius, float InRemovalRadius, const FNavAgentSelector& InSupportedAgents, ENavigationInvokerPriority InPriority);
+	FNavigationInvoker(INavigationInvokerInterface& InObject, float InGenerationRadius, float InRemovalRadius, const FNavAgentSelector& InSupportedAgents, ENavigationInvokerPriority InPriority);
+
+	FString GetName() const;
+	bool GetLocation(FVector& OutLocation) const;
 };
 
 namespace NavigationHelper

@@ -271,7 +271,7 @@ TSharedRef<STableViewBase> UListView::RebuildListWidget()
 
 void UListView::HandleListEntryHovered(UUserWidget& EntryWidget)
 {
-	if (UObject* const* ListItem = ItemFromEntryWidget(EntryWidget))
+	if (const TObjectPtrWrapTypeOf<UObject*>* ListItem = ItemFromEntryWidget(EntryWidget))
 	{
 		OnItemIsHoveredChanged().Broadcast(*ListItem, true);
 		BP_OnItemIsHoveredChanged.Broadcast(*ListItem, true);
@@ -280,10 +280,10 @@ void UListView::HandleListEntryHovered(UUserWidget& EntryWidget)
 
 void UListView::HandleListEntryUnhovered(UUserWidget& EntryWidget)
 {
-	if (UObject* const* ListItem = ItemFromEntryWidget(EntryWidget))
+	if (const TObjectPtrWrapTypeOf<UObject*>* ListItem = ItemFromEntryWidget(EntryWidget))
 	{
 		OnItemIsHoveredChanged().Broadcast(*ListItem, false);
-		BP_OnItemIsHoveredChanged.Broadcast(*ListItem, false);
+ 		BP_OnItemIsHoveredChanged.Broadcast(*ListItem, false);
 	}
 }
 
@@ -309,6 +309,12 @@ FMargin UListView::GetDesiredEntryPadding(UObject* Item) const
 UUserWidget& UListView::OnGenerateEntryWidgetInternal(UObject* Item, TSubclassOf<UUserWidget> DesiredEntryClass, const TSharedRef<STableViewBase>& OwnerTable)
 {
 	return GenerateTypedEntry(DesiredEntryClass, OwnerTable);
+}
+
+UObject* UListView::GetListObjectFromEntry(UUserWidget& EntryWidget)
+{
+	const TObjectPtrWrapTypeOf<UObject*>* Item = ITypedUMGListView::ItemFromEntryWidget(EntryWidget);
+	return Item ? *Item : nullptr;
 }
 
 void UListView::OnItemClickedInternal(UObject* ListItem)

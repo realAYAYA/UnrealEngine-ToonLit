@@ -15,8 +15,9 @@ struct FGLTFTextureUtilities
 
 	static void FullyLoad(const UTexture* InTexture);
 
-	static bool IsHDR(const UTexture* Texture);
+	static bool Is2D(const UTexture* Texture);
 	static bool IsCubemap(const UTexture* Texture);
+	static bool IsHDR(const UTexture* Texture);
 
 	static TextureFilter GetDefaultFilter(TextureGroup Group);
 

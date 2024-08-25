@@ -6,7 +6,6 @@ using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Xml;
 
 namespace EpicGames.Core
 {
@@ -280,66 +279,40 @@ namespace EpicGames.Core
 		/// Constructs a Json schema from a type
 		/// </summary>
 		/// <param name="type">The type to construct from</param>
-		/// <param name="xmlDoc">C# Xml documentation file, to use for property descriptions</param>
+		/// <param name="xmlDocReader">Reads documentation for requested types</param>
 		/// <returns>New schema object</returns>
-		public static JsonSchema FromType(Type type, XmlDocument? xmlDoc)
+		public static JsonSchema FromType(Type type, XmlDocReader? xmlDocReader)
 		{
 			JsonSchemaAttribute? schemaAttribute = type.GetCustomAttribute<JsonSchemaAttribute>();
-			return new JsonSchema(schemaAttribute?.Id, CreateSchemaType(type, new Dictionary<Type, JsonSchemaType>(), xmlDoc));
+			return new JsonSchema(schemaAttribute?.Id, CreateSchemaType(type, new Dictionary<Type, JsonSchemaType>(), xmlDocReader));
 		}
 
 		/// <summary>
-		/// Gets a property description from Xml documentation file
+		/// Create a Json schema (or retrieve a cached schema)
 		/// </summary>
-		/// <param name="type"></param>
-		/// <param name="name"></param>
-		/// <param name="xmlDoc"></param>
-		/// <returns></returns>
-		static string? GetPropertyDescription(Type type, string name, XmlDocument? xmlDoc)
+		public static JsonSchema CreateSchema(Type type, XmlDocReader? xmlDocReader)
 		{
-			return GetSummaryFromXmlDoc(type, "P", name, xmlDoc);
+			JsonSchemaAttribute? schemaAttribute = type.GetCustomAttribute<JsonSchemaAttribute>();
+			return new JsonSchema(schemaAttribute?.Id, CreateSchemaType(type, new Dictionary<Type, JsonSchemaType>(), xmlDocReader));
 		}
 
 		/// <summary>
-		/// Gets a description from Xml documentation file
+		/// Constructs a schema type for the given property
 		/// </summary>
-		/// <param name="type">Type to retrieve summary for</param>
-		/// <param name="qualifier">Type of element to retrieve</param>
-		/// <param name="member">Name of the member</param>
-		/// <param name="xmlDoc">XML documentation file to search</param>
-		/// <returns>Summary string, or null if it's not available</returns>
-		static string? GetSummaryFromXmlDoc(Type type, string qualifier, string? member, XmlDocument? xmlDoc)
+		static JsonSchemaType CreateSchemaType(PropertyInfo property, Dictionary<Type, JsonSchemaType> typeCache, XmlDocReader? xmlDocReader)
 		{
-			if (xmlDoc == null)
+			if (property.GetCustomAttribute<JsonSchemaStringAttribute>() != null)
 			{
-				return null;
+				return new JsonSchemaString();
 			}
 
-			string? fullName = type.FullName;
-			if (member != null)
-			{
-				fullName = $"{fullName}.{member}";
-			}
-
-			string selector = $"//member[@name='{qualifier}:{fullName}']/summary";
-
-			XmlNode? node = xmlDoc.SelectSingleNode(selector);
-			if (node == null)
-			{
-				return null;
-			}
-
-			return node.InnerText.Trim().Replace("\r\n", "\n", StringComparison.Ordinal);
+			return CreateSchemaType(property.PropertyType, typeCache, xmlDocReader);
 		}
 
 		/// <summary>
 		/// Constructs a schema type from the given type object
 		/// </summary>
-		/// <param name="type"></param>
-		/// <param name="typeCache"></param>
-		/// <param name="xmlDoc"></param>
-		/// <returns></returns>
-		static JsonSchemaType CreateSchemaType(Type type, Dictionary<Type, JsonSchemaType> typeCache, XmlDocument? xmlDoc)
+		static JsonSchemaType CreateSchemaType(Type type, Dictionary<Type, JsonSchemaType> typeCache, XmlDocReader? xmlDocReader)
 		{
 			switch (Type.GetTypeCode(type))
 			{
@@ -355,7 +328,7 @@ namespace EpicGames.Core
 				case TypeCode.UInt64:
 					if (type.IsEnum)
 					{
-						return CreateEnumSchemaType(type, xmlDoc);
+						return CreateEnumSchemaType(type, xmlDocReader);
 					}
 					else
 					{
@@ -377,7 +350,7 @@ namespace EpicGames.Core
 
 			if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>))
 			{
-				return CreateSchemaType(type.GetGenericArguments()[0], typeCache, xmlDoc);
+				return CreateSchemaType(type.GetGenericArguments()[0], typeCache, xmlDocReader);
 			}
 			if (type == typeof(DateTime) || type == typeof(DateTimeOffset))
 			{
@@ -391,6 +364,10 @@ namespace EpicGames.Core
 			{
 				return new JsonSchemaString(JsonSchemaStringFormat.Uri);
 			}
+			if (type == typeof(System.Text.Json.Nodes.JsonObject))
+			{
+				return new JsonSchemaObject();
+			}
 
 			Type[] interfaceTypes = type.GetInterfaces();
 			foreach (Type interfaceType in interfaceTypes)
@@ -400,12 +377,12 @@ namespace EpicGames.Core
 					Type[] arguments = interfaceType.GetGenericArguments();
 					if (interfaceType.GetGenericTypeDefinition() == typeof(IList<>))
 					{
-						return new JsonSchemaArray(CreateSchemaType(arguments[0], typeCache, xmlDoc));
+						return new JsonSchemaArray(CreateSchemaType(arguments[0], typeCache, xmlDocReader));
 					}
 					if (interfaceType.GetGenericTypeDefinition() == typeof(IDictionary<,>))
 					{
 						JsonSchemaObject obj = new JsonSchemaObject();
-						obj.AdditionalProperties = CreateSchemaType(arguments[1], typeCache, xmlDoc);
+						obj.AdditionalProperties = CreateSchemaType(arguments[1], typeCache, xmlDocReader);
 						return obj;
 					}
 				}
@@ -423,14 +400,14 @@ namespace EpicGames.Core
 				{
 					JsonSchemaOneOf obj = new JsonSchemaOneOf();
 					typeCache[type] = obj;
-					SetOneOfProperties(obj, type, knownTypes.Types, typeCache, xmlDoc);
+					SetOneOfProperties(obj, type, knownTypes.Types, typeCache, xmlDocReader);
 					return obj;
 				}
 				else
 				{
 					JsonSchemaObject obj = new JsonSchemaObject();
 					typeCache[type] = obj;
-					SetObjectProperties(obj, type, typeCache, xmlDoc);
+					SetObjectProperties(obj, type, typeCache, xmlDocReader);
 					return obj;
 				}
 			}
@@ -438,21 +415,21 @@ namespace EpicGames.Core
 			throw new Exception($"Unknown type for schema generation: {type}");
 		}
 
-		static JsonSchemaEnum CreateEnumSchemaType(Type type, XmlDocument? xmlDoc)
+		static JsonSchemaEnum CreateEnumSchemaType(Type type, XmlDocReader? xmlDocReader)
 		{
 			string[] names = Enum.GetNames(type);
 			string[] descriptions = new string[names.Length];
 
 			for (int idx = 0; idx < names.Length; idx++)
 			{
-				descriptions[idx] = GetSummaryFromXmlDoc(type, "F", names[idx], xmlDoc) ?? String.Empty;
+				descriptions[idx] = xmlDocReader?.GetDescription(type, names[idx]) ?? String.Empty;
 			}
 
-			string? enumDescription = GetSummaryFromXmlDoc(type, "T", null, xmlDoc);
+			string? enumDescription = xmlDocReader?.GetDescription(type);
 			return new JsonSchemaEnum(names, descriptions) { Name = type.Name, Description = enumDescription };
 		}
 
-		static void SetOneOfProperties(JsonSchemaOneOf obj, Type type, Type[] knownTypes, Dictionary<Type, JsonSchemaType> typeCache, XmlDocument? xmlDoc)
+		static void SetOneOfProperties(JsonSchemaOneOf obj, Type type, Type[] knownTypes, Dictionary<Type, JsonSchemaType> typeCache, XmlDocReader? xmlDocReader)
 		{
 			obj.Name = type.Name;
 
@@ -463,24 +440,24 @@ namespace EpicGames.Core
 				{
 					JsonSchemaObject knownObject = new JsonSchemaObject();
 					knownObject.Properties.Add(new JsonSchemaProperty("type", "Type discriminator", new JsonSchemaEnum(new[] { attribute.Name }, new[] { "Identifier for the derived type" })));
-					SetObjectProperties(knownObject, knownType, typeCache, xmlDoc);
+					SetObjectProperties(knownObject, knownType, typeCache, xmlDocReader);
 					obj.Types.Add(knownObject);
 				}
 			}
 		}
 
-		static void SetObjectProperties(JsonSchemaObject obj, Type type, Dictionary<Type, JsonSchemaType> typeCache, XmlDocument? xmlDoc)
+		static void SetObjectProperties(JsonSchemaObject obj, Type type, Dictionary<Type, JsonSchemaType> typeCache, XmlDocReader? xmlDocReader)
 		{
 			obj.Name = type.Name;
-			obj.Description = GetSummaryFromXmlDoc(type, "T", null, xmlDoc);
+			obj.Description = xmlDocReader?.GetDescription(type);
 
 			PropertyInfo[] properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
 			foreach (PropertyInfo property in properties)
 			{
 				if (property.GetCustomAttribute<JsonIgnoreAttribute>() == null)
 				{
-					string? description = GetPropertyDescription(type, property.Name, xmlDoc);
-					JsonSchemaType propertyType = CreateSchemaType(property.PropertyType, typeCache, xmlDoc);
+					string? description = xmlDocReader?.GetDescription(property);
+					JsonSchemaType propertyType = CreateSchemaType(property, typeCache, xmlDocReader);
 					obj.Properties.Add(new JsonSchemaProperty(property.Name, description, propertyType));
 				}
 			}

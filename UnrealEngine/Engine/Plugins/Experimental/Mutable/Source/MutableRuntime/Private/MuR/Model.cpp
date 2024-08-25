@@ -39,17 +39,17 @@ namespace mu
     void FProgram::LogHistogram() const
     {
 #if 0
-        uint64 countPerType[(int)OP_TYPE::COUNT];
+        uint64 countPerType[(int32)OP_TYPE::COUNT];
         mutable_memset(countPerType,0,sizeof(countPerType));
 
-        for ( const auto& o: m_opAddress )
+        for ( const uint32& o: m_opAddress )
         {
-            auto type = GetOpType(o);
-            countPerType[(int)type]++;
+            OP_TYPE type = GetOpType(o);
+            countPerType[(int32)type]++;
         }
 
-		TArray< TPair<uint64,OP_TYPE> > sorted((int)OP_TYPE::COUNT);
-        for (int i=0; i<(int)OP_TYPE::COUNT; ++i)
+		TArray< TPair<uint64,OP_TYPE> > sorted((int32)OP_TYPE::COUNT);
+        for (int32 i=0; i<(int32)OP_TYPE::COUNT; ++i)
         {
             sorted[i].second = (OP_TYPE)i;
             sorted[i].first = countPerType[i];
@@ -61,14 +61,24 @@ namespace mu
         });
 
         UE_LOG(LogMutableCore,Log, TEXT("Op histogram (%llu ops):"), m_opAddress.Num());
-        for(int i=0; i<8; ++i)
+        for(int32 i=0; i<8; ++i)
         {
             float p = sorted[i].first/float(m_opAddress.Num())*100.0f;
-            UE_LOG(LogMutableCore,Log, TEXT("  %3.2f%% : %d"), p, (int)sorted[i].second );
+            UE_LOG(LogMutableCore,Log, TEXT("  %3.2f%% : %d"), p, (int32)sorted[i].second );
         }
 #endif
     }
 
+	
+	//---------------------------------------------------------------------------------------------
+    void Model::Private::UnloadRoms()
+    {
+	    for (int32 RomIndex = 0; RomIndex < m_program.m_roms.Num(); ++RomIndex)
+	    {
+		    m_program.UnloadRom(RomIndex);
+	    }
+    }
+	
 
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
@@ -135,13 +145,13 @@ namespace mu
 
 		mu::FProgram& program = p->m_pD->m_program;
 
-		TArray<TPair<int32, mu::ImagePtrConst>> InitialImages = program.m_constantImageLODs;
-		TArray<TPair<int32, mu::MeshPtrConst>> InitialMeshes = program.m_constantMeshes;
+		TArray<TPair<int32, mu::ImagePtrConst>> InitialImages = program.ConstantImageLODs;
+		TArray<TPair<int32, mu::MeshPtrConst>> InitialMeshes = program.ConstantMeshes;
 
 		// Save images and unload from memory
-		for (int32 ResourceIndex = 0; ResourceIndex < program.m_constantImageLODs.Num(); ++ResourceIndex)
+		for (int32 ResourceIndex = 0; ResourceIndex < program.ConstantImageLODs.Num(); ++ResourceIndex)
 		{
-			TPair<int32, mu::ImagePtrConst>& ResData = program.m_constantImageLODs[ResourceIndex];
+			TPair<int32, mu::ImagePtrConst>& ResData = program.ConstantImageLODs[ResourceIndex];
 
 			// This shouldn't have been serialised with rom support before.
 			if (ResData.Key < 0)
@@ -169,9 +179,9 @@ namespace mu
 		}
 
 		// Save meshes and unload from memory
-		for (int32 ResourceIndex = 0; ResourceIndex < program.m_constantMeshes.Num(); ++ResourceIndex)
+		for (int32 ResourceIndex = 0; ResourceIndex < program.ConstantMeshes.Num(); ++ResourceIndex)
 		{
-			TPair<int32, mu::MeshPtrConst>& ResData = program.m_constantMeshes[ResourceIndex];
+			TPair<int32, mu::MeshPtrConst>& ResData = program.ConstantMeshes[ResourceIndex];
 
 			// This shouldn't have been serialised with rom support before.
 			if (ResData.Key < 0)
@@ -210,8 +220,8 @@ namespace mu
 		}
 
 		// Restore full data
-		program.m_constantImageLODs = InitialImages;
-		program.m_constantMeshes = InitialMeshes;
+		program.ConstantImageLODs = InitialImages;
+		program.ConstantMeshes = InitialMeshes;
 	}
 
 
@@ -221,25 +231,39 @@ namespace mu
 		return m_pD->m_program.m_roms.Num() > 0;
     }
 
+#if WITH_EDITOR
+	//---------------------------------------------------------------------------------------------
+	bool Model::IsValid() const
+	{
+		return m_pD->m_program.bIsValid;
+	}
+
+
+	//---------------------------------------------------------------------------------------------
+	void Model::Invalidate()
+    {
+		m_pD->m_program.bIsValid = false;
+    }
+#endif
 
     //---------------------------------------------------------------------------------------------
     void Model::UnloadExternalData()
     {
 		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
 
-		for (int32 ResIndex = 0; ResIndex < m_pD->m_program.m_constantImageLODs.Num(); ++ResIndex)
+		for (int32 ResIndex = 0; ResIndex < m_pD->m_program.ConstantImageLODs.Num(); ++ResIndex)
 		{
-			if (m_pD->m_program.m_constantImageLODs[ResIndex].Key >= 0)
+			if (m_pD->m_program.ConstantImageLODs[ResIndex].Key >= 0)
 			{
-				m_pD->m_program.m_constantImageLODs[ResIndex].Value = nullptr;
+				m_pD->m_program.ConstantImageLODs[ResIndex].Value = nullptr;
 			}
 		}
 
-		for (int32 ResIndex = 0; ResIndex < m_pD->m_program.m_constantMeshes.Num(); ++ResIndex)
+		for (int32 ResIndex = 0; ResIndex < m_pD->m_program.ConstantMeshes.Num(); ++ResIndex)
 		{
-			if (m_pD->m_program.m_constantMeshes[ResIndex].Key >= 0)
+			if (m_pD->m_program.ConstantMeshes[ResIndex].Key >= 0)
 			{
-				m_pD->m_program.m_constantMeshes[ResIndex].Value = nullptr;
+				m_pD->m_program.ConstantMeshes[ResIndex].Value = nullptr;
 			}
 		}
 	}
@@ -313,7 +337,7 @@ namespace mu
 	}
 
 
-	void Model::GetColourDefaultValue(int32 Index, float* R, float* G, float* B) const
+	void Model::GetColourDefaultValue(int32 Index, float* R, float* G, float* B, float* A) const
     {
     	check(m_pD->m_program.m_parameters.IsValidIndex(Index));
 		check(m_pD->m_program.m_parameters[Index].m_type == PARAMETER_TYPE::T_COLOUR);
@@ -326,9 +350,26 @@ namespace mu
         }
 
         ParamColorType& Color = m_pD->m_program.m_parameters[Index].m_defaultValue.Get<ParamColorType>();
-        if (R) *R = Color[0];
-    	if (G) *G = Color[1];
-    	if (B) *B = Color[2];
+		
+		if (R)
+		{
+			*R = Color[0];
+		}
+
+		if (G)
+		{
+			*G = Color[1];
+		}
+
+		if (B)
+		{
+			*B = Color[2];
+		}
+
+		if (A)
+		{
+			*A = Color[3];
+		}
     }
 
 
@@ -345,7 +386,7 @@ namespace mu
             return;
         }
 
-        const ParamProjectorType& Projector = m_pD->m_program.m_parameters[Index].m_defaultValue.Get<ParamProjectorType>();
+        const FProjector& Projector = m_pD->m_program.m_parameters[Index].m_defaultValue.Get<ParamProjectorType>();
         if (OutProjectionType) *OutProjectionType = Projector.type;
     	if (OutPos) *OutPos = Projector.position;
 		if (OutDir) *OutDir = Projector.direction;
@@ -436,9 +477,9 @@ namespace mu
 
                         case PARAMETER_TYPE::T_COLOUR:
                         {
-                            float r,g,b;
-                            pOld->GetColourValue( p, &r, &g, &b );
-                            pRes->SetColourValue( thisP, r, g, b );
+                            float R, G, B, A;
+                            pOld->GetColourValue( p, &R, &G, &B, &A );
+                            pRes->SetColourValue( thisP, R, G, B, A );
                             break;
                         }
 
@@ -487,27 +528,28 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    const char* Model::GetStateName( int index ) const
+    const FString& Model::GetStateName( int32 index ) const
     {
         const char* strRes = 0;
 
         if ( index>=0 && index<(int)m_pD->m_program.m_states.Num() )
         {
-            strRes = m_pD->m_program.m_states[index].m_name.c_str();
+            return m_pD->m_program.m_states[index].Name;
         }
 
-        return strRes;
+		static FString None;
+        return None;
     }
 
 
     //---------------------------------------------------------------------------------------------
-    int Model::FindState( const char* strName ) const
+    int32 Model::FindState( const FString& Name ) const
     {
         int res = -1;
 
         for ( int i=0; res<0 && i<(int)m_pD->m_program.m_states.Num(); ++i )
         {
-            if ( m_pD->m_program.m_states[i].m_name == strName )
+            if ( m_pD->m_program.m_states[i].Name == Name )
             {
                 res = i;
             }
@@ -713,13 +755,13 @@ namespace mu
 							for (int32 RangePosition = 0; RangePosition < m_pD->DefaultRangeDimension; ++RangePosition)
 							{
 								RangeIndex->SetPosition(Dimensions, RangePosition);
-								res->SetColourValue(i, RandomGenerator(), RandomGenerator(), RandomGenerator(), RangeIndex);
+								res->SetColourValue(i, RandomGenerator(), RandomGenerator(), RandomGenerator(), RandomGenerator(), RangeIndex);
 							}
 						}
 					}
 					else
 					{
-						res->SetColourValue(i, RandomGenerator(), RandomGenerator(), RandomGenerator());
+						res->SetColourValue(i, RandomGenerator(), RandomGenerator(), RandomGenerator(), RandomGenerator());
 					}
                 }
                 break;
@@ -884,13 +926,14 @@ namespace mu
 					{
 						for (int32 RangePosition = 0; RangePosition < m_pD->DefaultRangeDimension; ++RangePosition)
 						{
-							res->SetColourValue(i, randomGenerator(), randomGenerator(), randomGenerator(),RangeIndex);
+							res->SetColourValue(i, randomGenerator(), randomGenerator(), randomGenerator(), randomGenerator(), 
+												RangeIndex);
 						}
 					}
 				}
 				else
 				{
-					res->SetColourValue(i, randomGenerator(), randomGenerator(), randomGenerator());
+					res->SetColourValue(i, randomGenerator(), randomGenerator(), randomGenerator(), randomGenerator());
 				}
                 break;
 

@@ -16,6 +16,7 @@
 #include "Misc/Parse.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Paths.h"
+#include "Misc/PathViews.h"
 #include "Misc/FileHelper.h"
 #include "Internationalization/Text.h"
 #include "Internationalization/Internationalization.h"
@@ -820,13 +821,8 @@ bool FGenericPlatformMisc::SetStoredValue(const FString& InStoreId, const FStrin
 		
 	FConfigFile ConfigFile;
 	ConfigFile.Read(ConfigPath);
-
-	FConfigSection& Section = ConfigFile.FindOrAdd(InSectionName);
-
-	FConfigValue& KeyValue = Section.FindOrAdd(*InKeyName);
-	KeyValue = FConfigValue(InValue);
-
-	ConfigFile.Dirty = true;
+	// update one entry
+	ConfigFile.SetString(*InSectionName, *InKeyName, *InValue);
 	return ConfigFile.Write(ConfigPath);
 }
 
@@ -842,18 +838,7 @@ bool FGenericPlatformMisc::GetStoredValue(const FString& InStoreId, const FStrin
 	FConfigFile ConfigFile;
 	ConfigFile.Read(ConfigPath);
 
-	const FConfigSection* const Section = ConfigFile.Find(InSectionName);
-	if(Section)
-	{
-		const FConfigValue* const KeyValue = Section->Find(*InKeyName);
-		if(KeyValue)
-		{
-			OutValue = KeyValue->GetValue();
-			return true;
-		}
-	}
-
-	return false;
+	return ConfigFile.GetString(*InSectionName, *InKeyName, OutValue);
 }
 
 bool FGenericPlatformMisc::DeleteStoredValue(const FString& InStoreId, const FString& InSectionName, const FString& InKeyName)
@@ -868,13 +853,9 @@ bool FGenericPlatformMisc::DeleteStoredValue(const FString& InStoreId, const FSt
 	FConfigFile ConfigFile;
 	ConfigFile.Read(ConfigPath);
 
-	FConfigSection* const Section = ConfigFile.Find(InSectionName);
-	if (Section)
+	if (ConfigFile.RemoveKeyFromSection(*InSectionName, *InKeyName))
 	{
-		int32 RemovedNum = Section->Remove(*InKeyName);
-
-		ConfigFile.Dirty = true;
-		return ConfigFile.Write(ConfigPath) && RemovedNum == 1;
+		return ConfigFile.Write(ConfigPath);
 	}
 
 	return false;
@@ -988,30 +969,6 @@ const TCHAR* FGenericPlatformMisc::GetSystemErrorMessage(TCHAR* OutBuffer, int32
 	Error = 0;
 	FCString::Strcpy(OutBuffer, BufferCount - 1, Message);
 	return OutBuffer;
-}
-
-void FGenericPlatformMisc::ClipboardCopy(const TCHAR* Str)
-{
-	if(ClipboardCopyShim == nullptr)
-	{
-		UE_LOG(LogGenericPlatformMisc, Warning, TEXT("ClipboardCopyShim() is not bound; ignoring."));
-	}
-	else
-	{
-		ClipboardCopyShim(Str);
-	}
-}
-
-void FGenericPlatformMisc:: ClipboardPaste(class FString& Dest)
-{
-	if(ClipboardPasteShim == nullptr)
-	{
-		UE_LOG(LogGenericPlatformMisc, Warning, TEXT("ClipboardPasteShim() is not bound; ignoring."));
-	}
-	else
-	{
-		ClipboardPasteShim(Dest);
-	}
 }
 
 void FGenericPlatformMisc::CreateGuid(FGuid& Guid)
@@ -1131,7 +1088,7 @@ const TCHAR* FGenericPlatformMisc::RootDir()
 		int32 chopPos = TempPath.Find(TEXT("/Engine"), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
 		if (chopPos != INDEX_NONE)
 		{
-			TempPath.LeftInline(chopPos + 1, false);
+			TempPath.LeftInline(chopPos + 1, EAllowShrinking::No);
 		}
 		else
 		{
@@ -1140,7 +1097,7 @@ const TCHAR* FGenericPlatformMisc::RootDir()
 			// if the path ends in a separator, remove it
 			if (TempPath.Right(1) == TEXT("/"))
 			{
-				TempPath.LeftChopInline(1, false);
+				TempPath.LeftChopInline(1, EAllowShrinking::No);
 			}
 
 			// keep going until we've removed Binaries
@@ -1151,7 +1108,7 @@ const TCHAR* FGenericPlatformMisc::RootDir()
 #endif
 			if (pos != INDEX_NONE)
 			{
-				TempPath.LeftInline(pos + 1, false);
+				TempPath.LeftInline(pos + 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -1164,7 +1121,7 @@ const TCHAR* FGenericPlatformMisc::RootDir()
 				{
 					while (TempPath.Len() && TempPath.Right(1) != TEXT("/"))
 					{
-						TempPath.LeftChopInline(1, false);
+						TempPath.LeftChopInline(1, EAllowShrinking::No);
 					}
 				}
 			}
@@ -1859,6 +1816,14 @@ FGuid FGenericPlatformMisc::GetMachineId()
 	return MachineId;
 }
 
+FString FGenericPlatformMisc::GetDeviceTag()
+	{
+		FString DeviceTag = TEXT("");
+		FParse::Value( FCommandLine::Get(), TEXT("DeviceTag="), DeviceTag );
+
+		return DeviceTag;
+	}
+
 FString FGenericPlatformMisc::GetLoginId()
 {
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -2026,29 +1991,27 @@ void FGenericPlatformMisc::ParseChunkIdPakchunkIndexMapping(TArray<FString> Chun
 	}
 }
 
-int32 FGenericPlatformMisc::GetPakchunkIndexFromPakFile(const FString& InFilename)
+int32 FGenericPlatformMisc::GetPakchunkIndexFromPakFile(FStringView InFilename)
 {
-	FString ChunkIdentifier(TEXT("pakchunk"));
-	FString BaseFilename = FPaths::GetBaseFilename(InFilename);
+	FStringView ChunkIdentifier(TEXTVIEW("pakchunk"));
+	FStringView BaseFilename = FPathViews::GetBaseFilename(InFilename);
 	int32 ChunkNumber = INDEX_NONE;
 
 	if (BaseFilename.StartsWith(ChunkIdentifier))
 	{
-		int32 StartOfNumber = ChunkIdentifier.Len();
+		const int32 StartOfNumber = ChunkIdentifier.Len();
 		int32 DigitCount = 0;
-		if (FChar::IsDigit(BaseFilename[StartOfNumber]))
+		
+		while ((DigitCount + StartOfNumber) < BaseFilename.Len() && FChar::IsDigit(BaseFilename[StartOfNumber + DigitCount]))
 		{
-			while ((DigitCount + StartOfNumber) < BaseFilename.Len() && FChar::IsDigit(BaseFilename[StartOfNumber + DigitCount]))
-			{
-				DigitCount++;
-			}
+			DigitCount++;
+		}
 
-			if ((StartOfNumber + DigitCount) < BaseFilename.Len())
-			{
-				FString ChunkNumberString = BaseFilename.Mid(StartOfNumber, DigitCount);
-				check(ChunkNumberString.IsNumeric());
-				TTypeFromString<int32>::FromString(ChunkNumber, *ChunkNumberString);
-			}
+		if (DigitCount > 0 && (StartOfNumber + DigitCount) < BaseFilename.Len())
+		{
+			// FromString can't take a view
+			TStringBuilder<16> ChunkNumberString = WriteToString<16>(BaseFilename.Mid(StartOfNumber, DigitCount));
+			TTypeFromString<int32>::FromString(ChunkNumber, *ChunkNumberString);
 		}
 	}
 

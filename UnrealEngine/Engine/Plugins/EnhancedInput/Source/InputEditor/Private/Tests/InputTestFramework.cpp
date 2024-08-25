@@ -13,18 +13,19 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(InputTestFramework)
 
-FMockedEnhancedInputSubsystem::FMockedEnhancedInputSubsystem(const UControllablePlayer& PlayerData)
-: PlayerInput(PlayerData.PlayerInput)
-, UserSettings(PlayerData.UserSettings)
+void UMockedEnhancedInputSubsystem::Init(const UControllablePlayer& PlayerData)
 {
+	PlayerInput = PlayerData.PlayerInput;
+	UserSettings = PlayerData.UserSettings;
+	InitalizeUserSettings();
 }
 
-UEnhancedInputUserSettings* FMockedEnhancedInputSubsystem::GetUserSettings() const
+UEnhancedInputUserSettings* UMockedEnhancedInputSubsystem::GetUserSettings() const
 {
 	return UserSettings.Get();
 }
 
-void FMockedEnhancedInputSubsystem::InitalizeUserSettings()
+void UMockedEnhancedInputSubsystem::InitalizeUserSettings()
 {
 	ULocalPlayer* LP = PlayerInput->GetOwningLocalPlayer();
 	
@@ -48,8 +49,9 @@ UWorld* AnEmptyWorld()
 {
 #if WITH_AUTOMATION_TESTS
 	return FAutomationEditorCommonUtils::CreateNewMap();
-#endif
+#else
 	return nullptr;
+#endif
 }
 
 UControllablePlayer& AControllablePlayer(UWorld* World)
@@ -66,8 +68,8 @@ UControllablePlayer& AControllablePlayer(UWorld* World)
 	PlayerData->Player->InitInputSystem();
 	PlayerData->UserSettings = NewObject<UMockInputUserSettings>(GetTransientPackage(), UMockInputUserSettings::StaticClass());
 
-	PlayerData->Subsystem.Reset(new FMockedEnhancedInputSubsystem(*PlayerData));
-	PlayerData->Subsystem->Init();
+	PlayerData->Subsystem = NewObject<UMockedEnhancedInputSubsystem>(PlayerData->Player);
+	PlayerData->Subsystem->Init(*PlayerData);
 
 	check(PlayerData->IsValid());
 

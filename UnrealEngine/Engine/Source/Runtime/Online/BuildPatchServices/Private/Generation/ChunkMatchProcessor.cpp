@@ -80,8 +80,7 @@ namespace BuildPatchServices
 									PiecesToProcess.Add(MoveTemp(Matches[MatchIdxToPop]));
 								}
 								checkf(NewMatchesArraySize <= Matches.Num(), TEXT("Matches array should never grow uninitialised."));
-								const bool bAllowAllocationShrinking = false;
-								Matches.SetNumUninitialized(NewMatchesArraySize, bAllowAllocationShrinking);
+								Matches.SetNumUninitialized(NewMatchesArraySize, EAllowShrinking::No);
 								// Since we adjusted the history, we need to replay the rejected matches too.
 								PiecesToProcess.Append(MoveTemp(Rejects));
 							}
@@ -179,7 +178,7 @@ namespace BuildPatchServices
 				// We can discard this reject!
 				RemoveCount = RejectsIdx;
 			}
-			Rejects.RemoveAt(0, RemoveCount + 1, false);
+			Rejects.RemoveAt(0, RemoveCount + 1, EAllowShrinking::No);
 		}
 
 		virtual FBlockRange CollectLayer(const int32 Layer, TArray<FMatchEntry>& OutData)

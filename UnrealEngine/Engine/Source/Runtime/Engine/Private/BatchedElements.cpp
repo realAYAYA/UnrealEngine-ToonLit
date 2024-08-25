@@ -18,8 +18,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogBatchedElements, Log, All);
 FSimpleElementVertex::FSimpleElementVertex() = default;
 
 FSimpleElementVertex::FSimpleElementVertex(const FVector4f& InPosition, const FVector2f& InTextureCoordinate, const FLinearColor& InColor, const FColor& InHitProxyColor)
-	: RelativePosition(InPosition)
-	, TilePosition(ForceInitToZero)
+	: Position(InPosition, FVector4f{0.0f, 0.0f, 0.0f, 0.0f})
 	, TextureCoordinate(InTextureCoordinate)
 	, Color(InColor)
 	, HitProxyIdColor(InHitProxyColor)
@@ -27,8 +26,7 @@ FSimpleElementVertex::FSimpleElementVertex(const FVector4f& InPosition, const FV
 }
 
 FSimpleElementVertex::FSimpleElementVertex(const FVector4f& InPosition, const FVector2D& InTextureCoordinate, const FLinearColor& InColor, const FColor& InHitProxyColor)
-	: RelativePosition(InPosition)
-	, TilePosition(ForceInitToZero)
+	: Position(InPosition, FVector4f{0.0f, 0.0f, 0.0f, 0.0f})
 	, TextureCoordinate(InTextureCoordinate)
 	, Color(InColor)
 	, HitProxyIdColor(InHitProxyColor)
@@ -36,8 +34,7 @@ FSimpleElementVertex::FSimpleElementVertex(const FVector4f& InPosition, const FV
 }
 
 FSimpleElementVertex::FSimpleElementVertex(const FVector3f& InPosition, const FVector2D& InTextureCoordinate, const FLinearColor& InColor, const FColor& InHitProxyColor)
-	: RelativePosition(InPosition)
-	, TilePosition(ForceInitToZero)
+	: Position(FVector4f{ InPosition, 1.0 }, FVector4f{0.0f, 0.0f, 0.0f, 0.0f})
 	, TextureCoordinate(FVector2f(InTextureCoordinate))
 	, Color(InColor)
 	, HitProxyIdColor(InHitProxyColor)
@@ -45,24 +42,18 @@ FSimpleElementVertex::FSimpleElementVertex(const FVector3f& InPosition, const FV
 }
 
 FSimpleElementVertex::FSimpleElementVertex(const FVector4d& InPosition, const FVector2D& InTextureCoordinate, const FLinearColor& InColor, const FColor& InHitProxyColor)
-	: TextureCoordinate(InTextureCoordinate)
+	: Position(InPosition)
+	, TextureCoordinate(InTextureCoordinate)
 	, Color(InColor)
 	, HitProxyIdColor(InHitProxyColor)
-{
-	const FLargeWorldRenderPosition AbsolutePosition(InPosition);
-	RelativePosition = FVector4f(AbsolutePosition.GetOffset(), (float)InPosition.W); // Don't bother with LWC W-component
-	TilePosition = FVector4f(AbsolutePosition.GetTile(), 0.0f);
-}
+{}
 
 FSimpleElementVertex::FSimpleElementVertex(const FVector3d& InPosition, const FVector2D& InTextureCoordinate, const FLinearColor& InColor, const FColor& InHitProxyColor)
-	: TextureCoordinate(InTextureCoordinate)
+	: Position(InPosition, 1.0)
+	, TextureCoordinate(InTextureCoordinate)
 	, Color(InColor)
 	, HitProxyIdColor(InHitProxyColor)
-{
-	const FLargeWorldRenderPosition AbsolutePosition(InPosition);
-	RelativePosition = FVector4f(AbsolutePosition.GetOffset(), 1.0f);
-	TilePosition = FVector4f(AbsolutePosition.GetTile(), 0.0f);
-}
+{}
 
 FSimpleElementVertex::FSimpleElementVertex(const FVector4f& InPosition, const FVector2f& InTextureCoordinate, const FLinearColor& InColor, FHitProxyId InHitProxyId)
 	: FSimpleElementVertex(InPosition, InTextureCoordinate, InColor, InHitProxyId.GetColor())
@@ -97,8 +88,8 @@ void FSimpleElementVertexDeclaration::InitRHI(FRHICommandListBase& RHICmdList)
 {
 	FVertexDeclarationElementList Elements;
 	uint16 Stride = sizeof(FSimpleElementVertex);
-	Elements.Add(FVertexElement(0, STRUCT_OFFSET(FSimpleElementVertex, RelativePosition), VET_Float4, 0, Stride));
-	Elements.Add(FVertexElement(0, STRUCT_OFFSET(FSimpleElementVertex, TilePosition), VET_Float4, 1, Stride));
+	Elements.Add(FVertexElement(0, STRUCT_OFFSET(FSimpleElementVertex, Position.High), VET_Float4, 0, Stride));
+	Elements.Add(FVertexElement(0, STRUCT_OFFSET(FSimpleElementVertex, Position.Low), VET_Float4, 1, Stride));
 	Elements.Add(FVertexElement(0, STRUCT_OFFSET(FSimpleElementVertex, TextureCoordinate), VET_Float2, 2, Stride));
 	Elements.Add(FVertexElement(0, STRUCT_OFFSET(FSimpleElementVertex, Color), VET_Float4, 3, Stride));
 	Elements.Add(FVertexElement(0, STRUCT_OFFSET(FSimpleElementVertex, HitProxyIdColor), VET_Color, 4, Stride));
@@ -130,7 +121,6 @@ FBatchedElements::FBatchedElements()
 	, MaxMeshIndicesAllowed(GDrawUPIndexCheckCount / sizeof(int32))
 	// the index buffer is 2 bytes, so make sure we only address 0xFFFF vertices in the index buffer
 	, MaxMeshVerticesAllowed(FMath::Min<uint32>(0xFFFF, GDrawUPVertexCheckCount / sizeof(FSimpleElementVertex)))
-	, bEnableHDREncoding(true)
 {
 }
 
@@ -144,29 +134,29 @@ void FBatchedElements::AddLine(const FVector& Start, const FVector& End, const F
 	{
 		if (DepthBias == 0.0f)
 		{
-			new(LineVertices) FSimpleElementVertex(Start, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
-			new(LineVertices) FSimpleElementVertex(End, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
+			LineVertices.Emplace(Start, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
+			LineVertices.Emplace(End, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
 		}
 		else
 		{
 			// Draw degenerate triangles in wireframe mode to support depth bias (d3d11 and opengl3 don't support depth bias on line primitives, but do on wireframes)
-			FBatchedWireTris* WireTri = new(WireTris) FBatchedWireTris();
-			WireTri->DepthBias = DepthBias;
-			new(WireTriVerts) FSimpleElementVertex(Start, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
-			new(WireTriVerts) FSimpleElementVertex(End, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
-			new(WireTriVerts) FSimpleElementVertex(End, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
+			FBatchedWireTris& WireTri = WireTris.AddDefaulted_GetRef();
+			WireTri.DepthBias = DepthBias;
+			WireTriVerts.Emplace(Start, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
+			WireTriVerts.Emplace(End, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
+			WireTriVerts.Emplace(End, FVector2D::ZeroVector, OpaqueColor, HitProxyId);
 		}
 	}
 	else
 	{
-		FBatchedThickLines* ThickLine = new(ThickLines) FBatchedThickLines;
-		ThickLine->Start = Start;
-		ThickLine->End = End;
-		ThickLine->Thickness = Thickness;
-		ThickLine->Color = OpaqueColor;
-		ThickLine->HitProxyColor = HitProxyId.GetColor();
-		ThickLine->DepthBias = DepthBias;
-		ThickLine->bScreenSpace = bScreenSpace;
+		FBatchedThickLines& ThickLine = ThickLines.AddDefaulted_GetRef();
+		ThickLine.Start = Start;
+		ThickLine.End = End;
+		ThickLine.Thickness = Thickness;
+		ThickLine.Color = OpaqueColor;
+		ThickLine.HitProxyColor = HitProxyId.GetColor();
+		ThickLine.DepthBias = DepthBias;
+		ThickLine.bScreenSpace = bScreenSpace;
 	}
 }
 
@@ -176,29 +166,29 @@ void FBatchedElements::AddTranslucentLine(const FVector& Start, const FVector& E
 	{
 		if (DepthBias == 0.0f)
 		{
-			new(LineVertices) FSimpleElementVertex(Start, FVector2D::ZeroVector, Color, HitProxyId);
-			new(LineVertices) FSimpleElementVertex(End, FVector2D::ZeroVector, Color, HitProxyId);
+			LineVertices.Emplace(Start, FVector2D::ZeroVector, Color, HitProxyId);
+			LineVertices.Emplace(End, FVector2D::ZeroVector, Color, HitProxyId);
 		}
 		else
 		{
 			// Draw degenerate triangles in wireframe mode to support depth bias (d3d11 and opengl3 don't support depth bias on line primitives, but do on wireframes)
-			FBatchedWireTris* WireTri = new(WireTris) FBatchedWireTris();
-			WireTri->DepthBias = DepthBias;
-			new(WireTriVerts) FSimpleElementVertex(Start, FVector2D::ZeroVector, Color, HitProxyId);
-			new(WireTriVerts) FSimpleElementVertex(End, FVector2D::ZeroVector, Color, HitProxyId);
-			new(WireTriVerts) FSimpleElementVertex(End, FVector2D::ZeroVector, Color, HitProxyId);
+			FBatchedWireTris& WireTri = WireTris.AddDefaulted_GetRef();
+			WireTri.DepthBias = DepthBias;
+			WireTriVerts.Emplace(Start, FVector2D::ZeroVector, Color, HitProxyId);
+			WireTriVerts.Emplace(End, FVector2D::ZeroVector, Color, HitProxyId);
+			WireTriVerts.Emplace(End, FVector2D::ZeroVector, Color, HitProxyId);
 		}
 	}
 	else
 	{
-		FBatchedThickLines* ThickLine = new(ThickLines) FBatchedThickLines;
-		ThickLine->Start = Start;
-		ThickLine->End = End;
-		ThickLine->Thickness = Thickness;
-		ThickLine->Color = Color;
-		ThickLine->HitProxyColor = HitProxyId.GetColor();
-		ThickLine->DepthBias = DepthBias;
-		ThickLine->bScreenSpace = bScreenSpace;
+		FBatchedThickLines& ThickLine = ThickLines.AddDefaulted_GetRef();
+		ThickLine.Start = Start;
+		ThickLine.End = End;
+		ThickLine.Thickness = Thickness;
+		ThickLine.Color = Color;
+		ThickLine.HitProxyColor = HitProxyId.GetColor();
+		ThickLine.DepthBias = DepthBias;
+		ThickLine.bScreenSpace = bScreenSpace;
 
 	}
 }
@@ -209,24 +199,24 @@ void FBatchedElements::AddPoint(const FVector& Position,float Size,const FLinear
 	FLinearColor OpaqueColor(Color);
 	OpaqueColor.A = 1;
 
-	FBatchedPoint* Point = new(Points) FBatchedPoint;
-	Point->Position = Position;
-	Point->Size = Size;
-	Point->Color = OpaqueColor.ToFColor(true);
-	Point->HitProxyColor = HitProxyId.GetColor();
+	FBatchedPoint& Point = Points.AddDefaulted_GetRef();
+	Point.Position = Position;
+	Point.Size = Size;
+	Point.Color = OpaqueColor.ToFColor(true);
+	Point.HitProxyColor = HitProxyId.GetColor();
 }
 
 int32 FBatchedElements::AddVertex(const FVector4& InPosition, const FVector2D& InTextureCoordinate, const FLinearColor& InColor, FHitProxyId HitProxyId)
 {
 	int32 VertexIndex = MeshVertices.Num();
-	new(MeshVertices) FSimpleElementVertex(InPosition, InTextureCoordinate, InColor, HitProxyId);
+	MeshVertices.Emplace(InPosition, InTextureCoordinate, InColor, HitProxyId);
 	return VertexIndex;
 }
 
 int32 FBatchedElements::AddVertexf(const FVector4f& InPosition,const FVector2f& InTextureCoordinate,const FLinearColor& InColor,FHitProxyId HitProxyId)
 {
 	int32 VertexIndex = MeshVertices.Num();
-	new(MeshVertices) FSimpleElementVertex(InPosition,InTextureCoordinate,InColor,HitProxyId);
+	MeshVertices.Emplace(InPosition,InTextureCoordinate,InColor,HitProxyId);
 	return VertexIndex;
 }
 
@@ -311,7 +301,7 @@ void FBatchedElements::AddTriangleExtensive(int32 V0,int32 V1,int32 V2,FBatchedE
 		else
 		{
 			// Create a new mesh element for the texture if this is the first triangle encountered using it.
-			MeshElement = new(MeshElements) FBatchedMeshElement;
+			MeshElement = &MeshElements.AddDefaulted_GetRef();
 			MeshElement->Texture = Texture;
 			MeshElement->BatchedElementParameters = BatchedElementParameters;
 			MeshElement->BlendMode = BlendMode;
@@ -434,19 +424,19 @@ void FBatchedElements::AddSprite(
 {
 	check(Texture);
 
-	FBatchedSprite* Sprite = new(Sprites) FBatchedSprite;
-	Sprite->Position = Position;
-	Sprite->SizeX = SizeX;
-	Sprite->SizeY = SizeY;
-	Sprite->Texture = Texture;
-	Sprite->Color = Color;
-	Sprite->HitProxyColor = HitProxyId.GetColor();
-	Sprite->U = U;
-	Sprite->UL = UL == 0.f ? Texture->GetSizeX() : UL;
-	Sprite->V = V;
-	Sprite->VL = VL == 0.f ? Texture->GetSizeY() : VL;
-	Sprite->OpacityMaskRefVal = OpacityMaskRefVal;
-	Sprite->BlendMode = BlendMode;
+	FBatchedSprite& Sprite = Sprites.AddDefaulted_GetRef();
+	Sprite.Position = Position;
+	Sprite.SizeX = SizeX;
+	Sprite.SizeY = SizeY;
+	Sprite.Texture = Texture;
+	Sprite.Color = Color;
+	Sprite.HitProxyColor = HitProxyId.GetColor();
+	Sprite.U = U;
+	Sprite.UL = UL == 0.f ? Texture->GetSizeX() : UL;
+	Sprite.V = V;
+	Sprite.VL = VL == 0.f ? Texture->GetSizeY() : VL;
+	Sprite.OpacityMaskRefVal = OpacityMaskRefVal;
+	Sprite.BlendMode = BlendMode;
 }
 
 /** Translates a ESimpleElementBlendMode into a RHI state change for rendering a mesh with the blend mode normally. */
@@ -569,7 +559,7 @@ void FBatchedElements::PrepareShaders(
 	uint32 StencilRef,
 	ERHIFeatureLevel::Type FeatureLevel,
 	ESimpleElementBlendMode BlendMode,
-	const FRelativeViewMatrices& ViewMatrices,
+	const FDFRelativeViewMatrices& ViewMatrices,
 	FBatchedElementParameters* BatchedElementParameters,
 	const FTexture* Texture,
 	bool bHitTesting,
@@ -582,6 +572,9 @@ void FBatchedElements::PrepareShaders(
 	// used to mask individual channels and desaturate
 	FMatrix ColorWeights( FPlane(1, 0, 0, 0), FPlane(0, 1, 0, 0), FPlane(0, 0, 1, 0), FPlane(0, 0, 0, 0) );
 
+	// this is the inverse of the gamma of the target; 
+	//= 1.0 if "NoGamma" (EnableGammaCorrection(false))
+	//= 1.0/2.2 to output with LinearToSRGB
 	float GammaToUse = Gamma;
 
 	ESimpleElementBlendMode MaskedBlendMode = SE_BLEND_Opaque;
@@ -651,8 +644,9 @@ void FBatchedElements::PrepareShaders(
 	if( BatchedElementParameters != NULL )
 	{
 		// Use the vertex/pixel shader that we were given
-		ensure(ViewMatrices.TilePosition.IsZero());
-		BatchedElementParameters->BindShaders(RHICmdList, GraphicsPSOInit, FeatureLevel, FMatrix(ViewMatrices.RelativeWorldToClip), GammaToUse, ColorWeights, Texture);
+		FMatrix WorldToClip(ViewMatrices.RelativeWorldToClip);
+		WorldToClip.SetOrigin(WorldToClip.GetOrigin() + FVector(ViewMatrices.PositionHigh));
+		BatchedElementParameters->BindShaders(RHICmdList, GraphicsPSOInit, FeatureLevel, WorldToClip, GammaToUse, ColorWeights, Texture);
 	}
 	else
 	{
@@ -788,6 +782,7 @@ void FBatchedElements::PrepareShaders(
 	
 				if (FMath::Abs(Gamma - 1.0f) < UE_KINDA_SMALL_NUMBER)
 				{
+					// runs "Main"
 					TShaderMapRef<FSimpleElementPS> PixelShader(GetGlobalShaderMap(FeatureLevel));
 					GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
 
@@ -797,7 +792,11 @@ void FBatchedElements::PrepareShaders(
 				}
 				else
 				{
+					// runs "GammaMain"
 					TShaderRef<FSimpleElementGammaBasePS> BasePixelShader;
+
+					// these shaders differ in setting SRGB_INPUT_TEXTURE, which is ignored
+					//  so they are in fact the same
 					if (Texture->bSRGB)
 					{
 						TShaderMapRef<FSimpleElementGammaPS_SRGB> PixelShader_SRGB(GetGlobalShaderMap(FeatureLevel));
@@ -886,7 +885,7 @@ FSceneView FBatchedElements::CreateProxySceneView(const FMatrix& ProjectionMatri
 
 bool FBatchedElements::Draw(FRHICommandList& RHICmdList, const FMeshPassProcessorRenderState& DrawRenderState, ERHIFeatureLevel::Type FeatureLevel, const FSceneView& View, bool bHitTesting, float Gamma /* = 1.0f */, EBlendModeFilter::Type Filter /* = EBlendModeFilter::All */) const
 {
-	const FRelativeViewMatrices RelativeMatrices = FRelativeViewMatrices::Create(View.ViewMatrices);
+	const FDFRelativeViewMatrices RelativeMatrices = FDFRelativeViewMatrices::Create(View.ViewMatrices);
 	const FMatrix& WorldToClip = View.ViewMatrices.GetViewProjectionMatrix();
 	const FMatrix& ClipToWorld = View.ViewMatrices.GetInvViewProjectionMatrix();
 	const uint32 ViewportSizeX = View.UnscaledViewRect.Width();
@@ -979,8 +978,19 @@ bool FBatchedElements::Draw(FRHICommandList& RHICmdList, const FMeshPassProcesso
 					OrthoZoomFactor = 1.0f / View.ViewMatrices.GetProjectionMatrix().M[0][0];
 				}
 
+				const double CameraScreenXScale = FVector(WorldToClip.TransformVector(CameraX)).Length();
+				const double CameraScreenYScale = FVector(WorldToClip.TransformVector(CameraY)).Length();
+
 				int32 LineIndex = 0;
-				const int32 MaxLinesPerBatch = 2048;
+				int32 MaxVerticesAllowed = ((GDrawUPVertexCheckCount / sizeof(FSimpleElementVertex)) / 3) * 3;
+				/*
+				hack to avoid a crash when trying to render large numbers of line segments.
+				*/
+				MaxVerticesAllowed = FMath::Min(MaxVerticesAllowed, 64 * 1024);
+
+				constexpr int32 TrisPerLine = 4;
+				constexpr int32 VertPerLine = 3 * TrisPerLine;
+				const int32 MaxLinesPerBatch = MaxVerticesAllowed / VertPerLine;
 				while (LineIndex < ThickLines.Num())
 				{
 					int32 FirstLineThisBatch = LineIndex;
@@ -997,89 +1007,231 @@ bool FBatchedElements::Draw(FRHICommandList& RHICmdList, const FMeshPassProcesso
 					check(NumLinesThisBatch > 0);
 
 					const bool bEnableMSAA = true;
-					const bool bEnableLineAA = false;
-					FRasterizerStateInitializerRHI Initializer(FM_Solid, CM_None, 0, DepthBiasThisBatch, ERasterizerDepthClipMode::DepthClip, bEnableMSAA, bEnableLineAA);
+					FRasterizerStateInitializerRHI Initializer(FM_Solid, CM_None, 0, DepthBiasThisBatch, ERasterizerDepthClipMode::DepthClip, bEnableMSAA);
 					auto RasterState = RHICreateRasterizerState(Initializer);
 					GraphicsPSOInit.RasterizerState = RasterState.GetReference();
 					PrepareShaders(RHICmdList, GraphicsPSOInit, StencilRef, FeatureLevel, SE_BLEND_AlphaBlend, RelativeMatrices, BatchedElementParameters, GWhiteTexture, bHitTesting, Gamma, NULL, &View);
 
 					FRHIResourceCreateInfo CreateInfo(TEXT("ThickLines"));
-					FBufferRHIRef VertexBufferRHI = RHICmdList.CreateBuffer(sizeof(FSimpleElementVertex) * 8 * 3 * NumLinesThisBatch, BUF_VertexBuffer | BUF_Volatile, 0, ERHIAccess::VertexOrIndexBuffer, CreateInfo);
-					void* ThickVertexData = RHICmdList.LockBuffer(VertexBufferRHI, 0, sizeof(FSimpleElementVertex) * 8 * 3 * NumLinesThisBatch, RLM_WriteOnly);
+					FBufferRHIRef VertexBufferRHI = RHICmdList.CreateBuffer(sizeof(FSimpleElementVertex) * VertPerLine * NumLinesThisBatch, BUF_VertexBuffer | BUF_Volatile, 0, ERHIAccess::VertexOrIndexBuffer, CreateInfo);
+					void* ThickVertexData = RHICmdList.LockBuffer(VertexBufferRHI, 0, sizeof(FSimpleElementVertex) * VertPerLine * NumLinesThisBatch, RLM_WriteOnly);
 					FSimpleElementVertex* ThickVertices = (FSimpleElementVertex*)ThickVertexData;
 					check(ThickVertices);
 
+					int32 AddedTris = 0;
 					for (int i = 0; i < NumLinesThisBatch; ++i)
 					{
 						const FBatchedThickLines& Line = ThickLines[FirstLineThisBatch + i];
-						const float Thickness = FMath::Abs( Line.Thickness );
+						const double Thickness = FMath::Abs( Line.Thickness );
+						
+						FVector4 StartClip	= WorldToClip.TransformFVector4(Line.Start);
+						FVector4 EndClip	= WorldToClip.TransformFVector4(Line.End);
 
-						const float StartW			= WorldToClip.TransformFVector4(Line.Start).W;
-						const float EndW			= WorldToClip.TransformFVector4(Line.End).W;
+						// Manually clip thick lines start/end if they would go behind the near plane
+						FVector LineStart = Line.Start;
+						FVector LineEnd = Line.End;
+						const double ClipAt = View.NearClippingDistance + UE_DOUBLE_KINDA_SMALL_NUMBER;
+						if (bIsPerspective)
+						{
+							if (StartClip.W < ClipAt && EndClip.W < ClipAt)
+							{
+								continue;
+							}
+							else if (StartClip.W < ClipAt)
+							{
+								double Along = (ClipAt - StartClip.W) / (EndClip.W - StartClip.W);
+								LineStart = FMath::Lerp(LineStart, LineEnd, Along);
+								StartClip = FMath::Lerp(StartClip, EndClip, Along);
+							}
+							else if (EndClip.W < ClipAt)
+							{
+								double Along = (ClipAt - EndClip.W) / (StartClip.W - EndClip.W);
+								LineEnd = FMath::Lerp(LineEnd, LineStart, Along);
+								EndClip = FMath::Lerp(EndClip, StartClip, Along);
+							}
+						}
 
-						// Negative thickness means that thickness is calculated in screen space, positive thickness should be used for world space thickness.
-						const float ScalingStart	= Line.bScreenSpace ? StartW / ViewportSizeX : 1.0f;
-						const float ScalingEnd		= Line.bScreenSpace ? EndW   / ViewportSizeX : 1.0f;
+						const double StartW = StartClip.W;
+						const double EndW = EndClip.W;
 
-						const float CurrentOrthoZoomFactor = Line.bScreenSpace ? OrthoZoomFactor : 1.0f;
+						// bScreenSpace controls if thickness is calculated in screen space or world space.
+						const double ScalingStart	= Line.bScreenSpace ? StartW / ViewportSizeX : 1.0;
+						const double ScalingEnd		= Line.bScreenSpace ? EndW   / ViewportSizeX : 1.0;
 
-						const float ScreenSpaceScaling = Line.bScreenSpace ? 2.0f : 1.0f;
+						const double CurrentOrthoZoomFactor = Line.bScreenSpace ? OrthoZoomFactor : 1.0;
 
-						const float StartThickness	= Thickness * ScreenSpaceScaling * CurrentOrthoZoomFactor * ScalingStart;
-						const float EndThickness	= Thickness * ScreenSpaceScaling * CurrentOrthoZoomFactor * ScalingEnd;
+						const double ScreenSpaceScaling = Line.bScreenSpace ? 2.0 : 1.0;
 
-						const FVector WorldPointXS	= CameraX * StartThickness * 0.5f;
-						const FVector WorldPointYS	= CameraY * StartThickness * 0.5f;
+						const double StartThickness	= Thickness * ScreenSpaceScaling * CurrentOrthoZoomFactor * ScalingStart;
+						const double EndThickness	= Thickness * ScreenSpaceScaling * CurrentOrthoZoomFactor * ScalingEnd;
 
-						const FVector WorldPointXE	= CameraX * EndThickness * 0.5f;
-						const FVector WorldPointYE	= CameraY * EndThickness * 0.5f;
+						// Line start and end points S and E are expanded into quads based on the line thickness, and
+						// the line is filled in by trapezoids S2,S0,E0,E1 and S2,S3,E3,E1, w/ vertices as pictured:
+						//      E3---E1
+						//     / |...|
+						//    /  |...|
+						//   /  E2---E0
+						// S3---S1  /
+						//  |...|  /
+						//  |...| /
+						// S2---S0
+						// This labelling assume the direction from S->E on screen is up-right (pictured)
+						// We mirror point labels as needed to handle the down- or left- oriented cases
 
-						// Generate vertices for the point such that the post-transform point size is constant.
-						const FVector WorldPointX = CameraX * Thickness * StartW / ViewportSizeX;
-						const FVector WorldPointY = CameraY * Thickness * StartW / ViewportSizeX;
+						// Figure out whether we're in an up-right/down-left case or not
+						const double InvStartW = 1.0 / StartW, InvEndW = 1.0 / EndW;
+						const double ScreenShiftX = EndClip.X * InvEndW - StartClip.X * InvStartW;
+						const double ScreenShiftY = EndClip.Y * InvEndW - StartClip.Y * InvStartW;
+						const bool bLineRight = ScreenShiftX >= 0;
+						const bool bLineUp = ScreenShiftY >= 0;
 
-						// Begin point
-						ThickVertices[0] = FSimpleElementVertex(Line.Start + WorldPointXS - WorldPointYS,FVector2D(1,0),Line.Color,Line.HitProxyColor); // 0S
-						ThickVertices[1] = FSimpleElementVertex(Line.Start + WorldPointXS + WorldPointYS,FVector2D(1,1),Line.Color,Line.HitProxyColor); // 1S
-						ThickVertices[2] = FSimpleElementVertex(Line.Start - WorldPointXS - WorldPointYS,FVector2D(0,0),Line.Color,Line.HitProxyColor); // 2S
-					
-						ThickVertices[3] = FSimpleElementVertex(Line.Start + WorldPointXS + WorldPointYS,FVector2D(1,1),Line.Color,Line.HitProxyColor); // 1S
-						ThickVertices[4] = FSimpleElementVertex(Line.Start - WorldPointXS - WorldPointYS,FVector2D(0,0),Line.Color,Line.HitProxyColor); // 2S
-						ThickVertices[5] = FSimpleElementVertex(Line.Start - WorldPointXS + WorldPointYS,FVector2D(0,1),Line.Color,Line.HitProxyColor); // 3S
+						// Mirror X offsets in the up-left or down-right case
+						const double XSign = bLineRight ? 1.0 : -1.0;
+						const double YSign = bLineUp ? 1.0 : -1.0;
+						// Mirror X for UVs as well
+						const double RightUVX = (double)bLineRight, LeftUVX = (double)!bLineRight;
+						const double UpUVY = (double)bLineUp, DownUVY = (double)!bLineUp;
 
-						// Ending point
-						ThickVertices[0+ 6] = FSimpleElementVertex(Line.End + WorldPointXE - WorldPointYE,FVector2D(1,0),Line.Color,Line.HitProxyColor); // 0E
-						ThickVertices[1+ 6] = FSimpleElementVertex(Line.End + WorldPointXE + WorldPointYE,FVector2D(1,1),Line.Color,Line.HitProxyColor); // 1E
-						ThickVertices[2+ 6] = FSimpleElementVertex(Line.End - WorldPointXE - WorldPointYE,FVector2D(0,0),Line.Color,Line.HitProxyColor); // 2E
-																																							  
-						ThickVertices[3+ 6] = FSimpleElementVertex(Line.End + WorldPointXE + WorldPointYE,FVector2D(1,1),Line.Color,Line.HitProxyColor); // 1E
-						ThickVertices[4+ 6] = FSimpleElementVertex(Line.End - WorldPointXE - WorldPointYE,FVector2D(0,0),Line.Color,Line.HitProxyColor); // 2E
-						ThickVertices[5+ 6] = FSimpleElementVertex(Line.End - WorldPointXE + WorldPointYE,FVector2D(0,1),Line.Color,Line.HitProxyColor); // 3E
+						// Create the X and Y world offsets for each point, mirrored as needed
+						const FVector WorldPointXS	= CameraX * (StartThickness * 0.5 * XSign);
+						const FVector WorldPointYS	= CameraY * (StartThickness * 0.5 * YSign);
+						const FVector WorldPointXE	= CameraX * (EndThickness * 0.5 * XSign);
+						const FVector WorldPointYE	= CameraY * (EndThickness * 0.5 * YSign);
 
-						// First part of line
-						ThickVertices[0+12] = FSimpleElementVertex(Line.Start - WorldPointXS - WorldPointYS,FVector2D(0,0),Line.Color,Line.HitProxyColor); // 2S
-						ThickVertices[1+12] = FSimpleElementVertex(Line.Start + WorldPointXS + WorldPointYS,FVector2D(1,1),Line.Color,Line.HitProxyColor); // 1S
-						ThickVertices[2+12] = FSimpleElementVertex(Line.End   - WorldPointXE - WorldPointYE,FVector2D(0,0),Line.Color,Line.HitProxyColor); // 2E
+						// Vertex positions
+						FVector S0 = LineStart + WorldPointXS - WorldPointYS;
+						FVector S1 = LineStart + WorldPointXS + WorldPointYS;
+						FVector S2 = LineStart - WorldPointXS - WorldPointYS;
+						FVector S3 = LineStart - WorldPointXS + WorldPointYS;
 
-						ThickVertices[3+12] = FSimpleElementVertex(Line.Start + WorldPointXS + WorldPointYS,FVector2D(1,1),Line.Color,Line.HitProxyColor); // 1S
-						ThickVertices[4+12] = FSimpleElementVertex(Line.End   + WorldPointXE + WorldPointYE,FVector2D(1,1),Line.Color,Line.HitProxyColor); // 1E
-						ThickVertices[5+12] = FSimpleElementVertex(Line.End   - WorldPointXE - WorldPointYE,FVector2D(0,0),Line.Color,Line.HitProxyColor); // 2E
+						FVector E0 = LineEnd + WorldPointXE - WorldPointYE;
+						FVector E1 = LineEnd + WorldPointXE + WorldPointYE;
+						FVector E2 = LineEnd - WorldPointXE - WorldPointYE;
+						FVector E3 = LineEnd - WorldPointXE + WorldPointYE;
 
-						// Second part of line
-						ThickVertices[0+18] = FSimpleElementVertex(Line.Start - WorldPointXS + WorldPointYS,FVector2D(0,1),Line.Color,Line.HitProxyColor); // 3S
-						ThickVertices[1+18] = FSimpleElementVertex(Line.Start + WorldPointXS - WorldPointYS,FVector2D(1,0),Line.Color,Line.HitProxyColor); // 0S
-						ThickVertices[2+18] = FSimpleElementVertex(Line.End   - WorldPointXE + WorldPointYE,FVector2D(0,1),Line.Color,Line.HitProxyColor); // 3E
+						// UVs per vertex
+						FVector2D S0UV = FVector2D(RightUVX, DownUVY);
+						FVector2D S1UV = FVector2D(RightUVX, UpUVY);
+						FVector2D S2UV = FVector2D(LeftUVX, DownUVY);
+						FVector2D S3UV = FVector2D(LeftUVX, UpUVY);
 
-						ThickVertices[3+18] = FSimpleElementVertex(Line.Start + WorldPointXS - WorldPointYS,FVector2D(1,0),Line.Color,Line.HitProxyColor); // 0S
-						ThickVertices[4+18] = FSimpleElementVertex(Line.End   + WorldPointXE - WorldPointYE,FVector2D(1,0),Line.Color,Line.HitProxyColor); // 0E
-						ThickVertices[5+18] = FSimpleElementVertex(Line.End   - WorldPointXE + WorldPointYE,FVector2D(0,1),Line.Color,Line.HitProxyColor); // 3E
+						FVector2D E0UV = FVector2D(RightUVX, DownUVY);
+						FVector2D E1UV = FVector2D(RightUVX, UpUVY);
+						FVector2D E2UV = FVector2D(LeftUVX, DownUVY);
+						FVector2D E3UV = FVector2D(LeftUVX, UpUVY);
 
-						ThickVertices += 24;
+						// Handle special cases due to one end of the line being larger on screen than the other -- these don't happen w/ screen space lines
+						// Note: If you skip handling these cases, the lines will still mostly look fine, just not perfect if you get close to them
+						if (!Line.bScreenSpace)
+						{
+							// Figure out if we're in a only-vertical (pictured) or only-horizontal case, like:
+							//      E3---E1
+							//     / |...| \
+							//    /  |...|  \
+							//   /  E2---E0  \
+							// S3-------------S1
+							//  |.............|
+							// ... where S contains E along one axis, or vice versa
+							// In these cases, replace one of the vertices with S1 or E2 to fix the missing corner
+							const double ScreenStartRadius = StartThickness * InvStartW * .5;
+							const double ScreenEndRadius = EndThickness * InvEndW * .5;
+							const double RadDiff = ScreenEndRadius - ScreenStartRadius;
+							const bool bStartIsBigger = RadDiff < 0;
+							const double AbsRadDiff = bStartIsBigger ? -RadDiff : RadDiff;
+
+							bool bOnlyVertical = ScreenShiftX * XSign < AbsRadDiff * CameraScreenXScale, bOnlyHorizontal = ScreenShiftY * YSign < AbsRadDiff * CameraScreenYScale;
+							// If the larger point contains the smaller on both axes, we can just draw the larger point alone
+							if (bOnlyVertical && bOnlyHorizontal)
+							{
+								if (bStartIsBigger)
+								{
+									// Tri: S0,S1,S2
+									ThickVertices[0] = FSimpleElementVertex(S0, S0UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[1] = FSimpleElementVertex(S1, S1UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[2] = FSimpleElementVertex(S2, S2UV, Line.Color, Line.HitProxyColor);
+									// Tri: S2,S1,S3
+									ThickVertices[3] = FSimpleElementVertex(S2, S2UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[4] = FSimpleElementVertex(S1, S1UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[5] = FSimpleElementVertex(S3, S3UV, Line.Color, Line.HitProxyColor);
+								}
+								else
+								{
+									// Tri: E0,E1,E2
+									ThickVertices[0] = FSimpleElementVertex(E0, E0UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[1] = FSimpleElementVertex(E1, E1UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[2] = FSimpleElementVertex(E2, E2UV, Line.Color, Line.HitProxyColor);
+									// Tri: E2,E1,E3
+									ThickVertices[3] = FSimpleElementVertex(E2, E2UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[4] = FSimpleElementVertex(E1, E1UV, Line.Color, Line.HitProxyColor);
+									ThickVertices[5] = FSimpleElementVertex(E3, E3UV, Line.Color, Line.HitProxyColor);
+								}
+								ThickVertices += 6;
+								AddedTris += 2;
+								continue;
+							}
+							else if (bOnlyVertical) // only one direction is dominant; figure out which vertex to replace
+							{
+								if (bStartIsBigger)
+								{
+									// replace E0 with S1
+									E0 = S1;
+									E0UV = S1UV;
+								}
+								else
+								{
+									// replace S3 with E2
+									S3 = E2;
+									S3UV = E2UV;
+								}
+							}
+							else if (bOnlyHorizontal)
+							{
+								if (bStartIsBigger)
+								{
+									// replace E3 with S1
+									E3 = S1;
+									E3UV = S1UV;
+								}
+								else
+								{
+									// replace S0 with E2
+									S0 = E2;
+									S0UV = E2UV;
+								}
+							}
+						}
+						
+
+						// First trapezoid (S2,S0,E0,E1)
+						// Tri: S2,S0,E0
+						ThickVertices[0] = FSimpleElementVertex(S2, S2UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[1] = FSimpleElementVertex(S0, S0UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[2] = FSimpleElementVertex(E0, E0UV, Line.Color, Line.HitProxyColor);
+						// Tri: S2,E1,E0
+						ThickVertices[3] = FSimpleElementVertex(S2, S2UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[4] = FSimpleElementVertex(E1, E1UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[5] = FSimpleElementVertex(E0, E0UV, Line.Color, Line.HitProxyColor);
+
+						// Second trapezoid (S2,S3,E3,E1)
+						// Tri: S2,E3,E1
+						ThickVertices[6] = FSimpleElementVertex(S2, S2UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[7] = FSimpleElementVertex(E3, E3UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[8] = FSimpleElementVertex(E1, E1UV, Line.Color, Line.HitProxyColor);
+						// Tri: S2,S3,E3
+						ThickVertices[9] = FSimpleElementVertex(S2, S2UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[10] = FSimpleElementVertex(S3, S3UV, Line.Color, Line.HitProxyColor);
+						ThickVertices[11] = FSimpleElementVertex(E3, E3UV, Line.Color, Line.HitProxyColor);
+
+						ThickVertices += VertPerLine;
+						AddedTris += 4;
 					}
 
 					RHICmdList.UnlockBuffer(VertexBufferRHI);
-					RHICmdList.SetStreamSource(0, VertexBufferRHI, 0);
-					RHICmdList.DrawPrimitive(0, 8 * NumLinesThisBatch, 1);
+					if (AddedTris > 0)
+					{
+						RHICmdList.SetStreamSource(0, VertexBufferRHI, 0);
+						RHICmdList.DrawPrimitive(0, AddedTris, 1);
+					}
 				}
 
 				GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
@@ -1095,8 +1247,7 @@ bool FBatchedElements::Draw(FRHICommandList& RHICmdList, const FMeshPassProcesso
 				RHICmdList.SetStreamSource(0, VertexBufferRHI, 0);
 
 				const bool bEnableMSAA = true;
-				const bool bEnableLineAA = false;
-				FRasterizerStateInitializerRHI Initializer(FM_Wireframe, CM_None, bEnableMSAA, bEnableLineAA);
+				FRasterizerStateInitializerRHI Initializer(FM_Wireframe, CM_None, bEnableMSAA);
 
 				int32 MaxVerticesAllowed = ((GDrawUPVertexCheckCount / sizeof(FSimpleElementVertex)) / 3) * 3;
 				/*
@@ -1311,8 +1462,47 @@ void FBatchedElements::Clear()
 {
 	LineVertices.Empty();
 	Points.Empty();
+	WireTris.Empty();
+	WireTriVerts.Empty();
+	ThickLines.Empty();
 	Sprites.Empty();
 	MeshElements.Empty();
-	ThickLines.Empty();
 	MeshVertices.Empty();
+}
+
+void FBatchedElements::AddAllocationInfo(FAllocationInfo& AllocationInfo) const
+{
+	AllocationInfo.NumLineVertices += LineVertices.Num();
+	AllocationInfo.NumPoints += Points.Num();
+	AllocationInfo.NumWireTris += WireTris.Num();
+	AllocationInfo.NumWireTriVerts += WireTriVerts.Num();
+	AllocationInfo.NumThickLines += ThickLines.Num();
+	AllocationInfo.NumSprites += Sprites.Num();
+	AllocationInfo.NumMeshElements += MeshElements.Num();
+	AllocationInfo.NumMeshVertices += MeshVertices.Num();
+}
+
+void FBatchedElements::Reserve(const FAllocationInfo& AllocationInfo)
+{
+	LineVertices.Reserve(AllocationInfo.NumLineVertices);
+	Points.Reserve(AllocationInfo.NumPoints);
+	WireTris.Reserve(AllocationInfo.NumWireTris);
+	WireTriVerts.Reserve(AllocationInfo.NumWireTriVerts);
+	ThickLines.Reserve(AllocationInfo.NumThickLines);
+	Sprites.Reserve(AllocationInfo.NumSprites);
+	MeshElements.Reserve(AllocationInfo.NumMeshElements);
+	MeshVertices.Reserve(AllocationInfo.NumMeshVertices);
+}
+
+void FBatchedElements::Append(FBatchedElements& Other)
+{
+	LineVertices.Append(Other.LineVertices);
+	Points.Append(Other.Points);
+	WireTris.Append(Other.WireTris);
+	WireTriVerts.Append(Other.WireTriVerts);
+	ThickLines.Append(Other.ThickLines);
+	Sprites.Append(Other.Sprites);
+	MeshElements.Append(Other.MeshElements);
+	MeshVertices.Append(Other.MeshVertices);
+	Other.Clear();
 }

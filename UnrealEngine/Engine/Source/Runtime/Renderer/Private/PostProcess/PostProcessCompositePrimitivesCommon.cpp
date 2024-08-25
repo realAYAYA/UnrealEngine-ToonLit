@@ -92,7 +92,8 @@ public:
 
 	class FUseMSAADimension : SHADER_PERMUTATION_BOOL("USE_MSAA");
 	class FForceDebugDrawColorOutput : SHADER_PERMUTATION_BOOL("FORCE_DEBUG_DRAW_COLOR"); //Allow the option to draw out the scene color too to lower draw calls
-	using FPermutationDomain = TShaderPermutationDomain<FUseMSAADimension, FForceDebugDrawColorOutput>;
+	class FUseMetalMSAAHDRDecodeDim : SHADER_PERMUTATION_BOOL("METAL_MSAA_HDR_DECODE");
+	using FPermutationDomain = TShaderPermutationDomain<FUseMSAADimension, FForceDebugDrawColorOutput, FUseMetalMSAAHDRDecodeDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
@@ -122,15 +123,28 @@ public:
 	{
 		const FPermutationDomain PermutationVector(Parameters.PermutationId);
 		const bool bUseMSAA = PermutationVector.Get<FUseMSAADimension>();
+		const bool bUseMetalMSAAHDRDecodeDim = PermutationVector.Get<FUseMetalMSAAHDRDecodeDim>();
 
-		// Only SM5+ platforms supports MSAA.
-		if (!IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5) && bUseMSAA)
+		if (bUseMSAA)
 		{
-			return false;
+			// Only SM5+ and Metal ES3.1 platforms support MSAA.
+			if (IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5))
+			{
+				return true;
+			}
+			else if (IsMetalMobilePlatform(Parameters.Platform) && bUseMetalMSAAHDRDecodeDim)
+			{
+				//Only compile with decode dim if using metal platform on 3.1 + color output
+				return PermutationVector.Get<FForceDebugDrawColorOutput>();
+			}
+		}
+		else
+		{
+			//Never compile Metal decode dim permutations for non-MSAA passes
+			return !bUseMetalMSAAHDRDecodeDim;
 		}
 
-		// This pass can be used with any AA method so return true for all other circumstances
-		return true;
+		return false;
 	}
 };
 
@@ -245,7 +259,8 @@ void PopulateDepthPass(FRDGBuilder& GraphBuilder,
 	FRDGTextureRef OutPopDepth,
 	const FVector2f& SceneDepthJitter,
 	uint32 NumMSAASamples,
-	bool bForceDrawColor)
+	bool bForceDrawColor,
+	bool bUseMetalPlatformHDRDecode)
 {
 	FRHISamplerState* PointClampSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
@@ -256,15 +271,11 @@ void PopulateDepthPass(FRDGBuilder& GraphBuilder,
 	{
 		PassParameters->ColorTexture = InSceneColor.Texture;
 		PassParameters->ColorSampler = PointClampSampler;
+	}
 
-		PassParameters->Color = GetScreenPassTextureViewportParameters(View.StereoPass == EStereoscopicPass::eSSP_FULL ? FScreenPassTextureViewport(InSceneColor.Texture->Desc.Extent, View.ViewRect) : FScreenPassTextureViewport(InSceneColor));
-		PassParameters->Depth = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(InSceneDepth.Texture->Desc.Extent, View.ViewRect));
-	}
-	else
-	{
-		PassParameters->Color = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(InSceneColor));
-		PassParameters->Depth = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(InSceneDepth));
-	}
+	PassParameters->Color = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(InSceneColor));
+	PassParameters->Depth = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(InSceneDepth));
+
 	PassParameters->DepthTexture = InSceneDepth.Texture;
 	PassParameters->DepthSampler = PointClampSampler;
 	PassParameters->DepthTextureJitter = SceneDepthJitter;
@@ -275,6 +286,7 @@ void PopulateDepthPass(FRDGBuilder& GraphBuilder,
 	FPopulateCompositeDepthPS::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FPopulateCompositeDepthPS::FUseMSAADimension>(NumMSAASamples > 1);
 	PermutationVector.Set< FPopulateCompositeDepthPS::FForceDebugDrawColorOutput>(bForceDrawColor);
+	PermutationVector.Set< FPopulateCompositeDepthPS::FUseMetalMSAAHDRDecodeDim>(bForceDrawColor && bUseMetalPlatformHDRDecode);
 	TShaderMapRef<FPopulateCompositeDepthPS> PixelShader(View.ShaderMap, PermutationVector);
 
 	FPixelShaderUtils::AddFullscreenPass(

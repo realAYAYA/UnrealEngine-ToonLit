@@ -4,6 +4,7 @@
 	Functionality for a real time illuminance meter reference for the sky light and sun.
 =============================================================================*/
 
+#include "IlluminanceMeter.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "ReflectionEnvironmentCapture.h"
 #include "RHIResources.h"
@@ -12,6 +13,7 @@
 #include "SceneRendering.h"
 #include "ScenePrivate.h"
 #include "ShaderCompiler.h"
+#include "PostProcess/PostProcessing.h"
 
 DECLARE_GPU_STAT(IlluminanceMeter);
 
@@ -98,11 +100,17 @@ IMPLEMENT_GLOBAL_SHADER(FPrintIlluminanceMeterPS, "/Engine/Private/ReflectionEnv
 
 void FScene::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayView<FViewInfo> Views, FRDGTextureRef SceneColorTexture)
 {
-	FViewInfo& MainView = Views[0];
-	if (!SkyLight || !SkyLight->bShowIlluminanceMeter || MainView.bIsSceneCapture || MainView.bIsReflectionCapture || MainView.bIsPlanarReflection ||
-		!CanIlluminanceMeterDisplayOnPlatform(MainView.GetShaderPlatform()))
+	// Deprecated
+}
+
+FScreenPassTexture ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, const FViewInfo& View, FScreenPassTexture& ScreenPassSceneColor)
+{
+	const FScene* Scene = (const FScene*)View.Family->Scene;
+	FSkyLightSceneProxy* SkyLight = Scene ? Scene->SkyLight : nullptr;
+	if (!SkyLight || !View.Family->EngineShowFlags.VisualizeSkyLightIlluminance || View.bIsSceneCapture || View.bIsReflectionCapture || View.bIsPlanarReflection ||
+		!CanIlluminanceMeterDisplayOnPlatform(View.GetShaderPlatform()))
 	{
-		return;
+		return MoveTemp(ScreenPassSceneColor);
 	}
 
 	RDG_EVENT_SCOPE(GraphBuilder, "IlluminanceMeter");
@@ -110,11 +118,11 @@ void FScene::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayV
 
 	// 0- Get source cubemap and allocate cube map transient resources
 
-	FTextureRHIRef SkyLightTextureRHI = GBlackTextureCube->TextureRHI;;
-	if (SkyLight->bRealTimeCaptureEnabled && ConvolvedSkyRenderTargetReadyIndex >= 0)
+	FTextureRHIRef SkyLightTextureRHI = GBlackTextureCube->TextureRHI;
+	if (SkyLight->bRealTimeCaptureEnabled && Scene->ConvolvedSkyRenderTargetReadyIndex >= 0)
 	{
 		// Cannot blend with this capture mode as of today.
-		SkyLightTextureRHI = ConvolvedSkyRenderTarget[ConvolvedSkyRenderTargetReadyIndex]->GetRHI();
+		SkyLightTextureRHI = Scene->ConvolvedSkyRenderTarget[Scene->ConvolvedSkyRenderTargetReadyIndex]->GetRHI();
 
 		//
 	}
@@ -133,12 +141,12 @@ void FScene::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayV
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "CopyCubemapToIlluminanceMeterCubemap");
 
-		TShaderMapRef<FCopyCubemapToIlluminanceMeterCubemapPS> PixelShader(MainView.ShaderMap);
+		TShaderMapRef<FCopyCubemapToIlluminanceMeterCubemapPS> PixelShader(View.ShaderMap);
 
 		for (uint32 CubeFace = 0; CubeFace < CubeFace_MAX; CubeFace++)
 		{
 			auto* PassParameters = GraphBuilder.AllocParameters<FCopyCubemapToIlluminanceMeterCubemapPS::FParameters>();
-			PassParameters->ViewUniformBuffer = MainView.ViewUniformBuffer;
+			PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
 			PassParameters->SourceCubemapSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 			PassParameters->SourceCubemapTexture = SkyLightTextureRHI;
 			PassParameters->CubeFace = CubeFace;
@@ -149,7 +157,7 @@ void FScene::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayV
 
 			FPixelShaderUtils::AddFullscreenPass(
 				GraphBuilder,
-				MainView.ShaderMap,
+				View.ShaderMap,
 				RDG_EVENT_NAME("FCopyCubemapToIlluminanceMeterCubemap"),
 				PixelShader,
 				PassParameters,
@@ -161,7 +169,7 @@ void FScene::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayV
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "IntegrateCubemapIlluminance");
 
-		TShaderMapRef<FDownsampleIntegrateCubemapIlluminancePS> PixelShader(MainView.ShaderMap);
+		TShaderMapRef<FDownsampleIntegrateCubemapIlluminancePS> PixelShader(View.ShaderMap);
 		const int32 NumMips = IlluminanceMeterCubeTexture->Desc.NumMips;
 
 		for (int32 MipIndex = 1; MipIndex < NumMips; MipIndex++)
@@ -182,7 +190,7 @@ void FScene::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayV
 
 				FPixelShaderUtils::AddFullscreenPass(
 					GraphBuilder,
-					MainView.ShaderMap,
+					View.ShaderMap,
 					RDG_EVENT_NAME("CreateCubeMips (Mip: %d, Face: %d)", MipIndex, CubeFace),
 					PixelShader,
 					PassParameters,
@@ -200,19 +208,21 @@ void FScene::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayV
 		FRHIBlendState* PreMultipliedColorTransmittanceBlend = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_SourceAlpha, BO_Add, BF_Zero, BF_One>::GetRHI();
 
 		FPrintIlluminanceMeterPS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPrintIlluminanceMeterPS::FParameters>();
-		PassParameters->ViewUniformBuffer = MainView.ViewUniformBuffer;
+		PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
 		PassParameters->SourceCubemapTexture = IlluminanceMeterCubeTexture;
 		PassParameters->SourceCubemapSampler = TStaticSamplerState<SF_Trilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 		PassParameters->SkyLightCubeTexture = SkyLightTextureRHI;
 		PassParameters->SkyLightCubeSampler = TStaticSamplerState<SF_Trilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 		PassParameters->CubeMipIndexToSampleIlluminance = IlluminanceMeterCubeTexture->Desc.NumMips - 1;
 		PassParameters->SkyLightCaptureWorlPos = FVector3f(SkyLight->CapturePosition);
-		ShaderPrint::SetParameters(GraphBuilder, MainView.ShaderPrintData, PassParameters->ShaderPrintParameters);
-		PassParameters->RenderTargets[0] = FRenderTargetBinding(SceneColorTexture, ERenderTargetLoadAction::ELoad);
+		ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, PassParameters->ShaderPrintParameters);
+		PassParameters->RenderTargets[0] = FRenderTargetBinding(ScreenPassSceneColor.Texture, ERenderTargetLoadAction::ELoad);
 
 		FPrintIlluminanceMeterPS::FPermutationDomain PermutationVector;
-		TShaderMapRef<FPrintIlluminanceMeterPS> PixelShader(MainView.ShaderMap, PermutationVector);
+		TShaderMapRef<FPrintIlluminanceMeterPS> PixelShader(View.ShaderMap, PermutationVector);
 
-		FPixelShaderUtils::AddFullscreenPass<FPrintIlluminanceMeterPS>(GraphBuilder, MainView.ShaderMap, RDG_EVENT_NAME("Substrate::VisualizeMaterial(Draw)"), PixelShader, PassParameters, MainView.ViewRect, PreMultipliedColorTransmittanceBlend);
+		FPixelShaderUtils::AddFullscreenPass<FPrintIlluminanceMeterPS>(GraphBuilder, View.ShaderMap, RDG_EVENT_NAME("Substrate::VisualizeMaterial(Draw)"), PixelShader, PassParameters, View.ViewRect, PreMultipliedColorTransmittanceBlend);
 	}
+
+	return MoveTemp(ScreenPassSceneColor);
 }

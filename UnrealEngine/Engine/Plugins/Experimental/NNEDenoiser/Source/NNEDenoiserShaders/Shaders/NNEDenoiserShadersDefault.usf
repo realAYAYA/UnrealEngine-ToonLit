@@ -1,0 +1,84 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+
+#if BUFFER_TYPE_INDEX == 4
+	#define BUFFER_TYPE half
+	#define READ(X) float(X)
+	#define WRITE(X) half(X)
+#else
+	// BUFFER_TYPE_INDEX == 3
+	#define BUFFER_TYPE float
+	#define READ(X) X
+	#define WRITE(X) X
+#endif
+
+int InputTextureWidth;
+int InputTextureHeight;
+Texture2D InputTexture;
+
+int InputBufferWidth;
+int InputBufferHeight;
+RWBuffer<BUFFER_TYPE> InputBuffer;
+
+int4 BufferChannel_TextureChannel_Unused_Unused[MAX_NUM_MAPPED_CHANNELS];
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ReadInput(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	if (DispatchThreadID.x >= InputBufferWidth || DispatchThreadID.y >= InputBufferHeight)
+	{
+		return;
+	}
+
+	const int Idx = DispatchThreadID.y * InputBufferWidth + DispatchThreadID.x;
+	const int Offset = InputBufferWidth * InputBufferHeight;
+
+	const float4 BufferColor = InputTexture.Load(int3(DispatchThreadID.x, DispatchThreadID.y, 0));
+
+	for (int I = 0; I < NUM_MAPPED_CHANNELS; I++)
+	{
+		const int4 Info = BufferChannel_TextureChannel_Unused_Unused[I];
+		const int BufferChannel = Info.x;
+		const int TextureChannel = Info.y;
+
+		InputBuffer[Idx + BufferChannel * Offset] = WRITE(BufferColor[TextureChannel]);
+	}
+}
+
+int OutputBufferWidth;
+int OutputBufferHeight;
+RWBuffer<BUFFER_TYPE> OutputBuffer;
+
+int OutputTextureWidth;
+int OutputTextureHeight;
+RWTexture2D<float4> OutputTexture;
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void WriteOutput(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	if (DispatchThreadID.x >= OutputTextureWidth || DispatchThreadID.y >= OutputTextureHeight)
+	{
+		return;
+	}
+
+	// nearest neighbour
+	const int X = (int)(DispatchThreadID.x * (OutputBufferWidth - 1.0) / (OutputTextureWidth - 1.0));
+	const int Y = (int)(DispatchThreadID.y * (OutputBufferHeight - 1.0) / (OutputTextureHeight - 1.0));
+
+	const int Idx = Y * OutputBufferWidth + X;
+	const int Offset = OutputBufferWidth * OutputBufferHeight;
+
+	for (int I = 0; I < NUM_MAPPED_CHANNELS; I++)
+	{
+		const int4 Info = BufferChannel_TextureChannel_Unused_Unused[I];
+		const int BufferChannel = Info.x;
+		const int TextureChannel = Info.y;
+
+		OutputTexture[DispatchThreadID.xy][TextureChannel] = READ(OutputBuffer[Idx + BufferChannel * Offset]);
+	}
+
+	// note: alpha channel denoising or transfer not supported (yet)
+	OutputTexture[DispatchThreadID.xy].a = 1.0;
+}

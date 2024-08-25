@@ -141,8 +141,7 @@ bool IsReflectionEnvironmentAvailable(ERHIFeatureLevel::Type InFeatureLevel)
 
 bool IsReflectionCaptureAvailable()
 {
-	static IConsoleVariable* AllowStaticLightingVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.AllowStaticLighting"));
-	return (!AllowStaticLightingVar || AllowStaticLightingVar->GetInt() != 0);
+	return IsStaticLightingAllowed();
 }
 
 void FReflectionEnvironmentCubemapArray::InitRHI(FRHICommandListBase&)

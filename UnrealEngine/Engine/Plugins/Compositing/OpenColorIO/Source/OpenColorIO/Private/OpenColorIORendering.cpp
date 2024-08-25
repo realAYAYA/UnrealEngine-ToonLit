@@ -2,7 +2,6 @@
 
 #include "OpenColorIORendering.h"
 
-#include "ColorSpace.h"
 #include "Engine/RendererSettings.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
@@ -17,30 +16,12 @@
 #include "OpenColorIOShaderType.h"
 #include "OpenColorIOShared.h"
 #include "OpenColorIOColorTransform.h"
-#include "OpenColorIOWrapperDefines.h"
 #include "SceneInterface.h"
 #include "ScreenPass.h"
 #include "TextureResource.h"
 
 
 float FOpenColorIORendering::DefaultDisplayGamma = 2.2f;
-
-namespace {
-	using namespace UE::Color;
-
-	// Static local storage to prevent color space recomputation every frame. This is viable since a WCS change requires a project relaunch.
-	const FMatrix44f& GetWorkingColorSpaceToInterchangeTransform()
-	{
-		static FMatrix44f Transform = Transpose<float>(FColorSpaceTransform(FColorSpace::GetWorking(), FColorSpace(EColorSpace::ACESAP0)));
-		return Transform;
-	}
-
-	const FMatrix44f& GetInterchangeToWorkingColorSpaceTransform()
-	{
-		static FMatrix44f Transform = Transpose<float>(FColorSpaceTransform(FColorSpace(EColorSpace::ACESAP0), FColorSpace::GetWorking()));
-		return Transform;
-	}
-}
 
 // static
 void FOpenColorIORendering::AddPass_RenderThread(
@@ -61,37 +42,46 @@ void FOpenColorIORendering::AddPass_RenderThread(
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(FeatureLevel);
 	TShaderMapRef<FScreenPassVS> VertexShader(ShaderMap);
 
-	if (InPassResource.ShaderResource != nullptr)
+	bool bRenderPassSuccessed = false;
+
+	TSortedMap<int32, FTextureResource*> TextureResources;
+	TextureResources.Reserve(InPassResource.TextureResources.Num());
+
+	for (const TPair<int32, TWeakObjectPtr<UTexture>>& Pair : InPassResource.TextureResources)
+	{
+		if (Pair.Value.IsValid(false, true))
+		{
+			// UTexture's GetResource() is safe to call from the render thread.
+			if (FTextureResource* TextureResource = Pair.Value->GetResource())
+			{
+				TextureResources.Add(Pair.Key, TextureResource);
+			}
+		}
+	}
+
+	const bool bAllExpectedTexturesResources = TextureResources.Num() == InPassResource.TextureResources.Num();
+
+	if (bAllExpectedTexturesResources && InPassResource.ShaderResource != nullptr)
 	{
 		TShaderRef<FOpenColorIOPixelShader> OCIOPixelShader = InPassResource.ShaderResource->GetShader<FOpenColorIOPixelShader>();
 
 		FOpenColorIOPixelShaderParameters* Parameters = GraphBuilder.AllocParameters<FOpenColorIOPixelShaderParameters>();
 		Parameters->InputTexture = Input.Texture;
 		Parameters->InputTextureSampler = TStaticSamplerState<>::GetRHI();
-		OpenColorIOBindTextureResources(Parameters, InPassResource.TextureResources);
-
-		// Apply a transform between the working color space and the interchange color space, if necessary.
-		switch (InPassResource.ShaderResource->GetWorkingColorSpaceTransformType())
+		if (OpenColorIOBindTextureResources(Parameters, TextureResources))
 		{
-		case EOpenColorIOWorkingColorSpaceTransform::Source:
-			Parameters->WorkingColorSpaceToInterchange = GetWorkingColorSpaceToInterchangeTransform();
-			break;
-		case EOpenColorIOWorkingColorSpaceTransform::Destination:
-			Parameters->InterchangeToWorkingColorSpace = GetInterchangeToWorkingColorSpaceTransform();
-			break;
+			Parameters->Gamma = InGamma;
+			Parameters->TransformAlpha = (uint32)TransformAlpha;
+			Parameters->RenderTargets[0] = Output.GetRenderTargetBinding();
 
-		default:
-			// do nothing, shader parameter is unused.
-			break;	
+			FRDGEventName PassName = RDG_EVENT_NAME("OpenColorIOPass %dx%d (%s)", Output.ViewRect.Width(), Output.ViewRect.Height(), InPassResource.TransformName.IsEmpty() ? TEXT("Unspecified Transform") : *InPassResource.TransformName);
+			AddDrawScreenPass(GraphBuilder, MoveTemp(PassName), ViewInfo, OutputViewport, InputViewport, VertexShader, OCIOPixelShader, Parameters);
+
+			bRenderPassSuccessed = true;
 		}
-		Parameters->Gamma = InGamma;
-		Parameters->TransformAlpha = (uint32)TransformAlpha;
-		Parameters->RenderTargets[0] = Output.GetRenderTargetBinding();
-		
-		FRDGEventName PassName = RDG_EVENT_NAME("OpenColorIOPass %dx%d (%s)", Output.ViewRect.Width(), Output.ViewRect.Height(), InPassResource.TransformName.IsEmpty() ? TEXT("Unspecified Transform") : *InPassResource.TransformName);
-		AddDrawScreenPass(GraphBuilder, MoveTemp(PassName), ViewInfo, OutputViewport, InputViewport, VertexShader, OCIOPixelShader, Parameters);
 	}
-	else
+
+	if(!bRenderPassSuccessed)
 	{
 		// Fallback pass, printing invalid message across the viewport.
 		TShaderMapRef<FOpenColorIOInvalidPixelShader> OCIOInvalidPixelShader(ShaderMap);
@@ -201,11 +191,11 @@ bool FOpenColorIORendering::ApplyColorTransform(UWorld* InWorld, const FOpenColo
 
 	const ERHIFeatureLevel::Type FeatureLevel = InWorld->Scene->GetFeatureLevel();
 	FOpenColorIOTransformResource* ShaderResource = nullptr;
-	TSortedMap<int32, FTextureResource*> TransformTextureResources;
+	TSortedMap<int32, TWeakObjectPtr<UTexture>> TransformTextures;
 
 	if (InSettings.ConfigurationSource != nullptr)
 	{
-		const bool bFoundTransform = InSettings.ConfigurationSource->GetRenderResources(FeatureLevel, InSettings, ShaderResource, TransformTextureResources);
+		const bool bFoundTransform = InSettings.ConfigurationSource->GetRenderResources(FeatureLevel, InSettings, ShaderResource, TransformTextures);
 
 		if (bFoundTransform)
 		{
@@ -221,7 +211,7 @@ bool FOpenColorIORendering::ApplyColorTransform(UWorld* InWorld, const FOpenColo
 	}
 	
 	ENQUEUE_RENDER_COMMAND(ProcessColorSpaceTransform)(
-		[FeatureLevel, InputResource, OutputResource, ShaderResource, TextureResources = MoveTemp(TransformTextureResources), TransformName = InSettings.ToString()](FRHICommandListImmediate& RHICmdList)
+		[FeatureLevel, InputResource, OutputResource, ShaderResource, Textures = MoveTemp(TransformTextures), TransformName = InSettings.ToString()](FRHICommandListImmediate& RHICmdList)
 		{
 			FRDGBuilder GraphBuilder(RHICmdList);
 
@@ -236,7 +226,7 @@ bool FOpenColorIORendering::ApplyColorTransform(UWorld* InWorld, const FOpenColo
 				FeatureLevel,
 				FScreenPassTexture(InputTexture),
 				Output,
-				FOpenColorIORenderPassResources{ShaderResource, TextureResources, TransformName},
+				FOpenColorIORenderPassResources{ShaderResource, Textures, TransformName},
 				1.0f); // Set Gamma to 1., since we do not have any display parameters or requirement for Gamma.
 
 			GraphBuilder.Execute();

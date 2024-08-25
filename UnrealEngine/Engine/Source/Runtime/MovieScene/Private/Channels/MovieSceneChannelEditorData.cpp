@@ -18,6 +18,8 @@ const FLinearColor FCommonChannelData::RedChannelColor(1.0f, 0.05f, 0.05f, 0.9f)
 const FLinearColor FCommonChannelData::GreenChannelColor(0.05f, 1.0f, 0.05f, 0.9f);
 const FLinearColor FCommonChannelData::BlueChannelColor(0.1f, 0.2f, 1.0f, 0.9f);
 
+const FName FCommonChannelData::GroupDisplayName = TEXT("GroupDisplayName");
+
 
 FMovieSceneChannelMetaData::FMovieSceneChannelMetaData()
 	: bEnabled(true)

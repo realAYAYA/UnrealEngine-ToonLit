@@ -25,7 +25,7 @@ namespace EpicGames.Perforce
 		public PerforceViewFilter(IEnumerable<PerforceViewFilterEntry> entries)
 		{
 			Entries = entries.ToList();
-			
+
 			// When first entry is excluding, start by including everything. Otherwise, default is to exclude.
 			// This is to emulate the behavior of ManagedWorkspace.UpdateClientHaveTableAsync()
 			if (Entries.Count == 0 || !Entries[0].Include)
@@ -108,7 +108,7 @@ namespace EpicGames.Perforce
 		public PerforceViewFilterEntry(bool include, string pathExpression)
 		{
 			Include = include;
-		
+
 			Match match = Regex.Match(pathExpression, @"^(.*?)(\*|\.\.\.|%%1)(.*)$");
 			if (match.Success)
 			{
@@ -122,7 +122,7 @@ namespace EpicGames.Perforce
 				Suffix = String.Empty;
 				Wildcard = String.Empty;
 			}
-			
+
 			if (!Prefix.StartsWith('/'))
 			{
 				Prefix = '/' + Prefix;
@@ -158,7 +158,7 @@ namespace EpicGames.Perforce
 			}
 			return new PerforceViewFilterEntry(match.Groups[1].Length == 0, match.Groups[2].Value);
 		}
-		
+
 		/// <summary>
 		/// Determine if a file matches the current entry
 		/// </summary>
@@ -171,13 +171,13 @@ namespace EpicGames.Perforce
 			{
 				path = '/' + path;
 			}
-			
+
 			if (Wildcard.Length == 0)
 			{
 				// Expect an exact match if no wildcard is specified
 				return String.Equals(path, Prefix, comparison);
 			}
-			
+
 			if (!path.StartsWith(Prefix, comparison) || !path.EndsWith(Suffix, comparison))
 			{
 				return false;

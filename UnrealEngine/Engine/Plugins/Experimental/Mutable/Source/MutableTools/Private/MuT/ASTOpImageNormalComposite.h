@@ -13,7 +13,7 @@ namespace mu
 {
 struct FProgram;
 
-	class ASTOpImageNormalComposite : public ASTOp
+	class ASTOpImageNormalComposite final : public ASTOp
 	{
 	public:
 		ASTChild Base;

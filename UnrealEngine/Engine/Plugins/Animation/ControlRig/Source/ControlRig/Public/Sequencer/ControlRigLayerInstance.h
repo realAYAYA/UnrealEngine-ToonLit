@@ -49,9 +49,15 @@ public:
 	virtual void SetSourceAnimInstance(UAnimInstance* SourceAnimInstance) override;
 	virtual bool DoesSupportDifferentSourceAnimInstance() const override { return true; }
 
+#if WITH_EDITOR
+	virtual void HandleObjectsReinstanced(const TMap<UObject*, UObject*>& OldToNewInstanceMap) override;
+#endif
+
 protected:
 	// UAnimInstance interface
 	virtual FAnimInstanceProxy* CreateAnimInstanceProxy() override;
+public:
+	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
 
 public:
 	static const FName SequencerPoseName;

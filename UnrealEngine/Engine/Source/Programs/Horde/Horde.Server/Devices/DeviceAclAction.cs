@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Acls;
+using EpicGames.Horde.Acls;
 
 namespace Horde.Server.Devices
 {

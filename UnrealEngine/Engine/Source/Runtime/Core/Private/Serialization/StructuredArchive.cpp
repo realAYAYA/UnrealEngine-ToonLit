@@ -154,7 +154,7 @@ void FStructuredArchive::SetScope(UE::StructuredArchive::Private::FSlotPosition 
 			case UE::StructuredArchive::Private::EElementType::Record:
 				Formatter.LeaveRecord();
 #if DO_STRUCTURED_ARCHIVE_CONTAINER_CHECKS
-				CurrentContainer.Pop(false);
+				CurrentContainer.Pop(EAllowShrinking::No);
 #endif
 				break;
 			case UE::StructuredArchive::Private::EElementType::Array:
@@ -163,7 +163,7 @@ void FStructuredArchive::SetScope(UE::StructuredArchive::Private::FSlotPosition 
 #endif
 				Formatter.LeaveArray();
 #if DO_STRUCTURED_ARCHIVE_CONTAINER_CHECKS
-				CurrentContainer.Pop(false);
+				CurrentContainer.Pop(EAllowShrinking::No);
 #endif
 				break;
 			case UE::StructuredArchive::Private::EElementType::Stream:
@@ -175,19 +175,19 @@ void FStructuredArchive::SetScope(UE::StructuredArchive::Private::FSlotPosition 
 #endif
 				Formatter.LeaveMap();
 #if DO_STRUCTURED_ARCHIVE_CONTAINER_CHECKS
-				CurrentContainer.Pop(false);
+				CurrentContainer.Pop(EAllowShrinking::No);
 #endif
 				break;
 			case UE::StructuredArchive::Private::EElementType::AttributedValue:
 				Formatter.LeaveAttributedValue();
 #if DO_STRUCTURED_ARCHIVE_CONTAINER_CHECKS
-				CurrentContainer.Pop(false);
+				CurrentContainer.Pop(EAllowShrinking::No);
 #endif
 				break;
 			}
 
 			// Remove the element from the stack
-			CurrentScope.RemoveAt(CurrentDepth, 1, false);
+			CurrentScope.RemoveAt(CurrentDepth, 1, EAllowShrinking::No);
 
 			// Leave the slot containing it
 			LeaveSlot();

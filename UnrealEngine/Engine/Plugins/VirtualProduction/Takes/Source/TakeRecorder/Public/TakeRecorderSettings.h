@@ -19,14 +19,22 @@ public:
 
 	TAKERECORDER_API UTakeRecorderUserSettings();
 
+#if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+	/** Return the PresetSaveDir path relative to the project. */
+	FString GetResolvedPresetSaveDir() const;
+
+	/** Sets the default location for the present saved directory. */
+	void SetPresetSaveDir(const FString& InPath);
 
 	/** User settings that should be passed to a recorder instance */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category="User Settings", meta=(ShowOnlyInnerProperties))
 	FTakeRecorderUserParameters Settings;
 
 	/** The default location in which to save take presets */
-	UPROPERTY(config, EditAnywhere, Category="User Settings", DisplayName="Preset Save Location")
+	UPROPERTY(config, EditAnywhere, Category="User Settings", DisplayName="Preset Save Location", meta = (ContentDir))
 	FDirectoryPath PresetSaveDir;
 
 	/** Soft reference to the preset last opened on the take recording UI */
@@ -53,7 +61,9 @@ public:
 
 	TAKERECORDER_API UTakeRecorderProjectSettings();
 
+#if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category="Take Recorder", meta=(ShowOnlyInnerProperties))
 	FTakeRecorderProjectParameters Settings;

@@ -530,6 +530,36 @@ void FUIActionBindingHandle::SetDisplayName(const FText& DisplayName)
 	}
 }
 
+bool FUIActionBindingHandle::GetDisplayInActionBar() const
+{
+	bool bDisplayInActionBar = false;
+
+	if (const FUIActionBinding* Binding = FUIActionBinding::FindBinding(*this).Get())
+	{
+		bDisplayInActionBar = Binding->bDisplayInActionBar;
+	}
+
+	return bDisplayInActionBar;
+}
+
+void FUIActionBindingHandle::SetDisplayInActionBar(const bool bDisplayInActionBar)
+{
+	FUIActionBinding* Binding = FUIActionBinding::FindBinding(*this).Get();
+
+	if (Binding && Binding->bDisplayInActionBar != bDisplayInActionBar)
+	{
+		Binding->bDisplayInActionBar = bDisplayInActionBar;
+
+		if (const UWidget* BoundWidget = Binding->BoundWidget.Get())
+		{
+			if (const UCommonUIActionRouterBase* ActionRouter = UCommonUIActionRouterBase::Get(*BoundWidget))
+			{
+				ActionRouter->OnBoundActionsUpdated().Broadcast();
+			}
+		}
+	}
+}
+
 const UWidget* FUIActionBindingHandle::GetBoundWidget() const
 {
 	if (TSharedPtr<const FUIActionBinding> Binding = FUIActionBinding::FindBinding(*this))
@@ -547,6 +577,31 @@ const UWidget* FUIActionBindingHandle::GetBoundWidget() const
 FUIInputConfig::FUIInputConfig()
 	: InputMode(ECommonInputMode::Menu)
 	, MouseCaptureMode(EMouseCaptureMode::NoCapture)
+	, MouseLockMode(EMouseLockMode::DoNotLock)
+{}
+
+FUIInputConfig::FUIInputConfig(ECommonInputMode InInputMode, EMouseCaptureMode InMouseCaptureMode, bool bInHideCursorDuringViewportCapture)
+	: InputMode(InInputMode)
+	, MouseCaptureMode(InMouseCaptureMode)
+	, bHideCursorDuringViewportCapture(bInHideCursorDuringViewportCapture)
+{
+	switch (MouseCaptureMode)
+	{
+	case EMouseCaptureMode::CapturePermanently:
+	case EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown:
+		MouseLockMode = EMouseLockMode::LockOnCapture;
+		break;
+	default:
+		MouseLockMode = EMouseLockMode::DoNotLock;
+		break;
+	}
+}
+
+FUIInputConfig::FUIInputConfig(ECommonInputMode InInputMode, EMouseCaptureMode InMouseCaptureMode, EMouseLockMode InMouseLockMode, bool bInHideCursorDuringViewportCapture)
+	: InputMode(InInputMode)
+	, MouseCaptureMode(InMouseCaptureMode)
+	, MouseLockMode(InMouseLockMode)
+	, bHideCursorDuringViewportCapture(bInHideCursorDuringViewportCapture)
 {}
 
 FString FUIInputConfig::ToString() const
@@ -1196,18 +1251,25 @@ void FActivatableTreeNode::HandleWidgetDeactivated()
 	if (bCanReceiveInput)
 	{
 		SetCanReceiveInput(false);
-		
-		if (Parent.IsValid() && DoesPathSupportActivationFocus())
-		{
-			// Search for the nearest parent that's still receiving input to give it focus
-			if (FActivatableTreeNodePtr NearestActiveParent = GetParentNode())
-			{
-				while (NearestActiveParent && !NearestActiveParent->IsReceivingInput())
-				{
-					NearestActiveParent = NearestActiveParent->GetParentNode();
-				}
 
-				GetActionRouter().UpdateLeafNodeAndConfig(GetRoot(), NearestActiveParent);
+		if (Parent.IsValid())
+		{
+			if (DoesPathSupportActivationFocus())
+			{
+				// Search for the nearest parent that's still receiving input to give it focus
+				if (FActivatableTreeNodePtr NearestActiveParent = GetParentNode())
+				{
+					while (NearestActiveParent && !NearestActiveParent->IsReceivingInput())
+					{
+						NearestActiveParent = NearestActiveParent->GetParentNode();
+					}
+
+					GetActionRouter().UpdateLeafNodeAndConfig(GetRoot(), NearestActiveParent);
+				}
+			}
+			else
+			{
+				GetActionRouter().OnBoundActionsUpdated().Broadcast();
 			}
 		}
 	}
@@ -1439,10 +1501,27 @@ void FActivatableTreeRoot::ApplyLeafmostNodeConfig()
 void FActivatableTreeRoot::FocusLeafmostNode()
 {
 	check(LeafmostActiveNode.IsValid());
-
+	if (!LeafmostActiveNode.IsValid())
+	{
+		UE_LOG(LogUIActionRouter, Error, TEXT("Cannot focus leaf most node - invalid LeafmostActiveNode"));
+		return;
+	}
 	FActivatableTreeNodePtr PinnedLeafmostNode = LeafmostActiveNode.Pin();
+
+	check(PinnedLeafmostNode);
+	if (!PinnedLeafmostNode)
+	{
+		UE_LOG(LogUIActionRouter, Error, TEXT("Cannot focus leaf most node - invalid PinnedLeafmostNode"));
+		return;
+	}
+
 	UCommonActivatableWidget* LeafWidget = PinnedLeafmostNode->GetWidget();
 	check(LeafWidget);
+	if (!LeafWidget)
+	{
+		UE_LOG(LogUIActionRouter, Error, TEXT("Cannot focus leaf most node - invalid LeafWidget"));
+		return;
+	}
 
 	const int32 OwnerSlateId = GetOwnerUserIndex();
 	ULocalPlayer& LocalPlayer = *GetActionRouter().GetLocalPlayerChecked();

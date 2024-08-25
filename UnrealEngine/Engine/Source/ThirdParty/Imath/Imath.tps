@@ -3,7 +3,7 @@
   <Name>Imath</Name>
   <Location>Engine/Source/ThirdParty/Imath</Location>
   <Function>Imath is a basic, light-weight, and efficient C++ representation of 2D and 3D vectors and matrices and other simple but useful mathematical objects, functions, and data types common in computer graphics applications, including the “half” 16-bit floating-point type.</Function>
-  <Eula>https://github.com/AcademySoftwareFoundation/Imath/blob/v3.1.3/LICENSE.md</Eula>
+  <Eula>https://github.com/AcademySoftwareFoundation/Imath/blob/v3.1.9/LICENSE.md</Eula>
   <RedistributeTo>
     <EndUserGroup>Licensees</EndUserGroup>
     <EndUserGroup>Git</EndUserGroup>

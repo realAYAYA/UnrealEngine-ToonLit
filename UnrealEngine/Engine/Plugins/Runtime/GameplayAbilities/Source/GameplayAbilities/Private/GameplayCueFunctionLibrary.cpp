@@ -7,6 +7,7 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GameplayCueFunctionLibrary)
 
+DEFINE_LOG_CATEGORY_STATIC(LogGameplayCueFunctionLibrary, Log, All);
 
 //////////////////////////////////////////////////////////////////////////
 // UGameplayCueFunctionLibrary
@@ -57,6 +58,11 @@ void UGameplayCueFunctionLibrary::AddGameplayCueOnActor(AActor* Target, const FG
 
 	if (ASC)
 	{
+		if (ASC->ReplicationProxyEnabled && (Parameters != FGameplayCueParameters()))
+		{
+			UE_LOG(LogGameplayCueFunctionLibrary, Warning, TEXT("%hs: Parameters may not replicate when using AbilitySystemComponent with ReplicationProxyEnabled!"), __FUNCTION__);
+		}
+
 		// The actor has an ability system so the event will fire on authority only and will be replicated.
 		if (Target->GetLocalRole() == ROLE_Authority)
 		{

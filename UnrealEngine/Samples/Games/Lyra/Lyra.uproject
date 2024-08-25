@@ -191,6 +191,18 @@
 			"Enabled": true
 		},
 		{
+			"Name": "PlayFabParty",
+			"Enabled": true,
+			"PlatformAllowList": [
+				"XB1",
+				"XSX"
+			],
+			"SupportedTargetPlatforms": [
+				"XB1",
+				"XSX"
+			]
+		},
+		{
 			"Name": "OnlineSubsystemEOS",
 			"Enabled": true
 		},

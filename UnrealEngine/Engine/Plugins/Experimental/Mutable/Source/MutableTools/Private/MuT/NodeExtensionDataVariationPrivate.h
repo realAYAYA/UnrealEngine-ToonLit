@@ -11,23 +11,19 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeExtensionDataPtr DefaultValue;
 
-		struct VARIATION
+		struct FVariation
 		{
 			NodeExtensionDataPtr Value;
-			string Tag;
+			FString Tag;
 
 			//!
 			void Serialise(OutputArchive& InArch) const
 			{
-				uint32_t Ver = 1;
+				uint32 Ver = 2;
 				InArch << Ver;
 
 				InArch << Tag;
@@ -36,16 +32,25 @@ namespace mu
 
 			void Unserialise(InputArchive& InArch)
 			{
-				uint32_t Ver = 0;
+				uint32 Ver = 0;
 				InArch >> Ver;
-				check(Ver == 1);
+				check(Ver >= 1 && Ver <= 2);
 
-				InArch >> Tag;
+				if (Ver <= 1)
+				{
+					std::string Temp;
+					InArch >> Temp;
+					Tag = Temp.c_str();
+				}
+				else
+				{
+					InArch >> Tag;
+				}
 				InArch >> Value;
 			}
 		};
 
-		TArray<VARIATION> Variations;
+		TArray<FVariation> Variations;
 
 		//!
 		void Serialise(OutputArchive& InArch) const

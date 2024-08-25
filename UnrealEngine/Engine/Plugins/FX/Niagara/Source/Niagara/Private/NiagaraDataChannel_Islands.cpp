@@ -14,6 +14,15 @@
 
 //////////////////////////////////////////////////////////////////////////
 
+namespace NDCIslands_Local
+{
+	int32 AllowAsyncLoad = 1;
+	static FAutoConsoleVariableRef CVarAllowAsyncLoad(TEXT("fx.Niagara.DataChannels.AllowAsyncLoad"), AllowAsyncLoad, TEXT("True if we should attempt to load systems etc asynchronosly."), ECVF_Default);
+
+	int32 BlockAsyncLoadOnUse = 1;
+	static FAutoConsoleVariableRef CVarBlockAsyncLoadOnUse(TEXT("fx.Niagara.DataChannels.BlockAsyncLoadOnUse"), BlockAsyncLoadOnUse, TEXT("True if we should block on any pending async loads when those assets are used."), ECVF_Default);
+}
+
 void UNiagaraDataChannel_Islands::PostLoad()
 {
 	Super::PostLoad();
@@ -26,12 +35,18 @@ void UNiagaraDataChannel_Islands::PostLoad()
 TConstArrayView<TObjectPtr<UNiagaraSystem>> UNiagaraDataChannel_Islands::GetSystems()const
 {
 	check(IsInGameThread());
+	if(NDCIslands_Local::BlockAsyncLoadOnUse && AsyncLoadHandle && AsyncLoadHandle->IsActive())
+	{
+		AsyncLoadHandle->WaitUntilComplete();
+		PostLoadSystems();
+	}
+
 	return SystemsInternal;
 }
 
 void UNiagaraDataChannel_Islands::AsyncLoadSystems()const
 {
-	if(INiagaraModule::DataChannelsEnabled() && SystemsInternal.Num() != Systems.Num() && Systems.Num() > 0 && !IsRunningDedicatedServer())
+	if(INiagaraModule::DataChannelsEnabled() && !IsRunningDedicatedServer())
 	{
 		TArray<FSoftObjectPath> Requests;
 		for (const TSoftObjectPtr<UNiagaraSystem>& SoftSys : Systems)
@@ -44,9 +59,9 @@ void UNiagaraDataChannel_Islands::AsyncLoadSystems()const
 
 		if (Requests.Num() > 0)
 		{
-			if (UAssetManager::IsInitialized())
+			if (NDCIslands_Local::AllowAsyncLoad && UAssetManager::IsInitialized())
 			{
-				UAssetManager::GetStreamableManager().RequestAsyncLoad(Requests
+				AsyncLoadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(Requests
 					, FStreamableDelegate::CreateUObject(this, &UNiagaraDataChannel_Islands::PostLoadSystems)
 					, FStreamableManager::AsyncLoadHighPriority
 					, false
@@ -77,6 +92,8 @@ void UNiagaraDataChannel_Islands::PostLoadSystems()const
 	{
 		SystemsInternal.Add(SoftSys.Get());
 	}
+
+	AsyncLoadHandle.Reset();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -150,7 +167,7 @@ void UNiagaraDataChannelHandler_Islands::Tick(float DeltaTime, ETickingGroup Tic
 	for (auto It = ActiveIslands.CreateIterator(); It; ++It)
 	{
 		FNDCIsland& Island = IslandPool[*It];
-		Island.Tick();
+		Island.Tick(TickGroup);
 
 		if(IslandChannel->GetDebugDrawSettings().ShowBounds())
 		{
@@ -188,12 +205,12 @@ FNDCIsland* UNiagaraDataChannelHandler_Islands::FindOrCreateIsland(const FNiagar
 		//When writing we'll grow/spawn islands to accommodate the data.
 
 		//First we see if this is an islands handler system.
-		if(SearchParams.OwningComponent)
+		if(SearchParams.GetOwner())
 		{
 			for (int32 i : ActiveIslands)
 			{
 				FNDCIsland& Island = IslandPool[i];
-				if (Island.IsHandlerSystem(SearchParams.OwningComponent))
+				if (Island.IsHandlerSystem(SearchParams.GetOwner()))
 				{
 					return &Island;
 				}
@@ -202,7 +219,7 @@ FNDCIsland* UNiagaraDataChannelHandler_Islands::FindOrCreateIsland(const FNiagar
 			for (int32 i : ActiveIslands)
 			{
 				FNDCIsland& Island = IslandPool[i];
-				if (Island.Intersects(SearchParams.OwningComponent->Bounds))
+				if (Island.Intersects(SearchParams.GetOwner()->Bounds))
 				{
 					return &Island;
 				}
@@ -272,7 +289,7 @@ int32 UNiagaraDataChannelHandler_Islands::ActivateNewIsland(FVector Location)
 	FNDCIsland* NewIsland = nullptr;
 	if (FreeIslands.Num() > 0)
 	{
-		NewIndex = FreeIslands.Pop(false);
+		NewIndex = FreeIslands.Pop(EAllowShrinking::No);
 		NewIsland = &IslandPool[NewIndex];
 	}
 
@@ -399,9 +416,19 @@ void FNDCIsland::EndFrame()
 	Data->EndFrame(Owner);
 }
 
-void FNDCIsland::Tick()
+void FNDCIsland::Tick(const ETickingGroup& TickGroup)
 {
-	Data->ConsumePublishRequests(Owner);
+	int32 AddedData = Data->ConsumePublishRequests(Owner, TickGroup);
+	if (IsBeingUsed() && AddedData > 0)
+	{
+		for (UNiagaraComponent* Comp : NiagaraSystems)
+		{
+			if (Comp->IsComplete())
+			{
+				Comp->Activate();
+			}
+		}
+	}
 }
 
 bool FNDCIsland::Contains(FVector Point)

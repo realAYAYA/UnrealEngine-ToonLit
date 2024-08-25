@@ -181,6 +181,7 @@ struct FSimulationParameters
 		, MaxClusterLevel(100)
 		, MaxSimulatedLevel(100)
 		, bUseSizeSpecificDamageThresholds(false)
+		, bUseMaterialDamageModifiers(false)
 		, DamageModel(EDamageModelTypeEnum::Chaos_Damage_Model_UserDefined_Damage_Threshold)
 		, DamageEvaluationModel(Chaos::EDamageEvaluationModel::StrainFromDamageThreshold)
 		, DamageThreshold({500000.f, 50000.f, 5000.f})
@@ -210,10 +211,14 @@ struct FSimulationParameters
 		, bGenerateGlobalCrumblingChildrenData(false)
 		, EnableGravity(true)
 		, GravityGroupIndex(0)
+		, OneWayInteractionLevel(INDEX_NONE)
 		, UseInertiaConditioning(true)
 		, UseCCD(false)
+		, UseMACD(false)
 		, LinearDamping(0.01f)
 		, AngularDamping(0)
+		, InitialOverlapDepenetrationVelocity(-1.0f)
+		, SleepThresholdMultiplier(1.0f)
 		, bUseDamagePropagation(false)
 		, BreakDamagePropagationFactor(1.0f)
 		, ShockDamagePropagationFactor(0.0f)
@@ -221,6 +226,8 @@ struct FSimulationParameters
 		, QueryFilterData()
 		, UserData(nullptr)
 		, bEnableStrainOnCollision(true)
+		, bUseStaticMeshCollisionForTraces(false)
+		, bOptimizeConvexes(true)
 	{}
 
 	FSimulationParameters(const FSimulationParameters& Other)
@@ -237,6 +244,7 @@ struct FSimulationParameters
 		, MaxClusterLevel(Other.MaxClusterLevel)
 		, MaxSimulatedLevel(Other.MaxSimulatedLevel)
 		, bUseSizeSpecificDamageThresholds(Other.bUseSizeSpecificDamageThresholds)
+		, bUseMaterialDamageModifiers(Other.bUseMaterialDamageModifiers)
 		, DamageModel(Other.DamageModel)
 		, DamageEvaluationModel(Other.DamageEvaluationModel)
 		, DamageThreshold(Other.DamageThreshold)
@@ -268,10 +276,14 @@ struct FSimulationParameters
 		, Shared(Other.Shared)
 		, EnableGravity(Other.EnableGravity)
 		, GravityGroupIndex(Other.GravityGroupIndex)
+		, OneWayInteractionLevel(Other.OneWayInteractionLevel)
 		, UseInertiaConditioning(Other.UseInertiaConditioning)
 		, UseCCD(Other.UseCCD)
+		, UseMACD(Other.UseMACD)
 		, LinearDamping(Other.LinearDamping)
 		, AngularDamping(Other.AngularDamping)
+		, InitialOverlapDepenetrationVelocity(Other.InitialOverlapDepenetrationVelocity)
+		, SleepThresholdMultiplier(Other.SleepThresholdMultiplier)
 		, bUseDamagePropagation(Other.bUseDamagePropagation)
 		, BreakDamagePropagationFactor(Other.BreakDamagePropagationFactor)
 		, ShockDamagePropagationFactor(Other.ShockDamagePropagationFactor)
@@ -279,6 +291,8 @@ struct FSimulationParameters
 		, QueryFilterData(Other.QueryFilterData)
 		, UserData(Other.UserData)
 		, bEnableStrainOnCollision(Other.bEnableStrainOnCollision)
+		, bUseStaticMeshCollisionForTraces(Other.bUseStaticMeshCollisionForTraces)
+		, bOptimizeConvexes(Other.bOptimizeConvexes)
 	{
 	}
 
@@ -310,6 +324,7 @@ struct FSimulationParameters
 	int32 MaxClusterLevel;
 	int32 MaxSimulatedLevel;
 	bool bUseSizeSpecificDamageThresholds;
+	bool bUseMaterialDamageModifiers;
 
 	/** this is the user expose damage model, used for creation of the particles */
 	EDamageModelTypeEnum DamageModel; 
@@ -356,10 +371,14 @@ struct FSimulationParameters
 
 	bool EnableGravity;
 	int32 GravityGroupIndex;
+	int32 OneWayInteractionLevel;
 	bool UseInertiaConditioning;
 	bool UseCCD;
+	bool UseMACD;
 	float LinearDamping;
 	float AngularDamping;
+	float InitialOverlapDepenetrationVelocity;
+	float SleepThresholdMultiplier;
 
 	bool bUseDamagePropagation;
 	float BreakDamagePropagationFactor;
@@ -369,4 +388,8 @@ struct FSimulationParameters
 	FCollisionFilterData QueryFilterData;
 	void* UserData;
 	bool bEnableStrainOnCollision;
+
+	bool bUseStaticMeshCollisionForTraces;
+
+	bool bOptimizeConvexes = true;
 };

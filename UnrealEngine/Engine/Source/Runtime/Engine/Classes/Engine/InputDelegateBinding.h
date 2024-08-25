@@ -35,9 +35,6 @@ UCLASS(abstract, MinimalAPI)
 class UInputDelegateBinding : public UDynamicBlueprintBinding
 {
 	GENERATED_UCLASS_BODY()
-
-	UE_DEPRECATED(5.0, "This version of BindToInputComponent is deprecated, please use the version that takes in an ObjectToBindTo instead.")
-	virtual void BindToInputComponent(UInputComponent* InputComponent) const { };
 	
 	/**
 	 * Override this function to bind a delegate to the given input component.

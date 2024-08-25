@@ -391,7 +391,8 @@ bool UNiagaraDataInterfaceCurlNoise::Equals(const UNiagaraDataInterface* Other) 
 	return OtherCurlNoise->Seed == Seed;
 }
 
-void UNiagaraDataInterfaceCurlNoise::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceCurlNoise::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature Sig;
 	Sig.Name = SampleNoiseFieldName;
@@ -404,6 +405,7 @@ void UNiagaraDataInterfaceCurlNoise::GetFunctions(TArray<FNiagaraFunctionSignatu
 
 	OutFunctions.Add(Sig);
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceCurlNoise, SampleNoiseField);
 void UNiagaraDataInterfaceCurlNoise::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)

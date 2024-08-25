@@ -29,6 +29,7 @@ class UTexture2DArray;
 class UTextureCube;
 class UTextureCubeArray;
 class UVolumeTexture;
+class UTextureRenderTarget;
 class UTextureRenderTarget2D;
 class UTextureRenderTargetCube;
 class IImageWrapperModule;
@@ -149,6 +150,16 @@ public:
 	* 
 	*/
 	ENGINE_API static bool ExportTextureSourceToDDS(TArray64<uint8> & OutData, UTexture * Texture, int BlockIndex=0, int LayerIndex=0);
+	
+	/**
+	*  Export Texture RenderTarget (2D,Array,Cube,CubeArray,Volume) to DDS
+	*  reads from texture rendertarget RHI texture
+	* 
+	* @param OutData    Filled with DDS file format
+	* @param TexRT    Texture RenderTarget (2D,Array,Cube,CubeArray,Volume) to export
+	* 
+	*/
+	ENGINE_API static bool ExportRenderTargetToDDS(TArray64<uint8> & OutData, UTextureRenderTarget * TexRT);
 
 	/**
 	 * if Texture source is available, get it as an FImage
@@ -160,6 +171,8 @@ public:
 
 	/**
 	 * Resizes the given image using a simple average filter and stores it in the destination array.  This version constrains aspect ratio.
+	 *
+	 * DEPRECATED do not use this, use FImageCore::ResizeImage instead
 	 *
 	 * @param SrcWidth				Source image width.
 	 * @param SrcHeight				Source image height.
@@ -176,6 +189,8 @@ public:
 	 * Resizes the given image using a simple average filter and stores it in the destination array.  This version constrains aspect ratio.
 	 * Accepts TArrayViews but requires that DstData be pre-sized appropriately
 	 *
+	 * DEPRECATED do not use this, use FImageCore::ResizeImage instead
+	 *
 	 * @param SrcWidth				Source image width.
 	 * @param SrcHeight				Source image height.
 	 * @param SrcData				Source image data.
@@ -190,6 +205,8 @@ public:
 	/**
 	 * Resizes the given image using a simple average filter and stores it in the destination array.  This version constrains aspect ratio.
 	 *
+	 * DEPRECATED do not use this, use FImageCore::ResizeImage instead
+	 *
 	 * @param SrcWidth	Source image width.
 	 * @param SrcHeight	Source image height.
 	 * @param SrcData	Source image data.
@@ -202,6 +219,8 @@ public:
 	/**
 	 * Resizes the given image using a simple average filter and stores it in the destination array.  This version constrains aspect ratio.
 	 * Accepts TArrayViews but requires that DstData be pre-sized appropriately
+	 *
+	 * DEPRECATED do not use this, use FImageCore::ResizeImage instead
 	 *
 	 * @param SrcWidth	Source image width.
 	 * @param SrcHeight	Source image height.
@@ -224,14 +243,35 @@ public:
 	 * @param InParams		Params about how to set up the texture.
 	 * @return				Returns a pointer to the constructed 2D texture object.
 	 *
+	 * this fills a TextureSource , and will then Build a Platform texture from that
+	 * can be used WITH_EDITOR only
+	 * contrast to CreateTexture2DFromImage
+	 *
+	 * Prefer the more modern CreateTexture from FImage.
 	 */
 	ENGINE_API static UTexture2D* CreateTexture2D(int32 SrcWidth, int32 SrcHeight, const TArray<FColor> &SrcData, UObject* Outer, const FString& Name, const EObjectFlags &Flags, const FCreateTexture2DParameters& InParams);
+	
+	/**
+	 * Creates a texture of any type from an Image
+	 * This is the modern preferred way to create a texture.
+	 *
+	 * If you need to change the default settings, then use DoPostEditChange = false, and call PostEditChange() yourself after setting all properties.
+	 * Typically you may want to set LODGroup and CompressionSettings.
+	 *
+	 * this fills the TextureSource , and will then Build a Platform texture from that
+	 * can be used WITH_EDITOR only
+	 *
+	 */
+	ENGINE_API static UTexture * CreateTexture(ETextureClass TextureClass, const FImageView & Image, UObject* Outer, const FString& Name, EObjectFlags Flags = RF_NoFlags, bool DoPostEditChange = true );
 	
 	/**
 	 * Creates a 2D texture from an FImage
 	 * 
 	 * @param Image			Image that will be copied into a Texture
 	 * @return				Returns a pointer to the constructed 2D texture object.
+	 *
+	 * NOTE: this makes a Transient texture with the Image in the PlatformData
+	 * this is different than making a Texture via TextureSource.Init(Image)
 	 */	
 	ENGINE_API static UTexture2D* CreateTexture2DFromImage(const FImageView & Image);
 
@@ -245,6 +285,7 @@ public:
 	 * @param SrcData			Raw image array.
 	 * @param DstData			compressed image array.
 	 *
+	 * DEPRECATED, avoid this, uses the bad image resize
 	 */
 	ENGINE_API static void CropAndScaleImage( int32 SrcWidth, int32 SrcHeight, int32 DesiredWidth, int32 DesiredHeight, const TArray<FColor> &SrcData, TArray<FColor> &DstData  );
 
@@ -377,11 +418,17 @@ public:
 
 	/**
 	 * Imports a texture file from disk and creates Texture2D from it
+	 *
+	 * note this make a Transient / PlatformData only Texture (no TextureSource)
+	 *
 	 */
 	ENGINE_API static UTexture2D* ImportFileAsTexture2D(const FString& Filename);
 
 	/**
 	 * Imports a texture a buffer and creates Texture2D from it
+	 *
+	 * note this make a Transient / PlatformData only Texture (no TextureSource)
+	 *
 	 */
 	ENGINE_API static UTexture2D* ImportBufferAsTexture2D(TArrayView64<const uint8> Buffer);
 	ENGINE_API static UTexture2D* ImportBufferAsTexture2D(const TArray<uint8>& Buffer);
@@ -408,8 +455,7 @@ public:
 	*/
 	ENGINE_API static bool ExportTextureCubeAsHDR(UTextureCube* TexRT, FArchive& Ar);
 
-	// Should be removed from public API.
-	//  Move out of header.
+	UE_DEPRECATED(5.5, "Use GetRenderTargetImage")
 	ENGINE_API static bool GetRawData(UTextureRenderTarget2D* TexRT, TArray64<uint8>& RawData);
 	
 	/**
@@ -417,7 +463,10 @@ public:
 	* 
 	* @param TexRT		The texture rendertarget to copy from
 	* @param OutImage	Filled with the image, allocated as needed
+	*
+	* Works for Cubes, Volumes, etc.  (fills Image slices)
 	*/
-	ENGINE_API static bool GetRenderTargetImage(UTextureRenderTarget2D* TexRT, FImage & OutImage);
+	ENGINE_API static bool GetRenderTargetImage(UTextureRenderTarget* TexRT, FImage & OutImage);
+	ENGINE_API static bool GetRenderTargetImage(UTextureRenderTarget* TexRT, FImage & OutImage, const FIntRect & Rect);
 
 };

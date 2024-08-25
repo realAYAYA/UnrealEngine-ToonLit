@@ -14,4 +14,4 @@ const FName FMaterialEditorTabs::PreviewSettingsTabId(TEXT("MaterialEditor_Previ
 const FName FMaterialEditorTabs::ParameterDefaultsTabId(TEXT("MaterialEditor_ParameterDefaults"));
 const FName FMaterialEditorTabs::CustomPrimitiveTabId(TEXT("MaterialEditor_CustomPrimitiveData"));
 const FName FMaterialEditorTabs::LayerPropertiesTabId(TEXT("MaterialInstanceEditor_MaterialLayerProperties"));
-const FName FMaterialEditorTabs::StrataTabId(TEXT("MaterialEditor_Strata"));
+const FName FMaterialEditorTabs::SubstrateTabId(TEXT("MaterialEditor_Substrate"));

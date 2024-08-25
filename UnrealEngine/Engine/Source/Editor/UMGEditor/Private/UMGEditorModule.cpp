@@ -280,7 +280,7 @@ public:
 
 	virtual void RemoveWidgetCustomizationExtender(const TSharedRef<IBlueprintWidgetCustomizationExtender>& WidgetCustomizationExtender) override
 	{
-		WidgetCustomizationExtenders.RemoveSingleSwap(WidgetCustomizationExtender, false);
+		WidgetCustomizationExtenders.RemoveSingleSwap(WidgetCustomizationExtender, EAllowShrinking::No);
 	}
 
 	virtual TArrayView<TSharedRef<IBlueprintWidgetCustomizationExtender>> GetAllWidgetCustomizationExtenders() override

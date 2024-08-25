@@ -264,7 +264,7 @@ void FSlateAccessibleMessageHandler::Tick()
 			TArray<TSharedRef<SWindow>> SlateWindows = FSlateApplicationBase::Get().GetTopLevelWindows();
 			while (SlateWindows.Num() > 0)
 			{
-				const TSharedRef<SWindow> CurrentWindow = SlateWindows.Pop(false);
+				const TSharedRef<SWindow> CurrentWindow = SlateWindows.Pop(EAllowShrinking::No);
 				ToProcess.Emplace(CurrentWindow, FSlateAccessibleWidgetCache::GetAccessibleWidget(CurrentWindow));
 				SlateWindows.Append(CurrentWindow->GetChildWindows());
 			}
@@ -274,7 +274,7 @@ void FSlateAccessibleMessageHandler::Tick()
 		{
 			for (int32 Counter = 0; ToProcess.Num() > 0 && Counter < GAccessibleWidgetsProcessedPerTick; ++Counter)
 			{
-				FWidgetAndParent WidgetAndParent = ToProcess.Pop(false);
+				FWidgetAndParent WidgetAndParent = ToProcess.Pop(EAllowShrinking::No);
 				if (WidgetAndParent.Widget.IsValid())
 				{
 					TSharedPtr<SWidget> SharedWidget = WidgetAndParent.Widget.Pin();

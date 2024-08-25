@@ -126,8 +126,8 @@ void SPropertyMenuComponentPicker::Construct(const FArguments& InArgs)
 
 		MenuContent =
 			SNew(SBox)
-			.WidthOverride(PropertyEditorAssetConstants::SceneOutlinerWindowSize.X)
-			.HeightOverride(PropertyEditorAssetConstants::SceneOutlinerWindowSize.Y)
+			.WidthOverride(static_cast<float>(PropertyEditorAssetConstants::SceneOutlinerWindowSize.X))
+			.HeightOverride(static_cast<float>(PropertyEditorAssetConstants::SceneOutlinerWindowSize.Y))
 			[
 				SNew(SBorder)
 				.BorderImage(FAppStyle::GetBrush("Menu.Background"))

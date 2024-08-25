@@ -6,6 +6,8 @@
 #include "NiagaraDataChannelHandler.h"
 #include "NiagaraDataChannel_Islands.generated.h"
 
+struct FStreamableHandle;
+
 UENUM()
 enum class ENiagraDataChannel_IslandMode : uint8
 {
@@ -37,7 +39,7 @@ public:
 	void Init(UNiagaraDataChannelHandler_Islands* Owner);
 	void BeginFrame();
 	void EndFrame();
-	void Tick();
+	void Tick(const ETickingGroup& TickGroup);
 
 	bool Contains(FVector Point);
 	double DistanceToPoint(FVector Point);
@@ -106,6 +108,9 @@ struct FNDCIslandDebugDrawSettings
 	bool ShowBounds()const { return bEnabled && bShowIslandBounds; }
 };
 
+/**
+Data channel that will automatically sub-divide the world into discreet "islands" based on location.
+*/
 UCLASS(Experimental, MinimalAPI)
 class UNiagaraDataChannel_Islands : public UNiagaraDataChannel
 {
@@ -126,11 +131,11 @@ public:
 	FVector GetMaxExtents()const { return MaxExtents; }
 	FVector GetPerElementExtents()const { return PerElementExtents; }
 
-	TConstArrayView<TObjectPtr<UNiagaraSystem>> GetSystems()const;
+	NIAGARA_API TConstArrayView<TObjectPtr<UNiagaraSystem>> GetSystems()const;
 	int32 GetIslandPoolSize()const { return IslandPoolSize; }
 	const FNDCIslandDebugDrawSettings& GetDebugDrawSettings()const { return DebugDrawSettings; }
 
-private:
+protected:
 
 	/** Controls how islands are placed and sized. */
 	UPROPERTY(EditAnywhere, Category = "Islands")
@@ -180,6 +185,8 @@ private:
 
 	UPROPERTY(Transient)
 	mutable TArray<TObjectPtr<UNiagaraSystem>> SystemsInternal;
+
+	mutable TSharedPtr<FStreamableHandle> AsyncLoadHandle;
 };
 
 UCLASS(Experimental, BlueprintType, MinimalAPI)
@@ -197,7 +204,7 @@ class UNiagaraDataChannelHandler_Islands : public UNiagaraDataChannelHandler
 	NIAGARA_API virtual void Tick(float DeltaTime, ETickingGroup TickGroup, FNiagaraWorldManager* OwningWorld) override;
 	NIAGARA_API virtual FNiagaraDataChannelDataPtr FindData(FNiagaraDataChannelSearchParameters SearchParams, ENiagaraResourceAccess AccessType) override;
 
-private:
+protected:
 
 	/** All currently active Islands for this channel. */
 	UPROPERTY()

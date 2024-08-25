@@ -8,17 +8,28 @@ public class Renderer : ModuleRules
 	{
 		PrivateIncludePaths.AddRange(
 			new string[] {
-				EngineDirectory + "/Shaders/Shared",
 				EngineDirectory + "/Shaders/Private", // For HaltonUtilities.ush
-				}
-			);
+			}
+		);
 
-		PublicDependencyModuleNames.Add("Core");
-        PublicDependencyModuleNames.Add("Engine");
+		PrivateIncludePathModuleNames.Add("Shaders");
+
+		PublicDependencyModuleNames.AddRange(
+			new string[] {
+				"Core",
+				"Engine",
+			}
+		);
 
         if (Target.bBuildEditor == true)
         {
-            PrivateDependencyModuleNames.Add("TargetPlatform");
+			PrivateDependencyModuleNames.AddRange(
+				new string[] {
+					"TargetPlatform",
+					"GeometryCore",
+					"NaniteUtilities",
+				}
+			);
         }
 
         // Renderer module builds faster without unity
@@ -30,18 +41,21 @@ public class Renderer : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
-				"CoreUObject", 
+				"CoreUObject",
 				"ApplicationCore",
-				"RenderCore", 
+				"RenderCore",
 				"ImageWriteQueue",
 				"RHI",
-				"MaterialShaderQualitySettings"
+				"MaterialShaderQualitySettings",
+				"TraceLog",
 			}
-            );
+		);
 
         PrivateIncludePathModuleNames.AddRange(new string[] { "HeadMountedDisplay" });
         DynamicallyLoadedModuleNames.AddRange(new string[] { "HeadMountedDisplay" });
 		PrivateIncludePathModuleNames.AddRange(new string[] { "EyeTracker" });
 		DynamicallyLoadedModuleNames.AddRange(new string[] { "EyeTracker" });
+
+		RuntimeDependencies.Add("$(EngineDir)/Content/Renderer/TessellationTable.bin");
 	}
 }

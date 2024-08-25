@@ -20,6 +20,9 @@ public:
 	template<class U>
 	TActorDescContainerCollection(std::initializer_list<U> ActorDescContainerArray);
 
+	template<class U>
+	TActorDescContainerCollection(const TArray<U>& ActorDescContainers);
+
 	virtual ~TActorDescContainerCollection();
 
 	void AddContainer(ActorDescContPtrType Container);
@@ -40,8 +43,9 @@ public:
 	FWorldPartitionActorDesc& GetActorDescChecked(const FGuid& Guid);
 	const FWorldPartitionActorDesc& GetActorDescChecked(const FGuid& Guid) const;
 
-	const FWorldPartitionActorDesc* GetActorDescByName(const FString& ActorPath) const;
-	const FWorldPartitionActorDesc* GetActorDescByName(const FSoftObjectPath& ActorPath) const;
+	const FWorldPartitionActorDesc* GetActorDescByPath(const FString& ActorPath) const;
+	const FWorldPartitionActorDesc* GetActorDescByPath(const FSoftObjectPath& ActorPath) const;
+	const FWorldPartitionActorDesc* GetActorDescByName(FName ActorName) const;
 
 	template<typename Dummy = void, typename = typename TEnableIf<!TIsConst<TRemovePointer<ActorDescContPtrType>>::Value, Dummy>::Type>
 	bool RemoveActor(const FGuid& ActorGuid);
@@ -92,11 +96,11 @@ public:
 	protected:
 		typedef UActorDescContainer ContainerType;
 		typedef TArray<ActorDescContPtrType> ContainerCollectionType;
-		typedef typename TChooseClass<bConst, typename ContainerCollectionType::TConstIterator, typename ContainerCollectionType::TIterator>::Result ContainerIteratorType;
-		typedef typename TChooseClass<bConst, typename ContainerType::TConstIterator<ActorType>, typename ContainerType::TIterator<ActorType>>::Result ActDescIteratorType;
+		typedef std::conditional_t<bConst, typename ContainerCollectionType::TConstIterator, typename ContainerCollectionType::TIterator> ContainerIteratorType;
+		typedef std::conditional_t<bConst, typename ContainerType::TConstIterator<ActorType>, typename ContainerType::TIterator<ActorType>> ActDescIteratorType;
 
 		typedef typename FWorldPartitionActorDescType<ActorType>::Type ValueType;
-		typedef typename TChooseClass<bConst, const ValueType*, ValueType*>::Result ReturnType;
+		typedef std::conditional_t<bConst, const ValueType*, ValueType*> ReturnType;
 
 	public:
 		template<class T>
@@ -200,7 +204,18 @@ public:
 template<class ActorDescContPtrType>
 template<class U>
 TActorDescContainerCollection<ActorDescContPtrType>::TActorDescContainerCollection(std::initializer_list<U> ActorDescContainerArray)
-	:ActorDescContainerCollection(ActorDescContainerArray)
+	: ActorDescContainerCollection(ActorDescContainerArray)
+{
+	ForEachActorDescContainer([this](ActorDescContPtrType ActorDescContainer)
+	{
+		RegisterDelegates(ActorDescContainer);
+	});
+}
+
+template<class ActorDescContPtrType>
+template<class U>
+TActorDescContainerCollection<ActorDescContPtrType>::TActorDescContainerCollection(const TArray<U>& ActorDescContainers)
+	: ActorDescContainerCollection(ActorDescContainers)
 {
 	ForEachActorDescContainer([this](ActorDescContPtrType ActorDescContainer)
 	{
@@ -328,12 +343,12 @@ FWorldPartitionActorDesc& TActorDescContainerCollection<ActorDescContPtrType>::G
 }
 
 template<class ActorDescContPtrType>
-const FWorldPartitionActorDesc* TActorDescContainerCollection<ActorDescContPtrType>::GetActorDescByName(const FString& ActorPath) const
+const FWorldPartitionActorDesc* TActorDescContainerCollection<ActorDescContPtrType>::GetActorDescByPath(const FString& ActorPath) const
 {
 	const FWorldPartitionActorDesc* ActorDesc = nullptr;
 	ForEachActorDescContainerBreakable([&ActorPath, &ActorDesc](ActorDescContPtrType ActorDescContainer)
 	{
-		ActorDesc = ActorDescContainer->GetActorDescByName(ActorPath);
+		ActorDesc = ActorDescContainer->GetActorDescByPath(ActorPath);
 		return ActorDesc == nullptr;
 	});
 
@@ -341,12 +356,25 @@ const FWorldPartitionActorDesc* TActorDescContainerCollection<ActorDescContPtrTy
 }
 
 template<class ActorDescContPtrType>
-const FWorldPartitionActorDesc* TActorDescContainerCollection<ActorDescContPtrType>::GetActorDescByName(const FSoftObjectPath& ActorPath) const
+const FWorldPartitionActorDesc* TActorDescContainerCollection<ActorDescContPtrType>::GetActorDescByPath(const FSoftObjectPath& ActorPath) const
 {
 	const FWorldPartitionActorDesc* ActorDesc = nullptr;
 	ForEachActorDescContainerBreakable([&ActorPath, &ActorDesc](ActorDescContPtrType ActorDescContainer)
 	{
-		ActorDesc = ActorDescContainer->GetActorDescByName(ActorPath);
+		ActorDesc = ActorDescContainer->GetActorDescByPath(ActorPath);
+		return ActorDesc == nullptr;
+	});
+
+	return ActorDesc;
+}
+
+template<class ActorDescContPtrType>
+const FWorldPartitionActorDesc* TActorDescContainerCollection<ActorDescContPtrType>::GetActorDescByName(FName ActorName) const
+{
+	const FWorldPartitionActorDesc* ActorDesc = nullptr;
+	ForEachActorDescContainerBreakable([&ActorName, &ActorDesc](ActorDescContPtrType ActorDescContainer)
+	{
+		ActorDesc = ActorDescContainer->GetActorDescByName(ActorName);
 		return ActorDesc == nullptr;
 	});
 

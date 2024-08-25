@@ -190,7 +190,8 @@ TSharedRef<SWidget> SBasePropertyOverrideWidget::CreateRowWidget(FBasePropertyOv
 {
 	FText DisplayText = FText::GetEmpty();
 
-	if (RowData->ParameterID.IsEqual(TEXT("bOverride_OpacityMaskClipValue")))
+	if (RowData->ParameterID.IsEqual(TEXT("bOverride_OpacityMaskClipValue")) ||
+		RowData->ParameterID.IsEqual(TEXT("bOverride_DisplacementScaling")))
 	{
 		DisplayText = FText::AsNumber(RowData->ParameterValue);
 	}
@@ -203,7 +204,7 @@ TSharedRef<SWidget> SBasePropertyOverrideWidget::CreateRowWidget(FBasePropertyOv
 	{
 		int32 BlendID = (int32)RowData->ParameterValue;
 		DisplayText = FText::FromString(GetShadingModelString((EMaterialShadingModel)BlendID));
-	}
+	}	
 	else // bool values
 	{
 		DisplayText = RowData->ParameterValue ? LOCTEXT("True", "True") : LOCTEXT("False", "False");

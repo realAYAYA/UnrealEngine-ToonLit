@@ -2,6 +2,7 @@
 
 #include "UserGeneratedContentLocalization.h"
 
+#include "HAL/IConsoleManager.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/MessageDialog.h"
@@ -21,6 +22,16 @@
 #include "SourceControlHelpers.h"
 
 #define LOCTEXT_NAMESPACE "UserGeneratedContentLocalization"
+
+DEFINE_LOG_CATEGORY_STATIC(LogUGCLocalization, Log, All);
+
+namespace UserGeneratedContentLocalization
+{
+
+bool bAlwaysExportFullGatherLog = false;
+FAutoConsoleVariableRef CExportFullGatherLog(TEXT("Localization.UGC.AlwaysExportFullGatherLog"), bAlwaysExportFullGatherLog, TEXT("True to export the full gather log from running localization commandlet, even if there we no errors"));
+
+}
 
 void FUserGeneratedContentLocalizationDescriptor::InitializeFromProject(const ELocalizedTextSourceCategory LocalizationCategory)
 {
@@ -145,7 +156,7 @@ void PreWriteFileWithSCC(const FString& Filename)
 		// If the file already already exists, then check it out before writing to it
 		if (FPaths::FileExists(Filename) && !USourceControlHelpers::CheckOutFile(Filename))
 		{
-			UE_LOG(LogLocalization, Error, TEXT("Failed to check out file '%s'. %s"), *Filename, *USourceControlHelpers::LastErrorMsg().ToString());
+			UE_LOG(LogUGCLocalization, Error, TEXT("Failed to check out file '%s'. %s"), *Filename, *USourceControlHelpers::LastErrorMsg().ToString());
 		}
 	}
 }
@@ -162,7 +173,7 @@ void PostWriteFileWithSCC(const FString& Filename)
 		}
 		else
 		{
-			UE_LOG(LogLocalization, Error, TEXT("Failed to check out file '%s'. %s"), *Filename, *USourceControlHelpers::LastErrorMsg().ToString());
+			UE_LOG(LogUGCLocalization, Error, TEXT("Failed to check out file '%s'. %s"), *Filename, *USourceControlHelpers::LastErrorMsg().ToString());
 		}
 	}
 }
@@ -171,7 +182,7 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 {
 	if (ExportOptions.UGCLocDescriptor.NativeCulture.IsEmpty())
 	{
-		UE_LOG(LogLocalization, Error, TEXT("Localization export options did not have a 'NativeCulture' set"));
+		UE_LOG(LogUGCLocalization, Error, TEXT("Localization export options did not have a 'NativeCulture' set"));
 		return false;
 	}
 
@@ -210,12 +221,12 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 					{
 						if (IFileManager::Get().Copy(*DestinationFilename, FilenameOrDirectory) == COPY_OK)
 						{
-							UE_LOG(LogLocalization, Log, TEXT("Imported existing .po file for '%s': %s"), *Plugin->GetName(), FilenameOrDirectory);
+							UE_LOG(LogUGCLocalization, Log, TEXT("Imported existing .po file for '%s': %s"), *Plugin->GetName(), FilenameOrDirectory);
 						}
 						else
 						{
 							bCopiedAllFiles = false;
-							UE_LOG(LogLocalization, Warning, TEXT("Failed to import existing .po file for '%s': %s"), *Plugin->GetName(), FilenameOrDirectory);
+							UE_LOG(LogUGCLocalization, Warning, TEXT("Failed to import existing .po file for '%s': %s"), *Plugin->GetName(), FilenameOrDirectory);
 						}
 					}
 				}
@@ -239,7 +250,7 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 
 			// Common
 			{
-				FConfigSection& ConfigSection = GatherConfig.CommonSettings();
+				FConfigSection ConfigSection;
 
 				ConfigSection.Add(TEXT("SourcePath"), FPaths::ConvertRelativePathToFull(PluginLocalizationScratchDirectory));
 				ConfigSection.Add(TEXT("DestinationPath"), FPaths::ConvertRelativePathToFull(PluginLocalizationScratchDirectory));
@@ -257,6 +268,8 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 				{
 					ConfigSection.Add(TEXT("CulturesToGenerate"), *CultureToGenerate);
 				}
+				
+				GatherConfig.AddCommonSettings(MoveTemp(ConfigSection));
 			}
 
 			// Gather source
@@ -278,7 +291,7 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 				// Only gather from source if there's valid paths to gather from, as otherwise the commandlet will error
 				if (SearchDirectoryPaths.Num() > 0)
 				{
-					FConfigSection& ConfigSection = GatherConfig.GatherTextStep(GatherStepIndex++);
+					FConfigSection ConfigSection;
 					ConfigSection.Add(TEXT("CommandletClass"), TEXT("GatherTextFromSource"));
 
 					ConfigSection.Add(TEXT("FileNameFilters"), TEXT("*.h"));
@@ -290,13 +303,15 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 					{
 						ConfigSection.Add(TEXT("SearchDirectoryPaths"), SearchDirectoryPath);
 					}
+					
+					GatherConfig.AddGatherTextStep(GatherStepIndex++, MoveTemp(ConfigSection));
 				}
 			}
 
 			// Gather assets
 			if (ExportOptions.bGatherAssets && Plugin->CanContainContent())
 			{
-				FConfigSection& ConfigSection = GatherConfig.GatherTextStep(GatherStepIndex++);
+				FConfigSection ConfigSection;
 				ConfigSection.Add(TEXT("CommandletClass"), TEXT("GatherTextFromAssets"));
 
 				ConfigSection.Add(TEXT("PackageFileNameFilters"), TEXT("*.uasset"));
@@ -311,32 +326,36 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 				{
 					ConfigSection.Add(TEXT("CollectionFilters"), *CollectionFilter);
 				}
+				
+				GatherConfig.AddGatherTextStep(GatherStepIndex++, MoveTemp(ConfigSection));
 			}
 
-#if WITH_VERSE
 			// Gather Verse
 			if (ExportOptions.bGatherVerse && Plugin->CanContainVerse())
 			{
-				FConfigSection& ConfigSection = GatherConfig.GatherTextStep(GatherStepIndex++);
+				FConfigSection ConfigSection;
 				ConfigSection.Add(TEXT("CommandletClass"), TEXT("GatherTextFromVerse"));
 
 				ConfigSection.Add(TEXT("IncludePathFilters"), FPaths::ConvertRelativePathToFull(FPaths::Combine(Plugin->GetBaseDir(), TEXT("*"))));
 
 				ConfigSection.Add(TEXT("ExcludePathFilters"), FPaths::ConvertRelativePathToFull(FPaths::Combine(Plugin->GetContentDir(), TEXT("Localization"), TEXT("*"))));
 				ConfigSection.Add(TEXT("ExcludePathFilters"), FPaths::ConvertRelativePathToFull(FPaths::Combine(Plugin->GetContentDir(), TEXT("L10N"), TEXT("*"))));
+				
+				GatherConfig.AddGatherTextStep(GatherStepIndex++, MoveTemp(ConfigSection));
 			}
-#endif	// WITH_VERSE
 
 			// Generate manifest
 			{
-				FConfigSection& ConfigSection = GatherConfig.GatherTextStep(GatherStepIndex++);
+				FConfigSection ConfigSection;
 				ConfigSection.Add(TEXT("CommandletClass"), TEXT("GenerateGatherManifest"));
+				GatherConfig.AddGatherTextStep(GatherStepIndex++, MoveTemp(ConfigSection));
 			}
 
 			// Generate archive
 			{
-				FConfigSection& ConfigSection = GatherConfig.GatherTextStep(GatherStepIndex++);
+				FConfigSection ConfigSection;
 				ConfigSection.Add(TEXT("CommandletClass"), TEXT("GenerateGatherArchive"));
+				GatherConfig.AddGatherTextStep(GatherStepIndex++, MoveTemp(ConfigSection));
 			}
 
 			// Import PO
@@ -351,17 +370,19 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 					}
 				}
 
-				FConfigSection& ConfigSection = GatherConfig.GatherTextStep(GatherStepIndex++);
+				FConfigSection ConfigSection;
 				ConfigSection.Add(TEXT("CommandletClass"), TEXT("InternationalizationExport"));
 
 				ConfigSection.Add(TEXT("bImportLoc"), TEXT("true"));
 
 				ConfigSection.Add(TEXT("POFormat"), StaticEnum<EPortableObjectFormat>()->GetNameStringByValue((int64)UGCLocDescriptorForImport.PoFormat));
+
+				GatherConfig.AddGatherTextStep(GatherStepIndex++, MoveTemp(ConfigSection));
 			}
 
 			// Export PO
 			{
-				FConfigSection& ConfigSection = GatherConfig.GatherTextStep(GatherStepIndex++);
+				FConfigSection ConfigSection;
 				ConfigSection.Add(TEXT("CommandletClass"), TEXT("InternationalizationExport"));
 
 				ConfigSection.Add(TEXT("bExportLoc"), TEXT("true"));
@@ -369,6 +390,8 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 				ConfigSection.Add(TEXT("POFormat"), StaticEnum<EPortableObjectFormat>()->GetNameStringByValue((int64)ExportOptions.UGCLocDescriptor.PoFormat));
 
 				ConfigSection.Add(TEXT("ShouldPersistCommentsOnExport"), TEXT("true"));
+
+				GatherConfig.AddGatherTextStep(GatherStepIndex++, MoveTemp(ConfigSection));
 			}
 
 			// Write config
@@ -382,7 +405,7 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 				}
 				else
 				{
-					UE_LOG(LogLocalization, Error, TEXT("Failed to write gather config for '%s': %s"), *Plugin->GetName(), *GatherConfigFilename);
+					UE_LOG(LogUGCLocalization, Error, TEXT("Failed to write gather config for '%s': %s"), *Plugin->GetName(), *GatherConfigFilename);
 					return false;
 				}
 			}
@@ -395,28 +418,43 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 		FString CommandletOutput;
 		const int32 ReturnCode = CommandletExecutor(FString::Join(GatherConfigFilenames, TEXT(";")), CommandletOutput);
 
-		// Log the output and result of the commandlet
-		{
-			TArray<FString> CommandletOutputLines;
-			CommandletOutput.ParseIntoArrayLines(CommandletOutputLines);
-
-			UE_LOG(LogLocalization, Display, TEXT("Localization commandlet finished with exit code %d"), ReturnCode);
-			for (const FString& CommandletOutputLine : CommandletOutputLines)
-			{
-				UE_LOG(LogLocalization, Display, TEXT("    %s"), *CommandletOutputLine);
-			}
-		}
-
 		// Verify the commandlet finished cleanly
-		if (ReturnCode != 0)
+		bool bGatherFailed = true;
+		if (ReturnCode == 0)
+		{
+			bGatherFailed = false;
+		}
+		else
 		{
 			// The commandlet can sometimes exit with a non-zero return code for reasons unrelated to the localization export
 			// If this happens, check to see whether the GatherText commandlet itself exited with a zero return code
-			if (!CommandletOutput.Contains(TEXT("GatherText completed with exit code 0"), ESearchCase::CaseSensitive))
+			if (CommandletOutput.Contains(TEXT("GatherText completed with exit code 0"), ESearchCase::CaseSensitive))
 			{
-				return false;
+				bGatherFailed = false;
+				UE_LOG(LogUGCLocalization, Warning, TEXT("Localization commandlet finished with a non-zero exit code, but GatherText finished with a zero exit code. Considering the export a success, but there may be errors or omissions in the exported data."));
 			}
-			UE_LOG(LogLocalization, Warning, TEXT("Localization commandlet finished with a non-zero exit code, but GatherText finished with a zero exit code. Considering the export a success, but there may be errors or omissions in the exported data."));
+		}
+
+		// Log the output and result of the commandlet
+		{
+			UE_LOG(LogUGCLocalization, Display, TEXT("Localization commandlet finished with exit code %d"), ReturnCode);
+
+			if (bGatherFailed || UserGeneratedContentLocalization::bAlwaysExportFullGatherLog)
+			{
+				TArray<FString> CommandletOutputLines;
+				CommandletOutput.ParseIntoArrayLines(CommandletOutputLines);
+
+				for (const FString& CommandletOutputLine : CommandletOutputLines)
+				{
+					UE_LOG(LogUGCLocalization, Display, TEXT("    %s"), *CommandletOutputLine);
+				}
+			}
+		}
+
+		// If the gather failed then skip the rest of the process
+		if (bGatherFailed)
+		{
+			return false;
 		}
 	}
 
@@ -435,11 +473,11 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 			if (ExportOptions.UGCLocDescriptor.ToJsonFile(*UGCLocFilename))
 			{
 				PostWriteFileWithSCC(UGCLocFilename);
-				UE_LOG(LogLocalization, Log, TEXT("Updated .ugcloc file for '%s': %s"), *Plugin->GetName(), *UGCLocFilename);
+				UE_LOG(LogUGCLocalization, Log, TEXT("Updated .ugcloc file for '%s': %s"), *Plugin->GetName(), *UGCLocFilename);
 			}
 			else
 			{
-				UE_LOG(LogLocalization, Warning, TEXT("Failed to update .ugcloc file for '%s': %s"), *Plugin->GetName(), *UGCLocFilename);
+				UE_LOG(LogUGCLocalization, Warning, TEXT("Failed to update .ugcloc file for '%s': %s"), *Plugin->GetName(), *UGCLocFilename);
 			}
 		}
 
@@ -454,11 +492,11 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 					if (IFileManager::Get().Copy(*DestinationFilename, FilenameOrDirectory) == COPY_OK)
 					{
 						PostWriteFileWithSCC(DestinationFilename);
-						UE_LOG(LogLocalization, Log, TEXT("Updated .po file for '%s': %s"), *Plugin->GetName(), *DestinationFilename);
+						UE_LOG(LogUGCLocalization, Log, TEXT("Updated .po file for '%s': %s"), *Plugin->GetName(), *DestinationFilename);
 					}
 					else
 					{
-						UE_LOG(LogLocalization, Warning, TEXT("Failed to update .po file for '%s': %s"), *Plugin->GetName(), *DestinationFilename);
+						UE_LOG(LogUGCLocalization, Warning, TEXT("Failed to update .po file for '%s': %s"), *Plugin->GetName(), *DestinationFilename);
 					}
 				}
 			}
@@ -496,11 +534,11 @@ bool ExportLocalization(TArrayView<const TSharedRef<IPlugin>> Plugins, const FEx
 				if (Plugin->UpdateDescriptor(PluginDescriptor, DescriptorUpdateFailureReason))
 				{
 					PostWriteFileWithSCC(Plugin->GetDescriptorFileName());
-					UE_LOG(LogLocalization, Log, TEXT("Updated .uplugin file for '%s'"), *Plugin->GetName());
+					UE_LOG(LogUGCLocalization, Log, TEXT("Updated .uplugin file for '%s'"), *Plugin->GetName());
 				}
 				else
 				{
-					UE_LOG(LogLocalization, Warning, TEXT("Failed to update .uplugin file for '%s': %s"), *Plugin->GetName(), *DescriptorUpdateFailureReason.ToString());
+					UE_LOG(LogUGCLocalization, Warning, TEXT("Failed to update .uplugin file for '%s': %s"), *Plugin->GetName(), *DescriptorUpdateFailureReason.ToString());
 				}
 			}
 		}
@@ -523,13 +561,13 @@ bool CompileLocalizationTarget(const FString& LocalizationTargetDirectory, const
 		{
 			if (!LocMeta.SaveToFile(LocalizationTargetDirectory / LocMetaName))
 			{
-				UE_LOG(LogLocalization, Error, TEXT("Failed to save LocMeta file for '%s'"), *LocTextHelper.GetTargetName());
+				UE_LOG(LogUGCLocalization, Error, TEXT("Failed to save LocMeta file for '%s'"), *LocTextHelper.GetTargetName());
 				return false;
 			}
 		}
 		else
 		{
-			UE_LOG(LogLocalization, Error, TEXT("Failed to generate LocMeta file for '%s'"), *LocTextHelper.GetTargetName());
+			UE_LOG(LogUGCLocalization, Error, TEXT("Failed to generate LocMeta file for '%s'"), *LocTextHelper.GetTargetName());
 			return false;
 		}
 	}
@@ -545,13 +583,13 @@ bool CompileLocalizationTarget(const FString& LocalizationTargetDirectory, const
 
 			if (!LocRes.SaveToFile(LocalizationTargetDirectory / CultureToGenerate / LocResName))
 			{
-				UE_LOG(LogLocalization, Error, TEXT("Failed to save LocRes file for '%s' (culture '%s')"), *LocTextHelper.GetTargetName(), *CultureToGenerate);
+				UE_LOG(LogUGCLocalization, Error, TEXT("Failed to save LocRes file for '%s' (culture '%s')"), *LocTextHelper.GetTargetName(), *CultureToGenerate);
 				return false;
 			}
 		}
 		else
 		{
-			UE_LOG(LogLocalization, Error, TEXT("Failed to generate LocRes file for '%s' (culture '%s')"), *LocTextHelper.GetTargetName(), *CultureToGenerate);
+			UE_LOG(LogUGCLocalization, Error, TEXT("Failed to generate LocRes file for '%s' (culture '%s')"), *LocTextHelper.GetTargetName(), *CultureToGenerate);
 			return false;
 		}
 	}
@@ -676,7 +714,7 @@ ELoadLocalizationResult LoadLocalization(const FString& PluginName, const FStrin
 	FUserGeneratedContentLocalizationDescriptor UGCLocDescriptor;
 	if (!UGCLocDescriptor.FromJsonFile(*UGCLocFilename))
 	{
-		UE_LOG(LogLocalization, Error, TEXT("Failed to load localization descriptor for '%s'"), *PluginName);
+		UE_LOG(LogUGCLocalization, Error, TEXT("Failed to load localization descriptor for '%s'"), *PluginName);
 		return ELoadLocalizationResult::Failed;
 	}
 
@@ -695,7 +733,7 @@ ELoadLocalizationResult LoadLocalization(const FString& PluginName, const FStrin
 	// We always process the native culture first as it's also used to populate the manifest with the source texts
 	if (!ImportPortableObject(PluginLocalizationTargetDirectory, OutLocTextHelper->GetNativeCulture(), UGCLocDescriptor.PoFormat, *OutLocTextHelper))
 	{
-		UE_LOG(LogLocalization, Error, TEXT("Failed to load PO file for '%s' (culture '%s')"), *PluginName, *OutLocTextHelper->GetNativeCulture());
+		UE_LOG(LogUGCLocalization, Error, TEXT("Failed to load PO file for '%s' (culture '%s')"), *PluginName, *OutLocTextHelper->GetNativeCulture());
 		return ELoadLocalizationResult::Failed;
 	}
 	for (const FString& CultureToGenerate : OutLocTextHelper->GetAllCultures())
@@ -707,7 +745,7 @@ ELoadLocalizationResult LoadLocalization(const FString& PluginName, const FStrin
 
 		if (!ImportPortableObject(PluginLocalizationTargetDirectory, CultureToGenerate, UGCLocDescriptor.PoFormat, *OutLocTextHelper))
 		{
-			UE_LOG(LogLocalization, Error, TEXT("Failed to load PO file for '%s' (culture '%s')"), *PluginName, *CultureToGenerate);
+			UE_LOG(LogUGCLocalization, Error, TEXT("Failed to load PO file for '%s' (culture '%s')"), *PluginName, *CultureToGenerate);
 			return ELoadLocalizationResult::Failed;
 		}
 	}

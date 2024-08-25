@@ -77,4 +77,10 @@ ETrailerFailedReason FindTrailerFailedReason(const FPackagePath& PackagePath);
  */
 bool ExpandEnvironmentVariables(FStringView InputPath, FStringBuilderBase& OutExpandedPath);
 
+/** 
+ * Returns true if the process is interactive and we should display error dialogs to
+ * the user.
+ * */
+bool IsProcessInteractive();
+
 } // namespace UE::Virtualization::Utils

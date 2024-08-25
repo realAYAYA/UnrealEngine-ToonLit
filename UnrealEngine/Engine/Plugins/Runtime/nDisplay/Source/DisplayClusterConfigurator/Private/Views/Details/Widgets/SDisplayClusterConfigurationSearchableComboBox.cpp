@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reservekd.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Views/Details/Widgets/SDisplayClusterConfigurationSearchableComboBox.h"
 

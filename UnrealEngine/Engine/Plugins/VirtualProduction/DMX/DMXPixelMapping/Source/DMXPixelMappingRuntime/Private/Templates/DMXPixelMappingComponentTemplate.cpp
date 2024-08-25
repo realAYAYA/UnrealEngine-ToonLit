@@ -5,6 +5,7 @@
 #include "Components/DMXPixelMappingFixtureGroupItemComponent.h"
 #include "Components/DMXPixelMappingMatrixComponent.h"
 #include "Components/DMXPixelMappingRootComponent.h"
+#include "DMXPixelMapping.h"
 #include "Library/DMXEntityFixturePatch.h"
 
 
@@ -42,46 +43,58 @@ FText FDMXPixelMappingComponentTemplate::GetCategory() const
 
 UDMXPixelMappingBaseComponent* FDMXPixelMappingComponentTemplate::CreateComponentInternal(UDMXPixelMappingRootComponent* InRootComponent)
 {
-	if (ensureMsgf(InRootComponent, TEXT("Tried to create components from template but RootComponent was invalid.")))
+	const UDMXPixelMapping* PixelMapping = InRootComponent ? InRootComponent->GetPixelMapping() : nullptr;
+	if (!ensureMsgf(PixelMapping && InRootComponent, TEXT("Tried to create components from template but PixelMapping or RootComponent were invalid.")))
 	{
-		// Create a unique name
-		UDMXPixelMappingBaseComponent* DefaultComponent = ComponentClass->GetDefaultObject<UDMXPixelMappingBaseComponent>();
-		FName UniqueName = MakeUniqueObjectName(InRootComponent, ComponentClass.Get(), DefaultComponent->GetNamePrefix());
+		return nullptr;
+	}
 
-		if (ComponentClass.Get() == UDMXPixelMappingFixtureGroupItemComponent::StaticClass())
+	// Create a unique name
+	UDMXPixelMappingBaseComponent* DefaultComponent = ComponentClass->GetDefaultObject<UDMXPixelMappingBaseComponent>();
+	FName UniqueName = MakeUniqueObjectName(InRootComponent, ComponentClass.Get(), DefaultComponent->GetNamePrefix());
+
+	UDMXPixelMappingBaseComponent* NewComponent = nullptr;
+	if (ComponentClass.Get() == UDMXPixelMappingFixtureGroupItemComponent::StaticClass())
+	{
+		// Create the Component
+		UDMXPixelMappingFixtureGroupItemComponent* NewGroupItemComponent = NewObject<UDMXPixelMappingFixtureGroupItemComponent>(InRootComponent, ComponentClass.Get(), UniqueName, RF_Transactional | RF_Public);
+
+		NewGroupItemComponent->FixturePatchRef = FixturePatchRef;
+
+		NewComponent = NewGroupItemComponent;
+	}
+	else if (ComponentClass.Get() == UDMXPixelMappingMatrixComponent::StaticClass())
+	{
+		UDMXPixelMappingMatrixComponent* NewMatrixComponent = NewObject<UDMXPixelMappingMatrixComponent>(InRootComponent, ComponentClass.Get(), UniqueName, RF_Transactional | RF_Public);
+		NewMatrixComponent->FixturePatchRef = FixturePatchRef;
+
+		NewComponent = NewMatrixComponent;
+	}
+	else
+	{
+		UDMXPixelMappingBaseComponent* NewBaseComponent = NewObject<UDMXPixelMappingBaseComponent>(InRootComponent, ComponentClass.Get(), UniqueName, RF_Transactional | RF_Public);
+
+		NewComponent = NewBaseComponent;
+	}
+	check(NewComponent);
+
+	// Initialize name and color of components that use a patch with data from the patch
+	if (UDMXPixelMappingOutputDMXComponent* NewComponentWithPatch = Cast<UDMXPixelMappingOutputDMXComponent>(NewComponent))
+	{
+		const UDMXEntityFixturePatch* Patch = NewComponentWithPatch->FixturePatchRef.GetFixturePatch();
+		if (Patch)
 		{
-			// Create the Component
-			UDMXPixelMappingFixtureGroupItemComponent* NewGroupItemComponent = NewObject<UDMXPixelMappingFixtureGroupItemComponent>(InRootComponent, ComponentClass.Get(), UniqueName, RF_Transactional | RF_Public);
-
-			NewGroupItemComponent->FixturePatchRef = FixturePatchRef;
-
 			// Create a better unique name and set it
-			UniqueName = MakeUniqueObjectName(NewGroupItemComponent->GetOuter(), NewGroupItemComponent->GetClass(), FName(FixturePatchRef.GetFixturePatch()->Name));
+			UniqueName = MakeUniqueObjectName(NewComponentWithPatch->GetOuter(), NewComponentWithPatch->GetClass(), *Patch->Name);
 			const FString NewNameStr = UniqueName.ToString();
-			NewGroupItemComponent->Rename(*NewNameStr);
+			NewComponentWithPatch->Rename(*NewNameStr);
 
-			return NewGroupItemComponent;
-		}
-		else if (ComponentClass.Get() == UDMXPixelMappingMatrixComponent::StaticClass())
-		{
-			UDMXPixelMappingMatrixComponent* NewMatrixComponent = NewObject<UDMXPixelMappingMatrixComponent>(InRootComponent, ComponentClass.Get(), UniqueName, RF_Transactional | RF_Public);
-
-			NewMatrixComponent->FixturePatchRef = FixturePatchRef;
-
-			// Create a better unique name and set it
-			UniqueName = MakeUniqueObjectName(NewMatrixComponent->GetOuter(), NewMatrixComponent->GetClass(), FName(FixturePatchRef.GetFixturePatch()->Name));
-			const FString NewNameStr = UniqueName.ToString();
-			NewMatrixComponent->Rename(*NewNameStr);
-
-			return NewMatrixComponent;
-		}
-		else
-		{
-			UDMXPixelMappingBaseComponent* NewComponent = NewObject<UDMXPixelMappingBaseComponent>(InRootComponent, ComponentClass.Get(), UniqueName, RF_Transactional | RF_Public);
-
-			return NewComponent;
+#if WITH_EDITOR
+			// Set if the component should follow the patch color
+			NewComponentWithPatch->bUsePatchColor = PixelMapping->bNewComponentsUsePatchColor;
+#endif // WITH_EDITOR
 		}
 	}
 
-	return nullptr;
+	return NewComponent;
 }

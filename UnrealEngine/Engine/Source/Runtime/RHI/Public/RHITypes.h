@@ -16,6 +16,9 @@ class FReadSurfaceDataFlags
 {
 public:
 	// @param InCompressionMode defines the value input range that is mapped to output range
+	//			The default CompressionMode of RCM_UNorm will modify values to fit in [0,1]
+	//			it is recommended to always use RCM_MinMax instead, which leaves values unchanged
+	//			if you do want scaling into [0,1] do it after the fact using ScaleChannelsSoMinMaxIsInZeroToOne
 	// @param InCubeFace defined which cubemap side is used, only required for cubemap content, then it needs to be a valid side
 	FReadSurfaceDataFlags(ERangeCompressionMode InCompressionMode = RCM_UNorm, ECubeFace InCubeFace = CubeFace_MAX)
 		:CubeFace(InCubeFace), CompressionMode(InCompressionMode)
@@ -24,8 +27,11 @@ public:
 
 	ECubeFace GetCubeFace() const
 	{
-		checkSlow(CubeFace <= CubeFace_NegZ);
 		return CubeFace;
+	}
+	void SetCubeFace(ECubeFace InCubeFace)
+	{
+		CubeFace = InCubeFace;
 	}
 
 	ERangeCompressionMode GetCompressionMode() const

@@ -32,6 +32,7 @@
 #include "NiagaraComponentRendererProperties.h"
 #include "NiagaraVolumeRendererProperties.h"
 #include "NiagaraCustomVersion.h"
+#include "NiagaraDataChannel.h"
 #include "NiagaraShaderModule.h"
 #include "UObject/CoreRedirects.h"
 #include "NiagaraGpuComputeDispatch.h"
@@ -44,6 +45,7 @@
 #include "DataInterface/NiagaraDataInterfaceDataChannelCommon.h"
 #include "DataInterface/NiagaraDataInterfaceDataChannelWrite.h"
 #include "DataInterface/NiagaraDataInterfaceDataChannelRead.h"
+#include "Stateless/NiagaraStatelessCommon.h"
 
 #if UE_USE_OPENVDB
 #include "NiagaraOpenVDB.h"
@@ -64,6 +66,22 @@ static FAutoConsoleVariableRef CVarLogCompileIdGeneration(
 
 float INiagaraModule::EngineGlobalSpawnCountScale = 1.0f;
 float INiagaraModule::EngineGlobalSystemCountScale = 1.0f;
+
+const FNiagaraAssetTagDefinition INiagaraModule::TemplateTagDefinition = {
+	LOCTEXT("TemplateDisplayName", "Template")
+	, (int32) (ENiagaraAssetLibraryAssetTypes::Emitters) | (int32) (ENiagaraAssetLibraryAssetTypes::Systems)
+	, FText::GetEmpty()
+	, ENiagaraAssetTagDefinitionImportance::Primary
+	, FLinearColor::Yellow
+	, FGuid(0xFC157AFA, 0x50264263, 0xB9A9E658, 0xFFAC2D22)};
+
+const FNiagaraAssetTagDefinition INiagaraModule::LearningContentTagDefinition = {
+	LOCTEXT("LearningContentDisplayName", "Learning Content")
+	, (int32) (ENiagaraAssetLibraryAssetTypes::Emitters) | (int32) (ENiagaraAssetLibraryAssetTypes::Systems) | (int32) (ENiagaraAssetLibraryAssetTypes::Scripts)
+	, FText::GetEmpty()
+	, ENiagaraAssetTagDefinitionImportance::Primary
+	, FLinearColor::Green
+	, FGuid(0xFCF21AFA, 0x50764BFA, 0xB9B2E618, 0xF2A0CD6F)};
 
 std::atomic<bool> INiagaraModule::bDataChannelRefreshRequested = false;
 
@@ -121,6 +139,13 @@ static FAutoConsoleVariableRef CVarDataChannelEnabled(
 
 void INiagaraModule::OnDataChannelsEnabledChanged(IConsoleVariable* Variable)
 {
+	if(IsRunningCookCommandlet())
+	{
+		//Never allow NDCs when cooking.
+		INiagaraModule::bDataChannelsEnabled = false;
+		return;
+	}
+
 	if(DataChannelsEnabled())
 	{
 		ENiagaraTypeRegistryFlags Flags = ENiagaraTypeRegistryFlags::AllowAnyVariable | ENiagaraTypeRegistryFlags::AllowParameter;
@@ -172,6 +197,7 @@ FNiagaraVariable INiagaraModule::Engine_Owner_ZAxis;
 FNiagaraVariable INiagaraModule::Engine_Owner_Scale;
 FNiagaraVariable INiagaraModule::Engine_Owner_Rotation;
 FNiagaraVariable INiagaraModule::Engine_Owner_LWC_Tile;
+FNiagaraVariable INiagaraModule::Engine_ExecIndex;
 
 FNiagaraVariable INiagaraModule::Engine_Owner_SystemLocalToWorld;
 FNiagaraVariable INiagaraModule::Engine_Owner_SystemWorldToLocal;
@@ -191,6 +217,7 @@ FNiagaraVariable INiagaraModule::Engine_Emitter_NumParticles;
 FNiagaraVariable INiagaraModule::Engine_Emitter_SimulationPosition;
 FNiagaraVariable INiagaraModule::Engine_Emitter_TotalSpawnedParticles;
 FNiagaraVariable INiagaraModule::Engine_Emitter_SpawnCountScale;
+FNiagaraVariable INiagaraModule::Engine_Emitter_ID;
 FNiagaraVariable INiagaraModule::Engine_System_TickCount;
 FNiagaraVariable INiagaraModule::Engine_System_NumEmittersAlive;
 FNiagaraVariable INiagaraModule::Engine_System_SignificanceIndex;
@@ -247,6 +274,7 @@ FNiagaraVariable INiagaraModule::Particles_LightRadius;
 FNiagaraVariable INiagaraModule::Particles_LightExponent;
 FNiagaraVariable INiagaraModule::Particles_LightEnabled;
 FNiagaraVariable INiagaraModule::Particles_LightVolumetricScattering;
+FNiagaraVariable INiagaraModule::Particles_LightSpecularScale;
 FNiagaraVariable INiagaraModule::Particles_RibbonID;
 FNiagaraVariable INiagaraModule::Particles_RibbonWidth;
 FNiagaraVariable INiagaraModule::Particles_RibbonTwist;
@@ -270,13 +298,18 @@ FNiagaraVariable INiagaraModule::Translator_CallID;
 void INiagaraModule::StartupModule()
 {
 	VectorVM::Init();
-	FNiagaraTypeHelper::InitStaticTypes();
+	FNiagaraTypeHelper::InitLWCTypes();
 
-#if VECTORVM_SUPPORTS_EXPERIMENTAL
-	InitVectorVM();
-#endif
 	LLM_SCOPE(ELLMTag::Niagara);
 	FNiagaraTypeDefinition::Init();
+	FNiagaraTypeRegistry::ProcessRegistryQueue();
+	FNiagaraTypeHelper::RegisterLWCTypes();
+
+	if (IsRunningCookCommandlet())
+	{
+		//Never allow NDCs when cooking.
+		INiagaraModule::bDataChannelsEnabled = false;
+	}
 
 #if UE_USE_OPENVDB
 	// Global registration of  the vdb types.
@@ -327,6 +360,7 @@ void INiagaraModule::StartupModule()
 	Engine_Owner_Scale = FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Engine.Owner.Scale"));
 	Engine_Owner_Rotation = FNiagaraVariable(FNiagaraTypeDefinition::GetQuatDef(), TEXT("Engine.Owner.Rotation"));
 	Engine_Owner_LWC_Tile = FNiagaraVariable(FNiagaraTypeDefinition::GetVec4Def(), TEXT("Engine.Owner.LWCTile"));
+	Engine_ExecIndex = FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Engine.ExecIndex"));
 
 	Engine_Owner_SystemLocalToWorld = FNiagaraVariable(FNiagaraTypeDefinition::GetMatrix4Def(), TEXT("Engine.Owner.SystemLocalToWorld"));
 	Engine_Owner_SystemWorldToLocal = FNiagaraVariable(FNiagaraTypeDefinition::GetMatrix4Def(), TEXT("Engine.Owner.SystemWorldToLocal"));
@@ -347,6 +381,7 @@ void INiagaraModule::StartupModule()
 	Engine_Emitter_TotalSpawnedParticles = FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Engine.Emitter.TotalSpawnedParticles"));
 	Engine_Emitter_SpawnCountScale = FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Engine.Emitter.SpawnCountScale"));
 	Engine_Emitter_InstanceSeed = FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Engine.Emitter.InstanceSeed"));
+	Engine_Emitter_ID = FNiagaraVariable(FNiagaraTypeDefinition(FNiagaraEmitterID::StaticStruct()), TEXT("Engine.Emitter.ID"));
 	Engine_System_TickCount = FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Engine.System.TickCount"));
 	Engine_System_NumEmittersAlive = FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Engine.System.NumEmittersAlive"));
 	Engine_System_SignificanceIndex = FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Engine.System.SignificanceIndex"));
@@ -402,6 +437,7 @@ void INiagaraModule::StartupModule()
 	Particles_LightExponent = FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Particles.LightExponent"));
 	Particles_LightEnabled = FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("Particles.LightEnabled"));
 	Particles_LightVolumetricScattering = FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Particles.LightVolumetricScattering"));
+	Particles_LightSpecularScale = FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Particles.LightSpecularScale"));
 	Particles_RibbonID = FNiagaraVariable(FNiagaraTypeDefinition::GetIDDef(), TEXT("Particles.RibbonID"));
 	Particles_RibbonWidth = FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Particles.RibbonWidth"));
 	Particles_RibbonTwist = FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Particles.RibbonTwist"));
@@ -433,6 +469,7 @@ void INiagaraModule::StartupModule()
 	UNiagaraMeshRendererProperties::InitCDOPropertiesAfterModuleStartup();
 	UNiagaraComponentRendererProperties::InitCDOPropertiesAfterModuleStartup();
 	UNiagaraVolumeRendererProperties::InitCDOPropertiesAfterModuleStartup();
+	NiagaraStatelessCommon::Initialize();
 
 	// Register the data interface CDO finder with the shader module..
 	INiagaraShaderModule& NiagaraShaderModule = FModuleManager::LoadModuleChecked<INiagaraShaderModule>("NiagaraShader");
@@ -458,6 +495,8 @@ void INiagaraModule::StartupModule()
 #endif
 #endif
 
+	RegisterInternalAssetTagDefinitions();
+	
 	FCoreDelegates::OnPostEngineInit.AddRaw(this, &INiagaraModule::OnPostEngineInit);
 	FCoreDelegates::OnPreExit.AddRaw(this, &INiagaraModule::OnPreExit);
 	FWorldDelegates::OnWorldBeginTearDown.AddRaw(this, &INiagaraModule::OnWorldBeginTearDown);
@@ -556,6 +595,7 @@ void INiagaraModule::OnPostGarbageCollect()
 
 void INiagaraModule::OnBeginFrame()
 {
+	FNiagaraComponentSettings::UpdateSettings();
 	FNiagaraPlatformSet::RefreshScalability();
 }
 
@@ -598,11 +638,17 @@ void INiagaraModule::ShutdownModule()
 
 #if WITH_NIAGARA_DEBUGGER
 	DebuggerClient.Reset();
+	FNiagaraDataChannelDebugUtilities::TearDown();
 #endif
 
 #if NIAGARA_PERF_BASELINES
 	UNiagaraEffectType::OnGeneratePerfBaselines().Unbind();
 #endif
+}
+
+INiagaraModule& INiagaraModule::Get()
+{
+	return FModuleManager::LoadModuleChecked<INiagaraModule>("Niagara");
 }
 
 #if WITH_EDITOR
@@ -753,10 +799,10 @@ void INiagaraModule::UnregisterGraphTraversalCacher(FDelegateHandle DelegateHand
 	GraphTraversalCacheDelegate.Unbind();
 }
 
-FNiagaraCompilationTaskHandle INiagaraModule::RequestCompileSystem(UNiagaraSystem* System, bool bForce)
+FNiagaraCompilationTaskHandle INiagaraModule::RequestCompileSystem(UNiagaraSystem* System, bool bForce, const ITargetPlatform* TargetPlatform)
 {
 	checkf(RequestCompileSystemDelegate.IsBound(), TEXT("RequestCompileSystemDelegate delegate not bound."));
-	return RequestCompileSystemDelegate.Execute(System, bForce);
+	return RequestCompileSystemDelegate.Execute(System, bForce, TargetPlatform);
 }
 
 FDelegateHandle INiagaraModule::RegisterRequestCompileSystem(FOnRequestCompileSystem RequestCompileSystemCallback)
@@ -1313,64 +1359,63 @@ bool FNiagaraTypeDefinition::IsScalarDefinition(const FNiagaraTypeDefinition& Ty
 	return ScalarStructs.Contains(Type.GetScriptStruct()) || (Type.GetScriptStruct() == IntStruct && Type.GetEnum() != nullptr);
 }
 
-bool FNiagaraTypeDefinition::TypesAreAssignable(const FNiagaraTypeDefinition& TypeInput, const FNiagaraTypeDefinition& TypeOutput, bool bAllowLossyLWCConversions)
+bool FNiagaraTypeDefinition::TypesAreAssignable(const FNiagaraTypeDefinition& InputPinType, const FNiagaraTypeDefinition& OutputPinType, bool bAllowLossyLWCConversions)
 {
-	if (const UClass* AClass = TypeInput.GetClass())
+	if (const UClass* AClass = InputPinType.GetClass())
 	{
-		if (const UClass* BClass = TypeOutput.GetClass())
+		if (const UClass* BClass = OutputPinType.GetClass())
 		{
 			return AClass == BClass;
-			return true;
 		}
 	}
 	
-	if (const UClass* BClass = TypeOutput.GetClass())
+	if (const UClass* BClass = OutputPinType.GetClass())
 	{
 		return false;
 	}
 
-	if (const UClass* AClass = TypeInput.GetClass())
+	if (const UClass* AClass = InputPinType.GetClass())
 	{
 		return false;
 	}
 
 	// Enums can only be assigned from enums of the same type.
-	if(TypeInput.IsEnum() && TypeInput.GetEnum() != TypeOutput.GetEnum())
+	if(InputPinType.IsEnum() && InputPinType.GetEnum() != OutputPinType.GetEnum())
 	{
 		return false;
 	}
 
 	//Enums can be assigned to enums of the same type or plain integers.
-	if(TypeOutput.IsEnum() && TypeInput.GetEnum() != TypeOutput.GetEnum() && TypeInput != FNiagaraTypeDefinition::GetIntDef())
+	if(OutputPinType.IsEnum() && InputPinType.GetEnum() != OutputPinType.GetEnum() && InputPinType != FNiagaraTypeDefinition::GetIntDef())
 	{
 		return false;
 	}
 
 	// Static can go to static or static can go to nonstatic, but nonstatic can't go to static
-	if (((!TypeInput.IsStatic() && TypeOutput.IsStatic()) || (TypeInput.IsStatic() && TypeOutput.IsStatic())) && TypeInput.GetStruct() == TypeOutput.GetStruct() && TypeInput.GetEnum() == TypeOutput.GetEnum())
+	if (((!InputPinType.IsStatic() && OutputPinType.IsStatic()) || (InputPinType.IsStatic() && OutputPinType.IsStatic())) && InputPinType.GetStruct() == OutputPinType.GetStruct() && InputPinType.GetEnum() == OutputPinType.GetEnum())
 	{
 		return true;
 	}
-	else if ((TypeInput.IsStatic() || TypeOutput.IsStatic()) && TypeInput.GetStruct() == TypeOutput.GetStruct() && TypeInput.GetEnum() == TypeOutput.GetEnum())
+	else if ((InputPinType.IsStatic() || OutputPinType.IsStatic()) && InputPinType.GetStruct() == OutputPinType.GetStruct() && InputPinType.GetEnum() == OutputPinType.GetEnum())
 	{
 		return false;
 	}
 
-	if (TypeInput.GetStruct() == TypeOutput.GetStruct())
+	if (InputPinType.GetStruct() == OutputPinType.GetStruct())
 	{
 		return true;
 	}
 
 	bool bIsSupportedConversion = false;
-	if (IsScalarDefinition(TypeInput) && IsScalarDefinition(TypeOutput))
+	if (IsScalarDefinition(InputPinType) && IsScalarDefinition(OutputPinType))
 	{
-		bIsSupportedConversion = (TypeInput == IntDef && TypeOutput == FloatDef) || (TypeOutput == IntDef && TypeInput == FloatDef) || (TypeInput == IntDef && TypeOutput == BoolDef) || (TypeOutput == IntDef && TypeInput == BoolDef);
+		bIsSupportedConversion = (InputPinType == IntDef && OutputPinType == FloatDef) || (OutputPinType == IntDef && InputPinType == FloatDef) || (InputPinType == IntDef && OutputPinType == BoolDef) || (OutputPinType == IntDef && InputPinType == BoolDef);
 	}
 	else
 	{
-		bIsSupportedConversion = (TypeInput == ColorDef && TypeOutput == Vec4Def) || (TypeOutput == ColorDef && TypeInput == Vec4Def)
+		bIsSupportedConversion = (InputPinType == ColorDef && OutputPinType == Vec4Def) || (OutputPinType == ColorDef && InputPinType == Vec4Def)
 			// we only allow direct assignments between vec <-> position if we are allowing lossy conversions
-			|| (bAllowLossyLWCConversions && ((TypeOutput == PositionDef && TypeInput == Vec3Def) || (TypeOutput == Vec3Def && TypeInput == PositionDef)));
+			|| (bAllowLossyLWCConversions && ((OutputPinType == PositionDef && InputPinType == Vec3Def) || (OutputPinType == Vec3Def && InputPinType == PositionDef)));
 	}
 
 	if (bIsSupportedConversion)
@@ -1379,10 +1424,10 @@ bool FNiagaraTypeDefinition::TypesAreAssignable(const FNiagaraTypeDefinition& Ty
 	}
 
 
-	return	(TypeInput == NumericDef && NumericStructs.Contains(TypeOutput.GetScriptStruct())) ||
-		(TypeOutput == NumericDef && NumericStructs.Contains(TypeInput.GetScriptStruct())) ||
-		(TypeInput == NumericDef && (TypeOutput.GetStruct() == GetIntStruct()) && TypeOutput.GetEnum() != nullptr) ||
-		(TypeOutput == NumericDef && (TypeInput.GetStruct() == GetIntStruct()) && TypeInput.GetEnum() != nullptr);
+	return	(InputPinType == NumericDef && NumericStructs.Contains(OutputPinType.GetScriptStruct())) ||
+		(OutputPinType == NumericDef && NumericStructs.Contains(InputPinType.GetScriptStruct())) ||
+		(InputPinType == NumericDef && (OutputPinType.GetStruct() == GetIntStruct()) && OutputPinType.GetEnum() != nullptr) ||
+		(OutputPinType == NumericDef && (InputPinType.GetStruct() == GetIntStruct()) && InputPinType.GetEnum() != nullptr);
 }
 
 bool FNiagaraTypeDefinition::IsLossyConversion(const FNiagaraTypeDefinition& FromType, const FNiagaraTypeDefinition& ToType)
@@ -1443,8 +1488,6 @@ FNiagaraTypeDefinition FNiagaraTypeDefinition::GetNumericOutputType(TConstArrayV
 	{
 		return SortedTypeDefinitions[0];
 	}
-
-	return FNiagaraTypeDefinition::GetGenericNumericDef();
 }
 
 bool FNiagaraTypeDefinition::Serialize(FArchive& Ar)
@@ -1849,6 +1892,13 @@ const TArray<FNiagaraVariable>& FNiagaraEmitterParameters::GetVariables()
 }
 
 #endif
+
+void INiagaraModule::RegisterInternalAssetTagDefinitions()
+{
+	// All internal tags have to be manually assigned a unique and stable guid so that names can be changed without affecting assigned assets.
+	InternalAssetTagDefinitions.Add(&TemplateTagDefinition);
+	InternalAssetTagDefinitions.Add(&LearningContentTagDefinition);
+}
 
 #if NIAGARA_PERF_BASELINES
 

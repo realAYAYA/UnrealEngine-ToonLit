@@ -15,7 +15,7 @@ struct FSmartObjectAnnotationGameplayDebugContext;
  * Base class for Smart Object Slot annotations. Annotation is a specific type of slot definition data that has methods to visualize it.
  */
 USTRUCT(meta=(Hidden))
-struct SMARTOBJECTSMODULE_API FSmartObjectSlotAnnotation : public FSmartObjectSlotDefinitionData
+struct SMARTOBJECTSMODULE_API FSmartObjectSlotAnnotation : public FSmartObjectDefinitionData
 {
 	GENERATED_BODY()
 	virtual ~FSmartObjectSlotAnnotation() override {}

@@ -50,13 +50,13 @@ static void* GetDllHandleImpl(NSString* DylibPath, NSString* ExecutableFolder)
 		{
 			DylibName = [DylibPath lastPathComponent];
 		}
-		Handle = dlopen([[@"@rpath" stringByAppendingPathComponent:DylibName] fileSystemRepresentation], RTLD_NOLOAD | RTLD_LAZY | RTLD_LOCAL);
+		Handle = dlopen([[@"@rpath" stringByAppendingPathComponent:DylibName] fileSystemRepresentation], RTLD_NOLOAD | RTLD_LAZY | RTLD_GLOBAL);
 	}
 	
 	if (!Handle)
 	{
 		// Not loaded yet, so try to open it
-		Handle = dlopen([DylibPath fileSystemRepresentation], RTLD_LAZY | RTLD_LOCAL);
+		Handle = dlopen([DylibPath fileSystemRepresentation], RTLD_LAZY | RTLD_GLOBAL);
 	}
 	
 	if (!Handle && FParse::Param(FCommandLine::Get(), TEXT("dllerrors")))
@@ -316,7 +316,7 @@ FProcHandle FMacPlatformProcess::CreateProcInternal(const TCHAR* URL, const TCHA
 		if (![[NSFileManager defaultManager] fileExistsAtPath: nsProcessPath])
 		{
 			NSString* AppName = [[nsProcessPath lastPathComponent] stringByDeletingPathExtension];
-			nsProcessPath = [[NSWorkspace sharedWorkspace] fullPathForApplication:AppName];
+			nsProcessPath = [[[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:AppName] path];
 		}
 		
 		if ([[NSFileManager defaultManager] fileExistsAtPath: nsProcessPath])
@@ -1210,7 +1210,7 @@ bool FMacPlatformProcess::LaunchFileInDefaultExternalApplication( const TCHAR* F
 		// Xcode project is a special case where we don't open the project file itself, but the .xcodeproj folder containing it
 		FileToOpen = [FileToOpen stringByDeletingLastPathComponent];
 	}
-	bool Result = [[NSWorkspace sharedWorkspace] openFile: FileToOpen];
+	bool Result = [[NSWorkspace sharedWorkspace] openURL: [NSURL fileURLWithPath:FileToOpen]];
 	CFRelease( CFFileName );
 
 	return Result;

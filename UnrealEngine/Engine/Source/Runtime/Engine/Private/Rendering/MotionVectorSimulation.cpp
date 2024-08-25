@@ -40,12 +40,12 @@ void FMotionVectorSimulation::NotifyUObjectDeleted(const UObjectBase* Object, in
 	SimulatedTransforms.Remove(Object);
 }
 
-TOptional<FTransform> FMotionVectorSimulation::GetPreviousTransform(USceneComponent* Component) const
+TOptional<FTransform> FMotionVectorSimulation::GetPreviousTransform(UObject* Object) const
 {
 	if (IsEnabled())
 	{
 		FScopeLock Lock(&MapCriticalSection);
-		const FSimulatedTransform* PreviousTransform = SimulatedTransforms.Find(Component);
+		const FSimulatedTransform* PreviousTransform = SimulatedTransforms.Find(Object);
 
 		// Only return the transform if it pertains to the current frame number
 		if (PreviousTransform && PreviousTransform->FrameNumber == GFrameCounter)
@@ -57,12 +57,12 @@ TOptional<FTransform> FMotionVectorSimulation::GetPreviousTransform(USceneCompon
 	return TOptional<FTransform>();
 }
 
-bool FMotionVectorSimulation::GetPreviousTransform(USceneComponent* Component, FTransform* OutTransform) const
+bool FMotionVectorSimulation::GetPreviousTransform(UObject* Object, FTransform* OutTransform) const
 {
 	if (IsEnabled())
 	{
 		FScopeLock Lock(&MapCriticalSection);
-		const FSimulatedTransform* PreviousTransform = SimulatedTransforms.Find(Component);
+		const FSimulatedTransform* PreviousTransform = SimulatedTransforms.Find(Object);
 
 		// Only return the transform if it pertains to the current frame number
 		if (PreviousTransform && PreviousTransform->FrameNumber == GFrameCounter)
@@ -75,7 +75,7 @@ bool FMotionVectorSimulation::GetPreviousTransform(USceneComponent* Component, F
 	return false;
 }
 
-void FMotionVectorSimulation::SetPreviousTransform(USceneComponent* Component, const FTransform& InNewPreviousTransform)
+void FMotionVectorSimulation::SetPreviousTransform(UObject* Object, const FTransform& InNewPreviousTransform)
 {
 	FScopeLock Lock(&MapCriticalSection);
 
@@ -83,14 +83,14 @@ void FMotionVectorSimulation::SetPreviousTransform(USceneComponent* Component, c
 	SimulatedTransform.Transform = InNewPreviousTransform;
 	SimulatedTransform.FrameNumber = GFrameCounter;
 
-	SimulatedTransforms.Add(Component, SimulatedTransform);
+	SimulatedTransforms.Add(Object, SimulatedTransform);
 }
 
-void FMotionVectorSimulation::ClearPreviousTransform(USceneComponent* Component)
+void FMotionVectorSimulation::ClearPreviousTransform(UObject* Object)
 {
 	FScopeLock Lock(&MapCriticalSection);
 
-	SimulatedTransforms.Remove(Component);
+	SimulatedTransforms.Remove(Object);
 }
 
 void FMotionVectorSimulation::Tick(float DeltaTime)

@@ -18,6 +18,7 @@ class UScriptStruct;
 namespace Dataflow {
 	struct FNodeParameters {
 		FName Name;
+		UObject* OwningObject = nullptr;
 	};
 	class FGraph;
 }
@@ -81,7 +82,11 @@ struct FDataflowNode
 	DATAFLOWCORE_API TArray<FString> GetPinMetaData(const FName& PropertyName);
 	virtual TArray<Dataflow::FRenderingParameter> GetRenderParameters() const { return GetRenderParametersImpl(); }
 	// Copy node property values from another node
+	UE_DEPRECATED(5.4, "FDataflowNode::CopyNodeProperties is deprecated.")
 	DATAFLOWCORE_API void CopyNodeProperties(const TSharedPtr<FDataflowNode> CopyFromDataflowNode);
+
+	virtual bool IsDeprecated() { return false; }
+	virtual bool IsExperimental() { return false; }
 
 	//
 	// Connections
@@ -93,9 +98,16 @@ struct FDataflowNode
 	virtual Dataflow::FPin AddPin() { return { Dataflow::FPin::EDirection::NONE, NAME_None, NAME_None }; }
 	/** Override this function to add the AddOptionPin functionality to the node's context menu. */
 	virtual bool CanAddPin() const { return false; }
-	/** Override this function to add the RemoveOPtionPin functionality to the node's context menu. */
-	virtual Dataflow::FPin RemovePin() { return { Dataflow::FPin::EDirection::NONE, NAME_None, NAME_None }; }
-	/** Override this function to add the RemoveOPtionPin functionality to the node's context menu. */
+	/** Override this function to add the RemoveOptionPin functionality to the node's context menu. */
+	virtual Dataflow::FPin GetPinToRemove() const { return { Dataflow::FPin::EDirection::NONE, NAME_None, NAME_None }; }
+	UE_DEPRECATED(5.4, "Use GetPinToRemove and OnPinRemoved instead.")
+	virtual Dataflow::FPin RemovePin() { return GetPinToRemove(); }
+	/** 
+	 * Override this to update any bookkeeping when a pin is being removed.
+	 * This will be called before the pin is unregistered as an input.
+	 */
+	virtual void OnPinRemoved(const Dataflow::FPin& Pin) {}
+	/** Override this function to add the RemoveOptionPin functionality to the node's context menu. */
 	virtual bool CanRemovePin() const { return false; }
 
 	DATAFLOWCORE_API virtual void AddInput(FDataflowInput* InPtr);
@@ -105,7 +117,7 @@ struct FDataflowNode
 	DATAFLOWCORE_API FDataflowInput* FindInput(FName Name);
 	DATAFLOWCORE_API FDataflowInput* FindInput(void* Reference);
 	DATAFLOWCORE_API const FDataflowInput* FindInput(const void* Reference) const;
-
+	DATAFLOWCORE_API const FDataflowInput* FindInput(const FGuid& InGuid) const;
 
 	DATAFLOWCORE_API virtual void AddOutput(FDataflowOutput* InPtr);
 	DATAFLOWCORE_API int NumOutputs() const;
@@ -116,6 +128,7 @@ struct FDataflowNode
 	DATAFLOWCORE_API FDataflowOutput* FindOutput(void* Reference);
 	DATAFLOWCORE_API const FDataflowOutput* FindOutput(FName Name) const;
 	DATAFLOWCORE_API const FDataflowOutput* FindOutput(const void* Reference) const;
+	DATAFLOWCORE_API const FDataflowOutput* FindOutput(const FGuid& InGuid) const;
 
 	/** Return a property's byte offset from the dataflow base node address using the full property name (must includes its parent struct property names). */
 	uint32 GetPropertyOffset(const FName& PropertyFullName) const;
@@ -130,6 +143,11 @@ struct FDataflowNode
 
 	/** Override this method to provide custom serialization for this node. */
 	virtual void Serialize(FArchive& Ar) {}
+
+	/** Called by editor toolkits when the node is selected, or already selected and invalidated. */
+	virtual void OnSelected(Dataflow::FContext& Context) {}
+	/** Called by editor toolkits when the node is deselected. */
+	virtual void OnDeselected() {}
 
 	//
 	//  Struct Support
@@ -148,6 +166,8 @@ struct FDataflowNode
 		const FName& PassthroughName = NAME_None);
 	/** Unregister the input connection if one exists matching this property, and then invalidate the graph. */
 	DATAFLOWCORE_API void UnregisterInputConnection(const void* Property, const FName& PropertyName = NAME_None);
+	/** Unregister the connection if one exists matching this pin, then invalidate the graph. */
+	DATAFLOWCORE_API void UnregisterPinConnection(const Dataflow::FPin& Pin);
 
 	//
 	// Evaluation
@@ -266,6 +286,7 @@ struct FDataflowNode
 	FOnNodeInvalidated& GetOnNodeInvalidatedDelegate() { return OnNodeInvalidatedDelegate; }
 
 private:
+	static FString GetPropertyFullNameString(const TConstArrayView<const FProperty*>& PropertyChain);
 	static FName GetPropertyFullName(const TArray<const FProperty*>& PropertyChain);
 	static FText GetPropertyDisplayNameText(const TArray<const FProperty*>& PropertyChain);
 	static uint32 GetPropertyOffset(const TArray<const FProperty*>& PropertyChain);
@@ -301,7 +322,8 @@ namespace Dataflow
 		{A::StaticType(),A::StaticDisplay(),A::StaticCategory(),					\
 			A::StaticTags(),A::StaticToolTip()},									\
 		[](const ::Dataflow::FNewNodeParameters& InParam){							\
-				TUniquePtr<A> Val = MakeUnique<A>(::Dataflow::FNodeParameters{InParam.Name}, InParam.Guid);    \
+				TUniquePtr<A> Val = MakeUnique<A>(::Dataflow::FNodeParameters{		\
+					InParam.Name, InParam.OwningObject}, InParam.Guid);				\
 				Val->ValidateConnections(); return Val;});
 
 #define DATAFLOW_NODE_RENDER_TYPE(A, B)												\

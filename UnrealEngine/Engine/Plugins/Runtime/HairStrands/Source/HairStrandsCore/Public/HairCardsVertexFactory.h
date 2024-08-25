@@ -10,10 +10,30 @@
 #include "HairCardsDatas.h"
 #include "HairStrandsInterface.h"
 #include "PrimitiveSceneProxy.h"
+#include "MeshBatch.h"
 
 class FMaterial;
 class FSceneView;
-struct FMeshBatchElement;
+
+// Wrapper to reinterepet FRDGPooledBuffer as a FVertexBuffer
+class FRDGWrapperVertexBuffer : public FVertexBuffer
+{
+public:
+	FRDGWrapperVertexBuffer() {}
+	FRDGWrapperVertexBuffer(FRDGExternalBuffer& In): ExternalBuffer(In) { check(ExternalBuffer.Buffer); }
+	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
+	{
+		check(ExternalBuffer.Buffer && ExternalBuffer.Buffer->GetRHI());
+		VertexBufferRHI = ExternalBuffer.Buffer->GetRHI();
+	}
+
+	virtual void ReleaseRHI() override
+	{
+		VertexBufferRHI = nullptr;
+	}
+
+	FRDGExternalBuffer ExternalBuffer;
+};
 
 /**
  * A vertex factory which simply transforms explicit vertex attributes from local to world space.
@@ -39,6 +59,9 @@ public:
 	static void ValidateCompiledResult(const FVertexFactoryType* Type, EShaderPlatform Platform, const FShaderParameterMap& ParameterMap, TArray<FString>& OutErrors);
 	static void GetPSOPrecacheVertexFetchElements(EVertexInputStreamType VertexInputStreamType, FVertexDeclarationElementList& Elements);
 
+	// Return the primitive id supported by the VF
+	EPrimitiveIdMode GetPrimitiveIdMode(ERHIFeatureLevel::Type In) const;
+
 	/**
 	 * An implementation of the interface used by TSynchronizedResource to update the resource with new data from the game thread.
 	 */
@@ -51,6 +74,7 @@ public:
 	void Copy(const FHairCardsVertexFactory& Other);
 
 	void InitResources(FRHICommandListBase& RHICmdList);
+	virtual void ReleaseResource() override;
 
 	// FRenderResource interface.
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
@@ -60,6 +84,9 @@ public:
 protected:
 
 	bool bIsInitialized = false;
+
+	FRDGWrapperVertexBuffer DeformedPositionVertexBuffer[2];
+	FRDGWrapperVertexBuffer DeformedNormalVertexBuffer;
 
 	struct FDebugName
 	{

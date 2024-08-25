@@ -1,17 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "D3D12RHI.h"
+#include "HAL/FileManager.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "RayTracingDefinitions.h"
+#include "Serialization/MemoryWriter.h"
 #include "ShaderFormatD3D.h"
-#include "ShaderPreprocessor.h"
 #include "ShaderCompilerCommon.h"
+#include "ShaderCompilerDefinitions.h"
 #include "ShaderMinifier.h"
 #include "ShaderParameterParser.h"
 #include "ShaderPreprocessTypes.h"
-#include "D3D12RHI.h"
-#include "Misc/Paths.h"
-#include "Misc/FileHelper.h"
-#include "HAL/FileManager.h"
-#include "Serialization/MemoryWriter.h"
-#include "RayTracingDefinitions.h"
 #include "SpirvCommon.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogD3D11ShaderCompiler, Log, All);
@@ -57,6 +57,29 @@ static uint32 TranslateCompilerFlagD3D11(ECompilerFlags CompilerFlag)
 	};
 }
 
+/*
+ * Turns invalid absolute paths that FXC generated back into a virtual file paths,
+ * e.g. "D:\\Engine\\Private\\Common.ush" into "/Engine/Private/Common.ush"
+ */
+static void D3D11SanitizeErrorVirtualFilePath(FString& ErrorLine)
+{
+	if (ErrorLine.Len() > 3 && ErrorLine[1] == TEXT(':') && ErrorLine[2] == TEXT('\\'))
+	{
+		const int32 EndOfFilePath = ErrorLine.Find(TEXT(":"), ESearchCase::CaseSensitive, ESearchDir::FromStart, 3);
+		if (EndOfFilePath != INDEX_NONE)
+		{
+			for (int32 ErrorLineStringPosition = 2; ErrorLineStringPosition < EndOfFilePath; ++ErrorLineStringPosition)
+			{
+				if (ErrorLine[ErrorLineStringPosition] == TEXT('\\'))
+				{
+					ErrorLine[ErrorLineStringPosition] = TEXT('/');
+				}
+			}
+			ErrorLine.RightChopInline(2);
+		}
+	}
+}
+
 /**
  * Filters out unwanted shader compile warnings
  */
@@ -75,86 +98,55 @@ static void D3D11FilterShaderCompileWarnings(const FString& CompileWarnings, TAr
 			// Gets spammed when converting from float to half
 			&& !WarningArray[WarningIndex].Contains(TEXT("X3205")))
 		{
+			D3D11SanitizeErrorVirtualFilePath(WarningArray[WarningIndex]);
 			FilteredWarnings.AddUnique(WarningArray[WarningIndex]);
 		}
 	}
 }
 
 // @return 0 if not recognized
-static const TCHAR* GetShaderProfileName(ELanguage Language, uint32 Frequency, bool bForceSM6)
+static const TCHAR* GetShaderProfileName(const FShaderCompilerInput& Input, ED3DShaderModel ShaderModel)
 {
-
-	if (Language == ELanguage::SM6 || IsRayTracingShaderFrequency(EShaderFrequency(Frequency)))
+	if (ShaderModel == ED3DShaderModel::SM6_6)
 	{
-		switch (Frequency)
+		switch (Input.Target.GetFrequency())
 		{
-		default:
-			checkfSlow(false, TEXT("Unexpected shader frequency"));
-			return nullptr;
-		case SF_Pixel:
-			return USE_SHADER_MODEL_6_6 ? TEXT("ps_6_6") : TEXT("ps_6_5");
-		case SF_Vertex:
-			return USE_SHADER_MODEL_6_6 ? TEXT("vs_6_6") : TEXT("vs_6_5");
-		case SF_Mesh:
-			return USE_SHADER_MODEL_6_6 ? TEXT("ms_6_6") : TEXT("ms_6_5");
-		case SF_Amplification:
-			return USE_SHADER_MODEL_6_6 ? TEXT("as_6_6") : TEXT("as_6_5");
-		case SF_Geometry:
-			return USE_SHADER_MODEL_6_6 ? TEXT("gs_6_6") : TEXT("gs_6_5");
-		case SF_Compute:
-			return USE_SHADER_MODEL_6_6 ? TEXT("cs_6_6") : TEXT("cs_6_5");
+		case SF_Pixel:         return TEXT("ps_6_6");
+		case SF_Vertex:        return TEXT("vs_6_6");
+		case SF_Mesh:          return TEXT("ms_6_6");
+		case SF_Amplification: return TEXT("as_6_6");
+		case SF_Geometry:      return TEXT("gs_6_6");
+		case SF_Compute:       return TEXT("cs_6_6");
 		case SF_RayGen:
 		case SF_RayMiss:
 		case SF_RayHitGroup:
-		case SF_RayCallable:
-			return USE_SHADER_MODEL_6_6 ? TEXT("lib_6_6") : TEXT("lib_6_5");
+		case SF_RayCallable:   return TEXT("lib_6_6");
 		}
 	}
-	else if(Language == ELanguage::SM5)
+	else if (ShaderModel == ED3DShaderModel::SM6_0)
 	{
 		//set defines and profiles for the appropriate shader paths
-		switch(Frequency)
+		switch (Input.Target.GetFrequency())
 		{
-		default:
-			checkfSlow(false, TEXT("Unexpected shader frequency"));
-			return nullptr;
-		case SF_Pixel:
-			return bForceSM6 ? TEXT("ps_6_0") : TEXT("ps_5_0");
-		case SF_Vertex:
-			return bForceSM6 ? TEXT("vs_6_0") : TEXT("vs_5_0");
-		case SF_Geometry:
-			return bForceSM6 ? TEXT("gs_6_0") : TEXT("gs_5_0");
-		case SF_Compute:
-			return bForceSM6 ? TEXT("cs_6_0") : TEXT("cs_5_0");
-		case SF_RayGen:
-		case SF_RayMiss:
-		case SF_RayHitGroup:
-		case SF_RayCallable:
-			checkNoEntry();
-			return TEXT("lib_6_5");
+		case SF_Pixel:    return TEXT("ps_6_0");
+		case SF_Vertex:   return TEXT("vs_6_0");
+		case SF_Geometry: return TEXT("gs_6_0");
+		case SF_Compute:  return TEXT("cs_6_0");
 		}
 	}
-	else if (Language == ELanguage::ES3_1)
+	else
 	{
-		checkSlow(Frequency == SF_Vertex ||
-			Frequency == SF_Pixel ||
-			Frequency == SF_Geometry ||
-			Frequency == SF_Compute);
-
 		//set defines and profiles for the appropriate shader paths
-		switch(Frequency)
+		switch (Input.Target.GetFrequency())
 		{
-		case SF_Pixel:
-			return bForceSM6 ? TEXT("ps_6_0") : TEXT("ps_5_0");
-		case SF_Vertex:
-			return bForceSM6 ? TEXT("vs_6_0") : TEXT("vs_5_0");
-		case SF_Geometry:
-			return bForceSM6 ? TEXT("gs_6_0") : TEXT("gs_5_0");
-		case SF_Compute:
-			return bForceSM6 ? TEXT("cs_6_0") : TEXT("cs_5_0");
+		case SF_Pixel:    return TEXT("ps_5_0");
+		case SF_Vertex:   return TEXT("vs_5_0");
+		case SF_Geometry: return TEXT("gs_5_0");
+		case SF_Compute:  return TEXT("cs_5_0");
 		}
 	}
 
+	checkfSlow(false, TEXT("Unexpected shader frequency"));
 	return nullptr;
 }
 
@@ -482,8 +474,94 @@ static void PatchSpirvForPrecompilation(FSpirv& Spirv)
 	}
 }
 
+// @param StageVariablesStorageClass Must be SpvStorageClassOutput for vertex shaders and SpvStorageClassInput for pixel shaders.
+static bool PatchHlslWithReorderedIOVariables(
+	FString& HlslSourceString,
+	const FString& OriginalShaderSource,
+	const FString& OriginalEntryPoint,
+	SpvStorageClass StageVariablesStorageClass,
+	TArray<FShaderCompilerError>& OutErrors)
+{
+	check(StageVariablesStorageClass == SpvStorageClassInput || StageVariablesStorageClass == SpvStorageClassOutput);
+
+	// Find declaration struct for stage variables
+	const FStringView StageVariableDeclarationName = (StageVariablesStorageClass == SpvStorageClassInput ? TEXT("SPIRV_Cross_Input") : TEXT("SPIRV_Cross_Output"));
+	const int32 StageVariableDeclarationBegin = HlslSourceString.Find(StageVariableDeclarationName, ESearchCase::CaseSensitive);
+	if (StageVariableDeclarationBegin == INDEX_NONE)
+	{
+		return false;
+	}
+
+	const int32 StageVariableDelcarationBlockBegin = HlslSourceString.Find(TEXT("{"), ESearchCase::CaseSensitive, ESearchDir::FromStart, StageVariableDeclarationBegin + StageVariableDeclarationName.Len());
+	if (StageVariableDelcarationBlockBegin == INDEX_NONE)
+	{
+		return false;
+	}
+
+	const int32 StageVariableDelcarationBlockEnd = HlslSourceString.Find(TEXT("}"), ESearchCase::CaseSensitive, ESearchDir::FromStart, StageVariableDelcarationBlockBegin + 1);
+	if (StageVariableDelcarationBlockEnd == INDEX_NONE)
+	{
+		return false;
+	}
+
+	// Parse declaration struct for stage variables into array of individual lines
+	const FString StageVariableDeclarationSource = HlslSourceString.Mid(StageVariableDelcarationBlockBegin + 1, StageVariableDelcarationBlockEnd - (StageVariableDelcarationBlockBegin + 1));
+
+	TArray<FString> StageVariableDeclarationLines;
+	StageVariableDeclarationSource.ParseIntoArrayLines(StageVariableDeclarationLines);
+
+	// Parse variable names from SPIR-V input
+	TArray<FString> Variables, ParsingErrors;
+	const EShaderParameterStorageClass ParameterStorageClass = (StageVariablesStorageClass == SpvStorageClassOutput ? EShaderParameterStorageClass::Output : EShaderParameterStorageClass::Input);
+	if (!FindEntryPointParameters(OriginalShaderSource, OriginalEntryPoint, ParameterStorageClass, Variables, ParsingErrors))
+	{
+		for (FString& Error : ParsingErrors)
+		{
+			OutErrors.Add(FShaderCompilerError(MoveTemp(Error)));
+		}
+		return false;
+	}
+
+	if (Variables.Num() != StageVariableDeclarationLines.Num())
+	{
+		// Failed to match SPIR-V variables to SPIRV-Cross generated source
+		return false;
+	}
+
+	// Re-arrange source lines of stage variable declarations
+	FString SortedStageVariableDeclarationSource = TEXT("\n");
+
+	for (const FString& Variable : Variables)
+	{
+		for (FString& SourceLine : StageVariableDeclarationLines)
+		{
+			// Search for semantic name (always case insensitive) in current stage variable source line
+			if (SourceLine.Find(Variable, ESearchCase::IgnoreCase) != INDEX_NONE)
+			{
+				// Append source line for current variable at the end of sorted declaration string.
+				// Then empty this source line to avoid unnecessary string comparisons for next variables.
+				SortedStageVariableDeclarationSource += SourceLine;
+				SortedStageVariableDeclarationSource += TEXT('\n');
+				SourceLine.Empty();
+				break;
+			}
+		}
+	}
+
+	// Replace old declaration with sorted one
+	HlslSourceString.RemoveAt(StageVariableDelcarationBlockBegin + 1, StageVariableDelcarationBlockEnd - (StageVariableDelcarationBlockBegin + 1));
+	HlslSourceString.InsertAt(StageVariableDelcarationBlockBegin + 1, SortedStageVariableDeclarationSource);
+
+	return true;
+}
+
 // @todo-lh: use ANSI string class whenever UE core gets one
-static void PatchHlslForPrecompilation(TArray<ANSICHAR>& HlslSource)
+static void PatchHlslForPrecompilation(
+	TArray<ANSICHAR>& HlslSource,
+	const EShaderFrequency Frequency,
+	const FString& OriginalShaderSource,
+	const FString& OriginalEntryPoint,
+	TArray<FShaderCompilerError>& OutErrors)
 {
 	FString HlslSourceString;
 
@@ -525,6 +603,32 @@ static void PatchHlslForPrecompilation(TArray<ANSICHAR>& HlslSource)
 		}
 	}
 
+	if (Frequency == SF_Vertex)
+	{
+		// Ensure order of output variables remains the same as declared in original shader source
+		PatchHlslWithReorderedIOVariables(HlslSourceString, OriginalShaderSource, OriginalEntryPoint, SpvStorageClassOutput, OutErrors);
+	}
+	else if (Frequency == SF_Pixel)
+	{
+		// Patch internal error when SV_DepthLessEqual or SV_DepthGreaterEqual is specified in a pixel shader output. This is to prevent the following internal error:
+		//	error X8000 : D3D11 Internal Compiler Error : Invalid Bytecode : Interpolation mode for PS input position must be
+		//				  linear_noperspective_centroid or linear_noperspective_sample when outputting oDepthGE or oDepthLE and
+		//				  not running at sample frequency(which is forced by inputting SV_SampleIndex or declaring an input linear_sample or linear_noperspective_sample).
+		if (HlslSourceString.Find(TEXT("SV_DepthLessEqual"), ESearchCase::CaseSensitive) != INDEX_NONE ||
+			HlslSourceString.Find(TEXT("SV_DepthGreaterEqual"), ESearchCase::CaseSensitive) != INDEX_NONE)
+		{
+			// Ensure the interpolation mode is linear_noperspective_sample by adding "sample" specifier to one of the input-interpolators that have a floating-point type
+			const int32 FragCoordStringPosition = HlslSourceString.Find(TEXT("float4 gl_FragCoord : SV_Position"), ESearchCase::CaseSensitive);
+			if (FragCoordStringPosition != INDEX_NONE)
+			{
+				HlslSourceString.InsertAt(FragCoordStringPosition, TEXT("sample "));
+			}
+		}
+
+		// Ensure order of input variables remains the same as declared in original shader source
+		PatchHlslWithReorderedIOVariables(HlslSourceString, OriginalShaderSource, OriginalEntryPoint, SpvStorageClassInput, OutErrors);
+	}
+
 	// Return new HLSL source
 	HlslSource.SetNum(HlslSourceString.Len() + 1);
 	FMemory::Memcpy(HlslSource.GetData(), TCHAR_TO_ANSI(*HlslSourceString), HlslSourceString.Len());
@@ -547,19 +651,28 @@ static bool CompileErrorsContainInternalError(ID3DBlob* Errors)
 	return false;
 }
 
+static bool D3DCompileErrorContainsValidationErrors(ID3DBlob* ErrorBlob)
+{
+	if (ErrorBlob != nullptr)
+	{
+		const FAnsiStringView ErrorString((const ANSICHAR*)ErrorBlob->GetBufferPointer(), (int32)ErrorBlob->GetBufferSize());
+		return (ErrorString.Find(ANSITEXTVIEW("error X8000: Validation Error:")) != INDEX_NONE);
+	}
+	return false;
+}
+
 // Generate the dumped usf file; call the D3D compiler, gather reflection information and generate the output data
 static bool CompileAndProcessD3DShaderFXCExt(
-	const FShaderPreprocessOutput& PreprocessOutput,
 	uint32 CompileFlags,
 	const FShaderCompilerInput& Input,
+	const FString& PreprocessedShaderSource,
+	const FString& EntryPointName,
 	const FShaderParameterParser& ShaderParameterParser,
 	const TCHAR* ShaderProfile, bool bSecondPassAferUnusedInputRemoval,
 	TArray<FString>& FilteredErrors, FShaderCompilerOutput& Output)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(CompileAndProcessD3DShaderFXCExt);
 
-	const FString& PreprocessedShaderSource = Output.ModifiedShaderSource.IsEmpty() ? PreprocessOutput.GetSource() : Output.ModifiedShaderSource;
-	const FString& EntryPointName = Output.ModifiedEntryPointName.IsEmpty() ? Input.EntryPointName : Output.ModifiedEntryPointName;
 	auto AnsiSourceFile = StringCast<ANSICHAR>(*PreprocessedShaderSource);
 
 	bool bDumpDebugInfo = Input.DumpDebugInfoEnabled();
@@ -650,13 +763,16 @@ static bool CompileAndProcessD3DShaderFXCExt(
 			CrossCompiler::FShaderConductorTarget TargetDesc;
 			TargetDesc.Language = CrossCompiler::EShaderConductorLanguage::Hlsl;
 			TargetDesc.Version = 50;
-			TargetDesc.CompileFlags.SetDefine(TEXT("implicit_resource_binding"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("reconstruct_global_uniforms"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("reconstruct_cbuffer_names"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("reconstruct_semantics"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("force_zero_initialized_variables"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("relax_nan_checks"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("preserve_structured_buffers"), 1);
+
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+			TargetDesc.CompileFlags->SetDefine(TEXT("implicit_resource_binding"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("reconstruct_global_uniforms"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("reconstruct_cbuffer_names"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("reconstruct_semantics"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("force_zero_initialized_variables"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("relax_nan_checks"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("preserve_structured_buffers"), 1);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			// Patch SPIR-V for workarounds to prevent potential additional FXC failures
 			PatchSpirvForPrecompilation(Spirv);
@@ -669,7 +785,7 @@ static bool CompileAndProcessD3DShaderFXCExt(
 			}
 
 			// Patch HLSL for workarounds to prevent potential additional FXC failures
-			PatchHlslForPrecompilation(CrossCompiledSource);
+			PatchHlslForPrecompilation(CrossCompiledSource, Frequency, PreprocessedShaderSource, EntryPointName, Output.Errors);
 
 			if (bDumpDebugInfo && CrossCompiledSource.Num() > 1)
 			{
@@ -677,23 +793,63 @@ static bool CompileAndProcessD3DShaderFXCExt(
 				DumpDebugShaderText(Input, CrossCompiledSource.GetData(), CrossCompiledSource.Num() - 1, TEXT("intermediate.hlsl"));
 			}
 
-			// Compile again with FXC:
+			// Generates an virtual source file path with the ".intermediate." suffix injected.
+			auto MakeIntermediateVirtualSourceFilePath = [](const FString& InVirtualSourceFilePath) -> FString
+			{
+				FString PathPart, FilenamePart, ExtensionPart;
+				FPaths::Split(InVirtualSourceFilePath, PathPart, FilenamePart, ExtensionPart);
+				return FPaths::Combine(PathPart, FilenamePart) + TEXT(".intermediate.") + ExtensionPart;
+			};
+
+			const FString CrossCompiledSourceFilename = MakeIntermediateVirtualSourceFilePath(Input.VirtualSourceFilePath);
+			auto ShaderProfileAnsi = StringCast<ANSICHAR>(ShaderProfile);
+			auto CrossCompiledSourceFilenameAnsi = StringCast<ANSICHAR>(*CrossCompiledSourceFilename);
+
 			// SPIRV-Cross will have generated the new shader with "main" as the new entry point.
-			const FString CrossCompiledSourceFilename = Input.VirtualSourceFilePath + TEXT(".intermediate.hlsl");
-			Result = D3DCompileWrapper(
-				D3DCompileFunc,
-				CrossCompiledSource.GetData(),
-				CrossCompiledSource.Num() - 1,
-				TCHAR_TO_ANSI(*CrossCompiledSourceFilename),
-				/*pDefines=*/ NULL,
-				/*pInclude=*/ NULL,
-				"main",
-				TCHAR_TO_ANSI(ShaderProfile),
-				CompileFlags & (~D3DCOMPILE_WARNINGS_ARE_ERRORS),
-				0,
-				Shader.GetInitReference(),
-				Errors.GetInitReference()
-			);
+			auto CompileCrossCompiledHlsl = [&D3DCompileFunc, &CrossCompiledSourceFilenameAnsi, &Shader, &Errors, &ShaderProfileAnsi](const TArray<ANSICHAR>& Source, uint32 CompileFlags, const ANSICHAR* EntryPoint = "main") -> HRESULT
+			{
+				checkf(Source.Num() > 0, TEXT("TArray<ANSICHAR> of cross-compiled HLSL source must have at least one element including the NUL-terminator"));
+				return D3DCompileWrapper(
+					D3DCompileFunc,
+					Source.GetData(),
+					static_cast<SIZE_T>(Source.Num() - 1),
+					CrossCompiledSourceFilenameAnsi.Get(),
+					/*pDefines=*/ NULL,
+					/*pInclude=*/ NULL,
+					EntryPoint,
+					ShaderProfileAnsi.Get(),
+					CompileFlags,
+					0,
+					Shader.GetInitReference(),
+					Errors.GetInitReference()
+				);
+			};
+
+			// Compile again with FXC - 1st try
+			const uint32 CompileFlagsNoWarningsAsErrors = CompileFlags & (~D3DCOMPILE_WARNINGS_ARE_ERRORS);
+			Result = CompileCrossCompiledHlsl(CrossCompiledSource, CompileFlagsNoWarningsAsErrors);
+
+			// If FXC compilation failed with a validation error, assume bug in FXC's optimization passes
+			// Compile again with FXC and disable special compiler rule to simplify control flow - 2nd try
+			if (Result == E_FAIL && D3DCompileErrorContainsValidationErrors(Errors.GetReference()))
+			{
+				Output.Errors.Add(FShaderCompilerError(TEXT("Validation error in FXC encountered: Compiling intermediate HLSL a second time with simplified control flow")));
+
+				// Rule 0x08024065 is described as "simplify flow control that writes the same value in each flow control path"
+				const FAnsiStringView PragmaDirectiveCode = "#pragma ruledisable 0x08024065\n";
+				CrossCompiledSource.Insert(PragmaDirectiveCode.GetData(), PragmaDirectiveCode.Len(), 0);
+
+				Result = CompileCrossCompiledHlsl(CrossCompiledSource, CompileFlagsNoWarningsAsErrors);
+
+				// If FXC compilation still fails with a validation error, compile again and skip optimizations entirely as a last resort - 3rd try
+				if (Result == E_FAIL && D3DCompileErrorContainsValidationErrors(Errors.GetReference()))
+				{
+					Output.Errors.Add(FShaderCompilerError(TEXT("Validation error in FXC encountered: Compiling intermediate HLSL a third time without optimization (D3DCOMPILE_SKIP_OPTIMIZATION)")));
+
+					const uint32 CompileFlagsSkipOptimizations = CompileFlagsNoWarningsAsErrors | D3DCOMPILE_SKIP_OPTIMIZATION;
+					Result = CompileCrossCompiledHlsl(CrossCompiledSource, CompileFlagsSkipOptimizations);
+				}
+			}
 
 			if (!bPrecompileWithDXC && SUCCEEDED(Result))
 			{
@@ -701,7 +857,7 @@ static bool CompileAndProcessD3DShaderFXCExt(
 				FSCWErrorCode::Reset();
 
 				// Let the user know this shader had to be cross-compiled due to a crash in FXC. Only shows up if CVar 'r.ShaderDevelopmentMode' is enabled.
-				Output.Errors.Add(FShaderCompilerError(FString::Printf(TEXT("Cross-compiled shader to intermediate HLSL after first attempt crashed FXC: %s"), *Input.GenerateShaderName())));
+				Output.Errors.Add(FShaderCompilerError(TEXT("Cross-compiled shader to intermediate HLSL after first attempt crashed FXC")));
 			}
 		}
 	}
@@ -854,14 +1010,12 @@ static bool CompileAndProcessD3DShaderFXCExt(
 					for (int32 Attempt = 0; Attempt < kMaxReasonableAttempts; ++Attempt)
 					{
 						TArray<FString> RemoveErrors;
-						FString ModifiedShaderSource = PreprocessOutput.GetSource();
+						FString ModifiedShaderSource = PreprocessedShaderSource;
 						FString ModifiedEntryPointName = Input.EntryPointName;
 						if (RemoveUnusedInputs(ModifiedShaderSource, ShaderInputs, ModifiedEntryPointName, RemoveErrors))
 						{
 							Output = OriginalOutput;
-							Output.ModifiedShaderSource = MoveTemp(ModifiedShaderSource);
-							Output.ModifiedEntryPointName = MoveTemp(ModifiedEntryPointName);
-							if (!CompileAndProcessD3DShaderFXCExt(PreprocessOutput, CompileFlags, Input, ShaderParameterParser, ShaderProfile, true, FilteredErrors, Output))
+							if (!CompileAndProcessD3DShaderFXCExt(CompileFlags, Input, ModifiedShaderSource, ModifiedEntryPointName, ShaderParameterParser, ShaderProfile, true, FilteredErrors, Output))
 							{
 								// if we failed to compile the shader, propagate the error up
 								return false;
@@ -870,6 +1024,9 @@ static bool CompileAndProcessD3DShaderFXCExt(
 							// check if the ShaderInputs changed - if not, we're done here
 							if (Output.UsedAttributes.Num() == ShaderInputs.Num())
 							{
+								Output.ModifiedShaderSource = MoveTemp(ModifiedShaderSource);
+								Output.ModifiedEntryPointName = MoveTemp(ModifiedEntryPointName);
+
 								return true;
 							}
 
@@ -1030,8 +1187,10 @@ static bool CompileAndProcessD3DShaderFXCExt(
 	return SUCCEEDED(Result);
 }
 
-bool CompileAndProcessD3DShaderFXC(const FShaderPreprocessOutput& PreprocessOutput,
+bool CompileAndProcessD3DShaderFXC(
 	const FShaderCompilerInput& Input,
+	const FString& InPreprocessedSource,
+	const FString& InEntryPointName,
 	const FShaderParameterParser& ShaderParameterParser,
 	const TCHAR* ShaderProfile,
 	bool bSecondPassAferUnusedInputRemoval,
@@ -1069,7 +1228,7 @@ bool CompileAndProcessD3DShaderFXC(const FShaderPreprocessOutput& PreprocessOutp
 		});
 
 	TArray<FString> FilteredErrors;
-	const bool bSuccess = CompileAndProcessD3DShaderFXCExt(PreprocessOutput, CompileFlags, Input, ShaderParameterParser, ShaderProfile, false, FilteredErrors, Output);
+	const bool bSuccess = CompileAndProcessD3DShaderFXCExt(CompileFlags, Input, InPreprocessedSource, InEntryPointName, ShaderParameterParser, ShaderProfile, false, FilteredErrors, Output);
 
 	// Process errors
 	for (int32 ErrorIndex = 0; ErrorIndex < FilteredErrors.Num(); ErrorIndex++)
@@ -1100,164 +1259,100 @@ bool CompileAndProcessD3DShaderFXC(const FShaderPreprocessOutput& PreprocessOutp
 	return bSuccess;
 }
 
-inline bool ShouldUseDXC(const FShaderCompilerInput& Input, ELanguage Language)
+struct FD3DShaderParameterParserPlatformConfiguration : public FShaderParameterParser::FPlatformConfiguration
 {
-	return Language == ELanguage::SM6
-		|| Input.IsRayTracingShader()
-		|| Input.Environment.CompilerFlags.Contains(CFLAG_WaveOperations)
-		|| Input.Environment.CompilerFlags.Contains(CFLAG_ForceDXC)
-		|| Input.Environment.CompilerFlags.Contains(CFLAG_InlineRayTracing);
-}
-
-bool PreprocessD3DShader(
-	const FShaderCompilerInput& Input,
-	const FShaderCompilerEnvironment& Environment,
-	FShaderPreprocessOutput& Output,
-	ELanguage Language)
-{
-	FShaderCompilerDefinitions AdditionalDefines;
-	if (Language == ELanguage::SM6)
+	FD3DShaderParameterParserPlatformConfiguration()
+		: FShaderParameterParser::FPlatformConfiguration(TEXTVIEW("cbuffer"), EShaderParameterParserConfigurationFlags::UseStableConstantBuffer|EShaderParameterParserConfigurationFlags::SupportsBindless)
 	{
-		AdditionalDefines.SetDefine(TEXT("SM6_PROFILE"), 1);
-	}
-	else if (Language == ELanguage::SM5)
-	{
-		AdditionalDefines.SetDefine(TEXT("SM5_PROFILE"), 1);
-	}
-	else if (Language == ELanguage::ES3_1)
-	{
-		AdditionalDefines.SetDefine(TEXT("ES3_1_PROFILE"), 1);
 	}
 
-	FString& PreprocessedSource = Output.EditSource();
-	const bool bUseDXC = ShouldUseDXC(Input, Language);
-
-
-	// Set additional defines.
-	AdditionalDefines.SetDefine(TEXT("COMPILER_HLSL"), 1);
-	AdditionalDefines.SetDefine(TEXT("PLATFORM_SUPPORTS_ROV"), 1); // Assume min. spec HW supports with DX12/SM5
-
-	if (bUseDXC)
+	virtual FString GenerateBindlessAccess(EBindlessConversionType BindlessType, FStringView ShaderTypeString, FStringView IndexString) const final
 	{
-		AdditionalDefines.SetDefine(TEXT("PLATFORM_SUPPORTS_CALLABLE_SHADERS"), 1);
-		AdditionalDefines.SetDefine(TEXT("PLATFORM_SUPPORTS_SM6_0_WAVE_OPERATIONS"), 1);
-		if (Language == ELanguage::SM6 || Input.IsRayTracingShader())
-		{
-			AdditionalDefines.SetDefine(TEXT("PLATFORM_SUPPORTS_STATIC_SAMPLERS"), 1);
-		}
-		AdditionalDefines.SetDefine(TEXT("PLATFORM_SUPPORTS_DIAGNOSTIC_BUFFER"), 1);
-		AdditionalDefines.SetDefine(TEXT("COMPILER_SUPPORTS_NOINLINE"), 1);
+		// GetResourceFromHeap(Type, Index) ResourceDescriptorHeap[Index]
+		// GetSamplerFromHeap(Type, Index)  SamplerDescriptorHeap[Index]
 
-		if (Environment.CompilerFlags.Contains(CFLAG_InlineRayTracing))
-		{
-			AdditionalDefines.SetDefine(TEXT("PLATFORM_SUPPORTS_INLINE_RAY_TRACING"), 1);
-		}
+		const TCHAR* HeapString = BindlessType == EBindlessConversionType::Sampler ? TEXT("SamplerDescriptorHeap") : TEXT("ResourceDescriptorHeap");
 
-		if (Language == ELanguage::SM6 && Environment.CompilerFlags.Contains(CFLAG_AllowRealTypes))
-		{
-			AdditionalDefines.SetDefine(TEXT("PLATFORM_SUPPORTS_REAL_TYPES"), 1);
-		}
+		return FString::Printf(TEXT("%s[%.*s]"),
+			HeapString,
+			IndexString.Len(), IndexString.GetData()
+		);
 	}
-	else
-	{
-		AdditionalDefines.SetDefine(TEXT("COMPILER_FXC"), 1);
-	}
+};
 
-	
-	if (Input.bSkipPreprocessedCache)
-	{
-		if (!FFileHelper::LoadFileToString(PreprocessedSource, *Input.VirtualSourceFilePath))
-		{
-			return false;
-		}
-
-		// Remove const as we are on debug-only mode
-		CrossCompiler::CreateEnvironmentFromResourceTable(PreprocessedSource, const_cast<FShaderCompilerEnvironment&>(Environment));
-	}
-	else
-	{
-		if (!PreprocessShader(Output, Input, Environment, AdditionalDefines))
-		{
-			// The preprocessing stage will add any relevant errors.
-			return false;
-		}
-	}
-
-	if (!Output.ParseAndModify(Input, Environment, TEXT("cbuffer")))
-	{
-		// The FShaderParameterParser will add any relevant errors.
-		return false;
-	}
-
-	// Only use UniformBuffer structs on SM6 until we can fully vet SM5
-	if (Language != ELanguage::SM6)
-	{
-		RemoveUniformBuffersFromSource(Environment, PreprocessedSource);
-	}
-
-	// Process TEXT macro.
-	TransformStringIntoCharacterArray(PreprocessedSource);
-
-	TArray<FString> FilteredErrors;
-	// Run the shader minifier
-	#if UE_D3D_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
-	if (Environment.CompilerFlags.Contains(CFLAG_RemoveDeadCode))
-	{
-		UE::ShaderCompilerCommon::RemoveDeadCode(PreprocessedSource, Input.EntryPointName, Output.EditErrors());
-	}
-	#endif // UE_D3D_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
-	return true;
-}
-
-
-void CompileD3DShader(const FShaderCompilerInput& Input, const FShaderPreprocessOutput& PreprocessOutput, FShaderCompilerOutput& Output, const FString& WorkingDirectory, ELanguage Language)
+void CompileD3DShader(const FShaderCompilerInput& Input, const FShaderPreprocessOutput& InPreprocessOutput, FShaderCompilerOutput& Output, const FString& WorkingDirectory, ED3DShaderModel ShaderModel)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(CompileD3DShader);
 
-	const bool bUseDXC = ShouldUseDXC(Input, Language);
-	const TCHAR* ShaderProfile = GetShaderProfileName(Language, Input.Target.Frequency, bUseDXC);
+	const TCHAR* ShaderProfile = GetShaderProfileName(Input, ShaderModel);
 
-	if(!ShaderProfile)
+	if (!ShaderProfile)
 	{
 		Output.Errors.Add(FShaderCompilerError(*FString::Printf(TEXT("Unrecognized shader frequency %s"), GetShaderFrequencyString((EShaderFrequency)Input.Target.Frequency))));
 		return;
 	}
 
+	FString EntryPointName = Input.EntryPointName;
+	FString PreprocessedSource(InPreprocessOutput.GetSourceViewWide());
+
+	FD3DShaderParameterParserPlatformConfiguration PlatformConfiguration;
+	FShaderParameterParser ShaderParameterParser(PlatformConfiguration);
+	if (!ShaderParameterParser.ParseAndModify(Input, Output.Errors, PreprocessedSource))
+	{
+		// The FShaderParameterParser will add any relevant errors.
+		return;
+	}
+
+	if (ShaderParameterParser.DidModifyShader())
+	{
+		Output.ModifiedShaderSource = PreprocessedSource;
+	}
+
 	if (Input.Environment.CompilerFlags.Contains(CFLAG_ForceRemoveUnusedInterpolators) && Input.Target.Frequency == SF_Vertex && Input.bCompilingForShaderPipeline)
 	{
 		// Always add SV_Position
-		TArray<FString> UsedOutputs = Input.UsedOutputs;
-		UsedOutputs.AddUnique(TEXT("SV_POSITION"));
-		UsedOutputs.AddUnique(TEXT("SV_ViewPortArrayIndex"));
+		TArray<FStringView> UsedOutputs;
+		for (const FString& UsedOutput : Input.UsedOutputs)
+		{
+			UsedOutputs.Emplace(UsedOutput);
+		}
+		UsedOutputs.Emplace(TEXTVIEW("SV_POSITION"));
+		UsedOutputs.Emplace(TEXTVIEW("SV_ViewPortArrayIndex"));
 
 		// We can't remove any of the output-only system semantics
 		//@todo - there are a bunch of tessellation ones as well
-		TArray<FString> Exceptions;
-		Exceptions.AddUnique(TEXT("SV_ClipDistance"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance0"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance1"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance2"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance3"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance4"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance5"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance6"));
-		Exceptions.AddUnique(TEXT("SV_ClipDistance7"));
+		const FStringView Exceptions[] =
+		{
+			TEXTVIEW("SV_ClipDistance"),
+			TEXTVIEW("SV_ClipDistance0"),
+			TEXTVIEW("SV_ClipDistance1"),
+			TEXTVIEW("SV_ClipDistance2"),
+			TEXTVIEW("SV_ClipDistance3"),
+			TEXTVIEW("SV_ClipDistance4"),
+			TEXTVIEW("SV_ClipDistance5"),
+			TEXTVIEW("SV_ClipDistance6"),
+			TEXTVIEW("SV_ClipDistance7"),
 
-		Exceptions.AddUnique(TEXT("SV_CullDistance"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance0"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance1"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance2"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance3"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance4"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance5"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance6"));
-		Exceptions.AddUnique(TEXT("SV_CullDistance7"));
+			TEXTVIEW("SV_CullDistance"),
+			TEXTVIEW("SV_CullDistance0"),
+			TEXTVIEW("SV_CullDistance1"),
+			TEXTVIEW("SV_CullDistance2"),
+			TEXTVIEW("SV_CullDistance3"),
+			TEXTVIEW("SV_CullDistance4"),
+			TEXTVIEW("SV_CullDistance5"),
+			TEXTVIEW("SV_CullDistance6"),
+			TEXTVIEW("SV_CullDistance7"),
+		};
 
-		Output.ModifiedShaderSource = PreprocessOutput.GetSource();
-		Output.ModifiedEntryPointName = Input.EntryPointName;
+		TArray<FScopedDeclarations> ScopedDeclarations;
+		const FStringView GlobalSymbols[] =
+		{
+			TEXTVIEW("RayDesc"),
+		};
+		ScopedDeclarations.Emplace(TConstArrayView<FStringView>(), GlobalSymbols);
 
 		TArray<FString> Errors;
-		if (!RemoveUnusedOutputs(Output.ModifiedShaderSource, UsedOutputs, Exceptions, Output.ModifiedEntryPointName, Errors))
+		if (!RemoveUnusedOutputs(PreprocessedSource, UsedOutputs, Exceptions, ScopedDeclarations, EntryPointName, Errors))
 		{
 			UE_LOG(LogD3D11ShaderCompiler, Warning, TEXT("Failed to remove unused outputs from shader: %s"), *Input.GenerateShaderName());
 			for (const FString& ErrorReport : Errors)
@@ -1269,13 +1364,16 @@ void CompileD3DShader(const FShaderCompilerInput& Input, const FShaderPreprocess
 				Output.Errors.Add(NewError);
 			}
 		}
+		else
+		{
+			Output.ModifiedEntryPointName = EntryPointName;
+			Output.ModifiedShaderSource = PreprocessedSource;
+		}
 	}
 
-	const FShaderParameterParser& ShaderParameterParser = PreprocessOutput.GetParameterParser();
-
-	const bool bSuccess = bUseDXC
-		? CompileAndProcessD3DShaderDXC(PreprocessOutput, Input, ShaderParameterParser, ShaderProfile, Language, false, Output)
-		: CompileAndProcessD3DShaderFXC(PreprocessOutput, Input, ShaderParameterParser, ShaderProfile, false, Output);
+	const bool bSuccess = DoesShaderModelRequireDXC(ShaderModel)
+		? CompileAndProcessD3DShaderDXC(Input, PreprocessedSource, EntryPointName, ShaderParameterParser, ShaderProfile, ShaderModel, false, Output)
+		: CompileAndProcessD3DShaderFXC(Input, PreprocessedSource, EntryPointName, ShaderParameterParser, ShaderProfile, false, Output);
 
 	if (!bSuccess && !Output.Errors.Num())
 	{
@@ -1284,8 +1382,7 @@ void CompileD3DShader(const FShaderCompilerInput& Input, const FShaderPreprocess
 
 	ShaderParameterParser.ValidateShaderParameterTypes(Input, Output);
 
-	const bool bDirectCompile = FParse::Param(FCommandLine::Get(), TEXT("directcompile"));
-	if (bDirectCompile)
+	if (EnumHasAnyFlags(Input.DebugInfoFlags, EShaderDebugInfoFlags::CompileFromDebugUSF))
 	{
 		for (const FShaderCompilerError& Error : Output.Errors)
 		{

@@ -18,7 +18,9 @@
 #include "Physics/Experimental/PhysScene_Chaos.h"
 #endif
 #include "GeometryCollectionEditorSelection.h"
+#include "GeometryCollection/GeometryCollection.h"
 #include "GeometryCollection/GeometryCollectionDamagePropagationData.h"
+#include "GeometryCollectionObject.h"
 #include "GeometryCollection/RecordedTransformTrack.h"
 #include "GeometryCollection/GeometryCollectionSimulationTypes.h"
 #include "Templates/UniquePtr.h"
@@ -48,7 +50,7 @@ struct FGeometryCollectionSection;
 struct FDamageCollector;
 class FPhysScene_Chaos;
 class AGeometryCollectionISMPoolActor;
-class UGeometryCollectionExternalRenderInterface;
+class IGeometryCollectionExternalRenderInterface;
 enum ESimulationInitializationState : uint8;
 enum class EClusterConnectionTypeEnum : uint8;
 enum class EInitialVelocityTypeEnum : uint8;
@@ -56,12 +58,16 @@ enum class EObjectStateTypeEnum : uint8;
 namespace Chaos { enum class EObjectStateType: int8; }
 template<class InElementType> class TManagedArray;
 
-
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnChaosBreakEvent, const FChaosBreakEvent&, BreakEvent);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnChaosRemovalEvent, const FChaosRemovalEvent&, RemovalEvent);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnChaosCrumblingEvent, const FChaosCrumblingEvent&, CrumbleEvent);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnGeometryCollectionFullyDecayedEvent);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnGeometryCollectionRootMovedEvent);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnGeometryCollectionRootMovedNativeEvent, UGeometryCollectionComponent*);
 
 namespace GeometryCollection
 {
@@ -276,12 +282,17 @@ private:
 //This generates pointers to arrays marked private. Macro assumes getters are public
 //todo(ocohen): may want to take in a static name
 #define COPY_ON_WRITE_ATTRIBUTE(Type, Name, Group)											\
+	UE_DEPRECATED(5.4, "Use GetGeometryCollection()->"#Name" instead.")						\
 	GEOMETRYCOLLECTIONENGINE_API const TManagedArray<Type>& Get##Name##Array() const;		\
+	UE_DEPRECATED(5.4, "Use GetGeometryCollection()->"#Name" instead.")						\
 	GEOMETRYCOLLECTIONENGINE_API TManagedArray<Type>& Get##Name##ArrayCopyOnWrite();		\
+	UE_DEPRECATED(5.4, "Use GetGeometryCollection()->"#Name" instead.")						\
 	GEOMETRYCOLLECTIONENGINE_API void Reset##Name##ArrayDynamic();							\
+	UE_DEPRECATED(5.4, "Use GetGeometryCollection()->"#Name" instead.")						\
 	GEOMETRYCOLLECTIONENGINE_API const TManagedArray<Type>& Get##Name##ArrayRest() const;	\
 private:																					\
-	TManagedArray<Type>* Indirect##Name##Array;												\
+	/* Deprecated */																		\
+	/*TManagedArray<Type>* Indirect##Name##Array;*/											\
 public:
 
 /**
@@ -417,6 +428,9 @@ struct FGeometryCollectionRepData
 	bool Identical(const FGeometryCollectionRepData* Other, uint32 PortFlags) const;
 	bool NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess);
 
+	// Check if the data has changed
+	bool HasChanged(const FGeometryCollectionRepData& BaseData) const;
+
 	void Reset()
 	{
 		OneOffActivated.Reset();
@@ -436,6 +450,135 @@ struct TStructOpsTypeTraits<FGeometryCollectionRepData> : public TStructOpsTypeT
 };
 
 /**
+* Replicated state data for a geometry collection when bEnableReplication is true for that component.
+* State data means what is broken and what is not 
+* See UGeomtryCollectionComponent::UpdateRepData
+*/
+USTRUCT()
+struct FGeometryCollectionRepStateData
+{
+	GENERATED_BODY()
+
+	FGeometryCollectionRepStateData()
+	: Version(0)
+	, bIsRootAnchored(false)
+	{
+	}
+
+	// mark a transform as broken nd return true if this was a state change
+	bool SetBroken(int32 TransformIndex, int32 NumTransforms, bool bDisabled, const FVector& LinV, const FVector& AngVInRadiansPerSecond);
+
+	// version for fast comparison
+	int32 Version;
+
+	// broken state of each piece of the GC
+	TBitArray<> BrokenState;
+
+	// Is the root particle of the GC currently anchored
+	// could possibily change in the future to also be a bit array 
+	uint8 bIsRootAnchored;
+
+	// this represents the data for when a particle is released from its parent cluster 
+	// this data is added when the particle is released but will be cleared after a while
+	// so that late client will not replay the break as it is in their past 
+	struct FReleasedData
+	{
+		int16 TransformIndex;
+		FVector_NetQuantize10 LinearVelocity;
+		FVector_NetQuantize10 AngularVelocityInDegreesPerSecond;
+	};
+	TArray<FReleasedData> ReleasedData;
+
+	// Just test version to skip having to traverse the whole pose array for replication
+	bool Identical(const FGeometryCollectionRepStateData* Other, uint32 PortFlags) const;
+	bool NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess);
+
+	// Check if the data has changed
+	bool HasChanged(const FGeometryCollectionRepStateData& BaseData) const;
+
+	void Reset()
+	{
+		BrokenState.Reset();
+		bIsRootAnchored = 0;
+		ReleasedData.Reset();
+	}
+};
+
+template<>
+struct TStructOpsTypeTraits<FGeometryCollectionRepStateData> : public TStructOpsTypeTraitsBase2<FGeometryCollectionRepStateData>
+{
+	enum
+	{
+		WithNetSerializer = true,
+		WithIdentical = true,
+	};
+};
+
+// this structure holds entries for the tracked pieces to be replicated
+USTRUCT()
+struct FGeometryCollectionRepDynamicData
+{
+	GENERATED_BODY()
+
+	struct FClusterData
+	{
+		FVector_NetQuantize10 Position;
+		FVector_NetQuantize10 EulerRotation;
+		FVector_NetQuantize10 LinearVelocity;
+		FVector_NetQuantize10 AngularVelocityInDegreesPerSecond;
+
+		// Index of the cluster or one of its child if the cluster is internal ( see bIsInternalCluster)
+		uint16 TransformIndex = INDEX_NONE; 
+
+		// Whether this refers to an internal cluster or directly to a cluster in the geometry collection
+		uint8  bIsInternalCluster = false;
+
+		// non serialized data, used to trimn the data back when no longer updated
+		int32 LastUpdatedVersion = 0;
+
+		// comp
+		bool IsEqualPositionsAndVelocities(const FClusterData& Data) const;
+	};
+
+	FGeometryCollectionRepDynamicData()
+		: Version(0)
+	{}
+
+	int32 Version;
+	TArray<FClusterData> ClusterData;
+
+	// return true if the data has changed from stored one
+	bool SetData(const FClusterData& Data);
+
+	// return true if any entries was removed
+	bool RemoveOutOfDateClusterData();
+
+	// Just test version to skip having to traverse the whole pose array for replication
+	bool Identical(const FGeometryCollectionRepDynamicData* Other, uint32 PortFlags) const;
+	bool NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess);
+
+	// Check if the data has changed
+	bool HasChanged(const FGeometryCollectionRepDynamicData& BaseData) const;
+
+	void Reset()
+	{
+		ClusterData.Reset();
+	}
+};
+
+template<>
+struct TStructOpsTypeTraits<FGeometryCollectionRepDynamicData> : public TStructOpsTypeTraitsBase2<FGeometryCollectionRepDynamicData>
+{
+	enum
+	{
+		WithNetSerializer = true,
+		WithIdentical = true,
+	};
+};
+
+struct FGCCollisionProfileScopedTransaction;
+
+/**
 *	GeometryCollectionComponent
 */
 UCLASS(meta = (BlueprintSpawnableComponent), MinimalAPI)
@@ -450,16 +593,26 @@ class UGeometryCollectionComponent : public UMeshComponent, public IChaosNotifyH
 
 public:
 
+	// Collision profile name that indicates we should use the geometry collection's default collision profile.
+	GEOMETRYCOLLECTIONENGINE_API static FName DefaultCollisionProfileName;
+
+	//~ Begin UObject Interface.
+	GEOMETRYCOLLECTIONENGINE_API virtual void Serialize(FArchive& Ar) override;
+	//~ End UObject Interface.
+
 	//~ Begin UActorComponent Interface.
+	GEOMETRYCOLLECTIONENGINE_API virtual bool ShouldCreateRenderState() const override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void CreateRenderState_Concurrent(FRegisterComponentContext* Context) override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void SendRenderDynamicData_Concurrent() override;
-	FORCEINLINE void SetRenderStateDirty() { bRenderStateDirty = true; }
+	FORCEINLINE void SetRenderStateDirty() { /* Deprecated. */ }
 	GEOMETRYCOLLECTIONENGINE_API virtual void SetCollisionObjectType(ECollisionChannel Channel) override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void OnActorEnableCollisionChanged() override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void BeginPlay() override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void EndPlay(const EEndPlayReason::Type ReasonEnd) override;
+	GEOMETRYCOLLECTIONENGINE_API virtual void OnVisibilityChanged() override;
+	GEOMETRYCOLLECTIONENGINE_API virtual void OnActorVisibilityChanged() override;
+	GEOMETRYCOLLECTIONENGINE_API virtual void OnHiddenInGameChanged() override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	GEOMETRYCOLLECTIONENGINE_API virtual void InitializeComponent() override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
 
 #if WITH_EDITOR
@@ -474,12 +627,15 @@ public:
 	GEOMETRYCOLLECTIONENGINE_API FDelegateHandle RegisterOnGeometryCollectionPropertyChanged(const FOnGeometryCollectionPropertyChanged& Delegate);
 	GEOMETRYCOLLECTIONENGINE_API void UnregisterOnGeometryCollectionPropertyChanged(FDelegateHandle Handle);
 #endif
-	//~ Begin UActorComponent Interface. 
+	//~ End UActorComponent Interface. 
 
-
+	//~ Begin INavRelevantInterface Interface
+	GEOMETRYCOLLECTIONENGINE_API virtual bool IsNavigationRelevant() const override;
+	//~ End INavRelevantInterface Interface
+	
 	//~ Begin USceneComponent Interface.
 	GEOMETRYCOLLECTIONENGINE_API virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
-	virtual FBoxSphereBounds CalcLocalBounds() const { return LocalBounds; }
+	virtual FBoxSphereBounds CalcLocalBounds() const { return ComponentSpaceBounds; }
 
 	GEOMETRYCOLLECTIONENGINE_API virtual bool HasAnySockets() const override;
 	GEOMETRYCOLLECTIONENGINE_API virtual bool DoesSocketExist(FName InSocketName) const override;
@@ -488,12 +644,11 @@ public:
 	
 	GEOMETRYCOLLECTIONENGINE_API virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction) override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void AsyncPhysicsTickComponent(float DeltaTime, float SimTime) override;
-
-	GEOMETRYCOLLECTIONENGINE_API virtual void OnHiddenInGameChanged() override;
-	//~ Begin USceneComponent Interface.
+	//~ End USceneComponent Interface.
 
 
 	//~ Begin UPrimitiveComponent Interface.
+public:
 	GEOMETRYCOLLECTIONENGINE_API virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void OnRegister() override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void OnUnregister() override;
@@ -509,10 +664,15 @@ public:
 	GEOMETRYCOLLECTIONENGINE_API virtual void AddRadialImpulse(FVector Origin, float Radius, float Strength, enum ERadialImpulseFalloff Falloff, bool bVelChange = false) override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void AddTorqueInRadians(FVector Torque, FName BoneName = NAME_None, bool bAccelChange = false) override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void PostLoad() override;
+	GEOMETRYCOLLECTIONENGINE_API virtual void SetPhysMaterialOverride(UPhysicalMaterial* NewPhysMaterial) override;
+protected:
+	GEOMETRYCOLLECTIONENGINE_API virtual void OnComponentCollisionSettingsChanged(bool bUpdateOverlaps=true) override;
+	GEOMETRYCOLLECTIONENGINE_API virtual bool CanBeUsedInPhysicsReplication(const FName BoneName = NAME_None) const override;
 	//~ End UPrimitiveComponent Interface.
 
 
 	//~ Begin UMeshComponent Interface.	
+public:
 	GEOMETRYCOLLECTIONENGINE_API virtual int32 GetNumMaterials() const override;
 	GEOMETRYCOLLECTIONENGINE_API virtual UMaterialInterface* GetMaterial(int32 MaterialIndex) const override;
 	GEOMETRYCOLLECTIONENGINE_API virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials = false) const override;
@@ -527,7 +687,7 @@ public:
 	* Get local bounds of the geometry collection
 	*/
 	UFUNCTION(BlueprintCallable, Category = "ChaosPhysics")
-	FBox GetLocalBounds() const { return LocalBounds; }
+	FBox GetLocalBounds() const { return ComponentSpaceBounds; }
 
 	/**
 	 * Apply an external strain to specific piece of the geometry collection
@@ -646,6 +806,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ChaosPhysics")
 	GEOMETRYCOLLECTIONENGINE_API FTransform GetRootCurrentTransform() const;
 
+	GEOMETRYCOLLECTIONENGINE_API FTransform GetRootCurrentComponentSpaceTransform() const;
+
+	GEOMETRYCOLLECTIONENGINE_API FTransform GetRootParticleMassOffset() const;
+
+	/** return true if the root cluster is not longer active at runtime */
+	UFUNCTION(BlueprintCallable, Category = "ChaosPhysics")
+	GEOMETRYCOLLECTIONENGINE_API bool IsRootBroken() const { return BrokenAndDecayedStates.GetIsRootBroken(); }
+
 	/** 
 	* Get the initial rest transforms in component (local) space  space, 
 	* they are the transforms as defined in the rest collection asset 
@@ -667,6 +835,12 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "ChaosPhysics")
 	GEOMETRYCOLLECTIONENGINE_API void GetMassAndExtents(int32 ItemIndex, float& OutMass, FBox& OutExtents);
+
+	/** Returns the mass of this component in kg. */
+	GEOMETRYCOLLECTIONENGINE_API virtual float GetMass() const override;
+
+	/** Returns the calculated mass in kg. This is not 100% exactly the mass physx will calculate, but it is very close ( difference < 0.1kg ). */
+	GEOMETRYCOLLECTIONENGINE_API virtual float CalculateMass(FName BoneName = NAME_None) override;
 
 	/** RestCollection */
 	UFUNCTION(BlueprintCallable, Category = "ChaosPhysics")
@@ -698,6 +872,16 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ChaosPhysics")
 	GEOMETRYCOLLECTIONENGINE_API void SetPerParticleCollisionProfileName(const TArray<int32>& BoneIds, FName ProfileName);
+
+	GEOMETRYCOLLECTIONENGINE_API void SetPerParticleCollisionProfileName(const TSet<int32>& BoneIds, FName ProfileName);
+
+	GEOMETRYCOLLECTIONENGINE_API void SetParticleCollisionProfileName(int32 BoneId, FName ProfileName, FGCCollisionProfileScopedTransaction& InProfileNameUpdateTransaction);
+
+private:
+
+	bool UpdatePerParticleCollisionProfilesNum();
+
+public:
 
 	/** API for getting at geometry collection data */
 	GEOMETRYCOLLECTIONENGINE_API int32 GetNumElements(FName Group) const;
@@ -737,16 +921,19 @@ public:
 	/* Transform group */																				\
 	COPY_ON_WRITE_ATTRIBUTE(FString, BoneName, FTransformCollection::TransformGroup)					\
 	COPY_ON_WRITE_ATTRIBUTE(FLinearColor, BoneColor, FTransformCollection::TransformGroup)				\
-	COPY_ON_WRITE_ATTRIBUTE(FTransform, Transform, FTransformCollection::TransformGroup)				\
-	COPY_ON_WRITE_ATTRIBUTE(int32, Parent, FTransformCollection::TransformGroup)						\
-	COPY_ON_WRITE_ATTRIBUTE(TSet<int32>, Children, FTransformCollection::TransformGroup)				\
-	COPY_ON_WRITE_ATTRIBUTE(int32, SimulationType, FTransformCollection::TransformGroup)				\
 	COPY_ON_WRITE_ATTRIBUTE(int32, TransformToGeometryIndex, FTransformCollection::TransformGroup)		\
-	COPY_ON_WRITE_ATTRIBUTE(int32, StatusFlags, FTransformCollection::TransformGroup)					\
 	COPY_ON_WRITE_ATTRIBUTE(int32, ExemplarIndex, FTransformCollection::TransformGroup)					\
 
 	// Declare all the methods
 	COPY_ON_WRITE_ATTRIBUTES
+
+	GEOMETRYCOLLECTIONENGINE_API TManagedArray<int32>& GetParentArrayCopyOnWrite();
+	GEOMETRYCOLLECTIONENGINE_API int32 GetParent(int32 Index) const;
+	GEOMETRYCOLLECTIONENGINE_API const TManagedArray<int32>& GetParentArrayRest() const;
+	private:
+		TManagedArray<int32>* IndirectParentArray;
+	public:
+
 
 	UPROPERTY(EditAnywhere, NoClear, BlueprintReadOnly, Category = "ChaosPhysics")
 	TObjectPtr<const UGeometryCollection> RestCollection;
@@ -767,8 +954,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|General")
 	EObjectStateTypeEnum ObjectType;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|General")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetGravityGroupIndex, Category = "ChaosPhysics|General")
 	int32 GravityGroupIndex;
+
+	UFUNCTION(BlueprintCallable, BlueprintInternalUseOnly)
+	GEOMETRYCOLLECTIONENGINE_API void SetGravityGroupIndex(int32 InGravityGroupIndex);
+
+	// All bodies with a level greater than or equal to this will have One-Way Interaction enabled and act like debris (will not apply forces to non-debris bodies)
+	// Set to -1 to disable (no bodies will have One-Way Interaction enabled)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetOneWayInteractionLevel, Category = "ChaosPhysics|General")
+	int32 OneWayInteractionLevel;
+
+	UFUNCTION(BlueprintCallable, BlueprintInternalUseOnly)
+	GEOMETRYCOLLECTIONENGINE_API void SetOneWayInteractionLevel(int32 InOneWayInteractionLevel);
+
+	/** when true, density will be used to compute mass using the assigned physics material */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetDensityFromPhysicsMaterial, Category = "ChaosPhysics|General")
+	bool bDensityFromPhysicsMaterial;
+
+	UFUNCTION(BlueprintCallable, BlueprintInternalUseOnly)
+	GEOMETRYCOLLECTIONENGINE_API void SetDensityFromPhysicsMaterial(bool bInDensityFromPhysicsMaterial);
 
 	/** If ForceMotionBlur is on, motion blur will always be active, even if the GeometryCollection is at rest. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|General")
@@ -796,8 +1001,11 @@ public:
 	int32 MaxSimulatedLevel;
 
 	/** Damage model to use for evaluating destruction. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|Damage")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetDamageModel, Category = "ChaosPhysics|Damage")
 	EDamageModelTypeEnum DamageModel;
+
+	UFUNCTION(BlueprintCallable, BlueprintInternalUseOnly)
+	GEOMETRYCOLLECTIONENGINE_API void SetDamageModel(EDamageModelTypeEnum InDamageModel);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintGetter=GetDamageThreshold, BlueprintSetter=SetDamageThreshold, Category = "ChaosPhysics|Damage", meta = (EditCondition = "!bUseSizeSpecificDamageThreshold && DamageModel == EDamageModelTypeEnum::Chaos_Damage_Model_UserDefined_Damage_Threshold"))
 	TArray<float> DamageThreshold;
@@ -812,9 +1020,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|Damage", meta = (EditCondition = "DamageModel == EDamageModelTypeEnum::Chaos_Damage_Model_UserDefined_Damage_Threshold"))
 	bool bUseSizeSpecificDamageThreshold;
 
+	/** When on , use the modifiers on the material to adjust the user defined damage threshold values */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetUseMaterialDamageModifiers, Category = "ChaosPhysics|Damage", meta = (EditCondition = "DamageModel == EDamageModelTypeEnum::Chaos_Damage_Model_UserDefined_Damage_Threshold"))
+	bool bUseMaterialDamageModifiers;
+
+	UFUNCTION(BlueprintCallable, BlueprintInternalUseOnly)
+	GEOMETRYCOLLECTIONENGINE_API void SetUseMaterialDamageModifiers(bool bInUseMaterialDamageModifiers);
+
 	/** Data about how damage propagation shoudl behave. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|Damage")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetDamagePropagationData, Category = "ChaosPhysics|Damage")
 	FGeometryCollectionDamagePropagationData DamagePropagationData;
+
+	UFUNCTION(BlueprintCallable, BlueprintInternalUseOnly)
+	GEOMETRYCOLLECTIONENGINE_API void SetDamagePropagationData(const FGeometryCollectionDamagePropagationData& InDamagePropagationData);
 
 	/** Whether or not collisions against this geometry collection will apply strain which could cause the geometry collection to fracture. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter=SetEnableDamageFromCollision, Category = "ChaosPhysics|Damage")
@@ -964,6 +1182,7 @@ public:
 #endif  // UE_ENABLE_DEBUG_DRAWING
 
 	/**/
+	UE_DEPRECATED(5.4, "Disabled flags are no longer used.")
 	const TArray<bool>& GetDisabledFlags() const { return DisabledFlags; }
 
 	GEOMETRYCOLLECTIONENGINE_API virtual void OnCreatePhysicsState() override;
@@ -1026,6 +1245,12 @@ public:
 	// todo(chaos) remove when no longer necessary
 	FOnChaosBreakEvent OnRootBreakEvent;
 
+	FOnGeometryCollectionFullyDecayedEvent OnFullyDecayedEvent;
+	FOnGeometryCollectionRootMovedEvent OnRootMovedEvent;
+	FOnGeometryCollectionRootMovedNativeEvent OnRootMovedNativeEvent;
+
+	GEOMETRYCOLLECTIONENGINE_API bool IsFullyDecayed() const;
+
 	GEOMETRYCOLLECTIONENGINE_API void DispatchBreakEvent(const FChaosBreakEvent& Event);
 
 	GEOMETRYCOLLECTIONENGINE_API void DispatchRemovalEvent(const FChaosRemovalEvent& Event);
@@ -1065,6 +1290,9 @@ public:
 	// #todo should this only be available in editor?
 	GEOMETRYCOLLECTIONENGINE_API void SetRestState(TArray<FTransform>&& InRestTransforms);
 
+	// this reset the rest transform to use the rest collection asset ones
+	GEOMETRYCOLLECTIONENGINE_API void ResetRestTransforms();
+
 	/** Set the dynamic state for all bodies in the DynamicCollection. */
 	GEOMETRYCOLLECTIONENGINE_API void SetDynamicState(const Chaos::EObjectStateType& NewDynamicState);
 
@@ -1078,16 +1306,64 @@ public:
 	UE_DEPRECATED(5.3, "Use GetComponentSpaceTransforms instead")
 	TArray<FMatrix> GetGlobalMatrices() { return ComputeGlobalMatricesFromComponentSpaceTransforms(); }
 
-	const TArray<FTransform> GetComponentSpaceTransforms() { return ComponentSpaceTransforms; }
+	UE_DEPRECATED(5.4, "Use GetComponentSpaceTransforms3f instead")
+	GEOMETRYCOLLECTIONENGINE_API TArray<FTransform> GetComponentSpaceTransforms();
+
+	GEOMETRYCOLLECTIONENGINE_API const TArray<FTransform3f>& GetComponentSpaceTransforms3f();
 
 	GEOMETRYCOLLECTIONENGINE_API const FGeometryDynamicCollection* GetDynamicCollection() const;
 	GEOMETRYCOLLECTIONENGINE_API FGeometryDynamicCollection* GetDynamicCollection();  // TEMP HACK?
 
 	GEOMETRYCOLLECTIONENGINE_API TArray<UStaticMeshComponent*> CreateProxyComponents() const;
 
+	GEOMETRYCOLLECTIONENGINE_API void SetUpdateNavigationInTick(const bool bUpdateInTick) { bUpdateNavigationInTick = bUpdateInTick; }
+
+	// todo(chaos): Remove this and move to a cook time approach of the SM data based on the GC property
+	UFUNCTION(BlueprintPure, BlueprintInternalUseOnly, Category = "Physics")
+	GEOMETRYCOLLECTIONENGINE_API bool GetUseStaticMeshCollisionForTraces() const { return bUseStaticMeshCollisionForTraces; }
+
+	// todo(chaos): Remove this and move to a cook time approach of the SM data based on the GC property
+	UFUNCTION(BlueprintCallable, BlueprintInternalUseOnly, Category = "Physics")
+	GEOMETRYCOLLECTIONENGINE_API void SetUseStaticMeshCollisionForTraces(bool bInUseStaticMeshCollisionForTraces);
+
+	/** Get any custom renderer. Returns nullptr if none is set. */
+	GEOMETRYCOLLECTIONENGINE_API IGeometryCollectionExternalRenderInterface* GetCustomRenderer() { return CustomRenderer.GetInterface(); }
+
+	
+	/** Enable or disable root proxy component creation when not using a custom renderer - this can be set at runtime */
+	GEOMETRYCOLLECTIONENGINE_API void EnableRootProxyStaticMeshComponents(bool bEnabled);
+
+	/** Enable or disable root proxy for custom rendering - this can be set at runtime */
+	UFUNCTION(BlueprintCallable, Category = "Physics")
+	GEOMETRYCOLLECTIONENGINE_API void EnableRootProxyForCustomRenderer(bool bEnable);
+
+	/** Set a specific root proxy local transform */
+	GEOMETRYCOLLECTIONENGINE_API void SetRootProxyLocalTransform(int32 Index, const FTransform3f& RootProxyTransform);
+
+	/** clear all the root proxies local transforms - all proxies will now have the same default transform */
+	GEOMETRYCOLLECTIONENGINE_API void ClearRootProxyLocalTransforms();
+
 	/** Force all GC components to reregister their custom renderer objects. */
 	static GEOMETRYCOLLECTIONENGINE_API void ReregisterAllCustomRenderers();
 
+	/** allow update of the custom renderer ( valid if custom redner is being used ) - true by default */
+	GEOMETRYCOLLECTIONENGINE_API void SetUpdateCustomRenderer(bool bValue) { bUpdateCustomRenderer = bValue; }
+
+	/** update of the custom renderer when post physics sync callback is executing ( valid if custom redner is being used ) - true by default */
+	GEOMETRYCOLLECTIONENGINE_API void SetUpdateCustomRendererOnPostPhysicsSync(bool bValue) { bUpdateCustomRendererOnPostPhysicsSync = bValue; }
+	GEOMETRYCOLLECTIONENGINE_API bool GetUpdateCustomRendererOnPostPhysicsSync() const { return bUpdateCustomRendererOnPostPhysicsSync; }
+
+
+	GEOMETRYCOLLECTIONENGINE_API bool ShouldUpdateComponentTransformToRootBone() const { return bUpdateComponentTransformToRootBone; }
+
+	GEOMETRYCOLLECTIONENGINE_API double GetRootBrokenElapsedTimeInMs() const { return BrokenAndDecayedStates.GetRootBrokenElapsedTimeInMs(); }
+
+	/** Attn: these replication methods are helpers meant to be called before the component is fully registered, like a constructor! */
+	GEOMETRYCOLLECTIONENGINE_API void SetEnableReplication(bool bInEnableReplication) { bEnableReplication = bInEnableReplication; }
+	GEOMETRYCOLLECTIONENGINE_API void SetReplicationAbandonAfterLevel(int32 InReplicationAbandonAfterLevel) { ReplicationAbandonAfterLevel = InReplicationAbandonAfterLevel; }
+	GEOMETRYCOLLECTIONENGINE_API void SetReplicationMaxPositionAndVelocityCorrectionLevel(int32 InReplicationMaxPositionAndVelocityCorrectionLevel) { ReplicationMaxPositionAndVelocityCorrectionLevel = InReplicationMaxPositionAndVelocityCorrectionLevel; }
+	
+	GEOMETRYCOLLECTIONENGINE_API const FTransform& GetPreviousComponentToWorld() const;
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Collision")
 	FOnChaosPhysicsCollision OnChaosPhysicsCollision;
@@ -1147,10 +1423,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChaosPhysics|General")
 	bool bStoreVelocities;
 
+	UPROPERTY(Transient)
+	bool bIsCurrentlyNavigationRelevant = true;
+
 protected:
 	/** Display Bone Colors instead of assigned materials */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|General")
 	bool bShowBoneColors;
+
+	/** 
+	* Relocate the component so that the original offset to the root bone is maintained
+	* This only works when the root bone is moving whole being dynamically simulated 
+	* Note: Once the root element is broken, the component will no longer update its position
+	*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|General")
+	bool bUpdateComponentTransformToRootBone;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Collision, AdvancedDisplay, config)
 	bool bUseRootProxyForNavigation;
@@ -1182,9 +1469,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChaosPhysics|Rendering", meta = (editcondition = "bOverrideCustomRenderer", MustImplement = "/Script/GeometryCollectionEngine.GeometryCollectionExternalRenderInterface"))
 	TObjectPtr<UClass> CustomRendererType;
 
+	UPROPERTY()
+	bool bEnableRootProxyForCustomRenderer = true;
+
 	/** A custom renderer object created from CustomRenderType. */
 	UPROPERTY(Transient)
-	TObjectPtr<UGeometryCollectionExternalRenderInterface> CustomRenderer;
+	TScriptInterface<IGeometryCollectionExternalRenderInterface> CustomRenderer;
+
+	/** Collect all the PSO precache data used by the geometry collection */
+	GEOMETRYCOLLECTIONENGINE_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 
 	/** Populate the dynamic particle data for the render thread. */
 	GEOMETRYCOLLECTIONENGINE_API FGeometryCollectionDynamicData* InitDynamicData(bool bInitialization);
@@ -1199,13 +1492,15 @@ protected:
 	GEOMETRYCOLLECTIONENGINE_API void DispatchFieldCommand(const FFieldSystemCommand& InCommand);
 
 	GEOMETRYCOLLECTIONENGINE_API Chaos::FPhysicsSolver* GetSolver(const UGeometryCollectionComponent& GeometryCollectionComponent);
-	GEOMETRYCOLLECTIONENGINE_API void CalculateLocalBounds();
-	GEOMETRYCOLLECTIONENGINE_API void CalculateGlobalMatrices();
-	
+
+	UE_DEPRECATED(5.4, "CalculateLocalBounds is now Deprecated as it does not need to be called anymore, see ComponentSpaceBounds which replace LocalBounds")
+	GEOMETRYCOLLECTIONENGINE_API void CalculateLocalBounds() {};
+
 	UE_DEPRECATED(5.3, "Use ComputeBoundsFromComponentSpaceTransforms instead")
 	GEOMETRYCOLLECTIONENGINE_API FBox ComputeBoundsFromGlobalMatrices(const FMatrix& LocalToWorldWithScale, const TArray<FMatrix>& GlobalMatricesArray) const;
 
 	GEOMETRYCOLLECTIONENGINE_API FBox ComputeBoundsFromComponentSpaceTransforms(const FTransform& LocalToWorldWithScale, const TArray<FTransform>& ComponentSpaceTransformsArray) const;
+	FBox ComputeBoundsFromComponentSpaceTransforms(const FTransform& LocalToWorldWithScale, const TArray<FTransform3f>& ComponentSpaceTransformsArray) const;
 
 	UE_DEPRECATED(5.3, "Use FTransform version of ComputeBounds instead")
 	GEOMETRYCOLLECTIONENGINE_API FBox ComputeBounds(const FMatrix& LocalToWorldWithScale) const;
@@ -1215,10 +1510,7 @@ protected:
 	GEOMETRYCOLLECTIONENGINE_API void RegisterForEvents();
 	GEOMETRYCOLLECTIONENGINE_API void UpdateRBCollisionEventRegistration();
 	GEOMETRYCOLLECTIONENGINE_API void UpdateGlobalCollisionEventRegistration();
-	GEOMETRYCOLLECTIONENGINE_API void UpdateBreakEventRegistration();
-	GEOMETRYCOLLECTIONENGINE_API void UpdateRemovalEventRegistration();
 	GEOMETRYCOLLECTIONENGINE_API void UpdateGlobalRemovalEventRegistration();
-	GEOMETRYCOLLECTIONENGINE_API void UpdateCrumblingEventRegistration();
 	
 	/* Per-instance override to enable/disable replication for the geometry collection */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Network)
@@ -1281,12 +1573,25 @@ protected:
 	UPROPERTY(ReplicatedUsing=OnRep_RepData)
 	FGeometryCollectionRepData RepData;
 
+	UPROPERTY(ReplicatedUsing = OnRep_RepStateData)
+	FGeometryCollectionRepStateData RepStateData;
+
+	UPROPERTY(ReplicatedUsing = OnRep_RepDynamicData)
+	FGeometryCollectionRepDynamicData RepDynamicData;
+
 	/** Called post solve to allow authoritative components to update their replication data */
 	UFUNCTION()
 	GEOMETRYCOLLECTIONENGINE_API void OnRep_RepData();
 
+	UFUNCTION()
+	GEOMETRYCOLLECTIONENGINE_API void OnRep_RepStateData();
+
+	UFUNCTION()
+	GEOMETRYCOLLECTIONENGINE_API void OnRep_RepDynamicData();
+	
 	GEOMETRYCOLLECTIONENGINE_API void RequestUpdateRepData();
 	GEOMETRYCOLLECTIONENGINE_API virtual void UpdateRepData();
+	GEOMETRYCOLLECTIONENGINE_API virtual void UpdateRepStateAndDynamicData();
 
 	/** Clear all rep data, this is required if the physics proxy has been recreated */
 	GEOMETRYCOLLECTIONENGINE_API virtual void ResetRepData();
@@ -1296,7 +1601,11 @@ protected:
 
 	GEOMETRYCOLLECTIONENGINE_API virtual bool ProcessRepData(float DeltaTime, float SimTime);
 
+	void CheckFullyDecayed();
+	bool bAlreadyFullyDecayed = false;
+
 	int32 VersionProcessed = INDEX_NONE;
+	int32 DynamicRepDataVersionProcessed = INDEX_NONE;
 
 	// The last time (in milliseconds) the async physics component tick fired.
 	// We track this on the client to be able to turn off the tick for perf reasons
@@ -1304,10 +1613,21 @@ protected:
 	int64 LastAsyncPhysicsTickMs = 0;
 
 private:
-	GEOMETRYCOLLECTIONENGINE_API void ProcessRepDataOnPT();
-	GEOMETRYCOLLECTIONENGINE_API void ResetRepDataCommon();
+	void ProcessRepDataOnPT();
+	void ProcessRepStateDataOnPT();
+	void ProcessRepDynamicDataOnPT();
+	void InitializeRemovalDynamicAttributesIfNeeded();
 
-	bool bRenderStateDirty;
+	// called when the rest transform are updated from SetRestState / ResetRestTransforms
+	// this updates only the renderer, the dynamic collection should be initialized when calling this function
+	void RestTransformsChanged();
+
+	// return the most actual transforms
+	// this can be the rest collection ones, the overridden RestTransforms or the dynamic collection ones
+	FTransform3f GetCurrentTransform(int32 Index) const;
+	void ComputeCurrentGlobalsMatrices(TArray<FTransform3f>& OutTransforms) const;
+
+	bool bInitializedRemovalDynamicAttribute;
 	bool bEnableBoneSelection;
 	int ViewLevel;
 
@@ -1330,22 +1650,65 @@ private:
 	UE_DEPRECATED(5.3, "Use ComponentSpaceTransforms instead")
 	TArray<FMatrix> GlobalMatrices;
 
-	TArray<FTransform> ComponentSpaceTransforms;
+	struct FComponentSpaceTransforms
+	{
+	public:
+		FComponentSpaceTransforms(const UGeometryCollectionComponent* InComponent = nullptr)
+			: RootIndex(INDEX_NONE)
+			, Component(InComponent)
+		{
+			bIsRootDirty = 1;
+			bIsDirty = 1;
+		}
+		
+		void Reset(int32 NumTransforms, int32 InRootIndex)
+		{
+			Transforms.SetNumUninitialized(NumTransforms);
+			RootIndex = InRootIndex;
+			MarkDirty();
+		}
 
-	FBox LocalBounds;
+		void MarkDirty()
+		{
+			bIsRootDirty = true;
+			bIsDirty = true;
+		}
 
-	mutable FBoxSphereBounds ComponentSpaceBounds;
+		int32 Num() const { return Transforms.Num(); }
+
+		SIZE_T GetAllocatedSize() const { return Transforms.GetAllocatedSize(); }
+
+		// request all transform to be update
+		// this will trigger an update if it is still marked dirty
+		const TArray<FTransform3f>& RequestAllTransforms() const;
+
+		// request the root transform, this may compute it if it is still marked dirty
+		const FTransform3f& RequestRootTransform() const;
+
+	private:
+		int32 RootIndex;
+		mutable uint8 bIsRootDirty : 1;
+		mutable uint8 bIsDirty : 1;
+		mutable TArray<FTransform3f> Transforms;
+		const UGeometryCollectionComponent* Component;
+	};
+
+	FComponentSpaceTransforms ComponentSpaceTransforms;
+
+	/** bounds for unbroken state bounds in root space */
+	mutable FBox RootSpaceBounds;
+
+	/** 
+	* Bounds in component space 
+	* if unbroken this will use computed from RootSpaceBounds
+	*/
+	mutable FBox ComponentSpaceBounds;
 
 	float CurrentCacheTime;
 	TArray<bool> EventsPlayed;
 
 	FGeometryCollectionPhysicsProxy* PhysicsProxy;
 	TUniquePtr<FGeometryDynamicCollection> DynamicCollection;
-	TArray<FManagedArrayBase**> CopyOnWriteAttributeList;
-
-	// Temporary dummies to interface with Physx expectations of the SQ syatem
-	friend class FGeometryCollectionSQAccelerator;
-	FBodyInstance DummyBodyInstance;
 
 	// Temporary storage for body setup in order to initialise a dummy body instance
 	UPROPERTY(Transient)
@@ -1376,6 +1739,10 @@ private:
 	TArray<int32> EmbeddedInstanceIndex;
 #endif
 
+	// todo(chaos): Remove the ability to change this at runtime, as we'll want to use this at cook time instead
+	UPROPERTY(EditAnywhere, BlueprintGetter="GetUseStaticMeshCollisionForTraces", BlueprintSetter="SetUseStaticMeshCollisionForTraces", Category = "Physics")
+	bool bUseStaticMeshCollisionForTraces  = false;
+
 	GEOMETRYCOLLECTIONENGINE_API bool IsEmbeddedGeometryValid() const;
 	GEOMETRYCOLLECTIONENGINE_API void ClearEmbeddedGeometry();
 
@@ -1384,11 +1751,15 @@ private:
 
 	GEOMETRYCOLLECTIONENGINE_API void RegisterCustomRenderer();
 	GEOMETRYCOLLECTIONENGINE_API void UnregisterCustomRenderer();
+
+public:
+	/** Updates the custom renderer to the reflect the current state of the Geometry Collection */
 	GEOMETRYCOLLECTIONENGINE_API void RefreshCustomRenderer();
 
-	/** return true if the root cluster is not longer active at runtime */
-	UFUNCTION(BlueprintCallable, Category = "ChaosPhysics")
-	GEOMETRYCOLLECTIONENGINE_API bool IsRootBroken() const;
+	/** Refresh root proxies whether they are drawn through the custom renderer or normal static mesh components */
+	GEOMETRYCOLLECTIONENGINE_API void RefreshRootProxies();
+
+private:
 
 	GEOMETRYCOLLECTIONENGINE_API void IncrementSleepTimer(float DeltaTime);
 	GEOMETRYCOLLECTIONENGINE_API void IncrementBreakTimer(float DeltaTime);
@@ -1407,10 +1778,19 @@ private:
 
 	GEOMETRYCOLLECTIONENGINE_API void OnPostPhysicsSync();
 
+	GEOMETRYCOLLECTIONENGINE_API void OnPostCreateParticles();
+
 	GEOMETRYCOLLECTIONENGINE_API bool HasVisibleGeometry() const;
 
 	/** backward compatibility method, until we can remove GlobalMatrices */
 	GEOMETRYCOLLECTIONENGINE_API TArray<FMatrix> ComputeGlobalMatricesFromComponentSpaceTransforms() const;
+
+	float ComputeMassScaleRelativeToAsset() const;
+
+	void MoveComponentToRootTransform();
+
+	/** called when the dynamic collection is found to be dirty */
+	void OnTransformsDirty();
 
 	/** The clusters we need to replicate */
 	TUniquePtr<TSet<Chaos::FPBDRigidClusteredParticleHandle*>> ClustersToRep;
@@ -1421,6 +1801,68 @@ private:
 
 	/** True if GeometryCollection transforms have changed from previous tick. */
 	bool bIsMoving;
+
+	bool bUpdateCustomRenderer;
+
+	bool bUpdateCustomRendererOnPostPhysicsSync;
+
+private:
+	struct FBrokenAndDecayedStates
+	{
+	public:
+		void Reset(int32 NumTransforms);
+
+		bool GetIsRootBroken() const { return bIsRootBroken; }
+		bool GetIsBroken(int32 TransformIndex) const;
+		bool GetHasDecayed(int32 TransformIndex) const;
+		double GetRootBrokenEventTimeInMs() const;
+		double GetRootBrokenElapsedTimeInMs() const;
+
+		void SetRootIsBroken(bool bIsBroken);
+		void SetIsBroken(int32 TransformIndex);
+		void SetHasDecayed(int32 TransformIndex);
+		void SetHasDecayedRecursive(int32 TransformIndex, const TArray<TSet<int32>>& Children);
+
+		// return true if any broken piece is not yet decayed 
+		bool HasAnyDecaying() const;
+
+		bool HasFullyDecayed() const;
+
+	private:
+		int32 NumTransforms = 0;
+		bool bIsRootBroken = false;
+		double RootBrokenEventTimeInMs = 0;
+		TBitArray<> IsBroken;
+		TBitArray<> HasDecayed;
+		int32 NumDecaying = 0;
+	};
+
+	FBrokenAndDecayedStates BrokenAndDecayedStates;
+
+	void UpdateBrokenAndDecayedStates();
+
+	bool ShouldCreateRootProxyComponents() const;
+	void CreateRootProxyComponentsIfNeeded();
+	void UpdateRootProxyComponentsIfNeeded();
+	void ClearRootProxyComponents();
+
+	TArray<TObjectPtr<UStaticMeshComponent>> RootProxyStaticMeshComponents;
+	bool bEnableRootProxyStaticMeshComponents = true;
+
+	TArray<FTransform3f> RootProxyLocalTransforms;
+
+private:
+
+	enum class ENetAwakeningMode
+	{
+		ForceDormancyAwake,
+		FlushNetDormancy,
+	};
+
+	/** Flushes the net dormancy of our owner if this action is enabled and we are dormant */
+	void FlushNetDormancyIfNeeded() const;
+
+	ENetAwakeningMode GetDesiredNetAwakeningMode() const;
 
 	//~ Begin IPhysicsComponent Interface.
 public:
@@ -1435,4 +1877,60 @@ public:
 	GEOMETRYCOLLECTIONENGINE_API virtual bool IsHLODRelevant() const override;
 	//~ End UActorComponent interface.
 #endif
+
+	/**
+	 * Currently, component space transforms for every particle is compute relative to the component transform.
+	 * By default, this means that when the component transform changes, every particle is shifted along with the component.
+	 * However, there are times when you may change the component transform but instead want every particle to stay in the same world position.
+	 * In those cases, RebaseDynamicCollectionTransformsOnNewWorldTransform can be called.
+	 */
+	GEOMETRYCOLLECTIONENGINE_API void RebaseDynamicCollectionTransformsOnNewWorldTransform();
+
+	friend struct FGCCollisionProfileScopedTransaction;
+};
+
+/** Struct to be used as Transaction object used to make updates on particle per particle basis within a scope.
+ * It makes sure the collision profile names containers is up to date and the Collision profiles are loaded if needed when it goes out of scope
+ */
+struct GEOMETRYCOLLECTIONENGINE_API FGCCollisionProfileScopedTransaction
+{
+	explicit FGCCollisionProfileScopedTransaction(UGeometryCollectionComponent* InGCComponentInstance) : GCComponentInstance(InGCComponentInstance)
+	{
+		if (!ensure(GCComponentInstance))
+		{
+			return;
+		}
+
+		bHasChanged = InGCComponentInstance->UpdatePerParticleCollisionProfilesNum();	
+	}
+
+	~FGCCollisionProfileScopedTransaction()
+	{
+		if (!GCComponentInstance)
+		{
+			return;
+		}
+
+		if (bHasChanged)
+		{
+			GCComponentInstance->LoadCollisionProfiles();
+		}
+	}
+
+	FGCCollisionProfileScopedTransaction& operator=(const FGCCollisionProfileScopedTransaction& Other) = delete;
+	FGCCollisionProfileScopedTransaction& operator=(FGCCollisionProfileScopedTransaction&& Other) = delete;
+	FGCCollisionProfileScopedTransaction(FGCCollisionProfileScopedTransaction&& Other) = delete;
+	FGCCollisionProfileScopedTransaction(FGCCollisionProfileScopedTransaction& Other) = delete;
+
+	/** Marks this transaction dirty. It will load the collision profiles if needed when this transaction goes out of scope */
+	void MarkDirty()
+	{
+		bHasChanged = true;
+	}
+
+	bool IsValid() const { return GCComponentInstance != nullptr; }
+
+private:
+	UGeometryCollectionComponent* GCComponentInstance = nullptr;
+	bool bHasChanged = false;
 };

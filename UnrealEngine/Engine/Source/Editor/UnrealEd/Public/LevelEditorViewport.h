@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AssetSelection.h" // FExtraPlaceAssetOptions
 #include "InputCoreTypes.h"
 #include "GameFramework/Actor.h"
 #include "Camera/CameraComponent.h"
@@ -18,6 +19,7 @@ struct FMinimalViewInfo;
 class FCanvas;
 class FDragTool;
 class HModel;
+class IAssetFactoryInterface;
 class ILevelEditor;
 class SLevelViewport;
 class UActorFactory;
@@ -25,6 +27,7 @@ class UModel;
 class UTypedElementSelectionSet;
 struct FWorldContext;
 struct FTypedElementHandle;
+struct FGizmoState;
 
 /** Describes an object that's currently hovered over in the level viewport */
 struct FViewportHoverTarget
@@ -167,6 +170,7 @@ class FLevelEditorViewportClient : public FEditorViewportClient
 
 public:
 
+	//~ TODO: UE_DEPRECATED(5.4, "Use GetDropPreviewElements instead.")
 	/** @return Returns the current global drop preview actor, or a NULL pointer if we don't currently have one */
 	static const TArray< TWeakObjectPtr<AActor> >& GetDropPreviewActors()
 	{
@@ -227,6 +231,10 @@ public:
 	UNREALED_API virtual bool ShouldScaleCameraSpeedByDistance() const override;
 
 	UNREALED_API virtual bool OverrideHighResScreenshotCaptureRegion(FIntRect& OutCaptureRegion) override;
+
+	UNREALED_API virtual bool BeginTransform(const FGizmoState& InState) override;
+	UNREALED_API virtual bool EndTransform(const FGizmoState& InState) override;
+	
 
 	/** Sets a flag for this frame indicating that the camera has been cut, and temporal effects (such as motion blur) should be reset */
 	void SetIsCameraCut()
@@ -397,9 +405,11 @@ public:
 
 	UNREALED_API void RemoveReferenceToWorldContext(FWorldContext& WorldContext);
 
+	//~ TODO: UE_DEPRECATED(5.4, "Use HasDropPreviewElements instead.")
 	/** Returns true if a placement dragging actor exists */
 	UNREALED_API virtual bool HasDropPreviewActors() const override;
 
+	//~ TODO: UE_DEPRECATED(5.4, "Use UpdateDropPreviewElements instead.")
 	/**
 	 * If dragging an actor for placement, this function updates its position.
 	 *
@@ -412,10 +422,17 @@ public:
 	 */
 	UNREALED_API virtual bool UpdateDropPreviewActors(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, bool& out_bDroppedObjectsVisible, class UActorFactory* FactoryToUse = NULL) override;
 
+	//~ TODO: UE_DEPRECATED(5.4, "Use DestroyDropPreviewElements instead.")
 	/**
 	 * If dragging an actor for placement, this function destroys the actor.
 	 */
 	UNREALED_API virtual void DestroyDropPreviewActors() override;
+
+	UNREALED_API virtual bool HasDropPreviewElements() const override;
+	UNREALED_API virtual bool UpdateDropPreviewElements(int32 MouseX, int32 MouseY, 
+		const TArray<UObject*>& DroppedObjects, bool& out_bDroppedObjectsVisible, 
+		TScriptInterface<IAssetFactoryInterface> Factory = nullptr) override;
+	UNREALED_API virtual void DestroyDropPreviewElements() override;
 
 	/**
 	 * Checks the viewport to see if the given object can be dropped using the given mouse coordinates local to this viewport
@@ -429,16 +446,18 @@ public:
 	/**
 	 * Attempts to intelligently drop the given objects in the viewport, using the given mouse coordinates local to this viewport
 	 *
-	 * @param MouseX			 The position of the mouse's X coordinate
-	 * @param MouseY			 The position of the mouse's Y coordinate
-	 * @param DroppedObjects	 The Objects to be placed into the editor via this viewport
-	 * @param OutNewActors		 The new actor objects that were created
-	 * @param bOnlyDropOnTarget  Flag that when True, will only attempt a drop on the actor targeted by the Mouse position. Defaults to false.
-	 * @param bCreateDropPreview If true, a drop preview actor will be spawned instead of a normal actor.
-	 * @param bSelectActors		 If true, select the newly dropped actors (defaults: true)
-	 * @param FactoryToUse		 The preferred actor factory to use (optional)
+	 * @param MouseX			The position of the mouse's X coordinate
+	 * @param MouseY			The position of the mouse's Y coordinate
+	 * @param DroppedObjects	The asset objects to be placed into the editor via this viewport
+	 * @param OutNewItems		The new items that were created
+	 * @param Options			Additional options
 	 */
-	UNREALED_API virtual bool DropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, TArray<AActor*>& OutNewActors, bool bOnlyDropOnTarget = false, bool bCreateDropPreview = false, bool bSelectActors = true, UActorFactory* FactoryToUse = NULL ) override;
+	UNREALED_API virtual bool DropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, 
+		TArray<FTypedElementHandle>& OutNewItems, const FDropObjectOptions& Options = FDropObjectOptions()) override;
+
+	//~ TODO: UE_DEPRECATED(5.4, "Use the overload that uses FDropObjectOptions instead.")
+	UNREALED_API virtual bool DropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, TArray<AActor*>& OutNewActors, bool bOnlyDropOnTarget = false, bool bCreateDropPreview = false, bool bSelectActors = true, UActorFactory* FactoryToUse = NULL) override;
+
 
 	/**
 	 * Sets GWorld to the appropriate world for this client
@@ -613,6 +632,15 @@ public:
 	UNREALED_API void SetViewportTypeFromTool(ELevelViewportType InViewportType);
 
 	/**
+	 * Static: Attempts to place the specified asset object in the level, returning one or more 
+	 * newly-created objects by their FTypedElementHandles if successful.
+	 */
+	static UNREALED_API TArray<FTypedElementHandle> TryPlacingAssetObject(ULevel* InLevel, UObject* AssetObject,
+		const UE::AssetPlacementUtil::FExtraPlaceAssetOptions& AdditionalParams,
+		const FViewportCursorLocation* CursorInformation = nullptr);
+
+	//~TODO: UE_DEPRECATED(5.4, "Use TryPlacingAssetObject instead")
+	/**
 	 * Static: Attempts to place the specified object in the level, returning one or more newly-created actors if successful.
 	 * IMPORTANT: The placed actor's location must be first set using GEditor->ClickLocation and GEditor->ClickPlane.
 	 *
@@ -626,7 +654,9 @@ public:
 	 *
 	 * @return	true if the object was successfully used to place an actor; false otherwise
 	 */
-	static UNREALED_API TArray<AActor*> TryPlacingActorFromObject( ULevel* InLevel, UObject* ObjToUse, bool bSelectActors, EObjectFlags ObjectFlags, UActorFactory* FactoryToUse, const FName Name = NAME_None, const FViewportCursorLocation* Cursor = nullptr);
+	static UNREALED_API TArray<AActor*> TryPlacingActorFromObject( ULevel* InLevel, UObject* ObjToUse, bool bSelectActors,
+		EObjectFlags ObjectFlags, UActorFactory* FactoryToUse, 
+		const FName Name = NAME_None, const FViewportCursorLocation* Cursor = nullptr);
 
 	/** 
 	 * Returns true if creating a preview actor in the viewport. 
@@ -671,6 +701,9 @@ protected:
 	 * @return true if asset can be dropped, false otherwise
 	 */
 	UNREALED_API bool CanDropBlueprintAsset ( const struct FSelectedAssetInfo& );
+
+	/** Called when the widget mode changes. */
+	void OnWidgetModeChanged(UE::Widget::EWidgetMode NewMode);
 
 	/** Called when editor cleanse event is triggered */
 	UNREALED_API void OnEditorCleanse();
@@ -750,17 +783,19 @@ private:
 	/**
 	 * Called when an asset is dropped onto the blank area of a viewport.
 	 *
-	 * @param	Cursor				Mouse cursor location
-	 * @param	DroppedObjects		Array of objects dropped into the viewport
-	 * @param	ObjectFlags			The object flags to place on the actors that this function spawns.
-	 * @param	OutNewActors		The list of actors created while dropping
-	 * @param	bCreateDropPreview	If true, the actor being dropped is a preview actor (defaults: false)
-	 * @param	bSelectActors		If true, select the newly dropped actors (defaults: true)
-	 * @param	FactoryToUse		The preferred actor factory to use (optional)
+	 * @param	Cursor			Mouse cursor location
+	 * @param	DroppedObjects	Array of objects dropped into the viewport
+	 * @param	ObjectFlags		The object flags to place on the actors that this function spawns.
+	 * @param	OutNewItems		The list of actors created while dropping
+	 * @param	Options			Additional options
 	 *
 	 * @return	true if the drop operation was successfully handled; false otherwise
 	 */
-	UNREALED_API bool DropObjectsOnBackground( struct FViewportCursorLocation& Cursor, const TArray<UObject*>& DroppedObjects, EObjectFlags ObjectFlags, TArray<AActor*>& OutNewActors, bool bCreateDropPreview = false, bool bSelectActors = true, class UActorFactory* FactoryToUse = NULL );
+	UNREALED_API bool DropObjectsOnBackground(struct FViewportCursorLocation& Cursor, const TArray<UObject*>& DroppedObjects, 
+		EObjectFlags ObjectFlags, TArray<FTypedElementHandle>& OutNewItems, const FDropObjectOptions& Options);
+	
+	//~ TODO: UE_DEPRECATED(5.4, "Use the overload that uses FDropObjectOptions instead.")
+	UNREALED_API bool DropObjectsOnBackground(struct FViewportCursorLocation& Cursor, const TArray<UObject*>& DroppedObjects, EObjectFlags ObjectFlags, TArray<AActor*>& OutNewActors, bool bCreateDropPreview = false, bool bSelectActors = true, class UActorFactory* FactoryToUse = NULL);
 
 	/**
 	* Called when an asset is dropped upon an existing actor.
@@ -770,14 +805,20 @@ private:
 	* @param	DroppedUponActor	The actor that we are dropping upon
 	* @param    DroppedUponSlot     The material slot/submesh that was identified as the drop location.  If unknown use -1.
 	* @param	ObjectFlags			The object flags to place on the actors that this function spawns.
-	* @param	OutNewActors		The list of actors created while dropping
-	* @param	bCreateDropPreview	If true, the actor being dropped is a preview actor (defaults: false)
-	* @param	bSelectActors		If true, select the newly dropped actors (defaults: true)
-	* @param	FactoryToUse		The preferred actor factory to use (optional)
+	* @param	OutNewItems			The list of items created while dropping
+	* @param	Options				Additional options. Note that bOnlyDropOnTarget is ignored, since this function only drops on the actor
 	*
 	* @return	true if the drop operation was successfully handled; false otherwise
 	*/
-	UNREALED_API bool DropObjectsOnActor(struct FViewportCursorLocation& Cursor, const TArray<UObject*>& DroppedObjects, AActor* DroppedUponActor, int32 DroppedUponSlot, EObjectFlags ObjectFlags, TArray<AActor*>& OutNewActors, bool bCreateDropPreview = false, bool bSelectActors = true, class UActorFactory* FactoryToUse = NULL);
+	UNREALED_API bool DropObjectsOnActor(struct FViewportCursorLocation& Cursor, const TArray<UObject*>& DroppedObjects,
+		AActor* DroppedUponActor, int32 DroppedUponSlot, EObjectFlags ObjectFlags,
+		TArray<FTypedElementHandle>& OutNewItems, const FDropObjectOptions& Options);
+
+	//~ TODO: UE_DEPRECATED(5.4, "Use the overload that uses FDropObjectOptions instead.")
+	UNREALED_API bool DropObjectsOnActor(struct FViewportCursorLocation& Cursor, const TArray<UObject*>& DroppedObjects, 
+		AActor* DroppedUponActor, int32 DroppedUponSlot, EObjectFlags ObjectFlags, 
+		TArray<AActor*>& OutNewActors, bool bCreateDropPreview = false, 
+		bool bSelectActors = true, class UActorFactory* FactoryToUse = NULL);
 
 	/**
 	 * Called when an asset is dropped upon a BSP surface.
@@ -794,6 +835,11 @@ private:
 	 *
 	 * @return	true if the drop operation was successfully handled; false otherwise
 	 */
+	UNREALED_API bool DropObjectsOnBSPSurface(FSceneView* View, struct FViewportCursorLocation& Cursor, 
+		const TArray<UObject*>& DroppedObjects, HModel* TargetProxy, EObjectFlags ObjectFlags,
+		TArray<FTypedElementHandle>& OutNewItems, const FDropObjectOptions& Options);
+
+	//UE_DEPRECATED(5.4, "Use the overload that uses FDropObjectOptions instead.")
 	UNREALED_API bool DropObjectsOnBSPSurface(FSceneView* View, struct FViewportCursorLocation& Cursor, const TArray<UObject*>& DroppedObjects, HModel* TargetProxy, EObjectFlags ObjectFlags, TArray<AActor*>& OutNewActors, bool bCreateDropPreview = false, bool bSelectActors = true, UActorFactory* FactoryToUse = NULL);
 
 	/**
@@ -886,14 +932,25 @@ public:
 	bool bAlwaysShowModeWidgetAfterSelectionChanges;
 
 private:
-	/** The actors that are currently being placed in the viewport via dragging */
+	//TODO: UE_DEPRECATED(5.4, TEXT("Use DropPreviewElements instead"))
 	static UNREALED_API TArray< TWeakObjectPtr< AActor > > DropPreviewActors;
+		
+	/** The viewport clients share a list of drop preview elements.However we still want the elements
+	  to be destroyed if all the viewports are destroyed, hence a static weak pointer and private shared
+	  pointers. */
+	static UNREALED_API TWeakPtr<FTypedElementList> StaticDropPreviewElements;
+	TSharedPtr<FTypedElementList> DropPreviewElements;
 
 	/** If currently creating a preview actor. */
 	static UNREALED_API bool bIsDroppingPreviewActor;
 
+	// TODO: Remove this to always use PreDragElementTransforms. That requires modifications to ProjectActorsIntoWorld
 	/** A map of actor locations before a drag operation */
 	mutable TMap<TWeakObjectPtr<const AActor>, FTransform> PreDragActorTransforms;
+
+	/** Map of element locations keyed by their handle. Currently used for the preview drop elements. Should
+	 eventually replace PreDragActorTransforms entirely. */
+	TMap<FTypedElementHandle, FTransform> PreDragElementTransforms;
 
 	/** The elements (from the current selection set) that this viewport can manipulate (eg, via the transform gizmo) */
 	bool bHasCachedElementsToManipulate = false;
@@ -904,7 +961,11 @@ private:
 
 	UWorld* World;
 
+	/** Global shared transaction for all mouse interactions. */
 	FTrackingTransaction TrackingTransaction;
+
+	/** Cached transform of pilot actor before transaction, used to allow other transactions while piloting by performing a single end-transaction */
+	TOptional<FTransform> CachedPilotTransform;
 
 	/** Represents the last known drop preview mouse position. */
 	int32 DropPreviewMouseX;

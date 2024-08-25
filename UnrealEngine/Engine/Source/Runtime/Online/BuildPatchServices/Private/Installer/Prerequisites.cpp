@@ -75,7 +75,6 @@ namespace BuildPatchServices
 			if (PreReq.Path.IsEmpty())
 			{
 				UE_LOG(LogPrerequisites, Log, TEXT("Skipping prerequisites as manifest does not have prerequisites specified."));
-				BuildProgress.SetStateProgress(EBuildPatchState::PrerequisitesInstall, 1.0f);
 				continue;
 			}
 
@@ -101,8 +100,7 @@ namespace BuildPatchServices
 				if (MissingPrereqs.Num() == 0)
 				{
 					UE_LOG(LogPrerequisites, Log, TEXT("Skipping already installed prerequisites installer"));
-					BuildProgress.SetStateProgress(EBuildPatchState::PrerequisitesInstall, 1.0f);
-					return true;
+					continue;
 				}
 			}
 
@@ -137,7 +135,8 @@ namespace BuildPatchServices
 			{
 				UE_LOG(LogPrerequisites, Error, TEXT("Could not find prerequisites file %s on disk."), *PrereqPath);
 				InstallerError->SetError(EBuildPatchInstallError::PrerequisiteError, PrerequisiteErrorPrefixes::NotFoundCode);
-				return false;
+				bInstallSuccessful = false;
+				continue;
 			}
 
 			const FString PrereqCommandline = PreReq.Args
@@ -172,13 +171,15 @@ namespace BuildPatchServices
 			if (bPrereqInstallSuccessful)
 			{
 				UE_LOG(LogPrerequisites, Log, TEXT("Prerequisite installation successful"));
-				BuildProgress.SetStateProgress(EBuildPatchState::PrerequisitesInstall, 1.0f);
 				InstalledPrereqs.Append(PreReq.IdSet);
 				MachineConfig->SaveInstalledPrereqIds(InstalledPrereqs);
 			}
 			bInstallSuccessful = bInstallSuccessful && bPrereqInstallSuccessful;
 		}
-
+		if (bInstallSuccessful)
+		{
+			BuildProgress.SetStateProgress(EBuildPatchState::PrerequisitesInstall, 1.0f);
+		}
 		return bInstallSuccessful;
 	}
 

@@ -177,9 +177,24 @@ void SAnimationGraphNode::GetNodeInfoPopups(FNodeInfoContext* Context, TArray<FG
 					// reverse node index temporarily because of a bug in NodeGuidToIndexMap
 					AnimNodeIndex = Class->GetAnimNodeProperties().Num() - AnimNodeIndex - 1;
 
-					if (FAnimBlueprintDebugData::FNodeValue* DebugInfo = Class->GetAnimBlueprintDebugData().NodeValuesThisFrame.FindByPredicate([AnimNodeIndex](const FAnimBlueprintDebugData::FNodeValue& InValue){ return InValue.NodeID == AnimNodeIndex; }))
+					FString PopupText;
+					for(auto & NodeValue : Class->GetAnimBlueprintDebugData().NodeValuesThisFrame)
 					{
-						Popups.Emplace(nullptr, Color, DebugInfo->Text);
+						if (NodeValue.NodeID == AnimNodeIndex)
+						{
+							if (PopupText.IsEmpty())
+							{
+								PopupText = NodeValue.Text;
+							}
+							else
+							{
+								PopupText = FString::Format(TEXT("{0}\n{1}"), {PopupText, NodeValue.Text});
+							}
+						}
+					}
+					if (!PopupText.IsEmpty())
+					{
+						Popups.Emplace(nullptr, Color, PopupText);
 					}
 				}
 			}
@@ -289,7 +304,7 @@ public:
 			const TSharedPtr<IPropertyHandle> ChildPropertyHandle = ChildNode->CreatePropertyHandle();
 				
 			// Try to match node
-			if (ChildPropertyHandle.IsValid() && ChildPropertyHandle->GetProperty()->GetFName() == InMemberName && ChildPropertyHandle->GetMetaData(TEXT("Category")) == InCategory)
+			if (ChildPropertyHandle.IsValid() && ChildPropertyHandle->GetProperty() && ChildPropertyHandle->GetProperty()->GetFName() == InMemberName && ChildPropertyHandle->GetMetaData(TEXT("Category")) == InCategory)
 			{
 				OutDetailTreeNode = ChildNode;
 				OutPropertyHandle = ChildPropertyHandle;

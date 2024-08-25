@@ -43,12 +43,6 @@ struct FExistingMeshLodSectionData
 	bool bDisabled;
 };
 
-struct FSkeletalMeshLodImportDataBackup
-{
-	FSkeletalMeshImportData MeshImportData;
-	ESkeletalMeshGeoImportVersions MeshGeoImportVersion = ESkeletalMeshGeoImportVersions::Before_Versionning;
-	ESkeletalMeshSkinningImportVersions MeshSkinningImportVersion = ESkeletalMeshSkinningImportVersions::Before_Versionning;
-};
 
 struct FStreamableRenderAssetData
 {
@@ -78,7 +72,7 @@ struct FExistingSkelMeshData
 	TArray<USkeletalMeshSocket*>			ExistingSockets;
 	TArray<FInlineReductionCacheData>		ExistingInlineReductionCacheDatas;
 	TIndirectArray<FSkeletalMeshLODModel>	ExistingLODModels;
-	TArray<FSkeletalMeshLodImportDataBackup>	ExistingLODImportDatas;
+	TArray<FSkeletalMeshImportData>			ExistingLODImportDatas;
 	TArray<FSkeletalMeshLODInfo>			ExistingLODInfo;
 	FReferenceSkeleton						ExistingRefSkeleton;
 	TArray<FSkeletalMaterial>				ExistingMaterials;
@@ -91,6 +85,7 @@ struct FExistingSkelMeshData
 	USkeletalMeshLODSettings*				ExistingLODSettings;
 	TSubclassOf<UAnimInstance>				ExistingPostProcessAnimBlueprint;
 	TSoftObjectPtr<UObject>					ExistingDefaultAnimatingRig;
+	UMeshDeformer*							ExistingDefaultMeshDeformer;
 	//////////////////////////////////////////////////////////////////////////
 
 	bool									bExistingUseFullPrecisionUVs;

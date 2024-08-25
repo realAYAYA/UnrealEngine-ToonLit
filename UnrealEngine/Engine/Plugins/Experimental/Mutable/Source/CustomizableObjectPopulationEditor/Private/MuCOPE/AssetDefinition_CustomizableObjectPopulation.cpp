@@ -7,7 +7,7 @@
 #include "IContentBrowserSingleton.h"
 #include "ToolMenus.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "MuCOE/CustomizableObjectEditorModule.h"
+#include "MuCO/ICustomizableObjectEditorModule.h"
 #include "MuCOP/CustomizableObjectPopulation.h"
 #include "MuCOPE/CustomizableObjectPopulationEditorModule.h"
 

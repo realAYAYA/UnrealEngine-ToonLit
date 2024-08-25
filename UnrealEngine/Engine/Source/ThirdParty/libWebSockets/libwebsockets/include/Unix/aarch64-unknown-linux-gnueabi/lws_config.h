@@ -6,7 +6,7 @@
 	#endif
 #endif
 
-#define LWS_INSTALL_DATADIR "C:/Program Files/libwebsockets/share"
+#define LWS_INSTALL_DATADIR "C:/Program Files (x86)/libwebsockets/share"
 
 #define LWS_ROLE_H1
 #define LWS_ROLE_WS
@@ -102,8 +102,8 @@
 
 /* SSL server using ECDH certificate */
 /* #undef LWS_SSL_SERVER_WITH_ECDH_CERT */
-/* #undef LWS_HAVE_SSL_CTX_set1_param */
-/* #undef LWS_HAVE_X509_VERIFY_PARAM_set1_host */
+#define LWS_HAVE_SSL_CTX_set1_param
+#define LWS_HAVE_X509_VERIFY_PARAM_set1_host
 /* #undef LWS_HAVE_RSA_SET0_KEY */
 /* #undef LWS_HAVE_X509_get_key_usage */
 /* #undef LWS_HAVE_SSL_CTX_get0_certificate */
@@ -171,8 +171,8 @@
 
 /* OpenSSL various APIs */
 
-/* #undef LWS_HAVE_TLS_CLIENT_METHOD */
-/* #undef LWS_HAVE_TLSV1_2_CLIENT_METHOD */
+#define LWS_HAVE_TLS_CLIENT_METHOD
+#define LWS_HAVE_TLSV1_2_CLIENT_METHOD
 /* #undef LWS_HAVE_SSL_SET_INFO_CALLBACK */
 #define LWS_HAVE_SSL_EXTRA_CHAIN_CERTS
 /* #undef LWS_HAVE_SSL_get0_alpn_selected */

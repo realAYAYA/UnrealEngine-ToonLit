@@ -1,13 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CoreMinimal.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/Class.h"
 #include "UObject/UnrealType.h"
-#include "UObject/UnrealTypePrivate.h"
-#include "UObject/PropertyHelper.h"
-#include "UObject/LinkerPlaceholderFunction.h"
+
 #include "Serialization/ArchiveUObjectFromStructuredArchive.h"
+#include "UObject/LinkerPlaceholderFunction.h"
+#include "UObject/PropertyHelper.h"
+#include "UObject/PropertyTypeName.h"
+#include "UObject/UnrealTypePrivate.h"
 
 FMulticastScriptDelegate FMulticastDelegateProperty::EmptyDelegate;
 
@@ -248,7 +247,7 @@ void FMulticastDelegateProperty::ExportText_Internal( FString& ValueStr, const v
 
 				bool bDelegateHasValue = CurInvocation->GetFunctionName() != NAME_None;
 				ValueStr += FString::Printf(TEXT("%s.%s"),
-					CurInvocation->GetUObject() != NULL ? *CurInvocation->GetUObject()->GetName() : TEXT("(null)"),
+					CurInvocation->GetUObject() != NULL ? *CurInvocation->GetUObject()->GetPathName() : TEXT("(null)"),
 					*CurInvocation->GetFunctionName().ToString());
 			}
 		}
@@ -566,6 +565,7 @@ void FMulticastSparseDelegateProperty::SerializeItem(FStructuredArchive::FSlot S
 {
 	FArchiveUObjectFromStructuredArchive Adapter(Slot);
 	SerializeItemInternal(Adapter.GetArchive(), Value, Defaults);
+	Adapter.Close();
 }
 
 void FMulticastSparseDelegateProperty::SerializeItemInternal(FArchive& Ar, void* Value, void const* Defaults) const
@@ -687,6 +687,17 @@ void FMulticastSparseDelegateProperty::ClearDelegate(UObject* Parent, void* Prop
 	USparseDelegateFunction* SparseDelegateFunc = CastChecked<USparseDelegateFunction>(SignatureFunction);
 	FSparseDelegate& SparseDelegate = *(FSparseDelegate*)PropertyValue;
 	SparseDelegate.__Internal_Clear(Parent, SparseDelegateFunc->DelegateName);
+}
+
+bool FMulticastSparseDelegateProperty::LoadTypeName(UE::FPropertyTypeName Type, const FPropertyTag* Tag)
+{
+	if (!Super::LoadTypeName(Type, Tag))
+	{
+		return false;
+	}
+
+	// This cannot be used without its SignatureFunction and the tag lacks the information needed to load it.
+	return false;
 }
 
 IMPLEMENT_FIELD(FMulticastSparseDelegateProperty)

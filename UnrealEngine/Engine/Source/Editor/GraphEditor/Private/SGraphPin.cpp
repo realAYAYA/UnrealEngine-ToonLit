@@ -350,7 +350,7 @@ void SGraphPin::Construct(const FArguments& InArgs, UEdGraphPin* InPin)
 			.BorderImage(CachedImg_Pin_DiffOutline)
 			.BorderBackgroundColor(this, &SGraphPin::GetPinDiffColor)
 			[
-				SNew(SLevelOfDetailBranchNode)
+				SAssignNew(PinNameLODBranchNode, SLevelOfDetailBranchNode)
 				.UseLowDetailSlot(this, &SGraphPin::UseLowDetailPinNames)
 				.LowDetail()
 				[
@@ -383,6 +383,14 @@ TSharedRef<SWidget> SGraphPin::GetLabelWidget(const FName& InLabelStyle)
 		.TextStyle(FAppStyle::Get(), InLabelStyle)
 		.Visibility(this, &SGraphPin::GetPinLabelVisibility)
 		.ColorAndOpacity(this, &SGraphPin::GetPinTextColor);
+}
+
+void SGraphPin::RefreshLOD()
+{
+	if (PinNameLODBranchNode.IsValid())
+	{
+		PinNameLODBranchNode->RefreshLODSlotContent();
+	}
 }
 
 void SGraphPin::SetIsEditable(TAttribute<bool> InIsEditable)
@@ -728,19 +736,20 @@ void SGraphPin::OnDragEnter( const FGeometry& MyGeometry, const FDragDropEvent& 
 	// Is someone dragging a connection?
 	if (Operation->IsOfType<FGraphEditorDragDropAction>())
 	{
-		// Ensure that the pin is valid before using it
-		if(GraphPinObj != NULL && !GraphPinObj->IsPendingKill() && GraphPinObj->GetOuter() != NULL && GraphPinObj->GetOuter()->IsA(UEdGraphNode::StaticClass()))
+		// Ensure that the pin is valid before using it - in the case of OnDragEnter a previous OnPinNameMouseDown handler
+		// may have invalidated the graph data:
+		if(!bGraphDataInvalid && GraphPinObj != NULL && !GraphPinObj->IsPendingKill() && GraphPinObj->GetOuter() != NULL && GraphPinObj->GetOuter()->IsA(UEdGraphNode::StaticClass()))
 		{
 			if (GetIsConnectable())
 			{
 				// Inform the Drag and Drop operation that we are hovering over this pin.
 				TSharedPtr<FGraphEditorDragDropAction> DragConnectionOp = StaticCastSharedPtr<FGraphEditorDragDropAction>(Operation);
 				DragConnectionOp->SetHoveredPin(GraphPinObj);
+
+				// Pins treat being dragged over the same as being hovered outside of drag and drop if they know how to respond to the drag action.
+				SBorder::OnMouseEnter(MyGeometry, DragDropEvent);
 			}
 		}	
-
-		// Pins treat being dragged over the same as being hovered outside of drag and drop if they know how to respond to the drag action.
-		SBorder::OnMouseEnter( MyGeometry, DragDropEvent );
 	}
 }
 

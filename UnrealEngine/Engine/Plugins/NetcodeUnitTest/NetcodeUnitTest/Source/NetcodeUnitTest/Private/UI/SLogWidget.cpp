@@ -696,10 +696,10 @@ TSharedRef<SDockTab> SLogWidget::SpawnLogTab(const FSpawnTabArgs& InSpawnTabArgs
 									const TSharedRef<FSlateFontMeasure> FontMeasure =
 																		FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
-									FVector2D UnderlineDim = FontMeasure->Measure(TextToUnderline, 0, TotalLen, RenderFont);
-									FVector2D BaseDim = FontMeasure->Measure(TEXT("-"), RenderFont);
+									FVector2f UnderlineDim = FontMeasure->Measure(TextToUnderline, 0, TotalLen, RenderFont);
+									FVector2f BaseDim = FontMeasure->Measure(TEXT("-"), RenderFont);
 
-									uint32 UnderlineCharCount = FMath::FloorToInt(UnderlineDim.X / BaseDim.X);
+									int32 UnderlineCharCount = FMath::FloorToInt(UnderlineDim.X / BaseDim.X);
 
 									if (UnderlineCharCount > 0)
 									{
@@ -775,7 +775,7 @@ TSharedRef<SDockTab> SLogWidget::SpawnLogTab(const FSpawnTabArgs& InSpawnTabArgs
 									.Visibility(EVisibility::Collapsed)
 									.ToolTipText(FText::FromString(TEXT("Close the find bar.")))
 									.ButtonStyle(CloseButtonStyle)
-									.ContentPadding(0)
+									.ContentPadding(0.0f)
 									.OnClicked_Lambda(
 										[&]()
 										{

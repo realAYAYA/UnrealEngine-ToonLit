@@ -38,6 +38,7 @@
 
 #include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
 #include "ToolTargetManager.h"
+#include "Engine/StaticMeshActor.h"
 
 
 using namespace UE::Geometry;
@@ -1190,7 +1191,7 @@ void UPatternTool::ResetTransformGizmoPosition()
 
 	const FVector3d ProxyTranslation = CurrentStartFrameWorld.Origin + FRotator(CurrentStartFrameWorld.Rotation).RotateVector(OffsetFromOrigin);
 
-	PatternGizmo->SetNewGizmoTransform(FTransform(FQuat(CurrentStartFrameWorld.Rotation * FQuaterniond(RotationInLocalSpace)), ProxyTranslation));
+	PatternGizmo->ReinitializeGizmoTransform(FTransform(FQuat(CurrentStartFrameWorld.Rotation * FQuaterniond(RotationInLocalSpace)), ProxyTranslation));
 }
 
 void UPatternTool::ReconstructTransformGizmos()
@@ -1598,7 +1599,7 @@ UStaticMeshComponent* UPatternTool::GetPreviewStaticMesh(const FPatternElement& 
 
 	if (FoundPool->Components.Num() > 0)
 	{
-		UStaticMeshComponent* FoundComponent = Cast<UStaticMeshComponent>(FoundPool->Components.Pop(false));
+		UStaticMeshComponent* FoundComponent = Cast<UStaticMeshComponent>(FoundPool->Components.Pop(EAllowShrinking::No));
 		check(FoundComponent != nullptr);
 		return FoundComponent;
 	}
@@ -1654,7 +1655,7 @@ UDynamicMeshComponent* UPatternTool::GetPreviewDynamicMesh(const FPatternElement
 
 	if (FoundPool->Components.Num() > 0)
 	{
-		UDynamicMeshComponent* FoundComponent = Cast<UDynamicMeshComponent>(FoundPool->Components.Pop(false));
+		UDynamicMeshComponent* FoundComponent = Cast<UDynamicMeshComponent>(FoundPool->Components.Pop(EAllowShrinking::No));
 		check(FoundComponent != nullptr);
 		return FoundComponent;
 	}
@@ -1862,39 +1863,24 @@ void UPatternTool::EmitResults()
 					FCreateActorParams SpawnInfo;
 					SpawnInfo.BaseName = FString::Printf(TEXT("Pattern_%d_%d"), ElemIdx, k);
 					SpawnInfo.TargetWorld = GetTargetWorld();
-					SpawnInfo.TemplateActor = SourceComponent->GetOwner();
+					SpawnInfo.TemplateAsset = SourceComponent->GetStaticMesh();
 					SpawnInfo.Transform = WorldTransform;
 
 					FCreateActorResult Result = UE::Modeling::CreateNewActor(GetToolManager(), MoveTemp(SpawnInfo));
-					if (Result.IsOK())
+					if (AStaticMeshActor* NewStaticMeshActor = Cast<AStaticMeshActor>(Result.NewActor); Result.IsOK() && NewStaticMeshActor)
 					{
-						AActor* NewActor = Result.NewActor;
-						UStaticMeshComponent* NewComponent = NewActor->GetComponentByClass<UStaticMeshComponent>();
+						UStaticMeshComponent* NewStaticMeshComponent = NewStaticMeshActor->GetStaticMeshComponent();
 
-						// Not sure this will ever happen but we probably don't want to proceed if it does
-						ensureMsgf(NewActor->GetRootComponent(), TEXT("New actor has no root component."));
-
-						if (NewComponent)
+						// Ensure the new static mesh component is properly configured based on the source component
+						NewStaticMeshComponent->SetStaticMesh(SourceComponent->GetStaticMesh());
+						NewStaticMeshComponent->SetWorldTransform(WorldTransform);
+						for (int32 j = 0; j < Element.SourceMaterials.Num(); ++j)
 						{
-							NewComponent->SetStaticMesh(SourceComponent->GetStaticMesh());
-							for (int32 j = 0; j < Element.SourceMaterials.Num(); ++j)
-							{
-								NewComponent->SetMaterial(j, Element.SourceMaterials[j]);
-							}
-						}
-						else
-						{
-							NewComponent = DuplicateObject<UStaticMeshComponent>(SourceComponent, NewActor);
-							NewActor->SetRootComponent(NewComponent);
-							NewComponent->OnComponentCreated();
-							NewActor->AddInstanceComponent(NewComponent);
-							NewComponent->RegisterComponent();
+							NewStaticMeshComponent->SetMaterial(j, Element.SourceMaterials[j]);
 						}
 
-						NewComponent->SetWorldTransform(WorldTransform);
-
-						NewActors.Add(NewActor);
-						SetActorComponentsVisibility(NewActor, false);
+						NewActors.Add(NewStaticMeshActor);
+						SetActorComponentsVisibility(NewStaticMeshActor, false);
 					}
 				}
 			}
@@ -1938,8 +1924,8 @@ void UPatternTool::EmitResults()
 			}
 			else
 			{
-				AActor* NewActor = nullptr;
-				UStaticMeshComponent* TemplateComponent = nullptr;
+				AStaticMeshActor* NewStaticMeshActor = nullptr;
+				UStaticMeshComponent* TemplateStaticMeshComponent = nullptr;
 
 				for (int32 k = 0; k < NumPatternItems; ++k)
 				{
@@ -1952,39 +1938,25 @@ void UPatternTool::EmitResults()
 						FCreateActorParams SpawnInfo;
 						SpawnInfo.BaseName = FString::Printf(TEXT("Pattern_%d"), ElemIdx);
 						SpawnInfo.TargetWorld = GetTargetWorld();
-						SpawnInfo.TemplateActor = SourceComponent->GetOwner();
+						SpawnInfo.TemplateAsset = SourceComponent->GetStaticMesh();
 						SpawnInfo.Transform = FTransform::Identity;
 
 						FCreateActorResult Result = UE::Modeling::CreateNewActor(GetToolManager(), MoveTemp(SpawnInfo));
-						if (Result.IsOK())
+						if (NewStaticMeshActor = Cast<AStaticMeshActor>(Result.NewActor); Result.IsOK() && NewStaticMeshActor)
 						{
-							NewActor = Result.NewActor;
-							TemplateComponent = NewActor->GetComponentByClass<UStaticMeshComponent>();
+							TemplateStaticMeshComponent = NewStaticMeshActor->GetStaticMeshComponent();
 
-							// Not sure this will ever happen but we probably don't want to proceed if it does
-							ensureMsgf(NewActor->GetRootComponent(), TEXT("New actor has no root component."));
-
-							if (TemplateComponent)
+							// Ensure the new static mesh component is properly configured based on the source component
+							TemplateStaticMeshComponent->SetStaticMesh(SourceComponent->GetStaticMesh());
+							TemplateStaticMeshComponent->SetWorldTransform(WorldTransform);
+							for (int32 j = 0; j < Element.SourceMaterials.Num(); ++j)
 							{
-								TemplateComponent->SetStaticMesh(SourceComponent->GetStaticMesh());
-								for (int32 j = 0; j < Element.SourceMaterials.Num(); ++j)
-								{
-									TemplateComponent->SetMaterial(j, Element.SourceMaterials[j]);
-								}
-							}
-							else
-							{
-								TemplateComponent = DuplicateObject<UStaticMeshComponent>(SourceComponent, NewActor);
-								TemplateComponent->SetupAttachment(NewActor->GetRootComponent());
-								TemplateComponent->OnComponentCreated();
-								NewActor->AddInstanceComponent(TemplateComponent);
-								TemplateComponent->RegisterComponent();
+								TemplateStaticMeshComponent->SetMaterial(j, Element.SourceMaterials[j]);
 							}
 
-							TemplateComponent->SetWorldTransform(WorldTransform);
-
-							NewActors.Add(NewActor);
-							SetActorComponentsVisibility(NewActor, false);
+							
+							NewActors.Add(NewStaticMeshActor);
+							SetActorComponentsVisibility(NewStaticMeshActor, false);
 						}
 						else
 						{
@@ -1993,11 +1965,12 @@ void UPatternTool::EmitResults()
 					}
 					else
 					{
-						UStaticMeshComponent* NewCloneComponent = DuplicateObject<UStaticMeshComponent>(TemplateComponent, NewActor);
+						// Create new component based on TemplateStaticMeshComponent
+						UStaticMeshComponent* NewCloneComponent = DuplicateObject<UStaticMeshComponent>(TemplateStaticMeshComponent, NewStaticMeshActor);
 						NewCloneComponent->ClearFlags(RF_DefaultSubObject);
-						NewCloneComponent->SetupAttachment(NewActor->GetRootComponent());
+						NewCloneComponent->SetupAttachment(TemplateStaticMeshComponent);
 						NewCloneComponent->OnComponentCreated();
-						NewActor->AddInstanceComponent(NewCloneComponent);
+						NewStaticMeshActor->AddInstanceComponent(NewCloneComponent);
 						NewCloneComponent->RegisterComponent();
 						NewCloneComponent->SetWorldTransform(WorldTransform);
 

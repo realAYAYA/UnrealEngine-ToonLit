@@ -1,250 +1,155 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Serialization;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
 using System.ComponentModel;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EpicGames.Core;
 
 namespace EpicGames.Horde.Storage
 {
 	/// <summary>
-	/// Unique identifier for a blob, as a utf-8 string. Clients should not assume any internal structure to this identifier; it only
-	/// has meaning to the <see cref="IStorageClient"/> implementation.
+	/// Identifier for a blob within a particular namespace.
 	/// </summary>
-	[JsonConverter(typeof(BlobLocatorJsonConverter))]
+	[JsonSchemaString]
 	[TypeConverter(typeof(BlobLocatorTypeConverter))]
-	[CbConverter(typeof(BlobLocatorCbConverter))]
-	public struct BlobLocator : IEquatable<BlobLocator>
+	[JsonConverter(typeof(BlobLocatorJsonConverter))]
+	public readonly struct BlobLocator : IEquatable<BlobLocator>
 	{
+		readonly Utf8String _path;
+
 		/// <summary>
-		/// Dummy enum to allow invoking the constructor which takes a sanitized full path
+		/// Accessor for the internal path string
 		/// </summary>
-		public enum Sanitize
+		public Utf8String Path => _path;
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="path">Path to the blob. The meaning of this string is implementation defined.</param>
+		public BlobLocator(Utf8String path) => _path = path;
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="path">Path to the blob. The meaning of this string is implementation defined.</param>
+		public BlobLocator(string path) => _path = new Utf8String(path);
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="outer">The base locator to append to</param>
+		/// <param name="fragment">Characters to append</param>
+		public BlobLocator(BlobLocator outer, string fragment)
+			: this(outer, Encoding.UTF8.GetBytes(fragment))
 		{
-			/// <summary>
-			/// Dummy value
-			/// </summary>
-			None
 		}
 
 		/// <summary>
-		/// Empty blob locator
+		/// Constructor
 		/// </summary>
-		public static BlobLocator Empty { get; } = default;
+		/// <param name="outer">The base locator to append to</param>
+		/// <param name="fragment">Characters to append</param>
+		public BlobLocator(BlobLocator outer, ReadOnlySpan<byte> fragment)
+		{
+			byte[] buffer = new byte[outer._path.Length + 1 + fragment.Length];
+			outer._path.Span.CopyTo(buffer);
+			buffer[outer._path.Length] = (byte)'#';
+			fragment.CopyTo(buffer.AsSpan(outer._path.Length + 1));
+			_path = new Utf8String(buffer);
+		}
 
 		/// <summary>
-		/// Identifier for the blob
+		/// Whether the blob locator is valid
 		/// </summary>
-		public Utf8String Inner { get; }
+		public bool IsValid() => !_path.IsEmpty;
 
 		/// <summary>
-		/// Gets the server id for this blob
+		/// The base blob locator
 		/// </summary>
-		/// <returns>Server id</returns>
-		public HostId HostId
+		public BlobLocator BaseLocator
 		{
 			get
 			{
-				int colonIdx = Inner.LastIndexOf((byte)':');
-				return (colonIdx == -1) ? HostId.Empty : new HostId(Inner.Substring(0, colonIdx), HostId.Sanitize.None);
+				int hashIdx = _path.IndexOf('#');
+				return (hashIdx == -1) ? new BlobLocator(_path) : new BlobLocator(_path.Slice(0, hashIdx));
 			}
 		}
 
 		/// <summary>
-		/// Gets the content id for this blob
+		/// Fragment within the base blob
 		/// </summary>
-		/// <returns>Content id</returns>
-		public BlobId BlobId
+		public Utf8String Fragment
 		{
 			get
 			{
-				int colonIdx = Inner.LastIndexOf((byte)':');
-				return new BlobId(Inner.Substring(colonIdx + 1), BlobId.Validate.None);
+				int hashIdx = _path.IndexOf('#');
+				return (hashIdx == -1) ? Utf8String.Empty : _path.Slice(hashIdx + 1);
 			}
 		}
 
 		/// <summary>
-		/// Constructor
+		/// Determines if this locator can be unwrapped into an outer locator/fragment pair
 		/// </summary>
-		/// <param name="inner"></param>
-		public BlobLocator(Utf8String inner)
+		public bool CanUnwrap() => _path.IndexOf('#') != -1;
+
+		/// <summary>
+		/// Split this locator into a locator and fragment
+		/// </summary>
+		/// <param name="baseLocator">Receives the base blob locator</param>
+		/// <param name="fragment">Receives the blob fragment</param>
+		/// <returns>True if the locator was unwrapped, false otherwise</returns>
+		public bool TryUnwrap(out BlobLocator baseLocator, out Utf8String fragment)
 		{
-			if (inner.Length == 0)
+			int hashIdx = _path.LastIndexOf('#');
+			if (hashIdx == -1)
 			{
-				Inner = default;
+				baseLocator = this;
+				fragment = default;
+				return false;
 			}
 			else
 			{
-				Inner = inner;
-				ValidateArgument(nameof(inner), inner);
+				baseLocator = new BlobLocator(_path.Slice(0, hashIdx));
+				fragment = _path.Slice(hashIdx + 1);
+				return true;
 			}
 		}
 
 		/// <summary>
-		/// Constructor
+		/// Checks whether this blob is within the given folder
 		/// </summary>
-		/// <param name="hostId"></param>
-		/// <param name="blobId"></param>
-		public BlobLocator(HostId hostId, BlobId blobId)
+		/// <param name="folderName">Name of the folder</param>
+		/// <returns>True if the the blob id is within the given folder</returns>
+		public bool WithinFolder(Utf8String folderName)
 		{
-			if (hostId.IsValid())
-			{
-				byte[] buffer = new byte[hostId.Inner.Length + 1 + blobId.Inner.Length];
-
-				hostId.Inner.Span.CopyTo(buffer);
-				buffer[hostId.Inner.Length] = (byte)':';
-				blobId.Inner.Span.CopyTo(buffer.AsSpan(hostId.Inner.Length + 1));
-
-				Inner = new Utf8String(buffer);
-			}
-			else
-			{
-				Inner = blobId.Inner;
-			}
+			Utf8String path = Path;
+			return path.Length > folderName.Length && path.StartsWith(folderName) && path[folderName.Length] == '/';
 		}
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		/// <param name="hostId"></param>
-		/// <param name="blobId"></param>
-		public BlobLocator(ReadOnlySpan<byte> hostId, ReadOnlySpan<byte> blobId)
-		{
-			if (hostId.Length > 0)
-			{
-				byte[] buffer = new byte[hostId.Length + 1 + blobId.Length];
-
-				hostId.CopyTo(buffer);
-				buffer[hostId.Length] = (byte)':';
-				blobId.CopyTo(buffer.AsSpan(hostId.Length + 1));
-
-				Inner = new Utf8String(buffer);
-			}
-			else
-			{
-				Inner = new Utf8String(blobId.ToArray());
-			}
-		}
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		/// <param name="inner"></param>
-		/// <param name="sanitize"></param>
-		public BlobLocator(Utf8String inner, Sanitize sanitize)
-		{
-			Inner = inner;
-			_ = sanitize;
-		}
-
-		/// <summary>
-		/// Create a unique content id, optionally including a ref name
-		/// </summary>
-		/// <param name="serverId">The server id</param>
-		/// <param name="prefix">Prefix for blob names. Follows the same restrictions as for content ids.</param>
-		/// <returns>New content id</returns>
-		public static BlobLocator Create(HostId serverId, Utf8String prefix = default)
-		{
-			int length = 24;
-			if (serverId.IsValid())
-			{
-				length += serverId.Inner.Length + 1;
-			}
-			if (prefix.Length > 0)
-			{
-				length += prefix.Length + 1;
-			}
-
-			byte[] buffer = new byte[length];
-			Span<byte> span = buffer;
-
-			if (serverId.IsValid())
-			{
-				serverId.Inner.Span.CopyTo(span);
-				span = span.Slice(serverId.Inner.Length);
-
-				span[0] = (byte)':';
-				span = span.Slice(1);
-			}
-			if (prefix.Length > 0)
-			{
-				BlobId.ValidateArgument(nameof(prefix), prefix);
-
-				prefix.Span.CopyTo(span);
-				span = span.Slice(prefix.Length);
-
-				span[0] = (byte)'/';
-				span = span.Slice(1);
-			}
-
-			BlobId.GenerateUniqueId(span);
-			return new BlobLocator(new Utf8String(buffer), Sanitize.None);
-		}
-
-		/// <summary>
-		/// Validates a given string as a content id
-		/// </summary>
-		/// <param name="name">Name of the argument</param>
-		/// <param name="text">String to validate</param>
-		public static void ValidateArgument(string name, Utf8String text)
-		{
-			if (text.Length == 0)
-			{
-				throw new ArgumentException("Blob identifiers cannot be empty", name);
-			}
-
-			int colonIdx = text.LastIndexOf((byte)':');
-			if (colonIdx != -1)
-			{
-				HostId.ValidateArgument(name, text.Substring(0, colonIdx));
-			}
-
-			BlobId.ValidateArgument(name, text.Substring(colonIdx + 1));
-		}
-
-		/// <summary>
-		/// Checks whether this blob id is valid
-		/// </summary>
-		/// <returns>True if the identifier is valid</returns>
-		public bool IsValid() => Inner.Length > 0;
 
 		/// <inheritdoc/>
 		public override bool Equals(object? obj) => obj is BlobLocator blobId && Equals(blobId);
 
 		/// <inheritdoc/>
-		public override int GetHashCode() => Inner.GetHashCode();
+		public override int GetHashCode() => _path.GetHashCode();
 
 		/// <inheritdoc/>
-		public bool Equals(BlobLocator locator) => Inner == locator.Inner;
+		public bool Equals(BlobLocator other) => _path == other._path;
 
 		/// <inheritdoc/>
-		public override string ToString() => Inner.ToString();
+		public override string ToString() => _path.ToString();
 
 		/// <inheritdoc/>
-		public static bool operator ==(BlobLocator lhs, BlobLocator rhs) => lhs.Equals(rhs);
+		public static bool operator ==(BlobLocator left, BlobLocator right) => left.Path == right.Path;
 
 		/// <inheritdoc/>
-		public static bool operator !=(BlobLocator lhs, BlobLocator rhs) => !lhs.Equals(rhs);
+		public static bool operator !=(BlobLocator left, BlobLocator right) => !(left == right);
 	}
 
 	/// <summary>
-	/// Type converter for BlobId to and from JSON
-	/// </summary>
-	sealed class BlobLocatorJsonConverter : JsonConverter<BlobLocator>
-	{
-		/// <inheritdoc/>
-		public override BlobLocator Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => new BlobLocator(new Utf8String(reader.GetUtf8String().ToArray()));
-
-		/// <inheritdoc/>
-		public override void Write(Utf8JsonWriter writer, BlobLocator value, JsonSerializerOptions options) => writer.WriteStringValue(value.Inner.Span);
-	}
-
-	/// <summary>
-	/// Type converter from strings to BlobId objects
+	/// Type converter from strings to BlobLocator objects
 	/// </summary>
 	sealed class BlobLocatorTypeConverter : TypeConverter
 	{
@@ -255,50 +160,40 @@ namespace EpicGames.Horde.Storage
 		}
 
 		/// <inheritdoc/>
-		public override object ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object? value)
+		public override object ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)
 		{
-			return new BlobLocator((string)value!);
+			return new BlobLocator((string)value);
+		}
+
+		/// <inheritdoc/>
+		public override bool CanConvertTo(ITypeDescriptorContext? context, Type? destinationType)
+		{
+			return destinationType == typeof(string);
+		}
+
+		/// <inheritdoc/>
+		public override object? ConvertTo(ITypeDescriptorContext? context, CultureInfo? culture, object? value, Type destinationType)
+		{
+			if (destinationType == typeof(string))
+			{
+				return value?.ToString();
+			}
+			else
+			{
+				return null;
+			}
 		}
 	}
 
 	/// <summary>
-	/// Type converter to compact binary
+	/// Class which serializes BlobLocator objects to JSON
 	/// </summary>
-	sealed class BlobLocatorCbConverter : CbConverterBase<BlobLocator>
+	public sealed class BlobLocatorJsonConverter : JsonConverter<BlobLocator>
 	{
 		/// <inheritdoc/>
-		public override BlobLocator Read(CbField field) => new BlobLocator(field.AsUtf8String());
+		public override BlobLocator Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => new BlobLocator(new Utf8String(reader.GetUtf8String().ToArray()));
 
 		/// <inheritdoc/>
-		public override void Write(CbWriter writer, BlobLocator value) => writer.WriteUtf8StringValue(value.Inner);
-
-		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, BlobLocator value) => writer.WriteUtf8String(name, value.Inner);
-	}
-
-	/// <summary>
-	/// Extension methods for blob locators
-	/// </summary>
-	public static class BlobLocatorExtensions
-	{
-		/// <summary>
-		/// Deserialize a blob locator
-		/// </summary>
-		/// <param name="reader">Reader to deserialize from</param>
-		/// <returns>The blob id that was read</returns>
-		public static BlobLocator ReadBlobLocator(this IMemoryReader reader)
-		{
-			return new BlobLocator(reader.ReadUtf8String());
-		}
-
-		/// <summary>
-		/// Serialize a blob locator
-		/// </summary>
-		/// <param name="writer">Writer to serialize to</param>
-		/// <param name="value">Value to serialize</param>
-		public static void WriteBlobLocator(this IMemoryWriter writer, BlobLocator value)
-		{
-			writer.WriteUtf8String(value.Inner);
-		}
+		public override void Write(Utf8JsonWriter writer, BlobLocator value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
 	}
 }

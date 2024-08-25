@@ -18,10 +18,6 @@ UWaterRuntimeSettings::UWaterRuntimeSettings()
 	: MaterialParameterCollection(FSoftObjectPath(TEXT("/Water/Materials/MPC/MPC_Water.MPC_Water")))
 	, DefaultWaterCollisionProfileName(TEXT("WaterBodyCollision"))
 	, DefaultWaterInfoMaterial(FSoftObjectPath(TEXT("/Water/Materials/WaterInfo/DrawWaterInfo.DrawWaterInfo")))
-	, WaterBodyRiverComponentClass(UWaterBodyRiverComponent::StaticClass())
-	, WaterBodyLakeComponentClass(UWaterBodyLakeComponent::StaticClass())
-	, WaterBodyOceanComponentClass(UWaterBodyOceanComponent::StaticClass())
-	, WaterBodyCustomComponentClass(UWaterBodyCustomComponent::StaticClass())
 {
 	
 }
@@ -43,22 +39,22 @@ void UWaterRuntimeSettings::PostInitProperties()
 
 TSubclassOf<UWaterBodyRiverComponent> UWaterRuntimeSettings::GetWaterBodyRiverComponentClass() const
 {
-	return WaterBodyRiverComponentClass;
+	return WaterBodyRiverComponentClass_DEPRECATED;
 }
 
 TSubclassOf<UWaterBodyLakeComponent> UWaterRuntimeSettings::GetWaterBodyLakeComponentClass() const
 {
-	return WaterBodyLakeComponentClass;
+	return WaterBodyLakeComponentClass_DEPRECATED;
 }
 
 TSubclassOf<UWaterBodyOceanComponent> UWaterRuntimeSettings::GetWaterBodyOceanComponentClass() const
 {
-	return WaterBodyOceanComponentClass;
+	return WaterBodyOceanComponentClass_DEPRECATED;
 }
 
 TSubclassOf<UWaterBodyCustomComponent> UWaterRuntimeSettings::GetWaterBodyCustomComponentClass() const
 {
-	return WaterBodyCustomComponentClass;
+	return WaterBodyCustomComponentClass_DEPRECATED;
 }
 
 #if WITH_EDITOR

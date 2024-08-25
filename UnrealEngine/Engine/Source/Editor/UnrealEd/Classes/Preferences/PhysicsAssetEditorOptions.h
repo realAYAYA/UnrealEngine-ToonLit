@@ -107,6 +107,10 @@ class UPhysicsAssetEditorOptions : public UObject
 	UPROPERTY(config)
 	uint32 bShowConstraintsAsPoints:1;
 
+	/** Whether to highlight limits that have been violated */
+	UPROPERTY(config)
+	uint32 bDrawViolatedLimits:1;
+
 	/** Whether to only render selected constraints */
 	UPROPERTY(config)
 	uint32 bRenderOnlySelectedConstraints:1;

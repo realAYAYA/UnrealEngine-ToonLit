@@ -8,6 +8,7 @@
 #include "ObjectEditorUtils.h"
 #include "EditorCategoryUtils.h"
 #include "PropertyEditorHelpers.h"
+#include "UObject/PropertyBagRepository.h"
 
 #if WITH_EDITORONLY_DATA
 #include "Engine/Blueprint.h"
@@ -54,13 +55,21 @@ const UPackage* FObjectPropertyNode::GetUPackage(int32 InIndex) const
 // Adds a new object to the list.
 void FObjectPropertyNode::AddObject( UObject* InObject )
 {
+	UE::FPropertyBagRepository& Repository = UE::FPropertyBagRepository::Get();
+	if (UObject* Found = Repository.FindInstanceDataObject(InObject))
+	{
+		InObject = Found;
+	}
 	Objects.Add( InObject );
 }
 
 // Adds new objects to the list.
 void FObjectPropertyNode::AddObjects(const TArray<UObject*>& InObjects)
 {
-	Objects.Append( InObjects );
+	for (UObject* Object : InObjects)
+	{
+		AddObject(Object);
+	}
 }
 
 // Removes an object from the list.
@@ -71,6 +80,14 @@ void FObjectPropertyNode::RemoveObject( UObject* InObject )
 	if( idx != INDEX_NONE )
 	{
 		Objects.RemoveAt( idx, 1 );
+	}
+	else
+	{
+		UE::FPropertyBagRepository& Repository = UE::FPropertyBagRepository::Get();
+		if (UObject* Found = Repository.FindInstanceDataObject(InObject))
+		{
+			RemoveObject(Found);
+		}
 	}
 }
 

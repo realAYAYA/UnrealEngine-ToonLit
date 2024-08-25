@@ -35,6 +35,10 @@ public:
 #endif //WITH_EDITOR
 	//~ End AActor Interface
 
+	/* Get a pointer to the inner user widget  */
+	UFUNCTION(BlueprintCallable, Category = "User Interface")
+	UUserWidget* GetUserWidget() const;
+
 private:
 	void RequestEditorDisplay();
 	void RequestGameDisplay();

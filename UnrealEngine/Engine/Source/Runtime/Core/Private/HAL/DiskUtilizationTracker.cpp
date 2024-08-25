@@ -47,6 +47,7 @@ void FDiskUtilizationTracker::StartRead(uint64 InReadBytes, uint64 InSeekDistanc
 	if (bReset)
 	{
 		ShortTermStats.Reset();
+		UE_LOG(LogDiskIO, Display, TEXT("Short term stats reset"));
 		bBreak = true;
 	}
 

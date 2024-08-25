@@ -73,9 +73,13 @@ public:
 
 	void Serialize(FArchive& Ar) override;
 
-	/** Enable the deformation of the skeleton of the base mesh. */
+	/** Enable the deformation of the vertices of the base mesh. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	bool bReshapeVertices = true;	
+
+	/** Enable laplacian smoothing to the result of the base mesh reshape. */
+	UPROPERTY(EditAnywhere, Category = CustomizableObject, meta = (EditCondition = "bReshapeVertices"))
+	bool bApplyLaplacianSmoothing = false;
 
 	/** Enable the deformation of the skeleton of the base mesh. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)

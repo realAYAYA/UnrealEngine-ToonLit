@@ -4,7 +4,10 @@
 // ShaderCompileWorker.cpp : Defines the entry point for the console application.
 //
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
+#include "Misc/Compression.h"
 #include "RequiredProgramMainCPPInclude.h"
 #include "ShaderCompilerCore.h"
 #include "ShaderCompilerCommon.h"
@@ -50,8 +53,25 @@ static void OnXGEJobCompleted(const TCHAR* WorkingDirectory)
 	}
 }
 
+#if PLATFORM_WINDOWS // Currently only implemented for windows
+HMODULE GetUbaModule()
+{
+	static HMODULE UbaDetoursModule = GetModuleHandleW(L"UbaDetours.dll");
+	return UbaDetoursModule;
+}
+#endif
+
+inline bool IsUsingUBA()
+{
+#if PLATFORM_WINDOWS // Currently only implemented for windows
+	return GetUbaModule() != nullptr;
+#else
+	return false;
+#endif
+}
+
 #if USING_CODE_ANALYSIS
-	UE_NORETURN static inline void ExitWithoutCrash(FSCWErrorCode::ECode ErrorCode, const FString& Message);
+	[[noreturn]] static inline void ExitWithoutCrash(FSCWErrorCode::ECode ErrorCode, const FString& Message);
 #endif
 
 static inline void ExitWithoutCrash(FSCWErrorCode::ECode ErrorCode, const FString& Message)
@@ -187,6 +207,7 @@ class FWorkLoop
 public:
 	// If we have been idle for 20 seconds then exit. Can be overriden from the cmd line with -TimeToLive=N where N is in seconds (and a float value)
 	float TimeToLive = 20.0f;
+	int32 NumberToProcess = -1;
 	bool DisableFileWrite = false;
 	bool KeepInput = false;
 
@@ -215,13 +236,19 @@ public:
 			{
 				KeepInput = true;
 			}
+			else if (Switch.StartsWith(TEXT("NumJobs=")))
+			{
+				NumberToProcess = FCString::Atoi(Switch.GetCharArray().GetData() + 8);
+			}
 		}
 	}
 
-	void Loop()
+	void Loop(FString& CrashOutputFile)
 	{
 		UE_LOG(LogShaders, Log, TEXT("Entering job loop"));
 		TRACE_CPUPROFILER_EVENT_SCOPE(Loop);
+
+		int32 NumberProcessed = 0;
 
 		while(true)
 		{
@@ -278,9 +305,47 @@ public:
 				break;
 			}
 
+#if PLATFORM_WINDOWS // Currently only implemented for windows
+			if (HMODULE UbaDetoursModule = GetUbaModule())
+			{
+				using UbaRequestNextProcessFunc = bool(uint32 prevExitCode, TCHAR* outArguments, uint32 outArgumentsCapacity);
+				static UbaRequestNextProcessFunc* RequestNextProcess = (UbaRequestNextProcessFunc*)(void*)GetProcAddress(UbaDetoursModule, "UbaRequestNextProcess");
+
+				// Request new process
+				TCHAR Arguments[1024];
+				if (!RequestNextProcess(0, Arguments, 1024))
+				{
+					break; // No process available, exit loop
+				}
+
+				// We got a new process, change inputs and outputs and run again
+				
+				TArray<FString> Tokens;
+				TArray<FString> Switches;
+				FCommandLine::Parse(Arguments, Tokens, Switches);
+
+				WorkingDirectory = Tokens[0];
+				InputFilename = Tokens[3];
+				OutputFilename = Tokens[4];
+
+				InputFilePath = WorkingDirectory / InputFilename;
+				OutputFilePath = WorkingDirectory / OutputFilename;
+
+				CrashOutputFile = OutputFilePath;
+				continue;
+			}
+#endif
+
 			if (TimeToLive == 0)
 			{
 				UE_LOG(LogShaders, Log, TEXT("TimeToLive set to 0, exiting after single job"));
+				break;
+			}
+
+			NumberProcessed++;
+			if (NumberToProcess > 0 && NumberProcessed > NumberToProcess)
+			{
+				UE_LOG(LogShaders, Log, TEXT("NumJobs limit hit"));
 				break;
 			}
 
@@ -298,12 +363,12 @@ public:
 
 private:
 	const int32 ParentProcessId;
-	const FString WorkingDirectory;
-	const FString InputFilename;
-	const FString OutputFilename;
+	FString WorkingDirectory;
+	FString InputFilename;
+	FString OutputFilename;
 
-	const FString InputFilePath;
-	const FString OutputFilePath;
+	FString InputFilePath;
+	FString OutputFilePath;
 	TMap<FString, uint32> FormatVersionMap;
 	FString TempFilePath;
 
@@ -455,7 +520,7 @@ private:
 		};
 
 		// Shared inputs
-		TMap<FString, FThreadSafeSharedStringPtr> ExternalIncludes;
+		TMap<FString, FThreadSafeSharedAnsiStringPtr> ExternalIncludes;
 		{
 			int32 NumExternalIncludes = 0;
 			InputFile << NumExternalIncludes;
@@ -465,7 +530,7 @@ private:
 			{
 				FString NewIncludeName;
 				InputFile << NewIncludeName;
-				FString* NewIncludeContents = new FString();
+				TArray<ANSICHAR>* NewIncludeContents = new TArray<ANSICHAR>;
 				InputFile << (*NewIncludeContents);
 				ExternalIncludes.Add(NewIncludeName, MakeShareable(NewIncludeContents));
 			}
@@ -678,7 +743,8 @@ private:
 		// Don't delete the input file if we are running under Incredibuild (or if the cmdline args explicitly told us to keep it).
 		// In xml mode, we signal completion by creating a zero byte "Success" file after the output file has been fully written.
 		// In intercept mode, completion is signaled by this process terminating.
-		if (!IsUsingXGE() && !KeepInput)
+		// For UBA we can't delete the file when running remotely because there might be a crash or disconnect happening before result is sent back and then we can't retry
+		if (!IsUsingXGE() && !KeepInput && !IsUsingUBA())
 		{
 			do 
 			{
@@ -853,6 +919,8 @@ static void DirectCompile(const TArray<const class IShaderFormat*>& ShaderFormat
 	FName FormatName;
 	FName ShaderPlatformName;
 	FString Entry = TEXT("Main");
+	uint32 SupportedHardwareMask = 0;
+	FString DumpDebugInfoPath;
 	bool bPipeline = false;
 	EShaderFrequency Frequency = SF_Pixel;
 	TArray<FString> UsedOutputs;
@@ -880,9 +948,13 @@ static void DirectCompile(const TArray<const class IShaderFormat*>& ShaderFormat
 			{
 				ShaderPlatformName = FName(*Token.RightChop(19));
 			}
-			else if (Token.StartsWith(TEXT("cflags=")))
+			else if (Token.StartsWith(TEXT("supportedHardwareMask=")))
 			{
-				CFlags = FCString::Atoi64(*Token.RightChop(7));
+				SupportedHardwareMask = (uint32)FCString::Atoi64(*Token.RightChop(22));
+			}
+			else if (Token.StartsWith(TEXT("DebugInfoPath=")))
+			{
+				DumpDebugInfoPath = Token.RightChop(14);
 			}
 			else if (!FCString::Strcmp(*Token, TEXT("ps")))
 			{
@@ -958,16 +1030,15 @@ static void DirectCompile(const TArray<const class IShaderFormat*>& ShaderFormat
 	Job.Input.EntryPointName = Entry;
 	Job.Input.ShaderFormat = FormatName;
 	Job.Input.ShaderPlatformName = ShaderPlatformName;
+	Job.Input.SupportedHardwareMask = SupportedHardwareMask;
 	Job.Input.VirtualSourceFilePath = InputFile;
 	Job.Input.Target.Platform =  ShaderFormatNameToShaderPlatform(FormatName);
 	Job.Input.Target.Frequency = Frequency;
-	Job.Input.bSkipPreprocessedCache = true;
-
-	Job.Input.Environment.CompilerFlags = FShaderCompilerFlags(CFlags);
-
+	Job.Input.DumpDebugInfoPath = DumpDebugInfoPath;
 	Job.Input.bCompilingForShaderPipeline = bPipeline;
 	Job.Input.bIncludeUsedOutputs = bIncludeUsedOutputs;
 	Job.Input.UsedOutputs = UsedOutputs;
+	Job.Input.DebugInfoFlags = EShaderDebugInfoFlags::CompileFromDebugUSF;
 
 	FShaderCompilerOutput Output;
 	CompileShader(GetShaderFormats(), Job, Dir, &GNumProcessedJobs);
@@ -982,7 +1053,7 @@ static void DirectCompile(const TArray<const class IShaderFormat*>& ShaderFormat
  *		The parent process Id
  *		The thread Id corresponding to this worker
  */
-static int32 GuardedMain(int32 argc, TCHAR* argv[], bool bDirectMode)
+static int32 GuardedMain(int32 argc, TCHAR* argv[], FString& CrashOutputFile, bool bDirectMode)
 {
 	FString ExtraCmdLine = TEXT("-NOPACKAGECACHE -ReduceThreadUsage -cpuprofilertrace -nocrashreports");
 
@@ -1120,14 +1191,14 @@ static int32 GuardedMain(int32 argc, TCHAR* argv[], bool bDirectMode)
 		TRACE_CPUPROFILER_EVENT_SCOPE(FWorkLoop);
 
 		FWorkLoop WorkLoop(argv[2], argv[1], argv[4], argv[5], FormatVersionMap);
-		WorkLoop.Loop();
+		WorkLoop.Loop(CrashOutputFile);
 	}
 
 	return 0;
 }
 
 
-static int32 GuardedMainWrapper(int32 ArgC, TCHAR* ArgV[], const TCHAR* CrashOutputFile, bool bDirectMode)
+static int32 GuardedMainWrapper(int32 ArgC, TCHAR* ArgV[], FString& CrashOutputFile, bool bDirectMode)
 {
 	FTaskTagScope Scope(ETaskTag::EGameThread);
 	// We need to know whether we are using XGE now, in case an exception
@@ -1150,7 +1221,7 @@ static int32 GuardedMainWrapper(int32 ArgC, TCHAR* ArgV[], const TCHAR* CrashOut
 	if (FPlatformMisc::IsDebuggerPresent())
 #endif
 	{
-		ReturnCode = GuardedMain(ArgC, ArgV, bDirectMode);
+		ReturnCode = GuardedMain(ArgC, ArgV, CrashOutputFile, bDirectMode);
 	}
 #if PLATFORM_WINDOWS
 	else
@@ -1162,12 +1233,12 @@ static int32 GuardedMainWrapper(int32 ArgC, TCHAR* ArgV[], const TCHAR* CrashOut
 		__try
 		{
 			GIsGuarded = 1;
-			ReturnCode = GuardedMain(ArgC, ArgV, bDirectMode);
+			ReturnCode = GuardedMain(ArgC, ArgV, CrashOutputFile, bDirectMode);
 			GIsGuarded = 0;
 		}
 		__except(HandleShaderCompileException(GetExceptionInformation(), ExceptionMsg, ExceptionCallStack))
 		{
-			FArchive& OutputFile = *IFileManager::Get().CreateFileWriter(CrashOutputFile, FILEWRITE_EvenIfReadOnly);
+			FArchive& OutputFile = *IFileManager::Get().CreateFileWriter(*CrashOutputFile, FILEWRITE_EvenIfReadOnly);
 
 			if (GFailedErrorCode == FSCWErrorCode::Success)
 			{
@@ -1199,6 +1270,10 @@ static int32 GuardedMainWrapper(int32 ArgC, TCHAR* ArgV[], const TCHAR* CrashOut
 			{
 				ReturnCode = 1;
 				OnXGEJobCompleted(ArgV[1]);
+			}
+			else if (GetUbaModule())
+			{
+				ReturnCode = GFailedErrorCode;
 			}
 		}
 	}
@@ -1261,5 +1336,5 @@ INT32_MAIN_INT32_ARGC_TCHAR_ARGV()
 		OutputFilePath += ArgV[5];
 	}
 
-	return GuardedMainWrapper(ArgC, ArgV, *OutputFilePath, bDirectMode);
+	return GuardedMainWrapper(ArgC, ArgV, OutputFilePath, bDirectMode);
 }

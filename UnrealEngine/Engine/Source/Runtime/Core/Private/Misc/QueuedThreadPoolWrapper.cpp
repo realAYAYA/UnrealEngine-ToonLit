@@ -184,7 +184,7 @@ FQueuedThreadPoolWrapper::FScheduledWork* FQueuedThreadPoolWrapper::AllocateWork
 	FScheduledWork* Work = nullptr;
 	if (WorkPool.Num() > 0)
 	{
-		Work = WorkPool.Pop(false);
+		Work = WorkPool.Pop(EAllowShrinking::No);
 	}
 	else
 	{

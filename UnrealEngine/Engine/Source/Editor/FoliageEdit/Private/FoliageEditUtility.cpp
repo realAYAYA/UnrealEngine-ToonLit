@@ -39,33 +39,44 @@
 #include "UObject/UObjectGlobals.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "IContentBrowserSingleton.h"
+#include "ContentBrowserModule.h"
 
 #define LOCTEXT_NAMESPACE "FoliageEdMode"
 
-UFoliageType* FFoliageEditUtility::SaveFoliageTypeObject(UFoliageType* InFoliageType)
+UFoliageType* FFoliageEditUtility::SaveFoliageTypeObject(UFoliageType* InFoliageType, bool bInPlaceholderAsset)
 {
 	UFoliageType* TypeToSave = nullptr;
 
 	if (!InFoliageType->IsAsset())
 	{
 		FString PackageName;
+		FString AssetName = InFoliageType->GetDefaultNewAssetName();
 		UObject* FoliageSource = InFoliageType->GetSource();
 		if (FoliageSource)
 		{
+			// Avoid using source name if this is a placeholder asset which is going to be replaced 
+			if (!bInPlaceholderAsset)
+			{
+				AssetName = FoliageSource->GetName() + TEXT("_FoliageType");
+			}
+
 			// Build default settings asset name and path
-			PackageName = FPackageName::GetLongPackagePath(FoliageSource->GetOutermost()->GetName()) + TEXT("/") + FoliageSource->GetName() + TEXT("_FoliageType");
+			PackageName = FPackageName::GetLongPackagePath(FoliageSource->GetOutermost()->GetName()) + TEXT("/") + AssetName;
 		}
 
-		TSharedRef<SDlgPickAssetPath> SaveFoliageTypeDialog =
-			SNew(SDlgPickAssetPath)
-			.Title(LOCTEXT("SaveFoliageTypeDialogTitle", "Choose Location for Foliage Type Asset"))
-			.DefaultAssetPath(FText::FromString(PackageName))
-			.AllowReadOnlyFolders(false);
+		FSaveAssetDialogConfig SaveAssetDialogConfig;
+		SaveAssetDialogConfig.DialogTitleOverride = LOCTEXT("SaveAssetDialogTitle", "Save Asset As");
+		SaveAssetDialogConfig.DefaultPath = FPaths::GetPath(PackageName);
+		SaveAssetDialogConfig.DefaultAssetName = AssetName;
+		SaveAssetDialogConfig.ExistingAssetPolicy = ESaveAssetDialogExistingAssetPolicy::Disallow;
 
-		if (SaveFoliageTypeDialog->ShowModal() != EAppReturnType::Cancel)
+		FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+		FString SaveObjectPath = ContentBrowserModule.Get().CreateModalSaveAssetDialog(SaveAssetDialogConfig);
+		if(!SaveObjectPath.IsEmpty())
 		{
-			PackageName = SaveFoliageTypeDialog->GetFullAssetPath().ToString();
-			TypeToSave = DuplicateFoliageTypeToNewPackage(PackageName, InFoliageType);
+			FSoftObjectPath SoftObjectPath(SaveObjectPath);
+			TypeToSave = DuplicateFoliageTypeToNewPackage(SoftObjectPath.GetLongPackageName(), InFoliageType);
 		}
 	}
 	else

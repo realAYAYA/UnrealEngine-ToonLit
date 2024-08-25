@@ -31,10 +31,14 @@ namespace ECompilationResult
 		OtherCompilationError = 6,
 		/** Compilation failed due to live coding limit reached */
 		LiveCodingLimitError = 7,
+		/** Compilation failed due to TargetRules or ModuleRules errors */
+		RulesError = 8,
+		/** Compilation failed due to invalid action graph */
+		ActionGraphInvalid = 9,
 		/** Compilation is not supported in the current build */
 		Unsupported,
 		/** Unknown error */
-		Unknown
+		Unknown 
 	};
 
 	/**
@@ -58,6 +62,10 @@ namespace ECompilationResult
 			return TEXT("CrashOrAssert");
 		case ECompilationResult::LiveCodingLimitError:
 			return TEXT("LiveCodingLimitError");
+		case ECompilationResult::RulesError:
+			return TEXT("RulesError");
+		case ECompilationResult::ActionGraphInvalid:
+			return TEXT("ActionGraphInvalid");
 		case ECompilationResult::Unsupported:
 			return TEXT("Unsupported");
 		};

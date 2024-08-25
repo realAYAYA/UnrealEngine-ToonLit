@@ -4,10 +4,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DataDrivenShaderPlatformInfo.h"
 #include "ShaderParameters.h"
 #include "Shader.h"
 #include "GlobalShader.h"
 #include "DataDrivenShaderPlatformInfo.h"
+#include "ShaderCompilerCore.h"
 
 enum class EUpdateTextureValueType
 {
@@ -16,13 +18,38 @@ enum class EUpdateTextureValueType
 	Uint32
 };
 
-class FUpdateTexture2DSubresourceCS : public FGlobalShader
+class FUpdateTextureShaderBase : public FGlobalShader
+{
+public:
+	FUpdateTextureShaderBase() {}
+	FUpdateTextureShaderBase(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
+		: FGlobalShader(Initializer)
+	{
+	}
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static inline void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
+		if (FDataDrivenShaderPlatformInfo::GetRequiresBindfulUtilityShaders(Parameters.Platform))
+		{
+			OutEnvironment.CompilerFlags.Add(CFLAG_ForceBindful);
+		}
+	}
+};
+
+class FUpdateTexture2DSubresourceCS : public FUpdateTextureShaderBase
 {
 	DECLARE_EXPORTED_SHADER_TYPE(FUpdateTexture2DSubresourceCS, Global, ENGINE_API);
 public:
 	FUpdateTexture2DSubresourceCS() {}
 	FUpdateTexture2DSubresourceCS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
-		: FGlobalShader( Initializer )
+		: FUpdateTextureShaderBase( Initializer )
 	{
 		SrcPosPitchParameter.Bind(Initializer.ParameterMap, TEXT("TSrcPosPitch"), SPF_Mandatory);
 		SrcBuffer.Bind(Initializer.ParameterMap, TEXT("TSrcBuffer"), SPF_Mandatory);
@@ -33,10 +60,7 @@ public:
 	static const TCHAR* GetSourceFilename() { return TEXT("/Engine/Private/UpdateTextureShaders.usf"); }
 	static const TCHAR* GetFunctionName() { return TEXT("TUpdateTexture2DSubresourceCS"); }
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	using FUpdateTextureShaderBase::ModifyCompilationEnvironment;
 
 	void SetParameters(FRHIBatchedShaderParameters& BatchedParameters, const FUpdateTextureRegion2D& UpdateRegionInBlocks, uint32 SrcElementPitch)
 	{
@@ -77,6 +101,8 @@ public:
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
+		FUpdateTexture2DSubresourceCS::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
 		const TCHAR* Type = nullptr;
 		switch (ValueType)
 		{
@@ -106,13 +132,13 @@ inline TShaderRef<FUpdateTexture2DSubresourceCS> FUpdateTexture2DSubresourceCS::
 	}
 }
 
-class FUpdateTexture3DSubresourceCS : public FGlobalShader
+class FUpdateTexture3DSubresourceCS : public FUpdateTextureShaderBase
 {
 	DECLARE_EXPORTED_SHADER_TYPE(FUpdateTexture3DSubresourceCS, Global, ENGINE_API);
 public:
 	FUpdateTexture3DSubresourceCS() {}
 	FUpdateTexture3DSubresourceCS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
-		: FGlobalShader(Initializer)
+		: FUpdateTextureShaderBase(Initializer)
 	{
 		SrcPitchParameter.Bind(Initializer.ParameterMap, TEXT("SrcPitch"), SPF_Mandatory);
 		SrcDepthPitchParameter.Bind(Initializer.ParameterMap, TEXT("SrcDepthPitch"), SPF_Mandatory);
@@ -129,11 +155,6 @@ public:
 	
 	static const TCHAR* GetFunctionName() { return TEXT("UpdateTexture3DSubresourceCS"); };
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
-
 	LAYOUT_FIELD(FShaderParameter, SrcPitchParameter);
 	LAYOUT_FIELD(FShaderParameter, SrcDepthPitchParameter);
 	LAYOUT_FIELD(FShaderResourceParameter, SrcBuffer);
@@ -145,13 +166,13 @@ public:
 };
 
 template<uint32 ElementsPerThread>
-class TCopyDataCS : public FGlobalShader
+class TCopyDataCS : public FUpdateTextureShaderBase
 {
 	DECLARE_EXPORTED_SHADER_TYPE(TCopyDataCS, Global, ENGINE_API);
 public:
 	TCopyDataCS() {}
 	TCopyDataCS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
-		: FGlobalShader(Initializer)
+		: FUpdateTextureShaderBase(Initializer)
 	{
 		SrcBuffer.Bind(Initializer.ParameterMap, TEXT("SrcCopyBuffer"), SPF_Mandatory);
 		DestBuffer.Bind(Initializer.ParameterMap, TEXT("DestBuffer"), SPF_Mandatory);		
@@ -167,11 +188,6 @@ public:
 			case 2u: return TEXT("CopyData2CS"); break;
 		}
 		return nullptr;
-	}
-
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
 	}
 
 	LAYOUT_FIELD(FShaderResourceParameter, SrcBuffer);

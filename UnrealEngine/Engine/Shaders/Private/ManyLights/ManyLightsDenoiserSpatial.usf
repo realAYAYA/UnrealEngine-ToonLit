@@ -1,0 +1,155 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "ManyLights.ush"
+
+Texture2D<float4> DiffuseLightingAndSecondMomentTexture;
+Texture2D<float4> SpecularLightingAndSecondMomentTexture;
+Texture2D<UNORM float> NumFramesAccumulatedTexture;
+RWTexture2D<float4> RWSceneColor;
+
+float SpatialFilterDepthWeightScale;
+float TemporalMaxFramesAccumulated;
+
+/**
+ * Run a spatial filter in order to filter out noise based on the temporal variance.
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void DenoiserSpatialCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 ScreenCoord = DispatchThreadId.xy;
+
+#if DEBUG_MODE
+	int2 DebugScreenCoord = View.CursorPosition.x >= 0 ? View.CursorPosition * View.ViewResolutionFraction : -1;
+	bool bDebug = all(ScreenCoord == DebugScreenCoord);
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.55, 0.7));
+#endif
+
+	if (all(ScreenCoord < View.ViewRectMinAndSize.zw))
+	{
+		float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+		FGBufferData GBuffer = GetGBufferData(ScreenUV);
+
+		const float DeviceZ = SceneDepthTexture[ScreenCoord].x;
+		GBuffer.Depth = ConvertFromDeviceZ(DeviceZ);
+
+		if (GBuffer.Depth > 0.0f && GBuffer.ShadingModelID != SHADINGMODELID_UNLIT)
+		{
+			float4 CenterDiffuseLightingAndSecondMoment = DiffuseLightingAndSecondMomentTexture[ScreenCoord];
+			float4 CenterSpecularLightingAndSecondMoment = SpecularLightingAndSecondMomentTexture[ScreenCoord];
+
+			float CenterDiffuseStdDev = sqrt(max(CenterDiffuseLightingAndSecondMoment.w - Pow2(Luminance(CenterDiffuseLightingAndSecondMoment.xyz)), 0.0f));
+			float CenterSpecularStdDev = sqrt(max(CenterSpecularLightingAndSecondMoment.w - Pow2(Luminance(CenterSpecularLightingAndSecondMoment.xyz)), 0.0f));
+	
+			// Run spatial filter until we accumulate enough frames to estimated temporal variance
+			float NumFramesAccumulated = NumFramesAccumulatedTexture[ScreenCoord] * TemporalMaxFramesAccumulated;
+			CenterDiffuseStdDev = lerp(1.0f, CenterDiffuseStdDev, saturate(NumFramesAccumulated / min(5.0f, TemporalMaxFramesAccumulated)));
+
+			float3 DiffuseLightingSum = CenterDiffuseLightingAndSecondMoment.xyz;
+			float3 SpecularLightingSum = CenterSpecularLightingAndSecondMoment.xyz;
+			float DiffuseLightingWeightSum = 1.0f;
+			float SpecularLightingWeightSum = 1.0f;
+
+			// #sdl_todo: expose as CVars
+			float KernelRadiusInPixels = 8.0f;
+			uint NumSamples = 4;
+
+			float GuassianNormalize = 2.0f / (KernelRadiusInPixels * KernelRadiusInPixels);
+			uint2 RandomSeed = Rand3DPCG16(int3(ScreenCoord, ManyLightsStateFrameIndex)).xy;
+
+			float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, GBuffer.Depth);
+			float4 ScenePlane = float4(GBuffer.WorldNormal, dot(TranslatedWorldPosition, GBuffer.WorldNormal));
+
+			// #sdl_todo: expose as CVars
+			float MinStdDev = 0.1f;
+
+			#if SPATIAL_FILTER
+			if (KernelRadiusInPixels > 0.0f && (CenterDiffuseStdDev > MinStdDev || CenterSpecularStdDev > MinStdDev))
+			{
+				for (uint NeighborIndex = 0; NeighborIndex < NumSamples; ++NeighborIndex)
+				{
+					float2 NeighborOffsetInRect = Hammersley16(NeighborIndex, NumSamples, RandomSeed);
+					float2 NeighborOffset = UniformSampleDiskConcentric(NeighborOffsetInRect) * KernelRadiusInPixels;
+					int2 NeighborCoord = (int2)(ScreenCoord + NeighborOffset);
+
+					if (all(and(NeighborCoord >= View.ViewRectMinAndSize.xy, NeighborCoord < (View.ViewRectMinAndSize.xy + View.ViewRectMinAndSize.zw))))
+					{
+						// Depth weight
+						float2 NeighborScreenUV = (NeighborCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+						FGBufferData NeighborGBuffer = GetGBufferData(NeighborScreenUV);
+						const float3 NeighborTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(NeighborScreenUV, NeighborGBuffer.Depth);
+						float PlaneDistance = abs(dot(float4(NeighborTranslatedWorldPosition, -1), ScenePlane));
+						float RelativeDepthDifference = PlaneDistance / GBuffer.Depth;
+						float DepthWeight = exp2(-SpatialFilterDepthWeightScale * (RelativeDepthDifference * RelativeDepthDifference));
+
+						// #sdl_todo: separate weight for specular accounting for roughness and expose as CVars
+						// Normal weight
+						float AngleBetweenNormals = acosFast(saturate(dot(ScenePlane.xyz, NeighborGBuffer.WorldNormal)));
+						float NormalWeight = 1.0f - saturate(AngleBetweenNormals);
+
+						// Diffuse
+						if (CenterDiffuseStdDev > MinStdDev)
+						{
+							float4 NeighborDiffuseLightingAndSecondMoment = DiffuseLightingAndSecondMomentTexture[NeighborCoord];
+
+							float LuminanceDelta = abs(Luminance(CenterDiffuseLightingAndSecondMoment.xyz) - Luminance(NeighborDiffuseLightingAndSecondMoment.xyz));
+							float LuminanceWeight = exp2(-LuminanceDelta / max(CenterDiffuseStdDev, 0.001f));
+
+							const float DiffuseNeighborWeight = DepthWeight * NormalWeight * LuminanceWeight;
+							DiffuseLightingSum += NeighborDiffuseLightingAndSecondMoment.xyz * DiffuseNeighborWeight;
+							DiffuseLightingWeightSum += DiffuseNeighborWeight;
+						}
+
+						// Specular
+						if (CenterSpecularStdDev > MinStdDev)
+						{
+							float4 NeighborSpecularLightingAndSecondMoment = SpecularLightingAndSecondMomentTexture[NeighborCoord];
+
+							float LuminanceDelta = abs(Luminance(CenterSpecularLightingAndSecondMoment.xyz) - Luminance(NeighborSpecularLightingAndSecondMoment.xyz));
+							float LuminanceWeight = exp2(-LuminanceDelta / max(CenterSpecularStdDev, 0.001f));
+
+							const float SpecularNeighborWeight = DepthWeight * NormalWeight * LuminanceWeight;
+							SpecularLightingSum += NeighborSpecularLightingAndSecondMoment.xyz * SpecularNeighborWeight;
+							SpecularLightingWeightSum += SpecularNeighborWeight;
+						}
+					}
+				}
+			}
+			#endif
+
+			// Final pass outputs composites irradiance and outputs it to scene color
+			float3 DiffuseLighting = DiffuseLightingSum / DiffuseLightingWeightSum;
+			float3 SpecularLighting = SpecularLightingSum / SpecularLightingWeightSum;
+			ModulateLighting(GBuffer, TranslatedWorldPosition, DiffuseLighting, SpecularLighting);
+
+			// Composite diffuse and specular into scene color
+			const bool bNeedsSeparateSubsurfaceLightAccumulation = UseSubsurfaceProfile(GBuffer.ShadingModelID);
+			FLightAccumulator LightAccumulator = (FLightAccumulator)0;
+			LightAccumulator_AddSplit(LightAccumulator, DiffuseLighting, SpecularLighting, /*ScatterableLight*/ DiffuseLighting, /*CommonMultiplier*/ 1.0f, bNeedsSeparateSubsurfaceLightAccumulation);
+			float4 AccumulatedSceneColor = LightAccumulator_GetResult(LightAccumulator);
+
+			#if DEBUG_MODE
+			if (bDebug)
+			{
+				Print(Context, TEXT("Spatial pass"));
+				Newline(Context);
+				Print(Context, TEXT("AccumulatedSceneColor: "));
+				Print(Context, AccumulatedSceneColor);
+				Newline(Context);
+				Print(Context, CenterSpecularLightingAndSecondMoment);
+				Newline(Context);
+				Print(Context, TEXT("CenterDiffuseStdDev:  "));
+				Print(Context, CenterDiffuseStdDev);
+				Newline(Context);
+				Print(Context, TEXT("CenterSpecularStdDev: "));
+				Print(Context, CenterSpecularStdDev);
+			}
+			#endif
+
+			RWSceneColor[ScreenCoord] = RWSceneColor[ScreenCoord] + AccumulatedSceneColor;
+		}
+	}
+}

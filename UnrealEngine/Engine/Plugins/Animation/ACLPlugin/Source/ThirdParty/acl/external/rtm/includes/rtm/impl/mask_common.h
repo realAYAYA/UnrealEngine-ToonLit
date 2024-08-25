@@ -25,12 +25,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "rtm/math.h"
+#include "rtm/version.h"
 #include "rtm/impl/compiler_utils.h"
 
 RTM_IMPL_FILE_PRAGMA_PUSH
 
 namespace rtm
 {
+	RTM_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace rtm_impl
 	{
 		//////////////////////////////////////////////////////////////////////////
@@ -107,9 +110,9 @@ namespace rtm
 #if defined(RTM_SSE2_INTRINSICS)
 				return _mm_set_epi32(w_mask, z_mask, y_mask, x_mask);
 #elif defined(RTM_NEON_INTRINSICS)
-				float32x2_t V0 = vcreate_f32(((uint64_t)x_mask) | ((uint64_t)(y_mask) << 32));
-				float32x2_t V1 = vcreate_f32(((uint64_t)z_mask) | ((uint64_t)(w_mask) << 32));
-				return RTM_IMPL_MASK4i_SET(vcombine_f32(V0, V1));
+				uint32x2_t V0 = vcreate_u32(((uint64_t)x_mask) | ((uint64_t)(y_mask) << 32));
+				uint32x2_t V1 = vcreate_u32(((uint64_t)z_mask) | ((uint64_t)(w_mask) << 32));
+				return RTM_IMPL_MASK4i_SET(vcombine_u32(V0, V1));
 #else
 				return mask4i{ x_mask, y_mask, z_mask, w_mask };
 #endif
@@ -158,9 +161,9 @@ namespace rtm
 #if defined(RTM_SSE2_INTRINSICS)
 				return _mm_set_epi32(w, z, y, x);
 #elif defined(RTM_NEON_INTRINSICS)
-				float32x2_t V0 = vcreate_f32(((uint64_t)x) | ((uint64_t)(y) << 32));
-				float32x2_t V1 = vcreate_f32(((uint64_t)z) | ((uint64_t)(w) << 32));
-				return RTM_IMPL_MASK4i_SET(vcombine_f32(V0, V1));
+				uint32x2_t V0 = vcreate_u32(((uint64_t)x) | ((uint64_t)(y) << 32));
+				uint32x2_t V1 = vcreate_u32(((uint64_t)z) | ((uint64_t)(w) << 32));
+				return RTM_IMPL_MASK4i_SET(vcombine_u32(V0, V1));
 #else
 				return mask4i{ x, y, z, w };
 #endif
@@ -255,6 +258,8 @@ namespace rtm
 	{
 		return rtm_impl::mask4_uint64_set{ x, y, z, w };
 	}
+
+	RTM_IMPL_VERSION_NAMESPACE_END
 }
 
 RTM_IMPL_FILE_PRAGMA_POP

@@ -397,6 +397,7 @@ void ExecuteCreateStrandsTextures(const FToolMenuContext& InContext)
 				}
 				
 				FStrandsTexturesInfo Info;
+				Info.Layout = CurrentOptions->Layout;
 				Info.GroomAsset   = GroomAsset;
 				Info.TracingDirection = SignDirection;
 				Info.MaxTracingDistance = MaxDistance;
@@ -417,7 +418,7 @@ void ExecuteCreateStrandsTextures(const FToolMenuContext& InContext)
 						Info.GroupIndices.Add(GroupIndex);
 					}
 				}
-				FStrandsTexturesOutput Output = FGroomTextureBuilder::CreateGroomStrandsTexturesTexture(GroomAsset, Info.Resolution);
+				FStrandsTexturesOutput Output = FGroomTextureBuilder::CreateGroomStrandsTexturesTexture(GroomAsset, Info.Resolution, Info.Layout);
 				if (Output.IsValid())
 				{
 					FGroomTextureBuilder::BuildStrandsTextures(Info, Output);

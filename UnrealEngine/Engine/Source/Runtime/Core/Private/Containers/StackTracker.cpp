@@ -85,7 +85,7 @@ void FStackTracker::CaptureStackTrace(int32 EntriesToIgnore, void* UserData, int
 						int32 Spot = Symbol.Find(TEXT(" - "), ESearchCase::CaseSensitive);
 						if (Spot != INDEX_NONE)
 						{
-							Symbol.RightChopInline(Spot + 3, false);
+							Symbol.RightChopInline(Spot + 3, EAllowShrinking::No);
 						}
 						Existing = StringAliasMap.Find(Symbol);
 						if (Existing)

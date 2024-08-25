@@ -175,11 +175,13 @@ void FNiagaraParameterBinding::ForEachRenameEmitter(UObject* InObject, FStringVi
 {
 	for (TFieldIterator<FStructProperty> PropIt(InObject->GetClass()); PropIt; ++PropIt)
 	{
-		FStructProperty* StructProp = *PropIt;
-		if (StructProp->Struct == FNiagaraParameterBinding::StaticStruct())
+		if (FStructProperty* StructProp = *PropIt)
 		{
-			FNiagaraParameterBinding* ParameterBinding = StructProp->ContainerPtrToValuePtr<FNiagaraParameterBinding>(InObject);
-			ParameterBinding->OnRenameEmitter(EmitterName);
+			if (StructProp->Struct && StructProp->Struct->IsChildOf(FNiagaraParameterBinding::StaticStruct()))
+			{
+				FNiagaraParameterBinding* ParameterBinding = StructProp->ContainerPtrToValuePtr<FNiagaraParameterBinding>(InObject);
+				ParameterBinding->OnRenameEmitter(EmitterName);
+			}
 		}
 	}
 }
@@ -188,11 +190,13 @@ void FNiagaraParameterBinding::ForEachRenameVariable(UObject* InObject, const FN
 {
 	for (TFieldIterator<FStructProperty> PropIt(InObject->GetClass()); PropIt; ++PropIt)
 	{
-		FStructProperty* StructProp = *PropIt;
-		if (StructProp->Struct == FNiagaraParameterBinding::StaticStruct())
+		if (FStructProperty* StructProp = *PropIt)
 		{
-			FNiagaraParameterBinding* ParameterBinding = StructProp->ContainerPtrToValuePtr<FNiagaraParameterBinding>(InObject);
-			ParameterBinding->OnRenameVariable(OldVariable, NewVariable, EmitterName);
+			if (StructProp->Struct && StructProp->Struct->IsChildOf(FNiagaraParameterBinding::StaticStruct()))
+			{
+				FNiagaraParameterBinding* ParameterBinding = StructProp->ContainerPtrToValuePtr<FNiagaraParameterBinding>(InObject);
+				ParameterBinding->OnRenameVariable(OldVariable, NewVariable, EmitterName);
+			}
 		}
 	}
 }
@@ -201,11 +205,13 @@ void FNiagaraParameterBinding::ForEachRemoveVariable(UObject* InObject, const FN
 {
 	for (TFieldIterator<FStructProperty> PropIt(InObject->GetClass()); PropIt; ++PropIt)
 	{
-		FStructProperty* StructProp = *PropIt;
-		if (StructProp->Struct == FNiagaraParameterBinding::StaticStruct())
+		if (FStructProperty* StructProp = *PropIt)
 		{
-			FNiagaraParameterBinding* ParameterBinding = StructProp->ContainerPtrToValuePtr<FNiagaraParameterBinding>(InObject);
-			ParameterBinding->OnRemoveVariable(OldVariable, EmitterName);
+			if (StructProp->Struct && StructProp->Struct->IsChildOf(FNiagaraParameterBinding::StaticStruct()))
+			{
+				FNiagaraParameterBinding* ParameterBinding = StructProp->ContainerPtrToValuePtr<FNiagaraParameterBinding>(InObject);
+				ParameterBinding->OnRemoveVariable(OldVariable, EmitterName);
+			}
 		}
 	}
 }

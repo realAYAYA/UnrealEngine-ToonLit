@@ -7,14 +7,13 @@
 
 #include "PlayerRuntimeGlobal.h"
 #include "Player/AdaptiveStreamingPlayer.h"
+#include "Player/AdaptivePlayerOptionKeynames.h"
 #include "Player/IExternalDataReader.h"
 #include "Renderer/RendererVideo.h"
 #include "Renderer/RendererAudio.h"
 #include "MediaMetaDataDecoderOutput.h"
 #include "VideoDecoderResourceDelegate.h"
 #include "Utilities/Utilities.h"
-
-#include "Async/Async.h"
 
 #include "CoreGlobals.h"
 #include "Misc/ConfigCacheIni.h"
@@ -214,6 +213,7 @@ void FElectraPlayer::ClearToDefaultState()
 	bSubtitleTrackIndexDirty = true;
 	bInitialSeekPerformed = false;
 	bDiscardOutputUntilCleanStart = false;
+	bIsFirstBuffering = true;
 	LastPresentedFrameDimension = FIntPoint::ZeroValue;
 	CurrentStreamMetadata.Reset();
 	CurrentlyActiveVideoStreamFormat.Reset();
@@ -269,7 +269,7 @@ bool FElectraPlayer::OpenInternal(const FString& Url, const FParamDict& InPlayer
 		FParamDict PlayerOptions(InPlayerOptions);
 		if (PlaystartOptions.ExternalDataReader.IsValid())
 		{
-			PlayerOptions.Set(TEXT("use_external_data_reader"), FVariantValue(true));
+			PlayerOptions.Set(Electra::OptionKeyUseExternalDataReader, FVariantValue(true));
 			StaticResourceProvider->SetExternalDataReader(PlaystartOptions.ExternalDataReader);
 		}
 
@@ -286,6 +286,10 @@ bool FElectraPlayer::OpenInternal(const FString& Url, const FParamDict& InPlayer
 		CreateParams.VideoRenderer = NewPlayer->RendererVideo;
 		CreateParams.AudioRenderer = NewPlayer->RendererAudio;
 		CreateParams.ExternalPlayerGUID = PlayerGuid;
+		FString WorkerThreadOption = PlayerOptions.GetValue(Electra::OptionKeyWorkerThreads).SafeGetFString(TEXT("shared"));
+		CreateParams.WorkerThreads = WorkerThreadOption.Equals(TEXT("worker"), ESearchCase::IgnoreCase) ? IAdaptiveStreamingPlayer::FCreateParam::EWorkerThreads::DedicatedWorker :
+									 WorkerThreadOption.Equals(TEXT("worker_and_events"), ESearchCase::IgnoreCase) ? IAdaptiveStreamingPlayer::FCreateParam::EWorkerThreads::DedicatedWorkerAndEventDispatch :
+									 IAdaptiveStreamingPlayer::FCreateParam::EWorkerThreads::Shared;
 		NewPlayer->AdaptivePlayer = IAdaptiveStreamingPlayer::Create(CreateParams);
 		NewPlayer->AdaptivePlayer->AddMetricsReceiver(this);
 		NewPlayer->AdaptivePlayer->SetStaticResourceProviderCallback(StaticResourceProvider);
@@ -308,7 +312,7 @@ bool FElectraPlayer::OpenInternal(const FString& Url, const FParamDict& InPlayer
 
 		if (InOpenType == IElectraPlayerInterface::EOpenType::Blob)
 		{
-			const TCHAR * const KeyBlob = TEXT("blobparams");
+			const FName KeyBlob(TEXT("blobparams"));
 			if (PlayerOptions.HaveKey(KeyBlob))
 			{
 				BlobParams = PlayerOptions.GetValue(KeyBlob).SafeGetFString();
@@ -332,9 +336,9 @@ bool FElectraPlayer::OpenInternal(const FString& Url, const FParamDict& InPlayer
 			NewPlayer->AdaptivePlayer->SetBitrateCeiling(PlaystartOptions.MaxBandwidthForStreaming.GetValue());
 		}
 
-        // Set the player member variable to the new player so we can use our internal configuration methods on the new player. 
+        // Set the player member variable to the new player so we can use our internal configuration methods on the new player.
         CurrentPlayer = MoveTemp(NewPlayer);
-		
+
 		// Apply options that may have been set prior to calling Open().
 		// Set these only if they have defined values as to not override what might have been set in the PlayerOptions.
 		if (bFrameAccurateSeeking.IsSet())
@@ -516,22 +520,7 @@ void FElectraPlayer::FInternalPlayerImpl::DoCloseAsync(TSharedPtr<FInternalPlaye
 	// Fallback to simple, sequential execution if the engine is already shutting down...
 	if (GIsRunning)
 	{
-		Async(EAsyncExecution::ThreadPool, MoveTemp(CloseTask));
-
-		#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-			FInternalPlayerImpl* PlayerImpl = Player.Get();
-
-			TFunction<void()> CheckTimeoutTask = [bClosedSig, PlayerImpl]()
-			{
-				// Wait for 3 seconds and if the player did not close by then log an error!
-				FPlatformProcess::Sleep(3.0f);
-				if (*bClosedSig == false)
-				{
-					UE_LOG(LogElectraPlayer, Error, TEXT("[%p] DoCloseAsync() did not complete in time. Player may be dead and dangling!"), PlayerImpl);
-				}
-			};
-			Async(EAsyncExecution::Thread, MoveTemp(CheckTimeoutTask));
-		#endif
+		FMediaRunnable::EnqueueAsyncTask(MoveTemp(CloseTask));
 	}
 	else
 	{
@@ -1277,6 +1266,12 @@ void FElectraPlayer::SetPlaybackRange(const FPlaybackRange& InPlaybackRange)
 	TSharedPtr<FInternalPlayerImpl, ESPMode::ThreadSafe> LockedPlayer = CurrentPlayer;
 	if (LockedPlayer.IsValid() && LockedPlayer->AdaptivePlayer.IsValid())
 	{
+		// Ranges cannot be set on Live streams.
+		Electra::FTimeValue playDuration = CurrentPlayer->AdaptivePlayer->GetDuration();
+		if (playDuration.IsValid() && playDuration.IsInfinity())
+		{
+			return;
+		}
 		Electra::IAdaptiveStreamingPlayer::FPlaybackRange Range;
 		if (CurrentPlaybackRange.Start.IsSet())
 		{
@@ -1316,6 +1311,55 @@ void FElectraPlayer::GetPlaybackRange(FPlaybackRange& OutPlaybackRange) const
 		}
 	}
 }
+
+TRange<FTimespan> FElectraPlayer::GetPlaybackRange(ETimeRangeType InRangeToGet) const
+{
+	TRange<FTimespan> Range(FTimespan(0), FTimespan(0));
+	TSharedPtr<FInternalPlayerImpl, ESPMode::ThreadSafe> LockedPlayer = CurrentPlayer;
+	if (LockedPlayer.IsValid() && LockedPlayer->AdaptivePlayer.IsValid())
+	{
+		switch(InRangeToGet)
+		{
+			case IElectraPlayerInterface::ETimeRangeType::Absolute:
+			{
+				Electra::FTimeRange Timeline;
+				LockedPlayer->AdaptivePlayer->GetTimelineRange(Timeline);
+				if (Timeline.IsValid())
+				{
+					Range.SetLowerBound(Timeline.Start.GetAsTimespan());
+					Range.SetUpperBound(Timeline.End.GetAsTimespan());
+				}
+				else
+				{
+					Electra::FTimeValue playDuration = CurrentPlayer->AdaptivePlayer->GetDuration();
+					if (playDuration.IsValid())
+					{
+						Range.SetLowerBound(FTimespan(0));
+						Range.SetUpperBound(playDuration.IsInfinity() ? FTimespan::MaxValue() : playDuration.GetAsTimespan());
+					}
+				}
+				break;
+			}
+			case IElectraPlayerInterface::ETimeRangeType::Current:
+			{
+				Electra::IAdaptiveStreamingPlayer::FPlaybackRange Current;
+				LockedPlayer->AdaptivePlayer->GetPlaybackRange(Current);
+				if (Current.Start.IsSet() && Current.End.IsSet())
+				{
+					Range.SetLowerBound(Current.Start.GetValue().GetAsTimespan());
+					Range.SetUpperBound(Current.End.GetValue().GetAsTimespan());
+				}
+				else
+				{
+					return GetPlaybackRange(IElectraPlayerInterface::ETimeRangeType::Absolute);
+				}
+				break;
+			}
+		}
+	}
+	return Range;
+}
+
 
 TSharedPtr<TMap<FString, TArray<TSharedPtr<Electra::IMediaStreamMetadata::IItem, ESPMode::ThreadSafe>>>, ESPMode::ThreadSafe> FElectraPlayer::GetMediaMetadata() const
 {
@@ -1899,6 +1943,12 @@ void FElectraPlayer::HandleDeferredPlayerEvents()
 				HandlePlayerEventVideoQualityChange(Ev->NewBitrate, Ev->PreviousBitrate, Ev->bIsDrasticDownswitch);
 				break;
 			}
+			case FPlayerMetricEventBase::EType::AudioQualityChange:
+			{
+				FPlayerMetricEvent_AudioQualityChange* Ev = static_cast<FPlayerMetricEvent_AudioQualityChange*>(Event.Get());
+				HandlePlayerEventAudioQualityChange(Ev->NewBitrate, Ev->PreviousBitrate, Ev->bIsDrasticDownswitch);
+				break;
+			}
 			case FPlayerMetricEventBase::EType::CodecFormatChange:
 			{
 				FPlayerMetricEvent_CodecFormatChange* Ev = static_cast<FPlayerMetricEvent_CodecFormatChange*>(Event.Get());
@@ -2063,6 +2113,7 @@ void FElectraPlayer::HandlePlayerEventReceivedPlaylists()
 	Statistics.MediaTimelineAtStart = MediaTimeline;
 	Statistics.MediaTimelineAtEnd = MediaTimeline;
 	Statistics.MediaDuration = MediaDuration.IsInfinity() ? -1.0 : MediaDuration.GetAsSeconds();
+	StatisticsLock.Unlock();
 	// Get the video bitrates and populate our number of segments per bitrate map.
 	TArray<Electra::FTrackMetadata> VideoStreamMetaData;
 	CurrentPlayer->AdaptivePlayer->GetTrackMetadata(VideoStreamMetaData, Electra::EStreamType::Video);
@@ -2077,7 +2128,6 @@ void FElectraPlayer::HandlePlayerEventReceivedPlaylists()
 												VideoStreamMetaData[0].StreamDetails[i].Bandwidth);
 		}
 	}
-	StatisticsLock.Unlock();
 
 	SelectedVideoTrackIndex = NumTracksVideo ? 0 : -1;
 
@@ -2089,9 +2139,18 @@ void FElectraPlayer::HandlePlayerEventReceivedPlaylists()
 		EnqueueAnalyticsEvent(AnalyticEvent);
 	}
 
+	// Get the audio bitrates and populate our number of segments per bitrate map.
 	TArray<Electra::FTrackMetadata> AudioStreamMetaData;
 	CurrentPlayer->AdaptivePlayer->GetTrackMetadata(AudioStreamMetaData, Electra::EStreamType::Audio);
 	NumTracksAudio = AudioStreamMetaData.Num();
+	if (NumTracksAudio)
+	{
+		for(int32 i=0; i<AudioStreamMetaData[0].StreamDetails.Num(); ++i)
+		{
+			UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Found audio stream at bitrate %d"), this, CurrentPlayer.Get(),
+												AudioStreamMetaData[0].StreamDetails[i].Bandwidth);
+		}
+	}
 
 	TArray<Electra::FTrackMetadata> SubtitleStreamMetaData;
 	CurrentPlayer->AdaptivePlayer->GetTrackMetadata(SubtitleStreamMetaData, Electra::EStreamType::Subtitle);
@@ -2137,6 +2196,14 @@ void FElectraPlayer::HandlePlayerEventTracksChanged()
 	TArray<Electra::FTrackMetadata> AudioStreamMetaData;
 	CurrentPlayer->AdaptivePlayer->GetTrackMetadata(AudioStreamMetaData, Electra::EStreamType::Audio);
 	NumTracksAudio = AudioStreamMetaData.Num();
+	if (NumTracksAudio)
+	{
+		for(int32 i=0; i<AudioStreamMetaData[0].StreamDetails.Num(); ++i)
+		{
+			UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Found audio stream at bitrate %d"), this, CurrentPlayer.Get(),
+												AudioStreamMetaData[0].StreamDetails[i].Bandwidth);
+		}
+	}
 
 	TArray<Electra::FTrackMetadata> SubtitleStreamMetaData;
 	CurrentPlayer->AdaptivePlayer->GetTrackMetadata(SubtitleStreamMetaData, Electra::EStreamType::Subtitle);
@@ -2226,6 +2293,21 @@ void FElectraPlayer::HandlePlayerEventDataAvailabilityChange(const Electra::Metr
 void FElectraPlayer::HandlePlayerEventBufferingStart(Electra::Metrics::EBufferingReason BufferingReason)
 {
 	PlayerState.Status = PlayerState.Status | EPlayerStatus::Buffering;
+
+	// In case a seek was performed right away the reason would be `Seeking`, but we want to
+	// track it as `Initial` for statistics reasons and to make sure we won't miss sending `TracksChanged`.
+	if (bIsFirstBuffering)
+	{
+		BufferingReason = Electra::Metrics::EBufferingReason::Initial;
+	}
+
+	// Send TracksChanged on the initial buffering event. Prior to that we do not know where in the stream
+	// playback will begin and what tracks are available there.
+	if (BufferingReason == Electra::Metrics::EBufferingReason::Initial)
+	{
+		DeferredEvents.Enqueue(IElectraPlayerAdapterDelegate::EPlayerEvent::TracksChanged);
+	}
+
 	DeferredEvents.Enqueue(IElectraPlayerAdapterDelegate::EPlayerEvent::MediaBuffering);
 
 	// Update statistics
@@ -2267,6 +2349,13 @@ void FElectraPlayer::HandlePlayerEventBufferingEnd(Electra::Metrics::EBufferingR
 	//       state from which a playback start is not quite possible yet and would incur a slight delay until it is.
 	//       To avoid this we keep the state as buffering until the pre-rolling phase has also completed.
 	//PlayerState.Status = PlayerState.Status & ~EPlayerStatus::Buffering;
+
+	// In case a seek was performed right away the reason would be `Seeking`, but we want to track it as `Initial` for statistics.
+	if (bIsFirstBuffering)
+	{
+		BufferingReason = Electra::Metrics::EBufferingReason::Initial;
+		bIsFirstBuffering = false;
+	}
 
 	// Update statistics
 	FScopeLock Lock(&StatisticsLock);
@@ -2403,30 +2492,30 @@ void FElectraPlayer::HandlePlayerEventVideoQualityChange(int32 NewBitrate, int32
 	FScopeLock Lock(&StatisticsLock);
 	if (PreviousBitrate == 0)
 	{
-		Statistics.InitialStreamBitrate = NewBitrate;
+		Statistics.InitialVideoStreamBitrate = NewBitrate;
 	}
 	else
 	{
 		if (bIsDrasticDownswitch)
 		{
-			++Statistics.NumQualityDrasticDownswitches;
+			++Statistics.NumVideoQualityDrasticDownswitches;
 		}
 		if (NewBitrate > PreviousBitrate)
 		{
-			++Statistics.NumQualityUpswitches;
+			++Statistics.NumVideoQualityUpswitches;
 		}
 		else
 		{
-			++Statistics.NumQualityDownswitches;
+			++Statistics.NumVideoQualityDownswitches;
 		}
 	}
 	if (bIsDrasticDownswitch)
 	{
-		UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Player switched video quality drastically down to %d bps from %d bps. %d upswitches, %d downswitches (%d drastic ones)"), this, CurrentPlayer.Get(), NewBitrate, PreviousBitrate, Statistics.NumQualityUpswitches, Statistics.NumQualityDownswitches, Statistics.NumQualityDrasticDownswitches);
+		UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Player switched video quality drastically down to %d bps from %d bps. %d upswitches, %d downswitches (%d drastic ones)"), this, CurrentPlayer.Get(), NewBitrate, PreviousBitrate, Statistics.NumVideoQualityUpswitches, Statistics.NumVideoQualityDownswitches, Statistics.NumVideoQualityDrasticDownswitches);
 	}
 	else
 	{
-		UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Player switched video quality to %d bps from %d bps. %d upswitches, %d downswitches (%d drastic ones)"), this, CurrentPlayer.Get(), NewBitrate, PreviousBitrate, Statistics.NumQualityUpswitches, Statistics.NumQualityDownswitches, Statistics.NumQualityDrasticDownswitches);
+		UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Player switched video quality to %d bps from %d bps. %d upswitches, %d downswitches (%d drastic ones)"), this, CurrentPlayer.Get(), NewBitrate, PreviousBitrate, Statistics.NumVideoQualityUpswitches, Statistics.NumVideoQualityDownswitches, Statistics.NumVideoQualityDrasticDownswitches);
 	}
 
 	int32 prvWidth  = Statistics.CurrentlyActiveResolutionWidth;
@@ -2464,7 +2553,55 @@ void FElectraPlayer::HandlePlayerEventVideoQualityChange(int32 NewBitrate, int32
 
 	Statistics.AddMessageToHistory(FString::Printf(TEXT("Video bitrate change from %d to %d"), PreviousBitrate, NewBitrate));
 
-	CSV_EVENT(ElectraPlayer, TEXT("QualityChange %d -> %d"), PreviousBitrate, NewBitrate);
+	CSV_EVENT(ElectraPlayer, TEXT("VideoQualityChange %d -> %d"), PreviousBitrate, NewBitrate);
+}
+
+void FElectraPlayer::HandlePlayerEventAudioQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch)
+{
+	// Update statistics
+	FScopeLock Lock(&StatisticsLock);
+	if (PreviousBitrate == 0)
+	{
+		Statistics.InitialAudioStreamBitrate = NewBitrate;
+	}
+	else
+	{
+		if (bIsDrasticDownswitch)
+		{
+			++Statistics.NumAudioQualityDrasticDownswitches;
+		}
+		if (NewBitrate > PreviousBitrate)
+		{
+			++Statistics.NumAudioQualityUpswitches;
+		}
+		else
+		{
+			++Statistics.NumAudioQualityDownswitches;
+		}
+	}
+	if (bIsDrasticDownswitch)
+	{
+		UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Player switched audio quality drastically down to %d bps from %d bps. %d upswitches, %d downswitches (%d drastic ones)"), this, CurrentPlayer.Get(), NewBitrate, PreviousBitrate, Statistics.NumAudioQualityUpswitches, Statistics.NumAudioQualityDownswitches, Statistics.NumAudioQualityDrasticDownswitches);
+	}
+	else
+	{
+		UE_LOG(LogElectraPlayer, Log, TEXT("[%p][%p] Player switched audio quality to %d bps from %d bps. %d upswitches, %d downswitches (%d drastic ones)"), this, CurrentPlayer.Get(), NewBitrate, PreviousBitrate, Statistics.NumAudioQualityUpswitches, Statistics.NumAudioQualityDownswitches, Statistics.NumAudioQualityDrasticDownswitches);
+	}
+
+	// Enqueue a "AudioQualityChange" event.
+	static const FString kEventNameElectraAudioQualityChange(TEXT("Electra.AudioQualityChange"));
+	if (Electra::IsAnalyticsEventEnabled(kEventNameElectraAudioQualityChange))
+	{
+		TSharedPtr<FAnalyticsEvent> AnalyticEvent = CreateAnalyticsEvent(kEventNameElectraAudioQualityChange);
+		AnalyticEvent->ParamArray.Add(FAnalyticsEventAttribute(TEXT("OldBitrate"), PreviousBitrate));
+		AnalyticEvent->ParamArray.Add(FAnalyticsEventAttribute(TEXT("NewBitrate"), NewBitrate));
+		AnalyticEvent->ParamArray.Add(FAnalyticsEventAttribute(TEXT("bIsDrasticDownswitch"), bIsDrasticDownswitch));
+		EnqueueAnalyticsEvent(AnalyticEvent);
+	}
+
+	Statistics.AddMessageToHistory(FString::Printf(TEXT("Audio bitrate change from %d to %d"), PreviousBitrate, NewBitrate));
+
+	CSV_EVENT(ElectraPlayer, TEXT("AudioQualityChange %d -> %d"), PreviousBitrate, NewBitrate);
 }
 
 void FElectraPlayer::HandlePlayerEventCodecFormatChange(const Electra::FStreamCodecInformation& NewDecodingFormat)
@@ -2693,7 +2830,7 @@ void FElectraPlayer::HandlePlayerMediaMetadataChanged(const TSharedPtrTS<Electra
 	if (InMetadata.IsValid())
 	{
 		TSharedPtr<TMap<FString, TArray<TSharedPtr<Electra::IMediaStreamMetadata::IItem, ESPMode::ThreadSafe>>>, ESPMode::ThreadSafe> NewMeta = InMetadata->GetMediaStreamMetadata();
-		CurrentStreamMetadata = MoveTemp(NewMeta);		
+		CurrentStreamMetadata = MoveTemp(NewMeta);
 		DeferredEvents.Enqueue(IElectraPlayerAdapterDelegate::EPlayerEvent::MetadataChanged);
 
 		TSharedPtr<IElectraPlayerAdapterDelegate, ESPMode::ThreadSafe> PinnedAdapterDelegate = AdapterDelegate.Pin();
@@ -2867,6 +3004,7 @@ void FElectraPlayer::LogStatistics()
 			"Time after stream playlists loaded: %.3fs\n"\
 			"Time for initial buffering: %.3fs\n"\
 			"Initial video stream bitrate: %d bps\n"\
+			"Initial audio stream bitrate: %d bps\n"\
 			"Initial buffering bandwidth bps: %.3f\n"\
 			"Initial buffering latency: %.3fs\n"\
 			"Time for initial preroll: %.3fs\n"\
@@ -2883,9 +3021,12 @@ void FElectraPlayer::LogStatistics()
 			"Media duration: %.3fs\n"\
 			"Play position at start: %.3fs\n"\
 			"Play position at end: %.3fs\n"\
-			"Number of quality upswitches: %d\n"\
-			"Number of quality downswitches: %d\n"\
-			"Number of drastic downswitches: %d\n"\
+			"Number of video quality upswitches: %d\n"\
+			"Number of video quality downswitches: %d\n"\
+			"Number of video drastic downswitches: %d\n"\
+			"Number of audio quality upswitches: %d\n"\
+			"Number of audio quality downswitches: %d\n"\
+			"Number of audio drastic downswitches: %d\n"\
 			"Bytes of video data streamed: %lld\n"\
 			"Bytes of audio data streamed: %lld\n"\
 			"Number of segments fetched across all quality levels:\n%s"\
@@ -2901,7 +3042,8 @@ void FElectraPlayer::LogStatistics()
 			Statistics.TimeToLoadMasterPlaylist,
 			Statistics.TimeToLoadStreamPlaylists,
 			Statistics.InitialBufferingDuration,
-			Statistics.InitialStreamBitrate,
+			Statistics.InitialVideoStreamBitrate,
+			Statistics.InitialAudioStreamBitrate,
 			Statistics.InitialBufferingBandwidth.GetAverageBandwidth(),
 			Statistics.InitialBufferingBandwidth.GetAverageLatency(),
 			Statistics.TimeForInitialPreroll,
@@ -2918,9 +3060,12 @@ void FElectraPlayer::LogStatistics()
 			Statistics.MediaDuration,
 			Statistics.PlayPosAtStart,
 			Statistics.PlayPosAtEnd,
-			Statistics.NumQualityUpswitches,
-			Statistics.NumQualityDownswitches,
-			Statistics.NumQualityDrasticDownswitches,
+			Statistics.NumVideoQualityUpswitches,
+			Statistics.NumVideoQualityDownswitches,
+			Statistics.NumVideoQualityDrasticDownswitches,
+			Statistics.NumAudioQualityUpswitches,
+			Statistics.NumAudioQualityDownswitches,
+			Statistics.NumAudioQualityDrasticDownswitches,
 			(long long int)Statistics.NumVideoDatabytesStreamed,
 			(long long int)Statistics.NumAudioDatabytesStreamed,
 			*SegsPerStream,
@@ -2930,7 +3075,7 @@ void FElectraPlayer::LogStatistics()
 			*Statistics.LastState,
 			*SanitizeMessage(Statistics.LastError)
 		);
-		
+
 		if (Statistics.LastError.Len())
 		{
 			FString MessageHistory;
@@ -2989,7 +3134,8 @@ void FElectraPlayer::SendAnalyticMetrics(const TSharedPtr<IAnalyticsProviderET>&
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("TimeElapsedToPlaylists"), Statistics.TimeToLoadStreamPlaylists));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("InitialAvgBufferingBandwidth"), Statistics.InitialBufferingBandwidth.GetAverageBandwidth()));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("InitialAvgBufferingLatency"), Statistics.InitialBufferingBandwidth.GetAverageLatency()));
-	ParamArray.Add(FAnalyticsEventAttribute(TEXT("InitialVideoBitrate"), Statistics.InitialStreamBitrate));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("InitialVideoBitrate"), Statistics.InitialVideoStreamBitrate));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("InitialAudioBitrate"), Statistics.InitialAudioStreamBitrate));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("InitialBufferingDuration"), Statistics.InitialBufferingDuration));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("InitialPrerollDuration"), Statistics.TimeForInitialPreroll));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("TimeElapsedUntilReady"), Statistics.TimeForInitialPreroll + Statistics.TimeAtPrerollBegin - Statistics.TimeAtOpen));
@@ -3006,9 +3152,12 @@ void FElectraPlayer::SendAnalyticMetrics(const TSharedPtr<IAnalyticsProviderET>&
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumTimesMovedBackward"), (uint32) Statistics.NumTimesRewound));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumTimesLooped"), (uint32) Statistics.NumTimesLooped));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("AbortedSegmentDownloads"), (uint32) Statistics.NumSegmentDownloadsAborted));
-	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumQualityUpswitches"), (uint32) Statistics.NumQualityUpswitches));
-	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumQualityDownswitches"), (uint32) Statistics.NumQualityDownswitches));
-	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumQualityDrasticDownswitches"), (uint32) Statistics.NumQualityDrasticDownswitches));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumQualityUpswitches"), (uint32) Statistics.NumVideoQualityUpswitches));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumQualityDownswitches"), (uint32) Statistics.NumVideoQualityDownswitches));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("NumQualityDrasticDownswitches"), (uint32) Statistics.NumVideoQualityDrasticDownswitches));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("AudioQualityUpswitches"), (uint32) Statistics.NumAudioQualityUpswitches));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("AudioQualityDownswitches"), (uint32) Statistics.NumAudioQualityDownswitches));
+	ParamArray.Add(FAnalyticsEventAttribute(TEXT("AudioQualityDrasticDownswitches"), (uint32) Statistics.NumAudioQualityDrasticDownswitches));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("Rebuffering.Num"), (uint32)Statistics.NumTimesRebuffered));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("Rebuffering.AvgDuration"), Statistics.NumTimesRebuffered > 0 ? Statistics.TotalRebufferingDuration / Statistics.NumTimesRebuffered : 0.0));
 	ParamArray.Add(FAnalyticsEventAttribute(TEXT("Rebuffering.MaxDuration"), Statistics.LongestRebufferingDuration));
@@ -3101,8 +3250,9 @@ void FElectraPlayer::MediaStateOnPreparingFinished()
 	CSV_EVENT(ElectraPlayer, TEXT("MediaStateOnPreparingFinished"));
 
 	PlayerState.State = EPlayerState::Stopped;
+	// Only report MediaOpened here and *not* TracksChanged as well.
+	// We do not know where playback will start at and what tracks are available at that point.
 	DeferredEvents.Enqueue(IElectraPlayerAdapterDelegate::EPlayerEvent::MediaOpened);
-	DeferredEvents.Enqueue(IElectraPlayerAdapterDelegate::EPlayerEvent::TracksChanged);
 }
 
 bool FElectraPlayer::MediaStateOnPlay()

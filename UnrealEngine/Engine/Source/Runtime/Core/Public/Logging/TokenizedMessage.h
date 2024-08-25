@@ -37,6 +37,7 @@ namespace EMessageToken
 		Action,
 		Actor,
 		AssetName,
+		AssetData,
 		Documentation,
 		Image,
 		Object,
@@ -122,6 +123,12 @@ public:
 	 */
 	CORE_API static TSharedRef<FTokenizedMessage> Create(EMessageSeverity::Type InSeverity, const FText& InMessageText = FText());
 
+	/**
+	 * Clone this message.
+	 * @note The message tokens are shared between the original and the clone.
+	 */
+	CORE_API TSharedRef<FTokenizedMessage> Clone() const;
+
 	/** 
 	 * Get this tokenized message as a string
 	 * 
@@ -136,6 +143,26 @@ public:
 	 * @returns this message, for chaining calls.
 	 */
 	CORE_API TSharedRef<FTokenizedMessage> AddToken( const TSharedRef<IMessageToken>& InToken );
+
+	/** 
+	 * Adds a text token to a message.
+	 * @param	InMessage	The message to insert a token into
+	 * @param	InText		The text to insert as a token
+	 * @returns this message, for chaining calls.
+	 */
+	CORE_API TSharedRef<FTokenizedMessage> AddText(const FText& InText);
+
+	/** 
+	 * Adds a text token to a message as by calling FText::FormatOrdered
+	 * @param	InMessage	The message to insert a token into
+	 * @param	InText		The text to insert as a token
+	 * @returns this message, for chaining calls.
+	 */
+	template<typename... TArguments>
+	TSharedRef<FTokenizedMessage> AddText(FTextFormat InTextFormat, TArguments&&... InArgs)
+	{
+		return AddText(FText::FormatOrdered(InTextFormat, Forward<TArguments...>(InArgs...)));
+	}
 
 	/** 
 	 * Sets the severity of this message

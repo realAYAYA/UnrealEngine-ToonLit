@@ -5,6 +5,8 @@
 =============================================================================*/
 
 #include "DistanceFieldAtlas.h"
+#include "AsyncCompilationHelpers.h"
+#include "AssetCompilingManager.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "Engine/Texture2D.h"
 #include "EngineLogs.h"
@@ -126,7 +128,7 @@ FDistanceFieldAsyncQueue* GDistanceFieldAsyncQueue = NULL;
 #if WITH_EDITOR
 
 // DDC key for distance field data, must be changed when modifying the generation code or data format
-#define DISTANCEFIELD_DERIVEDDATA_VER TEXT("295895D9-FFCE-48B5-9A4B-131DB318441E")
+#define DISTANCEFIELD_DERIVEDDATA_VER TEXT("4BD0E980-7212-4093-A14D-2E468CD9FAF3")
 
 FString BuildDistanceFieldDerivedDataKey(const FString& InMeshKey)
 {
@@ -149,46 +151,52 @@ FString BuildDistanceFieldDerivedDataKey(const FString& InMeshKey)
 
 #if WITH_EDITORONLY_DATA
 
-void FDistanceFieldVolumeData::CacheDerivedData(const FString& InStaticMeshDerivedDataKey, const ITargetPlatform* TargetPlatform, UStaticMesh* Mesh, FStaticMeshRenderData& RenderData, UStaticMesh* GenerateSource, float DistanceFieldResolutionScale, bool bGenerateDistanceFieldAsIfTwoSided)
+void BuildSignedDistanceFieldBuildSectionData(UStaticMesh* Mesh, uint32 LODIndex, TArray<FSignedDistanceFieldBuildSectionData>& OutData)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(FDistanceFieldVolumeData::CacheDerivedData);
-
 	const TArray<FStaticMaterial>& StaticMaterials = Mesh->GetStaticMaterials();
-
-	TArray<FSignedDistanceFieldBuildMaterialData> BuildMaterialData;
-	BuildMaterialData.SetNum(StaticMaterials.Num());
-
 	const FMeshSectionInfoMap& SectionInfoMap = Mesh->GetSectionInfoMap();
-	const uint32 LODIndex = 0;
 
-	for (int32 SectionIndex = 0; SectionIndex < SectionInfoMap.GetSectionNumber(LODIndex); SectionIndex++)
+	OutData.SetNum(SectionInfoMap.GetSectionNumber(LODIndex));
+
+	for (int32 SectionIndex = 0; SectionIndex < OutData.Num(); SectionIndex++)
 	{
 		const FMeshSectionInfo& Section = SectionInfoMap.Get(LODIndex, SectionIndex);
 
-		if (!BuildMaterialData.IsValidIndex(Section.MaterialIndex))
+		FSignedDistanceFieldBuildSectionData& SectionData = OutData[SectionIndex];
+		SectionData.bAffectDistanceFieldLighting = Section.bAffectDistanceFieldLighting;
+
+		if (!StaticMaterials.IsValidIndex(Section.MaterialIndex))
 		{
+			// TODO: Should maybe log warning here
 			continue;
 		}
-
-		FSignedDistanceFieldBuildMaterialData& MaterialData = BuildMaterialData[Section.MaterialIndex];
-		MaterialData.bAffectDistanceFieldLighting = Section.bAffectDistanceFieldLighting;
 
 		UMaterialInterface* MaterialInterface = StaticMaterials[Section.MaterialIndex].MaterialInterface;
 		if (MaterialInterface)
 		{
-			MaterialData.BlendMode = MaterialInterface->GetBlendMode();
-			MaterialData.bTwoSided = MaterialInterface->IsTwoSided();
+			SectionData.BlendMode = MaterialInterface->GetBlendMode();
+			SectionData.bTwoSided = MaterialInterface->IsTwoSided();
 		}
 	}
+}
+
+void FDistanceFieldVolumeData::CacheDerivedData(const FString& InStaticMeshDerivedDataKey, const ITargetPlatform* TargetPlatform, UStaticMesh* Mesh, FStaticMeshRenderData& RenderData, UStaticMesh* GenerateSource, float DistanceFieldResolutionScale, bool bGenerateDistanceFieldAsIfTwoSided)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(FDistanceFieldVolumeData::CacheDerivedData);
+
+	TArray<FSignedDistanceFieldBuildSectionData> BuildSectionData;
+
+	const uint32 LODIndex = 0;
+	BuildSignedDistanceFieldBuildSectionData(Mesh, LODIndex, BuildSectionData);
 
 	FString DistanceFieldKey = BuildDistanceFieldDerivedDataKey(InStaticMeshDerivedDataKey);
 
-	for (int32 MaterialIndex = 0; MaterialIndex < Mesh->GetStaticMaterials().Num(); MaterialIndex++)
+	for (int32 SectionIndex = 0; SectionIndex < BuildSectionData.Num(); SectionIndex++)
 	{
 		DistanceFieldKey += FString::Printf(TEXT("_M%u_%u_%u"), 
-			(uint32)BuildMaterialData[MaterialIndex].BlendMode,
-			BuildMaterialData[MaterialIndex].bTwoSided ? 1 : 0,
-			BuildMaterialData[MaterialIndex].bAffectDistanceFieldLighting ? 1 : 0);
+			(uint32)BuildSectionData[SectionIndex].BlendMode,
+			BuildSectionData[SectionIndex].bTwoSided ? 1 : 0,
+			BuildSectionData[SectionIndex].bAffectDistanceFieldLighting ? 1 : 0);
 	}
 
 	TArray<uint8> DerivedData;
@@ -218,13 +226,13 @@ void FDistanceFieldVolumeData::CacheDerivedData(const FString& InStaticMeshDeriv
 		NewTask->GeneratedVolumeData = new FDistanceFieldVolumeData();
 		NewTask->GeneratedVolumeData->AssetName = Mesh->GetFName();
 		NewTask->GeneratedVolumeData->bAsyncBuilding = true;
-		NewTask->MaterialBlendModes = MoveTemp(BuildMaterialData);
+		NewTask->SectionData = MoveTemp(BuildSectionData);
 
 		// Nanite overrides source static mesh with a coarse representation. Need to load original data before we build the mesh SDF.
 		if (Mesh->IsNaniteEnabled())
 		{
 			IMeshBuilderModule& MeshBuilderModule = IMeshBuilderModule::GetForPlatform(TargetPlatform);
-			if (!MeshBuilderModule.BuildMeshVertexPositions(Mesh, NewTask->SourceMeshData.TriangleIndices, NewTask->SourceMeshData.VertexPositions))
+			if (!MeshBuilderModule.BuildMeshVertexPositions(Mesh, NewTask->SourceMeshData.TriangleIndices, NewTask->SourceMeshData.VertexPositions, NewTask->SourceMeshData.Sections))
 			{
 				UE_LOG(LogStaticMesh, Error, TEXT("Failed to build static mesh. See previous line(s) for details."));
 			}
@@ -283,7 +291,7 @@ void FDistanceFieldAsyncQueue::OnAssetPostCompile(const TArray<FAssetCompileData
 }
 
 FDistanceFieldAsyncQueue::FDistanceFieldAsyncQueue() 
-	: Notification(GetAssetNameFormat())
+	: Notification(MakeUnique<FAsyncCompilationNotification>(GetAssetNameFormat()))
 {
 	FAssetCompilingManager::Get().RegisterManager(this);
 	FAssetCompilingManager::Get().OnAssetPostCompileEvent().AddRaw(this, &FDistanceFieldAsyncQueue::OnAssetPostCompile);
@@ -720,8 +728,8 @@ void FDistanceFieldAsyncQueue::Build(FAsyncDistanceFieldTask* Task, FQueuedThrea
 			Task->SourceMeshData,
 			LODModel,
 			BuildThreadPool,
-			Task->MaterialBlendModes,
-			Task->GenerateSource->GetRenderData()->Bounds,
+			Task->SectionData,
+			(FBoxSphereBounds3f)Task->GenerateSource->GetRenderData()->Bounds,
 			Task->DistanceFieldResolutionScale,
 			Task->bGenerateDistanceFieldAsIfTwoSided,
 			*Task->GeneratedVolumeData);
@@ -797,11 +805,13 @@ void FDistanceFieldAsyncQueue::ProcessAsyncTasks(bool bLimitExecutionTime)
 			// Renderstates are not initialized between UStaticMesh::PreEditChange() and UStaticMesh::PostEditChange()
 			if (RenderData->IsInitialized())
 			{
-				for (UStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(Task->StaticMesh))
+				for (IStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(Task->StaticMesh))
 				{
-					if (Component->IsRegistered() && Component->IsRenderStateCreated())
+					IPrimitiveComponent* PrimitiveComponent = Component->GetPrimitiveComponentInterface();
+
+					if (PrimitiveComponent->IsRegistered() && PrimitiveComponent->IsRenderStateCreated())
 					{
-						Component->MarkRenderStateDirty();
+						PrimitiveComponent->MarkRenderStateDirty();
 					}
 				}
 			}
@@ -847,7 +857,7 @@ void FDistanceFieldAsyncQueue::ProcessAsyncTasks(bool bLimitExecutionTime)
 
 	if (bMadeProgress)
 	{
-		Notification.Update(GetNumRemainingAssets());
+		Notification->Update(GetNumRemainingAssets());
 	}
 #endif
 }

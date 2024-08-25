@@ -155,7 +155,7 @@ namespace AutomationTool.Tasks
 		public static async Task<FileSet> ExecuteAsync(BgTaskImpl Task)
 		{
 			HashSet<FileReference> BuildProducts = new HashSet<FileReference>();
-			await Task.ExecuteAsync(new JobContext(null!), BuildProducts, new Dictionary<string, HashSet<FileReference>>());
+			await Task.ExecuteAsync(new JobContext(null!, null!), BuildProducts, new Dictionary<string, HashSet<FileReference>>());
 			return FileSet.FromFiles(Unreal.RootDirectory, BuildProducts);
 		}
 

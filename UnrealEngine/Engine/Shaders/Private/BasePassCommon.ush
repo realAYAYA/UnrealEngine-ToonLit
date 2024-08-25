@@ -10,11 +10,13 @@
 	#define ReflectionStruct TranslucentBasePass.Shared.Reflection
 	#define PlanarReflectionStruct TranslucentBasePass.Shared.PlanarReflection
 	#define FogStruct TranslucentBasePass.Shared.Fog
+	#define LFVStruct TranslucentBasePass.Shared
 #else
 	#define ForwardLightData OpaqueBasePass.Shared.Forward
 	#define ReflectionStruct OpaqueBasePass.Shared.Reflection
 	#define PlanarReflectionStruct OpaqueBasePass.Shared.PlanarReflection
 	#define FogStruct OpaqueBasePass.Shared.Fog
+	#define LFVStruct OpaqueBasePass.Shared
 #endif 
 
 #undef NEEDS_LIGHTMAP_COORDINATE
@@ -49,7 +51,7 @@
 
 // If a primitive has static lighting, we assume it is not moving. If it is, it will be rerendered in an extra renderpass.
 #define SUPPORTS_WRITING_VELOCITY_TO_BASE_PASS	(FEATURE_LEVEL >= FEATURE_LEVEL_SM4 && (MATERIALBLENDING_SOLID || MATERIALBLENDING_MASKED))
-#define WRITES_VELOCITY_TO_GBUFFER				((SUPPORTS_WRITING_VELOCITY_TO_BASE_PASS || USES_GBUFFER) && GBUFFER_HAS_VELOCITY)
+#define WRITES_VELOCITY_TO_GBUFFER				((SUPPORTS_WRITING_VELOCITY_TO_BASE_PASS || USES_GBUFFER) && GBUFFER_HAS_VELOCITY && (!COMPUTE_SHADED || USES_BASE_PASS_VELOCITY || USES_WORLD_POSITION_OFFSET))
 
 #define TRANSLUCENCY_ANY_PERVERTEX_LIGHTING (TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_NONDIRECTIONAL || TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_DIRECTIONAL)
 #define TRANSLUCENCY_ANY_VOLUMETRIC (TRANSLUCENCY_LIGHTING_VOLUMETRIC_NONDIRECTIONAL || TRANSLUCENCY_LIGHTING_VOLUMETRIC_DIRECTIONAL || TRANSLUCENCY_ANY_PERVERTEX_LIGHTING)
@@ -64,10 +66,14 @@
 #define NEEDS_BASEPASS_CLOUD_SHADOW_INTERPOLATOR (SUPPORT_CLOUD_SHADOW_ON_FORWARD_LIT_TRANSLUCENT && IS_MATERIAL_TRANSLUCENT_AND_LIT && !TRANSLUCENCY_PERVERTEX_FORWARD_SHADING && !TRANSLUCENCY_PERVERTEX_LIGHTING_VOLUME)
 #endif
 
+// Local fog volumes are always evaluated per vertex for now, even with forward shading. But never for opaque meshes rendered in forward.
+#define LOCAL_FOG_VOLUME_ON_TRANSLUCENT (PROJECT_LOCALFOGVOLUME_APPLYONTRANSLUCENT && ((NEEDS_BASEPASS_VERTEX_FOGGING && !(OPAQUE_NEEDS_BASEPASS_FOGGING && PROJECT_VERTEX_FOGGING_FOR_OPAQUE)) || NEEDS_BASEPASS_PIXEL_FOGGING) && !MATERIAL_IS_SKY)
+
 struct FSharedBasePassInterpolants
 {
-	//for texture-lightmapped translucency we can pass the vertex fog in its own interpolator
-#if NEEDS_BASEPASS_VERTEX_FOGGING
+	// This is enabled for vertex fogging or for local fog volume that are better evaluated per vertex for now.
+	// For texture-lightmapped translucency we can pass the vertex fog in its own interpolator
+#if NEEDS_BASEPASS_VERTEX_FOGGING || LOCAL_FOG_VOLUME_ON_TRANSLUCENT
 	float4 VertexFog		: TEXCOORD7;
 #endif
 
@@ -101,7 +107,7 @@ struct FSharedBasePassInterpolants
 
 #if WRITES_VELOCITY_TO_GBUFFER && !IS_NANITE_PASS
 	// .xy is clip position, pre divide by w; .w is clip W; .z is 0 or 1 to mask out the velocity output
-	float4 VelocityPrevScreenPosition : VELOCITY_PREV_POS;
+	INVARIANT_OUTPUT float4 VelocityPrevScreenPosition : VELOCITY_PREV_POS;
 #endif
 };
 

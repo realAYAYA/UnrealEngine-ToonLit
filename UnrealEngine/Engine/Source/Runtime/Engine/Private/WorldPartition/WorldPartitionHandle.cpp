@@ -1,32 +1,52 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "WorldPartition/WorldPartitionHandle.h"
-#include "WorldPartition/ActorDescContainerCollection.h"
+
 #include "Engine/Level.h"
 #include "Engine/World.h"
 
 #if WITH_EDITOR
+
+#include "WorldPartition/ActorDescContainerInstanceCollection.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
+
 /**
 * FWorldPartitionImplBase
 */
-TUniquePtr<FWorldPartitionActorDesc>* FWorldPartitionImplBase::GetActorDesc(UActorDescContainer* Container, const FGuid& ActorGuid)
+UActorDescContainerInstance* FWorldPartitionImplBase::GetActorDescContainerInstance(TUniquePtr<FWorldPartitionActorDescInstance>* InActorDescInstance)
 {
-	if (TUniquePtr<FWorldPartitionActorDesc>** ActorDescPtr = Container->ActorsByGuid.Find(ActorGuid))
-	{
-		return *ActorDescPtr;
-	}
-
-	return nullptr;
+	return InActorDescInstance ? InActorDescInstance->Get()->GetContainerInstance() : nullptr;
 }
 
-UActorDescContainer* FWorldPartitionImplBase::GetActorDescContainer(TUniquePtr<FWorldPartitionActorDesc>* ActorDesc)
+UActorDescContainerInstance* FWorldPartitionImplBase::GetActorDescContainerInstance(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	return ActorDesc ? ActorDesc->Get()->GetContainer() : nullptr;
+	return InActorDescInstance ? InActorDescInstance->GetContainerInstance() : nullptr;
 }
 
-bool FWorldPartitionImplBase::IsActorDescLoaded(FWorldPartitionActorDesc* ActorDesc)
+FGuid FWorldPartitionImplBase::GetActorDescInstanceGuid(const FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	return ActorDesc->IsLoaded();
+	return InActorDescInstance ? InActorDescInstance->GetGuid() : FGuid();
+}
+
+TUniquePtr<FWorldPartitionActorDescInstance>* FWorldPartitionImplBase::GetActorDescInstance(UActorDescContainerInstance* InContainerInstance, const FGuid& InActorGuid)
+{
+	return InContainerInstance ? InContainerInstance->GetActorDescInstancePtr(InActorGuid) : nullptr;
+}
+
+FWorldPartitionActorDesc* FWorldPartitionImplBase::GetActorDesc(FWorldPartitionActorDescInstance* InActorDescInstance)
+{
+	return InActorDescInstance ? const_cast<FWorldPartitionActorDesc*>(InActorDescInstance->GetActorDesc()) : nullptr;
+}
+
+bool FWorldPartitionImplBase::IsLoaded(FWorldPartitionActorDescInstance* InActorDescInstance)
+{
+	return InActorDescInstance->IsLoaded();
+}
+
+AActor* FWorldPartitionImplBase::GetActor(FWorldPartitionActorDescInstance* InActorDescInstance)
+{
+	return InActorDescInstance->GetActor();
 }
 
 /**
@@ -35,22 +55,20 @@ bool FWorldPartitionImplBase::IsActorDescLoaded(FWorldPartitionActorDesc* ActorD
 FWorldPartitionLoadingContext::FImmediate FWorldPartitionLoadingContext::DefaultContext;
 FWorldPartitionLoadingContext::IContext* FWorldPartitionLoadingContext::ActiveContext = &DefaultContext;
 
-void FWorldPartitionLoadingContext::LoadAndRegisterActor(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionLoadingContext::LoadAndRegisterActor(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-#if DO_CHECK
-	FWorldPartitionActorDesc::FRegisteringUnregisteringGuard Guard(ActorDesc);
-#endif
+	check(!InActorDescInstance->bIsRegisteringOrUnregistering);
+	InActorDescInstance->bIsRegisteringOrUnregistering = true;
 
-	ActiveContext->RegisterActor(ActorDesc);
+	ActiveContext->RegisterActor(InActorDescInstance);
 }
 
-void FWorldPartitionLoadingContext::UnloadAndUnregisterActor(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionLoadingContext::UnloadAndUnregisterActor(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-#if DO_CHECK
-	FWorldPartitionActorDesc::FRegisteringUnregisteringGuard Guard(ActorDesc);
-#endif
+	check(!InActorDescInstance->bIsRegisteringOrUnregistering);
+	InActorDescInstance->bIsRegisteringOrUnregistering = true;
 
-	ActiveContext->UnregisterActor(ActorDesc);
+	ActiveContext->UnregisterActor(InActorDescInstance);
 }
 
 /**
@@ -71,40 +89,50 @@ FWorldPartitionLoadingContext::IContext::~IContext()
 /**
 * FImmediate
 */
-void FWorldPartitionLoadingContext::FImmediate::RegisterActor(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionLoadingContext::FImmediate::RegisterActor(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
+	// Set GIsEditorLoadingPackage to avoid dirtying the Actor package if Modify() is called during the load sequence
 	TGuardValue<bool> IsEditorLoadingPackageGuard(GIsEditorLoadingPackage, true);
 
-	if (AActor* Actor = ActorDesc->Load())
+	if (InActorDescInstance->StartAsyncLoad())
 	{
-		UActorDescContainer* Container = ActorDesc->GetContainer();
+		UActorDescContainerInstance* Container = InActorDescInstance->GetContainerInstance();
 		check(Container);
 
-		const FTransform& ContainerTransform = Container->GetInstanceTransform();
+		const FTransform& ContainerTransform = Container->GetTransform();
 		const FTransform* ContainerTransformPtr = ContainerTransform.Equals(FTransform::Identity) ? nullptr : &ContainerTransform;
 
-		Actor->GetLevel()->AddLoadedActor(Actor, ContainerTransformPtr);
+		if (AActor* Actor = InActorDescInstance->GetActor())
+		{
+			Actor->GetLevel()->AddLoadedActor(Actor, ContainerTransformPtr);
+		}
 	}
+
+	check(InActorDescInstance->bIsRegisteringOrUnregistering);
+	InActorDescInstance->bIsRegisteringOrUnregistering = false;
 }
 
-void FWorldPartitionLoadingContext::FImmediate::UnregisterActor(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionLoadingContext::FImmediate::UnregisterActor(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
 	// Set GIsEditorLoadingPackage to avoid dirtying the Actor package if Modify() is called during the unload sequence
 	TGuardValue<bool> IsEditorLoadingPackageGuard(GIsEditorLoadingPackage, true);
 
 	// When cleaning up worlds, actors are already marked as garbage at this point, so no need to remove them from the world
-	if (AActor* Actor = ActorDesc->GetActor(); IsValid(Actor))
+	if (AActor* Actor = InActorDescInstance->GetActor(); IsValid(Actor))
 	{
-		UActorDescContainer* Container = ActorDesc->GetContainer();
+		UActorDescContainerInstance* Container = InActorDescInstance->GetContainerInstance();
 		check(Container);
 
-		const FTransform& ContainerTransform = Container->GetInstanceTransform();
+		const FTransform& ContainerTransform = Container->GetTransform();
 		const FTransform* ContainerTransformPtr = ContainerTransform.Equals(FTransform::Identity) ? nullptr : &ContainerTransform;
 
 		Actor->GetLevel()->RemoveLoadedActor(Actor, ContainerTransformPtr);
 
-		ActorDesc->Unload();
-	}	
+		InActorDescInstance->MarkUnload();
+	}
+
+	check(InActorDescInstance->bIsRegisteringOrUnregistering);
+	InActorDescInstance->bIsRegisteringOrUnregistering = false;
 }
 
 /**
@@ -112,24 +140,25 @@ void FWorldPartitionLoadingContext::FImmediate::UnregisterActor(FWorldPartitionA
 */
 FWorldPartitionLoadingContext::FDeferred::~FDeferred()
 {
-	TMap<UActorDescContainer*, FContainerOps> LocalContainerOps = MoveTemp(ContainerOps);
+	TMap<UActorDescContainerInstance*, FContainerInstanceOps> LocalContainerInstanceOps = MoveTemp(ContainerInstanceOps);
 
-	while(LocalContainerOps.Num())
+	while (LocalContainerInstanceOps.Num())
 	{
-		for (auto& [Container, ContainerOp] : LocalContainerOps)
+		for (auto& [Container, ContainerOp] : LocalContainerInstanceOps)
 		{
-			const FTransform& ContainerTransform = Container->GetInstanceTransform();
+			const FTransform& ContainerTransform = Container->GetTransform();
 			const FTransform* ContainerTransformPtr = ContainerTransform.Equals(FTransform::Identity) ? nullptr : &ContainerTransform;
 
-			auto CreateActorList = [](TArray<AActor*>& ActorList, const TSet<FWorldPartitionActorDesc*>& SourceList) -> ULevel*
+			auto CreateActorList = [](TArray<AActor*>& ActorList, const TSet<FWorldPartitionActorDescInstance*>& SourceList) -> ULevel*
 			{
 				ActorList.Empty(SourceList.Num());
 
 				ULevel* Level = nullptr;
-				for (FWorldPartitionActorDesc* ActorDesc : SourceList)
+				for (FWorldPartitionActorDescInstance* ActorDescInstance : SourceList)
 				{
-					// When cleaning up worlds, actors are already marked as garbage at this point, so no need to remove them from the world
-					if (AActor* Actor = ActorDesc->GetActor(); IsValid(Actor))
+					// For async loads, the actor loading might have failed for several reasons, this will be handled here.
+					// Also, when cleaning up worlds, actors are already marked as garbage at this point, so no need to remove them from the world.
+					if (AActor* Actor = ActorDescInstance->GetActor(); IsValid(Actor))
 					{
 						ActorList.Add(Actor);
 
@@ -144,12 +173,19 @@ FWorldPartitionLoadingContext::FDeferred::~FDeferred()
 
 			if (ContainerOp.Registrations.Num())
 			{
+				// Set GIsEditorLoadingPackage to avoid dirtying the Actor package if Modify() is called during the load sequence
 				TGuardValue<bool> IsEditorLoadingPackageGuard(GIsEditorLoadingPackage, true);
 
 				TArray<AActor*> ActorList;
 				if (ULevel* Level = CreateActorList(ActorList, ContainerOp.Registrations))
 				{
 					Level->AddLoadedActors(ActorList, ContainerTransformPtr);
+				}
+
+				for (FWorldPartitionActorDescInstance* ActorDescInstance : ContainerOp.Registrations)
+				{
+					check(ActorDescInstance->bIsRegisteringOrUnregistering);
+					ActorDescInstance->bIsRegisteringOrUnregistering = false;
 				}
 			}
 
@@ -164,51 +200,53 @@ FWorldPartitionLoadingContext::FDeferred::~FDeferred()
 					Level->RemoveLoadedActors(ActorList, ContainerTransformPtr);
 				}
 
-				for (FWorldPartitionActorDesc* ActorDesc : ContainerOp.Unregistrations)
+				for (FWorldPartitionActorDescInstance* ActorDescInstance : ContainerOp.Unregistrations)
 				{
-					ActorDesc->Unload();
+					ActorDescInstance->MarkUnload();
+					check(ActorDescInstance->bIsRegisteringOrUnregistering);
+					ActorDescInstance->bIsRegisteringOrUnregistering = false;
 				}
 			}
 		}
 
 		// Continue with potentially new registrations/unregistrations that may have happenned during previous cycle
-		LocalContainerOps = MoveTemp(ContainerOps);
+		LocalContainerInstanceOps = MoveTemp(ContainerInstanceOps);
 	}
 }
 
-void FWorldPartitionLoadingContext::FDeferred::RegisterActor(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionLoadingContext::FDeferred::RegisterActor(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
 	TGuardValue<bool> IsEditorLoadingPackageGuard(GIsEditorLoadingPackage, true);
 
-	check(ActorDesc);
-	if (ActorDesc->Load())
+	check(InActorDescInstance);
+	if (InActorDescInstance->StartAsyncLoad())
 	{
-		UActorDescContainer* Container = ActorDesc->GetContainer();
+		UActorDescContainerInstance* Container = InActorDescInstance->GetContainerInstance();
 		check(Container);
 
 		bool bIsAlreadyInSetPtr;
-		ContainerOps.FindOrAdd(Container).Registrations.Add(ActorDesc, &bIsAlreadyInSetPtr);
+		ContainerInstanceOps.FindOrAdd(Container).Registrations.Add(InActorDescInstance, &bIsAlreadyInSetPtr);
 		check(!bIsAlreadyInSetPtr);
 		NumRegistrations++;
 
-		check(!ContainerOps.FindChecked(Container).Unregistrations.Contains(ActorDesc));
+		check(!ContainerInstanceOps.FindChecked(Container).Unregistrations.Contains(InActorDescInstance));
 	}
 }
 
-void FWorldPartitionLoadingContext::FDeferred::UnregisterActor(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionLoadingContext::FDeferred::UnregisterActor(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	check(ActorDesc);
-	if (AActor* Actor = ActorDesc->GetActor(); IsValid(Actor))
+	check(InActorDescInstance);
+	if (AActor* Actor = InActorDescInstance->GetActor(); IsValid(Actor))
 	{
-		UActorDescContainer* Container = ActorDesc->GetContainer();
+		UActorDescContainerInstance* Container = InActorDescInstance->GetContainerInstance();
 		check(Container);
 
 		bool bIsAlreadyInSetPtr;
-		ContainerOps.FindOrAdd(Container).Unregistrations.Add(ActorDesc, &bIsAlreadyInSetPtr);
+		ContainerInstanceOps.FindOrAdd(Container).Unregistrations.Add(InActorDescInstance, &bIsAlreadyInSetPtr);
 		check(!bIsAlreadyInSetPtr);
 		NumUnregistrations++;
 
-		check(!ContainerOps.FindChecked(Container).Registrations.Contains(ActorDesc));
+		check(!ContainerInstanceOps.FindChecked(Container).Registrations.Contains(InActorDescInstance));
 
 		bNeedsClearTransactions |= Actor->GetTypedOuter<UWorld>()->HasAnyFlags(RF_Transactional);
 	}
@@ -217,14 +255,14 @@ void FWorldPartitionLoadingContext::FDeferred::UnregisterActor(FWorldPartitionAc
 /**
 * FWorldPartitionHandleImpl
 */
-void FWorldPartitionHandleImpl::IncRefCount(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionHandleImpl::IncRefCount(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	ActorDesc->IncSoftRefCount();
+	InActorDescInstance->IncSoftRefCount();
 }
 
-void FWorldPartitionHandleImpl::DecRefCount(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionHandleImpl::DecRefCount(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	ActorDesc->DecSoftRefCount();
+	InActorDescInstance->DecSoftRefCount();
 }
 
 TWorldPartitionHandle<FWorldPartitionReferenceImpl> FWorldPartitionHandleImpl::ToReference(const TWorldPartitionHandle<FWorldPartitionHandleImpl>& Source)
@@ -237,19 +275,23 @@ TWorldPartitionHandle<FWorldPartitionReferenceImpl> FWorldPartitionHandleImpl::T
 /**
 * FWorldPartitionReferenceImpl
 */
-void FWorldPartitionReferenceImpl::IncRefCount(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionReferenceImpl::IncRefCount(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	if (ActorDesc->IncHardRefCount() == 1)
+	if (InActorDescInstance->IncHardRefCount() == 1)
 	{
-		FWorldPartitionLoadingContext::LoadAndRegisterActor(ActorDesc);
+		FWorldPartitionLoadingContext::LoadAndRegisterActor(InActorDescInstance);
 	}
 }
 
-void FWorldPartitionReferenceImpl::DecRefCount(FWorldPartitionActorDesc* ActorDesc)
+void FWorldPartitionReferenceImpl::DecRefCount(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	if (ActorDesc->DecHardRefCount() == 0)
+	const bool bIsContainerInitialized = InActorDescInstance->GetContainerInstance()->IsInitialized();
+	const bool bIsActorDescInstanceUnregistering = InActorDescInstance->bIsRegisteringOrUnregistering;
+	const bool bReleasingLastReference = !InActorDescInstance->DecHardRefCount();
+
+	if ((bReleasingLastReference || !bIsContainerInitialized) && !bIsActorDescInstanceUnregistering)
 	{
-		FWorldPartitionLoadingContext::UnloadAndUnregisterActor(ActorDesc);
+		FWorldPartitionLoadingContext::UnloadAndUnregisterActor(InActorDescInstance);
 	}
 }
 

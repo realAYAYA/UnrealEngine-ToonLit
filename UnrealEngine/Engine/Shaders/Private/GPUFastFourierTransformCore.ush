@@ -5,8 +5,7 @@ GPUFastFourierTransformCore.usf: Core Fast Fourier Transform Code
 =============================================================================*/
 
 //------------------------------------------------------- RECOMPILE HASH
-// 2E0547A4-F927-4785-941A-93B2B8A0E1B4
-
+#pragma message("UESHADERMETADATA_VERSION B96BD6F6-825A-4B16-AA27-96502C97998C")
 
 
 // This file requires the two values to be defined.

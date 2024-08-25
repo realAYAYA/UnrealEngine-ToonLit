@@ -73,6 +73,7 @@ RHI_API const TCHAR* GetTextureDimensionString(ETextureDimension Dimension);
 RHI_API const TCHAR* GetTextureCreateFlagString(ETextureCreateFlags TextureCreateFlag);
 RHI_API const TCHAR* GetBufferUsageFlagString(EBufferUsageFlags BufferUsage);
 RHI_API const TCHAR* GetUniformBufferBaseTypeString(EUniformBufferBaseType BaseType);
+RHI_API const TCHAR* GetShaderCodeResourceBindingTypeName(EShaderCodeResourceBindingType BindingType);
 
 // Needs to stay inline for shader formats which can't depend on the RHI module
 inline const TCHAR* GetShaderFrequencyString(EShaderFrequency Frequency, bool bIncludePrefix = true)

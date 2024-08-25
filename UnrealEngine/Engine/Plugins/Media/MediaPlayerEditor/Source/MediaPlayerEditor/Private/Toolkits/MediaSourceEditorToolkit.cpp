@@ -25,8 +25,8 @@
 #include "Widgets/SMediaPlayerEditorViewer.h"
 #include "Widgets/SMediaSourceEditorDetails.h"
 #include "UObject/Package.h"
-
-#include "PostProcess/SceneFilterRendering.h" // Renderer/Private
+#include "PostProcess/DrawRectangle.h"
+#include "PixelShaderUtils.h"
 
 #define LOCTEXT_NAMESPACE "FMediaSourceEditorToolkit"
 
@@ -105,7 +105,7 @@ void FMediaSourceEditorToolkit::Initialize(UMediaSource* InMediaSource, const ET
 						->AddTab(MediaSourceEditorToolkit::ViewerTabId, ETabState::OpenedTab)
 						->SetHideTabWell(true)
 						->SetSizeCoefficient(0.6f)
-						
+
 				)
 				->Split
 				(
@@ -140,7 +140,7 @@ void FMediaSourceEditorToolkit::Initialize(UMediaSource* InMediaSource, const ET
 		true /*bCreateDefaultToolbar*/,
 		InMediaSource
 	);
-	
+
 	ExtendToolBar();
 	RegenerateMenusAndToolbars();
 }
@@ -289,7 +289,13 @@ void FMediaSourceEditorToolkit::BindCommands()
 
 	ToolkitCommands->MapAction(
 		Commands.OpenMedia,
-		FExecuteAction::CreateLambda([this] { MediaPlayer->OpenSource(MediaSource); }),
+		FExecuteAction::CreateLambda([this]
+		{
+			FMediaPlayerOptions Options;
+			Options.SetAllAsOptional();
+			Options.InternalCustomOptions.Emplace(MediaPlayerOptionValues::Environment(), MediaPlayerOptionValues::Environment_Preview());
+			MediaPlayer->OpenSourceWithOptions(MediaSource, Options);
+		}),
 		FCanExecuteAction::CreateLambda([this] { return true; })
 	);
 
@@ -448,14 +454,14 @@ void FMediaSourceEditorToolkit::GenerateThumbnail()
 				SetScreenPassPipelineState(RHICmdList, PipelineState);
 				SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), *PixelShaderParameters);
 
-				DrawRectangle(
-					RHICmdList,
+				FRHIBatchedShaderParameters& BatchedParameters = RHICmdList.GetScratchShaderParameters();
+				UE::Renderer::PostProcess::SetDrawRectangleParameters(BatchedParameters, PipelineState.VertexShader.GetShader(),
 					0.0f, 0.0f, static_cast<float>(Extent.X), static_cast<float>(Extent.Y),
 					0.0f, 0.0f, static_cast<float>(Extent.X), static_cast<float>(Extent.Y),
 					Extent,
-					Extent,
-					PipelineState.VertexShader,
-					EDRF_UseTriangleOptimization);
+					Extent);
+				RHICmdList.SetBatchedShaderParameters(PipelineState.VertexShader.GetVertexShader(), BatchedParameters);
+				FPixelShaderUtils::DrawFullscreenTriangle(RHICmdList);
 			});
 
 			GraphBuilder.Execute();

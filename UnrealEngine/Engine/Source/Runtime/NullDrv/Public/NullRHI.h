@@ -6,6 +6,7 @@
 #include "Serialization/LargeMemoryData.h"
 #include "RHI.h"
 #include "RHITypes.h"
+#include "Async/TaskGraphInterfaces.h"
 
 struct Rect;
 
@@ -139,7 +140,7 @@ public:
 
 	}
 
-	virtual void RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer) final override
+	virtual void RHITransferBufferUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer) final override
 	{
 
 	}
@@ -177,21 +178,21 @@ public:
 		{}
 	};
 
-	virtual FTextureRHIRef RHICreateTexture(const FRHITextureCreateDesc& CreateDesc) final override
+	virtual FTextureRHIRef RHICreateTexture(FRHICommandListBase&, const FRHITextureCreateDesc& CreateDesc) final override
 	{
 		return new FNullTexture(CreateDesc);
 	}
 
-	virtual FTextureRHIRef RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, FGraphEventRef& OutCompletionEvent) final override
+	virtual FTextureRHIRef RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, const TCHAR* DebugName, FGraphEventRef& OutCompletionEvent) final override
 	{ 
 		const FRHITextureCreateDesc Desc =
-			FRHITextureCreateDesc::Create2D(TEXT("FNullDynamicRHI::RHIAsyncCreateTexture2D"), SizeX, SizeY, (EPixelFormat)Format)
+			FRHITextureCreateDesc::Create2D(DebugName, SizeX, SizeY, (EPixelFormat)Format)
 			.SetClearValue(FClearValueBinding::None)
 			.SetFlags(Flags)
 			.SetNumMips(NumMips)
 			.SetInitialState(InResourceState);
 		OutCompletionEvent = nullptr;
-		return this->RHICreateTexture(Desc);
+		return new FNullTexture(Desc);
 	}
 
 	virtual FShaderResourceViewRHIRef RHICreateShaderResourceView(class FRHICommandListBase& RHICmdList, FRHIViewableResource* Resource, FRHIViewDesc const& ViewDesc)
@@ -221,7 +222,7 @@ public:
 			.SetNumMips(NewMipCount)
 			.SetNumSamples(Texture2D->GetNumSamples());
 
-		return this->RHICreateTexture(Desc);
+		return new FNullTexture(Desc);
 	}
 	virtual ETextureReallocationStatus RHIFinalizeAsyncReallocateTexture2D(FRHITexture2D* Texture2D, bool bBlockUntilCompleted) final override
 	{ 
@@ -272,7 +273,7 @@ public:
 
 	}
 
-	virtual void RHIBindDebugLabelName(FRHITexture* Texture, const TCHAR* Name) final override
+	virtual void RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHITexture* Texture, const TCHAR* Name) final override
 	{
 
 	}
@@ -345,9 +346,10 @@ public:
 			FRHITextureCreateDesc::Create2D(TEXT("FNullDynamicRHI::RHIGetViewportBackBuffer"), 1, 1, PF_B8G8R8A8)
 			.SetFlags(ETextureCreateFlags::RenderTargetable);
 
-		return this->RHICreateTexture(Desc);
+		return new FNullTexture(Desc);
 	}
 
+	using FDynamicRHI::RHIBeginFrame;
 	virtual void RHIBeginFrame() final override
 	{
 
@@ -439,79 +441,11 @@ public:
 	{
 	}
 
-
-	virtual void RHISetShaderTexture(FRHIGraphicsShader* Shader, uint32 TextureIndex, FRHITexture* NewTexture) final override
-	{
-	}
-
-	virtual void RHISetShaderTexture(FRHIComputeShader* PixelShader, uint32 TextureIndex, FRHITexture* NewTexture) final override
-	{
-
-	}
-
-	virtual void RHISetShaderSampler(FRHIComputeShader* ComputeShader, uint32 SamplerIndex, FRHISamplerState* NewState) final override
-	{
-
-	}
-
-	virtual void RHISetShaderSampler(FRHIGraphicsShader* Shader, uint32 SamplerIndex, FRHISamplerState* NewState) final override
-	{
-	}
-
-	virtual void RHISetUAVParameter(FRHIPixelShader* PixelShader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV) final override
-	{
-	}
-
-	virtual void RHISetUAVParameter(FRHIComputeShader* ComputeShader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV) final override
-	{
-
-	}
-
-
-	virtual void RHISetUAVParameter(FRHIComputeShader* ComputeShader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV, uint32 InitialCount) final override
-	{
-
-	}
-
-
-	virtual void RHISetShaderResourceViewParameter(FRHIGraphicsShader* Shader, uint32 SamplerIndex, FRHIShaderResourceView* SRV) final override
-	{
-	}
-
-	virtual void RHISetShaderResourceViewParameter(FRHIComputeShader* ComputeShader, uint32 SamplerIndex, FRHIShaderResourceView* SRV) final override
-	{
-	}
-
-
-	virtual void RHISetShaderUniformBuffer(FRHIGraphicsShader* Shader, uint32 BufferIndex, FRHIUniformBuffer* Buffer) final override
-	{
-	}
-
-	virtual void RHISetShaderUniformBuffer(FRHIComputeShader* ComputeShader, uint32 BufferIndex, FRHIUniformBuffer* Buffer) final override
-	{
-	}
-
-	virtual void RHISetShaderParameter(FRHIGraphicsShader* Shader, uint32 BufferIndex, uint32 BaseIndex, uint32 NumBytes, const void* NewValue) final override
-	{
-	}
-
-	virtual void RHISetShaderParameter(FRHIComputeShader* ComputeShader, uint32 BufferIndex, uint32 BaseIndex, uint32 NumBytes, const void* NewValue) final override
-	{
-	}
-
 	virtual void RHISetShaderParameters(FRHIGraphicsShader* Shader, TConstArrayView<uint8> InParametersData, TConstArrayView<FRHIShaderParameter> InParameters, TConstArrayView<FRHIShaderParameterResource> InResourceParameters, TConstArrayView<FRHIShaderParameterResource> InBindlessParameters) final override
 	{
 	}
 
 	virtual void RHISetShaderParameters(FRHIComputeShader* Shader, TConstArrayView<uint8> InParametersData, TConstArrayView<FRHIShaderParameter> InParameters, TConstArrayView<FRHIShaderParameterResource> InResourceParameters, TConstArrayView<FRHIShaderParameterResource> InBindlessParameters) final override
-	{
-	}
-
-	virtual void RHISetShaderUnbinds(FRHIGraphicsShader* ComputeShader, TConstArrayView<FRHIShaderParameterUnbind> InUnbinds)
-	{
-	}
-
-	virtual void RHISetShaderUnbinds(FRHIComputeShader* ComputeShader, TConstArrayView<FRHIShaderParameterUnbind> InUnbinds)
 	{
 	}
 

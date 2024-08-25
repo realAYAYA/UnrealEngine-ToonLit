@@ -127,12 +127,12 @@ namespace UE
 
 			if (HasAttributeStorageResult(Result, EAttributeStorageResult::Operation_Error_WrongSize))
 			{
-				UE_LOG(LogInterchangeCore, Warning, TEXT("Attribute storage operation [%s] Key[%s]: Stored attribute value size do not match parameter value size."), *OperationName, *(AttributeKey.ToString()));
+				UE_LOG(LogInterchangeCore, Warning, TEXT("Attribute storage operation [%s] Key[%s]: Stored attribute value size does not match parameter value size."), *OperationName, *(AttributeKey.ToString()));
 			}
 
 			if (HasAttributeStorageResult(Result, EAttributeStorageResult::Operation_Error_WrongType))
 			{
-				UE_LOG(LogInterchangeCore, Warning, TEXT("Attribute storage operation [%s] Key[%s]: Stored attribute value type do not match parameter value type."), *OperationName, *(AttributeKey.ToString()));
+				UE_LOG(LogInterchangeCore, Warning, TEXT("Attribute storage operation [%s] Key[%s]: Stored attribute value type does not match parameter value type."), *OperationName, *(AttributeKey.ToString()));
 			}
 
 			if (HasAttributeStorageResult(Result, EAttributeStorageResult::Operation_Error_InvalidStorage))
@@ -418,7 +418,7 @@ namespace UE
 
 		EAttributeStorageResult FAttributeStorage::GetAttribute(const FAttributeKey& ElementAttributeKey, FString& OutValue, TSpecializeType<FString >) const
 		{
-			static_assert(TAttributeTypeTraits<FString>::GetType() != EAttributeTypes::None, "Not a supported type for the attributes. Check EAttributeTypes for the supported types");
+			static_assert(TAttributeTypeTraits<FString>::GetType() != EAttributeTypes::None, "Not a supported type for the attributes. Check EAttributeTypes for the supported types.");
 
 			//Lock the storage
 			FScopeLock ScopeLock(&StorageMutex);
@@ -455,7 +455,7 @@ namespace UE
 
 		EAttributeStorageResult FAttributeStorage::GetAttribute(const FAttributeKey& ElementAttributeKey, FName& OutValue, TSpecializeType<FName >) const
 		{
-			static_assert(TAttributeTypeTraits<FName>::GetType() != EAttributeTypes::None, "Not a supported type for the attributes. Check EAttributeTypes for supported types");
+			static_assert(TAttributeTypeTraits<FName>::GetType() != EAttributeTypes::None, "Not a supported type for the attributes. Check EAttributeTypes for supported types.");
 
 			//Lock the storage
 			FScopeLock ScopeLock(&StorageMutex);
@@ -501,7 +501,7 @@ namespace UE
 
 		EAttributeStorageResult FAttributeStorage::GetAttribute(const FAttributeKey& ElementAttributeKey, FSoftObjectPath& OutValue, TSpecializeType<FSoftObjectPath >) const
 		{
-			static_assert(TAttributeTypeTraits<FSoftObjectPath>::GetType() != EAttributeTypes::None, "Not a supported type for the attributes. Check EAttributeTypes for supported types");
+			static_assert(TAttributeTypeTraits<FSoftObjectPath>::GetType() != EAttributeTypes::None, "Not a supported type for the attributes. Check EAttributeTypes for supported types.");
 
 			//Lock the storage
 			FScopeLock ScopeLock(&StorageMutex);

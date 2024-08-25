@@ -27,6 +27,7 @@ namespace UnrealBuildTool.Rules
 					"SlateCore",
 					"EditorWidgets",
 					"EditorStyle",
+					"DesktopPlatform",
 					"GeometryCache",
 					"MLDeformerFramework",
 					"MLDeformerFrameworkEditor",
@@ -36,7 +37,8 @@ namespace UnrealBuildTool.Rules
 					"ToolWidgets",
 					"ComputeFramework",
 					"RenderCore",
-					"RHI"
+					"RHI",
+					"SkeletalMeshDescription",
 				}
 			);
 

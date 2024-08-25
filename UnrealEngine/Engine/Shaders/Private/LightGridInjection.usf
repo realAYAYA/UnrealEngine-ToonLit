@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*=============================================================================
 	LightGridInjection.usf
 =============================================================================*/
@@ -189,7 +191,7 @@ void LightGridInjectionCS(
 
 		float3 ViewTileCenter = .5f * (ViewTileMin + ViewTileMax);
 		float3 ViewTileExtent = ViewTileMax - ViewTileCenter;
-		float3 WorldTileCenter = mul(float4(ViewTileCenter, 1), View.ViewToTranslatedWorld).xyz - LWCHackToFloat(PrimaryView.PreViewTranslation);
+		float3 WorldTileCenter = mul(float4(ViewTileCenter, 1), View.ViewToTranslatedWorld).xyz - DFHackToFloat(PrimaryView.PreViewTranslation);
 		float4 WorldTileBoundingSphere = float4(WorldTileCenter, length(ViewTileExtent));
 
 		uint NumAvailableLinks = NumGridCells * MaxCulledLightsPerCell * NUM_CULLED_GRID_PRIMITIVE_TYPES;
@@ -260,8 +262,8 @@ void LightGridInjectionCS(
 		LOOP
 		for (uint ReflectionCaptureIndex = 0; ReflectionCaptureIndex < NumReflectionCaptures; ReflectionCaptureIndex++)
 		{
-			FLWCVector3 CaptureWorldPosition = MakeLWCVector3(GetReflectionTilePosition(ReflectionCaptureIndex).xyz, GetReflectionPositionAndRadius(ReflectionCaptureIndex).xyz);
-			float3 CaptureTranslatedWorldPosition = LWCToFloat(LWCAdd(CaptureWorldPosition, PrimaryView.PreViewTranslation));
+			FDFVector3 CaptureWorldPosition = MakeDFVector3(GetReflectionPositionAndRadius(ReflectionCaptureIndex).xyz, GetReflectionPositionLow(ReflectionCaptureIndex).xyz);
+			float3 CaptureTranslatedWorldPosition = DFFastAddDemote(CaptureWorldPosition, PrimaryView.PreViewTranslation);
 			float3 ViewSpaceCapturePosition = mul(float4(CaptureTranslatedWorldPosition, 1), View.TranslatedWorldToView).xyz;
 			float CaptureRadius = GetReflectionPositionAndRadius(ReflectionCaptureIndex).w;
 
@@ -458,7 +460,7 @@ void DebugLightGridPS(
 	}
 
 	const FLightGridData GridData = GetLightGridData(EyeIndex);
-	uint DebugNumLocalLights = 0;
+	uint DebugNumLightsInGridCell = 0;
 
 	uint2 StartPos = uint2(50, 100);
 	FShaderPrintContext Context = InitShaderPrintContext(all(PixelPos == StartPos), StartPos);
@@ -476,7 +478,7 @@ void DebugLightGridPS(
 		const uint GridIndex = ComputeLightGridCellIndex(LocalPixelPosDynRes, SceneDepth, EyeIndex);
 		const FCulledLightsGridData CulledLightsGrid = GetCulledLightsGrid(GridIndex, EyeIndex);
 
-		DebugNumLocalLights = CulledLightsGrid.NumLocalLights;
+		DebugNumLightsInGridCell = CulledLightsGrid.NumLights;
 	}
 	else
 	{
@@ -490,7 +492,7 @@ void DebugLightGridPS(
 			const uint GridIndex = ComputeLightGridCellIndex(uint3(LocalPixelPosDynRes >> GridData.LightGridPixelSizeShift, SliceIt), EyeIndex);
 			const FCulledLightsGridData CulledLightsGrid = GetCulledLightsGrid(GridIndex, EyeIndex);
 		
-			DebugNumLocalLights = max(DebugNumLocalLights, CulledLightsGrid.NumLocalLights);
+			DebugNumLightsInGridCell = max(DebugNumLightsInGridCell, CulledLightsGrid.NumLights);
 		}
 	}
 
@@ -498,11 +500,11 @@ void DebugLightGridPS(
 	const uint2 TileTopLeftPixelCoord2= (LocalPixelPosDynRes2 >> GridData.LightGridPixelSizeShift) << GridData.LightGridPixelSizeShift;
 	const uint TileSize = (0x1u << GridData.LightGridPixelSizeShift) - 1;
 
-	if (DebugNumLocalLights > 0)
+	if (DebugNumLightsInGridCell > 0)
 	{
 		OutLuminanceTransmittance.a   = 0.0f;
-		OutLuminanceTransmittance.rgb = GetHSVDebugColor(float(DebugNumLocalLights) / 8.0f);
-		PrintSmallUint(PixelPos, OutLuminanceTransmittance.rgb, float3(0.1, 0.1, 0.1), (TileTopLeftPixelCoord + TileSize/2) / View.ViewResolutionFraction, float(DebugNumLocalLights));
+		OutLuminanceTransmittance.rgb = GetHSVDebugColor(float(DebugNumLightsInGridCell) / 8.0f);
+		PrintSmallUint(PixelPos, OutLuminanceTransmittance.rgb, float3(0.1, 0.1, 0.1), (TileTopLeftPixelCoord + TileSize/2) / View.ViewResolutionFraction, float(DebugNumLightsInGridCell));
 	}
 
 	if ((TileTopLeftPixelCoord.x <= LocalPixelPosDynRes.x && TileTopLeftPixelCoord2.x >= LocalPixelPosDynRes.x)

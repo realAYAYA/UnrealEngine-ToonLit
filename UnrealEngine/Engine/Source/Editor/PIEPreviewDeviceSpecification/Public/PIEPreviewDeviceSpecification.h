@@ -109,7 +109,8 @@ public:
 
 	UPROPERTY()
 	FPIERHIOverrideState GLES31RHIState;
-
+	UPROPERTY()
+	bool SM5Available = false;
 // 	UPROPERTY()
 // 	FPIERHIOverrideState VulkanRHIState;
 };

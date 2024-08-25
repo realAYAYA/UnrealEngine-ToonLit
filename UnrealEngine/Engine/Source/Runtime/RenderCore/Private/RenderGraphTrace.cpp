@@ -310,7 +310,7 @@ void FRDGTrace::OutputGraphEnd(const FRDGBuilder& GraphBuilder)
 
 		TransientAllocation.Reset();
 
-		if (Texture->bTransient)
+		if (Texture->TransientTexture)
 		{
 			const FRHITransientResource* Resource = Texture->TransientTexture;
 			TransientAllocation.Fill(TransientAllocationStats, Resource);
@@ -338,7 +338,7 @@ void FRDGTrace::OutputGraphEnd(const FRDGBuilder& GraphBuilder)
 			<< TextureMessage.NumSamples(Texture->Desc.NumSamples)
 			<< TextureMessage.IsExternal(bool(Texture->bExternal))
 			<< TextureMessage.IsExtracted(bool(Texture->bExtracted))
-			<< TextureMessage.IsCulled(bool(Texture->IsCulled()))
+			<< TextureMessage.IsCulled(bool(Texture->ReferenceCount == 0))
 			<< TextureMessage.IsTrackingSkipped(EnumHasAnyFlags(Texture->Flags, ERDGTextureFlags::SkipTracking))
 			<< TextureMessage.IsTransient(bool(Texture->bTransient))
 			<< TextureMessage.IsTransientUntracked(false)
@@ -351,7 +351,7 @@ void FRDGTrace::OutputGraphEnd(const FRDGBuilder& GraphBuilder)
 
 		TransientAllocation.Reset();
 
-		if (Buffer->bTransient)
+		if (Buffer->TransientBuffer)
 		{
 			const FRHITransientResource* Resource = Buffer->TransientBuffer;
 			TransientAllocation.Fill(TransientAllocationStats, Resource);
@@ -372,7 +372,7 @@ void FRDGTrace::OutputGraphEnd(const FRDGBuilder& GraphBuilder)
 			<< BufferMessage.NumElements(Buffer->Desc.NumElements)
 			<< BufferMessage.IsExternal(bool(Buffer->bExternal))
 			<< BufferMessage.IsExtracted(bool(Buffer->bExtracted))
-			<< BufferMessage.IsCulled(bool(Buffer->IsCulled()))
+			<< BufferMessage.IsCulled(bool(Buffer->ReferenceCount == 0))
 			<< BufferMessage.IsTrackingSkipped(EnumHasAnyFlags(Buffer->Flags, ERDGBufferFlags::SkipTracking))
 			<< BufferMessage.IsTransient(bool(Buffer->bTransient))
 			<< BufferMessage.IsTransientUntracked(false)

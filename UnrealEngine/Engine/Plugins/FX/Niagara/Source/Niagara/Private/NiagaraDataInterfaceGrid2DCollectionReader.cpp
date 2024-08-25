@@ -53,13 +53,10 @@ bool UNiagaraDataInterfaceGrid2DCollectionReader::InitPerInstanceData(void* PerI
 	FGrid2DCollectionRWInstanceData_GameThread* InstanceData = new (PerInstanceData) FGrid2DCollectionRWInstanceData_GameThread();
 	SystemInstancesToProxyData_GT.Emplace(SystemInstance->GetId(), InstanceData);
 
-	TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> RT_EmitterInstance;
-
-
 	FNiagaraEmitterInstance* EmitterInstanceToUse = nullptr;
-	for (TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> EmitterInstance : SystemInstance->GetEmitters())
+	for (const FNiagaraEmitterInstanceRef& EmitterInstance : SystemInstance->GetEmitters())
 	{
-		UNiagaraEmitter* Emitter = EmitterInstance->GetCachedEmitter().Emitter;
+		const UNiagaraEmitter* Emitter = EmitterInstance->GetEmitter();
 		if (Emitter == nullptr)
 		{
 			continue;
@@ -67,7 +64,7 @@ bool UNiagaraDataInterfaceGrid2DCollectionReader::InitPerInstanceData(void* PerI
 
 		if (EmitterName == Emitter->GetUniqueEmitterName())
 		{
-			EmitterInstanceToUse = EmitterInstance.Get();
+			EmitterInstanceToUse = &EmitterInstance.Get();
 			break;
 		}
 	}
@@ -157,12 +154,12 @@ void UNiagaraDataInterfaceGrid2DCollectionReader::GetEmitterDependencies(UNiagar
 }
 
 
-
-void UNiagaraDataInterfaceGrid2DCollectionReader::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceGrid2DCollectionReader::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	int32 NumFunctionsBefore = OutFunctions.Num();
 
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 	TSet<FName> FunctionsToRemove =
 	{
 		ClearCellFunctionName,
@@ -191,6 +188,7 @@ void UNiagaraDataInterfaceGrid2DCollectionReader::GetFunctions(TArray<FNiagaraFu
 		}
 	}
 }
+#endif
 
 bool UNiagaraDataInterfaceGrid2DCollectionReader::PerInstanceTickPostSimulate(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance, float DeltaSeconds)
 {

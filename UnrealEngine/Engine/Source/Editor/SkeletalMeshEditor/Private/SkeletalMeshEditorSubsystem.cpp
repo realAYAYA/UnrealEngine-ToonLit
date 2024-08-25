@@ -16,6 +16,7 @@
 #include "ObjectTools.h"
 #include "PhysicsAssetUtils.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "PhysicsEngine/PhysicsConstraintTemplate.h"
 #include "Rendering/SkeletalMeshLODModel.h"
 #include "Rendering/SkeletalMeshLODRenderData.h"
 #include "Rendering/SkeletalMeshModel.h"
@@ -853,6 +854,89 @@ UPhysicsAsset* USkeletalMeshEditorSubsystem::CreatePhysicsAsset(USkeletalMesh* S
 	}
 
 	return NewPhysicsAsset;
+}
+
+bool USkeletalMeshEditorSubsystem::IsPhysicsAssetCompatible(USkeletalMesh* TargetMesh, UPhysicsAsset* PhysicsAsset)
+{
+	if(!TargetMesh)
+	{
+		return false;
+	}
+
+	// If we have a physics asset, validate it. Otherwise the user is clearing the asset by passing a nullptr
+	if (PhysicsAsset)
+	{
+		const FReferenceSkeleton& RefSkel = TargetMesh->GetRefSkeleton();
+
+		// Check that all of the body setups correctly map to a skeletal mesh bone
+		for (USkeletalBodySetup* Setup : PhysicsAsset->SkeletalBodySetups)
+		{
+			if (RefSkel.FindBoneIndex(Setup->BoneName) == INDEX_NONE)
+			{
+				UE_LOG(LogSkeletalMeshEditorSubsystem, 
+				       Error, 
+				       TEXT("IsPhysicsAssetCompatible failed: bone %s is not present for skeletal mesh %s"), 
+				       *Setup->BoneName.ToString(), 
+				       *TargetMesh->GetName());
+
+				return false;
+			}
+		}
+
+		// Check that all of the constraints match up to existing skeletal mesh bones.
+		for (UPhysicsConstraintTemplate* Constraint : PhysicsAsset->ConstraintSetup)
+		{
+			int32 ConstraintBoneIndices[2] = {
+				RefSkel.FindBoneIndex(Constraint->DefaultInstance.ConstraintBone1),
+				RefSkel.FindBoneIndex(Constraint->DefaultInstance.ConstraintBone2)
+			};
+
+
+
+			if (ConstraintBoneIndices[0] == INDEX_NONE)
+			{
+				UE_LOG(LogSkeletalMeshEditorSubsystem, 
+				       Error, 
+				       TEXT("IsPhysicsAssetCompatible failed: bone %s is not present for skeletal mesh %s"), 
+				       *Constraint->DefaultInstance.ConstraintBone1.ToString(), 
+				       *TargetMesh->GetName());
+
+				return false;
+			}
+
+			if (ConstraintBoneIndices[1] == INDEX_NONE)
+			{
+				UE_LOG(LogSkeletalMeshEditorSubsystem, 
+				       Error, 
+				       TEXT("IsPhysicsAssetCompatible failed: bone %s is not present for skeletal mesh %s"), 
+				       *Constraint->DefaultInstance.ConstraintBone2.ToString(), 
+				       *TargetMesh->GetName());
+
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+bool USkeletalMeshEditorSubsystem::AssignPhysicsAsset(USkeletalMesh* TargetMesh, UPhysicsAsset* PhysicsAsset)
+{
+	if(!IsPhysicsAssetCompatible(TargetMesh, PhysicsAsset))
+	{
+		return false;
+	}
+
+	{
+		FScopedTransaction Transaction(LOCTEXT("SetSkeletalMeshPhysicsAsset", "Set skeletal mesh physics asset"));
+		TargetMesh->Modify();
+		TargetMesh->SetPhysicsAsset(PhysicsAsset);
+	}
+
+	// Refresh all currently active skeletal mesh components that may have used the old setup
+	RefreshSkelMeshOnPhysicsAssetChange(TargetMesh);
+
+	return true;
 }
 
 #undef LOCTEXT_NAMESPACE

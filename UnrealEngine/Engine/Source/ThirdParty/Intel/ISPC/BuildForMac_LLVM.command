@@ -2,7 +2,9 @@
 
 set -e
 
-LLVM_VERSION=13.0.1
+LLVM_VERSION=16.0.5
+
+BUILD_UNIVERSAL=true
 
 UE_THIRD_PARTY_LOCATION=`cd $(pwd)/..; pwd`
 
@@ -23,7 +25,7 @@ mkdir -p $LLVM_BUILD_LOCATION
 
 CMAKE_ARGS=(
     -DCMAKE_INSTALL_PREFIX="$LLVM_INSTALL_LOCATION"
-    -DCMAKE_OSX_DEPLOYMENT_TARGET="10.9"
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0"
     -DCMAKE_BUILD_TYPE=Release
     -DLLVM_ENABLE_DUMP=ON
     -DLLVM_ENABLE_ASSERTIONS=ON
@@ -31,6 +33,7 @@ CMAKE_ARGS=(
     -DLLVM_TARGETS_TO_BUILD="AArch64;ARM;X86"
     -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=WebAssembly
     -DLLVM_ENABLE_PROJECTS=clang
+    -DLLVM_ENABLE_ZLIB=OFF
 )
 
 if [ "$BUILD_UNIVERSAL" = true ] ; then
@@ -47,7 +50,7 @@ echo Configuring build for llvm version $LLVM_VERSION...
 cmake -G "Xcode" $LLVM_SOURCE_LOCATION "${CMAKE_ARGS[@]}"
 
 echo Building llvm for Release...
-cmake --build . --config Release
+cmake --build . --config Release --parallel 8
 
 echo Installing llvm for Release...
 cmake --install . --config Release

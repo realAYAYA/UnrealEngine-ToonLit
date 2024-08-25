@@ -9,11 +9,9 @@ public class RenderCore : ModuleRules
 {
 	public RenderCore(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PrivateIncludePaths.Add("../Shaders/Shared");
-
 		PublicDependencyModuleNames.AddRange(new string[] { "RHI" });
 
-		PrivateIncludePathModuleNames.AddRange(new string[] { "TargetPlatform" });
+		PrivateIncludePathModuleNames.AddRange(new string[] { "Shaders", "TargetPlatform" });
 
 		// JSON is used for the asset info in the shader library and dumping out frames.
 		PrivateDependencyModuleNames.Add("Json");

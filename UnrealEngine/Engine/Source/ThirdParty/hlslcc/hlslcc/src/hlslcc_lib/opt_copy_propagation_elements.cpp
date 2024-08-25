@@ -90,7 +90,7 @@ public:
 
 struct acpe_hash_entry : public exec_node
 {
-    acpe_entry* acpe_entry;
+    acpe_entry* entry_acpe;
 };
 
 class acpe_hash_table
@@ -119,7 +119,7 @@ public:
         foreach_iter(exec_list_iterator, iter, *src_list)
         {
             acpe_hash_entry *entry = (acpe_hash_entry *)iter.get();
-            acpe_entry* a = entry->acpe_entry;
+            acpe_entry* a = entry->entry_acpe;
             if (a->get_next() && a->get_prev())
             {
                 if(!a->copy_entry)
@@ -128,7 +128,7 @@ public:
                     ht->acp->push_tail(a->copy_entry);
                 }
                 acpe_hash_entry *b = new(ht->mem_ctx) acpe_hash_entry;
-                b->acpe_entry = a->copy_entry;
+                b->entry_acpe = a->copy_entry;
                 list->push_tail(b);
             }
         }
@@ -162,7 +162,7 @@ public:
     void add_acp_hash(ir_variable* var, acpe_entry* entry)
     {
         acpe_hash_entry* he = new (mem_ctx)acpe_hash_entry;
-        he->acpe_entry = entry;
+        he->entry_acpe = entry;
         exec_list* entries = (exec_list*)hash_table_find(acp_ht, var);
         if (!entries)
         {
@@ -173,7 +173,7 @@ public:
         foreach_iter(exec_list_iterator, iter, *entries)
         {
             acpe_hash_entry *old_entry = (acpe_hash_entry *)iter.get();
-            acpe_entry* a = old_entry->acpe_entry;
+            acpe_entry* a = old_entry->entry_acpe;
             if (entry == a || (entry->lhs == a->lhs && entry->rhs == a->rhs))
             {
                 bFound = true;
@@ -385,7 +385,7 @@ void ir_copy_propagation_elements_visitor::handle_rvalue(ir_rvalue **ir)
 	ir_variable *var = deref_var->var;
 
 	// Shared variables should be considered volatile
-	if (var->mode == ir_var_shared)
+	if (var->mode == ir_var_shared || var->precise)
 	{
 		return;
 	}
@@ -401,7 +401,7 @@ void ir_copy_propagation_elements_visitor::handle_rvalue(ir_rvalue **ir)
         foreach_iter(exec_list_iterator, iter, *list)
         {
             acpe_hash_entry* e = (acpe_hash_entry*)iter.get();
-            acpe_entry *entry = e->acpe_entry;
+            acpe_entry *entry = e->entry_acpe;
             if (var == entry->lhs)
             {
                 for (int c = 0; c < chans; c++)
@@ -602,7 +602,7 @@ void ir_copy_propagation_elements_visitor::kill(kill_entry *k)
         foreach_list_safe(node, list)
         {
             acpe_hash_entry* e = (acpe_hash_entry*)node;
-            acpe_entry *entry = (acpe_entry *)e->acpe_entry;
+            acpe_entry *entry = (acpe_entry *)e->entry_acpe;
             if (entry->lhs == k->var)
             {
                 entry->write_mask = entry->write_mask & ~k->write_mask;
@@ -616,7 +616,7 @@ void ir_copy_propagation_elements_visitor::kill(kill_entry *k)
                         foreach_list_safe(iter2, ilist)
                         {
                             acpe_hash_entry* ientry = (acpe_hash_entry*)iter2;
-                            if(ientry->acpe_entry == entry)
+                            if(ientry->entry_acpe == entry)
                             {
                                 ientry->remove();
                             }
@@ -640,7 +640,7 @@ void ir_copy_propagation_elements_visitor::kill(kill_entry *k)
                     foreach_list_safe(iter2, ilist)
                     {
                         acpe_hash_entry* ientry = (acpe_hash_entry*)iter2;
-                        if(ientry->acpe_entry == entry)
+                        if(ientry->entry_acpe == entry)
                         {
                             ientry->remove();
                         }
@@ -676,6 +676,11 @@ void ir_copy_propagation_elements_visitor::add_copy(ir_assignment *ir)
 
 	if (ir->condition)
 		return;
+
+	if (ir->lhs->as_variable() != NULL && ir->lhs->as_variable()->precise)
+	{
+		return;
+	}
 
 	ir_dereference_variable *lhs = ir->lhs->as_dereference_variable();
 	if (!lhs || !(lhs->type->is_scalar() || lhs->type->is_vector()))

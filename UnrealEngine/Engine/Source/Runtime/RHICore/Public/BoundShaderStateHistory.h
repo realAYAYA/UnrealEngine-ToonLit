@@ -2,8 +2,8 @@
 
 #pragma once
 
+#include "RHIGlobals.h"
 #include "RenderResource.h"
-#include "RHI.h"
 
 /**
  * A list of the most recently used bound shader states.
@@ -60,3 +60,7 @@ private:
 	uint32 NextBoundShaderStateIndex = 0;
 	FCriticalSection BoundShaderStateHistoryLock;
 };
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "RHI.h"
+#endif

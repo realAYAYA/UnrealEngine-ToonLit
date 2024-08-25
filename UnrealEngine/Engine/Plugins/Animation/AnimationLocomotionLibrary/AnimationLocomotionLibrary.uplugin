@@ -19,12 +19,12 @@
 		{
 			"Name": "AnimationLocomotionLibraryRuntime",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PreDefault"
 		},
 		{
 			"Name": "AnimationLocomotionLibraryEditor",
 			"Type": "UncookedOnly",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PreDefault"
 		}
 	]
 }

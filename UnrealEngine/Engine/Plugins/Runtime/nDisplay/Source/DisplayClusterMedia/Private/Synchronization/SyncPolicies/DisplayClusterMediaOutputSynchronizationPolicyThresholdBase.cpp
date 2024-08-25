@@ -23,7 +23,7 @@ void FDisplayClusterMediaOutputSynchronizationPolicyThresholdBaseHandler::Synchr
 	if (TimeLeftSeconds < MarginSeconds)
 	{
 		// Sleep for a bit longer to skip the alignment timepoint
-		const float SleepTime = (MarginSeconds - TimeLeftSeconds) * 1.01f;
+		const float SleepTime = TimeLeftSeconds * 1.01f;
 
 		UE_LOG(LogDisplayClusterMediaSync, VeryVerbose, TEXT("'%s': TimeLeft(%lf) < Margin(%lf) --> Sleeping for %lf..."),
 			*GetMediaDeviceId(), TimeLeftSeconds, MarginSeconds, SleepTime);

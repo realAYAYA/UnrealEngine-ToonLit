@@ -15,6 +15,9 @@ struct FRayTracingDebugPayload : FMinimalPayload
 
 	float3 WorldNormal;
 	uint GeometryIndex;
+	
+	uint TriangleHitCountPerRay;
+	uint ScenePrimitiveIndex;
 };
 CHECK_RT_PAYLOAD_SIZE(FRayTracingDebugPayload)
 #endif

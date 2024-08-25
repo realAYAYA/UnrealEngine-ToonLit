@@ -88,5 +88,18 @@ namespace EpicGames.Perforce
 		{
 			return new FileSpecList(new string[] { fileSpec });
 		}
+
+		/// <inheritdoc/>
+		public override string ToString()
+		{
+			if (List.Count == 0)
+			{
+				return "(none)";
+			}
+			else
+			{
+				return String.Join(", ", List);
+			}
+		}
 	}
 }

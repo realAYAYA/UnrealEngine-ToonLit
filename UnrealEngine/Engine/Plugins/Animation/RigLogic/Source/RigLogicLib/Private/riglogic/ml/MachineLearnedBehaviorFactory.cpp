@@ -42,6 +42,11 @@ MachineLearnedBehaviorEvaluator::Pointer createEvaluator(const Configuration& co
             return ml::cpu::Factory<StorageValueType, trimd::avx::F256, trimd::sse::F128>::create(reader, memRes);
         }
     #endif  // RL_BUILD_WITH_AVX
+    #ifdef RL_BUILD_WITH_NEON
+        if (config.calculationType == CalculationType::NEON) {
+            return ml::cpu::Factory<StorageValueType, trimd::neon::F256, trimd::neon::F128>::create(reader, memRes);
+        }
+    #endif  // RL_BUILD_WITH_NEON
     return ml::cpu::Factory<float, trimd::scalar::F256, trimd::scalar::F128>::create(reader, memRes);
 }
 

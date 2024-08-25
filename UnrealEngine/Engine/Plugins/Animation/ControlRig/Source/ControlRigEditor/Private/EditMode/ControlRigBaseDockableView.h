@@ -22,6 +22,7 @@ public:
 	TArray<UControlRig*> GetControlRigs() const;
 
 	virtual void SetEditMode(FControlRigEditMode& InEditMode);
+	FControlRigEditMode* GetEditMode() const;
 
 protected:
 	virtual void HandleControlSelected(UControlRig* Subject, FRigControlElement* InControl, bool bSelected);

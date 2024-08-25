@@ -36,7 +36,7 @@ bool FStateTreeDebuggerInstanceTrack::UpdateInternal()
 	const int32 PrevNumPoints = EventData->Points.Num();
 	const int32 PrevNumWindows = EventData->Windows.Num();
 
-	EventData->Points.SetNum(0, false);
+	EventData->Points.SetNum(0, EAllowShrinking::No);
 	EventData->Windows.SetNum(0);
 	
 	const FStateTreeDebugger* Debugger = StateTreeDebugger.Get();
@@ -65,13 +65,7 @@ bool FStateTreeDebuggerInstanceTrack::UpdateInternal()
 			const uint32 EventIndex = EventCollection.ActiveStatesChanges[StateChangeIndex].EventIndex;
 			const FStateTreeTraceActiveStatesEvent& Event = Events[EventIndex].Get<FStateTreeTraceActiveStatesEvent>();
 				
-			FString StatePath;
-			for (int32 ActiveStateIndex = 0; ActiveStateIndex < Event.ActiveStates.Num(); ActiveStateIndex++)
-			{
-				const FCompactStateTreeState* State = StateTree->GetStateFromHandle(Event.ActiveStates[ActiveStateIndex]);
-				StatePath.Appendf(TEXT("%s%s"), ActiveStateIndex == 0 ? TEXT("") : TEXT("."), State == nullptr ? TEXT("Invalid") : *State->Name.ToString());
-			}
-
+			FString StatePath = Event.GetValueString(*StateTree);
 			UE::StateTreeDebugger::FFrameSpan Span = EventCollection.FrameSpans[SpanIndex];
 			SStateTreeDebuggerEventTimelineView::FTimelineEventData::EventWindow& Window = EventData->Windows.AddDefaulted_GetRef();
 			Window.Color = MakeRandomColor(GetTypeHash(StatePath));

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NiagaraWorldManager.h"
+#include "Engine/Engine.h"
 #include "Engine/Level.h"
 #include "GameFramework/Pawn.h"
 #include "NiagaraModule.h"
@@ -19,6 +20,7 @@
 #include "NiagaraDebugHud.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
 #include "NiagaraSimpleObjectPool.h"
+#include "NiagaraComponentLeakDetector.h"
 #include "Particles/FXBudget.h"
 #include "NiagaraCullProxyComponent.h"
 #include "GameDelegates.h"
@@ -265,13 +267,53 @@ FDelegateHandle FNiagaraWorldManager::ViewTargetChangedHandle;
 std::atomic<bool> FNiagaraWorldManager::bInvalidateCachedSystemScalabilityData(false);
 TMap<class UWorld*, class FNiagaraWorldManager*> FNiagaraWorldManager::WorldManagers;
 
-namespace FNiagaraUtilities
+namespace NiagaraWorldManagerInternal
 {
+	static int32 GFirstHighPriTickGroup = 0;
+	static TQueue<TFunction<void()>, EQueueMode::Mpsc> GlobalDeferredCallbacks;
+
+	void ExecuteGlobalDeferredCallbacks()
+	{
+		TFunction<void()> Callback;
+		while (GlobalDeferredCallbacks.Dequeue(Callback))
+		{
+			Callback();
+		}
+	}
+
 	int GetNiagaraTickGroup(ETickingGroup TickGroup)
 	{
 		const int ActualTickGroup = FMath::Clamp(TickGroup - NiagaraFirstTickGroup, 0, NiagaraNumTickGroups - 1);
 		return ActualTickGroup;
 	}
+
+	bool GetNiagaraTickGroupPriority(int32 NiagaraTickGroup)
+	{
+		return NiagaraTickGroup >= GFirstHighPriTickGroup;
+	}
+
+	static FAutoConsoleVariableRef CVarFirstHighPriTickGroup(
+		TEXT("fx.Niagara.WorldManager.FirstHighPriTickGroup"),
+		GFirstHighPriTickGroup,
+		TEXT("Defines which tick groups should be set to high priority for the world manager.\n")
+		TEXT("0 - (Default) all tick groups will run high priority.\n")
+		TEXT("1 - The first tick group will be normal priority, all others high, etc."),
+		FConsoleVariableDelegate::CreateLambda(
+			[](IConsoleVariable*)
+			{
+				FNiagaraWorldManager::ForAllWorldManagers(
+					[](FNiagaraWorldManager& WorldManager)
+					{
+						for (int32 i=0; i < NiagaraNumTickGroups; ++i)
+						{
+							WorldManager.SetTickGroupPriority(i, GetNiagaraTickGroupPriority(i));
+						}
+					}
+				);
+			}
+		),
+		ECVF_Default
+	); 
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -286,12 +328,12 @@ FString FNiagaraWorldManagerTickFunction::DiagnosticMessage()
 {
 	static const UEnum* EnumType = FindObjectChecked<UEnum>(nullptr, TEXT("/Script/Engine.ETickingGroup"));
 
-	return TEXT("FParticleSystemManager::Tick(") + EnumType->GetNameStringByIndex(static_cast<uint32>(TickGroup)) + TEXT(")");
+	return TEXT("FNiagaraWorldManagerTickFunction::Tick(") + EnumType->GetNameStringByIndex(static_cast<uint32>(TickGroup)) + TEXT(")");
 }
 
 FName FNiagaraWorldManagerTickFunction::DiagnosticContext(bool bDetailed)
 {
-	return FName(TEXT("ParticleSystemManager"));
+	return FName(TEXT("FNiagaraWorldManagerTickFunction"));
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -331,6 +373,7 @@ void FNiagaraWorldManager::Init(UWorld* InWorld)
 	ActiveNiagaraTickGroup = -1;
 	bAppHasFocus = true;
 	bIsTearingDown = false;
+	bIsCleaningUp = false;
 	WorldLoopTime = 0.0f;
 	RequestedDebugPlaybackMode = ENiagaraDebugPlaybackMode::Play;
 	DebugPlaybackMode = ENiagaraDebugPlaybackMode::Play;
@@ -345,7 +388,7 @@ void FNiagaraWorldManager::Init(UWorld* InWorld)
 		TickFunc.bCanEverTick = true;
 		TickFunc.bStartWithTickEnabled = true;
 		TickFunc.bAllowTickOnDedicatedServer = false;
-		TickFunc.bHighPriority = true;
+		TickFunc.bHighPriority = NiagaraWorldManagerInternal::GetNiagaraTickGroupPriority(TickGroup);
 		TickFunc.Owner = this;
 		TickFunc.RegisterTickFunction(InWorld->PersistentLevel);
 	}
@@ -360,6 +403,12 @@ void FNiagaraWorldManager::Init(UWorld* InWorld)
 
 #if WITH_NIAGARA_DEBUGGER
 	NiagaraDebugHud.Reset(new FNiagaraDebugHud(World));
+#endif
+#if WITH_NIAGARA_LEAK_DETECTOR
+	if ( World->IsGameWorld() )
+	{
+		ComponentLeakDetector.Reset(new FNiagaraComponentLeakDetector());
+	}
 #endif
 
 	// Make sure we update our component settings, this includes ban lists, etc
@@ -534,7 +583,7 @@ void FNiagaraWorldManager::TickParameterCollections()
 
 UNiagaraParameterCollectionInstance* FNiagaraWorldManager::GetParameterCollection(UNiagaraParameterCollection* Collection)
 {
-	if (!Collection || bIsTearingDown)
+	if (!Collection || !HasActiveWorld())
 	{
 		return nullptr;
 	}
@@ -576,10 +625,10 @@ FNiagaraSystemSimulationRef FNiagaraWorldManager::GetSystemSimulation(ETickingGr
 {
 	LLM_SCOPE(ELLMTag::Niagara);
 
-	int32 ActualTickGroup = FNiagaraUtilities::GetNiagaraTickGroup(TickGroup);
+	int32 ActualTickGroup = NiagaraWorldManagerInternal::GetNiagaraTickGroup(TickGroup);
 	if (ActiveNiagaraTickGroup == ActualTickGroup)
 	{
-		int32 DemotedTickGroup = FNiagaraUtilities::GetNiagaraTickGroup((ETickingGroup)(TickGroup + 1));
+		int32 DemotedTickGroup = NiagaraWorldManagerInternal::GetNiagaraTickGroup((ETickingGroup)(TickGroup + 1));
 		ActualTickGroup = DemotedTickGroup == ActualTickGroup ? 0 : DemotedTickGroup;
 	}
 
@@ -669,6 +718,8 @@ void FNiagaraWorldManager::OnWorldBeginTearDown()
 
 void FNiagaraWorldManager::OnWorldCleanup(bool bSessionEnded, bool bCleanupResources)
 {
+	bIsCleaningUp = true;
+
 	DeferredMethods.ExecuteAndClear();
 	ComponentPool->Cleanup(World);
 
@@ -750,6 +801,13 @@ void FNiagaraWorldManager::PostGarbageCollect()
 {
 	//Clear out and scalability managers who's EffectTypes have been GCd.
 	while (ScalabilityManagers.Remove(nullptr)) {}
+
+#if WITH_NIAGARA_LEAK_DETECTOR
+	if (ComponentLeakDetector.IsValid() && HasActiveWorld())
+	{
+		ComponentLeakDetector->ReportLeaks(World);
+	}
+#endif
 }
 
 void FNiagaraWorldManager::PreGarbageCollectBeginDestroy()
@@ -969,10 +1027,18 @@ void FNiagaraWorldManager::TickStart(float DeltaSeconds)
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraWorldManTick);
 
 	DataChannelManager->BeginFrame(DeltaSeconds);
+
+#if WITH_NIAGARA_LEAK_DETECTOR
+	if (ComponentLeakDetector.IsValid() && HasActiveWorld())
+	{
+		ComponentLeakDetector->Tick(World);
+	}
+#endif
 }
 
 void FNiagaraWorldManager::PreActorTick(ELevelTick InLevelTick, float InDeltaSeconds)
 {	
+	NiagaraWorldManagerInternal::ExecuteGlobalDeferredCallbacks();
 }
 
 void FNiagaraWorldManager::PostActorTick(float DeltaSeconds)
@@ -982,6 +1048,8 @@ void FNiagaraWorldManager::PostActorTick(float DeltaSeconds)
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraWorldManTick);
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraOverview_GT);
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_NiagaraPostActorTick_GT);
+
+	NiagaraWorldManagerInternal::ExecuteGlobalDeferredCallbacks();
 
 	DeltaSeconds *= DebugPlaybackRate;
 
@@ -1074,11 +1142,20 @@ void FNiagaraWorldManager::PostActorTick(float DeltaSeconds)
 		}
 	}
 
+	HandleCSVStats(DeltaSeconds);
+
+	DataChannelManager->EndFrame(DeltaSeconds);
+}
+
+void FNiagaraWorldManager::HandleCSVStats(float DeltaSeconds)
+{
+	bool bCSVStatsEnabled = false;
 #if WITH_PARTICLE_PERF_CSV_STATS
 	if (FCsvProfiler* CSVProfiler = FCsvProfiler::Get())
 	{
 		if (CSVProfiler->IsCapturing() && FParticlePerfStats::GetCSVStatsEnabled())
 		{
+			bCSVStatsEnabled = true;
 			//Record custom events marking split times at set intervals. Allows us to generate summary tables for averages over shorter bursts.
 			if (GNiagaraCSVSplitTime > 0.0f)
 			{
@@ -1101,11 +1178,24 @@ void FNiagaraWorldManager::PostActorTick(float DeltaSeconds)
 
 				ScalabilityMan.CSVProfilerUpdate(CSVProfiler);
 			}
+			#if WITH_PER_FXTYPE_PARTICLE_PERF_STATS
+			if (FXTypeCSVListener.IsValid() == false)
+			{
+				FXTypeCSVListener = MakeShared<FParticlePerfStatsListener_EffectType, ESPMode::ThreadSafe>();
+				FParticlePerfStatsManager::AddListener(FXTypeCSVListener);
+			}
+			#endif
 		}
 	}
 #endif 
 
-	DataChannelManager->EndFrame(DeltaSeconds);
+#if WITH_PER_FXTYPE_PARTICLE_PERF_STATS
+	if (bCSVStatsEnabled == false && FXTypeCSVListener.IsValid())
+	{
+		FParticlePerfStatsManager::RemoveListener(FXTypeCSVListener.Get());
+		FXTypeCSVListener.Reset();
+	}
+#endif
 }
 
 void FNiagaraWorldManager::PreSendAllEndOfFrameUpdates()
@@ -1184,13 +1274,16 @@ void FNiagaraWorldManager::Tick(ETickingGroup TickGroup, float DeltaSeconds, ELe
 {
 	check(TickGroup >= NiagaraFirstTickGroup && TickGroup <= NiagaraLastTickGroup);
 
-	DeferredMethods.ExecuteAndClear();
-
 	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(Effects);
 	LLM_SCOPE(ELLMTag::Niagara);
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraWorldManTick);
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraOverview_GT);
 
+	// Execute any global and local deferred functions
+	NiagaraWorldManagerInternal::ExecuteGlobalDeferredCallbacks();
+	DeferredMethods.ExecuteAndClear();
+
+	// Modify playback rate
 	DeltaSeconds *= DebugPlaybackRate;
 
 	//Tick DataChannel Manager.
@@ -1307,7 +1400,7 @@ void FNiagaraWorldManager::Tick(ETickingGroup TickGroup, float DeltaSeconds, ELe
 	}
 
 	// Now tick all system instances. 
-	const int ActualTickGroup = FNiagaraUtilities::GetNiagaraTickGroup(TickGroup);
+	const int ActualTickGroup = NiagaraWorldManagerInternal::GetNiagaraTickGroup(TickGroup);
 
 	ActiveNiagaraTickGroup = ActualTickGroup;
 
@@ -1981,6 +2074,11 @@ void FNiagaraWorldManager::InvalidateCachedSystemScalabilityData()
 	}
 }
 
+bool FNiagaraWorldManager::HasActiveWorld() const
+{
+	return World && World->IsInitialized() && !World->bIsTearingDown && !bIsTearingDown && !bIsCleaningUp;
+}
+
 void FNiagaraWorldManager::PrimePoolForAllWorlds(UNiagaraSystem* System)
 {
 	if (GNigaraAllowPrimedPools)
@@ -1997,7 +2095,7 @@ void FNiagaraWorldManager::PrimePoolForAllWorlds(UNiagaraSystem* System)
 
 void FNiagaraWorldManager::PrimePoolForAllSystems()
 {
-	if (GNigaraAllowPrimedPools && World && World->IsGameWorld() && !World->bIsTearingDown)
+	if (GNigaraAllowPrimedPools && HasActiveWorld() && World->IsGameWorld())
 	{
 		//Prime the pool for all currently loaded systems.
 		for (TObjectIterator<UNiagaraSystem> It; It; ++It)
@@ -2013,10 +2111,37 @@ void FNiagaraWorldManager::PrimePoolForAllSystems()
 
 void FNiagaraWorldManager::PrimePool(UNiagaraSystem* System)
 {
-	if (GNigaraAllowPrimedPools && World && World->IsGameWorld() && !World->bIsTearingDown)
+	if (GNigaraAllowPrimedPools && HasActiveWorld() && World->IsGameWorld())
 	{
 		ComponentPool->PrimePool(System, World);
 	}
+}
+
+void FNiagaraWorldManager::FlushComputeAndDeferredQueues(bool bWaitForGPU)
+{
+	check(IsInGameThread());
+
+	// Flush the compute dispatch queue
+	if ( FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface = FNiagaraGpuComputeDispatchInterface::Get(World) )
+	{
+		if (bWaitForGPU)
+		{
+			ComputeDispatchInterface->FlushAndWait_GameThread();
+		}
+		else
+		{
+			ComputeDispatchInterface->FlushPendingTicks_GameThread();
+		}
+	}
+
+	// Flush any deferred callbacks
+	NiagaraWorldManagerInternal::ExecuteGlobalDeferredCallbacks();
+}
+
+void FNiagaraWorldManager::EnqueueGlobalDeferredCallback(TFunction<void()>&& Callback)
+{
+	using namespace NiagaraWorldManagerInternal;
+	GlobalDeferredCallbacks.Enqueue(Callback);
 }
 
 UObject* FNiagaraWorldManager::ObjectPoolGetOrCreate(UClass* Class, bool& bIsExistingObject)
@@ -2087,6 +2212,12 @@ bool FNiagaraWorldManager::IsComponentLocalPlayerLinked(const USceneComponent* I
 	}
 
 	return false;
+}
+
+void FNiagaraWorldManager::SetTickGroupPriority(const int32 NiagaraTickGroupIndex, const bool bHighPriority)
+{
+	check ((NiagaraTickGroupIndex >= 0) && (NiagaraTickGroupIndex < NiagaraNumTickGroups));
+	TickFunctions[NiagaraTickGroupIndex].SetPriorityIncludingPrerequisites(bHighPriority);
 }
 
 #if DEBUG_SCALABILITY_STATE

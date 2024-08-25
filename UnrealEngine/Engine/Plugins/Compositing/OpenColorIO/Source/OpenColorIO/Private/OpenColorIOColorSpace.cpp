@@ -87,7 +87,7 @@ FString FOpenColorIODisplayView::ToString() const
 {
 	if (IsValid())
 	{
-		return Display + TEXT(" - ") + View;
+		return FString::Printf(TEXT("%s - %s"), *Display, *View);
 	}
 
 	return {};

@@ -6,6 +6,7 @@
 #include "IChooserColumn.h"
 #include "IChooserParameterObject.h"
 #include "InstancedStruct.h"
+#include "Serialization/MemoryReader.h"
 #include "ObjectColumn.generated.h"
 
 struct FBindingChainElement;
@@ -20,22 +21,9 @@ struct CHOOSER_API FObjectContextProperty : public FChooserParameterObjectBase
 
 	virtual bool GetValue(FChooserEvaluationContext& Context, FSoftObjectPath& OutResult) const override;
 
+	CHOOSER_PARAMETER_BOILERPLATE();
+
 #if WITH_EDITOR
-	static bool CanBind(const FProperty& Property)
-	{
-		return Property.IsA<FObjectPropertyBase>() && !(Property.IsA<FClassProperty>() || Property.IsA<FSoftClassProperty>());
-	}
-
-	void SetBinding(const TArray<FBindingChainElement>& InBindingChain);
-
-	virtual void GetDisplayName(FText& OutName) const override
-	{
-		if (!Binding.PropertyBindingChain.IsEmpty())
-		{
-			OutName = FText::FromName(Binding.PropertyBindingChain.Last());
-		}
-	}
-
 	virtual UClass* GetAllowedClass() const override { return Binding.AllowedClass; }
 #endif
 };
@@ -55,7 +43,7 @@ struct FChooserObjectRowData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = "Runtime")
+	UPROPERTY(EditAnywhere, Category = Runtime, Meta = (ValidEnumValues = "MatchEqual, MatchNotEqual, MatchAny"))
 	EObjectColumnCellValueComparison Comparison = EObjectColumnCellValueComparison::MatchEqual;
 
 	UPROPERTY(EditAnywhere, Category = "Runtime")
@@ -84,7 +72,7 @@ struct CHOOSER_API FObjectColumn : public FChooserColumnBase
 	// should match the length of the Results array
 	TArray<FChooserObjectRowData> RowValues;
 
-	virtual void Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const override;
+	virtual void Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const override;
 
 #if WITH_EDITOR
 	mutable FSoftObjectPath TestValue;
@@ -92,6 +80,16 @@ struct CHOOSER_API FObjectColumn : public FChooserColumnBase
 	{
 		return RowValues.IsValidIndex(RowIndex) && RowValues[RowIndex].Evaluate(TestValue);
 	}
+	virtual void SetTestValue(TArrayView<const uint8> Value) override
+	{
+		FMemoryReaderView Reader(Value);
+		FString Path;
+		Reader << Path;
+		TestValue.SetPath(Path);
+	}
+
+	virtual void AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
+	virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
 #endif
 
 	CHOOSER_COLUMN_BOILERPLATE(FChooserParameterObjectBase);

@@ -102,9 +102,9 @@ FNiagaraRendererVolumes::~FNiagaraRendererVolumes()
 {
 }
 
-void FNiagaraRendererVolumes::CreateRenderThreadResources()
+void FNiagaraRendererVolumes::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
-	FNiagaraRenderer::CreateRenderThreadResources();
+	FNiagaraRenderer::CreateRenderThreadResources(RHICmdList);
 
 	FLocalVertexFactory::FDataType VFData;
 	VFData.PositionComponent = FVertexStreamComponent(&GNullVertexBuffer, 0, 0, VET_Float3);
@@ -121,8 +121,8 @@ void FNiagaraRendererVolumes::CreateRenderThreadResources()
 	VFData.ColorComponent = FVertexStreamComponent(&GNullColorVertexBuffer, 0, 0, VET_Color, EVertexStreamUsage::ManualFetch);
 	VFData.ColorComponentsSRV = GNullColorVertexBuffer.VertexBufferSRV;
 
-	VertexFactory.SetData(VFData);
-	VertexFactory.InitResource(FRHICommandListImmediate::Get());
+	VertexFactory.SetData(RHICmdList, VFData);
+	VertexFactory.InitResource(RHICmdList);
 }
 
 void FNiagaraRendererVolumes::ReleaseRenderThreadResources()
@@ -133,9 +133,8 @@ void FNiagaraRendererVolumes::ReleaseRenderThreadResources()
 }
 
 bool FNiagaraRendererVolumes::IsMaterialValid(const UMaterialInterface* Material) const
-{
-	const UMaterial* BaseMaterial = Material ? Material->GetMaterial() : nullptr;
-	return BaseMaterial ? BaseMaterial->CheckMaterialUsage_Concurrent(MATUSAGE_HeterogeneousVolumes) : false;
+{	
+	return Material ? Material->CheckMaterialUsage_Concurrent(MATUSAGE_HeterogeneousVolumes) : false;
 }
 
 FNiagaraDynamicDataBase* FNiagaraRendererVolumes::GenerateDynamicData(const FNiagaraSceneProxy* Proxy, const UNiagaraRendererProperties* InProperties, const FNiagaraEmitterInstance* Emitter) const
@@ -155,7 +154,7 @@ FNiagaraDynamicDataBase* FNiagaraRendererVolumes::GenerateDynamicData(const FNia
 			return nullptr;
 		}
 
-		FNiagaraDataBuffer* DataToRender = Emitter->GetData().GetCurrentData();
+		FNiagaraDataBuffer* DataToRender = Emitter->GetParticleData().GetCurrentData();
 		if (!DataToRender || DataToRender->GetNumInstances() == 0)
 		{
 			return nullptr;
@@ -363,7 +362,7 @@ void FNiagaraRendererVolumes::GetDynamicMeshElements(const TArray<const FSceneVi
 			HeterogeneousVolumeData->LightingDownsampleFactor = VolumeDynamicData->LightingDownsampleFactor;
 			BatchElement.UserData = HeterogeneousVolumeData;
 
-			Collector.AddMesh(0, Mesh);
+			Collector.AddMesh(ViewIndex, Mesh);
 		}
 	}
 }

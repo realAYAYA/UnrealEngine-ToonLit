@@ -68,11 +68,6 @@ bool UMLDeformerModelInstance::HasPostInitialized() const
 	return bHasPostInitialized;
 }
 
-const TArray<FTransform>& UMLDeformerModelInstance::GetBoneTransforms() const
-{ 
-	return BoneTransforms;
-}
-
 bool UMLDeformerModelInstance::IsCompatible() const
 { 
 	return bIsCompatible;
@@ -101,6 +96,7 @@ void UMLDeformerModelInstance::Init(USkeletalMeshComponent* SkelMeshComponent)
 			}
 		}
 
+		UpdateCompatibilityStatus();
 		return;
 	}
 
@@ -132,7 +128,7 @@ void UMLDeformerModelInstance::Init(USkeletalMeshComponent* SkelMeshComponent)
 
 void UMLDeformerModelInstance::UpdateCompatibilityStatus()
 {
-	bIsCompatible = SkeletalMeshComponent->GetSkeletalMeshAsset() && CheckCompatibility(SkeletalMeshComponent, true).IsEmpty();
+	bIsCompatible = SkeletalMeshComponent && SkeletalMeshComponent->GetSkeletalMeshAsset() && CheckCompatibility(SkeletalMeshComponent, true).IsEmpty();
 }
 
 FString UMLDeformerModelInstance::CheckCompatibility(USkeletalMeshComponent* InSkelMeshComponent, bool bLogIssues)
@@ -157,47 +153,129 @@ FString UMLDeformerModelInstance::CheckCompatibility(USkeletalMeshComponent* InS
 	return ErrorText;
 }
 
+USkeletalMeshComponent* UMLDeformerModelInstance::GetFinalSkeletalMeshComponent() const
+{
+	#if WITH_EDITOR
+		const UMLDeformerComponent* MLDeformerComponent = GetMLDeformerComponent();
+		check(MLDeformerComponent);
+
+		const AActor* DebugActor = MLDeformerComponent->GetDebugActor();
+		if (DebugActor)
+		{
+			const USkeletalMesh* ModelSkelMesh = GetModel()->GetSkeletalMesh();
+			if (ModelSkelMesh)
+			{
+				for (UActorComponent* Component : DebugActor->GetComponents())
+				{
+					USkeletalMeshComponent* DebugActorSkelMeshComponent = Cast<USkeletalMeshComponent>(Component);
+					if (DebugActorSkelMeshComponent && DebugActorSkelMeshComponent->GetSkeletalMeshAsset() == ModelSkelMesh)
+					{
+						return DebugActorSkelMeshComponent;
+					}
+				}
+			}
+		}
+	#endif
+
+	return SkeletalMeshComponent;
+}
+
+
+namespace
+{
+	void CalculateBoneSpaceTransforms(const FReferenceSkeleton& RefSkel, const TArray<FTransform>& ComponentSpaceTransforms, TArray<FTransform>& OutBoneSpaceTransforms)
+	{
+		for (int32 Index = 0; Index < RefSkel.GetNum(); ++Index)
+		{
+			const int32 ParentIndex = RefSkel.GetParentIndex(Index);
+			if (ParentIndex != INDEX_NONE)
+			{
+				OutBoneSpaceTransforms[Index] = ComponentSpaceTransforms[Index].GetRelativeTransform(ComponentSpaceTransforms[ParentIndex]);
+				OutBoneSpaceTransforms[Index].NormalizeRotation();
+			}
+			else
+			{
+				OutBoneSpaceTransforms[Index] = ComponentSpaceTransforms[Index];
+			}
+		}
+	}
+}	// Anonymous namespace
+
+
 void UMLDeformerModelInstance::UpdateBoneTransforms()
 {
 	// If we use a leader component, we have to get the transforms from that component.
-	const USkinnedMeshComponent* LeaderPoseComponent = SkeletalMeshComponent->LeaderPoseComponent.Get();
+	USkeletalMeshComponent* FinalSkelMeshComponent = GetFinalSkeletalMeshComponent();
+	const USkinnedMeshComponent* LeaderPoseComponent = FinalSkelMeshComponent->LeaderPoseComponent.Get();
 	if (LeaderPoseComponent)
 	{
 		const TArray<FTransform>& LeaderTransforms = LeaderPoseComponent->GetComponentSpaceTransforms();
 		if (!LeaderTransforms.IsEmpty())
 		{
-			USkinnedAsset* SkinnedAsset = LeaderPoseComponent->GetSkinnedAsset();
+			const USkinnedAsset* SkinnedAsset = LeaderPoseComponent->GetSkinnedAsset();
+			const FReferenceSkeleton& RefSkel = SkinnedAsset->GetRefSkeleton();
 			const int32 NumTrainingBones = AssetBonesToSkelMeshMappings.Num();
 			for (int32 Index = 0; Index < NumTrainingBones; ++Index)
 			{
 				const int32 ComponentBoneIndex = AssetBonesToSkelMeshMappings[Index];
-				checkSlow(LeaderTransforms.IsValidIndex(ComponentBoneIndex));			
-				const FTransform& ComponentSpaceTransform = LeaderTransforms[ComponentBoneIndex];
-				const int32 ParentIndex = SkinnedAsset->GetRefSkeleton().GetParentIndex(ComponentBoneIndex);
-				if (LeaderTransforms.IsValidIndex(ParentIndex))
+				if (LeaderTransforms.IsValidIndex(ComponentBoneIndex))
 				{
-					TrainingBoneTransforms[Index] = ComponentSpaceTransform.GetRelativeTransform(LeaderTransforms[ParentIndex]);
+					const FTransform& ComponentSpaceTransform = LeaderTransforms[ComponentBoneIndex];
+					const int32 ParentIndex = RefSkel.GetParentIndex(ComponentBoneIndex);
+					if (LeaderTransforms.IsValidIndex(ParentIndex))
+					{
+						TrainingBoneTransforms[Index] = ComponentSpaceTransform.GetRelativeTransform(LeaderTransforms[ParentIndex]);
+						TrainingBoneTransforms[Index].NormalizeRotation();
+					}
+					else
+					{
+						TrainingBoneTransforms[Index] = ComponentSpaceTransform;
+					}
 				}
-				else
-				{
-					TrainingBoneTransforms[Index] = ComponentSpaceTransform;
-				}
-				TrainingBoneTransforms[Index].NormalizeRotation();
 			}
 		}
 	}
-	else
+	else // No leader pose is used.
 	{
-		// Grab the transforms from our own skeletal mesh component.
-		// These are local space transforms, relative to the parent bone.
-		const TArrayView<const FTransform> Transforms = SkeletalMeshComponent->GetBoneSpaceTransformsView();
-		if (!Transforms.IsEmpty())
+		if (FinalSkelMeshComponent == SkeletalMeshComponent)
 		{
+			// Grab the transforms from our own skeletal mesh component.
+			// These are local space transforms, relative to the parent bone.
+			const TArrayView<const FTransform> Transforms = FinalSkelMeshComponent->GetBoneSpaceTransformsView();
+			if (!Transforms.IsEmpty())
+			{
+				const int32 NumTrainingBones = AssetBonesToSkelMeshMappings.Num();
+				for (int32 Index = 0; Index < NumTrainingBones; ++Index)
+				{
+					const int32 ComponentBoneIndex = AssetBonesToSkelMeshMappings[Index];
+					if (Transforms.IsValidIndex(ComponentBoneIndex))
+					{
+						TrainingBoneTransforms[Index] = Transforms[ComponentBoneIndex];
+					}
+				}
+			}
+		}
+		else // We are debugging and grabbing transforms from another component.
+		{
+			USkeletalMesh* SkelMeshAsset = FinalSkelMeshComponent->GetSkeletalMeshAsset();
+			check(SkelMeshAsset);
+
+			// Allocate enough space in our bone space transforms buffer.
+			// We need to calculate the bone space transforms, because when debugging only component space transforms are updated.
+			DebugBoneSpaceTransforms.Reset();
+			DebugBoneSpaceTransforms.SetNumUninitialized(FinalSkelMeshComponent->GetComponentSpaceTransforms().Num());
+			const FReferenceSkeleton& RefSkel = SkelMeshAsset->GetRefSkeleton();
+			CalculateBoneSpaceTransforms(RefSkel, FinalSkelMeshComponent->GetComponentSpaceTransforms(), DebugBoneSpaceTransforms);
+
+			// Now that we have the new bone space transforms, store them so they will be passed into our neural network later.
 			const int32 NumTrainingBones = AssetBonesToSkelMeshMappings.Num();
 			for (int32 Index = 0; Index < NumTrainingBones; ++Index)
 			{
 				const int32 ComponentBoneIndex = AssetBonesToSkelMeshMappings[Index];
-				TrainingBoneTransforms[Index] = Transforms[ComponentBoneIndex];
+				if (DebugBoneSpaceTransforms.IsValidIndex(ComponentBoneIndex))
+				{					
+					TrainingBoneTransforms[Index] = DebugBoneSpaceTransforms[ComponentBoneIndex];
+				}
 			}
 		}
 	}
@@ -279,7 +357,8 @@ bool UMLDeformerModelInstance::HasValidTransforms() const
 		return false;
 	}
 
-	const USkinnedMeshComponent* LeaderPoseComponent = SkeletalMeshComponent->LeaderPoseComponent.Get();
+	USkeletalMeshComponent* FinalSkeletalMeshComponent = GetFinalSkeletalMeshComponent();
+	const USkinnedMeshComponent* LeaderPoseComponent = FinalSkeletalMeshComponent->LeaderPoseComponent.Get();
 	if (LeaderPoseComponent)
 	{
 		if (LeaderPoseComponent->GetComponentSpaceTransforms().IsEmpty())
@@ -287,7 +366,25 @@ bool UMLDeformerModelInstance::HasValidTransforms() const
 			return false;
 		}
 	}
-	else if (SkeletalMeshComponent->GetBoneSpaceTransformsView().IsEmpty())
+	else if (FinalSkeletalMeshComponent->GetBoneSpaceTransformsView().IsEmpty())
+	{
+		return false;
+	}
+
+	// Make sure we use the same Skeletal Mesh on the current skeletal mesh component as that we trained the deformer on.
+	// This is already checked before by compatibility checks, but it can still fail when some other game code suddenly
+	// changes the Skeletal Mesh on the SkeletalMeshComponent after the ML Deformer component has been initialized already.
+	// This is just an extra safety check.
+	USkeletalMesh* SkelMesh = FinalSkeletalMeshComponent->GetSkeletalMeshAsset();
+	UMLDeformerInputInfo* InputInfo = Model->GetInputInfo();
+	if (SkelMesh && InputInfo)
+	{
+		if (FSoftObjectPath(SkelMesh) != InputInfo->GetSkeletalMesh())
+		{
+			return false;
+		}
+	}
+	else if (!SkelMesh && InputInfo && InputInfo->GetSkeletalMesh().IsValid())
 	{
 		return false;
 	}
@@ -304,15 +401,47 @@ void UMLDeformerModelInstance::Tick(float DeltaTime, float ModelWeight)
 		PostMLDeformerComponentInit();
 	}
 
+	bool bExecuteCalled = false;
 	if (ModelWeight > 0.0001f && HasValidTransforms() && SetupInputs())
 	{
 		// Execute the model instance.
 		// For models using neural networks this will perform the inference, 
 		// calculate the network outputs and possibly use them, depending on how the model works.
 		Execute(ModelWeight);
+		bExecuteCalled = true;
 	}
 	else
 	{
 		HandleZeroModelWeight();
 	}
+
+	// Execute the post tick.
+	PostTick(bExecuteCalled);
 }
+
+#if WITH_EDITOR
+	void UMLDeformerModelInstance::CopyDataFromCurrentDebugActor()
+	{
+		UMLDeformerComponent* MLDeformerComponent = GetMLDeformerComponent();
+		if (MLDeformerComponent)
+		{
+			// Check if we're debugging at all.
+			const AActor* DebugActor = MLDeformerComponent->GetDebugActor();
+			if (DebugActor == nullptr)
+			{
+				return;
+			}
+
+			// Make sure we use the same ML Deformer asset and skeletal mesh etc.
+			UMLDeformerComponent* DebugMLDeformerComponent = nullptr;
+			if (!Model->IsCompatibleDebugActor(DebugActor, &DebugMLDeformerComponent))
+			{
+				return;
+			}
+			check(DebugMLDeformerComponent);
+
+			// Now copy the actual data.
+			CopyDataFromDebugActor(DebugActor, DebugMLDeformerComponent);
+		}
+	}
+#endif

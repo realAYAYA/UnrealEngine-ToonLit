@@ -298,4 +298,7 @@ private:
 
 	/** Event called when code is succesfully added to the project */
 	FOnAddedToProject OnAddedToProject;
+
+	/** Flag set when PathPicker selects a path*/
+	bool IsBlueprintPathSelected = false;
 };

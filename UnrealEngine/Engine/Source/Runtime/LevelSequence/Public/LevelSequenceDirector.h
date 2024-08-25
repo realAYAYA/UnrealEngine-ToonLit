@@ -5,6 +5,8 @@
 #include "CoreTypes.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "EntitySystem/MovieSceneSequenceInstance.h"
+#include "Evaluation/IMovieScenePlaybackCapability.h"
 #include "MovieSceneSequenceID.h"
 #include "MovieSceneObjectBindingID.h"
 #include "Misc/QualifiedFrameTime.h"
@@ -12,6 +14,7 @@
 
 class IMovieScenePlayer;
 class ULevelSequencePlayer;
+class UMovieSceneEntitySystemLinker;
 
 UCLASS(Blueprintable, MinimalAPI)
 class ULevelSequenceDirector : public UObject
@@ -90,13 +93,31 @@ public:
 
 	LEVELSEQUENCE_API virtual UWorld* GetWorld() const override;
 
-	/** Pointer to the player that's playing back this director's sequence. Only valid in game or in PIE/Simulate. */
-	UPROPERTY(BlueprintReadOnly, Category="Cinematics")
-	TObjectPtr<ULevelSequencePlayer> Player;
+private:
+
+	const UE::MovieScene::FSequenceInstance* FindSequenceInstance() const;
+
+public:
 
 	/** The Sequence ID for the sequence this director is playing back within - has to be stored as an int32 so that it is reinstanced correctly*/
 	UPROPERTY()
 	int32 SubSequenceID;
+
+	/** The linker inside which the sequence is evaluating. Only valid in game or in PIE/Simulate. */
+	UPROPERTY()
+	TWeakObjectPtr<UMovieSceneEntitySystemLinker> WeakLinker;
+
+	/** Instance ID of the sequence. Only valid in game or in PIE/Simulate. */
+	UPROPERTY()
+	uint16 InstanceID = (uint16)-1;
+
+	/** Instance serial of the sequence. Only valid in game or in PIE/Simulate. */
+	UPROPERTY()
+	uint16 InstanceSerial = 0;
+
+	/** Pointer to the player that's playing back this director's sequence. Only valid in game or in PIE/Simulate. */
+	UPROPERTY(BlueprintReadOnly, Category="Cinematics")
+	TObjectPtr<ULevelSequencePlayer> Player;
 
 	/** Native player interface index - stored by index so that it can be reinstanced correctly */
 	UPROPERTY()

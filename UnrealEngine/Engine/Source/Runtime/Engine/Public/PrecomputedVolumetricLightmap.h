@@ -226,7 +226,7 @@ public:
 
 	ENGINE_API void RemoveFromScene(FSceneInterface* Scene);
 	
-	ENGINE_API void SetData(FPrecomputedVolumetricLightmapData* NewData, FSceneInterface* Scene);
+	ENGINE_API void SetData(FRHICommandListBase& RHICmdList, FPrecomputedVolumetricLightmapData* NewData, FSceneInterface* Scene);
 
 	bool IsAddedToScene() const
 	{

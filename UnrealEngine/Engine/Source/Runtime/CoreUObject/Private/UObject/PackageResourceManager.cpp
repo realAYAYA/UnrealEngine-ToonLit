@@ -18,6 +18,7 @@ namespace
 {
 	IPackageResourceManager* GPackageResourceManager = nullptr;
 	FSetPackageResourceManager GSetPackageResourceManagerDelegate;
+	FOnClearPackageResourceManager GOnClearPackageResourceManagerDelegate;
 }
 
 IPackageResourceManager& IPackageResourceManager::Get()
@@ -29,6 +30,11 @@ IPackageResourceManager& IPackageResourceManager::Get()
 FSetPackageResourceManager& IPackageResourceManager::GetSetPackageResourceManagerDelegate()
 {
 	return GSetPackageResourceManagerDelegate;
+}
+
+FOnClearPackageResourceManager& IPackageResourceManager::GetOnClearPackageResourceManagerDelegate()
+{
+	return GOnClearPackageResourceManagerDelegate;
 }
 
 void IPackageResourceManager::Initialize()
@@ -57,6 +63,8 @@ void IPackageResourceManager::Shutdown()
 {
 	delete GPackageResourceManager;
 	GPackageResourceManager = nullptr;
+	FOnClearPackageResourceManager& OnClearManagerDelegate = GetOnClearPackageResourceManagerDelegate();
+	OnClearManagerDelegate.Broadcast();
 }
 
 bool IPackageResourceManager::DoesPackageExist(const FPackagePath& PackagePath, FPackagePath* OutUpdatedPath)
@@ -277,23 +285,23 @@ FOpenAsyncPackageResult::~FOpenAsyncPackageResult()
 }
 
 #if WITH_EDITOR
-bool IsEditorDomainEnabled()
+EEditorDomainEnabled IsEditorDomainEnabled()
 {
-	static bool bEnabled = []()
+	static EEditorDomainEnabled EnabledValue = []()
 	{
 		if (!GIsEditor || (IsRunningCommandlet() && !IsRunningCookCommandlet()))
 		{
-			return false;
+			return EEditorDomainEnabled::Disabled;
 		}
 
 		if (FParse::Param(FCommandLine::Get(), TEXT("NoEditorDomain")))
 		{
-			return false;
+			return EEditorDomainEnabled::Utilities;
 		}
 
 		if (FParse::Param(FCommandLine::Get(), TEXT("EditorDomain")))
 		{
-			return true;
+			return EEditorDomainEnabled::PackageResourceManager;
 		}
 
 		bool bEnabledByConfig = true;
@@ -303,8 +311,8 @@ bool IsEditorDomainEnabled()
 			UE_LOG(LogPackageResourceManager, Error,
 				TEXT("Editor.ini:[CookSettings]:EditorDomainEnabled is deprecated, use Editor.ini:[EditorDomain]:EditorDomainEnabled instead."));
 		}
-		return bEnabledByConfig;
+		return bEnabledByConfig ? EEditorDomainEnabled::PackageResourceManager : EEditorDomainEnabled::Utilities;
 	}();
-	return bEnabled;
+	return EnabledValue;
 }
 #endif

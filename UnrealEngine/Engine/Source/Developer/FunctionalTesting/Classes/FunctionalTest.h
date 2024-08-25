@@ -260,7 +260,7 @@ private:
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FFunctionalTestEventSignature);
 DECLARE_DELEGATE_OneParam(FFunctionalTestDoneSignature, class AFunctionalTest*);
 
-UCLASS(hidecategories=( Actor, Input, Rendering ), Blueprintable)
+UCLASS(hidecategories=( Actor, Input, Rendering, HLOD ), Blueprintable)
 class FUNCTIONALTESTING_API AFunctionalTest : public AActor
 {
 	GENERATED_BODY()
@@ -316,6 +316,12 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Functional Testing")
 	TObjectPtr<AActor> ObservationPoint;
+
+	/**
+	 * Allows for garbage collection to be delayed. If delayed, garbage collection will be triggered at the end of a test run
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Functional Testing", AdvancedDisplay)
+	uint32 bShouldDelayGarbageCollection:1;
 
 	/**
 	 * A random number stream that you can use during testing.  This number stream will be consistent
@@ -494,6 +500,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Asserts", DisplayName = "Assert Equal (Rotator)", meta = ( HidePin = "ContextObject", DefaultToSelf = "ContextObject"))
 	virtual bool AssertEqual_Rotator(FRotator Actual, FRotator Expected, const FString& What, float Tolerance = 1.e-4f, const UObject* ContextObject = nullptr);
+
+	/**
+	 * Assert that the orientation of two rotators is the same within a small tolerance. Robust to quaternion singularities where angles can differ despite having an identical orientation. 
+	 * @param What	A name to use in the message if the assert fails ("Expected 'What' to be {Expected} but it was {Actual} for context ''")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Asserts", DisplayName = "Assert Equal (Rotator Orientation)", meta = ( HidePin = "ContextObject", DefaultToSelf = "ContextObject"))
+	virtual bool AssertEqual_RotatorOrientation(FRotator Actual, FRotator Expected, const FString& What, float Tolerance = 1.e-4f, const UObject* ContextObject = nullptr);
 
 	/**
 	 * Assert that the component angles of two rotators are all not equal within a small tolerance.
@@ -711,6 +724,8 @@ public:
 
 #if WITH_EDITOR
 	void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 	static void OnSelectObject(UObject* NewSelection);
@@ -722,7 +737,8 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 #if WITH_EDITOR
 	virtual bool CanChangeIsSpatiallyLoadedFlag() const override { return false; }
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const override { return false; }
+	virtual bool ActorTypeSupportsDataLayer() const override { return false; }
+	virtual bool ActorTypeSupportsExternalDataLayer() const override { return false; }
 #endif
 	// AActor interface end
 

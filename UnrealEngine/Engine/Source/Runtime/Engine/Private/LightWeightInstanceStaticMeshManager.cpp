@@ -21,9 +21,17 @@
 ALightWeightInstanceStaticMeshManager::ALightWeightInstanceStaticMeshManager(const FObjectInitializer& ObjectInitializer)
 	:Super(ObjectInitializer)
 {
-	InstancedStaticMeshComponent = CreateDefaultSubobject<UHierarchicalInstancedStaticMeshComponent>(TEXT("InstancedStaticMeshComponent0"));
-	SetRootComponent(InstancedStaticMeshComponent);
-	AddInstanceComponent(InstancedStaticMeshComponent);
+#if WITH_EDITORONLY_DATA
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	// Still create the deprecated InstancedStaticMeshComponent so the old data can be serialized during loading
+	InstancedStaticMeshComponent_DEPRECATED = CreateDefaultSubobject<UHierarchicalInstancedStaticMeshComponent>(TEXT("InstancedStaticMeshComponent0"));
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+#endif
+
+	ISMComponent = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("ISMComponent0"));
+	ISMComponent->SetRemoveSwap();
+	SetRootComponent(ISMComponent);
+	AddInstanceComponent(ISMComponent);
 
 	if (StaticMesh.IsValid())
 	{
@@ -32,6 +40,57 @@ ALightWeightInstanceStaticMeshManager::ALightWeightInstanceStaticMeshManager(con
 
 	SetInstancedStaticMeshParams();
 }
+
+#if WITH_EDITORONLY_DATA
+void ALightWeightInstanceStaticMeshManager::PostLoad()
+{
+	Super::PostLoad();
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	if (InstancedStaticMeshComponent_DEPRECATED != nullptr && InstancedStaticMeshComponent_DEPRECATED->PerInstanceSMData.Num() > 0)
+	{
+		// assume new ISM component is still empty
+		check(ISMComponent->PerInstanceSMData.Num() == 0);
+
+		// copy over serialized instance data to ISM from HISM
+		ISMComponent->SetRelativeTransform(InstancedStaticMeshComponent_DEPRECATED->GetRelativeTransform());
+		ISMComponent->SetMobility(InstancedStaticMeshComponent_DEPRECATED->Mobility);
+		ISMComponent->SetStaticMesh(InstancedStaticMeshComponent_DEPRECATED->GetStaticMesh());
+		ISMComponent->InstancingRandomSeed = InstancedStaticMeshComponent_DEPRECATED->InstancingRandomSeed;
+
+		int32 StartCullDistance, EndCullDistance;
+		InstancedStaticMeshComponent_DEPRECATED->GetCullDistances(StartCullDistance, EndCullDistance);
+		ISMComponent->SetCullDistances(StartCullDistance, EndCullDistance);
+
+		for (int32 Idx = 0; Idx < InstancedStaticMeshComponent_DEPRECATED->GetNumOverrideMaterials(); ++Idx)
+		{
+			ISMComponent->SetMaterial(Idx, InstancedStaticMeshComponent_DEPRECATED->GetMaterial(Idx));
+		}
+		for (FTransform& InstanceTransform : InstanceTransforms)
+		{
+			ISMComponent->AddInstance(InstanceTransform, /*bWorldSpace*/false);
+		}
+
+		ISMComponent->OnPostPopulatePerInstanceData();
+
+		// release all instances in the HISM
+		InstancedStaticMeshComponent_DEPRECATED->ClearInstances();
+
+		// restore the root component after destroying the old root component)
+		SetRootComponent(ISMComponent);
+
+		// all instances have been added in order of the transforms so reset the indirection lookup tables
+		DataIndicesToRenderingIndices.SetNum(InstanceTransforms.Num());
+		RenderingIndicesToDataIndices.SetNum(InstanceTransforms.Num());
+		for (int32 DataIndex = 0; DataIndex < InstanceTransforms.Num(); ++DataIndex)
+		{
+			DataIndicesToRenderingIndices[DataIndex] = DataIndex;
+			RenderingIndicesToDataIndices[DataIndex] = DataIndex;
+		}
+	}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+#endif
 
 void ALightWeightInstanceStaticMeshManager::SetRepresentedClass(UClass* ActorClass)
 {
@@ -49,27 +108,19 @@ void ALightWeightInstanceStaticMeshManager::SetRepresentedClass(UClass* ActorCla
 		ClearStaticMesh();
 	}
 
-	if (InstancedStaticMeshComponent)
+	if (ISMComponent)
 	{
-		InstancedStaticMeshComponent->OnPostLoadPerInstanceData();
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		ISMComponent->OnPostPopulatePerInstanceData();
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 }
 
-int32 ALightWeightInstanceStaticMeshManager::ConvertCollisionIndexToLightWeightIndex(int32 InIndex) const
+int32 ALightWeightInstanceStaticMeshManager::ConvertCollisionIndexToInstanceIndex(int32 InIndex, const UPrimitiveComponent* RelevantComponent) const
 {
 	if (ensureMsgf(RenderingIndicesToDataIndices.IsValidIndex(InIndex), TEXT("Invalid index [ %d ]"), InIndex))
 	{
 		return RenderingIndicesToDataIndices[InIndex];
-	}
-
-	return InIndex;
-}
-
-int32 ALightWeightInstanceStaticMeshManager::ConvertLightWeightIndexToCollisionIndex(int32 InIndex) const
-{
-	if (ensureMsgf(DataIndicesToRenderingIndices.IsValidIndex(InIndex), TEXT("Invalid index [ %d ]"), InIndex))
-	{
-		return DataIndicesToRenderingIndices[InIndex];
 	}
 
 	return InIndex;
@@ -121,10 +172,10 @@ void ALightWeightInstanceStaticMeshManager::AddInstanceToRendering(int32 DataInd
 		DataIndicesToRenderingIndices[DataIndex] = RenderingIdx;
 	}
 
-	// Update the HISMC
-	if (InstancedStaticMeshComponent)
+	// Update the ISMC
+	if (ISMComponent)
 	{
-		ensure(RenderingIdx == InstancedStaticMeshComponent->AddInstance(InstanceTransforms[DataIndex], /*bWorldSpace*/false));
+		ensure(RenderingIdx == ISMComponent->AddInstance(InstanceTransforms[DataIndex], /*bWorldSpace*/false));
 	}
 }
 
@@ -177,9 +228,9 @@ void ALightWeightInstanceStaticMeshManager::PostRemoveInstanceFromRendering()
 		int32 RenderingIndex = RenderingIndicesToBeDeleted[Idx];
 		if (RenderingIndex != INDEX_NONE)
 		{
-			if (InstancedStaticMeshComponent)
+			if (ISMComponent)
 			{
-				InstancedStaticMeshComponent->RemoveInstance(RenderingIndex);
+				ISMComponent->RemoveInstance(RenderingIndex);
 			}
 			RenderingIndicesToDataIndices.RemoveAtSwap(RenderingIndex);
 
@@ -216,9 +267,9 @@ void ALightWeightInstanceStaticMeshManager::OnRep_Transforms()
 {
 	Super::OnRep_Transforms();
 
-	if (InstancedStaticMeshComponent)
+	if (ISMComponent)
 	{
-		InstancedStaticMeshComponent->AddInstance(InstanceTransforms.Last(), /*bWorldSpace*/false);
+		ISMComponent->AddInstance(InstanceTransforms.Last(), /*bWorldSpace*/false);
 	}
 }
 
@@ -233,21 +284,21 @@ void ALightWeightInstanceStaticMeshManager::PostActorSpawn(const FActorInstanceH
 void ALightWeightInstanceStaticMeshManager::SetInstancedStaticMeshParams()
 {
 	FName CollisionProfileName(TEXT("LightWeightInstancedStaticMeshPhysics"));
-	InstancedStaticMeshComponent->SetCollisionProfileName(CollisionProfileName);
+	ISMComponent->SetCollisionProfileName(CollisionProfileName);
 
-	InstancedStaticMeshComponent->CanCharacterStepUpOn = ECB_Owner;
-	InstancedStaticMeshComponent->CastShadow = true;
-	InstancedStaticMeshComponent->bCastDynamicShadow = true;
-	InstancedStaticMeshComponent->bCastStaticShadow = true;
-	InstancedStaticMeshComponent->PrimaryComponentTick.bCanEverTick = false;
+	ISMComponent->CanCharacterStepUpOn = ECB_Owner;
+	ISMComponent->CastShadow = true;
+	ISMComponent->bCastDynamicShadow = true;
+	ISMComponent->bCastStaticShadow = true;
+	ISMComponent->PrimaryComponentTick.bCanEverTick = false;
 	// Allows updating in game, while optimizing rendering for the case that it is not modified
-	InstancedStaticMeshComponent->Mobility = EComponentMobility::Movable;
+	ISMComponent->Mobility = EComponentMobility::Movable;
 	// Allows per-instance selection in the editor
-	InstancedStaticMeshComponent->bHasPerInstanceHitProxies = true;
+	ISMComponent->bHasPerInstanceHitProxies = true;
 
-	while(InstancedStaticMeshComponent->InstancingRandomSeed == 0)
+	while(ISMComponent->InstancingRandomSeed == 0)
 	{
-		InstancedStaticMeshComponent->InstancingRandomSeed = FMath::Rand();
+		ISMComponent->InstancingRandomSeed = FMath::Rand();
 	}
 } 
 
@@ -263,25 +314,25 @@ void ALightWeightInstanceStaticMeshManager::OnStaticMeshSet()
 	Modify();
 #endif
 	
-	if (InstancedStaticMeshComponent)
+	if (ISMComponent)
 	{
-		EComponentMobility::Type Mobility = InstancedStaticMeshComponent->Mobility;
+		EComponentMobility::Type Mobility = ISMComponent->Mobility;
 		if (Mobility == EComponentMobility::Static)
 		{
-			InstancedStaticMeshComponent->SetMobility(EComponentMobility::Stationary);
-			InstancedStaticMeshComponent->SetStaticMesh(StaticMesh.Get());
-			InstancedStaticMeshComponent->SetMobility(Mobility);
+			ISMComponent->SetMobility(EComponentMobility::Stationary);
+			ISMComponent->SetStaticMesh(StaticMesh.Get());
+			ISMComponent->SetMobility(Mobility);
 		}
 		else
 		{
-			InstancedStaticMeshComponent->SetStaticMesh(StaticMesh.Get());
+			ISMComponent->SetStaticMesh(StaticMesh.Get());
 		}
 
 		if (UStaticMesh* Mesh = StaticMesh.Get())
 		{
 			for (int32 Idx = 0; Idx < Mesh->GetStaticMaterials().Num(); ++Idx)
 			{
-				InstancedStaticMeshComponent->SetMaterial(Idx, Mesh->GetMaterial(Idx));
+				ISMComponent->SetMaterial(Idx, Mesh->GetMaterial(Idx));
 			}
 		}
 	}
@@ -299,7 +350,7 @@ void ALightWeightInstanceStaticMeshManager::ClearStaticMesh()
 
 FText ALightWeightInstanceStaticMeshManager::GetSMInstanceDisplayName(const FSMInstanceId& InstanceId) const
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
 	const FText OwnerDisplayName = FText::FromString(RepresentedClass ? RepresentedClass->GetName() : AActor::GetName());
 	return FText::Format(NSLOCTEXT("LightWeightInstanceStaticMeshManager", "DisplayNameFmt", "{0} - Instance {1}"), OwnerDisplayName, InstanceId.InstanceIndex);
@@ -307,7 +358,7 @@ FText ALightWeightInstanceStaticMeshManager::GetSMInstanceDisplayName(const FSMI
 
 FText ALightWeightInstanceStaticMeshManager::GetSMInstanceTooltip(const FSMInstanceId& InstanceId) const
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 	
 	const FText OwnerDisplayPath = FText::FromString(GetPathName(GetWorld())); // stops the path at the level of the world the object is in
 	return FText::Format(NSLOCTEXT("LightWeightInstanceStaticMeshManager", "TooltipFmt", "Instance {0} on {1}"), InstanceId.InstanceIndex, OwnerDisplayPath);
@@ -315,23 +366,23 @@ FText ALightWeightInstanceStaticMeshManager::GetSMInstanceTooltip(const FSMInsta
 
 bool ALightWeightInstanceStaticMeshManager::CanEditSMInstance(const FSMInstanceId& InstanceId) const
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
-	ISMInstanceManager* InstanceManager = InstancedStaticMeshComponent;
+	ISMInstanceManager* InstanceManager = ISMComponent;
 	return InstanceManager->CanEditSMInstance(InstanceId);
 }
 
 bool ALightWeightInstanceStaticMeshManager::CanMoveSMInstance(const FSMInstanceId& InstanceId, const ETypedElementWorldType InWorldType) const
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
-	ISMInstanceManager* InstanceManager = InstancedStaticMeshComponent;
+	ISMInstanceManager* InstanceManager = ISMComponent;
 	return InstanceManager->CanMoveSMInstance(InstanceId, InWorldType);
 }
 
 bool ALightWeightInstanceStaticMeshManager::GetSMInstanceTransform(const FSMInstanceId& InstanceId, FTransform& OutInstanceTransform, bool bWorldSpace) const
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
 	if (RenderingIndicesToDataIndices.IsValidIndex(InstanceId.InstanceIndex))
 	{
@@ -345,12 +396,12 @@ bool ALightWeightInstanceStaticMeshManager::GetSMInstanceTransform(const FSMInst
 
 bool ALightWeightInstanceStaticMeshManager::SetSMInstanceTransform(const FSMInstanceId& InstanceId, const FTransform& InstanceTransform, bool bWorldSpace, bool bMarkRenderStateDirty, bool bTeleport)
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
-	if (RenderingIndicesToDataIndices.IsValidIndex(InstanceId.InstanceIndex) && InstancedStaticMeshComponent->UpdateInstanceTransform(InstanceId.InstanceIndex, InstanceTransform, bWorldSpace, bMarkRenderStateDirty, bTeleport))
+	if (RenderingIndicesToDataIndices.IsValidIndex(InstanceId.InstanceIndex) && ISMComponent->UpdateInstanceTransform(InstanceId.InstanceIndex, InstanceTransform, bWorldSpace, bMarkRenderStateDirty, bTeleport))
 	{
 		const int32 DataIndex = RenderingIndicesToDataIndices[InstanceId.InstanceIndex];
-		InstancedStaticMeshComponent->GetInstanceTransform(InstanceId.InstanceIndex, InstanceTransforms[DataIndex], /*bWorldSpace*/false);
+		ISMComponent->GetInstanceTransform(InstanceId.InstanceIndex, InstanceTransforms[DataIndex], /*bWorldSpace*/false);
 		return true;
 	}
 
@@ -359,33 +410,33 @@ bool ALightWeightInstanceStaticMeshManager::SetSMInstanceTransform(const FSMInst
 
 void ALightWeightInstanceStaticMeshManager::NotifySMInstanceMovementStarted(const FSMInstanceId& InstanceId)
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
-	ISMInstanceManager* InstanceManager = InstancedStaticMeshComponent;
+	ISMInstanceManager* InstanceManager = ISMComponent;
 	InstanceManager->NotifySMInstanceMovementStarted(InstanceId);
 }
 
 void ALightWeightInstanceStaticMeshManager::NotifySMInstanceMovementOngoing(const FSMInstanceId& InstanceId)
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
-	ISMInstanceManager* InstanceManager = InstancedStaticMeshComponent;
+	ISMInstanceManager* InstanceManager = ISMComponent;
 	InstanceManager->NotifySMInstanceMovementOngoing(InstanceId);
 }
 
 void ALightWeightInstanceStaticMeshManager::NotifySMInstanceMovementEnded(const FSMInstanceId& InstanceId)
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
-	ISMInstanceManager* InstanceManager = InstancedStaticMeshComponent;
+	ISMInstanceManager* InstanceManager = ISMComponent;
 	InstanceManager->NotifySMInstanceMovementEnded(InstanceId);
 }
 
 void ALightWeightInstanceStaticMeshManager::NotifySMInstanceSelectionChanged(const FSMInstanceId& InstanceId, const bool bIsSelected)
 {
-	check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+	check(InstanceId.ISMComponent == ISMComponent);
 
-	ISMInstanceManager* InstanceManager = InstancedStaticMeshComponent;
+	ISMInstanceManager* InstanceManager = ISMComponent;
 	InstanceManager->NotifySMInstanceSelectionChanged(InstanceId, bIsSelected);
 }
 
@@ -398,7 +449,7 @@ bool ALightWeightInstanceStaticMeshManager::DeleteSMInstances(TArrayView<const F
 	DataIndices.Sort(TGreater<int32>());
 
 	Modify();
-	InstancedStaticMeshComponent->Modify();
+	ISMComponent->Modify();
 
 	for (int32 DataIndex : DataIndices)
 	{
@@ -414,7 +465,7 @@ bool ALightWeightInstanceStaticMeshManager::DuplicateSMInstances(TArrayView<cons
 	GetLWIDataIndices(InstanceIds, DataIndices);
 
 	Modify();
-	InstancedStaticMeshComponent->Modify();
+	ISMComponent->Modify();
 
 	TArray<int32> NewDataIndices;
 	DuplicateLWIInstances(DataIndices, NewDataIndices);
@@ -422,7 +473,7 @@ bool ALightWeightInstanceStaticMeshManager::DuplicateSMInstances(TArrayView<cons
 	OutNewInstanceIds.Reset(NewDataIndices.Num());
 	for (int32 NewDataIndex : NewDataIndices)
 	{
-		OutNewInstanceIds.Add(FSMInstanceId{ InstancedStaticMeshComponent, DataIndicesToRenderingIndices[NewDataIndex] });
+		OutNewInstanceIds.Add(FSMInstanceId{ ISMComponent, DataIndicesToRenderingIndices[NewDataIndex] });
 	}
 
 	return true;
@@ -449,7 +500,7 @@ void ALightWeightInstanceStaticMeshManager::GetLWIDataIndices(TArrayView<const F
 	OutDataIndices.Reset(InstanceIds.Num());
 	for (const FSMInstanceId& InstanceId : InstanceIds)
 	{
-		check(InstanceId.ISMComponent == InstancedStaticMeshComponent);
+		check(InstanceId.ISMComponent == ISMComponent);
 		if (RenderingIndicesToDataIndices.IsValidIndex(InstanceId.InstanceIndex))
 		{
 			OutDataIndices.Add(RenderingIndicesToDataIndices[InstanceId.InstanceIndex]);

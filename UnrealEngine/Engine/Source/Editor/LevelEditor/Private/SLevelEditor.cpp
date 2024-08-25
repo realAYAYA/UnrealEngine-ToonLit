@@ -68,6 +68,7 @@
 #include "Elements/Actor/ActorElementLevelEditorCommonActionsCustomization.h"
 #include "Elements/Component/ComponentElementLevelEditorSelectionCustomization.h"
 #include "Elements/Component/ComponentElementLevelEditorCommonActionsCustomization.h"
+#include "Elements/Framework/TypedElementRegistry.h"
 #include "Elements/SMInstance/SMInstanceElementId.h"
 #include "Elements/SMInstance/SMInstanceElementLevelEditorSelectionCustomization.h"
 #include "DerivedDataEditorModule.h"
@@ -115,7 +116,7 @@ void SLevelEditor::BindCommands()
 		Actions.EditAssetNoConfirmMultiple, 
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::EditAsset_Clicked, EToolkitMode::Standalone, TWeakPtr< SLevelEditor >( SharedThis( this ) ), false ),
 		FCanExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::EditAsset_CanExecute ) );
-	
+
 	LevelEditorCommands->MapAction(
 		Actions.OpenSelectionInPropertyMatrix,
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::OpenSelectionInPropertyMatrix_Clicked ),
@@ -175,6 +176,11 @@ void SLevelEditor::BindCommands()
 	LevelEditorCommands->MapAction( 
 		FEditorViewportCommands::Get().FocusViewportToSelection, 
 		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::ExecuteExecCommand, FString( TEXT("CAMERA ALIGN ACTIVEVIEWPORTONLY") ) )
+		);
+
+	LevelEditorCommands->MapAction(
+		FEditorViewportCommands::Get().FocusOutlinerToSelection,
+		FExecuteAction::CreateStatic( &FLevelEditorActionCallbacks::OnFocusOutlinerToSelection, TWeakPtr< SLevelEditor >( SharedThis( this ) ) )
 		);
 
 	if (FPlayWorldCommands::GlobalPlayWorldActions.IsValid())
@@ -239,7 +245,12 @@ void SLevelEditor::Construct( const SLevelEditor::FArguments& InArgs)
 			{
 				GEditor->BuildReflectionCaptures();
 			}
-			World->ChangeFeatureLevel(NewFeatureLevel);
+			World->ChangeFeatureLevel(NewFeatureLevel, true, true);
+		});
+
+	PreviewPlatformChangedHandle = GEditor->OnPreviewPlatformChanged().AddLambda([this]()
+		{
+			World->ShaderPlatformChanged();
 		});
 
 	FEditorDelegates::MapChange.AddRaw(this, &SLevelEditor::HandleEditorMapChange);
@@ -405,6 +416,7 @@ SLevelEditor::~SLevelEditor()
 	if (GEngine)
 	{
 		CastChecked<UEditorEngine>(GEngine)->OnPreviewFeatureLevelChanged().Remove(PreviewFeatureLevelChangedHandle);
+		CastChecked<UEditorEngine>(GEngine)->OnPreviewPlatformChanged().Remove(PreviewPlatformChangedHandle);
 	}
 
 	if (GEditor)
@@ -838,20 +850,31 @@ TSharedRef<ISceneOutliner> SLevelEditor::CreateSceneOutliner(FName TabIdentifier
 	
 	TSharedPtr<FLevelEditorOutlinerSettings> OutlinerSettings = LevelEditorModule.GetLevelEditorOutlinerSettings();
 	OutlinerSettings->GetOutlinerFilters(InitOptions.FilterBarOptions);
-
 	InitOptions.FilterBarOptions.CategoryToExpand = OutlinerSettings->GetFilterCategory(FLevelEditorOutlinerBuiltInCategories::Common());
 
 	FSceneOutlinerModule& SceneOutlinerModule = FModuleManager::Get().LoadModuleChecked<FSceneOutlinerModule>("SceneOutliner");
-	TSharedRef<ISceneOutliner> SceneOutlinerRef = SceneOutlinerModule.CreateActorBrowser(
-		InitOptions);
+	TSharedPtr<ISceneOutliner> NewSceneOutlinerPtr;
 
+	// Check if the Typed Element Registry has registered a custom outliner factory for us to use
+	if(SceneOutlinerModule.IsCustomSceneOutlinerFactoryRegistered(UTypedElementRegistry::GetInstance()->GetFName()))
+	{
+		NewSceneOutlinerPtr = SceneOutlinerModule.CreateCustomRegisteredOutliner(UTypedElementRegistry::GetInstance()->GetFName(), InitOptions);
+	}
+	// Fallback to the regular Actor Browser otherwise
+	else
+	{
+		NewSceneOutlinerPtr = SceneOutlinerModule.CreateActorBrowser(
+			InitOptions);
+
+	}
+	
 	// Add this to the map of all outliners
-	SceneOutliners.Add(TabIdentifier, SceneOutlinerRef);
+	SceneOutliners.Add(TabIdentifier, NewSceneOutlinerPtr);
 
 	// Update the most recently used outliner
 	SetMostRecentlyUsedSceneOutliner(TabIdentifier);
 
-	return SceneOutlinerRef;
+	return NewSceneOutlinerPtr.ToSharedRef();
 }
 
 void SLevelEditor::OnExtendSceneOutlinerTabContextMenu(FMenuBuilder& InMenuBuilder)
@@ -1640,6 +1663,9 @@ TSharedRef<SWidget> SLevelEditor::RestoreContentArea( const TSharedRef<SDockTab>
 				)
 			)
 		));
+
+	FGlobalTabmanager::Get()->SetInitialLayoutSP(DefaultLayout);
+	
 	const EOutputCanBeNullptr OutputCanBeNullptr = EOutputCanBeNullptr::IfNoTabValid;
 	TArray<FString> RemovedOlderLayoutVersions;
 	const TSharedRef<FTabManager::FLayout> Layout = FLayoutSaveRestore::LoadFromConfig(GEditorLayoutIni,
@@ -1680,7 +1706,7 @@ TSharedRef<SWidget> SLevelEditor::RestoreContentArea( const TSharedRef<SDockTab>
 		// Warn user/developer
 		const FString WarningMessage = FString::Format(TEXT("Level editor layout could not be loaded from the config file {0}, trying to reset this config file to the default one."), { *GEditorLayoutIni });
 		UE_LOG(LogTemp, Warning, TEXT("%s"), *WarningMessage);
-		ensureMsgf(false, TEXT("%s Some additional testing of that layout file should be done."));
+		ensureMsgf(false, TEXT("Some additional testing of that layout file should be done."));
 	}
 	check(ContentAreaWidget.IsValid());
 	return ContentAreaWidget.ToSharedRef();
@@ -1751,8 +1777,6 @@ void SLevelEditor::RefreshEditorModeCommands()
 	{
 		FLevelEditorModesCommands::Register();
 	}
-	const IWorkspaceMenuStructure& MenuStructure = WorkspaceMenu::GetMenuStructure();
-	TSharedPtr<FTabManager> LevelEditorTabManager = LevelEditorModule.GetLevelEditorTabManager();
 
 	// We need to remap all the actions to commands.
 	const FLevelEditorModesCommands& Commands = FLevelEditorModesCommands::Get();

@@ -139,7 +139,7 @@ struct FNDIIntRenderTarget2DProxy : public FNiagaraDataInterfaceProxyRW
 		if (InstanceData.bPreviewRenderTarget && InstanceData.TransientRDGTexture)
 		{
 			FNiagaraGpuComputeDebugInterface GpuComputeDebugInterface = Context.GetComputeDispatchInterface().GetGpuComputeDebugInterface();
-			GpuComputeDebugInterface.AddTexture(Context.GetGraphBuilder(), Context.GetSystemInstanceID(), SourceDIName, InstanceData.TransientRDGTexture);
+			GpuComputeDebugInterface.AddTexture(Context.GetGraphBuilder(), Context.GetSystemInstanceID(), SourceDIName, InstanceData.TransientRDGTexture, InstanceData.PreviewDisplayRange);
 		}
 #endif
 		if (Context.IsFinalPostSimulate())
@@ -187,9 +187,10 @@ void UNiagaraDataInterfaceIntRenderTarget2D::PostInitProperties()
 	}
 }
 
-void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	const int32 EmitterSystemOnlyBitmask = ENiagaraScriptUsageMask::Emitter | ENiagaraScriptUsageMask::System;
 	OutFunctions.Reserve(OutFunctions.Num() + NDIIntRenderTarget2DLocal::NumFunctions);
@@ -208,10 +209,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bWriteFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("GetValueDesc", "Gets the value from the render target at the pixel offset");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	{
 		FNiagaraFunctionSignature& Sig = OutFunctions.AddDefaulted_GetRef();
@@ -228,10 +227,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bWriteFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("SetValueDesc", "Sets the value on the render target at the pixel offset.");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	{
 		FNiagaraFunctionSignature& Sig = OutFunctions.AddDefaulted_GetRef();
@@ -250,10 +247,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bWriteFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("AtomicAddDesc", "Atomic min the value to the pixel at the offset, returns the current & previous values.  This opertion is thread safe.");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	////static const FName AtomicAndFunctionName("AtomicAnd");
 	{
@@ -274,10 +269,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bWriteFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("AtomicCASFunctionDesc", "Compares the pixel value against the comparison value, if they are equal the value is replaced.  Original Value is the pixel value before the operation completes.  This opertion is thread safe.");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	////static const FName AtomicCSFunctionName("AtomicCompareStore");
 	////static const FName AtomicExchangeFunctionName("AtomicExchange");
@@ -298,10 +291,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bWriteFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("AtomicMaxDesc", "Atomic max the value to the pixel at the offset, returns the current & previous values.  This opertion is thread safe.");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	{
 		FNiagaraFunctionSignature& Sig = OutFunctions.AddDefaulted_GetRef();
@@ -320,10 +311,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bWriteFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("AtomicMinDesc", "Atomic min the value to the pixel at the offset, returns the current & previous values.  This opertion is thread safe.");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	////static const FName AtomicOrFunctionName("AtomicOr");
 	////static const FName AtomicXorunctionName("AtomicXor");
@@ -339,10 +328,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bRequiresContext = false;
 		Sig.bSupportsCPU = true;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("GetSizeDesc", "Gets the size of the rendertarget");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	{
 		FNiagaraFunctionSignature& Sig = OutFunctions.AddDefaulted_GetRef();
@@ -358,10 +345,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bRequiresExecPin = true;
 		Sig.bSupportsCPU = true;
 		Sig.bSupportsGPU = false;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("SetSizeDesc", "Sets the size of the rendertarget");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 
 	{
@@ -376,10 +361,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bRequiresContext = false;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("LinearToIndexDesc", "Converts a linear index into a pixel coordinate");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	{
 		FNiagaraFunctionSignature& Sig = OutFunctions.AddDefaulted_GetRef();
@@ -392,10 +375,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bRequiresContext = false;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("LinearToUVDesc", "Converts a linear index into a UV coordinate");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 
 	{
@@ -409,10 +390,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bRequiresContext = false;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("ExecToIndexDesc", "Returns the execution index as a pixel coordinate");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 	{
 		FNiagaraFunctionSignature& Sig = OutFunctions.AddDefaulted_GetRef();
@@ -424,14 +403,11 @@ void UNiagaraDataInterfaceIntRenderTarget2D::GetFunctions(TArray<FNiagaraFunctio
 		Sig.bRequiresContext = false;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = LOCTEXT("ExecToUVDesc", "Returns the execution index as a UV coordinate");
 		Sig.FunctionVersion = NDIIntRenderTarget2DLocal::FFunctionVersion::LatestVersion;
-#endif
 	}
 }
 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceIntRenderTarget2D::UpgradeFunctionCall(FNiagaraFunctionSignature& FunctionSignature)
 {
 	bool bWasChanged = false;
@@ -587,6 +563,8 @@ void UNiagaraDataInterfaceIntRenderTarget2D::SetShaderParameters(const FNiagaraD
 				InstanceData.TransientRDGTexture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(InstanceData.TextureRHI, TEXT("NiagaraIntRenderTarget2D")));
 			}
 			InstanceData.TransientRDGUAV = GraphBuilder.CreateUAV(InstanceData.TransientRDGTexture);
+
+			GraphBuilder.UseInternalAccessMode(InstanceData.TransientRDGTexture);
 			Context.GetRDGExternalAccessQueue().Add(InstanceData.TransientRDGTexture);
 		}
 

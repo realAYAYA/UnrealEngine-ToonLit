@@ -122,7 +122,7 @@ CefResourceRequestHandler::ReturnValue FCEFResourceContextHandler::OnBeforeResou
 	}
 
 	// Current thread is IO thread. We need to invoke BrowserWindow->GetResourceContent on the UI (aka Game) thread:
-	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=]()
+	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=, this]()
 	{
 		const FString LanguageHeaderText(TEXT("Accept-Language"));
 		const FString LocaleCode = FWebBrowserSingleton::GetCurrentLocaleCode();

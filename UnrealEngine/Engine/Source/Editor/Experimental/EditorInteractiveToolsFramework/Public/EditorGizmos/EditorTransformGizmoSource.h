@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
 #include "EditorGizmos/TransformGizmoInterfaces.h"
 #include "Math/Axis.h"
 #include "ToolContextInterfaces.h"
@@ -14,6 +15,7 @@
 
 #include "EditorTransformGizmoSource.generated.h"
 
+class UEditorTransformGizmoContextObject;
 class FEditorModeTools;
 class FEditorViewportClient;
 class FSceneView;
@@ -40,44 +42,49 @@ public:
 	/**
 	 * @return The current display mode for the Editor transform gizmo
 	 */
-	virtual EGizmoTransformMode GetGizmoMode() const;
+	virtual EGizmoTransformMode GetGizmoMode() const override;
 
 	/**
 	 * @return The current axes to draw for the specified mode
 	 */
-	virtual EAxisList::Type GetGizmoAxisToDraw(EGizmoTransformMode InWidgetMode) const;
+	virtual EAxisList::Type GetGizmoAxisToDraw(EGizmoTransformMode InWidgetMode) const override;
 
 	/**
 	 * @return The coordinate system space (world or local) to display the widget in
 	 */
-	virtual EToolContextCoordinateSystem GetGizmoCoordSystemSpace() const;
+	virtual EToolContextCoordinateSystem GetGizmoCoordSystemSpace() const override;
 
 	/**
 	 * Returns a scale factor for the gizmo
 	 */
-	virtual float GetGizmoScale() const;
+	virtual float GetGizmoScale() const override;
 
 	/**
 	 * Whether the gizmo is visible
 	 */
-	virtual bool GetVisible() const;
+	virtual bool GetVisible() const override;
+
+	/* 
+	 * Returns whether the gizmo can interact.
+	 * Note that this can be true even if the gizmo is hidden to support indirect manipulation in game mode.
+	 */
+	virtual bool CanInteract() const override;
 
 	/**
  	 * Get current scale type
 	 */
-	virtual EGizmoTransformScaleType GetScaleType() const;
+	virtual EGizmoTransformScaleType GetScaleType() const override;
 
-public:
-	static UEditorTransformGizmoSource* Construct(
-		UObject* Outer = (UObject*)GetTransientPackage())
-	{
-		return NewObject<UEditorTransformGizmoSource>(Outer);
-	}
+	static UEditorTransformGizmoSource* CreateNew(
+		UObject* Outer = (UObject*)GetTransientPackage(),
+		const UEditorTransformGizmoContextObject* InContext = nullptr);
 
 protected:
 
-	FEditorModeTools& GetModeTools() const;
+	const FEditorModeTools& GetModeTools() const;
 
-	FEditorViewportClient* GetViewportClient() const;
+	const FEditorViewportClient* GetViewportClient() const;
+	
+	TWeakObjectPtr<const UEditorTransformGizmoContextObject> WeakContext = nullptr;
 };
 

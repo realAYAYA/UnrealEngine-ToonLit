@@ -9,6 +9,7 @@
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "GraphEditorSettings.h"
+#include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "RandomizeColumnEditor"
 
@@ -18,7 +19,12 @@ namespace UE::ChooserEditor
 TSharedRef<SWidget> CreateRandomizeColumnWidget(UChooserTable* Chooser, FChooserColumnBase* Column, int Row)
 {
 	FRandomizeColumn* RandomizeColumn = static_cast<FRandomizeColumn*>(Column);
-	if (Row < 0)
+	
+	if (Row == ColumnWidget_SpecialIndex_Fallback)
+	{
+		return SNullWidget::NullWidget;
+	}
+	if (Row == ColumnWidget_SpecialIndex_Header)
 	{
 		const FSlateBrush* ColumnIcon = FAppStyle::Get().GetBrush("Icons.Help");
 		
@@ -75,27 +81,8 @@ TSharedRef<SWidget> CreateRandomizeColumnWidget(UChooserTable* Chooser, FChooser
 		+ SHorizontalBox::Slot().FillWidth(1);
 }
 	
-TSharedRef<SWidget> CreateRandomizePropertyWidget(bool bReadOnly, UObject* TransactionObject, void* Value, UClass* ResultBaseClass, FChooserWidgetValueChanged ValueChanged)
-{
-	IHasContextClass* HasContextClass = Cast<IHasContextClass>(TransactionObject);
-
-	FRandomizeContextProperty* ContextProperty = reinterpret_cast<FRandomizeContextProperty*>(Value);
-
-	return SNew(SPropertyAccessChainWidget).ContextClassOwner(HasContextClass).AllowFunctions(true).BindingColor("StructPinTypeColor").TypeFilter("FChooserRandomizationContext")
-	.PropertyBindingValue(&ContextProperty->Binding)
-	.OnAddBinding_Lambda(
-		[ContextProperty, TransactionObject, ValueChanged](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
-		{
-			const FScopedTransaction Transaction(NSLOCTEXT("ContextPropertyWidget", "Change Property Binding", "Change Property Binding"));
-			TransactionObject->Modify(true);
-			ContextProperty->SetBinding(InBindingChain);
-			ValueChanged.ExecuteIfBound();
-		});
-}
-	
 void RegisterRandomizeWidgets()
 {
-	FObjectChooserWidgetFactories::RegisterWidgetCreator(FRandomizeContextProperty::StaticStruct(), CreateRandomizePropertyWidget);
 	FObjectChooserWidgetFactories::RegisterColumnWidgetCreator(FRandomizeColumn::StaticStruct(), CreateRandomizeColumnWidget);
 }
 	

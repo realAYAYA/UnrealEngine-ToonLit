@@ -50,9 +50,6 @@ public:
 	/** Marks an object as dirty. Assumes Init() has been called. */
 	NETCORE_API static void MarkNetObjectStateDirty(FNetHandle);
 
-	/** Returns true if an object has been marked as dirty since the last reset. Assumes Init() has been called. */
-	NETCORE_API static bool IsNetObjectStateDirty(FNetHandle);
-
 	/** Create a poller which is assumed to call PollDirtyNetObjects(). Assumes Init() has been called. */
 	NETCORE_API static FPollHandle CreatePoller();
 
@@ -61,7 +58,12 @@ public:
 	 * A matching call to ResetDirtyNetObjects() is required but should not be called until all pollers have had the chance to call GetDirtyNetObjects().
 	 * Assumes Init() has been called.
 	 */
-	NETCORE_API static const TSet<FNetHandle>& GetDirtyNetObjects(const FPollHandle&);
+	NETCORE_API static const TSet<FNetHandle>& GetDirtyNetObjects(const FPollHandle& Handle);
+
+	/**
+	 * Detect any updates to the dirty list until all pollers have gathered and reset the list.
+	 */
+	NETCORE_API static void LockDirtyListUntilReset(const FPollHandle& Handle);
 
 	/**
 	 * Clears the set of dirty net objects. GetDirtyNetObjects() must be called first. Some synchronization is needed between pollers such that all pollers have the chance to call GetDirtyNetObjects() first.
@@ -69,6 +71,12 @@ public:
 	 * Assumes Init() has been called.
 	 */
 	NETCORE_API static void ResetDirtyNetObjects(const FPollHandle&);
+
+	/**
+	 * Reset the list of dirty net objects but only if there is a single poller registered in the system.
+	 * Returns true if the reset was executed.
+	 */
+	NETCORE_API static bool ResetDirtyNetObjectsIfSinglePoller(const FPollHandle&);
 
 protected:
 	friend FNetCoreModule;

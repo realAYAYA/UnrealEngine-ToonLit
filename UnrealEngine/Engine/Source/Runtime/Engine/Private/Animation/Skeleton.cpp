@@ -8,6 +8,7 @@
 
 #include "AnimationSequenceCompiler.h"
 #include "Animation/AnimData/AnimDataModel.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/LinkerLoad.h"
 #include "Engine/AssetUserData.h"
 #include "Modules/ModuleManager.h"
@@ -17,7 +18,6 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/ARFilter.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "Animation/Rig.h"
 #include "Animation/BlendProfile.h"
 #include "Engine/SkinnedAsset.h"
 #include "Logging/MessageLog.h"
@@ -53,8 +53,6 @@ const FString USkeleton::CurveTagDelimiter = TEXT(";");
 
 const FName USkeleton::CompatibleSkeletonsNameTag = FName(TEXT("CompatibleSkeletonList"));
 const FString USkeleton::CompatibleSkeletonsTagDelimiter = TEXT(";");
-
-const FName USkeleton::RigTag = FName(TEXT("Rig"));
 #endif 
 
 #if WITH_EDITORONLY_DATA
@@ -67,6 +65,8 @@ const FName USkeleton::AnimTrackCurveMappingName = FName(TEXT("AnimationTrackCur
 
 const FName FAnimSlotGroup::DefaultGroupName = FName(TEXT("DefaultGroup"));
 const FName FAnimSlotGroup::DefaultSlotName = FName(TEXT("DefaultSlot"));
+
+TAutoConsoleVariable<bool> CVarAllowIncompatibleSkeletalMeshMerge(TEXT("a.Skeleton.AllowIncompatibleSkeletalMeshMerge"), 0, TEXT("When importing or otherwise merging in skeletal mesh bones, allow 'incompatible' hierarchies with bone insertions."));
 
 void SerializeReferencePose(FArchive& Ar, FReferencePose& P, UObject* Outer)
 {
@@ -143,8 +143,10 @@ bool USkeleton::IsCompatibleForEditor(const FAssetData& AssetData, const TCHAR* 
 bool USkeleton::IsCompatibleForEditor(const FString& SkeletonAssetString) const
 {
 	// First check against itself.
-	const FString SkeletonString = FAssetData(this).GetExportTextName();
-	if (SkeletonString == SkeletonAssetString)
+	TStringBuilder<128> SkeletonStringBuilder;
+	FAssetData(this, FAssetData::ECreationFlags::SkipAssetRegistryTagsGathering).GetExportTextName(SkeletonStringBuilder);
+	const TCHAR* SkeletonString = SkeletonStringBuilder.ToString();
+	if (SkeletonAssetString == SkeletonString)
 	{
 		return true;
 	}
@@ -156,18 +158,22 @@ bool USkeleton::IsCompatibleForEditor(const FString& SkeletonAssetString) const
 	}
 
 	// Now check against the list of compatible skeletons and see if we're dealing with the same asset.
-	const FSoftObjectPath InPath(SkeletonAssetString);
-	for (const TSoftObjectPtr<USkeleton>& CompatibleSkeleton : CompatibleSkeletons)
+	if(CompatibleSkeletons.Num() > 0)
 	{
-		if (CompatibleSkeleton.ToSoftObjectPath() == InPath)
+		const FSoftObjectPath InPath(SkeletonAssetString);
+		for (const TSoftObjectPtr<USkeleton>& CompatibleSkeleton : CompatibleSkeletons)
 		{
-			return true;
+			if (CompatibleSkeleton.ToSoftObjectPath() == InPath)
+			{
+				return true;
+			}
 		}
 	}
 
 	// Check if the other skeleton is compatible with this via the asset registry
 	const IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-	const FAssetData SkeletonAssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(*SkeletonAssetString));	
+	constexpr bool bIncludeOnlyOnDiskAssets = true;
+	const FAssetData SkeletonAssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(*SkeletonAssetString), bIncludeOnlyOnDiskAssets);
 	const FString TagValue = SkeletonAssetData.GetTagValueRef<FString>(USkeleton::CompatibleSkeletonsNameTag);
 	if (!TagValue.IsEmpty())
 	{
@@ -176,7 +182,7 @@ bool USkeleton::IsCompatibleForEditor(const FString& SkeletonAssetString) const
 		{
 			for (const FString& OtherCompatibleSkeleton : OtherCompatibleSkeletons)
 			{
-				if (SkeletonString == OtherCompatibleSkeleton)
+				if (OtherCompatibleSkeleton == SkeletonString)
 				{
 					return true;
 				}
@@ -395,10 +401,16 @@ void USkeleton::PostLoad()
 			}
 		}
 	}
+	else
+	{
+		// Ensure we have curve metadata, even if empty, so we can correctly pick up older objects in the asset registry
+		GetOrCreateCurveMetaDataObject();
+	}
 #endif
 
 	// refresh linked bone indices
 	RefreshSkeletonMetaData();
+
 }
 
 void USkeleton::PostDuplicate(bool bDuplicateForPIE)
@@ -436,7 +448,7 @@ void USkeleton::Serialize( FArchive& Ar )
 
 			FName RetargetSourceName;
 			FReferencePose RetargetSource;
-			AnimRetargetSources.Empty();
+			AnimRetargetSources.Empty(NumOfRetargetSources);
 			for (int32 Index=0; Index<NumOfRetargetSources; ++Index)
 			{
 				Ar << RetargetSourceName;
@@ -512,9 +524,7 @@ void USkeleton::Serialize( FArchive& Ar )
 		}
 	}
 
-	// This is crashing when live coding in debug - the ObjectReferenceCollector 
-	// is multithreaded and so I assume that is causing some subtle problem
-	if (!Ar.IsObjectReferenceCollector())
+	if (Ar.IsLoading())
 	{
 		const bool bRebuildNameMap = false;
 		ReferenceSkeleton.RebuildRefSkeleton(this, bRebuildNameMap);
@@ -611,6 +621,7 @@ bool USkeleton::RenameMarkerName(FName InOldName, FName InNewName)
 
 bool USkeleton::DoesParentChainMatch(int32 StartBoneIndex, const USkinnedAsset* InSkinnedAsset) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USkeleton::DoesParentChainMatch);
 	const FReferenceSkeleton& SkeletonRefSkel = ReferenceSkeleton;
 	const FReferenceSkeleton& MeshRefSkel = InSkinnedAsset->GetRefSkeleton();
 
@@ -656,6 +667,7 @@ bool USkeleton::DoesParentChainMatch(int32 StartBoneIndex, const USkinnedAsset* 
 
 bool USkeleton::IsCompatibleMesh(const USkinnedAsset* InSkinnedAsset, bool bDoParentChainCheck) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USkeleton::IsCompatibleMesh);
 	// at least % of bone should match 
 	int32 NumOfBoneMatches = 0;
 
@@ -732,26 +744,60 @@ bool USkeleton::IsCompatibleMesh(const USkinnedAsset* InSkinnedAsset, bool bDoPa
 
 void USkeleton::ClearCacheData()
 {
+	{
+		FRWScopeLock Lock(SkinnedAssetLinkupCacheLock, SLT_Write);
+		SkinnedAssetLinkupCache.Empty();
+	}
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FScopeLock ScopeLock(&LinkupCacheLock);
 	LinkupCache.Empty();
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	SkelMesh2LinkupCache.Empty();
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	SkinnedAsset2LinkupCache.Empty();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
+const FSkeletonToMeshLinkup& USkeleton::FindOrAddMeshLinkupData(const USkinnedAsset* InSkinnedAsset)
+{
+	const TUniquePtr<FSkeletonToMeshLinkup>* SkeletonToMeshLinkupPtr = nullptr;
+
+	{
+		FRWScopeLock Lock(SkinnedAssetLinkupCacheLock, SLT_ReadOnly);
+		SkeletonToMeshLinkupPtr = SkinnedAssetLinkupCache.Find(InSkinnedAsset);
+	}
+
+	return (SkeletonToMeshLinkupPtr != nullptr)
+		? *SkeletonToMeshLinkupPtr->Get()
+		: AddMeshLinkupData(InSkinnedAsset);
+}
+
+const FSkeletonToMeshLinkup& USkeleton::AddMeshLinkupData(const USkinnedAsset* InSkinnedAsset)
+{
+	TUniquePtr<FSkeletonToMeshLinkup> TmpLinkup = MakeUnique<FSkeletonToMeshLinkup>();
+	BuildLinkupData(InSkinnedAsset, *TmpLinkup.Get());
+
+	{
+		FRWScopeLock Lock(SkinnedAssetLinkupCacheLock, SLT_Write);
+		return *SkinnedAssetLinkupCache.Add(TObjectKey<USkinnedAsset>(InSkinnedAsset), MoveTemp(TmpLinkup)).Get();
+	}
 }
 
 int32 USkeleton::GetMeshLinkupIndex(const USkinnedAsset* InSkinnedAsset)
 {
 	int32* IndexPtr = nullptr;
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FScopeLock ScopeLock(&LinkupCacheLock);
 		IndexPtr = SkinnedAsset2LinkupCache.Find(MakeWeakObjectPtr(const_cast<USkinnedAsset*>(InSkinnedAsset)));
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 	int32 LinkupIndex = INDEX_NONE;
 
 	if ( IndexPtr == NULL )
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		LinkupIndex = BuildLinkup(InSkinnedAsset);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 	else
 	{
@@ -759,9 +805,11 @@ int32 USkeleton::GetMeshLinkupIndex(const USkinnedAsset* InSkinnedAsset)
 	}
 
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FScopeLock ScopeLock(&LinkupCacheLock);
 		// make sure it's not out of range
 		check(LinkupIndex < LinkupCache.Num());
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	return LinkupIndex;
@@ -769,25 +817,51 @@ int32 USkeleton::GetMeshLinkupIndex(const USkinnedAsset* InSkinnedAsset)
 
 void USkeleton::RemoveLinkup(const USkinnedAsset* InSkinnedAsset)
 {
-	FScopeLock ScopeLock(&LinkupCacheLock);
+	{
+		FRWScopeLock Lock(SkinnedAssetLinkupCacheLock, SLT_Write);
+		SkinnedAssetLinkupCache.Remove(InSkinnedAsset);
+	}
+
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FScopeLock ScopeLock(&LinkupCacheLock);
 	if (const USkeletalMesh* const InSkelMesh = Cast<const USkeletalMesh>(InSkinnedAsset))
 	{
 		SkelMesh2LinkupCache.Remove(MakeWeakObjectPtr(const_cast<USkeletalMesh*>(InSkelMesh)));
 	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	SkinnedAsset2LinkupCache.Remove(MakeWeakObjectPtr(const_cast<USkinnedAsset*>(InSkinnedAsset)));
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 int32 USkeleton::BuildLinkup(const USkinnedAsset* InSkinnedAsset)
 {
-	const FReferenceSkeleton& SkeletonRefSkel = ReferenceSkeleton;
-	const FReferenceSkeleton& MeshRefSkel = InSkinnedAsset->GetRefSkeleton();
-
 	// @todoanim : need to refresh NULL SkeletalMeshes from Cache
 	// since now they're autoweak pointer, they will go away if not used
 	// so whenever map transition happens, this links will need to clear up
 	FSkeletonToMeshLinkup NewMeshLinkup;
+
+	BuildLinkupData(InSkinnedAsset, NewMeshLinkup);
+
+	int32 NewIndex = INDEX_NONE;
+	//LinkupCache lock scope
+	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		FScopeLock ScopeLock(&LinkupCacheLock);
+		NewIndex = LinkupCache.Add(NewMeshLinkup);
+		check(NewIndex != INDEX_NONE);
+			if (const USkeletalMesh* const InSkelMesh = Cast<const USkeletalMesh>(InSkinnedAsset))
+			{
+				SkelMesh2LinkupCache.Add(MakeWeakObjectPtr(const_cast<USkeletalMesh*>(InSkelMesh)), NewIndex);
+			}
+		SkinnedAsset2LinkupCache.Add(MakeWeakObjectPtr(const_cast<USkinnedAsset*>(InSkinnedAsset)), NewIndex);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+	return NewIndex;
+}
+
+void USkeleton::BuildLinkupData(const USkinnedAsset* InSkinnedAsset, FSkeletonToMeshLinkup& NewMeshLinkup)
+{
+	const FReferenceSkeleton& SkeletonRefSkel = ReferenceSkeleton;
+	const FReferenceSkeleton& MeshRefSkel = InSkinnedAsset->GetRefSkeleton();
 
 	// First, make sure the Skeleton has all the bones the SkeletalMesh possesses.
 	// This can get out of sync if a mesh was imported on that Skeleton, but the Skeleton was not saved.
@@ -801,11 +875,12 @@ int32 USkeleton::BuildLinkup(const USkinnedAsset* InSkinnedAsset)
 		const FName MeshBoneName = MeshRefSkel.GetBoneName(MeshBoneIndex);
 		int32 SkeletonBoneIndex = SkeletonRefSkel.FindBoneIndex(MeshBoneName);
 
-#if WITH_EDITOR
-		// If we're in editor, and skeleton is missing a bone, fix it.
-		// not currently supported in-game.
 		if (SkeletonBoneIndex == INDEX_NONE)
 		{
+#if WITH_EDITOR
+			// If we're in editor, and skeleton is missing a bone, fix it.
+			// not currently supported in-game.
+
 			static FName NAME_LoadErrors("LoadErrors");
 			FMessageLog LoadErrors(NAME_LoadErrors);
 
@@ -822,12 +897,12 @@ int32 USkeleton::BuildLinkup(const USkinnedAsset* InSkinnedAsset)
 
 			// Fix missing bone.
 			SkeletonBoneIndex = SkeletonRefSkel.FindBoneIndex(MeshBoneName);
-		}
 #else
-		// If we're not in editor, we still want to know which skeleton is missing a bone.
-		ensureMsgf(SkeletonBoneIndex != INDEX_NONE, TEXT("USkeleton::BuildLinkup: The Skeleton %s, is missing bones that SkeletalMesh %s needs. MeshBoneName %s"),
+			// If we're not in editor, we still want to know which skeleton is missing a bone.
+			UE_LOG(LogAnimation, Error, TEXT("USkeleton::BuildLinkup: The Skeleton %s, is missing bones that SkeletalMesh %s needs. MeshBoneName %s"),
 				*GetNameSafe(this), *GetNameSafe(InSkinnedAsset), *MeshBoneName.ToString());
 #endif
+		}
 
 		NewMeshLinkup.MeshToSkeletonTable[MeshBoneIndex] = SkeletonBoneIndex;
 	}
@@ -841,22 +916,6 @@ int32 USkeleton::BuildLinkup(const USkinnedAsset* InSkinnedAsset)
 		const int32 MeshBoneIndex = MeshRefSkel.FindBoneIndex( SkeletonRefSkel.GetBoneName(SkeletonBoneIndex) );
 		NewMeshLinkup.SkeletonToMeshTable[SkeletonBoneIndex] = MeshBoneIndex;
 	}
-
-	int32 NewIndex = INDEX_NONE;
-	//LinkupCache lock scope
-	{
-		FScopeLock ScopeLock(&LinkupCacheLock);
-		NewIndex = LinkupCache.Add(NewMeshLinkup);
-		check(NewIndex != INDEX_NONE);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		if (const USkeletalMesh* const InSkelMesh = Cast<const USkeletalMesh>(InSkinnedAsset))
-		{
-			SkelMesh2LinkupCache.Add(MakeWeakObjectPtr(const_cast<USkeletalMesh*>(InSkelMesh)), NewIndex);
-		}
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-		SkinnedAsset2LinkupCache.Add(MakeWeakObjectPtr(const_cast<USkinnedAsset*>(InSkinnedAsset)), NewIndex);
-	}
-	return NewIndex;
 }
 
 
@@ -865,7 +924,7 @@ void USkeleton::RebuildLinkup(const USkinnedAsset* InSkinnedAsset)
 	// remove the key
 	RemoveLinkup(InSkinnedAsset);
 	// build new one
-	BuildLinkup(InSkinnedAsset);
+	AddMeshLinkupData(InSkinnedAsset);
 }
 
 void USkeleton::UpdateReferencePoseFromMesh(const USkinnedAsset* InSkinnedAsset)
@@ -902,8 +961,9 @@ bool USkeleton::RecreateBoneTree(USkinnedAsset* InSkinnedAsset)
 	return false;
 }
 
-bool USkeleton::MergeAllBonesToBoneTree(const USkinnedAsset* InSkinnedAsset)
+bool USkeleton::MergeAllBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, bool bShowProgress /*= true*/)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USkeleton::MergeAllBonesToBoneTree);
 	if( InSkinnedAsset )
 	{
 		TArray<int32> RequiredBoneIndices;
@@ -919,7 +979,7 @@ bool USkeleton::MergeAllBonesToBoneTree(const USkinnedAsset* InSkinnedAsset)
 		if( RequiredBoneIndices.Num() > 0 )
 		{
 			// merge bones to the selected skeleton
-			return MergeBonesToBoneTree( InSkinnedAsset, RequiredBoneIndices );
+			return MergeBonesToBoneTree( InSkinnedAsset, RequiredBoneIndices, bShowProgress);
 		}
 	}
 
@@ -928,6 +988,7 @@ bool USkeleton::MergeAllBonesToBoneTree(const USkinnedAsset* InSkinnedAsset)
 
 bool USkeleton::CreateReferenceSkeletonFromMesh(const USkinnedAsset* InSkinnedAsset, const TArray<int32> & RequiredRefBones)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USkeleton::CreateReferenceSkeletonFromMesh);
 	// Filter list, we only want bones that have their parents present in this array.
 	TArray<int32> FilteredRequiredBones; 
 	FAnimationRuntime::ExcludeBonesWithNoParents(RequiredRefBones, InSkinnedAsset->GetRefSkeleton(), FilteredRequiredBones);
@@ -967,11 +1028,12 @@ bool USkeleton::CreateReferenceSkeletonFromMesh(const USkinnedAsset* InSkinnedAs
 }
 
 
-bool USkeleton::MergeBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, const TArray<int32> & RequiredRefBones)
+bool USkeleton::MergeBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, const TArray<int32> & RequiredRefBones, bool bShowProgress /*= true*/)
 {
 	// see if it needs all animation data to remap - only happens when bone structure CHANGED - added
 	bool bSuccess = false;
 	bool bShouldHandleHierarchyChange = false;
+
 	// clear cache data since it won't work anymore once this is done
 	ClearCacheData();
 
@@ -983,37 +1045,93 @@ bool USkeleton::MergeBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, const 
 	}
 	else
 	{
-		// can we play? - hierarchy matches
-		if( IsCompatibleMesh(InSkinnedAsset) )
+		// Check if we can merge in the bones
+		const bool bDoParentChainCheck = !CVarAllowIncompatibleSkeletalMeshMerge.GetValueOnGameThread();
+		if( IsCompatibleMesh(InSkinnedAsset, bDoParentChainCheck) )
 		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(USkeleton::MergeBonesToBoneTree::CompatibleBranch);
 			// Exclude bones who do not have a parent.
 			TArray<int32> FilteredRequiredBones;
 			FAnimationRuntime::ExcludeBonesWithNoParents(RequiredRefBones, InSkinnedAsset->GetRefSkeleton(), FilteredRequiredBones);
 
-			FReferenceSkeletonModifier RefSkelModifier(ReferenceSkeleton, this);
-
-			for (int32 Index=0; Index<FilteredRequiredBones.Num(); Index++)
+			// Two modifier passes: add bones that dont already exist, then set bone parents that have changed
 			{
-				const int32& MeshBoneIndex = FilteredRequiredBones[Index];
-				const int32& SkeletonBoneIndex = ReferenceSkeleton.FindRawBoneIndex(InSkinnedAsset->GetRefSkeleton().GetBoneName(MeshBoneIndex));
-				
-				// Bone doesn't already exist. Add it.
-				if( SkeletonBoneIndex == INDEX_NONE )
-				{
-					FMeshBoneInfo NewMeshBoneInfo = InSkinnedAsset->GetRefSkeleton().GetRefBoneInfo()[MeshBoneIndex];
-					// Fix up ParentIndex for our new Skeleton.
-					if( ReferenceSkeleton.GetRawBoneNum() == 0 )
-					{
-						NewMeshBoneInfo.ParentIndex = INDEX_NONE; // root
-					}
-					else
-					{
-						NewMeshBoneInfo.ParentIndex = ReferenceSkeleton.FindRawBoneIndex(InSkinnedAsset->GetRefSkeleton().GetBoneName(InSkinnedAsset->GetRefSkeleton().GetParentIndex(MeshBoneIndex)));
-					}
+				FReferenceSkeletonModifier RefSkelModifier(ReferenceSkeleton, this);
 
-					RefSkelModifier.Add(NewMeshBoneInfo, InSkinnedAsset->GetRefSkeleton().GetRefBonePose()[MeshBoneIndex]);
-					BoneTree.AddZeroed(1);
-					bShouldHandleHierarchyChange = true;
+				// Check for bone's existence
+				for (const int32 MeshBoneIndex : FilteredRequiredBones)
+				{
+					const int32 SkeletonBoneIndex = ReferenceSkeleton.FindRawBoneIndex(InSkinnedAsset->GetRefSkeleton().GetBoneName(MeshBoneIndex));
+					
+					// Bone doesn't already exist. Add it.
+					if( SkeletonBoneIndex == INDEX_NONE )
+					{
+						FMeshBoneInfo NewMeshBoneInfo = InSkinnedAsset->GetRefSkeleton().GetRefBoneInfo()[MeshBoneIndex];
+						// Fix up ParentIndex for our new Skeleton.
+						if( ReferenceSkeleton.GetRawBoneNum() == 0 )
+						{
+							NewMeshBoneInfo.ParentIndex = INDEX_NONE; // root
+						}
+						else
+						{
+							NewMeshBoneInfo.ParentIndex = ReferenceSkeleton.FindRawBoneIndex(InSkinnedAsset->GetRefSkeleton().GetBoneName(InSkinnedAsset->GetRefSkeleton().GetParentIndex(MeshBoneIndex)));
+						}
+
+						RefSkelModifier.Add(NewMeshBoneInfo, InSkinnedAsset->GetRefSkeleton().GetRefBonePose()[MeshBoneIndex]);
+						BoneTree.AddDefaulted(1);
+						bShouldHandleHierarchyChange = true;
+					}
+				}
+			}
+
+			{
+				FReferenceSkeletonModifier RefSkelModifier(ReferenceSkeleton, this);
+
+				TMap<FName, FBoneNode> NameToBoneNode;
+				const int32 NumBones = BoneTree.Num();
+				check(NumBones == ReferenceSkeleton.GetRawRefBoneInfo().Num());
+
+				// Check for different parents
+				for (const int32 MeshBoneIndex : FilteredRequiredBones)
+				{
+					const FName BoneName = InSkinnedAsset->GetRefSkeleton().GetBoneName(MeshBoneIndex);
+					const int32 SkeletonBoneIndex = ReferenceSkeleton.FindRawBoneIndex(BoneName);
+
+					if(SkeletonBoneIndex != INDEX_NONE)
+					{
+						// Bone exists, check if it is in the same place in the hierarchy
+						const int32 MeshParentIndex = InSkinnedAsset->GetRefSkeleton().GetParentIndex(MeshBoneIndex);
+						const int32 SkeletonParentIndex = ReferenceSkeleton.GetRawParentIndex(SkeletonBoneIndex);
+						const FName MeshParentName = MeshParentIndex != INDEX_NONE ? InSkinnedAsset->GetRefSkeleton().GetBoneName(MeshParentIndex) : NAME_None;
+						const FName SkeletonParentName = SkeletonParentIndex != INDEX_NONE ? ReferenceSkeleton.GetRawRefBoneInfo()[SkeletonParentIndex].Name : NAME_None;
+
+						if(MeshParentName != SkeletonParentName)
+						{
+							// Cache the bone tree if we are going to change the structure
+							if(NameToBoneNode.Num() == 0)
+							{
+								NameToBoneNode.Reserve(NumBones);
+								for(int32 BoneTreeIndex = 0; BoneTreeIndex < NumBones; ++BoneTreeIndex)
+								{
+									NameToBoneNode.Add(ReferenceSkeleton.GetRawRefBoneInfo()[BoneTreeIndex].Name, BoneTree[BoneTreeIndex]);
+								}
+							}
+
+							RefSkelModifier.SetParent(BoneName, MeshParentName);
+							bShouldHandleHierarchyChange = true;
+						}
+					}
+				}
+
+				if(NameToBoneNode.Num() > 0)
+				{
+					// Setting parent can re-order bones, so the skeleton's BoneTree needs to update to reflect that
+					BoneTree.Reset();
+					for(int32 BoneTreeIndex = 0; BoneTreeIndex < NumBones; ++BoneTreeIndex)
+					{
+						FName BoneName = ReferenceSkeleton.GetRawRefBoneInfo()[BoneTreeIndex].Name;
+						BoneTree.Add(NameToBoneNode.FindChecked(BoneName));
+					}
 				}
 			}
 
@@ -1025,7 +1143,7 @@ bool USkeleton::MergeBonesToBoneTree(const USkinnedAsset* InSkinnedAsset, const 
 	if (bShouldHandleHierarchyChange)
 	{
 #if WITH_EDITOR
-		HandleSkeletonHierarchyChange();
+		HandleSkeletonHierarchyChange(bShowProgress);
 #endif
 	}
 
@@ -1109,31 +1227,19 @@ int32 USkeleton::GetRawAnimationTrackIndex(const int32 InSkeletonBoneIndex, cons
 	return INDEX_NONE;
 }
 
+
 int32 USkeleton::GetSkeletonBoneIndexFromMeshBoneIndex(const USkinnedAsset* InSkinnedAsset, const int32 MeshBoneIndex)
 {
 	check(MeshBoneIndex != INDEX_NONE);
-	const int32 LinkupCacheIdx = GetMeshLinkupIndex(InSkinnedAsset);
-
-	//LinkupCache lock scope
-	{
-		FScopeLock ScopeLock(&LinkupCacheLock);
-		const FSkeletonToMeshLinkup& LinkupTable = LinkupCache[LinkupCacheIdx];
-		return LinkupTable.MeshToSkeletonTable[MeshBoneIndex];
-	}
+	const FSkeletonToMeshLinkup& LinkupTable = FindOrAddMeshLinkupData(InSkinnedAsset);
+	return LinkupTable.MeshToSkeletonTable[MeshBoneIndex];
 }
-
 
 int32 USkeleton::GetMeshBoneIndexFromSkeletonBoneIndex(const USkinnedAsset* InSkinnedAsset, const int32 SkeletonBoneIndex)
 {
 	check(SkeletonBoneIndex != INDEX_NONE);
-	const int32 LinkupCacheIdx = GetMeshLinkupIndex(InSkinnedAsset);
-
-	//LinkupCache lock scope
-	{
-		FScopeLock ScopeLock(&LinkupCacheLock);
-		const FSkeletonToMeshLinkup& LinkupTable = LinkupCache[LinkupCacheIdx];
-		return LinkupTable.SkeletonToMeshTable[SkeletonBoneIndex];
-	}
+	const FSkeletonToMeshLinkup& LinkupTable = FindOrAddMeshLinkupData(InSkinnedAsset);
+	return LinkupTable.SkeletonToMeshTable[SkeletonBoneIndex];
 }
 
 
@@ -1350,7 +1456,14 @@ USkeletalMesh* USkeleton::GetAssetPreviewMesh(UObject* InAsset)
 
 	if (!PreviewMesh)
 	{
-		PreviewMesh = GetPreviewMesh(false);
+		//The const version avoid verifying the skeleton compatibility, which can stall the thread
+		const USkeleton* ThisSkeleton = this;
+		PreviewMesh = ThisSkeleton->GetPreviewMesh();
+		if (PreviewMesh && !PreviewMesh->IsCompiling())
+		{
+			//Verify the compatibility only if we are not building
+			PreviewMesh = GetPreviewMesh(false);
+		}
 	}
 
 	return PreviewMesh;
@@ -1400,8 +1513,9 @@ void USkeleton::RemoveBonesFromSkeleton( const TArray<FName>& BonesToRemove, boo
 	}
 }
 
-void USkeleton::HandleSkeletonHierarchyChange()
+void USkeleton::HandleSkeletonHierarchyChange(bool bShowProgress /*= true*/)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(USkeleton::HandleSkeletonHierarchyChange);
 	MarkPackageDirty();
 
 	RegenerateGuid();
@@ -1436,15 +1550,21 @@ void USkeleton::HandleSkeletonHierarchyChange()
 		}
 	}
 
-	FScopedSlowTask SlowTask((float)NumLoadedAssets, LOCTEXT("HandleSkeletonHierarchyChange", "Rebuilding animations..."));
-	SlowTask.MakeDialog();
+	FScopedSlowTask SlowTask((float)NumLoadedAssets, LOCTEXT("HandleSkeletonHierarchyChange", "Rebuilding animations..."), bShowProgress);
+	if (bShowProgress)
+	{
+		SlowTask.MakeDialog();
+	}
 
 	for (TObjectIterator<UAnimationAsset> It; It; ++It)
 	{
 		UAnimationAsset* CurrentAnimation = *It;
 		if (CurrentAnimation->GetSkeleton() == this)
 		{
-			SlowTask.EnterProgressFrame(1.0f, FText::Format(LOCTEXT("HandleSkeletonHierarchyChange_Format", "Rebuilding Animation: {0}"), FText::FromString(CurrentAnimation->GetName())));
+			if (bShowProgress)
+			{
+				SlowTask.EnterProgressFrame(1.0f, FText::Format(LOCTEXT("HandleSkeletonHierarchyChange_Format", "Rebuilding Animation: {0}"), FText::FromString(CurrentAnimation->GetName())));
+			}
 
 			CurrentAnimation->ValidateSkeleton();
 		}
@@ -1841,7 +1961,7 @@ void USkeleton::RemoveVirtualBones(const TArray<FName>& BonesToRemove)
 					VB.SourceBoneName = Parent;
 				}
 			}
-			VirtualBones.RemoveAt(Idx,1,false);
+			VirtualBones.RemoveAt(Idx,1,EAllowShrinking::No);
 
 			// @todo: This might be a slow operation if there's a large amount of blend profiles and entries
 			int32 BoneIdx = GetReferenceSkeleton().FindBoneIndex(BoneName);
@@ -1954,169 +2074,16 @@ void USkeleton::HandleVirtualBoneChanges()
 
 #if WITH_EDITOR
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-
-void USkeleton::SetRigConfig(URig * Rig)
-{
-	if (RigConfig.Rig != Rig)
-	{
-		RigConfig.Rig = Rig;
-		RigConfig.BoneMappingTable.Empty();
-
-		if (Rig)
-		{
-			const FReferenceSkeleton& RefSkeleton = GetReferenceSkeleton();
-			const TArray<FNode> & Nodes = Rig->GetNodes();
-			// now add bone mapping table
-			for (auto Node: Nodes)
-			{
-				// if find same bone, use that bone for mapping
-				if (RefSkeleton.FindBoneIndex(Node.Name) != INDEX_NONE)
-				{
-					RigConfig.BoneMappingTable.Add(FNameMapping(Node.Name, Node.Name));
-				}
-				else
-				{
-					RigConfig.BoneMappingTable.Add(FNameMapping(Node.Name));
-				}
-			}
-		}
-	}
-}
-
-int32 USkeleton::FindRigBoneMapping(const FName& NodeName) const
-{
-	int32 Index=0;
-	for(const auto & NameMap : RigConfig.BoneMappingTable)
-	{
-		if(NameMap.NodeName == NodeName)
-		{
-			return Index;
-		}
-
-		++Index;
-	}
-
-	return INDEX_NONE;
-}
-
-FName USkeleton::GetRigBoneMapping(const FName& NodeName) const
-{
-	int32 Index = FindRigBoneMapping(NodeName);
-
-	if (Index != INDEX_NONE)
-	{
-		return RigConfig.BoneMappingTable[Index].BoneName;
-	}
-
-	return NAME_None;
-}
-
-FName USkeleton::GetRigNodeNameFromBoneName(const FName& BoneName) const
-{
-	for(const auto & NameMap : RigConfig.BoneMappingTable)
-	{
-		if(NameMap.BoneName == BoneName)
-		{
-			return NameMap.NodeName;
-		}
-	}
-
-	return NAME_None;
-}
-
-int32 USkeleton::GetMappedValidNodes(TArray<FName> &OutValidNodeNames)
-{
-	OutValidNodeNames.Empty();
-
-	for (auto Entry : RigConfig.BoneMappingTable)
-	{
-		if (Entry.BoneName != NAME_None)
-		{
-			OutValidNodeNames.Add(Entry.NodeName);
-		}
-	}
-
-	return OutValidNodeNames.Num();
-}
-
-bool USkeleton::SetRigBoneMapping(const FName& NodeName, FName BoneName)
-{
-	// make sure it's valid
-	int32 BoneIndex = ReferenceSkeleton.FindBoneIndex(BoneName);
-
-	// @todo we need to have validation phase where you can't set same bone for different nodes
-	// but it might be annoying to do that right now since the tool is ugly
-	// so for now it lets you set everything, but in the future
-	// we'll have to add verification
-	if ( BoneIndex == INDEX_NONE )
-	{
-		BoneName = NAME_None;
-	}
-
-	int32 Index = FindRigBoneMapping(NodeName);
-
-	if(Index != INDEX_NONE)
-	{
-		RigConfig.BoneMappingTable[Index].BoneName = BoneName;
-		return true;
-	}
-
-	return false;
-}
-
-void USkeleton::RefreshRigConfig()
-{
-	if (RigConfig.Rig != NULL)
-	{
-		if (RigConfig.BoneMappingTable.Num() > 0)
-		{
-			// verify if any missing bones or anything
-			// remove if removed
-			for ( int32 TableId=0; TableId<RigConfig.BoneMappingTable.Num(); ++TableId )
-			{
-				auto & BoneMapping = RigConfig.BoneMappingTable[TableId];
-
-				if ( RigConfig.Rig->FindNode(BoneMapping.NodeName) == INDEX_NONE)
-				{
-					// if not contains, remove it
-					RigConfig.BoneMappingTable.RemoveAt(TableId);
-					--TableId;
-				}
-			}
-
-			// if the count doesn't match, there is missing nodes. 
-			if (RigConfig.Rig->GetNodeNum() != RigConfig.BoneMappingTable.Num())
-			{
-				int32 NodeNum = RigConfig.Rig->GetNodeNum();
-				for(int32 NodeId=0; NodeId<NodeNum; ++NodeId)
-				{
-					const auto* Node = RigConfig.Rig->GetNode(NodeId);
-
-					if (FindRigBoneMapping(Node->Name) == INDEX_NONE)
-					{
-						RigConfig.BoneMappingTable.Add(FNameMapping(Node->Name));
-					}
-				}
-			}
-		}
-	}
-}
-
-URig * USkeleton::GetRig() const
-{
-	return RigConfig.Rig;
-}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 void USkeleton::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	FString RigFullName = (RigConfig.Rig)? RigConfig.Rig->GetFullName() : TEXT("");
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
 
-	OutTags.Add(FAssetRegistryTag(USkeleton::RigTag, RigFullName, FAssetRegistryTag::TT_Hidden));
+void USkeleton::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	TStringBuilder<256> CompatibleSkeletonsBuilder;
 	
@@ -2127,7 +2094,7 @@ void USkeleton::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 		CompatibleSkeletonsBuilder.Append(USkeleton::CompatibleSkeletonsTagDelimiter);
 	}
 
-	OutTags.Add(FAssetRegistryTag(USkeleton::CompatibleSkeletonsNameTag, CompatibleSkeletonsBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(USkeleton::CompatibleSkeletonsNameTag, CompatibleSkeletonsBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
 
 	// Output sync notify names we use
 	TStringBuilder<256> NotifiesBuilder;
@@ -2139,7 +2106,7 @@ void USkeleton::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 		NotifiesBuilder.Append(USkeleton::AnimNotifyTagDelimiter);
 	}
 
-	OutTags.Add(FAssetRegistryTag(USkeleton::AnimNotifyTag, NotifiesBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(USkeleton::AnimNotifyTag, NotifiesBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
 	
 	// Output sync marker names we use
 	TStringBuilder<256> SyncMarkersBuilder;
@@ -2151,12 +2118,15 @@ void USkeleton::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 		SyncMarkersBuilder.Append(USkeleton::AnimSyncMarkerTagDelimiter);
 	}
 
-	OutTags.Add(FAssetRegistryTag(USkeleton::AnimSyncMarkerTag, SyncMarkersBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(USkeleton::AnimSyncMarkerTag, SyncMarkersBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
 	
 	// Allow asset user data to output tags
-	for(UAssetUserData* AssetUserDataItem : AssetUserData)
+	for(const UAssetUserData* AssetUserDataItem : *GetAssetUserDataArray())
 	{
-		AssetUserDataItem->GetAssetRegistryTags(OutTags);
+		if (AssetUserDataItem)
+		{
+			AssetUserDataItem->GetAssetRegistryTags(Context);
+		}
 	}
 }
 
@@ -2183,6 +2153,24 @@ UBlendProfile* USkeleton::CreateNewBlendProfile(const FName& InProfileName)
 	BlendProfiles.Add(NewProfile);
 
 	return NewProfile;
+}
+
+UBlendProfile* USkeleton::RenameBlendProfile(const FName& InProfileName, const FName& InNewProfileName)
+{
+	if (!GetBlendProfile(InNewProfileName)) // we can not rename if the new name already exists
+	{
+		UBlendProfile* BlendProfile = GetBlendProfile(InProfileName);
+		if (BlendProfile)
+		{
+			Modify();
+			if (BlendProfile->Rename(*InNewProfileName.ToString(), this, REN_DontCreateRedirectors))
+			{
+				return BlendProfile;
+			}
+		}
+	}
+
+	return nullptr;
 }
 
 USkeletalMeshSocket* USkeleton::FindSocket(FName InSocketName) const
@@ -2213,24 +2201,21 @@ USkeletalMeshSocket* USkeleton::FindSocketAndIndex(FName InSocketName, int32& Ou
 }
 
 
-void USkeleton::AddAssetUserData(UAssetUserData* InUserData)
+void USkeleton::AddAssetUserData( UAssetUserData* InUserData)
 {
 	if (InUserData != NULL)
 	{
-		UAssetUserData* ExistingData = GetAssetUserDataOfClass(InUserData->GetClass());
-		if (ExistingData != NULL)
-		{
-			AssetUserData.Remove(ExistingData);
-		}
+		RemoveUserDataOfClass(InUserData->GetClass());
 		AssetUserData.Add(InUserData);
 	}
 }
 
 UAssetUserData* USkeleton::GetAssetUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass)
 {
-	for (int32 DataIdx = 0; DataIdx < AssetUserData.Num(); DataIdx++)
+	const TArray<UAssetUserData*>* ArrayPtr = GetAssetUserDataArray();
+	for (int32 DataIdx = 0; DataIdx < ArrayPtr->Num(); DataIdx++)
 	{
-		UAssetUserData* Datum = AssetUserData[DataIdx];
+		UAssetUserData* Datum = (*ArrayPtr)[DataIdx];
 		if (Datum != NULL && Datum->IsA(InUserDataClass))
 		{
 			return Datum;
@@ -2250,11 +2235,38 @@ void USkeleton::RemoveUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClas
 			return;
 		}
 	}
+
+#if WITH_EDITOR
+	for (int32 DataIdx = 0; DataIdx < AssetUserDataEditorOnly.Num(); DataIdx++)
+	{
+		UAssetUserData* Datum = AssetUserDataEditorOnly[DataIdx];
+		if (Datum != NULL && Datum->IsA(InUserDataClass))
+		{
+			AssetUserDataEditorOnly.RemoveAt(DataIdx);
+			return;
+		}
+	}
+#endif
 }
 
 const TArray<UAssetUserData*>* USkeleton::GetAssetUserDataArray() const
 {
+#if WITH_EDITOR
+	if (IsRunningCookCommandlet())
+	{
+		return &ToRawPtrTArrayUnsafe(AssetUserData);
+	}
+	else
+	{
+		static thread_local TArray<TObjectPtr<UAssetUserData>> CachedAssetUserData;
+		CachedAssetUserData.Reset();
+		CachedAssetUserData.Append(AssetUserData);
+		CachedAssetUserData.Append(AssetUserDataEditorOnly);
+		return &ToRawPtrTArrayUnsafe(CachedAssetUserData);
+	}
+#else
 	return &ToRawPtrTArrayUnsafe(AssetUserData);
+#endif
 }
 
 void USkeleton::HandlePackageReloaded(const EPackageReloadPhase InPackageReloadPhase, FPackageReloadedEvent* InPackageReloadedEvent)

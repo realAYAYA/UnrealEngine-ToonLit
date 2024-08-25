@@ -23,6 +23,7 @@ public:
 	TSharedPtr<FUICommandInfo> Export;
 	TSharedPtr<FUICommandInfo> EditConfig;
 	TSharedPtr<FUICommandInfo> ExportConfigOnSave;
+	TSharedPtr<FUICommandInfo> ImportMPCDI;
 
 	// Cluster Configuration commands
 	TSharedPtr<FUICommandInfo> AddNewClusterNode;

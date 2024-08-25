@@ -6,6 +6,7 @@
 #include "UObject/NameTypes.h"
 #include "Containers/Map.h"
 #include "BoneIndices.h"
+#include "BoneWeights.h" //  UE::AnimationCore::MaxInlineBoneWeightCount;
 
 // Forward declarations
 class FProgressCancel;
@@ -170,6 +171,13 @@ public:
 
 	using TSmoothBoneWeights<FBoneIndexType, float>::SmoothWeightsAtVertex; 
 	
+	
+	/** 
+	 * During the smoothing, only use this number of influences per vertex. Prune the excess with the smallest influences 
+	 * and re-normalize. 
+	 */
+	int32 MaxNumInfluences = UE::AnimationCore::MaxInlineBoneWeightCount;
+
 	/**
 	 * @param InSourceMesh The mesh whose vertices contain bone weights data.
 	 * @param InProfile    The name of the skin weights profile containing the bone weights data.

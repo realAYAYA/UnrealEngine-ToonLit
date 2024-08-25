@@ -185,7 +185,7 @@ TSharedPtr<ITextFormatArgumentModifier> FTextFormatArgumentModifier_PluralForm::
 		PluralForms.Reserve(ArgKeyValues.Num());
 		for (const auto& Pair : ArgKeyValues)
 		{
-			FTextFormat PluralForm = FTextFormat::FromString(FString(Pair.Value.StringLen, Pair.Value.StringPtr), InPatternDef);
+			FTextFormat PluralForm = FTextFormat::FromString(FString::ConstructFromPtrSize(Pair.Value.StringPtr, Pair.Value.StringLen), InPatternDef);
 			if (!PluralForm.IsValid())
 			{
 				break;
@@ -374,12 +374,12 @@ TSharedPtr<ITextFormatArgumentModifier> FTextFormatArgumentModifier_GenderForm::
 	if (ParseValueArgs(InArgsString, ArgValues) && (ArgValues.Num() == 2 || ArgValues.Num() == 3))
 	{
 		// Gender forms may contain format markers, so pre-compile all the variants now so that Evaluate doesn't have to (this also lets us validate the gender form strings and fail if they're not correct)
-		FTextFormat MasculineForm = FTextFormat::FromString(FString(ArgValues[0].StringLen, ArgValues[0].StringPtr), InPatternDef);
-		FTextFormat FeminineForm  = FTextFormat::FromString(FString(ArgValues[1].StringLen, ArgValues[1].StringPtr), InPatternDef);
+		FTextFormat MasculineForm = FTextFormat::FromString(FString::ConstructFromPtrSize(ArgValues[0].StringPtr, ArgValues[0].StringLen), InPatternDef);
+		FTextFormat FeminineForm  = FTextFormat::FromString(FString::ConstructFromPtrSize(ArgValues[1].StringPtr, ArgValues[1].StringLen), InPatternDef);
 		FTextFormat NeuterForm;
 		if (ArgValues.Num() == 3)
 		{
-			NeuterForm = FTextFormat::FromString(FString(ArgValues[2].StringLen, ArgValues[2].StringPtr), InPatternDef);
+			NeuterForm = FTextFormat::FromString(FString::ConstructFromPtrSize(ArgValues[2].StringPtr, ArgValues[2].StringLen), InPatternDef);
 		}
 
 		// Did everything compile?

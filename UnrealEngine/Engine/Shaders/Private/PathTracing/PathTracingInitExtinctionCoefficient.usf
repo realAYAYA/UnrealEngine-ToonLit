@@ -22,7 +22,7 @@ RAY_TRACING_ENTRY_RAYGEN(PathTracingInitExtinctionCoefficientRG)
 	for (;;)
 	{
 		FPackedPathTracingPayload PackedPayload = InitPathTracingPayload(PATHTRACER_SCATTER_CAMERA, 0.0);
-		// STRATA_TODO: Set the stochastic slab random value? Add special flag to only return extinction of solid glass?
+		// SUBSTRATE_TODO: Set the stochastic slab random value? Add special flag to only return extinction of solid glass?
 		// The current behavior will only work correctly for single-slab materials
 		TraceRay(
 			TLAS,

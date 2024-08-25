@@ -119,6 +119,7 @@ void SCurveEditorTree::Construct(const FArguments& InArgs, TSharedPtr<FCurveEdit
 		.OnGetChildren(this, &SCurveEditorTree::GetTreeItemChildren)
 		.OnGenerateRow(this, &SCurveEditorTree::GenerateRow)
 		.OnSetExpansionRecursive(this, &SCurveEditorTree::SetItemExpansionRecursive)
+		.OnExpansionChanged(this, &SCurveEditorTree::OnExpansionChanged)
 		.OnMouseButtonDoubleClick(InArgs._OnMouseButtonDoubleClick)
 		.OnContextMenuOpening(InArgs._OnContextMenuOpening)
 		.OnTreeViewScrolled(InArgs._OnTreeViewScrolled)
@@ -143,6 +144,8 @@ void SCurveEditorTree::RefreshTree()
 
 	const FCurveEditorTree* CurveEditorTree = CurveEditor->GetTree();
 	const FCurveEditorFilterStates& FilterStates = CurveEditorTree->GetFilterStates();
+	bool bExpansionWasCleared = false;
+	const TArray<FCurveEditorTreeItemID>& CachedExpandedItems = CurveEditor->GetTree()->GetCachedExpandedItems();
 
 	// When changing to/from a filtered state, we save and restore expansion states
 	if (FilterStates.IsActive() && !bFilterWasActive)
@@ -176,6 +179,7 @@ void SCurveEditorTree::RefreshTree()
 		}
 
 		// Restore expansion states
+		bExpansionWasCleared = true;
 		ClearExpandedItems();
 		for (FCurveEditorTreeItemID ExpandedItem : PreFilterExpandedItems)
 		{
@@ -195,7 +199,6 @@ void SCurveEditorTree::RefreshTree()
 
 	RootItems.Shrink();
 	RequestTreeRefresh();
-
 	if (FilterStates.IsActive())
 	{
 		TArray<FCurveEditorTreeItemID> ExpandedItems;
@@ -212,12 +215,23 @@ void SCurveEditorTree::RefreshTree()
 
 		if (ExpandedItems.Num() > 0)
 		{
+			bExpansionWasCleared = true;
 			ClearExpandedItems();
 			for (const FCurveEditorTreeItemID& ItemID : ExpandedItems)
 			{
 				SetItemExpansion(ItemID, true);
 			}
 		}
+	}
+
+	// at end we reset any cached expansions we still have set
+	if (bExpansionWasCleared == false)
+	{
+		ClearExpandedItems();
+	}
+	for (const FCurveEditorTreeItemID& ItemID : CachedExpandedItems)
+	{
+		SetItemExpansion(ItemID, true);
 	}
 
 	bFilterWasActive = FilterStates.IsActive();
@@ -319,6 +333,14 @@ void SCurveEditorTree::OnTreeSelectionChanged(FCurveEditorTreeItemID, ESelectInf
 	{
 		TGuardValue<bool> SelecitonGuard(bUpdatingCurveEditorTreeSelection, true);
 		CurveEditor->GetTree()->SetDirectSelection(GetSelectedItems(), CurveEditor.Get());
+	}
+}
+
+void SCurveEditorTree::OnExpansionChanged(FCurveEditorTreeItemID Model, bool bInExpansionState)
+{
+	if (Model.IsValid())
+	{
+		CurveEditor->GetTree()->SetItemExpansion(Model, bInExpansionState);
 	}
 }
 

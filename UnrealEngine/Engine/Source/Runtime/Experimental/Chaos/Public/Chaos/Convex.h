@@ -100,6 +100,22 @@ namespace Chaos
 			ComputeUnitMassInertiaTensorAndRotationOfMass(Volume);
 		}
 
+		FConvex(TArray<FPlaneType>&& InPlanes, TArray<TArray<int32>>&& InFaceIndices, TArray<FVec3Type>&& InVertices, 
+			const FVec3Type& InMin, const FVec3Type& InMax, const FRealType InVolume, const FVec3Type InInertiaTensor, const FRotation3& InRotationMatrix, const bool bRegularDatas)
+			: FImplicitObject(EImplicitObject::IsConvex | EImplicitObject::HasBoundingBox, ImplicitObjectType::Convex)
+			, Planes(MoveTemp(InPlanes))
+			, Vertices(MoveTemp(InVertices))
+		{
+			LocalBoundingBox = FAABB3Type(InMin, InMax);
+			CenterOfMass = LocalBoundingBox.GetCenterOfMass();
+			
+			Volume = InVolume;
+			RotationOfMass = InRotationMatrix;
+			UnitMassInertiaTensor = InInertiaTensor;
+			
+			CreateStructureData(MoveTemp(InFaceIndices), bRegularDatas);
+		}
+
 		FConvex(const TArray<FVec3Type>& InVertices, const FReal InMargin, FConvexBuilder::EBuildMethod BuildMethod = FConvexBuilder::EBuildMethod::Default)
 		    : FImplicitObject(EImplicitObject::IsConvex | EImplicitObject::HasBoundingBox, ImplicitObjectType::Convex)
 		{
@@ -116,13 +132,16 @@ namespace Chaos
 			// @todo(chaos): this only works with triangles. Fix that an we can run MergeFaces before calling this
 			CalculateVolumeAndCenterOfMass(Vertices, FaceIndices, Volume, CenterOfMass);
 
-			// it appears that this code path can leave the convex in an undefined state.
-			// @todo(chaos): Tolerances should be based on size, or passed in
-			const FRealType DistanceTolerance = 1.0f;
-			const FRealType AngleTolerance = 1.e-6f;
-			FConvexBuilder::MergeFaces(Planes, FaceIndices, Vertices, DistanceTolerance);
-			FConvexBuilder::MergeColinearEdges(Planes, FaceIndices, Vertices, AngleTolerance);
-			CHAOS_ENSURE(Planes.Num() == FaceIndices.Num());
+			if (BuildMethod != FConvexBuilder::EBuildMethod::ConvexHull3Simplified)
+			{
+				// it appears that this code path can leave the convex in an undefined state.
+				// @todo(chaos): Tolerances should be based on size, or passed 
+				const FRealType DistanceTolerance = 1.0f;
+				const FRealType AngleTolerance = 1.e-6f;
+				FConvexBuilder::MergeFaces(Planes, FaceIndices, Vertices, DistanceTolerance);
+				FConvexBuilder::MergeColinearEdges(Planes, FaceIndices, Vertices, AngleTolerance);
+				CHAOS_ENSURE(Planes.Num() == FaceIndices.Num());
+			}
 
 			CreateStructureData(MoveTemp(FaceIndices));
 
@@ -159,22 +178,27 @@ namespace Chaos
 			return *this;
 		}
 
+		Chaos::FConvex* RawCopyAsConvex() const
+		{
+			return new Chaos::FConvex(*this);
+		}
+		
+		UE_DEPRECATED(5.4, "Please use RawCopyAsConvex instead")
 		TUniquePtr<FConvex> CopyAsConvex() const
-		{
-			return TUniquePtr<FConvex>(new FConvex(*this));
-		}
+        {
+			check(false);
+            return nullptr;
+        }
 
-		virtual TUniquePtr<FImplicitObject> Copy() const
-		{
-			return TUniquePtr<FImplicitObject>(new FConvex(*this));
-		}
-
-		CHAOS_API virtual TUniquePtr<FImplicitObject> CopyWithScale(const FVec3& Scale) const override;
+		CHAOS_API Chaos::FImplicitObjectPtr CopyGeometry() const override;
+		CHAOS_API Chaos::FImplicitObjectPtr CopyGeometryWithScale(const FVec3& Scale) const override;
+		CHAOS_API Chaos::FImplicitObjectPtr DeepCopyGeometry() const override;
+		CHAOS_API Chaos::FImplicitObjectPtr DeepCopyGeometryWithScale(const FVec3& Scale) const override;
 
 		CHAOS_API void MovePlanesAndRebuild(FRealType InDelta);
 
 	private:
-		CHAOS_API void CreateStructureData(TArray<TArray<int32>>&& FaceIndices);
+		CHAOS_API void CreateStructureData(TArray<TArray<int32>>&& FaceIndices, const bool bRegularDatas = false);
 
 	public:
 		static constexpr EImplicitObjectType StaticType()
@@ -182,12 +206,12 @@ namespace Chaos
 			return ImplicitObjectType::Convex;
 		}
 
-		FReal GetMargin() const
+		virtual FReal GetMargin() const override
 		{
 			return Margin;
 		}
 
-		FReal GetRadius() const
+		virtual FReal GetRadius() const override
 		{
 			return 0.0f;
 		}
@@ -213,7 +237,6 @@ namespace Chaos
 		{
 			return PhiWithNormalScaledInternal(X, Scale, Normal);
 		}
-
 
 	private:
 		// Distance to the surface
@@ -906,7 +929,7 @@ namespace Chaos
 				Vertices.SetNum(NumVertices);
 				for (int32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
 				{
-					Vertices[VertexIndex] = TmpSurfaceParticles.X(VertexIndex);
+					Vertices[VertexIndex] = TmpSurfaceParticles.GetX(VertexIndex);
 				}
 			}
 			else

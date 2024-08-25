@@ -42,7 +42,7 @@ namespace UE::MLDeformer
 	 * @param InAnimSequence The animation sequence object.
 	 * @return The error text in case there are errors, or an empty text object in case there were no errors.
 	 */
-	MLDEFORMERFRAMEWORK_API FText GetGeomCacheAnimSequenceErrorText(UGeometryCache* InGeomCache, UAnimSequence* InAnimSequence);
+	MLDEFORMERFRAMEWORK_API FText GetGeomCacheAnimSequenceErrorText(const UGeometryCache* InGeomCache, const UAnimSequence* InAnimSequence);
 
 	/**
 	 * Check for any mesh related issues between a skeletal mesh and geometry cache.

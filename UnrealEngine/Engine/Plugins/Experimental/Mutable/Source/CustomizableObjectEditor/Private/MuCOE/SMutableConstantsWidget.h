@@ -5,6 +5,7 @@
 #include "MuR/Image.h"
 #include "MuR/Mesh.h"
 #include "MuR/Operations.h"
+#include "MuR/ModelPrivate.h"
 #include "Widgets/Views/SHeaderRow.h"
 #include "Widgets/Views/STileView.h"
 
@@ -51,7 +52,7 @@ struct FMutableConstantMeshElement : public FMutableConstantElement
 */
 struct FMutableConstantStringElement : public FMutableConstantElement
 {
-	const mu::string* MutableString = nullptr;
+	FString MutableString;
 };
 
 /**
@@ -83,7 +84,7 @@ struct FMutableConstantProjectorElement : public FMutableConstantElement
 */
 struct FMutableConstantMatrixElement : public FMutableConstantElement
 { 
-	const mu::mat4f* Matrix = nullptr;
+	FMatrix44f Matrix;
 };
 
 /**

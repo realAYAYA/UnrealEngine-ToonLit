@@ -11,6 +11,8 @@
 #include "Misc/Paths.h"
 #include "Misc/DataDrivenPlatformInfoRegistry.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
+#include "HAL/LowLevelMemStats.h"
 
 namespace
 {
@@ -19,8 +21,14 @@ namespace
 	FString LegacyIniVersionString = TEXT("IniVersion");
 	FString LegacyEngineString = TEXT("Engine.Engine");
 	FString CurrentIniVersionString = TEXT("CurrentIniVersion");
+	const TCHAR* SectionsToSaveString = TEXT("SectionsToSave");
+	const TCHAR* SaveAllSectionsKey = TEXT("bCanSaveAllSections");
 }
 
+#if ALLOW_OTHER_PLATFORM_CONFIG
+TMap<FString, TUniquePtr<FConfigPluginDirs>> FConfigContext::ConfigToPluginDirs;
+FCriticalSection FConfigContext::ConfigToPluginDirsLock;
+#endif
 
 FConfigContext::FConfigContext(FConfigCacheIni* InConfigSystem, bool InIsHierarchicalConfig, const FString& InPlatform, FConfigFile* DestConfigFile)
 	: ConfigSystem(InConfigSystem)
@@ -110,7 +118,8 @@ const FConfigContext::FPerPlatformDirs& FConfigContext::GetPerPlatformDirs(const
 	FConfigContext::FPerPlatformDirs* Dirs = FConfigContext::PerPlatformDirs.Find(PlatformName);
 	if (Dirs == nullptr)
 	{
-		FString PluginExtDir;
+		// default to <skip> so we don't look in non-existant platform extension directories
+		FString PluginExtDir = TEXT("<skip>");
 		if (bIsForPlugin)
 		{
 			// look if there's a plugin extension for this platform, it will have the platform name in the path
@@ -127,9 +136,9 @@ const FConfigContext::FPerPlatformDirs& FConfigContext::GetPerPlatformDirs(const
 		Dirs = &PerPlatformDirs.Emplace(PlatformName, FConfigContext::FPerPlatformDirs
 			{
 				// PlatformExtensionEngineDir
-				FPaths::Combine(*FPaths::EnginePlatformExtensionsDir(), *PlatformName).Replace(*FPaths::EngineDir(), *(EngineRootDir + "/")),
+				FPaths::ConvertPath(EngineRootDir, FPaths::EPathConversion::Engine_PlatformExtension, *PlatformName),
 				// PlatformExtensionProjectDir
-				FPaths::Combine(*FPaths::ProjectPlatformExtensionsDir(), *PlatformName).Replace(*FPaths::ProjectDir(), *(ProjectRootDir + "/")),
+				FPaths::ConvertPath(ProjectRootDir, FPaths::EPathConversion::Project_PlatformExtension, *PlatformName, *ProjectRootDir),
 				// PluginExtensionDir
 				PluginExtDir,
 			});
@@ -174,7 +183,18 @@ bool FConfigContext::Load(const TCHAR* InBaseIniName, FString& OutFinalFilename)
 	}
 
 	// now load if we need (PrepareForLoad may find an existing file and just use it)
-	return bPerformLoad ? PerformLoad() : true;
+	bool bSuccess = bPerformLoad ? PerformLoad() : true;
+
+#if ALLOW_OTHER_PLATFORM_CONFIG
+	if (bSuccess && bIsForPlugin && Platform == FPlatformProperties::IniPlatformName())
+	{
+		// We have successfuly loaded a plugin ini file for the main platform. Cache the plugin info in case we want to load this ForPlatform.	
+		FScopeLock Lock(&FConfigContext::ConfigToPluginDirsLock);
+		FConfigContext::ConfigToPluginDirs.Add(InBaseIniName, TUniquePtr<FConfigPluginDirs>(new FConfigPluginDirs(PluginRootDir, ChildPluginBaseDirs)));
+	}
+#endif
+
+	return bSuccess;
 }
 
 bool FConfigContext::Load(const TCHAR* InBaseIniName)
@@ -313,6 +333,7 @@ static void LoadAnIniFile(const FString& FilenameToLoad, FConfigFile& ConfigFile
 bool FConfigContext::PerformLoad()
 {
 	LLM_SCOPE(ELLMTag::ConfigSystem);
+	static const FName ConfigContextClassName = TEXT("ConfigContext");
 
 	// if bIsBaseIniName is false, that means the .ini is a ready-to-go .ini file, and just needs to be loaded into the FConfigFile
 	if (!bIsHierarchicalConfig)
@@ -329,15 +350,24 @@ bool FConfigContext::PerformLoad()
 			DestIniFilename = FString::Printf(TEXT("%s/%s.ini"), *ProjectConfigDir, *BaseIniName);
 		}
 
+		const FName BaseName = FName(*BaseIniName);
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(BaseName, ELLMTagSet::Assets);
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(ConfigContextClassName, ELLMTagSet::AssetClasses);
+		UE_TRACE_METADATA_SCOPE_ASSET_FNAME(BaseName, ConfigContextClassName, BaseName);
+
 		// load the .ini file straight up
 		LoadAnIniFile(*DestIniFilename, *ConfigFile);
 
-		ConfigFile->Name = FName(*BaseIniName);
+		ConfigFile->Name = BaseName;
 		ConfigFile->PlatformName.Reset();
 		ConfigFile->bHasPlatformName = false;
 	}
 	else
 	{
+		const FName BaseName = FName(*BaseIniName);
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(BaseName, ELLMTagSet::Assets);
+		LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(ConfigContextClassName, ELLMTagSet::AssetClasses);
+		UE_TRACE_METADATA_SCOPE_ASSET_FNAME(BaseName, ConfigContextClassName, BaseName);
 #if DISABLE_GENERATED_INI_WHEN_COOKED
 		if (BaseIniName != TEXT("GameUserSettings"))
 		{
@@ -366,9 +396,31 @@ bool FConfigContext::PerformLoad()
 		// just write out the exact same thing it read in!
 		bool bNeedsWrite = GenerateDestIniFile();
 
-		ConfigFile->Name = FName(*BaseIniName);
+		ConfigFile->Name = BaseName;
 		ConfigFile->PlatformName = Platform;
 		ConfigFile->bHasPlatformName = true;
+
+		// check if the config file wants to save all sections
+		bool bLocalSaveAllSections = false;
+		// Do not report the read of SectionsToSave. Some ConfigFiles are reallocated without it, and reporting
+		// logs that the section disappeared. But this log is spurious since if the only reason it was read was
+		// for the internal save before the FConfigFile is made publicly available.
+		const FConfigSection* SectionsToSaveSection = ConfigFile->FindSection(SectionsToSaveString);
+		if (SectionsToSaveSection)
+		{
+			const FConfigValue* Value = SectionsToSaveSection->Find(SaveAllSectionsKey);
+			if (Value)
+			{
+				const FString& ValueStr = UE::ConfigCacheIni::Private::FAccessor::GetValueForWriting(*Value);
+				bLocalSaveAllSections = FCString::ToBool(*ValueStr);
+			}
+		}
+
+		// we can always save all sections of a User config file, Editor* (not Editor.ini tho, that is already handled in the normal method)
+		bool bIsUserFile = BaseIniName.Contains(TEXT("User"));
+		bool bIsEditorSettingsFile = BaseIniName.Contains(TEXT("Editor")) && BaseIniName != TEXT("Editor");
+
+		ConfigFile->bCanSaveAllSections = bLocalSaveAllSections || bIsUserFile || bIsEditorSettingsFile;
 
 		// don't write anything to disk in cooked builds - we will always use re-generated INI files anyway.
 		// Note: Unfortunately bAllowGeneratedIniWhenCooked is often true even in shipping builds with cooked data
@@ -476,7 +528,7 @@ FString FConfigContext::PerformFinalExpansions(const FString& InString, const FS
 		OutString = OutString.Replace(TEXT("{OPT_SUBDIR}"), TEXT(""));
 	}
 	
-	if (Platform.Len() > 0)
+	if (InPlatform.Len() > 0)
 	{
 		OutString = OutString.Replace(TEXT("{EXTENGINE}"), *GetPerPlatformDirs(InPlatform).PlatformExtensionEngineDir);
 		OutString = OutString.Replace(TEXT("{EXTPROJECT}"), *GetPerPlatformDirs(InPlatform).PlatformExtensionProjectDir);
@@ -494,7 +546,7 @@ FString FConfigContext::PerformFinalExpansions(const FString& InString, const FS
 
 
 
-void FConfigContext::AddStaticLayersToHierarchy()
+void FConfigContext::AddStaticLayersToHierarchy(TArray<FString>* GatheredLayerFilenames, bool bIsLogging)
 {
 	// remember where this file was loaded from
 	ConfigFile->SourceEngineConfigDir = EngineConfigDir;
@@ -522,6 +574,12 @@ void FConfigContext::AddStaticLayersToHierarchy()
 		Layers = GPluginLayers;
 		NumLayers = UE_ARRAY_COUNT(GPluginLayers);
 	}
+	// let the context override the layers if needed
+	if (OverrideLayers.Num() > 0)
+	{
+		Layers = OverrideLayers.GetData();
+		NumLayers = OverrideLayers.Num();
+	}
 
 	// go over all the config layers
 	for (int32 LayerIndex = 0; LayerIndex < NumLayers; LayerIndex++)
@@ -542,7 +600,7 @@ void FConfigContext::AddStaticLayersToHierarchy()
 		if (!EnumHasAnyFlags(Layer.Flag, EConfigLayerFlags::NoExpand))
 		{
 			// we assume none of the more special tags in expanded ones
-			checkfSlow(FCString::Strstr(Layer.Path, TEXT("{USERSETTINGS}")) == nullptr && FCString::Strstr(Layer.Path, TEXT("{USER}")) == nullptr, TEXT("Expanded config %s shouldn't have a {USER*} tags in it"), *Layer.Path);
+			checkfSlow(FCString::Strstr(Layer.Path, TEXT("{USERSETTINGS}")) == nullptr && FCString::Strstr(Layer.Path, TEXT("{USER}")) == nullptr, TEXT("Expanded config %s shouldn't have a {USER*} tags in it"), Layer.Path);
 
 			// loop over all the possible expansions
 			for (int32 ExpansionIndex = 0; ExpansionIndex < UE_ARRAY_COUNT(GConfigExpansions); ExpansionIndex++)
@@ -604,16 +662,35 @@ void FConfigContext::AddStaticLayersToHierarchy()
 					{
 						return;
 					}
+					
+					if (PlatformPath.StartsWith(TEXT("<skip>")))
+					{
+						continue;
+					}
 
 					// add this to the list!
-					ConfigFile->SourceIniHierarchy.AddStaticLayer(PlatformPath, LayerIndex, ExpansionIndex, PlatformIndex);
+					if (GatheredLayerFilenames != nullptr)
+					{
+						if (bIsLogging)
+						{
+							GatheredLayerFilenames->Add(FString::Printf(TEXT("%s[Exp-%d]: %s"), Layer.EditorName, ExpansionIndex, *PlatformPath));
+						}
+						else
+						{
+							GatheredLayerFilenames->Add(PlatformPath);
+						}
+					}
+					else
+					{
+						ConfigFile->SourceIniHierarchy.AddStaticLayer(PlatformPath, LayerIndex, ExpansionIndex, PlatformIndex);
+					}
 				}
 			}
 		}
 		// if no expansion, just process the special tags (assume no PLATFORM tags)
 		else
 		{
-			checkfSlow(!bHasPlatformTag, TEXT("Non-expanded config %s shouldn't have a PLATFORM in it"), *Layer.Path);
+			checkfSlow(!bHasPlatformTag, TEXT("Non-expanded config %s shouldn't have a PLATFORM in it"), Layer.Path);
 			checkfSlow(!EnumHasAnyFlags(Layer.Flag, EConfigLayerFlags::AllowCommandLineOverride), TEXT("Non-expanded config can't have a EConfigLayerFlags::AllowCommandLineOverride"));
 
 			FString FinalPath = PerformFinalExpansions(LayerPath, TEXT(""));
@@ -625,7 +702,21 @@ void FConfigContext::AddStaticLayersToHierarchy()
 			}
 
 			// add with no expansion
-			ConfigFile->SourceIniHierarchy.AddStaticLayer(FinalPath, LayerIndex);
+			if (GatheredLayerFilenames != nullptr)
+			{
+				if (bIsLogging)
+				{
+					GatheredLayerFilenames->Add(FString::Printf(TEXT("%s: %s"), Layer.EditorName, *FinalPath));
+				}
+				else
+				{
+					GatheredLayerFilenames->Add(FinalPath);
+				}
+			}
+			else
+			{
+				ConfigFile->SourceIniHierarchy.AddStaticLayer(FinalPath, LayerIndex);
+			}
 		}
 	}
 }
@@ -819,7 +910,7 @@ bool FConfigContext::GenerateDestIniFile()
 		//	The ini syntax is Preserve=Section=<section name, like /Scipt/FortniteGame.FortConsole>.
 		//	Go through and save the preserved sections before we regenerate the file. We'll re-add those after.
 		FConfigSection PreservedConfigSectionData;
-		if (FConfigSection* SourceConfigSectionIniVersion = ConfigFile->SourceConfigFile->Find(CurrentIniVersionString))
+		if (const FConfigSection* SourceConfigSectionIniVersion = ConfigFile->SourceConfigFile->FindSection(CurrentIniVersionString))
 		{
 			for (FConfigSectionMap::TConstIterator ItSourceConfigSectionIniVersion(*SourceConfigSectionIniVersion); ItSourceConfigSectionIniVersion; ++ItSourceConfigSectionIniVersion)
 			{
@@ -834,11 +925,11 @@ bool FConfigContext::GenerateDestIniFile()
 		for (FConfigSectionMap::TConstIterator ItPreservedConfigSectionData(PreservedConfigSectionData); ItPreservedConfigSectionData; ++ItPreservedConfigSectionData)
 		{
 			FString SectionString = ItPreservedConfigSectionData.Value().GetSavedValue();
-			if (FConfigSection* FoundSection = ConfigFile->Find(SectionString))
+			if (const FConfigSection* FoundSection = ConfigFile->FindSection(SectionString))
 			{
 				for (FConfigSectionMap::TConstIterator ItFoundSection(*FoundSection); ItFoundSection; ++ItFoundSection)
 				{
-					if (FConfigSection* CreatedSection = PreservedConfigFileData.FindOrAddSection(SectionString))
+					if (FConfigSection* CreatedSection = PreservedConfigFileData.FindOrAddSectionInternal(SectionString))
 					{
 						CreatedSection->Add(ItFoundSection.Key(), ItFoundSection.Value());
 					}
@@ -853,7 +944,7 @@ bool FConfigContext::GenerateDestIniFile()
 		bResult = RegenerateFileLambda(ConfigFile->SourceIniHierarchy, *ConfigFile, bUseHierarchyCache);
 
 		// Add back the CurrentIniVersion section.
-		if (FConfigSection* DestConfigSectionIniVersion = ConfigFile->FindOrAddSection(CurrentIniVersionString))
+		if (FConfigSection* DestConfigSectionIniVersion = ConfigFile->FindOrAddSectionInternal(CurrentIniVersionString))
 		{
 			// Update the version. If it's already there then good but if not, we add it.
 			DestConfigSectionIniVersion->FindOrAdd(VersionName, FConfigValue(FString::FromInt(SourceConfigVersionNum)));
@@ -862,7 +953,7 @@ bool FConfigContext::GenerateDestIniFile()
 		// Add back any preserved sections.
 		for (TMap<FString, FConfigSection>::TConstIterator ItPreservedConfigFileData(PreservedConfigFileData); ItPreservedConfigFileData; ++ItPreservedConfigFileData)
 		{
-			if (FConfigSection* DestConfigSectionPreserved = ConfigFile->FindOrAddSection(ItPreservedConfigFileData.Key()))
+			if (FConfigSection* DestConfigSectionPreserved = ConfigFile->FindOrAddSectionInternal(ItPreservedConfigFileData.Key()))
 			{
 				FConfigSection PreservedConfigFileSection = ItPreservedConfigFileData.Value();
 				for (FConfigSectionMap::TConstIterator ItPreservedConfigFileSection(PreservedConfigFileSection); ItPreservedConfigFileSection; ++ItPreservedConfigFileSection)
@@ -936,4 +1027,68 @@ int32 FConfigFileHierarchy::AddDynamicLayer(const FString& Filename)
 void FConfigContext::EnsureRequiredGlobalPathsHaveBeenInitialized()
 {
 	PerformBasicReplacements(TEXT(""), TEXT("")); // requests user directories and FConfigCacheIni::GetCustomConfigString
+}
+
+
+void FConfigContext::VisualizeHierarchy(FOutputDevice& Ar, const TCHAR* IniName, const TCHAR* OverridePlatform, const TCHAR* OverrideProjectOrProgramDataDir, const TCHAR* OverridePluginDir, const TArray<FString>* ChildPluginBaseDirs)
+{
+	FConfigFile Test;
+	FConfigContext Context(nullptr, true, OverridePlatform ? FString(OverridePlatform) : FString(), &Test);
+	if (OverridePluginDir != nullptr)
+	{
+		Context.bIsForPlugin = true;
+		Context.PluginRootDir = OverridePluginDir;
+		if (ChildPluginBaseDirs != nullptr)
+		{
+			Context.ChildPluginBaseDirs = *ChildPluginBaseDirs;
+		}
+	}
+	
+	if (OverrideProjectOrProgramDataDir != nullptr)
+	{
+		Context.ProjectConfigDir = FPaths::Combine(OverrideProjectOrProgramDataDir, "Config/");
+	}
+
+	
+	Context.VisualizeHierarchy(Ar, IniName);
+}
+
+void FConfigContext::VisualizeHierarchy(FOutputDevice& Ar, const TCHAR* IniName)
+{
+	Ar.Logf(TEXT("======================================================="));
+
+	ResetBaseIni(IniName);
+	CachePaths();
+	bool _;
+	PrepareForLoad(_);
+
+	Ar.Logf(TEXT("Config hierarchy:"));
+	if (ProjectRootDir.Contains(TEXT("/Programs/")))
+	{
+		Ar.Logf(TEXT("  Program Data Dir: %s"), *ProjectRootDir);
+	}
+	else
+	{
+		Ar.Logf(TEXT("  Project Dir: %s"), *ProjectRootDir);
+	}
+	Ar.Logf(TEXT("  Platform: %s"), *Platform);
+	if (bIsForPlugin)
+	{
+		Ar.Logf(TEXT("  Plugin Root Dir: %s"), *PluginRootDir);
+		for (FString& Child : ChildPluginBaseDirs)
+		{
+			Ar.Logf(TEXT("  Plugin Children Dir: %s"), *Child);
+		}
+	}
+	
+	TArray<FString> FileList;
+	AddStaticLayersToHierarchy(&FileList, true);
+	
+	Ar.Logf(TEXT("  Files:"));
+	for (const FString& File : FileList)
+	{
+		Ar.Logf(TEXT("    %s"), *File);
+	}
+
+	Ar.Logf(TEXT("======================================================="));
 }

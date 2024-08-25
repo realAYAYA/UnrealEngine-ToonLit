@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Agents.Sessions;
+using Grpc.Net.Client;
 using Horde.Agent.Leases.Handlers;
 using Horde.Agent.Services;
 using Horde.Agent.Utility;
@@ -14,23 +14,23 @@ using Microsoft.Extensions.Options;
 
 namespace Horde.Agent.Commands.Execution
 {
-	[Command("Execute", "Job", "Executes a job")]
+	[Command("Execute", "Job", "Executes a job", Advertise = false)]
 	class ExecuteJobCommand : Command
 	{
 		[CommandLine("-AgentId=", Required = true)]
-		public string AgentId { get; set; } = null!;
+		public AgentId AgentId { get; set; }
 
 		[CommandLine("-SessionId=", Required = true)]
-		public string SessionId { get; set; } = null!;
+		public SessionId SessionId { get; set; }
 
 		[CommandLine("-LeaseId", Required = true)]
-		public string LeaseId { get; set; } = null!;
+		public LeaseId LeaseId { get; set; }
 
 		[CommandLine("-Task=", Required = true)]
 		public string Task { get; set; } = null!;
 
 		[CommandLine("-WorkingDir=", Required = true)]
-		public DirectoryReference WorkingDir = null!;
+		public DirectoryReference WorkingDir { get; set; } = null!;
 
 		readonly GrpcService _grpcService;
 		readonly JobHandler _jobHandler;
@@ -51,9 +51,10 @@ namespace Horde.Agent.Commands.Execution
 			Dictionary<string, TerminateCondition> processNamesToTerminate = _settings.GetProcessesToTerminateMap();
 
 			await using RpcConnection rpcConnection = new RpcConnection(ctx => _grpcService.CreateGrpcChannelAsync(executeTask.Token, ctx), logger);
-			await using Session session = new Session(serverProfile.Url, AgentId, SessionId, executeTask.Token, rpcConnection, WorkingDir, processNamesToTerminate, logger);
+			using GrpcChannel channel = await _grpcService.CreateGrpcChannelAsync(executeTask.Token, CancellationToken.None);
+			await using Session session = new Session(serverProfile.Url, AgentId, SessionId, executeTask.Token, rpcConnection, channel, WorkingDir, processNamesToTerminate);
 
-			await _jobHandler.ExecuteInternalAsync(session, LeaseId, executeTask, CancellationToken.None);
+			await _jobHandler.ExecuteInternalAsync(session, LeaseId, executeTask, logger, CancellationToken.None);
 			return 0;
 		}
 	}

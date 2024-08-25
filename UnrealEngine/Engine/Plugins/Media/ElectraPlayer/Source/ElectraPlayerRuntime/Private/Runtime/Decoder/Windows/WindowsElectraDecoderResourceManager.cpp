@@ -9,8 +9,11 @@
 
 #include "Renderer/RendererBase.h"
 #include "ElectraVideoDecoder_PC.h"
+#include "VideoDecoderResourceDelegate.h"
 
 #include "ElectraPlayerMisc.h"
+
+#include COMPILED_PLATFORM_HEADER(ElectraDecoderGPUBufferHelpers.h)
 
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
@@ -76,19 +79,33 @@ class FElectraDecoderResourceManagerWindows::FInstanceVars : public IElectraDeco
 {
 public:
 	uint32 Codec4CC = 0;
+	uint32 MaxWidth = 0;
+	uint32 MaxHeight = 0;
+	uint32 MaxOutputBuffers = 0;
+	TWeakPtr<IVideoDecoderResourceDelegate, ESPMode::ThreadSafe> VideoDecoderResourceDelegate;
+	TSharedPtr<FElectraMediaDecoderOutputBufferPool_DX12> D3D12ResourcePool;
 };
-
 
 
 IElectraDecoderResourceDelegateWindows::IDecoderPlatformResource* FElectraDecoderResourceManagerWindows::CreatePlatformResource(void* InOwnerHandle, EDecoderPlatformResourceType InDecoderResourceType, const TMap<FString, FVariant> InOptions)
 {
-	FInstanceVars* Vars = new FInstanceVars;
-	check(Vars);
-	if (Vars)
+	IVideoDecoderResourceDelegate* Delegate = reinterpret_cast<IVideoDecoderResourceDelegate*>(ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("VideoResourceDelegate"), 0));
+	if (Delegate)
 	{
-		Vars->Codec4CC = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("codec_4cc"), 0);
+		TSharedPtr<IVideoDecoderResourceDelegate, ESPMode::ThreadSafe> VideoDecoderResourceDelegate = Delegate->AsShared();
+		FInstanceVars* Vars = new FInstanceVars();
+		check(Vars);
+		if (Vars)
+		{
+			Vars->VideoDecoderResourceDelegate = VideoDecoderResourceDelegate;
+			Vars->Codec4CC = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("codec_4cc"), 0);
+			Vars->MaxWidth = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_width"), 1920);
+			Vars->MaxHeight = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_height"), 1080);
+			Vars->MaxOutputBuffers = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_output_buffers"), 5);
+		}
+		return Vars;
 	}
-	return Vars;
+	return nullptr;
 }
 
 
@@ -113,24 +130,46 @@ bool FElectraDecoderResourceManagerWindows::GetD3DDevice(void **OutD3DDevice, in
 	return false;
 }
 
+TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync, ESPMode::ThreadSafe> FElectraDecoderResourceManagerWindows::CreateAsyncConsecutiveTaskSync()
+{
+	if (WindowsDecoderResources::Callbacks.CreateAsyncConsecutiveTaskSync)
+	{
+		return WindowsDecoderResources::Callbacks.CreateAsyncConsecutiveTaskSync();
+	}
+	return nullptr;
+}
+
+bool FElectraDecoderResourceManagerWindows::RunCodeAsync(TFunction<void()>&& CodeToRun, IAsyncConsecutiveTaskSync* TaskSync)
+{
+	if (WindowsDecoderResources::Callbacks.RunCodeAsync)
+	{
+		return WindowsDecoderResources::Callbacks.RunCodeAsync(MoveTemp(CodeToRun), TaskSync);
+	}
+	return false;
+}
+
 
 bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutputFromMFSample(IMediaRenderer::IBuffer* InOutBufferToSetup, TSharedPtr<FParamDict, ESPMode::ThreadSafe> InOutBufferPropertes, TSharedPtr<IElectraDecoderVideoOutput, ESPMode::ThreadSafe> InDecoderOutput, FElectraDecoderResourceManagerWindows::IDecoderPlatformResource* InPlatformSpecificResource)
 {
-	TSharedPtr<FElectraPlayerVideoDecoderOutputPC, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue("texture").GetSharedPointer<FElectraPlayerVideoDecoderOutputPC>();
-	if (DecoderOutput.IsValid())
+	TSharedPtr<FElectraPlayerVideoDecoderOutputPC, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue(RenderOptionKeys::Texture).GetSharedPointer<FElectraPlayerVideoDecoderOutputPC>();
+	FInstanceVars* Vars = static_cast<FInstanceVars*>(InPlatformSpecificResource);
+
+	if (DecoderOutput.IsValid() && Vars != nullptr)
 	{
+		TSharedPtr<IVideoDecoderResourceDelegate, ESPMode::ThreadSafe> PinnedResourceDelegate = Vars->VideoDecoderResourceDelegate.Pin();
+
 		FElectraVideoDecoderOutputCropValues Crop = InDecoderOutput->GetCropValues();
-		InOutBufferPropertes->Set(TEXT("width"), FVariantValue((int64)InDecoderOutput->GetWidth()));
-		InOutBufferPropertes->Set(TEXT("height"), FVariantValue((int64)InDecoderOutput->GetHeight()));
-		InOutBufferPropertes->Set(TEXT("crop_left"), FVariantValue((int64)Crop.Left));
-		InOutBufferPropertes->Set(TEXT("crop_right"), FVariantValue((int64)Crop.Right));
-		InOutBufferPropertes->Set(TEXT("crop_top"), FVariantValue((int64)Crop.Top));
-		InOutBufferPropertes->Set(TEXT("crop_bottom"), FVariantValue((int64)Crop.Bottom));
-		InOutBufferPropertes->Set(TEXT("aspect_ratio"), FVariantValue((double)InDecoderOutput->GetAspectRatioW() / (double)InDecoderOutput->GetAspectRatioH()));
-		InOutBufferPropertes->Set(TEXT("aspect_w"), FVariantValue((int64)InDecoderOutput->GetAspectRatioW()));
-		InOutBufferPropertes->Set(TEXT("aspect_h"), FVariantValue((int64)InDecoderOutput->GetAspectRatioH()));
-		InOutBufferPropertes->Set(TEXT("fps_num"), FVariantValue((int64)InDecoderOutput->GetFrameRateNumerator()));
-		InOutBufferPropertes->Set(TEXT("fps_denom"), FVariantValue((int64)InDecoderOutput->GetFrameRateDenominator()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::Width, FVariantValue((int64)InDecoderOutput->GetWidth()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::Height, FVariantValue((int64)InDecoderOutput->GetHeight()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropLeft, FVariantValue((int64)Crop.Left));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropRight, FVariantValue((int64)Crop.Right));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropTop, FVariantValue((int64)Crop.Top));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropBottom, FVariantValue((int64)Crop.Bottom));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectRatio, FVariantValue((double)InDecoderOutput->GetAspectRatioW() / (double)InDecoderOutput->GetAspectRatioH()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectW, FVariantValue((int64)InDecoderOutput->GetAspectRatioW()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectH, FVariantValue((int64)InDecoderOutput->GetAspectRatioH()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSNumerator, FVariantValue((int64)InDecoderOutput->GetFrameRateNumerator()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSDenominator, FVariantValue((int64)InDecoderOutput->GetFrameRateDenominator()));
 
 		// What type of decoder output do we have here?
 		TMap<FString, FVariant> ExtraValues;
@@ -174,6 +213,7 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutputFr
 				return false;
 			}
 
+			// No, continue with SW or DX11 texture output
 			TRefCountPtr<ID3D11Texture2D> Texture2D;
 			if ((Result = DXGIBuffer->GetResource(IID_PPV_ARGS(Texture2D.GetInitReference()))) != S_OK)
 			{
@@ -188,13 +228,13 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutputFr
 				return false;
 			}
 
-			InOutBufferPropertes->Set(TEXT("pixelfmt"), FVariantValue((int64)(TextureDesc.Format == DXGI_FORMAT_NV12 ? EPixelFormat::PF_NV12 : EPixelFormat::PF_P010)));
-			InOutBufferPropertes->Set(TEXT("bits_per"), FVariantValue((int64)(TextureDesc.Format == DXGI_FORMAT_NV12 ? 8 : 10)));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::PixelFormat, FVariantValue((int64)(TextureDesc.Format == DXGI_FORMAT_NV12 ? EPixelFormat::PF_NV12 : EPixelFormat::PF_P010)));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::BitsPerComponent, FVariantValue((int64)(TextureDesc.Format == DXGI_FORMAT_NV12 ? 8 : 10)));
 
 			if (DXVersion == 0 || DXVersion >= 12000)
 			{
 				//
-				// DX12 & non-DX
+				// DX12 (with DX11 decode device) & non-DX
 				// 
 				// (access buffer for CPU use)
 				//
@@ -213,7 +253,7 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutputFr
 					return false;
 				}
 
-				InOutBufferPropertes->Set(TEXT("pitch"), FVariantValue((int64)Pitch));
+				InOutBufferPropertes->Set(IDecoderOutputOptionNames::Pitch, FVariantValue((int64)Pitch));
 
 				// Get decoded with (e.g. featuring any height adjustments for CPU buffer usage of NV12 etc.)
 				int32 Width = InDecoderOutput->GetDecodedWidth();
@@ -295,8 +335,8 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutputFr
 
 			EPixelFormat PixFmt = (SamplePixFmt == EElectraDecoderPlatformPixelFormat::NV12) ? EPixelFormat::PF_NV12 : EPixelFormat::PF_P010;
 
-			InOutBufferPropertes->Set(TEXT("pixelfmt"), FVariantValue((int64)PixFmt));
-			InOutBufferPropertes->Set(TEXT("bits_per"), FVariantValue((int64)((PixFmt == EPixelFormat::PF_NV12) ? 8 : 10)));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::PixelFormat, FVariantValue((int64)PixFmt));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::BitsPerComponent, FVariantValue((int64)((PixFmt == EPixelFormat::PF_NV12) ? 8 : 10)));
 
 			TRefCountPtr<IMF2DBuffer> Buffer2D;
 			if ((Result = Buffer->QueryInterface(__uuidof(IMF2DBuffer), (void**)Buffer2D.GetInitReference())) == S_OK)
@@ -309,7 +349,7 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutputFr
 					return false;
 				}
 
-				InOutBufferPropertes->Set(TEXT("pitch"), FVariantValue((int64)Pitch));
+				InOutBufferPropertes->Set(IDecoderOutputOptionNames::Pitch, FVariantValue((int64)Pitch));
 
 				DecoderOutput->InitializeWithBuffer(Data, Pitch * Height,
 					Pitch,						// Buffer stride
@@ -339,7 +379,7 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutputFr
 
 				int32 Pitch = Width * ((PixFmt == EPixelFormat::PF_NV12) ? 1 : 2);
 
-				InOutBufferPropertes->Set(TEXT("pitch"), FVariantValue((int64)Pitch));
+				InOutBufferPropertes->Set(IDecoderOutputOptionNames::Pitch, FVariantValue((int64)Pitch));
 
 				DecoderOutput->InitializeWithBuffer(Data, BufferSize,
 					Pitch,						// Buffer stride
@@ -365,9 +405,8 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutput(I
 	check(InOutBufferPropertes.IsValid());
 	check(InDecoderOutput.IsValid());
 
-	TSharedPtr<FElectraPlayerVideoDecoderOutputPC, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue("texture").GetSharedPointer<FElectraPlayerVideoDecoderOutputPC>();
+	TSharedPtr<FElectraPlayerVideoDecoderOutputPC, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue(RenderOptionKeys::Texture).GetSharedPointer<FElectraPlayerVideoDecoderOutputPC>();
 	FInstanceVars* Vars = static_cast<FInstanceVars*>(InPlatformSpecificResource);
-
 	if (DecoderOutput.IsValid())
 	{
 		//
@@ -377,22 +416,22 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutput(I
 		if (ImageBuffers != nullptr)
 		{
 			FElectraVideoDecoderOutputCropValues Crop = InDecoderOutput->GetCropValues();
-			InOutBufferPropertes->Set(TEXT("width"), FVariantValue((int64)InDecoderOutput->GetWidth()));
-			InOutBufferPropertes->Set(TEXT("height"), FVariantValue((int64)InDecoderOutput->GetHeight()));
-			InOutBufferPropertes->Set(TEXT("crop_left"), FVariantValue((int64)Crop.Left));
-			InOutBufferPropertes->Set(TEXT("crop_right"), FVariantValue((int64)Crop.Right));
-			InOutBufferPropertes->Set(TEXT("crop_top"), FVariantValue((int64)Crop.Top));
-			InOutBufferPropertes->Set(TEXT("crop_bottom"), FVariantValue((int64)Crop.Bottom));
-			InOutBufferPropertes->Set(TEXT("aspect_ratio"), FVariantValue((double)InDecoderOutput->GetAspectRatioW() / (double)InDecoderOutput->GetAspectRatioH()));
-			InOutBufferPropertes->Set(TEXT("aspect_w"), FVariantValue((int64)InDecoderOutput->GetAspectRatioW()));
-			InOutBufferPropertes->Set(TEXT("aspect_h"), FVariantValue((int64)InDecoderOutput->GetAspectRatioH()));
-			InOutBufferPropertes->Set(TEXT("fps_num"), FVariantValue((int64)InDecoderOutput->GetFrameRateNumerator()));
-			InOutBufferPropertes->Set(TEXT("fps_denom"), FVariantValue((int64)InDecoderOutput->GetFrameRateDenominator()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::Width, FVariantValue((int64)InDecoderOutput->GetWidth()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::Height, FVariantValue((int64)InDecoderOutput->GetHeight()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropLeft, FVariantValue((int64)Crop.Left));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropRight, FVariantValue((int64)Crop.Right));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropTop, FVariantValue((int64)Crop.Top));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropBottom, FVariantValue((int64)Crop.Bottom));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectRatio, FVariantValue((double)InDecoderOutput->GetAspectRatioW() / (double)InDecoderOutput->GetAspectRatioH()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectW, FVariantValue((int64)InDecoderOutput->GetAspectRatioW()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectH, FVariantValue((int64)InDecoderOutput->GetAspectRatioH()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSNumerator, FVariantValue((int64)InDecoderOutput->GetFrameRateNumerator()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSDenominator, FVariantValue((int64)InDecoderOutput->GetFrameRateDenominator()));
 
 			int32 Width = InDecoderOutput->GetDecodedWidth();
 			int32 Height = InDecoderOutput->GetDecodedHeight();
 
-			InOutBufferPropertes->Set(TEXT("bits_per"), FVariantValue((int64)InDecoderOutput->GetNumberOfBits()));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::BitsPerComponent, FVariantValue((int64)InDecoderOutput->GetNumberOfBits()));
 
 			int32 NumImageBuffers = ImageBuffers->GetNumberOfBuffers();
 			check(NumImageBuffers == 1 || NumImageBuffers == 2);
@@ -402,7 +441,7 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutput(I
 			EElectraDecoderPlatformPixelEncoding PixEnc = ImageBuffers->GetBufferEncodingByIndex(0);
 
 			EPixelFormat RHIPixFmt;
-			switch (PixFmt)
+			switch(PixFmt)
 			{
 				case EElectraDecoderPlatformPixelFormat::R8G8B8A8:		RHIPixFmt = EPixelFormat::PF_R8G8B8A8; break;
 				case EElectraDecoderPlatformPixelFormat::A8R8G8B8:		RHIPixFmt = EPixelFormat::PF_A8R8G8B8; break;
@@ -438,9 +477,14 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutput(I
 			
 			int32 Pitch = ImageBuffers->GetBufferPitchByIndex(0);
 
-			InOutBufferPropertes->Set(TEXT("pixelfmt"), FVariantValue((int64)RHIPixFmt));
-			InOutBufferPropertes->Set(TEXT("pixelenc"), FVariantValue((int64)DecPixEnc));
-			InOutBufferPropertes->Set(TEXT("pitch"), FVariantValue((int64)Pitch));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::PixelFormat, FVariantValue((int64)RHIPixFmt));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::PixelEncoding, FVariantValue((int64)DecPixEnc));
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::Pitch, FVariantValue((int64)Pitch));
+
+			TMap<FString, FVariant> ExtraValues;
+			InDecoderOutput->GetExtraValues(ExtraValues);
+
+			InOutBufferPropertes->Set(IDecoderOutputOptionNames::PixelDataScale, FVariantValue((double)ElectraDecodersUtil::GetVariantValueSafeDouble(ExtraValues, TEXT("pix_datascale"), 1.0)));
 
 // [...] ALPHA BUFFER -- HOW DO WE PASS IT ON!?
 // [...] ANY CS/HDR INFO FROM THE DECODER? -- PASSING IT ON WOULD BE EASY, BUT RIGHT NOW WE ALWAYS READ IT FROM THE CONTAINER (in code further up the chain)
@@ -459,24 +503,58 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutput(I
 			}
 			else
 			{
-				// Note: we assume a DX11 texture at this point, but this could also be interpreted as IUnknown and then either DX11 or DX12 resources being derived from it...
-				ID3D11Texture2D* Texture = static_cast<ID3D11Texture2D*>(ImageBuffers->GetBufferTextureByIndex(0));
-				if (Texture != nullptr)
+				TRefCountPtr<IUnknown> TextureCommon(static_cast<IUnknown*>(ImageBuffers->GetBufferTextureByIndex(0)));
+
+				if (TextureCommon.IsValid())
 				{
-					//
-					// GPU texture
-					//
-					ID3D11Device* Device = reinterpret_cast<ID3D11Device*>(InDecoderOutput->GetPlatformOutputHandle(EElectraDecoderPlatformOutputHandleType::DXDevice));
-					ID3D11DeviceContext* DeviceContext = reinterpret_cast<ID3D11DeviceContext*>(InDecoderOutput->GetPlatformOutputHandle(EElectraDecoderPlatformOutputHandleType::DXDeviceContext));
-					if (Device && DeviceContext)
+					HRESULT Res;
+
+					void* DDevice;
+					int32 DVersion;
+					check(WindowsDecoderResources::Callbacks.GetD3DDevice);
+					WindowsDecoderResources::Callbacks.GetD3DDevice(&DDevice, &DVersion, WindowsDecoderResources::Callbacks.UserValue);
+
+					if (DVersion >= 12000)
 					{
-						uint32 ViewIndex = 0;
-						DecoderOutput->InitializeWithSharedTexture(Device, DeviceContext, Texture, ViewIndex, FIntPoint(InDecoderOutput->GetWidth(), InDecoderOutput->GetHeight()), InOutBufferPropertes);
-						return true;
+						TRefCountPtr<ID3D12Device> D3D12Device(static_cast<ID3D12Device*>(DDevice));
+
+						// Can we get a DX12 texture? (this will only work if the transform is associated with a DX12 device earlier on; hence no need for a SDK version guard here)
+						TRefCountPtr<ID3D12Resource> Resource;
+						Res = TextureCommon->QueryInterface(__uuidof(ID3D12Resource), (void**)Resource.GetInitReference());
+						if (Res == S_OK)
+						{
+							//
+							// DX12 texture / buffer
+							//
+
+							// We might also have a fence / sync we need to use before accessing the data on the texture...
+							FElectraDecoderOutputSync OutputSync;
+							ImageBuffers->GetBufferTextureSyncByIndex(0, OutputSync);
+
+							DecoderOutput->InitializeWithResource(D3D12Device, Resource, Pitch, OutputSync, FIntPoint(InDecoderOutput->GetDecodedWidth(), InDecoderOutput->GetDecodedHeight()), InOutBufferPropertes, Vars->VideoDecoderResourceDelegate,
+																  Vars->D3D12ResourcePool, Vars->MaxWidth, Vars->MaxHeight, Vars->MaxOutputBuffers);
+							return true;
+						}
+					}
+
+					TRefCountPtr<ID3D11Texture2D> Texture;
+					Res = TextureCommon->QueryInterface(__uuidof(ID3D11Texture2D), (void**)Texture.GetInitReference());
+					if (Res == S_OK)
+					{
+						//
+						// DX11 texture
+						//
+						ID3D11Device* Device = reinterpret_cast<ID3D11Device*>(InDecoderOutput->GetPlatformOutputHandle(EElectraDecoderPlatformOutputHandleType::DXDevice));
+						ID3D11DeviceContext* DeviceContext = reinterpret_cast<ID3D11DeviceContext*>(InDecoderOutput->GetPlatformOutputHandle(EElectraDecoderPlatformOutputHandleType::DXDeviceContext));
+						if (Device && DeviceContext)
+						{
+							uint32 ViewIndex = 0;
+							DecoderOutput->InitializeWithSharedTexture(Device, DeviceContext, Texture.GetReference(), ViewIndex, FIntPoint(InDecoderOutput->GetWidth(), InDecoderOutput->GetHeight()), InOutBufferPropertes);
+							return true;
+						}
 					}
 				}
 			}
-
 		}
 		else
 		{
@@ -491,8 +569,6 @@ bool FElectraDecoderResourceManagerWindows::SetupRenderBufferFromDecoderOutput(I
 	}
 	return false;
 }
-
-
 
 
 } // namespace Electra

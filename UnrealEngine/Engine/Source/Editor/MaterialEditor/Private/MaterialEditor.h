@@ -46,8 +46,9 @@ struct FGraphAppearanceInfo;
 class UMaterialFunctionInstance;
 class FMaterialCachedHLSLTree;
 struct FMaterialCachedExpressionData;
-class SMaterialEditorStrataWidget;
+class SMaterialEditorSubstrateWidget;
 
+typedef TSet<class UObject*> FGraphPanelSelectionSet;
 
 /**
  * Class for rendering previews of material expressions in the material editor's linked object viewport.
@@ -121,6 +122,7 @@ public:
 
 	virtual EMaterialDomain GetMaterialDomain() const override { return MD_Surface; }
 	virtual FString GetMaterialUsageDescription() const override { return FString::Printf(TEXT("FMatExpressionPreview %s"), Expression.IsValid() ? *Expression->GetName() : TEXT("NULL")); }
+	virtual bool IsPreview() const override { return true; }
 	virtual bool IsTwoSided() const override { return false; }
 	virtual bool IsThinSurface() const override { return false; }
 	virtual bool IsDitheredLODTransition() const override { return false; }
@@ -147,7 +149,7 @@ public:
 		return Expression.Get();
 	}
 
-	// This material interface is solely needed for the translator to be able to parse the graph for the Strata tree.
+	// This material interface is solely needed for the translator to be able to parse the graph for the Substrate tree.
 	virtual UMaterialInterface* GetMaterialInterface() const override;
 
 	virtual void NotifyCompilationFinished() override;
@@ -404,6 +406,7 @@ public:
 	virtual void DeleteSelectedNodes() override;
 	virtual FText GetOriginalObjectName() const override;
 	virtual void UpdateMaterialAfterGraphChange() override;
+	virtual void MarkMaterialDirty() override;
 	virtual void JumpToHyperlink(const UObject* ObjectReference) override; 
 	virtual bool CanPasteNodes() const override;
 	virtual void PasteNodesHere(const FVector2D& Location, const class UEdGraph* Graph = nullptr) override;
@@ -413,7 +416,13 @@ public:
 	virtual FMatExpressionPreview* GetExpressionPreview(UMaterialExpression* InExpression) override;
 	virtual void DeleteNodes(const TArray<class UEdGraphNode*>& NodesToDelete) override;
 	virtual void GenerateInheritanceMenu(class UToolMenu* Menu) override;
+	virtual void RefreshStatsMaterials() override;
 
+	void DeleteSelectedNodes(bool bShowConfirmation);
+	void DeleteNodes(const TArray<class UEdGraphNode*>& NodesToDelete, bool bShowConfirmation);
+	FString CopyNodesToBuffer(const FGraphPanelSelectionSet& Nodes);
+	FString CopyNodesToBuffer(const TSet<UEdGraphNode*>& Nodes);
+	void PasteNodesHereFromBuffer(const FVector2D& Location, const class UEdGraph* Graph, const FString& TextToImport, TMap<FGuid, FGuid>* OutOldToNewGuids);
 	void UpdateStatsMaterials();
 
 	/** Gets the extensibility managers for outside entities to extend material editor's menus and toolbars */
@@ -451,6 +460,9 @@ public:
 
 	/** The material applied to the preview mesh. */
 	TObjectPtr<UMaterial> Material;
+
+	TArray<TObjectPtr<UMaterialInstance>> DerivedMaterialInstances;
+	TArray<TObjectPtr<UMaterialInstance>> OriginalDerivedMaterialInstances;
 	
 	/** The source material being edited by this material editor. Only will be updated when Material's settings are copied over this material */
 	TObjectPtr<UMaterial> OriginalMaterial;
@@ -698,10 +710,12 @@ private:
 	bool IsFeaturePreviewAvailable(ERHIFeatureLevel::Type TestFeatureLevel) const;
 
 	/** Update Substrate topology preview */
-	void UpdateStrataTopologyPreview();
+	void UpdateSubstrateTopologyPreview();
+
+	/** Create array of derived material instances used in conjunction with preview material in material stats */
+	void CreateDerivedMaterialInstancesPreviews();
 
 public:
-
 private:
 	/**
 	 * Load editor settings from disk (docking state, window pos/size, option state, etc).
@@ -761,6 +775,12 @@ private:
 	void OnConvertObjects();
 	/** Command for converting nodes to textures */
 	void OnConvertTextures();
+	/** Command for collapsing nodes to a function */
+	void OnCollapseToFunction();
+	bool CanCollapseToFunction() const;
+	/** Command for expanding a function */
+	void OnExpandMaterialFunctionNode();
+	bool CanExpandMaterialFunctionNode() const;
 	/** Command for promoting nodes to double precision */
 	void OnPromoteObjects();
 	/** Command to select local variable declaration */
@@ -790,24 +810,30 @@ private:
 
 	/** Will promote selected pin to a parameter of the pin type */
 	void OnPromoteToParameter(const FToolMenuContext& InMenuContext) const;
-
+	
 	/** Used to know if we can promote selected pin to a parameter of the pin type */
 	bool OnCanPromoteToParameter(const FToolMenuContext& InMenuContext) const;
 
 	/** Will  return the UClass to create from the Pin Type */
 	UClass* GetOnPromoteToParameterClass(const UEdGraphPin* TargetPin) const;
 
-	enum class EStrataNodeForPin : uint8
+	/** Used to know if we can reset the selected pin to it's default value */
+	bool OnCanResetToDefault(const FToolMenuContext& InMenuContext) const;
+
+	/** Will reset selected pin to it's default value */
+	void OnResetToDefault(const FToolMenuContext& InMenuContext) const;
+	
+	enum class ESubstrateNodeForPin : uint8
 	{
 		Slab,
 		HorizontalMix,
 		VerticalLayer,
 		Weight
 	};
-	/** Will create a Strata node as input to the pin */
-	void OnCreateStrataNodeForPin(const FToolMenuContext& InMenuContext, EStrataNodeForPin NodeForPin) const;
-	/** Used to know if we can create a Strata node as input to the pin */
-	bool OnCanCreateStrataNodeForPin(const FToolMenuContext& InMenuContext, EStrataNodeForPin NodeForPin) const;
+	/** Will create a Substrate node as input to the pin */
+	void OnCreateSubstrateNodeForPin(const FToolMenuContext& InMenuContext, ESubstrateNodeForPin NodeForPin) const;
+	/** Used to know if we can create a Substrate node as input to the pin */
+	bool OnCanCreateSubstrateNodeForPin(const FToolMenuContext& InMenuContext, ESubstrateNodeForPin NodeForPin) const;
 
 	/** Open documentation for the selected node class */
 	void OnGoToDocumentation();
@@ -915,7 +941,7 @@ private:
 	TSharedRef<SDockTab> SpawnTab_ParameterDefaults(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnTab_CustomPrimitiveData(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnTab_LayerProperties(const FSpawnTabArgs& Args);
-	TSharedRef<SDockTab> SpawnTab_Strata(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnTab_Substrate(const FSpawnTabArgs& Args);
 
 	void OnFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent);
 	void OnFinishedChangingParametersFromOverview(const FPropertyChangedEvent& PropertyChangedEvent);
@@ -942,8 +968,8 @@ private:
 	/** Palette of Material Expressions and functions */
 	TSharedPtr<class SMaterialPalette> Palette;
 
-	/** The strata control tab */
-	TSharedPtr<class SMaterialEditorStrataWidget> StrataWidget;
+	/** The Substrate control tab */
+	TSharedPtr<class SMaterialEditorSubstrateWidget> SubstrateWidget;
 
 	/** Stats log, with the log listing that it reflects */
 	TSharedPtr<class SWidget> Stats;

@@ -49,7 +49,7 @@ namespace UnrealGameSync
 			{
 				Stop("Aborted");
 			}
-			Telemetry.SendEvent(_eventName, _eventData);
+			UgsTelemetry.SendEvent(_eventName, _eventData);
 		}
 
 		public TimeSpan Elapsed => _timer.Elapsed;

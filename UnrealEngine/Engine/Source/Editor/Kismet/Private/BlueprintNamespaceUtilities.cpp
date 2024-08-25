@@ -60,25 +60,17 @@ FString FBlueprintNamespaceUtilities::GetAssetNamespace(const FAssetData& InAsse
 
 	if (InAssetData.IsValid())
 	{
-		if (const UObject* AssetObject = InAssetData.FastGetAsset())
+		using namespace UE::Editor::Kismet::Private;
+
+		// @todo_namespaces - Add cases for unloaded UDS/UDE assets once they have a searchable namespace tag or property.
+		FString TagValue;
+		if (InAssetData.GetTagValue<FString>(GET_MEMBER_NAME_STRING_CHECKED(UBlueprint, BlueprintNamespace), TagValue))
 		{
-			Namespace = GetObjectNamespace(AssetObject);
+			Namespace = MoveTemp(TagValue);
 		}
-		else
+		else if (DefaultBlueprintNamespaceType == EDefaultBlueprintNamespaceType::UsePackagePathAsDefaultNamespace)
 		{
-			using namespace UE::Editor::Kismet::Private;
-
-			// @todo_namespaces - Add cases for unloaded UDS/UDE assets once they have a searchable namespace tag or property.
-
-			FString TagValue;
-			if (InAssetData.GetTagValue<FString>(GET_MEMBER_NAME_STRING_CHECKED(UBlueprint, BlueprintNamespace), TagValue))
-			{
-				Namespace = MoveTemp(TagValue);
-			}
-			else if (DefaultBlueprintNamespaceType == EDefaultBlueprintNamespaceType::UsePackagePathAsDefaultNamespace)
-			{
-				ConvertPackagePathToNamespacePath(InAssetData.PackageName.ToString(), Namespace);
-			}
+			ConvertPackagePathToNamespacePath(InAssetData.PackageName.ToString(), Namespace);
 		}
 	}
 
@@ -158,12 +150,7 @@ FString FBlueprintNamespaceUtilities::GetObjectNamespace(const UObject* InObject
 
 FString FBlueprintNamespaceUtilities::GetObjectNamespace(const FSoftObjectPath& InObjectPath)
 {
-	if (const UObject* Object = InObjectPath.ResolveObject())
-	{
-		return GetObjectNamespace(Object);
-	}
-
-	const bool bIncludeOnlyOnDiskAssets = true; // The resolve object failed so we know it isn't in memory
+	const bool bIncludeOnlyOnDiskAssets = false;
 	const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 	FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(InObjectPath, bIncludeOnlyOnDiskAssets);
 	if (!AssetData.IsValid())
@@ -209,7 +196,7 @@ void FBlueprintNamespaceUtilities::GetPropertyValueNamespaces(const FProperty* I
 			FScriptSetHelper SetHelper(SetProperty, ValuePtr);
 			for (FScriptSetHelper::FIterator SetIt = SetHelper.CreateIterator(); SetIt; ++SetIt)
 			{
-				GetPropertyValueNamespaces(SetProperty->ElementProp, SetHelper.GetElementPtr(*SetIt), OutNamespaces);
+				GetPropertyValueNamespaces(SetProperty->ElementProp, SetHelper.GetElementPtr(SetIt), OutNamespaces);
 			}
 		}
 		else if (const FMapProperty* MapProperty = CastField<FMapProperty>(InProperty))
@@ -217,7 +204,7 @@ void FBlueprintNamespaceUtilities::GetPropertyValueNamespaces(const FProperty* I
 			FScriptMapHelper MapHelper(MapProperty, ValuePtr);
 			for (FScriptMapHelper::FIterator MapIt = MapHelper.CreateIterator(); MapIt; ++MapIt)
 			{
-				const uint8* MapValuePtr = MapHelper.GetPairPtr(*MapIt);
+				const uint8* MapValuePtr = MapHelper.GetPairPtr(MapIt);
 				GetPropertyValueNamespaces(MapProperty->KeyProp, MapValuePtr, OutNamespaces);
 				GetPropertyValueNamespaces(MapProperty->ValueProp, MapValuePtr, OutNamespaces);
 			}

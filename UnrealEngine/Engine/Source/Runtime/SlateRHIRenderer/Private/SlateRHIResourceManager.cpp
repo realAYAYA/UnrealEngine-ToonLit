@@ -234,7 +234,7 @@ void FDynamicResourceMap::RemoveExpiredMaterialResources(TArray< TSharedPtr<FSla
 	for (FMaterialResourceMap::TIterator It(MaterialMap); It; ++It)
 	{
 		FMaterialKey& Key = It.Key();
-		if (!Key.Material.IsValid())
+		if (Key.Material.ResolveObjectPtr() == nullptr)
 		{
 			RemovedMaterials.Push(It.Value());
 			It.Value()->ResetMaterial();
@@ -382,7 +382,8 @@ FAtlasSlotInfo FSlateRHIResourceManager::GetAtlasSlotInfoAtPosition(FIntPoint In
 {
 	const FSlateTextureAtlas* Atlas = nullptr;
 
-	if (PrecachedTextureAtlases.IsValidIndex(AtlasIndex))
+	bool bIsPrecachedTextureAtlases = PrecachedTextureAtlases.IsValidIndex(AtlasIndex);
+	if (bIsPrecachedTextureAtlases)
 	{
 		Atlas = PrecachedTextureAtlases[AtlasIndex];
 	}
@@ -391,22 +392,18 @@ FAtlasSlotInfo FSlateRHIResourceManager::GetAtlasSlotInfoAtPosition(FIntPoint In
 		Atlas = VectorGraphicsCache->GetAtlas(AtlasIndex - PrecachedTextureAtlases.Num());
 	}
 
+	FAtlasSlotInfo NewInfo;
 	if (Atlas)
 	{
-		FAtlasSlotInfo NewInfo;
-
 		const FAtlasedTextureSlot* Slot = Atlas->GetSlotAtPosition(InPosition);
 		if (Slot)
 		{
 			NewInfo.AtlasSlotRect = FSlateRect(FVector2f((float)Slot->X, (float)Slot->Y), FVector2f((float)(Slot->X + Slot->Width), (float)(Slot->Y + Slot->Height)));
-
-			NewInfo.TextureName = AtlasDebugData.FindRef(Slot);
-
-			return NewInfo;
+			NewInfo.TextureName = bIsPrecachedTextureAtlases ? AtlasDebugData.FindRef(Slot) : VectorGraphicsCache->GetAtlasDebugData(Slot);
 		}
 	}
 
-	return FAtlasSlotInfo();
+	return NewInfo;
 }
 #endif
 
@@ -722,7 +719,7 @@ TSharedPtr<FSlateDynamicTextureResource> FSlateRHIResourceManager::MakeDynamicTe
 	// Get a resource from the free list if possible
 	if(DynamicTextureFreeList.Num() > 0)
 	{
-		TextureResource = DynamicTextureFreeList.Pop(/*bAllowShrinking=*/ false);
+		TextureResource = DynamicTextureFreeList.Pop(EAllowShrinking::No);
 	}
 	else
 	{
@@ -789,7 +786,7 @@ TSharedPtr<FSlateUTextureResource> FSlateRHIResourceManager::MakeDynamicUTexture
 		// Get a resource from the free list if possible
 		if (UTextureFreeList.Num() > 0)
 		{
-			TextureResource = UTextureFreeList.Pop(/*bAllowShrinking=*/ false);
+			TextureResource = UTextureFreeList.Pop(EAllowShrinking::No);
 			TextureResource->UpdateTexture(InTextureObject);
 		}
 		else

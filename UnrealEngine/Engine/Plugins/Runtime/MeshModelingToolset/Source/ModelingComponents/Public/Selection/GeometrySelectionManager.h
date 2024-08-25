@@ -152,7 +152,11 @@ public:
 		FInputRayHit& HitResultOut
 	);
 
-
+	/**
+	 * Invalidates all cached selection elements.
+	 */
+	void MarkRenderCachesDirty();
+	
 	//
 	// Selection Updates
 	//
@@ -160,8 +164,33 @@ public:
 	/**
 	 * Clear any active element selections. 
 	 * This function will emit a Transaction for the selection change.
+	 * @param bSaveSelectionBeforeClear if true, calls SaveCurrentSelection() before the selection is cleared, so it can be restored later.
 	 */
-	virtual void ClearSelection();
+	virtual void ClearSelection(bool bSaveSelectionBeforeClear = false);
+
+protected:
+	/**
+	 * Save the active selection. Overwrites any existing saved selections with the current selections. Typically used via ClearSelection(true)
+	 */
+	virtual void SaveCurrentSelection();
+
+public:
+	/**
+	 * Attempt to restore (and then discard) the most recent saved selection.
+	 * If there is no active saved selection, does nothing. On failure to restore, will still discard the saved selection.
+	 * @return false if could not restore selection, which can happen if the restore was called while transacting (e.g., when a tool is exited via undo), or if the selection objects were not found or not valid
+	 */
+	virtual bool RestoreSavedSelection();
+	
+	/**
+	 * Discard the saved selection, if there is one.
+	 */
+	virtual void DiscardSavedSelection();
+
+	/**
+	 * @return true if there is a non-empty saved selection, false otherwise.
+	 */
+	virtual bool HasSavedSelection();
 
 	/**
 	 * Use the given WorldRay to update the active element selection based on UpdateConfig.
@@ -253,9 +282,12 @@ public:
 		const FRay3d& WorldRay
 	);
 
+	/**
+	 * Resets the active preview selection and invalidates its associated cached render elements.
+	 */
 	virtual void ClearSelectionPreview();
 
-
+	
 	//
 	// Selection queries
 	//
@@ -270,8 +302,12 @@ public:
 
 	/** @return a world-space bounding box for the active element selection */
 	virtual bool GetSelectionBounds(FGeometrySelectionBounds& BoundsOut) const;
+
 	/** @return a 3D transformation frame suitable for use with the active element selection */
 	virtual void GetSelectionWorldFrame(UE::Geometry::FFrame3d& SelectionFrame) const;
+
+	/** @return a 3D transformation frame suitable for use with the set of active targets */
+	virtual void GetTargetWorldFrame(UE::Geometry::FFrame3d& SelectionFrame) const;
 
 	/** @return true if there is an active IGeometrySelector target for the given Component and it has a non-empty selection */
 	virtual bool HasSelectionForComponent(UPrimitiveComponent* Component) const;
@@ -423,25 +459,19 @@ protected:
 
 	void OnTargetGeometryModified(IGeometrySelector* Selector);
 
-	//
-	// 3D geometry for element selections of each ActiveTarget is cached
-	// to improve rendering performance
-	//
-	TArray<FGeometrySelectionElements> CachedSelectionRenderElements;
+	
+	// todo [nickolas.drake]: cane we move CachedSelectionRenderElements, CachedPreviewRenderElements, and bSelectionRenderCachesDirty to private?
+	
+	TArray<FGeometrySelectionElements> CachedSelectionRenderElements;				// Cached 3D geometry for current selection
 	bool bSelectionRenderCachesDirty = false;
 	void UpdateSelectionRenderCacheOnTargetChange();
 	void RebuildSelectionRenderCaches();
 
+    FGeometrySelection ActivePreviewSelection;										// Selection representing the active preview
+	FGeometrySelectionElements CachedPreviewRenderElements;							// Cached 3D geometry for active preview elements
+    void ClearActivePreview();
 
-	//
-	// 3D geometry for active hover/preview highlight
-	// note: currently only supporting single target here, will need to be refactored to handle multiple targets...
-	//
-	FGeometrySelection ActivePreviewSelection;
-	FGeometrySelectionElements CachedPreviewRenderElements;
-	void ClearActivePreview();
-
-
+	
 	// various change types need internal access
 
 	friend class FGeometrySelectionManager_SelectionTypeChange;
@@ -458,6 +488,43 @@ protected:
 	UE::Geometry::FGeometrySelectionDelta InitialTrackedDelta;
 	UE::Geometry::FGeometrySelectionDelta ActiveTrackedDelta;
 	bool bSelectionModifiedDuringTrackedChange = false;
+
+private:
+
+	//
+	// 3D geometry for element selections of each ActiveTarget is cached
+	// to improve rendering performance
+	//
+	
+	// todo [nickolas.drake]: refactor Rebuild_X_RenderCache() functions below to populate a UPreviewGeometry with the accumulated elements and remove PDI rendering
+	
+	void RebuildSelectionRenderCache();
+	
+	TArray<FGeometrySelectionElements> CachedSelectableRenderElements;				// Cached 3D geometry for all selectable elements
+	void RebuildSelectableRenderCache();
+	bool bSelectableRenderCachesDirty = false;
+	
+	void RebuildPreviewRenderCache();
+	bool bPreviewRenderCachesDirty = false;
+
+	
+	// Tracks saved selection state. Useful when the selection is temporarily cleared (e.g., for a tool)
+	struct FSavedSelection
+	{
+		TArray<TWeakObjectPtr<UObject>> Targets;
+		TArray<FGeometrySelection> Selections;
+		void Empty()
+		{
+			Targets.Empty();
+			Selections.Empty();
+		}
+		void Reset()
+		{
+			Targets.Reset();
+			Selections.Reset();
+		}
+	};
+	FSavedSelection SavedSelection;
 
 };
 

@@ -2,19 +2,22 @@
 
 #include "IMultiUserClientModule.h"
 
-#include "IConcertSyncClientModule.h"
-#include "IConcertModule.h"
-#include "IConcertClient.h"
 #include "ConcertClientSettings.h"
-#include "IConcertSession.h"
-#include "IConcertSyncClient.h"
 #include "ConcertLogGlobal.h"
 #include "ConcertFrontendStyle.h"
 #include "ConcertSyncSettings.h"
 #include "ConcertWorkspaceData.h"
 #include "ConcertWorkspaceUI.h"
 #include "ConcertUtil.h"
+#include "IConcertClient.h"
+#include "IConcertModule.h"
+#include "IConcertSession.h"
+#include "IConcertSyncClient.h"
+#include "IConcertSyncClientModule.h"
 #include "MultiUserClientUtils.h"
+#include "MultiUserReplicationStyle.h"
+#include "Replication/MultiUserReplicationManager.h"
+#include "Settings/MultiUserReplicationSettings.h"
 
 #include "Misc/App.h"
 #include "Misc/AsyncTaskNotification.h"
@@ -621,6 +624,7 @@ public:
 
 		// Boot the client instance
 		MultiUserClient->Startup(ClientConfig, EConcertSyncSessionFlags::Default_MultiUserSession);
+		ReplicationManager = MakeShared<UE::MultiUserClient::FMultiUserReplicationManager>(MultiUserClient.ToSharedRef());
 
 		// Hook UI elements in the tool bar (and setup commands).
 		RegisterUI();
@@ -642,6 +646,11 @@ public:
 	virtual TSharedPtr<IConcertSyncClient> GetClient() const override
 	{
 		return MultiUserClient;
+	}
+
+	virtual UE::MultiUserClient::IMultiUserReplication* GetReplication() const override
+	{
+		return ReplicationManager.Get();
 	}
 
 	/**
@@ -794,6 +803,7 @@ private:
 
 		// Initialize Style
 		FConcertFrontendStyle::Initialize();
+		UE::MultiUserClient::FMultiUserReplicationStyle::Initialize();
 
 		// Multi-User front end currently relies on EditorStyle being loaded
 		FModuleManager::LoadModuleChecked<IEditorStyleModule>("EditorStyle");
@@ -823,6 +833,9 @@ private:
 		UnregisterTabSpawner();
 
 #if WITH_EDITOR
+		FConcertFrontendStyle::Shutdown();
+		UE::MultiUserClient::FMultiUserReplicationStyle::Shutdown();
+		
 		UnregisterWorkspaceUI();
 		UnregisterSettings();
 		RemoveEditorToolbarButton();
@@ -1041,8 +1054,9 @@ private:
 	 */
 	TSharedRef<SDockTab> SpawnConcertBrowserTab(const FSpawnTabArgs& SpawnTabArgs)
 	{
-		const TSharedRef<SDockTab> DockTab = SNew(SDockTab).TabRole(ETabRole::NomadTab);
-		DockTab->SetContent(SNew(SConcertBrowser, DockTab, SpawnTabArgs.GetOwnerWindow(), MultiUserClient));
+		const TSharedRef<SDockTab> DockTab = SNew(SDockTab)
+			.TabRole(NomadTab);
+		DockTab->SetContent(SNew(SConcertBrowser, DockTab, MultiUserClient.ToSharedRef(), ReplicationManager.ToSharedRef()));
 		return DockTab;
 	}
 
@@ -1274,7 +1288,8 @@ private:
 			ISettingsSectionPtr SettingsSection = SettingsModule->RegisterSettings("Project", "Plugins", "Concert",
 				LOCTEXT("ConcertFrontendSettingsName", "Multi-User Editing"),
 				LOCTEXT("ConcertFrontendSettingsDescription", "Configure the Multi-User settings."),
-				GetMutableDefault<UConcertClientConfig>());
+				GetMutableDefault<UConcertClientConfig>()
+				);
 
 			if (SettingsSection.IsValid())
 			{
@@ -1284,7 +1299,14 @@ private:
 			SettingsModule->RegisterSettings("Project", "Plugins", "Concert Sync",
 				LOCTEXT("ConcertFrontendSyncSettingsName", "Multi-User Transactions"),
 				LOCTEXT("ConcertFrontendSyncSettingsDescription", "Configure the Multi-User Transactions settings."),
-				GetMutableDefault<UConcertSyncConfig>());
+				GetMutableDefault<UConcertSyncConfig>()
+				);
+
+			SettingsModule->RegisterSettings("Project", "Plugins", "Multi User",
+				LOCTEXT("MultiUserReplicationSettingsName", "Multi-User Replication"),
+				LOCTEXT("MultiUserReplicationSettingsDescription", "Configure the Multi-User Replication settings."),
+				UMultiUserReplicationSettings::Get()
+				);
 
 			// Register a special layout to validate user input when configuring the settings.
 			FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -1385,6 +1407,8 @@ private:
 	}
 
 	TSharedPtr<IConcertSyncClient> MultiUserClient;
+	/** Interacts with the replication system on behalf of Multi-User. */
+	TSharedPtr<UE::MultiUserClient::FMultiUserReplicationManager> ReplicationManager;
 
 	/** True if the tab spawners have been registered for this module */
 	bool bHasRegisteredTabSpawners = false;

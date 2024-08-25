@@ -78,7 +78,7 @@ TArray<TSharedPtr<FCapturableProperty>> SCapturedPropertiesWidget::GetCurrentChe
 
 void SCapturedPropertiesWidget::FilterPropertyPaths(const FText& Filter)
 {
-	FilteredCapturedProperties.SetNumUninitialized(0, false);
+	FilteredCapturedProperties.SetNumUninitialized(0, EAllowShrinking::No);
 
 	// Build a list of strings that must be matched
 	TArray<FString> FilterStrings;

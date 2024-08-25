@@ -3,6 +3,9 @@
 #include "DisplayClusterViewportLightCardManager.h"
 #include "DisplayClusterViewportLightCardManagerProxy.h"
 #include "DisplayClusterViewportLightCardResource.h"
+
+#include "Render/Viewport/Configuration/DisplayClusterViewportConfiguration.h"
+
 #include "ShaderParameters/DisplayClusterShaderParameters_UVLightCards.h"
 
 #include "DisplayClusterLightCardActor.h"
@@ -25,17 +28,14 @@ static TAutoConsoleVariable<int32> CVarUVLightCardTextureSize(
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // FDisplayClusterViewportLightCardManager
 ///////////////////////////////////////////////////////////////////////////////////////////////
-FDisplayClusterViewportLightCardManager::FDisplayClusterViewportLightCardManager(FDisplayClusterViewportManager& InViewportManager)
-	: ViewportManagerWeakPtr(InViewportManager.AsShared())
-{
-	LightCardManagerProxy = MakeShared<FDisplayClusterViewportLightCardManagerProxy, ESPMode::ThreadSafe>();
-}
+FDisplayClusterViewportLightCardManager::FDisplayClusterViewportLightCardManager(const TSharedRef<const FDisplayClusterViewportConfiguration, ESPMode::ThreadSafe>& InConfiguration)
+	: Configuration(InConfiguration)
+	, LightCardManagerProxy(MakeShared<FDisplayClusterViewportLightCardManagerProxy, ESPMode::ThreadSafe>())
+{ }
 
 FDisplayClusterViewportLightCardManager::~FDisplayClusterViewportLightCardManager()
 {
 	Release();
-
-	LightCardManagerProxy.Reset();
 }
 
 void FDisplayClusterViewportLightCardManager::Release()
@@ -49,16 +49,11 @@ void FDisplayClusterViewportLightCardManager::Release()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
-void FDisplayClusterViewportLightCardManager::UpdateConfiguration()
-{
-
-}
-
-void FDisplayClusterViewportLightCardManager::HandleStartScene()
+void FDisplayClusterViewportLightCardManager::OnHandleStartScene()
 {
 }
 
-void FDisplayClusterViewportLightCardManager::HandleEndScene()
+void FDisplayClusterViewportLightCardManager::OnHandleEndScene()
 {
 	ReleaseUVLightCardData();
 }
@@ -89,19 +84,13 @@ void FDisplayClusterViewportLightCardManager::UpdateUVLightCardData()
 {
 	ReleaseUVLightCardData();
 
-	FDisplayClusterViewportManager* ViewportManager = GetViewportManager();
-	if (!ViewportManager)
-	{
-		return;
-	}
-
 	/** The list of UV light card actors that are referenced by the root actor */
 	TArray<ADisplayClusterLightCardActor*> UVLightCardActors;
 
-	if (ADisplayClusterRootActor* RootActorPtr = ViewportManager->GetRootActor())
+	if (ADisplayClusterRootActor* SceneRootActorPtr = Configuration->GetRootActor(EDisplayClusterRootActorType::Scene))
 	{
 		TSet<ADisplayClusterLightCardActor*> LightCards;
-		UDisplayClusterBlueprintLib::FindLightCardsForRootActor(RootActorPtr, LightCards);
+		UDisplayClusterBlueprintLib::FindLightCardsForRootActor(SceneRootActorPtr, LightCards);
 
 		for (ADisplayClusterLightCardActor* LightCard : LightCards)
 		{
@@ -171,9 +160,9 @@ void FDisplayClusterViewportLightCardManager::UpdateUVLightCardResource()
 void FDisplayClusterViewportLightCardManager::RenderUVLightCard()
 {
 	// Render UV LightCard:
-	FDisplayClusterViewportManager* ViewportManager = GetViewportManager();
-	UWorld* World = ViewportManager ? ViewportManager->GetCurrentWorld() : nullptr;
-	if (IsUVLightCardEnabled() && World && LightCardManagerProxy.IsValid())
+	FDisplayClusterViewportManager* ViewportManager = Configuration->GetViewportManagerImpl();
+	UWorld* CurrentWorld = Configuration->GetCurrentWorld();
+	if (IsUVLightCardEnabled() && CurrentWorld && ViewportManager)
 	{
 		UpdateUVLightCardResource();
 
@@ -182,6 +171,7 @@ void FDisplayClusterViewportLightCardManager::RenderUVLightCard()
 			FDisplayClusterShaderParameters_UVLightCards UVLightCardParameters;
 			UVLightCardParameters.ProjectionPlaneSize = ADisplayClusterLightCardActor::UVPlaneDefaultSize;
 			UVLightCardParameters.bRenderFinalColor = ViewportManager->ShouldRenderFinalColor();
+			UVLightCardParameters.LightCardGamma = 2.2;
 
 			// Store any components that were invisible but forced to be visible so they can be set back to invisible after the render
 			TArray<UPrimitiveComponent*> ComponentsToUnload;
@@ -201,7 +191,7 @@ void FDisplayClusterViewportLightCardManager::RenderUVLightCard()
 				}
 			}
 
-			LightCardManagerProxy->RenderUVLightCard(World->Scene, UVLightCardParameters);
+			LightCardManagerProxy->RenderUVLightCard(CurrentWorld->Scene, UVLightCardParameters);
 
 			for (UPrimitiveComponent* LoadedComponent : ComponentsToUnload)
 			{
@@ -214,7 +204,6 @@ void FDisplayClusterViewportLightCardManager::RenderUVLightCard()
 	{
 		ReleaseUVLightCardResource();
 	}
-
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////

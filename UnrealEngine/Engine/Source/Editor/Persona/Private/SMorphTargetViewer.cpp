@@ -16,7 +16,9 @@
 #include "GPUSkinCache.h"
 #include "Engine/RendererSettings.h"
 #include "IPersonaPreviewScene.h"
+#include "SkeletalMeshAttributes.h"
 #include "Rendering/SkeletalMeshLODImporterData.h"
+#include "SkeletalRenderPublic.h"
 
 #define LOCTEXT_NAMESPACE "SMorphTargetViewer"
 
@@ -25,7 +27,6 @@ static const FName ColumnID_MorphTargetWeightLabel( "Weight" );
 static const FName ColumnID_MorphTargetEditLabel( "Edit" );
 static const FName ColumnID_MorphTargetVertCountLabel( "NumberOfVerts" );
 
-const float MaxMorphWeight = 5.0f;
 
 //////////////////////////////////////////////////////////////////////////
 // SMorphTargetListRow
@@ -151,8 +152,6 @@ TSharedRef< SWidget > SMorphTargetListRow::GenerateWidgetForColumn( const FName&
 				SNew( SSpinBox<float> )
 				.MinSliderValue(-1.f)
 				.MaxSliderValue(1.f)
-				.MinValue(-MaxMorphWeight)
-				.MaxValue(MaxMorphWeight)
 				.Value( this, &SMorphTargetListRow::GetWeight )
 				.OnValueChanged( this, &SMorphTargetListRow::OnMorphTargetWeightChanged )
 				.OnValueCommitted( this, &SMorphTargetListRow::OnMorphTargetWeightValueCommitted )
@@ -226,6 +225,10 @@ void SMorphTargetListRow::OnMorphTargetWeightChanged( float NewWeight )
 	// First change this item...
 	// the delta feature is a bit confusing when debugging morphtargets, and you're not sure why it's changing, so I'm disabling it for now. 
 	// I think in practice, you want each morph target to move independentaly. It is very unlikely you'd like to move multiple things together. 
+
+	const float MorphTargetMaxBlendWeight = UE::SkeletalRender::Settings::GetMorphTargetMaxBlendWeight();
+	NewWeight = FMath::Clamp(NewWeight, -MorphTargetMaxBlendWeight, MorphTargetMaxBlendWeight);
+
 #if 0 
 	float Delta = NewWeight - GetWeight();
 #endif
@@ -246,7 +249,7 @@ void SMorphTargetListRow::OnMorphTargetWeightChanged( float NewWeight )
 
 		if ( RowItem != Item ) // Don't do "this" row again if it's selected
 		{
-			RowItem->Weight = FMath::Clamp(RowItem->Weight + Delta, -MaxMorphWeight, MaxMorphWeight);
+			RowItem->Weight = FMath::Clamp(RowItem->Weight + Delta, -MorphTargetMaxBlendWeight, MorphTargetMaxBlendWeight);
 			RowItem->bAutoFillData = false;
 			MorphTargetViewer->AddMorphTargetOverride( RowItem->Name, RowItem->Weight, false );
 		}
@@ -258,8 +261,10 @@ void SMorphTargetListRow::OnMorphTargetWeightValueCommitted( float NewWeight, ET
 {
 	if (CommitType == ETextCommit::OnEnter || CommitType == ETextCommit::OnUserMovedFocus)
 	{
-		float NewValidWeight = FMath::Clamp(NewWeight, -MaxMorphWeight, MaxMorphWeight);
-		Item->Weight = NewValidWeight;
+		const float MorphTargetMaxBlendWeight = UE::SkeletalRender::Settings::GetMorphTargetMaxBlendWeight();
+		NewWeight = FMath::Clamp(NewWeight, -MorphTargetMaxBlendWeight, MorphTargetMaxBlendWeight);
+
+		Item->Weight = NewWeight;
 		Item->bAutoFillData = false;
 
 		MorphTargetViewer->AddMorphTargetOverride(Item->Name, Item->Weight, false);
@@ -273,7 +278,7 @@ void SMorphTargetListRow::OnMorphTargetWeightValueCommitted( float NewWeight, ET
 
 			if(RowItem != Item) // Don't do "this" row again if it's selected
 			{
-				RowItem->Weight = NewValidWeight;
+				RowItem->Weight = NewWeight;
 				RowItem->bAutoFillData = false;
 				MorphTargetViewer->AddMorphTargetOverride(RowItem->Name, RowItem->Weight, false);
 			}
@@ -517,54 +522,21 @@ bool SMorphTargetViewer::CanPerformDelete() const
 void SMorphTargetViewer::OnDeleteMorphTargets()
 {
 	TArray< TSharedPtr< FDisplayedMorphTargetInfo > > SelectedRows = MorphTargetListView->GetSelectedItems();
-	
-	for (int RowIndex = 0; RowIndex < SelectedRows.Num(); ++RowIndex)
+
+	// Clean up override usage
+	TArray<FName> MorphTargetNames;
+	for (int32 RowIndex = 0; RowIndex < SelectedRows.Num(); ++RowIndex)
 	{
 		UMorphTarget* MorphTarget = SkeletalMesh->FindMorphTarget(SelectedRows[RowIndex]->Name);
 		if(MorphTarget)
 		{
-			MorphTarget->RemoveFromRoot();
-			MorphTarget->ClearFlags(RF_Standalone);
-
-			FScopedTransaction Transaction(LOCTEXT("DeleteMorphTarget", "Delete Morph Target"));
-			SkeletalMesh->Modify();
-			MorphTarget->Modify();
-
-			//Clean up override usage
 			AddMorphTargetOverride(SelectedRows[RowIndex]->Name, 0.0f, true);
-
-			if (!SkeletalMesh->IsLODImportedDataEmpty(0) && SkeletalMesh->IsLODImportedDataBuildAvailable(0))
-			{
-				//Remove the morph target from the raw import data
-				FSkeletalMeshImportData SkelMeshImportData;
-				SkeletalMesh->LoadLODImportedData(0, SkelMeshImportData);
-				int32 ToDeleteIndex = INDEX_NONE;
-				for (int32 MoprhTargetIndex = 0; MoprhTargetIndex < SkelMeshImportData.MorphTargetNames.Num(); ++MoprhTargetIndex)
-				{
-					if (SkelMeshImportData.MorphTargetNames[MoprhTargetIndex].Equals(SelectedRows[RowIndex]->Name.ToString()))
-					{
-						ToDeleteIndex = MoprhTargetIndex;
-						break;
-					}
-				}
-
-				if (ToDeleteIndex != INDEX_NONE)
-				{
-					SkelMeshImportData.MorphTargetNames.RemoveAt(ToDeleteIndex);
-					SkelMeshImportData.MorphTargetModifiedPoints.RemoveAt(ToDeleteIndex);
-					SkelMeshImportData.MorphTargets.RemoveAt(ToDeleteIndex);
-					SkeletalMesh->SaveLODImportedData(0, SkelMeshImportData);
-				}
-			}
-			else
-			{
-				//If we deal with an old asset (pre 4.24) and we do not have some valid import data, we need to dirty the ddc key so it wont take the ddc with the old morph target we just delete
-				SkeletalMesh->InvalidateDeriveDataCacheGUID();
-			}
-
-			SkeletalMesh->UnregisterMorphTarget(MorphTarget);
+			MorphTargetNames.Add(SelectedRows[RowIndex]->Name);
 		}
 	}
+
+	// Remove from mesh
+	SkeletalMesh->RemoveMorphTargets(MorphTargetNames);
 
 	CreateMorphTargetList( NameFilterBox->GetText().ToString() );
 }

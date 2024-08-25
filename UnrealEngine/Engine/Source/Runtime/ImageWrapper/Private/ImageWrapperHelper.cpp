@@ -9,15 +9,17 @@ FStringView ImageWrapperHelper::GetFormatExtension(EImageFormat InImageFormat, b
 	switch (InImageFormat)
 	{
 	case EImageFormat::Invalid:
-		return StringExtension;
+		return FStringView(TEXT(""));
 	case EImageFormat::PNG:
 		StringExtension = TEXT(".png");
 		break;
 	case EImageFormat::JPEG:
-		StringExtension = TEXT(".jpeg");
-		break;
 	case EImageFormat::GrayscaleJPEG:
 		StringExtension = TEXT(".jpg");
+		break;
+	case EImageFormat::UEJPEG:
+	case EImageFormat::GrayscaleUEJPEG:
+		StringExtension = TEXT(".uej");
 		break;
 	case EImageFormat::BMP:
 		StringExtension = TEXT(".bmp");
@@ -38,7 +40,8 @@ FStringView ImageWrapperHelper::GetFormatExtension(EImageFormat InImageFormat, b
 		StringExtension = TEXT(".hdr");
 		break;
 	default:
-		return StringExtension;
+		// this should log error
+		return FStringView(TEXT(""));
 	}
 	if (!bIncludeDot) 
 	{
@@ -49,6 +52,8 @@ FStringView ImageWrapperHelper::GetFormatExtension(EImageFormat InImageFormat, b
 
 EImageFormat ImageWrapperHelper::GetImageFormat(FStringView StringExtention)
 {
+	// deprecated, use ImageWrapper::GetImageFormatFromExtension instead
+
 	int32 Length = StringExtention.Len();
 	if (Length == 0)
 	{
@@ -70,7 +75,11 @@ EImageFormat ImageWrapperHelper::GetImageFormat(FStringView StringExtention)
 	}
 	if (StringExtention.Equals(TEXT("jpg"), ESearchCase::IgnoreCase))
 	{
-		return EImageFormat::GrayscaleJPEG;
+		return EImageFormat::JPEG;
+	}
+	if (StringExtention.Equals(TEXT("uej"), ESearchCase::IgnoreCase))
+	{
+		return EImageFormat::UEJPEG;
 	}
 	if (StringExtention.Equals(TEXT("bmp"), ESearchCase::IgnoreCase))
 	{
@@ -102,6 +111,6 @@ EImageFormat ImageWrapperHelper::GetImageFormat(FStringView StringExtention)
 const FStringView ImageWrapperHelper::GetImageFilesFilterString(bool bIncludeAllFiles)
 {
 	return (bIncludeAllFiles)
-		? TEXT("Image files (*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr)|*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr|All files (*.*)|*.*")
-		: TEXT("Image files (*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr)|*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr");
+		? TEXT("Image files (*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr; *.ooj)|*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr; *.ooj|All files (*.*)|*.*")
+		: TEXT("Image files (*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr; *.ooj)|*.jpg; *.png; *.bmp; *.ico; *.exr; *.icns; *.jpeg; *.tga; *.hdr; *.ooj");
 }

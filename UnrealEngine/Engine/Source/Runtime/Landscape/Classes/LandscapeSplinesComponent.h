@@ -168,9 +168,6 @@ public:
 
 	bool HasAnyControlPointsOrSegments() const { return ControlPoints.Num() > 0 || Segments.Num() > 0; }
 
-	UE_DEPRECATED(5.2, "This function was needed for forcing the SplineEditorMesh to be loaded when a commandlet is running, but commandlets are not prevented from loading it anymore so it has become useless")
-	LANDSCAPE_API void SetDefaultEditorSplineMesh();
-
 	virtual void ShowSplineEditorMesh(bool bShow);
 
 	// Rebuilds all spline points and meshes for all spline control points and segments in this splines component

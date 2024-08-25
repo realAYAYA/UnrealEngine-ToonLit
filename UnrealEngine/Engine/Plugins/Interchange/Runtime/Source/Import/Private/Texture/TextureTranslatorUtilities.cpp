@@ -112,7 +112,7 @@ bool UE::Interchange::FTextureTranslatorUtilities::IsTranslatorValid(const UInte
 
 	if (!SourceData)
 	{
-		LogError(TextureTranslator, FText::Format(LOCTEXT("TextureImportFailure_BadData", "Failed to import {0}, bad source data."), FText::FromString(Format)));
+		LogError(TextureTranslator, FText::Format(LOCTEXT("TextureImportFailure_BadData", "{0}: Failed to import, bad source data."), FText::FromString(Format)));
 		return false;
 	}
 
@@ -120,7 +120,7 @@ bool UE::Interchange::FTextureTranslatorUtilities::IsTranslatorValid(const UInte
 
 	if (!FPaths::FileExists(Filename))
 	{
-		LogError(TextureTranslator, FText::Format(LOCTEXT("TextureImportFailure_OpenFile", "Failed to import {0}, cannot open file."), FText::FromString(Format)));
+		LogError(TextureTranslator, FText::Format(LOCTEXT("TextureImportFailure_OpenFile", "{0}: Failed to import texture asset, cannot open file [{1}]."), FText::FromString(Format), FText::FromString(Filename)));
 		return false;
 	}
 

@@ -14,21 +14,37 @@ static const FSoftObjectPath SkipAssetsMarker = FSoftObjectPath(TEXT("/Engine/Tr
 namespace ConcertSyncUtil
 {
 
+const FSoftObjectPath& GetSkipObjectPath()
+{
+	return SkipAssetsMarker;
+}
+
 bool CanExportProperty(const FProperty* Property, const bool InIncludeEditorOnlyData)
 {
-	auto PropertyIsInList = [Property](const TArray<TFieldPath<FProperty>>& PropertyList)
+	auto PropertyPathIsInList = [Property](const TArray<TFieldPath<FProperty>>& PropertyPaths)
 	{
-		return PropertyList.ContainsByPredicate([Property](const TFieldPath<FProperty>& PropertyFieldPath)
+		return PropertyPaths.ContainsByPredicate([Property](const TFieldPath<FProperty>& PropertyFieldPath)
 		{
-			FProperty* FilterProperty = PropertyFieldPath.Get();
+			const FProperty* FilterProperty = PropertyFieldPath.Get();
 			return Property == FilterProperty;
 		});
 	};
+
+	auto PropertyTypeIsInList = [Property](const TArray<FName>& PropertyTypes)
+	{
+		return PropertyTypes.ContainsByPredicate([Property](const FName PropertyType)
+		{
+			const FFieldClass* FilterPropertyClass = FFieldClass::GetNameToFieldClassMap().FindRef(PropertyType);
+			return FilterPropertyClass && Property->GetClass()->IsChildOf(FilterPropertyClass);
+		});
+	};
+
 	const UConcertSyncConfig* SyncConfig = GetDefault<UConcertSyncConfig>();
 	return (!Property->IsEditorOnlyProperty() || InIncludeEditorOnlyData)
 		&& (!Property->HasAnyPropertyFlags(CPF_NonTransactional))
-		&& (!Property->HasAnyPropertyFlags(CPF_Transient) || PropertyIsInList(SyncConfig->AllowedTransientProperties))
-		&& (!PropertyIsInList(SyncConfig->ExcludedProperties));
+		&& (!Property->HasAnyPropertyFlags(CPF_Transient) || PropertyPathIsInList(SyncConfig->AllowedTransientProperties))
+		&& (!PropertyPathIsInList(SyncConfig->ExcludedProperties))
+		&& (!PropertyTypeIsInList(SyncConfig->ExcludedPropertyTypes));
 }
 
 void GatherDefaultSubobjectPaths(const UObject* Obj, TSet<FSoftObjectPath>& OutSubobjects)
@@ -212,7 +228,7 @@ bool FConcertSyncWorldRemapper::HasMapping() const
 }
 
 FConcertSyncObjectWriter::FConcertSyncObjectWriter(FConcertLocalIdentifierTable* InLocalIdentifierTable, UObject* InObj, TArray<uint8>& OutBytes, const bool InIncludeEditorOnlyData, const bool InSkipAssets, const FConcertSyncRemapObjectPath& InRemapDelegate)
-	: FConcertIdentifierWriter(InLocalIdentifierTable, OutBytes, /*bIsPersistent*/false)
+	: FConcertIdentifierWriter(InLocalIdentifierTable, OutBytes, /*bIsPersistent*/true)
 	, bSkipAssets(InSkipAssets)
 	, ShouldSkipPropertyFunc()
 	, RemapObjectPathDelegate(InRemapDelegate)
@@ -430,7 +446,7 @@ void InitReaderArchive(FArchive& Ar, const FConcertSessionVersionInfo* InVersion
 } // namespace UE::Concert::Private::ConcertSyncArchiveUtil
 
 FConcertSyncObjectReader::FConcertSyncObjectReader(const FConcertLocalIdentifierTable* InLocalIdentifierTable, FConcertSyncWorldRemapper InWorldRemapper, const FConcertSessionVersionInfo* InVersionInfo, UObject* InObj, const TArray<uint8>& InBytes, const FConcertSyncEncounteredMissingObject& InEncounteredMissingObjectDelegate)
-	: FConcertIdentifierReader(InLocalIdentifierTable, InBytes, /*bIsPersistent*/false)
+	: FConcertIdentifierReader(InLocalIdentifierTable, InBytes, /*bIsPersistent*/true)
 	, WorldRemapper(MoveTemp(InWorldRemapper))
 	, EncounteredMissingObjectDelegate(InEncounteredMissingObjectDelegate)
 {
@@ -598,7 +614,7 @@ FString FConcertSyncObjectReader::GetArchiveName() const
 
 
 FConcertSyncObjectRewriter::FConcertSyncObjectRewriter(const FConcertLocalIdentifierTable* InLocalIdentifierTable, FConcertLocalIdentifierTable* InRewriteIdentifierTable, const FConcertSessionVersionInfo* InVersionInfo, TArray<uint8>& InBytes)
-	: FConcertIdentifierRewriter(InLocalIdentifierTable, InRewriteIdentifierTable, InBytes, /*bIsPersistent*/false)
+	: FConcertIdentifierRewriter(InLocalIdentifierTable, InRewriteIdentifierTable, InBytes, /*bIsPersistent*/true)
 {
 	UE::Concert::Private::ConcertSyncArchiveUtil::InitReaderArchive(*this, InVersionInfo);
 }

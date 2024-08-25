@@ -337,10 +337,15 @@ void FMeshParticleVertexFactory::GetPSOPrecacheVertexFetchElements(EVertexInputS
 	}
 }
 
-void FMeshParticleVertexFactory::SetData(const FDataType& InData)
+void FMeshParticleVertexFactory::SetData(FRHICommandListBase& RHICmdList, const FDataType& InData)
 {
 	Data = InData;
-	UpdateRHI(FRHICommandListImmediate::Get());
+	UpdateRHI(RHICmdList);
+}
+
+void FMeshParticleVertexFactory::SetData(const FDataType& InData)
+{
+	SetData(FRHICommandListImmediate::Get(), InData);
 }
 
 IMPLEMENT_VERTEX_FACTORY_PARAMETER_TYPE(FMeshParticleVertexFactory, SF_Vertex, FMeshParticleVertexFactoryShaderParameters);

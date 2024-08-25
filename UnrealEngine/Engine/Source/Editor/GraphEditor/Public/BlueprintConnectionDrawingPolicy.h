@@ -140,4 +140,5 @@ protected:
 	bool ShouldChangeTangentForKnot(class UK2Node_Knot* Knot);
 	bool GetAverageConnectedPosition(class UK2Node_Knot* Knot, EEdGraphPinDirection Direction, FVector2D& OutPos) const;
 	bool FindPinCenter(UEdGraphPin* Pin, FVector2D& OutCenter) const;
+	static UObject* GetObjectBeingDebugged(UBlueprint* TargetBP);
 };

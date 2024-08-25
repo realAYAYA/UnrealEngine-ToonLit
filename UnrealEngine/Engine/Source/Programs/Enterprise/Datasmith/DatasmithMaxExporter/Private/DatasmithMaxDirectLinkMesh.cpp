@@ -10,7 +10,7 @@
 #include "DatasmithMaxMeshExporter.h"
 #include "DatasmithMaxSceneExporter.h"
 #include "DatasmithMaxAttributes.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxLogger.h"
 
 #include "Logging/LogMacros.h"
@@ -167,7 +167,7 @@ INode* GetCollisionNode(ISceneTracker& SceneTracker, INode* Node, const FDatasmi
 	
 
 	FString OriginalName = Node->GetName();
-	for ( const FString& CollisionNodePrefix : FDatasmithMaxSceneParser::CollisionNodesPrefixes )
+	for ( const FString& CollisionNodePrefix : FDatasmithMaxSceneHelper::CollisionNodesPrefixes )
 	{
 		if (FNodeTracker* CollisionNode = SceneTracker.GetNodeTrackerByNodeName(*( CollisionNodePrefix + TEXT("_") + OriginalName )))
 		{

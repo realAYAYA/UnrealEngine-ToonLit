@@ -25,7 +25,7 @@ public:
 		: Channels(0)
 		, Duration(FTimespan::Zero())
 		, SampleRate(0)
-		, Time(FTimespan::Zero())
+		, Time(FTimespan::Zero(), 0)
 	{ }
 
 	/** Virtual destructor. */
@@ -46,7 +46,7 @@ public:
 		uint32 InSize,
 		uint32 InChannels,
 		uint32 InSampleRate,
-		FTimespan InTime,
+		FMediaTimeStamp InTime,
 		FTimespan InDuration)
 	{
 		if ((InBuffer == nullptr) || (InSize == 0))
@@ -101,7 +101,7 @@ public:
 
 	virtual FMediaTimeStamp GetTime() const override
 	{
-		return FMediaTimeStamp(Time);
+		return Time;
 	}
 
 private:
@@ -119,7 +119,7 @@ private:
 	uint32 SampleRate;
 
 	/** Presentation time for which the sample was generated. */
-	FTimespan Time;
+	FMediaTimeStamp Time;
 };
 
 

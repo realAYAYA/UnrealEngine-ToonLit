@@ -6,7 +6,7 @@
 #include "DatasmithExportOptions.h"
 #include "DatasmithUtils.h"
 #include "DatasmithMaxExporterDefines.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMesh.h"
 #include "DatasmithMeshExporter.h"
 #include "DatasmithMaxLogger.h"
@@ -208,7 +208,7 @@ INode* FDatasmithMaxMeshExporter::GetCollisionNode(INode* OriginalNode, const FD
 	}
 
 	FString OriginalName = OriginalNode->GetName();
-	for ( const FString& CollisionNodePrefix : FDatasmithMaxSceneParser::CollisionNodesPrefixes )
+	for ( const FString& CollisionNodePrefix : FDatasmithMaxSceneHelper::CollisionNodesPrefixes )
 	{
 		INode* CollisionNode = GetCOREInterface()->GetINodeByName( *( CollisionNodePrefix + TEXT("_") + OriginalName ) );
 		if (CollisionNode)

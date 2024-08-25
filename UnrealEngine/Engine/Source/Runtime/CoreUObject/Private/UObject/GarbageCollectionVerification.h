@@ -23,7 +23,10 @@ void VerifyGCAssumptions();
 void VerifyClustersAssumptions();
 
 /** Verifies Object and Internal flag mirroring assumptions */
-void VerifyObjectFlagMirroring();
+void VerifyObjectFlags();
+
+/** Verifies Reachability assumptions */
+void VerifyNoUnreachableObjects(int32 NumUnreachable);
 
 #endif // VERIFY_DISREGARD_GC_ASSUMPTIONS
 

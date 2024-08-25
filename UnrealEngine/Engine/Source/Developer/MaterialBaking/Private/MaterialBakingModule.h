@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
+#include "UObject/StrongObjectPtr.h"
 #include "Modules/ModuleInterface.h"
 #include "PixelFormat.h"
 #include "SceneTypes.h"
@@ -84,7 +84,7 @@ private:
 	};
 
 	/** Pool of available render targets, cached for re-using on consecutive property rendering */
-	TArray<UTextureRenderTarget2D*> RenderTargetPool;
+	TArray<TStrongObjectPtr<UTextureRenderTarget2D>> RenderTargetPool;
 
 	/** Pool of cached material proxies to optimize material baking workflow, stays resident when MaterialBaking.UseMaterialProxyCaching is set to 1 */
 	typedef TWeakObjectPtr<UMaterialInterface>				FMaterialPoolKey;
@@ -101,4 +101,6 @@ private:
 	EPropertyColorSpace DefaultColorSpace;
 
 	bool bEmissiveHDR;
+
+	bool bIsBakingMaterials;
 };

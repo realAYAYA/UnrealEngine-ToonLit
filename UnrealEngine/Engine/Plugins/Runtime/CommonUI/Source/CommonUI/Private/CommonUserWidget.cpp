@@ -140,6 +140,22 @@ void UCommonUserWidget::UnregisterScrollRecipient(const UWidget& AnalogScrollRec
 	}
 }
 
+void UCommonUserWidget::RegisterScrollRecipientExternal(const UWidget* AnalogScrollRecipient)
+{
+	if (AnalogScrollRecipient != nullptr)
+	{
+		RegisterScrollRecipient(*AnalogScrollRecipient);
+	}
+}
+
+void UCommonUserWidget::UnregisterScrollRecipientExternal(const UWidget* AnalogScrollRecipient)
+{
+	if (AnalogScrollRecipient != nullptr)
+	{
+		UnregisterScrollRecipient(*AnalogScrollRecipient);
+	}
+}
+
 void UCommonUserWidget::OnWidgetRebuilt()
 {
 	// Using OnWidgetRebuilt instead of NativeConstruct to ensure we register ourselves with the ActionRouter before the child receives NativeConstruct
@@ -164,6 +180,17 @@ void UCommonUserWidget::OnWidgetRebuilt()
 	}
 
 	Super::OnWidgetRebuilt();
+
+	if (UCommonUIActionRouterBase* ActionRouter = UCommonUIActionRouterBase::Get(*this))
+	{
+		for (const TWeakObjectPtr<const UWidget>& WidgetPtr : GetScrollRecipients())
+		{
+			if (const UWidget* Widget = WidgetPtr.Get())
+			{
+				ActionRouter->RegisterScrollRecipient(*Widget);
+			}
+		}
+	}
 }
 
 void UCommonUserWidget::NativeDestruct()

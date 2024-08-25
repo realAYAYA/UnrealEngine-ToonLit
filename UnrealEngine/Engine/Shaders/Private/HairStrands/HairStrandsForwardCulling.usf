@@ -29,7 +29,7 @@ uint				CurveCount;
 RWBuffer<float4>					RWPoints;
 RWStructuredBuffer<FPackedHairVis>	RWHairVis;
 RWBuffer<uint2>						RWCoord;
-RWTexture2D<uint>					RWCounter;
+RWStructuredBuffer<uint>			RWCounter;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Utils
@@ -100,14 +100,14 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 
 	const uint CurveID = DispatchThreadID;
 	const bool bValidCurve = CurveID < CurveCount;
-	const float3 PositionOffset = HairStrandsVF_PositionOffsetBuffer[0].xyz;
+	const float3 PositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 
 	bool bIsCurveVisibile = false;
 	uint PrimWriteOffset = 0;
 	FHairCurve Curve = (FHairCurve)0;
 	if (bValidCurve)
 	{
-		Curve = UnpackHairCurve(HairStrandsVF_CurveBuffer[CurveID]);
+		Curve = ReadHairCurve(HairStrandsVF_CurveBuffer, CurveID);
 		
 		uint VisiblePointCount = 0;
 		for (uint PointIt=0; PointIt < Curve.PointCount-1; ++PointIt)
@@ -118,15 +118,17 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 			if (bValidPoint)
 			{
 				// Fetch both control points
-				const FHairControlPoint CP0 = UnpackHairControlPoint(
-					HairStrandsVF_PositionBuffer[PrimID],
+				const FHairControlPoint CP0 = ReadHairControlPoint(
+					HairStrandsVF_PositionBuffer,
+					PrimID,
 					PositionOffset,
 					HairStrandsVF_Radius,
 					HairStrandsVF_RootScale,
 					HairStrandsVF_TipScale);
 
-				const FHairControlPoint CP1 = UnpackHairControlPoint(
-					HairStrandsVF_PositionBuffer[PrimID + 1],
+				const FHairControlPoint CP1 = ReadHairControlPoint(
+					HairStrandsVF_PositionBuffer,
+					PrimID + 1,
 					PositionOffset,
 					HairStrandsVF_Radius,
 					HairStrandsVF_RootScale,
@@ -135,8 +137,8 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 				// Transform to world space (TODO change this to translated world space?)
 				const float3 CP0WP = mul(float4(CP0.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
 				const float3 CP1WP = mul(float4(CP1.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
-				float4 SP0 = mul(float4(CP0WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
-				float4 SP1 = mul(float4(CP1WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+				float4 SP0 = mul(float4(CP0WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
+				float4 SP1 = mul(float4(CP1WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 
 				#if CULL_ENABLE
 				if (IsViewportVisible(SP0, SP1))
@@ -158,7 +160,7 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 	// Alloc
 	if (GroupThreadID == 0)
 	{
-		InterlockedAdd(RWCounter[uint2(0,0)], s_ValidSegmentCount, s_WriteOffset);
+		InterlockedAdd(RWCounter[0], s_ValidSegmentCount, s_WriteOffset);
 	}
 	GroupMemoryBarrierWithGroupSync();
 
@@ -174,15 +176,17 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 			if (bValidPoint)
 			{
 				// Fetch both control points
-				const FHairControlPoint CP0 = UnpackHairControlPoint(
-					HairStrandsVF_PositionBuffer[PrimID],
+				const FHairControlPoint CP0 = ReadHairControlPoint(
+					HairStrandsVF_PositionBuffer,
+					PrimID,
 					PositionOffset,
 					HairStrandsVF_Radius,
 					HairStrandsVF_RootScale,
 					HairStrandsVF_TipScale);
 
-				const FHairControlPoint CP1 = UnpackHairControlPoint(
-					HairStrandsVF_PositionBuffer[PrimID + 1],
+				const FHairControlPoint CP1 = ReadHairControlPoint(
+					HairStrandsVF_PositionBuffer,
+					PrimID + 1,
 					PositionOffset,
 					HairStrandsVF_Radius,
 					HairStrandsVF_RootScale,
@@ -191,8 +195,8 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 				// Transform to world space (TODO change this to translated world space?)
 				const float3 CP0WP = mul(float4(CP0.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
 				const float3 CP1WP = mul(float4(CP1.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
-				float4 SP0 = mul(float4(CP0WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
-				float4 SP1 = mul(float4(CP1WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+				float4 SP0 = mul(float4(CP0WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
+				float4 SP1 = mul(float4(CP1WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 
 				#if CULL_ENABLE
 				if (IsViewportVisible(SP0, SP1))
@@ -260,11 +264,12 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 	bool bIsPrimValid = ControlPointId < ControlPointCount;
 	if (bIsPrimValid)
 	{
-		const float3 PositionOffset = HairStrandsVF_PositionOffsetBuffer[0].xyz;
+		const float3 PositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 
 		// Fetch both control points
-		FHairControlPoint CP0 = UnpackHairControlPoint(
-			HairStrandsVF_PositionBuffer[ControlPointId],
+		FHairControlPoint CP0 = ReadHairControlPoint(
+			HairStrandsVF_PositionBuffer,
+			ControlPointId,
 			PositionOffset,
 			HairStrandsVF_Radius,
 			HairStrandsVF_RootScale,
@@ -273,8 +278,9 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 		FHairControlPoint CP1 = CP0;
 		if (CP0.Type != HAIR_CONTROLPOINT_END)
 		{
-			CP1 = UnpackHairControlPoint(
-				HairStrandsVF_PositionBuffer[ControlPointId + 1],
+			CP1 = ReadHairControlPoint(
+				HairStrandsVF_PositionBuffer,
+				ControlPointId + 1,
 				PositionOffset,
 				HairStrandsVF_Radius,
 				HairStrandsVF_RootScale,
@@ -284,8 +290,8 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 		// Transform to world space
 		const float3 CP0WP = mul(float4(CP0.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
 		const float3 CP1WP = mul(float4(CP1.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
-		float4 SP0 = mul(float4(CP0WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
-		float4 SP1 = mul(float4(CP1WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+		float4 SP0 = mul(float4(CP0WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
+		float4 SP1 = mul(float4(CP1WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 
 		#if CULL_ENABLE
 		if (IsViewportVisible(SP0, SP1))
@@ -308,7 +314,7 @@ void CSMain(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : SV
 	// Alloc
 	if (GroupThreadID == 0)
 	{
-		InterlockedAdd(RWCounter[uint2(0,0)], s_ValidSegmentCount, s_WriteOffset);
+		InterlockedAdd(RWCounter[0], s_ValidSegmentCount, s_WriteOffset);
 	}
 	GroupMemoryBarrierWithGroupSync();
 

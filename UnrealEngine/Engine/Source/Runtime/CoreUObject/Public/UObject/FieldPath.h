@@ -441,7 +441,7 @@ public:
 	FORCEINLINE bool operator==(const OtherPropertyType* Other) const
 	{
 		static_assert(TPointerIsConvertibleFromTo<OtherPropertyType, const FField>::Value, "TFieldPath can only be compared with FField types");
-		static_assert(TPointerIsConvertibleFromTo<PropertyType, OtherPropertyType>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
+		static_assert(TPointerIsConvertibleFromTo<PropertyType, const OtherPropertyType>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
 
 		return Get() == Other;
 	}
@@ -461,7 +461,7 @@ public:
 	FORCEINLINE bool operator!=(const TFieldPath<OtherPropertyType> &Other) const
 	{
 		static_assert(TPointerIsConvertibleFromTo<OtherPropertyType, const FField>::Value, "TFieldPath can only be compared with FField types");
-		static_assert(TPointerIsConvertibleFromTo<PropertyType, OtherPropertyType>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
+		static_assert(TPointerIsConvertibleFromTo<PropertyType, const OtherPropertyType>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
 
 		return FFieldPath::operator!=(Other);
 	}
@@ -474,7 +474,7 @@ public:
 	FORCEINLINE bool operator!=(const OtherPropertyType* Other) const
 	{
 		static_assert(TPointerIsConvertibleFromTo<OtherPropertyType, const FField>::Value, "TFieldPath can only be compared with FField types");
-		static_assert(TPointerIsConvertibleFromTo<PropertyType, OtherPropertyType>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
+		static_assert(TPointerIsConvertibleFromTo<PropertyType, const OtherPropertyType>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
 
 		return Get() != Other;
 	}
@@ -485,7 +485,7 @@ public:
 		// It's also possible that these static_asserts may fail for valid conversions because
 		// one or both of the types have only been forward-declared.
 		static_assert(TPointerIsConvertibleFromTo<LhsT, const FField>::Value, "TFieldPath can only be compared with FField types");
-		static_assert(TPointerIsConvertibleFromTo<LhsT, PropertyType>::Value || TPointerIsConvertibleFromTo<PropertyType, LhsT>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
+		static_assert(TPointerIsConvertibleFromTo<LhsT, const PropertyType>::Value || TPointerIsConvertibleFromTo<PropertyType, LhsT>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
 
 		return Rhs == Lhs;
 	}
@@ -501,7 +501,7 @@ public:
 		// It's also possible that these static_asserts may fail for valid conversions because
 		// one or both of the types have only been forward-declared.
 		static_assert(TPointerIsConvertibleFromTo<LhsT, const FField>::Value, "TFieldPath can only be compared with FField types");
-		static_assert(TPointerIsConvertibleFromTo<LhsT, PropertyType>::Value || TPointerIsConvertibleFromTo<PropertyType, LhsT>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
+		static_assert(TPointerIsConvertibleFromTo<LhsT, const PropertyType>::Value || TPointerIsConvertibleFromTo<PropertyType, LhsT>::Value, "Unable to compare TFieldPath with raw pointer - types are incompatible");
 
 		return Rhs != Lhs;
 	}

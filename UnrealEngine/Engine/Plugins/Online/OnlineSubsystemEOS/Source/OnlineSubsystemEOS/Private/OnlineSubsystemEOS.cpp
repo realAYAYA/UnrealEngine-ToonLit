@@ -13,6 +13,7 @@
 #include "OnlineStoreEOS.h"
 #include "EOSSettings.h"
 #include "EOSShared.h"
+#include "EOSVoiceChat.h"
 #include "IEOSSDKManager.h"
 #include "SocketSubsystemEOSUtils_OnlineSubsystemEOS.h"
 
@@ -28,7 +29,7 @@
 #define EOS_ENCRYPTION_KEY_MAX_LENGTH 64
 #define EOS_ENCRYPTION_KEY_MAX_BUFFER_LEN (EOS_ENCRYPTION_KEY_MAX_LENGTH + 1)
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "EOSVoiceChatFactory.h"
 #include "EOSVoiceChatUser.h"
@@ -86,7 +87,7 @@ public:
 	virtual FOnVoiceChatChannelJoinedDelegate& OnVoiceChatChannelJoined() override { return VoiceChatUser.OnVoiceChatChannelJoined(); }
 	virtual FOnVoiceChatChannelExitedDelegate& OnVoiceChatChannelExited() override { return VoiceChatUser.OnVoiceChatChannelExited(); }
 	virtual FOnVoiceChatCallStatsUpdatedDelegate& OnVoiceChatCallStatsUpdated() override { return VoiceChatUser.OnVoiceChatCallStatsUpdated(); }
-	virtual void Set3DPosition(const FString& ChannelName, const FVector& SpeakerPosition, const FVector& ListenerPosition, const FVector& ListenerForwardDirection, const FVector& ListenerUpDirection) override { VoiceChatUser.Set3DPosition(ChannelName, SpeakerPosition, ListenerPosition, ListenerForwardDirection, ListenerUpDirection); }
+	virtual void Set3DPosition(const FString& ChannelName, const FVector& Position) override { VoiceChatUser.Set3DPosition(ChannelName, Position); }
 	virtual TArray<FString> GetChannels() const override { return VoiceChatUser.GetChannels(); }
 	virtual TArray<FString> GetPlayersInChannel(const FString& ChannelName) const override { return VoiceChatUser.GetPlayersInChannel(ChannelName); }
 	virtual EVoiceChatChannelType GetChannelType(const FString& ChannelName) const override { return VoiceChatUser.GetChannelType(ChannelName); }
@@ -122,7 +123,7 @@ public:
 	FEOSVoiceChatUser& VoiceChatUser;
 };
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT
 
 FPlatformEOSHelpersPtr FOnlineSubsystemEOS::EOSHelpersPtr;
 
@@ -188,8 +189,8 @@ bool FOnlineSubsystemEOS::PlatformCreate()
 
 	// Create platform instance
 	EOS_Platform_Options PlatformOptions = {};
-	PlatformOptions.ApiVersion = 12;
-	UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_OPTIONS_API_LATEST, 12);
+	PlatformOptions.ApiVersion = 14;
+	UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_OPTIONS_API_LATEST, 14);
 	PlatformOptions.ClientCredentials.ClientId = reinterpret_cast<const char*>(ArtifactSettings.ClientId.IsEmpty() ? nullptr : (const char*)ClientIdUtf8.Get());
 	PlatformOptions.ClientCredentials.ClientSecret = ArtifactSettings.ClientSecret.IsEmpty() ? nullptr : (const char*)ClientSecretUtf8.Get();
 	PlatformOptions.ProductId = ArtifactSettings.ProductId.IsEmpty() ? nullptr : (const char*)ProductIdUtf8.Get();
@@ -198,6 +199,7 @@ bool FOnlineSubsystemEOS::PlatformCreate()
 	PlatformOptions.EncryptionKey = ArtifactSettings.EncryptionKey.IsEmpty() ? nullptr : (const char*)EncryptionKeyUtf8.Get();
 	PlatformOptions.bIsServer = IsRunningDedicatedServer() ? EOS_TRUE : EOS_FALSE;
 	PlatformOptions.Reserved = nullptr;
+	PlatformOptions.TaskNetworkTimeoutSeconds = nullptr;
 
 	FEOSSettings EOSSettings = UEOSSettings::GetSettings();
 	uint64 OverlayFlags = 0;
@@ -210,7 +212,7 @@ bool FOnlineSubsystemEOS::PlatformCreate()
 		OverlayFlags |= EOS_PF_DISABLE_SOCIAL_OVERLAY;
 	}
 #if WITH_EDITOR
-	if (!EOSSettings.bEnableEditorOverlay)
+	if (GIsEditor && EOSSettings.bEnableEditorOverlay)
 	{
 		OverlayFlags |= EOS_PF_LOADING_IN_EDITOR;
 	}
@@ -234,9 +236,10 @@ bool FOnlineSubsystemEOS::PlatformCreate()
 
 #if WITH_EOS_RTC
 	EOS_Platform_RTCOptions RtcOptions = { 0 };
-	RtcOptions.ApiVersion = 1;
-	UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_RTCOPTIONS_API_LATEST, 1);
+	RtcOptions.ApiVersion = 2;
+	UE_EOS_CHECK_API_MISMATCH(EOS_PLATFORM_RTCOPTIONS_API_LATEST, 2);
 	RtcOptions.PlatformSpecificOptions = nullptr;
+	RtcOptions.BackgroundMode = EOSSettings.RTCBackgroundMode;
 	PlatformOptions.RTCOptions = &RtcOptions;
 #endif
 
@@ -259,17 +262,12 @@ bool FOnlineSubsystemEOS::Init()
 	GConfig->GetString(TEXT("OnlineSubsystem"), TEXT("NativePlatformService"), PlatformOSS, GEngineIni);
 	bIsDefaultOSS = DefaultOSS == TEXT("EOS");
 	bIsPlatformOSS = PlatformOSS == TEXT("EOS");
-
-	// Check for being launched by EGS
 	bWasLaunchedByEGS = FParse::Param(FCommandLine::Get(), TEXT("EpicPortal"));
-	FEOSSettings EOSSettings = UEOSSettings::GetSettings();
-	if (!IsRunningDedicatedServer() && IsRunningGame() && !bWasLaunchedByEGS && EOSSettings.bShouldEnforceBeingLaunchedByEGS)
+
+	bool bUnused;
+	if (GConfig->GetBool(TEXT("/Script/OnlineSubsystemEOS.EOSSettings"), TEXT("bShouldEnforceBeingLaunchedByEGS"), bUnused, GEngineIni))
 	{
-		FString ArtifactName;
-		FParse::Value(FCommandLine::Get(), TEXT("EpicApp="), ArtifactName);
-		UE_LOG_ONLINE(Warning, TEXT("FOnlineSubsystemEOS::Init() relaunching artifact (%s) via the store"), *ArtifactName);
-		FPlatformProcess::LaunchURL(*FString::Printf(TEXT("com.epicgames.launcher://store/product/%s?action=launch&silent=true"), *ArtifactName), nullptr, nullptr);
-		FPlatformMisc::RequestExit(false);
+		UE_LOG_ONLINE(Error, TEXT("%hs: Support for bShouldEnforceBeingLaunchedByEGS has been removed, please delete this config entry and instead set bUseLauncherChecks=true in your .Target.cs file(s)"));
 		return false;
 	}
 
@@ -463,7 +461,7 @@ bool FOnlineSubsystemEOS::Shutdown()
 	TitleFileInterfacePtr = nullptr;
 	UserCloudInterfacePtr = nullptr;
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 	for (TPair<FUniqueNetIdRef, FOnlineSubsystemEOSVoiceChatUserWrapperRef>& Pair : LocalVoiceChatUsers)
 	{
 		FOnlineSubsystemEOSVoiceChatUserWrapperRef& VoiceChatUserWrapper = Pair.Value;
@@ -471,7 +469,7 @@ bool FOnlineSubsystemEOS::Shutdown()
 	}
 	LocalVoiceChatUsers.Reset();
 	VoiceChatInterface = nullptr;
-#endif
+#endif // WITH_EOSVOICECHAT
 
 	EOSPlatformHandle = nullptr;
 
@@ -499,19 +497,23 @@ bool FOnlineSubsystemEOS::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 	}
 
 	bool bWasHandled = false;
-	if (UserManager != nullptr && FParse::Command(&Cmd, TEXT("FRIENDS")))
+	if (UserManager != nullptr && FParse::Command(&Cmd, TEXT("FRIENDS"))) /* ONLINE (EOS if using EOSPlus) FRIENDS ... */
 	{
 		bWasHandled = UserManager->HandleFriendsExec(InWorld, Cmd, Ar);
 	}
-	else if (StoreInterfacePtr != nullptr && FParse::Command(&Cmd, TEXT("ECOM")))
+	else if (StoreInterfacePtr != nullptr && FParse::Command(&Cmd, TEXT("ECOM"))) /* ONLINE (EOS if using EOSPlus) ECOM ... */
 	{
 		bWasHandled = StoreInterfacePtr->HandleEcomExec(InWorld, Cmd, Ar);
 	}
-	else if (TitleFileInterfacePtr != nullptr && FParse::Command(&Cmd, TEXT("TITLEFILE")))
+	else if (LeaderboardsInterfacePtr != nullptr && FParse::Command(&Cmd, TEXT("LEADERBOARDS"))) /* ONLINE (EOS if using EOSPlus) LEADERBOARDS ... */
+	{
+		bWasHandled = LeaderboardsInterfacePtr->HandleLeaderboardsExec(InWorld, Cmd, Ar);
+	}
+	else if (TitleFileInterfacePtr != nullptr && FParse::Command(&Cmd, TEXT("TITLEFILE"))) /* ONLINE (EOS if using EOSPlus) TITLEFILE ... */
 	{
 		bWasHandled = TitleFileInterfacePtr->HandleTitleFileExec(InWorld, Cmd, Ar);
 	}
-	else if (UserCloudInterfacePtr != nullptr && FParse::Command(&Cmd, TEXT("USERCLOUD")))
+	else if (UserCloudInterfacePtr != nullptr && FParse::Command(&Cmd, TEXT("USERCLOUD"))) /* ONLINE (EOS if using EOSPlus) USERCLOUD ... */
 	{
 		bWasHandled = UserCloudInterfacePtr->HandleUserCloudExec(InWorld, Cmd, Ar);
 	}
@@ -681,7 +683,7 @@ IVoiceChatUser* FOnlineSubsystemEOS::GetVoiceChatUserInterface(const FUniqueNetI
 {
 	IVoiceChatUser* Result = nullptr;
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 	if (!VoiceChatInterface)
 	{
 		if (FEOSVoiceChatFactory* EOSVoiceChatFactory = FEOSVoiceChatFactory::Get())
@@ -705,7 +707,7 @@ IVoiceChatUser* FOnlineSubsystemEOS::GetVoiceChatUserInterface(const FUniqueNetI
 			Result = &Wrapper.Get();
 		}
 	}
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT
 
 	return Result;
 }
@@ -713,18 +715,18 @@ IVoiceChatUser* FOnlineSubsystemEOS::GetVoiceChatUserInterface(const FUniqueNetI
 FEOSVoiceChatUser* FOnlineSubsystemEOS::GetEOSVoiceChatUserInterface(const FUniqueNetId& LocalUserId)
 {
 	FEOSVoiceChatUser* Result = nullptr;
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 	if (IVoiceChatUser* Wrapper = GetVoiceChatUserInterface(LocalUserId))
 	{
 		Result = &static_cast<FOnlineSubsystemEOSVoiceChatUserWrapper*>(Wrapper)->VoiceChatUser;
 	}
-#endif
+#endif // WITH_EOSVOICECHAT
 	return Result;
 }
 
 void FOnlineSubsystemEOS::ReleaseVoiceChatUserInterface(const FUniqueNetId& LocalUserId)
 {
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 	if (VoiceChatInterface)
 	{
 		if (FOnlineSubsystemEOSVoiceChatUserWrapperRef* WrapperPtr = LocalVoiceChatUsers.Find(LocalUserId.AsShared()))
@@ -733,7 +735,7 @@ void FOnlineSubsystemEOS::ReleaseVoiceChatUserInterface(const FUniqueNetId& Loca
 			LocalVoiceChatUsers.Remove(LocalUserId.AsShared());
 		}
 	}
-#endif
+#endif // WITH_EOSVOICECHAT
 }
 
 #endif // WITH_EOS_SDK

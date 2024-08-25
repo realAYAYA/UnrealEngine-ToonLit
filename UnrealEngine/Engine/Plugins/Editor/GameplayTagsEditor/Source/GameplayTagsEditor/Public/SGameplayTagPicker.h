@@ -13,7 +13,6 @@
 #include "Widgets/Views/STableRow.h"
 #include "Widgets/Views/STreeView.h"
 #include "GameplayTagsManager.h"
-#include "EditorUndoClient.h"
 
 class IPropertyHandle;
 class SComboButton;
@@ -28,7 +27,7 @@ enum class EGameplayTagPickerMode : uint8
 };
 
 /** Widget allowing user to tag assets with gameplay tags */
-class GAMEPLAYTAGSEDITOR_API SGameplayTagPicker : public SCompoundWidget, public FSelfRegisteringEditorUndoClient
+class GAMEPLAYTAGSEDITOR_API SGameplayTagPicker : public SCompoundWidget
 {
 public:
 
@@ -114,6 +113,8 @@ public:
 	 */
 	static bool GetEditableTagContainersFromPropertyHandle(const TSharedRef<IPropertyHandle>& PropHandle, TArray<FGameplayTagContainer>& OutEditableContainers);
 
+	virtual ~SGameplayTagPicker() override;
+
 	/** Construct the actual widget */
 	void Construct(const FArguments& InArgs);
 	
@@ -152,10 +153,7 @@ private:
 		Duplicate,
 	};
 
-	// FSelfRegisteringEditorUndoClient
-	virtual void PostUndo(bool bSuccess) override;
-	virtual void PostRedo(bool bSuccess) override;
-	// ~FSelfRegisteringEditorUndoClient
+	void OnPostUndoRedo();
 
 	/** Verify the tags are all valid and if not prompt the user. */
 	void VerifyAssetTagValidity();
@@ -452,6 +450,8 @@ private:
 
 	TSharedPtr<SAddNewGameplayTagWidget> AddNewTagWidget;
 	bool bNewTagWidgetVisible = false;
+
+	FDelegateHandle PostUndoRedoDelegateHandle;
 };
 
 

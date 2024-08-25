@@ -2,6 +2,7 @@
 
 
 #include "RoundPlanetPawn.h"
+#include "Engine/HitResult.h"
 #include "Engine/World.h"
 #include "GeoReferencingSystem.h"
 #include "GameFramework/FloatingPawnMovement.h"

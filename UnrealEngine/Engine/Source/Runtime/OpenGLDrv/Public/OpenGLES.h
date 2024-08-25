@@ -213,6 +213,7 @@ struct FOpenGLES : public FOpenGLBase
 	static FORCEINLINE bool SupportsColorBufferHalfFloat() { return bSupportsColorBufferHalfFloat; }
 	static FORCEINLINE bool SupportsShaderFramebufferFetch() { return bSupportsShaderFramebufferFetch; }
 	static FORCEINLINE bool SupportsShaderMRTFramebufferFetch() { return bSupportsShaderMRTFramebufferFetch; }
+	static FORCEINLINE bool SupportsShaderFramebufferFetchProgrammableBlending() { return bSupportsShaderFramebufferFetchProgrammableBlending; }
 	static FORCEINLINE bool SupportsShaderDepthStencilFetch() { return bSupportsShaderDepthStencilFetch; }
 	static FORCEINLINE bool SupportsPixelLocalStorage() { return bSupportsPixelLocalStorage; }
 	static FORCEINLINE bool SupportsMultisampledRenderToTexture() { return bSupportsMultisampledRenderToTexture; }
@@ -502,7 +503,7 @@ struct FOpenGLES : public FOpenGLBase
 		glUniform4uiv(Location, Count, Value);
 	}
 
-	static FORCEINLINE bool SupportsProgramBinary() { return true; }
+	static FORCEINLINE bool SupportsProgramBinary() { return bSupportsProgramBinary; }
 
 	static FORCEINLINE void GetProgramBinary(GLuint Program, GLsizei BufSize, GLsizei* Length, GLenum* BinaryFormat, void* Binary)
 	{
@@ -864,6 +865,9 @@ public:
 
 	/* This is to avoid a bug in Adreno drivers that define GL_ARM_shader_framebuffer_fetch_depth_stencil even when device does not support this extension  */
 	static bool bRequiresARMShaderFramebufferFetchDepthStencilUndef;
+
+	/** Framebuffer fetch can be used to do programmable blending without running into driver issues */
+	static bool bSupportsShaderFramebufferFetchProgrammableBlending;
 
 	/** GL_OES_vertex_type_10_10_10_2 */
 	static bool bSupportsRGB10A2;

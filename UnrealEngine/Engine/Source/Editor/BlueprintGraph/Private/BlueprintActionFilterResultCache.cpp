@@ -47,7 +47,7 @@ public:
 			const FSharedNode SharedParent = Parent.Pin();
 
 			// remove this node from parent
-			SharedParent->Children.RemoveSingleSwap(this->AsShared(), false);
+			SharedParent->Children.RemoveSingleSwap(this->AsShared(), EAllowShrinking::No);
 
 			if (SharedParent->Children.IsEmpty())
 			{
@@ -263,7 +263,7 @@ void FActionFilterCache::PopCache()
 		RemovedElement.Pin()->UnCacheSelf();
 	}
 
-	CacheLeafs.RemoveAt(MinIndex, 1, false);
+	CacheLeafs.RemoveAt(MinIndex, 1, EAllowShrinking::No);
 }
 
 TSharedPtr<FActionFilterCacheNode> FActionFilterCache::SharedCache = MakeShared<FActionFilterCacheNode>();

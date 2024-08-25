@@ -41,7 +41,7 @@ void FLidarPointCloudDataBuffer::Resize(const int32& NewBufferSize, bool bForce 
 		// Shrink
 		else
 		{
-			Data.RemoveAtSwap(0, -Delta, true);
+			Data.RemoveAtSwap(0, -Delta, EAllowShrinking::Yes);
 		}
 	}
 }

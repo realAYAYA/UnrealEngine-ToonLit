@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -9,7 +10,6 @@ import '../../../../../../models/unreal_actor_manager.dart';
 import '../../../../../../models/unreal_types.dart';
 import '../../../../../../utilities/constants.dart';
 import '../../../../../../utilities/guarded_refresh_state.dart';
-import '../settings_generic.dart';
 
 /// Page showing the list of nDisplay root actors to pick from.
 class SettingsDialogRootActorPicker extends StatefulWidget {
@@ -52,8 +52,9 @@ class _SettingsDialogRootActorPickerState extends State<SettingsDialogRootActorP
             for (final UnrealObject actor in _actorManager.getActorsOfClass(nDisplayRootActorClassName))
               SettingsMenuItem(
                 title: actor.name,
-                iconPath: 'assets/images/icons/ndisplay.svg',
-                trailingIconPath: rootActorPath == actor.path ? 'assets/images/icons/check.svg' : null,
+                iconPath: 'packages/epic_common/assets/icons/ndisplay.svg',
+                trailingIconPath:
+                    rootActorPath.data == actor.path ? 'packages/epic_common/assets/icons/check.svg' : null,
                 onTap: () => selectedActorSettings.displayClusterRootPath.setValue(actor.path),
               ),
           ],

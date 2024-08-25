@@ -20,8 +20,6 @@ void FLandscapeTexturePatchVisualizer::DrawVisualization(const UActorComponent* 
 			Color, Patch->GetUnscaledCoverage().X * PatchToWorld.GetScale3D().X, Patch->GetUnscaledCoverage().Y * PatchToWorld.GetScale3D().Y, SDPG_Foreground,
 			Thickness, DepthBias, bScreenSpace);
 	}
-	else
-	{
-		ensure(false);
-	}
+	// Note: when patches are deleted, selection seems to be updated only after giving another call to the
+	// visualization drawing, so do not ensure if patch was null.
 }

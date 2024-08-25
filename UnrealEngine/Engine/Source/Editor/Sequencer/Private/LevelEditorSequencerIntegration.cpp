@@ -156,6 +156,20 @@ public:
 		}
 	}
 
+	virtual EPropertyKeyedStatus GetPropertyKeyedStatus(const IPropertyHandle& PropertyHandle) const override
+	{
+		EPropertyKeyedStatus KeyedStatus = EPropertyKeyedStatus::NotKeyed;
+		for (const TWeakPtr<ISequencer>& WeakSequencer : Sequencers)
+		{
+			if (TSharedPtr<ISequencer> Sequencer = WeakSequencer.Pin())
+			{
+				EPropertyKeyedStatus NewKeyedStatus = Sequencer->GetPropertyKeyedStatus(PropertyHandle);
+				KeyedStatus = FMath::Max(KeyedStatus, NewKeyedStatus);
+			}
+		}
+		return KeyedStatus;
+	}
+
 private:
 	TArray<TWeakPtr<ISequencer>> Sequencers;
 };
@@ -545,7 +559,7 @@ bool FLevelEditorSequencerIntegration::IsBindingVisible(const FMovieSceneBinding
 		return true;
 	}
 
-	// Disregard if not a level sequence (ie. a control rig sequence)
+	// Disregard if not a level sequence (ie. a control rig sequence)	
 	for (FSequencerAndOptions& SequencerAndOptions : BoundSequencers)
 	{
 		TSharedPtr<FSequencer> Pinned = SequencerAndOptions.Sequencer.Pin();
@@ -557,17 +571,21 @@ bool FLevelEditorSequencerIntegration::IsBindingVisible(const FMovieSceneBinding
 				{
 					return true;
 				}
+				else
+				{
+					TArrayView<TWeakObjectPtr<>> Objects = Pinned->FindObjectsInCurrentSequence(InBinding.GetObjectGuid());
+					for (TWeakObjectPtr<> Object : Objects)
+					{
+						if (AActor* Actor = Cast<AActor>(Object.Get()))
+						{
+							if (GEditor->GetSelectedActors()->IsSelected(Actor))
+							{
+								return true;
+							}
+						}
+					}
+				}
 			}
-		}
-	}
-
-	for( FSelectionIterator SelectionIt( *GEditor->GetSelectedActors() ); SelectionIt; ++SelectionIt )
-	{
-		AActor* SelectedActor = CastChecked<AActor>( *SelectionIt );
-		
-		if (SelectedActor->GetActorLabel() == InBinding.GetName())
-		{
-			return true;
 		}
 	}
 
@@ -682,7 +700,7 @@ void FLevelEditorSequencerIntegration::OnPreBeginPIE(bool bIsSimulating)
 		{
 			if (Options.bRequiresLevelEvents)
 			{
-				In.GetEvaluationTemplate().PlaybackContextChanged(In);
+				In.OnPlaybackContextChanged();
 				In.RestorePreAnimatedState();
 				In.State.ClearObjectCaches(In);
 				In.RequestEvaluate();
@@ -720,7 +738,7 @@ void FLevelEditorSequencerIntegration::OnEndPlayMap()
 			if (Options.bRequiresLevelEvents)
 			{
 				// Update and clear any stale bindings 
-				In.GetEvaluationTemplate().PlaybackContextChanged(In);
+				In.OnPlaybackContextChanged();
 				In.State.ClearObjectCaches(In);
 				In.ForceEvaluate();
 			}
@@ -1243,7 +1261,7 @@ void FLevelEditorSequencerIntegration::OnMapChanged(UWorld* World, EMapChangeTyp
 		{
 			if (Options.bRequiresLevelEvents)
 			{
-				In.GetEvaluationTemplate().PlaybackContextChanged(In);
+				In.OnPlaybackContextChanged();
 				In.RestorePreAnimatedState();
 				In.State.ClearObjectCaches(In);
 

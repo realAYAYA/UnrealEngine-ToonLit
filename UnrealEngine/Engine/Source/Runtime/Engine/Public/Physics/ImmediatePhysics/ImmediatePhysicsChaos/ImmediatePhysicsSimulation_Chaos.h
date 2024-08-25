@@ -41,6 +41,12 @@ namespace ImmediatePhysics_Chaos
 
 		ENGINE_API void DestroyActorCollisions(FActorHandle* ActorHandle);
 
+		ENGINE_API void SetIsKinematic(FActorHandle* ActorHandle, bool bKinematic);
+
+		ENGINE_API void SetEnabled(FActorHandle* ActorHandle, bool bEnable);
+
+		ENGINE_API void SetHasCollision(FActorHandle* ActorHandle, bool bHasCollision);
+
 		/** Create a physical joint and add it to the simulation */
 		ENGINE_API FJointHandle* CreateJoint(FConstraintInstance* ConstraintInstance, FActorHandle* Body1, FActorHandle* Body2);
 
@@ -67,6 +73,12 @@ namespace ImmediatePhysics_Chaos
 
 		/** Set up potential collisions between the actor and all other dynamic actors */
 		ENGINE_API void AddToCollidingPairs(FActorHandle* ActorHandle);
+
+		/** 
+		 * Sets whether velocities should be rewound when simulating - this may happen when the requested 
+		 * step size is smaller than the fixed simulation step.
+		 */
+		ENGINE_API void SetRewindVelocities(bool bRewindVelocities);
 
 		/** Advance the simulation by DeltaTime */
 		ENGINE_API void Simulate(FReal DeltaTime, FReal MaxStepTime, int32 MaxSubSteps, const FVector& InGravity);

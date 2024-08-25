@@ -96,8 +96,8 @@ namespace Chaos
 		const TGeometryParticleHandle<FReal, 3>* Particle0 = Constraint[0];
 		const TGeometryParticleHandle<FReal, 3>* Particle1 = Constraint[1];
 
-		Distances[ConstraintIndex][0] = Particle0->R().Inverse().RotateVector(Location0 - Particle0->X());
-		Distances[ConstraintIndex][1] = Particle1->R().Inverse().RotateVector(Location1 - Particle1->X());
+		Distances[ConstraintIndex][0] = Particle0->GetR().Inverse().RotateVector(Location0 - Particle0->GetX());
+		Distances[ConstraintIndex][1] = Particle1->GetR().Inverse().RotateVector(Location1 - Particle1->GetX());
 	}
 
 	FVec3 FPBDRigidSpringConstraints::GetDelta(int32 ConstraintIndex, const FVec3& WorldSpaceX1, const FVec3& WorldSpaceX2) const

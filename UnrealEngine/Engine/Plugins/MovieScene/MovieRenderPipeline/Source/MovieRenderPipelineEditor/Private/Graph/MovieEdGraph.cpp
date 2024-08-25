@@ -4,17 +4,20 @@
 #include "Graph/MovieGraphConfig.h"
 #include "Graph/MovieGraphEdge.h"
 #include "Graph/MovieGraphPin.h"
+#include "Graph/Nodes/MovieGraphSubgraphNode.h"
 #include "Graph/Nodes/MovieGraphVariableNode.h"
 #include "Graph/MovieGraphNode.h"
 #include "MovieEdGraphOutputNode.h"
 #include "MovieEdGraphInputNode.h"
 #include "MovieEdGraphVariableNode.h"
+#include "MoviePipelineEdGraphSubgraphNode.h"
 #include "MovieRenderPipelineCoreModule.h"
 #include "EdGraph/EdGraphPin.h"
 
 template UMoviePipelineEdGraphNodeBase* UMoviePipelineEdGraph::CreateNodeFromRuntimeNode<UMoviePipelineEdGraphNodeInput>(UMovieGraphNode* InRuntimeNode);
 template UMoviePipelineEdGraphNodeBase* UMoviePipelineEdGraph::CreateNodeFromRuntimeNode<UMoviePipelineEdGraphNodeOutput>(UMovieGraphNode* InRuntimeNode);
 template UMoviePipelineEdGraphNodeBase* UMoviePipelineEdGraph::CreateNodeFromRuntimeNode<UMoviePipelineEdGraphVariableNode>(UMovieGraphNode* InRuntimeNode);
+template UMoviePipelineEdGraphNodeBase* UMoviePipelineEdGraph::CreateNodeFromRuntimeNode<UMoviePipelineEdGraphSubgraphNode>(UMovieGraphNode* InRuntimeNode); 
 template UMoviePipelineEdGraphNodeBase* UMoviePipelineEdGraph::CreateNodeFromRuntimeNode<UMoviePipelineEdGraphNode>(UMovieGraphNode* InRuntimeNode);
 
 UMovieGraphConfig* UMoviePipelineEdGraph::GetPipelineGraph() const
@@ -42,11 +45,15 @@ void UMoviePipelineEdGraph::InitFromRuntimeGraph(UMovieGraphConfig* InGraph)
 	}
 
 	// Create the rest of the nodes in the graph
-	for (const TObjectPtr<UMovieGraphNode> RuntimeNode : InGraph->GetNodes())
+	for (const TObjectPtr<UMovieGraphNode>& RuntimeNode : InGraph->GetNodes())
 	{
 		if (RuntimeNode->IsA<UMovieGraphVariableNode>())
 		{
 			NodeLookup.Add(RuntimeNode, CreateNodeFromRuntimeNode<UMoviePipelineEdGraphVariableNode>(RuntimeNode));
+		}
+		else if (RuntimeNode.IsA<UMovieGraphSubgraphNode>())
+		{
+			NodeLookup.Add(RuntimeNode, CreateNodeFromRuntimeNode<UMoviePipelineEdGraphSubgraphNode>(RuntimeNode));
 		}
 		else
 		{
@@ -64,7 +71,7 @@ void UMoviePipelineEdGraph::InitFromRuntimeGraph(UMovieGraphConfig* InGraph)
 	}
 
 	// Restore editor-only nodes, which have no runtime node equivalent
-	for (const TObjectPtr<UObject> EditorOnlyNodeObject : InGraph->GetEditorOnlyNodes())
+	for (const TObjectPtr<UObject>& EditorOnlyNodeObject : InGraph->GetEditorOnlyNodes())
 	{
 		if (const UEdGraphNode* EdGraphNode = Cast<UEdGraphNode>(EditorOnlyNodeObject))
 		{
@@ -75,10 +82,15 @@ void UMoviePipelineEdGraph::InitFromRuntimeGraph(UMovieGraphConfig* InGraph)
 		}
 	}
 
-	InGraph->OnGraphChangedDelegate.AddUObject(this, &UMoviePipelineEdGraph::OnGraphConfigChanged);
-	InGraph->OnGraphNodesDeletedDelegate.AddUObject(this, &UMoviePipelineEdGraph::OnGraphNodesDeleted);
+	RegisterDelegates(InGraph);
 
 	bInitialized = true;
+}
+
+void UMoviePipelineEdGraph::RegisterDelegates(UMovieGraphConfig* InGraph)
+{
+	InGraph->OnGraphChangedDelegate.AddUObject(this, &UMoviePipelineEdGraph::OnGraphConfigChanged);
+	InGraph->OnGraphNodesDeletedDelegate.AddUObject(this, &UMoviePipelineEdGraph::OnGraphNodesDeleted);
 }
 
 void UMoviePipelineEdGraph::CreateLinks(UMoviePipelineEdGraphNodeBase* InGraphNode, bool bCreateInboundLinks, bool bCreateOutboundLinks)
@@ -164,7 +176,7 @@ void UMoviePipelineEdGraph::OnGraphConfigChanged()
 {
 	// TODO: Optimize this. Ideally we can target specific changes to the graph rather than rebuilding everything.
 	// However, this isn't strictly necessary unless rebuilding becomes a performance bottleneck.
-	for (const TObjectPtr<UEdGraphNode> Node: Nodes)
+	for (const TObjectPtr<UEdGraphNode>& Node: Nodes)
 	{
 		Node->ReconstructNode();
 	}
@@ -174,7 +186,7 @@ void UMoviePipelineEdGraph::OnGraphNodesDeleted(TArray<UMovieGraphNode*> Deleted
 {
 	TArray<TObjectPtr<UEdGraphNode>> EdGraphNodesToDelete;
 	
-	for (const TObjectPtr<UEdGraphNode> Node : Nodes)
+	for (const TObjectPtr<UEdGraphNode>& Node : Nodes)
 	{
 		if (!Node)
 		{

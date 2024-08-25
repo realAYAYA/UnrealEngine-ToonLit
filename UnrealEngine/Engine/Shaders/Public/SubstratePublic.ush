@@ -1,0 +1,21 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+/*=============================================================================
+	SubstratePublic.ush: Public facing API for external users of Substrate.
+=============================================================================*/
+
+#include "/Engine/Private/Substrate/Substrate.ush"
+
+#if Substrate_ENABLED
+
+/** Public facing functions allowing external users access to some Substrate data. */
+float3 SubstratePublic_GetWorldNormal(uint2 PixelCoord)
+{
+  return SubstrateUnpackTopLayerData(SubstratePublic.TopLayerTexture.Load(uint3(PixelCoord, 0))).WorldNormal;
+}
+
+//TODO: Implement other accessors that were previously available via SceneTextures.
+
+#endif

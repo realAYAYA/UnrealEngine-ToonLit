@@ -7,16 +7,15 @@ using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
 using EpicGames.Core;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Telemetry;
 using Horde.Server.Acls;
 using Horde.Server.Agents.Pools;
 using Horde.Server.Configuration;
-using Horde.Server.Jobs.Templates;
 using Horde.Server.Server;
 using Horde.Server.Streams;
-using Horde.Server.Utilities;
-using Horde.Common;
 using HordeCommon.Rpc.Tasks;
-using EpicGames.Horde.Api;
 
 namespace Horde.Server.Projects
 {
@@ -26,22 +25,15 @@ namespace Horde.Server.Projects
 	[JsonSchema("https://unrealengine.com/horde/project")]
 	[JsonSchemaCatalog("Horde Project", "Horde project configuration file", new[] { "*.project.json", "Projects/*.json" })]
 	[ConfigIncludeRoot]
+	[ConfigMacroScope]
 	[DebuggerDisplay("{Id}")]
-	public class ProjectConfig : IAclScope
+	public class ProjectConfig
 	{
 		/// <summary>
 		/// Accessor for the global config owning this project
 		/// </summary>
 		[JsonIgnore]
 		public GlobalConfig GlobalConfig { get; private set; } = null!;
-
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public IAclScope? ParentScope => GlobalConfig;
-
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public AclScopeName ScopeName { get; private set; }
 
 		/// <summary>
 		/// The project id
@@ -63,6 +55,11 @@ namespace Horde.Server.Projects
 		/// Includes for other configuration files
 		/// </summary>
 		public List<ConfigInclude> Include { get; set; } = new List<ConfigInclude>();
+
+		/// <summary>
+		/// Macros within the global scope
+		/// </summary>
+		public List<ConfigMacro> Macros { get; set; } = new List<ConfigMacro>();
 
 		/// <summary>
 		/// Order of this project on the dashboard
@@ -90,6 +87,11 @@ namespace Horde.Server.Projects
 		public JobOptions JobOptions { get; set; } = new JobOptions();
 
 		/// <summary>
+		/// Telemetry store for Horde data for this project
+		/// </summary>
+		public TelemetryStoreId TelemetryStoreId { get; set; }
+
+		/// <summary>
 		/// List of streams
 		/// </summary>
 		public List<StreamConfig> Streams { get; set; } = new List<StreamConfig>();
@@ -97,7 +99,11 @@ namespace Horde.Server.Projects
 		/// <summary>
 		/// Acl entries
 		/// </summary>
-		public AclConfig? Acl { get; set; }
+		public AclConfig Acl { get; set; } = new AclConfig();
+
+		/// <inheritdoc cref="AclConfig.Authorize(AclAction, ClaimsPrincipal)"/>
+		public bool Authorize(AclAction action, ClaimsPrincipal user)
+			=> Acl.Authorize(action, user);
 
 		/// <summary>
 		/// Callback after this configuration has been read
@@ -108,7 +114,8 @@ namespace Horde.Server.Projects
 		{
 			Id = id;
 			GlobalConfig = globalConfig;
-			ScopeName = globalConfig.ScopeName.Append("p", Id.ToString());
+
+			Acl.PostLoad(globalConfig.Acl, $"project:{Id}");
 
 			foreach (StreamConfig stream in Streams)
 			{

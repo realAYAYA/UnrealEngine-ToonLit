@@ -480,7 +480,7 @@ namespace LowLevelTasks
 		//if the Runnable returns an FTask* than enable symetric switching
 		if constexpr (std::is_same_v<FTask*, decltype(UE::Core::Private::IsInvocable::DeclVal<TRunnable>()())>)
 		{
-			Runnable = [LocalRunnable = Forward<TRunnable>(InRunnable)](const bool bNotCanceled) -> FTask*
+			Runnable = [LocalRunnable = Forward<TRunnable>(InRunnable)](const bool bNotCanceled) mutable -> FTask*
 			{
 				if (bNotCanceled)
 				{
@@ -492,7 +492,7 @@ namespace LowLevelTasks
 		}
 		else
 		{
-			Runnable = [LocalRunnable = Forward<TRunnable>(InRunnable)](const bool bNotCanceled) -> FTask*
+			Runnable = [LocalRunnable = Forward<TRunnable>(InRunnable)](const bool bNotCanceled) mutable -> FTask* 
 			{
 				if (bNotCanceled)
 				{
@@ -665,7 +665,7 @@ namespace LowLevelTasks
 		return { LocalPackedData.GetDebugName(), LocalPackedData.GetPriority(), LocalPackedData.GetFlags() };
 	}
 
-	enum class ESleepState
+	enum class UE_DEPRECATED(5.4, "This was meant for internal use only and will be removed") ESleepState
 	{
 		Affinity,
 		Running,
@@ -677,10 +677,12 @@ namespace LowLevelTasks
 	* the struct is naturally 64 bytes aligned, the extra alignment just 
 	* re-enforces this assumption and will error if it changes in the future
 	*/
-	struct alignas(64) FSleepEvent
+	struct UE_DEPRECATED(5.4, "This was meant for internal use only and will be removed") alignas(64) FSleepEvent
 	{
 		FEventRef SleepEvent;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		std::atomic<ESleepState> SleepState { ESleepState::Running };
 		std::atomic<FSleepEvent*> Next { nullptr };
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	};
 }

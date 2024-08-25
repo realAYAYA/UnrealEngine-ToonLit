@@ -830,6 +830,7 @@ void FPhysicsAssetEditor::ExtendViewportMenus()
 				{
 					FToolMenuSection& Section = InSubMenu->AddSection("PhysicsAssetEditorConstraints", LOCTEXT("ConstraintHeader", "Constraints"));
 					Section.AddMenuEntry(Commands.DrawConstraintsAsPoints);
+					Section.AddMenuEntry(Commands.DrawViolatedLimits);
 					Section.AddMenuEntry(Commands.RenderOnlySelectedConstraints);
 					Section.AddEntry(FToolMenuEntry::InitWidget(TEXT("ConstraintScale"), WeakPhysicsAssetEditor.Pin()->MakeConstraintScaleWidget(), LOCTEXT("ConstraintScaleLabel", "Constraint Scale")));
 				}
@@ -1456,6 +1457,12 @@ void FPhysicsAssetEditor::BindCommands()
 		FExecuteAction::CreateSP(this, &FPhysicsAssetEditor::ToggleDrawConstraintsAsPoints),
 		FCanExecuteAction(),
 		FIsActionChecked::CreateSP(this, &FPhysicsAssetEditor::IsDrawingConstraintsAsPoints));
+
+	ViewportCommandList->MapAction(
+		Commands.DrawViolatedLimits,
+		FExecuteAction::CreateSP(this, &FPhysicsAssetEditor::ToggleDrawViolatedLimits),
+		FCanExecuteAction(),
+		FIsActionChecked::CreateSP(this, &FPhysicsAssetEditor::IsDrawingViolatedLimits));
 
 	ViewportCommandList->MapAction(
 		Commands.RenderOnlySelectedConstraints,
@@ -2333,7 +2340,7 @@ void FPhysicsAssetEditor::ResetBoneCollision()
 
 				UBoneProxy* BoneProxy = CastChecked<UBoneProxy>(BoneItem->GetObject());
 
-				int32 BoneIndex = SharedData->EditorSkelComp->GetBoneIndex(BoneProxy->BoneName);
+				const int32 BoneIndex = EditorSkelMesh->GetRefSkeleton().FindBoneIndex(BoneProxy->BoneName);
 				if (BoneIndex != INDEX_NONE)
 				{
 					SharedData->MakeNewBody(BoneIndex);
@@ -2744,6 +2751,17 @@ void FPhysicsAssetEditor::ToggleDrawConstraintsAsPoints()
 bool FPhysicsAssetEditor::IsDrawingConstraintsAsPoints() const
 {
 	return SharedData->EditorOptions->bShowConstraintsAsPoints;
+}
+
+void FPhysicsAssetEditor::ToggleDrawViolatedLimits()
+{
+	SharedData->EditorOptions->bDrawViolatedLimits = !SharedData->EditorOptions->bDrawViolatedLimits;
+	SharedData->EditorOptions->SaveConfig();
+}
+
+bool FPhysicsAssetEditor::IsDrawingViolatedLimits() const
+{
+	return SharedData->EditorOptions->bDrawViolatedLimits;
 }
 
 void FPhysicsAssetEditor::ToggleRenderOnlySelectedConstraints()

@@ -4,8 +4,6 @@
 
 #include "Landscape.h"
 
-#include "WorldPartition/WorldPartition.h"
-
 #include "SourceControlHelpers.h"
 #include "UObject/SavePackage.h"
 #include "Builders/CubeBuilder.h"
@@ -100,9 +98,6 @@ void ForEachRegion_LoadProcessUnload(ULandscapeInfo* InLandscapeInfo, const FInt
 	const int32 RegionSizeInTexels = InLandscapeInfo->ComponentSizeQuads * InLandscapeInfo->RegionSizeInComponents + 1;
 	const FIntRect RegionCoordinates = InDomain / RegionSizeInTexels;
 
-	UWorldPartition* WorldPartition = InWorld->GetWorldPartition();
-	check(WorldPartition != nullptr);
-
 	TArray<AActor*> Children;
 	InLandscapeInfo->LandscapeActor->GetAttachedActors(Children);
 	TArray<ALocationVolume*> LandscapeRegions;
@@ -136,7 +131,7 @@ void ForEachRegion_LoadProcessUnload(ULandscapeInfo* InLandscapeInfo, const FInt
 
 		InLandscapeInfo->ForceLayersFullUpdate();
 
-		LandscapeEditorUtils::SaveLandscapeProxies(MakeArrayView(LandscapeProxies), WorldPartition);
+		LandscapeEditorUtils::SaveLandscapeProxies(MakeArrayView(LandscapeProxies));
 
 		Region->Unload();
 

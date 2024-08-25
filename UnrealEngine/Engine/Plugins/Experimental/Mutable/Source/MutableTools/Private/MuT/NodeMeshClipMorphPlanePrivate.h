@@ -17,10 +17,6 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
 		Private()
 			: m_dist(0.0f), m_factor(0.0f)
 			, m_radius1(0.0f), m_radius2(0.0f), m_rotation(0.0f)
@@ -29,7 +25,7 @@ namespace mu
 		{
 		}
 
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeMeshPtr m_pSource;
 
@@ -42,8 +38,8 @@ namespace mu
 		float m_factor;
 
 		// Ellipse location
-		vec3f m_origin;
-		vec3f m_normal;
+		FVector3f m_origin;
+		FVector3f m_normal;
 		float m_radius1, m_radius2, m_rotation;
 
 		//! Typed of vertex selection
@@ -61,12 +57,12 @@ namespace mu
 		} VERTEX_SELECTION;
 
 		// Vertex selection box 
-        uint8_t m_vertexSelectionType;
-		vec3f m_selectionBoxOrigin;
-		vec3f m_selectionBoxRadius;
+        uint8 m_vertexSelectionType;
+		FVector3f m_selectionBoxOrigin;
+		FVector3f m_selectionBoxRadius;
 		uint16 m_vertexSelectionBone;
 
-		TArray<mu::string> m_tags;
+		TArray<FString> m_tags;
 
 		// Max distance a vertex can have to the bone in order to be affected. A negative value
 		// means no limit.
@@ -75,7 +71,7 @@ namespace mu
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 4;
+            uint32 ver = 5;
 			arch << ver;
 
 			arch << m_pSource;
@@ -97,9 +93,9 @@ namespace mu
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
-            check(ver==3);
+            check(ver>=3&&ver<=5);
 
 			arch >> m_pSource;
 			arch >> m_origin;
@@ -112,7 +108,21 @@ namespace mu
 			arch >> m_vertexSelectionType;
 			arch >> m_selectionBoxOrigin;
 			arch >> m_selectionBoxRadius;
-			arch >> m_tags;
+
+			if (ver >= 5)
+			{
+				arch >> m_tags;
+			}
+			else
+			{
+				TArray<std::string> Temp;
+				arch >> Temp;
+				m_tags.SetNum(Temp.Num());
+				for (int32 i=0;i<Temp.Num();++i)
+				{
+					m_tags[i] = Temp[i].c_str();
+				}
+			}
 
 			if (ver >= 4)
 			{

@@ -276,7 +276,7 @@ TEST_CASE("API.autortfm_register_open_function")
     REQUIRE(0 == I);
 }
 
-TEST_CASE("API.autortfm_open_commit")
+TEST_CASE("API.autortfm_on_commit")
 {
     bool OuterTransaction = false;
     bool InnerTransaction = false;
@@ -286,7 +286,7 @@ TEST_CASE("API.autortfm_open_commit")
 
     AutoRTFM::Commit([&]
     {
-        autortfm_open_commit([](void* const Arg)
+        autortfm_on_commit([](void* const Arg)
         {
             *static_cast<bool* const>(Arg) = true;
         }, &OuterTransaction);
@@ -299,7 +299,7 @@ TEST_CASE("API.autortfm_open_commit")
 
         AutoRTFM::Commit([&]
         {
-            autortfm_open_commit([](void* const Arg)
+            autortfm_on_commit([](void* const Arg)
             {
                 *static_cast<bool* const>(Arg) = true;
             }, &InnerTransaction);
@@ -313,7 +313,7 @@ TEST_CASE("API.autortfm_open_commit")
 
         NestResult = AutoRTFM::Transact([&]
         {
-            autortfm_open_commit([](void* const Arg)
+            autortfm_on_commit([](void* const Arg)
             {
                 *static_cast<bool* const>(Arg) = true;
             }, &InnerTransactionWithAbort);
@@ -329,7 +329,7 @@ TEST_CASE("API.autortfm_open_commit")
 
         AutoRTFM::Open([&]
         {
-            autortfm_open_commit([](void* const Arg)
+            autortfm_on_commit([](void* const Arg)
             {
                 *static_cast<bool* const>(Arg) = true;
             }, &InnerOpenNest);
@@ -349,7 +349,7 @@ TEST_CASE("API.autortfm_open_commit")
     REQUIRE(AutoRTFM::ETransactionResult::AbortedByRequest == NestResult);
 }
 
-TEST_CASE("API.autortfm_open_abort")
+TEST_CASE("API.autortfm_on_abort")
 {
     bool OuterTransaction = false;
     bool InnerTransaction = false;
@@ -359,7 +359,7 @@ TEST_CASE("API.autortfm_open_abort")
 
     REQUIRE(AutoRTFM::ETransactionResult::Committed == AutoRTFM::Transact([&]
     {
-        autortfm_open_abort([](void* const Arg)
+        autortfm_on_abort([](void* const Arg)
         {
             *static_cast<bool* const>(Arg) = true;
         }, &OuterTransaction);
@@ -372,7 +372,7 @@ TEST_CASE("API.autortfm_open_abort")
 
         AutoRTFM::Commit([&]
         {
-            autortfm_open_abort([](void* const Arg)
+            autortfm_on_abort([](void* const Arg)
             {
                 *static_cast<bool* const>(Arg) = true;
             }, &InnerTransaction);
@@ -386,7 +386,7 @@ TEST_CASE("API.autortfm_open_abort")
 
         NestResult = AutoRTFM::Transact([&]
         {
-            autortfm_open_abort([](void* const Arg)
+            autortfm_on_abort([](void* const Arg)
             {
                 *static_cast<bool* const>(Arg) = true;
             }, &InnerTransactionWithAbort);
@@ -402,7 +402,7 @@ TEST_CASE("API.autortfm_open_abort")
 
         AutoRTFM::Open([&]
         {
-            autortfm_open_abort([](void* const Arg)
+            autortfm_on_abort([](void* const Arg)
             {
                 *static_cast<bool* const>(Arg) = true;
             }, &InnerOpenNest);
@@ -711,7 +711,7 @@ TEST_CASE("API.Close")
 
 TEST_CASE("API.RegisterOpenFunction")
 {
-    AutoRTFM::RegisterOpenFunction(
+    AutoRTFM::ForTheRuntime::RegisterOpenFunction(
         reinterpret_cast<void*>(NoAutoRTFM::DoSomethingCpp),
         reinterpret_cast<void*>(NoAutoRTFM::DoSomethingInTransactionCpp));
 
@@ -725,7 +725,7 @@ TEST_CASE("API.RegisterOpenFunction")
     REQUIRE(0 == I);
 }
 
-TEST_CASE("API.OpenCommit")
+TEST_CASE("API.OnCommit")
 {
     bool OuterTransaction = false;
     bool InnerTransaction = false;
@@ -735,7 +735,7 @@ TEST_CASE("API.OpenCommit")
 
     REQUIRE(AutoRTFM::ETransactionResult::Committed == AutoRTFM::Transact([&]
     {
-        AutoRTFM::OpenCommit([&]
+        AutoRTFM::OnCommit([&]
         {
             OuterTransaction = true;
         });
@@ -748,7 +748,7 @@ TEST_CASE("API.OpenCommit")
 
         AutoRTFM::Commit([&]
         {
-            AutoRTFM::OpenCommit([&]
+            AutoRTFM::OnCommit([&]
             {
                 InnerTransaction = true;
             });
@@ -762,7 +762,7 @@ TEST_CASE("API.OpenCommit")
 
         NestResult = AutoRTFM::Transact([&]
         {
-            AutoRTFM::OpenCommit([&]
+            AutoRTFM::OnCommit([&]
             {
                 InnerTransactionWithAbort = true;
             });
@@ -778,7 +778,7 @@ TEST_CASE("API.OpenCommit")
 
         AutoRTFM::Open([&]
         {
-            AutoRTFM::OpenCommit([&]
+            AutoRTFM::OnCommit([&]
             {
                 InnerOpenNest = true;
             });
@@ -798,7 +798,7 @@ TEST_CASE("API.OpenCommit")
     REQUIRE(AutoRTFM::ETransactionResult::AbortedByRequest == NestResult);
 }
 
-TEST_CASE("API.OpenAbort")
+TEST_CASE("API.OnAbort")
 {
     bool OuterTransaction = false;
     bool InnerTransaction = false;
@@ -808,7 +808,7 @@ TEST_CASE("API.OpenAbort")
 
     REQUIRE(AutoRTFM::ETransactionResult::Committed == AutoRTFM::Transact([&]
     {
-        AutoRTFM::OpenAbort([&]
+        AutoRTFM::OnAbort([&]
         {
             OuterTransaction = true;
         });
@@ -821,7 +821,7 @@ TEST_CASE("API.OpenAbort")
 
         AutoRTFM::Commit([&]
         {
-            AutoRTFM::OpenAbort([&]
+            AutoRTFM::OnAbort([&]
             {
                 InnerTransaction = true;
             });
@@ -835,7 +835,7 @@ TEST_CASE("API.OpenAbort")
 
         NestResult = AutoRTFM::Transact([&]
         {
-            AutoRTFM::OpenAbort([&]
+            AutoRTFM::OnAbort([&]
             {
                 InnerTransactionWithAbort = true;
             });
@@ -851,7 +851,7 @@ TEST_CASE("API.OpenAbort")
 
         AutoRTFM::Open([&]
         {
-            AutoRTFM::OpenAbort([&]
+            AutoRTFM::OnAbort([&]
             {
                 InnerOpenNest = true;
             });
@@ -903,6 +903,6 @@ TEST_CASE("API.CheckConsistencyAssumingNoRaces")
 {
     AutoRTFM::Commit([&]
     {
-        AutoRTFM::CheckConsistencyAssumingNoRaces();
+        AutoRTFM::ForTheRuntime::CheckConsistencyAssumingNoRaces();
     });
 }

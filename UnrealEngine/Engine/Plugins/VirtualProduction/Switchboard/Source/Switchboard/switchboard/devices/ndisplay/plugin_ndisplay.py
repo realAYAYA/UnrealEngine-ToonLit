@@ -9,10 +9,10 @@ import struct
 import traceback
 from typing import Optional
 
-from PySide2 import QtCore
-from PySide2 import QtWidgets
+from PySide6 import QtCore
+from PySide6 import QtWidgets
 
-from switchboard import message_protocol
+from switchboard import message_protocol, switchboard_application
 from switchboard import switchboard_utils as sb_utils
 from switchboard import switchboard_widgets as sb_widgets
 from switchboard import switchboard_dialog as sb_dialog
@@ -26,6 +26,7 @@ from switchboard.devices.unreal.plugin_unreal import DeviceUnreal, \
 from switchboard.devices.unreal.uassetparser import UassetParser
 from switchboard.devices.device_base import DeviceStatus
 from switchboard.switchboard_logging import LOGGER
+from switchboard.sbcache import SBCache, Asset
 
 from .ndisplay_monitor_ui import nDisplayMonitorUI
 from .ndisplay_monitor import nDisplayMonitor
@@ -99,31 +100,22 @@ class AddnDisplayDialog(AddDeviceDialog):
         having to re-find every time.
         '''
 
-         # cache the current value of the combo box (currently selected preset for this device)
+        # cache the current value of the combo box (currently selected preset for this device)
         cur_item = self.cbConfigs.currentData()
 
         self.cbConfigs.clear()
 
-        itemDatas = DeviceUnreal.csettings['asset_itemDatas'].get_value()
+        project = SBCache().query_or_create_project(CONFIG.UPROJECT_PATH.get_value())
+        assets = SBCache().query_assets_by_classname(project=project, classnames=DeviceUnreal.NDISPLAY_CLASS_NAMES)
 
-        def asset_is_nDisplay_config(itemData:dict) -> bool:
-            ''' Convenience function to filter the nDisplay configs '''
-
-            # Only return assets of the correct class
-            return itemData['classname'] in DeviceUnreal.NDISPLAY_CLASS_NAMES
-
-        try:
-            for itemData in [itemData for itemData in itemDatas if asset_is_nDisplay_config(itemData)]:
-                self.cbConfigs.addItem(itemData['name'], itemData)
-        except Exception:
-            LOGGER.error('Error recalling config itemDatas')
+        for asset in assets:
+            self.cbConfigs.addItem(asset.name, asset)
 
         # restore selected item
         for item_idx in range(self.cbConfigs.count()):
-            if cur_item and (cur_item['name'] == self.cbConfigs.itemData(item_idx)['name']):
+            if cur_item and (cur_item.name == self.cbConfigs.itemData(item_idx).name):
                 self.cbConfigs.setCurrentIndex(item_idx)
                 break
-
 
     def current_config_path(self):
         ''' Get currently selected config path in the combobox '''
@@ -131,13 +123,13 @@ class AddnDisplayDialog(AddDeviceDialog):
         # Detect if this is a manual entry using the itemData
 
         itemText = self.cbConfigs.currentText()
-        itemData = self.cbConfigs.currentData()
+        asset: Asset = self.cbConfigs.currentData()
 
         if (self.cbConfigs.currentData() is None or
-                itemData['name'] != itemText):
+                asset.name != itemText):
             config_path = itemText.replace('"', '').strip()
         else:
-            config_path = itemData['path'].replace('"', '').strip()
+            config_path = asset.localpath.replace('"', '').strip()
 
         # normalize the path
         config_path = os.path.normpath(config_path)
@@ -230,11 +222,12 @@ class DeviceWidgetnDisplay(DeviceWidgetUnreal):
         super().on_name_changed(text)
 
         if self.name_line_edit.is_valid:
-            point = self.name_line_edit.parent().mapToGlobal(
-                self.name_line_edit.geometry().topRight())
-            self.help_tool_tip.showText(
-                point,
-                "WARNING: Device names must match the nDisplay configuration")
+            parent = self.name_line_edit.parent()
+            if parent:
+                point = parent.mapToGlobal(self.name_line_edit.geometry().topRight())
+                self.help_tool_tip.showText(
+                    point,
+                    "WARNING: Device names must match the nDisplay configuration")
 
     def _add_control_buttons(self):
         self._autojoin_visible = False
@@ -318,6 +311,11 @@ class DevicenDisplay(DeviceUnreal):
             nice_name="Texture Streaming",
             value=True,
         ),
+        'sound': BoolSetting(
+            attr_name="sound",
+            nice_name="Sound",
+            value=False,
+        ),
         'render_api': OptionSetting(
             attr_name="render_api",
             nice_name="Render API",
@@ -326,10 +324,12 @@ class DevicenDisplay(DeviceUnreal):
                 "dx11",
                 "dx11 -sm5",
                 "dx11 -sm6",
-                "dx12", 
-                "dx12 -sm5", 
-                "dx12 -sm6", 
-                "vulkan"
+                "dx12",
+                "dx12 -sm5",
+                "dx12 -sm6",
+                "vulkan",
+                "vulkan -sm5",
+                "vulkan -sm6"
             ],
         ),
         'multiplayer_mode': OptionSetting(
@@ -758,9 +758,6 @@ class DevicenDisplay(DeviceUnreal):
         if multiplayer_mode_name == 'Dedicated server':
             dedicated_server_address = DevicenDisplay.csettings["dedicated_server_address"].get_value()
 
-            if dedicated_server_address == self.address or is_local_address(self.address):
-                dedicated_server_address = '127.0.0.1'
-
             return get_client_args(
                 f'{dedicated_server_address}:{DevicenDisplay.csettings["dedicated_server_port"].get_value()}')
 
@@ -777,8 +774,26 @@ class DevicenDisplay(DeviceUnreal):
 
         return '?'.join([current_map_name, 'Listen', get_common_args()])
 
+    def should_use_project_path_in_command_line(self):
+        ''' Returns true if the project path should be added to the command line.
+        This is normally true when launching the editor, but not when launching a cooked game executable.
+        '''
+ 
+        # The default exe of an Unreal device is the Editor.
+        default_exe = Path(DeviceUnreal.csettings['ue_exe']._original_value)
+
+        # This is the current executable
+        exe = Path(self.generate_unreal_exe_path())
+
+        # We don't use direct comparison to include editor build variants, such as -Debug builds.
+        return exe.stem.lower().startswith(default_exe.stem.lower())
+
     def generate_unreal_command_line(self, map_name=""):
-        uproject = CONFIG.UPROJECT_PATH.get_value(self.name)
+
+        uproject = ''
+
+        if self.should_use_project_path_in_command_line():
+            uproject = CONFIG.UPROJECT_PATH.get_value(self.name)
         
         # normalize path if not empty
         if uproject != "":
@@ -812,6 +827,12 @@ class DevicenDisplay(DeviceUnreal):
             "-notexturestreaming"
             if not DevicenDisplay.csettings['texture_streaming'].get_value(
                 self.name)
+            else "")
+
+        # Sound
+        no_sound = (
+            "-nosound"
+            if not DevicenDisplay.csettings['sound'].get_value(self.name)
             else "")
 
         # MaxGPUCount (mGPU)
@@ -929,6 +950,7 @@ class DevicenDisplay(DeviceUnreal):
             f'{render_mode}',             # mono/...
             f'{use_all_cores}',           # -useallavailablecores
             f'{no_texture_streaming}',    # -notexturestreaming
+            f'{no_sound}',                # -nosound
             f'-dc_node={self.name}',      # name of this node in the nDisplay cluster
             f'Log={self.log_filename}',   # log file
             f'{ini_engine}',              # Engine ini injections
@@ -992,9 +1014,9 @@ class DevicenDisplay(DeviceUnreal):
             args.extend([
                 '-CONCERTRETRYAUTOCONNECTONERROR',
                 '-CONCERTAUTOCONNECT'])
-
+        mu_server = switchboard_application.get_multi_user_server_instance()
         args.extend([
-            f'-CONCERTSERVER="{CONFIG.MUSERVER_SERVER_NAME.get_value()}"',
+            f'-CONCERTSERVER="{mu_server.configured_server_name()}"',
             f'-CONCERTSESSION="{SETTINGS.MUSERVER_SESSION_NAME}"',
             f'-CONCERTDISPLAYNAME="{self.name}"',
             '-CONCERTISHEADLESS',
@@ -1008,8 +1030,7 @@ class DevicenDisplay(DeviceUnreal):
             dp_cvars.append('Slate.bAllowNotifications=0')
 
         # Insights traces parameters
-        if CONFIG.INSIGHTS_TRACE_ENABLE.get_value():
-
+        if CONFIG.INSIGHTS_TRACE_ENABLE.get_value() and not self.exclude_from_insights.get_value():
             LOGGER.warning(f"Unreal Insight Tracing is enabled for '{self.name}'. This may affect Unreal Engine performance.")
 
             remote_utrace_path = self.get_utrace_filepath()
@@ -1038,6 +1059,8 @@ class DevicenDisplay(DeviceUnreal):
 
         # Always tell Chaos to be deterministic
         dp_cvars.append('p.Chaos.Solver.Deterministic=1')
+        # Always enable LevelInstance World Editor Mode.
+        dp_cvars.append('LevelInstance.ForceEditorWorldMode=1')
 
         # mediaprofile
         mediaprofile_gamepath = DevicenDisplay.csettings["mediaprofile"].get_value(self.name)
@@ -1281,7 +1304,7 @@ class DevicenDisplay(DeviceUnreal):
 
         elif render_sync_policy == 'Ethernet':
 
-            new_rsp['type'] = 'ethernet' # .ndisplay uses lowercase
+            new_rsp['type'] = 'Ethernet'
             new_rsp['parameters'] = {}
 
         elif render_sync_policy == 'None':
@@ -1415,12 +1438,41 @@ class DevicenDisplay(DeviceUnreal):
         return os.path.normpath(
             os.path.join(project_dir, 'Content', f'{package_rel_path}.uasset'))
 
+    def get_connected_devices(self):
+        ''' Returns a list with the connected devices/nodes
+        '''
+        nodes = []
+        for device in self.active_unreal_devices:
+            is_device_connected = (device.status == DeviceStatus.CLOSED) or (device.status == DeviceStatus.OPEN)
+            if (device.device_type == "nDisplay") and is_device_connected:
+                nodes.append(device)
+        return nodes
+
     def launch(self, map_name):
+
         if not self.check_settings_valid():
             LOGGER.error(f"{self.name}: Not launching due to invalid settings")
             self.widget._close()
             return
 
+        # Ensure that one of the devices is set as the primary node.
+        nodes = self.get_connected_devices()
+
+        assert len(nodes) > 0  # we wouldn't be launching otherwise
+
+        primary_name = DevicenDisplay.csettings['primary_device_name'].get_value()
+        primary = None
+
+        for node in nodes:
+            if node.name == primary_name:
+                primary = node
+                break
+
+        # if there is no primary, assign one
+        if primary is None:
+            nodes[0].select_as_primary()
+
+        # cache the map to launch
         self.map_name_to_launch = map_name
 
         # Update settings controlled exclusively by the nDisplay config file.

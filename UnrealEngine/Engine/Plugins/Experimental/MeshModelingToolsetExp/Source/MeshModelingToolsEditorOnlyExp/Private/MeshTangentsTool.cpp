@@ -22,6 +22,13 @@
 #include "ModelingToolTargetUtil.h"
 #include "ToolTargetManager.h"
 
+#include "PropertySets/GeometrySelectionVisualizationProperties.h"
+#include "GroupTopology.h"
+#include "DynamicMeshEditor.h"
+#include "Selection/GeometrySelectionVisualization.h"
+#include "Selection/StoredMeshSelectionUtil.h"
+#include "Selections/GeometrySelectionUtil.h"
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MeshTangentsTool)
 
 using namespace UE::Geometry;
@@ -46,6 +53,23 @@ const FToolTargetTypeRequirements& UMeshTangentsToolBuilder::GetTargetRequiremen
 USingleSelectionMeshEditingTool* UMeshTangentsToolBuilder::CreateNewTool(const FToolBuilderState& SceneState) const
 {
 	return NewObject<UMeshTangentsTool>(SceneState.ToolManager);
+}
+
+void UMeshTangentsToolBuilder::InitializeNewTool(USingleSelectionMeshEditingTool* NewTool, const FToolBuilderState& SceneState) const
+{
+	UToolTarget* Target = SceneState.TargetManager->BuildFirstSelectedTargetable(SceneState, GetTargetRequirements());
+	check(Target);
+	NewTool->SetTarget(Target);
+	NewTool->SetWorld(SceneState.World);
+
+	if (UMeshTangentsTool* TangentsTool = Cast<UMeshTangentsTool>(NewTool))
+	{
+		UE::Geometry::FGeometrySelection Selection;
+		if (UE::Geometry::GetCurrentGeometrySelectionForTarget(SceneState, Target, Selection))
+		{
+			TangentsTool->SetGeometrySelection(MoveTemp(Selection));
+		}
+	}
 }
 
 bool UMeshTangentsToolBuilder::CanBuildTool(const FToolBuilderState& SceneState) const
@@ -103,7 +127,59 @@ void UMeshTangentsTool::Setup()
 	Settings->WatchProperty(Settings->LineThickness, [this](float) { bThicknessDirty = true; });
 	Settings->WatchProperty(Settings->bShowTangents, [this](bool) { bVisibilityChanged = true; });
 	Settings->WatchProperty(Settings->bShowNormals, [this](bool) { bVisibilityChanged = true; });
-	Settings->WatchProperty(Settings->bCompareWithMikkt, [this](bool) { ComputeMikkTDeviations(nullptr); });
+	Settings->WatchProperty(Settings->bCompareWithMikkt, [this](bool) { ComputeMikkTDeviations(ComputeDegenerateTris()); });
+
+	if (InputGeometrySelection.IsEmpty() == false)
+	{
+		GeometrySelectionVizProperties = NewObject<UGeometrySelectionVisualizationProperties>(this);
+		GeometrySelectionVizProperties->RestoreProperties(this);
+		AddToolPropertySource(GeometrySelectionVizProperties);
+		GeometrySelectionVizProperties->Initialize(this);
+		GeometrySelectionVizProperties->SelectionElementType = static_cast<EGeometrySelectionElementType>(InputGeometrySelection.ElementType);
+		GeometrySelectionVizProperties->SelectionTopologyType = static_cast<EGeometrySelectionTopologyType>(InputGeometrySelection.TopologyType);
+		GeometrySelectionVizProperties->bEnableShowEdgeSelectionVertices = true;
+		// TODO Enable this but note we need to compute a ROI which only includes triangles incident to the
+		//      polygroup feature eg do not include all triangles in the groups incident to a polygroup edge
+		//GeometrySelectionVizProperties->bEnableShowTriangleROIBorder = true;
+
+		// Compute group topology if the selection has Polygroup topology, and do nothing otherwise
+		// Currently it is only possible to make a polygroup geometry selection using polygroup set stored directly in the mesh
+		FGroupTopology GroupTopology(InputMesh.Get(), InputGeometrySelection.TopologyType == EGeometryTopologyType::Polygroup);
+
+		// Compute the overlay selection and a proxy triangle vertex selection used to make edge selections behave like
+		// vertex selections. See :EdgeSelectionsBehaveLikeVertexSelections
+		if (InputGeometrySelection.TopologyType == EGeometryTopologyType::Polygroup)
+		{
+			ConvertPolygroupSelectionToIncidentOverlaySelection(
+				*InputMesh,
+				GroupTopology,
+				InputGeometrySelection,
+				EditTriangles,
+				EditVertices,
+				&TriangleVertexGeometrySelection);
+		}
+		else
+		{
+			ConvertTriangleSelectionToOverlaySelection(
+				*InputMesh,
+				InputGeometrySelection,
+				EditTriangles,
+				EditVertices,
+				&TriangleVertexGeometrySelection);
+		}
+
+		// Setup input geometry selection visualization
+		FTransform ApplyTransform = UE::ToolTarget::GetLocalToWorldTransform(Target);
+		GeometrySelectionViz = NewObject<UPreviewGeometry>(this);
+		GeometrySelectionViz->CreateInWorld(GetTargetWorld(), ApplyTransform);
+		InitializeGeometrySelectionVisualization(
+			GeometrySelectionViz,
+			GeometrySelectionVizProperties,
+			*InputMesh,
+			InputGeometrySelection,
+			&GroupTopology,
+			!TriangleVertexGeometrySelection.IsEmpty() ? &TriangleVertexGeometrySelection : nullptr);
+	}
 
 	PreviewGeometry = NewObject<UPreviewGeometry>(this);
 	PreviewGeometry->CreateInWorld(TargetActor->GetWorld(), PreviewMesh->GetTransform());
@@ -136,6 +212,11 @@ void UMeshTangentsTool::Setup()
 		EToolMessageLevel::UserNotification);
 }
 
+void UMeshTangentsTool::SetGeometrySelection(UE::Geometry::FGeometrySelection&& SelectionIn)
+{
+	InputGeometrySelection = MoveTemp(SelectionIn);
+}
+
 
 
 void UMeshTangentsTool::OnShutdown(EToolShutdownType ShutdownType)
@@ -144,6 +225,16 @@ void UMeshTangentsTool::OnShutdown(EToolShutdownType ShutdownType)
 	PreviewMesh->Disconnect();
 
 	Settings->SaveProperties(this);
+
+	if (GeometrySelectionViz)
+	{
+		GeometrySelectionViz->Disconnect();
+	}
+
+	if (GeometrySelectionVizProperties)
+	{
+		GeometrySelectionVizProperties->SaveProperties(this);
+	}
 
 	// Restore (unhide) the source meshes
 	UE::ToolTarget::ShowSourceObject(Target);
@@ -169,7 +260,7 @@ void UMeshTangentsTool::OnShutdown(EToolShutdownType ShutdownType)
 			}
 		}
 
-		Tangents->CopyToOverlays(*InputMesh);
+		CopyToOverlays(*Tangents, *InputMesh);
 
 		FConversionToMeshDescriptionOptions Options;
 		Options.bUpdatePositions = false;
@@ -189,6 +280,11 @@ void UMeshTangentsTool::OnTick(float DeltaTime)
 	{
 		UpdateVisualization(bThicknessDirty, bLengthDirty);
 		bThicknessDirty = bLengthDirty = bVisibilityChanged = false;
+	}
+
+	if (GeometrySelectionViz)
+	{
+		UpdateGeometrySelectionVisualization(GeometrySelectionViz, GeometrySelectionVizProperties);
 	}
 }
 
@@ -274,18 +370,24 @@ void UMeshTangentsTool::OnTangentsUpdated(const TUniquePtr<FMeshTangentsd>& NewR
 	PreviewGeometry->CreateOrUpdateLineSet(TEXT("Tangents"), InputMesh->MaxTriangleID(),
 		[&](int32 Index, TArray<FRenderableLine>& Lines) 
 	{
-
-		if (InputMesh->IsTriangle(Index) && DegenerateTris.Contains(Index) == false)
+		bool bValid = InputMesh->IsTriangle(Index) && !DegenerateTris.Contains(Index);
+		bool bIncludedTriangle = EditTriangles.IsEmpty() || EditTriangles.Contains(Index);
+		if (bValid && bIncludedTriangle)
 		{
-			FVector3d Verts[3];
-			InputMesh->GetTriVertices(Index, Verts[0], Verts[1], Verts[2]);
+			FIndex3i Vids = InputMesh->GetTriangle(Index);
 			for (int j = 0; j < 3; ++j)
 			{
-				FVector3d Tangent, Bitangent;
-				NewResult->GetPerTriangleTangent(Index, j, Tangent, Bitangent);
+				bool bIncludedVertex = EditVertices.IsEmpty() || EditVertices.Contains(Vids[j]);
+				if (bIncludedVertex)
+				{
+					FVector3d Origin = InputMesh->GetVertex(Vids[j]);
 
-				Lines.Add(FRenderableLine((FVector)Verts[j], (FVector)Verts[j] + LineLength * (FVector)Tangent, FColor(240,15,15), Thickness));
-				Lines.Add(FRenderableLine((FVector)Verts[j], (FVector)Verts[j] + LineLength * (FVector)Bitangent, FColor(15,240,15), Thickness));
+					FVector3d Tangent, Bitangent;
+					NewResult->GetPerTriangleTangent(Index, j, Tangent, Bitangent);
+
+					Lines.Add(FRenderableLine((FVector)Origin, (FVector)Origin + LineLength * (FVector)Tangent, FColor(240,15,15), Thickness));
+					Lines.Add(FRenderableLine((FVector)Origin, (FVector)Origin + LineLength * (FVector)Bitangent, FColor(15,240,15), Thickness));
+				}
 			}
 		}
 	}, 6);
@@ -298,24 +400,70 @@ void UMeshTangentsTool::OnTangentsUpdated(const TUniquePtr<FMeshTangentsd>& NewR
 	{
 		if (NormalOverlay->IsElement(Index))
 		{
-			FVector3f Normal = NormalOverlay->GetElement(Index);
 			int32 ParentVtx = NormalOverlay->GetParentVertex(Index);
-			FVector3f Position = (FVector3f)InputMesh->GetVertex(ParentVtx);
-			Lines.Add(FRenderableLine((FVector)Position, (FVector)Position + LineLength * (FVector)Normal, FColor(15,15,240), Thickness));
+			bool bIncluded = InputGeometrySelection.IsEmpty() || EditVertices.Contains(ParentVtx);
+			if (bIncluded)
+			{
+				FVector3f Normal = NormalOverlay->GetElement(Index);
+				FVector3f Origin = (FVector3f)InputMesh->GetVertex(ParentVtx);
+				Lines.Add(FRenderableLine((FVector)Origin, (FVector)Origin + LineLength * (FVector)Normal, FColor(15,15,240), Thickness));
+			}
 		}
 	}, 1);
 
-	ComputeMikkTDeviations(&DegenerateTris);
+	ComputeMikkTDeviations(DegenerateTris);
 
 	PreviewMesh->DeferredEditMesh([&](FDynamicMesh3& EditMesh)
 	{
-		NewResult.Get()->CopyToOverlays(EditMesh);
+		CopyToOverlays(*NewResult, EditMesh);
 	}, false);
 	PreviewMesh->NotifyDeferredEditCompleted(UPreviewMesh::ERenderUpdateMode::FastUpdate, EMeshRenderAttributeFlags::VertexNormals, false);
 
 	UpdateVisualization(false, false);
 }
 
+
+void UMeshTangentsTool::CopyToOverlays(const FMeshTangentsd& Tangents, FDynamicMesh3& Mesh)
+{
+	if (ensure(Mesh.HasAttributes()) == false || ensure(Mesh.Attributes()->NumNormalLayers() == 3) == false)
+	{
+		return;
+	}
+	
+	if (InputGeometrySelection.IsEmpty())
+	{
+		Tangents.CopyToOverlays(Mesh);
+	}
+	else
+	{
+		FDynamicMesh3 MeshCopy;
+		{
+			bool bCopyNormals = false;
+			bool bCopyColors = false;
+			bool bCopyUVs = false;
+			bool bCopyAttributes = true;
+			MeshCopy.Copy(Mesh, bCopyNormals, bCopyColors, bCopyUVs, bCopyAttributes);
+		}
+
+		// Copy all tangents to the MeshCopy overlays
+		Tangents.CopyToOverlays(MeshCopy);
+
+		// Copy the subset of tangents corresponding to the geometry selection to the Mesh overlays
+		FDynamicMeshEditor Editor(&Mesh);
+		Editor.AppendElementSubset(
+			&MeshCopy,
+			EditTriangles,
+			EditVertices,
+			MeshCopy.Attributes()->PrimaryTangents(),
+			Mesh.Attributes()->PrimaryTangents());
+		Editor.AppendElementSubset(
+			&MeshCopy,
+			EditTriangles,
+			EditVertices,
+			MeshCopy.Attributes()->PrimaryBiTangents(),
+			Mesh.Attributes()->PrimaryBiTangents());
+	}
+}
 
 TSet<int32> UMeshTangentsTool::ComputeDegenerateTris() const
 {
@@ -330,19 +478,12 @@ TSet<int32> UMeshTangentsTool::ComputeDegenerateTris() const
 }
 
 
-void UMeshTangentsTool::ComputeMikkTDeviations(const TSet<int32>* DegenerateTris)
+void UMeshTangentsTool::ComputeMikkTDeviations(const TSet<int32>& DegenerateTris)
 {
 	// calculate deviation between what we have and MikkT, if necessary
 	Deviations.Reset();
 	if (Settings->bCompareWithMikkt && Settings->CalculationMethod == EMeshTangentsType::FastMikkTSpace)
 	{
-		TSet<int32> TempDegenerateTris;
-		if (DegenerateTris == nullptr)
-		{
-			TempDegenerateTris = ComputeDegenerateTris();
-			DegenerateTris = &TempDegenerateTris;
-		}
-
 		FProgressCancel TmpCancel;
 		FCalculateTangentsOp MikktOp;
 		MikktOp.SourceMesh = InputMesh;
@@ -358,27 +499,49 @@ void UMeshTangentsTool::ComputeMikkTDeviations(const TSet<int32>* DegenerateTris
 
 		for (int32 Index : InputMesh->TriangleIndicesItr())
 		{
-			if (DegenerateTris->Contains(Index) == false)
+			bool bValid = !DegenerateTris.Contains(Index);
+			bool bIncludedTriangle = EditTriangles.IsEmpty() || EditTriangles.Contains(Index);
+			if (bValid && bIncludedTriangle)
 			{
-				FVector3d Verts[3];
-				InputMesh->GetTriVertices(Index, Verts[0], Verts[1], Verts[2]);
+				FIndex3i Vids = InputMesh->GetTriangle(Index);
 				for (int j = 0; j < 3; ++j)
 				{
-					FVector3f TangentMikkt, BitangentMikkt;
-					MikktTangents->GetPerTriangleTangent<FVector3f, float>(Index, j, TangentMikkt, BitangentMikkt);
-					UE::Geometry::Normalize(TangentMikkt);
-					UE::Geometry::Normalize(BitangentMikkt);
-					FVector3f TangentNew, BitangentNew;
-					NewTangents->GetPerTriangleTangent<FVector3f, float>(Index, j, TangentNew, BitangentNew);
-					UE::Geometry::Normalize(TangentNew); 
-					UE::Geometry::Normalize(BitangentNew);
-					ensure(UE::Geometry::IsNormalized(TangentMikkt) && UE::Geometry::IsNormalized(BitangentMikkt));
-					ensure(UE::Geometry::IsNormalized(TangentNew) && UE::Geometry::IsNormalized(BitangentNew));
-					float MaxAngleDeg = FMathf::Max(UE::Geometry::AngleD(TangentMikkt, TangentNew), UE::Geometry::AngleD(BitangentMikkt, BitangentNew));
-					if (MaxAngleDeg > 0.5f)
+					bool bIncludedVertex = EditVertices.IsEmpty() || EditVertices.Contains(Vids[j]);
+					if (bIncludedVertex)
 					{
-						FMikktDeviation Deviation{ MaxAngleDeg, Index, j, (FVector3f)Verts[j], TangentMikkt, BitangentMikkt, TangentNew, BitangentNew };
-						Deviations.Add(Deviation);
+						FVector3f TangentMikkt, BitangentMikkt;
+						MikktTangents->GetPerTriangleTangent<FVector3f, float>(Index, j, TangentMikkt, BitangentMikkt);
+						UE::Geometry::Normalize(TangentMikkt);
+						UE::Geometry::Normalize(BitangentMikkt);
+						ensure(UE::Geometry::IsNormalized(TangentMikkt));
+						ensure(UE::Geometry::IsNormalized(BitangentMikkt));
+
+						FVector3f TangentNew, BitangentNew;
+						NewTangents->GetPerTriangleTangent<FVector3f, float>(Index, j, TangentNew, BitangentNew);
+						UE::Geometry::Normalize(TangentNew); 
+						UE::Geometry::Normalize(BitangentNew);
+						ensure(UE::Geometry::IsNormalized(TangentNew));
+						ensure(UE::Geometry::IsNormalized(BitangentNew));
+
+						float TangentAngleDeg = UE::Geometry::AngleD(TangentMikkt, TangentNew);
+						float BiTangentAngleDeg = UE::Geometry::AngleD(BitangentMikkt, BitangentNew);
+						float MaxAngleDeg = FMathf::Max(TangentAngleDeg, BiTangentAngleDeg);
+
+						if (MaxAngleDeg > 0.5f)
+						{
+							FMikktDeviation Deviation;
+
+							Deviation.MaxAngleDeg    = MaxAngleDeg;
+							Deviation.TriangleID     = Index;
+							Deviation.TriVertIndex   = j;
+							Deviation.VertexPos      = (FVector3f)InputMesh->GetVertex(Vids[j]);
+							Deviation.MikktTangent   = TangentMikkt;
+							Deviation.MikktBitangent = BitangentMikkt;
+							Deviation.OtherTangent   = TangentNew;
+							Deviation.OtherBitangent = BitangentNew;
+							
+							Deviations.Add(Deviation);
+						}
 					}
 				}
 			}

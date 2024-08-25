@@ -33,6 +33,7 @@ public class GraphEditor : ModuleRules
 				"BlueprintGraph",
 				"Documentation",
 				"Persona",
+				"PropertyEditor",
 				"RenderCore",
 				"RHI",
 				"ToolMenus",

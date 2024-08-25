@@ -36,6 +36,7 @@ struct FAnimTypePreAnimatedStateRootStorage : TPreAnimatedStateStorage<FPreAnima
 {
 	static MOVIESCENE_API TAutoRegisterPreAnimatedStorageID<FAnimTypePreAnimatedStateRootStorage> StorageID;
 
+	MOVIESCENE_API FPreAnimatedStateEntry FindEntry(FMovieSceneAnimTypeID AnimTypeID);
 	MOVIESCENE_API FPreAnimatedStateEntry MakeEntry(FMovieSceneAnimTypeID AnimTypeID);
 
 public:

@@ -41,6 +41,7 @@ public:
 	virtual void ShowLoginDialog(const FSourceControlLoginClosed& InOnSourceControlLoginClosed, ELoginWindowMode::Type InLoginWindowMode, EOnLoginWindowStartup::Type InOnLoginWindowStartup = EOnLoginWindowStartup::ResetProviderToNone) override;
 	virtual bool GetUseGlobalSettings() const override;
 	virtual void SetUseGlobalSettings(bool bIsUseGlobalSettings) override;
+	virtual FSourceControlProviderChanging& GetSourceControlProviderChanging() override;
 	virtual FDelegateHandle RegisterProviderChanged(const FSourceControlProviderChanged::FDelegate& SourceControlProviderChanged) override;
 	virtual void UnregisterProviderChanged(FDelegateHandle Handle) override;
 	virtual void RegisterPreSubmitDataValidation(const FSourceControlPreSubmitDataValidationDelegate& PreSubmitDataValidationDelegate) override;
@@ -140,6 +141,9 @@ private:
 
 	/** Active Provider name to track source control provider changes */
 	FString ActiveProviderName;
+
+	/** For notifying when the source provider is about to change */
+	FSourceControlProviderChanging OnSourceControlProviderChanging;
 
 	/** For notifying when the source provider is changed */
 	FSourceControlProviderChanged OnSourceControlProviderChanged;

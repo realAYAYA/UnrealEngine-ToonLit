@@ -29,7 +29,7 @@ public:
 	ENGINE_API const FSkeletonRemapping& GetRemapping(const USkeleton* InSourceSkeleton, const USkeleton* InTargetSkeleton);
 
 	// Refresh any existing mappings that the supplied skeleton is used with
-	ENGINE_API void RefreshMappings(USkeleton* InSkeleton);
+	ENGINE_API void RefreshMappings(const USkeleton* InSkeleton);
 
 private:
 	friend FSkeletonRemappingRegistryPrivate;

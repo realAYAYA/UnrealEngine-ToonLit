@@ -38,7 +38,7 @@ static void CreateLevelSetElement(const FVector3d& GridOrigin, const UE::Geometr
 	LevelSetOut.BuildLevelSet(ChaosTransform, OutGridValues, FIntVector(GridDims[0], GridDims[1], GridDims[2]), CellSize);
 }
 
-static void CreateLevelSetElement(const FVector3d& GridOrigin, const UE::Geometry::FDenseGrid3f& Grid, float CellSize, TUniquePtr<Chaos::FLevelSet>& LevelSetOut)
+static void CreateLevelSetElement(const FVector3d& GridOrigin, const UE::Geometry::FDenseGrid3f& Grid, float CellSize, Chaos::FLevelSetPtr& LevelSetOut)
 {
 	const UE::Geometry::FVector3i& GridDims = Grid.GetDimensions();
 	TArray<double> OutGridValues;
@@ -65,7 +65,7 @@ static void CreateLevelSetElement(const FVector3d& GridOrigin, const UE::Geometr
 	Chaos::TUniformGrid<Chaos::FReal, 3> LevelSetGrid(GridMin, GridMax, ChaosLSGridDims);
 	Chaos::TArrayND<Chaos::FReal, 3> Phi(ChaosLSGridDims, OutGridValues);
 
-	LevelSetOut = MakeUnique<Chaos::FLevelSet>(MoveTemp(LevelSetGrid), MoveTemp(Phi), 0);
+	LevelSetOut = Chaos::FLevelSetPtr( new Chaos::FLevelSet(MoveTemp(LevelSetGrid), MoveTemp(Phi), 0));
 }
 
 // Copied from FMeshSimpleShapeApproximation::Generate_LevelSets (Plugins/Runtime/GeometryProcessing)
@@ -180,7 +180,7 @@ bool CreateLevelSetForMesh(const UE::Geometry::FDynamicMesh3& InMesh, int32 InLe
 	return CreateLevelSetForMeshInternal(InMesh, InLevelSetGridResolution, OutElement);
 }
 
-bool CreateLevelSetForMesh(const UE::Geometry::FDynamicMesh3& InMesh, int32 InLevelSetGridResolution, TUniquePtr<Chaos::FLevelSet>& OutElement)
+bool CreateLevelSetForMesh(const UE::Geometry::FDynamicMesh3& InMesh, int32 InLevelSetGridResolution, Chaos::FLevelSetPtr& OutElement)
 {
 	return CreateLevelSetForMeshInternal(InMesh, InLevelSetGridResolution, OutElement);
 }

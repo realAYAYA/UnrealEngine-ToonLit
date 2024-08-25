@@ -129,20 +129,12 @@ private:
 
 	// SWidget interface
 
-	void OnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
-	void OnMouseLeave(const FPointerEvent& MouseEvent) override;
-
 	FSlateColor GetForegroundBasedOnSelection() const;
 
 	/**
 	 * @return The border image to show in the tree node.
 	 */
 	const FSlateBrush* GetNodeBorderImage() const;
-	
-	/**
-	 * @return The tint to apply to the border image
-	 */
-	FSlateColor GetNodeBackgroundTint() const;
 
 	/**
 	* @return The tint to apply to the border image for the inner portion of the node.
@@ -165,7 +157,6 @@ protected:
 	TWeakPtr<FEditorViewModel> WeakEditor;
 
 	TAttribute<bool> IsReadOnlyAttribute;
-	TAttribute<bool> IsRowHoveredAttribute;
 	TAttribute<bool> IsRowSelectedAttribute;
 
 	/** Default background brush for this node when expanded */

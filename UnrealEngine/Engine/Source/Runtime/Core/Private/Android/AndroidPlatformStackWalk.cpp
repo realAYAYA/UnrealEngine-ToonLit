@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <pthread.h>
 #include <android/log.h>
 #include "Android/AndroidSignals.h"
 
@@ -255,6 +256,74 @@ uint32 FAndroidPlatformStackWalk::CaptureStackBackTrace(uint64* BackTrace, uint3
 	uint32 Depth = 0;
 	_Unwind_Backtrace(AndroidStackWalkHelpers::BacktraceCallback, &Depth);
 	return Depth;
+}
+
+uint32 FAndroidPlatformStackWalk::CaptureStackBackTraceViaFramePointerWalking(uint64* BackTrace, uint32 MaxDepth)
+{
+#if PLATFORM_ANDROID_ARM64 || PLATFORM_ANDROID_X64
+	uint64 StackTopPtr = 0;
+
+	// pthread_getattr_np/pthread_attr_getstack are slow for main thread, so let's cache the stack top 
+	const bool bIsMainThread = gettid() == getpid();
+	static uint64 StackTopMainThread = 0;
+	if (bIsMainThread && StackTopMainThread != 0)
+	{
+		StackTopPtr = StackTopMainThread;
+	}
+	else
+	{
+		pthread_attr_t ThreadAttr;
+		pthread_getattr_np(pthread_self(), &ThreadAttr);
+
+		void* StackBase;
+		size_t StackSize;
+		pthread_attr_getstack(&ThreadAttr, &StackBase, &StackSize);
+
+		StackTopPtr = (uint64)StackBase + StackSize;
+
+		if (bIsMainThread)
+		{
+			StackTopMainThread = StackTopPtr;
+		}
+	}
+
+	struct StackFrame
+	{
+		StackFrame* NextFrame;
+		UPTRINT ReturnPtr;
+
+		inline UPTRINT GetReturnPtr()
+		{
+#if PLATFORM_ANDROID_ARM64
+			register uintptr_t Ptr = ReturnPtr;
+			asm("xpaclri" : "+r"(Ptr)); // this instruction is mapped to NOP on pre-PAC architectures
+			return Ptr;
+#else
+			return ReturnPtr;
+#endif
+		}
+	};
+
+	StackFrame* FrameEnd = (StackFrame*)StackTopPtr;
+	StackFrame* FrameStart = (StackFrame*)__builtin_frame_address(0);
+
+	uint32 NumStackFrames = 0;
+
+	for (StackFrame* CurrentFrame = FrameStart;
+		NumStackFrames < MaxDepth &&
+		CurrentFrame->NextFrame > FrameStart &&
+		CurrentFrame->NextFrame <= FrameEnd &&
+		((UPTRINT)CurrentFrame->NextFrame & (sizeof(StackFrame) - 1)) == 0 && // stop at unaligned frame
+		CurrentFrame->GetReturnPtr() != 0; // stop if function ptr is 0
+		CurrentFrame = CurrentFrame->NextFrame, NumStackFrames++)
+	{
+		BackTrace[NumStackFrames] = CurrentFrame->GetReturnPtr();
+	}
+
+	return NumStackFrames;
+#else
+	return 0;
+#endif
 }
 
 bool FAndroidPlatformStackWalk::SymbolInfoToHumanReadableString(const FProgramCounterSymbolInfo& SymbolInfo, ANSICHAR* HumanReadableString, SIZE_T HumanReadableStringSize)

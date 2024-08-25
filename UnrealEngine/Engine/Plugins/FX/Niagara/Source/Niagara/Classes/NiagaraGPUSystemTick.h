@@ -25,21 +25,12 @@ struct FNiagaraComputeInstanceData
 
 	struct FPerStageInfo
 	{
-		FPerStageInfo() {}
-		FPerStageInfo(int32 InNumIterations, FIntVector InElementCountXYZ) : NumIterations(InNumIterations), ElementCountXYZ(InElementCountXYZ) {}
-
-		int32 NumIterations = 0;
-		FIntVector ElementCountXYZ = FIntVector::ZeroValue;
-
-		bool ShouldRunStage() const { return NumIterations > 0; }
+		uint16		SimStageIndex = 0;
+		uint16		NumIterations = 0;
+		uint16		LoopIndex = 0;
+		uint16		NumLoops = 0;
+		FIntVector	ElementCountXYZ = FIntVector::ZeroValue;
 	};
-
-	FNiagaraComputeInstanceData()
-	{
-		bResetData = false;
-		bStartNewOverlapGroup = false;
-		bHasMultipleStages = false;
-	}
 
 	FNiagaraGpuSpawnInfo SpawnInfo;
 	uint8* EmitterParamData = nullptr;
@@ -51,10 +42,11 @@ struct FNiagaraComputeInstanceData
 	TArray<FPerStageInfo, TInlineAllocator<1>> PerStageInfo;
 	uint32 ParticleCountFence = INDEX_NONE;
 	uint32 TotalDispatches = 0;
-	uint32 bResetData : 1;
-	uint32 bStartNewOverlapGroup : 1;
-	uint32 bHasMultipleStages : 1;
+	uint32 bResetData : 1 = false;
+	uint32 bStartNewOverlapGroup : 1 = false;
+	uint32 bHasMultipleStages : 1 = false;
 
+	FNiagaraComputeInstanceData() = default;
 	bool IsOutputStage(FNiagaraDataInterfaceProxy* DIProxy, uint32 CurrentStage) const;
 	bool IsInputStage(FNiagaraDataInterfaceProxy* DIProxy, uint32 CurrentStage) const;
 	bool IsIterationStage(FNiagaraDataInterfaceProxy* DIProxy, uint32 CurrentStage) const;
@@ -135,7 +127,6 @@ public:
 	uint32 InstanceCount = 0;
 	uint32 TotalDispatches = 0;
 	bool bIsFinalTick = false;
-	bool bHasMultipleStages = false;
 	bool bHasInterpolatedParameters = false;
 
 #if !UE_BUILD_SHIPPING && !UE_BUILD_TEST

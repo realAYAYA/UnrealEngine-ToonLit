@@ -6,7 +6,9 @@
 #include "NiagaraDataInterfaceEmitterBinding.generated.h"
 
 class UNiagaraEmitter;
-class UNiagaraSystem;
+struct FNiagaraEmitterHandle;
+class FNiagaraSystemInstance;
+class FNiagaraEmitterInstance;
 
 UENUM()
 enum class ENiagaraDataInterfaceEmitterBindingMode
@@ -29,9 +31,16 @@ struct FNiagaraDataInterfaceEmitterBinding
 	FName EmitterName;
 
 	/** Resolves the emitter binding, this can return nullptr if we failed to resolve */
-	FNiagaraEmitterInstance* Resolve(FNiagaraSystemInstance* SystemInstance, UNiagaraDataInterface* DataInterface);
-	/** Resolves the emitter binding, only returns a valid result when in Named mode as we can not determine the source otherwise. */
-	UNiagaraEmitter* Resolve(UNiagaraSystem* NiagaraSystem);
+	FNiagaraEmitterInstance* Resolve(const FNiagaraSystemInstance* SystemInstance, const UNiagaraDataInterface* DataInterface) const;
+
+	/** Resolves the emitter binding for a data interface. */
+	UNiagaraEmitter* Resolve(const UNiagaraDataInterface* DataInterface) const;
+
+	/** Resolves the binding to an FNiagaraEmitterHandle or nullptr if it's invalid. */
+	const FNiagaraEmitterHandle* ResolveHandle(const UNiagaraDataInterface* DataInterface) const;
+
+	/** Resolves the emitter name */
+	FString ResolveUniqueName(const UNiagaraDataInterface* DataInterface) const;
 
 	bool operator==(const FNiagaraDataInterfaceEmitterBinding& Other) const
 	{

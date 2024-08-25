@@ -3,27 +3,30 @@
 #include "Capture/DisplayClusterMediaCaptureCamera.h"
 
 #include "Components/DisplayClusterICVFXCameraComponent.h"
-#include "Config/IDisplayClusterConfigManager.h"
-#include "DisplayClusterConfigurationTypes_Viewport.h"
+#include "DisplayClusterConfigurationTypes.h"
 #include "DisplayClusterRootActor.h"
 #include "IDisplayCluster.h"
-#include "IDisplayClusterCallbacks.h"
 #include "Game/IDisplayClusterGameManager.h"
-
-#include "Render/Viewport/IDisplayClusterViewportManagerProxy.h"
-#include "RHICommandList.h"
-#include "RHIResources.h"
 
 
 FDisplayClusterMediaCaptureCamera::FDisplayClusterMediaCaptureCamera(const FString& InMediaId, const FString& InClusterNodeId, const FString& InCameraId, const FString& InViewportId, UMediaOutput* InMediaOutput, UDisplayClusterMediaOutputSynchronizationPolicy* SyncPolicy)
 	: FDisplayClusterMediaCaptureViewport(InMediaId, InClusterNodeId, InViewportId, InMediaOutput, SyncPolicy)
 	, CameraId(InCameraId)
 {
-	if (const ADisplayClusterRootActor* const RootActor = IDisplayCluster::Get().GetGameMgr()->GetRootActor())
+}
+
+bool FDisplayClusterMediaCaptureCamera::GetCaptureSizeFromConfig(FIntPoint& OutSize) const
+{
+	if (const ADisplayClusterRootActor* const ActiveRootActor = IDisplayCluster::Get().GetGameMgr()->GetRootActor())
 	{
 		TArray<UActorComponent*> ICVFXCameraComponents;
-		RootActor->GetComponents(UDisplayClusterICVFXCameraComponent::StaticClass(), ICVFXCameraComponents);
+		IDisplayClusterViewportConfiguration* ViewportConfiguration = ActiveRootActor->GetViewportConfiguration();
+		if (const ADisplayClusterRootActor* const ConfigurationRootActor = ViewportConfiguration ? ViewportConfiguration->GetRootActor(EDisplayClusterRootActorType::Configuration) : nullptr)
+		{
+			ConfigurationRootActor->GetComponents(UDisplayClusterICVFXCameraComponent::StaticClass(), ICVFXCameraComponents);
+		}
 
+		// Get capture size from camera config
 		for (const UActorComponent* const Component : ICVFXCameraComponents)
 		{
 			if (const UDisplayClusterICVFXCameraComponent* const ICVFXCamera = Cast<UDisplayClusterICVFXCameraComponent>(Component))
@@ -34,19 +37,18 @@ FDisplayClusterMediaCaptureCamera::FDisplayClusterMediaCaptureCamera(const FStri
 
 					if (CameraSettings.CustomFrustum.bEnable)
 					{
-						CameraResolution = CameraSettings.CustomFrustum.EstimatedOverscanResolution;
+						OutSize = CameraSettings.CustomFrustum.EstimatedOverscanResolution;
 					}
 					else
 					{
-						CameraResolution = CameraSettings.CustomFrustum.InnerFrustumResolution;
+						OutSize = CameraSettings.CustomFrustum.InnerFrustumResolution;
 					}
+
+					return true;
 				}
 			}
 		}
 	}
-}
 
-FIntPoint FDisplayClusterMediaCaptureCamera::GetCaptureSize() const
-{
-	return CameraResolution;
+	return false;
 }

@@ -5,6 +5,7 @@
 #include "Delegates/Delegate.h"
 
 class FControlFlow;
+class FControlFlowSubTaskBase;
 class FConcurrentControlFlowBehavior;
 struct FConcurrencySubFlowContainer;
 
@@ -38,6 +39,8 @@ private:
 
 	bool bCancelAllHasBegun = false;
 	TMap<int32, TSharedRef<FConcurrencySubFlowContainer>> ConcurrentFlows;
+
+	TWeakPtr<FControlFlowSubTaskBase> OwningTask;
 
 private:
 	FConcurrentControlFlowBehavior GetConcurrencyBehavior() const;

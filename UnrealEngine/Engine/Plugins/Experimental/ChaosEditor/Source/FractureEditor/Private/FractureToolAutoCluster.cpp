@@ -206,6 +206,8 @@ void UFractureToolAutoCluster::Execute(TWeakPtr<FFractureEditorModeToolkit> InTo
 				for (const int32 ClusterIndex : Context.GetSelection())
 				{
 					int32 KMeansIterations = AutoClusterSettings->ClusterSizeMethod == EClusterSizeMethod::ByGrid ? AutoClusterSettings->DriftIterations : 500;
+					// note: bPreferConvexity is incompatible with grid clustering
+					bool bPreferConvexity = AutoClusterSettings->bPreferConvexity && AutoClusterSettings->ClusterSizeMethod != EClusterSizeMethod::ByGrid;
 					FFractureEngineClustering::AutoCluster(*GeometryCollection,
 						ClusterIndex,
 						(EFractureEngineClusterSizeMethod)AutoClusterSettings->ClusterSizeMethod,
@@ -219,7 +221,10 @@ void UFractureToolAutoCluster::Execute(TWeakPtr<FFractureEditorModeToolkit> InTo
 						AutoClusterSettings->ClusterGridDepth,
 						AutoClusterSettings->ClusterGridHeight,
 						AutoClusterSettings->MinimumSize,
-						KMeansIterations);
+						KMeansIterations, 
+						bPreferConvexity, 
+						AutoClusterSettings->ConcavityTolerance
+					);
 				}
 
 				Context.GenerateGuids(StartTransformCount);

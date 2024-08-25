@@ -10,6 +10,7 @@
 #include "Rendering/SkeletalMeshDuplicatedVerticesBuffer.h"
 #include "Rendering/SkeletalMeshVertexClothBuffer.h"
 #include "Rendering/MorphTargetVertexInfoBuffers.h"
+#include "Rendering/SkeletalMeshHalfEdgeBuffer.h"
 #include "SkeletalMeshTypes.h"
 #include "BoneIndices.h"
 #include "StaticMeshResources.h"
@@ -145,6 +146,9 @@ public:
 
 	FSkeletalMeshVertexAttributeRenderData VertexAttributeBuffers;
 
+	/** GPU buffer for half edge data of an LOD, useful for mesh deformers */
+	FSkeletalMeshHalfEdgeBuffer HalfEdgeBuffer;
+
 	TArray<FBoneIndexType> ActiveBoneIndices;
 
 	TArray<FBoneIndexType> RequiredBones;
@@ -231,16 +235,23 @@ public:
 	void SerializeAvailabilityInfo(FArchive& Ar, int32 LODIdx, bool bHasAdjacencyData, bool bNeedsCPUAccess);
 
 #if WITH_EDITOR
+
+	struct ENGINE_API FBuildSettings
+	{
+		ESkeletalMeshVertexFlags BuildFlags = ESkeletalMeshVertexFlags::None;
+		bool bBuildHalfEdgeBuffers = false;
+	};
+	
 	/**
 	 * Initialize render data (e.g. vertex buffers) from model info
 	 * @param InLODModel The model to build the render data from.
 	 * @param InVertexAttributeInfos The vertex attributes to possibly include and their stored data type.
-	 * @param InBuildFlags See ESkeletalMeshVertexFlags.
+	 * @param InBuildSettings Forwards relevant settings from LodInfo, See ESkeletalMeshVertexFlags.
 	 */
 	void ENGINE_API BuildFromLODModel(
 		const FSkeletalMeshLODModel* InLODModel,
 		TConstArrayView<FSkeletalMeshVertexAttributeInfo> InVertexAttributeInfos = {},
-		ESkeletalMeshVertexFlags InBuildFlags = ESkeletalMeshVertexFlags::None
+		const FBuildSettings& InBuildSettings = FBuildSettings{ESkeletalMeshVertexFlags::None, false}
 		);
 #endif // WITH_EDITOR
 

@@ -5,6 +5,7 @@
 #include "DisplayClusterConfiguratorBlueprintEditor.h"
 #include "DisplayClusterConfiguratorUtils.h"
 #include "DisplayClusterConfiguratorCommands.h"
+#include "ClusterConfiguration/DisplayClusterConfiguratorClusterEditorUtils.h"
 #include "ClusterConfiguration/DisplayClusterConfiguratorClusterUtils.h"
 #include "ClusterConfiguration/SDisplayClusterConfiguratorNewClusterItemDialog.h"
 #include "Views/TreeViews/IDisplayClusterConfiguratorTreeItem.h"
@@ -281,7 +282,7 @@ void FDisplayClusterConfiguratorViewCluster::CopySelectedNodes()
 		}
 	}
 
-	FDisplayClusterConfiguratorClusterUtils::CopyClusterItemsToClipboard(ObjectsToCopy);
+	UE::DisplayClusterConfiguratorClusterEditorUtils::CopyClusterItemsToClipboard(ObjectsToCopy);
 }
 
 bool FDisplayClusterConfiguratorViewCluster::CanCopySelectedNodes() const
@@ -309,11 +310,11 @@ void FDisplayClusterConfiguratorViewCluster::PasteNodes()
 	}
 
 	int32 NumClusterItems;
-	if (FDisplayClusterConfiguratorClusterUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems))
+	if (UE::DisplayClusterConfiguratorClusterEditorUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems))
 	{
 		FScopedTransaction Transaction(FText::Format(LOCTEXT("PasteClusterItems", "Paste Cluster {0}|plural(one=Item, other=Items)"), NumClusterItems));
 
-		TArray<UObject*> PastedObjects = FDisplayClusterConfiguratorClusterUtils::PasteClusterItemsFromClipboard(TargetObjects);
+		TArray<UObject*> PastedObjects = UE::DisplayClusterConfiguratorClusterEditorUtils::PasteClusterItemsFromClipboard(TargetObjects);
 		if (PastedObjects.Num() > 0)
 		{
 			// Mark the cluster configuration data as dirty, allowing user to save the changes, and fire off a cluster changed event to let other
@@ -355,7 +356,7 @@ bool FDisplayClusterConfiguratorViewCluster::CanPasteNodes() const
 	}
 
 	int32 NumClusterItems;
-	return FDisplayClusterConfiguratorClusterUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems);
+	return UE::DisplayClusterConfiguratorClusterEditorUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems);
 }
 
 void FDisplayClusterConfiguratorViewCluster::DuplicateSelectedNodes()
@@ -443,7 +444,7 @@ void FDisplayClusterConfiguratorViewCluster::SetAsPrimary()
 		{
 			FScopedTransaction Transaction(LOCTEXT("SetPrimaryNode", "Set Primary Node"));
 
-			if (!FDisplayClusterConfiguratorClusterUtils::SetClusterNodeAsPrimary(ClusterNode))
+			if (!UE::DisplayClusterConfiguratorClusterUtils::SetClusterNodeAsPrimary(ClusterNode))
 			{
 				Transaction.Cancel();
 			}
@@ -571,12 +572,12 @@ void FDisplayClusterConfiguratorViewCluster::AddNewClusterNode(FVector2D PresetS
 		UObject* SelectedObject = SelectedTreeItems[0]->GetObject();
 		if (UDisplayClusterConfigurationHostDisplayData* HostData = Cast<UDisplayClusterConfigurationHostDisplayData>(SelectedObject))
 		{
-			HostAddress = FDisplayClusterConfiguratorClusterUtils::GetAddressForHost(HostData);
+			HostAddress = UE::DisplayClusterConfiguratorClusterUtils::GetAddressForHost(HostData);
 		}
 	}
 
 	TSharedPtr<FScopedTransaction> Transaction;
-	if (UDisplayClusterConfigurationClusterNode* NewNode = FDisplayClusterConfiguratorClusterUtils::CreateNewClusterNodeFromDialog(Toolkit.ToSharedRef(), Cluster, PresetRect, Transaction, HostAddress))
+	if (UDisplayClusterConfigurationClusterNode* NewNode = UE::DisplayClusterConfiguratorClusterEditorUtils::CreateNewClusterNodeFromDialog(Toolkit.ToSharedRef(), Cluster, PresetRect, Transaction, HostAddress))
 	{
 		// Mark the cluster configuration data as dirty, allowing user to save the changes, and fire off a cluster changed event to let other
 		// parts of the UI update as well
@@ -628,7 +629,7 @@ void FDisplayClusterConfiguratorViewCluster::AddNewViewport(FVector2D PresetSize
 	const TSharedPtr<FDisplayClusterConfiguratorBlueprintEditor> Toolkit = ToolkitPtr.Pin();
 	const FDisplayClusterConfigurationRectangle PresetRect = FDisplayClusterConfigurationRectangle(0, 0, PresetSize.X, PresetSize.Y);
 	TSharedPtr<FScopedTransaction> Transaction;
-	if (const UDisplayClusterConfigurationViewport* NewViewport = FDisplayClusterConfiguratorClusterUtils::CreateNewViewportFromDialog(Toolkit.ToSharedRef(), SelectedClusterNode, PresetRect, Transaction))
+	if (const UDisplayClusterConfigurationViewport* NewViewport = UE::DisplayClusterConfiguratorClusterEditorUtils::CreateNewViewportFromDialog(Toolkit.ToSharedRef(), SelectedClusterNode, PresetRect, Transaction))
 	{
 		// Mark the cluster configuration data as dirty, allowing user to save the changes, and fire off a cluster changed event to let other
 		// parts of the UI update as well

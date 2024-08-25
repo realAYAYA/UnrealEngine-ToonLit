@@ -83,7 +83,7 @@ namespace AudioModulation
 		FModulationPatchSettings(const FModulationPatchSettings& InPatchSettings) = default;
 
 		FModulationPatchSettings(const USoundModulationPatch& InPatch)
-			: TModulatorBase<FPatchId>(InPatch.GetName(), InPatch.GetUniqueID())
+			: TModulatorBase<FPatchId>(InPatch.GetFName(), InPatch.GetUniqueID())
 			, bBypass(InPatch.PatchSettings.bBypass)
 			, OutputParameter(InPatch.GetOutputParameter())
 		{

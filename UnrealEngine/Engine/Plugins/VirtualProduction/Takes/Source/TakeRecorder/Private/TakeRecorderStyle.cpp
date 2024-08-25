@@ -2,6 +2,7 @@
 
 #include "TakeRecorderStyle.h"
 
+#include "Interfaces/IPluginManager.h"
 #include "Styling/SlateTypes.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/AppStyle.h"
@@ -27,7 +28,9 @@ FTakeRecorderStyle::FTakeRecorderStyle()
 	const FLinearColor DarkGrey( FColor(30, 30, 30) );
 	const FLinearColor Black(FLinearColor::Black);
 
-	SetContentRoot(FPaths::EnginePluginsDir() / TEXT("VirtualProduction/Takes/Content"));
+
+	const FString ContentDir = IPluginManager::Get().FindPlugin(TEXT("Takes"))->GetContentDir();
+	SetContentRoot(ContentDir);
 	SetCoreContentRoot(FPaths::EngineContentDir() / TEXT("Slate"));
 
 	FButtonStyle Button = FButtonStyle()

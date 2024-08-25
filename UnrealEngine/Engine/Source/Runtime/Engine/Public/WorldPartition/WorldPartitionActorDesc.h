@@ -12,6 +12,7 @@
 #include "UObject/WeakObjectPtr.h"
 #include "Templates/SubclassOf.h"
 #include "Misc/Guid.h"
+#include "WorldPartition/WorldPartitionActorDescType.h"
 #include "WorldPartition/WorldPartitionActorContainerID.h"
 #include "WorldPartition/Filter/WorldPartitionActorFilter.h"
 
@@ -28,8 +29,20 @@ struct FWorldPartitionActorDescInitData
 	FWorldPartitionActorDescInitData& SetActorPath(const FSoftObjectPath& InActorPath) { ActorPath = InActorPath; return *this; }
 };
 
+struct FWorldPartitionAssetDataPatcher
+{
+	virtual bool DoPatch(FString& InOutString) = 0;
+	virtual bool DoPatch(FName& InOutName) = 0;
+	virtual bool DoPatch(FSoftObjectPath& InOutSoft) = 0;
+	virtual bool DoPatch(FTopLevelAssetPath& InOutPath) = 0;
+};
+
 class AActor;
+class UWorldPartition;
+class UActorDescContainerInstance;
+class FWorldPartitionActorDescInstance;
 class UActorDescContainer;
+class IWorldPartitionActorDescInstanceView;
 class IStreamingGenerationErrorHandler;
 
 enum class EContainerClusterMode : uint8
@@ -63,11 +76,14 @@ inline bool CompareUnsortedArrays(const TArray<FName>& Array1, const TArray<FNam
 	return CompareUnsortedArrays(Array1, Array2, [](const FName& A, const FName& B) { return A.LexicalLess(B); });
 }
 
+#endif // WITH_EDITOR
+
 /**
- * Represents a potentially unloaded actor (editor-only)
+ * Represents a Actor Metadata (editor-only)
  */
 class FWorldPartitionActorDesc
 {
+#if WITH_EDITOR
 	friend class AActor;
 	friend class UWorldPartition;
 	friend struct FWorldPartitionHandleImpl;
@@ -75,18 +91,28 @@ class FWorldPartitionActorDesc
 	friend struct FWorldPartitionActorDescUtils;
 	friend struct FWorldPartitionActorDescUnitTestAcccessor;
 	friend class FAssetRootPackagePatcher;
+	friend class FAssetHeaderPatcherInner;
 	friend class FActorDescArchive;
+	friend class FWorldPartitionActorDescInstance;
+	friend class FStreamingGenerationUnsavedDirtyActorDescInstance;
 	template<class U> friend class TActorDescContainerCollection;
 
 public:
 	struct FContainerInstance
 	{
-		const UActorDescContainer* Container = nullptr;
-		ULevel* LoadedLevel = nullptr;
-		bool bSupportsPartialEditorLoading = false;
+		UActorDescContainerInstance* ContainerInstance = nullptr;
 		FTransform Transform = FTransform::Identity;
-		EContainerClusterMode ClusterMode;		
+		EContainerClusterMode ClusterMode;
 		TMap<FActorContainerID, TSet<FGuid>> FilteredActors;
+
+		UE_DEPRECATED(5.4, "Use FLoadedContainerInstance instead")
+		ULevel* LoadedLevel = nullptr;
+
+		UE_DEPRECATED(5.4, "Use FLoadedContainerInstance instead")
+		bool bSupportsPartialEditorLoading = false;
+
+		UE_DEPRECATED(5.4, "Use ContainerInstance instead")
+		const UActorDescContainer* Container = nullptr;
 	};
 
 	virtual ~FWorldPartitionActorDesc() {}
@@ -97,38 +123,28 @@ public:
 	inline FTopLevelAssetPath GetNativeClass() const { return NativeClass; }
 	inline UClass* GetActorNativeClass() const { return ActorNativeClass; }
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UE_DEPRECATED(5.2, "GetOrigin is deprecated.")
-	inline FVector GetOrigin() const { return GetBounds().GetCenter(); }
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 	inline FName GetRuntimeGrid() const { return RuntimeGrid; }
-	inline bool GetIsSpatiallyLoaded() const { return (bIsForcedNonSpatiallyLoaded || !bIsBoundsValid) ? false : bIsSpatiallyLoaded; }
+	inline bool GetIsSpatiallyLoaded() const { return bIsBoundsValid ? bIsSpatiallyLoaded : false; }
 	inline bool GetIsSpatiallyLoadedRaw() const { return bIsSpatiallyLoaded; }
 	inline bool GetActorIsEditorOnly() const { return bActorIsEditorOnly; }
 	inline bool GetActorIsRuntimeOnly() const { return bActorIsRuntimeOnly; }
 
-	UE_DEPRECATED(5.1, "SetIsSpatiallyLoadedRaw is deprecated and should not be used.")
-	inline void SetIsSpatiallyLoadedRaw(bool bNewIsSpatiallyLoaded) { bIsSpatiallyLoaded = bNewIsSpatiallyLoaded; }
-
 	inline bool GetActorIsHLODRelevant() const { return bActorIsHLODRelevant; }
 	inline FSoftObjectPath GetHLODLayer() const { return HLODLayer; }
-	inline const TArray<FName>& GetDataLayers() const { return DataLayers; }
-	inline bool HasResolvedDataLayerInstanceNames() const { return ResolvedDataLayerInstanceNames.IsSet(); }
-	ENGINE_API const TArray<FName>& GetDataLayerInstanceNames() const;
+	ENGINE_API TArray<FName> GetDataLayers(bool bIncludeExternalDataLayer = true) const;
+	ENGINE_API FName GetExternalDataLayer() const;
+	inline const FSoftObjectPath& GetExternalDataLayerAsset() const { return ExternalDataLayerAsset; }
+
 	inline const TArray<FName>& GetTags() const { return Tags; }
-	inline void SetDataLayerInstanceNames(const TArray<FName>& InDataLayerInstanceNames) { ResolvedDataLayerInstanceNames = InDataLayerInstanceNames; }
+
 	inline FName GetActorPackage() const { return ActorPackage; }
 	inline FSoftObjectPath GetActorSoftPath() const { return ActorPath; }
 	inline FName GetActorLabel() const { return ActorLabel; }
 	inline FName GetFolderPath() const { return FolderPath; }
 	inline const FGuid& GetFolderGuid() const { return FolderGuid; }
+	inline const FTransform& GetActorTransform() const { return ActorTransform; }
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UE_DEPRECATED(5.2, "GetBounds is deprecated, GetEditorBounds or GetRuntimeBounds should be used instead.")
-	FBox GetBounds() const { return GetEditorBounds(); }
-ENGINE_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	virtual FBox GetEditorBounds() const;
+	ENGINE_API virtual FBox GetEditorBounds() const;
 	ENGINE_API FBox GetRuntimeBounds() const;
 
 	inline const FGuid& GetParentActor() const { return ParentActor; }
@@ -142,27 +158,19 @@ ENGINE_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	ENGINE_API FName GetDisplayClassName() const;
 
 	inline bool IsDefaultActorDesc() const { return bIsDefaultActorDesc; }
-
-	virtual bool IsContainerInstance() const { return false; }
-	virtual EWorldPartitionActorFilterType GetContainerFilterType() const { return EWorldPartitionActorFilterType::None; }
-	virtual FName GetContainerPackage() const { return NAME_None; }
+		
+	virtual bool IsChildContainerInstance() const { return false; }
+	virtual FName GetChildContainerPackage() const { return NAME_None; }
+	virtual EWorldPartitionActorFilterType GetChildContainerFilterType() const { return EWorldPartitionActorFilterType::None; }
+	virtual const FWorldPartitionActorFilter* GetChildContainerFilter() const { return nullptr; }
+	virtual UActorDescContainer* GetChildContainer() const { return nullptr; }
 	
-	virtual const FWorldPartitionActorFilter* GetContainerFilter() const { return nullptr; }
-	virtual bool GetContainerInstance(FContainerInstance& OutContainerInstance) const { return false; }
-
 	ENGINE_API FGuid GetContentBundleGuid() const;
 
 	virtual const FGuid& GetSceneOutlinerParent() const { return GetParentActor(); }
 	virtual bool IsResaveNeeded() const { return false; }
-	ENGINE_API virtual bool IsRuntimeRelevant(const FActorContainerID& InContainerID) const;
-	ENGINE_API virtual bool IsEditorRelevant() const;
-	ENGINE_API virtual void CheckForErrors(IStreamingGenerationErrorHandler* ErrorHandler) const;
 
-	UE_DEPRECATED(5.2, "ShouldValidateRuntimeGrid is deprecated and should not be used.")
-	virtual bool ShouldValidateRuntimeGrid() const { return true; }
-
-	UE_DEPRECATED(5.3, "GetLevelPackage is deprecated use GetContainerPackage instead.")
-	virtual FName GetLevelPackage() const { return GetContainerPackage(); }
+	ENGINE_API virtual void CheckForErrors(const IWorldPartitionActorDescInstanceView* InActorDescView, IStreamingGenerationErrorHandler* ErrorHandler) const;
 
 	bool operator==(const FWorldPartitionActorDesc& Other) const
 	{
@@ -174,50 +182,112 @@ ENGINE_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return GetTypeHash(Key.Guid);
 	}
 
-	ENGINE_API const FText& GetUnloadedReason() const;
+	//~ Begin Deprecation
+	UE_DEPRECATED(5.1, "SetIsSpatiallyLoadedRaw is deprecated and should not be used.")
+	inline void SetIsSpatiallyLoadedRaw(bool bNewIsSpatiallyLoaded) { bIsSpatiallyLoaded = bNewIsSpatiallyLoaded; }
 
-	void SetUnloadedReason(FText* InUnloadedReason)
-	{
-		UnloadedReason = InUnloadedReason;
-	}
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.2, "GetOrigin is deprecated.")
+	inline FVector GetOrigin() const { return GetBounds().GetCenter(); }
 
+	UE_DEPRECATED(5.2, "GetBounds is deprecated, GetEditorBounds or GetRuntimeBounds should be used instead.")
+	FBox GetBounds() const { return GetEditorBounds(); }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	UE_DEPRECATED(5.2, "ShouldValidateRuntimeGrid is deprecated and should not be used")
+	virtual bool ShouldValidateRuntimeGrid() const { return true; }
+
+	UE_DEPRECATED(5.3, "GetLevelPackage is deprecated use GetChildContainerPackage instead")
+	virtual FName GetLevelPackage() const { return GetChildContainerPackage(); }
+
+	UE_DEPRECATED(5.4, "Use FWorldPartitionActorDescInstance::HasResolvedDataLayerInstanceNames")
+	inline bool HasResolvedDataLayerInstanceNames() const { return false; }
+
+	UE_DEPRECATED(5.4, "Use FWorldPartitionActorDescInstance::GetDataLayerInstanceNames")
+	ENGINE_API TArray<FName> GetDataLayerInstanceNames() const { return TArray<FName>(); }
+
+	UE_DEPRECATED(5.4, "Use FWorldPartitionActorDescInstance::SetDataLayerInstanceNames")
+	inline void SetDataLayerInstanceNames(const TArray<FName>& InDataLayerInstanceNames) { }
+
+	UE_DEPRECATED(5.4, "Use FWorldPartitionActorDescInstance::IsRuntimeRelevant instead")
+	ENGINE_API virtual bool IsRuntimeRelevant(const FActorContainerID& InContainerID) const { return false; }
+		
+	UE_DEPRECATED(5.4, "Use FWorldPartitionActorDescInstance::IsEditorRelevant instead")
+	ENGINE_API virtual bool IsEditorRelevant() const { return false; }
+		
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::GetUnloadedReason")
+	ENGINE_API FText GetUnloadedReason() const { return FText(); }
+
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::SetUnloadedReason")
+	void SetUnloadedReason(FText* InUnloadedReason) { }
+
+	UE_DEPRECATED(5.4, "Use IsChildContainerInstance instead")
+	virtual bool IsContainerInstance() const { return false; }
+
+	UE_DEPRECATED(5.4, "Use GetChildContainerPackage instead")
+	virtual FName GetContainerPackage() const { return NAME_None; }
+
+	UE_DEPRECATED(5.4, "Use GetChildContainerFilterType instead")
+	virtual EWorldPartitionActorFilterType GetContainerFilterType() const { return EWorldPartitionActorFilterType::None; }
+
+	UE_DEPRECATED(5.4, "Use GetChildContainerFilter instead")
+	virtual const FWorldPartitionActorFilter* GetContainerFilter() const { return nullptr; }
+
+	UE_DEPRECATED(5.4, "Use GetChildContainerInstance instead")
+	virtual bool GetContainerInstance(FContainerInstance& OutContainerInstance) const { return false; }
+
+	UE_DEPRECATED(5.4, "Use SetContainer without World param")
+	virtual void SetContainer(UActorDescContainer* InContainer, UWorld* InWorldContext)	{ }
+
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::IsLoaded")
+	ENGINE_API bool IsLoaded(bool bEvenIfPendingKill=false) const { return false; }
+	
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::GetActor")
+	ENGINE_API AActor* GetActor(bool bEvenIfPendingKill=true, bool bEvenIfUnreachable=false) const { return nullptr; }
+
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::GetActor")
+	ENGINE_API TWeakObjectPtr<AActor>* GetActorPtr(bool bEvenIfPendingKill = true, bool bEvenIfUnreachable = false) const { return nullptr; }
+
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::Load")
+	ENGINE_API AActor* Load() const { return nullptr;}
+
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::Unload")
+	ENGINE_API virtual void Unload() {}
+
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance")
+	ENGINE_API void TransformInstance(const FString& From, const FString& To) {}
+
+	UE_DEPRECATED(5.4, "Use FWorldPartitionActorDescInstance version instead")
+	virtual void CheckForErrors(IStreamingGenerationErrorHandler* ErrorHandler) const {}
 protected:
-	inline uint32 IncSoftRefCount() const
-	{
-		return ++SoftRefCount;
-	}
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::IncSoftRefCount")
+	inline uint32 IncSoftRefCount() const { return 0; }
 
-	inline uint32 DecSoftRefCount() const
-	{
-		check(SoftRefCount > 0);
-		return --SoftRefCount;
-	}
-
-	inline uint32 IncHardRefCount() const
-	{
-		return ++HardRefCount;
-	}
-
-	inline uint32 DecHardRefCount() const
-	{
-		check(HardRefCount > 0);
-		return --HardRefCount;
-	}
-
-	inline uint32 GetSoftRefCount() const
-	{
-		return SoftRefCount;
-	}
-
-	inline uint32 GetHardRefCount() const
-	{
-		return HardRefCount;
-	}
-
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::DecSoftRefCount")
+	inline uint32 DecSoftRefCount() const { return 0; }
+	
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::IncHardRefCount")
+	inline uint32 IncHardRefCount() const { return 0;}
+	
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::DecHardRefCount")
+	inline uint32 DecHardRefCount() const { return 0;}
+	
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::GetSoftRefCount")
+	inline uint32 GetSoftRefCount() const { return 0; }
+	
+	UE_DEPRECATED(5.4, "Please use FWorldPartitionActorDescInstance::GetHardRefCount")
+	inline uint32 GetHardRefCount() const { return 0; }
+	//~ End Deprecation
+	
 public:
 	const TArray<FGuid>& GetReferences() const
 	{
 		return References;
+	}
+
+	const TArray<FGuid>& GetEditorOnlyReferences() const
+	{
+		return EditorOnlyReferences;
 	}
 
 	bool IsEditorOnlyReference(const FGuid& ReferenceGuid) const
@@ -230,7 +300,7 @@ public:
 		return Container;
 	}
 
-	virtual void SetContainer(UActorDescContainer* InContainer, UWorld* InWorldContext)
+	virtual void SetContainer(UActorDescContainer* InContainer)
 	{
 		check(!Container || !InContainer);
 		Container = InContainer;
@@ -245,15 +315,12 @@ public:
 
 	ENGINE_API FString ToString(EToStringMode Mode = EToStringMode::Compact) const;
 
-	ENGINE_API bool IsLoaded(bool bEvenIfPendingKill=false) const;
-	ENGINE_API AActor* GetActor(bool bEvenIfPendingKill=true, bool bEvenIfUnreachable=false) const;
-	ENGINE_API AActor* Load() const;
-	ENGINE_API virtual void Unload();
-
 	ENGINE_API virtual void Init(const AActor* InActor);
 	ENGINE_API virtual void Init(const FWorldPartitionActorDescInitData& DescData);
 
-	ENGINE_API virtual bool Equals(const FWorldPartitionActorDesc* Other) const;
+	static ENGINE_API void Patch(const FWorldPartitionActorDescInitData& DescData, TArray<uint8>& OutData, FWorldPartitionAssetDataPatcher* InAssetDataPatcher);
+
+	ENGINE_API virtual bool Equals(const FWorldPartitionActorDesc* Other) const;	
 
 	/**
 	 * Returns true if resaving this actor will have an impact on streaming generation. Before class descriptors, properties changed on a Blueprint 
@@ -261,9 +328,7 @@ public:
 	 */
 	ENGINE_API virtual bool ShouldResave(const FWorldPartitionActorDesc* Other) const;
 
-	ENGINE_API void SerializeTo(TArray<uint8>& OutData);
-
-	ENGINE_API void TransformInstance(const FString& From, const FString& To);
+	ENGINE_API void SerializeTo(TArray<uint8>& OutData) const;
 
 	using FActorDescDeprecator = TFunction<void(FArchive&, FWorldPartitionActorDesc*)>;
 	static ENGINE_API void RegisterActorDescDeprecator(TSubclassOf<AActor> ActorClass, const FActorDescDeprecator& Deprecator);
@@ -271,12 +336,22 @@ public:
 	ENGINE_API bool IsMainWorldOnly() const;
 	ENGINE_API bool IsListedInSceneOutliner() const;
 protected:
+	UE_DEPRECATED(5.4, "OnUnloadingInstance is deprecated.")
+	virtual void OnUnloadingInstance(const FWorldPartitionActorDescInstance* InActorDescInstance) const {}
+
+	virtual bool GetChildContainerInstance(const FWorldPartitionActorDescInstance* InActorDescInstance, FContainerInstance& OutContainerInstance) const { return false; }
+	virtual UActorDescContainerInstance* CreateChildContainerInstance(const FWorldPartitionActorDescInstance* InActorDescInstance) const { return nullptr; }
+	virtual UWorldPartition* GetLoadedChildWorldPartition(const FWorldPartitionActorDescInstance* InActorDescInstance) const { return nullptr; }
+	ENGINE_API virtual bool IsRuntimeRelevant(const FWorldPartitionActorDescInstance* InActorDescInstance) const;
+	ENGINE_API virtual bool IsEditorRelevant(const FWorldPartitionActorDescInstance* InActorDescInstance) const;
+
 	ENGINE_API FWorldPartitionActorDesc();
 
 	ENGINE_API virtual void TransferFrom(const FWorldPartitionActorDesc* From);
 
 	virtual void TransferWorldData(const FWorldPartitionActorDesc* From)
 	{
+		ActorTransform = From->ActorTransform;
 		BoundsLocation = From->BoundsLocation;
 		BoundsExtent = From->BoundsExtent;
 		bIsBoundsValid = From->bIsBoundsValid;
@@ -289,10 +364,11 @@ protected:
 	// Persistent
 	FGuid							Guid;
 	FTopLevelAssetPath				BaseClass;
-	FTopLevelAssetPath				NativeClass;
-	FName							ActorPackage;
-	FSoftObjectPath					ActorPath;
+	FTopLevelAssetPath				NativeClass;	// Not serialized, comes from initialization data
+	FName							ActorPackage;	// Not serialized, comes from initialization data
+	FSoftObjectPath					ActorPath;		// Not serialized, comes from initialization data
 	FName							ActorLabel;
+	FTransform						ActorTransform;
 	FVector							BoundsLocation;
 	FVector							BoundsExtent;
 	FName							RuntimeGrid;
@@ -306,6 +382,7 @@ protected:
 	bool							bIsBoundsValid;
 	FSoftObjectPath					HLODLayer;
 	TArray<FName>					DataLayers;
+	FSoftObjectPath					ExternalDataLayerAsset;
 	TArray<FGuid>					References;
 	TArray<FGuid>					EditorOnlyReferences; // References that aren't necessarily editor only but referenced through an editor only property.
 	TArray<FName>					Tags;
@@ -316,43 +393,13 @@ protected:
 	FGuid							ContentBundleGuid;
 	
 	// Transient
-	mutable uint32					SoftRefCount;
-	mutable uint32					HardRefCount;
 	UClass*							ActorNativeClass;
-	mutable TWeakObjectPtr<AActor>	ActorPtr;
+	FName							ActorName;
 	UActorDescContainer*			Container;
-	TOptional<TArray<FName>>		ResolvedDataLayerInstanceNames; // Can only resolve in ActorDesc if Container is not used as a template
-	bool							bIsForcedNonSpatiallyLoaded;
 	bool							bIsDefaultActorDesc;
-	mutable FText*					UnloadedReason;
 
 	static ENGINE_API TMap<TSubclassOf<AActor>, FActorDescDeprecator> Deprecators;
 
-#if DO_CHECK
-public:
-	struct FRegisteringUnregisteringGuard
-	{
-		FRegisteringUnregisteringGuard(FWorldPartitionActorDesc* InActorDesc)
-			:ActorDesc(InActorDesc)
-		{
-			check(!ActorDesc->bIsRegisteringOrUnregistering);
-			ActorDesc->bIsRegisteringOrUnregistering = true;
-		}
-
-		~FRegisteringUnregisteringGuard()
-		{
-			check(ActorDesc->bIsRegisteringOrUnregistering);
-			ActorDesc->bIsRegisteringOrUnregistering = false;
-		}
-
-		FRegisteringUnregisteringGuard(const FRegisteringUnregisteringGuard&) = delete;
-		FRegisteringUnregisteringGuard& operator=(const FRegisteringUnregisteringGuard&) = delete;
-
-	private:
-		FWorldPartitionActorDesc* ActorDesc;
-	};
-private:
-	bool bIsRegisteringOrUnregistering = false;
-#endif
+#endif // WITH_EDITOR
 };
-#endif
+

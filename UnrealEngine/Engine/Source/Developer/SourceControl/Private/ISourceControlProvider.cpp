@@ -7,6 +7,18 @@
 
 #define LOCTEXT_NAMESPACE "ISourceControlProvider"
 
+ISourceControlProvider::FInitResult ISourceControlProvider::Init(EInitFlags Flags)
+{
+	// TODO: This implementation is for compatibility. Once all providers have their own
+	// implementation it should be removed.
+	const bool bForceConnection = EnumHasAnyFlags(Flags, EInitFlags::AttemptConnection);
+	Init(bForceConnection);
+
+	FInitResult Result;
+	Result.bIsAvailable = IsAvailable();
+
+	return Result;
+}
 
 ECommandResult::Type ISourceControlProvider::Login(const FString& InPassword, EConcurrency::Type InConcurrency, const FSourceControlOperationComplete& InOperationCompleteDelegate)
 {

@@ -8,8 +8,16 @@
 #include "PhysicalMaterials/PhysicalMaterialPropertyBase.h"
 #include "UObject/UObjectIterator.h"
 #include "Chaos/PhysicalMaterials.h"
+#include "HAL/IConsoleManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PhysicalMaterial)
+
+namespace PhysicalMaterialCVars
+{
+	bool bShowExperimentalProperties = false;
+
+	FAutoConsoleVariableRef CVarShowExperimentalProperties(TEXT("p.PhysicalMaterial.ShowExperimentalProperties"), bShowExperimentalProperties, TEXT(""));
+}
 
 UDEPRECATED_PhysicalMaterialPropertyBase::UDEPRECATED_PhysicalMaterialPropertyBase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -22,6 +30,11 @@ FPhysicalMaterialStrength::FPhysicalMaterialStrength()
 	TensileStrength = 2;
 	CompressionStrength = 20;
 	ShearStrength = 6;
+}
+
+FPhysicalMaterialDamageModifier::FPhysicalMaterialDamageModifier()
+{
+	DamageThresholdMultiplier = 1.0;
 }
 
 UPhysicalMaterial::UPhysicalMaterial(const FObjectInitializer& ObjectInitializer)
@@ -37,6 +50,11 @@ UPhysicalMaterial::UPhysicalMaterial(const FObjectInitializer& ObjectInitializer
 	SleepCounterThreshold = 4;
 	bOverrideFrictionCombineMode = false;
 	UserData = FChaosUserData(this);
+
+	SoftCollisionMode = EPhysicalMaterialSoftCollisionMode::None;
+	SoftCollisionThickness = 0;
+
+	BaseFrictionImpulse = 0;
 }
 
 UPhysicalMaterial::UPhysicalMaterial(FVTableHelper& Helper)

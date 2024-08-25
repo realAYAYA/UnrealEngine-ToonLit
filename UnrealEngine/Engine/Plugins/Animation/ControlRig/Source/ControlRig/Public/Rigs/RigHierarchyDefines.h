@@ -17,10 +17,10 @@ class URigHierarchy;
  * This is rig element types that we support
  * This can be used as a mask so supported as a bitfield
  */
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta = (RigVMTypeAllowed))
 enum class ERigElementType : uint8
 {
-	None,
+	None = 0,
 	Bone = 0x001,
 	Null = 0x002,
 	Space = Null UMETA(Hidden),
@@ -28,9 +28,13 @@ enum class ERigElementType : uint8
 	Curve = 0x008,
 	RigidBody = 0x010 UMETA(Hidden), 
 	Reference = 0x020,
-	Last = 0x040 UMETA(Hidden),
-	All = Bone | Null | Control | Curve | RigidBody | Reference,
-	ToResetAfterConstructionEvent = Bone | Control | Curve UMETA(Hidden),
+	Connector = 0x040,
+	Socket = 0x080,
+	
+	First = Bone UMETA(Hidden), 
+	Last = Socket UMETA(Hidden), 
+	All = Bone | Null | Control | Curve | RigidBody | Reference | Connector | Socket,
+	ToResetAfterConstructionEvent = Bone | Control | Curve | Socket UMETA(Hidden),
 };
 
 UENUM(BlueprintType)
@@ -43,7 +47,7 @@ enum class ERigBoneType : uint8
 /* 
  * The type of meta data stored on an element
  */
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta = (RigVMTypeAllowed))
 enum class ERigMetadataType : uint8
 {
 	Bool,
@@ -89,12 +93,17 @@ enum class ERigHierarchyNotification : uint8
 	InteractionBracketOpened,
 	InteractionBracketClosed,
 	ElementReordered,
+	ConnectorSettingChanged,
+	SocketColorChanged,
+	SocketDescriptionChanged,
+	SocketDesiredParentChanged,
+	HierarchyCopied,
 
 	/** MAX - invalid */
 	Max UMETA(Hidden),
 };
 
-UENUM()
+UENUM(meta = (RigVMTypeAllowed))
 enum class ERigEvent : uint8
 {
 	/** Invalid event */
@@ -122,7 +131,7 @@ enum class EControlRigSetKey : uint8
 	Never				//Never set a key here.
 };
 
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta = (RigVMTypeAllowed))
 enum class ERigControlType : uint8
 {
 	Bool,
@@ -135,6 +144,7 @@ enum class ERigControlType : uint8
     Transform UMETA(Hidden),
     TransformNoScale UMETA(Hidden),
     EulerTransform,
+	ScaleFloat,
 };
 
 UENUM(BlueprintType)
@@ -161,7 +171,7 @@ enum class ERigControlValueType : uint8
     Maximum
 };
 
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta = (RigVMTypeAllowed))
 enum class ERigControlVisibility : uint8
 {
 	// Visibility controlled by the graph
@@ -170,7 +180,7 @@ enum class ERigControlVisibility : uint8
 	BasedOnSelection 
 };
 
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta = (RigVMTypeAllowed))
 enum class ERigControlAxis : uint8
 {
 	X,
@@ -454,14 +464,16 @@ public:
 		switch (InControlType)
 		{
 			case ERigControlType::Bool: ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_bool(%s)"), Get<bool>() ? TEXT("True") : TEXT("False")); break;							
-			case ERigControlType::Float: ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_float(%.6f)"), Get<float>()); break;
+			case ERigControlType::Float:
+			case ERigControlType::ScaleFloat:
+				ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_float(%.6f)"), Get<float>()); break;
 			case ERigControlType::Integer: ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_int(%d)"), Get<int>()); break;
-			case ERigControlType::Position: ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_vector(unreal.Vector(%.6f, %.6f, %.6f))"),
-				Get<FVector3f>().X, Get<FVector3f>().Y, Get<FVector3f>().Z); break;
+			case ERigControlType::Position:
+			case ERigControlType::Scale:
+				ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_vector(unreal.Vector(%.6f, %.6f, %.6f))"),
+					Get<FVector3f>().X, Get<FVector3f>().Y, Get<FVector3f>().Z); break;
 			case ERigControlType::Rotator: ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_rotator(unreal.Rotator(pitch=%.6f, roll=%.6f, yaw=%.6f))"),
 				Get<FVector3f>().X, Get<FVector3f>().Z, Get<FVector3f>().Y); break;
-			case ERigControlType::Scale: ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_vector(unreal.Vector(%.6f, %.6f, %.6f))"),
-				Get<FVector3f>().X, Get<FVector3f>().Y, Get<FVector3f>().Z); break;
 			case ERigControlType::Transform: ValueStr = FString::Printf(TEXT("unreal.RigHierarchy.make_control_value_from_euler_transform(unreal.EulerTransform(location=[%.6f,%.6f,%.6f],rotation=[%.6f,%.6f,%.6f],scale=[%.6f,%.6f,%.6f]))"),
 				Get<FTransform_Float>().TranslationX,
 				Get<FTransform_Float>().TranslationY,
@@ -537,6 +549,13 @@ public:
 						break;
 					}
 				}
+				break;
+			}
+			case ERigControlType::ScaleFloat:
+			{
+				const float ValueToGet = Get<float>();
+				const FVector ScaleVector(ValueToGet, ValueToGet, ValueToGet);
+				Transform.SetScale3D(ScaleVector);
 				break;
 			}
 			case ERigControlType::Integer:
@@ -661,6 +680,11 @@ public:
 				}
 				break;
 			}
+			case ERigControlType::ScaleFloat:
+			{
+				Set<float>(InTransform.GetScale3D().X);
+				break;
+			}
 			case ERigControlType::Integer:
 			{
 				switch (InPrimaryAxis)
@@ -783,6 +807,7 @@ public:
 		switch(InControlType)
 		{
 			case ERigControlType::Float:
+			case ERigControlType::ScaleFloat:
 			{
 				if (LimitEnabled[0].IsOn())
 				{
@@ -1434,15 +1459,28 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Hierarchy", meta = (CustomWidget = "ElementName"))
 	FName Name;
 
-	FRigElementKey()
-		: Type(ERigElementType::None)
+	FRigElementKey(const ERigElementType InType = ERigElementType::None)
+		: Type(InType)
 		, Name(NAME_None)
 	{}
 
-	FRigElementKey(const FName& InName, ERigElementType InType)
+	FRigElementKey(const FName& InName, const ERigElementType InType)
 		: Type(InType)
 		, Name(InName)
 	{}
+
+	FRigElementKey(const FString& InKeyString)
+	{
+		FString TypeStr, NameStr;
+		check(InKeyString.Split(TEXT("("), &TypeStr, &NameStr));
+		NameStr.RemoveFromEnd(TEXT(")"));
+		Name = *NameStr;
+
+		const UEnum* ElementTypeEnum = StaticEnum<ERigElementType>();
+		Type = (ERigElementType)ElementTypeEnum->GetValueByName(*TypeStr);
+		check(Type > ERigElementType::None && Type < ERigElementType::All);
+		
+	}
 
 	void Serialize(FArchive& Ar);
 	void Save(FArchive& Ar);
@@ -1455,7 +1493,7 @@ public:
 
 	bool IsValid() const
 	{
-		return Name != NAME_None && Type != ERigElementType::None;
+		return Name.IsValid() && Name != NAME_None && Type != ERigElementType::None;
 	}
 
 	explicit operator bool() const
@@ -1532,7 +1570,7 @@ public:
 			}
 			case ERigElementType::Null:
 			{
-				return FString::Printf(TEXT("Space(%s)"), *Name.ToString());
+				return FString::Printf(TEXT("Null(%s)"), *Name.ToString());
 			}
 			case ERigElementType::Control:
 			{
@@ -1550,7 +1588,16 @@ public:
 			{
 				return FString::Printf(TEXT("Reference(%s)"), *Name.ToString());
 			}
+			case ERigElementType::Connector:
+			{
+				return FString::Printf(TEXT("Connector(%s)"), *Name.ToString());
+			}
+			case ERigElementType::Socket:
+			{
+				return FString::Printf(TEXT("Socket(%s)"), *Name.ToString());
+			}
 		}
+		
 		return FString();
 	}
 
@@ -1755,3 +1802,143 @@ struct CONTROLRIG_API FRigEventContext
 };
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FRigEventDelegate, URigHierarchy*, const FRigEventContext&);
+
+UENUM()
+enum class ERigElementResolveState : uint8
+{
+	Unknown,
+	InvalidTarget,
+	PossibleTarget,
+	DefaultTarget,
+
+	/** MAX - invalid */
+	Max UMETA(Hidden),
+};
+
+USTRUCT(BlueprintType)
+struct CONTROLRIG_API FRigElementResolveResult
+{
+	GENERATED_BODY()
+
+public:
+	
+	FRigElementResolveResult()
+	: State(ERigElementResolveState::Unknown)
+	{
+	}
+
+	FRigElementResolveResult(const FRigElementKey& InKey, ERigElementResolveState InState = ERigElementResolveState::PossibleTarget, const FText& InMessage = FText())
+		: Key(InKey)
+		, State(InState)
+		, Message(InMessage)
+	{
+	}
+
+	bool IsValid() const;
+	const FRigElementKey& GetKey() const
+	{
+		return Key;
+	}
+	const ERigElementResolveState& GetState() const
+	{
+		return State;
+	}
+	const FText& GetMessage() const
+	{
+		return Message;
+	}
+	void SetInvalidTarget(const FText& InMessage);
+	void SetPossibleTarget(const FText& InMessage = FText());
+	void SetDefaultTarget(const FText& InMessage = FText());
+
+private:
+	
+	UPROPERTY()
+	FRigElementKey Key;
+
+	UPROPERTY()
+	ERigElementResolveState State;
+
+	UPROPERTY()
+	FText Message;
+
+	friend class UModularRigRuleManager;
+};
+
+UENUM()
+enum class EModularRigResolveState : uint8
+{
+	Success,
+	Error,
+
+	/** MAX - invalid */
+	Max UMETA(Hidden),
+};
+
+
+USTRUCT(BlueprintType)
+struct CONTROLRIG_API FModularRigResolveResult
+{
+	GENERATED_BODY()
+
+public:
+	
+	FModularRigResolveResult()
+		: State(EModularRigResolveState::Success)
+	{
+	}
+
+	bool IsValid() const;
+
+	const FRigElementKey& GetConnectorKey() const
+	{
+		return Connector;
+	}
+
+	EModularRigResolveState GetState() const
+	{
+		return State;
+	}
+
+	const FText& GetMessage() const
+	{
+		return Message;
+	}
+
+	const TArray<FRigElementResolveResult>& GetMatches() const
+	{
+		return Matches;
+	}
+
+	const TArray<FRigElementResolveResult>& GetExcluded() const
+	{
+		return Excluded;
+	}
+
+	bool ContainsMatch(const FRigElementKey& InKey, FString* OutErrorMessage = nullptr) const;
+	const FRigElementResolveResult* FindMatch(const FRigElementKey& InKey) const;
+	const FRigElementResolveResult* GetDefaultMatch() const;
+
+private:
+
+	UPROPERTY()
+	FRigElementKey Connector;
+
+	UPROPERTY()
+	TArray<FRigElementResolveResult> Matches;
+
+	UPROPERTY()
+	TArray<FRigElementResolveResult> Excluded;
+
+	UPROPERTY()
+	EModularRigResolveState State;
+
+	UPROPERTY()
+	FText Message;
+
+	friend class UModularRigRuleManager;
+	friend class UModularRig;
+	friend struct FRigUnit_GetCandidates;
+	friend struct FRigUnit_DiscardMatches;
+	friend struct FRigUnit_SetDefaultMatch;
+};

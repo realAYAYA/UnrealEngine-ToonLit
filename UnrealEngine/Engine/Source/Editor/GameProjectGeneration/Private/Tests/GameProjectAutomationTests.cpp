@@ -69,7 +69,7 @@ namespace GameProjectAutomationUtils
 
 	/* 
 	 * Create a project from a template with a given criteria
-	 * @oaram	InTemplates			List of available project templates
+	 * @param	InTemplates			List of available project templates
 	 * @param	InTargetedHardware	Target hardware (EHardwareClass)
 	 * @param	InGraphicPreset		Graphics preset (EGraphicsPreset)
 	 * @param	InCategory			Target category (EContentSourceCategory)

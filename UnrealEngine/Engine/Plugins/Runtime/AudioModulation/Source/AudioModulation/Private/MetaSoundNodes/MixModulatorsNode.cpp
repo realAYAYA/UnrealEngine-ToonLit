@@ -64,19 +64,17 @@ namespace AudioModulation
 			return Metadata;
 		}
 
-		static TUniquePtr<Metasound::IOperator> CreateOperator(const Metasound::FCreateOperatorParams& InParams, TArray<TUniquePtr<Metasound::IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<Metasound::IOperator> CreateOperator(const Metasound::FBuildOperatorParams& InParams, Metasound::FBuildResults& OutResults)
 		{
 			using namespace Metasound;
-
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 				
 			if (InParams.Environment.Contains<Audio::FDeviceId>(Metasound::Frontend::SourceInterface::Environment::DeviceID))
 			{
-				FSoundModulatorAssetReadRef Modulator1ReadRef = InputCollection.GetDataReadReferenceOrConstruct<FSoundModulatorAsset>("In1");
-				FSoundModulatorAssetReadRef Modulator2ReadRef = InputCollection.GetDataReadReferenceOrConstruct<FSoundModulatorAsset>("In2");
-				FSoundModulationParameterAssetReadRef ParameterReadRef = InputCollection.GetDataReadReferenceOrConstruct<FSoundModulationParameterAsset>("MixParameter");
-				FBoolReadRef NormalizedReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, "Normalized", InParams.OperatorSettings);
+				FSoundModulatorAssetReadRef Modulator1ReadRef = InputData.GetOrConstructDataReadReference<FSoundModulatorAsset>("In1");
+				FSoundModulatorAssetReadRef Modulator2ReadRef = InputData.GetOrConstructDataReadReference<FSoundModulatorAsset>("In2");
+				FSoundModulationParameterAssetReadRef ParameterReadRef = InputData.GetOrConstructDataReadReference<FSoundModulationParameterAsset>("MixParameter");
+				FBoolReadRef NormalizedReadRef = InputData.GetOrCreateDefaultDataReadReference<bool>("Normalized", InParams.OperatorSettings);
 
 				return MakeUnique<FMixModulatorsNodeOperator>(InParams, Modulator1ReadRef, Modulator2ReadRef, ParameterReadRef, NormalizedReadRef);
 			}
@@ -88,7 +86,7 @@ namespace AudioModulation
 		}
 
 		FMixModulatorsNodeOperator(
-			const Metasound::FCreateOperatorParams& InParams,
+			const Metasound::FBuildOperatorParams& InParams,
 			const FSoundModulatorAssetReadRef& InModulator1,
 			const FSoundModulatorAssetReadRef& InModulator2,
 			const FSoundModulationParameterAssetReadRef& InParameter,

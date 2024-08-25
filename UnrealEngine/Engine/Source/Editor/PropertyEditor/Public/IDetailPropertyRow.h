@@ -208,6 +208,13 @@ public:
 	virtual IDetailPropertyRow& EditCondition( TAttribute<bool> EditConditionValue, FOnBooleanValueChanged OnEditConditionValueChanged ) = 0;
 
 	/**
+	 * Sets whether or not the edit condition for this property should affect its visibility.  If the edit condition fails, the property will be hidden outright.
+	 * 
+	 * @param bEditConditionHidesValue		if true the property be shown/hidden based on the edit condition
+	 */
+	virtual IDetailPropertyRow& EditConditionHides( bool bEditConditionHidesValue ) = 0;
+
+	/**
 	 * Sets whether or not this property is enabled
 	 *
 	 * @param InIsEnabled	Attribute for the enabled state of the property (true to enable the property)
@@ -242,6 +249,13 @@ public:
 	 * @param InDragDropHandler	Handler used when starting a drag or accepting a drop operation
 	 */
 	virtual IDetailPropertyRow& DragDropHandler(TSharedPtr<IDetailDragDropHandler> InDragDropHandler) = 0;
+
+	/**
+	 * Returns the property row expansion state
+	 *
+	 * @return Will return true if the row is expanded, false if not
+	 */
+	virtual bool IsExpanded() const = 0;
 
 	/**
 	 * Returns the name and value widget of this property row.  You can use this widget to apply further customization to existing widgets (by using this  with CustomWidget)

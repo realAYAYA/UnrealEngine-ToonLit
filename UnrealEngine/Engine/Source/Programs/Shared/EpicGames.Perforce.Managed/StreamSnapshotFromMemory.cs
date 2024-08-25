@@ -55,7 +55,8 @@ namespace EpicGames.Perforce.Managed
 		/// <summary>
 		/// Serialize to a compact binary object
 		/// </summary>
-		/// <param name="BasePath"></param>
+		/// <param name="tree"></param>
+		/// <param name="hashToTree"></param>
 		/// <returns></returns>
 		static IoHash EncodeObject(StreamTree tree, Dictionary<IoHash, CbObject> hashToTree)
 		{
@@ -112,7 +113,8 @@ namespace EpicGames.Perforce.Managed
 		/// Saves the contents of this object to disk
 		/// </summary>
 		/// <param name="outputFile">The output file to write to</param>
-		public async Task Save(FileReference outputFile, Utf8String basePath)
+		/// <param name="basePath"></param>
+		public async Task SaveAsync(FileReference outputFile, Utf8String basePath)
 		{
 			CbWriter writer = new CbWriter();
 			writer.BeginObject();

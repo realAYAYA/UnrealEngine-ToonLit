@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Sound/SoundBase.h"
 #include "AssetDefinitionDefault.h"
+#include "ContentBrowserMenuContexts.h"
 
 #include "AssetDefinition_SoundBase.generated.h"
 
@@ -36,4 +37,19 @@ public:
 	virtual TSharedPtr<SWidget> GetThumbnailOverlay(const FAssetData& InAssetData) const override;
 	virtual EAssetCommandResult ActivateAssets(const FAssetActivateArgs& ActivateArgs) const override;
 	// UAssetDefinition End
+
+	// Menu Extension statics
+	static void ExecutePlaySound(const FToolMenuContext& InContext);
+	static void ExecuteStopSound(const FToolMenuContext& InContext);
+	static bool CanExecutePlayCommand(const FToolMenuContext& InContext);
+	static ECheckBoxState IsActionCheckedMute(const FToolMenuContext& InContext);
+	static ECheckBoxState IsActionCheckedSolo(const FToolMenuContext& InContext);
+	static void ExecuteMuteSound(const FToolMenuContext& InContext);
+	static void ExecuteSoloSound(const FToolMenuContext& InContext);
+	static bool CanExecuteMuteCommand(const FToolMenuContext& InContext);
+	static bool CanExecuteSoloCommand(const FToolMenuContext& InContext);
+
+	// Asset definition static utilities
+	static TSharedPtr<SWidget> GetSoundBaseThumbnailOverlay(const FAssetData& InAssetData, TUniqueFunction<FReply()>&& OnClickedLambda);
+	static EAssetCommandResult ActivateSoundBase(const FAssetActivateArgs& ActivateArgs);
 };

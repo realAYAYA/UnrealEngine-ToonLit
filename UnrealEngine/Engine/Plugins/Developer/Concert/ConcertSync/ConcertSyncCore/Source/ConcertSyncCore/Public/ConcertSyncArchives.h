@@ -21,6 +21,8 @@ namespace ConcertSyncUtil
 CONCERTSYNCCORE_API bool CanExportProperty(const FProperty* Property, const bool InIncludeEditorOnlyData);
 
 CONCERTSYNCCORE_API void ResetObjectPropertiesToArchetypeValues(UObject* Object, const bool InIncludeEditorOnlyData);
+
+CONCERTSYNCCORE_API const FSoftObjectPath& GetSkipObjectPath();
 }
 
 /** Util to handle remapping objects within the source world to be the equivalent objects in the destination world */

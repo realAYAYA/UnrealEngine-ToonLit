@@ -3,58 +3,48 @@
 #pragma once
 
 #include "Subsystems/EngineSubsystem.h"
+#include "Tickable.h"
+#include "UObject/ObjectKey.h"
+#include "View/MVVMViewClass.h"
 
 #include "MVVMBindingSubsystem.generated.h"
 
 class UMVVMView;
 
 /** */
-struct FMVVMViewDelayedBinding
-{
-	FMVVMViewDelayedBinding(int32 InCompiledBindingIndex)
-		: CompiledBindingIndex(InCompiledBindingIndex)
-	{
-	}
-
-	int32 GetCompiledBindingIndex() const
-	{
-		return CompiledBindingIndex;
-	}
-
-	bool operator==(const FMVVMViewDelayedBinding& Other) const
-	{
-		return CompiledBindingIndex == Other.CompiledBindingIndex;
-	}
-
-	bool operator!=(const FMVVMViewDelayedBinding& Other) const
-	{
-		return CompiledBindingIndex != Other.CompiledBindingIndex;
-	}
-
-private:
-	int32 CompiledBindingIndex = INDEX_NONE;
-};
-
-/** */
 UCLASS(NotBlueprintable, Hidden)
-class UMVVMBindingSubsystem : public UEngineSubsystem
+class UMVVMBindingSubsystem : public UEngineSubsystem, public FTickableGameObject
 {
 	GENERATED_BODY()
 
 public:
-	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-	virtual void Deinitialize() override;
+	void AddViewWithTickBinding(const UMVVMView* View);
+	void RemoveViewWithTickBinding(const UMVVMView* View);
 
-	void AddViewWithEveryTickBinding(const UMVVMView* View);
-	void RemoveViewWithEveryTickBinding(const UMVVMView* View);
+	void AddDelayedBinding(const UMVVMView* View, FMVVMViewClass_BindingKey BindingKey);
+	void RemoveDelayedBindings(const UMVVMView* View);
+	void RemoveDelayedBindings(const UMVVMView* View, FMVVMViewClass_SourceKey SourceKey);
 
-	void AddDelayedBinding(const UMVVMView* View, FMVVMViewDelayedBinding CompiledBinding);
+	//~ FTickableGameObject
+	virtual bool IsTickableWhenPaused() const override
+	{
+		return true;
+	}
+	virtual bool IsTickableInEditor() const override
+	{
+		return true;
+	}
+	virtual ETickableTickType GetTickableTickType() const override
+	{
+		return (IsTemplate() ? ETickableTickType::Never : ETickableTickType::Always);
+	}
+
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override;
 
 private:
-	void HandlePreTick(float DeltaTIme);
-
-	using FDelayedBindingList = TArray<FMVVMViewDelayedBinding, TInlineAllocator<8>>;
-	using FDelayedMap = TMap<TWeakObjectPtr<const UMVVMView>, FDelayedBindingList>;
-	FDelayedMap DelayedBindings;
-	TArray<TWeakObjectPtr<const UMVVMView>> EveryTickBindings;
+	using FDelayedBindingList = TArray<FMVVMViewClass_BindingKey, TInlineAllocator<8>>;
+	using FDelayedBindingMap = TMap<TObjectKey<const UMVVMView>, FDelayedBindingList>;
+	FDelayedBindingMap DelayedBindings;
+	TArray<TWeakObjectPtr<const UMVVMView>> ViewsWithTickBindings;
 };

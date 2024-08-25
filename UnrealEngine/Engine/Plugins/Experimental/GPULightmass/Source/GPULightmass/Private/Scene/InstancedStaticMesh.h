@@ -17,6 +17,9 @@ public:
 	TUniquePtr<FInstancedStaticMeshRenderData> InstancedRenderData;
 
 	TArray<FIntPoint> LODPerInstanceLightmapSize;
+	int32 NumInstances = 0;
+	TSharedPtr<FISMCInstanceDataSceneProxy, ESPMode::ThreadSafe> InstanceDataSceneProxy;
+	const FInstanceSceneDataBuffers *InstanceSceneDataBuffers = nullptr;
 
 	TArray<FMeshBatch> GetMeshBatchesForGBufferRendering(int32 LODIndex, FTileVirtualCoordinates CoordsForCulling);
 };

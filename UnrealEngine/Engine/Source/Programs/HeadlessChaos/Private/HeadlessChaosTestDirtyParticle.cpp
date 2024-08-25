@@ -21,7 +21,7 @@ namespace ChaosTest
 		auto Particle = FGeometryParticle::CreateParticle();
 		Particle->SetX(FVec3(1,1,1));
 
-		TSharedPtr<FImplicitObject,ESPMode::ThreadSafe> Ptr(new TSphere<FReal,3>(FVec3(0),0));
+		Chaos::FImplicitObjectPtr Ptr(new TSphere<FReal,3>(FVec3(0),0));
 		const auto RawPtr = Ptr.Get();
 		TWeakPtr<FImplicitObject,ESPMode::ThreadSafe> WeakPtr(Ptr);
 		FDirtyPropertiesManager Manager;

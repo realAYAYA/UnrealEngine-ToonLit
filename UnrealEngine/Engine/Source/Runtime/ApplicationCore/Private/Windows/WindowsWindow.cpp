@@ -315,6 +315,9 @@ void FWindowsWindow::Initialize( FWindowsApplication* const Application, const T
 		// Tell OLE that we are opting into drag and drop.
 		// Only makes sense for regular windows (windows that last a while.)
 		RegisterDragDrop( HWnd, this );
+		
+		// Listing to clipboard change event
+		::AddClipboardFormatListener(HWnd);
 	}
 }
 

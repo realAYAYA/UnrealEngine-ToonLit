@@ -23,6 +23,11 @@ client.source("cmds/workspace.py", "Workspace")
 client.invoke("p4", "workspace")
 
 #-------------------------------------------------------------------------------
+min_sync = flow.describe.Command()
+min_sync.source("cmds/workspace.py", "MinSync")
+min_sync.invoke("p4", "sync", "mini")
+
+#-------------------------------------------------------------------------------
 gui = flow.describe.Command()
 gui.source("cmds/gui.py", "Gui")
 gui.invoke("p4", "v")

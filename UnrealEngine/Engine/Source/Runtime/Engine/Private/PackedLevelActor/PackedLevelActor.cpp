@@ -81,9 +81,18 @@ void APackedLevelActor::RerunConstructionScripts()
 				*GetClass()->GetDefaultObject<APackedLevelActor>()->PackedVersion.ToString());
 		}
 	}
-	
+
 	if(bShouldRerunConstructionScript)
 	{
+		// Set bEditableWhenInherited to false to disable editing of properties on components.
+		// This was enabled in 5.4, but is not properly handled, so for now we are disabling it.
+		// @todo_ow: See https://jira.it.epicgames.com/browse/UE-216035
+		TArray<UActorComponent*> PackedComponents;
+		GetPackedComponents(PackedComponents);
+		for (UActorComponent* PackedComponent : PackedComponents)
+		{
+			PackedComponent->bEditableWhenInherited = false;
+		}
 		Super::RerunConstructionScripts();
 		PackedVersion = GetClass()->GetDefaultObject<APackedLevelActor>()->PackedVersion;
 	}

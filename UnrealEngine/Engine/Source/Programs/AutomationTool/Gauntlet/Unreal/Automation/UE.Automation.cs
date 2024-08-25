@@ -6,8 +6,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnrealBuildTool;
 using EpicGames.Core;
 using Log = Gauntlet.Log;
@@ -138,6 +136,12 @@ namespace UE
 		public virtual int LogIdleTimeout { get; set; } = 30 * 60;
 
 		/// <summary>
+		/// Enable stereo variants for image based tests
+		/// </summary>
+		[AutoParam]
+		public bool EnableStereoTestVariants = false;
+
+		/// <summary>
 		/// Used for having the editor and any client communicate
 		/// </summary>
 		public string SessionID = Guid.NewGuid().ToString();
@@ -221,6 +225,12 @@ namespace UE
 				AppConfig.CommandLine += " -unattended";
 			}
 
+			// Enable stereo variants for image based tests if requested
+			if (EnableStereoTestVariants)
+			{
+				AutomationTestArgument += "EnableStereoTests;";
+			}
+
 			bool HasNoOtherRole = !OtherRoles.Any();
 			// If there's only one role and it's the editor then tests are running under the editor with no target
 			if (ConfigRole.RoleType.IsEditor() && HasNoOtherRole)
@@ -234,8 +244,16 @@ namespace UE
 
 				if (ConfigRole.RoleType.IsClient())
 				{
-					// have the client list the tests it knows about. useful for troubleshooting discrepencies
-					AppConfig.CommandLine += string.Format(" -sessionid={0} -messaging -log -TcpMessagingConnect={1}:6666 -ExecCmds=\"Automation list\"", SessionID, HostIP);
+					// Have the client list the tests it knows about. Useful for troubleshooting discrepancies
+					string ClientAutomationTestArgument = "List;";
+
+					// Make sure the stereo test setting propagates to the client
+					if (EnableStereoTestVariants)
+					{
+						ClientAutomationTestArgument += "EnableStereoTests;";
+					}
+
+					AppConfig.CommandLine += string.Format(" -sessionid={0} -messaging -TcpMessagingConnect={1}:6666 -ExecCmds=\"Automation {2}\"", SessionID, HostIP, ClientAutomationTestArgument);
 				}
 				else if (ConfigRole.RoleType.IsEditor())
 				{
@@ -350,7 +368,7 @@ namespace UE
 
 			// Tests in the editor only require a single role
 			UnrealTestRole EditorRole = Config.RequireRole(Config.CookedEditor ? UnrealTargetRole.CookedEditor : UnrealTargetRole.Editor);
-			EditorRole.CommandLineParams.AddRawCommandline("-NoWatchdog -stdout -FORCELOGFLUSH -CrashForUAT -log");
+			EditorRole.CommandLineParams.AddRawCommandline("-NoWatchdog -stdout -FORCELOGFLUSH -CrashForUAT");
 
 			return Config;
 		}
@@ -382,7 +400,7 @@ namespace UE
 
 			// Target tests require an editor which hosts the process
 			UnrealTestRole EditorRole = Config.RequireRole(UnrealTargetRole.Editor);
-			EditorRole.CommandLineParams.AddRawCommandline("-NoWatchdog -stdout -FORCELOGFLUSH -CrashForUAT -log");
+			EditorRole.CommandLineParams.AddRawCommandline("-NoWatchdog -stdout -FORCELOGFLUSH -CrashForUAT");
 
 			if (Config.Attended == false)
 			{
@@ -460,6 +478,17 @@ namespace UE
 				}
 
 				return BaseSuite;
+			}
+		}
+
+		/// <summary>
+		/// Override the HordeReportTestName in case a simple report is used
+		/// </summary>
+		protected override string HordeReportTestName
+		{
+			get
+			{
+				return Suite;
 			}
 		}
 
@@ -543,20 +572,20 @@ namespace UE
 				IdleTimeout = Config.LogIdleTimeout;
 			}
 
-			List<string> ChannelEntries = new List<string>();
 			// We are primarily interested in what the editor is doing
 			var AppInstance = TestInstance.EditorApp;
 
-			UnrealLogParser Parser = new UnrealLogParser(AppInstance.StdOut);
-			ChannelEntries.AddRange(Parser.GetEditorBusyChannels());
+			UnrealLogStreamParser Parser = new UnrealLogStreamParser();
+			LastAutomationEntryCount += Parser.ReadStream(AppInstance.StdOut, LastAutomationEntryCount);
+
+			IEnumerable<string> ChannelEntries = Parser.GetLogFromEditorBusyChannels();
 
 			// Any new entries?
-			if (ChannelEntries.Count > LastAutomationEntryCount)
+			if (ChannelEntries.Any())
 			{
 				// log new entries so people have something to look at
-				ChannelEntries.Skip(LastAutomationEntryCount).ToList().ForEach(S => Log.Info(S));
+				ChannelEntries.ToList().ForEach(S => Log.Info(S));
 				LastAutomationEntryTime = DateTime.Now;
-				LastAutomationEntryCount = ChannelEntries.Count;
 			}
 			else
 			{
@@ -648,53 +677,137 @@ namespace UE
 			bool HasTimeout = RoleResults != null && RoleResults.Where(R => R.ProcessResult == UnrealProcessResult.TimeOut).Any();
 			string HordeArtifactPath = GetConfiguration().HordeArtifactPath;
 			var MainRole = GetConfiguration().GetMainRequiredRole();
-			string LastTestWithCriticalFailure = string.Empty;
+			// Get any critical error and push it to json report and resave it.
+			UnrealLog.CallstackMessage FatalError = null;
+			UnrealRoleResult FatalErrorRoleResult = null;
+			if (RoleResults != null)
+			{
+				foreach (var Result in RoleResults)
+				{
+					if (Result.LogSummary.FatalError != null)
+					{
+						FatalError = Result.LogSummary.FatalError;
+						FatalErrorRoleResult = Result;
+						break;
+					}
+				}
+			}
+			UnrealAutomatedTestResult LastTestInProgress = null;
 			if (JsonTestPassResults.InProcess > 0)
 			{
 				// The test pass did not run completely
 				Log.Verbose("Found in-process tests: {Count}", JsonTestPassResults.InProcess);
-				// Get any critical error and push it to json report and resave it.
-				if (RoleResults != null)
+				LastTestInProgress = JsonTestPassResults.Tests.FirstOrDefault((T => T.State == TestStateType.InProcess));
+				if (!String.IsNullOrEmpty(LastTestInProgress.TestDisplayName))
 				{
-					UnrealLog.CallstackMessage FatalError = null;
-					foreach (var Result in RoleResults)
+					string ErrorMessage = null;
+					if (HasTimeout)
 					{
-						if (Result.LogSummary.FatalError != null)
-						{
-							FatalError = Result.LogSummary.FatalError;
-							break;
-						}
+						ErrorMessage = String.Format("Session reached timeout after {0} seconds.", MaxDuration);
 					}
-					var Test = JsonTestPassResults.Tests.FirstOrDefault((T => T.State == TestStateType.InProcess));
-					if (!String.IsNullOrEmpty(Test.TestDisplayName))
+					else
 					{
-						LastTestWithCriticalFailure = Test.FullTestPath;
-						string ErrorMessage;
-						if (HasTimeout)
+						if (FatalError != null)
 						{
-							ErrorMessage = String.Format("Session reached timeout after {0} seconds.", MaxDuration);
+							string StartedTestFullName = GetLastStartedTestFullNameFromRoleResult(FatalErrorRoleResult);
+							if (!string.IsNullOrEmpty(StartedTestFullName))
+							{
+								if (LastTestInProgress.FullTestPath != StartedTestFullName)
+								{
+									// We have to find the test that has last started. Find that test result in the json report.
+									UnrealAutomatedTestResult LastStartedTestFromLog = JsonTestPassResults.Tests.FirstOrDefault((T => T.FullTestPath == StartedTestFullName));
+									if (LastStartedTestFromLog == null)
+									{
+										Log.Warning("Failed to find the test from the test state log entry '{0}'", StartedTestFullName);
+										// We revert to the standard approached as the json report seems inconsistent with the log.
+										// The test in-progress from the json report will get the callstack attached.
+									}
+									else
+									{
+										// The last known running test needs to be rescheduled
+										LastTestInProgress.State = TestStateType.NotRun;
+										JsonTestPassResults.NotRun++;
+										JsonTestPassResults.InProcess--;
+										// Then the last started test according to the log gets flagged as failed
+										LastTestInProgress = LastStartedTestFromLog;
+
+										if (LastTestInProgress.State != TestStateType.Fail)
+										{
+											switch (LastTestInProgress.State)
+											{
+												case TestStateType.InProcess:
+													JsonTestPassResults.InProcess--;
+													break;
+
+												case TestStateType.NotRun:
+													Log.Warning("The current state from the json report for the test '{0}' is NotRun (it will be changed to Fail). Log entry says it was started. That state is inconsistent.", StartedTestFullName);
+													JsonTestPassResults.NotRun--;
+													break;
+
+												case TestStateType.Success:
+													JsonTestPassResults.Succeeded--;
+													break;
+
+												default:
+													break;
+											};
+											LastTestInProgress.State = TestStateType.Fail;
+											JsonTestPassResults.Failed++;
+										}
+									}
+								}
+							}
+							ErrorMessage = FatalError.FormatForLog();
 						}
 						else
 						{
-							if (FatalError != null)
-							{
-								ErrorMessage = FatalError.FormatForLog();
-							}
-							else
-							{
-								ErrorMessage = "No callstack found in the log.";
-							}
+							ErrorMessage = "No callstack found in the log.";
 						}
-						Test.AddError(ErrorMessage, !HasTimeout);
+					}
+					if (LastTestInProgress != null)
+					{
+						if (!String.IsNullOrEmpty(ErrorMessage))
+						{
+							LastTestInProgress.AddError(ErrorMessage, !HasTimeout);
+						}
 						if (!CanRetry() || JsonTestPassResults.NotRun == 0)
 						{
 							// Setting the test as fail because no retry will be done anymore.
 							// The InProcess state won't be used for pass resume
-							Test.State = TestStateType.Fail;
+							LastTestInProgress.State = TestStateType.Fail;
 							if (!CanRetry())
 							{
-								Test.AddWarning(string.Format("Session reached maximum of retries({0}) to resume on critical failure!", Retries));
+								LastTestInProgress.AddWarning(string.Format("Session reached maximum of retries({0}) to resume on critical failure!", Retries));
 							}
+						}
+					}
+					JsonTestPassResults.WriteToJson();
+				}
+			}
+			else if (FatalError != null)
+			{
+				string ErrorMessage = FatalError.FormatForLog();
+				string StartedTestFullName = GetLastStartedTestFullNameFromRoleResult(FatalErrorRoleResult);
+				if (!string.IsNullOrEmpty(StartedTestFullName))
+				{
+					// We have to find the test that has last started. Find that test result in the json report.
+					UnrealAutomatedTestResult LastStartedTestFromLog = JsonTestPassResults.Tests.FirstOrDefault((T => T.FullTestPath == StartedTestFullName));
+					if (LastStartedTestFromLog == null)
+					{
+						Log.Warning("Failed to find the test from the test state log entry '{0}'", StartedTestFullName);
+					}
+					else
+					{
+						LastStartedTestFromLog.AddError(ErrorMessage, true);
+						if(LastStartedTestFromLog.State == TestStateType.Success)
+						{
+							LastStartedTestFromLog.State = TestStateType.Fail;
+							JsonTestPassResults.Succeeded--;
+							JsonTestPassResults.Failed++;
+						}
+						if (!CanRetry())
+						{
+							LastStartedTestFromLog.AddWarning(string.Format("Session reached maximum of retries({0}) to resume on critical failure!", Retries));
 						}
 						JsonTestPassResults.WriteToJson();
 					}
@@ -733,9 +846,9 @@ namespace UE
 						Log.Warning(KnownLogEvents.Gauntlet_TestEvent, "Reach maximum of retries({Count}) to resume on critical failure!", Retries);
 						// Adding a note to the report about why the not-run are not going to be run
 						string Message = string.Format("Session reached maximum of retries({0}) to resume on critical failure!", Retries);
-						if (!string.IsNullOrEmpty(LastTestWithCriticalFailure))
+						if (LastTestInProgress != null && !string.IsNullOrEmpty(LastTestInProgress.FullTestPath))
 						{
-							Message += string.Format(" \nLast critical failure was caught on {0}", LastTestWithCriticalFailure);
+							Message += string.Format(" \nLast critical failure was caught on {0}", LastTestInProgress.FullTestPath);
 						}
 						var NotRunTests = JsonTestPassResults.Tests.Where((T => T.State == TestStateType.NotRun));
 						foreach (var Test in NotRunTests)
@@ -757,6 +870,32 @@ namespace UE
 					JsonTestPassResults.WriteToJson();
 				}
 			}
+		}
+
+		/// <summary>
+		/// Get last started test full name from Unreal Role result
+		/// </summary>
+		/// <param name="RoleResult"></param>
+		/// <returns></returns>
+		private string GetLastStartedTestFullNameFromRoleResult(UnrealRoleResult RoleResult)
+		{
+			var LogEntry = RoleResult == null ? null : RoleResult.LogSummary.LogEntries.LastOrDefault(Entry => Entry.Category == "AutomationTestStateTrace", null);
+
+			if (LogEntry != null)
+			{
+				string LogEntryPrefix = "Test is about to start. Name={";
+				string LogEntrySuffix = "}";
+				if (LogEntry.Message.StartsWith(LogEntryPrefix) && LogEntry.Message.EndsWith(LogEntrySuffix))
+				{
+					string StartedTestFullName = LogEntry.Message.Substring(
+						LogEntryPrefix.Length,
+						LogEntry.Message.Length - LogEntryPrefix.Length - LogEntrySuffix.Length);
+
+					return StartedTestFullName;
+				}
+			}
+
+			return null;
 		}
 
 		/// <summary>

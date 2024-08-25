@@ -68,7 +68,7 @@ void FBlueprintStatsModule::DumpBlueprintStats()
 
 	// Now merge them
 	FBlueprintStatRecord Aggregate(NULL);
-	for (const FBlueprintStatRecord& SourceRecord : Records)
+	for (const FBlueprintStatRecord& SourceRecord : Records) //-V1078
 	{
 		Aggregate.MergeAnotherRecordIn(SourceRecord);
 	}

@@ -161,7 +161,7 @@ void SPluginAuditBrowser::BuildPluginList()
 	{
 		FString PluginURL;
 		FGameFeaturePluginDetails PluginDetails;
-		if (GameFeaturesSubsystem.GetGameFeaturePluginDetails(Plugin, PluginURL, PluginDetails))
+		if (GameFeaturesSubsystem.GetBuiltInGameFeaturePluginDetails(Plugin, PluginURL, PluginDetails))
 		{
 			if (Policy.WillPluginBeCooked(Plugin->GetDescriptorFileName(), PluginDetails))
 			{

@@ -3,9 +3,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Security.Claims;
+using System.Threading;
 using System.Threading.Tasks;
-using Horde.Server.Jobs;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Bisect;
+using EpicGames.Horde.Users;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
 using MongoDB.Bson;
@@ -30,8 +34,12 @@ namespace Horde.Server.Users
 			[BsonDefaultValue(false), BsonIgnoreIfDefault]
 			public bool EnableExperimentalFeatures { get; set; }
 
+			[BsonDefaultValue(false), BsonIgnoreIfDefault]
+			public bool AlwaysTagPreflightCL { get; set; }
+
 			public BsonValue DashboardSettings { get; set; } = BsonNull.Value;
 			public List<JobId> PinnedJobIds { get; set; } = new List<JobId>();
+			public List<BisectTaskId> PinnedBisectTaskIds { get; set; } = new List<BisectTaskId>();
 
 			string IUser.Name => Claims.FirstOrDefault(x => String.Equals(x.Type, "name", StringComparison.Ordinal))?.Value ?? PrimaryClaim.Value;
 			string IUser.Login => Claims.FirstOrDefault(x => String.Equals(x.Type, ClaimTypes.Name, StringComparison.Ordinal))?.Value ?? PrimaryClaim.Value;
@@ -42,6 +50,7 @@ namespace Horde.Server.Users
 
 			UserId IUserSettings.UserId => Id;
 			IReadOnlyList<JobId> IUserSettings.PinnedJobIds => PinnedJobIds;
+			IReadOnlyList<BisectTaskId> IUserSettings.PinnedBisectTaskIds => PinnedBisectTaskIds;
 
 			IReadOnlyList<IUserJobTemplateSettings>? IUserSettings.JobTemplateSettings => null;
 		}
@@ -91,13 +100,13 @@ namespace Horde.Server.Users
 		}
 
 		/// <inheritdoc/>
-		public async Task<IUser?> GetUserAsync(UserId id)
+		public async Task<IUser?> GetUserAsync(UserId id, CancellationToken cancellationToken)
 		{
-			return await _users.Find(x => x.Id == id).FirstOrDefaultAsync();
+			return await _users.Find(x => x.Id == id).FirstOrDefaultAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async ValueTask<IUser?> GetCachedUserAsync(UserId? id)
+		public async ValueTask<IUser?> GetCachedUserAsync(UserId? id, CancellationToken cancellationToken)
 		{
 			if (id == null)
 			{
@@ -105,67 +114,67 @@ namespace Horde.Server.Users
 			}
 			else
 			{
-				return await GetUserAsync(id.Value);
+				return await GetUserAsync(id.Value, cancellationToken);
 			}
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IUser>> FindUsersAsync(IEnumerable<UserId>? ids, string? nameRegex, int? index, int? count)
+		public async Task<IReadOnlyList<IUser>> FindUsersAsync(IEnumerable<UserId>? ids, string? nameRegex, int? index, int? count, CancellationToken cancellationToken)
 		{
 			FilterDefinition<UserDocument> filter = Builders<UserDocument>.Filter.In(x => x.Id, ids);
-			return await _users.Find(filter).Range(index, count).ToListAsync<UserDocument, IUser>();
+			return await _users.Find(filter).Range(index, count).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<IUser?> FindUserByLoginAsync(string login)
+		public async Task<IUser?> FindUserByLoginAsync(string login, CancellationToken cancellationToken)
 		{
-			ClaimDocument primaryClaim = new ClaimDocument(ClaimTypes.Name, login);
-			return await _users.Find(x => x.PrimaryClaim == primaryClaim).FirstOrDefaultAsync();
+			ClaimDocument primaryClaim = new ClaimDocument(HordeClaimTypes.User, login);
+			return await _users.Find(x => x.PrimaryClaim == primaryClaim).FirstOrDefaultAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public Task<IUser?> FindUserByEmailAsync(string email)
+		public Task<IUser?> FindUserByEmailAsync(string email, CancellationToken cancellationToken)
 		{
 			return Task.FromResult<IUser?>(null);
 		}
 
 		/// <inheritdoc/>
-		public async Task<IUser> FindOrAddUserByLoginAsync(string login, string? name, string? email)
+		public async Task<IUser> FindOrAddUserByLoginAsync(string login, string? name, string? email, CancellationToken cancellationToken)
 		{
 			ClaimDocument newPrimaryClaim = new ClaimDocument(ClaimTypes.Name, login);
-			UpdateDefinition<UserDocument> update = Builders<UserDocument>.Update.SetOnInsert(x => x.Id, UserId.GenerateNewId());
-			return await _users.FindOneAndUpdateAsync<UserDocument>(x => x.PrimaryClaim == newPrimaryClaim, update, new FindOneAndUpdateOptions<UserDocument> { IsUpsert = true, ReturnDocument = ReturnDocument.After });
+			UpdateDefinition<UserDocument> update = Builders<UserDocument>.Update.SetOnInsert(x => x.Id, new UserId(BinaryIdUtils.CreateNew()));
+			return await _users.FindOneAndUpdateAsync<UserDocument>(x => x.PrimaryClaim == newPrimaryClaim, update, new FindOneAndUpdateOptions<UserDocument> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<IUserClaims> GetClaimsAsync(UserId userId)
+		public async Task<IUserClaims> GetClaimsAsync(UserId userId, CancellationToken cancellationToken)
 		{
-			return await _users.Find(x => x.Id == userId).FirstOrDefaultAsync() ?? new UserDocument { Id = userId };
+			return await _users.Find(x => x.Id == userId).FirstOrDefaultAsync(cancellationToken) ?? new UserDocument { Id = userId };
 		}
 
 		/// <inheritdoc/>
-		public async Task UpdateClaimsAsync(UserId userId, IEnumerable<IUserClaim> claims)
+		public async Task UpdateClaimsAsync(UserId userId, IEnumerable<IUserClaim> claims, CancellationToken cancellationToken)
 		{
 			List<ClaimDocument> newClaims = claims.Select(x => new ClaimDocument(x)).ToList();
-			await _users.FindOneAndUpdateAsync(x => x.Id == userId, Builders<UserDocument>.Update.Set(x => x.Claims, newClaims));
+			await _users.FindOneAndUpdateAsync(x => x.Id == userId, Builders<UserDocument>.Update.Set(x => x.Claims, newClaims), cancellationToken: cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<IUserSettings> GetSettingsAsync(UserId userId)
+		public async Task<IUserSettings> GetSettingsAsync(UserId userId, CancellationToken cancellationToken)
 		{
-			return await _users.Find(x => x.Id == userId).FirstOrDefaultAsync() ?? new UserDocument { Id = userId };
+			return await _users.Find(x => x.Id == userId).FirstOrDefaultAsync(cancellationToken) ?? new UserDocument { Id = userId };
 		}
 
 		/// <inheritdoc/>
-		public async Task UpdateSettingsAsync(UserId userId, bool? enableExperimentalFeatures, BsonValue? dashboardSettings = null, IEnumerable<JobId>? addPinnedJobIds = null, IEnumerable<JobId>? removePinnedJobIds = null, UpdateUserJobTemplateOptions? templateOptions = null)
+		public async Task UpdateSettingsAsync(UserId userId, bool? enableExperimentalFeatures, bool? alwaysTagPreflightCL = null, BsonValue? dashboardSettings = null, IEnumerable<JobId>? addPinnedJobIds = null, IEnumerable<JobId>? removePinnedJobIds = null, UpdateUserJobTemplateOptions? templateOptions = null, IEnumerable<BisectTaskId>? addBisectTaskIds = null, IEnumerable<BisectTaskId>? removeBisectTaskIds = null, CancellationToken cancellationToken = default)
 		{
 			if (addPinnedJobIds != null)
 			{
 				foreach (JobId pinnedJobId in addPinnedJobIds)
 				{
 					FilterDefinition<UserDocument> filter = Builders<UserDocument>.Filter.Eq(x => x.Id, userId) & Builders<UserDocument>.Filter.AnyNin<JobId>(x => x.PinnedJobIds, new[] { pinnedJobId });
-					UpdateDefinition<UserDocument> update = Builders<UserDocument>.Update.PushEach(x => x.PinnedJobIds, new[] { pinnedJobId }, -50);
-					await _users.UpdateOneAsync(filter, update);
+					UpdateDefinition<UserDocument> update = Builders<UserDocument>.Update.PushEach(x => x.PinnedJobIds, new[] { pinnedJobId }, 50);
+					await _users.UpdateOneAsync(filter, update, null, cancellationToken);
 				}
 			}
 
@@ -173,6 +182,10 @@ namespace Horde.Server.Users
 			if (enableExperimentalFeatures != null)
 			{
 				updates.Add(Builders<UserDocument>.Update.SetOrUnsetNull(x => x.EnableExperimentalFeatures, enableExperimentalFeatures));
+			}
+			if (alwaysTagPreflightCL != null)
+			{
+				updates.Add(Builders<UserDocument>.Update.SetOrUnsetNull(x => x.AlwaysTagPreflightCL, alwaysTagPreflightCL));
 			}
 			if (dashboardSettings != null)
 			{
@@ -184,7 +197,7 @@ namespace Horde.Server.Users
 			}
 			if (updates.Count > 0)
 			{
-				await _users.UpdateOneAsync<UserDocument>(x => x.Id == userId, Builders<UserDocument>.Update.Combine(updates));
+				await _users.UpdateOneAsync<UserDocument>(x => x.Id == userId, Builders<UserDocument>.Update.Combine(updates), (UpdateOptions?)null, cancellationToken);
 			}
 		}
 
@@ -192,11 +205,11 @@ namespace Horde.Server.Users
 		/// Enumerate all the documents in this collection
 		/// </summary>
 		/// <returns></returns>
-		public async IAsyncEnumerable<(IUser, IUserClaims, IUserSettings)> EnumerateDocumentsAsync()
+		public async IAsyncEnumerable<(IUser, IUserClaims, IUserSettings)> EnumerateDocumentsAsync([EnumeratorCancellation] CancellationToken cancellationToken)
 		{
-			using (IAsyncCursor<UserDocument> cursor = await _users.Find(FilterDefinition<UserDocument>.Empty).ToCursorAsync())
+			using (IAsyncCursor<UserDocument> cursor = await _users.Find(FilterDefinition<UserDocument>.Empty).ToCursorAsync(cancellationToken))
 			{
-				while (await cursor.MoveNextAsync())
+				while (await cursor.MoveNextAsync(cancellationToken))
 				{
 					foreach (UserDocument document in cursor.Current)
 					{

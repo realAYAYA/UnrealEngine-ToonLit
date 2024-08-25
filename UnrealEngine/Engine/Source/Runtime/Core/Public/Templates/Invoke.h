@@ -11,7 +11,7 @@
 namespace UE::Core::Private
 {
 	template <typename OuterType, typename TargetType>
-	FORCEINLINE auto DereferenceIfNecessary(TargetType&& Target, const volatile OuterType* TargetPtr)
+	constexpr auto DereferenceIfNecessary(TargetType&& Target, const volatile OuterType* TargetPtr)
 		-> decltype((TargetType&&)Target)
 	{
 		// If the target is the same as or is derived from the outer type, just return it unchanged.
@@ -19,7 +19,7 @@ namespace UE::Core::Private
 	}
 
 	template <typename OuterType, typename TargetType>
-	FORCEINLINE auto DereferenceIfNecessary(TargetType&& Target, ...)
+	constexpr auto DereferenceIfNecessary(TargetType&& Target, ...)
 		-> decltype(*(TargetType&&)Target)
 	{
 		// If the target is not related to the outer type, assume it's a (possibly smart) pointer and dereference it.

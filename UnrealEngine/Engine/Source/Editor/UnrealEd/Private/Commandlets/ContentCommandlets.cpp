@@ -5,6 +5,7 @@
 =============================================================================*/
 
 #include "Algo/RemoveIf.h"
+#include "Algo/Unique.h"
 #include "AssetCompilingManager.h"
 #include "AssetRegistry/AssetData.h"
 #include "CollectionManagerModule.h"
@@ -60,7 +61,7 @@
 #include "UObject/SavePackage.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
-#include "WorldPartition/ActorDescContainer.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
 #include "Virtualization/VirtualizationSystem.h"
@@ -180,7 +181,7 @@ int32 UResavePackagesCommandlet::InitializeResaveParameters( const TArray<FStrin
 					bExplicitPackages = true;
 				}
 
-				Maps.RightInline(Maps.Len() - (PlusIdx + 1), false);
+				Maps.RightInline(Maps.Len() - (PlusIdx + 1), EAllowShrinking::No);
 			}
 			FString MapFile;
 			FPackageName::SearchForPackageOnDisk(Maps, NULL, &MapFile);
@@ -292,7 +293,7 @@ int32 UResavePackagesCommandlet::InitializeResaveParameters( const TArray<FStrin
 	// ... if not, load in all packages
 	if( !bExplicitPackages || Switches.Contains(TEXT("SaveAll")))
 	{
-		UE_LOG( LogContentCommandlet, Display, TEXT( "No maps found to save when building HLODs, checking Project Settings for Directory or Asset Path(s)" ) );
+		UE_CLOG( bShouldBuildHLOD, LogContentCommandlet, Display, TEXT( "No maps found to save when building HLODs, checking Project Settings for Directory or Asset Path(s)" ) );
 
 		uint8 PackageFilter = NORMALIZE_DefaultFlags;
 		if ( Switches.Contains(TEXT("SKIPMAPS")) )
@@ -428,6 +429,26 @@ int32 UResavePackagesCommandlet::InitializeResaveParameters( const TArray<FStrin
 			{
 				TArray<FName> Referencers;
 				AssetRegistry.GetReferencers(AssetData.PackageName, Referencers);
+
+				// For external objects referencers, also add the object's outer package as a referencer so it can be handled by PerformAdditionalOperations.
+				FARFilter Filter;
+				Filter.bIncludeOnlyOnDiskAssets = true;
+				Filter.PackageNames = Referencers;
+
+				TArray<FAssetData> AssetReferencers;
+				AssetRegistry.GetAssets(Filter, AssetReferencers);
+
+				TArray<FName> ReferencerOuters;
+				for (const FAssetData& AssetReferencer : AssetReferencers)
+				{
+					if (!AssetReferencer.GetOptionalOuterPathName().IsNone())
+					{
+						Referencers.Add(FSoftObjectPath(AssetReferencer.GetOptionalOuterPathName().ToString()).GetLongPackageFName());
+					}
+				}
+
+				Referencers.Sort(FNameFastLess());
+				Referencers.SetNum(Algo::Unique(Referencers));
 
 				for (FName Referencer : Referencers)
 				{
@@ -737,8 +758,8 @@ void UResavePackagesCommandlet::LoadAndSaveOnePackage(const FString& Filename)
 		// Get the package linker.
 		VerboseMessage(TEXT("Pre GetPackageLinker"));
 
-		FLinkerLoad* Linker = LoadPackageLinker(nullptr, PackagePath, LOAD_NoVerify);
-	
+		FLinkerLoad* Linker = GetPackageLinker(nullptr, PackagePath, LOAD_NoVerify, nullptr);
+
 		// Bail early if we don't have a valid linker (package was out of date, etc)
 		if( !Linker )
 		{
@@ -1926,12 +1947,12 @@ void UResavePackagesCommandlet::PerformAdditionalOperations(class UWorld* World,
 		// Use a default GC frequency for external actors if GarbageCollectionFrequency is 0.
 		TGuardValue<int32> ScopedGCFreq(GarbageCollectionFrequency, GarbageCollectionFrequency ? GarbageCollectionFrequency : DefaultExternalActorGCFreq);
 
-		FWorldPartitionHelpers::ForEachActorDesc(WorldPartition, [this, WorldPartition](const FWorldPartitionActorDesc* ActorDesc)
+		FWorldPartitionHelpers::ForEachActorDescInstance(WorldPartition, [this, WorldPartition](const FWorldPartitionActorDescInstance* ActorDescInstance)
 		{
 			++TotalPackagesForResave;
 			// Load & Register World Partition Actor
-			FWorldPartitionReference LoadedActor(WorldPartition, ActorDesc->GetGuid());
-			AActor* Actor = LoadedActor->GetActor();
+			FWorldPartitionReference LoadedActor(WorldPartition, ActorDescInstance->GetGuid());
+			AActor* Actor = LoadedActor.GetActor();
 			UPackage* Package = Actor ? Actor->GetExternalPackage() : nullptr;
 			if (Package == nullptr)
 			{
@@ -2643,9 +2664,9 @@ int32 UWrangleContentCommandlet::Main( const FString& Params )
 		}
 
 		// get a list of packages to load
-		const FConfigSection* PackagesToFullyLoadSection = GConfig->GetSectionPrivate(*PackagesToFullyLoadSectionName, 0, 1, *WrangleContentIniName);
-		const FConfigSection* StartupPackages = GConfig->GetSectionPrivate(TEXT("/Script/Engine.StartupPackages"), 0, 1, GEngineIni);
-		const FConfigSection* CollectionsToFullyLoadSection = GConfig->GetSectionPrivate(*CollectionsToFullyLoadSectionName, 0, 1, *WrangleContentIniName);
+		const FConfigSection* PackagesToFullyLoadSection = GConfig->GetSection(*PackagesToFullyLoadSectionName, 0, *WrangleContentIniName);
+		const FConfigSection* StartupPackages = GConfig->GetSection(TEXT("/Script/Engine.StartupPackages"), 0, GEngineIni);
+		const FConfigSection* CollectionsToFullyLoadSection = GConfig->GetSection(*CollectionsToFullyLoadSectionName, 0, *WrangleContentIniName);
 
 		// we expect either the .ini to exist, or -allmaps to be specified
 		if (!PackagesToFullyLoadSection && !bShouldLoadAllMaps && !CollectionsToFullyLoadSection)
@@ -2783,7 +2804,7 @@ int32 UWrangleContentCommandlet::Main( const FString& Params )
 				// This should help capture more references.
 				GRedirectCollector.ResolveAllSoftObjectPaths(NAME_None);
 				
-				FLinkerLoad* Linker = LoadPackageLinker(nullptr, PackagePath, LOAD_Quiet | LOAD_NoWarn | LOAD_NoVerify);
+				FLinkerLoad* Linker = GetPackageLinker(nullptr, PackagePath, LOAD_Quiet | LOAD_NoWarn | LOAD_NoVerify, nullptr);
 
 				UWorld* World = UWorld::FindWorldInPackage(Package);
 				if (World && World->IsPartitionedWorld())
@@ -2970,7 +2991,7 @@ int32 UWrangleContentCommandlet::Main( const FString& Params )
 				if (PackageObjs == NULL)
 				{
 					UE_LOG(LogContentCommandlet, Warning, TEXT("No objects in %s were referenced..."), *PackagePath.GetDebugName());
-					new(UnnecessaryPublicObjects) FUnreferencedObject(PackageName,
+					UnnecessaryPublicObjects.Emplace(PackageName,
 						TEXT("ENTIRE PACKAGE"), IPackageResourceManager::Get().FileSize(PackagePath));
 
 					// all objects in this package are unnecessary
@@ -2987,7 +3008,7 @@ int32 UWrangleContentCommandlet::Main( const FString& Params )
 				}
 			}
 
-			FLinkerLoad* Linker = LoadPackageLinker(nullptr, PackagePath, LOAD_Quiet | LOAD_NoWarn | LOAD_NoVerify);
+			FLinkerLoad* Linker = GetPackageLinker(nullptr, PackagePath, LOAD_Quiet | LOAD_NoWarn | LOAD_NoVerify, nullptr);
 
 			// go through the exports in the package, looking for public objects
 			for (int32 ExportIndex = 0; ExportIndex < Linker->ExportMap.Num(); ExportIndex++)
@@ -3017,7 +3038,7 @@ int32 UWrangleContentCommandlet::Main( const FString& Params )
 					if ((Export.ObjectFlags & RF_Public) != 0 && !bAreAllObjectsUnnecessary)
 					{
 						// if so, then add it to list of unused pcreateexportublic items
-						new(UnnecessaryPublicObjects) FUnreferencedObject(PackageName, ExportName, Export.SerialSize);
+						UnnecessaryPublicObjects.Emplace(PackageName, ExportName, Export.SerialSize);
 					}
 
 					// look for existing entry
@@ -3109,7 +3130,7 @@ int32 UWrangleContentCommandlet::Main( const FString& Params )
 				check(Space);
 
 				// get everything after the space
-				ObjectPathName.RightInline(ObjectPathName.Len() - (Space + 1), false);
+				ObjectPathName.RightInline(ObjectPathName.Len() - (Space + 1), EAllowShrinking::No);
 
 				// load the referenced object
 
@@ -3235,7 +3256,7 @@ int32 UWrangleContentCommandlet::Main( const FString& Params )
 					check(Space > 0);
 
 					// get everything after the space
-					ObjectPathName.RightInline(ObjectPathName.Len() - (Space + 1), false);
+					ObjectPathName.RightInline(ObjectPathName.Len() - (Space + 1), EAllowShrinking::No);
 
 					// load the unnecessary object
 					UObject* Object = StaticLoadObject(ObjectIt.Value(), NULL, *ObjectPathName, NULL, LOAD_NoWarn, NULL);

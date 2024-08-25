@@ -6,7 +6,7 @@
 #include "DX/DecoderErrors_DX.h"
 #include "ElectraDecodersUtils.h"
 #include "Utils/MPEG/ElectraUtilsMPEGAudio.h"
-
+#include "DSP/FloatArrayMath.h"
 #include "IElectraDecoderFeaturesAndOptions.h"
 #include "IElectraDecoderOutputAudio.h"
 
@@ -939,10 +939,8 @@ bool FElectraAudioDecoderAAC_DX::ConvertDecoderOutput()
 	else
 	{
 		const int16* Source = reinterpret_cast<const int16*>(pDecompressedData);
-		for(int32 i=0, iMax=NewOutput->NumChannels * NewOutput->NumFrames; i<iMax; ++i)
-		{
-			*Dest++ = *Source++ / 32768.0f;
-		}
+		Audio::ArrayPcm16ToFloat(MakeArrayView(Source, NewOutput->NumChannels* NewOutput->NumFrames)
+			, MakeArrayView(Dest, NewOutput->NumChannels* NewOutput->NumFrames));
 	}
 	DecodedLinearOutputBuffer->Unlock();
 	CurrentOutput = MoveTemp(NewOutput);

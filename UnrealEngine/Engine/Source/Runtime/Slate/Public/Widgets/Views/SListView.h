@@ -61,6 +61,7 @@
  *		];
  * }
  */
+
 template <typename ItemType>
 class SListView : public STableViewBase, TListTypeTraits<ItemType>::SerializerType, public ITypedTableView< ItemType >
 {
@@ -69,7 +70,7 @@ public:
 	using MapKeyFuncs       = typename TListTypeTraits<ItemType>::MapKeyFuncs;
 	using MapKeyFuncsSparse = typename TListTypeTraits<ItemType>::MapKeyFuncsSparse;
 	
-	using TItemSet          = TSet< ItemType, typename TListTypeTraits< ItemType >::SetKeyFuncs >;
+	using TItemSet          = TSet< TObjectPtrWrapTypeOf<ItemType>, typename TListTypeTraits< TObjectPtrWrapTypeOf<ItemType> >::SetKeyFuncs >;
 
 	using FOnGenerateRow            = typename TSlateDelegates< ItemType >::FOnGenerateRow;
 	using FOnItemScrolledIntoView   = typename TSlateDelegates< ItemType >::FOnItemScrolledIntoView;
@@ -868,10 +869,10 @@ private:
 		TMap< ItemType, TSharedRef<ITableRow>, FDefaultSetAllocator, MapKeyFuncs > ItemToWidgetMap;
 
 		/** Map of SWidgets to DataItems from which they were generated */
-		TMap< const ITableRow*, ItemType > WidgetMapToItem;
+		TMap< const ITableRow*, TObjectPtrWrapTypeOf<ItemType> > WidgetMapToItem;
 
 		/** A set of Items that currently have a generated widget */
-		TArray< ItemType > ItemsWithGeneratedWidgets;
+		TArray< TObjectPtrWrapTypeOf<ItemType> > ItemsWithGeneratedWidgets;
 
 		/** Total number of DataItems the last time we performed a generation pass. */
 		int32 TotalItemsLastGeneration;
@@ -965,15 +966,16 @@ public:
 			RangeStartIndex = FMath::Clamp(RangeStartIndex, 0, ItemsSourceRef.Num()-1);
 			RangeEndIndex = FMath::Clamp(RangeEndIndex, 0, ItemsSourceRef.Num()-1);
 
-			if (RangeEndIndex < RangeStartIndex)
-			{
-				Swap( RangeStartIndex, RangeEndIndex );
-			}
+			// Respect the direction of selection when ordering, ie if selecting upwards then make sure the top element is last-selected
+			const int32 Direction = (RangeEndIndex > RangeStartIndex) ? 1 : -1;
 
-			for (int32 ItemIndex = RangeStartIndex; ItemIndex <= RangeEndIndex; ++ItemIndex)
+			int32 ItemIndex = RangeStartIndex;
+			for (; ItemIndex != RangeEndIndex; ItemIndex += Direction)
 			{
 				SelectedItems.Add(ItemsSourceRef[ItemIndex]);
 			}
+			// The above loop won't add the last item, so manually add it here
+			SelectedItems.Add(ItemsSourceRef[ItemIndex]);
 		}
 
 		this->InertialScrollManager.ClearScrollVelocity();
@@ -988,17 +990,17 @@ public:
 
 		if( OnSelectionChanged.IsBound() )
 		{
-			NullableItemType SelectedItem = (SelectedItems.Num() > 0)
+			TObjectPtrWrapTypeOf<NullableItemType> SelectedItem = (SelectedItems.Num() > 0)
 				? (*typename TItemSet::TIterator(SelectedItems))
-				: TListTypeTraits< ItemType >::MakeNullPtr();
+				: TListTypeTraits< TObjectPtrWrapTypeOf<ItemType> >::MakeNullPtr();
 
 			OnSelectionChanged.ExecuteIfBound(SelectedItem, SelectInfo );
 		}
 	}
 
-	virtual const ItemType* Private_ItemFromWidget( const ITableRow* TheWidget ) const override
+	virtual const TObjectPtrWrapTypeOf<ItemType>* Private_ItemFromWidget( const ITableRow* TheWidget ) const override
 	{
-		ItemType const * LookupResult = WidgetGenerator.WidgetMapToItem.Find( TheWidget );
+		const TObjectPtrWrapTypeOf<ItemType>* LookupResult = WidgetGenerator.WidgetMapToItem.Find( TheWidget );
 		return LookupResult == nullptr ? PinnedWidgetGenerator.WidgetMapToItem.Find(TheWidget) : LookupResult;
 	}
 
@@ -1219,7 +1221,7 @@ private:
 		{
 			if (MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 			{
-				const ItemType* PinnedItem = OwnerListView->ItemFromWidget(PinnedItemRow.Get());
+				const TObjectPtrWrapTypeOf<ItemType>* PinnedItem = OwnerListView->ItemFromWidget(PinnedItemRow.Get());
 
 				if (PinnedItem)
 				{
@@ -1744,7 +1746,7 @@ public:
 	 *
 	 * @return the data item from which the WidgetToFind was generated
 	 */
-	const ItemType* ItemFromWidget( const ITableRow* WidgetToFind ) const
+	const TObjectPtrWrapTypeOf<ItemType>* ItemFromWidget( const ITableRow* WidgetToFind ) const
 	{
 		return Private_ItemFromWidget( WidgetToFind );
 	}
@@ -2040,9 +2042,7 @@ public:
 	 */
 	virtual void AddReferencedObjects( FReferenceCollector& Collector )
 	{
-#if !UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR
 		TListTypeTraits<ItemType>::AddReferencedObjects( Collector, WidgetGenerator.ItemsWithGeneratedWidgets, SelectedItems, WidgetGenerator.WidgetMapToItem );
-#endif
 	}
 	virtual FString GetReferencerName() const
 	{

@@ -320,7 +320,7 @@ void FTreeNode::BuildChildNodesRecursive(IFieldIterator& FieldIterator, IFieldEx
 
 	if (ChildStructType)
 	{
-		for (const FFieldVariant FieldIt : FieldIterator.GetFields(ChildStructType))
+		for (const FFieldVariant& FieldIt : FieldIterator.GetFields(ChildStructType))
 		{
 			if (const FProperty* PropertyIt = FieldIt.Get<FProperty>())
 			{
@@ -1247,8 +1247,8 @@ void FPropertyViewerImpl::HandleBlueprintCompiled()
 
 void FPropertyViewerImpl::HandleReplaceViewedObjects(const TMap<UObject*, UObject*>& OldToNewObjectMap)
 {
-	TArray<UObject*> ValueArray;
-	OldToNewObjectMap.GenerateValueArray(ValueArray);
+	TArray<UObject*> KeyArray;
+	OldToNewObjectMap.GenerateKeyArray(KeyArray);
 
 	TArray<TSharedPtr<FContainer>> ItemsToReplace;
 
@@ -1256,7 +1256,7 @@ void FPropertyViewerImpl::HandleReplaceViewedObjects(const TMap<UObject*, UObjec
 	{
 		if (Container->GetStruct())
 		{
-			if (ValueArray.Contains(Container->GetStruct()))
+			if (KeyArray.Contains(Container->GetStruct()))
 			{
 				ItemsToReplace.Add(Container);
 			}

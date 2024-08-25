@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -25,7 +25,16 @@ public:
 	virtual void CopyTo(URCAction* Action) {}
 
 	/** Returns the parent Behaviour associated with this Action */
-	URCBehaviour* GetParentBehaviour();
+	URCBehaviour* GetParentBehaviour() const;
+
+	/** Invoked when this Action item value change */
+	void NotifyActionValueChanged();
+
+	/**
+	 * @brief Called internally when entity Ids are renewed.
+	 * @param InEntityIdMap Map of old Id to new Id.
+	 */
+	virtual void UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap);
 
 public:
 	/** Exposed Property or Function field Id*/

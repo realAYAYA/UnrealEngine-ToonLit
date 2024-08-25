@@ -1,25 +1,21 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Checkbox, ActionButton, DefaultButton, Dropdown, IDropdownOption, IContextualMenuProps, ITextFieldProps, TextField, Image, Spinner, ProgressIndicator, SpinnerSize, Stack, Text, HoverCard, HoverCardType, IPlainCardProps, Modal, IconButton, Pivot, PivotItem, DirectionalHint } from '@fluentui/react';
+import { ActionButton, Checkbox, DefaultButton, DirectionalHint, Dropdown, HoverCard, HoverCardType, IContextualMenuProps, IDropdownOption, IPlainCardProps, ITextFieldProps, IconButton, Image, Modal, Pivot, PivotItem, ProgressIndicator, Spinner, SpinnerSize, Stack, Text, TextField } from '@fluentui/react';
 import { FontIcon } from '@fluentui/react/lib/Icon';
-import { getTheme, mergeStyles, mergeStyleSets } from '@fluentui/react/lib/Styling';
-import React, { useState, useEffect, useRef, useMemo, useReducer } from 'react';
-import { useNavigate, useParams, generatePath } from 'react-router';
+import { mergeStyleSets, mergeStyles } from '@fluentui/react/lib/Styling';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { generatePath, useNavigate, useParams } from 'react-router';
 import { Link } from 'react-router-dom';
-import backend from '../../../backend';
 import dashboard, { StatusColor } from "../../../backend/Dashboard";
-import { modeColors } from '../../../styles/Styles';
-import { ArtifactData } from '../../../backend/Api';
 import { msecToElapsed } from '../../../base/utilities/timeUtils';
-import { testDataHandler, getStreamData, getProjectName } from '../../../components/TestReportView';
-import { hordeClasses } from '../../../styles/Styles';
-import { EventType, ArtifactType, TestSessionWrapper, Metadata, MetaWrapper, SectionCollection, TestEvent, TestResult, TestDevice, TestState, TestStats, TestCase, Section, FilterType, SectionFilter, MetadataFilter, MetaFilterTools, TestSessionCollection, Loader } from '../models/AutomatedTestSession';
-import { TopNav } from '../../../components/TopNav';
-import { Breadcrumbs, BreadcrumbItem } from '../../../components/Breadcrumbs'
+import { BreadcrumbItem, Breadcrumbs } from '../../../components/Breadcrumbs';
 import { useQuery } from '../../../components/JobDetailCommon';
+import { getProjectName, getStreamData, testDataHandler } from '../../../components/TestReportView';
+import { TopNav } from '../../../components/TopNav';
+import { getHordeStyling } from '../../../styles/Styles';
+import { getHordeTheme } from '../../../styles/theme';
+import { ArtifactType, EventType, FilterType, Loader, MetaFilterTools, MetaWrapper, Metadata, MetadataFilter, Section, SectionCollection, SectionFilter, TestCase, TestDevice, TestEvent, TestResult, TestSessionCollection, TestSessionWrapper, TestState, TestStats } from '../models/AutomatedTestSession';
 
-const theme = getTheme();
-const colors = dashboard.getStatusColors();
 const gutterClass = mergeStyles({
    borderLeftWidth: 6,
    padding: 0,
@@ -31,165 +27,189 @@ const gutterClass = mergeStyles({
    marginBottom: 0,
    height: 20
 });
-const styles = mergeStyleSets({
-   container: {
-      overflow: 'auto'
-   },
-   event: [
-      {
-         fontSize: "11px",
-         fontFamily: "Horde Cousine Regular"
-      }
-   ],
-   gutter: [
-      {
-         padding: 0,
-         margin: 0,
-         paddingTop: 0,
-         paddingBottom: 0,
-         paddingRight: 14,
-         marginTop: 0,
-         marginBottom: 0,
-         height: 20
-      }
-   ],
-   gutterError: [
-      {
-         background: "#FEF6F6",
-         borderLeftStyle: 'solid',
-         borderLeftColor: colors.get(StatusColor.Failure)!
-      }, gutterClass
-   ],
-   gutterWarning: [
-      {
-         background: "#FEF8E7",
-         borderLeftStyle: 'solid',
-         borderLeftColor: colors.get(StatusColor.Warnings)!
-      }, gutterClass
-   ],
-   gutterSuccess: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: colors.get(StatusColor.Success)!
-      }, gutterClass
-   ],
-   eventWarning: [
-      {
-         background: "#FEF8E7"
-      }
-   ],
-   eventError: [
-      {
-         background: "#FEF6F6"
-      }
-   ],
-   itemHover: {
-      cursor: "pointer",
-      selectors: {
-         ':hover': {
-            background: theme.palette.neutralLight
-         }
-      }
-   },
-   icon: {
-      userSelect: 'none',
-      fontSize: '16px' //'1.2vw'
-   },
-   sectionItem: {
-      zIndex: 1,
-      borderWidth: "1px",
-      borderColor: "#888",
-      borderStyle: "solid",
-      backgroundColor: "#FFF",
-      padding: "6px",
-      overflow: "auto"
-   },
-   plainCard: {
-      borderWidth: "1px",
-      borderColor: "#888",
-      borderStyle: "solid",
-      backgroundColor: "#FFF",
-      padding: "6px",
-      display: 'flex',
-   },
-   filterCard: {
-      borderWidth: "1px",
-      borderColor: "#888",
-      borderStyle: "solid",
-      backgroundColor: "#FFF",
-      padding: "6px",
-      display: 'flex',
-   },
-   bottomLoadMore: {
-      borderWidth: "1px",
-      borderColor: "#CCC",
-      borderStyle: "solid",
-      padding: 3,
-      backgroundColor: theme.palette.neutralLight,
-      fontSize: 11
-   },
-   compactItem: {
-      paddingLeft: 6
-   },
-   compactItemRight: {
-      paddingRight: 6
-   },
-   reportLeftPanel: {
-      borderWidth: "1px",
-      borderColor: "#CCC",
-      borderStyle: "solid",
-      borderRadius: "5px",
-      width: "220px",
-      padding: 4,
-      backgroundColor: theme.palette.neutralLight
-   },
-   reportPivotItem: {
-      paddingTop: 8
-   },
-   bottomArrow: {
-      fontSize: 0,
-      position: "relative",
-      selectors: {
-         ':before': {
-            content: "''",
-            display: 'inline-block',
-            width: 0,
-            height: 0,
-            border: '8px solid transparent',
-            verticalAlign: 'middle',
-            borderBottomColor: '#666',
-            position: "absolute",
-            transform: 'translateY(9px)',
-         }
-      }
-   },
-   rotateText: {
-      transform: 'translateX(15px) translateY(15px) rotate(90deg)',
-      transformOrigin: '0 0',
-      position: 'absolute'
-   },
-   borderSolid: {
-      border: '1px solid transparent',
-   },
-   sideFilterButton: {
-      padding: 4,
-      minWidth: 0,
-      marginLeft: '4px !important'
-   },
-   stripes: {
-      backgroundImage: 'repeating-linear-gradient(-45deg, rgba(255, 255, 255, .2) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, .2) 50%, rgba(255, 255, 255, .2) 75%, transparent 75%, transparent)',
-   }
-});
 
-const stateColorStyles = new Map<string, string>([
-   [TestState.Success, colors.get(StatusColor.Success)!],
-   [TestState.InProcess, colors.get(StatusColor.Running)!],
-   [TestState.NotRun, colors.get(StatusColor.Waiting)!],
-   [TestState.SuccessWithWarnings, colors.get(StatusColor.Warnings)!],
-   [TestState.Failed, colors.get(StatusColor.Failure)!],
-   [TestState.Unknown, "#000000"],
-]);
+let _styles: any;
+let _stateColorStyles: any;
+
+const getStyling = () => {
+
+   const theme = getHordeTheme();
+   const colors = dashboard.getStatusColors();
+
+   const styles = _styles ?? mergeStyleSets({
+      container: {
+         overflow: 'auto'
+      },
+      event: [
+         {
+            fontSize: "11px",
+            fontFamily: "Horde Cousine Regular"
+         }
+      ],
+      gutter: [
+         {
+            padding: 0,
+            margin: 0,
+            paddingTop: 0,
+            paddingBottom: 0,
+            paddingRight: 14,
+            marginTop: 0,
+            marginBottom: 0,
+            height: 20
+         }
+      ],
+      gutterError: [
+         {
+            background: dashboard.darktheme ? "#330606" : "#FEF6F6",
+            borderLeftStyle: 'solid',
+            borderLeftColor: colors.get(StatusColor.Failure)!
+         }, gutterClass
+      ],
+      gutterWarning: [
+         {
+            background: dashboard.darktheme ? "#1E1817" : "#FEF8E7",            
+            borderLeftStyle: 'solid',
+            borderLeftColor: colors.get(StatusColor.Warnings)!
+         }, gutterClass
+      ],
+      gutterSuccess: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: colors.get(StatusColor.Success)!
+         }, gutterClass
+      ],
+      eventWarning: [
+         {
+            background: dashboard.darktheme ? "#1E1817" : "#FEF8E7",
+         }
+      ],
+      eventError: [
+         {
+            background: dashboard.darktheme ? "#330606" : "#FEF6F6",
+         }
+      ],
+      itemHover: {
+         cursor: "pointer",
+         selectors: {
+            ':hover': {
+               background: theme.palette.neutralLight
+            }
+         }
+      },
+      icon: {
+         userSelect: 'none',
+         fontSize: '16px' //'1.2vw'
+      },
+      sectionItem: {
+         zIndex: 1,
+         borderWidth: "1px",
+         borderColor: "#888",
+         borderStyle: "solid",
+         background: dashboard.darktheme ? "#111" : "#FFF",
+         padding: "6px",
+         overflow: "auto"
+      },
+      plainCard: {
+         borderWidth: "1px",
+         borderColor: "#888",
+         borderStyle: "solid",
+         background: dashboard.darktheme ? "#111" : "#FFF",
+         padding: "6px",
+         display: 'flex',
+      },
+      filterCard: {
+         borderWidth: "1px",
+         borderColor: "#888",
+         borderStyle: "solid",
+         background: dashboard.darktheme ? "#111" : "#FFF",
+         padding: "6px",
+         display: 'flex',
+      },
+      bottomLoadMore: {
+         borderWidth: "1px",
+         borderColor: "#CCC",
+         borderStyle: "solid",
+         padding: 3,
+         background: dashboard.darktheme ? "#111" : "#FFF",
+         fontSize: 11
+      },
+      compactItem: {
+         paddingLeft: 6
+      },
+      compactItemRight: {
+         paddingRight: 6
+      },
+      reportLeftPanel: {
+         borderWidth: "1px",
+         borderColor: "#CCC",
+         borderStyle: "solid",
+         borderRadius: "5px",
+         width: "220px",
+         padding: 4,
+         background: dashboard.darktheme ? "#111" : "#FFF",
+      },
+      reportPivotItem: {
+         paddingTop: 8
+      },
+      bottomArrow: {
+         fontSize: 0,
+         position: "relative",
+         selectors: {
+            ':before': {
+               content: "''",
+               display: 'inline-block',
+               width: 0,
+               height: 0,
+               border: '8px solid transparent',
+               verticalAlign: 'middle',
+               borderBottomColor: '#666',
+               position: "absolute",
+               transform: 'translateY(9px)',
+            }
+         }
+      },
+      rotateText: {
+         transform: 'translateX(15px) translateY(15px) rotate(90deg)',
+         transformOrigin: '0 0',
+         position: 'absolute'
+      },
+      borderSolid: {
+         border: '1px solid transparent',
+      },
+      sideFilterButton: {
+         padding: 4,
+         minWidth: 0,
+         marginLeft: '4px !important'
+      },
+      stripes: {
+         backgroundImage: 'repeating-linear-gradient(-45deg, rgba(255, 255, 255, .2) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, .2) 50%, rgba(255, 255, 255, .2) 75%, transparent 75%, transparent)',
+      }
+   });
+
+   const stateColorStyles = _stateColorStyles ?? new Map<string, string>([
+      [TestState.Success, colors.get(StatusColor.Success)!],
+      [TestState.InProcess, colors.get(StatusColor.Running)!],
+      [TestState.NotRun, colors.get(StatusColor.Waiting)!],
+      [TestState.SuccessWithWarnings, colors.get(StatusColor.Warnings)!],
+      [TestState.Failed, colors.get(StatusColor.Failure)!],
+      [TestState.Unknown, "#000000"],
+   ]);
+
+   _styles = styles;
+   _stateColorStyles = stateColorStyles;
+
+   return {
+      theme: theme,
+      styles: _styles,
+      stateColorStyles: _stateColorStyles
+   }
+}
+
+
 const getIconTestStateStyles = (state: string): string => {
+
+   const { styles, stateColorStyles } = getStyling();
+
    let color: string = "#000000";
    if (!stateColorStyles.has(state)) {
       color = stateColorStyles.get(TestState.Unknown)!;
@@ -245,9 +265,9 @@ const missingImage = "/images/missing-image.png";
 const MissingImageLabel = (): JSX.Element => { return <span style={{ fontWeight: 'bold' }}> [missing image]</span> }
 type imageData = { link?: string, ref?: string }
 type ImageLinks = { [key: string]: imageData; }
-const buildImageLink = (artifact?: ArtifactData) => artifact ? `${backend.serverUrl}/api/v1/artifacts/${artifact.id}/download?Code=${artifact.code}` : undefined;
 
 const Stats = (stats: TestStats): JSX.Element => {
+   const { stateColorStyles } = getStyling();
    return (
       <Stack horizontal verticalAlign="center">
          <Text styles={{ root: { fontWeight: 'bold' } }}>
@@ -264,6 +284,7 @@ const Stats = (stats: TestStats): JSX.Element => {
 }
 
 const ItemMeta = (item: TestResult, metaMask: string[]): JSX.Element => {
+   const { styles } = getStyling();
    const meta = item.Session.MetaHandler;
    const metaInfo: string[] | undefined = meta?.maskByKeys(metaMask);
    return (
@@ -278,6 +299,7 @@ const ItemMeta = (item: TestResult, metaMask: string[]): JSX.Element => {
 }
 
 const OnIconCard = (item: TestCase): JSX.Element => {
+   const { styles } = getStyling();
    const metas = item.getResults(true);
    const metaMask = metas.length > 1 ? GetCommonMetaKeys(item.getResults().map((item) => item.Session.Metadata)) : [];
    return (
@@ -289,6 +311,7 @@ const OnIconCard = (item: TestCase): JSX.Element => {
 };
 
 const OnTestCard = (item: TestResult): JSX.Element => {
+   const { styles } = getStyling();
    const meta = item.Session.MetaHandler;
    return <Stack className={styles.plainCard}>
       {TestInfoItemRow('Changelist', item.Session.Testdata.change)}
@@ -297,6 +320,7 @@ const OnTestCard = (item: TestResult): JSX.Element => {
 };
 
 const OnDeviceCard = (device: TestDevice): JSX.Element => {
+   const { styles } = getStyling();
    const meta = device.Metadata && new MetaWrapper(device.Metadata);
    return <Stack className={styles.plainCard}>
       {meta && meta.map((key, value) => TestInfoItemRow(key, value))}
@@ -376,6 +400,9 @@ const IconItem = (item: TestCase): JSX.Element => {
 }
 
 const CompactItem = (item: TestResult, metaMask: string[], highlighted: boolean = false): JSX.Element => {
+
+   const { styles, stateColorStyles } = getStyling();
+
    const plainCardProps: IPlainCardProps = {
       renderData: item,
       onRenderPlainCard: OnTestCard,
@@ -422,10 +449,10 @@ const TestResultModal: React.FC<{ testuid: string, collection: TestSessionCollec
    const testcaseRef = useRef<TestCase | undefined>(undefined);
    const navigate = useNavigate();
    const onClickCancel = () => {
-      navigate(onClickTestResult());      
+      navigate(onClickTestResult());
    }
    const onClickPivot = (item?: PivotItem) => {
-      navigate(urlFromFilterType(FilterType.view, item?.props.itemKey), {replace: true});
+      navigate(urlFromFilterType(FilterType.view, item?.props.itemKey), { replace: true });
    }
 
    const query = useQuery();
@@ -495,8 +522,11 @@ const TestResultModal: React.FC<{ testuid: string, collection: TestSessionCollec
       testName = testcaseRef.current.Name;
    }
 
+   const { hordeClasses, modeColors } = getHordeStyling();
+   const { styles } = getStyling();
+
    return (
-      <Modal isOpen styles={{ main: { padding: 8, width: '100vw', height: 'calc(100vh - 24px)', backgroundColor: '#FFFFFF' } }} className={hordeClasses.modal} onDismiss={onClickCancel}>
+      <Modal isOpen styles={{ main: { padding: 8, width: '100vw', height: 'calc(100vh - 24px)', background: modeColors.background} }} className={hordeClasses.modal} onDismiss={onClickCancel}>
          <Stack>
             <Stack horizontal styles={{ root: { padding: 8 } }}>
                <Stack verticalAlign="center" styles={{ root: { overflow: 'hidden' } }}>
@@ -539,6 +569,7 @@ const TestResultModal: React.FC<{ testuid: string, collection: TestSessionCollec
 }
 
 const TestDetails = (test: TestResult, alternates: TestResult[], metaMask: string[]): JSX.Element => {
+   const { stateColorStyles } = getStyling();
    const meta = test.Session.MetaHandler;
    const devices = test.Session.getDevices(test.DeviceAppInstanceName);
 
@@ -615,6 +646,8 @@ const TestHistory: React.FC<{ collection: TestSessionCollection, testcase: TestC
       return function cleanup() { cancel.current = true; historyChangeDisposer() }
    }, [testcase, collection, needFetching])
 
+   const { styles } = getStyling();
+
    let metasRef: MetaWrapper[] | undefined = undefined;
    let historyMetaMask: string[] = metaMask;
    const changesByMeta = collection.getLoadedTestHistoryByMeta(testcase.TestUID);
@@ -650,6 +683,9 @@ const TestHistory: React.FC<{ collection: TestSessionCollection, testcase: TestC
 }
 
 const TestHistoryMeta = (meta: MetaWrapper, metaMask: string[], tests: TestResult[], testuid: string, selected: boolean, change: number): JSX.Element => {
+
+   const { styles } = getStyling();
+
    let metaInfo: string[] = meta.maskByKeys(metaMask);
    if (metaInfo.length === 0) {
       metaInfo = meta.map((key, value) => value);
@@ -667,6 +703,7 @@ const TestHistoryMeta = (meta: MetaWrapper, metaMask: string[], tests: TestResul
 const TestHistoryItem: React.FC<{ test: TestResult, selected: boolean }> = (props) => {
    const { test, selected } = props;
    const navigate = useNavigate();
+   const { styles } = getStyling();
 
    const hoverCardProps: IPlainCardProps = {
       renderData: test,
@@ -700,6 +737,7 @@ const TestHistoryItem: React.FC<{ test: TestResult, selected: boolean }> = (prop
 }
 
 const TestHistoryItemCard = (test: TestResult): JSX.Element => {
+   const { styles } = getStyling();
    return <Stack className={styles.plainCard}>
       {TestInfoItemRow('Changelist', test.Session.Testdata.change)}
    </Stack>;
@@ -710,6 +748,7 @@ const TestEvents: React.FC<{ test: TestResult }> = (props) => {
    const [filterError, setFilterError] = useState(true);
    const [filterWarning, setFilterWarning] = useState(true);
    const [filterInfo, setFilterInfo] = useState(test.State !== TestState.Failed);
+   const { styles } = getStyling();
 
    function onChangeFilterError(ev?: React.FormEvent<HTMLElement | HTMLInputElement>, checked?: boolean) {
       checked !== undefined && setFilterError(checked);
@@ -753,6 +792,9 @@ const TestEvents: React.FC<{ test: TestResult }> = (props) => {
 }
 
 const EventPane: React.FC<{ entry: TestEvent, test: TestResult }> = (props) => {
+
+   const { styles } = getStyling();
+
    const { entry, test } = props;
    const eventType = entry.Type;
    const is_error = eventType === EventType.Error;
@@ -764,15 +806,17 @@ const EventPane: React.FC<{ entry: TestEvent, test: TestResult }> = (props) => {
    const need_image_comparison = entry.Artifacts && entry.Artifacts.length > 0 && entry.Tag === ArtifactType.ImageCompare;
    const need_image_comparisonRef = useRef(need_image_comparison);
 
+
    useEffect(() => {
       const cancel = { current: false };
       if (need_image_comparisonRef.current) {
          const findLinks = async () => {
             const imageInfo: ImageLinks = {};
             for (const key in entry.Artifacts) {
+
                const item = entry.Artifacts[key];
-               const foundJobArtifact = await test.Session.Testdata?.findArtifactData(item.ReferencePath);
-               imageInfo[item.Tag] = { link: buildImageLink(foundJobArtifact), ref: item.ReferencePath };
+               const url = await test.Session.Testdata?.getArtifactImageLink(item.ReferencePath);
+               imageInfo[item.Tag] = { link: url, ref: item.ReferencePath };
             }
             !cancel.current && setImageInfo(imageInfo);
          }
@@ -824,6 +868,9 @@ type ChartStack = {
 }
 
 const Chart = (stack: ChartStack[], width: number, height: number, basecolor?: string, style?: any): JSX.Element => {
+
+   const { styles } = getStyling();
+
    const mainTitle = stack.map((item) => `${item.value}% ${item.title}`).join(' ');
 
    return (
@@ -848,6 +895,9 @@ type BreadCrumbFill = {
 };
 
 const SectionBreadCrumb = (filling: BreadCrumbFill[], stack?: ChartStack[], total?: number): JSX.Element => {
+
+   const { stateColorStyles } = getStyling();
+
    return (
       <Stack grow>
          <Stack horizontal wrap>
@@ -889,6 +939,7 @@ const noSectionCrumbLink = () => {
 const ResultsFolder: React.FC<{ items: TestCase[], name: string, expanded?: boolean }> = (props) => {
    const { items, name, expanded } = props;
    const [isExpanded, setExpanded] = useState(expanded ?? false);
+   const { styles } = getStyling();
    return (
       <Stack styles={{ root: { padding: 5, userSelect: "none" } }}>
          <Stack verticalAlign="center" horizontal styles={{ root: { cursor: 'pointer' } }} onClick={() => setExpanded(!isExpanded)}>
@@ -927,6 +978,7 @@ const ResultsSelector: React.FC<{ items: TestCase[], stats: TestStats }> = (prop
    }, [items]);
 
    const failedFactor = Math.ceil((stats.Failed + stats.Incomplete) / (stats.TotalRun || 1) * 20) / 20;
+   const { stateColorStyles } = getStyling();
 
    const stack: ChartStack[] = [
       {
@@ -979,13 +1031,14 @@ const GetCommonMetaKeys = (items: Metadata[]) => {
 }
 
 const SectionItem = (item: Section): JSX.Element => {
+   const { styles } = getStyling();
    const key = item.Type + item.FullName;
 
    if (item.isOneTest) {
       const testcase = item.TestCases[0];
 
       return (
-         <Stack className={styles.sectionItem} styles={{ root: { background: item.Stats.Failed > 0 ? theme.palette.neutralLight : undefined } }} grow key={key}>
+         <Stack className={styles.sectionItem} styles={{ root: { background: item.Stats.Failed > 0 ? (dashboard.darktheme ? "#111" : "#FFF") : undefined } }} grow key={key}>
             <Stack verticalAlign="center" horizontal styles={{ root: { paddingBottom: 4 } }}>
                {IconItem(testcase)}
                <Link to={onClickTestResult(testcase.TestUID, testcase.StateMetaUID)}>
@@ -1004,7 +1057,7 @@ const SectionItem = (item: Section): JSX.Element => {
       }
 
       return (
-         <Stack className={styles.sectionItem} styles={{ root: { background: item.Stats.Failed > 0 ? theme.palette.neutralLight : undefined } }} grow key={key}>
+         <Stack className={styles.sectionItem} styles={{ root: { background: item.Stats.Failed > 0 ? (dashboard.darktheme ? "#111" : "#FFF") : undefined } }} grow key={key}>
             <Link to={onClickSection()} style={{ fontSize: 0, color: 'inherit' }}>
                <Stack horizontal styles={{ root: { paddingBottom: 4 } }}>
                   <FontIcon className={styles.icon} iconName="FolderList" />
@@ -1033,6 +1086,8 @@ const TestMetaFilter: React.FC<{ metaOptions: Map<string, Set<string>>, filter?:
    const metaCanAddKeys: IDropdownOption[] = Array.from(metaOptions.entries()).map((data) => {
       return { key: data[0], text: data[0] }
    }).filter((item) => !selectedMeta.has(item.key));
+
+   const { styles } = getStyling();
 
    return (
       <Stack tokens={{ childrenGap: 4 }}>
@@ -1101,6 +1156,9 @@ const TestMetaFilter: React.FC<{ metaOptions: Map<string, Set<string>>, filter?:
 const TestNameFilter: React.FC<{ filter: SectionFilter, onChange?: (value: string) => void, onValidate?: (value?: string) => void, dismissMenu?: (ev?: any, dismissAll?: boolean) => void }> = (props) => {
    const { filter, onChange, onValidate, dismissMenu } = props;
    const [name, setName] = useState<string>(filter.namecontains ?? '');
+
+   const { styles } = getStyling();
+
    return (
       <Stack horizontal horizontalAlign="end">
          <TextField
@@ -1144,6 +1202,11 @@ const TestFilterCard = (filter: SectionFilter, metaOptions: Map<string, Set<stri
 }
 
 const TestCollection: React.FC<{ collection: TestSessionCollection, onLoadMore?: () => void }> = (props) => {
+
+   const { modeColors } = getHordeStyling();
+   const { styles, stateColorStyles } = getStyling();
+   const colors = dashboard.getStatusColors();
+
    const { collection, onLoadMore } = props;
    const sectionsHandler = useRef<SectionCollection | undefined>(undefined);
    const navigate = useNavigate();
@@ -1217,7 +1280,7 @@ const TestCollection: React.FC<{ collection: TestSessionCollection, onLoadMore?:
    return <Stack className={styles.container} styles={{ root: { paddingTop: 8 } }} grow>
       {!!data &&
          <Stack styles={{ root: { paddingTop: 4, paddingLeft: 20, paddingBottom: 8, paddingRight: 8 } }}>
-            <Text>This test pass run on <span style={{ fontWeight: 'bold' }}>{data.TestSessionInfo.DateTime}</span> for a duration of <span style={{ fontWeight: 'bold' }}>{msecToElapsed(data.TestSessionInfo.TimeElapseSec * 1000)}</span> for <span style={{ fontWeight: 'bold' }}>{data.MetaHandler?.map((key, value) => <span key={key}>{value} </span>)}</span></Text>
+            <Text>This test pass ran on <span style={{ fontWeight: 'bold' }}>{data.TestSessionInfo.DateTime}</span> for a duration of <span style={{ fontWeight: 'bold' }}>{msecToElapsed(data.TestSessionInfo.TimeElapseSec * 1000)}</span> for <span style={{ fontWeight: 'bold' }}>{data.MetaHandler?.map((key, value) => <span key={key}>{value} </span>)}</span></Text>
          </Stack>
       }
 
@@ -1296,6 +1359,8 @@ export const TestSessionViewAll: React.FC = () => {
 
    const { streamId } = useParams<{ streamId: string }>();
 
+   const { hordeClasses } = getHordeStyling();
+
    const count = testDataHandler.items?.size ?? 0;
    const changeRange = !loading && count >= maxCount ? testDataHandler.getChanges() : undefined;
 
@@ -1321,6 +1386,8 @@ export const TestSessionViewAll: React.FC = () => {
 
       return function cleanup() { versionChangeDisposer(); testDataHandler.desactivate(); }
    }, [maxCount, streamId]);
+
+   const { styles } = getStyling();
 
    return (
       <Stack className={hordeClasses.horde} style={{ height: '100vh' }}>
@@ -1365,7 +1432,9 @@ export const routePath: string = "/automatedtestsession/:streamId";
 export const BuildHealthTestSessionView: React.FC<{ streamId: string }> = (props) => {
    const { streamId } = props;
 
+   const theme = getHordeTheme();
+
    return (
-      <DefaultButton href={generatePath(routePath, { streamId: streamId })} text="Test Results" style={{ color: 'black' }} />
+      <DefaultButton href={generatePath(routePath, { streamId: streamId })} text="Test Results" style={{ color: theme.semanticColors.bodyText }} />
    )
 }

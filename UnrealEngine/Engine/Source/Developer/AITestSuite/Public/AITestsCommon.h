@@ -209,7 +209,9 @@ struct FAITest_SimpleComponentBasedTest : public FAITestBase
 #define AITEST_TRUE(What, Value) __AITEST_IMPL(What, Value, TestTrue, false)
 #define AITEST_FALSE(What, Value) __AITEST_IMPL(What, Value, TestFalse, false)
 #define AITEST_NULL(What, Pointer) __AITEST_IMPL(What, Pointer, TestNull, false)
-#define AITEST_NOT_NULL(What, Pointer) __AITEST_IMPL(What, Pointer, TestNotNull, false)
+#define AITEST_NOT_NULL(What, Pointer) \
+	__AITEST_IMPL(What, Pointer, TestNotNull, false) \
+	CA_ASSUME(Pointer)
 
 namespace FTestHelpers
 {

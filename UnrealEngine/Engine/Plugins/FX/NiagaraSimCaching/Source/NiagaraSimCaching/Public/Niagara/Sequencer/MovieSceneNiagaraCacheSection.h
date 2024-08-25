@@ -4,6 +4,7 @@
 
 #include "NiagaraSimCache.h"
 #include "Sections/MovieSceneBaseCacheSection.h"
+#include "PerQualityLevelProperties.h"
 #include "MovieSceneNiagaraCacheSection.generated.h"
 
 UENUM(BlueprintType)
@@ -51,6 +52,17 @@ struct NIAGARASIMCACHING_API FMovieSceneNiagaraCacheParams : public FMovieSceneB
 	/** The sim cache this section plays and records into */
 	UPROPERTY(EditAnywhere, Category = "NiagaraCache")
 	TObjectPtr<UNiagaraSimCache> SimCache;
+
+	/** If true then the section properties might still be changed (so the section itself is not locked), but the cache cannot be rerecorded to prevent accidentally overriding the data within */
+	UPROPERTY(EditAnywhere, Category = "NiagaraCache")
+	bool bLockCacheToReadOnly = false;
+
+	UPROPERTY(EditAnywhere, Category = "NiagaraCache", meta=(InlineEditConditionToggle))
+	bool bOverrideQualityLevel = false;
+
+	/** If set, then the engine scalability setting will be overriden with this value when recording a new cache for this track */
+	UPROPERTY(EditAnywhere, Category = "NiagaraCache", meta=(EditCondition="bOverrideQualityLevel"))
+	EPerQualityLevels RecordQualityLevel = EPerQualityLevels::Cinematic;
 
 	/** What should the effect do when the track has no cache data to display */
 	UPROPERTY(EditAnywhere, Category="SimCache")

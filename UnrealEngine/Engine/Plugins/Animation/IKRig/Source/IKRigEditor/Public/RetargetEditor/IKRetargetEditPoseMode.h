@@ -13,6 +13,7 @@ class UIKRigProcessor;
 class FIKRetargetEditorController;
 class FIKRetargetEditor;
 class FIKRetargetPreviewScene;
+struct FGizmoState;
 
 enum class FIKRetargetTrackingState : int8
 {
@@ -70,6 +71,8 @@ public:
 	virtual bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click) override;
 	virtual bool StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
 	virtual bool EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
+	virtual bool BeginTransform(const FGizmoState& InState) override;
+	virtual bool EndTransform(const FGizmoState& InState) override;
 	virtual bool InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale) override;
 	virtual bool GetCustomDrawingCoordinateSystem(FMatrix& InMatrix, void* InData) override;
 	virtual bool GetCustomInputCoordinateSystem(FMatrix& InMatrix, void* InData) override;
@@ -87,6 +90,9 @@ private:
 	bool IsRootSelected() const;
 	bool IsOnlyRootSelected() const;
 	void UpdateWidgetTransform();
+
+	bool HandleBeginTransform(const FEditorViewportClient* InViewportClient);
+	bool HandleEndTransform(FEditorViewportClient* InViewportClient);
 
 	// the bone(s) currently being edited
 	FBoneEdit BoneEdit;

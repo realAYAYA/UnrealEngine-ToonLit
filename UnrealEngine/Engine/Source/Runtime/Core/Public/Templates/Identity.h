@@ -16,7 +16,8 @@
 template <typename T>
 struct TIdentity
 {
-	typedef T Type;
+	using Type = T;
+	using type = T;
 };
 
 template <typename T>

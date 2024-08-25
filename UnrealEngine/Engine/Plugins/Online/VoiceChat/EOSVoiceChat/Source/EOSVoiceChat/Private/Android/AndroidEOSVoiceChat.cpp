@@ -2,7 +2,7 @@
 
 #include "AndroidEOSVoiceChat.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "AndroidEOSVoiceChatUser.h"
 
@@ -17,4 +17,4 @@ IVoiceChatUser* FAndroidEOSVoiceChat::CreateUser()
 	return &User.Get();
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

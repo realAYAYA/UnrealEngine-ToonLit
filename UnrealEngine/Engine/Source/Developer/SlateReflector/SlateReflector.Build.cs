@@ -93,5 +93,7 @@ public class SlateReflector : ModuleRules
 		{
 			PrecompileForTargets = PrecompileTargetsType.Any;
 		}
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 	}
 }

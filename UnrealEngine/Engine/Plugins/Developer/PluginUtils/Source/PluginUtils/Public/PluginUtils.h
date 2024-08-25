@@ -91,6 +91,10 @@ public:
 		/** The Verse path to the root of this plugin's content directory */
 		FString VersePath;
 
+		/** The version of the Verse language that this plugin targets.
+			If no value is specified, the latest stable version is used. */
+		TOptional<uint32> VerseVersion;
+
 		/** If to generate Verse source code definitions from assets contained in this plugin */
 		bool bEnableVerseAssetReflection = false;
 
@@ -191,7 +195,20 @@ public:
 	 * @note Will fail if the plugin already exists
 	 */
 	static TSharedPtr<IPlugin> CreateAndLoadNewPlugin(const FString& PluginName, const FString& PluginLocation, const FNewPluginParamsWithDescriptor& CreationParams, FLoadPluginParams& LoadParams);
-
+	
+	/**
+	 * Helper to create and load a new plugin
+	 * @param PluginName Plugin name
+	 * @param NameToReplace what will be used to replace PLUGIN_NAME in the given templates. Pass in PluginName here for default behavior
+	 * @param PluginLocation Directory that contains the plugin folder
+	 * @param CreationParams Plugin creation parameters
+	 * @param LoadParams Plugin loading parameters
+	 * @return The newly created plugin. If something goes wrong during the creation process, the plugin folder gets deleted and null is returned.
+	 * @note MountParams.OutFailReason outputs the reason the plugin creation or loading failed (if applicable)
+	 * @note Will fail if the plugin already exists
+	 */
+	static TSharedPtr<IPlugin> CreateAndLoadNewPlugin(const FString& PluginName, const FString& NameToReplace, const FString& PluginLocation, const FNewPluginParamsWithDescriptor& CreationParams, FLoadPluginParams& LoadParams);
+	
 	/**
 	 * Helper to create and mount a new plugin.
 	 * @param PluginName Plugin name

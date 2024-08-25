@@ -15,8 +15,13 @@ uint bUintTexture;
 uint bForceOutputAllTiles;
 float TransmittanceThreshold;
 uint IntCoverageThreshold;
+#if PERMUTATION_INPUT_TYPE == 0
 Texture2D<float> InputFloatTexture;
+#elif PERMUTATION_INPUT_TYPE == 1
 Texture2D<uint> InputUintTexture;
+#else
+	#error Input type not defined
+#endif
 RWBuffer<uint> TileCountBuffer;
 
 RWBuffer<uint2> TileHairAllBuffer;
@@ -24,10 +29,15 @@ RWBuffer<uint2> TileHairFullBuffer;
 RWBuffer<uint2> TileHairPartialBuffer;
 RWBuffer<uint2> TileOtherBuffer;
 
+#if PERMUTATION_WAVEOPS == 0
 // 8x8 bit mask
 groupshared uint2 s_fMask[GROUP_THREAD_COUNT];
 groupshared uint2 s_pMask[GROUP_THREAD_COUNT];
+#endif
 
+#if PERMUTATION_WAVE_OPS && COMPILER_SUPPORTS_WAVE_SIZE
+WAVESIZE(64) // PERMUTATION_WAVE_OPS is true only when wave>=64 are available
+#endif
 [numthreads(HAIR_TILE_SIZE, HAIR_TILE_SIZE, 1)]
 void TileMainCS(uint2 DispatchThreadId : SV_DispatchThreadID, uint LinearIndex : SV_GroupIndex, uint3 GroupId : SV_GroupID)
 {
@@ -44,20 +54,52 @@ void TileMainCS(uint2 DispatchThreadId : SV_DispatchThreadID, uint LinearIndex :
 			fHair = true;
 			pHair = false;
 		}
-		else if (bUintTexture)
-		{
-			const uint Coverage = InputUintTexture.Load(uint3(PixelCoord, 0));
-			fHair = Coverage >= IntCoverageThreshold;
-			pHair = Coverage > 0;//&& Coverage < IntCoverageThreshold; //this is now consistent with non-int branch below
-		}
 		else
+		#if PERMUTATION_INPUT_TYPE == 0
 		{
 			const float Transmittance = InputFloatTexture.Load(uint3(PixelCoord, 0));
 			fHair = Transmittance <= TransmittanceThreshold;
 			pHair = Transmittance < 1.f;
 		}
+		#elif PERMUTATION_INPUT_TYPE == 1
+		{
+			const uint Coverage = InputUintTexture.Load(uint3(PixelCoord, 0));
+			fHair = Coverage >= IntCoverageThreshold;
+			pHair = Coverage > 0;//&& Coverage < IntCoverageThreshold; //this is now consistent with non-int branch below
+		}
+		#endif
 	}
-
+#if PERMUTATION_WAVEOPS
+	const bool bIsFull    = WaveActiveAllTrue(fHair);
+	const bool bIsPartial = WaveActiveAnyTrue(pHair);
+	if (all(LinearIndex == 0)) 
+	{
+		if (bIsFull || bIsPartial)
+		{
+			uint WriteToIndex;
+			InterlockedAdd(TileCountBuffer[HAIRTILE_HAIR_ALL], 1, WriteToIndex);
+			TileHairAllBuffer[WriteToIndex] = GroupId.xy;
+		}
+		if (bIsFull)
+		{
+			uint WriteToIndex;
+			InterlockedAdd(TileCountBuffer[HAIRTILE_HAIR_FULL], 1, WriteToIndex);
+			TileHairFullBuffer[WriteToIndex] = GroupId.xy;
+		}
+		else if (bIsPartial)
+		{
+			uint WriteToIndex;
+			InterlockedAdd(TileCountBuffer[HAIRTILE_HAIR_PARTIAL], 1, WriteToIndex);
+			TileHairPartialBuffer[WriteToIndex] = GroupId.xy;
+		}
+		else
+		{
+			uint WriteToIndex;
+			InterlockedAdd(TileCountBuffer[HAIRTILE_OTHER], 1, WriteToIndex);
+			TileOtherBuffer[WriteToIndex] = GroupId.xy;
+		}
+	}
+#else
 	const uint2 Mask = LinearIndex < 32 ? uint2(1u << LinearIndex, 0u) : uint2(0u, 1u << (LinearIndex - 32u));
 	s_fMask[LinearIndex] = fHair ? Mask : 0u;
 	s_pMask[LinearIndex] = pHair ? Mask : 0u;
@@ -128,6 +170,7 @@ void TileMainCS(uint2 DispatchThreadId : SV_DispatchThreadID, uint LinearIndex :
 			TileOtherBuffer[WriteToIndex] = GroupId.xy;
 		}
 	}
+#endif
 }
 #endif // SHADER_TILE_GENERATION
 
@@ -351,6 +394,7 @@ void MainVS(
 uint TileSize;
 uint TileType;
 int2 TileCountXY;
+int2 ViewRectMin;
 int2 Resolution;
 Buffer<uint>  TileCountBuffer;
 Buffer<uint2> TileDataBuffer;
@@ -367,7 +411,7 @@ void TileMainCS(uint2 InGroupId : SV_GroupID, uint2 InGroupThreadId : SV_GroupTh
 		return;
 	}
 	const uint2 GroupId = TileDataBuffer[TileIndex1D];
-	const uint2 PixelCoord = GroupId * TileSize + InGroupThreadId;
+	const uint2 PixelCoord = uint2(ViewRectMin) + GroupId * TileSize + InGroupThreadId;
 
 	if (all(PixelCoord < uint2(Resolution)))
 	{

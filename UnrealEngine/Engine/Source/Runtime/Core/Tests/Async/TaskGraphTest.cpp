@@ -766,34 +766,17 @@ namespace TaskGraphTests
 		}
 
 		{	// wait for prereq by DontCompleteUntil
-			auto Lambda = [](ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
-				{
-					//UE_LOG(LogTemp, Log, TEXT("Main task"));
-
-					FGraphEventRef PrereqHolder = FGraphEvent::CreateGraphEvent();
-					PrereqHolder->SetDebugName(TEXT("PrereqHolder"));
-
-					FGraphEventRef Prereq = FFunctionGraphTask::CreateAndDispatchWhenReady(
-						[PrereqHolder]
-						{
-							//UE_LOG(LogTemp, Log, TEXT("Prereq"));
-
-							PrereqHolder->Wait(); // hold it until it's used for `DontCompleteUntil`
-						}
-					);
-					Prereq->SetDebugName(TEXT("Prereq"));
-
-					MyCompletionGraphEvent->DontCompleteUntil(Prereq);
-					check(!Prereq->IsComplete()); // check that prereq was incomplete during DontCompleteUntil ^^
-
-					// now that Prereq was registered in DontCompleteUntil, unlock it
-					PrereqHolder->DispatchSubsequents();
+			FGraphEventRef Blocker = FGraphEvent::CreateGraphEvent();
+			auto Lambda = [&Blocker](ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
+			{
+				MyCompletionGraphEvent->DontCompleteUntil(Blocker);
 			};
 
-			FGraphEventRef Event = FFunctionGraphTask::CreateAndDispatchWhenReady(MoveTemp(Lambda));
-			Event->SetDebugName(TEXT("MainEvent"));
-			check(!Event->IsComplete());
-			Event->Wait(ENamedThreads::GameThread);
+			FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(MoveTemp(Lambda));
+			FPlatformProcess::Sleep(0.01f);
+			check(!Task->IsComplete());
+			Blocker->DispatchSubsequents();
+			Task->Wait(ENamedThreads::GameThread);
 		}
 
 		{	// prereq is completed before DontCompleteUntil is called
@@ -1031,6 +1014,25 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 
 		FTaskGraphInterface::Get().WaitUntilTasksComplete(Tasks);
+	}
+
+	template<int NumTasks>
+	void TestPerfChaining()
+	{
+		FGraphEventRef Ref;
+		for (int32 TaskIndex = 0; TaskIndex < NumTasks; ++TaskIndex)
+		{
+			if (Ref.IsValid())
+			{
+				Ref = FFunctionGraphTask::CreateAndDispatchWhenReady([&]() {}, TStatId{}, Ref);
+			}
+			else
+			{
+				Ref = FFunctionGraphTask::CreateAndDispatchWhenReady([&]() {});
+			}
+		}
+
+		FTaskGraphInterface::Get().WaitUntilTaskCompletes(Ref);
 	}
 
 	template<int32 NumTasks, int32 BatchSize>
@@ -1291,6 +1293,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		UE_BENCHMARK(5, TestPerfBatch<100000, 100>);
 		UE_BENCHMARK(5, TestPerfBatchOptimised<100000, 100>);
 		UE_BENCHMARK(5, TestLatency<10000>);
+		UE_BENCHMARK(5, TestPerfChaining<10000>);
 		UE_BENCHMARK(5, TestFGraphEventPerf<100000>);
 		UE_BENCHMARK(5, TestWorkStealing<100, 1000>);
 		UE_BENCHMARK(5, TestSpawning<100000>);
@@ -1384,6 +1387,73 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		FFunctionGraphTask::CreateAndDispatchWhenReady([DestructionTest = FDestructionTest{ &bDestroyed }]{})->Wait();
 
 		check(bDestroyed);
+	}
+
+	TEST_CASE_NAMED(FTaskGraphWaitForAnyTask, "System::Core::Async::TaskGraph::WaitForAnyTask", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		{	// blocks if none of tasks is completed
+			FGraphEventRef Blocker = FGraphEvent::CreateGraphEvent(); // blocks all tasks
+
+			FGraphEventArray Tasks
+			{
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}, TStatId{}, Blocker),
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}, TStatId{}, Blocker)
+			};
+
+			verify(WaitForAnyTaskCompleted(Tasks, FTimespan::FromMilliseconds(1.0)) == INDEX_NONE);
+
+			Blocker->DispatchSubsequents();
+
+			verify(WaitForAnyTaskCompleted(Tasks) != INDEX_NONE);
+		}
+
+		{	// doesn't wait for all tasks
+			FGraphEventRef Blocker = FGraphEvent::CreateGraphEvent();
+
+			FGraphEventArray Tasks
+			{
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}),
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}, TStatId{}, Blocker) // is blocked
+			};
+
+			verify(WaitForAnyTaskCompleted(Tasks) == 0);
+
+			Blocker->DispatchSubsequents();
+		}
+	}
+
+	TEST_CASE_NAMED(FTaskGraphAnyTask, "System::Core::Async::TaskGraph::AnyTask", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		{	// blocks if none of tasks is completed
+			FGraphEventRef Blocker = FGraphEvent::CreateGraphEvent(); // blocks all tasks
+
+			FGraphEventArray Tasks
+			{
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}, TStatId{}, Blocker),
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}, TStatId{}, Blocker)
+			};
+
+			FPlatformProcess::Sleep(0.1f);
+			verify(!AnyTaskCompleted(Tasks)->IsComplete());
+
+			Blocker->DispatchSubsequents();
+
+			AnyTaskCompleted(Tasks)->Wait();
+		}
+
+		{	// doesn't wait for all tasks
+			FGraphEventRef Blocker = FGraphEvent::CreateGraphEvent();
+
+			FGraphEventArray Tasks
+			{
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}),
+				FFunctionGraphTask::CreateAndDispatchWhenReady([] {}, TStatId{}, Blocker) // is blocked
+			};
+
+			AnyTaskCompleted(Tasks)->Wait();
+
+			Blocker->DispatchSubsequents();
+		}
 	}
 }
 

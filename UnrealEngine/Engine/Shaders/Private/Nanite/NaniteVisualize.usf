@@ -6,7 +6,7 @@
 #include "../DeferredShadingCommon.ush"
 #include "../ColorMap.ush"
 #include "../Visualization.ush"
-#include "../VirtualShadowMaps/VirtualShadowMapStaticCaching.ush"
+#include "../VirtualShadowMaps/VirtualShadowMapPageCacheCommon.ush"
 #include "../SplineMeshCommon.ush"
 
 #include "NaniteDataDecode.ush"
@@ -24,11 +24,11 @@ Texture2D<uint4>		SceneZLayout;
 Texture2D<float>		MaterialZDecoded;
 Texture2D<uint4>		MaterialZLayout;
 Texture2D<uint>			ShadingMask;
+Texture2D<uint>			FastClearTileVis;
 
 StructuredBuffer<FNaniteRasterBinMeta> RasterBinMeta;
-StructuredBuffer<FNaniteShadingBinMeta> ShadingBinMeta;
+ByteAddressBuffer		ShadingBinData;
 
-ByteAddressBuffer		MaterialSlotTable;
 ByteAddressBuffer		MaterialDepthTable;
 ByteAddressBuffer		MaterialHitProxyTable;
 
@@ -36,7 +36,9 @@ int4					VisualizeConfig;
 int4					VisualizeScales;
 uint					RegularMaterialRasterBinCount;
 int2					PickingPixelPos;
-uint					FixedFunctionBin;
+
+// NOTE: Just hardcoded to ENaniteMeshPass::BasePass as an optimization, as all these shaders are only concerned with base pass materials
+static const uint MeshPassIndex = 0;
 
 RWStructuredBuffer<FNanitePickingFeedback> FeedbackBuffer;
 
@@ -102,7 +104,20 @@ uint GetVisualizeMode()
 
 uint GetPickingDomain()
 {
-	return VisualizeConfig.y;
+	return select(
+		GetVisualizeMode() == NANITE_VISUALIZE_PICKING,
+		VisualizeConfig.y,
+		NANITE_PICKING_DOMAIN_TRIANGLE
+	);
+}
+
+uint GetPixelProgrammableVisMode()
+{
+	return select(
+		GetVisualizeMode() == NANITE_VISUALIZE_PIXEL_PROGRAMMABLE_RASTER,
+		VisualizeConfig.y,
+		NANITE_PIXEL_PROG_VIS_MODE_DEFAULT
+	);
 }
 
 float GetOverdrawScale()
@@ -113,6 +128,11 @@ float GetOverdrawScale()
 float GetComplexityScale()
 {
 	return clamp(float(VisualizeScales.y), 0.0f, 100.0f) / 100.0f;
+}
+
+uint GetShadingExportCount()
+{
+	return uint(VisualizeScales.z);
 }
 
 bool GetCompositeWithSceneDepth()
@@ -172,6 +192,9 @@ void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		UnpackDbgPixel(DbgPixel, DebugDepthInt, DebugValueMax);
 		uint DebugValueAdd = DbgBuffer32[PixelPos];
 
+		const uint PackedMaterialFlags = ShadingBinData.Load<FNaniteShadingBinMeta>(UnpackedMask.ShadingBin * NANITE_SHADING_BIN_META_BYTES).MaterialFlags;
+		FNaniteMaterialFlags MaterialFlags = UnpackNaniteMaterialFlags(PackedMaterialFlags);
+
 		FVisibleCluster VisibleCluster				= GetVisibleCluster(VisibleClusterIndex);
 		FInstanceSceneData InstanceData				= GetInstanceSceneData(VisibleCluster, false);
 		FInstanceDynamicData InstanceDynamicData	= CalculateInstanceDynamicData(NaniteView, InstanceData);
@@ -214,11 +237,44 @@ void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		);
 
 		const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+		const bool bSecondaryRasterBin = !bWPOEnabled;
+
+		uint RasterBin = GetMaterialRasterBin(Cluster, InstanceData.PrimitiveId, MeshPassIndex, TriIndex, RegularMaterialRasterBinCount, bSecondaryRasterBin);
+		RasterBin = RemapRasterBin(RasterBin, RenderFlags, MaterialFlags);
+
 		const int HierarchyOffset = InstanceData.NaniteHierarchyOffset;
 
 		// Note: The mode is no longer a bitmask at this point, just a single visualization mode.
 
-		if (VisualizeMode == NANITE_VISUALIZE_TRIANGLES)
+		if (VisualizeMode == NANITE_VISUALIZE_TESSELLATION)
+		{
+			const uint SubPatch = BitFieldExtractU32(DebugValueMax, 8,  8);
+			const uint MicroTri = BitFieldExtractU32(DebugValueMax, 8, 16);
+
+			const float3 PatchColor = IntToColor(TriIndex).x * 0.5 + 0.5;
+
+			float3 SubPatchColor = IntToColor(SubPatch << 8u) * 0.6 + 0.4;
+			float3 MicroTriColor = IntToColor(MicroTri) * 0.6 + 0.4;
+
+			MicroTriColor = lerp(MicroTriColor, dot(MicroTriColor, float3(0.3, 0.6, 0.1)), 0.5);
+			SubPatchColor /= max3(SubPatchColor.x, SubPatchColor.y, SubPatchColor.z);
+			Result = MicroTriColor * SubPatchColor * PatchColor;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_TRIANGLES)
+		{
+			const uint SubPatch = BitFieldExtractU32(DebugValueMax, 8,  8);
+			const uint MicroTri = BitFieldExtractU32(DebugValueMax, 8, 16);
+			if( MicroTri != 0u )
+			{
+				TriIndex = MurmurAdd( TriIndex, SubPatch );
+				TriIndex = MurmurAdd( TriIndex, MicroTri );
+			}
+
+			Result = IntToColor( TriIndex );
+			Result = Result * 0.8 + 0.2;
+			bDarkOutline = true;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_PATCHES)
 		{
 			Result = IntToColor(TriIndex);
 			Result = Result * 0.8 + 0.2;
@@ -248,17 +304,33 @@ void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_RASTER_MODE)
 		{
-			Result = ( IntToColor(DebugValueMax) * 0.75 + 0.25 ) * ( IntToColor(TriIndex).x * 0.5 + 0.5 );
+			const uint RasterMode = BitFieldExtractU32(DebugValueMax, 8,  0);
+			uint VisValue = 0u;
+			if (RasterMode == 1u)
+			{
+				// Hardware Raster
+				VisValue = 1u;
+			}
+			else if (RasterMode == 2u)
+			{
+				// Software Raster
+				VisValue = 2u;
+			}
+			else if (RasterMode == 3u)
+			{
+				// Software Tessellation
+				VisValue = 6000u;
+			}
+
+			Result = (IntToColor(VisValue) * 0.75 + 0.25) * (IntToColor(0).x * 0.5 + 0.5);
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_RASTER_BINS)
 		{
-			const bool bSecondaryRasterBin = !bWPOEnabled;
-			const uint RasterBin = GetMaterialRasterBin(Cluster, InstanceData.PrimitiveId, TriIndex, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryRasterBin, MaterialSlotTable);
 			Result = IntToColor(RasterBin);
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_SHADING_BINS)
 		{
-			const uint ShadingBin = GetMaterialShadingBin(Cluster, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+			const uint ShadingBin = GetMaterialShadingBin(Cluster, InstanceData.PrimitiveId, MeshPassIndex, TriIndex);
 			Result = IntToColor(ShadingBin);
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_HIERARCHY_OFFSET)
@@ -281,24 +353,10 @@ void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		{
 			const uint MaterialDepthId = GetMaterialDepthId(UnpackedMask.ShadingBin, MaterialDepthTable);
 			Result = IntToColor(MaterialDepthId);
-
-		#if 0
-			// For testing
-			const uint PackedFlags = ShadingBinMeta[UnpackedMask.ShadingBin].w;
-			FNaniteMaterialFlags MaterialFlags = UnpackNaniteMaterialFlags(PackedFlags);
-			if (MaterialFlags.bPixelDiscard)
-			{
-				Result = float3(0.0f, 0.8f, 0.0f);
-			}
-			else
-			{
-				Result = float3(0.0f, 0.0f, 0.8f);
-			}
-		#endif
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_SHADING_WRITE_MASK)
 		{
-			const uint PackedFlags = ShadingBinMeta[UnpackedMask.ShadingBin].MaterialFlags;
+			const uint PackedFlags = ShadingBinData.Load<FNaniteShadingBinMeta>(UnpackedMask.ShadingBin * NANITE_SHADING_BIN_META_BYTES).MaterialFlags;
 			const uint WriteMask = BitFieldExtractU32(PackedFlags, 8u, 24u);
 			Result = IntToColor(WriteMask);
 		}
@@ -375,6 +433,19 @@ void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 			}
 		}
 	#endif
+		else if (VisualizeMode == NANITE_VISUALIZE_NO_DERIVATIVE_OPS)
+		{
+			const uint ModeValue = select(MaterialFlags.bNoDerivativeOps, 2, 1);
+			Result = (IntToColor(ModeValue) * 0.75 + 0.25) * (IntToColor(TriIndex).x * 0.5 + 0.5);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_FAST_CLEAR_TILES)
+		{
+			const uint TileData = FastClearTileVis[PixelPos];
+			// Tile data has a counter for each MRT that is still marked as "clear" in
+			// the meta data, indicating that the next fast clear eliminate will fully
+			// write through this memory (slow tile).
+			Result = ColorMapInferno(float(TileData) / float(GetShadingExportCount()));
+		}
 		else if (VisualizeMode == NANITE_VISUALIZE_NANITE_MASK)
 		{
 			Result = float3(0, 1, 0);
@@ -397,9 +468,32 @@ void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 				Result = float3(1, 0, 0);
 			}
 		}
+		else if (VisualizeMode == NANITE_VISUALIZE_PIXEL_PROGRAMMABLE_RASTER)
+		{
+			bool bHighlight = false;
+			switch (GetPixelProgrammableVisMode())
+			{
+			case NANITE_PIXEL_PROG_VIS_MODE_DEFAULT:
+				bHighlight = MaterialFlags.bPixelDiscard || MaterialFlags.bPixelDepthOffset || MaterialFlags.bDisplacement;
+				break;
+			case NANITE_PIXEL_PROG_VIS_MODE_MASKED_ONLY:
+				bHighlight = MaterialFlags.bPixelDiscard;
+				break;
+			case NANITE_PIXEL_PROG_VIS_MODE_PDO_ONLY:
+				bHighlight = MaterialFlags.bPixelDepthOffset;
+				break;
+			case NANITE_PIXEL_PROG_VIS_MODE_TESS_ONLY:
+				bHighlight = MaterialFlags.bDisplacement;
+				break;
+			default:
+				break;
+			}
+
+			Result = select(bHighlight, float3(1, 0, 0), float3(0.1, 0, 0.3));
+		}
 		else if (VisualizeMode == NANITE_VISUALIZE_LIGHTMAP_UVS)
 		{
-			const float2 LightmapUVs = AttributeData.TexCoords[PrimitiveData.LightmapUVIndex];
+			const float2 LightmapUVs = AttributeData.TexCoords[PrimitiveData.LightmapUVIndex].Value;
 			Result = float3(LightmapUVs.x, LightmapUVs.y, 0);
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_LIGHTMAP_UV_INDEX)
@@ -425,7 +519,28 @@ void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_VSM_STATIC_CACHING)
 		{
-			Result = ShouldCacheInstanceAsStatic(InstanceData, false) ? float3(1, 1, 0) : float3(0.5, 0.5, 0.5);
+			// TODO: We need to figure out a way to try and better visualize shadow clipmap WPO distances
+			bool bAllowWPO = VirtualShadowMapIsWPOAllowed(PrimitiveData, -1);
+			if (ShouldCacheInstanceAsStatic(VisibleCluster.InstanceId, false, bAllowWPO))
+			{
+				Result = float3(1, 0, 0);	
+			}
+			else
+			{
+				Result = float3(0, 0, 1);
+			}
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_DISPLACEMENT_SCALE)
+		{
+			const float DisplacementCenter = RasterBinMeta[RasterBin].MaterialDisplacementCenter;
+			const float DisplacementMagnitude = RasterBinMeta[RasterBin].MaterialDisplacementMagnitude;
+
+			const float MinDisplacement = (0.0f - DisplacementCenter) * DisplacementMagnitude;
+			const float MaxDisplacement = (1.0f - DisplacementCenter) * DisplacementMagnitude;
+
+			const float AbsDelta = abs(MaxDisplacement - MinDisplacement);
+
+			Result = GreenToRedTurbo(AbsDelta / 30.0f);
 		}
 		else if (VisualizeMode == NANITE_VISUALIZE_PICKING)
 		{
@@ -529,14 +644,20 @@ void PickingCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		UnpackDbgPixel(DbgPixel, DebugDepthInt, DebugValueMax);
 		uint DebugValueAdd = DbgBuffer32[PickingPos];
 
+		const uint PackedMaterialFlags = ShadingBinData.Load<FNaniteShadingBinMeta>(UnpackedMask.ShadingBin * NANITE_SHADING_BIN_META_BYTES).MaterialFlags;
+		FNaniteMaterialFlags MaterialFlags = UnpackNaniteMaterialFlags(PackedMaterialFlags);
+
 		FVisibleCluster VisibleCluster				= GetVisibleCluster(VisibleClusterIndex);
 		FInstanceSceneData InstanceData				= GetInstanceSceneData(VisibleCluster, false);
 		FInstanceDynamicData InstanceDynamicData	= CalculateInstanceDynamicData(NaniteView, InstanceData);
 		FPrimitiveSceneData PrimitiveData			= GetPrimitiveData(InstanceData.PrimitiveId);
 		FCluster Cluster							= GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
 
-		const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;		
+		const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
 		const bool bSecondaryRasterBin = !bWPOEnabled;
+
+		uint RasterBin = GetMaterialRasterBin(Cluster, InstanceData.PrimitiveId, MeshPassIndex, TriIndex, RegularMaterialRasterBinCount, bSecondaryRasterBin);
+		RasterBin = RemapRasterBin(RasterBin, RenderFlags, MaterialFlags);
 
 		FeedbackResults.PrimitiveId			= InstanceData.PrimitiveId;
 		FeedbackResults.InstanceId			= VisibleCluster.InstanceId;
@@ -547,9 +668,9 @@ void PickingCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		FeedbackResults.TriangleIndex		= TriIndex;
 		FeedbackResults.DepthInt			= DepthInt;
 		FeedbackResults.RasterMode			= DebugValueMax;
-		FeedbackResults.RasterBin			= GetMaterialRasterBin(Cluster, InstanceData.PrimitiveId, TriIndex, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryRasterBin, MaterialSlotTable);
-		FeedbackResults.ShadingBin			= GetMaterialShadingBin(Cluster, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
-		FeedbackResults.LegacyShadingId		= GetMaterialLegacyShadingId(Cluster, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+		FeedbackResults.RasterBin			= RasterBin;
+		FeedbackResults.ShadingBin			= GetMaterialShadingBin(Cluster, InstanceData.PrimitiveId, MeshPassIndex, TriIndex);
+		FeedbackResults.LegacyShadingId		= GetMaterialLegacyShadingId(Cluster, InstanceData.PrimitiveId, MeshPassIndex, TriIndex);
 		FeedbackResults.MaterialDepthId		= GetMaterialDepthId(FeedbackResults.LegacyShadingId, MaterialDepthTable);
 		FeedbackResults.MaterialIndex		= GetRelativeMaterialIndex(Cluster, TriIndex);
 		FeedbackResults.MaterialCount		= GetMaterialCount(Cluster);
@@ -562,14 +683,10 @@ void PickingCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
 		const float4 ClusterLODBoundsColor	= ColorYellow;
 
 		FShaderPrintContext ShaderPrint = InitShaderPrintContext();
-		const float4x4 LocalToTranslatedWorld = LWCMultiplyTranslation(InstanceData.LocalToWorld, NaniteView.PreViewTranslation);
+		const float4x4 LocalToTranslatedWorld = DFFastToTranslatedWorld(InstanceData.LocalToWorld, NaniteView.PreViewTranslation);
 
 		const float3 WPOExtent = GetLocalMaxWPOExtent(PrimitiveData, InstanceData, bWPOEnabled);
-	#if ACCURATE_DISPLACEMENT_BOUNDS
-		const float AbsMaxMaterialDisplacement = GetAbsMaxMaterialDisplacement(RasterBinMeta, FeedbackResults.RasterBin);
-	#else
 		const float AbsMaxMaterialDisplacement = GetAbsMaxMaterialDisplacement(PrimitiveData);
-	#endif
 
 		// If WPO and/or material displacement is enabled, the cluster bounds will have been dilated to account for max displacement
 		float3 ClusterBoxBoundsCenter = Cluster.BoxBoundsCenter;

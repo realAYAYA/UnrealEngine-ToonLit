@@ -19,10 +19,21 @@ enum class ETriggerEventInternal : uint8;
 enum class EKeyEvent : uint8;
 class UInputMappingContext;
 
+// ContinuouslyInjectedInputs Map is not managed.
+// Continuous input injections seem to be getting garbage collected and
+// crashing in UObject::ProcessEvent when calling ModifyRaw.
+// Band-aid fix: Making these managed references. Also check modifications to
+// IEnhancedInputSubsystemInterface::Start/StopContinuousInputInjectionForAction.
+USTRUCT()
 struct FInjectedInput
 {
+	GENERATED_BODY()
+
 	FInputActionValue RawValue;
+
+	UPROPERTY(Transient)
 	TArray<UInputTrigger*> Triggers;
+	UPROPERTY(Transient)
 	TArray<UInputModifier*> Modifiers;
 };
 
@@ -42,6 +53,8 @@ USTRUCT()
 struct FInjectedInputArray
 {
 	GENERATED_BODY()
+
+	UPROPERTY(Transient)
 	TArray<FInjectedInput> Injected;
 };
 

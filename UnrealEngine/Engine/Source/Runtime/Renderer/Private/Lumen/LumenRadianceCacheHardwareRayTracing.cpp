@@ -15,7 +15,6 @@
 
 #if RHI_RAYTRACING
 
-#include "RayTracing/RayTracingDeferredMaterials.h"
 #include "RayTracing/RaytracingOptions.h"
 #include "RayTracing/RayTracingLighting.h"
 #include "LumenHardwareRayTracingCommon.h"
@@ -74,7 +73,7 @@ class FLumenRadianceCacheHardwareRayTracing : public FLumenHardwareRayTracingSha
 	DECLARE_LUMEN_RAYTRACING_SHADER(FLumenRadianceCacheHardwareRayTracing, Lumen::ERayTracingShaderDispatchSize::DispatchSize1D)
 
 	class FRayTracingPass : SHADER_PERMUTATION_ENUM_CLASS("RAY_TRACING_PASS", LumenRadianceCache::ERayTracingPass);
-	using FPermutationDomain = TShaderPermutationDomain<FRayTracingPass>;
+	using FPermutationDomain = TShaderPermutationDomain<FLumenHardwareRayTracingShaderBase::FBasePermutationDomain, FRayTracingPass>;
 
 	// Parameters
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
@@ -255,10 +254,6 @@ void FDeferredShadingSceneRenderer::PrepareLumenHardwareRayTracingRadianceCache(
 {
 }
 
-void FDeferredShadingSceneRenderer::PrepareLumenHardwareRayTracingRadianceCacheDeferredMaterial(const FViewInfo& View, TArray<FRHIRayTracingShader*>& OutRayGenShaders)
-{
-}
-
 void FDeferredShadingSceneRenderer::PrepareLumenHardwareRayTracingRadianceCacheLumenMaterial(const FViewInfo& View, TArray<FRHIRayTracingShader*>& OutRayGenShaders)
 {
 	if (Lumen::UseHardwareRayTracedRadianceCache(*View.Family))
@@ -311,7 +306,7 @@ void DispatchRayGenOrComputeShader(
 		{
 			PassParameters->CompactedTraceTexelAllocator = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(CompactedTraceTexelAllocator, PF_R32_UINT));
 			PassParameters->RWHardwareRayTracingIndirectArgs = GraphBuilder.CreateUAV(HardwareRayTracingIndirectArgsBuffer, PF_R32_UINT);
-			PassParameters->OutputThreadGroupSize = bInlineRayTracing ? FLumenRadianceCacheHardwareRayTracingCS::GetThreadGroupSize() : FLumenRadianceCacheHardwareRayTracingRGS::GetThreadGroupSize();
+			PassParameters->OutputThreadGroupSize = bInlineRayTracing ? FLumenRadianceCacheHardwareRayTracingCS::GetThreadGroupSize(View.GetShaderPlatform()) : FLumenRadianceCacheHardwareRayTracingRGS::GetThreadGroupSize();
 		}
 
 		TShaderRef<FLumenRadianceCacheHardwareRayTracingIndirectArgsCS> ComputeShader = View.ShaderMap->GetShader<FLumenRadianceCacheHardwareRayTracingIndirectArgsCS>();
@@ -361,30 +356,27 @@ void DispatchRayGenOrComputeShader(
 
 	if (bInlineRayTracing)
 	{
-		TShaderRef<FLumenRadianceCacheHardwareRayTracingCS> ComputeShader = View.ShaderMap->GetShader<FLumenRadianceCacheHardwareRayTracingCS>(PermutationVector);
-		
 		// Inline always runs as an indirect compute shader
-		FComputeShaderUtils::AddPass(
+		FLumenRadianceCacheHardwareRayTracingCS::AddLumenRayTracingDispatchIndirect(
 			GraphBuilder,
 			RDG_EVENT_NAME("HardwareRayTracingCS%s", *RayTracingPassName),
-			ComputePassFlags,
-			ComputeShader,
+			View,
+			PermutationVector,
 			PassParameters,
 			PassParameters->HardwareRayTracingIndirectArgs,
-			0);
+			0, 
+			ComputePassFlags);
 	}
 	else
 	{
-		TShaderRef<FLumenRadianceCacheHardwareRayTracingRGS> RayGenerationShader = View.ShaderMap->GetShader<FLumenRadianceCacheHardwareRayTracingRGS>(PermutationVector);
-
-		AddLumenRayTraceDispatchIndirectPass(
+		FLumenRadianceCacheHardwareRayTracingRGS::AddLumenRayTracingDispatchIndirect(
 			GraphBuilder,
 			RDG_EVENT_NAME("HardwareRayTracingRGS%s", *RayTracingPassName),
-			RayGenerationShader,
+			View,
+			PermutationVector,
 			PassParameters,
 			PassParameters->HardwareRayTracingIndirectArgs,
 			0,
-			View,
 			/*bUseMinimalPayload*/ true);
 	}	
 }

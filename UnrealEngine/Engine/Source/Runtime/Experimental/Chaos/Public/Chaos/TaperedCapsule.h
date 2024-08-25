@@ -240,7 +240,7 @@ namespace Chaos
 
 	private:
 		//Phi is distance from closest point on plane1
-		FReal GetRadius(const FReal& Phi) const
+		FReal GetRadiusAtDistance(const FReal& Phi) const
 		{
 			const FReal Alpha = Phi / Height;
 			return FMath::Lerp(Radius1, Radius2, Alpha);

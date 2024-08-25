@@ -27,6 +27,16 @@ void FMovieSceneControlRigSpaceChannel::GetKeys(const TRange<FFrameNumber>& With
 	GetData().GetKeys(WithinRange, OutKeyTimes, DeleteKeyHandles);
 }
 
+FKeyHandle FMovieSceneControlRigSpaceChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneControlRigSpaceChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
+}
+
 void FMovieSceneControlRigSpaceChannel::GetKeyTimes(TArrayView<const FKeyHandle> InHandles, TArrayView<FFrameNumber> OutKeyTimes)
 {
 	GetData().GetKeyTimes(InHandles, OutKeyTimes);

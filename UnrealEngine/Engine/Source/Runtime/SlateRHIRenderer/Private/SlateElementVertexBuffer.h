@@ -34,7 +34,7 @@ public:
 
 		if ( IsInRenderingThread() )
 		{
-			InitResource(FRenderResource::GetCommandList());
+			InitResource(FRHICommandListImmediate::Get());
 		}
 		else
 		{

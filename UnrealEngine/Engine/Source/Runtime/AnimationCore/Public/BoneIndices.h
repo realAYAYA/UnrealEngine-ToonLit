@@ -157,18 +157,21 @@ struct FBoneIndexWithOperators : public FBoneIndexBase
 	}
 };
 
+// This represents a compact pose bone index. A compact pose is held by a bone container and can have a different ordering than either the skeleton or skeletal mesh.
 struct FCompactPoseBoneIndex : public FBoneIndexWithOperators < FCompactPoseBoneIndex >
 {
 public:
 	explicit FCompactPoseBoneIndex(int32 InBoneIndex) { BoneIndex = InBoneIndex; }
 };
 
+// This represents a skeletal mesh bone index which may differ from the skeleton bone index it corresponds to.
 struct FMeshPoseBoneIndex : public FBoneIndexWithOperators < FMeshPoseBoneIndex >
 {
 public:
 	explicit FMeshPoseBoneIndex(int32 InBoneIndex) { BoneIndex = InBoneIndex; }
 };
 
+// This represents a skeleton bone index which may differ from the skeletal mesh bone index it corresponds to.
 struct FSkeletonPoseBoneIndex : public FBoneIndexWithOperators < FSkeletonPoseBoneIndex >
 {
 public:

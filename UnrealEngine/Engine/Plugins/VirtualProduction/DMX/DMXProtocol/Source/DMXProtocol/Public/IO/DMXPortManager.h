@@ -4,7 +4,6 @@
 
 #include "DMXProtocolCommon.h"
 
-#include "CoreMinimal.h"
 #include "Templates/SharedPointer.h"
 
 struct FDMXInputPortConfig;
@@ -70,9 +69,9 @@ public:
 
 	static FDMXPortManager& Get();
 
-	FORCEINLINE const TArray<FDMXInputPortSharedRef>& GetInputPorts() const { return InputPorts; }
+	const TArray<FDMXInputPortSharedRef>& GetInputPorts() const { return InputPorts; }
 
-	FORCEINLINE const TArray<FDMXOutputPortSharedRef>& GetOutputPorts() const { return OutputPorts; }
+	const TArray<FDMXOutputPortSharedRef>& GetOutputPorts() const { return OutputPorts; }
 
 	/** Gets the input port that corresponds to the input port config. Checks the config is in the DMXProtocolSetting's InputPortConfigs array. */
 	FDMXInputPortSharedRef GetInputPortFromConfigChecked(const FDMXInputPortConfig& InputPortConfig);

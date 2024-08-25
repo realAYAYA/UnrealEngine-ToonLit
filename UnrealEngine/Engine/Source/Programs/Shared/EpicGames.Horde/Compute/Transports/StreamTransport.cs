@@ -11,21 +11,35 @@ namespace EpicGames.Horde.Compute.Transports
 	/// <summary>
 	/// Compute transport which wraps an underlying stream
 	/// </summary>
-	class StreamTransport : IComputeTransport
+	class StreamTransport : ComputeTransport
 	{
 		readonly Stream _stream;
-
-		/// <inheritdoc/>
+		readonly bool _leaveOpen;
 		public long Position { get; private set; }
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
 		/// <param name="stream">Stream to use for the transferring data</param>
-		public StreamTransport(Stream stream) => _stream = stream;
+		/// <param name="leaveOpen">Whether to leave the inner stream open when disposing</param>
+		public StreamTransport(Stream stream, bool leaveOpen = false)
+		{
+			_stream = stream;
+			_leaveOpen = leaveOpen;
+		}
 
 		/// <inheritdoc/>
-		public async ValueTask<int> ReadPartialAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+		public override async ValueTask DisposeAsync()
+		{
+			if (!_leaveOpen)
+			{
+				await _stream.DisposeAsync();
+			}
+			GC.SuppressFinalize(this);
+		}
+
+		/// <inheritdoc/>
+		public override async ValueTask<int> RecvAsync(Memory<byte> buffer, CancellationToken cancellationToken)
 		{
 			int length = await _stream.ReadAsync(buffer, cancellationToken);
 			Position += length;
@@ -33,7 +47,7 @@ namespace EpicGames.Horde.Compute.Transports
 		}
 
 		/// <inheritdoc/>
-		public async ValueTask WriteAsync(ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
+		public override async ValueTask SendAsync(ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
 		{
 			foreach (ReadOnlyMemory<byte> memory in buffer)
 			{
@@ -43,6 +57,6 @@ namespace EpicGames.Horde.Compute.Transports
 		}
 
 		/// <inheritdoc/>
-		public ValueTask MarkCompleteAsync(CancellationToken cancellationToken) => new ValueTask();
+		public override ValueTask MarkCompleteAsync(CancellationToken cancellationToken) => new ValueTask();
 	}
 }

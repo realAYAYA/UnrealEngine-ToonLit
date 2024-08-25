@@ -2,7 +2,7 @@
 
 #include "SymslibResolver.h"
 
-#if PLATFORM_WINDOWS
+#if UE_SYMSLIB_AVAILABLE
 
 #include "Algo/ForEach.h"
 #include "Algo/Sort.h"
@@ -36,6 +36,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogSymslib, Log, All);
 		#include "DbgHelp.h"
 		#include <Microsoft/HideMicrosoftPlatformTypes.h>
 	#endif
+#else
+	#define USE_DBG_HELP_UNDECORATOR 0
 #endif
 
 /////////////////////////////////////////////////////////////////////
@@ -71,17 +73,29 @@ namespace
 		}
 	};
 
-	static FString FindBinaryFileInPath(const FString& File, const FString& SearchPath)
+	static FString FindBinaryFileInPath(const FString& File, const FString& SearchPath, const FString& Platform)
 	{
 		IPlatformFile* PlatformFile = &FPlatformFileManager::Get().GetPlatformFile();
 
+		// On Linux and Mac find the non-stripped binary if available
+		// todo: We cannot actually rely on the Platform string being set yet, we can enable that check when that's part of trace files metadata.
+		// 		 for now we always override the binary if a .debug file exists
+		//if (Platform.Equals(TEXT("Linux")) || Platform.Equals(TEXT("Mac")))
+		{
+			FString NonStrippedFile = FPaths::SetExtension(File, TEXT("debug"));
+			FString Result = FPaths::Combine(SearchPath, NonStrippedFile);
+			if (PlatformFile->FileExists(*Result))
+			{
+				return Result;
+			}
+		}
+
 		// If the search path is an absolute path to a file use this. Filenames does
-		// not need to to match (e.g. eboot.bin <-> gamename.self)
+		// not need to match (e.g. eboot.bin <-> gamename.self)
 		if (PlatformFile->FileExists(*SearchPath))
 		{
 			return SearchPath;
 		}
-
 
 		// Extract only filename part in case Path is absolute path
 		FString FileName = FPaths::GetCleanFilename(File);
@@ -231,7 +245,7 @@ namespace
 		}
 
 		// First lookup file in symbol path
-		FString BinaryPath = FindBinaryFileInPath(FilePath, SearchPath);
+		FString BinaryPath = FindBinaryFileInPath(FilePath, SearchPath, Platform);
 		if (BinaryPath.IsEmpty() && !Platform.IsEmpty())
 		{
 			BinaryPath = FindFileInEngineFolder(FilePath, SearchPath, Platform, AppName);
@@ -710,8 +724,8 @@ void FSymslibResolver::OnAnalysisComplete()
 			}
 		}
 
-		UE_LOG(LogSymslib, Display, TEXT("Allocated %.02f Mb of strings, %.02f Mb wasted."),
-		       SymbolBytesAllocated / float(1024*1024), SymbolBytesWasted / float(1024*1024));
+		UE_LOG(LogSymslib, Display, TEXT("Allocated %.02f MiB of strings (%.02f MiB wasted)."),
+			(double)SymbolBytesAllocated / (1024.0 * 1024.0), (double)SymbolBytesWasted / (1024.0 * 1024.0));
 	});
 }
 
@@ -790,9 +804,9 @@ void FSymslibResolver::ResolveSymbols(TArrayView<FQueuedAddress>& QueuedWork)
 		}
 		ResolveSymbolTracked(ToResolve.Address, *ToResolve.Target, StringAllocator);
 	}
-	UE_LOG(LogSymslib, VeryVerbose, TEXT("String allocator used: %.02f kb, wasted: %.02f kb using %d blocks"),
-		((StringAllocator.BlockUsed * StringAllocator.BlockSize - StringAllocator.BlockRemaining) * sizeof(TCHAR)) / 1024.0f,
-		(StringAllocator.BlockRemaining * sizeof(TCHAR)) / 1024.0f,
+	UE_LOG(LogSymslib, VeryVerbose, TEXT("String allocator: %.02f KiB used (%.02f KiB wasted) in %d blocks"),
+		(double)((StringAllocator.BlockUsed * StringAllocator.BlockSize - StringAllocator.BlockRemaining) * sizeof(TCHAR)) / 1024.0,
+		(double)(StringAllocator.BlockRemaining * sizeof(TCHAR)) / 1024.0,
 		StringAllocator.BlockUsed);
 	SymbolBytesAllocated.fetch_add(StringAllocator.BlockUsed * StringAllocator.BlockSize * sizeof(TCHAR));
 	SymbolBytesWasted.fetch_add(StringAllocator.BlockRemaining * sizeof(TCHAR));
@@ -1189,7 +1203,7 @@ bool FSymslibResolver::ResolveSymbol(uint64 Address, FResolvedSymbol& Target, FS
 	}
 
 	// this includes skipping symbols without name (empty string)
-	if (!SymsSymbol || !SourceFilePersistent || SymsSymbol && SymsSymbol->Name[0] == 0)
+	if (!SymsSymbol || !SourceFilePersistent || (SymsSymbol && SymsSymbol->Name[0] == 0))
 	{
 		UpdateResolvedSymbol(Target,
 			ESymbolQueryResult::NotFound,
@@ -1237,4 +1251,4 @@ void FSymslibResolver::WaitForTasks()
 
 } // namespace TraceServices
 
-#endif // PLATFORM_WINDOWS
+#endif // UE_SYMSLIB_AVAILABLE

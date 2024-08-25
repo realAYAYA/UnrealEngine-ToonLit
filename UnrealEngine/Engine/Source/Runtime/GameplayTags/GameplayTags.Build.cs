@@ -25,7 +25,7 @@ namespace UnrealBuildTool.Rules
 				}
 			);
 
-			if (Target.Type == TargetType.Editor)
+			if (Target.bCompileAgainstEditor)
             {
                 PrivateDependencyModuleNames.AddRange(
                 new string[]
@@ -35,6 +35,8 @@ namespace UnrealBuildTool.Rules
 				}
                 );
             }
+
+			bAllowAutoRTFMInstrumentation = true;
 
 			SetupIrisSupport(Target);
 		}

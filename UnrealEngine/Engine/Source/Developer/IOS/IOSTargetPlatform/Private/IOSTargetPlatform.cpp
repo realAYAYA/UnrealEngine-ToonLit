@@ -28,13 +28,15 @@
 /* FIOSTargetPlatform structors
  *****************************************************************************/
 
-FIOSTargetPlatform::FIOSTargetPlatform(bool bInIsTVOS, bool bIsClientOnly)
+FIOSTargetPlatform::FIOSTargetPlatform(bool bInIsTVOS, bool bInIsVisionOS, bool bIsClientOnly)
 	// override the ini name up in the base classes, which will go into the FTargetPlatformInfo
-	: TNonDesktopTargetPlatformBase(bIsClientOnly, nullptr, bInIsTVOS ? TEXT("TVOS") : nullptr)
+	: TNonDesktopTargetPlatformBase(bIsClientOnly, nullptr, bInIsTVOS ? TEXT("TVOS") : bInIsVisionOS ? TEXT("VisionOS") : nullptr)
 	, bIsTVOS(bInIsTVOS)
+	, bIsVisionOS(bInIsVisionOS)
 	, MobileShadingPath(0)
 	, bDistanceField(false)
 	, bMobileForwardEnableClusteredReflections(false)
+	, bMobileVirtualTextures(false)
 {
 #if WITH_ENGINE
 	TextureLODSettings = nullptr; // TextureLODSettings are registered by the device profile.
@@ -42,12 +44,13 @@ FIOSTargetPlatform::FIOSTargetPlatform(bool bInIsTVOS, bool bIsClientOnly)
 	GetConfigSystem()->GetBool(TEXT("/Script/Engine.RendererSettings"), TEXT("r.DistanceFields"), bDistanceField, GEngineIni);
 	GetConfigSystem()->GetInt(TEXT("/Script/Engine.RendererSettings"), TEXT("r.Mobile.ShadingPath"), MobileShadingPath, GEngineIni);
 	GetConfigSystem()->GetBool(TEXT("/Script/Engine.RendererSettings"), TEXT("r.Mobile.Forward.EnableClusteredReflections"), bMobileForwardEnableClusteredReflections, GEngineIni);
+	GetConfigSystem()->GetBool(TEXT("/Script/Engine.RendererSettings"), TEXT("r.Mobile.VirtualTextures"), bMobileVirtualTextures, GEngineIni);
 #endif // #if WITH_ENGINE
 
 	// initialize the connected device detector
 	DeviceHelper.OnDeviceConnected().AddRaw(this, &FIOSTargetPlatform::HandleDeviceConnected);
 	DeviceHelper.OnDeviceDisconnected().AddRaw(this, &FIOSTargetPlatform::HandleDeviceDisconnected);
-	DeviceHelper.Initialize(bIsTVOS);
+	DeviceHelper.Initialize(bIsTVOS || bIsVisionOS);
 }
 
 
@@ -275,7 +278,7 @@ int32 FIOSTargetPlatform::CheckRequirements(bool bProjectHasCode, EBuildConfigur
 	FString ProjectPath = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
 #if PLATFORM_MAC
     FString CmdExe = TEXT("/bin/sh");
-    FString ScriptPath = FPaths::ConvertRelativePathToFull(FPaths::EngineDir() / TEXT("Build/BatchFiles/Mac/RunMono.sh"));
+    FString ScriptPath = FPaths::ConvertRelativePathToFull(FPaths::EngineDir() / TEXT("Build/BatchFiles/RunDotnet.sh"));
     FString IPPPath = FPaths::ConvertRelativePathToFull(FPaths::EngineDir() / TEXT("Binaries/DotNET/IOS/IPhonePackager.exe"));
 	FString CommandLine = FString::Printf(TEXT("\"%s\" \"%s\" Validate Engine -project \"%s\" -bundlename \"%s\" -teamID \"%s\" %s %s"), *ScriptPath, *IPPPath, *ProjectPath, *(BundleIdentifier), *(TeamID), (bForDistribtion ? TEXT("-distribution") : TEXT("")), bAutomaticSigning ? TEXT("-autosigning") : TEXT(""));
 #else
@@ -372,7 +375,7 @@ void FIOSTargetPlatform::HandlePongMessage( const FIOSLaunchDaemonPong& Message,
 		Device->SetDeviceEndpoint(Context->GetSender());
 		Device->SetIsSimulated(Message.DeviceID.Contains(TEXT("Simulator")));
 
-		OnDeviceDiscovered().Broadcast(Device.ToSharedRef());
+		ITargetPlatformControls::OnDeviceDiscovered().Broadcast(Device.ToSharedRef());
 	}
 
 	Device->LastPinged = FDateTime::UtcNow();
@@ -387,7 +390,13 @@ void FIOSTargetPlatform::HandleDeviceConnected(const FIOSLaunchDaemonPong& Messa
 	
 	if (!Device.IsValid())
 	{
-	if ((Message.DeviceType.Contains(TEXT("AppleTV")) && bIsTVOS) || (!Message.DeviceType.Contains(TEXT("AppleTV")) && !bIsTVOS))
+		bool bIsTVOSDevice = Message.DeviceType.Contains(TEXT("AppleTV"));
+		bool bIsVisionOSDevice = Message.DeviceType.Contains(TEXT("RealityDevice"));
+		bool bIsIOSDevice = !bIsTVOSDevice && !bIsVisionOSDevice;
+		
+		bool bIsIOS = !bIsTVOS && !bIsVisionOS;
+
+		if ((bIsIOS && bIsIOSDevice) || (bIsTVOS && bIsTVOSDevice) || (bIsVisionOS && bIsVisionOSDevice))
 		{
 			Device = MakeShareable(new FIOSTargetDevice(*this));
 
@@ -401,9 +410,9 @@ void FIOSTargetPlatform::HandleDeviceConnected(const FIOSLaunchDaemonPong& Messa
 			Device->SetModelId(Message.DeviceModelId);
 			Device->SetOSVersion(Message.DeviceOSVersion);
 			Device->SetDeviceConnectionType(Message.DeviceConnectionType);
-			Device->SetIsSimulated(Message.DeviceID.Contains(TEXT("Simulator")));
+			Device->SetIsSimulated(Message.DeviceConnectionType.Contains(TEXT("Simulator")));
 
-			OnDeviceDiscovered().Broadcast(Device.ToSharedRef());
+			ITargetPlatformControls::OnDeviceDiscovered().Broadcast(Device.ToSharedRef());
 		}
 		else
 		{
@@ -425,7 +434,7 @@ void FIOSTargetPlatform::HandleDeviceDisconnected(const FIOSLaunchDaemonPong& Me
 	
 	if (Device.IsValid())
 	{
-		OnDeviceLost().Broadcast(Device.ToSharedRef());
+		ITargetPlatformControls::OnDeviceLost().Broadcast(Device.ToSharedRef());
 		Devices.Remove(DeviceId);
 	}
 }
@@ -433,12 +442,6 @@ void FIOSTargetPlatform::HandleDeviceDisconnected(const FIOSLaunchDaemonPong& Me
 
 /* ITargetPlatform interface
  *****************************************************************************/
-static bool UsesVirtualTextures()
-{
-	static auto* CVarMobileVirtualTextures = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Mobile.VirtualTextures"));
-	return CVarMobileVirtualTextures->GetValueOnAnyThread() != 0;
-}
-
 static bool SupportsMetal()
 {
 	// default to NOT supporting metal
@@ -488,7 +491,8 @@ bool FIOSTargetPlatform::SupportsFeature( ETargetPlatformFeatures Feature ) cons
 			return SupportsMetalMRT();
 
 		case ETargetPlatformFeatures::VirtualTextureStreaming:
-			return UsesVirtualTextures();
+			// TODO: should it check r.VirtualTextures for SM5 renderer?
+			return bMobileVirtualTextures;
 
 		case ETargetPlatformFeatures::DistanceFieldAO:
 			return UsesDistanceFields();

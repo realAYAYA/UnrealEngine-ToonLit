@@ -66,6 +66,7 @@ public:
 		SHADER_PARAMETER(int32, MeshIndex)
 		SHADER_PARAMETER(uint32, MeshIndexAttributeOffset)
 		SHADER_PARAMETER(FVector2f, CullDistanceRangeSquared)
+		SHADER_PARAMETER(FVector4f, LODScreenSize)
 		SHADER_PARAMETER(FVector4f, LocalBoundingSphere)
 		SHADER_PARAMETER(FVector3f, CullingWorldSpaceOffset)
 		SHADER_PARAMETER(FVector3f, SystemLWCTile)

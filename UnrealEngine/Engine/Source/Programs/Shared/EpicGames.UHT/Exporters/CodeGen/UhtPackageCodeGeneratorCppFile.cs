@@ -110,8 +110,6 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					builder.Append(info.RegsiteredExternalDecl);
 				}
 
-				builder.AppendMetaDataDef(Package, null, MetaDataParamsName, 3);
-
 				builder.Append("\tstatic FPackageRegistrationInfo Z_Registration_Info_UPackage_").Append(strippedName).Append(";\r\n");
 				builder.Append("\tFORCENOINLINE UPackage* ").Append(singletonName).Append("()\r\n");
 				builder.Append("\t{\r\n");

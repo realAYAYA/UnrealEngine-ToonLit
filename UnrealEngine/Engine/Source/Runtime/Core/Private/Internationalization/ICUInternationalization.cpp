@@ -54,7 +54,7 @@ namespace
 
 		static void* U_CALLCONV Malloc(const void* context, size_t size)
 		{
-			LLM_SCOPE(ELLMTag::Localization);
+			LLM_SCOPE_BYNAME(TEXT("Localization/ICU"));
 			void* Result = FMemory::Malloc(size);
 #if STATS
 			BytesInUseCount += FMemory::GetAllocSize(Result);
@@ -75,7 +75,7 @@ namespace
 
 		static void* U_CALLCONV Realloc(const void* context, void* mem, size_t size)
 		{
-			LLM_SCOPE(ELLMTag::Localization);
+			LLM_SCOPE_BYNAME(TEXT("Localization/ICU"));
 			return FMemory::Realloc(mem, size);
 		}
 
@@ -205,6 +205,7 @@ void FICUInternationalization::Terminate()
 
 	u_cleanup();
 
+	FScopeLock Lock(&PathToCachedFileDataMapCS);
 	for (auto& PathToCachedFileDataPair : PathToCachedFileDataMap)
 	{
 		UE_LOG(LogICUInternationalization, Warning, TEXT("ICU data file '%s' (ref count %d) was still referenced after ICU shutdown. This will likely lead to a crash."), *PathToCachedFileDataPair.Key, PathToCachedFileDataPair.Value.ReferenceCount);
@@ -567,7 +568,7 @@ TArray<FString> FICUInternationalization::GetPrioritizedCultureNames(const FStri
 	};
 
 	// Apply any culture remapping
-	FString GivenCulture = FCulture::GetCanonicalName(Name);
+	FString GivenCulture = FCultureImplementation::GetCanonicalName(Name, *I18N);
 	IsCultureRemapped(Name, &GivenCulture);
 
 	TArray<FString> PrioritizedCultureNames;
@@ -652,7 +653,7 @@ FCulturePtr FICUInternationalization::GetCulture(const FString& Name)
 
 FCulturePtr FICUInternationalization::FindOrMakeCulture(const FString& Name, const EAllowDefaultCultureFallback AllowDefaultFallback)
 {
-	return FindOrMakeCanonizedCulture(FCulture::GetCanonicalName(Name), AllowDefaultFallback);
+	return FindOrMakeCanonizedCulture(FCultureImplementation::GetCanonicalName(Name, *I18N), AllowDefaultFallback);
 }
 
 FCulturePtr FICUInternationalization::FindOrMakeCanonizedCulture(const FString& Name, const EAllowDefaultCultureFallback AllowDefaultFallback)
@@ -767,7 +768,7 @@ UDate FICUInternationalization::UEDateTimeToICUDate(const FDateTime& DateTime)
 
 UBool FICUInternationalization::OpenDataFile(const void* InContext, void** OutFileContext, void** OutContents, const char* InPath)
 {
-	LLM_SCOPE(ELLMTag::Localization);
+	LLM_SCOPE_BYNAME(TEXT("Localization/ICU"));
 
 	FICUInternationalization* This = (FICUInternationalization*)InContext;
 	check(This);
@@ -775,44 +776,47 @@ UBool FICUInternationalization::OpenDataFile(const void* InContext, void** OutFi
 	FString PathStr = StringCast<TCHAR>(InPath).Get();
 	FPaths::NormalizeFilename(PathStr);
 
-	FICUCachedFileData* CachedFileData = nullptr;
-
 	// Skip requests for anything outside the ICU data directory
 	const bool bIsWithinDataDirectory = PathStr.StartsWith(This->ICUDataDirectory);
-	if (bIsWithinDataDirectory)
+	if (!bIsWithinDataDirectory)
 	{
-		CachedFileData = This->PathToCachedFileDataMap.Find(PathStr);
+		*OutFileContext = nullptr;
+		*OutContents = nullptr;
+		return false;
+	}
 
-		// If there's no file context, we might have to load the file.
-		if (!CachedFileData)
-		{
+	FScopeLock Lock(&This->PathToCachedFileDataMapCS);
+	FICUCachedFileData* CachedFileData = This->PathToCachedFileDataMap.Find(PathStr);
+
+	// If there's no file context, we might have to load the file.
+	if (!CachedFileData)
+	{
 #if !UE_BUILD_SHIPPING
-			FScopedLoadingState ScopedLoadingState(*PathStr);
+		FScopedLoadingState ScopedLoadingState(*PathStr);
 #endif
 
-			// Attempt to load the file.
-			FArchive* FileAr = IFileManager::Get().CreateFileReader(*PathStr);
-			if (FileAr)
-			{
-				const int64 FileSize = FileAr->TotalSize();
+		// Attempt to load the file.
+		FArchive* FileAr = IFileManager::Get().CreateFileReader(*PathStr);
+		if (FileAr)
+		{
+			const int64 FileSize = FileAr->TotalSize();
 
-				// Create file data.
-				CachedFileData = &This->PathToCachedFileDataMap.Emplace(PathStr, FICUCachedFileData(FileSize));
+			// Create file data.
+			CachedFileData = &This->PathToCachedFileDataMap.Emplace(PathStr, FICUCachedFileData(FileSize));
 
-				// Load file into buffer.
-				FileAr->Serialize(CachedFileData->Buffer, FileSize);
-				delete FileAr;
+			// Load file into buffer.
+			FileAr->Serialize(CachedFileData->Buffer, FileSize);
+			delete FileAr;
 
-				// Stat tracking.
+			// Stat tracking.
 #if STATS
-				DataFileBytesInUseCount += FMemory::GetAllocSize(CachedFileData->Buffer);
-				if (FThreadStats::IsThreadingReady() && CachedDataFileBytesInUseCount != DataFileBytesInUseCount)
-				{
-					SET_MEMORY_STAT(STAT_MemoryICUDataFileAllocationSize, DataFileBytesInUseCount);
-					CachedDataFileBytesInUseCount = DataFileBytesInUseCount;
-				}
-#endif
+			DataFileBytesInUseCount += FMemory::GetAllocSize(CachedFileData->Buffer);
+			if (FThreadStats::IsThreadingReady() && CachedDataFileBytesInUseCount != DataFileBytesInUseCount)
+			{
+				SET_MEMORY_STAT(STAT_MemoryICUDataFileAllocationSize, DataFileBytesInUseCount);
+				CachedDataFileBytesInUseCount = DataFileBytesInUseCount;
 			}
+#endif
 		}
 	}
 
@@ -851,6 +855,7 @@ void FICUInternationalization::CloseDataFile(const void* InContext, void* const 
 	check(Path);
 
 	// Look up the cached file data so we can maintain references.
+	FScopeLock Lock(&This->PathToCachedFileDataMapCS);
 	FICUCachedFileData* const CachedFileData = This->PathToCachedFileDataMap.Find(*Path);
 	check(CachedFileData);
 	check(CachedFileData->Buffer == InContents);

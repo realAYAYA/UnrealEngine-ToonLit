@@ -393,6 +393,7 @@ void UMirrorTool::OnShutdown(EToolShutdownType ShutdownType)
 			FTransform Transform = (FTransform)UE::ToolTarget::GetLocalToWorldTransform(Targets[PreviewIndex]);
 			Results.Emplace(Preview->Shutdown());
 			MeshTransforms::ApplyTransformInverse(*(Results.Last().Mesh), MirrorTool_Local::OnlyScale(Transform), true);
+			Results.Last().Transform.SetScale(Transform.GetScale3D() * Results.Last().Transform.GetScale3D());
 		}
 
 		// Convert to output. This will also edit the selection.
@@ -452,7 +453,7 @@ void UMirrorTool::GenerateAsset(const TArray<FDynamicMeshOpResult>& Results)
 	}
 
 	// Properly deal with each result, setting up the selection at the same time.
-	FSelectedOjectsChangeList NewSelection;
+	FSelectedObjectsChangeList NewSelection;
 	NewSelection.ModificationType = ESelectedObjectsModificationType::Replace;
 	for (int OrigMeshIdx = 0; OrigMeshIdx < NumSourceMeshes; OrigMeshIdx++)
 	{

@@ -9,15 +9,15 @@
 #include "LocalizableMessage.generated.h"
 
 USTRUCT()
-struct FLocalizableMessageParameterEntry
+struct LOCALIZABLEMESSAGE_API FLocalizableMessageParameterEntry
 {
 	GENERATED_BODY()
 
 public:
 
 	FLocalizableMessageParameterEntry();
-	LOCALIZABLEMESSAGE_API FLocalizableMessageParameterEntry(const FString& InKey, const FInstancedStruct& InValue);
-	LOCALIZABLEMESSAGE_API ~FLocalizableMessageParameterEntry();
+	FLocalizableMessageParameterEntry(const FString& InKey, const FInstancedStruct& InValue);
+	~FLocalizableMessageParameterEntry();
 
 	bool operator==(const FLocalizableMessageParameterEntry& Other) const;
 	bool operator!=(const FLocalizableMessageParameterEntry& Other) const
@@ -33,13 +33,13 @@ public:
 };
 
 USTRUCT(BlueprintType)
-struct FLocalizableMessage
+struct LOCALIZABLEMESSAGE_API FLocalizableMessage
 {
 	GENERATED_BODY();
 
-	LOCALIZABLEMESSAGE_API FLocalizableMessage();
-	LOCALIZABLEMESSAGE_API ~FLocalizableMessage();
-	LOCALIZABLEMESSAGE_API bool operator==(const FLocalizableMessage& Other) const;
+	FLocalizableMessage();
+	~FLocalizableMessage();
+	bool operator==(const FLocalizableMessage& Other) const;
 
 	void Reset()
 	{

@@ -34,6 +34,13 @@ public:
 		return IsXPBDAnisoStretchStiffnessWarpEnabled(PropertyCollection, false);
 	}
 
+	CHAOS_API FXPBDStretchBiasElementConstraints(const FSolverParticlesRange& InParticles,
+		const FTriangleMesh& TriangleMesh,
+		const TArray<TVec3<FVec2f>>& FaceVertexUVs,
+		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+		const FCollectionPropertyConstFacade& PropertyCollection,
+		bool bTrimKinematicConstraints = false);
+
 	CHAOS_API FXPBDStretchBiasElementConstraints(const FSolverParticles& InParticles,
 		int32 ParticleOffset,
 		int32 ParticleCount,
@@ -96,11 +103,27 @@ public:
 		WeftScale.ApplyValues();
 	}
 
-	CHAOS_API void Apply(FSolverParticles& Particles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const;
 	CHAOS_API void CalculateUVStretch(const int32 ConstraintIndex, const FSolverVec3& P0, const FSolverVec3& P1, const FSolverVec3& P2, FSolverVec3& DXDu, FSolverVec3& DXDv) const;
 	
 	const TArray<TVec3<int32>>& GetConstraints() const { return Constraints; }
-	const TArray<FSolverVec2> GetRestStretchLengths() const { return RestStretchLengths; }
+
+	TArray<TArray<int32>> GetConstraintsArray() const
+	{
+		TArray<TArray<int32>> ConstraintsArray;
+		ConstraintsArray.SetNum(Constraints.Num());
+		for (int32 i = 0; i < Constraints.Num(); i++)
+		{
+			ConstraintsArray[i].SetNum(3);
+			for (int32 j = 0; j < 3; j++)
+			{
+				ConstraintsArray[i][j] = Constraints[i][j];
+			}
+		}
+		return ConstraintsArray;
+	}
+	const TArray<FSolverVec3> GetRestStretchLengths() const { return RestStretchLengths; }
 	FSolverVec2 GetWarpWeftScale(const int32 ConstraintIndex) const 
 	{ 
 		return FSolverVec2(WarpScale.HasWeightMap() ? WarpScale[ConstraintIndex] : (FSolverReal)WarpScale,
@@ -108,11 +131,20 @@ public:
 	}
 	const TArray<int32>& GetConstraintsPerColorStartIndex() const { return ConstraintsPerColorStartIndex; }
 
+	CHAOS_API void AddStretchBiasElementResidualAndHessian(const FSolverParticles& Particles, const int32 ConstraintIndex, const int32 ConstraintIndexLocal, const FSolverReal Dt, TVec3<FSolverReal>& ParticleResidual, Chaos::PMatrix<FSolverReal, 3, 3>& ParticleHessian);
+
+	CHAOS_API void InitializeDmInvAndMeasures(const FSolverParticles& Particles);
+
+	CHAOS_API void AddInternalForceDifferential(const FSolverParticles& InParticles, const TArray<TVector<FSolverReal, 3>>& DeltaParticles, TArray<TVector<FSolverReal, 3>>& ndf);
+
 private:
-	CHAOS_API void InitConstraintsAndRestData(const FSolverParticles& InParticles, const FTriangleMesh& TriangleMesh,
+	template<typename SolverParticlesOrRange>
+	void InitConstraintsAndRestData(const SolverParticlesOrRange& InParticles, const FTriangleMesh& TriangleMesh,
 		const TArray<TVec3<FVec2f>>& FaceVertexUVs, const bool bUse3dRestLengths, const bool bTrimKinematicConstraints);
-	CHAOS_API void InitColor(const FSolverParticles& InParticles);
-	CHAOS_API void ApplyHelper(FSolverParticles& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverVec3& ExpStiffnessValue, const FSolverReal DampingRatioValue, const FSolverReal WarpScaleValue, const FSolverReal WeftScaleValue) const;
+	template<typename SolverParticlesOrRange>
+	void InitColor(const SolverParticlesOrRange& InParticles);
+	template<typename SolverParticlesOrRange>
+	void ApplyHelper(SolverParticlesOrRange& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverVec3& ExpStiffnessValue, const FSolverReal DampingRatioValue, const FSolverReal WarpScaleValue, const FSolverReal WeftScaleValue) const;
 
 	TArray<TVec3<int32>> Constraints;
 	const int32 ParticleOffset;
@@ -127,8 +159,15 @@ private:
 	TArray<int32> ConstraintsPerColorStartIndex; // Constraints are ordered so each batch is contiguous. This is ColorNum + 1 length so it can be used as start and end.
 
 	TArray<FSolverMatrix22> DeltaUVInverse; // Used to convert from DeltaX to dX/dU and dX/dV
-	TArray<FSolverVec2> RestStretchLengths;
+	TArray<FSolverVec3> RestStretchLengths;
 	TArray<FSolverVec3> StiffnessScales; // Used to make everything resolution independent.
+
+	TArray<FSolverReal> Measure;
+	TArray<FSolverMatrix22> DmInverse;
+	TArray<FSolverMatrix22> DmArray;
+	bool bDmInitialized = false;
+
+	TArray<PMatrix<FSolverReal, 3, 2>> RestDmArray;
 
 	UE_CHAOS_DECLARE_PROPERTYCOLLECTION_NAME(XPBDAnisoStretchUse3dRestLengths, bool);
 	UE_CHAOS_DECLARE_PROPERTYCOLLECTION_NAME(XPBDAnisoStretchStiffnessWarp, float);

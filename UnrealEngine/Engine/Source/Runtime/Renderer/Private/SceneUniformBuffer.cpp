@@ -60,6 +60,11 @@ TArray<FSceneUniformBufferMemberRegistration*>& FSceneUniformBufferMemberRegistr
 	return *GSceneUniformBufferMemberRegistrationInstances;
 }
 
+void FSceneUniformBufferMemberRegistration::Register(FSceneUniformBufferMemberRegistration& Entry)
+{
+	GetInstances().Add(&Entry);
+}
+
 FShaderParametersMetadata* FSceneUniformBufferTypeRegistry::FImpl::BuildStructMetadata()
 {
 	FSceneUniformBufferMemberRegistration::CommitAll();

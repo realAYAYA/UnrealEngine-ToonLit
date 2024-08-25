@@ -132,12 +132,12 @@ void FDisplayClusterMediaCaptureBase::ExportMediaData(FRDGBuilder& GraphBuilder,
 
 void FDisplayClusterMediaCaptureBase::OnPostClusterTick()
 {
-	if (MediaCapture && bWasCaptureStarted)
+	if (MediaCapture)
 	{
 		const EMediaCaptureState MediaCaptureState = MediaCapture->GetState();
 		const bool bMediaCaptureNeedsRestart = (MediaCaptureState == EMediaCaptureState::Error) || (MediaCaptureState == EMediaCaptureState::Stopped);
 
-		if (bMediaCaptureNeedsRestart)
+		if (!bWasCaptureStarted || bMediaCaptureNeedsRestart)
 		{
 			constexpr double Interval = 1.0;
 			const double CurrentTime = FPlatformTime::Seconds();
@@ -146,7 +146,7 @@ void FDisplayClusterMediaCaptureBase::OnPostClusterTick()
 			{
 				UE_LOG(LogDisplayClusterMedia, Log, TEXT("MediaCapture '%s' is in error or stopped, restarting it."), *GetMediaId());
 
-				StartMediaCapture();
+				bWasCaptureStarted = StartMediaCapture();
 				LastRestartTimestamp = CurrentTime;
 			}
 		}
@@ -166,6 +166,11 @@ bool FDisplayClusterMediaCaptureBase::StartMediaCapture()
 		Descriptor.ResourceSize = LastSrcRegionSize.load().ToIntPoint();
 	}
 	
+	if (Descriptor.ResourceSize == FIntPoint::ZeroValue)
+	{
+		return false;
+	}
+
 	FMediaCaptureOptions MediaCaptureOptions;
 	MediaCaptureOptions.NumberOfFramesToCapture = -1;
 	MediaCaptureOptions.bAutoRestartOnSourceSizeChange = true;

@@ -162,8 +162,11 @@ protected:
 	/** Checkbox to determine if the DMX Monitor functionality should be enabled */
 	TSharedPtr<SCheckBox> EnableDMXMonitorCheckBox;
 
-	/** Scrollbox containing all patch universes */
-	TSharedPtr<SScrollBox> PatchedUniverseScrollBox;
+	/** Horizontal scrollbox containing all the patched universes */
+	TSharedPtr<SScrollBox> PatchedUniverseHorizontalScrollBox;
+
+	/** Vertical scrollbox containing all the patched universes */
+	TSharedPtr<SScrollBox> PatchedUniverseVerticalScrollBox;
 
 	/** Universe widgets by ID */
 	TMap<int32, TSharedPtr<SDMXPatchedUniverse>> PatchedUniversesByID;

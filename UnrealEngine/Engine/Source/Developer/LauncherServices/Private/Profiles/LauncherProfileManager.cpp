@@ -523,12 +523,12 @@ void FLauncherProfileManager::LoadDeviceGroups( )
 {
 	if (GConfig != nullptr)
 	{
-		FConfigSection* LoadedDeviceGroups = GConfig->GetSectionPrivate(TEXT("Launcher.DeviceGroups"), false, true, GEngineIni);
+		const FConfigSection* LoadedDeviceGroups = GConfig->GetSection(TEXT("Launcher.DeviceGroups"), false, GEngineIni);
 
 		if (LoadedDeviceGroups != nullptr)
 		{
 			// parse the configuration file entries into device groups
-			for (FConfigSection::TIterator It(*LoadedDeviceGroups); It; ++It)
+			for (FConfigSection::TConstIterator It(*LoadedDeviceGroups); It; ++It)
 			{
 				if (It.Key() == TEXT("DeviceGroup"))
 				{

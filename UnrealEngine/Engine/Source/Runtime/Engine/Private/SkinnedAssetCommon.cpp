@@ -29,6 +29,7 @@ static void SerializeReductionSettingsForDDC(FArchive& Ar, FSkeletalMeshOptimiza
 	FArchive_Serialize_BitfieldBool(Ar, ReductionSettings.bMergeCoincidentVertBones);
 	FArchive_Serialize_BitfieldBool(Ar, ReductionSettings.bLockEdges);
 	FArchive_Serialize_BitfieldBool(Ar, ReductionSettings.bLockColorBounaries);
+	FArchive_Serialize_BitfieldBool(Ar, ReductionSettings.bImproveTrianglesForCloth);
 	Ar << ReductionSettings.TerminationCriterion;
 	Ar << ReductionSettings.NumOfTrianglesPercentage;
 	Ar << ReductionSettings.NumOfVertPercentage;
@@ -106,6 +107,7 @@ FGuid FSkeletalMeshLODInfo::ComputeDeriveDataCacheKey(const FSkeletalMeshLODGrou
 	}
 	
 	FArchive_Serialize_BitfieldBool(Ar, bAllowCPUAccess);
+	FArchive_Serialize_BitfieldBool(Ar, bBuildHalfEdgeBuffers);
 	FArchive_Serialize_BitfieldBool(Ar, bSupportUniformlyDistributedSampling);
 
 	//Use the LOD settings asset if there is one

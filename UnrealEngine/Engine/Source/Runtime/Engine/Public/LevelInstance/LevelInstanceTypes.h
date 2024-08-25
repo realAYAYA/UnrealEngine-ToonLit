@@ -58,10 +58,10 @@ enum class ELevelInstanceRuntimeBehavior : uint8
 	None UMETA(Hidden),
 	// Deprecated exists only to avoid breaking Actor Desc serialization
 	Embedded_Deprecated UMETA(Hidden),
-	// Default behavior is to move Level Instance level actors to the main world partition using World Partition clustering rules
-	Partitioned,
-	// Behavior only supported through Conversion Commandlet or on non OFPA Level Instances
-	LevelStreaming UMETA(Hidden)
+	// Move level instance actors to the main world partition
+	Partitioned UMETA(DisplayName = "Embedded"),
+	// Use level streaming to load level instance actors
+	LevelStreaming UMETA(DisplayName = "Standalone"),
 };
 
 UENUM()

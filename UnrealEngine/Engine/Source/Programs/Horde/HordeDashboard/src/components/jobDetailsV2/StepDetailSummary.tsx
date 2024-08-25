@@ -6,9 +6,7 @@ import { JobStepError, JobStepOutcome, JobStepState, ReportPlacement } from '../
 import { Markdown } from '../../base/components/Markdown';
 import { ISideRailLink } from '../../base/components/SideRail';
 import { getNiceTime, getStepElapsed, getStepETA, getStepFinishTime, getStepTimingDelta } from '../../base/utilities/timeUtils';
-import { hordeClasses, modeColors } from '../../styles/Styles';
-import { AutosubmitInfo } from '../AutoSubmit';
-import { ChangeSummary } from '../ChangeSummary';
+import { getHordeStyling } from '../../styles/Styles';
 import { getBatchText } from '../JobDetailCommon';
 import { JobDataView, JobDetailsV2 } from './JobDetailsViewCommon';
 
@@ -29,7 +27,7 @@ class StepSummaryView extends JobDataView {
    }
 
    detailsUpdated() {
-      
+
       if (!this.details?.jobData) {
          return;
       }
@@ -85,12 +83,12 @@ const getStepSummaryMarkdown = (jobDetails: JobDetailsV2, stepId: string): strin
    const idx = retries.findIndex(s => s.id === step.id);
    if (idx > 0) {
 
-      const pstep = retries[idx - 1];      
+      const pstep = retries[idx - 1];
 
       let msg = `This is a retry of a [previous step](/job/${jobDetails.jobId!}?step=${pstep.id})`;
       if (pstep.retriedByUserInfo) {
          msg += ` started by ${pstep.retriedByUserInfo?.name}`;
-      } 
+      }
 
       text.push(msg);
 
@@ -202,16 +200,22 @@ export const StepSummaryPanel: React.FC<{ jobDetails: JobDetailsV2; stepId: stri
       };
    }, [dataView]);
 
-   dataView.subscribe();   
+   const { hordeClasses, modeColors } = getHordeStyling();
+
+   dataView.subscribe();
 
    dataView.initialize([sideRail]);
 
-   const jobData = jobDetails.jobData;   
+   const jobData = jobDetails.jobData;
 
    if (!jobData) {
       return null;
    }
-   
+
+   if (!jobDetails.viewReady(dataView.order)) {
+      return null;
+   }
+
    const jobPrice = jobDetails.jobPrice();
    const stepPrice = jobDetails.stepPrice(stepId);
 
@@ -242,14 +246,6 @@ export const StepSummaryPanel: React.FC<{ jobDetails: JobDetailsV2; stepId: stri
                {!!priceText && <Stack style={{ paddingTop: 8 }}>
                   <Text>{priceText}</Text>
                </Stack>}
-
-               <Stack tokens={{ padding: 8 }} style={{ paddingTop: 24 }}>
-                  <AutosubmitInfo jobDetails={jobDetails} />
-               </Stack>
-               <Stack>
-                  <ChangeSummary streamId={jobData.streamId} change={jobData.preflightChange ?? jobData.change!} />
-               </Stack>
-
             </Stack>
          </Stack>
       </Stack>

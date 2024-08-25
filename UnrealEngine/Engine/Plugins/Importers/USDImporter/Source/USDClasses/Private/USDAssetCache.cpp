@@ -7,176 +7,198 @@
 #include "Misc/ScopeLock.h"
 
 UUsdAssetCache::UUsdAssetCache()
-	: bAllowPersistentStorage( true )
+	: bAllowPersistentStorage(true)
 {
 }
 
 #if WITH_EDITOR
-void UUsdAssetCache::PostEditChangeProperty( FPropertyChangedEvent& PropertyChangedEvent )
+void UUsdAssetCache::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
-	if ( PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED( UUsdAssetCache, bAllowPersistentStorage ) )
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UUsdAssetCache, bAllowPersistentStorage))
 	{
-		if ( !bAllowPersistentStorage )
+		if (!bAllowPersistentStorage)
 		{
-			TransientStorage.Append( PersistentStorage );
+			TransientStorage.Append(PersistentStorage);
 			PersistentStorage.Empty();
 		}
 	}
 }
-#endif // #if WITH_EDITOR
+#endif	  // #if WITH_EDITOR
 
-void UUsdAssetCache::CacheAsset( const FString& Hash, UObject* Asset, const FString& PrimPath /*= FString() */ )
+void UUsdAssetCache::CacheAsset(const FString& Hash, UObject* Asset, const FString& PrimPath /*= FString() */)
 {
-	if ( !Asset )
+	if (!Asset)
 	{
-		UE_LOG( LogUsd, Warning, TEXT( "Attempted to add a null asset to USD Asset Cache with hash '%s' and PrimPath '%s'!" ), *Hash, *PrimPath );
+		UE_LOG(LogUsd, Warning, TEXT("Attempted to add a null asset to USD Asset Cache with hash '%s' and PrimPath '%s'!"), *Hash, *PrimPath);
 		return;
 	}
 
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	if ( !bAllowPersistentStorage || Asset->HasAnyFlags( RF_Transient ) || Asset->GetOutermost() == GetTransientPackage() )
+	if (!bAllowPersistentStorage || Asset->HasAnyFlags(RF_Transient) || Asset->GetOutermost() == GetTransientPackage())
 	{
-		if ( UObject* ExistingAsset = TransientStorage.FindRef( Hash ) )
+		if (UObject* ExistingAsset = TransientStorage.FindRef(Hash))
 		{
-			if ( ExistingAsset != Asset )
+			if (ExistingAsset != Asset)
 			{
-				UE_LOG( LogUsd, Log, TEXT( "Overwriting asset '%s' with '%s' (prim path '%s') in the asset cache's transient storage" ), *ExistingAsset->GetPathName(), *Asset->GetPathName(), *PrimPath );
-				DiscardAsset( Hash );
+				UE_LOG(
+					LogUsd,
+					Log,
+					TEXT("Overwriting asset '%s' with '%s' (prim path '%s') in the asset cache's transient storage"),
+					*ExistingAsset->GetPathName(),
+					*Asset->GetPathName(),
+					*PrimPath
+				);
+				DiscardAsset(Hash);
 			}
 		}
 
-		TransientStorage.Add( Hash, Asset );
+		TransientStorage.Add(Hash, Asset);
 	}
 	else
 	{
 		Modify();
 
-		if ( UObject* ExistingAsset = PersistentStorage.FindRef( Hash ) )
+		if (UObject* ExistingAsset = PersistentStorage.FindRef(Hash))
 		{
-			if ( ExistingAsset != Asset )
+			if (ExistingAsset != Asset)
 			{
-				UE_LOG( LogUsd, Log, TEXT( "Overwriting asset '%s' with '%s' (prim path '%s') in the asset cache's persistent storage" ), *ExistingAsset->GetPathName(), *Asset->GetPathName(), *PrimPath );
-				DiscardAsset( Hash );
+				UE_LOG(
+					LogUsd,
+					Log,
+					TEXT("Overwriting asset '%s' with '%s' (prim path '%s') in the asset cache's persistent storage"),
+					*ExistingAsset->GetPathName(),
+					*Asset->GetPathName(),
+					*PrimPath
+				);
+				DiscardAsset(Hash);
 			}
 		}
 
-		PersistentStorage.Add( Hash, Asset );
+		PersistentStorage.Add(Hash, Asset);
 	}
 
-	OwnedAssets.Add( Asset );
-	if ( !PrimPath.IsEmpty() )
+	OwnedAssets.Add(Asset);
+	if (!PrimPath.IsEmpty())
 	{
-		PrimPathToAssets.Add( PrimPath, Asset );
+		PrimPathToAssets.Add(PrimPath, Asset);
 	}
 
 	ActiveAssets.Add(Asset);
 }
 
-void UUsdAssetCache::DiscardAsset( const FString& Hash )
+void UUsdAssetCache::DiscardAsset(const FString& Hash)
 {
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	TObjectPtr<UObject>* FoundObject = TransientStorage.Find( Hash );
+	TObjectPtr<UObject>* FoundObject = TransientStorage.Find(Hash);
 
-	if ( !FoundObject )
+	if (!FoundObject)
 	{
-		FoundObject = PersistentStorage.Find( Hash );
+		FoundObject = PersistentStorage.Find(Hash);
 
-		if ( FoundObject )
+		if (FoundObject)
 		{
 			Modify();
 		}
 	}
 
-	if ( FoundObject )
+	if (FoundObject)
 	{
-		for ( TMap< FString, TWeakObjectPtr<UObject> >::TIterator PrimPathToAssetIt = PrimPathToAssets.CreateIterator(); PrimPathToAssetIt; ++PrimPathToAssetIt )
+		for (TMap<FString, TWeakObjectPtr<UObject>>::TIterator PrimPathToAssetIt = PrimPathToAssets.CreateIterator(); PrimPathToAssetIt;
+			 ++PrimPathToAssetIt)
 		{
-			if ( *FoundObject == PrimPathToAssetIt.Value().Get() )
+			if (*FoundObject == PrimPathToAssetIt.Value().Get())
 			{
 				PrimPathToAssetIt.RemoveCurrent();
 			}
 		}
 
-		ActiveAssets.Remove( *FoundObject );
-		TransientStorage.Remove( Hash );
-		PersistentStorage.Remove( Hash );
-		OwnedAssets.Remove( *FoundObject );
+		ActiveAssets.Remove(*FoundObject);
+		TransientStorage.Remove(Hash);
+		PersistentStorage.Remove(Hash);
+		OwnedAssets.Remove(*FoundObject);
 	}
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-UObject* UUsdAssetCache::GetCachedAsset( const FString& Hash ) const
+UObject* UUsdAssetCache::GetCachedAsset(const FString& Hash) const
 {
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	TObjectPtr<UObject> const* FoundObject = TransientStorage.Find( Hash );
+	TObjectPtr<UObject> const* FoundObject = TransientStorage.Find(Hash);
 
-	if ( !FoundObject )
+	if (!FoundObject)
 	{
-		FoundObject = PersistentStorage.Find( Hash );
+		FoundObject = PersistentStorage.Find(Hash);
 	}
 
-	if ( FoundObject )
+	if (FoundObject)
 	{
-		ActiveAssets.Add( *FoundObject );
+		ActiveAssets.Add(*FoundObject);
 		return *FoundObject;
 	}
 
 	return nullptr;
 }
 
-void UUsdAssetCache::LinkAssetToPrim( const FString& PrimPath, UObject* Asset )
+void UUsdAssetCache::LinkAssetToPrim(const FString& PrimPath, UObject* Asset)
 {
-	if ( !Asset )
+	if (!Asset)
 	{
 		return;
 	}
 
-	if ( !OwnedAssets.Contains( Asset ) )
+	if (!OwnedAssets.Contains(Asset))
 	{
-		UE_LOG( LogUsd, Warning, TEXT( "Tried to set prim path '%s' to asset '%s', but it is not currently owned by the USD stage cache!" ), *PrimPath, *Asset->GetName() );
+		UE_LOG(
+			LogUsd,
+			Warning,
+			TEXT("Tried to set prim path '%s' to asset '%s', but it is not currently owned by the USD stage cache!"),
+			*PrimPath,
+			*Asset->GetName()
+		);
 		return;
 	}
 
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	PrimPathToAssets.Add( PrimPath, Asset );
+	PrimPathToAssets.Add(PrimPath, Asset);
 }
 
-void UUsdAssetCache::RemoveAssetPrimLink( const FString& PrimPath )
+void UUsdAssetCache::RemoveAssetPrimLink(const FString& PrimPath)
 {
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	PrimPathToAssets.Remove( PrimPath );
+	PrimPathToAssets.Remove(PrimPath);
 }
 
-UObject* UUsdAssetCache::GetAssetForPrim( const FString& PrimPath ) const
+UObject* UUsdAssetCache::GetAssetForPrim(const FString& PrimPath) const
 {
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	if ( TWeakObjectPtr<UObject> const* FoundObjectPtr = PrimPathToAssets.Find( PrimPath ) )
+	if (TWeakObjectPtr<UObject> const* FoundObjectPtr = PrimPathToAssets.Find(PrimPath))
 	{
-		if ( UObject* FoundObject = FoundObjectPtr->Get() )
+		if (UObject* FoundObject = FoundObjectPtr->Get())
 		{
-			ActiveAssets.Add( FoundObject );
+			ActiveAssets.Add(FoundObject);
 			return FoundObject;
 		}
 	}
 
 	return nullptr;
 }
+
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-FString UUsdAssetCache::GetPrimForAsset( UObject* Asset ) const
+FString UUsdAssetCache::GetPrimForAsset(UObject* Asset) const
 {
 	FString PrimForAsset;
 
 	{
-		FScopeLock Lock( &CriticalSection );
+		FScopeLock Lock(&CriticalSection);
 
-		if ( const FString* KeyPtr = PrimPathToAssets.FindKey( Asset ) )
+		if (const FString* KeyPtr = PrimPathToAssets.FindKey(Asset))
 		{
 			PrimForAsset = *KeyPtr;
 		}
@@ -185,21 +207,21 @@ FString UUsdAssetCache::GetPrimForAsset( UObject* Asset ) const
 	return PrimForAsset;
 }
 
-FString UUsdAssetCache::GetHashForAsset( UObject* Asset ) const
+FString UUsdAssetCache::GetHashForAsset(UObject* Asset) const
 {
-	if ( !Asset || !OwnedAssets.Contains( Asset ) )
+	if (!Asset || !OwnedAssets.Contains(Asset))
 	{
 		return {};
 	}
 
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	if ( const FString* KeyPtr = TransientStorage.FindKey( Asset ) )
+	if (const FString* KeyPtr = TransientStorage.FindKey(Asset))
 	{
 		return *KeyPtr;
 	}
 
-	if ( const FString* KeyPtr = PersistentStorage.FindKey( Asset ) )
+	if (const FString* KeyPtr = PersistentStorage.FindKey(Asset))
 	{
 		return *KeyPtr;
 	}
@@ -209,7 +231,7 @@ FString UUsdAssetCache::GetHashForAsset( UObject* Asset ) const
 
 void UUsdAssetCache::Reset()
 {
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
 	Modify();
 
@@ -222,7 +244,7 @@ void UUsdAssetCache::Reset()
 
 void UUsdAssetCache::MarkAssetsAsStale()
 {
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
 	ActiveAssets.Reset();
 }
@@ -232,13 +254,13 @@ TSet<UObject*> UUsdAssetCache::GetActiveAssets() const
 	return ActiveAssets;
 }
 
-void UUsdAssetCache::Serialize( FArchive& Ar )
+void UUsdAssetCache::Serialize(FArchive& Ar)
 {
-	FScopeLock Lock( &CriticalSection );
+	FScopeLock Lock(&CriticalSection);
 
-	Super::Serialize( Ar );
+	Super::Serialize(Ar);
 
-	if ( Ar.GetPortFlags() & PPF_DuplicateForPIE )
+	if (Ar.GetPortFlags() & PPF_DuplicateForPIE)
 	{
 		Ar << TransientStorage;
 		Ar << ActiveAssets;

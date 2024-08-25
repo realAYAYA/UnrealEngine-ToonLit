@@ -5,7 +5,9 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "NavFilters/NavigationQueryFilter.h"
+#endif
 #include "AI/Navigation/NavigationTypes.h"
 #include "DataProviders/AIDataProvider.h"
 #include "EnvironmentQuery/Generators/EnvQueryGenerator_SimpleGrid.h"

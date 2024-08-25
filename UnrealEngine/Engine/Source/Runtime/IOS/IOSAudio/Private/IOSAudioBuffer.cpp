@@ -15,7 +15,6 @@
 #include "AudioDeviceManager.h"
 #include "Engine/Engine.h"
 #include "AudioDecompress.h"
-#include "ADPCMAudioInfo.h"
 
 /*------------------------------------------------------------------------------------
 	FIOSAudioSoundBuffer
@@ -36,7 +35,7 @@ FIOSAudioSoundBuffer::FIOSAudioSoundBuffer(FIOSAudioDevice* InAudioDevice, USoun
 			return;
 		}
 
-		SoundFormat = static_cast<ESoundFormat>(DecompressionState->GetFormatTag());
+		SoundFormat = SoundFormat_LPCM; 
 	}
     else
     {

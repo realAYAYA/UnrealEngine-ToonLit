@@ -1,12 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Agents.Pools;
 using EpicGames.Horde.Compute;
 using Horde.Server.Acls;
+using Horde.Server.Agents;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
 using Microsoft.AspNetCore.Authorization;
@@ -16,59 +19,12 @@ using Microsoft.Extensions.Options;
 namespace Horde.Server.Compute
 {
 	/// <summary>
-	/// Request a machine to execute compute requests
-	/// </summary>
-	public class AssignComputeRequest
-	{
-		/// <summary>
-		/// Condition to identify machines that can execute the request
-		/// </summary>
-		public Requirements? Requirements { get; set; }
-	}
-
-	/// <summary>
-	/// Request a machine to execute compute requests
-	/// </summary>
-	public class AssignComputeResponse
-	{
-		/// <summary>
-		/// IP address of the remote machine
-		/// </summary>
-		public string Ip { get; set; } = String.Empty;
-
-		/// <summary>
-		/// Port number on the remote machine
-		/// </summary>
-		public int Port { get; set; }
-
-		/// <summary>
-		/// Cryptographic nonce to identify the request, as a hex string
-		/// </summary>
-		public string Nonce { get; set; } = String.Empty;
-
-		/// <summary>
-		/// AES key for the channel, as a hex string
-		/// </summary>
-		public string Key { get; set; } = String.Empty;
-
-		/// <summary>
-		/// Resources assigned to this machine
-		/// </summary>
-		public Dictionary<string, int> AssignedResources { get; set; } = new Dictionary<string, int>();
-
-		/// <summary>
-		/// Properties of the agent assigned to do the work
-		/// </summary>
-		public IReadOnlyList<string> Properties { get; set; } = new List<string>();
-	}
-
-	/// <summary>
 	/// Controller for the /api/v2/compute endpoint
 	/// </summary>
 	[ApiController]
 	[Authorize]
 	[Route("[controller]")]
-	public class ComputeControllerV2 : HordeControllerBase
+	public class ComputeController : HordeControllerBase
 	{
 		readonly ComputeService _computeService;
 		readonly IOptionsSnapshot<GlobalConfig> _globalConfig;
@@ -76,7 +32,7 @@ namespace Horde.Server.Compute
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public ComputeControllerV2(ComputeService computeService, IOptionsSnapshot<GlobalConfig> globalConfig)
+		public ComputeController(ComputeService computeService, IOptionsSnapshot<GlobalConfig> globalConfig)
 		{
 			_computeService = computeService;
 			_globalConfig = globalConfig;
@@ -87,36 +43,68 @@ namespace Horde.Server.Compute
 		/// </summary>
 		/// <param name="clusterId">Id of the compute cluster</param>
 		/// <param name="request">The request parameters</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
 		[HttpPost]
 		[Authorize]
 		[Route("/api/v2/compute/{clusterId}")]
-		public async Task<ActionResult<AssignComputeResponse>> AssignComputeResourceAsync(ClusterId clusterId, [FromBody] AssignComputeRequest request)
+		public async Task<ActionResult<AssignComputeResponse>> AssignComputeResourceAsync(ClusterId clusterId, [FromBody] AssignComputeRequest request, CancellationToken cancellationToken)
 		{
-			ComputeClusterConfig? clusterConfig;
-			if (!_globalConfig.Value.TryGetComputeCluster(clusterId, out clusterConfig))
+			if (!_globalConfig.Value.TryGetComputeCluster(clusterId, out ComputeClusterConfig? clusterConfig))
 			{
 				return NotFound(clusterId);
 			}
-			if(!clusterConfig.Authorize(ComputeAclAction.AddComputeTasks, User))
+			if (!clusterConfig.Authorize(ComputeAclAction.AddComputeTasks, User))
 			{
 				return Forbid(ComputeAclAction.AddComputeTasks, clusterId);
 			}
 
-			Requirements requirements = request.Requirements ?? new Requirements();
-
-			ComputeResource? computeResource = await _computeService.TryAllocateResource(requirements);
-			if (computeResource == null)
+			AllocateResourceParams arp = new(clusterId, (ComputeProtocol)request.Protocol, request.Requirements)
 			{
-				return StatusCode((int)HttpStatusCode.ServiceUnavailable);
+				RequestId = request.RequestId,
+				RequesterIp = HttpContext.Connection.RemoteIpAddress,
+				ParentLeaseId = User.GetLeaseClaim(),
+				Ports = request.Connection?.Ports ?? new Dictionary<string, int>(),
+				ConnectionMode = request.Connection?.ModePreference,
+				RequesterPublicIp = request.Connection?.ClientPublicIp,
+				UsePublicIp = request.Connection?.PreferPublicIp,
+				Encryption = ComputeService.ConvertEncryptionToProto(request.Connection?.Encryption)
+			};
+
+			ComputeResource? computeResource;
+			try
+			{
+				computeResource = await _computeService.TryAllocateResourceAsync(arp, cancellationToken);
+				if (computeResource == null)
+				{
+					return StatusCode((int)HttpStatusCode.ServiceUnavailable, "No resources available");
+				}
+			}
+			catch (ComputeServiceException cse)
+			{
+				return cse.ShowToUser ? StatusCode((int)HttpStatusCode.InternalServerError, cse.Message) : StatusCode((int)HttpStatusCode.InternalServerError);
+			}
+
+			Dictionary<string, ConnectionMetadataPort> responsePorts = new();
+			foreach ((string name, ComputeResourcePort crp) in computeResource.Ports)
+			{
+				responsePorts[name] = new ConnectionMetadataPort(crp.Port, crp.AgentPort);
 			}
 
 			AssignComputeResponse response = new AssignComputeResponse();
 			response.Ip = computeResource.Ip.ToString();
-			response.Port = computeResource.Port;
+			response.Port = computeResource.Ports[ConnectionMetadataPort.ComputeId].Port;
+			response.ConnectionMode = computeResource.ConnectionMode;
+			response.ConnectionAddress = computeResource.ConnectionAddress;
+			response.Ports = responsePorts;
+			response.Encryption = ComputeService.ConvertEncryptionFromProto(computeResource.Task.Encryption);
 			response.Nonce = StringUtils.FormatHexString(computeResource.Task.Nonce.Span);
 			response.Key = StringUtils.FormatHexString(computeResource.Task.Key.Span);
+			response.Certificate = StringUtils.FormatHexString(computeResource.Task.Certificate.Span);
+			response.AgentId = computeResource.AgentId;
+			response.LeaseId = computeResource.LeaseId;
 			response.Properties = computeResource.Properties;
+			response.Protocol = computeResource.Task.Protocol;
 
 			foreach (KeyValuePair<string, int> pair in computeResource.Task.Resources)
 			{
@@ -124,6 +112,62 @@ namespace Horde.Server.Compute
 			}
 
 			return response;
+		}
+
+		/// <summary>
+		/// Get current resource needs for active sessions
+		/// </summary>
+		/// <param name="clusterId">ID of the compute cluster</param>
+		/// <returns>List of resource needs</returns>
+		[HttpGet]
+		[Authorize]
+		[Route("/api/v2/compute/{clusterId}/resource-needs")]
+		public async Task<ActionResult<GetResourceNeedsResponse>> GetResourceNeedsAsync(ClusterId clusterId)
+		{
+			if (!_globalConfig.Value.TryGetComputeCluster(clusterId, out ComputeClusterConfig? clusterConfig))
+			{
+				return NotFound(clusterId);
+			}
+
+			if (!clusterConfig.Authorize(ComputeAclAction.GetComputeTasks, User))
+			{
+				return Forbid(ComputeAclAction.GetComputeTasks, clusterId);
+			}
+
+			List<ResourceNeedsMessage> resourceNeeds =
+				(await _computeService.GetResourceNeedsAsync())
+				.Where(x => x.ClusterId == clusterId.ToString())
+				.OrderBy(x => x.Timestamp)
+				.Select(x => new ResourceNeedsMessage { SessionId = x.SessionId, Pool = x.Pool, ResourceNeeds = x.ResourceNeeds })
+				.ToList();
+
+			return new GetResourceNeedsResponse { ResourceNeeds = resourceNeeds };
+		}
+
+		/// <summary>
+		/// Declare resource needs for a session to help server calculate current demand
+		/// <see cref="KnownPropertyNames"/> for resource name property names
+		/// </summary>
+		/// <param name="clusterId">Id of the compute cluster</param>
+		/// <param name="request">Resource needs request</param>
+		/// <returns></returns>
+		[HttpPost]
+		[Authorize]
+		[Route("/api/v2/compute/{clusterId}/resource-needs")]
+		public async Task<ActionResult<AssignComputeResponse>> SetResourceNeedsAsync(ClusterId clusterId, [FromBody] ResourceNeedsMessage request)
+		{
+			if (!_globalConfig.Value.TryGetComputeCluster(clusterId, out ComputeClusterConfig? clusterConfig))
+			{
+				return NotFound(clusterId);
+			}
+
+			if (!clusterConfig.Authorize(ComputeAclAction.AddComputeTasks, User))
+			{
+				return Forbid(ComputeAclAction.AddComputeTasks, clusterId);
+			}
+
+			await _computeService.SetResourceNeedsAsync(clusterId, request.SessionId, new PoolId(request.Pool).ToString(), request.ResourceNeeds);
+			return Ok(new { message = "Resource needs set" });
 		}
 	}
 }

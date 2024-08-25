@@ -17,64 +17,14 @@ namespace UnrealBuildTool
 {
 	class IOSToolChainSettings : AppleToolChainSettings
 	{
-		/// <summary>
-		/// The version of the iOS SDK to target at build time.
-		/// </summary>
-		[XmlConfigFile(Category = "IOSToolChain")]
-		public string IOSSDKVersion = "latest";
-		public readonly float IOSSDKVersionFloat = 0.0f;
-
-		/// <summary>
-		/// The version of the iOS to allow at build time.
-		/// </summary>
-		[XmlConfigFile(Category = "IOSToolChain")]
-		public string BuildIOSVersion = "15.0";
-
-		/// <summary>
-		/// Directory for the developer binaries
-		/// </summary>
-		public string ToolchainDir = "";
-
-		/// <summary>
-		/// Location of the SDKs
-		/// </summary>
-		public readonly string BaseSDKDir;
-		public readonly string BaseSDKDirSim;
-
-		public readonly string DevicePlatformName;
-		public readonly string SimulatorPlatformName;
-
-		public IOSToolChainSettings(ILogger Logger) : this("iPhoneOS", "iPhoneSimulator", Logger)
+		public IOSToolChainSettings(ILogger Logger) 
+			: this("iPhoneOS", "iPhoneSimulator", "ios", Logger)
 		{
 		}
 
-		protected IOSToolChainSettings(string DevicePlatformName, string SimulatorPlatformName, ILogger Logger) : base(true, Logger)
+		protected IOSToolChainSettings(string DevicePlatformName, string SimulatorPlatformName, string TargetOSName, ILogger Logger) 
+			: base(DevicePlatformName, SimulatorPlatformName, TargetOSName, true, Logger)
 		{
-			XmlConfig.ApplyTo(this);
-
-			this.DevicePlatformName = DevicePlatformName;
-			this.SimulatorPlatformName = SimulatorPlatformName;
-
-			// update cached paths
-			BaseSDKDir = XcodeDeveloperDir + "Platforms/" + DevicePlatformName + ".platform/Developer/SDKs";
-			BaseSDKDirSim = XcodeDeveloperDir + "Platforms/" + SimulatorPlatformName + ".platform/Developer/SDKs";
-			ToolchainDir = XcodeDeveloperDir + "Toolchains/XcodeDefault.xctoolchain/usr/bin/";
-
-			// make sure SDK is selected
-			SelectSDK(BaseSDKDir, DevicePlatformName, ref IOSSDKVersion, true, Logger);
-
-			// convert to float for easy comparison
-			IOSSDKVersionFloat = Single.Parse(IOSSDKVersion, System.Globalization.CultureInfo.InvariantCulture);
-		}
-
-		public string GetSDKPath(UnrealArch Architecture)
-		{
-			if (Architecture == UnrealArch.IOSSimulator || Architecture == UnrealArch.TVOSSimulator)
-		{
-				return BaseSDKDirSim + "/" + SimulatorPlatformName + IOSSDKVersion + ".sdk";
-			}
-
-			return BaseSDKDir + "/" + DevicePlatformName + IOSSDKVersion + ".sdk";
 		}
 	}
 
@@ -82,7 +32,6 @@ namespace UnrealBuildTool
 	{
 		private static List<FileItem> BundleDependencies = new List<FileItem>();
 
-		public readonly ReadOnlyTargetRules? Target;
 		protected IOSProjectSettings ProjectSettings;
 
 		public IOSToolChain(ReadOnlyTargetRules? Target, IOSProjectSettings InProjectSettings, ClangToolChainOptions ToolchainOptions, ILogger InLogger)
@@ -90,12 +39,10 @@ namespace UnrealBuildTool
 		{
 		}
 
-		protected IOSToolChain(ReadOnlyTargetRules? Target, IOSProjectSettings InProjectSettings, Func<IOSToolChainSettings> InCreateSettings, ClangToolChainOptions ToolchainOptions, ILogger InLogger)
-			: base((Target == null) ? null : Target.ProjectFile, ToolchainOptions, InLogger)
+		protected IOSToolChain(ReadOnlyTargetRules? Target, IOSProjectSettings InProjectSettings, Func<AppleToolChainSettings> InCreateSettings, ClangToolChainOptions ToolchainOptions, ILogger InLogger)
+			: base(Target, InCreateSettings, ToolchainOptions, InLogger)
 		{
-			this.Target = Target;
 			ProjectSettings = InProjectSettings;
-			Settings = new Lazy<IOSToolChainSettings>(InCreateSettings);
 		}
 
 		// ***********************************************************************
@@ -114,11 +61,6 @@ namespace UnrealBuildTool
 		public static bool bUseDangerouslyFastMode = false;
 
 		/// <summary>
-		/// The lazily constructed settings for the toolchain
-		/// </summary>
-		private Lazy<IOSToolChainSettings> Settings;
-
-		/// <summary>
 		/// Which compiler\linker frontend to use
 		/// </summary>
 		private const string IOSCompiler = "clang++";
@@ -128,19 +70,21 @@ namespace UnrealBuildTool
 		/// </summary>
 		private const string IOSArchiver = "libtool";
 
+		private IOSToolChainSettings Settings => (IOSToolChainSettings)ToolChainSettings.Value;
+
 		protected override ClangToolChainInfo GetToolChainInfo()
 		{
-			FileReference CompilerPath = new FileReference(Settings.Value.ToolchainDir + IOSCompiler);
-			FileReference ArchiverPath = new FileReference(Settings.Value.ToolchainDir + IOSArchiver);
+			FileReference CompilerPath = FileReference.Combine(Settings.ToolchainDir, IOSCompiler);
+			FileReference ArchiverPath = FileReference.Combine(Settings.ToolchainDir, IOSArchiver);
 			return new AppleToolChainInfo(CompilerPath, ArchiverPath, Logger);
 		}
 
 		public override string GetSDKVersion()
 		{
-			return Settings.Value.IOSSDKVersionFloat.ToString();
+			return Settings.SDKVersionFloat.ToString();
 		}
 
-		public override void ModifyBuildProducts(ReadOnlyTargetRules Target, UEBuildBinary Binary, List<string> Libraries, List<UEBuildBundleResource> BundleResources, Dictionary<FileReference, BuildProductType> BuildProducts)
+		public override void ModifyBuildProducts(ReadOnlyTargetRules Target, UEBuildBinary Binary, IEnumerable<string> Libraries, IEnumerable<UEBuildBundleResource> BundleResources, Dictionary<FileReference, BuildProductType> BuildProducts)
 		{
 			if (Target.IOSPlatform.bCreateStubIPA && Binary.Type != UEBuildBinaryType.StaticLibrary)
 			{
@@ -204,7 +148,7 @@ namespace UnrealBuildTool
 			base.GetCompileArguments_WarningsAndErrors(CompileEnvironment, Arguments);
 
 			// fix for Xcode 8.3 enabling nonportable include checks, but p4 has some invalid cases in it
-			if (Settings.Value.IOSSDKVersionFloat >= 10.3)
+			if (Settings.SDKVersionFloat >= 10.3)
 			{
 				Arguments.Add("-Wno-nonportable-include-path");
 			}
@@ -214,9 +158,6 @@ namespace UnrealBuildTool
 		protected override void GetCompileArguments_Optimizations(CppCompileEnvironment CompileEnvironment, List<string> Arguments)
 		{
 			base.GetCompileArguments_Optimizations(CompileEnvironment, Arguments);
-
-			// We have 'this' vs nullptr comparisons that get optimized away for newer versions of Clang, which is undesirable until we refactor these checks.
-			Arguments.Add("-fno-delete-null-pointer-checks");
 
 			// use LTO if desired (like VCToolchain does)
 			if (CompileEnvironment.bAllowLTCG)
@@ -270,27 +211,31 @@ namespace UnrealBuildTool
 			// What architecture(s) to build for
 			Arguments.Add(FormatArchitectureArg(CompileEnvironment.Architectures));
 
-			Arguments.Add($"-isysroot \"{Settings.Value.GetSDKPath(CompileEnvironment.Architecture)}\"");
+			Arguments.Add($"-isysroot \"{Settings.GetSDKPath(CompileEnvironment.Architecture)}\"");
 
-			if (GetXcodeMinVersionParam(CompileEnvironment.Architecture) != "")
+			string MinVersionParam = GetXcodeMinVersionParam(CompileEnvironment.Architecture);
+			if (MinVersionParam != "")
 			{
-				Arguments.Add("-m" + GetXcodeMinVersionParam(CompileEnvironment.Architecture) + "=" + ProjectSettings.RuntimeVersion);
+				Arguments.Add($"-m{MinVersionParam}={ProjectSettings.RuntimeVersion}");
 			}
 
 			// Add additional frameworks so that their headers can be found
 			foreach (UEBuildFramework Framework in CompileEnvironment.AdditionalFrameworks)
 			{
-				DirectoryReference? FrameworkDirectory = Framework.GetFrameworkDirectory(CompileEnvironment.Platform, CompileEnvironment.Architecture, Logger);
-				if (FrameworkDirectory != null)
+				if (Framework.bLinkFramework)
 				{
-					string FrameworkDir = FrameworkDirectory.FullName;
-					// embedded frameworks have a framework inside of this directory, so we use this directory. regular frameworks need to go one up to point to the 
-					// directory containing the framework. -F gives a path to look for the -framework
-					if (FrameworkDir.EndsWith(".framework"))
+					DirectoryReference? FrameworkDirectory = Framework.GetFrameworkDirectory(CompileEnvironment.Platform, CompileEnvironment.Architecture, Logger);
+					if (FrameworkDirectory != null)
 					{
-						FrameworkDir = Path.GetDirectoryName(FrameworkDir)!;
+						string FrameworkDir = FrameworkDirectory.FullName;
+						// embedded frameworks have a framework inside of this directory, so we use this directory. regular frameworks need to go one up to point to the 
+						// directory containing the framework. -F gives a path to look for the -framework
+						if (FrameworkDir.EndsWith(".framework"))
+						{
+							FrameworkDir = Path.GetDirectoryName(FrameworkDir)!;
+						}
+						Arguments.Add($"-F\"{FrameworkDir}\"");
 					}
-					Arguments.Add($"-F\"{FrameworkDir}\"");
 				}
 			}
 		}
@@ -302,7 +247,7 @@ namespace UnrealBuildTool
 
 			string Extension = Path.GetExtension(SourceFile.AbsolutePath).ToUpperInvariant();
 
-			if (!Extension.Equals(".C"))
+			if (!Extension.Equals(".C") && !Extension.Equals(".SWIFT"))
 			{
 				Arguments.Add(GetObjCExceptionsFlag(CompileEnvironment));
 			}
@@ -364,14 +309,14 @@ namespace UnrealBuildTool
 			base.GetLinkArguments_Global(LinkEnvironment, Arguments);
 			Arguments.Add(FormatArchitectureArg(LinkEnvironment.Architectures));
 
-			bool bIsDevice = LinkEnvironment.Architecture != UnrealArch.IOSSimulator && LinkEnvironment.Architecture != UnrealArch.TVOSSimulator;
-			Arguments.Add(String.Format(" -isysroot \\\"{0}Platforms/{1}.platform/Developer/SDKs/{1}{2}.sdk\\\"",
-				Settings.Value.XcodeDeveloperDir, bIsDevice ? Settings.Value.DevicePlatformName : Settings.Value.SimulatorPlatformName, Settings.Value.IOSSDKVersion));
+			DirectoryReference SDKPath = Settings.GetSDKPath(LinkEnvironment.Architecture);
+			Arguments.Add($" -isysroot \"{SDKPath}\"");
 
 			Arguments.Add("-dead_strip");
-			if (GetXcodeMinVersionParam(LinkEnvironment.Architecture) != "") 
+			string MinVersionParam = GetXcodeMinVersionParam(LinkEnvironment.Architecture);
+			if (MinVersionParam != "")
 			{
-				Arguments.Add("-m" + GetXcodeMinVersionParam(LinkEnvironment.Architecture) + "=" + ProjectSettings.RuntimeVersion);
+				Arguments.Add($"-m{MinVersionParam}={ProjectSettings.RuntimeVersion}");
 			}
 			Arguments.Add("-Wl-no_pie");
 			Arguments.Add("-stdlib=libc++");
@@ -412,7 +357,7 @@ namespace UnrealBuildTool
 			// link in the frameworks
 			foreach (string Framework in LinkEnvironment.Frameworks)
 			{
-				if (Framework != "ARKit" || Settings.Value.IOSSDKVersionFloat >= 11.0f)
+				if (Framework != "ARKit" || Settings.SDKVersionFloat >= 11.0f)
 				{
 					Arguments.Add("-framework " + Framework);
 				}
@@ -505,6 +450,10 @@ namespace UnrealBuildTool
 					// and add to the commandline
 					LinkCommandArguments += String.Format(" \\\"{0}\\\"", Library.FullName);
 				}
+
+				// allow for auto-linked swift libs to be found
+				// @todo Mac will need this too - a lot of this code should probably be moved up to AppleToolChain and shared
+				LinkCommandArguments += $" -L{ToolChainSettings.Value.GetSDKPath(LinkEnvironment.Architecture)}/usr/lib/swift";
 			}
 
 			// Handle additional framework assets that might need to be shadowed
@@ -1148,7 +1097,7 @@ namespace UnrealBuildTool
 				Action StripAction = Graph.CreateAction(ActionType.CreateAppBundle);
 				StripAction.WorkingDirectory = GetMacDevSrcRoot();
 				StripAction.CommandPath = BuildHostPlatform.Current.Shell;
-				StripAction.CommandArguments = String.Format("-c \"\\\"{0}strip\\\" {1} \\\"{2}\\\" && touch \\\"{3}\\\"\"", Settings.Value.ToolchainDir, StripArguments, Executable.Location, StripCompleteFile);
+				StripAction.CommandArguments = String.Format("-c \"\\\"{0}/strip\\\" {1} \\\"{2}\\\" && touch \\\"{3}\\\"\"", Settings.ToolchainDir, StripArguments, Executable.Location, StripCompleteFile);
 				StripAction.PrerequisiteItems.Add(Executable);
 				StripAction.PrerequisiteItems.UnionWith(OutputFiles);
 				StripAction.ProducedItems.Add(StripCompleteFile);
@@ -1158,7 +1107,7 @@ namespace UnrealBuildTool
 				OutputFiles.Add(StripCompleteFile);
 			}
 
-			if (!BinaryLinkEnvironment.bIsBuildingDLL)
+			if (!AppleExports.UseModernXcode(Target.ProjectFile) && !BinaryLinkEnvironment.bIsBuildingDLL)
 			{
 				// generate the asset catalog
 				bool bUserImagesExist = false;
@@ -1188,7 +1137,7 @@ namespace UnrealBuildTool
 				Logger.LogInformation("Adding PostBuildSync action");
 
 				List<string> UPLScripts = UEDeployIOS.CollectPluginDataPaths(BinaryLinkEnvironment.AdditionalProperties, Logger);
-				VersionNumber SdkVersion = VersionNumber.Parse(Settings.Value.IOSSDKVersion);
+				VersionNumber SdkVersion = VersionNumber.Parse(Settings.SDKVersion);
 
 				Dictionary<string, DirectoryReference> FrameworkNameToSourceDir = new Dictionary<string, DirectoryReference>();
 
@@ -1245,7 +1194,6 @@ namespace UnrealBuildTool
 				PostBuildSyncAction.ProducedItems.Add(FileItem.GetItemByFileReference(GetStagedExecutablePath(Executable.Location, Target.Name)));
 				PostBuildSyncAction.DeleteItems.UnionWith(PostBuildSyncAction.ProducedItems);
 				PostBuildSyncAction.StatusDescription = "Executing PostBuildSync";
-				PostBuildSyncAction.bCanExecuteRemotely = false;
 
 				OutputFiles.AddRange(PostBuildSyncAction.ProducedItems);
 			}
@@ -1328,7 +1276,7 @@ namespace UnrealBuildTool
 			}
 
 			string FabricPath = Unreal.EngineDirectory + "/Intermediate/UnzippedFrameworks/Crashlytics/Fabric.embeddedframework";
-			if (Directory.Exists(FabricPath) && Environment.GetEnvironmentVariable("IsBuildMachine") == "1")
+			if (Directory.Exists(FabricPath) && Unreal.IsBuildMachine())
 			{
 				//string PlistFile = ProjectDir + "/Intermediate/IOS/" + ProjectName + "-Info.plist";
 				Process FabricProcess = new Process();
@@ -1638,7 +1586,7 @@ namespace UnrealBuildTool
 						Writer.WriteLine(String.Format("rm -rf \"{0}\"", FrameworkPayloadDirectory));
 
 						// Build the framework wrapper
-						CmdLine = new IOSToolChainSettings(Logger).XcodeDeveloperDir + "usr/bin/xcodebuild" +
+						CmdLine = FileReference.Combine(AppleToolChainSettings.XcodeDeveloperDir, "usr/bin/xcodebuild").FullName +
 							" -project \"" + WrapperProject + "\"" +
 								" -configuration \"" + ConfigName + "\"" +
 							" -scheme '" + SchemeName + "'" +
@@ -1651,7 +1599,7 @@ namespace UnrealBuildTool
 					else
 					{
 						// code sign the project
-						CmdLine = new IOSToolChainSettings(Logger).XcodeDeveloperDir + "usr/bin/xcodebuild" +
+						CmdLine = FileReference.Combine(AppleToolChainSettings.XcodeDeveloperDir, "usr/bin/xcodebuild").FullName +
 							" -workspace \"" + XcodeWorkspaceDir + "\"" +
 								" -configuration \"" + ConfigName + "\"" +
 							" -scheme '" + SchemeName + "'" +
@@ -1820,7 +1768,7 @@ namespace UnrealBuildTool
 
 		public void StripSymbols(FileReference SourceFile, FileReference TargetFile)
 		{
-			StripSymbolsWithXcode(SourceFile, TargetFile, Settings.Value.ToolchainDir);
+			StripSymbolsWithXcode(SourceFile, TargetFile, Settings.ToolchainDir);
 		}
 
 		FileItem CopyBundleResource(UEBuildBundleResource Resource, FileItem Executable, DirectoryReference BundleDirectory, IActionGraphBuilder Graph)
@@ -1854,7 +1802,7 @@ namespace UnrealBuildTool
 			return TargetItem;
 		}
 
-		public override void SetupBundleDependencies(ReadOnlyTargetRules Target, List<UEBuildBinary> Binaries, string GameName)
+		public override void SetupBundleDependencies(ReadOnlyTargetRules Target, IEnumerable<UEBuildBinary> Binaries, string GameName)
 		{
 			base.SetupBundleDependencies(Target, Binaries, GameName);
 

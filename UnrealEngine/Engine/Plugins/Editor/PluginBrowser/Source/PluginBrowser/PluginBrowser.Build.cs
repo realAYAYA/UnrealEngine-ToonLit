@@ -38,7 +38,10 @@ namespace UnrealBuildTool.Rules
                     "AssetTools",
 					"Json",
 					"ToolWidgets",
+					"ToolMenus",
 					"EditorWidgets",
+					"ContentBrowser",
+					"ContentBrowserData",
 				}
 			);
 

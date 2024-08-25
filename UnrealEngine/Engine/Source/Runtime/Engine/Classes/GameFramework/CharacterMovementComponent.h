@@ -884,6 +884,9 @@ public:
 	UPROPERTY(Category="Character Movement (General Settings)", EditAnywhere, BlueprintReadWrite)
 	TEnumAsByte<enum EMovementMode> DefaultWaterMovementMode;
 
+	/** Accessor to the Last Server Movement Base, only relevant during server update*/
+	UPrimitiveComponent* GetLastServerMovementBase() const { return LastServerMovementBase.Get(); };
+
 private:
 	/**
 	 * Ground movement mode to switch to after falling and resuming ground movement.
@@ -1373,6 +1376,21 @@ public:
 	/** Update OldBaseLocation and OldBaseQuat if there is a valid movement base, and store the relative location/rotation if necessary. Ignores bDeferUpdateBasedMovement and forces the update. */
 	ENGINE_API virtual void SaveBaseLocation();
 
+	/** Apply inherited velocity when leaving base, for example from jumping off it */
+	ENGINE_API virtual void ApplyImpartedMovementBaseVelocity();
+
+	/** Property to set if UpdateBasedMovement should ignore collision with actors part of the current MovementBase, if the base is simulated by physics */
+	UPROPERTY(Category = "Character Movement (General Settings)", EditAnywhere, BlueprintReadWrite)
+	bool bBasedMovementIgnorePhysicsBase = false;
+
+	/** Property to set if characters should stay based on objects while jumping */
+	UPROPERTY(Category = "Character Movement: Jumping / Falling", EditAnywhere, BlueprintReadWrite)
+	bool bStayBasedInAir = false;
+
+	/** Property used to set how high above base characters should stay based on objects while jumping if bStayBasedInAir is set */
+	UPROPERTY(Category = "Character Movement: Jumping / Falling", EditAnywhere, BlueprintReadWrite, meta = (editcondition = "bStayBasedInAir"))
+	float StayBasedInAirHeight = 1000.0f;
+
 	/** changes physics based on MovementMode */
 	ENGINE_API virtual void StartNewPhysics(float deltaTime, int32 Iterations);
 	
@@ -1616,13 +1634,16 @@ public:
 	 * from gravity relative space.
 	 * @param GravityDir		A non-zero vector representing the new gravity direction. The vector will be normalized.
 	 */
+	UFUNCTION(BlueprintCallable, Category="Pawn|Components|CharacterMovement")
 	ENGINE_API virtual void SetGravityDirection(const FVector& GravityDir);
 
 	/** Whether the gravity direction is different from UCharacterMovementComponent::DefaultGravityDirection. */
-	bool HasCustomGravity() const { return bHasCustomGravity; }
+	UFUNCTION(BlueprintPure, Category="Pawn|Components|CharacterMovement")
+	ENGINE_API bool HasCustomGravity() const { return bHasCustomGravity; }
 
 	/** Returns the current gravity direction. */
-	FVector GetGravityDirection() const { return GravityDirection; }
+	UFUNCTION(BlueprintPure, Category="Pawn|Components|CharacterMovement")
+	ENGINE_API FVector GetGravityDirection() const { return GravityDirection; }
 
 	/** Returns a quaternion transforming from world to gravity space. */
 	FQuat GetWorldToGravityTransform() const { return WorldToGravityTransform; }

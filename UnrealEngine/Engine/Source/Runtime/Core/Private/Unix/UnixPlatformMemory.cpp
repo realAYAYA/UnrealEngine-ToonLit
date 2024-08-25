@@ -22,6 +22,7 @@
 #include "HAL/MallocReplayProxy.h"
 #include "HAL/MallocStomp.h"
 #include "HAL/PlatformMallocCrash.h"
+#include "ProfilingDebugging/CsvProfiler.h"
 
 #include <sys/sysinfo.h>
 #include <sys/file.h>
@@ -93,6 +94,8 @@ namespace
 	const int32 MaximumAllowedMaxNumFileMappingCache = 1000000;
 	bool GEnableProtectForkedPages = false;
 }
+
+CSV_DECLARE_CATEGORY_EXTERN(FMemory);
 
 /** Controls growth of pools - see PooledVirtualMemoryAllocator.cpp */
 extern float GVMAPoolScale;
@@ -490,6 +493,8 @@ void* FUnixPlatformMemory::BinnedAllocFromOS(SIZE_T Size)
 		Pointer = AlignedPointer;
 	}
 
+	MarkMappedMemoryMergable(Pointer, ActualSizeMapped);
+
 	// at this point, Pointer is aligned at the expected alignment - either we lucked out on the initial allocation
 	// or we already got rid of the extra memory that was allocated in the front.
 	checkf((reinterpret_cast<SIZE_T>(Pointer) % ExpectedAlignment) == 0, TEXT("BinnedAllocFromOS(): Internal error: did not align the pointer as expected."));
@@ -530,7 +535,7 @@ void* FUnixPlatformMemory::BinnedAllocFromOS(SIZE_T Size)
 		AllocDescriptor->OriginalSizeAsPassed = Size;
 	}
 
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Pointer, Size));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Pointer, Size));
 	UE::FForkPageProtector::Get().AddMemoryRegion(Pointer, Size);
 
 	return Pointer;
@@ -538,7 +543,7 @@ void* FUnixPlatformMemory::BinnedAllocFromOS(SIZE_T Size)
 
 void FUnixPlatformMemory::BinnedFreeToOS(void* Ptr, SIZE_T Size)
 {
-	LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
 	// guard against someone not passing size in whole pages
 	static SIZE_T OSPageSize = FPlatformMemory::GetConstants().PageSize;
 	SIZE_T SizeInWholePages = (Size % OSPageSize) ? (Size + OSPageSize - (Size % OSPageSize)) : Size;
@@ -917,6 +922,187 @@ static uint64 ParseSMapsFileChunk(ANSICHAR *Buffer, uint64 BufferSize, FProcFiel
 	return ParsePos ? ParsePos : BufferSize;
 }
 
+// For tracking what we've seen in the smaps output between addresses
+struct FPageParseState
+{
+	bool bHavePageAddress = false;
+	bool bHaveSharedClean = false;
+	bool bHaveSharedDirty = false;
+	bool bHavePrivateClean = false;
+	bool bHavePrivateDirty = false;
+	bool Complete()
+	{
+		return bHaveSharedClean && bHaveSharedDirty && bHavePrivateClean && bHavePrivateDirty;
+	}
+	void Reset()
+	{
+		*this = FPageParseState();
+	}
+};
+
+// info on where to put the smaps field and which ones we wants.
+struct FProcFieldWithOffset
+{
+	const ANSICHAR* Name = nullptr;
+	uint64 Offset = 0;
+	uint64 ConfirmOffset = 0;
+	uint32 NameLen = 0;
+
+	FProcFieldWithOffset(const ANSICHAR* NameIn, uint64 OffsetIn, uint64 ConfirmOffsetIn)
+		: Name(NameIn), Offset(OffsetIn), ConfirmOffset(ConfirmOffsetIn)
+	{
+		NameLen = FCStringAnsi::Strlen(Name);
+	}
+};
+
+// Look in Buffer for a line and advance it, parsing out data that we care about. Returns how far in to Buffer we made it before
+// we couldn't get a complete line.
+static uint64 ParseSMapsPage(ANSICHAR* Buffer, uint64 BufferSize, FPageParseState& State, TArray<FForkedPageAllocation>& Pages, FProcFieldWithOffset* Fields, uint32 FieldCount)
+{
+	uint64 ParsePos = 0;
+
+	for (uint64 Idx = 0; Idx < BufferSize; Idx++)
+	{
+		if (Buffer[Idx] == '\n')
+		{
+			ANSICHAR* Line = Buffer + ParsePos;
+
+			Buffer[Idx] = 0;
+
+			// If the line starts with a number, its an address.
+			if ((Line[0] >= '0' && Line[0] <= '9') ||
+				(Line[0] >= 'a' && Line[0] <= 'f')) // all the fields start with capitals so this works
+			{
+				check(!State.bHavePageAddress);
+
+				// Start a new page.
+				FForkedPageAllocation& Page = Pages.AddZeroed_GetRef();
+
+				// 'from' address is up to '-'
+				ANSICHAR* Dash = FCStringAnsi::Strchr(Line, '-');
+				ANSICHAR* Space = FCStringAnsi::Strchr(Dash, ' ');
+
+				Dash[0] = 0;
+				Space[0] = 0;
+
+				Page.PageStart = strtoll(Line, 0, 16);
+				Page.PageEnd = strtoll(Dash + 1, 0, 16);
+
+				State.bHavePageAddress = true;
+			}
+			else if (State.bHavePageAddress)
+			{
+				for (uint32 IdxField = 0; IdxField < FieldCount; IdxField++)
+				{
+					uint32 NameLen = Fields[IdxField].NameLen;
+
+					if (!FCStringAnsi::Strncmp(Line, Fields[IdxField].Name, NameLen))
+					{
+						// Make sure we don't already have it
+						check(((bool*)(&State))[Fields[IdxField].ConfirmOffset] == false);
+						((bool*)(&State))[Fields[IdxField].ConfirmOffset] = true;
+
+						uint64 ResultKb = atoll(Line + NameLen);
+
+						FForkedPageAllocation* Page = &Pages.Top();
+
+						((uint64*)Page)[Fields[IdxField].Offset] = ResultKb;
+
+						if (State.Complete())
+						{
+							// If we have all the fields we care about, go back to looking for an address.
+							State.Reset();
+						}
+						break;
+					}
+				}
+			}
+
+			ParsePos = Idx + 1;
+		}
+	}
+
+	// If we didn't find any linefeeds, skip the entire chunk
+	return ParsePos ? ParsePos : BufferSize;
+}
+
+bool FUnixPlatformMemory::GetForkedPageAllocationInfo(TArray<FForkedPageAllocation>& OutPages)
+{
+	OutPages.Reset();
+
+	const ANSICHAR Shared_CleanStr[] = "Shared_Clean:";
+	const ANSICHAR Shared_DirtyStr[] = "Shared_Dirty:";
+	const ANSICHAR Private_CleanStr[] = "Private_Clean:";
+	const ANSICHAR Private_DirtyStr[] = "Private_Dirty:";
+
+
+	FProcFieldWithOffset SMapsFields[] =
+	{
+		{ Shared_CleanStr, offsetof(FForkedPageAllocation, SharedCleanKiB) / 8 , offsetof(FPageParseState, bHaveSharedClean)    },
+		{ Shared_DirtyStr, offsetof(FForkedPageAllocation, SharedDirtyKiB) / 8 , offsetof(FPageParseState, bHaveSharedDirty)    },
+		{ Private_CleanStr,offsetof(FForkedPageAllocation, PrivateCleanKiB) / 8, offsetof(FPageParseState, bHavePrivateClean)  },
+		{ Private_DirtyStr,offsetof(FForkedPageAllocation, PrivateDirtyKiB) / 8, offsetof(FPageParseState, bHavePrivateDirty)  },
+	};
+
+	int Fd = open("/proc/self/smaps", O_RDONLY);
+	if (Fd < 0)
+	{
+		UE_LOG(LogHAL, Warning, TEXT("Failed to open /proc/self/smaps for pages"));
+		return false;
+	}
+
+	const uint32 ChunkSize = 16*1024;
+	ANSICHAR Buffer[ChunkSize];
+	uint64 BytesAvailableInChunk = 0;
+
+	FPageParseState ParseState;
+
+	for (;;)
+	{
+		ssize_t BytesRead;
+		uint64 BytesToRead = ChunkSize - BytesAvailableInChunk;
+
+		do
+		{
+			QUICK_SCOPE_CYCLE_COUNTER(STAT_GetPages_FileRead);
+			BytesRead = read(Fd, Buffer + BytesAvailableInChunk, BytesToRead);
+		} while (BytesRead < 0 && errno == EINTR);
+
+		if (BytesRead <= 0)
+		{
+			break;
+		}
+
+		BytesAvailableInChunk += BytesRead;
+
+		uint64 BytesParsed = ParseSMapsPage(Buffer, BytesAvailableInChunk, ParseState, OutPages, SMapsFields, UE_ARRAY_COUNT(SMapsFields));
+		checkf(BytesParsed <= BytesAvailableInChunk, TEXT("BytesParsed more than BytesAvailableInChunk %u %u"), BytesParsed, BytesAvailableInChunk);
+		if (BytesParsed > BytesAvailableInChunk)
+		{
+			FPlatformMisc::LowLevelOutputDebugString(TEXT("Critical parse fail in ParseSMapsPage"));
+			close(Fd);
+			return false;
+		}
+
+		BytesAvailableInChunk -= BytesParsed;
+		memmove(Buffer, Buffer + BytesParsed, BytesAvailableInChunk);
+
+		// If we made no parsing progress and we've reached end of file, stop trying.
+		// This is a sanity check because we expect to complete parsing prior to getting EOF, naturally exiting
+		// in the above <= 0 check.
+		if (BytesRead == 0 &&
+			BytesParsed == 0)
+		{
+			break;
+		}
+	}
+
+	close(Fd);
+	return true;
+}
+
+
+
 FExtendedPlatformMemoryStats FUnixPlatformMemory::GetExtendedStats()
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_GetExtendedStats);
@@ -971,10 +1157,11 @@ FExtendedPlatformMemoryStats FUnixPlatformMemory::GetExtendedStats()
 
 				uint64 BytesParsed = ParseSMapsFileChunk(Buffer, BytesAvailableInChunk, SMapsFields, UE_ARRAY_COUNT(SMapsFields));
 				checkf(BytesParsed <= BytesAvailableInChunk, TEXT("BytesParsed more than BytesAvailableInChunk %u %u"), BytesParsed, BytesAvailableInChunk);
-
-				if (BytesRead < BytesToRead)
+				if (BytesParsed > BytesAvailableInChunk)
 				{
-					break;
+					FPlatformMisc::LowLevelOutputDebugString(TEXT("Critical parse fail in ParseSMapsPage"));
+					close(Fd);
+					return FExtendedPlatformMemoryStats();
 				}
 
 				BytesAvailableInChunk -= BytesParsed;

@@ -232,7 +232,7 @@ struct FQueryTest_ExecuteSparse : FEntityTestBase
 		for (FMassEntityHandle& Entity : EntitiesToIgnore)
 		{
 			const FTestFragment_Float& TestedFragment = EntityManager->GetFragmentDataChecked<FTestFragment_Float>(Entity);
-			AITEST_EQUAL("Untouched entites should retain default fragment value ", TestedFragment.Value, 0.f);
+			AITEST_EQUAL("Untouched entities should retain default fragment value ", TestedFragment.Value, 0.f);
 		}
 
 		return true;
@@ -296,12 +296,27 @@ struct FQueryTest_FragmentPresent : FEntityTestBase
 		CA_ASSUME(EntityManager);
 
 		FMassEntityQuery Query;
-		Query.AddRequirement<FTestFragment_Int>(EMassFragmentAccess::ReadOnly);
+		// using EMassFragmentAccess::None to indicate we're interested only in the archetype having the fragment, no binding is required
+		Query.AddRequirement<FTestFragment_Int>(EMassFragmentAccess::None, EMassFragmentPresence::Any);
 		Query.CacheArchetypes(*EntityManager);
 
 		AITEST_EQUAL("There are exactly two archetypes matching the requirements", Query.GetArchetypes().Num(), 2);
 		AITEST_TRUE("FloatsArchetype is not amongst matching archetypes"
 			, !(FloatsArchetype == Query.GetArchetypes()[0] || FloatsArchetype == Query.GetArchetypes()[1]));
+
+		constexpr int32 NumberOfEntitiesToAddA = 5;
+		constexpr int32 NumberOfEntitiesToAddB = 7;
+		TArray<FMassEntityHandle> MatchingEntities;
+		EntityManager->BatchCreateEntities(IntsArchetype, NumberOfEntitiesToAddA, MatchingEntities);
+		EntityManager->BatchCreateEntities(FloatsIntsArchetype, NumberOfEntitiesToAddB, MatchingEntities);
+		ensure(MatchingEntities.Num() == NumberOfEntitiesToAddA + NumberOfEntitiesToAddB);
+
+		int TotalProcessed = 0;
+		FMassExecutionContext ExecContext(*EntityManager.Get());
+		Query.ForEachEntityChunk(*EntityManager, ExecContext, [&TotalProcessed](FMassExecutionContext& Context) {
+			TotalProcessed += Context.GetNumEntities();
+		});
+		AITEST_EQUAL("We expect the number of entities processed to match number added to matching archetypes", MatchingEntities.Num(), TotalProcessed);
 
 		return true;
 	}

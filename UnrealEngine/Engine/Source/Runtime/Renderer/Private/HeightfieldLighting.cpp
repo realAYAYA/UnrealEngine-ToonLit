@@ -38,13 +38,12 @@ void FillHeightfieldDescriptionData(const TArray<FHeightfieldComponentDescriptio
 
 		HeightfieldDescriptionData.Add(FVector4f(Description.HeightfieldRect.Size().X, Description.HeightfieldRect.Size().Y, 1.f / Description.HeightfieldRect.Size().X, 1.f / Description.HeightfieldRect.Size().Y));
 
-		const FLargeWorldRenderPosition WorldPosition(Description.LocalToWorld.GetOrigin());
-		const FVector TilePositionOffset = WorldPosition.GetTileOffset();
+		const FDFVector3 WorldPosition(Description.LocalToWorld.GetOrigin());
 
 		// Inverse on FMatrix44f can generate NaNs if the source matrix contains large scaling, so do it in double precision.
-		const FMatrix LocalToRelativeWorld = FLargeWorldRenderScalar::MakeToRelativeWorldMatrixDouble(TilePositionOffset, Description.LocalToWorld);
+		const FMatrix LocalToRelativeWorld = FDFMatrix::MakeToRelativeWorldMatrixDouble(FVector(WorldPosition.High), Description.LocalToWorld);
 
-		HeightfieldDescriptionData.Add(WorldPosition.GetTile());
+		HeightfieldDescriptionData.Add(WorldPosition.High);
 
 		const FMatrix44f WorldToLocalT = FMatrix44f(LocalToRelativeWorld.Inverse().GetTransposed());
 

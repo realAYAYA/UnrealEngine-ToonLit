@@ -33,6 +33,7 @@ FScreenPassTexture AddSelectionOutlinePass(
 	const FViewInfo& View,
 	FSceneUniformBuffer &SceneUniformBuffer,
 	const FSelectionOutlineInputs& Inputs,
-	const Nanite::FRasterResults* NaniteRasterResults);
+	const Nanite::FRasterResults* NaniteRasterResults,
+	FRDGTextureRef& DepthStencilTexture);
 
 #endif

@@ -5,6 +5,7 @@
 #include "MVVM/ViewModels/SequenceModel.h"
 
 #include "Sequencer.h"
+#include "SequencerKeyCollection.h"
 #include "SequencerOutlinerItemDragDropOp.h"
 
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -17,6 +18,17 @@ namespace Sequencer
 
 FSequencerOutlinerViewModel::FSequencerOutlinerViewModel()
 {
+}
+
+void FSequencerOutlinerViewModel::RequestUpdate()
+{
+	FSequencerEditorViewModel* EditorViewModel = GetEditor()->CastThisChecked<FSequencerEditorViewModel>();
+	TSharedPtr<ISequencer> Sequencer = EditorViewModel->GetSequencer();
+
+	if (Sequencer)
+	{
+		Sequencer->RefreshTree();
+	}
 }
 
 TSharedPtr<SWidget> FSequencerOutlinerViewModel::CreateContextMenuWidget()
@@ -79,6 +91,62 @@ TSharedRef<FDragDropOperation> FSequencerOutlinerViewModel::InitiateDrag(TArray<
 {
 	FText DefaultText = FText::Format( NSLOCTEXT( "SequencerOutlinerViewModel", "DefaultDragDropFormat", "Move {0} item(s)" ), FText::AsNumber( InDraggedModels.Num() ) );
 	return FSequencerOutlinerDragDropOp::New( MoveTemp(InDraggedModels), DefaultText, nullptr );
+}
+
+FFrameNumber FSequencerOutlinerViewModel::GetNextKey(const TArray<TSharedRef<UE::Sequencer::FViewModel>>& InNodes, FFrameNumber FrameNumber, EMovieSceneTimeUnit TimeUnit, const TRange<FFrameNumber>& Range)
+{
+	return GetNextKeyInternal(InNodes, FrameNumber, TimeUnit, Range, EFindKeyDirection::Forwards);
+}
+
+FFrameNumber FSequencerOutlinerViewModel::GetPreviousKey(const TArray<TSharedRef<UE::Sequencer::FViewModel>>& InNodes, FFrameNumber FrameNumber, EMovieSceneTimeUnit TimeUnit, const TRange<FFrameNumber>& Range)
+{
+	return GetNextKeyInternal(InNodes, FrameNumber, TimeUnit, Range, EFindKeyDirection::Backwards);
+}
+
+FFrameNumber FSequencerOutlinerViewModel::GetNextKeyInternal(const TArray<TSharedRef<UE::Sequencer::FViewModel>>& InNodes, FFrameNumber FrameNumber, EMovieSceneTimeUnit TimeUnit, const TRange<FFrameNumber>& Range, EFindKeyDirection Direction)
+{
+	FSequencerEditorViewModel* EditorViewModel = GetEditor()->CastThisChecked<FSequencerEditorViewModel>();
+	TSharedPtr<ISequencer> Sequencer = EditorViewModel->GetSequencer();
+	if (Sequencer.IsValid())
+	{
+		FFrameRate TickResolution = Sequencer->GetFocusedTickResolution();
+		FFrameRate DisplayRate = Sequencer->GetFocusedDisplayRate();
+
+		FSequencerKeyCollection* KeyCollection = Sequencer->GetKeyCollection();
+
+		const float DuplicateThresholdSeconds = SMALL_NUMBER;
+		const int64 TotalMaxSeconds = static_cast<int64>(TNumericLimits<int32>::Max() / TickResolution.AsDecimal());
+
+		FFrameNumber ThresholdFrames = (DuplicateThresholdSeconds * TickResolution).FloorToFrame();
+		if (ThresholdFrames.Value < -TotalMaxSeconds)
+		{
+			ThresholdFrames.Value = TotalMaxSeconds;
+		}
+		else if (ThresholdFrames.Value > TotalMaxSeconds)
+		{
+			ThresholdFrames.Value = TotalMaxSeconds;
+		}
+
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			FrameNumber = ConvertFrameTime(FrameNumber, DisplayRate, TickResolution).FloorToFrame();
+		}
+
+		KeyCollection->Update(FSequencerKeyCollectionSignature::FromNodesRecursive(InNodes, ThresholdFrames));
+
+		TOptional<FFrameNumber> NextKey = KeyCollection->GetNextKey(FrameNumber, Direction, Range, EFindKeyType::FKT_All);
+		if (NextKey.IsSet())
+		{
+			if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+			{
+				return ConvertFrameTime(NextKey.GetValue(), TickResolution, DisplayRate).FloorToFrame();
+			}
+
+			return NextKey.GetValue();
+		}
+	}
+
+	return FrameNumber;
 }
 
 } // namespace Sequencer

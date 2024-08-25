@@ -2,8 +2,7 @@
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Users;
 
 namespace Horde.Server.Notifications
 {

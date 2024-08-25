@@ -81,7 +81,6 @@ public:
 										return FLinearColor::White;
 										break;
 								}
-								return FLinearColor::Gray;
 							})
 					]
 				]

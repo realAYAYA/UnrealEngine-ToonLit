@@ -5,23 +5,17 @@
 
 #if SHADER_AABBUPDATE 
 
-uint bClearBuffer;
 uint MacroGroupId;
-uint MacroGroupValid;
+uint MacroGroupCount;
 
 float PixelSizeAtDepth1;
 float NumPixelPerVoxel;
 uint  VoxelPageResolution;
+uint  PassCount;
 
 // Group data packed as {uint3 AABBMin, uint3 AABBMax}
-Buffer<int> InGroupAABBBuffer0;
-Buffer<int> InGroupAABBBuffer1;
-Buffer<int> InGroupAABBBuffer2;
-Buffer<int> InGroupAABBBuffer3;
-Buffer<int> InGroupAABBBuffer4;
-Buffer<int> InGroupAABBBuffer5;
-Buffer<int> InGroupAABBBuffer6;
-Buffer<int> InGroupAABBBuffer7;
+Buffer<uint> RegisteredIndexBuffer;
+Buffer<int> InGroupAABBBuffer;
 RWBuffer<int> OutMacroGroupAABBBuffer;
 RWBuffer<float> OutMacroGroupVoxelSizeBuffer;
 
@@ -30,26 +24,49 @@ void UpdateValue(inout FHairAABB B, in uint Index, in Buffer<int> InBuffer)
 	FHairAABB A = ReadHairAABB(Index, InBuffer);
 	B = UnionHairAABB(A, B);
 }
-
-[numthreads(1, 1, 1)]
-void Main(uint2 DispatchThreadId : SV_DispatchThreadID)
+groupshared float3 g_MinBounds[GROUP_SIZE];
+groupshared float3 g_MaxBounds[GROUP_SIZE];
+[numthreads(GROUP_SIZE, 1, 1)]
+void Main(uint2 DispatchThreadId : SV_DispatchThreadID, uint LinearIndex : SV_GroupIndex)
 {
-	if (DispatchThreadId.x == 0)
+	const uint ThreadId = LinearIndex;
+	for (uint PassIt = 0; PassIt < PassCount; ++PassIt)
+	{
+		const uint PassOffset = PassIt * GROUP_SIZE;
+		const uint BoundIndex = PassOffset + ThreadId;
+		if (BoundIndex < MacroGroupCount)
+		{
+			const uint RegisteredIndex = RegisteredIndexBuffer[BoundIndex];
+			const FHairAABB Bound = ReadHairAABB(RegisteredIndex, InGroupAABBBuffer);
+			if (PassIt == 0)
+			{
+				g_MinBounds[LinearIndex] = Bound.Min;
+				g_MaxBounds[LinearIndex] = Bound.Max;
+			}
+			else
+			{
+				g_MinBounds[LinearIndex].x = min(g_MinBounds[LinearIndex].x, Bound.Min.x);
+				g_MinBounds[LinearIndex].y = min(g_MinBounds[LinearIndex].y, Bound.Min.y);
+				g_MinBounds[LinearIndex].z = min(g_MinBounds[LinearIndex].z, Bound.Min.z);
+
+				g_MaxBounds[LinearIndex].x = max(g_MaxBounds[LinearIndex].x, Bound.Max.x);
+				g_MaxBounds[LinearIndex].y = max(g_MaxBounds[LinearIndex].y, Bound.Max.y);
+				g_MaxBounds[LinearIndex].z = max(g_MaxBounds[LinearIndex].z, Bound.Max.z);
+			}
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+	
+	if (ThreadId == 0)
 	{
 		FHairAABB Bound = InitHairAABB();
-		if (bClearBuffer == 0)
+		for (uint BoundIt = 0; BoundIt < MacroGroupCount; ++BoundIt)
 		{
-			Bound = ReadHairAABB(MacroGroupId, OutMacroGroupAABBBuffer);
+			FHairAABB CurrBound;
+			CurrBound.Min = g_MinBounds[BoundIt];
+			CurrBound.Max = g_MaxBounds[BoundIt];
+			Bound = UnionHairAABB(Bound, CurrBound);
 		}
-
-		if (MacroGroupValid & 1)   { UpdateValue(Bound, 0, InGroupAABBBuffer0); }
-		if (MacroGroupValid & 2)   { UpdateValue(Bound, 0, InGroupAABBBuffer1); }
-		if (MacroGroupValid & 4)   { UpdateValue(Bound, 0, InGroupAABBBuffer2); }
-		if (MacroGroupValid & 8)   { UpdateValue(Bound, 0, InGroupAABBBuffer3); }
-		if (MacroGroupValid & 16)  { UpdateValue(Bound, 0, InGroupAABBBuffer4); }
-		if (MacroGroupValid & 32)  { UpdateValue(Bound, 0, InGroupAABBBuffer5); }
-		if (MacroGroupValid & 64)  { UpdateValue(Bound, 0, InGroupAABBBuffer6); }
-		if (MacroGroupValid & 128) { UpdateValue(Bound, 0, InGroupAABBBuffer7); }
 
 		// Transform positions in camera space
 		const FHairAABB ViewBound = Transform(Bound, View.TranslatedWorldToCameraView);

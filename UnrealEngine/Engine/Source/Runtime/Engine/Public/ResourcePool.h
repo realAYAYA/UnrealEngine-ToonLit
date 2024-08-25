@@ -9,6 +9,7 @@
 #include "CoreMinimal.h"
 #include "RenderResource.h"
 #include "TickableObjectRenderThread.h"
+#include "RHICommandList.h"
 
 /** A templated pool for resources that can only be freed at a 'safe' point in the frame. */
 template<typename ResourceType, class ResourcePoolPolicy, class ResourceCreationArguments>
@@ -50,7 +51,7 @@ public:
 	 * @param Args the argument object for construction.
 	 * @returns An initialised resource.
 	 */
-	ResourceType CreatePooledResource(ResourceCreationArguments Args)
+	ResourceType CreatePooledResource(FRHICommandListBase& RHICmdList, ResourceCreationArguments Args)
 	{
 		// Find the appropriate bucket based on size
 		const uint32 BucketIndex = Policy.GetPoolBucketIndex(Args);
@@ -67,7 +68,7 @@ public:
 		}
 
 		// Nothing usable was found in the free pool, create a new resource
-		return Policy.CreateResource(Args);
+		return Policy.CreateResource(RHICmdList, Args);
 	}
 	
 	/** Release a resource back into the pool.
@@ -206,11 +207,24 @@ public:
 	 * @param Args the argument object for construction.
 	 * @returns An initialised resource or the policy's NullResource if not initialised.
 	 */
+	ResourceType CreatePooledResource(FRHICommandListBase& RHICmdList, ResourceCreationArguments Args)
+	{
+		if (IsInitialized())
+		{
+			return TResourcePool<ResourceType, ResourcePoolPolicy, ResourceCreationArguments>::CreatePooledResource(RHICmdList, Args);
+		}
+		else
+		{
+			return ResourceType();
+		}
+	}
+
+	UE_DEPRECATED(5.4, "CreatePooledResource requires an RHI command list.")
 	ResourceType CreatePooledResource(ResourceCreationArguments Args)
 	{
 		if (IsInitialized())
 		{
-			return TResourcePool<ResourceType, ResourcePoolPolicy, ResourceCreationArguments>::CreatePooledResource(Args);
+			return TResourcePool<ResourceType, ResourcePoolPolicy, ResourceCreationArguments>::CreatePooledResource(FRHICommandListImmediate::Get(), Args);
 		}
 		else
 		{

@@ -278,7 +278,7 @@ int32 FSparseDynamicOctree3::FindNearestHitObject(const FRay3d& Ray,
 	// test cells until the queue is empty
 	while (Queue.Num() > 0)
 	{
-		const FSparseOctreeCell* CurCell = Queue.Pop(false);
+		const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 		
 		// process elements
 		CellObjectLists.Enumerate(CurCell->CellID, [&](int32 ObjectID)
@@ -327,7 +327,7 @@ void FSparseDynamicOctree3::ContainmentQuery(
 
 	while (Queue.Num() > 0)
 	{
-		const FSparseOctreeCell* CurCell = Queue.Pop(false);
+		const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 
 		// process elements
 		CellObjectLists.Enumerate(CurCell->CellID, [&](int32 ObjectID)
@@ -370,7 +370,7 @@ bool FSparseDynamicOctree3::ContainmentQueryCancellable(
 
 	while (Queue.Num() > 0)
 	{
-		const FSparseOctreeCell* CurCell = Queue.Pop(false);
+		const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 
 		// process elements
 		bool bContinue = true;
@@ -419,7 +419,7 @@ void FSparseDynamicOctree3::RangeQuery(
 
 	while (Queue.Num() > 0)
 	{
-		const FSparseOctreeCell* CurCell = Queue.Pop(false);
+		const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 
 		// process elements
 		CellObjectLists.Enumerate(CurCell->CellID, [&](int32 ObjectID)
@@ -461,7 +461,7 @@ void FSparseDynamicOctree3::RangeQuery(
 
 	while (Queue.Num() > 0)
 	{
-		const FSparseOctreeCell* CurCell = Queue.Pop(false);
+		const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 
 		// process elements
 		CellObjectLists.Enumerate(CurCell->CellID, [&](int32 ObjectID)
@@ -519,6 +519,40 @@ void FSparseDynamicOctree3::ParallelRangeQuery(
 }
 
 
+int FSparseDynamicOctree3::ParallelOverlapAnyQuery(const FAxisAlignedBox3d& ShapeBounds,
+	TFunctionRef<bool(int32)> ObjectOverlapFn, TFunctionRef<bool(const FAxisAlignedBox3d&)> BoundsOverlapFn) const
+{
+	FAxisAlignedBox3d EmptyCell = FAxisAlignedBox3d::Empty();
+	// first test spill objects
+	for (int ObjectID : SpillObjectSet)
+	{
+		if (ObjectOverlapFn(ObjectID))
+		{
+			return ObjectID;
+		}
+	}
+
+	TArray<const FSparseOctreeCell*, TInlineAllocator<32>> Queue = InitializeQueryQueue(ShapeBounds);
+
+	std::atomic<int> FoundID = INDEX_NONE;
+	ParallelFor(Queue.Num(), [&](int32 qi)
+	{
+		if (FoundID != INDEX_NONE)
+		{
+			return;
+		}
+
+		const FSparseOctreeCell* RootCell = Queue[qi];
+		int LocalFoundID = BranchCustomOverlapAnyQuery(RootCell, ShapeBounds, ObjectOverlapFn, BoundsOverlapFn);
+		if (LocalFoundID != INDEX_NONE)
+		{
+			FoundID = LocalFoundID;
+		}
+	});
+	return FoundID;
+}
+
+
 void FSparseDynamicOctree3::BranchRangeQuery(
 	const FSparseOctreeCell* ParentCell,
 	const FAxisAlignedBox3d& Bounds,
@@ -529,7 +563,7 @@ void FSparseDynamicOctree3::BranchRangeQuery(
 
 	while (Queue.Num() > 0)
 	{
-		const FSparseOctreeCell* CurCell = Queue.Pop(false);
+		const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 
 		// process elements
 		CellObjectLists.Enumerate(CurCell->CellID, [&](int32 ObjectID)
@@ -551,6 +585,51 @@ void FSparseDynamicOctree3::BranchRangeQuery(
 	}
 }
 
+int FSparseDynamicOctree3::BranchCustomOverlapAnyQuery(
+	const FSparseOctreeCell* ParentCell,
+	const FAxisAlignedBox3d& Bounds,
+	TFunctionRef<bool(int32)> ObjectOverlapFn, TFunctionRef<bool(const FAxisAlignedBox3d&)> BoundsOverlapFn) const
+{
+	TArray<const FSparseOctreeCell*, TInlineAllocator<32>> Queue;
+	Queue.Add(ParentCell);
+
+	while (Queue.Num() > 0)
+	{
+		const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
+
+		// process elements
+		int32 FoundID = INDEX_NONE;
+		bool bNoOverlaps = CellObjectLists.EnumerateEarlyOut(CurCell->CellID, [&](int32 ObjectID)
+		{
+			if (ObjectOverlapFn(ObjectID))
+			{
+				FoundID = ObjectID;
+				return false;
+			}
+			return true;
+		});
+
+		if (!bNoOverlaps)
+		{
+			return FoundID;
+		}
+
+		for (int k = 0; k < 8; ++k)
+		{
+			if (CurCell->HasChild(k))
+			{
+				const FSparseOctreeCell* ChildCell = &Cells[CurCell->GetChildCellID(k)];
+				FAxisAlignedBox3d CellBox = GetCellBox(*ChildCell, MaxExpandFactor);
+				if (CellBox.Intersects(Bounds) && BoundsOverlapFn(CellBox))
+				{
+					Queue.Add(ChildCell);
+				}
+			}
+		}
+	}
+
+	return INDEX_NONE;
+}
 
 
 
@@ -649,10 +728,10 @@ void FSparseDynamicOctree3::CheckValidity(
 	// check that all object IDs in per-cell object lists is valid
 	for (int32 CellID : CellRefCounts.Indices())
 	{
-		for (int32 ObjectID : CellObjectLists.Values(CellID))
+		CellObjectLists.Enumerate(CellID, [&](int32 ObjectID)
 		{
 			CheckOrFailF(IsValidObjectIDFunc(ObjectID));
-		}
+		});
 	}
 
 	uint32 NumObjectIDs = ObjectIDToCellMap.Num();

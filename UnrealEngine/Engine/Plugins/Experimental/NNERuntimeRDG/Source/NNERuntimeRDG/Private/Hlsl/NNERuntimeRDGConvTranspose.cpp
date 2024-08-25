@@ -41,7 +41,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() >= 2 && InputTensors.Num() <= 3);
 			check(OutputTensors.Num() == 1);
@@ -205,8 +205,9 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterConvTransposeOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("ConvTranspose"), FConvTranspose::Create, ValidateConvTransposeOperator);
-
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("ConvTranspose"), TEXT("Onnx")}, 1}, FConvTranspose::Create, ValidateConvTransposeOperator);
+		Registry.OpAdd({{TEXT("ConvTranspose"), TEXT("Onnx")}, 11}, FConvTranspose::Create, ValidateConvTransposeOperator);
 		return true;
 	}
 

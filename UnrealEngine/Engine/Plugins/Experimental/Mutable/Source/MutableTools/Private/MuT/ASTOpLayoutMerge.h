@@ -12,7 +12,7 @@ namespace mu
 {
 	struct FProgram;
 	
-	class ASTOpLayoutMerge : public ASTOp
+	class ASTOpLayoutMerge final : public ASTOp
 	{
 	public:
 

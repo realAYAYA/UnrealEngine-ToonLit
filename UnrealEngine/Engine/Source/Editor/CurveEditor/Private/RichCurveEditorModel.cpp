@@ -373,9 +373,6 @@ void FRichCurveEditorModel::GetKeyAttributes(TArrayView<const FKeyHandle> InKeys
 				return;
 			}
 
-			const FRichCurveKey* FirstKey = &AllKeys[0];
-			const FRichCurveKey* LastKey  = &AllKeys.Last();
-
 			for (int32 Index = 0; Index < InKeys.Num(); ++Index)
 			{
 				if (RichCurve.IsKeyHandleValid(InKeys[Index]))
@@ -385,18 +382,20 @@ void FRichCurveEditorModel::GetKeyAttributes(TArrayView<const FKeyHandle> InKeys
 
 					Attributes.SetInterpMode(ThisKey.InterpMode);
 
+					// If the previous key is cubic, show the arrive tangent handle even if this key is constant
+					FKeyHandle PreviousKeyHandle = RichCurve.GetPreviousKey(InKeys[Index]);
+					const bool bGetArriveTangent = RichCurve.IsKeyHandleValid(PreviousKeyHandle) && RichCurve.GetKeyRef(PreviousKeyHandle).InterpMode == RCIM_Cubic;
+					if (bGetArriveTangent)
+					{
+						Attributes.SetArriveTangent(ThisKey.ArriveTangent);
+					}
+
 					if (ThisKey.InterpMode != RCIM_Constant && ThisKey.InterpMode != RCIM_Linear)
 					{
 						Attributes.SetTangentMode(ThisKey.TangentMode);
-						if (&ThisKey != FirstKey)
-						{
-							Attributes.SetArriveTangent(ThisKey.ArriveTangent);
-						}
+						Attributes.SetArriveTangent(ThisKey.ArriveTangent);
+						Attributes.SetLeaveTangent(ThisKey.LeaveTangent);
 
-						if (&ThisKey != LastKey)
-						{
-							Attributes.SetLeaveTangent(ThisKey.LeaveTangent);
-						}
 						if (ThisKey.InterpMode == RCIM_Cubic)
 						{
 							Attributes.SetTangentWeightMode(ThisKey.TangentWeightMode);
@@ -724,6 +723,60 @@ void FRichCurveEditorModel::GetNeighboringKeys(const FKeyHandle InKeyHandle, TOp
 			}
 		}
 	}
+}
+
+TPair<ERichCurveInterpMode, ERichCurveTangentMode> FRichCurveEditorModel::GetInterpolationMode(const double& InTime, ERichCurveInterpMode DefaultInterpolationMode, ERichCurveTangentMode DefaultTangentMode) const
+{
+	if (IsValid())
+	{
+		const FRichCurve& RichCurve = GetReadOnlyRichCurve();
+
+		if (!RichCurve.Keys.IsEmpty())
+		{
+			FKeyHandle ReferenceKeyHandle;
+			for (auto It = RichCurve.GetKeyHandleIterator(); It; ++It)
+			{
+				if (RichCurve.IsKeyHandleValid(*It))
+				{
+					const FRichCurveKey& Key = RichCurve.GetKeyRef(*It);
+					if (Key.Time < InTime)
+					{
+						ReferenceKeyHandle = *It;
+					}
+					else
+					{
+						// we try to get the key just before the reference time, if it does not exist, we use the key right after
+						if (!RichCurve.IsKeyHandleValid(ReferenceKeyHandle))
+						{
+							ReferenceKeyHandle = *It;
+						}
+						break;
+					}
+				}
+			}
+
+			if (RichCurve.IsKeyHandleValid(ReferenceKeyHandle))
+			{
+				TArray<FKeyAttributes> KeyAttributes;
+				KeyAttributes.SetNum(1);
+				GetKeyAttributes({ ReferenceKeyHandle }, KeyAttributes);
+
+				ERichCurveInterpMode InterpMode = KeyAttributes[0].GetInterpMode();
+				ERichCurveTangentMode TangentMode = KeyAttributes[0].HasTangentMode() ? KeyAttributes[0].GetTangentMode() : DefaultTangentMode;
+				
+				//if we are cubic, with anything but auto tangents we use the default instead, since they will give us flat tangents which aren't good
+				if (InterpMode == ERichCurveInterpMode::RCIM_Cubic &&
+					(TangentMode != ERichCurveTangentMode::RCTM_Auto && TangentMode != ERichCurveTangentMode::RCTM_SmartAuto))
+				{
+					TangentMode = DefaultTangentMode;
+				}
+
+				return TPair<ERichCurveInterpMode, ERichCurveTangentMode>(InterpMode, TangentMode);
+			}
+		}
+	}
+
+	return TPair<ERichCurveInterpMode, ERichCurveTangentMode>(DefaultInterpolationMode, DefaultTangentMode);
 }
 
 FRichCurveEditorModelRaw::FRichCurveEditorModelRaw(FRichCurve* InRichCurve, UObject* InOwner)

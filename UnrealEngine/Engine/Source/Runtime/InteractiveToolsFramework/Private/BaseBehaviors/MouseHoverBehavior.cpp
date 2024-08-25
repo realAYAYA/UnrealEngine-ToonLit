@@ -53,6 +53,13 @@ FInputCaptureUpdate UMouseHoverBehavior::UpdateHoverCapture(const FInputDeviceSt
 {
 	check(Target != nullptr);
 	Modifiers.UpdateModifiers(InputState, Target);
+
+	// Check device here because we may get keyboard inputs for updating the modifier, and they don't have a valid ray.
+	if ((GetSupportedDevices() & InputState.InputDevice) == EInputDevices::None)
+	{
+		return FInputCaptureUpdate::Continue();
+	}
+
 	if (Target->OnUpdateHover(FInputDeviceRay(InputState)))
 	{
 		return FInputCaptureUpdate::Continue();

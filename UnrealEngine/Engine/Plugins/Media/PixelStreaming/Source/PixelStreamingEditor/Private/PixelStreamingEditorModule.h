@@ -5,14 +5,17 @@
 #include "IPixelStreamingModule.h"
 #include "PixelStreamingServers.h"
 #include "PixelStreamingEditorUtils.h"
+#include "IPixelStreamingAudioInput.h"
 #include "IPixelStreamingEditorModule.h"
+#include "EditorSubmixListener.h"
+#include "AudioDeviceHandle.h"
 
 namespace UE::EditorPixelStreaming
 {
 	class FPixelStreamingToolbar;
 }
 
-class PIXELSTREAMINGEDITOR_API FPixelStreamingEditorModule : public IPixelStreamingEditorModule
+class FPixelStreamingEditorModule : public IPixelStreamingEditorModule
 {
 public:
 	/** IModuleInterface implementation */
@@ -21,9 +24,6 @@ public:
 
 	virtual void StartStreaming(UE::EditorPixelStreaming::EStreamTypes InStreamType) override;
 	virtual void StopStreaming() override;
-	/** These two method have been deprecated. We're just keeping them around until they can be removed in 5.4 */
-	virtual void SetStreamType(UE::EditorPixelStreaming::EStreamTypes InStreamType) override{};
-	virtual UE::EditorPixelStreaming::EStreamTypes GetStreamType() override { return UE::EditorPixelStreaming::EStreamTypes::Editor; }
 
 	virtual void StartSignalling() override;
 	virtual void StopSignalling() override;
@@ -44,6 +44,8 @@ private:
 	bool ParseResolution(const TCHAR* InResolution, uint32& OutX, uint32& OutY);
 	void MaybeResizeEditor(TSharedPtr<SWindow> RootWindow);
 	void OnFrameSizeChanged(TWeakPtr<FIntRect> NewTargetRect);
+	void DisableCPUThrottlingSetting();
+	void RestoreCPUThrottlingSetting();
 
 	TSharedPtr<UE::EditorPixelStreaming::FPixelStreamingToolbar> Toolbar;
 	// Signalling/webserver
@@ -64,4 +66,7 @@ private:
 	TSharedPtr<IPixelStreamingStreamer> EditorStreamer;
 
 	bool bUseExternalSignallingServer = false;
+	bool bOldCPUThrottlingSetting = false;
+
+	TMap<Audio::FDeviceId, TSharedPtr<UE::EditorPixelStreaming::FEditorSubmixListener, ESPMode::ThreadSafe>> AudioInputs;
 };

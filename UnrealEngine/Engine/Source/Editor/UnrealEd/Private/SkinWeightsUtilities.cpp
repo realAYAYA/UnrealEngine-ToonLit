@@ -47,13 +47,18 @@ DEFINE_LOG_CATEGORY_STATIC(LogSkinWeightsUtilities, Log, All);
 bool FSkinWeightsUtilities::ImportAlternateSkinWeight(USkeletalMesh* SkeletalMesh, const FString& Path, int32 TargetLODIndex, const FName& ProfileName, const bool bIsReimport)
 {
 	check(SkeletalMesh);
-	check(SkeletalMesh->GetLODInfo(TargetLODIndex));
 	FSkeletalMeshLODInfo* LODInfo = SkeletalMesh->GetLODInfo(TargetLODIndex);
-	
-	if (LODInfo && LODInfo->bHasBeenSimplified && LODInfo->ReductionSettings.BaseLOD != TargetLODIndex)
+
+	if (!LODInfo)
+	{
+		UE_LOG(LogSkinWeightsUtilities, Error, TEXT("Cannot import Skin Weight Profile. No valid LOD info."));
+		return false;
+	}
+
+	if (LODInfo->bHasBeenSimplified && LODInfo->ReductionSettings.BaseLOD != TargetLODIndex)
 	{
 		//We cannot import alternate skin weights profile for a generated LOD
-		UE_LOG(LogSkinWeightsUtilities, Error, TEXT("Cannot import Skin Weight Profile for a generated LOD."));
+		UE_LOG(LogSkinWeightsUtilities, Error, TEXT("Cannot import Skin Weight Profile for a generated LOD. Skin weight profile are transfert from the source LOD during the simplification process."));
 		return false;
 	}
 
@@ -89,19 +94,20 @@ bool FSkinWeightsUtilities::ImportAlternateSkinWeight(USkeletalMesh* SkeletalMes
 				//Avoid temporary package to be saved
 				UPackage* Package = ObjToDelete->GetOutermost();
 				Package->SetDirtyFlag(false);
-				//Avoid temporary asset to be saved by setting the RF_Transient flag
+				//Avoid gc, use keep flags
+				ObjToDelete->ClearFlags(RF_Standalone);
+				ObjToDelete->ClearInternalFlags(EInternalObjectFlags::Async);
+				//Make the object transient to prevent saving
 				ObjToDelete->SetFlags(RF_Transient);
 			}
 		}
-		ObjectTools::DeleteAssets(AssetsToDelete, false);
-		CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 	};
 
 	DeletePathAssets();
 
 	UObject* ImportedObject = nullptr;
-	UnFbx::FBXImportOptions ImportOptions;
 
+	bool bCreateTransaction = false;
 	//Only use interchange if the base skeletal mesh was imported with interchange
 	const UInterchangeAssetImportData* SelectedInterchangeAssetImportData = Cast<UInterchangeAssetImportData>(SkeletalMesh->GetAssetImportData());
 	if (bUseInterchangeFramework && SelectedInterchangeAssetImportData)
@@ -113,13 +119,33 @@ bool FSkinWeightsUtilities::ImportAlternateSkinWeight(USkeletalMesh* SkeletalMes
 
 		if (const UClass* GenericPipelineClass = InterchangeProjectSettings->GenericPipelineClass.LoadSynchronous())
 		{
-			if (UInterchangePipelineBase* GenericPipeline = NewObject<UInterchangePipelineBase>(GetTransientPackage(), GenericPipelineClass))
+			UInterchangePipelineBase* GenericPipeline = nullptr;
+			for (UObject* PipelineObject : SelectedInterchangeAssetImportData->GetPipelines())
 			{
+				if (PipelineObject->GetClass()->IsChildOf(GenericPipelineClass))
+				{
+					if (UInterchangePipelineBase* ImportPipeline = Cast<UInterchangePipelineBase>(PipelineObject))
+					{
+						GenericPipeline = Cast<UInterchangePipelineBase>(StaticDuplicateObject(ImportPipeline, GetTransientPackage()));
+						break;
+					}
+				}
+			}
+			
+			if (!GenericPipeline)
+			{
+				GenericPipeline = NewObject<UInterchangePipelineBase>(GetTransientPackage(), GenericPipelineClass);
+			}
+
+			if (GenericPipeline)
+			{
+				GenericPipeline->ClearFlags(EObjectFlags::RF_Standalone | EObjectFlags::RF_Public);
 				GenericPipeline->AdjustSettingsForContext(bIsReimport ? EInterchangePipelineContext::AssetAlternateSkinningReimport : EInterchangePipelineContext::AssetAlternateSkinningImport, nullptr);
 				ImportAssetParameters.OverridePipelines.Add(GenericPipeline);
 			}
 		}
 
+		ImportAssetParameters.DestinationName = FGuid::NewGuid().ToString(EGuidFormats::Digits);
 		//TODO create a pipeline that set all the proper skeletalmesh options (look at the legacy system setup)
 		UE::Interchange::FAssetImportResultRef AssetImportResult = InterchangeManager.ImportAssetAsync(ImportAssetPath, ScopedSourceData.GetSourceData(), ImportAssetParameters);
 		AssetImportResult->WaitUntilDone(); //TODO, do not stall the main thread here, WaitUntilDone will tick taskgraph so the job can complete even if we wait on the game thread.
@@ -174,8 +200,6 @@ bool FSkinWeightsUtilities::ImportAlternateSkinWeight(USkeletalMesh* SkeletalMes
 			FbxFactory->ImportUI->TextureImportData->BaseMaterialName.Reset();
 		}
 
-		ApplyImportUIToImportOptions(FbxFactory->ImportUI, ImportOptions);
-
 		TArray<FString> ImportFilePaths;
 		ImportFilePaths.Add(AbsoluteFilePath);
 
@@ -207,6 +231,7 @@ bool FSkinWeightsUtilities::ImportAlternateSkinWeight(USkeletalMesh* SkeletalMes
 		//Factory and task can now be garbage collected
 		Task->RemoveFromRoot();
 		FbxFactory->RemoveFromRoot();
+		bCreateTransaction = true;
 	}
 
 	USkeletalMesh* TmpSkeletalMesh = Cast<USkeletalMesh>(ImportedObject);
@@ -229,15 +254,18 @@ bool FSkinWeightsUtilities::ImportAlternateSkinWeight(USkeletalMesh* SkeletalMes
 			{
 				//Prepare the profile data
 				FSkeletalMeshLODModel& TargetLODModel = TargetModel->LODModels[TargetLODIndex];
-				
+
 				// Prepare the profile data
 				FSkinWeightProfileInfo* Profile = SkeletalMesh->GetSkinWeightProfiles().FindByPredicate([ProfileName](FSkinWeightProfileInfo Profile) { return Profile.Name == ProfileName; });
 
 				const bool bIsReimportLocal = Profile != nullptr;
-				FText TransactionName = bIsReimportLocal ? NSLOCTEXT("UnrealEd", "UpdateAlternateSkinningWeight", "Update Alternate Skinning Weight")
-					: NSLOCTEXT("UnrealEd", "ImportAlternateSkinningWeight", "Import Alternate Skinning Weight");
-				FScopedTransaction ScopedTransaction(TransactionName);
-				SkeletalMesh->Modify();
+				if (bCreateTransaction)
+				{
+					FText TransactionName = bIsReimportLocal ? NSLOCTEXT("UnrealEd", "UpdateAlternateSkinningWeight", "Update Alternate Skinning Weight")
+						: NSLOCTEXT("UnrealEd", "ImportAlternateSkinningWeight", "Import Alternate Skinning Weight");
+					FScopedTransaction ScopedTransaction(TransactionName);
+					SkeletalMesh->Modify();
+				}
 
 				if (bIsReimportLocal)
 				{
@@ -255,11 +283,15 @@ bool FSkinWeightsUtilities::ImportAlternateSkinWeight(USkeletalMesh* SkeletalMes
 				FImportedSkinWeightProfileData PreviousProfileData = ProfileData;
 				
 				IMeshUtilities::MeshBuildOptions BuildOptions;
-				BuildOptions.OverlappingThresholds = ImportOptions.OverlappingThresholds;
-				BuildOptions.bComputeNormals = !ImportOptions.ShouldImportNormals();
-				BuildOptions.bComputeTangents = !ImportOptions.ShouldImportTangents();
-				BuildOptions.bUseMikkTSpace = ImportOptions.NormalGenerationMethod == EFBXNormalGenerationMethod::MikkTSpace;
-				BuildOptions.bComputeWeightedNormals = ImportOptions.bComputeWeightedNormals;
+				//Use the Lod info build settings
+				BuildOptions.OverlappingThresholds.ThresholdPosition = LODInfo->BuildSettings.ThresholdPosition;
+				BuildOptions.OverlappingThresholds.ThresholdTangentNormal = LODInfo->BuildSettings.ThresholdTangentNormal;
+				BuildOptions.OverlappingThresholds.ThresholdUV = LODInfo->BuildSettings.ThresholdUV;
+				BuildOptions.OverlappingThresholds.MorphThresholdPosition = LODInfo->BuildSettings.MorphThresholdPosition;
+				BuildOptions.bComputeNormals = LODInfo->BuildSettings.bRecomputeNormals;
+				BuildOptions.bComputeTangents = LODInfo->BuildSettings.bRecomputeTangents;
+				BuildOptions.bUseMikkTSpace = LODInfo->BuildSettings.bUseMikkTSpace;
+				BuildOptions.bComputeWeightedNormals = LODInfo->BuildSettings.bComputeWeightedNormals;
 				// There's currently no import option for this. We could add one if needed.
 				BuildOptions.BoneInfluenceLimit = 0;
 
@@ -358,10 +390,28 @@ bool FSkinWeightsUtilities::RemoveSkinnedWeightProfileData(USkeletalMesh* Skelet
 	LODModelDest.SkinWeightProfiles.Remove(ProfileName);
 
 	FSkeletalMeshImportData ImportDataDest;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	SkeletalMesh->LoadLODImportedData(LODIndex, ImportDataDest);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-	//Rechunk the skeletal mesh since we remove it, we rebuild the skeletal mesh to achieve rechunking
-	UFbxSkeletalMeshImportData* OriginalSkeletalMeshImportData = UFbxSkeletalMeshImportData::GetImportDataForSkeletalMesh(SkeletalMesh, nullptr);
+	//If we have a LOD info we use the build settings to be sure we are rechunking the LOD with the existing options
+	IMeshUtilities::MeshBuildOptions BuildOptions;
+	if (FSkeletalMeshLODInfo* LODInfo = SkeletalMesh->GetLODInfo(LODIndex))
+	{
+		BuildOptions.OverlappingThresholds.ThresholdPosition = LODInfo->BuildSettings.ThresholdPosition;
+		BuildOptions.OverlappingThresholds.ThresholdTangentNormal = LODInfo->BuildSettings.ThresholdTangentNormal;
+		BuildOptions.OverlappingThresholds.ThresholdUV = LODInfo->BuildSettings.ThresholdUV;
+		BuildOptions.OverlappingThresholds.MorphThresholdPosition = LODInfo->BuildSettings.MorphThresholdPosition;
+		BuildOptions.bComputeNormals = LODInfo->BuildSettings.bRecomputeNormals;
+		BuildOptions.bComputeTangents = LODInfo->BuildSettings.bRecomputeTangents;
+		BuildOptions.bUseMikkTSpace = LODInfo->BuildSettings.bUseMikkTSpace;
+		BuildOptions.bComputeWeightedNormals = LODInfo->BuildSettings.bComputeWeightedNormals;
+	}
+
+	BuildOptions.bRemoveDegenerateTriangles = false;
+	BuildOptions.TargetPlatform = GetTargetPlatformManagerRef().GetRunningTargetPlatform();
+	// There's currently no import option for this. We could add one if needed.
+	BuildOptions.BoneInfluenceLimit = 0;
 
 	TArray<FVector3f> LODPointsDest;
 	TArray<SkeletalMeshImportData::FMeshWedge> LODWedgesDest;
@@ -369,23 +419,6 @@ bool FSkinWeightsUtilities::RemoveSkinnedWeightProfileData(USkeletalMesh* Skelet
 	TArray<SkeletalMeshImportData::FVertInfluence> LODInfluencesDest;
 	TArray<int32> LODPointToRawMapDest;
 	ImportDataDest.CopyLODImportData(LODPointsDest, LODWedgesDest, LODFacesDest, LODInfluencesDest, LODPointToRawMapDest);
-
-	const bool bShouldImportNormals = OriginalSkeletalMeshImportData->NormalImportMethod == FBXNIM_ImportNormals || OriginalSkeletalMeshImportData->NormalImportMethod == FBXNIM_ImportNormalsAndTangents;
-	const bool bShouldImportTangents = OriginalSkeletalMeshImportData->NormalImportMethod == FBXNIM_ImportNormalsAndTangents;
-	//Set the options with the current asset build options
-	IMeshUtilities::MeshBuildOptions BuildOptions;
-	BuildOptions.OverlappingThresholds.ThresholdPosition = OriginalSkeletalMeshImportData->ThresholdPosition;
-	BuildOptions.OverlappingThresholds.ThresholdTangentNormal = OriginalSkeletalMeshImportData->ThresholdTangentNormal;
-	BuildOptions.OverlappingThresholds.ThresholdUV = OriginalSkeletalMeshImportData->ThresholdUV;
-	BuildOptions.OverlappingThresholds.MorphThresholdPosition = OriginalSkeletalMeshImportData->MorphThresholdPosition;
-	BuildOptions.bComputeNormals = !bShouldImportNormals || !ImportDataDest.bHasNormals;
-	BuildOptions.bComputeTangents = !bShouldImportTangents || !ImportDataDest.bHasTangents;
-	BuildOptions.bUseMikkTSpace = (OriginalSkeletalMeshImportData->NormalGenerationMethod == EFBXNormalGenerationMethod::MikkTSpace) && (!bShouldImportNormals || !bShouldImportTangents);
-	BuildOptions.bComputeWeightedNormals = OriginalSkeletalMeshImportData->bComputeWeightedNormals;
-	BuildOptions.bRemoveDegenerateTriangles = false;
-	BuildOptions.TargetPlatform = GetTargetPlatformManagerRef().GetRunningTargetPlatform();
-	// There's currently no import option for this. We could add one if needed.
-	BuildOptions.BoneInfluenceLimit = 0;
 
 	//Build the skeletal mesh asset
 	IMeshUtilities& MeshUtilities = FModuleManager::Get().LoadModuleChecked<IMeshUtilities>("MeshUtilities");

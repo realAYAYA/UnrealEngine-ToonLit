@@ -202,10 +202,15 @@ void FHttpConnection::ProcessRequest(const TSharedPtr<FHttpServerRequest>& Reque
 
 	bool bRequestHandled = false;
 	auto RequestHandlerIterator = Router->CreateRequestHandlerIterator(Request);
-	while (const auto& RequestHandlerPtr = RequestHandlerIterator.Next())
+	while (const FHttpRequestHandler* RequestHandlerPtr = RequestHandlerIterator.Next())
 	{
-		(*RequestHandlerPtr).CheckCallable();
-		bRequestHandled = (*RequestHandlerPtr)(*Request, OnProcessingComplete);
+		if (!RequestHandlerPtr->IsBound())
+		{
+			UE_LOG(LogHttpConnection, Verbose, TEXT("Skipping an unbound FHttpRequestHandler."));
+			continue;
+		}
+
+		bRequestHandled = RequestHandlerPtr->Execute(*Request, OnProcessingComplete);
 		if (bRequestHandled)
 		{
 			break;
@@ -353,5 +358,4 @@ bool FHttpConnection::ResolveKeepAlive(HttpVersion::EHttpServerHttpVersion HttpV
 	{
 		return ConnectionHeaders.Contains(TEXT("Keep-Alive"));
 	}
-	return true;
 }

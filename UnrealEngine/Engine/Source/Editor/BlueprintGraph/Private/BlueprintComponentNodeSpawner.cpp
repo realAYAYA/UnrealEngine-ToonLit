@@ -28,7 +28,6 @@
 #include "Misc/PackageName.h"
 #include "Styling/SlateIconFinder.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SharedPointer.h"
 #include "Textures/SlateIcon.h"
 #include "UObject/Class.h"

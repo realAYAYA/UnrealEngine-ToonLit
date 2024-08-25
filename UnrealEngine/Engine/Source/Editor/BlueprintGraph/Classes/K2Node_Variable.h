@@ -84,7 +84,7 @@ public:
 
 	//~ Begin UEdGraphNode Interface
 	virtual FLinearColor GetNodeTitleColor() const override;
-	virtual FString GetFindReferenceSearchString() const override;
+	virtual FString GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const override;
 	virtual void ReconstructNode() override;
 	virtual FString GetDocumentationLink() const override;
 	virtual FString GetDocumentationExcerptName() const override;

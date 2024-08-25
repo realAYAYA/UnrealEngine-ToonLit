@@ -3,6 +3,7 @@
 #pragma once
 
 #include "RHIDefinitions.h"
+#include "Containers/EnumAsByte.h"
 
 class FVertexBuffer;
 

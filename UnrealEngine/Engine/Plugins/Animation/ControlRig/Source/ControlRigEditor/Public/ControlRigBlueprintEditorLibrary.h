@@ -10,7 +10,7 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "ControlRigBlueprint.h"
-#include "Kismet/BlueprintFunctionLibrary.h"
+#include "RigVMEditorBlueprintLibrary.h"
 #include "ControlRigBlueprintEditorLibrary.generated.h"
 
 UENUM(BlueprintType)
@@ -21,7 +21,7 @@ enum class ECastToControlRigBlueprintCases : uint8
 };
 
 UCLASS(BlueprintType, meta=(ScriptName="ControlRigBlueprintLibrary"))
-class CONTROLRIGEDITOR_API UControlRigBlueprintEditorLibrary : public UBlueprintFunctionLibrary
+class CONTROLRIGEDITOR_API UControlRigBlueprintEditorLibrary : public URigVMEditorBlueprintLibrary
 {
 	GENERATED_BODY()
 
@@ -40,22 +40,7 @@ public:
 	static USkeletalMesh* GetPreviewMesh(UControlRigBlueprint* InRigBlueprint);
 
 	UFUNCTION(BlueprintCallable, Category = "Control Rig Blueprint")
-	static void RecompileVM(UControlRigBlueprint* InRigBlueprint);
-
-	UFUNCTION(BlueprintCallable, Category = "Control Rig Blueprint")
-	static void RecompileVMIfRequired(UControlRigBlueprint* InRigBlueprint);
-	
-	UFUNCTION(BlueprintCallable, Category = "Control Rig Blueprint")
-	static void RequestAutoVMRecompilation(UControlRigBlueprint* InRigBlueprint);
-
-	UFUNCTION(BlueprintCallable, Category = "Control Rig Blueprint")
 	static void RequestControlRigInit(UControlRigBlueprint* InRigBlueprint);
-
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Control Rig Blueprint")
-	static URigVMGraph* GetModel(UControlRigBlueprint* InRigBlueprint);
-
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Control Rig Blueprint")
-	static URigVMController* GetController(UControlRigBlueprint* InRigBlueprint);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Control Rig Blueprint")
 	static TArray<UControlRigBlueprint*> GetCurrentlyOpenRigBlueprints();
@@ -71,5 +56,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintCallable, Category = "Control Rig Blueprint")
 	static void SetupAllEditorMenus();
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Control Rig Blueprint")
+	static TArray<FRigModuleDescription> GetAvailableRigModules();
 };
 

@@ -161,7 +161,7 @@ void AGameplayDebuggerPlayerManager::UpdateAuthReplicators()
 				TestData.Controller->Cleanup();
 			}
 
-			PlayerData.RemoveAt(Idx, 1, false);
+			PlayerData.RemoveAt(Idx, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -305,6 +305,8 @@ void AGameplayDebuggerPlayerManager::GetViewPoint(const APlayerController& Owner
 // FTickableGameObject begin
 void AGameplayDebuggerPlayerManager::Tick(float DeltaTime)
 {
+	Super::Tick(DeltaTime);
+	
 #if WITH_EDITORONLY_DATA 
 	if (EditorWorldData.Replicator)
 	{
@@ -350,7 +352,7 @@ void AGameplayDebuggerPlayerManager::OnGameModeLogout(AGameModeBase* GameMode, A
 					TestData.Controller->Cleanup();
 				}
 
-				PlayerData.RemoveAt(Idx, 1, false);
+				PlayerData.RemoveAt(Idx, 1, EAllowShrinking::No);
 				break;
 			}
 		}

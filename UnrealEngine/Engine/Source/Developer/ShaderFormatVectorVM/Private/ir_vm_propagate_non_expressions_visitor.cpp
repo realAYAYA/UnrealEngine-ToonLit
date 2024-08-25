@@ -198,13 +198,13 @@ public:
 		}
 	}
 
-	virtual ir_visitor_status visit_enter(ir_expression*)
+	virtual ir_visitor_status visit_enter(ir_expression*) override
 	{
 		num_expr++;
 		return visit_continue;
 	}
 
-	virtual ir_visitor_status visit_enter(ir_assignment* assign)
+	virtual ir_visitor_status visit_enter(ir_assignment* assign) override
 	{
 		if (assign->condition)
 		{
@@ -348,7 +348,7 @@ public:
 	{
 	}
 
-	virtual ir_visitor_status visit_enter(ir_call* call)
+	virtual ir_visitor_status visit_enter(ir_call* call) override
 	{
 		bool bFoundMatrixParam = false;
 		foreach_iter(exec_list_iterator, iter, call->actual_parameters)
@@ -690,7 +690,7 @@ public:
 		}
 	}
 
-	virtual ir_visitor_status visit_enter(ir_assignment* assign)
+	virtual ir_visitor_status visit_enter(ir_assignment* assign) override
 	{
 		if (assign->condition)
 		{

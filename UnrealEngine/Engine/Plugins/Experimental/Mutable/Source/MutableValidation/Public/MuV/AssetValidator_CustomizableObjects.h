@@ -32,9 +32,8 @@ public:
 	
 protected:
 	// UEditorValidatorBase
-	virtual bool CanValidate_Implementation(const EDataValidationUsecase InUsecase) const override;
-	virtual bool CanValidateAsset_Implementation(UObject* InAsset) const override;
-	virtual EDataValidationResult ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors) override;
+	virtual bool CanValidateAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& InContext) const override;
+	virtual EDataValidationResult ValidateLoadedAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& InContext) override;
 	// UEditorValidatorBase
 
 private:

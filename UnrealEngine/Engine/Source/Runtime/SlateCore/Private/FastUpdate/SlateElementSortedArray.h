@@ -128,7 +128,7 @@ public:
 		SizeType Index = Find(Item);
 		if (Index != INDEX_NONE)
 		{
-			Data.RemoveAt(Index, 1, false);
+			Data.RemoveAt(Index, 1, EAllowShrinking::No);
 			return 1;
 		}
 		return 0;
@@ -145,7 +145,7 @@ public:
 	template <typename CountType>
 	FORCEINLINE void RemoveAt(SizeType Index, CountType Count)
 	{
-		Data.RemoveAt(Index, Count, false);
+		Data.RemoveAt(Index, Count, EAllowShrinking::No);
 	}
 
 	/** Sorts the array using the SortPredicate. */

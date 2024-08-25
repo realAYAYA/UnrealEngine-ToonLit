@@ -4,8 +4,6 @@
 #include "NiagaraCommon.h"
 #include "NiagaraDataSetCompiledData.h"
 #include "NiagaraCompileHash.h"
-#include "Misc/LazySingleton.h"
-#include "NiagaraDataChannelCommon.h"
 #include "NiagaraDataInterface.h"
 #include "NiagaraDataInterfaceDataChannelCommon.generated.h"
 
@@ -168,6 +166,7 @@ struct FNDIDataChannelCompiledData
 
 	bool UsedByCPU()const{ return bUsedByCPU; }
 	bool UsedByGPU()const{ return bUsedByGPU; }
+	bool NeedSpawnDataTable()const { return bNeedsSpawnDataTable; }
 	int32 GetTotalParams()const{ return TotalParams; }
 
 protected:
@@ -195,6 +194,9 @@ protected:
 
 	UPROPERTY()
 	bool bUsedByGPU = false;
+	
+	UPROPERTY()
+	bool bNeedsSpawnDataTable = true;
 
 	/** Iterates over all scripts for the owning system and gathers all functions and parameters accessing this DI. Building the FunctionInfoTable and GPUScriptParameterInfos map.  */
 	void GatherAccessInfo(UNiagaraSystem* System, UNiagaraDataInterface* Owner);
@@ -203,7 +205,9 @@ protected:
 
 namespace NDIDataChannelUtilities
 {
-	void SortParameters(TArray<FNiagaraVariableBase>& Parameters);	
+	extern const FName GetNDCSpawnDataName;
+
+	void SortParameters(TArray<FNiagaraVariableBase>& Parameters);
 }
 
 

@@ -74,6 +74,6 @@ public:
 	virtual ITableReader<RowType>* CreateReader() const = 0;
 };
 
-TRACESERVICES_API void Table2Csv(const IUntypedTable& Table, const TCHAR* Filename);
+TRACESERVICES_API bool Table2Csv(const IUntypedTable& Table, const TCHAR* Filename);
 
 } // namespace TraceServices

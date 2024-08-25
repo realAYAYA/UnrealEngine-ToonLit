@@ -105,15 +105,15 @@ private:
 	friend class UAnimGraphNode_SequenceEvaluator;
 
 #if WITH_EDITORONLY_DATA
-	// The group name (NAME_None if it is not part of any group)
+	// The group name that we synchronize with (NAME_None if it is not part of any group). 
 	UPROPERTY(EditAnywhere, Category=Sync, meta=(FoldProperty))
 	FName GroupName = NAME_None;
 
-	// The role this player can assume within the group (ignored if GroupIndex is INDEX_NONE)
+	// The role this node can assume within the group (ignored if GroupName is not set)
 	UPROPERTY(EditAnywhere, Category=Sync, meta=(FoldProperty))
 	TEnumAsByte<EAnimGroupRole::Type> GroupRole = EAnimGroupRole::CanBeLeader;
 
-	// How synchronization is determined
+	// How this node will synchronize with other animations.
 	UPROPERTY(EditAnywhere, Category=Sync, meta=(FoldProperty))
 	EAnimSyncMethod Method = EAnimSyncMethod::DoNotSync;
 
@@ -126,8 +126,16 @@ private:
 	TObjectPtr<UAnimSequenceBase> Sequence = nullptr;
 
 	// The time at which to evaluate the associated sequence
-	UPROPERTY(EditAnywhere, Category=Settings, meta=(PinShownByDefault, FoldProperty))
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(PinShownByDefault, FoldProperty, EditCondition="!bUseExplicitFrame"))
 	float ExplicitTime = 0.0f;
+
+	// Whether to use ExplicitFrame (true) or ExplicitTime (false) when evaluating the associated sequence
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(NeverAsPin, FoldProperty))
+	bool bUseExplicitFrame = false;
+
+	// The frame at which to evaluate the associated sequence
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(PinHiddenByDefault, FoldProperty, EditCondition="bUseExplicitFrame"))
+	int32 ExplicitFrame = 0;
 
 	/** This only works if bTeleportToExplicitTime is false OR this node is set to use SyncGroup */
 	UPROPERTY(EditAnywhere, Category = Settings, meta = (PinHiddenByDefault, FoldProperty))
@@ -169,6 +177,11 @@ public:
 	ANIMGRAPHRUNTIME_API virtual bool SetGroupRole(EAnimGroupRole::Type InRole) override;
 	ANIMGRAPHRUNTIME_API virtual bool SetGroupMethod(EAnimSyncMethod InMethod) override;
 	ANIMGRAPHRUNTIME_API virtual bool SetIgnoreForRelevancyTest(bool bInIgnoreForRelevancyTest) override;
+	
+	ANIMGRAPHRUNTIME_API bool ShouldUseExplicitFrame() const;
+	ANIMGRAPHRUNTIME_API bool SetShouldUseExplicitFrame(bool bFlag);
+	ANIMGRAPHRUNTIME_API bool SetExplicitFrame(int32 InFrame);
+	ANIMGRAPHRUNTIME_API int32 GetExplicitFrame() const;
 };
 
 // Sequence evaluator node that can be used standalone (without constant folding)
@@ -178,15 +191,15 @@ struct FAnimNode_SequenceEvaluator_Standalone : public FAnimNode_SequenceEvaluat
 	GENERATED_BODY()
 
 private:
-	// The group name (NAME_None if it is not part of any group)
+	// The group name that we synchronize with (NAME_None if it is not part of any group). 
 	UPROPERTY(EditAnywhere, Category=Sync)
 	FName GroupName = NAME_None;
 
-	// The role this player can assume within the group (ignored if GroupIndex is INDEX_NONE)
+	// The role this node can assume within the group (ignored if GroupName is not set)
 	UPROPERTY(EditAnywhere, Category=Sync)
 	TEnumAsByte<EAnimGroupRole::Type> GroupRole = EAnimGroupRole::CanBeLeader;
 
-	// How synchronization is determined
+	// How this node will synchronize with other animations.
 	UPROPERTY(EditAnywhere, Category=Sync)
 	EAnimSyncMethod Method = EAnimSyncMethod::DoNotSync;
 
@@ -199,8 +212,14 @@ private:
 	TObjectPtr<UAnimSequenceBase> Sequence = nullptr;
 
 	// The time at which to evaluate the associated sequence
-	UPROPERTY(EditAnywhere, Category=Settings, meta=(PinShownByDefault))
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(PinShownByDefault, EditCondition="!bUseFrame"))
 	float ExplicitTime = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(NeverAsPin))
+	bool bUseExplicitFrame = false;
+	
+	UPROPERTY(EditAnywhere, Category=Settings, meta=(PinHiddenByDefault, EditCondition="bUseFrame"))
+	int32 ExplicitFrame = 0;
 
 	/** This only works if bTeleportToExplicitTime is false OR this node is set to use SyncGroup */
 	UPROPERTY(EditAnywhere, Category = Settings, meta = (PinHiddenByDefault))
@@ -227,7 +246,19 @@ public:
 	virtual void SetTeleportToExplicitTime(bool bInTeleport) override { bTeleportToExplicitTime = bInTeleport; }
 	virtual void SetReinitializationBehavior(TEnumAsByte<ESequenceEvalReinit::Type> InBehavior) override { ReinitializationBehavior = InBehavior; }
 	virtual UAnimSequenceBase* GetSequence() const override { return Sequence; }
-	virtual float GetExplicitTime() const override { return ExplicitTime; }
+	virtual float GetExplicitTime() const override
+	{
+		if(ShouldUseExplicitFrame())
+		{
+			if(const UAnimSequenceBase* SequenceBase = GetSequence())
+			{
+				return SequenceBase->GetSamplingFrameRate().AsSeconds(ExplicitFrame);
+			}
+
+			return 0.f;
+		}
+		return ExplicitTime;
+	}
 	virtual bool GetTeleportToExplicitTime() const override { return bTeleportToExplicitTime; }
 	virtual TEnumAsByte<ESequenceEvalReinit::Type> GetReinitializationBehavior() const override { return ReinitializationBehavior; }
 	virtual float GetStartPosition() const override { return StartPosition; }
@@ -242,4 +273,9 @@ public:
 	virtual bool SetGroupRole(EAnimGroupRole::Type InRole) override { GroupRole = InRole; return true; }
 	virtual bool SetGroupMethod(EAnimSyncMethod InMethod) override { Method = InMethod; return true; }
 	virtual bool SetIgnoreForRelevancyTest(bool bInIgnoreForRelevancyTest) override { bIgnoreForRelevancyTest = bInIgnoreForRelevancyTest; return true; }
+
+	bool ShouldUseExplicitFrame() const { return bUseExplicitFrame; }
+	void SetShouldUseExplicitFrame(bool bFlag) { bUseExplicitFrame = bFlag; }
+	void SetExplicitFrame(int32 InFrame) { ExplicitFrame = InFrame; }
+	int32 GetExplicitFrame() const { return ExplicitFrame; }
 };

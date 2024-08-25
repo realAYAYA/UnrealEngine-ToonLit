@@ -15,7 +15,7 @@
 	#define EyeAdaptationStruct DecalPass
 #endif
 
-#include "Strata/Strata.ush"
+#include "Substrate/Substrate.ush"
 #include "DecalCommon.ush"
 #include "/Engine/Generated/Material.ush"
 #include "/Engine/Generated/VertexFactory.ush"
@@ -132,31 +132,30 @@ void FPixelShaderInOut_MainPS(
 	}
 #endif
 
-#if STRATA_ENABLED
-	FStrataPixelHeader StrataHeader = MaterialParameters.GetFrontStrataHeader();
-	StrataHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+#if SUBSTRATE_ENABLED
+	FSubstratePixelHeader SubstrateHeader = MaterialParameters.GetFrontSubstrateHeader();
+	SubstrateHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
 
 	float Coverage = 0.0;
-	if (StrataHeader.StrataTree.BSDFCount > 0)
+	if (SubstrateHeader.SubstrateTree.BSDFCount > 0)
 	{
-		FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
 		const float3 V = MaterialParameters.CameraVector;
 
 		// Update tree (coverage/transmittance/luminace weights)
-		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, false /*bRoughDiffuseEnabled*/, 0, false/*bRoughnessTracking*/);
-		StrataHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+		const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, false /*bRoughDiffuseEnabled*/, 0, false/*bRoughnessTracking*/);
+		SubstrateHeader.SubstrateUpdateTree(V, Settings);
 
 		// Either propagate the BSDF opacity, or use the one for AlphaComposite (premultiplied alpha)
-		float CoverageOverBackground = StrataHeader.StrataTree.BSDFs[0].Coverage;
-#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+		float CoverageOverBackground = SubstrateHeader.SubstrateTree.BSDFs[0].Coverage;
+#if SUBSTRATE_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
 		CoverageOverBackground = GetMaterialOpacity(PixelMaterialInputs);
 #endif 
 
-		// Since the Convert-To-Decal node forces parameter blending for the entire Strata tree, the BSDF we are interested in will be in 0.
-		Coverage = DecalCommonOutput(Out, StrataHeader, StrataHeader.StrataTree.BSDFs[0], 1.0f /*CoverageWeight*/, CoverageOverBackground);
+		// Since the Convert-To-Decal node forces parameter blending for the entire Substrate tree, the BSDF we are interested in will be in 0.
+		Coverage = DecalCommonOutput(Out, SubstrateHeader, SubstrateHeader.SubstrateTree.BSDFs[0], 1.0f /*CoverageWeight*/, CoverageOverBackground);
 	}
 	const float Opacity = Coverage;
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 	float3 Color = GetMaterialEmissive(PixelMaterialInputs);
 
 	float Opacity = GetMaterialOpacity(PixelMaterialInputs);
@@ -178,7 +177,7 @@ void FPixelShaderInOut_MainPS(
 	GBufferData.Velocity = 0;
 
 	DecalCommonOutput(In, Out, Color, Opacity, GBufferData);
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 #if MATERIAL_VIRTUALTEXTURE_FEEDBACK
 	FinalizeVirtualTextureFeedback(

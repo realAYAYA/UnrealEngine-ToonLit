@@ -38,6 +38,17 @@ class FNiagaraSceneProxy;
 using FNiagaraSystemInstanceControllerPtr = TSharedPtr<FNiagaraSystemInstanceController, ESPMode::ThreadSafe>;
 using FNiagaraSystemInstanceControllerConstPtr = TSharedPtr<const FNiagaraSystemInstanceController, ESPMode::ThreadSafe>;
 
+struct FNiagaraMaterialAndScale
+{
+	FNiagaraMaterialAndScale() = default;
+	explicit FNiagaraMaterialAndScale(UMaterialInterface* InMaterial, float InScale) : Material(InMaterial), Scale(InScale) {}
+
+	UMaterialInterface* Material = nullptr;
+	float Scale = 1.0f;
+};
+
+using FNiagaraMaterialAndScaleArray = TArray<FNiagaraMaterialAndScale, TInlineAllocator<16>>;
+
 /**
  * This is the main asynchronous interface for controlling operation of a single instance of a Niagara System.
  */
@@ -81,10 +92,10 @@ public:
 	UMaterialInterface* GetMaterialOverride(const UNiagaraRendererProperties* InProps, int32 InMaterialSubIndex) const;
 	void SetOnMaterialsUpdated(const FOnMaterialsUpdated& Delegate) { OnMaterialsUpdatedDelegate = Delegate; }
 
-	void GetStreamingMeshInfo(const FBoxSphereBounds& OwnerBounds, FStreamingTextureLevelContext& LevelContext, TArray<FStreamingRenderAssetPrimitiveInfo>& OutStreamingRenderAssets) const;
+	void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& List) const;
 
-	bool GetParticleValueVec3_DebugOnly(TArray<FVector>& OutValues, FName EmitterName, FName ValueName) const;
-	bool GetParticleValues_DebugOnly(TArray<float>& OutValues, FName EmitterName, FName ValueName) const;
+	void GetMaterialStreamingInfo(FNiagaraMaterialAndScaleArray& OutMaterialAndScales) const;
+	void GetStreamingMeshInfo(const FBoxSphereBounds& OwnerBounds, FStreamingTextureLevelContext& LevelContext, TArray<FStreamingRenderAssetPrimitiveInfo>& OutStreamingRenderAssets) const;
 
 	/** Dumps system instance state and info to the log (Used by fx.Niagara.DumpComponents commandlet) */
 	void DebugDump(bool bFullDump);

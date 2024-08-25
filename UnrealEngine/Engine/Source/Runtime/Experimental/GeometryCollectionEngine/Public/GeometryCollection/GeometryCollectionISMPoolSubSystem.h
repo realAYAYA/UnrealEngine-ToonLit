@@ -6,7 +6,7 @@
 #include "GeometryCollectionISMPoolSubSystem.generated.h"
 
 class AGeometryCollectionISMPoolActor;
-
+class ULevel;
 /**
  * A subsystem managing ISMPool actors.
  * Used by geometry collection now but repurposed for more general use.
@@ -25,13 +25,15 @@ public:
 	// USubsystem END
 
 	/** Finds or creates an actor. */
-	GEOMETRYCOLLECTIONENGINE_API AGeometryCollectionISMPoolActor* FindISMPoolActor();
+	GEOMETRYCOLLECTIONENGINE_API AGeometryCollectionISMPoolActor* FindISMPoolActor(ULevel* Level);
 	
 	/** Get all actors managed by the subsystem. */
 	GEOMETRYCOLLECTIONENGINE_API void GetISMPoolActors(TArray<AGeometryCollectionISMPoolActor*>& OutActors) const;
 
 protected:
-	/** For now we only use one ISMPool actor per world, but we could extend the system to manage many more and return the right one based on search criteria. */
-	UPROPERTY(Transient)
-	TObjectPtr<AGeometryCollectionISMPoolActor> ISMPoolActor;
+	UFUNCTION()
+	void OnActorEndPlay(AActor* InSource, EEndPlayReason::Type Reason);
+
+	/** ISMPool are per level **/
+	TMap<TObjectPtr<ULevel>, TObjectPtr<AGeometryCollectionISMPoolActor> > PerLevelISMPoolActors;
 };

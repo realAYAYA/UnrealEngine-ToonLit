@@ -3,1363 +3,1657 @@
 #pragma once
 
 #include "LearningArray.h"
-#include "LearningAgentsDebug.h"
+#include "LearningObservation.h"
 
-#include "Templates/SharedPointer.h"
-#include "UObject/Object.h"
+#include "LearningAgentsNeuralNetwork.h" // Included for ELearningAgentsActivationFunction
+
+#include "Engine/EngineTypes.h"
+#include "GameFramework/OnlineReplStructs.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 
 #include "LearningAgentsObservations.generated.h"
 
-namespace UE::Learning
+class ULearningAgentsManagerListener;
+class ULearningAgentsObservationSchema;
+class ULearningAgentsObservationObject;
+struct FLearningAgentsObservationSchemaElement;
+struct FLearningAgentsObservationObjectElement;
+
+class USplineComponent;
+
+/** An element of an Observation Schema */
+USTRUCT(BlueprintType)
+struct LEARNINGAGENTS_API FLearningAgentsObservationSchemaElement
 {
-	struct FFeatureObject;
-	struct FFloatFeature;
-	struct FTimeFeature;
-	struct FAngleFeature;
-	struct FRotationFeature;
-	struct FDirectionFeature;
-	struct FPlanarDirectionFeature;
-	struct FPositionFeature;
-	struct FScalarPositionFeature;
-	struct FPlanarPositionFeature;
-	struct FVelocityFeature;
-	struct FScalarVelocityFeature;
-	struct FPlanarVelocityFeature;
-	struct FAngularVelocityFeature;
-	struct FScalarAngularVelocityFeature;
-}
+	GENERATED_BODY()
 
-class ULearningAgentsInteractor;
+	UE::Learning::Observation::FSchemaElement SchemaElement;
+};
 
-// For functions in this file, we are favoring having more verbose names such as "AddFloatObservation" vs simply "Add" in 
-// order to keep it easy to find the correct function in blueprints.
+/** An element of an Observation Object */
+USTRUCT(BlueprintType)
+struct LEARNINGAGENTS_API FLearningAgentsObservationObjectElement
+{
+	GENERATED_BODY()
 
-//------------------------------------------------------------------
+	UE::Learning::Observation::FObjectElement ObjectElement;
+};
 
-/** The base class for all observations. Observations define the inputs to your agents. */
-UCLASS(Abstract, BlueprintType)
-class LEARNINGAGENTS_API ULearningAgentsObservation : public UObject
+/** Comparison operator for Observation Object Elements */
+bool operator==(const FLearningAgentsObservationObjectElement& Lhs, const FLearningAgentsObservationObjectElement& Rhs);
+
+/** Hashing operator for Observation Object Elements */
+uint32 GetTypeHash(const FLearningAgentsObservationObjectElement& Element);
+
+template<>
+struct TStructOpsTypeTraits<FLearningAgentsObservationObjectElement> : public TStructOpsTypeTraitsBase2<FLearningAgentsObservationObjectElement>
+{
+	enum
+	{
+		WithIdenticalViaEquality = true,
+	};
+};
+
+/**
+ * Observation Schema
+ *
+ * This object is used to construct a schema describing some structure of observations.
+ */
+UCLASS(BlueprintType)
+class LEARNINGAGENTS_API ULearningAgentsObservationSchema : public UObject
 {
 	GENERATED_BODY()
 
 public:
 
-	/** Reference to the Interactor this observation is associated with. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
-	TObjectPtr<ULearningAgentsInteractor> Interactor;
-
-public:
-
-	/** Initialize the internal state for a given maximum number of agents */
-	void Init(const int32 MaxAgentNum);
-
-	/**
-	 * Called whenever agents are added to the associated ULearningAgentsInteractor object.
-	 * @param AgentIds Array of agent ids which have been added
-	 */
-	virtual void OnAgentsAdded(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are removed from the associated ULearningAgentsInteractor object.
-	 * @param AgentIds Array of agent ids which have been removed
-	 */
-	virtual void OnAgentsRemoved(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are reset on the associated ULearningAgentsInteractor object.
-	 * @param AgentIds Array of agent ids which have been reset
-	 */
-	virtual void OnAgentsReset(const TArray<int32>& AgentIds);
-
-	/** Get the number of times an observation has been set for the given agent id. */
-	uint64 GetAgentIteration(const int32 AgentId) const;
-
-public:
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-
-	/** Color used to draw this observation in the visual log */
-	FLinearColor VisualLogColor = FColor::Red;
-
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const {}
-#endif
-
-protected:
-
-	/** Number of times this observation has been set for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> AgentIteration;
+	UE::Learning::Observation::FSchema ObservationSchema;
 };
 
-//------------------------------------------------------------------
+/**
+ * Observation Object
+ *
+ * This object is used to construct or get the values of observations.
+ */
+UCLASS(BlueprintType)
+class LEARNINGAGENTS_API ULearningAgentsObservationObject : public UObject
+{
+	GENERATED_BODY()
 
-/** A simple float observation. Used as a catch-all for situations where a more type-specific observation does not exist yet. */
+public:
+
+	UE::Learning::Observation::FObject ObservationObject;
+};
+
+/** Enum Type representing either observation A or observation B */
+UENUM(BlueprintType)
+enum class ELearningAgentsEitherObservation : uint8
+{
+	A,
+	B,
+};
+
+/** Enum Type representing either a Null observation or some Valid observation */
+UENUM(BlueprintType)
+enum class ELearningAgentsOptionalObservation : uint8
+{
+	Null,
+	Valid,
+};
+
 UCLASS()
-class LEARNINGAGENTS_API UFloatObservation : public ULearningAgentsObservation
+class LEARNINGAGENTS_API ULearningAgentsObservations : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
 
-	/**
-	 * Adds a new float observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta=(DefaultToSelf = "InInteractor"))
-	static UFloatObservation* AddFloatObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
+	/** Project a transform onto the ground plane, leaving just rotation around the vertical axis */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	static FTransform ProjectTransformOntoGroundPlane(const FTransform Transform, const FVector LocalForwardVector = FVector::ForwardVector, const float GroundPlaneHeight = 0.0f);
+
+
+	/** Find an Enum type by Name. This can be used to find Enum types defined in C++. This call can be expensive so the result should be cached. */
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
+	static UEnum* FindEnumByName(const FString& Name);
 
 	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Observation The value currently being observed.
+	 * Validates that the given observation object matches the schema. Will log errors on objects that don't match.
+	 *
+	 * @param Schema				Observation Schema
+	 * @param SchemaElement			Observation Schema Element
+	 * @param Object				Observation Object
+	 * @param ObjectElement			Observation Object Element
+	 * @returns						true if the object matches the schema
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetFloatObservation(const int32 AgentId, const float Observation);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
-
-/** A simple array of floats observation. Used as a catch-all for situations where a more type-specific observation does not exist yet. */
-UCLASS()
-class LEARNINGAGENTS_API UFloatArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents")
+	static bool ValidateObservationObjectMatchesSchema(
+		const ULearningAgentsObservationSchema* Schema,
+		const FLearningAgentsObservationSchemaElement SchemaElement,
+		const ULearningAgentsObservationObject* Object,
+		const FLearningAgentsObservationObjectElement ObjectElement);
 
 	/**
-	 * Adds a new float array observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Num The number of floats in the array
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
+	 * Logs an Observation Object Element. Useful for debugging.
+	 *
+	 * @param Object				Observation Object
+	 * @param ObjectElement			Observation Object Element
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UFloatArrayObservation* AddFloatArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 Num = 1, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Observation The value currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetFloatArrayObservation(const int32 AgentId, const TArray<float>& Observation);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** A simple observation for an FVector. */
-UCLASS()
-class LEARNINGAGENTS_API UVectorObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents")
+	static void LogObservation(const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element);
 
 public:
 
 	/**
-	 * Adds a new vector observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
+	 * Specifies a new null observation. This represents an empty observation and can be useful when an observation is needed which has no value.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UVectorObservation* AddVectorObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyNullObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("NullObservation"));
 
 	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Observation The values currently being observed.
+	 * Specifies a new continuous observation. This represents an observation made up of several float values.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Size The number of float values in the observation.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetVectorObservation(const int32 AgentId, const FVector Observation);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyContinuousObservation(ULearningAgentsObservationSchema* Schema, const int32 Size, const FName Tag = TEXT("ContinuousObservation"));
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
+	/**
+	 * Specifies a new exclusive discrete observation. This represents a discrete observation which is an exclusive selection from multiple choices.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Size The number of discrete options in the observation.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyExclusiveDiscreteObservation(ULearningAgentsObservationSchema* Schema, const int32 Size, const FName Tag = TEXT("ExclusiveDiscreteObservation"));
 
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
+	/**
+	 * Specifies a new inclusive discrete observation. This represents a discrete observation which is an inclusive selection from multiple choices.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Size The number of discrete options in the observation.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyInclusiveDiscreteObservation(ULearningAgentsObservationSchema* Schema, const int32 Size, const FName Tag = TEXT("InclusiveDiscreteObservation"));
 
-/** A simple observation for an array of FVector. */
-UCLASS()
-class LEARNINGAGENTS_API UVectorArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
+	/**
+	 * Specifies a new count observation. This represents a count of something such as the size of, or index into, an array.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyCountObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("CountObservation"));
+
+	/**
+	 * Specifies a new struct observation. This represents a group of named sub-observations.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Elements The sub-observations that make up this struct.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyStructObservation(ULearningAgentsObservationSchema* Schema, const TMap<FName, FLearningAgentsObservationSchemaElement>& Elements, const FName Tag = TEXT("StructObservation"));
+
+	/**
+	 * Specifies a new struct observation. This represents a group of named sub-observations.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param ElementNames The names of the sub-observations that make up this struct.
+	 * @param Elements The corresponding sub-observations that make up this struct. Must be the same size as ElementNames.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifyStructObservationFromArrays(ULearningAgentsObservationSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationSchemaElement>& Elements, const FName Tag = TEXT("StructObservation"));
+	
+	/**
+	 * Specifies a new struct observation. This represents a group of named sub-observations.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param ElementNames The names of the sub-observations that make up this struct.
+	 * @param Elements The corresponding sub-observations that make up this struct. Must be the same size as ElementNames.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	static FLearningAgentsObservationSchemaElement SpecifyStructObservationFromArrayViews(ULearningAgentsObservationSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationSchemaElement> Elements, const FName Tag = TEXT("StructObservation"));
+
+	/**
+	 * Specifies a new exclusive union observation. This represents an observation which is exclusively chosen from a set of named sub-observations.
+	 * In other words, when this observation is created, you only need to provide one observation from the given sub-observations.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Elements The sub-observations that make up this union.
+	 * @param EncodingSize The encoding size used to encode each sub-observation.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyExclusiveUnionObservation(ULearningAgentsObservationSchema* Schema, const TMap<FName, FLearningAgentsObservationSchemaElement>& Elements, const int32 EncodingSize = 128, const FName Tag = TEXT("ExclusiveUnionObservation"));
+
+	/**
+	 * Specifies a new exclusive union observation. This represents an observation which is exclusively chosen from a set of named sub-observations.
+	 * In other words, when this observation is created, you only need to provide one observation from the given sub-observations.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param ElementNames The names of the sub-observations that make up this union.
+	 * @param Elements The corresponding sub-observations that make up this union. Must be the same size as ElementNames.
+	 * @param EncodingSize The encoding size used to encode each sub-observation.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifyExclusiveUnionObservationFromArrays(ULearningAgentsObservationSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationSchemaElement>& Elements, const int32 EncodingSize = 128, const FName Tag = TEXT("ExclusiveUnionObservation"));
+	
+	/**
+	 * Specifies a new exclusive union observation. This represents an observation which is exclusively chosen from a set of named sub-observations.
+	 * In other words, when this observation is created, you only need to provide one observation from the given sub-observations.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param ElementNames The names of the sub-observations that make up this union.
+	 * @param Elements The corresponding sub-observations that make up this union. Must be the same size as ElementNames.
+	 * @param EncodingSize The encoding size used to encode each sub-observation.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	static FLearningAgentsObservationSchemaElement SpecifyExclusiveUnionObservationFromArrayViews(ULearningAgentsObservationSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationSchemaElement> Elements, const int32 EncodingSize = 128, const FName Tag = TEXT("ExclusiveUnionObservation"));
+
+	/**
+	 * Specifies a new inclusive union observation. This represents an observation which is inclusively chosen from a set of named sub-observations.
+	 * In other words, when this observation is created, you can provide any combination of observations from the given sub-observations. Internally
+	 * this observation uses Attention so can be slower to evaluate and more difficult to train than other observation types. For this reason it 
+	 * should be used sparingly.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Elements The sub-observations that make up this union.
+	 * @param AttentionEncodingSize The encoding size used by the attention mechanism.
+	 * @param AttentionHeadNum The number of heads used by the attention mechanism.
+	 * @param ValueEncodingSize The output encoding size used by the attention mechanism.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyInclusiveUnionObservation(ULearningAgentsObservationSchema* Schema, const TMap<FName, FLearningAgentsObservationSchemaElement>& Elements, const int32 AttentionEncodingSize = 32, const int32 AttentionHeadNum = 4, const int32 ValueEncodingSize = 32, const FName Tag = TEXT("InclusiveUnionObservation"));
+
+	/**
+	 * Specifies a new inclusive union observation. This represents an observation which is inclusively chosen from a set of named sub-observations.
+	 * In other words, when this observation is created, you can provide any combination of observations from the given sub-observations. Internally
+	 * this observation uses Attention so can be slower to evaluate and more difficult to train than other observation types. For this reason it
+	 * should be used sparingly.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param ElementNames The names of the sub-observations that make up this union.
+	 * @param Elements The corresponding sub-observations that make up this union. Must be the same size as ElementNames.
+	 * @param AttentionEncodingSize The encoding size used by the attention mechanism.
+	 * @param AttentionHeadNum The number of heads used by the attention mechanism.
+	 * @param ValueEncodingSize The output encoding size used by the attention mechanism.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifyInclusiveUnionObservationFromArrays(ULearningAgentsObservationSchema* Schema, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationSchemaElement>& Elements, const int32 AttentionEncodingSize = 32, const int32 AttentionHeadNum = 4, const int32 ValueEncodingSize = 32, const FName Tag = TEXT("InclusiveUnionObservation"));
+	
+	/**
+	 * Specifies a new inclusive union observation. This represents an observation which is inclusively chosen from a set of named sub-observations.
+	 * In other words, when this observation is created, you can provide any combination of observations from the given sub-observations. Internally
+	 * this observation uses Attention so can be slower to evaluate and more difficult to train than other observation types. For this reason it
+	 * should be used sparingly.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param ElementNames The names of the sub-observations that make up this union.
+	 * @param Elements The corresponding sub-observations that make up this union. Must be the same size as ElementNames.
+	 * @param AttentionEncodingSize The encoding size used by the attention mechanism.
+	 * @param AttentionHeadNum The number of heads used by the attention mechanism.
+	 * @param ValueEncodingSize The output encoding size used by the attention mechanism.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	static FLearningAgentsObservationSchemaElement SpecifyInclusiveUnionObservationFromArrayViews(ULearningAgentsObservationSchema* Schema, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationSchemaElement> Elements, const int32 AttentionEncodingSize = 32, const int32 AttentionHeadNum = 4, const int32 ValueEncodingSize = 32, const FName Tag = TEXT("InclusiveUnionObservation"));
+
+	/**
+	 * Specifies a new static array observation. This represents an observation made up of a fixed-size array of some other observation.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Element The sub-observation that represents elements of this array.
+	 * @param Num The number of elements in the fixed size array.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifyStaticArrayObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 Num, const FName Tag = TEXT("StaticArrayObservation"));
+
+	/**
+	 * Specifies a new set observation. This represents an observation made up of a Set of some other observation. This Set can be variable in size 
+	 * (up to some fixed maximum size) and elements are considered unordered. Internally this observation uses Attention so can be slower to evaluate 
+	 * and more difficult to train than other observation types. For this reason it should be used sparingly.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Element The sub-observation that represents elements of this array.
+	 * @param MaxNum The maximum number of elements that can be included in the set.
+	 * @param AttentionEncodingSize The encoding size used by the attention mechanism.
+	 * @param AttentionHeadNum The number of heads used by the attention mechanism.
+	 * @param ValueEncodingSize The output encoding size used by the attention mechanism.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifySetObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 MaxNum, const int32 AttentionEncodingSize = 32, const int32 AttentionHeadNum = 4, const int32 ValueEncodingSize = 32, const FName Tag = TEXT("SetObservation"));
+
+	/**
+	 * Specifies a new pair observation. This represents an observation made up of two sub-observations.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Key The first sub-observation.
+	 * @param Value The second sub-observation.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifyPairObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Key, const FLearningAgentsObservationSchemaElement Value, const FName Tag = TEXT("PairObservation"));
+
+	/**
+	 * Specifies a new array observation. This represents an observation made up of an Array of some other observation. This Array can be variable in 
+	 * size (up to some fixed maximum size) and the order of elements is taken into consideration. Internally this observation uses Attention so can 
+	 * be slower to evaluate and more difficult to train than other observation types. For this reason it should be used sparingly.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Element The sub-observation that represents elements of this array.
+	 * @param MaxNum The maximum number of elements that can be included in the array.
+	 * @param AttentionEncodingSize The encoding size used by the attention mechanism.
+	 * @param AttentionHeadNum The number of heads used by the attention mechanism.
+	 * @param ValueEncodingSize The output encoding size used by the attention mechanism.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifyArrayObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 MaxNum, const int32 AttentionEncodingSize = 32, const int32 AttentionHeadNum = 4, const int32 ValueEncodingSize = 32, const FName Tag = TEXT("ArrayObservation"));
+
+	/**
+	 * Specifies a new map observation. This represents an observation made up of a Map of some other key and pair observations. This Map can be 
+	 * variable in size (up to some fixed maximum size) and elements are considered unordered. Internally this observation uses Attention so can
+	 * be slower to evaluate and more difficult to train than other observation types. For this reason it should be used sparingly.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param KeyElement The sub-observation that represents keys in this map.
+	 * @param ValueElement The sub-observation that represents values in this map.
+	 * @param MaxNum The maximum number of elements that can be included in the map.
+	 * @param AttentionEncodingSize The encoding size used by the attention mechanism.
+	 * @param AttentionHeadNum The number of heads used by the attention mechanism.
+	 * @param ValueEncodingSize The output encoding size used by the attention mechanism.
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4))
+	static FLearningAgentsObservationSchemaElement SpecifyMapObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement KeyElement, const FLearningAgentsObservationSchemaElement ValueElement, const int32 MaxNum, const int32 AttentionEncodingSize = 32, const int32 AttentionHeadNum = 4, const int32 ValueEncodingSize = 32, const FName Tag = TEXT("MapObservation"));
+
+	/**
+	 * Specifies a new enum observation. This represents an exclusive choice from elements of the given Enum. To use this with an Enum defined in C++ 
+	 * use the FindEnumByName convenience function.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Enum The enum type to use.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyEnumObservation(ULearningAgentsObservationSchema* Schema, const UEnum* Enum, const FName Tag = TEXT("EnumObservation"));
+
+	/**
+	 * Specifies a new bitmask observation. This represents an inclusive choice from elements of the given Enum. To use this with an Enum defined in 
+	 * C++ use the FindEnumByName convenience function.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Enum The enum type to use.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyBitmaskObservation(ULearningAgentsObservationSchema* Schema, const UEnum* Enum, const FName Tag = TEXT("BitmaskObservation"));
+
+	/**
+	 * Specifies a new optional observation. This represents an observation which may or may not be provided.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Elements The sub-observation that may or may not be provided.
+	 * @param EncodingSize The encoding size used to encode this sub-observation.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyOptionalObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 EncodingSize = 128, const FName Tag = TEXT("OptionalObservation"));
+
+	/**
+	 * Specifies a new either observation. This represents an observation which will be either sub-observation A or sub-observation B.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param A The first sub-observation.
+	 * @param A The second sub-observation.
+	 * @param EncodingSize The encoding size used to encode each sub-observation.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationSchemaElement SpecifyEitherObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement A, const FLearningAgentsObservationSchemaElement B, const int32 EncodingSize = 128, const FName Tag = TEXT("EitherObservation"));
+
+	/**
+	 * Specifies a new encoding observation. This represents an observation which will be an encoding of another sub-observation using a small neural
+	 * network.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Element The sub-observation to be encoded.
+	 * @param EncodingSize The encoding size used to encode this sub-observation.
+	 * @param HiddenLayerNum The number of hidden layers used to encode this sub-observation.
+	 * @param ActivationFunction The activation function used to encode this sub-observation.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationSchemaElement SpecifyEncodingObservation(ULearningAgentsObservationSchema* Schema, const FLearningAgentsObservationSchemaElement Element, const int32 EncodingSize = 128, const int32 HiddenLayerNum = 1, const ELearningAgentsActivationFunction ActivationFunction = ELearningAgentsActivationFunction::ELU, const FName Tag = TEXT("EncodingObservation"));
+
+	/**
+	 * Specifies a new bool observation. A true or false observation.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyBoolObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("BoolObservation"));
+
+	/**
+	 * Specifies a new float observation. A simple observation which can be used as a catch-all for situations where a
+	 * type-specific observation does not exist.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyFloatObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("FloatObservation"));
+
+	/**
+	 * Specifies a new location observation. Allows an agent to observe the location of some entity.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyLocationObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("LocationObservation"));
+
+	/**
+	 * Specifies a new rotation observation. Allows an agent to observe the rotation of some entity. Rotations are encoded as two columns of the 
+	 * rotation matrix to ensure there is no discontinuity in the encoding.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyRotationObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("RotationObservation"));
+
+	/**
+	 * Specifies a new scale observation. Allows an agent to observe the scale of some entity. Negative scales are not supported by this observation 
+	 * type.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyScaleObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("ScaleObservation"));
+
+	/**
+	 * Specifies a new transform observation. Allows an agent to observe the transform of some entity.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyTransformObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("TransformObservation"));
+
+	/**
+	 * Specifies a new angle observation. This will be encoded as a 2-dimension Cartesian vector so that 0 and 350 are close to each other in the 
+	 * encoded space.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyAngleObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("AngleObservation"));
+
+	/**
+	 * Specifies a new velocity observation. Allows an agent to observe the velocity of some entity.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyVelocityObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("VelocityObservation"));
+
+	/**
+	 * Specifies a new direction observation. Allows an agent to observe the direction of some entity.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyDirectionObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("DirectionObservation"));
+
+	/**
+	 * Specifies a new location along spline observation. This observes the location of the spline at the given distance along that spline.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyLocationAlongSplineObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("LocationAlongSplineObservation"));
+
+	/**
+	 * Specifies a new proportion along spline observation. This observes the proportion along a spline at the given distance. For looped splines 
+	 * this will be treated effectively like an angle between 0 and 360 degrees and encoded appropriately so that 0 and 350 are close to each other in the 
+	 * encoded space, while for non-looped splines this will be treated as a value between 0 and 1.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyProportionAlongSplineObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("ProportionAlongSplineObservation"));
+
+	/**
+	 * Specifies a new direction along spline observation. This observes the direction of the spline at the given distance along that spline.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyDirectionAlongSplineObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("DirectionAlongSplineObservation"));
+
+	/**
+	 * Specifies a new proportion along ray observation. This observes how far a you can travel along a ray before collision. Rays that can travel 
+	 * the full distance are encoded as zero, while rays that collide instantly are encoded as one.
+	 *
+	 * @param Schema The Observation Schema
+	 * @param Tag The tag of this new observation. Used during observation object validation and debugging.
+	 * @return The newly created observation schema element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationSchemaElement SpecifyProportionAlongRayObservation(ULearningAgentsObservationSchema* Schema, const FName Tag = TEXT("ProportionAlongRayObservation"));
 
 public:
 
 	/**
-	 * Adds a new vector array observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Num The number of vectors in the array
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
+	 * Make a new null observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UVectorArrayObservation* AddVectorArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 Num = 1, const float Scale = 1.0f);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationObjectElement MakeNullObservation(ULearningAgentsObservationObject* Object, const FName Tag = TEXT("NullObservation"));
 
 	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Observation The values currently being observed.
+	 * Make a new continuous observation. The size of Values must match the Size given during Specify.
+	 *
+	 * @param Object The Observation Object
+	 * @param Values The observation values.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetVectorArrayObservation(const int32 AgentId, const TArray<FVector>& Observation);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeContinuousObservation(
+		ULearningAgentsObservationObject* Object, 
+		const TArray<float>& Values, 
+		const FName Tag = TEXT("ContinuousObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
+	/**
+	 * Make a new continuous observation. The size of Values must match the Size given during Specify.
+	 *
+	 * @param Object The Observation Object
+	 * @param Values The observation values.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeContinuousObservationFromArrayView(
+		ULearningAgentsObservationObject* Object, 
+		const TArrayView<const float> Values, 
+		const FName Tag = TEXT("ContinuousObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
 
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
+	/**
+	 * Make a new exclusive discrete observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param DiscreteIndex The index of the discrete observation. Values must be smaller than the given Size.
+	 * @param Size The size of the discrete observation. Must be equal to the size given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeExclusiveDiscreteObservation(
+		ULearningAgentsObservationObject* Object, 
+		const int32 DiscreteIndex, 
+		const int32 Size,
+		const FName Tag = TEXT("ExclusiveDiscreteObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
 
-//------------------------------------------------------------------
+	/**
+	 * Make a new inclusive discrete observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param DiscreteIndices The indices of the discrete observations. All values must be smaller than the given Size.
+	 * @param Size The size of the discrete observation. Must be equal to the size given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeInclusiveDiscreteObservation(
+		ULearningAgentsObservationObject* Object, 
+		const TArray<int32>& DiscreteIndices, 
+		const int32 Size, 
+		const FName Tag = TEXT("InclusiveDiscreteObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+	
+	/**
+	 * Make a new inclusive discrete observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param DiscreteIndices The indices of the discrete observations. All values must be smaller than the given Size.
+	 * @param Size The size of the discrete observation. Must be equal to the size given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeInclusiveDiscreteObservationFromArrayView(
+		ULearningAgentsObservationObject* Object, 
+		const TArrayView<const int32> DiscreteIndices, 
+		const int32 Size, 
+		const FName Tag = TEXT("InclusiveDiscreteObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
 
-/** An observation of an enumeration. */
-UCLASS()
-class LEARNINGAGENTS_API UEnumObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
+	/**
+	 * Make a new count observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Num The number of items. Must be less than or equal to MaxNum.
+	 * @param MaxNum The maximum number of items possible.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeCountObservation(
+		ULearningAgentsObservationObject* Object, 
+		const int32 Num, 
+		const int32 MaxNum, 
+		const FName Tag = TEXT("CountObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new struct observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The named sub-observations. Must match what was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationObjectElement MakeStructObservation(ULearningAgentsObservationObject* Object, const TMap<FName, FLearningAgentsObservationObjectElement>& Elements, const FName Tag = TEXT("StructObservation"));
+
+	/**
+	 * Make a new struct observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param ElementNames The names of the sub-observations. Must match what was given during Specify.
+	 * @param Elements The corresponding sub-observations. Must match what was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationObjectElement MakeStructObservationFromArrays(ULearningAgentsObservationObject* Object, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag = TEXT("StructObservation"));
+	
+	/**
+	 * Make a new struct observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param ElementNames The names of the sub-observations. Must match what was given during Specify.
+	 * @param Elements The corresponding sub-observations. Must match what was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeStructObservationFromArrayViews(ULearningAgentsObservationObject* Object, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag = TEXT("StructObservation"));
+
+	/**
+	 * Make a new exclusive union observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param ElementName The name of the chosen sub-observation.
+	 * @param Element The corresponding chosen sub-observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationObjectElement MakeExclusiveUnionObservation(ULearningAgentsObservationObject* Object, const FName ElementName, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ExclusiveUnionObservation"));
+
+	/**
+	 * Make a new inclusive union observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The chosen sub-observations.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "Elements"))
+	static FLearningAgentsObservationObjectElement MakeInclusiveUnionObservation(ULearningAgentsObservationObject* Object, const TMap<FName, FLearningAgentsObservationObjectElement>& Elements, const FName Tag = TEXT("InclusiveUnionObservation"));
+
+	/**
+	 * Make a new inclusive union observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param ElementNames The names of the chosen sub-observations.
+	 * @param Elements The corresponding chosen sub-observations.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, AutoCreateRefTerm = "ElementNames,Elements"))
+	static FLearningAgentsObservationObjectElement MakeInclusiveUnionObservationFromArrays(ULearningAgentsObservationObject* Object, const TArray<FName>& ElementNames, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag = TEXT("InclusiveUnionObservation"));
+	
+	/**
+	 * Make a new inclusive union observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param ElementNames The names of the chosen sub-observations.
+	 * @param Elements The corresponding chosen sub-observations.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeInclusiveUnionObservationFromArrayViews(ULearningAgentsObservationObject* Object, const TArrayView<const FName> ElementNames, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag = TEXT("InclusiveUnionObservation"));
+
+	/**
+	 * Make a new static array observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must match what was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationObjectElement MakeStaticArrayObservation(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag = TEXT("StaticArrayObservation"));
+
+	/**
+	 * Make a new static array observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must match what was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeStaticArrayObservationFromArrayView(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag = TEXT("StaticArrayObservation"));
+
+	/**
+	 * Make a new set observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "Elements"))
+	static FLearningAgentsObservationObjectElement MakeSetObservation(ULearningAgentsObservationObject* Object, const TSet<FLearningAgentsObservationObjectElement>& Elements, const FName Tag = TEXT("SetObservation"));
+
+	/**
+	 * Make a new set observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "Elements"))
+	static FLearningAgentsObservationObjectElement MakeSetObservationFromArray(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Elements, const FName Tag = TEXT("SetObservation"));
+
+	/**
+	 * Make a new set observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeSetObservationFromArrayView(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const FName Tag = TEXT("SetObservation"));
+
+	/**
+	 * Make a new pair observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Key The key sub-observation.
+	 * @param Key The value sub-observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationObjectElement MakePairObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Key, const FLearningAgentsObservationObjectElement Value, const FName Tag = TEXT("PairObservation"));
+
+	/**
+	 * Make a new array observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param MaxNum The maximum number of elements possible for this observation. Must match what was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, AutoCreateRefTerm = "Elements"))
+	static FLearningAgentsObservationObjectElement MakeArrayObservation(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Elements, const int32 MaxNum, const FName Tag = TEXT("ArrayObservation"));
+
+	/**
+	 * Make a new array observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param MaxNum The maximum number of elements possible for this observation. Must match what was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeArrayObservationFromArrayView(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Elements, const int32 MaxNum, const FName Tag = TEXT("ArrayObservation"));
+
+	/**
+	 * Make a new map observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, AutoCreateRefTerm = "Map"))
+	static FLearningAgentsObservationObjectElement MakeMapObservation(ULearningAgentsObservationObject* Object, const TMap<FLearningAgentsObservationObjectElement, FLearningAgentsObservationObjectElement>& Map, const FName Tag = TEXT("MapObservation"));
+
+	/**
+	 * Make a new map observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, AutoCreateRefTerm = "Keys,Values"))
+	static FLearningAgentsObservationObjectElement MakeMapObservationFromArrays(ULearningAgentsObservationObject* Object, const TArray<FLearningAgentsObservationObjectElement>& Keys, const TArray<FLearningAgentsObservationObjectElement>& Values, const FName Tag = TEXT("MapObservation"));
+	
+	/**
+	 * Make a new map observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Elements The sub-observations. The number of elements here must be less than or equal to the maximum that was given during Specify.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	static FLearningAgentsObservationObjectElement MakeMapObservationFromArrayViews(ULearningAgentsObservationObject* Object, const TArrayView<const FLearningAgentsObservationObjectElement> Keys, const TArrayView<const FLearningAgentsObservationObjectElement> Values, const FName Tag = TEXT("MapObservation"));
+
+	/**
+	 * Make a new enum observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Enum The enum type for this observation. Must match what was given during Specify.
+	 * @param EnumValue The enum value.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeEnumObservation(
+		ULearningAgentsObservationObject* Object, 
+		const UEnum* Enum, 
+		const uint8 EnumValue, 
+		const FName Tag = TEXT("EnumObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new bitmask observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Enum The enum type for this observation. Must match what was given during Specify.
+	 * @param BitmaskValue The bitmask value.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeBitmaskObservation(
+		ULearningAgentsObservationObject* Object, 
+		const UEnum* Enum, 
+		const int32 BitmaskValue, 
+		const FName Tag = TEXT("BitmaskObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new optional observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Element The sub-observation given.
+	 * @param Option The indicator as to if this is observation should be used.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationObjectElement MakeOptionalObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const ELearningAgentsOptionalObservation Option, const FName Tag = TEXT("OptionalObservation"));
+
+	/**
+	 * Make a new null optional observation. Use this to provide a null optional observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1))
+	static FLearningAgentsObservationObjectElement MakeOptionalNullObservation(ULearningAgentsObservationObject* Object, const FName Tag = TEXT("OptionalObservation"));
+
+	/**
+	 * Make a new valid optional observation. Use this to provide a valid optional observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationObjectElement MakeOptionalValidObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("OptionalObservation"));
+
+	/**
+	 * Make a new either observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Element The sub-observation given.
+	 * @param Option The indicator as to if this is observation A or B.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3))
+	static FLearningAgentsObservationObjectElement MakeEitherObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const ELearningAgentsEitherObservation Either, const FName Tag = TEXT("EitherObservation"));
+
+	/**
+	 * Make a new either A observation. Use this to provide option A.
+	 *
+	 * @param Object The Observation Object
+	 * @param Element The sub-observation given.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DisplayName = "Make Either A Observation"))
+	static FLearningAgentsObservationObjectElement MakeEitherAObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement A, const FName Tag = TEXT("EitherObservation"));
+
+	/**
+	 * Make a new either B observation. Use this to provide option B.
+	 *
+	 * @param Object The Observation Object
+	 * @param Element The sub-observation given.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DisplayName = "Make Either B Observation"))
+	static FLearningAgentsObservationObjectElement MakeEitherBObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement B, const FName Tag = TEXT("EitherObservation"));
+
+	/**
+	 * Make a new encoding observation. This must be used in conjunction with SpecifyEncodingObservation.
+	 * 
+	 * @param Object The Observation Object
+	 * @param Element The Observation Element to be encoded.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2))
+	static FLearningAgentsObservationObjectElement MakeEncodingObservation(ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("EncodingObservation"));
+
+	/**
+	 * Make a new bool observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Value The new value of this observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeBoolObservation(
+		ULearningAgentsObservationObject* Object,
+		const bool bValue,
+		const FName Tag = TEXT("BoolObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new float observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Value The new value of this observation.
+	 * @param FloatScale Used to normalize the data for this observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeFloatObservation(
+		ULearningAgentsObservationObject* Object,
+		const float Value,
+		const float FloatScale = 1.0f,
+		const FName Tag = TEXT("FloatObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new location observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Location The location of interest to the agent.
+	 * @param RelativeTransform The transform the provided location should be encoded relative to.
+	 * @param LocationScale Used to normalize the data for this observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeLocationObservation(
+		ULearningAgentsObservationObject* Object,
+		const FVector Location,
+		const FTransform RelativeTransform = FTransform(),
+		const float LocationScale = 100.0f,
+		const FName Tag = TEXT("LocationObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new rotation observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Rotation The rotation of interest to the agent.
+	 * @param RelativeRotation The rotation the provided rotation should be encoded relative to.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerRotationLocation A location for the visual logger to display the rotation in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeRotationObservation(
+		ULearningAgentsObservationObject* Object,
+		const FRotator Rotation,
+		const FRotator RelativeRotation = FRotator::ZeroRotator,
+		const FName Tag = TEXT("RotationObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerRotationLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new rotation observation from a quaternion.
+	 *
+	 * @param Object The Observation Object
+	 * @param Rotation The rotation of interest to the agent.
+	 * @param RelativeRotation The rotation the provided rotation should be encoded relative to.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerRotationLocation A location for the visual logger to display the rotation in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeRotationObservationFromQuat(
+		ULearningAgentsObservationObject* Object,
+		const FQuat Rotation,
+		const FQuat RelativeRotation,
+		const FName Tag = TEXT("RotationObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerRotationLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new scale observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Scale The scale of interest to the agent.
+	 * @param RelativeScale The scale the provided scale should be encoded relative to.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerScaleLocation A location for the visual logger to display the scale in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeScaleObservation(
+		ULearningAgentsObservationObject* Object,
+		const FVector Scale,
+		const FVector RelativeScale = FVector(1, 1, 1),
+		const FName Tag = TEXT("ScaleObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerScaleLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new transform observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Transform The transform of interest to the agent.
+	 * @param RelativeTransform The transform the provided transform should be encoded relative to.
+	 * @param LocationScale Used to normalize the transform's location for this observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeTransformObservation(
+		ULearningAgentsObservationObject* Object,
+		const FTransform Transform,
+		const FTransform RelativeTransform = FTransform(),
+		const float LocationScale = 100.0f,
+		const FName Tag = TEXT("TransformObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new angle observation. Angles should be given in degrees.
+	 *
+	 * @param Object The Observation Object
+	 * @param Angle The angle of interest to the agent.
+	 * @param RelativeAngle The angle the provided angle should be encoded relative to.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeAngleObservation(
+		ULearningAgentsObservationObject* Object, 
+		const float Angle, 
+		const float RelativeAngle = 0.0f, 
+		const FName Tag = TEXT("AngleObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new angle observation. Angles should be given in radians.
+	 * 
+	 * @param Object The Observation Object
+	 * @param Angle The angle of interest to the agent.
+	 * @param RelativeAngle The angle the provided angle should be encoded relative to.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeAngleObservationRadians(
+		ULearningAgentsObservationObject* Object, 
+		const float Angle, 
+		const float RelativeAngle = 0.0f, 
+		const FName Tag = TEXT("AngleObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new velocity observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Velocity The velocity of interest to the agent.
+	 * @param RelativeTransform The transform the provided velocity should be encoded relative to.
+	 * @param VelocityScale Used to normalize the data for this observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerVelocityLocation A location for the visual logger to display the velocity in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeVelocityObservation(
+		ULearningAgentsObservationObject* Object, 
+		const FVector Velocity, 
+		const FTransform RelativeTransform = FTransform(), 
+		const float VelocityScale = 200.0f, 
+		const FName Tag = TEXT("VelocityObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerVelocityLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new direction observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param Direction The direction of interest to the agent.
+	 * @param RelativeTransform The transform the provided direction should be encoded relative to.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerDirectionLocation A location for the visual logger to display the direction in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerArrowLength The length of the arrow to display to represent the direction.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeDirectionObservation(
+		ULearningAgentsObservationObject* Object,
+		const FVector Direction,
+		const FTransform RelativeTransform = FTransform(),
+		const FName Tag = TEXT("DirectionObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerDirectionLocation = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const float VisualLoggerArrowLength = 100.0f,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new location along spline observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param SplineComponent The spline to observe.
+	 * @param DistanceAlongSpline The distance along that spline.
+	 * @param RelativeTransform The transform the provided location should be encoded relative to.
+	 * @param LocationScale Used to normalize the transform's location for this observation.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 5, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeLocationAlongSplineObservation(
+		ULearningAgentsObservationObject* Object,
+		const USplineComponent* SplineComponent,
+		const float DistanceAlongSpline,
+		const FTransform RelativeTransform = FTransform(),
+		const float LocationScale = 100.0f,
+		const FName Tag = TEXT("LocationAlongSplineObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new proportion along spline observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param SplineComponent The spline to observe.
+	 * @param DistanceAlongSpline The distance along that spline.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeProportionAlongSplineObservation(
+		ULearningAgentsObservationObject* Object, 
+		const USplineComponent* SplineComponent, 
+		const float DistanceAlongSpline, 
+		const FName Tag = TEXT("ProportionAlongSplineObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new direction along spline observation.
+	 *
+	 * @param Object The Observation Object
+	 * @param SplineComponent The spline to observe.
+	 * @param DistanceAlongSpline The distance along that spline.
+	 * @param RelativeTransform The transform the provided direction should be encoded relative to.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerArrowLength The length of the arrow to display to represent the direction.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeDirectionAlongSplineObservation(
+		ULearningAgentsObservationObject* Object,
+		const USplineComponent* SplineComponent,
+		const float DistanceAlongSpline,
+		const FTransform RelativeTransform = FTransform(),
+		const FName Tag = TEXT("DirectionAlongSplineObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const float VisualLoggerArrowLength = 100.0f,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
+
+	/**
+	 * Make a new proportion along ray observation. 
+	 *
+	 * @param Object The Observation Object
+	 * @param RayStart The local ray start location.
+	 * @param RayEnd The local ray end location.
+	 * @param RayTransform The transform to use to transform the local ray starts and ends into the world space.
+	 * @param CollisionChannel The collision channel to collide against.
+	 * @param Tag The tag of the corresponding observation. Must match the tag given during Specify.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this observation. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this observation.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The newly created observation object element.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 5, DefaultToSelf = "VisualLoggerListener"))
+	static FLearningAgentsObservationObjectElement MakeProportionAlongRayObservation(
+		ULearningAgentsObservationObject* Object, 
+		const FVector RayStart, 
+		const FVector RayEnd, 
+		const FTransform RayTransform = FTransform(), 
+		const ECollisionChannel CollisionChannel = ECollisionChannel::ECC_WorldStatic, 
+		const FName Tag = TEXT("ProportionAlongRayObservation"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Red);
 
 public:
 
-	/**
-	 * Adds a new enum observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param EnumType The type of enum to use
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UEnumObservation* AddEnumObservation(ULearningAgentsInteractor* InInteractor, const UEnum* EnumType, const FName Name = NAME_None);
+	// Get Basic Observations
 
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Value The enum value currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetEnumObservation(const int32 AgentId, const uint8 Value);
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 2, ReturnDisplayName = "Success"))
+	static bool GetNullObservation(const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("NullObservation"));
 
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetContinuousObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ContinuousObservation"));
 
-	const UEnum* Enum = nullptr;
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetContinuousObservation(TArray<float>& OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ContinuousObservation"));
+	static bool GetContinuousObservationToArrayView(TArrayView<float> OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ContinuousObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetExclusiveDiscreteObservation(int32& OutIndex, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ExclusiveDiscreteObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetInclusiveDiscreteObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("InclusiveDiscreteObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetInclusiveDiscreteObservation(TArray<int32>& OutIndices, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("InclusiveDiscreteObservation"));
+	static bool GetInclusiveDiscreteObservationToArrayView(TArrayView<int32> OutIndices, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("InclusiveDiscreteObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetCountObservation(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const int32 MaxNum, const FName Tag = TEXT("CountObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStructObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("StructObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStructObservation(TMap<FName, FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("StructObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetStructObservationToArrays(TArray<FName>& OutElementNames, TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("StructObservation"));
+	static bool GetStructObservationToArrayViews(TArrayView<FName> OutElementNames, TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("StructObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetExclusiveUnionObservation(FName& OutElementName, FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ExclusiveUnionObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetInclusiveUnionObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("InclusiveUnionObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetInclusiveUnionObservation(TMap<FName, FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("InclusiveUnionObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetInclusiveUnionObservationToArrays(TArray<FName>& OutElementNames, TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("InclusiveUnionObservation"));
+	static bool GetInclusiveUnionObservationToArrayViews(TArrayView<FName> OutElementNames, TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("InclusiveUnionObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStaticArrayObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("StaticArrayObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetStaticArrayObservation(TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("StaticArrayObservation"));
+	static bool GetStaticArrayObservationToArrayView(TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("StaticArrayObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetSetObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("SetObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetSetObservation(TSet<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("SetObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetSetObservationToArray(TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("SetObservation"));
+	static bool GetSetObservationToArrayView(TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("SetObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetPairObservation(FLearningAgentsObservationObjectElement& OutKey, FLearningAgentsObservationObjectElement& OutValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("PairObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetArrayObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ArrayObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetArrayObservation(TArray<FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const int32 MaxNum, const FName Tag = TEXT("ArrayObservation"));
+	static bool GetArrayObservationToArrayView(TArrayView<FLearningAgentsObservationObjectElement> OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const int32 MaxNum, const FName Tag = TEXT("ArrayObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetMapObservationNum(int32& OutNum, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("MapObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetMapObservation(TMap<FLearningAgentsObservationObjectElement, FLearningAgentsObservationObjectElement>& OutElements, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("MapObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetMapObservationToArrays(TArray<FLearningAgentsObservationObjectElement>& OutKeys, TArray<FLearningAgentsObservationObjectElement>& OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("MapObservation"));
+	static bool GetMapObservationToArrayViews(TArrayView<FLearningAgentsObservationObjectElement> OutKeys, TArrayView<FLearningAgentsObservationObjectElement> OutValues, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("MapObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetEnumObservation(uint8& OutEnumValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const UEnum* Enum, const FName Tag = TEXT("EnumObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetBitmaskObservation(int32& OutBitmaskValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const UEnum* Enum, const FName Tag = TEXT("BitmaskObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ExpandEnumAsExecs = "OutOption", ReturnDisplayName = "Success"))
+	static bool GetOptionalObservation(ELearningAgentsOptionalObservation& OutOption, FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("OptionalObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ExpandEnumAsExecs = "OutEither", ReturnDisplayName = "Success"))
+	static bool GetEitherObservation(ELearningAgentsEitherObservation& OutEither, FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("EitherObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetEncodingObservation(FLearningAgentsObservationObjectElement& OutElement, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("EncodingObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetBoolObservation(bool& bOutValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("BoolObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetFloatObservation(float& OutValue, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const float FloatScale = 1.0f, const FName Tag = TEXT("FloatObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success"))
+	static bool GetLocationObservation(FVector& OutLocation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform = FTransform(), const float LocationScale = 100.0f, const FName Tag = TEXT("LocationObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetRotationObservation(FRotator& OutRotation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FRotator RelativeRotation = FRotator::ZeroRotator, const FName Tag = TEXT("RotationObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetRotationObservationAsQuat(FQuat& OutRotation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FQuat RelativeRotation, const FName Tag = TEXT("RotationObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetScaleObservation(FVector& OutScale, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FVector RelativeScale = FVector(1, 1, 1), const FName Tag = TEXT("ScaleObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success"))
+	static bool GetTransformObservation(FTransform& OutTransform, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform = FTransform(), const float LocationScale = 100.0f, const FName Tag = TEXT("TransformObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetAngleObservation(float& OutAngle, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const float RelativeAngle = 0.0f, const FName Tag = TEXT("AngleObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetAngleObservationRadians(float& OutAngle, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const float RelativeAngle = 0.0f, const FName Tag = TEXT("AngleObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success"))
+	static bool GetVelocityObservation(FVector& OutVelocity, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform = FTransform(), const float VelocityScale = 200.0f, const FName Tag = TEXT("VelocityObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetDirectionObservation(FVector& OutDirection, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform = FTransform(), const FName Tag = TEXT("DirectionObservation"));
+
+	// Get Spline Observations
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success"))
+	static bool GetLocationAlongSplineObservation(FVector& OutLocation, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform = FTransform(), const float LocationScale = 100.0f, const FName Tag = TEXT("LocationAlongSplineObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 5, ReturnDisplayName = "Success"))
+	static bool GetProportionAlongSplineObservation(bool& bOutIsClosedLoop, float& OutAngle, float& OutPropotion, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ProportionAlongSplineObservation"));
+
+	UFUNCTION(BlueprintPure = false, Category = "LearningAgents", meta = (AdvancedDisplay = 4, ReturnDisplayName = "Success"))
+	static bool GetDirectionAlongSplineObservation(FVector& OutDirection, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FTransform RelativeTransform = FTransform(), const FName Tag = TEXT("DirectionAlongSplineObservation"));
+
+	// Get Ray Cast Observations
+
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, ReturnDisplayName = "Success"))
+	static bool GetProportionAlongRayObservation(float& OutProportion, const ULearningAgentsObservationObject* Object, const FLearningAgentsObservationObjectElement Element, const FName Tag = TEXT("ProportionAlongRayObservation"));
+
 };
 
-/** An observation of an array of enumerations. */
-UCLASS()
-class LEARNINGAGENTS_API UEnumArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
 
-public:
-
-	/**
-	 * Adds a new enum array observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param EnumType The type of enum to use
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param EnumNum The number of enum observations in the array
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UEnumArrayObservation* AddEnumArrayObservation(ULearningAgentsInteractor* InInteractor, const UEnum* EnumType, const FName Name = NAME_None, const int32 EnumNum = 1);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Values The enum values currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetEnumArrayObservation(const int32 AgentId, const TArray<uint8>& Values);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	const UEnum* Enum = nullptr;
-	TSharedPtr<UE::Learning::FFloatFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** An observation of a time relative to another time. */
-UCLASS()
-class LEARNINGAGENTS_API UTimeObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new time observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UTimeObservation* AddTimeObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Time The time currently being observed.
-	 * @param RelativeTime The time the provided time should be encoded relative to.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetTimeObservation(const int32 AgentId, const float Time, const float RelativeTime = 0.0f);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FTimeFeature> FeatureObject;
-};
-
-/** An observation of an array of times. */
-UCLASS()
-class LEARNINGAGENTS_API UTimeArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new angle observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param TimeNum The number of times in the array
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UTimeArrayObservation* AddTimeArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 TimeNum = 1, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Time The times currently being observed.
-	 * @param RelativeTime The time the provided time should be encoded relative to.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetTimeArrayObservation(const int32 AgentId, const TArray<float>& Times, const float RelativeTime = 0.0f);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FTimeFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** An observation of an angle relative to another angle. */
-UCLASS()
-class LEARNINGAGENTS_API UAngleObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new angle observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation. Angle observations are encoded as directions. 
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UAngleObservation* AddAngleObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Angle The angle currently being observed.
-	 * @param RelativeAngle The frame of reference angle.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetAngleObservation(const int32 AgentId, const float Angle, const float RelativeAngle = 0.0f);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FAngleFeature> FeatureObject;
-};
-
-/** An observation of an array of angles. */
-UCLASS()
-class LEARNINGAGENTS_API UAngleArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new angle observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param AngleNum The number of angles in the array
-	 * @param Scale Used to normalize the data for the observation. Angle observations are encoded as directions. 
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UAngleArrayObservation* AddAngleArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 AngleNum = 1, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Angles The angles currently being observed.
-	 * @param RelativeAngle The frame of reference angle.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetAngleArrayObservation(const int32 AgentId, const TArray<float>& Angles, const float RelativeAngle = 0.0f);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FAngleFeature> FeatureObject;
-};
-
-/** An observation of a rotation relative to another rotation. */
-UCLASS()
-class LEARNINGAGENTS_API URotationObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new rotation observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation. Rotation observations are encoded as directions. 
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static URotationObservation* AddRotationObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Rotation The rotation currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetRotationObservation(const int32 AgentId, const FRotator Rotation, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Rotation The rotation currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetRotationObservationFromQuat(const int32 AgentId, const FQuat Rotation, const FQuat RelativeRotation);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FRotationFeature> FeatureObject;
-};
-
-/** An observation of an array of rotations. */
-UCLASS()
-class LEARNINGAGENTS_API URotationArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new rotation observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param RotationNum The number of rotations in the array
-	 * @param Scale Used to normalize the data for the observation. Rotation observations are encoded as directions. 
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static URotationArrayObservation* AddRotationArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 RotationNum = 1, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Rotations The rotations currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetRotationArrayObservation(const int32 AgentId, const TArray<FRotator>& Rotations, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Rotations The rotations currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetRotationArrayObservationFromQuats(const int32 AgentId, const TArray<FQuat>& Rotations, const FQuat RelativeRotation);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FRotationFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** An observation of a direction vector. */
-UCLASS()
-class LEARNINGAGENTS_API UDirectionObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new direction observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UDirectionObservation* AddDirectionObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Direction The direction currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetDirectionObservation(const int32 AgentId, const FVector Direction, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FDirectionFeature> FeatureObject;
-};
-
-/** An observation of an array of direction vectors. */
-UCLASS()
-class LEARNINGAGENTS_API UDirectionArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new direction array observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param DirectionNum The number of directions in the array
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UDirectionArrayObservation* AddDirectionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 DirectionNum = 1, const float Scale = 1.0f);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Directions The directions currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetDirectionArrayObservation(const int32 AgentId, const TArray<FVector>& Directions, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FDirectionFeature> FeatureObject;
-};
-
-/** An observation of a direction vector projected onto a plane. */
-UCLASS()
-class LEARNINGAGENTS_API UPlanarDirectionObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new planar direction observation to the given agent interactor. The axis parameters define the plane. Call
-	 * during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPlanarDirectionObservation* AddPlanarDirectionObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 1.0f, const FVector Axis0 = FVector::ForwardVector, const FVector Axis1 = FVector::RightVector);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Direction The direction currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarDirectionObservation(const int32 AgentId, const FVector Direction, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarDirectionFeature> FeatureObject;
-};
-
-/** An observation of an array of direction vectors projected onto a plane. */
-UCLASS()
-class LEARNINGAGENTS_API UPlanarDirectionArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new planar direction observation to the given agent interactor. The axis parameters define the plane. Call
-	 * during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param DirectionNum The number of directions in the array
-	 * @param Scale Used to normalize the data for the observation.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPlanarDirectionArrayObservation* AddPlanarDirectionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 DirectionNum = 1, const float Scale = 1.0f, const FVector Axis0 = FVector::ForwardVector, const FVector Axis1 = FVector::RightVector);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Directions The directions currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarDirectionArrayObservation(const int32 AgentId, const TArray<FVector>& Directions, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarDirectionFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** An observation of a position vector. */
-UCLASS()
-class LEARNINGAGENTS_API UPositionObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new position observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPositionObservation* AddPositionObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 100.0f);
-
-	/**
-	 * Sets the data for this observation. The relative position & rotation can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position & forward rotation. Call during
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Position The position currently being observed.
-	 * @param RelativePosition The vector Position will be offset from.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPositionObservation(const int32 AgentId, const FVector Position, const FVector RelativePosition = FVector::ZeroVector, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPositionFeature> FeatureObject;
-};
-
-/** An observation of an array of positions. */
-UCLASS()
-class LEARNINGAGENTS_API UPositionArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new position array observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param PositionNum The number of positions in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPositionArrayObservation* AddPositionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 PositionNum = 1, const float Scale = 100.0f);
-
-	/**
-	 * Sets the data for this observation. The relative position & rotation can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position & forward rotation. Call during
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Positions The positions currently being observed.
-	 * @param RelativePosition The vector Positions will be offset from.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPositionArrayObservation(int32 AgentId, const TArray<FVector>& Positions, const FVector RelativePosition = FVector::ZeroVector, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPositionFeature> FeatureObject;
-};
-
-/** An observation of a position along a single axis. Can be useful for providing information like object heights. */
-UCLASS()
-class LEARNINGAGENTS_API UScalarPositionObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new scalar position observation to the given agent interactor. Call during 
-	 * ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UScalarPositionObservation* AddScalarPositionObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 100.0f);
-
-	/**
-	 * Sets the data for this observation. The relative position can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position. Call during 
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Position The position currently being observed.
-	 * @param RelativePosition The vector Position will be offset from.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarPositionObservation(const int32 AgentId, const float Position, const float RelativePosition = 0.0f);
-
-	/**
-	 * Sets the data for this observation. The relative position can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position. Call during
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Position The position currently being observed.
-	 * @param RelativePosition The vector Position will be offset from.
-	 * @param Axis The axis along which to encode the positions
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarPositionObservationWithAxis(const int32 AgentId, const FVector Position, const FVector RelativePosition = FVector::ZeroVector, const FVector Axis = FVector::UpVector);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FScalarPositionFeature> FeatureObject;
-};
-
-/** An observation of an array of positions along a single axis. */
-UCLASS()
-class LEARNINGAGENTS_API UScalarPositionArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new scalar position array observation to the given agent interactor. Call during 
-	 * ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param PositionNum The number of positions in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UScalarPositionArrayObservation* AddScalarPositionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 PositionNum = 1, const float Scale = 100.0f);
-
-	/**
-	 * Sets the data for this observation. The relative position can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position. Call during
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Positions The positions currently being observed.
-	 * @param RelativePosition The vector Positions will be offset from.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarPositionArrayObservation(const int32 AgentId, const TArray<float>& Positions, const float RelativePosition = 0.0f);
-
-	/**
-	 * Sets the data for this observation. The relative position can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position. Call during
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Positions The positions currently being observed.
-	 * @param RelativePosition The vector Positions will be offset from.
-	 * @param Axis The axis along which to encode the positions
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarPositionArrayObservationWithAxis(const int32 AgentId, const TArray<FVector>& Positions, const FVector RelativePosition = FVector::ZeroVector, const FVector Axis = FVector::UpVector);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FScalarPositionFeature> FeatureObject;
-};
-
-/** An observation of a position projected onto a plane. */
-UCLASS()
-class LEARNINGAGENTS_API UPlanarPositionObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new planar position observation to the given agent interactor. The axis parameters define the plane. Call
-	 * during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPlanarPositionObservation* AddPlanarPositionObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 100.0f, const FVector Axis0 = FVector::ForwardVector, const FVector Axis1 = FVector::RightVector);
-
-	/**
-	 * Sets the data for this observation. The relative position & rotation can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position & forward rotation. Call during
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Position The position currently being observed.
-	 * @param RelativePosition The vector Position will be offset from.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarPositionObservation(const int32 AgentId, const FVector Position, const FVector RelativePosition = FVector::ZeroVector, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarPositionFeature> FeatureObject;
-};
-
-/** An observation of an array of positions projected onto a plane. */
-UCLASS()
-class LEARNINGAGENTS_API UPlanarPositionArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new planar position array observation to the given agent interactor. The axis parameters define the plane.
-	 * Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param PositionNum The number of positions in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPlanarPositionArrayObservation* AddPlanarPositionArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 PositionNum = 1, const float Scale = 100.0f, const FVector Axis0 = FVector::ForwardVector, const FVector Axis1 = FVector::RightVector);
-
-	/**
-	 * Sets the data for this observation. The relative position & rotation can be used to make this observation
-	 * relative to the agent's perspective, e.g. by passing the agent's position & forward rotation. Call during
-	 * ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Positions The positions currently being observed.
-	 * @param RelativePosition The vector Positions will be offset from.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarPositionArrayObservation(const int32 AgentId, const TArray<FVector>& Positions, const FVector RelativePosition = FVector::ZeroVector, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarPositionFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** An observation of a velocity. */
-UCLASS()
-class LEARNINGAGENTS_API UVelocityObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new velocity observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UVelocityObservation* AddVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 200.0f);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocity The velocity currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetVelocityObservation(const int32 AgentId, const FVector Velocity, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FVelocityFeature> FeatureObject;
-};
-
-/** An observation of an array of velocities. */
-UCLASS()
-class LEARNINGAGENTS_API UVelocityArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new velocity observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param VelocityNum The number of velocities in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UVelocityArrayObservation* AddVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 VelocityNum = 1, const float Scale = 200.0f);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocities The velocities currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetVelocityArrayObservation(const int32 AgentId, const TArray<FVector>& Velocities, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FVelocityFeature> FeatureObject;
-};
-
-/** An observation of a velocity along a single axis. */
-UCLASS()
-class LEARNINGAGENTS_API UScalarVelocityObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new scalar velocity observation to the given agent interactor. 
-	 * Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UScalarVelocityObservation* AddScalarVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 200.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocity The velocity currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarVelocityObservation(const int32 AgentId, const float Velocity);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocity The velocity currently being observed.
-	 * @param Axis The axis to encode the velocity along
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarVelocityObservationWithAxis(const int32 AgentId, const FVector Velocity, const FVector Axis = FVector::UpVector);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FScalarVelocityFeature> FeatureObject;
-};
-
-/** An observation of an array of velocities along a single axis. */
-UCLASS()
-class LEARNINGAGENTS_API UScalarVelocityArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new scalar velocity observation to the given agent interactor.
-	 * Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param VelocityNum The number of velocities in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UScalarVelocityArrayObservation* AddScalarVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 VelocityNum = 1, const float Scale = 200.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocities The velocities currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarVelocityArrayObservation(const int32 AgentId, const TArray<float>& Velocities);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocities The velocities currently being observed.
-	 * @param Axis The axis to encode the velocity along
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarVelocityArrayObservationWithAxis(const int32 AgentId, const TArray<FVector>& Velocities, const FVector Axis = FVector::UpVector);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FScalarVelocityFeature> FeatureObject;
-};
-
-/** An observation of a velocity projected onto a plane. */
-UCLASS()
-class LEARNINGAGENTS_API UPlanarVelocityObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new planar velocity observation to the given agent interactor. The axis parameters define the plane.
-	 * Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPlanarVelocityObservation* AddPlanarVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 200.0f, const FVector Axis0 = FVector::ForwardVector, const FVector Axis1 = FVector::RightVector);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocity The velocity currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarVelocityObservation(const int32 AgentId, const FVector Velocity, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarVelocityFeature> FeatureObject;
-};
-
-/** An observation of an array of velocities projected onto a plane. */
-UCLASS()
-class LEARNINGAGENTS_API UPlanarVelocityArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new planar velocity observation to the given agent interactor. The axis parameters define the plane.
-	 * Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param VelocityNum The number of velocities in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UPlanarVelocityArrayObservation* AddPlanarVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 VelocityNum = 1, const float Scale = 200.0f, const FVector Axis0 = FVector::ForwardVector, const FVector Axis1 = FVector::RightVector);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocities The velocities currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarVelocityArrayObservation(const int32 AgentId, const TArray<FVector>& Velocities, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarVelocityFeature> FeatureObject;
-};
-
-//------------------------------------------------------------------
-
-/** An observation of an angular velocity. */
-UCLASS()
-class LEARNINGAGENTS_API UAngularVelocityObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new angular velocity observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UAngularVelocityObservation* AddAngularVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 180.0f);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param AngularVelocity The angular velocity currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetAngularVelocityObservation(const int32 AgentId, const FVector AngularVelocity, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FAngularVelocityFeature> FeatureObject;
-};
-
-/** An observation of an array of angular velocities. */
-UCLASS()
-class LEARNINGAGENTS_API UAngularVelocityArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new angular velocity array observation to the given agent interactor. Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param AngularVelocityNum The number of angular velocities in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UAngularVelocityArrayObservation* AddAngularVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 AngularVelocityNum = 1, const float Scale = 180.0f);
-
-	/**
-	 * Sets the data for this observation. The relative rotation can be used to make this observation relative to the
-	 * agent's perspective, e.g. by passing the agent's forward rotation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocities The angular velocities currently being observed.
-	 * @param RelativeRotation The frame of reference rotation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetAngularVelocityArrayObservation(const int32 AgentId, const TArray<FVector>& AngularVelocities, const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FAngularVelocityFeature> FeatureObject;
-};
-
-/** An observation of a scalar angular velocity. */
-UCLASS()
-class LEARNINGAGENTS_API UScalarAngularVelocityObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new scalar angular velocity observation to the given agent interactor.
-	 * Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UScalarAngularVelocityObservation* AddScalarAngularVelocityObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const float Scale = 180.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param AngularVelocity The angular velocity currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarAngularVelocityObservation(const int32 AgentId, const float AngularVelocity);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param AngularVelocity The angular velocity currently being observed.
-	 * @param Axis The axis to encode the angular velocity around
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarAngularVelocityObservationWithAxis(const int32 AgentId, const FVector AngularVelocity, const FVector Axis = FVector::UpVector);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FScalarAngularVelocityFeature> FeatureObject;
-};
-
-/** An observation of an array of scalar angular velocities. */
-UCLASS()
-class LEARNINGAGENTS_API UScalarAngularVelocityArrayObservation : public ULearningAgentsObservation
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new scalar angular velocity array observation to the given agent interactor.
-	 * Call during ULearningAgentsInteractor::SetupObservations event.
-	 * @param InInteractor The agent interactor to add this observation to.
-	 * @param Name The name of this new observation. Used for debugging.
-	 * @param AngularVelocityNum The number of angular velocities in the array.
-	 * @param Scale Used to normalize the data for the observation.
-	 * @return The newly created observation.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InInteractor"))
-	static UScalarAngularVelocityArrayObservation* AddScalarAngularVelocityArrayObservation(ULearningAgentsInteractor* InInteractor, const FName Name = NAME_None, const int32 AngularVelocityNum = 1, const float Scale = 180.0f);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param AngularVelocities The angular velocities currently being observed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarAngularVelocityArrayObservation(const int32 AgentId, const TArray<float>& AngularVelocities);
-
-	/**
-	 * Sets the data for this observation. Call during ULearningAgentsInteractor::SetObservations event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param AngularVelocities The angular velocities currently being observed.
-	 * @param Axis The axis to encode the angular velocity around
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarAngularVelocityArrayObservationWithAxis(const int32 AgentId, const TArray<FVector>& AngularVelocities, const FVector Axis = FVector::UpVector);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this observation to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FScalarAngularVelocityFeature> FeatureObject;
-};

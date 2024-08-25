@@ -12,6 +12,7 @@ class IPropertyHandle;
 class UNiagaraBakerOutputSimCache;
 class UNiagaraBakerOutputTexture2D;
 class UNiagaraBakerOutputVolumeTexture;
+class UNiagaraBakerOutputSparseVolumeTexture;
 
 struct FNiagaraBakerOutputDetails : public IDetailCustomization
 {
@@ -58,6 +59,16 @@ struct FNiagaraBakerOutputVolumeTextureDetails : public FNiagaraBakerOutputDetai
 
 	static FText BrowseExportAssetsToolTipText(TWeakObjectPtr<UNiagaraBakerOutputVolumeTexture> WeakOutput);
 	static FReply BrowseToExportAssets(TWeakObjectPtr<UNiagaraBakerOutputVolumeTexture> WeakOutput);
+
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+};
+
+struct FNiagaraBakerOutputSparseVolumeTextureDetails : public FNiagaraBakerOutputDetails
+{
+	static TSharedRef<IDetailCustomization> MakeInstance();
+
+	static FText BrowseAtlasToolTipText(TWeakObjectPtr<UNiagaraBakerOutputSparseVolumeTexture> WeakOutput);
+	static FReply BrowseToAtlas(TWeakObjectPtr<UNiagaraBakerOutputSparseVolumeTexture> WeakOutput);
 
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
 };

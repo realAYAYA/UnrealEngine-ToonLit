@@ -4,6 +4,8 @@
 #include "IDetailChildrenBuilder.h"
 #include "DetailLayoutBuilder.h"
 #include "PropertyCustomizationHelpers.h"
+#include "SmartObjectDefinition.h"
+#include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "SmartObjectEditor"
 
@@ -14,11 +16,37 @@ TSharedRef<IDetailCustomization> FSmartObjectDefinitionDetails::MakeInstance()
 
 void FSmartObjectDefinitionDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 {
-	const TSharedPtr<IPropertyHandle> SlotsProperty = DetailBuilder.GetProperty(TEXT("Slots"));
+	const TSharedPtr<IPropertyHandle> SlotsProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_STRING_CHECKED(USmartObjectDefinition, Slots));
+	const TSharedPtr<IPropertyHandle> DefinitionDataProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_STRING_CHECKED(USmartObjectDefinition, DefinitionData));
 
-	IDetailCategoryBuilder& StateCategory = DetailBuilder.EditCategory(TEXT("SmartObject"));
-	StateCategory.SetSortOrder(0);
+	// Special header for the defintion data. Need to do this before EditCategory(), or the default property is not accessible.
+	if (IDetailPropertyRow* DefinitionDataRow = DetailBuilder.EditDefaultProperty(DefinitionDataProperty))
+	{
+		DefinitionDataRow->CustomWidget(true)
+		.WholeRowContent()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Font(IDetailLayoutBuilder::GetDetailFontBold())
+				.Text(DefinitionDataProperty->GetPropertyDisplayName())
+			]
+			+ SHorizontalBox::Slot()
+			.VAlign(VAlign_Center)
+			.HAlign(HAlign_Right)
+			[
+				DefinitionDataProperty->CreateDefaultPropertyButtonWidgets()
+			]
+		];
+	}
+	
+	IDetailCategoryBuilder& SmartObjectCategory = DetailBuilder.EditCategory(TEXT("SmartObject"));
+	SmartObjectCategory.SetSortOrder(0);
 
+	// Slots as category
 	MakeArrayCategory(DetailBuilder, "Slots", LOCTEXT("SmartObjectDefinitionSlots", "Slots"), 1, SlotsProperty);
 }
 

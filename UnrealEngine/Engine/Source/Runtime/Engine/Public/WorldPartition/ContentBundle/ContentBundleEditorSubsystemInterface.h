@@ -24,7 +24,9 @@ public:
 	virtual bool IsEditingContentBundle() const = 0;
 	virtual bool ActivateContentBundleEditing(TSharedPtr<FContentBundleEditor>& ContentBundleEditor) const = 0;
 	virtual bool DeactivateContentBundleEditing(TSharedPtr<FContentBundleEditor>& ContentBundleEditor) const = 0;
-	virtual void PushContentBundleEditing() = 0;
+	virtual bool DeactivateCurrentContentBundleEditing() const = 0;
+	virtual void PushContentBundleEditing() { PushContentBundleEditing(false); }
+	virtual void PushContentBundleEditing(bool bDuplicateContext) = 0;
 	virtual void PopContentBundleEditing() = 0;
 
 	DECLARE_EVENT_OneParam(UContentBundleEditorSubsystem, FOnContentBundleAdded, const FContentBundleEditor*);

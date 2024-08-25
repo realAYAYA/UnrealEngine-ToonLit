@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 0.1,
+	"VersionName": "0.1",
+	"FriendlyName": "NNERuntimeIREE",
+	"Description": "A runtime implementing the NNE API which is based on IREE, MLIR and LLVM and compiles neural networks directly to game code.",
+	"Category": "Other",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "NNERuntimeIREE",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "NNERuntimeIREEEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

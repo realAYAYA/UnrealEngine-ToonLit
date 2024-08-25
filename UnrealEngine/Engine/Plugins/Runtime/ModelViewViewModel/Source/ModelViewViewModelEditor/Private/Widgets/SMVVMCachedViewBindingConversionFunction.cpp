@@ -11,7 +11,7 @@
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Text/STextBlock.h"
 
-#define LOCTEXT_NAMESPACE "SCachedViewBindingConverisonFunction"
+#define LOCTEXT_NAMESPACE "SCachedViewBindingConversionFunction"
 
 namespace UE::MVVM
 {
@@ -26,13 +26,23 @@ void SCachedViewBindingConversionFunction::Construct(const FArguments& InArgs, c
 		SNew(SHorizontalBox)
 		.ToolTipText_Lambda([this]() 
 		{
-			const UFunction* FoundFunction = OnGetConversionFunction.Execute();
-			return FoundFunction != nullptr ? FoundFunction->GetToolTipText() : FText::GetEmpty();
+			FConversionFunctionVariant ConversionFunction = OnGetConversionFunction.Execute();
+			if (ConversionFunction.IsType<const UFunction*>())
+			{
+				const UFunction* FoundFunction = ConversionFunction.Get<const UFunction*>();
+				return FoundFunction != nullptr ? FoundFunction->GetToolTipText() : FText::GetEmpty();
+			}
+			else if (ConversionFunction.IsType<TSubclassOf<UK2Node>>())
+			{
+				TSubclassOf<UK2Node> FoundFunction = ConversionFunction.Get<TSubclassOf<UK2Node>>();
+				return FoundFunction.Get() != nullptr ? FoundFunction->GetToolTipText() : FText::GetEmpty();
+			}
+			return FText::GetEmpty();
 		})
 		+ SHorizontalBox::Slot()
 		.HAlign(HAlign_Left)
 		.VAlign(VAlign_Center)
-		.Padding(0, 0, 4.0f, 0)
+		.Padding(0.0f, 0.0f, 4.0f, 0.0f)
 		.AutoWidth()
 		[
 			SNew(SImage)
@@ -46,8 +56,18 @@ void SCachedViewBindingConversionFunction::Construct(const FArguments& InArgs, c
 			SNew(STextBlock)
 			.Text_Lambda([this]() 
 			{ 
-				const UFunction* FoundFunction = OnGetConversionFunction.Execute();
-				return FoundFunction != nullptr ? FoundFunction->GetDisplayNameText() : FText::GetEmpty();
+				FConversionFunctionVariant ConversionFunction = OnGetConversionFunction.Execute();
+				if (ConversionFunction.IsType<const UFunction*>())
+				{
+					const UFunction* FoundFunction = ConversionFunction.Get<const UFunction*>();
+					return FoundFunction != nullptr ? FoundFunction->GetDisplayNameText() : FText::GetEmpty();
+				}
+				else if (ConversionFunction.IsType<TSubclassOf<UK2Node>>())
+				{
+					TSubclassOf<UK2Node> FoundFunction = ConversionFunction.Get<TSubclassOf<UK2Node>>();
+					return FoundFunction.Get() != nullptr ? FoundFunction->GetDisplayNameText() : FText::GetEmpty();
+				}
+				return FText::GetEmpty();
 			})
 		]
 	];

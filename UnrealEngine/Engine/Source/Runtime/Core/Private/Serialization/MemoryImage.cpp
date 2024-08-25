@@ -1758,7 +1758,7 @@ void FPtrTableBase::AddPatchedPointerBase(uint32 PtrIndex, uint64 Offset)
 {
 	if (PtrIndex >= (uint32)PatchLists.Num())
 	{
-		PatchLists.SetNum(PtrIndex + 1, false);
+		PatchLists.SetNum(PtrIndex + 1, EAllowShrinking::No);
 	}
 	FPatchOffsetList& List = PatchLists[PtrIndex];
 

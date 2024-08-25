@@ -387,7 +387,7 @@ FText UAnimGraphNode_AssetPlayerBase::GetNodeTitleHelper(ENodeTitleType::Type In
 		bool bHasBinding = false;
 		if(InAssetPin != nullptr)
 		{
-			if (PropertyBindings.Find(InAssetPin->GetFName()) != nullptr)
+			if (HasBinding(InAssetPin->GetFName()))
 			{
 				bHasBinding = true;
 			}
@@ -508,7 +508,7 @@ void UAnimGraphNode_AssetPlayerBase::ValidateAnimNodeDuringCompilationHelper(USk
 			bool bAlwaysDynamic = false;
 			if(InExposedPin != nullptr)
 			{
-				if(PropertyBindings.Contains(InExposedPin->GetFName()))
+				if(HasBinding(InExposedPin->GetFName()))
 				{
 					bHasBinding = true;
 				}
@@ -552,12 +552,34 @@ void UAnimGraphNode_AssetPlayerBase::PreloadRequiredAssetsHelper(UAnimationAsset
 	if(AssetToLoad)
 	{
 		// HandleAnimReferenceCollection adds 'this' as well as any recursive dependencies
+		TSet<UAnimationAsset*> PreloadedAssets;
+		TSet<UAnimationAsset*> DiscoveredAssets;
 		TArray<UAnimationAsset*> AssetAndDependencies;
 		AssetToLoad->HandleAnimReferenceCollection(AssetAndDependencies, true);
+		DiscoveredAssets.Append(AssetAndDependencies);
 
-		for (UAnimationAsset* Dependency : AssetAndDependencies)
+		while(AssetAndDependencies.Num() != 0)
 		{
-			PreloadObject(Dependency);
+			UAnimationAsset* Asset = AssetAndDependencies.Pop(EAllowShrinking::No);
+			if (!PreloadedAssets.Contains(Asset))
+			{
+				PreloadedAssets.Add(Asset);
+				PreloadObject(Asset);
+
+				// catch any extra dependencies found after preloading the object
+				// this will have some redundancy, but that can't be avoided without 
+				// reworking HandleAnimReferenceCollection
+				TArray<UAnimationAsset*> Dependencies;
+				Asset->HandleAnimReferenceCollection(Dependencies, true);
+				for (UAnimationAsset* AssetDependency : Dependencies)
+				{
+					if (!DiscoveredAssets.Contains(AssetDependency))
+					{
+						DiscoveredAssets.Add(AssetDependency);
+						AssetAndDependencies.Add(AssetDependency);
+					}
+				}
+			}
 		}
 	}
 }

@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
-using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -101,12 +100,12 @@ namespace EpicGames.Slack
 
 		static bool ShouldLogError<TResponse>(TResponse response) where TResponse : SlackResponse => !response.Ok;
 
-		private Task<TResponse> SendRequestAsync<TResponse>(string requestUrl, object request) where TResponse : SlackResponse
+		private Task<TResponse> SendRequestAsync<TResponse>(string requestUrl, object request, CancellationToken cancellationToken) where TResponse : SlackResponse
 		{
-			return SendRequestAsync<TResponse>(requestUrl, request, ShouldLogError);
+			return SendRequestAsync<TResponse>(requestUrl, request, ShouldLogError, cancellationToken);
 		}
 
-		private async Task<TResponse> SendRequestAsync<TResponse>(string requestUrl, object request, Func<TResponse, bool> shouldLogError) where TResponse : SlackResponse
+		private async Task<TResponse> SendRequestAsync<TResponse>(string requestUrl, object request, Func<TResponse, bool> shouldLogError, CancellationToken cancellationToken) where TResponse : SlackResponse
 		{
 			using (HttpRequestMessage sendMessageRequest = new HttpRequestMessage(HttpMethod.Post, requestUrl))
 			{
@@ -114,20 +113,20 @@ namespace EpicGames.Slack
 				using (StringContent messageContent = new StringContent(requestJson, Encoding.UTF8, "application/json"))
 				{
 					sendMessageRequest.Content = messageContent;
-					return await SendRequestAsync<TResponse>(sendMessageRequest, requestJson, shouldLogError);
+					return await SendRequestAsync<TResponse>(sendMessageRequest, requestJson, shouldLogError, cancellationToken);
 				}
 			}
 		}
 
-		private Task<TResponse> SendRequestAsync<TResponse>(HttpRequestMessage request, string requestJson) where TResponse : SlackResponse
+		private Task<TResponse> SendRequestAsync<TResponse>(HttpRequestMessage request, string requestJson, CancellationToken cancellationToken) where TResponse : SlackResponse
 		{
-			return SendRequestAsync<TResponse>(request, requestJson, ShouldLogError);
+			return SendRequestAsync<TResponse>(request, requestJson, ShouldLogError, cancellationToken);
 		}
 
-		private async Task<TResponse> SendRequestAsync<TResponse>(HttpRequestMessage request, string requestJson, Func<TResponse, bool> shouldLogError) where TResponse : SlackResponse
+		private async Task<TResponse> SendRequestAsync<TResponse>(HttpRequestMessage request, string requestJson, Func<TResponse, bool> shouldLogError, CancellationToken cancellationToken) where TResponse : SlackResponse
 		{
-			HttpResponseMessage response = await _httpClient.SendAsync(request);
-			byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+			HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken);
+			byte[] responseBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
 
 			TResponse responseObject = JsonSerializer.Deserialize<TResponse>(responseBytes)!;
 			if (shouldLogError(responseObject))
@@ -173,7 +172,7 @@ namespace EpicGames.Slack
 
 			[JsonPropertyName("attachments")]
 			public List<SlackAttachment>? Attachments { get; set; }
-			
+
 			[JsonPropertyName("reply_broadcast")]
 			public bool? ReplyBroadcast { get; set; }
 
@@ -198,10 +197,23 @@ namespace EpicGames.Slack
 		/// </summary>
 		/// <param name="recipient">Recipient of the message. May be a channel or Slack user id.</param>
 		/// <param name="message">New message to post</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Identifier for the message. Note that the returned channel value will respond to a concrete channel identifier if a user is specified as recipient, and must be used to update the message.</returns>
-		public async Task<SlackMessageId> PostMessageAsync(string recipient, SlackMessage message)
+		public async Task<SlackMessageId> PostMessageAsync(string recipient, SlackMessage message, CancellationToken cancellationToken = default)
 		{
-			return await PostOrUpdateMessageAsync(recipient, null, null, message, false);
+			return await PostOrUpdateMessageAsync(recipient, null, null, message, false, cancellationToken);
+		}
+
+		/// <summary>
+		/// Posts a message to a recipient
+		/// </summary>
+		/// <param name="threadId">Parent message to post to</param>
+		/// <param name="message">New message to post</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		/// <returns>Identifier for the message. Note that the returned channel value will respond to a concrete channel identifier if a user is specified as recipient, and must be used to update the message.</returns>
+		public Task<SlackMessageId> PostMessageToThreadAsync(SlackMessageId threadId, SlackMessage message, CancellationToken cancellationToken = default)
+		{
+			return PostMessageToThreadAsync(threadId, message, false, cancellationToken);
 		}
 
 		/// <summary>
@@ -210,10 +222,22 @@ namespace EpicGames.Slack
 		/// <param name="threadId">Parent message to post to</param>
 		/// <param name="message">New message to post</param>
 		/// <param name="replyBroadcast">Whether to broadcast the message to the channel</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Identifier for the message. Note that the returned channel value will respond to a concrete channel identifier if a user is specified as recipient, and must be used to update the message.</returns>
-		public async Task<SlackMessageId> PostMessageToThreadAsync(SlackMessageId threadId, SlackMessage message, bool replyBroadcast = false)
+		public async Task<SlackMessageId> PostMessageToThreadAsync(SlackMessageId threadId, SlackMessage message, bool replyBroadcast, CancellationToken cancellationToken = default)
 		{
-			return await PostOrUpdateMessageAsync(threadId.Channel, null, threadId.Ts, message, replyBroadcast);
+			return await PostOrUpdateMessageAsync(threadId.Channel, null, threadId.Ts, message, replyBroadcast, cancellationToken);
+		}
+
+		/// <summary>
+		/// Updates an existing message
+		/// </summary>
+		/// <param name="id">The message id</param>
+		/// <param name="message">New message to post</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public Task UpdateMessageAsync(SlackMessageId id, SlackMessage message, CancellationToken cancellationToken = default)
+		{
+			return UpdateMessageAsync(id, message, false, cancellationToken);
 		}
 
 		/// <summary>
@@ -222,17 +246,18 @@ namespace EpicGames.Slack
 		/// <param name="id">The message id</param>
 		/// <param name="message">New message to post</param>
 		/// <param name="replyBroadcast">For threaded messages, whether to broadcast the message to the channel</param>
-		public async Task UpdateMessageAsync(SlackMessageId id, SlackMessage message, bool replyBroadcast = false)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task UpdateMessageAsync(SlackMessageId id, SlackMessage message, bool replyBroadcast = false, CancellationToken cancellationToken = default)
 		{
-			await PostOrUpdateMessageAsync(id.Channel, id.Ts, id.ThreadTs, message, replyBroadcast);
+			await PostOrUpdateMessageAsync(id.Channel, id.Ts, id.ThreadTs, message, replyBroadcast, cancellationToken);
 		}
 
-		async Task<SlackMessageId> PostOrUpdateMessageAsync(string recipient, string? ts, string? threadTs, SlackMessage message, bool replyBroadcast)
+		async Task<SlackMessageId> PostOrUpdateMessageAsync(string recipient, string? ts, string? threadTs, SlackMessage message, bool replyBroadcast, CancellationToken cancellationToken)
 		{
 			PostMessageRequest request = new PostMessageRequest();
 			request.Channel = recipient;
-			request.Ts = String.IsNullOrEmpty(ts)? null : ts;
-			request.ThreadTs = String.IsNullOrEmpty(threadTs)? null : threadTs;
+			request.Ts = String.IsNullOrEmpty(ts) ? null : ts;
+			request.ThreadTs = String.IsNullOrEmpty(threadTs) ? null : threadTs;
 			request.Text = message.Text;
 			request.Blocks = message.Blocks;
 			request.Markdown = message.Markdown;
@@ -254,7 +279,7 @@ namespace EpicGames.Slack
 				request.UnfurlMedia = false;
 			}
 
-			PostMessageResponse response = await SendRequestAsync<PostMessageResponse>(ts == null? PostMessageUrl : UpdateMessageUrl, request);
+			PostMessageResponse response = await SendRequestAsync<PostMessageResponse>(ts == null ? PostMessageUrl : UpdateMessageUrl, request, cancellationToken);
 			if (!response.Ok || response.Ts == null)
 			{
 				throw new SlackException(response.Error ?? "unknown");
@@ -285,13 +310,14 @@ namespace EpicGames.Slack
 		/// Gets a permalink for a message
 		/// </summary>
 		/// <param name="id">Message identifier</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Link to the message</returns>
-		public async Task<string> GetPermalinkAsync(SlackMessageId id)
+		public async Task<string> GetPermalinkAsync(SlackMessageId id, CancellationToken cancellationToken = default)
 		{
 			string requestUrl = $"{GetPermalinkUrl}?channel={id.Channel}&message_ts={id.Ts}";
 			using (HttpRequestMessage sendMessageRequest = new HttpRequestMessage(HttpMethod.Get, requestUrl))
 			{
-				GetPermalinkResponse response = await SendRequestAsync<GetPermalinkResponse>(sendMessageRequest, "");
+				GetPermalinkResponse response = await SendRequestAsync<GetPermalinkResponse>(sendMessageRequest, "", cancellationToken);
 				if (!response.Ok || response.Permalink == null)
 				{
 					throw new SlackException(response.Error ?? "unknown");
@@ -324,7 +350,8 @@ namespace EpicGames.Slack
 		/// </summary>
 		/// <param name="messageId">Message to react to</param>
 		/// <param name="name">Name of the reaction to post</param>
-		public async Task AddReactionAsync(SlackMessageId messageId, string name)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task AddReactionAsync(SlackMessageId messageId, string name, CancellationToken cancellationToken = default)
 		{
 			ReactionMessage message = new ReactionMessage();
 			message.Channel = messageId.Channel;
@@ -333,7 +360,7 @@ namespace EpicGames.Slack
 
 			static bool ShouldLogError(SlackResponse response) => !response.Ok && !String.Equals(response.Error, "already_reacted", StringComparison.Ordinal);
 
-			await SendRequestAsync<SlackResponse>(AddReactionUrl, message, ShouldLogError);
+			await SendRequestAsync<SlackResponse>(AddReactionUrl, message, ShouldLogError, cancellationToken);
 		}
 
 		/// <summary>
@@ -341,7 +368,8 @@ namespace EpicGames.Slack
 		/// </summary>
 		/// <param name="messageId">Message to react to</param>
 		/// <param name="name">Name of the reaction to post</param>
-		public async Task RemoveReactionAsync(SlackMessageId messageId, string name)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task RemoveReactionAsync(SlackMessageId messageId, string name, CancellationToken cancellationToken = default)
 		{
 			ReactionMessage message = new ReactionMessage();
 			message.Channel = messageId.Channel;
@@ -350,7 +378,7 @@ namespace EpicGames.Slack
 
 			static bool ShouldLogError(SlackResponse response) => !response.Ok && !String.Equals(response.Error, "no_reaction", StringComparison.Ordinal);
 
-			await SendRequestAsync<SlackResponse>(RemoveReactionUrl, message, ShouldLogError);
+			await SendRequestAsync<SlackResponse>(RemoveReactionUrl, message, ShouldLogError, cancellationToken);
 		}
 
 		#endregion
@@ -373,14 +401,16 @@ namespace EpicGames.Slack
 		/// </summary>
 		/// <param name="channel">Channel identifier to invite the user to</param>
 		/// <param name="userId">The user id</param>
-		public Task InviteUserAsync(string channel, string userId) => InviteUsersAsync(channel, new[] { userId });
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public Task InviteUserAsync(string channel, string userId, CancellationToken cancellationToken = default) => InviteUsersAsync(channel, new[] { userId }, cancellationToken);
 
 		/// <summary>
 		/// Invite a set of users to a channel
 		/// </summary>
 		/// <param name="channel">Channel identifier to invite the user to</param>
 		/// <param name="userIds">The user id</param>
-		public async Task InviteUsersAsync(string channel, IEnumerable<string> userIds)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task InviteUsersAsync(string channel, IEnumerable<string> userIds, CancellationToken cancellationToken = default)
 		{
 			InviteMessage message = new InviteMessage();
 			message.Channel = channel;
@@ -388,7 +418,7 @@ namespace EpicGames.Slack
 
 			static bool ShouldLogError(SlackResponse response) => !response.Ok && !String.Equals(response.Error, "already_in_channel", StringComparison.Ordinal);
 
-			await SendRequestAsync<SlackResponse>(ConversationsInviteUrl, message, ShouldLogError);
+			await SendRequestAsync<SlackResponse>(ConversationsInviteUrl, message, ShouldLogError, cancellationToken);
 		}
 
 		/// <summary>
@@ -396,7 +426,8 @@ namespace EpicGames.Slack
 		/// </summary>
 		/// <param name="channel">Channel identifier to invite the user to</param>
 		/// <param name="userIds">The user id</param>
-		public async Task<string?> TryInviteUsersAsync(string channel, IEnumerable<string> userIds)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task<string?> TryInviteUsersAsync(string channel, IEnumerable<string> userIds, CancellationToken cancellationToken = default)
 		{
 			InviteMessage message = new InviteMessage();
 			message.Channel = channel;
@@ -404,7 +435,7 @@ namespace EpicGames.Slack
 
 			static bool ShouldLogError(SlackResponse response) => false;
 
-			SlackResponse response = await SendRequestAsync<SlackResponse>(ConversationsInviteUrl, message, ShouldLogError);
+			SlackResponse response = await SendRequestAsync<SlackResponse>(ConversationsInviteUrl, message, ShouldLogError, cancellationToken);
 			return response.Ok ? null : response.Error;
 		}
 
@@ -415,13 +446,14 @@ namespace EpicGames.Slack
 		/// </summary>
 		/// <param name="channel">Channel identifier to invite the user to</param>
 		/// <param name="userIds">The user id</param>
-		public async Task AdminInviteUsersAsync(string channel, IEnumerable<string> userIds)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task AdminInviteUsersAsync(string channel, IEnumerable<string> userIds, CancellationToken cancellationToken = default)
 		{
 			object message = new { channel_id = channel, user_ids = String.Join(",", userIds) };
 
 			static bool ShouldLogError(SlackResponse response) => !response.Ok && !String.Equals(response.Error, "already_in_channel", StringComparison.Ordinal);
 
-			await SendRequestAsync<SlackResponse>(AdminConversationsInviteUrl, message, ShouldLogError);
+			await SendRequestAsync<SlackResponse>(AdminConversationsInviteUrl, message, ShouldLogError, cancellationToken);
 		}
 
 		#endregion
@@ -441,12 +473,13 @@ namespace EpicGames.Slack
 		/// Gets a user's profile
 		/// </summary>
 		/// <param name="userId">The user id</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>User profile</returns>
-		public async Task<SlackUser> GetUserAsync(string userId)
+		public async Task<SlackUser> GetUserAsync(string userId, CancellationToken cancellationToken = default)
 		{
 			using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, $"{UsersInfoUrl}?user={userId}"))
 			{
-				UserResponse response = await SendRequestAsync<UserResponse>(request, "", ShouldLogError);
+				UserResponse response = await SendRequestAsync<UserResponse>(request, "", ShouldLogError, cancellationToken);
 				return response.User!;
 			}
 		}
@@ -455,14 +488,15 @@ namespace EpicGames.Slack
 		/// Finds a user by email address
 		/// </summary>
 		/// <param name="email">The user's email address</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>User profile</returns>
-		public async Task<SlackUser?> FindUserByEmailAsync(string email)
+		public async Task<SlackUser?> FindUserByEmailAsync(string email, CancellationToken cancellationToken = default)
 		{
 			using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, $"{UsersLookupByEmailUrl}?email={email}"))
 			{
 				static bool ShouldLogError(UserResponse response) => !response.Ok && !String.Equals(response.Error, "users_not_found", StringComparison.Ordinal);
 
-				UserResponse response = await SendRequestAsync<UserResponse>(request, "", ShouldLogError);
+				UserResponse response = await SendRequestAsync<UserResponse>(request, "", ShouldLogError, cancellationToken);
 				return response.User;
 			}
 		}
@@ -487,12 +521,13 @@ namespace EpicGames.Slack
 		/// </summary>
 		/// <param name="triggerId">The trigger id, as returned as part of an interaction payload</param>
 		/// <param name="view">Definition for the view</param>
-		public async Task OpenViewAsync(string triggerId, SlackView view)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		public async Task OpenViewAsync(string triggerId, SlackView view, CancellationToken cancellationToken = default)
 		{
 			ViewsOpenRequest request = new ViewsOpenRequest();
 			request.TriggerId = triggerId;
 			request.View = view;
-			await SendRequestAsync<PostMessageResponse>(ViewsOpenUrl, request);
+			await SendRequestAsync<PostMessageResponse>(ViewsOpenUrl, request, cancellationToken);
 		}
 
 		#endregion

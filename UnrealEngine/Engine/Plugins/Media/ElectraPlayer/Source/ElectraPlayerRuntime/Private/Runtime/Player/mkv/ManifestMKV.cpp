@@ -61,8 +61,9 @@ FErrorDetail FManifestMKVInternal::Build(TSharedPtrTS<IParserMKV> MKVParser, con
 	ConnectionInfo = InConnectionInfo;
 	MediaAsset = MakeSharedTS<FTimelineAssetMKV>();
 	FErrorDetail Error = MediaAsset->Build(PlayerSessionServices, MKVParser, URL);
-	FTimeRange PlaybackRange = GetPlaybackRange();
+	FTimeRange PlaybackRange = GetPlaybackRange(IManifest::EPlaybackRangeType::TemporaryPlaystartRange);
 	DefaultStartTime = PlaybackRange.Start;
+	DefaultEndTime = PlaybackRange.End;
 	return Error;
 }
 
@@ -105,15 +106,16 @@ void FManifestMKVInternal::GetTrackMetadata(TArray<FTrackMetadata>& OutMetadata,
  *
  * @return Optionally set time range to which playback is restricted.
  */
-FTimeRange FManifestMKVInternal::GetPlaybackRange() const
+FTimeRange FManifestMKVInternal::GetPlaybackRange(EPlaybackRangeType InRangeType) const
 {
 	FTimeRange FromTo;
 
-	// We are interested in the 't' fragment value here.
+	// We are interested in the 't' or 'r' fragment value here.
 	FString Time;
 	for(auto& Fragment : URLFragmentComponents)
 	{
-		if (Fragment.Name.Equals(TEXT("t")))
+		if ((InRangeType == IManifest::EPlaybackRangeType::TemporaryPlaystartRange && Fragment.Name.Equals(TEXT("t"))) ||
+			(InRangeType == IManifest::EPlaybackRangeType::LockedPlaybackRange && Fragment.Name.Equals(TEXT("r"))))
 		{
 			Time = Fragment.Value;
 		}

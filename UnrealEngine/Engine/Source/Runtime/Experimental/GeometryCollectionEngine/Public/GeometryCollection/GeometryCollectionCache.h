@@ -36,6 +36,8 @@ public:
 	GEOMETRYCOLLECTIONENGINE_API void SetSupportedCollection(const UGeometryCollection* InCollection);
 
 	/** UObject Interface */
+	GEOMETRYCOLLECTIONENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	GEOMETRYCOLLECTIONENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	/** End UObject Interface */
 

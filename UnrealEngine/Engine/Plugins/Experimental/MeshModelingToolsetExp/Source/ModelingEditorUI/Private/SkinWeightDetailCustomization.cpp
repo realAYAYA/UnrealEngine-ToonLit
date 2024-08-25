@@ -8,9 +8,12 @@
 #include "Widgets/Input/SSegmentedControl.h"
 #include "SkeletalMesh/SkinWeightsPaintTool.h"
 #include "SSkinWeightProfileImportOptions.h"
+#include "Selection/PolygonSelectionMechanic.h"
 #include "UObject/UnrealTypePrivate.h"
 #include "Widgets/Input/SSpinBox.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SNumericEntryBox.h"
+#include "Widgets/Input/SSlider.h"
 
 #define LOCTEXT_NAMESPACE "SkinWeightToolSettingsEditor"
 
@@ -43,8 +46,9 @@ void FSkinWeightDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 		[
 			SNew(SSegmentedControl<EWeightEditMode>)
 			.ToolTipText(LOCTEXT("EditingModeTooltip",
-					"Brush: the interactive viewport brush interface for editing weights.\n"
-					"Selection: the 1-off editing operations for weights on selected elements (bones and vertices).\n"))
+					"Brush: edit weights by painting directly on mesh.\n"
+					"Vertices: select vertices and edit weights directly.\n"
+					"Bones: select and manipulate bones to preview deformations.\n"))
 			.Value_Lambda([this]()
 			{
 				return SkinToolSettings->EditingMode;
@@ -62,6 +66,8 @@ void FSkinWeightDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 			.Text(LOCTEXT("BrushEditMode", "Brush"))
 			+ SSegmentedControl<EWeightEditMode>::Slot(EWeightEditMode::Vertices)
 			.Text(LOCTEXT("VertexEditMode", "Vertices"))
+			+ SSegmentedControl<EWeightEditMode>::Slot(EWeightEditMode::Bones)
+			.Text(LOCTEXT("BoneEditMode", "Bones"))
 		]
 	];
 
@@ -162,6 +168,12 @@ void FSkinWeightDetailCustomization::AddBrushUI(IDetailLayoutBuilder& DetailBuil
 			.OnValueChanged_Lambda([this](EWeightEditOperation Mode)
 			{
 				SkinToolSettings->BrushMode = Mode;
+
+				// sync base tool settings with the mode specific saved values
+				// these are the source of truth for the base class viewport rendering of brush
+				SkinToolSettings->BrushRadius = SkinToolSettings->GetBrushConfig().Radius;
+				SkinToolSettings->BrushStrength = SkinToolSettings->GetBrushConfig().Strength;
+				SkinToolSettings->BrushFalloffAmount = SkinToolSettings->GetBrushConfig().Falloff;
 			})
 			+SSegmentedControl<EWeightEditOperation>::Slot(EWeightEditOperation::Add)
 			.Text(LOCTEXT("BrushAddMode", "Add"))
@@ -301,7 +313,66 @@ void FSkinWeightDetailCustomization::AddBrushUI(IDetailLayoutBuilder& DetailBuil
 void FSkinWeightDetailCustomization::AddSelectionUI(IDetailLayoutBuilder& DetailBuilder)
 {
 	// custom display of weight editing tools
-	IDetailCategoryBuilder& EditWeightsCategory = DetailBuilder.EditCategory("EditWeights", FText::GetEmpty(), ECategoryPriority::Important);
+	IDetailCategoryBuilder& EditSelectionCategory = DetailBuilder.EditCategory("Edit Selection", FText::GetEmpty(), ECategoryPriority::Important);
+	EditSelectionCategory.InitiallyCollapsed(true);
+
+	// GROW/SHRINK/FLOOD Selection category
+	EditSelectionCategory.AddCustomRow(LOCTEXT("EditSelectionRow", "Edit Selection"), false)
+	.WholeRowContent()
+	[
+		SNew(SHorizontalBox)
+
+		+SHorizontalBox::Slot()
+		.Padding(2.f, WeightEditVerticalPadding)
+		[
+			SNew(SButton)
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.Text(LOCTEXT("GrowSelectionButtonLabel", "Grow"))
+			.ToolTipText(LOCTEXT("GrowSelectionTooltip",
+					"Grow the current selection by adding connected neighbors to current selection.\n"))
+			.OnClicked_Lambda([this]()
+			{
+				SkinToolSettings->WeightTool->GetSelectionMechanic()->GrowSelection();
+				return FReply::Handled();
+			})
+		]
+
+		+SHorizontalBox::Slot()
+		.Padding(2.f, WeightEditVerticalPadding)
+		[
+			SNew(SButton)
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.Text(LOCTEXT("ShrinkSelectionButtonLabel", "Shrink"))
+			.ToolTipText(LOCTEXT("ShrinkSelectionTooltip",
+					"Shrink the current selection by removing vertices on the border of the current selection.\n"))
+			.OnClicked_Lambda([this]()
+			{
+				SkinToolSettings->WeightTool->GetSelectionMechanic()->ShrinkSelection();
+				return FReply::Handled();
+			})
+		]
+
+		+SHorizontalBox::Slot()
+		.Padding(2.f, WeightEditVerticalPadding)
+		[
+			SNew(SButton)
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.Text(LOCTEXT("FloodSelectionButtonLabel", "Flood"))
+			.ToolTipText(LOCTEXT("FloodSelectionTooltip",
+					"Flood the current selection by adding all connected vertices to the current selection.\n"))
+			.OnClicked_Lambda([this]()
+			{
+				SkinToolSettings->WeightTool->GetSelectionMechanic()->FloodSelection();
+				return FReply::Handled();
+			})
+		]
+	];
+
+	// custom display of weight editing tools
+	IDetailCategoryBuilder& EditWeightsCategory = DetailBuilder.EditCategory("Edit Weights", FText::GetEmpty(), ECategoryPriority::Important);
 	EditWeightsCategory.InitiallyCollapsed(true);
 
 	// AVERAGE/RELAX/NORMALIZE WEIGHTS category
@@ -621,6 +692,138 @@ void FSkinWeightDetailCustomization::AddSelectionUI(IDetailLayoutBuilder& Detail
 			]
 		]
 	];
+
+	// VERTEX EDITOR category
+	EditWeightsCategory.AddCustomRow(LOCTEXT("VertexEditorRow", "Vertex Editor"), false)
+	.WholeRowContent()
+	[
+		SNew(SVertexWeightEditor, SkinToolSettings->WeightTool)
+	];
+}
+
+void SVertexWeightItem::Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& OwnerTableView)
+{
+	Element = InArgs._Element;
+	ParentTable = InArgs._ParentTable;
+	SMultiColumnTableRow<TSharedPtr<FWeightEditorElement>>::Construct(FSuperRowType::FArguments(), OwnerTableView);
+}
+
+TSharedRef<SWidget> SVertexWeightItem::GenerateWidgetForColumn(const FName& ColumnName)
+{
+	if (ColumnName == "Bone")
+	{
+		const FName BoneName = ParentTable->Tool->GetBoneNameFromIndex(Element->BoneIndex);
+		return SNew(STextBlock).Text(FText::FromName(BoneName));
+	}
+
+	if (ColumnName == "Weight")
+	{
+		// add a buffer to the slider to prevent ever fully getting a value to 1 or 0 using the slider alone
+		// doing so will remove other influences and cause the slider to no longer function as all other influences
+		// will be culled by normalization thus making the slider "stuck" at full value.
+		constexpr float SliderBuffer = 0.001f;
+		
+		return SNew(SNumericEntryBox<float>)
+		.AllowSpin(true)
+		.MinSliderValue(SliderBuffer)
+		.MinValue(0.f)
+		.MaxSliderValue(1.0f-SliderBuffer)
+		.MaxValue(1.f)
+		.Value_Lambda([this]()
+		{
+			return ParentTable->Tool->GetAverageWeightOnBone(Element->BoneIndex, ParentTable->SelectedVertices);
+		})
+		.OnValueChanged_Lambda([this](float NewValue)
+		{
+			TArray<VertexIndex> VerticesToEdit;
+			ParentTable->Tool->GetSelectedVertices(VerticesToEdit);
+			ParentTable->Tool->SetBoneWeightOnVertices(Element->BoneIndex, NewValue, VerticesToEdit, !bInTransaction);
+		})
+		.OnValueCommitted_Lambda([this](float NewValue, ETextCommit::Type CommitType)
+		{
+			bInTransaction = false;
+		})
+		.OnBeginSliderMovement_Lambda([this]()
+		{
+			ParentTable->Tool->BeginChange();
+			bInTransaction = true;
+		})
+		.OnEndSliderMovement_Lambda([this](float)
+		{
+			const FText TransactionLabel = LOCTEXT("DirectWeightChange", "Set weights on vertices.");
+			ParentTable->Tool->EndChange(TransactionLabel);
+			bInTransaction = false;
+		})
+		.ToolTipText(LOCTEXT("WeightSliderToolTip", "Set the weight on this bone for the selected vertices."));
+	}
+
+	checkNoEntry();
+	return SNullWidget::NullWidget;
+}
+
+SVertexWeightEditor::~SVertexWeightEditor()
+{
+	if (Tool.IsValid())
+	{
+		Tool->OnSelectionChanged.RemoveAll(this);
+		Tool->OnWeightsChanged.RemoveAll(this);
+		Tool.Reset();
+	}
+}
+
+void SVertexWeightEditor::Construct(const FArguments& InArgs, USkinWeightsPaintTool* InSkinTool)
+{
+	Tool = InSkinTool;
+
+	ChildSlot
+	[
+		SNew(SBox)
+		[
+			SAssignNew( ListView, SWeightEditorListViewType )
+			.SelectionMode(ESelectionMode::Single)
+			.ListItemsSource( &ListViewItems )
+			.OnGenerateRow_Lambda([this](TSharedPtr<FWeightEditorElement> Element, const TSharedRef<STableViewBase>& OwnerTableView)
+			{
+				return SNew(SVertexWeightItem, OwnerTableView).Element(Element).ParentTable(SharedThis(this));
+			})
+			.HeaderRow
+			(
+				SNew(SHeaderRow)
+				+ SHeaderRow::Column("Bone").DefaultLabel(NSLOCTEXT("WeightEditorBoneColumn", "Bone", "Bone"))
+				+ SHeaderRow::Column("Weight").DefaultLabel(NSLOCTEXT("WeightEditorWeightColumn", "Weight (Average)", "Weight (Average)"))
+			)
+		]
+	];
+
+	RefreshView();
+	
+	Tool->OnSelectionChanged.AddSP(this, &SVertexWeightEditor::RefreshView);
+	Tool->OnWeightsChanged.AddSP(this, &SVertexWeightEditor::RefreshView);
+}
+
+void SVertexWeightEditor::RefreshView()
+{
+	if (!Tool.IsValid())
+	{
+		return; 
+	}
+
+	// get list of selected vertex indices
+	SelectedVertices.Reset();
+	Tool->GetSelectedVertices(SelectedVertices);
+	
+	// get all bones affecting the selected vertices
+	TArray<int32> Influences;
+	Tool->GetInfluences(SelectedVertices, Influences);
+
+	// generate list view items
+	ListViewItems.Reset();
+	for (const int32 InfluenceIndex : Influences)
+	{
+		ListViewItems.Add(MakeShareable(new FWeightEditorElement(InfluenceIndex)));
+	}
+	
+	ListView->RequestListRefresh();
 }
 
 #undef LOCTEXT_NAMESPACE

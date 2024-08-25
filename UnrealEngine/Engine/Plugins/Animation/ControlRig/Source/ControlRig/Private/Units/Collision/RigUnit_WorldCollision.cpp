@@ -18,6 +18,25 @@ FRigUnit_SphereTraceWorld_Execute()
 
 	if(ExecuteContext.GetWorld() == nullptr)
 	{
+		WorkData.Reset();
+		return;
+	}
+
+	// Note: we are not adding the world transform to the hash since
+	// the world transform cannot change during one execution of the 
+	// rig. By adding NumExecutions to the hash we make sure to
+	// trace again once the world transform has changed.
+	uint32 Hash = GetTypeHash(ExecuteContext.GetNumExecutions());
+	Hash = HashCombine(Hash, GetTypeHash(Start));
+	Hash = HashCombine(Hash, GetTypeHash(End));
+	Hash = HashCombine(Hash, GetTypeHash((int32)Channel));
+	Hash = HashCombine(Hash, GetTypeHash(Radius));
+
+	if(WorkData.Hash == Hash)
+	{
+		bHit = WorkData.bHit;
+		HitLocation = WorkData.HitLocation;
+		HitNormal = WorkData.HitNormal;
 		return;
 	}
 	
@@ -47,6 +66,11 @@ FRigUnit_SphereTraceWorld_Execute()
 		HitLocation = ExecuteContext.ToVMSpace(HitResult.ImpactPoint);
 		HitNormal = ExecuteContext.GetToWorldSpaceTransform().InverseTransformVector(HitResult.ImpactNormal);
 	}
+
+	WorkData.Hash = Hash;
+	WorkData.bHit = bHit;
+	WorkData.HitLocation = HitLocation;
+	WorkData.HitNormal = HitNormal;
 }
 
 FRigVMStructUpgradeInfo FRigUnit_SphereTraceWorld::GetUpgradeInfo() const
@@ -69,6 +93,25 @@ FRigUnit_SphereTraceByTraceChannel_Execute()
 
 	if (ExecuteContext.GetWorld() == nullptr)
 	{
+		WorkData.Reset();
+		return;
+	}
+
+	// Note: we are not adding the world transform to the hash since
+	// the world transform cannot change during one execution of the 
+	// rig. By adding NumExecutions to the hash we make sure to
+	// trace again once the world transform has changed.
+	uint32 Hash = GetTypeHash(ExecuteContext.GetNumExecutions());
+	Hash = HashCombine(Hash, GetTypeHash(Start));
+	Hash = HashCombine(Hash, GetTypeHash(End));
+	Hash = HashCombine(Hash, GetTypeHash((int32)TraceChannel));
+	Hash = HashCombine(Hash, GetTypeHash(Radius));
+
+	if(WorkData.Hash == Hash)
+	{
+		bHit = WorkData.bHit;
+		HitLocation = WorkData.HitLocation;
+		HitNormal = WorkData.HitNormal;
 		return;
 	}
 
@@ -95,6 +138,11 @@ FRigUnit_SphereTraceByTraceChannel_Execute()
 		HitLocation = ExecuteContext.ToVMSpace(HitResult.ImpactPoint);
 		HitNormal = ExecuteContext.GetToWorldSpaceTransform().InverseTransformVector(HitResult.ImpactNormal);
 	}
+
+	WorkData.Hash = Hash;
+	WorkData.bHit = bHit;
+	WorkData.HitLocation = HitLocation;
+	WorkData.HitNormal = HitNormal;
 }
 
 FRigUnit_SphereTraceByObjectTypes_Execute()
@@ -107,6 +155,29 @@ FRigUnit_SphereTraceByObjectTypes_Execute()
 
 	if (ExecuteContext.GetWorld() == nullptr)
 	{
+		WorkData.Reset();
+		return;
+	}
+
+	// Note: we are not adding the world transform to the hash since
+	// the world transform cannot change during one execution of the 
+	// rig. By adding NumExecutions to the hash we make sure to
+	// trace again once the world transform has changed.
+	uint32 Hash = GetTypeHash(ExecuteContext.GetNumExecutions());
+	Hash = HashCombine(Hash, GetTypeHash(Start));
+	Hash = HashCombine(Hash, GetTypeHash(End));
+	Hash = HashCombine(Hash, GetTypeHash(ObjectTypes.Num()));
+	for(const TEnumAsByte<EObjectTypeQuery>& ObjectType : ObjectTypes)
+	{
+		Hash = HashCombine(Hash, GetTypeHash((int32)ObjectType));
+	}
+	Hash = HashCombine(Hash, GetTypeHash(Radius));
+
+	if(WorkData.Hash == Hash)
+	{
+		bHit = WorkData.bHit;
+		HitLocation = WorkData.HitLocation;
+		HitNormal = WorkData.HitNormal;
 		return;
 	}
 
@@ -150,5 +221,10 @@ FRigUnit_SphereTraceByObjectTypes_Execute()
 		HitLocation = ExecuteContext.ToVMSpace(HitResult.ImpactPoint);
 		HitNormal = ExecuteContext.GetToWorldSpaceTransform().InverseTransformVector(HitResult.ImpactNormal);
 	}
+
+	WorkData.Hash = Hash;
+	WorkData.bHit = bHit;
+	WorkData.HitLocation = HitLocation;
+	WorkData.HitNormal = HitNormal;
 }
 

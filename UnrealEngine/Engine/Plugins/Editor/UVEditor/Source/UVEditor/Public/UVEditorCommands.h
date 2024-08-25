@@ -22,6 +22,7 @@ public:
 	TSharedPtr<FUICommandInfo> BeginTransformTool;
 	TSharedPtr<FUICommandInfo> BeginAlignTool;
 	TSharedPtr<FUICommandInfo> BeginDistributeTool;
+	TSharedPtr<FUICommandInfo> BeginTexelDensityTool;
 	TSharedPtr<FUICommandInfo> BeginParameterizeMeshTool;
 	TSharedPtr<FUICommandInfo> BeginChannelEditTool;
 	TSharedPtr<FUICommandInfo> BeginSeamTool;

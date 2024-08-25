@@ -5,6 +5,7 @@
 #include "EdGraphUtilities.h"
 #include "GraphEditAction.h"
 #include "INiagaraEditorTypeUtilities.h"
+#include "NiagaraAnalytics.h"
 #include "NiagaraCommon.h"
 #include "NiagaraComponent.h"
 #include "NiagaraConstants.h"
@@ -32,7 +33,7 @@ UNiagaraScriptSource::UNiagaraScriptSource(const FObjectInitializer& ObjectIniti
 {
 }
 
-void UNiagaraScriptSource::RegisterVMCompilationIdDependencies(struct FNiagaraVMExecutableDataId& Id, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const
+void UNiagaraScriptSource::RegisterVMCompilationIdDependencies(FNiagaraScriptHashCollector& Collector, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const
 {
 	if (!AllowShaderCompiling())
 	{
@@ -53,8 +54,7 @@ void UNiagaraScriptSource::RegisterVMCompilationIdDependencies(struct FNiagaraVM
 			
 			if (Hash.IsValid())
 			{
-				Id.ReferencedCompileHashes.AddUnique(Hash);
-				Id.DebugReferencedObjects.Emplace(GetPathName());
+				Collector.AddHash(Hash, GetPathName());
 			}
 			else
 			{
@@ -65,7 +65,7 @@ void UNiagaraScriptSource::RegisterVMCompilationIdDependencies(struct FNiagaraVM
 }
 
 
-void UNiagaraScriptSource::ComputeVMCompilationId(FNiagaraVMExecutableDataId& Id, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const
+void UNiagaraScriptSource::ComputeVMCompilationId(FNiagaraVMExecutableDataId& Id, FNiagaraScriptHashCollector& HashCollector, ENiagaraScriptUsage InUsage, const FGuid& InUsageId) const
 {
 	if (!AllowShaderCompiling())
 	{
@@ -79,19 +79,17 @@ void UNiagaraScriptSource::ComputeVMCompilationId(FNiagaraVMExecutableDataId& Id
 	{
 		NodeGraph->RebuildCachedCompileIds();
 		Id.BaseScriptCompileHash = FNiagaraCompileHash(NodeGraph->GetCompileDataHash(InUsage, InUsageId));
-		NodeGraph->GatherExternalDependencyData(InUsage, InUsageId, Id.ReferencedCompileHashes, Id.DebugReferencedObjects);
+
+		NodeGraph->GatherExternalDependencyData(InUsage, InUsageId, HashCollector);
 	}
 
 	// Add in any referenced HLSL files.
 	FSHAHash Hash = GetShaderFileHash((TEXT("/Plugin/FX/Niagara/Private/NiagaraEmitterInstanceShader.usf")), EShaderPlatform::SP_PCD3D_SM5);
-	Id.ReferencedCompileHashes.AddUnique(FNiagaraCompileHash(Hash.Hash, sizeof(Hash.Hash)/sizeof(uint8)));
-	Id.DebugReferencedObjects.Emplace(TEXT("/Plugin/FX/Niagara/Private/NiagaraEmitterInstanceShader.usf"));
+	HashCollector.AddHash(FNiagaraCompileHash(Hash.Hash, sizeof(Hash.Hash) / sizeof(uint8)), TEXT("/Plugin/FX/Niagara/Private/NiagaraEmitterInstanceShader.usf"));
 	Hash = GetShaderFileHash((TEXT("/Plugin/FX/Niagara/Private/NiagaraShaderVersion.ush")), EShaderPlatform::SP_PCD3D_SM5);
-	Id.ReferencedCompileHashes.AddUnique(FNiagaraCompileHash(Hash.Hash, sizeof(Hash.Hash)/sizeof(uint8)));
-	Id.DebugReferencedObjects.Emplace(TEXT("/Plugin/FX/Niagara/Private/NiagaraShaderVersion.ush"));
+	HashCollector.AddHash(FNiagaraCompileHash(Hash.Hash, sizeof(Hash.Hash) / sizeof(uint8)), TEXT("/Plugin/FX/Niagara/Private/NiagaraShaderVersion.ush"));
 	Hash = GetShaderFileHash((TEXT("/Engine/Public/ShaderVersion.ush")), EShaderPlatform::SP_PCD3D_SM5);
-	Id.ReferencedCompileHashes.AddUnique(FNiagaraCompileHash(Hash.Hash, sizeof(Hash.Hash)/sizeof(uint8)));
-	Id.DebugReferencedObjects.Emplace(TEXT("/Engine/Public/ShaderVersion.ush"));
+	HashCollector.AddHash(FNiagaraCompileHash(Hash.Hash, sizeof(Hash.Hash) / sizeof(uint8)), TEXT("/Engine/Public/ShaderVersion.ush"));
 }
 
 void UNiagaraScriptSource::RefreshGraphCompileId()
@@ -99,6 +97,42 @@ void UNiagaraScriptSource::RefreshGraphCompileId()
 	if (NodeGraph)
 	{
 		NodeGraph->ConditionalRebuildCompileIdCache();
+	}
+}
+
+void UNiagaraScriptSource::ReportAnalyticsData(FNiagaraScriptSourceAnalytics& InData) const
+{
+	static const UEnum* EnumType = StaticEnum<ENiagaraScriptUsage>();
+
+	TArray<UNiagaraNodeOutput*> OutputNodes;
+	NodeGraph->GetNodesOfClass<UNiagaraNodeOutput>(OutputNodes);	
+	for (UNiagaraNodeOutput* OutputNode : OutputNodes)
+	{
+		FString UsageString = TEXT("Script.") + EnumType->GetNameStringByValue(static_cast<uint64>(OutputNode->GetUsage()));
+
+		// gather module data
+		TArray<UNiagaraNodeFunctionCall*> ModuleNodes;
+		FNiagaraStackGraphUtilities::GetOrderedModuleNodes(*OutputNode, ModuleNodes);
+
+		for (UNiagaraNodeFunctionCall* Node : ModuleNodes)
+		{
+			if (!Node->FunctionScript || !Node->GetScriptData())
+			{
+				continue;
+			}
+			
+			if (!Node->IsNodeEnabled())
+			{
+				InData.DisabledModules++;
+				continue;
+			}
+			InData.ActiveModules++;
+			if (NiagaraAnalytics::IsPluginAsset(Node->FunctionScript))
+			{
+				FNiagaraAssetVersion AssetVersion = Node->GetScriptData()->Version;
+				InData.UsedNiagaraModules.Add(FString::Format(TEXT("{0}:{1}.{2}"), {GetPathNameSafe(Node->FunctionScript->GetPackage()), AssetVersion.MajorVersion, AssetVersion.MinorVersion}));
+			}
+		}
 	}
 }
 

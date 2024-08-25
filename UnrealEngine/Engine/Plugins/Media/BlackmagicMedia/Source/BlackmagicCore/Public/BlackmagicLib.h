@@ -146,15 +146,15 @@ namespace BlackmagicDesign
 	struct BLACKMAGICCORE_API FFormatInfo
 	{
 		/** Framerate */
-		uint32_t FrameRateNumerator;
-		uint32_t FrameRateDenominator;
+		uint32_t FrameRateNumerator = 0;
+		uint32_t FrameRateDenominator = 0;
 
 		/** Image Width & Weight in texels */
-		uint32_t Width;
-		uint32_t Height;
+		uint32_t Width = 0;
+		uint32_t Height = 0;
 
-		EFieldDominance FieldDominance;
-		FBlackmagicVideoFormat DisplayMode; // Unique identifier that represent all that combination for the device
+		EFieldDominance FieldDominance = EFieldDominance::Progressive;
+		FBlackmagicVideoFormat DisplayMode = 0; // Unique identifier that represent all that combination for the device
 
 		bool operator==(FFormatInfo& Other) const;
 

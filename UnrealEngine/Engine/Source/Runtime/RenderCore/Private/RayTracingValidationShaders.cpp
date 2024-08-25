@@ -12,6 +12,12 @@ IMPLEMENT_GLOBAL_SHADER(FRayTracingValidateGeometryBuildParamsCS, "/Engine/Priva
 
 void FRayTracingValidateGeometryBuildParamsCS::Dispatch(FRHICommandList& RHICmdList, const FRayTracingGeometryBuildParams& Params)
 {
+	const bool bSupportsWaveOps = GRHISupportsWaveOperations && RHISupportsWaveOperations(GMaxRHIShaderPlatform);
+	if (!ensureMsgf(bSupportsWaveOps, TEXT("Wave operations are required to run ray tracing GPU validation shaders.")))
+	{
+		return;
+	}
+
 	const FRayTracingGeometryInitializer& Initializer = Params.Geometry->GetInitializer();
 
 	TShaderMapRef<FRayTracingValidateGeometryBuildParamsCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
@@ -74,12 +80,15 @@ void FRayTracingValidateGeometryBuildParamsCS::Dispatch(FRHICommandList& RHICmdL
 		RHICmdList.DispatchComputeShader(NumGroupsX, 1, 1);
 	}
 
-	FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
+	if (RHICmdList.NeedsShaderUnbinds())
+	{
+		FRHIBatchedShaderUnbinds& BatchedUnbinds = RHICmdList.GetScratchShaderUnbinds();
 
-	UnsetSRVParameter(BatchedUnbinds, ComputeShader->VertexBufferParam);
-	UnsetSRVParameter(BatchedUnbinds, ComputeShader->IndexBufferParam);
+		UnsetSRVParameter(BatchedUnbinds, ComputeShader->VertexBufferParam);
+		UnsetSRVParameter(BatchedUnbinds, ComputeShader->IndexBufferParam);
 
-	RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+		RHICmdList.SetBatchedShaderUnbinds(ShaderRHI, BatchedUnbinds);
+	}
 
 	RHICmdList.PopEvent();
 }
@@ -92,6 +101,12 @@ void FRayTracingValidateSceneBuildParamsCS::Dispatch(FRHICommandList& RHICmdList
 	uint32 NumHitGroups, uint32 NumInstances, 
 	FRHIBuffer* InstanceBuffer, uint32 InstanceBufferOffset, uint32 InstanceBufferStride)
 {
+	const bool bSupportsWaveOps = GRHISupportsWaveOperations && RHISupportsWaveOperations(GMaxRHIShaderPlatform);
+	if (!ensureMsgf(bSupportsWaveOps, TEXT("Wave operations are required to run ray tracing GPU validation shaders.")))
+	{
+		return;
+	}
+
 	TShaderMapRef<FRayTracingValidateSceneBuildParamsCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
 	FRHIComputeShader* ShaderRHI = ComputeShader.GetComputeShader();
 	SetComputePipelineState(RHICmdList, ShaderRHI);

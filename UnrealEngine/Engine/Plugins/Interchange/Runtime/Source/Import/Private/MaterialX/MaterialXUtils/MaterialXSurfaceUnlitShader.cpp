@@ -3,6 +3,8 @@
 #if WITH_EDITOR
 #include "MaterialXSurfaceUnlitShader.h"
 
+#include "Engine/EngineTypes.h"
+
 namespace mx = MaterialX;
 
 FMaterialXSurfaceUnlitShader::FMaterialXSurfaceUnlitShader(UInterchangeBaseNodeContainer& BaseNodeContainer)
@@ -22,21 +24,7 @@ void FMaterialXSurfaceUnlitShader::Translate(mx::NodePtr SurfaceUnlitNode)
 {
 	this->SurfaceShaderNode = SurfaceUnlitNode;
 
-	UInterchangeFunctionCallShaderNode* SurfaceUnlitShaderNode;
-
-	const FString NodeUID = UInterchangeShaderNode::MakeNodeUid(ANSI_TO_TCHAR(SurfaceUnlitNode->getName().c_str()), FStringView{});
-
-	if(SurfaceUnlitShaderNode = const_cast<UInterchangeFunctionCallShaderNode*>(Cast<UInterchangeFunctionCallShaderNode>(NodeContainer.GetNode(NodeUID))); !SurfaceUnlitShaderNode)
-	{
-		const FString NodeName = SurfaceUnlitNode->getName().c_str();
-		SurfaceUnlitShaderNode = NewObject<UInterchangeFunctionCallShaderNode>(&NodeContainer);
-		SurfaceUnlitShaderNode->InitializeNode(NodeUID, NodeName, EInterchangeNodeContainerType::TranslatedAsset);
-
-		SurfaceUnlitShaderNode->SetCustomMaterialFunction(TEXT("/Interchange/Functions/MX_SurfaceUnlit.MX_SurfaceUnlit"));
-		NodeContainer.AddNode(SurfaceUnlitShaderNode);
-
-		ShaderNodes.Add({ NodeName, SurfaceUnlitNode->getNodeDef(mx::EMPTY_STRING, true)->getActiveOutputs()[0]->getName().c_str() }, SurfaceUnlitShaderNode);
-	}
+	UInterchangeFunctionCallShaderNode* SurfaceUnlitShaderNode = CreateFunctionCallShaderNode(SurfaceUnlitNode->getName().c_str(), UE::Interchange::MaterialX::IndexSurfaceShaders, uint8(EInterchangeMaterialXShaders::SurfaceUnlit));
 
 	using namespace UE::Interchange::Materials;
 
@@ -55,18 +43,34 @@ void FMaterialXSurfaceUnlitShader::Translate(mx::NodePtr SurfaceUnlitNode)
 	//Transmission Color
 	ConnectNodeOutputToInput(mx::SurfaceUnlit::Input::TransmissionColor, SurfaceUnlitShaderNode, SurfaceUnlit::Parameters::TransmissionColor.ToString(), mx::SurfaceUnlit::DefaultValue::Color3::TransmissionColor);
 
-	// Outputs
-	UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, PBRMR::Parameters::EmissiveColor.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), PBRMR::Parameters::EmissiveColor.ToString());
+	if(!bIsSubstrateEnabled)
+	{
+		// Outputs
+		UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, PBRMR::Parameters::EmissiveColor.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), PBRMR::Parameters::EmissiveColor.ToString());
 
-	//We can't have both Opacity and Opacity Mask we need to make a choice	
-	if(UInterchangeShaderPortsAPI::HasInput(SurfaceUnlitShaderNode, SurfaceUnlit::Parameters::Transmission))
-	{
-		UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, PBRMR::Parameters::Opacity.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), PBRMR::Parameters::Opacity.ToString());
+		//We can't have both Opacity and Opacity Mask we need to make a choice	
+		if(UInterchangeShaderPortsAPI::HasInput(SurfaceUnlitShaderNode, SurfaceUnlit::Parameters::Transmission))
+		{
+			UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, PBRMR::Parameters::Opacity.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), PBRMR::Parameters::Opacity.ToString());
+		}
+		else if(UInterchangeShaderPortsAPI::HasInput(SurfaceUnlitShaderNode, SurfaceUnlit::Parameters::Opacity))
+		{
+			UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, PBRMR::Parameters::Opacity.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), SurfaceUnlit::Outputs::OpacityMask.ToString());
+			ShaderGraphNode->SetCustomOpacityMaskClipValue(1.f); // just to connect to the opacity mask
+		}
 	}
-	else if(UInterchangeShaderPortsAPI::HasInput(SurfaceUnlitShaderNode, SurfaceUnlit::Parameters::Opacity))
+	else
 	{
-		UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, PBRMR::Parameters::Opacity.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), TEXT("OpacityMask"));
-		ShaderGraphNode->SetCustomOpacityMaskClipValue(1.f); // just to connect to the opacity mask
+		UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, SubstrateMaterial::Parameters::FrontMaterial.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), SurfaceUnlit::Substrate::Outputs::SurfaceUnlit.ToString());
+		if(UInterchangeShaderPortsAPI::HasInput(SurfaceUnlitShaderNode, SurfaceUnlit::Parameters::Transmission))
+		{
+			ShaderGraphNode->SetCustomBlendMode(EBlendMode::BLEND_TranslucentColoredTransmittance);
+		}
+		else if(UInterchangeShaderPortsAPI::HasInput(SurfaceUnlitShaderNode, SurfaceUnlit::Parameters::Opacity))
+		{
+			UInterchangeShaderPortsAPI::ConnectOuputToInputByName(ShaderGraphNode, SubstrateMaterial::Parameters::OpacityMask.ToString(), SurfaceUnlitShaderNode->GetUniqueID(), SurfaceUnlit::Substrate::Outputs::OpacityMask.ToString());
+			ShaderGraphNode->SetCustomBlendMode(EBlendMode::BLEND_Masked);
+		}
 	}
 }
 #endif

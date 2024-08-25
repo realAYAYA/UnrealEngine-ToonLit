@@ -10,7 +10,6 @@
 #include "CoreMinimal.h"
 #include "CoreTypes.h"
 #include "Delegates/Delegate.h"
-#include "Developer/Merge/Public/Merge.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphSchema.h"
@@ -26,6 +25,7 @@
 #include "Layout/Visibility.h"
 #include "Math/Color.h"
 #include "Math/Vector2D.h"
+#include "Merge.h"
 #include "Misc/Guid.h"
 #include "Misc/NotifyHook.h"
 #include "Misc/Optional.h"
@@ -429,7 +429,7 @@ public:
 	float GetInstructionTextOpacity(UEdGraph* InGraph) const;
 
 	/** Returns true if in editing mode */
-	bool InEditingMode() const;
+	virtual bool InEditingMode() const;
 
 	/** Returns true if able to compile */
 	virtual bool IsCompilingEnabled() const;
@@ -1217,6 +1217,9 @@ protected:
 	virtual void NotifyPostChange( const FPropertyChangedEvent& PropertyChangedEvent, FProperty* PropertyThatChanged) override;
 	//~ End FNotifyHook Interface
 
+	/** Callback to determine visibility of the public view checkbox in the Defaults editor */
+	bool ShouldShowPublicViewControl() const;
+
 	/** Callback when properties have finished being handled */
 	virtual void OnFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent);
 
@@ -1277,6 +1280,9 @@ protected:
 	
 	/* Create comment node on graph */
 	virtual void OnCreateComment();
+	
+	/** Create custom event node on graph */
+	virtual void OnCreateCustomEvent();
 
 	// Create new graph editor widget for the supplied document container
 	virtual TSharedRef<SGraphEditor> CreateGraphEditorWidget(TSharedRef<class FTabInfo> InTabInfo, class UEdGraph* InGraph);
@@ -1299,7 +1305,7 @@ private:
 	void NavigateTab(FDocumentTracker::EOpenDocumentCause InCause);
 
 	/** Find all references of the selected node. */
-	void OnFindReferences();
+	void OnFindReferences(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags);
 
 	/** Checks if we can currently find all references of the node selection. */
 	bool CanFindReferences();
@@ -1505,6 +1511,9 @@ protected:
 
 	/** If a regular node (not a comment node) has been selected */
 	bool bSelectRegularNode;
+
+	/** True if the editor was opened in defaults mode */
+	bool bWasOpenedInDefaultsMode;
 
 	/** Focus nodes which are related to the selected nodes */
 	void ResetAllNodesUnrelatedStates();

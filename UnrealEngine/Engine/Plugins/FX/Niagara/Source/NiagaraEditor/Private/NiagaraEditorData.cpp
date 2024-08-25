@@ -29,7 +29,7 @@ void UNiagaraEditorParametersAdapter::PostLoad()
 	TArray<FNiagaraVariable> OldTypes = FNiagaraConstants::GetOldPositionTypeVariables();
 	for (FNiagaraVariable OldVarType : OldTypes)
 	{
-		for (TObjectPtr<UNiagaraScriptVariable> ScriptVariable : EditorOnlyScriptVars)
+		for (const TObjectPtr<UNiagaraScriptVariable>& ScriptVariable : EditorOnlyScriptVars)
 		{
 			if (ScriptVariable && ScriptVariable->Variable == OldVarType)
 			{

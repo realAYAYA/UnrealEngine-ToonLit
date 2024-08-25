@@ -105,9 +105,14 @@ private:
 
 namespace ElectraSubtitleDecoderTTMLOptions
 {
-	static const TCHAR* const SendEmptySubtitleDuringGaps = TEXT("sendEmptySubtitleDuringGaps");
-	static const TCHAR* const SideloadedID = TEXT("SideloadedID");
-	static const TCHAR* const PTO = TEXT("PTO");
+	static const FName SendEmptySubtitleDuringGaps(TEXT("sendEmptySubtitleDuringGaps"));
+	static const FName SideloadedID(TEXT("SideloadedID"));
+	static const FName PTO(TEXT("PTO"));
+	static const FName Width(TEXT("width"));
+	static const FName Height(TEXT("height"));
+	static const FName OffsetX(TEXT("offset_x"));
+	static const FName OffsetY(TEXT("offset_y"));
+	static const FName Timescale(TEXT("timescale"));
 }
 
 
@@ -134,12 +139,11 @@ FElectraSubtitleDecoderTTML::~FElectraSubtitleDecoderTTML()
 bool FElectraSubtitleDecoderTTML::InitializeStreamWithCSD(const TArray<uint8>& InCSD, const Electra::FParamDict& InAdditionalInfo)
 {
 	// Get dimension, placement offset and other data from the sideband dictionary.
-	Width = (int32) InAdditionalInfo.GetValue(TEXT("width")).SafeGetInt64(0);
-	Height = (int32) InAdditionalInfo.GetValue(TEXT("height")).SafeGetInt64(0);
-	TranslationX = (int32) InAdditionalInfo.GetValue(TEXT("offset_x")).SafeGetInt64(0);
-	TranslationY = (int32) InAdditionalInfo.GetValue(TEXT("offset_y")).SafeGetInt64(0);
-	Timescale = (uint32) InAdditionalInfo.GetValue(TEXT("timescale")).SafeGetInt64(0);
-
+	Width = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderTTMLOptions::Width).SafeGetInt64(0);
+	Height = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderTTMLOptions::Height).SafeGetInt64(0);
+	TranslationX = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderTTMLOptions::OffsetX).SafeGetInt64(0);
+	TranslationY = (int32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderTTMLOptions::OffsetY).SafeGetInt64(0);
+	Timescale = (uint32) InAdditionalInfo.GetValue(ElectraSubtitleDecoderTTMLOptions::Timescale).SafeGetInt64(0);
 	bSendEmptySubtitleDuringGaps = InAdditionalInfo.GetValue(ElectraSubtitleDecoderTTMLOptions::SendEmptySubtitleDuringGaps).SafeGetBool();
 
 	return true;

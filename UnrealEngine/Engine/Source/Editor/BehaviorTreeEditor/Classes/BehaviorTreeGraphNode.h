@@ -15,13 +15,14 @@
 #include "BehaviorTreeGraphNode.generated.h"
 
 class ISlateStyle;
+class UBehaviorTreeGraph;
 class UEdGraph;
 class UEdGraphSchema;
 class UObject;
 template <typename T> struct TObjectPtr;
 
 UCLASS()
-class UBehaviorTreeGraphNode : public UAIGraphNode
+class BEHAVIORTREEEDITOR_API UBehaviorTreeGraphNode : public UAIGraphNode
 {
 	GENERATED_UCLASS_BODY()
 
@@ -34,7 +35,6 @@ class UBehaviorTreeGraphNode : public UAIGraphNode
 	TArray<TObjectPtr<UBehaviorTreeGraphNode>> Services;
 
 	//~ Begin UEdGraphNode Interface
-	virtual class UBehaviorTreeGraph* GetBehaviorTreeGraph();
 	virtual void AllocateDefaultPins() override;
 	virtual FText GetTooltipText() const override;
 	virtual bool CanCreateUnderSpecifiedSchema(const UEdGraphSchema* DesiredSchema) const override;
@@ -53,11 +53,21 @@ class UBehaviorTreeGraphNode : public UAIGraphNode
 	virtual void RemoveAllSubNodes() override;
 	virtual int32 FindSubNodeDropIndex(UAIGraphNode* SubNode) const override;
 	virtual void InsertSubNodeAt(UAIGraphNode* SubNode, int32 DropIndex) override;
+	virtual void UpdateErrorMessage() override;
+
+	UE_DEPRECATED(5.4, "Use GetOwnerBehaviorTreeGraph instead.")
+	virtual UBehaviorTreeGraph* GetBehaviorTreeGraph();
+	virtual UBehaviorTreeGraph* GetOwnerBehaviorTreeGraph() const;
+
+	virtual FLinearColor GetBackgroundColor(bool bIsActiveForDebugger) const;
 
 	/** check if node can accept breakpoints */
 	virtual bool CanPlaceBreakpoints() const { return false; }
 
 	void ClearDebuggerState();
+
+	/** gets the style set from which GetNameIcon is queried */
+	virtual const ISlateStyle& GetNameIconStyleSet() const;
 
 	/** gets icon resource name for title bar */
 	virtual FName GetNameIcon() const;

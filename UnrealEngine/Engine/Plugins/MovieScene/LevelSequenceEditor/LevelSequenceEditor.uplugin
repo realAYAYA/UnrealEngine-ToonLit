@@ -13,12 +13,14 @@
 	"EnabledByDefault" : true,
 	"CanContainContent" : false,
 	"IsBetaVersion" : false,
-	"Installed" : false,
+	"Installed": false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Modules" :
 	[
 		{
 			"Name" : "LevelSequenceEditor",
-			"Type" : "Editor",
+			"Type": "Editor",
+			"ProgramAllowList": ["LiveLinkHub"],
 			"LoadingPhase" : "PostEngineInit"
 		}
 	],

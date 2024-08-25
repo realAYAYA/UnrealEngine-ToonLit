@@ -14,7 +14,7 @@ FDisplayClusterConfiguratorProjectionPolicyViewModel::FDisplayClusterConfigurato
 {
 	ViewportPtr = InViewport;
 
-	ProjectionPolicyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(InViewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, ProjectionPolicy));
+	ProjectionPolicyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(InViewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, ProjectionPolicy));
 	ProjectionPolicyHandle = ProjectionPolicyView->GetPropertyHandle();
 }
 
@@ -65,7 +65,7 @@ void FDisplayClusterConfiguratorProjectionPolicyViewModel::SetParameterValue(con
 	check(ParametersHandle);
 
 	uint8* MapContainer = StructProperty->ContainerPtrToValuePtr<uint8>(Viewport);
-	DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, ParametersHandle, ParameterKey, ParameterValue);
+	UE::DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, ParametersHandle, ParameterKey, ParameterValue);
 
 	Viewport->MarkPackageDirty();
 }
@@ -83,7 +83,7 @@ void FDisplayClusterConfiguratorProjectionPolicyViewModel::ClearParameters()
 	check(ParametersHandle);
 
 	uint8* MapContainer = StructProperty->ContainerPtrToValuePtr<uint8>(Viewport);
-	DisplayClusterConfiguratorPropertyUtils::EmptyMap(MapContainer, ParametersHandle);
+	UE::DisplayClusterConfiguratorPropertyUtils::EmptyMap(MapContainer, ParametersHandle);
 
 	Viewport->MarkPackageDirty();
 }

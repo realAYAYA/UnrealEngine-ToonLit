@@ -38,7 +38,7 @@ public:
 	 * Construct this widget.  Called by the SNew() Slate macro.
 	 *
 	 * @param	InArgs	          Declaration used by the SNew() macro to construct this widget.
-	 * @oaram   InOwnerTableView  The owner table into which this row is being placed.
+	 * @param   InOwnerTableView  The owner table into which this row is being placed.
 	 */
 	void Construct( const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView );
 
@@ -79,7 +79,7 @@ protected:
 	*
 	* @return true if the test is enabled.
 	*/
-	ECheckBoxState IsTestEnabled( ) const;
+	ECheckBoxState IsTestEnabled() const;
 
 	/**
 	* Is the test inside exclude list. This info is taken from Config/DefaultEngine.ini, section [AutomationTestExcludelist].
@@ -87,6 +87,13 @@ protected:
 	* Return the visibility state based on skipped state.
 	*/
 	EVisibility IsToBeSkipped_GetVisibility() const;
+
+	/**
+	* Change opacity of skipped button if it is hovered.
+	*
+	* Return the Linear Color with different opacity based on hovered status.
+	*/
+	FSlateColor IsToBeSkipped_GetColorAndOpacity() const;
 
 	/**
 	* Is the test inside exclude list through direct exclusion (not through propagation).
@@ -113,6 +120,13 @@ protected:
 	* @return respond of dialog
 	*/
 	FReply SetSkipFlag();
+
+	/**
+	* Can the test skip flag be changed.
+	*
+	* @return true if the test skip flag can be changed.
+	*/
+	bool CanSkipFlagBeChanged() const;
 
 	/**
 	* Open Exclude test options editor
@@ -205,6 +219,9 @@ private:
 
 	/** Is Session local. */
 	bool IsLocalSession;
+
+	/** Is Skip button hovered. */
+	bool bIsToBeSkippedButtonHovered = false;
 
 	/** Holds the highlight string for the automation test. */
 	TAttribute<FText> HighlightText;

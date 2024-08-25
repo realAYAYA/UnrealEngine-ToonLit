@@ -400,7 +400,7 @@ bool UNiagaraDataInterfaceGrid3DCollection::UpgradeFunctionCall(FNiagaraFunction
 	if (UpgradeName != NAME_None)
 	{
 		TArray<FNiagaraFunctionSignature> Sigs;
-		GetFunctions(Sigs);
+		GetFunctionsInternal(Sigs);
 
 		for (const FNiagaraFunctionSignature& Sig : Sigs)
 		{
@@ -415,10 +415,10 @@ bool UNiagaraDataInterfaceGrid3DCollection::UpgradeFunctionCall(FNiagaraFunction
 
 	return false;
 }
-#endif
-void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+
+void UNiagaraDataInterfaceGrid3DCollection::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	int32 StartIndex = OutFunctions.Num();
 
@@ -460,9 +460,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_GetValueFunction", "Get the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -484,9 +482,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_PreviousValueAtIndexFunction", "Get the value at a specific index.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -509,9 +505,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bReadFunction = true;
 		Sig.bHidden = true;
 		Sig.bSoftDeprecatedFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_PreviousValueAtIndexFunction", "Get the value at a specific index.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -535,9 +529,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSoftDeprecatedFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -560,9 +552,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bHidden = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -582,9 +572,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_ClearCellFunction", "Set all attributes for a given cell to be zeroes.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -605,9 +593,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_CopyPreviousToCurrentForCell", "Take the previous contents of the cell and copy to the output location for the cell.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -630,9 +616,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_CopyMaskedPreviousToCurrentForCell", "Take the previous contents of the cell and copy to the output location for the cell.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -653,9 +637,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetVector4", "Sets a Vector4 value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -675,9 +657,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_GetVector4", "Gets a Vector4 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -696,9 +676,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SampleVector4", "Sample a Vector4 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -717,9 +695,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_CubicSampleVector4", "Cubic Sample a Vector4 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -741,9 +717,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SetVector3", "Sets a Vector3 value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -764,9 +738,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_GetVector3", "Gets a Vector3 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -785,9 +757,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SampleVector3", "Sample a Vector3 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -806,9 +776,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_CubicSampleVector3", "Cubic Sample a Vector3 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -830,9 +798,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SetVector2", "Sets a Vector2 value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -853,9 +819,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_GetVector2", "Gets a Vector2 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -874,9 +838,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SampleVector2", "Sample a Vector2 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -895,9 +857,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_CubicSampleVector2", "Cubic Sample a Vector2 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -919,9 +879,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SetFloat", "Sets a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -941,9 +899,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_GetFloat", "Gets a float value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -962,9 +918,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SampleFloat", "Sample a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -983,9 +937,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_CubicSampleFloat", "Cubic Sample a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 
 	}
@@ -1119,9 +1071,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector4AttributeIndex", "Gets a attribute starting index value for Vector4 on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -1134,9 +1084,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector3AttributeIndex", "Gets a attribute starting index value for Vector3 on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -1149,9 +1097,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector2AttributeIndex", "Gets a attribute starting index value for Vector2 on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -1164,9 +1110,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetFloatAttributeIndex", "Gets a attribute starting index value for float on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -1187,9 +1131,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_PreviousValueAtIndexFunction", "Get the value at a specific index.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -1211,9 +1153,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_PreviousValueAtIndexFunction", "Get the value at a specific index.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -1235,9 +1175,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_PreviousValueAtIndexFunction", "Get the value at a specific index.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -1259,9 +1197,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_PreviousValueAtIndexFunction", "Get the value at a specific index.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -1427,9 +1363,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SetFloat", "Sets a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -1450,9 +1384,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SetFloat", "Sets a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -1473,9 +1405,7 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SetFloat", "Sets a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -1496,20 +1426,17 @@ void UNiagaraDataInterfaceGrid3DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_SetFloat", "Sets a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
-#if WITH_EDITORONLY_DATA
 	for (int32 i = StartIndex; i < OutFunctions.Num(); i++)
 	{
 		FNiagaraFunctionSignature& Function = OutFunctions[i];
 		Function.FunctionVersion = FNiagaraGridCollection3DDIFunctionVersion::LatestVersion;
 	}
-#endif
 }
+#endif
 
 // #todo(dmp): expose more CPU functionality
 // #todo(dmp): ideally these would be exposed on the parent class, but we can't bind functions of parent classes but need to work on the interface
@@ -4064,8 +3991,8 @@ void FGrid3DCollectionRWInstanceData_RenderThread::BeginSimulate(FRDGBuilder& Gr
 		const FIntVector TextureSize(NumCells.X * NumTiles.X, NumCells.Y * NumTiles.Y, NumCells.Z * NumTiles.Z);
 		const FRDGTextureDesc TextureDesc = FRDGTextureDesc::Create3D(TextureSize, PixelFormat.GetValue(), FClearValueBinding::Black, ETextureCreateFlags::ShaderResource | ETextureCreateFlags::UAV);
 
-		const TCHAR* GridTextureName = TEXT("Grid3D::GridTexture");
 	#if 0
+		// Note: Invalid as the render target pool holds onto a pointer and can exist beyond the lifetime of the grid
 		TStringBuilder<128> StringBuilder;
 		SourceDIName.AppendString(StringBuilder);
 		StringBuilder.Append("_");
@@ -4077,7 +4004,7 @@ void FGrid3DCollectionRWInstanceData_RenderThread::BeginSimulate(FRDGBuilder& Gr
 		StringBuilder.Append("Grid3DCollection");
 		GridTextureName = *StringBuilder;
 	#endif
-		DestinationData->Initialize(GraphBuilder, GridTextureName, TextureDesc);
+		DestinationData->Initialize(GraphBuilder, TEXT("Grid3D::GridTexture"), TextureDesc);
 
 		// This destination buffer will sometimes have old data in it.  Force it to clear.
 		AddClearUAVPass(GraphBuilder, DestinationData->GetOrCreateUAV(GraphBuilder), FVector4f(ForceInitToZero));
@@ -4268,4 +4195,3 @@ void UNiagaraDataInterfaceGrid3DCollection::CollectAttributesForScript(UNiagaraS
 }
 
 #undef LOCTEXT_NAMESPACE
-

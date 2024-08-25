@@ -41,6 +41,11 @@ class UFoliageType_InstancedStaticMesh : public UFoliageType
 	virtual UObject* GetSource() const override;
 
 #if WITH_EDITOR
+	virtual FString GetDefaultNewAssetName() const override
+	{
+		return TEXT("NewInstancedStaticMeshFoliage");
+	}
+
 	virtual void UpdateBounds() override;
 	virtual bool IsSourcePropertyChange(const FProperty* Property) const override
 	{

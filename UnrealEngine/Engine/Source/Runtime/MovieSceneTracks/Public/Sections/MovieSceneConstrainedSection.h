@@ -11,7 +11,7 @@
 #include "ConstraintChannel.h"
 #include "MovieSceneConstrainedSection.generated.h"
 
-
+struct FGuid;
 
 /**
  * Functionality to add to sections that contain constraints
@@ -40,12 +40,12 @@ public:
 	/*
 	* If it has that constraint with that Name
 	*/
-	virtual bool HasConstraintChannel(const FName& InConstraintName) const = 0;
+	virtual bool HasConstraintChannel(const FGuid& InGuid) const = 0;
 
 	/*
 	* Get constraint with that name
 	*/
-	virtual FConstraintAndActiveChannel* GetConstraintChannel(const FName& InConstraintName) = 0;
+	virtual FConstraintAndActiveChannel* GetConstraintChannel(const FGuid& InConstraintGuid) = 0;
 
 	/*
 	*  Add Constraint channel

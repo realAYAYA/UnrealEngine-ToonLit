@@ -89,12 +89,18 @@ TSet<FString> UGLTFPipelineSettings::GenerateExpectedParametersList(const FStrin
 
 	TSet<FString> ExpectedParameters;
 
+	auto AddTextureAndRelated = [&ExpectedParameters](const FString& TextureName)
+		{
+			ExpectedParameters.Add(TextureName);
+			ExpectedParameters.Add(TextureName + Inputs::PostFix::OffsetScale);
+			ExpectedParameters.Add(TextureName + Inputs::PostFix::Rotation);
+			ExpectedParameters.Add(TextureName + Inputs::PostFix::TexCoord);
+			ExpectedParameters.Add(TextureName + Inputs::PostFix::TilingMethod);
+		};
+
 	if (Identifier.Contains(TEXT("_Unlit")))
 	{
-		ExpectedParameters.Add(Inputs::BaseColorTexture);
-		ExpectedParameters.Add(Inputs::BaseColorTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::BaseColorTexture_Rotation);
-		ExpectedParameters.Add(Inputs::BaseColorTexture_TexCoord);
+		AddTextureAndRelated(Inputs::BaseColorTexture);
 		ExpectedParameters.Add(Inputs::BaseColorFactor);
 
 		return ExpectedParameters;
@@ -102,36 +108,24 @@ TSet<FString> UGLTFPipelineSettings::GenerateExpectedParametersList(const FStrin
 
 	//Generic ones:
 	{
-		ExpectedParameters.Add(Inputs::NormalTexture);
-		ExpectedParameters.Add(Inputs::NormalTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::NormalTexture_Rotation);
-		ExpectedParameters.Add(Inputs::NormalTexture_TexCoord);
+		AddTextureAndRelated(Inputs::NormalTexture);
 		ExpectedParameters.Add(Inputs::NormalScale);
 
 		if (!Identifier.Contains(TEXT("Transmission")))
 		{
-			ExpectedParameters.Add(Inputs::EmissiveTexture);
-			ExpectedParameters.Add(Inputs::EmissiveTexture_OffsetScale);
-			ExpectedParameters.Add(Inputs::EmissiveTexture_Rotation);
-			ExpectedParameters.Add(Inputs::EmissiveTexture_TexCoord);
+			AddTextureAndRelated(Inputs::EmissiveTexture);
 			ExpectedParameters.Add(Inputs::EmissiveFactor);
 			ExpectedParameters.Add(Inputs::EmissiveStrength);
 		}
 
-		ExpectedParameters.Add(Inputs::OcclusionTexture);
-		ExpectedParameters.Add(Inputs::OcclusionTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::OcclusionTexture_Rotation);
-		ExpectedParameters.Add(Inputs::OcclusionTexture_TexCoord);
+		AddTextureAndRelated(Inputs::OcclusionTexture);
 		ExpectedParameters.Add(Inputs::OcclusionStrength);
 
 		if (!Identifier.Contains(TEXT("SpecularGlossiness")))
 		{
 			ExpectedParameters.Add(Inputs::IOR);
 
-			ExpectedParameters.Add(Inputs::SpecularTexture);
-			ExpectedParameters.Add(Inputs::SpecularTexture_OffsetScale);
-			ExpectedParameters.Add(Inputs::SpecularTexture_Rotation);
-			ExpectedParameters.Add(Inputs::SpecularTexture_TexCoord);
+			AddTextureAndRelated(Inputs::SpecularTexture);
 			ExpectedParameters.Add(Inputs::SpecularFactor);
 		}
 	}
@@ -142,73 +136,43 @@ TSet<FString> UGLTFPipelineSettings::GenerateExpectedParametersList(const FStrin
 	{
 		//MetalRoughness Specific:
 
-		ExpectedParameters.Add(Inputs::BaseColorTexture);
-		ExpectedParameters.Add(Inputs::BaseColorTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::BaseColorTexture_Rotation);
-		ExpectedParameters.Add(Inputs::BaseColorTexture_TexCoord);
+		AddTextureAndRelated(Inputs::BaseColorTexture);
 		ExpectedParameters.Add(Inputs::BaseColorFactor);
 
-		ExpectedParameters.Add(Inputs::MetallicRoughnessTexture);
-		ExpectedParameters.Add(Inputs::MetallicRoughnessTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::MetallicRoughnessTexture_Rotation);
-		ExpectedParameters.Add(Inputs::MetallicRoughnessTexture_TexCoord);
+		AddTextureAndRelated(Inputs::MetallicRoughnessTexture);
 		ExpectedParameters.Add(Inputs::MetallicFactor);
 		ExpectedParameters.Add(Inputs::RoughnessFactor);
 	}
 	else if (Identifier.Contains(TEXT("ClearCoat")))
 	{
-		ExpectedParameters.Add(Inputs::ClearCoatTexture);
-		ExpectedParameters.Add(Inputs::ClearCoatTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::ClearCoatTexture_Rotation);
-		ExpectedParameters.Add(Inputs::ClearCoatTexture_TexCoord);
+		AddTextureAndRelated(Inputs::ClearCoatTexture);
 		ExpectedParameters.Add(Inputs::ClearCoatFactor);
 
-		ExpectedParameters.Add(Inputs::ClearCoatRoughnessTexture);
-		ExpectedParameters.Add(Inputs::ClearCoatRoughnessTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::ClearCoatRoughnessTexture_Rotation);
-		ExpectedParameters.Add(Inputs::ClearCoatRoughnessTexture_TexCoord);
+		AddTextureAndRelated(Inputs::ClearCoatRoughnessTexture);
 		ExpectedParameters.Add(Inputs::ClearCoatRoughnessFactor);
 
-		ExpectedParameters.Add(Inputs::ClearCoatNormalTexture);
-		ExpectedParameters.Add(Inputs::ClearCoatNormalTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::ClearCoatNormalTexture_Rotation);
-		ExpectedParameters.Add(Inputs::ClearCoatNormalTexture_TexCoord);
+		AddTextureAndRelated(Inputs::ClearCoatNormalTexture);
 		ExpectedParameters.Add(Inputs::ClearCoatNormalScale);
 	}
 	else if (Identifier.Contains(TEXT("Sheen")))
 	{
-		ExpectedParameters.Add(Inputs::SheenColorTexture);
-		ExpectedParameters.Add(Inputs::SheenColorTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::SheenColorTexture_Rotation);
-		ExpectedParameters.Add(Inputs::SheenColorTexture_TexCoord);
+		AddTextureAndRelated(Inputs::SheenColorTexture);
 		ExpectedParameters.Add(Inputs::SheenColorFactor);
 
-		ExpectedParameters.Add(Inputs::SheenRoughnessTexture);
-		ExpectedParameters.Add(Inputs::SheenRoughnessTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::SheenRoughnessTexture_Rotation);
-		ExpectedParameters.Add(Inputs::SheenRoughnessTexture_TexCoord);
+		AddTextureAndRelated(Inputs::SheenRoughnessTexture);
 		ExpectedParameters.Add(Inputs::SheenRoughnessFactor);
 	}
 	else if (Identifier.Contains(TEXT("Transmission")))
 	{
-		ExpectedParameters.Add(Inputs::TransmissionTexture);
-		ExpectedParameters.Add(Inputs::TransmissionTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::TransmissionTexture_Rotation);
-		ExpectedParameters.Add(Inputs::TransmissionTexture_TexCoord);
+		AddTextureAndRelated(Inputs::TransmissionTexture);
 		ExpectedParameters.Add(Inputs::TransmissionFactor);
 	}
 	else if (Identifier.Contains(TEXT("SpecularGlossiness")))
 	{
-		ExpectedParameters.Add(Inputs::DiffuseTexture);
-		ExpectedParameters.Add(Inputs::DiffuseTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::DiffuseTexture_Rotation);
-		ExpectedParameters.Add(Inputs::DiffuseTexture_TexCoord);
+		AddTextureAndRelated(Inputs::DiffuseTexture);
 		ExpectedParameters.Add(Inputs::DiffuseFactor);
 
-		ExpectedParameters.Add(Inputs::SpecularGlossinessTexture);
-		ExpectedParameters.Add(Inputs::SpecularGlossinessTexture_OffsetScale);
-		ExpectedParameters.Add(Inputs::SpecularGlossinessTexture_Rotation);
-		ExpectedParameters.Add(Inputs::SpecularGlossinessTexture_TexCoord);
+		AddTextureAndRelated(Inputs::SpecularGlossinessTexture);
 		ExpectedParameters.Add(Inputs::SpecFactor);
 		ExpectedParameters.Add(Inputs::GlossinessFactor);
 	}
@@ -325,11 +289,11 @@ void UInterchangeGLTFPipeline::AdjustSettingsForContext(EInterchangePipelineCont
 	}
 }
 
-void UInterchangeGLTFPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* NodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas)
+void UInterchangeGLTFPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* NodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas, const FString& ContentBasePath)
 {
-	Super::ExecutePipeline(NodeContainer, InSourceDatas);
+	Super::ExecutePipeline(NodeContainer, InSourceDatas, ContentBasePath);
 
-	if ((FApp::IsGame() || bUseGLTFMaterialInstanceLibrary) && GLTFPipelineSettings)
+	if (GLTFPipelineSettings)
 	{
 		TMap<FString, const UInterchangeShaderGraphNode*> MaterialFactoryNodeUidsToShaderGraphNodes;
 		auto FindGLTFShaderGraphNode = [&MaterialFactoryNodeUidsToShaderGraphNodes, &NodeContainer](const FString& NodeUid, UInterchangeFactoryBaseNode* /*Material or MaterialInstance*/ FactoryNode)

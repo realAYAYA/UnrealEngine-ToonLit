@@ -148,7 +148,7 @@ FOperationDescription GetOperationDescription(EOperation Op);
 struct FSwizzleParameters
 {
 	FSwizzleParameters() : NumComponents(0), bHasSwizzle(false) { SwizzleComponentIndex[0] = SwizzleComponentIndex[1] = SwizzleComponentIndex[2] = SwizzleComponentIndex[3] = INDEX_NONE; }
-	explicit FSwizzleParameters(int8 IndexR, int8 IndexG = INDEX_NONE, int8 IndexB = INDEX_NONE, int8 IndexA = INDEX_NONE);
+	ENGINE_API explicit FSwizzleParameters(int8 IndexR, int8 IndexG = INDEX_NONE, int8 IndexB = INDEX_NONE, int8 IndexA = INDEX_NONE);
 
 	inline int32 GetSwizzleComponentIndex(int32 Index) const
 	{
@@ -178,6 +178,25 @@ struct FCustomHLSLInput
 
 	FStringView Name;
 	const FExpression* Expression = nullptr;
+};
+
+typedef TArray<const Shader::FStructField*> FActiveStructFieldStack;
+
+class FScopedActiveStructField
+{
+	FActiveStructFieldStack& Stack;
+
+public:
+	FScopedActiveStructField(FActiveStructFieldStack& InStack, const Shader::FStructField* Field)
+		: Stack(InStack)
+	{
+		Stack.Push(Field);
+	}
+
+	~FScopedActiveStructField()
+	{
+		Stack.Pop(EAllowShrinking::No);
+	}
 };
 
 } // namespace UE::HLSLTree

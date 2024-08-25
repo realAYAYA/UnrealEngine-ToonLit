@@ -861,9 +861,9 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPartialResolv
 	ServerObject->Ref_TArray.Add(ServerReferencedObjectC);
 
 	// Make sure that references are not replicated to client
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 	
 	// Replicate
 	Server->PreSendUpdate();
@@ -883,7 +883,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPartialResolv
 	UE_NET_ASSERT_TRUE(ClientObject->Ref_TArray[2] == nullptr);
 
 	// Enable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -896,7 +896,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPartialResolv
 	UE_NET_ASSERT_TRUE(ClientObject->Ref_TArray[2] == nullptr);
 
 	// Enable replication for ServerReferenceObjectB 
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -909,7 +909,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPartialResolv
 	UE_NET_ASSERT_TRUE(ClientObject->Ref_TArray[2] == nullptr);
 
 	// Enable replication for ServerReferenceObjectB 
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -956,9 +956,9 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 #endif
 
 	// Make sure that references are not replicated to client
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 	
 	// Replicate
 	Server->PreSendUpdate();
@@ -980,7 +980,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].ObjectRef == nullptr);
 
 	// Enable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -997,7 +997,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].ObjectRef == nullptr);
 
 	// Enable replication for ServerReferenceObjectB 
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1010,7 +1010,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].ObjectRef == nullptr);
 
 	// Enable replication for ServerReferenceObjectC
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1051,9 +1051,9 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	ServerFastArrayEditor.Add(Item);
 
 	// Make sure that references are not replicated to client
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 	
 	// Replicate
 	Server->PreSendUpdate();
@@ -1075,7 +1075,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].ObjectRef == nullptr);
 
 	// Enable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1088,7 +1088,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].ObjectRef == nullptr);
 
 	// Enable replication for ServerReferenceObjectB 
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1101,7 +1101,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].ObjectRef == nullptr);
 
 	// Enable replication for ServerReferenceObjectC
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1146,9 +1146,9 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	ServerFastArrayEditor.Add(Item);
 
 	// Make sure that references are not replicated to client
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 	
 	// Replicate
 	Server->PreSendUpdate();
@@ -1177,7 +1177,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].Ref_TArray[0] == nullptr);
 
 	// Enable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1190,7 +1190,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].Ref_TArray[0] == nullptr);
 
 	// Enable replication for ServerReferenceObjectB 
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1203,7 +1203,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestOutOfOrderRes
 	UE_NET_ASSERT_TRUE(ClientFastArray.Items[2].Ref_TArray[0] == nullptr);
 
 	// Enable replication for ServerReferenceObjectC
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectC->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectC->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1244,7 +1244,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestRemovedRefere
 	UE_NET_ASSERT_NE(ClientObject->StructWithRef.ObjectRef, TObjectPtr<UObject>(nullptr));
 
 	// Disable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate to make sure object is destroyed on client
 	Server->PreSendUpdate();
@@ -1263,7 +1263,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestRemovedRefere
 	UE_NET_ASSERT_EQ(ClientObject->StructWithRef.ObjectRef, TObjectPtr<UObject>(nullptr));
 
 	// Enable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1312,7 +1312,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestRemovedRefere
 	UE_NET_ASSERT_NE(ClientObject->StructWithRef_CArray[0].ObjectRef, TObjectPtr<UObject>(nullptr));
 
 	// Disable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate to make sure object is destroyed on client
 	Server->PreSendUpdate();
@@ -1333,7 +1333,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestRemovedRefere
 	UE_NET_ASSERT_EQ(ClientObject->StructWithRef_CArray[0].ObjectRef, TObjectPtr<UObject>(nullptr));
 
 	// Enable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -1398,9 +1398,9 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestRemovingRefer
 	UE_NET_ASSERT_NE(ClientTArray[3].ObjectRef, TObjectPtr<UObject>(nullptr));
 
 	// Disable replication for ServerReferenceObjectA, B and D.
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectD->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectD->NetRefHandle);
 
 	// Replicate to make sure objects are destroyed on client
 	Server->PreSendUpdate();
@@ -1433,9 +1433,9 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestRemovingRefer
 	UE_NET_ASSERT_EQ(ClientTArray[3].ObjectRef, TObjectPtr<UObject>(nullptr));
 
 	// Enable replication for ServerReferenceObjectA, B and D.
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectD->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectD->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();

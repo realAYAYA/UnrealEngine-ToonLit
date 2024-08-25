@@ -10,6 +10,7 @@
 #include "Properties/MeshMaterialProperties.h"
 #include "Changes/ValueWatcher.h"
 #include "Components/BaseDynamicMeshComponent.h"
+#include "TransactionUtil.h"
 #include "MeshSculptToolBase.generated.h"
 
 
@@ -35,7 +36,7 @@ enum class EBrushToolSizeType : uint8
  * The brush size can be defined in various ways.
  */
 USTRUCT()
-struct FBrushToolRadius
+struct MESHMODELINGTOOLSEXP_API FBrushToolRadius
 {
 	GENERATED_BODY()
 
@@ -250,6 +251,7 @@ public:
 	virtual void OnBeginDrag(const FRay& Ray) override;
 	virtual void OnUpdateDrag(const FRay& Ray) override;
 	virtual void OnEndDrag(const FRay& Ray) override;
+	virtual void OnCancelDrag() override;
 	// end UMeshSurfacePointTool API
 
 protected:
@@ -259,6 +261,7 @@ protected:
 	virtual void OnCompleteSetup();
 	virtual void OnBeginStroke(const FRay& WorldRay) { check(false); }
 	virtual void OnEndStroke() { check(false); }
+	virtual void OnCancelStroke() { check(false); }
 
 public:
 	/** Properties that control brush size/etc */
@@ -292,6 +295,9 @@ protected:
 
 	virtual FDynamicMesh3* GetBaseMesh() { check(false); return nullptr; }
 	virtual const FDynamicMesh3* GetBaseMesh() const { check(false); return nullptr; }
+
+	// For any subclass where this returns false, BrushProperties will not be automatically saved/restored, so the class won't use BrushProperties changes made in other tools.
+	virtual bool SharesBrushPropertiesChanges() const { return true; }
 
 
 	/**
@@ -597,5 +603,8 @@ protected:
 	virtual void UpdateFixedSculptPlanePosition(const FVector& Position);
 	virtual void UpdateFixedSculptPlaneRotation(const FQuat& Rotation);
 	virtual void UpdateFixedPlaneGizmoVisibility(bool bVisible);
+
+protected:
+	UE::TransactionUtil::FLongTransactionTracker LongTransactions;
 
 };

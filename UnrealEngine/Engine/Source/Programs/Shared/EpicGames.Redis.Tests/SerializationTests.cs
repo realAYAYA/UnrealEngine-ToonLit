@@ -3,20 +3,11 @@
 using System;
 using System.ComponentModel;
 using System.Globalization;
-using System.Runtime.Serialization;
-using System.IO;
-using System.Text;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Redis.Converters;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProtoBuf;
-using ProtoBuf.Meta;
 using StackExchange.Redis;
-using System.Buffers;
-using System.Collections.Generic;
-using System.Reflection.Emit;
-using System.Reflection;
 
 namespace EpicGames.Redis.Tests
 {
@@ -28,7 +19,7 @@ namespace EpicGames.Redis.Tests
 		[TestMethod]
 		public void RoundTrip()
 		{
-			TestRecord input = new TestRecord(123, "hello", "world");
+			TestRecord input = new TestRecord(123, "hello", new Utf8String("world"));
 
 			RedisValue value = RedisSerializer.Serialize(input);
 
@@ -37,13 +28,13 @@ namespace EpicGames.Redis.Tests
 			TestRecord output = RedisSerializer.Deserialize<TestRecord>(value);
 			Assert.AreEqual(123, output.Number);
 			Assert.AreEqual("hello", output.String);
-			Assert.AreEqual("world", output.StringU8);
+			Assert.AreEqual(new Utf8String("world"), output.StringU8);
 		}
 
 		[TestMethod]
 		public void EscapedCharacters()
 		{
-			TestRecord input = new TestRecord(123, "|||", "\\");
+			TestRecord input = new TestRecord(123, "|||", new Utf8String("\\"));
 
 			RedisValue value = RedisSerializer.Serialize(input);
 
@@ -52,7 +43,7 @@ namespace EpicGames.Redis.Tests
 			TestRecord output = RedisSerializer.Deserialize<TestRecord>(value);
 			Assert.AreEqual(123, output.Number);
 			Assert.AreEqual("|||", output.String);
-			Assert.AreEqual("\\", output.StringU8);
+			Assert.AreEqual(new Utf8String("\\"), output.StringU8);
 		}
 
 		[TypeConverter(typeof(TestStringTypeConverter))]

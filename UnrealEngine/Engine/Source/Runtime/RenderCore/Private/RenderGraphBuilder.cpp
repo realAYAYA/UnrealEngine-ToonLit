@@ -10,41 +10,6 @@
 #include "ProfilingDebugging/CsvProfiler.h"
 #include "Async/ParallelFor.h"
 
-#if ENABLE_RHI_VALIDATION
-
-inline void GatherPassUAVsForOverlapValidation(const FRDGPass* Pass, TArray<FRHIUnorderedAccessView*, TInlineAllocator<MaxSimultaneousUAVs, FRDGArrayAllocator>>& OutUAVs)
-{
-	// RHI validation tracking of Begin/EndUAVOverlaps happens on the underlying resource, so we need to be careful about not
-	// passing multiple UAVs that refer to the same resource, otherwise we get double-Begin and double-End validation errors.
-	// Filter UAVs to only those with unique parent resources.
-	TArray<FRDGViewableResource*, TInlineAllocator<MaxSimultaneousUAVs, FRDGArrayAllocator>> UniqueParents;
-	Pass->GetParameters().Enumerate([&](FRDGParameter Parameter)
-	{
-		if (Parameter.IsUAV())
-		{
-			if (FRDGUnorderedAccessViewRef UAV = Parameter.GetAsUAV())
-			{
-				FRDGViewableResource* Parent = UAV->GetParent();
-
-				// Check if we've already seen this parent.
-				bool bFound = false;
-				for (int32 Index = 0; !bFound && Index < UniqueParents.Num(); ++Index)
-				{
-					bFound = UniqueParents[Index] == Parent;
-				}
-
-				if (!bFound)
-				{
-					UniqueParents.Add(Parent);
-					OutUAVs.Add(UAV->GetRHI());
-				}
-			}
-		}
-	});
-}
-
-#endif
-
 struct FParallelPassSet : public FRHICommandListImmediate::FQueuedCommandList
 {
 	FParallelPassSet() = default;
@@ -52,7 +17,6 @@ struct FParallelPassSet : public FRHICommandListImmediate::FQueuedCommandList
 	TArray<FRDGPass*, FRDGArrayAllocator> Passes;
 	IF_RHI_WANT_BREADCRUMB_EVENTS(FRDGBreadcrumbState* BreadcrumbStateBegin{});
 	IF_RHI_WANT_BREADCRUMB_EVENTS(FRDGBreadcrumbState* BreadcrumbStateEnd{});
-	int8 bInitialized = 0;
 	bool bDispatchAfterExecute = false;
 	bool bParallelTranslate = false;
 };
@@ -60,12 +24,9 @@ struct FParallelPassSet : public FRHICommandListImmediate::FQueuedCommandList
 inline void BeginUAVOverlap(const FRDGPass* Pass, FRHIComputeCommandList& RHICmdList)
 {
 #if ENABLE_RHI_VALIDATION
-	TArray<FRHIUnorderedAccessView*, TInlineAllocator<MaxSimultaneousUAVs, FRDGArrayAllocator>> UAVs;
-	GatherPassUAVsForOverlapValidation(Pass, UAVs);
-
-	if (UAVs.Num())
+	if (GRHIValidationEnabled)
 	{
-		RHICmdList.BeginUAVOverlap(UAVs);
+		RHICmdList.BeginUAVOverlap();
 	}
 #endif
 }
@@ -73,12 +34,9 @@ inline void BeginUAVOverlap(const FRDGPass* Pass, FRHIComputeCommandList& RHICmd
 inline void EndUAVOverlap(const FRDGPass* Pass, FRHIComputeCommandList& RHICmdList)
 {
 #if ENABLE_RHI_VALIDATION
-	TArray<FRHIUnorderedAccessView*, TInlineAllocator<MaxSimultaneousUAVs, FRDGArrayAllocator>> UAVs;
-	GatherPassUAVsForOverlapValidation(Pass, UAVs);
-
-	if (UAVs.Num())
+	if (GRHIValidationEnabled)
 	{
-		RHICmdList.EndUAVOverlap(UAVs);
+		RHICmdList.EndUAVOverlap();
 	}
 #endif
 }
@@ -383,8 +341,10 @@ void FRDGBuilder::EndFlushResourcesRHI()
 	}
 
 	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(STAT_RDG_FlushResourcesRHI);
+	CSV_SCOPED_SET_WAIT_STAT(FlushResourcesRHI);
 	SCOPED_NAMED_EVENT(EndFlushResourcesRHI, FColor::Emerald);
 	RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThreadFlushResources);
+	PipelineStateCache::FlushResources();
 }
 
 void FRDGBuilder::TickPoolElements()
@@ -493,6 +453,11 @@ ERDGPassFlags FRDGBuilder::OverridePassFlags(const TCHAR* PassName, ERDGPassFlag
 
 bool FRDGBuilder::IsTransient(FRDGBufferRef Buffer) const
 {
+	if (!bSupportsTransientBuffers || Buffer->bQueuedForUpload)
+	{
+		return false;
+	}
+
 	if (!IsTransientInternal(Buffer, EnumHasAnyFlags(Buffer->Desc.Usage, BUF_FastVRAM)))
 	{
 		return false;
@@ -508,21 +473,21 @@ bool FRDGBuilder::IsTransient(FRDGBufferRef Buffer) const
 
 bool FRDGBuilder::IsTransient(FRDGTextureRef Texture) const
 {
+	if (!bSupportsTransientTextures)
+	{
+		return false;
+	}
+
 	if (EnumHasAnyFlags(Texture->Desc.Flags, ETextureCreateFlags::Shared))
 	{
 		return false;
 	}
+
 	return IsTransientInternal(Texture, EnumHasAnyFlags(Texture->Desc.Flags, ETextureCreateFlags::FastVRAM));
 }
 
 bool FRDGBuilder::IsTransientInternal(FRDGViewableResource* Resource, bool bFastVRAM) const
 {
-	// Immediate mode can't use the transient allocator because we don't know if the user will extract the resource.
-	if (!GRDGTransientAllocator || IsImmediateMode())
-	{
-		return false;
-	}
-
 	// FastVRAM resources are always transient regardless of extraction or other hints, since they are performance critical.
 	if (!bFastVRAM || !FPlatformMemory::SupportsFastVRAMMemory())
 	{
@@ -551,9 +516,19 @@ bool FRDGBuilder::IsTransientInternal(FRDGViewableResource* Resource, bool bFast
 	}
 
 #if RDG_ENABLE_DEBUG
-	if (GRDGDebugDisableTransientResources != 0 && IsDebugAllowedForResource(Resource->Name))
+	if (GRDGDebugDisableTransientResources != 0)
 	{
-		return false;
+		const bool bDebugAllowed = IsDebugAllowedForResource(Resource->Name);
+
+		if (GRDGDebugDisableTransientResources == 2 && Resource->Type == ERDGViewableResourceType::Buffer && bDebugAllowed)
+		{
+			return false;
+		}
+
+		if (GRDGDebugDisableTransientResources == 3 && Resource->Type == ERDGViewableResourceType::Texture && bDebugAllowed)
+		{
+			return false;
+		}
 	}
 #endif
 
@@ -561,24 +536,27 @@ bool FRDGBuilder::IsTransientInternal(FRDGViewableResource* Resource, bool bFast
 }
 
 FRDGBuilder::FRDGBuilder(FRHICommandListImmediate& InRHICmdList, FRDGEventName InName, ERDGBuilderFlags InFlags)
-	: RHICmdList(InRHICmdList)
-	, Blackboard(Allocator)
+	: RootAllocatorScope(Allocators.Root)
+	, RHICmdList(InRHICmdList)
+	, Blackboard(Allocators.Root)
 	, BuilderName(InName)
-	, CompilePipe(TEXT("RDG_CompilePipe"))
-#if RDG_CPU_SCOPES
-	, CPUScopeStacks(Allocator)
-#endif
-	, GPUScopeStacks(Allocator)
-	, bParallelExecuteEnabled(IsParallelExecuteEnabled() && EnumHasAnyFlags(InFlags, ERDGBuilderFlags::AllowParallelExecute))
-	, bParallelSetupEnabled(IsParallelSetupEnabled() && EnumHasAnyFlags(InFlags, ERDGBuilderFlags::AllowParallelExecute))
+	, TransientResourceAllocator(GRDGTransientAllocator != 0 && !::IsImmediateMode() ? GRDGTransientResourceAllocator.Get() : nullptr)
+	, ExtendResourceLifetimeScope(RHICmdList)
 #if RDG_ENABLE_DEBUG
-	, UserValidation(Allocator, bParallelExecuteEnabled)
+	, UserValidation(Allocators.Root, ParallelExecute.bEnabled)
 	, BarrierValidation(&Passes, BuilderName)
 #endif
-	, TransientResourceAllocator(GRDGTransientResourceAllocator.Get())
-	, ExtendResourceLifetimeScope(RHICmdList)
 {
-	AddProloguePass();
+	ProloguePass = SetupEmptyPass(Passes.Allocate<FRDGSentinelPass>(Allocators.Root, RDG_EVENT_NAME("Graph Prologue (Graphics)")));
+
+	ParallelExecute.bEnabled = ::IsParallelExecuteEnabled() && EnumHasAnyFlags(InFlags, ERDGBuilderFlags::AllowParallelExecute);
+	ParallelSetup.bEnabled   = ::IsParallelSetupEnabled()   && EnumHasAnyFlags(InFlags, ERDGBuilderFlags::AllowParallelExecute);
+
+	if (TransientResourceAllocator)
+	{
+		bSupportsTransientTextures = TransientResourceAllocator->SupportsResourceType(ERHITransientResourceType::Texture);
+		bSupportsTransientBuffers  = TransientResourceAllocator->SupportsResourceType(ERHITransientResourceType::Buffer);
+	}
 
 #if RDG_EVENTS != RDG_EVENTS_NONE
 	// This is polled once as a workaround for a race condition since the underlying global is not always changed on the render thread.
@@ -586,19 +564,39 @@ FRDGBuilder::FRDGBuilder(FRHICommandListImmediate& InRHICmdList, FRDGEventName I
 #endif
 
 #if RHI_WANT_BREADCRUMB_EVENTS
-	if (bParallelExecuteEnabled)
+	if (ParallelExecute.bEnabled)
 	{
-		BreadcrumbState = FRDGBreadcrumbState::Create(Allocator);
+		BreadcrumbState = FRDGBreadcrumbState::Create(Allocators.Root);
 	}
 #endif
+
+#if RDG_DUMP_RESOURCES
+	DumpNewGraphBuilder();
+#endif
+}
+
+UE::Tasks::FTask FRDGBuilder::FAsyncDeleter::LastTask;
+
+FRDGBuilder::FAsyncDeleter::~FAsyncDeleter()
+{
+	if (Function)
+	{
+		// Launch the task with a prerequisite on any previously launched RDG async delete task.
+		LastTask = UE::Tasks::Launch(UE_SOURCE_LOCATION, [Function = MoveTemp(Function)]() mutable {}, LastTask);
+	}
+}
+
+void FRDGBuilder::WaitForAsyncDeleteTask()
+{
+	FAsyncDeleter::LastTask.Wait();
 }
 
 FRDGBuilder::~FRDGBuilder()
 {
-	if (bParallelExecuteEnabled && GRDGParallelDestruction > 0)
+	if (ParallelExecute.bEnabled && GRDGParallelDestruction > 0)
 	{
-		// Move expensive operations into the async deleter, which will be called in the base class destructor.
-		BeginAsyncDelete([
+		AsyncDeleter.Function = [
+			Allocators				= MoveTemp(Allocators),
 			Passes					= MoveTemp(Passes),
 			Textures				= MoveTemp(Textures),
 			Buffers					= MoveTemp(Buffers),
@@ -608,7 +606,7 @@ FRDGBuilder::~FRDGBuilder()
 			ActivePooledTextures	= MoveTemp(ActivePooledTextures),
 			ActivePooledBuffers		= MoveTemp(ActivePooledBuffers),
 			UploadedBuffers			= MoveTemp(UploadedBuffers)
-		] () mutable {});
+		] () mutable {};
 	}
 }
 
@@ -620,9 +618,12 @@ const TRefCountPtr<FRDGPooledBuffer>& FRDGBuilder::ConvertToExternalBuffer(FRDGB
 	if (!Buffer->bExternal)
 	{
 		Buffer->bExternal = 1;
-		Buffer->bForceNonTransient = 1;
-		BeginResourceRHI(GetProloguePassHandle(), Buffer);
-		ExternalBuffers.Add(Buffer->GetRHIUnchecked(), Buffer);
+		if (!Buffer->ResourceRHI)
+		{
+			SetPooledBufferRHI(Buffer, AllocatePooledBufferRHI(RHICmdList, Buffer));
+		}
+		ExternalBuffers.FindOrAdd(Buffer->GetRHIUnchecked(), Buffer);
+		AsyncSetupQueue.Push(FAsyncSetupOp::CullRootBuffer(Buffer));
 	}
 	return GetPooledBuffer(Buffer);
 }
@@ -633,9 +634,12 @@ const TRefCountPtr<IPooledRenderTarget>& FRDGBuilder::ConvertToExternalTexture(F
 	if (!Texture->bExternal)
 	{
 		Texture->bExternal = 1;
-		Texture->bForceNonTransient = 1;
-		BeginResourceRHI(GetProloguePassHandle(), Texture);
-		ExternalTextures.Add(Texture->GetRHIUnchecked(), Texture);
+		if (!Texture->ResourceRHI)
+		{
+			SetPooledRenderTargetRHI(Texture, AllocatePooledRenderTargetRHI(RHICmdList, Texture));
+		}
+		ExternalTextures.FindOrAdd(Texture->GetRHIUnchecked(), Texture);
+		AsyncSetupQueue.Push(FAsyncSetupOp::CullRootTexture(Texture));
 	}
 	return GetPooledTexture(Texture);
 }
@@ -646,18 +650,27 @@ FRHIUniformBuffer* FRDGBuilder::ConvertToExternalUniformBuffer(FRDGUniformBuffer
 	{
 		UniformBuffer->GetParameters().Enumerate([this](const FRDGParameter& Param)
 		{
-			auto ConvertTexture = [](FRDGBuilder* Builder, FRDGTextureRef Texture)
+			const auto ConvertTexture = [](FRDGBuilder* Builder, FRDGTextureRef Texture)
 			{
 				if (Texture && !Texture->IsExternal())
 				{
 					Builder->ConvertToExternalTexture(Texture);
 				}
 			};
-			auto ConvertBuffer = [](FRDGBuilder* Builder, FRDGBufferRef Buffer)
+
+			const auto ConvertBuffer = [](FRDGBuilder* Builder, FRDGBufferRef Buffer)
 			{
 				if (Buffer && !Buffer->IsExternal())
 				{
 					Builder->ConvertToExternalBuffer(Buffer);
+				}
+			};
+
+			const auto ConvertView = [this] (FRDGView* View)
+			{
+				if (!View->ResourceRHI)
+				{
+					InitViewRHI(RHICmdList, View);
 				}
 			};
 
@@ -685,13 +698,13 @@ FRHIUniformBuffer* FRDGBuilder::ConvertToExternalUniformBuffer(FRDGUniformBuffer
 			case UBMT_RDG_TEXTURE_SRV:
 			{
 				ConvertTexture(this, Param.GetAsTextureSRV()->Desc.Texture);
-				InitRHI(Param.GetAsView());
+				ConvertView(Param.GetAsView());
 			}
 			break;
 			case UBMT_RDG_TEXTURE_UAV:
 			{
 				ConvertTexture(this, Param.GetAsTextureUAV()->Desc.Texture);
-				InitRHI(Param.GetAsView());
+				ConvertView(Param.GetAsView());
 			}
 			break;
 			case UBMT_RDG_BUFFER_ACCESS:
@@ -711,13 +724,13 @@ FRHIUniformBuffer* FRDGBuilder::ConvertToExternalUniformBuffer(FRDGUniformBuffer
 			case UBMT_RDG_BUFFER_SRV:
 			{
 				ConvertBuffer(this, Param.GetAsBufferSRV()->Desc.Buffer);
-				InitRHI(Param.GetAsView());
+				ConvertView(Param.GetAsView());
 			}
 			break;
 			case UBMT_RDG_BUFFER_UAV:
 			{
 				ConvertBuffer(this, Param.GetAsBufferUAV()->Desc.Buffer);
-				InitRHI(Param.GetAsView());
+				ConvertView(Param.GetAsView());
 			}
 			break;
 			case UBMT_RDG_UNIFORM_BUFFER:
@@ -753,7 +766,6 @@ FRHIUniformBuffer* FRDGBuilder::ConvertToExternalUniformBuffer(FRDGUniformBuffer
 	if (!UniformBuffer->bExternal)
 	{
 		UniformBuffer->bExternal = true;
-		UniformBuffer->bQueuedForCreate = true;
 
 		// It's safe to reset the access to false because validation won't allow this call during execution.
 		IF_RDG_ENABLE_DEBUG(GRDGAllowRHIAccess = true);
@@ -820,7 +832,7 @@ void FRDGBuilder::UseInternalAccessMode(FRDGViewableResource* Resource)
 	{
 		int32 Index = AccessModeQueue.IndexOfByKey(Resource);
 		check(Index < AccessModeQueue.Num());
-		AccessModeQueue.RemoveAtSwap(Index, 1, false);
+		AccessModeQueue.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 		AccessModeState.bQueued = 0;
 	}
 	else
@@ -858,14 +870,14 @@ void FRDGBuilder::FlushAccessModeQueue()
 	ERHIPipeline ParameterPipelines = ERHIPipeline::None;
 
 	TArray<FRDGPass::FExternalAccessOp, FRDGArrayAllocator> Ops;
-	Ops.Reserve(bParallelSetupEnabled ? AccessModeQueue.Num() : 0);
+	Ops.Reserve(ParallelSetup.bEnabled ? AccessModeQueue.Num() : 0);
 
 	for (FRDGViewableResource* Resource : AccessModeQueue)
 	{
 		const auto& AccessModeState = Resource->AccessModeState;
 		Resource->AccessModeState.bQueued = false;
 
-		if (bParallelSetupEnabled)
+		if (ParallelSetup.bEnabled)
 		{
 			Ops.Emplace(Resource, AccessModeState.Mode);
 		}
@@ -915,7 +927,7 @@ void FRDGBuilder::FlushAccessModeQueue()
 		FAccessModePassParameters* Parameters = ParametersByPipeline[GetRHIPipelineIndex(ERHIPipeline::Graphics)];
 
 		FRDGPass* Pass = Passes.Allocate<LambdaPassType>(
-			Allocator,
+			Allocators.Root,
 			RDG_EVENT_NAME("AccessModePass[Graphics] (Textures: %d, Buffers: %d)", Parameters->Textures.Num(), Parameters->Buffers.Num()),
 			FAccessModePassParameters::FTypeInfo::GetStructMetadata(),
 			Parameters,
@@ -936,7 +948,7 @@ void FRDGBuilder::FlushAccessModeQueue()
 		FAccessModePassParameters* Parameters = ParametersByPipeline[GetRHIPipelineIndex(ERHIPipeline::AsyncCompute)];
 
 		FRDGPass* Pass = Passes.Allocate<LambdaPassType>(
-			Allocator,
+			Allocators.Root,
 			RDG_EVENT_NAME("AccessModePass[AsyncCompute] (Textures: %d, Buffers: %d)", Parameters->Textures.Num(), Parameters->Buffers.Num()),
 			FAccessModePassParameters::FTypeInfo::GetStructMetadata(),
 			Parameters,
@@ -981,20 +993,13 @@ FRDGTexture* FRDGBuilder::RegisterExternalTexture(
 	if (FRDGTexture* FoundTexture = FindExternalTexture(ExternalTextureRHI))
 	{
 		return FoundTexture;
-	}
+	} 
 
 	const FRDGTextureDesc Desc = Translate(ExternalPooledTexture->GetDesc());
-	FRDGTexture* Texture = Textures.Allocate(Allocator, Name, Desc, Flags);
-	SetRHI(Texture, ExternalPooledTexture.GetReference(), GetProloguePassHandle());
+	FRDGTexture* Texture = Textures.Allocate(Allocators.Root, Name, Desc, Flags);
+	SetPooledRenderTargetRHI(Texture, ExternalPooledTexture.GetReference());
 	Texture->bExternal = true;
-	ExternalTextures.Add(Texture->GetRHIUnchecked(), Texture);
-
-	if (Texture->bTransient)
-	{
-		FRDGSubresourceState State;
-		State.SetPass(ERHIPipeline::Graphics, GetProloguePassHandle());
-		InitTextureSubresources(*Texture->State, Texture->Layout, State);
-	}
+	ExternalTextures.FindOrAdd(Texture->GetRHIUnchecked(), Texture);
 
 	IF_RDG_ENABLE_DEBUG(UserValidation.ValidateRegisterExternalTexture(Texture));
 	IF_RDG_ENABLE_TRACE(Trace.AddResource(Texture));
@@ -1027,11 +1032,10 @@ FRDGBufferRef FRDGBuilder::RegisterExternalBuffer(
 		return FoundBuffer;
 	}
 
-	FRDGBuffer* Buffer = Buffers.Allocate(Allocator, Name, ExternalPooledBuffer->Desc, Flags);
-	SetRHI(Buffer, ExternalPooledBuffer, GetProloguePassHandle());
+	FRDGBuffer* Buffer = Buffers.Allocate(Allocators.Root, Name, ExternalPooledBuffer->Desc, Flags);
+	SetPooledBufferRHI(Buffer, ExternalPooledBuffer);
 	Buffer->bExternal = true;
-
-	ExternalBuffers.Add(Buffer->GetRHIUnchecked(), Buffer);
+	ExternalBuffers.FindOrAdd(Buffer->GetRHIUnchecked(), Buffer);
 
 	IF_RDG_ENABLE_DEBUG(UserValidation.ValidateRegisterExternalBuffer(Buffer));
 	IF_RDG_ENABLE_TRACE(Trace.AddResource(Buffer));
@@ -1044,7 +1048,7 @@ void FRDGBuilder::AddPassDependency(FRDGPass* Producer, FRDGPass* Consumer)
 {
 	auto& Producers = Consumer->Producers;
 
-	if (Producers.Find(Producer->Handle) == INDEX_NONE)
+	if (Producers.Find(Producer) == INDEX_NONE)
 	{
 #if RDG_STATS
 		GRDGStatPassDependencyCount++;
@@ -1052,7 +1056,7 @@ void FRDGBuilder::AddPassDependency(FRDGPass* Producer, FRDGPass* Consumer)
 
 		if (Producer->Pipeline != Consumer->Pipeline)
 		{
-			const auto BinarySearchOrAdd = [](FRDGPassHandleArray& Range, FRDGPassHandle Handle)
+			const auto BinarySearchOrAdd = [](auto& Range, FRDGPassHandle Handle)
 			{
 				const int32 LowerBoundIndex = Algo::LowerBound(Range, Handle);
 				if (LowerBoundIndex < Range.Num())
@@ -1075,11 +1079,11 @@ void FRDGBuilder::AddPassDependency(FRDGPass* Producer, FRDGPass* Consumer)
 			}
 		}
 
-		Producers.Add(Producer->Handle);
+		Producers.Add(Producer);
 	}
 }
 
-void FRDGBuilder::AddCullingDependency(FRDGProducerStatesByPipeline& LastProducers, const FRDGProducerState& NextState, ERHIPipeline NextPipeline)
+bool FRDGBuilder::AddCullingDependency(FRDGProducerStatesByPipeline& LastProducers, const FRDGProducerState& NextState, ERHIPipeline NextPipeline)
 {
 	for (ERHIPipeline LastPipeline : GetRHIPipelines())
 	{
@@ -1141,109 +1145,59 @@ void FRDGBuilder::AddCullingDependency(FRDGProducerStatesByPipeline& LastProduce
 		LastProducer.Access             = NextState.Access;
 		LastProducer.Pass               = NextState.Pass;
 		LastProducer.NoUAVBarrierHandle = NextState.NoUAVBarrierHandle;
+		return true;
 	}
+	return false;
 }
 
-void FRDGBuilder::CompilePassBarriers()
+void FRDGBuilder::AddCullRootTexture(FRDGTexture* Texture)
 {
-	// Walk the culled graph and compile barriers for each subresource. Certain transitions are redundant; read-to-read, for example.
-	// We can avoid them by traversing and merging compatible states together. The merging states removes a transition, but the merging
-	// heuristic is conservative and choosing not to merge doesn't necessarily mean a transition is performed. They are two distinct steps.
-	// Merged states track the first and last pass interval. Pass references are also accumulated onto each resource. This must happen
-	// after culling since culled passes can't contribute references.
+	check(Texture->IsCullRoot());
 
-	const FRDGPassHandle ProloguePassHandle = GetProloguePassHandle();
-	const FRDGPassHandle EpiloguePassHandle = GetEpiloguePassHandle();
-
-	SCOPED_NAMED_EVENT(CompileBarriers, FColor::Emerald);
-
-	for (FRDGPassHandle PassHandle = ProloguePassHandle + 1; PassHandle < EpiloguePassHandle; ++PassHandle)
+	for (auto& LastProducer : Texture->LastProducers)
 	{
-		FRDGPass* Pass = Passes[PassHandle];
+		AddLastProducersToCullStack(LastProducer);
+	}
 
-		if (Pass->bCulled || Pass->bEmptyParameters)
+	FlushCullStack();
+}
+
+void FRDGBuilder::AddCullRootBuffer(FRDGBuffer* Buffer)
+{
+	check(Buffer->IsCullRoot());
+
+	AddLastProducersToCullStack(Buffer->LastProducer);
+
+	FlushCullStack();
+}
+
+void FRDGBuilder::AddLastProducersToCullStack(const FRDGProducerStatesByPipeline& LastProducers)
+{
+	for (const FRDGProducerState& LastProducer : LastProducers)
+	{
+		if (LastProducer.Pass)
 		{
-			continue;
-		}
-
-		const ERHIPipeline PassPipeline = Pass->Pipeline;
-
-		const auto MergeSubresourceStates = [&](ERDGViewableResourceType ResourceType, FRDGSubresourceState*& PassMergeState, FRDGSubresourceState*& ResourceMergeState, const FRDGSubresourceState& PassState)
-		{
-			if (!ResourceMergeState || !FRDGSubresourceState::IsMergeAllowed(ResourceType, *ResourceMergeState, PassState))
-			{
-				// Allocate a new pending merge state and assign it to the pass state.
-				ResourceMergeState = AllocSubresource(PassState);
-			}
-			else
-			{
-				// Merge the pass state into the merged state.
-				ResourceMergeState->Access |= PassState.Access;
-
-				FRDGPassHandle& FirstPassHandle = ResourceMergeState->FirstPass[PassPipeline];
-
-				if (FirstPassHandle.IsNull())
-				{
-					FirstPassHandle = PassHandle;
-				}
-
-				ResourceMergeState->LastPass[PassPipeline] = PassHandle;
-			}
-
-			PassMergeState = ResourceMergeState;
-		};
-
-		for (auto& PassState : Pass->TextureStates)
-		{
-			FRDGTextureRef Texture = PassState.Texture;
-
-			if (Texture->FirstBarrier == FRDGTexture::EFirstBarrier::ImmediateRequested)
-			{
-				check(Texture->bExternal);
-				Texture->FirstBarrier = FRDGTexture::EFirstBarrier::ImmediateConfirmed;
-				Texture->FirstPass = PassHandle;
-
-				for (FRDGSubresourceState& SubresourceState : *Texture->State)
-				{
-					SubresourceState.SetPass(ERHIPipeline::Graphics, PassHandle);
-				}
-			}
-
-		#if RDG_STATS
-			GRDGStatTextureReferenceCount += PassState.ReferenceCount;
-		#endif
-
-			for (int32 Index = 0; Index < PassState.State.Num(); ++Index)
-			{
-				if (PassState.State[Index].Access == ERHIAccess::Unknown)
-				{
-					continue;
-				}
-
-				MergeSubresourceStates(ERDGViewableResourceType::Texture, PassState.MergeState[Index], Texture->MergeState[Index], PassState.State[Index]);
-			}
-		}
-
-		for (auto& PassState : Pass->BufferStates)
-		{
-			FRDGBufferRef Buffer = PassState.Buffer;
-
-			if (Buffer->FirstBarrier == FRDGBuffer::EFirstBarrier::ImmediateRequested)
-			{
-				check(Buffer->bExternal);
-				Buffer->FirstBarrier = FRDGBuffer::EFirstBarrier::ImmediateConfirmed;
-				Buffer->FirstPass = PassHandle;
-				Buffer->State->SetPass(ERHIPipeline::Graphics, PassHandle);
-			}
-
-		#if RDG_STATS
-			GRDGStatBufferReferenceCount += PassState.ReferenceCount;
-		#endif
-
-			MergeSubresourceStates(ERDGViewableResourceType::Buffer, PassState.MergeState, Buffer->MergeState, PassState.State);
+			CullPassStack.Emplace(LastProducer.Pass);
 		}
 	}
 }
+
+void FRDGBuilder::FlushCullStack()
+{
+	while (CullPassStack.Num())
+	{
+		FRDGPass* Pass = CullPassStack.Pop(EAllowShrinking::No);
+
+		if (Pass->bCulled)
+		{
+			Pass->bCulled = 0;
+
+			CullPassStack.Append(Pass->Producers);
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
 
 void FRDGBuilder::Compile()
 {
@@ -1259,76 +1213,19 @@ void FRDGBuilder::Compile()
 
 	const bool bCullPasses = GRDGCullPasses > 0;
 
-	if (bParallelSetupEnabled)
-	{
-		SetupPassQueue.Flush(TEXT("FRDGBuilder::SetupPassResources"), [this](FRDGPass* Pass) { SetupPassResources(Pass); });
-	}
-
-	if (bCullPasses)
-	{
-		CullPassStack.Reserve(CompilePassCount);
-	}
-
 	if (bCullPasses || AsyncComputePassCount > 0)
 	{
 		SCOPED_NAMED_EVENT(PassDependencies, FColor::Emerald);
 
-		if (!bParallelSetupEnabled)
+		if (!ParallelSetup.bEnabled)
 		{
 			for (FRDGPassHandle PassHandle = ProloguePassHandle + 1; PassHandle < EpiloguePassHandle; ++PassHandle)
 			{
 				SetupPassDependencies(Passes[PassHandle]);
 			}
 		}
-
-		const auto AddLastProducersToCullStack = [&](const FRDGProducerStatesByPipeline& LastProducers)
-		{
-			for (const FRDGProducerState& LastProducer : LastProducers)
-			{
-				if (LastProducer.Pass)
-				{
-					CullPassStack.Emplace(LastProducer.Pass->Handle);
-				}
-			}
-		};
-
-		// The last producer of a extracted or external resource is a cull graph root as it's not contained within the graph.
-
-		for (const FExtractedTexture& ExtractedTexture : ExtractedTextures)
-		{
-			FRDGTextureRef Texture = ExtractedTexture.Texture;
-
-			for (auto& LastProducer : Texture->LastProducers)
-			{
-				AddLastProducersToCullStack(LastProducer);
-			}
-		}
-
-		for (const FExtractedBuffer& ExtractedBuffer : ExtractedBuffers)
-		{
-			FRDGBufferRef Buffer = ExtractedBuffer.Buffer;
-
-			AddLastProducersToCullStack(Buffer->LastProducer);
-		}
-
-		for (const auto& Pair : ExternalTextures)
-		{
-			FRDGTexture* Texture = Pair.Value;
-
-			for (auto& LastProducer : Texture->LastProducers)
-			{
-				AddLastProducersToCullStack(LastProducer);
-			}
-		}
-
-		for (const auto& Pair : ExternalBuffers)
-		{
-			FRDGBuffer* Buffer = Pair.Value;
-
-			AddLastProducersToCullStack(Buffer->LastProducer);
-		}
 	}
-	else if (!bParallelSetupEnabled)
+	else if (!ParallelSetup.bEnabled)
 	{
 		for (FRDGPassHandle PassHandle = ProloguePassHandle + 1; PassHandle < EpiloguePassHandle; ++PassHandle)
 		{
@@ -1366,25 +1263,11 @@ void FRDGBuilder::Compile()
 	{
 		SCOPED_NAMED_EVENT(PassCulling, FColor::Emerald);
 
-		CullPassStack.Emplace(EpiloguePassHandle);
-
-		// Mark the epilogue pass as culled so that it is traversed.
-		EpiloguePass->bCulled = 1;
-
-		// Manually mark the prologue passes as not culled.
+		// Manually mark the prologue / epilogue passes as not culled.
+		EpiloguePass->bCulled = 0;
 		ProloguePass->bCulled = 0;
 
-		while (CullPassStack.Num())
-		{
-			FRDGPass* Pass = Passes[CullPassStack.Pop()];
-
-			if (Pass->bCulled)
-			{
-				Pass->bCulled = 0;
-
-				CullPassStack.Append(Pass->Producers);
-			}
-		}
+		check(CullPassStack.IsEmpty());
 
 		for (FRDGPassHandle PassHandle = ProloguePassHandle + 1; PassHandle < EpiloguePassHandle; ++PassHandle)
 		{
@@ -1576,13 +1459,13 @@ void FRDGBuilder::Compile()
 			{
 				CurrentGraphicsForkPassHandle = GraphicsForkPassHandle;
 
-				FRDGBarrierBatchBegin& EpilogueBarriersToBeginForAsyncCompute = GraphicsForkPass->GetEpilogueBarriersToBeginForAsyncCompute(Allocator, TransitionCreateQueue);
+				FRDGBarrierBatchBegin& EpilogueBarriersToBeginForAsyncCompute = GraphicsForkPass->GetEpilogueBarriersToBeginForAsyncCompute(Allocators.Transition, TransitionCreateQueue);
 
 				GraphicsForkPass->bGraphicsFork = 1;
 				EpilogueBarriersToBeginForAsyncCompute.SetUseCrossPipelineFence();
 
 				AsyncComputePass->bAsyncComputeBegin = 1;
-				AsyncComputePass->GetPrologueBarriersToEnd(Allocator).AddDependency(&EpilogueBarriersToBeginForAsyncCompute);
+				AsyncComputePass->GetPrologueBarriersToEnd(Allocators.Transition).AddDependency(&EpilogueBarriersToBeginForAsyncCompute);
 
 				// Since we are fencing the graphics pipe to some new async compute work, make sure to flush any prior work.
 				if (AsyncComputePassBeforeFork)
@@ -1629,14 +1512,14 @@ void FRDGBuilder::Compile()
 			{
 				CurrentGraphicsJoinPassHandle = GraphicsJoinPassHandle;
 
-				FRDGBarrierBatchBegin& EpilogueBarriersToBeginForGraphics = AsyncComputePass->GetEpilogueBarriersToBeginForGraphics(Allocator, TransitionCreateQueue);
+				FRDGBarrierBatchBegin& EpilogueBarriersToBeginForGraphics = AsyncComputePass->GetEpilogueBarriersToBeginForGraphics(Allocators.Transition, TransitionCreateQueue);
 
 				AsyncComputePass->bAsyncComputeEnd = 1;
 				AsyncComputePass->bDispatchAfterExecute = 1;
 				EpilogueBarriersToBeginForGraphics.SetUseCrossPipelineFence();
 
 				GraphicsJoinPass->bGraphicsJoin = 1;
-				GraphicsJoinPass->GetPrologueBarriersToEnd(Allocator).AddDependency(&EpilogueBarriersToBeginForGraphics);
+				GraphicsJoinPass->GetPrologueBarriersToEnd(Allocators.Transition).AddDependency(&EpilogueBarriersToBeginForGraphics);
 			}
 		}
 	}
@@ -1644,54 +1527,78 @@ void FRDGBuilder::Compile()
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename LambdaType>
-void FRDGBuilder::FPassQueue::Flush(UE::Tasks::FPipe& Pipe, const TCHAR* Name, LambdaType&& Lambda)
+void FRDGBuilder::LaunchAsyncSetupQueueTask()
 {
-	if (LastTask.IsCompleted())
+	if (AsyncSetupQueue.LastTask.IsCompleted())
 	{
-		LastTask = Pipe.Launch(Name, [this, Lambda, Name]
+		AsyncSetupQueue.LastTask = AsyncSetupQueue.Pipe.Launch(UE_SOURCE_LOCATION, [this]() mutable
 		{
-			SCOPED_NAMED_EVENT_TCHAR(Name, FColor::Magenta);
-			while (FRDGPass* Pass = Queue.Pop())
-			{
-				Lambda(Pass);
-			}
+			ProcessAsyncSetupQueue();
 		});
 	}
 }
 
-template <typename LambdaType>
-void FRDGBuilder::FPassQueue::Flush(const TCHAR* Name, LambdaType&& Lambda)
+void FRDGBuilder::ProcessAsyncSetupQueue()
 {
-	SCOPED_NAMED_EVENT_TCHAR(Name, FColor::Magenta);
-	LastTask.Wait();
-	while (FRDGPass* Pass = Queue.Pop())
+	SCOPED_NAMED_EVENT_TCHAR("FRDGBuilder::ProcessAsyncSetupQueue", FColor::Magenta);
+	FRDGAllocatorScope AllocatorScope(Allocators.Task);
+
+	while (true)
 	{
-		Lambda(Pass);
+		AsyncSetupQueue.Mutex.Lock();
+		TArray<FAsyncSetupOp, FRDGArrayAllocator> PoppedOps = MoveTemp(AsyncSetupQueue.Ops);
+		AsyncSetupQueue.Mutex.Unlock();
+
+		if (PoppedOps.IsEmpty())
+		{
+			break;
+		}
+
+		for (FAsyncSetupOp Op : PoppedOps)
+		{
+			switch (Op.Type)
+			{
+			case FAsyncSetupOp::EType::SetupPassResources:
+				SetupPassResources(Op.Pass);
+				break;
+
+			case FAsyncSetupOp::EType::CullRootBuffer:
+				AddCullRootBuffer(Op.Buffer);
+				break;
+
+			case FAsyncSetupOp::EType::CullRootTexture:
+				AddCullRootTexture(Op.Texture);
+				break;
+			}
+		}
 	}
 }
-
 
 void FRDGBuilder::FlushSetupQueue()
 {
-	if (bParallelSetupEnabled)
+	if (ParallelSetup.bEnabled)
 	{
-		SetupPassQueue.Flush(CompilePipe, TEXT("FRDGBuilder::SetupPassResources"), [this](FRDGPass* Pass) { SetupPassResources(Pass); });
+		LaunchAsyncSetupQueueTask();
 	}
 }
 
-template <typename LambdaType>
-UE::Tasks::FTask FRDGBuilder::LaunchCompileTask(const TCHAR* Name, bool bCondition, LambdaType&& Lambda)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FRDGBuilder::WaitForParallelSetupTasks()
 {
-	if (bCondition)
+	if (!ParallelSetup.Tasks.IsEmpty())
 	{
-		SCOPED_NAMED_EVENT_TCHAR(Name, FColor::Magenta);
-		return CompilePipe.Launch(Name, [Lambda] { Lambda(); }, LowLevelTasks::ETaskPriority::High);
+		UE::Tasks::Wait(ParallelSetup.Tasks);
+		ParallelSetup.Tasks.Reset();
 	}
-	else
+}
+
+void FRDGBuilder::SubmitParallelSetupTasks()
+{
+	if (!ParallelSetup.CommandLists.IsEmpty())
 	{
-		Lambda();
-		return {};
+		RHICmdList.QueueAsyncCommandListSubmit(ParallelSetup.CommandLists);
+		ParallelSetup.CommandLists.Empty();
 	}
 }
 
@@ -1700,7 +1607,7 @@ UE::Tasks::FTask FRDGBuilder::LaunchCompileTask(const TCHAR* Name, bool bConditi
 void FRDGBuilder::Execute()
 {
 	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(RDG);
-	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::Execute", FColor::Magenta);
+	SCOPED_DRAW_EVENTF(RHICmdList, FRDGBuilder_Execute, TEXT("FRDGBuilder::Execute"));
 
 	GRDGTransientResourceAllocator.ReleasePendingDeallocations();
 
@@ -1714,56 +1621,138 @@ void FRDGBuilder::Execute()
 	}
 
 	// Create the epilogue pass at the end of the graph just prior to compilation.
-	SetupEmptyPass(EpiloguePass = Passes.Allocate<FRDGSentinelPass>(Allocator, RDG_EVENT_NAME("Graph Epilogue")));
+	SetupEmptyPass(EpiloguePass = Passes.Allocate<FRDGSentinelPass>(Allocators.Root, RDG_EVENT_NAME("Graph Epilogue")));
 
 	const FRDGPassHandle ProloguePassHandle = GetProloguePassHandle();
 	const FRDGPassHandle EpiloguePassHandle = GetEpiloguePassHandle();
 
-	UE::Tasks::FTask SubmitBufferUploadsTask;
-	UE::Tasks::FTask CompilePassBarriersTask;
-	UE::Tasks::FTask CreateUniformBuffersTask;
-	UE::Tasks::FTask SetupParallelExecuteTask;
+	UE::Tasks::FTask CollectPassBarriersTask;
+	UE::Tasks::FTask CreateViewsTask;
 
 	IF_RDG_ENABLE_DEBUG(UserValidation.ValidateExecuteBegin());
 	IF_RDG_ENABLE_DEBUG(GRDGAllowRHIAccess = true);
 
+	FCollectResourceContext CollectResourceContext;
+
 	if (!IsImmediateMode())
 	{
-		UE::Tasks::FTask CompileTask = LaunchCompileTask(TEXT("FRDGBuilder::Compile"), bParallelSetupEnabled, [this] { Compile(); });
-
-		CompilePassBarriersTask = LaunchCompileTask(TEXT("FRDGBuilder::CompilePassBarriers"), bParallelSetupEnabled, [this] { CompilePassBarriers(); });
-
+		SubmitParallelSetupTasks();
 		BeginFlushResourcesRHI();
+		WaitForParallelSetupTasks();
 
-		if (!ParallelSetupEvents.IsEmpty())
+		if (ParallelSetup.bEnabled)
 		{
-			UE::Tasks::Wait(ParallelSetupEvents);
-			ParallelSetupEvents.Empty();
+			AsyncSetupQueue.LastTask.Wait();
+			ProcessAsyncSetupQueue();
 		}
 
-		PrepareBufferUploads();
-
-		GPUScopeStacks.ReserveOps(Passes.Num());
-		IF_RDG_CPU_SCOPES(CPUScopeStacks.ReserveOps());
-
-		if (bParallelExecuteEnabled)
+		// Pre-allocate containers.
 		{
-		#if RHI_WANT_BREADCRUMB_EVENTS
+			const int32 NumBuffers           = Buffers.Num();
+			const int32 NumTextures          = Textures.Num();
+			const int32 NumExternalBuffers   = ExternalBuffers.Num();
+			const int32 NumExternalTextures  = ExternalTextures.Num();
+			const int32 NumTransientBuffers  = bSupportsTransientBuffers ? (NumBuffers - NumExternalBuffers) : 0;
+			const int32 NumTransientTextures = bSupportsTransientTextures ? (NumTextures - NumExternalTextures) : 0;
+			const int32 NumPooledTextures    = NumTextures - NumTransientTextures;
+			const int32 NumPooledBuffers     = NumBuffers - NumTransientBuffers;
+
+			CollectResourceContext.TransientResources.Reserve(NumTransientBuffers + NumTransientTextures);
+			CollectResourceContext.PooledTextures.Reserve(bSupportsTransientTextures ? NumExternalTextures : NumTextures);
+			CollectResourceContext.PooledBuffers.Reserve(bSupportsTransientBuffers ? NumExternalBuffers : NumBuffers);
+			CollectResourceContext.UniformBuffers.Reserve(UniformBuffers.Num());
+			CollectResourceContext.Views.Reserve(Views.Num());
+			CollectResourceContext.UniformBufferMap.Init(true, UniformBuffers.Num());
+			CollectResourceContext.ViewMap.Init(true, Views.Num());
+
+			PooledBufferOwnershipMap.Reserve(NumPooledBuffers);
+			PooledTextureOwnershipMap.Reserve(NumPooledTextures);
+			ActivePooledTextures.Reserve(NumPooledTextures);
+			ActivePooledBuffers.Reserve(NumPooledBuffers);
+			EpilogueResourceAccesses.Reserve(NumTextures + NumBuffers);
+
+			ProloguePass->EpilogueBarriersToBeginForGraphics.Reserve(NumPooledBuffers + NumPooledTextures);
+		}
+
+		const UE::Tasks::ETaskPriority TaskPriority = UE::Tasks::ETaskPriority::High;
+
+		UE::Tasks::FTask BufferNumElementsCallbacksTask = AddSetupTask([this]
+		{
+			SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::FinalizeDescs", FColor::Magenta);
+
+			for (FRDGBuffer* Buffer : NumElementsCallbackBuffers)
+			{
+				Buffer->FinalizeDesc();
+			}
+			NumElementsCallbackBuffers.Empty();
+
+		}, TaskPriority);
+
+		UE::Tasks::FTask PrepareCollectResourcesTask = AddSetupTask([this]
+		{
+			SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::PrepareCollectResources", FColor::Magenta);
+
+			Buffers.Enumerate([&] (FRDGBuffer* Buffer)
+			{
+				if (Buffer->ResourceRHI || Buffer->bQueuedForUpload)
+				{
+					Buffer->bCollectForAllocate = false;
+				}
+
+				if (Buffer->TransientBuffer || (!Buffer->ResourceRHI && IsTransient(Buffer)))
+				{
+					Buffer->bTransient = true;
+				}
+			});
+
+			Textures.Enumerate([&] (FRDGTexture* Texture)
+			{
+				if (Texture->ResourceRHI)
+				{
+					Texture->bCollectForAllocate = false;
+				}
+
+				if (Texture->TransientTexture || (!Texture->ResourceRHI && IsTransient(Texture)))
+				{
+					Texture->bTransient = true;
+				}
+			});
+
+		}, TaskPriority);
+
+		UE::Tasks::FTaskEvent AllocateUploadBuffersTask{ UE_SOURCE_LOCATION };
+
+		UE::Tasks::FTask SubmitBufferUploadsTask = AddCommandListSetupTask([this, AllocateUploadBuffersTask] (FRHICommandListBase& RHICmdListTask) mutable
+		{
+			SubmitBufferUploads(RHICmdListTask, &AllocateUploadBuffersTask);
+
+		}, BufferNumElementsCallbacksTask, TaskPriority);
+
+		Compile();
+
+		CollectPassBarriersTask = AddSetupTask([this]
+		{
+			CompilePassBarriers();
+			CollectPassBarriers();
+
+		}, TaskPriority);
+
+		if (ParallelExecute.bEnabled)
+		{
+#if RHI_WANT_BREADCRUMB_EVENTS
 			RHICmdList.ExportBreadcrumbState(*BreadcrumbState);
-		#endif
+#endif
 
-			// Parallel execute setup can be done off the render thread and synced prior to dispatch.
-			SetupParallelExecuteTask = LaunchCompileTask(TEXT("FRDGBuilder::SetupParallelExecute"), bParallelExecuteEnabled, [this] { SetupParallelExecute(); });
+			AddSetupTask([this] { SetupParallelExecute(); });
 		}
 
-		CompileTask.Wait();
+		UE::Tasks::FTask AllocatePooledBuffersTask;
+		UE::Tasks::FTask AllocatePooledTexturesTask;
 
 		{
 			SCOPE_CYCLE_COUNTER(STAT_RDG_CollectResourcesTime);
 			CSV_SCOPED_TIMING_STAT_EXCLUSIVE(RDG_CollectResources);
 			SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::CollectResources", FColor::Magenta);
-
-			UniformBuffersToCreate.Reserve(UniformBuffers.Num());
 
 			EnumerateExtendedLifetimeResources(Textures, [](FRDGTexture* Texture)
 			{
@@ -1775,6 +1764,8 @@ void FRDGBuilder::Execute()
 				++Buffer->ReferenceCount;
 			});
 
+			PrepareCollectResourcesTask.Wait();
+
 			// Null out any culled external resources so that the reference is freed up.
 
 			for (const auto& Pair : ExternalTextures)
@@ -1783,7 +1774,7 @@ void FRDGBuilder::Execute()
 
 				if (Texture->IsCulled())
 				{
-					EndResourceRHI(ProloguePassHandle, Texture, 0);
+					CollectDeallocateTexture(CollectResourceContext, ProloguePassHandle, Texture, 0);
 				}
 			}
 
@@ -1793,17 +1784,7 @@ void FRDGBuilder::Execute()
 
 				if (Buffer->IsCulled())
 				{
-					EndResourceRHI(ProloguePassHandle, Buffer, 0);
-				}
-			}
-
-			for (FRDGPassHandle PassHandle = Passes.Begin(); PassHandle < ProloguePassHandle; ++PassHandle)
-			{
-				FRDGPass* Pass = Passes[PassHandle];
-
-				if (!Pass->bCulled)
-				{
-					EndResourcesRHI(Pass, ProloguePassHandle);
+					CollectDeallocateBuffer(CollectResourceContext, ProloguePassHandle, Buffer, 0);
 				}
 			}
 
@@ -1813,105 +1794,85 @@ void FRDGBuilder::Execute()
 
 				if (!Pass->bCulled)
 				{
-					BeginResourcesRHI(Pass, PassHandle);
-					EndResourcesRHI(Pass, PassHandle);
+					CollectAllocations(CollectResourceContext, Pass);
+					CollectDeallocations(CollectResourceContext, Pass);
 				}
 			}
 
 			EnumerateExtendedLifetimeResources(Textures, [&](FRDGTextureRef Texture)
 			{
-				EndResourceRHI(EpiloguePassHandle, Texture, 1);
+				CollectDeallocateTexture(CollectResourceContext, EpiloguePassHandle, Texture, 1);
 			});
 
 			EnumerateExtendedLifetimeResources(Buffers, [&](FRDGBufferRef Buffer)
 			{
-				EndResourceRHI(EpiloguePassHandle, Buffer, 1);
+				CollectDeallocateBuffer(CollectResourceContext, EpiloguePassHandle, Buffer, 1);
 			});
+
+			BufferNumElementsCallbacksTask.Wait();
+
+			AllocatePooledBuffersTask = AddCommandListSetupTask([this, PooledBuffers = MoveTemp(CollectResourceContext.PooledBuffers)] (FRHICommandListBase& RHICmdListTask)
+			{
+				AllocatePooledBuffers(RHICmdListTask, PooledBuffers);
+
+			}, AllocateUploadBuffersTask, TaskPriority);
+
+			AllocatePooledTexturesTask = AddCommandListSetupTask([this, PooledTextures = MoveTemp(CollectResourceContext.PooledTextures)] (FRHICommandListBase& RHICmdListTask)
+			{
+				AllocatePooledTextures(RHICmdListTask, PooledTextures);
+
+			}, TaskPriority);
+
+			AllocateTransientResources(MoveTemp(CollectResourceContext.TransientResources));
+
+			AddSetupTask([this]
+			{
+				FinalizeResources();
+
+			}, MakeArrayView<UE::Tasks::FTask>({ CollectPassBarriersTask, AllocatePooledBuffersTask, AllocatePooledTexturesTask }), TaskPriority);
+
+			CreateViewsTask = AddCommandListSetupTask([this, Views = MoveTemp(CollectResourceContext.Views)] (FRHICommandListBase& RHICmdListTask)
+			{
+				CreateViews(RHICmdListTask, Views);
+
+			}, MakeArrayView<UE::Tasks::FTask>({ AllocatePooledBuffersTask, AllocatePooledTexturesTask, SubmitBufferUploadsTask}), TaskPriority);
 
 			if (TransientResourceAllocator)
 			{
-			#if RDG_ENABLE_TRACE
+#if RDG_ENABLE_TRACE
 				TransientResourceAllocator->Flush(RHICmdList, Trace.IsEnabled() ? &Trace.TransientAllocationStats : nullptr);
-			#else
+#else
 				TransientResourceAllocator->Flush(RHICmdList);
-			#endif
+#endif
 			}
 		}
 
-		// We have to wait until after view creation to launch uploads because we can't lock / unlock while creating views simultaneously.
-		SubmitBufferUploadsTask = SubmitBufferUploads();
-
-		// Uniform buffer creation depends on view creation.
-		CreateUniformBuffersTask = CreateUniformBuffers();
-
+		AddSetupTask([this, UniformBuffers = MoveTemp(CollectResourceContext.UniformBuffers)]
 		{
-			SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::CollectBarriers", FColor::Magenta);
-			SCOPE_CYCLE_COUNTER(STAT_RDG_CollectBarriersTime);
-			CSV_SCOPED_TIMING_STAT_EXCLUSIVE_CONDITIONAL(RDG_CollectBarriers, GRDGVerboseCSVStats != 0);
+			CreateUniformBuffers(UniformBuffers);
 
-			CompilePassBarriersTask.Wait();
+		}, CreateViewsTask, TaskPriority); // Uniform buffer creation require views to be valid.
 
-			for (FRDGPassHandle PassHandle = ProloguePassHandle + 1; PassHandle < EpiloguePassHandle; ++PassHandle)
-			{
-				FRDGPass* Pass = Passes[PassHandle];
-
-				if (!Pass->bCulled && !Pass->bEmptyParameters)
-				{
-					CollectPassBarriers(Pass);
-				}
-			}
-		}
+		AllocatePooledBuffersTask.Wait();
+		AllocatePooledTexturesTask.Wait();
 	}
 	else
 	{
-		PrepareBufferUploads();
-		SubmitBufferUploads();
-		CreateUniformBuffers();
+		SubmitBufferUploads(RHICmdList);
+		FinalizeResources();
 	}
 
+	SubmitParallelSetupTasks();
+	EndFlushResourcesRHI();
+	WaitForParallelSetupTasks();
+
+	if (ParallelExecute.DispatchTaskEvent)
 	{
-		SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::Finalize", FColor::Magenta);
-
-		EpilogueResourceAccesses.Reserve(Textures.Num() + Buffers.Num());
-
-		Textures.Enumerate([&](FRDGTextureRef Texture)
-		{
-			AddEpilogueTransition(Texture);
-		});
-
-		Buffers.Enumerate([&](FRDGBufferRef Buffer)
-		{
-			AddEpilogueTransition(Buffer);
-		});
+		// Launch a task to absorb the cost of waking up threads and avoid stalling the render thread.
+		UE::Tasks::Launch(UE_SOURCE_LOCATION, [this] { ParallelExecute.DispatchTaskEvent->Trigger(); });
 	}
 
-	const ENamedThreads::Type RenderThread = ENamedThreads::GetRenderThread_Local();
-
-	CreatePassBarriers([&]
-	{
-		CreateUniformBuffersTask.Wait();
-
-		if (SubmitBufferUploadsTask.IsValid())
-		{
-			SubmitBufferUploadsTask.Wait();
-			check(RHICmdListBufferUploads);
-			RHICmdList.QueueAsyncCommandListSubmit(RHICmdListBufferUploads);
-			RHICmdListBufferUploads = nullptr;
-		}
-
-		// Process RHI thread flush before helping with barrier compilation on the render thread.
-		EndFlushResourcesRHI();
-	});
-
-	UE::Tasks::FTask ParallelExecuteTask;
-
-	if (bParallelExecuteEnabled)
-	{
-		SetupParallelExecuteTask.Wait();
-		ParallelExecuteTask = CompilePipe.Launch(TEXT("DispatchParallelExecute"), [this] { DispatchParallelExecute(); }, LowLevelTasks::ETaskPriority::High);
-	}
-
-	IF_RDG_ENABLE_DEBUG(GRDGAllowRHIAccess = bParallelExecuteEnabled);
+	IF_RDG_ENABLE_DEBUG(GRDGAllowRHIAccess = ParallelExecute.bEnabled);
 	IF_RDG_ENABLE_TRACE(Trace.OutputGraphBegin());
 
 	if (!IsImmediateMode())
@@ -1933,7 +1894,7 @@ void FRDGBuilder::Execute()
 				continue;
 			}
 
-			if (bParallelExecuteEnabled)
+			if (ParallelExecute.bEnabled)
 			{
 				if (Pass->bParallelExecute)
 				{
@@ -1943,10 +1904,7 @@ void FRDGBuilder::Execute()
 
 					if (Pass->bParallelExecuteBegin)
 					{
-						FParallelPassSet& ParallelPassSet = ParallelPassSets[Pass->ParallelPassSetIndex];
-
-						// Busy wait until our pass set is ready. This will be set by the dispatch task.
-						while (!FPlatformAtomics::AtomicRead(&ParallelPassSet.bInitialized)) {};
+						FParallelPassSet& ParallelPassSet = ParallelExecute.ParallelPassSets[Pass->ParallelPassSetIndex];
 
 						FRHICommandListImmediate::ETranslatePriority TranslatePriority = ParallelPassSet.bParallelTranslate ? FRHICommandListImmediate::ETranslatePriority::Normal : FRHICommandListImmediate::ETranslatePriority::Disabled;
 
@@ -1988,15 +1946,12 @@ void FRDGBuilder::Execute()
 
 	RHICmdList.SetTrackedAccess(EpilogueResourceAccesses);
 
-	// Wait for the parallel dispatch task before attempting to wait on the execute event array (the former mutates the array).
-	ParallelExecuteTask.Wait();
-
 	// Wait on the actual parallel execute tasks in the Execute call. When draining is okay to let them overlap with other graph setup.
 	// This also needs to be done before extraction of external resources to be consistent with non-parallel rendering.
-	if (!ParallelExecuteEvents.IsEmpty())
+	if (!ParallelExecute.Tasks.IsEmpty())
 	{
-		UE::Tasks::Wait(ParallelExecuteEvents);
-		ParallelExecuteEvents.Empty();
+		UE::Tasks::Wait(ParallelExecute.Tasks);
+		ParallelExecute.Tasks.Empty();
 	}
 
 	for (const FExtractedTexture& ExtractedTexture : ExtractedTextures)
@@ -2024,7 +1979,7 @@ void FRDGBuilder::Execute()
 	GRDGStatBufferCount += Buffers.Num();
 	GRDGStatTextureCount += Textures.Num();
 	GRDGStatViewCount += Views.Num();
-	GRDGStatMemoryWatermark = FMath::Max(GRDGStatMemoryWatermark, Allocator.GetByteCount());
+	GRDGStatMemoryWatermark = FMath::Max(GRDGStatMemoryWatermark, Allocators.GetByteCount());
 #endif
 
 	RasterPassCount = 0;
@@ -2126,6 +2081,8 @@ void FRDGBuilder::MarkResourcesAsProduced(FRDGPass* Pass)
 
 void FRDGBuilder::SetupPassDependencies(FRDGPass* Pass)
 {
+	bool bIsCullRootProducer = false;
+
 	for (auto& PassState : Pass->TextureStates)
 	{
 		FRDGTextureRef Texture = PassState.Texture;
@@ -2135,26 +2092,26 @@ void FRDGBuilder::SetupPassDependencies(FRDGPass* Pass)
 
 		for (uint32 Index = 0, Count = LastProducers.Num(); Index < Count; ++Index)
 		{
-			const auto& SubresourceState = PassState.State[Index];
+			const FRDGSubresourceState* SubresourceState = PassState.State[Index];
 
-			if (SubresourceState.Access == ERHIAccess::Unknown)
+			if (!SubresourceState)
 			{
 				continue;
 			}
 
 			FRDGProducerState ProducerState;
 			ProducerState.Pass = Pass;
-			ProducerState.Access = SubresourceState.Access;
-			ProducerState.NoUAVBarrierHandle = SubresourceState.NoUAVBarrierFilter.GetUniqueHandle();
+			ProducerState.Access = SubresourceState->Access;
+			ProducerState.NoUAVBarrierHandle = SubresourceState->NoUAVBarrierFilter.GetUniqueHandle();
 
-			AddCullingDependency(LastProducers[Index], ProducerState, Pass->Pipeline);
+			bIsCullRootProducer |= AddCullingDependency(LastProducers[Index], ProducerState, Pass->Pipeline) && Texture->IsCullRoot();
 		}
 	}
 
 	for (auto& PassState : Pass->BufferStates)
 	{
 		FRDGBufferRef Buffer = PassState.Buffer;
-		const auto& SubresourceState = PassState.State;
+		const FRDGSubresourceState& SubresourceState = PassState.State;
 
 		Buffer->ReferenceCount += PassState.ReferenceCount;
 
@@ -2163,15 +2120,17 @@ void FRDGBuilder::SetupPassDependencies(FRDGPass* Pass)
 		ProducerState.Access = SubresourceState.Access;
 		ProducerState.NoUAVBarrierHandle = SubresourceState.NoUAVBarrierFilter.GetUniqueHandle();
 
-		AddCullingDependency(Buffer->LastProducer, ProducerState, Pass->Pipeline);
+		bIsCullRootProducer |= AddCullingDependency(Buffer->LastProducer, ProducerState, Pass->Pipeline) && Buffer->IsCullRoot();
 	}
 
 	const bool bCullPasses = GRDGCullPasses > 0;
 	Pass->bCulled = bCullPasses;
 
-	if (bCullPasses && (Pass->bHasExternalOutputs || EnumHasAnyFlags(Pass->Flags, ERDGPassFlags::NeverCull)))
+	if (bCullPasses && (bIsCullRootProducer || Pass->bHasExternalOutputs || EnumHasAnyFlags(Pass->Flags, ERDGPassFlags::NeverCull)))
 	{
-		CullPassStack.Emplace(Pass->Handle);
+		CullPassStack.Emplace(Pass);
+
+		FlushCullStack();
 	}
 }
 
@@ -2227,14 +2186,19 @@ void FRDGBuilder::SetupPassResources(FRDGPass* Pass)
 
 		PassState->ReferenceCount++;
 
-		EnumerateSubresourceRange(PassState->State, Texture->Layout, Range, [&](FRDGSubresourceState& State)
+		EnumerateSubresourceRange(PassState->State, Texture->Layout, Range, [&](FRDGSubresourceState*& State)
 		{
-			IF_RDG_ENABLE_DEBUG(UserValidation.ValidateAddSubresourceAccess(Texture, State, Access));
+			if (!State)
+			{
+				State = AllocSubresource();
+			}
 
-			State.Access = MakeValidAccess(State.Access, Access);
-			State.Flags |= TransitionFlags;
-			State.NoUAVBarrierFilter.AddHandle(NoUAVBarrierHandle);
-			State.SetPass(PassPipeline, PassHandle);
+			IF_RDG_ENABLE_DEBUG(UserValidation.ValidateAddSubresourceAccess(Texture, *State, Access));
+
+			State->Access = MakeValidAccess(State->Access, Access);
+			State->Flags |= TransitionFlags;
+			State->NoUAVBarrierFilter.AddHandle(NoUAVBarrierHandle);
+			State->SetPass(PassPipeline, PassHandle);
 		});
 
 		if (IsWritableAccess(Access))
@@ -2242,7 +2206,7 @@ void FRDGBuilder::SetupPassResources(FRDGPass* Pass)
 			bRenderPassOnlyWrites &= EnumHasAnyFlags(AccessFlags, ERDGTextureAccessFlags::RenderTarget);
 
 			// When running in parallel this is set via MarkResourcesAsProduced. We also can't touch this as its a bitfield and not atomic.
-			if (!bParallelSetupEnabled)
+			if (!ParallelSetup.bEnabled)
 			{
 				Texture->bProduced = true;
 			}
@@ -2291,7 +2255,7 @@ void FRDGBuilder::SetupPassResources(FRDGPass* Pass)
 			bRenderPassOnlyWrites = false;
 
 			// When running in parallel this is set via MarkResourcesAsProduced. We also can't touch this as its a bitfield and not atomic.
-			if (!bParallelSetupEnabled)
+			if (!ParallelSetup.bEnabled)
 			{
 				Buffer->bProduced = true;
 			}
@@ -2308,7 +2272,7 @@ void FRDGBuilder::SetupPassResources(FRDGPass* Pass)
 		Pass->UniformBuffers.Emplace(UniformBuffer.GetUniformBuffer()->Handle);
 	});
 
-	if (bParallelSetupEnabled)
+	if (ParallelSetup.bEnabled)
 	{
 		SetupPassDependencies(Pass);
 
@@ -2325,8 +2289,6 @@ void FRDGBuilder::SetupPassInternals(FRDGPass* Pass)
 	const ERDGPassFlags PassFlags = Pass->Flags;
 	const ERHIPipeline PassPipeline = Pass->Pipeline;
 
-	Pass->GraphicsForkPass = PassHandle;
-	Pass->GraphicsJoinPass = PassHandle;
 	Pass->PrologueBarrierPass = PassHandle;
 	Pass->EpilogueBarrierPass = PassHandle;
 
@@ -2376,40 +2338,56 @@ void FRDGBuilder::SetupAuxiliaryPasses(FRDGPass* Pass)
 		SCOPED_NAMED_EVENT(FRDGBuilder_ExecutePass, FColor::Emerald);
 		RDG_ALLOW_RHI_ACCESS_SCOPE();
 
-		// Trivially redirect the merge states to the pass states, since we won't be compiling the graph.
 		for (auto& PassState : Pass->TextureStates)
 		{
-			const uint32 SubresourceCount = PassState.State.Num();
-			PassState.MergeState.SetNum(SubresourceCount);
-			for (uint32 Index = 0; Index < SubresourceCount; ++Index)
+			FRDGTexture* Texture = PassState.Texture;
+
+			if (Texture->ResourceRHI)
 			{
-				if (PassState.State[Index].Access != ERHIAccess::Unknown)
+				Texture->bCollectForAllocate = false;
+			}
+
+			for (FRDGSubresourceState*& SubresourceState : Texture->State)
+			{
+				if (!SubresourceState)
 				{
-					PassState.MergeState[Index] = &PassState.State[Index];
+					SubresourceState = &PrologueSubresourceState;
 				}
 			}
+
+			PassState.MergeState = PassState.State;
 		}
 
 		for (auto& PassState : Pass->BufferStates)
 		{
+			FRDGBuffer* Buffer = PassState.Buffer;
+
+			if (Buffer->ResourceRHI || Buffer->bQueuedForUpload)
+			{
+				Buffer->bCollectForAllocate = false;
+			}
+
+			if (!Buffer->State)
+			{
+				Buffer->State = &PrologueSubresourceState;
+			}
+
 			PassState.MergeState = &PassState.State;
 		}
 
 		check(!EnumHasAnyFlags(Pass->Pipeline, ERHIPipeline::AsyncCompute));
-		check(ParallelSetupEvents.IsEmpty());
+		check(ParallelSetup.Tasks.IsEmpty());
 
-		PrepareBufferUploads();
-		SubmitBufferUploads();
+		FCollectResourceContext Context;
+		SubmitBufferUploads(RHICmdList);
 		CompilePassOps(Pass);
-		BeginResourcesRHI(Pass, Pass->Handle);
-		CreateUniformBuffers();
-		CollectPassBarriers(Pass);
-		CreatePassBarriers([] {});
-		if (!ParallelSetupEvents.IsEmpty())
-		{
-			UE::Tasks::Wait(ParallelSetupEvents);
-			ParallelSetupEvents.Reset();
-		}
+		CollectAllocations(Context, Pass);
+		AllocatePooledTextures(RHICmdList, Context.PooledTextures);
+		AllocatePooledBuffers(RHICmdList, Context.PooledBuffers);
+		CreateViews(RHICmdList, Context.Views);
+		CreateUniformBuffers(Context.UniformBuffers);
+		CollectPassBarriers(Pass->Handle);
+		CreatePassBarriers();
 		ExecutePass(Pass, RHICmdList);
 	}
 
@@ -2427,10 +2405,10 @@ FRDGPass* FRDGBuilder::SetupParameterPass(FRDGPass* Pass)
 
 	SetupPassInternals(Pass);
 
-	if (bParallelSetupEnabled)
+	if (ParallelSetup.bEnabled)
 	{
 		MarkResourcesAsProduced(Pass);
-		SetupPassQueue.Push(Pass);
+		AsyncSetupQueue.Push(FAsyncSetupOp::SetupPassResources(Pass));
 	}
 	else
 	{
@@ -2478,72 +2456,63 @@ void FRDGBuilder::CompilePassOps(FRDGPass* Pass)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FRDGBuilder::PrepareBufferUploads()
+void FRDGBuilder::SubmitBufferUploads(FRHICommandListBase& RHICmdListUpload, UE::Tasks::FTaskEvent* AllocateUploadBuffersTask)
 {
-	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::PrepareBufferUploads", FColor::Magenta);
+	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::SubmitBufferUploads", FColor::Magenta);
 
-	for (FUploadedBuffer& UploadedBuffer : UploadedBuffers)
 	{
-		FRDGBuffer* Buffer = UploadedBuffer.Buffer;
-
-		if (!Buffer->HasRHI())
-		{
-			BeginResourceRHI(GetProloguePassHandle(), Buffer);
-		}
-
-		check(UploadedBuffer.DataSize <= Buffer->Desc.GetSize());
-	}
-}
-
-UE::Tasks::FTask FRDGBuilder::SubmitBufferUploads()
-{
-	const auto SubmitUploadsLambda = [this](FRHICommandList& RHICmdListUpload)
-	{
-		SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::SubmitBufferUploads", FColor::Magenta);
+		SCOPED_NAMED_EVENT_TEXT("Allocate", FColor::Magenta);
+		UE::TScopeLock Lock(GRenderGraphResourcePool.Mutex);
 
 		for (FUploadedBuffer& UploadedBuffer : UploadedBuffers)
 		{
-			if (UploadedBuffer.bUseDataCallbacks)
+			FRDGBuffer* Buffer = UploadedBuffer.Buffer;
+			if (!Buffer->ResourceRHI)
 			{
-				UploadedBuffer.Data = UploadedBuffer.DataCallback();
-				UploadedBuffer.DataSize = UploadedBuffer.DataSizeCallback();
+				SetPooledBufferRHI(Buffer, AllocatePooledBufferRHI(RHICmdListUpload, Buffer));
 			}
+		}
+	}
 
-			if (UploadedBuffer.Data && UploadedBuffer.DataSize)
+	if (AllocateUploadBuffersTask)
+	{
+		AllocateUploadBuffersTask->Trigger();
+	}
+
+	{
+		SCOPED_NAMED_EVENT_TEXT("Upload", FColor::Magenta);
+
+		for (FUploadedBuffer& UploadedBuffer : UploadedBuffers)
+		{
+			FRDGBuffer* Buffer = UploadedBuffer.Buffer;
+
+			if (UploadedBuffer.DataFillCallback)
 			{
-				void* DestPtr = RHICmdListUpload.LockBuffer(UploadedBuffer.Buffer->GetRHIUnchecked(), 0, UploadedBuffer.DataSize, RLM_WriteOnly);
-				FMemory::Memcpy(DestPtr, UploadedBuffer.Data, UploadedBuffer.DataSize);
-				RHICmdListUpload.UnlockBuffer(UploadedBuffer.Buffer->GetRHIUnchecked());
-
-				if (UploadedBuffer.bUseFreeCallbacks)
+				const uint32 DataSize = Buffer->Desc.GetSize();
+				void* DestPtr = RHICmdListUpload.LockBuffer(Buffer->GetRHIUnchecked(), 0, DataSize, RLM_WriteOnly);
+				UploadedBuffer.DataFillCallback(DestPtr, DataSize);
+				RHICmdListUpload.UnlockBuffer(Buffer->GetRHIUnchecked());
+			}
+			else
+			{
+				if (UploadedBuffer.bUseDataCallbacks)
 				{
-					UploadedBuffer.DataFreeCallback(UploadedBuffer.Data);
+					UploadedBuffer.Data = UploadedBuffer.DataCallback();
+					UploadedBuffer.DataSize = UploadedBuffer.DataSizeCallback();
+				}
+
+				if (UploadedBuffer.Data && UploadedBuffer.DataSize)
+				{
+					check(UploadedBuffer.DataSize <= Buffer->Desc.GetSize());
+					void* DestPtr = RHICmdListUpload.LockBuffer(Buffer->GetRHIUnchecked(), 0, UploadedBuffer.DataSize, RLM_WriteOnly);
+					FMemory::Memcpy(DestPtr, UploadedBuffer.Data, UploadedBuffer.DataSize);
+					RHICmdListUpload.UnlockBuffer(Buffer->GetRHIUnchecked());
 				}
 			}
 		}
-
-		UploadedBuffers.Reset();
-	};
-
-	if (bParallelSetupEnabled)
-	{
-		SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::SubmitBufferUploads", FColor::Magenta);
-
-		return UE::Tasks::Launch(TEXT("FRDGBuilder::SubmitBufferUploads"), [this, SubmitUploadsLambda]
-		{
-			FTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
-			RHICmdListBufferUploads = new FRHICommandList(FRHIGPUMask::All());
-			RHICmdListBufferUploads->SwitchPipeline(ERHIPipeline::Graphics);
-			SubmitUploadsLambda(*RHICmdListBufferUploads);
-			RHICmdListBufferUploads->FinishRecording();
-
-		}, LowLevelTasks::ETaskPriority::High);
 	}
-	else
-	{
-		SubmitUploadsLambda(RHICmdList);
-		return {};
-	}
+
+	UploadedBuffers.Reset();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2551,12 +2520,14 @@ UE::Tasks::FTask FRDGBuilder::SubmitBufferUploads()
 void FRDGBuilder::SetupParallelExecute()
 {
 	SCOPED_NAMED_EVENT(SetupParallelExecute, FColor::Emerald);
-	FTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
-
+	FRDGAllocatorScope AllocatorScope(Allocators.Task);
 	TArray<FRDGPass*, TInlineAllocator<64, FRDGArrayAllocator>> ParallelPassCandidates;
 	uint32 ParallelPassCandidatesWorkload = 0;
 	bool bDispatchAfterExecute = false;
 	bool bParallelTranslate = false;
+
+	GPUScopeStacks.ReserveOps(Passes.Num());
+	IF_RDG_CPU_SCOPES(CPUScopeStacks.ReserveOps());
 
 	const auto FlushParallelPassCandidates = [&]()
 	{
@@ -2606,18 +2577,18 @@ void FRDGBuilder::SetupParallelExecute()
 		{
 			FRDGPass* PassBegin = ParallelPassCandidates[PassBeginIndex];
 			PassBegin->bParallelExecuteBegin = 1;
-			PassBegin->ParallelPassSetIndex = ParallelPassSets.Num();
+			PassBegin->ParallelPassSetIndex = ParallelExecute.ParallelPassSets.Num();
 
 			FRDGPass* PassEnd = ParallelPassCandidates[PassEndIndex - 1];
 			PassEnd->bParallelExecuteEnd = 1;
-			PassEnd->ParallelPassSetIndex = ParallelPassSets.Num();
+			PassEnd->ParallelPassSetIndex = ParallelExecute.ParallelPassSets.Num();
 
 			for (int32 PassIndex = PassBeginIndex; PassIndex < PassEndIndex; ++PassIndex)
 			{
 				ParallelPassCandidates[PassIndex]->bParallelExecute = 1;
 			}
 
-			FParallelPassSet& ParallelPassSet = ParallelPassSets.Emplace_GetRef();
+			FParallelPassSet& ParallelPassSet = ParallelExecute.ParallelPassSets.Emplace_GetRef();
 			ParallelPassSet.Passes.Append(ParallelPassCandidates.GetData() + PassBeginIndex, ParallelPassCandidateCount);
 			ParallelPassSet.bDispatchAfterExecute = bDispatchAfterExecute;
 			ParallelPassSet.bParallelTranslate = bParallelTranslate;
@@ -2629,7 +2600,7 @@ void FRDGBuilder::SetupParallelExecute()
 		bParallelTranslate = false;
 	};
 
-	ParallelPassSets.Reserve(32);
+	ParallelExecute.ParallelPassSets.Reserve(32);
 	ParallelPassCandidates.Emplace(ProloguePass);
 
 	for (FRDGPassHandle PassHandle = GetProloguePassHandle() + 1; PassHandle < GetEpiloguePassHandle(); ++PassHandle)
@@ -2659,7 +2630,11 @@ void FRDGBuilder::SetupParallelExecute()
 		bParallelTranslate |= bPassHasParallelTranslate;
 
 		ParallelPassCandidates.Emplace(Pass);
-		ParallelPassCandidatesWorkload += Pass->Workload;
+
+		if (!Pass->bSkipRenderPassBegin && !Pass->bSkipRenderPassEnd)
+		{
+			ParallelPassCandidatesWorkload += Pass->Workload;
+		}
 
 		if (ParallelPassCandidatesWorkload >= (uint32)GRDGParallelExecutePassMax)
 		{
@@ -2684,8 +2659,8 @@ void FRDGBuilder::SetupParallelExecute()
 
 		if (Pass->bParallelExecuteBegin)
 		{
-			FParallelPassSet& ParallelPassSet = ParallelPassSets[Pass->ParallelPassSetIndex];
-			ParallelPassSet.BreadcrumbStateBegin = BreadcrumbState->Copy(Allocator);
+			FParallelPassSet& ParallelPassSet = ParallelExecute.ParallelPassSets[Pass->ParallelPassSetIndex];
+			ParallelPassSet.BreadcrumbStateBegin = BreadcrumbState->Copy(Allocators.Task);
 			ParallelPassSet.BreadcrumbStateEnd = ParallelPassSet.BreadcrumbStateBegin;
 		}
 
@@ -2694,34 +2669,27 @@ void FRDGBuilder::SetupParallelExecute()
 
 		if (Pass->bParallelExecuteEnd)
 		{
-			FParallelPassSet& ParallelPassSet = ParallelPassSets[Pass->ParallelPassSetIndex];
+			FParallelPassSet& ParallelPassSet = ParallelExecute.ParallelPassSets[Pass->ParallelPassSetIndex];
 
 			if (ParallelPassSet.BreadcrumbStateEnd->Version != BreadcrumbState->Version)
 			{
-				ParallelPassSet.BreadcrumbStateEnd = BreadcrumbState->Copy(Allocator);
+				ParallelPassSet.BreadcrumbStateEnd = BreadcrumbState->Copy(Allocators.Task);
 			}
 		}
 	}
 #endif
-}
 
-void FRDGBuilder::DispatchParallelExecute()
-{
-	SCOPED_NAMED_EVENT(DispatchParallelExecute, FColor::Emerald);
+	check(ParallelExecute.Tasks.IsEmpty());
+	ParallelExecute.Tasks.Reserve(ParallelExecute.ParallelPassSets.Num());
+	ParallelExecute.DispatchTaskEvent.Emplace(UE_SOURCE_LOCATION);
 
-	check(ParallelExecuteEvents.IsEmpty());
-	ParallelExecuteEvents.Reserve(ParallelPassSets.Num());
-
-	for (FParallelPassSet& ParallelPassSet : ParallelPassSets)
+	for (FParallelPassSet& ParallelPassSet : ParallelExecute.ParallelPassSets)
 	{
 		FRHICommandList* RHICmdListPass = new FRHICommandList(FRHIGPUMask::All());
 		ParallelPassSet.CmdList = RHICmdListPass;
 		IF_RHI_WANT_BREADCRUMB_EVENTS(RHICmdListPass->ImportBreadcrumbState(*ParallelPassSet.BreadcrumbStateBegin));
 
-		// Mark this set as initialized so that it can be submitted.
-		FPlatformAtomics::AtomicStore(&ParallelPassSet.bInitialized, 1);
-
-		ParallelExecuteEvents.Emplace(UE::Tasks::Launch(TEXT("FRDGBuilder::ParallelExecute"), [this, &ParallelPassSet, RHICmdListPass]
+		ParallelExecute.Tasks.Emplace(UE::Tasks::Launch(TEXT("FRDGBuilder::ParallelExecute"), [this, &ParallelPassSet, RHICmdListPass]
 		{
 			SCOPED_NAMED_EVENT(ParallelExecute, FColor::Emerald);
 			FOptionalTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
@@ -2733,53 +2701,185 @@ void FRDGBuilder::DispatchParallelExecute()
 
 			RHICmdListPass->FinishRecording();
 
-		}, LowLevelTasks::ETaskPriority::High));
+		}, *ParallelExecute.DispatchTaskEvent, LowLevelTasks::ETaskPriority::High));
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-UE::Tasks::FTask FRDGBuilder::CreateUniformBuffers()
+void FRDGBuilder::AllocatePooledTextures(FRHICommandListBase& InRHICmdList, TConstArrayView<FCollectResourceOp> Ops)
+{
+	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::AllocatePooledTextures", FColor::Magenta);
+	UE::TScopeLock Lock(GRenderTargetPool.Mutex);
+
+	for (FCollectResourceOp Op : Ops)
+	{
+		FRDGTexture* Texture = Textures[FRDGTextureHandle(Op.ResourceIndex)];
+
+		switch (Op.Op)
+		{
+		case FCollectResourceOp::EOp::Allocate:
+			SetPooledRenderTargetRHI(Texture, AllocatePooledRenderTargetRHI(InRHICmdList, Texture));
+			break;
+		case FCollectResourceOp::EOp::Deallocate:
+			if (static_cast<FPooledRenderTarget*>(Texture->RenderTarget)->IsTracked())
+			{
+				// This releases the reference without invoking a virtual function call.
+				TRefCountPtr<FPooledRenderTarget>(MoveTemp(Texture->Allocation));
+			}
+			break;
+		}
+	}
+
+	for (FCollectResourceOp Op : Ops)
+	{
+		FRDGTexture* Texture = Textures[FRDGTextureHandle(Op.ResourceIndex)];
+
+		if (!Texture->bSkipLastTransition)
+		{
+			// Hold the last reference in a chain of pooled allocations.
+			Texture->Allocation = Texture->RenderTarget;
+		}
+	}
+}
+
+void FRDGBuilder::AllocatePooledBuffers(FRHICommandListBase& InRHICmdList, TConstArrayView<FCollectResourceOp> Ops)
+{
+	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::AllocatePooledBuffers", FColor::Magenta);
+	UE::TScopeLock Lock(GRenderGraphResourcePool.Mutex);
+
+	for (FCollectResourceOp Op : Ops)
+	{
+		FRDGBuffer* Buffer = Buffers[FRDGBufferHandle(Op.ResourceIndex)];
+
+		switch (Op.Op)
+		{
+		case FCollectResourceOp::EOp::Allocate:
+			SetPooledBufferRHI(Buffer, AllocatePooledBufferRHI(InRHICmdList, Buffer));
+			break;
+		case FCollectResourceOp::EOp::Deallocate:
+			Buffer->Allocation = nullptr;
+			break;
+		}
+	}
+
+	for (FCollectResourceOp Op : Ops)
+	{
+		FRDGBuffer* Buffer = Buffers[FRDGBufferHandle(Op.ResourceIndex)];
+
+		if (!Buffer->bSkipLastTransition)
+		{
+			// Hold the last reference in a chain of pooled allocations.
+			Buffer->Allocation = Buffer->PooledBuffer;
+		}
+	}
+}
+
+void FRDGBuilder::AllocateTransientResources(TConstArrayView<FCollectResourceOp> Ops)
+{
+	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::AllocateTransientResources", FColor::Magenta);
+	for (FCollectResourceOp Op : Ops)
+	{
+		const FRDGPassHandle PassHandle = Op.PassHandle;
+
+		switch (Op.Op)
+		{
+		case FCollectResourceOp::EOp::Allocate:
+		{
+			if (Op.ResourceType == ERDGViewableResourceType::Buffer)
+			{
+				FRDGBuffer* Buffer = Buffers[FRDGBufferHandle(Op.ResourceIndex)];
+				FRHITransientBuffer* TransientBuffer = TransientResourceAllocator->CreateBuffer(Translate(Buffer->Desc), Buffer->Name, PassHandle.GetIndex());
+
+				SetTransientBufferRHI(Buffer, TransientBuffer);
+
+				Buffer->MinAcquirePass = FRDGPassHandle(TransientBuffer->GetAcquirePasses().Min);
+			}
+			else
+			{
+				FRDGTexture* Texture = Textures[FRDGTextureHandle(Op.ResourceIndex)];
+				FRHITransientTexture* TransientTexture = TransientResourceAllocator->CreateTexture(Texture->Desc, Texture->Name, PassHandle.GetIndex());
+
+				if (Texture->bExternal || Texture->bExtracted)
+				{
+					SetPooledRenderTargetRHI(Texture, GRDGTransientResourceAllocator.AllocateRenderTarget(TransientTexture));
+				}
+				else
+				{
+					SetTransientTextureRHI(Texture, TransientTexture);
+				}
+
+				Texture->MinAcquirePass = FRDGPassHandle(TransientTexture->GetAcquirePasses().Min);
+			}
+		}
+		break;
+		case FCollectResourceOp::EOp::Deallocate:
+		{
+			if (Op.ResourceType == ERDGViewableResourceType::Buffer)
+			{
+				FRDGBuffer* Buffer = Buffers[FRDGBufferHandle(Op.ResourceIndex)];
+				FRHITransientBuffer* TransientBuffer = Buffer->TransientBuffer;
+				TransientResourceAllocator->DeallocateMemory(TransientBuffer, PassHandle.GetIndex());
+
+				Buffer->MinDiscardPass = FRDGPassHandle(TransientBuffer->GetDiscardPasses().Min);
+			}
+			else
+			{
+				FRDGTexture* Texture = Textures[FRDGTextureHandle(Op.ResourceIndex)];
+				FRHITransientTexture* TransientTexture = Texture->TransientTexture;
+
+				// Texture is using a transient external render target.
+				if (Texture->RenderTarget)
+				{
+					if (!Texture->bExtracted)
+					{
+						// This releases the reference without invoking a virtual function call.
+						GRDGTransientResourceAllocator.Release(TRefCountPtr<FRDGTransientRenderTarget>(MoveTemp(Texture->Allocation)), PassHandle);
+					}
+				}
+				// Texture is using an internal transient texture.
+				else
+				{
+					TransientResourceAllocator->DeallocateMemory(TransientTexture, PassHandle.GetIndex());
+				}
+
+				if (!TransientTexture->IsAcquired())
+				{
+					Texture->MinDiscardPass = FRDGPassHandle(TransientTexture->GetDiscardPasses().Min);
+				}
+			}
+		}
+		break;
+		}
+	}
+}
+
+void FRDGBuilder::CreateViews(FRHICommandListBase& InRHICmdList, TConstArrayView<FRDGViewHandle> ViewsToCreate)
+{
+	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::CreateViews", FColor::Magenta);
+	for (FRDGViewHandle ViewHandle : ViewsToCreate)
+	{
+		FRDGView* View = Views[ViewHandle];
+
+		if (!View->ResourceRHI)
+		{
+			InitViewRHI(InRHICmdList, View);
+		}
+	}
+}
+
+void FRDGBuilder::CreateUniformBuffers(TConstArrayView<FRDGUniformBufferHandle> UniformBuffersToCreate)
 {
 	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::CreateUniformBuffers", FColor::Magenta);
-
-	const int32 ParallelDispatchThreshold = 4;
-
-	const auto CreateUniformBuffersFunction = [this]
+	for (FRDGUniformBufferHandle UniformBufferHandle : UniformBuffersToCreate)
 	{
-		SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::CreateUniformBuffers", FColor::Magenta);
-		for (FRDGUniformBufferHandle UniformBufferHandle : UniformBuffersToCreate)
+		FRDGUniformBuffer* UniformBuffer = UniformBuffers[UniformBufferHandle];
+
+		if (!UniformBuffer->ResourceRHI)
 		{
-			UniformBuffers[UniformBufferHandle]->InitRHI();
+			UniformBuffer->InitRHI();
 		}
-		UniformBuffersToCreate.Reset();
-	};
-
-	UE::Tasks::FTask Task;
-
-	if (bParallelSetupEnabled && UniformBuffersToCreate.Num() > ParallelDispatchThreshold)
-	{
-		Task = UE::Tasks::Launch(TEXT("FRDGBuilder::CreateUniformBuffer"),
-			[CreateUniformBuffersFunction]
-		{
-			FTaskTagScope Scope(ETaskTag::EParallelRenderingThread);
-			CreateUniformBuffersFunction();
-
-		}, LowLevelTasks::ETaskPriority::High);
 	}
-	else
-	{
-		CreateUniformBuffersFunction();
-	}
-
-	return Task;
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-void FRDGBuilder::AddProloguePass()
-{
-	ProloguePass = SetupEmptyPass(Passes.Allocate<FRDGSentinelPass>(Allocator, RDG_EVENT_NAME("Graph Prologue (Graphics)")));
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2933,7 +3033,7 @@ void FRDGBuilder::ExecutePass(FRDGPass* Pass, FRHIComputeCommandList& RHICmdList
 
 	if (GRDGDebugFlushGPU)
 	{
-		check(!GRDGAsyncCompute && !bParallelExecuteEnabled);
+		check(!GRDGAsyncCompute && !ParallelExecute.bEnabled);
 		RHICmdList.SubmitCommandsAndFlushGPU();
 		RHICmdList.BlockUntilGPUIdle();
 	}
@@ -2941,212 +3041,625 @@ void FRDGBuilder::ExecutePass(FRDGPass* Pass, FRHIComputeCommandList& RHICmdList
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FRDGBuilder::BeginResourcesRHI(FRDGPass* ResourcePass, FRDGPassHandle ExecutePassHandle)
+void FRDGBuilder::CollectAllocations(FCollectResourceContext& Context, FRDGPass* Pass)
 {
-	for (FRDGPass* PassToBegin : ResourcePass->ResourcesToBegin)
+	for (FRDGPass* PassToBegin : Pass->ResourcesToBegin)
 	{
-		for (const auto& PassState : PassToBegin->TextureStates)
+	  for (FRDGPass::FTextureState& PassState : PassToBegin->TextureStates)
+	  {
+		  CollectAllocateTexture(Context, Pass->Handle, PassState.Texture);
+	  }
+  
+	  for (FRDGPass::FBufferState& PassState : PassToBegin->BufferStates)
+	  {
+		  CollectAllocateBuffer(Context, Pass->Handle, PassState.Buffer);
+	  }
+  
+	  if (!IsImmediateMode())
+	  {
+		  for (FRDGUniformBufferHandle UniformBufferHandle : PassToBegin->UniformBuffers)
+		  {
+			  if (auto BitRef = Context.UniformBufferMap[UniformBufferHandle]; BitRef)
+			  {
+				  Context.UniformBuffers.Add(UniformBufferHandle);
+				  BitRef = false;
+			  }
+		  }
+  
+		  for (FRDGViewHandle ViewHandle : PassToBegin->Views)
+		  {
+			  if (auto BitRef = Context.ViewMap[ViewHandle]; BitRef)
+			  {
+				  Context.Views.Add(ViewHandle);
+				  BitRef = false;
+			  }
+		  }
+	  }
+	  else
+	  {
+		  Context.UniformBuffers = PassToBegin->UniformBuffers;
+		  Context.Views = PassToBegin->Views;
+	  }
+	}
+}
+
+void FRDGBuilder::CollectDeallocations(FCollectResourceContext& Context, FRDGPass* Pass)
+{
+	for (FRDGPass* PassToEnd : Pass->ResourcesToEnd)
+	{
+		for (FRDGPass::FTextureState& PassState : PassToEnd->TextureStates)
 		{
-			BeginResourceRHI(ExecutePassHandle, PassState.Texture);
+			CollectDeallocateTexture(Context, Pass->Handle, PassState.Texture, PassState.ReferenceCount);
 		}
 
-		for (const auto& PassState : PassToBegin->BufferStates)
+		for (FRDGPass::FBufferState& PassState : PassToEnd->BufferStates)
 		{
-			BeginResourceRHI(ExecutePassHandle, PassState.Buffer);
-		}
-
-		for (FRDGUniformBufferHandle UniformBufferHandle : PassToBegin->UniformBuffers)
-		{
-			if (FRDGUniformBuffer* UniformBuffer = UniformBuffers[UniformBufferHandle]; !UniformBuffer->bQueuedForCreate)
-			{
-				UniformBuffer->bQueuedForCreate = true;
-				UniformBuffersToCreate.Add(UniformBufferHandle);
-			}
-		}
-
-		for (FRDGViewHandle ViewHandle : PassToBegin->Views)
-		{
-			InitRHI(Views[ViewHandle]);
+			CollectDeallocateBuffer(Context, Pass->Handle, PassState.Buffer, PassState.ReferenceCount);
 		}
 	}
 }
 
-void FRDGBuilder::EndResourcesRHI(FRDGPass* ResourcePass, FRDGPassHandle ExecutePassHandle)
+void FRDGBuilder::CollectAllocateTexture(FCollectResourceContext& Context, FRDGPassHandle PassHandle, FRDGTextureRef Texture)
 {
-	for (FRDGPass* PassToEnd : ResourcePass->ResourcesToEnd)
+	check(Texture->ReferenceCount > 0 || Texture->bExternal || IsImmediateMode());
+
+#if RDG_ENABLE_DEBUG
 	{
-		for (const auto& PassState : PassToEnd->TextureStates)
+		FRDGPass* Pass = Passes[PassHandle];
+
+		// Cannot begin a resource on an async compute pass.
+		check(Pass->Pipeline == ERHIPipeline::Graphics);
+
+		// Cannot begin a resource within a merged render pass region.
+		checkf(GetPrologueBarrierPassHandle(PassHandle) == PassHandle,
+			TEXT("Cannot begin a resource within a merged render pass. Pass (Handle: %d, Name: %s), Resource %s"), PassHandle.GetIndex(), Pass->GetName(), Texture->Name);
+	}
+#endif
+
+	if (Texture->FirstPass.IsNull())
+	{
+		Texture->FirstPass = PassHandle;
+	}
+
+	if (Texture->bCollectForAllocate)
+	{
+		Texture->bCollectForAllocate = false;
+		check(!Texture->ResourceRHI);
+
+		const FCollectResourceOp AllocateOp = FCollectResourceOp::Allocate(PassHandle, Texture->Handle);
+
+		if (Texture->bTransient)
 		{
-			EndResourceRHI(ExecutePassHandle, PassState.Texture, PassState.ReferenceCount);
+			Context.TransientResources.Emplace(AllocateOp);
+
+	#if RDG_STATS
+			GRDGStatTransientTextureCount++;
+	#endif
+		}
+		else
+		{
+			Context.PooledTextures.Emplace(AllocateOp);
+		}
+	}
+}
+
+void FRDGBuilder::CollectDeallocateTexture(FCollectResourceContext& Context, FRDGPassHandle PassHandle, FRDGTexture* Texture, uint32 ReferenceCount)
+{
+	check(!IsImmediateMode());
+	check(Texture->ReferenceCount != FRDGViewableResource::DeallocatedReferenceCount);
+	check(Texture->ReferenceCount >= ReferenceCount);
+	Texture->ReferenceCount -= ReferenceCount;
+
+	if (Texture->ReferenceCount == 0)
+	{
+		check(!Texture->bCollectForAllocate);
+		const FCollectResourceOp DeallocateOp = FCollectResourceOp::Deallocate(PassHandle, Texture->Handle);
+
+		if (Texture->bTransient)
+		{
+			Context.TransientResources.Emplace(DeallocateOp);
+		}
+		else
+		{
+			Context.PooledTextures.Emplace(DeallocateOp);
 		}
 
-		for (const auto& PassState : PassToEnd->BufferStates)
+		Texture->LastPass = PassHandle;
+		Texture->ReferenceCount = FRDGViewableResource::DeallocatedReferenceCount;
+	}
+}
+
+void FRDGBuilder::CollectAllocateBuffer(FCollectResourceContext& Context, FRDGPassHandle PassHandle, FRDGBuffer* Buffer)
+{
+	check(Buffer->ReferenceCount > 0 || IsImmediateMode());
+
+#if RDG_ENABLE_DEBUG
+	{
+		const FRDGPass* Pass = Passes[PassHandle];
+
+		// Cannot begin a resource on an async compute pass.
+		check(Pass->Pipeline == ERHIPipeline::Graphics);
+
+		// Cannot begin a resource within a merged render pass region.
+		checkf(GetPrologueBarrierPassHandle(PassHandle) == PassHandle,
+			TEXT("Cannot begin a resource within a merged render pass. Pass (Handle: %d, Name: %s), Resource %s"), PassHandle.GetIndex(), Pass->GetName(), Buffer->Name);
+	}
+#endif
+
+	if (Buffer->FirstPass.IsNull())
+	{
+		Buffer->FirstPass = PassHandle;
+	}
+
+	if (Buffer->bCollectForAllocate)
+	{
+		Buffer->bCollectForAllocate = false;
+		check(!Buffer->ResourceRHI);
+
+		const FCollectResourceOp AllocateOp = FCollectResourceOp::Allocate(PassHandle, Buffer->Handle);
+
+		if (Buffer->bTransient)
 		{
-			EndResourceRHI(ExecutePassHandle, PassState.Buffer, PassState.ReferenceCount);
+			Context.TransientResources.Emplace(AllocateOp);
+
+#if RDG_STATS
+			GRDGStatTransientBufferCount++;
+#endif
 		}
+		else
+		{
+			Context.PooledBuffers.Emplace(AllocateOp);
+		}
+	}
+}
+
+void FRDGBuilder::CollectDeallocateBuffer(FCollectResourceContext& Context, FRDGPassHandle PassHandle, FRDGBuffer* Buffer, uint32 ReferenceCount)
+{
+	check(!IsImmediateMode());
+	check(Buffer->ReferenceCount != FRDGViewableResource::DeallocatedReferenceCount);
+	check(Buffer->ReferenceCount >= ReferenceCount);
+	Buffer->ReferenceCount -= ReferenceCount;
+
+	if (Buffer->ReferenceCount == 0)
+	{
+		const FCollectResourceOp DeallocateOp = FCollectResourceOp::Deallocate(PassHandle, Buffer->Handle);
+
+		if (Buffer->bTransient)
+		{
+			Context.TransientResources.Emplace(DeallocateOp);
+		}
+		else
+		{
+			Context.PooledBuffers.Emplace(DeallocateOp);
+		}
+
+		Buffer->LastPass = PassHandle;
+		Buffer->ReferenceCount = FRDGViewableResource::DeallocatedReferenceCount;
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FRDGBuilder::CollectPassBarriers(FRDGPass* Pass)
+void FRDGBuilder::CompilePassBarriers()
 {
-	IF_RDG_ENABLE_DEBUG(ConditionalDebugBreak(RDG_BREAKPOINT_PASS_COMPILE, BuilderName.GetTCHAR(), Pass->GetName()));
+	// Walk the culled graph and compile barriers for each subresource. Certain transitions are redundant; read-to-read, for example.
+	// We can avoid them by traversing and merging compatible states together. The merging states removes a transition, but the merging
+	// heuristic is conservative and choosing not to merge doesn't necessarily mean a transition is performed. They are two distinct steps.
+	// Merged states track the first and last pass used for all pipelines.
+
+	SCOPED_NAMED_EVENT(CompileBarriers, FColor::Emerald);
+	FRDGAllocatorScope AllocatorScope(Allocators.Transition);
+
+	for (FRDGPassHandle PassHandle = GetProloguePassHandle() + 1; PassHandle < GetEpiloguePassHandle(); ++PassHandle)
+	{
+		FRDGPass* Pass = Passes[PassHandle];
+
+		if (Pass->bCulled)
+		{
+			continue;
+		}
+
+		const ERHIPipeline PassPipeline = Pass->Pipeline;
+
+		const auto MergeSubresourceStates = [&](ERDGViewableResourceType ResourceType, FRDGSubresourceState*& PassMergeState, FRDGSubresourceState*& ResourceMergeState, FRDGSubresourceState* PassState)
+		{
+			if (!ResourceMergeState || !FRDGSubresourceState::IsMergeAllowed(ResourceType, *ResourceMergeState, *PassState))
+			{
+				// Use the new pass state as the merge state for future passes.
+				ResourceMergeState = PassState;
+			}
+			else
+			{
+				// Merge the pass state into the merged state.
+				ResourceMergeState->Access |= PassState->Access;
+
+				FRDGPassHandle& FirstPassHandle = ResourceMergeState->FirstPass[PassPipeline];
+
+				if (FirstPassHandle.IsNull())
+				{
+					FirstPassHandle = PassHandle;
+				}
+
+				ResourceMergeState->LastPass[PassPipeline] = PassHandle;
+			}
+
+			PassMergeState = ResourceMergeState;
+		};
+
+		for (auto& PassState : Pass->TextureStates)
+		{
+			FRDGTexture* Texture = PassState.Texture;
+
+		#if RDG_STATS
+			GRDGStatTextureReferenceCount += PassState.ReferenceCount;
+		#endif
+
+			for (int32 Index = 0; Index < PassState.State.Num(); ++Index)
+			{
+				if (!PassState.State[Index])
+				{
+					continue;
+				}
+
+				MergeSubresourceStates(ERDGViewableResourceType::Texture, PassState.MergeState[Index], Texture->MergeState[Index], PassState.State[Index]);
+			}
+		}
+
+		for (auto& PassState : Pass->BufferStates)
+		{
+			FRDGBuffer* Buffer = PassState.Buffer;
+
+		#if RDG_STATS
+			GRDGStatBufferReferenceCount += PassState.ReferenceCount;
+		#endif
+
+			MergeSubresourceStates(ERDGViewableResourceType::Buffer, PassState.MergeState, Buffer->MergeState, &PassState.State);
+		}
+	}
+}
+
+void FRDGBuilder::CollectPassBarriers()
+{
+	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::CollectBarriers", FColor::Magenta);
+	SCOPE_CYCLE_COUNTER(STAT_RDG_CollectBarriersTime);
+	CSV_SCOPED_TIMING_STAT_EXCLUSIVE_CONDITIONAL(RDG_CollectBarriers, GRDGVerboseCSVStats != 0);
+	FRDGAllocatorScope AllocatorScope(Allocators.Transition);
+
+	for (FRDGPassHandle PassHandle = GetProloguePassHandle() + 1; PassHandle < GetEpiloguePassHandle(); ++PassHandle)
+	{
+		CollectPassBarriers(PassHandle);
+	}
+}
+
+void FRDGBuilder::CollectPassBarriers(FRDGPassHandle PassHandle)
+{
+	IF_RDG_ENABLE_DEBUG(ConditionalDebugBreak(RDG_BREAKPOINT_PASS_COMPILE, BuilderName.GetTCHAR(), Passes[PassHandle]->GetName()));
+
+	FRDGPass* Pass = Passes[PassHandle];
+
+	if (Pass->bCulled || Pass->bEmptyParameters)
+	{
+		return;
+	}
+
 
 	for (auto& PassState : Pass->TextureStates)
 	{
-		FRDGTextureRef Texture = PassState.Texture;
-		AddTransition(Pass->Handle, Texture, PassState.MergeState);
+		FRDGTexture* Texture = PassState.Texture;
+
+		AddTextureTransition(PassState.Texture, Texture->State, PassState.MergeState, [Texture] (FRDGSubresourceState* StateAfter, int32 SubresourceIndex)
+		{
+			if (!Texture->FirstState[SubresourceIndex])
+			{
+				Texture->FirstState[SubresourceIndex] = StateAfter;
+				return IsImmediateMode();
+			}
+			return true;
+		});
 
 		IF_RDG_ENABLE_TRACE(Trace.AddTexturePassDependency(Texture, Pass));
 	}
 
 	for (auto& PassState : Pass->BufferStates)
 	{
-		FRDGBufferRef Buffer = PassState.Buffer;
-		AddTransition(Pass->Handle, Buffer, *PassState.MergeState);
+		FRDGBuffer* Buffer = PassState.Buffer;
+
+		AddBufferTransition(PassState.Buffer, Buffer->State, PassState.MergeState, [Buffer] (FRDGSubresourceState* StateAfter)
+		{
+			if (!Buffer->FirstState)
+			{
+				Buffer->FirstState = StateAfter;
+				Buffer->FirstState->bReservedCommit = Buffer->PendingCommitSize > 0;
+				return IsImmediateMode();
+			}
+			return true;
+		});
 
 		IF_RDG_ENABLE_TRACE(Trace.AddBufferPassDependency(Buffer, Pass));
 	}
 }
 
-void FRDGBuilder::CreatePassBarriers(TFunctionRef<void()> PreWork)
+void FRDGBuilder::CreatePassBarriers()
 {
-	const int32 NumBarriersPerTask = 32;
-
-	if (bParallelSetupEnabled && TransitionCreateQueue.Num() > NumBarriersPerTask)
+	struct FTaskContext
 	{
-		ParallelForWithPreWork(TEXT("FRDGBuilder::CreatePassBarriers"), TransitionCreateQueue.Num(), NumBarriersPerTask, [this](int32 Index)
-		{
-			TransitionCreateQueue[Index]->CreateTransition();
+		TArray<FRHITransitionInfo, FConcurrentLinearArrayAllocator> Transitions;
+	};
 
-		}, PreWork);
-	}
-	else
+	const auto CreateTransition = [this] (FTaskContext& Context, FRDGBarrierBatchBegin* BeginBatch)
 	{
-		PreWork();
+		Context.Transitions.Reset(BeginBatch->Transitions.Num());
 
-		SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::CreatePassBarriers", FColor::Magenta);
-
-		for (FRDGBarrierBatchBegin* BeginBatch : TransitionCreateQueue)
+		for (FRDGTransitionInfo InfoRDG : BeginBatch->Transitions)
 		{
-			BeginBatch->CreateTransition();
+			FRHITransitionInfo& InfoRHI = Context.Transitions.Emplace_GetRef();
+			InfoRHI.AccessBefore = InfoRDG.AccessBefore;
+			InfoRHI.AccessAfter  = InfoRDG.AccessAfter;
+			InfoRHI.ArraySlice   = InfoRDG.ArraySlice;
+			InfoRHI.MipIndex     = InfoRDG.MipIndex;
+			InfoRHI.PlaneSlice   = InfoRDG.PlaneSlice;
+			InfoRHI.Flags        = InfoRDG.Flags;
+
+			if (InfoRDG.Type == ERDGViewableResourceType::Texture)
+			{
+				InfoRHI.Resource = Textures[FRDGTextureHandle(InfoRDG.Handle)]->ResourceRHI;
+				InfoRHI.Type = FRHITransitionInfo::EType::Texture;
+			}
+			else
+			{
+				FRDGBuffer* Buffer = Buffers[FRDGBufferHandle(InfoRDG.Handle)];
+
+				InfoRHI.Resource = Buffer->ResourceRHI;
+				InfoRHI.Type = FRHITransitionInfo::EType::Buffer;
+
+				if (InfoRDG.bReservedCommit)
+				{
+					InfoRHI.CommitInfo.Emplace(Buffer->PendingCommitSize);
+				}
+			}
 		}
-	}
+
+		BeginBatch->CreateTransition(Context.Transitions);
+	};
+
+	TArray<FTaskContext, TInlineAllocator<1, FRDGArrayAllocator>> TaskContexts;
+	ParallelForWithTaskContext(TEXT("FRDGBuilder::CreatePassBarriers"), TaskContexts, TransitionCreateQueue.Num(), 1, [&](FTaskContext& TaskContext, int32 Index)
+	{
+		CreateTransition(TaskContext, TransitionCreateQueue[Index]);
+
+	}, ParallelSetup.bEnabled ? EParallelForFlags::None : EParallelForFlags::ForceSingleThread);
 
 	TransitionCreateQueue.Reset();
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FRDGBuilder::AddEpilogueTransition(FRDGTextureRef Texture)
+void FRDGBuilder::FinalizeResources()
 {
-	if (!Texture->HasRHI() || Texture->IsCulled() || !Texture->bLastOwner)
+	SCOPED_NAMED_EVENT_TEXT("FRDGBuilder::FinalizeResources", FColor::Magenta);
+	FRDGAllocatorScope AllocatorScope(Allocators.Transition);
+
 	{
-		return;
+		SCOPED_NAMED_EVENT_TEXT("Textures", FColor::Magenta);
+		Textures.Enumerate([&](FRDGTextureRef Texture)
+		{
+			if (Texture->FirstPass.IsValid())
+			{
+				if (!IsImmediateMode())
+				{
+					AddFirstTextureTransition(Texture);
+				}
+
+				if (!Texture->bSkipLastTransition)
+				{
+					AddLastTextureTransition(Texture);
+				}
+			}
+
+			if (Texture->Allocation)
+			{
+				ActivePooledTextures.Emplace(MoveTemp(Texture->Allocation));
+			}
+		});
 	}
 
+	{
+		SCOPED_NAMED_EVENT_TEXT("Buffers", FColor::Magenta);
+		Buffers.Enumerate([&](FRDGBufferRef Buffer)
+		{
+			if (Buffer->FirstPass.IsValid())
+			{
+				if (!IsImmediateMode())
+				{
+					AddFirstBufferTransition(Buffer);
+				}
+
+				if (!Buffer->bSkipLastTransition)
+				{
+					AddLastBufferTransition(Buffer);
+				}
+			}
+
+			if (Buffer->Allocation)
+			{
+				ActivePooledBuffers.Emplace(MoveTemp(Buffer->Allocation));
+			}
+		});
+	}
+
+	CreatePassBarriers();
+}
+
+void FRDGBuilder::AddFirstTextureTransition(FRDGTexture* Texture)
+{
+	check(!IsImmediateMode());
+	check(Texture->HasRHI());
+
+	FRDGTextureSubresourceState* StateBefore = &ScratchTextureState;
+	FRDGSubresourceState& SubresourceStateBefore = *AllocSubresource(FRDGSubresourceState(ERHIPipeline::Graphics, GetProloguePassHandle()));
+
+	if (Texture->PreviousOwner.IsValid())
+	{
+		// Previous state is the last used state of RDG texture that previously aliased the underlying pooled texture.
+		StateBefore = &Textures[Texture->PreviousOwner]->State;
+
+		for (int32 Index = 0; Index < Texture->FirstState.Num(); ++Index)
+		{
+			// If the new owner doesn't touch the subresource but the previous owner did, pull the previous owner subresource in so that the last transition is respected.
+			if (!Texture->FirstState[Index])
+			{
+				Texture->State[Index] = (*StateBefore)[Index];
+			}
+			// If the previous owner didn't touch the subresource but the new owner does, assign the prologue subresource state so the first transition is respected.
+			else if (!(*StateBefore)[Index])
+			{
+				(*StateBefore)[Index] = &SubresourceStateBefore;
+			}
+		}
+	}
+	else
+	{
+		if (Texture->MinAcquirePass.IsValid())
+		{
+			AddAliasingTransition(Texture->MinAcquirePass, Texture->FirstPass, Texture, FRHITransientAliasingInfo::Acquire(Texture->GetRHI(), Texture->AliasingOverlaps));
+
+			SubresourceStateBefore.SetPass(ERHIPipeline::Graphics, Texture->MinAcquirePass);
+			SubresourceStateBefore.Access = ERHIAccess::Discard;
+		}
+		else if (!Texture->bSplitFirstTransition)
+		{
+			SubresourceStateBefore.SetPass(ERHIPipeline::Graphics, Texture->FirstPass);
+		}
+
+		InitTextureSubresources(*StateBefore, Texture->Layout, &SubresourceStateBefore);
+	}
+
+	AddTextureTransition(Texture, *StateBefore, Texture->FirstState);
+
+	ScratchTextureState.Reset();
+}
+
+void FRDGBuilder::AddLastTextureTransition(FRDGTexture* Texture)
+{
 	check(IsImmediateMode() || Texture->bExtracted || Texture->ReferenceCount == FRDGViewableResource::DeallocatedReferenceCount);
+	check(Texture->HasRHI());
 
-	if (!EnumHasAnyFlags(Texture->Flags, ERDGTextureFlags::SkipTracking))
+	const FRDGPassHandle EpiloguePassHandle = GetEpiloguePassHandle();
+
+	FRDGSubresourceState* SubresourceStateBefore = nullptr;
+	FRDGSubresourceState& SubresourceStateAfter = *AllocSubresource();
+	SubresourceStateAfter.SetPass(ERHIPipeline::Graphics, EpiloguePassHandle);
+
+	// Texture is using the RHI transient allocator. Transition it back to Discard in the final pass it is used.
+	if (Texture->MinDiscardPass.IsValid())
 	{
-		const FRDGPassHandle EpiloguePassHandle = GetEpiloguePassHandle();
+		FRDGPassHandle MaxDiscardPass = FRDGPassHandle(FMath::Min<uint32>(Texture->TransientTexture->GetDiscardPasses().Max, GetEpiloguePassHandle().GetIndex()));
+		AddAliasingTransition(Texture->MinDiscardPass, MaxDiscardPass, Texture, FRHITransientAliasingInfo::Discard(Texture->GetRHIUnchecked()));
 
-		FRDGSubresourceState SubresourceState;
-		SubresourceState.SetPass(ERHIPipeline::Graphics, EpiloguePassHandle);
+		SubresourceStateAfter.SetPass(ERHIPipeline::Graphics, MaxDiscardPass);
+		SubresourceStateAfter.Access = ERHIAccess::Discard;
+	}
+	else
+	{
+		SubresourceStateAfter.Access = Texture->EpilogueAccess;
 
-		// Texture is using the RHI transient allocator. Transition it back to Discard in the final pass it is used.
-		if (Texture->bTransient && !Texture->TransientTexture->IsAcquired())
+		// Transient resources stay in the Discard state.
+		EpilogueResourceAccesses.Emplace(Texture->GetRHI(), SubresourceStateAfter.Access);
+	}
+
+	// Transition any unused (null) sub-resources to the epilogue state since we are assigning a monolithic state across all subresources.
+	for (FRDGSubresourceState*& State : Texture->State)
+	{
+		if (!State)
 		{
-			const TInterval<uint32> DiscardPasses = Texture->TransientTexture->GetDiscardPasses();
-			const FRDGPassHandle MinDiscardPassHandle(DiscardPasses.Min);
-			const FRDGPassHandle MaxDiscardPassHandle(FMath::Min<uint32>(DiscardPasses.Max, EpiloguePassHandle.GetIndex()));
+			if (!SubresourceStateBefore)
+			{
+				SubresourceStateBefore = AllocSubresource();
+				SubresourceStateBefore->SetPass(ERHIPipeline::Graphics, Texture->FirstPass);
+			}
 
-			AddAliasingTransition(MinDiscardPassHandle, MaxDiscardPassHandle, Texture, FRHITransientAliasingInfo::Discard(Texture->GetRHIUnchecked()));
-
-			SubresourceState.SetPass(ERHIPipeline::Graphics, MaxDiscardPassHandle);
-			Texture->EpilogueAccess = ERHIAccess::Discard;
+			State = SubresourceStateBefore;
 		}
-
-		SubresourceState.Access = Texture->EpilogueAccess;
-
-		InitTextureSubresources(ScratchTextureState, Texture->Layout, &SubresourceState);
-		AddTransition(EpiloguePassHandle, Texture, ScratchTextureState);
-		ScratchTextureState.Reset();
-
-		EpilogueResourceAccesses.Emplace(Texture->GetRHI(), Texture->EpilogueAccess);
 	}
 
-	if (Texture->Allocation)
-	{
-		ActivePooledTextures.Emplace(MoveTemp(Texture->Allocation));
-	}
-	else if (!Texture->bTransient)
-	{
-		// Non-transient textures need to be 'resurrected' to hold the last reference in the chain.
-		// Transient textures don't have that restriction since there's no actual pooling happening.
-		ActivePooledTextures.Emplace(Texture->RenderTarget);
-	}
+	InitTextureSubresources(ScratchTextureState, Texture->Layout, &SubresourceStateAfter);
+	AddTextureTransition(Texture, Texture->State, ScratchTextureState);
+	ScratchTextureState.Reset();
 }
 
-void FRDGBuilder::AddEpilogueTransition(FRDGBufferRef Buffer)
+void FRDGBuilder::AddFirstBufferTransition(FRDGBuffer* Buffer)
 {
-	if (!Buffer->HasRHI() || Buffer->IsCulled() || !Buffer->bLastOwner)
+	check(!IsImmediateMode());
+	check(Buffer->HasRHI());
+
+	FRDGSubresourceState* StateBefore = nullptr;
+
+	if (Buffer->PreviousOwner.IsValid())
 	{
-		return;
+		// Previous state is the last used state of RDG buffer that previously aliased the underlying pooled buffer.
+		StateBefore = Buffers[Buffer->PreviousOwner]->State;
 	}
 
-	check(IsImmediateMode() || Buffer->bExtracted || Buffer->ReferenceCount == FRDGViewableResource::DeallocatedReferenceCount);
-
-	if (!EnumHasAnyFlags(Buffer->Flags, ERDGBufferFlags::SkipTracking))
+	if (!StateBefore)
 	{
-		const FRDGPassHandle EpiloguePassHandle = GetEpiloguePassHandle();
+		StateBefore = AllocSubresource();
 
-		FRDGSubresourceState SubresourceState;
-		SubresourceState.SetPass(ERHIPipeline::Graphics, EpiloguePassHandle);
-
-		// Texture is using the RHI transient allocator. Transition it back to Discard in the final pass it is used.
-		if (Buffer->bTransient)
+		if (Buffer->MinAcquirePass.IsValid())
 		{
-			const TInterval<uint32> DiscardPasses = Buffer->TransientBuffer->GetDiscardPasses();
-			const FRDGPassHandle MinDiscardPassHandle(DiscardPasses.Min);
-			const FRDGPassHandle MaxDiscardPassHandle(FMath::Min<uint32>(DiscardPasses.Max, EpiloguePassHandle.GetIndex()));
+			AddAliasingTransition(Buffer->MinAcquirePass, Buffer->FirstPass, Buffer, FRHITransientAliasingInfo::Acquire(Buffer->GetRHI(), Buffer->AliasingOverlaps));
 
-			AddAliasingTransition(MinDiscardPassHandle, MaxDiscardPassHandle, Buffer, FRHITransientAliasingInfo::Discard(Buffer->GetRHIUnchecked()));
-
-			SubresourceState.SetPass(ERHIPipeline::Graphics, MaxDiscardPassHandle);
-			Buffer->EpilogueAccess = ERHIAccess::Discard;
+			StateBefore->SetPass(ERHIPipeline::Graphics, Buffer->MinAcquirePass);
+			StateBefore->Access = ERHIAccess::Discard;
 		}
-
-		SubresourceState.Access = Buffer->EpilogueAccess;
-
-		AddTransition(Buffer->LastPass, Buffer, SubresourceState);
-
-		EpilogueResourceAccesses.Emplace(Buffer->GetRHI(), Buffer->EpilogueAccess);
+		else if (!Buffer->bSplitFirstTransition)
+		{
+			StateBefore->SetPass(ERHIPipeline::Graphics, Buffer->FirstPass);
+		}
+		else
+		{
+			StateBefore->SetPass(ERHIPipeline::Graphics, GetProloguePassHandle());
+		}
 	}
 
-	if (Buffer->Allocation)
-	{
-		ActivePooledBuffers.Emplace(MoveTemp(Buffer->Allocation));
-	}
-	else if (!Buffer->bTransient)
-	{
-		// Non-transient buffers need to be 'resurrected' to hold the last reference in the chain.
-		// Transient buffers don't have that restriction since there's no actual pooling happening.
-		ActivePooledBuffers.Emplace(Buffer->PooledBuffer);
-	}
+	AddBufferTransition(Buffer, StateBefore, Buffer->FirstState);
 }
 
-void FRDGBuilder::AddTransition(FRDGPassHandle PassHandle, FRDGTextureRef Texture, FRDGTextureSubresourceStateIndirect& StateAfter)
+void FRDGBuilder::AddLastBufferTransition(FRDGBuffer* Buffer)
+{
+	check(IsImmediateMode() || Buffer->bExtracted || Buffer->ReferenceCount == FRDGViewableResource::DeallocatedReferenceCount);
+	check(Buffer->HasRHI());
+
+	const FRDGPassHandle EpiloguePassHandle = GetEpiloguePassHandle();
+
+	FRDGSubresourceState* StateAfter = AllocSubresource();
+
+	// Texture is using the RHI transient allocator. Transition it back to Discard in the final pass it is used.
+	if (Buffer->MinDiscardPass.IsValid())
+	{
+		FRDGPassHandle MaxDiscardPass = FRDGPassHandle(FMath::Min<uint32>(Buffer->TransientBuffer->GetDiscardPasses().Max, GetEpiloguePassHandle().GetIndex()));
+		AddAliasingTransition(Buffer->MinDiscardPass, MaxDiscardPass, Buffer, FRHITransientAliasingInfo::Discard(Buffer->GetRHIUnchecked()));
+
+		StateAfter->SetPass(ERHIPipeline::Graphics, MaxDiscardPass);
+		StateAfter->Access = ERHIAccess::Discard;
+	}
+	else
+	{
+		StateAfter->SetPass(ERHIPipeline::Graphics, EpiloguePassHandle);
+		StateAfter->Access = Buffer->EpilogueAccess;
+
+		EpilogueResourceAccesses.Emplace(Buffer->GetRHI(), StateAfter->Access);
+	}
+
+	AddBufferTransition(Buffer, Buffer->State, StateAfter);
+}
+
+template <typename FilterSubresourceLambdaType>
+void FRDGBuilder::AddTextureTransition(FRDGTexture* Texture, FRDGTextureSubresourceState& StateBefore, FRDGTextureSubresourceState& StateAfter, FilterSubresourceLambdaType&& FilterSubresourceLambda)
 {
 	const FRDGTextureSubresourceLayout Layout = Texture->Layout;
-	FRDGTextureSubresourceState& StateBefore = Texture->GetState();
-	const uint32 SubresourceCount = StateBefore.Num();
+	const uint32 SubresourceCount = Texture->SubresourceCount;
 
-	checkf(StateBefore.Num() == Layout.GetSubresourceCount() && StateBefore.Num() == StateAfter.Num(),
-		TEXT("Before state array (%d) does not match after state array (%d) for resource %s on pass %s."),
-		StateBefore.Num(), StateAfter.Num(), Texture->Name, Passes[PassHandle]->GetName());
+	check(SubresourceCount == Layout.GetSubresourceCount() && StateBefore.Num() == StateAfter.Num());
 
 	if (!GRHISupportsSeparateDepthStencilCopyAccess && Texture->Desc.Format == PF_DepthStencil)
 	{
@@ -3181,40 +3694,37 @@ void FRDGBuilder::AddTransition(FRDGPassHandle PassHandle, FRDGTextureRef Textur
 				continue;
 			}
 
-			FRDGSubresourceState& DepthStateBefore   = StateBefore[DepthIndex];
-			FRDGSubresourceState& StencilStateBefore = StateBefore[StencilIndex];
+			FRDGSubresourceState*& DepthStateBefore   = StateBefore[DepthIndex];
+			FRDGSubresourceState*& StencilStateBefore = StateBefore[StencilIndex];
 
 			// Case 1: transitioning into a fused copy state.
 			if (DepthStateAfter && EnumHasAnyFlags(DepthStateAfter->Access, ERHIAccess::CopySrc | ERHIAccess::CopyDest))
 			{
 				check(StencilStateAfter && StencilStateAfter->Access == DepthStateAfter->Access);
 
-				const FRDGPassHandle MaxPassHandle = FRDGPassHandle::Max(DepthStateBefore.LastPass[GraphicsPipe], StencilStateBefore.LastPass[GraphicsPipe]);
-				DepthStateBefore.LastPass[GraphicsPipe]   = MaxPassHandle;
-				StencilStateBefore.LastPass[GraphicsPipe] = MaxPassHandle;
+				const FRDGPassHandle MaxPassHandle = FRDGPassHandle::Max(DepthStateBefore->LastPass[GraphicsPipe], StencilStateBefore->LastPass[GraphicsPipe]);
+
+				DepthStateBefore = AllocSubresource(*DepthStateBefore);
+				DepthStateAfter  = AllocSubresource(*DepthStateAfter);
+
+				DepthStateBefore->LastPass[GraphicsPipe]   = MaxPassHandle;
+				StencilStateBefore->LastPass[GraphicsPipe] = MaxPassHandle;
 			}
 			// Case 2: transitioning out of a fused copy state.
-			else if (EnumHasAnyFlags(DepthStateBefore.Access, ERHIAccess::CopySrc | ERHIAccess::CopyDest))
+			else if (DepthStateBefore && EnumHasAnyFlags(DepthStateBefore->Access, ERHIAccess::CopySrc | ERHIAccess::CopyDest))
 			{
-				check(StencilStateBefore.Access        == DepthStateBefore.Access);
-				check(StencilStateBefore.GetLastPass() == DepthStateBefore.GetLastPass());
+				check(StencilStateBefore->Access        == DepthStateBefore->Access);
+				check(StencilStateBefore->GetLastPass() == DepthStateBefore->GetLastPass());
 
 				// Case 2a: depth unknown, so transition to match stencil.
 				if (!DepthStateAfter)
 				{
 					DepthStateAfter = AllocSubresource(*StencilStateAfter);
-					DepthStateAfter->SetPass(GraphicsPipe, PassHandle);
 				}
 				// Case 2b: stencil unknown, so transition to match depth.
 				else if (!StencilStateAfter)
 				{
 					StencilStateAfter = AllocSubresource(*DepthStateAfter);
-					StencilStateAfter->SetPass(GraphicsPipe, PassHandle);
-				}
-				// Two valid after states should be transitioning on this pass.
-				else
-				{
-					check(StencilStateAfter->GetFirstPass() == PassHandle && DepthStateAfter->GetFirstPass() == PassHandle);
 				}
 			}
 		}
@@ -3222,55 +3732,71 @@ void FRDGBuilder::AddTransition(FRDGPassHandle PassHandle, FRDGTextureRef Textur
 
 	for (uint32 SubresourceIndex = 0; SubresourceIndex < SubresourceCount; ++SubresourceIndex)
 	{
-		if (const FRDGSubresourceState* SubresourceStateAfter = StateAfter[SubresourceIndex])
+		FRDGSubresourceState*& SubresourceStateBefore = StateBefore[SubresourceIndex];
+		FRDGSubresourceState* SubresourceStateAfter = StateAfter[SubresourceIndex];
+
+		if (!SubresourceStateAfter)
+		{
+			continue;
+		}
+
+		if (FilterSubresourceLambda(SubresourceStateAfter, SubresourceIndex))
 		{
 			check(SubresourceStateAfter->Access != ERHIAccess::Unknown);
 
-			FRDGSubresourceState& SubresourceStateBefore = StateBefore[SubresourceIndex];
-
-			if (FRDGSubresourceState::IsTransitionRequired(SubresourceStateBefore, *SubresourceStateAfter))
+			if (SubresourceStateBefore && FRDGSubresourceState::IsTransitionRequired(*SubresourceStateBefore, *SubresourceStateAfter))
 			{
 				const FRDGTextureSubresource Subresource = Layout.GetSubresource(SubresourceIndex);
 
-				FRHITransitionInfo Info;
-				Info.Texture      = Texture->GetRHIUnchecked();
-				Info.Type         = FRHITransitionInfo::EType::Texture;
-				Info.Flags        = SubresourceStateAfter->Flags;
-				Info.AccessBefore = SubresourceStateBefore.Access;
-				Info.AccessAfter  = SubresourceStateAfter->Access;
-				Info.MipIndex     = Subresource.MipIndex;
-				Info.ArraySlice   = Subresource.ArraySlice;
-				Info.PlaneSlice   = Subresource.PlaneSlice;
+				FRDGTransitionInfo Info;
+				Info.AccessBefore = SubresourceStateBefore->Access;
+				Info.AccessAfter = SubresourceStateAfter->Access;
+				Info.Handle = Texture->Handle.GetIndex();
+				Info.Type = ERDGViewableResourceType::Texture;
+				Info.Flags = SubresourceStateAfter->Flags;
+				Info.ArraySlice = Subresource.ArraySlice;
+				Info.MipIndex = Subresource.MipIndex;
+				Info.PlaneSlice = Subresource.PlaneSlice;
+				Info.bReservedCommit = 0;
 
 				if (Info.AccessBefore == ERHIAccess::Discard)
 				{
 					Info.Flags |= EResourceTransitionFlags::Discard;
 				}
 
-				AddTransition(Texture, SubresourceStateBefore, *SubresourceStateAfter, Info);
+				AddTransition(Texture, *SubresourceStateBefore, *SubresourceStateAfter, Info);
 			}
-
-			SubresourceStateBefore = *SubresourceStateAfter;
 		}
+
+		SubresourceStateBefore = SubresourceStateAfter;
 	}
 }
 
-void FRDGBuilder::AddTransition(FRDGPassHandle PassHandle, FRDGBufferRef Buffer, FRDGSubresourceState StateAfter)
+template <typename FilterSubresourceLambdaType>
+void FRDGBuilder::AddBufferTransition(FRDGBufferRef Buffer, FRDGSubresourceState*& StateBefore, FRDGSubresourceState* StateAfter, FilterSubresourceLambdaType&& FilterSubresourceLambda)
 {
-	check(StateAfter.Access != ERHIAccess::Unknown);
+	check(StateAfter);
+	check(StateAfter->Access != ERHIAccess::Unknown);
 
-	FRDGSubresourceState& StateBefore = Buffer->GetState();
-
-	if (FRDGSubresourceState::IsTransitionRequired(StateBefore, StateAfter))
+	if (FilterSubresourceLambda(StateAfter))
 	{
-		FRHITransitionInfo Info;
-		Info.Resource = Buffer->GetRHIUnchecked();
-		Info.Type = FRHITransitionInfo::EType::Buffer;
-		Info.Flags = StateAfter.Flags;
-		Info.AccessBefore = StateBefore.Access;
-		Info.AccessAfter = StateAfter.Access;
+		check(StateBefore);
 
-		AddTransition(Buffer, StateBefore, StateAfter, Info);
+		if (FRDGSubresourceState::IsTransitionRequired(*StateBefore, *StateAfter))
+		{
+			FRDGTransitionInfo Info;
+			Info.AccessBefore = StateBefore->Access;
+			Info.AccessAfter = StateAfter->Access;
+			Info.Handle = Buffer->Handle.GetIndex();
+			Info.Type = ERDGViewableResourceType::Buffer;
+			Info.Flags = StateAfter->Flags;
+			Info.ArraySlice = 0;
+			Info.MipIndex = 0;
+			Info.PlaneSlice = 0;
+			Info.bReservedCommit = StateAfter->bReservedCommit;
+
+			AddTransition(Buffer, *StateBefore, *StateAfter, Info);
+		}
 	}
 
 	StateBefore = StateAfter;
@@ -3280,7 +3806,7 @@ void FRDGBuilder::AddTransition(
 	FRDGViewableResource* Resource,
 	FRDGSubresourceState StateBefore,
 	FRDGSubresourceState StateAfter,
-	const FRHITransitionInfo& TransitionInfo)
+	FRDGTransitionInfo TransitionInfo)
 {
 	const ERHIPipeline Graphics = ERHIPipeline::Graphics;
 	const ERHIPipeline AsyncCompute = ERHIPipeline::AsyncCompute;
@@ -3322,7 +3848,7 @@ void FRDGBuilder::AddTransition(
 		if (BeginPassHandle < FirstEndPassHandle)
 		{
 			BeginPass = GetEpilogueBarrierPass(BeginPassHandle);
-			BarriersToBegin = &BeginPass->GetEpilogueBarriersToBeginFor(Allocator, TransitionCreateQueue, PipelinesAfter);
+			BarriersToBegin = &BeginPass->GetEpilogueBarriersToBeginFor(Allocators.Transition, TransitionCreateQueue, PipelinesAfter);
 		}
 		// This is an immediate prologue transition in the same pass. Issue the begin in the prologue.
 		else
@@ -3332,7 +3858,7 @@ void FRDGBuilder::AddTransition(
 				Resource->Name, *GetRHIPipelineName(PipelinesAfter));
 
 			BeginPass = GetPrologueBarrierPass(BeginPassHandle);
-			BarriersToBegin = &BeginPass->GetPrologueBarriersToBegin(Allocator, TransitionCreateQueue);
+			BarriersToBegin = &BeginPass->GetPrologueBarriersToBegin(Allocators.Transition, TransitionCreateQueue);
 		}
 
 		BarriersToBegin->AddTransition(Resource, TransitionInfo);
@@ -3387,7 +3913,7 @@ void FRDGBuilder::AddTransition(
 			BarrierBatchPasses[Graphics]     = Passes[Id.Passes[Graphics]];
 			BarrierBatchPasses[AsyncCompute] = Passes[Id.Passes[AsyncCompute]];
 
-			BarriersToBegin = Allocator.AllocNoDestruct<FRDGBarrierBatchBegin>(PipelinesBefore, PipelinesAfter, GetEpilogueBarriersToBeginDebugName(PipelinesAfter), BarrierBatchPasses);
+			BarriersToBegin = Allocators.Transition.AllocNoDestruct<FRDGBarrierBatchBegin>(PipelinesBefore, PipelinesAfter, GetEpilogueBarriersToBeginDebugName(PipelinesAfter), BarrierBatchPasses);
 			TransitionCreateQueue.Emplace(BarriersToBegin);
 
 			for (FRDGPass* Pass : BarrierBatchPasses)
@@ -3421,9 +3947,8 @@ void FRDGBuilder::AddAliasingTransition(FRDGPassHandle BeginPassHandle, FRDGPass
 		EndPass = BeginPass;
 
 		check(GetPrologueBarrierPassHandle(BeginPassHandle) == BeginPassHandle);
-		check(BeginPass->GetPipeline() == ERHIPipeline::Graphics);
 
-		BarriersToBegin = &BeginPass->GetPrologueBarriersToBegin(Allocator, TransitionCreateQueue);
+		BarriersToBegin = &BeginPass->GetPrologueBarriersToBegin(Allocators.Transition, TransitionCreateQueue);
 	}
 	else
 	{
@@ -3431,19 +3956,30 @@ void FRDGBuilder::AddAliasingTransition(FRDGPassHandle BeginPassHandle, FRDGPass
 		EndPass = Passes[EndPassHandle];
 
 		check(GetPrologueBarrierPassHandle(EndPassHandle) == EndPassHandle);
-		check(BeginPass->GetPipeline() == ERHIPipeline::Graphics);
-		check(EndPass->GetPipeline() == ERHIPipeline::Graphics);
 
-		BarriersToBegin = &BeginPass->GetEpilogueBarriersToBeginForGraphics(Allocator, TransitionCreateQueue);
+		BarriersToBegin = &BeginPass->GetEpilogueBarriersToBeginFor(Allocators.Transition, TransitionCreateQueue, EndPass->GetPipeline());
 	}
 
 	BarriersToBegin->AddAlias(Resource, Info);
-	EndPass->GetPrologueBarriersToEnd(Allocator).AddDependency(BarriersToBegin);
+	EndPass->GetPrologueBarriersToEnd(Allocators.Transition).AddDependency(BarriersToBegin);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FRDGBuilder::SetRHI(FRDGTexture* Texture, IPooledRenderTarget* RenderTarget, FRDGPassHandle PassHandle)
+TRefCountPtr<IPooledRenderTarget> FRDGBuilder::AllocatePooledRenderTargetRHI(FRHICommandListBase& InRHICmdList, FRDGTextureRef Texture)
+{
+	return GRenderTargetPool.FindFreeElement(InRHICmdList, Texture->Desc, Texture->Name);
+}
+
+TRefCountPtr<FRDGPooledBuffer> FRDGBuilder::AllocatePooledBufferRHI(FRHICommandListBase& InRHICmdList, FRDGBufferRef Buffer)
+{
+	Buffer->FinalizeDesc();
+	return GRenderGraphResourcePool.FindFreeBuffer(InRHICmdList, Buffer->Desc, Buffer->Name);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FRDGBuilder::SetPooledRenderTargetRHI(FRDGTexture* Texture, IPooledRenderTarget* RenderTarget)
 {
 	Texture->RenderTarget = RenderTarget;
 
@@ -3452,256 +3988,118 @@ void FRDGBuilder::SetRHI(FRDGTexture* Texture, IPooledRenderTarget* RenderTarget
 		FRDGTransientRenderTarget* TransientRenderTarget = static_cast<FRDGTransientRenderTarget*>(RenderTarget);
 		Texture->Allocation = TRefCountPtr<FRDGTransientRenderTarget>(TransientRenderTarget);
 
-		SetRHI(Texture, TransientTexture, PassHandle);
+		SetTransientTextureRHI(Texture, TransientTexture);
 	}
 	else
 	{
 		FPooledRenderTarget* PooledRenderTarget = static_cast<FPooledRenderTarget*>(RenderTarget);
 		Texture->Allocation = TRefCountPtr<FPooledRenderTarget>(PooledRenderTarget);
 
-		SetRHI(Texture, &PooledRenderTarget->PooledTexture, PassHandle);
+		SetPooledTextureRHI(Texture, &PooledRenderTarget->PooledTexture);
 	}
 }
 
-void FRDGBuilder::SetRHI(FRDGTexture* Texture, FRDGPooledTexture* PooledTexture, FRDGPassHandle PassHandle)
+void FRDGBuilder::SetPooledTextureRHI(FRDGTexture* Texture, FRDGPooledTexture* PooledTexture)
 {
+	check(!Texture->ResourceRHI);
+
 	FRHITexture* TextureRHI = PooledTexture->GetRHI();
 
 	Texture->ResourceRHI = TextureRHI;
 	Texture->PooledTexture = PooledTexture;
 	Texture->ViewCache = &PooledTexture->ViewCache;
-	Texture->FirstPass = PassHandle;
 
-	FRDGTexture*& Owner = PooledTextureOwnershipMap.FindOrAdd(PooledTexture);
+	FRDGTexture*& Owner = *PooledTextureOwnershipMap.FindOrAdd(PooledTexture, nullptr);
 
 	// Link the previous alias to this one.
 	if (Owner)
 	{
+		Texture->PreviousOwner = Owner->Handle;
 		Owner->NextOwner = Texture->Handle;
-		Owner->bLastOwner = false;
-
-		// Chain the state allocation between all RDG textures which share this pooled texture.
-		Texture->State = Owner->State;
-	}
-	else
-	{
-		Texture->State = Allocator.AllocNoDestruct<FRDGTextureSubresourceState>();
-
-		FRDGSubresourceState State;
-		State.SetPass(ERHIPipeline::Graphics, GetProloguePassHandle());
-		InitTextureSubresources(*Texture->State, Texture->Layout, State);
+		Owner->bSkipLastTransition = true;
 	}
 
 	Owner = Texture;
 }
 
-void FRDGBuilder::SetRHI(FRDGTexture* Texture, FRHITransientTexture* TransientTexture, FRDGPassHandle PassHandle)
+void FRDGBuilder::SetTransientTextureRHI(FRDGTexture* Texture, FRHITransientTexture* TransientTexture)
 {
+	check(!Texture->ResourceRHI);
+
 	Texture->ResourceRHI = TransientTexture->GetRHI();
 	Texture->TransientTexture = TransientTexture;
 	Texture->ViewCache = &TransientTexture->ViewCache;
-	Texture->FirstPass = PassHandle;
 	Texture->bTransient = true;
-	Texture->State = Allocator.AllocNoDestruct<FRDGTextureSubresourceState>();
+	Texture->AliasingOverlaps = TransientTexture->GetAliasingOverlaps();
 }
 
-void FRDGBuilder::SetRHI(FRDGBuffer* Buffer, FRDGPooledBuffer* PooledBuffer, FRDGPassHandle PassHandle)
+void FRDGBuilder::SetPooledBufferRHI(FRDGBuffer* Buffer, FRDGPooledBuffer* PooledBuffer)
 {
+	check(!Buffer->ResourceRHI);
+
 	FRHIBuffer* BufferRHI = PooledBuffer->GetRHI();
 
 	Buffer->ResourceRHI = BufferRHI;
 	Buffer->PooledBuffer = PooledBuffer;
 	Buffer->ViewCache = &PooledBuffer->ViewCache;
 	Buffer->Allocation = PooledBuffer;
-	Buffer->FirstPass = PassHandle;
 
-	FRDGBuffer*& Owner = PooledBufferOwnershipMap.FindOrAdd(PooledBuffer);
+#if RHI_ENABLE_RESOURCE_INFO
+	Buffer->ResourceRHI->SetOwnerName(Buffer->OwnerName);
+#endif
+
+	FRDGBuffer*& Owner = *PooledBufferOwnershipMap.FindOrAdd(PooledBuffer, nullptr);
 
 	// Link the previous owner to this one.
 	if (Owner)
 	{
+		Buffer->PreviousOwner = Owner->Handle;
 		Owner->NextOwner = Buffer->Handle;
-		Owner->bLastOwner = false;
-
-		// Chain the state allocation between all RDG buffers which share this pooled buffer.
-		Buffer->State = Owner->State;
-	}
-	else
-	{
-		FRDGSubresourceState State;
-		State.SetPass(ERHIPipeline::Graphics, GetProloguePassHandle());
-		Buffer->State = Allocator.AllocNoDestruct<FRDGSubresourceState>(State);
+		Owner->bSkipLastTransition = true;
 	}
 
 	Owner = Buffer;
 }
 
-void FRDGBuilder::SetRHI(FRDGBuffer* Buffer, FRHITransientBuffer* TransientBuffer, FRDGPassHandle PassHandle)
+void FRDGBuilder::SetTransientBufferRHI(FRDGBuffer* Buffer, FRHITransientBuffer* TransientBuffer)
 {
-	check(!Buffer->ResourceRHI);
+	check(!Buffer->ResourceRHI && Buffer->bTransient);
 
 	Buffer->ResourceRHI = TransientBuffer->GetRHI();
 	Buffer->TransientBuffer = TransientBuffer;
 	Buffer->ViewCache = &TransientBuffer->ViewCache;
-	Buffer->FirstPass = PassHandle;
-	Buffer->bTransient = true;
-	Buffer->State = Allocator.AllocNoDestruct<FRDGSubresourceState>();
+	Buffer->AliasingOverlaps = TransientBuffer->GetAliasingOverlaps();
+
+#if RHI_ENABLE_RESOURCE_INFO
+	Buffer->ResourceRHI->SetOwnerName(Buffer->OwnerName);
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FRDGBuilder::BeginResourceRHI(FRDGPassHandle PassHandle, FRDGTextureRef Texture)
+void FRDGBuilder::InitTextureViewRHI(FRHICommandListBase& InRHICmdList, FRDGTextureSRVRef SRV)
 {
-	check(Texture);
-
-	if (Texture->HasRHI())
-	{
-		return;
-	}
-
-	check(Texture->ReferenceCount > 0 || Texture->bExternal || IsImmediateMode());
-
-#if RDG_ENABLE_DEBUG
-	{
-		FRDGPass* Pass = Passes[PassHandle];
-
-		// Cannot begin a resource on an async compute pass.
-		check(Pass->Pipeline == ERHIPipeline::Graphics);
-
-		// Cannot begin a resource within a merged render pass region.
-		checkf(GetPrologueBarrierPassHandle(PassHandle) == PassHandle,
-			TEXT("Cannot begin a resource within a merged render pass. Pass (Handle: %d, Name: %s), Resource %s"), PassHandle, Pass->GetName(), Texture->Name);
-	}
-#endif
-
-	if (TransientResourceAllocator && IsTransient(Texture))
-	{
-		if (FRHITransientTexture* TransientTexture = TransientResourceAllocator->CreateTexture(Texture->Desc, Texture->Name, PassHandle.GetIndex()))
-		{
-			if (Texture->bExternal || Texture->bExtracted)
-			{
-				SetRHI(Texture, GRDGTransientResourceAllocator.AllocateRenderTarget(TransientTexture), PassHandle);
-			}
-			else
-			{
-				SetRHI(Texture, TransientTexture, PassHandle);
-			}
-
-			const FRDGPassHandle MinAcquirePassHandle(TransientTexture->GetAcquirePasses().Min);
-
-			AddAliasingTransition(MinAcquirePassHandle, PassHandle, Texture, FRHITransientAliasingInfo::Acquire(TransientTexture->GetRHI(), TransientTexture->GetAliasingOverlaps()));
-
-			FRDGSubresourceState InitialState;
-			InitialState.SetPass(ERHIPipeline::Graphics, MinAcquirePassHandle);
-			InitialState.Access = ERHIAccess::Discard;
-			InitTextureSubresources(*Texture->State, Texture->Layout, InitialState);
-
-		#if RDG_STATS
-			GRDGStatTransientTextureCount++;
-		#endif
-		}
-	}
-
-	if (!Texture->ResourceRHI)
-	{
-		SetRHI(Texture, GRenderTargetPool.FindFreeElement(Texture->Desc, Texture->Name), PassHandle);
-	}
-}
-
-void FRDGBuilder::InitRHI(FRDGTextureSRVRef SRV)
-{
-	check(SRV);
-
-	if (SRV->HasRHI())
-	{
-		return;
-	}
+	check(SRV && !SRV->ResourceRHI);
 
 	FRDGTextureRef Texture = SRV->Desc.Texture;
 	FRHITexture* TextureRHI = Texture->GetRHIUnchecked();
 	check(TextureRHI);
 
-	SRV->ResourceRHI = Texture->ViewCache->GetOrCreateSRV(RHICmdList, TextureRHI, SRV->Desc);
+	SRV->ResourceRHI = Texture->ViewCache->GetOrCreateSRV(InRHICmdList, TextureRHI, SRV->Desc);
 }
 
-void FRDGBuilder::InitRHI(FRDGTextureUAVRef UAV)
+void FRDGBuilder::InitTextureViewRHI(FRHICommandListBase& InRHICmdList, FRDGTextureUAVRef UAV)
 {
-	check(UAV);
-
-	if (UAV->HasRHI())
-	{
-		return;
-	}
+	check(UAV && !UAV->ResourceRHI);
 
 	FRDGTextureRef Texture = UAV->Desc.Texture;
 	FRHITexture* TextureRHI = Texture->GetRHIUnchecked();
 	check(TextureRHI);
 
-	UAV->ResourceRHI = Texture->ViewCache->GetOrCreateUAV(RHICmdList, TextureRHI, UAV->Desc);
+	UAV->ResourceRHI = Texture->ViewCache->GetOrCreateUAV(InRHICmdList, TextureRHI, UAV->Desc);
 }
 
-void FRDGBuilder::BeginResourceRHI(FRDGPassHandle PassHandle, FRDGBufferRef Buffer)
-{
-	check(Buffer);
-
-	if (Buffer->HasRHI())
-	{
-		return;
-	}
-
-	check(Buffer->ReferenceCount > 0 || Buffer->bExternal || Buffer->bQueuedForUpload || IsImmediateMode());
-
-#if RDG_ENABLE_DEBUG
-	{
-		const FRDGPass* Pass = Passes[PassHandle];
-
-		// Cannot begin a resource on an async compute pass.
-		check(Pass->Pipeline == ERHIPipeline::Graphics);
-
-		// Cannot begin a resource within a merged render pass region.
-		checkf(GetPrologueBarrierPassHandle(PassHandle) == PassHandle,
-			TEXT("Cannot begin a resource within a merged render pass. Pass (Handle: %d, Name: %s), Resource %s"), PassHandle, Pass->GetName(), Buffer->Name);
-	}
-#endif
-	Buffer->FinalizeDesc();
-
-	// If transient then create the resource on the transient allocator. External or extracted resource can't be transient because of lifetime tracking issues.
-	if (TransientResourceAllocator && IsTransient(Buffer))
-	{
-		if (FRHITransientBuffer* TransientBuffer = TransientResourceAllocator->CreateBuffer(Translate(Buffer->Desc), Buffer->Name, PassHandle.GetIndex()))
-		{
-			SetRHI(Buffer, TransientBuffer, PassHandle);
-
-			const FRDGPassHandle MinAcquirePassHandle(TransientBuffer->GetAcquirePasses().Min);
-
-			AddAliasingTransition(MinAcquirePassHandle, PassHandle, Buffer, FRHITransientAliasingInfo::Acquire(TransientBuffer->GetRHI(), TransientBuffer->GetAliasingOverlaps()));
-
-			FRDGSubresourceState* InitialState = Buffer->State;
-			InitialState->SetPass(ERHIPipeline::Graphics, MinAcquirePassHandle);
-			InitialState->Access = ERHIAccess::Discard;
-
-		#if RDG_STATS
-			GRDGStatTransientBufferCount++;
-		#endif
-		}
-	}
-
-	if (!Buffer->bTransient)
-	{
-		const ERDGPooledBufferAlignment Alignment = Buffer->bQueuedForUpload ? ERDGPooledBufferAlignment::PowerOfTwo : ERDGPooledBufferAlignment::Page;
-
-		SetRHI(Buffer, GRenderGraphResourcePool.FindFreeBuffer(Buffer->Desc, Buffer->Name, Alignment), PassHandle);
-	}
-
-#if RHI_ENABLE_RESOURCE_INFO
-	if (Buffer->HasRHI())
-	{
-		Buffer->ResourceRHI->SetOwnerName(Buffer->OwnerName);
-	}
-#endif
-}
-
-void FRDGBuilder::InitRHI(FRDGBufferSRVRef SRV)
+void FRDGBuilder::InitBufferViewRHI(FRHICommandListBase& InRHICmdList, FRDGBufferSRVRef SRV)
 {
 	check(SRV);
 
@@ -3724,10 +4122,10 @@ void FRDGBuilder::InitRHI(FRDGBufferSRVRef SRV)
 		SRVCreateInfo.Format = PF_Unknown;
 	}
 
-	SRV->ResourceRHI = Buffer->ViewCache->GetOrCreateSRV(RHICmdList, BufferRHI, SRVCreateInfo);
+	SRV->ResourceRHI = Buffer->ViewCache->GetOrCreateSRV(InRHICmdList, BufferRHI, SRVCreateInfo);
 }
 
-void FRDGBuilder::InitRHI(FRDGBufferUAV* UAV)
+void FRDGBuilder::InitBufferViewRHI(FRHICommandListBase& InRHICmdList, FRDGBufferUAV* UAV)
 {
 	check(UAV);
 
@@ -3749,96 +4147,27 @@ void FRDGBuilder::InitRHI(FRDGBufferUAV* UAV)
 		UAVCreateInfo.Format = PF_Unknown;
 	}
 
-	UAV->ResourceRHI = Buffer->ViewCache->GetOrCreateUAV(RHICmdList, Buffer->GetRHIUnchecked(), UAVCreateInfo);
+	UAV->ResourceRHI = Buffer->ViewCache->GetOrCreateUAV(InRHICmdList, Buffer->GetRHIUnchecked(), UAVCreateInfo);
 }
 
-void FRDGBuilder::InitRHI(FRDGView* View)
+void FRDGBuilder::InitViewRHI(FRHICommandListBase& InRHICmdList, FRDGView* View)
 {
-	if (View->HasRHI())
-	{
-		return;
-	}
+	check(!View->ResourceRHI);
 
 	switch (View->Type)
 	{
 	case ERDGViewType::TextureUAV:
-		InitRHI(static_cast<FRDGTextureUAV*>(View));
+		InitTextureViewRHI(InRHICmdList, static_cast<FRDGTextureUAV*>(View));
 		break;
 	case ERDGViewType::TextureSRV:
-		InitRHI(static_cast<FRDGTextureSRV*>(View));
+		InitTextureViewRHI(InRHICmdList, static_cast<FRDGTextureSRV*>(View));
 		break;
 	case ERDGViewType::BufferUAV:
-		InitRHI(static_cast<FRDGBufferUAV*>(View));
+		InitBufferViewRHI(InRHICmdList, static_cast<FRDGBufferUAV*>(View));
 		break;
 	case ERDGViewType::BufferSRV:
-		InitRHI(static_cast<FRDGBufferSRV*>(View));
+		InitBufferViewRHI(InRHICmdList, static_cast<FRDGBufferSRV*>(View));
 		break;
-	}
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-void FRDGBuilder::EndResourceRHI(FRDGPassHandle PassHandle, FRDGTextureRef Texture, uint32 ReferenceCount)
-{
-	check(Texture);
-	check(Texture->ReferenceCount != FRDGViewableResource::DeallocatedReferenceCount);
-	check(Texture->ReferenceCount >= ReferenceCount || IsImmediateMode());
-	Texture->ReferenceCount -= ReferenceCount;
-
-	if (Texture->ReferenceCount == 0)
-	{
-		if (Texture->bTransient)
-		{
-			// Texture is using a transient external render target.
-			if (Texture->RenderTarget)
-			{
-				if (!Texture->bExtracted)
-				{
-					// This releases the reference without invoking a virtual function call.
-					GRDGTransientResourceAllocator.Release(TRefCountPtr<FRDGTransientRenderTarget>(MoveTemp(Texture->Allocation)), PassHandle);
-				}
-			}
-			// Texture is using an internal transient texture.
-			else
-			{
-				TransientResourceAllocator->DeallocateMemory(Texture->TransientTexture, PassHandle.GetIndex());
-			}
-		}
-		else
-		{
-			// Only tracked render targets are released. Untracked ones persist until the end of the frame.
-			if (static_cast<FPooledRenderTarget*>(Texture->RenderTarget)->IsTracked())
-			{
-				// This releases the reference without invoking a virtual function call.
-				TRefCountPtr<FPooledRenderTarget>(MoveTemp(Texture->Allocation));
-			}
-		}
-
-		Texture->LastPass = PassHandle;
-		Texture->ReferenceCount = FRDGViewableResource::DeallocatedReferenceCount;
-	}
-}
-
-void FRDGBuilder::EndResourceRHI(FRDGPassHandle PassHandle, FRDGBufferRef Buffer, uint32 ReferenceCount)
-{
-	check(Buffer);
-	check(Buffer->ReferenceCount != FRDGViewableResource::DeallocatedReferenceCount);
-	check(Buffer->ReferenceCount >= ReferenceCount || IsImmediateMode());
-	Buffer->ReferenceCount -= ReferenceCount;
-
-	if (Buffer->ReferenceCount == 0)
-	{
-		if (Buffer->bTransient)
-		{
-			TransientResourceAllocator->DeallocateMemory(Buffer->TransientBuffer, PassHandle.GetIndex());
-		}
-		else
-		{
-			Buffer->Allocation = nullptr;
-		}
-
-		Buffer->LastPass = PassHandle;
-		Buffer->ReferenceCount = FRDGViewableResource::DeallocatedReferenceCount;
 	}
 }
 
@@ -3945,7 +4274,6 @@ void FRDGBuilder::ClobberPassOutputs(const FRDGPass* Pass)
 	}
 
 	RDG_RECURSION_COUNTER_SCOPE(AuxiliaryPasses.Clobber);
-
 	RDG_EVENT_SCOPE(*this, "RDG ClobberResources");
 
 	const FLinearColor ClobberColor = GetClobberColor();
@@ -3959,6 +4287,42 @@ void FRDGBuilder::ClobberPassOutputs(const FRDGPass* Pass)
 		else
 		{
 			AddClearUAVPass(*this, TextureUAV, ClobberColor);
+		}
+	};
+
+	const auto ClobberTextureAccess = [&](FRDGTextureAccess TextureAccess)
+	{
+		if (IsWritableAccess(TextureAccess.GetAccess()))
+		{
+			FRDGTextureRef Texture = TextureAccess.GetTexture();
+	
+			if (Texture && UserValidation.TryMarkForClobber(Texture))
+			{
+				if (EnumHasAnyFlags(TextureAccess.GetAccess(), ERHIAccess::UAVMask))
+				{
+					for (int32 MipLevel = 0; MipLevel < Texture->Desc.NumMips; MipLevel++)
+					{
+						ClobberTextureUAV(CreateUAV(FRDGTextureUAVDesc(Texture, MipLevel)));
+					}
+				}
+				else if (EnumHasAnyFlags(TextureAccess.GetAccess(), ERHIAccess::RTV))
+				{
+					AddClearRenderTargetPass(*this, Texture, ClobberColor);
+				}
+			}
+		}
+	};
+
+	const auto ClobberBufferAccess = [&](FRDGBufferAccess BufferAccess)
+	{
+		if (IsWritableAccess(BufferAccess.GetAccess()))
+		{
+			FRDGBufferRef Buffer = BufferAccess.GetBuffer();
+	
+			if (Buffer && UserValidation.TryMarkForClobber(Buffer))
+			{
+				AddClearUAVPass(*this, CreateUAV(Buffer), GetClobberBufferValue());
+			}
 		}
 	};
 
@@ -3981,24 +4345,31 @@ void FRDGBuilder::ClobberPassOutputs(const FRDGPass* Pass)
 		break;
 		case UBMT_RDG_TEXTURE_ACCESS:
 		{
-			if (FRDGTextureAccess TextureAccess = Parameter.GetAsTextureAccess())
-			{
-				FRDGTextureRef Texture = TextureAccess.GetTexture();
+			ClobberTextureAccess(Parameter.GetAsTextureAccess());
+		}
+		break;
+		case UBMT_RDG_TEXTURE_ACCESS_ARRAY:
+		{
+			const FRDGTextureAccessArray& TextureAccessArray = Parameter.GetAsTextureAccessArray();
 
-				if (UserValidation.TryMarkForClobber(Texture))
-				{
-					if (EnumHasAnyFlags(TextureAccess.GetAccess(), ERHIAccess::UAVMask))
-					{
-						for (int32 MipLevel = 0; MipLevel < Texture->Desc.NumMips; MipLevel++)
-						{
-							ClobberTextureUAV(CreateUAV(FRDGTextureUAVDesc(Texture, MipLevel)));
-						}
-					}
-					else if (EnumHasAnyFlags(TextureAccess.GetAccess(), ERHIAccess::RTV))
-					{
-						AddClearRenderTargetPass(*this, Texture, ClobberColor);
-					}
-				}
+			for (FRDGTextureAccess TextureAccess : TextureAccessArray)
+			{
+				ClobberTextureAccess(TextureAccess);
+			}
+		}
+		break;
+		case UBMT_RDG_BUFFER_ACCESS:
+		{
+			ClobberBufferAccess(Parameter.GetAsBufferAccess());
+		}
+		break;
+		case UBMT_RDG_BUFFER_ACCESS_ARRAY:
+		{
+			const FRDGBufferAccessArray& BufferAccessArray = Parameter.GetAsBufferAccessArray();
+
+			for (FRDGBufferAccess BufferAccess : BufferAccessArray)
+			{
+				ClobberBufferAccess(BufferAccess);
 			}
 		}
 		break;
@@ -4057,49 +4428,55 @@ void FRDGBuilder::ClobberPassOutputs(const FRDGPass* Pass)
 #if WITH_MGPU
 void FRDGBuilder::ForceCopyCrossGPU()
 {
-	// Initialize set of external buffers
-	TSet<FRHIBuffer*> ExternalBufferSet;
-	ExternalBufferSet.Reserve(ExternalBuffers.Num());
-
-	for (auto ExternalBufferIt = ExternalBuffers.CreateConstIterator(); ExternalBufferIt; ++ExternalBufferIt)
+	const auto GetLastProducerGPUMask = [](FRDGProducerStatesByPipeline& LastProducers) -> TOptional<FRHIGPUMask>
 	{
-		ExternalBufferSet.Emplace(ExternalBufferIt.Value()->GetRHIUnchecked());
-	}
-
-	// Generate list of cross GPU resources from all passes, and the GPU mask where they were last written 
-	TMap<FRHIBuffer*, FRHIGPUMask> BuffersToTransfer;
-	TMap<FRHITexture*, FRHIGPUMask> TexturesToTransfer;
-
-	for (FRDGPassHandle PassHandle = GetProloguePassHandle(); PassHandle <= GetEpiloguePassHandle(); ++PassHandle)
-	{
-		FRDGPass* Pass = Passes[PassHandle];
-
-		for (int32 BufferIndex = 0; BufferIndex < Pass->BufferStates.Num(); BufferIndex++)
+		for (const FRDGProducerState& LastProducer : LastProducers)
 		{
-			FRHIBuffer* BufferRHI = Pass->BufferStates[BufferIndex].Buffer->GetRHIUnchecked();
-
-			if (ExternalBufferSet.Contains(BufferRHI) &&
-				!EnumHasAnyFlags(BufferRHI->GetUsage(), BUF_MultiGPUAllocate | BUF_MultiGPUGraphIgnore) &&
-				EnumHasAnyFlags(Pass->BufferStates[BufferIndex].State.Access, ERHIAccess::WritableMask))
+			if (LastProducer.Pass && !LastProducer.Pass->bCulled)
 			{
-				BuffersToTransfer.Emplace(BufferRHI) = Pass->GPUMask;
+				return LastProducer.Pass->GPUMask;
 			}
 		}
+		return {};
+	};
 
-		for (int32 TextureIndex = 0; TextureIndex < Pass->TextureStates.Num(); TextureIndex++)
+	Experimental::TRobinHoodHashMap<FRHIBuffer*, FRHIGPUMask, DefaultKeyFuncs<FRHIBuffer*>, FRDGArrayAllocator> BuffersToTransfer;
+	BuffersToTransfer.Reserve(ExternalBuffers.Num());
+
+	for (auto& ExternalBuffer : ExternalBuffers)
+	{
+		FRHIBuffer* BufferRHI = ExternalBuffer.Key;
+		FRDGBuffer* BufferRDG = ExternalBuffer.Value;
+
+		if (!EnumHasAnyFlags(BufferRDG->Desc.Usage, BUF_MultiGPUAllocate | BUF_MultiGPUGraphIgnore))
 		{
-			if (ExternalTextures.Contains(Pass->TextureStates[TextureIndex].Texture->GetRHIUnchecked()))
-			{
-				for (int32 StateIndex = 0; StateIndex < Pass->TextureStates[TextureIndex].State.Num(); StateIndex++)
-				{
-					FRHITexture* TextureRHI = Pass->TextureStates[TextureIndex].Texture->GetRHIUnchecked();
+			TOptional<FRHIGPUMask> GPUMask = GetLastProducerGPUMask(BufferRDG->LastProducer);
 
-					if (TextureRHI &&
-						!EnumHasAnyFlags(TextureRHI->GetFlags(), TexCreate_MultiGPUGraphIgnore) &&
-						EnumHasAnyFlags(Pass->TextureStates[TextureIndex].State[StateIndex].Access, ERHIAccess::WritableMask))
-					{
-						TexturesToTransfer.Emplace(Pass->TextureStates[TextureIndex].Texture->GetRHIUnchecked()) = Pass->GPUMask;
-					}
+			if (GPUMask)
+			{
+				BuffersToTransfer.FindOrAdd(BufferRHI, *GPUMask);
+			}
+		}
+	}
+
+	Experimental::TRobinHoodHashMap<FRHITexture*, FRHIGPUMask, DefaultKeyFuncs<FRHITexture*>, FRDGArrayAllocator> TexturesToTransfer;
+	TexturesToTransfer.Reserve(ExternalTextures.Num());
+
+	for (auto& ExternalTexture : ExternalTextures)
+	{
+		FRHITexture* TextureRHI = ExternalTexture.Key;
+		FRDGTexture* TextureRDG = ExternalTexture.Value;
+
+		if (!EnumHasAnyFlags(TextureRDG->Desc.Flags, TexCreate_MultiGPUGraphIgnore))
+		{
+			for (auto& LastProducer : TextureRDG->LastProducers)
+			{
+				TOptional<FRHIGPUMask> GPUMask = GetLastProducerGPUMask(LastProducer);
+
+				if (GPUMask)
+				{
+					TexturesToTransfer.FindOrAdd(TextureRHI, *GPUMask);
+					break;
 				}
 			}
 		}
@@ -4107,15 +4484,16 @@ void FRDGBuilder::ForceCopyCrossGPU()
 
 	// Now that we've got the list of external resources, and the GPU they were last written to, make a list of what needs to
 	// be propagated to other GPUs.
-	TArray<FTransferResourceParams> Transfers;
+	TArray<FTransferResourceParams, FRDGArrayAllocator> Transfers;
+	Transfers.Reserve(BuffersToTransfer.Num() + TexturesToTransfer.Num());
 	const FRHIGPUMask AllGPUMask = FRHIGPUMask::All();
 	const bool bPullData = false;
 	const bool bLockstepGPUs = true;
 
-	for (auto BufferIt = BuffersToTransfer.CreateConstIterator(); BufferIt; ++BufferIt)
+	for (auto& KeyValue : BuffersToTransfer)
 	{
-		FRHIBuffer* Buffer = BufferIt.Key();
-		FRHIGPUMask GPUMask = BufferIt.Value();
+		FRHIBuffer* Buffer  = KeyValue.Key;
+		FRHIGPUMask GPUMask = KeyValue.Value;
 
 		for (uint32 GPUIndex : AllGPUMask)
 		{
@@ -4126,10 +4504,10 @@ void FRDGBuilder::ForceCopyCrossGPU()
 		}
 	}
 
-	for (auto TextureIt = TexturesToTransfer.CreateConstIterator(); TextureIt; ++TextureIt)
+	for (auto& KeyValue : TexturesToTransfer)
 	{
-		FRHITexture* Texture = TextureIt.Key();
-		FRHIGPUMask GPUMask = TextureIt.Value();
+		FRHITexture* Texture = KeyValue.Key;
+		FRHIGPUMask GPUMask  = KeyValue.Value;
 
 		for (uint32 GPUIndex : AllGPUMask)
 		{

@@ -29,6 +29,13 @@ struct FRWBuffer;
 class FGPUSkinCacheEntry;
 class FMeshDeformerGeometry;
 class FRayTracingGeometry;
+class FRHICommandList;
+
+namespace UE::SkeletalRender::Settings
+{
+	// Returns the maximum value allowed for morph targets blend weights, configured at RenderSettings
+	ENGINE_API float GetMorphTargetMaxBlendWeight();
+}
 
 /** data for a single skinned skeletal mesh vertex */
 struct FFinalSkinVertex
@@ -93,7 +100,7 @@ public:
 	 * Called by FSkeletalMeshObject prior to GDME. This allows the GPU skin version to update bones etc now that we know we are going to render
 	 * @param FrameNumber from GFrameNumber
 	 */
-	virtual void PreGDMECallback(class FGPUSkinCache* GPUSkinCache, uint32 FrameNumber)
+	virtual void PreGDMECallback(FRHICommandList& RHICmdList, class FGPUSkinCache* GPUSkinCache, uint32 FrameNumber)
 	{
 	}
 
@@ -113,17 +120,14 @@ public:
 	virtual const FSkinBatchVertexFactoryUserData* GetVertexFactoryUserData(const int32 LODIndex, int32 ChunkIdx, ESkinVertexFactoryMode VFMode) const { return nullptr; }
 
 	/**
-	 * Re-skin cached vertices for an LOD and update the vertex buffer. Note that this
-	 * function is called from the render thread!
-	 * @param	LODIndex - index to LODs
-	 * @param	bForce - force update even if LOD index hasn't changed
-	 */
-	virtual void CacheVertices(int32 LODIndex, bool bForce) const = 0;
-
-	/**
 	 * Returns true if this mesh performs skinning on the CPU.
 	 */
 	virtual bool IsCPUSkinned() const = 0;
+
+	/**
+	 * Returns true if this mesh is an FSkeletalMeshObjectGPUSkin
+	 */
+	virtual bool IsGPUSkinMesh() const { return false; }
 
 	/** 
 	 *	Get the array of component-space bone transforms. 
@@ -174,7 +178,7 @@ public:
 	 *	This is called from the rendering thread (PreRender) so be very careful what you read/write to.
 	 * @param FrameNumber from ViewFamily.FrameNumber
 	 */
-	void UpdateMinDesiredLODLevel(const FSceneView* View, const FBoxSphereBounds& Bounds, int32 FrameNumber, uint8 CurFirstLODIdx);
+	void UpdateMinDesiredLODLevel(const FSceneView* View, const FBoxSphereBounds& Bounds, int32 FrameNumber);
 
 	/**
 	 *	Return true if this does have valid dynamic data to render
@@ -264,7 +268,10 @@ public:
 	TArray<FCapsuleShape3f> ShadowCapsuleShapes;
 
 	/** 
-	 *	Lowest (best) LOD that was desired for rendering this SkeletalMesh last frame. 
+	 *	Lowest (best) LOD that was desired for rendering this SkeletalMesh last frame.
+	 *
+	 *	Note that if LOD streaming is enabled, the desired LOD is not guaranteed to be currently loaded.
+	 * 
 	 *	This should only ever be WRITTEN by the RENDER thread (in FSkeletalMeshProxy::PreRenderView) and READ by the GAME thread (in USkeletalMeshComponent::UpdateSkelPose).
 	 */
 	int32 MinDesiredLODLevel;

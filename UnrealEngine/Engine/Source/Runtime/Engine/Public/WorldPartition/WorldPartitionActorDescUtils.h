@@ -8,6 +8,7 @@
 
 class AActor;
 struct FAssetData;
+class FWorldPartitionActorDescInstance;
 
 struct FWorldPartitionActorDescUtils
 {
@@ -37,11 +38,13 @@ struct FWorldPartitionActorDescUtils
 	 */
 	static ENGINE_API TUniquePtr<FWorldPartitionActorDesc> GetActorDescriptorFromAssetData(const FAssetData& InAssetData);
 
-	/** 
+	/**
 	 * Appends the actor's actor descriptor data into the provided asset registry tags.
 	 * @param InActor		The actor that will append its actor descriptor.
 	 * @param OutTags		Output tags to output into.
 	 */
+	static ENGINE_API void AppendAssetDataTagsFromActor(const AActor* InActor, FAssetRegistryTagsContext Context);
+	UE_DEPRECATED(5.4, "Call the version that takes FAssetRegistryTagsContext instead.")
 	static ENGINE_API void AppendAssetDataTagsFromActor(const AActor* InActor, TArray<UObject::FAssetRegistryTag>& OutTags);
 
 	/** 
@@ -50,6 +53,15 @@ struct FWorldPartitionActorDescUtils
 	 * @return				The actor descriptor data.
 	 */
 	static ENGINE_API FString GetAssetDataFromActorDescriptor(TUniquePtr<FWorldPartitionActorDesc>& InActorDesc);
+
+	/** 
+	 * Patches an actor descriptor's asset data
+	 * @param InAssetData			The asset data to be patched.
+	 * @param OutAssetData			The patched asset data.
+	 * @param InAssetDataPatcher	The patcher object.
+	 * @return						The actor descriptor patched data.
+	 */
+	static ENGINE_API bool GetPatchedAssetDataFromAssetData(const FAssetData& InAssetData, FString& OutAssetData, FWorldPartitionAssetDataPatcher* InAssetDataPatcher);
 
 	/** 
 	 * Update an actor descriptor with new values coming from the provided actor.
@@ -69,9 +81,12 @@ struct FWorldPartitionActorDescUtils
 	 * Replaces the actor descriptor's actor pointer with the provided new actor pointer.
 	 * @param InOldActor	The old actor that the provided actor descriptor was representing.
 	 * @param InNewActor	The new actor that the provided actor descriptor should be representing.
-	 * @param InActorDesc	Actor descriptor that will get its actor pointer updated.
+	 * @param InActorDescInstance	Actor descriptor instance that will get its actor pointer updated.
 	 */
-	static ENGINE_API void ReplaceActorDescriptorPointerFromActor(const AActor* InOldActor, AActor* InNewActor, FWorldPartitionActorDesc* InActorDesc);
+	static ENGINE_API void ReplaceActorDescriptorPointerFromActor(const AActor* InOldActor, AActor* InNewActor, FWorldPartitionActorDescInstance* InActorDescInstance);
+
+	UE_DEPRECATED(5.4, "Use FWorldPartitionActorDescInstance version instead")
+	static ENGINE_API void ReplaceActorDescriptorPointerFromActor(const AActor* InOldActor, AActor* InNewActor, FWorldPartitionActorDesc* InActorDesc) {}
 
 	UE_DEPRECATED(5.3, "Use FWorldPartitionHelpers::FixupRedirectedAssetPath instead")
 	static ENGINE_API bool FixupRedirectedAssetPath(FName& InOutAssetPath);

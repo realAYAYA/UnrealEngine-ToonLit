@@ -39,6 +39,22 @@ enum class ETransitionCurve : uint8
 	CubicInOut,
 };
 
+/** Determines the switcher's behavior if the target of a transition is removed before it becomes the active widget. */
+UENUM(BlueprintType)
+enum class ECommonSwitcherTransitionFallbackStrategy : uint8
+{
+	/** Transition fallbacks are disabled and no special handling will occur if a transitioning widget is removed. */
+	None,
+	/** Fall back to the nearest valid slot at a lower index than the original target, or the first slot if there are none lower */
+	Previous,
+	/** Fall back to the nearest valid slot at a higher index than the original target, or the last slot if there are none higher */
+	Next,
+	/** Fall back to the first item in the switcher */
+	First,
+	/** Fall back to the last item in the switcher */
+	Last
+};
+
 static FORCEINLINE ECurveEaseFunction TransitionCurveToCurveEaseFunction(ETransitionCurve CurveType)
 {
 	switch (CurveType)
@@ -65,6 +81,7 @@ public:
 		, _TransitionType(ECommonSwitcherTransition::FadeOnly)
 		, _TransitionCurveType(ETransitionCurve::CubicInOut)
 		, _TransitionDuration(0.4f)
+		, _TransitionFallbackStrategy(ECommonSwitcherTransitionFallbackStrategy::Previous)
 		{
 			_Visibility = EVisibility::SelfHitTestInvisible;
 		}
@@ -74,6 +91,7 @@ public:
 		SLATE_ARGUMENT(ECommonSwitcherTransition, TransitionType)
 		SLATE_ARGUMENT(ETransitionCurve, TransitionCurveType)
 		SLATE_ARGUMENT(float, TransitionDuration)
+		SLATE_ARGUMENT(ECommonSwitcherTransitionFallbackStrategy, TransitionFallbackStrategy)
 		SLATE_EVENT(FOnActiveIndexChanged, OnActiveIndexChanged)
 		SLATE_EVENT(FOnIsTransitioningChanged, OnIsTransitioningChanged)
 
@@ -90,10 +108,24 @@ public:
 	void SetTransition(float Duration, ETransitionCurve Curve);
 
 	bool IsTransitionPlaying() const;
+	
+	TWeakPtr<SWidget> GetPendingActiveWidget() const { return PendingActiveWidget; }
+	int32 GetPendingActiveWidgetIndex() const { return PendingActiveWidgetIndex; }
 
+	void SetTransitionFallbackStrategy(const ECommonSwitcherTransitionFallbackStrategy InStrategy) { TransitionFallbackStrategy = InStrategy; }
+	ECommonSwitcherTransitionFallbackStrategy GetTransitionFallbackStrategy() const { return TransitionFallbackStrategy; }
+	bool IsTransitionFallbackEnabled() const { return TransitionFallbackStrategy != ECommonSwitcherTransitionFallbackStrategy::None; }
+
+protected:
+	virtual void OnSlotAdded(int32 AddedIndex) override;
+	virtual void OnSlotRemoved(int32 RemovedIndex, TSharedRef<SWidget> RemovedWidget, bool bWasActiveSlot) override;
+	
 private:
 	EActiveTimerReturnType UpdateTransition(double InCurrentTime, float InDeltaTime);
 	float GetTransitionProgress() const;
+	int32 GetTransitionFallbackForIndex(int32 RemovedWidgetIndex) const;
+	bool TryTransitionFallbackOfPendingWidget();
+	bool TryTransitionFallbackOfActiveWidget(int32 RemovedWidgetIndex);
 
 private:
 	/** Anim sequence for the transition; plays twice per transition */
@@ -101,6 +133,12 @@ private:
 
 	/** The pending active widget, set when the initial transition out completes. If set to a null value then we don't have any pending widget */
 	TWeakPtr<SWidget> PendingActiveWidget;
+
+	/** Tracks the index of PendingActiveWidget, if there is one. */
+	int32 PendingActiveWidgetIndex = INDEX_NONE;
+
+	/** Controls how we will choose another widget if a transitioning widget is removed during the transition. */
+	ECommonSwitcherTransitionFallbackStrategy TransitionFallbackStrategy = ECommonSwitcherTransitionFallbackStrategy::None;
 
 	/** If true, we are transitioning content out and need to play the sequence again to transition it in */
 	bool bTransitioningOut = false;

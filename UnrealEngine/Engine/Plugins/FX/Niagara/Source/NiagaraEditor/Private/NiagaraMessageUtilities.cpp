@@ -151,9 +151,6 @@ UNiagaraStackEntry::FStackIssue FNiagaraMessageUtilities::StackMessageToStackIss
 	case ENiagaraMessageSeverity::Info:
 		StackIssueSeverity = EStackIssueSeverity::Info;
 		break;
-	case ENiagaraMessageSeverity::CustomNote:
-		StackIssueSeverity = EStackIssueSeverity::CustomNote;
-		break;
 	default:
 		StackIssueSeverity = EStackIssueSeverity::Info;
 		break;
@@ -185,10 +182,6 @@ UNiagaraStackEntry::FStackIssue FNiagaraMessageUtilities::StackMessageToStackIss
 		else if(StackIssueSeverity == EStackIssueSeverity::Error)
 		{
 			ShortDescription = LOCTEXT("EmptyShortDescriptionFromStackMessage_Error", "Error");
-		}
-		else if(StackIssueSeverity == EStackIssueSeverity::CustomNote)
-		{
-			ShortDescription = LOCTEXT("EmptyShortDescriptionFromStackMessage_CustomNote", "Custom Note");
 		}
 	}
 	

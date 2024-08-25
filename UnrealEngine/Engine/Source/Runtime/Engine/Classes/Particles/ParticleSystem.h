@@ -122,8 +122,6 @@ public:
 
 	ENGINE_API virtual void PostInitProperties() override;
 
-	ENGINE_API virtual bool IsReadyForFinishDestroy() override;
-
 	/** Max number of components of this system to keep resident in the world component pool. */
 	UPROPERTY(EditAnywhere, Category = Performance, AdvancedDisplay)
 	uint32 MaxPoolSize;
@@ -153,6 +151,7 @@ public:
 	FName CSVStat_Activation = NAME_None;
 	FName CSVStat_Waits = NAME_None;
 	FName CSVStat_Culled = NAME_None;
+	FName CSVStat_MemoryKB = NAME_None;
 #endif
 #endif
 
@@ -160,15 +159,8 @@ public:
 	const TArray<FMaterialPSOPrecacheRequestID>& GetMaterialPSOPrecacheRequestIDs() const { return MaterialPSOPrecacheRequestIDs; }
 
 protected:
-	struct VFsPerMaterialData
-	{
-		UMaterialInterface* MaterialInterface = nullptr;
-		EPrimitiveType PrimitiveType = PT_TriangleList; // must match FPSOPrecacheParams::PrimitiveType default value
-		bool bDisableBackfaceCulling = false;  // must match FPSOPrecacheParams::bDisableBackfaceCulling default value
-		FPSOPrecacheVertexFactoryDataList VertexFactoryData;
-	};
-
-	ENGINE_API void LaunchPSOPrecaching(TArrayView<VFsPerMaterialData> VFsPerMaterials);
+	
+	ENGINE_API void LaunchPSOPrecaching(const FMaterialInterfacePSOPrecacheParamsList& VFsPerMaterials);
 
 	FGraphEventRef PrecachePSOsEvent;
 	TArray<FMaterialPSOPrecacheRequestID> MaterialPSOPrecacheRequestIDs;
@@ -452,6 +444,8 @@ public:
 	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 	virtual void PostLoad() override;
 	virtual bool IsPostLoadThreadSafe() const override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	bool UsesCPUCollision() const;
 	virtual bool CanBeClusterRoot() const override;

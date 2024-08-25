@@ -11,22 +11,24 @@
 #include "ConcertClientSequencerManager.h"
 #include "ConcertClientPresenceManager.h"
 #include "ConcertSourceControlProxy.h"
+#include "Replication/Manager/ReplicationManager.h"
 
 LLM_DECLARE_TAG(Concert_ConcertSyncClient);
 #define LOCTEXT_NAMESPACE "ConcertSyncClient"
 
-FConcertSyncClient::FConcertSyncClient(const FString& InRole, IConcertClientPackageBridge* InPackageBridge, IConcertClientTransactionBridge* InTransactionBridge)
+FConcertSyncClient::FConcertSyncClient(
+	const FString& InRole,
+	const UE::ConcertSyncClient::FConcertBridges& InBridges
+	)
 	: ConcertClient(IConcertClientModule::Get().CreateClient(InRole))
 	, SessionFlags(EConcertSyncSessionFlags::None)
-	, PackageBridge(InPackageBridge)
-	, TransactionBridge(InTransactionBridge)
+	, Bridges(InBridges)
 #if WITH_EDITOR
 	, SequencerManager(MakeUnique<FConcertClientSequencerManager>(this))
 	, SourceControlProxy(MakeUnique<FConcertSourceControlProxy>())
 #endif
 {
-	check(PackageBridge);
-	check(TransactionBridge);
+	check(Bridges.IsValid());
 
 	ConcertClient->OnSessionStartup().AddRaw(this, &FConcertSyncClient::RegisterConcertSyncHandlers);
 	ConcertClient->OnSessionShutdown().AddRaw(this, &FConcertSyncClient::UnregisterConcertSyncHandlers);
@@ -85,6 +87,11 @@ IConcertClientSequencerManager* FConcertSyncClient::GetSequencerManager() const
 	Manager = SequencerManager.Get();
 #endif
 	return Manager;
+}
+
+IConcertClientReplicationManager* FConcertSyncClient::GetReplicationManager() const
+{
+	return ReplicationManager.Get();
 }
 
 FOnConcertClientWorkspaceStartupOrShutdown& FConcertSyncClient::OnWorkspaceStartup()
@@ -147,7 +154,7 @@ void FConcertSyncClient::SetFileSharingService(TSharedPtr<IConcertFileSharingSer
 void FConcertSyncClient::CreateWorkspace(const TSharedRef<FConcertSyncClientLiveSession>& InLiveSession)
 {
 	DestroyWorkspace();
-	Workspace = MakeShared<FConcertClientWorkspace>(InLiveSession, PackageBridge, TransactionBridge, FileSharingService, this);
+	Workspace = MakeShared<FConcertClientWorkspace>(UE::ConcertSyncClient::FSessionBindArgs{ InLiveSession, Bridges } , FileSharingService, this);
 	OnWorkspaceStartupDelegate.Broadcast(Workspace);
 #if WITH_EDITOR
 	if (GIsEditor && EnumHasAllFlags(SessionFlags, EConcertSyncSessionFlags::EnablePackages | EConcertSyncSessionFlags::ShouldUsePackageSandbox))
@@ -178,6 +185,14 @@ void FConcertSyncClient::RegisterConcertSyncHandlers(TSharedRef<IConcertClientSe
 	{
 		OnSyncSessionStartupDelegate.Broadcast(this);
 		CreateWorkspace(LiveSession.ToSharedRef());
+		
+		// Create Replication Manager
+		if (EnumHasAnyFlags(LiveSession->GetSessionFlags(), EConcertSyncSessionFlags::EnableReplication))
+		{
+			ReplicationManager = MakeUnique<UE::ConcertSyncClient::Replication::FReplicationManager>(InSession, Bridges.ReplicationBridge);
+			ReplicationManager->StartAcceptingJoinRequests();
+		}
+
 #if WITH_EDITOR
 		PresenceManager.Reset();
 		if (EnumHasAnyFlags(SessionFlags, EConcertSyncSessionFlags::EnablePresence))
@@ -198,12 +213,17 @@ void FConcertSyncClient::RegisterConcertSyncHandlers(TSharedRef<IConcertClientSe
 
 IConcertClientTransactionBridge* FConcertSyncClient::GetTransactionBridge() const
 {
-	return TransactionBridge;
+	return Bridges.TransactionBridge;
 }
 
 IConcertClientPackageBridge* FConcertSyncClient::GetPackageBridge() const
 {
-	return PackageBridge;
+	return Bridges.PackageBridge;
+}
+
+IConcertClientReplicationBridge* FConcertSyncClient::GetReplicationBridge() const
+{
+	return Bridges.ReplicationBridge;
 }
 
 void FConcertSyncClient::UnregisterConcertSyncHandlers(TSharedRef<IConcertClientSession> InSession)
@@ -212,6 +232,7 @@ void FConcertSyncClient::UnregisterConcertSyncHandlers(TSharedRef<IConcertClient
 	SequencerManager->Unregister(InSession);
 	PresenceManager.Reset();
 #endif
+	ReplicationManager.Reset();
 	DestroyWorkspace();
 	OnSyncSessionShutdownDelegate.Broadcast(this);
 	LiveSession.Reset();

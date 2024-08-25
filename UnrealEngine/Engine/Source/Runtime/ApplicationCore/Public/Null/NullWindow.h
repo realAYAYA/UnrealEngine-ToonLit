@@ -183,4 +183,6 @@ private:
 
 	/** Manually store window visibility as OS doesn't do that for us in nullplatform */
 	bool bIsVisible;
+
+	bool bIsInitialized;
 };

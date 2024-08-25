@@ -37,6 +37,7 @@ Texture2D<float> RayGuidingCDFY;
 #include "/Engine/Private/PathTracing/Material/PathTracingMaterialSampling.ush"
 #include "/Engine/Private/PathTracing/Material/PathTracingRadianceProbe.ush"
 
+#include "/Engine/Shared/LightDefinitions.h"
 
 #include "LightmapEncoding.ush"
 #include "LightmapCommon.ush"
@@ -292,40 +293,27 @@ FPathTracingPayload TraceTransparentRay(FRayDesc Ray, bool IsCameraRay, bool Las
 
 float3 TraceTransparentVisibilityRay(FRayDesc Ray, float PathRoughness)
 {
-	const uint RayFlags = 0;
+	const uint RayFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER;
 	const uint InstanceInclusionMask = PATHTRACER_MASK_SHADOW;
 	const uint RayContributionToHitGroupIndex = RAY_TRACING_SHADER_SLOT_SHADOW;
 	const uint MultiplierForGeometryContributionToShaderIndex = RAY_TRACING_NUM_SHADER_SLOTS;
 	const uint MissShaderIndex = 0;
 
 	FPackedPathTracingPayload PackedPayload = InitPathTracingVisibilityPayload(PathRoughness);
-
-	for (;;)
+	TraceRay(
+		TLAS,
+		RayFlags,
+		InstanceInclusionMask,
+		RayContributionToHitGroupIndex,
+		MultiplierForGeometryContributionToShaderIndex,
+		MissShaderIndex,
+		Ray.GetNativeDesc(),
+		PackedPayload);
+	if (PackedPayload.IsHit())
 	{
-		// Trace the ray
-		PackedPayload.SetMiss();
-		TraceRay(
-			TLAS,
-			RayFlags,
-			InstanceInclusionMask,
-			RayContributionToHitGroupIndex,
-			MultiplierForGeometryContributionToShaderIndex,
-			MissShaderIndex,
-			Ray.GetNativeDesc(),
-			PackedPayload);
-		if (PackedPayload.IsMiss())
-		{
-			break;
-		}
-		if (!any(PackedPayload.GetRayThroughput() > 0))
-		{
-			// accumulated to fully opacity already
-			break;
-		}
-		// one past the current hit to get the next transparent hit
-		Ray.TMin = asfloat(asuint(PackedPayload.HitT) + 1);
+		// We didn't run the miss shader, therefore we must have hit something opaque (or reached full opacity)
+		return 0.0;
 	}
-
 	return PackedPayload.GetRayThroughput();
 }
 
@@ -386,8 +374,7 @@ void PathTracingKernel(
 	{		
 		const bool bIsCameraRay = Bounce == 0;
 		const bool bIsLastBounce = Bounce == MaxBounces;
-		const bool bIncludeEmissive = (Bounce > 1) &&
-									  (EnableEmissive       != 0 || bIsCameraRay);
+		const bool bIncludeEmissive = EnableEmissive;
 		FPathTracingPayload Payload = (FPathTracingPayload)0;
 		
 		if (bIsCameraRay)
@@ -424,8 +411,8 @@ void PathTracingKernel(
 		}
 
 	#if USE_IRRADIANCE_CACHING
-		float3 TexelPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
-		float3 HitPosition = Payload.TranslatedWorldPos - LWCHackToFloat(PrimaryView.PreViewTranslation);
+		float3 TexelPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation);
+		float3 HitPosition = Payload.TranslatedWorldPos - DFHackToFloat(PrimaryView.PreViewTranslation);
 		float DistanceFromTexelToHit = length(HitPosition - TexelPosition);
 		bool bRejectedByCornerRejection = RenderPassIndex >= GetIrradianceCachingQuality() && DistanceFromTexelToHit < IrradianceCachingParameters.Spacing * IrradianceCachingParameters.CornerRejection;
 		
@@ -896,7 +883,7 @@ void LightmapPathTracingMainRG()
 		bGBufferSampleValid = false;
 	}
 
-	float3 TranslatedWorldPosition = EncodedGBufferWorldPosition.xyz / WorldPositionScalar + LWCHackToFloat(PrimaryView.PreViewTranslation); // RT_LWC_TODO
+	float3 TranslatedWorldPosition = EncodedGBufferWorldPosition.xyz / WorldPositionScalar + DFHackToFloat(PrimaryView.PreViewTranslation); // RT_LWC_TODO
 	
 	int EffectiveRenderPassIndex = BatchedTiles[TileIndex].RenderPassIndex;
 #if USE_IRRADIANCE_CACHING
@@ -1112,7 +1099,7 @@ uint MortonEncode3(uint3 Pixel)
 // Must match C++
 struct FLightShaderConstants
 {
-	float3 RelativeWorldPosition;
+	float3 PositionHigh;
 	float  InvRadius;
 	float3 Color;
 	float  FalloffExponent;
@@ -1120,7 +1107,7 @@ struct FLightShaderConstants
 	float  SpecularScale;
 	float3 Tangent;
 	float  SourceRadius;
-	float3 TilePosition;
+	float3 PositionLow;
 	float  SourceLength;
 	float2 SpotAngles;
 	float  SoftSourceRadius;
@@ -1129,9 +1116,9 @@ struct FLightShaderConstants
 	
 	void FillLightShaderParameters(inout FLightShaderParameters LightShaderParameters)
 	{
-		const FLWCVector3 WorldPosition = MakeLWCVector3(TilePosition, RelativeWorldPosition);
+		const FDFVector3 WorldPosition = MakeDFVector3(PositionHigh, PositionLow);
 
-		LightShaderParameters.TranslatedWorldPosition = LWCToFloat(LWCAdd(WorldPosition, PrimaryView.PreViewTranslation));
+		LightShaderParameters.TranslatedWorldPosition = DFFastAddDemote(WorldPosition, PrimaryView.PreViewTranslation);
 		LightShaderParameters.InvRadius = InvRadius;
 		LightShaderParameters.Color = Color;
 		LightShaderParameters.FalloffExponent = FalloffExponent;
@@ -1146,12 +1133,6 @@ struct FLightShaderConstants
 		LightShaderParameters.RectLightBarnLength = RectLightBarnLength;
 	}
 };
-
-#define LIGHT_TYPE_DIRECTIONAL		0 
-#define LIGHT_TYPE_POINT			1 
-#define LIGHT_TYPE_SPOT				2 
-#define LIGHT_TYPE_RECT				3 
-#define LIGHT_TYPE_MAX				4 
 
 bool GenerateOcclusionRay(
 	int LightType,
@@ -1281,7 +1262,7 @@ void VolumetricLightmapPathTracingMainRG()
 	float3 JitteredCellPosInVLM = (BrickRequests[BrickIndex].xyz * 4 + CellPosInBrick + Jitter - float3(0.5, 0.5, 0.5)) * BrickRequests[BrickIndex].w;	
 	float3 DetailCellSize = VolumeSize.xyz / IndirectionTextureDim / 4;
 	float3 WorldPosition = VolumeMin.xyz + DetailCellSize * JitteredCellPosInVLM; // RT_LWC_TODO
-	float3 TranslatedWorldPosition = WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // RT_LWC_TODO
+	float3 TranslatedWorldPosition = WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation); // RT_LWC_TODO
 
 	int NumValidHalfSamples = 0;
 	
@@ -1453,7 +1434,7 @@ void StationaryLightShadowTracingMainRG()
 		bGBufferSampleValid = false;
 	}
 
-	float3 TranslatedWorldPosition = EncodedGBufferWorldPosition.xyz / WorldPositionScalar + LWCHackToFloat(PrimaryView.PreViewTranslation); // RT_LWC_TODO
+	float3 TranslatedWorldPosition = EncodedGBufferWorldPosition.xyz / WorldPositionScalar + DFHackToFloat(PrimaryView.PreViewTranslation); // RT_LWC_TODO
 	
 	if (bGBufferSampleValid)
 	{

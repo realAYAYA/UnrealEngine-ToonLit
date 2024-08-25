@@ -43,16 +43,18 @@ namespace Horde.Server.Auditing
 		/// <param name="maxTime"></param>
 		/// <param name="index"></param>
 		/// <param name="count"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		IAsyncEnumerable<IAuditLogMessage> FindAsync(DateTime? minTime = null, DateTime? maxTime = null, int? index = null, int? count = null);
+		IAsyncEnumerable<IAuditLogMessage> FindAsync(DateTime? minTime = null, DateTime? maxTime = null, int? index = null, int? count = null, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Deletes messages between a given time range for a particular object
 		/// </summary>
 		/// <param name="minTime">Minimum time to remove</param>
 		/// <param name="maxTime">Maximum time to remove</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task<long> DeleteAsync(DateTime? minTime = null, DateTime? maxTime = null);
+		Task<long> DeleteAsync(DateTime? minTime = null, DateTime? maxTime = null, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Flush all writes to this log
@@ -126,22 +128,23 @@ namespace Horde.Server.Auditing
 		/// <param name="maxTime">Maximum time for records to return</param>
 		/// <param name="index">Offset of the first result</param>
 		/// <param name="count">Number of records to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested agent</returns>
-		public static async Task FindAsync<T>(this IAuditLogChannel<T> channel, PipeWriter bodyWriter, DateTime? minTime = null, DateTime? maxTime = null, int index = 0, int count = 50)
+		public static async Task FindAsync<T>(this IAuditLogChannel<T> channel, PipeWriter bodyWriter, DateTime? minTime = null, DateTime? maxTime = null, int index = 0, int count = 50, CancellationToken cancellationToken = default)
 		{
 			string prefix = "{\n\t\"entries\":\n\t[";
-			await bodyWriter.WriteAsync(Encoding.UTF8.GetBytes(prefix));
+			await bodyWriter.WriteAsync(Encoding.UTF8.GetBytes(prefix), cancellationToken);
 
 			string separator = "";
-			await foreach (IAuditLogMessage message in channel.FindAsync(minTime, maxTime, index, count))
+			await foreach (IAuditLogMessage message in channel.FindAsync(minTime, maxTime, index, count, cancellationToken))
 			{
 				string line = $"{separator}\n\t\t{message.Data}";
-				await bodyWriter.WriteAsync(Encoding.UTF8.GetBytes(line));
+				await bodyWriter.WriteAsync(Encoding.UTF8.GetBytes(line), cancellationToken);
 				separator = ",";
 			}
 
 			string suffix = "\n\t]\n}";
-			await bodyWriter.WriteAsync(Encoding.UTF8.GetBytes(suffix));
+			await bodyWriter.WriteAsync(Encoding.UTF8.GetBytes(suffix), cancellationToken);
 		}
 	}
 }

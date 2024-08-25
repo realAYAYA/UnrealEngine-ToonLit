@@ -10,7 +10,7 @@
 namespace UE::ConcertSyncTests
 {
 	/** Ensures that the dependency graph API functions as intended, i.e. you add, connect and query nodes. */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertDependencyGraphApiTest, "Concert.History.GraphApi.DependencyGraphApi", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FConcertDependencyGraphApiTest, "Editor.Concert.History.GraphApi.DependencyGraphApi", EAutomationTestFlags::EditorContext | EAutomationTestFlags::SmokeFilter)
 	bool FConcertDependencyGraphApiTest::RunTest(const FString& Parameters)
 	{
 		using namespace UE::ConcertSyncCore;
@@ -54,7 +54,7 @@ namespace UE::ConcertSyncTests
 	}
 
 	/** Ensures that the dependency graph API functions as intended, i.e. you add, connect and query nodes. */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisallowCyclesInGraph, "Concert.History.GraphApi.DisallowCyclesInGraph", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDisallowCyclesInGraph, "Editor.Concert.History.GraphApi.DisallowCyclesInGraph", EAutomationTestFlags::EditorContext | EAutomationTestFlags::SmokeFilter)
 	bool FDisallowCyclesInGraph::RunTest(const FString& Parameters)
 	{
 		using namespace UE::ConcertSyncCore;

@@ -232,7 +232,6 @@ uint32 GetTypeHash(const FRasterizerStateInitializerRHI& Initializer)
 	Hash = HashCombine(Hash, GetTypeHash(Initializer.SlopeScaleDepthBias));
 	Hash = HashCombine(Hash, GetTypeHash(Initializer.DepthClipMode));
 	Hash = HashCombine(Hash, GetTypeHash(Initializer.bAllowMSAA));
-	Hash = HashCombine(Hash, GetTypeHash(Initializer.bEnableLineAA));
 	return Hash;
 }
 	
@@ -244,8 +243,7 @@ bool operator== (const FRasterizerStateInitializerRHI& A, const FRasterizerState
 		A.DepthBias == B.DepthBias && 
 		A.SlopeScaleDepthBias == B.SlopeScaleDepthBias &&
 		A.DepthClipMode == B.DepthClipMode &&
-		A.bAllowMSAA == B.bAllowMSAA && 
-		A.bEnableLineAA == B.bEnableLineAA;
+		A.bAllowMSAA == B.bAllowMSAA;
 	return bSame;
 }
 
@@ -1235,10 +1233,24 @@ ERHIBindlessConfiguration RHIParseBindlessConfiguration(EShaderPlatform Platform
 {
 	const ERHIBindlessSupport BindlessSupport = RHIGetBindlessSupport(Platform);
 
+	if (BindlessSupport == ERHIBindlessSupport::Unsupported)
+	{
+		return ERHIBindlessConfiguration::Disabled;
+	}
+
+#if WITH_EDITOR
+	// We have to check the -bindless command line option here to make sure the shaders are compiled with bindless enabled too.
+	static const bool bCommandLine = FParse::Param(FCommandLine::Get(), TEXT("Bindless"));
+	if (bCommandLine)
+	{
+		return ERHIBindlessConfiguration::AllShaders;
+	}
+#endif
+
 	const ERHIBindlessConfiguration ConfigSetting = ParseConfigurationFromString(ConfigSettingString);
 	const ERHIBindlessConfiguration CVarSetting = ParseConfigurationFromString(CVarSettingString);
 
-	if (BindlessSupport == ERHIBindlessSupport::Unsupported || (ConfigSetting == ERHIBindlessConfiguration::Disabled && CVarSetting == ERHIBindlessConfiguration::Disabled))
+	if (ConfigSetting == ERHIBindlessConfiguration::Disabled && CVarSetting == ERHIBindlessConfiguration::Disabled)
 	{
 		return ERHIBindlessConfiguration::Disabled;
 	}
@@ -1524,7 +1536,6 @@ void FRHIRenderPassInfo::ConvertToRenderTargetsInfo(FRHISetRenderTargetsInfo& Ou
 
 		OutRTInfo.bClearColor |= (LoadAction == ERenderTargetLoadAction::EClear);
 
-		ensure(!OutRTInfo.bHasResolveAttachments || ColorRenderTargets[Index].ResolveTarget);
 		if (ColorRenderTargets[Index].ResolveTarget)
 		{
 			OutRTInfo.bHasResolveAttachments = true;
@@ -1571,7 +1582,8 @@ void FRHIRenderPassInfo::Validate() const
 			}
 			else
 			{
-				ensureMsgf(Entry.RenderTarget->GetNumSamples() == NumSamples, TEXT("RenderTarget have inconsistent NumSamples: first %d, then %d"), NumSamples, Entry.RenderTarget->GetNumSamples());
+				// CustomResolveSubpass can have targets with a different NumSamples
+				ensureMsgf(Entry.RenderTarget->GetNumSamples() == NumSamples || SubpassHint == ESubpassHint::CustomResolveSubpass, TEXT("RenderTarget have inconsistent NumSamples: first %d, then %d"), NumSamples, Entry.RenderTarget->GetNumSamples());
 			}
 
 			ERenderTargetStoreAction Store = GetStoreAction(Entry.Action);
@@ -1638,7 +1650,7 @@ void FRHIRenderPassInfo::Validate() const
 			//ensure(StencilStore == ERenderTargetStoreAction::EStore);
 		}
 		
-		if (SubpassHint == ESubpassHint::DepthReadSubpass)
+		if (SubpassHint == ESubpassHint::DepthReadSubpass || SubpassHint == ESubpassHint::CustomResolveSubpass)
 		{
 			// for depth read sub-pass
 			// 1. render pass must have depth target
@@ -1651,6 +1663,7 @@ void FRHIRenderPassInfo::Validate() const
 		ensure(DepthStencilRenderTarget.Action == EDepthStencilTargetActions::DontLoad_DontStore);
 		ensure(DepthStencilRenderTarget.ExclusiveDepthStencil == FExclusiveDepthStencil::DepthNop_StencilNop);
 		ensure(SubpassHint != ESubpassHint::DepthReadSubpass);
+		ensure(SubpassHint != ESubpassHint::CustomResolveSubpass);
 	}
 }
 #endif
@@ -1730,6 +1743,44 @@ bool FRHITextureDesc::Validate(const FRHITextureCreateInfo& Desc, const TCHAR* N
 	{
 		ValidateResourceDesc(Desc.NumMips > 0, TEXT("Texture %s's NumMips=%d is invalid."), Name, Desc.NumMips);
 		ValidateResourceDesc(Desc.NumMips <= GMaxTextureMipCount, TEXT("Texture %s's NumMips=%d is too large."), Name, Desc.NumMips);
+	}
+
+	// Validate reserved resource restrictions
+	if (EnumHasAnyFlags(Desc.Flags, TexCreate_ReservedResource))
+	{
+		ValidateResourceDesc(GRHIGlobals.ReservedResources.Supported,
+			TEXT("Reserved Texture %s's can't be created because current RHI does not support reserved resources."),
+			Name);
+
+		if (Desc.IsTexture3D())
+		{
+			ValidateResourceDesc(GRHIGlobals.ReservedResources.SupportsVolumeTextures,
+				TEXT("Reserved Texture %s's can't be created because current RHI does not support reserved volume textures."),
+				Name);
+		}
+		else
+		{
+			ValidateResourceDesc(
+				Desc.Dimension == ETextureDimension::Texture2D ||
+				Desc.Dimension == ETextureDimension::Texture2DArray,
+				TEXT("Reserved Texture %s's Desc.Dimension=%s is invalid. Expected Texture2D, Texture2DArray or Texture3D."),
+				Name, GetTextureDimensionString(Desc.Dimension));
+		}
+
+		ValidateResourceDesc(Desc.NumMips == 1,
+			TEXT("Reserved Texture %s's NumMips=%d is invalid. Expected only 1 mip level."),
+			Name, Desc.NumMips);
+
+		if (Desc.Dimension == ETextureDimension::Texture2DArray)
+		{
+			ValidateResourceDesc(Desc.Extent.X >= GRHIGlobals.ReservedResources.TextureArrayMinimumMipDimension,
+				TEXT("Reserved Texture array %s's Desc.Extent.X=%d is invalid. It is required to be be no less than %d."),
+				Name, Desc.Extent.X, GRHIGlobals.ReservedResources.TextureArrayMinimumMipDimension);
+
+			ValidateResourceDesc(Desc.Extent.Y >= GRHIGlobals.ReservedResources.TextureArrayMinimumMipDimension,
+				TEXT("Reserved Texture array %s's Desc.Extent.Y=%d is invalid. It is required to be be no less than %d."),
+				Name, Desc.Extent.Y, GRHIGlobals.ReservedResources.TextureArrayMinimumMipDimension);
+		}
 	}
 
 	return true;
@@ -2073,38 +2124,38 @@ FRHIUnorderedAccessView* FRHIBufferViewCache::GetOrCreateUAV(FRHICommandListBase
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 
-void FRHITextureViewCache::SetDebugName(const TCHAR* DebugName)
+void FRHITextureViewCache::SetDebugName(FRHICommandListBase& RHICmdList, const TCHAR* DebugName)
 {
 	for (const auto& KeyValue : UAVs)
 	{
-		RHIBindDebugLabelName(KeyValue.Value, DebugName);
+		RHICmdList.BindDebugLabelName(KeyValue.Value, DebugName);
 	}
 }
 
-void FRHIBufferViewCache::SetDebugName(const TCHAR* DebugName)
+void FRHIBufferViewCache::SetDebugName(FRHICommandListBase& RHICmdList, const TCHAR* DebugName)
 {
 	for (const auto& KeyValue : UAVs)
 	{
-		RHIBindDebugLabelName(KeyValue.Value, DebugName);
+		RHICmdList.BindDebugLabelName(KeyValue.Value, DebugName);
 	}
 }
 
 #endif
 
-void FRHITransientTexture::Acquire(const TCHAR* InName, uint32 InPassIndex, uint64 InAcquireCycle)
+void FRHITransientTexture::Acquire(FRHICommandListBase& RHICmdList, const TCHAR* InName, uint32 InPassIndex, uint64 InAcquireCycle)
 {
-	FRHITransientResource::Acquire(InName, InPassIndex, InAcquireCycle);
-	ViewCache.SetDebugName(InName);
+	FRHITransientResource::Acquire(RHICmdList, InName, InPassIndex, InAcquireCycle);
+	ViewCache.SetDebugName(RHICmdList, InName);
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	RHIBindDebugLabelName(GetRHI(), InName);
+	RHICmdList.BindDebugLabelName(GetRHI(), InName);
 #endif
 }
 
-void FRHITransientBuffer::Acquire(const TCHAR* InName, uint32 InPassIndex, uint64 InAcquireCycle)
+void FRHITransientBuffer::Acquire(FRHICommandListBase& RHICmdList, const TCHAR* InName, uint32 InPassIndex, uint64 InAcquireCycle)
 {
-	FRHITransientResource::Acquire(InName, InPassIndex, InAcquireCycle);
-	ViewCache.SetDebugName(InName);
+	FRHITransientResource::Acquire(RHICmdList, InName, InPassIndex, InAcquireCycle);
+	ViewCache.SetDebugName(RHICmdList, InName);
 
 	// TODO: Add method to rename a buffer.
 }

@@ -31,6 +31,7 @@ public class LyraEditor : ModuleRules
 				"GameplayTasksEditor",
 				"GameplayAbilities",
 				"GameplayAbilitiesEditor",
+				"StudioTelemetry",
 				"LyraGame",
             }
         );

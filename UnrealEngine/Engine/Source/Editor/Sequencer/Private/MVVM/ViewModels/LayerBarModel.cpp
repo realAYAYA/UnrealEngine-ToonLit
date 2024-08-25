@@ -84,7 +84,7 @@ TSharedPtr<ITrackLaneWidget> FLayerBarModel::CreateTrackLaneView(const FCreateTr
 FTrackLaneVirtualAlignment FLayerBarModel::ArrangeVirtualTrackLaneView() const
 {
 	TRange<FFrameNumber> Range = ComputeRange();
-	return FTrackLaneVirtualAlignment::Proportional(Range, .8f);
+	return FTrackLaneVirtualAlignment::Proportional(Range, .8f, EVerticalAlignment::VAlign_Top);
 }
 
 ESelectionIntent FLayerBarModel::IsSelectable() const

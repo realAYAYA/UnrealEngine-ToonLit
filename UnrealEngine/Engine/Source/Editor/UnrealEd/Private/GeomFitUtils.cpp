@@ -23,6 +23,7 @@
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
 #include "Settings/EditorExperimentalSettings.h"
+#include "CompGeom/FitKDOP3.h"
 
 static bool PromptToRemoveExistingCollision(UStaticMesh* StaticMesh)
 {
@@ -55,9 +56,6 @@ static bool PromptToRemoveExistingCollision(UStaticMesh* StaticMesh)
 // This function takes the current collision model, and fits a k-DOP around it.
 // It uses the array of k unit-length direction vectors to define the k bounding planes.
 
-// THIS FUNCTION REPLACES EXISTING SIMPLE COLLISION MODEL WITH KDOP
-#define MY_FLTMAX (3.402823466e+38F)
-
 int32 GenerateKDopAsSimpleCollision(UStaticMesh* StaticMesh, const TArray<FVector> &Dirs)
 {
 	// Make sure rendering is done - so we are not changing data being used by collision drawing.
@@ -70,103 +68,30 @@ int32 GenerateKDopAsSimpleCollision(UStaticMesh* StaticMesh, const TArray<FVecto
 
 	UBodySetup* bs = StaticMesh->GetBodySetup();
 
-	// Do k- specific stuff.
-	int32 kCount = Dirs.Num();
-	TArray<float> maxDist;
-	for(int32 i=0; i<kCount; i++)
-		maxDist.Add(-MY_FLTMAX);
-
-	// Construct temporary UModel for kdop creation. We keep no refs to it, so it can be GC'd.
-	auto TempModel = NewObject<UModel>();
-	TempModel->Initialize(nullptr, 1);
-
-	// For each vertex, project along each kdop direction, to find the max in that direction.
 	const FStaticMeshLODResources& RenderData = StaticMesh->GetRenderData()->LODResources[0];
-	for(int32 i=0; i<RenderData.GetNumVertices(); i++)
-	{
-		for(int32 j=0; j<kCount; j++)
-		{
-			float dist = RenderData.VertexBuffers.PositionVertexBuffer.VertexPosition(i) | (FVector3f)Dirs[j];
-			maxDist[j] = FMath::Max(dist, maxDist[j]);
-		}
-	}
-
-	// Inflate kdop to ensure it is no degenerate
-	const float MinSize = 0.1f;
-	for(int32 i=0; i<kCount; i++)
-	{
-		maxDist[i] += MinSize;
-	}
-
-	// Now we have the planes of the kdop, we work out the face polygons.
-	TArray<FPlane4f> planes;
-	for(int32 i=0; i<kCount; i++)
-		planes.Add( FPlane4f((FVector3f)Dirs[i], maxDist[i]) );
-
-	for(int32 i=0; i<planes.Num(); i++)
-	{
-		FPoly*	Polygon = new(TempModel->Polys->Element) FPoly();
-		FVector3f Base, AxisX, AxisY;
-
-		Polygon->Init();
-		Polygon->Normal = planes[i];
-		Polygon->Normal.FindBestAxisVectors(AxisX,AxisY);
-
-		Base = planes[i] * planes[i].W;
-
-		new(Polygon->Vertices) FVector3f(Base + AxisX * UE_OLD_HALF_WORLD_MAX + AxisY * UE_OLD_HALF_WORLD_MAX);
-		new(Polygon->Vertices) FVector3f(Base + AxisX * UE_OLD_HALF_WORLD_MAX - AxisY * UE_OLD_HALF_WORLD_MAX);
-		new(Polygon->Vertices) FVector3f(Base - AxisX * UE_OLD_HALF_WORLD_MAX - AxisY * UE_OLD_HALF_WORLD_MAX);
-		new(Polygon->Vertices) FVector3f(Base - AxisX * UE_OLD_HALF_WORLD_MAX + AxisY * UE_OLD_HALF_WORLD_MAX);
-
-		for(int32 j=0; j<planes.Num(); j++)
-		{
-			if(i != j)
-			{
-				if(!Polygon->Split(-FVector3f(planes[j]), planes[j] * planes[j].W))
-				{
-					Polygon->Vertices.Empty();
-					break;
-				}
-			}
-		}
-
-		if(Polygon->Vertices.Num() < 3)
-		{
-			// If poly resulted in no verts, remove from array
-			TempModel->Polys->Element.RemoveAt(TempModel->Polys->Element.Num()-1);
-		}
-		else
-		{
-			// Other stuff...
-			Polygon->iLink = i;
-			Polygon->CalcNormal(1);
-		}
-	}
-
-	if(TempModel->Polys->Element.Num() < 4)
-	{
-		TempModel = NULL;
-		return INDEX_NONE;
-	}
-
-	// Build bounding box.
-	TempModel->BuildBound();
-
-	// Build BSP for the brush.
-	FBSPOps::bspBuild(TempModel,FBSPOps::BSP_Good,15,70,1,0);
-	FBSPOps::bspRefresh(TempModel,1);
-	FBSPOps::bspBuildBounds(TempModel);
+	TArray<FVector> HullVertices;
+	UE::Geometry::FitKDOPVertices3<double>(Dirs, RenderData.GetNumVertices(),
+		[&](int32 VertIdx) { return (FVector)RenderData.VertexBuffers.PositionVertexBuffer.VertexPosition(VertIdx); }, HullVertices);
 
 	bs->Modify();
 
-	bs->CreateFromModel(TempModel, false);
+	// Create new GUID
+	bs->InvalidatePhysicsData();
+
+	FKConvexElem ConvexElem;
+	ConvexElem.VertexData = HullVertices;
+	// Note: UpdateElemBox also computes the convex hull indices
+	ConvexElem.UpdateElemBox();
+
+	bs->AggGeom.ConvexElems.Add(ConvexElem);
 	
 	// create all body instances
 	RefreshCollisionChange(*StaticMesh);
 
 	// Mark staticmesh as dirty, to help make sure it gets saved.
 	StaticMesh->MarkPackageDirty();
+
+	StaticMesh->bCustomizedCollision = true;	//mark the static mesh for collision customization
 
 	return bs->AggGeom.ConvexElems.Num() - 1;
 }

@@ -18,5 +18,5 @@ class UTypedElementRemoveSyncToWorldTagFactory : public UTypedElementDataStorage
 public:
 	~UTypedElementRemoveSyncToWorldTagFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
+	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) override;
 };

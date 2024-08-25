@@ -87,7 +87,7 @@ bool UCommonGameViewportClient::InputTouch(FViewport* InViewport, int32 Controll
 #endif
 	{
 		FReply Result = FReply::Unhandled();
-		if (OnRerouteTouch().ExecuteIfBound(ControllerId, Handle, Type, TouchLocation, Result))
+		if (!OnRerouteTouch().ExecuteIfBound(ControllerId, Handle, Type, TouchLocation, Result))
 		{
 			HandleRerouteTouch(ControllerId, Handle, Type, TouchLocation, Result);
 		}

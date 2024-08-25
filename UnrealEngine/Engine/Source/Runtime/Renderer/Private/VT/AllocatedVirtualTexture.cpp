@@ -2,13 +2,25 @@
 
 #include "AllocatedVirtualTexture.h"
 
+#include "Misc/StringBuilder.h"
 #include "VT/VirtualTextureScalability.h"
 #include "VT/VirtualTextureSystem.h"
 #include "VT/VirtualTextureSpace.h"
 #include "VT/VirtualTexturePhysicalSpace.h"
-#include "Misc/StringBuilder.h"
 
-FAllocatedVirtualTexture::FAllocatedVirtualTexture(FVirtualTextureSystem* InSystem,
+bool GSupport16BitPageTable = true;
+static FAutoConsoleVariableRef CVarVTSupport16BitPageTable(
+	TEXT("r.VT.Support16BitPageTable"),
+	GSupport16BitPageTable,
+	TEXT("Enable support for 16 bit page table entries.\n")
+	TEXT("This can reduce page table memory when only 16bit addressing is needed.\n")
+	TEXT("But this can increase the number of page table spaces required when a mixture of 16bit and 32bit addressing is needed.\n")
+	TEXT("Defaults on.\n"),
+	ECVF_ReadOnly);
+
+FAllocatedVirtualTexture::FAllocatedVirtualTexture(
+	FRHICommandListBase& RHICmdList,
+	FVirtualTextureSystem* InSystem,
 	uint32 InFrame,
 	const FAllocatedVTDescription& InDesc,
 	FVirtualTextureProducer* const* InProducers,
@@ -21,7 +33,6 @@ FAllocatedVirtualTexture::FAllocatedVirtualTexture(FVirtualTextureSystem* InSyst
 	, FrameAllocated(InFrame)
 	, Space(nullptr)
 {
-	check(IsInRenderingThread());
 	FMemory::Memzero(TextureLayers);
 	FMemory::Memzero(FallbackColorPerTextureLayer);
 
@@ -40,7 +51,7 @@ FAllocatedVirtualTexture::FAllocatedVirtualTexture(FVirtualTextureSystem* InSyst
 				ProducerPhysicalGroupIndex = Producer->GetPhysicalGroupIndexForTextureLayer(ProducerLayerIndex);
 				PhysicalSpace = Producer->GetPhysicalSpaceForPhysicalGroup(ProducerPhysicalGroupIndex);
 			}
-			const uint32 UniquePhysicalSpaceIndex = AddUniquePhysicalSpace(PhysicalSpace, UniqueProducerIndex, ProducerPhysicalGroupIndex);
+			const uint32 UniquePhysicalSpaceIndex = AddUniquePhysicalSpace(RHICmdList, PhysicalSpace, UniqueProducerIndex, ProducerPhysicalGroupIndex);
 			UniquePageTableLayers[UniquePhysicalSpaceIndex].ProducerTextureLayerMask |= 1 << ProducerLayerIndex;
 			const uint8 PageTableLayerLocalIndex = UniquePageTableLayers[UniquePhysicalSpaceIndex].TextureLayerCount++;
 			
@@ -73,7 +84,7 @@ FAllocatedVirtualTexture::FAllocatedVirtualTexture(FVirtualTextureSystem* InSyst
 	LockOrUnlockTiles(InSystem, true);
 
 	// Use 16bit page table entries if all physical spaces are small enough
-	bool bSupport16BitPageTable = true;
+	bool bSupport16BitPageTable = GSupport16BitPageTable;
 	for (int32 Index = 0; Index < UniquePageTableLayers.Num(); ++Index)
 	{
 		const FVirtualTexturePhysicalSpace* PhysicalSpace = UniquePageTableLayers[Index].PhysicalSpace;
@@ -94,7 +105,7 @@ FAllocatedVirtualTexture::FAllocatedVirtualTexture(FVirtualTextureSystem* InSyst
 	SpaceDesc.IndirectionTextureSize = InDesc.IndirectionTextureSize;
 	SpaceDesc.PageTableFormat = bSupport16BitPageTable ? EVTPageTableFormat::UInt16 : EVTPageTableFormat::UInt32;
 
-	Space = InSystem->AcquireSpace(SpaceDesc, InDesc.ForceSpaceID, this);
+	Space = InSystem->AcquireSpace(RHICmdList, SpaceDesc, InDesc.ForceSpaceID, this);
 	SpaceID = Space->GetID();
 	PageTableFormat = Space->GetPageTableFormat();
 }
@@ -114,7 +125,6 @@ void FAllocatedVirtualTexture::AssignVirtualAddress(uint32 vAddress)
 
 void FAllocatedVirtualTexture::Destroy(FVirtualTextureSystem* System)
 {
-	check(IsInRenderingThread());
 	check(NumRefs == 0);
 
 	// Unlock any locked tiles
@@ -141,7 +151,14 @@ void FAllocatedVirtualTexture::Destroy(FVirtualTextureSystem* System)
 
 		for (int32 PageTableIndex = 0u; PageTableIndex < UniquePageTableLayers.Num(); ++PageTableIndex)
 		{
-			UniquePageTableLayers[PageTableIndex].PhysicalSpace.SafeRelease();
+			if (UniquePageTableLayers[PageTableIndex].PhysicalSpace)
+			{
+				if (UniquePageTableLayers[PageTableIndex].PhysicalSpace->ReleaseResourceRef() == 0)
+				{
+					UniquePageTableLayers[PageTableIndex].PhysicalSpace->ReleaseResource();
+				}
+				UniquePageTableLayers[PageTableIndex].PhysicalSpace.SafeRelease();
+			}
 		}
 
 #if DO_CHECK
@@ -361,7 +378,7 @@ uint32 FAllocatedVirtualTexture::AddUniqueProducer(FVirtualTextureProducerHandle
 	return Index;
 }
 
-uint32 FAllocatedVirtualTexture::AddUniquePhysicalSpace(FVirtualTexturePhysicalSpace* InPhysicalSpace, uint32 InUniqueProducerIndex, uint32 InProducerPhysicalSpaceIndex)
+uint32 FAllocatedVirtualTexture::AddUniquePhysicalSpace(FRHICommandListBase& InRHICmdList, FVirtualTexturePhysicalSpace* InPhysicalSpace, uint32 InUniqueProducerIndex, uint32 InProducerPhysicalSpaceIndex)
 {
 	if (Description.bShareDuplicateLayers)
 	{
@@ -383,6 +400,11 @@ uint32 FAllocatedVirtualTexture::AddUniquePhysicalSpace(FVirtualTexturePhysicalS
 	UniquePageTableLayers[Index].ProducerPhysicalGroupIndex = InProducerPhysicalSpaceIndex;
 	UniquePageTableLayers[Index].ProducerTextureLayerMask = 0;
 	UniquePageTableLayers[Index].TextureLayerCount = 0;
+
+	if (InPhysicalSpace && InPhysicalSpace->AddResourceRef() == 1)
+	{
+		InPhysicalSpace->InitResource(InRHICmdList);
+	}
 
 	return Index;
 }

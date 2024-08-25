@@ -5,6 +5,7 @@
 #include "RHI.h"
 #include "RHIResources.h"
 
+class FRHICommandListBase;
 class FRHICommandListImmediate;
 class FRHITransientHeap;
 class FRHITransientPagePool;
@@ -102,7 +103,7 @@ public:
 	//////////////////////////////////////////////////////////////////////////////////////////////////
 	//! Internal Allocator API
 
-	virtual void Acquire(const TCHAR* InName, uint32 InAcquirePassIndex, uint64 InAllocatorCycle)
+	virtual void Acquire(FRHICommandListBase& RHICmdList, const TCHAR* InName, uint32 InAcquirePassIndex, uint64 InAllocatorCycle)
 	{
 		Name = InName;
 		AcquirePasses = TInterval<uint32>(0, InAcquirePassIndex);
@@ -251,7 +252,7 @@ public:
 
 	//////////////////////////////////////////////////////////////////////////////////////////////////
 	//! Internal Allocator API
-	RHI_API void Acquire(const TCHAR* InName, uint32 InAcquirePassIndex, uint64 InInitCycle) override;
+	RHI_API void Acquire(FRHICommandListBase& RHICmdList, const TCHAR* InName, uint32 InAcquirePassIndex, uint64 InInitCycle) override;
 	//////////////////////////////////////////////////////////////////////////////////////////////////
 
 	// Returns the underlying RHI texture.
@@ -289,7 +290,7 @@ public:
 
 	//////////////////////////////////////////////////////////////////////////////////////////////////
 	//! Internal Allocator API
-	RHI_API void Acquire(const TCHAR* InName, uint32 InAcquirePassIndex, uint64 InInitCycle) override;
+	RHI_API void Acquire(FRHICommandListBase& RHICmdList, const TCHAR* InName, uint32 InAcquirePassIndex, uint64 InInitCycle) override;
 	//////////////////////////////////////////////////////////////////////////////////////////////////
 
 	// Returns the underlying RHI buffer.
@@ -353,6 +354,9 @@ class IRHITransientResourceAllocator
 {
 public:
 	virtual ~IRHITransientResourceAllocator() = default;
+
+	// Supports transient allocations of given resource type
+	virtual bool SupportsResourceType(ERHITransientResourceType InType) const = 0;
 
 	// Allocates a new transient resource with memory backed by the transient allocator.
 	virtual FRHITransientTexture* CreateTexture(const FRHITextureCreateInfo& InCreateInfo, const TCHAR* InDebugName, uint32 InPassIndex) = 0;

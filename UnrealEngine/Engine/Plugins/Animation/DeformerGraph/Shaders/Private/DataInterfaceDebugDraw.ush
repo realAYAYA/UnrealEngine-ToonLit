@@ -48,13 +48,13 @@ float4x4 {DataInterfaceName}_LocalToWorld;
 int2 {DataInterfaceName}_Resolution;
 float2 {DataInterfaceName}_FontSize;
 float2 {DataInterfaceName}_FontSpacing;
-uint {DataInterfaceName}_MaxValueCount;
+uint {DataInterfaceName}_MaxCharacterCount;
 uint {DataInterfaceName}_MaxSymbolCount;
 uint {DataInterfaceName}_MaxStateCount;
 uint {DataInterfaceName}_MaxLineCount;
 uint {DataInterfaceName}_MaxTriangleCount;
-StructuredBuffer<uint> {DataInterfaceName}_StateBuffer;
-RWStructuredBuffer<uint> {DataInterfaceName}_RWEntryBuffer;
+Buffer<uint> {DataInterfaceName}_StateBuffer;
+RWBuffer<uint> {DataInterfaceName}_RWEntryBuffer;
 
 FDebugDraw ReadDebugDraw_{DataInterfaceName}()
 {
@@ -67,7 +67,7 @@ FDebugDraw ReadDebugDraw_{DataInterfaceName}()
 	DebugDraw.Context.Config.TranslatedWorldOffset = 0;
 	DebugDraw.Context.Config.FontSize = {DataInterfaceName}_FontSize;
 	DebugDraw.Context.Config.FontSpacing = {DataInterfaceName}_FontSpacing;
-	DebugDraw.Context.Config.MaxValueCount = {DataInterfaceName}_MaxValueCount;
+	DebugDraw.Context.Config.MaxCharacterCount = {DataInterfaceName}_MaxCharacterCount;
 	DebugDraw.Context.Config.MaxSymbolCount = {DataInterfaceName}_MaxSymbolCount;
 	DebugDraw.Context.Config.MaxStateCount = {DataInterfaceName}_MaxStateCount;
 	DebugDraw.Context.Config.MaxLineCount = {DataInterfaceName}_MaxLineCount;

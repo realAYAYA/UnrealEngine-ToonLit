@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Xml.Linq;
 using System.IO;
 using System.Diagnostics;
 using CSVStats;
@@ -15,18 +14,16 @@ using System.Threading.Tasks;
 using System.Threading;
 
 using PerfSummaries;
-using System.Globalization;
 using CSVTools;
 
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace PerfReportTool
 {
     class Version
     {
 		// Format: Major.Minor.Bugfix
-        private static string VersionString = "4.106.0";
+        private static string VersionString = "4.230.0";
 
         public static string Get() { return VersionString; }
     };
@@ -103,14 +100,18 @@ namespace PerfReportTool
 			"     Not available in bulk mode.\n" +
 			"  -noSmooth : disable smoothing on all graphs\n" +
 			"  -listSummaryTables: lists available summary tables from the current report XML\n" +
+			"  -dumpVariables | -dumpVariablesAll : dumps variables to the log for each CSV (all includes metadata)\n" +
 			"\n" +
 			"Performance args:\n" +
 			"  -perfLog : output performance logging information\n" +
 			"  -graphThreads : use with -batchedGraphs to control the number of threads per CsvToSVG instance \n" +
 			"                  (default: PC core count/2)\n" +
 			"  -csvToSvgSequential : Run CsvToSvg sequentially\n" +
+			"  -useEmbeddedGraphUrl : Insert a script to fetch the graph from the specified endpoint on page load rather than embedding the full graph\n" +
+			"  -embeddedGraphUrlRoot : The url to fetch the graph from if -useEmbeddedGraphUrl is specified. CsvToSvg graph args are provided as get params\n" +
 			"Deprecated performance args:\n" +
 			"  -csvToSvgProcesses : Use separate processes for csvToSVG instead of threads (slower)\n" +
+            "  -embedGraphCommandline : if -csvToSvgProcesses is specified, embeds the commandline for debugging purposes\n" +
 			"  -noBatchedGraphs : disable batched/multithreaded graph generation (use with -csvToSvgProcesses. Default is enabled)\n" +
 			"\n" +
 			"Options to truncate or filter source data:\n" +
@@ -143,7 +144,6 @@ namespace PerfReportTool
 			"     e.g \"platform=ps4 AND deviceprofile=ps4_60\" \n" +
 			"  -readAllStats : allows any CSV stat avg to appear in the summary table, not just those referenced in summaries\n" +
 			"  -showHiddenStats : shows stats which have been automatically hidden (typically duplicate csv unit stats)\n" +
-			"  -externalGraphs : enables external graphs (off by default)\n" +
 			"  -spreadsheetfriendly: outputs a single quote before non-numeric entries in summary tables\n" +
 			"  -noSummaryMinMax: don't make min/max columns for each stat in a condensed summary\n" +
 			"  -reverseTable [0|1]: Reverses the order of summary tables (set 0 to force off)\n" +
@@ -202,7 +202,6 @@ namespace PerfReportTool
 			"  -precacheThreads <n> : number of threads to use for the CSV lookahead cache (default 8)\n" +
 			"  -summaryTableCache <dir> : specifies a directory for summary table data to be cached.\n" +
 			"     This avoids processing csvs on subsequent runs when -noDetailedReports is specified\n" +
-			"     Note: Enables -readAllStats implicitly. \n" +
 			"  -summaryTableCacheInvalidate : regenerates summary table disk cache entries (ie write only)\n" +
 			"  -summaryTableCacheReadOnly : only read from the cache, never write\n" +
 			"  -summaryTableCachePurgeInvalid : Purges invalid PRCs from the cache folder\n" +
@@ -227,18 +226,7 @@ namespace PerfReportTool
 		string GetBaseDirectory()
 		{
 			string location = System.Reflection.Assembly.GetEntryAssembly().Location.ToLower();
-
-			string baseDirectory = location;
-			baseDirectory = baseDirectory.Replace("perfreporttool.exe", "");
-
-			string debugSubDir = "\\bin\\debug\\";
-			if (baseDirectory.ToLower().EndsWith(debugSubDir))
-			{
-				// Might be best to use the CSVToSVG from source, but that might not be built, so use the one checked into binaries instead
-				baseDirectory = baseDirectory.Substring(0, baseDirectory.Length - debugSubDir.Length);
-				baseDirectory += "\\..\\..\\..\\..\\Binaries\\DotNET\\CsvTools";
-			}
-			return baseDirectory;
+			return Path.GetDirectoryName(location);
 		}
 
 		void Run(string[] args)
@@ -485,10 +473,6 @@ namespace PerfReportTool
 			}
 
 			bool writeDetailedReports = !GetBoolArg("noDetailedReports");
-
-			// A csv hash for now can just be a filename/size. Replace with metadata later
-			// Make PerfSummaryCache from: CSV hash + reporttype hash. If the cache is enabled then always -readAllStats
-
 			bool bReadAllStats = GetBoolArg("readAllStats");
 
 			bool bSummaryTableCacheReadonly = GetBoolArg("summaryTableCacheReadOnly");
@@ -596,8 +580,14 @@ namespace PerfReportTool
 							}
 							else
 							{
-								GenerateReport(cachedCsvFile, outputDir, bBulkMode, rowData, bBatchedGraphs, writeDetailedReports, bReadAllStats || bWriteToSummaryTableCache, cachedCsvFile.reportTypeInfo, csvDir);
+								GenerateReport(cachedCsvFile, outputDir, bBulkMode, rowData, bBatchedGraphs, writeDetailedReports, true, cachedCsvFile.reportTypeInfo, csvDir);
 								perfLog.LogTiming("  GenerateReport");
+
+								if ( ( GetBoolArg("dumpVariables") || GetBoolArg("dumpVariablesAll") ) && cachedCsvFile.xmlVariableMappings != null)
+								{
+									Console.WriteLine("\nDumping variables for " + cachedCsvFile.filename + "\n");
+									cachedCsvFile.xmlVariableMappings.DumpToLog(GetBoolArg("dumpVariablesAll"));
+								}
 
 								if (rowData != null && bWriteToSummaryTableCache)
 								{
@@ -645,7 +635,7 @@ namespace PerfReportTool
 					else
 					{
 						// If we're not in bulk mode, exceptions are fatal
-						throw e;
+						throw;
 					}
 				}
 			}
@@ -944,7 +934,43 @@ namespace PerfReportTool
 			return csvStats;
 		}
 
-		void GenerateReport(CachedCsvFile csvFile, string outputDir, bool bBulkMode, SummaryTableRowData rowData, bool bBatchedGraphs, bool writeDetailedReport, bool bReadAllStats, ReportTypeInfo reportTypeInfo, string csvDir)
+		// Represents how a graph should be written to the file.
+		private class CsvSvgInfo
+		{
+			public enum GraphFormat
+			{
+				// The full graph html/script is written directly into the report file.
+				Inline,
+				// A script to fetch the graph dynamically on page load is inserted into the report file.
+				Url
+			}
+
+			public ReportGraph Graph { get; private set; }
+			public GraphFormat Format { get; private set; }
+			public string SvgFilename { get; private set; } = null;
+
+			public static CsvSvgInfo CreateInlineGraphInfo(ReportGraph graph, string svgFilename)
+			{
+				return new CsvSvgInfo()
+				{
+					Graph = graph,
+					Format = GraphFormat.Inline,
+					SvgFilename = svgFilename
+				};
+			}
+
+			public static CsvSvgInfo CreateEmbeddedUrlGraphInfo(ReportGraph graph)
+			{
+				return new CsvSvgInfo()
+				{
+					Graph = graph,
+					Format = GraphFormat.Url,
+					SvgFilename = null
+				};
+			}
+		}
+
+		void GenerateReport(CachedCsvFile csvFile, string outputDir, bool bBulkMode, SummaryTableRowData rowData, bool bBatchedGraphs, bool writeDetailedReport, bool bReadCsvStats, ReportTypeInfo reportTypeInfo, string csvDir)
 		{
 			PerfLog perfLog = new PerfLog(GetBoolArg("perfLog"));
 			string shortName = ReplaceFileExtension(MakeShortFilename(csvFile.filename), "");
@@ -994,7 +1020,7 @@ namespace PerfReportTool
 
 			float thickness = 1.0f;
 			List<string> csvToSvgCommandlines = new List<string>();
-			List<string> svgFilenames = new List<string>();
+			List<CsvSvgInfo> csvSvgInfoList = new List<CsvSvgInfo>();
 			string responseFilename = null;
 			List<Process> csvToSvgProcesses = new List<Process>();
 			List<Task> csvToSvgTasks = new List<Task>();
@@ -1006,15 +1032,16 @@ namespace PerfReportTool
 					graphGenerator = new GraphGenerator(csvFile.GetFinalCsv(), csvFile.filename);
 				}
 
+				bool useEmbeddedGraphUrl = GetBoolArg("useEmbeddedGraphUrl");
+
 				// Generate all the graphs asyncronously
 				foreach (ReportGraph graph in reportTypeInfo.graphs)
 				{
-					string svgFilename = String.Empty;
-					if (graph.isExternal && !GetBoolArg("externalGraphs"))
+					if (graph.settings.statString.isSet == false)
 					{
-						svgFilenames.Add(svgFilename);
-						continue;
+						throw new Exception("Graph " + graph.title + " has no <statString> element");
 					}
+
 					bool bFoundStat = false;
 					foreach (string statString in graph.settings.statString.value.Split(','))
 					{
@@ -1025,36 +1052,45 @@ namespace PerfReportTool
 							break;
 						}
 					}
+
 					if (bFoundStat)
 					{
-						svgFilename = GetTempFilename(csvFile.filename) + ".svg";
-						if (graphGenerator != null)
+						if (useEmbeddedGraphUrl)
 						{
-							GraphParams graphParams = GetCsvToSvgGraphParams(csvFile.filename, graph, thickness, minX, maxX, false, svgFilenames.Count);
-							if (bCsvToSvgMultiThreaded)
-							{
-								csvToSvgTasks.Add(graphGenerator.MakeGraphAsync(graphParams, svgFilename, true, false));
-							}
-							else
-							{
-								graphGenerator.MakeGraph(graphParams, svgFilename, true, false);
-							}
+							csvSvgInfoList.Add(CsvSvgInfo.CreateEmbeddedUrlGraphInfo(graph));
 						}
 						else
 						{
-							string args = GetCsvToSvgArgs(csvFile.filename, svgFilename, graph, thickness, minX, maxX, false, svgFilenames.Count);
-							if (bBatchedGraphs)
+							string svgFilename = GetTempFilename(csvFile.filename) + ".svg";
+							if (graphGenerator != null)
 							{
-								csvToSvgCommandlines.Add(args);
+								GraphParams graphParams = GetCsvToSvgGraphParams(graph, thickness, minX, maxX, false, csvSvgInfoList.Count);
+								if (bCsvToSvgMultiThreaded)
+								{
+									csvToSvgTasks.Add(graphGenerator.MakeGraphAsync(graphParams, svgFilename, true, false));
+								}
+								else
+								{
+									graphGenerator.MakeGraph(graphParams, svgFilename, true, false);
+								}
 							}
 							else
 							{
-								Process csvToSvgProcess = LaunchCsvToSvgAsync(args);
-								csvToSvgProcesses.Add(csvToSvgProcess);
+								string args = GetCsvToSvgArgs(csvFile.filename, svgFilename, graph, thickness, minX, maxX, false, csvSvgInfoList.Count, CsvToSvgArgFormat.CommandLine);
+								if (bBatchedGraphs)
+								{
+									csvToSvgCommandlines.Add(args);
+								}
+								else
+								{
+									Process csvToSvgProcess = LaunchCsvToSvgAsync(args);
+									csvToSvgProcesses.Add(csvToSvgProcess);
+								}
 							}
+
+							csvSvgInfoList.Add(CsvSvgInfo.CreateInlineGraphInfo(graph, svgFilename));
 						}
 					}
-					svgFilenames.Add(svgFilename);
 				}
 
 				if (bCsvToSvgProcesses && bBatchedGraphs)
@@ -1184,7 +1220,7 @@ namespace PerfReportTool
 					}
 				}
 
-				if (bReadAllStats)
+				if (bReadCsvStats)
 				{
 					// Add every stat avg value to the metadata
 					foreach (StatSamples stat in csvStats.Stats.Values)
@@ -1201,15 +1237,15 @@ namespace PerfReportTool
 			}
 
 			// Write the report
-			WriteReport(htmlFilename, title, svgFilenames, reportTypeInfo, csvStats, csvStatsUnstripped, numFramesStripped, minX, maxX, bBulkMode, rowData);
+			WriteReport(htmlFilename, title, csvSvgInfoList, reportTypeInfo, csvStats, csvStatsUnstripped, numFramesStripped, minX, maxX, bBulkMode, rowData);
 			perfLog.LogTiming("    WriteReport");
 
 			// Delete the temp files
-			foreach (string svgFilename in svgFilenames)
+			foreach (CsvSvgInfo csvSvgInfo in csvSvgInfoList)
 			{
-				if (svgFilename != String.Empty && File.Exists(svgFilename))
+				if (csvSvgInfo.SvgFilename != null && File.Exists(csvSvgInfo.SvgFilename))
 				{
-					File.Delete(svgFilename);
+					File.Delete(csvSvgInfo.SvgFilename);
 				}
 			}
 			if (responseFilename != null && File.Exists(responseFilename))
@@ -1220,8 +1256,6 @@ namespace PerfReportTool
 		CsvStats ReadCsvStats(CachedCsvFile csvFile, int minX, int maxX)
 		{
 			CsvStats csvStats = csvFile.GetFinalCsv();
-			reportXML.ApplyDerivedMetadata(csvStats.metaData);
-
 			if (csvStats.metaData == null)
 			{
 				csvStats.metaData = new CsvMetadata();
@@ -1307,10 +1341,8 @@ namespace PerfReportTool
 
 
 
-		void WriteReport(string htmlFilename, string title, List<string> svgFilenames, ReportTypeInfo reportTypeInfo, CsvStats csvStats, CsvStats csvStatsUnstripped, int numFramesStripped, int minX, int maxX, bool bBulkMode, SummaryTableRowData summaryRowData)
+		void WriteReport(string htmlFilename, string title, List<CsvSvgInfo> csvSvgInfoList, ReportTypeInfo reportTypeInfo, CsvStats csvStats, CsvStats csvStatsUnstripped, int numFramesStripped, int minX, int maxX, bool bBulkMode, SummaryTableRowData summaryRowData)
 		{
-
-			ReportGraph[] graphs = reportTypeInfo.graphs.ToArray();
 			string titleStr = reportTypeInfo.title + " : " + title;
 			System.IO.StreamWriter htmlFile = null;
 
@@ -1320,6 +1352,8 @@ namespace PerfReportTool
 				htmlFile.WriteLine("<html>");
 				htmlFile.WriteLine("  <head>");
 				htmlFile.WriteLine("    <meta http-equiv='X-UA-Compatible' content='IE=edge'/>");
+				htmlFile.WriteLine("    <meta charset='UTF-8'/>");
+
 				if (GetBoolArg("noWatermarks"))
 				{
 					htmlFile.WriteLine("    <![CDATA[ \nCreated with PerfReportTool");
@@ -1331,16 +1365,82 @@ namespace PerfReportTool
 				}
 				htmlFile.WriteLine("    ]]>");
 				htmlFile.WriteLine("    <title>" + titleStr + "</title>");
+
+				// Scripting for collapsibles
+				htmlFile.WriteLine("    <script>");
+				htmlFile.WriteLine("        document.addEventListener('DOMContentLoaded', function (event) { setupCollapsibles(); })");
+
+				htmlFile.WriteLine("        function setupCollapsibles() {");
+				htmlFile.WriteLine("            var collapsibles = document.getElementsByClassName('collapsibleHeading');");
+				htmlFile.WriteLine("            var i;");
+				htmlFile.WriteLine("            for (i = 0; i < collapsibles.length; i++) {");
+				htmlFile.WriteLine("                collapsibles[i].addEventListener('click', function() {");
+				htmlFile.WriteLine("                    this.classList.toggle('expanded');");
+				htmlFile.WriteLine("                    this.nextElementSibling.classList.toggle('expanded');");
+				htmlFile.WriteLine("             	});");
+				htmlFile.WriteLine("            }");
+				htmlFile.WriteLine("        }");
+
+				htmlFile.WriteLine("        function collapseAll() {");
+				htmlFile.WriteLine("            var collapsibles = document.getElementsByClassName('collapsibleHeading');");
+				htmlFile.WriteLine("            var i;");
+				htmlFile.WriteLine("            for (i = 0; i < collapsibles.length; i++) {");
+				htmlFile.WriteLine("                setSectionExpanded( collapsibles[i], false );");
+				htmlFile.WriteLine("            }");
+				htmlFile.WriteLine("        }");
+
+				htmlFile.WriteLine("        function expandAll() {");
+				htmlFile.WriteLine("            var collapsibles = document.getElementsByClassName('collapsibleHeading');");
+				htmlFile.WriteLine("            var i;");
+				htmlFile.WriteLine("            for (i = 0; i < collapsibles.length; i++) {");
+				htmlFile.WriteLine("                setSectionExpanded( collapsibles[i], true );");
+				htmlFile.WriteLine("            }");
+				htmlFile.WriteLine("        }");
+
+
+				htmlFile.WriteLine("        function setSectionExpanded(collapsible, bExpanded) {");
+				htmlFile.WriteLine("            if (bExpanded) {");
+				htmlFile.WriteLine("                collapsible.classList.add('expanded');");
+				htmlFile.WriteLine("                collapsible.nextElementSibling.classList.add('expanded');");
+				htmlFile.WriteLine("            }");
+				htmlFile.WriteLine("            else {");
+				htmlFile.WriteLine("                collapsible.classList.remove('expanded');");
+				htmlFile.WriteLine("                collapsible.nextElementSibling.classList.remove('expanded');");
+				htmlFile.WriteLine("            }");
+				htmlFile.WriteLine("        }");
+
+				htmlFile.WriteLine("        function setSectionExpandedById(id, bExpanded) {");
+				htmlFile.WriteLine("            setSectionExpanded(document.getElementById(id), bExpanded);");
+				htmlFile.WriteLine("        }");
+
+				htmlFile.WriteLine("    </script>");
+
+				// CSS
 				htmlFile.WriteLine("    <style type='text/css'>");
+
 				htmlFile.WriteLine("      table, th, td { border: 2px solid black; border-collapse: collapse; padding: 3px; vertical-align: top; font-family: 'Verdana', Times, serif; font-size: 12px;}");
 				htmlFile.WriteLine("      p {  font-family: 'Verdana', Times, serif; font-size: 12px }");
+				htmlFile.WriteLine("      ul {  font-family: 'Verdana', Times, serif; font-size: 14px }");
 				htmlFile.WriteLine("      h1 {  font-family: 'Verdana', Times, serif; font-size: 20px; padding-top:10px }");
-				htmlFile.WriteLine("      h2 {  font-family: 'Verdana', Times, serif; font-size: 18px; padding-top:20px }");
-				htmlFile.WriteLine("      h3 {  font-family: 'Verdana', Times, serif; font-size: 16px; padding-top:20px }");
+				htmlFile.WriteLine("      h2 {  font-family: 'Verdana', Times, serif; font-size: 18px; padding-top:5px; padding-bottom:0px; margin-block-start: 0.4em; margin-block-end: 0.4em }");
+				htmlFile.WriteLine("      h3 {  font-family: 'Verdana', Times, serif; font-size: 16px; padding-top:5px; margin-block-start: 0.3em; margin-block-end: 0.3em }");
+				htmlFile.WriteLine("      hr {  margin-top:15px }");
+				htmlFile.WriteLine("      a {  font-family: 'Verdana', Times, serif; font-size: 12px }");
+
+				// Collapsibles
+				htmlFile.WriteLine("      .collapsibleHeading { background-color: #ffffff; cursor: pointer; width: fit-content; border: none; text-align: left; outline: none; display: flex; justify-content: flex-start; align-items: flex-end; flex-direction: row; flex-wrap: nowrap; }");
+				htmlFile.WriteLine("      .expanded { background-color: #fff; }");
+				htmlFile.WriteLine("      .collapsibleHeading:hover { background-color: #c4c4c4; }");
+				htmlFile.WriteLine("      .collapsibleHeading:after { content: '\u25B2'; font-size: 14px; color: #4d4d4d; font-variant: normal; float: right; margin-left: 5px;}");
+				htmlFile.WriteLine("      .collapsibleHeading.expanded:after { content: '\u25BC'; }");
+				htmlFile.WriteLine("      .collapsibleSection { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s ease-out; }");
+				htmlFile.WriteLine("      .collapsibleSection.expanded { grid-template-rows: 1fr; }");
+				htmlFile.WriteLine("      .collapsibleSectionInner { overflow: auto; overflow-y: hidden; }");
+
 				htmlFile.WriteLine("    </style>");
 				htmlFile.WriteLine("  </head>");
-				htmlFile.WriteLine("  <body><font face='verdana'>");
-				htmlFile.WriteLine("  <h1>" + titleStr + "</h1>");
+				htmlFile.WriteLine("  <body>");
+				htmlFile.WriteLine("  <h1 name='top'>" + titleStr + "</h1>");
 
 				// show the range
 				if (minX > 0 || maxX < Int32.MaxValue)
@@ -1353,8 +1453,7 @@ namespace PerfReportTool
 					htmlFile.WriteLine(")</font>");
 				}
 
-				htmlFile.WriteLine("  <h2>Summary</h2>");
-
+				// Output the metadata table
 				htmlFile.WriteLine("<table style='width:800'>");
 
 				if (reportTypeInfo.metadataToShowList != null)
@@ -1378,6 +1477,13 @@ namespace PerfReportTool
 				htmlFile.WriteLine("<tr><td bgcolor='#F0F0F0'>Frame count</td><td>" + csvStats.SampleCount + " (" + numFramesStripped + " excluded)</td></tr>");
 				htmlFile.WriteLine("</table>");
 
+				// Output the top level nav
+				htmlFile.WriteLine("<br>");
+				htmlFile.WriteLine("<div style='width: 100%; background-color: #ffffff'>");
+				htmlFile.WriteLine("<button type='button' onclick='collapseAll()' style='margin-right:10px'>Collapse all</button>");
+				htmlFile.WriteLine("<button type='button' onclick='expandAll()' style='margin-right:10px'>Expand all</button>");
+				htmlFile.WriteLine("<button type='button' onclick='location.href=\"#graphList\";'>Graphs</button>");
+				htmlFile.WriteLine("</div>");
 			}
 
 			if (summaryRowData != null)
@@ -1396,23 +1502,23 @@ namespace PerfReportTool
 			if (bExtraLinksSummary)
 			{
 				bool bLinkTemplates = GetBoolArg("linkTemplates");
-				summaries.Insert(0, new ExtraLinksSummary(null, null, bLinkTemplates));
+				summaries.Insert(0, new ExtraLinksSummary(null, reportTypeInfo.vars, null, bLinkTemplates));
 			}
 
 			// If the reporttype has summary info, then write out the summary]
-			PeakSummary peakSummary = null;
 			foreach (Summary summary in summaries)
 			{
-				summary.WriteSummaryData(htmlFile, summary.useUnstrippedCsvStats ? csvStatsUnstripped : csvStats, csvStatsUnstripped, bWriteSummaryCsv, summaryRowData, htmlFilename);
-				if (summary.GetType() == typeof(PeakSummary))
+				HtmlSection htmlSection = summary.WriteSummaryData(htmlFile != null, summary.useUnstrippedCsvStats ? csvStatsUnstripped : csvStats, csvStatsUnstripped, bWriteSummaryCsv, summaryRowData, htmlFilename);
+				if (htmlSection != null)
 				{
-					peakSummary = (PeakSummary)summary;
+					htmlSection.WriteToFile(htmlFile);
 				}
 			}
 
 			if (htmlFile != null)
 			{
 				// Output the list of graphs
+				htmlFile.WriteLine("<hr><a name='graphList'></a>");
 				htmlFile.WriteLine("<h2>Graphs</h2>");
 
 				// TODO: support sections for graphs
@@ -1432,53 +1538,86 @@ namespace PerfReportTool
 					{
 						htmlFile.WriteLine("<h4>" + currentCategory + " Graphs</h4>");
 					}
-					for (int i = 0; i < svgFilenames.Count(); i++)
+					
+					foreach (CsvSvgInfo csvSvgInfo in csvSvgInfoList)
 					{
-						string svgFilename = svgFilenames[i];
-						if (string.IsNullOrEmpty(svgFilename))
-						{
-							continue;
-						}
-
-						ReportGraph graph = graphs[i];
-						string svgTitle = graph.title;
-						//if (reportTypeInfo.summary.stats[i].ToLower().StartsWith(currentCategory))
-						{
-							htmlFile.WriteLine("<li><a href='#" + StripSpaces(svgTitle) + "'>" + svgTitle + "</a></li>");
-						}
+						string svgTitle = csvSvgInfo.Graph.title;
+						// TODO: Check if this graph belongs in this section.
+						htmlFile.WriteLine("<li><a href='#" + StripSpaces(svgTitle) + "' onclick='setSectionExpandedById(\""+ StripSpaces(svgTitle) + "\", true)'>" + svgTitle + "</a></li>");
 					}
+
 					htmlFile.WriteLine("</ul>");
 				}
+				htmlFile.WriteLine("<a href='#top'>Back to top \u2191</a>");
 
 
 				// Output the Graphs
-				for (int svgFileIndex = 0; svgFileIndex < svgFilenames.Count; svgFileIndex++)
+				for (int svgFileIndex = 0; svgFileIndex < csvSvgInfoList.Count; svgFileIndex++)
 				{
-					string svgFilename = svgFilenames[svgFileIndex];
-					if (String.IsNullOrEmpty(svgFilename))
-					{
-						continue;
-					}
-					ReportGraph graph = graphs[svgFileIndex];
+					CsvSvgInfo csvSvgInfo = csvSvgInfoList[svgFileIndex];
+					ReportGraph graph = csvSvgInfo.Graph;
 
 					string svgTitle = graph.title;
-					htmlFile.WriteLine("  <br><a name='" + StripSpaces(svgTitle) + "'></a> <h2>" + svgTitle + "</h2>");
-					if (graph.isExternal)
+					HtmlSection htmlSection = new HtmlSection(svgTitle, false, StripSpaces(svgTitle), 3);
+
+					if (csvSvgInfo.Format == CsvSvgInfo.GraphFormat.Inline)
 					{
-						string outFilename = htmlFilename.Replace(".html", "_" + svgTitle.Replace(" ", "_") + ".svg");
-						File.Copy(svgFilename, outFilename, true);
-						htmlFile.WriteLine("<a href='" + outFilename + "'>" + svgTitle + " (external)</a>");
-					}
-					else
-					{
-						string[] svgLines = ReadLinesFromFile(svgFilename);
+						string[] svgLines = ReadLinesFromFile(csvSvgInfo.SvgFilename);
 						foreach (string line in svgLines)
 						{
 							string modLine = line.Replace("__MAKEUNIQUE__", "U_" + svgFileIndex.ToString());
-							htmlFile.WriteLine(modLine);
+							htmlSection.WriteLine(modLine);
 						}
 					}
+					else if (csvSvgInfo.Format == CsvSvgInfo.GraphFormat.Url)
+					{
+						string graphArgs = GetCsvToSvgArgs(null, null, graph, 1.0, minX, maxX, false, svgFileIndex, CsvToSvgArgFormat.Url);
+						string csvId = csvStats.metaData?.GetValue("csvid", null);
+						if (csvId == null)
+						{
+							throw new Exception("Failed to generate embeddedGraphUrl since no valid csvId was found.");
+						}
+
+						string graphUrlRoot = GetArg("embeddedGraphUrlRoot", mandatory: true);
+						string graphUrl = $"{graphUrlRoot}?csvs={csvId}&{graphArgs}";
+						string script = $"<div id=\"graph_{svgFileIndex}\"></div>\n";
+						script += $"<script>" +
+							// On page load, fetch the graph from the end point
+							$"fetch('{graphUrl}')\n" +
+							".then(response => response.text())\n" +
+							".then(html => {\n" +
+								// Insert the html into the div
+								$"const graphDiv = document.getElementById('graph_{svgFileIndex}');\n" +
+								"graphDiv.innerHTML = html;\n" +
+								// Find all the nested scripts and make them executable.
+								"graphDiv.querySelectorAll('script').forEach((script) => { \n" +
+									// We need to copy the script into a new node to make it executable as scripts
+									// assigned via innerHTML cannot be run. For some reason the text/innerHTML of scripts nested in an svg tag
+									// cannot be read/assigned to a new node directly, so we must serialize the node to xml, then parse that into
+									// a local dom tree. From there we can grab the script node and read its text data.
+									"const scriptNodeText = new XMLSerializer().serializeToString(script);\n" +
+									"const parsedScriptDom = new DOMParser().parseFromString(scriptNodeText, \"text/xml\");\n" +
+									"const scriptText = parsedScriptDom.querySelector('script').firstChild.data;" +
+
+									"const clonedScriptNode = document.createElement('script');\n" +
+									"clonedScriptNode.text = scriptText;\n" +
+									"script.parentNode.replaceChild(clonedScriptNode, script);\n" +
+								"});\n" +
+							"})\n" +
+							".catch(err => console.log(err));" +
+							"</script>";
+						htmlSection.WriteLine(script);
+					}
+					else
+					{
+						throw new Exception("Unsupported graph output format.");
+					}
+					
+					htmlSection.WriteToFile(htmlFile);
 				}
+
+				htmlFile.WriteLine("<a href='#top'>Back to top \u2191</a>");
+
 
 				if (GetBoolArg("noWatermarks"))
 				{
@@ -1488,20 +1627,19 @@ namespace PerfReportTool
 				{
 					htmlFile.WriteLine("<p style='font-size:8'>Created with PerfReportTool " + Version.Get() + "</p>");
 				}
-				htmlFile.WriteLine("  </font>");
 				htmlFile.WriteLine("  </body>");
 				htmlFile.WriteLine("</html>");
 				htmlFile.Close();
 				string ForEmail = GetArg("foremail", false);
 				if (ForEmail != "")
 				{
-					WriteEmail(htmlFilename, title, svgFilenames, reportTypeInfo, csvStats, csvStatsUnstripped, minX, maxX, bBulkMode);
+					WriteEmail(htmlFilename, title, csvSvgInfoList, reportTypeInfo, csvStats, csvStatsUnstripped, minX, maxX, bBulkMode);
 				}
 			}
 		}
 
 
-		void WriteEmail(string htmlFilename, string title, List<string> svgFilenames, ReportTypeInfo reportTypeInfo, CsvStats csvStats, CsvStats csvStatsUnstripped, int minX, int maxX, bool bBulkMode)
+		void WriteEmail(string htmlFilename, string title, List<CsvSvgInfo> csvSvgInfoList, ReportTypeInfo reportTypeInfo, CsvStats csvStats, CsvStats csvStatsUnstripped, int minX, int maxX, bool bBulkMode)
 		{
 			if (htmlFilename == null)
 			{
@@ -1549,15 +1687,13 @@ namespace PerfReportTool
 			bool bWriteSummaryCsv = GetBoolArg("writeSummaryCsv") && !bBulkMode;
 
 			// If the reporttype has summary info, then write out the summary]
-			PeakSummary peakSummary = null;
 			foreach (Summary summary in reportTypeInfo.summaries)
 			{
-				summary.WriteSummaryData(htmlFile, csvStats, csvStatsUnstripped, bWriteSummaryCsv, null, htmlFilename);
-				if (summary.GetType() == typeof(PeakSummary))
+				HtmlSection htmlSection = summary.WriteSummaryData(htmlFile != null, csvStats, csvStatsUnstripped, bWriteSummaryCsv, null, htmlFilename);
+				if (htmlSection != null)
 				{
-					peakSummary = (PeakSummary)summary;
+					htmlSection.WriteToFile(htmlFile);
 				}
-
 			}
 
 			htmlFile.WriteLine("  </font></body>");
@@ -1575,15 +1711,19 @@ namespace PerfReportTool
 			string shortFileName = MakeShortFilename(csvFilename).Replace(" ", "_");
 			return Path.Combine(Path.GetTempPath(), shortFileName + "_" + Guid.NewGuid().ToString().Substring(26));
 		}
-		string GetCsvToSvgArgs(string csvFilename, string svgFilename, ReportGraph graph, double thicknessMultiplier, int minx, int maxx, bool multipleCSVs, int graphIndex, float scaleby = 1.0f)
+
+		enum CsvToSvgArgFormat
+		{ 
+			CommandLine,
+			Url
+		}
+
+		string GetCsvToSvgArgs(string csvFilename, string svgFilename, ReportGraph graph, double thicknessMultiplier, int minx, int maxx, bool multipleCSVs, int graphIndex, CsvToSvgArgFormat argFormat, float scaleby = 1.0f)
 		{
 			string title = graph.title;
 
 			GraphSettings graphSettings = graph.settings;
-			string[] statStringTokens = graphSettings.statString.value.Split(',');
-			IEnumerable<string> quoteWrappedStatStrings = statStringTokens.Select(token => '"' + token + '"');
-			string statString = String.Join(" ", quoteWrappedStatStrings);
-			double thickness = graphSettings.thickness.value * thicknessMultiplier;
+
 			float maxy = GetFloatArg("maxy", (float)graphSettings.maxy.value);
 			bool smooth = graphSettings.smooth.value && !GetBoolArg("nosmooth");
 			double smoothKernelPercent = graphSettings.smoothKernelPercent.value;
@@ -1591,7 +1731,6 @@ namespace PerfReportTool
 			double compression = graphSettings.compression.value;
 			int width = graphSettings.width.value;
 			int height = graphSettings.height.value;
-			string additionalArgs = "";
 			bool stacked = graphSettings.stacked.value;
 			bool showAverages = graphSettings.showAverages.value;
 			bool filterOutZeros = graphSettings.filterOutZeros.value;
@@ -1613,19 +1752,6 @@ namespace PerfReportTool
 				hideEventNames = true;
 			}
 			bool interactive = true;
-			string smoothParams = "";
-			if (smooth)
-			{
-				smoothParams = " -smooth";
-				if (smoothKernelPercent >= 0.0f)
-				{
-					smoothParams += " -smoothKernelPercent " + smoothKernelPercent.ToString();
-				}
-				if (smoothKernelSize >= 0.0f)
-				{
-					smoothParams += " -smoothKernelSize " + smoothKernelSize.ToString();
-				}
-			}
 
 			string highlightEventRegions = "";
 			if (!GetBoolArg("noStripEvents"))
@@ -1640,59 +1766,131 @@ namespace PerfReportTool
 						{
 							highlightEventRegions += ",";
 						}
-						string endEvent = (eventsToStrip[i].endName == null) ? "{NULL}" : eventsToStrip[i].endName;
-						highlightEventRegions += eventsToStrip[i].beginName + "," + endEvent;
+						string endEvent = (eventsToStrip[i].endName == null) ? "{null}" : eventsToStrip[i].endName;
+						string beginEvent = (eventsToStrip[i].beginName == null) ? "{null}" : eventsToStrip[i].beginName;
+						highlightEventRegions += beginEvent + "," + endEvent;
 					}
 					highlightEventRegions += "\"";
 				}
 			}
 
-			OptionalDouble minFilterStatValueSetting = graph.minFilterStatValue.isSet ? graph.minFilterStatValue : graphSettings.minFilterStatValue;
+			Optional<double> minFilterStatValueSetting = graph.minFilterStatValue.isSet ? graph.minFilterStatValue : graphSettings.minFilterStatValue;
 
-			string args =
-				" -csvs \"" + csvFilename + "\"" +
-				" -title \"" + title + "\"" +
-				" -o \"" + svgFilename + "\"" +
-				" -stats " + statString +
-				" -width " + (width * scaleby).ToString() +
-				" -height " + (height * scaleby).ToString() +
-				OptionalHelper.GetDoubleSetting(graph.budget, " -budget ") +
-				" -maxy " + maxy.ToString() +
-				" -uniqueID Graph_" + graphIndex.ToString() +
-				" -lineDecimalPlaces " + lineDecimalPlaces.ToString() +
-				" -nocommandlineEmbed " +
+			string Quote(string s)
+			{
+				return "\"" + s + "\"";
+			}
 
-				((statMultiplier != 1.0) ? " -statMultiplier " + statMultiplier.ToString("0.0000000000000000000000") : "") +
-				(hideEventNames ? " -hideeventNames 1" : "") +
-				((minx > 0) ? (" -minx " + minx.ToString()) : "") +
-				((maxx != Int32.MaxValue) ? (" -maxx " + maxx.ToString()) : "") +
-				OptionalHelper.GetDoubleSetting(graphSettings.miny, " -miny ") +
-				OptionalHelper.GetDoubleSetting(graphSettings.threshold, " -threshold ") +
-				OptionalHelper.GetDoubleSetting(graphSettings.averageThreshold, " -averageThreshold ") +
-				OptionalHelper.GetDoubleSetting(minFilterStatValueSetting, " -minFilterStatValue ") +
-				OptionalHelper.GetStringSetting(graphSettings.minFilterStatName, " -minFilterStatName ") +
-				(compression > 0.0 ? " -compression " + compression.ToString() : "") +
-				(thickness > 0.0 ? " -thickness " + thickness.ToString() : "") +
-				smoothParams +
-				(interactive ? " -interactive" : "") +
-				(stacked ? " -stacked -forceLegendSort" : "") +
-				(showAverages ? " -showAverages" : "") +
-				(snapToPeaks ? "" : " -nosnap") +
-				(filterOutZeros ? " -filterOutZeros" : "") +
-				(maxHierarchyDepth >= 0 ? " -maxHierarchyDepth " + maxHierarchyDepth.ToString() : "") +
-				(hideStatPrefix.Length > 0 ? " -hideStatPrefix " + hideStatPrefix : "") +
-				(graphSettings.mainStat.isSet ? " -stacktotalstat " + graphSettings.mainStat.value : "") +
-				(showEvents.Length > 0 ? " -showevents " + showEvents : "") +
-				(highlightEventRegions.Length > 0 ? " -highlightEventRegions " + highlightEventRegions : "") +
-				(graphSettings.legendAverageThreshold.isSet ? " -legendAverageThreshold " + graphSettings.legendAverageThreshold.value : "") +
+			Dictionary<string, string> args = new();
 
-				(graphSettings.ignoreStats.isSet ? " -ignoreStats " + graphSettings.ignoreStats.value : "") +
-				" " + additionalArgs;
-			return args;
+			void AddOptionalArg<T>(string name, Optional<T> value)
+			{
+				if (value.isSet)
+				{
+					args[name] = value.value.ToString();
+				}
+			}
+
+			void AddConditionalArg<T>(string name, bool condition, T value)
+			{
+				if (condition)
+				{
+					args[name] = value.ToString();
+				}
+			}
+
+			void AddConditionalFlag(string name, bool condition)
+			{
+				if (condition)
+				{
+					args[name] = "";
+				}
+			}
+
+			args["title"] = Quote(title);
+			AddConditionalArg("width", width > 0, (width * scaleby));
+			AddConditionalArg("height", height > 0, (height * scaleby));
+			AddOptionalArg("budget", graph.budget);
+			AddConditionalArg("maxy", maxy > 0, maxy);
+			args["uniqueID"] = "Graph_" + graphIndex.ToString();
+			args["lineDecimalPlaces"] = lineDecimalPlaces.ToString();
+			AddConditionalFlag("nocommandlineEmbed", GetBoolArg("embedGraphCommandline"));
+			AddConditionalArg("statMultiplier", statMultiplier != 1.0, statMultiplier.ToString("0.0000000000000000000000"));
+			AddConditionalArg("hideeventNames", hideEventNames, 1);
+			AddConditionalArg("minx", minx > 0, minx);
+			AddConditionalArg("maxx", maxx != Int32.MaxValue, maxx);
+			AddOptionalArg("miny", graphSettings.miny);
+			AddOptionalArg("maxAutoMaxY", graphSettings.maxAutoMaxY);
+			AddOptionalArg("threshold", graphSettings.threshold);
+			AddOptionalArg("averageThreshold", graphSettings.averageThreshold);
+			AddOptionalArg("minFilterStatValue", minFilterStatValueSetting);
+			AddConditionalArg("minFilterStatName", graphSettings.minFilterStatName.isSet, graphSettings.minFilterStatName.value);
+			AddConditionalArg("compression", compression > 0.0, compression);
+			AddConditionalArg("thickness", graphSettings.thickness.isSet, graphSettings.thickness.value * thicknessMultiplier);
+			// Smoothing
+			AddConditionalFlag("smooth", smooth);
+			AddConditionalArg("smoothKernelPercent", smooth && smoothKernelPercent >= 0.0f, smoothKernelPercent);
+			AddConditionalArg("smoothKernelSize", smooth && smoothKernelSize >= 0.0f, smoothKernelSize);
+
+			AddConditionalFlag("interactive", interactive);
+			AddConditionalFlag("stacked", stacked);
+			AddConditionalFlag("forceLegendSort", stacked); // based on the stacked flag
+			AddConditionalFlag("showAverages", showAverages);
+			AddConditionalFlag("nosnap", !snapToPeaks);
+			AddConditionalFlag("filterOutZeros", filterOutZeros);
+			AddConditionalArg("maxHierarchyDepth", maxHierarchyDepth > 0, maxHierarchyDepth);
+			AddConditionalArg("hideStatPrefix", hideStatPrefix.Length > 0, hideStatPrefix);
+			AddConditionalArg("stacktotalstat", graphSettings.mainStat.isSet, graphSettings.mainStat.value);
+			AddOptionalArg("legendAverageThreshold", graphSettings.legendAverageThreshold);
+			AddConditionalArg("ignoreStats", graphSettings.ignoreStats.isSet, graphSettings.ignoreStats.value);
+
+			string argString = string.Empty;
+			if (argFormat == CsvToSvgArgFormat.Url)
+			{
+				string FormatStringList(string inStringList, string splitStr)
+				{
+					string[] tokens = inStringList
+						.Split(splitStr)
+						.Select(token => token.Trim())
+						.ToArray();
+					return String.Join(";", tokens);
+				}
+				// Exclude csvs from the args as that is a separate argument that the caller must setup.
+				// Any multi-value args need to be delimited with a semi-colon.
+				args["stats"] = FormatStringList(graphSettings.statString.value, ",");
+				AddConditionalArg("showevents", showEvents.Length > 0, FormatStringList(showEvents, " "));
+				AddConditionalArg("highlightEventRegions", highlightEventRegions.Length > 0, FormatStringList(highlightEventRegions, ","));
+
+				List<string> argList = args.Select(a =>
+					string.IsNullOrEmpty(a.Value) // Empty value means it's a flag
+					? $"{a.Key}=true"
+					: $"{a.Key}={a.Value.Replace("\"", "")}") // Strip quotes
+					.ToList();
+				argString = string.Join("&", argList);
+			}
+			else
+			{
+				args["csvs"] = Quote(csvFilename);
+				args["o"] = Quote(svgFilename);
+				AddConditionalArg("showevents", showEvents.Length > 0, showEvents);
+				AddConditionalArg("highlightEventRegions", highlightEventRegions.Length > 0, highlightEventRegions);
+
+				string[] statStringTokens = graphSettings.statString.value.Split(',');
+				IEnumerable<string> quoteWrappedStatStrings = statStringTokens.Select(token => '"' + token + '"');
+				args["stats"] = String.Join(" ", quoteWrappedStatStrings);
+
+				List<string> argList = args.Select(a =>
+					string.IsNullOrEmpty(a.Value)
+					? $"-{a.Key}"
+					: $"-{a.Key} {a.Value}")
+					.ToList();
+				argString = string.Join(" ", argList);
+			}
+			return argString;
 		}
 
 
-		GraphParams GetCsvToSvgGraphParams(string csvFilename, ReportGraph graph, double thicknessMultiplier, int minx, int maxx, bool multipleCSVs, int graphIndex, float scaleby = 1.0f)
+		GraphParams GetCsvToSvgGraphParams(ReportGraph graph, double thicknessMultiplier, int minx, int maxx, bool multipleCSVs, int graphIndex, float scaleby = 1.0f)
 		{
 			GraphParams graphParams = new GraphParams();
 			graphParams.title = graph.title;
@@ -1779,8 +1977,8 @@ namespace PerfReportTool
 				{
 					for (int i = 0; i < eventsToStrip.Count; i++)
 					{
-						graphParams.highlightEventRegions.Add((eventsToStrip[i].beginName == null) ? "" : eventsToStrip[i].beginName);
-						graphParams.highlightEventRegions.Add((eventsToStrip[i].endName == null) ? "{NULL}" : eventsToStrip[i].endName);
+						graphParams.highlightEventRegions.Add((eventsToStrip[i].beginName == null) ? "{null}" : eventsToStrip[i].beginName);
+						graphParams.highlightEventRegions.Add((eventsToStrip[i].endName == null) ? "{null}" : eventsToStrip[i].endName);
 					}
 				}
 			}
@@ -1813,6 +2011,10 @@ namespace PerfReportTool
 			}
 			graphParams.maxY = GetFloatArg("maxy", (float)graphSettings.maxy.value);
 
+			if (graphSettings.maxAutoMaxY.isSet)
+			{
+				graphParams.maxAutoMaxY = (float)graphSettings.maxAutoMaxY.value;
+			}
 			if (graphSettings.threshold.isSet)
 			{
 				graphParams.threshold = (float)graphSettings.threshold.value;
@@ -1835,7 +2037,7 @@ namespace PerfReportTool
 
 		Process LaunchCsvToSvgAsync(string args)
 		{
-			string csvToolPath = GetBaseDirectory() + "/CSVToSVG.exe";
+			string csvToolPath = Path.Combine(GetBaseDirectory(), "CSVToSVG.exe");
 			string binary = csvToolPath;
 
 			// run mono on non-Windows hosts
@@ -1972,7 +2174,7 @@ namespace PerfReportTool
 
 		Dictionary<string, dynamic> JsonToDynamicDict(string jsonStr)
 		{
-			JsonElement RootElement = JsonSerializer.Deserialize<JsonElement>((string)jsonStr, null);
+			JsonElement RootElement = JsonSerializer.Deserialize<JsonElement>((string)jsonStr);
 			Dictionary<string, dynamic> RootElementValue = GetJsonValue(RootElement);
 			return RootElementValue;
 		}
@@ -2020,37 +2222,5 @@ namespace PerfReportTool
 			return null;
 		}
 	}
-
-	static class Extensions
-	{
-		public static T GetSafeAttibute<T>(this XElement element, string attributeName, T defaultValue = default(T))
-		{
-			XAttribute attribute = element.Attribute(attributeName);
-			if (attribute == null)
-			{
-				return defaultValue;
-			}
-
-			try
-			{
-				switch (Type.GetTypeCode(typeof(T)))
-				{
-					case TypeCode.Boolean:
-						return (T)Convert.ChangeType(Convert.ChangeType(attribute.Value, typeof(int)), typeof(bool));
-					case TypeCode.Single:
-					case TypeCode.Double:
-					case TypeCode.Decimal:
-						return (T)Convert.ChangeType(attribute.Value, typeof(T), CultureInfo.InvariantCulture.NumberFormat);
-					default:
-						return (T)Convert.ChangeType(attribute.Value, typeof(T));
-				}
-			}
-			catch (FormatException e)
-			{
-				Console.WriteLine(string.Format("[Warning] Failed to convert XML attribute '{0}' ({1})", attributeName, e.Message));
-				return defaultValue;
-			}
-		}
-    };
 }
 

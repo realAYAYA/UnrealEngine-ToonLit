@@ -112,7 +112,7 @@ public:
 	virtual bool GetRelativeEyePose(int32 DeviceId, int32 ViewIndex, FQuat& OutOrientation, FVector& OutPosition) override;
 
 	/**
-	 * Sets tracking origin (either 'eye'-level or 'floor'-level).
+	 * Sets tracking origin (either Local, LocalFloor, or Stage.  CustomOpenXR origins are handled automatically, View tracking origins are not allowed.).
 	 *
 	 * The default implementations simply ignores the origin value.
 	 */
@@ -121,11 +121,11 @@ public:
 	/**
 	 * Returns current tracking origin.
 	 *
-	 * The default implementation always reports 'eye'-level tracking.
+	 * The default implementation always reports 'local'-level tracking.
 	 */
 	virtual EHMDTrackingOrigin::Type GetTrackingOrigin() const override
 	{
-		return EHMDTrackingOrigin::Eye;
+		return EHMDTrackingOrigin::Local;
 	}
 
 	/**

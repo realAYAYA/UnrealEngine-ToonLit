@@ -28,7 +28,9 @@
 #include "rtm/math.h"
 #include "rtm/scalarf.h"
 #include "rtm/vector4f.h"
+#include "rtm/version.h"
 #include "rtm/impl/compiler_utils.h"
+#include "rtm/impl/macros.mask4.impl.h"
 #include "rtm/impl/memory_utils.h"
 #include "rtm/impl/quat_common.h"
 
@@ -36,6 +38,8 @@ RTM_IMPL_FILE_PRAGMA_PUSH
 
 namespace rtm
 {
+	RTM_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Setters, getters, and casts
 	//////////////////////////////////////////////////////////////////////////
@@ -852,6 +856,38 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
+	// Returns a normalized quaternion using a deterministic algorithm.
+	// This ensures that for a given input, the output will be identical on all
+	// platforms that implement IEEE-754. This can be slower than `quat_normalize`.
+	// This is only guaranteed if the rounding modes are consistent.
+	// Note that if the input quaternion is invalid (pure zero or with NaN/Inf),
+	// the result is undefined.
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE quatf RTM_SIMD_CALL quat_normalize_deterministic(quatf_arg0 input) RTM_NO_EXCEPT
+	{
+		vector4f inputv = quat_to_vector(input);
+
+		// Multiply once and retrieve floats, can't use scalarf because we need to use volatile
+		// volatile will force a roundtrip to memory and should prevent re-ordering as well as
+		// other optimizations such as FMA.
+		vector4f input_sq = vector_mul(inputv, inputv);
+		volatile float x_sq = vector_get_x(input_sq);
+		volatile float y_sq = vector_get_y(input_sq);
+		volatile float z_sq = vector_get_z(input_sq);
+		volatile float w_sq = vector_get_w(input_sq);
+		volatile float sum_xy_sq = x_sq + y_sq;
+		volatile float sum_zw_sq = z_sq + w_sq;
+		float len_sq = sum_xy_sq + sum_zw_sq;
+
+		// sqrt(float) might not be exact when fast math or similar optimizations are enabled
+		// We might not be able to disable these
+		// As such, we promote to a double to ensure a deterministic result
+		// We add volatile to ensure rsqrt or similar isn't used
+		volatile double len = scalar_sqrt(double(len_sq));
+		return vector_to_quat(vector_div(inputv, vector_set(float(len))));
+	}
+
+	//////////////////////////////////////////////////////////////////////////
 	// Returns the linear interpolation between start and end for a given alpha value.
 	// The formula used is: ((1.0 - alpha) * start) + (alpha * end).
 	// Interpolation is stable and will return 'start' when 'alpha' is 0.0 and 'end' when it is 1.0.
@@ -1355,6 +1391,28 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
+	// Returns true if the two quaternions are equal component wise, otherwise false.
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL quat_are_equal(quatf_arg0 lhs, quatf_arg1 rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		const __m128 mask = _mm_cmpeq_ps(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
+#elif defined(RTM_NEON_INTRINSICS)
+		const uint32x4_t mask = vceqq_f32(lhs, rhs);
+
+		bool result;
+		RTM_MASK4F_ALL_TRUE(mask, result);
+		return result;
+#else
+		return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z && lhs.w == rhs.w;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
 	// Returns true if the two quaternions are nearly equal component wise, otherwise false.
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool RTM_SIMD_CALL quat_near_equal(quatf_arg0 lhs, quatf_arg1 rhs, float threshold = 0.00001F) RTM_NO_EXCEPT
@@ -1386,6 +1444,8 @@ namespace rtm
 		const float positive_w_angle = scalar_acos(scalar_cast(input_abs_w)) * 2.0F;
 		return positive_w_angle <= threshold_angle;
 	}
+
+	RTM_IMPL_VERSION_NAMESPACE_END
 }
 
 RTM_IMPL_FILE_PRAGMA_POP

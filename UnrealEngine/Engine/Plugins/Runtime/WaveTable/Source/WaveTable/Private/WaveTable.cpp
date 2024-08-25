@@ -406,41 +406,48 @@ bool FWaveTableData::GetDataView(TArrayView<int16>& OutData)
 	return false;
 }
 
+float FWaveTableData::GetLastValue() const
+{
+	if (Data.IsEmpty())
+	{
+		return 0.0f;
+	}
+
+	switch (BitDepth)
+	{
+		case EWaveTableBitDepth::IEEE_Float:
+		{
+			TArrayView<const float> TableView;
+			ensureAlways(GetDataView(TableView));
+			return TableView.Last();
+		}
+		break;
+
+		case EWaveTableBitDepth::PCM_16:
+		{
+			TArrayView<const int16> TableView;
+			ensureAlways(GetDataView(TableView));
+			constexpr float ConversionValue = 1.0f / static_cast<float>(TNumericLimits<int16>::Max());
+			return TableView.Last() * ConversionValue;
+		}
+		break;
+
+		default:
+		{
+			static_assert(static_cast<int32>(EWaveTableBitDepth::COUNT) == 2, "Possible missing switch case coverage for 'EWaveTableBitDepth'");
+			checkNoEntry();
+		}
+		break;
+	}
+
+	return 0.0f;
+}
+
 float FWaveTableData::GetFinalValue() const
 {
 	if (FMath::IsNearlyEqual(FinalValue, WaveTable::InvalidWaveTableValue))
 	{
-		if (Data.IsEmpty())
-		{
-			return 0.0f;
-		}
-
-		switch (BitDepth)
-		{
-			case EWaveTableBitDepth::IEEE_Float:
-			{
-				TArrayView<const float> TableView;
-				ensureAlways(GetDataView(TableView));
-				return TableView.Last();
-			}
-			break;
-
-			case EWaveTableBitDepth::PCM_16:
-			{
-				TArrayView<const int16> TableView;
-				ensureAlways(GetDataView(TableView));
-				constexpr float ConversionValue = 1.0f / static_cast<float>(TNumericLimits<int16>::Max());
-				return TableView.Last() * ConversionValue;
-			}
-			break;
-
-			default:
-			{
-				static_assert(static_cast<int32>(EWaveTableBitDepth::COUNT) == 2, "Possible missing switch case coverage for 'EWaveTableBitDepth'");
-				checkNoEntry();
-			}
-			break;
-		}
+		return GetLastValue();
 	}
 
 	return FinalValue;

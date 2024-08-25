@@ -85,15 +85,4 @@ UObject* UActorFactoryProceduralFoliage::GetAssetFromActorInstance(AActor* Insta
 	
 	return ProceduralComponent->FoliageSpawner;
 }
-
-void UActorFactoryProceduralFoliage::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		UProceduralFoliageSpawner* FoliageSpawner = CastChecked<UProceduralFoliageSpawner>(Asset);
-		AProceduralFoliageVolume* PFV = CastChecked<AProceduralFoliageVolume>(CDO);
-		UProceduralFoliageComponent* ProceduralComponent = PFV->ProceduralComponent;
-		ProceduralComponent->FoliageSpawner = FoliageSpawner;
-	}
-}
 #undef LOCTEXT_NAMESPACE

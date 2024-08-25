@@ -732,6 +732,8 @@ TSharedRef<FSlateApplication> FSlateApplication::Create(const TSharedRef<class G
 	CurrentApplication = MakeShareable( new FSlateApplication() );
 	CurrentBaseApplication = CurrentApplication;
 
+	UE_TRACE_SLATE_APPLICATION_REGISTER_TRACE_EVENTS(*CurrentApplication);
+
 	PlatformApplication->SetMessageHandler( CurrentApplication.ToSharedRef() );
 #if WITH_ACCESSIBILITY
 	PlatformApplication->SetAccessibleMessageHandler(CurrentApplication->GetAccessibleMessageHandler());
@@ -801,6 +803,7 @@ FSlateApplication::FSlateApplication()
 	, AverageDeltaTimeForResponsiveness( 1.0f / 30.0f )
 	, OnExitRequested()
 	, NumExternalModalWindowsActive( 0 )
+	, RootStyleNode(nullptr)
 	, bRequestLeaveDebugMode( false )
 	, bLeaveDebugForSingleStep( false )
 	, bIsExternalUIOpened( false )
@@ -811,6 +814,7 @@ FSlateApplication::FSlateApplication()
 	, bTouchFallbackToMouse( true )
 	, bSoftwareCursorAvailable( false )	
 	, bMenuAnimationsEnabled( false )
+	, AppIcon(nullptr)
 	, VirtualDesktopRect( 0,0,0,0 )
 	, NavigationConfig(MakeShared<FNavigationConfig>())
 #if WITH_EDITOR
@@ -852,6 +856,7 @@ FSlateApplication::FSlateApplication()
 
 	NavigationConfig->OnRegister();
 #if WITH_EDITOR
+	EditorNavigationConfig->bIgnoreModifiersForNavigationActions = false;
 	EditorNavigationConfig->OnRegister();
 #endif
 
@@ -1264,7 +1269,6 @@ static void PrepassWindowAndChildren(TSharedRef<SWindow> WindowToPrepass, const 
 void FSlateApplication::DrawPrepass( TSharedPtr<SWindow> DrawOnlyThisWindow )
 {
 	SCOPED_NAMED_EVENT_TEXT("Slate::Prepass", FColor::Magenta);
-	CSV_SCOPED_TIMING_STAT(Slate, Prepass);
 
 	TSharedPtr<SWindow> CurrentDebuggingWindowPinned = CurrentDebuggingWindow.Pin();
 
@@ -1505,8 +1509,13 @@ void FSlateApplication::Tick(ESlateTickType TickType)
 
 	FScopeLock SlateTickAccess(&SlateTickCriticalSection);
 
+	TGuardValue<bool> IsTickingGuard(bIsTicking, true);
+
+#if WITH_EDITOR
+	FScopedPreventDebuggingMode SlatePreventDebugginModeWhileTicking(NSLOCTEXT("EnterDebuggingMode", "WindowTicking", "The window is ticking."));
+#endif
+
 	SCOPED_NAMED_EVENT_F(TEXT("Slate::Tick (%s)"), FColor::Magenta, LexToString(TickType));
-	CSV_SCOPED_TIMING_STAT(Slate, Tick);
 
 	{
 		SCOPE_CYCLE_COUNTER(STAT_SlateTickTime);
@@ -1540,6 +1549,11 @@ void FSlateApplication::Tick(ESlateTickType TickType)
 			TickAndDrawWidgets(DeltaTime);
 		}
 	}
+}
+
+bool FSlateApplication::IsTicking() const
+{
+	return bIsTicking;
 }
 
 void FSlateApplication::TickTime()
@@ -3627,6 +3641,49 @@ void FSlateApplication::GetAllVisibleChildWindows(TArray< TSharedRef<SWindow> >&
 
 void FSlateApplication::EnterDebuggingMode()
 {
+	if (!IsInGameThread())
+	{
+		ensureMsgf(false, TEXT("Can only enter Debugging Mode while on the game thread."));
+		return;
+	}
+
+	auto AddNotification = [Self=this](const FText& SubText)
+	{
+		if (TSharedPtr<SNotificationItem> MessagePinned = Self->DebuggingModeNotificationMessage.Pin())
+		{
+			static float DefaultDuration = FNotificationInfo{FText::GetEmpty()}.ExpireDuration;
+			MessagePinned->SetSubText(SubText);
+		}
+		else
+		{
+			FNotificationInfo Info(NSLOCTEXT("EnterDebuggingMode", "FailTitle", "Debugging Mode Fail"));
+			Info.SubText = SubText;
+			Self->DebuggingModeNotificationMessage = FSlateNotificationManager::Get().AddNotification(Info);
+		}
+		UE_LOG(LogSlate, Warning, TEXT("Enter Debugging Mode failed."));
+
+		static volatile bool bDoDebugBreak = true;
+		if (bDoDebugBreak)
+		{
+			UE_DEBUG_BREAK();
+		}
+	};
+
+	if (GetActiveModalWindow().IsValid())
+	{
+		AddNotification(NSLOCTEXT("EnterDebuggingMode", "Fail_ModalWindow", "A modal window is open."));
+		return;
+	}
+
+#if WITH_EDITOR
+	if (PreventDebuggingModeStack.Num() > 0)
+	{
+		AddNotification(PreventDebuggingModeStack.Last().Key);
+		return;
+	}
+	FScopedPreventDebuggingMode Scope(NSLOCTEXT("EnterDebuggingMode", "AlreadyInDebuggingMode", "Already in debug mode."));
+#endif
+
 	bRequestLeaveDebugMode = false;
 
 	// Note it is ok to hold a reference here as the game viewport should not be destroyed while in debugging mode
@@ -3731,6 +3788,24 @@ void FSlateApplication::LeaveDebuggingMode( bool bLeavingForSingleStep )
 	bRequestLeaveDebugMode = true;
 	bLeaveDebugForSingleStep = bLeavingForSingleStep;
 }
+
+#if WITH_EDITOR
+FSlateApplication::FScopedPreventDebuggingMode::FScopedPreventDebuggingMode(FText InReason)
+{
+	static int32 IdGenerator = 0;
+	Id = ++IdGenerator;
+	FSlateApplication::Get().PreventDebuggingModeStack.Emplace(MoveTemp(InReason), Id);
+}
+
+FSlateApplication::FScopedPreventDebuggingMode::~FScopedPreventDebuggingMode()
+{
+	int32 IndexToRemove = FSlateApplication::Get().PreventDebuggingModeStack.IndexOfByPredicate([this](const TPair<FText, int32>& Reference){ return Reference.Value == Id;});
+	if (ensure(IndexToRemove != INDEX_NONE))
+	{
+		FSlateApplication::Get().PreventDebuggingModeStack.RemoveAtSwap(IndexToRemove);
+	}
+}
+#endif
 
 bool FSlateApplication::IsWindowInDestroyQueue(TSharedRef<SWindow> Window) const
 {
@@ -4847,17 +4922,15 @@ bool FSlateApplication::ProcessAnalogInputEvent(const FAnalogInputEvent& InAnalo
 			}, ESlateDebuggingInputEvent::AnalogInput);
 	}
 
-	// If no one handled this, it was probably motion in the deadzone.  Don't treat it as activity.
-	if (Reply.IsEventHandled())
+	// Ensure the analog input event exceeds the thresholds set in the navigation config before considering as interaction.
+	const TSharedRef<FNavigationConfig> RelevantNavConfig = GetRelevantNavConfig(InAnalogInputEvent.GetUserIndex());
+	if (RelevantNavConfig->IsAnalogEventBeyondNavigationThreshold(InAnalogInputEvent))
 	{
 		SetLastUserInteractionTime(this->GetCurrentTime());
 		LastUserInteractionTimeForThrottling = LastUserInteractionTime;
-		return true;
 	}
-	else
-	{
-		return false;
-	}
+
+	return Reply.IsEventHandled();
 }
 
 FKey TranslateMouseButtonToKey( const EMouseButtons::Type Button )
@@ -5767,6 +5840,15 @@ bool FSlateApplication::ProcessMouseButtonUpEvent( const FPointerEvent& MouseEve
 	// Input preprocessors get the first chance at the input
 	if (InputPreProcessors.HandleMouseButtonUpEvent(*this, MouseEvent))
 	{
+		// If mouse up event is consumed by a preprocessor, associated mouse down event needs to be cleared as well. Otherwise, subsequent mouse down events get ignored until the first one is cleared.
+		// This was only affecting the swipe detection on touch, we can remove this condition if we want the same fix for other platforms, but reducing the scope for now
+		if (MouseEvent.IsTouchEvent())
+		{
+			TSharedRef<FSlateUser> SlateUser = GetOrCreateUser(MouseEvent);
+			FWidgetPath WidgetsUnderPointer = LocateWindowUnderMouse(MouseEvent.GetScreenSpacePosition(), GetInteractiveTopLevelWindows(), false, SlateUser->GetUserIndex());
+
+			SlateUser->NotifyPointerReleased(MouseEvent, WidgetsUnderPointer, nullptr, true);
+		}
 		return true;
 	}
 
@@ -6231,7 +6313,7 @@ bool FSlateApplication::OnControllerButtonPressed(FGamepadKeyNames::Type KeyName
 {
 	FKey Key(KeyName);
 	TOptional<int32> UserIndex = GetUserIndexForInputDevice(InputDeviceId);
-	if (UserIndex.IsSet() && ensureMsgf(Key.IsValid(), TEXT("OnControllerButtonPressed(KeyName=%s,InputDeviceId=%d,IsRepeat=%b) key is invalid"), *KeyName.ToString(), InputDeviceId.GetId(), IsRepeat))
+	if (UserIndex.IsSet() && ensureMsgf(Key.IsValid(), TEXT("OnControllerButtonPressed(KeyName=%s,InputDeviceId=%d,IsRepeat=%u) key is invalid"), *KeyName.ToString(), InputDeviceId.GetId(), IsRepeat))
 	{
 		FKeyEvent KeyEvent(Key, PlatformApplication->GetModifierKeys(), InputDeviceId, IsRepeat, 0, 0, UserIndex);
 		
@@ -6244,7 +6326,7 @@ bool FSlateApplication::OnControllerButtonReleased(FGamepadKeyNames::Type KeyNam
 {
 	FKey Key(KeyName);
 	TOptional<int32> UserIndex = GetUserIndexForInputDevice(InputDeviceId);
-	if (UserIndex.IsSet() && ensureMsgf(Key.IsValid(), TEXT("OnControllerButtonReleased(KeyName=%s,InputDeviceId=%d,IsRepeat=%b) key is invalid"), *KeyName.ToString(), InputDeviceId.GetId(), IsRepeat))
+	if (UserIndex.IsSet() && ensureMsgf(Key.IsValid(), TEXT("OnControllerButtonReleased(KeyName=%s,InputDeviceId=%d,IsRepeat=%u) key is invalid"), *KeyName.ToString(), InputDeviceId.GetId(), IsRepeat))
 	{
 		FKeyEvent KeyEvent(Key, PlatformApplication->GetModifierKeys(), InputDeviceId, IsRepeat, 0, 0, UserIndex);
 		

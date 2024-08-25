@@ -4,9 +4,9 @@
 	GLCommon.ush: Common GL shader code
 =============================================================================*/
 
-// Update this GUID to improve shader recompilation for GL only shaders
-// GUID = F1338239-A231-40B9-AAD4-421C7AD5306A
-
 #pragma once
+
+// Update this GUID to invalidate shader recompilation for only GL shaders
+#pragma message("UESHADERMETADATA_VERSION 3FB1EB49-0442-40E1-9F1B-0371F7ABB4BB")
 
 

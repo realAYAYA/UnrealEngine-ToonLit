@@ -2,13 +2,12 @@
 
 import 'dart:async';
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 import '../../../../models/navigator_keys.dart';
-import '../../../../utilities/constants.dart';
-import '../../../elements/asset_icon.dart';
-import '../../../elements/modal.dart';
 import '../mixins/connect_mixin.dart';
 import 'manual_connect_form.dart';
 
@@ -41,7 +40,7 @@ class _ManualConnectTileState extends State<ManualConnectTile> with ConnectMixin
         width: 170,
         height: 166,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(cardCornerRadius),
+          borderRadius: BorderRadius.circular(UnrealTheme.cardCornerRadius),
           color: Theme.of(context).colorScheme.secondary,
         ),
         padding: EdgeInsets.all(10),
@@ -51,7 +50,7 @@ class _ManualConnectTileState extends State<ManualConnectTile> with ConnectMixin
           mainAxisSize: MainAxisSize.min,
           children: [
             AssetIcon(
-              path: 'assets/images/icons/unreal_u.svg',
+              path: 'packages/epic_common/assets/icons/unreal_u.svg',
               size: 50,
             ),
             SizedBox(height: 16),

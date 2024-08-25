@@ -27,11 +27,6 @@ UGameplayTask_WaitDelay* UGameplayTask_WaitDelay::TaskWaitDelay(TScriptInterface
 
 UGameplayTask_WaitDelay* UGameplayTask_WaitDelay::TaskWaitDelay(IGameplayTaskOwnerInterface& InTaskOwner, float Time, const uint8 Priority)
 {
-	if (Time <= 0.f)
-	{
-		return nullptr;
-	}
-
 	UGameplayTask_WaitDelay* MyTask = NewTaskUninitialized<UGameplayTask_WaitDelay>();
 	if (MyTask)
 	{
@@ -46,9 +41,16 @@ void UGameplayTask_WaitDelay::Activate()
 	UWorld* World = GetWorld();
 	TimeStarted = World->GetTimeSeconds();
 
-	// Use a dummy timer handle as we don't need to store it for later but we don't need to look for something to clear
-	FTimerHandle TimerHandle;
-	World->GetTimerManager().SetTimer(TimerHandle, this, &UGameplayTask_WaitDelay::OnTimeFinish, (float)Time, false);
+	if (Time <= 0.0f)
+	{
+		World->GetTimerManager().SetTimerForNextTick(this, &UGameplayTask_WaitDelay::OnTimeFinish);
+	}
+	else
+	{
+		// Use a dummy timer handle as we don't need to store it for later but we don't need to look for something to clear
+		FTimerHandle TimerHandle;
+		World->GetTimerManager().SetTimer(TimerHandle, this, &UGameplayTask_WaitDelay::OnTimeFinish, (float)Time, false);
+	}
 }
 
 void UGameplayTask_WaitDelay::OnTimeFinish()

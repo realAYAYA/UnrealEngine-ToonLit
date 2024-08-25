@@ -147,4 +147,55 @@ that's to be written to as a parameter on all platforms. Also unfortunate is tha
 #define WaveInterlockedOr( Dest, Value ) { InterlockedOr(Dest, Value); }
 
 
-#endif // PLATFORM_SUPPORTS_SM6_0_WAVE_OPERATIONS
+#endif // COMPILER_SUPPORTS_WAVE_VOTE
+
+
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM6 || PLATFORM_SUPPORTS_SM6_0_WAVE_OPERATIONS
+
+bool WaveReadLaneAt(bool In, uint SrcIndex)
+{
+	return (bool)WaveReadLaneAt((uint)In, SrcIndex);
+}
+
+// TODO: Workaround for WaveReadLaneAt being stripped for matrix types when compiling metal shaders
+// Will remove when we switch to MSC
+// Update: WaveReadLaneAt matrix overloads also cause pipelines to fail creation on Vulkan/NVIDIA
+float4x4 WaveReadLaneAtMatrix(float4x4 In, uint SrcIndex)
+{
+	float4x4 Result;
+	Result[0] = WaveReadLaneAt(In[0], SrcIndex);
+	Result[1] = WaveReadLaneAt(In[1], SrcIndex);
+	Result[2] = WaveReadLaneAt(In[2], SrcIndex);
+	Result[3] = WaveReadLaneAt(In[3], SrcIndex);
+	return Result;
+}
+float3x3 WaveReadLaneAtMatrix(float3x3 In, uint SrcIndex)
+{
+	float3x3 Result;
+	Result[0] = WaveReadLaneAt(In[0], SrcIndex);
+	Result[1] = WaveReadLaneAt(In[1], SrcIndex);
+	Result[2] = WaveReadLaneAt(In[2], SrcIndex);
+	return Result;
+}
+
+#if 0 // These are currently unsafe to use on Metal and Vulkan/NVIDIA. Don't reenable before those issues are fixed.
+float4x4 WaveReadLaneAt(float4x4 In, uint SrcIndex)
+{
+	float4x4 Result;
+	Result[0] = WaveReadLaneAt(In[0], SrcIndex);
+	Result[1] = WaveReadLaneAt(In[1], SrcIndex);
+	Result[2] = WaveReadLaneAt(In[2], SrcIndex);
+	Result[3] = WaveReadLaneAt(In[3], SrcIndex);
+	return Result;
+}
+float3x3 WaveReadLaneAt(float3x3 In, uint SrcIndex)
+{
+	float3x3 Result;
+	Result[0] = WaveReadLaneAt(In[0], SrcIndex);
+	Result[1] = WaveReadLaneAt(In[1], SrcIndex);
+	Result[2] = WaveReadLaneAt(In[2], SrcIndex);
+	return Result;
+}
+#endif
+
+#endif

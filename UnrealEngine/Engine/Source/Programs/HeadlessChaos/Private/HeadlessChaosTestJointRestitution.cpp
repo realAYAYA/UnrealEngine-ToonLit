@@ -50,8 +50,8 @@ namespace ChaosTest {
 		// Check that the velocity and angular velocity was affected by restitution
 		if (auto KinParticle = Test.GetParticle(1)->CastToKinematicParticle())
 		{
-			const FVec3 ResultVel = KinParticle->V();
-			const FVec3 ResultAngVel = KinParticle->W();
+			const FVec3 ResultVel = KinParticle->GetV();
+			const FVec3 ResultAngVel = KinParticle->GetW();
 
 			const FVec3 ExpectedVel = -Test.JointSettings[0].SwingRestitution * InitialVel1;
 			const FVec3 ExpectedAngVel = -Test.JointSettings[0].SwingRestitution * InitialAngVel1;

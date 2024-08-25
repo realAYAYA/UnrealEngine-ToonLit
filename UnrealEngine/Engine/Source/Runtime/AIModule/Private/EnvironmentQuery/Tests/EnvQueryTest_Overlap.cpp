@@ -68,7 +68,7 @@ void UEnvQueryTest_Overlap::RunTest(FEnvQueryInstance& QueryInstance) const
 		const bool bHit = (this->*OverlapFunc)(ItemLocation + OverlapData.ShapeOffset, CollisionShape, IgnoredActors, QueryInstance.World, OverlapCollisionChannel, OverlapParams);
 		It.SetScore(TestPurpose, FilterType, bHit, bWantsHit);
 		
-		IgnoredActors.Pop(/*bAllowShrinking=*/false);
+		IgnoredActors.Pop(EAllowShrinking::No);
 	}
 }
 

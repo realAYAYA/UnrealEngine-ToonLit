@@ -100,8 +100,6 @@ void FMessageLogListingModel::ClearMessages()
 
 void FMessageLogListingModel::NewPage( const FText& InTitle, uint32 InMaxPages )
 {
-	FMsg::Logf(__FILE__, __LINE__, *LogName.ToString(), ELogVerbosity::Log, TEXT("New page: %s"), *InTitle.ToString());
-
 	// store the name of the page we will add if a new message is pushed
 	PendingPageName = InTitle;
 	MaxPages = InMaxPages;

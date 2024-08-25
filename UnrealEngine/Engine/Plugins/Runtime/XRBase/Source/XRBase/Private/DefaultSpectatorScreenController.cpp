@@ -12,6 +12,7 @@
 #include "HeadMountedDisplayBase.h"
 #include "SceneUtils.h" // for SCOPED_DRAW_EVENT()
 #include "IStereoLayers.h"
+#include "Engine/Engine.h"
 
 
 FDefaultSpectatorScreenController::FDefaultSpectatorScreenController(FHeadMountedDisplayBase* InHMDDevice)
@@ -302,6 +303,10 @@ void FDefaultSpectatorScreenController::RenderSpectatorModeDistorted(FRHICommand
 {
 	// Note distorted mode is supported on only on oculus
 	// The default implementation falls back to RenderSpectatorModeSingleEyeCroppedToFill.
+	if(GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage((uint64) this, 2.0, FColor::Red, TEXT("Distorted mode is not available in the default spectator controller."));
+	}
 	RenderSpectatorModeSingleEyeCroppedToFill(RHICmdList, TargetTexture, EyeTexture, OtherTexture, WindowSize);
 }
 

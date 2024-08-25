@@ -38,6 +38,9 @@ class UVEDITOR_API UUVEditor : public UAssetEditor
 
 public:
 	void Initialize(const TArray<TObjectPtr<UObject>>& InObjects);
+	void Initialize(const TArray<TObjectPtr<UObject>>& InObjects, const TArray<FTransform3d>& InTransforms);
+
+	void GetWorldspaceRelativeTransforms(TArray<FTransform3d>& OutTransforms);
 
 	/** Returns the asset editor instance interface, so that its window can be focused, for example. */
 	IAssetEditorInstance* GetInstanceInterface();
@@ -53,6 +56,9 @@ protected:
 	
 	UPROPERTY()
 	TArray<TObjectPtr<UObject>> OriginalObjectsToEdit;
+
+	UPROPERTY()
+	TArray<FTransform3d> ObjectWorldspaceOffsets;
 
 	friend class UUVEditorSubsystem;
 };

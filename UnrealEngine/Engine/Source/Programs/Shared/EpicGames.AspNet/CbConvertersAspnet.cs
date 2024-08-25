@@ -7,80 +7,85 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace EpicGames.AspNet
 {
-    public static class CbConvertersAspNet
-    {
-        public static void AddAspnetConverters()
-        {
-            CbConverter.TypeToConverter[typeof(ProblemDetails)] = new CbProblemDetailsConverter();
-        }
-    }
+	/// <summary>
+	/// 
+	/// </summary>
+	public static class CbConvertersAspNet
+	{
+		/// <summary>
+		/// 
+		/// </summary>
+		public static void AddAspnetConverters()
+		{
+			CbConverter.TypeToConverter[typeof(ProblemDetails)] = new CbProblemDetailsConverter();
+		}
+	}
 
-    /// <summary>
-    /// Converter for asp.net problem details type
-    /// </summary>
-    /// <typeparam name="T"></typeparam>
-    class CbProblemDetailsConverter : CbConverterBase<ProblemDetails>
-    {
-        /// <inheritdoc/>
-        public override ProblemDetails Read(CbField field)
-        {
-            if (!field.IsObject())
-            {
-                throw new CbException($"Error converting field \"{field.Name}\" to ProblemDetails. Expected CbObject.");
-            }
-            
-            ProblemDetails result = new ProblemDetails
-            {
-                Title = field["title"].AsString(),
-                Detail = field["detail"].AsString(),
-                Type = field["type"].AsString(),
-                Instance = field["instance"].AsString(),
-                Status = field["status"].AsInt32()
-            };
-            return result;
-        }
+	/// <summary>
+	/// Converter for asp.net problem details type
+	/// </summary>
+	class CbProblemDetailsConverter : CbConverter<ProblemDetails>
+	{
+		/// <inheritdoc/>
+		public override ProblemDetails Read(CbField field)
+		{
+			if (!field.IsObject())
+			{
+				throw new CbException($"Error converting field \"{field.Name}\" to ProblemDetails. Expected CbObject.");
+			}
 
-        /// <inheritdoc/>
-        public override void Write(CbWriter writer, ProblemDetails problemDetails)
-        {
-            writer.WriteObject(ToCbObject(problemDetails));
-        }
+			ProblemDetails result = new ProblemDetails
+			{
+				Title = field[new Utf8String("title")].AsString(),
+				Detail = field[new Utf8String("detail")].AsString(),
+				Type = field[new Utf8String("type")].AsString(),
+				Instance = field[new Utf8String("instance")].AsString(),
+				Status = field[new Utf8String("status")].AsInt32()
+			};
+			return result;
+		}
 
-        /// <inheritdoc/>
-        public override void WriteNamed(CbWriter writer, Utf8String name, ProblemDetails problemDetails)
-        {
-            writer.WriteField(name, ToCbObject(problemDetails).AsField());
-        }
+		/// <inheritdoc/>
+		public override void Write(CbWriter writer, ProblemDetails problemDetails)
+		{
+			writer.WriteObject(ToCbObject(problemDetails));
+		}
 
-        private static CbObject ToCbObject(ProblemDetails problemDetails)
-        {
-            CbWriter objectWriter = new CbWriter();
-            objectWriter.BeginObject();
+		/// <inheritdoc/>
+		public override void WriteNamed(CbWriter writer, CbFieldName name, ProblemDetails problemDetails)
+		{
+			writer.WriteField(name, ToCbObject(problemDetails).AsField());
+		}
 
-            objectWriter.WriteString("title", problemDetails.Title);
-            if (!String.IsNullOrEmpty(problemDetails.Detail))
-            {
-                objectWriter.WriteString("detail", problemDetails.Detail);
-            }
+		private static CbObject ToCbObject(ProblemDetails problemDetails)
+		{
+			CbWriter objectWriter = new CbWriter();
+			objectWriter.BeginObject();
 
-            if (!String.IsNullOrEmpty(problemDetails.Type))
-            {
-                objectWriter.WriteString("type", problemDetails.Type);
-            }
+			objectWriter.WriteString(new Utf8String("title"), problemDetails.Title);
+			if (!String.IsNullOrEmpty(problemDetails.Detail))
+			{
+				objectWriter.WriteString(new Utf8String("detail"), problemDetails.Detail);
+			}
 
-            if (!String.IsNullOrEmpty(problemDetails.Instance))
-            {
-                objectWriter.WriteString("instance", problemDetails.Instance);
-            }
+			if (!String.IsNullOrEmpty(problemDetails.Type))
+			{
+				objectWriter.WriteString(new Utf8String("type"), problemDetails.Type);
+			}
 
-            if (problemDetails.Status.HasValue)
-            {
-                objectWriter.WriteInteger("status", problemDetails.Status.Value);
-            }
-            
-            objectWriter.EndObject();
+			if (!String.IsNullOrEmpty(problemDetails.Instance))
+			{
+				objectWriter.WriteString(new Utf8String("instance"), problemDetails.Instance);
+			}
 
-            return objectWriter.ToObject();
-        }
-    }
+			if (problemDetails.Status.HasValue)
+			{
+				objectWriter.WriteInteger(new Utf8String("status"), problemDetails.Status.Value);
+			}
+
+			objectWriter.EndObject();
+
+			return objectWriter.ToObject();
+		}
+	}
 }

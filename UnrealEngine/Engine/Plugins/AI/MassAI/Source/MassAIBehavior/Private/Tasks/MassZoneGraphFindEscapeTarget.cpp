@@ -11,6 +11,8 @@
 #include "MassStateTreeExecutionContext.h"
 #include "ZoneGraphSettings.h"
 #include "StateTreeLinker.h"
+#include "MassDebugger.h"
+
 
 FMassZoneGraphFindEscapeTarget::FMassZoneGraphFindEscapeTarget()
 {

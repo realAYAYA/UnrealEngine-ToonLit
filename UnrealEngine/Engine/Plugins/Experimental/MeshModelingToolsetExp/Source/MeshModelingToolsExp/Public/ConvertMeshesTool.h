@@ -7,20 +7,20 @@
 #include "InteractiveToolBuilder.h"
 #include "InteractiveToolQueryInterfaces.h" // IInteractiveToolExclusiveToolAPI
 #include "PropertySets/CreateMeshObjectTypeProperties.h"
+#include "TargetInterfaces/MeshTargetInterfaceTypes.h"
+
 #include "ConvertMeshesTool.generated.h"
 
 /**
  *
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UConvertMeshesToolBuilder : public UMultiSelectionMeshEditingToolBuilder
+class MESHMODELINGTOOLSEXP_API UConvertMeshesToolBuilder : public UInteractiveToolBuilder
 {
 	GENERATED_BODY()
-public:
-	virtual UMultiSelectionMeshEditingTool* CreateNewTool(const FToolBuilderState& SceneState) const override;
 
-protected:
-	virtual const FToolTargetTypeRequirements& GetTargetRequirements() const override;
+	virtual bool CanBuildTool(const FToolBuilderState& SceneState) const;
+	virtual UInteractiveTool* BuildTool(const FToolBuilderState& SceneState) const;
 };
 
 /**
@@ -45,7 +45,7 @@ public:
 
 
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UConvertMeshesTool : public UMultiSelectionMeshEditingTool,
+class MESHMODELINGTOOLSEXP_API UConvertMeshesTool : public UInteractiveTool,
 	// Disallow auto-accept switch-away for the tool
 	public IInteractiveToolExclusiveToolAPI
 {
@@ -53,7 +53,7 @@ class MESHMODELINGTOOLSEXP_API UConvertMeshesTool : public UMultiSelectionMeshEd
 
 public:
 	virtual void Setup() override;
-	virtual void OnShutdown(EToolShutdownType ShutdownType) override;
+	virtual void Shutdown(EToolShutdownType ShutdownType) override;
 
 	virtual bool HasCancel() const override { return true; }
 	virtual bool HasAccept() const override { return true; }
@@ -64,4 +64,20 @@ public:
 
 	UPROPERTY()
 	TObjectPtr<UCreateMeshObjectTypeProperties> OutputTypeProperties;
+
+	void InitializeInputs(TArray<TWeakObjectPtr<UPrimitiveComponent>>&& InInputs)
+	{
+		Inputs = MoveTemp(InInputs);
+	}
+
+	void SetTargetLOD(EMeshLODIdentifier LOD)
+	{
+		TargetLOD = LOD;
+	}
+
+private:
+ 	UPROPERTY()
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> Inputs;
+
+	EMeshLODIdentifier TargetLOD = EMeshLODIdentifier::Default;
 };

@@ -21,19 +21,17 @@ struct FNiagaraSimStageDispatchArgs
 
 struct FNiagaraSimStageData
 {
-	FNiagaraSimStageData()
-	{
-		bFirstStage = false;
-		bLastStage = false;
-		bSetDataToRender = false;
-	}
+	uint16 bFirstStage : 1 = false;
+	uint16 bLastStage : 1 = false;
+	uint16 bSetDataToRender : 1 = false;
+	uint16 StageIndex = INDEX_NONE;
 
-	uint32 bFirstStage : 1;
-	uint32 bLastStage : 1;
-	uint32 bSetDataToRender : 1;
+	uint16 NumIterations = 0;
+	uint16 IterationIndex = 0;
 
-	uint32 StageIndex = INDEX_NONE;
-	uint32 IterationIndex = 0;
+	uint16 NumLoops = 0;
+	uint16 LoopIndex = 0;
+
 	FNiagaraSimStageDispatchArgs DispatchArgs;
 
 	class FNiagaraDataBuffer* Source = nullptr;

@@ -26,7 +26,7 @@ public class DX11 : ModuleRules
 				// the bundled compiler library to make shader compilation repeatable
 			};
 
-			string DirectXSDKDir = DirectX.GetLibDir(Target);
+			string DirectXSDKDir = Target.WindowsPlatform.DirectXLibDir;
 			PublicAdditionalLibraries.AddRange(AllD3DLibs.Select(LibName => Path.Combine(DirectXSDKDir, LibName)));
 
 			PublicDelayLoadDLLs.Add("d3d9.dll");

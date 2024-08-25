@@ -10,6 +10,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 #include "EnhancedInputDeveloperSettings.h"
@@ -355,12 +356,24 @@ void FEnhancedInputModule::OnShowDebugInfo(AHUD* HUD, UCanvas* Canvas, const FDe
 		// Show the debug info for input user settings
 		if (HUD->ShouldDisplayDebug(NAME_InputSettings))
 		{
-			// TODO: some way to page through different local players instead of
-			// only showing the first player
-			TObjectIterator<UEnhancedInputLocalPlayerSubsystem> FirstPlayer;
-			if (FirstPlayer)
+			const APawn* TargetPawn = Cast<APawn>(HUD->GetCurrentDebugTargetActor());
+			const APlayerController* TargetPlayerController = TargetPawn ? TargetPawn->GetController<APlayerController>() : Cast<APlayerController>(HUD->GetCurrentDebugTargetActor());
+			const ULocalPlayer* TargetLocalPlayer = TargetPlayerController ? TargetPlayerController->GetLocalPlayer() : nullptr;
+			const UEnhancedInputLocalPlayerSubsystem* TargetEnhancedInputSubsystem = TargetPlayerController ? TargetLocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
+
+			//Fallback onto first found input system.
+			if (!TargetEnhancedInputSubsystem)
 			{
-				if (UEnhancedInputUserSettings* Settings = FirstPlayer->GetUserSettings())
+				TObjectIterator<UEnhancedInputLocalPlayerSubsystem> FirstFoundInputSubsystem;
+				if (FirstFoundInputSubsystem)
+				{
+					TargetEnhancedInputSubsystem = *FirstFoundInputSubsystem;
+				}
+			}
+			
+			if (TargetEnhancedInputSubsystem)
+			{
+				if (UEnhancedInputUserSettings* Settings = TargetEnhancedInputSubsystem->GetUserSettings())
 				{
 					Settings->ShowDebugInfo(Canvas);
 				}

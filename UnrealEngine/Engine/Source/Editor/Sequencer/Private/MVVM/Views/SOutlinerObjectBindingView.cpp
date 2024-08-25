@@ -35,40 +35,7 @@ void SOutlinerObjectBindingView::Construct(
 		TSharedPtr<FSequencerEditorViewModel> InEditor,
 		const TSharedRef<ISequencerTreeViewRow>& InTableRow)
 {
-	TSharedPtr<FSequencer> Sequencer = StaticCastSharedPtr<FSequencer>(InEditor->GetSequencer());
-
-	TAttribute<bool> HoverState = MakeAttributeSP(&InTableRow.Get(), &ISequencerTreeViewRow::IsHovered);
-
-	TSharedRef<SHorizontalBox> CustomBoxPanel =
-		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot()
-		[
-			SNew(SSpacer)
-		]
-
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		[
-			FSequencerUtilities::MakeAddButton(LOCTEXT("TrackText", "Track"), FOnGetContent::CreateSP(InModel.ToSharedRef(), &FObjectBindingModel::GetAddTrackMenuContent), HoverState, Sequencer->AsShared())
-		];
-
-	const UClass* ObjectClass = InModel->FindObjectClass();
-	Sequencer->BuildObjectBindingEditButtons(CustomBoxPanel, InModel->GetObjectGuid(), ObjectClass);
-
-	SOutlinerItemViewBase::Construct(
-		FArguments(InArgs)
-		.CustomContent()
-		[
-			CustomBoxPanel
-		]
-		.RightGutterContent()
-		[
-			// Spacer to match TrackView's color strip
-			SNew(SBox)
-			.WidthOverride(6.f)
-		], TWeakViewModelPtr<IOutlinerExtension>(InModel), InEditor, InTableRow
-	);
+	SOutlinerItemViewBase::Construct(InArgs, TWeakViewModelPtr<IOutlinerExtension>(InModel), InEditor, InTableRow);
 }
 
 } // namespace Sequencer

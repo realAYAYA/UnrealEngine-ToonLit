@@ -11,7 +11,8 @@
 #include "UObject/ObjectPtr.h"
 #include "UObject/StrongObjectPtr.h"
 
-class FOpenXRHMD;
+class IOpenXRHMD;
+class IXRTrackingSystem;
 class UInputAction;
 class UInputTrigger;
 class UInputModifier;
@@ -43,13 +44,15 @@ public:
 			const FName& InName, const
 			FString& InLocalizedName,
 			const TArray<XrPath>& InSubactionPaths,
-			const TObjectPtr<const UInputAction>& InObject);
+			const TObjectPtr<const UInputAction>& InObject,
+			IOpenXRHMD* OpenXRHMD = nullptr);
 
 		FOpenXRAction(XrActionSet InActionSet,
 			XrActionType InActionType,
 			const FName& InName,
 			const FString& InLocalizedName,
-			const TArray<XrPath>& InSubactionPaths);
+			const TArray<XrPath>& InSubactionPaths,
+			IOpenXRHMD* OpenXRHMD = nullptr);
 	};
 
 	struct FOpenXRActionSet
@@ -64,12 +67,14 @@ public:
 			const FName& InName,
 			const FString& InLocalizedName,
 			uint32 InPriority,
-			const TObjectPtr<const UInputMappingContext>& InObject);
+			const TObjectPtr<const UInputMappingContext>& InObject,
+			IOpenXRHMD* OpenXRHMD = nullptr);
 
 		FOpenXRActionSet(XrInstance InInstance,
 			const FName& InName,
 			const FString& InLocalizedName,
-			uint32 InPriority);
+			uint32 InPriority,
+			IOpenXRHMD* OpenXRHMD = nullptr);
 	};
 
 	struct FOpenXRController
@@ -88,7 +93,7 @@ public:
 
 		FOpenXRController(XrActionSet InActionSet, XrPath InUserPath, const char* InName);
 
-		void AddTrackedDevices(FOpenXRHMD* HMD);
+		void AddTrackedDevices(IOpenXRHMD* HMD);
 	};
 
 	struct FInteractionProfile
@@ -104,7 +109,7 @@ public:
 	class FOpenXRInput : public IOpenXRInputModule, public IInputDevice, public FXRMotionControllerBase, public IHapticDevice, public TSharedFromThis<FOpenXRInput>
 	{
 	public:
-		FOpenXRInput(FOpenXRHMD* HMD);
+		FOpenXRInput(IXRTrackingSystem* InTrackingSystem);
 		virtual ~FOpenXRInput() {};
 
 		// IOpenXRAdditionalModule overrides
@@ -130,6 +135,7 @@ public:
 		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		virtual bool SetPlayerMappableInputConfig(TObjectPtr<class UPlayerMappableInputConfig> InputConfig) override;
 		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		virtual bool AttachInputMappingContexts(const TSet<TObjectPtr<UInputMappingContext>>& MappingContexts) override;
 
 		// IHapticDevice overrides
 		IHapticDevice* GetHapticDevice() override { return (IHapticDevice*)this; }
@@ -139,7 +145,8 @@ public:
 		virtual float GetHapticAmplitudeScale() const override;
 
 	private:
-		FOpenXRHMD* OpenXRHMD;
+		IXRTrackingSystem* TrackingSystem;
+		IOpenXRHMD* OpenXRHMD;
 		XrInstance Instance;
 
 		TUniquePtr<FOpenXRActionSet> ControllerActionSet;
@@ -149,9 +156,9 @@ public:
 		TMap<EControllerHand, FOpenXRController> Controllers;
 		TMap<FName, EControllerHand> MotionSourceToControllerHandMap;
 
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		TStrongObjectPtr<class UPlayerMappableInputConfig> MappableInputConfig;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		// Holds Enhanced Input Mapping Contexts pulled from the Enhanced Input Settings and mapped to their priority
+		// These will be converted into OpenXR action sets
+		TMap<TStrongObjectPtr<const UInputMappingContext>, uint32> InputMappingContextToPriorityMap;
 
 		XrAction GetActionForMotionSource(FName MotionSource) const;
 		int32 GetDeviceIDForMotionSource(FName MotionSource) const;
@@ -192,9 +199,6 @@ public:
 
 	virtual void StartupModule() override;
 	virtual TSharedPtr< class IInputDevice > CreateInputDevice(const TSharedRef< FGenericApplicationMessageHandler >& InMessageHandler) override;
-
-private:
-	FOpenXRHMD* GetOpenXRHMD() const;
 
 private:
 	TSharedPtr<FOpenXRInput> InputDevice;

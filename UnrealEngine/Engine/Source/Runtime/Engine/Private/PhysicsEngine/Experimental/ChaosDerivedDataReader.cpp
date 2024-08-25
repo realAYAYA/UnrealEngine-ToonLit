@@ -19,6 +19,8 @@ FChaosDerivedDataReader<T, d>::FChaosDerivedDataReader(FBulkData* InBulkData)
 	int32 SerializedDataSize = -1;
 
 	ChaosAr << SerializedDataSize;
+	Ar.UsingCustomVersion(FFortniteValkyrieBranchObjectVersion::GUID);
+	
 
 	if(SerializedDataSize != DataTypeSize)
 	{
@@ -29,14 +31,13 @@ FChaosDerivedDataReader<T, d>::FChaosDerivedDataReader(FBulkData* InBulkData)
 	{
 		{
 			LLM_SCOPE(ELLMTag::ChaosConvex);
-			ChaosAr << ConvexImplicitObjects;
+			ChaosAr << ConvexGeometries;
 		}
 
 		{
 			LLM_SCOPE(ELLMTag::ChaosTrimesh);
-			ChaosAr << TrimeshImplicitObjects << UVInfo << FaceRemap;
+			ChaosAr << TriMeshGeometries << UVInfo << FaceRemap;
 		}
-		
 
 		bReadSuccessful = true;
 	}

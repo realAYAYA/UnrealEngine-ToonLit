@@ -55,6 +55,8 @@ namespace BuildPatchServices
 		bool IsUninstall() const { return InstallerAction.IsUninstall(); }
 		const TSet<FString>& GetInstallTags() const { return InstallTags; }
 		const TSet<FString>& GetTaggedFiles() const { return TaggedFiles; }
+		const FString& GetInstallSubdirectory() const { return InstallerAction.GetInstallSubdirectory(); }
+		const FString& GetCloudSubdirectory() const { return InstallerAction.GetCloudSubdirectory(); }
 		const FBuildPatchAppManifest& GetCurrentManifest() const { return *CurrentManifest; }
 		const FBuildPatchAppManifest& GetInstallManifest() const { return *InstallManifest; }
 		const FBuildPatchAppManifest* TryGetCurrentManifest() const { return CurrentManifest.Get(); }
@@ -93,7 +95,7 @@ namespace BuildPatchServices
 		virtual uint64 GetDownloadSize(const FGuid& DataGuid) const = 0;
 		virtual uint64 GetDownloadSize(const TSet<FGuid>& DataGuids) const = 0;
 		virtual bool GetChunkShaHash(const FGuid& ChunkGuid, FSHAHash& OutHash) const = 0;
-		virtual FString GetDataFilename(const FString& RootDirectory, const FGuid& DataGuid) const = 0;
+		virtual FString GetDataFilename(const FGuid& DataGuid) const = 0;
 
 		// File enumeration
 		virtual int32 GetNumExpectedFiles() const = 0;

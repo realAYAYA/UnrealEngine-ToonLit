@@ -266,6 +266,7 @@ public:
 	}
 		SLATE_ARGUMENT(FChangelistTreeItemPtr, TreeItemToVisualize)
 		SLATE_ATTRIBUTE(FText, HighlightText)
+		SLATE_EVENT(FOnDragDetected, OnDragDetected)
 	SLATE_END_ARGS()
 
 public:
@@ -288,6 +289,12 @@ public:
 	FText GetCheckedOutByUser() const;
 
 	static void PopulateSearchString(const FOfflineFileTreeItem& Item, TArray<FString>& OutStrings);
+
+protected:
+	//~ Begin STableRow Interface.
+	virtual void OnDragEnter(FGeometry const& InGeometry, FDragDropEvent const& InDragDropEvent) override;
+	virtual void OnDragLeave(FDragDropEvent const& InDragDropEvent) override;
+	//~ End STableRow Interface.
 
 private:
 	/** The info about the widget that we are visualizing. */

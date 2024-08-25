@@ -2,6 +2,7 @@
 
 #include "SmartObjectDefinition.h"
 #include "SmartObjectSettings.h"
+#include "Misc/EnumerateRange.h"
 #if WITH_EDITOR
 #include "UObject/ObjectSaveContext.h"
 #include "WorldConditions/WorldCondition_SmartObjectActorTagQuery.h"
@@ -9,7 +10,13 @@
 #include "SmartObjectUserComponent.h"
 #include "Engine/SCS_Node.h"
 #include "Misc/DataValidation.h"
+#include "SmartObjectPropertyHelpers.h"
+#include "Interfaces/ITargetPlatform.h"
 #endif
+
+#include "Serialization/ObjectAndNameAsStringProxyArchive.h"
+#include "Serialization/MemoryWriter.h"
+#include "UObject/Package.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SmartObjectDefinition)
 
@@ -18,7 +25,21 @@
 namespace UE::SmartObject
 {
 	const FVector DefaultSlotSize(40, 40, 90);
-}
+
+	namespace Delegates
+	{
+#if WITH_EDITOR
+		FOnParametersChanged OnParametersChanged;
+#endif	
+	} // Delegates
+
+} // UE::SmartObject
+
+
+const FSmartObjectDefinitionDataHandle FSmartObjectDefinitionDataHandle::Invalid(INDEX_NONE);
+const FSmartObjectDefinitionDataHandle FSmartObjectDefinitionDataHandle::Root(RootIndex);
+const FSmartObjectDefinitionDataHandle FSmartObjectDefinitionDataHandle::Parameters(ParametersIndex);
+
 
 USmartObjectDefinition::USmartObjectDefinition(const FObjectInitializer& ObjectInitializer): UDataAsset(ObjectInitializer)
 {
@@ -239,49 +260,99 @@ int32 USmartObjectDefinition::FindSlotByID(const FGuid ID) const
 	return Slot;
 }
 
+bool USmartObjectDefinition::FindSlotAndDefinitionDataIndexByID(const FGuid ID, int32& OutSlotIndex, int32& OutDefinitionDataIndex) const
+{
+	OutSlotIndex = INDEX_NONE;
+	OutDefinitionDataIndex = INDEX_NONE;
+	
+	// First try to find direct match on a slot.
+	for (TConstEnumerateRef<const FSmartObjectSlotDefinition> SlotDefinition : EnumerateRange(Slots))
+	{
+		if (SlotDefinition->ID == ID)
+		{
+			OutSlotIndex = SlotDefinition.GetIndex();
+			return true;
+		}
+
+		// Next try to find slot index based on definition data.
+		const int32 DefinitionDataIndex = SlotDefinition->DefinitionData.IndexOfByPredicate([&ID](const FSmartObjectDefinitionDataProxy& DataProxy)
+		{
+			return DataProxy.ID == ID;
+		});
+		if (DefinitionDataIndex != INDEX_NONE)
+		{
+			OutSlotIndex = SlotDefinition.GetIndex();
+			OutDefinitionDataIndex = DefinitionDataIndex;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void USmartObjectDefinition::PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeChainProperty(PropertyChangedEvent);
 
-	const FProperty* Property = PropertyChangedEvent.Property;
-	if (Property == nullptr)
-	{
-		return;
-	}
-	const FProperty* MemberProperty = nullptr;
-	if (PropertyChangedEvent.PropertyChain.GetActiveMemberNode())
-	{
-		MemberProperty = PropertyChangedEvent.PropertyChain.GetActiveMemberNode()->GetValue();
-	}
-	if (MemberProperty == nullptr)
-	{
-		return;
-	}
+	const FSmartObjectEditPropertyPath ChangePropertyPath(PropertyChangedEvent);
+
+	static const FSmartObjectEditPropertyPath ParametersPath(USmartObjectDefinition::StaticClass(), TEXT("Parameters"));
+	static const FSmartObjectEditPropertyPath SlotsPath(USmartObjectDefinition::StaticClass(), TEXT("Slots"));
+	static const FSmartObjectEditPropertyPath WorldConditionSchemaClassPath(USmartObjectDefinition::StaticClass(), TEXT("WorldConditionSchemaClass"));
+	static const FSmartObjectEditPropertyPath SlotsDefinitionDataPath(USmartObjectDefinition::StaticClass(), TEXT("Slots.DefinitionData"));
 
 	// Ensure unique Slot ID on added or duplicated items.
 	if (PropertyChangedEvent.ChangeType == EPropertyChangeType::ArrayAdd
 		|| PropertyChangedEvent.ChangeType == EPropertyChangeType::Duplicate)
 	{
-		if (Property->GetFName() == GET_MEMBER_NAME_CHECKED(USmartObjectDefinition, Slots))
+		if (ChangePropertyPath.IsPathExact(SlotsPath))
 		{
-			const int32 ArrayIndex = PropertyChangedEvent.GetArrayIndex(MemberProperty->GetFName().ToString());
-			if (Slots.IsValidIndex(ArrayIndex))
+			const int32 SlotIndex = ChangePropertyPath.GetPropertyArrayIndex(SlotsPath);
+			if (Slots.IsValidIndex(SlotIndex))
 			{
-				FSmartObjectSlotDefinition& Slot = Slots[ArrayIndex];
-				Slot.ID = FGuid::NewGuid();
-				Slot.SelectionPreconditions.SetSchemaClass(WorldConditionSchemaClass);
+				FSmartObjectSlotDefinition& SlotDefinition = Slots[SlotIndex];
+				SlotDefinition.ID = FGuid::NewGuid();
+				SlotDefinition.SelectionPreconditions.SetSchemaClass(WorldConditionSchemaClass);
+				
+				// Set new IDs to all duplicated data too
+				for (FSmartObjectDefinitionDataProxy& DataProxy : SlotDefinition.DefinitionData)
+				{
+					DataProxy.ID = FGuid::NewGuid();
+				}
+			}
+		}
+
+		if (ChangePropertyPath.IsPathExact(SlotsDefinitionDataPath))
+		{
+			const int32 SlotIndex = ChangePropertyPath.GetPropertyArrayIndex(SlotsPath);
+			if (Slots.IsValidIndex(SlotIndex))
+			{
+				FSmartObjectSlotDefinition& SlotDefinition = Slots[SlotIndex];
+				const int32 DataIndex = ChangePropertyPath.GetPropertyArrayIndex(SlotsDefinitionDataPath);
+				if (SlotDefinition.DefinitionData.IsValidIndex(DataIndex))
+				{
+					FSmartObjectDefinitionDataProxy& DataProxy = SlotDefinition.DefinitionData[DataIndex];
+					DataProxy.ID = FGuid::NewGuid();
+				}
 			}
 		}
 	}
 
+	// Anything in the parameters change, notify.
+	if (ChangePropertyPath.ContainsPath(ParametersPath))
+	{
+		UpdateBindingPaths();
+		UE::SmartObject::Delegates::OnParametersChanged.Broadcast(*this);
+	}
+
 	// Anything in the slots changed, update references.
-	if (MemberProperty->GetFName() == GET_MEMBER_NAME_CHECKED(USmartObjectDefinition, Slots))
+	if (ChangePropertyPath.ContainsPath(SlotsPath))
 	{
 		UpdateSlotReferences();
 	}
 
 	// If schema changes, update preconditions too.
-	if (MemberProperty->GetFName() == GET_MEMBER_NAME_CHECKED(USmartObjectDefinition, WorldConditionSchemaClass))
+	if (ChangePropertyPath.IsPathExact(WorldConditionSchemaClassPath))
 	{
 		for (FSmartObjectSlotDefinition& Slot : Slots)
 		{
@@ -290,6 +361,10 @@ void USmartObjectDefinition::PostEditChangeChainProperty(FPropertyChangedChainEv
 		}
 	}
 
+#if WITH_EDITOR
+	UpdateBindingDataHandles();
+#endif	
+	
 	Validate();
 }
 
@@ -302,20 +377,52 @@ void USmartObjectDefinition::PreSave(FObjectPreSaveContext SaveContext)
 
 	UpdateSlotReferences();
 	Super::PreSave(SaveContext);
+
+#if WITH_EDITOR
+
+	UpdateBindingDataHandles();
+
+	if (SaveContext.IsCooking()
+		&& SaveContext.GetTargetPlatform()->IsClientOnly()
+		&& GetDefault<USmartObjectSettings>()->bShouldExcludePreConditionsOnDedicatedClient
+		&& !HasAnyFlags(RF_ArchetypeObject | RF_ClassDefaultObject))
+	{
+		FObjectSaveOverride ObjSaveOverride;
+
+		// Add path to the conditions within the main definition
+		FProperty* OverrideProperty = FindFProperty<FProperty>(GetClass(), GET_MEMBER_NAME_CHECKED(USmartObjectDefinition, Preconditions));
+		check(OverrideProperty);
+		FPropertySaveOverride PropOverride;
+		PropOverride.PropertyPath = FFieldPath(OverrideProperty);
+		PropOverride.bMarkTransient = true;
+		
+		ObjSaveOverride.PropOverrides.Add(PropOverride);
+
+		// Add path to the conditions within the slot definition struct
+		OverrideProperty = FindFProperty<FProperty>(FSmartObjectSlotDefinition::StaticStruct(), GET_MEMBER_NAME_CHECKED(FSmartObjectSlotDefinition, SelectionPreconditions));
+		check(OverrideProperty);
+		PropOverride.PropertyPath = FFieldPath(OverrideProperty);
+		ObjSaveOverride.PropOverrides.Add(PropOverride);
+
+		SaveContext.AddSaveOverride(this, ObjSaveOverride);
+	}
+
+#endif // WITH_EDITOR
+	
 }
 
 void USmartObjectDefinition::UpdateSlotReferences()
 {
 	for (FSmartObjectSlotDefinition& Slot : Slots)
 	{
-		for (FInstancedStruct& Data : Slot.Data)
+		for (FSmartObjectDefinitionDataProxy& DataProxy : Slot.DefinitionData)
 		{
-			if (!Data.IsValid())
+			if (!DataProxy.Data.IsValid())
 			{
 				continue;
 			}
-			const UScriptStruct* ScriptStruct = Data.GetScriptStruct();
-			uint8* Memory = Data.GetMutableMemory();
+			const UScriptStruct* ScriptStruct = DataProxy.Data.GetScriptStruct();
+			uint8* Memory = DataProxy.Data.GetMutableMemory();
 			
 			for (TFieldIterator<FProperty> It(ScriptStruct); It; ++It)
 			{
@@ -333,7 +440,45 @@ void USmartObjectDefinition::UpdateSlotReferences()
 	}
 }
 
+void USmartObjectDefinition::UpdateBindingPaths()
+{
+	for (auto It = PropertyBindings.CreateIterator(); It; ++It)
+	{
+		if (!UpdateAndValidatePath(It->TargetPath)
+			|| !UpdateAndValidatePath(It->SourcePath))
+		{
+			It.RemoveCurrentSwap();
+		}
+	}
+	
+	ApplyParameters();
+}
+
+bool USmartObjectDefinition::UpdateAndValidatePath(FPropertyBindingPath& Path)
+{
+	FPropertyBindingDataView DataView;
+	if (!GetDataViewByID(Path.GetStructID(), DataView))
+	{
+		return false;
+	}
+	if (!Path.UpdateSegmentsFromValue(DataView))
+	{
+		return false;
+	}
+	return true;
+}
+
+
 #endif // WITH_EDITOR
+
+void USmartObjectDefinition::PostInitProperties()
+{
+	Super::PostInitProperties();
+
+#if WITH_EDITOR
+	EnsureValidGuids();
+#endif	
+}
 
 void USmartObjectDefinition::PostLoad()
 {
@@ -374,7 +519,34 @@ void USmartObjectDefinition::PostLoad()
 		PreviewData.ObjectMeshPath = PreviewMeshPath_DEPRECATED;
 		PreviewMeshPath_DEPRECATED.Reset();
 	}
+
+	for (TEnumerateRef<FSmartObjectSlotDefinition> Slot : EnumerateRange(Slots))
+	{
+		if (Slot->Data_DEPRECATED.Num() > 0)
+		{
+			Slot->DefinitionData.Reserve(Slot->Data_DEPRECATED.Num());
+
+			for (TEnumerateRef<const FInstancedStruct> Data : EnumerateRange(Slot->Data_DEPRECATED))
+			{
+				FSmartObjectDefinitionDataProxy& DataProxy = Slot->DefinitionData.AddDefaulted_GetRef();
+				DataProxy.Data.InitializeAsScriptStruct(Data->GetScriptStruct(), Data->GetMemory());
+
+				static FName DataProxyName(TEXT("DataProxy"));
+				const uint32 Hashes[] = {
+					GetTypeHash(DataProxyName),
+					GetTypeHash(Slot.GetIndex()),
+					GetTypeHash(Data.GetIndex())
+				}; 
+				const uint64 Hash = CityHash64((const char*)Hashes, sizeof Hashes);
+				DataProxy.ID = FGuid::NewDeterministicGuid(GetPathName(), Hash);
+			}
+			Slot->Data_DEPRECATED.Reset();
+		}
+	}	
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	EnsureValidGuids();
+	UpdateBindingDataHandles();
 #endif	
 
 	Preconditions.Initialize(this);
@@ -399,9 +571,439 @@ void USmartObjectDefinition::PostLoad()
 	
 #if WITH_EDITOR
 	UpdateSlotReferences();
+	UpdateBindingPaths();
 
 	Validate();
 #endif	
+}
+
+USmartObjectDefinition* USmartObjectDefinition::GetAssetVariation(const FInstancedPropertyBag& VariationParameters)
+{
+	// If no parameters, return this asset.
+	if (!VariationParameters.IsValid())
+	{
+		return this;
+	}
+
+	// Remove unused variations
+	for (auto It = Variations.CreateIterator(); It; ++It)
+	{
+		if (!It->DefinitionAsset.IsValid())
+		{
+			It.RemoveCurrentSwap();
+		}
+	}
+	
+	// Expect correct bag if provided.
+	UPropertyBag* VariationParametersBag = const_cast<UPropertyBag*>(VariationParameters.GetPropertyBagStruct());
+	if (!VariationParametersBag || VariationParametersBag != Parameters.GetPropertyBagStruct())
+	{
+		UE_LOG(LogSmartObject, Error, TEXT("%hs %s: Expecting matching variation parameters."), __FUNCTION__, *GetFullNameSafe(this));
+		return nullptr;
+	}
+
+	// Calculate hash of the parameters, will be used to look up an existing variation.
+	TArray<uint8> Data;
+    FMemoryWriter Writer(Data);
+    FObjectAndNameAsStringProxyArchive WriterProxy(Writer, /*bInLoadIfFindFails*/true);
+	VariationParametersBag->SerializeItem(WriterProxy, const_cast<uint8*>(VariationParameters.GetValue().GetMemory()), /* Defaults */ nullptr);
+
+	const uint64 VariationParametersHash = CityHash64((const char*)Data.GetData(), Data.Num());
+
+	const FSmartObjectDefinitionAssetVariation* ExistingVariation = Variations.FindByPredicate([VariationParametersHash](const FSmartObjectDefinitionAssetVariation& Variation)
+	{
+		return Variation.ParametersHash == VariationParametersHash;
+	});
+	if (ExistingVariation)
+	{
+		return ExistingVariation->DefinitionAsset.Get();
+	}
+
+	// Not the same, create a new one.
+	const FName UniqueName = MakeUniqueObjectName(
+		GetTransientPackage(),
+		USmartObjectDefinition::StaticClass(),
+		FName(FString::Printf(TEXT("%s_Var%llx"), *GetNameSafe(this), VariationParametersHash))
+	);
+
+	USmartObjectDefinition* AssetVariation = DuplicateObject(this, GetTransientPackage(), UniqueName);
+	check(AssetVariation);
+
+	// Apply parameters
+	AssetVariation->Parameters = VariationParameters;
+	AssetVariation->ApplyParameters();
+
+	// Keep track of variations.
+	Variations.Emplace(AssetVariation, VariationParametersHash);
+	
+	return AssetVariation;
+}
+
+void USmartObjectDefinition::ApplyParameters()
+{
+	// Do property copies
+	for (const FSmartObjectDefinitionPropertyBinding& Binding : PropertyBindings)
+	{
+		FPropertyBindingDataView SourceDataView;
+		if (!GetDataView(Binding.SourceDataHandle, SourceDataView))
+		{
+			UE_LOG(LogSmartObject, Error, TEXT("%hs %s: Could not find data view for property copy source %s."), __FUNCTION__, *GetFullNameSafe(this), *Binding.SourcePath.ToString());
+			continue;
+		}
+
+		FPropertyBindingDataView TargetDataView;
+		if (!GetDataView(Binding.TargetDataHandle, TargetDataView))
+		{
+			UE_LOG(LogSmartObject, Error, TEXT("%hs %s: Could not find data view for property copy target %s."), __FUNCTION__, *GetFullNameSafe(this), *Binding.TargetPath.ToString());
+			continue;
+		}
+		
+		CopyProperty(SourceDataView, Binding.SourcePath, TargetDataView, Binding.TargetPath);
+	}
+}
+
+bool USmartObjectDefinition::CopyProperty(FPropertyBindingDataView SourceDataView, const FPropertyBindingPath& SourcePath, FPropertyBindingDataView TargetDataView, const FPropertyBindingPath& TargetPath)
+{
+	TArray<FPropertyBindingPathIndirection> SourceIndirections;
+	if (!SourcePath.ResolveIndirectionsWithValue(SourceDataView, SourceIndirections))
+	{
+		return false;
+	}
+
+	TArray<FPropertyBindingPathIndirection> TargetIndirections;
+	if (!TargetPath.ResolveIndirectionsWithValue(TargetDataView, TargetIndirections))
+	{
+		return false;
+	}
+
+	const FProperty* SourceLeafProperty = SourceIndirections.Last().GetProperty();
+	const FProperty* TargetLeafProperty = TargetIndirections.Last().GetProperty();
+		
+	if (!SourceLeafProperty
+		|| !TargetLeafProperty
+		|| !ArePropertiesCompatible(SourceLeafProperty, TargetLeafProperty))
+	{
+		return false;
+	}
+
+	const void* SourceAddress = SourceIndirections.Last().GetPropertyAddress();
+	void* TargetAddress = TargetIndirections.Last().GetMutablePropertyAddress();
+
+	if (SourceAddress && TargetAddress)
+	{
+		TargetLeafProperty->CopyCompleteValue(TargetAddress, SourceAddress);
+	}
+
+	return true;
+}
+
+
+bool USmartObjectDefinition::ArePropertiesCompatible(const FProperty* SourceProperty, const FProperty* TargetProperty)
+{
+	if (SourceProperty == TargetProperty)
+	{
+		return true;
+	}
+
+	if (SourceProperty == nullptr || TargetProperty == nullptr)
+	{
+		return true;
+	}
+
+	// Special case for object properties since InPropertyA->SameType(InPropertyB) requires both properties to be of the exact same class.
+	// In our case we want to be able to bind a source property if its class is a child of the target property class.
+	const FObjectPropertyBase* SourceObjectProperty = CastField<const FObjectPropertyBase>(SourceProperty);
+	const FObjectPropertyBase* TargetObjectProperty = CastField<const FObjectPropertyBase>(TargetProperty);
+	if (SourceObjectProperty && TargetObjectProperty)
+	{
+		return SourceObjectProperty->PropertyClass->IsChildOf(TargetObjectProperty->PropertyClass);
+	}
+
+	if (SourceProperty->SameType(TargetProperty))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+#if WITH_EDITOR
+void USmartObjectDefinition::EnsureValidGuids()
+{
+	if (!RootID.IsValid())
+	{
+		static FName RootName(TEXT("RootID"));
+		RootID = FGuid::NewDeterministicGuid(GetPathName(), GetTypeHash(RootName));
+	}
+	if (!ParametersID.IsValid())
+	{
+		static FName DataProxyName(TEXT("ParametersID"));
+		ParametersID = FGuid::NewDeterministicGuid(GetPathName(), GetTypeHash(DataProxyName));
+	}
+}
+
+void USmartObjectDefinition::UpdateBindingDataHandles()
+{
+	for (FSmartObjectDefinitionPropertyBinding& Binding : PropertyBindings)
+	{
+		Binding.SourceDataHandle = GetDataHandleByID(Binding.SourcePath.GetStructID());
+		Binding.TargetDataHandle = GetDataHandleByID(Binding.TargetPath.GetStructID());
+	}
+}
+
+void USmartObjectDefinition::AddPropertyBinding(const FPropertyBindingPath& SourcePath, const FPropertyBindingPath& TargetPath)
+{
+	FPropertyBindingPath ValidatedSourcePath = SourcePath;
+	if (!UpdateAndValidatePath(ValidatedSourcePath))
+	{
+		return;
+	}
+
+	FPropertyBindingPath ValidatedTargetPath = TargetPath;
+	if (!UpdateAndValidatePath(ValidatedSourcePath))
+	{
+		return;
+	}
+	
+	RemovePropertyBindings(TargetPath);
+
+	PropertyBindings.Emplace(ValidatedSourcePath, ValidatedTargetPath);
+
+	UpdateBindingPaths();
+	UpdateBindingDataHandles();
+}
+
+void USmartObjectDefinition::RemovePropertyBindings(const FPropertyBindingPath& TargetPath)
+{
+	PropertyBindings.RemoveAll([&TargetPath](const FSmartObjectDefinitionPropertyBinding& Binding)
+	{
+		return Binding.GetTargetPath() == TargetPath;
+	});
+	
+	UpdateBindingDataHandles();
+}
+
+const FPropertyBindingPath* USmartObjectDefinition::GetPropertyBindingSource(const FPropertyBindingPath& TargetPath)
+{
+	const FSmartObjectDefinitionPropertyBinding* Binding = PropertyBindings.FindByPredicate([&TargetPath](const FSmartObjectDefinitionPropertyBinding& Binding)
+	{
+		return Binding.GetTargetPath() == TargetPath;
+	});
+	return Binding ? &Binding->GetSourcePath() : nullptr; 
+}
+
+void USmartObjectDefinition::GetAccessibleStructs(const FGuid TargetStructID, TArray<FBindableStructDesc>& OutStructDescs)
+{
+	FBindableStructDesc& ParametersDesc = OutStructDescs.AddDefaulted_GetRef();
+	ParametersDesc.Name = FName(TEXT("Parameters"));
+	ParametersDesc.ID = ParametersID;
+	ParametersDesc.Struct = Parameters.GetPropertyBagStruct();
+}
+
+bool USmartObjectDefinition::GetDataViewByID(const FGuid StructID, FPropertyBindingDataView& OutDataView)
+{
+	if (StructID == ParametersID)
+	{
+		OutDataView = FPropertyBindingDataView(Parameters.GetMutableValue());
+		return true;
+	}
+	if (StructID == RootID)
+	{
+		OutDataView = FPropertyBindingDataView(this);
+		return true;
+	}
+
+	for (FSmartObjectSlotDefinition& Slot : Slots)
+	{
+		if (StructID == Slot.ID)
+		{
+			OutDataView = FPropertyBindingDataView(FStructView::Make(Slot));
+			return true;
+		}
+		for (FSmartObjectDefinitionDataProxy& DataProxy : Slot.DefinitionData)
+		{
+			if (StructID == DataProxy.ID)
+			{
+				OutDataView = FPropertyBindingDataView(DataProxy.Data.GetScriptStruct(), DataProxy.Data.GetMutableMemory());
+				return true;
+			}
+		}
+	}
+	
+	return false;
+}
+
+bool USmartObjectDefinition::GetStructDescByID(const FGuid StructID, FBindableStructDesc& OutDesc)
+{
+	if (StructID == ParametersID)
+	{
+		OutDesc = FBindableStructDesc(FName(TEXT("Parameters")), Parameters.GetMutableValue().GetScriptStruct(), ParametersID);
+		return true;
+	}
+	if (StructID == RootID)
+	{
+		OutDesc = FBindableStructDesc(FName(TEXT("Root")), StaticClass(), RootID);
+		return true;
+	}
+
+	for (FSmartObjectSlotDefinition& Slot : Slots)
+	{
+		if (StructID == Slot.ID)
+		{
+			OutDesc = FBindableStructDesc(Slot.Name, TBaseStructure<FSmartObjectSlotDefinition>::Get(), Slot.ID);
+			return true;
+		}
+		for (FSmartObjectDefinitionDataProxy& DataProxy : Slot.DefinitionData)
+		{
+			if (StructID == DataProxy.ID)
+			{
+				FString DataName = Slot.Name.ToString();
+				const UScriptStruct* ScriptStruct = DataProxy.Data.GetScriptStruct(); 
+				if (ScriptStruct)
+				{
+					DataName += TEXT(" ");
+					DataName += ScriptStruct->GetDisplayNameText().ToString();
+				}
+				OutDesc = FBindableStructDesc(FName(DataName), ScriptStruct, DataProxy.ID);
+				return true;
+			}
+		}
+	}
+	
+	return false;
+}
+
+FSmartObjectDefinitionDataHandle USmartObjectDefinition::GetDataHandleByID(const FGuid StructID)
+{
+	if (StructID == ParametersID)
+	{
+		return FSmartObjectDefinitionDataHandle::Parameters;
+	}
+	if (StructID == RootID)
+	{
+		return FSmartObjectDefinitionDataHandle::Root;
+	}
+
+	for (const TEnumerateRef<const FSmartObjectSlotDefinition> Slot : EnumerateRange(Slots))
+	{
+		if (StructID == Slot->ID)
+		{
+			return FSmartObjectDefinitionDataHandle(Slot.GetIndex());
+		}
+		for (const TEnumerateRef<const FSmartObjectDefinitionDataProxy> DataProxy : EnumerateRange(Slot->DefinitionData))
+		{
+			if (StructID == DataProxy->ID)
+			{
+				return FSmartObjectDefinitionDataHandle(Slot.GetIndex(), DataProxy.GetIndex());
+			}
+		}
+	}
+	
+	return {};
+}
+
+FGuid USmartObjectDefinition::GetDataRootID() const
+{
+	return RootID;
+}
+
+bool USmartObjectDefinition::AddParameterAndBindingFromPropertyPath(const FPropertyBindingPath& TargetPath)
+{
+	if (TargetPath.IsPathEmpty())
+	{
+		return false;
+	}
+
+	FPropertyBindingDataView TargetDataView;
+	if (!GetDataViewByID(TargetPath.GetStructID(), TargetDataView))
+	{
+		return false;
+	}
+
+	FBindableStructDesc TargetDesc;
+	if (!GetStructDescByID(TargetPath.GetStructID(), TargetDesc))
+	{
+		return false;
+	}
+
+	TArray<FPropertyBindingPathIndirection> TargetIndirections;
+	if (!TargetPath.ResolveIndirectionsWithValue(TargetDataView, TargetIndirections))
+	{
+		return false;
+	}
+
+	// Add new property
+	const FProperty* TargetLeafProperty = TargetIndirections.Last().GetProperty();
+
+	const FString NewNameString = TargetDesc.Name.ToString() + TEXT(" ") + TargetLeafProperty->GetDisplayNameText().ToString();
+	const FName NewPropertyName(NewNameString);
+	
+	Parameters.AddProperty(NewPropertyName, TargetLeafProperty);
+
+	const FPropertyBindingPath SourcePath(ParametersID, NewPropertyName);
+
+	// Copy the current value to the newly created parameter.
+	FPropertyBindingDataView SourceDataView;
+	if (GetDataViewByID(SourcePath.GetStructID(), SourceDataView))
+	{
+		// Note: source/target reversed intentionally.
+		CopyProperty(TargetDataView, TargetPath, SourceDataView, SourcePath);
+	}
+
+	// Add binding
+	AddPropertyBinding(SourcePath, TargetPath);
+
+	// Update UI
+	UE::SmartObject::Delegates::OnParametersChanged.Broadcast(*this);
+	
+	return true;
+}
+
+#endif // WITH_EDITOR
+
+bool USmartObjectDefinition::GetDataView(const FSmartObjectDefinitionDataHandle DataHandle, FPropertyBindingDataView& OutDataView)
+{
+	if (!DataHandle.IsSlotValid())
+	{
+		return false;
+	}
+	
+	if (DataHandle.IsParameters())
+	{
+		OutDataView = FPropertyBindingDataView(Parameters.GetMutableValue());
+		return true;
+	}
+	if (DataHandle.IsRoot())
+	{
+		OutDataView = FPropertyBindingDataView(this);
+		return true;
+	}
+
+	const int32 SlotIndex = DataHandle.GetSlotIndex();
+	if (Slots.IsValidIndex(SlotIndex))
+	{
+		FSmartObjectSlotDefinition& Slot = Slots[SlotIndex];
+
+		if (DataHandle.IsDataValid())
+		{
+			// Slot data definition
+			const int32 DataDefinitionIndex = DataHandle.GetDataIndex();
+			if (Slot.DefinitionData.IsValidIndex(DataDefinitionIndex))
+			{
+				FSmartObjectDefinitionDataProxy& DataProxy = Slot.DefinitionData[DataDefinitionIndex];
+				OutDataView = FPropertyBindingDataView(DataProxy.Data.GetScriptStruct(), DataProxy.Data.GetMutableMemory());
+				return true;
+			}
+		}
+		else
+		{
+			// Just a slot
+			OutDataView = FPropertyBindingDataView(FStructView::Make(Slot));
+			return true;
+		}
+	}
+
+	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

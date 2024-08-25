@@ -8,21 +8,50 @@
 #include "BaseGizmos/GizmoElementShapes.h"
 #include "BaseGizmos/GizmoMath.h"
 #include "BaseGizmos/GizmoRenderingUtil.h"
-#include "BaseGizmos/ParameterSourcesFloat.h"
 #include "BaseGizmos/StateTargets.h"
-#include "Elements/Interfaces/TypedElementObjectInterface.h"
-#include "Elements/Interfaces/TypedElementWorldInterface.h"
 #include "Engine/CollisionProfile.h"
-#include "Engine/Selection.h"
 #include "Engine/World.h"
-#include "EditorModeTools.h"
 #include "Materials/Material.h"
-#include "UnrealEdGlobals.h"
 #include "UnrealEngine.h"
+#include "Behaviors/MultiButtonClickDragBehavior.h"
+#include "Intersection/IntersectionUtil.h"
+#include "SceneManagement.h"
 
 #define LOCTEXT_NAMESPACE "UTransformGizmo"
 
 DEFINE_LOG_CATEGORY_STATIC(LogTransformGizmo, Log, All);
+
+namespace GizmoLocals
+{
+	
+// NOTE these variables are not intended to remain here indefinitely.
+// Their purpose is to experiment the new behavior of rotation gizmos.
+
+static float DotThreshold = 0.2f;
+static FAutoConsoleVariableRef CVarDotThreshold(
+	TEXT("Gizmos.DotThreshold"),
+	DotThreshold,
+	TEXT("Dot threshold for determining whether the rotation plane is perpendicular to the camera view [0.2, 1.0]"),
+	FConsoleVariableDelegate::CreateLambda([](IConsoleVariable*)
+	{
+		DotThreshold = FMath::Clamp(DotThreshold, 0.2, 1.0);
+	})
+);
+
+static bool	bDebugDraw = false;
+static FAutoConsoleVariableRef CVarDebugDraw(
+	TEXT("Gizmos.DebugDraw"),
+	bDebugDraw,
+	TEXT("Displays debugging information.")
+	);
+
+static bool	ProjectIndirect = true;
+static FAutoConsoleVariableRef CVarProjectIndirect(
+	TEXT("Gizmos.ProjectIndirect"),
+	ProjectIndirect,
+	TEXT("Project to the nearest point of the curve when handling indirect rotation.")
+	);
+}
 
 void UTransformGizmo::SetDisallowNegativeScaling(bool bDisallow)
 {
@@ -39,6 +68,7 @@ void UTransformGizmo::Setup()
 	UInteractiveGizmo::Setup();
 
 	SetupBehaviors();
+	SetupIndirectBehaviors();
 	SetupMaterials();
 	SetupOnClickFunctions();
 
@@ -52,6 +82,11 @@ void UTransformGizmo::Setup()
 	GizmoElementRoot->SetInteractLineColor(CurrentColor);
 
 	bInInteraction = false;
+
+	SetModeLastHitPart(EGizmoTransformMode::None, ETransformGizmoPartIdentifier::Default);
+	SetModeLastHitPart(EGizmoTransformMode::Translate, ETransformGizmoPartIdentifier::TranslateScreenSpace);
+	SetModeLastHitPart(EGizmoTransformMode::Rotate, ETransformGizmoPartIdentifier::RotateArcball);
+	SetModeLastHitPart(EGizmoTransformMode::Scale, ETransformGizmoPartIdentifier::ScaleUniform);
 }
 
 void UTransformGizmo::SetupBehaviors()
@@ -63,22 +98,192 @@ void UTransformGizmo::SetupBehaviors()
 	AddInputBehavior(HoverBehavior);
 
 	// Add default mouse input behavior
-	MouseBehavior = NewObject<UClickDragInputBehavior>();
+	UClickDragInputBehavior* MouseBehavior = NewObject<UClickDragInputBehavior>();
 	MouseBehavior->Initialize(this);
 	MouseBehavior->SetDefaultPriority(FInputCapturePriority(FInputCapturePriority::DEFAULT_GIZMO_PRIORITY));
 	AddInputBehavior(MouseBehavior);
 }
 
+void UTransformGizmo::SetupIndirectBehaviors()
+{
+	// Add middle mouse input behavior for indirect manipulation
+	ULocalClickDragInputBehavior* MiddleClickDragBehavior = NewObject<ULocalClickDragInputBehavior>();
+	MiddleClickDragBehavior->Initialize();
+	MiddleClickDragBehavior->SetUseMiddleMouseButton();
+	MiddleClickDragBehavior->CanBeginClickDragFunc = [this](const FInputDeviceRay&)
+	{
+		static const FInputRayHit InvalidRayHit;
+		static const FInputRayHit ValidRayHit(TNumericLimits<double>::Max());
+		return CanInteract() ? ValidRayHit : InvalidRayHit;
+	};
+	MiddleClickDragBehavior->OnClickPressFunc = [this](const FInputDeviceRay& InPressPos)
+	{
+		bIndirectManipulation = true;
+		if (LastHitPart == ETransformGizmoPartIdentifier::Default)
+		{
+			LastHitPart = GetCurrentModeLastHitPart();
+		}
+		return OnClickPress(InPressPos);
+	};
+	MiddleClickDragBehavior->OnClickDragFunc = [this](const FInputDeviceRay& InDragPos)
+	{
+		bIndirectManipulation = true;
+		return OnClickDrag(InDragPos);
+	};
+	MiddleClickDragBehavior->OnClickReleaseFunc = [this](const FInputDeviceRay& InReleasePos)
+	{
+		bIndirectManipulation = false;
+		return OnClickRelease(InReleasePos);
+	};
+	MiddleClickDragBehavior->OnTerminateFunc = [this]()
+	{
+		bIndirectManipulation = false;
+		return OnTerminateDragSequence();
+	};
+	// disable ctrl + mmb for that behavior?
+	MiddleClickDragBehavior->ModifierCheckFunc = [this](const FInputDeviceState& InputState)
+	{
+		return !bCtrlMiddleDoesY || !FInputDeviceState::IsCtrlKeyDown(InputState);
+	};
+	AddInputBehavior(MiddleClickDragBehavior);
+
+	// Add left/right mouse input behavior for indirect manipulation
+	MultiIndirectClickDragBehavior = NewObject<UMultiButtonClickDragBehavior>();
+	MultiIndirectClickDragBehavior->Initialize();
+	MultiIndirectClickDragBehavior->EnableButton(EKeys::LeftMouseButton);
+	if (bCtrlMiddleDoesY)
+	{
+		MultiIndirectClickDragBehavior->EnableButton(EKeys::MiddleMouseButton);
+	}
+	MultiIndirectClickDragBehavior->EnableButton(EKeys::RightMouseButton);
+	MultiIndirectClickDragBehavior->ModifierCheckFunc = FInputDeviceState::IsCtrlKeyDown;
+	MultiIndirectClickDragBehavior->CanBeginClickDragFunc = [this](const FInputDeviceRay&)
+	{
+		static const FInputRayHit InvalidRayHit;
+		static const FInputRayHit ValidRayHit(TNumericLimits<double>::Max());
+		return CanInteract() ? ValidRayHit : InvalidRayHit;
+	};
+	MultiIndirectClickDragBehavior->OnClickPressFunc = [this](const FInputDeviceRay& InPressPos)
+	{
+		bIndirectManipulation = true;
+		if (LastHitPart == ETransformGizmoPartIdentifier::Default)
+		{
+			LastHitPart = GetCurrentModeLastHitPart();
+		}
+		return OnClickPress(InPressPos);
+	};
+	MultiIndirectClickDragBehavior->OnClickDragFunc = [this](const FInputDeviceRay& InDragPos)
+	{
+		bIndirectManipulation = true;
+		return OnClickDrag(InDragPos);
+	};
+	MultiIndirectClickDragBehavior->OnClickReleaseFunc = [this](const FInputDeviceRay& InReleasePos)
+	{
+		bIndirectManipulation = false;
+		return OnClickRelease(InReleasePos);
+	};
+	MultiIndirectClickDragBehavior->OnTerminateFunc = [this]()
+	{
+		bIndirectManipulation = false;
+		return OnTerminateDragSequence();
+	};
+	
+	auto GetAxis = [this](const FInputDeviceState& InInput)
+	{
+		const bool bAddX = InInput.Mouse.Left.bDown;
+		if (bCtrlMiddleDoesY)
+		{
+			const bool bAddY = InInput.Mouse.Middle.bDown;
+			const bool bAddZ = InInput.Mouse.Right.bDown;
+			return bAddX ? EAxis::X : bAddY ? EAxis::Y : bAddZ ? EAxis::Z : EAxis::None;
+		}
+		const bool bAddY = InInput.Mouse.Right.bDown;
+		return bAddX && bAddY ? EAxis::Z : bAddX ? EAxis::X : bAddY ? EAxis::Y : EAxis::None;
+	};
+
+	auto GetHitPart = [this](const EAxis::Type InAxis)
+	{
+		static constexpr ETransformGizmoPartIdentifier TranslateIds [4] = {
+			ETransformGizmoPartIdentifier::Default,
+			ETransformGizmoPartIdentifier::TranslateXAxis,
+			ETransformGizmoPartIdentifier::TranslateYAxis,
+			ETransformGizmoPartIdentifier::TranslateZAxis};
+			
+		static constexpr ETransformGizmoPartIdentifier RotateIds [4] = {
+			ETransformGizmoPartIdentifier::Default,
+			ETransformGizmoPartIdentifier::RotateXAxis,
+			ETransformGizmoPartIdentifier::RotateYAxis,
+			ETransformGizmoPartIdentifier::RotateZAxis};
+
+		static constexpr ETransformGizmoPartIdentifier ScaleIds [4] = {
+			ETransformGizmoPartIdentifier::Default,
+			ETransformGizmoPartIdentifier::ScaleXAxis,
+			ETransformGizmoPartIdentifier::ScaleYAxis,
+			ETransformGizmoPartIdentifier::ScaleZAxis};
+
+		switch (CurrentMode)
+		{
+		case EGizmoTransformMode::Translate: return TranslateIds[InAxis];
+		case EGizmoTransformMode::Rotate: return RotateIds[InAxis];
+		case EGizmoTransformMode::Scale: return ScaleIds[InAxis];
+		default: break;
+		}
+		return ETransformGizmoPartIdentifier::Default;
+	};
+	
+	MultiIndirectClickDragBehavior->OnStateUpdated = [this, GetAxis, GetHitPart](const FInputDeviceState& Input)
+	{
+		// disable indirect if the current axis is none 
+		const EAxis::Type Axis = GetAxis(Input);
+		if (Axis == EAxis::None)
+		{
+			bIndirectManipulation = false;
+			return;
+		}
+
+		bIndirectManipulation = true;
+		
+		const ETransformGizmoPartIdentifier HitPart = GetHitPart(Axis);
+		if (HitPart != GetCurrentModeLastHitPart())
+		{
+			// update interaction state
+			UpdateInteractingState(false, GetCurrentModeLastHitPart(), true);
+			SetModeLastHitPart(CurrentMode, HitPart);
+			UpdateInteractingState(true, HitPart, true);
+
+			// reinitialize OnClickPress data
+			LastHitPart = HitPart;
+			const uint8 HitPartIndex = static_cast<uint8>(LastHitPart);
+			if (OnClickPressFunctions.IsValidIndex(HitPartIndex) && OnClickPressFunctions[HitPartIndex])
+			{
+				OnClickPressFunctions[HitPartIndex](this, MultiIndirectClickDragBehavior->GetDeviceRay(Input));
+			}
+		}
+	};
+	AddInputBehavior(MultiIndirectClickDragBehavior);
+}
+
 void UTransformGizmo::SetupMaterials()
 {
-	auto GetBaseMaterial = [this]()
+	auto GetBaseMaterial = [this]() -> UMaterial*
 	{
 		if (CustomizationFunction)
 		{
 			const FGizmoCustomization& GizmoCustomization = CustomizationFunction();
-			return GizmoCustomization.Material ? GizmoCustomization.Material : GEngine->ArrowMaterial; 
+			if (IsValid(GizmoCustomization.Material))
+			{
+				return GizmoCustomization.Material.Get();
+			}
 		}
-		return GEngine->ArrowMaterial;
+
+		static const FString MaterialName = TEXT("/Engine/EditorMaterials/TransformGizmoMaterial.TransformGizmoMaterial");
+		UMaterial* Material = FindObject<UMaterial>(nullptr, *MaterialName);
+		if (!Material)
+		{
+			Material = LoadObject<UMaterial>(nullptr, *MaterialName, nullptr, LOAD_None, nullptr);
+		}
+		
+		return Material ? Material : GEngine->ArrowMaterial.Get();
 	};
 	
 	UMaterial* AxisMaterialBase = GetBaseMaterial(); 
@@ -121,6 +326,8 @@ void UTransformGizmo::SetupMaterials()
 void UTransformGizmo::Shutdown()
 {
 	ClearActiveTarget();
+	OnSetActiveTarget.Clear();
+	OnAboutToClearActiveTarget.Clear();
 }
 
 FTransform UTransformGizmo::GetGizmoTransform() const
@@ -149,13 +356,23 @@ FTransform UTransformGizmo::GetGizmoTransform() const
 
 void UTransformGizmo::Render(IToolsContextRenderAPI* RenderAPI)
 {
-	if (bVisible && GizmoElementRoot && RenderAPI)
+	if (IsVisible() && GizmoElementRoot && RenderAPI)
 	{
 		CurrentTransform = ActiveTarget->GetTransform();
 
 		UGizmoElementBase::FRenderTraversalState RenderState;
 		RenderState.Initialize(RenderAPI->GetSceneView(), GetGizmoTransform());
 		GizmoElementRoot->Render(RenderAPI, RenderState);
+
+		if (GizmoLocals::bDebugDraw)
+		{
+			if (bDebugRotate)
+			{
+				const float Radius = 2.f * GetWorldRadius(RotateAxisOuterRadius);
+				FPrimitiveDrawInterface* PDI = RenderAPI->GetPrimitiveDrawInterface();
+				PDI->DrawLine(DebugClosest - (DebugDirection * Radius), DebugClosest + (DebugDirection * Radius), FLinearColor::Yellow, SDPG_Foreground);
+			}
+		}
 	}
 }
 
@@ -170,21 +387,30 @@ void UTransformGizmo::OnBeginHover(const FInputDeviceRay& DevicePos)
 
 bool UTransformGizmo::OnUpdateHover(const FInputDeviceRay& DevicePos)
 {
-	FInputRayHit RayHit = UpdateHoveredPart(DevicePos);
+	const FInputRayHit RayHit = UpdateHoveredPart(DevicePos);
 	return RayHit.bHit;
 }
 
 void UTransformGizmo::OnEndHover()
 {
-	if (HitTarget && LastHitPart != ETransformGizmoPartIdentifier::Default)
+	if (HitTarget)
 	{
-		HitTarget->UpdateHoverState(false, static_cast<uint32>(LastHitPart));
+		if (LastHitPart != ETransformGizmoPartIdentifier::Default)
+		{
+			UpdateHoverState(false, LastHitPart);
+		}
+
+		const ETransformGizmoPartIdentifier ModeHitPart = GetCurrentModeLastHitPart();
+		if (ModeHitPart != ETransformGizmoPartIdentifier::Default)
+		{
+			UpdateInteractingState(true, ModeHitPart, true);
+		}
 	}
 }
 
 FInputRayHit UTransformGizmo::UpdateHoveredPart(const FInputDeviceRay& PressPos)
 {
-	if (!HitTarget)
+	if (!HitTarget || !IsVisible())
 	{
 		return FInputRayHit();
 	}
@@ -216,6 +442,12 @@ FInputRayHit UTransformGizmo::UpdateHoveredPart(const FInputDeviceRay& PressPos)
 		LastHitPart = HitPart;
 	}
 
+	const ETransformGizmoPartIdentifier ModeHitPart = GetCurrentModeLastHitPart();
+	if (ModeHitPart != ETransformGizmoPartIdentifier::Default)
+	{
+		UpdateInteractingState(true, ModeHitPart, true);
+	}
+
 	return RayHit;
 }
 
@@ -236,13 +468,52 @@ bool UTransformGizmo::VerifyPartIdentifier(uint32 InPartIdentifier) const
 	return true;
 }
 
+void UTransformGizmo::SetModeLastHitPart(const EGizmoTransformMode InMode, const ETransformGizmoPartIdentifier InIdentifier)
+{
+	if (InMode >= EGizmoTransformMode::None && InMode < EGizmoTransformMode::Max)
+	{
+		LastHitPartPerMode[static_cast<uint8>(InMode)] = InIdentifier;
+	}
+}
 
+ETransformGizmoPartIdentifier UTransformGizmo::GetCurrentModeLastHitPart() const
+{
+	auto GetTransformMode = [&]()
+	{
+		if (TransformGizmoSource)
+		{
+			return TransformGizmoSource->GetGizmoMode();
+		}
+		
+		const EToolContextTransformGizmoMode ActiveGizmoMode = GetGizmoManager()->GetContextQueriesAPI()->GetCurrentTransformGizmoMode();
+		switch (ActiveGizmoMode)
+		{
+		case EToolContextTransformGizmoMode::NoGizmo:
+			return EGizmoTransformMode::None;
+		case EToolContextTransformGizmoMode::Translation:
+			return EGizmoTransformMode::Translate;
+		case EToolContextTransformGizmoMode::Rotation:
+			return EGizmoTransformMode::Rotate;
+		case EToolContextTransformGizmoMode::Scale:
+			return EGizmoTransformMode::Scale;
+		case EToolContextTransformGizmoMode::Combined:
+			return EGizmoTransformMode::None;
+		}
+		
+		return EGizmoTransformMode::None;
+	};
+
+	const EGizmoTransformMode GizmoTransformMode = GetTransformMode();
+	return (GizmoTransformMode < EGizmoTransformMode::Max) ?
+		LastHitPartPerMode[static_cast<uint8>(GizmoTransformMode)] :
+		ETransformGizmoPartIdentifier::Default; 
+}
 
 FInputRayHit UTransformGizmo::CanBeginClickDragSequence(const FInputDeviceRay& PressPos)
 {
 	FInputRayHit RayHit;
-
-	if (HitTarget)
+		
+	if (CanInteract() && HitTarget)
 	{
 		RayHit = HitTarget->IsHit(PressPos);
 		ETransformGizmoPartIdentifier HitPart;
@@ -292,38 +563,21 @@ void UTransformGizmo::UpdateMode()
 		return EAxisList::Type::All;
 	};
 
-	auto GetVisible = [&]()
-	{
-		if (TransformGizmoSource)
-		{
-			return TransformGizmoSource->GetVisible();
-		}
-		return true;
-	};
+	const EGizmoTransformMode NewMode = GetTransformMode();
+	const EAxisList::Type NewAxisToDraw = GetAxisToDraw();
 	
-	if (GetVisible())
-	{
-		const EGizmoTransformMode NewMode = GetTransformMode();
-		const EAxisList::Type NewAxisToDraw = GetAxisToDraw();
-		
-		if (NewMode != CurrentMode)
-		{
-			EnableMode(CurrentMode, EAxisList::None);
-			EnableMode(NewMode, NewAxisToDraw);
-
-			CurrentMode = NewMode;
-			CurrentAxisToDraw = NewAxisToDraw;
-		}
-		else if (NewAxisToDraw != CurrentAxisToDraw)
-		{
-			EnableMode(CurrentMode, NewAxisToDraw);
-			CurrentAxisToDraw = NewAxisToDraw;
-		}
-	}
-	else
+	if (NewMode != CurrentMode)
 	{
 		EnableMode(CurrentMode, EAxisList::None);
-		CurrentMode = EGizmoTransformMode::None;
+		EnableMode(NewMode, NewAxisToDraw);
+
+		CurrentMode = NewMode;
+		CurrentAxisToDraw = NewAxisToDraw;
+	}
+	else if (NewAxisToDraw != CurrentAxisToDraw)
+	{
+		EnableMode(CurrentMode, NewAxisToDraw);
+		CurrentAxisToDraw = NewAxisToDraw;
 	}
 }
 
@@ -483,22 +737,10 @@ void UTransformGizmo::EnableRotate(EAxisList::Type InAxisListToDraw)
 			GizmoElementRoot->Add(RotateScreenSpaceElement);
 		}
 
-		if (RotateOuterCircleElement == nullptr)
+		if (RotateArcballElement == nullptr)
 		{
-			RotateOuterCircleElement = MakeRotateCircleHandle(ETransformGizmoPartIdentifier::Default, RotateOuterCircleRadius, RotateOuterCircleColor, false);
-			GizmoElementRoot->Add(RotateOuterCircleElement);
-		}
-
-		if (RotateArcballOuterElement == nullptr)
-		{
-			RotateArcballOuterElement = MakeRotateCircleHandle(ETransformGizmoPartIdentifier::RotateArcball, RotateArcballOuterRadius, RotateArcballCircleColor, false);
-			GizmoElementRoot->Add(RotateArcballOuterElement);
-		}
-
-		if (RotateArcballInnerElement == nullptr)
-		{
-			RotateArcballInnerElement = MakeRotateCircleHandle(ETransformGizmoPartIdentifier::RotateArcballInnerCircle, RotateArcballInnerRadius, RotateArcballCircleColor, true);
-			GizmoElementRoot->Add(RotateArcballInnerElement);
+			RotateArcballElement = MakeRotateCircleHandle(ETransformGizmoPartIdentifier::RotateArcball, RotateArcballSphereRadius, RotateArcballCircleColor, true);
+			GizmoElementRoot->Add(RotateArcballElement);
 		}
 	}
 
@@ -527,14 +769,9 @@ void UTransformGizmo::EnableRotate(EAxisList::Type InAxisListToDraw)
 		RotateOuterCircleElement->SetEnabled(bEnableAll);
 	}
 
-	if (RotateArcballOuterElement)
-	{
-		RotateArcballOuterElement->SetEnabled(bEnableAll);
-	}
-
-	if (RotateArcballInnerElement)
+	if (RotateArcballElement)
 	{ 
-		RotateArcballInnerElement->SetEnabled(bEnableAll);
+		RotateArcballElement->SetEnabled(bEnableAll);
 	}
 }
 
@@ -606,8 +843,33 @@ void UTransformGizmo::UpdateCameraAxisSource()
 	}
 }
 
+bool UTransformGizmo::IsVisible() const
+{
+	if (TransformGizmoSource)
+	{
+		return bVisible && TransformGizmoSource->GetVisible();
+	}	
+	return bVisible;
+}
+
+bool UTransformGizmo::CanInteract() const
+{
+	const bool bValidMode = CurrentMode > EGizmoTransformMode::None && CurrentMode < EGizmoTransformMode::Max;
+	if (TransformGizmoSource)
+	{
+		return bValidMode && TransformGizmoSource->CanInteract(); 
+	}
+	return bValidMode && bVisible;
+}
+
 void UTransformGizmo::Tick(float DeltaTime)
 {
+	if (PendingDragFunction)
+	{
+		PendingDragFunction();
+		PendingDragFunction.Reset();
+	}
+	
 	UpdateMode();
 
 	UpdateCameraAxisSource();
@@ -639,7 +901,8 @@ void UTransformGizmo::SetActiveTarget(UTransformProxy* Target, IToolContextTrans
 
 	if (InStateTarget)
 	{
-		StateTarget = Cast<UObject>(InStateTarget);
+		StateTarget.SetInterface(InStateTarget);
+		StateTarget.SetObject(CastChecked<UObject>(InStateTarget));
 	}
 	else
 	{
@@ -647,8 +910,9 @@ void UTransformGizmo::SetActiveTarget(UTransformProxy* Target, IToolContextTrans
 			LOCTEXT("UTransformGizmoTransaction", "Transform"), TransactionProvider, this);	
 	}
 
-
 	CameraAxisSource = NewObject<UGizmoConstantFrameAxisSource>(this);
+
+	OnSetActiveTarget.Broadcast(this, ActiveTarget);
 }
 
 // @todo: This should either be named to "SetScale" or removed, since it can be done with ReinitializeGizmoTransform
@@ -657,7 +921,7 @@ void UTransformGizmo::SetNewChildScale(const FVector& NewChildScale)
 	FTransform NewTransform = ActiveTarget->GetTransform();
 	NewTransform.SetScale3D(NewChildScale);
 
-	TGuardValue<bool>(ActiveTarget->bSetPivotMode, true);
+	TGuardValue GuardValue(ActiveTarget->bSetPivotMode, true);
 	ActiveTarget->SetTransform(NewTransform);
 }
 
@@ -671,9 +935,78 @@ void UTransformGizmo::SetCustomizationFunction(const TFunction<const FGizmoCusto
 	CustomizationFunction = InFunction;
 }
 
+void UTransformGizmo::HandleWidgetModeChanged(UE::Widget::EWidgetMode InWidgetMode)
+{
+	auto GetTransformMode = [InWidgetMode]()
+	{
+		switch (InWidgetMode)
+		{
+		case UE::Widget::EWidgetMode::WM_Translate: return EGizmoTransformMode::Translate;
+		case UE::Widget::EWidgetMode::WM_Rotate: return EGizmoTransformMode::Rotate;
+		case UE::Widget::EWidgetMode::WM_Scale: return EGizmoTransformMode::Scale;
+		default: return EGizmoTransformMode::None;
+		}
+	};
+	const EGizmoTransformMode NewMode = GetTransformMode();
+
+	if (CurrentMode != EGizmoTransformMode::None && NewMode == CurrentMode)
+	{
+		const ETransformGizmoPartIdentifier CurrentModeLastHitPart = GetCurrentModeLastHitPart();
+		auto GetModeDefaultHitPart = [NewMode, CurrentModeLastHitPart]()
+		{
+			const bool bIsRotateArcBall = (CurrentModeLastHitPart == ETransformGizmoPartIdentifier::RotateArcball);
+			switch (NewMode)
+			{
+			case EGizmoTransformMode::Translate:
+				return ETransformGizmoPartIdentifier::TranslateScreenSpace;
+			case EGizmoTransformMode::Rotate:
+				return bIsRotateArcBall ? ETransformGizmoPartIdentifier::RotateScreenSpace : ETransformGizmoPartIdentifier::RotateArcball;
+			case EGizmoTransformMode::Scale:
+				return ETransformGizmoPartIdentifier::ScaleUniform;
+			default:
+				return ETransformGizmoPartIdentifier::Default;
+			}
+		};
+
+		const ETransformGizmoPartIdentifier DefaultHitPart = GetModeDefaultHitPart();
+		if (DefaultHitPart != CurrentModeLastHitPart)
+		{
+			// reset indirect manipulation to default
+			ResetInteractingStates(CurrentMode);
+			ResetHoverStates(CurrentMode);
+			
+			SetModeLastHitPart(CurrentMode, DefaultHitPart);
+			UpdateInteractingState(true, DefaultHitPart, true);
+		}
+	}
+}
+
+void UTransformGizmo::OnParametersChanged(const FGizmosParameters& InParameters)
+{
+	if (InParameters.bCtrlMiddleDoesY != bCtrlMiddleDoesY)
+	{
+		bCtrlMiddleDoesY = InParameters.bCtrlMiddleDoesY;
+
+		// update CTRL + LMB/MMB/RMB indirect behavior
+		if (MultiIndirectClickDragBehavior)
+		{
+			if (bCtrlMiddleDoesY)
+			{
+				MultiIndirectClickDragBehavior->EnableButton(EKeys::MiddleMouseButton);
+			}
+			else
+			{
+				MultiIndirectClickDragBehavior->DisableButton(EKeys::MiddleMouseButton);
+			}
+		}
+	}
+	
+	DefaultRotateMode = InParameters.RotateMode;
+}
+
 UGizmoElementArrow* UTransformGizmo::MakeTranslateAxis(ETransformGizmoPartIdentifier InPartId, const FVector& InAxisDir, const FVector& InSideDir, UMaterialInterface* InMaterial)
 {
-	const float SizeCoeff = CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.f;
+	const float SizeCoeff = GetSizeCoefficient();
 	
 	UGizmoElementArrow* ArrowElement = NewObject<UGizmoElementArrow>();
 	ArrowElement->SetPartIdentifier(static_cast<uint32>(InPartId));
@@ -694,7 +1027,7 @@ UGizmoElementArrow* UTransformGizmo::MakeTranslateAxis(ETransformGizmoPartIdenti
 
 UGizmoElementArrow* UTransformGizmo::MakeScaleAxis(ETransformGizmoPartIdentifier InPartId, const FVector& InAxisDir, const FVector& InSideDir, UMaterialInterface* InMaterial)
 {
-	const float SizeCoeff = CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.f;
+	const float SizeCoeff = GetSizeCoefficient();
 
 	UGizmoElementArrow* ArrowElement = NewObject<UGizmoElementArrow>();
 	ArrowElement->SetPartIdentifier(static_cast<uint32>(InPartId));
@@ -714,7 +1047,7 @@ UGizmoElementArrow* UTransformGizmo::MakeScaleAxis(ETransformGizmoPartIdentifier
 
 UGizmoElementBox* UTransformGizmo::MakeUniformScaleHandle()
 {
-	const float SizeCoeff = CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.f;
+	const float SizeCoeff = GetSizeCoefficient();
 	
 	UGizmoElementBox* BoxElement = NewObject<UGizmoElementBox>();
 	BoxElement->SetPartIdentifier(static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleUniform));
@@ -729,7 +1062,7 @@ UGizmoElementBox* UTransformGizmo::MakeUniformScaleHandle()
 UGizmoElementRectangle* UTransformGizmo::MakePlanarHandle(ETransformGizmoPartIdentifier InPartId, const FVector& InUpDirection, const FVector& InSideDirection, const FVector& InPlaneNormal,
 	UMaterialInterface* InMaterial, const FLinearColor& InVertexColor)
 {
-	const float SizeCoeff = CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.f;
+	const float SizeCoeff = GetSizeCoefficient();
 	
 	FVector PlanarHandleCenter = (InUpDirection + InSideDirection) * PlanarHandleOffset * SizeCoeff;
 
@@ -757,7 +1090,7 @@ UGizmoElementRectangle* UTransformGizmo::MakePlanarHandle(ETransformGizmoPartIde
 
 UGizmoElementRectangle* UTransformGizmo::MakeTranslateScreenSpaceHandle()
 {
-	const float SizeCoeff = CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.f;
+	const float SizeCoeff = GetSizeCoefficient();
 	
 	UGizmoElementRectangle* RectangleElement = NewObject<UGizmoElementRectangle>();
 	RectangleElement->SetPartIdentifier(static_cast<uint32>(ETransformGizmoPartIdentifier::TranslateScreenSpace));
@@ -782,7 +1115,7 @@ UGizmoElementRectangle* UTransformGizmo::MakeTranslateScreenSpaceHandle()
 UGizmoElementTorus* UTransformGizmo::MakeRotateAxis(ETransformGizmoPartIdentifier InPartId, const FVector& TorusAxis0, const FVector& TorusAxis1,
 	UMaterialInterface* InMaterial, UMaterialInterface* InCurrentMaterial)
 {
-	const float SizeCoeff = CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.f;
+	const float SizeCoeff = GetSizeCoefficient();
 	
 	UGizmoElementTorus* RotateAxisElement = NewObject<UGizmoElementTorus>();
 	RotateAxisElement->SetPartIdentifier(static_cast<uint32>(InPartId));
@@ -799,6 +1132,8 @@ UGizmoElementTorus* UTransformGizmo::MakeRotateAxis(ETransformGizmoPartIdentifie
 	RotateAxisElement->SetPartialEndAngle(UE_PI);
 	RotateAxisElement->SetViewDependentAxis(TorusNormal);
 	RotateAxisElement->SetViewAlignType(EGizmoElementViewAlignType::Axial);
+	RotateAxisElement->SetViewAlignAxialAngleTol(UE_DOUBLE_SMALL_NUMBER);
+	RotateAxisElement->SetPartialViewDependentMaxCosTol(1.0-UE_DOUBLE_SMALL_NUMBER);	
 	RotateAxisElement->SetViewAlignAxis(TorusNormal);
 	RotateAxisElement->SetViewAlignNormal(TorusAxis1);
 	RotateAxisElement->SetMaterial(InMaterial);
@@ -807,7 +1142,7 @@ UGizmoElementTorus* UTransformGizmo::MakeRotateAxis(ETransformGizmoPartIdentifie
 
 UGizmoElementCircle* UTransformGizmo::MakeRotateCircleHandle(ETransformGizmoPartIdentifier InPartId, float InRadius, const FLinearColor& InColor, float bFill)
 {
-	const float SizeCoeff = CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.f;
+	const float SizeCoeff = GetSizeCoefficient();
 	
 	UGizmoElementCircle* CircleElement = NewObject<UGizmoElementCircle>();
 	CircleElement->SetPartIdentifier(static_cast<uint32>(InPartId));
@@ -821,8 +1156,15 @@ UGizmoElementCircle* UTransformGizmo::MakeRotateCircleHandle(ETransformGizmoPart
 
 	if (bFill)
 	{
-		CircleElement->SetVertexColor(InColor);
-		CircleElement->SetMaterial(WhiteMaterial);
+		const FLinearColor LightColor(InColor.R, InColor.G, InColor.B, InColor.A * 0.5);
+		CircleElement->SetVertexColor(LightColor);
+		CircleElement->SetMaterial(TransparentVertexColorMaterial);
+
+		CircleElement->SetHoverVertexColor(InColor);
+		CircleElement->SetHoverMaterial(TransparentVertexColorMaterial);
+		
+		CircleElement->SetInteractVertexColor(InColor);
+		CircleElement->SetInteractMaterial(TransparentVertexColorMaterial);
 	}
 	else
 	{
@@ -839,7 +1181,15 @@ UGizmoElementCircle* UTransformGizmo::MakeRotateCircleHandle(ETransformGizmoPart
 void UTransformGizmo::ClearActiveTarget()
 {
 	StateTarget = nullptr;
-	ActiveTarget = nullptr;
+
+	if (ActiveTarget)
+	{
+		OnAboutToClearActiveTarget.Broadcast(this, ActiveTarget);
+		
+		ActiveTarget->OnBeginTransformEdit.RemoveAll(this);
+		ActiveTarget->OnEndTransformEdit.RemoveAll(this);
+		ActiveTarget = nullptr;
+	}
 }
 
 
@@ -948,6 +1298,7 @@ void UTransformGizmo::SetupOnClickFunctions()
 	OnClickPressFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateYAxis)] = &UTransformGizmo::OnClickPressRotateYAxis;
 	OnClickPressFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateZAxis)] = &UTransformGizmo::OnClickPressRotateZAxis;
 	OnClickPressFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateScreenSpace)] = &UTransformGizmo::OnClickPressScreenSpaceRotate;
+	OnClickPressFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateArcball)] = &UTransformGizmo::OnClickPressArcBallRotate;
 
 	OnClickDragFunctions[static_cast<int>(ETransformGizmoPartIdentifier::TranslateXAxis)] = &UTransformGizmo::OnClickDragTranslateAxis;
 	OnClickDragFunctions[static_cast<int>(ETransformGizmoPartIdentifier::TranslateYAxis)] = &UTransformGizmo::OnClickDragTranslateAxis;
@@ -967,6 +1318,7 @@ void UTransformGizmo::SetupOnClickFunctions()
 	OnClickDragFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateYAxis)] = &UTransformGizmo::OnClickDragRotateAxis;
 	OnClickDragFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateZAxis)] = &UTransformGizmo::OnClickDragRotateAxis;
 	OnClickDragFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateScreenSpace)] = &UTransformGizmo::OnClickDragScreenSpaceRotate;
+	OnClickDragFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateArcball)] = &UTransformGizmo::OnClickDragArcBallRotate;
 
 	OnClickReleaseFunctions[static_cast<int>(ETransformGizmoPartIdentifier::TranslateXAxis)] = &UTransformGizmo::OnClickReleaseTranslateAxis;
 	OnClickReleaseFunctions[static_cast<int>(ETransformGizmoPartIdentifier::TranslateYAxis)] = &UTransformGizmo::OnClickReleaseTranslateAxis;
@@ -986,6 +1338,7 @@ void UTransformGizmo::SetupOnClickFunctions()
 	OnClickReleaseFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateYAxis)] = &UTransformGizmo::OnClickReleaseRotateAxis;
 	OnClickReleaseFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateZAxis)] = &UTransformGizmo::OnClickReleaseRotateAxis;
 	OnClickReleaseFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateScreenSpace)] = &UTransformGizmo::OnClickReleaseScreenSpaceRotate;
+	OnClickReleaseFunctions[static_cast<int>(ETransformGizmoPartIdentifier::RotateArcball)] = &UTransformGizmo::OnClickReleaseArcBallRotate;
 }
 
 
@@ -1017,7 +1370,7 @@ bool UTransformGizmo::GetRayParamIntersectionWithInteractionPlane(const FInputDe
 	return true;
 }
 
-void UTransformGizmo::UpdateHoverState(bool bInHover, ETransformGizmoPartIdentifier InHitPartId)
+void UTransformGizmo::UpdateHoverState(const bool bInHover, const ETransformGizmoPartIdentifier InHitPartId)
 {
 	HitTarget->UpdateHoverState(bInHover, static_cast<uint32>(InHitPartId));
 
@@ -1040,45 +1393,158 @@ void UTransformGizmo::UpdateHoverState(bool bInHover, ETransformGizmoPartIdentif
 		HitTarget->UpdateHoverState(bInHover, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXAxis));
 		HitTarget->UpdateHoverState(bInHover, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleZAxis));
 		break;
+	default:
+		break;
 	}
 }
 
-void UTransformGizmo::UpdateInteractingState(bool bInInteracting, ETransformGizmoPartIdentifier InHitPartId)
+void UTransformGizmo::ResetHoverStates(const EGizmoTransformMode InMode)
+{
+	ETransformGizmoPartIdentifier IdBegin = ETransformGizmoPartIdentifier::Default;
+	ETransformGizmoPartIdentifier IdEnd = ETransformGizmoPartIdentifier::Max;
+
+	switch (InMode)
+	{
+	case EGizmoTransformMode::Translate:
+		IdBegin = ETransformGizmoPartIdentifier::TranslateAll;
+		IdEnd = ETransformGizmoPartIdentifier::RotateAll;
+		break;
+	case EGizmoTransformMode::Rotate:
+		IdBegin = ETransformGizmoPartIdentifier::RotateAll;
+		IdEnd = ETransformGizmoPartIdentifier::ScaleAll;
+		break;
+	case EGizmoTransformMode::Scale:
+		IdBegin = ETransformGizmoPartIdentifier::ScaleAll;
+		IdEnd = ETransformGizmoPartIdentifier::Max;
+		break;
+	default:
+		break;
+	}
+
+	static constexpr bool bInHover = false;
+	for (uint32 Id = static_cast<uint32>(IdBegin); Id < static_cast<uint32>(IdEnd); ++Id)
+	{
+		UpdateHoverState(bInHover, static_cast<ETransformGizmoPartIdentifier>(Id));
+	}
+}
+
+void UTransformGizmo::UpdateInteractingState(const bool bInInteracting, const ETransformGizmoPartIdentifier InHitPartId, const bool bIdOnly)
 {
 	HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(InHitPartId));
 
-	switch (InHitPartId)
+	if (!bIdOnly)
 	{
-	case ETransformGizmoPartIdentifier::ScaleUniform:
+		switch (InHitPartId)
+		{
+		case ETransformGizmoPartIdentifier::ScaleUniform:
+			{
+				HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXAxis));
+				HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYAxis));
+				HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleZAxis));
+				HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleUniform));
+				GizmoElementRoot->UpdatePartVisibleState(!bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXYPlanar));
+				GizmoElementRoot->UpdatePartVisibleState(!bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYZPlanar));
+				GizmoElementRoot->UpdatePartVisibleState(!bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXZPlanar));
+				break;
+			}
+		case ETransformGizmoPartIdentifier::ScaleXYPlanar:
+			HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXAxis));
+			HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYAxis));
+			break;
+		case ETransformGizmoPartIdentifier::ScaleYZPlanar:
+			HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYAxis));
+			HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleZAxis));
+			break;
+		case ETransformGizmoPartIdentifier::ScaleXZPlanar:
+			HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXAxis));
+			HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleZAxis));
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+void UTransformGizmo::ResetInteractingStates(const EGizmoTransformMode InMode)
+{
+	ETransformGizmoPartIdentifier IdBegin = ETransformGizmoPartIdentifier::Default;
+	ETransformGizmoPartIdentifier IdEnd = ETransformGizmoPartIdentifier::Max;
+	bool bIdOnly = true;
+
+	switch (InMode)
 	{
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXAxis));
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYAxis));
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleZAxis));
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleUniform));
-		GizmoElementRoot->UpdatePartVisibleState(!bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXYPlanar));
-		GizmoElementRoot->UpdatePartVisibleState(!bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYZPlanar));
-		GizmoElementRoot->UpdatePartVisibleState(!bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXZPlanar));
+	case EGizmoTransformMode::Translate:
+		IdBegin = ETransformGizmoPartIdentifier::TranslateAll;
+		IdEnd = ETransformGizmoPartIdentifier::RotateAll;
+		break;
+	case EGizmoTransformMode::Rotate:
+		IdBegin = ETransformGizmoPartIdentifier::RotateAll;
+		IdEnd = ETransformGizmoPartIdentifier::ScaleAll;
+		break;
+	case EGizmoTransformMode::Scale:
+		IdBegin = ETransformGizmoPartIdentifier::ScaleAll;
+		IdEnd = ETransformGizmoPartIdentifier::Max;
+		bIdOnly = false; 
+		break;
+	default:
 		break;
 	}
-	case ETransformGizmoPartIdentifier::ScaleXYPlanar:
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXAxis));
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYAxis));
-		break;
-	case ETransformGizmoPartIdentifier::ScaleYZPlanar:
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleYAxis));
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleZAxis));
-		break;
-	case ETransformGizmoPartIdentifier::ScaleXZPlanar:
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleXAxis));
-		HitTarget->UpdateInteractingState(bInInteracting, static_cast<uint32>(ETransformGizmoPartIdentifier::ScaleZAxis));
-		break;
+
+	static constexpr bool bInInteracting = false;
+	for (uint32 Id = static_cast<uint32>(IdBegin); Id < static_cast<uint32>(IdEnd); ++Id)
+	{
+		UpdateInteractingState(bInInteracting, static_cast<ETransformGizmoPartIdentifier>(Id), bIdOnly);
+	}
+}
+
+void UTransformGizmo::BeginTransformEditSequence()
+{
+	if (ensure(StateTarget))
+	{
+		StateTarget->BeginUpdate();
+	}
+
+	if (ensure(ActiveTarget))
+	{
+		if (ActiveTarget->bSetPivotMode)
+		{
+			ActiveTarget->BeginPivotEditSequence();
+		}
+		else
+		{
+			ActiveTarget->BeginTransformEditSequence();
+		}
+	}
+}
+
+void UTransformGizmo::EndTransformEditSequence()
+{
+	if (ensure(StateTarget))
+	{
+		StateTarget->EndUpdate();
+	}
+
+	if (ensure(ActiveTarget))
+	{
+		if (ActiveTarget->bSetPivotMode)
+		{
+			ActiveTarget->EndPivotEditSequence();
+		}
+		else
+		{
+			ActiveTarget->EndTransformEditSequence();
+		}
 	}
 }
 
 void UTransformGizmo::OnClickPress(const FInputDeviceRay& PressPos)
 {
+	PendingDragFunction.Reset();
+	
 	check(OnClickPressFunctions.Num() == static_cast<int>(ETransformGizmoPartIdentifier::Max));
 
+	const ETransformGizmoPartIdentifier ModeLastHitPart = GetCurrentModeLastHitPart();
+	
 	if (OnClickPressFunctions[static_cast<int>(LastHitPart)])
 	{
 		OnClickPressFunctions[static_cast<int>(LastHitPart)](this, PressPos);
@@ -1088,13 +1554,14 @@ void UTransformGizmo::OnClickPress(const FInputDeviceRay& PressPos)
 	{
 		if (HitTarget && LastHitPart != ETransformGizmoPartIdentifier::Default)
 		{
+			if (LastHitPart != ModeLastHitPart)
+			{
+				UpdateInteractingState(false, ModeLastHitPart, true);	
+			}
 			UpdateInteractingState(true, LastHitPart);
 		}
 
-		if (StateTarget)
-		{
-			StateTarget->BeginUpdate();
-		}
+		BeginTransformEditSequence();
 	}
 }
 
@@ -1110,7 +1577,17 @@ void UTransformGizmo::OnClickDrag(const FInputDeviceRay& DragPos)
 
 	if (OnClickDragFunctions[HitPartIndex])
 	{
-		OnClickDragFunctions[HitPartIndex](this, DragPos);
+		if (bDeferDrag)
+		{ // defer drag function on next tick
+			PendingDragFunction = [this, DragPos, HitPartIndex]()
+			{
+				OnClickDragFunctions[HitPartIndex](this, DragPos);
+			};
+		}
+		else
+		{ // do drag function
+			OnClickDragFunctions[HitPartIndex](this, DragPos);
+		}
 	}
 }
 
@@ -1121,7 +1598,7 @@ void UTransformGizmo::OnClickRelease(const FInputDeviceRay& ReleasePos)
 		return;
 	}
 
-	int HitPartIndex = static_cast<int>(LastHitPart);
+	const int HitPartIndex = static_cast<int>(LastHitPart);
 	check(HitPartIndex < OnClickReleaseFunctions.Num());
 
 	if (OnClickReleaseFunctions[HitPartIndex])
@@ -1129,17 +1606,17 @@ void UTransformGizmo::OnClickRelease(const FInputDeviceRay& ReleasePos)
 		OnClickReleaseFunctions[HitPartIndex](this, ReleasePos);
 	}
 
-	if (StateTarget)
-	{
-		StateTarget->EndUpdate();
-	}
+	EndTransformEditSequence();
 
 	bInInteraction = false;
 
 	if (HitTarget && LastHitPart != ETransformGizmoPartIdentifier::Default)
 	{
 		UpdateInteractingState(false, LastHitPart);
+		UpdateInteractingState(true, GetCurrentModeLastHitPart(), true);
 	}
+
+	PendingDragFunction.Reset();
 }
 
 void UTransformGizmo::OnTerminateDragSequence()
@@ -1187,17 +1664,94 @@ void UTransformGizmo::OnClickPressTranslateZAxis(const FInputDeviceRay& PressPos
 
 void UTransformGizmo::OnClickPressAxis(const FInputDeviceRay& PressPos)
 {
+	InteractionPlanarOrigin = CurrentTransform.GetLocation();
 	InteractionAxisStartParam = GetNearestRayParamToInteractionAxis(PressPos);
 	InteractionAxisCurrParam = InteractionAxisStartParam;
+
+	// indirect manipulation uses a 2D approach instead as there's no guaranty to intersect a plane 
+	if (bIndirectManipulation)
+	{
+		InteractionScreenCurrPos = PressPos.ScreenPosition;
+		StartRotation = CurrentRotation = ActiveTarget->GetTransform().GetRotation();
+		bInInteraction = true;
+		SetModeLastHitPart(EGizmoTransformMode::Translate, LastHitPart);
+		return;
+	}
+
+	// compute plane and axis to mute
+	const FVector XAxis = GetWorldAxis(FVector::XAxisVector);
+	const FVector YAxis = GetWorldAxis(FVector::YAxisVector);
+	const FVector ZAxis = GetWorldAxis(FVector::ZAxisVector);
+
+	const FVector ViewDirection = GizmoViewContext->GetViewDirection();
+	const double XDot = FMath::Abs(FVector::DotProduct(ViewDirection, XAxis));
+	const double YDot = FMath::Abs(FVector::DotProduct(ViewDirection, YAxis));
+	const double ZDot = FMath::Abs(FVector::DotProduct(ViewDirection, ZAxis));
+
+	if (FVector::DotProduct(InteractionAxisDirection, XAxis) > 0.1)
+	{
+		InteractionPlanarNormal = (YDot > ZDot) ? YAxis : ZAxis;
+		NormalToRemove = (YDot > ZDot) ? ZAxis : YAxis;
+	}
+	else if (FVector::DotProduct(InteractionAxisDirection, YAxis) > 0.1)
+	{
+		InteractionPlanarNormal = (XDot > ZDot) ? XAxis : ZAxis;
+		NormalToRemove = (XDot > ZDot) ? ZAxis : XAxis;
+	}
+	else
+	{
+		InteractionPlanarNormal = (XDot > YDot) ? XAxis : YAxis;
+		NormalToRemove = (XDot > YDot) ? YAxis : XAxis;
+	}
+	
+	float HitDepth;
+	if (GetRayParamIntersectionWithInteractionPlane(PressPos, HitDepth))
+	{
+		InteractionPlanarStartPoint = PressPos.WorldRay.Origin + PressPos.WorldRay.Direction * HitDepth;
+		InteractionPlanarCurrPoint = InteractionPlanarStartPoint;
+	}
+
 	bInInteraction = true;
+	SetModeLastHitPart(EGizmoTransformMode::Translate, LastHitPart);
 }
 
 void UTransformGizmo::OnClickDragTranslateAxis(const FInputDeviceRay& DragPos)
 {
-	float AxisNearestParam = GetNearestRayParamToInteractionAxis(DragPos);
-	FVector Delta = ComputeAxisTranslateDelta(InteractionAxisCurrParam, AxisNearestParam);
-	ApplyTranslateDelta(Delta);
-	InteractionAxisCurrParam = AxisNearestParam;
+	// indirect manipulation uses a 2D projection approach instead of plane intersection
+	if (bIndirectManipulation)
+	{
+		const FVector2D DragDir = DragPos.ScreenPosition - InteractionScreenCurrPos;
+
+		const FVector2D XAxisDir = GetScreenProjectedAxis(GizmoViewContext, FVector::XAxisVector, CurrentTransform);
+		const FVector2D YAxisDir = GetScreenProjectedAxis(GizmoViewContext, FVector::YAxisVector, CurrentTransform);
+		const FVector2D ZAxisDir = GetScreenProjectedAxis(GizmoViewContext, FVector::ZAxisVector, CurrentTransform);
+		
+		FVector Delta((InteractionAxisList == EAxisList::X) ? FVector2D::DotProduct(XAxisDir, DragDir) : 0.0,
+					  (InteractionAxisList == EAxisList::Y) ? FVector2D::DotProduct(YAxisDir, DragDir) : 0.0,
+					  (InteractionAxisList == EAxisList::Z) ? FVector2D::DotProduct(ZAxisDir, DragDir) : 0.0);
+		Delta = CurrentRotation * Delta;
+		
+		ApplyTranslateDelta(Delta);
+
+		InteractionScreenCurrPos = DragPos.ScreenPosition;
+		return;
+	}
+
+	float HitDepth;
+	if (GetRayParamIntersectionWithInteractionPlane(DragPos, HitDepth))
+	{
+		FVector HitPoint = DragPos.WorldRay.Origin + DragPos.WorldRay.Direction * HitDepth;
+
+		const FVector DeltaToStart = HitPoint-InteractionPlanarStartPoint;
+		const FVector AxisToRemove = NormalToRemove * FVector::DotProduct(DeltaToStart, NormalToRemove); 
+		
+		HitPoint -= AxisToRemove;
+	
+		const FVector Delta = ComputePlanarTranslateDelta(InteractionPlanarCurrPoint, HitPoint);
+
+		ApplyTranslateDelta(Delta);
+		InteractionPlanarCurrPoint = HitPoint;
+	}
 }
 
 void UTransformGizmo::OnClickReleaseTranslateAxis(const FInputDeviceRay& InReleasePos)
@@ -1243,6 +1797,8 @@ void UTransformGizmo::OnClickPressPlanar(const FInputDeviceRay& PressPos)
 		InteractionPlanarStartPoint = PressPos.WorldRay.Origin + PressPos.WorldRay.Direction * HitDepth;
 		InteractionPlanarCurrPoint = InteractionPlanarStartPoint;
 		bInInteraction = true;
+		
+		SetModeLastHitPart(EGizmoTransformMode::Translate, LastHitPart);
 	}
 }
 
@@ -1251,8 +1807,8 @@ void UTransformGizmo::OnClickDragTranslatePlanar(const FInputDeviceRay& DragPos)
 	float HitDepth;
 	if (GetRayParamIntersectionWithInteractionPlane(DragPos, HitDepth))
 	{
-		FVector HitPoint = DragPos.WorldRay.Origin + DragPos.WorldRay.Direction * HitDepth;
-		FVector Delta = ComputePlanarTranslateDelta(InteractionPlanarCurrPoint, HitPoint);
+		const FVector HitPoint = DragPos.WorldRay.Origin + DragPos.WorldRay.Direction * HitDepth;
+		const FVector Delta = ComputePlanarTranslateDelta(InteractionPlanarCurrPoint, HitPoint);
 		ApplyTranslateDelta(Delta);
 		InteractionPlanarCurrPoint = HitPoint;
 	}
@@ -1358,6 +1914,8 @@ void UTransformGizmo::OnClickPressScale(const FInputDeviceRay& PressPos)
 	InteractionScreenAxisDirection = AxisDir.GetSafeNormal();
 	InteractionScreenStartPos = InteractionScreenEndPos = InteractionScreenCurrPos = PressPos.ScreenPosition;
 	bInInteraction = true;
+
+	SetModeLastHitPart(EGizmoTransformMode::Scale, LastHitPart);
 }
 
 void UTransformGizmo::OnClickDragScaleAxis(const FInputDeviceRay& DragPos)
@@ -1439,72 +1997,236 @@ FVector UTransformGizmo::ComputeScaleDelta(const FVector2D& InStartPos, const FV
 	return Scale;
 }
 
-void UTransformGizmo::OnClickPressRotateXAxis(const FInputDeviceRay& PressPos)
+bool UTransformGizmo::OnClickPressRotateArc(
+	const FInputDeviceRay& InPressPos, const FVector& InPlaneNormal,
+	const FVector& InPlaneAxis1, const FVector& InPlaneAxis2)
 {
-	InteractionScreenAxisDirection = GetScreenRotateAxisDir(FVector::ZAxisVector, FVector::YAxisVector).GetSafeNormal();
-	InteractionAxisList = EAxisList::X;
-	InteractionScreenStartPos = InteractionScreenCurrPos = PressPos.ScreenPosition;
-	bInInteraction = true;
-}
+	const FRay& Ray = InPressPos.WorldRay;
 
-void UTransformGizmo::OnClickPressRotateYAxis(const FInputDeviceRay& PressPos)
-{
-	InteractionScreenAxisDirection = GetScreenRotateAxisDir(FVector::XAxisVector, FVector::ZAxisVector).GetSafeNormal();
-	InteractionAxisList = EAxisList::Y;
-	InteractionScreenStartPos = InteractionScreenCurrPos = PressPos.ScreenPosition;
-	bInInteraction = true;
-}
+	// compute axis / view direction projection: is the rotation plane nearly perpendicular to the view plane?
+	const FVector WorldOrigin = CurrentTransform.GetLocation();
+	const FVector ViewDirection = GizmoViewContext->IsPerspectiveProjection() ?
+		(WorldOrigin - GizmoViewContext->ViewLocation).GetSafeNormal() :
+		GizmoViewContext->GetViewDirection();
+	const bool bAxisPerpendicularToView = FMath::Abs(FVector::DotProduct(InPlaneNormal, ViewDirection)) < GizmoLocals::DotThreshold;
+	const bool bRayPerpendicularToAxis = FMath::IsNearlyZero(FVector::DotProduct(InPlaneNormal, Ray.Direction));
 
-void UTransformGizmo::OnClickPressRotateZAxis(const FInputDeviceRay& PressPos)
-{
-	InteractionScreenAxisDirection = GetScreenRotateAxisDir(FVector::XAxisVector, FVector::YAxisVector).GetSafeNormal();
-	InteractionAxisList = EAxisList::Z;
-	InteractionScreenStartPos = InteractionScreenCurrPos = PressPos.ScreenPosition;
-	bInInteraction = true;
-}
-
-FVector2D UTransformGizmo::GetScreenRotateAxisDir(const FVector& InAxis0, const FVector& InAxis1)
-{
-	check(GizmoViewContext);
-	const FVector DirectionToWidget = CurrentTransform.GetLocation() - GizmoViewContext->ViewLocation;
-
-	const FVector Axis0 = GetWorldAxis(InAxis0);
-	const FVector Axis1 = GetWorldAxis(InAxis1);
-
-	// Reverse the axes based on camera view
-	const bool bMirrorAxis0 = (FVector::DotProduct(Axis0, DirectionToWidget) <= 0.0f);
-	const bool bMirrorAxis1 = (FVector::DotProduct(Axis1, DirectionToWidget) <= 0.0f);
-	const float Direction = (bMirrorAxis0 ^ bMirrorAxis1) ? -1.0f : 1.0f;
-
-	const FVector2D Axis0Screen = GetScreenProjectedAxis(GizmoViewContext, bMirrorAxis0 ? Axis0:-Axis0);
-	const FVector2D Axis1Screen = GetScreenProjectedAxis(GizmoViewContext, bMirrorAxis1 ? Axis1:-Axis1);
+	// can we project
+	const bool bCanProject = bIndirectManipulation || bAxisPerpendicularToView || bRayPerpendicularToAxis;
+	if (!bCanProject)
+	{
+		InteractionPlanarOrigin = CurrentTransform.GetLocation();
+		InteractionPlanarNormal = InPlaneNormal;
+		InteractionPlanarAxisX = InPlaneAxis1;
+		InteractionPlanarAxisY = InPlaneAxis2;
 	
-	return ((Axis1Screen - Axis0Screen) * Direction).GetSafeNormal();
+		float HitDepth;
+		if (GetRayParamIntersectionWithInteractionPlane(InPressPos, HitDepth))
+		{
+			const FVector HitPoint = InPressPos.WorldRay.Origin + InPressPos.WorldRay.Direction * HitDepth;
+			InteractionStartAngle = GizmoMath::ComputeAngleInPlane(HitPoint,
+				InteractionPlanarOrigin, InteractionPlanarNormal, InteractionPlanarAxisX, InteractionPlanarAxisY);
+			InteractionCurrAngle = InteractionStartAngle;
+			bInInteraction = true;
+			return true;
+		}
+	}
+	return false;
+}
+
+void UTransformGizmo::OnClickPressRotateAxis(const FInputDeviceRay& InPressPos)
+{
+	static const TArray RotateIDs({	ETransformGizmoPartIdentifier::RotateXAxis,
+									ETransformGizmoPartIdentifier::RotateYAxis,
+									ETransformGizmoPartIdentifier::RotateZAxis});
+
+	const int32 RotateID = RotateIDs.IndexOfByKey(LastHitPart);
+	if (!ensure(RotateID != INDEX_NONE))
+	{
+		bInInteraction = false;
+		return;
+	}
+
+	static const TArray AxisList({EAxisList::X, EAxisList::Y, EAxisList::Z});
+
+	bDebugRotate = true;
+	
+	// initialize pull data
+	InteractionScreenAxisDirection = GetScreenRotateAxisDir(InPressPos);
+	InteractionAxisList = AxisList[RotateID];
+	InteractionScreenStartPos = InteractionScreenCurrPos = InPressPos.ScreenPosition;
+	RotateMode = EAxisRotateMode::Pull;
+
+	// initialize arc/mixed data
+	const bool bRotatePull = bIndirectManipulation || DefaultRotateMode == EAxisRotateMode::Pull;
+	if (!bRotatePull)
+	{
+		static const TArray RotateAxis({FVector::XAxisVector, FVector::YAxisVector, FVector::ZAxisVector});
+		const FVector WorldPlaneNormal = GetWorldAxis(RotateAxis[RotateID]);
+		const FVector WorldPlaneAxis1 = GetWorldAxis(RotateAxis[(RotateID+1) % 3]);
+		const FVector WorldPlaneAxis2 = GetWorldAxis(RotateAxis[(RotateID+2) % 3]);
+		
+		const bool bCanRotateArc = OnClickPressRotateArc(InPressPos, WorldPlaneNormal, WorldPlaneAxis1, WorldPlaneAxis2);
+		if (bCanRotateArc)
+		{
+			RotateMode = EAxisRotateMode::Arc;
+		}
+	}
+
+	bInInteraction = true;
+	SetModeLastHitPart(EGizmoTransformMode::Rotate, LastHitPart);
+}
+
+void UTransformGizmo::OnClickPressRotateXAxis(const FInputDeviceRay& InPressPos)
+{
+	OnClickPressRotateAxis(InPressPos);
+}
+
+void UTransformGizmo::OnClickPressRotateYAxis(const FInputDeviceRay& InPressPos)
+{
+	OnClickPressRotateAxis(InPressPos);
+}
+
+void UTransformGizmo::OnClickPressRotateZAxis(const FInputDeviceRay& InPressPos)
+{
+	OnClickPressRotateAxis(InPressPos);
+}
+
+FVector2D UTransformGizmo::GetScreenRotateAxisDir(const FInputDeviceRay& InPressPos)
+{
+	// NOTE that function is not intended to remain here indefinitely, its purpose is to debug closest point computation
+	const auto PrintProjection = [this](const TCHAR* const InMessage)
+	{
+		if (bDebugRotate && GizmoLocals::bDebugDraw)
+		{
+			UE_LOG(LogTransformGizmo, Warning, TEXT("%s"), InMessage);
+		}
+	};
+
+	static const TArray RotateIDs({	ETransformGizmoPartIdentifier::RotateXAxis,
+									ETransformGizmoPartIdentifier::RotateYAxis,
+									ETransformGizmoPartIdentifier::RotateZAxis});
+	const int32 RotateID = RotateIDs.IndexOfByKey(LastHitPart);
+	if (!ensure(RotateID != INDEX_NONE))
+	{
+		return FVector2D::ZeroVector;
+	}
+	
+	const FRay& Ray = InPressPos.WorldRay;
+
+	// store world origin and axis
+	static const TArray RotateAxis({FVector::XAxisVector, FVector::YAxisVector, -FVector::ZAxisVector});
+	const FVector WorldAxis = GetWorldAxis(RotateAxis[RotateID]);
+	const FVector WorldOrigin = CurrentTransform.GetLocation();
+
+	// compute axis / view direction projection: is the rotation plane nearly perpendicular to the view plane?
+	const FVector ViewDirection = GizmoViewContext->IsPerspectiveProjection() ?
+		(WorldOrigin - GizmoViewContext->ViewLocation).GetSafeNormal() :
+		GizmoViewContext->GetViewDirection();
+	const bool bAxisPerpendicularToView = FMath::Abs(FVector::DotProduct(WorldAxis, ViewDirection)) < GizmoLocals::DotThreshold;
+	// compute axis / ray direction projection: is the ray direction parallel to the axis?
+	const bool bRayPerpendicularToAxis = FMath::IsNearlyZero(FVector::DotProduct(WorldAxis, Ray.Direction));
+
+	// compute closest point on the rotate handle
+	const bool bUseRayForIndirect = bIndirectManipulation && !GizmoLocals::ProjectIndirect;
+	const bool bUseRayOrigin = bUseRayForIndirect || bAxisPerpendicularToView || bRayPerpendicularToAxis;
+	// compute the closest point from plane intersection if we can
+	FVector QueryPoint = Ray.Origin;
+	if (!bUseRayOrigin)
+	{
+		const FPlane Plane(WorldOrigin, WorldAxis);
+
+		// if the projection is in front of the camera then use it
+		const double HitDepth = FMath::RayPlaneIntersectionParam(Ray.Origin, Ray.Direction, Plane);
+		if (HitDepth >= 0.0)
+		{
+			PrintProjection(TEXT("front"));
+			QueryPoint = Ray.Origin + Ray.Direction * HitDepth;
+		}
+		else
+		{
+			PrintProjection(TEXT("behind"));
+		}
+	}
+	else
+	{
+		PrintProjection(TEXT("ray origin"));
+	}
+
+	// compute nearest point
+	const float Radius = GetWorldRadius(RotateAxisOuterRadius);
+	FVector ClosestPointOnCircle;
+	GizmoMath::ClosetPointOnCircle(QueryPoint, WorldOrigin, WorldAxis, Radius, ClosestPointOnCircle);
+
+	// compute world directions
+	const FVector ToClosestDirection = (ClosestPointOnCircle - WorldOrigin).GetSafeNormal();
+	const FVector PullDirection = FVector::CrossProduct(ToClosestDirection, WorldAxis);
+
+	// compute screen projections
+	const FTransform ToClosest(ClosestPointOnCircle);
+	const FVector2D PullProjection = GetScreenProjectedAxis(GizmoViewContext, PullDirection, ToClosest);
+	const FVector2D AxisProjection = GetScreenProjectedAxis(GizmoViewContext, WorldAxis, ToClosest);
+	const FVector2D ToClosestProjection = GetScreenProjectedAxis(GizmoViewContext, ToClosestDirection, ToClosest);
+
+	// compute which projection to remove from drag
+	const double DotAxis = FMath::Abs( FVector2D::DotProduct(PullProjection, AxisProjection) );
+	const double DotClosest = FMath::Abs( FVector2D::DotProduct(PullProjection, ToClosestProjection) );
+	NormalProjectionToRemove = (DotAxis < DotClosest) ? AxisProjection : ToClosestProjection;
+
+	// debug
+	{
+		DebugDirection = PullDirection;
+		DebugClosest = ClosestPointOnCircle;
+	}
+	
+	return PullProjection;
 }
 
 void UTransformGizmo::OnClickDragRotateAxis(const FInputDeviceRay& DragPos)
 {
-	FQuat DeltaRot = ComputeAxisRotateDelta(InteractionScreenCurrPos, DragPos.ScreenPosition);
-	ApplyRotateDelta(DeltaRot);
-	InteractionScreenCurrPos = DragPos.ScreenPosition;
+	switch (RotateMode)
+	{
+	case EAxisRotateMode::Pull:
+	{
+		const FQuat DeltaRot = ComputeAxisRotateDelta(InteractionScreenCurrPos, DragPos.ScreenPosition);
+		ApplyRotateDelta(DeltaRot);
+		InteractionScreenCurrPos = DragPos.ScreenPosition;
+		break;
+	}
+	case EAxisRotateMode::Arc:
+	{
+		float HitDepth;
+		if (GetRayParamIntersectionWithInteractionPlane(DragPos, HitDepth))
+		{
+			const FVector HitPoint = DragPos.WorldRay.Origin + DragPos.WorldRay.Direction * HitDepth;
+			const float HitAngle = GizmoMath::ComputeAngleInPlane(HitPoint,
+				InteractionPlanarOrigin, InteractionPlanarNormal, InteractionPlanarAxisX, InteractionPlanarAxisY);
+
+			const FQuat Delta = ComputeAngularRotateDelta(InteractionCurrAngle, HitAngle);
+	
+			ApplyRotateDelta(Delta);
+			InteractionCurrAngle = HitAngle;
+		}
+		break;
+	}
+	default:
+		ensure(false);
+		break;
+	}
 }
 
 FQuat UTransformGizmo::ComputeAxisRotateDelta(const FVector2D& InStartPos, const FVector2D& InEndPos)
 {
 	FVector2D DragDir = InEndPos - InStartPos;
-	FRotator DeltaRot(0.0, 0.0, 0.0);
-	if (InteractionAxisList == EAxisList::X)
-	{
-		DeltaRot.Roll = FVector2D::DotProduct(InteractionScreenAxisDirection, DragDir);
-	}
-	else if (InteractionAxisList == EAxisList::Y)
-	{
-		DeltaRot.Pitch = FVector2D::DotProduct(InteractionScreenAxisDirection, DragDir);
-	}
-	else
-	{
-		DeltaRot.Yaw = FVector2D::DotProduct(InteractionScreenAxisDirection, DragDir);
-	}
+
+	const FVector2D DragDirToRemove = NormalProjectionToRemove * FVector2D::DotProduct(DragDir, NormalProjectionToRemove);
+	DragDir -= DragDirToRemove;
+
+	const double Delta = FVector2D::DotProduct(InteractionScreenAxisDirection, DragDir) * 0.25;
+	FRotator DeltaRot(
+		InteractionAxisList == EAxisList::Y ? Delta : 0.0,
+		InteractionAxisList == EAxisList::Z ? Delta : 0.0,
+		InteractionAxisList == EAxisList::X ? Delta : 0.0);
 
 	auto GetCoordinateSystem = [&]()
 	{
@@ -1518,7 +2240,7 @@ FQuat UTransformGizmo::ComputeAxisRotateDelta(const FVector2D& InStartPos, const
 	if (GetCoordinateSystem() == EToolContextCoordinateSystem::Local)
 	{
 		check(ActiveTarget);
-		FMatrix CurrCoordSystem = ActiveTarget->GetTransform().ToMatrixNoScale();
+		const FMatrix CurrCoordSystem = ActiveTarget->GetTransform().ToMatrixNoScale();
 		DeltaRot = (CurrCoordSystem.Inverse() * FRotationMatrix(DeltaRot) * CurrCoordSystem).Rotator();
 	}
 
@@ -1528,6 +2250,7 @@ FQuat UTransformGizmo::ComputeAxisRotateDelta(const FVector2D& InStartPos, const
 void UTransformGizmo::OnClickReleaseRotateAxis(const FInputDeviceRay& InReleasePos)
 {
 	bInInteraction = false;
+	bDebugRotate = false;
 }
 
 void UTransformGizmo::OnClickPressScreenSpaceRotate(const FInputDeviceRay& PressPos)
@@ -1549,6 +2272,8 @@ void UTransformGizmo::OnClickPressScreenSpaceRotate(const FInputDeviceRay& Press
 		InteractionCurrAngle = InteractionStartAngle;
 
 		bInInteraction = true;
+		
+		SetModeLastHitPart(EGizmoTransformMode::Rotate, LastHitPart);
 	}
 }
 
@@ -1559,11 +2284,12 @@ void UTransformGizmo::OnClickDragScreenSpaceRotate(const FInputDeviceRay& DragPo
 	float HitDepth;
 	if (GetRayParamIntersectionWithInteractionPlane(DragPos, HitDepth))
 	{
-		FVector HitPoint = DragPos.WorldRay.Origin + DragPos.WorldRay.Direction * HitDepth;
-		float HitAngle = GizmoMath::ComputeAngleInPlane(HitPoint,
+		const FVector HitPoint = DragPos.WorldRay.Origin + DragPos.WorldRay.Direction * HitDepth;
+		const float HitAngle = GizmoMath::ComputeAngleInPlane(HitPoint,
 			InteractionPlanarOrigin, InteractionPlanarNormal, InteractionPlanarAxisX, InteractionPlanarAxisY);
 
-		FQuat Delta = ComputeAngularRotateDelta(InteractionCurrAngle, HitAngle);
+		const FQuat Delta = ComputeAngularRotateDelta(InteractionCurrAngle, HitAngle);
+		
 		ApplyRotateDelta(Delta);
 		InteractionCurrAngle = HitAngle;
 	}
@@ -1571,7 +2297,7 @@ void UTransformGizmo::OnClickDragScreenSpaceRotate(const FInputDeviceRay& DragPo
 
 FQuat UTransformGizmo::ComputeAngularRotateDelta(double InStartAngle, double InEndAngle)
 {
-	float DeltaAngle = InEndAngle - InStartAngle;
+	const float DeltaAngle = InEndAngle - InStartAngle;
 	return FQuat(InteractionPlanarNormal, DeltaAngle);
 }
 
@@ -1580,7 +2306,159 @@ void UTransformGizmo::OnClickReleaseScreenSpaceRotate(const FInputDeviceRay& InR
 	bInInteraction = false;
 }
 
-FVector2D UTransformGizmo::GetScreenProjectedAxis(const UGizmoViewContext* View, const FVector& InLocalAxis, const FTransform& InLocalToWorld) const
+namespace ArcBallLocals
+{	
+	/* See Holroyd's implementation that mixes a sphere + and hyperbola to avoid popping
+	 * Knud Henriksen, Jon Sporring, and Kasper Hornbaek, “Virtual trackballs revisited”,
+	 * IEEE Transactions on Visualization and Computer Graphics, vol. 10, no. 2, pp. 206–216, 2004.
+	 */
+	bool GetSphereAndHyperbolicProjection(
+		const FVector& SphereOrigin,
+		const double SphereRadius,
+		const FVector& RayOrigin,
+		const FVector& RayDirection,
+		const UGizmoViewContext& ViewContext,
+		FVector& OutProjection)
+	{
+		const FVector CircleNormal = -ViewContext.GetViewDirection();
+		
+		// if ray is parallel to circle, no hit
+		if (FMath::IsNearlyZero(FVector::DotProduct(CircleNormal, RayDirection)))
+		{
+			return false;
+		}
+
+		const FPlane Plane(SphereOrigin, CircleNormal);
+		const double Param = FMath::RayPlaneIntersectionParam(RayOrigin, RayDirection, Plane);
+
+		if (Param < 0)
+		{
+			return false;
+		}
+
+		const FVector HitPoint = RayOrigin + RayDirection * Param;
+		FVector Offset = HitPoint - SphereOrigin;
+
+		// switch to screen space
+		FVector OffsetProjection = ViewContext.ViewMatrices.GetInvViewMatrix().InverseTransformVector(Offset);
+
+		const double OffsetSquared = Offset.SizeSquared();
+		const double CircleRadiusSquared = SphereRadius * SphereRadius;
+		
+		OffsetProjection.Z = (OffsetSquared <= CircleRadiusSquared * 0.5) ?
+			-FMath::Sqrt(CircleRadiusSquared - OffsetSquared) : // spherical projection
+			-CircleRadiusSquared * 0.5 / Offset.Length(); // hyperbolic projection
+
+		// switch back to world space
+		Offset = ViewContext.ViewMatrices.GetInvViewMatrix().TransformVector(OffsetProjection);
+		OutProjection = SphereOrigin + Offset;
+		
+		return true;
+	}
+}
+
+void UTransformGizmo::OnClickPressArcBallRotate(const FInputDeviceRay& PressPos)
+{
+	check(GizmoViewContext);
+	
+	const FVector& RayOrigin = PressPos.WorldRay.Origin;
+	const FVector& RayDir = PressPos.WorldRay.Direction;		
+	const double SphereRadius = GetWorldRadius(RotateArcballSphereRadius);
+
+	StartRotation = CurrentRotation = CurrentTransform.GetRotation();
+	InteractionPlanarOrigin = CurrentTransform.GetLocation();
+	InteractionPlanarNormal = -GizmoViewContext->GetViewDirection();
+	InteractionPlanarAxisX = GizmoViewContext->GetViewUp();
+	InteractionPlanarAxisY = GizmoViewContext->GetViewRight();
+	InteractionAxisList = EAxisList::XYZ;
+
+	auto NeedsInteraction = [&]()
+	{
+		const bool bIntersect = IntersectionUtil::RaySphereTest(RayOrigin, RayDir, InteractionPlanarOrigin, SphereRadius);
+		if (bIntersect)
+		{
+			return true;
+		}
+		
+		if (bIndirectManipulation)
+		{
+			// change the arc ball center in indirect manipulation if we didn't hit the sphere
+			float HitDepth;
+			if (GetRayParamIntersectionWithInteractionPlane(PressPos, HitDepth))
+			{
+				InteractionPlanarOrigin = PressPos.WorldRay.Origin + PressPos.WorldRay.Direction * HitDepth;
+				return true;
+			}
+		}
+		
+		return false;
+	};
+
+	if (NeedsInteraction())
+	{
+		// project on sphere
+		ArcBallLocals::GetSphereAndHyperbolicProjection(
+			InteractionPlanarOrigin, SphereRadius, RayOrigin, RayDir, *GizmoViewContext,
+			InteractionArcBallStartPoint);
+	
+		bInInteraction = true;
+	
+		SetModeLastHitPart(EGizmoTransformMode::Rotate, LastHitPart);
+	}
+}
+
+void UTransformGizmo::OnClickDragArcBallRotate(const FInputDeviceRay& DragPos)
+{
+	const FVector& RayOrigin = DragPos.WorldRay.Origin;
+	const FVector& RayDir = DragPos.WorldRay.Direction;		
+	const float SphereRadius = GetWorldRadius(RotateArcballSphereRadius);
+
+	// compute projection
+	ArcBallLocals::GetSphereAndHyperbolicProjection(
+		InteractionPlanarOrigin, SphereRadius, RayOrigin, RayDir, *GizmoViewContext,
+		InteractionArcBallCurrPoint);
+
+	if ((InteractionArcBallCurrPoint-InteractionArcBallStartPoint).Length() <= 0.0)
+	{
+		return;
+	}
+
+	// compute rotation
+	const FVector Axis1 = (InteractionArcBallCurrPoint - InteractionPlanarOrigin).GetSafeNormal();
+	const FVector Axis0 = (InteractionArcBallStartPoint - InteractionPlanarOrigin).GetSafeNormal();
+	
+	const FQuat DeltaQ = FQuat::FindBetweenNormals(Axis0, Axis1);
+	
+	// apply rotation
+	const FQuat FinalRotation = DeltaQ * StartRotation;
+	const FQuat InvCurrentRot = CurrentRotation.Inverse();
+	
+	const FQuat DeltaRot = (FinalRotation * InvCurrentRot).GetNormalized();
+	if (!DeltaRot.IsIdentity())
+	{
+		ApplyRotateDelta(DeltaRot);
+		CurrentRotation = DeltaRot * CurrentRotation; 
+	}
+}
+
+void UTransformGizmo::OnClickReleaseArcBallRotate(const FInputDeviceRay& ReleasePos)
+{
+	bInInteraction = false;
+}
+
+float UTransformGizmo::GetWorldRadius(const float InRadius) const
+{
+	const float PixelToWorldScale = GizmoRenderingUtil::CalculateLocalPixelToWorldScale(GizmoViewContext, CurrentTransform.GetLocation());
+	const float GizmoScale = TransformGizmoSource ? TransformGizmoSource->GetGizmoScale() : 1.0f;
+	return InRadius * GetSizeCoefficient() * PixelToWorldScale * GizmoScale;
+}
+
+float UTransformGizmo::GetSizeCoefficient() const
+{
+	return CustomizationFunction ? CustomizationFunction().SizeCoefficient : 1.5f;
+}
+
+FVector2D UTransformGizmo::GetScreenProjectedAxis(const UGizmoViewContext* View, const FVector& InLocalAxis, const FTransform& InLocalToWorld)
 {
 	FVector2D Origin;
 	FVector2D AxisEnd;
@@ -1617,15 +2495,15 @@ void UTransformGizmo::ApplyTranslateDelta(const FVector& InTranslateDelta)
 void UTransformGizmo::ApplyRotateDelta(const FQuat& InRotateDelta)
 {
 	// Applies rot delta after the current rotation
-	FQuat NewRotation = InRotateDelta * CurrentTransform.GetRotation();
+	const FQuat NewRotation = InRotateDelta * CurrentTransform.GetRotation();
 	CurrentTransform.SetRotation(NewRotation);
 	ActiveTarget->SetTransform(CurrentTransform);
 }
 
 void UTransformGizmo::ApplyScaleDelta(const FVector& InScaleDelta)
 {
-	FVector StartScale = CurrentTransform.GetScale3D();
-	FVector NewScale = StartScale + InScaleDelta;
+	const FVector StartScale = CurrentTransform.GetScale3D();
+	const FVector NewScale = StartScale + InScaleDelta;
 	CurrentTransform.SetScale3D(NewScale);
 	ActiveTarget->SetTransform(CurrentTransform);
 }

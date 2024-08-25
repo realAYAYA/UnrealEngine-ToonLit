@@ -77,6 +77,7 @@ void FDisplayClusterConfiguratorToolbar::FillModesToolbar(FToolBarBuilder& Toolb
 		/*bSimpleComboBox =*/true
 	);
 
+	ToolbarBuilder.AddToolBarButton(Commands.ImportMPCDI);
 	ToolbarBuilder.EndSection();
 
 	/*

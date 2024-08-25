@@ -105,7 +105,7 @@ void TDynamicMeshOverlay<RealType, ElementSize>::CreateFromPredicate(TFunctionRe
 
 			TrisActiveSubGroup.Reset();
 			AppendedElements.Reset();
-			TrisActiveSubGroup.SetNumZeroed(GroupNum, false);
+			TrisActiveSubGroup.SetNumZeroed(GroupNum, EAllowShrinking::No);
 			int CurrentGroupID = 0;
 			int CurrentGroupRefSubIdx = 0;
 			for (int TriSubIdx = 0; TriSubIdx+1 < GroupNum; TriSubIdx++)
@@ -377,7 +377,7 @@ void TDynamicMeshOverlay<RealType, ElementSize>::SplitBowtiesAtVertex(int32 Vert
 				SubGroupID[Idx] = 0;
 			}
 			MaxSubID--;
-			SubGroupElementIDs.Pop(false);
+			SubGroupElementIDs.Pop(EAllowShrinking::No);
 		}
 
 		for (int SubID = 0; SubID < SubGroupElementIDs.Num(); SubID++)

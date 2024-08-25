@@ -137,7 +137,7 @@ UDeformableCollisionsComponent::NewDeformableData()
 						if (C.VertexData.Num())
 						{
 							FTransform ShapeTransform = C.GetTransform() * P;
-							TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe> ConvexMesh = C.GetChaosConvexMesh();	
+							FConvexPtr ConvexMesh = C.GetChaosConvexMesh();	
 							TArray<FConvex::FVec3Type> Vertices;
 							Vertices.SetNum(C.VertexData.Num());
 							for (int i = 0; i < Vertices.Num(); i++)

@@ -22,13 +22,14 @@ void UMotorPhysicsSimComponent::Update(FAudioMotorSimInputContext& Input, FAudio
 	const int32 PrevGear = Gear;
 	
 	const float ClutchModifier = Input.bClutchEngaged ? ClutchedForceModifier : 1.f;
-	
+	const float ClutchDecelModifier = Input.bClutchEngaged ? FMath::Max(ClutchedDecelScale * (1.f - Throttle), 0.f) : 1.f;
+
 	//Forces in Newtons.
 	const float CurrentEngineTorque = EngineTorque * Throttle * GearRatio * ClutchModifier;
 	
 	const float BrakingForce = Input.Brake * BrakingHorsePower;
 	const float WindResistance = WindResistancePerVelocity * FMath::Square(SpeedKmh);
-	const float FrictionResistance = Weight * GroundFriction * Input.SurfaceFrictionModifier;
+	const float FrictionResistance = Weight * GroundFriction * Input.SurfaceFrictionModifier * ClutchDecelModifier;
 	const float EngineResistance = CurrentEngineTorque * FMath::Max(Input.MotorFrictionModifier - Throttle, 0.0f) * EngineFriction;
 	
 	const float NetForce = CurrentEngineTorque - BrakingForce - WindResistance - FrictionResistance - EngineResistance;

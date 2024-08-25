@@ -288,11 +288,24 @@ public class ModifyStageContext
 		}
 	}
 
+	private void AddCookedUFSFilesToList(List<FileReference> FileList, string Extension, DeploymentContext SC)
+	{
+		// look in SC and UFSFiles
+		FileList.AddRange(SC.FilesToStage.UFSFiles.Keys.Where(x => x.Name.EndsWith(Extension, StringComparison.OrdinalIgnoreCase)).Select(y => DeploymentContext.UnmakeRelativeStagedReference(SC, y)));
+		FileList.AddRange(UFSFilesToStage.Where(x => x.FullName.EndsWith(Extension, StringComparison.InvariantCultureIgnoreCase)));
+	}
+
 	private void AddUFSFilesToList(List<FileReference> FileList, string Extension, DeploymentContext SC)
 	{
 		// look in SC and UFSFiles
-		FileList.AddRange(SC.FilesToStage.UFSFiles.Keys.Where(x => x.HasExtension(Extension)).Select(y => DeploymentContext.UnmakeRelativeStagedReference(SC, y)));
-		FileList.AddRange(UFSFilesToStage.Where(x => x.GetExtension().Equals(Extension, StringComparison.InvariantCultureIgnoreCase)));
+		foreach (var Pair in SC.FilesToStage.UFSFiles)
+		{
+			if (Pair.Key.Name.EndsWith(Extension))
+			{
+				FileList.Add(Pair.Value);
+			}
+		}
+		FileList.AddRange(UFSFilesToStage.Where(x => x.FullName.EndsWith(Extension, StringComparison.InvariantCultureIgnoreCase)));
 	}
 
 	private void UncookMaps(DeploymentContext SC)
@@ -304,8 +317,8 @@ public class ModifyStageContext
 		}
 		else if (CookedMapMode == "uncooked")
 		{
-			// remove maps from SC and Context (SC has path to the cooked map, so we have to come back from Staged refernece that doesn't have the Cooked dir in it)
-			AddUFSFilesToList(FilesToUncook, ".umap", SC);
+			// remove maps from SC and Context (SC has path to the cooked map, so we have to come back from Staged reference that doesn't have the Cooked dir in it)
+			AddCookedUFSFilesToList(FilesToUncook, ".umap", SC);
 		}
 		else if (CookedMapMode == "none")
 		{
@@ -331,6 +344,7 @@ public class ModifyStageContext
 			// UAT needs uplugin and ini files, so make sure they are not in the .pak
 			AddUFSFilesToList(NonUFSFilesToStage, ".uplugin", SC);
 			AddUFSFilesToList(NonUFSFilesToStage, ".ini", SC);
+			AddUFSFilesToList(NonUFSFilesToStage, "SDK.json", SC);
 			NonUFSFilesToStage = NonUFSFilesToStage.Where(x => x.GetFileName() != "BinaryConfig.ini").ToList();
 		}
 	}
@@ -426,7 +440,9 @@ public class MakeCookedEditor : BuildCommand
 		// engine shaders
 		if (Context.bStageShaderDirs)
 		{
-			Context.NonUFSFilesToStage.AddRange(DirectoryReference.EnumerateFiles(DirectoryReference.Combine(Unreal.EngineDirectory, "Shaders"), "*", SearchOption.AllDirectories));
+			IEnumerable<FileReference> ShaderFiles = DirectoryReference.EnumerateFiles(DirectoryReference.Combine(Unreal.EngineDirectory, "Shaders"), "*", SearchOption.AllDirectories)
+				.Where(x => !x.GetExtension().Equals(".cs", StringComparison.OrdinalIgnoreCase));
+			Context.NonUFSFilesToStage.AddRange(ShaderFiles);
 			GatherTargetDependencies(Params, SC, Context, "ShaderCompileWorker");
 		}
 		if (bIsCookedCooker)
@@ -612,9 +628,8 @@ public class MakeCookedEditor : BuildCommand
 
 		if (Context.IniPlatformName == "Linux")
 		{
-			// linux needs dotnet runtime, as well as mono (at least for now until we can break our dependence)
+			// linux needs dotnet runtime
 			SC.StageFiles(StagedFileType.NonUFS, Unreal.FindDotnetDirectoryForPlatform(RuntimePlatform.Type.Linux), StageFilesSearch.AllDirectories);
-			SC.StageFiles(StagedFileType.NonUFS, DirectoryReference.Combine(Context.EngineDirectory, "Binaries/ThirdParty/Mono/Linux"), StageFilesSearch.AllDirectories);
 		}
 
 		// not sure if we need this or not now
@@ -807,6 +822,11 @@ public class MakeCookedEditor : BuildCommand
 					// now remove files in subdirs we want to skip
 					FilesToStage.RemoveAll(x => x.ContainsAnyNames(SubFoldersToStrip, Subdir));
 					ContextFileList.AddRange(FilesToStage);
+				}
+
+				if (SubdirName == "config")
+				{
+					Context.NonUFSFilesToStage.AddRange(DirectoryReference.EnumerateFiles(Subdir, "*SDK.json", SearchOption.AllDirectories));
 				}
 			}
 		}

@@ -56,7 +56,7 @@ bool UActorElementWorldInterface::CanMoveElement(const FTypedElementHandle& InEl
 		{
 			return false;
 		}
-#endif	// WITH_EDITOR
+#endif // WITH_EDITOR
 
 		// If the actor has a root component, but it cannot be moved, then the actor cannot move.
 		if (InWorldType == ETypedElementWorldType::Game && Actor->GetRootComponent() && !Actor->IsRootComponentMovable())
@@ -68,6 +68,20 @@ bool UActorElementWorldInterface::CanMoveElement(const FTypedElementHandle& InEl
 	}
 
 	return false;
+}
+
+bool UActorElementWorldInterface::CanScaleElement(const FTypedElementHandle& InElementHandle)
+{
+#if WITH_EDITOR
+	if (const AActor* Actor = ActorElementDataUtil::GetActorFromHandle(InElementHandle))
+	{
+		// The actor must be scalable.
+		FProperty* const RelativeScale3DProperty = USceneComponent::StaticClass()->FindPropertyByName(USceneComponent::GetRelativeScale3DPropertyName());
+		return Actor->CanEditChangeComponent(Actor->GetRootComponent(), RelativeScale3DProperty);
+	}
+#endif // WITH_EDITOR
+
+	return true;
 }
 
 bool UActorElementWorldInterface::GetWorldTransform(const FTypedElementHandle& InElementHandle, FTransform& OutTransform)

@@ -4,14 +4,18 @@
 #include "MoviePipeline.h"
 #include "MovieRenderPipelineCoreModule.h"
 #include "RHI.h"
+#include "Graph/MovieGraphDataTypes.h"
 #include "Sections/MovieSceneCinematicShotSection.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieRenderPipelineDataTypes)
 
 FFrameNumber FMoviePipelineCameraCutInfo::GetOutputFrameCountEstimate() const
 {
+	const FFrameRate SourceRate = CachedFrameRate;
+	const FFrameRate DestinationRate = CachedTickResolution;
+	
 	// TotalRange is stored in Tick Resolution, so we convert 1 frame of Frame Rate to the number of ticks.
-	FFrameNumber OneFrameInTicks = FFrameRate::TransformTime(FFrameTime(FFrameNumber(1)), CachedFrameRate, CachedTickResolution).FloorToFrame();
+	FFrameNumber OneFrameInTicks = FFrameRate::TransformTime(FFrameTime(FFrameNumber(1)), SourceRate, DestinationRate).FloorToFrame();
 
 	// Find out how many ticks long our total output range is.
 	FFrameNumber TotalOutputRangeTicks = TotalOutputRangeRoot.Size<FFrameNumber>();

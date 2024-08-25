@@ -262,7 +262,7 @@ void SCrashReportClient::ConstructDetailedDialog(const TSharedRef<FCrashReportCl
 					SNew(STextBlock)
 					.AutoWrapText(true)
 					.IsEnabled( !FEngineBuildSettings::IsInternalBuild() )
-					.Text(LOCTEXT("IAgree", "I agree to be contacted by Epic Games via email if additional information about this crash would help fix it."))
+					.Text_Static(&SCrashReportClient::GetContactText)
 				]
 			]
 
@@ -295,6 +295,21 @@ void SCrashReportClient::ConstructDetailedDialog(const TSharedRef<FCrashReportCl
 					SNew(SSpacer)
 				]
 
+#if PLATFORM_WINDOWS
+				+SHorizontalBox::Slot()
+				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Center)
+				.AutoWidth()
+				.Padding( FMargin(6) )
+				[
+					SNew(SButton)
+					.ContentPadding( FMargin(8,2) )
+					.Text(LOCTEXT("CopyFiles", "Copy Files To Clipboard"))
+					.OnClicked(Client, &FCrashReportClient::CopyFilesToClipboard)
+					.Visibility(FCrashReportCoreConfig::Get().IsAllowedToCopyFilesToClipboard() ? EVisibility::Visible : EVisibility::Hidden)
+				]
+#endif
+
 				+SHorizontalBox::Slot()
 				.HAlign(HAlign_Center)
 				.VAlign(VAlign_Center)
@@ -306,6 +321,7 @@ void SCrashReportClient::ConstructDetailedDialog(const TSharedRef<FCrashReportCl
 					.Text(LOCTEXT("Send", "Send and Close"))
 					.OnClicked(Client, &FCrashReportClient::Submit)
 					.IsEnabled(this, &SCrashReportClient::IsSendEnabled)
+					.ToolTipText_Static(&SCrashReportClient::GetSendTooltip)
 				]
 
 				+SHorizontalBox::Slot()
@@ -320,6 +336,7 @@ void SCrashReportClient::ConstructDetailedDialog(const TSharedRef<FCrashReportCl
 					.OnClicked(Client, &FCrashReportClient::SubmitAndRestart)
 					.IsEnabled(this, &SCrashReportClient::IsSendEnabled)
 					.Visibility( bHideSubmitAndRestart || FCrashReportCoreConfig::Get().GetHideRestartOption() ? EVisibility::Collapsed : EVisibility::Visible )
+					.ToolTipText_Static(&SCrashReportClient::GetSendTooltip)
 				]
 			]
 		]
@@ -428,9 +445,58 @@ EVisibility SCrashReportClient::IsHintTextVisible() const
 
 bool SCrashReportClient::IsSendEnabled() const
 {
-	bool bValidAppName = FPrimaryCrashProperties::Get()->IsValid() && !FPrimaryCrashProperties::Get()->GameName.IsEmpty();
+	const bool bValidAppName = FPrimaryCrashProperties::Get()->IsValid() && !FPrimaryCrashProperties::Get()->GameName.IsEmpty();
+	const bool bValidEndPoint = !FCrashReportCoreConfig::Get().GetReceiverAddress().IsEmpty() || !FCrashReportCoreConfig::Get().GetDataRouterURL().IsEmpty();
 
-	return bValidAppName && !bHasUserCommentErrors;
+	return bValidAppName && bValidEndPoint && !bHasUserCommentErrors;
+}
+
+FText SCrashReportClient::GetSendTooltip()
+{
+	// Optionally show a tooltip with the endpoint domain to the user. If the old receiver address is used it is
+	// just a IP number, so there is no point is showing that.
+	static FText CachedDomain = []() {
+		FStringView Endpoint = FCrashReportCoreConfig::Get().GetReceiverAddress();
+		bool bIsUrl = false;
+		if (Endpoint.IsEmpty())
+		{
+			Endpoint = FCrashReportCoreConfig::Get().GetDataRouterURL();
+			bIsUrl = true;
+		}
+		if (Endpoint.IsEmpty())
+		{
+			return LOCTEXT("SendTooltipEmpty", "No server specified.");
+		}
+		if (bIsUrl && FCrashReportCoreConfig::Get().GetShowEndpointInTooltip())
+		{
+			// Show only domain, not full url
+			const int32 Start = Endpoint.StartsWith(TEXT("https://")) ? 8 : 0;
+			Endpoint.RightChopInline(Start);
+			int32 End(INDEX_NONE);
+			Endpoint.FindChar('/', End);
+			Endpoint.LeftInline(End);
+			return FText::Format(LOCTEXT("SendTooltipUrl", "Send to {0}"), FText::FromStringView(Endpoint));
+		}
+		return LOCTEXT("SendTooltip", "Send to server");
+	}();
+	return CachedDomain;
+}
+
+FText SCrashReportClient::GetContactText()
+{
+	static FText CachedContactText = []()
+	{
+		const FStringView Company = FCrashReportCoreConfig::Get().GetCompanyName();
+		if (Company.IsEmpty())
+		{
+			return LOCTEXT("IAgreeNoCompany", "I agree to be contacted via email if additional information about this crash would help fix it.");
+		}
+		return FText::Format(
+			 LOCTEXT("IAgreeCompany", "I agree to be contacted by {0} via email if additional information about this crash would help fix it."),
+			 FText::FromStringView(Company)
+		);
+	}();
+	return CachedContactText;
 }
 
 #undef LOCTEXT_NAMESPACE

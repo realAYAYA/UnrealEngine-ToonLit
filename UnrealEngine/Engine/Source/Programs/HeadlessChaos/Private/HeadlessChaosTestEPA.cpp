@@ -685,8 +685,8 @@ namespace ChaosTest
 				});
 
 			// Test used to pass the planes to FConvex, but this is not supported any more. Planes are derived from points.
-			TUniquePtr<FConvex> Convex = MakeUnique<FConvex>(SurfaceParticles, 0.0f);
-			TImplicitObjectScaled<FConvex> ScaledConvex(MakeSerializable(Convex), nullptr, FVec3(1.0f), 0.0f);
+			FConvexPtr Convex( new FConvex(SurfaceParticles, 0.0f));
+			TImplicitObjectScaled<FConvex> ScaledConvex(Convex, FVec3(1.0f), 0.0f);
 
 			TSphere<FReal, 3> Sphere(FVec3(0.0f), 34.2120171);
 
@@ -785,8 +785,8 @@ namespace ChaosTest
 				// Test used to pass planes and verts to FConvex but this is not suported an more. 
 				// Planes will derived from the points now, and also faces are merged (not triangles any more)
 				FVec3 ConvexScale ={25,25,1};
-				TUniquePtr<FConvex> Convex = MakeUnique<FConvex>(SurfaceParticles, 0.0f);
-				TImplicitObjectScaled<FConvex> ScaledConvex(MakeSerializable(Convex), nullptr, ConvexScale,0.0f);
+				FConvexPtr Convex( new FConvex(SurfaceParticles, 0.0f));
+				TImplicitObjectScaled<FConvex> ScaledConvex(Convex, ConvexScale,0.0f);
 
 				TBox<FReal,3> Box({-50.0000000,-60.0000000,-30.0000000},{50.0000000,60.0000000,30.0000000});
 
@@ -1056,8 +1056,8 @@ namespace ChaosTest
 			// Test used to pass planes and verts to FConvex but this is not suported an more. 
 			// Planes will derived from the points now, and also faces are merged (not triangles any more)
 			FVec3 GroundConvexScale = { 25,25,1 };
-			TUniquePtr<FConvex> GroundConvex = MakeUnique<FConvex>(GroundSurfaceParticles, 0.0f);
-			TImplicitObjectScaled<FConvex> ScaledGroundConvex(MakeSerializable(GroundConvex), nullptr, GroundConvexScale, 0.0f);
+			FConvexPtr GroundConvex( new FConvex(GroundSurfaceParticles, 0.0f));
+			TImplicitObjectScaled<FConvex> ScaledGroundConvex(GroundConvex, GroundConvexScale, 0.0f);
 
 
 			// Test used to pass planes and verts to FConvex but this is not suported an more. 
@@ -1111,10 +1111,62 @@ namespace ChaosTest
 
 	}
 
-	// Currently broken EPA edge cases. As they are fixed move them to EPARealFailures_Fixed above so that we can ensure they don't break again.
-	GTEST_TEST(EPATests, EPARealFailures_Broken)
+	// Currently broken EPA edge cases
+	// A box above a triangle, almost exactly parallel and touching.
+	// EPA fails due to numerical error and returns an very bad contact.
+	// We hit this condition in EPA: if (UpperBound <= UpperBoundTolerance)
+	// but have previously rejected all of the actual closest faces
+	// because of numerical error.
+	GTEST_TEST(EPATests, DISABLED_EPARealFailures_TouchingBoxTriangle)
 	{
-		
+		{
+			FImplicitBox3 Box = FImplicitBox3(
+				FVec3(-50.000000000000000, -50.000000000000000, -15.000000000000000),
+				FVec3(50.000000000000000, 50.000000000000000, 15.000000000000000)
+			);
+
+			FTriangle Triangle = FTriangle(
+				FVec3(94.478362706670822, -120.65494588586357, -14.999999386949069),
+				FVec3(89.056288683336533, 179.29605196669289, -15.000000556768336),
+				FVec3(-210.89470916921991, 173.87397794335860, -15.000000537575422)
+			);
+
+			const TGJKShape<FImplicitBox3> GJKConvex(Box);
+			const TGJKShape<FTriangle> GJKTriangle(Triangle);
+
+			const FReal GJKEpsilon = 1.e-6;
+			const FReal EPAEpsilon = 1.e-6;
+			FReal UnusedMaxMarginDelta = FReal(0);
+			int32 ConvexVertexIndex = INDEX_NONE;
+			int32 TriangleVertexIndex = INDEX_NONE;
+			FReal Penetration;
+			FVec3 ConvexClosest, TriangleClosest, ConvexNormal;
+			FVec3 InitialGJKDir = FVec3(1, 0, 0);
+
+			const bool bHaveContact = GJKPenetrationSameSpace(
+				GJKConvex,
+				GJKTriangle,
+				Penetration,
+				ConvexClosest,
+				TriangleClosest,
+				ConvexNormal,
+				ConvexVertexIndex,
+				TriangleVertexIndex,
+				UnusedMaxMarginDelta,
+				InitialGJKDir,
+				GJKEpsilon, EPAEpsilon);
+
+			EXPECT_TRUE(bHaveContact);
+
+			// Should be touching
+			EXPECT_NEAR(Penetration, 0, UE_KINDA_SMALL_NUMBER);
+
+			// Normal should point directly down
+			EXPECT_NEAR(ConvexNormal.Z, -1, UE_KINDA_SMALL_NUMBER);
+
+			// Contact should be on bottom of box
+			EXPECT_NEAR(ConvexClosest.Z, -15.0, UE_KINDA_SMALL_NUMBER);
+		}
 	}
 
 	//
@@ -1233,8 +1285,8 @@ namespace ChaosTest
 		TArray<uint16> Materials;
 		Materials.Emplace(0);
 		Materials.Emplace(0);
-		TUniquePtr<FTriangleMeshImplicitObject> TriangleMesh = MakeUnique<FTriangleMeshImplicitObject>(MoveTemp(TrimeshParticles), MoveTemp(Indices), MoveTemp(Materials));
-		TImplicitObjectScaled<FTriangleMeshImplicitObject> ScaledTriangleMesh = TImplicitObjectScaled<FTriangleMeshImplicitObject>(MakeSerializable(TriangleMesh), nullptr, FVec3(11.5, 11.5, 11.5));
+		FTriangleMeshImplicitObjectPtr TriangleMesh( new FTriangleMeshImplicitObject(MoveTemp(TrimeshParticles), MoveTemp(Indices), MoveTemp(Materials)));
+		TImplicitObjectScaled<FTriangleMeshImplicitObject> ScaledTriangleMesh = TImplicitObjectScaled<FTriangleMeshImplicitObject>(TriangleMesh, FVec3(11.5, 11.5, 11.5));
 
 		FQuat Rotation0(0.00488796039, 0.00569311855, -0.000786740216, 0.999971569);
 		FQuat Rotation1(0.0117356628, -0.0108017093, -0.000888462295, 0.999872327);
@@ -1288,8 +1340,8 @@ namespace ChaosTest
 		TRigidTransform<FReal, 3> StartTM(FVec3(-344.031799, 1210.37158, 134.252747), FQuat(-0.255716801, -0.714108050, 0.0788889676, -0.646866322), FVec3(1));
 
 		// Wrapping in 1,1,1 scale is unnecessary, but this is technically what is happening when sweeping against scaled trimesh.
-		TUniquePtr<FCapsule> Capsule = MakeUnique<FCapsule>(FVec3(0, 0, -33), FVec3(0, 0, 33), 42);
-		TImplicitObjectScaled<FCapsule> ScaledCapsule = TImplicitObjectScaled<FCapsule>(MakeSerializable(Capsule), nullptr, FVec3(1));
+		FCapsulePtr Capsule( new FCapsule(FVec3(0, 0, -33), FVec3(0, 0, 33), 42));
+		TImplicitObjectScaled<FCapsule> ScaledCapsule = TImplicitObjectScaled<FCapsule>(Capsule, FVec3(1));
 
 
 		const FVec3 Dir(-0.102473199, 0.130887285, -0.986087084);

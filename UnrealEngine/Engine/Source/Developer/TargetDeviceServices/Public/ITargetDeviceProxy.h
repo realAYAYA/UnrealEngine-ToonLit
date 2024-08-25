@@ -242,6 +242,13 @@ public:
 	virtual bool IsShared() const = 0;
 
 	/**
+	 * Checks whether this device is being simulated on a Simulator
+	 *
+	 * @return true if the device is being simulated, false otherwise.
+	 */
+	virtual bool IsSimulated() const = 0;
+	
+	/**
 	* Cancel the application running on the device
 	 * @param InVariant Variant of the device
 	 * @param ProcessIdentifier The bundle id

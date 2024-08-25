@@ -10,11 +10,9 @@
 
 #include "RemoteControlRoute.generated.h"
 
-DECLARE_DELEGATE_RetVal_TwoParams(bool, FRequestHandlerDelegate, const FHttpServerRequest&, const FHttpResultCallback&);
-
 struct FRemoteControlRoute
 {
-	FRemoteControlRoute(FString InRouteDescription, FHttpPath InPath, EHttpServerRequestVerbs InVerb, FRequestHandlerDelegate InHandler)
+	FRemoteControlRoute(FString InRouteDescription, FHttpPath InPath, EHttpServerRequestVerbs InVerb, FHttpRequestHandler InHandler)
 		: RouteDescription(MoveTemp(InRouteDescription))
 		, Path(MoveTemp(InPath))
 		, Verb(InVerb)
@@ -28,7 +26,7 @@ struct FRemoteControlRoute
 	/** The desired HTTP verb (ie. GET, PUT..) */
 	EHttpServerRequestVerbs Verb = EHttpServerRequestVerbs::VERB_GET;
 	/** The handler called when the route is accessed. */
-	FRequestHandlerDelegate Handler;
+	FHttpRequestHandler Handler;
 
 	friend uint32 GetTypeHash(const FRemoteControlRoute& Route) { return HashCombine(GetTypeHash(Route.Path), GetTypeHash(Route.Verb)); }
 	friend bool operator==(const FRemoteControlRoute& LHS, const FRemoteControlRoute& RHS) { return LHS.Path == RHS.Path && LHS.Verb == RHS.Verb; }

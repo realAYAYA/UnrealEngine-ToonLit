@@ -4,9 +4,12 @@
 
 #include "CoreMinimal.h"
 
-class FDisplayClusterViewportProxy_Context
+/**
+* The viewport proxy context (rendering thread data)
+*/
+struct FDisplayClusterViewportProxy_Context
 {
-public:
+	// The number of context
 	uint32  ContextNum = 0;
 
 	// Profile description from ViewFamily

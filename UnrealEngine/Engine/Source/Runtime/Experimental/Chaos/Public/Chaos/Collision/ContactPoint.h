@@ -108,6 +108,7 @@ namespace Chaos
 				uint8 bWasRestored : 1;						// Whether the point was retored from the previous frame due to lack of movement
 				uint8 bWasReplaced : 1;						// @todo(chaos): remove this
 				uint8 bHasStaticFrictionAnchor : 1;			// Whether our static friction anchor was recovered from a prior tick
+				uint8 bInitialContact : 1;					// Whether this is a new contact this tick for handling initial penetration
 			};
 			uint8 Bits;
 		};
@@ -116,6 +117,7 @@ namespace Chaos
 			: ContactPoint()
 			, Flags()
 			, TargetPhi(0)
+			, InitialPhi(0)
 			, ShapeAnchorPoints{ FVec3f(0), FVec3f(0) }
 			, InitialShapeContactPoints{ FVec3f(0), FVec3f(0) }
 		{}
@@ -124,6 +126,7 @@ namespace Chaos
 			: ContactPoint(InContactPoint)
 			, Flags()
 			, TargetPhi(0)
+			, InitialPhi(0)
 			, ShapeAnchorPoints{ FVec3f(0), FVec3f(0) }
 			, InitialShapeContactPoints{ FVec3f(0), FVec3f(0) }
 		{}
@@ -131,6 +134,7 @@ namespace Chaos
 		FContactPointf ContactPoint;			// Contact point results of low-level collision detection
 		FFlags Flags;							// Various flags
 		FRealSingle TargetPhi;					// Usually 0, but can be used to add padding or penetration (e.g., via a collision modifer)
+		FRealSingle InitialPhi;					// Non-resolved initial penetration
 		FVec3f ShapeAnchorPoints[2];			// When static friction holds, the contact points on each shape when static friction contact was made
 		FVec3f InitialShapeContactPoints[2];	// ShapeContactPoints when the constraint was first initialized. Used to track reusablility
 	};
@@ -165,17 +169,8 @@ namespace Chaos
 	class FSavedManifoldPoint
 	{
 	public:
-		FSavedManifoldPoint()
-		{
-		}
-
-		void Reset()
-		{
-			ShapeContactPoints[0] = FVec3f(0);
-			ShapeContactPoints[1] = FVec3f(0);
-		}
-
 		FVec3f ShapeContactPoints[2];			// Contact anchor points for friction
+		FRealSingle InitialPhi;					// Non-resolved initial penetration
 	};
 
 	class FManifoldPointResult

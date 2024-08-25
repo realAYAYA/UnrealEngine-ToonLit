@@ -20,6 +20,7 @@ namespace Insights
 	{
 		ByTimerName,
 		ByTimerId,
+		BySourceFile,
 		ByDuration,
 
 		Count
@@ -137,6 +138,7 @@ public:
 	FTimerNodePtr GetTimerNode(uint32 TimerId) const;
 	uint32 GetSelectedTimer() const { return SelectedTimerId; }
 	void SetSelectedTimer(uint32 TimerId);
+	void ToggleTimingViewMainGraphEventSeries(uint32 InTimerId);
 
 	void OnThreadFilterChanged();
 

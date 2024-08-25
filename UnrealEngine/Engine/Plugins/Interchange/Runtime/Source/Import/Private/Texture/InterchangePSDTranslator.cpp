@@ -212,7 +212,7 @@ namespace UE
 				}
 
 				// Skip Clut, Image Resource Section, and Layer/Mask Section
-				if (SkipSection(Current) == false ||
+				if (SkipSection(Current) == false || //-V501
 					SkipSection(Current) == false ||
 					SkipSection(Current) == false)
 				{

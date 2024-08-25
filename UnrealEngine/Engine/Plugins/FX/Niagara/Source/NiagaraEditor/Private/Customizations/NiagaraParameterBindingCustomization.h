@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "IPropertyTypeCustomization.h"
 #include "Layout/Visibility.h"
+#include "UObject/StructOnScope.h"
 
 #include "NiagaraCommon.h"
 #include "NiagaraParameterBindingCustomization.generated.h"

@@ -33,9 +33,10 @@ namespace PackageRestore
 	class FPackageRestoreItem : public TSharedFromThis<FPackageRestoreItem>
 	{
 	public:
-		FPackageRestoreItem(const FString& InPackageName, const FString& InPackageFilename, const FString& InAutoSaveFilename, const bool bInIsExistingPackage)
+		FPackageRestoreItem(const FString& InPackageName, const FString& InPackageLabel, const FString& InPackageFilename, const FString& InAutoSaveFilename, const bool bInIsExistingPackage)
 			: PackageName(InPackageName)
-			, PackageFilename(InPackageFilename)
+			, PackageLabel(InPackageLabel)
+			, PackageFilename(InPackageFilename)			
 			, AutoSaveFilename(InAutoSaveFilename)
 			, bIsExistingPackage(bInIsExistingPackage)
 			, State(ECheckBoxState::Unchecked)
@@ -46,6 +47,12 @@ namespace PackageRestore
 		const FString& GetPackageName() const
 		{
 			return PackageName;
+		}
+
+		/** @return The package label for this item */
+		const FString& GetPackageLabel() const
+		{
+			return PackageLabel.IsEmpty() ? PackageName : PackageLabel;
 		}
 
 		/** @return The package filename for this item */
@@ -127,6 +134,7 @@ namespace PackageRestore
 
 	private:
 		FString PackageName;
+		FString PackageLabel;
 		FString PackageFilename;
 		FString AutoSaveFilename;
 		bool bIsExistingPackage;
@@ -208,7 +216,7 @@ namespace PackageRestore
 					.FillWidth(1)
 					[
 						SNew(STextBlock)
-						.Text(FText::FromString(Item->GetPackageName()))
+						.Text(FText::FromString(Item->GetPackageLabel()))
 					];
 			}
 			else if (ColumnName == ColumnID_FileLabel)
@@ -597,7 +605,7 @@ namespace PackageRestore
 	}
 }
 
-FEditorFileUtils::EPromptReturnCode PackageRestore::PromptToRestorePackages(const TMap<FString, FString>& PackagesToRestore, TArray<FString>* OutFailedPackages)
+FEditorFileUtils::EPromptReturnCode PackageRestore::PromptToRestorePackages(const TMap<FString, TPair<FString, FString>>& PackagesToRestore, TArray<FString>* OutFailedPackages)
 {
 	const FString AutoSaveDir = AutoSaveUtils::GetAutoSaveDir();
 
@@ -607,12 +615,13 @@ FEditorFileUtils::EPromptReturnCode PackageRestore::PromptToRestorePackages(cons
 	for(auto It = PackagesToRestore.CreateConstIterator(); It; ++It)
 	{
 		const FString& PackageFullPath = It.Key();
-		const FString& AutoSavePath = It.Value();
+		const FString& PackageAssetLabel = It.Value().Key;
+		const FString& AutoSavePath = It.Value().Value;
 
 		FString PackageFilename;
 		if(FPackageName::DoesPackageExist(PackageFullPath, &PackageFilename))
 		{
-			FPackageRestoreItemPtr PackageItemPtr = MakeShared<FPackageRestoreItem>(PackageFullPath, PackageFilename, AutoSaveDir / AutoSavePath, true/*bIsExistingPackage*/);
+			FPackageRestoreItemPtr PackageItemPtr = MakeShared<FPackageRestoreItem>(PackageFullPath, PackageAssetLabel, PackageFilename, AutoSaveDir / AutoSavePath, true/*bIsExistingPackage*/);
 			PackageRestoreItems.Add(PackageItemPtr);
 		}
 		else
@@ -622,7 +631,7 @@ FEditorFileUtils::EPromptReturnCode PackageRestore::PromptToRestorePackages(cons
 			{
 				PackageFilename += FPaths::GetExtension(AutoSavePath, true/*bIncludeDot*/);
 
-				FPackageRestoreItemPtr PackageItemPtr = MakeShared<FPackageRestoreItem>(PackageFullPath, PackageFilename, AutoSaveDir / AutoSavePath, false/*bIsExistingPackage*/);
+				FPackageRestoreItemPtr PackageItemPtr = MakeShared<FPackageRestoreItem>(PackageFullPath, PackageAssetLabel, PackageFilename, AutoSaveDir / AutoSavePath, false/*bIsExistingPackage*/);
 				PackageRestoreItems.Add(PackageItemPtr);
 			}
 		}

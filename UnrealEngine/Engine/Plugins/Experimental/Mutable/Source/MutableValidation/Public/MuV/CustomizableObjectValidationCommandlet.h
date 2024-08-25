@@ -8,7 +8,10 @@
 
 #include "CustomizableObjectValidationCommandlet.generated.h"
 
+// Forward declarations
 class UCustomizableObject;
+class UCOIUpdater;
+class ITargetPlatform;
 
 UCLASS()
 class UCustomizableObjectValidationCommandlet : public UCommandlet 
@@ -19,31 +22,24 @@ public:
 	virtual int32 Main(const FString& Params) override;
 	
 private:
+	
+	/**
+	 * Extracts the targeted compilation platform provided by the user. It will look for "-CompilationPlatformName="PlatformName".
+	 * Examples : -CompilationPlatformName=WindowsEditor or -CompilationPlatformName=Switch
+	 * @param Params The arguments provided to this commandlet.
+	 * @return The target platform to be used for the CO compilation.
+	 */
+	ITargetPlatform* ParseCompilationPlatform(const FString& Params) const;
 
 	/** Customizable Object to be tested */
 	UPROPERTY()
-	UCustomizableObject* ToTestCustomizableObject = nullptr;
-	
-	/** Customizable Object Instance currently being updated*/
+	TObjectPtr<UCustomizableObject> ToTestCustomizableObject = nullptr;
+
+	/** Array of COI to be generated with randomized parameter values */
 	UPROPERTY()
-	UCustomizableObjectInstance* InstanceBeingUpdated = nullptr;
+	TArray<TObjectPtr<UCustomizableObjectInstance>> InstancesToProcess;
 
-	/** Array of COI to be generated with randomized parameter values*/
+	/** Helper object designed to aid in the update of the CO Instances.*/
 	UPROPERTY()
-	TArray<UCustomizableObjectInstance*> InstancesToProcess;
-	
-	/** Handle to be able to unbind OnInstanceUpdated(...) from instance end of update delegate.*/
-	FDelegateHandle OnInstanceUpdateHandle;
-
-	/** Did any of the instances fail the UpdateSkeletalMesh process?*/
-	bool bInstanceFailedUpdate = false;
-
-	// Instance update delegate
-	FInstanceUpdateDelegate InstanceUpdateDelegate;
-
-	/** Callback invoked once the currently updating instance has done the update.
-	 * @paragm Result is a container that provides us with data related with the instance updating process.
-	 */
-	UFUNCTION()
-	void OnInstanceUpdate(const FUpdateContext& Result);
+	TObjectPtr<UCOIUpdater> InstanceUpdater;
 };

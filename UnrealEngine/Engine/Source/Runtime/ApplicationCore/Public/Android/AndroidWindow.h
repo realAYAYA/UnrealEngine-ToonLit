@@ -4,6 +4,7 @@
 
 #include "GenericPlatform/GenericWindow.h"
 #include "GenericPlatform/GenericApplication.h"
+#include "GenericPlatform/GenericPlatformMisc.h"
 #include <android/native_window.h> 
 #if USE_ANDROID_JNI
 #include <android/native_window_jni.h>
@@ -43,7 +44,7 @@ public:
 	// When bUseEventThreadWindow == false this uses dimensions cached when the game thread processes android events.
 	// When bUseEventThreadWindow == true this uses dimensions directly from the android event thread, unless called from event thread this requires acquiring GAndroidWindowLock to use.
 	static APPLICATIONCORE_API void CalculateSurfaceSize(int32_t& SurfaceWidth, int32_t& SurfaceHeight, bool bUseEventThreadWindow = false);
-	static APPLICATIONCORE_API bool OnWindowOrientationChanged(int Orientation);
+	static APPLICATIONCORE_API bool OnWindowOrientationChanged(EDeviceScreenOrientation DeviceScreenOrientation);
 
 	static APPLICATIONCORE_API int32 GetDepthBufferPreference();
 	
@@ -61,7 +62,6 @@ public:
 
 	static APPLICATIONCORE_API bool IsPortraitOrientation();
 	static APPLICATIONCORE_API FVector4 GetSafezone(bool bPortrait);
-	static APPLICATIONCORE_API bool SafezoneUpdated();
 
 	// called by the Android event thread to initially set the current window dimensions.
 	static APPLICATIONCORE_API void SetWindowDimensions_EventThread(ANativeWindow* DimensionWindow);

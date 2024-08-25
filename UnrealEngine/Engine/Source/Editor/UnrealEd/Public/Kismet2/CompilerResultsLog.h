@@ -121,10 +121,10 @@ public:
 	// Should nodes mentioned in messages be annotated for display with that message?
 	bool bAnnotateMentionedNodes;
 
-	// Should detailed results be appended to the final summary log?
+	// Should detailed BeginEvent/EndEvent timing information be written to log
 	bool bLogDetailedResults;
 
-	// Minimum event time (ms) for inclusion into the final summary log
+	// Minimum event time (ms) for events include in detailed results
 	int EventDisplayThresholdMs;
 
 	/** Tracks nodes that produced errors/warnings */
@@ -330,10 +330,10 @@ public:
 	/** End the current compiler event */
 	UNREALED_API void EndEvent();
 
-	/** Access the current event target log */
+	UE_DEPRECATED(5.4, "BP-specific perf tracking has been removed, use Insights")
 	static FCompilerResultsLog* GetEventTarget()
 	{
-		return CurrentEventTarget;
+		return nullptr;
 	}
 
 	/** Get the message log listing for this blueprint */
@@ -421,35 +421,16 @@ private:
 	/** The log's name, for easy re-use */
 	static UNREALED_API const FName Name;
 	
-	/** The log target for compile events */
-	static UNREALED_API FCompilerResultsLog* CurrentEventTarget;
-
 	/** Handle to the registered GetGlobalModuleCompilerDump delegate. */
 	static UNREALED_API FDelegateHandle GetGlobalModuleCompilerDumpDelegateHandle;
 };
 
-/** This class will begin a new compile event on construction, and automatically end it when the instance goes out of scope */
 class FScopedCompilerEvent
 {
 public:
-	/** Constructor; automatically begins a new event */
+	UE_DEPRECATED(5.4, "BP-specific perf tracking has been removed, use Insights")
 	FScopedCompilerEvent(const TCHAR* InName)
 	{
-		FCompilerResultsLog* ResultsLog = FCompilerResultsLog::GetEventTarget();
-		if(ResultsLog != nullptr)
-		{
-			ResultsLog->BeginEvent(InName);
-		}
-	}
-
-	/** Destructor; automatically ends the event */
-	~FScopedCompilerEvent()
-	{
-		FCompilerResultsLog* ResultsLog = FCompilerResultsLog::GetEventTarget();
-		if(ResultsLog != nullptr)
-		{
-			ResultsLog->EndEvent();
-		}
 	}
 };
 
@@ -471,11 +452,9 @@ public:
 #if STATS
 #define BP_SCOPED_COMPILER_EVENT_STAT(Stat) \
 	SCOPE_CYCLE_COUNTER(Stat); \
-	TRACE_CPUPROFILER_EVENT_SCOPE(Stat); \
-	FScopedCompilerEvent PREPROCESSOR_JOIN(ScopedCompilerEvent,__LINE__)(GET_STATDESCRIPTION(Stat))
+	TRACE_CPUPROFILER_EVENT_SCOPE(Stat);
 #else
 #define BP_SCOPED_COMPILER_EVENT_STAT(Stat) \
-	TRACE_CPUPROFILER_EVENT_SCOPE(Stat); \
-	FScopedCompilerEvent PREPROCESSOR_JOIN(ScopedCompilerEvent,__LINE__)(ANSI_TO_TCHAR(#Stat))
+	TRACE_CPUPROFILER_EVENT_SCOPE(Stat);
 #endif
 #endif	//#if WITH_EDITOR

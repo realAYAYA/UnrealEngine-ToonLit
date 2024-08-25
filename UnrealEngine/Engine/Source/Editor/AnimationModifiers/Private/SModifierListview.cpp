@@ -43,6 +43,7 @@ void SModifierListView::Construct(const FArguments& InArgs)
 	OnRemoveModifierDelegate = InArgs._OnRemoveModifier;
 	OnMoveUpModifierDelegate = InArgs._OnMoveUpModifier;
 	OnMoveDownModifierDelegate = InArgs._OnMoveDownModifier;
+	OnSelectedModifierChangedDelegate = InArgs._OnSelectedModifierChanged;
 	
 	this->ChildSlot
 	[
@@ -58,15 +59,22 @@ TSharedRef<ITableRow> SModifierListView::OnGenerateWidgetForList(ModifierListvie
 void SModifierListView::OnSelectionChanged(ModifierListviewItem SelectedItem, ESelectInfo::Type SelectInfo)
 {
 	UObject* SelectedObject = nullptr;
-
+	TWeakObjectPtr<UAnimationModifier> SelectedModifierInstance = nullptr;
+	
 	// Find object to select if an item was selected (otherwise we are de-selecting to nullptr)
 	if (SelectedItem.IsValid())
 	{
 		SelectedObject = SelectedItem->Instance.Get();
+		SelectedModifierInstance = SelectedItem->Instance;
 	}
 
 	// Set the details view to the currently selected modifier blueprint instance
-	InstanceDetailsView->SetObject(SelectedObject);
+	if (InstanceDetailsView.IsValid())
+	{
+		InstanceDetailsView->SetObject(SelectedObject);
+	}
+	
+	OnSelectedModifierChangedDelegate.ExecuteIfBound(SelectedModifierInstance);
 }
 
 void SModifierListView::OnApplyModifier()

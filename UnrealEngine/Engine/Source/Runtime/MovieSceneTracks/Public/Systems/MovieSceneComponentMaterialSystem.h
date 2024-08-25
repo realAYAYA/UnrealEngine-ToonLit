@@ -7,6 +7,7 @@
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateStorage.h"
 
 #include "Systems/MovieSceneMaterialSystem.h"
+#include "Tracks/MovieSceneMaterialTrack.h"
 
 #include "MovieSceneComponentMaterialSystem.generated.h"
 
@@ -18,15 +19,15 @@ namespace UE::MovieScene
 struct FComponentMaterialKey
 {
 	FObjectKey Object;
-	int32 MaterialIndex;
+	FComponentMaterialInfo MaterialInfo;
 
 	friend uint32 GetTypeHash(const FComponentMaterialKey& In)
 	{
-		return GetTypeHash(In.Object) ^ ::GetTypeHash(In.MaterialIndex);
+		return HashCombine(GetTypeHash(In.Object), GetTypeHash(In.MaterialInfo));
 	}
 	friend bool operator==(const FComponentMaterialKey& A, const FComponentMaterialKey& B)
 	{
-		return A.Object == B.Object && A.MaterialIndex == B.MaterialIndex;
+		return A.Object == B.Object && A.MaterialInfo == B.MaterialInfo;
 	}
 };
 
@@ -35,10 +36,10 @@ struct FComponentMaterialAccessor
 	using KeyType = FComponentMaterialKey;
 
 	UObject* Object;
-	int32 MaterialIndex;
+	FComponentMaterialInfo MaterialInfo;
 
 	FComponentMaterialAccessor(const FComponentMaterialKey& InKey);
-	FComponentMaterialAccessor(UObject* InObject, int32 InMaterialIndex);
+	FComponentMaterialAccessor(UObject* InObject, const FComponentMaterialInfo& InMaterialInfo);
 
 	explicit operator bool() const;
 
@@ -48,17 +49,17 @@ struct FComponentMaterialAccessor
 	FString ToString() const;
 };
 
-using FPreAnimatedComponentMaterialTraits          = TPreAnimatedMaterialTraits<FComponentMaterialAccessor, UObject*, int32>;
-using FPreAnimatedComponentMaterialParameterTraits = TPreAnimatedMaterialParameterTraits<FComponentMaterialAccessor, UObject*, int32>;
+using FPreAnimatedComponentMaterialTraits          = TPreAnimatedMaterialTraits<FComponentMaterialAccessor, UObject*, FComponentMaterialInfo>;
+using FPreAnimatedComponentMaterialParameterTraits = TPreAnimatedMaterialParameterTraits<FComponentMaterialAccessor, UObject*, FComponentMaterialInfo>;
 
 struct FPreAnimatedComponentMaterialSwitcherStorage
-	: public TPreAnimatedStateStorage<TPreAnimatedMaterialTraits<FComponentMaterialAccessor, UObject*, int32>>
+	: public TPreAnimatedStateStorage<TPreAnimatedMaterialTraits<FComponentMaterialAccessor, UObject*, FComponentMaterialInfo>>
 {
 	static TAutoRegisterPreAnimatedStorageID<FPreAnimatedComponentMaterialSwitcherStorage> StorageID;
 };
 
 struct FPreAnimatedComponentMaterialParameterStorage
-	: public TPreAnimatedStateStorage<TPreAnimatedMaterialParameterTraits<FComponentMaterialAccessor, UObject*, int32>>
+	: public TPreAnimatedStateStorage<TPreAnimatedMaterialParameterTraits<FComponentMaterialAccessor, UObject*, FComponentMaterialInfo>>
 {
 	static TAutoRegisterPreAnimatedStorageID<FPreAnimatedComponentMaterialParameterStorage> StorageID;
 };
@@ -87,5 +88,5 @@ private:
 
 private:
 
-	UE::MovieScene::TMovieSceneMaterialSystem<UE::MovieScene::FComponentMaterialAccessor, UObject*, int32> SystemImpl;
+	UE::MovieScene::TMovieSceneMaterialSystem<UE::MovieScene::FComponentMaterialAccessor, UObject*, FComponentMaterialInfo> SystemImpl;
 };

@@ -148,7 +148,7 @@ class MegaXGE : BuildCommand
 		}
 		Logger.LogInformation("*************************");
 
-		UnrealBuild.Build(Agenda, InUpdateVersionFiles: IsBuildMachine, InUseParallelExecutor: ParseParam("useparallelexecutor"), InShowProgress: ShowProgress);
+		UnrealBuild.Build(Agenda, InUpdateVersionFiles: IsBuildMachine);
 
 		// 		if (WorkingCL > 0) // only move UAT files if we intend to check in some build products
 		// 		{

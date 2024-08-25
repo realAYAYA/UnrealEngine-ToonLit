@@ -153,7 +153,7 @@ struct FDeepGroup : FDependencySolverBase
 		{
 			if (Result[i].NodeType != FMassProcessorOrderInfo::EDependencyNodeType::Processor)
 			{
-				Result.RemoveAt(i--, 1, /*bAllowShrinking=*/false);
+				Result.RemoveAt(i--, 1, EAllowShrinking::No);
 			}
 		}
 

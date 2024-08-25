@@ -256,6 +256,7 @@ struct FMeshBatchElement
 	uint32 bIsInstanceRuns : 1;
 	uint32 bForceInstanceCulling : 1;
 	uint32 bPreserveInstanceOrder : 1;
+	uint32 bFetchInstanceCountFromScene : 1;
 
 #if UE_ENABLE_DEBUG_DRAWING
 	/** Conceptual element index used for debug viewmodes. */
@@ -311,6 +312,7 @@ struct FMeshBatchElement
 	,	bIsInstanceRuns(false)
 	,	bForceInstanceCulling(false)
 	,	bPreserveInstanceOrder(false)
+	,	bFetchInstanceCountFromScene(false)
 #if UE_ENABLE_DEBUG_DRAWING
 	,	VisualizeElementIndex(INDEX_NONE)
 #endif
@@ -412,6 +414,12 @@ struct FMeshBatch
 	 */
 	uint32 bViewDependentArguments : 1;
 
+	/** Whether the mesh batch should be used in the depth-only passes of rendering the water info texture for the water plugin */
+	uint32 bUseForWaterInfoTextureDepth : 1;
+	
+	/** Gives the opportunity to select a different VF for the landscape for the lumen surface cache capture */
+	uint32 bUseForLumenSurfaceCacheCapture : 1;
+
 #if UE_ENABLE_DEBUG_DRAWING
 	/** Conceptual HLOD index used for the HLOD Coloration visualization. */
 	int8 VisualizeHLODIndex;
@@ -445,7 +453,7 @@ struct FMeshBatch
 	{
 		for (int32 ElementIdx = 0; ElementIdx < Elements.Num(); ++ElementIdx)
 		{
-			if (Elements[ElementIdx].GetNumPrimitives() > 0 || Elements[ElementIdx].IndirectArgsBuffer)
+			if (Elements[ElementIdx].GetNumPrimitives() > 0 || Elements[ElementIdx].IndirectArgsBuffer || Elements[ElementIdx].bFetchInstanceCountFromScene)
 			{
 				return true;
 			}
@@ -491,6 +499,8 @@ struct FMeshBatch
 	,	CastRayTracedShadow(true)
 #endif
 	,	bViewDependentArguments(false)
+	,	bUseForWaterInfoTextureDepth(false)
+	,	bUseForLumenSurfaceCacheCapture(false)
 #if (!(UE_BUILD_SHIPPING || UE_BUILD_TEST) || WITH_EDITOR)
 	,	VisualizeHLODIndex(INDEX_NONE)
 #endif

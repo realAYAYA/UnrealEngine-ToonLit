@@ -302,6 +302,11 @@ void FManagedArrayCollection::Append(const FManagedArrayCollection& InCollection
 void FManagedArrayCollection::RemoveAttribute(FName Name, FName Group)
 {
 	FKeyType Key = FManagedArrayCollection::MakeMapKey(Name, Group);
+	FValueType* FoundValue = Map.Find(Key);
+	if (FoundValue != nullptr)
+	{
+		FoundValue->Value->Empty();
+	}
 	Map.Remove(Key);
 }
 
@@ -419,6 +424,13 @@ void FManagedArrayCollection::SetDependency(FName Name, FName Group, FName Depen
 	}
 }
 
+FName FManagedArrayCollection::GetDependency(FName Name, FName Group) const
+{
+	check(HasAttribute(Name, Group));
+	const FKeyType Key = FManagedArrayCollection::MakeMapKey(Name, Group);
+	return Map[Key].GroupIndexDependency;
+}
+
 void FManagedArrayCollection::RemoveDependencyFor(FName Group)
 {
 	ensure(HasGroup(Group));
@@ -450,6 +462,40 @@ void FManagedArrayCollection::SyncGroupSizeFrom(const FManagedArrayCollection& I
 	}
 
 	Resize(InCollection.GroupInfo[Group].Size, Group);
+}
+
+void FManagedArrayCollection::CopyMatchingAttributesFrom(const FManagedArrayCollection& FromCollection, const TArrayView<const FAttributeAndGroupId> SkipList)
+{
+	MatchOptionalDefaultAttributes(FromCollection);
+
+	// we only want to resize the groups that are in common 
+	for (const TPair<FName, FGroupInfo>& Pair: FromCollection.GroupInfo)
+	{
+		const FName& GroupName = Pair.Key;
+		if (HasGroup(GroupName))
+		{
+			Resize(Pair.Value.Size, GroupName);
+		}
+	}
+
+	for (TTuple<FKeyType, FValueType>& Entry : Map)
+	{
+		const FName& AttributeName = Entry.Key.Get<0>();
+		const FName& GroupName = Entry.Key.Get<1>();
+
+		if (SkipList.Contains(FAttributeAndGroupId{ AttributeName, GroupName }))
+		{
+			continue;
+		}
+		if (const FValueType* FromAttribute = FromCollection.Map.Find(MakeMapKey(AttributeName, GroupName)))
+		{
+			FValueType& ToAttribute = Entry.Value;
+			if (ToAttribute.ArrayType == FromAttribute->ArrayType)
+			{
+				ToAttribute.Value->Init(*FromAttribute->Value);
+			}
+		}
+	}
 }
 
 void FManagedArrayCollection::CopyMatchingAttributesFrom(
@@ -486,7 +532,6 @@ void FManagedArrayCollection::CopyMatchingAttributesFrom(
 			}
 		}
 	}
-
 }
 
 void FManagedArrayCollection::CopyAttribute(const FManagedArrayCollection& InCollection, FName Name, FName Group)
@@ -514,8 +559,14 @@ void FManagedArrayCollection::CopyAttribute(const FManagedArrayCollection& InCol
 
 	const FValueType& OriginalValue = InCollection.Map[SrcKey];
 	const FValueType& DestValue = Map[DestKey];
-	check(OriginalValue.ArrayType == DestValue.ArrayType);
-	DestValue.Value->Init(*OriginalValue.Value);
+	if (OriginalValue.ArrayType == DestValue.ArrayType)
+	{
+		DestValue.Value->Init(*OriginalValue.Value);
+	}
+	else
+	{
+		DestValue.Value->Convert(*OriginalValue.Value);
+	}
 }
 
 bool FManagedArrayCollection::IsConnected(FName StartingNode, FName TargetNode)
@@ -666,10 +717,14 @@ void FManagedArrayCollection::Serialize(Chaos::FChaosArchive& Ar)
 		{
 			if (FValueType* Existing = Map.Find(Pair.Key))
 			{
-				if (ensureMsgf(Existing->ArrayType == Pair.Value.ArrayType, TEXT("Type change not supported. Ignoring serialized data")))
+				if (Existing->ArrayType == Pair.Value.ArrayType)
 				{
 					Existing->Value->ExchangeArrays(*Pair.Value.Value);	//if there is already an entry do an exchange. This way external arrays get correct serialization
 					//question: should we validate if group dependency has changed in some invalid way?
+				}
+				else
+				{
+					Existing->Value->Convert(*Pair.Value.Value);
 				}
 			}
 			else

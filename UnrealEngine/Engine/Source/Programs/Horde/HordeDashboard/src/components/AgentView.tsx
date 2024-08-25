@@ -1,5 +1,5 @@
-// Copyright Epic Games, Inc. All Rights Reserved.  
-import { Checkbox, CommandButton, ConstrainMode, ContextualMenu, DefaultButton, DetailsHeader, DetailsList, DetailsListLayoutMode, Dialog, DialogType, DirectionalHint, Dropdown, FontSizes, FontWeights, getTheme, IBasePickerProps, IColumn, Icon, IconButton, IContextualMenuItem, IContextualMenuProps, IDetailsHeaderProps, IDetailsHeaderStyles, IDetailsListProps, ITag, ITagItemStyles, ITooltipHostStyles, Link as ReactLink, mergeStyles, mergeStyleSets, PrimaryButton, ProgressIndicator, ScrollablePane, ScrollbarVisibility, SearchBox, Selection, SelectionMode, Slider, Spinner, SpinnerSize, Stack, Sticky, StickyPositionType, TagItem, TagPicker, Text, TextField } from '@fluentui/react';
+// Copyright Epic Games, Inc. All Rights Reserved.
+import { Checkbox, CommandButton, ConstrainMode, ContextualMenu, DefaultButton, DetailsHeader, DetailsList, DetailsListLayoutMode, Dialog, DialogType, DirectionalHint, Dropdown, FontIcon, FontSizes, FontWeights, IBasePickerProps, IColumn, IContextualMenuItem, IContextualMenuProps, IDetailsHeaderProps, IDetailsHeaderStyles, IDetailsListProps, ITag, ITagItemStyles, ITooltipHostStyles, Icon, IconButton, Pivot, PivotItem, PrimaryButton, ProgressIndicator, Link as ReactLink, ScrollablePane, ScrollbarVisibility, SearchBox, Selection, SelectionMode, Slider, Spinner, SpinnerSize, Stack, Sticky, StickyPositionType, TagItem, TagPicker, Text, TextField, mergeStyleSets } from '@fluentui/react';
 import { action, makeObservable, observable } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import moment from 'moment-timezone';
@@ -8,128 +8,127 @@ import { Link, useSearchParams } from 'react-router-dom';
 import Marquee from 'react-text-marquee';
 import backend from '../backend';
 import { agentStore } from '../backend/AgentStore';
-import { AgentData, BatchUpdatePoolRequest, GetAgentResponse, LeaseState, PoolData } from '../backend/Api';
+import { AgentData, BatchUpdatePoolRequest, GetAgentResponse, GetDashboardAgentCategoryResponse, LeaseState, PoolData } from '../backend/Api';
+import dashboard, { StatusColor } from '../backend/Dashboard';
 import { copyToClipboard } from '../base/utilities/clipboard';
 import { useWindowSize } from '../base/utilities/hooks';
 import { getShortNiceTime } from '../base/utilities/timeUtils';
-import { hexToRGB, hordeClasses, linearInterpolate } from '../styles/Styles';
+import { getHordeStyling, hexToRGB, linearInterpolate } from '../styles/Styles';
+import { getHordeTheme } from '../styles/theme';
 import { Breadcrumbs } from './Breadcrumbs';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { HistoryModal } from './HistoryModal';
 import { TopNav } from './TopNav';
 
+let _agentStyles: any;
+const getAgentStyles = () => {
+   const theme = getHordeTheme();
 
-const theme = getTheme();
+   const agentStyles = _agentStyles ?? mergeStyleSets({
 
-const iconClass = mergeStyles({
-   fontSize: 16,
-   marginRight: "13px",
-   paddingTop: "2px",
-});
-
-const detailClassNames = mergeStyleSets({
-   success: [{ color: theme.palette.green }, iconClass],
-   warnings: [{ color: theme.palette.yellow }, iconClass],
-   failure: [{ color: theme.palette.red }, iconClass],
-   offline: [{ color: theme.palette.neutralTertiary }, iconClass],
-   waiting: [{ color: theme.palette.neutralLighter }, iconClass],
-   ready: [{ color: theme.palette.neutralLight }, iconClass],
-   skipped: [{ color: theme.palette.neutralTertiary }, iconClass],
-   running: [{ color: theme.palette.blueLight }, iconClass]
-});
-
-const agentStyles = mergeStyleSets({
-
-   ticker: {
-      width: '100%'
-   },
-   checkboxCell: {
-      selectors: {
-         '> div': {
-            height: '100%'
+      ticker: {
+         width: '100%'
+      },
+      checkboxCell: {
+         selectors: {
+            '> div': {
+               height: '100%'
+            }
          }
-      }
-   },
-   dialog: {
-      selectors: {
-         ".ms-Label,.ms-Button-label": {
-            fontWeight: "unset",
-            fontFamily: "Horde Open Sans SemiBold"
+      },
+      dialog: {
+         selectors: {
+            ".ms-Label,.ms-Button-label": {
+               fontWeight: "unset",
+               fontFamily: "Horde Open Sans SemiBold"
+            }
          }
-      }
-   },
-   detailsList: {
-      selectors: {
-         ".ms-DetailsHeader-cellName": {
-            fontWeight: "unset",
-            fontFamily: "Horde Open Sans SemiBold"
+      },
+      detailsList: {
+         selectors: {
+            ".ms-DetailsHeader-cellName": {
+               fontWeight: "unset",
+               fontFamily: "Horde Open Sans SemiBold"
+            },
+            ".ms-DetailsRow #editagent": {
+               opacity: 0
+            },
+            ".ms-DetailsRow:hover #editagent": {
+               opacity: 1
+            }
          }
-      }
-   },
-   descFont: {
-      font: '8pt Horde Open Sans SemiBold !important',
-      marginLeft: 12,
-      marginRight: 12,
-      marginBottom: 4
-   },
-   buttonFont: {
-      height: '26px',
-      font: '7pt Horde Open Sans SemiBold !important',
-      flexShrink: '0 !important',
-      paddingLeft: 6,
-      paddingRight: 6,
-      selectors: {
-         '.ms-Icon': {
-            width: 0,
-            margin: 0
-         },
-         ':active': {
-            textDecoration: 'none'
-         },
-         ':hover': {
-            textDecoration: 'none'
-         },
-         ':visited': {
-            textDecoration: 'none',
-            color: "#FFFFFF"
-         }
+      },
+      descFont: {
+         font: '8pt Horde Open Sans SemiBold !important',
+         marginLeft: 12,
+         marginRight: 12,
+         marginBottom: 4
+      },
+      buttonFont: {
+         height: '26px',
+         font: '7pt Horde Open Sans SemiBold !important',
+         flexShrink: '0 !important',
+         paddingLeft: 6,
+         paddingRight: 6,
+         selectors: {
+            '.ms-Icon': {
+               width: 0,
+               margin: 0
+            },
+            ':active': {
+               textDecoration: 'none'
+            },
+            ':hover': {
+               textDecoration: 'none'
+            },
+            ':visited': {
+               textDecoration: 'none',
+               color: "#FFFFFF"
+            }
 
-      }
-   },
-   modalHeader: [
-      {
-         font: '24px Horde Open Sans Light',
-         flex: '1 1 auto',
-         color: theme.palette.neutralPrimary,
-         display: 'flex',
-         fontSize: FontSizes.xLarge,
-         alignItems: 'center',
-         fontWeight: FontWeights.semibold,
-         padding: '12px 12px 14px 24px'
-      }
-   ],
-   modalBody: {
-      flex: '4 4 auto',
-      padding: '0 24px 24px 24px',
-      overflowY: 'hidden',
-      selectors: {
-         p: {
-            margin: '14px 0'
-         },
-         'p:first-child': {
-            marginTop: 0
-         },
-         'p:last-child': {
-            marginBottom: 0
          }
+      },
+      modalHeader: [
+         {
+            font: '24px Horde Open Sans Light',
+            flex: '1 1 auto',
+            color: theme.palette.neutralPrimary,
+            display: 'flex',
+            fontSize: FontSizes.xLarge,
+            alignItems: 'center',
+            fontWeight: FontWeights.semibold,
+            padding: '12px 12px 14px 24px'
+         }
+      ],
+      modalBody: {
+         flex: '4 4 auto',
+         padding: '0 24px 24px 24px',
+         overflowY: 'hidden',
+         selectors: {
+            p: {
+               margin: '14px 0'
+            },
+            'p:first-child': {
+               marginTop: 0
+            },
+            'p:last-child': {
+               marginBottom: 0
+            }
+         }
+      },
+      ellipsesStackItem: {
+         whiteSpace: 'nowrap',
+         overflow: 'hidden',
+         textOverflow: 'ellipsis'
       }
-   },
-   ellipsesStackItem: {
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-   }
-});
+   });
+
+   _agentStyles = agentStyles;
+
+   return agentStyles;
+}
+
+
 
 // column in the main table
 type ColumnItem = {
@@ -196,6 +195,7 @@ type SearchState = {
    exactSearch?: boolean;
    filter?: string[];
    columnMode?: string;
+   category?: string;
 }
 
 class LocalState {
@@ -219,6 +219,7 @@ class LocalState {
    @observable shutdownAgentDialogIsOpen = false;
    @observable disableAgentDialogIsOpen = false;
    @observable cancelLeasesDialogIsOpen = false;
+   @observable editCommentDialogIsOpen = false;
 
    // column state for the table
    @observable columnsState: ColumnItem[];
@@ -276,6 +277,11 @@ class LocalState {
       this.updateSearch();
    }
 
+   @action
+   setAgentCategory(category?: string) {
+      this.searchState.category = category?.trim();
+      this.updateSearch();
+   }
 
    @action
    private _onColumnClick(ev: React.MouseEvent<HTMLElement>, column: IColumn) {
@@ -317,12 +323,32 @@ class LocalState {
       });
    }
 
-   async requestBuilderUpdate(conform: boolean, restart: boolean, fullConform?: boolean, shutdown?: boolean) {
+   // enable or disable builders.
+   async changeCommment(commentText?: string) {
+      let that = this;
+      const comment = commentText ?? "";
+      const allUpdates: any[] = [];
+      const selectedAgents = this.currentSelection;
+      selectedAgents.forEach(agent => {
+         // add to update queue if the agent isnt set to the value
+         if (agent.comment !== comment) {
+            allUpdates.push(backend.updateAgent(agent.id, { comment: comment }));
+         }
+      });
+      await Promise.all(allUpdates).then(function () {
+         that.setEditCommentDialogOpen(false);
+      }).catch(function (errors) {
+      }).finally(function () {
+         agentStore.update();
+      });
+   }
+
+   async requestBuilderUpdate(conform: boolean, restart: boolean, fullConform?: boolean, shutdown?: boolean, forceRestart?: boolean) {
       let that = this;
       const allUpdates: any[] = [];
       const selectedAgents = this.currentSelection;
       selectedAgents.forEach(agent => {
-         allUpdates.push(backend.updateAgent(agent.id, { requestConform: conform, requestFullConform: fullConform, requestRestart: restart, requestShutdown: shutdown }));
+         allUpdates.push(backend.updateAgent(agent.id, { requestConform: conform, requestFullConform: fullConform, requestRestart: restart, requestShutdown: shutdown, requestForceRestart: !!forceRestart }));
       });
       await Promise.all(allUpdates).then(function (responses) {
          if (restart) {
@@ -377,6 +403,10 @@ class LocalState {
 
    @action setDisableBuilderDialogOpen(isOpen: boolean) {
       this.disableAgentDialogIsOpen = isOpen;
+   }
+
+   @action setEditCommentDialogOpen(isOpen: boolean) {
+      this.editCommentDialogIsOpen = isOpen;
    }
 
    @action setRestartBuilderDialogOpen(isOpen: boolean) {
@@ -435,16 +465,32 @@ class LocalState {
 
    private _updateColumnDefs() {
       this.columnsState.forEach(colState => {
+
+         let colSize = colState.colSize;
+
+         if (!this.agentView && colState.displayText === "Pools") {
+            colSize = 480;
+         }
+
          colState.columnDef = {
             key: colState.key,
             name: colState.displayText,
-            minWidth: colState.colSize,
-            maxWidth: colState.colSize,
+            minWidth: colSize,
+            maxWidth: colSize,
             isResizable: false,
             isSorted: colState.key === "pools" ? undefined : colState.isSorted,
             isSortedDescending: colState.key === "pools" ? undefined : colState.isSortedDescending,
-            onColumnClick: this._onColumnClick.bind(this)
+            onColumnClick: this._onColumnClick.bind(this),
+            onRender: colState.key === "editAgent" ? () => {
+               return <Stack style={{ cursor: "pointer" }} verticalFill verticalAlign='center' horizontalAlign='start' onClick={(ev) => {
+                  localState.setRightClickDiv(ev?.clientX, ev?.clientY);
+                  localState.setAgentContextMenuOpen(true);
+               }
+               }><FontIcon id="editagent" style={{ fontSize: 14 }} iconName="Edit" />
+               </Stack>
+            } : undefined
          };
+
       });
    }
 
@@ -557,6 +603,10 @@ class LocalState {
          search.append("agentId", state.agentId);
       }
 
+      if (state.category) {
+         search.append("category", encodeURIComponent(state.category));
+      }
+
       state.filter?.forEach(f => {
          if (f) {
             search.append("filter", f);
@@ -585,12 +635,14 @@ class LocalState {
       const agentId = search.get("agentId") ?? undefined;
       const exact = search.get("exact") ?? undefined;
       const mode = search.get("mode") ?? undefined;
+      const category = search.get("category") ?? undefined;
 
       state.filter = filters?.sort((a, b) => a.localeCompare(b));
       state.columnMode = mode?.length ? mode : undefined;
       state.agentSearch = agentSearch?.length ? agentSearch : undefined;
       state.exactSearch = exact?.trim() === "true" ? true : undefined;
       state.agentId = agentId?.trim() ? agentId : undefined;
+      state.category = category?.trim() ? category : undefined;
 
       this.search = search;
       this.searchState = state;
@@ -601,7 +653,6 @@ class LocalState {
       if (state.exactSearch) {
          this.filterExactMatch = true;
       }
-
       if (state.filter?.length) {
          this.agentStatusFilter = new Set<string>(state.filter);
       }
@@ -612,6 +663,8 @@ class LocalState {
 
       return state;
    }
+
+   agentView: boolean | undefined = true;
 
    constructor() {
       makeObservable(this);
@@ -629,7 +682,7 @@ class LocalState {
          {
             key: 'pools',
             displayText: 'Pools',
-            colSize: 540,
+            colSize: 476,
             isChecked: true,
             isCheckable: false,
             isSorted: false,
@@ -649,7 +702,7 @@ class LocalState {
          {
             key: 'software',
             displayText: 'Software',
-            colSize: 180,
+            colSize: 220,
             isChecked: false,
             isCheckable: true,
             isSorted: false,
@@ -659,7 +712,7 @@ class LocalState {
          {
             key: 'taskTime',
             displayText: 'Task Time',
-            colSize: 180,
+            colSize: 220,
             isChecked: false,
             isCheckable: true,
             isSorted: false,
@@ -669,7 +722,7 @@ class LocalState {
          {
             key: 'storage',
             displayText: 'Storage',
-            colSize: 180,
+            colSize: 220,
             isChecked: true,
             isCheckable: true,
             isSorted: false,
@@ -679,7 +732,7 @@ class LocalState {
          {
             key: 'comment',
             displayText: 'Comment',
-            colSize: 180,
+            colSize: 220,
             isChecked: false,
             isCheckable: true,
             isSorted: false,
@@ -689,7 +742,7 @@ class LocalState {
          {
             key: 'systemInfoOS',
             displayText: 'OS',
-            colSize: 180,
+            colSize: 220,
             isChecked: false,
             isCheckable: true,
             isSorted: false,
@@ -699,7 +752,7 @@ class LocalState {
          {
             key: 'systemInfoCPU',
             displayText: 'CPU',
-            colSize: 180,
+            colSize: 220,
             isChecked: false,
             isCheckable: true,
             isSorted: false,
@@ -709,9 +762,19 @@ class LocalState {
          {
             key: 'systemInfoRAM',
             displayText: 'RAM',
-            colSize: 180,
+            colSize: 220,
             isChecked: false,
             isCheckable: true,
+            isSorted: false,
+            isSortedDescending: false,
+            columnDef: undefined
+         },
+         {
+            key: 'editAgent',
+            displayText: '',
+            colSize: 24,
+            isChecked: true,
+            isCheckable: false,
             isSorted: false,
             isSortedDescending: false,
             columnDef: undefined
@@ -726,6 +789,10 @@ class LocalState {
          'taskTimeDescription': {}
       };
       this.columnMenuProps = this._updateColumnProps();
+      this._updateColumnDefs();
+   }
+
+   updateColumns() {
       this._updateColumnDefs();
    }
 }
@@ -752,6 +819,8 @@ class EditPoolsModalState {
    @observable modifiedPools: PoolEditorItem[] = [];
    @observable selectedColor = "";
 
+   @observable isConfirmationOpen = false;
+
    // last selected color of the color modal
    @observable lastSelectedPool: PoolEditorItem | undefined = undefined;
    isDirectEdit = false;
@@ -777,6 +846,7 @@ class EditPoolsModalState {
          pool: {
             id: pool.id,
             name: pool.name,
+            colorValue: pool.colorValue,
             properties: { ...pool.properties },
             enableAutoscaling: pool.enableAutoscaling,
             workspaces: pool.workspaces
@@ -784,6 +854,11 @@ class EditPoolsModalState {
          selected: false,
          numAgentsAssigned: this.numAgentsAssigned[pool.id] ?? 0
       };
+   }
+
+   @action
+   showConfirmation(show: boolean) {
+      this.isConfirmationOpen = show;
    }
 
    // sets the pool editor dialog open
@@ -836,7 +911,7 @@ class EditPoolsModalState {
    @action
    addNewTempPool() {
       const newId = this.newPoolInputId + this.newIdSuffix;
-      const newPool: PoolData = { id: newId, name: "", properties: { Color: "0" }, enableAutoscaling: false, workspaces: [] };
+      const newPool: PoolData = { id: newId, name: "", properties: { Color: "0" }, colorValue: "#aaaaaa", enableAutoscaling: false, workspaces: [] };
       const newItem: PoolEditorItem = { key: newId, sortKey: newId, pool: newPool, numAgentsAssigned: 0, deleted: false };
       this.newIdSuffix++;
       this.modifiedPools.push(newItem);
@@ -870,6 +945,7 @@ class EditPoolsModalState {
    setSelectedPoolColor(range: string) {
       if (this.lastSelectedPool) {
          this.selectedColor = linearInterpolate(range);
+         this.lastSelectedPool.pool.colorValue = this.selectedColor;
          this.lastSelectedPool.pool.properties!["Color"] = range;
       }
    }
@@ -882,6 +958,31 @@ class EditPoolsModalState {
    @action
    setPoolValueValid(value: boolean) {
       this.isPoolValueValid = value;
+   }
+
+   getPoolModifications(): { deletedPools: string[], newPools: string[], modifiedPools: string[] } {
+
+
+      const value = { deletedPools: [] as string[], newPools: [] as string[], modifiedPools: [] as string[] };
+
+      this.modifiedPools.forEach(item => {
+         if (item.deleted) {
+            value.deletedPools.push(item.pool.name);
+         }
+         else if (item.key.indexOf(this.newPoolInputId) !== -1) {
+            value.newPools.push(item.pool.name);
+         } else {
+            const pool = agentStore.pools.find(pool => { return pool.id === item.pool.id; })!;
+            if (pool) {
+               if (pool.name !== item.pool.name || pool.properties!["Color"] !== item.pool.properties!["Color"]) {
+                  value.modifiedPools.push(item.pool.name);
+               }
+            }
+         }
+
+      })
+
+      return value;
    }
 
    @action
@@ -1165,6 +1266,10 @@ const agentSelectedProps: IContextualMenuProps = {
          else if (item.key === "delete") {
             localState.setDeleteBuilderDialogOpen(true);
          }
+         else if (item.key === "editcomment") {
+            localState.setEditCommentDialogOpen(true);
+         }
+
       }
    },
    items: [
@@ -1179,6 +1284,10 @@ const agentSelectedProps: IContextualMenuProps = {
       {
          key: 'audit',
          text: 'Audit',
+      },
+      {
+         key: 'editcomment',
+         text: 'Edit Comment',
       },
       {
          key: 'remotedesktop',
@@ -1242,6 +1351,11 @@ const agentContextMenuProps: IContextualMenuItem[] = [
       }
    },
    {
+      key: 'editcomment',
+      text: 'Edit Comment',
+      onClick: () => localState.setEditCommentDialogOpen(true)
+   },
+   {
       key: 'audit',
       text: 'Audit',
       onClick: () => {
@@ -1289,7 +1403,7 @@ const agentContextMenuProps: IContextualMenuItem[] = [
    },
 ];
 
-const agentStatus = ["Active", "Ready", "Disabled", "Pending Conform", "Pending Shutdown", "Offline", "Offline (Autoscaler)", "Offline (Manual)", "Offline (Unexpected)"];
+const agentStatus = ["Active", "Ready", "Disabled", "Ephemeral", "Pending Conform", "Pending Shutdown", "Offline", "Offline (Autoscaler)", "Offline (Manual)", "Offline (Unexpected)"];
 
 
 export const AgentMenuBar: React.FC<{ agentView?: boolean }> = observer(({ agentView }) => {
@@ -1298,7 +1412,7 @@ export const AgentMenuBar: React.FC<{ agentView?: boolean }> = observer(({ agent
    if (localState.agentsSelectedCount !== 0) {
       selectedButton = <PrimaryButton
          disabled={localState.agentsSelectedCount === 0 ? true : false}
-         styles={{ root: { marginRight: 18, fontFamily: 'Horde Open Sans SemiBold !important' } }}
+         styles={{ root: { fontFamily: 'Horde Open Sans SemiBold !important' } }}
          menuProps={agentSelectedProps}
          onClick={() => { }}>
          {`${localState.agentsSelectedCount} Agent${localState.agentsSelectedCount > 1 ? "s" : ""} Selected`}
@@ -1313,73 +1427,155 @@ export const AgentMenuBar: React.FC<{ agentView?: boolean }> = observer(({ agent
       }
    });
 
-
    return (
-      <Stack horizontal horizontalAlign="space-between" grow={!!agentView}>
-         <Stack.Item styles={{ root: { paddingLeft: '20px' } }}>
-            <Stack horizontal tokens={{ childrenGap: 12 }}>
-               <Stack verticalFill={true} verticalAlign="center">
-                  <SearchBox
-                     iconProps={{ iconName: "" }}
-                     placeholder="Search Agents"
-                     value={localState.agentFilter}
-                     styles={{ root: { marginLeft: -10, width: 200 } }}
-                     onChange={(event?: React.ChangeEvent<HTMLInputElement> | undefined, newValue?: string | undefined) => { localState.setAgentFilter(newValue ?? ""); }}
-                     onClear={() => { localState.setAgentFilter(""); }}
-                  />
-               </Stack>
-               <Stack verticalFill={true} verticalAlign="center">
-                  <Checkbox styles={{ root: { paddingTop: 6 } }} label={"Exact Match"} checked={localState.filterExactMatch} onChange={(ev, checked) => localState.setExactMatch(checked!)} />
-               </Stack>
-               <Stack verticalFill={true} verticalAlign="center" style={{ paddingLeft: 18 }}>
-                  <Dropdown
-                     placeholder="Filter Status"
-                     style={{ width: 200 }}
-                     selectedKeys={Array.from(localState.agentStatusFilter).map(status => `dropdown_agent_status_${status}_key`)}
-                     multiSelect
-                     options={agentStatusItems}
-                     onChange={(event, option, index) => {
-
-                        if (option) {
-
-                           // new set instance to update observable action update
-                           const newFilter = new Set(localState.agentStatusFilter);
-
-                           if (option.selected) {
-                              newFilter.add((option as any).status);
-                           } else {
-                              newFilter.delete((option as any).status);
-                           }
-
-                           localState.setAgentStaus(newFilter);
-
-                        }
-                     }}
-                  />
-               </Stack>
-            </Stack>
-
-         </Stack.Item>
-         {!!agentView && 
-            <Stack horizontal tokens={{ childrenGap: 12 }} grow>
-               <Stack grow/>
-               <PrimaryButton styles={{ root: { fontFamily: "Horde Open Sans SemiBold !important" } }} text="Download Agent" onClick={() => { backend.downloadAgentZip() }} />
-               <CommandButton
-                  onClick={() => { editPoolsModalState.setOpen(); }}
-                  iconProps={{ iconName: 'Edit' }}
-                  styles={{ root: { marginRight: 12, bottom: 3, fontFamily: 'Horde Open Sans SemiBold !important' } }}>
-                  {`Pools`}
-               </CommandButton>
-               {selectedButton}
-               <PoolEditorModal></PoolEditorModal>
-               <PoolSelectionModal></PoolSelectionModal>
-            </Stack>
+      <Stack horizontal verticalAlign='center' tokens={{ childrenGap: 24 }}>
+         {!!agentView && <Stack horizontal tokens={{ childrenGap: 12 }} verticalAlign='center'>
+            {!!dashboard.user?.dashboardFeatures?.showPoolEditor && <CommandButton
+               onClick={() => { editPoolsModalState.setOpen(); }}
+               iconProps={{ iconName: 'Edit' }}
+               styles={{ root: { fontFamily: 'Horde Open Sans SemiBold !important' } }}>
+               {`Pools`}
+            </CommandButton>}
+            {selectedButton}
+            <PoolEditorModal></PoolEditorModal>
+            <PoolSelectionModal></PoolSelectionModal>
+         </Stack>
          }
+         <Stack>
+            <Dropdown
+               placeholder="Filter Status"
+               style={{ width: 200 }}
+               selectedKeys={Array.from(localState.agentStatusFilter).map(status => `dropdown_agent_status_${status}_key`)}
+               multiSelect
+               options={agentStatusItems}
+               onChange={(event, option, index) => {
+
+                  if (option) {
+
+                     // new set instance to update observable action update
+                     const newFilter = new Set(localState.agentStatusFilter);
+
+                     if (option.selected) {
+                        newFilter.add((option as any).status);
+                     } else {
+                        newFilter.delete((option as any).status);
+                     }
+
+                     localState.setAgentStaus(newFilter);
+
+                  }
+               }}
+            />
+         </Stack>
+         <Stack>
+            <Checkbox label={"Exact Match"} checked={localState.filterExactMatch} onChange={(ev, checked) => localState.setExactMatch(checked!)} />
+         </Stack>
+         <Stack>
+            <SearchBox
+               showIcon={true}
+               disableAnimation={true}
+               placeholder="Search Agents"
+               value={localState.agentFilter}
+               styles={{ root: { width: 240 } }}
+               onChange={(event?: React.ChangeEvent<HTMLInputElement> | undefined, newValue?: string | undefined) => { localState.setAgentFilter(newValue ?? ""); }}
+               onClear={() => { localState.setAgentFilter(""); }}
+            />
+         </Stack>
+
       </Stack>
    );
 });
 
+
+export const AgentPivot: React.FC = () => {
+
+   const { hordeClasses, modeColors } = getHordeStyling();
+
+   const categories = dashboard.agentCategories;
+
+   const pivotItems = categories.map(tab => {
+      return <PivotItem headerText={tab.name} itemKey={tab.name} key={tab.name} style={{ color: modeColors.text }} />;
+   });
+
+   pivotItems.unshift(<PivotItem headerText="All" itemKey="all" key={"all"} style={{ color: modeColors.text }} />);
+
+   return <Stack grow>
+      <Pivot className={hordeClasses.pivot}
+         overflowBehavior='menu'
+         selectedKey={localState.searchState.category ?? "all"}
+         linkSize="normal"
+         linkFormat="links"
+         onLinkClick={(item) => {
+            if (item) {
+               localState.setAgentCategory(item.props.itemKey === "all" ? undefined : item.props.itemKey);
+            }
+         }}>
+         {pivotItems}
+      </Pivot>
+   </Stack>
+
+}
+
+const PoolEditorConfirmation: React.FC = observer(() => {
+
+
+   if (!editPoolsModalState.isConfirmationOpen) {
+      return null;
+   }
+
+   const mods = editPoolsModalState.getPoolModifications();
+
+   if (mods.deletedPools.length === 0 && mods.newPools.length === 0 && mods.modifiedPools.length === 0) {
+      return null;
+   }
+
+   let title = "Modify Pool" + (mods.modifiedPools.length > 1 ? "s" : "");
+   let subText = "";
+
+   if (mods.deletedPools.length && !mods.newPools.length) {
+      title = "Delete Pool";
+      if (mods.deletedPools.length > 1) {
+         title += "s";
+      }
+   } else if (!mods.deletedPools.length && mods.newPools.length) {
+      title = "Create Pool";
+      if (mods.newPools.length > 1) {
+         title += "s";
+      }
+   }
+
+   title += "?";
+
+   if (mods.deletedPools.length) {
+      subText += "Delete: " + mods.deletedPools.join(", ") + " ";
+   }
+
+   if (mods.newPools.length) {
+      subText += "Create: " + mods.newPools.join(", ") + " ";
+   }
+
+   if (mods.modifiedPools.length) {
+      subText += "Modified: " + mods.modifiedPools.join(", ");
+   }
+
+   return <ConfirmationDialog
+      title={title}
+      subText={subText}
+      isOpen={true}
+      confirmText="Save"
+      cancelText="Cancel"
+      onConfirm={() => { editPoolsModalState.showConfirmation(false); editPoolsModalState.saveChanges(); }}
+      onCancel={() => editPoolsModalState.showConfirmation(false)}
+   />
+
+});
+
 export const PoolEditorModal: React.FC = observer(() => {
+
+   const [state, setState] = useState<{ sortBy: "Agents" | "Name" }>({ sortBy: "Name" });
+   const { hordeClasses } = getHordeStyling();
+   const agentStyles = getAgentStyles();
+
    let selectedColor = "#ffffff";
    let selectedColorValue = "0";
    if (editPoolsModalState.lastSelectedPool) {
@@ -1390,7 +1586,7 @@ export const PoolEditorModal: React.FC = observer(() => {
    function onRenderPoolModalItem(item: PoolEditorItem, index?: number, column?: IColumn) {
       switch (column!.key) {
          case 'name':
-            const color = linearInterpolate(item.pool.properties!["Color"]);
+            const color = item.pool.colorValue;
             const textColor = "white";
             return (
                <Stack styles={{ root: { height: '100%', } }} horizontal>
@@ -1428,7 +1624,18 @@ export const PoolEditorModal: React.FC = observer(() => {
       if (props) {
          return (
             <Sticky stickyPosition={StickyPositionType.Header} isScrollSynced={true}>
-               <DetailsHeader {...props} styles={customStyles} onRenderColumnHeaderTooltip={onRenderColumnHeaderTooltip} />
+               <DetailsHeader {...props} styles={customStyles} onColumnClick={(ev: React.MouseEvent<HTMLElement>, column: IColumn) => {
+                  if (column.name === "Agents") {
+                     if (state.sortBy !== 'Agents') {
+                        setState({ ...state, sortBy: "Agents" });
+                     }
+
+                  } else if (column.name === "Name") {
+                     if (state.sortBy !== 'Name') {
+                        setState({ ...state, sortBy: "Name" });
+                     }
+                  }
+               }} onRenderColumnHeaderTooltip={onRenderColumnHeaderTooltip} />
             </Sticky>
          );
       }
@@ -1452,7 +1659,12 @@ export const PoolEditorModal: React.FC = observer(() => {
       return null;
    };
 
-   const pools = editPoolsModalState.modifiedPools.filter(item => item.deleted === false).sort((a, b) => { return a.sortKey.localeCompare(b.sortKey); });
+   const pools = editPoolsModalState.modifiedPools.filter(item => item.deleted === false).sort((a, b) => {
+      if (state.sortBy === "Name")
+         return a.sortKey.localeCompare(b.sortKey);
+      else
+         return b.numAgentsAssigned - a.numAgentsAssigned;
+   });
 
    // 75vh for max
    const viewportHeight = document.documentElement.clientHeight * .75;
@@ -1460,6 +1672,7 @@ export const PoolEditorModal: React.FC = observer(() => {
 
    return (
       <Stack>
+         <PoolEditorConfirmation />
          <Dialog
             modalProps={{
                isBlocking: false,
@@ -1504,7 +1717,7 @@ export const PoolEditorModal: React.FC = observer(() => {
                      </Stack>
                      <Stack grow />
                      <Stack>
-                        <PrimaryButton onClick={() => editPoolsModalState.saveChanges()} styles={{ root: { marginRight: "10px" } }}>Save</PrimaryButton>
+                        <PrimaryButton disabled={editPoolsModalState.getPoolModifications().deletedPools.length === 0 && editPoolsModalState.getPoolModifications().newPools.length === 0 && editPoolsModalState.getPoolModifications().modifiedPools.length === 0} onClick={() => editPoolsModalState.showConfirmation(true)} styles={{ root: { marginRight: "10px" } }}>Save</PrimaryButton>
                      </Stack>
                      <Stack>
                         <DefaultButton onClick={() => editPoolsModalState.setClose()} styles={{ root: { marginRight: "10px" } }}>Cancel</DefaultButton>
@@ -1602,6 +1815,9 @@ export const PoolEditorModal: React.FC = observer(() => {
 });
 
 export const PoolSelectionModal: React.FC = observer(() => {
+
+   const agentStyles = getAgentStyles();
+
    function onResolveSuggestions(filter: string, selectedItems?: ITag[] | undefined) {
       return selectPoolsModalState.availablePools.filter(item => item.name.toLowerCase().indexOf(filter.toLowerCase()) !== -1);
    }
@@ -1609,7 +1825,7 @@ export const PoolSelectionModal: React.FC = observer(() => {
    // renderitem override
    const onTagRenderItem: IBasePickerProps<ITag>['onRenderItem'] = (props) => {
       const item = props.item as SelectPoolItem;
-      let color = linearInterpolate(item.pool.properties!["Color"]);
+      let color = item.pool.colorValue;
       const hoverColor = hexToRGB(color);
       const hoverCloseColor = hexToRGB(color);
       hoverColor.r *= .8;
@@ -1734,9 +1950,14 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
    useEffect(() => {
       const interval = setInterval(() => {
          agentStore.update(true)
-      }, 3000);
+      }, 5000);
       return () => clearInterval(interval);
    }, []);
+
+   // subscribe
+   if (localState.searchUpdated) { }
+
+   const agentStyles = getAgentStyles();
 
    if (!initAgentUpdater) {
       agentStore.update().then(() => {
@@ -1773,11 +1994,10 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
 
    // main header
    const onRenderDetailsHeader: IDetailsListProps['onRenderDetailsHeader'] = (props) => {
-      const customStyles: Partial<IDetailsHeaderStyles> = {};
       if (props) {
          return (
             <Sticky stickyPosition={StickyPositionType.Header} isScrollSynced={true}>
-               <DetailsHeader {...props} styles={customStyles} onRenderColumnHeaderTooltip={onRenderColumnHeaderTooltip} />
+               <DetailsHeader {...props} onRenderColumnHeaderTooltip={onRenderColumnHeaderTooltip} />
             </Sticky>
          );
       }
@@ -1794,7 +2014,7 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
           // no other way to filter children being centered other than to drill into private members??
           if (props.children._owner.child?.child.child.child.elementType === "span") {
               const data = props.children._owner.child.child.child.child.child.child.stateNode.data;
-              // if this cluster happens to be true, reset back to the default, because doing this the other way around 
+              // if this cluster happens to be true, reset back to the default, because doing this the other way around
               // takes too long when the columns update on details switch
               // ugh :(
               if (data === "Name" || data === "Pools") {
@@ -1812,6 +2032,24 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
       if (agent.deleted) {
          return null;
       }
+
+      let category: GetDashboardAgentCategoryResponse | undefined;
+
+      if (localState.searchState.category) {
+         category = dashboard.agentCategories.find(c => c.name === localState.searchState.category);
+      }
+
+      if (category && category.condition) {
+         const cat = agentStore.getCategory(category.condition);
+         if (!cat.ids.length && cat.polling) {
+            return null;
+         } else {
+            if (!cat.ids.find((id) => id === agent.id)) {
+               return null;
+            }
+         }
+      }
+
       if (filter !== "") {
          if (localState.filterExactMatch) {
             // add if there's a match to name or version
@@ -2046,6 +2284,12 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
          }
       }
 
+      if (filter.has("Ephemeral")) {
+         if (item.ephemeral) {
+            filtered = false;
+         }
+      }
+
       if (filter.has("Offline")) {
          if (!item.online) {
             filtered = false;
@@ -2104,7 +2348,8 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
    return (<Stack>
       {!!agentView && <SearchUpdate />}
       <Stack horizontal style={{ paddingBottom: !agentView ? 18 : 0 }}>
-         {!agentView && <Stack grow />}
+         {!!agentView && <AgentPivot />}
+         <Stack grow />
          <AgentMenuBar agentView={agentView} />
       </Stack>
       <Stack style={{ position: "relative", height: agentView ? "calc(100vh - 240px)" : height }}>
@@ -2140,13 +2385,13 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
                onItemClick={() => localState.setAgentContextMenuOpen(false)}
                onDismiss={() => localState.setAgentContextMenuOpen(false)}
                isBeakVisible={true}
-               target={{x: localState.mouseX, y: localState.mouseY }}
+               target={{ x: localState.mouseX, y: localState.mouseY }}
                hidden={!localState.agentContextMenuOpen}
                directionalHint={DirectionalHint.bottomLeftEdge}
-               directionalHintFixed={true}
+               directionalHintFixed={false}
             />
          </ScrollablePane>
-         <Stack grow styles={{ root: { backgroundColor: 'rgb(250, 249, 249)' } }} />
+         <Stack grow />
       </Stack>
       <ConfirmationDialog
          title={`Delete Agent${localState.selection.getSelectedCount() > 1 ? "s" : ""}`}
@@ -2163,9 +2408,8 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
          isOpen={localState.restartAgentDialogIsOpen}
          confirmText={"Restart"}
          cancelText={"Cancel"}
-         textBoxLabel={"Type Confirm to confirm"}
-         isTextBoxSpawned={true}
-         onConfirm={() => { localState.requestBuilderUpdate(false, true) }}
+         checkBoxText='Force Restart'
+         onConfirm={(_, force) => { localState.requestBuilderUpdate(false, !force ? true : false, false, false, !!force) }}
          onCancel={() => { localState.setRestartBuilderDialogOpen(false) }}
       />
       <ConfirmationDialog
@@ -2199,6 +2443,17 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
          onConfirm={(textFieldText: string) => { localState.changeBuilderEnabled("disable", textFieldText) }}
          onCancel={() => { localState.setDisableBuilderDialogOpen(false) }}
       />
+      <ConfirmationDialog
+         title={`Edit Agent Comment${localState.selection.getSelectedCount() > 1 ? "s" : ""}`}
+         isOpen={localState.editCommentDialogIsOpen}
+         confirmText={"Edit Comment"}
+         cancelText={"Cancel"}
+         textBoxLabel={"New Comment"}
+         isTextBoxSpawned={true}
+         onConfirm={(textFieldText: string) => { localState.changeCommment(textFieldText) }}
+         onCancel={() => { localState.setEditCommentDialogOpen(false) }}
+      />
+
       <HistoryModal agentId={activeAgent?.id} onDismiss={onHistoryModalDismiss}></HistoryModal>
    </Stack>
    );
@@ -2213,18 +2468,17 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
    }
 
    function getAgentStatusIcon(agent: AgentData) {
-      let className = detailClassNames.success;
-      //let title = agentReadyStates.enabledReady;
-      // do filtering here
+
+      const statusColors = dashboard.getStatusColors();
+
+      let color = statusColors.get(StatusColor.Success);
       if (agent.enabled === false) {
-         className = detailClassNames.failure;
-         //title = agentReadyStates.disabled;
+         color = statusColors.get(StatusColor.Warnings);
       }
       if (!agent.online) {
-         className = detailClassNames.offline;
-         //title = agentReadyStates.offline;
+         color = statusColors.get(StatusColor.Skipped);
       }
-      return <Icon iconName="FullCircle" className={className} />;
+      return <Icon iconName="FullCircle" style={{ color: color, fontSize: 16, marginRight: "13px", paddingTop: "2px" }} />;
    }
 
    function getPropFromDevice(agent: AgentData, propKey: string, propValue: string | null = null) {
@@ -2277,16 +2531,12 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
                   return a.name.localeCompare(b.name);
                });
                for (let idx = 0; idx < poolObjs.length; idx++) {
-                  let color = "darkgrey";
+                  let color = poolObjs[idx].colorValue;
                   const textColor = "white";
-                  if (poolObjs[idx].properties?.["Color"]) {
-                     color = linearInterpolate(poolObjs[idx].properties!["Color"]);
-                     if (agent.pendingConform || agent.pendingFullConform) {
-                        const pendingConformColor = hexToRGB(color);
-                        color = `rgb(${pendingConformColor.r},${pendingConformColor.g},${pendingConformColor.b}, .5)`;
-                     }
+                  if (agent.pendingConform || agent.pendingFullConform) {
+                     const pendingConformColor = hexToRGB(color);
+                     color = `rgb(${pendingConformColor.r},${pendingConformColor.g},${pendingConformColor.b}, .5)`;
                   }
-
                   const menuProps: IContextualMenuProps = {
                      items: [
                         {
@@ -2357,9 +2607,12 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
                   if (lease.details) {
                      if ('jobId' in lease.details) {
                         link = `/job/${lease.details['jobId']}`;
+                        if ('batchId' in lease.details) {
+                           link += `?batch=${lease.details['batchId']}`;
+                        }
                      }
                      else if ('logId' in lease.details) {
-                        link = `/log/${lease.details['logId']}?leaseId=${lease.id}&agentId=${agent.id}`;
+                        link = `/log/${lease.details['logId']}?agentId=${agent.id}`;
                      }
                   }
                   if (link !== "") {
@@ -2389,7 +2642,10 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
             }
             // if there are no leases, we'll push some other state.
             if (leases.length === 0) {
-               let title = "Ready";
+               let title = agent.status ?? "";
+               if (title === "Ok") {
+                  title = "Ready";
+               }
                let subtitle = "";
                if (!agent.online) {
                   title = `Offline - ${agent.lastShutdownReason}`;
@@ -2501,8 +2757,8 @@ export const AgentViewInner: React.FC<{ agentId?: string, poolId?: string, searc
                   <ProgressIndicator
                      barHeight={15}
                      styles={{
-                        progressBar: { marginLeft: 2, marginTop: 2, height: '42%', backgroundColor: (realPercentage > .85 ? "rgb(218,38,38)" : "rgb(0,120,212)") },
-                        progressTrack: { width: '98%', border: '1px solid rgb(198,198,198) !important', backgroundColor: 'white' },
+                        progressBar: { height: dashboard.darktheme ? 13 : 16, marginLeft: dashboard.darktheme ? 1 : 0, marginTop: dashboard.darktheme ? 2 : 0 },
+                        progressTrack: { width: '98%', border: '1px solid !important' },
                         root: { width: 110 }
                      }}
                      percentComplete={nudgedPercentage}
@@ -2537,6 +2793,9 @@ export const AgentPanel: React.FC<{ agentId?: string, poolId?: string, agentView
    // subscribe
    if (localState.searchUpdated) { }
 
+   localState.agentView = agentView;
+   localState.updateColumns();
+
    return <Stack>
       <AgentViewInner agentId={localState.searchState?.agentId} agentView={agentView} poolId={poolId} />
    </Stack>
@@ -2546,23 +2805,28 @@ export const AgentPanel: React.FC<{ agentId?: string, poolId?: string, agentView
 export const AgentView: React.FC = () => {
 
    const [searchParams] = useSearchParams();
+   const hordeTheme = getHordeTheme();
+   const { hordeClasses } = getHordeStyling();
 
    const agentId = searchParams.get("agentId") ? searchParams.get("agentId") : undefined;
+
+   localState.agentView = true;
+   localState.updateColumns();
 
    // adjust automatically to viewport changes
    useWindowSize();
 
    return <Stack className={hordeClasses.horde}>
       <TopNav />
-      <Breadcrumbs items={[{ text: 'Admin' }, { text: 'Agents' }]} />
+      <Breadcrumbs items={[{ text: 'Agents' }]} />
       <Stack horizontal>
-         <Stack grow styles={{ root: { backgroundColor: 'rgb(250, 249, 249)' } }} />
-         <Stack tokens={{ maxWidth: 1440, childrenGap: 4 }} styles={{ root: { width: 1440, height: '100vh', backgroundColor: 'rgb(250, 249, 249)', paddingTop: 18, paddingLeft: 12 } }}>
+         <Stack grow styles={{ root: { backgroundColor: hordeTheme.horde.neutralBackground } }} />
+         <Stack tokens={{ maxWidth: 1440, childrenGap: 4 }} styles={{ root: { width: 1440, height: '100vh', backgroundColor: hordeTheme.horde.neutralBackground, paddingTop: 18, paddingLeft: 12 } }}>
             <Stack className={hordeClasses.raised} styles={{ root: { paddingRight: '40px' } }}>
                <AgentViewInner agentView={true} agentId={agentId ? agentId : undefined} searchParams={searchParams} />
             </Stack>
          </Stack>
-         <Stack grow styles={{ root: { backgroundColor: 'rgb(250, 249, 249)' } }} />
+         <Stack grow styles={{ root: { backgroundColor: hordeTheme.horde.neutralBackground } }} />
       </Stack>
    </Stack>
 

@@ -98,7 +98,7 @@ protected:
 		float NearClipPlane = 0.0f;
 		bool bRealTime = false;
 		bool bOnScreenMessages = false;
-		EHMDTrackingOrigin::Type TrackingOrigin = EHMDTrackingOrigin::Eye;
+		EHMDTrackingOrigin::Type TrackingOrigin = EHMDTrackingOrigin::Local;
 		float WorldToMetersScale = 100.0f;
 		bool bCinematicControlViewport = false;
 	};

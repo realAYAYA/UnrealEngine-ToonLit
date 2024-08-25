@@ -25,7 +25,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 5);
 			check(OutputTensors.Num() == 1);
@@ -126,8 +126,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
-		//This match version 9 of the BatchNormalization operator
-		//https://github.com/onnx/onnx/blob/main/docs/Operators.md#BatchNormalization
 		FAttributeValidator AttributeValidator;
 		AttributeValidator.AddOptional(TEXT("epsilon"), ENNEAttributeDataType::Float);
 		AttributeValidator.AddOptional(TEXT("momentum"), ENNEAttributeDataType::Float); //Will be ignored, only useful in training mode.
@@ -154,7 +152,9 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterBatchNormalizationOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("BatchNormalization"), CreateBatchNormalizationOperator, ValidateBatchNormalizationOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("BatchNormalization"), TEXT("Onnx")}, 9}, CreateBatchNormalizationOperator, ValidateBatchNormalizationOperator);
+		// Next version: 14
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

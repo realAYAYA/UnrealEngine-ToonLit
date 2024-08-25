@@ -32,7 +32,7 @@ class FFilterBase : public IFilter<FilterType>
 {
 public:
 
-	FFilterBase(TSharedPtr<FFilterCategory> InCategory) : FilterCategory(InCategory) {}
+	FFilterBase(TSharedPtr<FFilterCategory> InCategory) : FilterCategory(MoveTemp(InCategory)) {}
 
 	/** Returns the system name for this filter */
 	virtual FString GetName() const override = 0;
@@ -66,8 +66,19 @@ public:
 	/** Can be overriden for custom FilterBar subclasses to load settings, currently not implemented in any gneeric Filter Bar */
 	virtual void LoadSettings(const FString& IniFilename, const FString& IniSection, const FString& SettingsString) = 0;
 
-	/** Set this filter as active/inactive */
-	void SetActive(bool bInActive) { SetActiveEvent.Broadcast(bInActive); }
+	/** Set this filter as checked, and activates or deactivates it */
+	void SetActive(bool bActive) { SetActiveEvent.Broadcast(bActive); }
+
+	/** Checks whether the filter is checked/pinned and active/enabled */
+	bool IsActive() const
+	{
+		if(IsActiveEvent.IsBound())
+		{
+			return IsActiveEvent.Execute();
+		}
+
+		return false;
+	}
 
 	// IFilter implementation
 	DECLARE_DERIVED_EVENT( FFilterBase, IFilter<FilterType>::FChangedEvent, FChangedEvent );
@@ -84,6 +95,9 @@ protected:
 	DECLARE_EVENT_OneParam(FFilterBase, FSetActiveEvent, bool);
 	FSetActiveEvent SetActiveEvent;
 
+	DECLARE_DELEGATE_RetVal(bool, FIsActiveEvent);
+	FIsActiveEvent IsActiveEvent;
+	
 	TSharedPtr<FFilterCategory> FilterCategory;
 
 	friend struct FFrontendFilterExternalActivationHelper<FilterType>;

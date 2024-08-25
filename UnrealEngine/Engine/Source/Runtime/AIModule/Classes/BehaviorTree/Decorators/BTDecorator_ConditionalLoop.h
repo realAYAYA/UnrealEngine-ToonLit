@@ -29,6 +29,8 @@ class UBTDecorator_ConditionalLoop : public UBTDecorator_Blackboard
 	AIMODULE_API virtual void OnNodeDeactivation(FBehaviorTreeSearchData& SearchData, EBTNodeResult::Type NodeResult) override;
 
 	AIMODULE_API virtual uint16 GetInstanceMemorySize() const override;
+	AIMODULE_API virtual void InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const override;
+	AIMODULE_API virtual void CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const override;
 
 #if WITH_EDITOR
 	AIMODULE_API virtual FName GetNodeIconName() const override;

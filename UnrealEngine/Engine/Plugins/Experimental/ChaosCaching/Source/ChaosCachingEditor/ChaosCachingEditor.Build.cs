@@ -27,6 +27,7 @@ namespace UnrealBuildTool.Rules
                     "MovieScene",
                     "MovieSceneTools",
                     "MovieSceneTracks",
+                    "SequencerCore",
                     "Sequencer",
                     "TimeManagement",
 					"EditorFramework",

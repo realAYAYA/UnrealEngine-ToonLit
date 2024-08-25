@@ -29,7 +29,7 @@ ONLINESERVICESINTERFACE_API extern const FName ExternalAuth;
 namespace ExternalLoginType
 {
 ONLINESERVICESINTERFACE_API extern const FName Epic;
-ONLINESERVICESINTERFACE_API extern const FName SteamAppTicket;
+ONLINESERVICESINTERFACE_API extern const FName SteamSessionTicket;
 ONLINESERVICESINTERFACE_API extern const FName PsnIdToken;
 ONLINESERVICESINTERFACE_API extern const FName XblXstsToken;
 ONLINESERVICESINTERFACE_API extern const FName DiscordAccessToken;

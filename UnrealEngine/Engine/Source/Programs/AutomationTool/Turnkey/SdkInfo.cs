@@ -41,6 +41,8 @@ namespace Turnkey
 
 			Device_AutoSoftwareUpdates_Disabled		= (1 << 15),
 			Device_AutoSoftwareUpdates_Enabled		= (1 << 16),
+
+			Host_Unsupported						= (1 << 17),
 		}
 
 		static public LocalAvailability GetLocalAvailability(AutomationTool.Platform AutomationPlatform, bool bAllowUpdatingPrerequisites, TurnkeyContextImpl TurnkeyContext)
@@ -52,6 +54,11 @@ namespace Turnkey
 			if (SDK == null)
 			{
 				return Result;
+			}
+
+			if (!SDK.bIsSdkAllowedOnHost)
+			{
+				return LocalAvailability.Host_Unsupported;
 			}
 
 			if (AutomationPlatform.UpdateHostPrerequisites(TurnkeyUtils.CommandUtilHelper, TurnkeyContext, !bAllowUpdatingPrerequisites))
@@ -213,7 +220,13 @@ namespace Turnkey
 				}
 
 				// download the AutoSDK, to the UE_SDKS_ROOT dir
-				string AutoSDKDownloadedRoot = Path.Combine(Environment.GetEnvironmentVariable("UE_SDKS_ROOT"), $"Host{HostPlatform.Platform}", Platform.ToString(), Source.Version);
+				string AutoSdkPlatformName = Platform.ToString();
+				UEBuildPlatformSDK PlatformSDK = UEBuildPlatformSDK.GetSDKForPlatform(Platform.ToString());
+				if (PlatformSDK != null)
+				{
+					AutoSdkPlatformName = PlatformSDK.GetAutoSDKPlatformName();
+				}
+				string AutoSDKDownloadedRoot = Path.Combine(Environment.GetEnvironmentVariable("UE_SDKS_ROOT"), $"Host{HostPlatform.Platform}", AutoSdkPlatformName, Source.Version);
 				// it should return what we pass into ig
 				DownloadedRoot = CopyProvider.ExecuteCopy(CopyOperation, CopyExecuteSpecialMode.UsePermanentStorage, AutoSDKDownloadedRoot);
 				if (DownloadedRoot != AutoSDKDownloadedRoot)

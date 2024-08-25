@@ -155,6 +155,17 @@ USoundAttenuation::USoundAttenuation(const FObjectInitializer& ObjectInitializer
 {
 }
 
+FAttenuationSubmixSendSettings::FAttenuationSubmixSendSettings()
+{
+	// These were the defaults in the previous attenuation settings.
+	MinSendLevel = 0.0f;
+	MaxSendLevel = 1.0f;
+	MinSendDistance = 400.0f;
+	MaxSendDistance = 6000.0f;
+	SendLevel = 0.2f;
+	SendLevelControlMethod = ESendLevelControlMethod::Linear;
+}
+
 #define LOCTEXT_NAMESPACE "AudioParameterInterface"
 #define AUDIO_PARAMETER_INTERFACE_NAMESPACE "UE.Attenuation"
 namespace Audio

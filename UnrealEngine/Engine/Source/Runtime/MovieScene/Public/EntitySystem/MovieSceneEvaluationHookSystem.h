@@ -30,6 +30,8 @@ struct FMovieSceneEvaluationHookEvent
 	UPROPERTY()
 	FMovieSceneEvaluationHookComponent Hook;
 
+	UE::MovieScene::FRootInstanceHandle RootInstanceHandle;
+
 	FMovieSceneSequenceID SequenceID;
 
 	int32 TriggerIndex;

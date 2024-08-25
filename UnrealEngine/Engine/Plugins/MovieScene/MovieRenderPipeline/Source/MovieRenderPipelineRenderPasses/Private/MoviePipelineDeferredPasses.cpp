@@ -98,11 +98,24 @@ int32 UMoviePipelineDeferredPassBase::GetNumCamerasToRender() const
 	return CameraSettings->bRenderAllCameras ? CurrentShot->SidecarCameras.Num() : 1;
 }
 
+int32 UMoviePipelineDeferredPassBase::GetCameraIndexForRenderPass(const int32 InCameraIndex) const
+{
+	UMoviePipelineExecutorShot* CurrentShot = GetPipeline()->GetActiveShotList()[GetPipeline()->GetCurrentShotIndex()];
+	UMoviePipelineCameraSetting* CameraSettings = GetPipeline()->FindOrAddSettingForShot<UMoviePipelineCameraSetting>(CurrentShot);
+
+	// If we're not rendering all cameras, we need to pass -1 so we pick up the real camera name.
+	return CameraSettings->bRenderAllCameras ? InCameraIndex : -1;
+}
+
 FString UMoviePipelineDeferredPassBase::GetCameraName(const int32 InCameraIndex) const
 {
 	UMoviePipelineExecutorShot* CurrentShot = GetPipeline()->GetActiveShotList()[GetPipeline()->GetCurrentShotIndex()];
+	UMoviePipelineCameraSetting* CameraSettings = GetPipeline()->FindOrAddSettingForShot<UMoviePipelineCameraSetting>(CurrentShot);
 
-	return CurrentShot->GetCameraName(InCameraIndex);
+	// If we're not rendering all cameras, we need to pass -1 so we pick up the real camera name.
+	const int32 LocalCameraIndex = CameraSettings->bRenderAllCameras ? InCameraIndex : -1;
+
+	return CurrentShot->GetCameraName(LocalCameraIndex);
 }
 
 FString UMoviePipelineDeferredPassBase::GetCameraNameOverride(const int32 InCameraIndex) const
@@ -423,17 +436,13 @@ void UMoviePipelineDeferredPassBase::GatherOutputPassesImpl(TArray<FMoviePipelin
 	// Super::GatherOutputPassesImpl(ExpectedRenderPasses);
 
 	UMoviePipelineExecutorShot* CurrentShot = GetPipeline()->GetActiveShotList()[GetPipeline()->GetCurrentShotIndex()];
-	UMoviePipelineCameraSetting* CameraSettings = GetPipeline()->FindOrAddSettingForShot<UMoviePipelineCameraSetting>(CurrentShot);
 
 	const int32 NumCameras = GetNumCamerasToRender();
 	for (int32 CameraIndex = 0; CameraIndex < NumCameras; CameraIndex++)
 	{
 		FMoviePipelinePassIdentifier PassIdentifierForCurrentCamera;
 		PassIdentifierForCurrentCamera.Name = PassIdentifier.Name;
-
-		// If we're not rendering all cameras, we need to pass -1 so we pick up the real camera name.
-		int32 LocalCameraIndex = CameraSettings->bRenderAllCameras ? CameraIndex : -1;
-		PassIdentifierForCurrentCamera.CameraName = GetCameraName(LocalCameraIndex);
+		PassIdentifierForCurrentCamera.CameraName = GetCameraName(CameraIndex);
 
 		// Add the default backbuffer
 		if (bRenderMainPass)
@@ -494,7 +503,6 @@ void UMoviePipelineDeferredPassBase::RenderSample_GameThreadImpl(const FMoviePip
 
 	const int32 NumCameras = GetNumCamerasToRender();
 	UMoviePipelineExecutorShot* CurrentShot = GetPipeline()->GetActiveShotList()[GetPipeline()->GetCurrentShotIndex()];
-	UMoviePipelineCameraSetting* CameraSettings = GetPipeline()->FindOrAddSettingForShot<UMoviePipelineCameraSetting>(CurrentShot);
 
 	for (int32 CameraIndex = 0; CameraIndex < NumCameras; CameraIndex++)
 	{
@@ -502,19 +510,19 @@ void UMoviePipelineDeferredPassBase::RenderSample_GameThreadImpl(const FMoviePip
 		PassIdentifierForCurrentCamera.Name = PassIdentifier.Name;
 
 		// If we're not rendering all cameras, we need to pass -1 so we pick up the real camera name.
-		int32 LocalCameraIndex = CameraSettings->bRenderAllCameras ? CameraIndex : -1;
-		PassIdentifierForCurrentCamera.CameraName = GetCameraName(LocalCameraIndex);
+		const int32 CameraIndexForRenderPass = GetCameraIndexForRenderPass(CameraIndex);
+		PassIdentifierForCurrentCamera.CameraName = GetCameraName(CameraIndex);
 
 		// Main Render Pass
 		if (bRenderMainPass)
 		{
-			FMoviePipelineRenderPassMetrics InOutSampleState = GetRenderPassMetricsForCamera(LocalCameraIndex, InSampleState);
+			FMoviePipelineRenderPassMetrics InOutSampleState = GetRenderPassMetricsForCamera(CameraIndexForRenderPass, InSampleState);
 			// InOutSampleState.OutputState.CameraCount = NumCameras;
-			InOutSampleState.OutputState.CameraIndex = LocalCameraIndex;
-			InOutSampleState.OutputState.CameraNameOverride = GetCameraNameOverride(LocalCameraIndex);
+			InOutSampleState.OutputState.CameraIndex = CameraIndexForRenderPass;
+			InOutSampleState.OutputState.CameraNameOverride = GetCameraNameOverride(CameraIndex);
 
 			UE::MoviePipeline::FDeferredPassRenderStatePayload Payload;
-			Payload.CameraIndex = LocalCameraIndex;
+			Payload.CameraIndex = CameraIndexForRenderPass;
 			Payload.TileIndex = InOutSampleState.TileIndexes;
 
 			// Main renders use index 0.
@@ -571,9 +579,9 @@ void UMoviePipelineDeferredPassBase::RenderSample_GameThreadImpl(const FMoviePip
 
 		// Now do the stencil layer submission (which doesn't support additional post processing materials)
 		{
-			FMoviePipelineRenderPassMetrics InOutSampleState = GetRenderPassMetricsForCamera(LocalCameraIndex, InSampleState);
-			InOutSampleState.OutputState.CameraIndex = LocalCameraIndex;
-			InOutSampleState.OutputState.CameraNameOverride = GetCameraNameOverride(LocalCameraIndex);
+			FMoviePipelineRenderPassMetrics InOutSampleState = GetRenderPassMetricsForCamera(CameraIndexForRenderPass, InSampleState);
+			InOutSampleState.OutputState.CameraIndex = CameraIndexForRenderPass;
+			InOutSampleState.OutputState.CameraNameOverride = GetCameraNameOverride(CameraIndex);
 
 			struct FStencilValues
 			{
@@ -670,7 +678,7 @@ void UMoviePipelineDeferredPassBase::RenderSample_GameThreadImpl(const FMoviePip
 				if (StencilLayerMaterial)
 				{
 					UE::MoviePipeline::FDeferredPassRenderStatePayload Payload;
-					Payload.CameraIndex = LocalCameraIndex;
+					Payload.CameraIndex = CameraIndexForRenderPass;
 					Payload.TileIndex = InOutSampleState.TileIndexes;
 					Payload.SceneViewIndex = StencilLayerIndex + (bRenderMainPass ? 1 : 0);
 					TSharedPtr<FSceneViewFamilyContext> ViewFamily = CalculateViewFamily(InOutSampleState, &Payload);

@@ -3,6 +3,8 @@
 #include "Components/DisplayClusterCameraComponent.h"
 #include "Components/BillboardComponent.h"
 
+#include "DisplayClusterRootActor.h"
+
 #include "Engine/CollisionProfile.h"
 #include "Engine/Texture2D.h"
 #include "UObject/ConstructorHelpers.h"
@@ -28,6 +30,22 @@ UDisplayClusterCameraComponent::UDisplayClusterCameraComponent(const FObjectInit
 		SpriteTexture = SpriteTextureObject.Get();
 	}
 #endif
+}
+
+void UDisplayClusterCameraComponent::GetDesiredView(IDisplayClusterViewportConfiguration& InViewportConfiguration, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane)
+{
+	// Use this component as a camera
+	InOutViewInfo.Location = GetComponentLocation();
+	InOutViewInfo.Rotation = GetComponentRotation();
+
+	// Ignore PP, because this component has no such settings
+	InOutViewInfo.PostProcessBlendWeight = 0.f;
+
+	if (OutCustomNearClippingPlane)
+	{
+		// Value less than zero means: don't override the NCP value
+		*OutCustomNearClippingPlane = -1.f;
+	}
 }
 
 #if WITH_EDITOR

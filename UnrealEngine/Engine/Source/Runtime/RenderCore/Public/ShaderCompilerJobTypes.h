@@ -14,6 +14,8 @@ class FShaderCommonCompileJob;
 class FShaderCompileJob;
 class FShaderPipelineCompileJob;
 
+namespace UE::DerivedData { class FRequestOwner; }
+
 /** Results for a single compiled shader map. */
 struct FShaderMapCompileResults
 {
@@ -41,10 +43,42 @@ struct FPendingShaderMapCompileResults
 using FPendingShaderMapCompileResultsPtr = TRefCountPtr<FPendingShaderMapCompileResults>;
 
 
+/**
+ * Cached reference to the location of an in-flight job's FShaderJobData in the FShaderJobDataMap, used by the private FShaderJobCache class.
+ *
+ * Caching the reference avoids the need to do additional map lookups to find the entry again, potentially avoiding a lock of the container for
+ * the lookup.  Heap allocation of blocks is used by the cache to allow map entries to have a persistent location in memory.  The persistent
+ * memory allows modifications of map entry data for a given job, without needing locks to protect against container resizing.
+ *
+ * In-flight jobs and their duplicates reference the same FShaderJobData.  Client code should treat this structure as opaque.
+ */
+struct FShaderJobCacheRef
+{
+	/** Pointer to block the private FShaderJobData is stored in */
+	struct FShaderJobDataBlock* Block = nullptr;
+
+	/** Index of FShaderJobData in the block */
+	int32 IndexInBlock = INDEX_NONE;
+
+	/** If job is a duplicate, index of pointer to job in DuplicateJobs array in FShaderJobCache, used for clearing the pointer when the in-flight job completes */
+	int32 DuplicateIndex = INDEX_NONE;
+
+	void Clear()
+	{
+		Block = nullptr;
+		IndexInBlock = INDEX_NONE;
+		DuplicateIndex = INDEX_NONE;
+	}
+};
+
 /** Stores all of the common information used to compile a shader or pipeline. */
-class FShaderCommonCompileJob : public TIntrusiveLinkedList<FShaderCommonCompileJob>
+class FShaderCommonCompileJob
 {
 public:
+	/** Linked list support -- not using TIntrusiveLinkedList because we want lock free insertion not supported by the core class */
+	FShaderCommonCompileJob* NextLink = nullptr;
+	FShaderCommonCompileJob** PrevLink = nullptr;
+
 	using FInputHash = FBlake3Hash;
 
 	FPendingShaderMapCompileResultsPtr PendingShaderMap;
@@ -60,6 +94,8 @@ public:
 	EShaderCompileJobPriority Priority;
 	EShaderCompileJobPriority PendingPriority;
 	EShaderCompilerWorkerType CurrentWorker;
+
+	TPimplPtr<UE::DerivedData::FRequestOwner> RequestOwner;
 
 	/** true if the results of the shader compile have been processed. */
 	uint8 bFinalized : 1;
@@ -85,6 +121,11 @@ public:
 	double TimeAssignedToExecution = 0.0;
 	/** In-engine timestamp of job being completed. Encompasses the compile time. Not set for jobs that are satisfied from the jobs cache */
 	double TimeExecutionCompleted = 0.0;
+	/** Time spent in tasks generated in FShaderJobCache::SubmitJobs, plus stall time on mutex locks in those tasks */
+	double TimeTaskSubmitJobs = 0.0;
+	double TimeTaskSubmitJobsStall = 0.0;
+
+	FShaderJobCacheRef JobCacheRef;
 
 	uint32 AddRef() const
 	{
@@ -119,6 +160,8 @@ public:
 	// Executed for all jobs (including those read from cache) on completion.
 	virtual void OnComplete() = 0;
 
+	virtual void AppendDebugName(FStringBuilderBase& OutName) const = 0;
+	
 	bool Equals(const FShaderCommonCompileJob& Rhs) const;
 
 	/** Calls the specified predicate for each single compile job, i.e. FShaderCompileJob and each stage of FShaderPipelineCompileJob. */
@@ -212,6 +255,8 @@ public:
 	virtual RENDERCORE_API void SerializeOutput(FArchive& Ar) override;
 
 	virtual RENDERCORE_API void OnComplete() override;
+	
+	virtual RENDERCORE_API void AppendDebugName(FStringBuilderBase& OutName) const override;
 
 	// Serializes only the subset of data written by SCW/read back from ShaderCompiler when using worker processes.
 	RENDERCORE_API void SerializeWorkerOutput(FArchive& Ar);
@@ -219,7 +264,14 @@ public:
 	// Serializes only the subset of data written by ShaderCompiler and read from SCW when using worker processes.
 	RENDERCORE_API void SerializeWorkerInput(FArchive& Ar);
 
-	RENDERCORE_API const FString& GetFinalSource() const;
+	UE_DEPRECATED(5.4, "GetFinalSource is deprecated, GetFinalSourceView returns an FStringView instead.")
+	inline const FString& GetFinalSource() const
+	{
+		static FString Empty;
+		return Empty;
+	}
+
+	RENDERCORE_API FStringView GetFinalSourceView() const;
 
 	FShaderCompileJob() : FShaderCommonCompileJob(Type, 0u, 0u, EShaderCompileJobPriority::Num)
 	{}
@@ -265,6 +317,7 @@ public:
 	virtual RENDERCORE_API FInputHash GetInputHash() override;
 	virtual RENDERCORE_API void SerializeOutput(FArchive& Ar) override;
 	virtual RENDERCORE_API void OnComplete() override;
+	virtual RENDERCORE_API void AppendDebugName(FStringBuilderBase& OutName) const override;
 
 	RENDERCORE_API FShaderPipelineCompileJob(int32 NumStages);
 	RENDERCORE_API FShaderPipelineCompileJob(uint32 InHash, uint32 InId, EShaderCompileJobPriority InPriroity, const FShaderPipelineCompileJobKey& InKey);

@@ -7,16 +7,18 @@
 
 #if ENABLE_VISUAL_LOG
 
+DECLARE_DELEGATE_TwoParams(FImmediateRenderDelegate, const UObject*, const FVisualLogEntry&);
+
 class FVisualLoggerTraceDevice : public FVisualLogDevice
 {
 public:
-	static FVisualLoggerTraceDevice& Get()
+	static ENGINE_API FVisualLoggerTraceDevice& Get()
 	{
 		static FVisualLoggerTraceDevice GDevice;
 		return GDevice;
 	}
 
-	FVisualLoggerTraceDevice();
+	ENGINE_API FVisualLoggerTraceDevice();
 	virtual void Cleanup(bool bReleaseMemory = false) override;
 	virtual void StartRecordingToFile(double TimeStamp) override;
 	virtual void StopRecordingToFile(double TimeStamp) override;
@@ -25,6 +27,7 @@ public:
 	virtual void Serialize(const class UObject* LogOwner, FName OwnerName, FName OwnerClassName, const FVisualLogEntry& LogEntry) override;
 	virtual bool HasFlags(int32 InFlags) const override { return !!(InFlags & (EVisualLoggerDeviceFlags::CanSaveToFile | EVisualLoggerDeviceFlags::StoreLogsLocally)); }
 
+	FImmediateRenderDelegate ImmediateRenderDelegate;
 };
 
 #endif

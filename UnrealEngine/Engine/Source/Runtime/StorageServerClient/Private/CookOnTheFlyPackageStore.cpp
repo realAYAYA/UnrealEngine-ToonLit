@@ -32,7 +32,8 @@ FCookOnTheFlyPackageStoreBackend::FCookOnTheFlyPackageStoreBackend(UE::Cook::ICo
 		UE_LOG(LogCookOnTheFly, Log, TEXT("Got '%d' cooked and '%d' failed packages from server"),
 			GetCookedPackagesResponse.CookedPackages.Num(), GetCookedPackagesResponse.FailedPackages.Num());
 
-		AddPackages(MoveTemp(GetCookedPackagesResponse.CookedPackages), MoveTemp(GetCookedPackagesResponse.FailedPackages));
+		AddPackages(MoveTemp(GetCookedPackagesResponse.CookedPackages), MoveTemp(GetCookedPackagesResponse.FailedPackages),
+			TArray<TPair<FPackageId, FName>>());
 
 		LastServerActivtyTime = FPlatformTime::Seconds();
 	}
@@ -54,7 +55,7 @@ void FCookOnTheFlyPackageStoreBackend::BeginRead()
 
 void FCookOnTheFlyPackageStoreBackend::EndRead()
 {
-	TArray<FPackageId> PackageIds = MoveTemp(RequestedPackageIds);
+	TArray<TPair<FPackageId, FName>> PackageIds = MoveTemp(RequestedPackageIds);
 	EntriesLock.ReadUnlock();
 
 	if (PackageIds.Num() > 0)
@@ -70,7 +71,8 @@ bool FCookOnTheFlyPackageStoreBackend::DoesPackageExist(FPackageId PackageId)
 	return EntryInfo.Status != EPackageStoreEntryStatus::Missing;
 }
 
-EPackageStoreEntryStatus FCookOnTheFlyPackageStoreBackend::GetPackageStoreEntry(FPackageId PackageId, FPackageStoreEntry& OutPackageStoreEntry)
+EPackageStoreEntryStatus FCookOnTheFlyPackageStoreBackend::GetPackageStoreEntry(FPackageId PackageId,
+	FName PackageName, FPackageStoreEntry& OutPackageStoreEntry)
 {
 	FEntryInfo& EntryInfo = PackageIdToEntryInfo.FindOrAdd(PackageId, FEntryInfo());
 
@@ -82,19 +84,25 @@ EPackageStoreEntryStatus FCookOnTheFlyPackageStoreBackend::GetPackageStoreEntry(
 	else if (EntryInfo.Status == EPackageStoreEntryStatus::None)
 	{
 		EntryInfo.Status = EPackageStoreEntryStatus::Pending;
-		RequestedPackageIds.Add(PackageId);
+		RequestedPackageIds.Add(TPair<FPackageId, FName>(PackageId, PackageName));
 	}
 
 	return EntryInfo.Status; 
 }
 
-void FCookOnTheFlyPackageStoreBackend::SendCookRequest(TArray<FPackageId> PackageIds)
+void FCookOnTheFlyPackageStoreBackend::SendCookRequest(TArray<TPair<FPackageId, FName>> PackageIdsAndNames)
 {
 	using namespace UE::Cook;
 	using namespace UE::ZenCookOnTheFly::Messaging;
 
 	LastClientActivtyTime = FPlatformTime::Seconds();
 	
+	TArray<FPackageId> PackageIds;
+	PackageIds.Reserve(PackageIdsAndNames.Num());
+	for (const TPair<FPackageId, FName>& Pair : PackageIdsAndNames)
+	{
+		PackageIds.Add(Pair.Key);
+	}
 	FCookOnTheFlyRequest Request(ECookOnTheFlyMessage::CookPackage);
 	Request.SetBodyTo(FCookPackageRequest { PackageIds });
 
@@ -103,7 +111,8 @@ void FCookOnTheFlyPackageStoreBackend::SendCookRequest(TArray<FPackageId> Packag
 
 	if (Response.IsOk())
 	{
-		AddPackages(MoveTemp(CookResponse.CookedPackages), MoveTemp(CookResponse.FailedPackages));
+		AddPackages(MoveTemp(CookResponse.CookedPackages), MoveTemp(CookResponse.FailedPackages),
+			MoveTemp(PackageIdsAndNames));
 	}
 	else
 	{
@@ -136,14 +145,31 @@ EPackageStoreEntryStatus FCookOnTheFlyPackageStoreBackend::CreatePackageStoreEnt
 	}
 }
 
-void FCookOnTheFlyPackageStoreBackend::AddPackages(TArray<FPackageStoreEntryResource> Entries, TArray<FPackageId> FailedPackageIds)
+void FCookOnTheFlyPackageStoreBackend::AddPackages(TArray<FPackageStoreEntryResource> Entries, TArray<FPackageId> FailedPackageIds,
+	TArray<TPair<FPackageId, FName>> PackageIdsAndNames)
 {
 	FWriteScopeLock WriteLock(EntriesLock);
 		
 	for (FPackageId FailedPackageId : FailedPackageIds)
 	{
-		UE_LOG(LogCookOnTheFly, Warning, TEXT("0x%llX [Failed]"), FailedPackageId.ValueForDebugging());
 		FEntryInfo& EntryInfo = PackageIdToEntryInfo.FindOrAdd(FailedPackageId, FEntryInfo());
+		if (EntryInfo.Status != EPackageStoreEntryStatus::Missing)
+		{
+			TPair<FPackageId, FName>* FailedPair = PackageIdsAndNames.FindByPredicate(
+				[FailedPackageId](TPair<FPackageId, FName>& Pair) { return Pair.Key == FailedPackageId; });
+			FName FailedName;
+			if (FailedPair)
+			{
+				FailedName = FailedPair->Value;
+			}
+			else
+			{
+				FailedName = FName(TEXT("<Unknown>"));
+			}
+
+			UE_LOG(LogCookOnTheFly, Warning, TEXT("0x%llX [Failed]. Failed to cook package %s."),
+				FailedPackageId.ValueForDebugging(), *FailedName.ToString());
+		}
 		EntryInfo.Status = EPackageStoreEntryStatus::Missing;
 		PackageStats.Failed++;
 	}
@@ -180,7 +206,8 @@ void FCookOnTheFlyPackageStoreBackend::OnCookOnTheFlyMessage(const UE::Cook::FCo
 				PackagesCookedMessage.CookedPackages.Num(),
 				PackagesCookedMessage.FailedPackages.Num());
 
-			AddPackages(MoveTemp(PackagesCookedMessage.CookedPackages), MoveTemp(PackagesCookedMessage.FailedPackages));
+			AddPackages(MoveTemp(PackagesCookedMessage.CookedPackages), MoveTemp(PackagesCookedMessage.FailedPackages),
+				TArray<TPair<FPackageId, FName>>());
 
 			if (Context)
 			{

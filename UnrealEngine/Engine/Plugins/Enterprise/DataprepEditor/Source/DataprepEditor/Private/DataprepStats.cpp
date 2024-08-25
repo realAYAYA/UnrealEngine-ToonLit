@@ -255,7 +255,7 @@ private:
 		}
 
 		// Owned by a default object? Not part of a level either.
-		if(InComponent->GetOuter() && InComponent->GetOuter()->IsDefaultSubobject() )
+		if(InComponent->GetOuter() && InComponent->GetOuter()->IsTemplate())
 		{
 			return; // Result;
 		}

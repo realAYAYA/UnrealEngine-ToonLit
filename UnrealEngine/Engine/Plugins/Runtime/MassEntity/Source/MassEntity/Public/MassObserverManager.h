@@ -71,7 +71,7 @@ public:
 	}
 
 	bool OnPostEntitiesCreated(const FMassArchetypeEntityCollection& EntityCollection);
-	bool OnPostEntitiesCreated(FMassProcessingContext& ProcessingContext, const FMassArchetypeEntityCollection& EntityCollection);
+	bool OnPostEntitiesCreated(FMassProcessingContext& InProcessingContext, const FMassArchetypeEntityCollection& EntityCollection);
 
 	bool OnPreEntitiesDestroyed(const FMassArchetypeEntityCollection& EntityCollection);
 	bool OnPreEntitiesDestroyed(FMassProcessingContext& ProcessingContext, const FMassArchetypeEntityCollection& EntityCollection);
@@ -87,7 +87,14 @@ public:
 		return OnCompositionChanged(Entity, Composition, EMassObservedOperation::Remove);
 	}
 
-	bool OnCompositionChanged(const FMassArchetypeEntityCollection& EntityCollection, const FMassArchetypeCompositionDescriptor& Composition, const EMassObservedOperation Operation, FMassProcessingContext* InProcessingContext = nullptr);
+	bool OnCompositionChanged(FMassProcessingContext& InProcessingContext, const FMassArchetypeEntityCollection& EntityCollection, const FMassArchetypeCompositionDescriptor& Composition, const EMassObservedOperation Operation);
+
+	bool OnCompositionChanged(const FMassArchetypeEntityCollection& EntityCollection, const FMassArchetypeCompositionDescriptor& Composition, const EMassObservedOperation Operation)
+	{
+		FMassProcessingContext LocalContext(EntityManager, /*DeltaSeconds=*/0.f);
+		LocalContext.bFlushCommandBuffer = false;
+		return OnCompositionChanged(LocalContext, EntityCollection, Composition, Operation);
+	}
 
 	void OnPostFragmentOrTagAdded(const UScriptStruct& FragmentOrTagType, const FMassArchetypeEntityCollection& EntityCollection)
 	{
@@ -102,6 +109,7 @@ public:
 	void OnFragmentOrTagOperation(const UScriptStruct& FragmentOrTagType, const FMassArchetypeEntityCollection& EntityCollection, const EMassObservedOperation Operation);
 
 	void AddObserverInstance(const UScriptStruct& FragmentOrTagType, const EMassObservedOperation Operation, UMassProcessor& ObserverProcessor);
+	void RemoveObserverInstance(const UScriptStruct& FragmentOrTagType, const EMassObservedOperation Operation, UMassProcessor& ObserverProcessor);
 
 protected:
 	friend FMassEntityManager;
@@ -126,6 +134,17 @@ protected:
 	 * FMassObserverManager outside of an FMassEntityManager instance 
 	 */
 	FMassEntityManager& EntityManager;
+
+public:
+	UE_DEPRECATED(5.4, "This flavor of OnCompositionChanged is deprecated. Please use the one taking a FMassProcessingContext& parameter instead")
+	bool OnCompositionChanged(const FMassArchetypeEntityCollection& EntityCollection, const FMassArchetypeCompositionDescriptor& Composition, const EMassObservedOperation Operation, FMassProcessingContext* InProcessingContext)
+	{
+		if (InProcessingContext)
+		{
+			return OnCompositionChanged(*InProcessingContext, EntityCollection, Composition, Operation);
+		}
+		return OnCompositionChanged(EntityCollection, Composition, Operation);
+	}
 };
 
 template<>

@@ -10,12 +10,14 @@
 #include "MovieSceneTrack.h"
 #include "ISequencerSection.h"
 #include "ISequencerTrackEditor.h"
+#include "MaterialTypes.h"
 #include "MovieSceneTrackEditor.h"
 
 class UMaterial;
 class UMaterialInterface;
 class UMovieSceneMaterialTrack;
 class USceneComponent;
+struct FComponentMaterialInfo;
 
 /**
  * Track editor for material parameters.
@@ -62,14 +64,14 @@ private:
 	 * @param MaterialTrack The track in which to look for sections to add the parameter to.
 	 * @param ParameterName The name of the parameter to add an initial key for.
 	 */
-	void AddScalarParameter( FGuid ObjectBinding, UMovieSceneMaterialTrack* MaterialTrack, FName ParameterName );
+	void AddScalarParameter( FGuid ObjectBinding, UMovieSceneMaterialTrack* MaterialTrack, FMaterialParameterInfo ParameterInfo, FString InLayerName, FString InAssetName );
 
 	/** Adds a color parameter and initial key to a material track.
 	* @param ObjectBinding The object binding which owns the material track.
 	 * @param MaterialTrack The track in which to look for sections to add the parameter to.
 	* @param ParameterName The name of the parameter to add an initial key for.
 	*/
-	void AddColorParameter( FGuid ObjectBinding, UMovieSceneMaterialTrack* MaterialTrack, FName ParameterName );
+	void AddColorParameter( FGuid ObjectBinding, UMovieSceneMaterialTrack* MaterialTrack, FMaterialParameterInfo ParameterInfo, FString InLayerName, FString InAssetName);
 };
 
 
@@ -91,6 +93,7 @@ public:
 	virtual void ExtendObjectBindingTrackMenu(TSharedRef<FExtender> Extender, const TArray<FGuid>& ObjectBindings, const UClass* ObjectClass) override;
 	virtual bool SupportsType( TSubclassOf<UMovieSceneTrack> Type ) const override;
 	virtual bool GetDefaultExpansionState(UMovieSceneTrack* InTrack) const override;
+	virtual void BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track) override;
 
 protected:
 
@@ -102,6 +105,8 @@ private:
 
 	void ConstructObjectBindingTrackMenu(FMenuBuilder& MenuBuilder, TArray<FGuid> ObjectBindings);
 	/** Callback for executing the add component material track. */
-	void HandleAddComponentMaterialActionExecute(USceneComponent* Component, int32 MaterialIndex);
+	void HandleAddComponentMaterialActionExecute(USceneComponent* Component, FComponentMaterialInfo MaterialInfo);
+	/** Callback for rebinding a component material track to a different material slot */
+	void FillRebindMaterialTrackMenu(FMenuBuilder& MenuBuilder, class UMovieSceneComponentMaterialTrack* MaterialTrack, class UPrimitiveComponent* Component, FGuid ObjectBinding);
 
 };

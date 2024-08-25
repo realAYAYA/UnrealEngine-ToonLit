@@ -7,22 +7,26 @@
 #include "Containers/Set.h"
 #include "WorldPartition/WorldPartitionRuntimeCell.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
-#include "WorldPartition/HLOD/HLODSubActor.h"
 #include "WorldPartition/HLOD/HLODStats.h"
+
+#if WITH_EDITOR
+#include "UObject/ObjectSaveContext.h"
+#endif // WITH_EDITOR
+
 #include "HLODActor.generated.h"
 
 class UHLODLayer;
-class UHLODSubsystem;
 class UWorldPartitionHLODSourceActors;
 
 ENGINE_API DECLARE_LOG_CATEGORY_EXTERN(LogHLODHash, Log, All);
 
-UCLASS(NotPlaceable, MinimalAPI)
+UCLASS(NotPlaceable, MinimalAPI, HideCategories=(Rendering, Replication, Collision, Physics, Navigation, Networking, Input, Actor, LevelInstance, Cooking))
 class AWorldPartitionHLOD : public AActor
 {
 	GENERATED_UCLASS_BODY()
 
-	typedef TMap<FName, int64>	FStats;
+	friend class FHLODActorDesc;
+	typedef TMap<FName, int64> FStats;
 
 public:
 	ENGINE_API void SetVisibility(bool bInVisible);
@@ -55,18 +59,23 @@ public:
 	ENGINE_API void BuildHLOD(bool bForceBuild = false);
 	ENGINE_API uint32 GetHLODHash() const;
 
-	const FStats& GetStats() const { return HLODStats; }
-	int64 GetStat(FName InStatName) const { return HLODStats.FindRef(InStatName); }
+	ENGINE_API int64 GetStat(FName InStatName) const;
 	void SetStat(FName InStatName, int64 InStatValue) { HLODStats.Add(InStatName, InStatValue); }
 	void ResetStats() { HLODStats.Reset(); }
+
+private:
+	const FStats& GetStats() const { return HLODStats; }
+
 #endif // WITH_EDITOR
 
 protected:
 	//~ Begin UObject Interface.
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
+	ENGINE_API virtual bool IsEditorOnly() const override;
 	ENGINE_API virtual bool NeedsLoadForServer() const override;
 	ENGINE_API virtual void PostLoad() override;
 #if WITH_EDITOR
+	ENGINE_API virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 	ENGINE_API virtual void RerunConstructionScripts() override;
 	virtual bool CanEditChange(const FProperty* InProperty) const override { return false; }
 	virtual bool CanEditChangeComponent(const UActorComponent* Component, const FProperty* InProperty) const override { return false; }
@@ -80,8 +89,6 @@ protected:
 	virtual bool IsRuntimeOnly() const override { return true; }
 #if WITH_EDITOR
 	ENGINE_API virtual TUniquePtr<class FWorldPartitionActorDesc> CreateClassActorDesc() const override;
-
-	ENGINE_API virtual void GetActorBounds(bool bOnlyCollidingComponents, FVector& Origin, FVector& BoxExtent, bool bIncludeFromChildActors) const override;
 	ENGINE_API virtual FBox GetStreamingBounds() const override;
 
 	virtual bool ShouldImport(FStringView ActorPropString, bool IsMovingLevel) override { return false; }
@@ -129,7 +136,7 @@ private:
 	FName SourceCellName_DEPRECATED;
 
 	UPROPERTY()
-	TArray<FHLODSubActor> HLODSubActors_DEPRECATED;
+	TArray<FWorldPartitionRuntimeCellObjectMapping> HLODSubActors_DEPRECATED;
 
 	UPROPERTY()
 	TObjectPtr<const UHLODLayer> SubActorsHLODLayer_DEPRECATED;

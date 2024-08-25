@@ -32,6 +32,7 @@ public:
 	
 	//~ Begin UObject Interface
 	virtual void PreSave(FObjectPreSaveContext SaveContext) override;
+	virtual void PostLoad() override;
 	//~ End UObject Interface
 
 	class UDisplayClusterBlueprintGeneratedClass* GetGeneratedClass() const;
@@ -54,14 +55,15 @@ public:
 	/** Configure the config with needed blueprint data for an export. */
 	void PrepareConfigForExport();
 	
+	//** Updates the ConfigExport property. Called when saving the asset.
+	void UpdateConfigExportProperty();
+
 public:
 	// Holds the last saved config export. In the AssetRegistry to allow parsing without loading.
 	UPROPERTY(AssetRegistrySearchable)
 	FString ConfigExport;
 
 private:
-	//** Updates the ConfigExport property. Called when saving the asset.
-	void UpdateConfigExportProperty();
 
 	/** Returns normal component name. We get component name from a SCS component template which has _GEN_VARIABLE postfix. */
 	FString GetObjectNameFromSCSNode(const UObject* const Object) const;

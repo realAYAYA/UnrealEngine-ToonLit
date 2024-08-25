@@ -23,11 +23,11 @@ Buffer<uint>		RootToUniqueTriangleIndexBuffer;
 
 #endif
 
-Buffer<uint>		PointToCurveIndexBuffer;
-RWBuffer<uint4>		DeformedPositionBuffer;
-Buffer<uint4>		RestPositionBuffer;
-Buffer<uint>		CurvesOffsetsBuffer;
-Buffer<float4>		DeformedPositionOffset;
+ByteAddressBuffer	PointToCurveIndexBuffer;
+RWByteAddressBuffer	DeformedPositionBuffer;
+ByteAddressBuffer	RestPositionBuffer;
+ByteAddressBuffer	CurvesOffsetsBuffer;
+StructuredBuffer<float4> DeformedPositionOffset;
 float3				RestPositionOffset;
 float4x4			WorldToLocal;
 
@@ -71,9 +71,9 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
 	if (DispatchThreadId.x < uint(NumPoints))
 	{
-		const int StrandIndex = PointToCurveIndexBuffer[DispatchThreadId.x];
+		const int StrandIndex = ReadHairPointToCurveIndex(PointToCurveIndexBuffer, DispatchThreadId.x);
 
-		const FHairCurve Curve = UnpackHairCurve(CurvesOffsetsBuffer[StrandIndex]);
+		const FHairCurve Curve = ReadHairCurve(CurvesOffsetsBuffer, StrandIndex);
 		const int PointBegin = Curve.PointIndex;
 		const int PointCount = Curve.PointCount;
 		const int PointIndex = DispatchThreadId.x - PointBegin;
@@ -130,12 +130,12 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 		const float3 LocalPointDisplace = (TrianglePrevNodePosition - TrianglePrevRestPosition)  * (1.0 - PointAlpha) + (TriangleNextNodePosition - TriangleNextRestPosition) * PointAlpha;
 		
-		const uint4 Packed = RestPositionBuffer[DispatchThreadId.x];
+		const FPackedHairPosition Packed = ReadPackedHairPosition(RestPositionBuffer, DispatchThreadId.x);
 		const float3 LocalTrianglePosition = DIHairStrands_TriangleLocalPosition(RestTrianglePosition, RestTriangleOrientation, 
 					UnpackHairControlPointPosition(Packed, RestPositionOffset)) + LocalPointDisplace;
 		
 		const float3 LocalComponentPosition = DIHairStrands_TriangleWorldPosition(DeformedTrianglePosition, DeformedTriangleOrientation, LocalTrianglePosition) - DeformedPositionOffset[0].xyz;
-		DeformedPositionBuffer[DispatchThreadId.x] = PackHairControlPointPosition(Packed, LocalComponentPosition);
+		WritePackedHairControlPointPosition(DeformedPositionBuffer, DispatchThreadId.x, Packed, LocalComponentPosition);
 
 #endif
 		
@@ -143,9 +143,9 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		
 		const float3 LocalPointDisplace = (LocalPrevNodePosition - LocalPrevRestPosition)  * (1.0 - PointAlpha) + (LocalNextNodePosition - LocalNextRestPosition) * PointAlpha;
 
-		const uint4 Packed = RestPositionBuffer[DispatchThreadId.x];
-		const float3 LocalComponentPosition = UnpackHairControlPointPosition(RestPositionBuffer[DispatchThreadId.x], RestPositionOffset) + LocalPointDisplace;
-		DeformedPositionBuffer[DispatchThreadId.x] = PackHairControlPointPosition(Packed, LocalComponentPosition, DeformedPositionOffset[0].xyz);
+		const FPackedHairPosition Packed = ReadPackedHairPosition(RestPositionBuffer, DispatchThreadId.x);
+		const float3 LocalComponentPosition = ReadHairControlPointPosition(RestPositionBuffer, DispatchThreadId.x, RestPositionOffset) + LocalPointDisplace;
+		WritePackedHairControlPointPosition(DeformedPositionBuffer, DispatchThreadId.x, Packed, LocalComponentPosition, DeformedPositionOffset[0].xyz);
 		
 #endif
 	}

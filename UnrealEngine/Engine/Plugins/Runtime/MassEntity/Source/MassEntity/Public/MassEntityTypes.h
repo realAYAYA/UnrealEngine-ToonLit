@@ -13,6 +13,9 @@
 
 MASSENTITY_API DECLARE_LOG_CATEGORY_EXTERN(LogMass, Warning, All);
 
+DECLARE_STATS_GROUP(TEXT("Mass"), STATGROUP_Mass, STATCAT_Advanced);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Mass Total Frame Time"), STAT_Mass_Total, STATGROUP_Mass, MASSENTITY_API);
+
 // This is the base class for all lightweight fragments
 USTRUCT()
 struct FMassFragment
@@ -390,6 +393,9 @@ struct FMassGenericPayloadView
 		}
 	}
 
+	/** Moves NumToMove elements to the back of the viewed collection. */
+	void SwapElementsToEnd(int32 StartIndex, int32 NumToMove);
+
 	TArrayView<FStructArrayView> Content;
 };
 
@@ -553,3 +559,13 @@ namespace UE::Mass
 	};
 
 } // UE::Mass
+
+
+struct FMassArchetypeCreationParams
+{
+	/** Created archetype will have chunks of this size. 0 denotes "use default" (see UE::Mass::ChunkSize) */
+	int32 ChunkMemorySize = 0;
+
+	/** Name to identify the archetype while debugging*/
+	FName DebugName;
+};

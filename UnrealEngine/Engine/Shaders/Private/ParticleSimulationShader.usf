@@ -6,6 +6,7 @@
 
 #include "Common.ush"
 #include "SceneTexturesCommon.ush"
+#include "ParticleSimulationCommon.ush"
 
 #if DISTANCE_FIELD_COLLISION
 	#include "DistanceField/GlobalDistanceFieldShared.ush"
@@ -29,9 +30,8 @@ struct FShaderInterpolants
 ------------------------------------------------------------------------------*/
 #if VERTEXSHADER
 
-/** The width and height of a tile in the particle simulation texture */
-float TileSizeX;
-float TileSizeY;
+float2 TexCoordScale;
+float2 TilePageScale;
 
 struct FVertexInput
 {
@@ -44,12 +44,12 @@ struct FVertexInput
 	uint InstanceId	: SV_InstanceID;
 #else // Mobile
 	/** Tile offsets in per-instance data */
-	float2 TileOffsets : ATTRIBUTE1;
+	float4 TileOffsets : ATTRIBUTE1;
 #endif
 };
 
 /** Buffer from which to read tile offsets. */
-Buffer<float2> TileOffsets;
+Buffer<float4> TileOffsets;
 
 void VertexMain(
 	in FVertexInput Input,
@@ -59,12 +59,12 @@ void VertexMain(
 {
 #if FEATURE_LEVEL >= FEATURE_LEVEL_SM4
 	uint InstanceId = Input.InstanceId * TILES_PER_INSTANCE + Input.VertexId / 4;
-	float2 TileOffset = TileOffsets[InstanceId];
+	float3 TileOffset = TileOffsets[InstanceId].xyz;
 #else
-	float2 TileOffset = Input.TileOffsets.xy;
+	float3 TileOffset = Input.TileOffsets.xyz;
 #endif
 	
-	float2 TileCoord = Input.TexCoord.xy * float2(TileSizeX,TileSizeY) + TileOffset;
+	float2 TileCoord = Input.TexCoord.xy * TexCoordScale.xy + TileOffset * TilePageScale.xy + GetTilePageOffset(TileOffset.z, TilePageScale, true);
 
 	OutPosition = float4(
 		TileCoord.xy * float2(2.0f,-2.0f) + float2(-1.0f,1.0f),
@@ -321,7 +321,7 @@ void CollideWithDepthBuffer(
 	in float Resilience
 	)
 {
-	float3 InPosition = LWCToFloat(LWCAdd(InPosition_LWC, PrimaryView.PreViewTranslation));
+	float3 InPosition = LWCToFloat(LWCAdd(InPosition_LWC, PrimaryView.TileOffset.PreViewTranslation));
 
 	// Integration assuming no collision.
 	float3 MidVelocity = InVelocity.xyz + 0.5f * Acceleration;
@@ -354,7 +354,7 @@ void CollideWithDepthBuffer(
 			// in the view frustum. To avoid this, we disable the collision test if one of the derivate is above a threshold.
 			if (max(abs(SceneDepth - SceneDepth0), abs(SceneDepth - SceneDepth1)) > CollisionDepthBounds)
 			{
-				NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.PreViewTranslation);
+				NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.TileOffset.PreViewTranslation);
 				return;
 			}
 #endif
@@ -439,7 +439,7 @@ void CollideWithDepthBuffer(
 		}
 	}
 
-	NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.PreViewTranslation);
+	NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.TileOffset.PreViewTranslation);
 }
 #endif // #if DEPTH_BUFFER_COLLISION
 
@@ -459,7 +459,7 @@ void CollideWithDistanceField(
 	in float Resilience
 	)
 {
-	float3 InPosition = LWCToFloat(LWCAdd(InPosition_LWC, PrimaryView.PreViewTranslation));
+	float3 InPosition = LWCToFloat(LWCAdd(InPosition_LWC, PrimaryView.TileOffset.PreViewTranslation));
 
 	// Integration assuming no collision.
 	float3 MidVelocity = InVelocity.xyz + 0.5f * Acceleration;
@@ -518,7 +518,7 @@ void CollideWithDistanceField(
 		}
 	}
 
-	NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.PreViewTranslation);
+	NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.TileOffset.PreViewTranslation);
 }
 
 #endif
@@ -579,7 +579,7 @@ void PixelMain(
 		Force += ComputeDrag(Velocity.xyz, DragCoefficient);
 
 		// Compute force to a point gravity source.
-		Force += ComputeAttractionForce(PositionSample);
+		Force += ComputeAttractionForce(PositionSample.xyz);
 
 		// Compute the acceleration to apply to the particle this frame.
 		float3 Acceleration = Force * DeltaSeconds;

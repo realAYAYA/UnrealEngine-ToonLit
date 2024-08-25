@@ -10,7 +10,7 @@
 
 #include "DatasmithMaxSceneExporter.h"
 #include "DatasmithMaxCameraExporter.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxLogger.h"
 #include "DatasmithMaxHelper.h"
 
@@ -83,7 +83,7 @@ void FLightNodeConverter::ConvertToDatasmith(ISceneTracker& SceneTracker, FNodeT
 
 		if (!LightElement)
 		{
-			if (FDatasmithMaxSceneParser::GetLightClass(NodeTracker.Node) == EMaxLightClass::SkyEquivalent)
+			if (FDatasmithMaxSceneHelper::GetLightClass(NodeTracker.Node) == EMaxLightClass::SkyEquivalent)
 			{
 				SceneTracker.GetDatasmithSceneRef()->SetUsePhysicalSky(true);
 			}

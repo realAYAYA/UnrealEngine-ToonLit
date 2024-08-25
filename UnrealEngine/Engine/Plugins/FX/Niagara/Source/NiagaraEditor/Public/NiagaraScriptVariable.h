@@ -4,6 +4,7 @@
 
 #include "NiagaraCommon.h"
 #include "NiagaraTypes.h"
+#include "NiagaraVariableMetaData.h"
 #include "NiagaraVariant.h"
 #include "NiagaraScriptVariable.generated.h"
 

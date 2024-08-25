@@ -6,6 +6,8 @@
 
 #include "Engine/World.h"
 #include "Async/TaskGraphInterfaces.h"
+#include "Engine/HitResult.h"
+#include "Engine/OverlapResult.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/App.h"
 #include "Misc/Fork.h"

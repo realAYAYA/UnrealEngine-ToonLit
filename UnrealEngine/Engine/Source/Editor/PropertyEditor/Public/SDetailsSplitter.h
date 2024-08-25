@@ -9,17 +9,22 @@
 class PROPERTYEDITOR_API SDetailsSplitter : public SCompoundWidget
 {
 public:
+	// Callback that's called before highlighting a row. If true, the row is skipped.
+	DECLARE_DELEGATE_RetVal_OneParam(bool, FShouldIgnoreRow, const TWeakPtr<FDetailTreeNode>&)
+	DECLARE_DELEGATE_RetVal_OneParam(FLinearColor, FRowHighlightColor, const TUniquePtr<FAsyncDetailViewDiff::DiffNodeType>&)
+
 	class FSlot : public TSlotBase<FSlot>
 	{
 	public:
 		FSlot() = default;
-
+		
 		SLATE_SLOT_BEGIN_ARGS(FSlot, TSlotBase<FSlot>)
 			/** When the RuleSize is set to FractionOfParent, the size of the slot is the Value percentage of its parent size. */
 			SLATE_ATTRIBUTE(float, Value)
 			SLATE_ARGUMENT(TSharedPtr<IDetailsView>, DetailsView)
 			SLATE_ATTRIBUTE(bool, IsReadonly) // default true
 			SLATE_ATTRIBUTE(TSharedPtr<FAsyncDetailViewDiff>, DifferencesWithRightPanel)
+			SLATE_EVENT(FShouldIgnoreRow, ShouldIgnoreRow) // default false
 		SLATE_SLOT_END_ARGS()
 	};
 	struct FPanel
@@ -27,11 +32,13 @@ public:
 		TSharedPtr<IDetailsView> DetailsView;
 		TAttribute<bool> IsReadonly;
 		TAttribute<TSharedPtr<FAsyncDetailViewDiff>> DiffRight;
+		FShouldIgnoreRow ShouldIgnoreRow;
 	};
 	static FSlot::FSlotArguments Slot();
 	
 	SLATE_BEGIN_ARGS(SDetailsSplitter)
 	{}
+		SLATE_EVENT(FRowHighlightColor, RowHighlightColor) // default cyan: FLinearColor(0.f, 1.f, 1.f, .7f)
 		SLATE_SLOT_ARGUMENT(FSlot, Slots)
 	SLATE_END_ARGS()
 
@@ -47,6 +54,10 @@ public:
 	
 	void AddSlot(const FSlot::FSlotArguments& SlotArgs, int32 Index = INDEX_NONE);
 	FPanel& GetPanel(int32 Index);
+
+	void SetRowHighlightColorDelegate(const FRowHighlightColor& Delegate);
+	// generate a highlight color delegate that utilizes the merge results to determine the color
+	void HighlightFromMergeResults(const TMap<FString, TMap<FPropertySoftPath, ETreeDiffResult>>& Highlights);
 
 private:
 	
@@ -68,10 +79,11 @@ private:
 	void PaintPropertyConnector(FSlateWindowElementList& OutDrawElements, int32 LayerId, const FSlateRect& LeftPropertyRect, 
 		const FSlateRect& RightPropertyRect, const FLinearColor& FillColor, const FLinearColor& OutlineColor) const;
 	
-	void PaintCopyPropertyButton(FSlateWindowElementList& OutDrawElements, int32 LayerId, const TUniquePtr<TDiffNode<TWeakPtr<FDetailTreeNode>>>& DiffNode,
+	void PaintCopyPropertyButton(FSlateWindowElementList& OutDrawElements, int32 LayerId, const TUniquePtr<FAsyncDetailViewDiff::DiffNodeType>& DiffNode,
 		const FSlateRect& LeftPropertyRect, const FSlateRect& RightPropertyRect, EPropertyCopyDirection CopyDirection) const;
 	
 	TSharedPtr<SSplitter> Splitter;
 	TArray<FPanel> Panels;
 	FCopyPropertyButton HoveredCopyButton;
+	FRowHighlightColor GetRowHighlightColor;
 };

@@ -141,16 +141,16 @@ float FMovieSceneGeometryCacheSectionTemplateParameters::MapTimeToAnimation(floa
 	const float SectionPlayRate = PlayRate;
 	const float AnimPlayRate = FMath::IsNearlyZero(SectionPlayRate) ? 1.0f : SectionPlayRate;
 
-	const float FirstLoopSeqLength = SequenceLength - InFrameRate.AsSeconds(FirstLoopStartFrameOffset + StartFrameOffset + EndFrameOffset);
-	const float SeqLength = SequenceLength - InFrameRate.AsSeconds(StartFrameOffset + EndFrameOffset);
+	const float FirstLoopSeqLength = static_cast<float>(SequenceLength - InFrameRate.AsSeconds(FirstLoopStartFrameOffset + StartFrameOffset + EndFrameOffset));
+	const float SeqLength = static_cast<float>(SequenceLength - InFrameRate.AsSeconds(StartFrameOffset + EndFrameOffset));
 
-	float AnimPosition = FFrameTime::FromDecimal((InPosition - SectionStartTime).AsDecimal() * AnimPlayRate) / InFrameRate;
-	AnimPosition += InFrameRate.AsSeconds(FirstLoopStartFrameOffset);
+	float AnimPosition = static_cast<float>(FFrameTime::FromDecimal((InPosition - SectionStartTime).AsDecimal() * AnimPlayRate) / InFrameRate);
+	AnimPosition += static_cast<float>(InFrameRate.AsSeconds(FirstLoopStartFrameOffset));
 	if (SeqLength > 0.f && (bLooping || !FMath::IsNearlyEqual(AnimPosition, SeqLength, 1e-4f)))
 	{
 		AnimPosition = FMath::Fmod(AnimPosition, SeqLength);
 	}
-	AnimPosition += InFrameRate.AsSeconds(StartFrameOffset);
+	AnimPosition += static_cast<float>(InFrameRate.AsSeconds(StartFrameOffset));
 	if (bReverse)
 	{
 		AnimPosition = SequenceLength - AnimPosition;

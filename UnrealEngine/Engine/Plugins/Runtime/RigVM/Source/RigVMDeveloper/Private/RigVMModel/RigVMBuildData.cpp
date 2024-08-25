@@ -9,6 +9,8 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMBuildData)
 
+static const FName FunctionReferenceNodeDataName = TEXT("FunctionReferenceNodeData");
+
 // When the object system has been completely loaded, collect all the references between RigVM graphs 
 static FDelayedAutoRegisterHelper GRigVMBuildDataSingletonHelper(EDelayedRegisterRunPhase::EndOfEngineInit, []() -> void
 {
@@ -95,7 +97,7 @@ void URigVMBuildData::InitializeIfNeeded()
 	for (UClass* Class : ImplementedClasses)
 	{
 		const FArrayProperty* ReferenceNodeDataProperty =
-		   CastField<FArrayProperty>(Class->FindPropertyByName(TEXT("FunctionReferenceNodeData")));
+		   CastField<FArrayProperty>(Class->FindPropertyByName(FunctionReferenceNodeDataName));
 		if(ReferenceNodeDataProperty)
 		{
 			const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
@@ -124,35 +126,40 @@ void URigVMBuildData::RegisterReferencesFromAsset(const FAssetData& InAssetData)
 {
 	URigVMBuildData* BuildData = URigVMBuildData::Get();
 
-	if (UClass* Class = InAssetData.GetClass())
-	{
-		const FArrayProperty* ReferenceNodeDataProperty =
-			  CastField<FArrayProperty>(Class->FindPropertyByName(TEXT("FunctionReferenceNodeData")));
-		if(ReferenceNodeDataProperty)
-		{
-			const FString ReferenceNodeDataString =
-						   InAssetData.GetTagValueRef<FString>(ReferenceNodeDataProperty->GetFName());
-			if(ReferenceNodeDataString.IsEmpty())
-			{
-				return;
-			}
+	// It's faster to check for a key directly then trying to get the class
+	FAssetDataTagMapSharedView::FFindTagResult FoundValue = InAssetData.TagsAndValues.FindTag(FunctionReferenceNodeDataName);
 
-			// See if it has reference node data, and register the references
-			TArray<FRigVMReferenceNodeData> ReferenceNodeDatas;
-			ReferenceNodeDataProperty->ImportText_Direct(*ReferenceNodeDataString, &ReferenceNodeDatas, nullptr, EPropertyPortFlags::PPF_None);	
-			for(FRigVMReferenceNodeData& ReferenceNodeData : ReferenceNodeDatas)
+	if (FoundValue.IsSet())
+	{
+		if (UClass* Class = InAssetData.GetClass())
+		{
+			const FArrayProperty* ReferenceNodeDataProperty =
+				  CastField<FArrayProperty>(Class->FindPropertyByName(FunctionReferenceNodeDataName));
+			if(ReferenceNodeDataProperty)
 			{
-				if (ReferenceNodeData.ReferencedFunctionIdentifier.LibraryNode.IsValid())
+				const FString ReferenceNodeDataString = FoundValue.AsString();
+				if(ReferenceNodeDataString.IsEmpty())
 				{
-					BuildData->RegisterFunctionReference(ReferenceNodeData.ReferencedFunctionIdentifier, ReferenceNodeData.GetReferenceNodeObjectPath());
+					return;
 				}
-				else if (ReferenceNodeData.ReferencedHeader_DEPRECATED.IsValid())
+
+				// See if it has reference node data, and register the references
+				TArray<FRigVMReferenceNodeData> ReferenceNodeDatas;
+				ReferenceNodeDataProperty->ImportText_Direct(*ReferenceNodeDataString, &ReferenceNodeDatas, nullptr, EPropertyPortFlags::PPF_None);	
+				for(FRigVMReferenceNodeData& ReferenceNodeData : ReferenceNodeDatas)
 				{
-					BuildData->RegisterFunctionReference(ReferenceNodeData.ReferencedHeader_DEPRECATED.LibraryPointer, ReferenceNodeData.GetReferenceNodeObjectPath());
-				}
-				else if (!ReferenceNodeData.ReferencedFunctionPath_DEPRECATED.IsEmpty())
-				{
-					BuildData->RegisterFunctionReference(ReferenceNodeData);
+					if (ReferenceNodeData.ReferencedFunctionIdentifier.LibraryNode.IsValid())
+					{
+						BuildData->RegisterFunctionReference(ReferenceNodeData.ReferencedFunctionIdentifier, ReferenceNodeData.GetReferenceNodeObjectPath());
+					}
+					else if (ReferenceNodeData.ReferencedHeader_DEPRECATED.IsValid())
+					{
+						BuildData->RegisterFunctionReference(ReferenceNodeData.ReferencedHeader_DEPRECATED.LibraryPointer, ReferenceNodeData.GetReferenceNodeObjectPath());
+					}
+					else if (!ReferenceNodeData.ReferencedFunctionPath_DEPRECATED.IsEmpty())
+					{
+						BuildData->RegisterFunctionReference(ReferenceNodeData);
+					}
 				}
 			}
 		}
@@ -165,14 +172,15 @@ const FRigVMFunctionReferenceArray* URigVMBuildData::FindFunctionReferences(cons
 }
 
 void URigVMBuildData::ForEachFunctionReference(const FRigVMGraphFunctionIdentifier& InFunction,
-                                               TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction) const
+                                               TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction,
+                                               bool bLoadIfNecessary) const
 {
 	if (const FRigVMFunctionReferenceArray* ReferencesEntry = FindFunctionReferences(InFunction))
 	{
 		for (int32 ReferenceIndex = 0; ReferenceIndex < ReferencesEntry->Num(); ReferenceIndex++)
 		{
 			const TSoftObjectPtr<URigVMFunctionReferenceNode>& Reference = ReferencesEntry->operator [](ReferenceIndex);
-			if (!Reference.IsValid())
+			if (bLoadIfNecessary && !Reference.IsValid())
 			{
 				Reference.LoadSynchronous();
 			}

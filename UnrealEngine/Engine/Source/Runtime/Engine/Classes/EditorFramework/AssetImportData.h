@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "Misc/SecureHash.h"
@@ -129,9 +130,11 @@ public:
 	ENGINE_API void SetSourceFiles(TArray<FAssetImportInfo::FSourceFile>&& SourceFiles);
 
 #if WITH_EDITOR
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void AppendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) {}
 	/** If your asset import data flavor need to add some asset registry tag, override this function. */
-	virtual void AppendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags){}
-	
+	virtual void AppendAssetRegistryTags(FAssetRegistryTagsContext Context) {}
+
 	/** Helper function to return the first filename stored in this data. The resulting filename will be absolute (ie, not relative to the asset).  */
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="GetFirstFilename", ScriptName="GetFirstFilename"), Category="AssetImportData")
 	ENGINE_API FString K2_GetFirstFilename() const;

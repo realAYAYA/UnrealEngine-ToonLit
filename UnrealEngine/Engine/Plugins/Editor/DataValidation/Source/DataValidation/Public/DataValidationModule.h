@@ -4,37 +4,14 @@
 
 #include "Modules/ModuleManager.h"
 #include "UObject/ObjectMacros.h"
+#include "Misc/DataValidation.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "AssetRegistry/AssetData.h"
 #include "CoreMinimal.h"
 #endif
 
-#include "DataValidationModule.generated.h"
-
 struct FAssetData;
-
-UENUM(BlueprintType)
-enum class EDataValidationUsecase : uint8
-{
-	/** No usecase specified */
-	None = 0,
-
-	/** Triggered on user's demand */
-	Manual,
-
-	/** A commandlet invoked the validation */
-	Commandlet,
-
-	/** Saving a package triggered the validation */
-	Save,
-
-	/** Submit dialog triggered the validation */
-	PreSubmit,
-
-	/** Triggered by blueprint or c++ */
-	Script,
-};
 
 /**
  * The public interface to this module

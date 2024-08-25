@@ -193,6 +193,7 @@ private:
 	bool bDisplayAngularDamping;
 	bool bDisplayEnableGravity;
 	bool bDisplayInertiaConditioning;
+	bool bDisplayInitialOverlapDepenetration;
 	bool bDisplayWalkableSlopeOverride;
 	bool bDisplayAutoWeld;
 	bool bDisplayStartAwake;

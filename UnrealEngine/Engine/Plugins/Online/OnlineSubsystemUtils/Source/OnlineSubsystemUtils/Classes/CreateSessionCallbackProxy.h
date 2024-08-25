@@ -22,7 +22,7 @@ class UCreateSessionCallbackProxy : public UOnlineBlueprintCallProxyBase
 
 	// Creates a session with the default online subsystem
 	UFUNCTION(BlueprintCallable, meta=(BlueprintInternalUseOnly = "true", WorldContext="WorldContextObject"), Category = "Online|Session")
-	static UCreateSessionCallbackProxy* CreateSession(UObject* WorldContextObject, class APlayerController* PlayerController, int32 PublicConnections, bool bUseLAN);
+	static UCreateSessionCallbackProxy* CreateSession(UObject* WorldContextObject, class APlayerController* PlayerController, int32 PublicConnections, bool bUseLAN, bool bUseLobbiesIfAvailable = true);
 
 	// UOnlineBlueprintCallProxyBase interface
 	virtual void Activate() override;
@@ -53,6 +53,9 @@ private:
 
 	// Whether or not to search LAN
 	bool bUseLAN;
+
+	// Whether or not to use lobbies (as opposed to using a raw server list)
+	bool bUseLobbiesIfAvailable;
 
 	// The world context object in which this call is taking place
 	UObject* WorldContextObject;

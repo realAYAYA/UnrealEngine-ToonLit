@@ -13,7 +13,7 @@ FInertialScrollManager::FInertialScrollManager(double InSampleTimeout)
 
 void FInertialScrollManager::AddScrollSample(float Delta, double CurrentTime)
 {
-	new( ScrollSamples ) FScrollSample(Delta, CurrentTime);
+	ScrollSamples.Emplace(Delta, CurrentTime);
 
 	float Total = 0;
 	double OldestTime = 0;

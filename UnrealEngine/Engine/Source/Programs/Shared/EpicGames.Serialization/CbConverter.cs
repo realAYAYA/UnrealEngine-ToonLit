@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Serialization.Converters;
 using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
+using EpicGames.Core;
+using EpicGames.Serialization.Converters;
 
 namespace EpicGames.Serialization
 {
@@ -31,23 +31,23 @@ namespace EpicGames.Serialization
 	}
 
 	/// <summary>
-	/// Base class for all converters. Deriving from <see cref="ICbConverter{T}"/> is more efficient
+	/// Base class for all converters.
 	/// </summary>
-	public interface ICbConverter
+	public abstract partial class CbConverter
 	{
 		/// <summary>
 		/// Reads an object from a field
 		/// </summary>
 		/// <param name="field"></param>
 		/// <returns></returns>
-		object? ReadObject(CbField field);
+		public abstract object? ReadObject(CbField field);
 
 		/// <summary>
 		/// Writes an object to a field
 		/// </summary>
 		/// <param name="writer"></param>
 		/// <param name="value"></param>
-		void WriteObject(CbWriter writer, object? value);
+		public abstract void WriteObject(CbWriter writer, object? value);
 
 		/// <summary>
 		/// Writes an object to a named field, if not equal to the default value
@@ -55,27 +55,36 @@ namespace EpicGames.Serialization
 		/// <param name="writer"></param>
 		/// <param name="name"></param>
 		/// <param name="value"></param>
-		void WriteNamedObject(CbWriter writer, Utf8String name, object? value);
+		public abstract void WriteNamedObject(CbWriter writer, CbFieldName name, object? value);
 	}
 
 	/// <summary>
 	/// Converter for a particular type
 	/// </summary>
-	public interface ICbConverter<T> : ICbConverter
+	public abstract class CbConverter<T> : CbConverter
 	{
+		/// <inheritdoc/>
+		public override sealed object? ReadObject(CbField field) => Read(field);
+
+		/// <inheritdoc/>
+		public override sealed void WriteObject(CbWriter writer, object? value) => Write(writer, (T)value!);
+
+		/// <inheritdoc/>
+		public override sealed void WriteNamedObject(CbWriter writer, CbFieldName name, object? value) => WriteNamed(writer, name, (T)value!);
+
 		/// <summary>
 		/// Reads an object from a field
 		/// </summary>
 		/// <param name="field"></param>
 		/// <returns></returns>
-		T Read(CbField field);
+		public abstract T Read(CbField field);
 
 		/// <summary>
 		/// Writes an object to a field
 		/// </summary>
 		/// <param name="writer"></param>
 		/// <param name="value"></param>
-		void Write(CbWriter writer, T value);
+		public abstract void Write(CbWriter writer, T value);
 
 		/// <summary>
 		/// Writes an object to a named field, if not equal to the default value
@@ -83,7 +92,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer"></param>
 		/// <param name="name"></param>
 		/// <param name="value"></param>
-		void WriteNamed(CbWriter writer, Utf8String name, T value);
+		public abstract void WriteNamed(CbWriter writer, CbFieldName name, T value);
 	}
 
 	/// <summary>
@@ -102,7 +111,7 @@ namespace EpicGames.Serialization
 		public MethodInfo WriteMethod { get; }
 
 		/// <summary>
-		/// Method with the signature CbWriter, Utf8String, T -> void
+		/// Method with the signature CbWriter, CbFieldName, T -> void
 		/// </summary>
 		public MethodInfo WriteNamedMethod { get; }
 	}
@@ -112,17 +121,17 @@ namespace EpicGames.Serialization
 	/// </summary>
 	public static class CbConverterMethods
 	{
-		class CbConverterMethodsWrapper<TConverter, T> : ICbConverterMethods where TConverter : class, ICbConverter<T>
+		class CbConverterMethodsWrapper<TConverter, T> : ICbConverterMethods where TConverter : CbConverter<T>
 		{
 			static TConverter s_staticConverter = null!;
 
 			static T Read(CbField field) => s_staticConverter.Read(field);
 			static void Write(CbWriter writer, T value) => s_staticConverter.Write(writer, value);
-			static void WriteNamed(CbWriter writer, Utf8String name, T value) => s_staticConverter.WriteNamed(writer, name, value);
+			static void WriteNamed(CbWriter writer, CbFieldName name, T value) => s_staticConverter.WriteNamed(writer, name, value);
 
 			public MethodInfo ReadMethod { get; } = GetMethodInfo(() => Read(null!));
 			public MethodInfo WriteMethod { get; } = GetMethodInfo(() => Write(null!, default!));
-			public MethodInfo WriteNamedMethod { get; } = GetMethodInfo(() => WriteNamed(null!, null!, default!));
+			public MethodInfo WriteNamedMethod { get; } = GetMethodInfo(() => WriteNamed(null!, default, default!));
 
 			public CbConverterMethodsWrapper(TConverter converter)
 			{
@@ -138,7 +147,7 @@ namespace EpicGames.Serialization
 		static readonly Dictionary<PropertyInfo, ICbConverterMethods> s_propertyToMethods = new Dictionary<PropertyInfo, ICbConverterMethods>();
 		static readonly Dictionary<Type, ICbConverterMethods> s_typeToMethods = new Dictionary<Type, ICbConverterMethods>();
 
-		static ICbConverterMethods CreateWrapper(Type type, ICbConverter converter)
+		static ICbConverterMethods CreateWrapper(Type type, CbConverter converter)
 		{
 			Type converterMethodsType = typeof(CbConverterMethodsWrapper<,>).MakeGenericType(converter.GetType(), type);
 			return (ICbConverterMethods)Activator.CreateInstance(converterMethodsType, new object[] { converter })!;
@@ -154,7 +163,7 @@ namespace EpicGames.Serialization
 			ICbConverterMethods? methods;
 			if (!s_propertyToMethods.TryGetValue(property, out methods))
 			{
-				ICbConverter converter = CbConverter.GetConverter(property);
+				CbConverter converter = CbConverter.GetConverter(property);
 				methods = (converter as ICbConverterMethods) ?? CreateWrapper(property.PropertyType, converter);
 				s_propertyToMethods.Add(property, methods);
 			}
@@ -171,37 +180,12 @@ namespace EpicGames.Serialization
 			ICbConverterMethods? methods;
 			if (!s_typeToMethods.TryGetValue(type, out methods))
 			{
-				ICbConverter converter = CbConverter.GetConverter(type);
+				CbConverter converter = CbConverter.GetConverter(type);
 				methods = (converter as ICbConverterMethods) ?? CreateWrapper(type, converter);
 				s_typeToMethods.Add(type, methods);
 			}
 			return methods;
 		}
-	}
-
-	/// <summary>
-	/// Base class for converter implementations 
-	/// </summary>
-	/// <typeparam name="T"></typeparam>
-	public abstract class CbConverterBase<T> : ICbConverter<T>
-	{
-		/// <inheritdoc/>
-		public object? ReadObject(CbField field) => Read(field);
-
-		/// <inheritdoc/>
-		public void WriteObject(CbWriter writer, object? value) => Write(writer, (T)value!);
-
-		/// <inheritdoc/>
-		public void WriteNamedObject(CbWriter writer, Utf8String name, object? value) => WriteNamed(writer, name, (T)value!);
-
-		/// <inheritdoc/>
-		public abstract T Read(CbField field);
-
-		/// <inheritdoc/>
-		public abstract void Write(CbWriter writer, T value);
-
-		/// <inheritdoc/>
-		public abstract void WriteNamed(CbWriter writer, Utf8String name, T value);
 	}
 
 	/// <summary>
@@ -214,13 +198,13 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="type">The type to create a converter for</param>
 		/// <returns>The converter instance, or null if this factory does not support the given type</returns>
-		public abstract ICbConverter? CreateConverter(Type type);
+		public abstract CbConverter? CreateConverter(Type type);
 	}
 
 	/// <summary>
 	/// Utility functions for creating converters
 	/// </summary>
-	public static class CbConverter
+	public partial class CbConverter
 	{
 		/// <summary>
 		/// Object used for locking access to shared objects
@@ -230,12 +214,12 @@ namespace EpicGames.Serialization
 		/// <summary>
 		/// Cache of property to converter
 		/// </summary>
-		static readonly Dictionary<PropertyInfo, ICbConverter> s_propertyToConverter = new Dictionary<PropertyInfo, ICbConverter>();
+		static readonly Dictionary<PropertyInfo, CbConverter> s_propertyToConverter = new Dictionary<PropertyInfo, CbConverter>();
 
 		/// <summary>
 		/// Cache of type to converter
 		/// </summary>
-		public static Dictionary<Type, ICbConverter> TypeToConverter { get; } = new Dictionary<Type, ICbConverter>()
+		public static Dictionary<Type, CbConverter> TypeToConverter { get; } = new Dictionary<Type, CbConverter>()
 		{
 			[typeof(bool)] = new CbPrimitiveConverter<bool>(x => x.AsBool(), (w, v) => w.WriteBoolValue(v), (w, n, v) => w.WriteBool(n, v)),
 			[typeof(int)] = new CbPrimitiveConverter<int>(x => x.AsInt32(), (w, v) => w.WriteIntegerValue(v), (w, n, v) => w.WriteInteger(n, v)),
@@ -278,26 +262,26 @@ namespace EpicGames.Serialization
 			/// <summary>
 			/// The converter instance
 			/// </summary>
-			public static ICbConverter<T> Instance { get; } = CreateConverter();
+			public static CbConverter<T> Instance { get; } = CreateConverter();
 
 			/// <summary>
 			/// Create a typed converter
 			/// </summary>
 			/// <returns></returns>
-			static ICbConverter<T> CreateConverter()
+			static CbConverter<T> CreateConverter()
 			{
-				ICbConverter converter = GetConverter(typeof(T));
-				return (converter as ICbConverter<T>) ?? new CbConverterWrapper(converter);
+				CbConverter converter = GetConverter(typeof(T));
+				return (converter as CbConverter<T>) ?? new CbConverterWrapper(converter);
 			}
 
 			/// <summary>
 			/// Wrapper class to convert an untyped converter into a typed one
 			/// </summary>
-			class CbConverterWrapper : CbConverterBase<T>
+			class CbConverterWrapper : CbConverter<T>
 			{
-				readonly ICbConverter _inner;
+				readonly CbConverter _inner;
 
-				public CbConverterWrapper(ICbConverter inner) => _inner = inner;
+				public CbConverterWrapper(CbConverter inner) => _inner = inner;
 
 				/// <inheritdoc/>
 				public override T Read(CbField field) => (T)_inner.ReadObject(field)!;
@@ -306,7 +290,7 @@ namespace EpicGames.Serialization
 				public override void Write(CbWriter writer, T value) => _inner.WriteObject(writer, value);
 
 				/// <inheritdoc/>
-				public override void WriteNamed(CbWriter writer, Utf8String name, T value) => _inner.WriteNamedObject(writer, name, value);
+				public override void WriteNamed(CbWriter writer, CbFieldName name, T value) => _inner.WriteNamedObject(writer, name, value);
 			}
 		}
 
@@ -315,7 +299,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="property"></param>
 		/// <returns></returns>
-		public static ICbConverter GetConverter(PropertyInfo property)
+		public static CbConverter GetConverter(PropertyInfo property)
 		{
 			CbConverterAttribute? converterAttribute = property.GetCustomAttribute<CbConverterAttribute>();
 			if (converterAttribute != null)
@@ -323,10 +307,10 @@ namespace EpicGames.Serialization
 				Type converterType = converterAttribute.ConverterType;
 				lock (s_lockObject)
 				{
-					ICbConverter? converter;
+					CbConverter? converter;
 					if (!s_propertyToConverter.TryGetValue(property, out converter))
 					{
-						converter = (ICbConverter?)Activator.CreateInstance(converterType)!;
+						converter = (CbConverter?)Activator.CreateInstance(converterType)!;
 						s_propertyToConverter.Add(property, converter);
 					}
 					return converter;
@@ -340,9 +324,9 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="type"></param>
 		/// <returns></returns>
-		public static ICbConverter GetConverter(Type type)
+		public static CbConverter GetConverter(Type type)
 		{
-			ICbConverter? converter;
+			CbConverter? converter;
 			lock (s_lockObject)
 			{
 				if (!TypeToConverter.TryGetValue(type, out converter))
@@ -355,7 +339,7 @@ namespace EpicGames.Serialization
 						{
 							converterType = converterType.MakeGenericType(type.GetGenericArguments());
 						}
-						converter = (ICbConverter?)Activator.CreateInstance(converterType)!;
+						converter = (CbConverter?)Activator.CreateInstance(converterType)!;
 					}
 					else
 					{
@@ -380,7 +364,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <typeparam name="T">Type to retrieve the converter for</typeparam>
 		/// <returns></returns>
-		public static ICbConverter<T> GetConverter<T>()
+		public static CbConverter<T> GetConverter<T>()
 		{
 			try
 			{

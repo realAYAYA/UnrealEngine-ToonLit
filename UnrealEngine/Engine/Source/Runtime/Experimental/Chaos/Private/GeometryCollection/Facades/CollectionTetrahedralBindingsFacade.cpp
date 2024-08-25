@@ -83,7 +83,7 @@ namespace GeometryCollection::Facades
 				if (Entry.EndsWith(Suffix))
 				{
 					FString Str = Entry;
-					Str.RemoveAt(0, FString(TEXT("TetrahedralBindings:TetMeshIdx:")).Len(), false);
+					Str.RemoveAt(0, FString(TEXT("TetrahedralBindings:TetMeshIdx:")).Len(), EAllowShrinking::No);
 					Str.RemoveAt(Str.Len() - Suffix.Len(), Suffix.Len());
 					return FCString::Atoi(*Str);
 				}

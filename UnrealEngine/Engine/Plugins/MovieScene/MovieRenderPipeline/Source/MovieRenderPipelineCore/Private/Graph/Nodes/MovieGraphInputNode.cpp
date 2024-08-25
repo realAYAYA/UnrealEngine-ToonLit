@@ -8,16 +8,10 @@
 
 UMovieGraphInputNode::UMovieGraphInputNode()
 {
-#if WITH_EDITOR
 	if (!HasAnyFlags(RF_ClassDefaultObject))
 	{
-		if (UMovieGraphConfig* Graph = GetGraph())
-		{
-			// Register delegates for new inputs when they're added to the graph
-			Graph->OnGraphInputAddedDelegate.AddUObject(this, &UMovieGraphInputNode::RegisterDelegates);
-		}
+		RegisterDelegates();
 	}
-#endif
 }
 
 TArray<FMovieGraphPinProperties> UMovieGraphInputNode::GetOutputPinProperties() const
@@ -28,7 +22,7 @@ TArray<FMovieGraphPinProperties> UMovieGraphInputNode::GetOutputPinProperties() 
 	{
 		for (const UMovieGraphInput* Input : ParentGraph->GetInputs())
 		{
-			FMovieGraphPinProperties PinProperties(FName(Input->GetMemberName()), Input->GetValueType(), false);
+			FMovieGraphPinProperties PinProperties(FName(Input->GetMemberName()), Input->GetValueType(), Input->GetValueTypeObject(), false);
 			PinProperties.bIsBranch = Input->bIsBranch;
 			Properties.Add(MoveTemp(PinProperties));
 		}
@@ -80,6 +74,27 @@ TArray<UMovieGraphPin*> UMovieGraphInputNode::EvaluatePinsToFollow(FMovieGraphEv
 	return PinsToFollow;
 }
 
+FString UMovieGraphInputNode::GetResolvedValueForOutputPin(const FName& InPinName, const FMovieGraphTraversalContext* InContext) const
+{
+	if (const UMovieGraphConfig* Graph = GetGraph())
+	{
+		for (UMovieGraphInput* Input : Graph->GetInputs())
+		{
+			if (Input && (FName(Input->GetMemberName()) == InPinName))
+			{
+				return Input->GetValueSerializedString();
+			}
+		}
+	}
+
+	return FString();
+}
+
+bool UMovieGraphInputNode::CanBeDisabled() const
+{
+	return false;
+}
+
 #if WITH_EDITOR
 FText UMovieGraphInputNode::GetNodeTitle(const bool bGetDescriptive) const
 {
@@ -105,24 +120,32 @@ FSlateIcon UMovieGraphInputNode::GetIconAndTint(FLinearColor& OutColor) const
 }
 #endif // WITH_EDITOR
 
-void UMovieGraphInputNode::RegisterDelegates() const
+void UMovieGraphInputNode::RegisterDelegates()
 {
 	Super::RegisterDelegates();
 	
-	if (const UMovieGraphConfig* Graph = GetGraph())
+	if (UMovieGraphConfig* Graph = GetGraph())
 	{
+#if WITH_EDITOR
+		// Register delegates for new inputs when they're added to the graph
+		Graph->OnGraphInputAddedDelegate.RemoveAll(this);
+		Graph->OnGraphInputAddedDelegate.AddUObject(this, &UMovieGraphInputNode::RegisterInputDelegates);
+#endif
+
+		// Register delegates for existing inputs
 		for (UMovieGraphInput* InputMember : Graph->GetInputs())
 		{
-			RegisterDelegates(InputMember);
+			RegisterInputDelegates(InputMember);
 		}
 	}
 }
 
-void UMovieGraphInputNode::RegisterDelegates(UMovieGraphInput* Input) const
+void UMovieGraphInputNode::RegisterInputDelegates(UMovieGraphInput* Input)
 {
 #if WITH_EDITOR
 	if (Input)
 	{
+		Input->OnMovieGraphInputChangedDelegate.RemoveAll(this);
 		Input->OnMovieGraphInputChangedDelegate.AddUObject(this, &UMovieGraphInputNode::UpdateExistingPins);
 	}
 #endif
@@ -139,6 +162,7 @@ void UMovieGraphInputNode::UpdateExistingPins(UMovieGraphMember* ChangedInput) c
 			{
 				OutputPins[Index]->Properties.Label = FName(InputMembers[Index]->GetMemberName());
 				OutputPins[Index]->Properties.Type = InputMembers[Index]->GetValueType();
+				OutputPins[Index]->Properties.TypeObject = InputMembers[Index]->GetValueTypeObject();
 				OutputPins[Index]->Properties.bIsBranch = InputMembers[Index]->bIsBranch;
 			}
 		}

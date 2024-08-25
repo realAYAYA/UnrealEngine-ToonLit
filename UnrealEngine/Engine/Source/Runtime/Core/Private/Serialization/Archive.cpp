@@ -755,7 +755,7 @@ void FArchive::SerializeCompressedNew(void* V, int64 Length, FName CompressionFo
 		else
 		{
 			UE_LOG(LogSerialization, Log, TEXT("ArchiveName: %s"), *GetArchiveName());
-			UE_LOG(LogSerialization, Log, TEXT("Archive UE4 Version: %d"), UEVer().ToValue());
+			UE_LOG(LogSerialization, Log, TEXT("Archive UE Version: %d"), UEVer().ToValue());
 			UE_LOG(LogSerialization, Log, TEXT("Archive Licensee Version: %d"), LicenseeUEVer());
 			UE_LOG(LogSerialization, Log, TEXT("Position: %lld"), Tell());
 			UE_LOG(LogSerialization, Log, TEXT("Read Size: %lld"), Length);
@@ -796,7 +796,7 @@ void FArchive::SerializeCompressedNew(void* V, int64 Length, FName CompressionFo
 		if ( ! FCompression::IsFormatValid(CompressionFormatToDecode) )
 		{
 			UE_LOG(LogSerialization, Log, TEXT("ArchiveName: %s"), *GetArchiveName());
-			UE_LOG(LogSerialization, Log, TEXT("Archive UE4 Version: %d"), UEVer().ToValue());
+			UE_LOG(LogSerialization, Log, TEXT("Archive UE Version: %d"), UEVer().ToValue());
 			UE_LOG(LogSerialization, Log, TEXT("Archive Licensee Version: %d"), LicenseeUEVer());
 			UE_LOG(LogSerialization, Log, TEXT("Position: %lld"), Tell());
 			UE_LOG(LogSerialization, Log, TEXT("Read Size: %lld"), Length);
@@ -1379,7 +1379,7 @@ void FArchive::LogfImpl(const TCHAR* Fmt, ...)
 	{
 		FMemory::SystemFree(Buffer);
 		Buffer = (TCHAR*) FMemory::SystemMalloc( BufferSize * sizeof(TCHAR) );
-		GET_VARARGS_RESULT( Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result );
+		GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result );
 		BufferSize *= 2;
 	};
 	Buffer[Result] = TEXT('\0');

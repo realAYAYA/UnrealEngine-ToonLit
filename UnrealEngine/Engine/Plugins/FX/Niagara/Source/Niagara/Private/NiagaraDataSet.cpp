@@ -7,7 +7,6 @@
 #include "NiagaraRenderer.h"
 #include "NiagaraGPUInstanceCountManager.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
-#include "NiagaraGpuComputeDispatch.h"
 #include "NiagaraShaderParticleID.h"
 #include "NiagaraShared.h"
 
@@ -91,7 +90,7 @@ static FAutoConsoleVariableRef CVarNiagaraGPUDataWarningSize(
 	ECVF_Scalability
 );
 
-static bool GNiagaraReleaseBuffersOnReset = false;
+static bool GNiagaraReleaseBuffersOnReset = true;
 static FAutoConsoleVariableRef CVarNiagaraReleaseBuffersOnReset(
 	TEXT("fx.NiagaraReleaseBuffersOnReset"),
 	GNiagaraReleaseBuffersOnReset,
@@ -175,15 +174,29 @@ void FNiagaraDataSet::ResetBuffers()
 	
 	if (GetSimTarget() == ENiagaraSimTarget::CPUSim)
 	{
+		ResetBuffersInternal();
+
 		if (GNiagaraReleaseBuffersOnReset)
 		{
-			for (FNiagaraDataBuffer* Buffer : Data)
+			for (auto it=Data.CreateIterator(); it; ++it)
 			{
-				Buffer->ReleaseCPU();
+				FNiagaraDataBuffer* Buffer = Data[it.GetIndex()];
+				if (Buffer->IsBeingRead())
+				{
+				
+					// In this path the buffer might still be in use on the render thread for rendering the last frame therefore we push it into the deferred destruction queue as we can not release the data as we would race.
+#if NIAGARA_MEMORY_TRACKING
+					BufferSizeBytes -= Buffer->GetFloatBuffer().GetAllocatedSize() + Buffer->GetInt32Buffer().GetAllocatedSize() + Buffer->GetHalfBuffer().GetAllocatedSize();
+#endif
+					Buffer->Destroy();
+					it.RemoveCurrentSwap();
+				}
+				else
+				{
+					Buffer->ReleaseCPU();
+				}
 			}
 		}
-
-		ResetBuffersInternal();
 	}
 	else
 	{
@@ -579,7 +592,7 @@ FNiagaraDataBuffer::FNiagaraDataBuffer(FNiagaraDataSet* InOwner)
 FNiagaraDataBuffer::~FNiagaraDataBuffer()
 {
 	check(!IsInUse());
-	DEC_MEMORY_STAT_BY(STAT_NiagaraParticleMemory, FloatData.GetAllocatedSize() + Int32Data.GetAllocatedSize());
+	DEC_MEMORY_STAT_BY(STAT_NiagaraParticleMemory, FloatData.GetAllocatedSize() + Int32Data.GetAllocatedSize() + HalfData.GetAllocatedSize());
 #if NIAGARA_MEMORY_TRACKING
 	DEC_MEMORY_STAT_BY(STAT_NiagaraGPUParticleMemory, AllocationSizeBytes);
 #endif
@@ -728,9 +741,9 @@ void FNiagaraDataBuffer::Allocate(uint32 InNumInstances, bool bMaintainExisting)
 			}
 			else
 			{
-				FloatData.SetNum(NewFloatNum, bShrinkFloatData);
-				Int32Data.SetNum(NewInt32Num, bShrinkIntData);
-				HalfData.SetNum(NewHalfNum, bShrinkHalfData);
+				FloatData.SetNum(NewFloatNum, bShrinkFloatData ? EAllowShrinking::Yes : EAllowShrinking::No);
+				Int32Data.SetNum(NewInt32Num, bShrinkIntData ? EAllowShrinking::Yes : EAllowShrinking::No);
+				HalfData.SetNum(NewHalfNum, bShrinkHalfData ? EAllowShrinking::Yes : EAllowShrinking::No);
 			}
 			INC_MEMORY_STAT_BY(STAT_NiagaraParticleMemory, FloatData.GetAllocatedSize() + Int32Data.GetAllocatedSize() + HalfData.GetAllocatedSize());
 #if NIAGARA_MEMORY_TRACKING
@@ -887,7 +900,7 @@ void FNiagaraDataBuffer::AllocateGPU(FRHICommandList& RHICmdList, uint32 InNumIn
 				NiagaraWarnGpuBufferSize(NumNeededElems * sizeof(int32), DebugSimName);
 				TStringBuilder<128> DebugBufferName;
 				DebugBufferName.Appendf(TEXT("NiagaraIDToIndexTable_%s_%p"), DebugSimName ? DebugSimName : TEXT(""), this);
-				GPUIDToIndexTable.Initialize(RHICmdList, DebugBufferName.ToString(), sizeof(int32), NumNeededElems, EPixelFormat::PF_R32_SINT, ERHIAccess::SRVCompute, BUF_Static);
+				GPUIDToIndexTable.Initialize(RHICmdList, DebugBufferName.ToString(), sizeof(int32), NumNeededElems, EPixelFormat::PF_R32_SINT, ERHIAccess::SRVCompute, GPUBufferFlags);
 			}
 		}
 	}
@@ -1459,7 +1472,7 @@ void FScopedNiagaraDataSetGPUReadback::ReadbackData(FNiagaraGpuComputeDispatchIn
 			const uint32 BufferOffset = DataBuffer->GetGPUInstanceCountBufferOffset();
 			if (ComputeDispatchInterface && BufferOffset != INDEX_NONE)
 			{
-				FRHIBuffer* InstanceCountBuffer = static_cast<FNiagaraGpuComputeDispatch*>(ComputeDispatchInterface)->GetGPUInstanceCounterManager().GetInstanceCountBuffer().Buffer;
+				FRHIBuffer* InstanceCountBuffer = ComputeDispatchInterface->GetGPUInstanceCounterManager().GetInstanceCountBuffer().Buffer;
 
 				void* Data = RHICmdList.LockBuffer(InstanceCountBuffer, 0, (BufferOffset + 1) * sizeof(int32), RLM_ReadOnly);
 				NumInstances = reinterpret_cast<int32*>(Data)[BufferOffset];

@@ -32,6 +32,7 @@ public:
 	// Level Editor Tool Bar related
 	TSharedPtr<FUICommandInfo> OpenChannelsMonitor;
 	TSharedPtr<FUICommandInfo> OpenActivityMonitor;
+	TSharedPtr<FUICommandInfo> OpenConflictMonitor;
 	TSharedPtr<FUICommandInfo> OpenPatchTool;
 	TSharedPtr<FUICommandInfo> ToggleReceiveDMX;
 	TSharedPtr<FUICommandInfo> ToggleSendDMX;

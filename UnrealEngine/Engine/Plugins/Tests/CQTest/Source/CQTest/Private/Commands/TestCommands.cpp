@@ -26,7 +26,7 @@ bool CQTEST_API FWaitUntil::Update()
 	{
 		if (Description)
 		{
-			UE_LOG(LogCqTest, Log, TEXT("Finished %s after %d milliseconds"), Description, Elapsed.GetTotalMilliseconds());
+			UE_LOG(LogCqTest, Log, TEXT("Finished %s after %.0f milliseconds"), Description, Elapsed.GetTotalMilliseconds());
 		}
 		return true;
 	}
@@ -34,11 +34,11 @@ bool CQTEST_API FWaitUntil::Update()
 	{
 		if (Description)
 		{
-			TestRunner.AddError(*FString::Printf(TEXT("Timed out waiting for %s after %d milliseconds"), Description, Elapsed.GetTotalMilliseconds()));
+			TestRunner.AddError(*FString::Printf(TEXT("Timed out waiting for %s after %.0f milliseconds"), Description, Elapsed.GetTotalMilliseconds()));
 		}
 		else
 		{
-			TestRunner.AddError(*FString::Printf(TEXT("Latent command timed out after %d milliseconds"), Elapsed.GetTotalMilliseconds()));
+			TestRunner.AddError(*FString::Printf(TEXT("Latent command timed out after %.0f milliseconds"), Elapsed.GetTotalMilliseconds()));
 		}
 		return true;
 	}

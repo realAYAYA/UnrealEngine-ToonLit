@@ -10,6 +10,7 @@
 #include "OptimusNodeGraph.h"
 #include "OptimusComponentSource.h"
 #include "OptimusDataDomain.h"
+#include "OptimusNodeSubGraph.h"
 
 #include "Animation/MeshDeformer.h"
 #include "Interfaces/Interface_PreviewMeshProvider.h"
@@ -27,6 +28,7 @@ class UOptimusComputeGraph;
 class UOptimusDeformer;
 class UOptimusResourceDescription;
 class UOptimusVariableDescription;
+class UOptimusFunctionNodeGraph;
 enum class EOptimusDiagnosticLevel : uint8;
 struct FOptimusCompilerDiagnostic;
 struct FOptimusCompoundAction;
@@ -35,7 +37,7 @@ struct FOptimusCompoundAction;
 DECLARE_MULTICAST_DELEGATE_OneParam(FOptimusCompileBegin, UOptimusDeformer *);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOptimusCompileEnd, UOptimusDeformer *);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOptimusGraphCompileMessageDelegate, FOptimusCompilerDiagnostic const&);
-DECLARE_MULTICAST_DELEGATE_TwoParams(FOptimusConstantValueUpdate, FString const&, TArray<uint8> const&);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOptimusConstantValueUpdate, TSoftObjectPtr<UObject>, TArray<uint8> const&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOptimusSetAllInstancesCanbeActive, bool);
 
 UENUM()
@@ -122,6 +124,11 @@ class OPTIMUSCORE_API UOptimusDeformer :
 	GENERATED_BODY()
 
 public:
+
+	static const FName PublicFunctionsAssetTagName;
+	static const FName FunctionReferencesAssetTagName;
+
+	
 	UOptimusDeformer();
 
 	/** Get the action stack for this deformer graph */
@@ -157,6 +164,14 @@ public:
 	/** Remove a graph and delete it. */
 	bool RemoveGraph(UOptimusNodeGraph* InGraph);
 
+	/** Returns the sub graph reference node that is uniquely associated with the given subgraph */
+	UOptimusNode* GetSubGraphReferenceNode(
+		const UOptimusNodeSubGraph* InSubGraph
+		) const;
+
+	/// Returns all function graphs with the given access specifier. If InAccessSpecifier is None, it performs no filtering
+	TArray<UOptimusFunctionNodeGraph*> GetFunctionGraphs(FName InAccessSpecifier = NAME_None) const;
+	
 	// Variables
 	UOptimusVariableDescription* AddVariable(
 		FOptimusDataTypeRef InDataTypeRef,
@@ -258,6 +273,9 @@ public:
 	UFUNCTION(BlueprintGetter)
 	const TArray<UOptimusComponentSourceBinding*>& GetComponentBindings() const { return Bindings->Bindings; }
 
+	UFUNCTION(BlueprintGetter)
+	UOptimusComponentSourceBinding* GetPrimaryComponentBinding() const;
+
 	UOptimusComponentSourceBinding* ResolveComponentBinding(
 		FName InBindingName
 		) const override;
@@ -286,7 +304,9 @@ public:
 	// are not moved to the new package automatically (see FAssetRenameManager), so we
 	// have to manually perform the move/rename, to avoid invalid reference to the old package
 	void PostRename(UObject* OldOuter, const FName OldName) override;
-	void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 #if WITH_EDITOR
 	void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -319,32 +339,39 @@ public:
 
 	const TArray<UOptimusNodeGraph*> &GetGraphs() const override { return Graphs; }
 
+	UOptimusNodeGraph* FindGraphByName(FName InGraphName) const override;
+
 	UOptimusNodeGraph* CreateGraph(
 		EOptimusNodeGraphType InType,
 		FName InName)
-	{ return CreateGraph(InType, InName, TOptional<int32>()); }
+	{ return CreateGraphDirect(InType, InName, TOptional<int32>()); }
 	
-	UOptimusNodeGraph* CreateGraph(
+	UOptimusNodeGraph* CreateGraphDirect(
 	    EOptimusNodeGraphType InType,
 	    FName InName,
 	    TOptional<int32> InInsertBefore
 	    ) override;
 	
-	bool AddGraph(
+	bool AddGraphDirect(
 	    UOptimusNodeGraph* InGraph,
 		int32 InInsertBefore
 		) override;
 	
-	bool RemoveGraph(
+	bool RemoveGraphDirect(
 	    UOptimusNodeGraph* InGraph,
 		bool bDeleteGraph
 		) override;
 
-	bool MoveGraph(
+	bool MoveGraphDirect(
 	    UOptimusNodeGraph* InGraph,
 	    int32 InInsertBefore
 	    ) override;
 
+	bool RenameGraphDirect(
+		UOptimusNodeGraph* InGraph,
+		const FString& InNewName
+		) override;
+	
 	bool RenameGraph(
 	    UOptimusNodeGraph* InGraph,
 	    const FString& InNewName
@@ -461,7 +488,7 @@ protected:
 	// The compute graphs to execute.
 	UPROPERTY()
 	TArray<FOptimusComputeGraphInfo> ComputeGraphs;
-	
+
 private:
 	void PostLoadFixupMissingComponentBindingsCompat();
 	void PostLoadFixupMismatchedResourceDataDomains();
@@ -478,8 +505,8 @@ private:
 
 	TArray<UOptimusNode*> GetAllNodesOfClass(UClass* InNodeClass) const;
 	
-	/// Compile a node graph to a compute graph. Returns a complete compute graph if compilation succeeded. 
-	UOptimusComputeGraph* CompileNodeGraphToComputeGraph(
+	/// Compile a node graph to a compute graph. Returns one or two complete compute graphs if compilation succeeded. 
+	TArray<FOptimusComputeGraphInfo> CompileNodeGraphToComputeGraphs(
 		const UOptimusNodeGraph *InNodeGraph,
 		TFunction<void(EOptimusDiagnosticLevel, FText, const UObject*)> InErrorReporter
 		);

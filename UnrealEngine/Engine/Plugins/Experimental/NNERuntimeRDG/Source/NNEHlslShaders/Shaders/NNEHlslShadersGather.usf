@@ -50,7 +50,6 @@ void Gather(in const uint3 DispatchThreadID : SV_DispatchThreadID)
 	// Split the output indices into data and indices indices 
 	INDICES_WORK_TYPE DataIndices[NUM_OUTPUT_DIMENSIONS];
 	INDICES_WORK_TYPE IndicesIndices[NUM_OUTPUT_DIMENSIONS];
-	int AxisPlusNumIndicesDimensions = Axis + NumIndicesDimensions;
 	for (int i = 0; i < Axis; i++)
 	{
 		DataIndices[i] = OutputIndices[i];
@@ -61,7 +60,7 @@ void Gather(in const uint3 DispatchThreadID : SV_DispatchThreadID)
 	}
 	for (int i = Axis + 1; i < NumDataDimensions; i++)
 	{
-		DataIndices[i] = OutputIndices[AxisPlusNumIndicesDimensions + i];
+		DataIndices[i] = OutputIndices[NumIndicesDimensions + i - 1];
 	}
 
 	// Compute the flattened indices index

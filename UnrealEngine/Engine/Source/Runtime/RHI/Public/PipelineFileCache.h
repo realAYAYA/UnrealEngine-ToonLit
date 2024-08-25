@@ -34,7 +34,6 @@ struct FPipelineFileCacheRasterizerState
 	TEnumAsByte<ERasterizerCullMode> CullMode;
 	ERasterizerDepthClipMode DepthClipMode;
 	bool bAllowMSAA;
-	bool bEnableLineAA;
 	
 	FPipelineFileCacheRasterizerState& operator=(FRasterizerStateInitializerRHI const& Other)
 	{
@@ -44,27 +43,16 @@ struct FPipelineFileCacheRasterizerState
 		CullMode = Other.CullMode;
 		DepthClipMode = Other.DepthClipMode;
 		bAllowMSAA = Other.bAllowMSAA;
-		bEnableLineAA = Other.bEnableLineAA;
 		return *this;
 	}
 	
 	operator FRasterizerStateInitializerRHI() const
 	{
-		FRasterizerStateInitializerRHI Initializer(FillMode, CullMode, DepthBias, SlopeScaleDepthBias, DepthClipMode, bAllowMSAA, bEnableLineAA);
+		FRasterizerStateInitializerRHI Initializer(FillMode, CullMode, DepthBias, SlopeScaleDepthBias, DepthClipMode, bAllowMSAA);
 		return Initializer;
 	}
 	
-	friend FArchive& operator<<(FArchive& Ar,FPipelineFileCacheRasterizerState& RasterizerStateInitializer)
-	{
-		Ar << RasterizerStateInitializer.DepthBias;
-		Ar << RasterizerStateInitializer.SlopeScaleDepthBias;
-		Ar << RasterizerStateInitializer.FillMode;
-		Ar << RasterizerStateInitializer.CullMode;
-		Ar << RasterizerStateInitializer.DepthClipMode;
-		Ar << RasterizerStateInitializer.bAllowMSAA;
-		Ar << RasterizerStateInitializer.bEnableLineAA;
-		return Ar;
-	}
+	friend RHI_API FArchive& operator<<(FArchive& Ar, FPipelineFileCacheRasterizerState& RasterizerStateInitializer);
 
 	friend uint32 GetTypeHash(const FPipelineFileCacheRasterizerState &Key)
 	{
@@ -73,7 +61,6 @@ struct FPipelineFileCacheRasterizerState
 		KeyHash ^= Key.CullMode;
 		KeyHash ^= Key.DepthClipMode == ERasterizerDepthClipMode::DepthClamp ? 0x951f4c3b : 0; // crc32 "DepthClamp"
 		KeyHash ^= Key.bAllowMSAA ? 0x694ea601 : 0; // crc32 "bAllowMSAA"
-		KeyHash ^= Key.bEnableLineAA ? 0x48271d01 : 0; // crc32 "bEnableLineAA"
 		return KeyHash;
 	}
 	RHI_API FString ToString() const;
@@ -158,6 +145,8 @@ struct FPipelineCacheFileFormatPSO
 
 		uint8	MultiViewCount;
 		bool	bHasFragmentDensityAttachment;
+
+		bool	bDepthBounds;
 		
 		RHI_API FString ToString() const;
 		RHI_API void AddToReadableString(TReadableStringBuilder& OutBuilder) const;
@@ -355,7 +344,7 @@ public:
 	RHI_API static void CloseUserPipelineFileCache();
 
 	RHI_API static void CacheGraphicsPSO(uint32 RunTimeHash, FGraphicsPipelineStateInitializer const& Initializer, bool bWasPSOPrecached);
-	RHI_API static void CacheComputePSO(uint32 RunTimeHash, FRHIComputeShader const* Initializer);
+	RHI_API static void CacheComputePSO(uint32 RunTimeHash, FRHIComputeShader const* Initializer, bool bWasPSOPrecached);
 	RHI_API static void CacheRayTracingPSO(const FRayTracingPipelineStateInitializer& Initializer, ERayTracingPipelineCacheFlags Flags);
 
 	// true if the named PSOFC is currently open.
@@ -418,7 +407,7 @@ private:
 	static bool IsPSOEntryCached(FPipelineCacheFileFormatPSO const& NewEntry, FPSOUsageData* EntryData = nullptr);
 
 	static void LogNewGraphicsPSOToConsoleAndCSV(FPipelineCacheFileFormatPSO& PSO, uint32 PSOHash, bool bWasPSOPrecached);
-	static void LogNewComputePSOToConsoleAndCSV(FPipelineCacheFileFormatPSO& PSO, uint32 PSOHash);
+	static void LogNewComputePSOToConsoleAndCSV(FPipelineCacheFileFormatPSO& PSO, uint32 PSOHash, bool bWasPSOPrecached);
 	static void LogNewRaytracingPSOToConsole(FPipelineCacheFileFormatPSO& PSO, uint32 PSOHash, bool bIsNonBlockingPSO);
 private:
 	static FRWLock FileCacheLock;

@@ -45,7 +45,8 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 	float Specular, const float4 DistortionParams,
 	float3 SunIlluminance, float3 AmbiantIlluminance, float3 EnvBrdf,
 	bool CameraIsUnderWater, float WaterVisibility, uint EyeIndex,
-	bool bSeparateMainDirLight, inout float3 SeparatedWaterMainDirLightScatteredLuminance)
+	bool bSeparateMainDirLight, inout float3 SeparatedWaterMainDirLightScatteredLuminance,
+	in float3 LightFunctionColor = 1.0f)
 {
 	WaterVolumeLightingOutput Output;
 	Output.Luminance = 0.0f;
@@ -131,9 +132,9 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 
 		const float BehindWaterDeltaDepth = CameraIsUnderWater ? WaterDepth : max(0.0f, SceneDepth - WaterDepth);
 
-#if STRATA_INLINE_SINGLELAYERWATER
-		MaterialParameters.StrataTree.BSDFs[0].StrataSanitizeBSDF();
-		FStrataBSDF SLWBSDF = MaterialParameters.StrataTree.BSDFs[0];
+#if SUBSTRATE_INLINE_SINGLELAYERWATER
+		MaterialParameters.SubstrateTree.BSDFs[0].SubstrateSanitizeBSDF();
+		FSubstrateBSDF SLWBSDF = MaterialParameters.SubstrateTree.BSDFs[0];
 		const float3 Albedo = SLW_WATERALBEDO(SLWBSDF);
 		const float3 ExtinctionCoeff = SLW_WATEREXTINCTION(SLWBSDF);
 		const float3 ScatteringCoeff = Albedo * ExtinctionCoeff;
@@ -142,11 +143,11 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 		//Sample the optional Material Input ColorScaleBehindWater and fade it out at shorelines to avoid hard edge intersections
 		float3 ColorScaleBehindWater = lerp(1.0f, SLW_COLORSCALEBEHINDWATER(SLWBSDF), saturate(BehindWaterDeltaDepth * 0.02f));
 #else
-		const float3 ScatteringCoeff = max(0.0f, LWCToFloat(GetSingleLayerWaterMaterialOutput0(MaterialParameters)));
-		const float3 AbsorptionCoeff = max(0.0f, LWCToFloat(GetSingleLayerWaterMaterialOutput1(MaterialParameters)));
-		const float PhaseG = clamp(LWCToFloat(GetSingleLayerWaterMaterialOutput2(MaterialParameters)), -1.0f, 1.0f);
+		const float3 ScatteringCoeff = max(0.0f, DFDemote(GetSingleLayerWaterMaterialOutput0(MaterialParameters)));
+		const float3 AbsorptionCoeff = max(0.0f, DFDemote(GetSingleLayerWaterMaterialOutput1(MaterialParameters)));
+		const float PhaseG = clamp(DFDemote(GetSingleLayerWaterMaterialOutput2(MaterialParameters)), -1.0f, 1.0f);
 		//Sample the optional Material Input ColorScaleBehindWater and fade it out at shorelines to avoid hard edge intersections
-		float3 ColorScaleBehindWater = lerp(1.0f, max(0.0f, LWCToFloat(GetSingleLayerWaterMaterialOutput3(MaterialParameters))), saturate(BehindWaterDeltaDepth * 0.02f));
+		float3 ColorScaleBehindWater = lerp(1.0f, max(0.0f, DFDemote(GetSingleLayerWaterMaterialOutput3(MaterialParameters))), saturate(BehindWaterDeltaDepth * 0.02f));
 		const float3 ExtinctionCoeff = ScatteringCoeff + AbsorptionCoeff;
 #endif
 		
@@ -172,8 +173,8 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 		// We also apply transmittance from light to under water surface. However, the scene has been lit by many sources already.
 		// So the transmittance toabove surface is simply approximated using the travel distance from the scene pixel to the water top, assuming a flat water surface.
 		// We cannot combine this transmittance with the transmittance from view because this would change the behavior of the analytical integration of light scattering integration.
-		const FLWCVector3 BehindWaterSceneWorldPos = SvPositionToWorld(float4(MaterialParameters.SvPosition.xy, SceneDeviceZ, 1.0));
-		const float DistanceFromScenePixelToWaterTop = max(0.0, LWCToFloat(LWCSubtract(MaterialParameters.AbsoluteWorldPosition, BehindWaterSceneWorldPos)).z);
+		const float3 BehindWaterSceneWorldPos = SvPositionToTranslatedWorld(float4(MaterialParameters.SvPosition.xy, SceneDeviceZ, 1.0));
+		const float DistanceFromScenePixelToWaterTop = max(0.0, (GetTranslatedWorldPosition(MaterialParameters).z - BehindWaterSceneWorldPos.z));
 		const float3 MeanTransmittanceToLightSources = exp(-DistanceFromScenePixelToWaterTop * ExtinctionCoeff);
 
 #if SINGLE_LAYER_WATER_MOBILE_SHADING
@@ -192,13 +193,13 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 
 		const float3 OpticalDepth = ExtinctionCoeff * BehindWaterDeltaDepth;
 		float3 Transmittance = exp(-OpticalDepth);
-		float3 IncomingLuminance = (AmbScattLuminance + SunScattLuminance * DirectionalLightShadow * MainDirLightFactor);
+		float3 IncomingLuminance = (AmbScattLuminance + SunScattLuminance * LightFunctionColor * DirectionalLightShadow * MainDirLightFactor);
 		// The SafeScatteringAmount should be in 0~1, add saturate to fix an artifact caused by half precision on mobile.
 		float3 SafeScatteringAmount = saturate(ScatteringCoeff * (1.0f - Transmittance) / ExtinctionCoeffSafe);
 		float3 ScatteredLuminance = IncomingLuminance * SafeScatteringAmount;
 
 		// Compute separated direcitonal light scattering if requested
-		float3 SeparatedIncomingLuminance = SunScattLuminance * DirectionalLightShadow * SeparatedMainDirLightFactor;
+		float3 SeparatedIncomingLuminance = SunScattLuminance * LightFunctionColor * DirectionalLightShadow * SeparatedMainDirLightFactor;
 		// Apply Fresnel and water visibility to separated main dir light luminance.
 		SeparatedWaterMainDirLightScatteredLuminance += SeparatedIncomingLuminance * SafeScatteringAmount * (CameraIsUnderWater ? 1.0 : (1.0 - EnvBrdf)) * WaterVisibility;
 

@@ -16,7 +16,14 @@ void FToolElementRegistrationArgs::ResetWidget()
 
 FToolElementRegistrationArgs::FToolElementRegistrationArgs(
 	EToolElement InToolElementType) :
-	ToolElementType(InToolElementType)
+	ToolElementType(InToolElementType),
+	StyleClassName("Section")
+{
+}
+
+FToolElementRegistrationArgs::FToolElementRegistrationArgs( FName InStyleClassName ) :
+	ToolElementType(EToolElement::Section),
+	StyleClassName(InStyleClassName)
 {
 }
 	

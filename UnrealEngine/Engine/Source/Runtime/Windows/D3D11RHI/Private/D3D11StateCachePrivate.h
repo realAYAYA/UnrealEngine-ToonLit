@@ -381,42 +381,6 @@ public:
 	}
 
 	template <EShaderFrequency ShaderFrequency>
-	D3D11_STATE_CACHE_INLINE void GetSamplerState(uint32 StartSamplerIndex, uint32 NumSamplerIndexes, ID3D11SamplerState** SamplerStates)
-	{
-#if D3D11_ALLOW_STATE_CACHE
-		{
-			check(StartSamplerIndex + NumSamplerIndexes <= D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT);
-			for (uint32 StateLoop = 0; StateLoop < NumSamplerIndexes; StateLoop++)
-			{
-				SamplerStates[StateLoop] = CurrentShaderResourceViews[ShaderFrequency][StateLoop + StartSamplerIndex];
-				if (SamplerStates[StateLoop])
-				{
-					SamplerStates[StateLoop]->AddRef();
-				}
-			}
-		}
-#else
-		{
-			switch (ShaderFrequency)
-			{
-				case SF_Vertex:		
-					Direct3DDeviceIMContext->VSGetSamplers(StartSamplerIndex, NumSamplerIndexes, SamplerStates); 
-					break;
-				case SF_Geometry:	
-					Direct3DDeviceIMContext->GSGetSamplers(StartSamplerIndex, NumSamplerIndexes, SamplerStates); 
-					break;
-				case SF_Pixel:		
-					Direct3DDeviceIMContext->PSGetSamplers(StartSamplerIndex, NumSamplerIndexes, SamplerStates); 
-					break;
-				case SF_Compute:	
-					Direct3DDeviceIMContext->CSGetSamplers(StartSamplerIndex, NumSamplerIndexes, SamplerStates); 
-					break;
-
-			}
-		}
-#endif
-	}
-	template <EShaderFrequency ShaderFrequency>
 	D3D11_STATE_CACHE_INLINE void SetConstantBuffer(ID3D11Buffer* ConstantBuffer, uint32 SlotIndex)
 	{
 #if D3D11_ALLOW_STATE_CACHE

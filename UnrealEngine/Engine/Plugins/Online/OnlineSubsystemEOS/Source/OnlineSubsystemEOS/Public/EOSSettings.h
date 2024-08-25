@@ -5,6 +5,7 @@
 #include "UObject/ObjectMacros.h"
 #include "Engine/RuntimeOptionsBase.h"
 #include "Engine/DataAsset.h"
+#include "EOSShared.h"
 #include "EOSSettings.generated.h"
 
 /** Native version of the UObject based config data */
@@ -66,14 +67,18 @@ public:
 /** Native version of the UObject based config data */
 struct FEOSSettings
 {
+	FEOSSettings();
+
 	FString CacheDir;
 	FString DefaultArtifactName;
+	FString SteamTokenType;
+	EOS_ERTCBackgroundMode RTCBackgroundMode;
 	int32 TickBudgetInMilliseconds;
 	int32 TitleStorageReadChunkLength;
 	bool bEnableOverlay;
 	bool bEnableSocialOverlay;
 	bool bEnableEditorOverlay;
-	bool bShouldEnforceBeingLaunchedByEGS;
+	bool bPreferPersistentAuth;
 	bool bUseEAS;
 	bool bUseEOSConnect;
 	bool bUseEOSSessions;
@@ -104,6 +109,10 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="EOS Settings")
 	FString DefaultArtifactName;
 
+	/** The preferred background mode to be used by RTC services */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="EOS Settings")
+	FString RTCBackgroundMode;
+
 	/** Used to throttle how much time EOS ticking can take */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="EOS Settings")
 	int32 TickBudgetInMilliseconds = 0;
@@ -120,9 +129,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "EOS Settings")
 	bool bEnableEditorOverlay = false;
 
-	/** Set to true to enable the social overlay (friends, invites, etc.) */
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="EOS Settings", DisplayName="Require Being Launched by the Epic Games Store")
-	bool bShouldEnforceBeingLaunchedByEGS = false;
+	/** Set to true to prefer persistent auth over external authentication during Login */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="EOS Settings")
+	bool bPreferPersistentAuth = false;
 
 	/** Tag combinations for paged queries in title file enumerations, separate tags within groups using `+` */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="EOS Settings")
@@ -163,6 +172,19 @@ public:
 	/** Set to true to have Epic Accounts presence information updated when the default platform is updated */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="Crossplay Settings")
 	bool bMirrorPresenceToEAS = false;
+
+	/**
+	 * When running with Steam, defines what TokenType OSSEOS will request from OSSSteam to login with.
+	 * Please see EOS documentation at https://dev.epicgames.com/docs/dev-portal/identity-provider-management#steam for more information.
+	 * Note the default is currently "Session" but this is deprecated. Please migrate to WebApi.
+	 * Possible values:
+	 *     "App" -> [DEPRECATED] Use Steam Encryption Application Tickets from ISteamUser::GetEncryptedAppTicket.
+	 *     "Session" -> [DEPRECATED] Use Steam Auth Session Tickets from ISteamUser::GetAuthSessionTicket.
+	 *     "WebApi" -> Use Steam Auth Tickets from ISteamUser::GetAuthTicketForWebApi, using the default remote service identity configured for OSSSteam.
+	 *     "WebApi:<remoteserviceidentity>" -> Use Steam Auth Tickets from ISteamUser::GetAuthTicketForWebApi, using an explicit remote service identity.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="Crossplay Settings")
+	FString SteamTokenType = TEXT("Session");
 
 	/** Get the settings for the selected artifact */
 	static bool GetSelectedArtifactSettings(FEOSArtifactSettings& OutSettings);

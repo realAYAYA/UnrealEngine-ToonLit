@@ -223,7 +223,8 @@ void SDrawPrimitiveDebugger::Refresh()
 		if (!LocalCopies.Contains(Primitive.ComponentId))
 		{
 			AvailableEntries.Add(MakeShared<const FViewDebugInfo::FPrimitiveInfo>(Primitive));
-			if (IsValid(Primitive.Component) && !Primitive.Component->IsVisible())
+			UPrimitiveComponent* Component = Primitive.ComponentInterface ? Primitive.ComponentInterface->GetUObject<UPrimitiveComponent>() : nullptr;
+			if (Component && IsValid(Component) && !Component->IsVisible())
 			{
 				LocalCopies.Add(Primitive.ComponentId, Primitive);
 				HiddenEntries.Add(Primitive.ComponentId);
@@ -261,9 +262,11 @@ void SDrawPrimitiveDebugger::AddColumn(const FText& Name, const FName& ColumnId)
 
 void SDrawPrimitiveDebugger::OnChangeEntryVisibility(ECheckBoxState State, FPrimitiveRowDataPtr Data)
 {
-	if (Data.IsValid() && IsValid(Data->Component) && State != ECheckBoxState::Undetermined)
+	UPrimitiveComponent* Component = Data->ComponentInterface->GetUObject<UPrimitiveComponent>();
+	
+	if (Component && Data.IsValid() && IsValid(Component) && State != ECheckBoxState::Undetermined)
 	{
-		Data->Component->SetVisibility(State == ECheckBoxState::Checked);
+		Component->SetVisibility(State == ECheckBoxState::Checked);
 		if (State == ECheckBoxState::Unchecked)
 		{
 			if (!LocalCopies.Contains(Data->ComponentId))
@@ -427,15 +430,26 @@ TSharedRef<SWidget> SDrawPrimitiveDebuggerListViewRow::MakeCellWidget(const int3
 				FText::FromString("INVALID");
 		}
 		else if (InColumnId.IsEqual(ActorColumn))
-		{
+		{			
+			auto GetHumanReadableName = [](FPrimitiveRowDataPtr& InRowDataPtr) 
+			{
+				if (AActor* Actor = Cast<AActor>(InRowDataPtr->Owner))
+				{
+					return Actor->GetHumanReadableName();
+				}
+				else
+				{
+					return InRowDataPtr->ComponentInterface->GetOwnerName();
+				}
+			};
 			Value = IsValid(RowDataPtr->Owner) ?
-				FText::FromString(RowDataPtr->Owner->GetHumanReadableName()) :
+				FText::FromString(GetHumanReadableName(RowDataPtr)) :
 				FText::FromString("INVALID");
 		}
 		else if (InColumnId.IsEqual(LocationColumn))
 		{
-			Value = IsValid(RowDataPtr->Owner) ?
-				FText::FromString(RowDataPtr->Owner->GetActorLocation().ToString()) :
+			Value = IsValid(RowDataPtr->ComponentInterface->GetUObject()) ?
+				FText::FromString(RowDataPtr->ComponentInterface->GetTransform().GetLocation().ToString()) :
 				FText::FromString("INVALID");
 		}
 		else if (InColumnId.IsEqual(MaterialsColumn))

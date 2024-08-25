@@ -19,6 +19,7 @@
 ANALYTICS_API DECLARE_LOG_CATEGORY_EXTERN(LogAnalytics, Display, All);
 
 class IAnalyticsProvider;
+class IAnalyticsTracer;
 
 /**
  * The public interface for interacting with analytics.
@@ -75,6 +76,7 @@ public:
 	 */
 	virtual TSharedPtr<IAnalyticsProvider> CreateAnalyticsProvider(const FName& ProviderModuleName, const FAnalyticsProviderConfigurationDelegate& GetConfigValue);
 
+	virtual TSharedPtr<IAnalyticsTracer> CreateAnalyticsTracer();
 	/**
 	 * Creates an instance of the default configured analytics provider.
 	 * Default is determined by GetDefaultProviderModuleName and a default constructed ConfigFromIni instance.

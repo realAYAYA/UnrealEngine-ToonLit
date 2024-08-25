@@ -68,6 +68,10 @@ struct CUSTOMIZABLEOBJECTEDITOR_API FCustomizableObjectState
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	ETextureCompressionStrategy TextureCompressionStrategy = ETextureCompressionStrategy::None;
 
+	/** If this is enabled, texture streaming won't be used for this state, and full images will be generated when an instance is first updated. */
+	UPROPERTY(EditAnywhere, Category = CustomizableObject)
+	bool bDisableTextureStreaming = false;
+
 	/** LiveUpdateMode will reuse instance temp. data between updates and speed up update times, but spend much more memory. Good for customization screens, not for actual gameplay modes. */
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	bool bLiveUpdateMode = false;
@@ -194,7 +198,7 @@ public:
 
 	// Array of bones to remove from the mesh.All influences assigned to these bones will be transferred to the closest valid bone.
 	// Selected per component and LOD. Bones will be accumulated down the line.
-	UPROPERTY(VisibleAnywhere, Category = CustomizableObject)
+	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	TArray<FComponentSettings> ComponentSettings;
 	
     // To avoid any no properly saved GUIDs

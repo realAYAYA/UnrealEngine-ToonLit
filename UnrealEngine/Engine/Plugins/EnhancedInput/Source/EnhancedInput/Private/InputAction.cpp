@@ -72,10 +72,11 @@ ETriggerState FTriggerStateTracker::EvaluateTriggers(const UEnhancedPlayerInput*
 			bFoundActiveTrigger |= (CurrentState != ETriggerState::None);
 			break;
 		case ETriggerType::Blocker:
-			bBlocking |= (CurrentState == ETriggerState::Triggered);
-			// Ongoing blockers don't count as active triggers
+			// Ignore dedicated blockers, IsBlocking handles the state update
 			break;
 		}
+
+		bBlocking |= Trigger->IsBlocking(CurrentState);
 	}
 
 	return GetState();

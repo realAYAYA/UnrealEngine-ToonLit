@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 #pragma warning disable CS1591 // Missing XML documentation on public types
 
@@ -35,6 +36,7 @@ namespace EpicGames.OIDC
 		}
 
 		private readonly Dictionary<string, byte[]> _providerToRefreshToken = new Dictionary<string, byte[]>();
+		private bool _isDirty;
 
 		public WindowsTokenStore()
 		{
@@ -55,7 +57,7 @@ namespace EpicGames.OIDC
 				return;
 			}
 
-			using FileStream fs = fi.OpenRead();
+			using FileStream fs = fi.Open(FileMode.Open, FileAccess.Read, FileShare.Read);
 			using TextReader tr = new StreamReader(fs);
 
 			TokenStoreState? state;
@@ -82,6 +84,11 @@ namespace EpicGames.OIDC
 
 		private void SaveStoreToDisk()
 		{
+			if (!_isDirty)
+			{
+				return;
+			}
+
 			FileInfo fi = GetStorePath();
 
 			if (!fi.Directory?.Exists ?? false)
@@ -96,7 +103,22 @@ namespace EpicGames.OIDC
 				JsonSerializer.Serialize<TokenStoreState>(writer, new TokenStoreState(_providerToRefreshToken));
 			}
 
-			File.Move(tempFile, fi.FullName, true);
+			{
+				using Mutex mutex = new Mutex(false, "oidcTokenStoreDat");
+
+				try
+				{
+					mutex.WaitOne();
+				}
+				catch (AbandonedMutexException)
+				{
+
+				}
+				File.Move(tempFile, fi.FullName, true);
+
+				mutex.ReleaseMutex();
+			}
+			_isDirty = false;
 		}
 
 		public bool TryGetRefreshToken(string oidcProvider, out string refreshToken)
@@ -145,6 +167,8 @@ namespace EpicGames.OIDC
 			byte[] encryptedToken = CryptProtectDataHelper.DoCryptProtectData(bytes, $"OidcToken-{providerIdentifier}", GetEntropy(providerIdentifier));
 
 			_providerToRefreshToken[providerIdentifier] = encryptedToken;
+
+			_isDirty = true;
 		}
 
 		public void Save()

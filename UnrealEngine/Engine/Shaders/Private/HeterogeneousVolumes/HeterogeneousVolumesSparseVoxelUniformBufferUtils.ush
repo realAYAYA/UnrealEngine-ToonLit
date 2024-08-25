@@ -50,6 +50,16 @@ float GetShadowStepFactor()
 	return SparseVoxelUniformBuffer.ShadowStepFactor;
 }
 
+int ShouldApplyHeightFog()
+{
+	return SparseVoxelUniformBuffer.bApplyHeightFog;
+}
+
+int ShouldApplyVolumetricFog()
+{
+	return SparseVoxelUniformBuffer.bApplyVolumetricFog;
+}
+
 uint3 GetVolumeResolution()
 {
 	return SparseVoxelUniformBuffer.VolumeResolution;

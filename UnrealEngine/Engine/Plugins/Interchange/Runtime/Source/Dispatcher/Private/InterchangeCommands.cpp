@@ -10,6 +10,21 @@ namespace UE
 {
 	namespace Interchange
 	{
+		int32 DispatcherCommandVersion::GetMajor()
+		{
+			return 19;
+		}
+
+		int32 DispatcherCommandVersion::GetMinor()
+		{
+			return 0;
+		}
+
+		int32 DispatcherCommandVersion::GetPatch()
+		{
+			return 0;
+		}
+
 		TSharedPtr<ICommand> CreateCommand(ECommandId CommandType)
 		{
 			switch (CommandType)

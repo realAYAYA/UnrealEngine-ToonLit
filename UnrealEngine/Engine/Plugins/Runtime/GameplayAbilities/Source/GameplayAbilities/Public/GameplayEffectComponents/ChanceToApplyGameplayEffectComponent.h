@@ -8,7 +8,7 @@
 #include "ChanceToApplyGameplayEffectComponent.generated.h"
 
 /** Applies a probablity to the application conditions of the Gameplay Effect. */
-UCLASS()
+UCLASS(DisplayName="Chance To Apply This Effect")
 class GAMEPLAYABILITIES_API UChanceToApplyGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()

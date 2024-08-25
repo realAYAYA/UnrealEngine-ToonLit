@@ -2,18 +2,18 @@
 
 #pragma once
 
-#ifndef STRATA_ENABLED
-#error "This header should only be included when Strata is enabled."
+#ifndef SUBSTRATE_ENABLED
+#error "This header should only be included when Substrate is enabled."
 #endif
 
 #include "../PathTracingCommon.ush"
 
-#define STRATA_FRESNEL_F82  0
+#define SUBSTRATE_FRESNEL_F82  0
 
-#define STRATA_PATH_TRACING_GLINTS (STRATA_COMPLEXSPECIALPATH && PLATFORM_ENABLES_STRATA_GLINTS)
+#define SUBSTRATE_PATH_TRACING_GLINTS (SUBSTRATE_COMPLEXSPECIALPATH && PLATFORM_ENABLES_SUBSTRATE_GLINTS)
 
-#if STRATA_PATH_TRACING_GLINTS
-#include "/Engine/Private/Strata/Glint/GlintThirdParty.ush"
+#if SUBSTRATE_PATH_TRACING_GLINTS
+#include "/Engine/Private/Substrate/Glint/GlintThirdParty.ush"
 #endif
 
 float3 SubstrateLobeWeight(FPathTracingPayload Payload, float SatNoL)
@@ -38,7 +38,7 @@ float3 SubstrateSpecularTint(FPathTracingPayload Payload, float NoV, float NoL, 
 void SubstrateGlint(FPathTracingPayload Payload, float3 InTangentV, float3 InTangentL, float2 InAlphaXY, in float InPdf, inout float OutWeight)
 {
 	// For now use the GGX lobe sampling. This will be changed with glint importance sampling later on.
-#if STRATA_PATH_TRACING_GLINTS
+#if SUBSTRATE_PATH_TRACING_GLINTS
 	BRANCH
 	if (Payload.GlintValue > 0)
 	{

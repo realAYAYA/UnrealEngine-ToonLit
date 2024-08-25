@@ -8,12 +8,13 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Animation/AnimRootMotionProvider.h"
+#include "VisualLogger/VisualLogger.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_FootPlacement)
 
 DECLARE_CYCLE_STAT(TEXT("Foot Placement Eval"), STAT_FootPlacement_Eval, STATGROUP_Anim);
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 static TAutoConsoleVariable<bool> CVarAnimNodeFootPlacementEnable(TEXT("a.AnimNode.FootPlacement.Enable"), true, TEXT("Enable/Disable Foot Placement"));
 static TAutoConsoleVariable<bool> CVarAnimNodeFootPlacementEnableLock(TEXT("a.AnimNode.FootPlacement.Enable.Lock"), true, TEXT("Enable/Disable Foot Locking"));
 static TAutoConsoleVariable<bool> CVarAnimNodeFootPlacementDebug(TEXT("a.AnimNode.FootPlacement.Debug"), false, TEXT("Turn on visualization debugging for Foot Placement"));
@@ -94,7 +95,7 @@ namespace UE::Anim::FootPlacement
 		MovementComponent = CharacterOwner ? CharacterOwner->GetCharacterMovement() : nullptr;
 		OwningComponentToWorld = OwningComponent->GetComponentToWorld();
 
-		ApproachDirWS = OwningComponentToWorld.TransformVector(ApproachDirCS);
+		ApproachDirWS = OwningComponentToWorld.TransformVectorNoScale(ApproachDirCS);
 	
 		RootMotionTransformDelta = FTransform::Identity;
 		if (const UE::Anim::IAnimRootMotionProvider* RootMotionProvider = UE::Anim::IAnimRootMotionProvider::Get())
@@ -163,25 +164,18 @@ namespace UE::Anim::FootPlacement
 		const bool bHit = Context.World->SweepSingleByChannel(
 			HitResult, TraceStart, TraceEnd, FQuat::Identity, CollisionChannel, CollisionShape, QueryParams);
 
-		if (!bHit)
+		if (!bHit || !Context.GetMovementComponentIsWalkable(HitResult))
 		{
-			// If the hit fails, use the ground plane position and a default impact normal (negated trace direction)
+			// If the hit fails or isn't walkable, use the ground plane position and a default impact normal (negated trace direction)
 			OutImpactLocationWS = PointDirectionPlaneIntersection(StartPositionWS, TraceDirectionWS, FPlane(Context.GetMovementComponentFloorLocation(), -TraceDirectionWS));
 			OutImpactNormalWS = -TraceDirectionWS;
 			return false;
 		}
 
 		OutImpactLocationWS = HitResult.ImpactPoint;
-		if (!Context.GetMovementComponentIsWalkable(HitResult))
-		{
-			// If the surface hit isn't walkable, use the negated trace direction as the impact normal
-			OutImpactNormalWS = -TraceDirectionWS;
-			return false;
-		}
-
 		OutImpactNormalWS = HitResult.ImpactNormal;
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 		if (CVarAnimNodeFootPlacementDebugTraces.GetValueOnAnyThread())
 		{
 			Context.CSPContext.AnimInstanceProxy->AnimDrawDebugPoint(
@@ -535,7 +529,7 @@ void FAnimNode_FootPlacement::UpdatePlantingPlaneInterpolation(
 		UE::Anim::FootPlacement::FindPlantPlane(Context, TraceSettings, FootTransformWS.GetLocation(), true, InOutPlantPlane, ImpactLocationWS);
 	}
 
-	if (InterpolationSettings.bEnableFloorInterpolation)
+	if (InterpolationSettings.bEnableFloorInterpolation && !bIsFirstUpdate)
 	{
 		FVector CurrPlaneIntersection = UE::Anim::FootPlacement::PointDirectionPlaneIntersection(
 			FootTransformWS.GetLocation(),
@@ -689,7 +683,7 @@ void FAnimNode_FootPlacement::ResetRuntimeData()
 		LegData.Interpolation = UE::Anim::FootPlacement::FLegRuntimeData::FInterpolationData();
 	}
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 	DebugData.Init(LegDefinitions.Num());
 #endif
 
@@ -700,7 +694,7 @@ bool FAnimNode_FootPlacement::WantsToPlant(
 	const UE::Anim::FootPlacement::FEvaluationContext& Context,
 	const UE::Anim::FootPlacement::FLegRuntimeData::FInputPoseData& LegInputPose) const
 {
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 	if (!CVarAnimNodeFootPlacementEnableLock.GetValueOnAnyThread())
 	{
 		return false;
@@ -806,7 +800,7 @@ UE::Anim::FootPlacement::FPlantResult FAnimNode_FootPlacement::FinalizeFootAlign
 					const FVector CorrectedFootToToe = CorrectedBallLocationCS - CorrectedFootLocationCS;
 					FQuat DeltaSlopeRotation = FQuat::FindBetweenVectors(InitialFootToToe, CorrectedFootToToe);
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 					FRotator DeltaSlopeRotator = DeltaSlopeRotation.Rotator();
 #endif
 
@@ -835,11 +829,11 @@ UE::Anim::FootPlacement::FPlantResult FAnimNode_FootPlacement::FinalizeFootAlign
 				LegData.Plant.bCanReachTarget = true;
 			}
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 			DebugData.LegsInfo[LegData.Idx].HyperExtensionAmount = HyperExtensionAmount;
 			DebugData.LegsInfo[LegData.Idx].RollAmount = HyperExtensionAmount - HyperExtensionRemaining;
 			DebugData.LegsInfo[LegData.Idx].PullAmount = FMath::Max(0.0f, HyperExtensionRemaining);
-#endif // (ENABLE_ANIM_DEBUG)
+#endif // (ENABLE_FOOTPLACEMENT_DEBUG)
 		}
 	}
 
@@ -881,6 +875,13 @@ UE::Anim::FootPlacement::FPlantResult FAnimNode_FootPlacement::FinalizeFootAlign
 		}
 	}
 
+	if (LegData.InputPose.DisableLeg > 0)
+	{
+		FTransform DisabledLegTransform = LegData.InputPose.FootFKTransformCS;
+		DisabledLegTransform.SetTranslation(DisabledLegTransform.GetTranslation() + PelvisData.Interpolation.PelvisTranslationOffset * (1.0-PelvisData.DisablePelvis));
+		CorrectedFootTransformCS.BlendWith(DisabledLegTransform, LegData.InputPose.DisableLeg);
+	}
+
 	check(!CorrectedFootTransformCS.ContainsNaN());
 
 	// TODO: Do adjustments to the ball and hip
@@ -894,7 +895,118 @@ UE::Anim::FootPlacement::FPlantResult FAnimNode_FootPlacement::FinalizeFootAlign
 	return Result;
 }
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
+void FAnimNode_FootPlacement::DrawVLog(
+	const UE::Anim::FootPlacement::FEvaluationContext& Context,
+	const UE::Anim::FootPlacement::FLegRuntimeData& LegData,
+	const UE::Anim::FootPlacement::FPlantResult& PlantResult) const
+{
+	using namespace UE::Anim::FootPlacement;
+
+	const FColor FKColor = FColor::Blue;
+	const FColor PlantedColor = FColor::Red;
+	const FColor UnplantedColor = FColor::Green;
+	const FColor ReplantedColor = FColor::Orange;
+
+	FColor CurrentPlantColor;
+	switch (LegData.Plant.PlantType)
+	{
+	case UE::Anim::FootPlacement::EPlantType::Planted: CurrentPlantColor = PlantedColor; break;
+	case UE::Anim::FootPlacement::EPlantType::Unplanted: CurrentPlantColor = UnplantedColor; break;
+	case UE::Anim::FootPlacement::EPlantType::Replanted: CurrentPlantColor = ReplantedColor; break;
+	default: check(false); break; //not implemented
+	}
+
+	const FTransform FKBoneTransformWS =
+		LegData.InputPose.FootToGround *
+		LegData.InputPose.FootTransformCS *
+		Context.OwningComponentToWorld;
+
+	const FTransform IKBoneTransformWS =
+		LegData.InputPose.FootToGround *
+		LegData.AlignedFootTransformWS;
+
+
+	const FVector FKBoneLocationProjectedWS = UE::Anim::FootPlacement::PointDirectionPlaneIntersection(
+		FKBoneTransformWS.GetLocation(),
+		Context.ApproachDirWS,
+		LegData.Plant.PlantPlaneWS);
+	
+	UObject* LogOwner = Context.CSPContext.AnimInstanceProxy->GetAnimInstanceObject();
+	FName LogCategory = "FootPlacement";
+
+	UE_VLOG_SPHERE(LogOwner, LogCategory, Display, FKBoneTransformWS.GetLocation(), 0, FKColor, TEXT(""));
+	
+	UE_VLOG_SPHERE(LogOwner, LogCategory, Display, FKBoneLocationProjectedWS, 0, FKColor, TEXT(""));
+
+	UE_VLOG_SPHERE(LogOwner, LogCategory, Display, IKBoneTransformWS.GetLocation(), 0, CurrentPlantColor, TEXT(""));
+
+	const FVector IKBoneLocationProjectedWS = UE::Anim::FootPlacement::PointDirectionPlaneIntersection(
+		IKBoneTransformWS.GetLocation(),
+		Context.ApproachDirWS,
+		LegData.Plant.PlantPlaneWS);
+
+	UE_VLOG_SPHERE(LogOwner, LogCategory, Display, IKBoneLocationProjectedWS, 0, CurrentPlantColor, TEXT(""));
+	UE_VLOG_SEGMENT_THICK(LogOwner, LogCategory, Display, IKBoneTransformWS.GetLocation(), IKBoneLocationProjectedWS, CurrentPlantColor, 2, TEXT(""));
+
+	const float UnplantRadius = PlantSettings.UnplantRadius;
+	const FVector PlantCenter = UE::Anim::FootPlacement::PointDirectionPlaneIntersection(
+		IKBoneTransformWS.GetLocation(),
+		Context.ApproachDirWS,
+		LegData.Plant.PlantPlaneWS);
+
+	UE_VLOG_CIRCLE(LogOwner, LogCategory, Display, PlantCenter, LegData.Plant.PlantPlaneWS.GetNormal(), UnplantRadius, PlantedColor, TEXT(""));
+	
+	if (PlantSettings.ReplantRadiusRatio < 1.0f)
+	{
+		const float ReplantRadius =
+			PlantSettings.UnplantRadius *
+			PlantSettings.ReplantRadiusRatio;
+		
+		UE_VLOG_CIRCLE(LogOwner, LogCategory, Display, PlantCenter, LegData.Plant.PlantPlaneWS.GetNormal(), ReplantRadius, ReplantedColor, TEXT(""));
+	}
+
+	// FString InputPoseMessage = FString::Printf(
+	// 	TEXT("%s\n\t - InputPose [ AlignmentAlpha = %.2f, Speed = %.2f, DistanceToPlant = %.2f]"), 
+	// 		*LegDefinitions[LegData.Idx].FKFootBone.BoneName.ToString(),
+	// 		LegData.InputPose.AlignmentAlpha,
+	// 		LegData.InputPose.Speed,
+	// 		LegData.InputPose.DistanceToPlant );
+	// Context.CSPContext.AnimInstanceProxy->AnimDrawDebugOnScreenMessage(InputPoseMessage, FColor::White);
+	//
+	// FString ExtensionMessage = FString::Printf(
+	// 	TEXT("\t - HyperExtension[ Amount = %.2f, Roll = %.2f, Pull %.2f]"),
+	// 		DebugData.LegsInfo[LegData.Idx].HyperExtensionAmount,
+	// 		DebugData.LegsInfo[LegData.Idx].RollAmount,
+	// 		DebugData.LegsInfo[LegData.Idx].PullAmount);
+	// Context.CSPContext.AnimInstanceProxy->AnimDrawDebugOnScreenMessage(ExtensionMessage,
+	// 	(DebugData.LegsInfo[LegData.Idx].HyperExtensionAmount <= 0.0f) ? FColor::Green : FColor::Red);
+
+	if (PlantSettings.SeparatingDistance > 0.0f)
+	{
+		// FString SeparationPlaneMessage = FString::Printf(
+		// 	TEXT("\t - Distance To Separating Plane = %.2f"),
+		// 	DebugData.LegsInfo[LegData.Idx].DistanceToSeparatingPlane);
+		// Context.CSPContext.AnimInstanceProxy->AnimDrawDebugOnScreenMessage(SeparationPlaneMessage,
+		// 	(DebugData.LegsInfo[LegData.Idx].DistanceToSeparatingPlane < 0.0f) ? FColor::Red : FColor::Green);
+
+		TRACE_ANIM_NODE_VALUE(Context.CSPContext, TEXT("DistanceToSeparatingPlane"), DebugData.LegsInfo[LegData.Idx].DistanceToSeparatingPlane);
+	}
+
+	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TStringBuilder<256>().Append("HyperExtension - ").Append(FString::FromInt(LegData.Idx)).ToString(), DebugData.LegsInfo[LegData.Idx].HyperExtensionAmount);
+	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TStringBuilder<256>().Append("Roll - ").Append(FString::FromInt(LegData.Idx)).ToString(), DebugData.LegsInfo[LegData.Idx].RollAmount);
+	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TStringBuilder<256>().Append("Pull - ").Append(FString::FromInt(LegData.Idx)).ToString(), DebugData.LegsInfo[LegData.Idx].PullAmount);
+	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TStringBuilder<256>().Append("AlignmentAlpha - ").Append(FString::FromInt(LegData.Idx)).ToString(), LegData.InputPose.AlignmentAlpha);
+	
+	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TStringBuilder<256>().Append("FootSpeed - ").Append(FString::FromInt(LegData.Idx)).ToString(), LegData.InputPose.Speed);
+	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TStringBuilder<256>().Append("DistanceToPlant - ").Append(FString::FromInt(LegData.Idx)).ToString(), LegData.InputPose.DistanceToPlant);
+	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TStringBuilder<256>().Append("DisableLeg - ").Append(FString::FromInt(LegData.Idx)).ToString(), LegData.InputPose.DisableLeg);
+
+}
+#endif
+
+
+#if ENABLE_FOOTPLACEMENT_DEBUG
 void FAnimNode_FootPlacement::DrawDebug(
 	const UE::Anim::FootPlacement::FEvaluationContext& Context,
 	const UE::Anim::FootPlacement::FLegRuntimeData& LegData,
@@ -997,13 +1109,7 @@ void FAnimNode_FootPlacement::DrawDebug(
 		Context.CSPContext.AnimInstanceProxy->AnimDrawDebugOnScreenMessage(SeparationPlaneMessage,
 			(DebugData.LegsInfo[LegData.Idx].DistanceToSeparatingPlane < 0.0f) ? FColor::Red : FColor::Green);
 
-		TRACE_ANIM_NODE_VALUE(Context.CSPContext, TEXT("DistanceToSeparatingPlane"), DebugData.LegsInfo[LegData.Idx].DistanceToSeparatingPlane);
 	}
-
-	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TEXT("HyperExtension - Amount"), DebugData.LegsInfo[LegData.Idx].HyperExtensionAmount);
-	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TEXT("HyperExtension - Roll"), DebugData.LegsInfo[LegData.Idx].RollAmount);
-	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TEXT("HyperExtension - Pull"), DebugData.LegsInfo[LegData.Idx].PullAmount);
-	TRACE_ANIM_NODE_VALUE(Context.CSPContext, TEXT("InputPose - AlignmentAlpha"), LegData.InputPose.AlignmentAlpha);
 }
 #endif
 
@@ -1060,7 +1166,7 @@ void FAnimNode_FootPlacement::EvaluateSkeletalControl_AnyThread(FComponentSpaceP
 		}
 	}
 	
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 	UE::Anim::FootPlacement::FDebugData LastDebugData = DebugData;
 #endif
 
@@ -1098,7 +1204,8 @@ void FAnimNode_FootPlacement::EvaluateSkeletalControl_AnyThread(FComponentSpaceP
 
 	// Based on the ground alignment, search for the best Pelvis transform
 	FTransform PelvisTransformCS = SolvePelvis(FootPlacementContext);
-#if ENABLE_ANIM_DEBUG
+
+#if ENABLE_FOOTPLACEMENT_DEBUG
 	const FTransform PelvisTargetTransformCS = PelvisTransformCS;
 	if (CVarAnimNodeFootPlacementDebug.GetValueOnAnyThread())
 	{
@@ -1111,6 +1218,10 @@ void FAnimNode_FootPlacement::EvaluateSkeletalControl_AnyThread(FComponentSpaceP
 	{
 		PelvisTransformCS = UpdatePelvisInterpolation(FootPlacementContext, PelvisTransformCS);
 	}
+	
+	PelvisData.DisablePelvis = Output.Curve.Get(PelvisSettings.DisablePelvisCurveName);
+	PelvisTransformCS.BlendWith(PelvisData.InputPose.FKTransformCS, PelvisData.DisablePelvis);
+	
 	check(!PelvisTransformCS.ContainsNaN());
 	OutBoneTransforms.Add(FBoneTransform(PelvisData.Bones.FkBoneIndex, PelvisTransformCS));
 
@@ -1121,11 +1232,21 @@ void FAnimNode_FootPlacement::EvaluateSkeletalControl_AnyThread(FComponentSpaceP
 
 		const UE::Anim::FootPlacement::FPlantResult PlantResult =
 			FinalizeFootAlignment(FootPlacementContext, LegData, LegDef, PelvisTransformCS);
+
+	
+		
 		OutBoneTransforms.Add(PlantResult.FootTranformCS);
 		//OutBoneTransforms.Add(PlantResult.BallTransformCS);
 		//OutBoneTransforms.Add(PlantResult.HipTransformCS);
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
+		if (FVisualLogger::IsRecording())
+		{
+			DrawVLog(FootPlacementContext, LegData, PlantResult);
+		}
+#endif
+
+#if ENABLE_FOOTPLACEMENT_DEBUG
 		if (CVarAnimNodeFootPlacementDebug.GetValueOnAnyThread())
 		{
 			DrawDebug(FootPlacementContext, LegData, PlantResult);
@@ -1143,7 +1264,7 @@ void FAnimNode_FootPlacement::EvaluateSkeletalControl_AnyThread(FComponentSpaceP
 
 	CachedDeltaTime = 0.0f;
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 	{
 		FAnimInstanceProxy* AnimInstanceProxy = Output.AnimInstanceProxy;
 		const FTransform ComponentTransform =
@@ -1187,6 +1308,21 @@ void FAnimNode_FootPlacement::EvaluateSkeletalControl_AnyThread(FComponentSpaceP
 			AnimInstanceProxy->AnimDrawDebugPoint(
 				PelvisTargetTransformWS.GetLocation(), 10.0f, FColor::Purple, false, -1.0f, SDPG_Foreground);
 		}
+		
+#if ENABLE_FOOTPLACEMENT_DEBUG
+		if (FVisualLogger::IsRecording())
+		{
+			// pelvis debugging
+			const FTransform PelvisTransformWS = PelvisTransformCS * ComponentTransform;
+			const FTransform BasePelvisTransformWS = PelvisData.InputPose.FKTransformCS * ComponentTransform;
+			const FTransform PelvisTargetTransformWS = PelvisTargetTransformCS * ComponentTransform;
+
+			UObject* AnimInstance = AnimInstanceProxy->GetAnimInstanceObject();
+			UE_VLOG_SPHERE(AnimInstance, "FootPlacement", Display, PelvisTransformWS.GetTranslation(), 0, FColor::Green, TEXT(""));
+			UE_VLOG_SPHERE(AnimInstance, "FootPlacement", Display, BasePelvisTransformWS.GetTranslation(), 0, FColor::Blue, TEXT(""));
+			UE_VLOG_SPHERE(AnimInstance, "FootPlacement", Display, PelvisTargetTransformWS.GetTranslation(), 0, FColor::Purple, TEXT(""));
+		}
+#endif
 	}
 #endif
 
@@ -1197,7 +1333,7 @@ void FAnimNode_FootPlacement::EvaluateSkeletalControl_AnyThread(FComponentSpaceP
 
 bool FAnimNode_FootPlacement::IsValidToEvaluate(const USkeleton* Skeleton, const FBoneContainer& RequiredBones)
 {
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 	if (!CVarAnimNodeFootPlacementEnable.GetValueOnAnyThread())
 	{
 		return false;
@@ -1237,6 +1373,14 @@ void FAnimNode_FootPlacement::InitializeBoneReferences(const FBoneContainer& Req
 		LegData.Bones.IKIndex = LegDef.IKFootBone.GetCompactPoseIndex(RequiredBones);
 		LegData.Bones.FKIndex = LegDef.FKFootBone.GetCompactPoseIndex(RequiredBones);
 		LegData.Bones.BallIndex = LegDef.BallBone.GetCompactPoseIndex(RequiredBones);
+
+		if ((!LegData.Bones.IKIndex.IsValid()) ||
+			(!LegData.Bones.FKIndex.IsValid()) ||
+			(!LegData.Bones.BallIndex.IsValid()))
+		{
+			break;
+		}
+
 		UE::Anim::FootPlacement::FindChainLengthRootBoneIndex(
 			LegData.Bones.FKIndex, FMath::Max(LegDef.NumBonesInLimb, 1), RequiredBones,
 			LegData.Bones.HipIndex, LegData.Bones.LimbLength);
@@ -1244,7 +1388,7 @@ void FAnimNode_FootPlacement::InitializeBoneReferences(const FBoneContainer& Req
 		const FTransform BallTransformLS = RequiredBones.GetRefPoseTransform(LegData.Bones.BallIndex);
 		LegData.Bones.FootLength = BallTransformLS.GetLocation().Size();
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 		// TODO: This wont work for animations authored for different slopes or stairs. Figure this out later
 		const FVector RefPoseGroundNormalCS = FVector::UpVector;
 		const FTransform BallRefTransformCS = FAnimationRuntime::GetComponentSpaceRefPose(
@@ -1264,6 +1408,7 @@ void FAnimNode_FootPlacement::InitializeBoneReferences(const FBoneContainer& Req
 
 		LegData.SpeedCurveName = LegDef.SpeedCurveName;
 		LegData.DisableLockCurveName = LegDef.DisableLockCurveName;
+		LegData.DisableLegCurveName = LegDef.DisableLegCurveName;
 	}
 
 	PelvisBone.Initialize(RequiredBones);
@@ -1294,7 +1439,7 @@ void FAnimNode_FootPlacement::GatherLegDataFromInputs(
 {
 	FVector LastBallLocation = LegData.InputPose.BallTransformCS.GetLocation();
 
-	const FTransform FootFKTransformCS =
+	LegData.InputPose.FootFKTransformCS =
 		Context.CSPContext.Pose.GetComponentSpaceTransform(LegData.Bones.FKIndex);
 	const FTransform BallTransformCS =
 		Context.CSPContext.Pose.GetComponentSpaceTransform(LegData.Bones.BallIndex);
@@ -1303,11 +1448,11 @@ void FAnimNode_FootPlacement::GatherLegDataFromInputs(
 		Context.CSPContext.Pose.GetComponentSpaceTransform(LegData.Bones.IKIndex);
 	LegData.InputPose.HipTransformCS =
 		Context.CSPContext.Pose.GetComponentSpaceTransform(LegData.Bones.HipIndex);
-
+	
 	LegData.InputPose.BallToFoot =
-		FootFKTransformCS.GetRelativeTransform(BallTransformCS);
+		LegData.InputPose.FootFKTransformCS.GetRelativeTransform(BallTransformCS);
 	LegData.InputPose.FootToBall =
-		BallTransformCS.GetRelativeTransform(FootFKTransformCS);
+		BallTransformCS.GetRelativeTransform(LegData.InputPose.FootFKTransformCS);
 
 	// Can't use ball transform as-is as the foot's IK bone may not be at the FK bone.
 	// Assume the ball is at the same relative position
@@ -1352,6 +1497,8 @@ void FAnimNode_FootPlacement::GatherLegDataFromInputs(
 			Context.CSPContext.Curve.Get(LegData.SpeedCurveName, bValidSpeedCurve, DefaultSpeedCurveValue);
 	}
 
+	LegData.InputPose.DisableLeg = Context.CSPContext.Curve.Get(LegData.DisableLegCurveName);
+
 	// Grab the lock curve's alpha. If the curve isn't set, then LockAlpha is full weight.
 	LegData.InputPose.LockAlpha = 1.0f - Context.CSPContext.Curve.Get(LegData.DisableLockCurveName);
 
@@ -1386,7 +1533,8 @@ void FAnimNode_FootPlacement::ProcessCharacterState(const UE::Anim::FootPlacemen
 			(Context.MovementComponent->MovementMode == MOVE_NavWalking)) &&
 		Context.MovementComponent->CurrentFloor.bBlockingHit;
 
-	if (CharacterData.bIsOnGround && bWasOnGround && (PelvisSettings.ActorMovementCompensationMode != EActorMovementCompensationMode::ComponentSpace))
+	bool bOnGround =  !PelvisSettings.bDisablePelvisOffsetInAir || (CharacterData.bIsOnGround && bWasOnGround);
+	if (bOnGround && PelvisSettings.ActorMovementCompensationMode != EActorMovementCompensationMode::ComponentSpace)
 	{
 		FVector OwningComponentAdjustedLastLocationWS;
 		if (PelvisSettings.ActorMovementCompensationMode == EActorMovementCompensationMode::SuddenMotionOnly)
@@ -1426,7 +1574,14 @@ void FAnimNode_FootPlacement::ProcessCharacterState(const UE::Anim::FootPlacemen
 		const FVector CapsuleMoveOffsetCS =
 			Context.OwningComponentToWorld.InverseTransformVectorNoScale(CapsuleMoveOffsetWS);
 
-		CharacterData.ComponentVelocityCS = CapsuleMoveOffsetCS / CachedDeltaTime;
+		if (CachedDeltaTime > 0.0f)
+		{
+			CharacterData.ComponentVelocityCS = CapsuleMoveOffsetCS / CachedDeltaTime;
+		}
+		else
+		{
+			CharacterData.ComponentVelocityCS = FVector::ZeroVector;
+		}
 	}
 }
 
@@ -1557,13 +1712,37 @@ void FAnimNode_FootPlacement::ProcessFootAlignment(
 		const float DistanceToSeparatingPlane =
 			UE::Anim::FootPlacement::GetDistanceToPlaneAlongDirection(FootUnalignedLocationCS, SeparatingPlane, -PlaneNormal);
 
-		if (DistanceToSeparatingPlane < 0.0f)
+		if (Plant.PlantType == UE::Anim::FootPlacement::EPlantType::Unplanted)
 		{
-			FootUnalignedLocationCS -= PlaneNormal * DistanceToSeparatingPlane;
+			FVector SeparatingPlaneOffset(FVector::ZeroVector);
+			if (DistanceToSeparatingPlane < 0.0f)
+			{
+				SeparatingPlaneOffset = -PlaneNormal * DistanceToSeparatingPlane ;
+			}
+
+			if (InterpolationSettings.bEnableSeparationInterpolation)
+			{
+				Interpolation.SeparatingPlaneOffset = UKismetMathLibrary::VectorSpringInterp(
+					Interpolation.SeparatingPlaneOffset, SeparatingPlaneOffset, Interpolation.SeparatingPlaneOffsetSpringState,
+					InterpolationSettings.FloorLinearStiffness,
+					InterpolationSettings.FloorLinearDamping,
+					Context.UpdateDeltaTime, 1.0f, 0.0f);
+			}
+			else
+			{
+				Interpolation.SeparatingPlaneOffset = SeparatingPlaneOffset;
+			}
+			
+			FootUnalignedLocationCS  += Interpolation.SeparatingPlaneOffset;
 			FootUnalignedTransformCS.SetLocation(FootUnalignedLocationCS);
 		}
+		else
+		{
+			Interpolation.SeparatingPlaneOffset = FVector::ZeroVector;
+			Interpolation.SeparatingPlaneOffsetSpringState.Reset();
+		}
 
-#if ENABLE_ANIM_DEBUG
+#if ENABLE_FOOTPLACEMENT_DEBUG
 		if (CVarAnimNodeFootPlacementDebug.GetValueOnAnyThread())
 		{
 			const FVector PlaneNormalWS = Context.OwningComponentToWorld.TransformVector(PlaneNormal);;
@@ -1573,6 +1752,16 @@ void FAnimNode_FootPlacement::ProcessFootAlignment(
 				PlaneNormalWS, false, -1.0f, SDPG_Foreground, 0.5f);
 
 			DebugData.LegsInfo[LegData.Idx].DistanceToSeparatingPlane = DistanceToSeparatingPlane;
+		}
+#endif
+		
+#if ENABLE_FOOTPLACEMENT_DEBUG
+		if (FVisualLogger::IsRecording())
+		{
+			const FVector PlaneNormalWS = Context.OwningComponentToWorld.TransformVector(PlaneNormal);;
+			const FVector PlaneCenterWS = Context.OwningComponentToWorld.TransformPosition(PlaneCenter);;
+			
+			UE_VLOG_CIRCLE_THICK(Context.CSPContext.AnimInstanceProxy->GetAnimInstanceObject(), "FootPlacement", Display, PlaneCenterWS, PlaneNormalWS, 25, FColor::Red, 1, TEXT(""));
 		}
 #endif
 	}
@@ -1614,6 +1803,7 @@ void FAnimNode_FootPlacement::ProcessFootAlignment(
 			LegData.AlignedFootTransformCS.GetRotation(),
 			InputPose.AlignmentAlpha));
 
+	
 	LegData.AlignedFootTransformCS = BlendedPlantTransformCS;
 }
 

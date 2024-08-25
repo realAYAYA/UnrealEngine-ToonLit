@@ -21,6 +21,6 @@ namespace UE
 		~FSdfChangeBlock();
 
 	private:
-		TUniquePtr< Internal::FSdfChangeBlockImpl > Impl;
+		TUniquePtr<Internal::FSdfChangeBlockImpl> Impl;
 	};
 }

@@ -3,8 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using EpicGames.Horde.Issues;
 using Horde.Server.Jobs.Graphs;
-using Horde.Server.Utilities;
 
 namespace Horde.Server.Issues
 {
@@ -21,7 +21,7 @@ namespace Horde.Server.Issues
 		/// <summary>
 		/// Times of day at which to send a report
 		/// </summary>
-		public List<TimeSpan> ReportTimes { get; set; } = new List<TimeSpan> { TimeSpan.Zero };
+		public List<TimeSpan> ReportTimes { get; set; } = new List<TimeSpan>();
 
 		/// <summary>
 		/// Name of the tab to post summary data to
@@ -94,6 +94,11 @@ namespace Horde.Server.Issues
 		public bool InviteRestrictedUsers { get; set; }
 
 		/// <summary>
+		/// Skips sending reports when there are no active issues. 
+		/// </summary>
+		public bool SkipWhenEmpty { get; set; }
+
+		/// <summary>
 		/// Additional node annotations implicit in this workflow
 		/// </summary>
 		public NodeAnnotations Annotations { get; set; } = new NodeAnnotations();
@@ -102,6 +107,11 @@ namespace Horde.Server.Issues
 		/// External issue tracking configuration for this workflow
 		/// </summary>
 		public ExternalIssueConfig? ExternalIssues { get; set; }
+
+		/// <summary>
+		/// Additional issue handlers enabled for this workflow
+		/// </summary>
+		public List<string>? IssueHandlers { get; set; }
 	}
 
 	/// <summary>

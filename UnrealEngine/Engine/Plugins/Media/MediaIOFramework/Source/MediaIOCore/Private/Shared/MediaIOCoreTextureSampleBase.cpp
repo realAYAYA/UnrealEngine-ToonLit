@@ -218,7 +218,7 @@ bool FMediaIOCoreTextureSampleBase::ApplyColorConversion(FTexture2DRHIRef& InSrc
 			CachedOCIOResources = MakeShared<FOpenColorIORenderPassResources>();
 
 			FOpenColorIOTransformResource* ShaderResource = nullptr;
-			TSortedMap<int32, FTextureResource*> TransformTextureResources;
+			TSortedMap<int32, TWeakObjectPtr<UTexture>> TransformTextureResources;
 
 			if (ColorConversionSettings->ConfigurationSource != nullptr)
 			{
@@ -339,29 +339,29 @@ bool FMediaIOCoreTextureSampleBase::IsOutputSrgb() const
 	return Encoding == UE::Color::EEncoding::sRGB;
 }
 
-FMatrix44f FMediaIOCoreTextureSampleBase::GetGamutToXYZMatrix() const
+FMatrix44d FMediaIOCoreTextureSampleBase::GetGamutToXYZMatrix() const
 {
-	return FMatrix44f(ColorSpaceStruct.GetRgbToXYZ().GetTransposed());
+	return ColorSpaceStruct.GetRgbToXYZ().GetTransposed();
 }
 
-FVector2f FMediaIOCoreTextureSampleBase::GetWhitePoint() const
+FVector2d FMediaIOCoreTextureSampleBase::GetWhitePoint() const
 {
-	return FVector2f(ColorSpaceStruct.GetWhiteChromaticity());
+	return ColorSpaceStruct.GetWhiteChromaticity();
 }
 
-FVector2f FMediaIOCoreTextureSampleBase::GetDisplayPrimaryRed() const
+FVector2d FMediaIOCoreTextureSampleBase::GetDisplayPrimaryRed() const
 {
-	return FVector2f(ColorSpaceStruct.GetRedChromaticity());
+	return ColorSpaceStruct.GetRedChromaticity();
 }
 
-FVector2f FMediaIOCoreTextureSampleBase::GetDisplayPrimaryGreen() const
+FVector2d FMediaIOCoreTextureSampleBase::GetDisplayPrimaryGreen() const
 {
-	return FVector2f(ColorSpaceStruct.GetGreenChromaticity());
+	return ColorSpaceStruct.GetGreenChromaticity();
 } 
 
-FVector2f FMediaIOCoreTextureSampleBase::GetDisplayPrimaryBlue() const
+FVector2d FMediaIOCoreTextureSampleBase::GetDisplayPrimaryBlue() const
 {
-	return FVector2f(ColorSpaceStruct.GetBlueChromaticity());
+	return ColorSpaceStruct.GetBlueChromaticity();
 }
 
 UE::Color::EEncoding FMediaIOCoreTextureSampleBase::GetEncodingType() const

@@ -19,15 +19,15 @@ TEST_CASE("OpenAPI.StartAbortAndStartAgain")
 
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
-			AutoRTFM::RecordOpenWrite(&valueB);
+			AutoRTFM::ForTheRuntime::StartTransaction();
+			AutoRTFM::ForTheRuntime::RecordOpenWrite(&valueB);
 			valueB=10;
 			AutoRTFM::AbortTransaction();
 
-			AutoRTFM::ClearTransactionStatus();
+			AutoRTFM::ForTheRuntime::ClearTransactionStatus();
 
-			AutoRTFM::StartTransaction();
-			AutoRTFM::RecordOpenWrite(&valueC);
+			AutoRTFM::ForTheRuntime::StartTransaction();
+			AutoRTFM::ForTheRuntime::RecordOpenWrite(&valueC);
 			valueC = 30;
 			AutoRTFM::AbortTransaction();
 		});
@@ -42,8 +42,9 @@ TEST_CASE("OpenAPI.CommitScopedFromOpen_Illegal", "[.]")
 {
 	AutoRTFM::ETransactionResult transactResult = AutoRTFM::Transact([&]()
 	{
-		AutoRTFM::Open([&]() {
-			AutoRTFM::CommitTransaction(); // illegal. Can't Commit from within a scoped transaction
+		AutoRTFM::Open([&]()
+		{
+			AutoRTFM::ForTheRuntime::CommitTransaction(); // illegal. Can't Commit from within a scoped transaction
 		});
 	});
 	REQUIRE(transactResult == AutoRTFM::ETransactionResult::AbortedByRequest);
@@ -54,8 +55,9 @@ TEST_CASE("OpenAPI.RecordDataClosed_Illegal", "[.]")
 	int value = 0;
 	AutoRTFM::ETransactionResult transactResult = AutoRTFM::Transact([&]()
 	{
-		REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]() {
-			AutoRTFM::RecordOpenWrite(&value); // Illegal. Can't record writes explicitly while closed
+		REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]()
+		{
+			AutoRTFM::ForTheRuntime::RecordOpenWrite(&value); // Illegal. Can't record writes explicitly while closed
 			value = 1;
 		}));
 	});
@@ -69,8 +71,9 @@ TEST_CASE("OpenAPI.WriteDataInTheOpen")
 	int value = 0;
 	auto transactResult = AutoRTFM::Transact([&]()
 	{
-		AutoRTFM::Open([&]() {
-			AutoRTFM::RecordOpenWrite(&value);
+		AutoRTFM::Open([&]()
+		{
+			AutoRTFM::ForTheRuntime::RecordOpenWrite(&value);
 			value = 1;
 		});
 	});
@@ -83,7 +86,8 @@ TEST_CASE("OpenAPI.AbortTransactionScopedFromOpen")
 {
 	auto transactResult = AutoRTFM::Transact([&]()
 	{
-		AutoRTFM::Open([&]() {
+		AutoRTFM::Open([&]()
+		{
 			AutoRTFM::AbortTransaction();
 		});
 		FAIL("AutoRTFM::Open failed to throw after an abort");
@@ -95,7 +99,8 @@ TEST_CASE("OpenAPI.AbortTransactionScopedFromClosed")
 {
 	auto transactResult = AutoRTFM::Transact([&]()
 	{
-		REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]() {
+		REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]()
+		{
 			AutoRTFM::AbortTransaction();
 		}));
 		FAIL("AutoRTFM::Close should have no-op'ed because it's already closed from the Transact");
@@ -113,7 +118,8 @@ TEST_CASE("OpenAPI.AbortTransactionDoubleScopedFromOpen")
 		auto transactResult2 = AutoRTFM::Transact([&]()
 		{
 			value = 42424242;
-			AutoRTFM::Open([&]() {
+			AutoRTFM::Open([&]()
+			{
 				AutoRTFM::AbortTransaction();
 			});
 			FAIL("AutoRTFM::Open failed to throw after an abort");
@@ -200,7 +206,8 @@ TEST_CASE("OpenAPI.OpenWithCopy")
 		SomeData1.A = 11;
 		SomeData2.A = 29;
 
-		AutoRTFM::Open([=]() {
+		AutoRTFM::Open([=]()
+		{
 			REQUIRE(SomeData1.A == 11);
 			REQUIRE(SomeData2.A == 29);
 		});
@@ -233,17 +240,20 @@ TEST_CASE("OpenAPI.OpenCloseOpenClose")
 		if (!AutoRTFM::IsClosed()) FAIL("A - NOT CLOSED AS EXPECTED!");
 
 		// -------------------------------------
-		AutoRTFM::Open([&]() {
+		AutoRTFM::Open([&]()
+		{
 			// B - WE ARE OPEN 
 			REQUIRE(!AutoRTFM::IsClosed());
 
 			// -------------------------------------
-			REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]() {
+			REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]()
+			{
 				// C - WE ARE CLOSED AGAIN
 				if (!AutoRTFM::IsClosed()) FAIL("C - NOT CLOSED AS EXPECTED!");
 
 				// -------------------------------------
-				AutoRTFM::Open([&]() {
+				AutoRTFM::Open([&]()
+				{
 					// D - WE ARE OPEN AGAIN
 					REQUIRE(!AutoRTFM::IsClosed());
 
@@ -266,7 +276,8 @@ TEST_CASE("OpenAPI.OpenCloseOpenClose")
 				AutoRTFM::AbortTransaction();
 
 				// -------------------------------------
-				AutoRTFM::Open([&]() {
+				AutoRTFM::Open([&]()
+				{
 					// F - WE ARE OPEN AGAIN //
 					REQUIRE(!AutoRTFM::IsClosed());
 				});
@@ -323,15 +334,17 @@ TEST_CASE("OpenAPI.Commit_TransactOpenCloseCommit")
 	{
 		if (!AutoRTFM::IsClosed()) FAIL("Not Closed");
 
-		AutoRTFM::Open([&]() {
-			AutoRTFM::StartTransaction();
+		AutoRTFM::Open([&]()
+		{
+			AutoRTFM::ForTheRuntime::StartTransaction();
 
-			REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]() {
+			REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]()
+			{
 				value = 42;
 			}));
 
 			REQUIRE(value == 42); // RTFM writes through immediately, so we can see this value in the open
-			AutoRTFM::CommitTransaction();
+			AutoRTFM::ForTheRuntime::CommitTransaction();
 		});
 
 		if (value != 42) FAIL("Value != 42!");
@@ -363,10 +376,11 @@ TEST_CASE("OpenAPI.Commit_TransactOpenCloseAbort")
 		AutoRTFM::Open([&]()
 		{
 			double valueLocal = 1.0;
-			AutoRTFM::StartTransaction();
+			AutoRTFM::ForTheRuntime::StartTransaction();
 
 			// Closing from the open doesn't work
-			REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]() {
+			REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]()
+			{
 				value = 42;
 				valueLocal = 10.0;
 			}));
@@ -456,10 +470,10 @@ TEST_CASE("OpenAPI.StackWriteCommitInTheOpen1")
 	{
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
-			AutoRTFM::RecordOpenWrite(&value);
+			AutoRTFM::ForTheRuntime::StartTransaction();
+			AutoRTFM::ForTheRuntime::RecordOpenWrite(&value);
 			value = 10;
-			AutoRTFM::CommitTransaction();
+			AutoRTFM::ForTheRuntime::CommitTransaction();
 			REQUIRE(value == 10);
 		});
 	});
@@ -472,16 +486,17 @@ TEST_CASE("OpenAPI.StackWriteCommitInTheOpen2")
 		int value = 0;
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
+			AutoRTFM::ForTheRuntime::StartTransaction();
 			REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]()
 			{
-				AutoRTFM::Open([&]() {
-					AutoRTFM::RecordOpenWrite(&value);
+				AutoRTFM::Open([&]()
+				{
+					AutoRTFM::ForTheRuntime::RecordOpenWrite(&value);
 					value = 10;
 				});
 			}));
 
-			AutoRTFM::CommitTransaction();
+			AutoRTFM::ForTheRuntime::CommitTransaction();
 			REQUIRE(value == 10);
 		});
 	});
@@ -494,8 +509,8 @@ TEST_CASE("OpenAPI.StackWriteAbortInTheOpen1")
 	{
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
-			AutoRTFM::RecordOpenWrite(&value);
+			AutoRTFM::ForTheRuntime::StartTransaction();
+			AutoRTFM::ForTheRuntime::RecordOpenWrite(&value);
 			value = 10;
 			AutoRTFM::AbortTransaction();
 			REQUIRE(value == 0);
@@ -511,9 +526,9 @@ TEST_CASE("OpenAPI.StackWriteCommitInTheOpen3_Illegal")
 		int value = 0;
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
-			AutoRTFM::WriteMemory(&value, 10);
-			AutoRTFM::CommitTransaction();
+			AutoRTFM::ForTheRuntime::StartTransaction();
+			AutoRTFM::ForTheRuntime::WriteMemory(&value, 10);
+			AutoRTFM::ForTheRuntime::CommitTransaction();
 			REQUIRE(value == 10);
 		});
 	});
@@ -529,10 +544,10 @@ TEST_CASE("OpenAPI.WriteMemory1")
 	{
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
+			AutoRTFM::ForTheRuntime::StartTransaction();
 
-			AutoRTFM::WriteMemory(&value1, &sourceValue);
-			AutoRTFM::CommitTransaction();
+			AutoRTFM::ForTheRuntime::WriteMemory(&value1, &sourceValue);
+			AutoRTFM::ForTheRuntime::CommitTransaction();
 			REQUIRE(value1 == 10);
 		});
 	});
@@ -546,8 +561,8 @@ TEST_CASE("OpenAPI.StackWriteAbortInTheOpen2")
 	{
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
-			AutoRTFM::WriteMemory(&value, 10); // Illegal to write to value because it's in the inner-most closed-nest
+			AutoRTFM::ForTheRuntime::StartTransaction();
+			AutoRTFM::ForTheRuntime::WriteMemory(&value, 10); // Illegal to write to value because it's in the inner-most closed-nest
 
 			AutoRTFM::AbortTransaction();
 		});
@@ -579,9 +594,9 @@ TEST_CASE("OpenAPI.WriteTrivialStructure")
 	{
 		AutoRTFM::Open([&]()
 		{
-			AutoRTFM::StartTransaction();
+			AutoRTFM::ForTheRuntime::StartTransaction();
 
-			AutoRTFM::WriteMemory(&data, &data2);
+			AutoRTFM::ForTheRuntime::WriteMemory(&data, &data2);
 			REQUIRE(data.A == 9);
 			REQUIRE(data.B == 8.0);
 			REQUIRE(data.C == 7.0f);
@@ -625,9 +640,9 @@ TEST_CASE("OpenAPI.WriteTrivialStructure2")
 	{
 		AutoRTFM::Open([&]()
 			{
-				AutoRTFM::StartTransaction();
+				AutoRTFM::ForTheRuntime::StartTransaction();
 
-				AutoRTFM::WriteMemory(&data, &data2);
+				AutoRTFM::ForTheRuntime::WriteMemory(&data, &data2);
 				REQUIRE(data.A == 9);
 				REQUIRE(data.B == 8.0);
 				REQUIRE(data.C == 7.0f);
@@ -638,7 +653,7 @@ TEST_CASE("OpenAPI.WriteTrivialStructure2")
 				REQUIRE(data.E[3] == 666);
 				REQUIRE(data.E[4] == 555);
 					
-				AutoRTFM::WriteMemory(&data, &data3);
+				AutoRTFM::ForTheRuntime::WriteMemory(&data, &data3);
 				REQUIRE(data.A == 19);
 				REQUIRE(data.B == 28.0);
 				REQUIRE(data.C == 37.0f);
@@ -711,7 +726,7 @@ TEST_CASE("OpenAPI.Footgun2")
 				// Unrecorded assignments in the open
 				valueB = 10;
 				valueC = 10;
-				AutoRTFM::RecordOpenWrite(&valueC);
+				AutoRTFM::ForTheRuntime::RecordOpenWrite(&valueC);
 				// valueC was recorded in the open after the change - too late
 			});
 
@@ -735,7 +750,7 @@ TEST_CASE("OpenAPI.StartCloseOpenCommit")
 	value++;
 	(void)value;
 
-	AutoRTFM::StartTransaction();
+	AutoRTFM::ForTheRuntime::StartTransaction();
 
 	// Can't close outside of a transaction
 	REQUIRE(AutoRTFM::EContextStatus::OnTrack == AutoRTFM::Close([&]()
@@ -748,9 +763,9 @@ TEST_CASE("OpenAPI.StartCloseOpenCommit")
 
 	// Setting a value in the open requires us to register the memory address with the transaction
 	value = 42;
-	AutoRTFM::RecordOpenWrite(&value);
+	AutoRTFM::ForTheRuntime::RecordOpenWrite(&value);
 
-	AutoRTFM::CommitTransaction();
+	AutoRTFM::ForTheRuntime::CommitTransaction();
 
 	// Finally, 42 is committed to value
 	REQUIRE(value == 42);
@@ -770,8 +785,9 @@ TEST_CASE("OpenAPI.TransOpenStartCloseAbortAbort")
 
 	AutoRTFM::Transact([&]() 
 	{
-		AutoRTFM::Open([&]() {
-			AutoRTFM::StartTransaction();
+		AutoRTFM::Open([&]()
+		{
+			AutoRTFM::ForTheRuntime::StartTransaction();
 
 			int value = 10;
 			value++;
@@ -786,7 +802,7 @@ TEST_CASE("OpenAPI.TransOpenStartCloseAbortAbort")
 
 			REQUIRE(CloseStatus == AutoRTFM::EContextStatus::AbortedByRequest);
 
-			AutoRTFM::ClearTransactionStatus();
+			AutoRTFM::ForTheRuntime::ClearTransactionStatus();
 
 			REQUIRE(bGetsToA == false);
 

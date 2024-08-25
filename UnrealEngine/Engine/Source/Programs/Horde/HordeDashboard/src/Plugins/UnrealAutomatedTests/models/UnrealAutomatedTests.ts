@@ -37,8 +37,8 @@ export type TestDetails = {
     DeviceInstance: string;
     Errors: number;
     Warnings: number;
-    Entries: TestEntry[];
-    Artifacts: TestEntryArtifact[];
+    Entries?: TestEntry[];
+    Artifacts?: TestEntryArtifact[];
 }
 
 export type TestResult = {
@@ -83,5 +83,6 @@ export type TestPassSummary = {
 export type TestStateHistoryItem = {
     TestdataId: string;
     Change: number;
+    RangeUrl?: string;
     State: string;
 }

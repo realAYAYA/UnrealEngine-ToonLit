@@ -10,6 +10,7 @@
 #include "MVVM/SharedList.h"
 #include "MVVM/ViewModelPtr.h"
 #include "MVVM/ViewModels/ChannelModel.h"
+#include "MVVM/ViewModels/SectionModel.h"
 #include "MVVM/ViewModels/ViewModel.h"
 #include "MVVM/ViewModels/ViewModelIterators.h"
 #include "Math/Range.h"
@@ -40,6 +41,15 @@ FSequencerKeyCollectionSignature FSequencerKeyCollectionSignature::FromNodes(con
 				}
 			}
 		}
+
+		for (TSharedPtr<FSectionModel> SectionModel : Node->GetChildrenOfType<FSectionModel>())
+		{
+			if (UMovieSceneSection* Section = SectionModel->GetSection())
+			{
+				TRange<FFrameNumber> SectionRange = SectionModel->GetRange();
+				Result.SignatureToSectionBounds.Add(Section->GetSignature(), SectionRange);
+			}
+		}
 	}
 
 	return Result;
@@ -63,6 +73,15 @@ FSequencerKeyCollectionSignature FSequencerKeyCollectionSignature::FromNodesRecu
 			if (!OutlinerExtension || OutlinerExtension->IsFilteredOut() == false)
 			{
 				AllKeyAreaNodes.Add(KeyAreaNode);
+			}
+		}
+
+		for (TSharedPtr<FSectionModel> SectionModel : Node->GetDescendantsOfType<FSectionModel>())
+		{
+			if (UMovieSceneSection* Section = SectionModel->GetSection())
+			{
+				TRange<FFrameNumber> SectionRange = SectionModel->GetRange();
+				Result.SignatureToSectionBounds.Add(Section->GetSignature(), SectionRange);
 			}
 		}
 	}
@@ -97,6 +116,15 @@ FSequencerKeyCollectionSignature FSequencerKeyCollectionSignature::FromNodeRecur
 		}
 	}
 
+	for (TSharedPtr<FSectionModel> SectionModel : InNode->GetChildrenOfType<FSectionModel>())
+	{
+		if (UMovieSceneSection* Section = SectionModel->GetSection())
+		{
+			TRange<FFrameNumber> SectionRange = SectionModel->GetRange();
+			Result.SignatureToSectionBounds.Add(Section->GetSignature(), SectionRange);
+		}
+	}
+
 	for (const TSharedPtr<FChannelGroupModel>& Node : AllKeyAreaNodes)
 	{
 		TSharedPtr<IKeyArea> KeyArea = Node->GetKeyArea(InSection);
@@ -118,6 +146,13 @@ bool FSequencerKeyCollectionSignature::HasUncachableContent() const
 			return true;
 		}
 	}
+	for (auto& Pair : SignatureToSectionBounds)
+	{
+		if (!Pair.Key.IsValid())
+		{
+			return true;
+		}
+	}
 	return false;
 }
 
@@ -128,7 +163,7 @@ bool operator!=(const FSequencerKeyCollectionSignature& A, const FSequencerKeyCo
 		return true;
 	}
 
-	if (A.KeyAreaToSignature.Num() != B.KeyAreaToSignature.Num() || A.DuplicateThresholdTime != B.DuplicateThresholdTime)
+	if (A.KeyAreaToSignature.Num() != B.KeyAreaToSignature.Num() || A.DuplicateThresholdTime != B.DuplicateThresholdTime || A.SignatureToSectionBounds.Num() != B.SignatureToSectionBounds.Num())
 	{
 		return true;
 	}
@@ -137,6 +172,15 @@ bool operator!=(const FSequencerKeyCollectionSignature& A, const FSequencerKeyCo
 	{
 		const FGuid* BSig = B.KeyAreaToSignature.Find(Pair.Key);
 		if (!BSig || *BSig != Pair.Value)
+		{
+			return true;
+		}
+	}
+
+	for (auto& Pair : A.SignatureToSectionBounds)
+	{
+		const TRange<FFrameNumber>* SectionBounds = B.SignatureToSectionBounds.Find(Pair.Key);
+		if (!SectionBounds || *SectionBounds != Pair.Value)
 		{
 			return true;
 		}
@@ -152,7 +196,7 @@ bool operator==(const FSequencerKeyCollectionSignature& A, const FSequencerKeyCo
 		return false;
 	}
 
-	if (A.KeyAreaToSignature.Num() != B.KeyAreaToSignature.Num() || A.DuplicateThresholdTime != B.DuplicateThresholdTime)
+	if (A.KeyAreaToSignature.Num() != B.KeyAreaToSignature.Num() || A.DuplicateThresholdTime != B.DuplicateThresholdTime || A.SignatureToSectionBounds.Num() != B.SignatureToSectionBounds.Num())
 	{
 		return false;
 	}
@@ -161,6 +205,15 @@ bool operator==(const FSequencerKeyCollectionSignature& A, const FSequencerKeyCo
 	{
 		const FGuid* BSig = B.KeyAreaToSignature.Find(Pair.Key);
 		if (!BSig || *BSig != Pair.Value)
+		{
+			return false;
+		}
+	}
+
+	for (auto& Pair : A.SignatureToSectionBounds)
+	{
+		const TRange<FFrameNumber>* SectionBounds = B.SignatureToSectionBounds.Find(Pair.Key);
+		if (!SectionBounds || *SectionBounds != Pair.Value)
 		{
 			return false;
 		}
@@ -185,16 +238,18 @@ bool FSequencerKeyCollection::Update(const FSequencerKeyCollectionSignature& InS
 		if (UMovieSceneSection* Section = Pair.Key->GetOwningSection())
 		{
 			Pair.Key->GetKeyTimes(AllTimes, Section->GetRange());
-
-			if (Section->HasStartFrame())
-			{
-				AllSectionTimes.Add(Section->GetInclusiveStartFrame());
-			}
+		}
+	}
 			
-			if (Section->HasEndFrame())
-			{
-				AllSectionTimes.Add(Section->GetExclusiveEndFrame());
-			}
+	for (auto& Pair : InSignature.GetSectionBounds())
+	{
+		if (Pair.Value.HasLowerBound())
+		{
+			AllSectionTimes.Add(Pair.Value.GetLowerBoundValue());
+		}
+		if (Pair.Value.HasUpperBound())
+		{
+			AllSectionTimes.Add(Pair.Value.GetUpperBoundValue());
 		}
 	}
 
@@ -227,6 +282,25 @@ bool FSequencerKeyCollection::Update(const FSequencerKeyCollectionSignature& InS
 	}
 	GroupedSectionTimes.Shrink();
 
+	AllTimes = GroupedTimes;
+	if (GroupedSectionTimes.Num() > 0)
+	{
+		AllTimes.Insert(GroupedSectionTimes, 0);
+		AllTimes.Sort();
+	}
+	AllGroupedTimes.Reset(AllTimes.Num());
+	Index = 0;
+	while (Index < AllTimes.Num())
+	{
+		FFrameNumber PredicateTime = AllTimes[Index];
+		AllGroupedTimes.Add(PredicateTime);
+		while (Index < AllTimes.Num() && FMath::Abs(AllTimes[Index] - PredicateTime) <= InSignature.GetDuplicateThreshold())
+		{
+			++Index;
+		}
+	}
+	AllGroupedTimes.Shrink();
+
 	Signature = InSignature;
 
 	return true;
@@ -248,35 +322,38 @@ TArrayView<const FFrameNumber> GetKeysInRangeInternal(const TArray<FFrameNumber>
 	return TArrayView<const FFrameNumber>();
 }
 
-TOptional<FFrameNumber> GetNextKeyInternal(const TArray<FFrameNumber>& Times, FFrameNumber FrameNumber, EFindKeyDirection Direction)
+TOptional<FFrameNumber> GetNextKeyInternal(const TArray<FFrameNumber>& Times, FFrameNumber FrameNumber, EFindKeyDirection Direction, const TRange<FFrameNumber>& Range)
 {
+	TArrayView<const FFrameNumber> KeysInRange = GetKeysInRangeInternal(Times, Range);
+
 	int32 Index = INDEX_NONE;
 	if (Direction == EFindKeyDirection::Forwards)
 	{
-		Index = Algo::UpperBound(Times, FrameNumber);
+		Index = Algo::UpperBound(KeysInRange, FrameNumber);
 	}
 	else
 	{
-		Index = Algo::LowerBound(Times, FrameNumber) - 1;
+		Index = Algo::LowerBound(KeysInRange, FrameNumber) - 1;
 	}
 
-	if (Times.IsValidIndex(Index))
+	if (KeysInRange.IsValidIndex(Index))
 	{
-		return Times[Index];
+		return KeysInRange[Index];
 	}
-	else if (Times.Num() > 0)
+	else if (KeysInRange.Num() > 0)
 	{
 		if (Direction == EFindKeyDirection::Forwards)
 		{
-			return Times[0];
+			return KeysInRange[0];
 		}
 		else
 		{
-			return Times.Last();
+			return KeysInRange.Last();
 		}
 	}
 
 	return TOptional<FFrameNumber>();
+
 }
 
 TOptional<FFrameNumber> FindFirstKeyInRangeInternal(const TArray<FFrameNumber>& Times, const TRange<FFrameNumber>& Range, EFindKeyDirection Direction)
@@ -289,32 +366,53 @@ TOptional<FFrameNumber> FindFirstKeyInRangeInternal(const TArray<FFrameNumber>& 
 	return TOptional<FFrameNumber>();
 }
 
-TOptional<FFrameNumber> FSequencerKeyCollection::FindFirstKeyInRange(const TRange<FFrameNumber>& Range, EFindKeyDirection Direction) const
+TOptional<FFrameNumber> FSequencerKeyCollection::FindFirstKeyInRange(const TRange<FFrameNumber>& Range, EFindKeyDirection Direction, EFindKeyType FindKeyType) const
 {
-	return FindFirstKeyInRangeInternal(GroupedTimes, Range, Direction);
+	if (FindKeyType == EFindKeyType::FKT_Keys)
+	{
+		return FindFirstKeyInRangeInternal(GroupedTimes, Range, Direction);
+	}
+	else if (FindKeyType == EFindKeyType::FKT_Sections)
+	{
+		return FindFirstKeyInRangeInternal(GroupedSectionTimes, Range, Direction);
+	}
+	else if (FindKeyType == EFindKeyType::FKT_All)
+	{
+		return FindFirstKeyInRangeInternal(AllGroupedTimes, Range, Direction);
+	}
+	return TOptional<FFrameNumber>();
 }
 
-TOptional<FFrameNumber> FSequencerKeyCollection::FindFirstSectionKeyInRange(const TRange<FFrameNumber>& Range, EFindKeyDirection Direction) const
+TArrayView<const FFrameNumber> FSequencerKeyCollection::GetKeysInRange(const TRange<FFrameNumber>& Range, EFindKeyType FindKeyType) const
 {
-	return FindFirstKeyInRangeInternal(GroupedSectionTimes, Range, Direction);
+	if (FindKeyType == EFindKeyType::FKT_Keys)
+	{
+		return GetKeysInRangeInternal(GroupedTimes, Range);
+	}
+	else if (FindKeyType == EFindKeyType::FKT_Sections)
+	{
+		return GetKeysInRangeInternal(GroupedSectionTimes, Range);
+	}
+	else if (FindKeyType == EFindKeyType::FKT_All)
+	{
+		return GetKeysInRangeInternal(AllGroupedTimes, Range);
+	}
+	return TArrayView<const FFrameNumber>();
 }
 
-TArrayView<const FFrameNumber> FSequencerKeyCollection::GetKeysInRange(const TRange<FFrameNumber>& Range) const
+TOptional<FFrameNumber> FSequencerKeyCollection::GetNextKey(FFrameNumber FrameNumber, EFindKeyDirection Direction, const TRange<FFrameNumber>& Range, EFindKeyType FindKeyType) const
 {
-	return GetKeysInRangeInternal(GroupedTimes, Range);
-}
-
-TArrayView<const FFrameNumber> FSequencerKeyCollection::GetSectionKeysInRange(const TRange<FFrameNumber>& Range) const
-{
-	return GetKeysInRangeInternal(GroupedSectionTimes, Range);
-}
-
-TOptional<FFrameNumber> FSequencerKeyCollection::GetNextKey(FFrameNumber FrameNumber, EFindKeyDirection Direction) const
-{
-	return GetNextKeyInternal(GroupedTimes, FrameNumber, Direction);
-}
-
-TOptional<FFrameNumber> FSequencerKeyCollection::GetNextSectionKey(FFrameNumber FrameNumber, EFindKeyDirection Direction) const
-{
-	return GetNextKeyInternal(GroupedSectionTimes, FrameNumber, Direction);
+	if (FindKeyType == EFindKeyType::FKT_Keys)
+	{
+		return GetNextKeyInternal(GroupedTimes, FrameNumber, Direction, Range);
+	}
+	else if (FindKeyType == EFindKeyType::FKT_Sections)
+	{
+		return GetNextKeyInternal(GroupedSectionTimes, FrameNumber, Direction, Range);
+	}
+	else if (FindKeyType == EFindKeyType::FKT_All)
+	{
+		return GetNextKeyInternal(AllGroupedTimes, FrameNumber, Direction, Range);
+	}
+	return TOptional<FFrameNumber>();
 }

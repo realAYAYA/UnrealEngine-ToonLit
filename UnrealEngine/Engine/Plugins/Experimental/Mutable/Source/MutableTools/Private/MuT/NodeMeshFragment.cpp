@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshFragment::Private::s_type =
-			NODE_TYPE( "MeshFragment", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshFragment::Private::s_type =
+			FNodeType( "MeshFragment", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -25,46 +25,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeMeshFragment, EType::Fragment, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshFragment::GetInputCount() const
-	{
-		return 1;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshFragment::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-        (void)i;
-
-		Node* pResult = 0;
-
-		pResult = m_pD->m_pMesh.get();
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshFragment::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0:
-			m_pD->m_pMesh = dynamic_cast<NodeMesh*>(pNode.get());
-			break;
-
-		default:
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -142,10 +102,7 @@ namespace mu
 		if ( m_pMesh )
 		{
 			// TODO: Cut a fragment out of the layout.
-
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>( m_pMesh->GetBasePrivate() );
-
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>( m_pMesh->GetBasePrivate() );
 			pResult = pPrivate->GetLayout( index );
 		}
 

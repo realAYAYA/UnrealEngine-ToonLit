@@ -6,6 +6,8 @@
 #include "BaseGizmos/GizmoElementHitTargets.h"
 #include "BaseGizmos/GizmoViewContext.h"
 #include "ContextObjectStore.h"
+#include "EditorModeManager.h"
+#include "EdModeInteractiveToolsContext.h"
 #include "EditorGizmos/EditorTransformGizmo.h"
 #include "EditorGizmos/EditorTransformGizmoSource.h"
 #include "EditorGizmos/EditorTransformProxy.h"
@@ -14,6 +16,7 @@
 #include "InteractiveGizmoManager.h"
 #include "Templates/Casts.h"
 #include "ToolContextInterfaces.h"
+#include "EditorGizmos/EditorTransformGizmoUtil.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectPtr.h"
 #include "UObject/ScriptInterface.h"
@@ -26,7 +29,7 @@ UInteractiveGizmo* UEditorTransformGizmoBuilder::BuildGizmo(const FToolBuilderSt
 	UEditorTransformGizmo* TransformGizmo = NewObject<UEditorTransformGizmo>(SceneState.GizmoManager);
 	TransformGizmo->SetCustomizationFunction(CustomizationFunction);
 	TransformGizmo->Setup();
-	TransformGizmo->TransformGizmoSource = UEditorTransformGizmoSource::Construct(TransformGizmo);
+	TransformGizmo->TransformGizmoSource = UEditorTransformGizmoSource::CreateNew(TransformGizmo, GetTransformGizmoContext(SceneState));
 	TransformGizmo->GizmoViewContext = GizmoViewContext;
 
 	// @todo: Gizmo element construction to be moved here from UTransformGizmo.
@@ -41,8 +44,11 @@ void UEditorTransformGizmoBuilder::UpdateGizmoForSelection(UInteractiveGizmo* Gi
 {
 	if (UTransformGizmo* TransformGizmo = Cast<UTransformGizmo>(Gizmo))
 	{
-		UEditorTransformProxy* TransformProxy = NewObject<UEditorTransformProxy>();
-		TransformGizmo->SetActiveTarget(TransformProxy);
+		const UEditorTransformGizmoContextObject* GizmoContextObject = GetTransformGizmoContext(SceneState);
+		FEditorModeTools* ModeTools = GizmoContextObject ? GizmoContextObject->GetModeTools() : nullptr;
+		ensure(ModeTools);
+		UEditorTransformProxy* TransformProxy = UEditorTransformProxy::CreateNew(GizmoContextObject);
+		TransformGizmo->SetActiveTarget(TransformProxy, nullptr, ModeTools->GetGizmoStateTarget());
 		TransformGizmo->SetVisibility(true);
 		
 		if (UGizmoElementHitMultiTarget* HitMultiTarget = Cast< UGizmoElementHitMultiTarget>(TransformGizmo->HitTarget))
@@ -50,4 +56,10 @@ void UEditorTransformGizmoBuilder::UpdateGizmoForSelection(UInteractiveGizmo* Gi
 			HitMultiTarget->GizmoTransformProxy = TransformProxy;
 		}
 	}
+}
+
+const UEditorTransformGizmoContextObject* UEditorTransformGizmoBuilder::GetTransformGizmoContext(const FToolBuilderState& InSceneState)
+{
+	const UContextObjectStore* ContextStore = InSceneState.GizmoManager ? InSceneState.GizmoManager->GetContextObjectStore() : nullptr;
+	return ContextStore ? ContextStore->FindContext<UEditorTransformGizmoContextObject>() : nullptr;
 }

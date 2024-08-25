@@ -123,7 +123,7 @@ FUVID FMeshDescriptionBuilder::AppendUV(const FVector2D& UVvalue, int32 UVLayerI
 void FMeshDescriptionBuilder::AppendUVTriangle(const FTriangleID& TriangleID, const FUVID UVvertexID0, const FUVID UVvertexID1, const FUVID UVvertexID2, int32 UVLayerIndex)
 {
 	// set the shared UVs
-	TempUVBuffer.SetNum(3, false);
+	TempUVBuffer.SetNum(3, EAllowShrinking::No);
 	TempUVBuffer[0] = UVvertexID0;
 	TempUVBuffer[1] = UVvertexID1;
 	TempUVBuffer[2] = UVvertexID2;

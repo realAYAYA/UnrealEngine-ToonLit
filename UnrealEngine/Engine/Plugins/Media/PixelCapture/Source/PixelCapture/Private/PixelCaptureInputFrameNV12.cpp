@@ -6,7 +6,7 @@
 FPixelCaptureInputFrameNV12::FPixelCaptureInputFrameNV12(TSharedPtr<FPixelCaptureBufferNV12> Buffer)
 	: NV12Buffer(Buffer)
 {
-	Metadata.SourceTime = FPlatformTime::Cycles64();
+	Metadata.SourceTime = rtc::TimeMillis();
 }
 
 int32 FPixelCaptureInputFrameNV12::GetType() const

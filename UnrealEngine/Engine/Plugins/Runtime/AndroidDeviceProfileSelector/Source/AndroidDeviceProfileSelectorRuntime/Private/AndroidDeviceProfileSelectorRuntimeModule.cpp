@@ -77,6 +77,7 @@ static const TMap<FName,FString>& GetDeviceSelectorParams()
 		AndroidParams.Add(FAndroidProfileSelectorSourceProperties::SRC_Chipset, GetParam(FString(TEXT("unknown")), TEXT("chipset")));
 		AndroidParams.Add(FAndroidProfileSelectorSourceProperties::SRC_HMDSystemName, HMDRequestedProfileName);
 		AndroidParams.Add(FAndroidProfileSelectorSourceProperties::SRC_TotalPhysicalGB, FString::Printf(TEXT("%d"), TotalPhysicalGB));
+		AndroidParams.Add(FAndroidProfileSelectorSourceProperties::SRC_SM5Available, FAndroidMisc::IsDesktopVulkanAvailable() ? TEXT("true") : TEXT("false"));
 
 #if PLATFORM_ANDROID
 		// allow ConfigRules to override cvars first

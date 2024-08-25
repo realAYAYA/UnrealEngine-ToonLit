@@ -524,7 +524,7 @@ void UMapBuildDataRegistry::Serialize(FArchive& Ar)
 	Ar.UsingCustomVersion(FUE5ReleaseStreamObjectVersion::GUID);
 	Ar.UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
 
-	if (!StripFlags.IsDataStrippedForServer())
+	if (!StripFlags.IsAudioVisualDataStripped())
 	{
 		Ar << MeshBuildData;
 		Ar << LevelPrecomputedLightVolumeBuildData;
@@ -973,7 +973,7 @@ bool UMapBuildDataRegistry::IsLightingValid(ERHIFeatureLevel::Type InFeatureLeve
 	}
 	else
 	{
-		const bool bUsingVTLightmaps = UseVirtualTextureLightmap(InFeatureLevel);
+		const bool bUsingVTLightmaps = UseVirtualTextureLightmap(GetFeatureLevelShaderPlatform(InFeatureLevel));
 
 		// this code checks if AT LEAST 1 virtual textures is valid. 
 		for (auto MeshBuildDataPair : MeshBuildData)

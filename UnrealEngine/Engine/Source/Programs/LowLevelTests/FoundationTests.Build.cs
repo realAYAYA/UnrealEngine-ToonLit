@@ -3,7 +3,16 @@ using UnrealBuildTool;
 
 public class FoundationTests : TestModuleRules
 {
-	protected Metadata FoundationTestsMetadata = new Metadata() { TestName = "Foundation", TestShortName = "Foundation", ReportType = "xml" };
+	protected Metadata FoundationTestsMetadata = new Metadata() {
+		TestName = "Foundation",
+		TestShortName = "Foundation",
+		ReportType = "xml",
+		SupportedPlatforms = {
+			UnrealTargetPlatform.Win64,
+			UnrealTargetPlatform.Linux,
+			UnrealTargetPlatform.Mac,
+			UnrealTargetPlatform.Android,
+			UnrealTargetPlatform.IOS } };
 
 	/// <summary>
 	/// Test metadata to be used with BuildGraph
@@ -20,7 +29,9 @@ public class FoundationTests : TestModuleRules
 				"Core",
 				"Cbor",
 				"CoreUObject",
-				"TelemetryUtils"
+				"TelemetryUtils",
+				"AssetRegistry",
+				"ColorManagement"
 			});
 
 		if (Target.bBuildWithEditorOnlyData)

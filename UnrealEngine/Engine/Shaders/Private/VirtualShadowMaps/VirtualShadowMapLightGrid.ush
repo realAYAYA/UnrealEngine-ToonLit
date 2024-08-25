@@ -1,0 +1,30 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMapLightGrid.ush:
+=============================================================================*/
+#pragma once
+
+#include "../Common.ush"
+#include "../LightGridCommon.ush"
+
+FCulledLightsGridData VirtualShadowMapGetLightsGrid(uint2 PixelPos, float SceneDepth)
+{
+	// Has no effect unless INSTANCED_STEREO is enabled. Used in GetLightGridData to select ForwardLightData or ForwardLightDataISR, but then only uses redundant parameters anyway.
+	uint EyeIndex = 0U;
+
+	uint GridLinearIndex = ComputeLightGridCellIndex(PixelPos, SceneDepth, EyeIndex);
+	FCulledLightsGridData CulledLightGridData = GetCulledLightsGrid(GridLinearIndex, EyeIndex);
+
+	// Replace light count with our pruned count
+	CulledLightGridData.NumLights = VirtualShadowMap.NumCulledLightsGrid[GridLinearIndex];
+	return CulledLightGridData;
+}
+
+FLocalLightData VirtualShadowMapGetLocalLightData(FCulledLightsGridData GridData, uint Index)
+{
+	const uint ListIndex = GridData.DataStartIndex + Index;
+	checkStructuredBufferAccessSlow(VirtualShadowMap.LightGridData, ListIndex);
+	const uint LightGridLightIndex = VirtualShadowMap.LightGridData[ListIndex];
+	return GetLocalLightDataNonStereo(LightGridLightIndex);
+}

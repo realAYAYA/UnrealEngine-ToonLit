@@ -157,6 +157,62 @@ namespace UnrealBuildTool
 			Writer.WriteObjectEnd();
 		}
 
+		private JsonObject ToJsonObject()
+		{
+			JsonObject PluginReferenceObject = new JsonObject();
+			PluginReferenceObject.AddOrSetFieldValue("Name", Name);
+			PluginReferenceObject.AddOrSetFieldValue("Enabled", bEnabled);
+			if (bEnabled && bOptional)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("Optional", bOptional);
+			}
+			if (!String.IsNullOrEmpty(Description))
+			{
+				PluginReferenceObject.AddOrSetFieldValue("Description", Description);
+			}
+			if (!String.IsNullOrEmpty(MarketplaceURL))
+			{
+				PluginReferenceObject.AddOrSetFieldValue("MarketplaceURL", MarketplaceURL);
+			}
+			if (PlatformAllowList != null && PlatformAllowList.Length > 0)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("PlatformAllowList", PlatformAllowList.Select(x => x.ToString()).ToArray());
+			}
+			if (PlatformDenyList != null && PlatformDenyList.Length > 0)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("PlatformDenyList", PlatformDenyList.Select(x => x.ToString()).ToArray());
+			}
+			if (TargetConfigurationAllowList != null && TargetConfigurationAllowList.Length > 0)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("TargetConfigurationAllowList", TargetConfigurationAllowList);
+			}
+			if (TargetConfigurationDenyList != null && TargetConfigurationDenyList.Length > 0)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("TargetConfigurationDenyList", TargetConfigurationDenyList);
+			}
+			if (TargetAllowList != null && TargetAllowList.Length > 0)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("TargetAllowList", TargetAllowList);
+			}
+			if (TargetDenyList != null && TargetDenyList.Length > 0)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("TargetDenyList", TargetDenyList);
+			}
+			if (SupportedTargetPlatforms != null && SupportedTargetPlatforms.Length > 0)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("SupportedTargetPlatforms", SupportedTargetPlatforms.Select(x => x.ToString()).ToArray());
+			}
+			if (bHasExplicitPlatforms)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("HasExplicitPlatforms", bHasExplicitPlatforms);
+			}
+			if (bEnabled && RequestedVersion != null)
+			{
+				PluginReferenceObject.AddOrSetFieldValue("Version", RequestedVersion.Value);
+			}
+			return PluginReferenceObject;
+		}
+
 		/// <summary>
 		/// Write an array of module descriptors
 		/// </summary>
@@ -173,6 +229,21 @@ namespace UnrealBuildTool
 					Plugin.Write(Writer);
 				}
 				Writer.WriteArrayEnd();
+			}
+		}
+
+		/// <summary>
+		/// Updates the json object with an array of plugin descriptors.
+		/// </summary>
+		/// <param name="InObject">The Json object to update.</param>
+		/// <param name="Name">Name of the array</param>
+		/// <param name="Plugins">Array of plugins</param>
+		public static void UpdateJson(JsonObject InObject, string Name, PluginReferenceDescriptor[]? Plugins)
+		{
+			if (Plugins != null && Plugins.Length > 0)
+			{
+				JsonObject[] JsonObjects = Plugins.Select(X => X.ToJsonObject()).ToArray();
+				InObject.AddOrSetFieldValue(Name, JsonObjects);
 			}
 		}
 

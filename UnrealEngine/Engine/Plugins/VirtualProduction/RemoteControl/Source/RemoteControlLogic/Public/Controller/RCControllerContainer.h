@@ -17,6 +17,10 @@ class REMOTECONTROLLOGIC_API URCControllerContainer : public URCVirtualPropertyC
 	GENERATED_BODY()
 
 public:
+	//~ Begin URCVirtualPropertyContainerBase
+	virtual void UpdateEntityIds(const TMap<FGuid, FGuid>& InEntityIdMap) override;
+	//~ End URCVirtualPropertyContainerBase
+	
 	/** Adds a new Controller to this container */
 	virtual URCVirtualPropertyInContainer* AddProperty(const FName& InPropertyName, TSubclassOf<URCVirtualPropertyInContainer> InPropertyClass, const EPropertyBagPropertyType InValueType, UObject* InValueTypeObject = nullptr, TArray<FPropertyBagPropertyDescMetaData> MetaData = TArray<FPropertyBagPropertyDescMetaData>()) override;
 	

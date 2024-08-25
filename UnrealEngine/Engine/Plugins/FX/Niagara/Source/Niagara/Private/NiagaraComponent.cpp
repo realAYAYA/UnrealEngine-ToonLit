@@ -43,6 +43,8 @@ DECLARE_CYCLE_STAT(TEXT("Get Dynamic Mesh Elements (RT)"), STAT_NiagaraComponent
 
 DEFINE_LOG_CATEGORY(LogNiagara);
 
+DEFINE_RENDER_COMMAND_PIPE(NiagaraDynamicData, ERenderCommandPipeFlags::None);
+
 static int GNiagaraSoloTickEarly = 1;
 static FAutoConsoleVariableRef CVarNiagaraSoloTickEarly(
 	TEXT("fx.Niagara.Solo.TickEarly"),
@@ -188,7 +190,9 @@ FNiagaraSceneProxy::FNiagaraSceneProxy(UNiagaraComponent* InComponent)
 	: FPrimitiveSceneProxy(InComponent, InComponent->GetAsset() ? InComponent->GetAsset()->GetFName() : FName())
 	, OcclusionQueryMode(InComponent->GetOcclusionQueryMode())
 {
-	if (FNiagaraSystemInstanceControllerConstPtr SystemInstanceController = InComponent->GetSystemInstanceController())
+	FNiagaraSystemInstanceControllerConstPtr SystemInstanceController = InComponent->GetSystemInstanceController();
+	UNiagaraSystem* NiagaraSystem = InComponent->GetAsset();
+	if (SystemInstanceController && NiagaraSystem)
 	{
 		LLM_SCOPE(ELLMTag::Niagara);
 
@@ -198,11 +202,16 @@ FNiagaraSceneProxy::FNiagaraSceneProxy(UNiagaraComponent* InComponent)
 		bAlwaysHasVelocity = RenderData->HasAnyMotionBlurEnabled();
 		bIsHeterogeneousVolume = RenderData->HasAnyHeterogeneousVolumesEnabled();
 
-		SystemStatID = InComponent->GetAsset()->GetStatID(false, false);
+		SystemStatID = NiagaraSystem->GetStatID(false, false);
 #if NIAGARAPROXY_EVENTS_ENABLED
-		SystemStatString = InComponent->GetAsset()->GetFName().ToString();
+		SystemStatString = NiagaraSystem->GetFName().ToString();
 #endif
 	}
+
+	// Prevent continuous VSM invalidation from the bounds of the primitive.
+	bHasDeformableMesh = false;
+	// Niagara renderers reference a lot of common contexts that aren't locked (and would otherwise introduce a lot of contention).
+	bSupportsParallelGDME = false;
 }
 
 SIZE_T FNiagaraSceneProxy::GetTypeHash() const
@@ -221,8 +230,6 @@ void FNiagaraSceneProxy::DestroyRenderState_Concurrent()
 
 FNiagaraSceneProxy::~FNiagaraSceneProxy()
 {
-	check(IsInRenderingThread());
-
 	if (RenderData)
 	{
 		delete RenderData;
@@ -243,18 +250,18 @@ void FNiagaraSceneProxy::ReleaseRenderThreadResources()
 }
 
 // FPrimitiveSceneProxy interface.
-void FNiagaraSceneProxy::CreateRenderThreadResources()
+void FNiagaraSceneProxy::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	if (RenderData)
 	{
 		LLM_SCOPE(ELLMTag::Niagara);
-		RenderData->CreateRenderThreadResources();
+		RenderData->CreateRenderThreadResources(RHICmdList);
 	}
 }
 
-void FNiagaraSceneProxy::OnTransformChanged()
+void FNiagaraSceneProxy::OnTransformChanged(FRHICommandListBase& RHICmdList)
 {
-	FPrimitiveSceneProxy::OnTransformChanged();
+	FPrimitiveSceneProxy::OnTransformChanged(RHICmdList);
 
 	LocalToWorldInverse = GetLocalToWorld().Inverse();
 
@@ -265,22 +272,21 @@ FPrimitiveViewRelevance FNiagaraSceneProxy::GetViewRelevance(const FSceneView* V
 {
 	FPrimitiveViewRelevance Relevance;
 
-	if (!GetRenderingEnabled() || !FNiagaraUtilities::SupportsNiagaraRendering(View->GetFeatureLevel()))
+	if (!RenderData || !RenderData->IsRenderingEnabled_RT() || !FNiagaraUtilities::SupportsNiagaraRendering(View->GetFeatureLevel()))
 	{
 		return Relevance;
 	}
-	Relevance.bDynamicRelevance = true;
 
-	Relevance.bRenderCustomDepth = ShouldRenderCustomDepth();
-	Relevance.bDrawRelevance = IsShown(View) && View->Family->EngineShowFlags.Particles && View->Family->EngineShowFlags.Niagara;
-	Relevance.bShadowRelevance = IsShadowCast(View);
-	Relevance.bRenderInMainPass = ShouldRenderInMainPass();
-	Relevance.bUsesLightingChannels = GetLightingChannelMask() != GetDefaultLightingChannelMask();
-	Relevance.bTranslucentSelfShadow = bCastVolumetricTranslucentShadow;
-
-	Relevance |= RenderData->GetViewRelevance(*View, *this);
-
-	Relevance.bVelocityRelevance = DrawsVelocity() && Relevance.bOpaque && Relevance.bRenderInMainPass;
+	// Read Relevance from the material / renderer first as FPrimitiveViewRelevance() will turn on certain flags which we want to control (i.e. bRenderInMainPass)
+	Relevance							= RenderData->GetViewRelevance(*View, *this);
+	Relevance.bDynamicRelevance			= true;
+	Relevance.bDrawRelevance			= IsShown(View) && View->Family->EngineShowFlags.Particles && View->Family->EngineShowFlags.Niagara;
+	Relevance.bRenderCustomDepth		= ShouldRenderCustomDepth();
+	Relevance.bShadowRelevance			= IsShadowCast(View);
+	Relevance.bRenderInMainPass			= ShouldRenderInMainPass();
+	Relevance.bUsesLightingChannels		= GetLightingChannelMask() != GetDefaultLightingChannelMask();
+	Relevance.bTranslucentSelfShadow	= bCastVolumetricTranslucentShadow;
+	Relevance.bVelocityRelevance		= DrawsVelocity() && Relevance.bOpaque && Relevance.bRenderInMainPass;
 
 	return Relevance;
 }
@@ -307,7 +313,7 @@ const FVector3f& FNiagaraSceneProxy::GetLWCRenderTile() const
 	return RenderData ? RenderData->LWCRenderTile : FVector3f::ZeroVector;
 }
 
-TUniformBuffer<FPrimitiveUniformShaderParameters>* FNiagaraSceneProxy::GetCustomUniformBufferResource(bool bHasVelocity, const FBox& InstanceBounds) const
+TUniformBuffer<FPrimitiveUniformShaderParameters>* FNiagaraSceneProxy::GetCustomUniformBufferResource(FRHICommandListBase& RHICmdList, bool bHasVelocity, const FBox& InstanceBounds) const
 {
 	// Use a hash to determine if we can re-use any uniform buffer
 	uint32 KeyHash = HashCombine(bHasVelocity, InstanceBounds.IsValid);
@@ -367,7 +373,8 @@ TUniformBuffer<FPrimitiveUniformShaderParameters>* FNiagaraSceneProxy::GetCustom
 				.HasDistanceFieldRepresentation(HasDistanceFieldRepresentation())
 				.HasCapsuleRepresentation(HasDynamicIndirectShadowCasterRepresentation())
 				.UseVolumetricLightmap(bHasPrecomputedVolumetricLightmap)
-				.UseSingleSampleShadowFromStationaryLights(UseSingleSampleShadowFromStationaryLights());
+				.UseSingleSampleShadowFromStationaryLights(UseSingleSampleShadowFromStationaryLights())
+				.HasPixelAnimation(AnyMaterialHasPixelAnimation());
 		if ( InstanceBounds.IsValid )
 		{
 			UBBuilder.InstanceLocalBounds(InstanceBounds);
@@ -377,14 +384,19 @@ TUniformBuffer<FPrimitiveUniformShaderParameters>* FNiagaraSceneProxy::GetCustom
 		}
 
 		CustomUBRef = new TUniformBuffer<FPrimitiveUniformShaderParameters>();
-		CustomUBRef->SetContents(UBBuilder.Build());
-		CustomUBRef->InitResource(FRHICommandListImmediate::Get());
+		CustomUBRef->SetContents(RHICmdList, UBBuilder.Build());
+		CustomUBRef->InitResource(RHICmdList);
 	}
 
 	return CustomUBRef;
 }
 
-FRHIUniformBuffer* FNiagaraSceneProxy::GetCustomUniformBuffer(bool bHasVelocity, const FBox& InstanceBounds) const
+TUniformBuffer<FPrimitiveUniformShaderParameters>* FNiagaraSceneProxy::GetCustomUniformBufferResource(bool bHasVelocity, const FBox& InstanceBounds) const
+{
+	return GetCustomUniformBufferResource(FRHICommandListImmediate::Get(), bHasVelocity, InstanceBounds);
+}
+
+FRHIUniformBuffer* FNiagaraSceneProxy::GetCustomUniformBuffer(FRHICommandListBase& RHICmdList, bool bHasVelocity, const FBox& InstanceBounds) const
 {
 	// Default UB we create for the primitive
 	if (bHasVelocity && !InstanceBounds.IsValid)
@@ -392,7 +404,12 @@ FRHIUniformBuffer* FNiagaraSceneProxy::GetCustomUniformBuffer(bool bHasVelocity,
 		return GetUniformBuffer();
 	}
 
-	return GetCustomUniformBufferResource(bHasVelocity, InstanceBounds)->GetUniformBufferRHI();
+	return GetCustomUniformBufferResource(RHICmdList, bHasVelocity, InstanceBounds)->GetUniformBufferRHI();
+}
+
+FRHIUniformBuffer* FNiagaraSceneProxy::GetCustomUniformBuffer(bool bHasVelocity, const FBox& InstanceBounds) const
+{
+	return GetCustomUniformBuffer(FRHICommandListImmediate::Get(), bHasVelocity, InstanceBounds);
 }
 
 uint32 FNiagaraSceneProxy::GetMemoryFootprint() const
@@ -410,16 +427,11 @@ uint32 FNiagaraSceneProxy::GetAllocatedSize() const
 	return Size;
 }
 
-bool FNiagaraSceneProxy::GetRenderingEnabled() const
-{
-	return RenderData ? RenderData->IsRenderingEnabled() : false;
-}
-
-void FNiagaraSceneProxy::SetRenderingEnabled(bool bInRenderingEnabled)
+void FNiagaraSceneProxy::SetRenderingEnabled_GT(bool bInRenderingEnabled)
 {
 	if (RenderData)
 	{
-		RenderData->SetRenderingEnabled(bInRenderingEnabled);
+		RenderData->SetRenderingEnabled_GT(bInRenderingEnabled);
 	}
 }
 
@@ -452,9 +464,11 @@ void FNiagaraSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>&
 		bEndTraceEvent = true;
 		FCpuProfilerTrace::OutputBeginDynamicEvent(GetResourceName());
 	}
-	else
 #endif //CPUPROFILERTRACE_ENABLED
 #if ENABLE_STATNAMEDEVENTS
+#if CPUPROFILERTRACE_ENABLED
+	else
+#endif
 	{
 		bEndPlatformEvent = true;
 		FPlatformMisc::BeginNamedEvent(FColor(0), *SystemStatString);
@@ -552,6 +566,7 @@ UNiagaraComponent::UNiagaraComponent(const FObjectInitializer& ObjectInitializer
 	, bIsCulledByScalability(false)
 	, bDuringUpdateContextReset(false)
 	, bDesiredPauseState(false)
+	, bRecachePSOs(false)
 	//, bIsChangingAutoAttachment(false)
 	, ScalabilityManagerHandle(INDEX_NONE)
 	, ForceUpdateTransformTime(0.0f)
@@ -633,6 +648,9 @@ void UNiagaraComponent::SetLODDistance(float InLODDistance, float InMaxLODDistan
 
 void UNiagaraComponent::SetEmitterEnable(FName EmitterName, bool bNewEnableState)
 {
+	FEmitterOverrideInfo& EmitterOverrideInfo = FindOrAddEmitterOverrideInfo(EmitterName);
+	EmitterOverrideInfo.bEnabled = bNewEnableState;
+
 	if (SystemInstanceController.IsValid() && !SystemInstanceController->IsComplete())
 	{
 		SystemInstanceController->SetEmitterEnable(EmitterName, bNewEnableState);
@@ -664,7 +682,9 @@ void UNiagaraComponent::ClearSystemFixedBounds()
 
 void UNiagaraComponent::SetEmitterFixedBounds(FName EmitterName, FBox LocalBounds)
 {
-	EmitterFixedBounds.FindOrAdd(EmitterName, LocalBounds);
+	FEmitterOverrideInfo& EmitterOverrideInfo = FindOrAddEmitterOverrideInfo(EmitterName);
+	EmitterOverrideInfo.FixedBounds = LocalBounds;
+
 	if (SystemInstanceController.IsValid())
 	{
 		SystemInstanceController->SetEmitterFixedBounds(EmitterName, LocalBounds);
@@ -673,16 +693,20 @@ void UNiagaraComponent::SetEmitterFixedBounds(FName EmitterName, FBox LocalBound
 
 FBox UNiagaraComponent::GetEmitterFixedBounds(FName EmitterName) const
 {
-	if ( const FBox* EmitterBounds = EmitterFixedBounds.Find(EmitterName) )
+	if ( const FEmitterOverrideInfo* EmitterOverrideInfo = FindEmitterOverrideInfo(EmitterName) )
 	{
-		return *EmitterBounds;
+		return EmitterOverrideInfo->FixedBounds;
 	}
 	return FBox(EForceInit::ForceInit);
 }
 
 void UNiagaraComponent::ClearEmitterFixedBounds(FName EmitterName)
 {
-	EmitterFixedBounds.Remove(EmitterName);
+	if (FEmitterOverrideInfo* EmitterOverrideInfo = FindEmitterOverrideInfo(EmitterName))
+	{
+		EmitterOverrideInfo->FixedBounds = FBox(EForceInit::ForceInit);
+	}
+
 	if (SystemInstanceController.IsValid())
 	{
 		SystemInstanceController->SetEmitterFixedBounds(EmitterName, FBox(EForceInit::ForceInit));
@@ -734,8 +758,13 @@ void UNiagaraComponent::ReleaseToPool()
 
 uint32 UNiagaraComponent::GetApproxMemoryUsage() const
 {
-	// TODO: implement memory usage for the component pool statistics
-	return 1;
+	uint32 MemoryBytes = sizeof(UNiagaraComponent);
+	MemoryBytes += OverrideParameters.GetResourceSize();
+	if (SystemInstanceController)
+	{
+		MemoryBytes += uint32(SystemInstanceController->GetTotalBytesUsed());
+	}
+	return MemoryBytes;
 }
 
 void UNiagaraComponent::ActivateSystem(bool bFlagAsJustAttached)
@@ -761,6 +790,17 @@ void UNiagaraComponent::ActivateSystem(bool bFlagAsJustAttached)
 FName UNiagaraComponent::GetFNameForStatID() const
 {
 	return Asset ? Asset->GetFNameForStatID() : Super::GetFNameForStatID();
+}
+
+bool UNiagaraComponent::RequiresGameThreadEndOfFrameRecreate() const
+{
+#if WITH_EDITORONLY_DATA
+	// Niagara is capable of running async but in the editor.  However various UObjects we might use during a create are not.
+	// For example, resolving a UStaticMesh will query the mesh compiler which will propagate changes and mark render state dirty which is not allowed during EOF updates.
+	return true;
+#else
+	return false;
+#endif
 }
 
 void UNiagaraComponent::TickComponent(float DeltaSeconds, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -937,7 +977,7 @@ void UNiagaraComponent::TickComponent(float DeltaSeconds, enum ELevelTick TickTy
 		if (SceneProxy != nullptr)
 		{
 			FNiagaraSceneProxy* NiagaraProxy = static_cast<FNiagaraSceneProxy*>(SceneProxy);
-			NiagaraProxy->SetRenderingEnabled(bRenderingEnabled && (bCanRenderWhileSeeking || bIsSeeking == false));
+			NiagaraProxy->SetRenderingEnabled_GT(bRenderingEnabled && (bCanRenderWhileSeeking || bIsSeeking == false));
 		}
 	}
 }
@@ -1108,13 +1148,19 @@ bool UNiagaraComponent::InitializeSystem()
 		{
 			SystemInstanceController->SetSystemFixedBounds(SystemFixedBounds);
 		}
-		if (!EmitterFixedBounds.IsEmpty())
+		for ( const FEmitterOverrideInfo& EmitterOverrideInfo : EmitterOverrideInfos)
 		{
-			for ( auto it=EmitterFixedBounds.CreateConstIterator(); it; ++it )
+			if (!EmitterOverrideInfo.bEnabled)
 			{
-				SystemInstanceController->SetEmitterFixedBounds(it.Key(), it.Value());
+				SystemInstanceController->SetEmitterEnable(EmitterOverrideInfo.EmitterName, EmitterOverrideInfo.bEnabled);
+			}
+			if (EmitterOverrideInfo.FixedBounds.IsValid)
+			{
+				SystemInstanceController->SetEmitterFixedBounds(EmitterOverrideInfo.EmitterName, EmitterOverrideInfo.FixedBounds);
 			}
 		}
+
+		PrecachePSOs();
 
 #if WITH_EDITORONLY_DATA
 		OnSystemInstanceChangedDelegate.Broadcast();
@@ -1238,6 +1284,12 @@ void UNiagaraComponent::ActivateInternal(bool bReset /* = false */, bool bIsScal
 		return;
 	}
 
+	if (!Asset->IsAllowedByScalability())
+	{
+		OnSystemComplete(true);
+		return;
+	}
+
 	bIsCulledByScalability = false;
 	
 	//Ensure we're not paused. Non-scalability activate calls should override pause state.
@@ -1254,6 +1306,36 @@ void UNiagaraComponent::ActivateInternal(bool bReset /* = false */, bool bIsScal
 	//Leaving as the default of -1000 causes the visibility code to always assume this should be culled until it's first rendered and initialized by the RT.
 	//Set the component last render time *before* preculling otherwise there are cases where we can pre cull incorrectly.
 	SetLastRenderTime(GetWorld()->GetTimeSeconds());
+
+	// Auto attach if requested
+	const bool bWasAutoAttached = bDidAutoAttach;
+	bDidAutoAttach = false;
+	if (bAutoManageAttachment)
+	{
+		USceneComponent* NewParent = AutoAttachParent.Get();
+		if (NewParent)
+		{
+			const bool bAlreadyAttached = GetAttachParent() && (GetAttachParent() == NewParent) && (GetAttachSocketName() == AutoAttachSocketName) && GetAttachParent()->GetAttachChildren().Contains(this);
+			if (!bAlreadyAttached)
+			{
+				bDidAutoAttach = bWasAutoAttached;
+				CancelAutoAttachment(true);
+				SavedAutoAttachRelativeLocation = GetRelativeLocation();
+				SavedAutoAttachRelativeRotation = GetRelativeRotation();
+				SavedAutoAttachRelativeScale3D = GetRelativeScale3D();
+				//bIsChangingAutoAttachment = true;
+				AttachToComponent(NewParent, FAttachmentTransformRules(AutoAttachLocationRule, AutoAttachRotationRule, AutoAttachScaleRule, bAutoAttachWeldSimulatedBodies), AutoAttachSocketName);
+				//bIsChangingAutoAttachment = false;
+			}
+
+			bDidAutoAttach = true;
+			//bFlagAsJustAttached = true;
+		}
+		else
+		{
+			CancelAutoAttachment(true);
+		}
+	}
 
 	if (ShouldPreCull())
 	{
@@ -1301,36 +1383,6 @@ void UNiagaraComponent::ActivateInternal(bool bReset /* = false */, bool bIsScal
 	{
 		SetActiveFlag(true);
 		OnComponentActivated.Broadcast(this, bReset);
-	}
-	
-	// Auto attach if requested
-	const bool bWasAutoAttached = bDidAutoAttach;
-	bDidAutoAttach = false;
-	if (bAutoManageAttachment)
-	{
-		USceneComponent* NewParent = AutoAttachParent.Get();
-		if (NewParent)
-		{
-			const bool bAlreadyAttached = GetAttachParent() && (GetAttachParent() == NewParent) && (GetAttachSocketName() == AutoAttachSocketName) && GetAttachParent()->GetAttachChildren().Contains(this);
-			if (!bAlreadyAttached)
-			{
-				bDidAutoAttach = bWasAutoAttached;
-				CancelAutoAttachment(true);
-				SavedAutoAttachRelativeLocation = GetRelativeLocation();
-				SavedAutoAttachRelativeRotation = GetRelativeRotation();
-				SavedAutoAttachRelativeScale3D = GetRelativeScale3D();
-				//bIsChangingAutoAttachment = true;
-				AttachToComponent(NewParent, FAttachmentTransformRules(AutoAttachLocationRule, AutoAttachRotationRule, AutoAttachScaleRule, bAutoAttachWeldSimulatedBodies), AutoAttachSocketName);
-				//bIsChangingAutoAttachment = false;
-			}
-
-			bDidAutoAttach = true;
-			//bFlagAsJustAttached = true;
-		}
-		else
-		{
-			CancelAutoAttachment(true);
-		}
 	}
 	
 #if WITH_EDITOR
@@ -1478,6 +1530,8 @@ bool UNiagaraComponent::IsComplete() const
 void UNiagaraComponent::DeactivateImmediateInternal(bool bIsScalabilityCull)
 {
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraComponentDeactivate);
+	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(Effects);
+
 	Super::Deactivate();
 
 	bool bWasCulledByScalability = bIsCulledByScalability;
@@ -1606,6 +1660,12 @@ void UNiagaraComponent::PostSystemTick_GameThread()
 		{
 			SystemInstanceController->PostTickRenderers(*RenderData);
 		}
+	}
+
+	if (bRecachePSOs)
+	{
+		PrecachePSOs();
+		bRecachePSOs = false;
 	}
 }
 
@@ -1790,7 +1850,7 @@ void UNiagaraComponent::OnPooledReuse(UWorld* NewWorld)
 	ForceUpdateTransformTime = 0.0f;
 	CurrLocalBounds.Init();
 	SystemFixedBounds.Init();
-	EmitterFixedBounds.Empty();
+	EmitterOverrideInfos.Empty();
 
 	if (SystemInstanceController != nullptr)
 	{
@@ -1830,9 +1890,7 @@ void UNiagaraComponent::OnRegister()
 				// Only detach if we are not about to auto attach to the same target, that would be wasteful.
 				if (!bAutoActivate || (AutoAttachLocationRule != EAttachmentRule::KeepRelative && AutoAttachRotationRule != EAttachmentRule::KeepRelative && AutoAttachScaleRule != EAttachmentRule::KeepRelative) || (AutoAttachSocketName != GetAttachSocketName()) || (AutoAttachParent != GetAttachParent()))
 				{
-					//bIsChangingAutoAttachment = true;
 					DetachFromComponent(FDetachmentTransformRules(EDetachmentRule::KeepRelative, /*bCallModify=*/ false));
-					//bIsChangingAutoAttachment = false;
 				}
 			}
 			else
@@ -1933,6 +1991,13 @@ void UNiagaraComponent::PostApplyToComponent()
 	Super::PostApplyToComponent();
 
 #if WITH_EDITOR
+	// Ensure update the override parameters as they may be incomplete
+	// Without this calls to set override data interface values can fail as the DI may not be present in the override parameter store
+	if (Asset != nullptr)
+	{
+		OverrideParameters.UnbindAll();
+		CopyParametersFromAsset(false);
+	}
 	ApplyOverridesToParameterStore();
 	FixDataInterfaceOuters();
 #endif
@@ -2026,6 +2091,42 @@ void UNiagaraComponent::GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSiz
 	}
 }
 
+const UNiagaraComponent::FEmitterOverrideInfo* UNiagaraComponent::FindEmitterOverrideInfo(FName EmitterName) const
+{
+	for (const FEmitterOverrideInfo& Info : EmitterOverrideInfos)
+	{
+		if (Info.EmitterName == EmitterName)
+		{
+			return &Info;
+		}
+	}
+	return nullptr;
+}
+
+UNiagaraComponent::FEmitterOverrideInfo* UNiagaraComponent::FindEmitterOverrideInfo(FName EmitterName)
+{
+	for (FEmitterOverrideInfo& Info : EmitterOverrideInfos)
+	{
+		if (Info.EmitterName == EmitterName)
+		{
+			return &Info;
+		}
+	}
+	return nullptr;
+}
+
+UNiagaraComponent::FEmitterOverrideInfo& UNiagaraComponent::FindOrAddEmitterOverrideInfo(FName EmitterName)
+{
+	for (FEmitterOverrideInfo& Info : EmitterOverrideInfos)
+	{
+		if (Info.EmitterName == EmitterName)
+		{
+			return Info;
+		}
+	}
+	return EmitterOverrideInfos.Emplace_GetRef(EmitterName);
+}
+
 void UNiagaraComponent::CreateCullProxy(bool bForce)
 {
 	if (Asset->GetCullProxyMode() != ENiagaraCullProxyMode::None && CullProxy == nullptr)
@@ -2033,8 +2134,7 @@ void UNiagaraComponent::CreateCullProxy(bool bForce)
 		FNiagaraWorldManager* WorldMan = FNiagaraWorldManager::Get(GetWorld());
 		check(WorldMan);
 		
-		UNiagaraCullProxyComponent* SystemCullProxy = WorldMan->GetCullProxy(this);
-		if (SystemCullProxy)
+		if ( UNiagaraCullProxyComponent* SystemCullProxy = WorldMan->GetCullProxy(this) )
 		{
 			if (SystemCullProxy->RegisterCulledComponent(this, bForce))
 			{
@@ -2081,9 +2181,10 @@ void UNiagaraComponent::OnEndOfFrameUpdateDuringTick()
 void UNiagaraComponent::CreateRenderState_Concurrent(FRegisterComponentContext* Context)
 {
 	Super::CreateRenderState_Concurrent(Context);
+
 	// The emitter instance may not tick again next frame so we send the dynamic data here so that the current state
 	// renders.  This can happen when while editing, or any time the age update mode is set to desired age.
-	SendRenderDynamicData_Concurrent();
+	FRegisterComponentContext::SendRenderDynamicData(Context, this);
 }
 
 void UNiagaraComponent::DestroyRenderState_Concurrent()
@@ -2139,8 +2240,8 @@ void UNiagaraComponent::SendRenderDynamicData_Concurrent()
 				SystemInstanceController->GenerateSetDynamicDataCommands(SetDataCommands, *RenderData, *NiagaraProxy);
 			}
 
-			ENQUEUE_RENDER_COMMAND(NiagaraSetDynamicData)(
-				[NiagaraProxy, CommandsRT = MoveTemp(SetDataCommands), NewProxyDynamicData](FRHICommandListImmediate& RHICmdList)
+			ENQUEUE_RENDER_COMMAND(NiagaraSetDynamicData)(UE::RenderCommandPipe::NiagaraDynamicData,
+				[NiagaraProxy, CommandsRT = MoveTemp(SetDataCommands), NewProxyDynamicData]
 				{
 					SCOPE_CYCLE_COUNTER(STAT_NiagaraSetDynamicData);
 					PARTICLE_PERF_STAT_CYCLES_WITH_COUNT_RT(NewProxyDynamicData.PerfStatsContext, RenderUpdate, 1);
@@ -2165,8 +2266,10 @@ FBoxSphereBounds UNiagaraComponent::CalcBounds(const FTransform& LocalToWorld) c
 {
 	FScopeCycleCounter SystemStatCounter(Asset ? Asset->GetStatID(true, false) : TStatId());
 
+	// When inactive and using auto attachments do not include our bounds as they will be in an invalid location
+	// While active it's more complicated as we could become detatched and wish to play the remainder of the effect so we must include them
 	const USceneComponent* UseAutoParent = (bAutoManageAttachment && GetAttachParent() == nullptr) ? AutoAttachParent.Get() : nullptr;
-	if (UseAutoParent)
+	if (UseAutoParent && !IsActive())
 	{
 		// We use auto attachment but have detached, don't use our own bogus bounds (we're off near 0,0,0), use the usual parent's bounds.
 		return UseAutoParent->Bounds;
@@ -2215,9 +2318,11 @@ FPrimitiveSceneProxy* UNiagaraComponent::CreateSceneProxy()
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraCreateSceneProxy);
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraOverview_GT);
     
+#if UE_WITH_PSO_PRECACHING
 	if (Asset != nullptr)
 	{
-		// PSO request should have been handled by the Asset itself, so here we just ensure the request gets boosted
+		// If PSOs not precached yet then rely on PSOs reuqested by the shared asset itself - this will make sure
+		// those pending requests are boosted if still pending
 		if (!bPSOPrecacheCalled)
 		{
 			PrecacheAssetPSOs(Asset);
@@ -2229,15 +2334,28 @@ FPrimitiveSceneProxy* UNiagaraComponent::CreateSceneProxy()
 			return nullptr;
 		}
 	}
+#endif // UE_WITH_PSO_PRECACHING
 
 	// The constructor will set up the System renderers from the component.
 	FNiagaraSceneProxy* Proxy = new FNiagaraSceneProxy(this);
 	return Proxy;
 }
 
-void UNiagaraComponent::GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials) const
+void UNiagaraComponent::CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams)
 {
 	if (SystemInstanceController.IsValid())
+	{
+		SystemInstanceController->CollectPSOPrecacheData(BasePrecachePSOParams, OutParams);
+	}
+}
+
+void UNiagaraComponent::GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials) const
+{
+	if (CullProxy)
+	{
+		CullProxy->GetUsedMaterials(OutMaterials, bGetDebugMaterials);
+	}
+	else if (SystemInstanceController.IsValid())
 	{
 		SystemInstanceController->GetUsedMaterials(OutMaterials);
 	}
@@ -2245,11 +2363,28 @@ void UNiagaraComponent::GetUsedMaterials(TArray<UMaterialInterface*>& OutMateria
 
 void UNiagaraComponent::GetStreamingRenderAssetInfo(FStreamingTextureLevelContext& LevelContext, TArray<FStreamingRenderAssetPrimitiveInfo>& OutStreamingRenderAssets) const
 {
-	// UPrimitiveComponent::GetStreamingRenderAssetInfo takes care of getting the referenced textures
-	Super::GetStreamingRenderAssetInfo(LevelContext, OutStreamingRenderAssets);
-
 	if (SystemInstanceController.IsValid())
 	{
+		FNiagaraMaterialAndScaleArray MaterialAndScales;
+		SystemInstanceController->GetMaterialStreamingInfo(MaterialAndScales);
+
+		LevelContext.BindBuildData(nullptr);
+		if (MaterialAndScales.Num() > 0)
+		{
+			static const FMeshUVChannelInfo UVChannelData(1.f);
+
+			FPrimitiveMaterialInfo MaterialData;
+			MaterialData.PackedRelativeBox = PackedRelativeBox_Identity;
+			MaterialData.UVChannelData = &UVChannelData;
+
+			for (const FNiagaraMaterialAndScale& MaterialAndScale : MaterialAndScales)
+			{
+				check(MaterialAndScale.Material != nullptr);
+				MaterialData.Material = MaterialAndScale.Material;
+				LevelContext.ProcessMaterial(Bounds, MaterialData, Bounds.SphereRadius * MaterialAndScale.Scale, OutStreamingRenderAssets, bIsValidTextureStreamingBuiltData, this);
+			}
+		}
+
 		SystemInstanceController->GetStreamingMeshInfo(Bounds, LevelContext, OutStreamingRenderAssets);
 	}
 }
@@ -2626,6 +2761,9 @@ void UNiagaraComponent::SetVariableMaterial(FName InVariableName, UMaterialInter
 	{
 		OverrideParameters.SetUObject(InValue, VariableDesc);
 	}
+
+	bRecachePSOs = true;
+
 #if WITH_EDITOR
 	SetParameterOverride(VariableDesc, FNiagaraVariant(InValue));
 #endif
@@ -2643,6 +2781,9 @@ void UNiagaraComponent::SetVariableStaticMesh(FName InVariableName, UStaticMesh*
 	{
 		OverrideParameters.SetUObject(InValue, VariableDesc);
 	}
+
+	bRecachePSOs = true;
+
 #if WITH_EDITOR
 	SetParameterOverride(VariableDesc, FNiagaraVariant(InValue));
 #endif
@@ -2680,40 +2821,6 @@ void UNiagaraComponent::SetVariableTextureRenderTarget(FName InVariableName, UTe
 #if WITH_EDITOR
 	SetParameterOverride(VariableDesc, FNiagaraVariant(TextureRenderTarget));
 #endif
-}
-
-TArray<FVector> UNiagaraComponent::GetNiagaraParticlePositions_DebugOnly(const FString& InEmitterName)
-{
-	return GetNiagaraParticleValueVec3_DebugOnly(InEmitterName, TEXT("Position"));
-}
-
-TArray<FVector> UNiagaraComponent::GetNiagaraParticleValueVec3_DebugOnly(const FString& InEmitterName, const FString& InValueName)
-{
-	TArray<FVector> Values;
-	FName EmitterName = FName(*InEmitterName);
-	if (SystemInstanceController.IsValid())
-	{
-		if (!SystemInstanceController->GetParticleValueVec3_DebugOnly(Values, EmitterName, FName(*InValueName)))
-		{
-			UE_LOG(LogNiagara, Warning, TEXT("Unable to find variable %s on %s per-particle data. Returning zeroes."), *InValueName, *GetPathName());
-		}
-	}
-	return Values;
-
-}
-
-TArray<float> UNiagaraComponent::GetNiagaraParticleValues_DebugOnly(const FString& InEmitterName, const FString& InValueName)
-{
-	TArray<float> Values;
-	FName EmitterName = FName(*InEmitterName);
-	if (SystemInstanceController.IsValid())
-	{
-		if (!SystemInstanceController->GetParticleValues_DebugOnly(Values, EmitterName, FName(*InValueName)))
-		{
-			UE_LOG(LogNiagara, Warning, TEXT("Unable to find variable %s on %s per-particle data. Returning zeroes."), *InValueName, *GetPathName());
-		}
-	}
-	return Values;
 }
 
 void FixInvalidUserParameters(FNiagaraUserRedirectionParameterStore& ParameterStore)
@@ -2841,7 +2948,7 @@ void UNiagaraComponent::PostLoad()
 	PostLoadVariantDIs(InstanceParameterOverrides);
 #endif
 
-	OverrideParameters.PostLoad();
+	OverrideParameters.PostLoad(this);
 	OverrideParameters.SanityCheckData();
 
 #if WITH_EDITOR
@@ -3345,6 +3452,13 @@ void UNiagaraComponent::CopyParametersFromAsset(bool bResetExistingOverrideParam
 	{
 		UNiagaraDataInterface* AssetDataInterface = AssetExposedParameters.GetDataInterface(i);
 		UNiagaraDataInterface* OverrideDataInterface = OverrideParameters.GetDataInterface(i);
+		if (!AssetDataInterface || !OverrideDataInterface)
+		{
+			const FNiagaraVariableBase* DIVariable = AssetExposedParameters.FindVariableFromDataInterfaceIndex(i);
+			UE_LOG(LogNiagara, Error, TEXT("null data interface found for Variable(%s) System(%s) will not run."), DIVariable ? *DIVariable->GetName().ToString() : TEXT("Unknown"), *GetNameSafe(Asset));
+			continue;
+		}
+
 		if (AssetDataInterface != OverrideDataInterface)
 		{
 			// We must copy the data regardless as there is an expectation that data interfaces are always reset to the original state
@@ -4101,9 +4215,11 @@ void UNiagaraComponent::CancelAutoAttachment(bool bDetachFromParent)
 
 		if (bDetachFromParent)
 		{
-			//bIsChangingAutoAttachment = true;
-			DetachFromComponent(FDetachmentTransformRules::KeepRelativeTransform);
-			//bIsChangingAutoAttachment = false;
+			UWorld* World = GetWorld();
+			if (!World || World->IsGameWorld())
+			{
+				DetachFromComponent(FDetachmentTransformRules(EDetachmentRule::KeepRelative, /*bCallModify=*/ false));
+			}
 		}
 	}
 }

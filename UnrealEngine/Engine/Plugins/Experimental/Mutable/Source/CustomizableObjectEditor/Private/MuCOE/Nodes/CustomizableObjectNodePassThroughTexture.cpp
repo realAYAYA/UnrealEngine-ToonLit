@@ -7,6 +7,27 @@
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
 
+void UCustomizableObjectNodePassThroughTexture::BackwardsCompatibleFixup()
+{
+	Super::BackwardsCompatibleFixup();
+
+	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
+
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::AddedAnyTextureTypeToPassThroughTextures)
+	{
+		if (Texture)
+		{
+			if (!PassThroughTexture)
+			{
+				PassThroughTexture = Texture;
+			}
+
+			Texture = nullptr;
+		}
+	}
+}
+
+
 void UCustomizableObjectNodePassThroughTexture::AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins)
 {
 	const UEdGraphSchema_CustomizableObject* Schema = GetDefault<UEdGraphSchema_CustomizableObject>();

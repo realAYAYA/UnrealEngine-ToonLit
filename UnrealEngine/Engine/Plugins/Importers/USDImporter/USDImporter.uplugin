@@ -14,49 +14,70 @@
 	"CanContainContent": true,
 	"IsBetaVersion": true,
 	"Installed": false,
-	"SupportedTargetPlatforms": [
-		"Win64", "Mac", "Linux"
-	],
 	"Modules": [
 		{
 			"Name": "UnrealUSDWrapper",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDUtilities",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDSchemas",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDStage",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDStageEditor",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDStageImporter",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDStageEditorViewModels",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDExporter",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDClasses",
@@ -66,17 +87,26 @@
         {
 			"Name": "USDClassesEditor",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "GeometryCacheUSD",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		},
 		{
 			"Name": "USDTests",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Mac", "Linux"
+			]
 		}
 	],
 	"Plugins": [
@@ -98,7 +128,12 @@
 		},
 		{
 			"Name": "Interchange",
-			"Enabled": true
+			"Enabled": true,
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
 		},
 		{
 			"Name": "LevelSequenceEditor",
@@ -110,7 +145,12 @@
 		},
 		{
 			"Name": "MDLImporter",
-			"Enabled": true
+			"Enabled": true,
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
 		},
 		{
 			"Name": "PythonScriptPlugin",

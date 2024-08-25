@@ -634,6 +634,7 @@ struct TPropertyDefinitionBuilder
 	TPropertyDefinitionBuilder<PropertyTraits>& SetStat(TStatId InStatID)
 	{
 		Definition->StatID = InStatID;
+		return *this;
 	}
 
 	template<typename BlenderSystemType>

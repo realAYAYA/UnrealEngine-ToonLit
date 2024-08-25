@@ -169,7 +169,7 @@ void UMeshGroupPaintTool::Setup()
 	FilterProperties->WatchProperty(FilterProperties->SubToolType,
 		[this](EMeshGroupPaintInteractionType NewType) { UpdateSubToolType(NewType); });
 	FilterProperties->WatchProperty(FilterProperties->BrushSize,
-		[this](float NewSize) { UMeshSculptToolBase::BrushProperties->BrushSize.AdaptiveSize = NewSize; });
+		[this](float NewSize) { UMeshSculptToolBase::BrushProperties->BrushSize.AdaptiveSize = NewSize; CalculateBrushRadius(); });
 	FilterProperties->WatchProperty(FilterProperties->bHitBackFaces,
 		[this](bool bNewValue) { UMeshSculptToolBase::BrushProperties->bHitBackFaces = bNewValue; });
 	FilterProperties->RestoreProperties(this);
@@ -327,13 +327,6 @@ TUniquePtr<FMeshSculptBrushOp>& UMeshGroupPaintTool::GetActiveBrushOp()
 	}
 }
 
-
-void UMeshGroupPaintTool::OnPropertyModified(UObject* PropertySet, FProperty* Property)
-{
-	CalculateBrushRadius();
-}
-
-
 void UMeshGroupPaintTool::IncreaseBrushRadiusAction()
 {
 	Super::IncreaseBrushRadiusAction();
@@ -418,7 +411,12 @@ void UMeshGroupPaintTool::OnEndStroke()
 	EndChange();
 }
 
-
+void UMeshGroupPaintTool::OnCancelStroke()
+{
+	GetActiveBrushOp()->CancelStroke();
+	ActiveGroupEditBuilder.Reset();
+	bDrawGroupsDataValid = false;
+}
 
 
 void UMeshGroupPaintTool::UpdateROI(const FSculptBrushStamp& BrushStamp)
@@ -545,17 +543,17 @@ void UMeshGroupPaintTool::UpdateROI(const FSculptBrushStamp& BrushStamp)
 		FIndex3i Tri = Mesh->GetTriangle(tid);
 		VertexSetBuffer.Add(Tri.A);  VertexSetBuffer.Add(Tri.B);  VertexSetBuffer.Add(Tri.C);
 	}
-	VertexROI.SetNum(0, false);
+	VertexROI.SetNum(0, EAllowShrinking::No);
 	BufferUtil::AppendElements(VertexROI, VertexSetBuffer);
 
 	// construct ROI triangle and group buffers
 	ROITriangleBuffer.Reserve(TriangleROI.Num());
-	ROITriangleBuffer.SetNum(0, false);
+	ROITriangleBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : TriangleROI)
 	{
 		ROITriangleBuffer.Add(tid);
 	}
-	ROIGroupBuffer.SetNum(ROITriangleBuffer.Num(), false);
+	ROIGroupBuffer.SetNum(ROITriangleBuffer.Num(), EAllowShrinking::No);
 }
 
 bool UMeshGroupPaintTool::UpdateStampPosition(const FRay& WorldRay)
@@ -738,7 +736,7 @@ void UMeshGroupPaintTool::SetTrianglesToGroupID(const TSet<int32>& Triangles, in
 {
 	BeginChange();
 
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : Triangles)
 	{
 		int32 CurGroupID = ActiveGroupSet->GetGroup(tid);
@@ -788,7 +786,7 @@ bool UMeshGroupPaintTool::HaveVisibilityFilter() const
 
 void UMeshGroupPaintTool::ApplyVisibilityFilter(TSet<int32>& Triangles, TArray<int32>& ROIBuffer, TArray<int32>& OutputBuffer)
 {
-	ROIBuffer.SetNum(0, false);
+	ROIBuffer.SetNum(0, EAllowShrinking::No);
 	ROIBuffer.Reserve(Triangles.Num());
 	for (int32 tid : Triangles)
 	{
@@ -822,7 +820,7 @@ void UMeshGroupPaintTool::ApplyVisibilityFilter(const TArray<int32>& Triangles, 
 
 	int32 NumTriangles = Triangles.Num();
 
-	VisibilityFilterBuffer.SetNum(NumTriangles, false);
+	VisibilityFilterBuffer.SetNum(NumTriangles, EAllowShrinking::No);
 	ParallelFor(NumTriangles, [&](int32 idx)
 	{
 		VisibilityFilterBuffer[idx] = true;
@@ -1128,7 +1126,7 @@ void UMeshGroupPaintTool::ToggleFrozenGroup(int32 FreezeGroupID)
 	}
 
 	const FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : Mesh->TriangleIndicesItr())
 	{
 		int32 TriGroupID = ActiveGroupSet->GetGroup(tid);
@@ -1147,7 +1145,7 @@ void UMeshGroupPaintTool::FreezeOtherGroups(int32 KeepGroupID)
 	TArray<int32> InitialFrozenGroups = FrozenGroups;
 	FrozenGroups.Reset();
 	const FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : Mesh->TriangleIndicesItr())
 	{
 		int32 GroupID = ActiveGroupSet->GetGroup(tid);
@@ -1166,7 +1164,7 @@ void UMeshGroupPaintTool::ClearAllFrozenGroups()
 {
 	TArray<int32> InitialFrozenGroups = FrozenGroups;
 	const FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : Mesh->TriangleIndicesItr())
 	{
 		if ( FrozenGroups.Contains(ActiveGroupSet->GetGroup(tid)) )
@@ -1209,7 +1207,7 @@ void UMeshGroupPaintTool::GrowCurrentGroupAction()
 	InitialSelection.Select([&](int32 tid) { return ActiveGroupSet->GetGroup(tid) == CurrentGroupID; });
 	FMeshFaceSelection ExpandSelection(InitialSelection);
 	ExpandSelection.ExpandToOneRingNeighbours([&](int32 tid) { return FrozenGroups.Contains(ActiveGroupSet->GetGroup(tid)) == false; });
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	ExpandSelection.SetDifference(InitialSelection, TempROIBuffer);
 
 	ActiveGroupEditBuilder->SaveTriangles(TempROIBuffer);
@@ -1235,7 +1233,7 @@ void UMeshGroupPaintTool::ShrinkCurrentGroupAction()
 	InitialSelection.Select([&](int32 tid) { return ActiveGroupSet->GetGroup(tid) == CurrentGroupID; });
 	FMeshFaceSelection ContractSelection(InitialSelection);
 	ContractSelection.ContractBorderByOneRingNeighbours();
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	InitialSelection.SetDifference(ContractSelection, TempROIBuffer);
 
 	ActiveGroupEditBuilder->SaveTriangles(TempROIBuffer);
@@ -1258,7 +1256,7 @@ void UMeshGroupPaintTool::ClearCurrentGroupAction()
 
 	int32 CurrentGroupID = FilterProperties->SetGroup;
 	const FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : Mesh->TriangleIndicesItr())
 	{
 		if (ActiveGroupSet->GetGroup(tid) == CurrentGroupID)
@@ -1286,7 +1284,7 @@ void UMeshGroupPaintTool::FloodFillCurrentGroupAction()
 
 	int32 SetGroupID = FilterProperties->SetGroup;
 	const FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : Mesh->TriangleIndicesItr())
 	{
 		int32 GroupID = ActiveGroupSet->GetGroup(tid);
@@ -1314,7 +1312,7 @@ void UMeshGroupPaintTool::ClearAllGroupsAction()
 	BeginChange();
 
 	const FDynamicMesh3* Mesh = DynamicMeshComponent->GetMesh();
-	TempROIBuffer.SetNum(0, false);
+	TempROIBuffer.SetNum(0, EAllowShrinking::No);
 	for (int32 tid : Mesh->TriangleIndicesItr())
 	{
 		if (ActiveGroupSet->GetGroup(tid) != 0)
@@ -1345,6 +1343,7 @@ void UMeshGroupPaintTool::BeginChange()
 {
 	check(ActiveGroupEditBuilder == nullptr);
 	ActiveGroupEditBuilder = MakeUnique<FDynamicMeshGroupEditBuilder>(ActiveGroupSet.Get());
+	LongTransactions.Open(LOCTEXT("GroupPaintChange", "Group Stroke"), GetToolManager());
 }
 
 void UMeshGroupPaintTool::EndChange()
@@ -1362,6 +1361,7 @@ void UMeshGroupPaintTool::EndChange()
 	};
 
 	GetToolManager()->EmitObjectChange(DynamicMeshComponent, MoveTemp(NewChange), LOCTEXT("GroupPaintChange", "Group Stroke"));
+	LongTransactions.Close(GetToolManager());
 
 	// debug groups are invalid now
 	bDrawGroupsDataValid = false;

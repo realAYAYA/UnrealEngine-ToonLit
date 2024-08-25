@@ -101,7 +101,7 @@ private:
 	TSharedPtr<FEdGraphSchemaAction> Action;
 };
 
-TSharedRef<SWidget> FBlueprintWidgetCustomization::MakePropertyBindingWidget(TWeakPtr<FWidgetBlueprintEditor> InEditor, UFunction* SignatureFunction, TSharedRef<IPropertyHandle> InPropertyHandle, bool bInGeneratePureBindings, bool bAllowOldBinding)
+TSharedRef<SWidget> FBlueprintWidgetCustomization::MakePropertyBindingWidget(TWeakPtr<FWidgetBlueprintEditor> InEditor, UFunction* SignatureFunction, TSharedRef<IPropertyHandle> InPropertyHandle, bool bInGeneratePureBindings, bool bAllowDetailsPanelLegacyBinding)
 {
 	if (!IModularFeatures::Get().IsModularFeatureAvailable("PropertyAccessEditor"))
 	{
@@ -606,7 +606,7 @@ TSharedRef<SWidget> FBlueprintWidgetCustomization::MakePropertyBindingWidget(TWe
 	});
 
 	Args.bGeneratePureBindings = bInGeneratePureBindings;
-	Args.bAllowNewBindings = bAllowOldBinding;
+	Args.bAllowNewBindings = bAllowDetailsPanelLegacyBinding;
 
 	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
 	return PropertyAccessEditor.MakePropertyBindingWidget(InEditor.Pin()->GetBlueprintObj(), Args);
@@ -726,7 +726,7 @@ void FBlueprintWidgetCustomization::CreateEventCustomization( IDetailLayoutBuild
 		.MinDesiredWidth(200)
 		.MaxDesiredWidth(250)
 		[
-			MakePropertyBindingWidget(Editor.Pin(), Property->SignatureFunction, DelegatePropertyHandle, false, BlueprintObj->ArePropertyBindingsAllowed())
+			MakePropertyBindingWidget(Editor.Pin(), Property->SignatureFunction, DelegatePropertyHandle, false, true)
 		];
 }
 
@@ -822,68 +822,76 @@ void FBlueprintWidgetCustomization::CreateMulticastEventCustomization(IDetailLay
 		PropertyTooltip = FText::FromString(DelegateProperty->GetName());
 	}
 
+	static FText EventCategoryText = LOCTEXT("Events", "Events");
+	IDetailCategoryBuilder& EventCategory = DetailLayout.EditCategory(TEXT("Events"), EventCategoryText, ECategoryPriority::Uncommon);
 	FObjectProperty* ComponentProperty = FindFProperty<FObjectProperty>(BlueprintObj->SkeletonGeneratedClass, ThisComponentName);
-
-	if ( !ComponentProperty )
+	if (ComponentProperty)
 	{
-		return;
-	}
+		FName PropertyName = ComponentProperty->GetFName();
+		FName EventName = DelegateProperty->GetFName();
+		FText EventText = DelegateProperty->GetDisplayNameText();
 
-	FName PropertyName = ComponentProperty->GetFName();
-	FName EventName = DelegateProperty->GetFName();
-	FText EventText = DelegateProperty->GetDisplayNameText();
-
-	IDetailCategoryBuilder& EventCategory = DetailLayout.EditCategory(TEXT("Events"), LOCTEXT("Events", "Events"), ECategoryPriority::Uncommon);
-
-	EventCategory.AddCustomRow(EventText)
-		.WholeRowContent()
-		[
-			SNew(SHorizontalBox)
-			.ToolTipText(DelegateProperty->GetToolTipText())
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			.Padding(0, 0, 5, 0)
+		EventCategory.AddCustomRow(EventText)
+			.WholeRowContent()
 			[
-				SNew(SImage)
-				.Image(FAppStyle::Get().GetBrush("GraphEditor.Event_16x"))
-			]
-
-			+ SHorizontalBox::Slot()
-			.VAlign(VAlign_Center)
-			.HAlign(HAlign_Left)
-			[
-				SNew(STextBlock)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
-				.Text(EventText)
-			]
-
-			+ SHorizontalBox::Slot()
-			.HAlign(HAlign_Left)
-			.VAlign(VAlign_Center)
-			.Padding(0)
-			[
-				SNew(SButton)
-				.ContentPadding(FMargin(3.0, 2.0))
-				.OnClicked(this, &FBlueprintWidgetCustomization::HandleAddOrViewEventForVariable, EventName, PropertyName, MakeWeakObjectPtr(PropertyClass))
+				SNew(SHorizontalBox)
+				.ToolTipText(DelegateProperty->GetToolTipText())
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 5, 0)
 				[
-					SNew(SWidgetSwitcher)
-					.WidgetIndex(this, &FBlueprintWidgetCustomization::HandleAddOrViewIndexForButton, EventName, PropertyName)
-					+ SWidgetSwitcher::Slot()
+					SNew(SImage)
+					.Image(FAppStyle::Get().GetBrush("GraphEditor.Event_16x"))
+				]
+
+				+ SHorizontalBox::Slot()
+				.VAlign(VAlign_Center)
+				.HAlign(HAlign_Left)
+				[
+					SNew(STextBlock)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+					.Text(EventText)
+				]
+
+				+ SHorizontalBox::Slot()
+				.HAlign(HAlign_Left)
+				.VAlign(VAlign_Center)
+				.Padding(0)
+				[
+					SNew(SButton)
+					.ContentPadding(FMargin(3.0, 2.0))
+					.OnClicked(this, &FBlueprintWidgetCustomization::HandleAddOrViewEventForVariable, EventName, PropertyName, MakeWeakObjectPtr(PropertyClass))
 					[
-						SNew(SImage)
-						.ColorAndOpacity(FSlateColor::UseForeground())
-						.Image(FAppStyle::Get().GetBrush("Icons.SelectInViewport"))
-					]
-					+ SWidgetSwitcher::Slot()
-					[
-						SNew(SImage)
-						.ColorAndOpacity(FSlateColor::UseForeground())
-						.Image(FAppStyle::Get().GetBrush("Icons.Plus"))
+						SNew(SWidgetSwitcher)
+						.WidgetIndex(this, &FBlueprintWidgetCustomization::HandleAddOrViewIndexForButton, EventName, PropertyName)
+						+ SWidgetSwitcher::Slot()
+						[
+							SNew(SImage)
+							.ColorAndOpacity(FSlateColor::UseForeground())
+							.Image(FAppStyle::Get().GetBrush("Icons.SelectInViewport"))
+						]
+						+ SWidgetSwitcher::Slot()
+						[
+							SNew(SImage)
+							.ColorAndOpacity(FSlateColor::UseForeground())
+							.Image(FAppStyle::Get().GetBrush("Icons.Plus"))
+						]
 					]
 				]
-			]
-		];
+			];
+	}
+	else if (!bCreateMulticastEventCustomizationErrorAdded)
+	{
+		bCreateMulticastEventCustomizationErrorAdded = true;
+		EventCategory.AddCustomRow(FText::GetEmpty())
+			.WholeRowContent()
+			[
+				SNew(STextBlock)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+					.Text(LOCTEXT("EventAvailableButNotVariable", "To see available events, enable the Is Variable setting for this widget."))
+			];
+	}
 }
 
 void FBlueprintWidgetCustomization::CustomizeDetails( IDetailLayoutBuilder& DetailLayout )
@@ -946,6 +954,7 @@ void FBlueprintWidgetCustomization::PerformBindingCustomization(IDetailLayoutBui
 {
 	static const FName IsBindableEventName(TEXT("IsBindableEvent"));
 
+	bCreateMulticastEventCustomizationErrorAdded = false;
 	if ( Widgets.Num() == 1 )
 	{
 		UWidget* Widget = Widgets[0];

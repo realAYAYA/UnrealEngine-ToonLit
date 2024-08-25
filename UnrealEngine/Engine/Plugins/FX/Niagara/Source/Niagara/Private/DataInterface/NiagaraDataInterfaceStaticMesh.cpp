@@ -284,9 +284,9 @@ namespace NDIStaticMeshLocal
 				TangentY = FVector3f(0.0f, 1.0f, 0.0f);
 				TangentZ = FVector3f(0.0f, 0.0f, 1.0f);
 			}
-			TransformHandler.TransformVector(TangentX, Matrix);
-			TransformHandler.TransformVector(TangentY, Matrix);
-			TransformHandler.TransformVector(TangentZ, Matrix);
+			TransformHandler.TransformUnitVector(TangentX, Matrix);
+			TransformHandler.TransformUnitVector(TangentY, Matrix);
+			TransformHandler.TransformUnitVector(TangentZ, Matrix);
 		}
 	};
 
@@ -662,6 +662,8 @@ namespace NDIStaticMeshLocal
 
 		FNiagaraParameterDirectBinding<int32> LODIndexUserBinding;
 
+		FNiagaraParameterDirectBinding<UObject*> MeshParameterBinding;
+
 		/** Cached socket information, if available */
 		TArray<FTransform3f> CachedSockets;
 
@@ -745,6 +747,7 @@ namespace NDIStaticMeshLocal
 		void UpdateTransforms(USceneComponent* SceneComponent, FNiagaraSystemInstance* SystemInstance)
 		{
 			SystemInstanceWorldTransform = SystemInstance->GetWorldTransform();
+			LWCTileOffset = FVector(SystemInstance->GetLWCTile()) * -FLargeWorldRenderScalar::GetTileSize();
 
 			FTransform ComponentTransform;
 			if (SceneComponent)
@@ -768,16 +771,16 @@ namespace NDIStaticMeshLocal
 				{
 					ISMTransforms.Empty();
 				}
+
+				OwnerToMeshVector = FVector3f(ComponentTransform.GetLocation() - SystemInstanceWorldTransform.GetLocation());
+				ComponentTransform.AddToTranslation(LWCTileOffset);
 			}
 			else
 			{
 				ISMTransforms.Empty();
 				ComponentTransform = SystemInstanceWorldTransform;
+				OwnerToMeshVector = FVector3f::ZeroVector;
 			}
-
-			OwnerToMeshVector = FVector3f(ComponentTransform.GetLocation() - SystemInstanceWorldTransform.GetLocation());
-			LWCTileOffset = FVector(SystemInstance->GetLWCTile()) * -FLargeWorldRenderScalar::GetTileSize();
-			ComponentTransform.AddToTranslation(LWCTileOffset);
 
 			Transform = ComponentTransform.ToMatrixWithScale();
 			TransformInverseTransposed = ComponentTransform.Inverse().ToMatrixWithScale().GetTransposed();
@@ -854,9 +857,11 @@ namespace NDIStaticMeshLocal
 			NumFilteredSockets = 0;
 			FilteredAndUnfilteredSockets.Empty();
 
+			MeshParameterBinding.Init(SystemInstance->GetInstanceParameters(), Interface->MeshParameterBinding.Parameter);
+
 			// Get component / mesh we are using
 			USceneComponent* SceneComponent = nullptr;
-			UStaticMesh* StaticMesh = Interface->GetStaticMesh(SceneComponent, SystemInstance);
+			UStaticMesh* StaticMesh = Interface->GetStaticMesh(SceneComponent, SystemInstance, MeshParameterBinding.GetValue());
 			SceneComponentWeakPtr = SceneComponent;
 
 			// Gather attached information
@@ -1141,29 +1146,28 @@ namespace NDIStaticMeshLocal
 				return true;
 			}
 
+			// Check to see if either the mesh has become invalid
 			UStaticMesh* Mesh = StaticMeshWeakPtr.Get();
-			if (bMeshValid)
+			if (bMeshValid && !Mesh)
 			{
-				if (!Mesh)
-				{
-					// The static mesh we were bound to is no longer valid so we have to trigger a reset.
-					return true;
-				}
-				else if (UStaticMeshComponent* StaticMeshComp = Cast<UStaticMeshComponent>(Component))
-				{
-					if (Mesh != StaticMeshComp->GetStaticMesh())
-					{
-						// The mesh changed on the component we're attached to so we have to reset
-						return true;
-					}
-				}
+				return true;
 			}
 
+			// Has an external call invalidated the SM DI
 			if (Interface != nullptr && ChangeId != Interface->ChangeId)
 			{
 				return true;
 			}
 
+			// Check to see if we would resolve to a different mesh / component
+			USceneComponent* ResolvedComponent = nullptr;
+			UStaticMesh* ResolvedMesh = Interface->GetStaticMesh(ResolvedComponent, Instance, MeshParameterBinding.GetValue());
+			if (Component != ResolvedComponent || Mesh != ResolvedMesh)
+			{
+				return true;
+			}
+
+			// Has the LOD changed
 			if (Mesh != nullptr)
 			{
 				//TODO: If the LOD index selection changes then we reset the system
@@ -1307,9 +1311,15 @@ namespace NDIStaticMeshLocal
 			return Position;
 		}
 
-		FORCEINLINE FVector3f TransformVector(FVector3f Vector) const
+		FORCEINLINE FVector3f TransformUnitVector(FVector3f Vector) const
 		{
-			TransformHandler.TransformVector(Vector, FMatrix44f(InstanceData->TransformInverseTransposed));		// LWC_TODO: Precision loss
+			TransformHandler.TransformUnitVector(Vector, FMatrix44f(InstanceData->TransformInverseTransposed));		// LWC_TODO: Precision loss
+			return Vector;
+		}
+
+		FORCEINLINE FVector3f TransformNotUnitVector(FVector3f Vector) const
+		{
+			TransformHandler.TransformNotUnitVector(Vector, FMatrix44f(InstanceData->TransformInverseTransposed));		// LWC_TODO: Precision loss
 			return Vector;
 		}
 
@@ -1325,9 +1335,15 @@ namespace NDIStaticMeshLocal
 			return Position;
 		}
 
-		FORCEINLINE FVector3f PreviousTransformVector(FVector3f Vector) const
+		FORCEINLINE FVector3f PreviousTransformUnitVector(FVector3f Vector) const
 		{
-			TransformHandler.TransformVector(Vector, FMatrix44f(InstanceData->PrevTransformInverseTransposed));	// LWC_TODO: Precision loss
+			TransformHandler.TransformUnitVector(Vector, FMatrix44f(InstanceData->PrevTransformInverseTransposed));	// LWC_TODO: Precision loss
+			return Vector;
+		}
+
+		FORCEINLINE FVector3f PreviousTransformNotUnitVector(FVector3f Vector) const
+		{
+			TransformHandler.TransformNotUnitVector(Vector, FMatrix44f(InstanceData->PrevTransformInverseTransposed));	// LWC_TODO: Precision loss
 			return Vector;
 		}
 
@@ -1393,7 +1409,7 @@ namespace NDIStaticMeshLocal
 			Tangent  = LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentX(Index0) * BaryCoord.X;
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentX(Index1) * BaryCoord.Y;
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentX(Index2) * BaryCoord.Z;
-			TransformHandler.TransformVector(Tangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(Tangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
 			return Tangent;
 		}
 
@@ -1403,7 +1419,7 @@ namespace NDIStaticMeshLocal
 			Tangent  = LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentY(Index0) * BaryCoord.X;
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentY(Index1) * BaryCoord.Y;
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentY(Index2) * BaryCoord.Z;
-			TransformHandler.TransformVector(Tangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(Tangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
 			return Tangent;
 		}
 
@@ -1413,7 +1429,7 @@ namespace NDIStaticMeshLocal
 			Tangent  = LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentZ(Index0) * BaryCoord.X;
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentZ(Index1) * BaryCoord.Y;
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentZ(Index2) * BaryCoord.Z;
-			TransformHandler.TransformVector(Tangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(Tangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
 			return Tangent;
 		}
 
@@ -1425,8 +1441,8 @@ namespace NDIStaticMeshLocal
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentX(Index2) * BaryCoord.Z;
 			FVector3f CurrTangent = Tangent;
 			FVector3f PrevTangent = Tangent;
-			TransformHandler.TransformVector(PrevTangent, FMatrix44f(InstanceData->PrevTransform));						// LWC_TODO: Precision loss?
-			TransformHandler.TransformVector(CurrTangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(PrevTangent, FMatrix44f(InstanceData->PrevTransform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(CurrTangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
 			return FMath::Lerp(PrevTangent, CurrTangent, Interp);
 		}
 
@@ -1438,8 +1454,8 @@ namespace NDIStaticMeshLocal
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentY(Index2) * BaryCoord.Z;
 			FVector3f CurrTangent = Tangent;
 			FVector3f PrevTangent = Tangent;
-			TransformHandler.TransformVector(PrevTangent, FMatrix44f(InstanceData->PrevTransform));						// LWC_TODO: Precision loss?
-			TransformHandler.TransformVector(CurrTangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(PrevTangent, FMatrix44f(InstanceData->PrevTransform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(CurrTangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
 			return FMath::Lerp(PrevTangent, CurrTangent, Interp);
 		}
 
@@ -1451,8 +1467,8 @@ namespace NDIStaticMeshLocal
 			Tangent += LODResource->VertexBuffers.StaticMeshVertexBuffer.VertexTangentZ(Index2) * BaryCoord.Z;
 			FVector3f CurrTangent = Tangent;
 			FVector3f PrevTangent = Tangent;
-			TransformHandler.TransformVector(PrevTangent, FMatrix44f(InstanceData->PrevTransform));						// LWC_TODO: Precision loss?
-			TransformHandler.TransformVector(CurrTangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(PrevTangent, FMatrix44f(InstanceData->PrevTransform));						// LWC_TODO: Precision loss?
+			TransformHandler.TransformUnitVector(CurrTangent, FMatrix44f(InstanceData->Transform));						// LWC_TODO: Precision loss?
 			return FMath::Lerp(PrevTangent, CurrTangent, Interp);
 		}
 
@@ -1645,8 +1661,8 @@ namespace NDIStaticMeshLocal
 			const FVector3f CurrPosition = TransformPosition(SocketTransform.GetLocation());
 			const FQuat4f PrevRotation = PreviousTransformRotation(SocketTransform.GetRotation());
 			const FQuat4f CurrRotation = TransformRotation(SocketTransform.GetRotation());
-			const FVector3f PrevScale = PreviousTransformVector(SocketTransform.GetScale3D());
-			const FVector3f CurrScale = TransformVector(SocketTransform.GetScale3D());
+			const FVector3f PrevScale = PreviousTransformNotUnitVector(SocketTransform.GetScale3D());
+			const FVector3f CurrScale = TransformNotUnitVector(SocketTransform.GetScale3D());
 
 			OutPosition = FMath::Lerp(PrevPosition, CurrPosition, Interp);
 			OutRotation = FQuat4f::Slerp(PrevRotation, CurrRotation, Interp);
@@ -1669,6 +1685,7 @@ UNiagaraDataInterfaceStaticMesh::UNiagaraDataInterfaceStaticMesh(FObjectInitiali
 	Proxy.Reset(new NDIStaticMeshLocal::FRenderProxy());
 
 	LODIndexUserParameter.Parameter.SetType(FNiagaraTypeDefinition::GetIntDef());
+	MeshParameterBinding.Parameter.SetType(FNiagaraTypeDefinition(UObject::StaticClass()));
 }
 
 void UNiagaraDataInterfaceStaticMesh::PostInitProperties()
@@ -1921,11 +1938,12 @@ void UNiagaraDataInterfaceStaticMesh::ProvidePerInstanceDataForRenderThread(void
 
 	if ( UPrimitiveComponent* PrimitiveComponent = Cast<UPrimitiveComponent>(InstanceData->SceneComponentWeakPtr) )
 	{
-		DataFromGT->DistanceFieldPrimitiveId = PrimitiveComponent->ComponentId;
+		DataFromGT->DistanceFieldPrimitiveId = PrimitiveComponent->GetPrimitiveSceneId();
 	}
 }
 
-void UNiagaraDataInterfaceStaticMesh::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceStaticMesh::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIStaticMeshLocal;
 
@@ -1936,9 +1954,7 @@ void UNiagaraDataInterfaceStaticMesh::GetFunctions(TArray<FNiagaraFunctionSignat
 	BaseSignature.Inputs.Emplace(FNiagaraTypeDefinition(GetClass()), TEXT("StaticMesh"));
 	BaseSignature.bMemberFunction = true;
 	BaseSignature.bRequiresContext = false;
-#if WITH_EDITORONLY_DATA
 	BaseSignature.FunctionVersion = EDIFunctionVersion::LatestVersion;
-#endif
 
 	GetVertexSamplingFunctions(OutFunctions, BaseSignature);
 	GetTriangleSamplingFunctions(OutFunctions, BaseSignature);
@@ -2496,6 +2512,7 @@ void UNiagaraDataInterfaceStaticMesh::GetDeprecatedFunctions(TArray<FNiagaraFunc
 		OutFunctions.Add_GetRef(Sig).Name = Deprecated_GetTriNormalWSName;
 	}
 }
+#endif
 
 bool UNiagaraDataInterfaceStaticMesh::FunctionNeedsCpuAccess(FName InName)
 {
@@ -2512,6 +2529,25 @@ bool UNiagaraDataInterfaceStaticMesh::FunctionNeedsCpuAccess(FName InName)
 		GetWorldVelocityName,
 		//GetInstanceIndexName,
 		SetInstanceIndexName,
+
+		// Socket functions are safe
+		GetSocketCountName,
+		GetFilteredSocketCountName,
+		GetUnfilteredSocketCountName,
+		RandomSocketName,
+		RandomFilteredSocketName,
+		RandomUnfilteredSocketName,
+		GetSocketTransformName,
+		GetSocketTransformWSName,
+		GetSocketTransformWSInterpolatedName,
+		GetFilteredSocketTransformName,
+		GetFilteredSocketTransformWSName,
+		GetFilteredSocketTransformWSInterpolatedName,
+		GetUnfilteredSocketTransformName,
+		GetUnfilteredSocketTransformWSName,
+		GetUnfilteredSocketTransformWSInterpolatedName,
+		GetFilteredSocketName,
+		GetUnfilteredSocketName,
 	};
 
 	return SafeFunctions.Contains(InName) == false;
@@ -2974,7 +3010,7 @@ void UNiagaraDataInterfaceStaticMesh::GetVMExternalFunction(const FVMExternalFun
 	}
 }
 
-bool UNiagaraDataInterfaceStaticMesh::RequiresDistanceFieldData() const
+bool UNiagaraDataInterfaceStaticMesh::RequiresEarlyViewData() const
 {
 	return GetDefault<UNiagaraSettings>()->NDIStaticMesh_AllowDistanceFields;
 }
@@ -3266,6 +3302,7 @@ bool UNiagaraDataInterfaceStaticMesh::Equals(const UNiagaraDataInterface* Other)
 		OtherTyped->bAllowSamplingFromStreamingLODs == bAllowSamplingFromStreamingLODs &&
 		OtherTyped->LODIndex == LODIndex &&
 		OtherTyped->LODIndexUserParameter == LODIndexUserParameter &&
+		OtherTyped->MeshParameterBinding == MeshParameterBinding &&
 		OtherTyped->InstanceIndex == InstanceIndex &&
 		OtherTyped->FilteredSockets == FilteredSockets;
 }
@@ -3293,6 +3330,7 @@ bool UNiagaraDataInterfaceStaticMesh::CopyToInternal(UNiagaraDataInterface* Dest
 	OtherTyped->bAllowSamplingFromStreamingLODs = bAllowSamplingFromStreamingLODs;
 	OtherTyped->LODIndex = LODIndex;
 	OtherTyped->LODIndexUserParameter = LODIndexUserParameter;
+	OtherTyped->MeshParameterBinding = MeshParameterBinding;
 	OtherTyped->InstanceIndex = InstanceIndex;
 	OtherTyped->BindSourceDelegates();
 	return true;
@@ -3420,7 +3458,7 @@ void UNiagaraDataInterfaceStaticMesh::GetFeedback(UNiagaraSystem* Asset, UNiagar
 }
 #endif //WITH_EDITOR
 
-UStaticMesh* UNiagaraDataInterfaceStaticMesh::GetStaticMesh(USceneComponent*& OutComponent, class FNiagaraSystemInstance* SystemInstance)
+UStaticMesh* UNiagaraDataInterfaceStaticMesh::GetStaticMesh(USceneComponent*& OutComponent, class FNiagaraSystemInstance* SystemInstance, UObject* ParameterBindingValue)
 {
 	// Helper to scour an actor (or its parents) for a valid Static mesh component
 	auto FindActorMeshComponent = [](AActor* Actor, bool bRecurseParents = false) -> UStaticMeshComponent*
@@ -3459,73 +3497,107 @@ UStaticMesh* UNiagaraDataInterfaceStaticMesh::GetStaticMesh(USceneComponent*& Ou
 		return nullptr;
 	};
 
-	UStaticMeshComponent* FoundMeshComponent = nullptr;	
-
 	const bool bTrySource = SourceMode == ENDIStaticMesh_SourceMode::Default || SourceMode == ENDIStaticMesh_SourceMode::Source;
+	const bool bTryMeshParameter = SourceMode == ENDIStaticMesh_SourceMode::Default || SourceMode == ENDIStaticMesh_SourceMode::MeshParameterBinding;
 	const bool bTryAttachParent = SourceMode == ENDIStaticMesh_SourceMode::Default || SourceMode == ENDIStaticMesh_SourceMode::AttachParent;
 	const bool bTryDefaultMesh = SourceMode == ENDIStaticMesh_SourceMode::Default || SourceMode == ENDIStaticMesh_SourceMode::DefaultMeshOnly;
 
+	UStaticMesh* OutMesh = nullptr;
+	UStaticMeshComponent* OutStaticMeshComponent = nullptr;
 	if (bTrySource && ::IsValid(SourceComponent))
 	{
-		FoundMeshComponent = SourceComponent;
+		OutStaticMeshComponent = SourceComponent;
+		OutMesh = OutStaticMeshComponent->GetStaticMesh();
 	}
 	else if (bTrySource && SoftSourceActor.Get())
 	{
-		FoundMeshComponent = FindActorMeshComponent(SoftSourceActor.Get());
-	}
-	else if (bTryAttachParent && SystemInstance)
-	{
-		if (USceneComponent* AttachComponent = SystemInstance->GetAttachComponent())
+		OutStaticMeshComponent = FindActorMeshComponent(SoftSourceActor.Get());
+		if (OutStaticMeshComponent)
 		{
-			// First, try to find the mesh component up the attachment hierarchy
-			for (USceneComponent* Curr = AttachComponent; Curr; Curr = Curr->GetAttachParent())
+			OutMesh = OutStaticMeshComponent->GetStaticMesh();
+		}
+	}
+	else
+	{
+		// Try parameter binding, this could either be a component or a static mesh
+		if (bTryMeshParameter && ParameterBindingValue)
+		{
+			if (AActor* Actor = Cast<AActor>(ParameterBindingValue))
 			{
-				UStaticMeshComponent* ParentComp = Cast<UStaticMeshComponent>(Curr);
-				if (::IsValid(ParentComp))
+				OutStaticMeshComponent = FindActorMeshComponent(Actor, true);
+				if (OutStaticMeshComponent)
 				{
-					FoundMeshComponent = ParentComp;
-					break;
+					OutMesh = OutStaticMeshComponent->GetStaticMesh();
 				}
 			}
-			
-			if (!FoundMeshComponent)
+			else
 			{
-				// Next, try to find one in our outer chain
-				UStaticMeshComponent* OuterComp = AttachComponent->GetTypedOuter<UStaticMeshComponent>();
-				if (::IsValid(OuterComp))
+				OutStaticMeshComponent = Cast<UStaticMeshComponent>(ParameterBindingValue);
+				if (OutStaticMeshComponent)
 				{
-					FoundMeshComponent = OuterComp;
+					OutMesh = OutStaticMeshComponent->GetStaticMesh();
 				}
-				else if (AActor* Actor = AttachComponent->GetAttachmentRootActor())
+				else
 				{
-					// Final fall-back, look for any mesh component on our root actor or any of its parents
-					FoundMeshComponent = FindActorMeshComponent(Actor, true);
+					OutMesh = Cast<UStaticMesh>(ParameterBindingValue);
+				}
+			}
+		}
+
+		// Try attached parent, only if we did not already find a valid component / mesh
+		if (bTryAttachParent && SystemInstance && !OutStaticMeshComponent && !OutMesh)
+		{
+			if (USceneComponent* AttachComponent = SystemInstance->GetAttachComponent())
+			{
+				// First, try to find the mesh component up the attachment hierarchy
+				for (USceneComponent* Curr = AttachComponent; Curr; Curr = Curr->GetAttachParent())
+				{
+					UStaticMeshComponent* ParentComp = Cast<UStaticMeshComponent>(Curr);
+					if (::IsValid(ParentComp))
+					{
+						OutStaticMeshComponent = ParentComp;
+						break;
+					}
+				}
+
+				if (!OutStaticMeshComponent)
+				{
+					// Next, try to find one in our outer chain
+					UStaticMeshComponent* OuterComp = AttachComponent->GetTypedOuter<UStaticMeshComponent>();
+					if (::IsValid(OuterComp))
+					{
+						OutStaticMeshComponent = OuterComp;
+					}
+					else if (AActor* Actor = AttachComponent->GetAttachmentRootActor())
+					{
+						// Final fall-back, look for any mesh component on our root actor or any of its parents
+						OutStaticMeshComponent = FindActorMeshComponent(Actor, true);
+					}
+				}
+
+				if (OutStaticMeshComponent)
+				{
+					OutMesh = OutStaticMeshComponent->GetStaticMesh();
 				}
 			}
 		}
 	}
 
-	UStaticMesh* Mesh = nullptr;
-	OutComponent = nullptr;
-	if (FoundMeshComponent)
+	OutComponent = OutStaticMeshComponent;
+	if (bTryDefaultMesh && !OutComponent && !OutMesh)
 	{
-		Mesh = FoundMeshComponent->GetStaticMesh();
-		OutComponent = FoundMeshComponent;
-	}
-	else if (bTryDefaultMesh)
-	{
-		Mesh = DefaultMesh;
+		OutMesh = DefaultMesh;
 	}
 
 #if WITH_EDITORONLY_DATA
-	if (!Mesh && !FoundMeshComponent && (!SystemInstance || !SystemInstance->GetWorld()->IsGameWorld()))
+	if (!OutMesh && !OutComponent && (!SystemInstance || !SystemInstance->GetWorld()->IsGameWorld()))
 	{
 		// NOTE: We don't fall back on the preview mesh if we have a valid static mesh component referenced
-		Mesh = PreviewMesh.LoadSynchronous();		
+		OutMesh = PreviewMesh.LoadSynchronous();		
 	}
 #endif
 
-	return Mesh;
+	return OutMesh;
 }
 
 void UNiagaraDataInterfaceStaticMesh::SetSourceComponentFromBlueprints(UStaticMeshComponent* ComponentToUse)
@@ -3558,7 +3630,7 @@ void UNiagaraDataInterfaceStaticMesh::BindSourceDelegates()
 	}
 	else if (SourceComponent)
 	{
-		UE_CLOG(!UObjectBaseUtility::IsPendingKillEnabled(),
+		UE_CLOG(!UObjectBaseUtility::IsGarbageEliminationEnabled(),
 			LogNiagara, Warning, TEXT("%s: Unable to bind OnEndPlay for actor-less source component %s, this may extend the lifetime of the component"),
 			*GetFullName(), *SourceComponent->GetPathName());
 	}
@@ -3576,6 +3648,7 @@ void UNiagaraDataInterfaceStaticMesh::OnSourceEndPlay(AActor* InSource, EEndPlay
 {
 	// Increment change id in case we're able to find a new source component 
 	++ChangeId;
+	UnbindSourceDelegates();
 	SoftSourceActor = nullptr;
 	SourceComponent = nullptr;
 }
@@ -3584,6 +3657,7 @@ void UNiagaraDataInterfaceStaticMesh::SetDefaultMeshFromBlueprints(UStaticMesh* 
 {
 	// NOTE: When ChangeId changes the next tick will be skipped and a reset of the per-instance data will be initiated. 
 	++ChangeId;
+	UnbindSourceDelegates();
 	SourceComponent = nullptr;
 	SoftSourceActor = nullptr;
 	DefaultMesh = MeshToUse;
@@ -3742,9 +3816,9 @@ void UNiagaraDataInterfaceStaticMesh::VMGetVertex(FVectorVMExternalFunctionConte
 	{
 		const FVector3f Position = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FVector3f Velocity = FVector3f::ZeroVector;
-		const FVector3f TangentX = StaticMeshHelper.TransformVector(FVector3f(1.0f, 0.0f, 0.0f));
-		const FVector3f TangentY = StaticMeshHelper.TransformVector(FVector3f(0.0f, 1.0f, 0.0f));
-		const FVector3f TangentZ = StaticMeshHelper.TransformVector(FVector3f(0.0f, 0.0f, 1.0f));
+		const FVector3f TangentX = StaticMeshHelper.TransformUnitVector(FVector3f(1.0f, 0.0f, 0.0f));
+		const FVector3f TangentY = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 1.0f, 0.0f));
+		const FVector3f TangentZ = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 0.0f, 1.0f));
 		for ( int32 i=0; i < Context.GetNumInstances(); ++i )
 		{
 			OutPosition.SetAndAdvance(Position);
@@ -3793,9 +3867,9 @@ void UNiagaraDataInterfaceStaticMesh::VMGetVertexInterpolated(FVectorVMExternalF
 	{
 		const FVector3f Position = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FVector3f Velocity = FVector3f::ZeroVector;
-		const FVector3f TangentX = StaticMeshHelper.TransformVector(FVector3f(1.0f, 0.0f, 0.0f));
-		const FVector3f TangentY = StaticMeshHelper.TransformVector(FVector3f(0.0f, 1.0f, 0.0f));
-		const FVector3f TangentZ = StaticMeshHelper.TransformVector(FVector3f(0.0f, 0.0f, 1.0f));
+		const FVector3f TangentX = StaticMeshHelper.TransformUnitVector(FVector3f(1.0f, 0.0f, 0.0f));
+		const FVector3f TangentY = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 1.0f, 0.0f));
+		const FVector3f TangentZ = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 0.0f, 1.0f));
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
 			OutPosition.SetAndAdvance(Position);
@@ -4142,9 +4216,9 @@ void UNiagaraDataInterfaceStaticMesh::VMGetTriangle(FVectorVMExternalFunctionCon
 		const FVector3f Position = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FVector3f PreviousPosition = StaticMeshHelper.PreviousTransformPosition(FVector3f::ZeroVector);
 		const FVector3f Velocity = FVector3f::ZeroVector;
-		const FVector3f TangentX = StaticMeshHelper.TransformVector(FVector3f(1.0f, 0.0f, 0.0f));
-		const FVector3f TangentY = StaticMeshHelper.TransformVector(FVector3f(0.0f, 1.0f, 0.0f));
-		const FVector3f TangentZ = StaticMeshHelper.TransformVector(FVector3f(0.0f, 0.0f, 1.0f));
+		const FVector3f TangentX = StaticMeshHelper.TransformUnitVector(FVector3f(1.0f, 0.0f, 0.0f));
+		const FVector3f TangentY = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 1.0f, 0.0f));
+		const FVector3f TangentZ = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 0.0f, 1.0f));
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
 			OutPositionParam.SetAndAdvance(Position);
@@ -4197,9 +4271,9 @@ void UNiagaraDataInterfaceStaticMesh::VMGetTriangleInterpolated(FVectorVMExterna
 		const FVector3f Position = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FVector3f PreviousPosition = StaticMeshHelper.PreviousTransformPosition(FVector3f::ZeroVector);
 		const FVector3f Velocity = FVector3f::ZeroVector;
-		const FVector3f TangentX = StaticMeshHelper.TransformVector(FVector3f(1.0f, 0.0f, 0.0f));
-		const FVector3f TangentY = StaticMeshHelper.TransformVector(FVector3f(0.0f, 1.0f, 0.0f));
-		const FVector3f TangentZ = StaticMeshHelper.TransformVector(FVector3f(0.0f, 0.0f, 1.0f));
+		const FVector3f TangentX = StaticMeshHelper.TransformUnitVector(FVector3f(1.0f, 0.0f, 0.0f));
+		const FVector3f TangentY = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 1.0f, 0.0f));
+		const FVector3f TangentZ = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 0.0f, 1.0f));
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
 			OutPositionParam.SetAndAdvance(Position);
@@ -4423,7 +4497,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetSocketTransform(FVectorVMExternalFunc
 			const FVector3f Velocity = (Position - PreviousPosition) * StaticMeshHelper.GetInvDeltaSeconds();
 			OutTranslateParam.SetAndAdvance(StaticMeshHelper.TransformPosition(SocketTransform.GetTranslation()));
 			OutRotateParam.SetAndAdvance(StaticMeshHelper.TransformRotation(SocketTransform.GetRotation()));
-			OutScaleParam.SetAndAdvance(StaticMeshHelper.TransformVector(SocketTransform.GetScale3D()));
+			OutScaleParam.SetAndAdvance(StaticMeshHelper.TransformNotUnitVector(SocketTransform.GetScale3D()));
 			OutVelocityParam.SetAndAdvance(Velocity);
 		}
 	}
@@ -4431,7 +4505,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetSocketTransform(FVectorVMExternalFunc
 	{
 		const FVector3f DefaultTranslate = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FQuat4f DefaultRotation = StaticMeshHelper.TransformRotation(FQuat4f::Identity);
-		const FVector3f DefaultScale = StaticMeshHelper.TransformVector(FVector3f::OneVector);
+		const FVector3f DefaultScale = StaticMeshHelper.TransformNotUnitVector(FVector3f::OneVector);
 		const FVector3f DefaultVelocity = FVector3f::ZeroVector;
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
@@ -4473,7 +4547,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetSocketTransformInterpolated(FVectorVM
 	{
 		const FVector3f DefaultTranslate = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FQuat4f DefaultRotation = StaticMeshHelper.TransformRotation(FQuat4f::Identity);
-		const FVector3f DefaultScale = StaticMeshHelper.TransformVector(FVector3f::OneVector);
+		const FVector3f DefaultScale = StaticMeshHelper.TransformNotUnitVector(FVector3f::OneVector);
 		const FVector3f DefaultVelocity = FVector3f::ZeroVector;
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
@@ -4508,7 +4582,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetFilteredSocketTransform(FVectorVMExte
 			const FVector3f Velocity = (Position - PreviousPosition) * StaticMeshHelper.GetInvDeltaSeconds();
 			OutTranslateParam.SetAndAdvance(StaticMeshHelper.TransformPosition(SocketTransform.GetTranslation()));
 			OutRotateParam.SetAndAdvance(StaticMeshHelper.TransformRotation(SocketTransform.GetRotation()));
-			OutScaleParam.SetAndAdvance(StaticMeshHelper.TransformVector(SocketTransform.GetScale3D()));
+			OutScaleParam.SetAndAdvance(StaticMeshHelper.TransformNotUnitVector(SocketTransform.GetScale3D()));
 			OutVelocityParam.SetAndAdvance(Velocity);
 		}
 	}
@@ -4516,7 +4590,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetFilteredSocketTransform(FVectorVMExte
 	{
 		const FVector3f DefaultTranslate = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FQuat4f DefaultRotation = StaticMeshHelper.TransformRotation(FQuat4f::Identity);
-		const FVector3f DefaultScale = StaticMeshHelper.TransformVector(FVector3f::OneVector);
+		const FVector3f DefaultScale = StaticMeshHelper.TransformNotUnitVector(FVector3f::OneVector);
 		const FVector3f DefaultVelocity = FVector3f::ZeroVector;
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
@@ -4559,7 +4633,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetFilteredSocketTransformInterpolated(F
 	{
 		const FVector3f DefaultTranslate = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FQuat4f DefaultRotation = StaticMeshHelper.TransformRotation(FQuat4f::Identity);
-		const FVector3f DefaultScale = StaticMeshHelper.TransformVector(FVector3f::OneVector);
+		const FVector3f DefaultScale = StaticMeshHelper.TransformNotUnitVector(FVector3f::OneVector);
 		const FVector3f DefaultVelocity = FVector3f::ZeroVector;
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
@@ -4595,7 +4669,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetUnfilteredSocketTransform(FVectorVMEx
 			const FVector3f Velocity = (Position - PreviousPosition) * StaticMeshHelper.GetInvDeltaSeconds();
 			OutTranslateParam.SetAndAdvance(StaticMeshHelper.TransformPosition(SocketTransform.GetTranslation()));
 			OutRotateParam.SetAndAdvance(StaticMeshHelper.TransformRotation(SocketTransform.GetRotation()));
-			OutScaleParam.SetAndAdvance(StaticMeshHelper.TransformVector(SocketTransform.GetScale3D()));
+			OutScaleParam.SetAndAdvance(StaticMeshHelper.TransformNotUnitVector(SocketTransform.GetScale3D()));
 			OutVelocityParam.SetAndAdvance(Velocity);
 		}
 	}
@@ -4603,7 +4677,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetUnfilteredSocketTransform(FVectorVMEx
 	{
 		const FVector3f DefaultTranslate = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FQuat4f DefaultRotation = StaticMeshHelper.TransformRotation(FQuat4f::Identity);
-		const FVector3f DefaultScale = StaticMeshHelper.TransformVector(FVector3f::OneVector);
+		const FVector3f DefaultScale = StaticMeshHelper.TransformNotUnitVector(FVector3f::OneVector);
 		const FVector3f DefaultVelocity = FVector3f::ZeroVector;
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
@@ -4647,7 +4721,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetUnfilteredSocketTransformInterpolated
 	{
 		const FVector3f DefaultTranslate = StaticMeshHelper.TransformPosition(FVector3f::ZeroVector);
 		const FQuat4f DefaultRotation = StaticMeshHelper.TransformRotation(FQuat4f::Identity);
-		const FVector3f DefaultScale = StaticMeshHelper.TransformVector(FVector3f::OneVector);
+		const FVector3f DefaultScale = StaticMeshHelper.TransformNotUnitVector(FVector3f::OneVector);
 		const FVector3f DefaultVelocity = FVector3f::ZeroVector;
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
@@ -5307,9 +5381,9 @@ void UNiagaraDataInterfaceStaticMesh::VMGetTriangleTangentBasis_Deprecated(FVect
 	}
 	else
 	{
-		const FVector3f TangentX = StaticMeshHelper.TransformVector(FVector3f(1.0f, 0.0f, 0.0f));
-		const FVector3f TangentY = StaticMeshHelper.TransformVector(FVector3f(0.0f, 1.0f, 0.0f));
-		const FVector3f TangentZ = StaticMeshHelper.TransformVector(FVector3f(0.0f, 0.0f, 1.0f));
+		const FVector3f TangentX = StaticMeshHelper.TransformUnitVector(FVector3f(1.0f, 0.0f, 0.0f));
+		const FVector3f TangentY = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 1.0f, 0.0f));
+		const FVector3f TangentZ = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 0.0f, 1.0f));
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
 			OutNormal.SetAndAdvance(TangentZ);
@@ -5341,7 +5415,7 @@ void UNiagaraDataInterfaceStaticMesh::VMGetTriangleNormal_Deprecated(FVectorVMEx
 	}
 	else
 	{
-		const FVector3f TangentZ = StaticMeshHelper.TransformVector(FVector3f(0.0f, 0.0f, 1.0f));
+		const FVector3f TangentZ = StaticMeshHelper.TransformUnitVector(FVector3f(0.0f, 0.0f, 1.0f));
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
 			OutNormal.SetAndAdvance(TangentZ);
@@ -5373,7 +5447,7 @@ void FNDI_StaticMesh_GeneratedData::Tick(ETickingGroup TickGroup, float DeltaSec
 
 		while (MappingsToRemove.Num())
 		{
-			CachedUvMapping.RemoveAtSwap(MappingsToRemove.Pop(false));
+			CachedUvMapping.RemoveAtSwap(MappingsToRemove.Pop(EAllowShrinking::No));
 		}
 	}
 }

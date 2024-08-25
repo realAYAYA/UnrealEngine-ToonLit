@@ -8,13 +8,14 @@
 #include "dna/JSONStreamReader.h"
 #include "dna/ReaderImpl.h"
 #include "dna/TypeDefs.h"
+#include "dna/stream/StreamReaderStatus.h"
 
 #include <status/Provider.h>
 #include <terse/archives/json/InputArchive.h>
 
 namespace dna {
 
-class JSONStreamReaderImpl : public ReaderImpl<JSONStreamReader> {
+class JSONStreamReaderImpl : public ReaderImpl<JSONStreamReader>, private StreamReaderStatus {
     public:
         JSONStreamReaderImpl(BoundedIOStream* stream_, MemoryResource* memRes_);
 
@@ -22,8 +23,6 @@ class JSONStreamReaderImpl : public ReaderImpl<JSONStreamReader> {
         void read() override;
 
     private:
-        static sc::StatusProvider status;
-
         BoundedIOStream* stream;
         terse::JSONInputArchive<BoundedIOStream> archive;
 };

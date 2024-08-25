@@ -136,11 +136,11 @@ namespace ChaosTest {
 
 
 			// Joint position calculated from pose and local-space joint pos
-			const FVec3 Box2WorldSpaceJointPosition = Test.GetParticle(Box2Id)->R().RotateVector(Box2LocalSpaceJointPosition) + Test.GetParticle(Box2Id)->X();
+			const FVec3 Box2WorldSpaceJointPosition = Test.GetParticle(Box2Id)->GetR().RotateVector(Box2LocalSpaceJointPosition) + Test.GetParticle(Box2Id)->GetX();
 			EXPECT_LT((Box2WorldSpaceJointPosition - Test.JointPositions[0]).Size(), (FReal)0.1);
 
 			// Kinematic particle should not have moved
-			EXPECT_LT((Test.GetParticle(Box1Id)->X() - Test.ParticlePositions[0]).Size(), (FReal)0.1);
+			EXPECT_LT((Test.GetParticle(Box1Id)->GetX() - Test.ParticlePositions[0]).Size(), (FReal)0.1);
 		}
 	}
 
@@ -197,13 +197,13 @@ namespace ChaosTest {
 			// Nothing should have moved
 			for (int32 ParticleIndex = 0; ParticleIndex < Test.ParticlePositions.Num(); ++ParticleIndex)
 			{
-				EXPECT_LT((Test.GetParticle(ParticleIndex)->X() - Test.ParticlePositions[ParticleIndex]).Size(), (FReal)0.1) << "Initial configuration instability on frame " << i;
+				EXPECT_LT((Test.GetParticle(ParticleIndex)->GetX() - Test.ParticlePositions[ParticleIndex]).Size(), (FReal)0.1) << "Initial configuration instability on frame " << i;
 			}
 		}
 
 		// Move the kinematic body
 		const FVec3 RootPosition = Test.ParticlePositions[0] + RootDelta;
-		Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(Box1Id)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(Box1Id)->R()));
+		Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(Box1Id)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(Box1Id)->GetR()));
 
 		for (int32 i = 0; i < 1000; ++i)
 		{
@@ -211,16 +211,16 @@ namespace ChaosTest {
 			Test.Evolution.EndFrame(Dt);
 
 			// Kinematic particle should have moved to animated position
-			EXPECT_LT((Test.GetParticle(Box1Id)->X() - RootPosition).Size(), (FReal)0.1 * BoxSize) << "Post-move instability on frame " << i;
+			EXPECT_LT((Test.GetParticle(Box1Id)->GetX() - RootPosition).Size(), (FReal)0.1 * BoxSize) << "Post-move instability on frame " << i;
 
 			// Particles should remain fixed distance apart (joint point is at Box1 location)
 			// NOTE: when using linear joints the error can be moderately large
-			const FVec3 Delta = Test.GetParticle(Box2Id)->X() - Test.GetParticle(Box1Id)->X();
+			const FVec3 Delta = Test.GetParticle(Box2Id)->GetX() - Test.GetParticle(Box1Id)->GetX();
 			const FReal Distance = Delta.Size();
 			EXPECT_NEAR(Distance, ExpectedDistance, (FReal)0.15 * BoxSize) << "Post-move instability on frame " << i;
 
 			// Joint position calculted from pose and local-space joint pos
-			const FVec3 Box2WorldSpaceJointPosition = Test.GetParticle(Box2Id)->R().RotateVector(Box2LocalSpaceJointPosition) + Test.GetParticle(Box2Id)->X();
+			const FVec3 Box2WorldSpaceJointPosition = Test.GetParticle(Box2Id)->GetR().RotateVector(Box2LocalSpaceJointPosition) + Test.GetParticle(Box2Id)->GetX();
 			EXPECT_LT((Box2WorldSpaceJointPosition - RootPosition).Size(), (FReal)0.15 * BoxSize) << "Post-move instability on frame " << i;
 		}
 	}
@@ -280,21 +280,21 @@ namespace ChaosTest {
 			const FVec3 RootOffset = FMath::Sin((FReal)2 * PI * Time / AnimPeriod) * AnimDelta;
 			const FVec3 RootPosition = Test.ParticlePositions[0] + RootOffset;
 
-			Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(Box1Id)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(Box1Id)->R()));
+			Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(Box1Id)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(Box1Id)->GetR()));
 
 			Test.Evolution.AdvanceOneTimeStep(Dt);
 			Test.Evolution.EndFrame(Dt);
 
 			// Kinematic particle should have moved to animated position
-			EXPECT_LT((Test.GetParticle(Box1Id)->X() - RootPosition).Size(), (FReal)1) << "Failed on frame " << i;
+			EXPECT_LT((Test.GetParticle(Box1Id)->GetX() - RootPosition).Size(), (FReal)1) << "Failed on frame " << i;
 
 			// Particles should remain fixed distance apart (joint point is at Box1 location)
-			const FVec3 Delta = Test.GetParticle(Box2Id)->CastToRigidParticle()->P() - Test.GetParticle(Box1Id)->X();
+			const FVec3 Delta = Test.GetParticle(Box2Id)->CastToRigidParticle()->GetP() - Test.GetParticle(Box1Id)->GetX();
 			const FReal Distance = Delta.Size();
 			EXPECT_NEAR(Distance, ExpectedDistance, (FReal)1) << "Failed on frame " << i;
 
 			// Joint position calculated from pose and local-space joint pos
-			const FVec3 Box2WorldSpaceJointPosition = Test.GetParticle(Box2Id)->R().RotateVector(Box2LocalSpaceJointPosition) + Test.GetParticle(Box2Id)->X();
+			const FVec3 Box2WorldSpaceJointPosition = Test.GetParticle(Box2Id)->GetR().RotateVector(Box2LocalSpaceJointPosition) + Test.GetParticle(Box2Id)->GetX();
 			EXPECT_LT((Box2WorldSpaceJointPosition - RootPosition).Size(), (FReal)1) << "Failed on frame " << i;
 		}
 	}
@@ -358,7 +358,7 @@ namespace ChaosTest {
 			const FVec3 RootOffset = FMath::Sin((FReal)2 * PI * Time / AnimPeriod) * AnimDelta;
 			const FVec3 RootPosition = Test.ParticlePositions[0] + RootOffset;
 
-			Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(0)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(0)->R()));
+			Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(0)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(0)->GetR()));
 
 			Test.Evolution.AdvanceOneTimeStep(Dt);
 			Test.Evolution.EndFrame(Dt);
@@ -368,7 +368,7 @@ namespace ChaosTest {
 			{
 				const int32 ParticleIndex1 = Test.JointParticleIndices[JointIndex][0];
 				const int32 ParticleIndex2 = Test.JointParticleIndices[JointIndex][1];
-				const FVec3 Delta = Test.GetParticle(ParticleIndex2)->CastToRigidParticle()->P() - Test.GetParticle(ParticleIndex1)->X();
+				const FVec3 Delta = Test.GetParticle(ParticleIndex2)->CastToRigidParticle()->GetP() - Test.GetParticle(ParticleIndex1)->GetX();
 				const FReal Distance = Delta.Size();
 				const FReal ExpectedDistance = (Test.ParticlePositions[ParticleIndex2] - Test.ParticlePositions[ParticleIndex1]).Size();
 				EXPECT_NEAR(Distance, ExpectedDistance, AcceptableDistanceError) << "Joint " << JointIndex << " on frame " << FrameIndex;
@@ -444,7 +444,7 @@ namespace ChaosTest {
 			const FVec3 RootOffset = FMath::Sin((FReal)2 * PI * Time / AnimPeriod) * AnimDelta;
 			const FVec3 RootPosition = Test.ParticlePositions[0] + RootOffset;
 
-			Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(0)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(0)->R()));
+			Test.Evolution.SetParticleKinematicTarget(Test.GetParticle(0)->CastToKinematicParticle(), FKinematicTarget::MakePositionTarget(RootPosition, Test.GetParticle(0)->GetR()));
 
 			Test.Evolution.AdvanceOneTimeStep(Dt);
 			Test.Evolution.EndFrame(Dt);
@@ -454,7 +454,7 @@ namespace ChaosTest {
 			{
 				const int32 ParticleIndex1 = Test.JointParticleIndices[JointIndex][0];
 				const int32 ParticleIndex2 = Test.JointParticleIndices[JointIndex][1];
-				const FVec3 Delta = Test.GetParticle(ParticleIndex2)->CastToRigidParticle()->P() - Test.GetParticle(ParticleIndex1)->X();
+				const FVec3 Delta = Test.GetParticle(ParticleIndex2)->CastToRigidParticle()->GetP() - Test.GetParticle(ParticleIndex1)->GetX();
 				const FReal Distance = Delta.Size();
 				const FReal ExpectedDistance = (Test.ParticlePositions[ParticleIndex2] - Test.ParticlePositions[ParticleIndex1]).Size();
 				EXPECT_NEAR(Distance, ExpectedDistance, AcceptableDistanceError) << "Joint " << JointIndex << " on frame " << FrameIndex;
@@ -488,10 +488,10 @@ namespace ChaosTest {
 
 		auto StaticBox = AppendStaticParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
 		auto Box2 = AppendDynamicParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
-		StaticBox->X() = FVec3((FReal)0, (FReal)0, (FReal)1000);
+		StaticBox->SetX(FVec3((FReal)0, (FReal)0, (FReal)1000));
 
-		Box2->X() = FVec3((FReal)500, (FReal)0, (FReal)1000);
-		Box2->P() = Box2->X();
+		Box2->SetX(FVec3((FReal)500, (FReal)0, (FReal)1000));
+		Box2->SetP(Box2->GetX());
 		THandleArray<FChaosPhysicsMaterial> PhysicalMaterials;
 		TEvolution Evolution(Particles, PhysicalMaterials);
 		TVec2<FGeometryParticleHandle*> ConstrainedParticles = TVec2<FGeometryParticleHandle*>(StaticBox, Box2);
@@ -513,7 +513,7 @@ namespace ChaosTest {
 		{
 			Evolution.AdvanceOneTimeStep(Dt);
 			Evolution.EndFrame(Dt);
-			EXPECT_LT(FMath::Abs((Box2->R().RotateVector(FVec3((FReal)-100, (FReal)0, (FReal)0)) + Box2->X() - Points[0]).Size() - 300.f), 0.1);
+			EXPECT_LT(FMath::Abs((Box2->GetR().RotateVector(FVec3((FReal)-100, (FReal)0, (FReal)0)) + Box2->GetX() - Points[0]).Size() - 300.f), 0.1);
 		}
 	}
 
@@ -535,10 +535,10 @@ namespace ChaosTest {
 
 			auto& StaticBox = *AppendStaticParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
 			auto& Box2 = *AppendDynamicParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
-			StaticBox.X() = FVec3((FReal)0, (FReal)0, (FReal)500);
+			StaticBox.SetX(FVec3((FReal)0, (FReal)0, (FReal)500));
 
-			Box2.X() = FVec3((FReal)500, (FReal)0, (FReal)1000);
-			Box2.P() = Box2.X();
+			Box2.SetX(FVec3((FReal)500, (FReal)0, (FReal)1000));
+			Box2.SetP(Box2.GetX());
 
 			THandleArray<FChaosPhysicsMaterial> PhysicalMaterials;
 			TEvolution Evolution(Particles, PhysicalMaterials);
@@ -559,7 +559,7 @@ namespace ChaosTest {
 				Evolution.AdvanceOneTimeStep(Dt);
 				Evolution.EndFrame(Dt);
 			}
-			EXPECT_LT(Box2.X()[2], 0);
+			EXPECT_LT(Box2.GetX()[2], 0);
 		}
 
 		{
@@ -568,10 +568,10 @@ namespace ChaosTest {
 
 			auto& StaticBox = *AppendStaticParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
 			auto& Box2 = *AppendDynamicParticleBox(Particles, FVec3((FReal)100, (FReal)100, (FReal)100));
-			StaticBox.X() = FVec3((FReal)0, (FReal)0, (FReal)500);
+			StaticBox.SetX(FVec3((FReal)0, (FReal)0, (FReal)500));
 
-			Box2.X() = FVec3((FReal)500, (FReal)0, (FReal)1000);
-			Box2.P() = Box2.X();
+			Box2.SetX(FVec3((FReal)500, (FReal)0, (FReal)1000));
+			Box2.SetP(Box2.GetX());
 
 			THandleArray<FChaosPhysicsMaterial> PhysicalMaterials;
 			TEvolution Evolution(Particles, PhysicalMaterials);
@@ -592,7 +592,7 @@ namespace ChaosTest {
 				Evolution.AdvanceOneTimeStep(Dt);
 				Evolution.EndFrame(Dt);
 			}
-			EXPECT_GT(Box2.X()[2], 0);
+			EXPECT_GT(Box2.GetX()[2], 0);
 		}
 	}
 
@@ -647,14 +647,14 @@ namespace ChaosTest {
 			Test.Evolution.EndFrame(Dt);
 
 			// box 1 not simulating so would expect to not have moved
-			EXPECT_LT(FMath::Abs(Test.ParticlePositions[0].X - Test.GetParticle(Box1Id)->X().X), (FReal)0.1);
-			EXPECT_LT(FMath::Abs(Test.ParticlePositions[0].Y - Test.GetParticle(Box1Id)->X().Y), (FReal)0.1);
-			EXPECT_LT(FMath::Abs(Test.ParticlePositions[0].Z - Test.GetParticle(Box1Id)->X().Z), (FReal)0.09);
+			EXPECT_LT(FMath::Abs(Test.ParticlePositions[0].X - Test.GetParticle(Box1Id)->GetX().X), (FReal)0.1);
+			EXPECT_LT(FMath::Abs(Test.ParticlePositions[0].Y - Test.GetParticle(Box1Id)->GetX().Y), (FReal)0.1);
+			EXPECT_LT(FMath::Abs(Test.ParticlePositions[0].Z - Test.GetParticle(Box1Id)->GetX().Z), (FReal)0.09);
 
 			// box 2 should fall under gravity & not have moved in X or Y, constraint should not 'Apply' if other particle is disabled
-			EXPECT_LT(FMath::Abs(Test.ParticlePositions[1].X - Test.GetParticle(Box2Id)->X().X), (FReal)0.1);
-			EXPECT_LT(FMath::Abs(Test.ParticlePositions[1].Y - Test.GetParticle(Box2Id)->X().Y), (FReal)0.1);
-			EXPECT_GT(FMath::Abs(Test.ParticlePositions[1].Z - Test.GetParticle(Box2Id)->X().Z), (FReal)0.09);
+			EXPECT_LT(FMath::Abs(Test.ParticlePositions[1].X - Test.GetParticle(Box2Id)->GetX().X), (FReal)0.1);
+			EXPECT_LT(FMath::Abs(Test.ParticlePositions[1].Y - Test.GetParticle(Box2Id)->GetX().Y), (FReal)0.1);
+			EXPECT_GT(FMath::Abs(Test.ParticlePositions[1].Z - Test.GetParticle(Box2Id)->GetX().Z), (FReal)0.09);
 		}
 	}
 
@@ -749,8 +749,8 @@ namespace ChaosTest {
 			Test.Evolution.EndFrame(Dt);
 
 			// Neither particle should have moved
-			EXPECT_LT((Test.GetParticle(0)->X() - Test.ParticlePositions[0]).Size(), (FReal)0.1);
-			EXPECT_LT((Test.GetParticle(1)->X() - Test.ParticlePositions[1]).Size(), (FReal)0.1);
+			EXPECT_LT((Test.GetParticle(0)->GetX() - Test.ParticlePositions[0]).Size(), (FReal)0.1);
+			EXPECT_LT((Test.GetParticle(1)->GetX() - Test.ParticlePositions[1]).Size(), (FReal)0.1);
 		}
 	}
 

@@ -14,6 +14,8 @@
 #include "Components/BaseDynamicMeshComponent.h"
 #include "RayTracingGeometry.h"
 
+#include "PhysicsEngine/AggregateGeom.h"
+
 using UE::Geometry::FDynamicMesh3;
 using UE::Geometry::FDynamicMeshAttributeSet;
 using UE::Geometry::FDynamicMeshUVOverlay;
@@ -98,8 +100,6 @@ public:
 
 	virtual ~FMeshRenderBufferSet()
 	{
-		check(IsInRenderingThread());
-
 		if (TriangleCount > 0)
 		{
 			PositionVertexBuffer.ReleaseResource();
@@ -139,9 +139,9 @@ public:
 			return;
 		}
 
-		InitOrUpdateResource(&this->PositionVertexBuffer);
-		InitOrUpdateResource(&this->StaticMeshVertexBuffer);
-		InitOrUpdateResource(&this->ColorVertexBuffer);
+		InitOrUpdateResource(RHICmdList, &this->PositionVertexBuffer);
+		InitOrUpdateResource(RHICmdList, &this->StaticMeshVertexBuffer);
+		InitOrUpdateResource(RHICmdList, &this->ColorVertexBuffer);
 
 		FLocalVertexFactory::FDataType Data;
 		this->PositionVertexBuffer.BindPositionVertexBuffer(&this->VertexFactory, Data);
@@ -150,9 +150,9 @@ public:
 		// currently no lightmaps support
 		//this->StaticMeshVertexBuffer.BindLightMapVertexBuffer(&this->VertexFactory, Data, LightMapIndex);
 		this->ColorVertexBuffer.BindColorVertexBuffer(&this->VertexFactory, Data);
-		this->VertexFactory.SetData(Data);
+		this->VertexFactory.SetData(RHICmdList, Data);
 
-		InitOrUpdateResource(&this->VertexFactory);
+		InitOrUpdateResource(RHICmdList, &this->VertexFactory);
 		PositionVertexBuffer.InitResource(RHICmdList);
 		StaticMeshVertexBuffer.InitResource(RHICmdList);
 		ColorVertexBuffer.InitResource(RHICmdList);
@@ -180,15 +180,15 @@ public:
 	void UploadIndexBufferUpdate()
 	{
 		// todo: can this be done with RHI locking and memcpy, like in TransferVertexUpdateToGPU?
+		FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
 
-		check(IsInRenderingThread());
 		if (IndexBuffer.Indices.Num() > 0)
 		{
-			InitOrUpdateResource(&IndexBuffer);
+			InitOrUpdateResource(RHICmdList, &IndexBuffer);
 		}
 		if (bEnableSecondaryIndexBuffer && SecondaryIndexBuffer.Indices.Num() > 0)
 		{
-			InitOrUpdateResource(&SecondaryIndexBuffer);
+			InitOrUpdateResource(RHICmdList, &SecondaryIndexBuffer);
 		}
 
 		InvalidateRayTracingData();
@@ -208,24 +208,24 @@ public:
 		// are any situations where we would change vertex buffer size w/o also updating the index
 		// buffers (in which case we are fully rebuilding the buffers...)
 
-		check(IsInRenderingThread());
-
 		if (TriangleCount == 0)
 		{
 			return;
 		}
 
+		FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
+
 		if (bPositions)
 		{
-			InitOrUpdateResource(&this->PositionVertexBuffer);
+			InitOrUpdateResource(RHICmdList, &this->PositionVertexBuffer);
 		}
 		if (bMeshAttribs)
 		{
-			InitOrUpdateResource(&this->StaticMeshVertexBuffer);
+			InitOrUpdateResource(RHICmdList, &this->StaticMeshVertexBuffer);
 		}
 		if (bColors)
 		{
-			InitOrUpdateResource(&this->ColorVertexBuffer);
+			InitOrUpdateResource(RHICmdList, &this->ColorVertexBuffer);
 		}
 
 		FLocalVertexFactory::FDataType Data;
@@ -233,9 +233,9 @@ public:
 		this->StaticMeshVertexBuffer.BindTangentVertexBuffer(&this->VertexFactory, Data);
 		this->StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(&this->VertexFactory, Data);
 		this->ColorVertexBuffer.BindColorVertexBuffer(&this->VertexFactory, Data);
-		this->VertexFactory.SetData(Data);
+		this->VertexFactory.SetData(RHICmdList, Data);
 
-		InitOrUpdateResource(&this->VertexFactory);
+		InitOrUpdateResource(RHICmdList, &this->VertexFactory);
 
 		InvalidateRayTracingData();
 		ValidateRayTracingData();		// currently we are immediately validating. This may be revisited in future.
@@ -344,16 +344,15 @@ protected:
 			Initializer.bFastBuild = true;
 			Initializer.bAllowUpdate = false;
 
-			RayTracingGeometry.SetInitializer(Initializer);
-			RayTracingGeometry.InitResource(RHICmdList);
-
 			FRayTracingGeometrySegment Segment;
 			Segment.VertexBuffer = PositionVertexBuffer.VertexBufferRHI;
-			Segment.NumPrimitives = RayTracingGeometry.Initializer.TotalPrimitiveCount;
+			Segment.NumPrimitives = Initializer.TotalPrimitiveCount;
 			Segment.MaxVertices = PositionVertexBuffer.GetNumVertices();
-			RayTracingGeometry.Initializer.Segments.Add(Segment);
 
-			RayTracingGeometry.UpdateRHI(RHICmdList);
+			Initializer.Segments.Add(Segment);
+
+			RayTracingGeometry.SetInitializer(MoveTemp(Initializer));
+			RayTracingGeometry.InitResource(RHICmdList);
 		}
 #endif
 	}
@@ -364,10 +363,8 @@ protected:
 	 * Initializes a render resource, or update it if already initialized.
 	 * @warning This function can only be called on the Render Thread
 	 */
-	void InitOrUpdateResource(FRenderResource* Resource)
+	void InitOrUpdateResource(FRHICommandListBase& RHICmdList, FRenderResource* Resource)
 	{
-		FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
-
 		if (!Resource->IsInitialized())
 		{
 			Resource->InitResource(RHICmdList);
@@ -395,11 +392,7 @@ protected:
 			return;
 		}
 
-		ENQUEUE_RENDER_COMMAND(FMeshRenderBufferSetDestroy)(
-			[BufferSet](FRHICommandListImmediate& RHICmdList)
-		{
-			delete BufferSet;
-		});
+		delete BufferSet;
 	}
 
 
@@ -964,6 +957,16 @@ public:
 		uint32 VisibilityMap, 
 		FMeshElementCollector& Collector) const override;
 
+protected:
+	/**
+	 * Helper called by GetDynamicMeshElements to process collision debug drawing
+	 */
+	GEOMETRYFRAMEWORK_API virtual void GetCollisionDynamicMeshElements(TArray<FMeshRenderBufferSet*>& Buffers,
+		const FEngineShowFlags& EngineShowFlags, bool bDrawCollisionView, bool bDrawSimpleCollision, bool bDrawComplexCollision,
+		bool bProxyIsSelected,
+		const TArray<const FSceneView*>& Views, uint32 VisibilityMap,
+		FMeshElementCollector& Collector) const;
+public:
 
 	/**
 	 * Draw a single-frame FMeshBatch for a FMeshRenderBufferSet
@@ -1000,5 +1003,27 @@ public:
 
 
 #endif // RHI_RAYTRACING
+
+public:
+	// Set the collision data to use for debug drawing, or do nothing if debug drawing is not enabled
+	GEOMETRYFRAMEWORK_API void SetCollisionData();
+
+#if UE_ENABLE_DEBUG_DRAWING
+private:
+	// If debug drawing is enabled, we store collision data here so that collision shapes can be rendered when requested by showflags
+
+	bool bOwnerIsNull = true;
+	/** Whether the collision data has been set up for rendering */
+	bool bHasCollisionData = false;
+	/** Collision trace flags */
+	ECollisionTraceFlag		CollisionTraceFlag;
+	/** Collision Response of this component */
+	FCollisionResponseContainer CollisionResponse;
+	/** Cached AggGeom holding the collision shapes to render */
+	FKAggregateGeom CachedAggGeom;
+
+#endif
+
+	GEOMETRYFRAMEWORK_API bool IsCollisionView(const FEngineShowFlags& EngineShowFlags, bool& bDrawSimpleCollision, bool& bDrawComplexCollision) const;
 
 };

@@ -88,6 +88,7 @@ public:
 protected:
 	UNREALED_API virtual bool RunInternal(UWorld* World, const FCellInfo& InCellInfo, FPackageSourceControlHelper& PackageHelper) override;
 	virtual bool CanProcessNonPartitionedWorlds() const override { return true; }
+	UNREALED_API virtual bool ShouldProcessWorld(UWorld* World) const override;
 	// UWorldPartitionBuilder interface end
 
 	bool IsDistributedBuild() const { return bDistributedBuild; }
@@ -123,6 +124,7 @@ private:
 
 	bool bDistributedBuild;
 	bool bForceBuild;
+	bool bReportOnly;
 	FString BuildManifest;
 	int32 BuilderIdx;
 	int32 BuilderCount;

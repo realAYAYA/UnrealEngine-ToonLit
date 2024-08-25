@@ -5,6 +5,7 @@
 #endif
 
 #include "/Engine/Private/VirtualTextureCommon.ush"
+#include "/Engine/Private/Landscape/LandscapeCommon.ush"
 
 // Mirrored from FNiagaraDataInterfaceParametersCS_Landscape
 #define VIRTUAL_TEXTURE_UNPACK_NORMAL_NONE 0
@@ -50,7 +51,8 @@ float3				{ParameterName}_CachedHeightTextureLWCTile;
 float4x4			{ParameterName}_CachedHeightTextureWorldToUvTransform;
 float4x4			{ParameterName}_CachedHeightTextureUvToWorldTransform;
 float4				{ParameterName}_CachedHeightTextureUvScaleBias;
-float2				{ParameterName}_CachedHeightTextureGridSize;
+float2				{ParameterName}_CachedHeightTextureWorldGridSize;
+int2				{ParameterName}_CachedHeightTextureDimension;
 SamplerState		{ParameterName}_PointClampedSampler;
 Texture2D<uint>		{ParameterName}_CachedPhysMatTexture;
 int2				{ParameterName}_CachedPhysMatTextureDimension;
@@ -75,8 +77,8 @@ void GetBaseColor_{ParameterName}(float3 InWorldPos, out float3 OutBaseColor, ou
 		float3 UnpackBaseColorU = {ParameterName}_BaseColorVirtualTextureWorldToUvTransform[1].xyz;
 		float3 UnpackBaseColorV = {ParameterName}_BaseColorVirtualTextureWorldToUvTransform[2].xyz;
 
-		FLWCVector3 LwcWorldPos = MakeLWCVector3({ParameterName}_SystemLWCTile, InWorldPos);
-		FLWCVector3 LwcBaseColorOrigin = MakeLWCVector3({ParameterName}_BaseColorVirtualTextureLWCTile, UnpackBaseColorOrigin);
+		FDFVector3 LwcWorldPos = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, InWorldPos));
+		FDFVector3 LwcBaseColorOrigin = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_BaseColorVirtualTextureLWCTile, UnpackBaseColorOrigin));
 		float2 SampleUv = VirtualTextureWorldToUV(LwcWorldPos, LwcBaseColorOrigin, UnpackBaseColorU, UnpackBaseColorV);
 
 		VTPageTableResult PageTable = TextureLoadVirtualPageTableLevel(
@@ -113,8 +115,8 @@ void GetHeight_{ParameterName}(float3 InWorldPos, out float OutHeight, out bool 
 		float3 UnpackHeightV = {ParameterName}_HeightVirtualTextureWorldToUvTransform[2].xyz;
 		float2 UnpackHeightScaleBias = {ParameterName}_HeightVirtualTextureWorldToUvTransform[3].xy;
 
-		FLWCVector3 LwcWorldPos = MakeLWCVector3({ParameterName}_SystemLWCTile, InWorldPos);
-		FLWCVector3 LwcHeightOrigin = MakeLWCVector3({ParameterName}_HeightVirtualTextureLWCTile, UnpackHeightOrigin);
+		FDFVector3 LwcWorldPos = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, InWorldPos));
+		FDFVector3 LwcHeightOrigin = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_HeightVirtualTextureLWCTile, UnpackHeightOrigin));
 		float2 SampleUv = VirtualTextureWorldToUV(LwcWorldPos, LwcHeightOrigin, UnpackHeightU, UnpackHeightV);
 
 		VTPageTableResult PageTable = TextureLoadVirtualPageTableLevel(
@@ -157,8 +159,8 @@ void GetWorldNormal_{ParameterName}(float3 InWorldPos, out float3 OutNormal, out
 		float3 UnpackNormalU = {ParameterName}_NormalVirtualTextureWorldToUvTransform[1].xyz;
 		float3 UnpackNormalV = {ParameterName}_NormalVirtualTextureWorldToUvTransform[2].xyz;
 
-		FLWCVector3 LwcWorldPos = MakeLWCVector3({ParameterName}_SystemLWCTile, InWorldPos);
-		FLWCVector3 LwcNormalOrigin = MakeLWCVector3({ParameterName}_NormalVirtualTextureLWCTile, UnpackNormalOrigin);
+		FDFVector3 LwcWorldPos = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, InWorldPos));
+		FDFVector3 LwcNormalOrigin = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_NormalVirtualTextureLWCTile, UnpackNormalOrigin));
 		float2 SampleUv = VirtualTextureWorldToUV(LwcWorldPos, LwcNormalOrigin, UnpackNormalU, UnpackNormalV);
 
 		VTPageTableResult PageTable = TextureLoadVirtualPageTableLevel(
@@ -202,23 +204,71 @@ void GetWorldNormal_{ParameterName}(float3 InWorldPos, out float3 OutNormal, out
 	}
 	else if ({ParameterName}_CachedHeightTextureEnabled != 0)
 	{
-		float2 Uv = GetCachedHeightTextureUv_{ParameterName}(InWorldPos);
+		float2 InTextureCoordinates = GetCachedHeightTextureUv_{ParameterName}(InWorldPos);
+		float2 TextureSize = {ParameterName}_CachedHeightTextureDimension.xy;
 
-		float Left = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(-1,0)).x;
-		float Right = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(1,0)).x;
-		float Top = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(0,1)).x;
-		float Bottom = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(0,-1)).x;
+		// taken from LandscapeLayersPS.usf -> CalculateNormalsFromHeights()
+		float2 TexelSize = 1.0 / TextureSize;
 
-		// cross product of our two gradient vectors
-		OutNormal = float3(
-			{ParameterName}_CachedHeightTextureGridSize.y * (Left - Right),
-			{ParameterName}_CachedHeightTextureGridSize.x * (Bottom - Top),
-			2.0f * {ParameterName}_CachedHeightTextureGridSize.x * {ParameterName}_CachedHeightTextureGridSize.y);
+		float MaskMinBorderX = (InTextureCoordinates.x <= TexelSize.x) ? 0.0f : 1.0f;			// first pixel X
+		float MaskMinBorderY = (InTextureCoordinates.y <= TexelSize.y) ? 0.0f : 1.0f;			// first pixel Y
+		float MaskMaxBorderX = (InTextureCoordinates.x >= 1.0f - TexelSize.x) ? 0.0f : 1.0f;	// last pixel X
+		float MaskMaxBorderY = (InTextureCoordinates.y >= 1.0f - TexelSize.y) ? 0.0f : 1.0f;	// last pixel Y
 
-		// next rotate the normal to make it world space
-		OutNormal = mul(float4(OutNormal, 0.0f), {ParameterName}_CachedHeightTextureUvToWorldTransform).xyz;
-		OutNormal = normalize(OutNormal);
+		// The triangle topology is the following (where C = center, T = top, B = bottom, L = left, R = right and Nx the normals we need to interpolate):
+		// TL ------ TT
+		// | \       | \
+		// |  \      |  \
+		// |   \     |   \
+		// | N0 \ N1 | N3 \
+		// |     \   |     \
+		// |      \  |      \
+		// |       \ |       \
+		// LL ------ CC ------ RR
+		//   \       | \       |
+		//    \      |  \      |
+		//     \     |   \     |
+		//      \ N2 | N4 \ N5 |
+		//       \   |     \   |
+		//        \  |      \  |
+		//         \ |       \ |
+		//           BB ------ BR
+		// So we can retrieve all 7 samples using 4 gathers : 
+		// Make sure we gather the 4 pixels in the bottom right direction by sampling at (0.75, 0.75) of the pixel (gather retrieves the 4 samples that would be used for bilinear interpolation):
 
+		float2 GatherLocation = InTextureCoordinates + 0.25f * TexelSize; 
+		float4 Red0 = {ParameterName}_CachedHeightTexture.GatherRed({ParameterName}_CachedHeightTextureSampler, GatherLocation - TexelSize);
+		float4 Red1 = {ParameterName}_CachedHeightTexture.GatherRed({ParameterName}_CachedHeightTextureSampler, GatherLocation);
+
+		// [x,y,z] = World Position [w] = valid mask
+		float4 TL = float4(float2(-1, -1) * {ParameterName}_CachedHeightTextureWorldGridSize, Red0.w, 1.0f);
+		float4 TT = float4(float2(+0, -1) * {ParameterName}_CachedHeightTextureWorldGridSize, Red0.z, 1.0f);
+		float4 CC = float4(float2(+0, +0) * {ParameterName}_CachedHeightTextureWorldGridSize, Red0.y, 1.0f);
+		float4 LL = float4(float2(-1, +0) * {ParameterName}_CachedHeightTextureWorldGridSize, Red0.x, 1.0f);
+		float4 RR = float4(float2(+1, +0) * {ParameterName}_CachedHeightTextureWorldGridSize, Red1.z, 1.0f);
+		float4 BR = float4(float2(+1, +1) * {ParameterName}_CachedHeightTextureWorldGridSize, Red1.y, 1.0f);
+		float4 BB = float4(float2(+0, +1) * {ParameterName}_CachedHeightTextureWorldGridSize, Red1.x, 1.0f);
+
+		// mask out samples that are off the edge of the texture
+		TL.w *= MaskMinBorderX * MaskMinBorderY;
+		TT.w *=                  MaskMinBorderY;
+		// CC should never be off the edge
+		LL.w *= MaskMinBorderX;
+		RR.w *= MaskMaxBorderX;
+		BR.w *= MaskMaxBorderX * MaskMaxBorderY;
+		BB.w *=                  MaskMaxBorderY;
+
+		float3 N0 = ComputeNullableTriangleNormal(CC, LL, TL);
+		float3 N1 = ComputeNullableTriangleNormal(TL, TT, CC);
+		float3 N2 = ComputeNullableTriangleNormal(LL, CC, BB);
+		float3 N3 = ComputeNullableTriangleNormal(RR, CC, TT);
+		float3 N4 = ComputeNullableTriangleNormal(BR, BB, CC);
+		float3 N5 = ComputeNullableTriangleNormal(CC, RR, BR);
+
+		// average the normals
+		float3 FinalNormal = normalize(N0 + N1 + N2 + N3 + N4 + N5);
+
+		OutNormal = normalize(mul(float4(FinalNormal, 0.0f), {ParameterName}_CachedHeightTextureUvToWorldTransform).xyz);
 		OutIsValid = true;
 	}
 	else

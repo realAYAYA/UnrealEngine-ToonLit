@@ -138,7 +138,17 @@ namespace Electra
 		 * Returns the mutable player option dictionary. Other than initial options this serves as an interface to
 		 * pass values between internal sub systems.
 		 */
-		 virtual FParamDict& GetOptions() = 0;
+		virtual FParamDictTS& GetMutableOptions() = 0;
+
+		/**
+		 * Checks if a certain player option has been set.
+		 */
+		virtual bool HaveOptionValue(const FName& InOption) = 0;
+
+		/**
+		 * Returns a player option value.
+		 */
+		virtual const FVariantValue GetOptionValue(const FName& InOption) = 0;
 
 		 /**
 		  * Returns the DRM manager, if any.

@@ -2,13 +2,9 @@
 
 #pragma once
 
-#include "EOSShared.h"
+#include "EOSVoiceChat.h"
 
-#if WITH_EOS_RTC
-
-#include "VoiceChat.h"
-
-#include "eos_rtc_types.h"
+#if WITH_EOSVOICECHAT
 
 class FEOSAudioDevicePool final : public TSharedFromThis<FEOSAudioDevicePool>
 {
@@ -42,4 +38,4 @@ private:
 	TArray<FVoiceChatDeviceInfo> CachedOutputDeviceInfos;
 };
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

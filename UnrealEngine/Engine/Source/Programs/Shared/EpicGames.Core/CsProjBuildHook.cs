@@ -17,29 +17,28 @@ namespace EpicGames.Core
 	/// </summary>
 	public interface CsProjBuildHook
 	{
+		/// <summary>
+		/// Test the cache for a given file to get the last write time of the given file 
+		/// </summary>
+		/// <param name="basePath">Base path of the file.</param>
+		/// <param name="relativeFilePath">Relative path of the file</param>
+		/// <returns>Last write time of the file.</returns>
+		DateTime GetLastWriteTime(DirectoryReference basePath, string relativeFilePath);
 
 		/// <summary>
 		/// Test the cache for a given file to get the last write time of the given file 
 		/// </summary>
-		/// <param name="BasePath">Base path of the file.</param>
-		/// <param name="RelativeFilePath">Relative path of the file</param>
+		/// <param name="basePath">Base path of the file.</param>
+		/// <param name="relativeFilePath">Relative path of the file</param>
 		/// <returns>Last write time of the file.</returns>
-		DateTime GetLastWriteTime(DirectoryReference BasePath, string RelativeFilePath);
-
-		/// <summary>
-		/// Test the cache for a given file to get the last write time of the given file 
-		/// </summary>
-		/// <param name="BasePath">Base path of the file.</param>
-		/// <param name="RelativeFilePath">Relative path of the file</param>
-		/// <returns>Last write time of the file.</returns>
-		DateTime GetLastWriteTime(string BasePath, string RelativeFilePath);
+		DateTime GetLastWriteTime(string basePath, string relativeFilePath);
 
 		/// <summary>
 		/// Return the build record directory for the given base path (i.e. engine dir or project dir)
 		/// </summary>
-		/// <param name="BasePath">The base path for the directory</param>
+		/// <param name="basePath">The base path for the directory</param>
 		/// <returns>Directory for the build records</returns>
-		DirectoryReference GetBuildRecordDirectory(DirectoryReference BasePath);
+		DirectoryReference GetBuildRecordDirectory(DirectoryReference basePath);
 
 		/// <summary>
 		/// Validate the given build records for the project
@@ -51,9 +50,9 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Test to see if the given file spec has any wild cards
 		/// </summary>
-		/// <param name="FileSpec">File spec to test</param>
+		/// <param name="fileSpec">File spec to test</param>
 		/// <returns>True if wildcards are present</returns>
-		bool HasWildcards(string FileSpec);
+		bool HasWildcards(string fileSpec);
 
 		/// <summary>
 		/// Unreal engine directory

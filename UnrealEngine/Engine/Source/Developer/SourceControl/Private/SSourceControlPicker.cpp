@@ -52,6 +52,15 @@ void SSourceControlPicker::Construct(const FArguments& InArgs)
 void SSourceControlPicker::ChangeSourceControlProvider(int32 ProviderIndex) const
 {
 	FSourceControlModule& SourceControlModule = FSourceControlModule::Get();
+
+	if (CurrentProviderIndex != ProviderIndex)
+	{
+		if (ConfirmProviderChanging() == false) // The user has decided to abort the operation
+		{
+			return;
+		}
+	}
+
 	SourceControlModule.SetCurrentSourceControlProvider(ProviderIndex);
 
 	if(SourceControlModule.GetLoginWidget().IsValid())
@@ -60,7 +69,17 @@ void SSourceControlPicker::ChangeSourceControlProvider(int32 ProviderIndex) cons
 	}
 }
 
-TSharedRef<SWidget> SSourceControlPicker::OnGetMenuContent() const
+bool SSourceControlPicker::ConfirmProviderChanging() const
+{
+	FSourceControlModule& SourceControlModule = FSourceControlModule::Get();
+	if (SourceControlModule.GetSourceControlProviderChanging().IsBound())
+	{
+		return SourceControlModule.GetSourceControlProviderChanging().Execute();
+	}
+	return true;
+}
+
+TSharedRef<SWidget> SSourceControlPicker::OnGetMenuContent()
 {
 	FSourceControlModule& SourceControlModule = FSourceControlModule::Get();
 
@@ -75,6 +94,11 @@ TSharedRef<SWidget> SSourceControlPicker::OnGetMenuContent() const
 		const FName ProviderName = SourceControlModule.GetSourceControlProviderName(ProviderIndex);
 		int32 ProviderSortKey = ProviderName == FName("None") ? -1 * ProviderIndex : ProviderIndex;
 		SortedProviderNames.Emplace(ProviderName, ProviderSortKey);
+
+		if (ProviderName == FSourceControlModule::Get().GetProvider().GetName())
+		{
+			CurrentProviderIndex = ProviderIndex;
+		}
 	}
 
 	// Sort based on the provider index
@@ -116,7 +140,7 @@ FText SSourceControlPicker::GetProviderText(const FName& InName) const
 		return LOCTEXT("NoProviderDescription", "None  (revision control disabled)");
 	}
 
-	// @todo: Remove this block after the Git/Skein plugins have been exhaustively tested (also remember to change the Git plugin's "IsBetaVersion" setting to false.)
+	// @todo: Remove this block after the Git plugin has been exhaustively tested (also remember to change the Git plugin's "IsBetaVersion" setting to false.)
 	if(InName == "Git")
 	{
 		return LOCTEXT( "GitBetaProviderName", "Git  (beta version)" );

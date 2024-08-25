@@ -16,6 +16,8 @@
 #include "Templates/UnrealTypeTraits.h"
 #include "Templates/ResolveTypeAmbiguity.h"
 #include "Templates/TypeCompatibleBytes.h"
+#include <limits>
+#include <type_traits>
 
 #if PLATFORM_HAS_FENV_H 
 #include <fenv.h>
@@ -613,6 +615,9 @@ struct FGenericPlatformMath
 	/** Returns a random integer between 0 and RAND_MAX, inclusive */
 	static FORCEINLINE int32 Rand() { return rand(); }
 
+	/** Returns a random integer between 0 and MAX_int32, inclusive. RAND_MAX may only be 15 bits, so compose from multiple calls. */
+	static FORCEINLINE int32 Rand32() { return ((rand() & 0x7fff) << 16) | ((rand() & 0x7fff) << 1) | (rand() & 0x1); }
+
 	/** Seeds global random number functions Rand() and FRand() */
 	static FORCEINLINE void RandInit(int32 Seed) { srand( Seed ); }
 
@@ -1018,6 +1023,174 @@ struct FGenericPlatformMath
 	/** Test some of the tricky functions above **/
 	static void AutoTest();
 #endif
+
+	/**
+	 * Adds two integers of any integer type, checking for overflow.
+	 * If there was overflow, it returns false, and OutResult may or may not be written.
+	 * If there wasn't overflow, it returns true, and the result of the addition is written to OutResult.
+	 */
+	template <
+		typename IntType
+		UE_REQUIRES(std::is_integral_v<IntType>)
+	>
+	static FORCEINLINE bool AddAndCheckForOverflow(IntType A, IntType B, IntType& OutResult)
+	{
+		// This follows Hacker's Delight, Chapter 2-12
+		// Signed->unsigned conversion and unsigned addition have defined behavior always
+		typedef typename std::make_unsigned_t<IntType> UnsignedType;
+		const UnsignedType UnsignedA = static_cast<UnsignedType>(A);
+		const UnsignedType UnsignedB = static_cast<UnsignedType>(B);
+		const UnsignedType UnsignedSum = UnsignedA + UnsignedB;
+
+		if constexpr (std::is_signed_v<IntType>)
+		{
+			// Check for signed overflow.
+			// The underlying logic here is pretty simple: if A and B had opposite signs, their sum can't
+			// overflow. If they had the same sign and the sum has the opposite value in the sign bit, we
+			// had an overflow. (See Hacker's Delight Chapter 2-12 for more details.)
+			constexpr UnsignedType UnsignedMSB = static_cast<UnsignedType>(std::numeric_limits<IntType>::min());
+			if((UnsignedSum ^ UnsignedA) & (UnsignedSum ^ UnsignedB) & UnsignedMSB)
+			{
+				return false;
+			}
+			else
+			{
+				OutResult = A + B;
+				return true;
+			}
+		}
+		else
+		{
+			// Iff there was overflow, the modular sum must be less than both the operands.
+			if (UnsignedSum >= UnsignedA)
+			{
+				OutResult = UnsignedSum;
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+	}
+
+	/**
+	 * Subtracts two integers of any integer type, checking for overflow.
+	 * If there was overflow, it returns false, and OutResult may or may not be written.
+	 * If there wasn't overflow, it returns true, and the result of the subtraction is written to OutResult.
+	 */
+	template <
+		typename IntType
+		UE_REQUIRES(std::is_integral_v<IntType>)
+	>
+	static FORCEINLINE bool SubtractAndCheckForOverflow(IntType A, IntType B, IntType& OutResult)
+	{
+		// This follows Hacker's Delight, Chapter 2-12
+		// Signed->unsigned conversion and unsigned addition have defined behavior always
+		typedef typename std::make_unsigned_t<IntType> UnsignedType;
+		const UnsignedType UnsignedA = static_cast<UnsignedType>(A);
+		const UnsignedType UnsignedB = static_cast<UnsignedType>(B);
+		const UnsignedType UnsignedDiff = UnsignedA - UnsignedB;
+
+		if constexpr (std::is_signed_v<IntType>)
+		{
+			// Check for signed overflow.
+			// If A and B have the same sign, the difference can't overflow. Therefore, we test for cases
+			// where the sign bit differs meaning ((UnsignedA ^ UnsignedB) & UnsignedMSB) != 0, and
+			// simultaneously the sign of the difference differs from the sign of the minuend (which should
+			// keep its sign when we're subtracting a value of the opposite sign), meaning
+			// ((UnsignedDiff ^ UnsignedA) & UnsignedMSB) != 0. Combining the two yields:
+			constexpr UnsignedType UnsignedMSB = static_cast<UnsignedType>(std::numeric_limits<IntType>::min());
+			if ((UnsignedA ^ UnsignedB) & (UnsignedDiff ^ UnsignedA) & UnsignedMSB)
+			{
+				return false;
+			}
+			else
+			{
+				OutResult = A - B;
+				return true;
+			}
+		}
+		else
+		{
+			OutResult = UnsignedDiff;
+			return A >= B;
+		}
+	}
+
+	/**
+	 * Multiplies two integers of any integer type, checking for overflow.
+	 * If there was overflow, it returns false, and OutResult may or may not be written.
+	 * If there wasn't overflow, it returns true, and the result of the multiplication is written to OutResult.
+	 */
+	template <
+		typename IntType
+		UE_REQUIRES(std::is_integral_v<IntType>)
+	>
+	static FORCEINLINE bool MultiplyAndCheckForOverflow(IntType A, IntType B, IntType& OutResult)
+	{
+		// Handle the case where the second factor is 0 specially (why will become clear in a minute).
+		if (B == 0)
+		{
+			// Anything times 0 is 0.
+			OutResult = 0;
+			return true;
+		}
+
+		if constexpr (std::is_signed_v<IntType>)
+		{
+			// The overflow check is annoying and expensive, but the basic idea is fairly simple:
+			// reduce to an unsigned check of the absolute values. (Again the basic algorithm is
+			// in Hacker's Delight, Chapter 2-12).
+			//
+			// We need the absolute value of the product to be <=MaxValue when the result is positive
+			// (signs of factors same) and <= -MinValue = MaxValue + 1 if the result is negative
+			// (signs of factors opposite).
+			typedef typename std::make_unsigned_t<IntType> UnsignedType;
+			UnsignedType UnsignedA = static_cast<UnsignedType>(A);
+			UnsignedType UnsignedB = static_cast<UnsignedType>(B);
+			bool bSignsDiffer = false;
+
+			// Determine the unsigned absolute values of A and B carefully (note we can't negate signed
+			// A or B, because negating MinValue is UB). We can however subtract their
+			// unsigned values from 0 if the original value was less than zero. While doing this, also
+			// keep track of the sign parity.
+			if (A < 0)
+			{
+				UnsignedA = UnsignedType(0) - UnsignedA;
+				bSignsDiffer = !bSignsDiffer;
+			}
+
+			if (B < 0)
+			{
+				UnsignedB = UnsignedType(0) - UnsignedB;
+				bSignsDiffer = !bSignsDiffer;
+			}
+
+			// Determine the unsigned product bound we need based on whether the signs were same or different.
+			const UnsignedType ProductBound = UnsignedType(std::numeric_limits<IntType>::max()) + (bSignsDiffer ? 1 : 0);
+
+			// We're now in the unsigned case, 0 <= UnsignedA, 0 < UnsignedB (we established b != 0), and for
+			// there not to be overflows we need
+			//   a * b <= ProductBound
+			// <=> a <= ProductBound/b
+			// <=> a <= floor(ProductBound/b)   since a is integer
+			if (UnsignedA <= ProductBound / UnsignedB)
+			{
+				OutResult = A * B;
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+		else
+		{
+			OutResult = A * B;
+			return OutResult / B == A;
+		}
+	}
 
 private:
 

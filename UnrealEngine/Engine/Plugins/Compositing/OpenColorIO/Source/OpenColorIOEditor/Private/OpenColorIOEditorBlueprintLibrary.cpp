@@ -20,6 +20,18 @@ void UOpenColorIOEditorBlueprintLibrary::SetActiveViewportConfiguration(const FO
 	OpenColorIOEditorModule.SetActiveViewportConfiguration(InConfiguration);
 }
 
+bool UOpenColorIOEditorBlueprintLibrary::ApplyColorSpaceTransformToColor(const FOpenColorIOColorConversionSettings& ConversionSettings, const FLinearColor& InColor, FLinearColor& OutColor)
+{
+	if (IsValid(ConversionSettings.ConfigurationSource))
+	{
+		OutColor = InColor;
+
+		return ConversionSettings.ConfigurationSource->TransformColor(ConversionSettings, OutColor);
+	}
+
+	return false;
+}
+
 bool UOpenColorIOEditorBlueprintLibrary::ApplyColorSpaceTransformToTexture(const FOpenColorIOColorConversionSettings& ConversionSettings, UTexture* InOutTexture)
 {
 	if (IsValid(InOutTexture))

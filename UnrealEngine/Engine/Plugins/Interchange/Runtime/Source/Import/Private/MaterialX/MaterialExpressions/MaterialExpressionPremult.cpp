@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionPremult.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "HLSLTree/HLSLTree.h"
+#include "HLSLTree/HLSLTreeCommon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionPremult)
 
@@ -41,6 +44,30 @@ int32 UMaterialExpressionMaterialXPremult::Compile(FMaterialCompiler* Compiler, 
 void UMaterialExpressionMaterialXPremult::GetCaption(TArray<FString>& OutCaptions) const
 {
 		OutCaptions.Add(TEXT("MaterialX Premult"));
+}
+
+bool UMaterialExpressionMaterialXPremult::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionInput = Input.AcquireHLSLExpression(Generator, Scope);
+
+	if(!ExpressionInput)
+	{
+		return false;
+	}
+
+	FTree& Tree = Generator.GetTree();
+
+	const FExpression* ExpressionAlpha = Tree.NewSwizzle(FSwizzleParameters(3), ExpressionInput);
+
+	OutExpression =
+		Tree.NewExpression<FExpressionAppend>(
+			Tree.NewMul(Tree.NewSwizzle(FSwizzleParameters(0, 1, 2), ExpressionInput),
+						ExpressionAlpha),
+			ExpressionAlpha);
+
+	return true;
 }
 #endif
 

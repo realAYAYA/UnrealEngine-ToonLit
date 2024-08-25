@@ -354,7 +354,7 @@ void FUniqueNetIdReplNetSerializer::Dequantize(FNetSerializationContext& Context
 	else
 	{
 		FCString::CharType NumberAsStringBuffer[32];
-		const int32 CharCount = FCString::Sprintf(NumberAsStringBuffer, TEXT(UINT64_FMT), Source.Number);
+		const int32 CharCount = FCString::Sprintf(NumberAsStringBuffer, TEXT("%" UINT64_FMT), Source.Number);
 		// No point in validating CharCount as only a bad Sprintf implementation could fail. We expect Sprintf to be well-tested.
 		StringID.AppendChars(NumberAsStringBuffer, CharCount);
 	}

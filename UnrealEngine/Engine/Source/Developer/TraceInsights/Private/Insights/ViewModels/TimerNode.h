@@ -61,7 +61,7 @@ public:
 
 public:
 	/** Initialization constructor for the timer node. */
-	FTimerNode(uint32 InTimerId, const TCHAR* InName, ETimerNodeType InType);
+	FTimerNode(uint32 InTimerId, const TCHAR* InName, ETimerNodeType InType, bool bInIsGroup);
 
 	/** Initialization constructor for the group node. */
 	explicit FTimerNode(const FName InGroupName);

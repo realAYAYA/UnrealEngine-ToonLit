@@ -33,7 +33,7 @@
 static TAutoConsoleVariable<float> CVarScreenRayLength(
 	TEXT( "r.Shadow.Virtual.ScreenRayLength" ),
 	0.015f,
-	TEXT( "Length of the screen space shadow trace (smart shadow bias) before the virtual shadow map lookup." ),
+	TEXT( "Length of the screen space shadow trace away from receiver surface (smart shadow bias) before the VSM / SMRT lookup." ),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
@@ -142,21 +142,24 @@ TAutoConsoleVariable<float> CVarSMRTMaxSlopeBiasLocal(
 static TAutoConsoleVariable<int32> CVarForcePerLightShadowMaskClear(
 	TEXT( "r.Shadow.Virtual.ForcePerLightShadowMaskClear" ),
 	0,
-	TEXT( "" ),
+	TEXT( "For debugging purposes. When enabled, the shadow mask texture is cleared before the projection pass writes to it. Projection pass writes all relevant pixels, so clearing should be unnecessary." ),
 	ECVF_RenderThreadSafe
 );
 
 static TAutoConsoleVariable<int32> CVarVSMTranslucentQuality(
 	TEXT("r.Shadow.Virtual.TranslucentQuality"),
 	0,
-	TEXT("Quality of shadow for lit translucent surfaces. This will be applied on all translucent surfaces, and has high-performance impact."),
+	TEXT("Quality of shadow for lit translucent surfaces. This will be applied on all translucent surfaces, and has high-performance impact.\n")
+	TEXT("Set to 1 to enable the high-quality mode."),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe
 );
 
 static TAutoConsoleVariable<int32> CVarSubsurfaceShadowMinSourceAngle(
 	TEXT("r.Shadow.Virtual.SubsurfaceShadowMinSourceAngle"),
 	5,
-	TEXT("Minimum source angle (in degrees) used for shadow & transmittance of sub-surface materials with directional lights"),
+	TEXT("Minimum source angle (in degrees) used for shadow & transmittance of sub-surface materials with directional lights.\n")
+	TEXT("To emulate light diffusion with sub-surface materials, VSM can increase the light source radius depending on the material opacity.\n")
+	TEXT("The higher this value, the more diffuse the shadowing with these materials will appear."),
 	ECVF_RenderThreadSafe
 );
 
@@ -168,6 +171,8 @@ static TAutoConsoleVariable<int32> CVarTestPermutation(
 	ECVF_RenderThreadSafe
 );
 #endif
+
+extern int32 GNaniteVisualizeOverdrawScale;
 
 // The tile size in pixels for VSM projection with tile list.
 // Is also used as the workgroup size for the CS without tile list.
@@ -211,7 +216,7 @@ const TCHAR* ToString(EVirtualShadowMapProjectionInputType In)
 	switch (In)
 	{
 	case EVirtualShadowMapProjectionInputType::HairStrands: return TEXT("HairStrands");
-	case EVirtualShadowMapProjectionInputType::GBuffer:     return Strata::IsStrataEnabled() ? TEXT("Substrate") : TEXT("GBuffer");
+	case EVirtualShadowMapProjectionInputType::GBuffer:     return Substrate::IsSubstrateEnabled() ? TEXT("Substrate") : TEXT("GBuffer");
 	}
 	return TEXT("Invalid");
 }
@@ -251,7 +256,7 @@ class FVirtualShadowMapProjectionCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FHairStrandsViewUniformParameters, HairStrands)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FVirtualVoxelParameters, HairStrandsVoxel)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_STRUCT_REF(FBlueNoise, BlueNoise)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FVirtualShadowMapSMRTSettings, SMRTSettings)
@@ -271,6 +276,7 @@ class FVirtualShadowMapProjectionCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer< FPhysicalPageMetaData >, PhysicalPageMetaData)
 		SHADER_PARAMETER(int32, VisualizeModeId)
 		SHADER_PARAMETER(int32, VisualizeVirtualShadowMapId)
+		SHADER_PARAMETER(float, VisualizeNaniteOverdrawScale)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, OutVisualize)
 		// Optional tile list
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer, TileListData)
@@ -347,7 +353,7 @@ static void RenderVirtualShadowMapProjectionCommon(
 	PassParameters->SubsurfaceMinSourceRadius = FMath::Sin(0.5f * FMath::DegreesToRadians(CVarSubsurfaceShadowMinSourceAngle.GetValueOnRenderThread()));
 	PassParameters->InputType = uint32(InputType);
 	PassParameters->bCullBackfacingPixels = VirtualShadowMapArray.ShouldCullBackfacingPixels() ? 1 : 0;
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	if (bUseTileList)
 	{
 		PassParameters->TileListData = TiledVSMProjection->TileListDataBufferSRV;
@@ -392,6 +398,7 @@ static void RenderVirtualShadowMapProjectionCommon(
 		bDebugOutput = true;
 		PassParameters->VisualizeModeId = VisualizationData.GetActiveModeID();
 		PassParameters->VisualizeVirtualShadowMapId = VirtualShadowMapArray.VisualizeLight[ViewIndex].GetVirtualShadowMapId();
+		PassParameters->VisualizeNaniteOverdrawScale = GNaniteVisualizeOverdrawScale;
 		PassParameters->PhysicalPageMetaData = GraphBuilder.CreateSRV( VirtualShadowMapArray.PhysicalPageMetaDataRDG );
 		PassParameters->OutVisualize = GraphBuilder.CreateUAV( VirtualShadowMapArray.DebugVisualizationOutput[ViewIndex] );
 	}

@@ -37,7 +37,9 @@ void SWidgetEventLog::Construct(const FArguments& InArgs, TSharedPtr<const SWidg
 	FMessageLogModule& MessageLogModule = FModuleManager::LoadModuleChecked<FMessageLogModule>(TEXT("MessageLog"));
 	if (!MessageLogModule.IsRegisteredLogListing(NAME_WidgetEvents))
 	{
-		MessageLogModule.RegisterLogListing(NAME_WidgetEvents, LOCTEXT("WidgetEventLog", "Widget Events"), FMessageLogInitializationOptions{});
+		FMessageLogInitializationOptions InitOptions;
+		InitOptions.bScrollToBottom = true;
+		MessageLogModule.RegisterLogListing(NAME_WidgetEvents, LOCTEXT("WidgetEventLog", "Widget Events"), InitOptions);
 	}
 	TSharedRef<IMessageLogListing> MessageLogListing = MessageLogModule.GetLogListing(NAME_WidgetEvents);
 

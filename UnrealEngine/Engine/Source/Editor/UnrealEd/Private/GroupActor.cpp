@@ -991,7 +991,7 @@ namespace UE::Editor::GroupActorUtil
 	TArray<AGroupActor*> GetSelectedGroupActors(TArray<TObjectPtr<AActor>> ActiveGroupActors)
 	{
 		TArray<AGroupActor*> Result;
-		for (TObjectPtr<AActor> Actor : ActiveGroupActors)
+		for (const TObjectPtr<AActor>& Actor : ActiveGroupActors)
 		{
 			if (AGroupActor* SelectedGroup = Cast<AGroupActor>(Actor))
 			{

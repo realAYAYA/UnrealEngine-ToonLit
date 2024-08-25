@@ -2,6 +2,7 @@
 
 #include "Collision/CollisionConversions.h"
 #include "BodySetupCore.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "Chaos/Capsule.h"
 #include "Chaos/ImplicitObjectType.h"
@@ -14,33 +15,34 @@
 #include "Physics/Experimental/ChaosInterfaceWrapper.h"
 
 #include "PhysicsEngine/CollisionQueryFilterCallback.h"
-#include "GameFramework/LightWeightInstanceManager.h"
+#include "Engine/ActorInstanceManagerInterface.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 #include "PhysicsProxy/GeometryCollectionPhysicsProxy.h"
 
 // Used to place overlaps into a TMap when deduplicating them
 struct FOverlapKey
 {
-	UPrimitiveComponent* Component;
-	int32 ComponentIndex;
+	const Chaos::FPhysicsObjectHandle PhysicsObject;
+	const UPrimitiveComponent* Component;
+	const int32 ComponentIndex;
 
-	FOverlapKey(UPrimitiveComponent* InComponent, int32 InComponentIndex)
-		: Component(InComponent)
-		, ComponentIndex(InComponentIndex)
+	FOverlapKey(const FOverlapResult& InResult)
+		: PhysicsObject(InResult.PhysicsObject)
+		, Component(InResult.GetComponent())
+		, ComponentIndex(InResult.ItemIndex)
 	{
 	}
 
 	friend bool operator==(const FOverlapKey& X, const FOverlapKey& Y)
 	{
-		return (X.ComponentIndex == Y.ComponentIndex) && (X.Component == Y.Component);
+		return  (X.PhysicsObject == Y.PhysicsObject) && (X.ComponentIndex == Y.ComponentIndex) && (X.Component == Y.Component);
 	}
 };
 
 uint32 GetTypeHash(const FOverlapKey& Key)
 {
-	return GetTypeHash(Key.Component) ^ GetTypeHash(Key.ComponentIndex);
+	return GetTypeHash(Key.PhysicsObject) ^ GetTypeHash(Key.Component) ^ GetTypeHash(Key.ComponentIndex);
 }
-
 
 extern int32 CVarShowInitialOverlaps;
 
@@ -110,7 +112,7 @@ static FVector FindGeomOpposingNormal(ECollisionShapeType QueryGeomType, const T
 			}
 			else
 			{
-				const FTransform ActorTM(Hit.Actor->R(), Hit.Actor->X());
+				const FTransform ActorTM(Hit.Actor->GetR(), Hit.Actor->GetX());
 				const FVector LocalInNormal = ActorTM.InverseTransformVectorNoScale(InNormal);
 				const FVector LocalTraceDirectionDenorm = ActorTM.InverseTransformVectorNoScale(TraceDirectionDenorm);
 				const FVector LocalNormal = Shape->GetGeometry()->FindGeometryOpposingNormal(LocalTraceDirectionDenorm, Hit.FaceIndex, LocalInNormal);
@@ -133,7 +135,8 @@ static void SetHitResultFromShapeAndFaceIndex(const FPhysicsShape& Shape,  const
 	CHAOS_CHECK(ShapeIndex < (int32)TNumericLimits<uint8>::Max()); // I could just write < 256, but this makes it more clear *why*
 	OutResult.ElementIndex = (uint8)ShapeIndex;
 	
-	UPrimitiveComponent* OwningComponent = nullptr;
+	TWeakObjectPtr<UPrimitiveComponent> OwningComponent;
+	OutResult.PhysicsObject = nullptr;
 	if(const FBodyInstance* BodyInst = GetUserData(Actor))
 	{
 		BodyInst = FPhysicsInterface::ShapeToOriginalBodyInstance(BodyInst, &Shape);
@@ -146,14 +149,14 @@ static void SetHitResultFromShapeAndFaceIndex(const FPhysicsShape& Shape,  const
 			OutResult.BoneName = BodySetup->BoneName;
 		}
 
-		OwningComponent = BodyInst->OwnerComponent.Get();
+		OwningComponent = BodyInst->OwnerComponent;
+		OutResult.PhysicsObject = BodyInst->ActorHandle ? BodyInst->ActorHandle->GetPhysicsObject() : nullptr;
 	}
 	else
 	{
 		// Currently geom collections are registered with a primitive component user data, but maybe custom should be adapted
 		// to be more general so we can support leaf identification #BGTODO
-		void* UserData = Actor.UserData();
-		UPrimitiveComponent* PossibleOwner = FChaosUserData::Get<UPrimitiveComponent>(UserData);
+		UPrimitiveComponent* PossibleOwner = GetPrimitiveComponentFromUserData(Actor);
 
 		if(PossibleOwner)
 		{
@@ -170,6 +173,7 @@ static void SetHitResultFromShapeAndFaceIndex(const FPhysicsShape& Shape,  const
 					const FGeometryCollectionItemIndex ItemIndex = ConcreteProxy->GetItemIndexFromGTParticle_External(Actor.CastToRigidParticle());
 					OutResult.Item = ItemIndex.GetItemIndex();
 					OutResult.BoneName = ConcreteProxy->GetTransformName_External(ItemIndex);
+					OutResult.PhysicsObject = PossibleOwner->GetPhysicsObjectById(OutResult.Item);
 				}
 			}
 		}
@@ -182,18 +186,13 @@ static void SetHitResultFromShapeAndFaceIndex(const FPhysicsShape& Shape,  const
 	OutResult.PhysMaterial = nullptr;
 
 	// Grab actor/component
-	if( OwningComponent )
+	if (!OwningComponent.IsExplicitlyNull())
 	{
 		OutResult.Component = OwningComponent;
-		AActor* Owner = OwningComponent->GetOwner();
-		if (ALightWeightInstanceManager* LWIManager = Cast<ALightWeightInstanceManager>(Owner))
-		{
-			OutResult.HitObjectHandle = FActorInstanceHandle(LWIManager, OutResult.Item);
-		}
-		else
-		{
-			OutResult.HitObjectHandle = FActorInstanceHandle(OwningComponent->GetOwner());
-		}
+
+		// Create a handle that needs to be resolved later when accessed in game thread,
+		// since resolving FActorInstanceHandle may require to access related UObjects (e.g. owner actor), which is not safe outside game thread.
+		OutResult.HitObjectHandle = FActorInstanceHandle::MakeActorHandleToResolve(OwningComponent, OutResult.Item);
 
 		if (bReturnPhysMat)
 		{
@@ -442,7 +441,7 @@ EConvertQueryResult ConvertTraceResults(bool& OutHasValidBlockingHit, const UWor
 			else
 			{
 				// Reject invalid result (this should be rare). Remove from the results.
-				OutHits.Pop(/*bAllowShrinking=*/ false);
+				OutHits.Pop(EAllowShrinking::No);
 				ConvertResult = EConvertQueryResult::Invalid;
 			}
 			
@@ -603,36 +602,33 @@ void ConvertQueryOverlap(const FPhysicsShape& Shape, const FPhysicsActor& Actor,
 	using namespace ChaosInterface;
 
 	// Grab actor/component
-	
+	OutOverlap.PhysicsObject = nullptr;
 	// Try body instance
 	if (const FBodyInstance* BodyInst = GetUserData(Actor))
 	{
         BodyInst = FPhysicsInterface::ShapeToOriginalBodyInstance(BodyInst, &Shape);
 		if (const UPrimitiveComponent* OwnerComponent = BodyInst->OwnerComponent.Get())
 		{
-			if (ALightWeightInstanceManager* LWIManager = Cast<ALightWeightInstanceManager>(OwnerComponent->GetOwner()))
-			{
-				OutOverlap.OverlapObjectHandle = FActorInstanceHandle(LWIManager, BodyInst->InstanceBodyIndex);
-			}
-			else
-			{
-				OutOverlap.OverlapObjectHandle = FActorInstanceHandle(OwnerComponent->GetOwner());
-			}
+			// Create a handle that needs to be resolved later when accessed in game thread,
+			// since resolving FActorInstanceHandle may require to access related UObjects (e.g. owner actor), which is not safe outside game thread.
+			OutOverlap.OverlapObjectHandle = FActorInstanceHandle::MakeActorHandleToResolve(BodyInst->OwnerComponent, BodyInst->InstanceBodyIndex);
 			OutOverlap.Component = BodyInst->OwnerComponent; // Copying weak pointer is faster than assigning raw pointer.
 			OutOverlap.ItemIndex = OwnerComponent->bMultiBodyOverlap ? BodyInst->InstanceBodyIndex : INDEX_NONE;
 		}
+		OutOverlap.PhysicsObject = BodyInst->ActorHandle ? BodyInst->ActorHandle->GetPhysicsObject() : nullptr;
 	}
 	else
 	{
 		// Currently geom collections are registered with a primitive component user data, but maybe custom should be adapted
 		// to be more general so we can support leaf identification #BGTODO
-		void* UserData = Actor.UserData();
-		UPrimitiveComponent* PossibleOwner = FChaosUserData::Get<UPrimitiveComponent>(UserData);
+		UPrimitiveComponent* PossibleOwner = GetPrimitiveComponentFromUserData(Actor);
 
 		if(PossibleOwner)
 		{
+			// Create a handle that needs to be resolved later when accessed in game thread,
+			// since resolving FActorInstanceHandle may require to access related UObjects (e.g. owner actor), which is not safe outside game thread.
+			OutOverlap.OverlapObjectHandle = FActorInstanceHandle::MakeActorHandleToResolve(PossibleOwner, INDEX_NONE);
 			OutOverlap.Component = PossibleOwner;
-			OutOverlap.OverlapObjectHandle = FActorInstanceHandle(OutOverlap.Component->GetOwner());
 			OutOverlap.ItemIndex = INDEX_NONE;
 		}
 		else
@@ -650,7 +646,7 @@ static void AddUniqueOverlap(TArray<FOverlapResult>& OutOverlaps, const FOverlap
 	{
 		FOverlapResult& Overlap = OutOverlaps[TestIdx];
 
-		if (Overlap.ItemIndex == NewOverlap.ItemIndex && Overlap.Component == NewOverlap.Component)
+		if (FOverlapKey(Overlap) == FOverlapKey(NewOverlap))
 		{
 			// These should be the same if the component matches!
 			checkSlow(Overlap.OverlapObjectHandle == NewOverlap.OverlapObjectHandle);
@@ -709,7 +705,7 @@ bool ConvertOverlapResultsImp(int32 NumOverlaps, THitOverlap* OverlapResults, co
 		for (int32 ExistingIndex = 0; ExistingIndex < OutOverlaps.Num(); ++ExistingIndex)
 		{
 			const FOverlapResult& ExistingOverlap = OutOverlaps[ExistingIndex];
-			OverlapMap.Add(FOverlapKey(ExistingOverlap.Component.Get(), ExistingOverlap.ItemIndex), ExistingIndex + 1);
+			OverlapMap.Add(FOverlapKey(ExistingOverlap), ExistingIndex + 1);
 		}
 
 		for (int32 PResultIndex = 0; PResultIndex < NumOverlaps; ++PResultIndex)
@@ -733,7 +729,7 @@ bool ConvertOverlapResultsImp(int32 NumOverlaps, THitOverlap* OverlapResults, co
 			//TODO: this doesn't de-duplicate if FOverlapResult has no component - like in PT for example. If we care about de-duplication we should use the PT handle if needed
 			//Question: why do we de-duplicate? This seems expensive and is not consistent with traces. The user could handle this at their level anyway (at the cost of a bit of transient memory here)
 			//TODO: make sure it doesn't de-duplicate null results
-			int32& DestinationIndex = OverlapMap.FindOrAdd(FOverlapKey(NewOverlap.Component.Get(), NewOverlap.ItemIndex));
+			int32& DestinationIndex = OverlapMap.FindOrAdd(FOverlapKey(NewOverlap));
 			if (DestinationIndex == 0)
 			{
 				DestinationIndex = OutOverlaps.Add(NewOverlap) + 1;
@@ -793,6 +789,19 @@ FHitResult ConvertOverlapToHitResult(const FOverlapResult& Overlap)
 	Hit.bBlockingHit = Overlap.bBlockingHit;
 	Hit.Item = Overlap.ItemIndex;
 	Hit.Component = Overlap.Component;
+	Hit.PhysicsObject = Overlap.PhysicsObject;
 	Hit.HitObjectHandle = Overlap.OverlapObjectHandle;
 	return Hit;
+}
+
+bool FCompareFHitResultTime::operator()(const FHitResult& A, const FHitResult& B) const
+{
+	if (A.Time == B.Time)
+	{
+		// Sort blocking hits after non-blocking hits, if they are at the same time. Also avoid swaps if they are the same.
+		// This is important so initial touches are reported before processing stops on the first blocking hit.
+		return (A.bBlockingHit == B.bBlockingHit) ? true : B.bBlockingHit;
+	}
+
+	return A.Time < B.Time;
 }

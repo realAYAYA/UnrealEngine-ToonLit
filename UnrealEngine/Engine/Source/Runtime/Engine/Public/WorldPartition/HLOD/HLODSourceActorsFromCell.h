@@ -3,7 +3,7 @@
 #pragma once
 
 #include "WorldPartition/HLOD/HLODSourceActors.h"
-#include "WorldPartition/HLOD/HLODSubActor.h"
+#include "WorldPartition/WorldPartitionRuntimeCell.h"
 #include "HLODSourceActorsFromCell.generated.h"
 
 
@@ -17,13 +17,15 @@ public:
 	ENGINE_API virtual ULevelStreaming* LoadSourceActors(bool& bOutDirty) const override;
 	ENGINE_API virtual uint32 GetHLODHash() const override;
 
-	ENGINE_API void SetActors(const TArray<FHLODSubActor>& InSourceActors);
-	ENGINE_API const TArray<FHLODSubActor>& GetActors() const;
+	ENGINE_API static uint32 GetHLODHash(const TArray<FWorldPartitionRuntimeCellObjectMapping>& InSourceActors);
+
+	ENGINE_API void SetActors(const TArray<FWorldPartitionRuntimeCellObjectMapping>&& InSourceActors);
+	ENGINE_API const TArray<FWorldPartitionRuntimeCellObjectMapping>& GetActors() const;
 #endif
 
 private:
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()
-	TArray<FHLODSubActor> Actors;
+	TArray<FWorldPartitionRuntimeCellObjectMapping> Actors;
 #endif
 };

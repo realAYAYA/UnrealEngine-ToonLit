@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Threading.Tasks;
+using System.ComponentModel;
 using EpicGames.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,19 +8,16 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Serilog.Events;
 
-namespace Horde.Agent.Modes.Service
+namespace Horde.Agent.Commands.Service
 {
-
 	/// <summary>
-	/// 
+	/// Runs the agent
 	/// </summary>
-	[Command("service", "run", "Runs the service in listen mode")]
+	[Command("service", "run", "Runs the Horde agent")]
 	class RunCommand : Command
 	{
-		/// <summary>
-		/// Log verbosity level (use normal Serilog levels such as debug, warning or info)
-		/// </summary>
 		[CommandLine("-LogLevel")]
+		[Description("Log verbosity level (use normal MS levels such as debug, warning or information)")]
 		public string LogLevelStr { get; set; } = "information";
 
 		readonly DefaultServices _defaultServices;
@@ -49,7 +45,7 @@ namespace Horde.Agent.Modes.Service
 				Console.WriteLine($"Unable to parse log level: {LogLevelStr}");
 				return 0;
 			}
-			
+
 			IHostBuilder hostBuilder = Host.CreateDefaultBuilder();
 
 			// Attempt to setup this process as a Windows service. A race condition inside Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService

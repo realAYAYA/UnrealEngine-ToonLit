@@ -12,15 +12,26 @@
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/EnterpriseObjectVersion.h"
 
 #if WITH_EDITORONLY_DATA
 void FDatasmithImportInfo::GetAssetRegistryTags(TArray<UObject::FAssetRegistryTag>& OutTags) const
 {
+	FAssetRegistryTagsContextData TagsContext(nullptr, EAssetRegistryTagsCaller::Uncategorized);
+	GetAssetRegistryTags(TagsContext);
+	for (TPair<FName, UObject::FAssetRegistryTag>& Pair : TagsContext.Tags)
+	{
+		OutTags.Add(MoveTemp(Pair.Value));
+	}
+}
+
+void FDatasmithImportInfo::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	using FAssetRegistryTag = UObject::FAssetRegistryTag;
 
-	OutTags.Add(FAssetRegistryTag(TEXT("SourceUri"), SourceUri, FAssetRegistryTag::TT_Hidden));
-	OutTags.Add(FAssetRegistryTag(TEXT("SourceHash"), SourceHash, FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(TEXT("SourceUri"), SourceUri, FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(TEXT("SourceHash"), SourceHash, FAssetRegistryTag::TT_Hidden));
 }
 
 #if WITH_EDITOR

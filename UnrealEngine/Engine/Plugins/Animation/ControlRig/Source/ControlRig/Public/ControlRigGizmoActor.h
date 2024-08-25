@@ -88,6 +88,8 @@ public:
 
 	FLinearColor OverrideColor;
 
+	FTransform OffsetTransform;
+
 	UFUNCTION(BlueprintSetter)
 	/** Set the control to be enabled/disabled */
 	virtual void SetEnabled(bool bInEnabled) { SetSelectable(bInEnabled); }

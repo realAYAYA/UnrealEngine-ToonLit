@@ -60,6 +60,7 @@ public:
 	virtual void SetSceneViewport(FSceneViewport* SceneViewport) = 0;
 
 	virtual FGeometry GetViewportWidgetHostGeometry() const = 0;
+	virtual FGeometry GetViewportWidgetHostPaintGeometry() const = 0;
 	virtual FGeometry GetPlayerWidgetHostGeometry(ULocalPlayer* Player) const = 0;
 
 	virtual void NotifyPlayerAdded(int32 PlayerIndex, ULocalPlayer* AddedPlayer) = 0;
@@ -127,6 +128,7 @@ public:
 	// Begin IGameLayerManager
 	ENGINE_API virtual void SetSceneViewport(FSceneViewport* InSceneViewport) override;
 	ENGINE_API virtual FGeometry GetViewportWidgetHostGeometry() const override;
+	ENGINE_API virtual FGeometry GetViewportWidgetHostPaintGeometry() const override;
 	ENGINE_API virtual FGeometry GetPlayerWidgetHostGeometry(ULocalPlayer* Player) const override;
 
 	ENGINE_API virtual void NotifyPlayerAdded(int32 PlayerIndex, ULocalPlayer* AddedPlayer) override;

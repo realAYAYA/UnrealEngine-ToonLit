@@ -23,12 +23,12 @@ extern int32 GHairVisibilityComputeRaster_Debug;
 
 void SetUpViewHairRenderInfo(const FViewInfo& ViewInfo, FVector4f& OutHairRenderInfo, uint32& OutHairRenderInfoBits, uint32& OutHairComponents);
 void SetUpViewHairRenderInfo(const FViewInfo& ViewInfo, bool bEnableMSAA, FVector4f& OutHairRenderInfo, uint32& OutHairRenderInfoBits, uint32& OutHairComponents);
-FMinHairRadiusAtDepth1 ComputeMinStrandRadiusAtDepth1(const FIntPoint& Resolution, const float FOV, const uint32 SampleCount, const float OverrideStrandHairRasterizationScale);
+FMinHairRadiusAtDepth1 ComputeMinStrandRadiusAtDepth1(const FIntPoint& Resolution, const float FOV, const uint32 SampleCount, const float OverrideStrandHairRasterizationScale, const float OrthoWidth);
 
 inline bool IsHairStrandsForwardRasterSupported(EShaderPlatform In) 
 { 
 	return IsFeatureLevelSupported(In, ERHIFeatureLevel::SM6) && IsHairStrandsSupported(EHairStrandsShaderType::Strands, In) && 
-		!IsVulkanPlatform(In); // :todo-jn: fix SPIR-V error during compilation
+		!IsVulkanPlatform(In) && !IsMetalPlatform(In); // :todo-jn: fix SPIR-V error during compilation (Mac and Vulkan)
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -49,7 +49,7 @@ class FHairCullSegmentCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FPackedHairVis>, RWHairVis)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, RWCoord)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, RWCounter)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, RWCounter)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float4>, RWPoints)
 
 		END_SHADER_PARAMETER_STRUCT()
@@ -85,7 +85,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FRasterComputeForwardCommonParameters, )
 	SHADER_PARAMETER(uint32,    MaxControlPointCount)
 
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer, ControlPoints)
-	SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, ControlPointCount)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ControlPointCount)
 END_SHADER_PARAMETER_STRUCT()
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -326,13 +326,13 @@ FRasterForwardCullingOutput AddHairStrandsForwardCullingPass(
 	Out.NodeCoord		= GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(uint32), MaxNumPrimIDs), TEXT("Hair.VisibilityNodeCoord"));
 	Out.Points			= GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(uint32)*4u, MaxNumPrimIDs), TEXT("Hair.ControlPoints"));
 	Out.PointsSRV		= GraphBuilder.CreateSRV(Out.Points, ControlPointFormat);
-	Out.PointCount		= GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1,1), PF_R32_UINT, FClearValueBinding::None, TexCreate_UAV | TexCreate_ShaderResource), TEXT("Hair.ControlPointCount"));
+	Out.PointCount		= GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1), TEXT("Hair.ControlPointCount"));
 	Out.RasterizedInstanceCount = 0;
 
 	FRDGBufferUAVRef PointsUAV = GraphBuilder.CreateUAV(Out.Points, ControlPointFormat);
 
 	const uint32 ClearValues[4] = { 0u,0u,0u,0u };
-	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.PointCount), ClearValues);
+	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.PointCount), 0u);
 	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.NodeIndex), ClearValues);
 
 	// Create and set the uniform buffer
@@ -548,7 +548,7 @@ void AddHairStrandsForwardRasterPass(
 		Common.ControlPoints = InData.ControlPointsSRV;
 		Common.ControlPointCount = InData.ControlPointCount;
 
-		Common.RadiusAtDepth1 = ComputeMinStrandRadiusAtDepth1(FIntPoint(ViewInfo.UnconstrainedViewRect.Width(), ViewInfo.UnconstrainedViewRect.Height()), ViewInfo.FOV, 1 /*SampleCount*/, 0 /*ScaleOverride*/).Primary;
+		Common.RadiusAtDepth1 = ComputeMinStrandRadiusAtDepth1(FIntPoint(ViewInfo.UnconstrainedViewRect.Width(), ViewInfo.UnconstrainedViewRect.Height()), ViewInfo.FOV, 1 /*SampleCount*/, 0 /*ScaleOverride*/, ViewInfo.ViewMatrices.GetOrthoDimensions().X).Primary;
 	}
 
 	// Fill in tile depth

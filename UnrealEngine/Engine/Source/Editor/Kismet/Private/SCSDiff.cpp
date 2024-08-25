@@ -23,7 +23,6 @@
 #include "SubobjectData.h"
 #include "SubobjectDataHandle.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Types/SlateEnums.h"
 #include "UObject/Object.h"
@@ -36,14 +35,14 @@ class SWidget;
 
 FSCSDiff::FSCSDiff(const UBlueprint* InBlueprint)
 {
+	// Need to pull off const because the ICH access functions theoretically could modify it
+	Blueprint = const_cast<UBlueprint*>(InBlueprint);
+
 	if (!FBlueprintEditorUtils::SupportsConstructionScript(InBlueprint) || InBlueprint->SimpleConstructionScript == NULL)
 	{
 		ContainerWidget = SNew(SBox);
 		return;
 	}
-
-	// Need to pull off const because the ICH access functions theoretically could modify it
-	Blueprint = const_cast<UBlueprint*>(InBlueprint);
 
 	Inspector = SNew(SKismetInspector)
 		.HideNameArea(true)

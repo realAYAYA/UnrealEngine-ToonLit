@@ -12,7 +12,7 @@
 
 struct FDepthOnlyVSToPS
 {
-	float4 Position : SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 
 	#if !MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET
 		FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
@@ -35,14 +35,20 @@ void Main(
 #if USE_GLOBAL_CLIP_PLANE
 	, out float OutGlobalClipPlaneDistance : SV_ClipDistance
 #endif
-#if INSTANCED_STEREO
+#if INSTANCED_STEREO && MOBILE_MULTI_VIEW
+	, out uint LayerIndex : SV_RenderTargetArrayIndex
+#elif INSTANCED_STEREO
 	, out uint ViewportIndex : SV_ViewPortArrayIndex
 #endif
 	)
 {
 #if INSTANCED_STEREO
 	uint EyeIndex = GetEyeIndexFromVF(Input);
-	ViewportIndex = EyeIndex;
+	#if MOBILE_MULTI_VIEW
+		LayerIndex = EyeIndex;
+	#else
+		ViewportIndex = EyeIndex;
+	#endif
 #endif
 	ResolvedView = ResolveViewFromVF(Input);
 

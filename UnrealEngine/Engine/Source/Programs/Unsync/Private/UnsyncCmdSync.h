@@ -8,6 +8,8 @@
 
 namespace unsync {
 
+struct FAuthDesc;
+
 struct FCmdSyncOptions
 {
 	FAlgorithmOptions Algorithm;
@@ -17,10 +19,12 @@ struct FCmdSyncOptions
 	FPath SourceManifestOverride;
 	FPath ScavengeRoot;
 	uint32 ScavengeDepth = 5;
+	uint64 BackgroundTaskMemoryBudget = 2_GB;
 
 	std::vector<FPath> Overlays;
 
 	FRemoteDesc Remote;
+	FAuthDesc*	AuthDesc = nullptr;
 
 	bool bFullDifference = false;
 	bool bFullSourceScan = false;
@@ -29,8 +33,6 @@ struct FCmdSyncOptions
 	bool bCheckAvailableSpace = true;
 
 	bool bValidateTargetFiles = true;  // WARNING: turning this off is intended only for testing/profiling
-
-	uint32 BlockSize = uint32(64_KB);
 
 	FSyncFilter* Filter = nullptr;
 };

@@ -36,11 +36,19 @@ namespace EpicGames.Perforce.Managed
 		public int Revision { get; }
 
 		#region Field names
-		static readonly Utf8String s_lengthField = "len";
-		static readonly Utf8String s_digestField = "dig";
-		static readonly Utf8String s_typeField = "type";
-		static readonly Utf8String s_revisionField = "rev";
+		static readonly Utf8String s_lengthField = new Utf8String("len");
+		static readonly Utf8String s_digestField = new Utf8String("dig");
+		static readonly Utf8String s_typeField = new Utf8String("type");
+		static readonly Utf8String s_revisionField = new Utf8String("rev");
 		#endregion
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		public StreamFile(string path, long length, FileContentId contentId, int revision)
+			: this(new Utf8String(path), length, contentId, revision)
+		{
+		}
 
 		/// <summary>
 		/// Constructor
@@ -106,7 +114,7 @@ namespace EpicGames.Perforce.Managed
 		public IoHash Hash { get; set; }
 
 		#region Field names
-		static readonly Utf8String s_hashField = "hash";
+		static readonly Utf8String s_hashField = new Utf8String("hash");
 		#endregion
 
 		/// <summary>
@@ -175,10 +183,10 @@ namespace EpicGames.Perforce.Managed
 		public Dictionary<Utf8String, StreamTreeRef> NameToTree { get; } = new Dictionary<Utf8String, StreamTreeRef>(FileUtils.PlatformPathComparerUtf8);
 
 		#region Field names
-		static readonly Utf8String s_nameField = "name";
-		static readonly Utf8String s_pathField = "path";
-		static readonly Utf8String s_filesField = "files";
-		static readonly Utf8String s_treesField = "trees";
+		static readonly Utf8String s_nameField = new Utf8String("name");
+		static readonly Utf8String s_pathField = new Utf8String("path");
+		static readonly Utf8String s_filesField = new Utf8String("files");
+		static readonly Utf8String s_treesField = new Utf8String("trees");
 		#endregion
 
 		/// <summary>

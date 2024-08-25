@@ -475,7 +475,7 @@ void FTable::Reserve(const uint32 ThreadCount)
 		TArray<FBucket*, FAnsiAllocator> AvailableBuckets = ExistingBuckets;
 		const auto AllocateBucket = [&AvailableBuckets]() -> FBucket*
 		{
-			return !AvailableBuckets.IsEmpty() ? AvailableBuckets.Pop(/*bAllowShrinking*/ false) : FBucket::Create();
+			return !AvailableBuckets.IsEmpty() ? AvailableBuckets.Pop(EAllowShrinking::No) : FBucket::Create();
 		};
 
 		// Add waiting threads to the new table.

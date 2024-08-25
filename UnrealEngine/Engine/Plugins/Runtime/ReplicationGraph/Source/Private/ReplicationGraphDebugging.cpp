@@ -107,7 +107,7 @@ void AReplicationGraphDebugActor::ServerStartDebugging_Implementation()
 	int32 TotalNumCells = 0; // How many cells have been allocated
 	int32 TotalLeafNodes = 0; // How many cells have leaf nodes allocated
 
-	TSet<AActor*> UniqueActors;
+	TSet<FActorRepListType> UniqueActors;
 	int32 TotalElementsInLists = 0;
 
 	TMap<int32, int32> NumStreamLevelsMap;
@@ -425,7 +425,7 @@ void AReplicationGraphDebugActor::ServerCellInfo_Implementation()
 
 		LocationsSent.Add(CellLocation);
 
-		TArray<AActor*> ActorsInCell;
+		TArray<FActorRepListType> ActorsInCell;
 		FVector CellExtent(GridNode->CellSize, GridNode->CellSize, 10.f);
 
 		if (GridNode->Grid.IsValidIndex(CellX))
@@ -440,7 +440,16 @@ void AReplicationGraphDebugActor::ServerCellInfo_Implementation()
 			}
 		}
 
+#if !UE_ACTOR_REPLIST_TYPE_EXTRA_SAFETY
 		ClientCellInfo(CellLocation, CellExtent, ActorsInCell);
+#else
+		TArray<AActor*> RealActorsInCell;
+		for (const FActorRepListType& RepListActor : ActorsInCell)
+		{
+			RealActorsInCell.Add(RepListActor);
+		}
+		ClientCellInfo(CellLocation, CellExtent, RealActorsInCell);
+#endif
 	}	
 }
 
@@ -1091,12 +1100,23 @@ void UReplicationGraphNode::VerifyActorReferences()
 
 bool UReplicationGraphNode::VerifyActorReference(const FActorRepListType& Actor) const
 {
-	const bool bIsValid = IsValid(Actor);
-	UE_CLOG(!bIsValid, LogReplicationGraph, Error,
-		TEXT("Invalid Actor %s (%s) is still referenced by %s"),
-		*GetNameSafe(Actor),
-		*GetNameSafe(Actor ? Actor->GetClass() : nullptr),
+	//This logic should be triggered just before GC, so we can have an invalid actor which still has safely addressable memory
+	//However, if we have a case where the Actor was cleaned up or stomped, we would crash on GetNameSafe, so I'm logging the Node separately
+	const bool bIsValid = Actor && IsValid(Actor);
+	
+	UE_CLOG(!bIsValid, LogReplicationGraph, Error, TEXT("VerifyActorReference Invalid Actor in RepGraphNode: %s"),
 		*GetName());
+
+	const bool bIsValidLowLevel = Actor && Actor->IsValidLowLevel();
+
+	UE_CLOG(!bIsValid || !bIsValidLowLevel, LogReplicationGraph, Error,
+		TEXT("Invalid Actor %s (%s) is still referenced in %s. Actor bIsValid: %d bIsValidLowLevel:%d"),
+		*GetPathNameSafe(Actor),
+		*GetNameSafe(Actor ? Actor->GetClass() : nullptr),
+		*GetName(),
+		bIsValid,
+		bIsValidLowLevel);
+		
 	return bIsValid;
 }
 
@@ -1333,11 +1353,14 @@ void PrintPrioritizedList(FOutputDevice& Ar, UNetReplicationGraphConnection* Con
 		FString StarvedString = bWasStarved ? FString::Printf(TEXT(" (Starved %d) "), RepFrameNum - ActorInfo.LastRepFrameNum) : TEXT("");
 
 #if REPGRAPH_DETAILS
-			
-		if (FPrioritizedActorFullDebugDetails* FullDetails = PrioritizedList->FullDebugDetails.Get()->FindByKey(Item.Actor))
+
+		if (PrioritizedList->FullDebugDetails.Get())
 		{
-			Ar.Logf(TEXT("%-40s %.4f %s %s"), *GetActorRepListTypeDebugString(Item.Actor), Item.Priority, *FullDetails->BuildString(), *StarvedString);
-			continue;
+			if (FPrioritizedActorFullDebugDetails* FullDetails = PrioritizedList->FullDebugDetails.Get()->FindByKey(Item.Actor))
+			{
+				Ar.Logf(TEXT("%-40s %.4f %s %s"), *GetActorRepListTypeDebugString(Item.Actor), Item.Priority, *FullDetails->BuildString(), *StarvedString);
+				continue;
+			}
 		}
 #endif
 

@@ -7,6 +7,7 @@
 #include "GeometryCollection/ManagedArrayAccessor.h"
 #include "GeometryCollection/ManagedArrayCollection.h"
 #include "GeometryCollection/Facades/CollectionSelectionFacade.h"
+#include "GeometryCollection/GeometryCollection.h"
 #include "Chaos/Triangle.h"
 
 class FGeometryCollection;
@@ -63,6 +64,9 @@ namespace GeometryCollection::Facades
 		/**  */
 		CHAOS_API void ConvertSelectionToRigidNodes(const int32 Index, TArray<int32>& InSelection) const;
 		CHAOS_API void ConvertSelectionToRigidNodes(TArray<int32>& InSelection) const;
+
+		/** Keep only the bones in the selection that match the input SimulationType */
+		CHAOS_API void FilterSelectionBySimulationType(TArray<int32>& InOutSelection, FGeometryCollection::ESimulationTypes KeepSimulationType) const;
 
 		/** Replace any Embedded or Rigid transforms in InOutSelection with their parent cluster. If there is just a rigid root node selected, optionally keep it if bLeaveRigidRoot is true. */
 		CHAOS_API void ConvertSelectionToClusterNodes(TArray<int32>& InOutSelection, bool bLeaveRigidRoots = true) const;
@@ -124,6 +128,9 @@ namespace GeometryCollection::Facades
 
 		/**  */
 		CHAOS_API TArray<int32> SelectByVolume(float VolumeMin, float VolumeMax, bool bInclusive, bool bInsideRange) const;
+
+		/** Return a map from parent of bone to the selected bones with that parent */
+		CHAOS_API TMap<int32, TArray<int32>> GetClusteredSelections(const TArray<int32>& InSelection) const;
 
 		/** 
 		* Returns indices of bones where all the vertices or at least one vertex of the bone is inside InBox 

@@ -17,39 +17,37 @@ void FNiagaraSystemDetails::CustomizeDetails(IDetailLayoutBuilder& InDetailLayou
 	// we display the scalability category within scalability mode, which is why we hide it here
 	InDetailLayout.HideCategory("Scalability");
 
-	InDetailLayout.SortCategories([](const TMap<FName, IDetailCategoryBuilder*>& CategoryMap)
-	{
-		for (const TPair<FName, IDetailCategoryBuilder*>& Pair : CategoryMap)
+	InDetailLayout.SortCategories(
+		[](const TMap<FName, IDetailCategoryBuilder*>& CategoryMap)
 		{
-			int32 SortOrder = Pair.Value->GetSortOrder();
-			const FName& CategoryName = Pair.Key;
+			for (const TPair<FName, IDetailCategoryBuilder*>& Pair : CategoryMap)
+			{
+				int32 SortOrder = Pair.Value->GetSortOrder();
+				const FName& CategoryName = Pair.Key;
 
-			if (CategoryName == "Random")
-			{
-				SortOrder = 1;
-			}
-			else if (CategoryName == "Rendering")
-			{
-				SortOrder = 2;
-			}
-			else if (CategoryName == "System")
-			{
-				SortOrder = 3;
-			}
-			else if (CategoryName == "Warmup")
-			{
-				SortOrder = 4;
-			}
-			else if (CategoryName == "Performance")
-			{
-				SortOrder = 5;
-			}
-			else
-			{
-				SortOrder += 6;
-			}
+				if (CategoryName == "System")
+				{
+					SortOrder = 1;
+				}
+				else if (CategoryName == "Rendering")
+				{
+					SortOrder = 2;
+				}
+				else if (CategoryName == "Debug")
+				{
+					SortOrder = 3;
+				}
+				else if (CategoryName == "Performance")
+				{
+					SortOrder = 4;
+				}
+				else
+				{
+					SortOrder += 5;
+				}
 
-			Pair.Value->SetSortOrder(SortOrder);
+				Pair.Value->SetSortOrder(SortOrder);
+			}
 		}
-	});
+	);
 }

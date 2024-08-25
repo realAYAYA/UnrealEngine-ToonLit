@@ -3,9 +3,17 @@
 #include "Graph/Nodes/MovieGraphCollectionNode.h"
 
 #include "Graph/MovieGraphConfig.h"
+#include "Graph/MovieGraphRenderLayerSubsystem.h"
 #include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "MovieGraph"
+
+UMovieGraphCollectionNode::UMovieGraphCollectionNode()
+{
+	Collection = CreateDefaultSubobject<UMovieGraphCollection>(TEXT("Collection"));
+
+	RegisterDelegates();
+}
 
 #if WITH_EDITOR
 FText UMovieGraphCollectionNode::GetNodeTitle(const bool bGetDescriptive) const
@@ -13,9 +21,13 @@ FText UMovieGraphCollectionNode::GetNodeTitle(const bool bGetDescriptive) const
 	static const FText CollectionNodeName = LOCTEXT("NodeName_Collection", "Collection");
 	static const FText CollectionNodeDescription = LOCTEXT("NodeDescription_Collection", "Collection\n{0}");
 
-	if (bGetDescriptive && !CollectionName.IsEmpty())
+	const FString CollectionDisplayName = (Collection && !Collection->GetCollectionName().IsEmpty())
+		? Collection->GetCollectionName()
+		: LOCTEXT("NodeNoNameWarning_Collection", "NO NAME").ToString();
+
+	if (bGetDescriptive)
 	{
-		return FText::Format(CollectionNodeDescription, FText::FromString(CollectionName));
+		return FText::Format(CollectionNodeDescription, FText::FromString(CollectionDisplayName));
 	}
 
 	return CollectionNodeName;
@@ -39,19 +51,26 @@ FSlateIcon UMovieGraphCollectionNode::GetIconAndTint(FLinearColor& OutColor) con
 	OutColor = FLinearColor::White;
 	return CollectionIcon;
 }
+#endif // WITH_EDITOR
 
-void UMovieGraphCollectionNode::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+FString UMovieGraphCollectionNode::GetNodeInstanceName() const
 {
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	// Broadcast a node-changed delegate so that the node title's UI gets updated.
-	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UMovieGraphCollectionNode, CollectionName) ||
-		PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(UMovieGraphCollectionNode, bOverride_CollectionName))
-	{
-		OnNodeChangedDelegate.Broadcast(this);
-	}
+	return Collection ? Collection->GetCollectionName() : FString();
 }
 
-#endif // WITH_EDITOR
+void UMovieGraphCollectionNode::RegisterDelegates()
+{
+	Super::RegisterDelegates();
+
+#if WITH_EDITOR
+	if (Collection)
+	{
+		Collection->OnCollectionNameChangedDelegate.AddWeakLambda(this, [this](UMovieGraphCollection* ChangedCollection)
+		{
+			OnNodeChangedDelegate.Broadcast(this);
+		});
+	}
+#endif
+}
 
 #undef LOCTEXT_NAMESPACE // "MovieGraph"

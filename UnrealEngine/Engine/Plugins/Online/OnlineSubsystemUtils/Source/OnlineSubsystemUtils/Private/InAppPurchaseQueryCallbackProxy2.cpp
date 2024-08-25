@@ -22,54 +22,51 @@ void UInAppPurchaseQueryCallbackProxy2::TriggerQuery(APlayerController* PlayerCo
 	bool bFailedToEvenSubmit = true;
 
 	WorldPtr = nullptr;
-	APlayerState* PlayerState = nullptr;
-	if (PlayerController != nullptr)
+	if (PlayerController)
 	{
 		WorldPtr = PlayerController->GetWorld();
-		PlayerState = ToRawPtr(PlayerController->PlayerState);
-	}
-
-	if (PlayerState != nullptr)
-	{
-		if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
+		if (APlayerState* PlayerState = ToRawPtr(PlayerController->PlayerState))
 		{
-			IOnlineStoreV2Ptr StoreInterface = OnlineSub->GetStoreV2Interface();
-			if (StoreInterface.IsValid())
+			if (IOnlineSubsystem* const OnlineSub = IOnlineSubsystem::IsLoaded() ? IOnlineSubsystem::Get() : nullptr)
 			{
-				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - GetUniqueNetIdFromCachedControllerId"), ELogVerbosity::Log);
-				check(PlayerController);
-				FUniqueNetIdRepl QueryingPlayer = PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId();
-
-				if (QueryingPlayer.IsValid())
+				IOnlineStoreV2Ptr StoreInterface = OnlineSub->GetStoreV2Interface();
+				if (StoreInterface.IsValid())
 				{
-					FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Querying Store Interface"), ELogVerbosity::Log);
-					bFailedToEvenSubmit = false;
-					StoreInterface->QueryOffersById(*QueryingPlayer, ProductIdentifiers, FOnQueryOnlineStoreOffersComplete::CreateUObject(this, &UInAppPurchaseQueryCallbackProxy2::OnInAppPurchaseRead));
+					FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - GetUniqueNetIdFromCachedControllerId"), ELogVerbosity::Log);
+					check(PlayerController);
+					FUniqueNetIdRepl QueryingPlayer = PlayerController->GetLocalPlayer()->GetUniqueNetIdFromCachedControllerId();
+
+					if (QueryingPlayer.IsValid())
+					{
+						FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Querying Store Interface"), ELogVerbosity::Log);
+						bFailedToEvenSubmit = false;
+						StoreInterface->QueryOffersById(*QueryingPlayer, ProductIdentifiers, FOnQueryOnlineStoreOffersComplete::CreateUObject(this, &UInAppPurchaseQueryCallbackProxy2::OnInAppPurchaseRead));
+					}
+					else
+					{
+						FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Invalid UniqueNetId"), ELogVerbosity::Warning);
+					}
 				}
 				else
 				{
-					FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Invalid UniqueNetId"), ELogVerbosity::Warning);
+					FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - In App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
 				}
 			}
 			else
 			{
-				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - In App Purchases are not supported by Online Subsystem"), ELogVerbosity::Warning);
+				FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
 			}
 		}
 		else
 		{
-			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Invalid or uninitialized OnlineSubsystem"), ELogVerbosity::Warning);
+			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Invalid player state"), ELogVerbosity::Warning);
 		}
-	}
-	else
-	{
-		FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Invalid player state"), ELogVerbosity::Warning);
-	}
 
-	if (bFailedToEvenSubmit && (PlayerController != NULL))
-	{
-		FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Failed to even submit"), ELogVerbosity::Warning);
-		OnInAppPurchaseRead(false, TArray<FUniqueOfferId>(), FString());
+		if (bFailedToEvenSubmit)
+		{
+			FFrame::KismetExecutionMessage(TEXT("UInAppPurchaseQueryCallbackProxy2::TriggerQuery - Failed to even submit"), ELogVerbosity::Warning);
+			OnInAppPurchaseRead(false, TArray<FUniqueOfferId>(), FString());
+		}
 	}
 }
 

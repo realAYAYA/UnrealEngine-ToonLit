@@ -63,12 +63,11 @@ public:
 	*/
 	IRISCORE_API void SetPropertyValue(uint32 Index, const void* SrcValue);
 
-	/** Set the value at the provided Index, written into DstValue. 
-		The UProperty is looked up from the descriptor using the index, if the value differs the statemask is updated
-		Mostly intended for test code
-		Normal use of this class is through the poll layer
-		TODO: It would be nice if we could provide some validation on property types
-	*/
+	/**
+	 * Retrieve the value at the provided Index by writing it to DstValue. 
+	 * The property is looked up from the descriptor using the index.
+	 * Mostly intended for test code. Normal use of this class is through the poll layer.
+	 */
 	IRISCORE_API void GetPropertyValue(uint32 Index, void* DstValue) const;
 
 	/** Is the property at the given index dirty, for properties with multiple bits in the statemask this will return true if any of those bits are set */
@@ -88,15 +87,13 @@ public:
 	*/
 	IRISCORE_API bool PollPropertyReplicationState(const void* RESTRICT SrcData);
 
-	/**
-	 * Poll src data from properties which we want to store in order to determine if we need to call RepNotifies
-	*/
-	IRISCORE_API bool PollPropertyReplicationStateForRepNotifies(const void* RESTRICT SrcData);
+	/** Certain rep notifies requires the current state to be stored before we overwrite it, this method will copy property values from src data, , where SrcData is a UClass/UStruct containing properties
+	 * if the property is marked as dirty in NewStateToBeApplied
+	 */
+	IRISCORE_API bool StoreCurrentPropertyReplicationStateForRepNotifies(const void* RESTRICT SrcData, const FPropertyReplicationState* NewStateToBeApplied);
 
-	/** Push received state data to properties in DstData buffer, Note: DstData is a UClass/UStruct containing properties
-		Compare and update representation in DstStateBuffer and update ChangeMask 
-	*/
-	IRISCORE_API void PushPropertyReplicationState(void* RESTRICT DstData, bool bPushAll = false) const;
+	/** Push received state data to properties in DstData buffer. Note: DstData is a UClass/UStruct containing properties. Updates representation in DstStateBuffer and mark destination properties as dirty if updated. */
+	IRISCORE_API void PushPropertyReplicationState(const UObject* Owner, void* RESTRICT DstData, bool bPushAll = false) const;
 
 
 	/**
@@ -105,6 +102,11 @@ public:
 	 * @return True if any state is dirty, false if not.
 	 */
 	IRISCORE_API bool PollObjectReferences(const void* RESTRICT SrcData);
+
+	/**
+	 * Copy dirty properties from the other state including changemask
+	 */
+	IRISCORE_API void CopyDirtyProperties(const FPropertyReplicationState& Other);
 
 	struct FCallRepNotifiesParameters
 	{
@@ -149,9 +151,6 @@ public:
 		TArrayElementChangeMaskBitOffset = 1U,
 	};
 
-	// Polls source data for a single property. If the property has changed it will be marked as dirty.
-	void PollProperty(const void* SrcData, uint32 Index);
-
 	/**
 	 * If state has custom conditionals then this function will check whether the condition is enabled or not.
 	 * If state doesn't have custom conditionals it will return true.
@@ -164,6 +163,9 @@ private:
 	void ConstructStateInternal();
 	void DestructStateInternal();
 	void InjectState(const FReplicationStateDescriptor* Descriptor, uint8* InStateBuffer);
+	void PollPropertyValue(uint32 Index, const void* SrcValue);
+	void PushPropertyValue(uint32 Index, void* DstValue) const;
+
 
 	TRefCountPtr<const FReplicationStateDescriptor> ReplicationStateDescriptor;
 	uint8* StateBuffer;

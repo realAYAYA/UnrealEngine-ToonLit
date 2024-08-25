@@ -39,6 +39,9 @@ bool FDerivedDataGeometryCollectionCooker::Build(TArray<uint8>& OutData)
 		Chaos::FErrorReporter ErrorReporter(GeometryCollection.GetName());
 
 		BuildSimulationData(ErrorReporter, *Collection, SharedParams);
+		// important : this is necessary to make sure we compute mass scale on the instances properly
+		// sadly we cannot call this in BuildSimulationData because we have no access to the asset
+		GeometryCollection.CacheMaterialDensity();
 		Collection->Serialize(ChaosAr);
 
 		if (false && ErrorReporter.EncounteredAnyErrors())
@@ -60,7 +63,7 @@ bool FDerivedDataGeometryCollectionCooker::Build(TArray<uint8>& OutData)
 
 const TCHAR* FDerivedDataGeometryCollectionCooker::GetVersionString() const
 {
-	const TCHAR* VersionString = TEXT("E223057731B4465BBF7087001AF7ACBD");
+	const TCHAR* VersionString = TEXT("3162920A8AD047C1B4E498CB16681696");
 	return VersionString;
 }
 

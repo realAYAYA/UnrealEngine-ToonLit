@@ -33,7 +33,7 @@ public:
 	/**
 	 * Resolve the current world context pointer. Can never be nullptr.
 	 */
-	UWorld* GetPlaybackContext() const;
+	UObject* GetPlaybackContext() const;
 
 	/**
 	 * Returns GetPlaybackContext as a plain object.

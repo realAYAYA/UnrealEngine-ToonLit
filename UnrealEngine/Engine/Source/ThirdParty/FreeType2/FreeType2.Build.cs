@@ -14,17 +14,17 @@ public class FreeType2 : ModuleRules
 			{
 				return "FreeType2-2.10.4";
 			}
-			else if (Target.Platform == UnrealTargetPlatform.IOS ||
+			else if (Target.Platform == UnrealTargetPlatform.TVOS)
+			{
+				return "FreeType2-2.4.12";
+			}
+			else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS) ||
 				Target.Platform == UnrealTargetPlatform.Mac ||
 				Target.IsInPlatformGroup(UnrealPlatformGroup.Windows) ||
 				Target.IsInPlatformGroup(UnrealPlatformGroup.Unix)
 			)
 			{
 				return "FreeType2-2.10.0";
-			}
-			else if (Target.Platform == UnrealTargetPlatform.TVOS)
-			{
-				return "FreeType2-2.4.12";
 			}
 			else
 			{
@@ -33,15 +33,15 @@ public class FreeType2 : ModuleRules
 		}
 	}
 
-	protected virtual string IncRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
-	protected virtual string LibRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
+	protected virtual string IncRootDirectory { get { return ModuleDirectory; } }
+	protected virtual string LibRootDirectory { get { return PlatformModuleDirectory; } }
 
 	protected virtual string FreeType2IncPath
 	{
 		get
 		{
 			string IncPath = (FreeType2Version == "FreeType2-2.6") ? "Include" : "include";
-			return Path.Combine(IncRootDirectory, "FreeType2", FreeType2Version, IncPath);
+			return Path.Combine(IncRootDirectory, FreeType2Version, IncPath);
 		}
 	}
 	protected virtual string FreeType2LibPath
@@ -49,7 +49,7 @@ public class FreeType2 : ModuleRules
 		get
 		{
 			string LibPath = (FreeType2Version == "FreeType2-2.6") ? "Lib" : "lib";
-			return Path.Combine(LibRootDirectory, "FreeType2", FreeType2Version, LibPath);
+			return Path.Combine(LibRootDirectory, FreeType2Version, LibPath);
 		}
 	}
 
@@ -98,28 +98,25 @@ public class FreeType2 : ModuleRules
 
 			PublicAdditionalLibraries.Add(Path.Combine(FreeType2LibPath, "Mac", LibPath));
 		}
-		else if (Target.Platform == UnrealTargetPlatform.IOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
-			if (Target.Architecture != UnrealArch.IOSSimulator)
+			string LibName = Target.Platform == UnrealTargetPlatform.TVOS ? "libfreetype2412.a" : "libfreetype.a";
+			string LibDir = Target.Platform == UnrealTargetPlatform.TVOS ? "Device" : "Release";
+			if (Target.Architecture == UnrealArch.IOSSimulator || Target.Architecture == UnrealArch.TVOSSimulator)
 			{
-				LibPath = Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT
-					? Path.Combine("Debug", "libfreetyped.a")
-					: Path.Combine("Release", "libfreetype.a");
+				LibDir = "Simulator";
 			}
-			else
+			else if (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT)
 			{
-				LibPath = Path.Combine("Simulator", "libfreetype.a");
+				if (Target.Platform != UnrealTargetPlatform.TVOS)
+				{
+					LibDir = "Debug";
+					LibName = "libfreetyped.a";
+				}
 			}
+			LibPath = Path.Combine(LibDir, LibName);
 
-			PublicAdditionalLibraries.Add(Path.Combine(FreeType2LibPath, "IOS", LibPath));
-		}
-		else if (Target.Platform == UnrealTargetPlatform.TVOS)
-		{
-			LibPath = (Target.Architecture == UnrealArch.TVOSSimulator)
-				? "Simulator"
-				: "Device";
-
-			PublicAdditionalLibraries.Add(Path.Combine(FreeType2LibPath, "TVOS", LibPath, "libfreetype2412.a"));
+			PublicAdditionalLibraries.Add(Path.Combine(FreeType2LibPath, PlatformSubdirectoryName, LibPath));
 		}
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Android))
 		{

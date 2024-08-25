@@ -12,6 +12,7 @@
 #include "TargetInterfaces/StaticMeshBackedTarget.h"
 #include "TargetInterfaces/PhysicsDataSource.h"
 #include "ToolTargets/PrimitiveComponentToolTarget.h"
+#include "ToolTargets/StaticMeshToolTarget.h" // for FMeshDescriptionCache
 #include "ComponentSourceInterfaces.h"  // for EMeshLODIdentifier
 
 #include "StaticMeshComponentToolTarget.generated.h"
@@ -58,6 +59,7 @@ public:
 
 	// IDynamicMeshProvider
 	virtual UE::Geometry::FDynamicMesh3 GetDynamicMesh() override;
+	virtual UE::Geometry::FDynamicMesh3 GetDynamicMesh(bool bRequestTangents) override;
 
 	// IDynamicMeshCommitter
 	virtual void CommitDynamicMesh(const UE::Geometry::FDynamicMesh3& Mesh, const FDynamicMeshCommitInfo& CommitInfo) override;
@@ -84,6 +86,9 @@ protected:
 	EMeshLODIdentifier EditingLOD = EMeshLODIdentifier::LOD0;
 
 	friend class UStaticMeshComponentToolTargetFactory;
+
+private:
+	UStaticMeshToolTarget::FMeshDescriptionCache CachedMeshDescriptions;
 };
 
 

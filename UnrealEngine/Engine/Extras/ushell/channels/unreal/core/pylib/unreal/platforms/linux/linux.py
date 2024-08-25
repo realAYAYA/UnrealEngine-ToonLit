@@ -45,9 +45,10 @@ class Platform(PlatformBase):
 
     def _launch(self, exec_context, stage_dir, binary_path, args):
         if stage_dir:
-            base_dir = binary_path.replace("\\", "/").split("/")
-            base_dir = "/".join(base_dir[-4:-1])
-            base_dir = stage_dir + base_dir
+            midfix = "Engine";
+            if project := self.get_unreal_context().get_project():
+                midfix = project.get_name()
+            base_dir = stage_dir + midfix + "/Binaries/Linux"
             if not os.path.isdir(base_dir):
                 raise EnvironmentError(f"Failed to find base directory '{base_dir}'")
             args = (*args, "-basedir=" + base_dir)

@@ -210,7 +210,7 @@ syms_unwind_pe_x64(SYMS_String8 data, SYMS_PeBinAccel *bin, SYMS_U64 bin_base,
               {
                 // NOTE(rjf): this was found by stepping through kernel code after an exception was
                 // thrown, encountered in the exception_stepping_tests (after the throw) in mule_main
-                SYMS_ASSERT(!"Hit me!");
+                // SYMS_ASSERT(!"Hit me!");
                 result.dead = syms_true;
                 // TODO(allen): ???
               }break;
@@ -257,7 +257,7 @@ syms_unwind_pe_x64(SYMS_String8 data, SYMS_PeBinAccel *bin, SYMS_U64 bin_base,
               {
                 // NOTE(rjf): this was found by stepping through kernel code after an exception was
                 // thrown, encountered in the exception_stepping_tests (after the throw) in mule_main
-                SYMS_ASSERT(!"Hit me!");
+                // SYMS_ASSERT(!"Hit me!");
                 
                 if (op_info > 1){
                   result.dead = syms_true;
@@ -369,13 +369,13 @@ syms_unwind_pe_x64__epilog(SYMS_String8 bin_data, SYMS_PeBinAccel *bin, SYMS_U64
   //- setup parsing context
   SYMS_U64 ip_voff = regs->rip.u64 - bin_base;
   SYMS_U64 sec_number = syms_pe_sec_number_from_voff(bin_data, bin, ip_voff);
-  SYMS_CoffSection coff_sec = syms_pe_coff_section(bin_data, bin, sec_number);
-  void*         inst_base   = syms_pe_ptr_from_sec_number(bin_data, bin, sec_number);
-  SYMS_U64Range inst_range = {0, coff_sec.virt_size};
+  SYMS_CoffSectionHeader *sec = syms_pecoff_sec_hdr_from_n(bin_data, bin->section_array_off, sec_number);
+  void*         inst_base  = syms_pe_ptr_from_sec_number(bin_data, bin, sec_number);
+  SYMS_U64Range inst_range = {0, sec->virt_size};
   
   //- setup parsing variables
   SYMS_B32 keep_parsing = syms_true;
-  SYMS_U64 off = ip_voff - coff_sec.virt_off;
+  SYMS_U64 off = ip_voff - sec->virt_off;
   
   //- parsing loop
   for (;keep_parsing;){
@@ -597,14 +597,14 @@ syms_unwind_pe_x64__voff_is_in_epilog(SYMS_String8 bin_data, SYMS_PeBinAccel *bi
   
   //- setup parsing context
   SYMS_U64 sec_number = syms_pe_sec_number_from_voff(bin_data, bin, voff);
-  SYMS_CoffSection coff_sec = syms_pe_coff_section(bin_data, bin, sec_number);
-  void*         inst_base   = syms_pe_ptr_from_sec_number(bin_data, bin, sec_number);
-  SYMS_U64Range inst_range = {0, coff_sec.virt_size};
+  SYMS_CoffSectionHeader *sec = syms_pecoff_sec_hdr_from_n(bin_data, bin->section_array_off, sec_number);
+  void*         inst_base  = syms_pe_ptr_from_sec_number(bin_data, bin, sec_number);
+  SYMS_U64Range inst_range = {0, sec->virt_size};
   
   //- setup parsing variables
   SYMS_B32 is_epilog = syms_false;
   SYMS_B32 keep_parsing = syms_true;
-  SYMS_U64 off = voff - coff_sec.virt_off;
+  SYMS_U64 off = voff - sec->virt_off;
   
   //- check first instruction
   {

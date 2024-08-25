@@ -5,13 +5,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using EpicGames.Core;
 using Horde.Server.Jobs.Graphs;
 using Horde.Server.Jobs.Templates;
 using Horde.Server.Perforce;
 using Horde.Server.Server;
 using Horde.Server.Streams;
-using Horde.Server.Utilities;
 using HordeCommon;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -94,11 +92,13 @@ namespace Horde.Server.Jobs.Bisect
 			// Find the step that ran before this one, ignoring any excluded jobs
 			(IJobStepRef? currentJobStepRef, IJobStepRef? previousJobStepRef) = await GetBisectRangeAsync(bisectTask, cancellationToken);
 
+			_logger.LogDebug("Bisect task {BisectTaskId} ({StreamId}:{TemplateId}:{NodeName}): Current Job Id: {CurJobId}/{CurStepOutcome}, Previous Job Id: {PrevJobId}/{PrevStepOutcome}", bisectTask.Id, bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, currentJobStepRef?.Id.JobId, currentJobStepRef?.Outcome, previousJobStepRef?.Id.JobId, previousJobStepRef?.Outcome);
+
 			// Check if the task needs to be updated with the current bisect state
-			if (currentJobStepRef != null && bisectTask.CurrentJobId != currentJobStepRef.Id.JobId)
+			if (currentJobStepRef != null && bisectTask.CurrentJobStep.JobId != currentJobStepRef.Id.JobId)
 			{
-				_logger.LogInformation("Bisect task {BisectTaskId} ({StreamId}:{TemplateId}:{NodeName}): Changing current job from {PrevJobId} ({PrevChange}) -> {NextJobId} ({NextChange}).", bisectTask.Id, bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, bisectTask.CurrentJobId, bisectTask.CurrentChange, currentJobStepRef.Id.JobId, currentJobStepRef.Change);
-				await _bisectTaskCollection.TryUpdateAsync(bisectTask, new UpdateBisectTaskOptions { CurrentJob = (currentJobStepRef.Id.JobId, currentJobStepRef.Change) }, cancellationToken);
+				_logger.LogInformation("Bisect task {BisectTaskId} ({StreamId}:{TemplateId}:{NodeName}): Changing current job from {PrevJobId} ({PrevChange}) -> {NextJobId} ({NextChange}).", bisectTask.Id, bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, bisectTask.CurrentJobStep.JobId, bisectTask.CurrentChange, currentJobStepRef.Id.JobId, currentJobStepRef.Change);
+				await _bisectTaskCollection.TryUpdateAsync(bisectTask, new UpdateBisectTaskOptions { CurrentJobStep = (currentJobStepRef.Id, currentJobStepRef.Change) }, cancellationToken);
 				return null;
 			}
 
@@ -114,6 +114,12 @@ namespace Horde.Server.Jobs.Bisect
 				// Job is still running
 				_logger.LogDebug("Bisect task {BisectTaskId} ({StreamId}:{TemplateId}:{NodeName}): Waiting on {JobStepRefId}", bisectTask.Id, bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, previousJobStepRef.Id);
 				return BisectTaskState.Running;
+			}
+
+			// Update bisection lower bound
+			if (bisectTask.MinJobStep == null)
+			{
+				await _bisectTaskCollection.TryUpdateAsync(bisectTask, new UpdateBisectTaskOptions { MinJobStep = (previousJobStepRef.Id, previousJobStepRef.Change) }, cancellationToken);
 			}
 
 			// Find the next commit to test
@@ -138,10 +144,10 @@ namespace Horde.Server.Jobs.Bisect
 			ICommit nextCodeCommit = await commitCollection.GetLastCodeChangeAsync(nextCommit.Number, cancellationToken) ?? nextCommit;
 
 			// Get the initial job
-			IJob? job = await _jobCollection.GetAsync(bisectTask.InitialJobId);
+			IJob? job = await _jobCollection.GetAsync(bisectTask.InitialJobStep.JobId, cancellationToken);
 			if (job == null)
 			{
-				_logger.LogInformation("Bisect task {BisectTaskId} ({StreamId}:{TemplateId}:{NodeName}): Missing job {JobId}.", bisectTask.Id, bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, bisectTask.InitialJobId);
+				_logger.LogInformation("Bisect task {BisectTaskId} ({StreamId}:{TemplateId}:{NodeName}): Missing job {JobId}.", bisectTask.Id, bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, bisectTask.InitialJobStep.JobId);
 				return BisectTaskState.MissingJob;
 			}
 
@@ -154,7 +160,7 @@ namespace Horde.Server.Jobs.Bisect
 			}
 
 			ITemplate template = await _templateCollection.GetOrAddAsync(templateRefConfig);
-			IGraph graph = await _graphCollection.AddAsync(template, streamConfig.InitialAgentType);
+			IGraph graph = await _graphCollection.AddAsync(template, streamConfig.InitialAgentType, cancellationToken);
 
 			CreateJobOptions options = new CreateJobOptions(templateRefConfig);
 			options.StartedByBisectTaskId = bisectTask.Id;
@@ -163,7 +169,7 @@ namespace Horde.Server.Jobs.Bisect
 			options.Arguments.AddRange(job.Arguments.Where(x => !x.StartsWith(IJob.TargetArgumentPrefix, StringComparison.OrdinalIgnoreCase)));
 			options.Arguments.Add($"{IJob.TargetArgumentPrefix}{bisectTask.NodeName}");
 
-			IJob nextJob = await _jobCollection.AddAsync(JobId.GenerateNewId(), bisectTask.StreamId, bisectTask.TemplateId, template.Hash, graph, $"{template.Name} (Bisect)", nextCommit.Number, nextCodeCommit.Number, options);
+			IJob nextJob = await _jobCollection.AddAsync(JobIdUtils.GenerateNewId(), bisectTask.StreamId, bisectTask.TemplateId, template.Hash, graph, $"{template.Name} (Bisect)", nextCommit.Number, nextCodeCommit.Number, options, cancellationToken);
 			_logger.LogInformation("Bisect task {BisectTaskId} ({StreamId}:{TemplateId}:{NodeName}): {NumCommits} possible commits ({MinChange}..{MaxChange}). Started new job {JobId} at CL {Change}.", bisectTask.Id, bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, commits.Count, commits[^1].Number, commits[0].Number, nextJob.Id, nextCommit.Number);
 
 			return BisectTaskState.Running;
@@ -174,12 +180,12 @@ namespace Horde.Server.Jobs.Bisect
 			// Query jobs before the start position
 			for (int maxJobCount = 20; ; maxJobCount += 20)
 			{
-				List<IJobStepRef> jobStepRefs = await _jobStepRefCollection.GetStepsForNodeAsync(bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, bisectTask.InitialChange, true, maxJobCount, null, cancellationToken);
+				List<IJobStepRef> jobStepRefs = await _jobStepRefCollection.GetStepsForNodeAsync(bisectTask.StreamId, bisectTask.TemplateId, bisectTask.NodeName, bisectTask.InitialChange, true, maxJobCount, cancellationToken);
 
 				IJobStepRef? currentJobStepRef = null;
-				foreach(IJobStepRef jobStepRef in jobStepRefs.OrderByDescending(x => x.Change).ThenBy(x => x.Id))
+				foreach (IJobStepRef jobStepRef in jobStepRefs.OrderByDescending(x => x.Change).ThenBy(x => x.Id))
 				{
-					if(!bisectTask.IgnoreJobs.Contains(jobStepRef.Id.JobId))
+					if (!bisectTask.IgnoreJobs.Contains(jobStepRef.Id.JobId))
 					{
 						if (jobStepRef.Outcome == bisectTask.Outcome)
 						{

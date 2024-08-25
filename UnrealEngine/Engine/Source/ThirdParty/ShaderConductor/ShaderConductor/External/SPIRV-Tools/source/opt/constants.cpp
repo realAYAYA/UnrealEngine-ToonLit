@@ -436,6 +436,8 @@ const Constant* ConstantManager::GetNumericVectorConstantWithWords(
     words_per_element = float_type->width() / 32;
   else if (const auto* int_type = element_type->AsInteger())
     words_per_element = int_type->width() / 32;
+  else if (const auto* bool_type = element_type->AsBool())
+    words_per_element = 1;
 
   if (words_per_element != 1 && words_per_element != 2) return nullptr;
 

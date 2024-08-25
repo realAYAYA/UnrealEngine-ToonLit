@@ -82,7 +82,7 @@ protected:
 		FAnsiStringView Hostname,
 		EStorageServerContentType Accept = EStorageServerContentType::Binary);
 
-	FSocket* Send(FStorageServerConnection& Owner);
+	FSocket* Send(FStorageServerConnection& Owner, bool bLogOnError = true);
 	virtual void Serialize(void* V, int64 Length) override;
 
 	EStorageServerContentType AcceptType;
@@ -197,7 +197,7 @@ private:
 
 	int32 HandshakeRequest(TArrayView<const TSharedPtr<FInternetAddr>> HostAddresses);
 	FSocket* AcquireSocketFromPool();
-	FSocket* AcquireNewSocket();
+	FSocket* AcquireNewSocket(float TimeoutSeconds = -1.0f);
 	void ReleaseSocket(FSocket* Socket, bool bKeepAlive);
 
 	ISocketSubsystem& SocketSubsystem;

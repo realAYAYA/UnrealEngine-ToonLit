@@ -7,12 +7,18 @@
 #include "UnrealExporter.h"
 #include "UObject/ObjectSaveContext.h"
 #include "RigVMModel/RigVMControllerActions.h"
+#include "EdGraph/RigVMEdGraph.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMClient)
 
 #if WITH_EDITOR
 #include "ScopedTransaction.h"
 #endif
+
+UObject* IRigVMClientHost::ResolveUserDefinedTypeById(const FString& InTypeName) const
+{
+	return nullptr;
+}
 
 void FRigVMClient::SetSchemaClass(TSubclassOf<URigVMSchema> InSchemaClass)
 {
@@ -39,6 +45,23 @@ void FRigVMClient::SetSchemaClass(TSubclassOf<URigVMSchema> InSchemaClass)
 	{
 		Pair.Value->SetSchema(Schema);
 	}
+}
+
+void FRigVMClient::SetControllerClass(TSubclassOf<URigVMController> InControllerClass)
+{
+	check(InControllerClass);
+
+	if (InControllerClass == ControllerClass)
+	{
+		return;
+	}
+
+	for (URigVMGraph* Model : Models)
+	{
+		RemoveController(Model);
+	}
+
+	ControllerClass = InControllerClass;
 }
 
 void FRigVMClient::SetOuterClientHost(UObject* InOuterClientHost, const FName& InOuterClientHostPropertyName)
@@ -139,6 +162,26 @@ URigVMGraph* FRigVMClient::GetDefaultModel() const
 		return nullptr;
 	}
 	return GetModel(0);
+}
+
+URigVMGraph* FRigVMClient::GetModel(const UEdGraph* InEdGraph) const
+{
+	if (InEdGraph == nullptr)
+	{
+		return GetDefaultModel();
+	}
+
+//#if WITH_EDITORONLY_DATA
+//	if (InEdGraph == FunctionLibraryEdGraph)
+//	{
+//		return RigVMClient.GetFunctionLibrary();
+//	}
+//#endif
+
+	const URigVMEdGraph* RigGraph = Cast< URigVMEdGraph>(InEdGraph);
+	check(RigGraph);
+	return GetModel(RigGraph->ModelNodePath);
+
 }
 
 URigVMGraph* FRigVMClient::GetModel(const FString& InNodePathOrName) const
@@ -294,6 +337,27 @@ URigVMController* FRigVMClient::GetOrCreateController(const UObject* InEditorSid
 	return nullptr;
 }
 
+URigVMController* FRigVMClient::GetControllerByName(const FString InGraphName) const
+{
+	if (InGraphName.IsEmpty())
+	{
+		if (const URigVMGraph* DefaultModel = GetDefaultModel())
+		{
+			return GetController(DefaultModel);
+		}
+	}
+
+	for (const URigVMGraph* Graph : GetAllModels(true, true))
+	{
+		if (Graph->GetName() == InGraphName || Graph->GetGraphName() == InGraphName)
+		{
+			return GetController(Graph);
+		}
+	}
+
+	return nullptr;
+}
+
 bool FRigVMClient::RemoveController(const URigVMGraph* InModel)
 {
 	const FSoftObjectPath Key(InModel);
@@ -307,6 +371,12 @@ bool FRigVMClient::RemoveController(const URigVMGraph* InModel)
 		Controller->MarkAsGarbage();
 	}
 	return bSuccess;
+}
+
+URigVMGraph* FRigVMClient::AddModel(const FString InName, bool bSetupUndoRedo, bool bPrintPythonCommand)
+{
+	const FString DesiredName = FString::Printf(TEXT("%s %s"), FRigVMClient::RigVMModelPrefix, *InName);
+	return AddModel(*DesiredName, bSetupUndoRedo);
 }
 
 URigVMGraph* FRigVMClient::AddModel(const FName& InName, bool bSetupUndoRedo, const FObjectInitializer* ObjectInitializer, bool bCreateController)
@@ -460,11 +530,28 @@ void FRigVMClient::SetExecuteContextStruct(UScriptStruct* InExecuteContextStruct
 	GetOrCreateSchema()->SetExecuteContextStruct(InExecuteContextStruct);
 }
 
+URigVMGraph* FRigVMClient::GetFocusedModel() const
+{
+#if WITH_EDITOR
+	if (OnGetFocusedGraph().IsBound())
+	{
+		return OnGetFocusedGraph().Execute();
+	}
+#endif
+
+	return GetDefaultModel();
+}
+
+bool FRigVMClient::RemoveModel(FString InName, bool bSetupUndoRedo, bool bPrintPythonCommand)
+{
+	return RemoveModel(InName, bSetupUndoRedo);
+}
+
 bool FRigVMClient::RemoveModel(const FString& InNodePathOrName, bool bSetupUndoRedo)
 {
 	if(URigVMGraph* Model = GetModel(InNodePathOrName))
 	{
-		if(Model == GetDefaultModel())
+		if(Model == GetDefaultModel() && !bDefaultModelCanBeRemoved)
 		{
 #if WITH_EDITOR
 			static constexpr TCHAR Message[] = TEXT("Cannot remove the default model.");
@@ -491,9 +578,6 @@ bool FRigVMClient::RemoveModel(const FString& InNodePathOrName, bool bSetupUndoR
 		}
 #endif
 
-		// remove the controller
-		verify(RemoveController(Model));
-
 		if (GetOuter()->Implements<URigVMClientHost>())
 		{
 			IRigVMClientHost* ClientHost = Cast<IRigVMClientHost>(GetOuter());
@@ -514,6 +598,9 @@ bool FRigVMClient::RemoveModel(const FString& InNodePathOrName, bool bSetupUndoR
 
 		// clean up the model
 		Models.Remove(Model);
+		
+		// remove the controller
+		verify(RemoveController(Model));
 
 		NotifyOuterOfPropertyChange();
 		return true;
@@ -547,10 +634,15 @@ FName FRigVMClient::RenameModel(const FString& InNodePathOrName, const FName& In
 		}
 #endif
 
+		TObjectPtr<URigVMController>* Controller = Controllers.Find(Model);
 		const FString OldNodePath = Model->GetNodePath();
 		const FName SafeNewName = GetUniqueName(InNewName);
 		Model->Rename(*SafeNewName.ToString(), nullptr, REN_ForceNoResetLoaders | REN_DontCreateRedirectors);
 		const FString NewNodePath = Model->GetNodePath();
+		if (Controller)
+		{
+			Controllers.Add(Model, *Controller);
+		}
 
 		if(bSetupUndoRedo)
 		{
@@ -749,7 +841,7 @@ URigVMController* FRigVMClient::CreateController(const URigVMGraph* InModel)
 {
 	const FString ModelName = InModel ? InModel->GetName() : TEXT("__NullGraph");
 	const FName SafeControllerName = GetUniqueName(*FString::Printf(TEXT("%s_Controller"), *ModelName));
-	URigVMController* Controller = NewObject<URigVMController>(GetOuter(), SafeControllerName);
+	URigVMController* Controller = NewObject<URigVMController>(GetOuter(), ControllerClass, SafeControllerName);
 	Controllers.Add(InModel, Controller);
 	Controller->SetSchema(GetOrCreateSchema());
 	Controller->SetActionStack(GetOrCreateActionStack());
@@ -877,6 +969,8 @@ FRigVMClientPatchResult FRigVMClient::PatchModelsOnLoad()
 		Result.Merge(Controller->PatchArrayNodesOnLoad());
 		Result.Merge(Controller->PatchReduceArrayFloatDoubleConvertsionsOnLoad());
 		Result.Merge(Controller->PatchInvalidLinksOnWildcards());
+		Result.Merge(Controller->PatchExecutePins());
+		Result.Merge(Controller->PatchLazyPins());
 
 		if (URigVMCollapseNode* CollapseNode = Model->GetTypedOuter<URigVMCollapseNode>())
 		{
@@ -1052,10 +1146,19 @@ void FRigVMClient::HandleGraphModifiedEvent(ERigVMGraphNotifType InNotifType, UR
 
 								for (int32 i=0; i<NewFunctionReferences.Num(); ++i)
 								{
-									NewFunctionReferences[i]->ReferencedFunctionHeader = Data->Header;
+									if (!NewFunctionReferences[i].IsValid())
+									{
+										NewFunctionReferences[i].LoadSynchronous();
+									}
+									if (NewFunctionReferences[i].IsValid())
+									{
+										NewFunctionReferences[i]->ReferencedFunctionHeader = Data->Header;
+										NewFunctionReferences[i]->MarkPackageDirty();
+									}
 								}
 							}
 
+							UpdateFunctionReferences(Data->Header, true, false);
 							UpdateGraphFunctionData(CollapseNode);
 						}
 					}
@@ -1172,11 +1275,8 @@ bool FRigVMClient::UpdateFunctionReferences(const FRigVMGraphFunctionHeader& Hea
 		{
 			const TSoftObjectPtr<URigVMFunctionReferenceNode>& Reference = FunctionReferenceArray->FunctionReferences[i];
 
-			// Load reference package
-			if (!Reference.IsValid())
-			{
-				Reference.LoadSynchronous();
-			}
+			// Only update references that are loaded
+			// Other references will be updated when they are loaded
 			if (Reference.IsValid())
 			{
 				URigVMFunctionReferenceNode* Node = Reference.Get();
@@ -1188,7 +1288,7 @@ bool FRigVMClient::UpdateFunctionReferences(const FRigVMGraphFunctionHeader& Hea
 				{
 					if (URigVMLibraryNode* LibraryNode = Node->FindFunctionForNode())
 					{
-						IRigVMClientHost* OtherClientHost = LibraryNode->GetImplementingOuter<IRigVMClientHost>();							
+						IRigVMClientHost* OtherClientHost = LibraryNode->GetImplementingOuter<IRigVMClientHost>();
 						if (bUpdateDependencies)
 						{
 							OtherClientHost->GetRigVMClient()->UpdateDependenciesForFunction(LibraryNode);

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
@@ -14,8 +15,15 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Timers;
 using EpicGames.Core;
+using EpicGames.Horde;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Issues;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using EpicGames.Redis;
 using EpicGames.Redis.Utility;
 using EpicGames.Slack;
@@ -32,9 +40,9 @@ using Horde.Server.Logs;
 using Horde.Server.Server;
 using Horde.Server.Streams;
 using Horde.Server.Users;
-using Horde.Server.Utilities;
 using HordeCommon;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -48,7 +56,7 @@ namespace Horde.Server.Notifications.Sinks
 	/// <summary>
 	/// Maintains a connection to Slack, in order to receive socket-mode notifications of user interactions
 	/// </summary>
-	public sealed class SlackNotificationSink : BackgroundService, INotificationSink, IAvatarService
+	public sealed class SlackNotificationSink : IHostedService, INotificationSink, IAvatarService, IAsyncDisposable
 	{
 		const bool DefaultAllowMentions = true;
 
@@ -56,7 +64,7 @@ namespace Horde.Server.Notifications.Sinks
 
 		// The color to use for error messages.
 		const string ErrorColor = "#ec4c47";
-		
+
 		// The color to use for warning messages.
 		const string WarningColor = "#f7d154";
 
@@ -159,7 +167,7 @@ namespace Horde.Server.Notifications.Sinks
 		class SlackUserDocument : IAvatar
 		{
 			public const int CurrentVersion = 2;
-			
+
 			public UserId Id { get; set; }
 
 			[BsonElement("u")]
@@ -170,7 +178,7 @@ namespace Horde.Server.Notifications.Sinks
 
 			[BsonElement("i32")]
 			public string? Image32 { get; set; }
-			
+
 			[BsonElement("i48")]
 			public string? Image48 { get; set; }
 
@@ -207,7 +215,6 @@ namespace Horde.Server.Notifications.Sinks
 		readonly IssueService _issueService;
 		readonly IUserCollection _userCollection;
 		readonly ILogFileService _logFileService;
-		readonly IStreamCollection _streamCollection;
 		readonly IWebHostEnvironment _environment;
 		readonly ServerSettings _settings;
 		readonly IMongoCollection<MessageStateDocument> _messageStates;
@@ -216,13 +223,13 @@ namespace Horde.Server.Notifications.Sinks
 		readonly IExternalIssueService _externalIssueService;
 		readonly JsonSerializerOptions _jsonSerializerOptions;
 		readonly ITicker _escalateTicker;
-		static readonly RedisSortedSetKey<int> _escalateIssues = "slack/escalate";
-		readonly IClock _clock;
+		static readonly RedisSortedSetKey<int> s_escalateIssues = "slack/escalate";
+		readonly BackgroundTask _backgroundTask;
 		readonly IOptionsMonitor<GlobalConfig> _globalConfig;
 		readonly ILogger _logger;
 
 		readonly ITicker _issueQueueTicker;
-		static readonly RedisListKey<int> _redisIssueQueue = "slack/issue-queue";
+		static readonly RedisListKey<int> s_redisIssueQueue = "slack/issue-queue";
 		readonly string _redisIssueLockPrefix;
 
 		readonly HttpClient _httpClient;
@@ -239,19 +246,18 @@ namespace Horde.Server.Notifications.Sinks
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public SlackNotificationSink(MongoService mongoService, RedisService redisService, IssueService issueService, IUserCollection userCollection, ILogFileService logFileService, IStreamCollection streamCollection, IExternalIssueService externalIssueService, IWebHostEnvironment environment, IOptions<ServerSettings> settings, IClock clock, IOptionsMonitor<GlobalConfig> globalConfig, ILogger<SlackNotificationSink> logger)
+		public SlackNotificationSink(MongoService mongoService, RedisService redisService, IssueService issueService, IUserCollection userCollection, ILogFileService logFileService, IExternalIssueService externalIssueService, IWebHostEnvironment environment, IOptions<ServerSettings> settings, IClock clock, IOptionsMonitor<GlobalConfig> globalConfig, ILogger<SlackNotificationSink> logger)
 		{
 			_redisService = redisService;
 			_issueService = issueService;
 			_userCollection = userCollection;
 			_logFileService = logFileService;
-			_streamCollection = streamCollection;
 			_externalIssueService = externalIssueService;
 			_environment = environment;
 			_settings = settings.Value;
 			_messageStates = mongoService.GetCollection<MessageStateDocument>("SlackV2", keys => keys.Ascending(x => x.Recipient).Ascending(x => x.EventId), unique: true);
 			_slackUsers = mongoService.GetCollection<SlackUserDocument>("Slack.UsersV2");
-			_clock = clock;
+			_backgroundTask = new BackgroundTask(ExecuteAsync);
 			_globalConfig = globalConfig;
 			_logger = logger;
 
@@ -281,48 +287,45 @@ namespace Horde.Server.Notifications.Sinks
 		}
 
 		/// <inheritdoc/>
-		public override void Dispose()
+		public async ValueTask DisposeAsync()
 		{
-			base.Dispose();
-
+			await _backgroundTask.DisposeAsync();
 			_userCache.Dispose();
 			_httpClient.Dispose();
 			_adminHttpClient?.Dispose();
-			_issueQueueTicker.Dispose();
-			_escalateTicker.Dispose();
+			await _issueQueueTicker.DisposeAsync();
+			await _escalateTicker.DisposeAsync();
 		}
 
 		/// <inheritdoc/>
-		public override async Task StartAsync(CancellationToken cancellationToken)
+		public async Task StartAsync(CancellationToken cancellationToken)
 		{
-			await base.StartAsync(cancellationToken);
-
+			_backgroundTask.Start();
 			await _issueQueueTicker.StartAsync();
 			await _escalateTicker.StartAsync();
 		}
 
 		/// <inheritdoc/>
-		public override async Task StopAsync(CancellationToken cancellationToken)
+		public async Task StopAsync(CancellationToken cancellationToken)
 		{
-			await base.StopAsync(cancellationToken);
-
 			await _escalateTicker.StopAsync();
 			await _issueQueueTicker.StopAsync();
+			await _backgroundTask.StopAsync(cancellationToken);
 		}
 
 		#region Avatars
 
 		/// <inheritdoc/>
-		public async Task<IAvatar?> GetAvatarAsync(IUser user)
+		public async Task<IAvatar?> GetAvatarAsync(IUser user, CancellationToken cancellationToken)
 		{
-			return await GetSlackUser(user);
+			return await GetSlackUserAsync(user, cancellationToken);
 		}
 
 		#endregion
 
 		#region Message state 
 
-		async Task<(MessageStateDocument, bool)> AddOrUpdateMessageStateAsync(string recipient, string eventId, UserId? userId, string digest, SlackMessageId? messageId)
+		async Task<(MessageStateDocument, bool)> AddOrUpdateMessageStateAsync(string recipient, string eventId, UserId? userId, string digest, SlackMessageId? messageId, CancellationToken cancellationToken)
 		{
 			ObjectId newId = ObjectId.GenerateNewId();
 
@@ -334,7 +337,7 @@ namespace Horde.Server.Notifications.Sinks
 				update = update.Set(x => x.Channel, messageId.Channel).Set(x => x.Ts, messageId.Ts);
 			}
 
-			MessageStateDocument state = await _messageStates.FindOneAndUpdateAsync(filter, update, new FindOneAndUpdateOptions<MessageStateDocument> { IsUpsert = true, ReturnDocument = ReturnDocument.After });
+			MessageStateDocument state = await _messageStates.FindOneAndUpdateAsync(filter, update, new FindOneAndUpdateOptions<MessageStateDocument> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, cancellationToken);
 			if (state.Id == newId)
 			{
 				_logger.LogInformation("Posted message {StateId} (recipient: {Recipient}, user: {UserId}, event: {EventId}, messageId: {MessageId}, digest: {Digest})", state.Id, recipient, userId ?? UserId.Empty, eventId, state.MessageId, digest);
@@ -347,20 +350,20 @@ namespace Horde.Server.Notifications.Sinks
 			return (state, state.Id == newId);
 		}
 
-		async Task<MessageStateDocument?> GetMessageStateAsync(string recipient, string eventId)
+		async Task<MessageStateDocument?> GetMessageStateAsync(string recipient, string eventId, CancellationToken cancellationToken)
 		{
 			FilterDefinition<MessageStateDocument> filter = Builders<MessageStateDocument>.Filter.Eq(x => x.Recipient, recipient) & Builders<MessageStateDocument>.Filter.Eq(x => x.EventId, eventId);
-			return await _messageStates.Find(filter).FirstOrDefaultAsync();
+			return await _messageStates.Find(filter).FirstOrDefaultAsync(cancellationToken);
 		}
 
-		async Task<bool> DeleteMessageStateAsync(string recipient, string eventId)
+		async Task<bool> DeleteMessageStateAsync(string recipient, string eventId, CancellationToken cancellationToken)
 		{
 			FilterDefinition<MessageStateDocument> filter = Builders<MessageStateDocument>.Filter.Eq(x => x.Recipient, recipient) & Builders<MessageStateDocument>.Filter.Eq(x => x.EventId, eventId);
-			DeleteResult result = await _messageStates.DeleteOneAsync(filter);
+			DeleteResult result = await _messageStates.DeleteOneAsync(filter, cancellationToken);
 			return result.DeletedCount > 0;
 		}
 
-		async Task UpdateMessageStateAsync(ObjectId stateId, SlackMessageId id, string? permalink = null)
+		async Task UpdateMessageStateAsync(ObjectId stateId, SlackMessageId id, string? permalink = null, CancellationToken cancellationToken = default)
 		{
 			FilterDefinition<MessageStateDocument> filter = Builders<MessageStateDocument>.Filter.Eq(x => x.Id, stateId);
 			UpdateDefinition<MessageStateDocument> update = Builders<MessageStateDocument>.Update.Set(x => x.Channel, id.Channel).Set(x => x.Ts, id.Ts);
@@ -374,14 +377,14 @@ namespace Horde.Server.Notifications.Sinks
 				update = update.Set(x => x.Permalink, permalink);
 			}
 
-			await _messageStates.FindOneAndUpdateAsync(filter, update);
+			await _messageStates.FindOneAndUpdateAsync(filter, update, cancellationToken: cancellationToken);
 			_logger.LogInformation("Updated message {StateId} (messageId: {MessageId}, permalink: {Permalink})", stateId, id, permalink ?? "(n/a)");
 		}
 
 		#endregion
 
 		/// <inheritdoc/>
-		public async Task NotifyJobScheduledAsync(List<JobScheduledNotification> notifications)
+		public async Task NotifyJobScheduledAsync(List<JobScheduledNotification> notifications, CancellationToken cancellationToken)
 		{
 			if (_settings.JobNotificationChannel != null)
 			{
@@ -389,18 +392,18 @@ namespace Horde.Server.Notifications.Sinks
 				_logger.LogInformation("Sending Slack notification for scheduled job IDs {JobIds} to channel {SlackChannel}", jobIds, _settings.JobNotificationChannel);
 				foreach (string channel in _settings.JobNotificationChannel.Split(';'))
 				{
-					await SendJobScheduledOnEmptyAutoScaledPoolMessageAsync($"#{channel}", notifications);
+					await SendJobScheduledOnEmptyAutoScaledPoolMessageAsync($"#{channel}", notifications, cancellationToken);
 				}
 			}
 		}
-		
-		private async Task SendJobScheduledOnEmptyAutoScaledPoolMessageAsync(string recipient, List<JobScheduledNotification> notifications)
+
+		private async Task SendJobScheduledOnEmptyAutoScaledPoolMessageAsync(string recipient, List<JobScheduledNotification> notifications, CancellationToken cancellationToken)
 		{
 			const int MaxItems = 10;
 			string jobIds = StringUtils.FormatList(notifications.Select(x => x.JobId.ToString()).ToArray(), MaxItems);
-				
+
 			StringBuilder sb = new();
-			for(int idx = 0; idx < notifications.Count; idx++)
+			for (int idx = 0; idx < notifications.Count; idx++)
 			{
 				if (idx >= MaxItems && notifications.Count > MaxItems + 2)
 				{
@@ -425,13 +428,13 @@ namespace Horde.Server.Notifications.Sinks
 				attachment.AddSection(sb.ToString());
 			}
 
-			await SendMessageAsync(recipient, attachment);
+			await SendMessageAsync(recipient, attachment, cancellationToken);
 		}
 
 		#region Job Complete
 
 		/// <inheritdoc/>
-		public async Task NotifyJobCompleteAsync(IJob job, IGraph graph, LabelOutcome outcome)
+		public async Task NotifyJobCompleteAsync(IJob job, IGraph graph, LabelOutcome outcome, CancellationToken cancellationToken)
 		{
 			StreamConfig? streamConfig;
 			if (!_globalConfig.CurrentValue.TryGetStream(job.StreamId, out streamConfig))
@@ -440,15 +443,15 @@ namespace Horde.Server.Notifications.Sinks
 			}
 			if (job.NotificationChannel != null)
 			{
-				await SendJobCompleteNotificationToChannelAsync(job.NotificationChannel, job.NotificationChannelFilter, streamConfig, job, graph, outcome);
+				await SendJobCompleteNotificationToChannelAsync(job.NotificationChannel, job.NotificationChannelFilter, streamConfig, job, graph, outcome, cancellationToken);
 			}
 			if (streamConfig.NotificationChannel != null)
 			{
-				await SendJobCompleteNotificationToChannelAsync(streamConfig.NotificationChannel, streamConfig.NotificationChannelFilter, streamConfig, job, graph, outcome);
+				await SendJobCompleteNotificationToChannelAsync(streamConfig.NotificationChannel, streamConfig.NotificationChannelFilter, streamConfig, job, graph, outcome, cancellationToken);
 			}
 		}
 
-		async Task SendJobCompleteNotificationToChannelAsync(string notificationChannel, string? notificationFilter, StreamConfig streamConfig, IJob job, IGraph graph, LabelOutcome outcome)
+		async Task SendJobCompleteNotificationToChannelAsync(string notificationChannel, string? notificationFilter, StreamConfig streamConfig, IJob job, IGraph graph, LabelOutcome outcome, CancellationToken cancellationToken)
 		{
 			if (notificationFilter != null)
 			{
@@ -472,12 +475,12 @@ namespace Horde.Server.Notifications.Sinks
 			}
 			foreach (string channel in notificationChannel.Split(';'))
 			{
-				await SendJobCompleteMessageAsync(channel, streamConfig, job, graph);
+				await SendJobCompleteMessageAsync(channel, streamConfig, job, graph, cancellationToken);
 			}
 		}
 
 		/// <inheritdoc/>
-		public async Task NotifyJobCompleteAsync(IUser slackUser, IJob job, IGraph graph, LabelOutcome outcome)
+		public async Task NotifyJobCompleteAsync(IUser slackUser, IJob job, IGraph graph, LabelOutcome outcome, CancellationToken cancellationToken)
 		{
 			StreamConfig? streamConfig;
 			if (!_globalConfig.CurrentValue.TryGetStream(job.StreamId, out streamConfig))
@@ -485,16 +488,21 @@ namespace Horde.Server.Notifications.Sinks
 				return;
 			}
 
-			string? slackUserId = await GetSlackUserId(slackUser);
-			if (slackUserId != null)
+			string? slackUserId = await GetSlackUserIdAsync(slackUser, cancellationToken);
+			if (slackUserId != null && slackUser.Id != job.AbortedByUserId)
 			{
-				await SendJobCompleteMessageAsync(slackUserId, streamConfig, job, graph);
+				await SendJobCompleteMessageAsync(slackUserId, streamConfig, job, graph, cancellationToken);
 			}
 		}
 
-		private Task SendJobCompleteMessageAsync(string recipient, StreamConfig streamConfig, IJob job, IGraph graph)
+		private async Task SendJobCompleteMessageAsync(string recipient, StreamConfig streamConfig, IJob job, IGraph graph, CancellationToken cancellationToken)
 		{
 			JobStepOutcome jobOutcome = job.Batches.SelectMany(x => x.Steps).Min(x => x.Outcome);
+			if (job.AbortedByUserId != null)
+			{
+				jobOutcome = JobStepOutcome.Failure;
+			}
+
 			_logger.LogInformation("Sending Slack notification for job {JobId} outcome {Outcome} to {SlackUser}", job.Id, jobOutcome, recipient);
 
 			Uri jobLink = new Uri($"{_settings.DashboardUrl}job/{job.Id}");
@@ -516,7 +524,11 @@ namespace Horde.Server.Notifications.Sinks
 				attachment.AddSection($"```{description}```");
 			}
 
-			if (jobOutcome == JobStepOutcome.Success)
+			if (job.AbortedByUserId != null)
+			{
+				attachment.AddSection($"*Job cancelled by {await FormatMentionAsync(job.AbortedByUserId.Value, true, cancellationToken)}");
+			}
+			else if (jobOutcome == JobStepOutcome.Success)
 			{
 				attachment.AddSection($"*Job Succeeded*");
 			}
@@ -576,7 +588,7 @@ namespace Horde.Server.Notifications.Sinks
 				}
 			}
 
-			return SendMessageAsync(recipient, attachment);
+			await SendMessageAsync(recipient, attachment, cancellationToken);
 		}
 
 		#endregion
@@ -584,14 +596,14 @@ namespace Horde.Server.Notifications.Sinks
 		#region Job step complete
 
 		/// <inheritdoc/>
-		public async Task NotifyJobStepCompleteAsync(IUser slackUser, IJob job, IJobStepBatch batch, IJobStep step, INode node, List<ILogEventData> jobStepEventData)
+		public async Task NotifyJobStepCompleteAsync(IUser slackUser, IJob job, IJobStepBatch batch, IJobStep step, INode node, List<ILogEventData> jobStepEventData, CancellationToken cancellationToken)
 		{
 			_logger.LogInformation("Sending Slack notification for job {JobId}, batch {BatchId}, step {StepId}, outcome {Outcome} to {SlackUser} ({UserId})", job.Id, batch.Id, step.Id, step.Outcome, slackUser.Name, slackUser.Id);
 
-			string? slackUserId = await GetSlackUserId(slackUser);
+			string? slackUserId = await GetSlackUserIdAsync(slackUser, cancellationToken);
 			if (slackUserId != null)
 			{
-				await SendJobStepCompleteMessageAsync(slackUserId, job, step, node, jobStepEventData);
+				await SendJobStepCompleteMessageAsync(slackUserId, job, step, node, jobStepEventData, cancellationToken);
 			}
 		}
 
@@ -603,7 +615,8 @@ namespace Horde.Server.Notifications.Sinks
 		/// <param name="step">The job step that completed.</param>
 		/// <param name="node">The node for the job step.</param>
 		/// <param name="events">Any events that occurred during the job step.</param>
-		private Task SendJobStepCompleteMessageAsync(string recipient, IJob job, IJobStep step, INode node, List<ILogEventData> events)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		private Task SendJobStepCompleteMessageAsync(string recipient, IJob job, IJobStep step, INode node, List<ILogEventData> events, CancellationToken cancellationToken)
 		{
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 			if (!globalConfig.TryGetStream(job.StreamId, out StreamConfig? streamConfig))
@@ -635,7 +648,10 @@ namespace Horde.Server.Notifications.Sinks
 					attachment.AddSection(errorSummary);
 					foreach (ILogEventData error in errors.Take(MaxJobStepEvents))
 					{
-						attachment.AddSection(QuoteText(error.Message));
+						if (!String.IsNullOrWhiteSpace(error.Message))
+						{
+							attachment.AddSection(QuoteText(error.Message));
+						}
 					}
 				}
 				else if (warnings.Any())
@@ -644,14 +660,17 @@ namespace Horde.Server.Notifications.Sinks
 					eventStrings.Add(warningSummary);
 					foreach (ILogEventData warning in warnings.Take(MaxJobStepEvents))
 					{
-						attachment.AddSection(QuoteText(warning.Message));
+						if (!String.IsNullOrWhiteSpace(warning.Message))
+						{
+							attachment.AddSection(QuoteText(warning.Message));
+						}
 					}
 				}
 
 				attachment.AddSection($"<{jobStepLogLink}|View Job Step Log>");
 			}
 
-			return SendMessageAsync(recipient, attachment);
+			return SendMessageAsync(recipient, attachment, cancellationToken);
 		}
 
 		#endregion
@@ -659,7 +678,7 @@ namespace Horde.Server.Notifications.Sinks
 		#region Label complete
 
 		/// <inheritdoc/>
-		public async Task NotifyLabelCompleteAsync(IUser user, IJob job, ILabel label, int labelIdx, LabelOutcome outcome, List<(string, JobStepOutcome, Uri)> stepData)
+		public async Task NotifyLabelCompleteAsync(IUser user, IJob job, ILabel label, int labelIdx, LabelOutcome outcome, List<(string, JobStepOutcome, Uri)> stepData, CancellationToken cancellationToken)
 		{
 			if (!_globalConfig.CurrentValue.TryGetStream(job.StreamId, out StreamConfig? streamConfig))
 			{
@@ -668,14 +687,14 @@ namespace Horde.Server.Notifications.Sinks
 
 			_logger.LogInformation("Sending Slack notification for job {JobId} outcome {Outcome} to {Name} ({UserId})", job.Id, outcome, user.Name, user.Id);
 
-			string? slackUserId = await GetSlackUserId(user);
+			string? slackUserId = await GetSlackUserIdAsync(user, cancellationToken);
 			if (slackUserId != null)
 			{
-				await SendLabelUpdateMessageAsync(slackUserId, streamConfig, job, label, labelIdx, outcome, stepData);
+				await SendLabelUpdateMessageAsync(slackUserId, streamConfig, job, label, labelIdx, outcome, stepData, cancellationToken);
 			}
 		}
 
-		Task SendLabelUpdateMessageAsync(string recipient, StreamConfig streamConfig, IJob job, ILabel label, int labelIdx, LabelOutcome outcome, List<(string, JobStepOutcome, Uri)> jobStepData)
+		Task SendLabelUpdateMessageAsync(string recipient, StreamConfig streamConfig, IJob job, ILabel label, int labelIdx, LabelOutcome outcome, List<(string, JobStepOutcome, Uri)> jobStepData, CancellationToken cancellationToken)
 		{
 			Uri labelLink = new Uri($"{_settings.DashboardUrl}job/{job.Id}?label={labelIdx}");
 
@@ -716,7 +735,7 @@ namespace Horde.Server.Notifications.Sinks
 				}
 			}
 
-			return SendMessageAsync(recipient, attachment);
+			return SendMessageAsync(recipient, attachment, cancellationToken);
 		}
 
 		#endregion
@@ -724,7 +743,7 @@ namespace Horde.Server.Notifications.Sinks
 		#region Issues
 
 		/// <inheritdoc/>
-		public async Task NotifyIssueUpdatedAsync(IIssue issue)
+		public async Task NotifyIssueUpdatedAsync(IIssue issue, CancellationToken cancellationToken)
 		{
 			// Do not send notifications for quarantined issues
 			if (issue.QuarantinedByUserId != null)
@@ -734,7 +753,7 @@ namespace Horde.Server.Notifications.Sinks
 			}
 
 			// Otherwise add it to the redis queue, and attempt to process the queue immediately.
-			await _redisService.GetDatabase().ListRightPushAsync(_redisIssueQueue, issue.Id);
+			await _redisService.GetDatabase().ListRightPushAsync(s_redisIssueQueue, issue.Id);
 			await ProcessIssueQueueAsync(CancellationToken.None);
 		}
 
@@ -749,25 +768,25 @@ namespace Horde.Server.Notifications.Sinks
 
 			// Execute loop number of times based on the length of the queue at the start. This should bound the number of iterations while allowing us
 			// to re-queue items that we're unable to process now, without having to track whether we've reached the end of the list in its original state.
-			long count = await _redisService.GetDatabase().ListLengthAsync(_redisIssueQueue);
+			long count = await _redisService.GetDatabase().ListLengthAsync(s_redisIssueQueue);
 			for (; count > 0; count--)
 			{
-				int issueId = await _redisService.GetDatabase().ListLeftPopAsync(_redisIssueQueue);
-				if (!testedIssueIds.Add(issueId) || !await TryUpdateIssueAsync(globalConfig, issueId))
+				int issueId = await _redisService.GetDatabase().ListLeftPopAsync(s_redisIssueQueue);
+				if (!testedIssueIds.Add(issueId) || !await TryUpdateIssueAsync(globalConfig, issueId, cancellationToken))
 				{
-					await _redisService.GetDatabase().ListRightPushAsync(_redisIssueQueue, issueId);
+					await _redisService.GetDatabase().ListRightPushAsync(s_redisIssueQueue, issueId);
 				}
 				cancellationToken.ThrowIfCancellationRequested();
 			}
 		}
 
-		async ValueTask<bool> TryUpdateIssueAsync(GlobalConfig globalConfig, int issueId)
+		async ValueTask<bool> TryUpdateIssueAsync(GlobalConfig globalConfig, int issueId, CancellationToken cancellationToken)
 		{
 			using (RedisLock issueLock = new RedisLock(_redisService.GetDatabase(), $"{_redisIssueLockPrefix}/{issueId}"))
 			{
 				if (await issueLock.AcquireAsync(TimeSpan.FromSeconds(30.0)))
 				{
-					await NotifyIssueUpdatedInternalAsync(globalConfig, issueId);
+					await NotifyIssueUpdatedInternalAsync(globalConfig, issueId, cancellationToken);
 					return true;
 				}
 				else
@@ -778,12 +797,12 @@ namespace Horde.Server.Notifications.Sinks
 			}
 		}
 
-		async Task NotifyIssueUpdatedInternalAsync(GlobalConfig globalConfig, int issueId)
+		async Task NotifyIssueUpdatedInternalAsync(GlobalConfig globalConfig, int issueId, CancellationToken cancellationToken)
 		{
-			using IDisposable scope = _logger.BeginScope("Slack notifications for issue {IssueId}", issueId);
+			using IDisposable? scope = _logger.BeginScope("Slack notifications for issue {IssueId}", issueId);
 			_logger.LogInformation("Updating Slack notifications for issue {IssueId}", issueId);
 
-			IIssueDetails? details = await _issueService.GetIssueDetailsAsync(issueId);
+			IIssueDetails? details = await _issueService.GetIssueDetailsAsync(issueId, cancellationToken);
 			if (details == null)
 			{
 				return;
@@ -805,7 +824,7 @@ namespace Horde.Server.Notifications.Sinks
 					StreamConfig? streamConfig;
 					if (globalConfig.TryGetStream(span.StreamId, out streamConfig) && streamConfig.TryGetWorkflow(workflowId.Value, out workflow) && !String.IsNullOrEmpty(workflow.TriageChannel))
 					{
-						await CreateOrUpdateWorkflowThreadAsync(workflow.TriageChannel, issue, span, details.Spans, workflow);
+						await CreateOrUpdateWorkflowThreadAsync(workflow.TriageChannel, issue, span, details.Spans, workflow, cancellationToken);
 						notifyOwner = notifySuspects = false;
 					}
 				}
@@ -830,7 +849,7 @@ namespace Horde.Server.Notifications.Sinks
 
 			HashSet<string> channels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-			List<MessageStateDocument> existingMessages = await _messageStates.Find(x => x.EventId == GetIssueEventId(issue)).ToListAsync();
+			List<MessageStateDocument> existingMessages = await _messageStates.Find(x => x.EventId == GetIssueEventId(issue)).ToListAsync(cancellationToken);
 			foreach (MessageStateDocument existingMessage in existingMessages)
 			{
 				if (existingMessage.UserId != null)
@@ -864,14 +883,14 @@ namespace Horde.Server.Notifications.Sinks
 			{
 				foreach (UserId userId in userIds)
 				{
-					IUser? user = await _userCollection.GetUserAsync(userId);
+					IUser? user = await _userCollection.GetUserAsync(userId, cancellationToken);
 					if (user == null)
 					{
 						_logger.LogWarning("Unable to find user {UserId}", userId);
 					}
 					else
 					{
-						await NotifyIssueUpdatedAsync(globalConfig, user, issue, details);
+						await NotifyIssueUpdatedAsync(globalConfig, user, issue, details, cancellationToken);
 					}
 				}
 			}
@@ -880,11 +899,11 @@ namespace Horde.Server.Notifications.Sinks
 			{
 				foreach (string channel in channels)
 				{
-					await SendIssueMessageAsync(globalConfig, channel, issue, details, null, DefaultAllowMentions);
+					await SendIssueMessageAsync(globalConfig, channel, issue, details, null, DefaultAllowMentions, cancellationToken);
 				}
 			}
 
-			await UpdateReportsAsync(globalConfig, issue, details.Spans);
+			await UpdateReportsAsync(globalConfig, issue, details.Spans, cancellationToken);
 		}
 
 		static IIssueSpan? GetFixFailedSpan(IIssue issue, IReadOnlyList<IIssueSpan> spans)
@@ -903,15 +922,15 @@ namespace Horde.Server.Notifications.Sinks
 			return null;
 		}
 
-		async Task InviteUsersAsync(string channel, IEnumerable<UserId> userIds, bool inviteUsersAsAdmin)
+		async Task InviteUsersAsync(string channel, IEnumerable<UserId> userIds, bool inviteUsersAsAdmin, CancellationToken cancellationToken)
 		{
 			List<string> slackUserIds = new List<string>();
 			foreach (UserId userId in userIds)
 			{
-				IUser? user = await _userCollection.GetUserAsync(userId);
+				IUser? user = await _userCollection.GetUserAsync(userId, cancellationToken);
 				if (user != null)
 				{
-					string? slackUserId = await GetSlackUserId(user);
+					string? slackUserId = await GetSlackUserIdAsync(user, cancellationToken);
 					if (slackUserId != null)
 					{
 						slackUserIds.Add(slackUserId);
@@ -921,18 +940,21 @@ namespace Horde.Server.Notifications.Sinks
 
 			foreach (string slackUserId in slackUserIds)
 			{
-				string? errorCode = await _slackClient.TryInviteUsersAsync(channel, new[] { slackUserId });
+				string? errorCode = await _slackClient.TryInviteUsersAsync(channel, new[] { slackUserId }, cancellationToken);
 				if (errorCode != null)
 				{
 					if (errorCode.Equals("user_is_restricted", StringComparison.Ordinal) && inviteUsersAsAdmin && _adminSlackClient != null)
 					{
 						try
 						{
-							await _adminSlackClient.AdminInviteUsersAsync(channel, new[] { slackUserId });
+							await _adminSlackClient.AdminInviteUsersAsync(channel, new[] { slackUserId }, cancellationToken);
 						}
 						catch (SlackException ex)
 						{
-							_logger.LogWarning(ex, "Unable to invite user {UserId} to {Channel} (as admin): {Error}", slackUserId, channel, ex.Code);
+							if (!String.Equals(ex.Code, "already_in_channel", StringComparison.Ordinal))
+							{
+								_logger.LogWarning(ex, "Unable to invite user {UserId} to {Channel} (as admin): {Error}", slackUserId, channel, ex.Code);
+							}
 						}
 					}
 					else
@@ -945,7 +967,18 @@ namespace Horde.Server.Notifications.Sinks
 
 		static string GetTriageThreadEventId(int issueId) => $"issue_triage_{issueId}";
 
-		async Task CreateOrUpdateWorkflowThreadAsync(string triageChannel, IIssue issue, IIssueSpan span, IReadOnlyList<IIssueSpan> spans, WorkflowConfig workflow)
+		[Flags]
+		enum ReactionFlags
+		{
+			None = 0,
+			Acknowledged = 1,
+			Quarantined = 2,
+			FixFailed = 4,
+			Resolved = 8,
+			AssignedButNotAcknowledged = 16,
+		}
+
+		async Task CreateOrUpdateWorkflowThreadAsync(string triageChannel, IIssue issue, IIssueSpan span, IReadOnlyList<IIssueSpan> spans, WorkflowConfig workflow, CancellationToken cancellationToken)
 		{
 			Uri issueUrl = GetIssueUrl(issue, span.FirstFailure);
 
@@ -966,11 +999,12 @@ namespace Horde.Server.Notifications.Sinks
 			}
 
 			// Get the suspects for the issue
-			List<IIssueSuspect> suspects = await _issueService.Collection.FindSuspectsAsync(issue);
+			IReadOnlyList<IIssueSuspect> suspects = await _issueService.Collection.FindSuspectsAsync(issue, cancellationToken);
 
-			(MessageStateDocument state, bool isNew) = await SendOrUpdateMessageAsync(triageChannel, eventId, null, text);
+			(MessageStateDocument state, bool isNew) = await SendOrUpdateMessageAsync(triageChannel, eventId, null, text, cancellationToken);
 			SlackMessageId threadId = state.MessageId;
 
+			bool isSecondThread = false;
 			if (isNew)
 			{
 				// Create the summary text
@@ -980,10 +1014,10 @@ namespace Horde.Server.Notifications.Sinks
 				if (span.FirstFailure.LogId != null)
 				{
 					LogId logId = span.FirstFailure.LogId.Value;
-					ILogFile? logFile = await _logFileService.GetLogFileAsync(logId, CancellationToken.None);
+					ILogFile? logFile = await _logFileService.GetLogFileAsync(logId, cancellationToken);
 					if (logFile != null)
 					{
-						events = await _logFileService.FindEventsAsync(logFile, span.Id, 0, 50);
+						events = await _logFileService.FindEventsAsync(logFile, span.Id, 0, 50, cancellationToken);
 						if (events.Any(x => x.Severity == EventSeverity.Error))
 						{
 							events.RemoveAll(x => x.Severity == EventSeverity.Warning);
@@ -992,7 +1026,7 @@ namespace Horde.Server.Notifications.Sinks
 						List<string> eventStrings = new List<string>();
 						for (int idx = 0; idx < Math.Min(events.Count, 3); idx++)
 						{
-							ILogEventData data = await _logFileService.GetEventDataAsync(logFile, events[idx].LineIndex, events[idx].LineCount);
+							ILogEventData data = await _logFileService.GetEventDataAsync(logFile, events[idx].LineIndex, events[idx].LineCount, cancellationToken);
 							eventDataItems.Add(data);
 						}
 					}
@@ -1010,263 +1044,358 @@ namespace Horde.Server.Notifications.Sinks
 					message.Blocks.Add(new SectionBlock(new TextObject("```...```")));
 				}
 
-				SlackMessageId summaryId = await _slackClient.PostMessageToThreadAsync(threadId, message);
+				SlackMessageId summaryId = await _slackClient.PostMessageToThreadAsync(threadId, message, cancellationToken: cancellationToken);
 
 				// Permalink to the summary text so we link inside the thread rather than just to the original message
-				string? permalink = await _slackClient.GetPermalinkAsync(summaryId);
-				await UpdateMessageStateAsync(state.Id, state.MessageId, permalink);
+				string permalink = await _slackClient.GetPermalinkAsync(summaryId, cancellationToken);
+				await UpdateMessageStateAsync(state.Id, state.MessageId, permalink, cancellationToken);
 
-				_issueService.Collection.GetLogger(issue.Id).LogInformation("Created Slack thread: {SlackLink}", permalink);
-				if (permalink != null)
+				_issueService.Collection.GetLogger(issue.Id).LogInformation("Created Slack thread under workflow {WorkflowId}: {SlackLink}", workflow.Id, permalink);
+				try
 				{
-					try
+					for (IIssue? updateIssue = issue; updateIssue != null;)
 					{
-						await _issueService.UpdateIssueAsync(issue.Id, workflowThreadUrl: new Uri(permalink));
-					}
-					catch (Exception Ex)
-					{
-						_issueService.Collection.GetLogger(issue.Id).LogInformation("Error associating workflow thread with issue, bad URI format? {ErrorMessage}", Ex.Message);
-					}					
-				}				
-			}
-
-			// Post a message containing the controls and status
-			{
-				SlackMessage message = new SlackMessage();
-
-				if (workflow.TriageInstructions != null)
-				{
-					message.AddSection(workflow.TriageInstructions);
-				}
-
-				if (!closed)
-				{
-					ActionsBlock actions = message.AddActions();
-					actions.AddButton("Assign to Me", value: $"issue_{issue.Id}_ack", style: ButtonStyle.Primary);
-					actions.AddButton("Not Me", value: $"issue_{issue.Id}_decline", style: ButtonStyle.Danger);
-					actions.AddButton("Mark Fixed", value: $"issue_{issue.Id}_markfixed");
-
-					string? context = null;
-					if (issue.OwnerId != null)
-					{
-						string user = await FormatNameAsync(issue.OwnerId.Value);
-						if (issue.AcknowledgedAt == null)
+						if (updateIssue.WorkflowThreadUrl != null)
 						{
-							context = $"Assigned to {user} (unacknowledged).";
-						}
-						else
-						{
-							context = $"Acknowledged by {user}.";
-						}
-					}
-					else if (suspects.Any(x => x.DeclinedAt != null))
-					{
-						HashSet<UserId> userIds = new HashSet<UserId>();
-						foreach (IIssueSuspect suspect in suspects)
-						{
-							if (suspect.DeclinedAt != null)
-							{
-								userIds.Add(suspect.AuthorId);
-							}
+							await _slackClient.PostMessageToThreadAsync(threadId, $"Existing thread here: {updateIssue.WorkflowThreadUrl}", cancellationToken: cancellationToken);
+							isSecondThread = true;
+							break;
 						}
 
-						List<string> users = new List<string>();
-						foreach (UserId userId in userIds)
+						updateIssue = await _issueService.Collection.TryUpdateIssueAsync(updateIssue, null, newWorkflowThreadUrl: new Uri(permalink), cancellationToken: cancellationToken);
+						if (updateIssue != null)
 						{
-							users.Add(await FormatNameAsync(userId));
-						}
-						users.Sort(StringComparer.OrdinalIgnoreCase);
-
-						context = $"Declined by {StringUtils.FormatList(users)}.";
-					}
-
-					if (context != null)
-					{
-						message.AddContext(context);
-					}
-				}
-
-				if (message.Blocks.Count == 0)
-				{
-					message.AddSection("Issue has been closed.");
-				}
-
-				await SendOrUpdateMessageToThreadAsync(triageChannel, $"{eventId}_buttons", null, threadId, message);
-			}
-
-			bool notifyTriageAlias = false;
-			if (isNew)
-			{
-				// If it has an owner, show that
-				HashSet<UserId> inviteUserIds = new HashSet<UserId>();
-				if (issue.OwnerId != null)
-				{
-					string mention = await FormatMentionAsync(issue.OwnerId.Value, workflow.AllowMentions);
-
-					string changes = String.Join(", ", suspects.Where(x => x.AuthorId == issue.OwnerId).Select(x => FormatChange(x.Change)));
-					if (changes.Length > 0)
-					{
-						mention += $" ({changes})";
-					}
-
-					await _slackClient.PostMessageToThreadAsync(threadId, $"Assigned to {mention}");
-					inviteUserIds.Add(issue.OwnerId.Value);
-				}
-				else
-				{
-					IGrouping<UserId, IIssueSuspect>[] suspectGroups = suspects.GroupBy(x => x.AuthorId).ToArray();
-					if (suspectGroups.Length > 0 && suspectGroups.Length <= workflow.MaxMentions)
-					{
-						List<string> suspectList = new List<string>();
-						foreach (IGrouping<UserId, IIssueSuspect> suspectGroup in suspectGroups)
-						{
-							string mention = await FormatMentionAsync(suspectGroup.Key, workflow.AllowMentions);
-							string changes = String.Join(", ", suspectGroup.Select(x => FormatChange(x.Change)));
-							suspectList.Add($"{mention} ({changes})");
-							inviteUserIds.Add(suspectGroup.Key);
+							break;
 						}
 
-						string suspectMessage = $"Possibly {StringUtils.FormatList(suspectList, "or")}.";
-						await _slackClient.PostMessageToThreadAsync(threadId, suspectMessage);
-					}
-					else
-					{
-						notifyTriageAlias = true;
+						updateIssue = await _issueService.Collection.GetIssueAsync(issue.Id, cancellationToken);
 					}
 				}
-
-				if (_environment.IsProduction() && workflow.AllowMentions)
+				catch (Exception ex)
 				{
-					await InviteUsersAsync(state.Channel, inviteUserIds, workflow.InviteRestrictedUsers);
+					_issueService.Collection.GetLogger(issue.Id).LogInformation(ex, "Error associating workflow thread with issue, bad URI format? {ErrorMessage}", ex.Message);
 				}
-			}
-
-			if (workflow.EscalateAlias != null && workflow.EscalateTimes.Count > 0)
-			{
-				DateTime escalateTime = _clock.UtcNow + TimeSpan.FromMinutes(workflow.EscalateTimes[0]);
-				if (await _redisService.GetDatabase().SortedSetAddAsync(_escalateIssues, issue.Id, (escalateTime - DateTime.UnixEpoch).TotalSeconds, StackExchange.Redis.When.NotExists))
-				{
-					_logger.LogInformation("First escalation time for issue {IssueId} is {Time}", issue.Id, escalateTime);
-				}
-			}
-
-			if ((workflow.TriageAlias != null || workflow.TriageTypeAliases != null) && issue.OwnerId == null && (suspects.All(x => x.DeclinedAt != null) || notifyTriageAlias) && !closed)
-			{
-				string? triageAlias;
-					
-				if (workflow.TriageTypeAliases == null || issue.Fingerprints.Count == 0 || !workflow.TriageTypeAliases.TryGetValue(issue.Fingerprints[0].Type, out triageAlias))
-				{
-					triageAlias = workflow.TriageAlias;
-				}
-
-				if (triageAlias != null)
-				{
-					string triageMessage = $"(cc {FormatUserOrGroupMention(triageAlias)} for triage).";
-					await SendOrUpdateMessageToThreadAsync(triageChannel, eventId + "_triage", null, threadId, triageMessage);
-				}
-			}
-
-			if (issue.AcknowledgedAt != null)
-			{
-				await _slackClient.AddReactionAsync(threadId, "eyes");
-			}
-			else
-			{
-				await _slackClient.RemoveReactionAsync(threadId, "eyes");
-			}
-
-			if (issue.QuarantinedByUserId != null)
-			{
-				await _slackClient.AddReactionAsync(threadId, "mask");
-			}
-			else
-			{
-				await _slackClient.RemoveReactionAsync(threadId, "mask");
 			}
 
 			IIssueSpan? fixFailedSpan = null;
 			if (issue.FixChange != null)
 			{
 				fixFailedSpan = GetFixFailedSpan(issue, spans);
+			}
 
-				if (fixFailedSpan == null)
+			if (!isSecondThread)
+			{
+				// Post a message containing the controls and status
 				{
-					string fixedEventId = $"issue_{issue.Id}_fixed_{issue.FixChange}";
-					string fixedMessage = $"Marked as fixed in {FormatChange(issue.FixChange.Value)}";
-					await PostSingleMessageToThreadAsync(triageChannel, fixedEventId, threadId, fixedMessage);
-				}
-				else
-				{
-					string fixFailedEventId = $"issue_{issue.Id}_fixfailed_{issue.FixChange}";
-					string fixFailedMessage = $"Issue not fixed by {FormatChange(issue.FixChange.Value)}; see {FormatJobStep(fixFailedSpan.LastFailure, fixFailedSpan.NodeName)} at CL {fixFailedSpan.LastFailure.Change} in {fixFailedSpan.StreamName}.";
-					if (issue.OwnerId.HasValue)
+					SlackMessage message = new SlackMessage();
+
+					if (workflow.TriageInstructions != null)
 					{
-						string mention = await FormatMentionAsync(issue.OwnerId.Value, workflow.AllowMentions);
-						fixFailedMessage += $" ({mention})";
+						message.AddSection(workflow.TriageInstructions);
 					}
-					await PostSingleMessageToThreadAsync(triageChannel, fixFailedEventId, threadId, fixFailedMessage);
+
+					if (!closed)
+					{
+						ActionsBlock actions = message.AddActions();
+						actions.AddButton("Assign to Me", value: $"issue_{issue.Id}_ack", style: ButtonStyle.Primary);
+						actions.AddButton("Not Me", value: $"issue_{issue.Id}_decline", style: ButtonStyle.Danger);
+						actions.AddButton("Mark Fixed", value: $"issue_{issue.Id}_markfixed");
+
+						string? context = null;
+						if (issue.OwnerId != null)
+						{
+							string user = await FormatNameAsync(issue.OwnerId.Value, cancellationToken);
+							if (issue.AcknowledgedAt == null)
+							{
+								context = $"Assigned to {user} (unacknowledged).";
+							}
+							else
+							{
+								context = $"Acknowledged by {user} at {FormatSlackTime(issue.AcknowledgedAt.Value)}.";
+							}
+						}
+						else if (suspects.Any(x => x.DeclinedAt != null))
+						{
+							HashSet<UserId> userIds = new HashSet<UserId>();
+							foreach (IIssueSuspect suspect in suspects)
+							{
+								if (suspect.DeclinedAt != null)
+								{
+									userIds.Add(suspect.AuthorId);
+								}
+							}
+
+							List<string> users = new List<string>();
+							foreach (UserId userId in userIds)
+							{
+								users.Add(await FormatNameAsync(userId, cancellationToken));
+							}
+							users.Sort(StringComparer.OrdinalIgnoreCase);
+
+							context = $"Declined by {StringUtils.FormatList(users)}.";
+						}
+
+						if (context != null)
+						{
+							message.AddContext(context);
+						}
+					}
+
+					if (message.Blocks.Count == 0)
+					{
+						message.AddSection("Issue has been closed.");
+					}
+
+					await SendOrUpdateMessageToThreadAsync(triageChannel, $"{eventId}_buttons", null, threadId, message, cancellationToken);
 				}
 
-				if (fixFailedSpan == null)
+				bool notifyTriageAlias = false;
+				if (isNew)
 				{
-					foreach (IIssueStream stream in issue.Streams)
+					// If it has an owner, show that
+					HashSet<UserId> inviteUserIds = new HashSet<UserId>();
+					if (issue.OwnerId != null)
 					{
-						if ((stream.MergeOrigin ?? false) && !(stream.ContainsFix ?? false))
+						string mention = await FormatMentionAsync(issue.OwnerId.Value, workflow.AllowMentions, cancellationToken);
+
+						string changes = String.Join(", ", suspects.Where(x => x.AuthorId == issue.OwnerId).Select(x => FormatChange(x.Change)));
+						if (changes.Length > 0)
 						{
-							string streamName = spans.FirstOrDefault(x => x.StreamId == stream.StreamId)?.StreamName ?? stream.StreamId.ToString();
-							string missingEventId = $"issue_{issue.Id}_fixmissing_{issue.FixChange}_{stream.StreamId}";
-							string missingMessage = $"Note: Fix may need manually merging to {streamName}";
-							await PostSingleMessageToThreadAsync(triageChannel, missingEventId, threadId, missingMessage);
+							mention += $" ({changes})";
+						}
+
+						await _slackClient.PostMessageToThreadAsync(threadId, $"Assigned to {mention}", cancellationToken);
+						inviteUserIds.Add(issue.OwnerId.Value);
+					}
+					else
+					{
+						IGrouping<UserId, IIssueSuspect>[] suspectGroups = suspects.GroupBy(x => x.AuthorId).ToArray();
+						if (suspectGroups.Length > 0 && suspectGroups.Length <= workflow.MaxMentions)
+						{
+							List<string> suspectList = new List<string>();
+							foreach (IGrouping<UserId, IIssueSuspect> suspectGroup in suspectGroups)
+							{
+								string mention = await FormatMentionAsync(suspectGroup.Key, workflow.AllowMentions, cancellationToken);
+								string changes = String.Join(", ", suspectGroup.Select(x => FormatChange(x.Change)));
+								suspectList.Add($"{mention} ({changes})");
+								inviteUserIds.Add(suspectGroup.Key);
+							}
+
+							string suspectMessage = $"Possibly {StringUtils.FormatList(suspectList, "or")}.";
+
+							Uri? swarmLink = GetSwarmLinkForSpan(span);
+							if (swarmLink != null)
+							{
+								suspectMessage += $" (<{swarmLink}|View changes>)";
+							}
+
+							await _slackClient.PostMessageToThreadAsync(threadId, suspectMessage, cancellationToken: cancellationToken);
+						}
+						else
+						{
+							Uri? swarmLink = GetSwarmLinkForSpan(span);
+							if (swarmLink != null)
+							{
+								await _slackClient.PostMessageToThreadAsync(threadId, $"<{swarmLink}|View changes in Swarm>", cancellationToken);
+							}
+
+							notifyTriageAlias = true;
+						}
+					}
+
+					if (_environment.IsProduction() && workflow.AllowMentions)
+					{
+						await InviteUsersAsync(state.Channel, inviteUserIds, workflow.InviteRestrictedUsers, cancellationToken);
+					}
+				}
+
+				if (workflow.EscalateAlias != null && workflow.EscalateTimes.Count > 0)
+				{
+					DateTime escalateTime = issue.CreatedAt.AddMinutes(workflow.EscalateTimes[0]);
+					if (await _redisService.GetDatabase().SortedSetAddAsync(s_escalateIssues, issue.Id, (escalateTime - DateTime.UnixEpoch).TotalSeconds, StackExchange.Redis.When.NotExists))
+					{
+						_logger.LogInformation("First escalation time for issue {IssueId} is {Time}", issue.Id, escalateTime);
+					}
+				}
+
+				if ((workflow.TriageAlias != null || workflow.TriageTypeAliases != null) && issue.OwnerId == null && (suspects.All(x => x.DeclinedAt != null) || notifyTriageAlias) && !closed)
+				{
+					string? triageAlias;
+
+					if (workflow.TriageTypeAliases == null || issue.Fingerprints.Count == 0 || !workflow.TriageTypeAliases.TryGetValue(issue.Fingerprints[0].Type, out triageAlias))
+					{
+						triageAlias = workflow.TriageAlias;
+					}
+
+					if (triageAlias != null)
+					{
+						string triageMessage = $"(cc {FormatUserOrGroupMention(triageAlias)} for triage).";
+						await SendOrUpdateMessageToThreadAsync(triageChannel, eventId + "_triage", null, threadId, triageMessage, cancellationToken);
+					}
+				}
+
+				if (issue.FixChange != null)
+				{
+					if (fixFailedSpan == null)
+					{
+						string fixedEventId = $"issue_{issue.Id}_fixed_{issue.FixChange}";
+						string fixedMessage = $"Marked as fixed in {FormatChange(issue.FixChange.Value)}";
+						await PostSingleMessageToThreadAsync(triageChannel, fixedEventId, threadId, fixedMessage, cancellationToken);
+					}
+					else
+					{
+						string fixFailedEventId = $"issue_{issue.Id}_fixfailed_{issue.FixChange}";
+						string fixFailedMessage = $"Issue not fixed by {FormatChange(issue.FixChange.Value)}; see {FormatJobStep(fixFailedSpan.LastFailure, fixFailedSpan.NodeName)} at CL {fixFailedSpan.LastFailure.Change} in {fixFailedSpan.StreamName}.";
+						if (issue.OwnerId.HasValue)
+						{
+							string mention = await FormatMentionAsync(issue.OwnerId.Value, workflow.AllowMentions, cancellationToken);
+							fixFailedMessage += $" ({mention})";
+						}
+						await PostSingleMessageToThreadAsync(triageChannel, fixFailedEventId, threadId, fixFailedMessage, cancellationToken);
+					}
+
+					if (fixFailedSpan == null)
+					{
+						foreach (IIssueStream stream in issue.Streams)
+						{
+							if ((stream.MergeOrigin ?? false) && !(stream.ContainsFix ?? false))
+							{
+								string streamName = spans.FirstOrDefault(x => x.StreamId == stream.StreamId)?.StreamName ?? stream.StreamId.ToString();
+								string missingEventId = $"issue_{issue.Id}_fixmissing_{issue.FixChange}_{stream.StreamId}";
+								string missingMessage = $"Note: Fix may need manually merging to {streamName}";
+								await PostSingleMessageToThreadAsync(triageChannel, missingEventId, threadId, missingMessage, cancellationToken);
+							}
 						}
 					}
 				}
+
+				// Assignment notifications
+				if (issue.OwnerId != null && issue.NominatedById != null && issue.NominatedById != issue.OwnerId)
+				{
+					string assignmentEventId = $"issue_{issue.Id}_nominated";
+					string assignmentMessage = $"{await FormatMentionAsync(issue.OwnerId.Value, workflow.AllowMentions, cancellationToken)} was nominated to fix by {await FormatNameAsync(issue.NominatedById.Value, cancellationToken)}.";
+					await PostSingleMessageToThreadAsync(triageChannel, assignmentEventId, threadId, assignmentMessage, cancellationToken);
+				}
 			}
 
-			if (fixFailedSpan != null)
+			// Reactions
 			{
-				await _slackClient.AddReactionAsync(threadId, "x");
-			}
-			else
-			{
-				await _slackClient.RemoveReactionAsync(threadId, "x");
-			}
+				ReactionFlags reactions = ReactionFlags.None;
+				if (issue.AcknowledgedAt != null)
+				{
+					reactions |= ReactionFlags.Acknowledged;
+				}
+				if (issue.QuarantinedByUserId != null)
+				{
+					reactions |= ReactionFlags.Quarantined;
+				}
+				if (fixFailedSpan != null)
+				{
+					reactions |= ReactionFlags.FixFailed;
+				}
+				if (issue.ResolvedAt != null && fixFailedSpan == null)
+				{
+					reactions |= ReactionFlags.Resolved;
+				}
+				if (issue.AcknowledgedAt == null && issue.OwnerId != null)
+				{
+					reactions |= ReactionFlags.AssignedButNotAcknowledged;
+				}
 
-			if (issue.ResolvedAt != null && fixFailedSpan == null)
-			{
-				await _slackClient.AddReactionAsync(threadId, "tick");
-			}
-			else
-			{
-				await _slackClient.RemoveReactionAsync(threadId, "tick");
+				string reactionEventId = $"{eventId}_reactions";
+				string reactionStateDigest = ((int)reactions).ToString();
+
+				MessageStateDocument? reactionState = await GetMessageStateAsync(triageChannel, reactionEventId, cancellationToken);
+				if ((reactionState == null && reactions != ReactionFlags.None) || (reactionState != null && reactionState.Digest != reactionStateDigest))
+				{
+					if ((reactions & ReactionFlags.Acknowledged) != 0)
+					{
+						await _slackClient.AddReactionAsync(threadId, "eyes", cancellationToken);
+					}
+					else
+					{
+						await _slackClient.RemoveReactionAsync(threadId, "eyes", cancellationToken);
+					}
+
+					if ((reactions & ReactionFlags.Quarantined) != 0)
+					{
+						await _slackClient.AddReactionAsync(threadId, "mask", cancellationToken);
+					}
+					else
+					{
+						await _slackClient.RemoveReactionAsync(threadId, "mask", cancellationToken);
+					}
+
+					if ((reactions & ReactionFlags.FixFailed) != 0)
+					{
+						await _slackClient.AddReactionAsync(threadId, "x", cancellationToken);
+					}
+					else
+					{
+						await _slackClient.RemoveReactionAsync(threadId, "x", cancellationToken);
+					}
+
+					if ((reactions & ReactionFlags.Resolved) != 0)
+					{
+						await _slackClient.AddReactionAsync(threadId, "tick", cancellationToken);
+					}
+					else
+					{
+						await _slackClient.RemoveReactionAsync(threadId, "tick", cancellationToken);
+					}
+
+					if ((reactions & ReactionFlags.AssignedButNotAcknowledged) != 0)
+					{
+						await _slackClient.AddReactionAsync(threadId, "mailbox", cancellationToken);
+					}
+					else
+					{
+						await _slackClient.RemoveReactionAsync(threadId, "mailbox", cancellationToken);
+					}
+
+					await AddOrUpdateMessageStateAsync(triageChannel, reactionEventId, null, reactionStateDigest, threadId, cancellationToken);
+				}
 			}
 
 			if (issue.ExternalIssueKey != null)
 			{
 				string extIssueEventId = $"issue_{issue.Id}_ext_{issue.ExternalIssueKey}";
 				string extIssueMessage = $"Linked to issue {FormatExternalIssue(issue.ExternalIssueKey)}";
-				await PostSingleMessageToThreadAsync(triageChannel, extIssueEventId, threadId, extIssueMessage);
+				await PostSingleMessageToThreadAsync(triageChannel, extIssueEventId, threadId, extIssueMessage, cancellationToken);
 			}
 		}
 
-		async Task PostSingleMessageToThreadAsync(string recipient, string eventId, SlackMessageId threadId, string message)
+		Uri? GetSwarmLinkForSpan(IIssueSpan span)
 		{
-			(MessageStateDocument state, bool isNew) = await AddOrUpdateMessageStateAsync(recipient, eventId, null, "", null);
+			if (_settings.P4SwarmUrl == null || span.LastSuccess == null)
+			{
+				return null;
+			}
+			else
+			{
+				return new Uri(_settings.P4SwarmUrl, $"files/{span.StreamName.TrimStart('/')}?range=@{span.LastSuccess.Change + 1},@{span.FirstFailure.Change}#commits");
+			}
+		}
+
+		async Task PostSingleMessageToThreadAsync(string recipient, string eventId, SlackMessageId threadId, string message, CancellationToken cancellationToken)
+		{
+			(MessageStateDocument state, bool isNew) = await AddOrUpdateMessageStateAsync(recipient, eventId, null, "", null, cancellationToken);
 			if (isNew)
 			{
-				SlackMessageId messageId = await _slackClient.PostMessageToThreadAsync(threadId, message);
-				await UpdateMessageStateAsync(state.Id, messageId);
+				SlackMessageId messageId = await _slackClient.PostMessageToThreadAsync(threadId, message, cancellationToken);
+				await UpdateMessageStateAsync(state.Id, messageId, cancellationToken: cancellationToken);
 			}
 		}
 
-		async Task NotifyIssueUpdatedAsync(GlobalConfig globalConfig, IUser user, IIssue issue, IIssueDetails details)
+		async Task NotifyIssueUpdatedAsync(GlobalConfig globalConfig, IUser user, IIssue issue, IIssueDetails details, CancellationToken cancellationToken)
 		{
-			string? slackUserId = await GetSlackUserId(user);
+			string? slackUserId = await GetSlackUserIdAsync(user, cancellationToken);
 			if (slackUserId == null)
 			{
 				return;
 			}
 
-			await SendIssueMessageAsync(globalConfig, slackUserId, issue, details, user.Id, DefaultAllowMentions);
+			await SendIssueMessageAsync(globalConfig, slackUserId, issue, details, user.Id, DefaultAllowMentions, cancellationToken);
 		}
 
 		Uri GetJobUrl(JobId jobId)
@@ -1274,7 +1403,7 @@ namespace Horde.Server.Notifications.Sinks
 			return new Uri(_settings.DashboardUrl, $"job/{jobId}");
 		}
 
-		Uri GetStepUrl(JobId jobId, SubResourceId stepId)
+		Uri GetStepUrl(JobId jobId, JobStepId stepId)
 		{
 			return new Uri(_settings.DashboardUrl, $"job/{jobId}?step={stepId}");
 		}
@@ -1284,9 +1413,9 @@ namespace Horde.Server.Notifications.Sinks
 			return new Uri(_settings.DashboardUrl, $"job/{step.JobId}?step={step.StepId}&issue={issue.Id}");
 		}
 
-		async Task SendIssueMessageAsync(GlobalConfig globalConfig, string recipient, IIssue issue, IIssueDetails details, UserId? userId, bool allowMentions)
+		async Task SendIssueMessageAsync(GlobalConfig globalConfig, string recipient, IIssue issue, IIssueDetails details, UserId? userId, bool allowMentions, CancellationToken cancellationToken)
 		{
-			using IDisposable scope = _logger.BeginScope("SendIssueMessageAsync (User: {SlackUser}, Issue: {IssueId})", recipient, issue.Id);
+			using IDisposable? scope = _logger.BeginScope("SendIssueMessageAsync (User: {SlackUser}, Issue: {IssueId})", recipient, issue.Id);
 
 			SlackAttachment attachment = new SlackAttachment();
 			attachment.Color = ErrorColor;
@@ -1306,9 +1435,9 @@ namespace Horde.Server.Notifications.Sinks
 			if (workflowId != null)
 			{
 				StreamConfig? streamConfig;
-				if(globalConfig.TryGetStream(span.StreamId, out streamConfig) && streamConfig.TryGetWorkflow(workflowId.Value, out WorkflowConfig? workflow) && !String.IsNullOrEmpty(workflow.TriageChannel) && workflow.AllowMentions)
+				if (globalConfig.TryGetStream(span.StreamId, out streamConfig) && streamConfig.TryGetWorkflow(workflowId.Value, out WorkflowConfig? workflow) && !String.IsNullOrEmpty(workflow.TriageChannel) && workflow.AllowMentions)
 				{
-					MessageStateDocument? state = await GetMessageStateAsync(workflow.TriageChannel, GetTriageThreadEventId(issue.Id));
+					MessageStateDocument? state = await GetMessageStateAsync(workflow.TriageChannel, GetTriageThreadEventId(issue.Id), cancellationToken);
 					if (state != null)
 					{
 						summaryBuilder.Append($" See *<{state.Permalink}|discussion thread>*.");
@@ -1321,10 +1450,10 @@ namespace Horde.Server.Notifications.Sinks
 			if (lastSpan != null && lastSpan.LastFailure.LogId != null)
 			{
 				LogId logId = lastSpan.LastFailure.LogId.Value;
-				ILogFile? logFile = await _logFileService.GetLogFileAsync(logId, CancellationToken.None);
-				if(logFile != null)
+				ILogFile? logFile = await _logFileService.GetLogFileAsync(logId, cancellationToken);
+				if (logFile != null)
 				{
-					List<ILogEvent> events = await _logFileService.FindEventsAsync(logFile, lastSpan.Id, 0, 20);
+					List<ILogEvent> events = await _logFileService.FindEventsAsync(logFile, lastSpan.Id, 0, 20, cancellationToken);
 					if (events.Any(x => x.Severity == EventSeverity.Error))
 					{
 						events.RemoveAll(x => x.Severity == EventSeverity.Warning);
@@ -1332,7 +1461,7 @@ namespace Horde.Server.Notifications.Sinks
 
 					for (int idx = 0; idx < Math.Min(events.Count, 3); idx++)
 					{
-						ILogEventData data = await _logFileService.GetEventDataAsync(logFile, events[idx].LineIndex, events[idx].LineCount);
+						ILogEventData data = await _logFileService.GetEventDataAsync(logFile, events[idx].LineIndex, events[idx].LineCount, cancellationToken);
 						attachment.AddSection(QuoteText(data.Message));
 					}
 					if (events.Count > 3)
@@ -1372,7 +1501,7 @@ namespace Horde.Server.Notifications.Sinks
 				{
 					if (issue.NominatedById != null)
 					{
-						string mention = await FormatMentionAsync(issue.NominatedById.Value, allowMentions);
+						string mention = await FormatMentionAsync(issue.NominatedById.Value, allowMentions, cancellationToken);
 						string text = $"You were nominated to fix this issue by {mention} at {FormatSlackTime(issue.NominatedAt ?? DateTime.UtcNow)}";
 						attachment.AddSection(text);
 					}
@@ -1394,7 +1523,7 @@ namespace Horde.Server.Notifications.Sinks
 			}
 			else if (issue.OwnerId != null)
 			{
-				string ownerMention = await FormatMentionAsync(issue.OwnerId.Value, allowMentions);
+				string ownerMention = await FormatMentionAsync(issue.OwnerId.Value, allowMentions, cancellationToken);
 				if (issue.AcknowledgedAt.HasValue)
 				{
 					attachment.AddSection($":+1: Acknowledged by {ownerMention} at {FormatSlackTime(issue.AcknowledgedAt.Value)}");
@@ -1409,7 +1538,7 @@ namespace Horde.Server.Notifications.Sinks
 				}
 				else
 				{
-					attachment.AddSection($"{ownerMention} was nominated to fix this issue by {await FormatMentionAsync(issue.NominatedById.Value, allowMentions)}");
+					attachment.AddSection($"{ownerMention} was nominated to fix this issue by {await FormatMentionAsync(issue.NominatedById.Value, allowMentions, cancellationToken)}");
 				}
 			}
 			else if (userId != null)
@@ -1438,15 +1567,15 @@ namespace Horde.Server.Notifications.Sinks
 				{
 					if (!details.Issue.Promoted)
 					{
-						declinedLines.Add($"Possibly {await FormatNameAsync(suspect.AuthorId)} (CL {suspect.Change})");
+						declinedLines.Add($"Possibly {await FormatNameAsync(suspect.AuthorId, cancellationToken)} (CL {suspect.Change})");
 					}
 					else if (suspect.DeclinedAt == null)
 					{
-						declinedLines.Add($":heavy_minus_sign: Ignored by {await FormatNameAsync(suspect.AuthorId)} (CL {suspect.Change})");
+						declinedLines.Add($":heavy_minus_sign: Ignored by {await FormatNameAsync(suspect.AuthorId, cancellationToken)} (CL {suspect.Change})");
 					}
 					else
 					{
-						declinedLines.Add($":downvote: Declined by {await FormatNameAsync(suspect.AuthorId)} at {FormatSlackTime(suspect.DeclinedAt.Value)} (CL {suspect.Change})");
+						declinedLines.Add($":downvote: Declined by {await FormatNameAsync(suspect.AuthorId, cancellationToken)} at {FormatSlackTime(suspect.DeclinedAt.Value)} (CL {suspect.Change})");
 					}
 				}
 				attachment.AddSection(String.Join("\n", declinedLines));
@@ -1454,7 +1583,7 @@ namespace Horde.Server.Notifications.Sinks
 
 			if (IsRecipientAllowed(recipient, "issue update"))
 			{
-				await SendOrUpdateMessageAsync(recipient, GetIssueEventId(issue, recipient), userId, attachment);
+				await SendOrUpdateMessageAsync(recipient, GetIssueEventId(issue, recipient), userId, attachment, cancellationToken);
 			}
 		}
 
@@ -1468,25 +1597,30 @@ namespace Horde.Server.Notifications.Sinks
 			return $"issue_{issue.Id}_for_{recipient}";
 		}
 
-		async Task<string> FormatNameAsync(UserId userId)
+		async Task<string> FormatNameAsync(UserId userId, CancellationToken cancellationToken)
 		{
-			IUser? user = await _userCollection.GetUserAsync(userId);
+			IUser? user = await _userCollection.GetUserAsync(userId, cancellationToken);
 			if (user == null)
 			{
-				if (userId == IIssue.ResolvedByUnknownId)
-				{
-					return "Horde (Unknown)";
-				}
-				else if (userId == IIssue.ResolvedByTimeoutId)
-				{
-					return "Horde (Timeout)";
-				}
-				else
-				{
-					return $"User {userId}";
-				}
+				return GetDefaultUserName(userId);
 			}
 			return user.Name;
+		}
+
+		static string GetDefaultUserName(UserId userId)
+		{
+			if (userId == IIssue.ResolvedByUnknownId)
+			{
+				return "Horde (Unknown)";
+			}
+			else if (userId == IIssue.ResolvedByTimeoutId)
+			{
+				return "Horde (Timeout)";
+			}
+			else
+			{
+				return $"User {userId}";
+			}
 		}
 
 		string FormatChange(int change)
@@ -1528,15 +1662,15 @@ namespace Horde.Server.Notifications.Sinks
 			}
 		}
 
-		async Task<string> FormatMentionAsync(UserId userId, bool allowMentions)
+		async Task<string> FormatMentionAsync(UserId userId, bool allowMentions, CancellationToken cancellationToken)
 		{
-			IUser? user = await _userCollection.GetUserAsync(userId);
+			IUser? user = await _userCollection.GetUserAsync(userId, cancellationToken);
 			if (user == null)
 			{
-				return $"User {userId}";
+				return GetDefaultUserName(userId);
 			}
 
-			string? slackUserId = await GetSlackUserId(user);
+			string? slackUserId = await GetSlackUserIdAsync(user, cancellationToken);
 			if (slackUserId == null)
 			{
 				return user.Login;
@@ -1587,22 +1721,22 @@ namespace Horde.Server.Notifications.Sinks
 		static string GetReportBlockEventId(string ts, int idx) => $"issue-report-block:{ts}:{idx}";
 
 		/// <inheritdoc/>
-		public async Task SendIssueReportAsync(IssueReportGroup group)
+		public async Task SendIssueReportAsync(IssueReportGroup group, CancellationToken cancellationToken)
 		{
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 
 			foreach (IssueReport report in group.Reports.OrderBy(x => x.WorkflowId.Id.Text).ThenBy(x => x.StreamId.Id.Text))
 			{
-				await SendIssueReportForStreamAsync(globalConfig, group.Channel, group.Time, report);
+				await SendIssueReportForStreamAsync(globalConfig, group.Channel, group.Time, report, cancellationToken);
 			}
 
 			SlackMessage message = new SlackMessage();
 			message.AddDivider();
 
-			await SendMessageAsync(group.Channel, message);
+			await SendMessageAsync(group.Channel, message, cancellationToken);
 		}
 
-		async Task SendIssueReportForStreamAsync(GlobalConfig globalConfig, string channel, DateTime time, IssueReport report)
+		async Task SendIssueReportForStreamAsync(GlobalConfig globalConfig, string channel, DateTime time, IssueReport report, CancellationToken cancellationToken)
 		{
 			const int MaxIssuesPerMessage = 8;
 
@@ -1679,31 +1813,36 @@ namespace Horde.Server.Notifications.Sinks
 			SlackMessage headerMessage = new SlackMessage();
 			headerMessage.AddHeader($"Summary for {streamConfig.Name}");
 
-			SlackMessageId? messageId = await SendMessageAsync(channel, headerMessage);
+			TimeSpan rateLimitDelay = TimeSpan.FromSeconds(1.0);
+
+			SlackMessageId? messageId = await SendMessageAsync(channel, headerMessage, cancellationToken);
 			if (messageId != null)
 			{
 				string reportEventId = GetReportEventId(streamConfig.Id, report.WorkflowId);
 				string json = JsonSerializer.Serialize(state, _jsonSerializerOptions);
-				await AddOrUpdateMessageStateAsync(channel, reportEventId, null, json, messageId);
+				await AddOrUpdateMessageStateAsync(channel, reportEventId, null, json, messageId, cancellationToken);
 
 				if (state.Blocks.Count == 0)
 				{
 					string header = ":tick: No issues open.";
-					await SendMessageAsync(channel, header);
+					await SendMessageAsync(channel, header, cancellationToken);
 				}
 
 				for (int idx = 0; idx < state.Blocks.Count; idx++)
 				{
+					await Task.Delay(rateLimitDelay, cancellationToken);
 					string blockEventId = GetReportBlockEventId(messageId.Ts, idx);
-					await UpdateReportBlockAsync(channel, blockEventId, time, streamConfig, state.Blocks[idx].TemplateId, issuesByBlock[idx], report.TriageChannel, state.Blocks[idx].TemplateHeader);
+					await UpdateReportBlockAsync(channel, blockEventId, time, streamConfig, state.Blocks[idx].TemplateId, issuesByBlock[idx], report.TriageChannel, state.Blocks[idx].TemplateHeader, cancellationToken);
 				}
 
 				if (report.WorkflowStats.NumSteps > 0)
 				{
 					double totalPct = (report.WorkflowStats.NumPassingSteps * 100.0) / report.WorkflowStats.NumSteps;
 					string header = $"*{totalPct:0.0}%* of build steps ({report.WorkflowStats.NumPassingSteps:n0}/{report.WorkflowStats.NumSteps:n0}) succeeded since last status update.";
-					await SendMessageAsync(channel, header);
+					await SendMessageAsync(channel, header, cancellationToken);
 				}
+
+				await Task.Delay(rateLimitDelay, cancellationToken);
 			}
 		}
 
@@ -1722,7 +1861,7 @@ namespace Horde.Server.Notifications.Sinks
 			return false;
 		}
 
-		async Task UpdateReportsAsync(GlobalConfig globalConfig, IIssue issue, IReadOnlyList<IIssueSpan> spans)
+		async Task UpdateReportsAsync(GlobalConfig globalConfig, IIssue issue, IReadOnlyList<IIssueSpan> spans, CancellationToken cancellationToken)
 		{
 			_logger.LogInformation("Checking for report updates to issue {IssueId}", issue.Id);
 
@@ -1753,7 +1892,7 @@ namespace Horde.Server.Notifications.Sinks
 					continue;
 				}
 
-				MessageStateDocument? messageState = await GetMessageStateAsync(workflowConfig.ReportChannel, reportEventId);
+				MessageStateDocument? messageState = await GetMessageStateAsync(workflowConfig.ReportChannel, reportEventId, cancellationToken);
 				if (messageState == null)
 				{
 					continue;
@@ -1787,7 +1926,7 @@ namespace Horde.Server.Notifications.Sinks
 						List<(IIssue, IIssueSpan?, bool)> issues = new List<(IIssue, IIssueSpan?, bool)>();
 						foreach (int issueId in block.IssueIds)
 						{
-							IIssueDetails? details = await _issueService.GetIssueDetailsAsync(issueId);
+							IIssueDetails? details = await _issueService.GetIssueDetailsAsync(issueId, cancellationToken);
 							if (details != null)
 							{
 								IIssueSpan? otherSpan = details.Spans.FirstOrDefault(x => x.TemplateRefId == block.TemplateId);
@@ -1801,13 +1940,13 @@ namespace Horde.Server.Notifications.Sinks
 							}
 						}
 
-						await UpdateReportBlockAsync(workflowConfig.ReportChannel, blockEventId, state.Time, streamConfig, block.TemplateId, issues, workflowConfig.TriageChannel, block.TemplateHeader);
+						await UpdateReportBlockAsync(workflowConfig.ReportChannel, blockEventId, state.Time, streamConfig, block.TemplateId, issues, workflowConfig.TriageChannel, block.TemplateHeader, cancellationToken);
 					}
 				}
 			}
 		}
 
-		async Task UpdateReportBlockAsync(string channel, string eventId, DateTime reportTime, StreamConfig streamConfig, TemplateId templateId, List<(IIssue, IIssueSpan?, bool)> issues, string? triageChannel, bool templateHeader)
+		async Task UpdateReportBlockAsync(string channel, string eventId, DateTime reportTime, StreamConfig streamConfig, TemplateId templateId, List<(IIssue, IIssueSpan?, bool)> issues, string? triageChannel, bool templateHeader, CancellationToken cancellationToken)
 		{
 			StringBuilder body = new StringBuilder();
 
@@ -1816,7 +1955,7 @@ namespace Horde.Server.Notifications.Sinks
 				TemplateRefConfig? templateConfig;
 				if (streamConfig.TryGetTemplate(templateId, out templateConfig))
 				{
-					JobsTabConfig? tab = streamConfig.Tabs.OfType<JobsTabConfig>().FirstOrDefault(x => x.Templates != null && x.Templates.Contains(templateId));
+					TabConfig? tab = streamConfig.Tabs.FirstOrDefault(x => x.Templates != null && x.Templates.Contains(templateId));
 					if (tab != null)
 					{
 						Uri templateUrl = new Uri(_settings.DashboardUrl, $"stream/{streamConfig.Id}?tab={tab.Title}&template={templateId}");
@@ -1832,14 +1971,14 @@ namespace Horde.Server.Notifications.Sinks
 					body.Append('\n');
 				}
 
-				string text = await FormatIssueAsync(issue, span, triageChannel, reportTime, open);
+				string text = await FormatIssueAsync(issue, span, triageChannel, reportTime, open, cancellationToken);
 				body.Append(text);
 			}
 
 			SlackMessage message = body.ToString();
 			message.UnfurlLinks = false;
 			message.UnfurlMedia = false;
-			await SendOrUpdateMessageAsync(channel, eventId, null, message);
+			await SendOrUpdateMessageAsync(channel, eventId, null, message, cancellationToken);
 		}
 
 		string GetSeverityPrefix(IssueSeverity severity)
@@ -1847,7 +1986,7 @@ namespace Horde.Server.Notifications.Sinks
 			return (severity == IssueSeverity.Warning) ? _settings.SlackWarningPrefix : _settings.SlackErrorPrefix;
 		}
 
-		async ValueTask<string> FormatIssueAsync(IIssue issue, IIssueSpan? span, string? triageChannel, DateTime reportTime, bool open)
+		async ValueTask<string> FormatIssueAsync(IIssue issue, IIssueSpan? span, string? triageChannel, DateTime reportTime, bool open, CancellationToken cancellationToken)
 		{
 			Uri issueUrl = _settings.DashboardUrl;
 			if (span != null)
@@ -1859,7 +1998,7 @@ namespace Horde.Server.Notifications.Sinks
 			IUser? owner = null;
 			if (issue.OwnerId != null)
 			{
-				owner = await _userCollection.GetCachedUserAsync(issue.OwnerId.Value);
+				owner = await _userCollection.GetCachedUserAsync(issue.OwnerId.Value, cancellationToken);
 			}
 
 			string status = "*Unassigned*";
@@ -1904,7 +2043,7 @@ namespace Horde.Server.Notifications.Sinks
 
 			if (!String.IsNullOrEmpty(triageChannel))
 			{
-				MessageStateDocument? state = await GetMessageStateAsync(triageChannel, GetTriageThreadEventId(issue.Id));
+				MessageStateDocument? state = await GetMessageStateAsync(triageChannel, GetTriageThreadEventId(issue.Id), cancellationToken);
 				if (state != null && state.Permalink != null)
 				{
 					body.Append($" (<{state.Permalink}|Thread>)");
@@ -1940,7 +2079,7 @@ namespace Horde.Server.Notifications.Sinks
 			}
 
 			double totalHours = timeSpan.TotalHours;
-			if(totalHours > 1.0)
+			if (totalHours > 1.0)
 			{
 				return $"{totalHours:n0}h";
 			}
@@ -1953,7 +2092,7 @@ namespace Horde.Server.Notifications.Sinks
 		#region Stream updates
 
 		/// <inheritdoc/>
-		public async Task NotifyConfigUpdateAsync(Exception? ex)
+		public async Task NotifyConfigUpdateAsync(Exception? ex, CancellationToken cancellationToken)
 		{
 			if (String.IsNullOrEmpty(_settings.ConfigNotificationChannel))
 			{
@@ -1988,7 +2127,7 @@ namespace Horde.Server.Notifications.Sinks
 							string blameMessage = $"Possibly due to CL {blame.Revision}";
 							if (blame.Author != null)
 							{
-								string userId = await FormatMentionAsync(blame.Author.Id, true);
+								string userId = await FormatMentionAsync(blame.Author.Id, true, cancellationToken);
 								blameMessage += $" ({userId})";
 							}
 							details.Add(blameMessage.ToString());
@@ -2004,25 +2143,25 @@ namespace Horde.Server.Notifications.Sinks
 				string message = String.Join("\n", details);
 				string digest = GetMessageDigest(message);
 
-				MessageStateDocument? state = await GetMessageStateAsync(_settings.ConfigNotificationChannel, EventId);
+				MessageStateDocument? state = await GetMessageStateAsync(_settings.ConfigNotificationChannel, EventId, cancellationToken);
 				if (state == null || state.Digest != digest)
 				{
 					SlackMessage header = new SlackMessage();
 					header.AddHeader($"Config Update Error");
-					await SendMessageAsync(_settings.ConfigNotificationChannel, header);
+					await SendMessageAsync(_settings.ConfigNotificationChannel, header, cancellationToken);
 
-					SlackMessageId? messageId = await SendMessageAsync(_settings.ConfigNotificationChannel, message);
-					await AddOrUpdateMessageStateAsync(_settings.ConfigNotificationChannel, EventId, null, digest, messageId);
+					SlackMessageId? messageId = await SendMessageAsync(_settings.ConfigNotificationChannel, message, cancellationToken);
+					await AddOrUpdateMessageStateAsync(_settings.ConfigNotificationChannel, EventId, null, digest, messageId, cancellationToken);
 				}
 			}
 			else
 			{
-				if (await DeleteMessageStateAsync(_settings.ConfigNotificationChannel, EventId))
+				if (await DeleteMessageStateAsync(_settings.ConfigNotificationChannel, EventId, cancellationToken))
 				{
 					SlackMessage message = new SlackMessage();
 					message.AddSection($"*Config Update Succeeded*");
-					await SendMessageAsync(_settings.ConfigNotificationChannel, message);
-					await DeleteMessageStateAsync(_settings.ConfigNotificationChannel, EventId);
+					await SendMessageAsync(_settings.ConfigNotificationChannel, message, cancellationToken);
+					await DeleteMessageStateAsync(_settings.ConfigNotificationChannel, EventId, cancellationToken);
 				}
 			}
 		}
@@ -2057,14 +2196,14 @@ namespace Horde.Server.Notifications.Sinks
 		}
 
 		/// <inheritdoc/>
-		public async Task NotifyConfigUpdateFailureAsync(string errorMessage, string fileName, int? change = null, IUser? author = null, string? description = null)
+		public async Task NotifyConfigUpdateFailureAsync(string errorMessage, string fileName, int? change = null, IUser? author = null, string? description = null, CancellationToken cancellationToken = default)
 		{
 			_logger.LogInformation("Sending config update failure notification for {FileName} (change: {Change}, author: {UserId})", fileName, change ?? -1, author?.Id ?? UserId.Empty);
 
 			string? slackUserId = null;
 			if (author != null)
 			{
-				slackUserId = await GetSlackUserId(author);
+				slackUserId = await GetSlackUserIdAsync(author, cancellationToken);
 				if (slackUserId == null)
 				{
 					_logger.LogWarning("Unable to identify Slack user id for {UserId}", author.Id);
@@ -2077,15 +2216,15 @@ namespace Horde.Server.Notifications.Sinks
 
 			if (slackUserId != null)
 			{
-				await SendConfigUpdateFailureMessageAsync(slackUserId, errorMessage, fileName, change, slackUserId, description);
+				await SendConfigUpdateFailureMessageAsync(slackUserId, errorMessage, fileName, change, slackUserId, description, cancellationToken);
 			}
 			if (_settings.UpdateStreamsNotificationChannel != null)
 			{
-				await SendConfigUpdateFailureMessageAsync($"#{_settings.UpdateStreamsNotificationChannel}", errorMessage, fileName, change, slackUserId, description);
+				await SendConfigUpdateFailureMessageAsync($"#{_settings.UpdateStreamsNotificationChannel}", errorMessage, fileName, change, slackUserId, description, cancellationToken);
 			}
 		}
 
-		private async Task SendConfigUpdateFailureMessageAsync(string recipient, string errorMessage, string fileName, int? change = null, string? author = null, string? description = null)
+		private async Task SendConfigUpdateFailureMessageAsync(string recipient, string errorMessage, string fileName, int? change = null, string? author = null, string? description = null, CancellationToken cancellationToken = default)
 		{
 			string outcomeColor = ErrorColor;
 			SlackAttachment attachment = new SlackAttachment();
@@ -2112,7 +2251,7 @@ namespace Horde.Server.Notifications.Sinks
 				}
 			}
 
-			await SendMessageAsync(recipient, attachment);
+			await SendMessageAsync(recipient, attachment, cancellationToken);
 		}
 
 		#endregion
@@ -2120,13 +2259,117 @@ namespace Horde.Server.Notifications.Sinks
 		#region Device notifications
 
 		/// <inheritdoc/>
-		public async Task NotifyDeviceServiceAsync(string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null)
+		public async Task SendDeviceIssueReportAsync(DeviceIssueReport report, CancellationToken cancellationToken)
+		{
+			if (report.PoolReports.Count > 0)
+			{
+				SlackMessage headerMessage = new SlackMessage();
+				headerMessage.AddHeader($"Device Pool Health Summary");
+				await SendMessageAsync(report.Channel, headerMessage, cancellationToken);
+
+				foreach (DevicePoolReport pool in report.PoolReports)
+				{
+					List<SlackAttachment> attachments = new List<SlackAttachment>();
+					foreach (DevicePoolMetrics metrics in pool.Metrics)
+					{
+
+						double totalPct = (((double)metrics.Disabled + (double)metrics.Maintenance + (double)metrics.Problems) / (double)metrics.Total) * 100.0;
+
+						StringBuilder builder = new StringBuilder("   ");
+
+						string color = "#eeeeee";
+
+						if (totalPct >= 40)
+						{
+							color = "#ff0000";
+						}
+						else if (totalPct >= 20)
+						{
+							color = "#ffff00";
+						}
+						else
+						{
+							continue;
+						}
+
+						builder.Append($"*{metrics.PlatformName}* - ");
+
+						if (metrics.Problems > 0)
+						{
+							builder.Append($"Problems: {metrics.Problems}, ");
+						}
+
+						builder.Append($"Devices: {metrics.Total}, Disabled: {metrics.Disabled}, Maintenance: {metrics.Maintenance}");
+
+						SlackAttachment attachment = new SlackAttachment();
+						attachment.FallbackText = builder.ToString();
+						attachment.Color = color;
+						attachment.AddSection(builder.ToString());
+						attachments.Add(attachment);
+					}
+					if (attachments.Count > 0)
+					{
+						SlackMessage message = new SlackMessage();
+						message.Attachments.AddRange(attachments);
+						message.Markdown = true;
+						message.Text = $"*{pool.PoolName}*";
+						await SendMessageAsync(report.Channel, message, cancellationToken);
+					}
+				}
+
+				SlackMessage divider = new SlackMessage();
+				divider.AddDivider();
+				await SendMessageAsync(report.Channel, divider, cancellationToken);
+
+			}
+
+			if (report.PlatformReports.Count > 0)
+			{
+				SlackMessage headerMessage = new SlackMessage();
+				headerMessage.AddHeader($"Device Problems Since Last Update");
+				await SendMessageAsync(report.Channel, headerMessage, cancellationToken);
+
+				foreach (DevicePlatformReport platform in report.PlatformReports)
+				{
+					SlackMessage message = new SlackMessage();
+					message.Markdown = true;
+					message.Text = $"*{platform.PlatformName}*";
+
+					SlackAttachment attachment = new SlackAttachment();
+
+					foreach (DeviceReport device in platform.DeviceReports.OrderByDescending(r => r.ProblemDelta))
+					{
+						StringBuilder builder = new StringBuilder($"   {device.DeviceName} / {device.DeviceAddress}");
+
+						builder.Append($" / Problems: {device.ProblemDelta}");
+
+						if (!String.IsNullOrEmpty(device.LastProblemURL))
+						{
+							builder.Append($" - <{device.LastProblemURL}|{device.LastProblemDesc ?? "??"}>");
+						}
+
+						attachment.FallbackText = builder.ToString();
+						attachment.AddSection(builder.ToString());
+					}
+
+					message.Attachments.Add(attachment);
+					await SendMessageAsync(report.Channel, message, cancellationToken);
+				}
+
+				SlackMessage divider = new SlackMessage();
+				divider.AddDivider();
+				await SendMessageAsync(report.Channel, divider, cancellationToken);
+			}
+		}
+
+		/// <inheritdoc/>
+		public async Task NotifyDeviceServiceAsync(string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null, CancellationToken cancellationToken = default)
 		{
 			string? recipient = null;
 
 			if (user != null)
 			{
-				string? slackRecipient = await GetSlackUserId(user);
+				string? slackRecipient = await GetSlackUserIdAsync(user, cancellationToken);
 
 				if (slackRecipient == null)
 				{
@@ -2136,11 +2379,11 @@ namespace Horde.Server.Notifications.Sinks
 
 				recipient = slackRecipient;
 			}
-			
+
 			if (recipient != null)
 			{
 				_logger.LogDebug("Sending device service notification to {Recipient}", recipient);
-				await SendDeviceServiceMessage(recipient, message, device, pool, streamConfig, job, step, node, user);
+				await SendDeviceServiceMessageAsync(recipient, message, device, pool, streamConfig, job, step, node, user, cancellationToken);
 			}
 		}
 
@@ -2156,12 +2399,12 @@ namespace Horde.Server.Notifications.Sinks
 		/// <param name="step">The job step that completed.</param>
 		/// <param name="node">The node for the job step.</param>
 		/// <param name="user">The user to notify.</param>
-		private Task SendDeviceServiceMessage(string recipient, string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null)
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		private Task SendDeviceServiceMessageAsync(string recipient, string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null, CancellationToken cancellationToken = default)
 		{
-
 			if (user != null)
 			{
-				return SendMessageAsync(recipient, message);
+				return SendMessageAsync(recipient, message, cancellationToken);
 			}
 
 			// truncate message to avoid slack error on message length
@@ -2171,14 +2414,14 @@ namespace Horde.Server.Notifications.Sinks
 			}
 
 			SlackAttachment attachment = new SlackAttachment();
-							
+
 			attachment.FallbackText = $"{message}";
 
 			if (device != null && pool != null)
 			{
 				attachment.FallbackText += $" - Device: {device.Name} Pool: {pool.Name}";
 			}
-				
+
 			attachment.AddHeader(message, false);
 
 			if (streamConfig != null && job != null && step != null && node != null)
@@ -2196,7 +2439,7 @@ namespace Horde.Server.Notifications.Sinks
 				attachment.AddSection("*No job information (Gauntlet might need to be updated in stream)*");
 			}
 
-			return SendMessageAsync(recipient, attachment);
+			return SendMessageAsync(recipient, attachment, cancellationToken);
 		}
 
 		#endregion
@@ -2235,7 +2478,7 @@ namespace Horde.Server.Notifications.Sinks
 
 		static bool ShouldUpdateUser(SlackUserDocument? document)
 		{
-			if(document == null || document.Version < SlackUserDocument.CurrentVersion)
+			if (document == null || document.Version < SlackUserDocument.CurrentVersion)
 			{
 				return true;
 			}
@@ -2252,31 +2495,36 @@ namespace Horde.Server.Notifications.Sinks
 			return document.Time + expiryTime < DateTime.UtcNow;
 		}
 
-		private async Task<string?> GetSlackUserId(IUser user)
+		private async Task<string?> GetSlackUserIdAsync(IUser user, CancellationToken cancellationToken)
 		{
-			return (await GetSlackUser(user))?.SlackUserId;
+			return (await GetSlackUserAsync(user, cancellationToken))?.SlackUserId;
 		}
 
-		private async Task<SlackUserDocument?> GetSlackUser(IUser user)
+		private readonly HashSet<UserId> _usersWithoutEmail = new HashSet<UserId>();
+
+		private async Task<SlackUserDocument?> GetSlackUserAsync(IUser user, CancellationToken cancellationToken)
 		{
 			string? email = user.Email;
 			if (email == null)
 			{
-				_logger.LogWarning("Unable to find Slack user id for {UserId} ({Name}): No email address in user profile", user.Id, user.Name);
+				if (_usersWithoutEmail.Add(user.Id))
+				{
+					_logger.LogInformation("Unable to find Slack user id for {UserId} ({Name}): No email address in user profile", user.Id, user.Name);
+				}
 				return null;
 			}
 
 			SlackUserDocument? userDocument;
 			if (!_userCache.TryGetValue(email, out userDocument))
 			{
-				userDocument = await _slackUsers.Find(x => x.Id == user.Id).FirstOrDefaultAsync();
+				userDocument = await _slackUsers.Find(x => x.Id == user.Id).FirstOrDefaultAsync(cancellationToken);
 				if (userDocument == null || ShouldUpdateUser(userDocument))
 				{
-					SlackUser? userInfo = await _slackClient.FindUserByEmailAsync(email);
+					SlackUser? userInfo = await _slackClient.FindUserByEmailAsync(email, cancellationToken);
 					if (userDocument == null || userInfo != null)
 					{
 						userDocument = new SlackUserDocument(user.Id, userInfo);
-						await _slackUsers.ReplaceOneAsync(x => x.Id == user.Id, userDocument, new ReplaceOptions { IsUpsert = true });
+						await _slackUsers.ReplaceOneAsync(x => x.Id == user.Id, userDocument, new ReplaceOptions { IsUpsert = true }, cancellationToken);
 					}
 				}
 				using (ICacheEntry entry = _userCache.CreateEntry(email))
@@ -2289,7 +2537,7 @@ namespace Horde.Server.Notifications.Sinks
 			return userDocument;
 		}
 
-		private async Task<SlackMessageId?> SendMessageAsync(string recipient, SlackMessage message)
+		private async Task<SlackMessageId?> SendMessageAsync(string recipient, SlackMessage message, CancellationToken cancellationToken)
 		{
 			if (!IsRecipientAllowed(recipient, message.Text))
 			{
@@ -2297,7 +2545,7 @@ namespace Horde.Server.Notifications.Sinks
 			}
 			else
 			{
-				return await _slackClient.PostMessageAsync(recipient, message);
+				return await _slackClient.PostMessageAsync(recipient, message, cancellationToken);
 			}
 		}
 
@@ -2311,9 +2559,9 @@ namespace Horde.Server.Notifications.Sinks
 			return true;
 		}
 
-		private async Task<(MessageStateDocument, bool)> SendOrUpdateMessageAsync(string recipient, string eventId, UserId? userId, SlackMessage message)
+		private async Task<(MessageStateDocument, bool)> SendOrUpdateMessageAsync(string recipient, string eventId, UserId? userId, SlackMessage message, CancellationToken cancellationToken)
 		{
-			return await SendOrUpdateMessageToThreadAsync(recipient, eventId, userId, null, message);
+			return await SendOrUpdateMessageToThreadAsync(recipient, eventId, userId, null, message, cancellationToken);
 		}
 
 		private static string GetMessageDigest(SlackMessage message)
@@ -2321,17 +2569,17 @@ namespace Horde.Server.Notifications.Sinks
 			return ContentHash.MD5(JsonSerializer.Serialize(message, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull })).ToString();
 		}
 
-		private async Task<(MessageStateDocument, bool)> SendOrUpdateMessageToThreadAsync(string recipient, string eventId, UserId? userId, SlackMessageId? threadId, SlackMessage message)
+		private async Task<(MessageStateDocument, bool)> SendOrUpdateMessageToThreadAsync(string recipient, string eventId, UserId? userId, SlackMessageId? threadId, SlackMessage message, CancellationToken cancellationToken)
 		{
 			string requestDigest = GetMessageDigest(message);
 
-			MessageStateDocument? prevState = await GetMessageStateAsync(recipient, eventId);
+			MessageStateDocument? prevState = await GetMessageStateAsync(recipient, eventId, cancellationToken);
 			if (prevState != null && prevState.Digest == requestDigest)
 			{
 				return (prevState, false);
 			}
 
-			(MessageStateDocument state, bool isNew) = await AddOrUpdateMessageStateAsync(recipient, eventId, userId, requestDigest, null);
+			(MessageStateDocument state, bool isNew) = await AddOrUpdateMessageStateAsync(recipient, eventId, userId, requestDigest, null, cancellationToken);
 			if (isNew)
 			{
 				_logger.LogInformation("Sending new slack message to {SlackUser} (state: {StateId}, threadMessageId: {ThreadTs})", recipient, state.Id, threadId?.ToString() ?? "n/a");
@@ -2339,17 +2587,17 @@ namespace Horde.Server.Notifications.Sinks
 				SlackMessageId id;
 				if (threadId == null)
 				{
-					id = await _slackClient.PostMessageAsync(recipient, message);
+					id = await _slackClient.PostMessageAsync(recipient, message, cancellationToken);
 				}
 				else
 				{
-					id = await _slackClient.PostMessageToThreadAsync(threadId, message);
+					id = await _slackClient.PostMessageToThreadAsync(threadId, message, cancellationToken);
 				}
 
 				state.Channel = id.Channel;
 				state.Ts = id.Ts;
 
-				await UpdateMessageStateAsync(state.Id, id);
+				await UpdateMessageStateAsync(state.Id, id, null, cancellationToken);
 			}
 			else if (!String.IsNullOrEmpty(state.Ts))
 			{
@@ -2357,11 +2605,11 @@ namespace Horde.Server.Notifications.Sinks
 
 				if (threadId == null)
 				{
-					await _slackClient.UpdateMessageAsync(state.MessageId, message);
+					await _slackClient.UpdateMessageAsync(state.MessageId, message, cancellationToken);
 				}
 				else
 				{
-					await _slackClient.UpdateMessageAsync(new SlackMessageId(threadId.Channel, threadId.Ts, state.Ts), message);
+					await _slackClient.UpdateMessageAsync(new SlackMessageId(threadId.Channel, threadId.Ts, state.Ts), message, cancellationToken);
 				}
 			}
 			return (state, isNew);
@@ -2374,7 +2622,7 @@ namespace Horde.Server.Notifications.Sinks
 			DateTime utcNow = DateTime.UtcNow;
 			double time = (utcNow - DateTime.UnixEpoch).TotalSeconds;
 
-			int[] issueIds = await _redisService.GetDatabase().SortedSetRangeByScoreAsync(_escalateIssues, 0, time);
+			int[] issueIds = await _redisService.GetDatabase().SortedSetRangeByScoreAsync(s_escalateIssues, 0, time);
 			if (issueIds.Length > 0)
 			{
 				_logger.LogInformation("Escalating issues for {Time} ({TimeSecs})", utcNow, time);
@@ -2383,37 +2631,42 @@ namespace Horde.Server.Notifications.Sinks
 					cancellationToken.ThrowIfCancellationRequested();
 					try
 					{
-						double? nextTime = await EscalateSingleIssueAsync(globalConfig, issueId, utcNow);
+						double? nextTime = await EscalateSingleIssueAsync(globalConfig, issueId, utcNow, cancellationToken);
 						if (nextTime == null)
 						{
 							_logger.LogInformation("Cancelling escalation for issue {IssueId}", issueId);
-							await _redisService.GetDatabase().SortedSetRemoveAsync(_escalateIssues, issueId);
+							await _redisService.GetDatabase().SortedSetRemoveAsync(s_escalateIssues, issueId);
 						}
 						else
 						{
 							_logger.LogInformation("Next escalation for issue {IssueId} is at timestamp {Time}", issueId, nextTime.Value);
-							await _redisService.GetDatabase().SortedSetAddAsync(_escalateIssues, issueId, nextTime.Value);
+							await _redisService.GetDatabase().SortedSetAddAsync(s_escalateIssues, issueId, nextTime.Value);
 						}
 					}
 					catch (SlackException ex)
 					{
 						_logger.LogError(ex, "Slack exception while escalating issue {IssueId}; cancelling.", issueId);
-						await _redisService.GetDatabase().SortedSetRemoveAsync(_escalateIssues, issueId);
+						await _redisService.GetDatabase().SortedSetRemoveAsync(s_escalateIssues, issueId);
 					}
 				}
 			}
 		}
 
-		async Task<double?> EscalateSingleIssueAsync(GlobalConfig globalConfig, int issueId, DateTime utcNow)
+		async Task<double?> EscalateSingleIssueAsync(GlobalConfig globalConfig, int issueId, DateTime utcNow, CancellationToken cancellationToken)
 		{
-			IIssue? issue = await _issueService.Collection.GetIssueAsync(issueId);
+			IIssue? issue = await _issueService.Collection.GetIssueAsync(issueId, cancellationToken);
 			if (issue == null)
 			{
 				return null;
 			}
 
-			List<IIssueSpan> spans = await _issueService.Collection.FindSpansAsync(issueId);
+			IReadOnlyList<IIssueSpan> spans = await _issueService.Collection.FindSpansAsync(issueId, cancellationToken);
 			if (spans.Count == 0)
+			{
+				return null;
+			}
+
+			if (issue.ResolvedById != null)
 			{
 				return null;
 			}
@@ -2451,7 +2704,7 @@ namespace Horde.Server.Notifications.Sinks
 
 			if (issue.QuarantineTimeUtc == null)
 			{
-				MessageStateDocument? state = await GetMessageStateAsync(workflow.TriageChannel, GetTriageThreadEventId(issueId));
+				MessageStateDocument? state = await GetMessageStateAsync(workflow.TriageChannel, GetTriageThreadEventId(issueId), cancellationToken);
 				if (state == null)
 				{
 					return null;
@@ -2474,11 +2727,22 @@ namespace Horde.Server.Notifications.Sinks
 				}
 
 				Uri issueUrl = GetIssueUrl(issue, span.FirstFailure);
-				await _slackClient.PostMessageToThreadAsync(state.MessageId, $"{FormatUserOrGroupMention(workflow.EscalateAlias)} - Issue <{issueUrl}|{issue.Id}> has not been resolved after {openTimeStr}.");
+
+				string message;
+				if (issue.OwnerId == null)
+				{
+					message = $"{FormatUserOrGroupMention(workflow.EscalateAlias)} - Issue <{issueUrl}|{issue.Id}> has not been assigned after {openTimeStr}.";
+				}
+				else
+				{
+					message = $"{await FormatMentionAsync(issue.OwnerId.Value, workflow.AllowMentions, cancellationToken)} this issue requires your attention ({FormatUserOrGroupMention(workflow.EscalateAlias)} for vis).";
+				}
+
+				await _slackClient.PostMessageToThreadAsync(state.MessageId, message, cancellationToken);
 			}
 
-			DateTime nextEscalationTime = span.FirstFailure.StepTime;
-			for (int idx = 0;;idx++)
+			DateTime nextEscalationTime = issue.CreatedAt;
+			for (int idx = 0; ; idx++)
 			{
 				if (idx >= workflow.EscalateTimes.Count)
 				{
@@ -2490,7 +2754,7 @@ namespace Horde.Server.Notifications.Sinks
 				DateTime prevEscalationTime = nextEscalationTime;
 				nextEscalationTime += TimeSpan.FromMinutes(workflow.EscalateTimes[idx]);
 
-				if (nextEscalationTime > utcNow)
+				if (nextEscalationTime > utcNow + TimeSpan.FromMinutes(5.0))
 				{
 					_logger.LogInformation("Next escalation time for issue {IssueId} is {NextEscalationTime} ({PrevEscalationTime} + {Time}m [{Idx}/{Count}])", issue.Id, nextEscalationTime, prevEscalationTime, workflow.EscalateTimes[idx], idx + 1, workflow.EscalateTimes.Count);
 					break;
@@ -2501,7 +2765,7 @@ namespace Horde.Server.Notifications.Sinks
 		}
 
 		/// <inheritdoc/>
-		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+		async Task ExecuteAsync(CancellationToken stoppingToken)
 		{
 			if (String.IsNullOrEmpty(_settings.SlackSocketToken))
 			{
@@ -2509,8 +2773,10 @@ namespace Horde.Server.Notifications.Sinks
 				return;
 			}
 
+			int exceptionCount = 0;
 			while (!stoppingToken.IsCancellationRequested)
 			{
+				Stopwatch timer = Stopwatch.StartNew();
 				try
 				{
 					Uri? webSocketUrl = await GetWebSocketUrlAsync(stoppingToken);
@@ -2528,8 +2794,29 @@ namespace Horde.Server.Notifications.Sinks
 				}
 				catch (Exception ex)
 				{
-					_logger.LogError(ex, "Exception while updating Slack socket");
-					await Task.Delay(TimeSpan.FromSeconds(5.0), stoppingToken);
+					if (timer.Elapsed.TotalSeconds > 60)
+					{
+						exceptionCount = 0;
+					}
+					else
+					{
+						exceptionCount++;
+					}
+
+					if (exceptionCount == 0)
+					{
+						_logger.LogInformation(ex, "Exception while updating Slack socket: {Message}", ex.Message);
+					}
+					else if (exceptionCount < 3)
+					{
+						_logger.LogWarning(ex, "Exception while updating Slack socket: {Message}", ex.Message);
+					}
+					else
+					{
+						_logger.LogError(ex, "Exception while updating Slack socket: {Message}", ex.Message);
+					}
+
+					await Task.Delay(TimeSpan.FromSeconds(Math.Max(0.0, 60.0 - timer.Elapsed.TotalSeconds)), stoppingToken);
 				}
 			}
 		}
@@ -2576,13 +2863,13 @@ namespace Horde.Server.Notifications.Sinks
 			byte[] buffer = new byte[2048];
 
 			bool disconnect = false;
-			while(!disconnect)
+			while (!disconnect)
 			{
 				stoppingToken.ThrowIfCancellationRequested();
 
 				// Read the next message
 				int length = 0;
-				while(!disconnect)
+				while (!disconnect)
 				{
 					if (length == buffer.Length)
 					{
@@ -2626,7 +2913,7 @@ namespace Horde.Server.Notifications.Sinks
 					{
 						try
 						{
-							response.Payload = await HandleInteractionMessage(eventMessage.Payload, stoppingToken);
+							response.Payload = await HandleInteractionMessageAsync(eventMessage.Payload, stoppingToken);
 						}
 						catch (Exception ex)
 						{
@@ -2646,7 +2933,7 @@ namespace Horde.Server.Notifications.Sinks
 		/// <summary>
 		/// Handle a button being clicked
 		/// </summary>
-		private async Task<object?> HandleInteractionMessage(EventPayload payload, CancellationToken cancellationToken)
+		private async Task<object?> HandleInteractionMessageAsync(EventPayload payload, CancellationToken cancellationToken)
 		{
 			_ = cancellationToken;
 
@@ -2663,14 +2950,14 @@ namespace Horde.Server.Notifications.Sinks
 							{
 								int issueId = Int32.Parse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture);
 								string verb = match.Groups[2].Value;
-								UserId userId = new UserId(ObjectId.Parse(match.Groups[3].Value));
-								await HandleIssueDmResponseAsync(issueId, verb, userId, payload.User.Id);
+								UserId userId = new UserId(BinaryId.Parse(match.Groups[3].Value));
+								await HandleIssueDmResponseAsync(issueId, verb, userId, payload.User.Id, cancellationToken);
 							}
 							else if (TryMatch(action.Value, @"^issue_(\d+)_([a-zA-Z]+)$", out match) && payload.TriggerId != null)
 							{
 								int issueId = Int32.Parse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture);
 								string verb = match.Groups[2].Value;
-								await HandleIssueChannelResponseAsync(issueId, verb, payload.User.Id, payload.TriggerId);
+								await HandleIssueChannelResponseAsync(issueId, verb, payload.User.Id, payload.TriggerId, cancellationToken);
 							}
 							else
 							{
@@ -2689,6 +2976,16 @@ namespace Horde.Server.Notifications.Sinks
 							int issueId = Int32.Parse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture);
 							UserId userId = UserId.Parse(match.Groups[2].Value);
 
+							UserId? resolvedById = userId;
+							if (payload.View.State.TryGetValue("fixed_by", "fixed_by_action", out string? fixedByStr))
+							{
+								UserId fixedById;
+								if (UserId.TryParse(fixedByStr, out fixedById))
+								{
+									resolvedById = fixedById;
+								}
+							}
+
 							string? fixChangeStr;
 							if (payload.View.State.TryGetValue("fix_cl", "fix_cl_action", out fixChangeStr))
 							{
@@ -2700,15 +2997,15 @@ namespace Horde.Server.Notifications.Sinks
 									return new { response_action = "errors", errors };
 								}
 
-								await _issueService.UpdateIssueAsync(issueId, fixChange: fixChange, resolvedById: userId, initiatedById: userId);
-								_logger.LogInformation("Marked issue {IssueId} fixed by user {UserId} in {Change}", issueId, userId, fixChange);
+								await _issueService.UpdateIssueAsync(issueId, fixChange: fixChange, resolvedById: resolvedById, initiatedById: userId, cancellationToken: cancellationToken);
+								_logger.LogInformation("Marked issue {IssueId} fixed by user {UserId} in {Change}", issueId, resolvedById, fixChange);
 							}
 						}
 						else if (TryMatch(payload.View.CallbackId, @"^issue_(\d+)_ack_([a-fA-F0-9]{24})$", out match))
 						{
 							int issueId = Int32.Parse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture);
 							UserId userId = UserId.Parse(match.Groups[2].Value);
-							await _issueService.UpdateIssueAsync(issueId, acknowledged: true, ownerId: userId, initiatedById: userId);
+							await _issueService.UpdateIssueAsync(issueId, acknowledged: true, ownerId: userId, initiatedById: userId, cancellationToken: cancellationToken);
 						}
 					}
 				}
@@ -2719,7 +3016,7 @@ namespace Horde.Server.Notifications.Sinks
 		static bool TryMatch(string input, string pattern, [NotNullWhen(true)] out Match? match)
 		{
 			Match result = Regex.Match(input, pattern);
-			if(result.Success)
+			if (result.Success)
 			{
 				match = result;
 				return true;
@@ -2731,51 +3028,51 @@ namespace Horde.Server.Notifications.Sinks
 			}
 		}
 
-		async Task HandleIssueDmResponseAsync(int issueId, string verb, UserId userId, string userName)
+		async Task HandleIssueDmResponseAsync(int issueId, string verb, UserId userId, string userName, CancellationToken cancellationToken)
 		{
 			_logger.LogInformation("Issue {IssueId}: {Action} from {SlackUser} ({UserId})", issueId, verb, userName, userId);
 
 			if (String.Equals(verb, "ack", StringComparison.Ordinal))
 			{
-				await _issueService.UpdateIssueAsync(issueId, acknowledged: true, initiatedById: userId);
+				await _issueService.UpdateIssueAsync(issueId, acknowledged: true, initiatedById: userId, cancellationToken: cancellationToken);
 			}
 			else if (String.Equals(verb, "accept", StringComparison.Ordinal))
 			{
-				await _issueService.UpdateIssueAsync(issueId, ownerId: userId, nominatedById: userId, acknowledged: true, initiatedById: userId);
+				await _issueService.UpdateIssueAsync(issueId, ownerId: userId, nominatedById: userId, acknowledged: true, initiatedById: userId, cancellationToken: cancellationToken);
 			}
 			else if (String.Equals(verb, "decline", StringComparison.Ordinal))
 			{
-				await _issueService.UpdateIssueAsync(issueId, declinedById: userId, initiatedById: userId);
+				await _issueService.UpdateIssueAsync(issueId, declinedById: userId, initiatedById: userId, cancellationToken: cancellationToken);
 			}
 
-			IIssue? newIssue = await _issueService.Collection.GetIssueAsync(issueId);
+			IIssue? newIssue = await _issueService.Collection.GetIssueAsync(issueId, cancellationToken);
 			if (newIssue != null)
 			{
-				IUser? user = await _userCollection.GetUserAsync(userId);
+				IUser? user = await _userCollection.GetUserAsync(userId, cancellationToken);
 				if (user != null)
 				{
-					string? recipient = await GetSlackUserId(user);
+					string? recipient = await GetSlackUserIdAsync(user, cancellationToken);
 					if (recipient != null)
 					{
-						IIssueDetails details = await _issueService.GetIssueDetailsAsync(newIssue);
-						await SendIssueMessageAsync(_globalConfig.CurrentValue, recipient, newIssue, details, userId, DefaultAllowMentions);
+						IIssueDetails details = await _issueService.GetIssueDetailsAsync(newIssue, cancellationToken);
+						await SendIssueMessageAsync(_globalConfig.CurrentValue, recipient, newIssue, details, userId, DefaultAllowMentions, cancellationToken);
 					}
 				}
 			}
 		}
 
-		async Task HandleIssueChannelResponseAsync(int issueId, string verb, string slackUserId, string triggerId)
+		async Task HandleIssueChannelResponseAsync(int issueId, string verb, string slackUserId, string triggerId, CancellationToken cancellationToken)
 		{
 			_logger.LogInformation("Issue {IssueId}: {Action} from {SlackUser}", issueId, verb, slackUserId);
 
-			SlackUser? slackUser = await _slackClient.GetUserAsync(slackUserId);
+			SlackUser? slackUser = await _slackClient.GetUserAsync(slackUserId, cancellationToken);
 			if (slackUser == null || slackUser.Profile == null || slackUser.Profile.Email == null)
 			{
 				_logger.LogWarning("Unable to find Slack user profile for {UserId}", slackUserId);
 				return;
 			}
 
-			IUser? user = await _userCollection.FindUserByEmailAsync(slackUser.Profile.Email);
+			IUser? user = await _userCollection.FindUserByEmailAsync(slackUser.Profile.Email, cancellationToken);
 			if (user == null)
 			{
 				_logger.LogWarning("Unable to find Horde user profile for {Email}", slackUser.Profile.Email);
@@ -2784,7 +3081,7 @@ namespace Horde.Server.Notifications.Sinks
 
 			if (String.Equals(verb, "ack", StringComparison.Ordinal))
 			{
-				IIssue? issue = await _issueService.Collection.GetIssueAsync(issueId);
+				IIssue? issue = await _issueService.Collection.GetIssueAsync(issueId, cancellationToken);
 				if (issue == null)
 				{
 					_logger.LogWarning("Unable to find issue {IssueId}", issueId);
@@ -2793,7 +3090,7 @@ namespace Horde.Server.Notifications.Sinks
 
 				if (issue.OwnerId != null && issue.OwnerId != user.Id)
 				{
-					IUser? owner = await _userCollection.GetUserAsync(issue.OwnerId.Value);
+					IUser? owner = await _userCollection.GetUserAsync(issue.OwnerId.Value, cancellationToken);
 					if (owner != null)
 					{
 						SlackView view = new SlackView($"Issue {issueId}");
@@ -2802,16 +3099,16 @@ namespace Horde.Server.Notifications.Sinks
 						view.Close = "Cancel";
 						view.Submit = "Assign to Me";
 
-						await _slackClient.OpenViewAsync(triggerId, view);
+						await _slackClient.OpenViewAsync(triggerId, view, cancellationToken);
 						return;
 					}
 				}
 
-				await _issueService.UpdateIssueAsync(issueId, acknowledged: true, ownerId: user.Id, nominatedById: user.Id, initiatedById: user.Id);
+				await _issueService.UpdateIssueAsync(issueId, acknowledged: true, ownerId: user.Id, nominatedById: user.Id, initiatedById: user.Id, cancellationToken: cancellationToken);
 			}
 			else if (String.Equals(verb, "decline", StringComparison.Ordinal))
 			{
-				IIssue? issue = await _issueService.Collection.GetIssueAsync(issueId);
+				IIssue? issue = await _issueService.Collection.GetIssueAsync(issueId, cancellationToken);
 				if (issue == null)
 				{
 					_logger.LogWarning("Unable to find issue {IssueId}", issueId);
@@ -2820,30 +3117,111 @@ namespace Horde.Server.Notifications.Sinks
 
 				if (issue.OwnerId != user.Id)
 				{
-					List<IIssueSuspect> suspects = await _issueService.Collection.FindSuspectsAsync(issue);
+					IReadOnlyList<IIssueSuspect> suspects = await _issueService.Collection.FindSuspectsAsync(issue, cancellationToken);
 					if (!suspects.Any(x => x.AuthorId == user.Id))
 					{
 						SlackView view = new SlackView($"Issue {issueId}");
 						view.AddSection("You are not currently listed as a suspect for this issue.");
 						view.Close = "Cancel";
 
-						await _slackClient.OpenViewAsync(triggerId, view);
+						await _slackClient.OpenViewAsync(triggerId, view, cancellationToken);
 						return;
 					}
 				}
 
-				await _issueService.UpdateIssueAsync(issueId, declinedById: user.Id, initiatedById: user.Id);
+				await _issueService.UpdateIssueAsync(issueId, declinedById: user.Id, initiatedById: user.Id, cancellationToken: cancellationToken);
 			}
 			else if (String.Equals(verb, "markfixed", StringComparison.Ordinal))
 			{
 				SlackView view = new SlackView($"Issue {issueId}");
 				view.CallbackId = $"issue_{issueId}_markfixed_{user.Id}";
-				view.AddInput("Fix Changelist", new PlainTextInputElement("fix_cl_action", placeholder: "Number")).BlockId = "fix_cl";
+
+				IIssue? issue = await _issueService.Collection.GetIssueAsync(issueId, cancellationToken);
+				if (issue != null && issue.OwnerId != null && issue.OwnerId != user.Id)
+				{
+					IUser? owner = await _userCollection.GetCachedUserAsync(issue.OwnerId.Value, cancellationToken);
+					if (owner != null)
+					{
+						List<SlackOption> options = new List<SlackOption>();
+						options.Add(new SlackOption("Me", user.Id.ToString()));
+						options.Add(new SlackOption($"Current owner ({owner.Name})", owner.Id.ToString()));
+
+						RadioButtonGroupElement ownership = new RadioButtonGroupElement("fixed_by_action", options);
+						ownership.InitialOption = options[0];
+						view.AddInput("Fixed By:", ownership).BlockId = "fixed_by";
+					}
+				}
+
+				view.AddInput("Fix Changelist:", new PlainTextInputElement("fix_cl_action", placeholder: "Number")).BlockId = "fix_cl";
+
 				view.Close = "Cancel";
 				view.Submit = "Mark Fixed";
 
-				await _slackClient.OpenViewAsync(triggerId, view);
+				await _slackClient.OpenViewAsync(triggerId, view, cancellationToken);
 				return;
+			}
+		}
+
+		/// <inheritdoc/>
+		public async Task SendAgentReportAsync(AgentReport report, CancellationToken cancellationToken)
+		{
+			if (report.ConformLoop.Count == 0 && report.UpgradeLoop.Count == 0)
+			{
+				_logger.LogInformation("Skipping sending agent report to {Channel}; no current issues.", _settings.AgentNotificationChannel);
+				return;
+			}
+
+			if (!String.IsNullOrEmpty(_settings.AgentNotificationChannel))
+			{
+				_logger.LogInformation("Sending agent report to {Channel}", _settings.AgentNotificationChannel);
+
+				SlackMessage headerMessage = new SlackMessage();
+				headerMessage.AddHeader($"Agent status");
+				await _slackClient.PostMessageAsync(_settings.AgentNotificationChannel, headerMessage, cancellationToken);
+
+				{
+					StringBuilder conformMessage = new StringBuilder("*Conform issues:*\n");
+					if (report.ConformLoop.Count == 0)
+					{
+						conformMessage.Append("None.\n");
+					}
+					else
+					{
+						const int NumItems = 10;
+						foreach ((AgentId agentId, int conformCount) in report.ConformLoop.OrderByDescending(x => x.Item2).ThenBy(x => x.Item1.ToString()).Take(NumItems))
+						{
+							Uri agentUrl = new Uri(_settings.DashboardUrl, $"agents?agentId={agentId}");
+							conformMessage.Append($"\u2022 *<{agentUrl}|{agentId}>* has run conform {conformCount} times\n");
+						}
+						if (report.ConformLoop.Count > NumItems)
+						{
+							conformMessage.Append($"+ {report.ConformLoop.Count - NumItems} other(s)\n");
+						}
+					}
+					await _slackClient.PostMessageAsync(_settings.AgentNotificationChannel, conformMessage.ToString(), cancellationToken: cancellationToken);
+				}
+
+				{
+					StringBuilder upgradeMessage = new StringBuilder("*Upgrade issues:*\n");
+					if (report.UpgradeLoop.Count == 0)
+					{
+						upgradeMessage.Append("None.\n");
+					}
+					else
+					{
+						const int NumItems = 10;
+						foreach ((AgentId agentId, int upgradeCount) in report.UpgradeLoop.OrderByDescending(x => x.Item2).ThenBy(x => x.Item1.ToString()).Take(NumItems))
+						{
+							Uri agentUrl = new Uri(_settings.DashboardUrl, $"agents?agentId={agentId}");
+							upgradeMessage.Append($"\u2022 *<{agentUrl}|{agentId}>* has attempted to upgrade {upgradeCount} times\n");
+						}
+						if (report.UpgradeLoop.Count > NumItems)
+						{
+							upgradeMessage.Append($"+ {report.UpgradeLoop.Count - NumItems} other(s)\n");
+						}
+					}
+					await _slackClient.PostMessageAsync(_settings.AgentNotificationChannel, upgradeMessage.ToString(), cancellationToken);
+				}
 			}
 		}
 	}

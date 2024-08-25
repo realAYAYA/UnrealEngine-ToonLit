@@ -16,6 +16,7 @@
 #include "GeometryCollection/GeometryCollectionObject.h"
 #include "GeometryCollection/GeometryCollectionRenderData.h"
 #include "GeometryCollection/GeometryCollectionHitProxy.h"
+#include "InstanceDataSceneProxy.h"
 
 class UGeometryCollection;
 class UGeometryCollectionComponent;
@@ -68,6 +69,15 @@ inline void CopyTransformsWithConversionWhenNeeded(TArray<FMatrix44f>& DstTransf
 	}
 }
 
+inline void CopyTransformsWithConversionWhenNeeded(TArray<FMatrix44f>& DstTransforms, const TArray<FTransform3f>& SrcTransforms)
+{
+	DstTransforms.SetNumUninitialized(SrcTransforms.Num());
+	for (int TransformIndex = 0; TransformIndex < SrcTransforms.Num(); ++TransformIndex)
+	{
+		DstTransforms[TransformIndex] = SrcTransforms[TransformIndex].ToMatrixWithScale();
+	}
+}
+
 /** Mutable rendering data */
 struct FGeometryCollectionDynamicData
 {
@@ -103,6 +113,11 @@ struct FGeometryCollectionDynamicData
 		CopyTransformsWithConversionWhenNeeded(Transforms, InTransforms);
 	}
 
+	void SetTransforms(const TArray<FTransform3f>& InTransforms)
+	{
+		CopyTransformsWithConversionWhenNeeded(Transforms, InTransforms);
+	}
+
 	UE_DEPRECATED(5.3, "Use FTransform version of SetPrevTransforms instead")
 	void SetPrevTransforms(const TArray<FMatrix>& InTransforms)
 	{
@@ -113,6 +128,11 @@ struct FGeometryCollectionDynamicData
 	void SetPrevTransforms(const TArray<FTransform>& InTransforms)
 	{
 		// use for LWC as FMatrix and FMatrix44f are different when LWC is on 
+		CopyTransformsWithConversionWhenNeeded(PrevTransforms, InTransforms);
+	}
+
+	void SetPrevTransforms(const TArray<FTransform3f>& InTransforms)
+	{
 		CopyTransformsWithConversionWhenNeeded(PrevTransforms, InTransforms);
 	}
 
@@ -209,6 +229,7 @@ class FGeometryCollectionSceneProxy final : public FPrimitiveSceneProxy
 	int32 CurrentTransformBufferIndex = 0;
 	bool TransformVertexBuffersContainsRestTransforms = true;
 	bool bSupportsTripleBufferVertexUpload = false;
+	bool bRenderResourcesCreated = false;
 	TArray<FGeometryCollectionTransformBuffer, TInlineAllocator<3>> TransformBuffers;
 	TArray<FGeometryCollectionTransformBuffer, TInlineAllocator<3>> PrevTransformBuffers;
 
@@ -242,17 +263,19 @@ public:
 	virtual ~FGeometryCollectionSceneProxy();
 
 	/** Called on render thread to setup dynamic geometry for rendering */
-	void SetDynamicData_RenderThread(FGeometryCollectionDynamicData* NewDynamicData);
+	void SetDynamicData_RenderThread(FRHICommandListBase& RHICmdList, FGeometryCollectionDynamicData* NewDynamicData);
 
 	uint32 GetMemoryFootprint() const override { return sizeof(*this) + GetAllocatedSize(); }
 	uint32 GetAllocatedSize() const;
 
 	SIZE_T GetTypeHash() const override;
-	void CreateRenderThreadResources() override;
+	void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 	void DestroyRenderThreadResources() override;
 	void GetPreSkinnedLocalBounds(FBoxSphereBounds& OutBounds) const override;
 	FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override;
 	void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override;
+
+	virtual bool AllowInstanceCullingOcclusionQueries() const override { return true; }
 
 #if GEOMETRYCOLLECTION_EDITOR_SELECTION
 	virtual HHitProxy* CreateHitProxies(UPrimitiveComponent* Component, TArray<TRefCountPtr<HHitProxy> >& OutHitProxies) override;
@@ -311,6 +334,7 @@ public:
 
 public:
 	// FPrimitiveSceneProxy interface.
+	virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 	virtual SIZE_T GetTypeHash() const override;
 	virtual FPrimitiveViewRelevance	GetViewRelevance(const FSceneView* View) const override;
 #if WITH_EDITOR
@@ -320,7 +344,7 @@ public:
 
 	virtual uint32 GetMemoryFootprint() const override;
 
-	virtual void OnTransformChanged() override;
+	virtual void OnTransformChanged(FRHICommandListBase& RHICmdList) override;
 
 	// FSceneProxyBase interface.
 	virtual void GetNaniteResourceInfo(uint32& ResourceID, uint32& HierarchyOffset, uint32& ImposterIndex) const override;
@@ -329,7 +353,7 @@ public:
 	virtual Nanite::FResourceMeshInfo GetResourceMeshInfo() const override;
 
 	/** Called on render thread to setup dynamic geometry for rendering */
-	void SetDynamicData_RenderThread(FGeometryCollectionDynamicData* NewDynamicData);
+	void SetDynamicData_RenderThread(FGeometryCollectionDynamicData* NewDynamicData, const FMatrix &PrimitiveLocalToWorld);
 
 	void ResetPreviousTransforms_RenderThread();
 
@@ -371,4 +395,6 @@ protected:
 	uint32 bHasMaterialErrors : 1;
 	uint32 bCurrentlyInMotion : 1;
 	uint32 bRequiresGPUSceneUpdate : 1;
+
+	FInstanceSceneDataBuffers InstanceSceneDataBuffersImpl;
 };

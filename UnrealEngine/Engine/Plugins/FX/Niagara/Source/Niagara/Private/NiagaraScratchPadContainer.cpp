@@ -16,7 +16,7 @@ void UNiagaraScratchPadContainer::PostLoad()
 void UNiagaraScratchPadContainer::CheckConsistency()
 {
 #if WITH_EDITORONLY_DATA
-	for (TObjectPtr<UNiagaraScript> Script : Scripts)
+	for (const TObjectPtr<UNiagaraScript>& Script : Scripts)
 	{
 		if (Script && Script->GetOuter() != this)
 		{
@@ -47,7 +47,7 @@ void UNiagaraScratchPadContainer::AppendScripts(TObjectPtr<UNiagaraScratchPadCon
 #if WITH_EDITORONLY_DATA
 	if (InScripts)
 	{
-		for (TObjectPtr<UNiagaraScript> Script : InScripts->Scripts)
+		for (const TObjectPtr<UNiagaraScript>& Script : InScripts->Scripts)
 		{
 			if (Script)
 			{

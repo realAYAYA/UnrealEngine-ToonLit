@@ -44,6 +44,7 @@
 #include "UObject/UnrealType.h"
 #include "AnimationGraphSchema.h"
 #include "BlueprintEditorSettings.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 
 #define LOCTEXT_NAMESPACE "BlueprintDebugging"
 
@@ -254,6 +255,11 @@ void FKismetDebugUtilities::OnScriptException(const UObject* ActiveObject, const
 		const FBlueprintExceptionInfo* ExceptionInfo = &Info;
 		bool bResetObjectBeingDebuggedWhenFinished = false;
 		UObject* ObjectBeingDebugged = BlueprintObj->GetObjectBeingDebugged();
+		if (UClass* GeneratedClass = BlueprintObj->GeneratedClass; 
+			ObjectBeingDebugged == nullptr && BPTYPE_FunctionLibrary == BlueprintObj->BlueprintType && GeneratedClass)
+		{
+			ObjectBeingDebugged = GeneratedClass->ClassDefaultObject;
+		}
 
 		auto IsAPreviewOrInactiveObject = [](const UObject* InObject)
 		{
@@ -275,7 +281,7 @@ void FKismetDebugUtilities::OnScriptException(const UObject* ActiveObject, const
 		{
 			// Check if we need to update the object being debugged
 			UObject* ObjectToDebug = FindObjectSafe<UObject>(nullptr, *PathToDebug);
-			if (ObjectToDebug)
+			if (IsValid(ObjectToDebug))
 			{
 				// If the path to debug matches a newly-spawned object, set the hard reference now
 				ObjectBeingDebugged = ObjectToDebug;
@@ -1209,7 +1215,7 @@ void FKismetDebugUtilities::RemoveBreakpointsByPredicate(const UBlueprint* Bluep
 		}
 
 		// remove the breakpoints from the data
-		if(Breakpoints->RemoveAllSwap(Predicate, false))
+		if(Breakpoints->RemoveAllSwap(Predicate, EAllowShrinking::No))
 		{
 			if(Breakpoints->IsEmpty())
 			{
@@ -1474,11 +1480,7 @@ bool FKismetDebugUtilities::CanWatchPin(const UBlueprint* Blueprint, const UEdGr
 
 			if (UAnimGraphNode_Base* AnimGraphNode = Cast<UAnimGraphNode_Base>(Pin->GetOwningNode()))
 			{
-				// Compare FName without number to make sure we catch array properties that are split into multiple pins
-				FName ComparisonName = Pin->GetFName();
-				ComparisonName.SetNumber(0);
-
-				if (FAnimGraphNodePropertyBinding* BindingPtr = AnimGraphNode->PropertyBindings.Find(ComparisonName))
+				if(AnimGraphNode->HasBinding(Pin->GetFName()))
 				{
 					bHasBinding = true;
 				}
@@ -1630,7 +1632,7 @@ bool FKismetDebugUtilities::RemovePinWatchesByPredicate(const UBlueprint* Bluepr
 	
 	if(TArray<FBlueprintWatchedPin>* WatchedPins = GetWatchedPins(Blueprint))
 	{
-		if(WatchedPins->RemoveAllSwap(ModifiedPedicate, false))
+		if(WatchedPins->RemoveAllSwap(ModifiedPedicate, EAllowShrinking::No))
 		{
 			if(WatchedPins->IsEmpty())
 			{
@@ -1655,7 +1657,7 @@ bool FKismetDebugUtilities::RemovePinPropertyWatchesByPredicate(const UBlueprint
 
 	if (TArray<FBlueprintWatchedPin>* WatchedPins = GetWatchedPins(Blueprint))
 	{
-		if (WatchedPins->RemoveAllSwap(ModifiedPedicate, false))
+		if (WatchedPins->RemoveAllSwap(ModifiedPedicate, EAllowShrinking::No))
 		{
 			if (WatchedPins->IsEmpty())
 			{
@@ -1900,7 +1902,7 @@ FKismetDebugUtilities::EWatchTextResult FKismetDebugUtilities::FindDebuggingData
 					}
 				}
 			}
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
+
 			// Try find the propertybase in the persistent ubergraph frame
 			UFunction* OuterFunction = Property->GetOwner<UFunction>();
 			if (!PropertyBase && OuterFunction)
@@ -1911,10 +1913,22 @@ FKismetDebugUtilities::EWatchTextResult FKismetDebugUtilities::FindDebuggingData
 					PropertyBase = BPGC->GetPersistentUberGraphFrame(ActiveObject, OuterFunction);
 				}
 			}
-#endif // USE_UBER_GRAPH_PERSISTENT_FRAME
 
 			// see if our WatchPin is on a animation node & if so try to get its property info
 			const UAnimBlueprintGeneratedClass* AnimBlueprintGeneratedClass = Cast<UAnimBlueprintGeneratedClass>(Blueprint->GeneratedClass);
+
+			// Use the root anim BP's debug data - derived anim BPs have empty debug data
+			if(AnimBlueprintGeneratedClass)
+			{
+				if (UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(AnimBlueprintGeneratedClass->ClassGeneratedBy))
+				{
+					if(UAnimBlueprint* RootAnimBP = UAnimBlueprint::FindRootAnimBlueprint(AnimBlueprint))
+					{
+						AnimBlueprintGeneratedClass = RootAnimBP->GetAnimBlueprintGeneratedClass();
+					}
+				}
+			}
+
 			if (!PropertyBase && AnimBlueprintGeneratedClass)
 			{
 				// are we linked to an anim graph node?
@@ -2278,11 +2292,10 @@ void FPropertyInstanceInfo::PopulateChildren(FPropertyInstance PropertyInstance)
 	{
 		FScriptMapHelper MapHelper(MapProperty, PropertyInstance.Value);
 
-		int32 Index = 0;
-		for (FScriptMapHelper::FIterator Itr = MapHelper.CreateIterator(); Itr; ++Itr, ++Index)
+		for (FScriptMapHelper::FIterator Itr = MapHelper.CreateIterator(); Itr; ++Itr)
 		{
-			uint8* KeyData = MapHelper.GetKeyPtr(*Itr);
-			uint8* ValData = MapHelper.GetValuePtr(*Itr);
+			uint8* KeyData = MapHelper.GetKeyPtr(Itr);
+			uint8* ValData = MapHelper.GetValuePtr(Itr);
 			FPropertyInstance ChildProperty = {
 				MapProperty->ValueProp,
 				ValData
@@ -2301,7 +2314,7 @@ void FPropertyInstanceInfo::PopulateChildren(FPropertyInstance PropertyInstance)
 			NameStr += TEXT("] ");
 			ChildInfo->DisplayName = FText::FromString(NameStr);
 			ChildInfo->bIsInContainer = true;
-			ChildInfo->ContainerIndex = Index;
+			ChildInfo->ContainerIndex = Itr.GetLogicalIndex();
 				
 			Children.Add(ChildInfo);
 		}
@@ -2309,19 +2322,18 @@ void FPropertyInstanceInfo::PopulateChildren(FPropertyInstance PropertyInstance)
 	else if (const FSetProperty* SetProperty = CastField<FSetProperty>(Property.Get()))
 	{
 		FScriptSetHelper SetHelper(SetProperty, PropertyInstance.Value);
-		int32 Index = 0;
-		for (FScriptSetHelper::FIterator Itr = SetHelper.CreateIterator(); Itr; ++Itr, ++Index)
+		for (FScriptSetHelper::FIterator Itr = SetHelper.CreateIterator(); Itr; ++Itr)
 		{
-			uint8* PropData = SetHelper.GetElementPtr(*Itr);
+			uint8* PropData = SetHelper.GetElementPtr(Itr);
 			FPropertyInstance ChildProperty = {
 				SetProperty->ElementProp,
 				PropData
 			};
 			const TSharedPtr<FPropertyInstanceInfo> ChildInfo = Make(ChildProperty, AsShared());
 				
-			ChildInfo->DisplayName = FText::Format(LOCTEXT("SetIndexName", "[{0}]"), FText::AsNumber(Index));
+			ChildInfo->DisplayName = FText::Format(LOCTEXT("SetIndexName", "[{0}]"), FText::AsNumber(Itr.GetLogicalIndex()));
 			ChildInfo->bIsInContainer = true;
-			ChildInfo->ContainerIndex = Index;
+			ChildInfo->ContainerIndex = Itr.GetLogicalIndex();
 
 			Children.Add(ChildInfo);
 		}

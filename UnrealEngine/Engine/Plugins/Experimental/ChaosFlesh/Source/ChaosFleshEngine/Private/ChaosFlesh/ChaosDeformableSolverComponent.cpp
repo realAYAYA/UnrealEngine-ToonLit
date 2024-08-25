@@ -217,6 +217,9 @@ void UDeformableSolverComponent::Reset()
 			, SolverConstraints.GaussSeidelConstraints.bUseSOR
 			, SolverConstraints.GaussSeidelConstraints.OmegaSOR
 			, SolverConstraints.GaussSeidelConstraints.bUseGSNeohookean
+			, SolverConstraints.GaussSeidelConstraints.CollisionSpring.CollisionSearchRadius
+			, SolverConstraints.GaussSeidelConstraints.CollisionSpring.CollisionSpringStiffness
+			, SolverConstraints.GaussSeidelConstraints.CollisionSpring.bAllowSliding
 		}));
 
 		for (TObjectPtr<UDeformablePhysicsComponent>& DeformableComponent : ConnectedObjects.DeformableComponents)

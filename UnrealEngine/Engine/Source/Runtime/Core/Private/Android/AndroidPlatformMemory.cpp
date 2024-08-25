@@ -25,6 +25,12 @@ extern jobject GGameActivityThis;
 #include "Containers/Ticker.h"
 #include "memory_advice/memory_advice.h"
 
+// TEMP because a future update to mem advisor will include this API.
+int64_t TEMPMemoryAdvice_getAvailableMemory()
+{
+	return static_cast<int64_t>((MemoryAdvice_getPercentageAvailableMemory() / 100.0) * (double)MemoryAdvice_getTotalMemory());
+}
+
 static int GAndroidUseMemoryAdvisor = 0;
 static bool GMemoryAdvisorInitialized = false;
 static MemoryAdvice_MemoryState GMemoryAdvisorState = MEMORYADVICE_STATE_OK;
@@ -52,15 +58,21 @@ static const TCHAR* MemStateToString(MemoryAdvice_MemoryState State)
 	}
 }
 
+JNI_METHOD jlong Java_com_epicgames_unreal_GameActivity_nativeGetMemAdvisorAvailableBytes(JNIEnv* jenv, jobject thiz)
+{
+	return TEMPMemoryAdvice_getAvailableMemory();
+}
+
 static bool MemoryAdvisorTick(float dt)
 {
 	const MemoryAdvice_MemoryState State = GMemoryAdvisorStateThreaded.load(std::memory_order_acquire);
 	if (State != GMemoryAdvisorState)
 	{
-		//SetGameData is not thread safe, so we have to set it in GT only, that's why we update the value via GMemoryAdvisorStateThreaded
+		//SetEngineData is not thread safe, so we have to set it in GT only, that's why we update the value via GMemoryAdvisorStateThreaded
 		const TCHAR* StringState = MemStateToString(State);
 		UE_LOG(LogAndroid, Log, TEXT("MemAdvice new state : %s"), StringState);
-		FGenericCrashContext::SetGameData(TEXT("UE.Android.GoogleMemAdvice"), StringState);
+		FGenericCrashContext::SetEngineData(TEXT("UE.Android.GoogleMemAdvice"), StringState);
+		FGenericCrashContext::SetEngineData(TEXT("UE.Android.GoogleMemAdviceAvailableMem"), *FString::Printf(TEXT("%lld"), TEMPMemoryAdvice_getAvailableMemory()));
 		GMemoryAdvisorState = State;
 	}
 
@@ -89,6 +101,11 @@ static void OnCVarAndroidUseMemoryAdvisorChanged(IConsoleVariable* Var)
 		{
 			FTSTicker& Ticker = FTSTicker::GetCoreTicker();
 			Ticker.AddTicker(FTickerDelegate::CreateStatic(&MemoryAdvisorTick), 1.0f);
+
+			const int64 MemAvail = TEMPMemoryAdvice_getAvailableMemory();
+			UE_LOG(LogInit, Log, TEXT("Mem advisor v%d.%d.%d in use, %lld total bytes predicted. %lld available bytes."), MEMORY_ADVICE_MAJOR_VERSION, MEMORY_ADVICE_MINOR_VERSION, MEMORY_ADVICE_BUGFIX_VERSION, MemoryAdvice_getTotalMemory(), MemAvail);
+			FGenericCrashContext::SetEngineData(TEXT("UE.Android.GoogleMemAdviceTotalMem"), *FString::Printf(TEXT("%lld"), MemoryAdvice_getTotalMemory()));
+			FGenericCrashContext::SetEngineData(TEXT("UE.Android.GoogleMemAdviceAvailableMem"), *FString::Printf(TEXT("%lld"), MemAvail));
 		}
 		else
 		{
@@ -100,7 +117,20 @@ static void OnCVarAndroidUseMemoryAdvisorChanged(IConsoleVariable* Var)
 		UE_LOG(LogInit, Warning, TEXT("Cannot disable memory advisor once it has been initialized."));
 	}
 }
+
 #endif
+
+FAndroidPlatformMemory::FMemAdviceStats FAndroidPlatformMemory::GetDeviceMemAdviceStats()
+{
+	FAndroidPlatformMemory::FMemAdviceStats ret;
+#if HAS_ANDROID_MEMORY_ADVICE
+	ret.MemFree = TEMPMemoryAdvice_getAvailableMemory();
+	ret.TotalMem = MemoryAdvice_getTotalMemory();
+	ret.MemUsed = ret.TotalMem - ret.MemFree;
+#endif
+	return ret;
+}
+
 
 static int32 GAndroidAddSwapToTotalPhysical = 1;
 static FAutoConsoleVariableRef CVarAddSwapToTotalPhysical(
@@ -134,6 +164,9 @@ static int64 GetNativeHeapAllocatedSize()
 	return AllocatedSize;
 }
 
+/** Controls growth of pools - see PooledVirtualMemoryAllocator.cpp */
+extern float GVMAPoolScale;
+
 void FAndroidPlatformMemory::Init()
 {
 	// Only allow this method to be called once
@@ -154,9 +187,12 @@ void FAndroidPlatformMemory::Init()
 		float((double)MemoryStats.AvailablePhysical/1024.0/1024.0),
 		float((double)MemoryConstants.PageSize/1024.0)
 		);
+	UE_LOG(LogInit, Log, TEXT(" - VirtualMemoryAllocator pools will grow at scale %g"), GVMAPoolScale);
 
 #if HAS_ANDROID_MEMORY_ADVICE
 	CVarAndroidUseMemoryAdvisor->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&OnCVarAndroidUseMemoryAdvisorChanged));
+	// explicitly init memadvisor.
+	OnCVarAndroidUseMemoryAdvisorChanged(nullptr);
 #endif
 }
 
@@ -346,6 +382,7 @@ FPlatformMemoryStats FAndroidPlatformMemory::GetStats()
 			else if (strstr(Line, "VmRSS:") == Line)
 			{
 				MemoryStats.UsedPhysical = AndroidPlatformMemory::GetBytesFromStatusLine(Line);
+				MemoryStats.VMRss = MemoryStats.UsedPhysical;
 				++FieldsSetSuccessfully;
 			}
 			else if (strstr(Line, "VmSwap:") == Line)
@@ -652,13 +689,13 @@ void* FAndroidPlatformMemory::BinnedAllocFromOS(SIZE_T Size)
 		Ptr = mmap(nullptr, Size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	}
 
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, Ptr, Size));
 	return Ptr;
 }
 
 void FAndroidPlatformMemory::BinnedFreeToOS(void* Ptr, SIZE_T Size)
 {
-	LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, Ptr));
 	if (munmap(Ptr, Size) != 0)
 	{
 		const int ErrNo = errno;
@@ -776,3 +813,41 @@ bool FAndroidPlatformMemory::GetLLMAllocFunctions(void*(*&OutAllocFunction)(size
 	return false;
 #endif
 }
+
+#if USING_HW_ADDRESS_SANITISER && PLATFORM_USED_NDK_VERSION_INTEGER >= 26
+
+// Using libc++_static on NDK r26b with HWAsan enabled is not officially supported
+// In practice it does work, but when used with C++ 17 dynamic linker fails to find "_ZnamSt11align_val_t", "_ZnwmSt11align_val_t", "_ZdlPvSt11align_val_t", "_ZdaPvSt11align_val_t" when loading "libUnreal.so".
+// It shouldn't be used by anything on UE side, so providing a stub as a temporary fix.
+
+extern void* operator new(std::size_t Size, std::align_val_t Alignment)
+{
+	void* Result;
+	if (UNLIKELY(posix_memalign(&Result, (std::size_t)Alignment, Size) != 0))
+	{
+		Result = nullptr;
+	}
+	return Result;
+}
+
+extern void* operator new[](std::size_t Size, std::align_val_t Alignment)
+{
+	void* Result;
+	if (UNLIKELY(posix_memalign(&Result, (std::size_t)Alignment, Size) != 0))
+	{
+		Result = nullptr;
+	}
+	return Result;
+}
+
+extern void operator delete(void* Ptr, std::align_val_t)
+{
+	free(Ptr);
+}
+
+extern void operator delete[](void* Ptr, std::align_val_t)
+{
+	free(Ptr);
+}
+
+#endif

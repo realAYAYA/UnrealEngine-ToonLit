@@ -97,7 +97,7 @@ public:
 		GetDerivedClasses(UNiagaraSimulationStageBase::StaticClass(), SimulationStageClasses);
 		for (UClass* SimulationStageClass : SimulationStageClasses)
 		{
-			if (NiagaraEditorSettings->IsAllowedClass(SimulationStageClass))
+			if (NiagaraEditorSettings->IsVisibleClass(SimulationStageClass))
 			{
 				OutAddActions.Add(MakeShared<FAddEmitterStageAction>(
 					EEmitterAddMode::SimulationStage,
@@ -197,11 +197,30 @@ const FSlateBrush* UNiagaraStackEmitterPropertiesGroup::GetIconBrush() const
 	return FAppStyle::Get().GetBrush("Icons.Details");
 }
 
+bool UNiagaraStackEmitterPropertiesGroup::SupportsSecondaryIcon() const
+{
+	if(IsFinalized() == false && GetEmitterViewModel().IsValid())
+	{
+		// we don't want to display the CPU/GPU icons in collapsed mode as we have a separate toggle for it
+		if(GetEmitterViewModel()->GetEditorData().ShouldShowSummaryView() == true)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
 const FSlateBrush* UNiagaraStackEmitterPropertiesGroup::GetSecondaryIconBrush() const
 {
 	if (IsFinalized() == false && GetEmitterViewModel().IsValid())
 	{
 		FVersionedNiagaraEmitterData* EmitterData = GetEmitterViewModel()->GetEmitter().GetEmitterData();
+		//-TODO:Stateless: Do we need a stateless icon?
+		if (EmitterData == nullptr)
+		{
+			return FNiagaraEditorStyle::Get().GetBrush("NiagaraEditor.Stack.GPUIcon");
+		}
 		if (EmitterData->SimTarget == ENiagaraSimTarget::CPUSim)
 		{
 			return FNiagaraEditorStyle::Get().GetBrush("NiagaraEditor.Stack.CPUIcon");

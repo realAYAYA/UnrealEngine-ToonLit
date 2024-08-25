@@ -85,8 +85,8 @@ void FDataLayerPropertyTypeCustomization::CustomizeHeader(TSharedRef<IPropertyHa
 				.IsEnabled_Lambda([this]
 				{
 					FPropertyAccess::Result PropertyAccessResult;
-					const UDataLayerInstance* DataLayer = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
-					return (!DataLayer || !DataLayer->IsLocked());
+					const UDataLayerInstance* DataLayerInstance = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
+					return (!DataLayerInstance || !DataLayerInstance->IsReadOnly());
 				})
 				.ToolTipText(LOCTEXT("ComboButtonTip", "Drag and drop a Data Layer onto this property, or choose one from the drop down."))
 				.OnGetMenuContent(this, &FDataLayerPropertyTypeCustomization::OnGetDataLayerMenu)
@@ -109,8 +109,8 @@ void FDataLayerPropertyTypeCustomization::CustomizeHeader(TSharedRef<IPropertyHa
 				.Visibility_Lambda([this] 
 				{
 					FPropertyAccess::Result PropertyAccessResult;
-					const UDataLayerInstance* DataLayer = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
-					return (DataLayer && DataLayer->IsLocked()) ? EVisibility::Visible : EVisibility::Collapsed;
+					const UDataLayerInstance* DataLayerInstance = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
+					return (DataLayerInstance && DataLayerInstance->IsReadOnly()) ? EVisibility::Visible : EVisibility::Collapsed;
 				})
 				.ColorAndOpacity(this, &FDataLayerPropertyTypeCustomization::GetForegroundColor)
 				.Image(FAppStyle::GetBrush(TEXT("PropertyWindow.Locked")))
@@ -174,8 +174,8 @@ UDataLayerInstance* FDataLayerPropertyTypeCustomization::GetDataLayerFromPropert
 const FSlateBrush* FDataLayerPropertyTypeCustomization::GetDataLayerIcon() const
 {
 	FPropertyAccess::Result PropertyAccessResult;
-	const UDataLayerInstance* DataLayer = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
-	if (!DataLayer)
+	const UDataLayerInstance* DataLayerInstance = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
+	if (!DataLayerInstance)
 	{
 		return FAppStyle::GetBrush(TEXT("DataLayer.Editor"));
 	}
@@ -183,7 +183,7 @@ const FSlateBrush* FDataLayerPropertyTypeCustomization::GetDataLayerIcon() const
 	{
 		return FAppStyle::GetBrush(TEXT("LevelEditor.Tabs.DataLayers"));
 	}
-	return FAppStyle::GetBrush(DataLayer->GetDataLayerIconName());
+	return FAppStyle::GetBrush(DataLayerInstance->GetDataLayerIconName());
 }
 
 FText FDataLayerPropertyTypeCustomization::GetDataLayerText() const
@@ -200,8 +200,8 @@ FText FDataLayerPropertyTypeCustomization::GetDataLayerText() const
 FSlateColor FDataLayerPropertyTypeCustomization::GetForegroundColor() const
 {
 	FPropertyAccess::Result PropertyAccessResult;
-	const UDataLayerInstance* DataLayer = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
-	if (DataLayer && DataLayer->IsLocked())
+	const UDataLayerInstance* DataLayerInstance = GetDataLayerFromPropertyHandle(&PropertyAccessResult);
+	if (DataLayerInstance && DataLayerInstance->IsReadOnly())
 	{
 		return FSceneOutlinerCommonLabelData::DarkColor;
 	}

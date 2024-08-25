@@ -17,6 +17,7 @@
 #if WITH_EDITOR
 #include "ScopedTransaction.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionSubsystem.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "LevelUtils"
@@ -108,9 +109,15 @@ bool FLevelUtils::IsValidStreamingLevel(UWorld* InWorld, const TCHAR* InPackageN
 	}
 
 #if WITH_EDITOR
-	if (UWorldPartition* WorldPartition = InWorld ? InWorld->GetWorldPartition() : nullptr)
+	if (UWorldPartitionSubsystem* WorldPartitionSubsystem = InWorld ? InWorld->GetSubsystem<UWorldPartitionSubsystem>() : nullptr)
 	{
-		return WorldPartition->IsValidPackageName(InPackageName);
+		bool bIsValidStreamingLevel = false;
+		WorldPartitionSubsystem->ForEachWorldPartition([&bIsValidStreamingLevel, InPackageName](UWorldPartition* WorldPartition)
+		{
+			bIsValidStreamingLevel = WorldPartition->IsValidPackageName(InPackageName);
+			return !bIsValidStreamingLevel;
+		});
+		return bIsValidStreamingLevel;
 	}
 #endif
 
@@ -444,6 +451,8 @@ void FLevelUtils::ApplyLevelTransform(const FLevelUtils::FApplyLevelTransformPar
 					RootComponent->SetRelativeLocation_Direct(TransformParams.LevelTransform.TransformPosition(RootComponent->GetRelativeLocation()));
 					RootComponent->SetRelativeRotation_Direct(TransformParams.LevelTransform.TransformRotation(RootComponent->GetRelativeRotation().Quaternion()).Rotator());
 					RootComponent->SetRelativeScale3D_Direct(TransformParams.LevelTransform.GetScale3D() * RootComponent->GetRelativeScale3D());
+
+					TransformParams.Actor->MarkNeedsRecomputeBoundsOnceForGame();
 				}
 			}
 			else
@@ -454,6 +463,9 @@ void FLevelUtils::ApplyLevelTransform(const FLevelUtils::FApplyLevelTransformPar
 				{
 					RootComponent->SetRelativeLocationAndRotation(TransformParams.LevelTransform.TransformPosition(RootComponent->GetRelativeLocation()), TransformParams.LevelTransform.TransformRotation(RootComponent->GetRelativeRotation().Quaternion()));
 					RootComponent->SetRelativeScale3D(TransformParams.LevelTransform.GetScale3D() * RootComponent->GetRelativeScale3D());
+
+					// Any components which have cached their bounds will not be accurate after a level transform is applied. Force them to recompute the bounds once more.
+					TransformParams.Actor->MarkNeedsRecomputeBoundsOnceForGame();
 				}
 			}
 #if WITH_EDITOR
@@ -500,6 +512,9 @@ void FLevelUtils::ApplyLevelTransform(const FLevelUtils::FApplyLevelTransformPar
 						RootComponent->SetRelativeLocation_Direct(TransformParams.LevelTransform.TransformPosition(RootComponent->GetRelativeLocation()));
 						RootComponent->SetRelativeRotation_Direct(TransformParams.LevelTransform.TransformRotation(RootComponent->GetRelativeRotation().Quaternion()).Rotator());
 						RootComponent->SetRelativeScale3D_Direct(TransformParams.LevelTransform.GetScale3D() * RootComponent->GetRelativeScale3D());
+
+						// Any components which have cached their bounds will not be accurate after a level transform is applied. Force them to recompute the bounds once more.
+						Actor->MarkNeedsRecomputeBoundsOnceForGame();
 					}
 				}
 			}
@@ -528,6 +543,9 @@ void FLevelUtils::ApplyLevelTransform(const FLevelUtils::FApplyLevelTransformPar
 					{
 						RootComponent->SetRelativeLocationAndRotation(TransformParams.LevelTransform.TransformPosition(RootComponent->GetRelativeLocation()), TransformParams.LevelTransform.TransformRotation(RootComponent->GetRelativeRotation().Quaternion()));
 						RootComponent->SetRelativeScale3D(TransformParams.LevelTransform.GetScale3D() * RootComponent->GetRelativeScale3D());
+
+						// Any components which have cached bounds will not be accurate after a level transform is applied. Force them to recompute the bounds once more.
+						Actor->MarkNeedsRecomputeBoundsOnceForGame();
 					}
 				}
 			}

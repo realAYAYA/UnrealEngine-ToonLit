@@ -4,6 +4,10 @@
 #include "UnsyncLog.h"
 #include "UnsyncUtil.h"
 
+#if UNSYNC_PLATFORM_WINDOWS
+#	include <Windows.h>
+#endif	// UNSYNC_PLATFORM_WINDOWS
+
 #if UNSYNC_USE_DEBUG_HEAP
 #	include "ig-debugheap/DebugHeap.h"
 #endif	// UNSYNC_USE_DEBUG_HEAP
@@ -224,6 +228,33 @@ UnsyncDebugFree(void*)
 
 #endif	// UNSYNC_USE_DEBUG_HEAP
 
+
+#if UNSYNC_PLATFORM_WINDOWS
+bool
+QueryMemoryInfo(FSystemMemoryInfo& OutMemoryInfo)
+{
+	OutMemoryInfo = {};
+
+	ULONGLONG TotalMemoryInKB = 0;
+
+	if (!GetPhysicallyInstalledSystemMemory(&TotalMemoryInKB))
+	{
+		return false;
+	}
+
+	OutMemoryInfo.InstalledPhysicalMemory = uint64(TotalMemoryInKB) << 10ull;
+
+	return true;
+}
+#else
+bool
+QueryMemoryInfo(FSystemMemoryInfo& OutMemoryInfo)
+{
+	OutMemoryInfo = {};
+	return false;
+}
+#endif
+
 }  // namespace unsync
 
 #if UNSYNC_OVERRIDE_GLOBAL_NEW_DELETE
@@ -243,8 +274,16 @@ IsBootstrapPtr(void* InPtr)
 }
 }  // namespace unsync
 
+#	if defined(_MSC_VER)
+_NODISCARD _Ret_notnull_
+_Post_writable_byte_size_(Size)
+_VCRT_ALLOCATOR
+void* __CRTDECL
+operator new(size_t Size)
+#	else
 void*
 operator new(size_t Size)
+#	endif
 {
 	using namespace unsync;
 

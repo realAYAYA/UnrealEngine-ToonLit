@@ -28,10 +28,20 @@ namespace UnrealBuildTool.Rules
 					"Json",
 					"Projects",
 					"SlateCore",
+					"ToolMenus",
 					"ToolWidgets"
 				}
 			);
 
+			if (Target.bBuildEditor)
+			{
+				PrivateDependencyModuleNames.AddRange(
+					new string[]
+					{
+						"Engine" // In editor builds, we want to display actors using their label. See DisplayUtils::GetObjectDisplayString
+					}
+				);
+			}
 		}
 	}
 }

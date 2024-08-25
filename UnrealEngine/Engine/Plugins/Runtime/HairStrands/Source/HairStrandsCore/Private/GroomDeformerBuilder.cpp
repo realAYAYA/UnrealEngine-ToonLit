@@ -421,7 +421,7 @@ USkeletalMesh* FGroomDeformerBuilder::CreateSkeletalMesh(UGroomAsset* GroomAsset
 		return nullptr;
 	}
 	return BuildSkeletalMesh(GroomAsset);
-	
-#endif
+#else
 	return nullptr;
+#endif
 }

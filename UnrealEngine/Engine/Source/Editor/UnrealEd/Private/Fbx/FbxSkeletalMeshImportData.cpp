@@ -2,6 +2,7 @@
 
 #include "Factories/FbxSkeletalMeshImportData.h"
 #include "Engine/SkeletalMesh.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "UObject/EditorObjectVersion.h"
 
@@ -84,6 +85,13 @@ bool UFbxSkeletalMeshImportData::GetImportContentFilename(FString& OutFilename, 
 
 void UFbxSkeletalMeshImportData::AppendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags)
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::AppendAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UFbxSkeletalMeshImportData::AppendAssetRegistryTags(FAssetRegistryTagsContext Context)
+{
 	auto EFBXImportContentTypeToString = [](const EFBXImportContentType value)-> FString
 	{
 		switch (value)
@@ -101,7 +109,7 @@ void UFbxSkeletalMeshImportData::AppendAssetRegistryTags(TArray<FAssetRegistryTa
 	};
 
 	FString EnumString = EFBXImportContentTypeToString(LastImportContentType);
-	OutTags.Add(FAssetRegistryTag("LastImportContentType", EnumString, FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag("LastImportContentType", EnumString, FAssetRegistryTag::TT_Hidden));
 
-	Super::AppendAssetRegistryTags(OutTags);
+	Super::AppendAssetRegistryTags(Context);
 }

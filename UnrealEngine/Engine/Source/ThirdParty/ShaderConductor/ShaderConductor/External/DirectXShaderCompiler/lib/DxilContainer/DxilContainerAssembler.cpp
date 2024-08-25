@@ -442,6 +442,27 @@ DxilPartWriter *hlsl::NewFeatureInfoWriter(const DxilModule &M) {
   return new DxilFeatureInfoWriter(M);
 }
 
+// UE Change Begin: Added UserInfo container and check for derivative ops
+class DxilUserInfoWriter : public DxilPartWriter  {
+public:
+  // Only save the user info after create class for it.
+  DxilUserInfo userInfo;
+public:
+  DxilUserInfoWriter(const DxilModule &M) {
+    userInfo.UserFlags = M.m_ShaderFlags.GetHasDerivativeOps() ? 0x0 : 0x1;
+  }
+  uint32_t size() const override {
+    return sizeof(DxilUserInfo);
+  }
+  void write(AbstractMemoryStream *pStream) override {
+    IFT(WriteStreamValue(pStream, userInfo.UserFlags));
+  }
+};
+
+DxilPartWriter *hlsl::NewUserInfoWriter(const DxilModule &M) {
+  return new DxilUserInfoWriter(M);
+}
+// UE Change End: Added UserInfo container and check for derivative ops
 
 //////////////////////////////////////////////////////////
 // Utility code for serializing/deserializing ViewID state
@@ -1606,6 +1627,18 @@ void hlsl::SerializeDxilContainerForModule(
     featureInfoWriter.write(pStream);
   });
 
+  // UE Change Begin: Added UserInfo container and check for derivative ops
+  // Write the user info part.
+  DxilUserInfoWriter userInfoWriter(*pModule);
+  // TEMP HACK: Official validator will fail on ValidationRule::ContainerPartInvalid
+  // Use PrivateData / PRIV container for now.
+  pPrivateData = &userInfoWriter.userInfo;
+  PrivateDataSize = userInfoWriter.size();
+  //writer.AddPart(DFCC_UserInfo, userInfoWriter.size(), [&](AbstractMemoryStream *pStream) {
+  //  userInfoWriter.write(pStream);
+  //});
+  // UE Change End: Added UserInfo container and check for derivative ops
+
   std::unique_ptr<DxilProgramSignatureWriter> pInputSigWriter = nullptr;
   std::unique_ptr<DxilProgramSignatureWriter> pOutputSigWriter = nullptr;
   std::unique_ptr<DxilProgramSignatureWriter> pPatchConstOrPrimSigWriter = nullptr;
@@ -1844,7 +1877,7 @@ void hlsl::SerializeDxilContainerForModule(
     WriteProgramPart(pModule->GetShaderModel(), pProgramStream, pStream);
   });
 
-  // Private data part should be added last when assembling the container becasue there is no garuntee of aligned size
+  // Private data part should be added last when assembling the container because there is no guarantee of aligned size
   if (pPrivateData) {
     writer.AddPart(
         hlsl::DFCC_PrivateData, PrivateDataSize,

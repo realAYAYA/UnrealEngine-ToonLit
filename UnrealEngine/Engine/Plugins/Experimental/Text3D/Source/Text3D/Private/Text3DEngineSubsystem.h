@@ -2,16 +2,17 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
+#include "BevelType.h"
+#include "Containers/Ticker.h"
+#include "ContourNode.h"
 #include "Subsystems/EngineSubsystem.h"
 #include "Text3DPrivate.h"
-#include "BevelType.h"
-#include "ContourNode.h"
-#include "Containers/Ticker.h"
 
 #include "Text3DEngineSubsystem.generated.h"
 
 class FFreeTypeFace;
+class UFont;
+class UStaticMesh;
 
 USTRUCT()
 struct FGlyphMeshParameters
@@ -36,6 +37,9 @@ public:
 
 	UPROPERTY()
 	float OutlineExpand = 0.5f;
+
+	UPROPERTY()
+	uint32 TypefaceIndex = 0;
 };
 
 inline uint32 GetTypeHash(const FGlyphMeshParameters A)
@@ -47,6 +51,7 @@ inline uint32 GetTypeHash(const FGlyphMeshParameters A)
 	HashParameters = HashCombine(HashParameters, GetTypeHash(A.BevelSegments));
 	HashParameters = HashCombine(HashParameters, GetTypeHash(A.bOutline));
 	HashParameters = HashCombine(HashParameters, GetTypeHash(A.OutlineExpand));
+	HashParameters = HashCombine(HashParameters, GetTypeHash(A.TypefaceIndex));
 	return HashParameters;
 }
 
@@ -58,14 +63,77 @@ struct FCachedFontMeshes
 public:
 	FCachedFontMeshes();
 
-	int32 GetCacheCount();
+	int32 GetCacheCount() const;
 	TSharedPtr<int32> GetCacheCounter();
 
 	UPROPERTY()
-	TMap<uint32, TObjectPtr<class UStaticMesh>> Glyphs;
+	TMap<uint32, TObjectPtr<UStaticMesh>> Glyphs;
 
 private:
 	TSharedPtr<int32> CacheCounter;
+};
+
+USTRUCT()
+struct FTypefaceFontData
+{
+	GENERATED_BODY()
+
+public:
+	FTypefaceFontData();
+
+	void Reset()
+	{
+		FT_Done_Face(FreeTypeFace);
+		FreeTypeFace = nullptr;
+		TypefaceData.Reset();
+	}
+
+	int32 GetCacheCount() const
+	{
+		const int32 Count = CacheCounter.GetSharedReferenceCount();
+		return Count;
+	}
+
+	FT_Face& GetTypeface() { return FreeTypeFace; }
+
+	TArray<uint8>& GetTypefaceData() { return TypefaceData; }
+
+	void SetTypefaceData(const TArray<uint8>& InTypefaceData)
+	{
+		TypefaceData = InTypefaceData;
+	}
+
+	FName GetTypefaceName() const { return TypefaceName; }
+	void SetTypefaceName(FName InTypefaceName)
+	{
+		TypefaceName = InTypefaceName;
+	}
+
+	uint32 GetTypefaceFontDataHash() const { return TypefaceFontDataHash; }
+
+	void SetTypefaceFontDataHash(uint32 InDataHash)
+	{
+		TypefaceFontDataHash = InDataHash;
+	}
+
+	TMap<uint32, FCachedFontMeshes>& GetMeshes() { return Meshes; }
+
+	TSharedPtr<int32> GetCacheCounter() { return CacheCounter; }
+
+	FCachedFontMeshes& FindOrAddMeshes(uint32 InHashParameters)
+	{
+		return Meshes.FindOrAdd(InHashParameters);
+	}
+
+private:
+	UPROPERTY()
+	TMap<uint32, FCachedFontMeshes> Meshes;
+
+	FName TypefaceName;
+	FT_Face FreeTypeFace;
+	TArray<uint8> TypefaceData;
+	TSharedPtr<int32> CacheCounter;
+	uint32 TypefaceFontDataHash;
 };
 
 USTRUCT()
@@ -77,51 +145,62 @@ public:
 	FCachedFontData();
 	~FCachedFontData();
 
-	FT_Face GetFreeTypeFace();
-	const FString& GetFontName();
+	FT_Face GetFreeTypeFace(uint32 InTypefaceIndex);
 
-	void LoadFreeTypeFace();
+	FString GetFontName() const;
+
+	UFont* GetFont() { return Font; }
+
+	void SetFont(UFont* InFont)
+	{
+		Font = InFont;
+	}
+
+	void LoadFreeTypeFace(uint32 InTypefaceIndex);
 	void ClearFreeTypeFace();
 
 	bool Cleanup();
+	bool CleanupTypeface(uint32 InTypefaceIndex);
 
-	uint32 GetTypefaceFontDataHash();
-	TSharedPtr<int32> GetCacheCounter();
-	TSharedPtr<int32> GetMeshesCacheCounter(const FGlyphMeshParameters& Parameters);
+	uint32 GetTypefaceFontDataHash(int32 InTypefaceEntryIndex) const;
+	TSharedPtr<int32> GetCacheCounter(int32 InTypefaceEntryIndex);
+	TSharedPtr<int32> GetMeshesCacheCounter(const FGlyphMeshParameters& InParameters);
 
-	UStaticMesh* GetGlyphMesh(uint32 GlyphIndex, const FGlyphMeshParameters& Parameters, const FFreeTypeFace* FontFaceData = nullptr);
-	TSharedContourNode GetGlyphContours(uint32 GlyphIndex, const FFreeTypeFace* FontFaceData = nullptr);
+	UStaticMesh* GetGlyphMesh(uint32 InGlyphIndex, const FGlyphMeshParameters& InParameters, const FFreeTypeFace* InFontFaceData = nullptr);
+	TSharedContourNode GetGlyphContours(uint32 InGlyphIndex, int32 InTypefaceEntryIndex, const FFreeTypeFace* InFontFaceData = nullptr);
 
-	UPROPERTY()
-	TObjectPtr<class UFont> Font;
-
-	UPROPERTY()
-	TMap<uint32, FCachedFontMeshes> Meshes;
-
-	TMap<uint32, TSharedContourNode> Glyphs;
+	void PrintCache() const;
 
 private:
-	FT_Face FreeTypeFace;
-	FString FontName;
-	TArray<uint8> Data;
-	TSharedPtr<int32> CacheCounter;
-	uint32 TypefaceFontDataHash;
+	UPROPERTY()
+	TObjectPtr<UFont> Font;
+
+	UPROPERTY()
+	TMap<uint32, FTypefaceFontData> TypefaceFontDataMap;
 };
 
 UCLASS()
-class TEXT3D_API UText3DEngineSubsystem : public UEngineSubsystem
+class TEXT3D_API UText3DEngineSubsystem : public UEngineSubsystem, public FSelfRegisteringExec
 {
 	GENERATED_BODY()
 
-public:	
+public:
 	UText3DEngineSubsystem();
 
+	// ~Begin UEngineSubsystem
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	// ~End UEngineSubsystem
+
+	// ~Begin FSelfRegisteringExec
+	virtual bool Exec(class UWorld* InWorld, const TCHAR* InCmd, FOutputDevice& InAr) override;
+	// ~End FSelfRegisteringExec
+
+	void PrintCache() const;
 
 	void Reset();
 	void Cleanup();
-	FCachedFontData& GetCachedFontData(class UFont* Font);
+	FCachedFontData& GetCachedFontData(UFont* InFont, int32 InTypefaceEntryIndex = 0);
 
 	UPROPERTY()
 	TObjectPtr<class UMaterial> DefaultMaterial;

@@ -1998,7 +1998,7 @@ void UParticleModuleLocationBoneSocket::GetSkeletalMeshComponentSource(FParticle
 
 bool UParticleModuleLocationBoneSocket::GetSocketInfoForSourceIndex(FModuleLocationBoneSocketInstancePayload* InstancePayload, USkeletalMeshComponent* SourceComponent, int32 SourceIndex, USkeletalMeshSocket*& OutSocket, FVector& OutOffset) const
 {
-	if (!ensureMsgf(SourceType == BONESOCKETSOURCE_Sockets, TEXT("Invalid source type %d for %s"), SourceType, *GetPathName()) ||
+	if (!ensureMsgf(SourceType == BONESOCKETSOURCE_Sockets, TEXT("Invalid source type %d for %s"), SourceType.GetIntValue(), *GetPathName()) ||
 		!ensureMsgf(SourceComponent, TEXT("Null SkeletalMeshComponent for %s"), *GetPathName()) ||
 		!ensureMsgf(SourceComponent->GetSkeletalMeshAsset(), TEXT("Null SkeletalMesh on Component %s for %s"), *SourceComponent->GetPathName(), *GetPathName()))
 	{

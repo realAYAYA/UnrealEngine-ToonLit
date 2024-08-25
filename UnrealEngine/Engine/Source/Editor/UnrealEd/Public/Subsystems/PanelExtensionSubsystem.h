@@ -14,7 +14,7 @@
 #include "PanelExtensionSubsystem.generated.h"
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	
+
 struct UNREALED_API FPanelExtensionFactory
 {
 public:
@@ -25,7 +25,7 @@ public:
 	int32 SortWeight = 0;
 
 	/**
-	 * Delegate that generates the SExtensionPanel content widget. 
+	 * Delegate that generates the SExtensionPanel content widget.
 	 * The FWeakObjectPtr param is an opaque context specific to the panel that is being extended
 	 * which can be used to customize or populate the extension widget.
 	 */
@@ -50,7 +50,9 @@ public:
 		: _ExtensionPanelID()
 		, _DefaultWidget()
 		, _ExtensionContext()
-	{}
+		, _WindowZoneOverride()
+	{
+	}
 
 		/** The ID to identify this Extension point */
 		SLATE_ATTRIBUTE(FName, ExtensionPanelID)
@@ -58,13 +60,23 @@ public:
 		SLATE_ATTRIBUTE(TSharedPtr<SWidget>, DefaultWidget)
 		/** Context used to customize or populate the extension widget (specific to each panel extension) */
 		SLATE_ATTRIBUTE(FWeakObjectPtr, ExtensionContext)
+		/** The window zone to return for this widget. Set to EWindowZone::TitleBar to make the window draggable on this widget. */
+		SLATE_ATTRIBUTE(EWindowZone::Type, WindowZoneOverride)
 
 	SLATE_END_ARGS()
 
 	/** Constructs the widget */
 	void Construct(const FArguments& InArgs);
 
-	UObject* GetExtensionContext() const { return ExtensionContext.Get(); }
+	UObject* GetExtensionContext() const
+	{
+		return ExtensionContext.Get();
+	}
+
+	virtual EWindowZone::Type GetWindowZoneOverride() const override
+	{
+		return WindowZoneOverride.Get(EWindowZone::Unspecified);
+	}
 
 private:
 	void RebuildWidget();
@@ -72,6 +84,7 @@ private:
 	FName ExtensionPanelID;
 	TSharedPtr<SWidget> DefaultWidget;
 	FWeakObjectPtr ExtensionContext;
+	TAttribute<EWindowZone::Type> WindowZoneOverride;
 };
 
 /**
@@ -103,5 +116,4 @@ protected:
 private:
 	TMap<FName, TArray<FPanelExtensionFactory>> ExtensionPointMap;
 	TMap<FName, FPanelFactoryRegistryChanged> PanelFactoryRegistryChangedCallbackMap;
-
 };

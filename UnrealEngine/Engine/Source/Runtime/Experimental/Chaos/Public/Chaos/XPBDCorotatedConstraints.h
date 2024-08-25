@@ -207,7 +207,7 @@ namespace Chaos::Softs
 			PMatrix<T, 3, 3> Result((T)0.);
 			for (int i = 0; i < 3; i++) {
 				for (int c = 0; c < 3; c++) {
-					Result.SetAt(c, i, InParticles.X(MeshConstraints[e][i + 1])[c] - InParticles.X(MeshConstraints[e][0])[c]);
+					Result.SetAt(c, i, InParticles.GetX(MeshConstraints[e][i + 1])[c] - InParticles.GetX(MeshConstraints[e][0])[c]);
 				}
 			}
 			return Result;
@@ -218,7 +218,7 @@ namespace Chaos::Softs
 			PMatrix<T, 3, 3> Result((T)0.);
 			for (int i = 0; i < 3; i++) {
 				for (int c = 0; c < 3; c++) {
-					Result.SetAt(c, i, InParticles.P(MeshConstraints[e][i+1])[c] - InParticles.P(MeshConstraints[e][0])[c]);
+					Result.SetAt(c, i, InParticles.GetP(MeshConstraints[e][i+1])[c] - InParticles.GetP(MeshConstraints[e][0])[c]);
 				}
 			}
 			return Result;
@@ -246,7 +246,7 @@ namespace Chaos::Softs
 
 		virtual void ApplyInSerial(ParticleType& Particles, const T Dt, const int32 ElementIndex) const
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDCorotatedApplySingle"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDCorotatedApplySingle);
 
 			TVec4<TVector<T, 3>> PolarDelta = GetPolarDelta(Particles, Dt, ElementIndex);
 
@@ -267,7 +267,7 @@ namespace Chaos::Softs
 		void ApplyInSerial(ParticleType& Particles, const T Dt) const
 		{
 			SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotated);
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDCorotatedApplySerial"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDCorotatedApplySerial);
 			const int32 ConstraintColorNum = ConstraintsPerColorStartIndex.Num() - 1;
 			for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
 			{
@@ -294,7 +294,7 @@ namespace Chaos::Softs
 			
 			{
 				SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotated);
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDCorotatedApply"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDCorotatedApply);
 				if ((ConstraintsPerColorStartIndex.Num() > 1))//&& (MeshConstraints.Num() > Chaos_Spring_ParallelConstraintCount))
 				{
 					const int32 ConstraintColorNum = ConstraintsPerColorStartIndex.Num() - 1;
@@ -360,7 +360,7 @@ namespace Chaos::Softs
 
 		TVec4<TVector<T, 3>> GetDeterminantGradient(const PMatrix<T, 3, 3>& Fe, const PMatrix<T, 3, 3>& DmInvT) const
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDCorotatedGetDetGradient"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDCorotatedGetDetGradient);
 			//SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotatedDet);
 			//const TVec4<int32>& Constraint = MeshConstraints[ElementIndex];
 
@@ -444,7 +444,7 @@ namespace Chaos::Softs
 
 		virtual TVec4<TVector<T, 3>> GetDeterminantDelta(const ParticleType& Particles, const T Dt, const int32 ElementIndex, const T Tol = (T)1e-3) const
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDCorotatedApplyDet"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDCorotatedApplyDet);
 			//SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotatedDet);
 			////const TVec4<int32>& Constraint = MeshConstraints[ElementIndex];
 
@@ -508,7 +508,7 @@ namespace Chaos::Softs
 
 		virtual TVec4<TVector<T, 3>> GetPolarDelta(const ParticleType& Particles, const T Dt, const int32 ElementIndex, const T Tol = (T)1e-3) const
 		{	
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDCorotatedApplyPolar"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDCorotatedApplyPolar);
 			SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotatedPolar);
 			const PMatrix<T, 3, 3> Fe = F(ElementIndex, Particles);
 

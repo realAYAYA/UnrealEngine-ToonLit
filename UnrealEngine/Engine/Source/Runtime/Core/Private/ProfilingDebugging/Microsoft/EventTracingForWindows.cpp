@@ -26,8 +26,8 @@ public:
 	FPlatformEvents(uint32 SamplingIntervalUsec);
 	~FPlatformEvents();
 
-	void Enable(EPlatformEvent Event);
-	void Disable(EPlatformEvent Event);
+	void Enable(FPlatformEventsTrace::EEventType Event);
+	void Disable(FPlatformEventsTrace::EEventType Event);
 
 private:
 	virtual uint32 Run() override;
@@ -45,7 +45,7 @@ private:
 	FRunnableThread* Thread = nullptr;
 	uint32 SamplingIntervalUsec;
 
-	EPlatformEvent EnabledEvents = EPlatformEvent::None;
+	FPlatformEventsTrace::EEventType EnabledEvents = FPlatformEventsTrace::EEventType::None;
 
 	struct FTrace
 	{
@@ -128,11 +128,7 @@ void FPlatformEvents::TraceEventCallback(PEVENT_RECORD Event)
 
 			if (ThreadId != 0)
 			{
-				UE_TRACE_LOG(PlatformEvent, ContextSwitch, ContextSwitchChannel)
-					<< ContextSwitch.StartTime(StartTime)
-					<< ContextSwitch.EndTime(EndTime)
-					<< ContextSwitch.ThreadId(ThreadId)
-					<< ContextSwitch.CoreNumber(CoreNumber);
+				FPlatformEventsTrace::OutputContextSwitch(StartTime, EndTime, ThreadId, CoreNumber);
 
 				bool bAlreadyAdded = false;
 				GPlatformEvents->ThreadNameSet.Add(ThreadId, &bAlreadyAdded);
@@ -164,10 +160,7 @@ void FPlatformEvents::TraceEventCallback(PEVENT_RECORD Event)
 							::CloseHandle(ProcessHandle);
 						}
 
-						UE_TRACE_LOG(PlatformEvent, ThreadName, ContextSwitchChannel)
-							<< ThreadName.ThreadId(ThreadId)
-							<< ThreadName.ProcessId(ProcessId)
-							<< ThreadName.Name(Name, NameLen);
+						FPlatformEventsTrace::OutputThreadName(ThreadId, ProcessId, Name, NameLen);
 					}
 				}
 			}
@@ -201,10 +194,7 @@ void FPlatformEvents::TraceEventCallback(PEVENT_RECORD Event)
 		// sometimes we get call stack with only one or two entries, which obviously is not very useful
 		if (bValid && Count > 2)
 		{
-			UE_TRACE_LOG(PlatformEvent, StackSample, StackSamplingChannel)
-				<< StackSample.Time(Payload->TimeStamp)
-				<< StackSample.ThreadId(Payload->ThreadId)
-				<< StackSample.Addresses(Payload->Stack, Count);
+			FPlatformEventsTrace::OutputStackSample(Payload->TimeStamp, Payload->ThreadId, Payload->Stack, Count);
 		}
 	}
 }
@@ -230,7 +220,7 @@ FPlatformEvents::~FPlatformEvents()
 
 /////////////////////////////////////////////////////////////////////
 
-void FPlatformEvents::Enable(EPlatformEvent Event)
+void FPlatformEvents::Enable(FPlatformEventsTrace::EEventType Event)
 {
 	if (bStarting)
 	{
@@ -244,7 +234,7 @@ void FPlatformEvents::Enable(EPlatformEvent Event)
 		return;
 	}
 
-	if ((EnabledEvents & Event) != EPlatformEvent::None)
+	if ((EnabledEvents & Event) != FPlatformEventsTrace::EEventType::None)
 	{
 		// if event is already enabled, do nothing
 		return;
@@ -263,15 +253,15 @@ void FPlatformEvents::Enable(EPlatformEvent Event)
 		// in case ETW was already running, enable the necessary event
 
 		EVENT_TRACE_PROPERTIES* Properties = &Trace.Properties;
-		if (Event == EPlatformEvent::ContextSwitch)
+		if (Event == FPlatformEventsTrace::EEventType::ContextSwitch)
 		{
 			Properties->EnableFlags |= EVENT_TRACE_FLAG_CSWITCH;
 		}
-		else if (Event == EPlatformEvent::StackSampling)
+		else if (Event == FPlatformEventsTrace::EEventType::StackSampling)
 		{
 			Properties->EnableFlags |= EVENT_TRACE_FLAG_PROFILE;
 		}
-		
+
 		ULONG Status = ::ControlTraceW(NULL, KERNEL_LOGGER_NAMEW, Properties, EVENT_TRACE_CONTROL_UPDATE);
 		if (Status != ERROR_SUCCESS)
 		{
@@ -284,7 +274,7 @@ void FPlatformEvents::Enable(EPlatformEvent Event)
 
 /////////////////////////////////////////////////////////////////////
 
-void FPlatformEvents::Disable(EPlatformEvent Event)
+void FPlatformEvents::Disable(FPlatformEventsTrace::EEventType Event)
 {
 	if (bStarting)
 	{
@@ -298,15 +288,15 @@ void FPlatformEvents::Disable(EPlatformEvent Event)
 		return;
 	}
 
-	if ((EnabledEvents & Event) == EPlatformEvent::None)
+	if ((EnabledEvents & Event) == FPlatformEventsTrace::EEventType::None)
 	{
 		// if event is already disabled, do nothing
 		return;
 	}
-	
+
 	EnumRemoveFlags(EnabledEvents, Event);
 
-	if (EnabledEvents == EPlatformEvent::None)
+	if (EnabledEvents == FPlatformEventsTrace::EEventType::None)
 	{
 		// in case all events are disabled, stop ETW
 		Stop();
@@ -316,11 +306,11 @@ void FPlatformEvents::Disable(EPlatformEvent Event)
 		// in case ETW still needs to run, disable only specific event
 
 		EVENT_TRACE_PROPERTIES* Properties = &Trace.Properties;
-		if (Event == EPlatformEvent::ContextSwitch)
+		if (Event == FPlatformEventsTrace::EEventType::ContextSwitch)
 		{
 			Properties->EnableFlags &= ~EVENT_TRACE_FLAG_CSWITCH;
 		}
-		else if (Event == EPlatformEvent::StackSampling)
+		else if (Event == FPlatformEventsTrace::EEventType::StackSampling)
 		{
 			Properties->EnableFlags &= ~EVENT_TRACE_FLAG_PROFILE;
 		}
@@ -345,7 +335,7 @@ uint32 FPlatformEvents::Run()
 
 		// ProcessTrace is blocking function that enters processing loop
 		// and calls TraceEventCallback callback for each event
-		// it exits processing loop when trace is closed with ::CloseTrace 
+		// it exits processing loop when trace is closed with ::CloseTrace
 		::ProcessTrace(&TraceHandle, 1, NULL, NULL);
 	}
 	else
@@ -364,7 +354,7 @@ uint32 FPlatformEvents::Run()
 void FPlatformEvents::Stop()
 {
 	// because ETW is started in background thread, then first make sure
-	// ETW startup code has completed (sucessfully or not) before actually
+	// ETW startup code has completed (successfully or not) before actually
 	// stopping it
 	ReadyEvent->Wait(MAX_uint32);
 
@@ -418,7 +408,7 @@ bool FPlatformEvents::StartETW()
 				if (!::AdjustTokenPrivileges(Token, 0, &TokenPrivileges, sizeof(TokenPrivileges), NULL, NULL))
 				{
 					uint32 Error = ::GetLastError();
-					UE_LOG(LogPlatformEvents, Warning, TEXT("Cannot enable profile privlege for process: 0x%08x"), Error);
+					UE_LOG(LogPlatformEvents, Warning, TEXT("Cannot enable profile privilege for process: 0x%08x"), Error);
 				}
 			}
 			::CloseHandle(Token);
@@ -466,11 +456,11 @@ bool FPlatformEvents::StartETW()
 	Properties->FlushTimer = 1;
 	Properties->EnableFlags = 0;
 
-	if ((EnabledEvents & EPlatformEvent::ContextSwitch) != EPlatformEvent::None)
+	if ((EnabledEvents & FPlatformEventsTrace::EEventType::ContextSwitch) != FPlatformEventsTrace::EEventType::None)
 	{
 		Properties->EnableFlags |= EVENT_TRACE_FLAG_CSWITCH;
 	}
-	if ((EnabledEvents & EPlatformEvent::StackSampling) != EPlatformEvent::None)
+	if ((EnabledEvents & FPlatformEventsTrace::EEventType::StackSampling) != FPlatformEventsTrace::EEventType::None)
 	{
 		Properties->EnableFlags |= EVENT_TRACE_FLAG_PROFILE;
 	}
@@ -503,7 +493,7 @@ bool FPlatformEvents::StartETW()
 		}
 	}
 
-	// open trace for receving callbacks
+	// open trace for receiving callbacks
 	{
 		EVENT_TRACE_LOGFILEW LogFile;
 		ZeroMemory(&LogFile, sizeof(LogFile));
@@ -540,12 +530,12 @@ void FPlatformEvents::StopETW()
 
 /////////////////////////////////////////////////////////////////////
 
-void PlatformEvents_Init(uint32 SamplingIntervalUsec)
+void FPlatformEventsTrace::Init(uint32 SamplingIntervalUsec)
 {
 	GPlatformEvents = new FPlatformEvents(SamplingIntervalUsec);
 }
 
-void PlatformEvents_Enable(EPlatformEvent Event)
+void FPlatformEventsTrace::Enable(FPlatformEventsTrace::EEventType Event)
 {
 	if (GPlatformEvents)
 	{
@@ -553,7 +543,7 @@ void PlatformEvents_Enable(EPlatformEvent Event)
 	}
 }
 
-void PlatformEvents_Disable(EPlatformEvent Event)
+void FPlatformEventsTrace::Disable(FPlatformEventsTrace::EEventType Event)
 {
 	if (GPlatformEvents)
 	{
@@ -561,7 +551,7 @@ void PlatformEvents_Disable(EPlatformEvent Event)
 	}
 }
 
-void PlatformEvents_Stop()
+void FPlatformEventsTrace::Stop()
 {
 	if (GPlatformEvents)
 	{

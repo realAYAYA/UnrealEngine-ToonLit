@@ -103,9 +103,16 @@ void UCommonRotator::ShiftTextLeftInternal(bool bFromNavigation)
 		{
 			SetSelectedItem(SelectedIndex);
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (OnRotated.IsBound())
 			{
 				OnRotated.Broadcast(SelectedIndex);
+			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+			if (OnRotatedWithDirection.IsBound())
+			{
+				OnRotatedWithDirection.Broadcast(SelectedIndex, ERotatorDirection::Left);
 			}
 
 			OnRotatedEvent.Broadcast(SelectedIndex, bFromNavigation);
@@ -135,9 +142,16 @@ void UCommonRotator::ShiftTextRightInternal(bool bFromNavigation)
 		{
 			SetSelectedItem(SelectedIndex);
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (OnRotated.IsBound())
 			{
 				OnRotated.Broadcast(SelectedIndex);
+			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+			if (OnRotatedWithDirection.IsBound())
+			{
+				OnRotatedWithDirection.Broadcast(SelectedIndex, ERotatorDirection::Right);
 			}
 
 			OnRotatedEvent.Broadcast(SelectedIndex, bFromNavigation);

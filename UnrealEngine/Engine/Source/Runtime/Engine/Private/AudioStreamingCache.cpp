@@ -5,6 +5,7 @@ AudioStreaming.cpp: Implementation of audio streaming classes.
 =============================================================================*/
 
 #include "AudioStreamingCache.h"
+#include "AudioStreamCacheMemoryHandle.h"
 #include "Async/Async.h"
 #include "Audio.h"
 #include "AudioCompressionSettingsUtils.h"
@@ -53,7 +54,7 @@ FAutoConsoleVariableRef CVarAlwaysLogCacheMisses(
 	TEXT("0: Don't log cache misses until au.streamcaching.StartProfiling is called. 1: Always log cache misses."),
 	ECVF_Default);
 
-static int32 ReadRequestPriorityCVar = 2;
+static int32 ReadRequestPriorityCVar = 1;
 FAutoConsoleVariableRef CVarReadRequestPriority(
 	TEXT("au.streamcaching.ReadRequestPriority"),
 	ReadRequestPriorityCVar,
@@ -231,11 +232,11 @@ FAudioChunkCache::FChunkKey::FChunkKey(const FSoundWavePtr& InSoundWave, uint32 
 	if (InSoundWave.IsValid())
 	{
 		SoundWaveName = InSoundWave->GetFName();
-		ObjectKey = InSoundWave->GetFObjectKey();
+		ObjectKey = InSoundWave->GetGUID();
 	}
 }
 
-FAudioChunkCache::FChunkKey::FChunkKey(const FName& InSoundWaveName , const FObjectKey& InSoundWaveObjectKey , uint32 InChunkIndex
+FAudioChunkCache::FChunkKey::FChunkKey(const FName& InSoundWaveName , const FGuid& InSoundWaveObjectKey , uint32 InChunkIndex
 #if WITH_EDITOR
 		, uint32 InChunkRevision
 #endif // #if WITH_EDITOR
@@ -423,6 +424,42 @@ void FCachedAudioStreamingManager::AddStreamingSoundWave(const FSoundWaveProxyPt
 void FCachedAudioStreamingManager::RemoveStreamingSoundWave(const FSoundWaveProxyPtr& SoundWave)
 {
 	// Unused.
+}
+
+void FCachedAudioStreamingManager::AddForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave)
+{
+	// add the sound wave to the first cache
+	if (ensure(CacheArray.Num() > 0))
+	{
+		CacheArray[0].AddForceInlineSoundWave(SoundWave);
+	}
+}
+
+void FCachedAudioStreamingManager::RemoveForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave)
+{
+	// remove the sound wave from the first cache
+	if (ensure(CacheArray.Num() > 0))
+	{
+		CacheArray[0].RemoveForceInlineSoundWave(SoundWave);
+	}
+}
+
+void FCachedAudioStreamingManager::AddMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature)
+{
+	// add memory count to the first cache
+	if (ensure(CacheArray.Num() > 0))
+	{
+		CacheArray[0].AddMemoryCountedFeature(Feature);
+	}
+}
+
+void FCachedAudioStreamingManager::RemoveMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature)
+{
+	// remove memory count from the first cache
+	if (ensure(CacheArray.Num() > 0))
+	{
+		CacheArray[0].RemoveMemoryCountedFeature(Feature);
+	}
 }
 
 void FCachedAudioStreamingManager::AddDecoder(ICompressedAudioInfo* InCompressedAudioInfo)
@@ -636,7 +673,7 @@ void FCachedAudioStreamingManager::AddReferenceToChunk(const FAudioChunkHandle& 
 
 	const FAudioChunkCache::FChunkKey ChunkKey(
 		  InHandle.CorrespondingWaveName
-		, InHandle.CorrespondingWaveObjectKey
+		, InHandle.CorrespondingWaveGuid
 		, ((uint32)InHandle.ChunkIndex)
 #if WITH_EDITOR
 		, InHandle.ChunkRevision
@@ -654,7 +691,7 @@ void FCachedAudioStreamingManager::RemoveReferenceToChunk(const FAudioChunkHandl
 
 	const FAudioChunkCache::FChunkKey ChunkKey(
 		  InHandle.CorrespondingWaveName
-		, InHandle.CorrespondingWaveObjectKey
+		, InHandle.CorrespondingWaveGuid
 		, ((uint32)InHandle.ChunkIndex)
 #if WITH_EDITOR
 		, InHandle.ChunkRevision
@@ -701,6 +738,8 @@ FAudioChunkCache::FAudioChunkCache(uint32 InMaxChunkSize, uint32 NumChunks, uint
 	, ChunksInUse(0)
 	, MemoryCounterBytes(0)
 	, MemoryLimitBytes(InMemoryLimitInBytes)
+	, ForceInlineMemoryCounterBytes(0)
+	, FeatureMemoryCounterBytes(0)
 	, bLogCacheMisses(false)
 {
 	check(NumChunks > 0);
@@ -710,6 +749,11 @@ FAudioChunkCache::FAudioChunkCache(uint32 InMaxChunkSize, uint32 NumChunks, uint
 		CachePool.Emplace(Index);
 	}
 	CacheOverflowCount.Set(0);
+
+	if (MemoryLimitBytes == 0)
+	{
+		UE_LOG(LogAudioStreamCaching, Display, TEXT("Audio stream cache size is 0 bytes. Audio will not play. To resolve this issue, set \'CacheSizeKB\' to a non-zero value."));
+	}
 }
 
 FAudioChunkCache::~FAudioChunkCache()
@@ -778,7 +822,8 @@ uint64 FAudioChunkCache::AddOrTouchChunk(const FChunkKey& InKey, const TSharedPt
 		{
 			int32 ChunkDataSize = Chunk->AudioDataSize;
 
-			if (TrimCacheWhenOverBudgetCVar != 0 && (MemoryCounterBytes + ChunkDataSize) > MemoryLimitBytes)
+			const uint64 MemoryUsageBytes = GetCurrentMemoryUsageBytes() + ChunkDataSize;
+			if (TrimCacheWhenOverBudgetCVar != 0 && MemoryUsageBytes > MemoryLimitBytes)
 			{
 				uint64 MemoryToTrim = 0;
 				if (MemoryLimitTrimPercentageCVar > 0.0f)
@@ -787,7 +832,7 @@ uint64 FAudioChunkCache::AddOrTouchChunk(const FChunkKey& InKey, const TSharedPt
 				}
 				else
 				{
-					MemoryToTrim = MemoryCounterBytes + ChunkDataSize - MemoryLimitBytes;
+					MemoryToTrim = MemoryUsageBytes - MemoryLimitBytes;
 				}
 
 				TrimMemory(MemoryToTrim, true);
@@ -969,6 +1014,126 @@ void FAudioChunkCache::ClearCache()
 	MostRecentElement = nullptr;
 	LeastRecentElement = nullptr;
 	ChunksInUse = 0;
+}
+
+void FAudioChunkCache::AddForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave)
+{
+	check(SoundWave.IsValid());
+	ensureMsgf(SoundWave->GetLoadingBehavior() == ESoundWaveLoadingBehavior::ForceInline, 
+		TEXT("AudioStreamingCache::AddForceInlineSoundWave: Attempted to add SoundWave not set to ForceInline: %s"), *SoundWave->GetFName().ToString());
+
+	if (SoundWave->GetLoadingBehavior() != ESoundWaveLoadingBehavior::ForceInline)
+	{
+		return;
+	}
+	
+	FName Format = SoundWave->GetRuntimeFormat();
+	FByteBulkData* Data = SoundWave->GetCompressedData(Format);
+	int64 MemoryCount = Data ? Data->GetBulkDataSize() : 0;
+	int32 RefCount = 0;
+	{
+		FScopeLock Lock(&SoundWaveMemoryTrackerCritSec);
+		FSoundWaveMemoryTracker& Tracker = SoundWaveTracker.FindOrAdd(SoundWave);
+		checkf(Tracker.RefCount >= 0, TEXT("AudioStreamCache::AddForceInlineSoundWave: ref count for Added sound wave is negative!: %s"), *SoundWave->GetFName().ToString());
+		RefCount = ++Tracker.RefCount;
+		if (RefCount == 1)
+		{
+			// set the tracker memory count to that of the sound wave
+			Tracker.MemoryCount = MemoryCount;
+		}
+		else
+		{
+			// use the memory count set by the tracker.
+			MemoryCount = Tracker.MemoryCount;
+		}
+	}
+
+	// we only increment memory count for the first time the sound wave is added
+	if (RefCount == 1)
+	{
+		ForceInlineMemoryCounterBytes += MemoryCount;
+		const uint64 MemoryUsageBytes = GetCurrentMemoryUsageBytes();
+		if (TrimCacheWhenOverBudgetCVar != 0 && MemoryUsageBytes > MemoryLimitBytes)
+		{
+			uint64 MemoryToTrim = 0;
+			if (MemoryLimitTrimPercentageCVar > 0.0f)
+			{
+				MemoryToTrim = MemoryLimitBytes * FMath::Min(MemoryLimitTrimPercentageCVar, 1.0f);
+			}
+			else
+			{
+				MemoryToTrim = MemoryUsageBytes - MemoryLimitBytes;
+			}
+
+			TrimMemory(MemoryToTrim, true);
+		}
+	}
+}
+
+void FAudioChunkCache::RemoveForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave)
+{
+	check(SoundWave.IsValid());
+	ensureMsgf(SoundWave->GetLoadingBehavior() == ESoundWaveLoadingBehavior::ForceInline,
+		TEXT("AudioStreamingCache::RemoveForceInlineSoundWave: Attempted to remove SoundWave not set to ForceInline: %s"), *SoundWave->GetFName().ToString());
+
+	if (SoundWave->GetLoadingBehavior() != ESoundWaveLoadingBehavior::ForceInline)
+	{
+		return;
+	}
+
+	int64 MemoryCount = 0;
+	int32 RefCount = 0;
+
+	// scope lock
+	{
+		FScopeLock Lock(&SoundWaveMemoryTrackerCritSec);
+
+		FSoundWaveMemoryTracker* Tracker = SoundWaveTracker.Find(SoundWave);
+		checkf(Tracker != nullptr, TEXT("AudioStreamCache::RemoveForceInlineSoundWave: Attempted to remove SoundWave that was never added, or has already been removed: %s"), *SoundWave->GetFName().ToString());
+		checkf(Tracker->RefCount > 0, TEXT("AudioStreamCache::RemoveForceInlineSoundWve: Attempted to remove SoundWave that has a ref count of zero or less. Something has gone horribly wrong: %s"), *SoundWave->GetFName().ToString());
+		MemoryCount = Tracker->MemoryCount;
+		RefCount = --Tracker->RefCount;
+		// use the memory count we cached from the last sound wave add
+		if (RefCount == 0)
+		{
+			SoundWaveTracker.Remove(SoundWave);
+		}
+	}
+	
+	if (RefCount == 0)
+	{
+		ForceInlineMemoryCounterBytes -= MemoryCount;
+	}
+}
+
+void FAudioChunkCache::AddMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature)
+{
+	UE_LOG(LogAudioStreamCaching, Log, TEXT("Adding Memory Counted Feature (%s) Memory Usage: %d bytes"), *Feature.GetFeatureName().ToString(), (int32)Feature.GetMemoryUseInBytes());
+	const uint64 OldMemoryCount = FeatureMemoryCounterBytes.AddExchange(Feature.GetMemoryUseInBytes());
+	UE_LOG(LogAudioStreamCaching, Log, TEXT("Total Memory Usage for all features: %d -> %d bytes"), (int32)OldMemoryCount, (int32)FeatureMemoryCounterBytes.Load());
+	const uint64 MemoryUsageBytes = GetCurrentMemoryUsageBytes();
+	if (TrimCacheWhenOverBudgetCVar != 0 && MemoryUsageBytes > MemoryLimitBytes)
+	{
+		uint64 MemoryToTrim = 0;
+		if (MemoryLimitTrimPercentageCVar > 0.0f)
+		{
+			MemoryToTrim = MemoryLimitBytes * FMath::Min(MemoryLimitTrimPercentageCVar, 1.0f);
+		}
+		else
+		{
+			MemoryToTrim = MemoryUsageBytes - MemoryLimitBytes;
+		}
+
+		TrimMemory(MemoryToTrim, true);
+	}
+}
+
+void FAudioChunkCache::RemoveMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature)
+{
+	UE_LOG(LogAudioStreamCaching, Log, TEXT("Removing Memory Counted Feature (%s) Memory Usage: %d"), *Feature.GetFeatureName().ToString(), (int32)Feature.GetMemoryUseInBytes());
+	checkf(FeatureMemoryCounterBytes.Load() >= Feature.GetMemoryUseInBytes(), TEXT("Count (%lu) < Remove (%lu)"), FeatureMemoryCounterBytes.Load(), Feature.GetMemoryUseInBytes());
+	const uint32 OldMemoryCount = FeatureMemoryCounterBytes.SubExchange(Feature.GetMemoryUseInBytes());
+	UE_LOG(LogAudioStreamCaching, Log, TEXT("Total Memory Usage for all features: %d -> %d"), (int32)OldMemoryCount, (int32)FeatureMemoryCounterBytes.Load());
 }
 
 uint64 FAudioChunkCache::TrimMemory(uint64 BytesToFree, bool bInAllowRetainedChunkTrimming)
@@ -1359,7 +1524,7 @@ void FAudioChunkCache::TouchElement(FCacheElement* InElement)
 
 bool FAudioChunkCache::ShouldAddNewChunk() const
 {
-	return (ChunksInUse < CachePool.Num()) && (MemoryCounterBytes.Load() < MemoryLimitBytes);
+	return (ChunksInUse < CachePool.Num()) && (GetCurrentMemoryUsageBytes() < MemoryLimitBytes);
 }
 
 FAudioChunkCache::FCacheElement* FAudioChunkCache::InsertChunk(const FChunkKey& InKey, const TSharedPtr<FSoundWaveData>& InSoundWavePtr)
@@ -1436,6 +1601,12 @@ void FAudioChunkCache::SetUpLeastRecentChunk()
 FAudioChunkCache::FCacheElement* FAudioChunkCache::EvictLeastRecentChunk(bool bBlockForPendingLoads /* = false */)
 {
 	FCacheElement* CacheElement = LeastRecentElement;
+
+	if (!CacheElement)
+	{
+		// This can happen if the MemoryLimitBytes is 0, prevting LeastRecentElement from being set to a valid element.
+		return nullptr;
+	}
 
 	// If the least recent chunk is evictable, evict it.
 	bool bIsChunkEvictable = CacheElement->CanEvictChunk();
@@ -1525,30 +1696,7 @@ FAudioChunkCache::FCacheElement* FAudioChunkCache::EvictLeastRecentChunk(bool bB
 	return CacheElement;
 }
 
-TArray<FObjectKey> FAudioChunkCache::GetLeastRecentlyUsedRetainedSoundWaves(int32 NumSoundWavesToRetrieve)
-{
-	// Start at the least recent element, then crawl our way up the LRU cache, 
-	// adding object keys for elements as we go.
-	FCacheElement* CacheElement = LeastRecentElement;
 
-	TArray<FObjectKey> SoundWavesToRelease;
-
-	// In order to avoid cycles, we always leave at least two chunks in the cache.
-	const FCacheElement* ElementToStopAt = MostRecentElement;
-
-	while (CacheElement && CacheElement != ElementToStopAt && SoundWavesToRelease.Num() < NumSoundWavesToRetrieve)
-	{
-		// If the least recent chunk is evictable, evict it.
-		if (CacheElement->IsInUse())
-		{
-			SoundWavesToRelease.Add(CacheElement->Key.ObjectKey);
-		}
-
-		CacheElement = CacheElement->MoreRecentElement;
-	}
-
-	return SoundWavesToRelease;
-}
 
 static FAutoConsoleTaskPriority CPrio_ClearAudioChunkCacheReadRequest(
 	TEXT("TaskGraph.TaskPriorities.ClearAudioChunkCacheReadRequest"),
@@ -1594,7 +1742,7 @@ void FAudioChunkCache::KickOffAsyncLoad(FCacheElement* CacheElement, const FChun
 {
 	check(CacheElement);
 
-	const FStreamedAudioChunk* Chunk = CacheElement->GetChunk(InKey.ChunkIndex);
+	FStreamedAudioChunk* Chunk = CacheElement->GetChunk(InKey.ChunkIndex);
 
 	if (nullptr == Chunk)
 	{
@@ -1678,7 +1826,8 @@ void FAudioChunkCache::KickOffAsyncLoad(FCacheElement* CacheElement, const FChun
 			MoveTemp(OnLoadComplete)
 		));
 
-		CacheElement->DDCTask->StartBackgroundTask();
+		// This task may perform a long synchronous DDC request. Using DoNotRunInsideBusyWait prevents potentially delaying foreground tasks.
+		CacheElement->DDCTask->StartBackgroundTask(GThreadPool, EQueuedWorkPriority::Normal, EQueuedWorkFlags::DoNotRunInsideBusyWait);
 	}
 	else
 #endif // #if WITH_EDITORONLY_DATA
@@ -1715,7 +1864,7 @@ void FAudioChunkCache::KickOffAsyncLoad(FCacheElement* CacheElement, const FChun
 			CacheElement->bIsLoaded = true;
 
 #if DEBUG_STREAM_CACHE
-			CacheElement->DebugInfo.TimeToLoad = (FPlatformTime::Seconds() - CacheElement->DebugInfo.TimeLoadStarted) * 1000.0f;
+			CacheElement->DebugInfo.TimeToLoad = FPlatformTime::ToMilliseconds64(FPlatformTime::Cycles64() - CacheElement->DebugInfo.TimeLoadStarted);
 #endif
 			const EAudioChunkLoadResult LoadResult = bWasCancelled ? EAudioChunkLoadResult::Interrupted : EAudioChunkLoadResult::Completed;
 			ExecuteOnLoadCompleteCallback(LoadResult, OnLoadCompleted, CallbackThread);
@@ -1724,21 +1873,53 @@ void FAudioChunkCache::KickOffAsyncLoad(FCacheElement* CacheElement, const FChun
 		};
 
 #if DEBUG_STREAM_CACHE
-		CacheElement->DebugInfo.TimeLoadStarted = FPlatformTime::Seconds();
+		CacheElement->DebugInfo.TimeLoadStarted = FPlatformTime::Cycles64();
 #endif
 
 		CacheElement->ReadRequest = nullptr;
-		IBulkDataIORequest* LocalReadRequest = Chunk->BulkData.CreateStreamingRequest(0, ChunkDataSize, AsyncIOPriority | AIOP_FLAG_DONTCACHE, &AsyncFileCallBack, CacheElement->ChunkData);
-		if (!LocalReadRequest)
+		if (Chunk->BulkData.IsBulkDataLoaded())
 		{
-			UE_LOG(LogAudioStreamCaching, Error, TEXT("Chunk load in audio LRU cache failed."));
-			OnLoadCompleted(EAudioChunkLoadResult::ChunkOutOfBounds);
-			NumberOfLoadsInFlight.Decrement();
+			// If this chunk has been inlined and loaded, move out the data into our newly allocated block.
+			const FBulkDataBuffer<uint8> ChunkMemory = Chunk->MoveOutAsBuffer();
+			
+			// Copy and delete to be sure we pay back the LLM and use our newly allocated version.
+			check(CacheElement->ChunkDataSize <= ChunkMemory.GetView().Num());
+			FMemory::Memcpy(CacheElement->ChunkData, ChunkMemory.GetView().GetData(), ChunkMemory.GetView().Num());
+
+#if DEBUG_STREAM_CACHE
+			UE_LOG(LogAudioStreamCaching, Verbose, TEXT("Loading Inlined Chunk: %s, %d, TimeToLoad=%2.2fms"), *InKey.SoundWaveName.ToString(),
+				InKey.ChunkIndex, FPlatformTime::ToMilliseconds64(FPlatformTime::Cycles64() - CacheElement->DebugInfo.TimeLoadStarted));
+
+			CacheElement->DebugInfo.bWasLoadedFromInlineChunk = true;
+			UE_LOG(LogAudioStreamCaching, VeryVerbose, TEXT("COPY+DISCARD %s - Bulk=0x%p"), *InKey.SoundWaveName.ToString(), &Chunk->BulkData);
+#endif //DEBUG_STREAM_CACHE
+			
+			// Fire the callback (this will mark it load completed etc).
+			AsyncFileCallBack(false, nullptr);
 		}
-		else if (FPlatformAtomics::InterlockedCompareExchangePointer((void* volatile*)&CacheElement->ReadRequest, LocalReadRequest, nullptr) == (void*)0x1)
+		else
 		{
-			// The request is completed before we can store it. Just delete it
-			TGraphTask<FClearAudioChunkCacheReadRequestTask>::CreateTask().ConstructAndDispatchWhenReady(LocalReadRequest);
+			UE_LOG(LogAudioStreamCaching, VeryVerbose, TEXT("DISK %s - Bulk=0x%p"), *InKey.SoundWaveName.ToString(), &Chunk->BulkData)
+
+#if DEBUG_STREAM_CACHE
+			CacheElement->DebugInfo.bWasInlinedButUnloaded = Chunk->BulkData.IsInlined() || Chunk->BulkData.GetBulkDataFlags() & BULKDATA_ForceInlinePayload;
+			UE_CLOG(CacheElement->DebugInfo.bWasInlinedButUnloaded,LogAudioStreamCaching, Log, TEXT("IO LOAD FOR INLINE %s - Bulk=0x%p"), *InKey.SoundWaveName.ToString(), &Chunk->BulkData);
+#endif //DEBUG_STREAM_CACHE
+			
+			UE_LOG(LogAudioStreamCaching, Verbose, TEXT("Loading Chunk: %s, %d"), *InKey.SoundWaveName.ToString(), InKey.ChunkIndex);
+
+			IBulkDataIORequest* LocalReadRequest = Chunk->BulkData.CreateStreamingRequest(0, ChunkDataSize, AsyncIOPriority | AIOP_FLAG_DONTCACHE, &AsyncFileCallBack, CacheElement->ChunkData);
+			if (!LocalReadRequest)
+			{
+				UE_LOG(LogAudioStreamCaching, Error, TEXT("Chunk load in audio LRU cache failed."));
+				OnLoadCompleted(EAudioChunkLoadResult::ChunkOutOfBounds);
+				NumberOfLoadsInFlight.Decrement();
+			}
+			else if (FPlatformAtomics::InterlockedCompareExchangePointer((void* volatile*)&CacheElement->ReadRequest, LocalReadRequest, nullptr) == (void*)0x1)
+			{
+				// The request is completed before we can store it. Just delete it
+				TGraphTask<FClearAudioChunkCacheReadRequestTask>::CreateTask().ConstructAndDispatchWhenReady(LocalReadRequest);
+			}
 		}
 	}
 }
@@ -1910,7 +2091,7 @@ uint64 FCachedAudioStreamingManager::TrimMemory(uint64 NumBytesToFree)
 	// Freeing longer chunks will get us bigger gains and (presumably) have lower churn.
 	for (FAudioChunkCache& Cache : CacheArray)
 	{
-		uint64 NumBytesFreed = Cache.TrimMemory(NumBytesLeftToFree, false);
+		const uint64 NumBytesFreed = Cache.TrimMemory(NumBytesLeftToFree, false);
 
 		// NumBytesFreed could potentially be more than what we requested to free (since we delete whole chunks at once).
 		NumBytesLeftToFree -= FMath::Min(NumBytesFreed, NumBytesLeftToFree);
@@ -1923,9 +2104,9 @@ uint64 FCachedAudioStreamingManager::TrimMemory(uint64 NumBytesToFree)
 	}
 
 	check(NumBytesLeftToFree <= NumBytesToFree);
-	uint64 TotalBytesFreed = NumBytesToFree - NumBytesLeftToFree;
+	const uint64 TotalBytesFreed = NumBytesToFree - NumBytesLeftToFree;
 
-	UE_LOG(LogAudioStreamCaching, Display, TEXT("Call to IAudioStreamingManager::TrimMemory successfully freed %lu of the requested %lu bytes."), TotalBytesFreed, NumBytesToFree);
+	UE_LOG(LogAudioStreamCaching, Display, TEXT("Call to IAudioStreamingManager::TrimMemory successfully freed %llu of the requested %llu bytes."), TotalBytesFreed, NumBytesToFree);
 	return TotalBytesFreed;
 }
 
@@ -1998,6 +2179,7 @@ TPair<int, int> FAudioChunkCache::DebugDisplayLegacy(UWorld* World, FViewport* V
 		bool bLoadingBehaviorExternallyOverriden = false;
 		bool bWasCacheMiss = false;
 		bool bIsStaleChunk = false;
+		bool bWasLoadedInlined = false;
 
 #if DEBUG_STREAM_CACHE
 		NumTotalChunks = CurrentElement->DebugInfo.NumTotalChunks;
@@ -2007,6 +2189,7 @@ TPair<int, int> FAudioChunkCache::DebugDisplayLegacy(UWorld* World, FViewport* V
 		LoadingBehavior = CurrentElement->DebugInfo.LoadingBehavior;
 		bLoadingBehaviorExternallyOverriden = CurrentElement->DebugInfo.bLoadingBehaviorExternallyOverriden;
 		bWasCacheMiss = CurrentElement->DebugInfo.bWasCacheMiss;
+		bWasLoadedInlined = CurrentElement->DebugInfo.bWasLoadedFromInlineChunk;
 #endif
 
 #if WITH_EDITOR
@@ -2016,7 +2199,7 @@ TPair<int, int> FAudioChunkCache::DebugDisplayLegacy(UWorld* World, FViewport* V
 
 		const bool bWasTrimmed = CurrentElement->ChunkDataSize == 0;
 
-		FString ElementInfo = *FString::Printf(TEXT("%4i. Size: %6.2f KB   Chunk: %d of %d   Request Count: %d    Average Index: %6.2f  Number of Handles Retaining Chunk: %d     Chunk Load Time(in ms): %6.4fms      Loading Behavior: %s%s      Name: %s Notes: %s %s"),
+		FString ElementInfo = *FString::Printf(TEXT("%4i. Size: %6.2f KB   Chunk: %d of %d   Request Count: %d    Average Index: %6.2f  Number of Handles Retaining Chunk: %d     Chunk Load Time(in ms): %6.4fms      Loading Behavior: %s%s      Name: %s Notes: %s %s %s"),
 			Index,
 			CurrentElement->ChunkDataSize / 1024.0f,
 			CurrentElement->Key.ChunkIndex,
@@ -2029,7 +2212,8 @@ TPair<int, int> FAudioChunkCache::DebugDisplayLegacy(UWorld* World, FViewport* V
 			bLoadingBehaviorExternallyOverriden ? TEXT("*") : TEXT(""),
 			bWasTrimmed ? TEXT("TRIMMED CHUNK") : *CurrentElement->Key.SoundWaveName.ToString(),
 			bWasCacheMiss ? TEXT("(Cache Miss!)") : TEXT(""),
-			bIsStaleChunk ? TEXT("(Stale Chunk)") : TEXT("")
+			bIsStaleChunk ? TEXT("(Stale Chunk)") : TEXT(""),
+			bWasLoadedInlined ? TEXT("(Inlined)") : TEXT("")
 		);
 
 		// Since there's a lot of info here,
@@ -2104,16 +2288,26 @@ FString FAudioChunkCache::DebugPrint()
 		CurrentElement = CurrentElement->LessRecentElement;
 	}
 
+	// Num bytes in use should include Force Inline data!
+	NumBytesCounter += ForceInlineMemoryCounterBytes;
+
+	// Num bytes should include feature data!
+	NumBytesCounter += FeatureMemoryCounterBytes;
+
 	// Convert to megabytes and print the total size:
 	const double NumMegabytesInUse = (double)NumBytesCounter / (1024 * 1024);
+	const double NumMegabytesForceInline = (double)ForceInlineMemoryCounterBytes / (1024 * 1024);
+	const double NumMegabytesExternalFeatures = (double)FeatureMemoryCounterBytes / (1024 * 1024);
 	const double NumMegabytesRetained = (double)NumBytesRetained / (1024 * 1024);
 
 	const double MaxCacheSizeMB = ((double)MemoryLimitBytes) / (1024 * 1024);
 	const double PercentageOfCacheRetained = NumMegabytesRetained / MaxCacheSizeMB;
+	const double PercentageOfCacheForceInlined = NumMegabytesForceInline / MaxCacheSizeMB;
+	const double PercentageOfCacheExternalFeatures = NumMegabytesExternalFeatures / MaxCacheSizeMB;
 
-	FString CacheMemoryHeader = *FString::Printf(TEXT("Retaining:\t, Loaded:\t, Max Potential Usage:\t, \n"));
-	FString CacheMemoryUsage = *FString::Printf(TEXT("%.4f Megabytes (%.3f of total capacity)\t,  %.4f Megabytes (%lu bytes)\t, %.4f Megabytes\t, \n"), NumMegabytesRetained, PercentageOfCacheRetained, NumMegabytesInUse, MemoryCounterBytes.Load(), MaxCacheSizeMB);
-
+	FString CacheMemoryHeader = *FString::Printf(TEXT("External Features:\t, Force Inline:\t, Retaining:\t, Loaded:\t, Max Potential Usage:\t, \n"));
+	FString CacheMemoryUsage = *FString::Printf(TEXT("%.4f Megabytes (%.3f%% of total capacity)\t %.4f Megabytes (%.3f%% of total capacity)\t %.4f Megabytes (%.3f%% of total capacity)\t,  %.4f Megabytes (%lu bytes)\t, %.4f Megabytes\t, \n"), 
+		NumMegabytesExternalFeatures, PercentageOfCacheExternalFeatures, NumMegabytesForceInline, PercentageOfCacheForceInlined, NumMegabytesRetained, PercentageOfCacheRetained, NumMegabytesInUse, MemoryCounterBytes.Load(), MaxCacheSizeMB);
 	OutputString += CacheMemoryHeader + CacheMemoryUsage + TEXT("\n");
 
 	// Second Pass: We're going to list the actual chunks in the cache.
@@ -2133,6 +2327,7 @@ FString FAudioChunkCache::DebugPrint()
 		bool bLoadingBehaviorExternallyOverriden = false;
 		bool bWasCacheMiss = false;
 		bool bIsStaleChunk = false;
+		bool bWasLoadedInlined = false;
 
 #if DEBUG_STREAM_CACHE
 		NumTotalChunks = CurrentElement->DebugInfo.NumTotalChunks;
@@ -2142,6 +2337,7 @@ FString FAudioChunkCache::DebugPrint()
 		LoadingBehavior = CurrentElement->DebugInfo.LoadingBehavior;
 		bLoadingBehaviorExternallyOverriden = CurrentElement->DebugInfo.bLoadingBehaviorExternallyOverriden;
 		bWasCacheMiss = CurrentElement->DebugInfo.bWasCacheMiss;
+		bWasLoadedInlined = CurrentElement->DebugInfo.bWasLoadedFromInlineChunk;
 #endif
 
 #if WITH_EDITOR
@@ -2151,7 +2347,7 @@ FString FAudioChunkCache::DebugPrint()
 
 		const bool bWasTrimmed = CurrentElement->ChunkDataSize == 0;
 
-		FString ElementInfo = *FString::Printf(TEXT("%4i.\t, %6.2f\t, %d of %d\t, %d\t, %6.2f\t, %d\t,  %6.4f\t, %s\t, %s%s, %s %s %s"),
+		FString ElementInfo = *FString::Printf(TEXT("%4i.\t, %6.2f\t, %d of %d\t, %d\t, %6.2f\t, %d\t,  %6.4f\t, %s\t, %s%s, %s %s %s %s"),
 			Index,
 			CurrentElement->ChunkDataSize / 1024.0f,
 			CurrentElement->Key.ChunkIndex,
@@ -2165,7 +2361,8 @@ FString FAudioChunkCache::DebugPrint()
 			bLoadingBehaviorExternallyOverriden ? TEXT("*") : TEXT(""),
 			bWasCacheMiss ? TEXT("(Cache Miss!)") : TEXT(""),
 			bIsStaleChunk ? TEXT("(Stale Chunk)") : TEXT(""),
-			CurrentElement->IsLoadInProgress() ? TEXT("(Loading In Progress)") : TEXT("")
+			CurrentElement->IsLoadInProgress() ? TEXT("(Loading In Progress)") : TEXT(""),
+			bWasLoadedInlined ? TEXT("(Inlined)") : TEXT("(Disk)")
 		);
 
 		if (!bWasTrimmed)
@@ -2201,6 +2398,8 @@ static const FLinearColor ColorLoadInProgress = FLinearColor::Black;
 static const FLinearColor ColorTrimmed = FLinearColor::Red;
 static const FLinearColor ColorCacheMiss = ColorLOD;
 static const FLinearColor ColorOther = FLinearColor::Gray;
+static const FLinearColor ColorForceInline(255 / ColorMax, 0, 255 / ColorMax); // Magenta
+static const FLinearColor ColorExternalFeatures(255 / ColorMax, 100 / ColorMax, 0x00 / ColorMax); // Orange
 
 
 
@@ -2244,7 +2443,6 @@ TPair<int, int> FAudioChunkCache::DebugDisplay(UWorld* World, FViewport* Viewpor
 	int32 NumTrimmed = 0;
 	int32 NumLoadInProgress = 0;
 	int32 NumOther = 0;
-
 
 	for (int i = 0; i < ChunksInUse; ++i)
 	{
@@ -2328,11 +2526,23 @@ TPair<int, int> FAudioChunkCache::DebugDisplay(UWorld* World, FViewport* Viewpor
 		}
 	}
 
+	uint64 ForceInlineBytes = ForceInlineMemoryCounterBytes.Load();
+	uint64 ExternalFeaturesBytes = FeatureMemoryCounterBytes.Load();
+	NumBytesCounter += ForceInlineBytes;
+	NumBytesCounter += ExternalFeaturesBytes;
 	// Convert to megabytes and print the total size:
 	const double NumMegabytesInUse = (double)NumBytesCounter / (1024 * 1024);
 	const double MaxCacheSizeMB = ((double)MemoryLimitBytes) / (1024 * 1024);
 
-	FString CacheMemoryUsage = *FString::Printf(TEXT("Using: %.4f Megabytes (%lu bytes). Max Potential Usage: %.4f Megabytes."), NumMegabytesInUse, MemoryCounterBytes.Load(), MaxCacheSizeMB);
+	// calculate ForceInline bytes and percentage
+	const double NumMegabytesForceInline = (double)ForceInlineBytes / (1024 * 1024);
+	const float PercentageForceInline = NumBytesCounter > 0 ? (double)ForceInlineBytes / NumBytesCounter : 0;
+
+	const double NumMegabytesExternalFeatures = (double)ExternalFeaturesBytes / (1024 * 1024);
+	const float PercentageExternalFeatures = NumBytesCounter > 0 ? (double)ExternalFeaturesBytes / NumBytesCounter : 0;
+
+	FString CacheMemoryUsage = *FString::Printf(TEXT("Using: %.4f Megabytes (%lu bytes). Max Potential Usage: %.4f Megabytes."), 
+		NumMegabytesInUse, GetCurrentMemoryUsageBytes(), MaxCacheSizeMB);
 
 	// We're going to align this horizontally with the number of elements right above it.
 	Canvas->DrawShadowedString(X, Y, *CacheMemoryUsage, UEngine::GetMediumFont(), FLinearColor::White);
@@ -2352,6 +2562,32 @@ TPair<int, int> FAudioChunkCache::DebugDisplay(UWorld* World, FViewport* Viewpor
 		+ NumTrimmed
 		+ NumLoadInProgress
 		+ NumOther;
+
+	float PercentageExtra = PercentageForceInline + PercentageExternalFeatures;
+	if (FMath::IsNearlyEqual(PercentageExtra, 1.0))
+	{
+		// if the Percentage is basically 1, then just set the "number of chunks" to a really big number.
+		// so everything else just gets zeroed out
+		NumChunks = UE_BIG_NUMBER;
+	}
+	else if (PercentageExtra > 0.0)
+	{
+		// calculate the NumExtra based on the percentage of memory used.
+		int32 NumExtra = NumChunks * (PercentageExtra / (1 - PercentageExtra));
+
+		// derivation:
+		// NumChunks + NumExtra = TotalNumChunks
+		// NumExtra = TotalNumChunks * PercentageExtra
+		// 
+		// NumChunks = TotalNumChunks * (1 - PercentageExtra)
+		// TotalNumChunks = NumChunks / (1 - PercentageExtra)
+		// 
+		// - using substitution with the above
+		//  NumExtra = NumChunks * PercentageExtra / (1 - PercentageExtra)
+
+		// Add the newly calculated Extra "chunks" to the mix 
+		NumChunks += NumExtra;
+	}
 
 	if (NumChunks == 0)
 	{
@@ -2390,6 +2626,8 @@ TPair<int, int> FAudioChunkCache::DebugDisplay(UWorld* World, FViewport* Viewpor
 	const int32 BarWidthTrimmed = PercentageTrimmed * BarWidth;
 	const int32 BarWidthLoadInProgress = PercentageLoadInProgress * BarWidth;
 	const int32 BarWidthOther = PercentageOther * BarWidth;
+	const int32 BarWidthForceInline = PercentageForceInline * BarWidth;
+	const int32 BarWidthExternalFeatures = PercentageExternalFeatures * BarWidth;
 
 
 	// Draw color key
@@ -2415,6 +2653,14 @@ TPair<int, int> FAudioChunkCache::DebugDisplay(UWorld* World, FViewport* Viewpor
 	TempString = *FString::Printf(TEXT("Load In Progress: %.2f %%"), 100.f * PercentageLoadInProgress);
 	Canvas->DrawShadowedString(X, Y, *TempString, UEngine::GetSmallFont(), ColorLoadInProgress);
 	Y += 15;
+
+	TempString = *FString::Printf(TEXT("Force Inline: %.2f %% (%.2f MB)"), 100.f * PercentageForceInline, NumMegabytesForceInline);
+	Canvas->DrawShadowedString(X, Y, *TempString, UEngine::GetSmallFont(), ColorForceInline);
+	Y += 15;
+
+	TempString = *FString::Printf(TEXT("External Features: %.2f %% (%.2f MB)"), 100.f * PercentageExternalFeatures, NumMegabytesExternalFeatures);
+	Canvas->DrawShadowedString(X, Y, *TempString, UEngine::GetSmallFont(), ColorExternalFeatures);
+	Y += 25;
 
 	TempString = *FString::Printf(TEXT("Other: %.2f %%"), 100.f * PercentageOther);
 	Canvas->DrawShadowedString(X, Y, *TempString, UEngine::GetSmallFont(), ColorOther);
@@ -2486,6 +2732,28 @@ TPair<int, int> FAudioChunkCache::DebugDisplay(UWorld* World, FViewport* Viewpor
 	// (other)
 	Canvas->DrawTile(CurrHorzOffset, CurrVertOffset, BarWidthOther, BarHeight, 0, 0, 0, 0, ColorOther);
 	CurrHorzOffset += BarWidthOther;
+	
+	if (BarWidthForceInline > 0 || BarWidthExternalFeatures > 0)
+	{
+		// (|| divider between cache and chunk memory usage && force inline + External features)
+		const int32 DividerWidth = 5;
+		Canvas->DrawTile(CurrHorzOffset, CurrVertOffset, DividerWidth, BarHeight, 0, 0, 0, 0, FLinearColor::Black);
+		CurrHorzOffset += DividerWidth;
+
+		if (BarWidthForceInline > 0)
+		{
+			// (Force Inline)
+			Canvas->DrawTile(CurrHorzOffset, CurrVertOffset, BarWidthForceInline - DividerWidth, BarHeight, 0, 0, 0, 0, ColorForceInline);
+			CurrHorzOffset += BarWidthForceInline;
+		}
+
+		if (BarWidthExternalFeatures > 0)
+		{
+			// (External Features)
+			Canvas->DrawTile(CurrHorzOffset, CurrVertOffset, BarWidthExternalFeatures - DividerWidth, BarHeight, 0, 0, 0, 0, ColorExternalFeatures);
+			CurrHorzOffset += BarWidthExternalFeatures;
+		}
+	}
 
 	Y = (CurrVertOffset + 24);
 

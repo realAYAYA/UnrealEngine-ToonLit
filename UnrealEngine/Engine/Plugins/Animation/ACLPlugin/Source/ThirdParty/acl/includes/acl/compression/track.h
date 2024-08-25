@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/iallocator.h"
 #include "acl/core/string.h"
@@ -50,6 +51,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// An untyped track of data. A track is a time series of values sampled
 	// uniformly over time at a specific sample rate. Tracks can either own
@@ -103,6 +106,9 @@ namespace acl
 
 		//////////////////////////////////////////////////////////////////////////
 		// Returns the number of samples contained within the track.
+		// This does not account for the repeating first sample when the wrap
+		// looping policy is used.
+		// See `sample_looping_policy` for details.
 		uint32_t get_num_samples() const { return m_num_samples; }
 
 		//////////////////////////////////////////////////////////////////////////
@@ -272,6 +278,17 @@ namespace acl
 		const sample_type& operator[](uint32_t index) const;
 
 		//////////////////////////////////////////////////////////////////////////
+		// Returns a pointer to the sample data.
+		// Note that if the sample stride is not sizeof(sample_type) then samples
+		// are not contiguous in memory!
+		sample_type* get_data();
+
+		//////////////////////////////////////////////////////////////////////////
+		// Note that if the sample stride is not sizeof(sample_type) then samples
+		// are not contiguous in memory!
+		const sample_type* get_data() const;
+
+		//////////////////////////////////////////////////////////////////////////
 		// Returns the track description.
 		desc_type& get_description();
 
@@ -353,6 +370,8 @@ namespace acl
 	using track_float4f			= track_typed<track_type8::float4f>;
 	using track_vector4f		= track_typed<track_type8::vector4f>;
 	using track_qvvf			= track_typed<track_type8::qvvf>;
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 #include "acl/compression/impl/track.impl.h"

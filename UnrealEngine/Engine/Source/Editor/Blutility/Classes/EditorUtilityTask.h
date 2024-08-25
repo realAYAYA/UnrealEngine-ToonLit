@@ -57,6 +57,7 @@ public:
 protected:
 	virtual void BeginExecution() {}
 	virtual void CancelRequested() {}
+	virtual FText GetTaskTitle() const;
 
 	UFUNCTION(BlueprintImplementableEvent, Category=Task, meta=(DisplayName="BeginExecution"))
 	void ReceiveBeginExecution();
@@ -64,7 +65,11 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category=Task, meta=(DisplayName="CancelRequested"))
 	void ReceiveCancelRequested();
 
+	UFUNCTION(BlueprintImplementableEvent, Category=Task)
+	FText GetTaskTitleOverride() const;
+
 private:
+	// Calls GetTaskTitle() and GetTaskTitleOverride()
 	void CreateNotification();
 
 	// Calls BeginExecution() and ReceiveBeginExecution()

@@ -11,7 +11,7 @@
 /**
  * Utilities to assist with modifying properties through their handle so values are propagated across instances.
  */
-namespace DisplayClusterConfiguratorPropertyUtils
+namespace UE::DisplayClusterConfiguratorPropertyUtils
 {
 	/**
 	 * Create a temporary property handle for a given property. Call GetPropertyHandle() from here.

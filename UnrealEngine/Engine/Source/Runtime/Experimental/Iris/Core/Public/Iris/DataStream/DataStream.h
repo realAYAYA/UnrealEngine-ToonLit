@@ -9,6 +9,16 @@ namespace UE::Net
 {
 	class FNetSerializationContext;
 	enum class EPacketDeliveryStatus : uint8;
+
+enum class EDataStreamWriteMode : unsigned
+{
+	// Allowed to write all data, this is the default WriteMode
+	Full,
+
+	// Only write data that should be sent after PostTickDispatch
+	PostTickDispatch,
+};
+
 }
 
 /**
@@ -53,6 +63,12 @@ public:
 		HasMoreData,
 	};
 
+	struct FBeginWriteParameters
+	{
+		UE::Net::EDataStreamWriteMode WriteMode = UE::Net::EDataStreamWriteMode::Full;
+		bool bCanWriteMoreData = false;
+	};
+
 public:
 	IRISCORE_API virtual ~UDataStream();
 
@@ -60,7 +76,7 @@ public:
 	 * Called before any calls to potential WriteData, if it returns EWriteData::NoData no other calls will be made.
 	 * The purpose of the method is to enable a DataStream to setup data that can persist over multiple calls to WriteData if bandwidth allows.
 	*/
-	IRISCORE_API virtual EWriteResult BeginWrite();
+	IRISCORE_API virtual EWriteResult BeginWrite(const FBeginWriteParameters& Params);
 
 	/**
 	 * Serialize data to a bitstream and optionally store record of what was serialized to a custom FDataStreamRecord.

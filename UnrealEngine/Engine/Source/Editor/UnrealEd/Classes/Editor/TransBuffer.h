@@ -86,7 +86,7 @@ protected:
 						RemovedTransactions.Add(UndoBuffer[i]);
 					}
 
-					UndoBuffer.RemoveAt(UndoBuffer.Num() - UndoCount, UndoCount, false);
+					UndoBuffer.RemoveAt(UndoBuffer.Num() - UndoCount, UndoCount, EAllowShrinking::No);
 				}
 				// Over memory budget handling
  				else 
@@ -118,7 +118,7 @@ protected:
 							RemovedTransactions.Add(UndoBuffer[i]);
 						}
 
-						UndoBuffer.RemoveAt(0, TransactionsToRemove, false);
+						UndoBuffer.RemoveAt(0, TransactionsToRemove, EAllowShrinking::No);
 					}
 				}
 

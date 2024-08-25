@@ -11,6 +11,7 @@
 #include "Serialization/MemoryReader.h"
 #include "VulkanLLM.h"
 #include "VulkanDescriptorSets.h"
+#include "RHICoreShader.h"
 
 TAutoConsoleVariable<int32> GDynamicGlobalUBs(
 	TEXT("r.Vulkan.DynamicGlobalUBs"),
@@ -87,6 +88,7 @@ ShaderType* FVulkanShaderFactory::CreateShader(TArrayView<const uint8> Code, FVu
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 				FShaderCodeReader ShaderCode(Code);
 				RetShader->Debug.ShaderName = ShaderCode.FindOptionalData(FShaderCodeName::Key);
+				UE::RHICore::SetupShaderCodeValidationData(RetShader, ShaderCode);
 #endif
 			}
 		}
@@ -133,6 +135,21 @@ FVulkanRayTracingShader* FVulkanShaderFactory::CreateRayTracingShader(TArrayView
 		FVulkanShader::FSpirvContainer SpirvContainer;
 		Ar << SpirvContainer;
 
+		const bool bIsHitGroup = (ShaderFrequency == SF_RayHitGroup);
+		FVulkanShader::FSpirvContainer AnyHitSpirvContainer;
+		FVulkanShader::FSpirvContainer IntersectionSpirvContainer;
+		if (bIsHitGroup)
+		{
+			if (CodeHeader.RayGroupAnyHit == FVulkanShaderHeader::ERayHitGroupEntrypoint::SeparateBlob)
+			{
+				Ar << AnyHitSpirvContainer;
+			}
+			if (CodeHeader.RayGroupIntersection == FVulkanShaderHeader::ERayHitGroupEntrypoint::SeparateBlob)
+			{
+				Ar << IntersectionSpirvContainer;
+			}
+		}
+
 		{
 			FRWScopeLock ScopedLock(RWLock[ShaderFrequency], SLT_Write);
 			FVulkanShader* const* FoundShaderPtr = ShaderMap[ShaderFrequency].Find(ShaderKey);
@@ -144,6 +161,11 @@ FVulkanRayTracingShader* FVulkanShaderFactory::CreateRayTracingShader(TArrayView
 			{
 				RetShader = new FVulkanRayTracingShader(Device, ShaderFrequency);
 				RetShader->Setup(MoveTemp(CodeHeader), MoveTemp(SerializedSRT), MoveTemp(SpirvContainer), ShaderKey);
+				if (bIsHitGroup)
+				{
+					RetShader->AnyHitSpirvContainer = MoveTemp(AnyHitSpirvContainer);
+					RetShader->IntersectionSpirvContainer = MoveTemp(IntersectionSpirvContainer);
+				}
 				RetShader->RayTracingPayloadType = RetShader->CodeHeader.RayTracingPayloadType;
 				RetShader->RayTracingPayloadSize = RetShader->CodeHeader.RayTracingPayloadSize;
 
@@ -152,6 +174,7 @@ FVulkanRayTracingShader* FVulkanShaderFactory::CreateRayTracingShader(TArrayView
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 				FShaderCodeReader ShaderCode(Code);
 				RetShader->Debug.ShaderName = ShaderCode.FindOptionalData(FShaderCodeName::Key);
+                UE::RHICore::SetupShaderCodeValidationData(RetShader, ShaderCode);
 #endif
 			}
 		}
@@ -203,7 +226,7 @@ FArchive& operator<<(FArchive& Ar, FVulkanShader::FSpirvContainer& SpirvContaine
 	}
 	else
 	{
-		const int32 CompressedUpperBound = FCompression::CompressMemoryBound(NAME_Zlib, SpirvCodeSizeInBytes);
+		const int32 CompressedUpperBound = FCompression::CompressMemoryBound(NAME_Oodle, SpirvCodeSizeInBytes);
 		SpirvCode.Reserve(CompressedUpperBound);
 		SpirvCode.SetNumUninitialized(CompressedUpperBound);
 
@@ -212,7 +235,7 @@ FArchive& operator<<(FArchive& Ar, FVulkanShader::FSpirvContainer& SpirvContaine
 		Ar.Serialize(UncompressedSpirv.GetData(), SpirvCodeSizeInBytes);
 
 		int32 CompressedSizeBytes = CompressedUpperBound;
-		if (FCompression::CompressMemory(NAME_Zlib, SpirvCode.GetData(), CompressedSizeBytes, UncompressedSpirv.GetData(), UncompressedSpirv.GetTypeSize() * UncompressedSpirv.Num()))
+		if (FCompression::CompressMemory(NAME_Oodle, SpirvCode.GetData(), CompressedSizeBytes, UncompressedSpirv.GetData(), UncompressedSpirv.GetTypeSize() * UncompressedSpirv.Num(), ECompressionFlags::COMPRESS_BiasSpeed))
 		{
 			SpirvContainer.UncompressedSizeBytes = SpirvCodeSizeInBytes;
 			SpirvCode.SetNumUninitialized(CompressedSizeBytes);
@@ -233,21 +256,21 @@ FVulkanShaderModule::~FVulkanShaderModule()
 	Device->GetDeferredDeletionQueue().EnqueueResource(VulkanRHI::FDeferredDeletionQueue2::EType::ShaderModule, ActualShaderModule);
 }
 
-FVulkanShader::FSpirvCode FVulkanShader::GetSpirvCode()
+FVulkanShader::FSpirvCode FVulkanShader::GetSpirvCode(const FSpirvContainer& Container)
 {
-	if (SpirvContainer.IsCompressed())
+	if (Container.IsCompressed())
 	{
 		TArray<uint32> UncompressedSpirv;
 		const size_t ElementSize = UncompressedSpirv.GetTypeSize();
-		UncompressedSpirv.Reserve(SpirvContainer.GetSizeBytes() / ElementSize);
-		UncompressedSpirv.SetNumUninitialized(SpirvContainer.GetSizeBytes() / ElementSize);
-		FCompression::UncompressMemory(NAME_Zlib, UncompressedSpirv.GetData(), SpirvContainer.GetSizeBytes(), SpirvContainer.SpirvCode.GetData(), SpirvContainer.SpirvCode.Num());
+		UncompressedSpirv.Reserve(Container.GetSizeBytes() / ElementSize);
+		UncompressedSpirv.SetNumUninitialized(Container.GetSizeBytes() / ElementSize);
+		FCompression::UncompressMemory(NAME_Oodle, UncompressedSpirv.GetData(), Container.GetSizeBytes(), Container.SpirvCode.GetData(), Container.SpirvCode.Num());
 
 		return FSpirvCode(MoveTemp(UncompressedSpirv));
 	}
 	else
 	{
-		return FSpirvCode(TArrayView<uint32>((uint32*)SpirvContainer.SpirvCode.GetData(), SpirvContainer.SpirvCode.Num() / sizeof(uint32)));
+		return FSpirvCode(TArrayView<uint32>((uint32*)Container.SpirvCode.GetData(), Container.SpirvCode.Num() / sizeof(uint32)));
 	}
 }
 
@@ -267,7 +290,7 @@ void FVulkanShader::Setup(FVulkanShaderHeader&& InCodeHeader, FShaderResourceTab
 
 	checkf(SpirvContainer.GetSizeBytes() != 0, TEXT("Empty SPIR-V! %s"), *CodeHeader.DebugName);
 
-	check(CodeHeader.UniformBufferSpirvInfos.Num() == CodeHeader.UniformBuffers.Num());
+	check(IsRayTracingShaderFrequency(Frequency) || (CodeHeader.UniformBufferSpirvInfos.Num() == CodeHeader.UniformBuffers.Num()));
 
 	check(CodeHeader.GlobalSpirvInfos.Num() == CodeHeader.Globals.Num());
 
@@ -433,16 +456,95 @@ TRefCountPtr<FVulkanShaderModule> FVulkanShader::GetOrCreateHandle()
 {
 	check(Device->SupportsBindless());
 	FScopeLock Lock(&VulkanShaderModulesMapCS);
+
+	const uint32 MainModuleIndex = 0;
+	TRefCountPtr<FVulkanShaderModule>* Found = ShaderModules.Find(MainModuleIndex);
+	if (Found)
+	{
+		return *Found;
+	}
+
 	FSpirvCode Spirv = GetSpirvCode();
 
 	TRefCountPtr<FVulkanShaderModule> Module = CreateShaderModule(Device, Spirv);
-	ShaderModules.Add(0, Module);
+	ShaderModules.Add(MainModuleIndex, Module);
 	if (!CodeHeader.DebugName.IsEmpty())
 	{
 		VULKAN_SET_DEBUG_NAME((*Device), VK_OBJECT_TYPE_SHADER_MODULE, Module->GetVkShaderModule(), TEXT("%s : (FVulkanShader*)0x%p"), *CodeHeader.DebugName, this);
 	}
 	return Module;
 }
+
+#if VULKAN_RHI_RAYTRACING
+TRefCountPtr<FVulkanShaderModule> FVulkanRayTracingShader::GetOrCreateHandle(uint32 ModuleIdentifier)
+{
+	check(Device->SupportsBindless());
+
+	const bool bIsAnyHitModuleIdentifier = (ModuleIdentifier == AnyHitModuleIdentifier);
+	const bool bIsIntersectionModuleIdentifier = (ModuleIdentifier == IntersectionModuleIdentifier);
+
+	// If we're using a single blob with multiple entry points, forward everything to the main module
+	if ((bIsAnyHitModuleIdentifier && (GetCodeHeader().RayGroupAnyHit == FVulkanShaderHeader::ERayHitGroupEntrypoint::CommonBlob)) ||
+		(bIsIntersectionModuleIdentifier && (GetCodeHeader().RayGroupIntersection == FVulkanShaderHeader::ERayHitGroupEntrypoint::CommonBlob)))
+	{
+		return GetOrCreateHandle(MainModuleIdentifier);
+	}
+
+	FScopeLock Lock(&VulkanShaderModulesMapCS);
+
+	TRefCountPtr<FVulkanShaderModule>* Found = ShaderModules.Find(ModuleIdentifier);
+	if (Found)
+	{
+		return *Found;
+	}
+
+	auto CreateHitGroupHandle = [&](const FSpirvContainer& Container)
+	{
+		FSpirvCode Spirv = GetSpirvCode(Container);
+		TRefCountPtr<FVulkanShaderModule> Module = CreateShaderModule(Device, Spirv);
+		ShaderModules.Add(ModuleIdentifier, Module);
+		return Module;
+	};
+
+	TRefCountPtr<FVulkanShaderModule> Module;
+	if (bIsAnyHitModuleIdentifier)
+	{
+		check(GetFrequency() == SF_RayHitGroup);
+		if (GetCodeHeader().RayGroupAnyHit == FVulkanShaderHeader::ERayHitGroupEntrypoint::SeparateBlob)
+		{
+			Module = CreateHitGroupHandle(AnyHitSpirvContainer);
+		}
+		else
+		{
+			return TRefCountPtr<FVulkanShaderModule>();
+		}
+	}
+	else if (bIsIntersectionModuleIdentifier)
+	{
+		check(GetFrequency() == SF_RayHitGroup);
+		if (GetCodeHeader().RayGroupIntersection == FVulkanShaderHeader::ERayHitGroupEntrypoint::SeparateBlob)
+		{
+			Module = CreateHitGroupHandle(IntersectionSpirvContainer);
+		}
+		else
+		{
+			return TRefCountPtr<FVulkanShaderModule>();
+		}
+	}
+	else
+	{
+		Module = CreateHitGroupHandle(SpirvContainer);
+	}
+
+	if (!CodeHeader.DebugName.IsEmpty())
+	{
+		VULKAN_SET_DEBUG_NAME((*Device), VK_OBJECT_TYPE_SHADER_MODULE, Module->GetVkShaderModule(), TEXT("%s : (FVulkanShader*)0x%p"), *CodeHeader.DebugName, this);
+	}
+
+	return Module;
+}
+#endif // VULKAN_RHI_RAYTRACING
+
 
 TRefCountPtr<FVulkanShaderModule> FVulkanShader::CreateHandle(const FVulkanLayout* Layout, uint32 LayoutHash)
 {
@@ -901,7 +1003,7 @@ void FVulkanDescriptorSetsLayoutInfo::FinalizeBindings(const FVulkanDevice& Devi
 	}
 
 	CompileTypesUsageID();
-	GenerateHash(ImmutableSamplers);
+	GenerateHash(ImmutableSamplers, bIsCompute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS);
 
 	// If we are consolidating and no uniforms are present in the shader, then strip the empty set data
 	if (bConsolidateAllIntoOneSet)

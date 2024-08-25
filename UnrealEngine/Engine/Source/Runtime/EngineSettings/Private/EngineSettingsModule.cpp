@@ -118,7 +118,7 @@ FString UGameMapsSettings::GetGameModeForName(const FString& GameModeName)
 	}
 
 	// Check deprecated config
-	FConfigSection* GameModeSection = GConfig->GetSectionPrivate(TEXT("/Script/Engine.GameMode"), false, true, GGameIni);
+	const FConfigSection* GameModeSection = GConfig->GetSection(TEXT("/Script/Engine.GameMode"), false, GGameIni);
 	
 	if (GameModeSection)
 	{
@@ -161,7 +161,7 @@ FString UGameMapsSettings::GetGameModeForMapName(const FString& MapName)
 	}
 
 	// Check deprecated config
-	FConfigSection* GameModeSection = GConfig->GetSectionPrivate(TEXT("/Script/Engine.WorldSettings"), false, true, GGameIni);
+	const FConfigSection* GameModeSection = GConfig->GetSection(TEXT("/Script/Engine.WorldSettings"), false, GGameIni);
 
 	if (GameModeSection)
 	{

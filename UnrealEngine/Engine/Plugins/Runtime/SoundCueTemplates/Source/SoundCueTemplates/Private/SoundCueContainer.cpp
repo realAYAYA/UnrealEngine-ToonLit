@@ -95,7 +95,7 @@ void USoundCueContainer::OnRebuildGraph(USoundCue& SoundCue) const
 	{
 		if (!VariationArray[i])
 		{
-			VariationArray.RemoveAtSwap(i, 1, false);
+			VariationArray.RemoveAtSwap(i, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -191,8 +191,6 @@ void USoundCueContainer::OnRebuildGraph(USoundCue& SoundCue) const
 
 int32 USoundCueContainer::GetMaxVariations(const FSoundCueTemplateQualitySettings& QualitySettings) const
 {
-	int32 MaxVariations = TNumericLimits<int32>::Max();
-
 	switch (ContainerType)
 	{
 		case ESoundContainerType::Concatenate:
@@ -214,8 +212,6 @@ int32 USoundCueContainer::GetMaxVariations(const FSoundCueTemplateQualitySetting
 		}
 		break;
 	}
-
-	return MaxVariations;
 }
 
 TSet<FName>& USoundCueContainer::GetCategoryAllowList()

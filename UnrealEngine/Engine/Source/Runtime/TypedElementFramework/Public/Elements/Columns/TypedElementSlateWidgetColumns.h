@@ -9,6 +9,7 @@
 #include "TypedElementSlateWidgetColumns.generated.h"
 
 class SWidget;
+class STedsWidget;
 
 /**
  * Stores a widget reference in the data storage. At the start of processing any
@@ -21,7 +22,11 @@ struct FTypedElementSlateWidgetReferenceColumn final : public FTypedElementDataS
 {
 	GENERATED_BODY()
 
+	// The actual internal widget
 	TWeakPtr<SWidget> Widget;
+
+	// Reference to the container widget that holds the internal widget
+	TWeakPtr<STedsWidget> TedsWidget;
 };
 
 /**

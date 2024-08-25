@@ -1505,6 +1505,10 @@ void FMeshSceneAdapter::InitializeSpatialWrappers(const TArray<FActorAdapter*>& 
 	}
 }
 
+bool FMeshSceneAdapter::IsValid() const
+{
+	return !SpatialAdapters.IsEmpty();
+}
 
 void FMeshSceneAdapter::Build(const FMeshSceneAdapterBuildOptions& BuildOptions)
 {
@@ -1752,7 +1756,7 @@ void FMeshSceneAdapter::Build_FullDecompose(const FMeshSceneAdapterBuildOptions&
 		ToBuildQueueLock.Lock();
 		check(ToBuild.Num() > 0);
 		FProcessedSourceMeshStats& ItemStats = Stats[ToBuild.Num() - 1];
-		FSpatialWrapperInfo* WrapperInfo = ToBuild.Pop(false);
+		FSpatialWrapperInfo* WrapperInfo = ToBuild.Pop(EAllowShrinking::No);
 		NumSourceUniqueTris += WrapperInfo->SpatialWrapper->GetTriangleCount();
 		ToBuildQueueLock.Unlock();
 
@@ -2085,7 +2089,7 @@ void FMeshSceneAdapter::Build_FullDecompose(const FMeshSceneAdapterBuildOptions&
 		// we have to treat the list like a queue to get it to be processed in our desired order
 		ToBuildQueueLock.Lock();
 		check(PendingBuildJobs.Num() > 0);
-		FBuildJob BuildJob = PendingBuildJobs.Pop(false);
+		FBuildJob BuildJob = PendingBuildJobs.Pop(EAllowShrinking::No);
 		ToBuildQueueLock.Unlock();
 		BuildJob.BuildWrapper->Build(BuildOptions);
 		if (BuildJob.BuildWrapper->GetTriangleCount() == 1)

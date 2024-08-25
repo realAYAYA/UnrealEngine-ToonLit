@@ -38,9 +38,9 @@ static void GetPrimitiveComponentsFromLayers(UWorld* World, const TArray<FName>&
 					{
 						if (const UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component))
 						{
-							if (!InExcludePrimitivesList || !InExcludePrimitivesList->Contains(PrimComp->ComponentId))
+							if (!InExcludePrimitivesList || !InExcludePrimitivesList->Contains(PrimComp->GetPrimitiveSceneId()))
 							{
-								OutPrimitives.Add(PrimComp->ComponentId);
+								OutPrimitives.Add(PrimComp->GetPrimitiveSceneId());
 							}
 						}
 					}

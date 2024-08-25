@@ -21,5 +21,7 @@ public class DisplayClusterLightCardEditorShaders : ModuleRules
 		PrivateIncludePaths.AddRange(
 			new string[] {
 			});
+
+		ShortName = "DCLCEShaders";
 	}
 }

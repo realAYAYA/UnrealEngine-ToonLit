@@ -6,8 +6,6 @@
 
 #if PLATFORM_WINDOWS
 
-#include "Windows/WindowsHWrapper.h"
-
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 THIRD_PARTY_INCLUDES_START

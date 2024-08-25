@@ -2,9 +2,9 @@
 
 #pragma once
 
+#include "Misc/Build.h"
 #include "Misc/WildcardString.h"
 #include "UObject/NameTypes.h"
-
 
 class IDumpGPUUploadServiceProvider
 {
@@ -30,3 +30,18 @@ public:
 
 	static RENDERCORE_API IDumpGPUUploadServiceProvider* GProvider;
 };
+
+#if WITH_DUMPGPU
+
+namespace UE::RenderCore::DumpGPU
+{
+
+RENDERCORE_API void TickEndFrame();
+
+RENDERCORE_API bool IsDumpingFrame();
+
+RENDERCORE_API bool ShouldCameraCut();
+
+} // namespace  UE::RenderCore::DumpGPU
+
+#endif // WITH_DUMPGPU

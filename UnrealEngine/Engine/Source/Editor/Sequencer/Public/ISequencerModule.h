@@ -19,13 +19,17 @@ class FExtensibilityManager;
 class FMenuBuilder;
 class FSequencerCustomizationManager;
 class ISequencerTrackEditor;
-class ISequencerOutlinerColumn;
 class ISequencerEditorObjectBinding;
 class IToolkitHost;
 class UMovieSceneSequence;
 struct FSequencerInitParams;
 
-namespace UE { namespace Sequencer { class FTrackModel; } }
+namespace UE::Sequencer
+{
+	class FTrackModel;
+	class IObjectSchema;
+	class IOutlinerColumn;
+} // namespace UE::Sequencer
 
 enum class ECurveEditorTreeFilterType : uint32;
 
@@ -57,7 +61,7 @@ DECLARE_DELEGATE_RetVal_OneParam(TSharedRef<ISequencerEditorObjectBinding>, FOnC
 DECLARE_DELEGATE_RetVal_OneParam(TSharedPtr<UE::Sequencer::FTrackModel>, FOnCreateTrackModel, UMovieSceneTrack*);
 
 /** A delegate which will create an outliner column */
-DECLARE_DELEGATE_RetVal_OneParam(TSharedRef<ISequencerOutlinerColumn>, FOnCreateOutlinerColumn, TSharedRef<ISequencer>);
+DECLARE_DELEGATE_RetVal(TSharedRef<UE::Sequencer::IOutlinerColumn>, FOnCreateOutlinerColumn);
 
 /** A delegate that is executed when adding menu content. */
 DECLARE_DELEGATE_OneParam(FOnGetContextMenuContent, FMenuBuilder& /*MenuBuilder*/);
@@ -348,6 +352,26 @@ public:
 	 * the currently focused sequence type and other dynamic criteria.
 	 */
 	virtual TSharedPtr<FSequencerCustomizationManager> GetSequencerCustomizationManager() const = 0;
+
+	/**
+	 * Register a new object schema defining how an object is able to be animated through Sequencer
+	 */
+	virtual void RegisterObjectSchema(TSharedPtr<UE::Sequencer::IObjectSchema> InObjectSchema) = 0;
+
+	/**
+	 * Unregister a new object schema defining how an object is able to be animated through Sequencer
+	 */
+	virtual void UnregisterObjectSchema(TSharedPtr<UE::Sequencer::IObjectSchema> InSchema) = 0;
+
+	/**
+	 * Retrieve all the currently registered object schemas
+	 */
+	virtual TArrayView<const TSharedPtr<UE::Sequencer::IObjectSchema>> GetObjectSchemas() const = 0;
+
+	/**
+	 * Find an object schema for the specified object
+	 */
+	virtual TSharedPtr<UE::Sequencer::IObjectSchema> FindObjectSchema(const UObject* Object) const = 0;
 
 	/**
 	 * Register a sequencer channel type using a default channel interface.

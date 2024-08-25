@@ -271,7 +271,7 @@ TAttribute<FText> FNiagaraGraphEditorSummoner::ConstructTabNameForObject(UEdGrap
 			TSharedPtr<FNiagaraScratchPadScriptViewModel> ScratchScriptViewModel = UNiagaraSystemEditorDocumentsViewModel::GetScratchPadViewModelFromGraph(SysViewModel.Get(), DocumentID);
 			if (ScratchScriptViewModel)
 			{
-				return ScratchScriptViewModel->GetDisplayName(); /* FText::FromString(ScratchScriptViewModel->GetOriginalScript()->GetName());*/
+				return TAttribute<FText>::CreateSP(ScratchScriptViewModel.Get(), &FNiagaraScratchPadScriptViewModel::GetDisplayName);
 			}
 		}
 	}

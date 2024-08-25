@@ -91,11 +91,13 @@ void UPolyEditInsertEdgeLoopActivity::Setup(UInteractiveTool* ParentToolIn)
 	// Draws the new group edges that are added
 	PreviewEdgeRenderer.LineColor = FLinearColor::Green;
 	PreviewEdgeRenderer.LineThickness = 2.0;
+	PreviewEdgeRenderer.bDepthTested = false;
 
 	// Highlights non-quad groups that stop the loop;
 	ProblemTopologyRenderer.LineColor = FLinearColor::Red;
 	ProblemTopologyRenderer.LineThickness = 3.0;
 	ProblemTopologyRenderer.DepthBias = 1.0;
+	ProblemTopologyRenderer.bDepthTested = false;
 
 	TopologySelectorSettings.bEnableEdgeHits = true;
 	TopologySelectorSettings.bEnableFaceHits = false;

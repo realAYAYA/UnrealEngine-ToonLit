@@ -154,6 +154,12 @@ FRemesher::EProcessResult FRemesher::ProcessEdge(int edgeID)
 	FVector3d vB(Mesh->GetVertex(b));
 	double edge_len_sqr = DistanceSquared(vA, vB);
 
+	if (CustomEdgeLengthScaleF)
+	{
+		const double EdgeLengthScale = CustomEdgeLengthScaleF(*Mesh, a, b);
+		edge_len_sqr = (EdgeLengthScale * EdgeLengthScale) * edge_len_sqr;
+	}
+
 	// check if we should collapse, and also find which vertex we should collapse to,
 	// in cases where we have constraints/etc
 	int collapse_to = -1;

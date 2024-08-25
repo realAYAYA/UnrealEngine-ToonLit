@@ -35,17 +35,17 @@ struct FSequenceUpdater_Flat : ISequenceUpdater
 	explicit FSequenceUpdater_Flat(FMovieSceneCompiledDataID InCompiledDataID);
 	~FSequenceUpdater_Flat();
 
-	virtual void PopulateUpdateFlags(UMovieSceneEntitySystemLinker* InLinker, IMovieScenePlayer* InPlayer, ESequenceInstanceUpdateFlags& OutUpdateFlags) override;
-	virtual void DissectContext(UMovieSceneEntitySystemLinker* Linker, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections) override;
-	virtual void Start(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& InContext) override;
-	virtual void Update(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context) override;
-	virtual bool CanFinishImmediately(UMovieSceneEntitySystemLinker* InLinker, FRootInstanceHandle RootInstanceHandle) const override;
-	virtual void Finish(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer) override;
-	virtual void InvalidateCachedData(UMovieSceneEntitySystemLinker* Linker) override;
-	virtual void Destroy(UMovieSceneEntitySystemLinker* Linker) override;
+	virtual void PopulateUpdateFlags(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, ESequenceInstanceUpdateFlags& OutUpdateFlags) override;
+	virtual void DissectContext(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections) override;
+	virtual void Start(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& InContext) override;
+	virtual void Update(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context) override;
+	virtual bool CanFinishImmediately(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const override;
+	virtual void Finish(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) override;
+	virtual void InvalidateCachedData(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) override;
+	virtual void Destroy(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) override;
 	virtual TUniquePtr<ISequenceUpdater> MigrateToHierarchical() override;
 	virtual FInstanceHandle FindSubInstance(FMovieSceneSequenceID SubSequenceID) const override { return FInstanceHandle(); }
-	virtual void OverrideRootSequence(UMovieSceneEntitySystemLinker* InLinker, FRootInstanceHandle InstanceHandle, FMovieSceneSequenceID NewRootOverrideSequenceID) override {}
+	virtual void OverrideRootSequence(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID NewRootOverrideSequenceID) override {}
 
 private:
 
@@ -64,23 +64,23 @@ struct FSequenceUpdater_Hierarchical : ISequenceUpdater
 
 	~FSequenceUpdater_Hierarchical();
 
-	virtual void PopulateUpdateFlags(UMovieSceneEntitySystemLinker* InLinker, IMovieScenePlayer* InPlayer, ESequenceInstanceUpdateFlags& OutUpdateFlags) override;
-	virtual void DissectContext(UMovieSceneEntitySystemLinker* Linker, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections) override;
-	virtual void Start(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& InContext) override;
-	virtual void Update(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context) override;
-	virtual bool CanFinishImmediately(UMovieSceneEntitySystemLinker* InLinker, FRootInstanceHandle RootInstanceHandle) const override;
-	virtual void Finish(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer) override;
-	virtual void InvalidateCachedData(UMovieSceneEntitySystemLinker* Linker) override;
-	virtual void Destroy(UMovieSceneEntitySystemLinker* Linker) override;
+	virtual void PopulateUpdateFlags(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, ESequenceInstanceUpdateFlags& OutUpdateFlags) override;
+	virtual void DissectContext(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections) override;
+	virtual void Start(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& InContext) override;
+	virtual void Update(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context) override;
+	virtual bool CanFinishImmediately(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const override;
+	virtual void Finish(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) override;
+	virtual void InvalidateCachedData(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) override;
+	virtual void Destroy(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) override;
 	virtual TUniquePtr<ISequenceUpdater> MigrateToHierarchical() override { return nullptr; }
 	virtual FInstanceHandle FindSubInstance(FMovieSceneSequenceID SubSequenceID) const override { return SequenceInstances.FindRef(SubSequenceID).Handle; }
-	virtual void OverrideRootSequence(UMovieSceneEntitySystemLinker* InLinker, FRootInstanceHandle InstanceHandle, FMovieSceneSequenceID NewRootOverrideSequenceID) override;
+	virtual void OverrideRootSequence(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID NewRootOverrideSequenceID) override;
 
 private:
 
 	TRange<FFrameNumber> UpdateEntitiesForSequence(const FMovieSceneEntityComponentField* ComponentField, FFrameTime SequenceTime, FMovieSceneEvaluationFieldEntitySet& OutEntities);
 
-	FInstanceHandle GetOrCreateSequenceInstance(IMovieScenePlayer* InPlayer, const FMovieSceneSequenceHierarchy* Hierarchy, FInstanceRegistry* InstanceRegistry, FRootInstanceHandle RootInstanceHandle, FMovieSceneSequenceID SequenceID);
+	FInstanceHandle GetOrCreateSequenceInstance(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, UMovieSceneSequence* SubSequence, const FMovieSceneSequenceHierarchy* Hierarchy, FInstanceRegistry* InstanceRegistry, FMovieSceneSequenceID SequenceID);
 
 private:
 
@@ -88,8 +88,8 @@ private:
 
 	struct FSubInstanceData
 	{
+		FGuid SequenceSignature;
 		FInstanceHandle Handle;
-		bool bNeedsDestroy = false;
 	};
 	TSortedMap<FMovieSceneSequenceID, FSubInstanceData, TInlineAllocator<8>> SequenceInstances;
 
@@ -196,11 +196,11 @@ TUniquePtr<ISequenceUpdater> FSequenceUpdater_Flat::MigrateToHierarchical()
 	return MakeUnique<FSequenceUpdater_Hierarchical>(CompiledDataID);
 }
 
-void FSequenceUpdater_Flat::PopulateUpdateFlags(UMovieSceneEntitySystemLinker* InLinker, IMovieScenePlayer* InPlayer, ESequenceInstanceUpdateFlags& OutUpdateFlags)
+void FSequenceUpdater_Flat::PopulateUpdateFlags(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, ESequenceInstanceUpdateFlags& OutUpdateFlags)
 {
 	if (!CachedDeterminismFences.IsSet())
 	{
-		UMovieSceneCompiledDataManager* CompiledDataManager = InPlayer->GetEvaluationTemplate().GetCompiledDataManager();
+		UMovieSceneCompiledDataManager* CompiledDataManager = SharedPlaybackState->GetCompiledDataManager();
 		TArrayView<const FFrameTime>    DeterminismFences   = CompiledDataManager->GetEntryRef(CompiledDataID).DeterminismFences;
 
 		if (DeterminismFences.Num() != 0)
@@ -213,7 +213,10 @@ void FSequenceUpdater_Flat::PopulateUpdateFlags(UMovieSceneEntitySystemLinker* I
 		}
 	}
 
-	InPlayer->PopulateUpdateFlags(OutUpdateFlags);
+	if (IMovieScenePlayer* Player = FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState))
+	{
+		Player->PopulateUpdateFlags(OutUpdateFlags);
+	}
 
 	if (CachedDeterminismFences.IsSet() && CachedDeterminismFences->Num() > 0)
 	{
@@ -221,11 +224,11 @@ void FSequenceUpdater_Flat::PopulateUpdateFlags(UMovieSceneEntitySystemLinker* I
 	}
 }
 
-void FSequenceUpdater_Flat::DissectContext(UMovieSceneEntitySystemLinker* Linker, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections)
+void FSequenceUpdater_Flat::DissectContext(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections)
 {
 	if (!CachedDeterminismFences.IsSet())
 	{
-		UMovieSceneCompiledDataManager* CompiledDataManager = InPlayer->GetEvaluationTemplate().GetCompiledDataManager();
+		UMovieSceneCompiledDataManager* CompiledDataManager = SharedPlaybackState->GetCompiledDataManager();
 		TArrayView<const FFrameTime>    DeterminismFences   = CompiledDataManager->GetEntryRef(CompiledDataID).DeterminismFences;
 
 		if (DeterminismFences.Num() != 0)
@@ -245,17 +248,20 @@ void FSequenceUpdater_Flat::DissectContext(UMovieSceneEntitySystemLinker* Linker
 	}
 }
 
-void FSequenceUpdater_Flat::Start(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& InContext)
+void FSequenceUpdater_Flat::Start(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& InContext)
 {
 }
 
-void FSequenceUpdater_Flat::Update(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context)
+void FSequenceUpdater_Flat::Update(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context)
 {
+	UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
+	const FRootInstanceHandle& InstanceHandle = SharedPlaybackState->GetRootInstanceHandle();
 	FSequenceInstance& SequenceInstance = Linker->GetInstanceRegistry()->MutateInstance(InstanceHandle);
 	SequenceInstance.SetContext(Context);
 
-	const FMovieSceneEntityComponentField* ComponentField = InPlayer->GetEvaluationTemplate().GetCompiledDataManager()->FindEntityComponentField(CompiledDataID);
-	UMovieSceneSequence* Sequence = InPlayer->GetEvaluationTemplate().GetSequence(MovieSceneSequenceID::Root);
+	UMovieSceneCompiledDataManager* CompiledDataManager = SharedPlaybackState->GetCompiledDataManager();
+	const FMovieSceneEntityComponentField* ComponentField = CompiledDataManager->FindEntityComponentField(CompiledDataID);
+	UMovieSceneSequence* Sequence = SharedPlaybackState->GetRootSequence();
 	if (Sequence == nullptr)
 	{
 		SequenceInstance.Ledger.UnlinkEverything(Linker);
@@ -264,7 +270,11 @@ void FSequenceUpdater_Flat::Update(UMovieSceneEntitySystemLinker* Linker, FRootI
 
 	if (!bDynamicWeighting.IsSet())
 	{
-		bDynamicWeighting = InPlayer->HasDynamicWeighting() || EnumHasAnyFlags(Sequence->GetFlags(), EMovieSceneSequenceFlags::DynamicWeighting);
+		bDynamicWeighting = EnumHasAnyFlags(Sequence->GetFlags(), EMovieSceneSequenceFlags::DynamicWeighting);
+		if (IMovieScenePlayer* Player = FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState))
+		{
+			bDynamicWeighting = bDynamicWeighting || Player->HasDynamicWeighting();
+		}
 	}
 
 	FMovieSceneEvaluationFieldEntitySet EntitiesScratch;
@@ -315,22 +325,24 @@ void FSequenceUpdater_Flat::Update(UMovieSceneEntitySystemLinker* Linker, FRootI
 	}
 }
 
-bool FSequenceUpdater_Flat::CanFinishImmediately(UMovieSceneEntitySystemLinker* InLinker, FRootInstanceHandle RootInstanceHandle) const
+bool FSequenceUpdater_Flat::CanFinishImmediately(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const
 {
-	const FSequenceInstance& SequenceInstance = InLinker->GetInstanceRegistry()->GetInstance(RootInstanceHandle);
+	UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
+	const FRootInstanceHandle RootInstanceHandle = SharedPlaybackState->GetRootInstanceHandle();
+	const FSequenceInstance& SequenceInstance = Linker->GetInstanceRegistry()->GetInstance(RootInstanceHandle);
 	return SequenceInstance.Ledger.IsEmpty();
 }
 
-void FSequenceUpdater_Flat::Finish(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer)
+void FSequenceUpdater_Flat::Finish(TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
-	InvalidateCachedData(Linker);
+	InvalidateCachedData(SharedPlaybackState);
 }
 
-void FSequenceUpdater_Flat::Destroy(UMovieSceneEntitySystemLinker* Linker)
+void FSequenceUpdater_Flat::Destroy(TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
 }
 
-void FSequenceUpdater_Flat::InvalidateCachedData(UMovieSceneEntitySystemLinker* Linker)
+void FSequenceUpdater_Flat::InvalidateCachedData(TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
 	CachedEntityRange = TRange<FFrameNumber>::Empty();
 	CachedDeterminismFences.Reset();
@@ -352,9 +364,12 @@ FSequenceUpdater_Hierarchical::~FSequenceUpdater_Hierarchical()
 {
 }
 
-void FSequenceUpdater_Hierarchical::PopulateUpdateFlags(UMovieSceneEntitySystemLinker* InLinker, IMovieScenePlayer* InPlayer, ESequenceInstanceUpdateFlags& OutUpdateFlags)
+void FSequenceUpdater_Hierarchical::PopulateUpdateFlags(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, ESequenceInstanceUpdateFlags& OutUpdateFlags)
 {
-	InPlayer->PopulateUpdateFlags(OutUpdateFlags);
+	if (IMovieScenePlayer* Player = FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState))
+	{
+		Player->PopulateUpdateFlags(OutUpdateFlags);
+	}
 
 	// If we've already been told we need dissection there's nothing left to do
 	if (EnumHasAnyFlags(OutUpdateFlags, ESequenceInstanceUpdateFlags::NeedsDissection))
@@ -362,7 +377,7 @@ void FSequenceUpdater_Hierarchical::PopulateUpdateFlags(UMovieSceneEntitySystemL
 		return;
 	}
 
-	UMovieSceneCompiledDataManager* CompiledDataManager = InPlayer->GetEvaluationTemplate().GetCompiledDataManager();
+	UMovieSceneCompiledDataManager* CompiledDataManager = SharedPlaybackState->GetCompiledDataManager();
 
 	{
 		const FMovieSceneCompiledDataEntry& RootDataEntry = CompiledDataManager->GetEntryRef(CompiledDataID);
@@ -388,9 +403,9 @@ void FSequenceUpdater_Hierarchical::PopulateUpdateFlags(UMovieSceneEntitySystemL
 	}
 }
 
-void FSequenceUpdater_Hierarchical::DissectContext(UMovieSceneEntitySystemLinker* Linker, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections)
+void FSequenceUpdater_Hierarchical::DissectContext(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections)
 {
-	UMovieSceneCompiledDataManager* CompiledDataManager = InPlayer->GetEvaluationTemplate().GetCompiledDataManager();
+	UMovieSceneCompiledDataManager* CompiledDataManager = SharedPlaybackState->GetCompiledDataManager();
 
 	TRange<FFrameNumber> TraversedRange = Context.GetFrameNumberRange();
 	TArray<FFrameTime>   RootDissectionTimes;
@@ -442,7 +457,7 @@ void FSequenceUpdater_Hierarchical::DissectContext(UMovieSceneEntitySystemLinker
 						FFrameTime Unused;
 						SubData->RootToSequenceTransform.TransformTime(RootClampRange.GetLowerBoundValue(), Unused, WarpCounter);
 
-						FMovieSceneTimeTransform InverseTransform = SubData->RootToSequenceTransform.InverseFromWarp(WarpCounter);
+						FMovieSceneSequenceTransform InverseTransform = SubData->RootToSequenceTransform.InverseFromLoop(WarpCounter);
 						Algo::Transform(TraversedFences, RootDissectionTimes, [InverseTransform](FFrameTime In){ return In * InverseTransform; });
 					}
 				}
@@ -457,38 +472,39 @@ void FSequenceUpdater_Hierarchical::DissectContext(UMovieSceneEntitySystemLinker
 	}
 }
 
-FInstanceHandle FSequenceUpdater_Hierarchical::GetOrCreateSequenceInstance(IMovieScenePlayer* InPlayer, const FMovieSceneSequenceHierarchy* Hierarchy, FInstanceRegistry* InstanceRegistry, FRootInstanceHandle RootInstanceHandle, FMovieSceneSequenceID SequenceID)
+FInstanceHandle FSequenceUpdater_Hierarchical::GetOrCreateSequenceInstance(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, UMovieSceneSequence* SubSequence, const FMovieSceneSequenceHierarchy* Hierarchy, FInstanceRegistry* InstanceRegistry, FMovieSceneSequenceID SequenceID)
 {
 	check(SequenceID != MovieSceneSequenceID::Root);
 
 	if (FSubInstanceData* Existing = SequenceInstances.Find(SequenceID))
 	{
-		Existing->bNeedsDestroy = false;
 		return Existing->Handle;
 	}
 
 	const FMovieSceneSequenceHierarchyNode* Node = Hierarchy->FindNode(SequenceID);
-
 	checkf(Node, TEXT("Attempting to construct a new sub sequence instance with a sub sequence ID that does not exist in the hierarchy"));
 	checkf(Node->ParentID != MovieSceneSequenceID::Invalid, TEXT("Parent should never be invalid for a non-root SequenceID"));
+
+	const FRootInstanceHandle& RootInstanceHandle = SharedPlaybackState->GetRootInstanceHandle();
 
 	FInstanceHandle ParentInstance;
 	if (Node->ParentID == MovieSceneSequenceID::Root)
 	{
 		ParentInstance = RootInstanceHandle;
 	}
-	else
+	else if (UMovieSceneSequence* ParentSequence = Hierarchy->FindSubData(Node->ParentID)->GetSequence())
 	{
-		ParentInstance = GetOrCreateSequenceInstance(InPlayer, Hierarchy, InstanceRegistry, RootInstanceHandle, Node->ParentID);
+		ParentInstance = GetOrCreateSequenceInstance(SharedPlaybackState, ParentSequence, Hierarchy, InstanceRegistry, Node->ParentID);
 	}
 
-	FInstanceHandle InstanceHandle = InstanceRegistry->AllocateSubInstance(InPlayer, SequenceID, RootInstanceHandle, ParentInstance);
-	SequenceInstances.Add(SequenceID, FSubInstanceData { InstanceHandle });
+	FInstanceHandle InstanceHandle = InstanceRegistry->AllocateSubInstance(SequenceID, RootInstanceHandle, ParentInstance);
+	SequenceInstances.Add(SequenceID, FSubInstanceData { SubSequence->GetSignature(), InstanceHandle });
+	InstanceRegistry->MutateInstance(InstanceHandle).Initialize();
 
 	return InstanceHandle;
 }
 
-void FSequenceUpdater_Hierarchical::OverrideRootSequence(UMovieSceneEntitySystemLinker* InLinker, FRootInstanceHandle RootInstanceHandle, FMovieSceneSequenceID NewRootOverrideSequenceID)
+void FSequenceUpdater_Hierarchical::OverrideRootSequence(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID NewRootOverrideSequenceID)
 {
 	if (RootOverrideSequenceID != NewRootOverrideSequenceID)
 	{
@@ -498,27 +514,31 @@ void FSequenceUpdater_Hierarchical::OverrideRootSequence(UMovieSceneEntitySystem
 			// We unlink everything from the root sequence since we know they won't be necessary.
 			// This is because the root sequence instance is handled separately in FSequenceUpdater_Hierarchical::Update, and it wouldn't
 			// get automatically unlinked like other sub sequences would (by way of not being present in the ActiveSequences map)
-			FInstanceRegistry* InstanceRegistry = InLinker->GetInstanceRegistry();
-			InstanceRegistry->MutateInstance(RootInstanceHandle).Ledger.UnlinkEverything(InLinker);
+			UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
+			FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
+			const FRootInstanceHandle& RootInstanceHandle = SharedPlaybackState->GetRootInstanceHandle();
+			InstanceRegistry->MutateInstance(RootInstanceHandle).Ledger.UnlinkEverything(Linker);
 		}
 
-		InvalidateCachedData(InLinker);
+		InvalidateCachedData(SharedPlaybackState);
 		RootOverrideSequenceID = NewRootOverrideSequenceID;
 	}
 }
 
-void FSequenceUpdater_Hierarchical::Start(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& InContext)
+void FSequenceUpdater_Hierarchical::Start(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& InContext)
 {
 }
 
-void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer, const FMovieSceneContext& Context)
+void FSequenceUpdater_Hierarchical::Update(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneContext& Context)
 {
+	UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
 	FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
-	UMovieSceneCompiledDataManager* CompiledDataManager = InPlayer->GetEvaluationTemplate().GetCompiledDataManager();
+	UMovieSceneCompiledDataManager* CompiledDataManager = SharedPlaybackState->GetCompiledDataManager();
+	IMovieScenePlayer* Player = FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState);
 
 	FMovieSceneEvaluationFieldEntitySet EntitiesScratch;
 
-	FInstanceHandle             RootInstanceHandle = InstanceHandle;
+	FRootInstanceHandle         RootInstanceHandle = SharedPlaybackState->GetRootInstanceHandle();
 	FMovieSceneCompiledDataID   RootCompiledDataID = CompiledDataID;
 	FSubSequencePath            RootOverridePath;
 	FMovieSceneContext          RootContext = Context;
@@ -533,7 +553,8 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 		UMovieSceneSequence*                RootSequence    = SubData ? SubData->GetSequence() : nullptr;
 		if (ensure(RootSequence))
 		{
-			RootInstanceHandle = GetOrCreateSequenceInstance(InPlayer, RootHierarchy, InstanceRegistry, InstanceHandle, RootOverrideSequenceID);
+			FInstanceHandle NewRootInstanceHandle = GetOrCreateSequenceInstance(SharedPlaybackState, RootSequence, RootHierarchy, InstanceRegistry, RootOverrideSequenceID);
+			RootInstanceHandle = FRootInstanceHandle(NewRootInstanceHandle.InstanceID, NewRootInstanceHandle.InstanceSerial);
 			RootCompiledDataID = CompiledDataManager->GetDataID(RootSequence);
 			RootContext        = Context.Transform(SubData->RootToSequenceTransform, SubData->TickResolution);
 
@@ -564,7 +585,11 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 		{
 			if (!bDynamicWeighting.IsSet())
 			{
-				bDynamicWeighting = InPlayer->HasDynamicWeighting() || EnumHasAnyFlags(CompiledDataManager->GetEntryRef(RootCompiledDataID).AccumulatedFlags, EMovieSceneSequenceFlags::DynamicWeighting);
+				bDynamicWeighting = EnumHasAnyFlags(CompiledDataManager->GetEntryRef(RootCompiledDataID).AccumulatedFlags, EMovieSceneSequenceFlags::DynamicWeighting);
+				if (Player)
+				{
+					bDynamicWeighting = bDynamicWeighting || Player->HasDynamicWeighting();
+				}
 			}
 
 			// Update entities if necessary
@@ -575,7 +600,7 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 				FEntityImportSequenceParams Params;
 				Params.SequenceID = MovieSceneSequenceID::Root;
 				Params.InstanceHandle = RootInstanceHandle;
-				Params.RootInstanceHandle = InstanceHandle;
+				Params.RootInstanceHandle = RootInstanceHandle;
 				Params.DefaultCompletionMode = RootSequence->DefaultCompletionMode;
 				Params.HierarchicalBias = 0;
 				Params.bDynamicWeighting = bDynamicWeighting.Get(false);
@@ -594,7 +619,7 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 					FEntityImportSequenceParams Params;
 					Params.SequenceID = MovieSceneSequenceID::Root;
 					Params.InstanceHandle = RootInstanceHandle;
-					Params.RootInstanceHandle = InstanceHandle;
+					Params.RootInstanceHandle = RootInstanceHandle;
 					Params.DefaultCompletionMode = RootSequence->DefaultCompletionMode;
 					Params.HierarchicalBias = 0;
 					Params.bDynamicWeighting = bDynamicWeighting.Get(false);
@@ -642,7 +667,7 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 				FMovieSceneCompiledDataID SubDataID = CompiledDataManager->GetDataID(SubSequence);
 
 				// Set the context for the root sequence instance
-				FInstanceHandle    SubSequenceHandle = GetOrCreateSequenceInstance(InPlayer, RootHierarchy, InstanceRegistry, InstanceHandle, SequenceIDFromRoot);
+				FInstanceHandle    SubSequenceHandle = GetOrCreateSequenceInstance(SharedPlaybackState, SubSequence, RootHierarchy, InstanceRegistry, SequenceIDFromRoot);
 				FSequenceInstance& SubSequenceInstance = InstanceRegistry->MutateInstance(SubSequenceHandle);
 
 				// Update the sub sequence's context
@@ -679,7 +704,7 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 				FEntityImportSequenceParams Params;
 				Params.SequenceID = SequenceIDFromRoot;
 				Params.InstanceHandle = SubSequenceHandle;
-				Params.RootInstanceHandle = InstanceHandle;
+				Params.RootInstanceHandle = RootInstanceHandle;
 				Params.DefaultCompletionMode = SubSequence->DefaultCompletionMode;
 				Params.HierarchicalBias = SubData->HierarchicalBias;
 				Params.SubSectionFlags = SubData->AccumulatedFlags;
@@ -702,11 +727,11 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 
 					if (WarpCounter.WarpCounts.Num() > 0)
 					{
-						FMovieSceneTimeTransform InverseTransform = SubData->RootToSequenceTransform.InverseFromWarp(WarpCounter);
-						CachedEntityRange = TRange<FFrameNumber>::Intersection(CachedEntityRange, SubData->PlayRange.Value * InverseTransform);
+						FMovieSceneSequenceTransform InverseTransform = SubData->RootToSequenceTransform.InverseFromLoop(WarpCounter);
+						CachedEntityRange = TRange<FFrameNumber>::Intersection(CachedEntityRange, InverseTransform.TransformRangeConstrained(SubData->PlayRange.Value));
 					}
 
-					const FMovieSceneSequenceTransform SequenceToRootOverrideTransform = FMovieSceneSequenceTransform(SubContext.GetSequenceToRootTransform()) * RootContext.GetRootToSequenceTransform();
+					const FMovieSceneSequenceTransform SequenceToRootOverrideTransform = SubContext.GetSequenceToRootSequenceTransform() * RootContext.GetRootToSequenceTransform();
 					SubEntityRange = SequenceToRootOverrideTransform.TransformRangeConstrained(SubEntityRange);
 
 					CachedEntityRange = TRange<FFrameNumber>::Intersection(CachedEntityRange, SubEntityRange);
@@ -733,27 +758,24 @@ void FSequenceUpdater_Hierarchical::Update(UMovieSceneEntitySystemLinker* Linker
 	for (auto InstanceIt = SequenceInstances.CreateIterator(); InstanceIt; ++InstanceIt)
 	{
 		FSubInstanceData SubData = InstanceIt.Value();
-		if (SubData.bNeedsDestroy)
-		{
-			InstanceRegistry->DestroyInstance(SubData.Handle);
-			InstanceIt.RemoveCurrent();
-			continue;
-		}
 
-		Runner->MarkForUpdate(SubData.Handle, ERunnerUpdateFlags::None);
-
+		ERunnerUpdateFlags Flags = ERunnerUpdateFlags::None;
 		if (!ActiveSequences.Contains(InstanceIt.Key()))
 		{
-			// Remove all entities from this instance since it is no longer active
-			InstanceRegistry->MutateInstance(SubData.Handle).Finish(Linker);
-			InstanceIt.Value().bNeedsDestroy = true;
+			Flags = ERunnerUpdateFlags::Finish | ERunnerUpdateFlags::Destroy;
+			InstanceIt.RemoveCurrent();
 		}
+
+		Runner->MarkForUpdate(SubData.Handle, Flags);
 	}
 }
 
-bool FSequenceUpdater_Hierarchical::CanFinishImmediately(UMovieSceneEntitySystemLinker* InLinker, FRootInstanceHandle RootInstanceHandle) const
+bool FSequenceUpdater_Hierarchical::CanFinishImmediately(TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const
 {
-	FInstanceRegistry* InstanceRegistry = InLinker->GetInstanceRegistry();
+	UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
+	const FRootInstanceHandle RootInstanceHandle = SharedPlaybackState->GetRootInstanceHandle();
+
+	FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
 
 	const FSequenceInstance& RootInstance = InstanceRegistry->GetInstance(RootInstanceHandle);
 	if (!RootInstance.Ledger.IsEmpty())
@@ -773,21 +795,23 @@ bool FSequenceUpdater_Hierarchical::CanFinishImmediately(UMovieSceneEntitySystem
 	return true;
 }
 
-void FSequenceUpdater_Hierarchical::Finish(UMovieSceneEntitySystemLinker* Linker, FRootInstanceHandle InstanceHandle, IMovieScenePlayer* InPlayer)
+void FSequenceUpdater_Hierarchical::Finish(TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
+	UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
 	FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
 
 	// Finish all sub sequences as well
 	for (TPair<FMovieSceneSequenceID, FSubInstanceData> Pair : SequenceInstances)
 	{
-		InstanceRegistry->MutateInstance(Pair.Value.Handle).Finish(Linker);
+		InstanceRegistry->MutateInstance(Pair.Value.Handle).Finish();
 	}
 
-	InvalidateCachedData(Linker);
+	InvalidateCachedData(SharedPlaybackState);
 }
 
-void FSequenceUpdater_Hierarchical::Destroy(UMovieSceneEntitySystemLinker* Linker)
+void FSequenceUpdater_Hierarchical::Destroy(TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
+	UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
 	FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
 
 	for (TPair<FMovieSceneSequenceID, FSubInstanceData> Pair : SequenceInstances)
@@ -796,20 +820,29 @@ void FSequenceUpdater_Hierarchical::Destroy(UMovieSceneEntitySystemLinker* Linke
 	}
 }
 
-void FSequenceUpdater_Hierarchical::InvalidateCachedData(UMovieSceneEntitySystemLinker* Linker)
+void FSequenceUpdater_Hierarchical::InvalidateCachedData(TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
 	bDynamicWeighting.Reset();
 	CachedEntityRange = TRange<FFrameNumber>::Empty();
 
+	UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker();
 	FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
 
-	for (TPair<FMovieSceneSequenceID, FSubInstanceData> Pair : SequenceInstances)
+	for (TPair<FMovieSceneSequenceID, FSubInstanceData>& Pair : SequenceInstances)
 	{
-		InstanceRegistry->MutateInstance(Pair.Value.Handle).Ledger.Invalidate();
+		UMovieSceneSequence* Sequence = SharedPlaybackState->GetSequence(Pair.Key);
+		if (!Sequence)
+		{
+			Pair.Value.SequenceSignature = FGuid();
+			InstanceRegistry->MutateInstance(Pair.Value.Handle).Ledger.Invalidate();
+		}
+		else if (Pair.Value.SequenceSignature != Sequence->GetSignature())
+		{
+			Pair.Value.SequenceSignature = Sequence->GetSignature();
+			InstanceRegistry->MutateInstance(Pair.Value.Handle).Ledger.Invalidate();
+		}
 	}
 }
-
-
 
 TRange<FFrameNumber> FSequenceUpdater_Hierarchical::UpdateEntitiesForSequence(const FMovieSceneEntityComponentField* ComponentField, FFrameTime SequenceTime, FMovieSceneEvaluationFieldEntitySet& OutEntities)
 {
@@ -823,7 +856,6 @@ TRange<FFrameNumber> FSequenceUpdater_Hierarchical::UpdateEntitiesForSequence(co
 
 	return CachedRange;
 }
-
 
 } // namespace MovieScene
 } // namespace UE

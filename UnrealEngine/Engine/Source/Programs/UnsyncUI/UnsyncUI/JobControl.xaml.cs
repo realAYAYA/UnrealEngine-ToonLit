@@ -68,7 +68,6 @@ namespace UnsyncUI
 		public string DstPathBase => Path.GetDirectoryName(DstPath);
         public bool DryRun { get; }
         public string Proxy { get; }
-		public string DFS { get; }
 		public string AdditionalArgs { get; }
 		public string[] IncludeFilter { get; }
 		public string[] Exclusions { get; }
@@ -173,7 +172,6 @@ namespace UnsyncUI
 			string scavengePath,
 			bool dryRun,
 			string proxy,
-			string dfs,
 			string additionalArgs,
 			string[] exclusions,
 			Action<JobModel> onCompletion,
@@ -185,7 +183,6 @@ namespace UnsyncUI
 			ScavengePath = scavengePath?.TrimEnd('\\');
             DryRun = dryRun;
             Proxy = proxy?.TrimEnd('\\');
-			DFS = dfs?.TrimEnd('\\');
 			AdditionalArgs = additionalArgs;
 			IncludeFilter = build.Include?.Split(',', StringSplitOptions.RemoveEmptyEntries)
 				.Select(Entry => Entry.Trim())
@@ -371,11 +368,12 @@ namespace UnsyncUI
 				if (!string.IsNullOrWhiteSpace(Proxy))
 				{
 					args.Add($"--proxy \"{Proxy}\"");
-				}
 
-				if (!string.IsNullOrWhiteSpace(DFS))
-				{
-					args.Add($"--dfs {DFS}");
+					if (App.Current.Config.EnableUserAuthentication
+						&& App.Current.Config.loggedInUser != null)
+					{
+						args.Add("--login");
+					}
 				}
 
 				if (IncludeFilter?.Length > 0)
@@ -403,9 +401,9 @@ namespace UnsyncUI
 					argsStr = AdditionalArgs.Substring(1);
 				}
 
-				Debug.WriteLine($"Running unsync with args {argsStr}");
+				App.Current.LogMessage($"Running unsync with args {argsStr}");
 
-				var unsyncPath = App.Current.UnsyncPath;
+				var unsyncPath = App.Current.Config.UnsyncPath;
 				proc = new AsyncProcess(unsyncPath, argsStr);
 
 				await foreach (var str in proc.RunAsync(cts.Token))

@@ -200,7 +200,7 @@ namespace AlgoImpl
 				}
 			}
 			Algo::Sort(UniqueElementDependencies);
-			UniqueElementDependencies.SetNum(Algo::Unique(UniqueElementDependencies), false /* bAllowShrinking */);
+			UniqueElementDependencies.SetNum(Algo::Unique(UniqueElementDependencies), EAllowShrinking::No);
 			int32 NumUniqueDependencies = UniqueElementDependencies.Num();
 			DependencyCount[Handle] = NumUniqueDependencies;
 			if (NumUniqueDependencies == 0)
@@ -283,7 +283,7 @@ namespace AlgoImpl
 			// Cycle stacks will be like [7,7] or [7,3,2,7], always starting and ending with a vertex
 			// Pop the second occurrence of CycleWitnessVertex off the stack
 			check(Stack.Num() >= 2);
-			Stack.Pop(false /* bAllowShrinking */);
+			Stack.Pop(EAllowShrinking::No);
 			// Find the start of the Cycle
 			int32 StartIndex = Stack.Num() - 1;
 			while (StartIndex >= 0 && Stack[StartIndex] != CycleWitnessVertex)
@@ -301,7 +301,7 @@ namespace AlgoImpl
 			// finding the cycle, since everything in that set is a referencer of the cycle
 			while (!Stack.IsEmpty())
 			{
-				FKahnHandle Vertex = Stack.Pop(false /* bAllowShrinking */);
+				FKahnHandle Vertex = Stack.Pop(EAllowShrinking::No);
 				for (FKahnHandle Referencer : Referencers[Vertex])
 				{
 					if (Culprits.Contains(Referencer)) // Only consider edges to remaining vertices
@@ -326,7 +326,7 @@ namespace AlgoImpl
 			}
 			while (!Stack.IsEmpty())
 			{
-				FKahnHandle Vertex = Stack.Pop(false /* bAllowShrinking */);
+				FKahnHandle Vertex = Stack.Pop(EAllowShrinking::No);
 				for (FKahnHandle Dependency : Dependencies[Vertex])
 				{
 					if (Culprits.Contains(Dependency)) // Only consider edges to remaining vertices

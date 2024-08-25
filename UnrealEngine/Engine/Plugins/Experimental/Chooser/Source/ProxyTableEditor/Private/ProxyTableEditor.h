@@ -94,9 +94,12 @@ namespace UE::ProxyTableEditor
 
 		void UpdateTableColumns();
 		void UpdateTableRows();
-		void MoveRow(int SourceRowIndex, int TargetIndex);
+		int MoveRow(int SourceRowIndex, int TargetIndex);
 		void InsertEntry(FProxyEntry& Entry, int RowIndex);
 		void DeleteSelectedRows();
+		void ClearSelectedRows();
+		void SelectRow(int RowIndex) { if (TableRows.IsValidIndex(RowIndex)) { SelectRow(TableRows[RowIndex]); } }
+		void SelectRow(TSharedPtr<FProxyTableRow> Row);
 	private:
 		void AddInheritedRows(UProxyTable* ProxyTable);
 		void SelectRootProperties();
@@ -142,15 +145,7 @@ namespace UE::ProxyTableEditor
 		TMap<UProxyTable*, bool> ImportedTablesExpansionState;
 		TSet<FProxyEntry> ReferencedProxyEntries;
 		TSet<UProxyTable*> ReferencedProxyTables;
-		
-		void SelectRow(TSharedPtr<FProxyTableRow> Row)
-		{
-			if (!TableView->IsItemSelected(Row))
-			{
-				TableView->ClearSelection();
-				TableView->SetItemSelection(Row, true, ESelectInfo::OnMouseClick);
-			}
-		}
+
 		TSharedPtr<SComboButton>& GetCreateRowComboButton() { return CreateRowComboButton; };
 
 		/** The name given to all instances of this type of editor */

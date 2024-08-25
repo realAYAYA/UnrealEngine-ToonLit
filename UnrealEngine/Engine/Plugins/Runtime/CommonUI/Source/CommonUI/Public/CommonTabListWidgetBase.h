@@ -2,9 +2,10 @@
 
 #pragma once
 
+#include "Blueprint/UserWidgetPool.h"
 #include "CommonUserWidget.h"
-
 #include "Engine/DataTable.h"
+
 #include "CommonTabListWidgetBase.generated.h"
 
 class UCommonAnimatedSwitcher;
@@ -150,6 +151,7 @@ protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void ReleaseSlateResources(bool bReleaseChildren) override;
 	// End UUserWidget
 
 	virtual void UpdateBindings();
@@ -234,6 +236,9 @@ private:
 	/** Info about each of the currently registered tabs organized by a given registration name ID */
 	UPROPERTY(Transient)
 	TMap<FName, FCommonRegisteredTabInfo> RegisteredTabsByID;
+
+	UPROPERTY(Transient)
+	FUserWidgetPool TabButtonWidgetPool;
 
 	/** The registration ID of the currently active tab */
 	FName ActiveTabID;

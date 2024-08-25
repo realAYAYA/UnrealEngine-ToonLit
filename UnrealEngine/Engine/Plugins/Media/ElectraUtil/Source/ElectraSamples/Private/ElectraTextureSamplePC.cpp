@@ -9,20 +9,25 @@
 #include "ProfilingDebugging/RealtimeGPUProfiler.h"
 #include "RenderUtils.h"
 
+#include "ID3D12DynamicRHI.h"
+
 #include "Windows/AllowWindowsPlatformTypes.h"
+THIRD_PARTY_INCLUDES_START
 #ifdef ELECTRA_HAVE_DX11
 #include "D3D11State.h"
 #include "D3D11Resources.h"
 #endif
 #include "d3d12.h"
+THIRD_PARTY_INCLUDES_END
 #include "Windows/HideWindowsPlatformTypes.h"
+
 
 /*
 	Short summary of how we get data:
 
 	- Win10+ (HW decode is used at all times if handling H.264/5)
 	-- DX11:   we receive data in GPU space as NV12/P010 texture
-	-- DX12:   we receive data in CPU(yes) space as NV12/P010 texture
+	-- DX12:   we receive data in CPU(yes) space as NV12/P010 texture -=UNLESS=- we have SDK 22621+ and suitable runtime support -> DX12 texture in GPU space
 	-- Vulkan: we receive data in CPU(yes) space as NV12/P010 texture
 	-- Other codec's data usually arrives as CPU space texture buffer
 
@@ -41,8 +46,8 @@ DECLARE_GPU_STAT_NAMED(MediaWinDecoder_Convert, TEXT("MediaWinDecoder_Convert"))
 
 void FElectraTextureSample::Initialize(FVideoDecoderOutput *InVideoDecoderOutput)
 {
-	IElectraTextureSampleBase::Initialize(InVideoDecoderOutput);
 	VideoDecoderOutputPC = static_cast<FVideoDecoderOutputPC*>(InVideoDecoderOutput);
+	IElectraTextureSampleBase::Initialize(InVideoDecoderOutput);
 
 	EPixelFormat Format = VideoDecoderOutput->GetFormat();
 	switch (Format)
@@ -156,25 +161,73 @@ void FElectraTextureSample::Initialize(FVideoDecoderOutput *InVideoDecoderOutput
 		check(!"Decoder sample format not supported in Electra texture sample!");
 	}
 
-	bCanUseSRGB = (Format == PF_B8G8R8A8 || Format == PF_R8G8B8A8 || Format == PF_DXT1 || Format == PF_DXT5 || Format == PF_BC4);
+	EMediaTextureSampleFormat SampleFmt = GetFormat();
+	bCanUseSRGB = (SampleFmt == EMediaTextureSampleFormat::CharBGRA ||
+				   SampleFmt == EMediaTextureSampleFormat::CharRGBA ||
+				   SampleFmt == EMediaTextureSampleFormat::CharBMP ||
+				   SampleFmt == EMediaTextureSampleFormat::DXT1 ||
+				   SampleFmt == EMediaTextureSampleFormat::DXT5);
 
-	if (RHIGetInterfaceType() == ERHIInterfaceType::D3D12)
+	// Get rid of older textures if we switched around to CPU side buffers (which might happen if a single player switches between decoders)
+	// (note: we do not care about the CPU side buffers as we do not keep a reference on that resource)
+	if (Texture.IsValid() && (VideoDecoderOutputPC->GetTexture() == nullptr))
 	{
-		ID3D12Device* ApplicationDxDevice = static_cast<ID3D12Device*>(GDynamicRHI->RHIGetNativeDevice());
-		HRESULT Res;
-		if (!D3DCmdAllocator.IsValid())
-		{
-			Res = ApplicationDxDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(D3DCmdAllocator.GetInitReference()));
-			check(!FAILED(Res));
-		}
-		if (!D3DCmdList.IsValid())
-		{
-			Res = ApplicationDxDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3DCmdAllocator.GetReference(), nullptr, __uuidof(ID3D12CommandList), reinterpret_cast<void**>(D3DCmdList.GetInitReference()));
-			check(!FAILED(Res));
-			D3DCmdList->Close();
-		}
+		Texture = nullptr;
 	}
 }
+
+
+#if !UE_SERVER
+void FElectraTextureSample::ShutdownPoolable()
+{
+	// If we use DX12 with texture data, we use the RHI texture only to refer to the actual "native" D3D resource we created -> get rid of this "alias" as soon as we retire to the pool
+//OPT: WE COULD TRACK IF WE STILL HAVE THE SAME NATIVE TEXTURE AND ATTEMPT TO REUSE THIS
+	if (VideoDecoderOutputPC->GetTexture() && (RHIGetInterfaceType() == ERHIInterfaceType::D3D12))
+	{
+		Texture = nullptr;
+	}
+	IElectraTextureSampleBase::ShutdownPoolable();
+}
+#endif
+
+
+#if WITH_ENGINE
+FRHITexture* FElectraTextureSample::GetTexture() const
+{
+	check(IsInRenderingThread());
+
+	// Is this DX12?
+	if (RHIGetInterfaceType() == ERHIInterfaceType::D3D12)
+	{
+		// Yes, see if we have a real D3D resource...
+		if (TRefCountPtr<IUnknown> TextureCommon = VideoDecoderOutputPC->GetTexture())
+		{
+			// Yes. Do we need a new RHI texture?
+			FIntPoint Dim = VideoDecoderOutput->GetDim();
+			if (!Texture.IsValid() || Texture->GetSizeX() != Dim.X || Texture->GetSizeY() != Dim.Y)
+			{
+				// Yes...
+				TRefCountPtr<ID3D12Resource> TextureDX12;
+				HRESULT Res = TextureCommon->QueryInterface(__uuidof(ID3D12Resource), (void**)TextureDX12.GetInitReference());
+				check(Res == S_OK);
+				if (Res == S_OK)
+				{
+					// Setup a suitable RHI texture (it will also become an additional owner of the data)
+					ETextureCreateFlags Flags = ETextureCreateFlags::ShaderResource;
+					if (IsOutputSrgb() && bCanUseSRGB)
+					{
+						Flags = Flags | ETextureCreateFlags::SRGB;
+					}
+					Texture = static_cast<ID3D12DynamicRHI*>(GDynamicRHI)->RHICreateTexture2DFromResource(VideoDecoderOutput->GetFormat(), Flags, FClearValueBinding(), TextureDX12);
+				}
+			}
+		}
+	}
+
+	return Texture;
+}
+#endif //WITH_ENGINE
+
 
 IMediaTextureSampleConverter* FElectraTextureSample::GetMediaTextureSampleConverter()
 {
@@ -193,70 +246,6 @@ IMediaTextureSampleConverter* FElectraTextureSample::GetMediaTextureSampleConver
 	}
 	return nullptr;
 }
-
-
-struct FRHICommandCopyResourceDX12 final : public FRHICommand<FRHICommandCopyResourceDX12>
-{
-	TRefCountPtr<ID3D12Resource> SampleTexture;
-	FTexture2DRHIRef SampleDestinationTexture;
-	TRefCountPtr<ID3D12CommandAllocator> D3DCmdAllocator;
-	TRefCountPtr<ID3D12GraphicsCommandList> D3DCmdList;
-	TRefCountPtr<ID3D12Fence> D3DFence;
-	uint64 FenceValue;
-
-	FRHICommandCopyResourceDX12(ID3D12Resource* InSampleTexture, FRHITexture2D* InSampleDestinationTexture, TRefCountPtr<ID3D12CommandAllocator> InD3DCmdAllocator, TRefCountPtr<ID3D12GraphicsCommandList> InD3DCmdList, TRefCountPtr<ID3D12Fence> InD3DFence, uint64 InFenceValue)
-		: SampleTexture(InSampleTexture)
-		, SampleDestinationTexture(InSampleDestinationTexture)
-		, D3DCmdAllocator(InD3DCmdAllocator)
-		, D3DCmdList(InD3DCmdList)
-		, D3DFence(InD3DFence)
-		, FenceValue(InFenceValue)
-	{
-		LLM_SCOPE(ELLMTag::MediaStreaming);
-
-		auto DstTexture = (ID3D12Resource*)SampleDestinationTexture->GetNativeResource();
-
-		D3D12_RESOURCE_BARRIER PreCopyResourceBarriers[] = {
-			{D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, D3D12_RESOURCE_BARRIER_FLAG_NONE, {{ SampleTexture, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE }}},
-			{D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, D3D12_RESOURCE_BARRIER_FLAG_NONE, {{ DstTexture, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST }}},
-		};
-
-		D3D12_RESOURCE_BARRIER PostCopyResourceBarriers[] = {
-			{ D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, D3D12_RESOURCE_BARRIER_FLAG_NONE, {{ SampleTexture, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON }}},
-			{ D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, D3D12_RESOURCE_BARRIER_FLAG_NONE, {{ DstTexture, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE }}},
-		};
-
-		D3DCmdAllocator->Reset();
-		D3DCmdList->Reset(D3DCmdAllocator, nullptr);
-
-		D3DCmdList->ResourceBarrier(2, PreCopyResourceBarriers);
-		D3DCmdList->CopyResource(DstTexture, SampleTexture);
-		D3DCmdList->ResourceBarrier(2, PostCopyResourceBarriers);
-
-		D3DCmdList->Close();
-	}
-
-	void Execute(FRHICommandListBase& CmdList)
-	{
-		TRefCountPtr<ID3D12GraphicsCommandList> D3DCmdList2 = D3DCmdList;
-		TRefCountPtr<ID3D12CommandAllocator> D3DCmdAllocator2 = D3DCmdAllocator;
-		TRefCountPtr<ID3D12Resource> SampleTexture2 = SampleTexture;
-		TRefCountPtr<ID3D12Fence> D3DFence2 = D3DFence;
-		FTexture2DRHIRef SampleDestinationTexture2 = SampleDestinationTexture;
-		ENQUEUE_RENDER_COMMAND(MediaCopyInputTexture)(
-			[D3DCmdList2, D3DCmdAllocator2, SampleTexture2, SampleDestinationTexture2, D3DFence2, FenceValue2 = FenceValue](FRHICommandListImmediate& RHICmdList)
-		{
-			LLM_SCOPE(ELLMTag::MediaStreaming);
-			auto D3DCmdQueue = (ID3D12CommandQueue*)FRHICommandListExecutor::GetImmediateCommandList().GetNativeGraphicsQueue();
-			if (D3DFence2.IsValid())
-			{
-				D3DCmdQueue->Wait(D3DFence2, FenceValue2);
-			}
-			ID3D12CommandList* CmdLists[1] = {D3DCmdList2.GetReference()};
-			D3DCmdQueue->ExecuteCommandLists(1, CmdLists);
-		});
-	}
-};
 
 
 #ifdef ELECTRA_HAVE_DX11
@@ -363,6 +352,9 @@ bool FElectraTextureSample::Convert(FTexture2DRHIRef& InDstTexture, const FConve
 	SCOPED_DRAW_EVENT(RHICmdList, WinMediaOutputConvertTexture);
 	SCOPED_GPU_STAT(RHICmdList, MediaWinDecoder_Convert);
 
+
+	bool bHasTexture = !!VideoDecoderOutputPC->GetTexture();
+
 	// Get actual sample dimensions
 	FIntPoint Dim = VideoDecoderOutput->GetDim();
 
@@ -374,12 +366,41 @@ bool FElectraTextureSample::Convert(FTexture2DRHIRef& InDstTexture, const FConve
 		return false;
 	}
 
-	// Note: the converter is not used at all if we have texture data in a SW buffer!
+	// If we have a texture and D3D12 is active, we will not need to do any custom conversion work, but we will need a sync!
+	if (bHasTexture && (RHIGetInterfaceType() == ERHIInterfaceType::D3D12))
+	{
+		uint64 SyncFenceValue;
+		TRefCountPtr<IUnknown> SyncCommon = VideoDecoderOutputPC->GetSync(SyncFenceValue);
+		if (SyncCommon)
+		{
+			//
+			// Synchronize with sample data copy on copy queue
+			//
+			TRefCountPtr<ID3D12Fence> SyncFence;
+			HRESULT Res = SyncCommon->QueryInterface(__uuidof(ID3D12Fence), (void**)SyncFence.GetInitReference());
+			check(SUCCEEDED(Res));
+			if (Res == S_OK)
+			{
+				RHICmdList.EnqueueLambda([SyncFence, SyncFenceValue](FRHICommandList& RHICmdList)
+				{
+					GetID3D12DynamicRHI()->RHIWaitManualFence(RHICmdList, SyncFence, SyncFenceValue);
+				});
+			}
+		}
+		return true;
+	}
+
+	// Note: the converter code (from here on) is not used at all if we have texture data in a SW buffer!
+	check(bHasTexture);
 
 	bool bCrossDeviceCopy;
 	EPixelFormat Format;
 	if (VideoDecoderOutputPC->GetOutputType() != FVideoDecoderOutputPC::EOutputType::HardwareWin8Plus)
 	{
+		// Below case deliver DX11 textures on the rendering device, so it would be feasible to create an RHI texture from them directly.
+		// The current code instead uses a copy of the data to populate an RHI texture. As this is DX11 only and is not the code path
+		// affecting main line hardware decoders (H.264/5), we do currently NOT optimize for this.
+
 		if (VideoDecoderOutputPC->GetOutputType() != FVideoDecoderOutputPC::EOutputType::Hardware_DX)
 		{
 			//
@@ -394,7 +415,7 @@ bool FElectraTextureSample::Convert(FTexture2DRHIRef& InDstTexture, const FConve
 		else
 		{
 			// We have a texture on the rendering device
-			Format = (VideoDecoderOutput->GetFormat() == PF_NV12) ? PF_G8 : PF_G16; // return a texture, representing the whole NV12/P010 layout as a single texture (1.5 height)
+			Format = VideoDecoderOutput->GetFormat();
 			bCrossDeviceCopy = false;
 		}
 	}
@@ -445,38 +466,9 @@ bool FElectraTextureSample::Convert(FTexture2DRHIRef& InDstTexture, const FConve
 	else
 #endif
 	{
-		// No. Then it better be a DX12 resource...
-		TRefCountPtr<ID3D12Resource> TextureDX12;
-		Res = TextureCommon->QueryInterface(__uuidof(ID3D12Resource), (void**)TextureDX12.GetInitReference());
-		check(Res == S_OK);
-		if (Res != S_OK)
-		{
-			return true;
-		}
-	
-		check(RHIGetInterfaceType() == ERHIInterfaceType::D3D12);
-
-		TRefCountPtr<ID3D12Fence> D3DFence;
-		if (SyncCommon)
-		{
-			Res = SyncCommon->QueryInterface(__uuidof(ID3D12Fence), (void**)D3DFence.GetInitReference());
-			check(Res == S_OK);
-			if (Res != S_OK)
-			{
-				return true;
-			}
-		}
-
-		// Copy data into RHI texture
-		if (RHICmdList.Bypass())
-		{
-			FRHICommandCopyResourceDX12 Cmd(TextureDX12, Texture, D3DCmdAllocator, D3DCmdList, D3DFence, SyncValue);
-			Cmd.Execute(RHICmdList);
-		}
-		else
-		{
-			new (RHICmdList.AllocCommand<FRHICommandCopyResourceDX12>()) FRHICommandCopyResourceDX12(TextureDX12, Texture, D3DCmdAllocator, D3DCmdList, D3DFence, SyncValue);
-		}
+		// We really only expect to be called for DX11
+		check("Unexpected call to conversion method from another RHI than the D3D11 one!");
+		return false;
 	}
 	return true;
 }
@@ -502,13 +494,17 @@ uint32 FElectraTextureSample::GetStride() const
 }
 
 
-IMFSample* FElectraTextureSample::GetMFSample()
+float FElectraTextureSample::GetSampleDataScale(bool b10Bit) const
 {
 	if (VideoDecoderOutput)
 	{
-		return VideoDecoderOutputPC->GetMFSample().GetReference();
+		auto Value = VideoDecoderOutputPC->GetDict().GetValue(IDecoderOutputOptionNames::PixelDataScale);
+		if (Value.IsValid() && Value.IsType(Electra::FVariantValue::EDataType::TypeDouble))
+		{
+			return (float)Value.GetDouble();
+		}
 	}
-	return nullptr;
+	return 1.0f;
 }
 
 #endif

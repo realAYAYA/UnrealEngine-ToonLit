@@ -358,8 +358,8 @@ public:
 	TMap<FString, FDisplayClusterConfigurationPostprocess> Postprocess;
 
 	// Media settings
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Media")
-	FDisplayClusterConfigurationMedia Media;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Media", meta = (DisplayName = "Media"))
+	FDisplayClusterConfigurationMediaNodeBackbuffer MediaSettings;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(EditDefaultsOnly, Category = "Configuration", meta = (HideProperty))
@@ -371,6 +371,14 @@ public:
 	/** Binds a background preview image for easier output mapping */
 	UPROPERTY(EditDefaultsOnly, Category = "Configuration")
 	FDisplayClusterConfigurationExternalImage PreviewImage;
+#endif
+
+public:
+
+#if WITH_EDITORONLY_DATA
+	UE_DEPRECATED(5.4, "This property has been deprecated. Please use 'MediaSettings'.")
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "This property has been deprecated. Please use 'MediaSettings'."))
+	FDisplayClusterConfigurationMediaViewport Media;
 #endif
 
 protected:
@@ -513,6 +521,9 @@ public:
 	// Viewports API
 	UFUNCTION(BlueprintPure, Category = "NDisplay|Configuration")
 	UDisplayClusterConfigurationViewport* GetViewport(const FString& NodeId, const FString& ViewportId) const;
+
+	/** Execute a function on each viewport in each cluster node */
+	void ForEachViewport(const TFunction<void(const TObjectPtr<UDisplayClusterConfigurationViewport>&)>& Function) const;
 	
 	/**
 	* Update\Create node postprocess
@@ -579,6 +590,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = Configuration, meta = (DisplayName = "Override Viewports From .ndisplay", DisplayAfter = "bExitOnEsc"))
 	bool bOverrideViewportsFromExternalConfig = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = Configuration, meta = (DisplayName = "Override Transforms From .ndisplay", DisplayAfter = "bOverrideViewportsFromExternalConfig"))
+	bool bOverrideTransformsFromExternalConfig = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Configuration, meta = (DisplayName = "Global Media Settings"))
 	FDisplayClusterConfigurationGlobalMediaSettings MediaSettings;

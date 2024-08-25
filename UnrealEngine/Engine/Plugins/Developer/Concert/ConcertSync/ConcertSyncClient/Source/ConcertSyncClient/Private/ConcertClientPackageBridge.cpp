@@ -25,6 +25,7 @@
 
 #if WITH_EDITOR
 	#include "LevelEditor.h"
+	#include "UnrealEdMisc.h"
 #endif
 
 LLM_DEFINE_TAG(Concert_ConcertClientPackageBridge);
@@ -136,6 +137,7 @@ bool& FConcertClientPackageBridge::GetIgnoreLocalDiscardRef()
 	return bIgnoreLocalDiscard;
 }
 
+#if WITH_EDITOR
 void FConcertClientPackageBridge::HandlePackagePreSave(UPackage* Package, FObjectPreSaveContext ObjectSaveContext)
 {
 	// Only execute if this is a user save
@@ -360,6 +362,7 @@ void FConcertClientPackageBridge::HandleMapChanged(UWorld* InWorld, EMapChangeTy
 		}
 	}
 }
+#endif
 
 void FConcertClientPackageBridge::RegisterPackageFilter(FName FilterName, FPackageFilterDelegate FilterHandle)
 {

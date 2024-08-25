@@ -15,14 +15,16 @@
 
 #define LOCTEXT_NAMESPACE "Mass"
 
-DECLARE_CYCLE_STAT(TEXT("Mass Phase Done"), STAT_MassPhaseDone, STATGROUP_TaskGraphTasks);
+DECLARE_CYCLE_STAT(TEXT("Mass Phase Tick"), STAT_Mass_PhaseTick, STATGROUP_Mass);
 
 namespace UE::Mass::Tweakables
 {
 	bool bFullyParallel = MASS_DO_PARALLEL;
+	bool bMakePrePhysicsTickFunctionHighPriority = true;
 
 	FAutoConsoleVariableRef CVars[] = {
 		{TEXT("mass.FullyParallel"), bFullyParallel, TEXT("Enables mass processing distribution to all available thread (via the task graph)")},
+		{TEXT("mass.MakePrePhysicsTickFunctionHighPriority"), bMakePrePhysicsTickFunctionHighPriority, TEXT("Whether to make the PrePhysics tick function high priority - can minimise GameThread waits by starting parallel work as soon as possible")},
 	};
 }
 
@@ -55,6 +57,9 @@ void FMassProcessingPhase::ExecuteTick(float DeltaTime, ELevelTick TickType, ENa
 	{
 		return;
 	}
+
+	SCOPE_CYCLE_COUNTER(STAT_Mass_PhaseTick);
+	SCOPE_CYCLE_COUNTER(STAT_Mass_Total);
 
 	checkf(PhaseManager, TEXT("Manager is null which is not a supported case. Either this FMassProcessingPhase has not been initialized properly or it's been left dangling after the FMassProcessingPhase owner got destroyed."));
 
@@ -139,10 +144,11 @@ void FMassProcessingPhase::Initialize(FMassProcessingPhaseManager& InPhaseManage
 //----------------------------------------------------------------------//
 // FPhaseProcessorConfigurator
 //----------------------------------------------------------------------//
-void FMassPhaseProcessorConfigurationHelper::Configure(TArrayView<UMassProcessor* const> DynamicProcessors,
-	const TSharedPtr<FMassEntityManager>& EntityManager, FMassProcessorDependencySolver::FResult* OutOptionalResult)
+void FMassPhaseProcessorConfigurationHelper::Configure(TArrayView<UMassProcessor* const> DynamicProcessors
+	, EProcessorExecutionFlags InWorldExecutionFlags, const TSharedPtr<FMassEntityManager>& EntityManager
+	, FMassProcessorDependencySolver::FResult* OutOptionalResult)
 {
-	FMassRuntimePipeline TmpPipeline;
+	FMassRuntimePipeline TmpPipeline(InWorldExecutionFlags);
 	TmpPipeline.CreateFromArray(PhaseConfig.ProcessorCDOs, ProcessorOuter);
 	for (UMassProcessor* Processor : DynamicProcessors)
 	{
@@ -158,7 +164,7 @@ void FMassPhaseProcessorConfigurationHelper::Configure(TArrayView<UMassProcessor
 
 	Solver.ResolveDependencies(SortedProcessors, EntityManager, OutOptionalResult);
 
-	PhaseProcessor.Populate(SortedProcessors);
+	PhaseProcessor.UpdateProcessorsCollection(SortedProcessors, InWorldExecutionFlags);
 
 #if WITH_MASSENTITY_DEBUG
 	for (const FMassProcessorOrderInfo& ProcessorOrderInfo : SortedProcessors)
@@ -192,12 +198,14 @@ void FMassPhaseProcessorConfigurationHelper::Configure(TArrayView<UMassProcessor
 //----------------------------------------------------------------------//
 void FMassProcessingPhaseManager::Initialize(UObject& InOwner, TConstArrayView<FMassProcessingPhaseConfig> InProcessingPhasesConfig, const FString& DependencyGraphFileName)
 {
-#if WITH_EDITOR
 	UWorld* World = InOwner.GetWorld();
+#if WITH_EDITOR
 	const bool bCreateProcessorGraphPreview = (World != nullptr) && (World->IsEditorWorld() && !World->IsGameWorld());
 #endif // WITH_EDITOR
 	Owner = &InOwner;
 	ProcessingPhasesConfig = InProcessingPhasesConfig;
+
+	ProcessorExecutionFlags = UE::Mass::Utils::DetermineProcessorExecutionFlags(World, ProcessorExecutionFlags);
 
 	for (int PhaseAsInt = 0; PhaseAsInt < int(EMassProcessingPhase::MAX); ++PhaseAsInt)
 	{		
@@ -229,7 +237,9 @@ void FMassProcessingPhaseManager::Initialize(UObject& InOwner, TConstArrayView<F
 			Result.DependencyGraphFileName = DependencyGraphFileName;
 			FMassPhaseProcessorConfigurationHelper Configurator(*PhaseProcessor, ProcessingPhasesConfig[PhaseAsInt], InOwner, EMassProcessingPhase(PhaseAsInt));
 			Configurator.bIsGameRuntime = false;
-			Configurator.Configure({}, /*EntityManager=*/nullptr, &Result);
+			// passing EProcessorExecutionFlags::All here to gather all available processors since bCreateProcessorGraphPreview 
+			// is true when we want to preview processors that might be available at runtime.
+			Configurator.Configure({}, EProcessorExecutionFlags::All, /*EntityManager=*/nullptr, &Result);
 		}
 #endif // WITH_EDITOR
 	}
@@ -312,6 +322,12 @@ void FMassProcessingPhaseManager::EnableTickFunctions(const UWorld& World)
 
 	for (FMassProcessingPhase& Phase : ProcessingPhases)
 	{
+		if (UE::Mass::Tweakables::bMakePrePhysicsTickFunctionHighPriority && (Phase.Phase == EMassProcessingPhase::PrePhysics))
+		{
+			constexpr bool bHighPriority = true;
+			Phase.SetPriorityIncludingPrerequisites(bHighPriority);
+		}
+
 		Phase.RegisterTickFunction(World.PersistentLevel);
 		Phase.SetTickFunctionEnable(true);
 #if WITH_MASSENTITY_DEBUG
@@ -386,7 +402,7 @@ void FMassProcessingPhaseManager::OnPhaseStart(const FMassProcessingPhase& Phase
 			GraphBuildState.LastResult.Reset();
 
 			FMassPhaseProcessorConfigurationHelper Configurator(*PhaseProcessor, ProcessingPhasesConfig[PhaseAsInt], *Owner.Get(), Phase.Phase);
-			Configurator.Configure(DynamicProcessors, EntityManager, &GraphBuildState.LastResult);
+			Configurator.Configure(DynamicProcessors, ProcessorExecutionFlags, EntityManager, &GraphBuildState.LastResult);
 
 			GraphBuildState.bInitialized = true;
 

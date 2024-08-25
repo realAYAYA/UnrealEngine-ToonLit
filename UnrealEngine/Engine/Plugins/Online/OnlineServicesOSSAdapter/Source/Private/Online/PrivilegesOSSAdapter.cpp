@@ -63,7 +63,7 @@ TOnlineAsyncOpHandle<FQueryUserPrivilege> FPrivilegesOSSAdapter::QueryUserPrivil
 
 								Promise->SetValue();
 							}
-						}));
+						}), EShowPrivilegeResolveUI::Default);
 
 				return Promise->GetFuture();
 			})

@@ -427,7 +427,7 @@ void UAnimGraphNode_SkeletalControlBase::PostEditChangeProperty(struct FProperty
 				if (GetNode()->AlphaInputType != EAnimAlphaInputType::Float)
 				{
 					Pin->BreakAllPinLinks();
-					PropertyBindings.Remove(Pin->PinName);
+					RemoveBindings(Pin->PinName);
 				}
 			}
 			else if (Pin->PinName == GET_MEMBER_NAME_STRING_CHECKED(FAnimNode_SkeletalControlBase, bAlphaBoolEnabled))
@@ -435,7 +435,7 @@ void UAnimGraphNode_SkeletalControlBase::PostEditChangeProperty(struct FProperty
 				if (GetNode()->AlphaInputType != EAnimAlphaInputType::Bool)
 				{
 					Pin->BreakAllPinLinks();
-					PropertyBindings.Remove(Pin->PinName);
+					RemoveBindings(Pin->PinName);
 				}
 			}
 			else if (Pin->PinName == GET_MEMBER_NAME_STRING_CHECKED(FAnimNode_SkeletalControlBase, AlphaCurveName))
@@ -443,7 +443,7 @@ void UAnimGraphNode_SkeletalControlBase::PostEditChangeProperty(struct FProperty
 				if (GetNode()->AlphaInputType != EAnimAlphaInputType::Curve)
 				{
 					Pin->BreakAllPinLinks();
-					PropertyBindings.Remove(Pin->PinName);
+					RemoveBindings(Pin->PinName);
 				}
 			}
 		}

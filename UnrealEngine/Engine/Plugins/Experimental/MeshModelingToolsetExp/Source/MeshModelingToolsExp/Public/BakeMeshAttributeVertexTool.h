@@ -71,25 +71,25 @@ public:
 
 	/** The bake output type to generate in the Red channel */
 	UPROPERTY(EditAnywhere, Category = BakeOutput, meta=(Bitmask, BitmaskEnum = "/Script/MeshModelingToolsExp.EBakeMapType",
-		ValidEnumValues="None, AmbientOcclusion, Curvature",
+		ValidEnumValues="None, AmbientOcclusion, Curvature, One, Zero",
 		EditCondition="OutputMode == EBakeVertexOutput::PerChannel", EditConditionHides))
 	int32 OutputTypeR = static_cast<int32>(EBakeMapType::None);
 
 	/** The bake output type to generate in the Green channel */
 	UPROPERTY(EditAnywhere, Category = BakeOutput, meta=(Bitmask, BitmaskEnum = "/Script/MeshModelingToolsExp.EBakeMapType",
-		ValidEnumValues="None, AmbientOcclusion, Curvature",
+		ValidEnumValues="None, AmbientOcclusion, Curvature, One, Zero",
 		EditCondition="OutputMode == EBakeVertexOutput::PerChannel", EditConditionHides))
 	int32 OutputTypeG = static_cast<int32>(EBakeMapType::None);
 
 	/** The bake output type to generate in the Blue channel */
 	UPROPERTY(EditAnywhere, Category = BakeOutput, meta=(Bitmask, BitmaskEnum = "/Script/MeshModelingToolsExp.EBakeMapType",
-		ValidEnumValues="None, AmbientOcclusion, Curvature",
+		ValidEnumValues="None, AmbientOcclusion, Curvature, One, Zero",
 		EditCondition="OutputMode == EBakeVertexOutput::PerChannel", EditConditionHides))
 	int32 OutputTypeB = static_cast<int32>(EBakeMapType::None);
 
 	/** The bake output type to generate in the Alpha channel */
 	UPROPERTY(EditAnywhere, Category = BakeOutput, meta=(Bitmask, BitmaskEnum = "/Script/MeshModelingToolsExp.EBakeMapType",
-		ValidEnumValues="None, AmbientOcclusion, Curvature",
+		ValidEnumValues="None, AmbientOcclusion, Curvature, One, Zero",
 		EditCondition="OutputMode == EBakeVertexOutput::PerChannel", EditConditionHides))
 	int32 OutputTypeA = static_cast<int32>(EBakeMapType::None);
 
@@ -167,6 +167,7 @@ protected:
 	void UpdateOnModeChange();
 	void UpdateVisualization();
 	void UpdateColorTopology();
+	void UpdateSourceVertexColors();
 	void UpdateResult();
 
 	struct FBakeSettings

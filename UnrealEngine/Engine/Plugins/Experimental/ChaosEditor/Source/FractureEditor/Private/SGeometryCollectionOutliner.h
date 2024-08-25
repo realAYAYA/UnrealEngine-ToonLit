@@ -98,7 +98,9 @@ public:
 	const TManagedArray<int32>& GetSimulationType() const { return SimulationTypeAttribute.Get(); }
 	const TManagedArray<bool>& GetVisible() const { return VisibleAttribute.Get(); }
 
+	bool IsValidBoneIndex(int32 BoneIndex) const;
 	FString GetBoneName(int32 Index) const;
+	int32 GetBoneCount() const;
 	float GetRelativeSize(int32 Index) const;
 	float GetVolumetricUnit(int32 Index) const;
 	int32 GetInitialState(int32 Index) const;
@@ -110,6 +112,8 @@ public:
 	bool HasSourceCollision(int32 Index) const;
 	bool IsSourceCollisionUsed(int32 Index) const;
 	int32 GetConvexCount(int32 Index) const;
+	int32 GetTriangleCount(int32 Index) const;
+	int32 GetVertexCount(int32 Index) const;
 
 private:
 	FManagedArrayCollection&			DataCollection;
@@ -129,6 +133,8 @@ private:
 	TManagedArrayAccessor<bool>			HasSourceCollisionAttribute;
 	TManagedArrayAccessor<bool>			SourceCollisionUsedAttribute;
 	TManagedArrayAccessor<int32>		ConvexCountAttribute;
+	TManagedArrayAccessor<int32>		TriangleCountAttribute;
+	TManagedArrayAccessor<int32>		VertexCountAttribute;
 };
 
 class FGeometryCollectionTreeItemComponent : public FGeometryCollectionTreeItem
@@ -141,6 +147,8 @@ public:
 	{
 		RegenerateChildren();
 	}
+	
+	virtual ~FGeometryCollectionTreeItemComponent() {}
 
 	/** FGeometryCollectionTreeItem interface */
 	virtual TSharedRef<ITableRow> MakeTreeRowWidget(const TSharedRef<STableViewBase>& InOwnerTable, bool bIsPinned = false);
@@ -160,7 +168,16 @@ public:
 
 	void SetHistogramSelection(TArray<int32>& SelectedBones);
 
+	const FGeometryCollectionItemDataFacade& GetDataCollectionFacade() const { return DataCollectionFacade; }
 	FGeometryCollectionItemDataFacade& GetDataCollectionFacade() { return DataCollectionFacade; }
+
+	bool IsValid() const;
+
+	// Mark item as unused/invalid; helpful because slate defers destroying tree items and can still run callbacks on them until tick
+	void Invalidate()
+	{
+		bInvalidated = true;
+	}
 
 private:
 	bool FilterBoneIndex(int32 BoneIndex) const;
@@ -180,6 +197,9 @@ private:
 	// collection used to store the displayed information
 	FManagedArrayCollection DataCollection;
 	FGeometryCollectionItemDataFacade DataCollectionFacade;
+
+	// track whether the item has been explicitly invalidated
+	bool bInvalidated = false;
 
 };
 
@@ -208,8 +228,11 @@ public:
 	TSharedRef<SWidget> MakeRemovalTimeColumnWidget() const;
 	TSharedRef<SWidget> MakeImportedCollisionsColumnWidget() const;
 	TSharedRef<SWidget> MakeConvexCountColumnWidget() const;
+	TSharedRef<SWidget> MakeTriangleCountColumnWidget() const;
+	TSharedRef<SWidget> MakeVertexCountColumnWidget() const;
 	TSharedRef<SWidget> MakeEmptyColumnWidget() const;
 	virtual void GetChildren(FGeometryCollectionTreeItemList& OutChildren) override;
+	bool IsValidBone() const;
 	virtual int32 GetBoneIndex() const override { return BoneIndex; }
 	virtual UGeometryCollectionComponent* GetComponent() const { return ParentComponentItem->GetComponent(); }
 	bool HasChildren() const;
@@ -251,6 +274,9 @@ namespace SGeometryCollectionOutlinerColumnID
 	// Collision Column Mode
 	const FName ConvexCount("Convex Count");
 	const FName ImportedCollisions("ImportedCollisions");
+	// Geometry Column Mode
+	const FName VertexCount("Vertex Count");
+	const FName TriangleCount("Triangle Count");
 }
 
 class SGeometryCollectionOutlinerRow : public SMultiColumnTableRow<FGeometryCollectionTreeItemBonePtr>

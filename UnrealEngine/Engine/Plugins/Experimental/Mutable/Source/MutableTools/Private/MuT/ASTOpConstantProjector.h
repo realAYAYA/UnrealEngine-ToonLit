@@ -17,7 +17,7 @@ struct FProgram;
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
-	class ASTOpConstantProjector : public ASTOp
+	class ASTOpConstantProjector final : public ASTOp
 	{
 	public:
 

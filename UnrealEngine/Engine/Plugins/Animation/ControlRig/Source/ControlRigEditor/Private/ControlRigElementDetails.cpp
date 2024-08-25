@@ -9,9 +9,13 @@
 #include "Widgets/Input/SVectorInputBox.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Colors/SColorBlock.h"
+#include "Widgets/Colors/SColorPicker.h"
 #include "ControlRigBlueprint.h"
+#include "ModularRig.h"
 #include "Graph/ControlRigGraph.h"
 #include "PropertyCustomizationHelpers.h"
+#include "PropertyEditorModule.h"
 #include "SEnumCombo.h"
 #include "Units/Execution/RigUnit_BeginExecution.h"
 #include "Units/Execution/RigUnit_DynamicHierarchy.h"
@@ -19,6 +23,9 @@
 #include "HAL/PlatformApplicationMisc.h"
 #include "Styling/AppStyle.h"
 #include "Editor/SRigHierarchyTreeView.h"
+#include "StructViewerFilter.h"
+#include "StructViewerModule.h"
+#include "Widgets/SRigVMGraphPinEnumPicker.h"
 
 #define LOCTEXT_NAMESPACE "ControlRigElementDetails"
 
@@ -57,18 +64,6 @@ struct FRigElementTransformWidgetSettings
 
 TMap<uint32, FRigElementTransformWidgetSettings> FRigElementTransformWidgetSettings::sSettings;
 
-
-namespace FRigElementKeyDetailsDefs
-{
-	// Active foreground pin alpha
-	static const float ActivePinForegroundAlpha = 1.f;
-	// InActive foreground pin alpha
-	static const float InactivePinForegroundAlpha = 0.15f;
-	// Active background pin alpha
-	static const float ActivePinBackgroundAlpha = 0.8f;
-	// InActive background pin alpha
-	static const float InactivePinBackgroundAlpha = 0.4f;
-};
 
 void RigElementKeyDetails_GetCustomizedInfo(TSharedRef<IPropertyHandle> InStructPropertyHandle, UControlRigBlueprint*& OutBlueprint)
 {
@@ -154,6 +149,168 @@ UControlRigBlueprint* RigElementDetails_GetBlueprintFromHierarchy(URigHierarchy*
 	return Blueprint;
 }
 
+void SRigElementKeyWidget::Construct(const FArguments& InArgs, TSharedPtr<IPropertyHandle> InNameHandle, TSharedPtr<IPropertyHandle> InTypeHandle)
+{
+	NameHandle = InNameHandle;
+	TypeHandle = InTypeHandle;
+	Construct(InArgs);
+}
+
+void SRigElementKeyWidget::Construct(const FArguments& InArgs)
+{
+	BlueprintBeingCustomized = InArgs._Blueprint;
+	OnGetElementType = InArgs._OnGetElementType;
+	OnElementNameChanged = InArgs._OnElementNameChanged;
+	OnElementTypeChanged = InArgs._OnElementTypeChanged;
+	
+	UpdateElementNameList();
+	
+	ChildSlot
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		[
+			TypeHandle.IsValid() ?
+				TypeHandle->CreatePropertyValueWidget()
+					:
+				SNew(SEnumComboBox, StaticEnum<ERigElementType>())
+				.CurrentValue_Lambda([this]()
+				{
+					if (OnGetElementType.IsBound())
+					{
+						return (int32)OnGetElementType.Execute();
+					}
+					return (int32)ERigElementType::None;
+				})
+				.OnEnumSelectionChanged_Lambda([this](int32 InEnumValue, ESelectInfo::Type SelectInfo)
+				{
+					ERigElementType EnumValue = static_cast<ERigElementType>(InEnumValue);
+					OnElementTypeChanged.ExecuteIfBound(EnumValue);
+					UpdateElementNameList();
+					SearchableComboBox->ClearSelection();
+					OnElementNameChanged.ExecuteIfBound(nullptr, ESelectInfo::Direct);
+				})
+		]
+
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.Padding(4.f, 0.f, 0.f, 0.f)
+		[
+			SAssignNew(SearchableComboBox, SSearchableComboBox)
+			.OptionsSource(&ElementNameList)
+			.OnSelectionChanged(InArgs._OnElementNameChanged)
+			.OnGenerateWidget_Lambda([](TSharedPtr<FString> InItem)
+			{
+				return SNew(STextBlock)
+				.Text(FText::FromString(InItem.IsValid() ? *InItem : FString()))
+				.Font(IDetailLayoutBuilder::GetDetailFont());
+			})
+			.Content()
+			[
+				SNew(STextBlock)
+				.Text_Lambda([InArgs]()
+				{
+					if (InArgs._OnGetElementNameAsText.IsBound())
+					{
+						return InArgs._OnGetElementNameAsText.Execute();
+					}
+					return FText();
+				})
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+			]
+		]
+		// Use button
+		+SHorizontalBox::Slot()
+		.AutoWidth()
+		.Padding(1,0)
+		.VAlign(VAlign_Center)
+		[
+			SAssignNew(UseSelectedButton, SButton)
+			.ButtonStyle( FAppStyle::Get(), "NoBorder" )
+			.ButtonColorAndOpacity_Lambda([this, InArgs]() { return UseSelectedButton.IsValid() && UseSelectedButton->IsHovered() ? InArgs._ActiveBackgroundColor : InArgs._InactiveBackgroundColor; })
+			.OnClicked(InArgs._OnGetSelectedClicked)
+			.ContentPadding(1.f)
+			.ToolTipText(NSLOCTEXT("ControlRigElementDetails", "ObjectGraphPin_Use_Tooltip", "Use item selected"))
+			[
+				SNew(SImage)
+				.ColorAndOpacity_Lambda( [this, InArgs]() { return UseSelectedButton.IsValid() && UseSelectedButton->IsHovered() ? InArgs._ActiveForegroundColor : InArgs._InactiveForegroundColor; })
+				.Image(FAppStyle::GetBrush("Icons.CircleArrowLeft"))
+			]
+		]
+		// Select in hierarchy button
+		+SHorizontalBox::Slot()
+		.AutoWidth()
+		.Padding(1,0)
+		.VAlign(VAlign_Center)
+		[
+			SAssignNew(SelectElementButton, SButton)
+			.ButtonStyle( FAppStyle::Get(), "NoBorder" )
+			.ButtonColorAndOpacity_Lambda([this, InArgs]() { return SelectElementButton.IsValid() && SelectElementButton->IsHovered() ? InArgs._ActiveBackgroundColor : InArgs._InactiveBackgroundColor; })
+			.OnClicked(InArgs._OnSelectInHierarchyClicked)
+			.ContentPadding(0)
+			.ToolTipText(NSLOCTEXT("ControlRigElementDetails", "ObjectGraphPin_Browse_Tooltip", "Select in hierarchy"))
+			[
+				SNew(SImage)
+				.ColorAndOpacity_Lambda( [this, InArgs]() { return SelectElementButton.IsValid() && SelectElementButton->IsHovered() ? InArgs._ActiveForegroundColor : InArgs._InactiveForegroundColor; })
+				.Image(FAppStyle::GetBrush("Icons.Search"))
+			]
+		]
+	];
+
+	if (TypeHandle)
+	{
+		TypeHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda(
+			[this, InArgs]()
+			{
+				int32 EnumValue;
+				TypeHandle->GetValue(EnumValue);
+				OnElementTypeChanged.ExecuteIfBound(static_cast<ERigElementType>(EnumValue));
+				UpdateElementNameList();
+				SearchableComboBox->ClearSelection();
+				OnElementNameChanged.ExecuteIfBound(nullptr, ESelectInfo::Direct);
+			}
+		));
+	}
+}
+
+void SRigElementKeyWidget::UpdateElementNameList()
+{
+	ElementNameList.Reset();
+
+	if (BlueprintBeingCustomized)
+	{
+		for (UEdGraph* Graph : BlueprintBeingCustomized->UbergraphPages)
+		{
+			if (UControlRigGraph* RigGraph = Cast<UControlRigGraph>(Graph))
+			{
+				
+				const TArray<TSharedPtr<FRigVMStringWithTag>>* NameList = nullptr;
+				if (OnGetElementType.IsBound())
+				{
+					NameList = RigGraph->GetElementNameList(OnGetElementType.Execute());
+				}
+
+				ElementNameList.Reset();
+				if (NameList)
+				{
+					ElementNameList.Reserve(NameList->Num());
+					for(const TSharedPtr<FRigVMStringWithTag>& Name : *NameList)
+					{
+						ElementNameList.Add(MakeShared<FString>(Name->GetString()));
+					}
+				}
+				
+				if(SearchableComboBox.IsValid())
+				{
+					SearchableComboBox->RefreshOptions();
+				}
+				return;
+			}
+		}
+	}
+}
+
 void FRigElementKeyDetails::CustomizeHeader(TSharedRef<IPropertyHandle> InStructPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
 {
 	BlueprintBeingCustomized = nullptr;
@@ -195,16 +352,6 @@ void FRigElementKeyDetails::CustomizeHeader(TSharedRef<IPropertyHandle> InStruct
 		TypeHandle = InStructPropertyHandle->GetChildHandle(TEXT("Type"));
 		NameHandle = InStructPropertyHandle->GetChildHandle(TEXT("Name"));
 
-		TypeHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda(
-			[this]()
-			{
-				this->UpdateElementNameList();
-				SetElementName(FString());
-			}
-		));
-
-		UpdateElementNameList();
-
 		HeaderRow
 		.NameContent()
 		[
@@ -213,66 +360,19 @@ void FRigElementKeyDetails::CustomizeHeader(TSharedRef<IPropertyHandle> InStruct
 		.ValueContent()
 		.MinDesiredWidth(250.f)
 		[
-			SNew(SHorizontalBox)
-
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			[
-				TypeHandle->CreatePropertyValueWidget()
-			]
-
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.Padding(4.f, 0.f, 0.f, 0.f)
-			[
-				SAssignNew(SearchableComboBox, SSearchableComboBox)
-				.OptionsSource(&ElementNameList)
-				.OnSelectionChanged(this, &FRigElementKeyDetails::OnElementNameChanged)
-				.OnGenerateWidget(this, &FRigElementKeyDetails::OnGetElementNameWidget)
-				.IsEnabled(!NameHandle->IsEditConst())
-				.Content()
-				[
-					SNew(STextBlock)
-					.Text(this, &FRigElementKeyDetails::GetElementNameAsText)
-					.Font(IDetailLayoutBuilder::GetDetailFont())
-				]
-			]
-			// Use button
-			+SHorizontalBox::Slot()
-			.AutoWidth()
-			.Padding(1,0)
-			.VAlign(VAlign_Center)
-			[
-				SAssignNew(UseSelectedButton, SButton)
-				.ButtonStyle( FAppStyle::Get(), "NoBorder" )
-				.ButtonColorAndOpacity_Lambda([this]() { return OnGetWidgetBackground(UseSelectedButton); })
-				.OnClicked(this, &FRigElementKeyDetails::OnGetSelectedClicked)
-				.ContentPadding(1.f)
-				.ToolTipText(NSLOCTEXT("ControlRigElementDetails", "ObjectGraphPin_Use_Tooltip", "Use item selected"))
-				[
-					SNew(SImage)
-					.ColorAndOpacity_Lambda( [this]() { return OnGetWidgetForeground(UseSelectedButton); })
-					.Image(FAppStyle::GetBrush("Icons.CircleArrowLeft"))
-				]
-			]
-			// Select in hierarchy button
-			+SHorizontalBox::Slot()
-			.AutoWidth()
-			.Padding(1,0)
-			.VAlign(VAlign_Center)
-			[
-				SAssignNew(SelectElementButton, SButton)
-				.ButtonStyle( FAppStyle::Get(), "NoBorder" )
-				.ButtonColorAndOpacity_Lambda([this]() { return OnGetWidgetBackground(SelectElementButton); })
-				.OnClicked(this, &FRigElementKeyDetails::OnSelectInHierarchyClicked)
-				.ContentPadding(0)
-				.ToolTipText(NSLOCTEXT("ControlRigElementDetails", "ObjectGraphPin_Browse_Tooltip", "Select in hierarchy"))
-				[
-					SNew(SImage)
-					.ColorAndOpacity_Lambda( [this]() { return OnGetWidgetForeground(SelectElementButton); })
-					.Image(FAppStyle::GetBrush("Icons.Search"))
-				]
-			]			
+			SAssignNew(RigElementKeyWidget, SRigElementKeyWidget, NameHandle, TypeHandle)
+			.Blueprint(BlueprintBeingCustomized)
+			.IsEnabled_Lambda([this](){ return !NameHandle->IsEditConst(); })
+			.ActiveBackgroundColor(FSlateColor(FLinearColor(1.f, 1.f, 1.f, FRigElementKeyDetailsDefs::ActivePinBackgroundAlpha)))
+			.ActiveForegroundColor(FSlateColor(FLinearColor(1.f, 1.f, 1.f, FRigElementKeyDetailsDefs::ActivePinForegroundAlpha)))
+			.InactiveBackgroundColor(FSlateColor(FLinearColor(1.f, 1.f, 1.f, FRigElementKeyDetailsDefs::InactivePinBackgroundAlpha)))
+			.InactiveForegroundColor(FSlateColor(FLinearColor(1.f, 1.f, 1.f, FRigElementKeyDetailsDefs::InactivePinForegroundAlpha)))
+			.OnElementNameChanged(this, &FRigElementKeyDetails::OnElementNameChanged)
+			.OnGetSelectedClicked(this, &FRigElementKeyDetails::OnGetSelectedClicked)
+			//.OnGetElementNameWidget(this, &FRigElementKeyDetails::OnGetElementNameWidget)
+			.OnSelectInHierarchyClicked(this, &FRigElementKeyDetails::OnSelectInHierarchyClicked)
+			.OnGetElementNameAsText_Raw(this, &FRigElementKeyDetails::GetElementNameAsText)
+			.OnGetElementType(this, &FRigElementKeyDetails::GetElementType)
 		];
 	}
 }
@@ -335,30 +435,43 @@ void FRigElementKeyDetails::SetElementName(FString InName)
 	if (NameHandle.IsValid())
 	{
 		NameHandle->SetValue(InName);
-	}
-}
 
-void FRigElementKeyDetails::UpdateElementNameList()
-{
-	if (!TypeHandle.IsValid())
-	{
-		return;
-	}
-
-	ElementNameList.Reset();
-
-	if (BlueprintBeingCustomized)
-	{
-		for (UEdGraph* Graph : BlueprintBeingCustomized->UbergraphPages)
+		// if this is nested below a connection rule
+		const TSharedPtr<IPropertyHandle> KeyHandle = NameHandle->GetParentHandle();
+		if(KeyHandle.IsValid())
 		{
-			if (UControlRigGraph* RigGraph = Cast<UControlRigGraph>(Graph))
+			const TSharedPtr<IPropertyHandle> ParentHandle = KeyHandle->GetParentHandle();
+			if(ParentHandle.IsValid())
 			{
-				ElementNameList = *RigGraph->GetElementNameList(GetElementType());
-				if(SearchableComboBox.IsValid())
+				if (const TSharedPtr<IPropertyHandleStruct> StructPropertyHandle = ParentHandle->AsStruct())
 				{
-					SearchableComboBox->RefreshOptions();
+					if(const UScriptStruct* RuleStruct = Cast<UScriptStruct>(StructPropertyHandle->GetStructData()->GetStruct()))
+					{
+						if (RuleStruct->IsChildOf(FRigConnectionRule::StaticStruct()))
+						{
+							const void* RuleMemory = StructPropertyHandle->GetStructData()->GetStructMemory();
+							FString RuleContent;
+							RuleStruct->ExportText(RuleContent, RuleMemory, RuleMemory, nullptr, PPF_None, nullptr);
+
+							const TSharedPtr<IPropertyHandle> RuleStashHandle = ParentHandle->GetParentHandle();
+							
+							FRigConnectionRuleStash Stash;
+							Stash.ScriptStructPath = RuleStruct->GetPathName();
+							Stash.ExportedText = RuleContent;
+							
+							FString StashContent;
+							FRigConnectionRuleStash::StaticStruct()->ExportText(StashContent, &Stash, &Stash, nullptr, PPF_None, nullptr);
+
+							TArray<UObject*> Objects;
+							RuleStashHandle->GetOuterObjects(Objects);
+							FString FirstObjectValue;
+							for (int32 Index = 0; Index < Objects.Num(); Index++)
+							{
+								(void)RuleStashHandle->SetPerObjectValue(Index, StashContent, EPropertyValueSetFlags::DefaultFlags);
+							}
+						}
+					}
 				}
-				return;
 			}
 		}
 	}
@@ -374,13 +487,6 @@ void FRigElementKeyDetails::OnElementNameChanged(TSharedPtr<FString> InItem, ESe
 	{
 		SetElementName(FString());
 	}
-}
-
-TSharedRef<SWidget> FRigElementKeyDetails::OnGetElementNameWidget(TSharedPtr<FString> InItem)
-{
-	return SNew(STextBlock)
-		.Text(FText::FromString(InItem.IsValid() ? *InItem : FString()))
-		.Font(IDetailLayoutBuilder::GetDetailFont());
 }
 
 FText FRigElementKeyDetails::GetElementNameAsText() const
@@ -678,7 +784,10 @@ void FRigBaseElementDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 
 		FPerElementInfo Info;
 		Info.WrapperObject = WrapperObject;
-		Info.Element = Cast<URigHierarchy>(WrapperObject->GetSubject())->GetHandle(Key);
+		if (const URigHierarchy* Hierarchy = Cast<URigHierarchy>(WrapperObject->GetSubject()))
+		{
+			Info.Element = Hierarchy->GetHandle(Key);
+		}
 
 		if(!Info.Element.IsValid())
 		{
@@ -708,7 +817,7 @@ void FRigBaseElementDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 	}
 
 	const bool bAllControls = !IsAnyElementNotOfType(ERigElementType::Control);
-	const bool bAllAnimationChannels = !IsAnyControlNotOfAnimationType(ERigControlAnimationType::AnimationChannel);
+	const bool bAllAnimationChannels = bAllControls && !IsAnyControlNotOfAnimationType(ERigControlAnimationType::AnimationChannel);
 	if(bAllControls && bAllAnimationChannels)
 	{
 		GeneralCategory.AddCustomRow(FText::FromString(TEXT("Parent Control")))
@@ -754,7 +863,7 @@ void FRigBaseElementDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 
 	DetailBuilder.HideCategory(TEXT("RigElement"));
 
-	if(!bAllAnimationChannels)
+	if(!bAllControls || !bAllAnimationChannels)
 	{
 		GeneralCategory.AddCustomRow(FText::FromString(TEXT("Name")))
 		.NameContent()
@@ -780,7 +889,9 @@ void FRigBaseElementDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 	// if we are not a bone, control or null
 	if(!IsAnyElementOfType(ERigElementType::Bone) &&
 		!IsAnyElementOfType(ERigElementType::Control) &&
-		!IsAnyElementOfType(ERigElementType::Null))
+		!IsAnyElementOfType(ERigElementType::Null) &&
+		!IsAnyElementOfType(ERigElementType::Connector) &&
+		!IsAnyElementOfType(ERigElementType::Socket))
 	{
 		CustomizeMetadata(DetailBuilder);
 	}
@@ -889,7 +1000,7 @@ bool FRigBaseElementDetails::OnVerifyNameChanged(const FText& InText, FText& Out
 	}
 
 	FString OutErrorMessageStr;
-	if (!Hierarchy->IsNameAvailable(InText.ToString(), GetElementKey().Type, &OutErrorMessageStr))
+	if (!Hierarchy->IsNameAvailable(FRigName(InText.ToString()), GetElementKey().Type, &OutErrorMessageStr))
 	{
 		OutErrorMessage = FText::FromString(OutErrorMessageStr);
 		return false;
@@ -1016,6 +1127,26 @@ bool FRigBaseElementDetails::IsAnyElementProcedural() const
 	return ContainsElementByPredicate([](const FPerElementInfo& Info)
 	{
 		return Info.IsProcedural();
+	});
+}
+
+bool FRigBaseElementDetails::IsAnyConnectorImported() const
+{
+	return ContainsElementByPredicate([](const FPerElementInfo& Info)
+	{
+		return Info.Element.GetKey().Name.ToString().Contains(UModularRig::NamespaceSeparator);
+	});
+}
+
+bool FRigBaseElementDetails::IsAnyConnectorPrimary() const
+{
+	return ContainsElementByPredicate([](const FPerElementInfo& Info)
+	{
+		if(const FRigConnectorElement* Connector = Info.Element.Get<FRigConnectorElement>())
+		{
+			return Connector->IsPrimary();
+		}
+		return false;
 	});
 }
 
@@ -1169,37 +1300,44 @@ void FRigBaseElementDetails::CustomizeMetadata(IDetailLayoutBuilder& DetailBuild
 		return;
 	}
 
+	URigHierarchy* Hierarchy = nullptr;
 	if (!MetadataHandle.IsValid())
 	{
 		const FPerElementInfo& Info = PerElementInfos[0];
-		URigHierarchy* Hierarchy = Info.IsValid() ? Info.GetHierarchy() : nullptr;
+		
+		Hierarchy = Info.IsValid() ? Info.GetHierarchy() : nullptr;
 		if (!Hierarchy)
 		{
 			return;
 		}
 			
-		TSharedRef<IPropertyUtilities> PropertyUtilities = DetailBuilder.GetPropertyUtilities();
-		MetadataHandle = Hierarchy->OnMetadataChanged().AddLambda([this, PropertyUtilities](const FRigElementKey& InKey, const FName&)
+		TWeakPtr<IPropertyUtilities> WeakPropertyUtilities =  DetailBuilder.GetPropertyUtilities().ToWeakPtr();
+		MetadataHandle = Hierarchy->OnMetadataChanged().AddLambda([this, WeakPropertyUtilities](const FRigElementKey& InKey, const FName&)
 		{
-			const FRigBaseElement* Element = PerElementInfos.Num() == 1 ? PerElementInfos[0].GetElement() : nullptr;
-			if (Element && Element->GetKey() == InKey)
+			if(WeakPropertyUtilities.IsValid())
 			{
-				PropertyUtilities->ForceRefresh();
+				const FRigBaseElement* Element = PerElementInfos.Num() == 1 ? PerElementInfos[0].GetElement() : nullptr;
+				if (InKey.Type == ERigElementType::All || (Element && Element->GetKey() == InKey))
+				{
+					WeakPropertyUtilities.Pin()->ForceRefresh();
+				}
 			}
 		});
 	}
 	
-	const FRigBaseElement* Element = PerElementInfos[0].Element.Get();
-	if(Element->NumMetadata() == 0)
+	FRigBaseElement* Element = PerElementInfos[0].Element.Get();
+	TArray<FName> MetadataNames = Element->GetOwner()->GetMetadataNames(Element->GetKey());
+	
+	if(MetadataNames.IsEmpty())
 	{
 		return;
 	}
 
 	IDetailCategoryBuilder& MetadataCategory = DetailBuilder.EditCategory(TEXT("Metadata"), LOCTEXT("Metadata", "Metadata"));
-	for(int32 Index=0;Index<Element->NumMetadata();Index++)
+	for(FName MetadataName: MetadataNames)
 	{
-		FRigBaseMetadata* Metadata = Element->GetMetadata(Index);
-		TSharedPtr<FStructOnScope> StructOnScope = MakeShareable(new FStructOnScope(Metadata->GetMetadataStruct(), (uint8*)Metadata));
+		FRigBaseMetadata* Metadata = Element->GetMetadata(MetadataName);
+		TSharedPtr<FStructOnScope> StructOnScope = MakeShareable(new FStructOnScope(Metadata->GetMetadataStruct(), reinterpret_cast<uint8*>(Metadata)));
 
 		FAddPropertyParams Params;
 		Params.CreateCategoryNodes(false);
@@ -1598,11 +1736,26 @@ FDetailWidgetRow& FRigTransformElementDetails::CreateEulerTransformValueWidgetRo
 								{
 									if(ControlElement->Settings.LimitEnabled.Num() == 3)
 									{
-										const int32 Index = ControlElement->Settings.ControlType == ERigControlType::Rotator ?
-											int32(SubComponent) - int32(ESlateTransformSubComponent::Pitch) :
-											int32(SubComponent) - int32(ESlateTransformSubComponent::X);
+										int32 Index = INDEX_NONE;
+										if (ControlElement->Settings.ControlType == ERigControlType::Rotator)
+										{
+											// TRotator is ordered Roll,Pitch,Yaw, while SNumericRotatorInputBox is ordered Pitch,Yaw,Roll
+											switch (SubComponent)
+											{
+												case ESlateTransformSubComponent::Pitch: Index = 1; break;
+												case ESlateTransformSubComponent::Yaw: Index = 2; break;
+												case ESlateTransformSubComponent::Roll: Index = 0; break;
+											}
+										}
+										else
+										{
+											Index = int32(SubComponent) - int32(ESlateTransformSubComponent::X);
+										}
 
-										Value = ControlElement->Settings.LimitEnabled[Index].GetForValueType(ValueType);
+										if (Index != INDEX_NONE)
+										{
+											Value = ControlElement->Settings.LimitEnabled[Index].GetForValueType(ValueType);
+										}
 									}
 									break;
 								}
@@ -1750,11 +1903,26 @@ FDetailWidgetRow& FRigTransformElementDetails::CreateEulerTransformValueWidgetRo
 							{
 								if(ControlElement->Settings.LimitEnabled.Num() == 3)
 								{
-									const int32 Index = ControlElement->Settings.ControlType == ERigControlType::Rotator ?
-										int32(SubComponent) - int32(ESlateTransformSubComponent::Pitch) :
-										int32(SubComponent) - int32(ESlateTransformSubComponent::X);
+									int32 Index = INDEX_NONE;
+									if (ControlElement->Settings.ControlType == ERigControlType::Rotator)
+									{
+										// TRotator is ordered Roll,Pitch,Yaw, while SNumericRotatorInputBox is ordered Pitch,Yaw,Roll
+										switch (SubComponent)
+										{
+											case ESlateTransformSubComponent::Pitch: Index = 1; break;
+											case ESlateTransformSubComponent::Yaw: Index = 2; break;
+											case ESlateTransformSubComponent::Roll: Index = 0; break;
+										}
+									}
+									else
+									{
+										Index = int32(SubComponent) - int32(ESlateTransformSubComponent::X);
+									}
 
-									ControlElement->Settings.LimitEnabled[Index].SetForValueType(ValueType, Value);
+									if (Index != INDEX_NONE)
+									{
+										ControlElement->Settings.LimitEnabled[Index].SetForValueType(ValueType, Value);
+									}
 								}
 								break;
 							}
@@ -1893,7 +2061,15 @@ FDetailWidgetRow& FRigTransformElementDetails::CreateEulerTransformValueWidgetRo
 					case ERigControlType::Transform:
 					case ERigControlType::TransformNoScale:
 					{
-						FVector Vector = Hierarchy->GetControlSpecifiedEulerAngle(ControlElement, bInitial);
+						FVector Vector;
+						if(const UControlRig* ControlRig = Hierarchy->GetTypedOuter<UControlRig>())
+						{
+							Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement, bInitial);
+						}
+						else
+						{
+							Vector = Hierarchy->GetControlSpecifiedEulerAngle(ControlElement, bInitial);
+						}
 						RelativeTransform.Rotation =  FRotator(Vector.Y, Vector.Z, Vector.X);
 						break;
 					}
@@ -2759,6 +2935,7 @@ void FRigControlElementDetails::CustomizeValue(IDetailLayoutBuilder& DetailBuild
 				break;
 			}
 			case ERigControlType::Float:
+			case ERigControlType::ScaleFloat:
 			{
 				CreateFloatValueWidgetRow(Keys, ValueCategory, Labels[Index], Tooltips[Index], ValueType, VisibilityAttribute);
 				break;
@@ -2913,6 +3090,7 @@ void FRigControlElementDetails::CustomizeControl(IDetailLayoutBuilder& DetailBui
 					ControlElement->Settings.bGroupWithParentControl =
 						ControlElement->Settings.ControlType == ERigControlType::Bool ||
 						ControlElement->Settings.ControlType == ERigControlType::Float ||
+						ControlElement->Settings.ControlType == ERigControlType::ScaleFloat ||
 						ControlElement->Settings.ControlType == ERigControlType::Integer ||
 						ControlElement->Settings.ControlType == ERigControlType::Vector2D;
 
@@ -3019,6 +3197,7 @@ void FRigControlElementDetails::CustomizeControl(IDetailLayoutBuilder& DetailBui
 	if(bSupportsShape &&
 		!(IsAnyControlNotOfValueType(ERigControlType::Integer) &&
 		IsAnyControlNotOfValueType(ERigControlType::Float) &&
+		IsAnyControlNotOfValueType(ERigControlType::ScaleFloat) &&
 		IsAnyControlNotOfValueType(ERigControlType::Vector2D)))
 	{
 		const TSharedPtr<IPropertyHandle> PrimaryAxisHandle = SettingsHandle->GetChildHandle(TEXT("PrimaryAxis"));
@@ -3041,60 +3220,43 @@ void FRigControlElementDetails::CustomizeControl(IDetailLayoutBuilder& DetailBui
 	}
 
 	if(IsAnyControlOfValueType(ERigControlType::Integer))
-	{
-		const TSharedPtr<IPropertyHandle> ControlEnumHandle = SettingsHandle->GetChildHandle(TEXT("ControlEnum"));
-		ControlCategory.AddProperty(ControlEnumHandle.ToSharedRef()).DisplayName(FText::FromString(TEXT("Control Enum")))
-		.IsEnabled(bIsEnabled);
-
-		ControlEnumHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda(
-			[this, PropertyUtilities]()
+	{		
+		FDetailWidgetRow* EnumWidgetRow = &ControlCategory.AddCustomRow(FText::FromString(TEXT("ControlEnum")))
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("Control Enum")))
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+			.IsEnabled(bIsEnabled)
+		]
+		.ValueContent()
+		[
+			SNew(SRigVMEnumPicker)
+			.OnEnumChanged(this, &FRigControlElementDetails::HandleControlEnumChanged, PropertyUtilities)
+			.IsEnabled(bIsEnabled)
+			.GetCurrentEnum_Lambda([this]()
 			{
-				PropertyUtilities->ForceRefresh();
-
-				for(int32 ControlIndex = 0; ControlIndex < PerElementInfos.Num(); ControlIndex++)
+				UEnum* CommonControlEnum = nullptr;
+				for (int32 ControlIndex=0; ControlIndex < PerElementInfos.Num(); ++ControlIndex)
 				{
 					FPerElementInfo& Info = PerElementInfos[ControlIndex];
 					const FRigControlElement ControlInView = Info.WrapperObject->GetContent<FRigControlElement>();
 					FRigControlElement* ControlBeingCustomized = Info.GetDefaultElement<FRigControlElement>();
-					
-					const UEnum* ControlEnum = ControlBeingCustomized->Settings.ControlEnum;
-					if (ControlEnum != nullptr)
+						
+					UEnum* ControlEnum = ControlBeingCustomized->Settings.ControlEnum;
+					if (ControlIndex == 0)
 					{
-						int32 Maximum = (int32)ControlEnum->GetMaxEnumValue() - 1;
-						ControlBeingCustomized->Settings.MinimumValue.Set<int32>(0);
-						ControlBeingCustomized->Settings.MaximumValue.Set<int32>(Maximum);
-						ControlBeingCustomized->Settings.LimitEnabled.Reset();
-						ControlBeingCustomized->Settings.LimitEnabled.Add(true);
-						Info.GetDefaultHierarchy()->SetControlSettings(ControlBeingCustomized, ControlBeingCustomized->Settings, true, true, true);
-
-						FRigControlValue InitialValue = Info.GetDefaultHierarchy()->GetControlValue(ControlBeingCustomized, ERigControlValueType::Initial);
-						FRigControlValue CurrentValue = Info.GetDefaultHierarchy()->GetControlValue(ControlBeingCustomized, ERigControlValueType::Current);
-
-						ControlBeingCustomized->Settings.ApplyLimits(InitialValue);
-						ControlBeingCustomized->Settings.ApplyLimits(CurrentValue);
-						Info.GetDefaultHierarchy()->SetControlValue(ControlBeingCustomized, InitialValue, ERigControlValueType::Initial, false, false, true);
-						Info.GetDefaultHierarchy()->SetControlValue(ControlBeingCustomized, CurrentValue, ERigControlValueType::Current, false, false, true);
-
-						if (UControlRig* DebuggedRig = Cast<UControlRig>(Info.GetBlueprint()->GetObjectBeingDebugged()))
-						{
-							URigHierarchy* DebuggedHierarchy = DebuggedRig->GetHierarchy();
-							if(FRigControlElement* DebuggedControlElement = DebuggedHierarchy->Find<FRigControlElement>(ControlBeingCustomized->GetKey()))
-							{
-								DebuggedControlElement->Settings.MinimumValue.Set<int32>(0);
-                                DebuggedControlElement->Settings.MaximumValue.Set<int32>(Maximum);
-								DebuggedHierarchy->SetControlSettings(DebuggedControlElement, DebuggedControlElement->Settings, true, true, true);
-
-                                DebuggedHierarchy->SetControlValue(DebuggedControlElement, InitialValue, ERigControlValueType::Initial);
-                                DebuggedHierarchy->SetControlValue(DebuggedControlElement, CurrentValue, ERigControlValueType::Current);
-							}
-						}
+						CommonControlEnum = ControlEnum;
 					}
-
-					Info.WrapperObject->SetContent<FRigControlElement>(*ControlBeingCustomized);
+					else if(ControlEnum != CommonControlEnum)
+					{
+						CommonControlEnum = nullptr;
+						break;
+					}
 				}
-			}
-		));
-		
+				return CommonControlEnum;
+			})
+		];
 	}
 
 	const TSharedPtr<IPropertyHandle> CustomizationHandle = SettingsHandle->GetChildHandle(TEXT("Customization"));
@@ -3159,6 +3321,54 @@ void FRigControlElementDetails::CustomizeControl(IDetailLayoutBuilder& DetailBui
 	}
 }
 
+void FRigControlElementDetails::HandleControlEnumChanged(TSharedPtr<FString> InItem, ESelectInfo::Type InSelectionInfo, const TSharedRef<IPropertyUtilities> PropertyUtilities)
+{
+	PropertyUtilities->ForceRefresh();
+	UEnum* ControlEnum = FindObject<UEnum>(nullptr, **InItem.Get(), false);
+
+	for(int32 ControlIndex = 0; ControlIndex < PerElementInfos.Num(); ControlIndex++)
+	{
+		FPerElementInfo& Info = PerElementInfos[ControlIndex];
+		const FRigControlElement ControlInView = Info.WrapperObject->GetContent<FRigControlElement>();
+		FRigControlElement* ControlBeingCustomized = Info.GetDefaultElement<FRigControlElement>();
+		
+		ControlBeingCustomized->Settings.ControlEnum = ControlEnum;
+		if (ControlEnum != nullptr)
+		{
+			int32 Maximum = (int32)ControlEnum->GetMaxEnumValue() - 1;
+			ControlBeingCustomized->Settings.MinimumValue.Set<int32>(0);
+			ControlBeingCustomized->Settings.MaximumValue.Set<int32>(Maximum);
+			ControlBeingCustomized->Settings.LimitEnabled.Reset();
+			ControlBeingCustomized->Settings.LimitEnabled.Add(true);
+			Info.GetDefaultHierarchy()->SetControlSettings(ControlBeingCustomized, ControlBeingCustomized->Settings, true, true, true);
+
+			FRigControlValue InitialValue = Info.GetDefaultHierarchy()->GetControlValue(ControlBeingCustomized, ERigControlValueType::Initial);
+			FRigControlValue CurrentValue = Info.GetDefaultHierarchy()->GetControlValue(ControlBeingCustomized, ERigControlValueType::Current);
+
+			ControlBeingCustomized->Settings.ApplyLimits(InitialValue);
+			ControlBeingCustomized->Settings.ApplyLimits(CurrentValue);
+			Info.GetDefaultHierarchy()->SetControlValue(ControlBeingCustomized, InitialValue, ERigControlValueType::Initial, false, false, true);
+			Info.GetDefaultHierarchy()->SetControlValue(ControlBeingCustomized, CurrentValue, ERigControlValueType::Current, false, false, true);
+
+			if (UControlRig* DebuggedRig = Cast<UControlRig>(Info.GetBlueprint()->GetObjectBeingDebugged()))
+			{
+				URigHierarchy* DebuggedHierarchy = DebuggedRig->GetHierarchy();
+				if(FRigControlElement* DebuggedControlElement = DebuggedHierarchy->Find<FRigControlElement>(ControlBeingCustomized->GetKey()))
+				{
+					DebuggedControlElement->Settings.MinimumValue.Set<int32>(0);
+					DebuggedControlElement->Settings.MaximumValue.Set<int32>(Maximum);
+					DebuggedHierarchy->SetControlSettings(DebuggedControlElement, DebuggedControlElement->Settings, true, true, true);
+
+					DebuggedHierarchy->SetControlValue(DebuggedControlElement, InitialValue, ERigControlValueType::Initial);
+					DebuggedHierarchy->SetControlValue(DebuggedControlElement, CurrentValue, ERigControlValueType::Current);
+				}
+			}
+		}
+
+		Info.WrapperObject->SetContent<FRigControlElement>(*ControlBeingCustomized);
+	}
+}
+
 void FRigControlElementDetails::CustomizeAnimationChannels(IDetailLayoutBuilder& DetailBuilder)
 {
 	// We only show this section for parents of animation channels
@@ -3211,8 +3421,7 @@ void FRigControlElementDetails::CustomizeAnimationChannels(IDetailLayoutBuilder&
 	Category.HeaderContent(HeaderContentWidget);
 
 	bool bHasAnimationChannels = false;
-	const FRigBaseElementChildrenArray ChildElements = Hierarchy->GetChildren(ControlElement);
-	for(const FRigBaseElement* ChildElement : ChildElements)
+	for(const FRigBaseElement* ChildElement : Hierarchy->GetChildren(ControlElement))
 	{
 		if(const FRigControlElement* ChildControlElement = Cast<FRigControlElement>(ChildElement))
 		{
@@ -3324,6 +3533,7 @@ void FRigControlElementDetails::CustomizeAnimationChannels(IDetailLayoutBuilder&
 						break;
 					}
 					case ERigControlType::Float:
+					case ERigControlType::ScaleFloat:
 					{
 						WidgetRow = &CreateFloatValueWidgetRow(ChildElementKeys, Category, Label, FText(), ERigControlValueType::Current, Visibility, NameContent);
 						break;
@@ -3497,14 +3707,14 @@ FReply FRigControlElementDetails::OnAddAnimationChannelClicked()
 	const FRigElementKey Key = PerElementInfos[0].GetElement()->GetKey();
 	URigHierarchy* HierarchyToChange = PerElementInfos[0].GetDefaultHierarchy();
 
-	static const FString ChannelName = TEXT("Channel");
+	static const FName ChannelName = TEXT("Channel");
 	FRigControlSettings Settings;
 	Settings.AnimationType = ERigControlAnimationType::AnimationChannel;
 	Settings.ControlType = ERigControlType::Float;
 	Settings.MinimumValue = FRigControlValue::Make<float>(0.f);
 	Settings.MaximumValue = FRigControlValue::Make<float>(1.f);
 	Settings.DisplayName = HierarchyToChange->GetSafeNewDisplayName(Key, ChannelName);
-	HierarchyToChange->GetController(true)->AddAnimationChannel(*ChannelName, Key, Settings, true, true);
+	HierarchyToChange->GetController(true)->AddAnimationChannel(ChannelName, Key, Settings, true, true);
 	HierarchyToChange->GetController(true)->SelectElement(Key);
 	return FReply::Handled();
 }
@@ -3596,6 +3806,15 @@ void FRigControlElementDetails::HandleControlTypeChanged(ERigControlType Control
 				ControlElement->Settings.SetupLimitArrayForType(true);
 				ControlElement->Settings.MinimumValue = FRigControlValue::Make<float>(0.f);
 				ControlElement->Settings.MaximumValue = FRigControlValue::Make<float>(100.f);
+				ControlElement->Settings.bGroupWithParentControl = ControlElement->Settings.IsAnimatable();
+				break;
+			}
+			case ERigControlType::ScaleFloat:
+			{
+				ValueToSet = FRigControlValue::Make<float>(1.f);
+				ControlElement->Settings.SetupLimitArrayForType(false);
+				ControlElement->Settings.MinimumValue = FRigControlValue::Make<float>(0.f);
+				ControlElement->Settings.MaximumValue = FRigControlValue::Make<float>(10.f);
 				ControlElement->Settings.bGroupWithParentControl = ControlElement->Settings.IsAnimatable();
 				break;
 			}
@@ -3736,20 +3955,47 @@ void FRigControlElementDetails::CustomizeShape(IDetailLayoutBuilder& DetailBuild
 	
 	if (UControlRigBlueprint* Blueprint = PerElementInfos[0].GetBlueprint())
 	{
-		const bool bUseNameSpace = Blueprint->ShapeLibraries.Num() > 1;
-		for(TSoftObjectPtr<UControlRigShapeLibrary>& ShapeLibrary : Blueprint->ShapeLibraries)
+		if(UEdGraph* RootEdGraph = Blueprint->GetEdGraph(Blueprint->GetModel()))
 		{
-			if (!ShapeLibrary.IsValid())
+			if(UControlRigGraph* RigGraph = Cast<UControlRigGraph>(RootEdGraph))
 			{
-				ShapeLibrary.LoadSynchronous();
-			}
-			if (ShapeLibrary.IsValid())
-			{
-				const FString NameSpace = bUseNameSpace ? ShapeLibrary->GetName() + TEXT(".") : FString();
-				ShapeNameList.Add(MakeShared<FString>(NameSpace + ShapeLibrary->DefaultShape.ShapeName.ToString()));
-				for (const FControlRigShapeDefinition& Shape : ShapeLibrary->Shapes)
+				URigHierarchy* Hierarchy = Blueprint->Hierarchy;
+				if(UControlRig* RigBeingDebugged = Cast<UControlRig>(Blueprint->GetObjectBeingDebugged()))
 				{
-					ShapeNameList.Add(MakeShared<FString>(NameSpace + Shape.ShapeName.ToString()));
+					Hierarchy = RigBeingDebugged->GetHierarchy();
+				}
+
+				const TArray<TSoftObjectPtr<UControlRigShapeLibrary>>* ShapeLibraries = &Blueprint->ShapeLibraries;
+				if(const UControlRig* DebuggedControlRig = Hierarchy->GetTypedOuter<UControlRig>())
+				{
+					ShapeLibraries = &DebuggedControlRig->GetShapeLibraries();
+				}
+				RigGraph->CacheNameLists(Hierarchy, &Blueprint->DrawContainer, *ShapeLibraries);
+				
+				if(const TArray<TSharedPtr<FRigVMStringWithTag>>* GraphShapeNameListPtr = RigGraph->GetShapeNameList())
+				{
+					ShapeNameList = *GraphShapeNameListPtr;
+				}
+			}
+		}
+
+		if(ShapeNameList.IsEmpty())
+		{
+			const bool bUseNameSpace = Blueprint->ShapeLibraries.Num() > 1;
+			for(TSoftObjectPtr<UControlRigShapeLibrary>& ShapeLibrary : Blueprint->ShapeLibraries)
+			{
+				if (!ShapeLibrary.IsValid())
+				{
+					ShapeLibrary.LoadSynchronous();
+				}
+				if (ShapeLibrary.IsValid())
+				{
+					const FString NameSpace = bUseNameSpace ? ShapeLibrary->GetName() + TEXT(".") : FString();
+					ShapeNameList.Add(MakeShared<FRigVMStringWithTag>(NameSpace + ShapeLibrary->DefaultShape.ShapeName.ToString()));
+					for (const FControlRigShapeDefinition& Shape : ShapeLibrary->Shapes)
+					{
+						ShapeNameList.Add(MakeShared<FRigVMStringWithTag>(NameSpace + Shape.ShapeName.ToString()));
+					}
 				}
 			}
 		}
@@ -4222,7 +4468,7 @@ bool FRigControlElementDetails::IsShapeEnabled() const
 	});
 }
 
-const TArray<TSharedPtr<FString>>& FRigControlElementDetails::GetShapeNameList() const
+const TArray<TSharedPtr<FRigVMStringWithTag>>& FRigControlElementDetails::GetShapeNameList() const
 {
 	return ShapeNameList;
 }
@@ -4345,7 +4591,7 @@ bool FRigControlElementDetails::OnVerifyDisplayNameChanged(const FText& InText, 
 	if(const FRigBaseElement* ParentElement = Hierarchy->GetFirstParent(ControlElement))
 	{
 		FString OutErrorString;
-		if (!Hierarchy->IsDisplayNameAvailable(ParentElement->GetKey(), NewName, &OutErrorString))
+		if (!Hierarchy->IsDisplayNameAvailable(ParentElement->GetKey(), FRigName(NewName), &OutErrorString))
 		{
 			OutErrorMessage = FText::FromString(OutErrorString);
 			return false;
@@ -5037,6 +5283,396 @@ void FRigNullElementDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 	FRigTransformElementDetails::CustomizeDetails(DetailBuilder);
 	CustomizeTransform(DetailBuilder);
 	CustomizeMetadata(DetailBuilder);
+}
+
+void FRigConnectorElementDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
+{
+	FRigTransformElementDetails::CustomizeDetails(DetailBuilder);
+	CustomizeSettings(DetailBuilder);
+	//CustomizeTransform(DetailBuilder);
+	//CustomizeMetadata(DetailBuilder);
+}
+
+void FRigConnectorElementDetails::CustomizeSettings(IDetailLayoutBuilder& DetailBuilder)
+{
+	if(PerElementInfos.IsEmpty())
+	{
+		return;
+	}
+
+	if(IsAnyElementNotOfType(ERigElementType::Connector))
+	{
+		return;
+	}
+
+	const TSharedPtr<IPropertyHandle> SettingsHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(FRigConnectorElement, Settings));
+	DetailBuilder.HideProperty(SettingsHandle);
+
+	IDetailCategoryBuilder& SettingsCategory = DetailBuilder.EditCategory(TEXT("Settings"), LOCTEXT("Settings", "Settings"));
+
+	SettingsCategory
+		.AddProperty(SettingsHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FRigConnectorSettings, Type)))
+		.IsEnabled(false);
+
+	SettingsCategory
+		.AddProperty(SettingsHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FRigConnectorSettings, bOptional)))
+		.Visibility(IsAnyConnectorPrimary() ? EVisibility::Collapsed : EVisibility::Visible)
+		.IsEnabled(!IsAnyConnectorImported());
+
+	bool bHideRules = false;
+	uint32 FirstHash = UINT32_MAX;
+	for (const FPerElementInfo& Info : PerElementInfos)
+	{
+		if (URigHierarchy* Hierarchy = Info.IsValid() ? Info.GetHierarchy() : nullptr)
+		{
+			if(const FRigConnectorElement* Connector = Info.GetElement<FRigConnectorElement>())
+			{
+				const uint32 Hash = Connector->Settings.GetRulesHash();
+				if(FirstHash == UINT32_MAX)
+				{
+					FirstHash = Hash;
+				}
+				else if(FirstHash != Hash)
+				{
+					bHideRules = true;
+					break;
+				}
+			}
+			else
+			{
+				bHideRules = true;
+			}
+		}
+	}
+
+	if(!bHideRules)
+	{
+		SettingsCategory
+			.AddProperty(SettingsHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FRigConnectorSettings, Rules)))
+			.IsEnabled(!IsAnyConnectorImported());
+	}
+}
+
+void FRigSocketElementDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
+{
+	FRigTransformElementDetails::CustomizeDetails(DetailBuilder);
+	CustomizeSettings(DetailBuilder);
+	CustomizeTransform(DetailBuilder);
+	CustomizeMetadata(DetailBuilder);
+}
+
+void FRigSocketElementDetails::CustomizeSettings(IDetailLayoutBuilder& DetailBuilder)
+{
+	if(PerElementInfos.IsEmpty())
+	{
+		return;
+	}
+
+	if(IsAnyElementNotOfType(ERigElementType::Socket))
+	{
+		return;
+	}
+
+	const bool bIsProcedural = IsAnyElementProcedural();
+	
+	IDetailCategoryBuilder& SettingsCategory = DetailBuilder.EditCategory(TEXT("Settings"), LOCTEXT("Settings", "Settings"));
+
+	SettingsCategory.AddCustomRow(FText::FromString(TEXT("Color")))
+	.NameContent()
+	[
+		SNew(STextBlock)
+		.Text(LOCTEXT("Color", "Color"))
+		.Font(IDetailLayoutBuilder::GetDetailFont())
+	]
+	.ValueContent()
+	[
+		SNew(SColorBlock)
+		.IsEnabled(!bIsProcedural)
+		//.Size(FVector2D(6.0, 38.0))
+		.Color(this, &FRigSocketElementDetails::GetSocketColor) 
+		.OnMouseButtonDown(this, &FRigSocketElementDetails::SetSocketColor)
+	];
+
+	SettingsCategory.AddCustomRow(FText::FromString(TEXT("Description")))
+	.NameContent()
+	[
+		SNew(STextBlock)
+		.Text(LOCTEXT("Description", "Description"))
+		.Font(IDetailLayoutBuilder::GetDetailFont())
+	]
+	.ValueContent()
+	[
+		SNew(SEditableText)
+		.IsEnabled(!bIsProcedural)
+		.Font(IDetailLayoutBuilder::GetDetailFont())
+		.Text(this, &FRigSocketElementDetails::GetSocketDescription)
+		.OnTextCommitted(this, &FRigSocketElementDetails::SetSocketDescription)
+	];
+}
+
+FReply FRigSocketElementDetails::SetSocketColor(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+{
+	FColorPickerArgs PickerArgs;
+	PickerArgs.bUseAlpha = false;
+	PickerArgs.DisplayGamma = TAttribute<float>::Create(TAttribute<float>::FGetter::CreateUObject(GEngine, &UEngine::GetDisplayGamma));
+	PickerArgs.InitialColor = GetSocketColor();
+	PickerArgs.OnColorCommitted = FOnLinearColorValueChanged::CreateSP(this, &FRigSocketElementDetails::OnSocketColorPicked);
+	OpenColorPicker(PickerArgs);
+	return FReply::Handled();
+}
+
+FLinearColor FRigSocketElementDetails::GetSocketColor() const 
+{
+	if(PerElementInfos.Num() > 1)
+	{
+		return FRigSocketElement::SocketDefaultColor;
+	}
+	URigHierarchy* Hierarchy = PerElementInfos[0].GetDefaultHierarchy();
+	const FRigSocketElement* Socket = PerElementInfos[0].GetDefaultElement<FRigSocketElement>();
+	return Socket->GetColor(Hierarchy);
+}
+
+void FRigSocketElementDetails::OnSocketColorPicked(FLinearColor NewColor)
+{
+	FScopedTransaction Transaction(LOCTEXT("SocketColorChanged", "Socket Color Changed"));
+	for(FPerElementInfo& Info : PerElementInfos)
+	{
+		URigHierarchy* Hierarchy = Info.GetDefaultHierarchy();
+		Hierarchy->Modify();
+		FRigSocketElement* Socket = Info.GetDefaultElement<FRigSocketElement>();
+		Socket->SetColor(NewColor, Hierarchy);
+	}
+}
+
+void FRigSocketElementDetails::SetSocketDescription(const FText& InDescription, ETextCommit::Type InCommitType)
+{
+	const FString Description = InDescription.ToString();
+	for(FPerElementInfo& Info : PerElementInfos)
+	{
+		URigHierarchy* Hierarchy = Info.GetDefaultHierarchy();
+		Hierarchy->Modify();
+		FRigSocketElement* Socket = Info.GetDefaultElement<FRigSocketElement>();
+		Socket->SetDescription(Description, Hierarchy);
+	}
+}
+
+FText FRigSocketElementDetails::GetSocketDescription() const
+{
+	FString FirstValue;
+	for(int32 Index = 0; Index < PerElementInfos.Num(); Index++)
+	{
+		URigHierarchy* Hierarchy = PerElementInfos[Index].GetDefaultHierarchy();
+		const FRigSocketElement* Socket = PerElementInfos[Index].GetDefaultElement<FRigSocketElement>();
+		const FString Description = Socket->GetDescription(Hierarchy);
+		if(Index == 0)
+		{
+			FirstValue = Description;
+		}
+		else if(!FirstValue.Equals(Description, ESearchCase::CaseSensitive))
+		{
+			return ControlRigDetailsMultipleValues;
+		}
+	}
+	return FText::FromString(FirstValue);
+}
+
+void FRigConnectionRuleDetails::CustomizeHeader(TSharedRef<IPropertyHandle> InStructPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	StructPropertyHandle = InStructPropertyHandle.ToSharedPtr();
+	PropertyUtilities = StructCustomizationUtils.GetPropertyUtilities();
+	BlueprintBeingCustomized = nullptr;
+	EnabledAttribute = false;
+	RigElementKeyDetails_GetCustomizedInfo(InStructPropertyHandle, BlueprintBeingCustomized);
+
+	TArray<UObject*> Objects;
+	StructPropertyHandle->GetOuterObjects(Objects);
+	FString FirstObjectValue;
+	for (int32 Index = 0; Index < Objects.Num(); Index++)
+	{
+		FString ObjectValue;
+		if(InStructPropertyHandle->GetPerObjectValue(Index, ObjectValue) == FPropertyAccess::Result::Success)
+		{
+			if(FirstObjectValue.IsEmpty())
+			{
+				FirstObjectValue = ObjectValue;
+			}
+			else
+			{
+				if(!FirstObjectValue.Equals(ObjectValue, ESearchCase::CaseSensitive))
+				{
+					FirstObjectValue.Reset();
+					break;
+				}
+			}
+		}
+
+		// only enable editing of the rule if the widget is nested under a wrapper object (a rig element)
+		if(Objects[Index]->IsA<URigVMDetailsViewWrapperObject>())
+		{
+			EnabledAttribute = true;
+		}
+	}
+
+	if(!FirstObjectValue.IsEmpty())
+	{
+		FRigConnectionRuleStash::StaticStruct()->ImportText(*FirstObjectValue, &RuleStash, nullptr, EPropertyPortFlags::PPF_None, nullptr, FRigConnectionRuleStash::StaticStruct()->GetName(), true);
+	}
+
+	if (BlueprintBeingCustomized == nullptr || FirstObjectValue.IsEmpty())
+	{
+		HeaderRow
+		.NameContent()
+		[
+			StructPropertyHandle->CreatePropertyNameWidget()
+		]
+		.ValueContent()
+		[
+			StructPropertyHandle->CreatePropertyValueWidget()
+		];
+	}
+	else
+	{
+		HeaderRow
+		.NameContent()
+		[
+			StructPropertyHandle->CreatePropertyNameWidget()
+		]
+		.ValueContent()
+		[
+			SNew(SComboButton)
+			.ContentPadding(FMargin(2,2,2,1))
+			.ButtonContent()
+			[
+				SNew(STextBlock)
+				.Text(this, &FRigConnectionRuleDetails::OnGetStructTextValue)
+			]
+			.OnGetMenuContent(this, &FRigConnectionRuleDetails::GenerateStructPicker)
+			.IsEnabled(EnabledAttribute)
+		];
+	}
+}
+
+void FRigConnectionRuleDetails::CustomizeChildren(TSharedRef<IPropertyHandle> InStructPropertyHandle, IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	const UScriptStruct* ScriptStruct = RuleStash.GetScriptStruct();
+	if(ScriptStruct == nullptr)
+	{
+		return;
+	}
+
+	(void)RuleStash.Get(Storage);
+	const TSharedRef<FStructOnScope> StorageRef = Storage.ToSharedRef();
+	const FSimpleDelegate OnPropertyChanged = FSimpleDelegate::CreateSP(this, &FRigConnectionRuleDetails::OnRuleContentChanged);
+
+	TArray<TSharedPtr<IPropertyHandle>> ChildProperties = InStructPropertyHandle->AddChildStructure(StorageRef);
+	for (TSharedPtr<IPropertyHandle> ChildHandle : ChildProperties)
+	{
+		ChildHandle->SetOnPropertyValueChanged(OnPropertyChanged);
+		IDetailPropertyRow& ChildRow = StructBuilder.AddProperty(ChildHandle.ToSharedRef());
+		ChildRow.IsEnabled(EnabledAttribute);
+	}
+}
+
+TSharedRef<SWidget> FRigConnectionRuleDetails::GenerateStructPicker()
+{
+	FStructViewerModule& StructViewerModule = FModuleManager::LoadModuleChecked<FStructViewerModule>("StructViewer");
+
+	class FRigConnectionRuleFilter : public IStructViewerFilter
+	{
+	public:
+		FRigConnectionRuleFilter()
+		{
+		}
+
+		virtual bool IsStructAllowed(const FStructViewerInitializationOptions& InInitOptions, const UScriptStruct* InStruct, TSharedRef<FStructViewerFilterFuncs> InFilterFuncs) override
+		{
+			static const UScriptStruct* BaseStruct = FRigConnectionRule::StaticStruct();
+			return InStruct != BaseStruct && InStruct->IsChildOf(BaseStruct);
+		}
+
+		virtual bool IsUnloadedStructAllowed(const FStructViewerInitializationOptions& InInitOptions, const FSoftObjectPath& InStructPath, TSharedRef<FStructViewerFilterFuncs> InFilterFuncs) override
+		{
+			return false;
+		}
+	};
+		
+	static TSharedPtr<FRigConnectionRuleFilter> Filter = MakeShared<FRigConnectionRuleFilter>();
+	FStructViewerInitializationOptions Options;
+	{
+		Options.StructFilter = Filter;
+		Options.Mode = EStructViewerMode::StructPicker;
+		Options.DisplayMode = EStructViewerDisplayMode::ListView;
+		Options.NameTypeToDisplay = EStructViewerNameTypeToDisplay::DisplayName;
+		Options.bShowNoneOption = false;
+		Options.bShowUnloadedStructs = false;
+		Options.bAllowViewOptions = false;
+	}
+
+	return
+		SNew(SBox)
+		.WidthOverride(330.0f)
+		[
+			SNew(SVerticalBox)
+
+			+SVerticalBox::Slot()
+			.FillHeight(1.0f)
+			.MaxHeight(500)
+			[
+				SNew(SBorder)
+				.Padding(4)
+				.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+				[
+					StructViewerModule.CreateStructViewer(Options, FOnStructPicked::CreateSP(this, &FRigConnectionRuleDetails::OnPickedStruct))
+				]
+			]
+		];
+}
+
+void FRigConnectionRuleDetails::OnPickedStruct(const UScriptStruct* ChosenStruct)
+{
+	if(ChosenStruct == nullptr)
+	{
+		RuleStash = FRigConnectionRuleStash();
+	}
+	else
+	{
+		RuleStash.ScriptStructPath = ChosenStruct->GetPathName();
+		RuleStash.ExportedText = TEXT("()");
+		Storage.Reset();
+		RuleStash.Get(Storage);
+	}
+	OnRuleContentChanged();
+}
+
+FText FRigConnectionRuleDetails::OnGetStructTextValue() const
+{
+	const UScriptStruct* ScriptStruct = RuleStash.GetScriptStruct();
+	return ScriptStruct
+		? FText::AsCultureInvariant(ScriptStruct->GetDisplayNameText())
+		: LOCTEXT("None", "None");
+}
+
+void FRigConnectionRuleDetails::OnRuleContentChanged()
+{
+	const UScriptStruct* ScriptStruct = RuleStash.GetScriptStruct();
+	if(Storage && Storage->GetStruct() == ScriptStruct)
+	{
+		RuleStash.ExportedText.Reset();
+		const uint8* StructMemory = Storage->GetStructMemory();
+		ScriptStruct->ExportText(RuleStash.ExportedText, StructMemory, StructMemory, nullptr, PPF_None, nullptr);
+	}
+	
+	FString Content;
+	FRigConnectionRuleStash::StaticStruct()->ExportText(Content, &RuleStash, &RuleStash, nullptr, PPF_None, nullptr);
+
+	TArray<UObject*> Objects;
+	StructPropertyHandle->GetOuterObjects(Objects);
+	FString FirstObjectValue;
+	for (int32 Index = 0; Index < Objects.Num(); Index++)
+	{
+		(void)StructPropertyHandle->SetPerObjectValue(Index, Content, EPropertyValueSetFlags::DefaultFlags);
+	}
+	StructPropertyHandle->GetParentHandle()->NotifyPostChange(EPropertyChangeType::ValueSet);
 }
 
 #undef LOCTEXT_NAMESPACE

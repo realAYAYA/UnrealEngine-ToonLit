@@ -7,15 +7,24 @@
 UPixelStreamingStreamerVideoInputBackBuffer::UPixelStreamingStreamerVideoInputBackBuffer(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	// detect if we're in PIE mode or not
-	bool IsGame = false;
-	FParse::Bool(FCommandLine::Get(), TEXT("game"), IsGame);
-	if (GIsEditor && !IsGame)
-	{
-		VideoInput = FPixelStreamingVideoInputPIEViewport::Create();
-	}
-	else
-	{
-		VideoInput = FPixelStreamingVideoInputBackBuffer::Create();
-	}
 }
+
+TSharedPtr<FPixelStreamingVideoInput> UPixelStreamingStreamerVideoInputBackBuffer::GetVideoInput()
+{
+	if (!VideoInput)
+	{
+		// detect if we're in PIE mode or not
+		bool IsGame = false;
+		FParse::Bool(FCommandLine::Get(), TEXT("game"), IsGame);
+		if (GIsEditor && !IsGame)
+		{
+			VideoInput = FPixelStreamingVideoInputPIEViewport::Create();
+		}
+		else
+		{
+			VideoInput = FPixelStreamingVideoInputBackBuffer::Create();
+		}
+	}
+	return VideoInput;
+}
+

@@ -25,6 +25,7 @@ class SSubobjectEditor;
 class ISCSEditorUICustomization;
 class FSubobjectEditorTreeNode;
 struct FPropertyChangedEvent;
+class FDetailsDisplayManager;
 
 namespace UE::LevelEditor::Private
 {
@@ -71,7 +72,7 @@ public:
 	 *
 	 * @param InFilter	The filter to use or nullptr to remove the active filter
 	 */
-	void SetActorDetailsRootCustomization(TSharedPtr<FDetailsViewObjectFilter> ActorDetailsObjectFilter, TSharedPtr<class IDetailRootObjectCustomization> ActorDetailsRootCustomization);
+	void SetActorDetailsRootCustomization(TSharedPtr<FDetailsViewObjectFilter> InActorDetailsObjectFilter, TSharedPtr<class IDetailRootObjectCustomization> ActorDetailsRootCustomization);
 
 	UE_DEPRECATED(5.0, "SetSCSEditorUICustomization is deprecated, please use SetSubobjectEditorUICustomization instead.")
 	void SetSCSEditorUICustomization(TSharedPtr<ISCSEditorUICustomization> ActorDetailsSCSEditorUICustomization) { SetSubobjectEditorUICustomization(ActorDetailsSCSEditorUICustomization); }
@@ -87,6 +88,11 @@ private:
 	AActor* GetActorContext() const;
 	UObject* GetActorContextAsObject() const;
 	bool GetAllowComponentTreeEditing() const;
+
+	/**
+	 * Gets the Visibility of the top of the panel buttons in the details panel
+	 */
+	EVisibility GetComponentEditorButtonsVisibility() const;
 
 	void OnComponentsEditedInWorld();
 	void OnSubobjectEditorTreeViewSelectionChanged(const TArray<TSharedPtr<FSubobjectEditorTreeNode> >& SelectedNodes);
@@ -137,4 +143,8 @@ private:
 
 	// Used to prevent reentrant changes
 	bool bSelectionGuard = false;
+
+	/** A @code TSharedPtr @endcode to the @code FDetailsDisplayManager @endcode to manage various aspects of the
+	 *details view */
+	TSharedPtr<FDetailsDisplayManager> DisplayManager;
 };

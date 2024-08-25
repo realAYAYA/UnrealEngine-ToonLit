@@ -17,7 +17,7 @@ struct FSeparatorTemplates
 	 * @return a small (2 Slate Unit), vertical FSeparatorBuilder with the color of the theme
 	 * specified color for Background
 	 */
-	static FSeparatorBuilder SmallVerticalBackgroundNoBorder();
+	WIDGETREGISTRATION_API static FSeparatorBuilder SmallVerticalBackgroundNoBorder();
 
 	/**
 	* Creates and returns a small (2 Slate Unit), horizontal FSeparatorBuilder set to the color of the theme
@@ -26,7 +26,7 @@ struct FSeparatorTemplates
 	* @return a small (2 Slate Unit), horizontal FSeparatorBuilder with the color of the theme
 	* specified color for Background
 	 */
-	static FSeparatorBuilder SmallHorizontalBackgroundNoBorder();
+	WIDGETREGISTRATION_API static FSeparatorBuilder SmallHorizontalBackgroundNoBorder();
 
 	/**
 	* Creates and returns a small (2 Slate Unit), horizontal FSeparatorBuilder set to the color of the theme
@@ -35,5 +35,5 @@ struct FSeparatorTemplates
 	 * @return a small (2 Slate Unit), horizontal FSeparatorBuilder with the color of the theme
 	 * specified color for Panels.
 	 */
-	static FSeparatorBuilder SmallHorizontalPanelNoBorder();
+	WIDGETREGISTRATION_API static FSeparatorBuilder SmallHorizontalPanelNoBorder();
 };

@@ -629,12 +629,21 @@ bool UPartyBeaconState::CrossPlayAllowed(const FPartyReservation& ReservationReq
 bool UPartyBeaconState::DoesReservationFit(const FPartyReservation& ReservationRequest) const
 {
 	const int32 IncomingPartySize = ReservationRequest.PartyMembers.Num();
-	const bool bPartySizeOk = (IncomingPartySize > 0) && (IncomingPartySize <= NumPlayersPerTeam);
+	bool bPartySizeOk = true;
+	if (bRespectCompetitiveIntegrity)
+	{
+		bPartySizeOk = (IncomingPartySize > 0) && (IncomingPartySize <= NumPlayersPerTeam);
+	}
 	const bool bRoomForReservation = (NumConsumedReservations + IncomingPartySize ) <= MaxReservations;
 
 	UE_LOG(LogPartyBeacon, Verbose, TEXT("UPartyBeaconState::DoesReservationFit: Incoming Party Size: %d Num Players Per Team: %d NumConsumedReservations: %d MaxReservations: %d"), IncomingPartySize, NumPlayersPerTeam, NumConsumedReservations, MaxReservations);
 
 	return bPartySizeOk && bRoomForReservation;
+}
+
+bool UPartyBeaconState::DoesModifiedReservationFit(const FPartyReservation& ExistingReservation, const TArray<FPlayerReservation>& NewPlayers) const
+{
+	return GetRemainingReservations() - NewPlayers.Num() >= 0;
 }
 
 bool UPartyBeaconState::AddReservation(const FPartyReservation& ReservationRequest)

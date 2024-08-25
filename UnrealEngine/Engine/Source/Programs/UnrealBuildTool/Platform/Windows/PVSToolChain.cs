@@ -1,7 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,8 +13,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml.Serialization;
-using EpicGames.Core;
-using Microsoft.Extensions.Logging;
 using UnrealBuildBase;
 
 namespace UnrealBuildTool
@@ -383,6 +385,29 @@ namespace UnrealBuildTool
 		FileReference? OutputFile = null;
 
 		/// <summary>
+		/// Path to file list of paths to ignore
+		/// </summary>
+		[CommandLine("-Ignored")]
+		FileReference? IgnoredFile = null;
+
+		/// <summary>
+		/// The maximum level of warnings to print
+		/// </summary>
+		[CommandLine("-PrintLevel")]
+		public int PrintLevel { get; set; } = 1;
+
+		/// <summary>
+		/// Version of the analyzers
+		/// </summary>
+		[CommandLine("-AnalyzerVersion")]
+		public Version? AnalyzerVersion { get; set; } = null;
+
+		/// <summary>
+		/// If all ThirdParty code should be ignored
+		/// </summary>
+		bool IgnoreThirdParty = true;
+
+		/// <summary>
 		/// Execute the command
 		/// </summary>
 		/// <param name="Arguments">List of command line arguments</param>
@@ -393,17 +418,19 @@ namespace UnrealBuildTool
 			Arguments.ApplyTo(this);
 			Arguments.CheckAllArgumentsUsed();
 
-			Logger.LogInformation("{File}", OutputFile!.GetFileName());
-
 			// Read the input files
 			string[] InputFileLines = FileReference.ReadAllLines(InputFileList!);
 			FileReference[] InputFiles = InputFileLines.Select(x => x.Trim()).Where(x => x.Length > 0).Select(x => new FileReference(x)).ToArray();
+
+			// Read the ignore file
+			string[] IgnoreFileLines = IgnoredFile != null ? FileReference.ReadAllLines(IgnoredFile) : new string[] { };
+			DirectoryReference[] IgnoredDirectories = IgnoreFileLines.Select(x => x.Trim()).Where(x => x.Length > 0).Select(x => new DirectoryReference(x)).ToArray();
 
 			// Create the combined output file, and print the diagnostics to the log
 			HashSet<string> UniqueItems = new HashSet<string>();
 			List<string> OutputLines = new List<string>();
 
-			using (StreamWriter RawWriter = new StreamWriter(OutputFile.FullName))
+			using (StreamWriter RawWriter = new StreamWriter(OutputFile!.FullName))
 			{
 				foreach (FileReference InputFile in InputFiles)
 				{
@@ -411,47 +438,64 @@ namespace UnrealBuildTool
 					for (int LineIdx = 0; LineIdx < Lines.Length; LineIdx++)
 					{
 						string Line = Lines[LineIdx];
-						if (!String.IsNullOrWhiteSpace(Line) && UniqueItems.Add(Line))
+						if (String.IsNullOrWhiteSpace(Line) || !UniqueItems.Add(Line))
 						{
-							bool bCanParse = false;
+							continue;
+						}
 
-							string[] Tokens = Line.Split(new string[] { "<#~>" }, StringSplitOptions.None);
-							if (Tokens.Length >= 9)
+						try
+						{
+							PVSErrorInfo? ErrorInfo;
+							if (AnalyzerVersion!.CompareTo(new Version("7.30")) < 0)
 							{
-								//string Trial = Tokens[1];
-								string LineNumberStr = Tokens[2];
-								string FileName = Tokens[3];
-								string WarningCode = Tokens[5];
-								string WarningMessage = Tokens[6];
-								string FalseAlarmStr = Tokens[7];
-								string LevelStr = Tokens[8];
-
-								int LineNumber;
-								bool bFalseAlarm;
-								int Level;
-								if (Int32.TryParse(LineNumberStr, out LineNumber) && Boolean.TryParse(FalseAlarmStr, out bFalseAlarm) && Int32.TryParse(LevelStr, out Level))
+								if (!TryParseErrorInfo(Line, out ErrorInfo))
 								{
-									bCanParse = true;
-
-									// Ignore anything in ThirdParty folders
-									if (FileName.Replace('/', '\\').IndexOf("\\ThirdParty\\", StringComparison.InvariantCultureIgnoreCase) == -1)
-									{
-										// Output the line to the raw output file
-										RawWriter.WriteLine(Line);
-
-										// Output the line to the log
-										if (!bFalseAlarm && Level == 1)
-										{
-											Log.WriteLine(LogEventType.Warning, LogFormatOptions.NoSeverityPrefix, "{0}({1}): warning {2}: {3}", FileName, LineNumber, WarningCode, WarningMessage);
-										}
-									}
+									throw new FormatException();
 								}
 							}
-
-							if (!bCanParse)
+							else
 							{
-								Log.WriteLine(LogEventType.Warning, LogFormatOptions.NoSeverityPrefix, "{0}({1}): warning: Unable to parse PVS output line '{2}' (tokens=|{3}|)", InputFile, LineIdx + 1, Line, String.Join("|", Tokens));
+								ErrorInfo = JsonConvert.DeserializeObject<PVSErrorInfo>(Line) ?? throw new FormatException();
 							}
+
+							string FileName = ErrorInfo.Positions![0].File!;
+							int LineNumber = ErrorInfo.Positions![0].Lines![0];
+
+							FileReference file;
+							if (!String.IsNullOrWhiteSpace(FileName))
+							{
+								file = new FileReference(FileName);
+								// Ignore anything in the IgnoredDirectories folders
+								if (IgnoredDirectories.Any() && IgnoredDirectories.Any(x => file.IsUnderDirectory(x)))
+								{
+									continue;
+								}
+
+								if (IgnoreThirdParty && file.FullName.Contains("ThirdParty", StringComparison.OrdinalIgnoreCase))
+								{
+									continue;
+								}
+							}
+							else
+							{
+								file = InputFile;
+								FileName = InputFile.FullName;
+								LineNumber = LineIdx + 1;
+							}
+
+							// Output the line to the raw output file
+							RawWriter.WriteLine(Line);
+
+							// Output the line to the log
+							if (ErrorInfo.FalseAlarm != true && ErrorInfo.Level <= PrintLevel)
+							{
+								Logger.LogWarning(KnownLogEvents.Compiler, "{Path}({LineNumber}): warning {WarningCode}: {WarningMessage}", LogValue.SourceFile(file, FileName), LineNumber, ErrorInfo.Code, ErrorInfo.Message);
+							}
+
+						}
+						catch (Exception Ex)
+						{
+							Logger.LogWarning(KnownLogEvents.Compiler, "{Path}({LineNumber}): warning: Unable to parse PVS output line '{Line}' ({Message})", LogValue.SourceFile(InputFile, InputFile.GetFileName()), LineIdx + 1, Line, Ex.Message);
 						}
 					}
 				}
@@ -459,6 +503,68 @@ namespace UnrealBuildTool
 			Logger.LogInformation("Written {NumItems} {Noun} to {File}.", UniqueItems.Count, (UniqueItems.Count == 1) ? "diagnostic" : "diagnostics", OutputFile.FullName);
 			return Task.FromResult(0);
 		}
+
+		bool TryParseErrorInfo(string Line, out PVSErrorInfo ErrorInfo)
+		{
+			string[] Tokens = Line.Split(new string[] { "<#~>" }, StringSplitOptions.None);
+			if (Tokens.Length >= 9)
+			{
+				string LineNumberStr = Tokens[2];
+				string FileName = Tokens[3];
+				string WarningCode = Tokens[5];
+				string WarningMessage = Tokens[6];
+				string FalseAlarmStr = Tokens[7];
+				string LevelStr = Tokens[8];
+
+				int LineNumber;
+				bool bFalseAlarm;
+				int Level;
+				if (Int32.TryParse(LineNumberStr, out LineNumber) && Boolean.TryParse(FalseAlarmStr, out bFalseAlarm) && Int32.TryParse(LevelStr, out Level))
+				{
+					ErrorInfo = new PVSErrorInfo()
+					{
+						Code = WarningCode,
+						Message = WarningMessage,
+						FalseAlarm = bFalseAlarm,
+						Level = Level,
+						Positions = new PVSPosition[] { new PVSPosition { File = FileName, Lines = new int[] { LineNumber } } },
+
+					};
+
+					return true;
+				}
+			}
+
+			ErrorInfo = new PVSErrorInfo();
+			return false;
+		}
+	}
+
+	class PVSPosition
+	{
+		[JsonProperty(Required = Required.Always)]
+		public string? File;
+
+		[JsonProperty(Required = Required.Always)]
+		public int[]? Lines;
+	}
+
+	class PVSErrorInfo
+	{
+		[JsonProperty(Required = Required.Always)]
+		public string? Code;
+
+		[JsonProperty(Required = Required.Always)]
+		public bool? FalseAlarm;
+
+		[JsonProperty(Required = Required.Always)]
+		public int? Level;
+
+		[JsonProperty(Required = Required.Always)]
+		public string? Message;
+
+		[JsonProperty(Required = Required.Always)]
+		public PVSPosition[]? Positions;
 	}
 
 	class PVSToolChain : ISPCToolChain
@@ -472,12 +578,14 @@ namespace UnrealBuildTool
 		UnrealTargetPlatform Platform;
 		Version AnalyzerVersion;
 
-		public PVSToolChain(ReadOnlyTargetRules Target, ILogger Logger)
+		string OutputFileExtension => AnalyzerVersion.CompareTo(new Version("7.30")) >= 0 ? ".PVS-Studio.log" : ".pvslog";
+
+		public PVSToolChain(ReadOnlyTargetRules Target, VCToolChain InInnerToolchain, ILogger Logger)
 			: base(Logger)
 		{
 			this.Target = Target;
 			Platform = Target.Platform;
-			InnerToolChain = new VCToolChain(Target, Logger);
+			InnerToolChain = InInnerToolchain;
 
 			AnalyzerFile = FileReference.Combine(Unreal.RootDirectory, "Engine", "Restricted", "NoRedist", "Extras", "ThirdPartyNotUE", "PVS-Studio", "PVS-Studio.exe");
 			if (!FileReference.Exists(AnalyzerFile))
@@ -518,6 +626,11 @@ namespace UnrealBuildTool
 					LicenseFile = DefaultLicenseFile;
 				}
 			}
+
+			if (BuildHostPlatform.Current.IsRunningOnWine())
+			{
+				throw new BuildException("PVS-Studio is not supported with Wine.");
+			}
 		}
 
 		public override void GetVersionInfo(List<string> Lines)
@@ -525,12 +638,12 @@ namespace UnrealBuildTool
 			base.GetVersionInfo(Lines);
 
 			ReadOnlyPVSTargetSettings Settings = Target.WindowsPlatform.PVS;
-			Lines.Add(String.Format("Using PVS-Studio installation at {0} with analysis mode {1} ({2})", AnalyzerFile, (uint)Settings.ModeFlags, Settings.ModeFlags.ToString()));
+			Lines.Add(String.Format("Using PVS-Studio {0} at {1} with analysis mode {2} ({3})", AnalyzerVersion, AnalyzerFile, (uint)Settings.ModeFlags, Settings.ModeFlags.ToString()));
 		}
 
 		static Version GetAnalyzerVersion(FileReference AnalyzerPath)
 		{
-			String Output = String.Empty;
+			string Output = String.Empty;
 			Version? AnalyzerVersion = new Version(0, 0);
 
 			try
@@ -548,7 +661,7 @@ namespace UnrealBuildTool
 					PvsProc.WaitForExit();
 				}
 
-				const String VersionPattern = @"\d+(?:\.\d+)+";
+				const string VersionPattern = @"\d+(?:\.\d+)+";
 				Match Match = Regex.Match(Output, VersionPattern);
 
 				if (Match.Success)
@@ -619,13 +732,13 @@ namespace UnrealBuildTool
 			return cppCfgStandard;
 		}
 
-		public static bool ShouldCompileAsC(String compilerCommandLine, String sourceFileName)
+		public static bool ShouldCompileAsC(string compilerCommandLine, string sourceFileName)
 		{
 			int CFlagLastPosition = Math.Max(Math.Max(compilerCommandLine.LastIndexOf("/TC "), compilerCommandLine.LastIndexOf("/Tc ")),
-											 Math.Max(compilerCommandLine.LastIndexOf("-TC "), compilerCommandLine.LastIndexOf("-Tc ")));
+												Math.Max(compilerCommandLine.LastIndexOf("-TC "), compilerCommandLine.LastIndexOf("-Tc ")));
 
 			int CppFlagLastPosition = Math.Max(Math.Max(compilerCommandLine.LastIndexOf("/TP "), compilerCommandLine.LastIndexOf("/Tp ")),
-											   Math.Max(compilerCommandLine.LastIndexOf("-TP "), compilerCommandLine.LastIndexOf("-Tp ")));
+												Math.Max(compilerCommandLine.LastIndexOf("-TP "), compilerCommandLine.LastIndexOf("-Tp ")));
 
 			bool compileAsCCode;
 			if (CFlagLastPosition == CppFlagLastPosition)
@@ -647,7 +760,7 @@ namespace UnrealBuildTool
 			return CompileEnvironment;
 		}
 
-		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
+		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
 		{
 			if (CompileEnvironment.bDisableStaticAnalysis)
 			{
@@ -719,7 +832,7 @@ namespace UnrealBuildTool
 						}
 					}
 				}
-				if (Platform == UnrealTargetPlatform.Win64)
+				if (Platform.IsInGroup(UnrealPlatformGroup.Microsoft))
 				{
 					ConfigFileContents.Append("platform=x64\n");
 				}
@@ -735,7 +848,7 @@ namespace UnrealBuildTool
 				ConfigFileContents.Append("skip-cl-exe=yes\n");
 
 				WindowsCompiler WindowsCompiler = Target.WindowsPlatform.Compiler;
-				bool isVisualCppCompiler = WindowsCompiler == WindowsCompiler.VisualStudio2022 || WindowsCompiler == WindowsCompiler.VisualStudio2019;
+				bool isVisualCppCompiler = WindowsCompiler.IsMSVC();
 				if (AnalyzerVersion.CompareTo(new Version("7.07")) >= 0 && !shouldCompileAsC)
 				{
 					VersionNumber compilerVersion = Target.WindowsPlatform.Environment.CompilerVersion;
@@ -763,8 +876,23 @@ namespace UnrealBuildTool
 					ConfigFileContents.Append("report-disabled-rules=yes\n");
 				}
 
+				if (SourceFileItem.Location.IsUnderDirectory(Unreal.RootDirectory))
+				{
+					ConfigFileContents.AppendFormat("errors-off=V1102\n");
+				}
+
 				int Timeout = (int)(Settings.AnalysisTimeoutFlag == AnalysisTimeoutFlags.No_timeout ? 0 : Settings.AnalysisTimeoutFlag);
 				ConfigFileContents.AppendFormat("timeout={0}\n", Timeout);
+
+				if (AnalyzerVersion.CompareTo(new Version("7.28")) >= 0)
+				{
+					ConfigFileContents.Append("silent-exit-code-mode=yes\n");
+				}
+
+				if (AnalyzerVersion.CompareTo(new Version("7.30")) >= 0)
+				{
+					ConfigFileContents.Append("new-output-format=yes\n"); ;
+				}
 
 				string BaseFileName = PreprocessedFileItem.Location.GetFileName();
 
@@ -772,7 +900,7 @@ namespace UnrealBuildTool
 				FileItem ConfigFileItem = Graph.CreateIntermediateTextFile(ConfigFileLocation, ConfigFileContents.ToString());
 
 				// Run the analzyer on the preprocessed source file
-				FileReference OutputFileLocation = FileReference.Combine(OutputDir, BaseFileName + ".pvslog");
+				FileReference OutputFileLocation = FileReference.Combine(OutputDir, BaseFileName + OutputFileExtension);
 				FileItem OutputFileItem = FileItem.GetItemByFileReference(OutputFileLocation);
 
 				Action AnalyzeAction = Graph.CreateAction(ActionType.Compile);
@@ -781,21 +909,29 @@ namespace UnrealBuildTool
 				AnalyzeAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 				AnalyzeAction.CommandPath = AnalyzerFile;
 
-				StringBuilder Arguments = new StringBuilder();
-				Arguments.Append($"--source-file \"{SourceFileItem.AbsolutePath}\" --output-file \"{OutputFileLocation}\" --cfg \"{ConfigFileItem.AbsolutePath}\" --i-file=\"{PreprocessedFileItem.AbsolutePath}\" --analysis-mode {(uint)Settings.ModeFlags}");
+				List<string> Arguments = new();
+				Arguments.Add($"--source-file \"{SourceFileItem.AbsolutePath}\"");
+				Arguments.Add($"--output-file \"{OutputFileItem.AbsolutePath}\"");
+				Arguments.Add($"--cfg \"{ConfigFileItem.AbsolutePath}\"");
+				Arguments.Add($"--i-file=\"{PreprocessedFileItem.AbsolutePath}\"");
+				Arguments.Add($"--analysis-mode {(uint)Settings.ModeFlags}");
+
 				if (LicenseFile != null)
 				{
-					Arguments.Append($" --lic-file \"{LicenseFile}\"");
+					Arguments.Add($"--lic-file \"{LicenseFile}\"");
 					AnalyzeAction.PrerequisiteItems.Add(FileItem.GetItemByFileReference(LicenseFile));
 				}
-				AnalyzeAction.CommandArguments = Arguments.ToString();
+				AnalyzeAction.CommandArguments = String.Join(' ', Arguments);
 
 				AnalyzeAction.PrerequisiteItems.Add(ConfigFileItem);
 				AnalyzeAction.PrerequisiteItems.Add(PreprocessedFileItem);
 				AnalyzeAction.PrerequisiteItems.UnionWith(InputFiles); // Add the InputFiles as PrerequisiteItems so that in SingleFileCompile mode the PVSAnalyze step is not filtered out
 				AnalyzeAction.ProducedItems.Add(OutputFileItem);
 				AnalyzeAction.DeleteItems.Add(OutputFileItem); // PVS Studio will append by default, so need to delete produced items
-				AnalyzeAction.bCanExecuteRemotely = false;
+				AnalyzeAction.bCanExecuteRemotely = true;
+				AnalyzeAction.bCanExecuteRemotelyWithSNDBS = false;
+				AnalyzeAction.bCanExecuteRemotelyWithXGE = false;
+				AnalyzeAction.bCanExecuteInUBA = true;
 
 				Result.ObjectFiles.AddRange(AnalyzeAction.ProducedItems);
 			}
@@ -810,35 +946,44 @@ namespace UnrealBuildTool
 		public override void FinalizeOutput(ReadOnlyTargetRules Target, TargetMakefileBuilder MakefileBuilder)
 		{
 			FileReference OutputFile;
+			string outputFileExtension = OutputFileExtension;
+
 			if (Target.ProjectFile == null)
 			{
-				OutputFile = FileReference.Combine(Unreal.EngineDirectory, "Saved", "PVS-Studio", String.Format("{0}.pvslog", Target.Name));
+				OutputFile = FileReference.Combine(Unreal.EngineDirectory, "Saved", "PVS-Studio", $"{Target.Name}{outputFileExtension}");
 			}
 			else
 			{
-				OutputFile = FileReference.Combine(Target.ProjectFile.Directory, "Saved", "PVS-Studio", String.Format("{0}.pvslog", Target.Name));
+				OutputFile = FileReference.Combine(Target.ProjectFile.Directory, "Saved", "PVS-Studio", $"{Target.Name}{outputFileExtension}");
 			}
 
 			TargetMakefile Makefile = MakefileBuilder.Makefile;
-			List<FileReference> InputFiles = Makefile.OutputItems.Select(x => x.Location).Where(x => x.HasExtension(".pvslog")).ToList();
+			ImmutableSortedSet<FileReference> InputFiles = Makefile.OutputItems.Select(x => x.Location).Where(x => x.HasExtension(outputFileExtension)).ToImmutableSortedSet();
 
 			// Collect the sourcefile items off of the Compile action added in CompileCPPFiles so that in SingleFileCompile mode the PVSGather step is also not filtered out
-			List<FileItem> CompileSourceFiles = Makefile.Actions.OfType<VCCompileAction>().Select(x => x.SourceFile!).ToList();
+			ImmutableSortedSet<FileItem> CompileSourceFiles = Makefile.Actions.OfType<VCCompileAction>().Select(x => x.SourceFile!).ToImmutableSortedSet();
+
+			// Store list of system paths that should be excluded
+			ImmutableSortedSet<DirectoryReference> SystemIncludePaths = Makefile.Actions.OfType<VCCompileAction>().SelectMany(x => x.SystemIncludePaths).ToImmutableSortedSet();
 
 			FileItem InputFileListItem = MakefileBuilder.CreateIntermediateTextFile(OutputFile.ChangeExtension(".input"), InputFiles.Select(x => x.FullName));
+			FileItem IgnoredFileListeItem = MakefileBuilder.CreateIntermediateTextFile(OutputFile.ChangeExtension(".ignored"), SystemIncludePaths.Select(x => x.FullName));
 
 			Action AnalyzeAction = MakefileBuilder.CreateAction(ActionType.Compile);
 			AnalyzeAction.ActionType = ActionType.PostBuildStep;
 			AnalyzeAction.CommandDescription = "Process PVS-Studio Results";
 			AnalyzeAction.CommandPath = Unreal.DotnetPath;
-			AnalyzeAction.CommandArguments = $"\"{Unreal.UnrealBuildToolDllPath}\" -Mode=PVSGather -Input=\"{InputFileListItem.Location}\" -Output=\"{OutputFile}\" ";
+			AnalyzeAction.CommandArguments = $"\"{Unreal.UnrealBuildToolDllPath}\" -Mode=PVSGather -Input=\"{InputFileListItem.Location}\" -Output=\"{OutputFile}\" -Ignored=\"{IgnoredFileListeItem.Location}\"" +
+																				$" -PrintLevel={Target.StaticAnalyzerPVSPrintLevel} -AnalyzerVersion={AnalyzerVersion}";
 			AnalyzeAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 			AnalyzeAction.PrerequisiteItems.Add(InputFileListItem);
+			AnalyzeAction.PrerequisiteItems.Add(IgnoredFileListeItem);
 			AnalyzeAction.PrerequisiteItems.UnionWith(Makefile.OutputItems);
 			AnalyzeAction.PrerequisiteItems.UnionWith(CompileSourceFiles);
 			AnalyzeAction.ProducedItems.Add(FileItem.GetItemByFileReference(OutputFile));
 			AnalyzeAction.ProducedItems.Add(FileItem.GetItemByPath(OutputFile.FullName + "_does_not_exist")); // Force the gather step to always execute
 			AnalyzeAction.DeleteItems.UnionWith(AnalyzeAction.ProducedItems);
+			AnalyzeAction.bCanExecuteInUBA = false;
 
 			Makefile.OutputItems.AddRange(AnalyzeAction.ProducedItems);
 		}

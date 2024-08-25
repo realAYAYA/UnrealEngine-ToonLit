@@ -36,9 +36,6 @@ void UPolyEditPreviewMesh::InitializeExtrudeType(
 
 	// save copy of initial patch
 	InitialEditPatch = EditPatch;
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	InitialEditPatchBVTree.SetMesh(&InitialEditPatch);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// save initial tri normals
 	InitialTriNormals.SetNum(InitialEditPatch.MaxTriangleID());
@@ -105,11 +102,6 @@ void UPolyEditPreviewMesh::InitializeExtrudeType(FDynamicMesh3&& BaseMesh,
 		MeshTransform = *MeshTransformIn;
 		MeshTransforms::ApplyTransform(InitialEditPatch, MeshTransform, true);
 	}
-
-	// save copy of initial patch
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	InitialEditPatchBVTree.SetMesh(&InitialEditPatch);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// save initial tri normals
 	InitialTriNormals.SetNum(InitialEditPatch.MaxTriangleID());
@@ -265,9 +257,6 @@ void UPolyEditPreviewMesh::InitializeInsetType(const FDynamicMesh3* SourceMesh, 
 
 	// save copy of initial patch
 	InitialEditPatch = EditPatch;
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	InitialEditPatchBVTree.SetMesh(&InitialEditPatch);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// initialize the preview mesh
 	UpdatePreview(&EditPatch);

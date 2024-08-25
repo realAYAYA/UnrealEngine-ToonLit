@@ -6,7 +6,7 @@
 FPixelCaptureInputFrameI420::FPixelCaptureInputFrameI420(TSharedPtr<FPixelCaptureBufferI420> Buffer)
 	: I420Buffer(Buffer)
 {
-	Metadata.SourceTime = FPlatformTime::Cycles64();
+	Metadata.SourceTime = rtc::TimeMillis();
 }
 
 int32 FPixelCaptureInputFrameI420::GetType() const

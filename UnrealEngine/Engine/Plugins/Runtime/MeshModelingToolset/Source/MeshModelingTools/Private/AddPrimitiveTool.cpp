@@ -116,6 +116,8 @@ void UAddPrimitiveTool::Setup()
 	AddToolPropertySource(OutputTypeProperties);
 
 	AddToolPropertySource(ShapeSettings);
+	
+	ShapeSettings->WatchProperty(ShapeSettings->TargetSurface, [this](EMakeMeshPlacementType){UpdateTargetSurface();});
 	ShapeSettings->RestoreProperties(this);
 
 	MaterialProperties = NewObject<UNewMeshMaterialProperties>(this);
@@ -147,7 +149,6 @@ void UAddPrimitiveTool::Setup()
 	DragAlignmentMechanic->AddToGizmo(Gizmo);
 
 	UpdatePreviewMesh();
-
 	SetState(EState::PlacingPrimitive);
 }
 
@@ -260,14 +261,24 @@ void UAddPrimitiveTool::UpdatePreviewPosition(const FInputDeviceRay& DeviceClick
 	// hit position (temp)
 	bool bHit = false;
 
+	auto RaycastPlaneWithFallback = [](const FVector3d& Origin, const FVector3d& Direction, const FPlane& Plane, double FallbackDistance = 1000) -> FVector3d
+	{
+		double IntersectTime = FMath::RayPlaneIntersectionParam(Origin, Direction, Plane);
+		if (IntersectTime < 0 || !FMath::IsFinite(IntersectTime))
+		{
+			IntersectTime = FallbackDistance;
+		}
+		return Origin + Direction * IntersectTime;
+	};
+
 	FPlane DrawPlane(FVector::ZeroVector, FVector(0, 0, 1));
 	if (ShapeSettings->TargetSurface == EMakeMeshPlacementType::GroundPlane)
 	{
-		FVector3d DrawPlanePos = (FVector3d)FMath::RayPlaneIntersection(ClickPosWorldRay.Origin, ClickPosWorldRay.Direction, DrawPlane);
+		FVector3d DrawPlanePos = RaycastPlaneWithFallback(ClickPosWorldRay.Origin, ClickPosWorldRay.Direction, DrawPlane);
 		bHit = true;
 		ShapeFrame = FFrame3d(DrawPlanePos);
 	}
-	else
+	else if (ShapeSettings->TargetSurface == EMakeMeshPlacementType::OnScene)
 	{
 		// cast ray into scene
 		FHitResult Result;
@@ -285,10 +296,15 @@ void UAddPrimitiveTool::UpdatePreviewPosition(const FInputDeviceRay& DeviceClick
 		else
 		{
 			// fall back to ground plane if we don't have a scene hit
-			FVector3d DrawPlanePos = (FVector3d)FMath::RayPlaneIntersection(ClickPosWorldRay.Origin, ClickPosWorldRay.Direction, DrawPlane);
+			FVector3d DrawPlanePos = RaycastPlaneWithFallback(ClickPosWorldRay.Origin, ClickPosWorldRay.Direction, DrawPlane);
 			bHit = true;
 			ShapeFrame = FFrame3d(DrawPlanePos);
 		}
+	}
+	else
+	{
+		bHit = true;
+		ShapeFrame = FFrame3d();
 	}
 
 	// Snap to grid
@@ -363,6 +379,24 @@ void UAddPrimitiveTool::UpdatePreviewMesh() const
 	const bool CalculateTangentsSuccessful = PreviewMesh->CalculateTangents();
 	checkSlow(CalculateTangentsSuccessful);
 }
+
+void UAddPrimitiveTool::UpdateTargetSurface()
+{
+	if (ShapeSettings->TargetSurface == EMakeMeshPlacementType::AtOrigin)
+	{
+		// default ray is used as coordinates will not be needed to set position at origin
+		const FInputDeviceRay DefaultRay = FInputDeviceRay();
+		UpdatePreviewPosition(DefaultRay);
+
+		SetState(EState::AdjustingSettings);
+		GetToolManager()->EmitObjectChange(this, MakeUnique<FStateChange>(PreviewMesh->GetTransform()),
+				LOCTEXT("PlaceMeshTransaction", "Place Mesh"));
+	} else
+	{
+		SetState(EState::PlacingPrimitive);
+	}
+}
+
 
 
 bool UAddPrimitiveTool::SupportsWorldSpaceFocusBox()

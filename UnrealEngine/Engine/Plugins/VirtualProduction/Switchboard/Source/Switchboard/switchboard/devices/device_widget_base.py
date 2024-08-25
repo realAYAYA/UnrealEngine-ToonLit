@@ -1,7 +1,7 @@
 # Copyright Epic Games, Inc. All Rights Reserved.
 from typing import Dict, Optional
 
-from PySide2 import QtWidgets, QtGui, QtCore
+from PySide6 import QtWidgets, QtGui, QtCore
 
 from switchboard.config import CONFIG
 from switchboard.switchboard_widgets import FramelessQLineEdit

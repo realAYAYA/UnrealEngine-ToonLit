@@ -57,7 +57,14 @@ bool UBlackboardKeyType_Rotator::GetRotation(const UBlackboardComponent& OwnerCo
 
 void UBlackboardKeyType_Rotator::InitializeMemory(UBlackboardComponent& OwnerComp, uint8* RawData)
 {
-	SetValue(this, RawData, FAISystem::InvalidRotation);
+	if (bUseDefaultValue)
+	{
+		SetValue(this, RawData, DefaultValue);
+	}
+	else
+	{
+		SetValue(this,RawData, InvalidValue);
+	}
 }
 
 bool UBlackboardKeyType_Rotator::TestBasicOperation(const UBlackboardComponent& OwnerComp, const uint8* MemoryBlock, EBasicKeyOperation::Type Op) const

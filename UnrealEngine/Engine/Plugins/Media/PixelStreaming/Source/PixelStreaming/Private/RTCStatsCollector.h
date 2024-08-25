@@ -5,9 +5,19 @@
 #include "WebRTCIncludes.h"
 #include "PixelStreamingPlayerId.h"
 #include "Stats.h"
+#include "Templates/SharedPointer.h"
 
 namespace UE::PixelStreaming
 {
+	namespace RTCStatTypes
+	{
+		const FName DataChannel = FName(TEXT("data-channel"));
+		const FName OutboundRTP = FName(TEXT("outbound-rtp"));
+		const FName InboundRTP = FName(TEXT("inbound-rtp"));
+		const FName Track = FName(TEXT("track"));
+		const FName MediaSource = FName(TEXT("media-source"));
+	}
+
 	class PIXELSTREAMING_API FRTCStatsCollector : public webrtc::RTCStatsCollectorCallback
 	{
 	public:
@@ -21,59 +31,107 @@ namespace UE::PixelStreaming
 		// End RTCStatsCollectorCallback interface
 
 	private:
-		// Some stats have a latest value that is update each time that stats comes and
-		// then also a calculated value that might get updates every 1 second.
-		// An example is FPS, where total frames sent is the stat that is tracked but
-		// the calculated stat is frames sent per second.
-		struct FMonitoredStat
+		/*
+		* ---------- FRTCTrackedStat -------------------
+		* Tracks a stat from WebRTC. Stores the current value and previous value.
+		*/
+		class FRTCTrackedStat
 		{
+		public:
+			FRTCTrackedStat(FName StatName, int NDecimalPlaces) : LatestStat(StatName, 0.0, NDecimalPlaces){}
+			FRTCTrackedStat(FName StatName, int NDecimalPlaces, uint8 DisplayFlags) : LatestStat(StatName, 0.0, NDecimalPlaces){ LatestStat.DisplayFlags = DisplayFlags; }
+			FRTCTrackedStat(FName StatName, FName Alias, int NDecimalPlaces, uint8 DisplayFlags);
+			double CalculateDelta(double Period) const;
+			double Average() const;
+			const FStatData& GetLatestStat() const { return LatestStat; }
+			void SetLatestValue(double InValue);
+		private:
 			FStatData LatestStat;
-			double PrevValue;
-
-			double CalculateDelta(double Period)
-			{
-				double Delta = (LatestStat.StatValue - PrevValue) * Period;
-				PrevValue = LatestStat.StatValue;
-				return Delta;
-			}
+			double PrevValue = 0.0;
 		};
 
+		/*
+		* ---------- FStatsSink -------------------
+		* A sink for processing webrtc::RTCStats - processing will include extracting stats and storing them.  
+		*/
 		class FStatsSink
 		{
 		public:
+			FStatsSink(FName InSinkType) : SinkType(InSinkType) {}
 			virtual ~FStatsSink() = default;
-			// Sink only interested in a single type of stat from WebRTC (e.g. track, outbound-rtp).
-			virtual bool Contains(const FName& StatName) const { return Stats.Contains(StatName); };
-			virtual bool ContainsMonitoredStat(const FName& StatName) const { return MonitoredStats.Contains(StatName); }
+			virtual bool Wants(const webrtc::RTCStats& InStats) const { return FString(InStats.type()) == SinkType.ToString(); };
+			virtual void Process(const webrtc::RTCStats& InStats, FString PeerId);
+			virtual void PostProcess(FString PeerId, double SecondsDelta);
+			virtual FString DerivePeerId(const webrtc::RTCStats& InStats, FPixelStreamingPlayerId PlayerId) const { return PlayerId; }
+			// returns true if the value is worth storing (false if it started and remains zero)
+			virtual bool ExtractValueAndSet(const webrtc::RTCStatsMemberInterface* ExtractFrom, FRTCTrackedStat* SetValueHere);
+			virtual bool Contains(const FName StatName) const { return Stats.Contains(StatName); };
 			virtual bool ContainsCalculatedStat(const FName& StatName) const { return CalculatedStats.Contains(StatName); }
-			virtual void Add(FName StatName, int NDecimalPlaces) { Stats.Add(StatName, FStatData(StatName, 0.0, NDecimalPlaces)); };
-			virtual void AddMonitored(FName StatName) { MonitoredStats.Add(StatName, { FStatData(StatName, 0.0, 2), 0.0 }); };
+			virtual void Add(FName StatName, int NDecimalPlaces){ Stats.Add(StatName, FRTCTrackedStat(StatName, NDecimalPlaces, FStatData::EDisplayFlags::TEXT)); }
+			virtual void AddAliased(FName StatName, FName AliasedName, int NDecimalPlaces, uint8 DisplayFlags);
+			virtual void AddNonRendered(FName StatName) { Stats.Add(StatName, FRTCTrackedStat(StatName, 2, FStatData::EDisplayFlags::HIDDEN)); }
 			virtual void AddStatCalculator(const TFunction<TOptional<FStatData>(FStatsSink&, double)>& Calculator) { Calculators.Add(Calculator); }
-			virtual FStatData* Get(const FName& StatName) { return Stats.Find(StatName); };
-			virtual FMonitoredStat* GetMonitoredStat(const FName& StatName) { return MonitoredStats.Find(StatName); }
+			virtual FRTCTrackedStat* Get(const FName& StatName) { return Stats.Find(StatName); };
 			virtual FStatData* GetCalculatedStat(const FName& StatName) { return CalculatedStats.Find(StatName); }
 
-			TMap<FName, FStatData> Stats;				// basic stats that are displayed as is.
-			TMap<FName, FMonitoredStat> MonitoredStats;	// stats to monitor changes over time.
-			TMap<FName, FStatData> CalculatedStats;		// the result of calculations that can be used in other calculations
+			// Stats that are stored as is.
+			TMap<FName, FRTCTrackedStat> Stats;
+
+			// Stats we calculate based on the stats map above. This calculation is done in FStatsSink::PostProcess by the `Calculators` below.
+			TMap<FName, FStatData> CalculatedStats;
 			TArray<TFunction<TOptional<FStatData>(FStatsSink&, double)>> Calculators;
+		protected:
+			FName SinkType;
 		};
 
-		class FStreamStatsSink : public FStatsSink
+		/*
+		* ---------- FRTPMediaStatsSink -------------------
+		* Sink useful for RTP media (audio or video) that is inbound or outbound.
+		*/
+		class FRTPMediaStatsSink : public FStatsSink
 		{
 		public:
-			FStreamStatsSink(FString InRid);
-			virtual ~FStreamStatsSink() = default;
-
+			FRTPMediaStatsSink(FName InSinkType, FString InMediaKind);
+			virtual ~FRTPMediaStatsSink() = default;
+			virtual bool Wants(const webrtc::RTCStats& InStats) const override;
+			virtual FString DerivePeerId(const webrtc::RTCStats& InStats, FPixelStreamingPlayerId PlayerId) const override;
 		private:
-			// Rid is the unique stream identifier.
-			FString Rid;
+			FString MediaKind;
 		};
 
-	private:
-		FStatsSink* FindSink(const FString& StatsType, const std::vector<const webrtc::RTCStatsMemberInterface*>& StatMembers, FString& OutSsrc);
-		bool ExtractValueAndSet(const webrtc::RTCStatsMemberInterface* ExtractFrom, FStatData* SetValueHere);
-		void PostDeliverCalculateStats(FStats* PSStats);
+		/*
+		* ---------- FTrackStatsSink -------------------
+		* Stats sink for `track` stats
+		*/
+		class FTrackStatsSink : public FStatsSink
+		{
+		public:
+			FTrackStatsSink();
+			virtual ~FTrackStatsSink() = default;
+		};
+
+		/*
+		* ---------- FVideoSourceStatsSink -------------------
+		* Stats sink for video `media-source` stats
+		*/
+		class FVideoSourceStatsSink : public FStatsSink
+		{
+		public:
+			FVideoSourceStatsSink();
+			virtual ~FVideoSourceStatsSink() = default;
+			virtual bool Wants(const webrtc::RTCStats& InStats) const override;
+		};
+
+		/*
+		* ---------- FDataChannelStatsSink -------------------
+		* Stats sink `data-channel` stats
+		*/
+		class FDataChannelStatsSink : public FStatsSink
+		{
+		public:
+			FDataChannelStatsSink();
+			virtual ~FDataChannelStatsSink() = default;
+		};
 
 	private:
 		FPixelStreamingPlayerId AssociatedPlayerId;
@@ -82,11 +140,9 @@ namespace UE::PixelStreaming
 
 		uint64 LastCalculationCycles;
 
-		TMap<FString, FStatsSink> StatSinks;
-
 		bool bIsEnabled;
 
-		// Stream stats are further broken down and stored per RID, as some peers (e.g. an SFU) can have multiple streams.
-		TMap<FString, FStatsSink> StreamStatsSinks;
+		// All sinks are given all webrtc::RTCStats contained in a report and they can choose which stats they wish to extract/process.
+		TArray<TSharedPtr<FStatsSink>> RTCStatSinks;
 	};
 } // namespace UE::PixelStreaming

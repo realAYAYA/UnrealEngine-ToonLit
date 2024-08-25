@@ -2,6 +2,7 @@
 
 
 #include "WaterBodyIslandActor.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
@@ -141,9 +142,9 @@ void AWaterBodyIsland::PostLoad()
 						if (FMapProperty* OldLayerWeightmapSettingsMapProperty = CastField<FMapProperty>(BPProperty))
 						{
 							FScriptMapHelper MapHelper(OldLayerWeightmapSettingsMapProperty, OldLayerWeightmapSettingsMapProperty->ContainerPtrToValuePtr<void>(this));
-							for (int32 I = 0; I < MapHelper.Num(); ++I)
+							for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 							{
-								uint8* PairPtr = MapHelper.GetPairPtr(I);
+								uint8* PairPtr = MapHelper.GetPairPtr(It);
 								const FName* Key = MapHelper.GetKeyProperty()->ContainerPtrToValuePtr<FName>(PairPtr);
 								const FWaterBodyWeightmapSettings* Value = MapHelper.GetValueProperty()->ContainerPtrToValuePtr<FWaterBodyWeightmapSettings>(PairPtr);
 								WaterWeightmapSettings.FindOrAdd(*Key) = *Value;

@@ -35,6 +35,13 @@ enum class EModelingSelectionInteraction_DragMode : uint8
 	RectangleMarqueeInteraction = 2
 };
 
+UENUM()
+enum class EModelingSelectionInteraction_LocalFrameMode : uint8
+{
+	FromGeometry = 0,
+	FromObject = 1,
+};
+
 /**
  * UModelingSelectionInteraction provides element-level selection behavior (ie mesh triangles/edges/vertices)
  * via the UGeometrySelectionManager. The Interaction doesn't actually know about the meshes or interact
@@ -98,6 +105,11 @@ public:
 	DECLARE_MULTICAST_DELEGATE(FOnEndTransformInteraction);
 	FOnEndTransformInteraction OnTransformEnd;
 
+	//
+	// Support for Adjusting Local Frame Mode
+	//
+	EModelingSelectionInteraction_LocalFrameMode GetLocalFrameMode() const { return LocalFrameMode; }
+	void SetLocalFrameMode(EModelingSelectionInteraction_LocalFrameMode NewLocalFrameMode);
 
 protected:
 	// click-to-select behavior, various drag behaviors
@@ -206,6 +218,8 @@ protected:
 protected:
 	EModelingSelectionInteraction_DragMode ActiveDragMode = EModelingSelectionInteraction_DragMode::NoDragInteraction;
 	void UpdateActiveDragMode();
+
+	EModelingSelectionInteraction_LocalFrameMode LocalFrameMode = EModelingSelectionInteraction_LocalFrameMode::FromGeometry;
 
 	UPROPERTY()
 	TObjectPtr<URectangleMarqueeInteraction> RectangleMarqueeInteraction;

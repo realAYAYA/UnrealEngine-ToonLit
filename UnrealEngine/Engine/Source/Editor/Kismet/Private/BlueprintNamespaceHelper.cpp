@@ -102,8 +102,7 @@ public:
 			return true;
 		}
 
-		const bool bForceLoadSubCategoryObject = false;
-		const FEdGraphPinType& PinType = InItem->GetPinType(bForceLoadSubCategoryObject);
+		const FEdGraphPinType& PinType = InItem->GetPinTypeNoResolve();
 
 		if (PinType.PinSubCategoryObject.IsValid() && !CachedNamespaceHelper->IsImportedObject(PinType.PinSubCategoryObject.Get()))
 		{
@@ -112,8 +111,7 @@ public:
 		}
 		else
 		{
-			const FSoftObjectPath& AssetRef = InItem->GetSubCategoryObjectAsset();
-			if (AssetRef.IsValid() && !CachedNamespaceHelper->IsImportedObject(AssetRef))
+			if (!CachedNamespaceHelper->IsImportedAsset(InItem->GetCachedAssetData()))
 			{
 				// A pin type whose underlying asset may be either loaded or unloaded, but is not imported.
 				return false;

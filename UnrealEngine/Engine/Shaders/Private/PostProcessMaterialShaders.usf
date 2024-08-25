@@ -7,6 +7,8 @@
 #include "Common.ush"
 #include "ScreenPass.ush"
 
+#pragma message("UESHADERMETADATA_VERSION 02E0E449-2223-45B4-8CD0-93AB087FBEE3")
+
 #ifndef POST_PROCESS_MATERIAL
 #define POST_PROCESS_MATERIAL 0
 #endif
@@ -75,6 +77,8 @@ SamplerState PathTracingPostProcessInput_2_Sampler;
 SamplerState PathTracingPostProcessInput_3_Sampler;
 SamplerState PathTracingPostProcessInput_4_Sampler;
 #endif
+
+#include "NeuralPostProcessCommon.usf"
 
 #define EYE_ADAPTATION_LOOSE_PARAMETERS 1
 
@@ -189,11 +193,10 @@ void MainVS_VideoOverlay(
 void ManualStencilTest(uint2 PixelPos)
 {
 	const uint Stencil = CalcSceneCustomStencil(PixelPos);
-	const int Diff = ManualStencilReferenceValue - Stencil;
 	const uint Test =
-		(Stencil == ManualStencilReferenceValue	? STENCIL_TEST_EQUAL	: 0) |
-		(Stencil <  ManualStencilReferenceValue	? STENCIL_TEST_LESS		: 0) |
-		(Stencil >  ManualStencilReferenceValue	? STENCIL_TEST_GREATER	: 0);
+		(ManualStencilReferenceValue == Stencil	? STENCIL_TEST_EQUAL	: 0) |
+		(ManualStencilReferenceValue <  Stencil	? STENCIL_TEST_LESS		: 0) |
+		(ManualStencilReferenceValue >  Stencil	? STENCIL_TEST_GREATER	: 0);
 
 	if ((Test & ManualStencilTestMask) == 0)
 	{
@@ -243,20 +246,75 @@ void MainPS(
 	// fill out other related material parameters
 	CalcMaterialParametersPost(Parameters, PixelMaterialInputs, SvPosition, true);
 
+#if NEURAL_POSTPROCESS_PREPASS && MATERIAL_NEURAL_POST_PROCESS
+
+	OutColor = 0.5f;
+
+#if HAVE_GetNeuralInput1
+
+	float4 Index = GetNeuralInput0(Parameters);
+	float3 NeuralInput0 = GetNeuralInput1(Parameters).rgb;
+	float  Mask = GetNeuralInput2(Parameters);
+	const bool bWriteToBuffer = Index.x >= 0; //Configuration the same across all pixels.
+
+	// Update the source type so we can copy on demand
+	BRANCH
+	if (all((uint2)SvPosition.xy == uint2(0, 0)))
+	{
+		const int SourceType = bWriteToBuffer ? SOURCE_TYPE_BUFFER : SOURCE_TYPE_TEXTURE;
+		UpdateNeuralProfileSourceType(SourceType);
+	}
+
+	// Write to buffer/texture based on config
+	BRANCH
+	if (Mask != 0)
+	{
+		BRANCH
+		if (bWriteToBuffer)
+		{
+			int Batch = (int)Index.x;
+			int StartChannel = (int)Index.y;
+			float2 BufferWH = Index.zw;
+			SaveToNeuralBuffer(Batch, StartChannel, BufferWH, NeuralInput0);
+		}
+		else
+		{
+			int StartChannel = (int)Index.y;
+			float2 CustomViewportUV = Index.zw;
+			float2 Position = CustomViewportUV * PostProcessOutput_ViewportSize.xy + PostProcessOutput_ViewportMin.xy;
+			if (StartChannel >= 0 && StartChannel <= 2)
+			{
+				RWNeuralTexture[(uint2)Position.xy] = float4(NeuralInput0, 0.0f);
+			}
+		}
+	}
+	
+	// This is for debug only
+	OutColor.xyz = NeuralInput0;
+#if !MATERIALBLENDING_MODULATE && POST_PROCESS_MATERIAL_BEFORE_TONEMAP
+	OutColor.xyz *= View.PreExposure;
+#endif
+
+	return;
+
+#endif // HAVE_GetNeuralInput1
+#endif // NEURAL_POSTPROCESS_PREPASS	
+
 	// In Unreal, an alpha channel value of 0.0f means that the pixel is opaque and a value of 1.0f means that there is translucency.
 	// This is the opposite of how the alpha channel is interpreted in formats like PNG. For this reason, rendered images that are exported
 	// from the engine will have their alpha channel inverted to match the PNG convention. However, for consistency inside the rendering chain,
 	// we need to stick to 0.0f as the default value.
 	float Alpha = 0.0f;
 	float3 EmissiveColor = 0.0f;
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
-	// Unlit forces a single BSDF
-	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
-	UnlitBSDF.StrataSanitizeBSDF();
+	// Post process node forces a single unlit BSDF. We get the raw data from light function node from the raw BSDF on the tree.
+	FSubstratePixelHeader SubstratePixelHeader = Parameters.GetFrontSubstrateHeader();
+	FSubstrateBSDF UnlitBSDF = SubstratePixelHeader.SubstrateTree.BSDFs[0];
+	UnlitBSDF.SubstrateSanitizeBSDF(); // required wehen not calling SubstrateUpdateTreeUnlit
 
 	half3 PPColor = BSDF_GETEMISSIVE(UnlitBSDF);
-	half  PPAlpha = saturate(1.0 - UNLIT_TRANSMITTANCE(UnlitBSDF).x);	// The current interface only allows legacy opacity transformed to transmittance as 1-Opacity. See UMaterialExpressionStrataPostProcess.
+	half  PPAlpha = saturate(1.0 - UNLIT_TRANSMITTANCE(UnlitBSDF).x);	// The current interface only allows legacy opacity transformed to transmittance as 1-Opacity. See UMaterialExpressionSubstratePostProcess.
 
 	// Substrate only use premultiplied alpha blending state (except for modulate and holdout) so we need to convert to the here.
 #if MATERIALBLENDING_SOLID || MATERIALBLENDING_MASKED
@@ -275,7 +333,7 @@ void MainPS(
 	EmissiveColor = PPColor;
 #endif
 
-#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+#if SUBSTRATE_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
 	PPAlpha = GetMaterialOpacity(PixelMaterialInputs);
 #endif
 
@@ -283,14 +341,14 @@ void MainPS(
 	Alpha = PPAlpha;
 #endif
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 	// Grab emissive colour as output
   #if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
 	Alpha = GetMaterialOpacity(PixelMaterialInputs);
   #endif
 	EmissiveColor = GetMaterialEmissive(PixelMaterialInputs);
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 	OutColor = float4(EmissiveColor, Alpha );
 
@@ -425,14 +483,14 @@ void MainPS(
 
 	float Alpha = 0.0f;
 	float3 EmissiveColor = 0.0f;
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
 	// Unlit forces a single BSDF
-	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
-	UnlitBSDF.StrataSanitizeBSDF();
+	FSubstrateBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+	UnlitBSDF.SubstrateSanitizeBSDF();
 
 	half3 PPColor = BSDF_GETEMISSIVE(UnlitBSDF);
-	half  PPAlpha = saturate(1.0 - UNLIT_TRANSMITTANCE(UnlitBSDF).x);	// The current interface only allows legacy opacity transformed to transmittance as 1-Opacity. See UMaterialExpressionStrataPostProcess.
+	half  PPAlpha = saturate(1.0 - UNLIT_TRANSMITTANCE(UnlitBSDF).x);	// The current interface only allows legacy opacity transformed to transmittance as 1-Opacity. See UMaterialExpressionSubstratePostProcess.
 
 	// Substrate only use premultiplied alpha blending state (except for modulate and holdout) so we need to convert to the here.
 #if MATERIALBLENDING_SOLID || MATERIALBLENDING_MASKED
@@ -451,7 +509,7 @@ void MainPS(
 	EmissiveColor = PPColor;
 #endif
 
-#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+#if SUBSTRATE_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
 	PPAlpha = GetMaterialOpacity(PixelMaterialInputs);
 #endif
 
@@ -459,7 +517,7 @@ void MainPS(
 	Alpha = PPAlpha;
 #endif
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 	// Grab emissive colour as output
 	EmissiveColor = GetMaterialEmissive(PixelMaterialInputs);
@@ -470,7 +528,7 @@ void MainPS(
 	Alpha = 0.0f;
   #endif
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 	half4 FullSceneColor = half4(EmissiveColor, Alpha);
 	   

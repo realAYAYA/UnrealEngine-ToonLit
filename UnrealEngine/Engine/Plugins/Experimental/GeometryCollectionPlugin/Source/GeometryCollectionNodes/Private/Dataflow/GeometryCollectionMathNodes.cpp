@@ -67,6 +67,7 @@ namespace Dataflow
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FRadiansToDegreesDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FDegreesToRadiansDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FMathConstantsDataflowNode);
+		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FOneMinusDataflowNode);
 
 		// Math
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY("Math", FLinearColor(0.f, 0.4f, 0.8f), CDefaultNodeBodyTintColor);
@@ -846,6 +847,16 @@ void FMathConstantsDataflowNode::Evaluate(Dataflow::FContext& Context, const FDa
 	}
 }
 
+void FOneMinusDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
+{
+	if (Out->IsA<float>(&ReturnValue))
+	{
+		const float InA = GetValue<float>(Context, &A, A);
+
+		const float Result = 1.f - InA;
+		SetValue(Context, Result, &ReturnValue);
+	}
+}
 
 
 

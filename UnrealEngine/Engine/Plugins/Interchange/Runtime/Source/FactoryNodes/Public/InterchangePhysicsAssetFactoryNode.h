@@ -12,16 +12,16 @@
 
 #include "InterchangePhysicsAssetFactoryNode.generated.h"
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGEFACTORYNODES_API UInterchangePhysicsAssetFactoryNode : public UInterchangeFactoryBaseNode
 {
 	GENERATED_BODY()
 
 public:
 	/**
-	 * Initialize node data
-	 * @param: UniqueID - The uniqueId for this node
-	 * @param DisplayLabel - The name of the node
+	 * Initialize node data.
+	 * @param: UniqueID - The unique ID for this node.
+	 * @param DisplayLabel - The name of the node.
 	 * @param InAssetClass - The class the Skeleton factory will create for this node.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
@@ -48,7 +48,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -56,7 +56,7 @@ public:
 		return TypeName;
 	}
 
-	/** Get the class this node want to create */
+	/** Get the class this node creates. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
 	virtual class UClass* GetObjectClass() const override
 	{
@@ -68,19 +68,32 @@ public:
 #endif
 	}
 
+#if WITH_EDITOR
+
+	virtual bool ShouldHideAttribute(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override
+	{
+		if (NodeAttributeKey == Macro_CustomSkeletalMeshUidKey)
+		{
+			return true;
+		}
+
+		return Super::ShouldHideAttribute(NodeAttributeKey);
+	}
+#endif
+
 	virtual FGuid GetHash() const override
 	{
 		return Attributes->GetStorageHash();
 	}
 
 public:
-	/** Get skeletalMesh asset Uid used to create the data in the post pipeline step.*/
+	/** Get the Skeletal Mesh asset UID used to create the data in the post-pipeline step. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
 	bool GetCustomSkeletalMeshUid(FString& AttributeValue) const
 	{
 		IMPLEMENT_NODE_ATTRIBUTE_GETTER(SkeletalMeshUid, FString);
 	}
-	/** Set skeletalMesh asset Uid used to create the data in the post pipeline step.*/
+	/** Set the Skeletal Mesh asset UID used to create the data in the post-pipeline step. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
 	bool SetCustomSkeletalMeshUid(const FString& AttributeValue)
 	{

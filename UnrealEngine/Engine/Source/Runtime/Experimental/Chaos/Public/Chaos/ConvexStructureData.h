@@ -238,13 +238,15 @@ namespace Chaos
 		}
 
 		// Initialize the structure data from the set of vertices for each face of the convex
-		bool SetPlaneVertices(const TArray<TArray<int32>>& InPlaneVertices, int32 NumVerts)
+		bool SetPlaneVertices(const TArray<TArray<int32>>& InPlaneVertices, int32 NumVerts, const bool bRegularDatas = false)
 		{
 			const EIndexType NewIndexType = GetRequiredIndexType(InPlaneVertices, NumVerts);
 			CreateDataContainer(NewIndexType);
 
 			return NonConstDataOp(
-				[InPlaneVertices, NumVerts](auto& ConcreteData) { return ConcreteData.SetPlaneVertices(InPlaneVertices, NumVerts); },
+				[InPlaneVertices, NumVerts, bRegularDatas](auto& ConcreteData) {
+				return bRegularDatas ? ConcreteData.BuildRegularDatas(InPlaneVertices, NumVerts) : ConcreteData.SetPlaneVertices(InPlaneVertices, NumVerts); 
+					},
 				[]() { return true; });
 		}
 

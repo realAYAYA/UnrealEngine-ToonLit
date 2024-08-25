@@ -45,6 +45,12 @@ struct FFortniteReleaseBranchCustomObjectVersion
 		// Enable SkipOnlyEditorOnly style cooking of NaniteOverrideMaterial
 		NaniteMaterialOverrideUsesEditorOnly,
 
+		// Store game thread particles data in single precision
+		SinglePrecisonParticleData,
+
+		// UPCGPoint custom serialization
+		PCGPointStructuredSerializer,
+
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,
 		LatestVersion = VersionPlusOne - 1

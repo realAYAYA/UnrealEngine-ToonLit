@@ -52,6 +52,10 @@ SYMS_API SYMS_B32      syms_dw_are_attrib_class_and_form_kind_compatible(SYMS_Dw
 SYMS_API SYMS_TypeKind syms_dw_type_kind_from_tag_encoding_size(SYMS_DwTagKind tag_kind, SYMS_DwAttribTypeEncoding encoding, SYMS_U64 size);
 SYMS_API SYMS_TypeModifiers syms_dw_type_modifiers_from_tag_kind(SYMS_DwTagKind tag_kind);
 
+SYMS_API SYMS_DwAttribClass syms_dw_attrib_class_from_attrib_kind_extensions(SYMS_DwAttribKind attrib);
+SYMS_API SYMS_DwAttribClass syms_dw_attrib_class_from_attrib_kind_v2(SYMS_DwAttribKind attrib);
+SYMS_API SYMS_DwAttribClass syms_dw_attrib_class_from_form_kind_v2(SYMS_DwFormKind form);
+
 SYMS_C_LINKAGE_END
 
 #endif // SYMS_DWARF_H

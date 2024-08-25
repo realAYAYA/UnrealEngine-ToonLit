@@ -1,0 +1,168 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+float	SolveVelocitiesAndForces_MassScale;
+float	SolveVelocitiesAndForces_MassBias;
+float	SolveVelocitiesAndForces_DragScale;
+float	SolveVelocitiesAndForces_DragBias;
+float3	SolveVelocitiesAndForces_VelocityScale;
+float3	SolveVelocitiesAndForces_VelocityBias;
+float3	SolveVelocitiesAndForces_WindScale;
+float3	SolveVelocitiesAndForces_WindBias;
+float3	SolveVelocitiesAndForces_AccelerationScale;
+float3	SolveVelocitiesAndForces_AccelerationBias;
+
+uint	SolveVelocitiesAndForces_ConeVelocityEnabled;
+float4	SolveVelocitiesAndForces_ConeQuat;
+float	SolveVelocitiesAndForces_ConeVelocityScale;
+float	SolveVelocitiesAndForces_ConeVelocityBias;
+float	SolveVelocitiesAndForces_ConeAngleScale;
+float	SolveVelocitiesAndForces_ConeAngleBias;
+float	SolveVelocitiesAndForces_ConeVelocityFalloff;
+
+uint	SolveVelocitiesAndForces_PontVelocityEnabled;
+float	SolveVelocitiesAndForces_PointVelocityScale;
+float	SolveVelocitiesAndForces_PointVelocityBias;
+float3	SolveVelocitiesAndForces_PointOrigin;
+
+uint	SolveVelocitiesAndForces_NoiseEnabled;
+float	SolveVelocitiesAndForces_NoiseAmplitude;
+float3	SolveVelocitiesAndForces_NoiseFrequency;
+Texture3D		SolveVelocitiesAndForces_NoiseTexture;
+SamplerState	SolveVelocitiesAndForces_NoiseSampler;
+
+uint	SolveVelocitiesAndForces_NoiseMode;
+uint	SolveVelocitiesAndForces_NoiseLUTOffset;
+uint	SolveVelocitiesAndForces_NoiseLUTNumChannel;
+uint	SolveVelocitiesAndForces_NoiseLUTChannelWidth;
+
+struct FStatelessModule_SolveVelocitiesAndForces
+{
+	float  Mass;
+	float  Drag;
+	float3 Velocity;
+	float3 Wind;
+	float3 Acceleration;
+};
+
+void SolveVelocitiesAndForces_IntegratePosition(in FStatelessModule_SolveVelocitiesAndForces ModuleData, float Age, inout float3 Position)
+{
+	const float3 IntVelocity = (ModuleData.Velocity - ModuleData.Wind) + (ModuleData.Wind * Age * Age);
+	const float LambdaDragMass = max(ModuleData.Drag * rcp(ModuleData.Mass), 0.0001f);
+	const float LambdaAge = (1.0f - exp(-(LambdaDragMass * Age))) / LambdaDragMass;
+	Position += IntVelocity * LambdaAge;
+	Position += (Age - LambdaAge) * (ModuleData.Acceleration / LambdaDragMass);
+}
+	
+void SolveVelocitiesAndForces_Initialize(inout FStatelessModule_SolveVelocitiesAndForces ModuleData, inout FStatelessParticle Particle)
+{
+	ModuleData.Mass = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_MassScale, SolveVelocitiesAndForces_MassBias);
+	ModuleData.Drag = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_DragScale, SolveVelocitiesAndForces_DragBias);
+	ModuleData.Velocity = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_VelocityScale, SolveVelocitiesAndForces_VelocityBias);
+	ModuleData.Wind = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_WindScale, SolveVelocitiesAndForces_WindBias);
+	ModuleData.Acceleration = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_AccelerationScale, SolveVelocitiesAndForces_AccelerationBias);
+
+	if ( SolveVelocitiesAndForces_ConeVelocityEnabled != 0 )
+	{
+		const float ConeAngle = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_ConeAngleScale, SolveVelocitiesAndForces_ConeAngleBias);
+		const float ConeRotation = RandomFloat(Particle) * UE_TWO_PI;
+			
+		float2 scAng = SinCos(ConeAngle);
+		float2 scRot = SinCos(ConeRotation);
+		const float3 Direction = float3(scRot.x * scAng.x, scRot.y * scAng.x, scAng.y);
+		
+		float VelocityScale = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_ConeVelocityScale, SolveVelocitiesAndForces_ConeVelocityBias);
+		if ( SolveVelocitiesAndForces_ConeVelocityFalloff > 0.0f )
+		{
+			const float pf = pow(saturate(scAng.y), SolveVelocitiesAndForces_ConeVelocityFalloff * 10.0f);
+			VelocityScale *= lerp(1.0f, pf, SolveVelocitiesAndForces_ConeVelocityFalloff);
+		}
+			
+		ModuleData.Velocity += RotateVectorByQuat(Direction, SolveVelocitiesAndForces_ConeQuat) * VelocityScale;
+	}
+
+	if ( SolveVelocitiesAndForces_PontVelocityEnabled != 0 )
+	{
+		const float3 FallbackDir = RandomUnitFloat3(Particle);
+		const float3 Delta = Particle.Position - SolveVelocitiesAndForces_PointOrigin;
+		const float  DeltaL2 = length2(Delta);
+		const float3 Dir = DeltaL2 > UE_KINDA_SMALL_NUMBER ? Delta * rsqrt(DeltaL2) : FallbackDir;
+			
+		const float VelocityScale = RandomScaleBiasFloat(Particle, SolveVelocitiesAndForces_PointVelocityScale, SolveVelocitiesAndForces_PointVelocityBias);
+			
+		ModuleData.Velocity += Dir * VelocityScale;
+	}
+
+	if ( SolveVelocitiesAndForces_NoiseEnabled  != 0 )
+	{
+		const float3 NoiseOffset = RandomFloat3(Particle);
+		float3 NoiseValue = 0;
+		if ( SolveVelocitiesAndForces_NoiseMode == 0 )
+		{
+			const float3 NoiseTravel = float3(Particle.Age, Particle.NormalizedAge, Particle.UniqueIndex);
+			const float3 NoisePosition = NoiseOffset + (NoiseTravel * SolveVelocitiesAndForces_NoiseFrequency);
+			NoiseValue = Texture3DSample(SolveVelocitiesAndForces_NoiseTexture, SolveVelocitiesAndForces_NoiseSampler, NoisePosition).xyz;
+		}
+		else if ( SolveVelocitiesAndForces_NoiseMode == 1 )
+		{
+			const float3 NoiseTravel = float3(Particle.Age, Particle.NormalizedAge, Particle.UniqueIndex) * 5.0f;
+			const float3 NoisePosition = NoiseOffset + (NoiseTravel * SolveVelocitiesAndForces_NoiseFrequency);
+			const float3x4 J = JacobianSimplex_ALU(NoisePosition, false, 1.0f);
+			NoiseValue = float3(J[1][2] - J[2][1], J[2][0] - J[0][2], J[0][1] - J[1][0]); // See comments to JacobianSimplex_ALU in Random.ush
+		}
+		else if ( SolveVelocitiesAndForces_NoiseMode == 2 )
+		{
+			const uint3 ChannelIndex = RandomUInt3(Particle) % SolveVelocitiesAndForces_NoiseLUTNumChannel;
+			const float3 ChannelLerp = (Particle.Age * SolveVelocitiesAndForces_NoiseFrequency) + RandomFloat(Particle);
+			const uint3 ChannelLUTOffsetA = (ChannelIndex * SolveVelocitiesAndForces_NoiseLUTChannelWidth) + min(floor(ChannelLerp) + 0, SolveVelocitiesAndForces_NoiseLUTChannelWidth - 1);
+			const uint3 ChannelLUTOffsetB = (ChannelIndex * SolveVelocitiesAndForces_NoiseLUTChannelWidth) + min(floor(ChannelLerp) + 1, SolveVelocitiesAndForces_NoiseLUTChannelWidth - 1);
+				
+			const float3 ValuesA = float3(
+					GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetA.x),
+					GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetA.y),
+					GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetA.z)
+			);
+			const float3 ValuesB = float3(
+					GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetB.x),
+					GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetB.y),
+					GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetB.z)
+			);
+			NoiseValue = lerp(ValuesA, ValuesB, frac(ChannelLerp));
+		}
+		else if ( SolveVelocitiesAndForces_NoiseMode == 3 )
+		{
+			const uint3 ChannelIndex = RandomUInt3(Particle) % SolveVelocitiesAndForces_NoiseLUTNumChannel;
+			const float ChannelLerp = (Particle.Age * SolveVelocitiesAndForces_NoiseFrequency.x) + RandomFloat(Particle);
+			const uint3 ChannelLUTOffsetA = (ChannelIndex * SolveVelocitiesAndForces_NoiseLUTChannelWidth) + min(floor(ChannelLerp) + 0, SolveVelocitiesAndForces_NoiseLUTChannelWidth - 1);
+			const uint3 ChannelLUTOffsetB = (ChannelIndex * SolveVelocitiesAndForces_NoiseLUTChannelWidth) + min(floor(ChannelLerp) + 1, SolveVelocitiesAndForces_NoiseLUTChannelWidth - 1);
+			const uint3 ChannelLUTOffsetC = (ChannelIndex * SolveVelocitiesAndForces_NoiseLUTChannelWidth) + min(floor(ChannelLerp) + 2, SolveVelocitiesAndForces_NoiseLUTChannelWidth - 1);
+			const uint3 ChannelLUTOffsetD = (ChannelIndex * SolveVelocitiesAndForces_NoiseLUTChannelWidth) + min(floor(ChannelLerp) + 3, SolveVelocitiesAndForces_NoiseLUTChannelWidth - 1);
+				
+			const float3 Values0 = float3(GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetA.x), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetA.y), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetA.z));
+			const float3 Values1 = float3(GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetB.x), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetB.y), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetB.z));
+			const float3 Values2 = float3(GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetC.x), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetC.y), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetC.z));
+			const float3 Values3 = float3(GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetD.x), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetD.y), GetStaticFloat(SolveVelocitiesAndForces_NoiseLUTOffset, ChannelLUTOffsetD.z));
+			{
+				const float u = frac(ChannelLerp);
+				const float u2 = u * u;
+				const float3 a0 = Values3 - Values2 - Values0 + Values1;
+				const float3 a1 = Values0 - Values1 - a0;
+				const float3 a2 = Values2 - Values0;
+				const float3 a3 = Values1;
+				NoiseValue = a0*u*u2+a1*u2+a2*u+a3;
+			}
+		}
+
+		ModuleData.Velocity += NoiseValue.xyz * SolveVelocitiesAndForces_NoiseAmplitude;
+	}
+}
+	
+void SolveVelocitiesAndForces_Simulate(in FStatelessModule_SolveVelocitiesAndForces ModuleData, inout FStatelessParticle Particle)
+{
+	SolveVelocitiesAndForces_IntegratePosition(ModuleData, Particle.Age, Particle.Position);
+	SolveVelocitiesAndForces_IntegratePosition(ModuleData, Particle.PreviousAge, Particle.PreviousPosition);
+		
+	Particle.Velocity = Particle.Position - Particle.PreviousPosition;
+	Particle.PreviousVelocity = Particle.Velocity;
+}

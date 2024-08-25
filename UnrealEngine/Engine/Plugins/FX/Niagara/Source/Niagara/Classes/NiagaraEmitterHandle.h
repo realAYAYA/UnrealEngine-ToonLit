@@ -14,6 +14,14 @@
 #include "NiagaraEmitterHandle.generated.h"
 
 class UNiagaraSystem;
+class UNiagaraStatelessEmitter;
+
+UENUM()
+enum class ENiagaraEmitterMode : uint8
+{
+	Standard,
+	Stateless
+};
 
 /** 
  * Stores emitter information within the context of a System.
@@ -32,6 +40,10 @@ public:
 	
 	/** Creates a new emitter handle from an emitter. */
 	NIAGARA_API FNiagaraEmitterHandle(const FVersionedNiagaraEmitter& InEmitter);
+
+	//-TODO:Stateless
+	NIAGARA_API FNiagaraEmitterHandle(UNiagaraStatelessEmitter& InEmitter);
+	//-TODO:Stateless
 #endif
 
 	/** Whether or not this is a valid emitter handle. */
@@ -67,6 +79,17 @@ public:
 
 	NIAGARA_API FVersionedNiagaraEmitterData* GetEmitterData() const;
 
+	//-TODO:Stateless: Should we return a bass class here / have a factory method to generate the runtime instance?
+	UNiagaraStatelessEmitter* GetStatelessEmitter() const { return StatelessEmitter; }
+	void SetStatelessEmitter(UNiagaraStatelessEmitter* InEmitter) { StatelessEmitter = InEmitter; }
+	//-TODO:Stateless: Should we return a bass class here / have a factory method to generate the runtime instance?
+
+	ENiagaraEmitterMode GetEmitterMode() const { return EmitterMode; }
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API void SetEmitterMode(UNiagaraSystem& InOwningSystem, ENiagaraEmitterMode InEmitterMode);
+	FSimpleMulticastDelegate& OnEmitterModeChanged() { return OnEmitterModeChangedDelegate; }
+#endif
+
 	/** Gets a unique name for this emitter instance for use in scripts and parameter stores etc.*/
 	NIAGARA_API FString GetUniqueInstanceName()const;
 
@@ -91,6 +114,10 @@ public:
 	static NIAGARA_API const FNiagaraEmitterHandle InvalidHandle;
 
 private:
+	/** The display name for this emitter in the System. */
+	UPROPERTY()
+	FName Name;
+	
 	/** The id of this emitter handle. */
 	UPROPERTY(VisibleAnywhere, Category="Emitter ID")
 	FGuid Id;
@@ -103,10 +130,6 @@ private:
 	/** Whether or not this emitter is enabled within the System.  Disabled emitters aren't simulated. */
 	UPROPERTY()
 	bool bIsEnabled;
-	
-	/** The display name for this emitter in the System. */
-	UPROPERTY()
-	FName Name;
 
 #if WITH_EDITORONLY_DATA
 	/** The source emitter this emitter handle was built from. */
@@ -130,4 +153,17 @@ private:
 	/** The copied instance of the emitter this handle references. */
 	UPROPERTY()
 	FVersionedNiagaraEmitter VersionedInstance;
+
+	//-TODO:Stateless: Should we return a bass class here / have a factory method to generate the runtime instance?
+	UPROPERTY()
+	TObjectPtr<UNiagaraStatelessEmitter> StatelessEmitter = nullptr;
+	//-TODO:Stateless: Should we return a bass class here / have a factory method to generate the runtime instance?
+
+	UPROPERTY()
+	ENiagaraEmitterMode EmitterMode = ENiagaraEmitterMode::Standard;
+
+#if WITH_EDITORONLY_DATA
+	FSimpleMulticastDelegate OnEmitterModeChangedDelegate;
+#endif
+	
 };

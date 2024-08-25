@@ -108,8 +108,7 @@ private:
 
 				if (!OutBlendResults.IsValidIndex(BlendID.ChannelID))
 				{
-					const bool bShrinkArray = false;
-					OutBlendResults.SetNum(BlendID.ChannelID + 1, bShrinkArray);
+					OutBlendResults.SetNum(BlendID.ChannelID + 1, EAllowShrinking::No);
 				}
 
 				FBlendResult& Result = OutBlendResults[BlendID.ChannelID];
@@ -129,8 +128,7 @@ private:
 
 				if (!OutBlendResults.IsValidIndex(BlendID.ChannelID))
 				{
-					const bool bShrinkArray = false;
-					OutBlendResults.SetNum(BlendID.ChannelID + 1, bShrinkArray);
+					OutBlendResults.SetNum(BlendID.ChannelID + 1, EAllowShrinking::No);
 				}
 
 				FBlendResult& Result = OutBlendResults[BlendID.ChannelID];
@@ -816,14 +814,29 @@ void UMovieScenePiecewiseDoubleBlenderSystem::ReinitializeAccumulationBuffers()
 	const int32 NumResults = ResultComponents.Num();
 	const int32 MaximumNumBlends = AllocatedBlendChannels.Num();
 	FEntityManager& EntityManager = Linker->EntityManager;
+
+	FEntityComponentFilter AnyCompositeFilter;
+	FComponentMask AnyCompositeAllocationsMask;
+
 	for (int32 Index = 0; Index < NumResults; ++Index)
 	{
 		TComponentTypeID<double> Component = ResultComponents[Index];
 
-		const bool bHasAbsolutes         = EntityManager.Contains(FEntityComponentFilter().All({ Component, GetBlenderTypeTag(), BuiltInComponents->BlendChannelInput, BuiltInComponents->Tags.AbsoluteBlend }));
-		const bool bHasRelatives         = EntityManager.Contains(FEntityComponentFilter().All({ Component, GetBlenderTypeTag(), BuiltInComponents->BlendChannelInput, BuiltInComponents->Tags.RelativeBlend }));
-		const bool bHasAdditives         = EntityManager.Contains(FEntityComponentFilter().All({ Component, GetBlenderTypeTag(), BuiltInComponents->BlendChannelInput, BuiltInComponents->Tags.AdditiveBlend }));
-		const bool bHasAdditivesFromBase = EntityManager.Contains(FEntityComponentFilter().All({ Component, GetBlenderTypeTag(), BuiltInComponents->BlendChannelInput, BuiltInComponents->Tags.AdditiveFromBaseBlend }));
+		AnyCompositeFilter.Reset();
+		AnyCompositeFilter.All({ Component, GetBlenderTypeTag(), BuiltInComponents->BlendChannelInput });
+		AnyCompositeFilter.Any({
+				BuiltInComponents->Tags.AbsoluteBlend, 
+				BuiltInComponents->Tags.RelativeBlend, 
+				BuiltInComponents->Tags.AdditiveBlend, 
+				BuiltInComponents->Tags.AdditiveFromBaseBlend });
+
+		AnyCompositeAllocationsMask.Reset();
+		EntityManager.AccumulateMask(AnyCompositeFilter, AnyCompositeAllocationsMask);
+
+		const bool bHasAbsolutes         = AnyCompositeAllocationsMask.Contains(BuiltInComponents->Tags.AbsoluteBlend);
+		const bool bHasRelatives         = AnyCompositeAllocationsMask.Contains(BuiltInComponents->Tags.RelativeBlend);
+		const bool bHasAdditives         = AnyCompositeAllocationsMask.Contains(BuiltInComponents->Tags.AdditiveBlend);
+		const bool bHasAdditivesFromBase = AnyCompositeAllocationsMask.Contains(BuiltInComponents->Tags.AdditiveFromBaseBlend);
 
 		if (!(bHasAbsolutes || bHasRelatives || bHasAdditives || bHasAdditivesFromBase))
 		{

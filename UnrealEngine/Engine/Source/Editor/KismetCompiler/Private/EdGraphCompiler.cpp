@@ -19,7 +19,6 @@
 #include "Internationalization/Internationalization.h"
 #include "Internationalization/Text.h"
 #include "Kismet2/CompilerResultsLog.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/ObjectPtr.h"
 

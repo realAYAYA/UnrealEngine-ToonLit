@@ -2,9 +2,9 @@
 
 #include? "SDKsRoot.xcconfig"
 
-AC_SDK_PATH = $(UESDKRoot)/HostMac/Mac/Archicad/$(AC_VERSION)
+AC_SDK_PATH = $(UESDKRoot)/HostMac/Mac/Archicad/$(AC_SDK_DIR)
 
-AC_INCLUDES_PATH = "$(AC_SDK_PATH)/Support/Inc" "$(AC_SDK_PATH)/Support/Modules/GSRoot/STL/imp" "$(AC_SDK_PATH)/Support/Modules/GSRoot" "$(AC_SDK_PATH)/Support/Modules/InputOutput"/** "$(AC_SDK_PATH)/Support/Modules/GSModelDevLib"/** "$(AC_SDK_PATH)/Support/Modules/GSUtils"/** "$(AC_SDK_PATH)/Support/Modules/GSModeler"/** "$(AC_SDK_PATH)/Support/Modules/Model3D"/** "$(AC_SDK_PATH)/Support/Modules/MPIInterfaceDevLib"/** "$(AC_SDK_PATH)/Support/Modules/Geometry"/** "$(AC_SDK_PATH)/Support/Modules/DGLib"/** "$(AC_SDK_PATH)/Support/Modules/GDL"/** "$(AC_SDK_PATH)/Support/Modules/GXImage"/** "$(AC_SDK_PATH)/Support/Modules/GX"/** "$(AC_SDK_PATH)/Support/Modules/DGGraphix"/** "$(AC_SDK_PATH)/Support/Modules/Graphix"/** "$(AC_SDK_PATH)/Support/Modules/TextEngine"/** "$(AC_SDK_PATH)/Support/Modules/GXImageBase"/** "$(AC_SDK_PATH)/Support/Modules/PointCloudManager" "$(AC_SDK_PATH)/Support/Modules/PointCloud" "$(AC_SDK_PATH)/Support/Modules/Pattern" "$(AC_SDK_PATH)/Support/Modules/Brep" "$(AC_SDK_PATH)/Support/Modules/VBAttributes" "$(AC_SDK_PATH)/Support/Modules/GSModeler2D" "$(AC_SDK_PATH)/Support/Modules/ObjectDatabase" "$(AC_SDK_PATH)/Support/Modules/UDLib" "$(AC_SDK_PATH)/Support/Modules/RS" "$(UE_Engine)/Binaries/Mac/DatasmithSDK"
+AC_INCLUDES_PATH = "$(AC_SDK_PATH)/Support/Inc" "$(AC_SDK_PATH)/Support/Modules/GSRoot/STL/imp" "$(AC_SDK_PATH)/Support/Modules/GSRoot" "$(AC_SDK_PATH)/Support/Modules/InputOutput"/** "$(AC_SDK_PATH)/Support/Modules/GSModelDevLib"/** "$(AC_SDK_PATH)/Support/Modules/GSUtils"/** "$(AC_SDK_PATH)/Support/Modules/GSModeler"/** "$(AC_SDK_PATH)/Support/Modules/Model3D"/** "$(AC_SDK_PATH)/Support/Modules/MPIInterfaceDevLib"/** "$(AC_SDK_PATH)/Support/Modules/Geometry"/** "$(AC_SDK_PATH)/Support/Modules/DGLib"/** "$(AC_SDK_PATH)/Support/Modules/GDL"/** "$(AC_SDK_PATH)/Support/Modules/GXImage"/** "$(AC_SDK_PATH)/Support/Modules/GX"/** "$(AC_SDK_PATH)/Support/Modules/DGGraphix"/** "$(AC_SDK_PATH)/Support/Modules/Graphix"/** "$(AC_SDK_PATH)/Support/Modules/TextEngine"/** "$(AC_SDK_PATH)/Support/Modules/GXImageBase"/** "$(AC_SDK_PATH)/Support/Modules/PointCloudManager" "$(AC_SDK_PATH)/Support/Modules/PointCloud" "$(AC_SDK_PATH)/Support/Modules/Pattern" "$(AC_SDK_PATH)/Support/Modules/CADInfrastructureBase" "$(AC_SDK_PATH)/Support/Modules/Brep" "$(AC_SDK_PATH)/Support/Modules/VBAttributes" "$(AC_SDK_PATH)/Support/Modules/GSModeler2D" "$(AC_SDK_PATH)/Support/Modules/ObjectDatabase" "$(AC_SDK_PATH)/Support/Modules/UDLib" "$(AC_SDK_PATH)/Support/Modules/RS" "$(UE_Engine)/Binaries/Mac/DatasmithSDK"
 
 UE_Runtime = $(UE_Engine)/Source/Runtime
 UE_Core = $(UE_Runtime)/Core/Public
@@ -27,7 +27,7 @@ CurrentYear = 2022
 
 FRAMEWORK_SEARCH_PATHS = $(FRAMEWORK_SEARCH_PATHS) $(AC_SDK_PATH)/Support/Frameworks
 
-LIBRARY_SEARCH_PATHS = "Dylibs" "$(AC_SDK_PATH)/Support/Lib/Mactel"
+LIBRARY_SEARCH_PATHS = "Dylibs" "$(AC_SDK_PATH)/Support/Lib/Mactel" "$(AC_SDK_PATH)/Support/Lib"
 
 REZ_SEARCH_PATHS = RO "$(AC_SDK_PATH)/Support/Inc" "$(AC_SDK_PATH)/Support/Modules/DGLib"
 

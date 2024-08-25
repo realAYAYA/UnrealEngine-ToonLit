@@ -679,7 +679,7 @@ class ir_gen_glsl_visitor : public ir_visitor
 		{
 			/* Do we already have a name for this variable? */
 			const char *name = (const char *) hash_table_find(this->printable_names, var);
-			if (name == NULL)
+			if (name == nullptr)
 			{
 				bool bIsGlobal = (scope_depth == 0 && var->mode != ir_var_temporary);
 				const char* prefix = "g";

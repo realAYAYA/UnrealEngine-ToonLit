@@ -11,19 +11,35 @@
 #include "IESLightProfilesCommon.ush"
 #include "CapsuleLightIntegrate.ush"
 #include "RectLightIntegrate.ush"
-#include "Strata/Strata.ush"
+#include "ScreenSpaceShadowRayCast.ush"
+#include "Substrate/Substrate.ush"
 #include "LightData.ush"
 
-// This Strata include assumes that if inline shading is required, it needs to 
+#if USE_LIGHT_FUNCTION_ATLAS
+#include "LightFunctionAtlas/LightFunctionAtlasCommon.usf"
+#endif
+
+#ifndef ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+#define ADAPTIVE_VOLUMETRIC_SHADOW_MAP 0
+#endif
+
+#if ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+#include "HeterogeneousVolumes/HeterogeneousVolumesAdaptiveVolumetricShadowMapSampling.ush"
+
+//#include "HeterogeneousVolumes/HeterogeneousVolumesVoxelGridUtils2.ush"
+//#include "HeterogeneousVolumes/HeterogeneousVolumesRayMarchingUtils.ush"
+#endif // ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+
+// This Substrate include assumes that if inline shading is required, it needs to 
 // be defined prior to DeferredLightingCommong.ush
-// StrataStruct.MaterialTextureArray is only available to translucent materials or global shaders computing contact shadows.
-// It is not defined for opaque materials, only the UAV is available to write the strata buffer.
-#define STRATA_RAYCAST_ENABLED (!MATERIAL_IS_STRATA || STRATA_TRANSLUCENT_ENABLED)
-#if STRATA_RAYCAST_ENABLED
-	#if MATERIAL_IS_STRATA
-		#define StrataRayCast StrataStruct
+// SubstrateStruct.MaterialTextureArray is only available to translucent materials or global shaders computing contact shadows.
+// It is not defined for opaque materials, only the UAV is available to write the Substrate buffer.
+#define SUBSTRATE_RAYCAST_ENABLED (!MATERIAL_IS_SUBSTRATE || SUBSTRATE_TRANSLUCENT_ENABLED)
+#if SUBSTRATE_RAYCAST_ENABLED
+	#if MATERIAL_IS_SUBSTRATE
+		#define SubstrateRayCast SubstrateStruct
 	#else
-		#define StrataRayCast Strata
+		#define SubstrateRayCast Substrate
 	#endif
 #endif
 
@@ -42,79 +58,30 @@ float DistanceFromCameraFade(float SceneDepth, FDeferredLightData LightData)
 // Sets bOutHitCastDynamicShadow if the hit point is marked as a dynamic shadow caster
 float ShadowRayCast(
 	float3 RayOriginTranslatedWorld, float3 RayDirection, float RayLength,
-	int NumSteps, float StepOffset, bool bHairNoShadowLight, out bool bOutHitCastContactShadow )
+	int NumSteps, float Dither, bool bHairNoShadowLight, out bool bOutHitCastContactShadow)
 {
-	float4 RayStartClip	= mul( float4( RayOriginTranslatedWorld, 1 ), View.TranslatedWorldToClip );
-	float4 RayDirClip	= mul( float4( RayDirection * RayLength, 0 ), View.TranslatedWorldToClip );
-	float4 RayEndClip	= RayStartClip + RayDirClip;
-
-	float3 RayStartScreen = RayStartClip.xyz / RayStartClip.w;
-	float3 RayEndScreen = RayEndClip.xyz / RayEndClip.w;
-	
-	float3 RayStepScreen = RayEndScreen - RayStartScreen;
-
-	float3 RayStartUVz = float3( RayStartScreen.xy * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz, RayStartScreen.z );
-	float3 RayStepUVz = float3( RayStepScreen.xy * View.ScreenPositionScaleBias.xy, RayStepScreen.z );
-
-	float4 RayDepthClip	= RayStartClip + mul( float4( 0, 0, RayLength, 0 ), View.ViewToClip );
-	float3 RayDepthScreen = RayDepthClip.xyz / RayDepthClip.w;
-
-	const float Step = 1.0 / NumSteps;
-
 	// *2 to get less moire pattern in extreme cases, larger values make object appear not grounded in reflections
-	const float CompareTolerance = abs( RayDepthScreen.z - RayStartScreen.z ) * Step * 2;
+	const float CompareToleranceScale = 2.0f;
 
-	float SampleTime = StepOffset * Step + Step;
+	float2 HitUV;
+	float HitDistance = CastScreenSpaceShadowRay(RayOriginTranslatedWorld, RayDirection, RayLength, NumSteps, Dither, CompareToleranceScale, bHairNoShadowLight, HitUV);
 
-	float FirstHitTime = -1.0;
-
-	const float StartDepth = SceneTexturesStruct.SceneDepthTexture.SampleLevel( SceneTexturesStruct_SceneDepthTextureSampler, RayStartUVz.xy, 0 ).r;
-
-	UNROLL
-	for( int i = 0; i < NumSteps; i++ )
+	bOutHitCastContactShadow = false;
+	if (HitDistance > 0.0)
 	{
-		float3 SampleUVz = RayStartUVz + RayStepUVz * SampleTime;
-		float SampleDepth = SceneTexturesStruct.SceneDepthTexture.SampleLevel( SceneTexturesStruct_SceneDepthTextureSampler, SampleUVz.xy, 0 ).r;
-
-		float DepthDiff = SampleUVz.z - SampleDepth;
-		bool Hit = abs( DepthDiff + CompareTolerance ) < CompareTolerance;
-		// Avoid self-intersection with the start pixel (exact comparison due to point sampling depth buffer)
-		// Exception is made for hair for occluding transmitted light with non-shadow casting light
-		if (!bHairNoShadowLight)
-		{
-			Hit = Hit && (SampleDepth != StartDepth);
-		}
-
-		FirstHitTime = (Hit && FirstHitTime < 0.0) ? SampleTime : FirstHitTime;
-
-		SampleTime += Step;
+#if SUBSTRATE_ENABLED
+#if SUBSTRATE_RAYCAST_ENABLED && SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+		uint2 PixelPos = View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy * HitUV;
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), SubstrateRayCast.MaxBytesPerPixel);
+		FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(SubstrateRayCast.MaterialTextureArray, SubstrateAddressing, SubstrateRayCast.TopLayerTexture);
+		bOutHitCastContactShadow = SubstratePixelHeader.DoesCastContactShadow();
+#endif
+#else
+		FGBufferData SampleGBuffer = GetGBufferData(HitUV);
+		bOutHitCastContactShadow = CastContactShadow(SampleGBuffer);
+#endif
 	}
 
-	float HitDistance = -1.0;
-	bOutHitCastContactShadow = false;
-	if ( FirstHitTime > 0.0 )
-	{
-		// Ignore hits that come from non-shadow-casting pixels
-		float3 SampleUVz = RayStartUVz + RayStepUVz * FirstHitTime;
-	#if STRATA_ENABLED
-		#if STRATA_RAYCAST_ENABLED && STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE
-		uint2 PixelPos = View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy * SampleUVz.xy;
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), StrataRayCast.MaxBytesPerPixel);
-		FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(StrataRayCast.MaterialTextureArray, StrataAddressing, StrataRayCast.TopLayerTexture);
-		bOutHitCastContactShadow = StrataPixelHeader.DoesCastContactShadow();
-		#endif
-	#else
-		FGBufferData SampleGBuffer = GetGBufferData( SampleUVz.xy );
-		bOutHitCastContactShadow = CastContactShadow(SampleGBuffer);
-	#endif
-
-		// Off screen masking
-		float3 HitUVz = RayStartUVz + RayStepUVz * FirstHitTime;
-		bool bValidUV = all(and(0.0 < HitUVz.xy, HitUVz.xy < 1.0));
-		HitDistance = bValidUV ? ( FirstHitTime * RayLength ) : -1.0;
-	}	
-	
-	
 	return HitDistance;
 }
 #endif
@@ -123,11 +90,13 @@ float ShadowRayCast(
 #error "Must set SUPPORT_CONTACT_SHADOWS"
 #endif
 
-void GetShadowTerms(float SceneDepth, half4 PrecomputedShadowFactors, uint ShadingModelID, float ContactShadowOpacity, FDeferredLightData LightData, float3 TranslatedWorldPosition, half3 L, half4 LightAttenuation, float Dither, inout FShadowTerms Shadow)
+void GetShadowTermsBase(
+	float SceneDepth, 
+	half4 PrecomputedShadowFactors, 
+	FDeferredLightData LightData, 
+	half4 LightAttenuation, 
+	inout FShadowTerms OutShadow)
 {
-	float ContactShadowLength = 0.0f;
-	const float ContactShadowLengthScreenScale = GetTanHalfFieldOfView().y * SceneDepth;
-
 	BRANCH
 	if (LightData.ShadowedBits)
 	{
@@ -147,12 +116,12 @@ void GetShadowTerms(float SceneDepth, half4 PrecomputedShadowFactors, uint Shadi
 		{
 			// Remapping the light attenuation buffer (see ShadowRendering.cpp)
 
-			Shadow.SurfaceShadow = LightAttenuation.z * StaticShadowing;
+			OutShadow.SurfaceShadow = LightAttenuation.z * StaticShadowing;
 			// SSS uses a separate shadowing term that allows light to penetrate the surface
 			//@todo - how to do static shadowing of SSS correctly?
-			Shadow.TransmissionShadow = LightAttenuation.w * StaticShadowing;
+			OutShadow.TransmissionShadow = LightAttenuation.w * StaticShadowing;
 
-			Shadow.TransmissionThickness = LightAttenuation.w;
+			OutShadow.TransmissionThickness = LightAttenuation.w;
 		}
 		else
 		{
@@ -162,27 +131,43 @@ void GetShadowTerms(float SceneDepth, half4 PrecomputedShadowFactors, uint Shadi
 
 			float DynamicShadowFraction = DistanceFromCameraFade(SceneDepth, LightData);
 			// For a directional light, fade between static shadowing and the whole scene dynamic shadowing based on distance + per object shadows
-			Shadow.SurfaceShadow = lerp(LightAttenuation.x, StaticShadowing, DynamicShadowFraction);
+			OutShadow.SurfaceShadow = lerp(LightAttenuation.x, StaticShadowing, DynamicShadowFraction);
 			// Fade between SSS dynamic shadowing and static shadowing based on distance
-			Shadow.TransmissionShadow = min(lerp(LightAttenuation.y, StaticShadowing, DynamicShadowFraction), LightAttenuation.w);
+			OutShadow.TransmissionShadow = min(lerp(LightAttenuation.y, StaticShadowing, DynamicShadowFraction), LightAttenuation.w);
 
-			Shadow.SurfaceShadow *= LightAttenuation.z;
-			Shadow.TransmissionShadow *= LightAttenuation.z;
+			OutShadow.SurfaceShadow *= LightAttenuation.z;
+			OutShadow.TransmissionShadow *= LightAttenuation.z;
 
 			// Need this min or backscattering will leak when in shadow which cast by non perobject shadow(Only for directional light)
-			Shadow.TransmissionThickness = min(LightAttenuation.y, LightAttenuation.w);
-		}
-
-		FLATTEN
-		if (LightData.ShadowedBits > 1 && LightData.ContactShadowLength > 0)
-		{
-			ContactShadowLength = LightData.ContactShadowLength * (LightData.ContactShadowLengthInWS ? 1.0f : ContactShadowLengthScreenScale);
+			OutShadow.TransmissionThickness = min(LightAttenuation.y, LightAttenuation.w);
 		}
 	}
 
+	OutShadow.HairTransmittance = LightData.HairTransmittance;
+	OutShadow.HairTransmittance.OpaqueVisibility = OutShadow.SurfaceShadow;
+}
+
+void ApplyContactShadowWithShadowTerms(
+	float SceneDepth, 
+	uint ShadingModelID, 
+	float ContactShadowOpacity, 
+	FDeferredLightData LightData, 
+	float3 TranslatedWorldPosition, 
+	half3 L, 
+	float Dither, 
+	inout FShadowTerms OutShadow)
+{
 #if SUPPORT_CONTACT_SHADOWS
 
-#if STRATA_ENABLED == 0
+	float ContactShadowLength = 0.0f;
+	const float ContactShadowLengthScreenScale = GetScreenRayLengthMultiplierForProjectionType(SceneDepth).y;
+
+	FLATTEN
+	if (LightData.ShadowedBits > 1 && LightData.ContactShadowLength > 0)
+	{
+		ContactShadowLength = LightData.ContactShadowLength * (LightData.ContactShadowLengthInWS ? 1.0f : ContactShadowLengthScreenScale);
+	}
+
 	if (LightData.ShadowedBits < 2 && (ShadingModelID == SHADINGMODELID_HAIR))
 	{
 		ContactShadowLength = 0.2 * ContactShadowLengthScreenScale;
@@ -193,25 +178,22 @@ void GetShadowTerms(float SceneDepth, half4 PrecomputedShadowFactors, uint Shadi
 		ContactShadowLength = 0.5;
 		
 	}
-#endif
 
-	#if MATERIAL_CONTACT_SHADOWS
-		ContactShadowLength = 0.2 * ContactShadowLengthScreenScale;
-	#endif
+#if MATERIAL_CONTACT_SHADOWS
+	ContactShadowLength = 0.2 * ContactShadowLengthScreenScale;
+#endif
 
 	BRANCH
 	if (ContactShadowLength > 0.0)
 	{
-		float StepOffset = Dither - 0.5;
 		bool bHitCastContactShadow = false;
 		bool bHairNoShadowLight = ShadingModelID == SHADINGMODELID_HAIR && !LightData.ShadowedBits;
-		float HitDistance = ShadowRayCast( TranslatedWorldPosition, L, ContactShadowLength, 8, StepOffset, bHairNoShadowLight, bHitCastContactShadow );
+		float HitDistance = ShadowRayCast( TranslatedWorldPosition, L, ContactShadowLength, 8, Dither, bHairNoShadowLight, bHitCastContactShadow );
 				
 		if ( HitDistance > 0.0 )
 		{
 			float ContactShadowOcclusion = bHitCastContactShadow ? LightData.ContactShadowCastingIntensity : LightData.ContactShadowNonCastingIntensity;
 
-#if STRATA_ENABLED == 0
 			// Exponential attenuation is not applied on hair/eye/SSS-profile here, as the hit distance (shading-point to blocker) is different from the estimated 
 			// thickness (closest-point-from-light to shading-point), and this creates light leaks. Instead we consider first hit as a blocker (old behavior)
 			BRANCH
@@ -227,19 +209,37 @@ void GetShadowTerms(float SceneDepth, half4 PrecomputedShadowFactors, uint Shadi
 				float Density = SubsurfaceDensityFromOpacity(ContactShadowOpacity);
 				ContactShadowOcclusion *= 1.0 - saturate( exp( -Density * HitDistance ) );
 			}
-#endif
 
 			float ContactShadow = 1.0 - ContactShadowOcclusion;
 
-			Shadow.SurfaceShadow *= ContactShadow;
-			Shadow.TransmissionShadow *= ContactShadow;
+			OutShadow.SurfaceShadow *= ContactShadow;
+			OutShadow.TransmissionShadow *= ContactShadow;
 		}
-		
 	}
-#endif
 
-	Shadow.HairTransmittance = LightData.HairTransmittance;
-	Shadow.HairTransmittance.OpaqueVisibility = Shadow.SurfaceShadow;
+	OutShadow.HairTransmittance = LightData.HairTransmittance;
+	OutShadow.HairTransmittance.OpaqueVisibility = OutShadow.SurfaceShadow;
+
+#endif // SUPPORT_CONTACT_SHADOWS
+}
+
+void GetShadowTerms(
+	float SceneDepth,
+	half4 PrecomputedShadowFactors,
+	uint ShadingModelID,
+	float ContactShadowOpacity,
+	FDeferredLightData LightData,
+	float3 TranslatedWorldPosition,
+	half3 L,
+	half4 LightAttenuation,
+	float Dither,
+	inout FShadowTerms OutShadow)
+{
+	// Get the basic shadow terms
+	GetShadowTermsBase(SceneDepth, PrecomputedShadowFactors, LightData, LightAttenuation, OutShadow);
+
+	// Now combined with screens space contact shadow if necessary.
+	ApplyContactShadowWithShadowTerms (SceneDepth, ShadingModelID, ContactShadowOpacity, LightData, TranslatedWorldPosition, L, Dither, OutShadow);
 }
 
 float GetLocalLightAttenuation(
@@ -258,8 +258,8 @@ float GetLocalLightAttenuation(
 	{
 		LightMask = Square( saturate( 1 - Square( DistanceSqr * Square(LightData.InvRadius) ) ) );
 		// This extra attenuation has been added for supporting existing 'legacy' shading model on mobile. 
-		// This is not needed for Strata which unifies all lighting paths
-		#if SHADING_PATH_MOBILE && !STRATA_ENABLED
+		// This is not needed for Substrate which unifies all lighting paths
+		#if SHADING_PATH_MOBILE && !SUBSTRATE_ENABLED
 		LightMask *= 1.0f / (DistanceSqr + 1.0f);
 		#endif
 	}
@@ -331,6 +331,10 @@ FLightAccumulator AccumulateDynamicLighting(
 	if (LightData.bRadialLight)
 	{
 		LightMask = GetLocalLightAttenuation( TranslatedWorldPosition, LightData, ToLight, L );
+#if ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+		//LightAttenuation *= ComputeTransmittance(DerivedParams.TranslatedWorldPosition, LightData.TranslatedWorldPosition, 256);
+		LightAttenuation *= AVSM_SampleTransmittance(TranslatedWorldPosition, LightData.TranslatedWorldPosition);
+#endif // ADAPTIVE_VOLUMETRIC_SHADOW_MAP
 		MaskedLightColor *= LightMask;
 	}
 
@@ -416,7 +420,11 @@ FLightAccumulator AccumulateDynamicLighting(
 			}
 
 			Lighting.Specular *= LightData.SpecularScale;
-				
+
+		#if USE_LIGHT_FUNCTION_ATLAS
+			MaskedLightColor *= GetLocalLightFunctionCommon(TranslatedWorldPosition, LightData.LightFunctionAtlasLightIndex);
+		#endif
+
 			LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
 			LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
 

@@ -14,8 +14,8 @@
 #define EYE_ADAPTATION_PREV_FRAME_EXPOSURE 1
 
 
-#if STRATA_ENABLED
-#define STRATA_INLINE_SHADING 1
+#if SUBSTRATE_ENABLED
+#define SUBSTRATE_INLINE_SHADING 1
 #endif
 
 #include "/Engine/Private/Common.ush"
@@ -35,8 +35,8 @@
 #include "/Engine/Private/LightmapCommon.ush"
 #include "/Engine/Private/Lumen/LumenHardwareRayTracingPayloadCommon.ush"
 
-#define MATERIAL_STRATA_OPAQUE_PRECOMPUTED_LIGHTING 0
-#include "/Engine/Private/Strata/StrataExport.ush"
+#define MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING 0
+#include "/Engine/Private/Substrate/SubstrateExport.ush"
 
 /** Computes sky diffuse lighting, including precomputed shadowing. */
 void GetSkyLighting(
@@ -227,60 +227,87 @@ void GetMaterialPayload(
 	FVertexFactoryInterpolantsVSToPS Interpolants,
 	bool bIsEnableSkyLightContribution,
 	inout FMaterialClosestHitPayload Payload)
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 {
-  #if MATERIAL_IS_STRATA
+  #if MATERIAL_IS_SUBSTRATE
 	const float Dither = 0.5f;
 	float3 EmissiveLuminance = 0.0f;
 	float TotalCoverage = 1.f;
-	bool bStrataSubsurfaceEnable = false;
+	bool bSubstrateSubsurfaceEnable = false;
 	const float3 WorldBentNormal0 = GetWorldBentNormalZero(MaterialParameters);
 
-  #if STRATA_OPTIMIZED_UNLIT
-	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
-	UnlitBSDF.StrataSanitizeBSDF();
-	EmissiveLuminance = BSDF_GETEMISSIVE(UnlitBSDF);
-	#if !STRATA_OPAQUE_MATERIAL
-	TotalCoverage = UnlitBSDF.Coverage;
+	// Initialise a Substrate header with normal in registers
+	FSubstrateData SubstrateData = PixelMaterialInputs.GetFrontSubstrateData();
+	FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
+
+  #if SUBSTRATE_OPTIMIZED_UNLIT	
+	// Unlit BSDF goes through the SubstrateTree to support weighting operations. Technically, layering and mixing could also be supported.
+	float3	UnlitSurfaceLuminancePostCoverage = 0.0f;
+	float	UnlitSurfaceCoverage = 0.0f;
+	float3	UnlitSurfaceTransmittancePreCoverage = 0.0f;
+	float3	UnlitSurfaceNormal = 0.0f;
+	SubstratePixelHeader.SubstrateUpdateTreeUnlit(
+		uint2(MaterialParameters.SvPosition.xy),
+		MaterialParameters.CameraVector,
+		SubstrateData,
+		UnlitSurfaceLuminancePostCoverage,
+		UnlitSurfaceCoverage,
+		UnlitSurfaceTransmittancePreCoverage,
+		UnlitSurfaceNormal);
+	EmissiveLuminance = UnlitSurfaceLuminancePostCoverage;
+	#if !SUBSTRATE_OPAQUE_MATERIAL
+	TotalCoverage = UnlitSurfaceCoverage;
 	#endif
-  #else // STRATA_OPTIMIZED_UNLIT
-	// Initialise a Strata header with normal in registers
-	FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
-	FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
-	StrataPixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
-	StrataPixelHeader.SetCastContactShadow(GetPrimitiveData(MaterialParameters).Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_CAST_CONTACT_SHADOW);
-	StrataPixelHeader.SetDynamicIndirectShadowCasterRepresentation(GetPrimitiveData(MaterialParameters).Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_CAPSULE_REPRESENTATION);
+  #else // SUBSTRATE_OPTIMIZED_UNLIT
+	SubstratePixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+	SubstratePixelHeader.SetCastContactShadow(GetPrimitiveData(MaterialParameters).Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_CAST_CONTACT_SHADOW);
+	SubstratePixelHeader.SetDynamicIndirectShadowCasterRepresentation(GetPrimitiveData(MaterialParameters).Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_CAPSULE_REPRESENTATION);
 
-	FStrataSubsurfaceData SSSData = (FStrataSubsurfaceData)0;
-	FStrataTopLayerData TopLayerData = (FStrataTopLayerData)0;
-	FStrataOpaqueRoughRefractionData OpaqueRoughRefractionData = (FStrataOpaqueRoughRefractionData)0;
-	FStrataIntegrationSettings Settings = InitStrataIntegrationSettings();
+	FSubstrateSubsurfaceData SSSData = (FSubstrateSubsurfaceData)0;
+	FSubstrateTopLayerData TopLayerData = (FSubstrateTopLayerData)0;
+	FSubstrateOpaqueRoughRefractionData OpaqueRoughRefractionData = (FSubstrateOpaqueRoughRefractionData)0;
+	FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings();
 
-	// Generate the strata material data to write out
-	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(0,0,0);
+	// Generate the Substrate material data to write out
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(0,0,0);
 
-	const float3 CamVector = MaterialParameters.CameraVector;	
-	Payload.StrataData = InitialiseRWStrataMaterialContainer();
-	PackStrataOut(
-		Payload.StrataData,
+	// Compute TotalCoverage for translucent material
+	#if MATERIALBLENDING_ANY_TRANSLUCENT
+	if (SubstratePixelHeader.SubstrateTree.BSDFCount > 0)
+	{
+		float TransmittancePreCoverage = 0.f;
+		SubstratePixelHeader.SubstrateUpdateTree(
+			SubstrateData, 
+			MaterialParameters.CameraVector, 
+			Settings, 
+			TotalCoverage, 
+			TransmittancePreCoverage);
+		TotalCoverage *= (1.f-dot(TransmittancePreCoverage, float(1.f/3.f).xxx));
+	}
+	#endif
+
+	const float3 CamVector = MaterialParameters.CameraVector;
+	Payload.SubstrateData = InitialiseRWSubstrateMaterialContainer();
+	PackSubstrateOut(
+		Payload.SubstrateData,
 		Dither,
 		Settings,
-		StrataAddressing,
-		StrataPixelHeader, StrataData, 
+		SubstrateAddressing,
+		SubstratePixelHeader, SubstrateData, 
 		CamVector, 
 		WorldBentNormal0,
-		bStrataSubsurfaceEnable, 
+		bSubstrateSubsurfaceEnable, 
 		EmissiveLuminance,
 		SSSData, TopLayerData, OpaqueRoughRefractionData
 	);
 
-	Payload.StrataData.PackedTopLayerData = StrataPackTopLayerData(TopLayerData);
-  #endif // STRATA_OPTIMIZED_UNLIT
+	Payload.SubstrateData.PackedTopLayerData = SubstratePackTopLayerData(TopLayerData);
+  #endif // SUBSTRATE_OPTIMIZED_UNLIT
 
 	Payload.Radiance += EmissiveLuminance;
-	Payload.TranslatedWorldPos = LWCToFloat(LWCAdd(MaterialParameters.AbsoluteWorldPosition, ResolvedView.PreViewTranslation));
+	Payload.TranslatedWorldPos = DFFastToTranslatedWorld(MaterialParameters.AbsoluteWorldPosition, ResolvedView.PreViewTranslation);
 
-	// STRATA_TODO Payload.Ior when available (accounting for REFRACTION_USE_INDEX_OF_REFRACTION and REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT)
+	// SUBSTRATE_TODO Payload.Ior when available (accounting for REFRACTION_USE_INDEX_OF_REFRACTION and REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT)
 
 	// Opacity
 	Payload.Opacity = TotalCoverage;
@@ -291,9 +318,9 @@ void GetMaterialPayload(
 		Payload.Opacity = 0;
 	}
 	#endif // MATERIALBLENDING_MASKED
-  #endif // MATERIAL_IS_STRATA
+  #endif // MATERIAL_IS_SUBSTRATE
 }
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 {
 	// Store the results in local variables and reuse instead of calling the functions multiple times.
 	half3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
@@ -314,7 +341,7 @@ void GetMaterialPayload(
 	/**
 	 * Set material attributes for full materials
 	 **/
-	Payload.TranslatedWorldPos = LWCToFloat(LWCAdd(MaterialParameters.AbsoluteWorldPosition, ResolvedView.PreViewTranslation));
+	Payload.TranslatedWorldPos = DFFastToTranslatedWorld(MaterialParameters.AbsoluteWorldPosition, ResolvedView.PreViewTranslation);
 	Payload.WorldNormal = normalize(MaterialParameters.WorldNormal);
 	Payload.Radiance = GetMaterialEmissive(PixelMaterialInputs);
 	Payload.BaseColor = BaseColor;
@@ -385,9 +412,9 @@ void GetMaterialPayload(
 #if MATERIAL_SHADINGMODEL_SINGLELAYERWATER
 	if (Payload.ShadingModelID == SHADINGMODELID_SINGLELAYERWATER)
 	{
-		const float3 ScatteringCoeff = max(0.0f, LWCToFloat(GetSingleLayerWaterMaterialOutput0(MaterialParameters)));
-		const float3 AbsorptionCoeff = max(0.0f, LWCToFloat(GetSingleLayerWaterMaterialOutput1(MaterialParameters)));
-		const float PhaseG = clamp(LWCToFloat(GetSingleLayerWaterMaterialOutput2(MaterialParameters)), -1.0f, 1.0f);
+		const float3 ScatteringCoeff = max(0.0f, DFDemote(GetSingleLayerWaterMaterialOutput0(MaterialParameters)));
+		const float3 AbsorptionCoeff = max(0.0f, DFDemote(GetSingleLayerWaterMaterialOutput1(MaterialParameters)));
+		const float PhaseG = clamp(DFDemote(GetSingleLayerWaterMaterialOutput2(MaterialParameters)), -1.0f, 1.0f);
 
 		const float3 WaterExtinction = ScatteringCoeff + AbsorptionCoeff;
 		const float3 WaterAlbedo = ScatteringCoeff / WaterExtinction;
@@ -423,7 +450,7 @@ void GetMaterialPayload(
 	float3 VolumetricLightmapBrickTextureUVs;
 		
 	#if PRECOMPUTED_IRRADIANCE_VOLUME_LIGHTING
-		VolumetricLightmapBrickTextureUVs = ComputeVolumetricLightmapBrickTextureUVs(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition)); // RT_LWC_TODO
+	VolumetricLightmapBrickTextureUVs = ComputeVolumetricLightmapBrickTextureUVs(WSHackToFloat(GetWorldPosition(MaterialParameters))); // RT_LWC_TODO
 	#endif
 
 	VTPageTableResult LightmapVTPageTableResult = (VTPageTableResult)0.0f;
@@ -453,7 +480,7 @@ void GetMaterialPayload(
 	
 	Payload.IndirectIrradiance += DiffuseIndirectLighting; // Contains both lightmap & skylight
 }
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 RAY_TRACING_ENTRY_CLOSEST_HIT(MaterialCHS,
 	FPackedMaterialClosestHitPayload, PackedPayload,
@@ -468,7 +495,7 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(MaterialCHS,
 
 	FVertexFactoryInterpolantsVSToPS Interpolants;
 	const float3 TranslatedWorldPosition = TranslatedWorldRayOrigin() + RayTCurrent() * WorldRayDirection();
-	float4 SvPosition = mul(float4(TranslatedWorldPosition, 1.0f), ResolvedView.TranslatedWorldToClip);
+	const float4 SvPosition = TranslatedWorldPositionToSvPosition(TranslatedWorldPosition);
 	
 	FRayCone PropagatedCone = PropagateRayCone(PackedPayload.GetRayCone(), 0 /* surface curvature */, RayTCurrent());
 	CalcInterpolants(PropagatedCone, Attributes, Interpolants);
@@ -496,10 +523,17 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(MaterialCHS,
 
 	if (PackedPayload.IsMinimalPayloadMode())
 	{
-		// Minimal payload mode only fills FMinimalPayload::HitT, skipping actual material evaluation.
-		// This mode is used when tracing shadow rays against masked geometry.
-		// Dynamic branch is used to avoid compiling an extra shader permutation.
-		return;
+#if MATERIALBLENDING_TRANSLUCENT
+		//For shadow ray that does not ignore translucent materials, the material will be evaluated
+		// even with minimal payload mode to query the opacity for translucent shadow.
+		if (PackedPayload.IsIgnoreTranslucentMaterials() || !PackedPayload.IsShadowRay())
+#endif
+		{
+			// Minimal payload mode only fills FMinimalPayload::HitT, skipping actual material evaluation.
+			// This mode is used when tracing shadow rays against masked geometry.
+			// Dynamic branch is used to avoid compiling an extra shader permutation.
+			return;
+		}
 	}
 
 	CurrentPayloadInputFlags = PackedPayload.GetFlags();
@@ -541,8 +575,10 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(MaterialCHS,
 		uint MaterialBlendingMode = RAY_TRACING_BLEND_MODE_OPAQUE;
 	#endif
 
+	const uint PrimitiveFlags = GetPrimitiveData(MaterialParameters.PrimitiveId).Flags;
+
 	Payload.BlendingMode = MaterialBlendingMode;
-	Payload.PrimitiveLightingChannelMask = GetPrimitive_LightingChannelMask(MaterialParameters.PrimitiveId);
+	Payload.PrimitiveLightingChannelMask = GetPrimitive_LightingChannelMask_FromFlags(PrimitiveFlags);
 
 	Payload.HitT = RayTCurrent();
 	if (HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE)
@@ -557,6 +593,26 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(MaterialCHS,
 	// Fill payload with material data
 	GetMaterialPayload(PixelMaterialInputs, MaterialParameters, Interpolants, PackedPayload.IsEnableSkyLightContribution(), Payload); 
 
+	// After we have gathered the material info, check to see if we are a holdout to see if we need to overwrite the shaded result
+#if MATERIALBLENDING_ALPHAHOLDOUT
+	const bool bIsHoldout = true;
+#else
+	const bool bIsHoldout = (PrimitiveFlags & PRIMITIVE_SCENE_DATA_FLAG_HOLDOUT) != 0;
+#endif
+	const bool bIsCameraRay = PackedPayload.IsCameraRay();
+	if (bIsHoldout && bIsCameraRay)
+	{
+#if SUBSTRATE_ENABLED
+		// SUBSTRATE_TODO: Need to clear the material data and set a black unlit material in this case
+#else
+		Payload.ShadingModelID = SHADINGMODELID_UNLIT;
+		Payload.Radiance = 0.0;
+		Payload.BaseColor = 0.0;
+		Payload.Specular = 0.0;
+#endif
+		Payload.SetHoldout();
+	}
+
 	PackedPayload = PackRayTracingPayload(Payload, PropagatedCone);
 
 	// Override packed payload with custom Lumen data
@@ -567,6 +623,20 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(MaterialCHS,
 		PackedPayload.SetSceneInstanceIndex(GetGPUSceneInstanceIndex(PrimitiveIndex, PrimitiveInstanceIndex));
 		PackedPayload.SetGeometryNormal(GeoNormal);
 	}
+
+#if MATERIAL_VIRTUALTEXTURE_FEEDBACK
+	if (bIsCameraRay)
+	{
+		// Virtual texturing feedback logic (camera rays only for now)
+		FinalizeVirtualTextureFeedback(
+			MaterialParameters.VirtualTextureFeedback,
+			MaterialParameters.SvPosition,
+			Payload.Opacity,
+			View.FrameNumber,
+			View.VTFeedbackBuffer
+		);
+	}
+#endif
 
 #endif // USE_MATERIAL_CLOSEST_HIT_SHADER
 }
@@ -613,7 +683,7 @@ RAY_TRACING_ENTRY_ANY_HIT(MaterialAHS,
 
 	FVertexFactoryInterpolantsVSToPS Interpolants;
 	const float3 TranslatedWorldPosition = TranslatedWorldRayOrigin() + RayTCurrent() * WorldRayDirection();
-	float4 SvPosition = mul(float4(TranslatedWorldPosition, 1.0f), ResolvedView.TranslatedWorldToClip);
+	const float4 SvPosition = TranslatedWorldPositionToSvPosition(TranslatedWorldPosition);
 
 	CalcInterpolants(PackedPayload.GetRayCone(), Attributes, Interpolants);
 

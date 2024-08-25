@@ -574,7 +574,7 @@ void FTrackEditorThumbnailCache::UpdateFilledThumbnails()
 			Remove.Append(&Thumbnails[0], Index);
 			ThumbnailPool.Pin()->RemoveThumbnailsNeedingRedraw(Remove);
 
-			Thumbnails.RemoveAt(0, Index, false);
+			Thumbnails.RemoveAt(0, Index, EAllowShrinking::No);
 		}
 	}
 
@@ -599,7 +599,7 @@ void FTrackEditorThumbnailCache::UpdateFilledThumbnails()
 			Remove.Append(&Thumbnails[Thumbnails.Num() - NumToRemove], NumToRemove);
 			ThumbnailPool.Pin()->RemoveThumbnailsNeedingRedraw(Remove);
 
-			Thumbnails.RemoveAt(Thumbnails.Num() - NumToRemove, NumToRemove, false);
+			Thumbnails.RemoveAt(Thumbnails.Num() - NumToRemove, NumToRemove, EAllowShrinking::No);
 		}
 	}
 

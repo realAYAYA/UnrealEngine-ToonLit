@@ -16,6 +16,7 @@
 #include "EditorCategoryUtils.h"
 #include "Animation/AnimComposite.h"
 #include "Animation/AnimSequence.h"
+#include "Animation/AnimPoseSearchProvider.h"
 #include "Animation/AnimRootMotionProvider.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
 #include "IAnimBlueprintNodeOverrideAssetsContext.h"
@@ -249,6 +250,16 @@ const TCHAR* UAnimGraphNode_SequencePlayer::GetTimePropertyName() const
 UScriptStruct* UAnimGraphNode_SequencePlayer::GetTimePropertyStruct() const 
 {
 	return FAnimNode_SequencePlayer::StaticStruct();
+}
+
+void UAnimGraphNode_SequencePlayer::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
+{
+	Super::CustomizeDetails(DetailBuilder);
+
+	if (!UE::Anim::IPoseSearchProvider::IsAvailable())
+	{
+		DetailBuilder.HideCategory(TEXT("PoseMatching"));
+	}
 }
 
 void UAnimGraphNode_SequencePlayer::CustomizePinData(UEdGraphPin* Pin, FName SourcePropertyName, int32 ArrayIndex) const

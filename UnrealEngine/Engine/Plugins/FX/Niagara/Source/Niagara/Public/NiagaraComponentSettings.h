@@ -4,12 +4,13 @@
 
 #include "NiagaraCommon.h"
 
+class UNiagaraEmitter;
 class UNiagaraSystem;
-class FNiagaraEmitterInstance;
+struct FVersionedNiagaraEmitterData;
 
 namespace FNiagaraComponentSettings
 {
 	extern void UpdateSettings();
 	extern NIAGARA_API bool IsSystemAllowedToRun(const UNiagaraSystem* System);
-	extern NIAGARA_API bool IsEmitterAllowedToRun(const FNiagaraEmitterInstance* EmitterInstance);
+	extern NIAGARA_API bool IsEmitterAllowedToRun(const FVersionedNiagaraEmitterData& EmitterData, const UNiagaraEmitter& NiagaraEmitter);
 };

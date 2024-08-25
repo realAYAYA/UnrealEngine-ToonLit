@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GroomCacheTrackEditor.h"
-#include "CommonMovieSceneTools.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -12,14 +11,14 @@
 #include "MovieSceneGroomCacheTrack.h"
 #include "MovieSceneGroomCacheSection.h"
 #include "SequencerSectionPainter.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "Styling/SlateIconFinder.h"
 #include "TimeToPixel.h"
 
 namespace GroomCacheEditorConstants
 {
 	// @todo Sequencer Allow this to be customizable
-	const uint32 AnimationTrackHeight = 20;
+	const uint32 AnimationTrackHeight = 28;
 }
 
 #define LOCTEXT_NAMESPACE "FGroomCacheTrackEditor"
@@ -40,10 +39,7 @@ static UGroomComponent* AcquireGroomComponentFromObjectGuid(const FGuid& Guid, T
 	}
 	else if (UGroomComponent* GroomComp = Cast<UGroomComponent>(BoundObject))
 	{
-		if (GroomComp->GetGroomCache())
-		{
-			return GroomComp;
-		}
+		return GroomComp;
 	}
 
 	return nullptr;
@@ -391,13 +387,7 @@ TSharedPtr<SWidget> FGroomCacheTrackEditor::BuildOutlinerEditWidget(const FGuid&
 			return MenuBuilder.MakeWidget();
 		};
 
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				FSequencerUtilities::MakeAddButton(LOCTEXT("GroomCacheText", "Groom Cache"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-			];
+		return UE::Sequencer::MakeAddButton(LOCTEXT("GroomCacheText", "Groom Cache"), FOnGetContent::CreateLambda(SubMenuCallback), Params.ViewModel);
 	}
 	else
 	{

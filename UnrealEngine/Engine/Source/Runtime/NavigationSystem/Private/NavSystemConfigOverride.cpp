@@ -186,7 +186,7 @@ void ANavSystemConfigOverride::PostUnregisterAllComponents()
 
 	// ApplyConfig was performed in PostRegisterAllComponents for Editor worlds so nothing to unregister for Game worlds.
 	UWorld* World = GetWorld();
-	if (World == nullptr || World->IsGameWorld() || World->WorldType == EWorldType::Inactive)
+	if (World == nullptr || World->IsGameWorld() || World->WorldType == EWorldType::Inactive || !World->IsInitialized() || World->IsBeingCleanedUp())
 	{
 		return;
 	}

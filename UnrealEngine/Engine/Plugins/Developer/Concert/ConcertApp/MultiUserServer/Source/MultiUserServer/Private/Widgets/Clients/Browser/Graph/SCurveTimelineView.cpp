@@ -156,7 +156,7 @@ int32 SCurveTimelineView::PaintCurve(const FGeometry& AllottedGeometry, const FS
 										LineColor,
 										false
 										);
-					Points.SetNum(0,false);
+					Points.SetNum(0,EAllowShrinking::No);
 				}
 			
 				float X = RangeToScreen.InputToLocalX(Point.Time);

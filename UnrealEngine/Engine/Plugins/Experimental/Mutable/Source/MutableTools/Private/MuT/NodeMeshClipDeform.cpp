@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshClipDeform::Private::s_type =
-			NODE_TYPE( "MeshClipDeform", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshClipDeform::Private::s_type =
+			FNodeType( "MeshClipDeform", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -25,49 +25,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeMeshClipDeform, EType::ClipDeform, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshClipDeform::GetInputCount() const
-	{
-		return 2;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshClipDeform::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = nullptr;
-
-		switch (i)
-		{
-		case 0: pResult = m_pD->m_pBaseMesh.get(); break;
-		case 1: pResult = m_pD->m_pClipShape.get(); break;
-		default:
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshClipDeform::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0: m_pD->m_pBaseMesh = dynamic_cast<NodeMesh*>(pNode.get()); break;
-		case 1: m_pD->m_pClipShape = dynamic_cast<NodeMesh*>(pNode.get()); break;
-		default:
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -107,9 +64,7 @@ namespace mu
 
 		if (m_pBaseMesh)
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>(m_pBaseMesh->GetBasePrivate() );
-
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>(m_pBaseMesh->GetBasePrivate() );
 			pResult = pPrivate->GetLayout( index );
 		}
 

@@ -35,7 +35,7 @@
 #include "ClearQuad.h"
 #include "SceneTextureParameters.h"
 #include "SceneViewExtension.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 
 void SetupPlanarReflectionUniformParameters(const class FSceneView& View, const FPlanarReflectionSceneProxy* ReflectionSceneProxy, FPlanarReflectionUniformParameters& OutParameters)
 {
@@ -351,10 +351,7 @@ static void UpdatePlanarReflectionContents_RenderThread(
 	FDeferredUpdateResource::UpdateResources(RHICmdList);
 
 	const ERHIFeatureLevel::Type FeatureLevel = SceneRenderer->FeatureLevel;
-	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("PlanarReflection"), FSceneRenderer::GetRDGParalelExecuteFlags(FeatureLevel));
-
-	// We need to execute the pre-render view extensions before we do any view dependent work.
-	FSceneRenderer::ViewExtensionPreRender_RenderThread(GraphBuilder, SceneRenderer);
+	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("PlanarReflection"), ERDGBuilderFlags::AllowParallelExecute);
 
 	// Make sure we render to the same set of GPUs as the main scene renderer.
 	if (MainSceneRenderer->ViewFamily.RenderTarget != nullptr)
@@ -509,7 +506,6 @@ extern void SetupViewFamilyForSceneCapture(
 	USceneCaptureComponent* SceneCaptureComponent,
 	const TArrayView<const FSceneCaptureViewInfo> Views,
 	float MaxViewDistance,
-	bool bUseFauxOrthoViewPos,
 	bool bCaptureSceneColor,
 	bool bIsPlanarReflection,
 	FPostProcessSettings* PostProcessSettings,
@@ -654,7 +650,8 @@ void FScene::UpdatePlanarReflectionContents(UPlanarReflectionComponent* CaptureC
 			ViewFamily,
 			CaptureComponent,
 			SceneCaptureViewInfo, CaptureComponent->MaxViewDistanceOverride,
-			/* bUseFauxOrthoViewPos = */ false, /* bCaptureSceneColor = */ true, /* bIsPlanarReflection = */ true,
+			/* bCaptureSceneColor = */ true,
+			/* bIsPlanarReflection = */ true,
 			&PostProcessSettings, 1.0f,
 			/*ViewActor =*/ nullptr,
 			/*CubemapFaceIndex =*/ INDEX_NONE);
@@ -672,17 +669,6 @@ void FScene::UpdatePlanarReflectionContents(UPlanarReflectionComponent* CaptureC
 		for (const FSceneViewExtensionRef& Extension : SceneRenderer->ViewFamily.ViewExtensions)
 		{
 			Extension->SetupViewFamily(SceneRenderer->ViewFamily);
-		}
-
-		FSceneViewStateInterface* ViewStateInterface = CaptureComponent->GetViewState(0);
-
-		if (UseVirtualShadowMaps(SceneRenderer->ShaderPlatform, FeatureLevel) && ViewStateInterface)
-		{
-			ViewStateInterface->AddVirtualShadowMapCache(this);
-		}
-		else if (ViewStateInterface)
-		{
-			ViewStateInterface->RemoveVirtualShadowMapCache(this);
 		}
 
 		for (int32 ViewIndex = 0; ViewIndex < SceneCaptureViewInfo.Num(); ++ViewIndex)
@@ -719,6 +705,8 @@ void FScene::UpdatePlanarReflectionContents(UPlanarReflectionComponent* CaptureC
 			FSceneRenderer* MainSceneRendererPtr = &MainSceneRenderer;
 			FPlanarReflectionSceneProxy* SceneProxyPtr = CaptureComponent->SceneProxy;
 			FPlanarReflectionRenderTarget* RenderTargetPtr = CaptureComponent->RenderTarget;
+
+			UE::RenderCommandPipe::FSyncScope SyncScope;
 
 			if (bIsMobilePixelProjectedReflectionEnabled)
 			{
@@ -798,7 +786,7 @@ class FPlanarReflectionPS : public FGlobalShader
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
 
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
 		SHADER_PARAMETER_STRUCT_REF(FPlanarReflectionUniformParameters, PlanarReflectionParameters)
 
@@ -874,7 +862,7 @@ void FDeferredShadingSceneRenderer::RenderDeferredPlanarReflections(FRDGBuilder&
 	PassParameters->SceneTextures.GBufferFTexture = SceneTextures.GBufferFTexture;
 	PassParameters->SceneTextures.GBufferVelocityTexture = SceneTextures.GBufferVelocityTexture;
 
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
 	PassParameters->RenderTargets[0] = FRenderTargetBinding(
 		ReflectionsOutputTexture, bClearReflectionsOutputTexture ? ERenderTargetLoadAction::EClear : ERenderTargetLoadAction::ELoad);

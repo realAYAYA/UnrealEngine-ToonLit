@@ -12,13 +12,10 @@
 #include "CameraCalibrationCoreEditorStyle.h"
 #include "Editor.h"
 #include "IPlacementModeModule.h"
-#include "LensComponent.h"
-#include "LensComponentDetailCustomization.h"
-#include "LensFile.h"
+#include "LevelEditorOutlinerSettings.h"
 #include "Misc/CoreDelegates.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
-#include "LevelEditorOutlinerSettings.h"
 
 LLM_DEFINE_TAG(CameraCalibrationCore_CameraCalibrationCoreEditor);
 #define LOCTEXT_NAMESPACE "CameraCalibrationCoreEditor"
@@ -39,11 +36,6 @@ void FCameraCalibrationCoreEditorModule::StartupModule()
 		FOnGetDetailCustomizationInstance::CreateStatic(&FCalibrationPointComponentDetails::MakeInstance)
 	);
 
-	PropertyEditorModule.RegisterCustomClassLayout(
-		ULensComponent::StaticClass()->GetFName(),
-		FOnGetDetailCustomizationInstance::CreateStatic(&FLensComponentDetailCustomization::MakeInstance)
-	);
-
 	RegisterPlacementModeItems();
 }
 
@@ -56,7 +48,6 @@ void FCameraCalibrationCoreEditorModule::ShutdownModule()
 		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 
 		PropertyModule.UnregisterCustomClassLayout(UCalibrationPointComponent::StaticClass()->GetFName());
-		PropertyModule.UnregisterCustomClassLayout(ULensComponent::StaticClass()->GetFName());
 
 		UnregisterPlacementModeItems();
 	}

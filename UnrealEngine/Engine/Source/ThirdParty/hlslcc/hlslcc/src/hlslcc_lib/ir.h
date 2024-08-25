@@ -422,6 +422,11 @@ public:
 	ir_variable_mode mode;
 
 	/**
+	* When true, arithmetic refactoring will not be applied to expressions assigned to this variable.
+	*/
+	unsigned precise : 1;
+
+	/**
 	* Interpolation mode for shader inputs / outputs
 	*
 	* \sa ir_variable_interpolation

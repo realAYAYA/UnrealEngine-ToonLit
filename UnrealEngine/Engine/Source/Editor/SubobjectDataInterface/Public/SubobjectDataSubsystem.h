@@ -7,7 +7,6 @@
 #include "Subsystems/EngineSubsystem.h"
 #include "SubobjectData.h"
 #include "ModuleDescriptor.h"
-#include "SubobjectDataFactory.h"
 #include "SubobjectDataSubsystem.generated.h"
 
 class UActorComponent;
@@ -419,12 +418,7 @@ private:
 	
 	/** Find the parent that this new subobject should attach to */
 	FSubobjectDataHandle FindParentForNewSubobject(const UObject* NewSubobject, const FSubobjectDataHandle& SelectedParent);
-	
-	FSubobjectFactoryManager* FactoryManager = nullptr;
 
 	FOnNewSubobjectAdded OnNewSubobjectAdded_Delegate;
-	
-public:
-	FSubobjectFactoryManager* GetSubobjectFactoryManager() const { return FactoryManager; }
 	
 };

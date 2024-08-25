@@ -5,6 +5,7 @@
 
 #if WITH_STATETREE_DEBUGGER
 
+#include "Math/Range.h"
 #include "StateTree.h"
 #include "StateTreeTypes.h"
 #include "TraceServices/Model/Frames.h"

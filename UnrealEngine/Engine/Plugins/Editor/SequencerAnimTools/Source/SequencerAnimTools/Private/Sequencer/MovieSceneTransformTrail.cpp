@@ -747,7 +747,7 @@ bool FMovieSceneControlRigTransformTrail::ApplyDelta(const FVector& Pos, const F
 				Context.LocalTime = TickResolution.AsSeconds(FFrameTime(KeyInfo->FrameNumber));
 				Context.KeyMask = (uint32)EControlRigContextChannelToKey::Translation;
 				FFrameTime GlobalTime(KeyInfo->FrameNumber);
-				GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly(); //player evals in root time so need to go back to it.
+				GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping(); //player evals in root time so need to go back to it.
 
 				FMovieSceneContext MovieSceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Player->GetPlaybackStatus()).SetHasJumped(true);
 
@@ -755,7 +755,7 @@ bool FMovieSceneControlRigTransformTrail::ApplyDelta(const FVector& Pos, const F
 				NewTransform.SetLocation(NewTransform.GetLocation() + Pos);
 				KeyInfo->Transform = NewTransform;
 				NewTransform = NewTransform.GetRelativeTransform(KeyInfo->ParentTransform);
-				GetSequencer()->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext, *Player);
+				GetSequencer()->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext);
 				ControlRig->Evaluate_AnyThread();
 				ControlRig->SetControlGlobalTransform(ControlName, NewTransform, true, Context, false /*undo*/, false /*bPrintPython*/, true/* bFixEulerFlips*/);
 			}
@@ -806,11 +806,11 @@ bool FMovieSceneControlRigTransformTrail::EndTracking()
 		FFrameTime StartTime = GetSequencer()->GetLocalTime().Time;
 		FFrameRate TickResolution = GetSequencer()->GetFocusedTickResolution();
 		FMovieSceneSequenceTransform RootToLocalTransform = GetSequencer()->GetFocusedMovieSceneSequenceTransform();
-		StartTime = StartTime * RootToLocalTransform.InverseLinearOnly(); //player evals in root time so need to go back to it.
+		StartTime = StartTime * RootToLocalTransform.InverseNoLooping(); //player evals in root time so need to go back to it.
 
 		FMovieSceneContext MovieSceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(StartTime, TickResolution), Player->GetPlaybackStatus()).SetHasJumped(true);
 		
-		Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext, *Player);
+		Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext);
 		ControlRig->Evaluate_AnyThread();
 		return true;
 	}
@@ -845,22 +845,22 @@ bool FMovieSceneControlRigTransformTrail::HandleAltClick(FEditorViewportClient* 
 	DisplayTime = DisplayTime.RoundToFrame();
 	GlobalTime = FFrameRate::TransformTime(DisplayTime, TickResolution, DisplayResolution);
 	FMovieSceneSequenceTransform RootToLocalTransform = GetSequencer()->GetFocusedMovieSceneSequenceTransform();
-	GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly(); //player evals in root time so need to go back to it.
+	GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping(); //player evals in root time so need to go back to it.
 
 	Context.LocalTime = TickResolution.AsSeconds(GlobalTime);
 	Context.KeyMask = (uint32)EControlRigContextChannelToKey::Translation;
 	FMovieSceneContext MovieSceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Player->GetPlaybackStatus()).SetHasJumped(true);
-	GetSequencer()->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext, *Player);
+	GetSequencer()->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext);
 	ControlRig->Evaluate_AnyThread();
 	FTransform NewTransform(ControlRig->GetControlGlobalTransform(ControlName));
 	ControlRig->SetControlGlobalTransform(ControlName, NewTransform, true, Context, false /*undo*/, false /*bPrintPython*/, true/* bFixEulerFlips*/);
 
 	//eval back at current time
 	FFrameTime StartTime = GetSequencer()->GetLocalTime().Time;
-	StartTime = StartTime * RootToLocalTransform.InverseLinearOnly(); //player evals in root time so need to go back to it.
+	StartTime = StartTime * RootToLocalTransform.InverseNoLooping(); //player evals in root time so need to go back to it.
 
 	MovieSceneContext = FMovieSceneContext(FMovieSceneEvaluationRange(StartTime, TickResolution), Player->GetPlaybackStatus()).SetHasJumped(true);
-	Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext, *Player);
+	Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(MovieSceneContext);
 	ControlRig->Evaluate_AnyThread();
 
 	//create new keys

@@ -17,6 +17,8 @@ class FText;
 class IStreamingGenerationErrorHandler;
 class UWorld;
 class UDataLayerAsset;
+class UExternalDataLayerInstance;
+class FDataLayerInstanceDesc;
 
 UENUM(BlueprintType)
 enum class EDataLayerRuntimeState : uint8
@@ -59,62 +61,77 @@ public:
 	{
 		static_assert(!std::is_same<T, UWorld>::value, "Use GetOuterWorld instead");
 		static_assert(!std::is_same<T, ULevel>::value, "Use GetOuterWorld()->PersistentLevel instead");
-		static_assert(!std::is_same<T, AWorldDataLayers>::value, "Use GetOuterWorldDataLayers instead");
+		static_assert(!std::is_same<T, AWorldDataLayers>::value, "Use GetOuterWorldDataLayers or GetDirectOuterWorldDataLayers instead");
 		return Super::GetTypedOuter<T>();
 	}
 
-	ENGINE_API UWorld* GetOuterWorld() const;
+	ENGINE_API virtual UWorld* GetOuterWorld() const;
 	ENGINE_API AWorldDataLayers* GetOuterWorldDataLayers() const;
+	ENGINE_API AWorldDataLayers* GetDirectOuterWorldDataLayers() const;
 
 #if WITH_EDITOR
+	//~ Begin UObject interface
+	ENGINE_API virtual bool IsAsset() const override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
 	ENGINE_API virtual void PreEditUndo() override;
 	ENGINE_API virtual void PostEditUndo() override;
+	ENGINE_API virtual bool CanEditChange(const FProperty* InProperty) const override;
+	//~ End UObject interface
 
+	// Getters/Setters
+	ENGINE_API bool SetParent(UDataLayerInstance* InParent);
 	ENGINE_API void SetVisible(bool bIsVisible);
 	ENGINE_API void SetIsInitiallyVisible(bool bIsInitiallyVisible);
 	ENGINE_API void SetIsLoadedInEditor(bool bIsLoadedInEditor, bool bFromUserChange);
 	void SetIsLocked(bool bInIsLocked) { bIsLocked = bInIsLocked; }
 
-	bool IsInitiallyLoadedInEditor() const { return bIsInitiallyLoadedInEditor; }
-	bool IsLoadedInEditor() const { return bIsLoadedInEditor; }
 	ENGINE_API bool IsEffectiveLoadedInEditor() const;
-	bool IsLoadedInEditorChangedByUserOperation() const { return bIsLoadedInEditorChangedByUserOperation; }
-	void ClearLoadedInEditorChangedByUserOperation() { bIsLoadedInEditorChangedByUserOperation = false; }
+	ENGINE_API bool IsInitiallyLoadedInEditor() const { return bIsInitiallyLoadedInEditor; }
+	ENGINE_API bool IsLoadedInEditor() const { return bIsLoadedInEditor; }
+	ENGINE_API bool IsLoadedInEditorChangedByUserOperation() const { return bIsLoadedInEditorChangedByUserOperation; }
+	ENGINE_API virtual bool IsReadOnly(FText* OutReason = nullptr) const;
+	virtual bool IsIncludedInActorFilterDefault() const { return false; }
 
-	ENGINE_API const TCHAR* GetDataLayerIconName() const;
-
+	// Data Layer Instance features support
 	ENGINE_API bool CanBeChildOf(const UDataLayerInstance* InParent, FText* OutReason = nullptr) const;
-	ENGINE_API bool SetParent(UDataLayerInstance* InParent);
+	ENGINE_API virtual bool CanUserAddActors(FText* OutReason = nullptr) const;
+	ENGINE_API virtual bool CanUserRemoveActors(FText* OutReason = nullptr) const;
+	ENGINE_API virtual bool CanAddActor(AActor* Actor, FText* OutReason = nullptr) const;
+	ENGINE_API virtual bool CanRemoveActor(AActor* Actor, FText* OutReason = nullptr) const;
+	ENGINE_API virtual bool CanBeInActorEditorContext() const;
+	virtual bool CanBeRemoved() const { return true; }
+	virtual bool CanEditDataLayerShortName() const { return false; }
+	virtual bool SupportsActorFilters() const { return false; }
+	virtual const UExternalDataLayerInstance* GetRootExternalDataLayerInstance() const { return nullptr; }
 
-	ENGINE_API void SetChildParent(UDataLayerInstance* InParent);
-
-	static ENGINE_API FText GetDataLayerText(const UDataLayerInstance* InDataLayer);
-
-	ENGINE_API virtual bool IsLocked() const;
-	ENGINE_API virtual bool IsReadOnly() const;
-	ENGINE_API virtual bool CanEditChange(const FProperty* InProperty) const;
-	
-	ENGINE_API virtual bool CanUserAddActors() const;
-	ENGINE_API virtual bool CanAddActor(AActor* Actor) const;
+	// Actor assignation and removal
 	ENGINE_API virtual bool AddActor(AActor* Actor) const;
-	ENGINE_API virtual bool CanUserRemoveActors() const;
-	ENGINE_API virtual bool CanRemoveActor(AActor* Actor) const;
 	ENGINE_API virtual bool RemoveActor(AActor* Actor) const;
 
-	ENGINE_API virtual bool CanBeInActorEditorContext() const;
+	// Actor Editor Context
+	ENGINE_API bool IsActorEditorContextCurrentColorized() const;
 	ENGINE_API bool IsInActorEditorContext() const;
 	ENGINE_API bool AddToActorEditorContext();
 	ENGINE_API bool RemoveFromActorEditorContext();
 
-	virtual bool CanEditDataLayerShortName() const { return false; }
-
-	virtual bool SupportsActorFilters() const { return false; }
-	virtual bool IsIncludedInActorFilterDefault() const { return false; }
-
-	// Whether the DataLayer was created by a user and can be deleted by a user.
-	virtual bool IsUserManaged() const { return true; }
-
+	// Validation
 	ENGINE_API virtual bool Validate(IStreamingGenerationErrorHandler* ErrorHandler) const;
+
+	// Helpers
+	ENGINE_API virtual const TCHAR* GetDataLayerIconName() const;
+	static ENGINE_API FText GetDataLayerText(const UDataLayerInstance* InDataLayer);
+	static bool GetAssetRegistryInfoFromPackage(FName InDataLayerInstancePackageName, FDataLayerInstanceDesc& OutDataLayerInstanceDesc);
+	static bool GetAssetRegistryInfoFromPackage(const FAssetData& InAsset, FDataLayerInstanceDesc& OutDataLayerInstanceDesc);
+
+	//~Begin deprecation
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
+
+	UE_DEPRECATED(5.4, "SetChildParent was removed.")
+	ENGINE_API void SetChildParent(UDataLayerInstance* InParent);
+
+	UE_DEPRECATED(5.4, "Use IsReadOnly instead")
+	ENGINE_API virtual bool IsLocked() const { FText Reason; return IsLocked(&Reason); }
 
 	UE_DEPRECATED(5.3, "Use CanEditShortName instead")
 	virtual bool SupportRelabeling() const { return false; }
@@ -124,6 +141,7 @@ public:
 
 	UE_DEPRECATED(5.3, "Use CanBeChildOf instead")
 	bool CanParent(const UDataLayerInstance* InParent) const { return CanBeChildOf(InParent); }
+	//~End deprecation
 #endif // WITH_EDITOR
 
 	UFUNCTION(Category = "Data Layer", BlueprintCallable)
@@ -142,50 +160,56 @@ public:
 	virtual bool IsRuntime() const { return false; }
 
 	UFUNCTION(Category = "Data Layer|Runtime", BlueprintCallable)
+	virtual bool IsClientOnly() const { return false; }
+
+	UFUNCTION(Category = "Data Layer|Runtime", BlueprintCallable)
+	virtual bool IsServerOnly() const { return false; }
+
+	UFUNCTION(Category = "Data Layer|Runtime", BlueprintCallable)
 	virtual FColor GetDebugColor() const { return FColor::Black; }
 
 	UFUNCTION(Category = "Data Layer|Runtime", BlueprintCallable)
-	EDataLayerRuntimeState GetInitialRuntimeState() const { return IsRuntime() ? InitialRuntimeState : EDataLayerRuntimeState::Unloaded; }
+	EDataLayerRuntimeState GetInitialRuntimeState() const { return IsRuntime() && !IsClientOnly() && !IsServerOnly() ? InitialRuntimeState : EDataLayerRuntimeState::Unloaded; }
 
+	UFUNCTION(Category = "Data Layer", BlueprintCallable)
 	virtual FString GetDataLayerShortName() const { return TEXT("Invalid Data Layer"); }
+
+	UFUNCTION(Category = "Data Layer", BlueprintCallable)
 	virtual FString GetDataLayerFullName() const { return TEXT("Invalid Data Layer"); }
 
+	virtual bool CanHaveChildDataLayerInstance(const UDataLayerInstance* InChildDataLayerInstance) const { return InChildDataLayerInstance != nullptr; }
+	virtual bool CanHaveParentDataLayerInstance() const { return true; }
+	UE_DEPRECATED(5.4, "Use CanHaveParentDataLayerInstance instead")
+	virtual bool CanHaveParentDataLayer() const { return CanHaveParentDataLayerInstance(); }
+	UE_DEPRECATED(5.4, "Use CanHaveChildDataLayer instead")
 	virtual bool CanHaveChildDataLayers() const { return true; }
-	virtual bool CanHaveParentDataLayer() const { return true; }
 
 	const UDataLayerInstance* GetParent() const { return Parent; }
 	UDataLayerInstance* GetParent() { return Parent; }
 
+	virtual bool CanEditInitialRuntimeState() const { return IsRuntime(); }
 	ENGINE_API EDataLayerRuntimeState GetRuntimeState() const;
 	ENGINE_API EDataLayerRuntimeState GetEffectiveRuntimeState() const;
 
+	UFUNCTION(Category = "Data Layer", BlueprintCallable)
 	virtual const UDataLayerAsset* GetAsset() const { return nullptr; }
 
 	const TArray<TObjectPtr<UDataLayerInstance>>& GetChildren() const { return Children; }
 	ENGINE_API void ForEachChild(TFunctionRef<bool(const UDataLayerInstance*)> Operation) const;
 
 #if DATALAYER_TO_INSTANCE_RUNTIME_CONVERSION_ENABLED
+public:
 	virtual FName GetDataLayerFName() const { return GetFName(); }
 
 private:
 	FName GetFName() const { return Super::GetFName(); }
 	FString GetName() const { return Super::GetName();  }
-public:
 #endif // DATALAYER_TO_INSTANCE_RUNTIME_CONVERSION_ENABLED
-
-private:
-	ENGINE_API void AddChild(UDataLayerInstance* DataLayer);
-	ENGINE_API bool SetRuntimeState(EDataLayerRuntimeState InState, bool bInIsRecursive = false) const;
-	friend class UDataLayerManager;
-	friend class FDataLayerUtils;
-
-#if WITH_EDITOR
-	ENGINE_API void RemoveChild(UDataLayerInstance* DataLayer);
-#endif
 
 protected:
 #if WITH_EDITOR
-	ENGINE_API bool IsParentDataLayerTypeCompatible(const UDataLayerInstance* InParent) const;
+	ENGINE_API bool IsLocked(FText* OutReason) const;
+	ENGINE_API bool IsParentDataLayerTypeCompatible(const UDataLayerInstance* InParent, FText* OutReason = nullptr) const;
 
 	virtual bool PerformAddActor(AActor* InActor) const { return false; }
 	virtual bool PerformRemoveActor(AActor* InActor) const { return false;  }
@@ -219,13 +243,26 @@ protected:
 	uint32 bIsLocked : 1;
 #endif
 
+	/** Initial runtime state of this data layer instance. Only supported if it's runtime and not client/server only. */
 	UPROPERTY(Category = "Runtime", EditAnywhere)
 	EDataLayerRuntimeState InitialRuntimeState;
 
 private:
+
+#if WITH_EDITOR
+	ENGINE_API void OnRemovedFromWorldDataLayers();
+	void ClearLoadedInEditorChangedByUserOperation() { bIsLoadedInEditorChangedByUserOperation = false; }
+	ENGINE_API void RemoveChild(UDataLayerInstance* DataLayer);
+#endif
+	ENGINE_API void AddChild(UDataLayerInstance* DataLayer);
+
 	UPROPERTY()
 	TObjectPtr<UDataLayerInstance> Parent;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UDataLayerInstance>> Children;
+
+	friend class AWorldDataLayers;
+	friend class UDataLayerManager;
+	friend class FDataLayerUtils;
 };

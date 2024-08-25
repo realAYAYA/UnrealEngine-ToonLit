@@ -48,7 +48,7 @@ void UMovieSceneHookSection::ImportTriggerEntity(UMovieSceneEntitySystemLinker* 
 	NewEvent.Hook.Interface = this;
 	NewEvent.Hook.ObjectBindingID = Params.GetObjectBindingID();
 
-	NewEvent.RootTime = Times[EventIndex] * Context.GetSequenceToRootTransform();
+	NewEvent.RootTime = Times[EventIndex] * Context.GetSequenceToRootSequenceTransform();
 	NewEvent.Type = EEvaluationHookEvent::Trigger;
 	NewEvent.SequenceID = ThisInstance.GetSequenceID();
 	NewEvent.TriggerIndex = EventIndex;

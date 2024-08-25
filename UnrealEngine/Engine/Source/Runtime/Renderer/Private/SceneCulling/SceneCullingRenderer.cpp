@@ -3,11 +3,24 @@
 #include "SceneCullingRenderer.h"
 #include "SceneCulling.h"
 #include "RenderGraphUtils.h"
+#include "SceneRendererInterface.h"
+#include "SystemTextures.h"
+#include "SceneRendering.h"
+#include "ShaderPrintParameters.h"
+
+static TAutoConsoleVariable<int32> CVarSceneCullingDebugRenderMode(
+	TEXT("r.SceneCulling.DebugRenderMode"), 
+	0, 
+	TEXT("SceneCulling debug render mode.\n")
+	TEXT(" 0 = Disabled (default)\n")
+	TEXT(" 1 = Enabled"),
+	ECVF_RenderThreadSafe);
+
 
 FInstanceHierarchyParameters& FSceneCullingRenderer::GetShaderParameters(FRDGBuilder& GraphBuilder) 
 { 
 	// Sync any update that is in progress.
-	SceneCulling.EndUpdate(GraphBuilder, true);
+	SceneCulling.EndUpdate(GraphBuilder, SceneRenderer.GetSceneUniforms(), true);
 
 	// This should not need to be done more than once per frame
 	if (CellHeadersRDG == nullptr)
@@ -15,24 +28,28 @@ FInstanceHierarchyParameters& FSceneCullingRenderer::GetShaderParameters(FRDGBui
 		CellBlockDataRDG = SceneCulling.CellBlockDataBuffer.Register(GraphBuilder);
 		CellHeadersRDG = SceneCulling.CellHeadersBuffer.Register(GraphBuilder);
 		ItemChunksRDG = SceneCulling.ItemChunksBuffer.Register(GraphBuilder);
-		ItemsRDG = SceneCulling.ItemsBuffer.Register(GraphBuilder);
+		InstanceIdsRDG = SceneCulling.InstanceIdsBuffer.Register(GraphBuilder);
+
+		ExplicitCellBoundsRDG = SceneCulling.bUseExplictBounds ? SceneCulling.ExplicitCellBoundsBuffer.Register(GraphBuilder) :  GSystemTextures.GetDefaultStructuredBuffer<FVector4f>(GraphBuilder);
 
 #if 0
 		// Fully upload the buffers for debugging. 
 		CellBlockDataRDG = CreateStructuredBuffer(GraphBuilder, TEXT("SceneCulling.BlockData"), SceneCulling.CellBlockData);
 		CellHeadersRDG = CreateStructuredBuffer(GraphBuilder, TEXT("SceneCulling.CellHeaders"), SceneCulling.CellHeaders);
 		ItemChunksRDG = CreateStructuredBuffer(GraphBuilder, TEXT("SceneCulling.ItemChunks"), SceneCulling.PackedCellChunkData);
-		ItemsRDG = CreateStructuredBuffer(GraphBuilder, TEXT("SceneCulling.Items"), SceneCulling.PackedCellData);
+		InstanceIdsRDG = CreateStructuredBuffer(GraphBuilder, TEXT("SceneCulling.Items"), SceneCulling.PackedCellData);
 #endif
 
 		ShaderParameters.NumCellsPerBlockLog2 = FSpatialHash::NumCellsPerBlockLog2;
 		ShaderParameters.CellBlockDimLog2 = FSpatialHash::CellBlockDimLog2;
 		ShaderParameters.LocalCellCoordMask = (1U << FSpatialHash::CellBlockDimLog2) - 1U;
 		ShaderParameters.FirstLevel = SceneCulling.SpatialHash.GetFirstLevel();
+		ShaderParameters.bUseExplicitCellBounds = SceneCulling.bUseExplictBounds;
 		ShaderParameters.InstanceHierarchyCellBlockData = GraphBuilder.CreateSRV(CellBlockDataRDG);
 		ShaderParameters.InstanceHierarchyCellHeaders = GraphBuilder.CreateSRV(CellHeadersRDG);
-		ShaderParameters.InstanceHierarchyItems = GraphBuilder.CreateSRV(ItemsRDG);
+		ShaderParameters.InstanceIds = GraphBuilder.CreateSRV(InstanceIdsRDG);
 		ShaderParameters.InstanceHierarchyItemChunks = GraphBuilder.CreateSRV(ItemChunksRDG);
+		ShaderParameters.ExplicitCellBounds = GraphBuilder.CreateSRV(ExplicitCellBoundsRDG);
 	}
 
 	return ShaderParameters; 
@@ -58,6 +75,84 @@ FSceneInstanceCullingQuery* FSceneCullingRenderer::CullInstances(FRDGBuilder& Gr
 		return Query;
 	}
 	return nullptr;
+}
+
+
+class FSceneCullingDebugRender_CS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FSceneCullingDebugRender_CS);
+	SHADER_USE_PARAMETER_STRUCT(FSceneCullingDebugRender_CS, FGlobalShader);
+
+	static constexpr int32 NumThreadsPerGroup = 64;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) 
+	{ 
+		return DoesPlatformSupportNanite(Parameters.Platform);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
+		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
+		OutEnvironment.SetDefine(TEXT("NUM_THREADS_PER_GROUP"), NumThreadsPerGroup);
+	}
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_STRUCT_INCLUDE( ShaderPrint::FShaderParameters, ShaderPrintUniformBuffer )
+		SHADER_PARAMETER_STRUCT_INCLUDE( FInstanceHierarchyParameters, InstanceHierarchyParameters )
+		SHADER_PARAMETER(int32, MaxCells)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint32>, ValidCellsMask)
+	END_SHADER_PARAMETER_STRUCT()
+};
+IMPLEMENT_GLOBAL_SHADER(FSceneCullingDebugRender_CS, "/Engine/Private/SceneCulling/SceneCullingDebugRender.usf", "DebugRender", SF_Compute);
+
+
+void FSceneCullingRenderer::DebugRender(FRDGBuilder& GraphBuilder, TArrayView<FViewInfo> Views)
+{
+#if !UE_BUILD_SHIPPING
+	int32 MaxCellCount = SceneCulling.CellHeaders.Num();
+
+	if (CVarSceneCullingDebugRenderMode.GetValueOnRenderThread() != 0 && MaxCellCount > 0)
+	{
+		// Force ShaderPrint on.
+		ShaderPrint::SetEnabled(true); 
+
+		// This lags by one frame, so may miss some in one frame, also overallocates since we will cull a lot.
+		ShaderPrint::RequestSpaceForLines(MaxCellCount * 12 * Views.Num());
+
+		// Note: we have to construct this as the GPU currently does not have a mapping of what cells are valid.
+		//       Normally this comes from the CPU during the broad phase culling. Thus it is only needed here for debug purposes.
+		TBitArray<> ValidCellsMask(false, MaxCellCount);
+		for (int32 Index = 0; Index < MaxCellCount; ++Index)
+		{
+			ValidCellsMask[Index] =  (SceneCulling.CellHeaders[Index].ItemChunksOffset & FSceneCulling::InvalidCellFlag) == 0; 
+		}
+		FRDGBuffer* ValidCellsMaskRdg = CreateStructuredBuffer(GraphBuilder, TEXT("Shadow.Virtual.RevealedPrimitivesMask"), TConstArrayView<uint32>(ValidCellsMask.GetData(), FBitSet::CalculateNumWords(ValidCellsMask.Num())));
+
+		for (auto &View : Views)
+		{
+			if (ShaderPrint::IsEnabled(View.ShaderPrintData))
+			{	
+				FSceneCullingDebugRender_CS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSceneCullingDebugRender_CS::FParameters>();
+				ShaderPrint::SetParameters(GraphBuilder, PassParameters->ShaderPrintUniformBuffer);
+				PassParameters->InstanceHierarchyParameters = GetShaderParameters(GraphBuilder);
+				PassParameters->MaxCells = MaxCellCount;
+				PassParameters->ValidCellsMask = GraphBuilder.CreateSRV(ValidCellsMaskRdg);
+
+				auto ComputeShader = View.ShaderMap->GetShader<FSceneCullingDebugRender_CS>();
+
+				FComputeShaderUtils::AddPass(
+					GraphBuilder,
+					RDG_EVENT_NAME("SceneCullingDebugRender"),
+					ComputeShader,
+					PassParameters,
+					FComputeShaderUtils::GetGroupCountWrapped(MaxCellCount, FSceneCullingDebugRender_CS::NumThreadsPerGroup)
+				);
+			}
+		}
+	}
+#endif
 }
 
 FSceneInstanceCullingQuery* FSceneCullingRenderer::CreateInstanceQuery(FRDGBuilder& GraphBuilder)

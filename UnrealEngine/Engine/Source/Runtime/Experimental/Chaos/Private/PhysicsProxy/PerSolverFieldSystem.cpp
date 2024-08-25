@@ -187,7 +187,7 @@ FORCEINLINE void EvaluateImpulseField(
 	static_cast<const FFieldNode<FVector>*>(FieldCommand.RootNode.Get())->Evaluate(FieldContext, ResultsView);
 	if (OutputImpulse.Num() == 0)
 	{
-		OutputImpulse.SetNumZeroed(ResultsView.Num(), false);
+		OutputImpulse.SetNumZeroed(ResultsView.Num(), EAllowShrinking::No);
 		for (const FFieldContextIndex& Index : FieldContext.GetEvaluatedSamples())
 		{
 			if (Index.Sample < OutputImpulse.Num() && Index.Result < ResultsView.Num())
@@ -418,7 +418,7 @@ void FPerSolverFieldSystem::GetRelevantParticleHandles(
 	const Chaos::FPBDRigidsSolver* RigidSolver,
 	const EFieldResolutionType ResolutionType)
 {
-	Handles.SetNum(0, false);
+	Handles.SetNum(0, EAllowShrinking::No);
 	const Chaos::FPBDRigidsSOAs& SolverParticles = RigidSolver->GetParticles();
 
 	if (ResolutionType == EFieldResolutionType::Field_Resolution_Minimal)
@@ -478,7 +478,7 @@ void FPerSolverFieldSystem::GetFilteredParticleHandles(
 	const EFieldFilterType FilterType,
 	const EFieldObjectType ObjectType)
 {
-	Handles.SetNum(0, false);
+	Handles.SetNum(0, EAllowShrinking::No);
 	const Chaos::FPBDRigidsSOAs& SolverParticles = RigidSolver->GetParticles();
 	if (FilterType == EFieldFilterType::Field_Filter_Dynamic)
 	{

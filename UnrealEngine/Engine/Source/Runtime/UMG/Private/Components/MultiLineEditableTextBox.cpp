@@ -125,13 +125,75 @@ void UMultiLineEditableTextBox::SynchronizeProperties()
 	Super::SynchronizeTextLayoutProperties(*MyEditableTextBlock);
 }
 
-void UMultiLineEditableTextBox::SetJustification(ETextJustify::Type InJustification)
+void UMultiLineEditableTextBox::OnShapedTextOptionsChanged(FShapedTextOptions InShapedTextOptions)
 {
-	Super::SetJustification(InJustification);
+	Super::OnShapedTextOptionsChanged(InShapedTextOptions);
+	if (MyEditableTextBlock.IsValid())
+	{
+		InShapedTextOptions.SynchronizeShapedTextProperties(*MyEditableTextBlock);
+	}
+}
 
+void UMultiLineEditableTextBox::OnJustificationChanged(ETextJustify::Type InJustification)
+{
+	Super::OnJustificationChanged(InJustification);
 	if (MyEditableTextBlock.IsValid())
 	{
 		MyEditableTextBlock->SetJustification(InJustification);
+	}
+}
+
+void UMultiLineEditableTextBox::OnWrappingPolicyChanged(ETextWrappingPolicy InWrappingPolicy)
+{
+	Super::OnWrappingPolicyChanged(InWrappingPolicy);
+	if (MyEditableTextBlock.IsValid())
+	{
+		MyEditableTextBlock->SetWrappingPolicy(InWrappingPolicy);
+	}
+}
+
+void UMultiLineEditableTextBox::OnAutoWrapTextChanged(bool InAutoWrapText)
+{
+	Super::OnAutoWrapTextChanged(InAutoWrapText);
+	if (MyEditableTextBlock.IsValid())
+	{
+		MyEditableTextBlock->SetAutoWrapText(InAutoWrapText);
+	}
+}
+
+void UMultiLineEditableTextBox::OnWrapTextAtChanged(float InWrapTextAt)
+{
+	Super::OnWrapTextAtChanged(InWrapTextAt);
+	if (MyEditableTextBlock.IsValid())
+	{
+		MyEditableTextBlock->SetWrapTextAt(InWrapTextAt);
+	}
+}
+
+void UMultiLineEditableTextBox::OnLineHeightPercentageChanged(float InLineHeightPercentage)
+{
+	Super::OnLineHeightPercentageChanged(InLineHeightPercentage);
+	if (MyEditableTextBlock.IsValid())
+	{
+		MyEditableTextBlock->SetLineHeightPercentage(InLineHeightPercentage);
+	}
+}
+
+void UMultiLineEditableTextBox::OnApplyLineHeightToBottomLineChanged(bool InApplyLineHeightToBottomLine)
+{
+	Super::OnApplyLineHeightToBottomLineChanged(InApplyLineHeightToBottomLine);
+	if (MyEditableTextBlock.IsValid())
+	{
+		MyEditableTextBlock->SetApplyLineHeightToBottomLine(InApplyLineHeightToBottomLine);
+	}
+}
+
+void UMultiLineEditableTextBox::OnMarginChanged(const FMargin& InMargin)
+{
+	Super::OnMarginChanged(InMargin);
+	if (MyEditableTextBlock.IsValid())
+	{
+		MyEditableTextBlock->SetMargin(InMargin);
 	}
 }
 
@@ -147,9 +209,13 @@ FText UMultiLineEditableTextBox::GetText() const
 
 void UMultiLineEditableTextBox::SetText(FText InText)
 {
-	if (SetTextInternal(InText) && MyEditableTextBlock.IsValid() )
+	if (SetTextInternal(InText))
 	{
-		MyEditableTextBlock->SetText(Text);
+		if (MyEditableTextBlock.IsValid())
+		{
+			MyEditableTextBlock->SetText(Text);
+		}
+		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
 	}
 }
 
@@ -158,7 +224,6 @@ bool UMultiLineEditableTextBox::SetTextInternal(const FText& InText)
 	if (!Text.IdenticalTo(InText, ETextIdenticalModeFlags::DeepCompare | ETextIdenticalModeFlags::LexicalCompareInvariants))
 	{
 		Text = InText;
-		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
 		return true;
 	}
 
@@ -233,13 +298,17 @@ void UMultiLineEditableTextBox::HandleOnTextChanged(const FText& InText)
 {
 	if (SetTextInternal(InText))
 	{
+		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
 		OnTextChanged.Broadcast(InText);
 	}
 }
 
 void UMultiLineEditableTextBox::HandleOnTextCommitted(const FText& InText, ETextCommit::Type CommitMethod)
 {
-	SetTextInternal(InText);
+	if (SetTextInternal(InText))
+	{
+		BroadcastFieldValueChanged(FFieldNotificationClassDescriptor::Text);
+	}
 	OnTextCommitted.Broadcast(InText, CommitMethod);
 }
 

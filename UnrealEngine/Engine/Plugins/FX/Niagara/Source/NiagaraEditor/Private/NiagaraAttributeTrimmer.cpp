@@ -93,7 +93,8 @@ template<typename GraphBridge>
 class FNiagaraAttributeTrimmerHelper<GraphBridge>::FImpureFunctionParser
 {
 public:
-	FImpureFunctionParser(const FGraph* Graph, ENiagaraScriptUsage Usage)
+	FImpureFunctionParser(const FGraph* Graph, ENiagaraScriptUsage Usage, FTrimAttributeCache& InCache)
+		: Cache(InCache)
 	{
 		Traverse(TEXT(""), Graph, Usage);
 	}
@@ -125,7 +126,20 @@ private:
 						Traverse(NamespacePrefix + GraphBridge::GetFunctionName(FunctionNode), FunctionGraph, GraphBridge::GetFunctionUsage(FunctionNode));
 					}
 
+					bool bEvaluatePins = false;
 					if (FunctionNode->Signature.bRequiresExecPin)
+					{
+						bEvaluatePins = true;
+					}
+					else if(const FCustomHlslNode* CustomHlslNode = GraphBridge::AsCustomHlslNode(Node))
+					{
+						FCustomHlslNodeInfo NodeInfo;
+						BuildCustomHlslNodeInfo(Cache, CustomHlslNode, NodeInfo);
+
+						bEvaluatePins = NodeInfo.bHasImpureFunctionText;
+					}
+
+					if (bEvaluatePins)
 					{
 						for (const FInputPin* Pin : GraphBridge::GetInputPins(FunctionNode))
 						{
@@ -149,6 +163,7 @@ private:
 		}
 	}
 
+	FTrimAttributeCache& Cache;
 	TArray<FModuleScopedPin> ImpureFunctionInputs;
 };
 
@@ -157,9 +172,10 @@ class FNiagaraAttributeTrimmerHelper<GraphBridge>::FExpressionBuilder
 {
 public:
 
-	FExpressionBuilder(const FParamMapHistory& InParamMap, const FFunctionInputResolver& InInputResolver)
+	FExpressionBuilder(const FParamMapHistory& InParamMap, const FFunctionInputResolver& InInputResolver, FTrimAttributeCache& InCache)
 		: ParamMap(InParamMap)
 		, InputResolver(InInputResolver)
+		, Cache(InCache)
 	{}
 
 	// generates a set of dependencies for a specific pin
@@ -294,7 +310,7 @@ private:
 						if (!Dependencies.CustomNodes.Contains(CustomHlslNode))
 						{
 							FCustomHlslNodeInfo& NodeInfo = Dependencies.CustomNodes.Add(CustomHlslNode);
-							BuildCustomHlslNodeInfo(CustomHlslNode, NodeInfo);
+							BuildCustomHlslNodeInfo(Cache, CustomHlslNode, NodeInfo);
 						}
 					}
 				}
@@ -302,7 +318,7 @@ private:
 
 			if (PinsToEvaluate.Num())
 			{
-				CurrentPin = PinsToEvaluate.Pop(false);
+				CurrentPin = PinsToEvaluate.Pop(EAllowShrinking::No);
 			}
 			else
 			{
@@ -311,64 +327,31 @@ private:
 		}
 	}
 
-	void BuildCustomHlslNodeInfo(const FCustomHlslNode* CustomNode, FCustomHlslNodeInfo& NodeInfo)
-	{
-		check(CustomNode);
-
-		NodeInfo.bHasDataInterfaceInputs = false;
-		NodeInfo.bHasImpureFunctionText = false;
-
-		TArray<FString> ImpureFunctionNames;
-
-		for (const FInputPin* InputPin : GraphBridge::GetInputPins(CustomNode))
-		{
-			FNiagaraTypeDefinition NiagaraType = GraphBridge::GetPinType(InputPin, ENiagaraStructConversion::Simulation);
-			if (NiagaraType.IsDataInterface())
-			{
-				NodeInfo.bHasDataInterfaceInputs = true;
-
-				if (UNiagaraDataInterface* DataInterfaceClass = CastChecked<UNiagaraDataInterface>(NiagaraType.GetClass()->ClassDefaultObject))
-				{
-					TArray<FNiagaraFunctionSignature> FunctionSignatures;
-					DataInterfaceClass->GetFunctions(FunctionSignatures);
-
-					for (const FNiagaraFunctionSignature& FunctionSignature : FunctionSignatures)
-					{
-						if (FunctionSignature.bRequiresExecPin)
-						{
-							TStringBuilder<256> Builder;
-							InputPin->PinName.AppendString(Builder);
-							Builder.AppendChar(TCHAR('.'));
-							FunctionSignature.Name.AppendString(Builder);
-
-							ImpureFunctionNames.AddUnique(Builder.ToString());
-						}
-					}
-				}
-			}
-		}
-
-		if (!ImpureFunctionNames.IsEmpty())
-		{
-			TArray<FStringView> ImpureFunctionNameViews;
-			ImpureFunctionNameViews.Reserve(ImpureFunctionNames.Num());
-			Algo::Transform(ImpureFunctionNames, ImpureFunctionNameViews, [](const FString& FunctionName) -> FStringView
-				{
-					return FunctionName;
-				});
-
-			if (GraphBridge::CustomHlslReferencesTokens(CustomNode, ImpureFunctionNameViews))
-			{
-				return;
-			}
-		}
-	}
-
 	const FParamMapHistory& ParamMap;
 	const FFunctionInputResolver& InputResolver;
+	FTrimAttributeCache& Cache;
 
 	const bool EvaluateStaticSwitches = false;
 };
+
+template<typename GraphBridge>
+void FNiagaraAttributeTrimmerHelper<GraphBridge>::BuildCustomHlslNodeInfo(FTrimAttributeCache& InCache, const FCustomHlslNode* CustomNode, FCustomHlslNodeInfo& NodeInfo)
+{
+	if (CustomNode == nullptr)
+	{
+		return;
+	}
+
+	if (FCustomHlslNodeInfo* ExistingNodeInfo = InCache.CustomNodeCache.Find(CustomNode))
+	{
+		NodeInfo = *ExistingNodeInfo;
+		return;
+	}
+
+	NodeInfo.bHasImpureFunctionText = GraphBridge::GetCustomNodeUsesImpureFunctions(CustomNode);
+
+	InCache.CustomNodeCache.Add(CustomNode, NodeInfo);
+}
 
 // For a specific read of a variable finds the corresponding PreviousWritePin if one exists (only considers actual writes
 // rather than default pins on a MapGet)
@@ -460,6 +443,69 @@ FName FNiagaraAttributeTrimmerHelper<GraphBridge>::FindAttributeForRead(const FP
 	return NAME_None;
 }
 
+// for a given pin search through the variables of the parameter map and try to resolve any potential ambiguity with module namespaces
+template<typename GraphBridge>
+FName FNiagaraAttributeTrimmerHelper<GraphBridge>::FindParameterMapVariable(const FParamMapHistory& ParamMap, const FModuleScopedPin& Pin)
+{
+	auto FindVariableName = [&ParamMap](FName NameToEvaluate, FName& OutVariableName) -> bool
+	{
+		if (ParamMap.FindVariableByName(NameToEvaluate) != INDEX_NONE)
+		{
+			OutVariableName = NameToEvaluate;
+			return true;
+		}
+
+		// we also need to check to see if the attribute has resolved namespaces (i.e. Particles.Module.MyAttribute or StackContext.MyAttribute)
+		// for which we'll just search through the parameter maps variables directly
+		const int32 AliasedIndex = ParamMap.VariablesWithOriginalAliasesIntact.IndexOfByPredicate([&](const FNiagaraVariable& Variable)
+		{
+			return Variable.GetName() == NameToEvaluate;
+		});
+
+		if (ParamMap.Variables.IsValidIndex(AliasedIndex))
+		{
+			OutVariableName = ParamMap.Variables[AliasedIndex].GetName();
+			return true;
+		}
+
+		return false;
+	};
+
+	FName FoundVariableName;
+
+	// try the pin name
+	if (FindVariableName(Pin.Pin->PinName, FoundVariableName))
+	{
+		return FoundVariableName;
+	}
+	else if (Pin.ModuleName != NAME_None)
+	{
+		FNameBuilder ModuleNameString(Pin.ModuleName);
+
+		// check if we need to replace an explicit module name with 'Module'
+		FString GenericPinName = Pin.Pin->PinName.ToString();
+		if (GenericPinName.ReplaceInline(*ModuleNameString, *FNiagaraConstants::ModuleNamespaceString))
+		{
+			if (FindVariableName(*GenericPinName, FoundVariableName))
+			{
+				return FoundVariableName;
+			}
+		}
+
+		// try replacing 'Module' with the explicit ModuleName
+		FString ExplicitPinName = Pin.Pin->PinName.ToString();
+		if (ExplicitPinName.ReplaceInline(*FNiagaraConstants::ModuleNamespaceString, *ModuleNameString))
+		{
+			if (FindVariableName(*ExplicitPinName, FoundVariableName))
+			{
+				return FoundVariableName;
+			}
+		}
+	}
+
+	return NAME_None;
+}
+
 // given the set of expressions (as defined in FindDependencies above) we resolve the named attribute aggregating the dependent reads and custom nodes
 template<typename GraphBridge>
 void FNiagaraAttributeTrimmerHelper<GraphBridge>::ResolveDependencyChain(const FParamMapHistory& ParamMap, const FDependencyMap& DependencyData, const FName& AttributeName, FDependencyChain& ResolvedDependencies)
@@ -476,7 +522,7 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::ResolveDependencyChain(const F
 
 			while (PinsToResolve.Num() > 0)
 			{
-				const FModuleScopedPin PinToResolve = PinsToResolve.Pop(false);
+				const FModuleScopedPin PinToResolve = PinsToResolve.Pop(EAllowShrinking::No);
 
 				if (const FDependencyChain* Dependencies = DependencyData.Find(PinToResolve))
 				{
@@ -537,7 +583,13 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::ResolveDependencyChain(const F
 
 										if (!bValidDefaultWriteFound || bBackCompat_AlwaysIncludeFirstReadPin)
 										{
-											ResolvedDependencies.Pins.Add(ParamMap.PerVariableReadHistory[DefaultBoundVariable][0].ReadPin);
+											const typename FParamMapHistory::FReadHistory& InitialReadHistory = ParamMap.PerVariableReadHistory[DefaultBoundVariable][0];
+
+											if (InitialReadHistory.PreviousWritePin.Pin)
+											{
+												PinsToResolve.Add(InitialReadHistory.PreviousWritePin);
+											}
+											ResolvedDependencies.Pins.Add(InitialReadHistory.ReadPin);
 										}
 									}
 								}
@@ -607,6 +659,8 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Safe(TConstArra
 template<typename GraphBridge>
 void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Aggressive(const FCompilationCopy* CompileDuplicateData, TConstArrayView<const FParamMapHistory*> LocalParamHistories, TSet<FName>& AttributesToPreserve, TArray<FNiagaraVariable>& Attributes)
 {
+	FTrimAttributeCache Cache;
+
 	// variable references hidden in custom hlsl nodes may not be present in a specific stages parameter map
 	// so we consolidate all the variables into one list to use when going through custom hlsl nodes
 	TSet<FNiagaraVariableBase> UnifiedVariables;
@@ -635,7 +689,7 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Aggressive(cons
 			{
 				FDependencyChain& Dependencies = PerVariableDependencySets.Add(WritePin);
 
-				FExpressionBuilder Builder(*ParamMap, InputResolver);
+				FExpressionBuilder Builder(*ParamMap, InputResolver, Cache);
 				Builder.FindDependencies(WritePin, Dependencies);
 
 				for (typename FCustomHlslNodeMap::TConstIterator CustomNodeIt = Dependencies.CustomNodes.CreateConstIterator(); CustomNodeIt; ++CustomNodeIt)
@@ -648,42 +702,24 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Aggressive(cons
 			}
 		}
 
-		FImpureFunctionParser ImpureFunctionParser(GraphBridge::GetGraph(CompileDuplicateData), ParamMap->OriginatingScriptUsage);
+		FImpureFunctionParser ImpureFunctionParser(GraphBridge::GetGraph(CompileDuplicateData), ParamMap->OriginatingScriptUsage, Cache);
 		for (const FModuleScopedPin& RequiredFunctionInput : ImpureFunctionParser.ReadFunctionInputs())
 		{
 			FDependencyChain Dependencies;
 
-			FExpressionBuilder Builder(*ParamMap, InputResolver);
+			FExpressionBuilder Builder(*ParamMap, InputResolver, Cache);
 			Builder.FindDependencies(RequiredFunctionInput, Dependencies);
 
 			for (const FModuleScopedPin& DependentPin : Dependencies.Pins)
 			{
 				// see if this variable corresponds to something in our parameter map's list of variables
 				// if it does then we need to mark it as something that needs to be preserved
-				// Note that we need to resolve the Pin name's module namespace before we actually search for it
-				// as a variable
-				FString VariableNameString = DependentPin.Pin->PinName.ToString();
-				VariableNameString.ReplaceInline(*DependentPin.ModuleName.ToString(), *FNiagaraConstants::ModuleNamespace.ToString());
-
-				const FName VariableName = *VariableNameString;
-
-				if (ParamMap->FindVariableByName(VariableName) != INDEX_NONE)
+				// Note that the parameter map can have the variable represented with either an explicit namespace
+				// or the generic Module, so we need to try both.
+				const FName MatchingVariableName = FindParameterMapVariable(*ParamMap, DependentPin);
+				if (MatchingVariableName != NAME_None)
 				{
-					AttributesToPreserve.Add(VariableName);
-				}
-				else
-				{
-					// we also need to check to see if the attribute has resolved namespaces (i.e. Particles.Module.MyAttribute or StackContext.MyAttribute)
-					// for which we'll just search through the parameter maps variables directly
-					const int32 AliasedIndex = ParamMap->VariablesWithOriginalAliasesIntact.IndexOfByPredicate([&](const FNiagaraVariable& Variable)
-						{
-							return Variable.GetName() == VariableName;
-						});
-
-					if (ParamMap->Variables.IsValidIndex(AliasedIndex))
-					{
-						AttributesToPreserve.Add(ParamMap->Variables[AliasedIndex].GetName());
-					}
+					AttributesToPreserve.Add(MatchingVariableName);
 				}
 			}
 		}
@@ -703,7 +739,7 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Aggressive(cons
 
 	while (SearchList.Num())
 	{
-		const FName AttributeName = SearchList.Pop(false);
+		const FName AttributeName = SearchList.Pop(EAllowShrinking::No);
 
 		for (const FParamMapHistory* ParamMap : LocalParamHistories)
 		{
@@ -741,6 +777,7 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Aggressive(cons
 			for (const auto& CustomHlslInfo : ResolvedChain.CustomNodes)
 			{
 				// go through all of the variables in the attributes to see if they are referenced by any encountered CustomNodes
+				TArray<FName> VariableNames;
 				for (const FNiagaraVariableBase& Variable : UnifiedVariables)
 				{
 					// skip searching through the hlsl code if we're already included
@@ -748,11 +785,18 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Aggressive(cons
 					{
 						continue;
 					}
+					VariableNames.Push(Variable.GetName());
+				}
 
-					FNameBuilder VariableName(Variable.GetName());
-					if (GraphBridge::CustomHlslReferencesTokens(CustomHlslInfo.Key, { VariableName.ToView() }))
+				const int32 VariableCount = VariableNames.Num();
+				TArray<bool> VariableReferenced;
+				VariableReferenced.SetNumZeroed(VariableCount);
+				GraphBridge::CustomHlslReferencesTokens(CustomHlslInfo.Key, VariableNames, VariableReferenced);
+				for (int32 VariableIt = 0; VariableIt < VariableCount; ++VariableIt)
+				{
+					if (VariableReferenced[VariableIt])
 					{
-						ConditionalAddAttribute(Variable.GetName());
+						ConditionalAddAttribute(VariableNames[VariableIt]);
 					}
 				}
 			}
@@ -773,7 +817,7 @@ void FNiagaraAttributeTrimmerHelper<GraphBridge>::TrimAttributes_Aggressive(cons
 		{
 			// when we have something to do with this information, we can re-enable the compile tag
 			//TranslateResults.CompileTags.Emplace(Attribute, TEXT("Trimmed"));
-			Attributes.RemoveAt(AttributeIt, 1, false);
+			Attributes.RemoveAt(AttributeIt, 1, EAllowShrinking::No);
 		}
 		else
 		{

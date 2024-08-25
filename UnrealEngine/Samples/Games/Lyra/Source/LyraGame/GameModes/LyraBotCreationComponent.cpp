@@ -41,7 +41,7 @@ void ULyraBotCreationComponent::OnExperienceLoaded(const ULyraExperienceDefiniti
 
 #if WITH_SERVER_CODE
 
-void ULyraBotCreationComponent::ServerCreateBots()
+void ULyraBotCreationComponent::ServerCreateBots_Implementation()
 {
 	if (BotControllerClass == nullptr)
 	{
@@ -160,6 +160,23 @@ void ULyraBotCreationComponent::RemoveOneBot()
 			BotToRemove->Destroy();
 		}
 	}
+}
+
+#else // !WITH_SERVER_CODE
+
+void ULyraBotCreationComponent::ServerCreateBots_Implementation()
+{
+	ensureMsgf(0, TEXT("Bot functions do not exist in LyraClient!"));
+}
+
+void ULyraBotCreationComponent::SpawnOneBot()
+{
+	ensureMsgf(0, TEXT("Bot functions do not exist in LyraClient!"));
+}
+
+void ULyraBotCreationComponent::RemoveOneBot()
+{
+	ensureMsgf(0, TEXT("Bot functions do not exist in LyraClient!"));
 }
 
 #endif

@@ -72,6 +72,39 @@ public:
 	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 };
 
+// Report the number of spheres in a sphere covering
+USTRUCT(meta = (DataflowGeometryCollection))
+struct FSphereCoveringCountSpheresNode : public FDataflowNode
+{
+	GENERATED_USTRUCT_BODY()
+	DATAFLOW_NODE_DEFINE_INTERNAL(FSphereCoveringCountSpheresNode, "Get Sphere Covering Sphere Count", "SphereCovering", "")
+
+public:
+	// The sphere covering to evaluate
+	UPROPERTY(meta = (DataflowInput, DataflowIntrinsic))
+	FDataflowSphereCovering SphereCovering;
+
+	// Number of spheres in the sphere covering
+	UPROPERTY(meta = (DataflowOutput))
+	int32 NumSpheres = 0;
+
+	FSphereCoveringCountSpheresNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
+		: FDataflowNode(InParam, InGuid)
+	{
+		RegisterInputConnection(&SphereCovering);
+		RegisterOutputConnection(&NumSpheres);
+	}
+
+	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override
+	{
+		if (Out->IsA(&NumSpheres))
+		{
+			const FDataflowSphereCovering& InSphereCovering = GetValue(Context, &SphereCovering);
+			SetValue(Context, InSphereCovering.Spheres.Num(), &NumSpheres);
+		}
+	}
+};
+
 // Convert a mesh to a string formatted as an OBJ file, which can be read by many external mesh viewers
 USTRUCT(meta = (DataflowGeometryCollection))
 struct FMeshToOBJStringDebugDataflowNode: public FDataflowNode

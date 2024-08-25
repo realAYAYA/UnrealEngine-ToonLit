@@ -76,6 +76,11 @@ public:
 
 	/** Closes the crash report client allowing data to finish being sent. */
 	FReply Close();
+	
+#if PLATFORM_WINDOWS
+	/** Copy report files to the clipboard for user to immediately request help with. */
+	FReply CopyFilesToClipboard();
+#endif
 
 	/**
 	 * Respond to the user pressing Submit

@@ -31,7 +31,7 @@ FORCEINLINE FDisjointSet::FDisjointSet( const uint32 Size )
 
 FORCEINLINE void FDisjointSet::Init( uint32 Size )
 {
-	Parents.SetNumUninitialized( Size, false );
+	Parents.SetNumUninitialized( Size, EAllowShrinking::No);
 	for( uint32 i = 0; i < Size; i++ )
 	{
 		Parents[i] = i;

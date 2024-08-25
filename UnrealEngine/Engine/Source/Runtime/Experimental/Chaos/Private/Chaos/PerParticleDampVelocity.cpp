@@ -2,6 +2,7 @@
 
 #include "Chaos/PerParticleDampVelocity.h"
 #include "Chaos/Matrix.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 #include "GenericPlatform/GenericPlatformMath.h"
 
 #if INTEL_ISPC && !UE_BUILD_SHIPPING
@@ -22,6 +23,12 @@ namespace Chaos::Softs {
 
 void FPerParticleDampVelocity::UpdatePositionBasedState(const FSolverParticles& Particles, const int32 Offset, const int32 Range)
 {
+	const FSolverParticlesRange ParticlesRange(const_cast<FSolverParticles*>(&Particles), Offset, Range - Offset);
+	return UpdatePositionBasedState(ParticlesRange);
+}
+
+void FPerParticleDampVelocity::UpdatePositionBasedState(const FSolverParticlesRange& Particles)
+{
 #if INTEL_ISPC
 	if (bRealTypeCompatibleWithISPC && bChaos_DampVelocity_ISPC_Enabled)
 	{
@@ -33,8 +40,8 @@ void FPerParticleDampVelocity::UpdatePositionBasedState(const FSolverParticles& 
 			(const ispc::FVector3f*)Particles.GetV().GetData(),
 			Particles.GetM().GetData(),
 			Particles.GetInvM().GetData(),
-			Offset,
-			Range);
+			0,
+			Particles.GetRangeSize());
 	}
 	else
 #endif
@@ -43,14 +50,14 @@ void FPerParticleDampVelocity::UpdatePositionBasedState(const FSolverParticles& 
 		Vcm = FSolverVec3(0.);
 		FSolverReal Mcm = (FSolverReal)0.;
 
-		for (int32 Index = Offset; Index < Range; ++Index)
+		for (int32 Index = 0; Index < Particles.GetRangeSize(); ++Index)
 		{
 			if (Particles.InvM(Index) == (FSolverReal)0.)
 			{
 				continue;
 			}
 
-			Xcm += Particles.X(Index) * Particles.M(Index);
+			Xcm += Particles.GetX(Index) * Particles.M(Index);
 			Vcm += Particles.V(Index) * Particles.M(Index);
 			Mcm += Particles.M(Index);
 		}
@@ -63,14 +70,14 @@ void FPerParticleDampVelocity::UpdatePositionBasedState(const FSolverParticles& 
 
 		FSolverVec3 L = FSolverVec3(0.);
 		FSolverMatrix33 I(0.);
-		for (int32 Index = Offset; Index < Range; ++Index)
+		for (int32 Index = 0; Index < Particles.GetRangeSize(); ++Index)
 		{
 			if (Particles.InvM(Index) == (FSolverReal)0.)
 			{
 				continue;
 			}
 
-			const FSolverVec3 V = Particles.X(Index) - Xcm;
+			const FSolverVec3 V = Particles.GetX(Index) - Xcm;
 			L += FSolverVec3::CrossProduct(V, Particles.M(Index) * Particles.V(Index));
 			const FSolverMatrix33 M(0, V[2], -V[1], -V[2], 0, V[0], V[1], -V[0], 0);
 			I += M.GetTransposed() * M * Particles.M(Index);

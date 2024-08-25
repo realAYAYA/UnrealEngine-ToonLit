@@ -6,20 +6,6 @@
 
 #include "MeshMaterialShader.h"
 #include "ShaderCompiler.h"
-#include "ProfilingDebugging/CookStats.h"
-
-#if ENABLE_COOK_STATS
-namespace MaterialMeshCookStats
-{
-	static int32 MeshMaterialShadersCompiled = 0;
-	static FCookStatsManager::FAutoRegisterCallback RegisterCookStats([](FCookStatsManager::AddStatFuncRef AddStat)
-	{
-		AddStat(TEXT("Material"), FCookStatsManager::CreateKeyValueArray(
-			TEXT("MeshMaterialShadersCompiled"), MeshMaterialShadersCompiled
-			));
-	});
-}
-#endif
 
 #if WITH_EDITOR
 
@@ -44,6 +30,12 @@ static void PrepareMeshMaterialShaderCompileJob(EShaderPlatform Platform,
 	NewJob->bIsDefaultMaterial = Material->IsDefaultMaterial();
 	NewJob->bIsGlobalShader = false;
 
+	static IConsoleVariable* CVarShaderDevMode = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ShaderDevelopmentMode"));
+	if (CVarShaderDevMode && CVarShaderDevMode->GetInt() != 0)
+	{
+		NewJob->bErrorsAreLikelyToBeCode = true;
+	}
+
 	const FMaterialShaderParameters MaterialParameters(Material);
 
 	// apply the vertex factory changes to the compile environment
@@ -56,7 +48,6 @@ static void PrepareMeshMaterialShaderCompileJob(EShaderPlatform Platform,
 	UpdateMaterialShaderCompilingStats(Material);
 
 	UE_LOG(LogShaders, Verbose, TEXT("			%s"), ShaderType->GetName());
-	COOK_STAT(MaterialMeshCookStats::MeshMaterialShadersCompiled++);
 
 	// Allow the shader type to modify the compile environment.
 	ShaderType->SetupCompileEnvironment(Platform, MaterialParameters, VertexFactoryType, Key.PermutationId, PermutationFlags, ShaderEnvironment);

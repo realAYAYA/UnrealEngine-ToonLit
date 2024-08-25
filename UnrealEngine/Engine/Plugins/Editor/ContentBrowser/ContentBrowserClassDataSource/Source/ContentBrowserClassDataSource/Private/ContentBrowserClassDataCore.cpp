@@ -8,6 +8,7 @@
 #include "AssetViewUtils.h"
 #include "IAssetTypeActions.h"
 #include "ContentBrowserDataUtils.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #define LOCTEXT_NAMESPACE "ContentBrowserClassDataSource"
 
@@ -99,7 +100,7 @@ bool IsPluginClass(const FName InPath)
 	return AssetViewUtils::IsPluginFolder(PathStr);
 }
 
-FContentBrowserItemData CreateClassFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath)
+FContentBrowserItemData CreateClassFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath, const bool bIsFromPlugin)
 {
 	static const FName GameRootPath = "/Classes_Game";
 	static const FName EngineRootPath = "/Classes_Engine";
@@ -120,12 +121,22 @@ FContentBrowserItemData CreateClassFolderItem(UContentBrowserDataSource* InOwner
 		FolderDisplayNameOverride = ContentBrowserDataUtils::GetFolderItemDisplayNameOverride(InFolderPath, FolderItemName, /*bIsClassesFolder*/ true);
 	}
 
-	return FContentBrowserItemData(InOwnerDataSource, EContentBrowserItemFlags::Type_Folder | EContentBrowserItemFlags::Category_Class, InVirtualPath, *FolderItemName, MoveTemp(FolderDisplayNameOverride), MakeShared<FContentBrowserClassFolderItemDataPayload>(InFolderPath));
+	return FContentBrowserItemData(InOwnerDataSource,
+		EContentBrowserItemFlags::Type_Folder | EContentBrowserItemFlags::Category_Class | (bIsFromPlugin ? EContentBrowserItemFlags::Category_Plugin : EContentBrowserItemFlags::None),
+		InVirtualPath,
+		*FolderItemName,
+		MoveTemp(FolderDisplayNameOverride),
+		MakeShared<FContentBrowserClassFolderItemDataPayload>(InFolderPath));
 }
 
-FContentBrowserItemData CreateClassFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InClassPath, UClass* InClass)
+FContentBrowserItemData CreateClassFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InClassPath, UClass* InClass, const bool bIsFromPlugin)
 {
-	return FContentBrowserItemData(InOwnerDataSource, EContentBrowserItemFlags::Type_File | EContentBrowserItemFlags::Category_Class, InVirtualPath, InClass->GetFName(), FText(), MakeShared<FContentBrowserClassFileItemDataPayload>(InClassPath, InClass));
+	return FContentBrowserItemData(InOwnerDataSource,
+		EContentBrowserItemFlags::Type_File | EContentBrowserItemFlags::Category_Class | (bIsFromPlugin ? EContentBrowserItemFlags::Category_Plugin : EContentBrowserItemFlags::None),
+		InVirtualPath,
+		InClass->GetFName(),
+		FText(),
+		MakeShared<FContentBrowserClassFileItemDataPayload>(InClassPath, InClass));
 }
 
 TSharedPtr<const FContentBrowserClassFolderItemDataPayload> GetClassFolderItemPayload(const UContentBrowserDataSource* InOwnerDataSource, const FContentBrowserItemData& InItem)
@@ -347,15 +358,16 @@ const FClassTagDefinitionMap& GetAvailableClassTags()
 	{
 		FClassTagDefinitionMap ClassTagsTmp;
 
-		TArray<UObject::FAssetRegistryTag> CDOClassTags;
-		GetDefault<UClass>()->GetAssetRegistryTags(CDOClassTags);
+		const UObject* ClassDefault = GetDefault<UClass>();
+		FAssetRegistryTagsContextData TagsContext(ClassDefault, EAssetRegistryTagsCaller::Uncategorized);
+		ClassDefault->GetAssetRegistryTags(TagsContext);
 
-		for (const UObject::FAssetRegistryTag& CDOClassTag : CDOClassTags)
+		for (const TPair<FName,UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
 		{
-			FClassTagDefinition& ClassTag = ClassTagsTmp.Add(CDOClassTag.Name);
-			ClassTag.TagType = CDOClassTag.Type;
-			ClassTag.DisplayFlags = CDOClassTag.DisplayFlags;
-			ClassTag.DisplayName = FText::AsCultureInvariant(FName::NameToDisplayString(CDOClassTag.Name.ToString(), /*bIsBool*/false));
+			FClassTagDefinition& ClassTag = ClassTagsTmp.Add(TagPair.Key);
+			ClassTag.TagType = TagPair.Value.Type;
+			ClassTag.DisplayFlags = TagPair.Value.DisplayFlags;
+			ClassTag.DisplayName = FText::AsCultureInvariant(FName::NameToDisplayString(TagPair.Key.ToString(), /*bIsBool*/false));
 		}
 
 		return ClassTagsTmp;

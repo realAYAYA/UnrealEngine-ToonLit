@@ -89,6 +89,12 @@ public:
 	UPROPERTY(EditAnywhere, config, Category=Units, AdvancedDisplay, meta=(DisplayName="Speed/Velocity", Tooltip="Choose the units in which to display speeds and velocities.", ValidEnumValues="CentimetersPerSecond, MetersPerSecond, KilometersPerHour, MilesPerHour"))
 	EUnit SpeedUnits;
 
+	UPROPERTY(EditAnywhere, config, Category=Units, AdvancedDisplay, meta=(DisplayName="Angular Speed", Tooltip="Choose the units in which to display angular speeds.", ValidEnumValues="DegreesPerSecond, RadiansPerSecond"))
+	EUnit AngularSpeedUnits;
+	
+	UPROPERTY(EditAnywhere, config, Category=Units, AdvancedDisplay, meta=(DisplayName="Acceleration", Tooltip="Choose the units in which to display acceleration.", ValidEnumValues="CentimetersPerSecondSquared, MetersPerSecondSquared"))
+	EUnit AccelerationUnits;
+
 	UPROPERTY(EditAnywhere, config, Category=Units, AdvancedDisplay, meta=(DisplayName="Temperature", Tooltip="Choose the units in which to display temperatures.", ValidEnumValues="Celsius, Farenheit, Kelvin"))
 	EUnit TemperatureUnits;
 
@@ -97,6 +103,12 @@ public:
 
 	UPROPERTY(EditAnywhere, config, Category = Units, AdvancedDisplay, meta = (DisplayName = "Torque", Tooltip = "Choose the units in which to display torques.", ValidEnumValues = "NewtonMeters, KilogramCentimetersSquaredPerSecondSquared"))
 	EUnit TorqueUnits;
+
+	UPROPERTY(EditAnywhere, config, Category = Units, AdvancedDisplay, meta = (DisplayName = "Impulse", Tooltip = "Choose the units in which to display impulses.", ValidEnumValues = "NewtonSeconds"))
+	EUnit ImpulseUnits;
+
+	UPROPERTY(EditAnywhere, config, Category = Units, AdvancedDisplay, meta = (DisplayName = "PositionalImpulse", Tooltip = "Choose the units in which to display positional impulses.", ValidEnumValues = "KilogramMeters, KilogramCentimeters"))
+	EUnit PositionalImpulseUnits;
 
 	// Should the Reference Viewer have 'Show Searchable Names' checked by default when opened in this project
 	UPROPERTY(EditAnywhere, config, Category=ReferenceViewer)
@@ -258,8 +270,24 @@ public:
 
 };
 
+/**
+ * Settings for how developers interact with assets. Stored in default config, per-project
+ */
+UCLASS(config = Editor, defaultconfig, meta = (DisplayName = "Assets"), MinimalAPI)
+class UEditorProjectAssetSettings : public UDeveloperSettings
+{
+	GENERATED_BODY()
 
-UCLASS(config=Editor, meta=(DisplayName="Derived Data"), defaultconfig, MinimalAPI)
+public:
+	/**
+	 * When performing cleanup operations on redirectors (such as resaving their referencers),
+	 * prompt the user to delete unreferenced redirectors.
+	 */
+	UPROPERTY(EditAnywhere, config, Category = Redirectors)
+	bool bPromptToDeleteUnreferencedRedirectors = true;
+};
+
+UCLASS(config = Editor, meta = (DisplayName = "Derived Data"), defaultconfig, MinimalAPI)
 class UDDCProjectSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()

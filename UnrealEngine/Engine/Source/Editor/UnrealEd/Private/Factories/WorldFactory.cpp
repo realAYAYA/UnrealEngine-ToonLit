@@ -5,6 +5,7 @@
 #include "Editor.h"
 #include "UObject/Package.h"
 #include "ThumbnailRendering/WorldThumbnailInfo.h"
+#include "WorldPartition/WorldPartitionSettings.h"
 #include "EditorClassUtils.h"
 #include "Modules/ModuleManager.h"
 
@@ -17,7 +18,8 @@ UWorldFactory::UWorldFactory(const FObjectInitializer& ObjectInitializer)
 	SupportedClass = UWorld::StaticClass();
 	WorldType = EWorldType::Inactive;
 	bInformEngineOfWorld = false;
-	bCreateWorldPartition = false;
+	bCreateWorldPartition = UWorldPartitionSettings::Get()->GetNewMapsEnableWorldPartition();
+	bEnableWorldPartitionStreaming = UWorldPartitionSettings::Get()->GetNewMapsEnableWorldPartitionStreaming();
 	FeatureLevel = ERHIFeatureLevel::Num;
 }
 
@@ -37,7 +39,8 @@ UObject* UWorldFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName
 		.EnableTraceCollision(true)
 		.CreateNavigation(WorldType == EWorldType::Editor)
 		.CreateAISystem(WorldType == EWorldType::Editor)
-		.CreateWorldPartition(bCreateWorldPartition);
+		.CreateWorldPartition(bCreateWorldPartition)
+		.EnableWorldPartitionStreaming(bEnableWorldPartitionStreaming);
 
 	UWorld* NewWorld = UWorld::CreateWorld(WorldType, bInformEngineOfWorld, Name, Cast<UPackage>(InParent), bAddToRoot, FeatureLevel, &InitValues);
 	GEditor->InitBuilderBrush(NewWorld);

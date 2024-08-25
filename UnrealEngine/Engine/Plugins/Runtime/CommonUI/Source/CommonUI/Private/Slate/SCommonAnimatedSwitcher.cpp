@@ -11,8 +11,10 @@ void SCommonAnimatedSwitcher::Construct(const FArguments& InArgs)
 	SetCanTick(false);
 	bTransitioningOut = false;
 	PendingActiveWidget = nullptr;
+	PendingActiveWidgetIndex = INDEX_NONE;
 
 	TransitionType = InArgs._TransitionType;
+	TransitionFallbackStrategy = InArgs._TransitionFallbackStrategy;
 
 	SetTransition(InArgs._TransitionDuration, InArgs._TransitionCurveType);
 
@@ -45,8 +47,13 @@ void SCommonAnimatedSwitcher::TransitionToIndex(int32 NewWidgetIndex, bool bInst
 {
 	// Cache the widget we want to reach
 	PendingActiveWidget = GetWidget(NewWidgetIndex);
-	if (!PendingActiveWidget.IsValid())
+	if (PendingActiveWidget.IsValid())
 	{
+		PendingActiveWidgetIndex = NewWidgetIndex;
+	}
+	else
+	{
+		PendingActiveWidgetIndex = INDEX_NONE;
 		UE_LOG(LogSlate, Verbose, TEXT("Called SCommonAnimatedSwitcher::TransitionToIndex('%d') to an invalid Index"), NewWidgetIndex);
 		return;
 	}
@@ -134,6 +141,55 @@ void SCommonAnimatedSwitcher::SetTransition(float Duration, ETransitionCurve Cur
 	TransitionSequence = FCurveSequence(0.f, Duration * 0.5f, TransitionCurveToCurveEaseFunction(Curve));
 }
 
+void SCommonAnimatedSwitcher::OnSlotAdded(int32 AddedIndex)
+{
+	SWidgetSwitcher::OnSlotAdded(AddedIndex);
+	
+	if (PendingActiveWidgetIndex >= 0 && PendingActiveWidgetIndex >= AddedIndex)
+	{
+		// A slot has been added before our PendingActiveWidgetIndex
+		++PendingActiveWidgetIndex;
+	}
+}
+
+void SCommonAnimatedSwitcher::OnSlotRemoved(int32 RemovedIndex, TSharedRef<SWidget> RemovedWidget, bool bWasActiveSlot)
+{
+	SWidgetSwitcher::OnSlotRemoved(RemovedIndex, RemovedWidget, bWasActiveSlot);
+
+	if (PendingActiveWidgetIndex >= 0)
+	{
+		if (PendingActiveWidgetIndex == RemovedIndex)
+		{
+			// Our PendingActiveWidget has been removed, attempt a fallback if enabled
+			TryTransitionFallbackOfPendingWidget();
+		}
+		else if (PendingActiveWidgetIndex < RemovedIndex)
+		{
+			// A slot has been removed before our PendingActiveWidget
+			--PendingActiveWidgetIndex;
+		}
+	}
+	
+	if (bWasActiveSlot && TransitionSequence.IsPlaying())
+	{
+		// The widget being animated has been removed. Instantly finish the current transition animation and allow UpdateTransition() to finish the process.
+		if (TransitionSequence.IsForward())
+		{
+			TransitionSequence.JumpToEnd();
+		}
+		else
+		{
+			TransitionSequence.JumpToStart();
+		}
+
+		if (!bTransitioningOut)
+		{
+			// Since the removed widget was active and the target of the current transition, set the fallback widget active.
+			TryTransitionFallbackOfActiveWidget(RemovedIndex);
+		}
+	}
+}
+
 EActiveTimerReturnType SCommonAnimatedSwitcher::UpdateTransition(double InCurrentTime, float InDeltaTime)
 {
 	if (TransitionType == ECommonSwitcherTransition::Zoom)
@@ -163,7 +219,19 @@ EActiveTimerReturnType SCommonAnimatedSwitcher::UpdateTransition(double InCurren
 
 	if (!TransitionSequence.IsPlaying())
 	{
+		// The transition is complete in one direction
 		TSharedPtr<SWidget> PinnedPendingActiveWidget = PendingActiveWidget.Pin();
+		if (bTransitioningOut && (!PinnedPendingActiveWidget.IsValid() || GetWidgetIndex(PinnedPendingActiveWidget.ToSharedRef()) == INDEX_NONE))
+		{
+			// The PendingActiveWidget is no longer contained in this switcher
+			UE_LOG(LogSlate, Verbose, TEXT("SCommonAnimatedSwitcher Pending Widget was removed or became invalid while a transition was happening"));
+			if (TryTransitionFallbackOfPendingWidget())
+			{
+				// We have fallen back to an alternative PendingActiveWidget
+				PinnedPendingActiveWidget = PendingActiveWidget.Pin();
+			}
+		}
+		
 		if (PinnedPendingActiveWidget.IsValid() && GetActiveWidget().Get() != PinnedPendingActiveWidget.Get())
 		{
 			const bool bWasTransitioningOut = bTransitioningOut;
@@ -174,6 +242,7 @@ EActiveTimerReturnType SCommonAnimatedSwitcher::UpdateTransition(double InCurren
 				// Finished transitioning out - update the active widget and play again from the start
 				SetActiveWidget(PinnedPendingActiveWidget.ToSharedRef());
 				PendingActiveWidget = nullptr;
+				PendingActiveWidgetIndex = INDEX_NONE;
 
 				//Note that any listener could decide to trigger ANOTHER transition, 
 				//changing the values of PendingActiveWidget and bTransitioningOut to something new.
@@ -196,11 +265,8 @@ EActiveTimerReturnType SCommonAnimatedSwitcher::UpdateTransition(double InCurren
 		}
 		else
 		{
-			if (!PinnedPendingActiveWidget.IsValid())
-			{
-				UE_LOG(LogSlate, Verbose, TEXT("SCommonAnimatedSwitcher Pending Widget became invalid while a transition was happening"));
-			}
 			PendingActiveWidget = nullptr;
+			PendingActiveWidgetIndex = INDEX_NONE;
 		}
 	}
 
@@ -233,6 +299,73 @@ float SCommonAnimatedSwitcher::GetTransitionProgress() const
 	}
 		
 	return Progress;
+}
+
+int32 SCommonAnimatedSwitcher::GetTransitionFallbackForIndex(int32 RemovedWidgetIndex) const
+{
+	int32 DesiredIndex;
+	switch (TransitionFallbackStrategy)
+	{
+	case ECommonSwitcherTransitionFallbackStrategy::First:
+		// Falling back to the index of the first item
+		DesiredIndex = 0;
+		break;
+	case ECommonSwitcherTransitionFallbackStrategy::Last:
+		// Falling back to the index of the last item
+		DesiredIndex = GetNumWidgets() - 1;
+		break;
+	case ECommonSwitcherTransitionFallbackStrategy::Next:
+		// Falling back to the index of the next item, which is now the same as RemovedWidgetIndex because it shifted after the removal.
+		DesiredIndex = RemovedWidgetIndex;
+		break;
+	case ECommonSwitcherTransitionFallbackStrategy::Previous:
+	default:
+		// Falling back to the index of the previous item
+		DesiredIndex = RemovedWidgetIndex - 1;
+		break;
+	}
+
+	// Constraining the index to the valid range
+	return FMath::Clamp(DesiredIndex, 0, GetNumWidgets() - 1);
+}
+
+bool SCommonAnimatedSwitcher::TryTransitionFallbackOfPendingWidget()
+{
+	if (IsTransitionFallbackEnabled() && GetNumWidgets() > 0)
+	{
+		// Falling back to another transition target
+		const int32 NewPendingWidgetIndex = GetTransitionFallbackForIndex(PendingActiveWidgetIndex);
+		PendingActiveWidget = GetWidget(NewPendingWidgetIndex);
+		if (PendingActiveWidget.IsValid())
+		{
+			PendingActiveWidgetIndex = NewPendingWidgetIndex;
+			return true;
+		}
+		else
+		{
+			PendingActiveWidgetIndex = INDEX_NONE;
+			UE_LOG(LogSlate, Verbose, TEXT("SCommonAnimatedSwitcher failed to fall back to another Pending Widget for the transition"));
+		}
+	}
+	
+	return false;
+}
+
+bool SCommonAnimatedSwitcher::TryTransitionFallbackOfActiveWidget(int32 RemovedWidgetIndex)
+{
+	if (IsTransitionFallbackEnabled() && GetNumWidgets() > 0)
+	{
+		// Falling back to another active widget
+		const int32 NewActiveWidgetIndex = GetTransitionFallbackForIndex(RemovedWidgetIndex);
+		SetActiveWidgetIndex(NewActiveWidgetIndex);
+		
+		//Note that any listener could decide to trigger ANOTHER transition, 
+		//changing the values of PendingActiveWidget and bTransitioningOut to something new.
+		OnActiveIndexChanged.ExecuteIfBound(GetActiveWidgetIndex());
+		return true;
+	}
+	
+	return false;
 }
 
 bool SCommonAnimatedSwitcher::IsTransitionPlaying() const

@@ -8,6 +8,8 @@
 #include "Math/Vector2D.h"
 #include "Math/TransformCalculus.h"
 
+#include <type_traits>
+
 //////////////////////////////////////////////////////////////////////////
 // Transform calculus for 2D types. UE4 already has a 2D Vector class that we
 // will adapt to be interpreted as a translate transform. The rest we create
@@ -440,7 +442,7 @@ public:
 	}
 
 	/** Ctor. initialize from a rotation. */
-	explicit TMatrix2x2(const FQuat2D& Rotation)
+	explicit TMatrix2x2(const TQuat2<T>& Rotation)
 	{
 		T CosAngle = (T)Rotation.GetVector().X;
 		T SinAngle = (T)Rotation.GetVector().Y;
@@ -907,7 +909,7 @@ namespace TransformCalculusHelper
 }
 
 /** Partial specialization of ConcatenateRules for FTransform2D and any other type via Upcast to FTransform2D first. Requires a conversion ctor on FTransform2D. Funky template logic so we don't hide the default rule for NULL conversions. */
-template<typename TransformType> struct ConcatenateRules<typename TEnableIf<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2f>::Type, TransformType	> { typedef FTransform2f ResultType; };
-template<typename TransformType> struct ConcatenateRules<typename TEnableIf<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2d>::Type, TransformType	> { typedef FTransform2d ResultType; };
-template<typename TransformType> struct ConcatenateRules<TransformType, typename TEnableIf<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2f>::Type	> { typedef FTransform2f ResultType; };
-template<typename TransformType> struct ConcatenateRules<TransformType, typename TEnableIf<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2d>::Type	> { typedef FTransform2d ResultType; };
+template<typename TransformType> struct ConcatenateRules<std::enable_if_t<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2f>, TransformType> { typedef FTransform2f ResultType; };
+template<typename TransformType> struct ConcatenateRules<std::enable_if_t<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2d>, TransformType> { typedef FTransform2d ResultType; };
+template<typename TransformType> struct ConcatenateRules<TransformType, std::enable_if_t<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2f>> { typedef FTransform2f ResultType; };
+template<typename TransformType> struct ConcatenateRules<TransformType, std::enable_if_t<!TransformCalculusHelper::TIsTransform2<TransformType>::Value, FTransform2d>> { typedef FTransform2d ResultType; };

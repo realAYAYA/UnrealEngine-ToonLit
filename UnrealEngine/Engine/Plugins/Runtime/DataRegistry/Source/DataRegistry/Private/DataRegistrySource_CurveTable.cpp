@@ -24,12 +24,10 @@ void UDataRegistrySource_CurveTable::SetSourceTable(const TSoftObjectPtr<UCurveT
 
 void UDataRegistrySource_CurveTable::SetCachedTable(bool bForceLoad /*= false*/)
 {
-#if WITH_EDITOR
-	if (CachedTable && GIsEditor)
+	if (CachedTable)
 	{
 		CachedTable->OnCurveTableChanged().RemoveAll(this);
 	}
-#endif
 
 	CachedTable = nullptr;
 	UCurveTable* FoundTable = SourceTable.Get();
@@ -49,6 +47,14 @@ void UDataRegistrySource_CurveTable::SetCachedTable(bool bForceLoad /*= false*/)
 			}
 
 			FoundTable = SourceTable.LoadSynchronous();
+			if (!FoundTable)
+			{
+				if (!SourceTable.IsNull())
+				{
+					UE_LOG(LogDataRegistry, Warning, TEXT("Force loading table %s for source %s failed! Source data is invalid and will be ignored."), *SourceTable.ToString(), *GetPathName());
+				}
+				bInvalidSourceTable = true;
+			}
 		}
 	}
 
@@ -59,30 +65,30 @@ void UDataRegistrySource_CurveTable::SetCachedTable(bool bForceLoad /*= false*/)
 		if (FoundTable->HasAnyFlags(RF_NeedLoad))
 		{
 			UE_LOG(LogDataRegistry, Error, TEXT("Cannot initialize DataRegistry source %s, Preload table was not set, resave in editor!"), *GetPathName());
+			bInvalidSourceTable = true;
 		}
 		else if (!ItemStruct || !ItemStruct->IsChildOf(FRealCurve::StaticStruct()))
 		{
 			UE_LOG(LogDataRegistry, Error, TEXT("Cannot initialize DataRegistry source %s, Curve tables only work with curve items!"), *GetPathName(), *FoundTable->GetPathName());
+			bInvalidSourceTable = true;
 		}
 		else if (ItemStruct->IsChildOf(FSimpleCurve::StaticStruct()) && FoundTable->GetCurveTableMode() != ECurveTableMode::SimpleCurves)
 		{
 			UE_LOG(LogDataRegistry, Error, TEXT("Cannot initialize DataRegistry source %s, only simple curve tables are supported for SimpleCurve items, reimport with linear interpolation type or select different table"), *GetPathName(), *FoundTable->GetPathName());
+			bInvalidSourceTable = true;
 		}
 		else if (ItemStruct->IsChildOf(FRichCurve::StaticStruct()) && FoundTable->GetCurveTableMode() != ECurveTableMode::RichCurves)
 		{
 			UE_LOG(LogDataRegistry, Error, TEXT("Cannot initialize DataRegistry source %s, only rich curve tables are supported for RichCurve items, reimport with cubic interpolation type or select different table"), *GetPathName(), *FoundTable->GetPathName());
+			bInvalidSourceTable = true;
 		}
 		else
 		{
 			CachedTable = FoundTable;
+			bInvalidSourceTable = false;
 
-#if WITH_EDITOR
-			if (GIsEditor)
-			{
-				// Listen for changes like row 
-				CachedTable->OnCurveTableChanged().AddUObject(this, &UDataRegistrySource_CurveTable::EditorRefreshSource);
-			}
-#endif
+			// Listen for changes like row 
+			CachedTable->OnCurveTableChanged().AddUObject(this, &UDataRegistrySource_CurveTable::OnDataTableChanged);
 		}
 	}
 
@@ -150,10 +156,12 @@ EDataRegistryAvailability UDataRegistrySource_CurveTable::GetItemAvailability(co
 			return EDataRegistryAvailability::DoesNotExist;
 		}
 	}
-	else
+	else if (bInvalidSourceTable)
 	{
-		return EDataRegistryAvailability::Unknown;
+		return EDataRegistryAvailability::DoesNotExist;
 	}
+
+	return EDataRegistryAvailability::Unknown;
 }
 
 void UDataRegistrySource_CurveTable::GetResolvedNames(TArray<FName>& Names) const
@@ -297,22 +305,32 @@ void UDataRegistrySource_CurveTable::OnTableLoaded()
 
 	SetCachedTable(false);
 
+	// If we failed to set a cached table, the source data is invalid
+	if (CachedTable == nullptr)
+	{
+		UE_LOG(LogDataRegistry, Warning, TEXT("Loading table %s for source %s failed! Source data is invalid and will be ignored."), *SourceTable.ToString(), *GetPathName());
+		bInvalidSourceTable = true;
+	}
+
 	HandlePendingAcquires();
 }
 
+void UDataRegistrySource_CurveTable::OnDataTableChanged()
+{
 #if WITH_EDITOR
+	if (GIsEditor)
+	{
+		SetCachedTable(false);
+	}
+#endif
 
-void UDataRegistrySource_CurveTable::EditorRefreshSource()
-{
-	SetCachedTable(false);
+	if (IsInitialized())
+	{
+		GetRegistry()->InvalidateCacheVersion();
+	}
 }
 
-void UDataRegistrySource_CurveTable::PreSave(const ITargetPlatform* TargetPlatform)
-{
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	Super::PreSave(TargetPlatform);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
-}
+#if WITH_EDITOR
 
 void UDataRegistrySource_CurveTable::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {

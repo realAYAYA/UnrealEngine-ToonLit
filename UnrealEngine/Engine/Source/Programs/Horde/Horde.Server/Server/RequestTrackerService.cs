@@ -43,7 +43,7 @@ namespace Horde.Server.Server
 		{
 			_requestsInProgress[context.TraceIdentifier] = new TrackedRequest(context.Request);
 		}
-		
+
 		/// <summary>
 		/// Called by the middleware when a request is finished (no matter if an exception occurred or not)
 		/// </summary>
@@ -67,7 +67,7 @@ namespace Horde.Server.Server
 			List<KeyValuePair<string, TrackedRequest>> requests = GetRequestsInProgress().ToList();
 			requests.Sort((a, b) => a.Value.StartedAt.CompareTo(b.Value.StartedAt));
 			StringBuilder content = new StringBuilder();
-			foreach (KeyValuePair<string,TrackedRequest> pair in requests)
+			foreach (KeyValuePair<string, TrackedRequest> pair in requests)
 			{
 				int ageInMs = pair.Value.GetTimeSinceStartInMs();
 				string path = pair.Value.Request.Path;
@@ -92,7 +92,7 @@ namespace Horde.Server.Server
 			}
 		}
 	}
-	
+
 	/// <summary>
 	/// Value object for tracked requests
 	/// </summary>
@@ -102,7 +102,7 @@ namespace Horde.Server.Server
 		/// When the request was received
 		/// </summary>
 		public DateTime StartedAt { get; }
-			
+
 		/// <summary>
 		/// The HTTP request being tracked
 		/// </summary>
@@ -124,17 +124,17 @@ namespace Horde.Server.Server
 		/// <returns>Time elapsed in milliseconds since request started</returns>
 		public int GetTimeSinceStartInMs()
 		{
-			return (int) (DateTime.UtcNow - StartedAt).TotalMilliseconds;
+			return (int)(DateTime.UtcNow - StartedAt).TotalMilliseconds;
 		}
 	}
-	
+
 	/// <summary>
 	/// ASP.NET Middleware to track open requests
 	/// </summary>
 	public class RequestTrackerMiddleware
 	{
 		private readonly RequestDelegate _next;
-	
+
 		/// <summary>
 		/// Constructor
 		/// </summary>
@@ -143,14 +143,14 @@ namespace Horde.Server.Server
 		{
 			_next = next;
 		}
-	
+
 		/// <summary>
 		/// Invoked by ASP.NET framework itself
 		/// </summary>
 		/// <param name="context">HTTP Context</param>
 		/// <param name="service">The RequestTrackerService singleton</param>
 		/// <returns></returns>
-		public async Task Invoke(HttpContext context, RequestTrackerService service)
+		public async Task InvokeAsync(HttpContext context, RequestTrackerService service)
 		{
 			if (!context.Request.Path.StartsWithSegments("/health", StringComparison.Ordinal))
 			{

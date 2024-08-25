@@ -57,6 +57,11 @@ public:
 		return DisplayClusterEndSceneEvent;
 	}
 
+	virtual FDisplayClusterPreSubmitViewFamilies& OnDisplayClusterPreSubmitViewFamilies() override
+	{
+		return DisplayClusterPreSubmitViewFamiliesEvent;
+	}
+
 	virtual FDisplayClusterCustomPresentSetEvent& OnDisplayClusterCustomPresentSet() override
 	{
 		return DisplayClusterCustomPresentSetEvent;
@@ -70,6 +75,11 @@ public:
 	virtual FDisplayClusterPresentationPostSynchronization_RHIThread& OnDisplayClusterPresentationPostSynchronization_RHIThread() override
 	{
 		return DisplayClusterPresentationPostSynchronizationEvent;
+	}
+
+	virtual FDisplayClusterFramePresentated_RHIThread& OnDisplayClusterFramePresented_RHIThread() override
+	{
+		return DisplayClusterFramePresentedEvent;
 	}
 
 	virtual FDisplayClusterFailoverNodeDown& OnDisplayClusterFailoverNodeDown() override
@@ -132,6 +142,11 @@ public:
 		return FDisplayClusterPreProcessIcvfxEvent;
 	}
 
+	virtual FDisplayClusterUpdateViewportMediaState& OnDisplayClusterUpdateViewportMediaState() override
+	{
+		return DisplayClusterUpdateViewportMediaStateEvent;
+	}
+
 private:
 	FDisplayClusterStartSessionEvent         DisplayClusterStartSessionEvent;
 	FDisplayClusterEndSessionEvent           DisplayClusterEndSessionEvent;
@@ -142,11 +157,13 @@ private:
 	FDisplayClusterPostTickEvent             DisplayClusterPostTickEvent;
 	FDisplayClusterStartSceneEvent           DisplayClusterStartSceneEvent;
 	FDisplayClusterEndSceneEvent             DisplayClusterEndSceneEvent;
+	FDisplayClusterPreSubmitViewFamilies     DisplayClusterPreSubmitViewFamiliesEvent;
 	FDisplayClusterCustomPresentSetEvent     DisplayClusterCustomPresentSetEvent;
 	FDisplayClusterFailoverNodeDown          DisplayClusterFailoverNodeDown;
 
 	FDisplayClusterPresentationPreSynchronization_RHIThread  DisplayClusterPresentationPreSynchronizationEvent;
 	FDisplayClusterPresentationPostSynchronization_RHIThread DisplayClusterPresentationPostSynchronizationEvent;
+	FDisplayClusterFramePresentated_RHIThread                DisplayClusterFramePresentedEvent;
 
 	FDisplayClusterPostRenderViewFamily_RenderThread DisplayClusterPostRenderViewFamily;
 	FDisplayClusterPreWarp_RenderThread              DisplayClusterPreWarpEvent;
@@ -159,4 +176,6 @@ private:
 	FDisplayClusterPostBackbufferUpdate_RenderThread DisplayClusterPostBackbufferUpdateEvent;
 	FDisplayClusterPostBackbufferUpdated_RenderThread DisplayClusterPostBackbufferUpdatedEvent;
 	FDisplayClusterPreProcessIcvfx_RenderThread      FDisplayClusterPreProcessIcvfxEvent;
+
+	FDisplayClusterUpdateViewportMediaState DisplayClusterUpdateViewportMediaStateEvent;
 };

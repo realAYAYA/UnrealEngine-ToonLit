@@ -71,7 +71,7 @@ public:
 	bool IsInitialized();
 	void InitBackBuffer();
 	void DestroyBackBuffer();
-	void Init( APIVariant API, uint32 MajorVersion, uint32 MinorVersion, bool bDebug);
+	void Init( APIVariant API, uint32 MajorVersion, uint32 MinorVersion);
 	void ReInit();
 	void UnBind();
 	void UnBindRender();
@@ -85,7 +85,8 @@ public:
 	bool IsOfflineSurfaceRequired();
 
 	void GetDimensions(uint32& OutWidth, uint32& OutHeight);
-	
+	bool IsUsingRobustContext() const { return bIsEXTRobustContextActive; }
+
 	EGLDisplay GetDisplay() const;
 	EGLSurface GetSurface() const;
 	EGLConfig GetConfig() const;
@@ -145,6 +146,8 @@ private:
 	bool bSupportsKHRCreateContext;
 	bool bSupportsKHRSurfacelessContext;
 	bool bSupportsKHRNoErrorContext;
+	bool bSupportsEXTRobustContext;
+	bool bIsEXTRobustContextActive = false;
 
 	int *ContextAttributes;
 };

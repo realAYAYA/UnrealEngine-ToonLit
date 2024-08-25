@@ -245,34 +245,25 @@ namespace Metasound
 				TMathOpClass::Calculate(InstanceData, PrimaryOperandRef, AdditionalOperandRefs, ValueRef);
 			}
 
-			static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+			static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 			{
 				using namespace MathOpNames;
 
 				const TMathOpNode& MathOpNode = static_cast<const TMathOpNode&>(InParams.Node);
 
+				const FInputVertexInterfaceData& InputData = InParams.InputData;
 				const FInputVertexInterface& InputInterface = MathOpNode.GetVertexInterface().GetInputInterface();
 
-				FLiteral DefaultValue = FLiteral::CreateInvalid();
-				if (InputInterface.Contains(METASOUND_GET_PARAM_NAME(PrimaryOperand)))
-				{
-					DefaultValue = InputInterface[METASOUND_GET_PARAM_NAME(PrimaryOperand)].GetDefaultLiteral();
-				}
-				TDataClassReadRef PrimaryOperand = InParams.InputDataReferences.GetDataReadReferenceOrConstruct<TDataClass>(METASOUND_GET_PARAM_NAME(PrimaryOperand), TMathOpClass::GetDefault(InParams.OperatorSettings, DefaultValue));
+				TDataClassReadRef PrimaryOperand = InputData.GetOrCreateDefaultDataReadReference<TDataClass>(METASOUND_GET_PARAM_NAME(PrimaryOperand), InParams.OperatorSettings);
 
 				// TODO: Support dynamic number of inputs
-				const FVertexName& OpName = METASOUND_GET_PARAM_NAME(AdditionalOperands);
-				if (InputInterface.Contains(OpName))
-				{
-					DefaultValue = InputInterface[OpName].GetDefaultLiteral();
-				}
-				TOperandDataClassReadRef Op1 = InParams.InputDataReferences.GetDataReadReferenceOrConstruct<TOperandDataClass>(OpName, TMathOpClass::GetDefaultOp(InParams.OperatorSettings, DefaultValue));
+				TOperandDataClassReadRef Op1 = InputData.GetOrCreateDefaultDataReadReference<TOperandDataClass>(METASOUND_GET_PARAM_NAME(AdditionalOperands), InParams.OperatorSettings);
 				TArray<TOperandDataClassReadRef> AdditionalOperandRefs = { Op1 };
 
 				return MakeUnique<TMathOperator>(InParams, PrimaryOperand, AdditionalOperandRefs);
 			}
 
-			TMathOperator(const FCreateOperatorParams& InParams, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands)
+			TMathOperator(const FBuildOperatorParams& InParams, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands)
 				: PrimaryOperandRef(InPrimaryOperand)
 				, AdditionalOperandRefs(InAdditionalOperands)
 				, ValueRef(TDataWriteReferenceFactory<TDataClass>::CreateAny(InParams.OperatorSettings))
@@ -364,16 +355,6 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TDataClass GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TDataClass>(0);
-		}
-
-		static TOperandDataClass GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TOperandDataClass>(0);
-		}
-
 		static void Calculate(TMathOpAdd<TDataClass, TOperandDataClass>& InInstanceData, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands, TDataClassWriteRef& OutResult)
 		{
 			if (!ensure(!InAdditionalOperands.IsEmpty()))
@@ -431,16 +412,6 @@ namespace Metasound
 			);
 
 			return Interface;
-		}
-
-		static TDataClass GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TDataClass>(0);
-		}
-
-		static TOperandDataClass GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TOperandDataClass>(0);
 		}
 
 		static void Calculate(TMathOpSubtract<TDataClass, TOperandDataClass>& InInstanceData, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands, TDataClassWriteRef& OutResult)
@@ -502,16 +473,6 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TDataClass GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TDataClass>(1);
-		}
-
-		static TOperandDataClass GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TOperandDataClass>(1);
-		}
-
 		static void Calculate(TMathOpMultiply<TDataClass, TOperandDataClass>& InInstanceData, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands, TDataClassWriteRef& OutResult)
 		{
 			if (!ensure(!InAdditionalOperands.IsEmpty()))
@@ -569,16 +530,6 @@ namespace Metasound
 			);
 
 			return Interface;
-		}
-
-		static TDataClass GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TDataClass>(1);
-		}
-
-		static TOperandDataClass GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TOperandDataClass>(1);
 		}
 
 		static void Calculate(TMathOpDivide& InInstanceData, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands, TDataClassWriteRef& OutResult)
@@ -645,16 +596,6 @@ namespace Metasound
 			);
 
 			return Interface;
-		}
-
-		static TDataClass GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TDataClass>(1);
-		}
-
-		static TOperandDataClass GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TOperandDataClass>(1);
 		}
 
 		static void Calculate(TMathOpModulo& InInstanceData, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands, TDataClassWriteRef& OutResult)
@@ -725,16 +666,6 @@ namespace Metasound
 			return DefaultInterface;
 		}
 
-		static TDataClass GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TDataClass>(1);
-		}
-
-		static TOperandDataClass GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TOperandDataClass>(1);
-		}
-
 		static void Calculate(TMathOpPower& InInstanceData, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands, TDataClassWriteRef& OutResult)
 		{
 			if (!ensure(!InAdditionalOperands.IsEmpty()))
@@ -797,16 +728,6 @@ namespace Metasound
 			return DefaultInterface;
 		}
 
-		static TDataClass GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TDataClass>(1);
-		}
-
-		static TOperandDataClass GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return static_cast<TOperandDataClass>(1);
-		}
-
 		static void Calculate(TMathOpLogarithm& InInstanceData, const TDataClassReadRef& InPrimaryOperand, const TArray<TOperandDataClassReadRef>& InAdditionalOperands, TDataClassWriteRef& OutResult)
 		{
 			if (!ensure(!InAdditionalOperands.IsEmpty()))
@@ -858,16 +779,6 @@ namespace Metasound
 			);
 
 			return Interface;
-		}
-
-		static FAudioBuffer GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FAudioBuffer(InSettings.GetNumFramesPerBlock());
-		}
-
-		static FAudioBuffer GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return GetDefault(InSettings, InVertexDefault);
 		}
 
 		static void Calculate(TMathOpAdd<FAudioBuffer>& InInstanceData, FAudioBufferReadRef& InPrimaryOperand, const TArray<FAudioBufferReadRef>& InAdditionalOperands, FAudioBufferWriteRef& OutResult)
@@ -954,16 +865,6 @@ namespace Metasound
 			return Interface;
 		}
 
-		static FTime GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FTime(InVertexDefault.Value.Get<float>());
-		}
-
-		static FTime GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return GetDefault(InSettings, InVertexDefault);
-		}
-
 		static void Calculate(TMathOpAdd& InInstanceData, const FTimeReadRef& InPrimaryOperand, const TArray<FTimeReadRef>& InAdditionalOperands, FTimeWriteRef& OutResult)
 		{
 			if (!ensure(!InAdditionalOperands.IsEmpty()))
@@ -1012,16 +913,6 @@ namespace Metasound
 			return Interface;
 		}
 
-		static FAudioBuffer GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FAudioBuffer(InSettings.GetNumFramesPerBlock());
-		}
-
-		static float GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return InVertexDefault.Value.Get<float>();
-		}
-
 		static void Calculate(TMathOpAdd& InInstanceData, const FAudioBufferReadRef& InPrimaryOperand, const TArray<FFloatReadRef>& InAdditionalOperands, FAudioBufferWriteRef& OutResult)
 		{
 			FMemory::Memcpy(OutResult->GetData(), InPrimaryOperand->GetData(), sizeof(float) * OutResult->Num());
@@ -1066,16 +957,6 @@ namespace Metasound
 			);
 
 			return Interface;
-		}
-
-		static FAudioBuffer GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FAudioBuffer(InSettings.GetNumFramesPerBlock());
-		}
-
-		static FAudioBuffer GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return GetDefault(InSettings, InVertexDefault);
 		}
 
 		static void Calculate(TMathOpSubtract& InInstanceData, FAudioBufferReadRef& InPrimaryOperand, const TArray<FAudioBufferReadRef>& InAdditionalOperands, FAudioBufferWriteRef& OutResult)
@@ -1153,16 +1034,6 @@ namespace Metasound
 			return Interface;
 		}
 
-		static FTime GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FTime(InVertexDefault.Value.Get<float>());
-		}
-
-		static FTime GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return GetDefault(InSettings, InVertexDefault);
-		}
-
 		static void Calculate(TMathOpSubtract& InInstanceData, const FTimeReadRef& InPrimaryOperand, const TArray<FTimeReadRef>& InAdditionalOperands, FTimeWriteRef& OutResult)
 		{
 			if (!ensure(!InAdditionalOperands.IsEmpty()))
@@ -1209,16 +1080,6 @@ namespace Metasound
 			);
 
 			return Interface;
-		}
-
-		static FAudioBuffer GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FAudioBuffer(InSettings.GetNumFramesPerBlock());
-		}
-
-		static FAudioBuffer GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return GetDefault(InSettings, InVertexDefault);
 		}
 
 		static void Calculate(TMathOpMultiply& InInstanceData, const FAudioBufferReadRef& InPrimaryOperand, const TArray<FAudioBufferReadRef>& InAdditionalOperands, FAudioBufferWriteRef& OutResult)
@@ -1293,16 +1154,6 @@ namespace Metasound
 			return Interface;
 		}
 
-		static FAudioBuffer GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FAudioBuffer(InSettings.GetNumFramesPerBlock());
-		}
-
-		static float GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return InVertexDefault.Value.Get<float>();
-		}
-
 		static void Calculate(TMathOpMultiply& InInstanceData, const FAudioBufferReadRef& InPrimaryOperand, const TArray<FFloatReadRef>& InAdditionalOperands, FAudioBufferWriteRef& OutResult)
 		{
 			constexpr float MaxGain = TNumericLimits<float>::Max() / 1024.f;
@@ -1374,16 +1225,6 @@ namespace Metasound
 			return Interface;
 		}
 
-		static FTime GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FTime(InVertexDefault.Value.Get<float>());
-		}
-
-		static float GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return 1.0f;
-		}
-
 		static void Calculate(TMathOpMultiply& InInstanceData, const FTimeReadRef& InPrimaryOperand, const TArray<FFloatReadRef>& InAdditionalOperands, FTimeWriteRef& OutResult)
 		{
 			*OutResult = *InPrimaryOperand;
@@ -1438,16 +1279,6 @@ namespace Metasound
 			);
 
 			return Interface;
-		}
-
-		static FTime GetDefault(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return FTime(InVertexDefault.Value.Get<float>());
-		}
-
-		static float GetDefaultOp(const FOperatorSettings& InSettings, const FLiteral& InVertexDefault)
-		{
-			return 1.0f;
 		}
 
 		static void Calculate(TMathOpDivide& InInstanceData, const FTimeReadRef& InPrimaryOperand, const TArray<FFloatReadRef>& InAdditionalOperands, FTimeWriteRef& OutResult)

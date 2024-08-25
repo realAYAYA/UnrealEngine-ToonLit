@@ -2,16 +2,6 @@
 
 #pragma once
 
-// Enabled page occupancy lookup, to have finer grain empty space skipping
-#ifndef VOXEL_TRAVERSAL_PAGEOCCUPANCY
-#define VOXEL_TRAVERSAL_PAGEOCCUPANCY 0
-#endif
-
-// Enabled when debugging page occupancy
-#ifndef VOXEL_TRAVERSAL_DEBUG_PAGEOCCUPANCY
-#define VOXEL_TRAVERSAL_DEBUG_PAGEOCCUPANCY 0
-#endif
-
 // VOXEL_TRAVERSAL_TYPE needs to be defined for selecting which type of traversal needs to be used
 // Definition of traversal types are defined in HairStrandsVoxelPageCommon.ush
 #ifndef VOXEL_TRAVERSAL_TYPE
@@ -94,22 +84,23 @@ float4 GetHairVoxelJitter2(uint2 PixelCoord, uint Seed, uint JitterMode)
 	return JitterMode > 0 ? float4(Hammersley16(Seed, 8, Seed0), Hammersley16(Seed, 8, Seed1)) : float4(0, 0, 0, 0);
 }
 
+// Use define as this function use global resources not always available where this file is included
+#define DEFINE_HAIR_BLUE_NOISE_JITTER_FUNCTION float4 GetHairBlueNoiseJitter(uint2 PixelCoord, uint SampleIndex, uint MaxSampleCount, uint TimeIndex)\
+{\
+	int2 Offset1 = int2(R2Sequence(SampleIndex) * BlueNoise.Dimensions.xy);\
+	int2 Offset2 = int2(R2Sequence(SampleIndex + MaxSampleCount) * BlueNoise.Dimensions.xy);\
+	float4 RandomSample;\
+	RandomSample.xy = BlueNoiseVec2(PixelCoord + Offset1, TimeIndex);\
+	RandomSample.zw = BlueNoiseVec2(PixelCoord + Offset2, TimeIndex);\
+	return RandomSample;\
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool ShouldStopTraversal(const FHairTraversalResult InResult, float InHairCountThreshold, bool InUseOpaqueVisibility=true)
 {
 	// Change this function once we have better result/control over the opaque filtering
 	return (InUseOpaqueVisibility && InResult.Visibility == 0) || (InHairCountThreshold != 0 && InResult.HairCount > InHairCountThreshold);
-}
-
-// This assume pages have a resolution of 32x32x32
-bool DoesVoxelContainData(uint2 PageOccupancy, uint3 CoordInPage)
-{
-	// A page with a 32x32x32 resolution contains 4x4x4 bricks of 8x8x8 resolution
-	uint3 QCoord = CoordInPage >> 3;
-	uint  QRes = 4;
-	uint  LinearQCoord = QCoord.x + QCoord.y * QRes + QCoord.z * QRes * QRes;
-	return LinearQCoord < 32 ? ((PageOccupancy.x >> LinearQCoord) & 0x1) : ((PageOccupancy.y >> (LinearQCoord - 32)) & 0x1);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -128,7 +119,6 @@ struct FHairTraversalSettings
 	bool	bUseOpaqueVisibility;
 	bool	bDebugEnabled;
 	bool	bIsPrimaryRay;
-	bool	bUseOccupancy;
 	bool	bCastShadow;	// True of the traversal is for casting (opaque) shadow, i.e., not for hair transmission
 };
 
@@ -151,7 +141,6 @@ FHairTraversalSettings InitHairTraversalSettings()
 	Out.bUseOpaqueVisibility = true;
 	Out.bDebugEnabled = false;
 	Out.bIsPrimaryRay = false;
-	Out.bUseOccupancy = false;
 	Out.ForcedMip = -1;
 	Out.bCastShadow = false;
 	return Out;
@@ -165,7 +154,6 @@ FHairTraversalResult ComputeHairCountVirtualVoxel(
 	FVirtualVoxelCommonDesc InCommonDesc,
 	FVirtualVoxelNodeDesc InNodeDesc,
 	Buffer<uint> InPageIndexBuffer,
-	Buffer<uint2> InPageIndexOccupancyBuffer,
 	Texture3D<uint> InPageTexture,
 	FHairTraversalSettings InSettings)
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -212,7 +200,6 @@ FHairTraversalResult ComputeHairCountVirtualVoxel(
 		float StepScale = 1.0f;
 		float3 PreviousP = O;
 		float ClosestHitT = -1;
-		uint2 PageOccupancy = 0;
 
 		const float3 RandomStepJitter = InSettings.Random.xyz * 2 - 1; // [-1..1]
 		for (float StepIt = 0.0f; StepIt < MaxStep; StepIt += StepScale)
@@ -236,18 +223,9 @@ FHairTraversalResult ComputeHairCountVirtualVoxel(
 				const uint PageIndex = InPageIndexBuffer.Load(LinearPageIndexCoord);
 
 				bIsPageValid = PageIndex != INVALID_VOXEL_PAGE_INDEX;
-				#if VOXEL_TRAVERSAL_PAGEOCCUPANCY
-				PageOccupancy = 0;
-				if (bIsPageValid)
-				{
-					PageCoord = IndexToCoord(PageIndex, InCommonDesc.PageCountResolution);
-					PageOccupancy = InPageIndexOccupancyBuffer.Load(LinearPageIndexCoord);
-				}
-				#else
 				{
 					PageCoord = IndexToCoord(PageIndex, InCommonDesc.PageCountResolution);
 				}
-				#endif
 			}
 
 			if (bIsPageValid)
@@ -256,10 +234,6 @@ FHairTraversalResult ComputeHairCountVirtualVoxel(
 				const uint3 VoxelPageOffset = VolumeCoord - (PageIndexCoord << InCommonDesc.PageResolutionLog2);
 				const uint3 VoxelPageCoord  = VoxelPageBase + VoxelPageOffset;
 
-				#if VOXEL_TRAVERSAL_PAGEOCCUPANCY
-				const bool bIsSubBrickValid = InSettings.bUseOccupancy ? DoesVoxelContainData(PageOccupancy, VoxelPageOffset) : true;
-				if (bIsSubBrickValid)
-				#endif
 				{
 					float HairCountScale = 1;
 					float MipLevel = 0.0f;
@@ -293,18 +267,12 @@ FHairTraversalResult ComputeHairCountVirtualVoxel(
 					}
 					#endif
 
-					#if VOXEL_TRAVERSAL_DEBUG_PAGEOCCUPANCY
-					Out.HairCount = 100;
-					Out.HitT = length(HitP - TranslatedWorldPosition0);
-					return Out;
-					#else
 					if (ShouldStopTraversal(Out, InSettings.CountThreshold, InSettings.bUseOpaqueVisibility))
 					{
 						//Out.HitT = length(HitP - O);
 						Out.HitT = length(HitP - TranslatedWorldPosition0);
 						return Out;
 					}
-					#endif	
 				}
 			}
 			#if VOXEL_TRAVERSAL_TYPE == VOXEL_TRAVERSAL_LINEAR_MIPMAP

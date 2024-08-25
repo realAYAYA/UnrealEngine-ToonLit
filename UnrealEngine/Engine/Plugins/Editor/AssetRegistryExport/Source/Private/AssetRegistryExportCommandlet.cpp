@@ -274,11 +274,11 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 		TSet<const FAssetData*> RemainingAssetsWithSize;
 		uint64 TotalCompressedBytes = 0;
 		{
-			const TArray<const FAssetData*>& AssetsWithSize = AssetRegistry.GetAssetsByTagName("Stage_ChunkCompressedSize");
+			const TArray<const FAssetData*>& AssetsWithSize = AssetRegistry.GetAssetsByTagName(UE::AssetRegistry::Stage_ChunkCompressedSizeFName);
 			for (const FAssetData* AD : AssetsWithSize)
 			{
 				uint64 CompressedSize = 0;
-				if (AD->GetTagValue("Stage_ChunkCompressedSize", CompressedSize))
+				if (AD->GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize))
 				{
 					TotalCompressedBytes += CompressedSize;
 					RemainingAssetsWithSize.Add(AD);
@@ -369,7 +369,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 						Line << GetRootClassToPrint(UseAsClassData->AssetClassPath) << ",";
 
 						uint64 CompressedSize = 0;
-						if (UseAsClassData->GetTagValue("Stage_ChunkCompressedSize", CompressedSize))
+						if (UseAsClassData->GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize))
 						{
 							Info.SizeOfAllDependencies += CompressedSize;
 						}
@@ -428,7 +428,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 						if (UseAsClassData)
 						{
 							uint64 CompressedSize = 0;
-							if (UseAsClassData->GetTagValue("Stage_ChunkCompressedSize", CompressedSize))
+							if (UseAsClassData->GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize))
 							{
 								check(RemainingAssetsWithSize.Contains(UseAsClassData));
 								RemainingAssetsWithSize.Remove(UseAsClassData);
@@ -464,7 +464,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 						Line << GetRootClassToPrint(UseAsClassData->AssetClassPath) << ",";
 
 						uint64 CompressedSize = 0;
-						if (UseAsClassData->GetTagValue("Stage_ChunkCompressedSize", CompressedSize))
+						if (UseAsClassData->GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize))
 						{
 							check(RemainingAssetsWithSize.Contains(UseAsClassData));
 							RemainingAssetsWithSize.Remove(UseAsClassData);
@@ -505,7 +505,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 						Line << GetRootClassToPrint(UseAsClassData->AssetClassPath) << ",";
 
 						uint64 CompressedSize = 0;
-						if (UseAsClassData->GetTagValue("Stage_ChunkCompressedSize", CompressedSize))
+						if (UseAsClassData->GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize))
 						{
 							check(RemainingAssetsWithSize.Contains(UseAsClassData));
 							RemainingAssetsWithSize.Remove(UseAsClassData);
@@ -605,7 +605,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 		for (const FAssetData* LD : RemainingAssetsWithSize)
 		{
 			uint64 value = 0;
-			if (LD->GetTagValue("Stage_ChunkCompressedSize", value))
+			if (LD->GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, value))
 			{
 				const FAssetPackageData* PackageData = AllPackages[LD->PackageName];
 
@@ -615,7 +615,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 				for (const FAssetData* AD : PackageAssets)
 				{
 					uint64 blah = 0;
-					AD->GetTagValue("Stage_ChunkCompressedSize", blah);
+					AD->GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, blah);
 
 					UE_LOG(LogAssetRegistryExport, Warning, TEXT("......Package has %s %d"), *AD->AssetName.ToString(), blah);
 
@@ -753,7 +753,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 				
 				// If this assets has size information then add it to the global assets list as well.
 				FString CompressedSize;
-				if (AssetData.GetTagValue("Stage_ChunkCompressedSize", CompressedSize))
+				if (AssetData.GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize))
 				{
 					bGotCompressedSize = true;
 				}
@@ -797,7 +797,7 @@ int32 UAssetRegistryExportCommandlet::Main(const FString& CmdLineParams)
 
 				// If this assets has size information then add it to the global assets list as well.
 				FString CompressedSize;
-				if (AssetData.GetTagValue("Stage_ChunkCompressedSize", CompressedSize))
+				if (AssetData.GetTagValue(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, CompressedSize))
 				{
 					bGotCompressedSize = true;
 					GlobalInsertStatement.GetPtrOrNull()->SetBindingValueByIndex(4, CompressedSize);

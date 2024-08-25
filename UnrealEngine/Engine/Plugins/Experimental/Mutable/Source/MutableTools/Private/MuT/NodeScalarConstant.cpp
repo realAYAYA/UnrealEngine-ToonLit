@@ -14,8 +14,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeScalarConstant::Private::s_type =
-			NODE_TYPE( "ScalarConstant", NodeScalar::GetStaticType() );
+	FNodeType NodeScalarConstant::Private::s_type =
+			FNodeType( "ScalarConstant", NodeScalar::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -23,30 +23,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeScalarConstant, EType::Constant, Node, Node::EType::Scalar)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeScalarConstant::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeScalarConstant::GetInputNode( int ) const
-	{
-		check( false );
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeScalarConstant::SetInputNode( int, NodePtr )
-	{
-		check( false );
-	}
 
 
 	//---------------------------------------------------------------------------------------------

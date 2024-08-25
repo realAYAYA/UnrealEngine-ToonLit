@@ -10,7 +10,8 @@ UENUM(BlueprintType)
 enum class EDynamicStateOverrideEnum : uint8
 {
 	NoOverride = 0										  UMETA(DisplayName = "No Override"),
-	Sleeping = 1 /*~Chaos::EObjectStateType::Sleeping*/    UMETA(DisplayName = "Sleeping"),
+	//~ Note: Sleeping is tagged as Hidden because it can't be set as Initial Dynamic State
+	Sleeping = 1 /*~Chaos::EObjectStateType::Sleeping */    UMETA(Hidden, DisplayName = "Sleeping"),
 	Kinematic = 2 /*~Chaos::EObjectStateType::Kinematic*/  UMETA(DisplayName = "Kinematic"),
 	Static = 3    /*~Chaos::EObjectStateType::Static*/     UMETA(DisplayName = "Static")
 };

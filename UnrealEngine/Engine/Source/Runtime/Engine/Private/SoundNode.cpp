@@ -7,6 +7,7 @@
 #include "Sound/SoundCue.h"
 #include "Misc/App.h"
 #include "Sound/SoundNodeWavePlayer.h"
+#include "Sound/SoundNodeQualityLevel.h"
 #include "AudioCompressionSettingsUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SoundNode)
@@ -243,6 +244,31 @@ void USoundNode::RemoveSoundWaveOnChildWavePlayers()
 	}
 }
 
+void USoundNode::LoadChildWavePlayerAssets(bool bAddToRoot, bool bRecurse)
+{
+	// Search child nodes for wave players, then load their sound wave asset.
+	for (USoundNode* ChildNode : ChildNodes)
+	{
+		if (ChildNode)
+		{
+			if (bRecurse)
+			{
+				ChildNode->LoadChildWavePlayerAssets(bAddToRoot, bRecurse);
+			}
+
+			if (USoundNodeWavePlayer* WavePlayer = Cast<USoundNodeWavePlayer>(ChildNode))
+			{
+				WavePlayer->LoadAsset(bAddToRoot);
+			}
+			else if (USoundNodeQualityLevel* QualityNode = Cast<USoundNodeQualityLevel>(ChildNode))
+			{
+				// Take into account quality nodes by only loading wave players for the relevant quality level
+				QualityNode->LoadChildWavePlayers(bAddToRoot, bRecurse);
+			}
+		}
+	}
+}
+
 void USoundNode::BeginDestroy()
 {
 	Super::BeginDestroy();
@@ -369,6 +395,22 @@ bool USoundNode::HasConcatenatorNode() const
 		{
 			ChildNode->ConditionalPostLoad();
 			if (ChildNode->HasConcatenatorNode())
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool USoundNode::HasAttenuationNode() const
+{
+	for (USoundNode* ChildNode : ChildNodes)
+	{
+		if (ChildNode)
+		{
+			ChildNode->ConditionalPostLoad();
+			if (ChildNode->HasAttenuationNode())
 			{
 				return true;
 			}

@@ -3,6 +3,7 @@
 #include "MuCOPE/SCustomizableObjectPopulationClassTagsTool.h"
 
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCOP/CustomizableObjectPopulationClass.h"
 #include "MuCOPE/CustomizableObjectPopulationClassDetails.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
@@ -247,9 +248,9 @@ void SCustomizableObjectPopulationClassTagsTool::GenerateTagsViewer()
 {
 	TagsViewer->ClearChildren();
 
-	for (int32 i = 0; i < PopulationClass->CustomizableObject->PopulationClassTags.Num(); ++i)
+	for (int32 i = 0; i < PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags().Num(); ++i)
 	{
-		FString TagValue = PopulationClass->CustomizableObject->PopulationClassTags[i];
+		FString TagValue = PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags()[i];
 
 		if (SearchItem.IsEmpty())
 		{
@@ -468,13 +469,13 @@ void SCustomizableObjectPopulationClassTagsTool::GenerateParameterOptionsManager
 							]
 						];
 
-						if (PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Find(SelectedParameter))
+						if (PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Find(SelectedParameter))
 						{
-							if (PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions.Find(ParameterOptionName))
+							if (PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions.Find(ParameterOptionName))
 							{
 								float LineLength = 40.0f;
 
-								LineLength += 40.0f * (int)((PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Num() - 1) / 4);
+								LineLength += 40.0f * (int)((PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Num() - 1) / 4);
 								
 								VerticalWidget->AddSlot()
 								.AutoWidth()
@@ -486,15 +487,15 @@ void SCustomizableObjectPopulationClassTagsTool::GenerateParameterOptionsManager
 								];
 
 								// Delete the parameter option from the parameter options map if it doesn't have any tag
-								if (PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Num() == 0)
+								if (PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Num() == 0)
 								{
-									PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions.Remove(ParameterOptionName);
+									PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions.Remove(ParameterOptionName);
 
 									// Check if we also have to delete the parameter 
-									if (PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].Tags.Num() == 0
-										&& PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions.Num() == 0)
+									if (PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].Tags.Num() == 0
+										&& PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions.Num() == 0)
 									{
-										PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Remove(SelectedParameter);
+										PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Remove(SelectedParameter);
 									}
 								}
 								else
@@ -505,7 +506,7 @@ void SCustomizableObjectPopulationClassTagsTool::GenerateParameterOptionsManager
 									[
 										SNew(SParameterTagWidget)
 										.PopulationClass(PopulationClass)
-										.TagsList(&PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions[ParameterOptionName].Tags)
+										.TagsList(&PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions[ParameterOptionName].Tags)
 										.TagsToolPtr(this)
 									];
 								}
@@ -542,9 +543,9 @@ FReply SCustomizableObjectPopulationClassTagsTool::OnAddTagButtonPressed()
 {
 	FString NewTag = SearchBoxWidget->GetText().ToString();
 
-	if (!NewTag.IsEmpty() && PopulationClass->CustomizableObject->PopulationClassTags.Find(NewTag) == INDEX_NONE)
+	if (!NewTag.IsEmpty() && PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags().Find(NewTag) == INDEX_NONE)
 	{
-		PopulationClass->CustomizableObject->PopulationClassTags.Add(NewTag);
+		PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags().Add(NewTag);
 		PopulationClass->CustomizableObject->MarkPackageDirty();
 		SearchItem.Empty();
 		GenerateChildSlot();
@@ -557,7 +558,7 @@ FReply SCustomizableObjectPopulationClassTagsTool::OnAddTagButtonPressed()
 FReply SCustomizableObjectPopulationClassTagsTool::OnRemoveTagButtonPressed(int32 Index)
 {
 	PopulationClass->CustomizableObject->MarkPackageDirty();
-	PopulationClass->CustomizableObject->PopulationClassTags.RemoveAt(Index);
+	PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags().RemoveAt(Index);
 	GenerateChildSlot();
 
 	return FReply::Unhandled();
@@ -578,9 +579,9 @@ void SCustomizableObjectPopulationClassTagsTool::OnSearchBoxTextCommitted(const 
 		FString NewTag = InText.ToString();
 
 		// If the written tag doesn't exist, then we create a new one
-		if (!NewTag.IsEmpty() && PopulationClass->CustomizableObject->PopulationClassTags.Find(NewTag) == INDEX_NONE)
+		if (!NewTag.IsEmpty() && PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags().Find(NewTag) == INDEX_NONE)
 		{
-			PopulationClass->CustomizableObject->PopulationClassTags.Add(InText.ToString());
+			PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags().Add(InText.ToString());
 			PopulationClass->CustomizableObject->MarkPackageDirty();
 			SearchItem.Empty();
 			GenerateChildSlot();
@@ -607,15 +608,15 @@ FReply SCustomizableObjectPopulationClassTagsTool::OnParameterAddTagButtonPresse
 	{
 		FString SelectedParameter = *ParameterComboBox->GetSelectedItem();
 
-		if (PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Find(SelectedParameter))
+		if (PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Find(SelectedParameter))
 		{
-			PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].Tags.Add("");
+			PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].Tags.Add("");
 			GenerateChildSlot();
 		}
 		else
 		{
-			PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Add(SelectedParameter);
-			PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].Tags.Add("");
+			PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Add(SelectedParameter);
+			PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].Tags.Add("");
 			GenerateChildSlot();
 		}
 
@@ -633,20 +634,20 @@ FReply SCustomizableObjectPopulationClassTagsTool::OnParameterOptionAddTagButton
 	{
 		FString SelectedParameter = *ParameterComboBox->GetSelectedItem();
 
-		if (!PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Find(SelectedParameter))
+		if (!PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Find(SelectedParameter))
 		{
-			PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Add(SelectedParameter);
+			PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Add(SelectedParameter);
 		}
 
-		if (PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions.Find(ParameterOptionName))
+		if (PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions.Find(ParameterOptionName))
 		{
-			PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Add("");
+			PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Add("");
 			GenerateChildSlot();
 		}
 		else
 		{
-			PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions.Add(ParameterOptionName);
-			PopulationClass->CustomizableObject->CustomizableObjectParametersTags[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Add("");
+			PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions.Add(ParameterOptionName);
+			PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags()[SelectedParameter].ParameterOptions[ParameterOptionName].Tags.Add("");
 			GenerateChildSlot();
 		}
 
@@ -760,11 +761,11 @@ void SSingleTagWidget::Construct(const FArguments& InArgs)
 	ComboBoxTagsOptions.Add(MakeShareable(new FString("None")));
 	TagsComboBox->SetSelectedItem(ComboBoxTagsOptions.Last());
 
-	for (int32 i = 0; i < PopulationClass->CustomizableObject->PopulationClassTags.Num(); ++i)
+	for (int32 i = 0; i < PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags().Num(); ++i)
 	{
-		ComboBoxTagsOptions.Add(MakeShareable(new FString(PopulationClass->CustomizableObject->PopulationClassTags[i])));
+		ComboBoxTagsOptions.Add(MakeShareable(new FString(PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags()[i])));
 
-		if ((*TagsList)[TagIndex] == PopulationClass->CustomizableObject->PopulationClassTags[i])
+		if ((*TagsList)[TagIndex] == PopulationClass->CustomizableObject->GetPrivate()->GetPopulationClassTags()[i])
 		{
 			TagsComboBox->SetSelectedItem(ComboBoxTagsOptions.Last());
 		}

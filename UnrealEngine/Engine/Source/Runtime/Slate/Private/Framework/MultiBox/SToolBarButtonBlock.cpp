@@ -51,12 +51,12 @@ FToolBarButtonBlock::FToolBarButtonBlock( const TAttribute<FText>& InLabel, cons
 {
 }
 
-void FToolBarButtonBlock::SetCustomMenuDelegate( FNewMenuDelegate& InCustomMenuDelegate )
+void FToolBarButtonBlock::SetCustomMenuDelegate(const FNewMenuDelegate& InCustomMenuDelegate)
 {
 	CustomMenuDelegate = InCustomMenuDelegate;
 }
 
-void FToolBarButtonBlock::SetOnGetMenuContent( FOnGetContent& InOnGetMenuContent)
+void FToolBarButtonBlock::SetOnGetMenuContent(const FOnGetContent& InOnGetMenuContent)
 {
 	OnGetMenuContent = InOnGetMenuContent;
 }

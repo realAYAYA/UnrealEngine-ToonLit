@@ -6,7 +6,11 @@
 #include "UObject/ObjectMacros.h"
 #include "Internationalization/GatherableTextData.h"
 #include "Commandlets/GatherTextCommandletBase.h"
+#include "AssetRegistry/AssetData.h"
 #include "GatherTextFromAssetsCommandlet.generated.h"
+
+struct FARFilter;
+struct FPackageFileSummary;
 
 /**
  *	UGatherTextFromAssetsCommandlet: Localization commandlet that collects all text to be localized from the game assets.
@@ -43,6 +47,35 @@ public:
 	};
 
 private:
+	/** Parses the command line for the commandlet. Returns true if all required parameters are provided and are correct.*/
+	bool ParseCommandLineHelper(const FString& InCommandLine);
+
+// Filtering of asset registry elements
+	// Broadly, there is the first pass filter,the exact class filter and the include/exclude path filter that can be applied to filter out asset registry elements.
+	// Look at Main() to see how the functions are applied to understand the logic.
+	bool PerformFirstPassFilter(TArray<FAssetData>& OutAssetDataArray) const;
+	void ApplyFirstPassFilter(const FARFilter& InFilter, TArray<FAssetData>& InOutAssetDataArray) const;
+	bool BuildFirstPassFilter(FARFilter& InOutFilter) const;
+	bool BuildCollectionFilter(FARFilter& InOutFilter) const;
+	bool BuildExcludeDerivedClassesFilter(FARFilter& InOutFilter) const;
+	bool PerformExcludeExactClassesFilter(TArray<FAssetData>& InOutAssetDataArray) const;
+	bool BuildExcludeExactClassesFilter(FARFilter& InOutFilter) const;
+	void ApplyExcludeExactClassesFilter(const FARFilter& InFilter, TArray<FAssetData>& InOutAssetDataArray) const;
+	void FilterAssetsBasedOnIncludeExcludePaths(TArray<FAssetData>& InOutAssetDataArray) const;
+	
+	void DiscoverExternalActors(TArray<FAssetData>& InOutAssetDataArray);
+	void RemoveExistingExternalActors(TArray<FAssetData>& InOutAssetDataArray, TArray<FName>& OutPartitionedWorldPackageNames) const;
+
+	TSet<FName> GetPackageNamesToGather(const TArray<FAssetData>& InAssetDataArray) const;
+	void PopulatePackagesPendingGather(TSet<FName> PackageNamesToGather);
+	void ProcessAndRemoveCachedPackages(TMap<FName, TSet<FGuid>>& OutExternalActorsWithStaleOrMissingCaches);
+	void MergeInExternalActorsWithStaleOrMissingCaches(TMap<FName, TSet<FGuid>>& ExternalActorsWithStaleOrMissingCaches);
+
+	void LoadAndProcessUncachedPackages(TArray<FName>& OutPackagesWithStaleGatherCache);
+
+	void ReportStaleGatherCache(TArray<FName>& InPackagesWithStaleGatherCache) const;
+	/** Determines the loc cache state for a package. This determines whether the package should be fully loaded for gathering.*/
+	EPackageLocCacheState CalculatePackageLocCacheState(const FPackageFileSummary& PackageFileSummary, const FName PackageName, bool bIsExternalActorPackage) const;
 	/** Struct containing the data needed by a pending package that we will gather text from */
 	struct FPackagePendingGather
 	{
@@ -65,6 +98,9 @@ private:
 		TArray<FGatherableTextData> GatherableTextDataArray;
 	};
 
+	/** Adds a package to PackagesPendingGather and returns a pointer to the appended package.*/
+	FPackagePendingGather* AppendPackagePendingGather(const FName PackageNameToGather);
+
 	static const FString UsageText;
 
 	TArray<FString> ModulesToPreload;
@@ -85,11 +121,12 @@ private:
 
 	/** Array of objects that should be kept alive during the next call to CollectGarbage (used by PurgeGarbage and AddReferencedObjects) */
 	TSet<TObjectPtr<UObject>> ObjectsToKeepAlive;
-
+	/** Path to the directory where output reports etc will be saved.*/
+	FString DestinationPath;
 	bool bSkipGatherCache;
 	bool bReportStaleGatherCache;
 	bool bFixStaleGatherCache;
 	bool bFixMissingGatherCache;
-	bool ShouldGatherFromEditorOnlyData;
-	bool ShouldExcludeDerivedClasses;
+	bool bShouldGatherFromEditorOnlyData;
+	bool bShouldExcludeDerivedClasses;
 };

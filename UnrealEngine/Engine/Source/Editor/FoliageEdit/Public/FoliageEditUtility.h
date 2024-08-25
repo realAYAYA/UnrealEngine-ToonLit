@@ -20,7 +20,7 @@ class FFoliageEditUtility
 {
 public:
 	/** Save the foliage type object. If it isn't an asset, will prompt the user for a location to save the new asset. */
-	static FOLIAGEEDIT_API UFoliageType* SaveFoliageTypeObject(UFoliageType* Settings); 
+	static FOLIAGEEDIT_API UFoliageType* SaveFoliageTypeObject(UFoliageType* Settings, bool bPlaceholderAsset = false); 
 
 	/**
 	 * Copies the provided FoliageType to a new asset

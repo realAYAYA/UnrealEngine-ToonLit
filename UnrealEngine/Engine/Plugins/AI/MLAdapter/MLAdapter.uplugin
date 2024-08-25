@@ -35,10 +35,6 @@
 		{
 			"Name": "EnhancedInput",
 			"Enabled": true
-		},
-		{
-			"Name": "NNE",
-			"Enabled": true
 		}
 	]
 }

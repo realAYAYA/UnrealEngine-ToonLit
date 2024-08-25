@@ -9,9 +9,13 @@ namespace UnrealBuildTool.Rules
 			PublicDependencyModuleNames.AddRange(
 				new string[]
 				{
+					// Engine
 					"Core",
 					"CoreUObject",
 					"Engine",
+					
+					// Concert
+					"ConcertReplicationScripting",
 				}
 			);
 
@@ -24,29 +28,31 @@ namespace UnrealBuildTool.Rules
 					{
 						"Concert",
 						"ConcertClient",
-						"ConcertSyncCore"
+						"ConcertSyncCore",
+						"ConcertTransport",
+						"MultiUserClient"
 					}
 				);
 
 				PrivateIncludePathModuleNames.AddRange(
 					new string[]
 					{
+						"Concert",
 						"ConcertSyncCore",
-						"ConcertSyncClient",
-						"MultiUserClient",
-					}
-				);
-
-				DynamicallyLoadedModuleNames.AddRange(
-					new string[]
-					{
-						"MultiUserClient",
+						"ConcertSyncClient"
 					}
 				);
 			}
 			else
 			{
 				PrivateDefinitions.Add("WITH_CONCERT=0");
+				PrivateDependencyModuleNames.AddRange(
+					new string[]
+					{
+						"Concert",
+						"ConcertTransport"
+					}
+				);
 			}
 		}
 	}

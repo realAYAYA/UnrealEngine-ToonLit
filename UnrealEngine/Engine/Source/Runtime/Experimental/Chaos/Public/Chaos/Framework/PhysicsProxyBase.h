@@ -5,6 +5,7 @@
 #include "Chaos/Declares.h"
 #include "UObject/GCObject.h"
 #include "Chaos/Core.h"
+#include "HAL/IConsoleManager.h"
 
 enum class EPhysicsProxyType : uint32
 {
@@ -121,6 +122,38 @@ public:
 	IPhysicsProxyBase* GetParentProxy() const { return ParentProxy; }
 	void SetParentProxy(IPhysicsProxyBase* InProxy) { ParentProxy = InProxy; }
 
+	// Render Interpolation CVars
+	static float GetRenderInterpErrorCorrectionDuration()
+	{
+		static float RenderInterpErrorCorrectionDuration = 0.5f;
+		static FAutoConsoleVariableRef CVarRenderInterpErrorCorrectionDuration(TEXT("p.RenderInterp.ErrorCorrectionDuration"), RenderInterpErrorCorrectionDuration, TEXT("How long in seconds to apply error correction over."));
+		return RenderInterpErrorCorrectionDuration;
+	}
+	static float GetRenderInterpMaximumErrorCorrectionBeforeSnapping()
+	{
+		static float RenderInterpMaximumErrorCorrectionBeforeSnapping = 250.0f;
+		static FAutoConsoleVariableRef CVarRenderInterpErrorCorrectionMaximumError(TEXT("p.RenderInterp.MaximumErrorCorrectionBeforeSnapping"), RenderInterpMaximumErrorCorrectionBeforeSnapping, TEXT("Maximum error correction in cm before we stop interpolating and snap to target."));
+		return RenderInterpMaximumErrorCorrectionBeforeSnapping;
+	}
+	static float GetRenderInterpErrorVelocitySmoothingDuration()
+	{
+		static float RenderInterpErrorVelocitySmoothingDuration = 0.5f;
+		static FAutoConsoleVariableRef CVarRenderInterpErrorVelocitySmoothingDuration(TEXT("p.RenderInterp.ErrorVelocitySmoothingDuration"), RenderInterpErrorVelocitySmoothingDuration, TEXT("How long in seconds to apply error velocity smoothing correction over, should be smaller than or equal to p.RenderInterp.ErrorCorrectionDuration. RENDERINTERPOLATION_VELOCITYSMOOTHING needs to be defined."));
+		return RenderInterpErrorVelocitySmoothingDuration;
+	}
+	static bool GetRenderInterpDebugDraw()
+	{
+		static bool RenderInterpDebugDraw = false;
+		static FAutoConsoleVariableRef CVarRenderInterpDebugDraw(TEXT("p.RenderInterp.DebugDraw"), RenderInterpDebugDraw, TEXT("Draw debug lines for physics render interpolation, also needs p.Chaos.DebugDraw.Enabled set"));
+		return RenderInterpDebugDraw;
+	}
+	static float GetRenderInterpErrorDirectionalDecayMultiplier()
+	{
+		static float RenderInterpErrorDirectionalDecayMultiplier = 0.0f;
+		static FAutoConsoleVariableRef CVarRenderInterpErrorDirectionalDecayMultiplier(TEXT("p.RenderInterp.DirectionalDecayMultiplier"), RenderInterpErrorDirectionalDecayMultiplier, TEXT("Decay error offset in the direction that the physics object is moving, value is multiplier of projected offset direction, 0.25 means a 25% decay of the magnitude in the direction of physics travel. Deactivate by setting to 0."));
+		return RenderInterpErrorDirectionalDecayMultiplier;
+	}
+
 protected:
 	// Ensures that derived classes can successfully call this destructor
 	// but no one can delete using a IPhysicsProxyBase*
@@ -191,12 +224,21 @@ struct FProxyInterpolationError : FProxyInterpolationBase
 
 	void AccumlateErrorXR(const Chaos::FVec3 X, const FQuat R, const int32 CurrentSimTick, const int32 ErrorSmoothDuration)
 	{
-		ErrorX += X;
-		ErrorXPrev = ErrorX;
-		ErrorR *= R;
-		ErrorRPrev = ErrorR;
 		ErrorSmoothingCount = ErrorSmoothDuration; // How many simulation ticks to correct error over
 		LastSimTick = CurrentSimTick - 1; // Error is from the previous simulation tick, not the current
+		SimTicks = 0;
+
+		if (IsErrorSmoothing())
+		{
+			ErrorX += X;
+			ErrorXPrev = ErrorX;
+			ErrorR *= R;
+			ErrorRPrev = ErrorR;
+		}
+		else
+		{
+			Reset();
+		}
 	}
 
 	virtual bool UpdateError(const int32 CurrentSimTick, const Chaos::FReal AsyncFixedTimeStep)
@@ -205,18 +247,38 @@ struct FProxyInterpolationError : FProxyInterpolationBase
 		SimTicks = CurrentSimTick - LastSimTick;
 		LastSimTick = CurrentSimTick;
 
-		if (IsErrorSmoothing() && SimTicks > 0)
+		if (SimTicks > 0)
 		{
-			DecayError();
-			return true;
+			return DecayError();
 		}
 		return false;
 	}
 
+	virtual bool DirectionalDecay(Chaos::FVec3 Direction)
+	{
+		if (IsErrorSmoothing() && SimTicks > 0)
+		{
+			const Chaos::FVec3 DirectionNormal = Direction.GetSafeNormal();
+			Chaos::FRealDouble DotProd = Chaos::FVec3::DotProduct(DirectionNormal, ErrorX);
+			if (DotProd > 0.0f)
+			{
+				Chaos::FVec3 DirProjection = ErrorX.ProjectOnToNormal(DirectionNormal) * IPhysicsProxyBase::GetRenderInterpErrorDirectionalDecayMultiplier();
+				ErrorX -= DirProjection;
+				return true;
+			}
+		}
+		return false;
+	}
 
 protected:
-	void DecayError()
+	bool DecayError()
 	{
+		if (!IsErrorSmoothing())
+		{
+			Reset();
+			return false;
+		}
+
 		// Linear decay
 		// Example: If we want to decay an error of 100 over 10ticks (i.e. 10% each tick)
 		// First step:  9/10 = 0.9   |  100 * 0.9  = 90 error
@@ -233,8 +295,19 @@ protected:
 		ErrorR = FMath::Lerp(FQuat::Identity, ErrorR, Alpha);
 
 		ErrorSmoothingCount = FMath::Max(ErrorSmoothingCount - SimTicks, 0);
+		return true;
 	}
 
+	void Reset()
+	{
+		ErrorX = Chaos::FVec3::ZeroVector;
+		ErrorXPrev = Chaos::FVec3::ZeroVector;
+		ErrorR = FQuat::Identity;
+		ErrorRPrev = FQuat::Identity;
+		ErrorSmoothingCount = 0;
+		LastSimTick = 0;
+		SimTicks = 0;
+	}
 
 protected:
 	int32 LastSimTick = 0;

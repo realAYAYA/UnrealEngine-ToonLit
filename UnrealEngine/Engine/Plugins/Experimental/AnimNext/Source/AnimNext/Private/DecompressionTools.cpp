@@ -51,9 +51,9 @@ static bool CanEvaluateRawAnimationData(const UAnimSequence* AnimSequence)
 {
 #if WITH_EDITOR
 	return AnimSequence->IsDataModelValid();
-#endif
-
+#else
 	return false;
+#endif
 }
 
 static bool UseRawDataForPoseExtraction(const UAnimSequence* AnimSequence, FLODPose& AnimationPoseData)
@@ -127,7 +127,7 @@ void FDecompressionTools::GetBonePose(const UAnimSequence* AnimSequence, const F
 	SCOPE_CYCLE_COUNTER(STAT_AnimSeq_GetBonePose);
 	CSV_SCOPED_TIMING_STAT(Animation, AnimSeq_GetBonePose);
 
-	const TArrayView<const FBoneIndexType> LODBoneIndexes = OutAnimationPoseData.GetLODBoneIndexes();
+	const TArrayView<const FBoneIndexType> LODBoneIndexToSkeletonBoneIndexMap = OutAnimationPoseData.GetLODBoneIndexToSkeletonBoneIndexMap();
 
 	check(!bForceUseRawData || CanEvaluateRawAnimationData(AnimSequence));
 	const bool bUseRawDataForPoseExtraction = (CanEvaluateRawAnimationData(AnimSequence) && bForceUseRawData) ||
@@ -158,19 +158,19 @@ void FDecompressionTools::GetBonePose(const UAnimSequence* AnimSequence, const F
 		// if retargeting is disabled, we initialize pose with 'Retargeting Source' ref pose.
 		if (bDisableRetargeting)
 		{
-			TArray<FTransform> const& AuthoredOnRefSkeleton = AnimSequence->GetRetargetTransforms();
+			const TArray<FTransform>& AuthoredOnRefSkeleton = AnimSequence->GetRetargetTransforms();
 
-			const int32 NumBones = LODBoneIndexes.Num();
-			const int32 NumRawBones = AnimSequence->GetSkeleton()->GetReferenceSkeleton().GetRawBoneNum();
+			const int32 NumLODBones = LODBoneIndexToSkeletonBoneIndexMap.Num();
+			const int32 NumRawSkeletonBones = AnimSequence->GetSkeleton()->GetReferenceSkeleton().GetRawBoneNum();
 
-			for (int i = 0; i < NumBones; i++)
+			for (int LODBoneIndex = 0; LODBoneIndex < NumLODBones; LODBoneIndex++)
 			{
-				const int32 SkeletonBoneIndex = LODBoneIndexes[i];
+				const int32 SkeletonBoneIndex = LODBoneIndexToSkeletonBoneIndexMap[LODBoneIndex];
 
 				// Virtual bones are part of the retarget transform pose, so if the pose has not been updated (recently) there might be a mismatch
-				if (SkeletonBoneIndex < NumRawBones || AuthoredOnRefSkeleton.IsValidIndex(SkeletonBoneIndex))
+				if (SkeletonBoneIndex < NumRawSkeletonBones || AuthoredOnRefSkeleton.IsValidIndex(SkeletonBoneIndex))
 				{
-					OutAnimationPoseData.LocalTransforms[i] = AuthoredOnRefSkeleton[SkeletonBoneIndex];
+					OutAnimationPoseData.LocalTransformsView[LODBoneIndex] = AuthoredOnRefSkeleton[SkeletonBoneIndex];
 				}
 			}
 		}
@@ -222,7 +222,8 @@ void FDecompressionTools::GetBonePose(const UAnimSequence* AnimSequence, const F
 				, AnimSequence->GetSkeleton()->GetRefLocalPoses()
 				, AnimSequence->CompressedData.CompressedTrackToSkeletonMapTable
 				, AnimSequence->GetSkeleton()
-				, AnimSequence->IsValidAdditive());
+				, AnimSequence->IsValidAdditive()
+				, AnimSequence->GetAdditiveAnimType());
 
 			DecompressPose(OutAnimationPoseData, AnimSequence->CompressedData, ExtractionContext, DecompContext, AnimSequence->GetRetargetTransforms(), RootMotionReset);
 		}
@@ -276,12 +277,11 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 										const FRootMotionReset& RootMotionReset)
 {
 	const FReferencePose& ReferencePose = OutAnimationPoseData.GetRefPose();
-	const TArrayView<const FBoneIndexType>LODBoneIndexes = OutAnimationPoseData.GetLODBoneIndexes();
-	const TArrayView<const FBoneIndexType> SkeletoonToLODBoneIndexes = ReferencePose.GetSkeletonToLODBoneIndexes(0); // Full list of Skeleton to LOD conversion
-	const int32 NumLODBoneIndexes = LODBoneIndexes.Num();
+	const TArrayView<const FBoneIndexType> LODBoneIndexToSkeletonBoneIndexMap = OutAnimationPoseData.GetLODBoneIndexToMeshBoneIndexMap();
+	const TArrayView<const FBoneIndexType> SkeletonToLODBoneIndexes = ReferencePose.GetSkeletonBoneIndexToLODBoneIndexMap(0); // Full list of Skeleton to LOD conversion
+	const int32 NumLODBoneIndexes = LODBoneIndexToSkeletonBoneIndexMap.Num();
 
 	const int32 NumTracks = CompressedData.CompressedTrackToSkeletonMapTable.Num();
-
 
 	const USkeleton* TargetSkeleton = OutAnimationPoseData.GetSkeletonAsset();
 	const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry::Get().GetRemapping(DecompressionContext.GetSourceSkeleton(), TargetSkeleton);
@@ -300,7 +300,7 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 	OrientAndScaleRetargetingPairs.Reset();
 
 	// Optimization: assuming first index is root bone. That should always be the case in Skeletons.
-	checkSlow((LODBoneIndexes[0] == FMeshPoseBoneIndex(0).GetInt()));
+	checkSlow((LODBoneIndexToSkeletonBoneIndexMap[0] == FMeshPoseBoneIndex(0).GetInt()));
 	// this is not guaranteed for AnimSequences though... If Root is not animated, Track will not exist.
 	const bool bFirstTrackIsRootBone = (CompressedData.GetSkeletonIndexFromTrackIndex(0) == 0);
 
@@ -315,7 +315,7 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 
 			if (TargetSkeletonBoneIndex != INDEX_NONE)
 			{
-				const int32 LODBoneIndex = TargetSkeletonBoneIndex < SkeletoonToLODBoneIndexes.Num() ? SkeletoonToLODBoneIndexes[TargetSkeletonBoneIndex] : INDEX_NONE;
+				const int32 LODBoneIndex = TargetSkeletonBoneIndex < SkeletonToLODBoneIndexes.Num() ? SkeletonToLODBoneIndexes[TargetSkeletonBoneIndex] : INDEX_NONE;
 
 				if (LODBoneIndex != INDEX_NONE && LODBoneIndex < NumLODBoneIndexes) // skip bones not in current LOD
 				{
@@ -368,25 +368,18 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 		{
 			const int32 TrackIndex = 0;
 			const int32 LODRootBone = 0;
-			FTransform RootAtom = OutAnimationPoseData.LocalTransforms[0];
+			FTransform RootAtom = OutAnimationPoseData.LocalTransformsView[0];
 
 			CompressedData.BoneCompressionCodec->DecompressBone(DecompressionContext, TrackIndex, RootAtom);
 
 			// Retarget the root onto the target skeleton (correcting for differences in rest poses)
 			if (SkeletonRemapping.RequiresReferencePoseRetarget())
 			{
-				const int32 TargetSkeletonBoneIndex = 0;
+				// Root bone does not require fix-up for additive animations as there is no parent delta rotation to account for
+				if (!DecompressionContext.IsAdditiveAnimation())
+				{
+					const int32 TargetSkeletonBoneIndex = 0;
 
-				if (DecompressionContext.IsAdditiveAnimation())
-				{
-					RootAtom.SetRotation(SkeletonRemapping.RetargetAdditiveRotationToTargetSkeleton(TargetSkeletonBoneIndex, RootAtom.GetRotation()));
-					if (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, OutAnimationPoseData.GetDisableRetargeting()) != EBoneTranslationRetargetingMode::Skeleton)
-					{
-						RootAtom.SetTranslation(SkeletonRemapping.RetargetAdditiveTranslationToTargetSkeleton(TargetSkeletonBoneIndex, RootAtom.GetTranslation()));
-					}
-				}
-				else
-				{
 					RootAtom.SetRotation(SkeletonRemapping.RetargetBoneRotationToTargetSkeleton(TargetSkeletonBoneIndex, RootAtom.GetRotation()));
 					if (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, OutAnimationPoseData.GetDisableRetargeting()) != EBoneTranslationRetargetingMode::Skeleton)
 					{
@@ -407,14 +400,14 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 				, DecompressionContext.IsAdditiveAnimation()
 				, OutAnimationPoseData.GetDisableRetargeting());
 
-			OutAnimationPoseData.LocalTransforms[0] = RootAtom;
+			OutAnimationPoseData.LocalTransformsView[0] = RootAtom;
 		}
 
 		if (RotationScalePairs.Num() > 0)
 		{
 #if DEFAULT_SOA
 			// get the remaining bone atoms
-			CompressedData.BoneCompressionCodec->DecompressPose(DecompressionContext, UE::Anim::FAnimPoseDecompressionData(RotationScalePairs, TranslationPairs, RotationScalePairs, OutAnimationPoseData.LocalTransforms.Rotations, OutAnimationPoseData.LocalTransforms.Translations, OutAnimationPoseData.LocalTransforms.Scales3D));
+			CompressedData.BoneCompressionCodec->DecompressPose(DecompressionContext, UE::Anim::FAnimPoseDecompressionData(RotationScalePairs, TranslationPairs, RotationScalePairs, OutAnimationPoseData.LocalTransformsView.Rotations, OutAnimationPoseData.LocalTransformsView.Translations, OutAnimationPoseData.LocalTransformsView.Scales3D));
 #else
 			// get the remaining bone atoms
 			TArrayView<FTransform> OutPoseBones = OutAnimationPoseData.LocalTransforms.Transforms;
@@ -430,13 +423,19 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 
 		if (DecompressionContext.IsAdditiveAnimation())
 		{
-			for (int32 LODBoneIndex = bFirstTrackIsRootBone ? 1 : 0; LODBoneIndex < LODNumBones; ++LODBoneIndex)
+			for (int32 LODBoneIndex = (bFirstTrackIsRootBone ? 1 : 0); LODBoneIndex < LODNumBones; ++LODBoneIndex)
 			{
 				const int32 TargetSkeletonBoneIndex = ReferencePose.GetSkeletonBoneIndexFromLODBoneIndex(LODBoneIndex);
-				OutAnimationPoseData.LocalTransforms[LODBoneIndex].SetRotation(SkeletonRemapping.RetargetAdditiveRotationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransforms[LODBoneIndex].GetRotation()));
+
+				// Mesh space additives do not require fix-up
+				if (DecompressionContext.GetAdditiveType() == AAT_LocalSpaceBase)
+				{
+					OutAnimationPoseData.LocalTransformsView[LODBoneIndex].SetRotation(SkeletonRemapping.RetargetAdditiveRotationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransformsView[LODBoneIndex].GetRotation()));
+				}
+
 				if (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, OutAnimationPoseData.GetDisableRetargeting()) != EBoneTranslationRetargetingMode::Skeleton)
 				{
-					OutAnimationPoseData.LocalTransforms[LODBoneIndex].SetTranslation(SkeletonRemapping.RetargetAdditiveTranslationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransforms[LODBoneIndex].GetTranslation()));
+					OutAnimationPoseData.LocalTransformsView[LODBoneIndex].SetTranslation(SkeletonRemapping.RetargetAdditiveTranslationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransformsView[LODBoneIndex].GetTranslation()));
 				}
 			}
 		}
@@ -444,11 +443,11 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 		{
 			for (int32 LODBoneIndex = (bFirstTrackIsRootBone ? 1 : 0); LODBoneIndex < LODNumBones; ++LODBoneIndex)
 			{
-				const int32 TargetSkeletonBoneIndex = LODBoneIndexes[LODBoneIndex]; // ReferencePose.GetSkeletonBoneIndexFromLODBoneIndex(LODBoneIndex);
-				OutAnimationPoseData.LocalTransforms[LODBoneIndex].SetRotation(SkeletonRemapping.RetargetBoneRotationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransforms[LODBoneIndex].GetRotation()));
+				const int32 TargetSkeletonBoneIndex = LODBoneIndexToSkeletonBoneIndexMap[LODBoneIndex]; // ReferencePose.GetSkeletonBoneIndexFromLODBoneIndex(LODBoneIndex);
+				OutAnimationPoseData.LocalTransformsView[LODBoneIndex].SetRotation(SkeletonRemapping.RetargetBoneRotationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransformsView[LODBoneIndex].GetRotation()));
 				if (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, OutAnimationPoseData.GetDisableRetargeting()) != EBoneTranslationRetargetingMode::Skeleton)
 				{
-					OutAnimationPoseData.LocalTransforms[LODBoneIndex].SetTranslation(SkeletonRemapping.RetargetBoneTranslationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransforms[LODBoneIndex].GetTranslation()));
+					OutAnimationPoseData.LocalTransformsView[LODBoneIndex].SetTranslation(SkeletonRemapping.RetargetBoneTranslationToTargetSkeleton(TargetSkeletonBoneIndex, OutAnimationPoseData.LocalTransformsView[LODBoneIndex].GetTranslation()));
 				}
 			}
 		}
@@ -457,7 +456,9 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 	// Once pose has been extracted, snap root bone back to first frame if we are extracting root motion.
 	if ((ExtractionContext.bExtractRootMotion && RootMotionReset.bEnableRootMotion) || RootMotionReset.bForceRootLock)
 	{
-		//RootMotionReset.ResetRootBoneForRootMotion(OutAnimationPoseData.LocalTransforms[FCompactPoseBoneIndex(0)], RequiredBones);
+		FTransform RootTransform = OutAnimationPoseData.LocalTransformsView[0];
+		RootMotionReset.ResetRootBoneForRootMotion(RootTransform, ReferencePose.GetRefPoseTransform(0));
+		OutAnimationPoseData.LocalTransformsView[0] = RootTransform;
 	}
 
 	// Anim Scale Retargeting
@@ -476,7 +477,7 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 			if (SourceTranslationLength > UE_KINDA_SMALL_NUMBER)
 			{
 				float const TargetTranslationLength = ReferencePose.GetRefPoseTranslation(LODBoneIndex).Size();
-				OutAnimationPoseData.LocalTransforms[LODBoneIndex].ScaleTranslation(TargetTranslationLength / SourceTranslationLength);
+				OutAnimationPoseData.LocalTransformsView[LODBoneIndex].ScaleTranslation(TargetTranslationLength / SourceTranslationLength);
 			}
 		}
 	}
@@ -503,10 +504,10 @@ void FDecompressionTools::DecompressPose(FLODPose& OutAnimationPoseData,
 			}
 
 			// Apply the retargeting as if it were an additive difference between the current skeleton and the retarget skeleton. 
-			OutAnimationPoseData.LocalTransforms[LODBoneIndex].SetRotation(OutAnimationPoseData.LocalTransforms[LODBoneIndex].GetRotation() * BaseTransform.GetRotation().Inverse() * RefPoseTransform.GetRotation());
-			OutAnimationPoseData.LocalTransforms[LODBoneIndex].SetTranslation(OutAnimationPoseData.LocalTransforms[LODBoneIndex].GetTranslation() + (RefPoseTransform.GetTranslation() - BaseTransform.GetTranslation()));
-			OutAnimationPoseData.LocalTransforms[LODBoneIndex].SetScale3D(OutAnimationPoseData.LocalTransforms[LODBoneIndex].GetScale3D() * (RefPoseTransform.GetScale3D() * BaseTransform.GetSafeScaleReciprocal(BaseTransform.GetScale3D())));
-			OutAnimationPoseData.LocalTransforms[LODBoneIndex].NormalizeRotation();
+			OutAnimationPoseData.LocalTransformsView[LODBoneIndex].SetRotation(OutAnimationPoseData.LocalTransformsView[LODBoneIndex].GetRotation() * BaseTransform.GetRotation().Inverse() * RefPoseTransform.GetRotation());
+			OutAnimationPoseData.LocalTransformsView[LODBoneIndex].SetTranslation(OutAnimationPoseData.LocalTransformsView[LODBoneIndex].GetTranslation() + (RefPoseTransform.GetTranslation() - BaseTransform.GetTranslation()));
+			OutAnimationPoseData.LocalTransformsView[LODBoneIndex].SetScale3D(OutAnimationPoseData.LocalTransformsView[LODBoneIndex].GetScale3D() * (RefPoseTransform.GetScale3D() * BaseTransform.GetSafeScaleReciprocal(BaseTransform.GetScale3D())));
+			OutAnimationPoseData.LocalTransformsView[LODBoneIndex].NormalizeRotation();
 		}
 	}
 

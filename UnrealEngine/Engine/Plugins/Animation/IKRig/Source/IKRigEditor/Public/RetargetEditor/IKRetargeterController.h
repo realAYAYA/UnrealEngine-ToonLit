@@ -4,6 +4,9 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 
+#include "RetargetEditor/IKRetargeterPoseGenerator.h"
+#include "Retargeter/IKRetargeter.h"
+
 #include "IKRetargeterController.generated.h"
 
 struct FRetargetGlobalSettings;
@@ -11,6 +14,7 @@ struct FTargetRootSettings;
 struct FTargetChainSettings;
 struct FIKRetargetPose;
 enum class ERetargetSourceOrTarget : uint8;
+enum class ERetargetAutoAlignMethod : uint8;
 class FIKRetargetEditorController;
 class URetargetChainSettings;
 class UIKRigDefinition;
@@ -33,6 +37,9 @@ class IKRIGEDITOR_API UIKRetargeterController : public UObject
 	GENERATED_BODY()
 
 public:
+
+	// UObject
+	virtual void PostInitProperties() override;
 	
 	// Get access to the retargeter asset.
 	// Warning: Do not make modifications to the asset directly. Use this API instead. 
@@ -97,6 +104,46 @@ public:
 	// Set the settings for the target chain by name. Returns true if the chain settings were applied, false otherwise.
 	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category=IKRetargeter, meta = (BlueprintThreadSafe))
 	bool SetRetargetChainSettings(const FName& TargetChainName, const FTargetChainSettings& Settings) const;
+
+	//
+	// RETARGET OPS PUBLIC/SCRIPTING API
+	//
+	
+	// Add a new retarget op of the given type to the bottom of the stack. Returns the stack index.
+	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category=RetargetOps)
+	int32 AddRetargetOp(TSubclassOf<URetargetOpBase> InOpClass) const;
+
+	// Remove the retarget op at the given stack index. 
+	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category=RetargetOps)
+	bool RemoveRetargetOp(const int32 OpIndex) const;
+
+	// Remove all ops in the stack.
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	bool RemoveAllOps() const;
+
+	// Get access to the given retarget operation. 
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	URetargetOpBase* GetRetargetOpAtIndex(int32 Index) const;
+
+	// Get access to the given retarget operation. 
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	int32 GetIndexOfRetargetOp(URetargetOpBase* RetargetOp) const;
+
+	// Get the number of Ops in the stack.
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	int32 GetNumRetargetOps() const;
+
+	// Move the retarget op at the given index to the target index. 
+	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category=RetargetOps)
+	bool MoveRetargetOpInStack(int32 OpToMoveIndex, int32 TargetIndex) const;
+
+	// Set enabled/disabled status of the given retarget operation. 
+	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category=RetargetOps)
+	bool SetRetargetOpEnabled(int32 RetargetOpIndex, bool bIsEnabled) const;
+
+	// Get enabled status of the given Op. 
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	bool GetRetargetOpEnabled(int32 RetargetOpIndex) const;
 
 	//
 	// GENERAL C++ ONLY API
@@ -239,6 +286,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category=IKRetargeter, meta = (BlueprintThreadSafe))
 	FVector GetRootOffsetInRetargetPose(const ERetargetSourceOrTarget SourceOrTarget) const;
 
+	// Automatically align all bones in mapped chains and store in the current retarget pose.
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	void AutoAlignAllBones(ERetargetSourceOrTarget SourceOrTarget) const;
+
+	// Automatically align an array of bones and store in the current retarget pose. Bones not in a mapped chain will be ignored.
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	void AutoAlignBones(const TArray<FName>& BonesToAlign, const ERetargetAutoAlignMethod Method, ERetargetSourceOrTarget SourceOrTarget) const;
+
+	// Moves the entire skeleton vertically until the specified bone is the same height off the ground as in the reference pose.
+	UFUNCTION(BlueprintCallable, Category=RetargetOps)
+	void SnapBoneToGround(FName ReferenceBone, ERetargetSourceOrTarget SourceOrTarget);
+
 	//
 	// RETARGET POSE C++ ONLY API
 	//
@@ -284,8 +343,14 @@ private:
 		RetargeterNeedsInitialized.Broadcast();
 	}
 
+	// auto pose generator
+	TUniquePtr<FRetargetAutoPoseGenerator> AutoPoseGenerator;
+
 	// only allow modifications to data model from one thread at a time
 	mutable FCriticalSection ControllerLock;
+
+	// prevent reinitializing from inner operations
+	mutable int32 ReinitializeScopeCounter = 0;
 	
 public:
 
@@ -299,4 +364,25 @@ public:
 	FOnRetargeterNeedsInitialized& OnRetargeterNeedsInitialized(){ return RetargeterNeedsInitialized; };
 	
 	friend class UIKRetargeter;
+	friend struct FScopedReinitializeIKRetargeter;
 };
+
+struct FScopedReinitializeIKRetargeter
+{
+	FScopedReinitializeIKRetargeter(const UIKRetargeterController *InController)
+	{
+		InController->ReinitializeScopeCounter++;
+		Controller = InController;
+	}
+	~FScopedReinitializeIKRetargeter()
+	{
+		if (--Controller->ReinitializeScopeCounter == 0)
+		{
+			Controller->GetAsset()->IncrementVersion();
+			Controller->BroadcastNeedsReinitialized();
+		}
+	};
+
+	const UIKRetargeterController* Controller;
+};
+

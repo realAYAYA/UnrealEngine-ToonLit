@@ -330,7 +330,7 @@ public:
 	{
 		TSharedPtr<IInstanceProvider> Provider = MakeShareable(
 			new TFunctionInstanceProvider<R>(
-				[=]() -> TSharedPtr<void, Mode> {
+				[=, this]() -> TSharedPtr<void, Mode> {
 					return CreateFunc(GetInstance<P0>(), GetInstance<P>()...);
 				}
 			)

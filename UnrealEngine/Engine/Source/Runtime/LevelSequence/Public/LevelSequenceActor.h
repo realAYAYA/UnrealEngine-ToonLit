@@ -14,10 +14,6 @@
 #include "LevelSequenceCameraSettings.h"
 #include "WorldPartition/IWorldPartitionObjectResolver.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-	#include "LevelSequencePlayer.h"
-#endif
-
 #include "LevelSequenceActor.generated.h"
 
 class ULevelSequenceBurnIn;
@@ -87,7 +83,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Playback", meta=(ShowOnlyInnerProperties, ExposeOnSpawn))
 	FMovieSceneSequencePlaybackSettings PlaybackSettings;
 
-	UPROPERTY(Instanced, transient, replicated, BlueprintReadOnly, BlueprintGetter=GetSequencePlayer, Category="Playback", meta=(ExposeFunctionCategories="Sequencer|Player"))
+	UE_DEPRECATED(5.4, "Direct access to SequencePlayer will be removed. Please use GetSequencePlayer()")
+	UPROPERTY(Instanced, transient, replicated, BlueprintReadOnly, BlueprintGetter = GetSequencePlayer, Category = "Playback", meta = (ExposeFunctionCategories = "Sequencer|Player"))
 	TObjectPtr<ULevelSequencePlayer> SequencePlayer;
 
 	UPROPERTY(EditAnywhere, replicated, BlueprintReadOnly, Category="General", meta=(AllowedClasses="/Script/LevelSequence.LevelSequence", ExposeOnSpawn))
@@ -265,7 +262,6 @@ protected:
 	//~ End IMovieScenePlaybackClient interface
 
 	//~ Begin UObject interface
-	LEVELSEQUENCE_API virtual bool ReplicateSubobjects(UActorChannel* Channel, FOutBunch* Bunch, FReplicationFlags *RepFlags) override;
 	LEVELSEQUENCE_API virtual void PostInitProperties() override;
 	LEVELSEQUENCE_API virtual void PostLoad() override;
 public:
@@ -277,6 +273,7 @@ protected:
 	//~ End UObject interface
 
 	//~ Begin AActor interface
+	LEVELSEQUENCE_API virtual void PreInitializeComponents() override;
 	LEVELSEQUENCE_API virtual void PostInitializeComponents() override;
 	LEVELSEQUENCE_API virtual void BeginPlay() override;
 	LEVELSEQUENCE_API virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -288,6 +285,7 @@ protected:
 	//~ End AActor interface
 
 public:
+
 	const FWorldPartitionResolveData& GetWorldPartitionResolveData() const
 	{
 		return WorldPartitionResolveData;

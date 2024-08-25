@@ -11,9 +11,12 @@
 
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/Operations/MergeCoincidentMeshEdges.h"
+#include "DynamicMesh/MeshNormals.h"
 #include "DynamicMesh/MeshTransforms.h"
 #include "DynamicMesh/DynamicMeshAABBTree3.h"
 #include "Spatial/FastWinding.h"
+#include "Spatial/SparseDynamicOctree3.h"
+#include "Implicit/Morphology.h"
 
 #include "Async/ParallelFor.h"
 
@@ -22,13 +25,162 @@ namespace UE
 namespace Geometry
 {
 
-bool FSphereCovering::AddNegativeSpace(const TFastWindingTree<FDynamicMesh3>& Spatial, const FNegativeSpaceSampleSettings& SampleSettings)
+bool FConvexDecomposition3::ConvexPartVsSphereOverlap(const FConvexDecomposition3::FConvexPart& Part, FVector3d Center, double Radius, const FTransform* TransformIntoSphereSpace, double* OutDistanceSq)
+{
+	if (OutDistanceSq)
+	{
+		*OutDistanceSq = 0;
+	}
+	bool bMustTransformConvex = false;
+	if (TransformIntoSphereSpace)
+	{
+		FVector ScaleVec = TransformIntoSphereSpace->GetScale3D();
+		// Uniform scale: Can transform into sphere into part space
+		if (ScaleVec.AllComponentsEqual())
+		{
+			if (ScaleVec.X == 0)
+			{
+				return false;
+			}
+			Radius = FMath::Abs(Radius / ScaleVec.X);
+			Center = TransformIntoSphereSpace->InverseTransformPosition(Center);
+		}
+		else // Non-uniform scale: Must transform convex into sphere space
+		{
+			bMustTransformConvex = true;
+		}
+	}
+
+	// Quick test vs FConvexPart's bounding box here for an early out
+	if (!OutDistanceSq)
+	{
+		double BoundsOverlapDist = (Part.Bounds.DiagonalLength() * .5) + Radius;
+		if (FVector3d::DistSquared(Part.Bounds.Center(), Center) > BoundsOverlapDist * BoundsOverlapDist)
+		{
+			return false;
+		}
+	}
+
+	auto GetTriDistanceSq = [&Part, bMustTransformConvex, Center, TransformIntoSphereSpace](int32 PlaneIdx)
+	{
+		FIndex3i TriInds = Part.HullTriangles[PlaneIdx];
+		FTriangle3d Tri(Part.InternalGeo.GetVertex(TriInds.A), Part.InternalGeo.GetVertex(TriInds.B), Part.InternalGeo.GetVertex(TriInds.C));
+		if (bMustTransformConvex)
+		{
+			Tri.V[0] = TransformIntoSphereSpace->TransformPosition(Tri.V[0]);
+			Tri.V[1] = TransformIntoSphereSpace->TransformPosition(Tri.V[1]);
+			Tri.V[2] = TransformIntoSphereSpace->TransformPosition(Tri.V[2]);
+		}
+		FDistPoint3Triangle3d Dist(Center, Tri);
+		return Dist.GetSquared();
+	};
+
+	double ClosestRadiusSq = Radius * Radius;
+	double MaxPlaneDist = 0;
+	bool bFoundDistSq = false;
+	for (int32 PlaneIdx = 0; PlaneIdx < Part.HullPlanes.Num(); ++PlaneIdx)
+	{
+		FPlane3d Plane = Part.HullPlanes[PlaneIdx];
+		if (Plane.Normal == FVector::ZeroVector)
+		{
+			// for degenerate tri, don't consider the plane distance but still test if we're close to the tri
+			double TriDistSq = GetTriDistanceSq(PlaneIdx);
+			if (TriDistSq < ClosestRadiusSq)
+			{
+				if (OutDistanceSq)
+				{
+					ClosestRadiusSq = TriDistSq;
+					bFoundDistSq = true;
+				}
+				else
+				{
+					return true;
+				}
+			}
+
+			continue;
+		}
+		if (bMustTransformConvex)
+		{
+			Plane.Transform(*TransformIntoSphereSpace);
+		}
+		double PlaneDist = Plane.DistanceTo(Center);
+		MaxPlaneDist = FMath::Max(MaxPlaneDist, PlaneDist);
+		if (PlaneDist > Radius) // can quick-reject based on plane distance
+		{
+			return false;
+		}
+		else if (Radius > 0 && PlaneDist > FMath::Max(0, MaxPlaneDist - FMathd::ZeroTolerance)) // use a heuristic to only test the most-likely culprit plane
+		{
+			double TriDistSq = GetTriDistanceSq(PlaneIdx);
+			if (TriDistSq < ClosestRadiusSq)
+			{
+				if (OutDistanceSq)
+				{
+					ClosestRadiusSq = TriDistSq;
+					bFoundDistSq = true;
+				}
+				else
+				{
+					return true;
+				}
+			}
+		}
+	}
+	if (MaxPlaneDist > 0) // if we're outside the hull, but didn't accept or reject yet, do one more pass w/ the "most-likely culprit" heuristic flipped
+	{
+		double LocalMaxPlaneDist = 0;
+		for (int32 PlaneIdx = 0; PlaneIdx < Part.HullPlanes.Num(); ++PlaneIdx)
+		{
+			FPlane3d Plane = Part.HullPlanes[PlaneIdx];
+			if (Plane.Normal == FVector3d::ZeroVector)
+			{
+				continue;
+			}
+			
+			if (bMustTransformConvex)
+			{
+				Plane.Transform(*TransformIntoSphereSpace);
+			}
+			double PlaneDist = Plane.DistanceTo(Center);
+			LocalMaxPlaneDist = FMath::Max(LocalMaxPlaneDist, PlaneDist);
+			// Note: We don't test for negative plane distances, etc, since the first pass, above, would have caught those
+			if (PlaneDist <= FMath::Max(0, LocalMaxPlaneDist - FMathd::ZeroTolerance)) // cases the heuristic skipped in the first pass
+			{
+				double TriDistSq = GetTriDistanceSq(PlaneIdx);
+				if (TriDistSq < ClosestRadiusSq)
+				{
+					if (OutDistanceSq)
+					{
+						ClosestRadiusSq = TriDistSq;
+						bFoundDistSq = true;
+					}
+					else
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+	if (OutDistanceSq && bFoundDistSq)
+	{
+		*OutDistanceSq = ClosestRadiusSq;
+		return true;
+	}
+	checkSlow(!OutDistanceSq || *OutDistanceSq == 0); // If we reach here distance should still be zero (as set by default)
+	return (MaxPlaneDist <= 0);
+}
+
+bool FSphereCovering::AddNegativeSpace(const TFastWindingTree<FDynamicMesh3>& Spatial, const FNegativeSpaceSampleSettings& SampleSettings, bool bHasFlippedTriangles)
 {
 	bool bAddedPoints = false;
 
 	check(Spatial.IsBuilt());
 
 	FAxisAlignedBox3d Bounds = Spatial.GetTree()->GetBoundingBox();
+
+	double WindingSign = bHasFlippedTriangles ? -1 : 1;
 
 	if (SampleSettings.SampleMethod == FNegativeSpaceSampleSettings::ESampleMethod::Uniform)
 	{
@@ -61,13 +213,19 @@ bool FSphereCovering::AddNegativeSpace(const TFastWindingTree<FDynamicMesh3>& Sp
 				{
 					double ZPos = Bounds.Min.Z + StepSizes.Z * (.5 + Z);
 					FVector3d Pos(XPos, YPos, ZPos);
-					double Winding = Spatial.FastWindingNumber(Pos);
-					if (Winding < -.5)
+					double Winding = Spatial.FastWindingNumber(Pos) * WindingSign;
+					if (Winding > .5)
 					{
 						continue;
 					}
 					double NearDistSq;
 					int NearTID = Spatial.GetTree()->FindNearestTriangle(Pos, NearDistSq);
+					double NearDist = FMath::Sqrt(NearDistSq);
+					if (SampleSettings.OptionalObstacleSDF)
+					{
+						double ObstacleSD = SampleSettings.ObstacleDistance(Pos);
+						NearDist = FMath::Min(ObstacleSD, NearDist);
+					}
 					double R = FMath::Sqrt(NearDistSq) - SampleSettings.ReduceRadiusMargin;
 					if (R < SampleSettings.MinRadius)
 					{
@@ -78,6 +236,382 @@ bool FSphereCovering::AddNegativeSpace(const TFastWindingTree<FDynamicMesh3>& Sp
 					Position.Add(Pos);
 					Radius.Add(R);
 				}
+			}
+		}
+	}
+	else if (SampleSettings.SampleMethod == FNegativeSpaceSampleSettings::ESampleMethod::VoxelSearch || SampleSettings.SampleMethod == FNegativeSpaceSampleSettings::ESampleMethod::NavigableVoxelSearch)
+	{
+		const FDynamicMesh3* Mesh = Spatial.GetTree()->GetMesh();
+
+		// Make a convex hull of the input surface as the domain to search
+		FConvexHull3d MeshHull;
+		MeshHull.Solve(Mesh->MaxVertexID(), [&](int32 VID) {return Mesh->GetVertex(VID);}, [&](int32 VID) {return Mesh->IsVertex(VID);});
+
+		// Make a light wrapper to pass the convex hull to our AABB Tree and Fast Winding classes
+		struct FHullMeshWrapper
+		{
+			const FDynamicMesh3* SourceMesh;
+			const FConvexHull3d* Hull;
+			inline int32 MaxVertexID() const
+			{
+				return SourceMesh->MaxVertexID();
+			}
+			inline bool IsVertex(int32 VID) const
+			{
+				return SourceMesh->IsVertex(VID);
+			}
+			inline FVector3d GetVertex(int32 VID) const
+			{
+				return SourceMesh->GetVertex(VID);
+			}
+			inline void GetTriVertices(int32 TID, FVector3d& V0, FVector3d& V1, FVector3d& V2) const
+			{
+				FIndex3i Tri = GetTriangle(TID);
+				V0 = GetVertex(Tri.A);
+				V1 = GetVertex(Tri.B);
+				V2 = GetVertex(Tri.C);
+			}
+			inline int32 GetChangeStamp() const
+			{
+				return 0;
+			}
+			inline int32 MaxTriangleID() const
+			{
+				return Hull->GetTriangles().Num();
+			}
+			inline int32 TriangleCount() const
+			{
+				return MaxTriangleID();
+			}
+			inline bool IsTriangle(int32 TID) const
+			{
+				return true;
+			}
+			inline FIndex3i GetTriangle(int32 TID) const
+			{
+				return Hull->GetTriangles()[TID];
+			}
+		};
+		FHullMeshWrapper HullMeshWrap{ Mesh, &MeshHull };
+		TMeshAABBTree3<FHullMeshWrapper> HullAABB(&HullMeshWrap, true);
+		TFastWindingTree<FHullMeshWrapper> HullWinding(&HullAABB, true);
+
+		// Compute the empty space inside the convex hull as (Convex Hull - Original Mesh)
+		FAxisAlignedBox3d HullBox = HullAABB.GetBoundingBox();
+		HullBox.Expand(SampleSettings.VoxelExpandBoundsFactor * SampleSettings.GetAppliedScaleFactor());
+		FMarchingCubes MarchingCubes;
+		const double TargetCubeSize = SampleSettings.ReduceRadiusMargin * SampleSettings.MarchingCubesGridScale;
+		MarchingCubes.CubeSize = FMath::Clamp(TargetCubeSize, HullBox.MaxDim() / (double)SampleSettings.MaxVoxelsPerDim, HullBox.MinDim() * .5);
+		MarchingCubes.Bounds = HullBox;
+		MarchingCubes.RootMode = ERootfindingModes::Bisection;
+		MarchingCubes.RootModeSteps = 5;
+		MarchingCubes.IsoValue = 0;
+		MarchingCubes.bParallelCompute = true;
+		if (SampleSettings.SampleMethod == FNegativeSpaceSampleSettings::ESampleMethod::VoxelSearch)
+		{
+			MarchingCubes.Implicit = [&HullWinding, &Spatial, WindingSign, &SampleSettings](const FVector3d& Pt) -> double
+			{
+				// Volume is inside the hull and outside the input surface
+				if ((HullWinding.FastWindingNumber(Pt) > .5) && (Spatial.FastWindingNumber(Pt) * WindingSign <= .5))
+				{
+					// Volume is at least ReduceRadiusMargin away from the input surface
+					double NearDistSq = FMathd::MaxReal;
+					int32 NearTri = Spatial.GetTree()->FindNearestTriangle(Pt, NearDistSq, SampleSettings.ReduceRadiusMargin);
+					if (NearTri == INDEX_NONE)
+					{
+						if (SampleSettings.OptionalObstacleSDF)
+						{
+							double LocalSD = SampleSettings.ObstacleDistance(Pt);
+							if (LocalSD < SampleSettings.ReduceRadiusMargin)
+							{
+								return -1.0;
+							}
+						}
+
+						return 1.0;
+					}
+					return -1.0;
+				}
+				return -1.0;
+			};
+		}
+		else // SampleSettings.SampleMethod == FNegativeSpaceSampleSettings::ESampleMethod::NavigableVoxelSearch
+		{
+			MarchingCubes.Bounds = HullAABB.GetBoundingBox();
+			MarchingCubes.Bounds.Expand(SampleSettings.MinRadius + SampleSettings.ReduceRadiusMargin + UE_DOUBLE_KINDA_SMALL_NUMBER);
+			const double MinRadSq = SampleSettings.MinRadius * SampleSettings.MinRadius;
+			MarchingCubes.Implicit = [&HullMeshWrap, &HullAABB, &Spatial, WindingSign, &SampleSettings, MinRadSq](const FVector3d& Pt) -> double
+			{
+				double NearDistSq = FMathd::MaxReal;
+				int32 NearTri = Spatial.GetTree()->FindNearestTriangle(Pt, NearDistSq, SampleSettings.ReduceRadiusMargin + SampleSettings.MinRadius);
+				if (NearTri != INDEX_NONE) // If we're closer than MinRadius + ReduceRadiusMargin to the surface, we can't place a MinRadius sphere here
+				{
+					return -1.0;
+				}
+				if (!SampleSettings.bOnlyConnectedToHull && Spatial.FastWindingNumber(Pt) * WindingSign > .5) // If we're not requiring 'only connected to hull', then remove the internal spaces
+				{
+					return -1.0;
+				}
+				// Test that we're also inside the (offset) convex hull
+				double HullDistSq = FMathd::MaxReal;
+				int32 TID = HullAABB.FindNearestTriangle(Pt, HullDistSq);
+				checkSlow(TID != -1);
+				if (TID != -1)
+				{
+					FTriangle3d Tri;
+					HullMeshWrap.GetTriVertices(TID, Tri.V[0], Tri.V[1], Tri.V[2]);
+					FVector3d N = Tri.Normal();
+					if (N.Dot(Pt - Tri.V[0]) > 0 && HullDistSq > MinRadSq)
+					{
+						return -1.0; // outside the convex hull
+					}
+				}
+				// If there's an optional obstacle SDF, test that we're also not too close to that
+				if (SampleSettings.OptionalObstacleSDF)
+				{
+					double LocalSD = SampleSettings.ObstacleDistance(Pt);
+					if (LocalSD < SampleSettings.MinRadius)
+					{
+						return -1.0;
+					}
+				}
+				return 1.0;
+			};
+		}
+
+		// If we can ignore internal negative space, we can use a seeded/continuation marching cubes here, starting from the convex hull.
+		// Since our negative space surface is away from the source mesh, we need to sample the hull away from its vertices as well;
+		// we do so with a subdivision scheme that can generate a large number of seed points, but still far fewer than there are voxel cells.
+		if (SampleSettings.bOnlyConnectedToHull)
+		{
+			TArray<FVector> Seeds;
+			double MinSeedSpacing = FMath::Max(MarchingCubes.CubeSize, SampleSettings.ReduceRadiusMargin);
+			double AddPtLenSq = 4 * MinSeedSpacing * MinSeedSpacing;
+			double SubDivLenSq = 16 * MinSeedSpacing * MinSeedSpacing;
+
+			// Make a manual stack of triangles to process --
+			// adding midpoints on long edges and subdividing when the resulting triangles could have long enough edges
+			TArray<FTriangle3d> ProcessTriStack;
+			for (FIndex3i TriInds : MeshHull.GetTriangles())
+			{
+				FTriangle3d HullTri(
+					Mesh->GetVertex(TriInds.A),
+					Mesh->GetVertex(TriInds.B),
+					Mesh->GetVertex(TriInds.C));
+				ProcessTriStack.Reset();
+				ProcessTriStack.Push(HullTri);
+
+				FVector3d TriOffset = FVector3d::ZeroVector;
+				if (SampleSettings.SampleMethod == FNegativeSpaceSampleSettings::ESampleMethod::NavigableVoxelSearch)
+				{
+					TriOffset = HullTri.Normal() * SampleSettings.MinRadius;
+				}
+
+				int32 SeedsAdded = 0;
+				while (!ProcessTriStack.IsEmpty())
+				{
+					FTriangle3d Tri = ProcessTriStack.Pop();
+					FVector3d EdgeLensSq(
+						FVector::DistSquared(Tri.V[2], Tri.V[0]),
+						FVector::DistSquared(Tri.V[0], Tri.V[1]),
+						FVector::DistSquared(Tri.V[1], Tri.V[2]));
+					int32 NumLongEdges = 0;
+					FTriangle3d Mids;
+					for (int32 SubIdx = 0, LastIdx = 2; SubIdx < 3; LastIdx = SubIdx++)
+					{
+						Mids.V[SubIdx] = (Tri.V[SubIdx] + Tri.V[LastIdx]) * .5;
+						if (EdgeLensSq[SubIdx] > AddPtLenSq)
+						{
+							FVector3d ToAdd = Mids.V[SubIdx] + TriOffset;
+							Seeds.Add(ToAdd);
+						}
+						NumLongEdges += (int32)(EdgeLensSq[SubIdx] > SubDivLenSq);
+					}
+					// Had any edge long enough to subdivide; go ahead and add all candidate tris
+					if (NumLongEdges > 0)
+					{
+						ProcessTriStack.Add(Mids);
+						ProcessTriStack.Emplace(Tri.V[0], Mids.V[0], Mids.V[1]);
+						ProcessTriStack.Emplace(Tri.V[1], Mids.V[1], Mids.V[2]);
+						ProcessTriStack.Emplace(Tri.V[2], Mids.V[2], Mids.V[0]);
+					}
+				}
+			}
+
+			MarchingCubes.GenerateContinuation(Seeds);
+		}
+		else
+		{
+			MarchingCubes.Generate();
+		}
+		FDynamicMesh3 NegativeSpaceMesh(&MarchingCubes);
+		NegativeSpaceMesh.DiscardAttributes();
+
+		// Make sure the mesh is compact to simplify downsampling below
+		NegativeSpaceMesh.CompactInPlace();
+
+		auto AddSample = [this, &Mesh, &Spatial, &SampleSettings, &bAddedPoints, WindingSign](FVector3d Pos, bool bTestCover = false, bool bRequireWalk = true)
+		{
+			if (bRequireWalk || !SampleSettings.bAllowSamplesInsideMesh)
+			{
+				double Winding = Spatial.FastWindingNumber(Pos) * WindingSign;
+				if (Winding > .5)
+				{
+					return;
+				}
+			}
+
+			double NearDistSq;
+			int NearTID = Spatial.GetTree()->FindNearestTriangle(Pos, NearDistSq);
+			double R = FMath::Sqrt(NearDistSq) - SampleSettings.ReduceRadiusMargin;
+
+			// Walk away from the closest point until we're far enough away to create a sample
+			// (give up if we haven't found a valid sample after a few steps, or if we stepped inside the shape)
+			if (bRequireWalk)
+			{
+				int32 Steps = 0;
+				while (R < SampleSettings.MinRadius && Steps++ < 3)
+				{
+					bool bFoundValidSample = false;
+					FDistPoint3Triangle3d Query = TMeshQueries<FDynamicMesh3>::TriangleDistance(*Mesh, NearTID, Pos);
+					FVector3d Away = Pos - Query.ClosestTrianglePoint;
+					if (!Away.Normalize())
+					{
+						return;
+					}
+
+					// Move away and re-test the sample
+					Pos += Away * ((SampleSettings.MinRadius - R) * 1.1);
+					if (Spatial.FastWindingNumber(Pos) * WindingSign <= .5)
+					{
+						NearTID = Spatial.GetTree()->FindNearestTriangle(Pos, NearDistSq);
+						R = FMath::Sqrt(NearDistSq) - SampleSettings.ReduceRadiusMargin;
+						if (R >= SampleSettings.MinRadius)
+						{
+							break;
+						}
+					}
+					else  // give up if we stepped into the volume
+					{
+						return;
+					}
+				}
+			}
+
+			if (!bRequireWalk || R >= SampleSettings.MinRadius)
+			{
+				if (bTestCover)
+				{
+					double SpacingThresholdSq = SampleSettings.MinSpacing * SampleSettings.MinSpacing;
+					// TODO: Consider accelerating this coverage search w/ e.g. a sparse dynamic octree representation of the sphere covering
+					for (int32 SphereIdx = 0; SphereIdx < Position.Num(); ++SphereIdx)
+					{
+						double ThreshSq = FMath::Max(SpacingThresholdSq, Radius[SphereIdx] * Radius[SphereIdx]);
+						if (FVector3d::DistSquared(Position[SphereIdx], Pos) < ThreshSq)
+						{
+							return;
+						}
+					}
+				}
+				bAddedPoints = true;
+				Position.Add(Pos);
+				Radius.Add(R);
+			}
+		};
+
+		// Compute an angle metric to prioritize samples on 'features' of the negative space mesh
+		TArray<float> VertexAngleMetric; // favor points on sharper edges (near 'features')
+		VertexAngleMetric.SetNumZeroed(NegativeSpaceMesh.MaxVertexID());
+		TArray<FVector3d> TriNormals;
+		TriNormals.SetNumZeroed(NegativeSpaceMesh.MaxTriangleID());
+		for (int32 TID : NegativeSpaceMesh.TriangleIndicesItr())
+		{
+			TriNormals[TID] = NegativeSpaceMesh.GetTriNormal(TID);
+		}
+		TArray<FVector3d> VertexPositions;
+		VertexPositions.SetNumZeroed(NegativeSpaceMesh.MaxVertexID());
+		for (int32 VID : NegativeSpaceMesh.VertexIndicesItr())
+		{
+			VertexPositions[VID] = NegativeSpaceMesh.GetVertex(VID);
+			// Note: Angle metric favors vertices on edges with larger dihedral angles
+			float AngleMetric = 0;
+			NegativeSpaceMesh.EnumerateVertexEdges(VID, [&](int32 EID)
+				{
+					FIndex2i EdgeT = NegativeSpaceMesh.GetEdgeT(EID);
+					if (EdgeT.B != FDynamicMesh3::InvalidID)
+					{
+						AngleMetric = FMath::Max(AngleMetric, float(1 - TriNormals[EdgeT.A].Dot(TriNormals[EdgeT.B])));
+					}
+				});
+			VertexAngleMetric[VID] = AngleMetric;
+		}
+
+		// If we want consistent results, sort the points -- since parallelism in marching cubes can add vertices in arbitrary order
+		if (SampleSettings.bDeterministic)
+		{
+			check(NegativeSpaceMesh.IsCompactV());
+			TArray<int32> Indices;
+			Indices.SetNumUninitialized(VertexPositions.Num());
+			for (int32 Idx = 0; Idx < Indices.Num(); ++Idx)
+			{
+				Indices[Idx] = Idx;
+			}
+			Indices.Sort([&](int32 A, int32 B)
+				{
+					FVector3d VA = VertexPositions[A];
+					FVector3d VB = VertexPositions[B];
+					if (VA.X < VB.X)
+					{
+						return true;
+					}
+					else if (VA.X == VB.X)
+					{
+						if (VA.Y < VB.Y)
+						{
+							return true;
+						}
+						else if (VA.Y == VB.Y)
+						{
+							return VA.Z < VB.Z;
+						}
+					}
+					return false;
+				});
+			TArray<FVector> SortedPositions;
+			TArray<float> SortedAngleMetric;
+			SortedPositions.SetNumUninitialized(VertexPositions.Num());
+			SortedAngleMetric.SetNumUninitialized(VertexPositions.Num());
+			for (int32 Idx = 0; Idx < VertexPositions.Num(); ++Idx)
+			{
+				SortedPositions[Idx] = VertexPositions[Indices[Idx]];
+				SortedAngleMetric[Idx] = VertexAngleMetric[Indices[Idx]];
+			}
+			Swap(VertexPositions, SortedPositions);
+			Swap(VertexAngleMetric, SortedAngleMetric);
+		}
+
+		int32 NumSamples = FMath::Min(VertexPositions.Num(), SampleSettings.TargetNumSamples);
+		FPriorityOrderPoints Ordering;
+		Ordering.ComputeUniformSpaced(VertexPositions, VertexAngleMetric, SampleSettings.bRequireSearchSampleCoverage ? -1 : NumSamples);
+
+		// The 'sample walk' is used to ensure samples are at least MinRadius + ReduceRadiusMargin away from the input surface. 
+		// Note this isn't needed for the NavigableVoxelSearch method; its samples are already this distance from the surface by construction
+		bool bRequireSampleWalk = SampleSettings.SampleMethod == FNegativeSpaceSampleSettings::ESampleMethod::VoxelSearch;
+		for (int32 SampleIdx = 0; SampleIdx < NumSamples; ++SampleIdx)
+		{
+			int32 VID = Ordering.Order[SampleIdx];
+			AddSample(VertexPositions[VID], false /*test cover*/, bRequireSampleWalk);
+		}
+
+		if (SampleSettings.bRequireSearchSampleCoverage)
+		{
+			double SpacingThresholdSq = SampleSettings.MinSpacing * SampleSettings.MinSpacing;
+			bool bTestCover = SpacingThresholdSq > 0;
+			for (int32 SampleIdx = NumSamples; SampleIdx < Ordering.Order.Num(); ++SampleIdx)
+			{
+				int32 VID = Ordering.Order[SampleIdx];
+				FVector3d Pos = VertexPositions[VID];
+				AddSample(Pos, bTestCover, bRequireSampleWalk);
 			}
 		}
 	}
@@ -180,6 +714,7 @@ double GetVolumeUsingReferencePoint(const TriangleMeshType& Mesh, FVector3d RefP
 struct FPartialCutResult
 {
 	TArray<FVector3d> CutVertices;
+	TArray<FVector3d> OffsetVertices[2]; // vertices added to thicken an otherwise-degenerate convex hull; in most cases, not needed
 	TArray<int32> CrossingEdgeIDs;
 	TArray<double> SignDists;
 
@@ -195,10 +730,13 @@ struct FPartialCutResult
 		return HullMinusGeoVolume;
 	}
 
-	void ApplyToGeo(TIndirectArray<FConvexDecomposition3::FConvexPart>& Decomposition, int32 OrigPartIdx, const FPlane3d& Plane, int32& OtherSideStartIdxOut, double PlaneTol, double ConnectedComponentTolerance)
+	void ApplyToGeo(TIndirectArray<FConvexDecomposition3::FConvexPart>& Decomposition, int32 OrigPartIdx, const FPlane3d& Plane, int32& OtherSideStartIdxOut, double PlaneTol, double ConnectedComponentTolerance, const FSphereCovering& NegativeSpace, bool bTreatAsSolid, bool bSplitDisconnectedComponents)
 	{
 		FConvexDecomposition3::FConvexPart& OrigPart = Decomposition[OrigPartIdx];
 		bool bSourceGeometryVolumeUnreliable = OrigPart.bGeometryVolumeUnreliable;
+
+		// Save out the negative space overlaps right away (as we will end up replacing this original part)
+		TArray<int32> OrigOverlaps = MoveTemp(OrigPart.OverlapsNegativeSpace);
 
 		int32 NewPartIdx = Decomposition.Add(new FConvexDecomposition3::FConvexPart);
 		FConvexDecomposition3::FConvexPart& NewPart = Decomposition[NewPartIdx];
@@ -207,7 +745,6 @@ struct FPartialCutResult
 		TArray<int32> OnCutEdges;
 		check(CrossingEdgeIDs.Num() == CutVertices.Num());
 
-		TMap<int32, int32> VIDMaps[2]; // mapping from indices used in HullTriangles -> indices used in OrigPart and NewPart
 		TArray<int32> HullCrossingVertexMap;
 		int32 HullCrossingVertexStart = OrigPart.InternalGeo.MaxVertexID();
 		HullCrossingVertexMap.SetNumUninitialized(CrossingEdgeIDs.Num());
@@ -232,20 +769,23 @@ struct FPartialCutResult
 		}
 
 		// remove all fully on-plane triangles
-		for (int32 TID = 0, MaxTID = OrigPart.InternalGeo.MaxTriangleID(); TID < MaxTID; TID++)
+		if (bTreatAsSolid)
 		{
-			if (!OrigPart.InternalGeo.IsTriangle(TID))
+			for (int32 TID = 0, MaxTID = OrigPart.InternalGeo.MaxTriangleID(); TID < MaxTID; TID++)
 			{
-				continue;
-			}
-			FIndex3i Tri = OrigPart.InternalGeo.GetTriangle(TID);
-			// Note any new vertex (ID beyond sign dist or un-set before) will be on the plane by construction (introduced by above edge split)
-			// SignDists was zero-initialized, so we don't need to update it with the new vertices, and can just assume IDs beyond the previous max are on the plane
-			if ((Tri.A >= SignDists.Num() || FMathd::Abs(SignDists[Tri.A]) <= PlaneTol) &&
-				(Tri.B >= SignDists.Num() || FMathd::Abs(SignDists[Tri.B]) <= PlaneTol) &&
-				(Tri.C >= SignDists.Num() || FMathd::Abs(SignDists[Tri.C]) <= PlaneTol))
-			{
-				EMeshResult Res = OrigPart.InternalGeo.RemoveTriangle(TID, true, false);
+				if (!OrigPart.InternalGeo.IsTriangle(TID))
+				{
+					continue;
+				}
+				FIndex3i Tri = OrigPart.InternalGeo.GetTriangle(TID);
+				// Note any new vertex (ID beyond sign dist or un-set before) will be on the plane by construction (introduced by above edge split)
+				// SignDists was zero-initialized, so we don't need to update it with the new vertices, and can just assume IDs beyond the previous max are on the plane
+				if ((Tri.A >= SignDists.Num() || FMathd::Abs(SignDists[Tri.A]) <= PlaneTol) &&
+					(Tri.B >= SignDists.Num() || FMathd::Abs(SignDists[Tri.B]) <= PlaneTol) &&
+					(Tri.C >= SignDists.Num() || FMathd::Abs(SignDists[Tri.C]) <= PlaneTol))
+				{
+					EMeshResult Res = OrigPart.InternalGeo.RemoveTriangle(TID, true, false);
+				}
 			}
 		}
 		
@@ -264,6 +804,34 @@ struct FPartialCutResult
 			else if (SignDist < -PlaneTol && PartsMeshes[1]->IsVertex(VID))
 			{
 				PartsMeshes[1]->RemoveVertex(VID, false);
+			}
+		}
+
+		// for non-solid meshes, remove on-plane triangles based on the side they're facing
+		if (!bTreatAsSolid)
+		{
+			for (int32 Side = 0; Side < 2; Side++)
+			{
+				for (int32 TID = 0, MaxTID = PartsMeshes[Side]->MaxTriangleID(); TID < MaxTID; TID++)
+				{
+					if (!PartsMeshes[Side]->IsTriangle(TID))
+					{
+						continue;
+					}
+					FIndex3i Tri = PartsMeshes[Side]->GetTriangle(TID);
+					// Note any new vertex (ID beyond sign dist or un-set before) will be on the plane by construction (introduced by above edge split)
+					// SignDists was zero-initialized, so we don't need to update it with the new vertices, and can just assume IDs beyond the previous max are on the plane
+					if ((Tri.A >= SignDists.Num() || FMathd::Abs(SignDists[Tri.A]) <= PlaneTol) &&
+						(Tri.B >= SignDists.Num() || FMathd::Abs(SignDists[Tri.B]) <= PlaneTol) &&
+						(Tri.C >= SignDists.Num() || FMathd::Abs(SignDists[Tri.C]) <= PlaneTol))
+					{
+						double DotTriPlane = PartsMeshes[Side]->GetTriNormal(TID).Dot(Plane.Normal);
+						if (DotTriPlane > 0 != (bool)Side)
+						{
+							PartsMeshes[Side]->RemoveTriangle(TID, true, false);
+						}
+					}
+				}
 			}
 		}
 
@@ -368,6 +936,7 @@ struct FPartialCutResult
 					// TODO: if result is not well defined, is there anything more robust we could do here?
 					// Perhaps fill based on the winding number of the input mesh? (But more expensive, and we'd have to handle ~coplanar cases as well)
 				}
+				// TODO: Consider only attempting to append the hole fill if bSuccessFill is true
 				if (!Triangles2.IsEmpty()) // Delaunay triangulation succeeded at generating some triangulation
 				{
 					for (const FIndex3i& Tri2 : Triangles2)
@@ -452,7 +1021,7 @@ struct FPartialCutResult
 		};
 
 		// TODO: We may be able to skip hole filling if we're using an error metric that is not volume-based
-		bool bHoleFillResultUnreliable = !HoleFill();
+		bool bHoleFillResultUnreliable = !bTreatAsSolid || !HoleFill();
 
 		auto ComputeHullsIfMultipleComponents = [&Decomposition, &ConnectedComponentTolerance](int32 PartIdx)->int32
 		{
@@ -550,19 +1119,22 @@ struct FPartialCutResult
 			Part->HullTriangles.Reset(HullTriangles[Side].Num());
 			Part->HullTriangles.Reset();
 
-			// If there are multiple components, we'll need to compute all new hulls for each of them
-			int32 NumComponents = ComputeHullsIfMultipleComponents(PartIndices[Side]);
-			if (NumComponents > 1)
+			// If there are multiple components, we'll need to compute all new hulls for each of them (if enabled)
+			if (bSplitDisconnectedComponents)
 			{
-				if (Side == 0) // keep the components from each side of the plane contiguous
+				int32 NumComponents = ComputeHullsIfMultipleComponents(PartIndices[Side]);
+				if (NumComponents > 1)
 				{
-					ComponentsOnSide0 = NumComponents;
-					int32 LastIdx = Decomposition.Num() - 1;
-					Decomposition.Swap(NewPartIdx, LastIdx);
-					NewPartIdx = LastIdx;
-					OtherSideStartIdxOut = NewPartIdx;
+					if (Side == 0) // keep the components from each side of the plane contiguous
+					{
+						ComponentsOnSide0 = NumComponents;
+						int32 LastIdx = Decomposition.Num() - 1;
+						Decomposition.Swap(NewPartIdx, LastIdx);
+						NewPartIdx = LastIdx;
+						OtherSideStartIdxOut = NewPartIdx;
+					}
+					continue;
 				}
-				continue;
 			}
 
 			// There was only one component -- we can re-use the convex hull we computed, just need to fix the vertex indices
@@ -574,11 +1146,28 @@ struct FPartialCutResult
 			{
 				if (OrigHullIdx < HullCrossingVertexStart)
 				{
-					return CompactMaps.GetVertexMapping(OrigHullIdx);
+					int32 Idx = CompactMaps.GetVertexMapping(OrigHullIdx);
+					ensure(Idx > -1);
+					return Idx;
 				}
 				else
 				{
-					int32 CrossingVertexIdx = OrigHullIdx - HullCrossingVertexStart;
+					const int32 CrossingVertexIdx = OrigHullIdx - HullCrossingVertexStart;
+					if (CrossingVertexIdx >= CutVertices.Num()) // it's an offset vertex; will always need to be appended to the geo on first encounter
+					{
+						int32* AddedVertPtr = AddedVertsMap.Find(CrossingVertexIdx);
+						if (!AddedVertPtr)
+						{
+							const int32 OffsetVertexIdx = CrossingVertexIdx - CutVertices.Num();
+							int32 AppendedVertID = PartsMeshes[Side]->AppendVertex(OffsetVertices[Side][OffsetVertexIdx]);
+							AddedVertsMap.Add(CrossingVertexIdx, AppendedVertID);
+							return AppendedVertID;
+						}
+						else
+						{
+							return *AddedVertPtr;
+						}
+					}
 					int32 NewIdx = HullCrossingVertexMap[CrossingVertexIdx];
 					if (NewIdx == -1)
 					{
@@ -598,6 +1187,7 @@ struct FPartialCutResult
 					{
 						NewIdx = CompactMaps.GetVertexMapping(NewIdx);
 					}
+					checkSlow(NewIdx > -1);
 					return NewIdx;
 				}
 			};
@@ -633,11 +1223,65 @@ struct FPartialCutResult
 				Decomposition[PartIdx].bGeometryVolumeUnreliable = true;
 			}
 		}
+
+		// Update lists of conflicting negative spaces (if negative space is available)
+		if (NegativeSpace.Num() > 0 && !OrigOverlaps.IsEmpty())
+		{
+			auto AddIfOverlaps = [&NegativeSpace, &OrigOverlaps](FConvexDecomposition3::FConvexPart& Part)
+			{
+				// heuristics to multithread the convex part vs sphere overlap tests when there are enough spheres to be potentially worth it
+				// TODO: consider also using some kind of spatial acceleration + revisit tuning
+				if (OrigOverlaps.Num() > 200)
+				{
+					const int32 NumBatch = 7 + int32(OrigOverlaps.Num()/200);
+					TArray<TArray<int32>> OverlapArr;
+					OverlapArr.SetNum(NumBatch);
+					const int32 PerBatch = 1+OrigOverlaps.Num() / NumBatch;
+					ParallelFor(NumBatch, [&](int32 BatchIdx)
+						{
+							for (int32 Idx = PerBatch * BatchIdx, Num = FMath::Min(OrigOverlaps.Num(), PerBatch * (BatchIdx + 1)); Idx < Num; ++Idx)
+							{
+								int32 SphereIdx = OrigOverlaps[Idx];
+								if (FConvexDecomposition3::ConvexPartVsSphereOverlap(Part, NegativeSpace.GetCenter(SphereIdx), NegativeSpace.GetRadius(SphereIdx)))
+								{
+									OverlapArr[BatchIdx].Add(SphereIdx);
+								}
+							}
+						});
+					int32 TotalSize = 0;
+					for (int32 BatchIdx = 0; BatchIdx < NumBatch; ++BatchIdx)
+					{
+						TotalSize += OverlapArr[BatchIdx].Num();
+					}
+					Part.OverlapsNegativeSpace.Reserve(TotalSize);
+					for (int32 BatchIdx = 0; BatchIdx < NumBatch; ++BatchIdx)
+					{
+						Part.OverlapsNegativeSpace.Append(OverlapArr[BatchIdx]);
+					}
+				}
+				else
+				{
+					for (int32 SphereIdx : OrigOverlaps)
+					{
+						if (FConvexDecomposition3::ConvexPartVsSphereOverlap(Part, NegativeSpace.GetCenter(SphereIdx), NegativeSpace.GetRadius(SphereIdx)))
+						{
+							Part.OverlapsNegativeSpace.Add(SphereIdx);
+						}
+					}
+				}
+			};
+
+			AddIfOverlaps(OrigPart);
+			for (int32 PartIdx = NewPartIdx; PartIdx < Decomposition.Num(); ++PartIdx)
+			{
+				AddIfOverlaps(Decomposition[PartIdx]);
+			}
+		}
 	}
 
 	FPartialCutResult() {}
 
-	FPartialCutResult(const FConvexDecomposition3::FConvexPart& Convex, const FPlane3d& Plane, double PlaneTol)
+	FPartialCutResult(const FConvexDecomposition3::FConvexPart& Convex, const FPlane3d& Plane, double PlaneTol, bool bTreatAsSolid, double ThickenHullAfterFailure)
 	{
 		SignDists.SetNumZeroed(Convex.InternalGeo.MaxVertexID());
 		TArray<bool> OnHull; // indicates if vertex was on the original hull
@@ -690,7 +1334,31 @@ struct FPartialCutResult
 					ForHull[Side][EdgeVID.B] = true;
 				}
 			}
-			// else {} Note: fully on-plane case does not need anything
+			// else edge is on the plane -- rely on the one-side case edges to protect these vertices in most cases
+		}
+		// for non-solid shapes, we cannot rely on non-planar segments to preserve on-plane geometry
+		// so we also also mark on-plane triangle vertices based on the triangle normal
+		if (!bTreatAsSolid)
+		{
+			for (int32 TID : Convex.InternalGeo.TriangleIndicesItr())
+			{
+				FIndex3i TriVID = Convex.InternalGeo.GetTriangle(TID);
+				auto IsVertOnPlane = [this, PlaneTol](int32 TestVID) -> bool
+					{
+						double Dist = SignDists[TestVID];
+						return Dist >= -PlaneTol && Dist <= PlaneTol;
+					};
+				bool bOnPlane = IsVertOnPlane(TriVID.A) && IsVertOnPlane(TriVID.B) && IsVertOnPlane(TriVID.C);
+				if (bOnPlane)
+				{
+					FVector3d TriNormal = Convex.InternalGeo.GetTriNormal(TID);
+					double TriDot = TriNormal.Dot(Plane.Normal);
+					int32 KeepSide = int32(TriDot > 0);
+					ForHull[KeepSide][TriVID.A] = true;
+					ForHull[KeepSide][TriVID.B] = true;
+					ForHull[KeepSide][TriVID.C] = true;
+				}
+			}
 		}
 
 		// compute the hulls, s.t. the hull triangle indices are referencing the original internal geo vertices w/ the cut vertices appended
@@ -739,24 +1407,57 @@ struct FPartialCutResult
 				[this, &Convex, &ForHull, Side](int32 Index) { return Index < Convex.InternalGeo.MaxVertexID() ? ForHull[Side][Index] : true; });
 			if (!bOK)
 			{
-				// don't cut the hull on a plane that would lead to a degenerate hull on either side
-				CutVertices.Empty();
-				CrossingEdgeIDs.Empty();
-				bSuccess = false;
-				return;
+				// optionally re-try w/ minimal offsets in degen directions
+				if (ThickenHullAfterFailure > 0)
+				{
+					const int32 OrigMaxID = Convex.InternalGeo.MaxVertexID();
+					FMeshNormals Normals(&Convex.InternalGeo);
+					Normals.ComputeVertexNormals();
+					const double OffsetFactor = ThickenHullAfterFailure;
+					for (int32 VID = 0; VID < OrigMaxID; ++VID)
+					{
+						if (Convex.InternalGeo.IsVertex(VID) && ForHull[Side][VID])
+						{
+							FVector3d Normal = Normals[VID];
+							if (Normal == FVector::ZeroVector)
+							{
+								Normal = FVector::OneVector * FMathd::InvSqrt3; // for degenerate normals, arbitrarily pick a diagonal offset direction
+							}
+							OffsetVertices[Side].Add(Convex.InternalGeo.GetVertex(VID) - Normals[VID] * OffsetFactor);
+						}
+					}
+					bOK = HullCompute.Solve(Convex.InternalGeo.MaxVertexID() + CutVertices.Num() + OffsetVertices[Side].Num(),
+						[this, &Convex, &ForHull, Side](int32 Index)
+						{
+							const int32 MaxVID = Convex.InternalGeo.MaxVertexID();
+							const int32 MaxCutVID = MaxVID + CutVertices.Num();
+							return Index < MaxVID ? Convex.InternalGeo.GetVertex(Index) : Index < MaxCutVID ? CutVertices[Index - MaxVID] : OffsetVertices[Side][Index - MaxCutVID];
+						},
+						[this, &Convex, &ForHull, Side](int32 Index) { return Index < Convex.InternalGeo.MaxVertexID() ? ForHull[Side][Index] : true; });
+
+				}
+				if (!bOK)
+				{
+					// don't cut the hull on a plane that would lead to a degenerate hull on either side
+					CutVertices.Empty();
+					CrossingEdgeIDs.Empty();
+					bSuccess = false;
+					return;
+				}
 			}
 			HullTriangles[Side] = HullCompute.MoveTriangles();
 
 			// Custom hull volume calculation to account for the triangles indexing partly into InternalGeo, partly into CutVertices
 			HullVolumes[Side] = 0;
-			int32 MaxVID = Convex.InternalGeo.MaxVertexID();
+			const int32 MaxVID = Convex.InternalGeo.MaxVertexID();
+			const int32 MaxCutVID = MaxVID + CutVertices.Num();
 			for (const FIndex3i& Tri : HullTriangles[Side])
 			{
 				FVector3d Verts[3];
 				for (int32 SubIdx = 0; SubIdx < 3; SubIdx++)
 				{
 					int32 VID = Tri[SubIdx];
-					Verts[SubIdx] = VID < MaxVID ? Convex.InternalGeo.GetVertex(VID) : CutVertices[VID - MaxVID];
+					Verts[SubIdx] = VID < MaxVID ? Convex.InternalGeo.GetVertex(VID) : VID < MaxCutVID ? CutVertices[VID - MaxVID] : OffsetVertices[Side][VID - MaxCutVID];
 				}
 
 				// Get cross product of edges and (un-normalized) normal vector.
@@ -882,6 +1583,100 @@ void FConvexDecomposition3::InitializeFromIndexMesh(TArrayView<const FVector3f> 
 	Decomposition.Add(Convex);
 }
 
+
+bool FConvexDecomposition3::InitializeNegativeSpace(const FNegativeSpaceSampleSettings& Settings, TArrayView<const FVector3d> RequestedSamples)
+{
+	if (Decomposition.Num() != 1)
+	{
+		return false;
+	}
+	TMeshAABBTree3<FDynamicMesh3> InternalGeoAABBTree(&Decomposition[0].InternalGeo, true);
+	TFastWindingTree<FDynamicMesh3> InternalGeoWinding(&InternalGeoAABBTree, true);
+
+	FNegativeSpaceSampleSettings RescaledSettings = Settings;
+	RescaledSettings.SetResultTransform(ResultTransform);
+	NegativeSpace.Reset();
+	NegativeSpace.AddNegativeSpace(InternalGeoWinding, RescaledSettings, false);
+	for (const FVector3d& Req : RequestedSamples)
+	{
+		FVector3d Center = ResultTransform.InverseTransformPosition(Req);
+		if (!RescaledSettings.bAllowSamplesInsideMesh)
+		{
+			double Winding = InternalGeoWinding.FastWindingNumber(Center);
+			if (Winding > .5) // inside, should skip
+			{
+				continue;
+			}
+		}
+		FVector3d NearSample = InternalGeoAABBTree.FindNearestPoint(Center);
+		double Dist = FVector3d::Dist(Center, NearSample);
+		double Rad = FMath::Max(0, Dist - RescaledSettings.ReduceRadiusMargin);
+		NegativeSpace.AddSphere(Center, Rad);
+	}
+	InitNegativeSpaceConvexPartMapping();
+	return true;
+}
+
+
+void FConvexDecomposition3::FixHullOverlapsInNegativeSpace(double NegativeSpaceTolerance, double NegativeSpaceMinRadius)
+{
+	if (!NegativeSpace.Num())
+	{
+		return;
+	}
+
+	// make sure tolerance and min radius are at least 0
+	double UseTolerance = FMath::Max(0, NegativeSpaceTolerance);
+	double UseMinRadius = FMath::Max(0, NegativeSpaceMinRadius);
+	// fix overlaps
+	for (int32 PartIdx = 0; PartIdx < Decomposition.Num(); ++PartIdx)
+	{
+		for (int32 SphereIdx : Decomposition[PartIdx].OverlapsNegativeSpace)
+		{
+			double DistSq = 0;
+			double Radius = NegativeSpace.GetRadius(SphereIdx);
+			if (Radius > UseMinRadius && ConvexPartVsSphereOverlap(Decomposition[PartIdx], NegativeSpace.GetCenter(SphereIdx), Radius, nullptr, &DistSq))
+			{
+				double Dist = FMath::Sqrt(DistSq);
+				check(Dist <= Radius);
+				NegativeSpace.SetRadius(SphereIdx, Dist - UseTolerance);
+			}
+		}
+		Decomposition[PartIdx].OverlapsNegativeSpace.Reset();
+	}
+	// delete all too-small spheres
+	NegativeSpace.RemoveSmaller(UseMinRadius);
+}
+
+void FConvexDecomposition3::Compute(int32 NumOutputHulls, int32 NumAdditionalSplits, double ErrorTolerance, double MinThicknessTolerance, int32 MaxOutputHulls, bool bOnlySplitIfNegativeSpaceCovered)
+{
+	if (MaxOutputHulls > 0)
+	{
+		NumOutputHulls = FMath::Min(NumOutputHulls, MaxOutputHulls);
+	}
+	bool bUseNegativeSpace = NegativeSpace.Num() > 0;
+	int32 TargetNumSplits = NumOutputHulls + NumAdditionalSplits;
+	for (int32 SplitIdx = 0; SplitIdx < TargetNumSplits; SplitIdx++)
+	{
+		int32 NumNewParts = SplitWorst(bool(SplitIdx % 2), ErrorTolerance, bOnlySplitIfNegativeSpaceCovered);
+		if (NumNewParts == 0)
+		{
+			break;
+		}
+	}
+
+	if (bUseNegativeSpace)
+	{
+		// remove overlaps with negative space that the splitting didn't resolve by just shrinking/deleting the associated spheres
+		// (b/c otherwise the overlapped parts will be incapable of merging with anything in the MergeBest step)
+		FixHullOverlapsInNegativeSpace();
+	}
+
+	constexpr bool bAllowCompact = true;
+	MergeBest(NumOutputHulls, ErrorTolerance, MinThicknessTolerance, bAllowCompact, false, MaxOutputHulls, nullptr, nullptr);
+}
+
+
 bool FConvexDecomposition3::FConvexPart::ComputeHull(bool bComputePlanes)
 {
 	FConvexHull3d HullCompute;
@@ -909,8 +1704,16 @@ void FConvexDecomposition3::FConvexPart::ComputeHullPlanes()
 	{
 		const FIndex3i& Tri = HullTriangles[TriIdx];
 		FVector3d VA = InternalGeo.GetVertex(Tri.A);
-		FVector3d Normal = VectorUtil::Normal(VA, InternalGeo.GetVertex(Tri.B), InternalGeo.GetVertex(Tri.C));
-		HullPlanes[TriIdx] = FPlane3d(Normal, VA);
+		double Area = 0;
+		FVector3d Normal = VectorUtil::NormalArea(VA, InternalGeo.GetVertex(Tri.B), InternalGeo.GetVertex(Tri.C), Area);
+		if (Area < FMathd::ZeroTolerance)
+		{
+			HullPlanes[TriIdx] = FPlane3d(FVector3d::ZeroVector, 0); // track degenerate plane with a zero-vector normal
+		}
+		else
+		{
+			HullPlanes[TriIdx] = FPlane3d(Normal, VA);
+		}
 	}
 }
 
@@ -930,21 +1733,77 @@ void FConvexDecomposition3::FConvexPart::ComputeStats()
 	HullError = HullVolume - GeoVolume;
 }
 
-int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, double ErrorTolerance)
+int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, double ErrorTolerance, bool bOnlySplitIfNegativeSpaceCovered, double MinSplitSizeInWorldSpace)
+{
+	int32 InitialNum = Decomposition.Num();
+	int32 NumAttempts = InitialNum + 1;
+	while (!SplitWorstHelper(bCanSkipUnreliableGeoVolumes, ErrorTolerance, bOnlySplitIfNegativeSpaceCovered, MinSplitSizeInWorldSpace)) // keep attempting to split until we succeed or run out of parts to try
+	{
+		if (!ensure(NumAttempts-- > 0)) // guard against infinite loop
+		{
+			break;
+		}
+	}
+	return Decomposition.Num() - InitialNum;
+}
+
+bool FConvexDecomposition3::SplitWorstHelper(bool bCanSkipUnreliableGeoVolumes, double ErrorTolerance, bool bOnlySplitIfNegativeSpaceCovered, double MinSplitSizeInWorldSpace)
 {
 	if (Decomposition.Num() == 0)
 	{
-		return 0;
+		return true;
 	}
+
+	double MinSplitSize = MinSplitSizeInWorldSpace <= 0 ? MinSplitSizeInWorldSpace : ConvertDistanceToleranceToLocalSpace(MinSplitSizeInWorldSpace);
 
 	double VolumeTolerance = ConvertDistanceToleranceToLocalVolumeTolerance(ErrorTolerance);
 
-	double WorstError = Decomposition[0].HullError;
-	bool bErrorAboveTolerance = VolumeTolerance <= 0 || Decomposition[0].HullError > VolumeTolerance;
-	int32 WorstIdx = 0;
-	bool bCanSkipCurrent = bCanSkipUnreliableGeoVolumes && Decomposition[0].bGeometryVolumeUnreliable;
-	for (int32 PartIdx = 1; PartIdx < Decomposition.Num(); PartIdx++)
+	double WorstError = -FMathd::MaxReal;
+	bool bErrorAboveTolerance = false;
+	int32 WorstIdx = INDEX_NONE;
+	bool bCanSkipCurrent = true;
+	bool bHasOverlapsNegative = false;
+	// check if we have any negative-space-covered parts
+	if (NegativeSpace.Num() > 0)
 	{
+		for (int32 PartIdx = 0; PartIdx < Decomposition.Num(); PartIdx++)
+		{
+			if (Decomposition[PartIdx].bSplitFailed)
+			{
+				continue;
+			}
+			if (Decomposition[PartIdx].Bounds.MaxDim() < MinSplitSize)
+			{
+				continue;
+			}
+			if (!Decomposition[PartIdx].OverlapsNegativeSpace.IsEmpty())
+			{
+				bHasOverlapsNegative = true;
+				break;
+			}
+		}
+	}
+	// stop early if there are no negative-space overlaps, and we're only splitting in those cases
+	if (!bHasOverlapsNegative && bOnlySplitIfNegativeSpaceCovered)
+	{
+		return 0;
+	}
+	for (int32 PartIdx = 0; PartIdx < Decomposition.Num(); PartIdx++)
+	{
+		if (Decomposition[PartIdx].bSplitFailed)
+		{
+			continue;
+		}
+		if (Decomposition[PartIdx].Bounds.MaxDim() < MinSplitSize)
+		{
+			continue;
+		}
+		bool bOverlapsNegative = !Decomposition[PartIdx].OverlapsNegativeSpace.IsEmpty();
+		// always favor the parts that overlap negative space as long as we have them
+		if (bHasOverlapsNegative && !bOverlapsNegative)
+		{
+			continue;
+		}
 		if (Decomposition[PartIdx].HullError > VolumeTolerance)
 		{
 			bErrorAboveTolerance = true;
@@ -960,14 +1819,19 @@ int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, doubl
 			bCanSkipCurrent = bCanSkipCurrent && Decomposition[PartIdx].bGeometryVolumeUnreliable;
 		}
 	}
+	
+	if (WorstIdx == INDEX_NONE)
+	{
+		return true;
+	}
 
-	// Stop splitting if we see no errors above tolerance
+	// Stop splitting if we see no errors above tolerance and no negative-space overlaps
 	// Note if bCanSkipUnreliableGeoVolumes==true, we may still split a below-tolerance part
 	//  -- TODO: consider what to do in this case!
 	//		It will just add one extra split currently as we alternate toggling bCanSkipUnreliableGeoVolumes off, but the behavior may be confusing.
-	if (!bErrorAboveTolerance)
+	if (!bErrorAboveTolerance && !bHasOverlapsNegative)
 	{
-		return 0;
+		return true;
 	}
 
 	FConvexPart& Part = Decomposition[WorstIdx];
@@ -976,20 +1840,24 @@ int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, doubl
 
 	TArray<FPlane3d> CandidatePlanes;
 
-	// Always start with the major axis planes
+	// Always start with the major axis planes (as long as the axis bounds length is at least the min split size)
 	FVector3d Center = Part.Bounds.Center();
-	CandidatePlanes.Emplace(FVector3d::XAxisVector, Center);
-	CandidatePlanes.Emplace(FVector3d::YAxisVector, Center);
-	CandidatePlanes.Emplace(FVector3d::ZAxisVector, Center);
 	FVector3d Extents = Part.Bounds.Extents();
-	int32 MaxBoundsDim = 0;
-	if (Extents.Y > Extents.X)
+	int32 MaxBoundsDim = FMath::Max3Index(Extents.X, Extents.Y, Extents.Z);
+	int32 MaxAxisAlignedIdx = 0;
+	for (int32 AxisIdx = 0; AxisIdx < 3; ++AxisIdx)
 	{
-		MaxBoundsDim = 1;
-	}
-	if (Extents.Z > Extents[MaxBoundsDim])
-	{
-		MaxBoundsDim = 2;
+		bool bIsMaxDim = AxisIdx == MaxBoundsDim;
+		if (bIsMaxDim || Extents[AxisIdx] >= MinSplitSize)
+		{
+			FVector3d AxisVector = FVector3d::ZeroVector;
+			AxisVector[AxisIdx] = 1.0;
+			int32 PlaneIdx = CandidatePlanes.Emplace(AxisVector, Center);
+			if (bIsMaxDim)
+			{
+				MaxAxisAlignedIdx = PlaneIdx;
+			}
+		}
 	}
 
 	// make candidate planes out of convex and boundary edges
@@ -1011,14 +1879,14 @@ int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, doubl
 			Convexities.Add((float)Convexity);
 		}
 
-		void AddMultiple(FConvexPart& ConvPart, const FVector3d& Center, FVector3d Normals[MaxPerEdge], int32 NumToAdd, double Convexity)
+		void AddMultiple(FConvexPart& ConvPart, const FVector3d& Center, FVector3d Normals[MaxPerEdge], FVector3d Offsets[MaxPerEdge], int32 NumToAdd, double Convexity)
 		{
 			TArray<FPlane3d, TFixedAllocator<MaxPerEdge>> PlaneSet;
 			for (int32 NormalIdx = 0; NormalIdx < NumToAdd; NormalIdx++)
 			{
 				if (Normals[NormalIdx].Normalize())
 				{
-					PlaneSet.Add(FPlane3d(Normals[NormalIdx], Center));
+					PlaneSet.Add(FPlane3d(Normals[NormalIdx], Center + Offsets[NormalIdx]));
 				}
 			}
 			if (PlaneSet.IsEmpty())
@@ -1107,7 +1975,11 @@ int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, doubl
 				PlaneNormals[3] = (PlaneNormals[0] + PlaneNormals[1]);
 				PlaneNormals[4] = (PlaneNormals[0] + PlaneNormals[2]);
 			}
-			ConvexEdgeCandidates.AddMultiple(Part, (VA + VB) * .5, PlaneNormals, NumPlanes, CosHalfAngle);
+			// Add small offsets to the on-triangle planes, so the source triangle is fully on one side of the plane
+			FVector3d Offsets[5] {FVector3d::ZeroVector, FVector3d::ZeroVector, FVector3d::ZeroVector, FVector3d::ZeroVector, FVector3d::ZeroVector };
+			Offsets[1] = NormalA * OnPlaneTolerance;
+			Offsets[2] = NormalB * OnPlaneTolerance;
+			ConvexEdgeCandidates.AddMultiple(Part, (VA + VB) * .5, PlaneNormals, Offsets, NumPlanes, CosHalfAngle);
 		}
 	}
 
@@ -1128,18 +2000,15 @@ int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, doubl
 	for (int32 PlaneIdx = 0; PlaneIdx < CandidatePlanes.Num(); PlaneIdx++)
 	{
 		const FPlane3d& Plane = CandidatePlanes[PlaneIdx];
-		FPartialCutResult PlaneResult(Part, Plane, OnPlaneTolerance);
+		FPartialCutResult PlaneResult(Part, Plane, OnPlaneTolerance, bTreatAsSolid, ThickenAfterHullFailure);
 		if (!PlaneResult.bSuccess)
 		{
 			continue;
 		}
 		double PlaneError = PlaneResult.Score(Part);
-		if (PlaneIdx < 3)
+		if (MaxAxisAlignedIdx == PlaneIdx) // favor the larger axis (make predictable cuts when none of the planes are reducing the hull volume)
 		{
-			if (MaxBoundsDim == PlaneIdx) // favor the larger axis (make predictable cuts when none of the planes are reducing the hull volume)
-			{
-				PlaneError *= CutLargestAxisErrorScale;
-			}
+			PlaneError *= CutLargestAxisErrorScale;
 		}
 		if (PlaneError < LowestError)
 		{
@@ -1151,16 +2020,17 @@ int32 FConvexDecomposition3::SplitWorst(bool bCanSkipUnreliableGeoVolumes, doubl
 
 	if (BestPlaneIdx == -1)
 	{
-		return 0;
+		Decomposition[WorstIdx].bSplitFailed = true; // mark this part so we know not to try splitting it again
+		return false; // return failure from the helper so split can be re-attempted
 	}
 
 	int32 NewPartsStartIdx = Decomposition.Num();
 	int32 OtherSideStartIdx = -1;
-	BestCutResult.ApplyToGeo(Decomposition, WorstIdx, CandidatePlanes[BestPlaneIdx], OtherSideStartIdx, OnPlaneTolerance, ConnectedComponentTolerance);
+	BestCutResult.ApplyToGeo(Decomposition, WorstIdx, CandidatePlanes[BestPlaneIdx], OtherSideStartIdx, OnPlaneTolerance, ConnectedComponentTolerance, NegativeSpace, bTreatAsSolid, bSplitDisconnectedComponents);
 
 	UpdateProximitiesAfterSplit(WorstIdx, NewPartsStartIdx, CandidatePlanes[BestPlaneIdx], OtherSideStartIdx, OrigHullVolume);
 
-	return Decomposition.Num() - NewPartsStartIdx;
+	return true;
 }
 
 void FConvexDecomposition3::UpdateProximitiesAfterSplit(int32 SplitIdx, int32 NewIdxStart, FPlane3d CutPlane, int32 SecondSideIdxStart, double OrigHullVolume)
@@ -1239,10 +2109,7 @@ void FConvexDecomposition3::UpdateProximitiesAfterSplit(int32 SplitIdx, int32 Ne
 
 	// Delete removed edges (including updating the map as needed)
 	// Note this must happen *after* connecting up new edges, or else the StartNewProximitiesIdx will be wrong
-	for (int32 ToRemove : ToRemoveProximities)
-	{
-		DeleteProximity(ToRemove, true);
-	}
+	DeleteProximity(MoveTemp(ToRemoveProximities), true);
 
 	// Create new proximity links across the new plane
 	bool bOrigOnPlane = IsMeshOnPlane(SplitIdx, CutPlane);
@@ -1294,6 +2161,7 @@ void FConvexDecomposition3::InitializeFromHulls(int32 NumHulls, TFunctionRef<dou
 	for (int32 HullIdx = 0; HullIdx < NumHulls; ++HullIdx)
 	{
 		FConvexPart* Convex = new FConvexPart(true);
+		Convex->HullSourceID = HullIdx;
 		Convex->bGeometryVolumeUnreliable = false;
 		Convex->bMustMerge = false;
 		double Volume = HullVolumes(HullIdx);
@@ -1326,10 +2194,75 @@ void FConvexDecomposition3::InitializeFromHulls(int32 NumHulls, TFunctionRef<dou
 	}
 }
 
+void FConvexDecomposition3::InitializeProximityFromDecompositionBoundingBoxOverlaps(double ExpandByBoundsMinDimFactor, double ExpandByBoundsMaxDimFactor, double MinExpandAmount)
+{
+	Proximities.Empty();
+	DecompositionToProximity.Empty();
+	
+	FAxisAlignedBox3d OverallBounds;
+	double MaxDim = 0;
+	TArray<FAxisAlignedBox3d> ExpandedBounds;
+	ExpandedBounds.SetNum(Decomposition.Num());
+	for (int32 PartIdx = 0; PartIdx < Decomposition.Num(); ++PartIdx)
+	{
+		FAxisAlignedBox3d Bounds = Decomposition[PartIdx].Bounds;
+		double ExpandAmount = FMath::Max3(MinExpandAmount, Bounds.MinDim() * ExpandByBoundsMinDimFactor, Bounds.MaxDim() * ExpandByBoundsMaxDimFactor);
+		Bounds.Expand(ExpandAmount);
+		OverallBounds.Contain(Bounds);
+		MaxDim = FMath::Max(MaxDim, Bounds.MaxDim());
+		ExpandedBounds[PartIdx] = Bounds;
+	}
+	FSparseDynamicOctree3 Octree;
+	Octree.RootDimension = FMath::Max(MaxDim, OverallBounds.MaxDim() / 2.0);
+	TArray<int32> Overlaps;
+	for (int32 PartIdx = 0; PartIdx < Decomposition.Num(); ++PartIdx)
+	{
+		FAxisAlignedBox3d QueryBounds = ExpandedBounds[PartIdx];
+		
+		Overlaps.Reset();
+		Octree.RangeQuery(QueryBounds, Overlaps);
+		for (int32 OverlapIdx : Overlaps)
+		{
+			// Filter range query results for actual overlaps with query bounds
+			if (QueryBounds.Intersects(ExpandedBounds[OverlapIdx]))
+			{
+				int32 ProxIdx = Proximities.Emplace(FIndex2i(OverlapIdx, PartIdx), FPlane3d(), false /*bPlaneSeparates*/);
+				DecompositionToProximity.Add(OverlapIdx, ProxIdx);
+				DecompositionToProximity.Add(PartIdx, ProxIdx);
+			}
+		}
+
+		Octree.InsertObject(PartIdx, ExpandedBounds[PartIdx]);
+	}
+}
+
 int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTolerance, double MinThicknessToleranceWorldSpace, bool bAllowCompact, bool bRequireHullTriangles, int32 MaxOutputHulls,
 	const FSphereCovering* OptionalNegativeSpace, const FTransform* OptionalTransformIntoNegativeSpace)
 {
-	int32 TargetNumParts = FMath::Max(1, InTargetNumParts);
+	FMergeSettings Settings;
+	Settings.TargetNumParts = InTargetNumParts;
+	Settings.ErrorTolerance = MaxErrorTolerance;
+	Settings.MinThicknessTolerance = MinThicknessToleranceWorldSpace;
+	Settings.bAllowCompact = bAllowCompact;
+	Settings.bRequireHullTriangles = bRequireHullTriangles;
+	Settings.MaxOutputHulls = MaxOutputHulls;
+	Settings.OptionalNegativeSpace = OptionalNegativeSpace;
+	Settings.OptionalTransformIntoNegativeSpace = OptionalTransformIntoNegativeSpace;
+	return MergeBest(Settings);
+}
+
+int32 FConvexDecomposition3::MergeBest(const FMergeSettings& Settings)
+{
+	// expand some settings out to variables for convenience
+	int32 TargetNumParts = FMath::Max(1, Settings.TargetNumParts);
+	double MaxErrorTolerance = Settings.ErrorTolerance;
+	double MinThicknessToleranceWorldSpace = Settings.MinThicknessTolerance;
+	bool bAllowCompact = Settings.bAllowCompact;
+	bool bRequireHullTriangles = Settings.bRequireHullTriangles;
+	int32 MaxOutputHulls = Settings.MaxOutputHulls;
+	const FSphereCovering* OptionalNegativeSpace = Settings.OptionalNegativeSpace;
+	const FTransform* OptionalTransformIntoNegativeSpace = Settings.OptionalTransformIntoNegativeSpace;
+
 	const bool bHasValidMaxHulls = MaxOutputHulls > 0;
 	if (bHasValidMaxHulls)
 	{
@@ -1342,70 +2275,11 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 
 	int32 MergeNum = 0;
 
+	
+	// Map from proximity index to a pre-computed convex part that would result if the proximity-linked parts were merged
 	TMap<int32, TUniquePtr<FConvexPart>> ProximityComputedParts;
-
-	auto ConvexNegativeSpaceSphereOverlapTest = [OptionalNegativeSpace, OptionalTransformIntoNegativeSpace](FConvexPart* Part, int PtIdx)
-	{
-		check(OptionalNegativeSpace);
-		double Radius = OptionalNegativeSpace->GetRadius(PtIdx);
-		FVector3d Center = OptionalNegativeSpace->GetCenter(PtIdx);
-
-		bool bMustTransformConvex = false;
-		if (OptionalTransformIntoNegativeSpace)
-		{
-			FVector ScaleVec = OptionalTransformIntoNegativeSpace->GetScale3D();
-			// Uniform scale: Can tranform into negative space into part space
-			if (ScaleVec.AllComponentsEqual())
-			{
-				if (ScaleVec.X == 0)
-				{
-					return false;
-				}
-				Radius = FMath::Abs(Radius / ScaleVec.X);
-				Center = OptionalTransformIntoNegativeSpace->InverseTransformPosition(Center);
-			}
-			else // Non-uniform scale: Must transform convex into negative space
-			{
-				bMustTransformConvex = true;
-			}
-		}
-		
-		double RadiusSq = Radius * Radius;
-		double MaxPlaneDist = 0;
-		for (int32 PlaneIdx = 0; PlaneIdx < Part->HullPlanes.Num(); ++PlaneIdx)
-		{
-			FPlane3d Plane = Part->HullPlanes[PlaneIdx];
-			if (bMustTransformConvex)
-			{
-				Plane.Transform(*OptionalTransformIntoNegativeSpace);
-			}
-			double PlaneDist = Plane.DistanceTo(Center);
-			MaxPlaneDist = FMath::Max(MaxPlaneDist, PlaneDist);
-			if (PlaneDist > Radius)
-			{
-				return false;
-			}
-			else if (Radius > 0 && PlaneDist > FMath::Max(0, MaxPlaneDist - FMathd::ZeroTolerance))
-			{
-				FIndex3i TriInds = Part->HullTriangles[PlaneIdx];
-				FTriangle3d Tri(Part->InternalGeo.GetVertex(TriInds.A), Part->InternalGeo.GetVertex(TriInds.B), Part->InternalGeo.GetVertex(TriInds.C));
-				if (bMustTransformConvex)
-				{
-					Tri.V[0] = OptionalTransformIntoNegativeSpace->TransformPosition(Tri.V[0]);
-					Tri.V[1] = OptionalTransformIntoNegativeSpace->TransformPosition(Tri.V[1]);
-					Tri.V[2] = OptionalTransformIntoNegativeSpace->TransformPosition(Tri.V[2]);
-				}
-				// TODO: Can optimize this by writing custom Point-Tri distance logic to re-use what we already know and early-out if a vertex or edge distance is < Radius
-				FDistPoint3Triangle3d Dist(Center, Tri);
-				double TriDistSq = Dist.GetSquared();
-				if (TriDistSq < RadiusSq)
-				{
-					return true;
-				}
-			}
-		}
-		return (MaxPlaneDist <= 0);
-	};
+	// threshold at which we will start to more aggressively evict cached computed parts from ProximityComputedParts
+	constexpr int32 EvictComputedPartsThreshold = 10000;
 
 	auto IsPartBelowSizeTolerance = [MinThicknessTolerance](const FConvexPart& Part) -> bool
 	{ 
@@ -1451,15 +2325,16 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 	};
 
 	int32 MustMergeCount = 0;
+	bool bHaveCompactMustMergeParts = false;
 	if (MinThicknessTolerance > 0)
 	{
 		for (int32 PartIdx = 0; PartIdx < Decomposition.Num(); PartIdx++)
 		{
 			FConvexPart& Part = Decomposition[PartIdx];
-			// The 'must merge' logic is not designed to handle pre-compacted hull inputs
+			// Note if our thin parts are already compact, so we can skip processing that requires the underlying geometry
 			if (Part.IsCompact())
 			{
-				continue;
+				bHaveCompactMustMergeParts = true;
 			}
 			Part.bMustMerge = IsPartBelowSizeTolerance(Part);
 			MustMergeCount += Part.bMustMerge;
@@ -1468,7 +2343,7 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 	// TODO: if MustMergeCount is >= NumParts-1, we could shortcut the process and just return a single convex hull
 
 	// Try to further-split long/wide thin parts -- parts that are not thin in all directions, e.g. parts with max bounding box extent wider than MinThicknessTolerance
-	if (MustMergeCount > 0)
+	if (MustMergeCount > 0 && !bHaveCompactMustMergeParts)
 	{
 		TArray<int32> PartsToConsider;
 		for (int32 OrigPartIdx = 0, OrigNumDecomposition = Decomposition.Num(); OrigPartIdx < OrigNumDecomposition; OrigPartIdx++)
@@ -1504,7 +2379,7 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 						{
 							continue;
 						}
-						FPartialCutResult PlaneResult(PartToSplit, Plane, OnPlaneTolerance);
+						FPartialCutResult PlaneResult(PartToSplit, Plane, OnPlaneTolerance, bTreatAsSolid, ThickenAfterHullFailure);
 						if (!PlaneResult.bSuccess)
 						{
 							continue;
@@ -1513,7 +2388,7 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 						double OrigHullVolume = PartToSplit.HullVolume;
 						int32 NewPartsStartIdx = Decomposition.Num();
 						int32 OtherSideStartIdx = -1;
-						PlaneResult.ApplyToGeo(Decomposition, PartIdx, Plane, OtherSideStartIdx, OnPlaneTolerance, ConnectedComponentTolerance);
+						PlaneResult.ApplyToGeo(Decomposition, PartIdx, Plane, OtherSideStartIdx, OnPlaneTolerance, ConnectedComponentTolerance, NegativeSpace, bTreatAsSolid, bSplitDisconnectedComponents);
 						UpdateProximitiesAfterSplit(PartIdx, NewPartsStartIdx, Plane, OtherSideStartIdx, OrigHullVolume);
 						PartToSplit.bMustMerge = true;
 						for (int32 NewIdx = NewPartsStartIdx; NewIdx < Decomposition.Num(); NewIdx++)
@@ -1546,6 +2421,17 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 		if (Part.SumHullsVolume == -FMathd::MaxReal)
 		{
 			Part.SumHullsVolume = Part.HullVolume;
+		}
+	}
+
+	// If we have a MergeCallback, maintain a mapping from current decomposition part indices back to original part indices
+	TArray<int32> ToOriginalPartIdx;
+	if (Settings.MergeCallback)
+	{
+		ToOriginalPartIdx.SetNumUninitialized(Decomposition.Num());
+		for (int32 PartIdx = 0; PartIdx < ToOriginalPartIdx.Num(); ++PartIdx)
+		{
+			ToOriginalPartIdx[PartIdx] = PartIdx;
 		}
 	}
 
@@ -1585,13 +2471,27 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 	for (; MustMergeCount > 0 || VolumeTolerance > 0 || Decomposition.Num() > TargetNumParts; MergeNum++)
 	{
 		double BestKnownCost = FMathd::MaxReal;
-		bool bOnlyAllowMustMerges = VolumeTolerance == 0 && Decomposition.Num() <= TargetNumParts;
+		bool bOnlyAllowMustMerges = (VolumeTolerance == 0 || !Settings.bErrorToleranceOverridesNumParts) && Decomposition.Num() <= TargetNumParts;
 		int32 BestKnownIdx = -1;
+		int32 ConsideredCount = 0;
 		for (int32 ProxIdx = 0; ProxIdx < Proximities.Num(); ProxIdx++)
 		{
 			if (!Proximities[ProxIdx].bIsValidLink)
 			{
 				continue;
+			}
+
+			// Once we've considered a certain number of links and found a merge candidate, only consider links that are in the neighborhood of the current best link
+			// This prevents excessive computation to find the absolute best merge, when we only really need a local best merge
+			ConsideredCount++;
+			if (RestrictMergeSearchToLocalAfterTestNumConnections > -1 && ConsideredCount > RestrictMergeSearchToLocalAfterTestNumConnections && BestKnownIdx != -1)
+			{
+				FIndex2i BestLink = Proximities[BestKnownIdx].Link;
+				FIndex2i CurLink = Proximities[ProxIdx].Link;
+				if (!BestLink.Contains(CurLink.A) && !BestLink.Contains(CurLink.B))
+				{
+					continue;
+				}
 			}
 
 			bool bIncludesMustMergePart =
@@ -1601,7 +2501,18 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 				Decomposition[Proximities[ProxIdx].Link.A].bMustMerge &&
 				Decomposition[Proximities[ProxIdx].Link.B].bMustMerge;
 
+			// Run the custom allow-merge function (if we have one)
+			if (Settings.CustomAllowMergeParts)
+			{
+				if (!Settings.CustomAllowMergeParts(Decomposition[Proximities[ProxIdx].Link.A], Decomposition[Proximities[ProxIdx].Link.B]))
+				{
+					continue;
+				}
+			}
+
 			double MergeCost;
+			// attempt to remove parts from the proximity store if we're at the size limit
+			bool bShouldRemoveParts = ProximityComputedParts.Num() > EvictComputedPartsThreshold;
 			if (Proximities[ProxIdx].HasMergedVolume())
 			{
 				MergeCost = Proximities[ProxIdx].GetMergeCost(Decomposition);
@@ -1622,6 +2533,11 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 					bOnlyAllowMustMerges // or we're currently only considering must-merge parts (e.g., already at or below desired number of parts)
 				))
 			{
+				// remove pre-computed part if they won't pass volume tolerance or we're at the part limit
+				if (bShouldRemoveParts || (!bAboveMax && VolumeTolerance > 0 && MergeCost > VolumeTolerance))
+				{
+					ProximityComputedParts.Remove(ProxIdx);
+				}
 				continue;
 			}
 
@@ -1632,7 +2548,8 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 			}
 
 			// if this would be the new best candidate, and we have negative space, check if the merge would cross protected negative space
-			if (OptionalNegativeSpace && OptionalNegativeSpace->Num() > 0 && MergeCost < BestKnownCost)
+			bool bHasNegativeSpace = NegativeSpace.Num() || (OptionalNegativeSpace && OptionalNegativeSpace->Num() > 0);
+			if (bHasNegativeSpace && MergeCost < BestKnownCost)
 			{
 				TUniquePtr<FConvexPart>* FoundMergeHull = ProximityComputedParts.Find(ProxIdx);
 				if (!FoundMergeHull)
@@ -1640,18 +2557,41 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 					FoundMergeHull = &ProximityComputedParts.Add(ProxIdx, CreateMergedPart(Proximities[ProxIdx]));
 				}
 				bool bCoversProtectedPt = false;
-				for (int32 PtIdx = 0; PtIdx < OptionalNegativeSpace->Num(); ++PtIdx)
+				auto TestVsNegativeSpace = [](const FConvexPart& Part, const FSphereCovering& SphereCovering, const FTransform* OptionalTransform = nullptr) -> bool
 				{
-					if (ConvexNegativeSpaceSphereOverlapTest(FoundMergeHull->Get(), PtIdx))
+					std::atomic_bool bOverlaps = false;
+					ParallelFor(SphereCovering.Num(), [&](int32 SphereIdx)
+						{
+							if (bOverlaps.load(std::memory_order_relaxed))
+							{
+								return;
+							}
+							double Radius = SphereCovering.GetRadius(SphereIdx);
+							FVector3d Center = SphereCovering.GetCenter(SphereIdx);
+							if (ConvexPartVsSphereOverlap(Part, Center, Radius, OptionalTransform))
+							{
+								bOverlaps = true;
+							}
+						});
+					return (bool)bOverlaps;
+				};
+				if (OptionalNegativeSpace)
+				{
+					if (TestVsNegativeSpace(**FoundMergeHull, *OptionalNegativeSpace, OptionalTransformIntoNegativeSpace))
 					{
 						bCoversProtectedPt = true;
-						break;
 					}
+				}
+				if (TestVsNegativeSpace(**FoundMergeHull, NegativeSpace))
+				{
+					bCoversProtectedPt = true;
 				}
 				if (bCoversProtectedPt)
 				{
 					// Mark link as invalid so we don't repeat this overlap test in later iterations
 					Proximities[ProxIdx].bIsValidLink = false;
+					// Never keep precomputed proximity for invalid links
+					ProximityComputedParts.Remove(ProxIdx);
 					continue;
 				}
 			}
@@ -1660,6 +2600,10 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 			{
 				BestKnownCost = MergeCost;
 				BestKnownIdx = ProxIdx;
+			}
+			else if (bShouldRemoveParts) // if we are at the precomputed proximity part limit and it's not the best part, don't keep it
+			{
+				ProximityComputedParts.Remove(ProxIdx);
 			}
 		}
 
@@ -1714,7 +2658,7 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 
 				// Swap-Remove the proximity links
 				int32 LastProxIdx = Proximities.Num() - 1;
-				Proximities.RemoveAtSwap(ProxIdx, 1, false);
+				Proximities.RemoveAtSwap(ProxIdx, 1, EAllowShrinking::No);
 
 				// Update the proximity that was swapped back to this position (if any)
 				if (ProxIdx < LastProxIdx)
@@ -1740,10 +2684,21 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 		NewLinks.Remove(DecoToKeep);
 		NewLinks.Remove(DecoToRm);
 
+		if (Settings.MergeCallback)
+		{
+			int32 OrigKeep = ToOriginalPartIdx[DecoToKeep];
+			int32 OrigRm = ToOriginalPartIdx[DecoToRm];
+			Settings.MergeCallback(OrigKeep, OrigRm);
+		}
+
 		// Remove the unused convex, updating references to the part that was swapped back
 		int32 LastIdx = Decomposition.Num() - 1;
 		if (DecoToRm != LastIdx)
 		{
+			if (Settings.MergeCallback)
+			{
+				ToOriginalPartIdx[DecoToRm] = ToOriginalPartIdx[LastIdx];
+			}
 			// Before swap-removing DecoToRm, update references that used to point to the last element of the array to now point to DecoToRm
 			[this](int32 OrigIdx, int32 NewIdx)
 			{
@@ -1761,7 +2716,7 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 				}
 			}(LastIdx, DecoToRm);
 		}
-		Decomposition.RemoveAtSwap(DecoToRm, 1, false);
+		Decomposition.RemoveAtSwap(DecoToRm, 1, EAllowShrinking::No);
 
 		// Add new proximities for all new links to the merged part
 		for (int32 ToLink : NewLinks)
@@ -1791,35 +2746,101 @@ int32 FConvexDecomposition3::MergeBest(int32 InTargetNumParts, double MaxErrorTo
 	return MergeNum;
 }
 
-void FConvexDecomposition3::DeleteProximity(int32 ProxIdx, bool bDeleteMapReferences)
+void FConvexDecomposition3::DeleteProximity(TArray<int32>&& ToRemoveProx, bool bDeleteMapReferences)
 {
-	if (bDeleteMapReferences)
+	for (int32 ToRemoveIdx = 0; ToRemoveIdx < ToRemoveProx.Num(); ++ToRemoveIdx)
 	{
-		const FProximity& OldProx = Proximities[ProxIdx];
-		DecompositionToProximity.RemoveSingle(OldProx.Link.A, ProxIdx);
-		DecompositionToProximity.RemoveSingle(OldProx.Link.B, ProxIdx);
-	}
-	checkSlow(DecompositionToProximity.FindKey(ProxIdx) == nullptr); // verify there are no more references to this Proximity's index
+		int32 ProxIdx = ToRemoveProx[ToRemoveIdx];
+		if (bDeleteMapReferences)
+		{
+			const FProximity& OldProx = Proximities[ProxIdx];
+			DecompositionToProximity.RemoveSingle(OldProx.Link.A, ProxIdx);
+			DecompositionToProximity.RemoveSingle(OldProx.Link.B, ProxIdx);
+		}
+		checkSlow(DecompositionToProximity.FindKey(ProxIdx) == nullptr); // verify there are no more references to this Proximity's index
 
-	if (ProxIdx == Proximities.Num() - 1)
-	{
-		Proximities.RemoveAt(ProxIdx, 1, false);
-		return;
-	}
-	else
-	{
-		// Remove by swapping the last element to the new slot, and removing the last element
-		// Then update links for that swapped-in proximity
-		int32 LastProxIdx = Proximities.Num() - 1;
-		Proximities.RemoveAtSwap(ProxIdx, 1, false);
-		const FProximity& NewProx = Proximities[ProxIdx];
-		DecompositionToProximity.RemoveSingle(NewProx.Link.A, LastProxIdx);
-		DecompositionToProximity.RemoveSingle(NewProx.Link.B, LastProxIdx);
-		DecompositionToProximity.Add(NewProx.Link.A, ProxIdx);
-		DecompositionToProximity.Add(NewProx.Link.B, ProxIdx);
+		if (ProxIdx == Proximities.Num() - 1)
+		{
+			Proximities.RemoveAt(ProxIdx, 1, EAllowShrinking::No);
+			return;
+		}
+		else
+		{
+			// Remove by swapping the last element to the new slot, and removing the last element
+			// Then update links for that swapped-in proximity
+			int32 LastProxIdx = Proximities.Num() - 1;
+			Proximities.RemoveAtSwap(ProxIdx, 1, EAllowShrinking::No);
+			const FProximity& NewProx = Proximities[ProxIdx];
+			DecompositionToProximity.RemoveSingle(NewProx.Link.A, LastProxIdx);
+			DecompositionToProximity.RemoveSingle(NewProx.Link.B, LastProxIdx);
+			DecompositionToProximity.Add(NewProx.Link.A, ProxIdx);
+			DecompositionToProximity.Add(NewProx.Link.B, ProxIdx);
+			// check if the swapped-back index is one we planned to remove, and if so update the index
+			for (int32 WillRemoveIdx = ToRemoveIdx + 1; WillRemoveIdx < ToRemoveProx.Num(); ++WillRemoveIdx)
+			{
+				if (LastProxIdx == ToRemoveProx[WillRemoveIdx])
+				{
+					ToRemoveProx[WillRemoveIdx] = ProxIdx;
+					break;
+				}
+			}
+		}
 	}
 }
 
+void FConvexDecomposition3::InitNegativeSpaceConvexPartMapping()
+{
+	// Helper to check each sphere for overlap vs each convex part
+	auto IteratePartsVsSpheres = [this](TFunctionRef<void(FConvexPart& Part, int32 SphereIdx, bool bOverlapsPart)> ProcessPartVsSphere)
+	{
+		for (int32 PartIdx = 0; PartIdx < Decomposition.Num(); ++PartIdx)
+		{
+			FConvexPart& Part = Decomposition[PartIdx];
+			if (!ensure(Part.OverlapsNegativeSpace.IsEmpty())) // expect this Init to only be called when there is no existing mapping
+			{
+				Part.OverlapsNegativeSpace.Reset();
+			}
+			for (int32 SphereIdx = 0; SphereIdx < NegativeSpace.Num(); ++SphereIdx)
+			{
+				// Note: We assume the part is in the same coordinate space as the negative space spheres
+				bool bOverlapsPart = ConvexPartVsSphereOverlap(Part, NegativeSpace.GetCenter(SphereIdx), NegativeSpace.GetRadius(SphereIdx));
+				ProcessPartVsSphere(Part, SphereIdx, bOverlapsPart);
+			}
+		}
+	};
+
+	if (Decomposition.Num() == 1)
+	{
+		// Special handling of the single-part case, since any spheres that don't overlap that must be useless (future splits/merges will never be affected by them)
+		IteratePartsVsSpheres([this](FConvexPart& Part, int32 SphereIdx, bool bOverlapsPart)
+		{
+			if (!bOverlapsPart)
+			{
+				// Set negative radius to indicate sphere is not useful
+				NegativeSpace.SetRadius(SphereIdx, -FMathd::MaxReal);
+			}
+		});
+		// Clear negative-radius / invalid spheres from the NegativeSpace
+		NegativeSpace.RemoveSmaller(0);
+		// Add all remaining spheres
+		Decomposition[0].OverlapsNegativeSpace.SetNumUninitialized(NegativeSpace.Num());
+		for (int32 Idx = 0; Idx < NegativeSpace.Num(); ++Idx)
+		{
+			Decomposition[0].OverlapsNegativeSpace[Idx] = Idx;
+		}
+	}
+	else
+	{
+		// If there are multiple parts, just assign them to parts based on overlap
+		IteratePartsVsSpheres([](FConvexPart& Part, int32 SphereIdx, bool bOverlapsPart)
+		{
+			if (bOverlapsPart)
+			{
+				Part.OverlapsNegativeSpace.Add(SphereIdx);
+			}
+		});
+	}
+}
 
 } // end namespace UE::Geometry
 } // end namespace UE

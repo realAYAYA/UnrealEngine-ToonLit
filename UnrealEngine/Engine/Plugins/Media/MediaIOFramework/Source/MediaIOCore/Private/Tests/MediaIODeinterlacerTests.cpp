@@ -187,14 +187,26 @@ namespace UE::MediaIOTests
 	}
 }
 
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMediaIODeinterlacerTests, "Plugin.MediaIO.Deinterlace", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-bool FMediaIODeinterlacerTests::RunTest(const FString& Parameters)
+DEFINE_SPEC(FMediaIODeinterlacerTests, "Plugins.MediaIO.Deinterlace", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+void FMediaIODeinterlacerTests::Define()
 {
-	// Test expose whole container
-	UE::MediaIOTests::TestBobDeinterlace(*this);
-	UE::MediaIOTests::TestBlendDeinterlace(*this);
-	UE::MediaIOTests::TestDiscardDeinterlace(*this);
-	UE::MediaIOTests::TestDiscardDeinterlaceBottomFieldOrder(*this);
-	return true;
+	It("BobDeinterlace", [this]()
+		{
+			UE::MediaIOTests::TestBobDeinterlace(*this);
+		});
+
+	It("BlendDeinterlace", [this]()
+		{
+			UE::MediaIOTests::TestBlendDeinterlace(*this);
+		});
+
+	It("DiscardDeinterlace", [this]()
+		{
+			UE::MediaIOTests::TestDiscardDeinterlace(*this);
+		});
+
+	It("DiscardDeinterlaceBottomFieldOrder", [this]()
+		{
+			UE::MediaIOTests::TestDiscardDeinterlaceBottomFieldOrder(*this);
+		});
 }

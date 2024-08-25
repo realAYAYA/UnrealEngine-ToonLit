@@ -2,7 +2,6 @@
 #pragma once
 #include "Chaos/Core.h"
 #include "Chaos/ParticleHandle.h"
-#include "PhysicsProxy/SingleParticlePhysicsProxyFwd.h"
 #include "Chaos/Framework/PhysicsSolverBase.h"
 #include "Serialization/BufferArchive.h"
 #include "Containers/CircularBuffer.h"
@@ -13,40 +12,71 @@
 #define VALIDATE_REWIND_DATA 0
 #endif
 
+#ifndef DEBUG_REWIND_DATA
+#define DEBUG_REWIND_DATA 0
+#endif
+
 #ifndef DEBUG_NETWORK_PHYSICS
 #define DEBUG_NETWORK_PHYSICS 0
 #endif
 
-struct FBaseHistoryDatas;
-
 namespace Chaos
 {
 
-/** Base rewind history used in the rewind datas */
+/** Base rewind history used in the rewind data */
 struct FBaseRewindHistory
 {
 	FORCEINLINE virtual ~FBaseRewindHistory() {}
+
+	/** Create a new, empty instance with the same concrete type as this object */
+	virtual TUniquePtr<FBaseRewindHistory> CreateNew() const = 0;
+
+	/** Create a polymorphic copy of the history */
+	virtual TUniquePtr<FBaseRewindHistory> Clone() const = 0;
 
 	/** Set the package map for serialization */
 	FORCEINLINE virtual void SetPackageMap(class UPackageMap* InPackageMap) {}
 
 	/** Check if the history buffer contains an entry for the given frame*/
-	FORCEINLINE virtual bool HasValidDatas(const int32 ValidFrame) const { return false; }
+	FORCEINLINE virtual bool HasValidData(const int32 ValidFrame) const { return false; }
+	UE_DEPRECATED(5.4, "Deprecated, use HasValidData() instead")
+	FORCEINLINE virtual bool HasValidDatas(const int32 ValidFrame) const { return HasValidData(ValidFrame);
+	}
 
-	/** Extract datas from the history buffer at a given time */
-	FORCEINLINE virtual bool ExtractDatas(const int32 ExtractFrame, const bool bResetSolver, void* HistoryDatas, const bool bExactFrame = false) { return true; }
+	/** Extract data from the history buffer at a given time */
+	FORCEINLINE virtual bool ExtractData(const int32 ExtractFrame, const bool bResetSolver, void* HistoryData, const bool bExactFrame = false) { return true; }
+	UE_DEPRECATED(5.4, "Deprecated, use ExtractData() instead")
+	FORCEINLINE virtual bool ExtractDatas(const int32 ExtractFrame, const bool bResetSolver, void* HistoryDatas, const bool bExactFrame = false) { return ExtractData(ExtractFrame, bResetSolver, HistoryDatas, bExactFrame); }
+	
+	/** Iterate over and merge data */
+	FORCEINLINE virtual void MergeData(const int32 FromFrame, void* ToData) {}
 
-	/** Record datas into the history buffer at a given time */
-	FORCEINLINE virtual bool RecordDatas(const int32 RecordFrame, const void* HistoryDatas) { return true; }
+	/** Record data into the history buffer at a given time */
+	FORCEINLINE virtual bool RecordData(const int32 RecordFrame, const void* HistoryData) { return true; }
+	UE_DEPRECATED(5.4, "Deprecated, use RecordData() instead")
+	FORCEINLINE virtual bool RecordDatas(const int32 RecordFrame, const void* HistoryDatas) { return RecordData(RecordFrame, HistoryDatas); }
 
-	/** Serialize the datas into an array of uint8 */
-	FORCEINLINE virtual void SerializeDatas(const uint32 StartFrame, const uint32 EndFrame, TArray<uint8>& ArchiveDatas, const int32 FrameOffset) const {}
+	/** Create a polymorphic copy of only a range of frames, applying the frame offset to the copies */
+	virtual TUniquePtr<FBaseRewindHistory> CopyFramesWithOffset(const uint32 StartFrame, const uint32 EndFrame, const int32 FrameOffset) = 0;
 
-	/** Deserialize the datas from the array of uint8 */
-	FORCEINLINE virtual void DeserializeDatas(const TArray<uint8>& ArchiveDatas, const int32 FrameOffset) {}
+	/** Copy new data (received from the network) into this history, returns frame to resimulate from if @param CompareDataForRewind is set to true and compared data differ enough */
+	virtual int32 ReceiveNewData(FBaseRewindHistory& NewData, const int32 FrameOffset, bool CompareDataForRewind = false) { return INDEX_NONE; }
+	UE_DEPRECATED(5.4, "Deprecated, use ReceiveNewData() instead")
+	virtual void ReceiveNewDatas(FBaseRewindHistory& NewDatas, const int32 FrameOffset) { ReceiveNewData(NewDatas, FrameOffset); }
 
-	/** Debug the datas from the array of uint8 that will be transferred from client to server */
-	FORCEINLINE virtual void DebugDatas(const TArray<uint8>& ArchiveDatas, TArray<int32>& LocalFrames, TArray<int32>& ServerFrames, TArray<int32>& InputFrames) {}
+	/** Compares new received data with local predicted data and returns true if they differ enough to trigger a resimulation  */
+	FORCEINLINE virtual bool TriggerRewindFromNewData(void* NewData) { return false; }
+
+	/** Serialize the data to or from a network archive */
+	virtual void NetSerialize(FArchive& Ar, UPackageMap* PackageMap) {}
+	
+	/** Validate data in history buffer received from clients on the server */
+	virtual void ValidateDataInHistory(const void* ActorComponent) {}
+
+	/** Debug the data from the array of uint8 that will be transferred from client to server */
+	FORCEINLINE virtual void DebugData(const Chaos::FBaseRewindHistory& NewData, TArray<int32>& LocalFrames, TArray<int32>& ServerFrames, TArray<int32>& InputFrames) { }
+	UE_DEPRECATED(5.4, "Deprecated, use DebugData() instead")
+	FORCEINLINE virtual void DebugDatas(const Chaos::FBaseRewindHistory& NewDatas, TArray<int32>& LocalFrames, TArray<int32>& ServerFrames, TArray<int32>& InputFrames) { DebugData(NewDatas, LocalFrames, ServerFrames, InputFrames); }
 
 	/** Legacy interface to rewind states */
 	FORCEINLINE virtual bool RewindStates(const int32 RewindFrame, const bool bResetSolver) { return false; }
@@ -55,29 +85,29 @@ struct FBaseRewindHistory
 	FORCEINLINE virtual bool ApplyInputs(const int32 ApplyFrame, const bool bResetSolver) { return false; }
 };
 
-/** Templated datas history holding a datas buffer */
-template<typename DatasType>
-struct TDatasRewindHistory : public FBaseRewindHistory
+/** Templated data history holding a data buffer */
+template<typename DataType>
+struct TDataRewindHistory : public FBaseRewindHistory
 {
-	FORCEINLINE TDatasRewindHistory(const int32 FrameCount, const bool bIsHistoryLocal) :
-		bIsLocalHistory(bIsHistoryLocal), DatasArray(), CurrentFrame(0), CurrentIndex(0), NumFrames(FrameCount)
+	FORCEINLINE TDataRewindHistory(const int32 FrameCount, const bool bIsHistoryLocal) :
+		bIsLocalHistory(bIsHistoryLocal), DataHistory(), CurrentFrame(0), CurrentIndex(0), NumFrames(FrameCount)
 	{
-		DatasArray.SetNum(NumFrames);
+		DataHistory.SetNum(NumFrames);
 	}
-	FORCEINLINE virtual ~TDatasRewindHistory() {}
+	FORCEINLINE virtual ~TDataRewindHistory() {}
 
 protected:
 
-	/** Get the closest (min/max) valid datas from the Datas frame */
-	FORCEINLINE int32 ClosestDatas(const int32 DatasFrame, const bool bMinDatas)
+	/** Get the closest (min/max) valid data from the data frame */
+	FORCEINLINE int32 ClosestData(const int32 DataFrame, const bool bMinData)
 	{
 		int32 ClosestIndex = INDEX_NONE;
 		for (int32 FrameIndex = 0; FrameIndex < NumFrames; ++FrameIndex)
 		{
-			const int32 ValidFrame = bMinDatas ? FMath::Max(0, DatasFrame - FrameIndex) : DatasFrame + FrameIndex;
+			const int32 ValidFrame = bMinData ? FMath::Max(0, DataFrame - FrameIndex) : DataFrame + FrameIndex;
 			const int32 ValidIndex = ValidFrame % NumFrames;
 
-			if (DatasArray[ValidIndex].LocalFrame == ValidFrame)
+			if (DataHistory[ValidIndex].LocalFrame == ValidFrame)
 			{
 				ClosestIndex = ValidIndex;
 				break;
@@ -85,67 +115,74 @@ protected:
 		}
 		return ClosestIndex;
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use ClosestData() instead")
+	FORCEINLINE int32 ClosestDatas(const int32 DatasFrame, const bool bMinDatas) { return ClosestData(DatasFrame, bMinDatas); }
 
 public : 
 
 	/** Check if the history buffer contains an entry for the given frame*/
-	FORCEINLINE virtual bool HasValidDatas(const int32 ValidFrame) const override
+	FORCEINLINE virtual bool HasValidData(const int32 ValidFrame) const override
 	{
 		const int32 LocalFrame = ValidFrame % NumFrames;
-		return ValidFrame == DatasArray[LocalFrame].LocalFrame;
+		return ValidFrame == DataHistory[LocalFrame].LocalFrame;
 	}
 
 	/** Extract states at a given time */
-	FORCEINLINE virtual bool ExtractDatas(const int32 ExtractFrame, const bool bResetSolver, void* HistoryDatas, const bool bExactFrame = false) override
+	FORCEINLINE virtual bool ExtractData(const int32 ExtractFrame, const bool bResetSolver, void* HistoryData, const bool bExactFrame = false) override
 	{
 		const int32 LocalFrame = ExtractFrame % NumFrames;
-		if (ExtractFrame == DatasArray[LocalFrame].LocalFrame)
+		if (ExtractFrame == DataHistory[LocalFrame].LocalFrame)
 		{
 			CurrentFrame = ExtractFrame;
 			CurrentIndex = LocalFrame;
 
 #if DEBUG_NETWORK_PHYSICS
-			UE_LOG(LogTemp, Log, TEXT("		Found matching datas into history at frame %d"), ExtractFrame);
+			UE_LOG(LogTemp, Log, TEXT("		Found matching data into history at frame %d"), ExtractFrame);
 #endif
-			*static_cast<DatasType*>(HistoryDatas) = DatasArray[CurrentIndex];
+			*static_cast<DataType*>(HistoryData) = DataHistory[CurrentIndex];
 			return true;
 		}
 		else if(!bExactFrame)
 		{
 			if (bResetSolver)
 			{
-				UE_LOG(LogChaos, Warning, TEXT("		Unable to extract datas at frame %d while rewinding the simulation"), ExtractFrame);
+				UE_LOG(LogChaos, Warning, TEXT("		Unable to extract data at frame %d while rewinding the simulation"), ExtractFrame);
 			}
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS // TODO: Change to ClosestData() in UE 5.6 and remove deprecation pragma
 			const int32 MinFrame = ClosestDatas(ExtractFrame, true);
 			const int32 MaxFrame = ClosestDatas(ExtractFrame, false);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			if (MinFrame != INDEX_NONE && MaxFrame != INDEX_NONE)
 			{
-				static_cast<DatasType*>(HistoryDatas)->InterpolateDatas(
-					DatasArray[MinFrame], DatasArray[MaxFrame]);
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
+				// TODO: Change to InterpolateData() in UE 5.6 and remove deprecation pragma
+				static_cast<DataType*>(HistoryData)->InterpolateDatas(
+					DataHistory[MinFrame], DataHistory[MaxFrame]); 
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-				const int32 DeltaFrame = FMath::Abs(ExtractFrame - DatasArray[MinFrame].LocalFrame);
+				const int32 DeltaFrame = FMath::Abs(ExtractFrame - DataHistory[MinFrame].LocalFrame);
 
-				static_cast<DatasType*>(HistoryDatas)->LocalFrame = ExtractFrame;
-				static_cast<DatasType*>(HistoryDatas)->ServerFrame = DatasArray[MinFrame].ServerFrame + DeltaFrame;
-				static_cast<DatasType*>(HistoryDatas)->InputFrame = DatasArray[MinFrame].InputFrame + DeltaFrame;
+				static_cast<DataType*>(HistoryData)->LocalFrame = ExtractFrame;
+				static_cast<DataType*>(HistoryData)->ServerFrame = DataHistory[MinFrame].ServerFrame + DeltaFrame;
+				static_cast<DataType*>(HistoryData)->InputFrame = DataHistory[MinFrame].InputFrame + DeltaFrame;
 				return true;
 #if DEBUG_NETWORK_PHYSICS
-				UE_LOG(LogTemp, Log, TEXT("		Smoothing datas between frame %d and %d - > [%d %d]"), DatasArray[MinFrame].LocalFrame, DatasArray[MaxFrame].LocalFrame, static_cast<DatasType*>(HistoryDatas)->InputFrame, static_cast<DatasType*>(HistoryDatas)->ServerFrame);
+				UE_LOG(LogTemp, Log, TEXT("		Smoothing data between frame %d and %d - > [%d %d]"), DataHistory[MinFrame].LocalFrame, DataHistory[MaxFrame].LocalFrame, static_cast<DataType*>(HistoryData)->InputFrame, static_cast<DataType*>(HistoryData)->ServerFrame);
 #endif
 			}
 			else if (MinFrame != INDEX_NONE)
 			{
-				*static_cast<DatasType*>(HistoryDatas) = DatasArray[MinFrame];
+				*static_cast<DataType*>(HistoryData) = DataHistory[MinFrame];
 				return true;
 #if DEBUG_NETWORK_PHYSICS
-				UE_LOG(LogTemp, Log, TEXT("		Setting datas to frame %d"), DatasArray[MinFrame].LocalFrame);
+				UE_LOG(LogTemp, Log, TEXT("		Setting data to frame %d"), DataHistory[MinFrame].LocalFrame);
 #endif
 			}
 			else
 			{
 #if DEBUG_NETWORK_PHYSICS
-				UE_LOG(LogTemp, Log, TEXT("		Failed to find datas bounds : Min = %d | Max = %d"), MinFrame, MaxFrame);
+				UE_LOG(LogTemp, Log, TEXT("		Failed to find data bounds : Min = %d | Max = %d"), MinFrame, MaxFrame);
 #endif
 				return false;
 			}
@@ -153,22 +190,46 @@ public :
 		return false;
 	}
 
-	/** Load the datas from the buffer at a specific frame */
-	FORCEINLINE bool LoadDatas(const int32 LoadFrame)
+	FORCEINLINE virtual void MergeData(int32 FromFrame, void* ToData) override
+	{
+		const int32 ToFrame = static_cast<DataType*>(ToData)->LocalFrame;
+		for (; FromFrame < ToFrame; FromFrame++)
+		{
+			const int32 LocalFrame = FromFrame % NumFrames;
+			if (FromFrame == DataHistory[LocalFrame].LocalFrame)
+			{
+				static_cast<DataType*>(ToData)->MergeData(DataHistory[LocalFrame]);
+			}
+		}
+	}
+
+	FORCEINLINE virtual bool TriggerRewindFromNewData(void* NewData) override
+	{
+		if (EvalData(static_cast<DataType*>(NewData)->LocalFrame))
+		{
+			return !static_cast<DataType*>(NewData)->CompareData(DataHistory[CurrentIndex]);
+		}
+
+		return false;
+	}
+
+	/** Load the data from the buffer at a specific frame */
+	FORCEINLINE bool LoadData(const int32 LoadFrame)
 	{
 		const int32 LocalFrame = LoadFrame % NumFrames;
-		DatasArray[LocalFrame].LocalFrame = LoadFrame;
+		DataHistory[LocalFrame].LocalFrame = LoadFrame;
 		CurrentFrame = LoadFrame;
 		CurrentIndex = LocalFrame;
 		return true;
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use LoadData() instead")
+	FORCEINLINE bool LoadDatas(const int32 LoadFrame) { return LoadData(LoadFrame); }
 
-
-	/** Eval the datas from the buffer at a specific frame */
-	FORCEINLINE bool EvalDatas(const int32 EvalFrame)
+	/** Eval the data from the buffer at a specific frame */
+	FORCEINLINE bool EvalData(const int32 EvalFrame)
 	{
 		const int32 LocalFrame = EvalFrame % NumFrames;
-		if (EvalFrame == DatasArray[LocalFrame].LocalFrame)
+		if (EvalFrame == DataHistory[LocalFrame].LocalFrame)
 		{
 			CurrentFrame = EvalFrame;
 			CurrentIndex = LocalFrame;
@@ -176,41 +237,56 @@ public :
 		}
 		return false;
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use EvalData() instead")
+	FORCEINLINE bool EvalDatas(const int32 EvalFrame) { return EvalData(EvalFrame); }
 
-	/** Record the datas from the buffer at a specific frame */
-	FORCEINLINE virtual bool RecordDatas(const int32 RecordFrame, const void* HistoryDatas) override
+	/** Record the data from the buffer at a specific frame */
+	FORCEINLINE virtual bool RecordData(const int32 RecordFrame, const void* HistoryData) override
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS // TODO: Change to LoadData() in UE 5.6 and remove deprecation pragma
 		LoadDatas(RecordFrame);
-		DatasArray[CurrentIndex] = *static_cast<const DatasType*>(HistoryDatas);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		DataHistory[CurrentIndex] = *static_cast<const DataType*>(HistoryData);
 		return true;
 	}
 
-	/** Current datas that is being loaded/recorded*/
-	DatasType& GetCurrentDatas() { return DatasArray[CurrentIndex]; }
-	const DatasType& GetCurrentDatas() const { return DatasArray[CurrentIndex]; }
+	/** Current data that is being loaded/recorded*/
+	DataType& GetCurrentData() { return DataHistory[CurrentIndex]; }
+	UE_DEPRECATED(5.4, "Deprecated, use GetCurrentData() instead")
+	DataType& GetCurrentDatas() { return GetCurrentData(); }
 
-	/** Get the number of valid datas in the buffer index range */
-	FORCEINLINE uint32 NumValidDatas(const uint32 StartFrame, const uint32 EndFrame) const
+	const DataType& GetCurrentData() const { return DataHistory[CurrentIndex]; }
+	UE_DEPRECATED(5.4, "Deprecated, use GetCurrentData() instead")
+	const DataType& GetCurrentDatas() const { return GetCurrentData(); }
+
+	/** Get the number of valid data in the buffer index range */
+	FORCEINLINE uint32 NumValidData(const uint32 StartFrame, const uint32 EndFrame) const
 	{
-		uint32 NumDatas = 0;
+		uint32 NumData = 0;
 		for (uint32 FrameIndex = StartFrame; FrameIndex < EndFrame; ++FrameIndex)
 		{
 			const int32 LocalFrame = FrameIndex % NumFrames;
-			if (FrameIndex == DatasArray[LocalFrame].LocalFrame)
+			if (FrameIndex == DataHistory[LocalFrame].LocalFrame)
 			{
-				++NumDatas;
+				++NumData;
 			}
 		}
-		return NumDatas;
+		return NumData;
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use NumValidData() instead")
+	FORCEINLINE uint32 NumValidDatas(const uint32 StartFrame, const uint32 EndFrame) const { return NumValidData(StartFrame, EndFrame); }
+
+	TArray<DataType>& GetDataHistory() { return DataHistory; }
+	UE_DEPRECATED(5.4, "Deprecated, use GetDataHistory() instead")
+	TArray<DataType>& GetDatasArray() { return GetDataHistory(); }
 
 protected : 
 
 	/** Check if the history is on the local/remote client*/
 	bool bIsLocalHistory;
 
-	/**  Datas buffer holding the history */
-	TArray<DatasType> DatasArray;
+	/**  Data buffer holding the history */
+	TArray<DataType> DataHistory;
 
 	/** Current frame that is being loaded/recorded */
 	int32 CurrentFrame;
@@ -218,8 +294,16 @@ protected :
 	/** Current index that is being loaded/recorded */
 	int32 CurrentIndex;
 
-	/** Number of frames used in that history */
+	/** Number of frames in data history */
 	int32 NumFrames = 0;
+};
+
+
+/** Templated data history holding a data buffer */
+template<typename DatasType>
+struct UE_DEPRECATED(5.4, "Deprecated, use TDataRewindHistory instead") TDatasRewindHistory : public TDataRewindHistory<DatasType>
+{
+
 };
 
 struct FFrameAndPhase
@@ -349,14 +433,26 @@ public:
 		return Idx != INDEX_NONE ? &GetPool(Manager).GetElement(Buffer[Idx].Ref) : nullptr;
 	}
 
+	//Get the FrameAndPhase of the head / last entry
+	const bool GetHeadFrameAndPhase(FFrameAndPhase& OutFrameAndPhase) const
+	{
+		if (NumValid)
+		{
+			const int32 Prev = Next == 0 ? Buffer.Num() - 1 : Next - 1;
+			OutFrameAndPhase = Buffer[Prev].FrameAndPhase;
+			return true;
+		}
+		return false;
+	}
+
 	//Releases data back into the pool
 	void Release(FDirtyPropertiesPool& Manager)
 	{
 		TPropertyPool<T>& Pool = GetPool(Manager);
 		for(FPropertyInterval& Interval : Buffer)
-	{
+		{
 			Pool.RemoveElement(Interval.Ref);
-	}
+		}
 
 		Buffer.Empty();
 		NumValid = 0;
@@ -375,11 +471,11 @@ public:
 	void ClearEntryAndFuture(const FFrameAndPhase FrameAndPhase)
 	{
 		//Move next backwards until FrameAndPhase and anything more future than it is gone
-		while(NumValid)
+		while (NumValid)
 		{
 			const int32 PotentialNext = Next - 1 >= 0 ? Next - 1 : Buffer.Num() - 1;
 
-			if(Buffer[PotentialNext].FrameAndPhase < FrameAndPhase)
+			if (Buffer[PotentialNext].FrameAndPhase < FrameAndPhase)
 			{
 				break;
 			}
@@ -424,14 +520,14 @@ public:
 		T* Result = nullptr;
 
 		int32 FrameIndex = FindIdx(FrameAndPhase);
-		if(FrameIndex != INDEX_NONE)
+		if (FrameIndex != INDEX_NONE)
 		{
 			Result = &GetPool(Manager).GetElement(Buffer[FrameIndex].Ref);
 		}
 		else
 		{
 			FPropertyIdx ElementRef;
-			if(Next >= Buffer.Num())
+			if (Next >= Buffer.Num())
 			{
 				GetPool(Manager).AddElement(ElementRef);
 				Buffer.Add({ ElementRef, FrameAndPhase });
@@ -461,6 +557,13 @@ public:
 				else
 				{
 					Buffer[NextFrame] = Buffer[PrevFrame];
+
+					if (Count == NumValid - 1)
+					{ 
+						// If we shift back and reach the end of the buffer, insert here
+						Buffer[PrevFrame].FrameAndPhase = FrameAndPhase;
+						Buffer[PrevFrame].Ref = ElementRef;
+					}
 				}
 			}
 
@@ -478,24 +581,25 @@ private:
 	{
 		int32 Cur = Next;	//go in reverse order because hopefully we don't rewind too far back
 		int32 Result = INDEX_NONE;
-		for(int32 Count = 0; Count < NumValid; ++Count)
+		for (int32 Count = 0; Count < NumValid; ++Count)
 		{
 			--Cur;
 			if (Cur < 0) { Cur = Buffer.Num() - 1; }
 
 			const FPropertyInterval& Interval = Buffer[Cur];
-			if(Interval.FrameAndPhase < FrameAndPhase)
+			
+			if (Interval.FrameAndPhase < FrameAndPhase)
 			{
 				//no reason to keep searching, frame is bigger than everything before this
 				break;
 			}
 			else
-	{
+			{
 				Result = Cur;
 			}
 		}
 
-		if(bNoEntryIsHead || Result == INDEX_NONE)
+		if (bNoEntryIsHead || Result == INDEX_NONE)
 		{
 			//in this mode we consider the entire interval as one entry
 			return Result;
@@ -569,17 +673,17 @@ private:
 #if VALIDATE_REWIND_DATA
 		int32 Val = Next;
 		FFrameAndPhase PrevVal;
-		for(int32 Count = 0; Count < NumValid; ++Count)
-	{
+		for (int32 Count = 0; Count < NumValid; ++Count)
+		{
 			--Val;
 			if (Val < 0) { Val = Buffer.Num() - 1; }
 			if (Count == 0)
-		{
+			{
 				PrevVal = Buffer[Val].FrameAndPhase;
-		}
-		else
-		{
-				ensure(Buffer[Val].FrameAndPhase < PrevVal);
+			}
+			else
+			{
+				ensureMsgf(Buffer[Val].FrameAndPhase < PrevVal, TEXT("ValidateOrder Idx: %d TailFrame: %d/%d, HeadFrame: %d/%d"), Val, Buffer[Val].FrameAndPhase.Frame, Buffer[Val].FrameAndPhase.Phase, PrevVal.Frame, PrevVal.Phase);
 				PrevVal = Buffer[Val].FrameAndPhase;
 			}
 		}
@@ -710,6 +814,11 @@ inline FString ToStringHelper(void* Val)
 }
 
 inline FString ToStringHelper(const FReal Val)
+{
+	return FString::Printf(TEXT("%f"), Val);
+}
+
+inline FString ToStringHelper(const FRealSingle Val)
 {
 	return FString::Printf(TEXT("%f"), Val);
 }
@@ -899,6 +1008,7 @@ struct FGeometryParticleStateBase
 	bool IsInSync(const FGeometryParticleHandle& Handle, const FFrameAndPhase FrameAndPhase, const FDirtyPropertiesPool& Pool) const;
 
 	/** Check if the handle resim frame is valid (before the current one) */
+	UE_DEPRECATED(5.4, "Not recommended for use, will not return a correct response if the particle is not in contact with anything else in the physics scene. Note also that naming is inversed, returns false when valid.")
 	bool IsResimFrameValid(const FGeometryParticleHandle& Handle, const FFrameAndPhase FrameAndPhase) const;
 	
 	template <typename TParticle>
@@ -913,8 +1023,8 @@ struct FGeometryParticleStateBase
 	template<typename TParticle>
 	void CachePreCorrectionState(const TParticle& Particle)
 	{
-		PreCorrectionXR.SetX(Particle.X());
-		PreCorrectionXR.SetR(Particle.R());
+		PreCorrectionXR.SetX(Particle.GetX());
+		PreCorrectionXR.SetR(Particle.GetR());
 	}
 
 	TParticlePropertyBuffer<FParticlePositionRotation,EChaosProperty::XR> ParticlePositionRotation;
@@ -925,9 +1035,9 @@ struct FGeometryParticleStateBase
 	TParticlePropertyBuffer<FParticleMassProps,EChaosProperty::MassProps> MassProps;
 	TParticlePropertyBuffer<FKinematicTarget, EChaosProperty::KinematicTarget> KinematicTarget;
 
-	TParticlePropertyBuffer<FParticlePositionRotation, EChaosProperty::XR> TargetPositions;
-	TParticlePropertyBuffer<FParticleVelocities, EChaosProperty::Velocities> TargetVelocities;
-	TParticlePropertyBuffer<FParticleDynamicMisc, EChaosProperty::DynamicMisc> TargetStates;
+	TParticlePropertyBuffer<FParticlePositionRotation, EChaosProperty::XR, /*bNoEntryIsHead=*/false> TargetPositions;
+	TParticlePropertyBuffer<FParticleVelocities, EChaosProperty::Velocities, /*bNoEntryIsHead=*/false> TargetVelocities;
+	TParticlePropertyBuffer<FParticleDynamicMisc, EChaosProperty::DynamicMisc, /*bNoEntryIsHead=*/false> TargetStates;
 
 	FShapesArrayStateBase ShapesArrayState;
 
@@ -954,16 +1064,18 @@ public:
 	}
 
 
-	REWIND_PARTICLE_STATIC_PROPERTY(ParticlePositionRotation, X)
-	REWIND_PARTICLE_STATIC_PROPERTY(ParticlePositionRotation, R)
+	REWIND_PARTICLE_STATIC_PROPERTY(ParticlePositionRotation, GetX)
+	REWIND_PARTICLE_STATIC_PROPERTY(ParticlePositionRotation, GetR)
 
-	REWIND_PARTICLE_KINEMATIC_PROPERTY(Velocities, V)
-	REWIND_PARTICLE_KINEMATIC_PROPERTY(Velocities, W)
+	REWIND_PARTICLE_KINEMATIC_PROPERTY(Velocities, GetV)
+	REWIND_PARTICLE_KINEMATIC_PROPERTY(Velocities, GetW)
 
 	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, LinearEtherDrag)
 	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, AngularEtherDrag)
 	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, MaxLinearSpeedSq)
 	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, MaxAngularSpeedSq)
+	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, InitialOverlapDepenetrationVelocity)
+	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, SleepThresholdMultiplier)
 	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, ObjectState)
 	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, CollisionGroup)
 	REWIND_PARTICLE_RIGID_PROPERTY(DynamicsMisc, ControlFlags)
@@ -974,7 +1086,7 @@ public:
 	REWIND_PARTICLE_RIGID_PROPERTY(MassProps, M)
 	REWIND_PARTICLE_RIGID_PROPERTY(MassProps, InvM)
 
-	REWIND_PARTICLE_STATIC_PROPERTY(NonFrequentData, Geometry)
+	REWIND_PARTICLE_STATIC_PROPERTY(NonFrequentData, GetGeometry)
 	REWIND_PARTICLE_STATIC_PROPERTY(NonFrequentData, UniqueIdx)
 	REWIND_PARTICLE_STATIC_PROPERTY(NonFrequentData, SpatialIdx)
 #if CHAOS_DEBUG_NAME
@@ -1008,16 +1120,16 @@ public:
 		//TODO: use macro to define api and the to string
 		FString Out = FString::Printf(TEXT("ParticleID:[Global: %d Local: %d]\n"), Particle.ParticleID().GlobalID, Particle.ParticleID().LocalID);
 
-		REWIND_PARTICLE_TO_STR(X)
-		REWIND_PARTICLE_TO_STR(R)
+		REWIND_PARTICLE_TO_STR(GetX)
+		REWIND_PARTICLE_TO_STR(GetR)
 		//REWIND_PARTICLE_TO_STR(Geometry)
 		//REWIND_PARTICLE_TO_STR(UniqueIdx)
 		//REWIND_PARTICLE_TO_STR(SpatialIdx)
 
 		if(Particle.CastToKinematicParticle())
 		{
-			REWIND_PARTICLE_TO_STR(V)
-			REWIND_PARTICLE_TO_STR(W)
+			REWIND_PARTICLE_TO_STR(GetV)
+			REWIND_PARTICLE_TO_STR(GetW)
 		}
 
 		if(Particle.CastToRigidParticle())
@@ -1026,6 +1138,9 @@ public:
 			REWIND_PARTICLE_TO_STR(AngularEtherDrag)
 			REWIND_PARTICLE_TO_STR(MaxLinearSpeedSq)
 			REWIND_PARTICLE_TO_STR(MaxAngularSpeedSq)
+			REWIND_PARTICLE_TO_STR(InitialOverlapDepenetrationVelocity)
+			REWIND_PARTICLE_TO_STR(SleepThresholdMultiplier)
+
 			REWIND_PARTICLE_TO_STR(ObjectState)
 			REWIND_PARTICLE_TO_STR(CollisionGroup)
 			REWIND_PARTICLE_TO_STR(ControlFlags)
@@ -1202,11 +1317,12 @@ public:
 		return nullptr;
 	}
 
-	void Remove(const TKey Key)
+	void Remove(const TKey Key, const EAllowShrinking AllowShrinking)
 	{
 		if (const int32* Idx = KeyToIdx.Find(Key))
 		{
-			DenseVals.RemoveAtSwap(*Idx);
+			constexpr int32 Count = 1;
+			DenseVals.RemoveAtSwap(*Idx, Count, AllowShrinking);
 
 			if(*Idx < DenseVals.Num())
 			{
@@ -1217,7 +1333,17 @@ public:
 			KeyToIdx.Remove(Key);
 		}
 	}
-	
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("Remove")
+	FORCEINLINE void Remove(const TKey Key, const bool bAllowShrinking)
+	{
+		Remove(Key, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
+	}
+
+	void Shrink()
+	{
+		DenseVals.Shrink();
+	}
+
 	void Reset()
 	{
 		DenseVals.Reset();
@@ -1251,7 +1377,7 @@ public:
 	: Managers(NumFrames+1)	//give 1 extra for saving at head
 	, Solver(InSolver)
 	, CurFrame(InCurrentFrame)
-	, LatestFrame(-1)
+	, LatestFrame(InCurrentFrame)
 	, FramesSaved(0)
 	, DataIdxOffset(0)
 	, bNeedsSave(false)
@@ -1263,12 +1389,14 @@ public:
 	{
 		Solver = InSolver;
 		CurFrame = InCurrentFrame;
+		LatestFrame = InCurrentFrame;
 		bResimOptimization = InResimOptimization;
 		Managers = TCircularBuffer<FFrameManagerInfo>(NumFrames + 1);
 	}
 
 	int32 Capacity() const { return Managers.Capacity(); }
 	int32 CurrentFrame() const { return CurFrame; }
+	int32 GetLatestFrame() const { return LatestFrame; }
 	int32 GetFramesSaved() const { return FramesSaved; }
 
 	FReal GetDeltaTimeForFrame(int32 Frame) const
@@ -1277,14 +1405,24 @@ public:
 		return Managers[Frame].DeltaTime;
 	}
 
-	void RemoveObject(const FGeometryParticleHandle* Particle)
+	void RemoveObject(const FGeometryParticleHandle* Particle, const EAllowShrinking AllowShrinking=EAllowShrinking::Yes)
 	{
-		DirtyParticles.Remove(Particle);
+		DirtyParticles.Remove(Particle, AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveObject")
+	FORCEINLINE void RemoveObject(const FGeometryParticleHandle* Particle, const bool bAllowShrinking)
+	{
+		RemoveObject(Particle, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
-	void RemoveObject(const FPBDJointConstraintHandle* Joint)
+	void RemoveObject(const FPBDJointConstraintHandle* Joint, const EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
-		DirtyJoints.Remove(Joint);
+		DirtyJoints.Remove(Joint, AllowShrinking);
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveObject")
+	FORCEINLINE void RemoveObject(const FPBDJointConstraintHandle* Joint, const bool bAllowShrinking)
+	{
+		RemoveObject(Joint, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	int32 GetEarliestFrame_Internal() const { return CurFrame - FramesSaved; }
@@ -1295,7 +1433,7 @@ public:
 	/* Clear all the simulation history after Frame */
 	void CHAOS_API ClearPhaseAndFuture(FGeometryParticleHandle& Handle, int32 Frame, FFrameAndPhase::EParticleHistoryPhase Phase);
 
-	/* Push a physics state in the rewind datas at some frame */
+	/* Push a physics state in the rewind data at specified frame */
 	void CHAOS_API PushStateAtFrame(FGeometryParticleHandle& Handle, int32 Frame, FFrameAndPhase::EParticleHistoryPhase Phase, const FVector& Position, const FQuat& Quaternion,
 					const FVector& LinVelocity, const FVector& AngVelocity, const bool bShouldSleep);
 
@@ -1338,21 +1476,22 @@ public:
 		Managers[CurFrame].FrameCreatedFor = CurFrame;
 		TUniquePtr<IResimCacheBase>& ResimCache = Managers[CurFrame].ExternalResimCache;
 
-		if(bResimOptimization)
+		if (bResimOptimization)
 		{
-			if(IsResim())
+			if (IsResim())
 			{
-				if(ResimCache)
+				if (ResimCache)
 				{
 					ResimCache->SetResimming(true);
 				}
 			}
 			else
 			{
-				if(ResimCache)
+				if (ResimCache)
 				{
 					ResimCache->ResetCache();
-				} else
+				}
+				else
 				{
 					ResimCache = CreateCacheFunc();
 				}
@@ -1391,37 +1530,45 @@ public:
 
 	void CHAOS_API SpawnProxyIfNeeded(FSingleParticlePhysicsProxy& Proxy);
 
-	/** Add Inputs history to the rewind datas for future use while resimulating */
-	void AddInputsHistory(const TSharedPtr<FBaseRewindHistory>& InputsHistory)
+	/** Add input history to the rewind data for future use while resimulating */
+	void AddInputHistory(const TSharedPtr<FBaseRewindHistory>& InputHistory)
 	{
-		InputsHistories.Add(InputsHistory.ToWeakPtr());
+		InputHistories.Add(InputHistory.ToWeakPtr());
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use AddInputHistory() instead")
+	void AddInputsHistory(const TSharedPtr<FBaseRewindHistory>& InputsHistory) { AddInputHistory(InputsHistory); }
 
-	/** Remove Inputs history from the rewind datas */
-	void RemoveInputsHistory(const TSharedPtr<FBaseRewindHistory>& InputsHistory)
+	/** Remove input history from the rewind data */
+	void RemoveInputHistory(const TSharedPtr<FBaseRewindHistory>& InputHistory)
 	{
-		InputsHistories.Remove(InputsHistory.ToWeakPtr());
+		InputHistories.Remove(InputHistory.ToWeakPtr());
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use RemoveInputHistory() instead")
+	void RemoveInputsHistory(const TSharedPtr<FBaseRewindHistory>& InputsHistory) { RemoveInputHistory(InputsHistory); }
 
-	/** Add states history to the rewind datas for future use while rewinding */
-	void AddStatesHistory(const TSharedPtr<FBaseRewindHistory>& StatesHistory)
+	/** Add state history to the rewind data for future use while rewinding */
+	void AddStateHistory(const TSharedPtr<FBaseRewindHistory>& StateHistory)
 	{
-		StatesHistories.Add(StatesHistory.ToWeakPtr());
+		StateHistories.Add(StateHistory.ToWeakPtr());
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use AddStateHistory() instead")
+	void AddStatesHistory(const TSharedPtr<FBaseRewindHistory>& StatesHistory) { AddStateHistory(StatesHistory); }
 
-	/** Remove states history from the rewind datas */
-	void RemoveStatesHistory(const TSharedPtr<FBaseRewindHistory>& StatesHistory)
+	/** Remove state history from the rewind data */
+	void RemoveStateHistory(const TSharedPtr<FBaseRewindHistory>& StateHistory)
 	{
-		StatesHistories.Remove(StatesHistory.ToWeakPtr());
+		StateHistories.Remove(StateHistory.ToWeakPtr());
 	}
+	UE_DEPRECATED(5.4, "Deprecated, use RemoveStateHistory() instead")
+	void RemoveStatesHistory(const TSharedPtr<FBaseRewindHistory>& StatesHistory) { RemoveStateHistory(StatesHistory); }
 
-	/** Apply the inputs from all the history Inputs datas */
+	/** Apply inputs for specified frame from rewind data */
 	void ApplyInputs(const int32 ApplyFrame, const bool bResetSolver);
 
-	/** Rewind the states from all the history states datas */
+	/** Rewind to state for a specified frame from rewind data */
 	void RewindStates(const int32 RewindFrame, const bool bResetSolver);
 
-	void BufferPhysicsResults(TMap<const FSingleParticlePhysicsProxy*, struct FDirtyRigidParticleReplicationErrorData>& DirtyRigidErrors);
+	void BufferPhysicsResults(TMap<const IPhysicsProxyBase*, struct FDirtyRigidParticleReplicationErrorData>& DirtyRigidErrors);
 
 	/** Return the rewind data solver */
 	const FPBDRigidsSolver* GetSolver() const { return Solver; }
@@ -1433,8 +1580,13 @@ public:
 	int32 GetResimFrame() { return ResimFrame; }
 	void SetResimFrame(int32 Frame) { ResimFrame = Frame; }
 
-private:
+	/** This blocks any future resimulation to rewind back past the frame this is called on */
+	void BlockResim();
 
+	/** Get the latest frame resim has been blocked from rewinding past */
+	int32 GetBlockedResimFrame() { return BlockResimFrame; }
+
+private:
 	friend class FPBDRigidsSolver;
 
 	void CHAOS_API AdvanceFrameImp(IResimCacheBase* ResimCache);
@@ -1544,7 +1696,18 @@ private:
 	};
 
 	template <typename TDirtyObjs, typename TObj>
-	auto& FindOrAddDirtyObjImp(TDirtyObjs& DirtyObjs, TObj& Handle, const int32 InitializedOnFrame = INDEX_NONE)
+	auto* FindDirtyObjImp(TDirtyObjs& DirtyObjs, TObj& Handle)
+	{
+		return DirtyObjs.Find(&Handle);
+	}
+
+	FDirtyParticleInfo* FindDirtyObj(const FGeometryParticleHandle& Handle)
+	{
+		return FindDirtyObjImp(DirtyParticles, Handle);
+	}
+
+	template <typename TDirtyObjs, typename TObj>
+	auto& FindOrAddDirtyObjImp(TDirtyObjs & DirtyObjs, TObj & Handle, const int32 InitializedOnFrame = INDEX_NONE)
 	{
 		if (auto Info = DirtyObjs.Find(&Handle))
 		{
@@ -1599,8 +1762,8 @@ private:
 	TDirtyObjects<FDirtyJointInfo> DirtyJoints;
 	TDirtyObjects<FDirtyParticleErrorInfo> DirtyParticleErrors;
 
-	TArray<TWeakPtr<FBaseRewindHistory>> InputsHistories;
-	TArray<TWeakPtr<FBaseRewindHistory>> StatesHistories;
+	TArray<TWeakPtr<FBaseRewindHistory>> InputHistories;
+	TArray<TWeakPtr<FBaseRewindHistory>> StateHistories;
 
 	FPBDRigidsSolver* Solver;
 	int32 CurFrame;
@@ -1610,6 +1773,9 @@ private:
 	bool bNeedsSave;	//Indicates that some data is pointing at head and requires saving before a rewind
 	bool bResimOptimization;
 	int32 ResimFrame = INDEX_NONE;
+
+	// Used to block rewinding past a physics change we currently don't handle
+	int32 BlockResimFrame = INDEX_NONE;
 
 	template <typename TObj>
 	bool IsResimAndInSync(const TObj& Handle) const { return IsResim() && Handle.SyncState() == ESyncState::InSync; }
@@ -1670,6 +1836,9 @@ public:
 
 	/** Register a sim callback onto the rewind callback */
 	virtual void RegisterRewindableSimCallback_Internal(ISimCallbackObject* Callback) {}
+
+	/** Unregister a sim callback from the rewind callback */
+	virtual void UnregisterRewindableSimCallback_Internal(ISimCallbackObject* Callback) {}
 
 	/** Called When resim is finished with debug information about the resim */
 	virtual void SetResimDebugInfo_Internal(const FResimDebugInfo& ResimDebugInfo){}

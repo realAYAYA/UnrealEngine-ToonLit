@@ -1092,12 +1092,12 @@ namespace GeometryCollectionTest
 		FGeometryCollection* Collection = new FGeometryCollection();
 
 		int32 TransformIndex = Collection->AddElements(1, FGeometryCollection::TransformGroup);
-		(Collection->Transform)[TransformIndex].SetTranslation(FVector(13));
+		(Collection->Transform)[TransformIndex].SetTranslation(FVector3f(13));
 		(Collection->Parent)[TransformIndex]= -1;
 		EXPECT_EQ(TransformIndex, 0);
 
 		TransformIndex = Collection->AddElements(1, FGeometryCollection::TransformGroup);
-		(Collection->Transform)[TransformIndex].SetTranslation(FVector(7));
+		(Collection->Transform)[TransformIndex].SetTranslation(FVector3f(7));
 		(Collection->Parent)[TransformIndex] = -1;
 		EXPECT_EQ(TransformIndex, 1);
 
@@ -1113,7 +1113,7 @@ namespace GeometryCollectionTest
 
 		TArray<FTransform> GlobalTransform;
 		GeometryCollectionAlgo::GlobalMatrices(Collection->Transform, Collection->Parent, GlobalTransform);
-		EXPECT_LT(((Collection->Transform)[0].GetTranslation() - FVector(6)).Size(), KINDA_SMALL_NUMBER);
+		EXPECT_LT(((Collection->Transform)[0].GetTranslation() - FVector3f(6)).Size(), KINDA_SMALL_NUMBER);
 		EXPECT_LT((GlobalTransform[0].GetTranslation()-FVector(13)).Size(), KINDA_SMALL_NUMBER);
 
 		EXPECT_EQ(Collection->TransformToGeometryIndex.Num(), 2);
@@ -1124,7 +1124,7 @@ namespace GeometryCollectionTest
 		// Add some geometry
 		//
 		TransformIndex = Collection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FVector(3)), FVector(1.0)));
-		EXPECT_LT(((Collection->Transform)[TransformIndex].GetTranslation() - FVector(3)).Size(), KINDA_SMALL_NUMBER);
+		EXPECT_LT(((Collection->Transform)[TransformIndex].GetTranslation() - FVector3f(3)).Size(), KINDA_SMALL_NUMBER);
 		EXPECT_EQ((Collection->TransformIndex).Num(), 1);
 		EXPECT_EQ((Collection->TransformIndex)[0], TransformIndex);
 		EXPECT_EQ((Collection->VertexStart)[0], 0);
@@ -1148,7 +1148,7 @@ namespace GeometryCollectionTest
 		EXPECT_EQ((Collection->Children)[1].Num(), 1);
 		EXPECT_TRUE((Collection->Children)[1].Contains(0));
 		EXPECT_EQ((Collection->Parent)[1], -1);
-		EXPECT_LT(((Collection->Transform)[TransformIndex].GetTranslation() - FVector(-10)).Size(), KINDA_SMALL_NUMBER);
+		EXPECT_LT(((Collection->Transform)[TransformIndex].GetTranslation() - FVector3f(-10)).Size(), KINDA_SMALL_NUMBER);
 		EXPECT_EQ((Collection->TransformIndex).Num(), 1);
 		EXPECT_EQ((Collection->TransformIndex)[0], TransformIndex);
 		EXPECT_EQ((Collection->VertexStart)[0], 0);

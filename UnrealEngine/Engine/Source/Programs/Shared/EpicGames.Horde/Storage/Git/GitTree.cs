@@ -15,17 +15,17 @@ namespace EpicGames.Horde.Storage.Git
 		/// <summary>
 		/// Regular file
 		/// </summary>
-		public static Utf8String File { get; } = "100644";
+		public static Utf8String File { get; } = new Utf8String("100644");
 
 		/// <summary>
 		/// Executable file
 		/// </summary>
-		public static Utf8String ExecutableFile { get; } = "100755";
+		public static Utf8String ExecutableFile { get; } = new Utf8String("100755");
 
 		/// <summary>
 		/// Child tree
 		/// </summary>
-		public static Utf8String Tree { get; } = "40000";
+		public static Utf8String Tree { get; } = new Utf8String("40000");
 	}
 
 	/// <summary>

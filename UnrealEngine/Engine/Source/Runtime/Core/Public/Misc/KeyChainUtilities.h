@@ -129,10 +129,10 @@ namespace KeyChainUtilities
 
 		FString PublicExponentBase64, PrivateExponentBase64, PublicModulusBase64, PrivateModulusBase64;
 
-		if (PublicKey->TryGetStringField("Exponent", PublicExponentBase64)
-			&& PublicKey->TryGetStringField("Modulus", PublicModulusBase64)
-			&& PrivateKey->TryGetStringField("Exponent", PrivateExponentBase64)
-			&& PrivateKey->TryGetStringField("Modulus", PrivateModulusBase64))
+		if (PublicKey->TryGetStringField(TEXT("Exponent"), PublicExponentBase64)
+			&& PublicKey->TryGetStringField(TEXT("Modulus"), PublicModulusBase64)
+			&& PrivateKey->TryGetStringField(TEXT("Exponent"), PrivateExponentBase64)
+			&& PrivateKey->TryGetStringField(TEXT("Modulus"), PrivateModulusBase64))
 		{
 			check(PublicModulusBase64 == PrivateModulusBase64);
 

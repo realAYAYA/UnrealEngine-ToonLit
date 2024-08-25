@@ -13,6 +13,7 @@
 #include "Templates/DMXPixelMappingComponentTemplate.h"
 #include "Toolkits/DMXPixelMappingToolkit.h"
 #include "ViewModels/DMXPixelMappingDMXLibraryViewModel.h"
+#include "Widgets/DMXReadOnlyFixturePatchListItem.h"
 
 
 void SDMXPixelMappingFixturePatchList::Construct(const FArguments& InArgs, const TSharedPtr<FDMXPixelMappingToolkit>& InToolkit, TWeakObjectPtr<UDMXPixelMappingDMXLibraryViewModel> InDMXLibraryModel)
@@ -42,17 +43,12 @@ FReply SDMXPixelMappingFixturePatchList::OnRowDragDetected(const FGeometry& MyGe
 	}
 
 	TArray<TSharedPtr<FDMXPixelMappingComponentTemplate>> Templates;
-	for (const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef : GetSelectedFixturePatchRefs())
+	for (UDMXEntityFixturePatch* FixturePatch : GetSelectedFixturePatches())
 	{
-		UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
-		UDMXEntityFixtureType* FixtureType = FixturePatch ? FixturePatch->GetFixtureType() : nullptr;
-		if (!FixturePatch || !FixtureType)
-		{
-			continue;
-		}
+		const FDMXFixtureMode* FixtureModePtr = FixturePatch->GetActiveMode();
 
 		const FDMXEntityFixturePatchRef FixturePatchReference(FixturePatch);
-		if (FixtureType->bFixtureMatrixEnabled)
+		if (FixtureModePtr && FixtureModePtr->bFixtureMatrixEnabled)
 		{
 			TSharedRef<FDMXPixelMappingComponentTemplate> FixturePatchMatrixTemplate = MakeShared<FDMXPixelMappingComponentTemplate>(UDMXPixelMappingMatrixComponent::StaticClass(), FixturePatchReference);
 			Templates.Add(FixturePatchMatrixTemplate);
@@ -70,47 +66,45 @@ FReply SDMXPixelMappingFixturePatchList::OnRowDragDetected(const FGeometry& MyGe
 	}
 	else
 	{
-		return FReply::Handled().BeginDragDrop(FDMXPixelMappingDragDropOp::New(FVector2D::ZeroVector, Templates, FixtureGroup));
+		return FReply::Handled().BeginDragDrop(FDMXPixelMappingDragDropOp::New(Toolkit.ToSharedRef(), FVector2D::ZeroVector, Templates, FixtureGroup));
 	}
 }
 
-void SDMXPixelMappingFixturePatchList::SelectAfter(const TArray<TSharedPtr<FDMXEntityFixturePatchRef>>& FixturePatches)
+void SDMXPixelMappingFixturePatchList::SelectAfter(const TArray<UDMXEntityFixturePatch*>& FixturePatches)
 {
-	const TSharedPtr<FDMXEntityFixturePatchRef>* MaxFixturePatchPtr = Algo::MaxElementBy(FixturePatches, [](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
+	const UDMXEntityFixturePatch* const* MaxFixturePatchPtr = Algo::MaxElementBy(FixturePatches, [](const UDMXEntityFixturePatch* FixturePatch)
 		{
-			const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
 			return FixturePatch ? FixturePatch->GetUniverseID() * DMX_UNIVERSE_SIZE + FixturePatch->GetStartingChannel() : -1;
 		});
 
-	const TArray<TSharedPtr<FDMXEntityFixturePatchRef>> Items = GetListItems();
+	const TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> Items = GetListItems();
 	if (MaxFixturePatchPtr)
 	{
-		int32 IndexOfPatch = Items.IndexOfByPredicate([MaxFixturePatchPtr](const TSharedPtr<FDMXEntityFixturePatchRef>& Item)
+		const int32 IndexOfPatch = Items.IndexOfByPredicate([MaxFixturePatchPtr](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& Item)
 			{			
-				const UDMXEntityFixturePatch* FixturePatch = (*MaxFixturePatchPtr).IsValid() ? (*MaxFixturePatchPtr)->GetFixturePatch() : nullptr;
-				return Item->GetFixturePatch() == FixturePatch;
+				return MaxFixturePatchPtr && Item->GetFixturePatch() == *MaxFixturePatchPtr;
 			});
 
 		if (Items.IsValidIndex(IndexOfPatch + 1))
 		{
-			const TArray<TSharedPtr<FDMXEntityFixturePatchRef>> NewSelection{ Items[IndexOfPatch + 1] };
+			const TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> NewSelection{ Items[IndexOfPatch + 1] };
 			SelectItems(NewSelection);
 		}
 		else if (Items.IsValidIndex(IndexOfPatch - 1))
 		{
-			const TArray<TSharedPtr<FDMXEntityFixturePatchRef>> NewSelection{ Items[IndexOfPatch - 1] };
+			const TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> NewSelection{ Items[IndexOfPatch - 1] };
 			SelectItems(NewSelection);
 		}
 	}
 }
 
-void SDMXPixelMappingFixturePatchList::RefreshList() 
+void SDMXPixelMappingFixturePatchList::ForceRefresh() 
 {
-	SDMXReadOnlyFixturePatchList::RefreshList();
+	SDMXReadOnlyFixturePatchList::ForceRefresh();
 
 	// Always make a selection if possible
-	if (GetSelectedFixturePatchRefs().IsEmpty() && !ListItems.IsEmpty())
+	if (GetSelectedFixturePatches().IsEmpty() && !GetListItems().IsEmpty())
 	{
-		SelectItems(TArray<TSharedPtr<FDMXEntityFixturePatchRef>>({ ListItems[0] }));
+		SelectItems(TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>>({ GetListItems()[0] }));
 	}
 }

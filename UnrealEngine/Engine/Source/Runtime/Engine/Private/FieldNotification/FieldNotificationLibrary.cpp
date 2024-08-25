@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "Net/NetPushModelHelpers.h"
 #include "UObject/Script.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 
 #define LOCTEXT_NAMESPACE "FieldNotificationLibrary"
 

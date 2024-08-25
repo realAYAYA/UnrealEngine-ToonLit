@@ -2,6 +2,8 @@
 
 #include "MaterialExpressionAppend3Vector.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "HLSLTree/HLSLTreeCommon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionAppend3Vector)
 
@@ -53,6 +55,24 @@ int32 UMaterialExpressionMaterialXAppend3Vector::Compile(FMaterialCompiler* Comp
 void UMaterialExpressionMaterialXAppend3Vector::GetCaption(TArray<FString>& OutCaptions) const
 {
 	OutCaptions.Add(TEXT("MaterialX Append3"));
+}
+
+bool UMaterialExpressionMaterialXAppend3Vector::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionA = A.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionB = B.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionC = C.AcquireHLSLExpression(Generator, Scope);
+	
+	if(!ExpressionA || !ExpressionB || !ExpressionC)
+	{
+		return false;
+	}
+	
+	OutExpression = Generator.GetTree().NewExpression<FExpressionAppend>(ExpressionA,
+					Generator.GetTree().NewExpression<FExpressionAppend>(ExpressionB, ExpressionC));
+	return true;
 }
 #endif
 

@@ -14,6 +14,7 @@
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipDeform.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipMorph.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipWithMesh.h"
+#include "MuCOE/Nodes/CustomizableObjectNodeModifierClipWithUVMask.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
 #include "Widgets/Views/SListView.h"
@@ -247,11 +248,11 @@ void SCustomizableObjectEditorTagExplorer::FillTagInformation(UCustomizableObjec
 {
 	if (Object->Source)
 	{
-		for (TObjectPtr<UEdGraphNode> Node : Object->Source->Nodes)
+		for (const TObjectPtr<UEdGraphNode>& Node : Object->Source->Nodes)
 		{
 			if (UCustomizableObjectNodeMaterial* TypedNodeMat = Cast<UCustomizableObjectNodeMaterial>(Node))
 			{
-				for (int i = 0; i < TypedNodeMat->Tags.Num(); ++i)
+				for (int32 i = 0; i < TypedNodeMat->Tags.Num(); ++i)
 				{
 					NodeTags.Add(TypedNodeMat->Tags[i], TypedNodeMat);
 					if (Tags.Find(TypedNodeMat->Tags[i]) == INDEX_NONE)
@@ -263,19 +264,20 @@ void SCustomizableObjectEditorTagExplorer::FillTagInformation(UCustomizableObjec
 
 			if (UCustomizableObjectNodeMaterialVariation* TypedNodeVariations = Cast<UCustomizableObjectNodeMaterialVariation>(Node))
 			{
-				for (int i = 0; i < TypedNodeVariations->Variations.Num(); ++i)
+				for (int32 i = 0; i < TypedNodeVariations->GetNumVariations(); ++i)
 				{
-					NodeTags.Add(TypedNodeVariations->Variations[i].Tag, TypedNodeVariations);
-					if (Tags.Find(TypedNodeVariations->Variations[i].Tag) == INDEX_NONE)
+					const FString& VairationTag = TypedNodeVariations->GetVariation(i).Tag; 
+					NodeTags.Add(VairationTag, TypedNodeVariations);
+					if (Tags.Find(VairationTag) == INDEX_NONE)
 					{
-						Tags.Add(TypedNodeVariations->Variations[i].Tag);
+						Tags.Add(VairationTag);
 					}
 				}
 			}
 
 			if (UCustomizableObjectNodeMeshClipMorph* TypedNodeClipMorph = Cast<UCustomizableObjectNodeMeshClipMorph>(Node))
 			{
-				for (int i = 0; i < TypedNodeClipMorph->Tags.Num(); ++i)
+				for (int32 i = 0; i < TypedNodeClipMorph->Tags.Num(); ++i)
 				{
 					NodeTags.Add(TypedNodeClipMorph->Tags[i], TypedNodeClipMorph);
 					if (Tags.Find(TypedNodeClipMorph->Tags[i]) == INDEX_NONE)
@@ -287,7 +289,7 @@ void SCustomizableObjectEditorTagExplorer::FillTagInformation(UCustomizableObjec
 
 			if (UCustomizableObjectNodeMeshClipWithMesh* TypedNodeClipMesh = Cast<UCustomizableObjectNodeMeshClipWithMesh>(Node))
 			{
-				for (int i = 0; i < TypedNodeClipMesh->Tags.Num(); ++i)
+				for (int32 i = 0; i < TypedNodeClipMesh->Tags.Num(); ++i)
 				{
 					NodeTags.Add(TypedNodeClipMesh->Tags[i], TypedNodeClipMesh);
 					if (Tags.Find(TypedNodeClipMesh->Tags[i]) == INDEX_NONE)
@@ -297,9 +299,21 @@ void SCustomizableObjectEditorTagExplorer::FillTagInformation(UCustomizableObjec
 				}
 			}
 
+			if (UCustomizableObjectNodeModifierClipWithUVMask* TypedNodeClipMask = Cast<UCustomizableObjectNodeModifierClipWithUVMask>(Node))
+			{
+				for (int32 i = 0; i < TypedNodeClipMask->Tags.Num(); ++i)
+				{
+					NodeTags.Add(TypedNodeClipMask->Tags[i], TypedNodeClipMask);
+					if (Tags.Find(TypedNodeClipMask->Tags[i]) == INDEX_NONE)
+					{
+						Tags.Add(TypedNodeClipMask->Tags[i]);
+					}
+				}
+			}
+
 			if (UCustomizableObjectNodeExtendMaterial* TypedNodeExtend = Cast<UCustomizableObjectNodeExtendMaterial>(Node))
 			{
-				for (int i = 0; i < TypedNodeExtend->Tags.Num(); ++i)
+				for (int32 i = 0; i < TypedNodeExtend->Tags.Num(); ++i)
 				{
 					NodeTags.Add(TypedNodeExtend->Tags[i], TypedNodeExtend);
 					if (Tags.Find(TypedNodeExtend->Tags[i]) == INDEX_NONE)
@@ -311,7 +325,7 @@ void SCustomizableObjectEditorTagExplorer::FillTagInformation(UCustomizableObjec
 
 			if (UCustomizableObjectNodeMeshClipDeform* TypedNodeClipDeform = Cast<UCustomizableObjectNodeMeshClipDeform>(Node))
 			{
-				for (int i = 0; i < TypedNodeClipDeform->Tags.Num(); ++i)
+				for (int32 i = 0; i < TypedNodeClipDeform->Tags.Num(); ++i)
 				{
 					NodeTags.Add(TypedNodeClipDeform->Tags[i], TypedNodeClipDeform);
 					if (Tags.Find(TypedNodeClipDeform->Tags[i]) == INDEX_NONE)

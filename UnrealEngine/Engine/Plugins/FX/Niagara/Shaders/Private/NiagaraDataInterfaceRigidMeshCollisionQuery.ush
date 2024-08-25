@@ -12,6 +12,7 @@ NiagaraDataInterfaceRigidMeshCollisionQuery.ush
 #define BOX_INDEX 0
 #define SPHERE_INDEX 1
 #define CAPSULE_INDEX 2
+#define NUM_ELEMENTS_INDEX 3
 
 uint			{ParameterName}_MaxTransforms;
 uint			{ParameterName}_CurrentOffset;
@@ -24,6 +25,8 @@ Buffer<float4>	{ParameterName}_ElementExtentBuffer;
 Buffer<uint>	{ParameterName}_PhysicsTypeBuffer;
 Buffer<uint>	{ParameterName}_DFIndexBuffer;
 float3			{ParameterName}_SystemLWCTile;
+float3			{ParameterName}_CombinedBBoxWorldMin;
+float3			{ParameterName}_CombinedBBoxWorldMax;
 
 /* -----------------------------------------------------------------
  * Element accessors
@@ -43,6 +46,11 @@ void GetNumSpheres_{ParameterName}(out int OutNumSpheres)
 void GetNumCapsules_{ParameterName}(out int OutNumCapsules)
 {
 	OutNumCapsules = {ParameterName}_ElementOffsets[CAPSULE_INDEX+1] - {ParameterName}_ElementOffsets[CAPSULE_INDEX];
+}
+
+void GetNumElements_{ParameterName}(out int OutNumElements)
+{
+	OutNumElements = {ParameterName}_ElementOffsets[NUM_ELEMENTS_INDEX];
 }
 
 /* -----------------------------------------------------------------
@@ -77,6 +85,19 @@ float3x4 GetPreviousInverse_{ParameterName}(in int ElementIndex)
 float3 GetMeshScale_{ParameterName}(in int ElementIndex)
 {
 	return {ParameterName}_MeshScaleBuffer[ElementIndex].xyz;
+}
+
+void IsWorldPositionInsideCombinedBounds_{ParameterName}(in float3 WorldPosition, out bool IsInside)
+{
+	const FDFVector3 LWCWorldPosition = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition));
+
+	IsInside =  
+		WorldPosition.x >= {ParameterName}_CombinedBBoxWorldMin.x && 
+		WorldPosition.y >= {ParameterName}_CombinedBBoxWorldMin.y && 
+		WorldPosition.z >= {ParameterName}_CombinedBBoxWorldMin.z && 
+		WorldPosition.x <= {ParameterName}_CombinedBBoxWorldMax.x && 
+		WorldPosition.y <= {ParameterName}_CombinedBBoxWorldMax.y && 
+		WorldPosition.z <= {ParameterName}_CombinedBBoxWorldMax.z;
 }
 
 /* -----------------------------------------------------------------
@@ -175,6 +196,11 @@ float3 GetLocalPosition_{ParameterName}(in float3 WorldPosition, in int ElementI
 	return PreviousLocal + TimeFraction * (CurrentLocal-PreviousLocal);
 }
 
+float3 GetCurrentLocalPosition_{ParameterName}(in float3 WorldPosition, in int ElementIndex )
+{
+	return mul(GetInverseTransform_{ParameterName}(ElementIndex), float4(WorldPosition,1.0)).xyz;	
+}
+
 // Given a world space position (WorldPosition) compute the sphere closest point (position,normal,velocity)
 int GetClosestElement_{ParameterName}(in float3 WorldPosition, out float3 OutClosestPosition, out float3 OutClosestNormal, out float OutMinDistance, in float TimeFraction)
 {	
@@ -214,6 +240,49 @@ int GetClosestElement_{ParameterName}(in float3 WorldPosition, out float3 OutClo
 	}
 	OutClosestPosition = CollisionPosition;
 	OutClosestNormal = CollisionNormal;
+	OutMinDistance = MinDistance;
+	return ElementIndex;
+}
+
+// Given a world space position (WorldPosition) compute the sphere closest point (position,normal,velocity)
+int GetClosestElementSimple_{ParameterName}(in float3 WorldPosition, out float3 OutClosestPosition, out float OutMinDistance)
+{	
+	float MinDistance = MAX_DISTANCE;
+	int ElementIndex = -1;
+	float3 CollisionPosition = float3(0,0,0);
+	float3 CollisionNormal = float3(0,0,0);
+
+	const int SpheresBegin = {ParameterName}_ElementOffsets[SPHERE_INDEX];
+	const int SpheresEnd = {ParameterName}_ElementOffsets[SPHERE_INDEX+1];
+	for (int SphereIndex = SpheresBegin; SphereIndex < SpheresEnd; ++SphereIndex)
+	{
+		const float3 LocalPosition = GetCurrentLocalPosition_{ParameterName}(WorldPosition,SphereIndex);
+
+		GetSphereProjection_{ParameterName}(LocalPosition, float3(0,0,0), {ParameterName}_ElementExtentBuffer[SphereIndex].x, SphereIndex,
+				CollisionPosition, CollisionNormal, ElementIndex, MinDistance);
+	}
+
+	const int CapsulesBegin = {ParameterName}_ElementOffsets[CAPSULE_INDEX];
+	const int CapsulesEnd = {ParameterName}_ElementOffsets[CAPSULE_INDEX+1];
+	for (int CapsuleIndex = CapsulesBegin; CapsuleIndex < CapsulesEnd; ++CapsuleIndex)
+	{
+		const float3 LocalPosition = GetCurrentLocalPosition_{ParameterName}(WorldPosition,CapsuleIndex);
+
+		GetCapsuleProjection_{ParameterName}(LocalPosition, {ParameterName}_ElementExtentBuffer[CapsuleIndex].xy, CapsuleIndex,
+				CollisionPosition, CollisionNormal, ElementIndex, MinDistance);
+	}
+
+	const int BoxesBegin = {ParameterName}_ElementOffsets[BOX_INDEX];
+	const int BoxesEnd = {ParameterName}_ElementOffsets[BOX_INDEX+1];
+	for (int BoxIndex = BoxesBegin; BoxIndex < BoxesEnd; ++BoxIndex)
+	{
+		const float3 LocalPosition = GetCurrentLocalPosition_{ParameterName}(WorldPosition,BoxIndex);
+
+		GetBoxProjection_{ParameterName}(LocalPosition, {ParameterName}_ElementExtentBuffer[BoxIndex].xyz, BoxIndex,
+				CollisionPosition, CollisionNormal, ElementIndex, MinDistance);
+	}
+
+	OutClosestPosition = CollisionPosition;	
 	OutMinDistance = MinDistance;
 	return ElementIndex;
 }
@@ -269,6 +338,52 @@ void GetElementPoint_{ParameterName}(in float3 WorldPosition, in float DeltaTime
 
 			OutClosestVelocity = ( CurrentPosition - PreviousPosition ) / DeltaTime;
 		}
+	}
+}
+
+// Given a world space position (WorldPosition) and an element index compute the static mesh closest point using distance fields (position,velocity)
+void GetElementPointMeshDistanceFieldNoNormal_{ParameterName}(in float3 WorldPosition, in float DeltaTime, in float TimeFraction, in float MaxDistance, in int ElementIndex, out float OutClosestDistance, out float3 OutClosestVelocity)
+{
+	OutClosestVelocity = float3(0,0,0);
+	OutClosestDistance = MAX_DISTANCE;
+
+	if (ElementIndex >= 0)
+	{
+		const uint ElementIndexUint = uint(ElementIndex);
+		const float3 LocalPosition = GetLocalPosition_{ParameterName}(WorldPosition,ElementIndex,TimeFraction);
+		
+		int OutputIndex = -1;
+		float3 CollisionPosition = float3(0,0,0);
+		float3 CollisionNormal = float3(0,0,0);
+
+		if ( ElementIndexUint >= {ParameterName}_ElementOffsets[SPHERE_INDEX] && ElementIndexUint < {ParameterName}_ElementOffsets[SPHERE_INDEX+1] )
+		{
+			GetSphereProjection_{ParameterName}(LocalPosition, float3(0,0,0), {ParameterName}_ElementExtentBuffer[ElementIndex].x, ElementIndex,
+					CollisionPosition, CollisionNormal, OutputIndex, OutClosestDistance);
+		}
+		else if ( ElementIndexUint >= {ParameterName}_ElementOffsets[CAPSULE_INDEX] && ElementIndexUint < {ParameterName}_ElementOffsets[CAPSULE_INDEX+1] )
+		{
+			GetCapsuleProjection_{ParameterName}(LocalPosition, {ParameterName}_ElementExtentBuffer[ElementIndex].xy, ElementIndex,
+					CollisionPosition, CollisionNormal, OutputIndex, OutClosestDistance);
+		}
+		else if ( ElementIndexUint >= {ParameterName}_ElementOffsets[BOX_INDEX] && ElementIndexUint < {ParameterName}_ElementOffsets[BOX_INDEX+1] )
+		{
+			GetBoxProjection_{ParameterName}(LocalPosition, {ParameterName}_ElementExtentBuffer[ElementIndex].xyz, ElementIndex,
+					CollisionPosition, CollisionNormal, OutputIndex, OutClosestDistance);
+		}
+
+		uint DFIndex = {ParameterName}_DFIndexBuffer[ElementIndex];
+
+		if (DFIndex >= 0 && DFIndex < NumSceneObjects)
+		{
+			MaxDistance = max(.001, MaxDistance);
+			const FDFVector3 LWCWorldPosition = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition));
+			OutClosestDistance = DistanceToNearestSurfaceForObject(DFIndex, LWCWorldPosition, MaxDistance);			
+		}
+
+		const float3 PreviousPosition = mul(GetPreviousTransform_{ParameterName}(ElementIndex), float4(CollisionPosition,1.0)).xyz;
+		const float3 CurrentPosition = mul(GetCurrentTransform_{ParameterName}(ElementIndex), float4(CollisionPosition,1.0)).xyz;
+		OutClosestVelocity = ( CurrentPosition - PreviousPosition ) / DeltaTime;		
 	}
 }
 
@@ -348,6 +463,24 @@ void GetClosestPoint_{ParameterName}(in float3 WorldPosition, in float DeltaTime
 	}
 }
 
+// Given a world space position (WorldPosition) compute the static mesh closest point (position,normal,velocity)
+void GetClosestPointSimple_{ParameterName}(in float3 WorldPosition, in float DeltaTime, out float OutClosestDistance, out float3 OutClosestVelocity)
+{	
+	float3 CollisionPosition = float3(0,0,0);
+	OutClosestDistance = 0.0;
+
+	const int ElementIndex = GetClosestElementSimple_{ParameterName}(WorldPosition,CollisionPosition,OutClosestDistance);
+
+	OutClosestVelocity = float3(0,0,0);
+
+	if (ElementIndex != -1)
+	{
+		const float3 PreviousPosition = mul(GetPreviousTransform_{ParameterName}(ElementIndex), float4(CollisionPosition,1.0)).xyz;
+		const float3 CurrentPosition = mul(GetCurrentTransform_{ParameterName}(ElementIndex), float4(CollisionPosition,1.0)).xyz;
+		OutClosestVelocity = ( CurrentPosition - PreviousPosition ) / DeltaTime;
+	}
+}
+
 // Given a world space position (WorldPosition) compute the static mesh closest distance
 void GetClosestDistance_{ParameterName}(in float3 WorldPosition, in float TimeFraction, out float OutClosestDistance)
 {	
@@ -368,7 +501,7 @@ void GetClosestDistance_{ParameterName}(in float3 WorldPosition, in float TimeFr
 // Given a world space position (WorldPosition) compute the static mesh closest point (position,normal,velocity)
 void GetClosestPointMeshDistanceField_{ParameterName}(in float3 WorldPosition, in float DeltaTime, in float TimeFraction, in float MaxDistance, out float OutClosestDistance, out float3 OutClosestPosition, out float3 OutClosestNormal, out float3 OutClosestVelocity, out bool NormalIsValid)
 {
-	const FLWCVector3 LWCWorldPosition = MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition);
+	const FDFVector3 LWCWorldPosition = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition));
 
 	float3 CollisionPosition = float3(0,0,0);
 	float3 CollisionNormal = float3(0,0,0);
@@ -398,12 +531,12 @@ void GetClosestPointMeshDistanceField_{ParameterName}(in float3 WorldPosition, i
 			uint NumMips = LoadDFAssetData(DFObjectData.AssetIndex, 0).NumMips;
 			FDFAssetData DFAssetData = LoadDFAssetData(DFObjectData.AssetIndex, NumMips - 1);
 
-			float3 VolumePosition = LWCMultiply(LWCWorldPosition, DFObjectData.WorldToVolume);
+			float3 VolumePosition = DFMultiplyDemote(LWCWorldPosition, DFObjectData.WorldToVolume);
 			float3 VolumeGradient = CalculateMeshSDFGradient(VolumePosition, DFAssetData);
 			float VolumeGradientLength = length(VolumeGradient);
 			float3 VolumeNormal = VolumeGradientLength > 0.0f ? VolumeGradient / VolumeGradientLength : 0;
 			// Transform by transposed inverse to handle non-uniform scaling
-			float4x4 WorldToVolume = LWCHackToFloat(DFObjectData.WorldToVolume);
+			float4x4 WorldToVolume = DFHackToFloat(DFObjectData.WorldToVolume);
 			float3 WorldGradient = mul(VolumeNormal, transpose((float3x3)WorldToVolume));
 			float WorldGradientLength = length(WorldGradient);
 			OutClosestNormal = WorldGradientLength > 0.0f ? WorldGradient / WorldGradientLength : 0;
@@ -426,7 +559,7 @@ void GetClosestPointMeshDistanceField_{ParameterName}(in float3 WorldPosition, i
 // Given a world space position (WorldPosition) compute the static mesh closest point (position,normal,velocity) by querying all overlapping mesh distance fields
 void GetClosestPointMeshDistanceFieldAccurate_{ParameterName}(in float3 WorldPosition, in float DeltaTime, in float TimeFraction, in float MaxDistance, out float OutClosestDistance, out float3 OutClosestPosition, out float3 OutClosestNormal, out float3 OutClosestVelocity, out bool NormalIsValid)
 {
-	const FLWCVector3 LWCWorldPosition = MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition);
+	const FDFVector3 LWCWorldPosition = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition));
 
 	float3 CollisionPosition = float3(0,0,0);
 	float3 CollisionNormal = float3(0,0,0);
@@ -438,7 +571,7 @@ void GetClosestPointMeshDistanceFieldAccurate_{ParameterName}(in float3 WorldPos
 	
 	NormalIsValid = false;
 
-	for (int ElementIndex = 0; ElementIndex < {ParameterName}_ElementOffsets[3]; ++ElementIndex)
+	for (int ElementIndex = 0; ElementIndex < {ParameterName}_ElementOffsets[NUM_ELEMENTS_INDEX]; ++ElementIndex)
 	{
 		uint DFIndex = {ParameterName}_DFIndexBuffer[ElementIndex];
 
@@ -454,12 +587,12 @@ void GetClosestPointMeshDistanceFieldAccurate_{ParameterName}(in float3 WorldPos
 			uint NumMips = LoadDFAssetData(DFObjectData.AssetIndex, 0).NumMips;
 			FDFAssetData DFAssetData = LoadDFAssetData(DFObjectData.AssetIndex, NumMips - 1);
 
-			float3 VolumePosition = LWCMultiply(LWCWorldPosition, DFObjectData.WorldToVolume);
+			float3 VolumePosition = DFMultiplyDemote(LWCWorldPosition, DFObjectData.WorldToVolume);
 			float3 VolumeGradient = CalculateMeshSDFGradient(VolumePosition, DFAssetData);
 			float VolumeGradientLength = length(VolumeGradient);
 			float3 VolumeNormal = VolumeGradientLength > 0.0f ? VolumeGradient / VolumeGradientLength : 0;
 			// Transform by transposed inverse to handle non-uniform scaling
-			float4x4 WorldToVolume = LWCHackToFloat(DFObjectData.WorldToVolume);
+			float4x4 WorldToVolume = DFHackToFloat(DFObjectData.WorldToVolume);
 			float3 WorldGradient = mul(VolumeNormal, transpose((float3x3)WorldToVolume));
 			float WorldGradientLength = length(WorldGradient);
 			OutClosestNormal = WorldGradientLength > 0.0f ? WorldGradient / WorldGradientLength : 0;
@@ -482,7 +615,7 @@ void GetClosestPointMeshDistanceFieldAccurate_{ParameterName}(in float3 WorldPos
 // Given a world space position (WorldPosition) compute the static mesh closest point (position,normal,velocity)
 void GetClosestPointMeshDistanceFieldNoNormal_{ParameterName}(in float3 WorldPosition, in float DeltaTime, in float TimeFraction, in float MaxDistance, out float OutClosestDistance, out float3 OutClosestPosition, out float3 OutClosestVelocity)
 {	
-	const FLWCVector3 LWCWorldPosition = MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition);
+	const FDFVector3 LWCWorldPosition = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition));
 
 	float3 CollisionPosition = float3(0,0,0);
 	float3 CollisionNormal = float3(0,0,0);

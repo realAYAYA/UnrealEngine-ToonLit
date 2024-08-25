@@ -93,6 +93,16 @@ TRDGScopeOpArray<ScopeOpType> TRDGScopeStackHelper<ScopeOpType>::EndCompile()
 	return TRDGScopeOpArray<ScopeOpType>(Ops, OffsetIndex, Ops.Num() - OffsetIndex);
 }
 
+// Lower overhead non-variadic version of constructor with arbitrary integer first argument to avoid overload resolution ambiguity.
+// Avoids dynamic allocation of the formatted string and other overhead.
+inline FRDGEventName::FRDGEventName(int32 NonVariadic, const TCHAR* InEventName)
+#if RDG_EVENTS == RDG_EVENTS_STRING_REF || RDG_EVENTS == RDG_EVENTS_STRING_COPY
+	: EventFormat(InEventName)
+#endif
+{
+	check(InEventName != nullptr);
+}
+
 #if RDG_EVENTS != RDG_EVENTS_STRING_COPY
 inline FRDGEventName::FRDGEventName(const TCHAR* InEventFormat, ...)
 #if RDG_EVENTS == RDG_EVENTS_STRING_REF

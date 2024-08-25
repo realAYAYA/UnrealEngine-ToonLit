@@ -594,18 +594,21 @@ void FLiveLinkClient::PushSubjectStaticData_Internal(FPendingSubjectStatic&& Sub
 	FLiveLinkSubject* LiveLinkSubject = nullptr;
 	if (FLiveLinkCollectionSubjectItem* SubjectItem = Collection->FindSubject(SubjectStaticData.SubjectKey))
 	{
-		LiveLinkSubject = SubjectItem->GetLiveSubject();
-
-		if (LiveLinkSubject->GetRole() != SubjectStaticData.Role)
+		if (!SubjectItem->bPendingKill)
 		{
-			FLiveLinkLog::Warning(TEXT("Subject '%s' of role '%s' is changing its role to '%s'. Current subject will be removed and a new one will be created"), *SubjectStaticData.SubjectKey.SubjectName.ToString(), *LiveLinkSubject->GetRole().GetDefaultObject()->GetDisplayName().ToString(), *SubjectStaticData.Role.GetDefaultObject()->GetDisplayName().ToString());
+			LiveLinkSubject = SubjectItem->GetLiveSubject();
 
-			Collection->RemoveSubject(SubjectStaticData.SubjectKey);
-			LiveLinkSubject = nullptr;
-		}
-		else
-		{
-			LiveLinkSubject->ClearFrames();
+			if (LiveLinkSubject->GetRole() != SubjectStaticData.Role)
+			{
+				FLiveLinkLog::Warning(TEXT("Subject '%s' of role '%s' is changing its role to '%s'. Current subject will be removed and a new one will be created"), *SubjectStaticData.SubjectKey.SubjectName.ToString(), *LiveLinkSubject->GetRole().GetDefaultObject()->GetDisplayName().ToString(), *SubjectStaticData.Role.GetDefaultObject()->GetDisplayName().ToString());
+
+				Collection->RemoveSubject(SubjectStaticData.SubjectKey);
+				LiveLinkSubject = nullptr;
+			}
+			else
+			{
+				LiveLinkSubject->ClearFrames();
+			}
 		}
 	}
 
@@ -690,31 +693,45 @@ void FLiveLinkClient::PushSubjectStaticData_Internal(FPendingSubjectStatic&& Sub
 	}
 }
 
+
+void FLiveLinkClient::BroadcastFrameDataUpdate(const FLiveLinkSubjectKey& InSubjectKey, const FLiveLinkFrameDataStruct& InFrameData)
+{
+	FScopeLock BroadcastLock(&SubjectFrameReceivedHandleseCriticalSection);
+	if (const FSubjectFramesReceivedHandles* Handles = SubjectFrameReceivedHandles.Find(InSubjectKey))
+	{
+		Handles->OnFrameDataReceived.Broadcast(InFrameData);
+	}
+}
+
 void FLiveLinkClient::PushSubjectFrameData_AnyThread(const FLiveLinkSubjectKey& InSubjectKey, FLiveLinkFrameDataStruct&& InFrameData)
 {
 	FPendingSubjectFrame SubjectFrame{ InSubjectKey, MoveTemp(InFrameData) };
 	const int32 MaxNumBufferToCached = CVarMaxNewFrameDataPerUpdate.GetValueOnAnyThread();
 	bool bLogError = false;
+
+	bool bCanPushFrame = true;
 	{
 		FScopeLock Lock(&CollectionAccessCriticalSection);
+
 		if (SubjectFrameToPush.Num() > MaxNumBufferToCached) // Something is wrong somewhere. Warn the user and discard the new Frame Data.
 		{
 			bLogError = true;
-			SubjectFrameToPush.RemoveAt(0, SubjectFrameToPush.Num() - MaxNumBufferToCached, false);
+			SubjectFrameToPush.RemoveAt(0, SubjectFrameToPush.Num() - MaxNumBufferToCached, EAllowShrinking::No);
+			bCanPushFrame = false;
 		}
-		else
-		{
+	}
 
-			{
-				FScopeLock BroadcastLock(&SubjectFrameReceivedHandleseCriticalSection);
-				if (const FSubjectFramesReceivedHandles* Handles = SubjectFrameReceivedHandles.Find(InSubjectKey))
-				{
-					Handles->OnFrameDataReceived.Broadcast(SubjectFrame.FrameData);
-				}
-			}
+	if (bCanPushFrame)
+	{
+		BroadcastFrameDataUpdate(InSubjectKey, SubjectFrame.FrameData);
 			
-			SubjectFrameToPush.Add(MoveTemp(SubjectFrame));
-		}
+		// Since the lock was released between setting bCanPushFrame and adding to the array, it is possible that
+		// we exceed MaxNumBufferToCached. But this should be rare and also harmless.
+		// The lock was released so that OnFrameDataReceived doesn't need to be called with the lock on,
+		// which can hang the game thread when it calls EvaluateFrame if the broadcast takes longer than usual.
+
+		FScopeLock Lock(&CollectionAccessCriticalSection);
+		SubjectFrameToPush.Add(MoveTemp(SubjectFrame));
 	}
 
 	if (bLogError)

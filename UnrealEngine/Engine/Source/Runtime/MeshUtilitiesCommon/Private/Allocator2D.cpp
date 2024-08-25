@@ -52,7 +52,7 @@ void FAllocator2D::Clear()
 
 void FAllocator2D::CopyRuns(TArray<FRun>& Runs, const TArray<FRun>& OtherRuns, int32 MaxSize)
 {
-	Runs.SetNum(OtherRuns.Num(), false);
+	Runs.SetNum(OtherRuns.Num(), EAllowShrinking::No);
 
 	MaxSize = FMath::Min(Runs.Num(), MaxSize);
 
@@ -581,7 +581,7 @@ void FAllocator2D::CreateUsedSegments()
 {
 	check(Mode == EMode::UsedSegments);
 
-	SortedRowsIndex.SetNum(RasterHeight, false);
+	SortedRowsIndex.SetNum(RasterHeight, EAllowShrinking::No);
 
 	uint64* BitsData = Bits.GetData();
 
@@ -658,7 +658,7 @@ void FAllocator2D::CreateUsedSegments()
 	// Create segments along the Y axis for each columns
 	if (LayoutVersion >= ELightmapUVVersion::Segments2D)
 	{
-		SortedColumnsIndex.SetNum(RasterWidth, false);
+		SortedColumnsIndex.SetNum(RasterWidth, EAllowShrinking::No);
 
 		for ( uint32 x = 0; x < RasterWidth; ++x )
 		{

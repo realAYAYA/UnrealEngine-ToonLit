@@ -46,9 +46,9 @@ SetupIntermediateDirectory() {
     chmod 777 "$Dylibs/$dylibLibTbb"
     chmod 777 "$Dylibs/$dylibLibTbbMalloc"
 
-    install_name_tool -id @loader_path/Dylibs/DatasmithSDK.dylib "$Dylibs/DatasmithSDK.dylib"
-    install_name_tool -id @loader_path/Dylibs/$dylibLibFreeImage "$Dylibs/$dylibLibFreeImage"
-    install_name_tool -change @rpath/$dylibLibFreeImage @loader_path/$dylibLibFreeImage "$Dylibs/DatasmithSDK.dylib"
+    install_name_tool -id @loader_path/Dylibs/DatasmithSDK.dylib "$Dylibs/DatasmithSDK.dylib" > /dev/null 2>&1
+    install_name_tool -id @loader_path/Dylibs/$dylibLibFreeImage "$Dylibs/$dylibLibFreeImage" > /dev/null 2>&1
+    install_name_tool -change @rpath/$dylibLibFreeImage @loader_path/$dylibLibFreeImage "$Dylibs/DatasmithSDK.dylib" > /dev/null 2>&1
 }
 
 # Technicaly our dylibs are already Universal Arm64+x86_64 binaries, so they shouldn't really go into the x86_64 folder,
@@ -93,6 +93,7 @@ BuildSketchUpPlugin 2020 SDK_Mac_2020-2-171 "x86_64" "$Intermediatex86_64Path"
 BuildSketchUpPlugin 2021 SDK_Mac_2021-0-338 "x86_64" "$Intermediatex86_64Path"
 BuildSketchUpPlugin 2022 SDK_Mac_2022-0-353 "x86_64 arm64" "$IntermediateUniversalPath"
 BuildSketchUpPlugin 2023 SDK_Mac_2023-0-366 "x86_64 arm64" "$IntermediateUniversalPath"
+BuildSketchUpPlugin 2024 SDK_Mac_2024-0-483 "x86_64 arm64" "$IntermediateUniversalPath"
 
 
 # install_name_tool -change @rpath/DatasmithSDK.dylib @loader_path/Dylibs/DatasmithSDK.dylib DatasmithSketchUp.bundle 

@@ -271,7 +271,7 @@ class CORE_API FMallocBinnedGPU final : public FMalloc
 	{
 		FORCEINLINE static FPerThreadFreeBlockLists* Get(uint32 BinnedGPUTlsSlot)
 		{
-			return BinnedGPUTlsSlot ? (FPerThreadFreeBlockLists*)FPlatformTLS::GetTlsValue(BinnedGPUTlsSlot) : nullptr;
+			return FPlatformTLS::IsValidTlsSlot(BinnedGPUTlsSlot) ? (FPerThreadFreeBlockLists*)FPlatformTLS::GetTlsValue(BinnedGPUTlsSlot) : nullptr;
 		}
 		static void SetTLS(FMallocBinnedGPU& Allocator);
 		static int64 ClearTLS(FMallocBinnedGPU& Allocator);
@@ -618,7 +618,7 @@ public:
 	FArenaParams ArenaParams;
 
 	TArray<uint16> SmallBlockSizesReversedShifted; // this is reversed to get the smallest elements on our main cache line
-	uint32 BinnedGPUTlsSlot;
+	uint32 BinnedGPUTlsSlot = FPlatformTLS::InvalidTlsSlot;
 	uint64 PoolSearchDiv; // if this is zero, the VM turned out to be contiguous anyway so we use a simple subtract and shift
 	uint8* HighestPoolBaseVMPtr; // this is a duplicate of PoolBaseVMPtr[ArenaParams.PoolCount - 1]
 	FPlatformMemory::FPlatformVirtualMemoryBlock PoolBaseVMBlock;

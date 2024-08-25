@@ -41,6 +41,7 @@ protected:
 	//~ Begin UActorComponent Interface
 	void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	void SendRenderDynamicData_Concurrent() override;
+	void DestroyRenderState_Concurrent() override;
 	bool ShouldCreateRenderState() const override { return true; }
 	//~ End UActorComponent Interface
 

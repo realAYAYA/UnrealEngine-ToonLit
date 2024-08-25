@@ -33,10 +33,10 @@ namespace Chaos::Softs
 			for (int32 ElementIndex = 0; ElementIndex < InMesh.Num(); ElementIndex++)
 			{
 				TVec4<int32> Constraint = InMesh[ElementIndex];
-				const FSolverVec3& P1 = InParticles.X(Constraint[0]);
-				const FSolverVec3& P2 = InParticles.X(Constraint[1]);
-				const FSolverVec3& P3 = InParticles.X(Constraint[2]);
-				const FSolverVec3& P4 = InParticles.X(Constraint[3]);
+				const FSolverVec3& P1 = InParticles.GetX(Constraint[0]);
+				const FSolverVec3& P2 = InParticles.GetX(Constraint[1]);
+				const FSolverVec3& P3 = InParticles.GetX(Constraint[2]);
+				const FSolverVec3& P4 = InParticles.GetX(Constraint[3]);
 				Volumes[ElementIndex] = FSolverVec3::DotProduct(FSolverVec3::CrossProduct(P2 - P1, P3 - P1), P4 - P1) / (FSolverReal)6.;
 			}
 
@@ -53,7 +53,7 @@ namespace Chaos::Softs
 
 		virtual void ApplyOneElement(FSolverParticles& Particles, const FSolverReal Dt, const int32 ElementIndex) const
 		{
-			//TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDCorotatedApplySingle"));
+			//TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDCorotatedApplySingle);
 			
 			TVec4<FSolverVec3> VolumeDelta = GetVolumeDelta(Particles, Dt, ElementIndex);
 			for (int i = 0; i < 4; i++)
@@ -66,8 +66,8 @@ namespace Chaos::Softs
 
 		void ApplyInSerial(FSolverParticles& Particles, const FSolverReal Dt) const
 		{
-			SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotated);
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDVolumeApplySerial"));
+			//SCOPE_CYCLE_COUNTER(STAT_ChaosXPBDCorotated);
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDVolumeApplySerial);
 			for (int32 ElementIndex = 0; ElementIndex < MeshConstraints.Num(); ++ElementIndex)
 			{
 				ApplyOneElement(Particles, Dt, ElementIndex);
@@ -79,7 +79,7 @@ namespace Chaos::Softs
 		void ApplyInParallel(FSolverParticles& Particles, const FSolverReal Dt) const
 		{
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDVolumeApply"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDVolumeApply);
 				if ((ConstraintsPerColorStartIndex.Num() > 1))//&& (MeshConstraints.Num() > Chaos_Spring_ParallelConstraintCount))
 				{
 					const int32 ConstraintColorNum = ConstraintsPerColorStartIndex.Num() - 1;

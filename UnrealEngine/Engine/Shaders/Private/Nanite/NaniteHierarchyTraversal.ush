@@ -33,7 +33,17 @@ void SetGroupNodeData(uint NodeIndex, uint4 Data) { GroupNodeData[NodeIndex] = D
 #	error "Unexpected Group Node Size."
 #endif
 
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
 RWCoherentStructuredBuffer(FQueueState)	QueueState;
+#else
+RWStructuredBuffer<FQueueState>	QueueState;
+#endif
+
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_NODES
+Buffer<uint>					CurrentNodeIndirectArgs;
+RWBuffer<uint>					NextNodeIndirectArgs;
+uint							NodeLevel;
+#endif
 
 groupshared uint	GroupNumCandidateNodes;
 groupshared uint	GroupCandidateNodesOffset;
@@ -85,11 +95,23 @@ void ProcessNodeBatch(uint BatchSize, uint GroupIndex, uint QueueStateIndex)
 	if (GroupIndex == 0)
 	{
 		InterlockedAdd(QueueState[0].PassState[QueueStateIndex].NodeWriteOffset, GroupNumCandidateNodes, GroupCandidateNodesOffset);
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
 		InterlockedAdd(QueueState[0].PassState[QueueStateIndex].NodeCount, (int)GroupNumCandidateNodes);	// NodeCount needs to be conservative, so child count is added before the actual children.
+#else
+		uint NumNodes = 0;
+		InterlockedAdd(NextNodeIndirectArgs[(NodeLevel + 1) * NANITE_NODE_CULLING_ARG_COUNT + 3], GroupNumCandidateNodes, NumNodes);
+		NumNodes += GroupNumCandidateNodes;
+		const uint NumGroups = (NumNodes + NANITE_MAX_BVH_NODES_PER_GROUP - 1) / NANITE_MAX_BVH_NODES_PER_GROUP;
+		InterlockedMax(NextNodeIndirectArgs[(NodeLevel + 1) * NANITE_NODE_CULLING_ARG_COUNT + 0], NumGroups);
+#endif
 	}
 
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
 	AllMemoryBarrierWithGroupSync();
-
+#else
+	GroupMemoryBarrierWithGroupSync();
+#endif
+	
 	// GPU might not be filled, so latency is important here. Kick new jobs as soon as possible.
 	if (bOutputChild && !HierarchyNodeSlice.bLeaf)
 	{
@@ -100,8 +122,11 @@ void ProcessNodeBatch(uint BatchSize, uint GroupIndex, uint QueueStateIndex)
 			TraversalCallback.StoreChildNode(CandidateNodesOffset, HierarchyNodeSlice);
 		}
 	}
-	DeviceMemoryBarrierWithGroupSync();
 
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
+	DeviceMemoryBarrierWithGroupSync();
+#endif
+	
 	// Continue with remaining independent work
 	if (bOutputChild && HierarchyNodeSlice.bLeaf)
 	{
@@ -128,6 +153,8 @@ void ProcessNodeBatch(uint BatchSize, uint GroupIndex, uint QueueStateIndex)
 			TraversalCallback.StoreCluster(Index, HierarchyNodeSlice, BaseClusterIndex + (Index - StartIndex));
 		}
 
+
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
 		DeviceMemoryBarrier();
 
 		// Once the cluster indices have been committed to memory, we can update the cluster counters of the overlapping cluster batches.
@@ -140,14 +167,17 @@ void ProcessNodeBatch(uint BatchSize, uint GroupIndex, uint QueueStateIndex)
 			TraversalCallback.AddToClusterBatch(BatchIndex, Num);
 			Index = NextIndex;
 		}
+#endif
 	}
 
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
 	DeviceMemoryBarrierWithGroupSync();
 	if (GroupIndex == 0)
 	{
 		// Done writing clusters/nodes for current pass. Subtract us from NodeCount.
 		InterlockedAdd(QueueState[0].PassState[QueueStateIndex].NodeCount, -(int)BatchSize);
 	}
+#endif
 
 	TraversalCallback.OnPostNodeVisit(HierarchyNodeSlice);
 }
@@ -169,8 +199,10 @@ void ProcessClusterBatch(uint BatchStartIndex, uint BatchSize, uint GroupIndex)
 		TraversalCallback.ProcessCluster(PackedCluster);
 	}
 
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
 	// Clear batch so the buffer is cleared for next pass.
 	TraversalCallback.ClearClusterBatch(BatchStartIndex);
+#endif
 }
 
 #endif
@@ -329,41 +361,46 @@ void PersistentNodeAndClusterCull(uint GroupIndex, uint QueueStateIndex)
 
 #if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_NODES
 
+groupshared uint GroupReadOffset;
 template<typename FNaniteTraversalCallback>
 void NodeCull(uint GroupID, uint GroupIndex, uint QueueStateIndex)
 {
-	const uint ClampedReadOffset		= min(QueueState[0].PassState[QueueStateIndex].NodeReadOffset, MaxNodes);
-	const uint ClampedPrevWriteOffset	= min(QueueState[0].PassState[QueueStateIndex].NodePrevWriteOffset, MaxNodes);
-	const uint BatchNumNodes			= ClampedPrevWriteOffset - ClampedReadOffset;
 
-	const uint BatchNodeBaseIndex		= GroupID * NANITE_MAX_BVH_NODES_PER_GROUP;
-	const uint BatchSize				= min(BatchNodeBaseIndex + NANITE_MAX_BVH_NODES_PER_GROUP, BatchNumNodes) - BatchNodeBaseIndex;
+	const uint NumNodes				= CurrentNodeIndirectArgs[NodeLevel * NANITE_NODE_CULLING_ARG_COUNT + 3];
+	const uint LevelStartIndex		= CurrentNodeIndirectArgs[NodeLevel * NANITE_NODE_CULLING_ARG_COUNT + 4];
+	const uint LevelEndIndex		= min(LevelStartIndex + NumNodes, MaxNodes);
 
-	const uint NodeIndex				= ClampedReadOffset + BatchNodeBaseIndex + GroupIndex;
+	const uint StartIndex			= LevelStartIndex + GroupID * NANITE_MAX_BVH_NODES_PER_GROUP;
+	const uint ClampedStartIndex	= min(StartIndex, LevelEndIndex);
+	const uint ClampedEndIndex		= min(StartIndex + NANITE_MAX_BVH_NODES_PER_GROUP, LevelEndIndex);
+
+	uint BatchSize					= ClampedEndIndex - ClampedStartIndex;
 
 	if (GroupIndex == 0)
 	{
 		GroupNumCandidateNodes = 0;
+
+		if (GroupID == 0)
+		{
+			// First group updates start index for next level
+			NextNodeIndirectArgs[(NodeLevel + 1) * NANITE_NODE_CULLING_ARG_COUNT + 4] = LevelEndIndex;
+		}
 	}
+	
+	GroupMemoryBarrierWithGroupSync();
+
+	const uint NodeIndex = ClampedStartIndex + GroupIndex;
 
 	FNaniteTraversalCallback TraversalCallback;
 	TraversalCallback.OnPreProcessNodeBatch(GroupIndex);
 
-	bool bClear = false;
 	if (GroupIndex < BatchSize)
 	{
 		TraversalCallback.LoadCandidateNodeDataToGroup(NodeIndex, GroupIndex, false);
-
-		bClear = true;
 	}
-	AllMemoryBarrierWithGroupSync();
 
+	GroupMemoryBarrierWithGroupSync();
 	ProcessNodeBatch<FNaniteTraversalCallback>(BatchSize, GroupIndex, QueueStateIndex);
-	if (bClear)
-	{
-		// Clear processed element so we leave the buffer cleared for next pass.
-		TraversalCallback.ClearCandidateNodeData(NodeIndex);
-	}
 }
 
 #endif

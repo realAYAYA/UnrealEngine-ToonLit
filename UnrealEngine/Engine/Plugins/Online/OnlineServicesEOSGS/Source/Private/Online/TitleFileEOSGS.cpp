@@ -3,6 +3,7 @@
 #include "Online/TitleFileEOSGS.h"
 
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/AuthEOSGS.h"
 #include "Online/OnlineErrorEOSGS.h"
 #include "Online/OnlineIdEOSGS.h"
@@ -22,7 +23,7 @@ void FTitleFileEOSGS::Initialize()
 {
 	Super::Initialize();
 
-	TitleStorageHandle = EOS_Platform_GetTitleStorageInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	TitleStorageHandle = EOS_Platform_GetTitleStorageInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(TitleStorageHandle);
 }
 

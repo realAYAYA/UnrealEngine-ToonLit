@@ -9,6 +9,9 @@
 
 namespace Audio
 {
+	// forward
+	class FWaveTableOsc;
+
 	struct FEarlyReflectionsSettings
 	{
 		// Early reflections gain

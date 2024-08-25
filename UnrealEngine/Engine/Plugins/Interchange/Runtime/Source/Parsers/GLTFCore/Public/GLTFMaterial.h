@@ -128,6 +128,24 @@ namespace GLTF
 			FTextureMap NormalMap;
 		};
 
+		struct FIridescence
+		{
+			struct FThickness
+			{
+				float       Minimum = 100.0f;
+				float       Maximum = 400.0f;
+				FTextureMap	Texture;
+			};
+
+			float Factor = 0.0f;
+			FTextureMap Texture;
+			float IOR = 1.3f;
+
+			FThickness Thickness;
+
+			bool bHasIridescence = false;
+		};
+
 		FString Name;
 
 		// PBR properties
@@ -157,14 +175,16 @@ namespace GLTF
 		float      AlphaCutoff;  // only used when AlphaMode == Mask
 
 		// extension properties
-		FPacking Packing;
-		bool     bIsUnlitShadingModel;
-		bool     bHasClearCoat;
-		bool     bHasSheen;
-		bool     bHasTransmission;
-		bool     bHasIOR;
-		bool     bHasSpecular;
-		bool     bHasEmissiveStrength;
+		FPacking        Packing;
+		bool            bIsUnlitShadingModel;
+		bool            bHasClearCoat;
+		bool            bHasSheen;
+		bool            bHasTransmission;
+		bool            bHasIOR;
+		bool            bHasSpecular;
+		bool            bHasEmissiveStrength;
+		FIridescence    Iridescence;
+
 
 		FString UniqueId; //will be generated in FAsset::GenerateNames
 

@@ -36,7 +36,7 @@ void NiagaraRayMarchGlobalSdfCS(uint GroupIndex : SV_GroupIndex)
 	Result.WorldPosition = Trace.Origin;
 	Result.HitT = 0.0f;
 
-	float3 TranslatedWorldPosition = Result.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
+	float3 TranslatedWorldPosition = Result.WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
 
 	int MarchCount = 0;
 	for (MarchCount = 0; MarchCount < MAX_MARCH_COUNT; ++MarchCount)
@@ -69,7 +69,7 @@ void NiagaraRayMarchGlobalSdfCS(uint GroupIndex : SV_GroupIndex)
 		Result.WorldNormal = normalize(GetDistanceFieldGradientGlobal(TranslatedWorldPosition));
 	}
 
-	Result.WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
+	Result.WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
 
 	// write the offset result
 	Results[ResultsOffset + GroupIndex] = Result;

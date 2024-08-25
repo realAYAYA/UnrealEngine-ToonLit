@@ -42,6 +42,7 @@ public class ContextualAnimationEditor : ModuleRules
 				"GraphEditor",
 				"SequencerWidgets",
 				"MovieScene",
+				"SequencerCore",
 				"Sequencer",
 				"MovieSceneTracks",
 				"MovieSceneTools",

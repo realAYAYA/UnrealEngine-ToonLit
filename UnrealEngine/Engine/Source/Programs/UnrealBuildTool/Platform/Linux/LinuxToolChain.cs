@@ -130,7 +130,7 @@ namespace UnrealBuildTool
 					DirectoryReference AutoRTFMDir = DirectoryReference.Combine(Unreal.EngineDirectory, "Restricted", "NotForLicensees", "Binaries", BuildHostPlatform.Current.Platform.ToString(), "AutoRTFM", "bin");
 
 					// set up the path to our toolchain
-					ClangPath = FileReference.Combine(AutoRTFMDir, $"verse-clang-cl");
+					ClangPath = FileReference.Combine(AutoRTFMDir, $"verse-clang-cl{BuildHostPlatform.Current.BinarySuffix}");
 				}
 
 				// When cross-compiling on Windows, use old FixDeps. It is slow, but it does not have timing issues
@@ -310,7 +310,7 @@ namespace UnrealBuildTool
 				{
 					if (bForLinker)
 					{
-						Arguments.Add(String.Format("-flto=thin -Wl,--thinlto-jobs={0}, -Wl,-mllvm,-disable-auto-upgrade-debug-info", Utils.GetPhysicalProcessorCount()));
+						Arguments.Add(String.Format("-flto=thin -Wl,--thinlto-jobs={0}, -Wl,-mllvm,-disable-auto-upgrade-debug-info, -Wl,-mllvm,-enable-ext-tsp-block-placement=1", Utils.GetPhysicalProcessorCount()));
 					}
 					else
 					{
@@ -340,6 +340,43 @@ namespace UnrealBuildTool
 			base.GetCompileArguments_Optimizations(CompileEnvironment, Arguments);
 
 			AddCompilerLTOFlags(Arguments);
+
+			// architecture (all but None are AVX)
+			if (CompileEnvironment.Architecture == UnrealArch.X64 && CompileEnvironment.MinCpuArchX64 != MinimumCpuArchitectureX64.None)
+			{
+				// The binary created will be targeting AVX instructions. Machines without AVX support will crash on any AVX instructions if they run this compilation unit.
+
+				// AVX available implies sse4 and sse2 available.
+				Arguments.Add("-DPLATFORM_ENABLE_VECTORINTRINSICS=1");
+
+				if (CompileEnvironment.MinCpuArchX64 >= MinimumCpuArchitectureX64.AVX)
+				{
+					// Apparently MSVC enables (a subset?) of BMI (bit manipulation instructions) when /arch:AVX is set. Some code relies on this, so mirror it by enabling BMI1
+					Arguments.Add("-mavx -mbmi");
+					// Inform Unreal code that we have sse2, sse4, and AVX, both available to compile and available to run
+					Arguments.Add("-DPLATFORM_MAYBE_HAS_AVX=1");
+					// By setting the ALWAYS_HAS defines, we we direct Unreal code to skip cpuid checks to verify that the running hardware supports sse/avx.
+					Arguments.Add("-DPLATFORM_ALWAYS_HAS_AVX=1");
+				}
+
+				if (CompileEnvironment.MinCpuArchX64 >= MinimumCpuArchitectureX64.AVX2)
+				{
+					Arguments.Add("-mavx2");
+					Arguments.Add("-DPLATFORM_ALWAYS_HAS_AVX_2=1");
+				}
+
+				if (CompileEnvironment.MinCpuArchX64 >= MinimumCpuArchitectureX64.AVX512)
+				{
+					// Match MSVC which says (https://learn.microsoft.com/en-us/cpp/build/reference/arch-x64?view=msvc-170):
+					// > The __AVX512F__, __AVX512CD__, __AVX512BW__, __AVX512DQ__ and __AVX512VL__ preprocessor symbols are defined when the /arch:AVX512 compiler option is specified
+					Arguments.Add("-mavx512f");
+					Arguments.Add("-mavx512cd");
+					Arguments.Add("-mavx512bw");
+					Arguments.Add("-mavx512dq");
+					Arguments.Add("-mavx512vl");
+					Arguments.Add("-DPLATFORM_ALWAYS_HAS_AVX_512=1");
+				}
+			}
 
 			if (CompileEnvironment.bCodeCoverage)
 			{
@@ -439,6 +476,11 @@ namespace UnrealBuildTool
 				{
 					Arguments.Add("-glldb");
 				}
+
+				if (CompileEnvironment.bDebugLineTablesOnly)
+				{
+					Arguments.Add("-gline-tables-only");
+				}
 			}
 
 			if (CompileEnvironment.bHideSymbolsByDefault)
@@ -496,6 +538,10 @@ namespace UnrealBuildTool
 			base.GetCompileArguments_Global(CompileEnvironment, Arguments);
 
 			// build up the commandline common to C and C++
+
+			// These aren't supported on Linux at this time
+			Arguments.Add("-DUSE_DEBUG_LOGGING=0");
+			Arguments.Add("-DUSE_EVENT_LOGGING=0");
 
 			// always select the driver g++ in-case we are using a different binary for clang, such as clang/clang-cl
 			Arguments.Add("--driver-mode=g++");
@@ -595,6 +641,40 @@ namespace UnrealBuildTool
 			return Value == null
 				? String.Format("{0}", Key)
 				: String.Format("{0}={1}", Key, Value);
+		}
+
+		public override void PrepareRuntimeDependencies(List<RuntimeDependency> RuntimeDependencies, Dictionary<FileReference, FileReference> TargetFileToSourceFile, DirectoryReference ExeDir)
+		{
+			// If ASan is enabled we need to copy the companion helper libraries from the MSVC tools bin folder to the
+			// target executable folder.
+			if (Options.HasFlag(ClangToolChainOptions.EnableAddressSanitizer) ||
+				Options.HasFlag(ClangToolChainOptions.EnableThreadSanitizer) ||
+				Options.HasFlag(ClangToolChainOptions.EnableUndefinedBehaviorSanitizer) ||
+				Options.HasFlag(ClangToolChainOptions.EnableMemorySanitizer) ||
+				Options.HasFlag(ClangToolChainOptions.EnableLibFuzzer))
+			{
+				bool bInternalBuild = false;
+				BuildVersion? Version;
+				if (BuildVersion.TryRead(BuildVersion.GetDefaultFileName(), out Version))
+				{
+					bInternalBuild = !Version.IsLicenseeVersion;
+				}
+
+				if (bInternalBuild)
+				{
+					string? InternalSdkPath = UEBuildPlatform.GetSDK(UnrealTargetPlatform.Linux)!.GetInternalSDKPath();
+					if (InternalSdkPath != null)
+					{
+						DirectoryReference InternalSdkPathRef = new DirectoryReference(InternalSdkPath);
+
+						FileReference SymbolizerSourcePath = FileReference.Combine(InternalSdkPathRef, "bin/llvm-symbolizer");
+						FileReference SymbolizerTargetPath = FileReference.Combine(ExeDir, "llvm-symbolizer");
+
+						RuntimeDependencies.Add(new RuntimeDependency(SymbolizerTargetPath, StagedFileType.NonUFS));
+						TargetFileToSourceFile[SymbolizerTargetPath] = SymbolizerSourcePath;
+					}
+				}
+			}
 		}
 
 		protected virtual void GetLinkArguments(LinkEnvironment LinkEnvironment, List<string> Arguments)
@@ -712,8 +792,6 @@ namespace UnrealBuildTool
 				// x86_64 is now using updated ICU that doesn't need extra .so
 				Arguments.Add("-Wl,-rpath=${ORIGIN}/../../../Engine/Binaries/ThirdParty/ICU/icu4c-53_1/Unix/" + LinkEnvironment.Architecture.LinuxName);
 			}
-
-			Arguments.Add("-Wl,-rpath=${ORIGIN}/../../../Engine/Binaries/ThirdParty/OpenVR/OpenVRv1_5_17/linux64");
 
 			// @FIXME: Workaround for generating RPATHs for launching on devices UE-54136
 			Arguments.Add("-Wl,-rpath=${ORIGIN}/../../../Engine/Binaries/ThirdParty/PhysX3/Unix/x86_64-unknown-linux-gnu");
@@ -853,6 +931,8 @@ namespace UnrealBuildTool
 				Logger.LogInformation("Using fast way to relink  circularly dependent libraries (no FixDeps).");
 			}
 
+			Logger.LogInformation("Targeted minimum CPU architecture: {0}", (CompileEnvironment.Architecture == UnrealArch.X64) ? CompileEnvironment.MinCpuArchX64 : "default");
+
 			if (CompileEnvironment.bPGOOptimize)
 			{
 				Logger.LogInformation("Using PGO (profile guided optimization).");
@@ -888,8 +968,13 @@ namespace UnrealBuildTool
 			Logger.LogInformation("------------------------------");
 		}
 
-		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
+		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
 		{
+			if (ShouldSkipCompile(CompileEnvironment))
+			{
+				return new CPPOutput();
+			}
+
 			List<string> GlobalArguments = new();
 			GetCompileArguments_Global(CompileEnvironment, GlobalArguments);
 
@@ -921,6 +1006,8 @@ namespace UnrealBuildTool
 			Action ArchiveAction = Graph.CreateAction(ActionType.Link);
 			ArchiveAction.WorkingDirectory = Unreal.EngineSourceDirectory;
 			ArchiveAction.CommandPath = Info.Archiver;
+
+			ArchiveAction.bCanExecuteInUBA = OperatingSystem.IsWindows(); // Linker on native linux uses vfork/exec which is not handled in uba right now
 
 			// this will produce a final library
 			ArchiveAction.bProducesImportLibrary = true;
@@ -994,6 +1081,7 @@ namespace UnrealBuildTool
 				PostLinkAction.StatusDescription = String.Format("{0}", Path.GetFileName(Executable.AbsolutePath));
 				PostLinkAction.CommandDescription = "FixDeps";
 				PostLinkAction.bCanExecuteRemotely = false;
+				PostLinkAction.bCanExecuteInUBA = OperatingSystem.IsWindows(); // Linker on native linux uses vfork/exec which is not handled in uba right now
 				PostLinkAction.CommandArguments = ExecuteSwitch;
 
 				PostLinkAction.CommandArguments += bUseCmdExe ? " \"" : " -c '";
@@ -1080,6 +1168,13 @@ namespace UnrealBuildTool
 			{
 				LinkAction.CommandDescription = "Link";
 			}
+
+			// Saw a 6 hour link time potentially caused by box. Will disable for now and revisit later
+			LinkAction.bCanExecuteInUBA = !LinkEnvironment.bPGOProfile && !LinkEnvironment.bPGOOptimize && !LinkEnvironment.bAllowLTCG;
+
+			if (!OperatingSystem.IsWindows())
+				LinkAction.bCanExecuteInUBA = false; // Linker on native linux uses vfork/exec which is not handled in uba right now
+
 			// because the logic choosing between lld and ld is somewhat messy atm (lld fails to link .DSO due to bugs), make the name of the linker clear
 			LinkAction.CommandDescription += (LinkCommandString.Contains("-fuse-ld=lld")) ? " (lld)" : " (ld)";
 			LinkAction.CommandVersion = Info.ClangVersionString;
@@ -1485,6 +1580,7 @@ namespace UnrealBuildTool
 					RelinkAction.StatusDescription = LinkAction.StatusDescription;
 					RelinkAction.CommandDescription = "Relink";
 					RelinkAction.bCanExecuteRemotely = false;
+					RelinkAction.bCanExecuteInUBA = OperatingSystem.IsWindows(); // Linker on native linux uses vfork/exec which is not handled in uba right now
 					RelinkAction.ProducedItems.Clear();
 					RelinkAction.PrerequisiteItems = new SortedSet<FileItem>(LinkAction.PrerequisiteItems);
 					foreach (FileItem Dependency in EngineAndGameLibrariesFiles)
@@ -1575,7 +1671,7 @@ namespace UnrealBuildTool
 			return OutputFile;
 		}
 
-		public override void SetupBundleDependencies(ReadOnlyTargetRules Target, List<UEBuildBinary> Binaries, string GameName)
+		public override void SetupBundleDependencies(ReadOnlyTargetRules Target, IEnumerable<UEBuildBinary> Binaries, string GameName)
 		{
 			if (bUseFixdeps)
 			{
@@ -1644,7 +1740,8 @@ namespace UnrealBuildTool
 			{
 				// starting with clang 16.x the directory naming changed to include major version only
 				string ClangVersionString = (Info.ClangVersion.Major >= 16) ? Info.ClangVersion.Major.ToString() : Info.ClangVersion.ToString();
-				ExtraArguments.Add(String.Format("-isystem\"{0}\"", System.IO.Path.Combine(InternalSdkPath, "lib/clang/" + ClangVersionString + "/include/").Replace("\\", "/")));
+				ExtraArguments.Add(String.Format("-isystem {0}", System.IO.Path.Combine(InternalSdkPath, "lib", "clang", ClangVersionString, "include").Replace("\\", "/")));
+				ExtraArguments.Add(String.Format("-isystem {0}", System.IO.Path.Combine(InternalSdkPath, "usr", "include").Replace("\\", "/")));
 			}
 		}
 	}

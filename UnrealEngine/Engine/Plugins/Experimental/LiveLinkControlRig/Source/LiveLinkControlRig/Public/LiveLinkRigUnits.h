@@ -120,3 +120,24 @@ struct LIVELINKCONTROLRIG_API FRigUnit_LiveLinkEvaluteFrameTransform : public FR
 	UPROPERTY(meta = (Output))
 	FTransform Transform;
 };
+/**
+ * Evaluate current Live Link Basic float property data associated with supplied subject
+ */
+USTRUCT(meta = (DisplayName = "Get Basic LiveLink Data", Category = "Live Link"))
+struct LIVELINKCONTROLRIG_API FRigUnit_LiveLinkEvaluateBasicValue : public FRigUnit_LiveLinkBase
+{
+	GENERATED_BODY()
+
+	/** Execute logic for this rig unit */
+	RIGVM_METHOD()
+	virtual void Execute() override;
+
+	UPROPERTY(meta = (Input))
+	FName SubjectName;
+
+	UPROPERTY(meta = (Input))
+	FName PropertyName;
+
+	UPROPERTY(meta = (Output))
+	float Value = 0.f;
+};

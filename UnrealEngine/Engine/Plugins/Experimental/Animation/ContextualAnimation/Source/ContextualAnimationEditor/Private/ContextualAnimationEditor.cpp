@@ -21,8 +21,6 @@ void FContextualAnimationEditorModule::StartupModule()
 
 	FContextualAnimEditorStyle::Initialize();
 
-	FContextualAnimEditorStyle::ReloadTextures();
-
 	// Register Ed Mode used to interact with the preview scene
 	FEditorModeRegistry::Get().RegisterMode<FContextualAnimEdMode>(FContextualAnimEdMode::EdModeId, 
 		LOCTEXT("ContextualAnimEdModeEdModeName", "ContextualAnim"), 

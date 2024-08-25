@@ -692,7 +692,13 @@ void USimpleConstructionScript::ExecuteScriptOnActor(AActor* Actor, const TInlin
 	else if(Actor->GetRootComponent() == nullptr) // Must have a root component at the end of SCS, so if we don't have one already (from base class), create a SceneComponent now
 	{
 		USceneComponent* SceneComp = NewObject<USceneComponent>(Actor);
-		SceneComp->SetFlags(RF_Transactional);
+
+		// The object is new, so its safe for us to atomically set the flag in the open.
+		UE_AUTORTFM_OPEN(
+			{
+				SceneComp->SetFlags(RF_Transactional);
+			});
+
 		SceneComp->CreationMethod = EComponentCreationMethod::SimpleConstructionScript;
 		if (RootRelativeRotationCache)
 		{   // Enforces using the same rotator as much as possible.
@@ -1333,7 +1339,7 @@ FName USimpleConstructionScript::GenerateNewComponentName(const UClass* Componen
 					FString NumericSuffix = ComponentName.RightChop(Index);
 					Counter = FCString::Atoi(*NumericSuffix);
 					NumericSuffix = FString::Printf(TEXT("%d"), Counter); // Restringify the counter to account for leading 0s that we don't want to remove
-					ComponentName.RemoveAt(ComponentName.Len() - NumericSuffix.Len(), NumericSuffix.Len(), false);
+					ComponentName.RemoveAt(ComponentName.Len() - NumericSuffix.Len(), NumericSuffix.Len(), EAllowShrinking::No);
 					++Counter;
 					NewName = BuildNewName();
 				}
@@ -1508,6 +1514,11 @@ void USimpleConstructionScript::ValidateNodeVariableNames(FCompilerResultsLog& M
 void USimpleConstructionScript::ValidateNodeTemplates(FCompilerResultsLog& MessageLog)
 {
 	TArray<USCS_Node*> Nodes = GetAllNodes();
+	UClass* OwningClass = GetOwnerClass();
+
+	// it's likely that we shouldn't run any of this for diff loaded packages, but don't 
+	// want to destabilize anyone.. so just soldering off my new logic
+	const bool bForDiff = OwningClass->GetOutermost()->HasAnyPackageFlags(PKG_ForDiffing);
 
 	for (USCS_Node* Node : Nodes)
 	{
@@ -1546,6 +1557,34 @@ void USimpleConstructionScript::ValidateNodeTemplates(FCompilerResultsLog& Messa
 			if (bRemoveNode)
 			{
 				RemoveNodeAndPromoteChildren(Node);
+			}
+		}
+		else if (!bForDiff)
+		{
+			if (Node->ComponentTemplate->GetOuter() != OwningClass)
+			{
+				// this component template is somehow not owned by the class, recreate it:
+				FString VariableName = Node->GetVariableName().ToString();
+				if (Node->ComponentTemplate->HasAnyFlags(RF_ClassDefaultObject))
+				{
+					// duplicate won't work on CDOs because SDO will (for no good reason) reset loaders when duplicating a CDO...
+					Node->ComponentTemplate = NewObject<UActorComponent>(
+						OwningClass, 
+						Node->ComponentTemplate->GetClass(), 
+						*(VariableName + ComponentTemplateNameSuffix), 
+						RF_ArchetypeObject | RF_Transactional | RF_Public);
+				}
+				else
+				{
+					Node->ComponentTemplate = static_cast<UActorComponent*>(StaticDuplicateObject(
+						Node->ComponentTemplate, 
+						OwningClass, 
+						*(VariableName + ComponentTemplateNameSuffix)));
+					Node->ComponentTemplate->SetFlags(RF_ArchetypeObject | RF_Transactional | RF_Public);
+				}
+				MessageLog.Warning(*FText::Format(NSLOCTEXT(
+					"SimpleConstructionScript", "CorruptComponentFixed", 
+					"SCS Node component template {0} has been recreated because it was unexpectedly not owned by the class"), FText::FromString(VariableName)).ToString());
 			}
 		}
 	}

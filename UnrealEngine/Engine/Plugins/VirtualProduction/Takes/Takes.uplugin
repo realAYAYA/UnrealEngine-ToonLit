@@ -13,6 +13,7 @@
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"Installed": false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Plugins":
 	[
 		{
@@ -29,35 +30,42 @@
 		{
 			"Name": "TakesCore",
 			"Type": "UncookedOnly",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"LoadingPhase": "PostDefault"
 		},
 		{
 			"Name": "TakeTrackRecorders",
 			"Type": "UncookedOnly",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"LoadingPhase": "PostDefault"
 		},
 		{
 			"Name": "TakeRecorderSources",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"Type": "UncookedOnly",
 			"LoadingPhase": "PostDefault"
 		},
 		{
 			"Name": "TakeRecorder",
 			"Type": "UncookedOnly",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"LoadingPhase": "PostDefault"
 		},
 		{
 			"Name": "TakeMovieScene",
 			"Type": "Runtime",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "TakeSequencer",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"Type": "Editor",
 			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "CacheTrackRecorder",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"Type": "UncookedOnly",
 			"LoadingPhase": "PostDefault"
 		}

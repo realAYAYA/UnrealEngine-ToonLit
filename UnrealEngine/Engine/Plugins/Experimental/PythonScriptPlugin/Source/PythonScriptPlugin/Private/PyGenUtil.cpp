@@ -448,12 +448,12 @@ void FGeneratedWrappedConstant::ToPython(FPyConstantDef& OutPyConstant) const
 			}
 	
 			// Return value requires that we create a params struct to hold the result
-			FStructOnScope FuncParams(This->ConstantFunc.Func);
-			if (!PyUtil::InvokeFunctionCall(Obj, This->ConstantFunc.Func, FuncParams.GetStructMemory(), *ErrorCtxt))
+			PY_UFUNCTION_STACK(FuncParams, This->ConstantFunc.Func);
+			if (!PyUtil::InvokeFunctionCall(Obj, This->ConstantFunc.Func, FuncParams.GetMemory(), *ErrorCtxt))
 			{
 				return nullptr;
 			}
-			return PyGenUtil::PackReturnValues(FuncParams.GetStructMemory(), This->ConstantFunc.OutputParams, *ErrorCtxt, *FString::Printf(TEXT("constant '%s' on '%s'"), UTF8_TO_TCHAR(This->ConstantName.GetData()), *PyUtil::GetCleanTypename(InType)));
+			return PyGenUtil::PackReturnValues(FuncParams.GetMemory(), This->ConstantFunc.OutputParams, *ErrorCtxt, *FString::Printf(TEXT("constant '%s' on '%s'"), UTF8_TO_TCHAR(This->ConstantName.GetData()), *PyUtil::GetCleanTypename(InType)));
 		}
 	
 		Py_RETURN_NONE;
@@ -879,8 +879,14 @@ void ExtractFunctionParams(const UFunction* InFunc, TArray<FGeneratedWrappedMeth
 	auto AddGeneratedWrappedMethodParameter = [InFunc](const FProperty* InParam, TArray<FGeneratedWrappedMethodParameter>& OutParams)
 	{
 		const FString ParamName = InParam->GetName();
-		const FString PythonParamName = PythonizePropertyName(ParamName, EPythonizeNameCase::Lower);
 		const FName DefaultValueMetaDataKey = *FString::Printf(TEXT("CPP_Default_%s"), *ParamName);
+
+		FString PythonParamName = PythonizePropertyName(ParamName, EPythonizeNameCase::Lower);
+		if (!InFunc->HasAnyFunctionFlags(FUNC_Static) && PythonParamName == TEXTVIEW("self"))
+		{
+			// self is a reserved function parameter name
+			PythonParamName.InsertAt(0, TEXT('_'));
+		}
 
 		FGeneratedWrappedMethodParameter& GeneratedWrappedMethodParam = OutParams.AddDefaulted_GetRef();
 		GeneratedWrappedMethodParam.ParamName = TCHARToUTF8Buffer(*PythonParamName);
@@ -1100,6 +1106,12 @@ bool UnpackReturnValues(PyObject* InRetVals, const FOutParmRec* InOutputParms, c
 		const FBoolProperty* BoolReturn = CastFieldChecked<const FBoolProperty>(OutParamRec->Property);
 		const bool bReturnValue = InRetVals != Py_None;
 		BoolReturn->SetPropertyValue(OutParamRec->PropAddr, bReturnValue);
+
+		if (!bReturnValue)
+		{
+			// None was returned, so there's nothing to unpack into any additional output arguments
+			return true;
+		}
 
 		OutParamRec = OutParamRec->NextOutParm; // Start unpacking at the 1st out value
 		check(OutParamRec);
@@ -1799,7 +1811,7 @@ FString PythonizeName(FStringView InName, const EPythonizeNameCase InNameCase)
 			{
 				break;
 			}
-			PythonizedName.RemoveAt(CharIndex, 1, false);
+			PythonizedName.RemoveAt(CharIndex, 1, EAllowShrinking::No);
 		}
 
 		PrevBreak = NameBreak;
@@ -1844,18 +1856,17 @@ FString PythonizePropertyName(FStringView InName, const EPythonizeNameCase InNam
 			continue;
 		}
 
-		// Strip the "Out" prefix from names
-		//if (InName.Len() - NameOffset >= 4 && InName[NameOffset] == TEXT('O') && InName[NameOffset + 1] == TEXT('u') && InName[NameOffset + 2] == TEXT('t') && FChar::IsUpper(InName[NameOffset + 3]))
-		//{
-		//	NameOffset += 3;
-		//	continue;
-		//}
-
 		// Nothing more to strip
 		break;
 	}
 
-	return PythonizeName(NameOffset ? InName.RightChop(NameOffset) : InName, InNameCase);
+	FString PythonPropertyName = PythonizeName(NameOffset ? InName.RightChop(NameOffset) : InName, InNameCase);
+	if (PythonPropertyName == TEXTVIEW("self"))
+	{
+		PythonPropertyName.InsertAt(0, TEXT('_'));
+	}
+
+	return PythonPropertyName;
 }
 
 FString PythonizePropertyTooltip(const FParsedTooltip& InTooltip, const FProperty* InProp, const uint64 InReadOnlyFlags)
@@ -2315,16 +2326,13 @@ void PythonizeValueImpl(const FProperty* InProp, const void* InPropValue, const 
 				: TEXT("[");
 			{
 				FScriptSetHelper ScriptSetHelper(SetProperty, PropArrValue);
-				for (int32 SparseElementIndex = 0, ElementIndex = 0; SparseElementIndex < ScriptSetHelper.GetMaxIndex(); ++SparseElementIndex)
+				for (FScriptSetHelper::FIterator It(ScriptSetHelper); It; ++It)
 				{
-					if (ScriptSetHelper.IsValidIndex(SparseElementIndex))
+					if (It.GetLogicalIndex() > 0)
 					{
-						if (ElementIndex++ > 0)
-						{
-							OutPythonDefaultValue += TEXT(", ");
-						}
-						PythonizeValueImpl(ScriptSetHelper.GetElementProperty(), ScriptSetHelper.GetElementPtr(SparseElementIndex), InFlags, OutPythonDefaultValue);
+						OutPythonDefaultValue += TEXT(", ");
 					}
+					PythonizeValueImpl(ScriptSetHelper.GetElementProperty(), ScriptSetHelper.GetElementPtr(It), InFlags, OutPythonDefaultValue);
 				}
 			}
 			OutPythonDefaultValue += bUseStrictTyping
@@ -2338,18 +2346,15 @@ void PythonizeValueImpl(const FProperty* InProp, const void* InPropValue, const 
 				: TEXT("{");
 			{
 				FScriptMapHelper ScriptMapHelper(MapProperty, PropArrValue);
-				for (int32 SparseElementIndex = 0, ElementIndex = 0; SparseElementIndex < ScriptMapHelper.GetMaxIndex(); ++SparseElementIndex)
+				for (FScriptMapHelper::FIterator It(ScriptMapHelper); It; ++It)
 				{
-					if (ScriptMapHelper.IsValidIndex(SparseElementIndex))
+					if (It.GetLogicalIndex() > 0)
 					{
-						if (ElementIndex++ > 0)
-						{
-							OutPythonDefaultValue += TEXT(", ");
-						}
-						PythonizeValueImpl(ScriptMapHelper.GetKeyProperty(), ScriptMapHelper.GetKeyPtr(SparseElementIndex), InFlags, OutPythonDefaultValue);
-						OutPythonDefaultValue += TEXT(": ");
-						PythonizeValueImpl(ScriptMapHelper.GetValueProperty(), ScriptMapHelper.GetValuePtr(SparseElementIndex), InFlags, OutPythonDefaultValue);
+						OutPythonDefaultValue += TEXT(", ");
 					}
+					PythonizeValueImpl(ScriptMapHelper.GetKeyProperty(), ScriptMapHelper.GetKeyPtr(It), InFlags, OutPythonDefaultValue);
+					OutPythonDefaultValue += TEXT(": ");
+					PythonizeValueImpl(ScriptMapHelper.GetValueProperty(), ScriptMapHelper.GetValuePtr(It), InFlags, OutPythonDefaultValue);
 				}
 			}
 			OutPythonDefaultValue += bUseStrictTyping
@@ -2412,17 +2417,17 @@ void PythonizeStructValueImpl(const UScriptStruct* InStruct, const void* InStruc
 			if (BreakFuncDef.OutputParams.Num() <= 255)
 			{
 				// Call the break function using the instance we were given
-				FStructOnScope FuncParams(BreakFuncDef.Func);
+				PY_UFUNCTION_STACK(FuncParams, BreakFuncDef.Func);
 				if (BreakFuncDef.InputParams.Num() == 1 && CastField<FStructProperty>(BreakFuncDef.InputParams[0].ParamProp) && InStruct->IsChildOf(CastFieldChecked<const FStructProperty>(BreakFuncDef.InputParams[0].ParamProp)->Struct))
 				{
 					// Copy the given instance as the 'self' argument
 					const FGeneratedWrappedMethodParameter& SelfParam = BreakFuncDef.InputParams[0];
-					void* SelfArgInstance = SelfParam.ParamProp->ContainerPtrToValuePtr<void>(FuncParams.GetStructMemory());
+					void* SelfArgInstance = SelfParam.ParamProp->ContainerPtrToValuePtr<void>(FuncParams.GetMemory());
 					CastFieldChecked<const FStructProperty>(SelfParam.ParamProp)->Struct->CopyScriptStruct(SelfArgInstance, InStructValue);
 				}
 				{
 					FPyScopedGIL GIL;
-					PyUtil::InvokeFunctionCall(Obj, BreakFuncDef.Func, FuncParams.GetStructMemory(), TEXT("pythonize default struct value"));
+					PyUtil::InvokeFunctionCall(Obj, BreakFuncDef.Func, FuncParams.GetMemory(), TEXT("pythonize default struct value"));
 					PyErr_Clear(); // Clear any errors in case InvokeFunctionCall failed
 				}
 
@@ -2434,7 +2439,7 @@ void PythonizeStructValueImpl(const UScriptStruct* InStruct, const void* InStruc
 					{
 						OutPythonDefaultValue += TEXT(", ");
 					}
-					PythonizeValueImpl(OutputParam.ParamProp, OutputParam.ParamProp->ContainerPtrToValuePtr<void>(FuncParams.GetStructMemory()), InFlags, OutPythonDefaultValue);
+					PythonizeValueImpl(OutputParam.ParamProp, OutputParam.ParamProp->ContainerPtrToValuePtr<void>(FuncParams.GetMemory()), InFlags, OutPythonDefaultValue);
 				}
 			}
 		}
@@ -2719,7 +2724,7 @@ bool GetFieldPythonNameFromMetaDataImpl(const FFieldVariant& InField, const FNam
 			int32 SemiColonIndex = INDEX_NONE;
 			if (OutFieldName.FindChar(TEXT(';'), SemiColonIndex))
 			{
-				OutFieldName.RemoveAt(SemiColonIndex, OutFieldName.Len() - SemiColonIndex, /*bAllowShrinking*/false);
+				OutFieldName.RemoveAt(SemiColonIndex, OutFieldName.Len() - SemiColonIndex, EAllowShrinking::No);
 			}
 
 			FText ValidationError;
@@ -2756,7 +2761,7 @@ bool GetDeprecatedFieldPythonNamesFromMetaDataImpl(const FFieldVariant& InField,
 			// Remove the non-deprecated entry
 			if (OutFieldNames.Num() > 0)
 			{
-				OutFieldNames.RemoveAt(0, 1, /*bAllowShrinking*/false);
+				OutFieldNames.RemoveAt(0, 1, EAllowShrinking::No);
 			}
 
 			// Trim whitespace and remove empty items
@@ -2801,7 +2806,7 @@ FString GetFieldPythonNameImpl(const FFieldVariant& InField, const FName InMetaD
 		// Strip the "E" prefix from enum names
 		if (InField.IsA<UEnum>() && FieldName.Len() >= 2 && FieldName[0] == TEXT('E') && FChar::IsUpper(FieldName[1]))
 		{
-			FieldName.RemoveAt(0, 1, /*bAllowShrinking*/false);
+			FieldName.RemoveAt(0, 1, EAllowShrinking::No);
 		}
 
 		// Classes, structs, and enums will no longer have their C++ prefix at this point
@@ -2912,7 +2917,7 @@ TArray<FString> GetDeprecatedFieldPythonNamesImpl(const FFieldVariant& InField, 
 		// Strip the "E" prefix from enum names
 		if (InField.IsA<UEnum>() && FieldName.Len() >= 2 && FieldName[0] == TEXT('E') && FChar::IsUpper(FieldName[1]))
 		{
-			FieldName.RemoveAt(0, 1, /*bAllowShrinking*/false);
+			FieldName.RemoveAt(0, 1, EAllowShrinking::No);
 		}
 
 		FieldNames.AddUnique(MoveTemp(FieldName));
@@ -2965,7 +2970,7 @@ FString GetEnumEntryPythonName(const UEnum* InEnum, const int32 InEntryIndex)
 			int32 SemiColonIndex = INDEX_NONE;
 			if (EnumEntryName.FindChar(TEXT(';'), SemiColonIndex))
 			{
-				EnumEntryName.RemoveAt(SemiColonIndex, EnumEntryName.Len() - SemiColonIndex, /*bAllowShrinking*/false);
+				EnumEntryName.RemoveAt(SemiColonIndex, EnumEntryName.Len() - SemiColonIndex, EAllowShrinking::No);
 			}
 
 			FText ValidationError;

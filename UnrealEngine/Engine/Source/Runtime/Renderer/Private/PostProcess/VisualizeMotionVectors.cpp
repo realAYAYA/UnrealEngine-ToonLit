@@ -32,6 +32,7 @@ class FVisualizeMotionVectorsPS : public FGlobalShader
 		SHADER_PARAMETER(FScreenTransform, SvPositionToColor)
 		SHADER_PARAMETER(FScreenTransform, SvPositionToScreenPos)
 		SHADER_PARAMETER(FScreenTransform, PrevScreenPosToPrevColor)
+		SHADER_PARAMETER(int32, VisualizeType)
 
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
@@ -39,7 +40,7 @@ class FVisualizeMotionVectorsPS : public FGlobalShader
 
 IMPLEMENT_GLOBAL_SHADER(FVisualizeMotionVectorsPS, "/Engine/Private/MotionBlur/VisualizeMotionVectors.usf", "MainPS", SF_Pixel);
 
-FScreenPassTexture AddVisualizeMotionVectorsPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FVisualizeMotionVectorsInputs& Inputs)
+FScreenPassTexture AddVisualizeMotionVectorsPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FVisualizeMotionVectorsInputs& Inputs, EVisualizeMotionVectors Visualize)
 {
 	check(Inputs.SceneColor.IsValid());
 	check(Inputs.SceneDepth.IsValid());
@@ -94,6 +95,7 @@ FScreenPassTexture AddVisualizeMotionVectorsPass(FRDGBuilder& GraphBuilder, cons
 			FScreenTransform::ViewportUVToScreenPos);
 		PassParameters->PrevScreenPosToPrevColor = (
 			FScreenTransform::ChangeTextureBasisFromTo(PrevColor, FScreenTransform::ETextureBasis::ScreenPosition, FScreenTransform::ETextureBasis::TextureUV));
+		PassParameters->VisualizeType = int32(Visualize);
 
 		PassParameters->RenderTargets[0] = Output.GetRenderTargetBinding();
 

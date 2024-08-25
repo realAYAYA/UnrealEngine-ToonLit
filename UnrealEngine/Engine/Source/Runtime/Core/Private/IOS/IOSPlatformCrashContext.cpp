@@ -20,7 +20,7 @@
 
 FIOSApplicationInfo GIOSAppInfo;
 
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
 PLCrashReporter* FIOSApplicationInfo::CrashReporter;
 #endif
 FIOSMallocCrashHandler* FIOSApplicationInfo::CrashMalloc;
@@ -33,7 +33,7 @@ FIOSCrashContext::FIOSCrashContext(ECrashContextType InType, const TCHAR* InErro
 
 void FIOSCrashContext::CopyMinidump(char const* OutputPath, char const* InputPath) const
 {
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
     int ReportFile = open(OutputPath, O_CREAT|O_WRONLY, 0766);
     int DumpFile = open(InputPath, O_RDONLY, 0766);
     if (ReportFile != -1 && DumpFile != -1)
@@ -66,7 +66,7 @@ void FIOSCrashContext::CopyMinidump(char const* OutputPath, char const* InputPat
 
 void FIOSCrashContext::ConvertMinidump(char const* OutputPath, char const* InputPath)
 {
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
 	NSError* Error = nil;
 	NSString* Path = FString(ANSI_TO_TCHAR(InputPath)).GetNSString();
 	NSData* CrashData = [NSData dataWithContentsOfFile: Path options: NSMappedRead error: &Error];
@@ -271,7 +271,7 @@ void FIOSCrashContext::GenerateEnsureInfo() const
     // Prevent CrashReportClient from spawning another CrashReportClient.
     const bool bCanRunCrashReportClient = FCString::Stristr( *(GIOSAppInfo.ExecutableName), TEXT( "CrashReportClient" ) ) == nullptr;
     
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
     if(bCanRunCrashReportClient)
     {
         SCOPED_AUTORELEASE_POOL;
@@ -396,7 +396,7 @@ void FIOSApplicationInfo::Init()
     
 FIOSApplicationInfo::~FIOSApplicationInfo()
 {
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
 	if (CrashReporter)
 	{
 		[CrashReporter release];

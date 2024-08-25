@@ -20,9 +20,11 @@ public:
 
 	SLATE_BEGIN_ARGS(SInterchangeGraphInspectorTreeView)
 		: _InterchangeBaseNodeContainer(nullptr)
+		, _bPreview(false)
 		, _OnSelectionChangedDelegate()
 		{}
 		SLATE_ARGUMENT(UInterchangeBaseNodeContainer*, InterchangeBaseNodeContainer)
+		SLATE_ARGUMENT(bool, bPreview)
 		SLATE_EVENT(FOnGraphInspectorSelectionChanged, OnSelectionChangedDelegate)
 	SLATE_END_ARGS()
 
@@ -36,9 +38,9 @@ public:
 	FReply OnCollapseAll();
 protected:
 	UInterchangeBaseNodeContainer* InterchangeBaseNodeContainer = nullptr;
+	bool bPreview = false;
 	/** Delegate to invoke when selection changes. */
 	FOnGraphInspectorSelectionChanged OnSelectionChangedDelegate;
-
 	/** the elements we show in the tree view */
 	TArray<UInterchangeBaseNode*> RootNodeArray;
 
@@ -57,10 +59,12 @@ class SInterchangeGraphInspectorWindow : public SCompoundWidget
 public:
 	SLATE_BEGIN_ARGS(SInterchangeGraphInspectorWindow)
 		: _InterchangeBaseNodeContainer(nullptr)
+		, _bPreview(false)
 		, _OwnerWindow()
 		{}
 
 		SLATE_ARGUMENT( UInterchangeBaseNodeContainer*, InterchangeBaseNodeContainer)
+		SLATE_ARGUMENT(bool, bPreview)
 		SLATE_ARGUMENT(TWeakPtr<SWindow>, OwnerWindow)
 	SLATE_END_ARGS()
 
@@ -99,6 +103,7 @@ private:
 	//SInterchangeGraphInspectorWindow Arguments
 	
 	UInterchangeBaseNodeContainer* InterchangeBaseNodeContainer;
+	bool bPreview = false;
 	
 	
 	//Graph Inspector UI elements

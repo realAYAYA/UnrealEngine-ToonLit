@@ -413,7 +413,7 @@ void BuildProximityFromConvexHulls(FGeometryCollection* Collection, const UE::Ge
 {
 	double MaxHullDim = DistanceThreshold;
 	Chaos::FAABB3 OverallBounds;
-	for (const TUniquePtr<Chaos::FConvex>& Hull : HullData.Hulls)
+	for (const Chaos::FConvexPtr& Hull : HullData.Hulls)
 	{
 		const Chaos::FAABB3 HullBounds = Hull->BoundingBox();
 		OverallBounds.GrowToInclude(HullBounds);
@@ -828,7 +828,7 @@ FGeometryCollectionProximityUtility::ComputeConvexGeometryContactFromProximity(
 				for (int32 NbrHullIdx : NbrGeoHulls)
 				{
 					float Area, MaxArea, SharpContact, MaxSharpContact;
-					UE::GeometryCollectionConvexUtility::HullIntersectionStats(LocalHulls.Hulls[GeoHullIdx].Get(), LocalHulls.Hulls[NbrHullIdx].Get(), DistanceTolerance, Area, MaxArea, SharpContact, MaxSharpContact);
+					UE::GeometryCollectionConvexUtility::HullIntersectionStats(LocalHulls.Hulls[GeoHullIdx].GetReference(), LocalHulls.Hulls[NbrHullIdx].GetReference(), DistanceTolerance, Area, MaxArea, SharpContact, MaxSharpContact);
 					// Note: The sharp contact concept would be most accurately implemented by combining the intersection/overlaps of all involved hulls
 					// but taking the max values should be a reasonable conservative approximation in most cases
 					OverlapSharpContact = FMath::Max(OverlapSharpContact, SharpContact);

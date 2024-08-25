@@ -102,16 +102,25 @@ public:
 		FGuid Guid;
 
 		TArray<Chaos::FMaterialHandle> UsedChaosMaterials;
+		Chaos::FHeightFieldPtr HeightfieldGeometry;
+	    Chaos::FHeightFieldPtr HeightfieldSimpleGeometry;
+
+		UE_DEPRECATED(5.4, "Please use HeightfieldGeometry instead")
 		TUniquePtr<Chaos::FHeightField> Heightfield;
-	    TUniquePtr<Chaos::FHeightField> HeightfieldSimple;
+		
+		UE_DEPRECATED(5.4, "Please use HeightfieldSimpleGeometry instead")
+		TUniquePtr<Chaos::FHeightField> HeightfieldSimple;
 
 #if WITH_EDITORONLY_DATA
+		Chaos::FHeightFieldPtr EditorHeightfieldGeometry;
+
+		UE_DEPRECATED(5.4, "Please use HeightfieldSimpleGeometry instead")
 		TUniquePtr<Chaos::FHeightField> EditorHeightfield;
 #endif // WITH_EDITORONLY_DATA
 
 		FHeightfieldGeometryRef(FGuid& InGuid);
-
 		virtual ~FHeightfieldGeometryRef();
+		
 		void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize);
 	};
 	
@@ -156,6 +165,7 @@ public:
 	 *	Cooked HeightField data. Serialized only with cooked content 
 	 *	Stored as array instead of BulkData to take advantage of precaching during async loading
 	 */
+	bool bCookedCollisionDataWasDeleted = false;
 	TArray<uint8>								CookedCollisionData;
 	
 	/** This is a list of physical materials that is actually used by a cooked HeightField */
@@ -165,6 +175,11 @@ public:
 	/** Physics engine version of heightfield data. */
 	TRefCountPtr<FHeightfieldGeometryRef>	HeightfieldRef;
 	
+	// local non-serialized ref counted pointers to keep the chaos heightfields alive between Unregister() and actual destruction of the component.
+	// this allows us to re-use them if the component gets a call to Register() again
+	Chaos::FHeightFieldPtr LocalHeightfieldGeometryRef;
+	Chaos::FHeightFieldPtr LocalHeightfieldSimpleGeometryRef;
+
 	/** Cached PxHeightFieldSamples values for navmesh generation. Note that it's being used only if navigation octree is set up for lazy geometry exporting */
 	int32 HeightfieldRowsCount;
 	int32 HeightfieldColumnsCount;
@@ -220,12 +235,10 @@ public:
 	virtual void BeginDestroy() override;
 	virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
 	virtual void PostLoad() override;
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // Suppress compiler warning on override of deprecated function
-	UE_DEPRECATED(5.0, "Use version that takes FObjectPreSaveContext instead.")
-	virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 #if WITH_EDITOR
+	virtual bool NeedsLoadForClient() const override;
+	virtual bool NeedsLoadForServer() const override;
 	virtual void ExportCustomProperties(FOutputDevice& Out, uint32 Indent) override;
 	virtual void ImportCustomProperties(const TCHAR* SourceText, FFeedbackContext* Warn) override;
 	virtual void PostEditImport() override;
@@ -313,7 +326,8 @@ public:
 	void SetRenderComponent(ULandscapeComponent* InRenderComponent) { RenderComponentRef = InRenderComponent; }
 
 public:
-	TOptional<float> GetHeight(float X, float Y, EHeightfieldSource HeightFieldSource);
+	LANDSCAPE_API TOptional<float> GetHeight(float X, float Y, EHeightfieldSource HeightFieldSource);
+	LANDSCAPE_API UPhysicalMaterial* GetPhysicalMaterial(float X, float Y, EHeightfieldSource HeightFieldSource);
 
 	/**
 	 * Populates a supplied array with the heights from the heightfield.  Samples are placed

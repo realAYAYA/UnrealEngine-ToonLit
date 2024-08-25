@@ -7,10 +7,11 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using Horde.Server.Jobs;
 using Horde.Server.Server;
-using Horde.Server.Streams;
-using Horde.Server.Users;
 using Horde.Server.Utilities;
 using HordeCommon;
 using MongoDB.Bson.Serialization.Attributes;
@@ -111,7 +112,7 @@ namespace Horde.Server.Notifications
 			{
 				StringBuilder result = new StringBuilder();
 				result.Append(CultureInfo.InvariantCulture, $"stream={StreamId}, template={TemplateId}");
-				if(CategoryName != null)
+				if (CategoryName != null)
 				{
 					result.Append(CultureInfo.InvariantCulture, $", category={CategoryName}");
 				}

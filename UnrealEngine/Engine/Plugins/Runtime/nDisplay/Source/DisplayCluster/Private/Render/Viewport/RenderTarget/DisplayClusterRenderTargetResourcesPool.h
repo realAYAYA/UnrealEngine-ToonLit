@@ -3,52 +3,64 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DisplayClusterRenderTargetResource.h"
+#include "Render/Viewport/Resource/DisplayClusterViewportResource.h"
 
-class FDisplayClusterViewportManagerProxy;
-struct FDisplayClusterRenderFrameSettings;
-
+/**
+ * DC viewport resources pool
+ */
 class FDisplayClusterRenderTargetResourcesPool
 {
 public:
-	FDisplayClusterRenderTargetResourcesPool(FDisplayClusterViewportManagerProxy* InViewportManagerProxy);
 	~FDisplayClusterRenderTargetResourcesPool();
 
 	void Release();
 
 public:
-	bool BeginReallocateResources(const FDisplayClusterRenderFrameSettings& InRenderFrameSettings, class FViewport* InViewport);
-	void FinishReallocateResources();
+	/** Begin reallocate resources for the specified cluster node.
+	* 
+	* @param InRenderFrameSettings - default resource settings
+	* @param InViewport - the window that uses these resources
+	* 
+	* @return true, if success
+	*/
+	bool BeginReallocateResources(class FViewport* InViewport, const struct FDisplayClusterRenderFrameSettings& InRenderFrameSettings);
+	
+	/** Allocate a new resource or reuse exists
+	* 
+	* @param InViewportId      - This resource belongs to this viewport only. Empty string if not used
+	* @param InSize            - resource dimensions
+	* @param CustomPixelFormat - resource pixel format
+	* @param InResourceFlags   - These flags define the behavior of the resource.
+	* @param NumMips           - number of mips in the texture
+	* 
+	* @return ref to the resource instance
+	*/
+	TSharedPtr<FDisplayClusterViewportResource, ESPMode::ThreadSafe> AllocateResource(const FString InViewportId, const FIntPoint& InSize, EPixelFormat CustomPixelFormat, const EDisplayClusterViewportResourceSettingsFlags InResourceFlags, int32 NumMips = 1);
 
-	FDisplayClusterViewportRenderTargetResource* AllocateRenderTargetResource(const FIntPoint& InSize, EPixelFormat CustomPixelFormat);
-	FDisplayClusterViewportTextureResource*      AllocateTextureResource(const FIntPoint& InSize, bool bIsRenderTargetable, EPixelFormat CustomPixelFormat, int32 NumMips = 1);
-
-protected:
-	inline FDisplayClusterViewportManagerProxy* GetViewportManagerProxy() const
-	{
-		return ViewportManagerProxyWeakPtr.IsValid() ? ViewportManagerProxyWeakPtr.Pin().Get() : nullptr;
-	}
+	/** End reallocate resources for the specified cluster node. */
+	void EndReallocateResources();
 
 private:
-	template <typename TViewportResourceType>
-	void ImplBeginReallocateResources(TArray<TViewportResourceType*>& InOutViewportResources);
+	/**
+	 * Resource update mode
+	 */
+	enum class EResourceUpdateMode : uint8
+	{
+		Initialize = 0,
+		Release
+	};
 
-	template <typename TViewportResourceType>
-	void ImplFinishReallocateResources(TArray<TViewportResourceType*>& InOutViewportResources);
-
-	template <typename TViewportResourceType>
-	TViewportResourceType* ImplAllocateResource(TArray<TViewportResourceType*>& InOutViewportResources, const FDisplayClusterViewportResourceSettings& InSettings);
-
-	template <typename TViewportResourceType>
-	void ImplReleaseResources(TArray<TViewportResourceType*>& InOutViewportResources);
+	/** Update resources from array
+	* 
+	* @param InOutViewportResources - resources to update
+	* @param InUpdateMode           - initialize or release
+	*/
+	void ImplUpdateResources(TArray<TSharedPtr<FDisplayClusterViewportResource, ESPMode::ThreadSafe>>& InOutViewportResources, const EResourceUpdateMode InUpdateMode);
 
 private:
 	// Current render resource settings
 	FDisplayClusterViewportResourceSettings* ResourceSettings = nullptr;
 
 	// Viewport render resources
-	TArray<FDisplayClusterViewportRenderTargetResource*> RenderTargetResources;
-	TArray<FDisplayClusterViewportTextureResource*>      TextureResources;
-
-	TWeakPtr<FDisplayClusterViewportManagerProxy, ESPMode::ThreadSafe> ViewportManagerProxyWeakPtr;
+	TArray<TSharedPtr<FDisplayClusterViewportResource, ESPMode::ThreadSafe>> ViewportResources;
 };

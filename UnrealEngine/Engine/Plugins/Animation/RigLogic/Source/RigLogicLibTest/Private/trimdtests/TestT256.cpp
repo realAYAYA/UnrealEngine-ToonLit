@@ -743,8 +743,22 @@ TEST(T256Test, AbsScalar) {
 
 TEST(T256Test, AndNotScalar) {
     trimd::scalar::F256 v{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
-    trimd::scalar::F256 mask1 = frombits<trimd::scalar::F256>(0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u);
-    trimd::scalar::F256 mask2 = frombits<trimd::scalar::F256>(0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu);
+    trimd::scalar::F256 mask1 = frombits<trimd::scalar::F256>(0x00000000u,
+                                                              0x00000000u,
+                                                              0x00000000u,
+                                                              0x00000000u,
+                                                              0x00000000u,
+                                                              0x00000000u,
+                                                              0x00000000u,
+                                                              0x00000000u);
+    trimd::scalar::F256 mask2 = frombits<trimd::scalar::F256>(0xFFFFFFFFu,
+                                                              0xFFFFFFFFu,
+                                                              0xFFFFFFFFu,
+                                                              0xFFFFFFFFu,
+                                                              0xFFFFFFFFu,
+                                                              0xFFFFFFFFu,
+                                                              0xFFFFFFFFu,
+                                                              0xFFFFFFFFu);
     trimd::scalar::F256 result1 = trimd::scalar::andnot(mask1, v);
     trimd::scalar::F256 result2 = trimd::scalar::andnot(mask2, v);
     trimd::scalar::F256 e1{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
@@ -794,8 +808,22 @@ TEST(T256Test, AndNotScalar) {
 
     TEST(T256Test, AndNotAVX) {
         trimd::avx::F256 v{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
-        trimd::avx::F256 mask1 = frombits<trimd::avx::F256>(0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u);
-        trimd::avx::F256 mask2 = frombits<trimd::avx::F256>(0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu);
+        trimd::avx::F256 mask1 = frombits<trimd::avx::F256>(0x00000000u,
+                                                            0x00000000u,
+                                                            0x00000000u,
+                                                            0x00000000u,
+                                                            0x00000000u,
+                                                            0x00000000u,
+                                                            0x00000000u,
+                                                            0x00000000u);
+        trimd::avx::F256 mask2 = frombits<trimd::avx::F256>(0xFFFFFFFFu,
+                                                            0xFFFFFFFFu,
+                                                            0xFFFFFFFFu,
+                                                            0xFFFFFFFFu,
+                                                            0xFFFFFFFFu,
+                                                            0xFFFFFFFFu,
+                                                            0xFFFFFFFFu,
+                                                            0xFFFFFFFFu);
         trimd::avx::F256 result1 = trimd::avx::andnot(mask1, v);
         trimd::avx::F256 result2 = trimd::avx::andnot(mask2, v);
         trimd::avx::F256 e1{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};

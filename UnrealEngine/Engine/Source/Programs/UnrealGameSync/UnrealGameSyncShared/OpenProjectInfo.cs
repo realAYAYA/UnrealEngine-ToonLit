@@ -1,15 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.OIDC;
-using EpicGames.Perforce;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Perforce;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -25,9 +24,9 @@ namespace UnrealGameSync
 		public ConfigFile WorkspaceProjectConfigFile { get; }
 		public IReadOnlyList<string>? WorkspaceProjectStreamFilter { get; }
 		public List<KeyValuePair<FileReference, DateTime>> LocalConfigFiles { get; }
-		public OidcTokenClient? OidcTokenClient { get; }
+		public bool GenerateP4Config { get; }
 
-		public OpenProjectInfo(UserSelectedProjectSettings selectedProject, IPerforceSettings perforceSettings, ProjectInfo projectInfo, UserWorkspaceSettings workspaceSettings, WorkspaceStateWrapper workspaceStateWrapper, ConfigFile latestProjectConfigFile, ConfigFile workspaceProjectConfigFile, IReadOnlyList<string>? workspaceProjectStreamFilter, List<KeyValuePair<FileReference, DateTime>> localConfigFiles, OidcTokenClient? oidcTokenClient)
+		public OpenProjectInfo(UserSelectedProjectSettings selectedProject, IPerforceSettings perforceSettings, ProjectInfo projectInfo, UserWorkspaceSettings workspaceSettings, WorkspaceStateWrapper workspaceStateWrapper, ConfigFile latestProjectConfigFile, ConfigFile workspaceProjectConfigFile, IReadOnlyList<string>? workspaceProjectStreamFilter, List<KeyValuePair<FileReference, DateTime>> localConfigFiles, bool generateP4Config)
 		{
 			SelectedProject = selectedProject;
 
@@ -39,10 +38,10 @@ namespace UnrealGameSync
 			WorkspaceProjectConfigFile = workspaceProjectConfigFile;
 			WorkspaceProjectStreamFilter = workspaceProjectStreamFilter;
 			LocalConfigFiles = localConfigFiles;
-			OidcTokenClient = oidcTokenClient;
+			GenerateP4Config = generateP4Config;
 		}
 
-		public static async Task<OpenProjectInfo> CreateAsync(IPerforceSettings defaultPerforceSettings, UserSelectedProjectSettings selectedProject, UserSettings userSettings, OidcTokenManager oidcTokenManager, ILogger<OpenProjectInfo> logger, CancellationToken cancellationToken)
+		public static async Task<OpenProjectInfo> CreateAsync(IPerforceSettings defaultPerforceSettings, UserSelectedProjectSettings selectedProject, UserSettings userSettings, bool generateP4Config, ILogger<OpenProjectInfo> logger, CancellationToken cancellationToken)
 		{
 			PerforceSettings perforceSettings = Utility.OverridePerforceSettings(defaultPerforceSettings, selectedProject.ServerAndPort, selectedProject.UserName);
 			using IPerforceConnection perforce = await PerforceConnection.CreateAsync(perforceSettings, logger);
@@ -55,10 +54,10 @@ namespace UnrealGameSync
 			}
 
 			// Execute like a regular task
-			return await CreateAsync(perforce, selectedProject, userSettings, oidcTokenManager, logger, cancellationToken);
+			return await CreateAsync(perforce, selectedProject, userSettings, generateP4Config, logger, cancellationToken);
 		}
 
-		public static async Task<OpenProjectInfo> CreateAsync(IPerforceConnection defaultConnection, UserSelectedProjectSettings selectedProject, UserSettings userSettings, OidcTokenManager oidcTokenManager, ILogger<OpenProjectInfo> logger, CancellationToken cancellationToken)
+		public static async Task<OpenProjectInfo> CreateAsync(IPerforceConnection defaultConnection, UserSelectedProjectSettings selectedProject, UserSettings userSettings, bool generateP4Config, ILogger<OpenProjectInfo> logger, CancellationToken cancellationToken)
 		{
 			using IDisposable loggerScope = logger.BeginScope("Project {SelectedProject}", selectedProject.ToString());
 			logger.LogInformation("Detecting settings for {Project}", selectedProject);
@@ -204,7 +203,7 @@ namespace UnrealGameSync
 						}
 					}
 				}
-				if(branchClientPath == null || branchDirectoryName == null)
+				if (branchClientPath == null || branchDirectoryName == null)
 				{
 					throw new UserErrorException($"Could not find engine in Perforce relative to project path ({newSelectedClientFileName})");
 				}
@@ -221,22 +220,35 @@ namespace UnrealGameSync
 				ProjectInfo projectInfo = await ProjectInfo.CreateAsync(perforceClient, userWorkspaceSettings, cancellationToken);
 
 				// Update the cached workspace state
-				WorkspaceStateWrapper workspaceStateWrapper = userSettings.FindOrAddWorkspaceState(projectInfo, userWorkspaceSettings);
+				WorkspaceStateWrapper? workspaceStateWrapper = null;
+				try
+				{
+#pragma warning disable CA2000
+					workspaceStateWrapper = userSettings.FindOrAddWorkspaceState(projectInfo, userWorkspaceSettings);
+#pragma warning restore CA2000
 
-				// Read the initial config file
-				List<KeyValuePair<FileReference, DateTime>> localConfigFiles = new List<KeyValuePair<FileReference, DateTime>>();
-				ConfigFile latestProjectConfigFile = await ConfigUtils.ReadProjectConfigFileAsync(perforceClient, projectInfo, localConfigFiles, logger, cancellationToken);
+					// Read the initial config file
+					List<KeyValuePair<FileReference, DateTime>> localConfigFiles = new List<KeyValuePair<FileReference, DateTime>>();
+					ConfigFile latestProjectConfigFile = await ConfigUtils.ReadProjectConfigFileAsync(perforceClient, projectInfo, localConfigFiles, logger, cancellationToken);
 
-				// Read the initial OIDC config files
-				OidcTokenClient? oidcTokenClient = await ConfigUtils.CreateOidcTokenClientAsync(oidcTokenManager, latestProjectConfigFile, projectInfo.ProjectIdentifier, perforceClient, branchClientPath, newSelectedClientFileName, localConfigFiles, projectInfo.CacheFolder, logger, cancellationToken);
+					// Get the local config file and stream filter
+					ConfigFile workspaceProjectConfigFile = await WorkspaceUpdate.ReadProjectConfigFile(branchDirectoryName, newSelectedFileName, logger);
+					IReadOnlyList<string>? workspaceProjectStreamFilter = await WorkspaceUpdate.ReadProjectStreamFilter(perforceClient, workspaceProjectConfigFile, cancellationToken);
 
-				// Get the local config file and stream filter
-				ConfigFile workspaceProjectConfigFile = await WorkspaceUpdate.ReadProjectConfigFile(branchDirectoryName, newSelectedFileName, logger);
-				IReadOnlyList<string>? workspaceProjectStreamFilter = await WorkspaceUpdate.ReadProjectStreamFilter(perforceClient, workspaceProjectConfigFile, cancellationToken);
+					OpenProjectInfo workspaceSettings = new OpenProjectInfo(selectedProject, perforceSettings, projectInfo, userWorkspaceSettings, workspaceStateWrapper, latestProjectConfigFile, workspaceProjectConfigFile, workspaceProjectStreamFilter, localConfigFiles, generateP4Config);
 
-				OpenProjectInfo workspaceSettings = new OpenProjectInfo(selectedProject, perforceSettings, projectInfo, userWorkspaceSettings, workspaceStateWrapper, latestProjectConfigFile, workspaceProjectConfigFile, workspaceProjectStreamFilter, localConfigFiles, oidcTokenClient);
+					if (generateP4Config)
+					{
+						GenerateP4ConfigFile(perforceSettings, projectInfo, logger);
+					}
 
-				return workspaceSettings;
+					return workspaceSettings;
+				}
+				catch
+				{
+					workspaceStateWrapper?.Dispose();
+					throw;
+				}
 			}
 			finally
 			{
@@ -247,15 +259,15 @@ namespace UnrealGameSync
 		static async Task<List<IPerforceSettings>> FilterClients(List<ClientsRecord> clients, FileReference newSelectedFileName, IPerforceSettings defaultPerforceSettings, string? hostName, ILogger logger, CancellationToken cancellationToken)
 		{
 			List<IPerforceSettings> candidateClients = new List<IPerforceSettings>();
-			foreach(ClientsRecord client in clients)
+			foreach (ClientsRecord client in clients)
 			{
 				// Make sure the client is well formed
-				if(!String.IsNullOrEmpty(client.Name) && (!String.IsNullOrEmpty(client.Host) || !String.IsNullOrEmpty(client.Owner)) && !String.IsNullOrEmpty(client.Root))
+				if (!String.IsNullOrEmpty(client.Name) && (!String.IsNullOrEmpty(client.Host) || !String.IsNullOrEmpty(client.Owner)) && !String.IsNullOrEmpty(client.Root))
 				{
 					// Require either a username or host name match
-					if((String.IsNullOrEmpty(client.Host) || String.Equals(client.Host, hostName, StringComparison.OrdinalIgnoreCase)) && (String.IsNullOrEmpty(client.Owner) || String.Equals(client.Owner, defaultPerforceSettings.UserName, StringComparison.OrdinalIgnoreCase)))
+					if ((String.IsNullOrEmpty(client.Host) || String.Equals(client.Host, hostName, StringComparison.OrdinalIgnoreCase)) && (String.IsNullOrEmpty(client.Owner) || String.Equals(client.Owner, defaultPerforceSettings.UserName, StringComparison.OrdinalIgnoreCase)))
 					{
-						if(!Utility.SafeIsFileUnderDirectory(newSelectedFileName.FullName, client.Root))
+						if (!Utility.SafeIsFileUnderDirectory(newSelectedFileName.FullName, client.Root))
 						{
 							logger.LogInformation("Rejecting {ClientName} due to root mismatch ({RootPath})", client.Name, client.Root);
 							continue;
@@ -265,7 +277,7 @@ namespace UnrealGameSync
 						using IPerforceConnection candidateClient = await PerforceConnection.CreateAsync(candidateSettings, logger);
 
 						List<PerforceResponse<WhereRecord>> whereRecords = await candidateClient.TryWhereAsync(newSelectedFileName.FullName, cancellationToken).Where(x => x.Failed || !x.Data.Unmap).ToListAsync(cancellationToken);
-						if(!whereRecords.Succeeded() || whereRecords.Count != 1)
+						if (!whereRecords.Succeeded() || whereRecords.Count != 1)
 						{
 							logger.LogInformation("Rejecting {ClientName} due to file not existing in workspace", client.Name);
 							continue;
@@ -279,7 +291,7 @@ namespace UnrealGameSync
 						}
 
 						records.RemoveAll(x => !x.Data.IsMapped);
-						if(records.Count == 0)
+						if (records.Count == 0)
 						{
 							logger.LogInformation("Rejecting {ClientName} due to {NumRecords} matching records", client.Name, records.Count);
 							continue;
@@ -291,6 +303,51 @@ namespace UnrealGameSync
 				}
 			}
 			return candidateClients;
+		}
+
+		static void GenerateP4ConfigFile(IPerforceSettings perforceSettings, ProjectInfo projectInfo, ILogger<OpenProjectInfo> logger)
+		{
+			string? p4ConfigName = PerforceEnvironment.Default.GetValue("P4CONFIG");
+
+			// We only create a p4config if the user has opted into the system by setting P4CONFIG manually.
+			if (String.IsNullOrEmpty(p4ConfigName))
+			{
+				logger.LogError("Could not generate a p4config file as the envvar P4CONFIG is not set!");
+				return;
+			}
+
+			string configFilePath = Path.Combine(projectInfo.LocalRootPath.ToString(), p4ConfigName);
+
+			// Do not update or replace the file if it already exists 
+			if (File.Exists(configFilePath))
+			{
+				logger.LogDebug("P4CONFIG file '{Path}' already exists.", configFilePath);
+				return;
+			}
+
+			Dictionary<string, string> settings = new Dictionary<string, string>();
+			settings.Add("P4PORT", perforceSettings.ServerAndPort);
+			settings.Add("P4USER", perforceSettings.UserName);
+			settings.Add("P4CLIENT", perforceSettings.ClientName ?? "");
+
+			List<string> Lines = new List<string>();
+			foreach (KeyValuePair<string, string> setting in settings)
+			{
+				Lines.Add(String.Format("{0}={1}", setting.Key, setting.Value));
+
+			}
+
+			try
+			{
+				File.WriteAllLines(configFilePath, Lines);
+			}
+			catch (Exception ex)
+			{
+				logger.LogError(ex, "Failed to write {Path} with exception - {Msg}", p4ConfigName, ex.Message);
+				return;
+			}
+
+			logger.LogInformation("Successfully wrote a P4CONFIG file to '{Path}'.", configFilePath);
 		}
 	}
 }

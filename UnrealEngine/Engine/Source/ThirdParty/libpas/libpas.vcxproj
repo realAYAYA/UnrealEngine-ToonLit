@@ -1,0 +1,804 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="DebugUE|x64">
+      <Configuration>DebugUE</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseMSVC|x64">
+      <Configuration>ReleaseMSVC</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseTesting|x64">
+      <Configuration>ReleaseTesting</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="ReleaseUE|x64">
+      <Configuration>ReleaseUE</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\libpas\bmalloc_heap.h" />
+    <ClInclude Include="src\libpas\bmalloc_heap_config.h" />
+    <ClInclude Include="src\libpas\bmalloc_heap_inlines.h" />
+    <ClInclude Include="src\libpas\bmalloc_heap_innards.h" />
+    <ClInclude Include="src\libpas\bmalloc_heap_ref.h" />
+    <ClInclude Include="src\libpas\bmalloc_type.h" />
+    <ClInclude Include="src\libpas\hotbit_heap.h" />
+    <ClInclude Include="src\libpas\hotbit_heap_config.h" />
+    <ClInclude Include="src\libpas\hotbit_heap_inlines.h" />
+    <ClInclude Include="src\libpas\hotbit_heap_innards.h" />
+    <ClInclude Include="src\libpas\inline_medium_page_header_config.h" />
+    <ClInclude Include="src\libpas\inline_medium_page_header_heap.h" />
+    <ClInclude Include="src\libpas\inline_non_committable_granules_config.h" />
+    <ClInclude Include="src\libpas\inline_non_committable_granules_heap.h" />
+    <ClInclude Include="src\libpas\iso_heap.h" />
+    <ClInclude Include="src\libpas\iso_heap_config.h" />
+    <ClInclude Include="src\libpas\iso_heap_inlines.h" />
+    <ClInclude Include="src\libpas\iso_heap_innards.h" />
+    <ClInclude Include="src\libpas\iso_heap_ref.h" />
+    <ClInclude Include="src\libpas\iso_test_heap.h" />
+    <ClInclude Include="src\libpas\iso_test_heap_config.h" />
+    <ClInclude Include="src\libpas\jit_heap.h" />
+    <ClInclude Include="src\libpas\jit_heap_config.h" />
+    <ClInclude Include="src\libpas\jit_heap_config_root_data.h" />
+    <ClInclude Include="src\libpas\minalign32_heap.h" />
+    <ClInclude Include="src\libpas\minalign32_heap_config.h" />
+    <ClInclude Include="src\libpas\outline_medium_page_header_config.h" />
+    <ClInclude Include="src\libpas\outline_medium_page_header_heap.h" />
+    <ClInclude Include="src\libpas\outline_non_committable_granules_config.h" />
+    <ClInclude Include="src\libpas\outline_non_committable_granules_heap.h" />
+    <ClInclude Include="src\libpas\pagesize64k_heap.h" />
+    <ClInclude Include="src\libpas\pagesize64k_heap_config.h" />
+    <ClInclude Include="src\libpas\pas_aligned_allocation_result.h" />
+    <ClInclude Include="src\libpas\pas_aligned_allocator.h" />
+    <ClInclude Include="src\libpas\pas_alignment.h" />
+    <ClInclude Include="src\libpas\pas_allocation_callbacks.h" />
+    <ClInclude Include="src\libpas\pas_allocation_config.h" />
+    <ClInclude Include="src\libpas\pas_allocation_kind.h" />
+    <ClInclude Include="src\libpas\pas_allocation_result.h" />
+    <ClInclude Include="src\libpas\pas_allocator_counts.h" />
+    <ClInclude Include="src\libpas\pas_allocator_index.h" />
+    <ClInclude Include="src\libpas\pas_allocator_scavenge_action.h" />
+    <ClInclude Include="src\libpas\pas_all_heaps.h" />
+    <ClInclude Include="src\libpas\pas_all_heap_configs.h" />
+    <ClInclude Include="src\libpas\pas_all_shared_page_directories.h" />
+    <ClInclude Include="src\libpas\pas_baseline_allocator.h" />
+    <ClInclude Include="src\libpas\pas_baseline_allocator_result.h" />
+    <ClInclude Include="src\libpas\pas_baseline_allocator_table.h" />
+    <ClInclude Include="src\libpas\pas_basic_heap_config_enumerator_data.h" />
+    <ClInclude Include="src\libpas\pas_basic_heap_config_root_data.h" />
+    <ClInclude Include="src\libpas\pas_basic_heap_page_caches.h" />
+    <ClInclude Include="src\libpas\pas_basic_heap_runtime_config.h" />
+    <ClInclude Include="src\libpas\pas_biasing_directory_kind.h" />
+    <ClInclude Include="src\libpas\pas_bitfield_vector.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_allocation_result.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_allocator.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_allocator_inlines.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_directory.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_directory_inlines.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_heap.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_max_free.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_config.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_config_inlines.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_config_kind.def.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_config_kind.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_config_utils.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_config_utils_inlines.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_config_variant.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_page_inlines.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_size_class.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_view.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_view_and_index.h" />
+    <ClInclude Include="src\libpas\pas_bitfit_view_inlines.h" />
+    <ClInclude Include="src\libpas\pas_bitvector.h" />
+    <ClInclude Include="src\libpas\pas_bootstrap_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_cares_about_size_mode.h" />
+    <ClInclude Include="src\libpas\pas_cartesian_tree.h" />
+    <ClInclude Include="src\libpas\pas_coalign.h" />
+    <ClInclude Include="src\libpas\pas_committed_pages_vector.h" />
+    <ClInclude Include="src\libpas\pas_commit_mode.h" />
+    <ClInclude Include="src\libpas\pas_commit_span.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_allocator_index_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_biasing_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_bitfit_biasing_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_bitfit_global_size_class_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_bitfit_heap_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_bitfit_size_class_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_bitfit_view_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_enumerable_range_list_chunk_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_page_sharing_pool_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_segregated_exclusive_view_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_segregated_heap_page_sharing_pools_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_segregated_partial_view_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_segregated_size_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_segregated_view.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_thread_local_cache_layout_node.h" />
+    <ClInclude Include="src\libpas\pas_compact_atomic_unsigned_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_biasing_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_bitfit_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_bitfit_global_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_bitfit_view_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_cartesian_tree_node_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_expendable_memory.h" />
+    <ClInclude Include="src\libpas\pas_compact_heap_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_heap_reservation.h" />
+    <ClInclude Include="src\libpas\pas_compact_page_granule_use_count_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_reservation_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_compact_segregated_biasing_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_segregated_exclusive_view_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_segregated_heap_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_segregated_shared_page_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_segregated_shared_view_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_segregated_size_directory_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_segregated_view.h" />
+    <ClInclude Include="src\libpas\pas_compact_tagged_atomic_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_tagged_page_granule_use_count_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_tagged_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_tagged_unsigned_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_tagged_void_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compact_thread_local_cache_layout_node.h" />
+    <ClInclude Include="src\libpas\pas_compact_unsigned_ptr.h" />
+    <ClInclude Include="src\libpas\pas_compute_summary_object_callbacks.h" />
+    <ClInclude Include="src\libpas\pas_config.h" />
+    <ClInclude Include="src\libpas\pas_create_basic_heap_page_caches_with_reserved_memory.h" />
+    <ClInclude Include="src\libpas\pas_darwin_spi.h" />
+    <ClInclude Include="src\libpas\pas_deallocate.h" />
+    <ClInclude Include="src\libpas\pas_deallocation_mode.h" />
+    <ClInclude Include="src\libpas\pas_deallocator.h" />
+    <ClInclude Include="src\libpas\pas_deallocator_scavenge_action.h" />
+    <ClInclude Include="src\libpas\pas_debug_heap.h" />
+    <ClInclude Include="src\libpas\pas_debug_spectrum.h" />
+    <ClInclude Include="src\libpas\pas_decommit_exclusion_range.h" />
+    <ClInclude Include="src\libpas\pas_deferred_decommit_log.h" />
+    <ClInclude Include="src\libpas\pas_designated_intrinsic_heap.h" />
+    <ClInclude Include="src\libpas\pas_designated_intrinsic_heap_inlines.h" />
+    <ClInclude Include="src\libpas\pas_dyld_state.h" />
+    <ClInclude Include="src\libpas\pas_dynamic_primitive_heap_map.h" />
+    <ClInclude Include="src\libpas\pas_empty_mode.h" />
+    <ClInclude Include="src\libpas\pas_ensure_heap_forced_into_reserved_memory.h" />
+    <ClInclude Include="src\libpas\pas_ensure_heap_with_page_caches.h" />
+    <ClInclude Include="src\libpas\pas_enumerable_page_malloc.h" />
+    <ClInclude Include="src\libpas\pas_enumerable_range_list.h" />
+    <ClInclude Include="src\libpas\pas_enumerate_bitfit_heaps.h" />
+    <ClInclude Include="src\libpas\pas_enumerate_initially_unaccounted_pages.h" />
+    <ClInclude Include="src\libpas\pas_enumerate_large_heaps.h" />
+    <ClInclude Include="src\libpas\pas_enumerate_segregated_heaps.h" />
+    <ClInclude Include="src\libpas\pas_enumerate_unaccounted_pages_as_meta.h" />
+    <ClInclude Include="src\libpas\pas_enumerator.h" />
+    <ClInclude Include="src\libpas\pas_enumerator_internal.h" />
+    <ClInclude Include="src\libpas\pas_enumerator_region.h" />
+    <ClInclude Include="src\libpas\pas_epoch.h" />
+    <ClInclude Include="src\libpas\pas_exclusive_view_template_memo_table.h" />
+    <ClInclude Include="src\libpas\pas_expendable_memory.h" />
+    <ClInclude Include="src\libpas\pas_extended_gcd.h" />
+    <ClInclude Include="src\libpas\pas_fast_large_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_fast_megapage_cache.h" />
+    <ClInclude Include="src\libpas\pas_fast_megapage_kind.h" />
+    <ClInclude Include="src\libpas\pas_fast_megapage_table.h" />
+    <ClInclude Include="src\libpas\pas_fast_path_allocation_result.h" />
+    <ClInclude Include="src\libpas\pas_fast_path_allocation_result_kind.h" />
+    <ClInclude Include="src\libpas\pas_fast_tls.h" />
+    <ClInclude Include="src\libpas\pas_fd_stream.h" />
+    <ClInclude Include="src\libpas\pas_found_bit_index.h" />
+    <ClInclude Include="src\libpas\pas_found_index.h" />
+    <ClInclude Include="src\libpas\pas_free_granules.h" />
+    <ClInclude Include="src\libpas\pas_free_mode.h" />
+    <ClInclude Include="src\libpas\pas_free_range_kind.h" />
+    <ClInclude Include="src\libpas\pas_full_alloc_bits.h" />
+    <ClInclude Include="src\libpas\pas_full_alloc_bits_inlines.h" />
+    <ClInclude Include="src\libpas\pas_generic_large_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_get_allocation_size.h" />
+    <ClInclude Include="src\libpas\pas_get_heap.h" />
+    <ClInclude Include="src\libpas\pas_get_object_kind.h" />
+    <ClInclude Include="src\libpas\pas_get_page_base.h" />
+    <ClInclude Include="src\libpas\pas_get_page_base_and_kind_for_small_other_in_fast_megapage.h" />
+    <ClInclude Include="src\libpas\pas_global_physical_page_sharing_cache.h" />
+    <ClInclude Include="src\libpas\pas_hashtable.h" />
+    <ClInclude Include="src\libpas\pas_has_object.h" />
+    <ClInclude Include="src\libpas\pas_heap.h" />
+    <ClInclude Include="src\libpas\pas_heap_config.h" />
+    <ClInclude Include="src\libpas\pas_heap_config_inlines.h" />
+    <ClInclude Include="src\libpas\pas_heap_config_kind.def.h" />
+    <ClInclude Include="src\libpas\pas_heap_config_kind.h" />
+    <ClInclude Include="src\libpas\pas_heap_config_utils.h" />
+    <ClInclude Include="src\libpas\pas_heap_config_utils_inlines.h" />
+    <ClInclude Include="src\libpas\pas_heap_inlines.h" />
+    <ClInclude Include="src\libpas\pas_heap_kind.h" />
+    <ClInclude Include="src\libpas\pas_heap_lock.h" />
+    <ClInclude Include="src\libpas\pas_heap_page_provider.h" />
+    <ClInclude Include="src\libpas\pas_heap_ref.h" />
+    <ClInclude Include="src\libpas\pas_heap_ref_kind.h" />
+    <ClInclude Include="src\libpas\pas_heap_runtime_config.h" />
+    <ClInclude Include="src\libpas\pas_heap_summary.h" />
+    <ClInclude Include="src\libpas\pas_immortal_heap.h" />
+    <ClInclude Include="src\libpas\pas_immutable_vector.h" />
+    <ClInclude Include="src\libpas\pas_internal_config.h" />
+    <ClInclude Include="src\libpas\pas_intrinsic_heap_support.h" />
+    <ClInclude Include="src\libpas\pas_large_expendable_memory.h" />
+    <ClInclude Include="src\libpas\pas_large_free.h" />
+    <ClInclude Include="src\libpas\pas_large_free_heap_config.h" />
+    <ClInclude Include="src\libpas\pas_large_free_heap_deferred_commit_log.h" />
+    <ClInclude Include="src\libpas\pas_large_free_inlines.h" />
+    <ClInclude Include="src\libpas\pas_large_free_visitor.h" />
+    <ClInclude Include="src\libpas\pas_large_heap.h" />
+    <ClInclude Include="src\libpas\pas_large_heap_physical_page_sharing_cache.h" />
+    <ClInclude Include="src\libpas\pas_large_map.h" />
+    <ClInclude Include="src\libpas\pas_large_map_entry.h" />
+    <ClInclude Include="src\libpas\pas_large_sharing_pool.h" />
+    <ClInclude Include="src\libpas\pas_large_sharing_pool_epoch_update_mode.h" />
+    <ClInclude Include="src\libpas\pas_large_utility_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_large_virtual_range.h" />
+    <ClInclude Include="src\libpas\pas_large_virtual_range_min_heap.h" />
+    <ClInclude Include="src\libpas\pas_list_direction.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator_config_kind.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator_inlines.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator_kind.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator_location.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator_refill_mode.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator_result.h" />
+    <ClInclude Include="src\libpas\pas_local_allocator_scavenger_data.h" />
+    <ClInclude Include="src\libpas\pas_local_view_cache.h" />
+    <ClInclude Include="src\libpas\pas_lock.h" />
+    <ClInclude Include="src\libpas\pas_lock_free_read_ptr_ptr_hashtable.h" />
+    <ClInclude Include="src\libpas\pas_log.h" />
+    <ClInclude Include="src\libpas\pas_manually_decommittable_large_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_medium_megapage_cache.h" />
+    <ClInclude Include="src\libpas\pas_megapage_cache.h" />
+    <ClInclude Include="src\libpas\pas_min_heap.h" />
+    <ClInclude Include="src\libpas\pas_mmap_capability.h" />
+    <ClInclude Include="src\libpas\pas_monotonic_time.h" />
+    <ClInclude Include="src\libpas\pas_mutation_count.h" />
+    <ClInclude Include="src\libpas\pas_object_kind.h" />
+    <ClInclude Include="src\libpas\pas_page_base.h" />
+    <ClInclude Include="src\libpas\pas_page_base_and_kind.h" />
+    <ClInclude Include="src\libpas\pas_page_base_config.h" />
+    <ClInclude Include="src\libpas\pas_page_base_config_inlines.h" />
+    <ClInclude Include="src\libpas\pas_page_base_config_utils.h" />
+    <ClInclude Include="src\libpas\pas_page_base_config_utils_inlines.h" />
+    <ClInclude Include="src\libpas\pas_page_base_inlines.h" />
+    <ClInclude Include="src\libpas\pas_page_config_kind.h" />
+    <ClInclude Include="src\libpas\pas_page_granule_use_count.h" />
+    <ClInclude Include="src\libpas\pas_page_header_placement_mode.h" />
+    <ClInclude Include="src\libpas\pas_page_header_table.h" />
+    <ClInclude Include="src\libpas\pas_page_kind.h" />
+    <ClInclude Include="src\libpas\pas_page_malloc.h" />
+    <ClInclude Include="src\libpas\pas_page_sharing_mode.h" />
+    <ClInclude Include="src\libpas\pas_page_sharing_participant.h" />
+    <ClInclude Include="src\libpas\pas_page_sharing_participant_kind.h" />
+    <ClInclude Include="src\libpas\pas_page_sharing_pool.h" />
+    <ClInclude Include="src\libpas\pas_page_sharing_pool_scavenge_result.h" />
+    <ClInclude Include="src\libpas\pas_page_sharing_pool_take_result.h" />
+    <ClInclude Include="src\libpas\pas_payload_reservation_page_list.h" />
+    <ClInclude Include="src\libpas\pas_physical_memory_synchronization_style.h" />
+    <ClInclude Include="src\libpas\pas_physical_memory_transaction.h" />
+    <ClInclude Include="src\libpas\pas_platform.h" />
+    <ClInclude Include="src\libpas\pas_primitive_heap_ref.h" />
+    <ClInclude Include="src\libpas\pas_primordial_page_state.h" />
+    <ClInclude Include="src\libpas\pas_promote_intrinsic_heap.h" />
+    <ClInclude Include="src\libpas\pas_ptr_hash_map.h" />
+    <ClInclude Include="src\libpas\pas_ptr_hash_set.h" />
+    <ClInclude Include="src\libpas\pas_ptr_min_heap.h" />
+    <ClInclude Include="src\libpas\pas_ptr_worklist.h" />
+    <ClInclude Include="src\libpas\pas_race_test_hooks.h" />
+    <ClInclude Include="src\libpas\pas_random.h" />
+    <ClInclude Include="src\libpas\pas_range.h" />
+    <ClInclude Include="src\libpas\pas_range16.h" />
+    <ClInclude Include="src\libpas\pas_range_begin_min_heap.h" />
+    <ClInclude Include="src\libpas\pas_range_locked_mode.h" />
+    <ClInclude Include="src\libpas\pas_range_min_heap.h" />
+    <ClInclude Include="src\libpas\pas_reallocate_free_mode.h" />
+    <ClInclude Include="src\libpas\pas_reallocate_heap_teleport_rule.h" />
+    <ClInclude Include="src\libpas\pas_redundant_local_allocator_node.h" />
+    <ClInclude Include="src\libpas\pas_red_black_tree.h" />
+    <ClInclude Include="src\libpas\pas_reservation.h" />
+    <ClInclude Include="src\libpas\pas_reservation_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_reservation_heap_page_provider.h" />
+    <ClInclude Include="src\libpas\pas_reserved_memory_provider.h" />
+    <ClInclude Include="src\libpas\pas_root.h" />
+    <ClInclude Include="src\libpas\pas_scavenger.h" />
+    <ClInclude Include="src\libpas\pas_segmented_vector.h" />
+    <ClInclude Include="src\libpas\pas_segregated_deallocation_logging_mode.h" />
+    <ClInclude Include="src\libpas\pas_segregated_deallocation_mode.h" />
+    <ClInclude Include="src\libpas\pas_segregated_directory.h" />
+    <ClInclude Include="src\libpas\pas_segregated_directory_bit_reference.h" />
+    <ClInclude Include="src\libpas\pas_segregated_directory_first_eligible_kind.h" />
+    <ClInclude Include="src\libpas\pas_segregated_directory_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_directory_kind.h" />
+    <ClInclude Include="src\libpas\pas_segregated_exclusive_view.h" />
+    <ClInclude Include="src\libpas\pas_segregated_exclusive_view_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_heap.h" />
+    <ClInclude Include="src\libpas\pas_segregated_heap_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_and_config.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config_kind.def.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config_kind.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config_kind_and_role.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config_utils.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config_utils_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_config_variant.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_emptiness_kind.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_page_role.h" />
+    <ClInclude Include="src\libpas\pas_segregated_partial_view.h" />
+    <ClInclude Include="src\libpas\pas_segregated_partial_view_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_shared_handle.h" />
+    <ClInclude Include="src\libpas\pas_segregated_shared_handle_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_shared_page_directory.h" />
+    <ClInclude Include="src\libpas\pas_segregated_shared_view.h" />
+    <ClInclude Include="src\libpas\pas_segregated_shared_view_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_size_directory.h" />
+    <ClInclude Include="src\libpas\pas_segregated_size_directory_creation_mode.h" />
+    <ClInclude Include="src\libpas\pas_segregated_size_directory_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_view.h" />
+    <ClInclude Include="src\libpas\pas_segregated_view_allocator_inlines.h" />
+    <ClInclude Include="src\libpas\pas_segregated_view_kind.h" />
+    <ClInclude Include="src\libpas\pas_shared_handle_or_page_boundary.h" />
+    <ClInclude Include="src\libpas\pas_shared_handle_or_page_boundary_inlines.h" />
+    <ClInclude Include="src\libpas\pas_shared_page_directory_by_size.h" />
+    <ClInclude Include="src\libpas\pas_simple_decommittable_large_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_simple_large_free_heap.h" />
+    <ClInclude Include="src\libpas\pas_simple_type.h" />
+    <ClInclude Include="src\libpas\pas_size_lookup_mode.h" />
+    <ClInclude Include="src\libpas\pas_snprintf.h" />
+    <ClInclude Include="src\libpas\pas_status_reporter.h" />
+    <ClInclude Include="src\libpas\pas_stream.h" />
+    <ClInclude Include="src\libpas\pas_string_stream.h" />
+    <ClInclude Include="src\libpas\pas_thread_local_cache.h" />
+    <ClInclude Include="src\libpas\pas_thread_local_cache_layout.h" />
+    <ClInclude Include="src\libpas\pas_thread_local_cache_layout_entry.h" />
+    <ClInclude Include="src\libpas\pas_thread_local_cache_layout_node.h" />
+    <ClInclude Include="src\libpas\pas_thread_local_cache_layout_node_kind.h" />
+    <ClInclude Include="src\libpas\pas_thread_local_cache_node.h" />
+    <ClInclude Include="src\libpas\pas_thread_suspend_lock.h" />
+    <ClInclude Include="src\libpas\pas_tree_direction.h" />
+    <ClInclude Include="src\libpas\pas_tri_state.h" />
+    <ClInclude Include="src\libpas\pas_try_allocate.h" />
+    <ClInclude Include="src\libpas\pas_try_allocate_array.h" />
+    <ClInclude Include="src\libpas\pas_try_allocate_common.h" />
+    <ClInclude Include="src\libpas\pas_try_allocate_intrinsic.h" />
+    <ClInclude Include="src\libpas\pas_try_allocate_primitive.h" />
+    <ClInclude Include="src\libpas\pas_try_reallocate.h" />
+    <ClInclude Include="src\libpas\pas_try_shrink.h" />
+    <ClInclude Include="src\libpas\pas_utility_heap.h" />
+    <ClInclude Include="src\libpas\pas_utility_heap_config.h" />
+    <ClInclude Include="src\libpas\pas_utility_heap_support.h" />
+    <ClInclude Include="src\libpas\pas_utils.h" />
+    <ClInclude Include="src\libpas\pas_versioned_field.h" />
+    <ClInclude Include="src\libpas\pas_virtual_range.h" />
+    <ClInclude Include="src\libpas\pas_virtual_range_min_heap.h" />
+    <ClInclude Include="src\libpas\pas_zero_mode.h" />
+    <ClInclude Include="src\libpas\thingy_heap.h" />
+    <ClInclude Include="src\libpas\thingy_heap_config.h" />
+    <ClInclude Include="src\libpas\thingy_heap_prefix.h" />
+    <ClInclude Include="src\libpas\ue_include\bmalloc_heap_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\pas_bitfit_allocator_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\pas_bitvector_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\pas_local_allocator_scavenger_data_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\pas_local_allocator_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\pas_scavenger_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\pas_status_reporter_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\verse_heap_config_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\verse_heap_iterate_filter_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\verse_heap_mark_bits_page_commit_controller_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\verse_heap_object_set_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\verse_heap_page_header_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\verse_heap_ue.h" />
+    <ClInclude Include="src\libpas\ue_include\verse_local_allocator_ue.h" />
+    <ClInclude Include="src\libpas\verse_heap.h" />
+    <ClInclude Include="src\libpas\verse_heap_black_allocation_mode.h" />
+    <ClInclude Include="src\libpas\verse_heap_chunk_map.h" />
+    <ClInclude Include="src\libpas\verse_heap_chunk_map_entry.h" />
+    <ClInclude Include="src\libpas\verse_heap_compact_large_entry_ptr.h" />
+    <ClInclude Include="src\libpas\verse_heap_compact_mark_bits_page_commit_controller_ptr.h" />
+    <ClInclude Include="src\libpas\verse_heap_config.h" />
+    <ClInclude Include="src\libpas\verse_heap_inlines.h" />
+    <ClInclude Include="src\libpas\verse_heap_iterate_filter.h" />
+    <ClInclude Include="src\libpas\verse_heap_iteration_state.h" />
+    <ClInclude Include="src\libpas\verse_heap_large_entry.h" />
+    <ClInclude Include="src\libpas\verse_heap_mark_bits_page_commit_controller.h" />
+    <ClInclude Include="src\libpas\verse_heap_medium_page_header_object.h" />
+    <ClInclude Include="src\libpas\verse_heap_object_set.h" />
+    <ClInclude Include="src\libpas\verse_heap_object_set_inlines.h" />
+    <ClInclude Include="src\libpas\verse_heap_object_set_set.h" />
+    <ClInclude Include="src\libpas\verse_heap_page_header.h" />
+    <ClInclude Include="src\libpas\verse_heap_page_header_inlines.h" />
+    <ClInclude Include="src\libpas\verse_heap_runtime_config.h" />
+    <ClInclude Include="src\libpas\verse_heap_type.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\libpas\bmalloc_heap.c" />
+    <ClCompile Include="src\libpas\bmalloc_heap_config.c" />
+    <ClCompile Include="src\libpas\bmalloc_type.c" />
+    <ClCompile Include="src\libpas\hotbit_heap.c" />
+    <ClCompile Include="src\libpas\hotbit_heap_config.c" />
+    <ClCompile Include="src\libpas\inline_medium_page_header_config.c" />
+    <ClCompile Include="src\libpas\inline_medium_page_header_heap.c" />
+    <ClCompile Include="src\libpas\inline_non_committable_granules_config.c" />
+    <ClCompile Include="src\libpas\inline_non_committable_granules_heap.c" />
+    <ClCompile Include="src\libpas\iso_heap.c" />
+    <ClCompile Include="src\libpas\iso_heap_config.c" />
+    <ClCompile Include="src\libpas\iso_test_heap.c" />
+    <ClCompile Include="src\libpas\iso_test_heap_config.c" />
+    <ClCompile Include="src\libpas\jit_heap.c" />
+    <ClCompile Include="src\libpas\jit_heap_config.c" />
+    <ClCompile Include="src\libpas\minalign32_heap.c" />
+    <ClCompile Include="src\libpas\minalign32_heap_config.c" />
+    <ClCompile Include="src\libpas\outline_medium_page_header_config.c" />
+    <ClCompile Include="src\libpas\outline_medium_page_header_heap.c" />
+    <ClCompile Include="src\libpas\outline_non_committable_granules_config.c" />
+    <ClCompile Include="src\libpas\outline_non_committable_granules_heap.c" />
+    <ClCompile Include="src\libpas\pagesize64k_heap.c" />
+    <ClCompile Include="src\libpas\pagesize64k_heap_config.c" />
+    <ClCompile Include="src\libpas\pas_alignment.c" />
+    <ClCompile Include="src\libpas\pas_allocation_callbacks.c" />
+    <ClCompile Include="src\libpas\pas_all_heaps.c" />
+    <ClCompile Include="src\libpas\pas_all_shared_page_directories.c" />
+    <ClCompile Include="src\libpas\pas_baseline_allocator.c" />
+    <ClCompile Include="src\libpas\pas_baseline_allocator_table.c" />
+    <ClCompile Include="src\libpas\pas_basic_heap_config_enumerator_data.c" />
+    <ClCompile Include="src\libpas\pas_bitfit_allocator.c" />
+    <ClCompile Include="src\libpas\pas_bitfit_directory.c" />
+    <ClCompile Include="src\libpas\pas_bitfit_heap.c" />
+    <ClCompile Include="src\libpas\pas_bitfit_page.c" />
+    <ClCompile Include="src\libpas\pas_bitfit_page_config_kind.c" />
+    <ClCompile Include="src\libpas\pas_bitfit_size_class.c" />
+    <ClCompile Include="src\libpas\pas_bitfit_view.c" />
+    <ClCompile Include="src\libpas\pas_bootstrap_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_coalign.c" />
+    <ClCompile Include="src\libpas\pas_committed_pages_vector.c" />
+    <ClCompile Include="src\libpas\pas_commit_span.c" />
+    <ClCompile Include="src\libpas\pas_compact_expendable_memory.c" />
+    <ClCompile Include="src\libpas\pas_compact_heap_reservation.c" />
+    <ClCompile Include="src\libpas\pas_compact_reservation_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_compute_summary_object_callbacks.c" />
+    <ClCompile Include="src\libpas\pas_create_basic_heap_page_caches_with_reserved_memory.c" />
+    <ClCompile Include="src\libpas\pas_deallocate.c" />
+    <ClCompile Include="src\libpas\pas_debug_spectrum.c" />
+    <ClCompile Include="src\libpas\pas_deferred_decommit_log.c" />
+    <ClCompile Include="src\libpas\pas_designated_intrinsic_heap.c" />
+    <ClCompile Include="src\libpas\pas_dyld_state.c" />
+    <ClCompile Include="src\libpas\pas_dynamic_primitive_heap_map.c" />
+    <ClCompile Include="src\libpas\pas_ensure_heap_forced_into_reserved_memory.c" />
+    <ClCompile Include="src\libpas\pas_ensure_heap_with_page_caches.c" />
+    <ClCompile Include="src\libpas\pas_enumerable_page_malloc.c" />
+    <ClCompile Include="src\libpas\pas_enumerable_range_list.c" />
+    <ClCompile Include="src\libpas\pas_enumerate_bitfit_heaps.c" />
+    <ClCompile Include="src\libpas\pas_enumerate_initially_unaccounted_pages.c" />
+    <ClCompile Include="src\libpas\pas_enumerate_large_heaps.c" />
+    <ClCompile Include="src\libpas\pas_enumerate_segregated_heaps.c" />
+    <ClCompile Include="src\libpas\pas_enumerate_unaccounted_pages_as_meta.c" />
+    <ClCompile Include="src\libpas\pas_enumerator.c" />
+    <ClCompile Include="src\libpas\pas_enumerator_region.c" />
+    <ClCompile Include="src\libpas\pas_epoch.c" />
+    <ClCompile Include="src\libpas\pas_exclusive_view_template_memo_table.c" />
+    <ClCompile Include="src\libpas\pas_expendable_memory.c" />
+    <ClCompile Include="src\libpas\pas_extended_gcd.c" />
+    <ClCompile Include="src\libpas\pas_fast_large_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_fast_megapage_cache.c" />
+    <ClCompile Include="src\libpas\pas_fast_megapage_table.c" />
+    <ClCompile Include="src\libpas\pas_fast_tls.c" />
+    <ClCompile Include="src\libpas\pas_fast_tls_win32.cpp" />
+    <ClCompile Include="src\libpas\pas_fd_stream.c" />
+    <ClCompile Include="src\libpas\pas_free_granules.c" />
+    <ClCompile Include="src\libpas\pas_global_physical_page_sharing_cache.c" />
+    <ClCompile Include="src\libpas\pas_heap.c" />
+    <ClCompile Include="src\libpas\pas_heap_config.c" />
+    <ClCompile Include="src\libpas\pas_heap_config_kind.c" />
+    <ClCompile Include="src\libpas\pas_heap_config_utils.c" />
+    <ClCompile Include="src\libpas\pas_heap_lock.c" />
+    <ClCompile Include="src\libpas\pas_heap_ref.c" />
+    <ClCompile Include="src\libpas\pas_heap_runtime_config.c" />
+    <ClCompile Include="src\libpas\pas_heap_summary.c" />
+    <ClCompile Include="src\libpas\pas_immortal_heap.c" />
+    <ClCompile Include="src\libpas\pas_large_expendable_memory.c" />
+    <ClCompile Include="src\libpas\pas_large_free_heap_deferred_commit_log.c" />
+    <ClCompile Include="src\libpas\pas_large_heap.c" />
+    <ClCompile Include="src\libpas\pas_large_heap_physical_page_sharing_cache.c" />
+    <ClCompile Include="src\libpas\pas_large_map.c" />
+    <ClCompile Include="src\libpas\pas_large_sharing_pool.c" />
+    <ClCompile Include="src\libpas\pas_large_utility_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_local_allocator.c" />
+    <ClCompile Include="src\libpas\pas_local_allocator_scavenger_data.c" />
+    <ClCompile Include="src\libpas\pas_local_view_cache.c" />
+    <ClCompile Include="src\libpas\pas_lock.c" />
+    <ClCompile Include="src\libpas\pas_lock_free_read_ptr_ptr_hashtable.c" />
+    <ClCompile Include="src\libpas\pas_log.c" />
+    <ClCompile Include="src\libpas\pas_manually_decommittable_large_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_medium_megapage_cache.c" />
+    <ClCompile Include="src\libpas\pas_megapage_cache.c" />
+    <ClCompile Include="src\libpas\pas_monotonic_time.c" />
+    <ClCompile Include="src\libpas\pas_page_base.c" />
+    <ClCompile Include="src\libpas\pas_page_base_config.c" />
+    <ClCompile Include="src\libpas\pas_page_header_table.c" />
+    <ClCompile Include="src\libpas\pas_page_malloc.c" />
+    <ClCompile Include="src\libpas\pas_page_sharing_participant.c" />
+    <ClCompile Include="src\libpas\pas_page_sharing_pool.c" />
+    <ClCompile Include="src\libpas\pas_payload_reservation_page_list.c" />
+    <ClCompile Include="src\libpas\pas_physical_memory_transaction.c" />
+    <ClCompile Include="src\libpas\pas_primitive_heap_ref.c" />
+    <ClCompile Include="src\libpas\pas_ptr_worklist.c" />
+    <ClCompile Include="src\libpas\pas_race_test_hooks.c" />
+    <ClCompile Include="src\libpas\pas_random.c" />
+    <ClCompile Include="src\libpas\pas_redundant_local_allocator_node.c" />
+    <ClCompile Include="src\libpas\pas_red_black_tree.c" />
+    <ClCompile Include="src\libpas\pas_reservation.c" />
+    <ClCompile Include="src\libpas\pas_reservation_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_reservation_heap_page_provider.c" />
+    <ClCompile Include="src\libpas\pas_reserved_memory_provider.c" />
+    <ClCompile Include="src\libpas\pas_reserve_commit_cache_large_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_root.c" />
+    <ClCompile Include="src\libpas\pas_scavenger.c" />
+    <ClCompile Include="src\libpas\pas_segregated_directory.c" />
+    <ClCompile Include="src\libpas\pas_segregated_exclusive_view.c" />
+    <ClCompile Include="src\libpas\pas_segregated_heap.c" />
+    <ClCompile Include="src\libpas\pas_segregated_page.c" />
+    <ClCompile Include="src\libpas\pas_segregated_page_config.c" />
+    <ClCompile Include="src\libpas\pas_segregated_page_config_kind.c" />
+    <ClCompile Include="src\libpas\pas_segregated_page_config_kind_and_role.c" />
+    <ClCompile Include="src\libpas\pas_segregated_partial_view.c" />
+    <ClCompile Include="src\libpas\pas_segregated_shared_handle.c" />
+    <ClCompile Include="src\libpas\pas_segregated_shared_page_directory.c" />
+    <ClCompile Include="src\libpas\pas_segregated_shared_view.c" />
+    <ClCompile Include="src\libpas\pas_segregated_size_directory.c" />
+    <ClCompile Include="src\libpas\pas_segregated_view.c" />
+    <ClCompile Include="src\libpas\pas_shared_page_directory_by_size.c" />
+    <ClCompile Include="src\libpas\pas_simple_decommittable_large_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_simple_large_free_heap.c" />
+    <ClCompile Include="src\libpas\pas_simple_type.c" />
+    <ClCompile Include="src\libpas\pas_status_reporter.c" />
+    <ClCompile Include="src\libpas\pas_stream.c" />
+    <ClCompile Include="src\libpas\pas_string_stream.c" />
+    <ClCompile Include="src\libpas\pas_thread_local_cache.c" />
+    <ClCompile Include="src\libpas\pas_thread_local_cache_layout.c" />
+    <ClCompile Include="src\libpas\pas_thread_local_cache_layout_node.c" />
+    <ClCompile Include="src\libpas\pas_thread_local_cache_node.c" />
+    <ClCompile Include="src\libpas\pas_thread_suspend_lock.c" />
+    <ClCompile Include="src\libpas\pas_utility_heap.c" />
+    <ClCompile Include="src\libpas\pas_utility_heap_config.c" />
+    <ClCompile Include="src\libpas\pas_utils.c" />
+    <ClCompile Include="src\libpas\pas_versioned_field.c" />
+    <ClCompile Include="src\libpas\pas_virtual_range.c" />
+    <ClCompile Include="src\libpas\thingy_heap.c" />
+    <ClCompile Include="src\libpas\thingy_heap_config.c" />
+    <ClCompile Include="src\libpas\verse_heap.c" />
+    <ClCompile Include="src\libpas\verse_heap_chunk_map.c" />
+    <ClCompile Include="src\libpas\verse_heap_chunk_map_entry.c" />
+    <ClCompile Include="src\libpas\verse_heap_config.c" />
+    <ClCompile Include="src\libpas\verse_heap_large_entry.c" />
+    <ClCompile Include="src\libpas\verse_heap_mark_bits_page_commit_controller.c" />
+    <ClCompile Include="src\libpas\verse_heap_medium_page_header_object.c" />
+    <ClCompile Include="src\libpas\verse_heap_object_set.c" />
+    <ClCompile Include="src\libpas\verse_heap_object_set_set.c" />
+    <ClCompile Include="src\libpas\verse_heap_page_header.c" />
+    <ClCompile Include="src\libpas\verse_heap_runtime_config.c" />
+    <ClCompile Include="src\libpas\verse_heap_type.c" />
+    <ClCompile Include="src\libpas\verse_local_allocator.c" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{bbbdce0c-dc79-453c-8e05-a9a2fc02f597}</ProjectGuid>
+    <RootNamespace>libpas</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='DebugUE|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseMSVC|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseTesting|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='DebugUE|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseMSVC|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseTesting|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_LIB;PAS_NO_INLINING;ENABLE_PAS_TESTING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>
+      </AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>
+      </SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='DebugUE|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_LIB;PAS_NO_INLINING;ENABLE_PAS_TESTING;PAS_UE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>
+      </AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>
+      </SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>
+      </AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>
+      </SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseUE|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_LIB;PAS_UE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>
+      </AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>
+      </SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseMSVC|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
+      <AdditionalOptions />
+    </ClCompile>
+    <Link>
+      <SubSystem>
+      </SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseTesting|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_LIB;ENABLE_PAS_TESTING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>
+      </AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>
+      </SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

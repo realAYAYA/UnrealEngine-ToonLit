@@ -28,7 +28,7 @@ public:
 	void QueueTick(const FNiagaraGPUSystemTick& Tick);
 	void ReleaseTicks(FNiagaraGPUInstanceCountManager& GPUInstanceCountManager, int32 NumTicksToRelease, bool bLastViewFamily);
 
-	bool RequiresDistanceFieldData() const { return bRequiresDistanceFieldData; }
+	bool RequiresGlobalDistanceField() const { return bRequiresGlobalDistanceField; }
 	bool RequiresDepthBuffer() const { return bRequiresDepthBuffer; }
 	bool RequiresEarlyViewData() const { return bRequiresEarlyViewData; }
 	bool RequiresViewUniformBuffer() const { return bRequiresViewUniformBuffer; }
@@ -43,7 +43,7 @@ private:
 
 	FNiagaraSystemInstanceID					SystemInstanceID = FNiagaraSystemInstanceID();
 	ENiagaraGpuComputeTickStage::Type			ComputeTickStage = ENiagaraGpuComputeTickStage::PostOpaqueRender;
-	uint32										bRequiresDistanceFieldData : 1;
+	uint32										bRequiresGlobalDistanceField : 1;
 	uint32										bRequiresDepthBuffer : 1;
 	uint32										bRequiresEarlyViewData : 1;
 	uint32										bRequiresViewUniformBuffer : 1;

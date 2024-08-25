@@ -6,7 +6,6 @@
 #include "GameFramework/LightWeightInstanceManager.h"
 #include "Templates/SharedPointer.h"
 
-#include "Actor.h"
 
 ENGINE_API DECLARE_LOG_CATEGORY_EXTERN(LogLightWeightInstance, Log, All);
 
@@ -49,9 +48,6 @@ struct FLightWeightInstanceSubsystem
 	// Returns the instance manager that handles instances of type Class that live in Level
 	ENGINE_API ALightWeightInstanceManager* FindOrAddLightWeightInstanceManager(UClass& ActorClass, UWorld& World, const FVector& InPos, const UDataLayerInstance* DataLayer = nullptr);
 
-	// Returns the actor specified by Handle. This may require loading and creating the actor object.
-	ENGINE_API AActor* FetchActor(const FActorInstanceHandle& Handle);
-
 	// Returns the actor specified by Handle if it exists. Returns nullptr if it doesn't
 	ENGINE_API AActor* GetActor_NoCreate(const FActorInstanceHandle& Handle) const;
 
@@ -72,30 +68,6 @@ struct FLightWeightInstanceSubsystem
 
 	// deletes the instance identified by Handle
 	ENGINE_API void DeleteInstance(const FActorInstanceHandle& Handle);
-
-	// Returns true if the handle can return an object that implements the interface U
-	template<typename U>
-	bool IsInterfaceSupported(const FActorInstanceHandle& Handle) const
-	{
-		if (ALightWeightInstanceManager* InstanceManager = FindLightWeightInstanceManager(Handle))
-		{
-			return InstanceManager->IsInterfaceSupported<U>();
-		}
-
-		return false;
-	}
-
-	// Returns an object that implements the interface I for Handle
-	template<typename I>
-	I* FetchInterfaceObject(const FActorInstanceHandle& Handle)
-	{
-		if (ALightWeightInstanceManager* InstanceManager = FindLightWeightInstanceManager(Handle))
-		{
-			return InstanceManager->FetchInterfaceObject<I>(Handle);
-		}
-
-		return nullptr;
-	}
 
 	// Helper that converts a position (world space) into a coordinate for the LWI grid.
 	UE_DEPRECATED(5.3, "Use LWI Managers version of ConvertPositionToCoord()")

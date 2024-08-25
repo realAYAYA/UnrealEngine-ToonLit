@@ -168,10 +168,10 @@ void FAnimNode_MultiWayBlend::Evaluate_AnyThread(FPoseContext& Output)
 		Output.Pose.NormalizeRotations();
 		
 		// pop the poses we added
-		SourcePoses.SetNum(SourcePosesInitialNum, false);
-		SourceCurves.SetNum(SourcePosesInitialNum, false);
-		SourceWeights.SetNum(SourcePosesInitialNum, false);
-		SourceAttributes.SetNum(SourcePosesInitialNum, false);
+		SourcePoses.SetNum(SourcePosesInitialNum, EAllowShrinking::No);
+		SourceCurves.SetNum(SourcePosesInitialNum, EAllowShrinking::No);
+		SourceWeights.SetNum(SourcePosesInitialNum, EAllowShrinking::No);
+		SourceAttributes.SetNum(SourcePosesInitialNum, EAllowShrinking::No);
 	}
 	else
 	{

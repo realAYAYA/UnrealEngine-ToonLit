@@ -69,7 +69,7 @@ void UBlackboardKeyType_GameplayTag::CopyValues(UBlackboardComponent& OwnerComp,
 
 void UBlackboardKeyType_GameplayTag::InitializeMemory(UBlackboardComponent& OwnerComp, uint8* MemoryBlock)
 {
-	SetValue(this, MemoryBlock, InvalidValue);
+	SetValue(this, MemoryBlock, DefaultValue);
 }
 
 void UBlackboardKeyType_GameplayTag::Clear(UBlackboardComponent& OwnerComp, uint8* MemoryBlock)

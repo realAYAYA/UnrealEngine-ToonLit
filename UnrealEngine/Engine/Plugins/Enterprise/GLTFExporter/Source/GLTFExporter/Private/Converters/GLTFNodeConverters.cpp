@@ -2,7 +2,6 @@
 
 #include "Converters/GLTFNodeConverters.h"
 #include "Converters/GLTFNameUtilities.h"
-#include "Converters/GLTFBoneUtilities.h"
 #include "Builders/GLTFContainerBuilder.h"
 #include "Utilities/GLTFCoreUtilities.h"
 #include "LevelSequenceActor.h"
@@ -16,17 +15,28 @@
 #include "Engine/SkeletalMeshSocket.h"
 #include "GameFramework/Pawn.h"
 
+#include "LandscapeComponent.h"
+#include "GLTFMeshUtilities.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Components/SplineMeshComponent.h"
+#include "LevelInstance/LevelInstanceComponent.h"
+#include "LevelInstance/LevelInstanceActor.h"
+#include "LevelInstance/LevelInstanceEditorInstanceActor.h"
+#include "Engine/Level.h"
+
 FGLTFJsonNode* FGLTFActorConverter::Convert(const AActor* Actor)
 {
-	if (Actor->bIsEditorOnlyActor)
+	if (!Actor || !Actor->IsValidLowLevel() || Actor->IsEditorOnly() || !Builder.IsSelectedActor(Actor))
 	{
 		return nullptr;
 	}
-
-	if (!Builder.IsSelectedActor(Actor))
+#if WITH_EDITOR
+	if (const ALevelInstanceEditorInstanceActor* LevelInstanceEditorInstanceActor = Cast<ALevelInstanceEditorInstanceActor>(Actor))
 	{
+		//Editor only class, reporting as IsEditorOnly==false
 		return nullptr;
 	}
+#endif
 
 	const USceneComponent* RootComponent = Actor->GetRootComponent();
 	FGLTFJsonNode* RootNode = Builder.AddUniqueNode(RootComponent);
@@ -45,7 +55,6 @@ FGLTFJsonNode* FGLTFActorConverter::Convert(const AActor* Actor)
 		// TODO: add support for exporting brush geometry?
 
 		// TODO: to reduce number of nodes, only export components that are of interest
-
 		for (const UActorComponent* Component : Actor->GetComponents())
 		{
 			const USceneComponent* SceneComponent = Cast<USceneComponent>(Component);
@@ -61,7 +70,7 @@ FGLTFJsonNode* FGLTFActorConverter::Convert(const AActor* Actor)
 
 FGLTFJsonNode* FGLTFComponentConverter::Convert(const USceneComponent* SceneComponent)
 {
-	if (SceneComponent->IsEditorOnly())
+	if (!SceneComponent || SceneComponent->IsEditorOnly())
 	{
 		return nullptr;
 	}
@@ -73,15 +82,23 @@ FGLTFJsonNode* FGLTFComponentConverter::Convert(const USceneComponent* SceneComp
 		return nullptr;
 	}
 
+#if WITH_EDITOR
+	if (const ALevelInstanceEditorInstanceActor* LevelInstanceEditorInstanceActor = Cast<ALevelInstanceEditorInstanceActor>(Owner))
+	{
+		//Editor only class, reporting as IsEditorOnly==false
+		return nullptr;
+	}
+#endif
+
 	if (!Builder.IsSelectedActor(Owner))
 	{
 		return nullptr;
 	}
-
+	
 	const bool bIsRootComponent = Owner->GetRootComponent() == SceneComponent;
 	const bool bIsRootNode = bIsRootComponent && Builder.IsRootActor(Owner);
-
 	const USceneComponent* ParentComponent = !bIsRootNode ? SceneComponent->GetAttachParent() : nullptr;
+
 	const FName SocketName = SceneComponent->GetAttachSocketName();
 	FGLTFJsonNode* ParentNode = Builder.AddUniqueNode(ParentComponent, SocketName);
 
@@ -130,8 +147,90 @@ void FGLTFComponentConverter::ConvertComponentSpecialization(const USceneCompone
 	{
 		return;
 	}
+	
+    if (const UInstancedStaticMeshComponent* InstancedMeshComp = Cast<UInstancedStaticMeshComponent>(SceneComponent))
+	{
+		const UStaticMesh* StaticMesh = InstancedMeshComp->GetStaticMesh();
 
-	if (const UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(SceneComponent))
+		FGLTFJsonMesh* Mesh = Builder.AddUniqueMesh(StaticMesh);
+
+		const int32 NumInstances = InstancedMeshComp->GetInstanceCount();
+		for (int32 InstanceIndex = 0; InstanceIndex < NumInstances; ++InstanceIndex)
+		{
+			FTransform RelativeTransform;
+			if (ensure(InstancedMeshComp->GetInstanceTransform(InstanceIndex, RelativeTransform, /*bWorldSpace=*/false)))
+			{
+				FGLTFJsonNode* InstanceNode = Builder.AddNode();
+				InstanceNode->Mesh = Mesh;
+				InstanceNode->Name = FString::Printf(TEXT("%s:%d"), *(InstancedMeshComp->GetName()), InstanceIndex);
+				const FTransform3f Transform = FTransform3f(RelativeTransform);
+
+				InstanceNode->Translation = FGLTFCoreUtilities::ConvertPosition(Transform.GetTranslation(), Builder.ExportOptions->ExportUniformScale);
+				InstanceNode->Rotation = FGLTFCoreUtilities::ConvertRotation(Transform.GetRotation());
+				InstanceNode->Scale = FGLTFCoreUtilities::ConvertScale(Transform.GetScale3D());
+				Node->Children.Add(InstanceNode);
+			}
+		}
+	}
+	else if (const USplineMeshComponent* SplineMeshComponent = Cast<USplineMeshComponent>(SceneComponent))
+	{
+		FGLTFJsonNode* SplineNode = Builder.AddNode();
+		SplineNode->Name = SplineMeshComponent->GetName();
+		SplineNode->Mesh = Builder.AddUniqueMesh(SplineMeshComponent);
+
+		const FTransform3f Transform;
+		SplineNode->Translation = FGLTFCoreUtilities::ConvertPosition(Transform.GetTranslation(), Builder.ExportOptions->ExportUniformScale);
+		SplineNode->Rotation = FGLTFCoreUtilities::ConvertRotation(Transform.GetRotation());
+		SplineNode->Scale = FGLTFCoreUtilities::ConvertScale(Transform.GetScale3D());
+
+		Node->Children.Add(SplineNode);
+	}
+	else if (const ULandscapeComponent* LandscapeComponent = Cast<ULandscapeComponent>(SceneComponent))
+	{
+		FGLTFJsonNode* LandscapeNode = Builder.AddNode();
+		LandscapeNode->Name = LandscapeComponent->GetName();
+		LandscapeNode->Mesh = Builder.AddUniqueMesh(LandscapeComponent);
+		
+		const FTransform3f Transform;
+		LandscapeNode->Translation = FGLTFCoreUtilities::ConvertPosition(Transform.GetTranslation(), Builder.ExportOptions->ExportUniformScale);
+		LandscapeNode->Rotation = FGLTFCoreUtilities::ConvertRotation(Transform.GetRotation());
+		LandscapeNode->Scale = FGLTFCoreUtilities::ConvertScale(Transform.GetScale3D());
+		
+		Node->Children.Add(LandscapeNode);
+	}
+	else if (const ULevelInstanceComponent* LevelInstanceComponent = Cast<ULevelInstanceComponent>(SceneComponent))
+	{
+		const ALevelInstance* LevelInstance = Cast<ALevelInstance>(Owner);
+		
+		TArray<TObjectPtr<AActor>> Actors = LevelInstance->GetLoadedLevel()->Actors;
+
+		for (const AActor* LevelActor : Actors)
+		{
+			FGLTFJsonNode* LevelActorNode = Builder.AddUniqueNode(LevelActor);
+
+			if (LevelActorNode == nullptr)
+			{
+				continue;
+			}
+			const USceneComponent* LevelActorComponent = LevelActor->GetRootComponent();
+			const USceneComponent* ParentComponent = SceneComponent;
+
+			const FName SocketName = LevelActorComponent->GetAttachSocketName();
+			const FTransform3f Transform = FTransform3f(LevelActorComponent->GetComponentTransform());
+			const FTransform3f ParentTransform = ParentComponent != nullptr ? FTransform3f(ParentComponent->GetSocketTransform(SocketName)) : FTransform3f::Identity;
+			const FTransform3f RelativeTransform = Transform.GetRelativeTransform(ParentTransform);
+
+			LevelActorNode->Translation = FGLTFCoreUtilities::ConvertPosition(RelativeTransform.GetTranslation(), Builder.ExportOptions->ExportUniformScale);
+			LevelActorNode->Rotation = FGLTFCoreUtilities::ConvertRotation(RelativeTransform.GetRotation());
+			LevelActorNode->Scale = FGLTFCoreUtilities::ConvertScale(RelativeTransform.GetScale3D());
+
+			if (LevelActorNode != nullptr)
+			{
+				Node->Children.Add(LevelActorNode);
+			}
+		}
+	}
+	else if (const UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(SceneComponent))
 	{
 		Node->Mesh = Builder.AddUniqueMesh(StaticMeshComponent);
 	}

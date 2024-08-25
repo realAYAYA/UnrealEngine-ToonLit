@@ -21,6 +21,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SWidget.h"
 #include "Widgets/Views/STreeView.h"
+#include "PropertyHandle.h"
 
 class ISourceControlRevision;
 class SWidget;
@@ -219,6 +220,8 @@ namespace ETreeDiffType
 		NODE_TYPE_CHANGED,
 		NODE_PROPERTY_CHANGED,
 		NODE_MOVED,
+		NODE_CORRUPTED,
+		NODE_FIXED
 		/** We could potentially try to identify hierarchy reorders separately from add/remove */
 	};
 }
@@ -262,6 +265,7 @@ namespace DiffUtils
 	 */
 	UNREALED_API bool Identical(const FResolvedProperty& AProp, const FResolvedProperty& BProp, const UObject* OwningOuterA, const UObject* OwningOuterB);
 	UNREALED_API bool Identical(const FResolvedProperty& AProp, const FResolvedProperty& BProp, const UObject* OwningOuterA, const UObject* OwningOuterB, const FPropertySoftPath& RootPath, TArray<FPropertySoftPath>& DifferingProperties);
+	UNREALED_API bool Identical(const TSharedPtr<IPropertyHandle>& PropertyHandleA, const TSharedPtr<IPropertyHandle>& PropertyHandleB, const TArray<TWeakObjectPtr<UObject>>& OwningOutersA = {}, const TArray<TWeakObjectPtr<UObject>>& OwningOutersB = {});
 	UNREALED_API TArray<FPropertySoftPath> GetVisiblePropertiesInOrderDeclared(const UStruct* ForStruct, const FPropertySoftPath& Scope = FPropertySoftPath());
 
 	UNREALED_API TArray<FPropertyPath> ResolveAll(const UObject* Object, const TArray<FPropertySoftPath>& InSoftProperties);

@@ -30,6 +30,8 @@ namespace UE::DatasmithInterchange::NodeUtils
 	extern const FString LevelSequencePrefix;
 	extern const FString LevelVariantSetPrefix;
 	extern const FString LightPrefix;
+	extern const FString DecalPrefix;
+	extern const FString DecalMaterialPrefix;
 	extern const FString MaterialPrefix;
 	extern const FString MaterialExpressionPrefix;
 	extern const FString MaterialFunctionPrefix;

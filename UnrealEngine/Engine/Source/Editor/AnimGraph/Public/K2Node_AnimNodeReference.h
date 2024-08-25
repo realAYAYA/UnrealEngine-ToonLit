@@ -29,6 +29,11 @@ public:
 	// Get the text used for the node's label
 	FText GetLabelText() const;
 	
+	// Get the tag for this node, if any
+	FName GetTag() const { return Tag; }
+
+	// Set the tag for this node
+	void SetTag(FName InTag) { Tag = InTag; }
 private:
 	/** The node tag we reference */
 	UPROPERTY()

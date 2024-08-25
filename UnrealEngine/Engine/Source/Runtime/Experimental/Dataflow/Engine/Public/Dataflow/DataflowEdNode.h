@@ -46,6 +46,7 @@ public:
 	DATAFLOWENGINE_API virtual void GetPinHoverText(const UEdGraphPin& Pin, FString& HoverTextOut) const override;
 	DATAFLOWENGINE_API virtual FText GetPinDisplayName(const UEdGraphPin* Pin) const override;
 	DATAFLOWENGINE_API virtual void AutowireNewNode(UEdGraphPin* FromPin) override;
+	DATAFLOWENGINE_API virtual void OnPinRemoved(UEdGraphPin* InRemovedPin) override;
 #endif // WITH_EDITOR
 	// End of UEdGraphNode interface
 
@@ -78,7 +79,7 @@ public:
 	DATAFLOWENGINE_API void SetAssetRender(bool bInRender);
 	bool DoAssetRender() { return bRenderInAssetEditor; }
 	DATAFLOWENGINE_API TArray<Dataflow::FRenderingParameter> GetRenderParameters() const;
-	DATAFLOWENGINE_API virtual bool Render(GeometryCollection::Facades::FRenderingFacade& RenderData, TSharedPtr<Dataflow::FContext> Context) const;
+	DATAFLOWENGINE_API virtual bool Render(GeometryCollection::Facades::FRenderingFacade& RenderData, const TSharedPtr<Dataflow::FContext> Context) const;
 
 	UPROPERTY()
 	bool bRenderInAssetEditor = false;

@@ -6,6 +6,7 @@
 
 
 #include "Components/SceneComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/Level.h"
 #include "EngineStats.h"
 #include "Components/StaticMeshComponent.h"
@@ -30,7 +31,10 @@
 #include "Interfaces/ITargetPlatform.h"
 #include "DeviceProfiles/DeviceProfile.h"
 #include "Net/Core/PushModel/PushModel.h"
-#include  "UObject/ICookInfo.h"
+#include "UObject/Class.h"
+#include "UObject/ICookInfo.h"
+#include "Misc/DataValidation.h"
+#include "Misc/EnumRange.h"
 
 #define LOCTEXT_NAMESPACE "SceneComponent"
 
@@ -40,6 +44,17 @@ namespace SceneComponentStatics
 	static const FName MobilityName(TEXT("Mobility"));
 	static const FText MobilityWarnText = LOCTEXT("InvalidMove", "move");
 	static const FName PhysicsVolumeTraceName(TEXT("PhysicsVolumeTrace"));
+}
+
+namespace SceneComponentCVars
+{
+	bool bCheckRootComponentReplicationOnAttachedChildren = true;
+	static FAutoConsoleVariableRef CVarCheckRootComponentReplicationOnAttachedChildren(
+		TEXT("s.CheckRootComponentReplicationOnAttachedChildren"),
+		bCheckRootComponentReplicationOnAttachedChildren,
+		TEXT("Scene Component OnRep_AttachedChildren:\n")
+		TEXT("false: fix up any children that are missing the parent, true: fixes up all children except non-replicated root components (default)"),
+		ECVF_Default);
 }
 
 DEFINE_LOG_CATEGORY_STATIC(LogSceneComponent, Log, All);
@@ -88,24 +103,6 @@ void USceneComponent::AddReferencedObjects(UObject* InThis, FReferenceCollector&
 	Super::AddReferencedObjects(InThis, Collector);
 }
 
-void USceneComponent::PostLoad()
-{
-	Super::PostLoad();
-
-	if (AttachParent)
-	{
-		USceneComponent* TopReplacementComponent = AttachParent->ReplacementSceneComponent;
-		while (TopReplacementComponent && TopReplacementComponent->ReplacementSceneComponent)
-		{
-			TopReplacementComponent = TopReplacementComponent->ReplacementSceneComponent;
-		}
-
-		if (TopReplacementComponent)
-		{
-			SetAttachParent(TopReplacementComponent);
-		}
-	}
-}
 #endif
 
 #if WITH_EDITOR
@@ -472,9 +469,20 @@ static bool CheckDescendantsAreAlsoCulledForTarget(USceneComponent const* SceneC
 
 	for (USceneComponent* ChildSceneComponent : AttachedChildren)
 	{
+		if (!ChildSceneComponent)
+		{
+			continue;
+		}
+
+		UE_LOG(LogSceneComponent, Display, TEXT("Checking attached component %s for culling"), *GetPathNameSafe(ChildSceneComponent));
 		if (SceneComponentNeedsLoadForTarget(ChildSceneComponent, TargetPlatform))
 		{
+			UE_LOG(LogSceneComponent, Display, TEXT("Scene component %s will not be culled"), *GetPathNameSafe(ChildSceneComponent));
 			return false;
+		}
+		else
+		{
+			UE_LOG(LogSceneComponent, Display, TEXT("Scene component %s will eot be culled"), *GetPathNameSafe(ChildSceneComponent));
 		}
 	}
 
@@ -485,13 +493,14 @@ bool USceneComponent::NeedsLoadForTargetPlatform(const ITargetPlatform* TargetPl
 {
 	if(!SceneComponentNeedsLoadForTarget(this, TargetPlatform))
 	{
+		UE_LOG(LogSceneComponent, Display, TEXT("Scene component %s will be culled for target, checking children"), *GetPathName());
 		// Also check whether any of our children are culled.
 		bool bDescendantsCulled = CheckDescendantsAreAlsoCulledForTarget(this, TargetPlatform);
 
 		// Child not culled, so warn
 		if(!bDescendantsCulled)
 		{
-			UE_LOG(LogSceneComponent, Warning, TEXT("Component %s not cooked out for client because descendants were not also cooked out."), *GetPathName());
+			UE_LOG(LogSceneComponent, Warning, TEXT("Component %s not removed from client data because descendants were not also not removed."), *GetPathName());
 			return true;
 		}
 
@@ -499,6 +508,91 @@ bool USceneComponent::NeedsLoadForTargetPlatform(const ITargetPlatform* TargetPl
 	}
 
 	return true;
+}
+bool GValidateSceneComponentAttachmentEditorOnlySettings = true;
+static FAutoConsoleVariableRef CVarValidateSceneComponentAttachmentEditorOnlySettings (
+	TEXT("p.ValidateSceneComponentAttachmentEditorOnlySettings"),
+	GValidateSceneComponentAttachmentEditorOnlySettings,
+	TEXT("If enabled, checks that components which are editor only don't have attached components which are not editor only"),
+	ECVF_Default
+);
+
+bool GValidateSceneComponentAttachmentDetailLevel_Low = true;
+static FAutoConsoleVariableRef CVarValidateSceneComponentAttachmentDetailLevel_Low (
+	TEXT("p.ValidateSceneComponentAttachmentDetailLevel_Low"),
+	GValidateSceneComponentAttachmentDetailLevel_Low,
+	TEXT("If enabled, checks that cooking for a target detail level of Low and removing unneeded components will not remove the parents of any components."),
+	ECVF_Default
+);
+bool GValidateSceneComponentAttachmentDetailLevel_Medium = true;
+static FAutoConsoleVariableRef CVarValidateSceneComponentAttachmentDetailLevel_Medium (
+	TEXT("p.ValidateSceneComponentAttachmentDetailLevel_Medium"),
+	GValidateSceneComponentAttachmentDetailLevel_Medium,
+	TEXT("If enabled, checks that cooking for a target detail level of Medium and removing unneeded components will not remove the parents of any components."),
+	ECVF_Default
+);
+bool GValidateSceneComponentAttachmentDetailLevel_High = true;
+static FAutoConsoleVariableRef CVarValidateSceneComponentAttachmentDetailLevel_High (
+	TEXT("p.ValidateSceneComponentAttachmentDetailLevel_High"),
+	GValidateSceneComponentAttachmentDetailLevel_High,
+	TEXT("If enabled, checks that cooking for a target detail level of High and removing unneeded components will not remove the parents of any components."),
+	ECVF_Default
+);
+
+EDataValidationResult USceneComponent::IsDataValid(FDataValidationContext& Context) const
+{
+	EDataValidationResult Result = EDataValidationResult::Valid;
+	if (GValidateSceneComponentAttachmentEditorOnlySettings && IsEditorOnly())
+	{
+		for (USceneComponent* ChildSceneComponent : GetAttachChildren())
+		{
+			if (ChildSceneComponent && !ChildSceneComponent->IsEditorOnly())
+			{
+				Context.AddError(FText::Format(LOCTEXT("SceneComponent_AttachmentEditorOnlyMismatch",
+					"Component {0} is editor-only but it has an attached child {1} that is not"),
+					FText::FromString(GetPathName()),
+					FText::FromString(ChildSceneComponent->GetPathName())
+				));
+				Result = EDataValidationResult::Invalid;
+			}	
+		}
+	}
+
+	if (   DetailMode != EDetailMode::DM_Low 
+		&& (GValidateSceneComponentAttachmentDetailLevel_Low || GValidateSceneComponentAttachmentDetailLevel_Medium || GValidateSceneComponentAttachmentDetailLevel_High))
+	{
+		const AActor* const Owner = GetOwner();
+		const USceneComponent* const RootComponent = Owner ? Owner->GetRootComponent() : nullptr;
+		const bool bActorStrippedAtLow = RootComponent && RootComponent->DetailMode > EDetailMode::DM_Low;
+		const bool bActorStrippedAtMedium = RootComponent && RootComponent->DetailMode > EDetailMode::DM_Medium;
+		const bool bActorStrippedAtHigh = RootComponent && RootComponent->DetailMode > EDetailMode::DM_High;
+		for (USceneComponent* ChildSceneComponent : GetAttachChildren())
+		{
+			if (!ChildSceneComponent || ChildSceneComponent->IsEditorOnly())
+			{
+				continue;
+			}
+			
+			const bool bBrokenAtLow = !bActorStrippedAtLow && DetailMode > EDetailMode::DM_Low && ChildSceneComponent->DetailMode <= EDetailMode::DM_Low;
+			const bool bBrokenAtMedium = !bActorStrippedAtMedium && DetailMode > EDetailMode::DM_Medium && ChildSceneComponent->DetailMode <= EDetailMode::DM_Medium;
+			const bool bBrokenAtHigh = !bActorStrippedAtHigh && DetailMode > EDetailMode::DM_High && ChildSceneComponent->DetailMode <= EDetailMode::DM_High;
+			if((GValidateSceneComponentAttachmentDetailLevel_Low && bBrokenAtLow)
+			|| (GValidateSceneComponentAttachmentDetailLevel_Medium && bBrokenAtMedium)
+			|| (GValidateSceneComponentAttachmentDetailLevel_High && bBrokenAtHigh))
+			{
+				// This child is culled at this detail mode, even though we aren't
+				Context.AddError(FText::Format(LOCTEXT("SceneComponent_AttachmentDetailLevelMismatch",
+					"Component {0} of detail level {1} cannot be removed because it has an attached child {2} of detail level {3}"),
+					FText::FromString(GetPathName()),
+					UEnum::GetDisplayValueAsText(DetailMode),
+					FText::FromString(ChildSceneComponent->GetPathName()),
+					UEnum::GetDisplayValueAsText(ChildSceneComponent->DetailMode)
+				));
+				Result = EDataValidationResult::Invalid;
+			}	
+		}
+	}
+	return CombineDataValidationResults(Result, Super::IsDataValid(Context));
 }
 
 void USceneComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
@@ -716,7 +810,8 @@ void USceneComponent::CreateSpriteComponent(class UTexture2D* SpriteTexture, boo
 		// Create a new billboard component to serve as a visualization of the actor until there is another primitive component
 		{
 			FCookLoadScope EditorOnlyLoadScope(ECookLoadType::EditorOnly);
-			SpriteComponent = NewObject<UBillboardComponent>(GetOwner(), NAME_None, RF_Transactional | RF_Transient | RF_TextExportTransient);
+			const EObjectFlags TransactionalFlag = GetFlags() & RF_Transactional;
+			SpriteComponent = NewObject<UBillboardComponent>(GetOwner(), NAME_None, TransactionalFlag | RF_Transient | RF_TextExportTransient);
 		}
 
 		SpriteComponent->Sprite = SpriteTexture? SpriteTexture : LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EditorResources/EmptyActor.EmptyActor"));
@@ -904,7 +999,7 @@ void USceneComponent::EndScopedMovementUpdate(class FScopedMovementUpdate& Compl
 	}
 
 	// Process top of the stack
-	FScopedMovementUpdate* CurrentScopedUpdate = ScopedMovementStack.Pop(false);
+	FScopedMovementUpdate* CurrentScopedUpdate = ScopedMovementStack.Pop(EAllowShrinking::No);
 	checkSlow(CurrentScopedUpdate == &CompletedScope);
 	{
 		checkSlow(CurrentScopedUpdate->IsDeferringUpdates());
@@ -1112,9 +1207,7 @@ void USceneComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
 		AActor* MyOwner = GetOwner();
 
 		// Do not involve objects which will be destroyed in hierarchy fixups
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		constexpr EInternalObjectFlags SkipFlags = EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage | EInternalObjectFlags::Unreachable;
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		const EInternalObjectFlags SkipFlags = EInternalObjectFlags::Garbage | UE::GC::GUnreachableObjectFlag;
 
 		if (bDestroyingHierarchy)
 		{
@@ -1171,14 +1264,14 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 						{
 #if WITH_EDITORONLY_DATA
 							// If we are in the middle of a transaction it isn't entirely unexpected that an AttachParent/AttachChildren pairing is wrong
-							if (!ensure(GIsTransacting))
+							if (!ensureAlwaysMsgf(GIsTransacting, TEXT("Component '%s' has '%s' in its AttachChildren array, however, '%s' believes it is attached to '%s'"), *GetFullName(), *Child->GetFullName(), *Child->GetFullName(), *Child->GetAttachParent()->GetFullName()))
 #endif
 							{
 								// We've gotten in to a bad state where the Child's AttachParent doesn't jive with the AttachChildren array
 								// so instead of crashing, output an error and gracefully handle
 								UE_LOG(LogSceneComponent, Error, TEXT("Component '%s' has '%s' in its AttachChildren array, however, '%s' believes it is attached to '%s'"), *GetFullName(), *Child->GetFullName(), *Child->GetFullName(), *Child->GetAttachParent()->GetFullName());
 							}
-							AttachChildren.Pop(false);
+							AttachChildren.Pop(EAllowShrinking::No);
 						}
 					}
 					else 
@@ -1190,13 +1283,13 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 						{
 							UE_LOG(LogSceneComponent, Error, TEXT("Component '%s' has '%s' in its AttachChildren array, however, '%s' believes it is not attached to anything"), *GetFullName(), *Child->GetFullName(), *Child->GetFullName());
 						}
-						AttachChildren.Pop(false);
+						AttachChildren.Pop(EAllowShrinking::No);
 					}
 					checkf(ChildCount > AttachChildren.Num(), TEXT("AttachChildren count increased while detaching '%s', likely caused by OnAttachmentChanged introducing new children, which could lead to an infinite loop."), *Child->GetName());
 				}
 				else
 				{
-					AttachChildren.Pop(false);
+					AttachChildren.Pop(EAllowShrinking::No);
 					if (Child)
 					{
 						CachedChildren.Add(Child);
@@ -1253,14 +1346,14 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 						{
 #if WITH_EDITORONLY_DATA
 							// If we are in the middle of a transaction it isn't entirely unexpected that an AttachParent/AttachChildren pairing is wrong
-							if (!ensure(GIsTransacting))
+							if (!ensureAlwaysMsgf(GIsTransacting, TEXT("Component '%s' has '%s' in its AttachChildren array, however, '%s' believes it is attached to '%s'"), *GetFullName(), *Child->GetFullName(), *Child->GetFullName(), *Child->GetAttachParent()->GetFullName()))
 #endif
 							{
 								// We've gotten in to a bad state where the Child's AttachParent doesn't jive with the AttachChildren array
 								// so instead of crashing, output an error and gracefully handle
 								UE_LOG(LogSceneComponent, Error, TEXT("Component '%s' has '%s' in its AttachChildren array, however, '%s' believes it is attached to '%s'"), *GetFullName(), *Child->GetFullName(), *Child->GetFullName(), *Child->GetAttachParent()->GetFullName());
 							}
-							AttachChildren.Pop(false);
+							AttachChildren.Pop(EAllowShrinking::No);
 						}
 					}
 					else 
@@ -1272,12 +1365,12 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 						{
 							UE_LOG(LogSceneComponent, Error, TEXT("Component '%s' has '%s' in its AttachChildren array, however, '%s' believes it is not attached to anything"), *GetFullName(), *Child->GetFullName(), *Child->GetFullName());
 						}
-						AttachChildren.Pop(false);
+						AttachChildren.Pop(EAllowShrinking::No);
 					}
 				}
 				else
 				{
-					AttachChildren.Pop(false);
+					AttachChildren.Pop(EAllowShrinking::No);
 				}
 				ChildCount = AttachChildren.Num();
 			}
@@ -1787,7 +1880,7 @@ USceneComponent* USceneComponent::GetChildComponent(int32 ChildIndex) const
 		return nullptr;
 	}
 
-	const TArray<USceneComponent*>& AttachedChildren = GetAttachChildren();
+	const TArray<TObjectPtr<USceneComponent>>& AttachedChildren = GetAttachChildren();
 	if (ChildIndex >= AttachedChildren.Num())
 	{
 		UE_LOG(LogBlueprint, Log, TEXT("SceneComponent::GetChild called with an out of range ChildIndex: %d; Number of children is %d."), ChildIndex, AttachedChildren.Num());
@@ -3182,7 +3275,7 @@ void USceneComponent::SetVisibility(const bool bNewVisibility, const USceneCompo
 
 		while (ComponentStack.Num() > 0)
 		{
-			USceneComponent* const CurrentComp = ComponentStack.Pop(/*bAllowShrinking=*/ false);
+			USceneComponent* const CurrentComp = ComponentStack.Pop(EAllowShrinking::No);
 			if (CurrentComp)
 			{
 				ComponentStack.Append(CurrentComp->GetAttachChildren());
@@ -3228,7 +3321,7 @@ void USceneComponent::SetHiddenInGame(const bool bNewHiddenGame, const USceneCom
 
 		while (ComponentStack.Num() > 0)
 		{
-			USceneComponent* const CurrentComp = ComponentStack.Pop(/*bAllowShrinking=*/ false);
+			USceneComponent* const CurrentComp = ComponentStack.Pop(EAllowShrinking::No);
 			if (CurrentComp)
 			{
 				ComponentStack.Append(CurrentComp->GetAttachChildren());
@@ -3337,7 +3430,7 @@ void USceneComponent::OnRep_AttachChildren()
 			{
 				if (PossibleDuplicate == AttachChildren[DuplicateCheckIndex])
 				{
-					AttachChildren.RemoveAt(SearchIndex, 1, false);
+					AttachChildren.RemoveAt(SearchIndex, 1, EAllowShrinking::No);
 					break;
 				}
 			}
@@ -3371,6 +3464,18 @@ void USceneComponent::OnRep_AttachChildren()
 	{
 		if (ChildComponent)
 		{
+			// @note: When a actor's root component is flagged not to replicate it uses AActor::AttachmentReplication and
+			// when using that we'll want that to be the authority in making sure the parent component it's attached to
+			// is properly set up.
+			if (SceneComponentCVars::bCheckRootComponentReplicationOnAttachedChildren)
+			{
+				AActor* ChildOwner = ChildComponent->GetOwner();
+				if (ChildOwner && ChildOwner->GetRootComponent() == ChildComponent && !ChildComponent->GetIsReplicated())
+				{
+					continue;
+				}
+			}
+
 			if (ChildComponent->GetAttachParent() != this)
 			{
 				ChildComponent->SetAttachParent(this);

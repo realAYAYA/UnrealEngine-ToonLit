@@ -69,6 +69,7 @@ namespace UE::PixelStreaming
 		const Audio::FPatchInput& GetPatchInput() const { return PatchInput; }
 
 	private:
+		Audio::FResampler Resampler;
 		Audio::FPatchInput PatchInput;
 		uint8 NumChannels;
 		uint32 SampleRate;

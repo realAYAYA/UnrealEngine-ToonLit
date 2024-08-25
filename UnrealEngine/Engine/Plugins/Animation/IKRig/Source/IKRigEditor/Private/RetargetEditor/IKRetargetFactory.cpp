@@ -51,7 +51,7 @@ FText UIKRetargetFactory::GetToolTip() const
 
 FString UIKRetargetFactory::GetDefaultNewAssetName() const
 {
-	return FString(TEXT("NewIKRetargeter"));
+	return FString(TEXT("RTG_NewRetargeter"));
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -17,7 +17,7 @@ namespace EpicGames.Core
 	/// Standard return codes used by UBT and UHT
 	/// 
 	/// This MUST be kept in sync with EGeneratedBodyVersion defined in 
-	/// Engine\Source\Runtime\Core\Public\Misc\ComplilationResult.h.
+	/// Engine\Source\Runtime\Core\Public\Misc\CompilationResult.h
 	/// </summary>
 	public enum CompilationResult
 	{
@@ -57,9 +57,19 @@ namespace EpicGames.Core
 		OtherCompilationError = 6,
 
 		/// <summary>
-		/// Compilation failed due to live coding action limit being exceeded.
+		/// Compilation failed due to live coding action limit being exceeded
 		/// </summary>
 		LiveCodingLimitError = 7,
+
+		/// <summary>
+		/// Compilation failed due to TargetRules or ModuleRules errors
+		/// </summary>
+		RulesError = 8,
+
+		/// <summary>
+		/// Compilation failed due to invalid action graph
+		/// </summary>
+		ActionGraphInvalid = 9,
 
 		/// <summary>
 		/// Compilation is not supported in the current build
@@ -180,10 +190,9 @@ namespace EpicGames.Core
 		Interface = 0x00004000u,
 
 		/// <summary>
-		/// Do not export a constructor for this class, assuming it is in the cpptext
-		/// </summary>
-		[Obsolete("No longer used in the engine.")]
-		CustomConstructor = 0x00008000u,
+		/// Config for this class is overridden in platform inis, reload when previewing platforms
+		/// </summary>	
+		PerPlatformConfig = 0x00008000u,
 
 		/// <summary>
 		/// all properties and functions in this class are const and should be exported as const
@@ -289,7 +298,7 @@ namespace EpicGames.Core
 		/// <summary>
 		/// This is used as a mask for the flags put into generated code for "compiled in" classes.
 		/// </summary>
-		SaveInCompiledInClasses = Abstract | DefaultConfig | GlobalUserConfig | ProjectUserConfig | Config | Transient | Optional | Native | NotPlaceable | PerObjectConfig |
+		SaveInCompiledInClasses = Abstract | DefaultConfig | GlobalUserConfig | ProjectUserConfig | PerPlatformConfig | Config | Transient | Optional | Native | NotPlaceable | PerObjectConfig |
 			ConfigDoNotCheckDefaults | EditInlineNew | CollapseCategories | Interface | DefaultToInstanced | HasInstancedReference | Hidden | Deprecated |
 			HideDropDown | Intrinsic | Const | MinimalAPI | RequiredAPI | MatchedSerializers | NeedsDeferredDependencyLoading,
 	};
@@ -379,9 +388,11 @@ namespace EpicGames.Core
 		FMulticastInlineDelegateProperty = 0x0004000000000000,
 		FMulticastSparseDelegateProperty = 0x0008000000000000,
 		FFieldPathProperty = 0x0010000000000000,
-		FObjectPtrProperty = 0x0020000000000000,
-		FClassPtrProperty = 0x0040000000000000,
 		FLargeWorldCoordinatesRealProperty = 0x0080000000000000,
+		FOptionalProperty = 0x0100000000000000,
+		FVValueProperty = 0x0200000000000000,
+		UVerseVMClass = 0x0400000000000000,
+		FVRestValueProperty = 0x0800000000000000,
 		AllFlags = UInt64.MaxValue,
 	};
 
@@ -648,6 +659,21 @@ namespace EpicGames.Core
 		//~ All the other bits are reserved, DO NOT ADD NEW FLAGS HERE!
 
 		/// <summary>
+		/// One of the flags used by Garbage Collector to determine UObject's reachability state
+		/// </summary>
+		ReachabilityFlag0 = 1 << 0,
+
+		/// <summary>
+		/// One of the flags used by Garbage Collector to determine UObject's reachability state
+		/// </summary>
+		ReachabilityFlag1 = 1 << 1,
+
+		/// <summary>
+		/// Flag set on all non-root objects at the beginning of Reachability Analysis
+		/// </summary>
+		MaybeUnreachable = 1 << 19,
+
+		/// <summary>
 		/// Object is ready to be imported by another package during loading
 		/// </summary>
 		LoaderImport = 1 << 20,
@@ -688,11 +714,6 @@ namespace EpicGames.Core
 		Unreachable = 1 << 28,
 
 		/// <summary>
-		/// Objects that are pending destruction (invalid for gameplay but valid objects)
-		/// </summary>
-		PendingKill = 1 << 29,
-
-		/// <summary>
 		/// Object will not be garbage collected, even if unreferenced.
 		/// </summary>
 		RootSet = 1 << 30,
@@ -705,7 +726,7 @@ namespace EpicGames.Core
 		GarbageCollectionKeepFlags = Native | Async | AsyncLoading | LoaderImport,
 
 		//~ Make sure this is up to date!
-		AllFlags = LoaderImport | Garbage | ReachableInCluster | ClusterRoot | Native | Async | AsyncLoading | Unreachable | PendingKill | RootSet | PendingConstruction
+		AllFlags = ReachabilityFlag0 | ReachabilityFlag1 | MaybeUnreachable | LoaderImport | Garbage | ReachableInCluster | ClusterRoot | Native | Async | AsyncLoading | Unreachable | RootSet | PendingConstruction
 	};
 
 	/// <summary>
@@ -1181,6 +1202,26 @@ namespace EpicGames.Core
 		SkipSerialization = 0x0080000000000000,
 
 		/// <summary>
+		/// Property is a TObjectPtr instead of a USomething*. Need to differentiate between TObjectclassOf and TObjectPtr
+		/// </summary>
+		TObjectPtr = 0x0100000000000000,
+
+		/// <summary>
+		/// TObjectPtr properties are both wrapped and TObjectPtr
+		/// </summary>
+		TObjectPtrWrapper = TObjectPtr | UObjectWrapper,
+
+		/// <summary>
+		/// ****Experimental*** Property will use different logic to serialize knowing what changes are done against its default use the overridable information provided by the overridable manager on the object
+		/// </summary>
+		ExperimentalOverridableLogic = 0x0200000000000000,
+
+		/// <summary>
+		/// ****Experimental*** Property should never inherit from the parent when using overridable serialization
+		/// </summary>
+		ExperimentalAlwaysOverriden = 0x0400000000000000,
+
+		/// <summary>
 		/// All Native Access Specifier flags
 		/// </summary>
 		NativeAccessSpecifiers = NativeAccessSpecifierPublic | NativeAccessSpecifierProtected | NativeAccessSpecifierPrivate,
@@ -1193,22 +1234,27 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Flags that are propagated to properties inside array container
 		/// </summary>
-		PropagateToArrayInner =	ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper,
+		PropagateToArrayInner =	ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | TObjectPtr,
+
+		/// <summary>
+		/// Flags that are propagated to properties inside optional container
+		/// </summary>
+		PropagateToOptionalInner = ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | Edit,
 
 		/// <summary>
 		/// Flags that are propagated to value properties inside map container
 		/// </summary>
-		PropagateToMapValue = ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | Edit,
+		PropagateToMapValue = ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | TObjectPtr | Edit,
 
 		/// <summary>
 		/// Flags that are propagated to key properties inside map container
 		/// </summary>
-		PropagateToMapKey = ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | Edit,
+		PropagateToMapKey = ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | TObjectPtr | Edit,
 
 		/// <summary>
 		/// Flags that are propagated to properties inside set container
 		/// </summary>
-		PropagateToSetElement = ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | Edit,
+		PropagateToSetElement = ExportObject | PersistentInstance | InstancedReference | ContainsInstancedReference | Config | EditConst | Deprecated | EditorOnly | AutoWeak | UObjectWrapper | TObjectPtr | Edit,
 
 		/// <summary>
 		/// The flags that should never be set on interface properties

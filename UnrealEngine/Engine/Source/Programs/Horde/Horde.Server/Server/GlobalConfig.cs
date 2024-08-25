@@ -6,30 +6,79 @@ using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Net;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
 using EpicGames.Core;
-using EpicGames.Horde.Api;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Agents.Pools;
+using EpicGames.Horde.Artifacts;
 using EpicGames.Horde.Common;
 using EpicGames.Horde.Compute;
+using EpicGames.Horde.Devices;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Secrets;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Telemetry;
+using EpicGames.Horde.Tools;
+using EpicGames.Horde.Users;
 using EpicGames.Perforce;
 using EpicGames.Serialization;
 using Horde.Server.Acls;
+using Horde.Server.Agents;
 using Horde.Server.Agents.Pools;
-using Horde.Server.Agents.Software;
-using Horde.Server.Artifacts;
 using Horde.Server.Configuration;
+using Horde.Server.Dashboard;
+using Horde.Server.Devices;
 using Horde.Server.Projects;
 using Horde.Server.Secrets;
 using Horde.Server.Storage;
 using Horde.Server.Streams;
+using Horde.Server.Telemetry.Metrics;
 using Horde.Server.Tools;
-using Horde.Server.Users;
 using Horde.Server.Utilities;
-using Microsoft.Extensions.Configuration;
 
 namespace Horde.Server.Server
 {
+	using JsonObject = System.Text.Json.Nodes.JsonObject;
+
+#pragma warning disable CA1027 // Mark enums with FlagsAttribute
+#pragma warning disable CA1069 // Enum member 'Latest' has same value as ...
+	/// <summary>
+	/// Global version number for running the server. As new features are introduced that require data migrations, this version number indicates the backwards compatibility functionality that must be enabled.
+	/// When adding a new version here, also add a message to <see cref="ConfigService.CreateSnapshotAsync"/> describing the steps that need to be taken to upgrade the deployment.
+	/// </summary>
+	public enum GlobalVersion
+	{
+		/// <summary>
+		/// Not specified
+		/// </summary>
+		None,
+
+		/// <summary>
+		/// Initial version number
+		/// </summary>
+		Initial,
+
+		/// <summary>
+		/// Ability to add/remove pools via the REST API is removed. Pools should be configured through globals.json instead.
+		/// </summary>
+		PoolsInConfigFiles,
+
+		/// <summary>
+		/// One after the last defined version number
+		/// </summary>
+		LatestPlusOne,
+
+		/// <summary>
+		/// Latest version number
+		/// </summary>
+		Latest = (int)LatestPlusOne - 1,
+	}
+#pragma warning restore CA1069
+#pragma warning restore CA1027
+
 	/// <summary>
 	/// Directive to merge config data from another source
 	/// </summary>
@@ -44,42 +93,6 @@ namespace Horde.Server.Server
 	}
 
 	/// <summary>
-	/// Configuration for global features
-	/// </summary>
-	public class DashboardConfig
-	{
-		/// <summary>
-		/// Navigate to the landing page by default
-		/// </summary>
-		public bool ShowLandingPage { get; set; } = false;
-
-		/// <summary>
-		/// Enable CI functionality
-		/// </summary>
-		public bool ShowCI { get; set; } = true;
-
-		/// <summary>
-		/// Whether to show functionality related to agents, pools, and utilization on the dashboard.
-		/// </summary>
-		public bool ShowAgents { get; set; } = true;
-
-		/// <summary>
-		/// Show the Perforce server option on the server menu
-		/// </summary>
-		public bool ShowPerforceServers { get; set; } = true;
-
-		/// <summary>
-		/// Show the device manager on the server menu
-		/// </summary>
-		public bool ShowDeviceManager { get; set; } = true;
-
-		/// <summary>
-		/// Show automated tests on the server menu
-		/// </summary>
-		public bool ShowTests { get; set; } = true;
-	}
-
-	/// <summary>
 	/// Configuration for an artifact
 	/// </summary>
 	public class ArtifactTypeConfig
@@ -87,7 +100,22 @@ namespace Horde.Server.Server
 		/// <summary>
 		/// Name of the artifact type
 		/// </summary>
-		public ArtifactType Name { get; set; }
+		public ArtifactType Type { get; set; }
+
+		/// <summary>
+		/// Legacy 'Name' property
+		/// </summary>
+		[Obsolete("Use Type instead")]
+		public ArtifactType Name
+		{
+			get => Type;
+			set => Type = value;
+		}
+
+		/// <summary>
+		/// Number of artifacts to retain
+		/// </summary>
+		public int? KeepCount { get; set; }
 
 		/// <summary>
 		/// Number of days to retain artifacts of this type
@@ -99,23 +127,16 @@ namespace Horde.Server.Server
 	/// Global configuration
 	/// </summary>
 	[JsonSchema("https://unrealengine.com/horde/global")]
-	[JsonSchemaCatalog("Horde Globals", "Horde global configuration file", "globals.json")]
+	[JsonSchemaCatalog("Horde Globals", "Horde global configuration file", new[] { "globals.json", "*.global.json" })]
 	[ConfigIncludeRoot]
-	public class GlobalConfig : IAclScope
+	[ConfigMacroScope]
+	public class GlobalConfig
 	{
 		/// <summary>
 		/// Global server settings object
 		/// </summary>
 		[JsonIgnore]
 		public ServerSettings ServerSettings { get; private set; } = null!;
-
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public IAclScope ParentScope => ServerSettings;
-
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public AclScopeName ScopeName => ServerSettings.ScopeName;
 
 		/// <summary>
 		/// Unique identifier for this config revision. Useful to detect changes.
@@ -124,9 +145,25 @@ namespace Horde.Server.Server
 		public string Revision { get; set; } = String.Empty;
 
 		/// <summary>
+		/// Version number for the server. Values are indicated by the <see cref="GlobalVersion"/>.
+		/// </summary>
+		public int Version { get; set; }
+
+		/// <summary>
+		/// Version number for the server, as an enum.
+		/// </summary>
+		[JsonIgnore]
+		public GlobalVersion VersionEnum => (GlobalVersion)Version;
+
+		/// <summary>
 		/// Other paths to include
 		/// </summary>
 		public List<ConfigInclude> Include { get; set; } = new List<ConfigInclude>();
+
+		/// <summary>
+		/// Macros within the global scope
+		/// </summary>
+		public List<ConfigMacro> Macros { get; set; } = new List<ConfigMacro>();
 
 		/// <summary>
 		/// Settings for the dashboard
@@ -164,6 +201,11 @@ namespace Horde.Server.Server
 		public List<AgentRateConfig> Rates { get; set; } = new List<AgentRateConfig>();
 
 		/// <summary>
+		/// List of networks
+		/// </summary>
+		public List<NetworkConfig> Networks { get; set; } = new List<NetworkConfig>();
+
+		/// <summary>
 		/// List of compute profiles
 		/// </summary>
 		public List<ComputeClusterConfig> Compute { get; set; } = new List<ComputeClusterConfig>();
@@ -187,7 +229,7 @@ namespace Horde.Server.Server
 		/// Maximum number of conforms to run at once
 		/// </summary>
 		public int MaxConformCount { get; set; }
-		
+
 		/// <summary>
 		/// Time to wait before shutting down an agent that has been disabled
 		/// Used if no value is set on the actual pool.
@@ -205,9 +247,25 @@ namespace Horde.Server.Server
 		public List<ArtifactTypeConfig> ArtifactTypes { get; set; } = new List<ArtifactTypeConfig>();
 
 		/// <summary>
+		/// Metrics to aggregate on the Horde server
+		/// </summary>
+		public List<TelemetryStoreConfig> TelemetryStores { get; set; } = new List<TelemetryStoreConfig>();
+
+		/// <summary>
+		/// General parameters for other tools. Can be queried through the api/v1/parameters endpoint.
+		/// </summary>
+		public JsonObject Parameters { get; set; } = new JsonObject();
+
+		/// <summary>
 		/// Access control list
 		/// </summary>
 		public AclConfig Acl { get; set; } = new AclConfig();
+
+		/// <summary>
+		/// Accessor for the ACL scope lookup
+		/// </summary>
+		[JsonIgnore]
+		public IReadOnlyDictionary<AclScopeName, AclConfig> AclScopes => _aclLookup;
 
 		/// <summary>
 		/// Enumerates all the streams
@@ -219,9 +277,15 @@ namespace Horde.Server.Server
 		private readonly Dictionary<StreamId, StreamConfig> _streamLookup = new Dictionary<StreamId, StreamConfig>();
 		private readonly Dictionary<ToolId, ToolConfig> _toolLookup = new Dictionary<ToolId, ToolConfig>();
 		private readonly Dictionary<ClusterId, ComputeClusterConfig> _computeClusterLookup = new Dictionary<ClusterId, ComputeClusterConfig>();
-		private readonly Dictionary<AclScopeName, IAclScope> _aclScopeLookup = new Dictionary<AclScopeName, IAclScope>();
+		private readonly Dictionary<AclScopeName, AclConfig> _aclLookup = new Dictionary<AclScopeName, AclConfig>();
 		private readonly Dictionary<ArtifactType, ArtifactTypeConfig> _artifactTypeLookup = new Dictionary<ArtifactType, ArtifactTypeConfig>();
 		private readonly Dictionary<SecretId, SecretConfig> _secretLookup = new Dictionary<SecretId, SecretConfig>();
+		private readonly Dictionary<PoolId, PoolConfig> _poolLookup = new Dictionary<PoolId, PoolConfig>();
+		private readonly Dictionary<TelemetryStoreId, TelemetryStoreConfig> _telemetryStoreLookup = new Dictionary<TelemetryStoreId, TelemetryStoreConfig>();
+
+		/// <inheritdoc cref="AclConfig.Authorize(AclAction, ClaimsPrincipal)"/>
+		public bool Authorize(AclAction action, ClaimsPrincipal user)
+			=> Acl.Authorize(action, user);
 
 		/// <summary>
 		/// Called after the config file has been read
@@ -229,6 +293,9 @@ namespace Horde.Server.Server
 		public void PostLoad(ServerSettings serverSettings)
 		{
 			ServerSettings = serverSettings;
+
+			AclConfig defaultAcl = AclConfig.CreateRoot();
+			Acl.PostLoad(defaultAcl, defaultAcl.ScopeName);
 
 			Streams = Projects.SelectMany(x => x.Streams).ToList();
 
@@ -259,25 +326,10 @@ namespace Horde.Server.Server
 				computeCluster.PostLoad(this);
 			}
 
-			_aclScopeLookup.Clear();
-			_aclScopeLookup.Add(ScopeName, this);
-			foreach (ProjectConfig project in Projects)
-			{
-				_aclScopeLookup.Add(project.ScopeName, project);
-				foreach (StreamConfig stream in project.Streams)
-				{
-					_aclScopeLookup.Add(stream.ScopeName, stream);
-					foreach (TemplateRefConfig template in stream.Templates)
-					{
-						_aclScopeLookup.Add(template.ScopeName, template);
-					}
-				}
-			}
-
 			_artifactTypeLookup.Clear();
 			foreach (ArtifactTypeConfig artifactType in ArtifactTypes)
 			{
-				_artifactTypeLookup.Add(artifactType.Name, artifactType);
+				_artifactTypeLookup.Add(artifactType.Type, artifactType);
 			}
 
 			_secretLookup.Clear();
@@ -287,7 +339,116 @@ namespace Horde.Server.Server
 				secret.PostLoad(this);
 			}
 
+			_poolLookup.Clear();
+			foreach (PoolConfig pool in Pools)
+			{
+				_poolLookup.Add(pool.Id, pool);
+			}
+			ConfigType.MergeDefaults<string, PoolConfig>(Pools.Select(x => (x.Id.ToString(), x.Base?.ToString(), x)));
+			UpdateWorkspacesForPools();
+
+			_telemetryStoreLookup.Clear();
+			foreach (TelemetryStoreConfig telemetryStore in TelemetryStores)
+			{
+				_telemetryStoreLookup.Add(telemetryStore.Id, telemetryStore);
+				telemetryStore.PostLoad(this);
+			}
+
 			Storage.PostLoad(this);
+
+			_aclLookup.Clear();
+			BuildAclScopeLookup(Acl, _aclLookup);
+
+			foreach (ProjectConfig project in Projects)
+			{
+				AclScopeName legacyProjectScopeName = Acl.ScopeName.Append($"p:{project.Id}");
+				_aclLookup.Add(legacyProjectScopeName, project.Acl);
+
+				foreach (StreamConfig stream in project.Streams)
+				{
+					AclScopeName legacyStreamScopeName = Acl.ScopeName.Append($"s:{stream.Id}");
+					_aclLookup.Add(legacyStreamScopeName, stream.Acl);
+
+					foreach (TemplateRefConfig template in stream.Templates)
+					{
+						AclScopeName legacyTemplateScopeName = legacyStreamScopeName.Append($"t:{template.Id}");
+						_aclLookup.Add(legacyTemplateScopeName, template.Acl);
+					}
+				}
+			}
+		}
+
+		static void BuildAclScopeLookup(AclConfig acl, Dictionary<AclScopeName, AclConfig> aclLookup)
+		{
+			aclLookup.Add(acl.ScopeName, acl);
+			if (acl.Children != null)
+			{
+				foreach (AclConfig childAcl in acl.Children)
+				{
+					BuildAclScopeLookup(childAcl, aclLookup);
+				}
+			}
+		}
+
+		void UpdateWorkspacesForPools()
+		{
+			// Lookup table of pool id to workspaces
+			Dictionary<PoolId, AutoSdkConfig> poolToAutoSdkView = new Dictionary<PoolId, AutoSdkConfig>();
+			Dictionary<PoolId, List<AgentWorkspaceInfo>> poolToAgentWorkspaces = new Dictionary<PoolId, List<AgentWorkspaceInfo>>();
+
+			// Populate the workspace list from the current stream
+			foreach (StreamConfig streamConfig in Streams)
+			{
+				foreach (KeyValuePair<string, AgentConfig> agentTypePair in streamConfig.AgentTypes)
+				{
+					// Create the new agent workspace
+					if (streamConfig.TryGetAgentWorkspace(agentTypePair.Value, out AgentWorkspaceInfo? agentWorkspace, out AutoSdkConfig? autoSdkConfig))
+					{
+						AgentConfig agentType = agentTypePair.Value;
+
+						// Find or add a list of workspaces for this pool
+						List<AgentWorkspaceInfo>? agentWorkspaces;
+						if (!poolToAgentWorkspaces.TryGetValue(agentType.Pool, out agentWorkspaces))
+						{
+							agentWorkspaces = new List<AgentWorkspaceInfo>();
+							poolToAgentWorkspaces.Add(agentType.Pool, agentWorkspaces);
+						}
+
+						// Add it to the list
+						if (!agentWorkspaces.Contains(agentWorkspace))
+						{
+							agentWorkspaces.Add(agentWorkspace);
+						}
+						if (autoSdkConfig != null)
+						{
+							AutoSdkConfig? existingAutoSdkConfig;
+							poolToAutoSdkView.TryGetValue(agentType.Pool, out existingAutoSdkConfig);
+							poolToAutoSdkView[agentType.Pool] = AutoSdkConfig.Merge(autoSdkConfig, existingAutoSdkConfig);
+						}
+					}
+				}
+			}
+
+			// Update the list of workspaces for each pool
+			foreach (PoolConfig pool in Pools)
+			{
+				// Get the new list of workspaces for this pool
+				List<AgentWorkspaceInfo>? newWorkspaces;
+				if (!poolToAgentWorkspaces.TryGetValue(pool.Id, out newWorkspaces))
+				{
+					newWorkspaces = new List<AgentWorkspaceInfo>();
+				}
+
+				// Get the autosdk view
+				AutoSdkConfig? newAutoSdkConfig;
+				if (!poolToAutoSdkView.TryGetValue(pool.Id, out newAutoSdkConfig))
+				{
+					newAutoSdkConfig = AutoSdkConfig.None;
+				}
+
+				pool.Workspaces = newWorkspaces;
+				pool.AutoSdkConfig = newAutoSdkConfig;
+			}
 		}
 
 		/// <summary>
@@ -319,8 +480,8 @@ namespace Horde.Server.Server
 		/// </summary>
 		/// <param name="streamId">The stream identifier</param>
 		/// <param name="templateId">Template identifier</param>
-		/// <param name="config">Configuration for the stream</param>
-		/// <returns>True if the stream configuration was found</returns>
+		/// <param name="config">Configuration for the template</param>
+		/// <returns>True if the template configuration was found</returns>
 		public bool TryGetTemplate(StreamId streamId, TemplateId templateId, [NotNullWhen(true)] out TemplateRefConfig? config)
 		{
 			if (!_streamLookup.TryGetValue(streamId, out StreamConfig? streamConfig))
@@ -335,9 +496,79 @@ namespace Horde.Server.Server
 		/// Attempts to get configuration for a tool from this object
 		/// </summary>
 		/// <param name="toolId">The tool identifier</param>
-		/// <param name="config">Configuration for the stream</param>
-		/// <returns>True if the stream configuration was found</returns>
+		/// <param name="config">Configuration for the tool</param>
+		/// <returns>True if the tool configuration was found</returns>
 		public bool TryGetTool(ToolId toolId, [NotNullWhen(true)] out ToolConfig? config) => _toolLookup.TryGetValue(toolId, out config);
+
+		/// <summary>
+		/// Attempts to get configuration for a pool from this object
+		/// </summary>
+		/// <param name="poolId">The pool identifier</param>
+		/// <param name="config">Configuration for the pool</param>
+		/// <returns>True if the pool configuration was found</returns>
+		public bool TryGetPool(PoolId poolId, [NotNullWhen(true)] out PoolConfig? config) => _poolLookup.TryGetValue(poolId, out config);
+
+		/// <summary>
+		/// Attempts to get configuration for a pool from this object
+		/// </summary>
+		/// <param name="telemetryStoreId">The pool identifier</param>
+		/// <param name="config">Configuration for the telemetry store</param>
+		/// <returns>True if the telemetry configuration was found</returns>
+		public bool TryGetTelemetryStore(TelemetryStoreId telemetryStoreId, [NotNullWhen(true)] out TelemetryStoreConfig? config) => _telemetryStoreLookup.TryGetValue(telemetryStoreId, out config);
+
+		/// <summary>
+		/// Attempt to resolve an IP address to a network config
+		/// </summary>
+		/// <param name="ip">IP address to resolve</param>
+		/// <param name="networkConfig">Config for the network</param>
+		/// <returns>True if the IP address was resolved</returns>
+		public bool TryGetNetworkConfig(IPAddress ip, [NotNullWhen(true)] out NetworkConfig? networkConfig)
+		{
+			foreach (NetworkConfig nc in Networks)
+			{
+				if (nc.Id != null && IsIpInBlock(ip, nc.CidrBlock))
+				{
+					networkConfig = nc;
+					return true;
+				}
+			}
+
+			networkConfig = null;
+			return false;
+		}
+
+		private static bool IsIpInBlock(IPAddress ip, string? cidrBlock)
+		{
+			if (cidrBlock == null)
+			{
+				return false;
+			}
+
+			if (cidrBlock == "0.0.0.0/0")
+			{
+				return true;
+			}
+
+			string[] parts = cidrBlock.Split('/');
+			if (parts.Length != 2 || !IPAddress.TryParse(parts[0], out IPAddress? address) || !Int32.TryParse(parts[1], out int maskBits))
+			{
+				return false;
+			}
+
+			byte[] networkPrefixBytes = address.GetAddressBytes();
+			Array.Reverse(networkPrefixBytes);
+
+			uint networkPrefix = BitConverter.ToUInt32(networkPrefixBytes, 0);
+			uint subnetMask = 0xffffffff;
+			subnetMask <<= 32 - maskBits;
+			uint ipRangeStart = networkPrefix & subnetMask;
+			uint ipRangeEnd = networkPrefix | (subnetMask ^ 0xffffffff);
+
+			byte[] ipBytes = ip.GetAddressBytes();
+			Array.Reverse(ipBytes);
+			uint ipUint = BitConverter.ToUInt32(ipBytes, 0);
+			return ipUint > ipRangeStart && ipUint <= ipRangeEnd;
+		}
 
 		/// <summary>
 		/// Attempts to get compute cluster configuration from this object
@@ -359,11 +590,21 @@ namespace Horde.Server.Server
 		/// Authorizes a user to perform a given action
 		/// </summary>
 		/// <param name="scopeName">Name of the scope to auth against</param>
+		/// <param name="scopeConfig">Configuration for the scope</param>
+		public bool TryGetAclScope(AclScopeName scopeName, [NotNullWhen(true)] out AclConfig? scopeConfig)
+		{
+			return _aclLookup.TryGetValue(scopeName, out scopeConfig);
+		}
+
+		/// <summary>
+		/// Authorizes a user to perform a given action
+		/// </summary>
+		/// <param name="scopeName">Name of the scope to auth against</param>
 		/// <param name="action">The action being performed</param>
 		/// <param name="user">The principal to validate</param>
 		public bool Authorize(AclScopeName scopeName, AclAction action, ClaimsPrincipal user)
 		{
-			return _aclScopeLookup.TryGetValue(scopeName, out IAclScope? scope) && scope.Authorize(action, user);
+			return _aclLookup.TryGetValue(scopeName, out AclConfig? scopeConfig) && scopeConfig.Authorize(action, user);
 		}
 
 		/// <summary>
@@ -445,6 +686,44 @@ namespace Horde.Server.Server
 
 			return new List<PerforceCluster> { cluster };
 		}
+
+		IReadOnlyList<string>? _cachedGroupClaims;
+
+		/// <summary>
+		/// Gets all the valid <see cref="HordeClaimTypes.Group"/> claims referenced by ACL entries within the config object.
+		/// </summary>
+		public IReadOnlyList<string> GetValidAccountGroupClaims()
+		{
+			if (_cachedGroupClaims == null)
+			{
+				HashSet<string> groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				FindGroupClaimsFromObject(Acl, groups);
+				_cachedGroupClaims = groups.ToArray();
+			}
+			return _cachedGroupClaims;
+		}
+
+		static void FindGroupClaimsFromObject(AclConfig config, HashSet<string> groups)
+		{
+			if (config.Entries != null)
+			{
+				foreach (AclEntryConfig entry in config.Entries)
+				{
+					AclClaimConfig claim = entry.Claim;
+					if (claim.Type.Equals(HordeClaimTypes.Group, StringComparison.OrdinalIgnoreCase))
+					{
+						groups.Add(claim.Value);
+					}
+				}
+			}
+			if (config.Children != null)
+			{
+				foreach (AclConfig childConfig in config.Children)
+				{
+					FindGroupClaimsFromObject(childConfig, groups);
+				}
+			}
+		}
 	}
 
 	/// <summary>
@@ -487,7 +766,7 @@ namespace Horde.Server.Server
 		/// <summary>
 		/// Access control list
 		/// </summary>
-		public AclConfig? Acl { get; set; }
+		public AclConfig Acl { get; set; } = new AclConfig();
 
 		/// <summary>
 		/// Callback post loading this config file
@@ -496,6 +775,7 @@ namespace Horde.Server.Server
 		public void PostLoad(GlobalConfig globalConfig)
 		{
 			GlobalConfig = globalConfig;
+			Acl.PostLoad(globalConfig.Acl, $"compute:{Id}");
 		}
 
 		/// <summary>
@@ -513,22 +793,67 @@ namespace Horde.Server.Server
 	/// Configuration for a device platform 
 	/// </summary>
 	[DebuggerDisplay("{Id}")]
-	public class DevicePlatformConfig
+	public class DevicePlatformConfig : IDevicePlatform
 	{
 		/// <summary>
 		/// The id for this platform 
 		/// </summary>
-		public string Id { get; set; } = String.Empty;
+		[Required]
+		public DevicePlatformId Id { get; set; } = new DevicePlatformId("default");
 
 		/// <summary>
-		/// List of platform names for this device, which may be requested by Gauntlet 
+		/// Name of the platform
 		/// </summary>
-		public List<string> Names { get; set; } = new List<string>();
+		[Required]
+		public string Name { get; set; } = String.Empty;
 
 		/// <summary>
-		/// Model name for the high perf spec, which may be requested by Gauntlet (Deprecated)
+		/// A list of platform models 
+		/// </summary>
+		public List<string>? Models { get; set; }
+		IReadOnlyList<string>? IDevicePlatform.Models => Models;
+
+		/// <summary>
+		/// Legacy names which older versions of Gauntlet may be using
+		/// </summary>
+		public List<string>? LegacyNames { get; set; }
+		IReadOnlyList<string>? IDevicePlatform.LegacyNames => LegacyNames;
+
+		/// <summary>
+		/// Model name for the high perf spec, which may be requested by Gauntlet
 		/// </summary>
 		public string? LegacyPerfSpecHighModel { get; set; }
+	}
+
+	/// <summary>
+	/// Configuration for a device pool
+	/// </summary>
+	[DebuggerDisplay("{Id}")]
+	public class DevicePoolConfig : IDevicePool
+	{
+		/// <summary>
+		/// The id for this platform 
+		/// </summary>
+		[Required]
+		public DevicePoolId Id { get; set; } = new DevicePoolId("default");
+
+		/// <summary>
+		/// The name of the pool
+		/// </summary>
+		[Required]
+		public string Name { get; set; } = String.Empty;
+
+		/// <summary>
+		/// The type of the pool
+		/// </summary>
+		[Required]
+		[JsonConverter(typeof(JsonStringEnumConverter))]
+		public DevicePoolType PoolType { get; set; } = DevicePoolType.Automation;
+
+		/// <summary>
+		/// List of project ids associated with pool
+		/// </summary>
+		public List<ProjectId>? ProjectIds { get; set; }
 	}
 
 	/// <summary>
@@ -540,6 +865,12 @@ namespace Horde.Server.Server
 		/// List of device platforms
 		/// </summary>
 		public List<DevicePlatformConfig> Platforms { get; set; } = new List<DevicePlatformConfig>();
+
+		/// <summary>
+		/// List of device pools
+		/// </summary>
+		public List<DevicePoolConfig> Pools { get; set; } = new List<DevicePoolConfig>();
+
 	}
 
 	/// <summary>
@@ -560,7 +891,7 @@ namespace Horde.Server.Server
 	}
 
 	/// <summary>
-	/// Describes the monetary cost of agents matching a particular criteris
+	/// Describes the monetary cost of agents matching a particular criteria
 	/// </summary>
 	public class AgentRateConfig
 	{
@@ -575,6 +906,37 @@ namespace Horde.Server.Server
 		/// </summary>
 		[CbField("r")]
 		public double Rate { get; set; }
+	}
+
+	/// <summary>
+	/// Describes a network
+	/// The ID describes any logical grouping, such as region, availability zone, rack or office location. 
+	/// </summary>
+	public class NetworkConfig
+	{
+		/// <summary>
+		/// ID for this network
+		/// </summary>
+		[CbField("id")]
+		public string? Id { get; set; }
+
+		/// <summary>
+		/// CIDR block
+		/// </summary>
+		[CbField("cb")]
+		public string? CidrBlock { get; set; }
+
+		/// <summary>
+		/// Human-readable description
+		/// </summary>
+		[CbField("d")]
+		public string? Description { get; set; }
+
+		/// <summary>
+		/// Compute ID for this network (used when allocating compute resources)
+		/// </summary>
+		[CbField("cid")]
+		public string? ComputeId { get; set; }
 	}
 
 	/// <summary>
@@ -765,7 +1127,12 @@ namespace Horde.Server.Server
 		/// <summary>
 		/// Password for the user
 		/// </summary>
-		public string Password { get; set; } = String.Empty;
+		public string? Password { get; set; } = String.Empty;
+
+		/// <summary>
+		/// Login ticket for the user (will be used instead of password if set)
+		/// </summary>
+		public string? Ticket { get; set; } = String.Empty;
 	}
 
 	/// <summary>
@@ -786,7 +1153,7 @@ namespace Horde.Server.Server
 		public string Name { get; set; } = null!;
 
 		/// <summary>
-		/// Username for Horde to log in to this server. Will use the default user if not set.
+		/// Username for Horde to log in to this server. Will use the first account specified below if not overridden.
 		/// </summary>
 		public string? ServiceAccount { get; set; }
 
@@ -794,6 +1161,11 @@ namespace Horde.Server.Server
 		/// Whether the service account can impersonate other users
 		/// </summary>
 		public bool CanImpersonate { get; set; } = true;
+
+		/// <summary>
+		/// Whether to use partitioned workspaces on this server
+		/// </summary>
+		public bool SupportsPartitionedWorkspaces { get; set; } = false;
 
 		/// <summary>
 		/// List of servers

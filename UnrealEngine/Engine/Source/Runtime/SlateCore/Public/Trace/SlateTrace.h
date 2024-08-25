@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ProfilingDebugging/TraceAuxiliary.h"
 #include "Trace/Config.h"
 #include "Trace/Trace.h"
 
@@ -58,17 +59,34 @@ public:
 	};
 
 	SLATECORE_API static void ApplicationTickAndDrawWidgets(float DeltaTime);
+	SLATECORE_API static void ApplicationRegisterTraceEvents(FSlateApplicationBase& SlateApplication);
 	SLATECORE_API static void WidgetInvalidated(const SWidget* Widget, const SWidget* Investigator, EInvalidateWidgetReason Reason);
 	SLATECORE_API static void RootInvalidated(const SWidget* Widget, const SWidget* Investigator);
 	SLATECORE_API static void RootChildOrderInvalidated(const SWidget* Widget, const SWidget* Investigator);
 
+	/** Called in widget ctor */
 	static void AddWidget(const SWidget* Widget);
+
+	/** Called as part of TSlateDecl widget creation (SNew, SAssignNew, SArgumentNew) */
 	static void UpdateWidgetInfo(const SWidget* Widget);
+
+	/** Called in widget dtor */
 	static void RemoveWidget(const SWidget* Widget);
 
 private:
-	static void OutputWidgetPaint(const SWidget* Widget, uint64 StartCycle, uint64 EndCycle, uint32 PaintCount);
+
+	/** Called on all widget updates except for Add & Remove to ensure that trace WidgetInfo is populated */
+	static void ConditionallyUpdateWidgetInfo(const SWidget* Widget);
+
+	/** Called on all widget updates except for Add & Remove to ensure that trace WidgetInfo is populated */
+	static void HandleOnTraceStarted(FTraceAuxiliary::EConnectionType TraceType, const FString& TraceDestination);
+
+	/** Used to log a particular widget update, tick timer, repaint, volatile prepass, etc. See: 'EWidgetUpdateFlags' for more info */
 	static void OutputWidgetUpdate(const SWidget* Widget, uint64 StartCycle, uint64 EndCycle, EWidgetUpdateFlags UpdateFlags, uint32 AffectedCount);
+
+private:
+	/** Counter for number of traces started, used to conditionally re-send widget infos as needed */
+	static uint8 TraceCounter;
 };
 
 #define UE_TRACE_SLATE_BOOKMARK(Format, ...) \
@@ -78,6 +96,9 @@ private:
 	}
 #define UE_TRACE_SLATE_APPLICATION_TICK_AND_DRAW_WIDGETS(DeltaTime) \
 	FSlateTrace::ApplicationTickAndDrawWidgets(DeltaTime);
+
+#define UE_TRACE_SLATE_APPLICATION_REGISTER_TRACE_EVENTS(SlateApplication) \
+	FSlateTrace::ApplicationRegisterTraceEvents(SlateApplication);
 	
 #define UE_TRACE_SLATE_WIDGET_ADDED(Widget) \
 	FSlateTrace::AddWidget(Widget);
@@ -107,6 +128,7 @@ private:
 
 #define UE_TRACE_SLATE_BOOKMARK(...)
 #define UE_TRACE_SLATE_APPLICATION_TICK_AND_DRAW_WIDGETS(DeltaTime)
+#define UE_TRACE_SLATE_APPLICATION_REGISTER_TRACE_EVENTS(SlateApplication)
 #define UE_TRACE_SLATE_WIDGET_ADDED(Widget)
 #define UE_TRACE_SLATE_WIDGET_DEBUG_INFO(Widget)
 #define UE_TRACE_SLATE_WIDGET_REMOVED(Widget)

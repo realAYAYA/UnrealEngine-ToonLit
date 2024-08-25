@@ -2,143 +2,90 @@
 
 using System;
 using System.Collections.Generic;
-using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 namespace EpicGames.Horde.Storage
 {
 	/// <summary>
-	/// Base exception for the storage service
-	/// </summary>
-	public class StorageException : Exception
-	{
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		public StorageException(string message)
-			: base(message)
-		{
-		}
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		public StorageException(string message, Exception? innerException)
-			: base(message, innerException)
-		{
-		}
-	}
-
-	/// <summary>
-	/// Exception for a ref not existing
-	/// </summary>
-	public sealed class RefNameNotFoundException : StorageException
-	{
-		/// <summary>
-		/// Name of the missing ref
-		/// </summary>
-		public RefName Name { get; }
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		/// <param name="name"></param>
-		public RefNameNotFoundException(RefName name)
-			: base($"Ref name '{name}' not found")
-		{
-			Name = name;
-		}
-	}
-
-	/// <summary>
 	/// Options for a new ref
 	/// </summary>
-	public class RefOptions
-	{
-		/// <summary>
-		/// Time until a ref is expired
-		/// </summary>
-		public TimeSpan? Lifetime { get; set; }
-
-		/// <summary>
-		/// Whether to extend the remaining lifetime of a ref whenever it is fetched. Defaults to true.
-		/// </summary>
-		public bool? Extend { get; set; }
-	}
+	/// <param name="Lifetime">Time until a ref is expired</param>
+	/// <param name="Extend">Whether to extend the remaining lifetime of a ref whenever it is fetched. Defaults to true.</param>
+	public record class RefOptions(TimeSpan? Lifetime = null, bool? Extend = null);
 
 	/// <summary>
-	/// Base interface for a low-level storage backend. Blobs added to this store are not content addressed, but referenced by <see cref="BlobLocator"/>.
+	/// Interface for the storage system.
 	/// </summary>
-	public interface IStorageClient
+	public interface IStorageClient : IDisposable
 	{
 		#region Blobs
 
 		/// <summary>
-		/// Reads raw data for a blob from the store
+		/// Creates a new blob handle by parsing a locator
 		/// </summary>
-		/// <param name="locator">The blob locator</param>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <returns>Stream containing the data</returns>
-		Task<Stream> ReadBlobAsync(BlobLocator locator, CancellationToken cancellationToken = default);
+		/// <param name="locator">Path to the blob</param>
+		/// <returns>New handle to the blob</returns>
+		IBlobHandle CreateBlobHandle(BlobLocator locator);
 
 		/// <summary>
-		/// Reads a ranged chunk from a blob
+		/// Creates a new blob reference from a locator and hash
 		/// </summary>
-		/// <param name="locator">Locator for the blob</param>
-		/// <param name="offset">Starting offset for the data to read</param>
-		/// <param name="length">Length of the data</param>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		Task<Stream> ReadBlobRangeAsync(BlobLocator locator, int offset, int length, CancellationToken cancellationToken = default);
+		/// <param name="hash">Hash of the target blob</param>
+		/// <param name="locator">Path to the blob</param>
+		/// <returns>New handle to the blob</returns>
+		IBlobRef CreateBlobRef(IoHash hash, BlobLocator locator);
 
 		/// <summary>
-		/// Writes a new blob to the store
+		/// Creates a new blob reference from a locator and hash
 		/// </summary>
-		/// <param name="stream">Blob data</param>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <param name="prefix">Prefix for blob names. While the returned BlobId is guaranteed to be unique, this name can be used as a prefix to aid debugging.</param>
-		/// <returns>Unique identifier for the blob</returns>
-		Task<BlobLocator> WriteBlobAsync(Stream stream, Utf8String prefix = default, CancellationToken cancellationToken = default);
-
-		#endregion
-
-		#region Nodes
+		/// <param name="hash">Hash of the target blob</param>
+		/// <param name="locator">Path to the blob</param>
+		/// <param name="serializerOptions">Options for deserializing the blob</param>
+		/// <returns>New handle to the blob</returns>
+		IBlobRef<T> CreateBlobRef<T>(IoHash hash, BlobLocator locator, BlobSerializerOptions? serializerOptions = null);
 
 		/// <summary>
-		/// Creates a new writer for storage nodes
+		/// Creates a new writer for storage blobs
 		/// </summary>
-		/// <param name="refName">Name of the ref being written.</param>
+		/// <param name="basePath">Base path for any nodes written from the writer.</param>
+		/// <param name="serializerOptions">Options for serializing classes</param>
 		/// <returns>New writer instance. Must be disposed after use.</returns>
-		IStorageWriter CreateWriter(RefName refName = default);
+		IBlobWriter CreateBlobWriter(string? basePath = null, BlobSerializerOptions? serializerOptions = null);
 
 		#endregion
 
 		#region Aliases
 
 		/// <summary>
-		/// Adds an alias to a given node
+		/// Adds an alias to a given blob
 		/// </summary>
-		/// <param name="name">Alias for the node</param>
-		/// <param name="handle">Locator for the node</param>
+		/// <param name="name">Alias for the blob</param>
+		/// <param name="handle">Locator for the blob</param>
+		/// <param name="rank">Rank for this alias. In situations where an alias has multiple mappings, the alias with the highest rank will be returned by default.</param>
+		/// <param name="data">Additional data to be stored inline with the alias</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		Task AddAliasAsync(Utf8String name, BlobHandle handle, CancellationToken cancellationToken = default);
+		Task AddAliasAsync(string name, IBlobHandle handle, int rank = 0, ReadOnlyMemory<byte> data = default, CancellationToken cancellationToken = default);
 
 		/// <summary>
-		/// Removes an alias from a node
+		/// Removes an alias from a blob
 		/// </summary>
 		/// <param name="name">Name of the alias</param>
-		/// <param name="handle">Locator for the node</param>
+		/// <param name="handle">Locator for the blob</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		Task RemoveAliasAsync(Utf8String name, BlobHandle handle, CancellationToken cancellationToken = default);
+		Task RemoveAliasAsync(string name, IBlobHandle handle, CancellationToken cancellationToken = default);
 
 		/// <summary>
-		/// Finds nodes with the given alias. Unlike refs, aliases do not serve as GC roots.
+		/// Finds blobs with the given alias. Unlike refs, aliases do not serve as GC roots.
 		/// </summary>
-		/// <param name="name">Alias for the node</param>
+		/// <param name="name">Alias for the blob</param>
+		/// <param name="maxResults">Maximum number of aliases to return</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <returns>Nodes matching the given handle</returns>
-		IAsyncEnumerable<BlobHandle> FindNodesAsync(Utf8String name, CancellationToken cancellationToken = default);
+		/// <returns>Blobs matching the given handle</returns>
+		Task<BlobAlias[]> FindAliasesAsync(string name, int? maxResults = null, CancellationToken cancellationToken = default);
 
 		#endregion
 
@@ -150,71 +97,32 @@ namespace EpicGames.Horde.Storage
 		/// <param name="name">The ref name</param>
 		/// <param name="cacheTime">Minimum coherency for any cached value to be returned</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <returns>Node pointed to by the ref</returns>
-		Task<BlobHandle?> TryReadRefTargetAsync(RefName name, RefCacheTime cacheTime = default, CancellationToken cancellationToken = default);
+		/// <returns>Blob pointed to by the ref</returns>
+		Task<IBlobRef?> TryReadRefAsync(RefName name, RefCacheTime cacheTime = default, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Writes a new ref to the store
 		/// </summary>
 		/// <param name="name">Ref to write</param>
-		/// <param name="handle">Handle to the target node</param>
+		/// <param name="target">Handle to the target blob</param>
 		/// <param name="options">Options for the new ref</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Unique identifier for the blob</returns>
-		Task WriteRefTargetAsync(RefName name, BlobHandle handle, RefOptions? options = null, CancellationToken cancellationToken = default);
+		Task WriteRefAsync(RefName name, IBlobRef target, RefOptions? options = null, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Reads data for a ref from the store
 		/// </summary>
 		/// <param name="name">The ref identifier</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		Task DeleteRefAsync(RefName name, CancellationToken cancellationToken = default);
+		Task<bool> DeleteRefAsync(RefName name, CancellationToken cancellationToken = default);
 
 		#endregion
-	}
-
-	/// <summary>
-	/// Interface for writing new nodes to the store
-	/// </summary>
-	public interface IStorageWriter : IAsyncDisposable
-	{
-		/// <summary>
-		/// Create another writer instance, allowing multiple threads to write in parallel.
-		/// </summary>
-		/// <returns>New writer instance</returns>
-		IStorageWriter Fork();
 
 		/// <summary>
-		/// Flush any pending nodes to storage
+		/// Gets a snapshot of the stats for the storage client.
 		/// </summary>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		Task FlushAsync(CancellationToken cancellationToken = default);
-
-		/// <summary>
-		/// Gets an output buffer for writing.
-		/// </summary>
-		/// <param name="usedSize">Current size in the existing buffer that has been written to</param>
-		/// <param name="desiredSize">Desired size of the returned buffer</param>
-		/// <returns>Buffer to be written into.</returns>
-		Memory<byte> GetOutputBuffer(int usedSize, int desiredSize);
-
-		/// <summary>
-		/// Finish writing a node.
-		/// </summary>
-		/// <param name="size">Used size of the buffer</param>
-		/// <param name="references">References to other nodes</param>
-		/// <param name="type">Type of the node that was written</param>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <returns>Handle to the written node</returns>
-		ValueTask<BlobHandle> WriteNodeAsync(int size, IReadOnlyList<BlobHandle> references, BlobType type, CancellationToken cancellationToken = default);
-
-		/// <summary>
-		/// Writes the reference using the given target node
-		/// </summary>
-		/// <param name="target">The target node</param>
-		/// <param name="options">Options for the new ref</param>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		ValueTask WriteRefAsync(BlobHandle target, RefOptions? options = null, CancellationToken cancellationToken = default);
+		void GetStats(StorageStats stats);
 	}
 
 	/// <summary>
@@ -226,9 +134,27 @@ namespace EpicGames.Horde.Storage
 		/// Creates a storage client for the given namespace
 		/// </summary>
 		/// <param name="namespaceId">Namespace to manipulate</param>
-		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <returns>Storage client instance</returns>
-		ValueTask<IStorageClient> GetClientAsync(NamespaceId namespaceId, CancellationToken cancellationToken = default);
+		/// <returns>Storage client instance. May be null if the namespace does not exist.</returns>
+		IStorageClient? TryCreateClient(NamespaceId namespaceId);
+	}
+
+	/// <summary>
+	/// Extension methods for <see cref="IStorageClientFactory"/>
+	/// </summary>
+	public static class StorageClientFactoryExtensions
+	{
+		/// <summary>
+		/// Creates a new storage client, throwing an exception if it does not exist
+		/// </summary>
+		public static IStorageClient CreateClient(this IStorageClientFactory factory, NamespaceId namespaceId)
+		{
+			IStorageClient? client = factory.TryCreateClient(namespaceId);
+			if (client == null)
+			{
+				throw new InvalidOperationException($"No namespace '{namespaceId}' is configured");
+			}
+			return client;
+		}
 	}
 
 	/// <summary>
@@ -240,7 +166,7 @@ namespace EpicGames.Horde.Storage
 		/// <summary>
 		/// Maximum age for a cached value to be returned
 		/// </summary>
-		public TimeSpan MaxAge => DateTime.UtcNow - Utc;
+		public readonly TimeSpan MaxAge => DateTime.UtcNow - Utc;
 
 		/// <summary>
 		/// Sets the earliest time at which the entry must have been valid
@@ -251,7 +177,7 @@ namespace EpicGames.Horde.Storage
 		/// <summary>
 		/// Tests whether this value is set
 		/// </summary>
-		public bool IsSet() => Utc != default;
+		public readonly bool IsSet() => Utc != default;
 
 		/// <summary>
 		/// Determines if this cache time deems a particular cache entry stale
@@ -272,6 +198,50 @@ namespace EpicGames.Horde.Storage
 	}
 
 	/// <summary>
+	/// Stats for the storage system
+	/// </summary>
+	public class StorageStats
+	{
+		/// <summary>
+		/// Stat name to value
+		/// </summary>
+		public List<(string, long)> Values { get; } = new List<(string, long)>();
+
+		/// <summary>
+		/// Add a new stat to the list
+		/// </summary>
+		public void Add(string name, long value) => Values.Add((name, value));
+
+		/// <summary>
+		/// Prints the table of stats to the logger
+		/// </summary>
+		public void Print(ILogger logger)
+		{
+			foreach ((string key, long value) in Values)
+			{
+				logger.LogInformation("{Key}: {Value:n0}", key, value);
+			}
+		}
+
+		/// <summary>
+		/// Subtract a base set of stats from this one
+		/// </summary>
+		public static StorageStats GetDelta(StorageStats initial, StorageStats finish)
+		{
+			StorageStats result = new StorageStats();
+
+			Dictionary<string, long> initialValues = initial.Values.ToDictionary(x => x.Item1, x => x.Item2, StringComparer.Ordinal);
+			foreach ((string name, long value) in finish.Values.ToArray())
+			{
+				initialValues.TryGetValue(name, out long otherValue);
+				result.Add(name, value - otherValue);
+			}
+
+			return result;
+		}
+	}
+
+	/// <summary>
 	/// Extension methods for <see cref="IStorageClient"/>
 	/// </summary>
 	public static class StorageClientExtensions
@@ -279,30 +249,39 @@ namespace EpicGames.Horde.Storage
 		#region Blobs
 
 		/// <summary>
-		/// Utility method to read a blob into a buffer
+		/// Create a blob ref from a RefValue
 		/// </summary>
-		/// <param name="store">Store to read from</param>
-		/// <param name="locator">Blob location</param>
-		/// <param name="offset">Offset within the blob</param>
-		/// <param name="memory">Buffer to read into</param>
+		public static IBlobRef CreateBlobRef(this IStorageClient store, BlobRefValue refValue)
+			=> store.CreateBlobRef(refValue.Hash, refValue.Locator);
+
+		/// <summary>
+		/// Create a typed blob ref from a RefValue
+		/// </summary>
+		public static IBlobRef<T> CreateBlobRef<T>(this IStorageClient store, BlobRefValue refValue, BlobSerializerOptions? options)
+			=> store.CreateBlobRef<T>(refValue.Hash, refValue.Locator, options);
+
+		/// <summary>
+		/// Creates a writer using a refname as a base path
+		/// </summary>
+		/// <param name="store">The store instance to read from</param>
+		/// <param name="refName">Ref name to use as a base path</param>
+		public static IBlobWriter CreateBlobWriter(this IStorageClient store, RefName refName) => store.CreateBlobWriter(refName.ToString());
+
+		#endregion
+
+		#region Aliases
+
+		/// <summary>
+		/// Finds blobs with the given alias. Unlike refs, aliases do not serve as GC roots.
+		/// </summary>
+		/// <param name="store">The store instance to read from</param>
+		/// <param name="name">Alias for the blob</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		/// <returns>The data that was read</returns>
-		public static async Task<Memory<byte>> ReadBlobRangeAsync(this IStorageClient store, BlobLocator locator, int offset, Memory<byte> memory, CancellationToken cancellationToken = default)
+		/// <returns>Blobs matching the given handle</returns>
+		public static async Task<BlobAlias?> FindAliasAsync(this IStorageClient store, string name, CancellationToken cancellationToken = default)
 		{
-			using (Stream stream = await store.ReadBlobRangeAsync(locator, offset, memory.Length, cancellationToken))
-			{
-				int length = 0;
-				while (length < memory.Length)
-				{
-					int readBytes = await stream.ReadAsync(memory.Slice(length), cancellationToken);
-					if (readBytes == 0)
-					{
-						break;
-					}
-					length += readBytes;
-				}
-				return memory.Slice(0, length);
-			}
+			BlobAlias[] aliases = await store.FindAliasesAsync(name, 1, cancellationToken);
+			return aliases.FirstOrDefault();
 		}
 
 		#endregion
@@ -317,9 +296,9 @@ namespace EpicGames.Horde.Storage
 		/// <param name="cacheTime">Minimum coherency for any cached value to be returned</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the ref exists, false if it did not exist</returns>
-		public static async Task<bool> HasRefAsync(this IStorageClient store, RefName name, RefCacheTime cacheTime = default, CancellationToken cancellationToken = default)
+		public static async Task<bool> RefExistsAsync(this IStorageClient store, RefName name, RefCacheTime cacheTime = default, CancellationToken cancellationToken = default)
 		{
-			BlobHandle? target = await store.TryReadRefTargetAsync(name, cacheTime, cancellationToken);
+			IBlobHandle? target = await store.TryReadRefAsync(name, cacheTime, cancellationToken);
 			return target != null;
 		}
 
@@ -331,16 +310,22 @@ namespace EpicGames.Horde.Storage
 		/// <param name="cacheTime">Minimum coherency of any cached result</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The ref target</returns>
-		public static async Task<BlobHandle> ReadRefTargetAsync(this IStorageClient store, RefName name, RefCacheTime cacheTime = default, CancellationToken cancellationToken = default)
+		public static async Task<IBlobRef> ReadRefAsync(this IStorageClient store, RefName name, RefCacheTime cacheTime = default, CancellationToken cancellationToken = default)
 		{
-			BlobHandle? refTarget = await store.TryReadRefTargetAsync(name, cacheTime, cancellationToken);
-			if (refTarget == null)
-			{
-				throw new RefNameNotFoundException(name);
-			}
-			return refTarget;
+			IBlobRef? refTarget = await store.TryReadRefAsync(name, cacheTime, cancellationToken);
+			return refTarget ?? throw new RefNameNotFoundException(name);
 		}
 
 		#endregion
+
+		/// <summary>
+		/// Gets a snapshot of the stats for the storage client.
+		/// </summary>
+		public static StorageStats GetStats(this IStorageClient store)
+		{
+			StorageStats stats = new StorageStats();
+			store.GetStats(stats);
+			return stats;
+		}
 	}
 }

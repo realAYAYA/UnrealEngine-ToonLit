@@ -2,7 +2,9 @@
 
 #pragma once 
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CollisionShape.h"
+#endif
 #include "Templates/SubclassOf.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 #include "AI/Navigation/NavLinkDefinition.h"
@@ -266,6 +268,8 @@ protected:
 	TWeakObjectPtr<UClass> LinkDefinitionClassOb;
 };
 
+struct FCollisionShape;
+
 struct FCompositeNavModifier : public FNavigationModifier
 {
 	FCompositeNavModifier() 
@@ -290,6 +294,12 @@ struct FCompositeNavModifier : public FNavigationModifier
 			NavMeshResolution == ENavigationDataResolution::Invalid;
 	}
 
+	FORCEINLINE bool IsDynamic() const 
+	{
+		// Excluding bFillCollisionUnderneathForNavmesh, bMaskFillCollisionUnderneathForNavmesh and NavMeshResolution since they require full tile rebuild.
+		return !Areas.IsEmpty() || !SimpleLinks.IsEmpty() || !CustomLinks.IsEmpty();
+	}
+	
 	void Add(const FAreaNavModifier& Area)
 	{
 		Areas.Add(Area);

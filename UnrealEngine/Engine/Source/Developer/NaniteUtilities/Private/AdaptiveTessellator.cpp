@@ -75,7 +75,7 @@ FAdaptiveTessellator::FAdaptiveTessellator(
 	while( NumSplits )
 	{
 		// Size to atomic count and sort for deterministic order
-		SplitRequests.SetNum( NumSplits, false );
+		SplitRequests.SetNum( NumSplits, EAllowShrinking::No );
 		SplitRequests.Sort();
 		for( int32 i = 0; i < SplitRequests.Num(); i++ )
 			Triangles[ SplitRequests[i] ].RequestIndex = i;
@@ -511,7 +511,7 @@ void FAdaptiveTessellator::FindSplitBVH( uint32 TriIndex )
 			[&]( const FNode& Node0, const FNode& Node1 )
 			{
 				return Node0.ErrorMax > Node1.ErrorMax;
-			}, false );
+			}, EAllowShrinking::No );
 	}
 
 	if( BestError > TargetError )
@@ -718,7 +718,7 @@ void FAdaptiveTessellator::RemoveSplitRequest( uint32 TriIndex )
 	if( RequestIndex >= 0 )
 	{
 		Triangles[ SplitRequests.Last() ].RequestIndex = RequestIndex;
-		SplitRequests.RemoveAtSwap( RequestIndex, 1, false );
+		SplitRequests.RemoveAtSwap( RequestIndex, 1, EAllowShrinking::No );
 		RequestIndex = -1;
 	}
 }

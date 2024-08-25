@@ -57,6 +57,10 @@ class UMaterialExpressionVectorNoise : public UMaterialExpression
 	UPROPERTY()
 	FExpressionInput Position;
 
+	/** Defines the reference space for the Position input. */
+	UPROPERTY(EditAnywhere, Category = MaterialExpressionVectorNoise)
+	EPositionOrigin WorldPositionOriginType = EPositionOrigin::Absolute;
+
 	/** Noise function, affects performance and look */
 	UPROPERTY(EditAnywhere, Category = MaterialExpressionVectorNoise, meta = (DisplayName = "Function", ShowAsInputPin = "Advanced"))
 	TEnumAsByte<enum EVectorNoiseFunction> NoiseFunction;
@@ -78,8 +82,12 @@ class UMaterialExpressionVectorNoise : public UMaterialExpression
 	//~ Begin UMaterialExpression Interface
 #if WITH_EDITOR
 	virtual bool CanEditChange(const FProperty* InProperty) const override;
+	virtual FName GetInputName(int32 InputIndex) const override;
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual int32 Compile(class FMaterialCompiler* Compiler, int32 OutputIndex) override;
 	virtual void GetCaption(TArray<FString>& OutCaptions) const override;
+
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
 #endif
 	//~ End UMaterialExpression Interface
 };

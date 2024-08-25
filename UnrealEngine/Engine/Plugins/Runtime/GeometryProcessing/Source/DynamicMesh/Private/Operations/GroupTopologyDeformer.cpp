@@ -147,7 +147,7 @@ void FGroupTopologyDeformer::SetActiveHandleFromSelection(const FGeometrySelecti
 		for (uint64 Element : Selection.Selection)
 		{
 			int32 GroupEdgeID = FGeoSelectionID(Element).TopologyID;
-			if (GroupEdgeID > 0 && GroupEdgeID < Topology->Edges.Num())
+			if (GroupEdgeID >= 0 && GroupEdgeID < Topology->Edges.Num())
 			{
 				Elements.Add(GroupEdgeID);
 			}
@@ -159,7 +159,7 @@ void FGroupTopologyDeformer::SetActiveHandleFromSelection(const FGeometrySelecti
 		for (uint64 Element : Selection.Selection)
 		{
 			int32 CornerID = FGeoSelectionID(Element).TopologyID;
-			if (CornerID > 0 && CornerID < Topology->Corners.Num())
+			if (CornerID >= 0 && CornerID < Topology->Corners.Num())
 			{
 				Elements.Add(CornerID);
 			}
@@ -363,6 +363,11 @@ void FGroupTopologyDeformer::UpdateSolution(FDynamicMesh3* TargetMesh, const TFu
 		FSegment3d Seg(A, B);
 		for (int k = 1; k < NumVerts - 1; ++k)
 		{
+			if (HandleVertices.Contains(Span.Vertices[k]))
+			{
+				// If we're explicitly moving this vertex, we should keep the explicitly set location.
+				continue;
+			}
 			FVector3d NewPos = Seg.PointBetween(Encoding.Vertices[k].T);
 			NewPos += Encoding.Vertices[k].Delta;
 			TargetMesh->SetVertex(Span.Vertices[k], NewPos);

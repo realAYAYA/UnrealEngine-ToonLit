@@ -23,10 +23,11 @@ public class AssetManagerEditor : ModuleRules
 		
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
+				"CookMetadata",
 				"Slate",
 				"SlateCore",
-                "ApplicationCore",
-                "InputCore",
+				"ApplicationCore",
+				"InputCore",
 				"EditorFramework",
 				"UnrealEd",
 				"AssetRegistry",
@@ -50,7 +51,7 @@ public class AssetManagerEditor : ModuleRules
 				"SourceControl",
 				"SourceControlWindows",
 				"UncontrolledChangelists",
-				"Projects"
+				"Projects",
 			}
 		);
 	}

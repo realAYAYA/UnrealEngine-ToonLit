@@ -24,8 +24,8 @@ static FAutoConsoleVariableRef CVarHairFastResolveVelocityThreshold(TEXT("r.Hair
 static int32 GHairWriteGBufferData = 1;
 static FAutoConsoleVariableRef CVarHairWriteGBufferData(TEXT("r.HairStrands.WriteGBufferData"), GHairWriteGBufferData, TEXT("Write hair hair material data into GBuffer before post processing run. 0: no write, 1: dummy write into GBuffer A/B (Normal/ShadingModel), 2: write into GBuffer A/B (Normal/ShadingModel). 2: Write entire GBuffer data. (default 1)."));
 
-static int32 GHairStrandsComposeDOFDepth = 1;
-static FAutoConsoleVariableRef CVarHairStrandsComposeDOFDepth(TEXT("r.HairStrands.DOFDepth"), GHairStrandsComposeDOFDepth, TEXT("Compose hair with DOF by lerping hair depth based on its opacity."));
+static int32 GHairStrandsHoldoutMode = 1;
+static FAutoConsoleVariableRef CVarHairStrandsHoldoutMode(TEXT("r.HairStrands.HoldoutMode"), GHairStrandsHoldoutMode, TEXT("Change how sample are merged when rendering with holdout."));
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
@@ -42,7 +42,8 @@ enum EHairStrandsCommonPassType
 	DOF,
 	TAAFastResolve,
 	GBuffer,
-	Blit
+	Blit,
+	Holdout
 };
 
 template<typename TPassParameter, typename TPixelShader>
@@ -53,6 +54,7 @@ void InternalCommonDrawPass(
 	const FIntPoint Resolution,
 	const EHairStrandsCommonPassType Type,
 	const bool bWriteDepth,
+	const bool bHasHoldout,
 	const FHairStrandsTiles& TileData,
 	TPixelShader& PixelShader,
 	TPassParameter* PassParamters)
@@ -70,7 +72,7 @@ void InternalCommonDrawPass(
 		Forward<FRDGEventName>(EventName),
 		PassParamters,
 		ERDGPassFlags::Raster,
-		[PassParamters, TileVertexShader, PixelShader, Viewport, Resolution, Type, bWriteDepth, TileType](FRHICommandList& RHICmdList)
+		[PassParamters, TileVertexShader, PixelShader, Viewport, Resolution, Type, bWriteDepth, bHasHoldout, TileType](FRHICommandList& RHICmdList)
 	{
 		FHairStrandsTilePassVS::FParameters ParametersVS = PassParamters->TileData;
 
@@ -79,19 +81,41 @@ void InternalCommonDrawPass(
 
 		if (Type == EHairStrandsCommonPassType::Composition)
 		{
-			// Alpha usage/output is controlled with r.PostProcessing.PropagateAlpha. The value are:
-			// 0: disabled(default);
-			// 1: enabled in linear color space;
-			// 2: same as 1, but also enable it through the tonemapper.
-			//
-			// When enable (PorpagateAlpha is set to 1 or 2), the alpha value means:
-			// 0: valid pixel
-			// 1: invalid pixel (background)
-			GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_InverseSourceAlpha, BO_Add, BF_Zero, BF_InverseSourceAlpha>::GetRHI();
+			if (bHasHoldout)
+			{
+				// EHairStrandsCommonPassType::Composition and bHasHoldout, only color is composed. The alpha value is composed into a separate pass.
+				// Two modes:
+				// * 0: the background pixels are *not* weighted by the hair coverage
+				// * 1: the background pixels are       weighted by the hair coverage
+				if (GHairStrandsHoldoutMode == 0)
+				{
+					GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_One, BO_Add, BF_Zero, BF_One>::GetRHI();
+				}
+				else
+				{
+					GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_InverseSourceAlpha, BO_Add, BF_Zero, BF_One>::GetRHI();
+				}
+			}
+			else
+			{
+				// Alpha usage/output is controlled with r.PostProcessing.PropagateAlpha. The value are:
+				// 0: disabled(default);
+				// 1: enabled in linear color space;
+				// 2: same as 1, but also enable it through the tonemapper.
+				//
+				// When enable (PorpagateAlpha is set to 1 or 2), the alpha value means:
+				// 0: valid pixel
+				// 1: invalid pixel (background)
+				GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_InverseSourceAlpha, BO_Add, BF_Zero, BF_InverseSourceAlpha>::GetRHI();
+			}
 		}
 		else if (Type == EHairStrandsCommonPassType::Blit) //used to write data into the temporal input buffer
 		{
 			GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_Zero, BO_Add, BF_One, BF_Zero>::GetRHI();
+		}
+		else if (Type == EHairStrandsCommonPassType::Holdout)
+		{
+			GraphicsPSOInit.BlendState = TStaticBlendState<CW_ALPHA, BO_Add, BF_Zero, BF_One, BO_Add, BF_One, BF_InverseSourceAlpha>::GetRHI();
 		}
 		else
 		{
@@ -100,7 +124,7 @@ void InternalCommonDrawPass(
 
 		GraphicsPSOInit.RasterizerState = TStaticRasterizerState<>::GetRHI();
 
-		if (Type == EHairStrandsCommonPassType::Composition)
+		if (Type == EHairStrandsCommonPassType::Composition || Type == EHairStrandsCommonPassType::Holdout)
 		{
 			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<true, CF_DepthNearOrEqual>::GetRHI();
 		}
@@ -148,14 +172,12 @@ void InternalCommonDrawPass(
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
-class FHairVisibilityComposeSamplePS : public FGlobalShader
+class FHairHoldoutPS : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FHairVisibilityComposeSamplePS);
-	SHADER_USE_PARAMETER_STRUCT(FHairVisibilityComposeSamplePS, FGlobalShader);
+	DECLARE_GLOBAL_SHADER(FHairHoldoutPS);
+	SHADER_USE_PARAMETER_STRUCT(FHairHoldoutPS, FGlobalShader);
 
-	class FDebug : SHADER_PERMUTATION_BOOL("PERMUTATION_DEBUG");
-	class FTemporal : SHADER_PERMUTATION_BOOL("PERMUTATION_TEMPORAL");
-	using FPermutationDomain = TShaderPermutationDomain<FDebug, FTemporal>;
+	using FPermutationDomain = TShaderPermutationDomain<>;
 	
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
@@ -163,12 +185,7 @@ class FHairVisibilityComposeSamplePS : public FGlobalShader
 		SHADER_PARAMETER(FIntPoint, OutputResolution)
 		SHADER_PARAMETER(uint32, bComposeDofDepth)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FHairStrandsViewUniformParameters, HairStrands)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairLightingSampleBuffer)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairDOFDepthTexture)
-		SHADER_PARAMETER(uint32, TemporalLayerCount)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairTemporalAccumulationTexture)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, OutMetaTexture)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FFogUniformParameters, FogStruct)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -177,27 +194,93 @@ public:
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("SHADER_HOLDOUT"), 1);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FHairHoldoutPS, "/Engine/Private/HairStrands/HairStrandsComposition.usf", "HoldoutPS", SF_Pixel);
+
+static void AddHairHoldoutPass(
+	FRDGBuilder& GraphBuilder,
+	const FViewInfo& View,
+	const FHairStrandsVisibilityData& VisibilityData,
+	const FRDGTextureRef& HairDOFDepthTexture,
+	FRDGTextureRef& OutColorTexture,
+	FRDGTextureRef& OutDepthTexture)
+{
+	const bool bDOFEnable = HairDOFDepthTexture != nullptr ? 1 : 0;
+
+	FHairHoldoutPS::FParameters* Parameters = GraphBuilder.AllocParameters<FHairHoldoutPS::FParameters>();
+	Parameters->bComposeDofDepth = bDOFEnable ? 1 : 0;
+	Parameters->HairDOFDepthTexture = bDOFEnable ? HairDOFDepthTexture : GSystemTextures.GetBlackDummy(GraphBuilder);
+	Parameters->OutputResolution = OutColorTexture->Desc.Extent;
+	Parameters->ViewUniformBuffer = View.ViewUniformBuffer;
+	Parameters->HairStrands = View.HairStrandsViewData.UniformBuffer;
+	Parameters->RenderTargets[0] = FRenderTargetBinding(OutColorTexture, ERenderTargetLoadAction::ELoad);
+	Parameters->RenderTargets.DepthStencil = FDepthStencilBinding(OutDepthTexture, ERenderTargetLoadAction::ELoad, ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthWrite_StencilRead);
+
+	FHairHoldoutPS::FPermutationDomain PermutationVector;
+	TShaderMapRef<FHairHoldoutPS> PixelShader(View.ShaderMap, PermutationVector);
+	InternalCommonDrawPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("HairStrands::Holdout"),
+		View,
+		OutColorTexture->Desc.Extent,
+		EHairStrandsCommonPassType::Holdout,
+		false /*bWriteDepth*/,
+		true /*bHasHoldout*/,
+		VisibilityData.TileData,
+		PixelShader,
+		Parameters);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+
+class FHairVisibilityComposeSamplePS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FHairVisibilityComposeSamplePS);
+	SHADER_USE_PARAMETER_STRUCT(FHairVisibilityComposeSamplePS, FGlobalShader);
+
+	class FDebug : SHADER_PERMUTATION_BOOL("PERMUTATION_DEBUG");
+	using FPermutationDomain = TShaderPermutationDomain<FDebug>;
+	
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
+		SHADER_PARAMETER_STRUCT_INCLUDE(FHairStrandsTilePassVS::FParameters, TileData)
+		SHADER_PARAMETER(FIntPoint, OutputResolution)
+		SHADER_PARAMETER(uint32, bComposeDofDepth)
+		SHADER_PARAMETER(uint32, bHasHoldout)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FHairStrandsViewUniformParameters, HairStrands)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairLightingSampleBuffer)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairDOFDepthTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, OutMetaTexture)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FFogUniformParameters, FogStruct)
+		RENDER_TARGET_BINDING_SLOTS()
+		END_SHADER_PARAMETER_STRUCT()
+
+public:
+		static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform); }
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("SHADER_COMPOSE_SAMPLE"), 1);
 	}
 };
 
-IMPLEMENT_GLOBAL_SHADER(FHairVisibilityComposeSamplePS, "/Engine/Private/HairStrands/HairStrandsVisibilityComposeSubPixelPS.usf", "ComposeSamplePS", SF_Pixel);
+IMPLEMENT_GLOBAL_SHADER(FHairVisibilityComposeSamplePS, "/Engine/Private/HairStrands/HairStrandsComposition.usf", "ComposeSamplePS", SF_Pixel);
 
 static void AddHairVisibilityComposeSamplePass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FHairStrandsVisibilityData& VisibilityData,
-	const FRDGTextureRef& CategorizationTexture,
+	const bool bHasHoldout,
 	const FRDGTextureRef& HairDOFDepthTexture,
 	const FRDGTextureRef& HairTemporalAccumulationTexture,
 	FRDGTextureRef& OutColorTexture,
-	FRDGTextureRef& OutDepthTexture,
-	const bool bTemporalLayeringEnabled)
+	FRDGTextureRef& OutDepthTexture)
 {
 	check(VisibilityData.SampleLightingTexture);
 	const bool bDOFEnable = HairDOFDepthTexture != nullptr ? 1 : 0;
-
-	const bool bTemporal = false; //HAIR_TODO: remove
 
 	TRDGUniformBufferRef<FFogUniformParameters> FogBuffer = CreateFogUniformBuffer(GraphBuilder, View);
 
@@ -209,28 +292,26 @@ static void AddHairVisibilityComposeSamplePass(
 	Parameters->ViewUniformBuffer = View.ViewUniformBuffer;
 	Parameters->HairStrands = View.HairStrandsViewData.UniformBuffer;
 	Parameters->FogStruct = FogBuffer;
-	Parameters->TemporalLayerCount = 1;
-	Parameters->HairTemporalAccumulationTexture = bTemporal ? HairTemporalAccumulationTexture : GSystemTextures.GetBlackDummy(GraphBuilder);
-	Parameters->RenderTargets[0] = FRenderTargetBinding(OutColorTexture, bTemporal ? ERenderTargetLoadAction::ELoad : (bTemporalLayeringEnabled ? ERenderTargetLoadAction::EClear : ERenderTargetLoadAction::ELoad) );
+	Parameters->bHasHoldout = bHasHoldout ? 1u : 0u;
+	Parameters->RenderTargets[0] = FRenderTargetBinding(OutColorTexture, ERenderTargetLoadAction::ELoad);
 	Parameters->RenderTargets.DepthStencil = FDepthStencilBinding(OutDepthTexture, ERenderTargetLoadAction::ELoad, ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthWrite_StencilRead);
 
 	const bool bDebugComposition = View.Family->EngineShowFlags.LODColoration;
 	FHairVisibilityComposeSamplePS::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FHairVisibilityComposeSamplePS::FDebug>(bDebugComposition);
-	PermutationVector.Set<FHairVisibilityComposeSamplePS::FTemporal>(bTemporal);
 	TShaderMapRef<FHairVisibilityComposeSamplePS> PixelShader(View.ShaderMap, PermutationVector);
 	InternalCommonDrawPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("HairStrands::ComposeSample"),
 		View,
 		OutColorTexture->Desc.Extent,
-		bTemporal ? EHairStrandsCommonPassType::Composition : (bTemporalLayeringEnabled ? EHairStrandsCommonPassType::Blit : EHairStrandsCommonPassType::Composition),
-		false,
+		EHairStrandsCommonPassType::Composition,
+		false /*bWriteDepth*/,
+		bHasHoldout,
 		VisibilityData.TileData,
 		PixelShader,
 		Parameters);
 }
-
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
@@ -259,7 +340,7 @@ public:
 	}
 };
 
-IMPLEMENT_GLOBAL_SHADER(FHairDOFDepthPS, "/Engine/Private/HairStrands/HairStrandsVisibilityComposeSubPixelPS.usf", "DOFDepthPS", SF_Pixel);
+IMPLEMENT_GLOBAL_SHADER(FHairDOFDepthPS, "/Engine/Private/HairStrands/HairStrandsComposition.usf", "DOFDepthPS", SF_Pixel);
 
 static FRDGTextureRef AddHairDOFDepthPass(
 	FRDGBuilder& GraphBuilder,
@@ -293,7 +374,8 @@ static FRDGTextureRef AddHairDOFDepthPass(
 		View,
 		OutputResolution,
 		EHairStrandsCommonPassType::DOF,
-		false,
+		false /*bWriteDepth*/,
+		false /*bHasHoldout*/,
 		VisibilityData.TileData,
 		PixelShader,
 		Parameters);
@@ -324,7 +406,7 @@ public:
 	}
 };
 
-IMPLEMENT_GLOBAL_SHADER(FHairVisibilityFastResolveMaskPS, "/Engine/Private/HairStrands/HairStrandsVisibilityComposeSubPixelPS.usf", "FastResolvePS", SF_Pixel);
+IMPLEMENT_GLOBAL_SHADER(FHairVisibilityFastResolveMaskPS, "/Engine/Private/HairStrands/HairStrandsComposition.usf", "FastResolvePS", SF_Pixel);
 
 static void AddHairVisibilityFastResolveMaskPass(
 	FRDGBuilder& GraphBuilder,
@@ -357,7 +439,8 @@ static void AddHairVisibilityFastResolveMaskPass(
 		View,
 		Resolution,
 		EHairStrandsCommonPassType::TAAFastResolve,
-		false,
+		false /*bWriteDepth*/,
+		false /*bHasHoldout*/,
 		TileData,
 		PixelShader,
 		Parameters);
@@ -397,10 +480,11 @@ public:
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetRenderTargetOutputFormat(0, PF_B8G8R8A8);
 		OutEnvironment.SetRenderTargetOutputFormat(1, PF_FloatRGBA);
+		OutEnvironment.SetDefine(TEXT("SHADER_WRITE_GBUFFER"), 1);
 	}
 };
 
-IMPLEMENT_GLOBAL_SHADER(FHairVisibilityGBufferWritePS, "/Engine/Private/HairStrands/HairStrandsGBufferWrite.usf", "MainPS", SF_Pixel);
+IMPLEMENT_GLOBAL_SHADER(FHairVisibilityGBufferWritePS, "/Engine/Private/HairStrands/HairStrandsComposition.usf", "MainPS", SF_Pixel);
 
 static void AddHairVisibilityGBufferWritePass(
 	FRDGBuilder& GraphBuilder,
@@ -463,6 +547,7 @@ static void AddHairVisibilityGBufferWritePass(
 		OutGBufferATexture->Desc.Extent,
 		EHairStrandsCommonPassType::GBuffer,
 		bWriteDepth,
+		false /*bHasHoldout*/,
 		TileData,
 		PixelShader,
 		Parameters);
@@ -501,8 +586,7 @@ static void InternalRenderHairComposition(
 		}
 
 		FRDGTextureRef DOFDepth = nullptr;
-		const bool bHairDOF = GHairStrandsComposeDOFDepth > 0 ? 1 : 0;
-		if (bHairDOF)
+		if (View.FinalPostProcessSettings.DepthOfFieldUseHairDepth)
 		{
 			DOFDepth = AddHairDOFDepthPass(
 				GraphBuilder,
@@ -515,56 +599,29 @@ static void InternalRenderHairComposition(
 
 		FRDGTextureRef AccumulatedColor = nullptr;
 
+		const bool bHasHoldout = HasHairFlags(View.HairStrandsViewData.Flags, HAIR_FLAGS_HOLDOUT);
 		const bool bTemporalLayeringEnabled = false; // HAIR_TODO: remove
-
-		if (bTemporalLayeringEnabled)
-		{
-			FIntPoint OutputResolution = SceneColorTexture->Desc.Extent;
-
-			FRDGTextureDesc HairColorInputDesc = FRDGTextureDesc::Create2D(OutputResolution, PF_FloatRGBA, FClearValueBinding(FLinearColor(0, 0, 0, 0)), TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV, 1);
-			FRDGTextureRef HairColorInputTexture = GraphBuilder.CreateTexture(HairColorInputDesc, TEXT("Hair.ColorInputTexture"));
-
-			AddHairVisibilityComposeSamplePass(
-				GraphBuilder,
-				View,
-				VisibilityData,
-				VisibilityData.CoverageTexture,
-				DOFDepth,
-				nullptr,
-				HairColorInputTexture,
-				SceneDepthTexture,
-				bTemporalLayeringEnabled);
-
-
-			check(View.ViewState);
-			FTAAPassParameters TAASettings(View);
-			TAASettings.SceneDepthTexture = SceneDepthTexture;
-			TAASettings.SceneVelocityTexture = SceneVelocityTexture;
-			TAASettings.Pass = ETAAPassConfig::Hair;
-			TAASettings.SceneColorInput = HairColorInputTexture;
-			TAASettings.bOutputRenderTargetable = true;
-
-			FTAAOutputs TAAOutputs = AddTemporalAAPass(
-				GraphBuilder,
-				View,
-				TAASettings,
-				View.PrevViewInfo.HairHistory,
-				&View.ViewState->PrevFrameViewInfo.HairHistory);
-
-			AccumulatedColor = TAAOutputs.SceneColor;			
-		}
 
 		AddHairVisibilityComposeSamplePass(
 			GraphBuilder,
 			View,
 			VisibilityData,
-			VisibilityData.CoverageTexture,
+			bHasHoldout,
 			DOFDepth,
 			AccumulatedColor,
 			SceneColorTexture,
-			SceneDepthTexture,
-			bTemporalLayeringEnabled);
+			SceneDepthTexture);
 
+		if (bHasHoldout)
+		{
+			AddHairHoldoutPass(
+				GraphBuilder,
+				View,
+				VisibilityData,
+				DOFDepth,
+				SceneColorTexture,
+				SceneDepthTexture);
+		}
 		if (VisibilityData.ResolveMaskTexture)
 		{
 			AddHairVisibilityFastResolveMaskPass(

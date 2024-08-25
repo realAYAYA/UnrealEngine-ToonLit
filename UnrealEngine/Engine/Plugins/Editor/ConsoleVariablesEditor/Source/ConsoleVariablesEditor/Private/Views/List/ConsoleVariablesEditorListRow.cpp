@@ -318,8 +318,10 @@ FReply FConsoleVariablesEditorListRow::OnActionButtonClicked()
 
 	FConsoleVariablesEditorModule& ConsoleVariablesEditorModule = FConsoleVariablesEditorModule::Get();
 
-	const FString& CommandName = GetCommandInfo().Pin()->Command;
-	const FString& StartupValue = GetCommandInfo().Pin()->StartupValueAsString;
+	TSharedPtr<FConsoleVariablesEditorCommandInfo> Info = GetCommandInfo().Pin();
+	const FString& CommandName = Info->Command;
+	const FString& StartupValue = Info->StartupValueAsString;
+	const EConsoleVariableFlags Source = Info->GetSource();
 	const TObjectPtr<UConsoleVariablesAsset> EditableAsset = ConsoleVariablesEditorModule.GetPresetAsset();
 	check(EditableAsset);
 
@@ -340,7 +342,7 @@ FReply FConsoleVariablesEditorListRow::OnActionButtonClicked()
 		{
 			EditableAsset->RemoveConsoleVariable(CommandName);
 
-			ConsoleVariablesEditorModule.SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Remove, CommandName, StartupValue);
+			ConsoleVariablesEditorModule.SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Remove, CommandName, StartupValue, Source);
 		}
 	}
 	else
@@ -349,7 +351,7 @@ FReply FConsoleVariablesEditorListRow::OnActionButtonClicked()
 
 		EditableAsset->RemoveConsoleVariable(CommandName);
 
-		ConsoleVariablesEditorModule.SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Remove, CommandName, StartupValue);
+		ConsoleVariablesEditorModule.SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Remove, CommandName, StartupValue, Source);
 		ListViewPtr.Pin()->RebuildListWithListMode(ListViewPtr.Pin()->GetListModelPtr().Pin()->GetListMode());
 	}
 

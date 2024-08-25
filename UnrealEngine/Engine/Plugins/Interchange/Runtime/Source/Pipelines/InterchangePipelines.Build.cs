@@ -13,6 +13,7 @@ namespace UnrealBuildTool.Rules
 					"CoreUObject",
 					"Engine",
 					"InterchangeCore",
+					"InterchangeCommon",
 					"InterchangeEngine",
 					"InterchangeFactoryNodes",
 					"InterchangeNodes"
@@ -22,10 +23,14 @@ namespace UnrealBuildTool.Rules
 			PrivateDependencyModuleNames.AddRange(
 				new string[]
 				{
+					"ApplicationCore",
 					"CinematicCamera",
 					"InterchangeImport",
 					"DeveloperSettings",
 					"GLTFCore",
+					"InputCore",
+					"Slate",
+					"SlateCore",
 				}
 			);
 
@@ -34,6 +39,7 @@ namespace UnrealBuildTool.Rules
 				PrivateDependencyModuleNames.AddRange(
 					new string[]
 					{
+						"MainFrame",
 						"PhysicsUtilities",
 						"TextureUtilitiesCommon",
 						"UnrealEd",

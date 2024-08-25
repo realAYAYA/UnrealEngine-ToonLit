@@ -159,6 +159,24 @@ void UNiagaraNodeEmitter::NodeConnectionListChanged()
 	//GetGraph()->NotifyGraphChanged();
 }
 
+FNiagaraEmitterID UNiagaraNodeEmitter::GetEmitterID()const
+{
+	if (OwnerSystem != nullptr && EmitterHandleId.IsValid())
+	{
+		const auto& Emitters = OwnerSystem->GetEmitterHandles();
+		for (int32 i = 0; i < Emitters.Num(); ++i)
+		{
+			const FNiagaraEmitterHandle& EmitterHandle = Emitters[i];
+			if (EmitterHandle.GetId() == EmitterHandleId)
+			{
+				return FNiagaraEmitterID(i);
+			}
+		}
+	}
+
+	return CachedEmitterID;
+}
+
 FString UNiagaraNodeEmitter::GetEmitterUniqueName() const
 {
 	if (OwnerSystem != nullptr && EmitterHandleId.IsValid())
@@ -267,9 +285,10 @@ void UNiagaraNodeEmitter::SyncEnabledState()
 	}
 }
 
-void UNiagaraNodeEmitter::SetCachedVariablesForCompilation(const FName& InUniqueName, UNiagaraGraph* InGraph, UNiagaraScriptSourceBase* InSource)
+void UNiagaraNodeEmitter::SetCachedVariablesForCompilation(const FName& InUniqueName, FNiagaraEmitterID InEmitterID, UNiagaraGraph* InGraph, UNiagaraScriptSourceBase* InSource)
 {
 	CachedUniqueName = InUniqueName;
+	CachedEmitterID = InEmitterID;
 	CachedGraphWeakPtr = InGraph;
 	CachedScriptSourceWeakPtr = InSource;
 }
@@ -323,6 +342,19 @@ void UNiagaraNodeEmitter::BuildParameterMapHistory(FNiagaraParameterMapHistoryBu
 		}
 	}
 
+	const FNiagaraEmitterHandle* EmitterHandle = nullptr;
+	if (const UNiagaraSystem* System = OutHistory.ConstantResolver->GetSystem())
+	{
+		EmitterHandle = System->GetEmitterHandles().FindByPredicate([this](const FNiagaraEmitterHandle& Handle) -> bool
+		{
+			return Handle.GetId() == EmitterHandleId;
+		});
+	}
+
+	const FCompileConstantResolver ChildConstantResolver = EmitterHandle
+		? OutHistory.ConstantResolver->AsEmitter(EmitterHandle->GetInstance())
+		: *OutHistory.ConstantResolver;
+
 	FString EmitterUniqueName = GetEmitterUniqueName();
 	UNiagaraGraph* Graph = GetCalledGraph();
 	if (Graph && ParamMapIdx != INDEX_NONE && OutHistory.bShouldBuildSubHistories)
@@ -347,7 +379,7 @@ void UNiagaraNodeEmitter::BuildParameterMapHistory(FNiagaraParameterMapHistoryBu
 
 			// Build up a new parameter map history with all the child graph nodes..
 			FNiagaraParameterMapHistoryBuilder ChildBuilder;
-			*ChildBuilder.ConstantResolver = *OutHistory.ConstantResolver;
+			*ChildBuilder.ConstantResolver = ChildConstantResolver.WithUsage(OutputNodeUsage);
 			ChildBuilder.RegisterEncounterableVariables(OutHistory.GetEncounterableVariables());
 			ChildBuilder.EnableScriptAllowList(true, GetUsage());
 
@@ -509,7 +541,7 @@ void UNiagaraNodeEmitter::Compile(FTranslator* Translator, TArray<int32>& Output
 	}
 }
 
-void UNiagaraNodeEmitter::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const
+void UNiagaraNodeEmitter::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const
 {
 	UNiagaraGraph* CalledGraph = GetCalledGraph();
 
@@ -518,9 +550,8 @@ void UNiagaraNodeEmitter::GatherExternalDependencyData(ENiagaraScriptUsage InUsa
 		CalledGraph->RebuildCachedCompileIds();
 		ENiagaraScriptUsage TargetUsage = InUsage == ENiagaraScriptUsage::SystemSpawnScript ? ENiagaraScriptUsage::EmitterSpawnScript : ENiagaraScriptUsage::EmitterUpdateScript;
 		FNiagaraCompileHash Hash = CalledGraph->GetCompileDataHash(TargetUsage, FGuid(0,0,0,0));
-		InReferencedCompileHashes.AddUnique(Hash);
-		InReferencedObjs.Add(CalledGraph->GetPathName());
-		CalledGraph->GatherExternalDependencyData(TargetUsage, FGuid(0, 0, 0, 0), InReferencedCompileHashes, InReferencedObjs);
+		HashCollector.AddHash(Hash, CalledGraph->GetPathName());
+		CalledGraph->GatherExternalDependencyData(TargetUsage, FGuid(0, 0, 0, 0), HashCollector);
 	}
 }
 

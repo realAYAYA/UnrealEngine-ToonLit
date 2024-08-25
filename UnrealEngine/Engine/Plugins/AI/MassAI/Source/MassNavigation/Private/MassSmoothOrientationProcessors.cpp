@@ -21,7 +21,7 @@ UMassSmoothOrientationProcessor::UMassSmoothOrientationProcessor()
 	: HighResEntityQuery(*this)
 	, LowResEntityQuery_Conditional(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::Movement;
 }
 

@@ -184,8 +184,8 @@ bool IsPhysicalLight(int LightId)
 
 float3 GetTranslatedPosition(int LightId)
 {
-	//const FLWCVector3 WorldPosition = MakeLWCVector3(SceneLights[LightId].TilePosition, SceneLights[LightId].RelativeWorldPosition);
-	//return LWCToFloat(LWCAdd(WorldPosition, PreViewTranslation));
+	//const FDFVector3 WorldPosition = DFFromTileOffset_Hack(MakeLWCVector3(SceneLights[LightId].TilePosition, SceneLights[LightId].RelativeWorldPosition));
+	//return DFFastToTranslatedWorld(WorldPosition, PreViewTranslation);
 
 	return SceneLights[LightId].TranslatedWorldPosition;
 }
@@ -220,17 +220,9 @@ float2 GetRectSize(int LightId)
 	return SceneLights[LightId].Dimensions.xy;
 }
 
-float2 DecodeLightF16x2(uint Encoded)
-{
-	return float2(
-		f16tof32(Encoded),
-		f16tof32(Encoded >> 16)
-	);
-}
-
 float2 GetCosConeAngles(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].Shaping);
+	return SceneLights[LightId].Shaping;
 }
 
 float3 GetColor(int LightId)
@@ -255,22 +247,22 @@ float GetAttenuation(int LightId)
 
 float GetRectLightBarnCosAngle(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].Shaping).x;
+	return SceneLights[LightId].Shaping.x;
 }
 
 float GetRectLightBarnLength(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].Shaping).y;
+	return SceneLights[LightId].Shaping.y;
 }
 
 float2 GetRectLightAtlasUVScale(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].RectLightAtlasUVScale);
+	return SceneLights[LightId].RectLightAtlasUVScale;
 }
 
 float2 GetRectLightAtlasUVOffset(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].RectLightAtlasUVOffset);
+	return SceneLights[LightId].RectLightAtlasUVOffset;
 }
 
 #ifndef USE_ATTENUATION_TERM

@@ -60,6 +60,8 @@ public:
 
 	bool GetEnableEnhancedInputSupport() const { return bEnableEnhancedInputSupport; }
 
+	bool GetEnableAutomaticGamepadTypeDetection() const { return bEnableAutomaticGamepadTypeDetection; }
+
 	TObjectPtr<UCommonInputActionDomainTable> GetActionDomainTable() const { return ActionDomainTablePtr; }
 
 public:
@@ -106,6 +108,13 @@ private:
 	/** Controls if Enhanced Input Support plugin-wide. Requires restart due to caching. */
 	UPROPERTY(config, EditAnywhere, Category = "Input", meta = (ConfigRestartRequired = true))
 	bool bEnableEnhancedInputSupport = false;
+
+	/**
+	* Controls automatic detection of the gamepad type.
+	* Disable this if you want to manually control the gamepad type using the UCommonInputSubsystem::SetGamepadInputType() function.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Input")
+	bool bEnableAutomaticGamepadTypeDetection = true;
 
 	/** Create a derived asset from UCommonInputActionDomainTable to store ordered ActionDomain data for your game */
 	UPROPERTY(config, EditAnywhere, Category = "Action Domain")

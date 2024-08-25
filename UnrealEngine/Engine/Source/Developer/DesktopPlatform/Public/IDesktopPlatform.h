@@ -67,6 +67,7 @@ struct FTargetInfo
 	FString Name;
 	FString Path;
 	EBuildTargetType Type;
+	TOptional<bool> DefaultTarget;
 };
 
 /**

@@ -186,8 +186,6 @@ double UCameraNodalOffsetAlgoManual::GetSensitivity() const
 	default:
 		return 0.0;
 	}
-
-	return 0.0;
 }
 
 TSharedRef<SWidget> UCameraNodalOffsetAlgoManual::BuildSensitivityWidget()

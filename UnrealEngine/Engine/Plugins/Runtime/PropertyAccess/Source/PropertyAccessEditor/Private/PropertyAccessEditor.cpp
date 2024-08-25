@@ -50,6 +50,12 @@ struct FPropertyAccessEditorSystem
 
 		// Whether to apply allow-list to functions and properties along the path
 		bool bPerformValidation = false;
+
+		// Whether to use the most up to date classes when traversing the path. 
+		// This can be useful for situations where we are resolving against potentially out of date
+		// classes, but the resulting path will not be valid to use or persist due to functions and properties
+		// being on skeleton classes 
+		bool bUseMostUpToDateClasses = false;
 	};
 
 	// The result of a segment resolve operation
@@ -245,6 +251,13 @@ struct FPropertyAccessEditorSystem
 				}
 
 				InContext.CurrentStruct = Segment.Struct;
+#if WITH_EDITOR
+				if (InContext.bUseMostUpToDateClasses && InContext.CurrentStruct && InContext.CurrentStruct->IsA<UClass>())
+				{
+					// Try to use the skeleton class if possible in editor as the regular class may have yet to be compiled
+					InContext.CurrentStruct = FBlueprintEditorUtils::GetMostUpToDateClass(CastChecked<UClass>(InContext.CurrentStruct));
+				}
+#endif
 			}
 
 			if(InContext.Segments.Num() > 0)
@@ -285,6 +298,7 @@ struct FPropertyAccessEditorSystem
 	{
 		FPropertyAccessPath AccessPath;
 		FResolveSegmentsContext Context(InStruct, InPath, AccessPath);
+		Context.bUseMostUpToDateClasses = InArgs.bUseMostUpToDateClasses;
 		FPropertyAccessResolveResult Result;
 		Result.Result = ResolveSegments(Context);
 		Result.bIsThreadSafe = Context.bWasThreadSafe;
@@ -341,6 +355,49 @@ struct FPropertyAccessEditorSystem
 		return Result;
 	}
 	
+	static EPropertyAccessCopyType GetAccessType(const FPropertyAccessSegment& InSegment)
+	{
+		FProperty* Property = InSegment.Property.Get();
+		if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+		{
+			// use the array's inner property if we are not trying to copy the whole array
+			if (InSegment.ArrayIndex != INDEX_NONE)
+			{
+				Property = ArrayProperty->Inner;
+			}
+		}
+
+		if (CastField<FNameProperty>(Property))
+		{
+			return EPropertyAccessCopyType::Name;
+		}
+		else if (CastField<FBoolProperty>(Property))
+		{
+			return EPropertyAccessCopyType::Bool;
+		}
+		else if (CastField<FStructProperty>(Property))
+		{
+			return EPropertyAccessCopyType::Struct;
+		}
+		else if (CastField<FObjectPropertyBase>(Property))
+		{
+			return EPropertyAccessCopyType::Object;
+		}
+		else if (CastField<FArrayProperty>(Property) && Property->HasAnyPropertyFlags(CPF_EditFixedSize))
+		{
+			// only apply array copying rules if the destination array is fixed size, otherwise it will be 'complex'
+			return EPropertyAccessCopyType::Array;
+		}
+		else if (Property->PropertyFlags & CPF_IsPlainOldData)
+		{
+			return EPropertyAccessCopyType::Plain;
+		}
+		else
+		{
+			return EPropertyAccessCopyType::Complex;
+		}
+	}
+
 	static EPropertyAccessCopyType GetCopyType(const FPropertyAccessSegment& InSrcSegment, const FPropertyAccessSegment& InDestSegment, FText& OutErrorMessage)
 	{
 		FProperty* SrcProperty = InSrcSegment.Property.Get();
@@ -370,35 +427,7 @@ struct FPropertyAccessEditorSystem
 		EPropertyAccessCompatibility Compatibility = PropertyAccess::GetPropertyCompatibility(SrcProperty, DestProperty);
 		if(Compatibility == EPropertyAccessCompatibility::Compatible)
 		{
-			if (CastField<FNameProperty>(DestProperty))
-			{
-				return EPropertyAccessCopyType::Name;
-			}
-			else if (CastField<FBoolProperty>(DestProperty))
-			{
-				return EPropertyAccessCopyType::Bool;
-			}
-			else if (CastField<FStructProperty>(DestProperty))
-			{
-				return EPropertyAccessCopyType::Struct;
-			}
-			else if (CastField<FObjectPropertyBase>(DestProperty))
-			{
-				return EPropertyAccessCopyType::Object;
-			}
-			else if (CastField<FArrayProperty>(DestProperty) && DestProperty->HasAnyPropertyFlags(CPF_EditFixedSize))
-			{
-				// only apply array copying rules if the destination array is fixed size, otherwise it will be 'complex'
-				return EPropertyAccessCopyType::Array;
-			}
-			else if(DestProperty->PropertyFlags & CPF_IsPlainOldData)
-			{
-				return EPropertyAccessCopyType::Plain;
-			}
-			else
-			{
-				return EPropertyAccessCopyType::Complex;
-			}
+			return GetAccessType(InDestSegment);
 		}
 		else if(Compatibility == EPropertyAccessCompatibility::Promotable)
 		{
@@ -578,6 +607,32 @@ struct FPropertyAccessEditorSystem
 				OutCopy.SourceResult = EPropertyAccessResolveResult::Failed;
 				OutCopy.SourceErrorText = CopyTypeError;
 			}
+		}
+
+		return false;
+	}
+
+	static bool CompileAccess(const UStruct* InStruct, FPropertyAccessLibrary& InLibrary, FPropertyAccessLibraryCompiler::FQueuedAccess& OutAccess)
+	{
+		FPropertyAccessPath AccessPath;
+
+		FResolveSegmentsContext Context(InStruct, OutAccess.Path, AccessPath);
+		Context.bPerformValidation = false;
+
+		OutAccess.Result = ResolveSegments(Context);
+		OutAccess.ErrorText = Context.ErrorMessage;
+
+		if (OutAccess.Result != EPropertyAccessResolveResult::Failed)
+		{
+			OutAccess.AccessIndex = InLibrary.DestPaths.Num();
+			OutAccess.AccessType = GetAccessType(Context.Segments.Last());
+
+			AccessPath.PathSegmentStartIndex = InLibrary.PathSegments.Num();
+			AccessPath.PathSegmentCount = Context.Segments.Num();
+			InLibrary.DestPaths.Add(AccessPath);
+			InLibrary.PathSegments.Append(Context.Segments);
+
+			return true;
 		}
 
 		return false;
@@ -915,7 +970,18 @@ FPropertyAccessHandle FPropertyAccessLibraryCompiler::AddCopy(TArrayView<FString
 
 	QueuedCopies.Add(MoveTemp(QueuedCopy));
 
-	return FPropertyAccessHandle(QueuedCopies.Num() - 1);
+	return FPropertyAccessHandle(QueuedCopies.Num() - 1, EPropertyAccessHandleType::Copy);
+}
+
+FPropertyAccessHandle FPropertyAccessLibraryCompiler::AddAccess(TArrayView<FString> InPath, UObject* InAssociatedObject)
+{
+	FQueuedAccess QueuedAccess;
+	QueuedAccess.Path = InPath;
+	QueuedAccess.AssociatedObject = InAssociatedObject;
+
+	QueuedAccesses.Add(MoveTemp(QueuedAccess));
+
+	return FPropertyAccessHandle(QueuedAccesses.Num() - 1, EPropertyAccessHandleType::Access);
 }
 
 bool FPropertyAccessLibraryCompiler::FinishCompilation()
@@ -927,7 +993,14 @@ bool FPropertyAccessLibraryCompiler::FinishCompilation()
 		{
 			FQueuedCopy& Copy = QueuedCopies[CopyIndex];
 			bResult &= ::FPropertyAccessEditorSystem::CompileCopy(Class, OnDetermineBatchId, *Library, Copy);
-			CopyMap.Add(FPropertyAccessHandle(CopyIndex), FCompiledPropertyAccessHandle(Copy.BatchIndex, Copy.BatchId));
+			CopyMap.Add(FPropertyAccessHandle(CopyIndex, EPropertyAccessHandleType::Copy), FCompiledPropertyAccessHandle(Copy.BatchIndex, Copy.BatchId, EPropertyAccessHandleType::Copy));
+		}
+
+		for (int32 AccessIndex = 0; AccessIndex < QueuedAccesses.Num(); ++AccessIndex)
+		{
+			FQueuedAccess& Access = QueuedAccesses[AccessIndex];
+			bResult &= ::FPropertyAccessEditorSystem::CompileAccess(Class, *Library, Access);
+			AccessMap.Add(FPropertyAccessHandle(AccessIndex, EPropertyAccessHandleType::Access), FCompiledPropertyAccessHandle(Access.AccessIndex, INDEX_NONE, EPropertyAccessHandleType::Access));
 		}
 
 		// Always rebuild the library even if we detected a 'failure'. Otherwise we could fail to copy data for both
@@ -961,12 +1034,35 @@ void FPropertyAccessLibraryCompiler::IterateErrors(TFunctionRef<void(const FText
 
 FCompiledPropertyAccessHandle FPropertyAccessLibraryCompiler::GetCompiledHandle(FPropertyAccessHandle InHandle) const
 {
-	if(const FCompiledPropertyAccessHandle* FoundHandle = CopyMap.Find(InHandle))
+	if (InHandle.GetType() == EPropertyAccessHandleType::Copy)
 	{
-		return *FoundHandle;
+		if (const FCompiledPropertyAccessHandle* FoundHandle = CopyMap.Find(InHandle))
+		{
+			return *FoundHandle;
+		}
+	}
+	else if (InHandle.GetType() == EPropertyAccessHandleType::Access)
+	{
+		if (const FCompiledPropertyAccessHandle* FoundHandle = AccessMap.Find(InHandle))
+		{
+			return *FoundHandle;
+		}
 	}
 
 	return FCompiledPropertyAccessHandle();
+}
+
+EPropertyAccessCopyType FPropertyAccessLibraryCompiler::GetCompiledHandleAccessType(FPropertyAccessHandle InHandle) const
+{
+	if (InHandle.GetType() == EPropertyAccessHandleType::Access)
+	{
+		if (const FCompiledPropertyAccessHandle* FoundHandle = AccessMap.Find(InHandle))
+		{
+			return QueuedAccesses[InHandle.GetId()].AccessType;
+		}
+	}
+
+	return EPropertyAccessCopyType::None;
 }
 
 #undef LOCTEXT_NAMESPACE

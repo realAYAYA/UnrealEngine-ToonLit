@@ -67,7 +67,7 @@ public:
 	void OnActorSpawned(AActor* InActor);
 
 	/** A callback for CC Region deletion. */
-	void OnActorDeleted(AActor* InActor);
+	void OnActorDeleted(AActor* InActor, bool bClearStencilIdValues);
 
 	/** Called when level is added or removed. */
 	void OnLevelsChanged() { RefreshRegions(); };

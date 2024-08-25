@@ -17,7 +17,7 @@ EDisplayClusterShaderParametersICVFX_LightCardRenderMode FDisplayClusterConfigur
 
 	if (LightcardRenderMode != EDisplayClusterConfigurationICVFX_OverrideLightcardRenderMode::Default)
 	{
-		// Use overrided values from viewport:
+		// Use overridden values from the viewport:
 		switch (LightcardRenderMode)
 		{
 		case EDisplayClusterConfigurationICVFX_OverrideLightcardRenderMode::Over:

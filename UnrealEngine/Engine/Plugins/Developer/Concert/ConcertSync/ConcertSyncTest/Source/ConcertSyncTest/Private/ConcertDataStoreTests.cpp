@@ -413,7 +413,7 @@ public:
 
 	/** Ensures a key/value pair was added. */
 	template<typename T>
-	void EnsureValueAdded(TConcertDataStoreResult<T>&& Result, const T& ExpectedValue)
+	void EnsureValueAdded(const TConcertDataStoreResult<T>& Result, const T& ExpectedValue)
 	{
 		TestTrueExpr(Result.GetCode() == EConcertDataStoreResultCode::Added);
 		TestTrueExpr(Result.GetValue() == ExpectedValue);
@@ -422,7 +422,7 @@ public:
 
 	/** Ensures the expected value was fetched. */
 	template<typename T>
-	void EnsureValueFetched(TConcertDataStoreResult<T>&& Result, const T& ExpectedValue)
+	void EnsureValueFetched(const TConcertDataStoreResult<T>& Result, const T& ExpectedValue)
 	{
 		TestTrueExpr(Result.GetCode() == EConcertDataStoreResultCode::Fetched);
 		TestTrueExpr(Result.GetValue() == ExpectedValue);
@@ -431,7 +431,7 @@ public:
 
 	/** Ensures the desired value was exchanged. */
 	template<typename T>
-	void EnsureValueExchanged(TConcertDataStoreResult<T>&& Result, const T& ExpectedValue)
+	void EnsureValueExchanged(const TConcertDataStoreResult<T>& Result, const T& ExpectedValue)
 	{
 		TestTrueExpr(Result.GetCode() == EConcertDataStoreResultCode::Exchanged);
 		TestTrueExpr(Result.GetValue() == ExpectedValue);
@@ -439,7 +439,7 @@ public:
 	}
 
 	template<typename T>
-	void EnsureTypeMismatch(TConcertDataStoreResult<T>&& Result)
+	void EnsureTypeMismatch(const TConcertDataStoreResult<T>& Result)
 	{
 		TestTrueExpr(Result.GetCode() == EConcertDataStoreResultCode::TypeMismatch);
 		TestTrueExpr(!Result.IsValid()); // Server doesn't send back any value on error.
@@ -447,7 +447,7 @@ public:
 	}
 
 	template<typename T>
-	void EnsureNotFound(TConcertDataStoreResult<T>&& Result)
+	void EnsureNotFound(const TConcertDataStoreResult<T>& Result)
 	{
 		TestTrueExpr(Result.GetCode() == EConcertDataStoreResultCode::NotFound);
 		TestTrueExpr(!Result.IsValid()); // Server doesn't send back any value on error.

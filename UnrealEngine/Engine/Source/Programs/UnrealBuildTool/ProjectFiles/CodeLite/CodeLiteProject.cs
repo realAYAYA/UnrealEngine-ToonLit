@@ -472,7 +472,7 @@ namespace UnrealBuildTool
 					//
 					if (ProjectTargetType == TargetType.Game)
 					{
-						string CookGameCommandLine = "mono AutomationTool.exe BuildCookRun ";
+						string CookGameCommandLine = "dotnet AutomationTool.exe BuildCookRun ";
 
 						// Projects filename
 						if (OnlyGameProject != null)

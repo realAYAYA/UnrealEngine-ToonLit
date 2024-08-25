@@ -80,6 +80,8 @@ public:
 	NIAGARAEDITOR_API virtual bool GetIsInherited() const override;
 	NIAGARAEDITOR_API virtual FText GetInheritanceMessage() const override;
 
+	virtual bool SupportsStackNotes() override { return true; }
+	
 	virtual bool CanDrag() const override { return true; }
 
 	NIAGARAEDITOR_API virtual bool GetIsEnabled() const override;

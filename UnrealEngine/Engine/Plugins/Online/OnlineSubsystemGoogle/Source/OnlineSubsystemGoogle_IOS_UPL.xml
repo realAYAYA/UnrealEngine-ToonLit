@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--OnlineSubsystemGoogle plugin additions-->
+<root>
+	<!-- init section is always evaluated once per architecture -->
+	<init>
+		<log text="GoogleSignIn iOS init"/>
+		
+		<setBoolFromProperty result="bEnabled" ini="Engine" section="OnlineSubsystemGoogle" property="bEnabled" default="false"/>
+		<setStringFromProperty result="ClientId" ini="Engine" section="OnlineSubsystemGoogle" property="ClientId" default=""/>
+		<setStringFromProperty result="ReversedClientId" ini="Engine" section="OnlineSubsystemGoogle.OnlineIdentityGoogle" property="ReversedClientId" default=""/>
+		<dumpvars/>
+	</init>
+	<iosPListUpdates>
+		<if condition="bEnabled">
+			<true>
+				<addElements tag="dict" once="true"> 
+					<key>GIDClientID</key>
+				</addElements>
+				<setElement result="NewEntry" value="string" text="$S(ClientId)"/>
+				<addElement tag="dict" name="NewEntry" once="true"/> 
+
+				<!-- CFBundleURLTypes block -->
+				<addElements tag="dict" once="true"> 
+					<key>CFBundleURLTypes</key>
+				</addElements>
+
+				<setElement result="Scheme" value="string" text="$S(ReversedClientId)"/>
+				<setElement result="ValueForKey" value="array"/>
+				<addElement tag="$ValueForKey" name="Scheme"/>
+
+				<setElement result="DictOnArray" value="dict"/>
+				<addElements tag="$DictOnArray">
+  					<key>CFBundleURLSchemes</key>
+				</addElements>
+				<addElement tag="$DictOnArray" name="ValueForKey"/>
+				<setElement result="NewEntry" value="array"/>				
+				<addElement tag="$NewEntry" name="DictOnArray"/>
+				<addElement tag="dict" name="NewEntry" once="true"/> 
+				<!-- End of CFBundleURLTypes block -->
+			</true>
+		</if>
+	</iosPListUpdates>
+	
+</root>

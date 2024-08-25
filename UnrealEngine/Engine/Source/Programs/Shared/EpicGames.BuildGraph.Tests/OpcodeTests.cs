@@ -1,12 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using EpicGames.BuildGraph.Expressions;
 using System.Threading.Tasks;
+using EpicGames.BuildGraph.Expressions;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace EpicGames.BuildGraph.Tests
 {

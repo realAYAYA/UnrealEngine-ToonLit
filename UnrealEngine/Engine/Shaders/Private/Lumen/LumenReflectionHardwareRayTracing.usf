@@ -1,14 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "/Engine/Shared/RayTracingTypes.h"
 #include "../Common.ush"
 #include "../MonteCarlo.ush"
 #include "../SceneTextureParameters.ush"
 
 // Ensure that DiffuseAlbedo is not overrident on SSS material (as we don't split lighting with the Lumen/RT integrator)
-#define STRATA_SSS_MATERIAL_OVERRIDE 0
+#define SUBSTRATE_SSS_MATERIAL_OVERRIDE 0
+#define SUBSTRATE_COMPLEXSPECIALPATH 1
+#define SUBSTRATE_GLINTS_ALLOWED 0
 
-// When tracing from compute, STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE=0 is not automatically detected, so we notify the use of raytracing here.
-#define STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE 0 
+// When tracing from compute, SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE=0 is not automatically detected, so we notify the use of raytracing here.
+#define SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE 0 
 
 // Additional rewiring to make DeferredShadingCommon happy
 #define PreIntegratedGF				ReflectionStruct.PreIntegratedGF
@@ -72,13 +75,14 @@ int HitLightingForceEnabled;
 int SampleSceneColor;
 float RelativeDepthThickness;
 uint MaxReflectionBounces;
+uint MaxRefractionBounces;
 
-Texture2D<uint2> TraceBookmark;
+Texture2DArray<uint2> TraceBookmark;
 
-RWTexture2D<float3> RWTraceRadiance;
-RWTexture2D<float> RWTraceHit;
-RWTexture2D<uint2> RWTraceBookmark;
-RWTexture2D<uint> RWTraceMaterialId;
+RWTexture2DArray<float3> RWTraceRadiance;
+RWTexture2DArray<float>  RWTraceHit;
+RWTexture2DArray<uint2>  RWTraceBookmark;
+RWTexture2DArray<uint>   RWTraceMaterialId;
 
 LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenReflectionHardwareRayTracing)
 {
@@ -97,7 +101,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenReflectionHardwareRayTracing)
 		float2 ScreenCoord = ScreenUV * View.BufferSizeAndInvSize.xy;
 		uint LinearCoord = ScreenCoord.y * View.BufferSizeAndInvSize.x + ScreenCoord.x;
 
-		float SceneDepth = DownsampledDepth.Load(int3(ReflectionTracingCoord.CoordFlatten, 0)).x;
+		float SceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten, 0)).x;
 		float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
 		const float3 WorldNormal = ReadMaterialData(uint2(ScreenCoord)).WorldNormal;
 		FRayData RayData = GetRayData(ReflectionTracingCoord.CoordFlatten);
@@ -105,7 +109,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenReflectionHardwareRayTracing)
 		float ClippedNearFieldMaxTraceDistance = ClipAndDitherNearFieldMaxTraceDistance(
 			TranslatedWorldPosition,
 			RayData.Direction,
-			ReflectionTracingCoord.CoordFlatten,
+			ReflectionTracingCoord.Coord,
 			NearFieldSceneRadius,
 			NearFieldMaxTraceDistance,
 			NearFieldMaxTraceDistanceDitherScale);
@@ -139,6 +143,11 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenReflectionHardwareRayTracing)
 		Context.FarFieldMaxTraceDistance = FarFieldMaxTraceDistance;
 		Context.FarFieldReferencePos = FarFieldReferencePos;
 		Context.bUseBookmark = true;
+
+	#if RECURSIVE_REFRACTION_TRACES
+		Context.MaxRefractionBounces = MaxRefractionBounces;
+		Context.InstanceMask |= RAY_TRACING_MASK_TRANSLUCENT;  
+	#endif
 
 		FRayTracedLightingResult Result = CreateRayTracedLightingResult();
 		#if RAY_TRACING_PASS == RAY_TRACING_PASS_HIT_LIGHTING
@@ -230,8 +239,8 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenReflectionHardwareRayTracing)
 			// If we're tracing a near field ray that missed, which has valid Radiance Cache coverage, use that for final lighting
 			if (!Result.bIsHit && RayData.bUseRadianceCache)
 			{
-				float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
-				FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(WorldPosition, RayData.Direction, InterleavedGradientNoise(ReflectionTracingCoord.Coord, View.StateFrameIndexMod8));
+				float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+				FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(WorldPosition, RayData.Direction, InterleavedGradientNoise(ReflectionTracingCoord.Coord, ReflectionsStateFrameIndexMod8));
 				SampleRadianceCacheAndApply(Coverage, WorldPosition, RayData.Direction, RayData.ConeHalfAngle, TraceResult.Lighting, TraceResult.Transparency);
 				Result.bIsHit = true;
 				bNeedsHitLightingPass = false;
@@ -282,7 +291,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenReflectionHardwareRayTracing)
 
 				if (DebugTraceIndex >= 0 && DebugTraceIndex < 32)
 				{
-					float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+					float3 WorldPosition = TranslatedWorldPosition - DFHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
 					WriteTraceForVisualization(DebugTraceIndex, WorldPosition, RayData.Direction, TraceResult.OpaqueHitDistance, / *TraceResult.Lighting* /float3(1, 0, 0));
 				}
 			}

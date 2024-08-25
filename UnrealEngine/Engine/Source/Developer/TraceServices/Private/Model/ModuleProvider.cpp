@@ -193,9 +193,9 @@ template <typename SymbolResolverType>
 void TModuleProvider<SymbolResolverType>::EnumerateModules(uint32 Start, TFunctionRef<void(const FModule& Module)> Callback) const
 {
 	FReadScopeLock _(ModulesLock);
-	for (uint32 i = Start; i < Modules.Num(); ++i)
+	for (uint32 ModuleIndex = Start; ModuleIndex < Modules.Num(); ++ModuleIndex)
 	{
-		Callback(Modules[i]);
+		Callback(Modules[ModuleIndex]);
 	}
 }
 
@@ -303,18 +303,31 @@ void TModuleProvider<SymbolResolverType>::GetStats(FStats* OutStats) const
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<typename SymbolResolverType>
-void TModuleProvider<SymbolResolverType>::OnModuleLoad(const FStringView& Module, uint64 Base, uint32 Size, const uint8* ImageId, uint32 ImageIdSize)
+void TModuleProvider<SymbolResolverType>::OnModuleLoad(const FStringView& ModuleName, uint64 Base, uint32 Size, const uint8* ImageId, uint32 ImageIdSize)
 {
-	if (Module.Len() == 0)
+	if (ModuleName.Len() == 0)
 	{
 		return;
 	}
 
-	const FStringView NameTemp = FPathViews::GetCleanFilename(Module);
+	const FStringView NameTemp = FPathViews::GetCleanFilename(ModuleName);
 	const TCHAR* Name = Session.StoreString(NameTemp);
-	const TCHAR* FullName = Session.StoreString(Module);
+	const TCHAR* FullName = Session.StoreString(ModuleName);
 
 	FWriteScopeLock _(ModulesLock);
+
+	// Check if the module was already added.
+	for (uint32 ModuleIndex = 0; ModuleIndex < Modules.Num(); ++ModuleIndex)
+	{
+		const FModule& LoadedModule = Modules[ModuleIndex];
+		if (LoadedModule.Name == Name && // only comparing pointers from session's string store
+			LoadedModule.Base == Base &&
+			LoadedModule.Size == Size)
+		{
+			return;
+		}
+	}
+
 	FModule& NewModule = Modules.EmplaceBack(Name, FullName, Base, Size, EModuleStatus::Discovered);
 
 	// The number of cached symbols for this module is equal to the number
@@ -438,8 +451,10 @@ FResolvedSymbolFilter::FResolvedSymbolFilter()
 	IgnoreSymbolsByFunctionName.Add(TEXT("FVirtualWinApiHooks::"));
 	IgnoreSymbolsByFunctionName.Add(TEXT("Malloc"));
 	IgnoreSymbolsByFunctionName.Add(TEXT("Realloc"));
+	IgnoreSymbolsByFunctionName.Add(TEXT("Free"));
 	IgnoreSymbolsByFunctionName.Add(TEXT("MemoryTrace_"));
 	IgnoreSymbolsByFunctionName.Add(TEXT("operator new"));
+	IgnoreSymbolsByFunctionName.Add(TEXT("operator delete"));
 	IgnoreSymbolsByFunctionName.Add(TEXT("std::"));
 	IgnoreSymbolsByFunctionName.Add(TEXT("FWindowsPlatformMemory::"));
 	IgnoreSymbolsByFunctionName.Add(TEXT("FCachedOSPageAllocator::"));
@@ -502,12 +517,12 @@ TSharedPtr<IModuleAnalysisProvider> CreateModuleProvider(IAnalysisSession& InSes
 {
 	TSharedPtr<IModuleAnalysisProvider> Provider;
 
-#if PLATFORM_WINDOWS && USE_SYMSLIB
+#if USE_SYMSLIB && UE_SYMSLIB_AVAILABLE
 	if (!Provider && (InSymbolFormat.Equals("pdb") || InSymbolFormat.Equals("dwarf")))
 	{
 		Provider = MakeShared<TModuleProvider<FSymslibResolver>>(InSession);
 	}
-#endif // PLATFORM_WINDOWS && USE_SYMSLIB
+#endif //USE_SYMSLIB
 #if PLATFORM_WINDOWS && USE_DBGHELP
 	if (!Provider && InSymbolFormat.Equals("pdb"))
 	{

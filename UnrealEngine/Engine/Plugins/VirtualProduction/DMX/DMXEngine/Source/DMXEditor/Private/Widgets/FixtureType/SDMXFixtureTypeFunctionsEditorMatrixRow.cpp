@@ -60,7 +60,7 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorMatrixRow::GenerateWidgetForCo
 		TWeakObjectPtr<UDMXEntityFixtureType> FixtureType = MatrixItem->GetFixtureType();
 		const int32 ModeIndex = MatrixItem->GetModeIndex();
 
-		if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Status)
+		if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Status)
 		{
 			return
 				SNew(SBorder)
@@ -97,7 +97,7 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorMatrixRow::GenerateWidgetForCo
 						})
 				];
 		}
-		else if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Channel)
+		else if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Channel)
 		{
 			return
 				SNew(SBorder)
@@ -117,7 +117,7 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorMatrixRow::GenerateWidgetForCo
 					.IsSelected(IsSelected)
 				];
 		}
-		else if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Name)
+		else if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Name)
 		{
 			return
 				SNew(SBorder)
@@ -175,7 +175,7 @@ TSharedRef<SWidget> SDMXFixtureTypeFunctionsEditorMatrixRow::GenerateWidgetForCo
 					]
 				];
 		}
-		else if (ColumnName == FDMXFixtureTypeFunctionsEditorCollumnIDs::Attribute)
+		else if (ColumnName == SDMXFixtureTypeFunctionsEditor::FCollumnID::Attribute)
 		{
 			return
 				SNew(SBorder)

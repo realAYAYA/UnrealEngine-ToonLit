@@ -118,6 +118,7 @@ protected:
 
 	//~ Begin UObject interface
 	virtual void PostInitProperties() override;
+	virtual void PostLoad() override;
 	//~ End UObject interface
 
 public:

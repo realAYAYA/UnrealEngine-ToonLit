@@ -154,7 +154,7 @@ protected:
 					OutSize = RequiredSize;
 					if (!RemainingSize)
 					{
-						FreeRanges.RemoveAt(Index, 1, false);
+						FreeRanges.RemoveAt(Index, 1, EAllowShrinking::No);
 					}
 					else
 					{
@@ -225,7 +225,7 @@ protected:
 				{
 					FreeRanges[LowerBoundIndex].SizeMultiplier += FreeRanges[UpperBoundIndex].SizeMultiplier;
 					Size = FreeRanges[LowerBoundIndex].SizeMultiplier;
-					FreeRanges.RemoveAt(UpperBoundIndex, 1, false);
+					FreeRanges.RemoveAt(UpperBoundIndex, 1, EAllowShrinking::No);
 				}
 			}
 			// No merging, add a new free range
@@ -257,7 +257,7 @@ protected:
 		{
 			Chunks[FreeChunkInfos.Last().ChunkIndex].InfoIndex = InfoIndex;
 		}
-		FreeChunkInfos.RemoveAtSwap(InfoIndex, 1, false);
+		FreeChunkInfos.RemoveAtSwap(InfoIndex, 1, EAllowShrinking::No);
 	}
 
 	void FreeChunk(uint32 ChunkIndex)

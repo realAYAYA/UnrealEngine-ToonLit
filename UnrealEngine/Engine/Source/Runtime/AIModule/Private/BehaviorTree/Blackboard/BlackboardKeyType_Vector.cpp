@@ -57,7 +57,14 @@ bool UBlackboardKeyType_Vector::GetLocation(const UBlackboardComponent& OwnerCom
 
 void UBlackboardKeyType_Vector::InitializeMemory(UBlackboardComponent& OwnerComp, uint8* RawData)
 {
-	SetValue(this, RawData, FAISystem::InvalidLocation);
+	if (bUseDefaultValue)
+	{
+		SetValue(this, RawData, DefaultValue);
+	}
+	else
+	{
+		SetValue(this, RawData, InvalidValue);
+	}
 }
 
 bool UBlackboardKeyType_Vector::TestBasicOperation(const UBlackboardComponent& OwnerComp, const uint8* MemoryBlock, EBasicKeyOperation::Type Op) const

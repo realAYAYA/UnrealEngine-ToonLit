@@ -47,42 +47,53 @@ OutputPS DMXPixelMappingPS(OutputVS IN)
 	}
 	else
 	{
-		// Average the final color sample based on various samples taken from within this UV space.
+		// Sample the center color
 		OUT.Color = Texture2DSample(InputTexture, InputSampler, UV);
 
+		// For higher qualities, average the final color from the center color and additional samples on the sides.
 #if PIXELBLENDING_QUALITY == PIXELBLENDING_QUALITY_MEDIUM
 		#define NUM_CELLS 4
 		float2 UVCells[NUM_CELLS];
 		
-		UVCells[0] = UV + float2(-UVCellSize.x, -UVCellSize.y);			// UL
-		UVCells[1] = UV + float2(UVCellSize.x, -UVCellSize.y);			// UR
-		UVCells[2] = UV + float2(UVCellSize.x, UVCellSize.y);			// BR
-		UVCells[3] = UV + float2(-UVCellSize.x, UVCellSize.y);			// BL
+		// 1/8 from the vertices results in an even color distribution with 5 samples
+		UVCells[0] = UVTopLeftRotated + (UV - UVTopLeftRotated) / 8.f;			// Upper Left 
+		UVCells[1] = UVTopRightRotated + (UV - UVTopRightRotated) / 8.f;		// Upper Right
+		UVCells[2] = UV + UV - UVCells[0];										// Bottom Right
+		UVCells[3] = UV + UV - UVCells[1];										// Bottom Left
+
+		for(uint i = 0; i < NUM_CELLS; ++i)
+		{
+			// Only add 1/4 of the color to avoid bias towards the sides
+			OUT.Color += Texture2DSample(InputTexture, InputSampler, clamp(UVCells[i], 0, 1)) / 4.f;
+		}
+		
+		// The average of the center color + 1/4 of the color on each side
+		OUT.Color /= 2.f;
 
 #elif PIXELBLENDING_QUALITY == PIXELBLENDING_QUALITY_HIGH
 		#define NUM_CELLS 8
 		float2 UVCells[NUM_CELLS];
 		
-		UVCells[0] = UV + float2(-UVCellSize.x, -UVCellSize.y);			// UL
-		UVCells[1] = UV + float2(UVCellSize.x, -UVCellSize.y);			// UR
-		UVCells[2] = UV + float2(UVCellSize.x, UVCellSize.y);			// BR
-		UVCells[3] = UV + float2(-UVCellSize.x, UVCellSize.y);			// BL
-		UVCells[4] = UV + float2(-UVCellSize.x, 0);						// L
-		UVCells[5] = UV + float2(0, -UVCellSize.y);						// U
-		UVCells[6] = UV + float2(UVCellSize.x, 0);						// R
-		UVCells[7] = UV + float2(0, UVCellSize.y);						// D
+		// 1/6 from the vertices results in an even color distribution with 9 samples
+		UVCells[0] = UVTopLeftRotated + (UV - UVTopLeftRotated) / 6.f;			// Upper Left  
+		UVCells[1] = UVTopRightRotated + (UV - UVTopRightRotated) / 6.f;		// Upper Right 
+		UVCells[2] = UV + UV - UVCells[0];										// Bottom Right
+		UVCells[3] = UV + UV - UVCells[1];										// Bottom Left
+		UVCells[4] = UV + (UVCells[0] - UV + UVCells[1] - UV) / 2.f;			// Upper Center
+		UVCells[5] = UV + (UVCells[1] - UV + UVCells[2] - UV) / 2.f;			// Right Center
+		UVCells[6] = UV + (UVCells[2] - UV + UVCells[3] - UV) / 2.f;			// Bottom Center
+		UVCells[7] = UV + (UVCells[3] - UV + UVCells[0] - UV) / 2.f;			// Left Center
 		
-#elif PIXELBLENDING_QUALITY > PIXELBLENDING_QUALITY_HIGH
-#error Invalid pixel blending quality level specified.
-#endif
-
-#if PIXELBLENDING_QUALITY > PIXELBLENDING_QUALITY_LOW
 		for(uint i = 0; i < NUM_CELLS; ++i)
 		{
 			OUT.Color += Texture2DSample(InputTexture, InputSampler, clamp(UVCells[i], 0, 1));
 		}
 		
-		OUT.Color /= (NUM_CELLS + 1);
+		// The average of the center color + all the points on sides
+		OUT.Color /= 9.f;
+		
+#elif PIXELBLENDING_QUALITY > PIXELBLENDING_QUALITY_HIGH
+#error Invalid pixel blending quality level specified.
 #endif
 
 		OUT.Color *= Brightness;

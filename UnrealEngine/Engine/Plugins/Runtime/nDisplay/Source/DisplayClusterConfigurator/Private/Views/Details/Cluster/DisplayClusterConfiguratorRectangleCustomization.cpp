@@ -139,7 +139,8 @@ private:
 		const FString& SliderExponentString = GetMetaData(TEXT("SliderExponent"));
 		const FString& DeltaString = GetMetaData(TEXT("Delta"));
 		const FString& LinearDeltaSensitivityString = GetMetaData(TEXT("LinearDeltaSensitivity"));
-		const FString& ShiftMouseMovePixelPerDeltaString = GetMetaData(TEXT("ShiftMouseMovePixelPerDelta"));
+		const FString& ShiftMultiplierString = GetMetaData(TEXT("ShiftMultiplier"));
+		const FString& CtrlMultiplierString = GetMetaData(TEXT("CtrlMultiplier"));
 
 		TOptional<int32> ClampMin = !ClampMinString.IsEmpty() ? FCString::Atoi(*ClampMinString) : TOptional<int32>();
 		TOptional<int32> ClampMax = !ClampMaxString.IsEmpty() ? FCString::Atoi(*ClampMaxString) : TOptional<int32>();
@@ -148,7 +149,8 @@ private:
 		float SliderExponent = !SliderExponentString.IsEmpty() ? FCString::Atof(*SliderExponentString) : 1.0f;
 		int32 Delta = !DeltaString.IsEmpty() ? FCString::Atoi(*DeltaString) : 0;
 		int32 LinearDeltaSensitivity = !LinearDeltaSensitivityString.IsEmpty() ? FCString::Atoi(*LinearDeltaSensitivityString) : 0;
-		int32 ShiftMouseMovePixelPerDelta = !ShiftMouseMovePixelPerDeltaString.IsEmpty() ? FMath::Max(FCString::Atoi(*ShiftMouseMovePixelPerDeltaString), 1) : 1;
+		float ShiftMultiplier = !ShiftMultiplierString.IsEmpty() ? FCString::Atof(*ShiftMultiplierString) : 10.f;
+		float CtrlMultiplier = !CtrlMultiplierString.IsEmpty() ? FCString::Atof(*CtrlMultiplierString) : 0.1f;
 
 		TWeakPtr<IPropertyHandle> WeakHandlePtr = PropertyHandle;
 
@@ -164,7 +166,8 @@ private:
 			.OnBeginSliderMovement(this, &FRectangleCompoundCustomNodeBuilder::OnBeginSliderMovement, WeakHandlePtr)
 			.OnEndSliderMovement(this, &FRectangleCompoundCustomNodeBuilder::OnEndSliderMovement, WeakHandlePtr)
 			.AllowSpin(PropertyHandle->GetNumOuterObjects() < 2)
-			.ShiftMouseMovePixelPerDelta(ShiftMouseMovePixelPerDelta)
+			.ShiftMultiplier(ShiftMultiplier)
+			.CtrlMultiplier(CtrlMultiplier)
 			.MinValue(ClampMin)
 			.MaxValue(ClampMax)
 			.MinSliderValue(UIMin)

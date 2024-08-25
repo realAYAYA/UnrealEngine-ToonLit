@@ -28,5 +28,7 @@ public:
 	virtual FString GetShaderText() const = 0;
 	/** Set shader text after edit modifications. */
 	virtual void SetShaderText(const FString& NewText) = 0;
+	/** Return true is the shader text can be edited */
+	virtual bool IsShaderTextReadOnly() const = 0;
 #endif
 };

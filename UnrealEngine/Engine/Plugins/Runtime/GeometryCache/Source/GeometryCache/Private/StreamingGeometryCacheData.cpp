@@ -308,7 +308,7 @@ bool FStreamingGeometryCacheData::BlockTillAllRequestsFinished(float TimeLimit)
 		{
 			if (Iter.Value().IORequest)
 			{
-				float ThisTimeLimit = EndTime - FPlatformTime::Seconds();
+				float ThisTimeLimit = static_cast<float>(EndTime - FPlatformTime::Seconds());
 				if (ThisTimeLimit < .001f || // one ms is the granularity of the platform event system
 					!Iter.Value().IORequest->WaitCompletion(ThisTimeLimit))
 				{

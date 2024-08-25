@@ -40,6 +40,7 @@ UNiagaraLightRendererProperties::UNiagaraLightRendererProperties()
 		&RadiusBinding,
 		&VolumetricScatteringBinding,
 		&RendererVisibilityTagBinding,
+		&SpecularScaleBinding,
 	};
 }
 
@@ -74,6 +75,7 @@ void UNiagaraLightRendererProperties::PostInitProperties()
 			LightRenderingEnabledBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_ENABLED);
 			VolumetricScatteringBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING);
 			RendererVisibilityTagBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_VISIBILITY_TAG);
+			SpecularScaleBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE);
 		}
 	}
 }
@@ -103,6 +105,7 @@ void UNiagaraLightRendererProperties::InitCDOPropertiesAfterModuleStartup()
 	CDO->LightRenderingEnabledBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_ENABLED);
 	CDO->VolumetricScatteringBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING);
 	CDO->RendererVisibilityTagBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_VISIBILITY_TAG);
+	CDO->SpecularScaleBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE);
 
 	for (TWeakObjectPtr<UNiagaraLightRendererProperties>& WeakLightRendererProperties : LightRendererPropertiesToDeferredInit)
 	{
@@ -117,6 +120,7 @@ void UNiagaraLightRendererProperties::InitCDOPropertiesAfterModuleStartup()
 				WeakLightRendererProperties->LightRenderingEnabledBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_ENABLED);
 				WeakLightRendererProperties->VolumetricScatteringBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING);
 				WeakLightRendererProperties->RendererVisibilityTagBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_VISIBILITY_TAG);
+				WeakLightRendererProperties->SpecularScaleBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE);
 			}
 		}
 	}
@@ -195,6 +199,7 @@ void UNiagaraLightRendererProperties::CacheFromCompiledData(const FNiagaraDataSe
 	InitParticleDataSetAccessor(ScatteringDataSetAccessor, CompiledData, VolumetricScatteringBinding);
 	InitParticleDataSetAccessor(EnabledDataSetAccessor, CompiledData, LightRenderingEnabledBinding);
 	InitParticleDataSetAccessor(RendererVisibilityTagAccessor, CompiledData, RendererVisibilityTagBinding);
+	InitParticleDataSetAccessor(SpecularScaleAccessor, CompiledData, SpecularScaleBinding);
 }
 
 void UNiagaraLightRendererProperties::UpdateSourceModeDerivates(ENiagaraRendererSourceDataMode InSourceMode, bool bFromPropertyEdit)
@@ -231,6 +236,7 @@ const TArray<FNiagaraVariable>& UNiagaraLightRendererProperties::GetOptionalAttr
 		Attrs.Add(SYS_PARAM_PARTICLES_LIGHT_ENABLED);
 		Attrs.Add(SYS_PARAM_PARTICLES_LIGHT_VOLUMETRIC_SCATTERING);
 		Attrs.Add(SYS_PARAM_PARTICLES_VISIBILITY_TAG);
+		Attrs.Add(SYS_PARAM_PARTICLES_LIGHT_SPECULAR_SCALE);
 	}
 	return Attrs;
 }

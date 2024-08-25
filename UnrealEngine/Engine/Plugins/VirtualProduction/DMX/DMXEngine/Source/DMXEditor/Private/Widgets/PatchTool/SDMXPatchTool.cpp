@@ -18,6 +18,10 @@
 
 #define LOCTEXT_NAMESPACE "SDMXPatchTool"
 
+SDMXPatchTool::SDMXPatchTool()
+	: AnalyticsProvider("PatchTool")
+{}
+
 SDMXPatchTool::~SDMXPatchTool()
 {
 	// Unbind from library changes

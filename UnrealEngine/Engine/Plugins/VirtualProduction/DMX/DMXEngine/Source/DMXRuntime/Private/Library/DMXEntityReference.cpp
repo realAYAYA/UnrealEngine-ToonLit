@@ -43,14 +43,12 @@ UDMXEntity* FDMXEntityReference::GetEntity() const
 	{
 		return CachedEntity.Get();
 	}
-	else if (DMXLibrary && EntityId.IsValid())
+	else if (IsValid(DMXLibrary) && EntityId.IsValid())
 	{
-		if (UDMXEntity* Entity = DMXLibrary->FindEntity(EntityId))
+		UDMXEntity* Entity = DMXLibrary->FindEntity(EntityId);
+		if (IsValid(Entity) && Entity->GetClass()->IsChildOf(GetEntityType()))
 		{
-			if (Entity->GetClass()->IsChildOf(GetEntityType()))
-			{
-				return Entity;
-			}
+			return Entity;
 		}
 	}
 	return nullptr;

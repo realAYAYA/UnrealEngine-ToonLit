@@ -12,6 +12,7 @@
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/Layout/SWrapBox.h"
+#include "Widgets/SNiagaraColorEditor.h"
 
 class SNiagaraColorParameterEditor : public SNiagaraParameterEditor
 {
@@ -21,43 +22,19 @@ public:
 
 	void Construct(const FArguments& InArgs)
 	{
-		SNiagaraParameterEditor::Construct(SNiagaraParameterEditor::FArguments()
-			.HAlign(HAlign_Fill));
+		SNiagaraParameterEditor::Construct(SNiagaraParameterEditor::FArguments());
 
 		ChildSlot
 		[
-			SNew(SWrapBox)
-			.UseAllottedSize(true)
-			+ SWrapBox::Slot()
-			.VAlign(VAlign_Center)
-			.Padding(0, 0, 6, 0)
-			[
-				SAssignNew(ColorBlock, SColorBlock)
-				.Color(this, &SNiagaraColorParameterEditor::GetColor)
-				.ShowBackgroundForAlpha(true)
-				.OnMouseButtonDown(this, &SNiagaraColorParameterEditor::OnMouseButtonDownColorBlock)
-				.Size(FVector2D(40.0f, 16.0f))
-				.CornerRadius(FVector4(3.0f, 3.0f, 3.0f, 3.0f))
-			]
-			+ SWrapBox::Slot()
-			.Padding(0, 0, 4, 0)
-			[
-				ConstructComponentWidget(0, NSLOCTEXT("ColorParameterEditor", "RLabel", "R"))
-			]
-			+ SWrapBox::Slot()
-			.Padding(0, 0, 4, 0)
-			[
-				ConstructComponentWidget(1, NSLOCTEXT("ColorParameterEditor", "GLabel", "G"))
-			]
-			+ SWrapBox::Slot()
-			.Padding(0, 0, 4, 0)
-			[
-				ConstructComponentWidget(2, NSLOCTEXT("ColorParameterEditor", "BLabel", "B"))
-			]
-			+ SWrapBox::Slot()
-			[
-				ConstructComponentWidget(3, NSLOCTEXT("ColorParameterEditor", "ALabel", "A"))
-			]
+			SNew(SNiagaraColorEditor)
+			.Color(this, &SNiagaraColorParameterEditor::GetColor)
+			.OnColorChanged(this, &SNiagaraColorParameterEditor::SetColor)
+			.OnBeginEditing(this, &SNiagaraColorParameterEditor::BeginEditing)
+			.OnEndEditing(this, &SNiagaraColorParameterEditor::EndEditing)
+			.OnCancelEditing(this, &SNiagaraColorParameterEditor::CancelEditing)
+			.OnColorPickerOpened(this, &SNiagaraColorParameterEditor::ColorPickerOpened)
+			.OnColorPickerClosed(this, &SNiagaraColorParameterEditor::ColorPickerClosed)
+			.MinDesiredColorBlockWidth(SNiagaraParameterEditor::DefaultInputSize)
 		];
 	}
 
@@ -76,108 +53,28 @@ public:
 	virtual bool CanChangeContinuously() const override { return true; }
 
 private:
-	TSharedRef<SWidget> ConstructComponentWidget(int32 Index, FText ComponentLabel)
-	{
-		return SNew(SNumericEntryBox<float>)
-		.Font(FAppStyle::Get().GetFontStyle("PropertyWindow.NormalFont"))
-		.OverrideTextMargin(2)
-		.MinValue(TOptional<float>())
-		.MaxValue(TOptional<float>())
-		.MaxSliderValue(TOptional<float>())
-		.MinSliderValue(TOptional<float>())
-		.Delta(0.0f)
-		.Value(this, &SNiagaraColorParameterEditor::GetComponentValue, Index)
-		.OnValueChanged(this, &SNiagaraColorParameterEditor::ComponentValueChanged, Index)
-		.OnValueCommitted(this, &SNiagaraColorParameterEditor::ComponentValueCommitted, Index)
-		.OnBeginSliderMovement(this, &SNiagaraColorParameterEditor::BeginSliderMovement)
-		.OnEndSliderMovement(this, &SNiagaraColorParameterEditor::EndSliderMovement)
-		.AllowSpin(true)
-		.BroadcastValueChangesPerKey(!GetDefault<UNiagaraEditorSettings>()->GetUpdateStackValuesOnCommitOnly())
-		.LabelVAlign(EVerticalAlignment::VAlign_Center)
-		.MinDesiredValueWidth(30)
-		.Label()
-		[
-			SNew(STextBlock)
-			.TextStyle(FNiagaraEditorStyle::Get(), "NiagaraEditor.ParameterText")
-			.Text(ComponentLabel)
-		];
-	}
-
-	void BeginSliderMovement()
+	void BeginEditing()
 	{
 		ExecuteOnBeginValueChange();
 	}
 
-	void EndSliderMovement(float Value)
+	void EndEditing()
 	{
 		ExecuteOnEndValueChange();
 	}
 
-	TOptional<float> GetComponentValue(int32 Index) const
-	{
-		return TOptional<float>(ColorValue.Component(Index));
-	}
-
-	void ComponentValueChanged(float ComponentValue, int32 Index)
-	{
-		ColorValue.Component(Index) = ComponentValue;
-		ExecuteOnValueChanged();
-	}
-
-	void ComponentValueCommitted(float ComponentValue, ETextCommit::Type CommitInfo, int32 Index)
-	{
-		if (CommitInfo == ETextCommit::OnEnter || CommitInfo == ETextCommit::OnUserMovedFocus)
-		{
-			ComponentValueChanged(ComponentValue, Index);
-		}
-	}
-
-	FReply OnMouseButtonDownColorBlock(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
-	{
-		if (MouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
-		{
-			return FReply::Unhandled();
-		}
-
-		FColorPickerArgs PickerArgs;
-		{
-			PickerArgs.bUseAlpha = true;
-			PickerArgs.bOnlyRefreshOnMouseUp = false;
-			PickerArgs.bOnlyRefreshOnOk = false;
-			PickerArgs.DisplayGamma = TAttribute<float>::Create(TAttribute<float>::FGetter::CreateUObject(GEngine, &UEngine::GetDisplayGamma));
-			PickerArgs.OnColorCommitted = FOnLinearColorValueChanged::CreateSP(this, &SNiagaraColorParameterEditor::SetColor);
-			PickerArgs.OnColorPickerCancelled = FOnColorPickerCancelled::CreateSP(this, &SNiagaraColorParameterEditor::ColorPickerCancelled);
-			PickerArgs.OnInteractivePickBegin = FSimpleDelegate::CreateSP(this, &SNiagaraColorParameterEditor::InteractivePickBegin);
-			PickerArgs.OnInteractivePickEnd = FSimpleDelegate::CreateSP(this, &SNiagaraColorParameterEditor::InteractivePickEnd);
-			PickerArgs.OnColorPickerWindowClosed = FOnWindowClosed::CreateSP(this, &SNiagaraColorParameterEditor::ColorPickerClosed);
-			PickerArgs.InitialColor = ColorValue;
-			PickerArgs.ParentWidget = ColorBlock;
-		}
-
-		OpenColorPicker(PickerArgs);
-		// Mark this parameter editor as editing exclusively so that the corresponding structure details view doesn't get updated
-		// since it closes all color pickers when it gets updated!
-		SetIsEditingExclusively(true);
-		return FReply::Handled();
-	}
-
-	void InteractivePickBegin()
-	{
-		ExecuteOnBeginValueChange();
-	}
-
-	void InteractivePickEnd()
-	{
-		ExecuteOnEndValueChange();
-	}
-
-	void ColorPickerCancelled(FLinearColor OriginalColor)
+	void CancelEditing(FLinearColor OriginalColor)
 	{
 		ColorValue = OriginalColor;
 		ExecuteOnValueChanged();
 	}
 
-	void ColorPickerClosed(const TSharedRef<SWindow>& Window)
+	void ColorPickerOpened()
+	{
+		SetIsEditingExclusively(true);
+	}
+
+	void ColorPickerClosed()
 	{
 		SetIsEditingExclusively(false);
 	}

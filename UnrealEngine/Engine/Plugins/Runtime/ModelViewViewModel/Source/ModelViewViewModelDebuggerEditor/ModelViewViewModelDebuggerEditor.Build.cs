@@ -8,6 +8,8 @@ public class ModelViewViewModelDebuggerEditor : ModuleRules
 {
 	public ModelViewViewModelDebuggerEditor(ReadOnlyTargetRules Target) : base(Target)
 	{
+		ShortName = "MVVMDebuggerEditor";
+
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{

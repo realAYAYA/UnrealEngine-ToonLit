@@ -4,6 +4,10 @@
 	DepthOnlyPixelShader.hlsl: Depth-only pixel shader.
 =============================================================================*/
 
+#if !MATERIAL_LWC_ENABLED
+#define UE_DF_FORCE_FP32_OPS 1
+#endif
+
 #include "Common.ush"
 #include "/Engine/Generated/Material.ush"
 #include "/Engine/Generated/VertexFactory.ush"
@@ -60,32 +64,30 @@ void Main(
 
 
 
-	#if STRATA_ENABLED
-		FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
-
-		FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
-		FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
+	#if SUBSTRATE_ENABLED
+		FSubstrateData SubstrateData = PixelMaterialInputs.GetFrontSubstrateData();
+		FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
 
 		float MaterialOpacity = 1.0f;
-		if (StrataPixelHeader.BSDFCount > 0)
+		if (SubstratePixelHeader.ClosureCount > 0)
 		{
 			// Update tree (coverage/transmittance/luminace weights)
-			const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings();
+			const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings();
 			const float3 V = MaterialParameters.CameraVector;
-			StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+			SubstratePixelHeader.SubstrateUpdateTree(V, Settings);
 
-			MaterialOpacity = StrataPixelHeader.StrataTree.Operators[StrataData.OperatorIndex].Coverage;
+			MaterialOpacity = SubstratePixelHeader.SubstrateTree.Operators[SubstrateData.OperatorIndex].Coverage;
 		}
 
-	#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+	#if SUBSTRATE_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
 		MaterialOpacity = GetMaterialOpacity(PixelMaterialInputs); 
 	#endif
 
-	#else // STRATA_ENABLED
+	#else // SUBSTRATE_ENABLED
 
 		float MaterialOpacity = GetMaterialOpacity(PixelMaterialInputs);
 
-	#endif // STRATA_ENABLED
+	#endif // SUBSTRATE_ENABLED
 		
 
 	#if MATERIALBLENDING_TRANSLUCENT

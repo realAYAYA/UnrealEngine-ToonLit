@@ -10,6 +10,7 @@
 #include "InteractiveToolActivity.h" // IToolActivityHost
 #include "InteractiveToolBuilder.h"
 #include "InteractiveToolQueryInterfaces.h" // IInteractiveToolNestedAcceptCancelAPI
+#include "Internationalization/Text.h"
 #include "Operations/GroupTopologyDeformer.h"
 #include "BaseTools/SingleTargetWithSelectionTool.h"
 
@@ -20,6 +21,7 @@
 PREDECLARE_GEOMETRY(class FGroupTopology);
 PREDECLARE_GEOMETRY(struct FGroupTopologySelection);
 
+struct FSlateBrush;
 class UCombinedTransformGizmo;
 class UDragAlignmentMechanic;
 class UMeshOpPreviewWithBackgroundCompute; 
@@ -33,6 +35,7 @@ class UPolyEditInsetOutsetActivity;
 class UPolyEditCutFacesActivity;
 class UPolyEditPlanarProjectionUVActivity;
 class UPolyEditBevelEdgeActivity;
+class UPolyEditExtrudeEdgeActivity;
 class UPolygonSelectionMechanic;
 class UTransformProxy;
 
@@ -129,6 +132,7 @@ enum class EEditMeshPolygonsToolActions
 	StraightenEdge,
 	FillHole,
 	BridgeEdges,
+	ExtrudeEdges,
 	BevelEdges,
 	SimplifyAlongEdges,
 
@@ -269,7 +273,7 @@ public:
 	void Merge() { PostAction(EEditMeshPolygonsToolActions::Merge);	}
 
 	/** Delete the current set of selected faces */
-	UFUNCTION(CallInEditor, Category = FaceEdits, meta = (DisplayName = "Delete", DisplayPriority = 4))
+	UFUNCTION(CallInEditor, Category = FaceEdits, meta = (DisplayName = "Delete Faces", DisplayPriority = 4))
 	void Delete() { PostAction(EEditMeshPolygonsToolActions::Delete); }
 
 	/** Cut the current set of selected faces. Click twice in viewport to set cut line. */
@@ -280,7 +284,7 @@ public:
 	UFUNCTION(CallInEditor, Category = FaceEdits, meta = (DisplayName = "RecalcNormals", DisplayPriority = 6))
 	void RecalcNormals() { PostAction(EEditMeshPolygonsToolActions::RecalculateNormals); }
 
-	/** Flip normalsand face orientation for the current set of selected faces */
+	/** Flip normals and face orientation for the current set of selected faces */
 	UFUNCTION(CallInEditor, Category = FaceEdits, meta = (DisplayName = "Flip", DisplayPriority = 7))
 	void Flip() { PostAction(EEditMeshPolygonsToolActions::FlipNormals); }
 
@@ -342,7 +346,7 @@ public:
 	void Outset() { PostAction(EEditMeshPolygonsToolActions::Outset);	}
 
 	/** Delete the current set of selected faces */
-	UFUNCTION(CallInEditor, Category = TriangleEdits, meta = (DisplayName = "Delete", DisplayPriority = 4))
+	UFUNCTION(CallInEditor, Category = TriangleEdits, meta = (DisplayName = "Delete Faces", DisplayPriority = 4))
 	void Delete() { PostAction(EEditMeshPolygonsToolActions::Delete); }
 
 	/** Cut the current set of selected faces. Click twice in viewport to set cut line. */
@@ -418,9 +422,17 @@ public:
 	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Bridge", DisplayPriority = 5))
 	void Bridge() { PostAction(EEditMeshPolygonsToolActions::BridgeEdges); }
 
-	/** Simplify the underlying triangulation along the selected edges, when doing so won't change the shape or UVs, or make low-quality triangles */
+	/** Duplicate and move boundary edge vertices outwards and connect them to the original boundary to create new faces. */
 	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayPriority = 6))
+	void Extrude() { PostAction(EEditMeshPolygonsToolActions::ExtrudeEdges); }
+
+	/** Simplify the underlying triangulation along the selected edges, when doing so won't change the shape or UVs, or make low-quality triangles */
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayPriority = 7))
 	void Simplify() { PostAction(EEditMeshPolygonsToolActions::SimplifyAlongEdges); }
+	
+	/** Delete selected edge, implicitly merging any connected faces */
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Delete Edges", DisplayPriority = 8))
+	void DeleteEdge() { PostAction(EEditMeshPolygonsToolActions::Delete); }
 };
 
 
@@ -434,54 +446,29 @@ public:
 	void Weld() { PostAction(EEditMeshPolygonsToolActions::WeldEdges); }
 
 	/** Fill the adjacent hole for any selected boundary edges */
-	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Fill Hole", DisplayPriority = 1))
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Fill Hole", DisplayPriority = 2))
 	void FillHole() { PostAction(EEditMeshPolygonsToolActions::FillHole); }
 
+	/** Create a new face that connects the selected edges */
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Bridge", DisplayPriority = 3))
+	void Bridge() { PostAction(EEditMeshPolygonsToolActions::BridgeEdges); }
+	
+	/** Duplicate and move boundary vertices outwards and connect them to the original boundary to create new faces. */
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Extrude", DisplayPriority = 4))
+	void Extrude() { PostAction(EEditMeshPolygonsToolActions::ExtrudeEdges); }
+
 	/** Collapse the selected edges, deleting the attached triangles and merging its two vertices into one */
-	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Collapse", DisplayPriority = 1))
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Collapse", DisplayPriority = 5))
 	void Collapse() { PostAction(EEditMeshPolygonsToolActions::CollapseSingleEdge); }
 
 	/** Flip the selected (non-border, non-seam) edges, replacing them with new edges in the crossing direction */
-	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Flip", DisplayPriority = 1))
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Flip", DisplayPriority = 6))
 	void Flip() { PostAction(EEditMeshPolygonsToolActions::FlipSingleEdge); }
 
 	/** Split the selected edges, inserting a new vertex at each edge midpoint */
-	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Split", DisplayPriority = 1))
+	UFUNCTION(CallInEditor, Category = EdgeEdits, meta = (DisplayName = "Split", DisplayPriority = 7))
 	void Split() { PostAction(EEditMeshPolygonsToolActions::SplitSingleEdge); }
-
 };
-
-
-/**
- * TODO: This is currently a separate action set so that we can show/hide it depending on whether
- * we have an activity running. We should have a cleaner alternative.
- */
-UCLASS()
-class MESHMODELINGTOOLS_API UEditMeshPolygonsToolCancelAction : public UEditMeshPolygonsToolActionPropertySet
-{
-	GENERATED_BODY()
-public:
-	UFUNCTION(CallInEditor, Category = CurrentOperation, meta = (DisplayName = "Cancel", DisplayPriority = 1))
-	void Done() { PostAction(EEditMeshPolygonsToolActions::CancelCurrent); }
-};
-
-
-/**
- * TODO: This is currently a separate action set so that we can show/hide it depending on whether
- * we have an activity running. We should have a cleaner alternative.
- */
-UCLASS()
-class MESHMODELINGTOOLS_API UEditMeshPolygonsToolAcceptCancelAction : public UEditMeshPolygonsToolActionPropertySet
-{
-	GENERATED_BODY()
-public:
-	UFUNCTION(CallInEditor, Category = CurrentOperation, meta = (DisplayName = "Apply", DisplayPriority = 1))
-	void Apply() { PostAction(EEditMeshPolygonsToolActions::AcceptCurrent); }
-
-	UFUNCTION(CallInEditor, Category = CurrentOperation, meta = (DisplayName = "Cancel", DisplayPriority = 2))
-	void Cancel() { PostAction(EEditMeshPolygonsToolActions::CancelCurrent); }
-};
-
 
 
 
@@ -575,12 +562,6 @@ protected:
 	TObjectPtr<UEditMeshPolygonsToolUVActions> EditUVActions = nullptr;
 
 	UPROPERTY()
-	TObjectPtr<UEditMeshPolygonsToolCancelAction> CancelAction = nullptr;
-
-	UPROPERTY()
-	TObjectPtr<UEditMeshPolygonsToolAcceptCancelAction> AcceptCancelAction = nullptr;
-
-	UPROPERTY()
 	TObjectPtr<UPolyEditTopologyProperties> TopologyProperties = nullptr;
 
 	/**
@@ -600,6 +581,11 @@ protected:
 	TObjectPtr<UPolyEditInsertEdgeLoopActivity> InsertEdgeLoopActivity = nullptr;
 	UPROPERTY()
 	TObjectPtr<UPolyEditBevelEdgeActivity> BevelEdgeActivity = nullptr;
+	UPROPERTY()
+	TObjectPtr<UPolyEditExtrudeEdgeActivity> ExtrudeEdgeActivity = nullptr;
+
+	TMap<UInteractiveToolActivity*, FText> ActivityLabels;
+	TMap<UInteractiveToolActivity*, FName> ActivityIconNames;
 
 	/**
 	 * Points to one of the activities when it is active
@@ -677,8 +663,10 @@ protected:
 
 	void UpdateGizmoVisibility();
 
-	void ApplyMerge();
 	void ApplyDelete();
+	
+	void ApplyMerge();
+	void ApplyDeleteFaces();
 	void ApplyRecalcNormals();
 	void ApplyFlipNormals();
 	void ApplyRetriangulate();
@@ -690,6 +678,7 @@ protected:
 	void ApplyCollapseEdge();
 	void ApplyWeldEdges();
 	void ApplyStraightenEdges();
+	void ApplyDeleteEdges();
 	void ApplyFillHole();
 	void ApplyBridgeEdges();
 	void ApplySimplifyAlongEdges();

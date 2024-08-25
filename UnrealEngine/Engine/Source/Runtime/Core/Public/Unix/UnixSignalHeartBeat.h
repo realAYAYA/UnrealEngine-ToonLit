@@ -33,6 +33,11 @@ public:
 	*/
 	CORE_API void ResumeHeartBeat();
 
+	/**
+	* Check if started suspended.
+	*/
+	CORE_API bool IsStartedSuspended();
+
 	CORE_API void Restart();
 	CORE_API void Stop();
 
@@ -51,5 +56,6 @@ private:
 	bool bDisabled = false;
 	int32 SuspendCount = 0;
 	bool bTimerCreated = false;
+	bool bStartSuspended = false;
 	timer_t TimerId = 0;
 };

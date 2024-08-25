@@ -11,6 +11,7 @@ MeshPassProcessor.inl:
 #include "PrimitiveSceneProxy.h"
 #include "RHIStaticStates.h"
 #include "RenderGraphBuilder.h"
+#include "PSOPrecacheValidation.h"
 
 static EVRSShadingRate GetShadingRateFromMaterial(EMaterialShadingRate MaterialShadingRate)
 {
@@ -50,7 +51,7 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 	const FMaterialRenderProxy& RESTRICT MaterialRenderProxy,
 	const FMaterial& RESTRICT MaterialResource,
 	const FMeshPassProcessorRenderState& RESTRICT DrawRenderState,
-	PassShadersType PassShaders,
+	const PassShadersType& PassShaders,
 	ERasterizerFillMode MeshFillMode,
 	ERasterizerCullMode MeshCullMode,
 	FMeshDrawCommandSortKey SortKey,
@@ -89,7 +90,7 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 
 	check(!VertexFactory->NeedsDeclaration() || VertexDeclaration);
 
-	FMeshProcessorShaders MeshProcessorShaders = PassShaders.GetUntypedShaders();
+	const FMeshProcessorShaders MeshProcessorShaders = PassShaders.GetUntypedShaders();
 	PipelineState.SetupBoundShaderState(VertexDeclaration, MeshProcessorShaders);
 
 	SharedMeshDrawCommand.InitializeShaderBindings(MeshProcessorShaders);
@@ -102,6 +103,7 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 	PipelineState.BlendState = DrawRenderState.GetBlendState();
 	PipelineState.DepthStencilState = DrawRenderState.GetDepthStencilState();
 	PipelineState.DrawShadingRate = GetShadingRateFromMaterial(MaterialResource.GetShadingRate());
+	PipelineState.bAllowVariableRateShading = MaterialResource.IsVariableRateShadingAllowed();
 
 	// PSO Precache hash only needed when PSO precaching is enabled
 	if (PipelineStateCache::IsPSOPrecachingEnabled())
@@ -113,12 +115,10 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 	VertexFactory->GetStreams(FeatureLevel, InputStreamType, SharedMeshDrawCommand.VertexStreams);
 
 #if PSO_PRECACHING_VALIDATE
-	if (PSOCollectorStats::IsMinimalPSOValidationEnabled())
+	if (PSOCollectorStats::IsFullPrecachingValidationEnabled())
 	{
-		FGraphicsMinimalPipelineStateInitializer ShadersOnlyInitializer = PSOCollectorStats::GetShadersOnlyInitializer(PipelineState);
-		PSOCollectorStats::GetShadersOnlyPSOPrecacheStatsCollector().CheckStateInCacheByHash(ShadersOnlyInitializer.StatePrecachePSOHash, (uint32)MeshPassType, VertexFactory->GetType());
-		FGraphicsMinimalPipelineStateInitializer PatchedMinimalInitializer = PSOCollectorStats::PatchMinimalPipelineStateToCheck(PipelineState);
-		PSOCollectorStats::GetMinimalPSOPrecacheStatsCollector().CheckStateInCacheByHash(PatchedMinimalInitializer.StatePrecachePSOHash, (uint32)MeshPassType, VertexFactory->GetType());
+		PSOCollectorStats::CheckShaderOnlyStateInCache(PipelineState, MaterialResource, VertexFactory->GetType(), PrimitiveSceneProxy, PSOCollectorIndex);
+		PSOCollectorStats::CheckMinimalPipelineStateInCache(PipelineState, MaterialResource, VertexFactory->GetType(), PrimitiveSceneProxy, PSOCollectorIndex);
 	}
 #endif // PSO_PRECACHING_VALIDATE
 
@@ -133,22 +133,23 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 	if (PassShaders.VertexShader.IsValid())
 	{
 		FMeshDrawSingleShaderBindings ShaderBindings = SharedMeshDrawCommand.ShaderBindings.GetSingleShaderBindings(SF_Vertex, DataOffset);
-		PassShaders.VertexShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, DrawRenderState, ShaderElementData, ShaderBindings);
+		PassShaders.VertexShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, ShaderElementData, ShaderBindings);
 	}
 
 	if (PassShaders.PixelShader.IsValid())
 	{
 		FMeshDrawSingleShaderBindings ShaderBindings = SharedMeshDrawCommand.ShaderBindings.GetSingleShaderBindings(SF_Pixel, DataOffset);
-		PassShaders.PixelShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, DrawRenderState, ShaderElementData, ShaderBindings);
+		PassShaders.PixelShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, ShaderElementData, ShaderBindings);
 	}
 
 	if (PassShaders.GeometryShader.IsValid())
 	{
 		FMeshDrawSingleShaderBindings ShaderBindings = SharedMeshDrawCommand.ShaderBindings.GetSingleShaderBindings(SF_Geometry, DataOffset);
-		PassShaders.GeometryShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, DrawRenderState, ShaderElementData, ShaderBindings);
+		PassShaders.GeometryShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, MaterialResource, ShaderElementData, ShaderBindings);
 	}
 
-	SharedMeshDrawCommand.SetDebugData(PrimitiveSceneProxy, &MaterialResource, &MaterialRenderProxy, PassShaders.GetUntypedShaders(), VertexFactory, (uint32)MeshPassType);
+	SharedMeshDrawCommand.SetDebugData(PrimitiveSceneProxy, &MaterialResource, &MaterialRenderProxy, MeshProcessorShaders, VertexFactory, MeshBatch, PSOCollectorIndex);
+	SharedMeshDrawCommand.SetStatsData(PrimitiveSceneProxy);
 
 	const int32 NumElements = ShouldSkipMeshDrawCommand(MeshBatch, PrimitiveSceneProxy) ? 0 : MeshBatch.Elements.Num();
 
@@ -172,6 +173,10 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 					Flags |= EFVisibleMeshDrawCommandFlags::PreserveInstanceOrder;
 				}
 			}
+			if (BatchElement.bFetchInstanceCountFromScene)
+			{
+				Flags |= EFVisibleMeshDrawCommandFlags::FetchInstanceCountFromScene;
+			}
 
 			DataOffset = 0;
 			if (PassShaders.VertexShader.IsValid())
@@ -186,7 +191,6 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 				FMeshMaterialShader::GetElementShaderBindings(PassShaders.PixelShader, Scene, ViewIfDynamicMeshCommand, VertexFactory, EVertexInputStreamType::Default, FeatureLevel, PrimitiveSceneProxy, MeshBatch, BatchElement, ShaderElementData, PixelShaderBindings, MeshDrawCommand.VertexStreams);
 			}
 
-
 			if (PassShaders.GeometryShader.IsValid())
 			{
 				FMeshDrawSingleShaderBindings GeometryShaderBindings = MeshDrawCommand.ShaderBindings.GetSingleShaderBindings(SF_Geometry, DataOffset);
@@ -195,8 +199,7 @@ void FMeshPassProcessor::BuildMeshDrawCommands(
 
 			FMeshDrawCommandPrimitiveIdInfo IdInfo = GetDrawCommandPrimitiveId(PrimitiveSceneInfo, BatchElement);
 
-			FMeshProcessorShaders ShadersForDebugging = PassShaders.GetUntypedShaders();
-			DrawListContext->FinalizeCommand(MeshBatch, BatchElementIndex, IdInfo, MeshFillMode, MeshCullMode, SortKey, Flags, PipelineState, &ShadersForDebugging, MeshDrawCommand);
+			DrawListContext->FinalizeCommand(MeshBatch, BatchElementIndex, IdInfo, MeshFillMode, MeshCullMode, SortKey, Flags, PipelineState, &MeshProcessorShaders, MeshDrawCommand);
 		}
 	}
 }
@@ -207,7 +210,7 @@ void FMeshPassProcessor::AddGraphicsPipelineStateInitializer(
 	const FMaterial& RESTRICT MaterialResource,
 	const FMeshPassProcessorRenderState& RESTRICT DrawRenderState,
 	const FGraphicsPipelineRenderTargetsInfo& RESTRICT RenderTargetsInfo,
-	PassShadersType PassShaders,
+	const PassShadersType& PassShaders,
 	ERasterizerFillMode MeshFillMode,
 	ERasterizerCullMode MeshCullMode,
 	EPrimitiveType PrimitiveType,
@@ -228,6 +231,7 @@ void FMeshPassProcessor::AddGraphicsPipelineStateInitializer(
 		ESubpassHint::None,
 		0,
 		bRequired,
+		PSOCollectorIndex,
 		PSOInitializers);
 }
 
@@ -237,7 +241,7 @@ void FMeshPassProcessor::AddGraphicsPipelineStateInitializer(
 	const FMaterial& RESTRICT MaterialResource,
 	const FMeshPassProcessorRenderState& RESTRICT DrawRenderState,
 	const FGraphicsPipelineRenderTargetsInfo& RESTRICT RenderTargetsInfo,
-	PassShadersType PassShaders,
+	const PassShadersType& PassShaders,
 	ERasterizerFillMode MeshFillMode,
 	ERasterizerCullMode MeshCullMode,
 	EPrimitiveType PrimitiveType,
@@ -245,6 +249,7 @@ void FMeshPassProcessor::AddGraphicsPipelineStateInitializer(
 	ESubpassHint SubpassHint,
 	uint8 SubpassIndex,
 	bool bRequired,
+	int32 InPSOCollectorIndex,
 	TArray<FPSOPrecacheData>& PSOInitializers)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FMeshPassProcessor::AddGraphicsPipelineStateInitializer);
@@ -272,9 +277,7 @@ void FMeshPassProcessor::AddGraphicsPipelineStateInitializer(
 	}
 	check(VertexDeclaration);
 
-	FMeshProcessorShaders MeshProcessorShaders = PassShaders.GetUntypedShaders();
-	MinimalPipelineStateInitializer.SetupBoundShaderState(VertexDeclaration, MeshProcessorShaders);
-
+	MinimalPipelineStateInitializer.SetupBoundShaderState(VertexDeclaration, PassShaders.GetUntypedShaders());
 	MinimalPipelineStateInitializer.RasterizerState = GetStaticRasterizerState<true>(MeshFillMode, MeshCullMode);
 
 	check(DrawRenderState.GetDepthStencilState());
@@ -287,13 +290,13 @@ void FMeshPassProcessor::AddGraphicsPipelineStateInitializer(
 	// NOTE: AsGraphicsPipelineStateInitializer will create the RHIShaders internally if they are not cached yet
 	FGraphicsPipelineStateInitializer PipelineStateInitializer = MinimalPipelineStateInitializer.AsGraphicsPipelineStateInitializer(); 
 #if PSO_PRECACHING_VALIDATE
-	if (PSOCollectorStats::IsMinimalPSOValidationEnabled())
+	if (PSOCollectorStats::IsFullPrecachingValidationEnabled())
 	{
 		MinimalPipelineStateInitializer.StatePrecachePSOHash = PipelineStateInitializer.StatePrecachePSOHash;
 		FGraphicsMinimalPipelineStateInitializer ShadersOnlyInitializer = PSOCollectorStats::GetShadersOnlyInitializer(MinimalPipelineStateInitializer);
-		PSOCollectorStats::GetShadersOnlyPSOPrecacheStatsCollector().AddStateToCache(ShadersOnlyInitializer, PSOCollectorStats::GetPSOPrecacheHash, (uint32)MeshPassType, VertexFactoryData.VertexFactoryType);
+		PSOCollectorStats::GetShadersOnlyPSOPrecacheStatsCollector().AddStateToCache(ShadersOnlyInitializer, PSOCollectorStats::GetPSOPrecacheHash, &MaterialResource, InPSOCollectorIndex, VertexFactoryData.VertexFactoryType);
 		FGraphicsMinimalPipelineStateInitializer PatchedMinimalInitializer = PSOCollectorStats::PatchMinimalPipelineStateToCheck(MinimalPipelineStateInitializer);
-		PSOCollectorStats::GetMinimalPSOPrecacheStatsCollector().AddStateToCache(PatchedMinimalInitializer, PSOCollectorStats::GetPSOPrecacheHash, (uint32)MeshPassType, VertexFactoryData.VertexFactoryType);
+		PSOCollectorStats::GetMinimalPSOPrecacheStatsCollector().AddStateToCache(PatchedMinimalInitializer, PSOCollectorStats::GetPSOPrecacheHash, &MaterialResource, InPSOCollectorIndex, VertexFactoryData.VertexFactoryType);
 	}
 #endif // PSO_PRECACHING_VALIDATE
 
@@ -306,8 +309,13 @@ void FMeshPassProcessor::AddGraphicsPipelineStateInitializer(
 	PSOPrecacheData.Type = FPSOPrecacheData::EType::Graphics;
 	PSOPrecacheData.GraphicsPSOInitializer = PipelineStateInitializer;
 #if PSO_PRECACHING_VALIDATE
-	PSOPrecacheData.MeshPassType = (uint32)MeshPassType;
+	PSOPrecacheData.PSOCollectorIndex = InPSOCollectorIndex;
 	PSOPrecacheData.VertexFactoryType = VertexFactoryData.VertexFactoryType;
+	if (PSOCollectorStats::IsFullPrecachingValidationEnabled())
+	{
+		PSOPrecacheData.bDefaultMaterial = MaterialResource.IsDefaultMaterial();
+		ConditionalBreakOnPSOPrecacheShader(PipelineStateInitializer);
+	}
 #endif // PSO_PRECACHING_VALIDATE
 	PSOInitializers.Add(PSOPrecacheData);
 }

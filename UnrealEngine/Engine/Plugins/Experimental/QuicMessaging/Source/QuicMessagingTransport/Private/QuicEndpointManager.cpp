@@ -352,7 +352,7 @@ void FQuicEndpointManager::InitializeServer()
 			return;
 		}
 
-		TPair<FString, FString> SelfSigned = QuicCertificateUtils::GetSelfSignedPaths();
+		TTuple<FString, FString> SelfSigned = QuicCertificateUtils::GetSelfSignedPaths();
 		Certificate = SelfSigned.Key;
 		PrivateKey = SelfSigned.Value;
 

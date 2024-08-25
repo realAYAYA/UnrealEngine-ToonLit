@@ -102,7 +102,8 @@ FMassEntityTemplate::FMassEntityTemplate(const FMassEntityTemplateData& InData, 
 	// Sort anything there is to sort for later comparison purposes
 	TemplateData.Sort();
 
-	const FMassArchetypeHandle ArchetypeHandle = EntityManager.CreateArchetype(GetCompositionDescriptor(), FName(GetTemplateName()));
+	TemplateData.GetArchetypeCreationParams().DebugName = FName(GetTemplateName());
+	const FMassArchetypeHandle ArchetypeHandle = EntityManager.CreateArchetype(GetCompositionDescriptor(), TemplateData.GetArchetypeCreationParams());
 	SetArchetype(ArchetypeHandle);
 }
 
@@ -113,7 +114,8 @@ FMassEntityTemplate::FMassEntityTemplate(FMassEntityTemplateData&& InData, FMass
 	// Sort anything there is to sort for later comparison purposes
 	TemplateData.Sort();
 
-	const FMassArchetypeHandle ArchetypeHandle = EntityManager.CreateArchetype(GetCompositionDescriptor(), FName(GetTemplateName()));
+	TemplateData.GetArchetypeCreationParams().DebugName = FName(GetTemplateName());
+	const FMassArchetypeHandle ArchetypeHandle = EntityManager.CreateArchetype(GetCompositionDescriptor(), TemplateData.GetArchetypeCreationParams());
 	SetArchetype(ArchetypeHandle);
 }
 

@@ -37,12 +37,7 @@
 #define DISABLE_UNVERIFIED_CERTIFICATE_LOADING 0
 #endif
 
-TAutoConsoleVariable<int32> CVarCurlEventLoopEnableChance(
-	TEXT("http.CurlEventLoopEnableChance"),
-	0,
-	TEXT("Enable chance of curl event loop, from 0 to 100"),
-	ECVF_SaveForNextBoot
-);
+extern TAutoConsoleVariable<int32> CVarHttpEventLoopEnableChance;
 
 CURLM* FCurlHttpManager::GMultiHandle = nullptr;
 #if !WITH_CURL_XCURL
@@ -452,26 +447,29 @@ void FCurlHttpManager::UpdateConfigs()
 
 FHttpThreadBase* FCurlHttpManager::CreateHttpThread()
 {
-	bool bUseEventLoop = (FMath::RandRange(0, 99) < CVarCurlEventLoopEnableChance.GetValueOnGameThread());
+	bool bUseEventLoop = (FMath::RandRange(0, 99) < CVarHttpEventLoopEnableChance.GetValueOnGameThread());
+
+	// Also support to change it through runtime args.
+	// Can't set cvar CVarHttpEventLoopEnableChance through runtime args or .ini files because http module initialized too early
+	FParse::Bool(FCommandLine::Get(), TEXT("useeventloop="), bUseEventLoop);
+
 	if (bUseEventLoop)
 	{
 #if WITH_CURL_MULTIPOLL
-		UE_LOG(LogHttp, Log, TEXT("CreateHttpThread using FCurlMultiPollEventLoopHttpThread"));
+		UE_LOG(LogInit, Log, TEXT("CreateHttpThread using FCurlMultiPollEventLoopHttpThread"));
 		return new FCurlMultiPollEventLoopHttpThread();
-#endif // WITH_CURL_MULTIPOLL
 
-#if WITH_CURL_MULTISOCKET
-		UE_LOG(LogHttp, Log, TEXT("CreateHttpThread using FCurlSocketEventLoopHttpThread"));
+#elif WITH_CURL_MULTISOCKET
+		UE_LOG(LogInit, Log, TEXT("CreateHttpThread using FCurlSocketEventLoopHttpThread"));
 		return new FCurlSocketEventLoopHttpThread();
-#endif // WITH_CURL_MULTISOCKET
 
-#if WITH_CURL_MULTIWAIT
-		UE_LOG(LogHttp, Log, TEXT("CreateHttpThread using FCurlMultiWaitEventLoopHttpThread"));
+#elif WITH_CURL_MULTIWAIT
+		UE_LOG(LogInit, Log, TEXT("CreateHttpThread using FCurlMultiWaitEventLoopHttpThread"));
 		return new FCurlMultiWaitEventLoopHttpThread();
-#endif // WITH_CURL_MULTIWAIT
+#endif
 	}
 
-	UE_LOG(LogHttp, Log, TEXT("CreateHttpThread using FCurlHttpThread"));
+	UE_LOG(LogInit, Log, TEXT("CreateHttpThread using FCurlHttpThread"));
 	return new FCurlHttpThread();
 }
 

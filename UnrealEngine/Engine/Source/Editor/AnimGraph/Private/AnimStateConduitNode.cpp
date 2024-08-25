@@ -114,7 +114,7 @@ void UAnimStateConduitNode::ValidateNodeDuringCompilation(class FCompilerResults
 	UAnimGraphNode_TransitionResult* ResultNode = TransGraph->GetResultNode();
 	check(ResultNode);
 
-	if (ResultNode->PropertyBindings.Num() > 0 && ResultNode->PropertyBindings.CreateIterator()->Value.bIsBound)
+	if (ResultNode->HasBinding(GET_MEMBER_NAME_CHECKED(FAnimNode_TransitionResult, bCanEnterTransition)))
 	{
 		// Rule is bound so nothing more to check
 	}

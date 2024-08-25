@@ -83,10 +83,10 @@ namespace Horde.Server.Logs
 		/// <returns>Sequence of offsets within the buffer</returns>
 		public static IEnumerable<int> FindOcurrences(ReadOnlyMemory<byte> buffer, SearchText text)
 		{
-			for(int offset = 0; ;offset++)
+			for (int offset = 0; ; offset++)
 			{
 				offset = FindNextOcurrence(buffer.Span, offset, text);
-				if(offset == -1)
+				if (offset == -1)
 				{
 					break;
 				}

@@ -5,12 +5,10 @@
 #include "USDMemory.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/sdf/changeBlock.h"
+#include "pxr/usd/sdf/changeBlock.h"
 #include "USDIncludesEnd.h"
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -20,14 +18,14 @@ namespace UE
 		{
 #if USE_USD_SDK
 			pxr::SdfChangeBlock SdfChangeBlock;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 		};
 	}
 
 	FSdfChangeBlock::FSdfChangeBlock()
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FSdfChangeBlockImpl >();
+		Impl = MakeUnique<Internal::FSdfChangeBlockImpl>();
 	}
 
 	FSdfChangeBlock::~FSdfChangeBlock()

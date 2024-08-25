@@ -76,18 +76,17 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace LinearToLogFrequencyVertexNames;
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
-
-			TDataReadReference<float> InValue = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
-			TDataReadReference<float> InDomainMin = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputDomainMin), InParams.OperatorSettings);
-			TDataReadReference<float> InDomainMax = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputDomainMax), InParams.OperatorSettings);
-			TDataReadReference<float> InRangeMin = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputRangeMin), InParams.OperatorSettings);
-			TDataReadReference<float> InRangeMax = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputRangeMax), InParams.OperatorSettings);
+			TDataReadReference<float> InValue = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputValue), InParams.OperatorSettings);
+			TDataReadReference<float> InDomainMin = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputDomainMin), InParams.OperatorSettings);
+			TDataReadReference<float> InDomainMax = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputDomainMax), InParams.OperatorSettings);
+			TDataReadReference<float> InRangeMin = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputRangeMin), InParams.OperatorSettings);
+			TDataReadReference<float> InRangeMax = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputRangeMax), InParams.OperatorSettings);
 
 			return MakeUnique<FLinearToLogFrequencyOperator>(InValue, InDomainMin, InDomainMax, InRangeMin, InRangeMax);
 		}

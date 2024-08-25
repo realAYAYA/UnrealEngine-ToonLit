@@ -10,6 +10,7 @@
 #include "ConversationInstance.generated.h"
 
 class UConversationChoiceNode;
+class UConversationDatabase;
 class UConversationInstance;
 class UConversationNodeWithLinks;
 class UConversationParticipantComponent;
@@ -40,11 +41,11 @@ public:
 #if WITH_SERVER_CODE
 	/** Should be called with a copy of the conversation participants before any removals happen, that way clients can properly respond to the end of their respective conversations
 	  * with an accurate account of who was in that conversation. */
-	void ServerRemoveParticipant(FGameplayTag ParticipantID, const FConversationParticipants& PreservedParticipants);
+	void ServerRemoveParticipant(const FGameplayTag& ParticipantID, const FConversationParticipants& PreservedParticipants);
 
-	void ServerAssignParticipant(FGameplayTag ParticipantID, AActor* ParticipantActor);
+	void ServerAssignParticipant(const FGameplayTag& ParticipantID, AActor* ParticipantActor);
 
-	void ServerStartConversation(FGameplayTag EntryPoint);
+	void ServerStartConversation(const FGameplayTag& EntryPoint, const UConversationDatabase* Graph = nullptr);
 
 	void ServerAdvanceConversation(const FAdvanceConversationRequest& InChoicePicked);
 
@@ -55,6 +56,10 @@ public:
 	void ServerRefreshConversationChoices();
 
 	void ServerRefreshTaskChoiceData(const FConversationNodeHandle& Handle);
+
+	/** Attempts to process the current conversation node again - only useful in very specific circumstances where you'd want to re-run the current node
+	  * without having to deal with conversation flow changes. */
+	void ServerRefreshCurrentConversationNode();
 
 	/**
      * This is memory that will last for the duration of the conversation instance.  Don't store
@@ -84,6 +89,11 @@ public:
 	UConversationParticipantComponent* GetParticipantComponent(FGameplayTag ParticipantID) const
 	{
 		return Participants.GetParticipantComponent(ParticipantID);
+	}
+
+	const UConversationDatabase* GetActiveConversationGraph() const
+	{
+		return ActiveConversationGraph.Get();
 	}
 
 	const FConversationNodeHandle& GetCurrentNodeHandle() const { return CurrentBranchPoint.GetNodeHandle(); }
@@ -117,7 +127,9 @@ private:
 
 #if WITH_SERVER_CODE
 	void OnCurrentConversationNodeModified();
-#endif
+
+	void ProcessCurrentConversationNode();
+#endif //WITH_SERVER_CODE
 
 protected:
 
@@ -126,6 +138,9 @@ protected:
 private:
 	UPROPERTY()
 	FConversationParticipants Participants;
+
+	UPROPERTY()
+	TObjectPtr<const UConversationDatabase> ActiveConversationGraph = nullptr;
 
 	FGameplayTag StartingEntryGameplayTag;
 	FConversationBranchPoint StartingBranchPoint;

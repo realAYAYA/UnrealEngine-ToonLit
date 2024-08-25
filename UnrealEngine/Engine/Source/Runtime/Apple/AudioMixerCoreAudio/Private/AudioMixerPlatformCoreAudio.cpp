@@ -8,10 +8,7 @@
 #include "CoreMinimal.h"
 #include "Misc/ConfigCacheIni.h"
 #if WITH_ENGINE
-#include "VorbisAudioInfo.h"
-#include "OpusAudioInfo.h"
 #include "AudioDevice.h"
-#include "BinkAudioInfo.h"
 #endif
 /**
 * CoreAudio System Headers
@@ -358,51 +355,6 @@ namespace Audio
 		SubmittedBufferPtr = (uint8*) Buffer;
 		SubmittedBytes = 0;
 		RemainingBytesInCurrentSubmittedBuffer = BytesPerSubmittedBuffer;
-	}
-
-	FName FMixerPlatformCoreAudio::GetRuntimeFormat(const USoundWave* InSoundWave) const
-	{
-		FName RuntimeFormat = Audio::ToName(InSoundWave->GetSoundAssetCompressionType());
-
-		if (RuntimeFormat == Audio::NAME_PLATFORM_SPECIFIC)
-		{
-			if (InSoundWave->IsStreaming(nullptr))
-			{
-				RuntimeFormat = Audio::NAME_OPUS;
-			}
-			else
-			{
-				RuntimeFormat = Audio::NAME_OGG;
-			}
-		}
-
-		return RuntimeFormat;
-	}
-
-	ICompressedAudioInfo* FMixerPlatformCoreAudio::CreateCompressedAudioInfo(const FName& InRuntimeFormat) const
-	{
-		ICompressedAudioInfo* Decoder = nullptr;
-
-		if (InRuntimeFormat == Audio::NAME_OGG)
-		{
-			Decoder = new FVorbisAudioInfo();
-		}
-		else if (InRuntimeFormat == Audio::NAME_OPUS)
-		{
-			Decoder = new FOpusAudioInfo();
-		}
-#if WITH_BINK_AUDIO
-		else if (InRuntimeFormat == Audio::NAME_BINKA)
-		{
-			return new FBinkAudioInfo();
-		}
-#endif // WITH_BINK_AUDIO	
-		else
-		{
-			Decoder = Audio::CreateSoundAssetDecoder(InRuntimeFormat);
-		}
-		ensureMsgf(Decoder != nullptr, TEXT("Failed to create a sound asset decoder for compression type: %s"), *InRuntimeFormat.ToString());
-		return Decoder;
 	}
 
 	FString FMixerPlatformCoreAudio::GetDefaultDeviceName()

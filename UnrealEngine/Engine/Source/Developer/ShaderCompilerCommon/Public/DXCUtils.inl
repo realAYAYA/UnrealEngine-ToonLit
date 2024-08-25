@@ -59,6 +59,7 @@ static void DumpDebugBlobDetail(IDxcBlob* Blob, const TCHAR* BlobName, TRefCount
 		case DXC_FOURCC('I', 'L', 'D', 'B'): BlobDescription = TEXT("ShaderDebugInfoDXIL");     break;
 		case DXC_FOURCC('I', 'L', 'D', 'N'): BlobDescription = TEXT("ShaderDebugName");         break;
 		case DXC_FOURCC('S', 'F', 'I', '0'): BlobDescription = TEXT("FeatureInfo");             break;
+		case DXC_FOURCC('U', 'S', 'E', 'R'): BlobDescription = TEXT("UserInfo");                break;
 		case DXC_FOURCC('P', 'R', 'I', 'V'): BlobDescription = TEXT("PrivateData");             break;
 		case DXC_FOURCC('R', 'T', 'S', '0'): BlobDescription = TEXT("RootSignature");           break;
 		case DXC_FOURCC('D', 'X', 'I', 'L'): BlobDescription = TEXT("DXIL");                    break;
@@ -76,4 +77,32 @@ static void DumpDebugBlobDetail(IDxcBlob* Blob, const TCHAR* BlobName, TRefCount
 	FPlatformMisc::LowLevelOutputDebugString(TEXT("\n\n"));
 }
 
-
+HRESULT RetrieveDebugNameAndBlob(TRefCountPtr<IDxcResult>& CompileResult, FString& OutDebugBlobName, IDxcBlob** OutDebugBlob)
+{
+	HRESULT Result = S_OK;
+	if (OutDebugBlob && CompileResult->HasOutput(DXC_OUT_PDB))
+	{
+		// If the PDB blob exists, we get its name at the same time.
+		TRefCountPtr<IDxcBlobUtf16> DebugBlobName;
+		Result = CompileResult->GetOutput(DXC_OUT_PDB, __uuidof(IDxcBlob), (void**)OutDebugBlob, DebugBlobName.GetInitReference());
+		if (SUCCEEDED(Result))
+		{
+			OutDebugBlobName = DebugBlobName->GetStringPointer();
+		}
+	}
+	else if (CompileResult->HasOutput(DXC_OUT_SHADER_HASH))
+	{
+		// If the PDB blob is not available, or if we don't need to return it, we can reconstruct the name 
+		// the PDB would have used from the Shader Hash, using only 16 bytes if there is more.
+		TRefCountPtr<IDxcBlob> HashBlob;
+		TRefCountPtr<IDxcBlobUtf16> OutputNameUnused;
+		Result = CompileResult->GetOutput(DXC_OUT_SHADER_HASH, __uuidof(IDxcBlob), (void**)HashBlob.GetInitReference(), OutputNameUnused.GetInitReference());
+		if (SUCCEEDED(Result))
+		{
+			size_t BlobSize = HashBlob->GetBufferSize();
+			uint32 Offset = BlobSize <= 16 ? 0 : BlobSize - 16;
+			OutDebugBlobName = FString(BytesToHex(reinterpret_cast<uint8*>(HashBlob->GetBufferPointer()) + Offset, HashBlob->GetBufferSize() - Offset)) + TEXT(".pdb");
+		}
+	}
+	return Result;
+}

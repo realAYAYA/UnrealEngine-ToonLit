@@ -48,35 +48,14 @@ public:
 
 	virtual bool PassesFilter( const TSharedPtr< IAutomationReport >& InReport ) const override
 	{
-		const int NumGroupFilters = Filters.Num();
-		bool bMeetsMatch;
-
 		for (const FAutomatedTestFilter& Filter: Filters)
 		{
-			bMeetsMatch = true;
-
-			if (Filter.MatchFromStart || Filter.MatchFromEnd)
-			{
-				if (Filter.MatchFromStart)
-				{
-					bMeetsMatch = InReport->GetFullTestPath().StartsWith(Filter.Contains);
-				}
-
-				if (Filter.MatchFromEnd && bMeetsMatch)
-				{
-					bMeetsMatch = InReport->GetFullTestPath().EndsWith(Filter.Contains);
-				}
-			}
-			else
-			{
-				bMeetsMatch = InReport->GetFullTestPath().Contains(Filter.Contains);
-			}
-
-			if (bMeetsMatch)
+			if (Filter.PassesFilter(InReport))
 			{
 				return true;
 			}
 		}
+
 		return Filters.Num() == 0;
 	}
 

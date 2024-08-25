@@ -46,7 +46,7 @@ struct MASSSMARTOBJECTS_API FMassSmartObjectHandler
 	 * @param Location The center of the query
 	 * @return Request identifier that can be used to try claiming a result once available
 	 */
-	UE_NODISCARD FMassSmartObjectRequestID FindCandidatesAsync(const FMassEntityHandle RequestingEntity, const FGameplayTagContainer& UserTags, const FGameplayTagQuery& ActivityRequirements, const FVector& Location) const;
+	[[nodiscard]] FMassSmartObjectRequestID FindCandidatesAsync(const FMassEntityHandle RequestingEntity, const FGameplayTagContainer& UserTags, const FGameplayTagQuery& ActivityRequirements, const FVector& Location) const;
 
 	/**
 	 * Creates an async request to build a list of compatible smart objects
@@ -56,7 +56,7 @@ struct MASSSMARTOBJECTS_API FMassSmartObjectHandler
 	 * @param LaneLocation The lane location as reference for the query
 	 * @return Request identifier that can be used to try claiming a result once available
 	 */
-	UE_NODISCARD FMassSmartObjectRequestID FindCandidatesAsync(const FMassEntityHandle RequestingEntity, const FGameplayTagContainer& UserTags, const FGameplayTagQuery& ActivityRequirements, const FZoneGraphCompactLaneLocation& LaneLocation) const;
+	[[nodiscard]] FMassSmartObjectRequestID FindCandidatesAsync(const FMassEntityHandle RequestingEntity, const FGameplayTagContainer& UserTags, const FGameplayTagQuery& ActivityRequirements, const FZoneGraphCompactLaneLocation& LaneLocation) const;
 
 	/**
 	 * Provides the result of a previously created request from FindCandidatesAsync to indicate if it has been processed
@@ -64,7 +64,7 @@ struct MASSSMARTOBJECTS_API FMassSmartObjectHandler
 	 * @param RequestID A valid request identifier (method will ensure otherwise)
 	 * @return The current request's result, nullptr if request not ready yet.
 	 */
-	UE_NODISCARD const FMassSmartObjectCandidateSlots* GetRequestCandidates(const FMassSmartObjectRequestID& RequestID) const;
+	[[nodiscard]] const FMassSmartObjectCandidateSlots* GetRequestCandidates(const FMassSmartObjectRequestID& RequestID) const;
 
 	/**
 	 * Deletes the request associated to the specified identifier
@@ -77,9 +77,10 @@ struct MASSSMARTOBJECTS_API FMassSmartObjectHandler
 	 * @param Entity MassEntity associated to the user fragment
 	 * @param User Fragment of the user claiming
 	 * @param Candidates Candidate slots to choose from.
+	 * @param ClaimPriority Claim priority, a slot claimed at lower priority can be claimed by higher priority (unless already in use).
 	 * @return Whether the slot has been successfully claimed or not
 	 */
-	UE_NODISCARD FSmartObjectClaimHandle ClaimCandidate(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FMassSmartObjectCandidateSlots& Candidates) const;
+	[[nodiscard]] FSmartObjectClaimHandle ClaimCandidate(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FMassSmartObjectCandidateSlots& Candidates, ESmartObjectClaimPriority ClaimPriority = ESmartObjectClaimPriority::Normal) const;
 
 	/**
 	 * Claims the first available slot holding any type of USmartObjectMassBehaviorDefinition in the smart object
@@ -87,9 +88,10 @@ struct MASSSMARTOBJECTS_API FMassSmartObjectHandler
 	 * @param Entity MassEntity associated to the user fragment
 	 * @param User Fragment of the user claiming
 	 * @param RequestResult A valid smart object request result (method will ensure otherwise)
+	 * @param ClaimPriority Claim priority, a slot claimed at lower priority can be claimed by higher priority (unless already in use).
 	 * @return Whether the slot has been successfully claimed or not
 	 */
-	UE_NODISCARD FSmartObjectClaimHandle ClaimSmartObject(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FSmartObjectRequestResult& RequestResult) const;
+	[[nodiscard]] FSmartObjectClaimHandle ClaimSmartObject(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FSmartObjectRequestResult& RequestResult, ESmartObjectClaimPriority ClaimPriority = ESmartObjectClaimPriority::Normal) const;
 
 	/**
 	 * Activates the mass gameplay behavior associated to the previously claimed smart object.

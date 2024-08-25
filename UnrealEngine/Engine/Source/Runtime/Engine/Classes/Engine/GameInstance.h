@@ -146,7 +146,7 @@ struct FGameInstancePIEParameters
 
 enum class EInputDeviceConnectionState : uint8;
 
-DECLARE_EVENT_OneParam(UGameInstance, FOnLocalPlayerEvent, ULocalPlayer*);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnLocalPlayerEvent, ULocalPlayer*);
 
 /**
  * GameInstance: high-level manager object for an instance of the running game.
@@ -294,7 +294,7 @@ public:
 	/** Called as soon as the game mode is spawned, to allow additional PIE setting validation prior to creating the local players / etc... (called on pure clients too, in which case the game mode is nullptr) */
 	ENGINE_API virtual FGameInstancePIEResult PostCreateGameModeForPIE(const FGameInstancePIEParameters& Params, AGameModeBase* GameMode);
 
-	ENGINE_API void ReportPIEStartupTime();
+	ENGINE_API virtual void ReportPIEStartupTime();
 #endif
 
 	ENGINE_API class UEngine* GetEngine() const;
@@ -645,6 +645,9 @@ public:
 
 	/** Remove a referenced object, this will allow it to GC out */
 	ENGINE_API virtual void UnregisterReferencedObject(UObject* ObjectToReference);
+
+	/** Allows a GameInstance to override the default configured replication system for it's specific conditions. Return Default to use the configured replication system. */
+	ENGINE_API virtual EReplicationSystem GetDesiredReplicationSystem(FName InNetDriverDefinition) const;
 
 protected:
 	/** Non-virtual dispatch for OnStart, also calls the associated global OnStartGameInstance. */

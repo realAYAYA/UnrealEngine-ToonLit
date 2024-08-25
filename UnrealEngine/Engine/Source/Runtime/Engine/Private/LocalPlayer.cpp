@@ -26,6 +26,7 @@
 
 #include "IXRTrackingSystem.h"
 #include "IXRCamera.h"
+#include "Camera/CameraComponent.h"
 #include "SceneView.h"
 #include "SceneViewExtension.h"
 #include "Net/DataChannel.h"
@@ -253,6 +254,14 @@ void ULocalPlayer::InitOnlineSession()
 void ULocalPlayer::PlayerRemoved()
 {
 	SubsystemCollection.Deinitialize();
+
+	if (!IsTemplate())
+	{
+		for (FSceneViewStateReference& ViewState : ViewStates)
+		{
+			ViewState.Destroy();
+		}
+	}
 }
 
 bool ULocalPlayer::SpawnPlayActor(const FString& URL,FString& OutError, UWorld* InWorld)
@@ -371,18 +380,6 @@ void ULocalPlayer::SendSplitJoin(TArray<FString>& Options)
 			bSentSplitJoin = true;
 		}
 	}
-}
-
-void ULocalPlayer::FinishDestroy()
-{
-	if ( !IsTemplate() )
-	{
-		for (FSceneViewStateReference& ViewState : ViewStates)
-		{
-			ViewState.Destroy();
-		}
-	}
-	Super::FinishDestroy();
 }
 
 /**
@@ -772,7 +769,7 @@ bool ULocalPlayer::CalcSceneViewInitOptions(
 		ViewInitOptions.bInCameraCut = PlayerController->PlayerCameraManager->bGameCameraCutThisFrame;
 	}
 
-	if (GEngine->StereoRenderingDevice.IsValid())
+	if (GEngine->IsStereoscopic3D(Viewport))
 	{
 		ViewInitOptions.StereoPass = GEngine->StereoRenderingDevice->GetViewPassForIndex(StereoViewIndex != INDEX_NONE, StereoViewIndex);
 	}
@@ -895,9 +892,9 @@ FSceneView* ULocalPlayer::CalcSceneView( class FSceneViewFamily* ViewFamily,
 		View->OverridePostProcessSettings(ViewInfo.PostProcessSettings, ViewInfo.PostProcessBlendWeight);
 
 		// Camera overrides (cameras blending in, camera modifiers, etc)
-		if (PlayerController->PlayerCameraManager &&
-				CameraAnimPPSettings && CameraAnimPPBlendWeights && CameraAnimPPBlendOrders)
+		if (PlayerController->PlayerCameraManager)
 		{
+			checkSlow(CameraAnimPPBlendWeights && CameraAnimPPBlendOrders && CameraAnimPPSettings);
 			for (int32 PPIdx = 0; PPIdx < CameraAnimPPBlendWeights->Num(); ++PPIdx)
 			{
 				if ((*CameraAnimPPBlendOrders)[PPIdx] == VTBlendOrder_Override)
@@ -909,7 +906,7 @@ FSceneView* ULocalPlayer::CalcSceneView( class FSceneViewFamily* ViewFamily,
 			PlayerController->PlayerCameraManager->UpdatePhotographyPostProcessing(View->FinalPostProcessSettings);
 		}
 
-		if (GEngine->StereoRenderingDevice.IsValid())
+		if (GEngine->IsStereoscopic3D(Viewport))
 		{
 			FPostProcessSettings StereoDeviceOverridePostProcessinSettings;
 			float BlendWeight = 1.0f;
@@ -1236,7 +1233,7 @@ bool ULocalPlayer::GetProjectionData(FViewport* Viewport, FSceneViewProjectionDa
 			XRCamera->UseImplicitHMDPosition(bHasActiveCamera);
 		}
 
-		if (GEngine->StereoRenderingDevice.IsValid())
+		if (GEngine->IsStereoscopic3D(Viewport))
 		{
 			GEngine->StereoRenderingDevice->CalculateStereoViewOffset(StereoViewIndex, ViewInfo.Rotation, GetWorld()->GetWorldSettings()->WorldToMeters, StereoViewLocation);
 		}

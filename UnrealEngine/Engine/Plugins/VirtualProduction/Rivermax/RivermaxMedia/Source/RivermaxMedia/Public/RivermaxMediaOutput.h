@@ -5,6 +5,7 @@
 #include "MediaOutput.h"
 
 #include "MediaIOCoreDefinitions.h"
+#include "RivermaxTypes.h"
 #include "UObject/ObjectMacros.h"
 
 #include "RivermaxMediaOutput.generated.h"
@@ -131,9 +132,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
 	FString InterfaceAddress = TEXT("*.*.*.*");
 
-	/** Address of the stream. Can be multicast, i.e. 224.1.1.1) */
+	/** Address of the stream. Can be multicast, i.e. 228.1.1.1) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
-	FString StreamAddress = TEXT("224.1.1.1");
+	FString StreamAddress = UE::RivermaxCore::DefaultStreamAddress;
 
 	/** Port to use for this output */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")

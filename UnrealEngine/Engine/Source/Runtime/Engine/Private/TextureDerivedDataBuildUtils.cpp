@@ -202,6 +202,7 @@ static void WriteBuildSettings(FCbWriter& Writer, const FTextureBuildSettings& B
 	WriteCbFieldWithDefault<bool>(Writer, "bApplyYCoCgBlockScale", BuildSettings.bApplyYCoCgBlockScale, DefaultSettings.bApplyYCoCgBlockScale);
 	WriteCbFieldWithDefault<bool>(Writer, "bApplyKernelToTopMip", BuildSettings.bApplyKernelToTopMip, DefaultSettings.bApplyKernelToTopMip);
 	WriteCbFieldWithDefault<bool>(Writer, "bRenormalizeTopMip", BuildSettings.bRenormalizeTopMip, DefaultSettings.bRenormalizeTopMip);
+	WriteCbFieldWithDefault<bool>(Writer, "bCPUAccessible", BuildSettings.bCPUAccessible, DefaultSettings.bCPUAccessible);
 	WriteCbFieldWithDefault(Writer, "CompositeTextureMode", BuildSettings.CompositeTextureMode, DefaultSettings.CompositeTextureMode);
 	WriteCbFieldWithDefault(Writer, "CompositePower", BuildSettings.CompositePower, DefaultSettings.CompositePower);
 	WriteCbFieldWithDefault(Writer, "LODBias", BuildSettings.LODBias, DefaultSettings.LODBias);
@@ -211,6 +212,9 @@ static void WriteBuildSettings(FCbWriter& Writer, const FTextureBuildSettings& B
 	WriteCbFieldWithDefault<bool>(Writer, "bChromaKeyTexture", BuildSettings.bChromaKeyTexture, DefaultSettings.bChromaKeyTexture);
 	WriteCbFieldWithDefault(Writer, "PowerOfTwoMode", BuildSettings.PowerOfTwoMode, DefaultSettings.PowerOfTwoMode);
 	WriteCbFieldWithDefault(Writer, "PaddingColor", BuildSettings.PaddingColor, DefaultSettings.PaddingColor);
+	WriteCbFieldWithDefault<bool>(Writer, "bPadWithBorderColor", BuildSettings.bPadWithBorderColor, DefaultSettings.bPadWithBorderColor);
+	WriteCbFieldWithDefault(Writer, "ResizeDuringBuildX", BuildSettings.ResizeDuringBuildX, DefaultSettings.ResizeDuringBuildX);
+	WriteCbFieldWithDefault(Writer, "ResizeDuringBuildY", BuildSettings.ResizeDuringBuildY, DefaultSettings.ResizeDuringBuildY);
 	WriteCbFieldWithDefault(Writer, "ChromaKeyColor", BuildSettings.ChromaKeyColor, DefaultSettings.ChromaKeyColor);
 	WriteCbFieldWithDefault(Writer, "ChromaKeyThreshold", BuildSettings.ChromaKeyThreshold, DefaultSettings.ChromaKeyThreshold);
 	WriteCbFieldWithDefault(Writer, "CompressionQuality", BuildSettings.CompressionQuality, DefaultSettings.CompressionQuality);
@@ -226,7 +230,8 @@ static void WriteBuildSettings(FCbWriter& Writer, const FTextureBuildSettings& B
 	WriteCbFieldWithDefault<uint8>(Writer, "OodleUniversalTiling", (uint8)BuildSettings.OodleUniversalTiling, (uint8)DefaultSettings.OodleUniversalTiling);
 	WriteCbFieldWithDefault<uint8>(Writer, "OodleRDO", BuildSettings.OodleRDO, DefaultSettings.OodleRDO);
 	WriteCbFieldWithDefault<bool>(Writer, "bOodleUsesRDO", BuildSettings.bOodleUsesRDO, DefaultSettings.bOodleUsesRDO);
-	
+	WriteCbFieldWithDefault<bool>(Writer, "bOodlePreserveExtremes", BuildSettings.bOodlePreserveExtremes, DefaultSettings.bOodlePreserveExtremes);
+
 	WriteCbFieldWithDefault(Writer, "OodleTextureSdkVersion", BuildSettings.OodleTextureSdkVersion, DefaultSettings.OodleTextureSdkVersion);
 
 	WriteCbFieldWithDefault(Writer, "TextureAddressModeX", BuildSettings.TextureAddressModeX, DefaultSettings.TextureAddressModeX);

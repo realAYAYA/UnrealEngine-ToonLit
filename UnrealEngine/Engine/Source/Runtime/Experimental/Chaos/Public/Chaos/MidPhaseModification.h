@@ -7,7 +7,10 @@
 
 namespace Chaos
 {
-	class FCollisionConstraintAllocator;	// Container for solver's constraints and midphase pairs
+	namespace Private
+	{
+		class FCollisionConstraintAllocator;	// Container for solver's constraints and midphase pairs
+	}
 	class FParticlePairMidPhase;			// The underlying midphase type
 	class FMidPhaseModifier;			// Modifier for a particular midphase
 	class FMidPhaseModifierAccessor;		// Access class for all midphase pair modifiers
@@ -32,7 +35,7 @@ namespace Chaos
 
 		// Since a modifier can be invalid (ie, null midphase and/or accessor), make it
 		// castable to bool so that users can check validity.
-		bool IsValid() const
+		CHAOS_API bool IsValid() const
 		{
 			return
 				MidPhase != nullptr &&
@@ -49,11 +52,14 @@ namespace Chaos
 		// Disable CCD for this pair
 		CHAOS_API void DisableCCD();
 
+		// Disable convex optimization for this pair
+		CHAOS_API void DisableConvexOptimization();
+
 		//
 		// Accessor functions
 		//
 
-		CHAOS_API void GetParticles(const FGeometryParticleHandle** Particle0, const FGeometryParticleHandle** Particle1) const;
+		CHAOS_API void GetParticles(FGeometryParticleHandle** Particle0, FGeometryParticleHandle** Particle1) const;
 
 		CHAOS_API const FGeometryParticleHandle* GetOtherParticle(const FGeometryParticleHandle* InParticle) const;
 
@@ -67,7 +73,7 @@ namespace Chaos
 	/*
 	 * Class for iterating over midphases involving a specific particle
 	 */
-	class FMidPhaseModifierParticleIterator
+	class CHAOS_API FMidPhaseModifierParticleIterator
 	{
 	public:
 		FMidPhaseModifierParticleIterator(
@@ -121,18 +127,26 @@ namespace Chaos
 		friend class FMidPhaseModifierParticleRange;
 	};
 
+	/*
+	* A range-iterable object for accessing all mid-phases which include a particular particle
+	*/
 	class FMidPhaseModifierParticleRange
 	{
 	public:
+		CHAOS_API FMidPhaseModifierParticleIterator begin() const;
+		CHAOS_API FMidPhaseModifierParticleIterator end() const;
+
+	private:
 		FMidPhaseModifierParticleRange(
 			FMidPhaseModifierAccessor* InAccessor, FGeometryParticleHandle* InParticle)
 			: Accessor(InAccessor)
 			, Particle(InParticle) { }
-		CHAOS_API FMidPhaseModifierParticleIterator begin() const;
-		CHAOS_API FMidPhaseModifierParticleIterator end() const;
-	private:
+
 		FMidPhaseModifierAccessor* Accessor;
 		FGeometryParticleHandle* Particle;
+
+		// Befriend the accessor so that it alone can instantiate this range object
+		friend class FMidPhaseModifierAccessor;
 	};
 
 	/*
@@ -141,11 +155,22 @@ namespace Chaos
 	class FMidPhaseModifierAccessor
 	{
 	public:
+		FMidPhaseModifierAccessor(Private::FCollisionConstraintAllocator& InConstraintAllocator)
+			: ConstraintAllocator(InConstraintAllocator)
+		{ }
+
 		// Get an object which allows for range iteration over the list of
 		// midphases for a particle
 		CHAOS_API FMidPhaseModifierParticleRange GetMidPhases(FGeometryParticleHandle* Particle);
 
 		// Get a midphase modifier for a particular object pair
 		CHAOS_API FMidPhaseModifier GetMidPhase(FGeometryParticleHandle* Particle0, FGeometryParticleHandle* Particle1);
+
+		// Provide visitor access to all midphase modifiers
+		CHAOS_API void VisitMidPhases(const TFunction<void(FMidPhaseModifier&)>& Visitor);
+
+	private:
+
+		Private::FCollisionConstraintAllocator& ConstraintAllocator;
 	};
 }

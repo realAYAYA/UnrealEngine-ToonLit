@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -315,7 +314,13 @@ namespace EpicGames.Core
 		{
 			if (line.Length > 0 && line[0] == '{')
 			{
-				byte[] data = Encoding.UTF8.GetBytes(line);
+				int length = line.Length;
+				while(length > 0 && Char.IsWhiteSpace(line[length - 1]))
+				{
+					length--;
+				}
+
+				byte[] data = Encoding.UTF8.GetBytes(line, 0, length);
 				try
 				{
 					JsonLogEvent jsonEvent;
@@ -328,7 +333,7 @@ namespace EpicGames.Core
 				}
 				catch (Exception ex)
 				{
-					_logger.LogError(ex, "Exception while parsing log event");
+					_logger.LogError(ex, "Exception while parsing log event: {Message}", ex.Message);
 				}
 			}
 

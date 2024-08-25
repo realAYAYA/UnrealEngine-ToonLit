@@ -178,6 +178,14 @@ void FRigVMJumpToBranchOp::Serialize(FArchive& Ar)
 	Ar << FirstBranchInfoIndex;
 }
 
+void FRigVMRunInstructionsOp::Serialize(FArchive& Ar)
+{
+	Ar << OpCode;
+	Ar << Arg;
+	Ar << StartInstruction;
+	Ar << EndInstruction;
+}
+
 FRigVMInstructionArray::FRigVMInstructionArray()
 {
 }
@@ -259,6 +267,7 @@ void FRigVMByteCode::Serialize(FArchive& Ar)
 	Ar.UsingCustomVersion(FAnimObjectVersion::GUID);
 	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
 	Ar.UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
+	Ar.UsingCustomVersion(FRigVMObjectVersion::GUID);
 
 	if (Ar.CustomVer(FAnimObjectVersion::GUID) < FAnimObjectVersion::StoreMarkerNamesOnSkeleton)
 	{
@@ -279,7 +288,7 @@ void FRigVMByteCode::Serialize(FArchive& Ar)
 	}
 }
 
-void FRigVMByteCode::Save(FArchive& Ar) const
+void FRigVMByteCode::Save(FArchive& Ar)
 {
 	FRigVMInstructionArray Instructions;
 
@@ -417,6 +426,12 @@ void FRigVMByteCode::Save(FArchive& Ar) const
 				Ar << Op;
 				break;
 			}
+			case ERigVMOpCode::RunInstructions:
+			{
+				FRigVMRunInstructionsOp Op = GetOpAt<FRigVMRunInstructionsOp>(Instruction.ByteCodeIndex);
+				Ar << Op;
+				break;
+			}
 			default:
 			{
 				ensure(false);
@@ -441,6 +456,8 @@ void FRigVMByteCode::Save(FArchive& Ar) const
 
 	TArray<FRigVMBranchInfo> TempBranchInfos = BranchInfos;
 	Ar << TempBranchInfos;
+
+	Ar << PublicContextPathName;
 }
 
 void FRigVMByteCode::Load(FArchive& Ar)
@@ -600,6 +617,13 @@ void FRigVMByteCode::Load(FArchive& Ar)
 				AddOp<FRigVMJumpToBranchOp>(Op);
 				break;
 			}
+			case ERigVMOpCode::RunInstructions:
+			{
+				FRigVMRunInstructionsOp Op;
+				Ar << Op;
+				AddOp<FRigVMRunInstructionsOp>(Op);
+				break;
+			}
 			default:
 			{
 				ensure(false);
@@ -607,8 +631,6 @@ void FRigVMByteCode::Load(FArchive& Ar)
 		}
 	}
 	
-	AlignByteCode();
-
 	Entries.Reset();
 	if (Ar.CustomVer(FAnimObjectVersion::GUID) >= FAnimObjectVersion::SerializeRigVMEntries)
 	{
@@ -638,6 +660,12 @@ void FRigVMByteCode::Load(FArchive& Ar)
 		BranchInfos.Reset();
 		BranchInfoLookup.Reset();
 	}
+
+	if (Ar.CustomVer(FRigVMObjectVersion::GUID) >= FRigVMObjectVersion::VMBytecodeStorePublicContextPath)
+	{
+		Ar << PublicContextPathName;
+		bHasPublicContextPathName = true;
+	}
 }
 
 void FRigVMByteCode::Reset()
@@ -648,6 +676,7 @@ void FRigVMByteCode::Reset()
 	Entries.Reset();
 	BranchInfos.Reset();
 	BranchInfoLookup.Reset();
+	PublicContextPathName.Reset();
 
 #if WITH_EDITORONLY_DATA
 	SubjectPerInstruction.Reset();
@@ -668,6 +697,7 @@ void FRigVMByteCode::Empty()
 	bByteCodeIsAligned = false;
 	NumInstructions = 0;
 	Entries.Empty();
+	PublicContextPathName.Empty();
 
 #if WITH_EDITORONLY_DATA
 	SubjectPerInstruction.Empty();
@@ -801,6 +831,10 @@ uint32 FRigVMByteCode::GetOperatorHash(const FRigVMInstruction& InInstruction) c
 		{
 			return GetTypeHash(GetOpAt<FRigVMJumpToBranchOp>(InInstruction));
 		}
+		case ERigVMOpCode::RunInstructions:
+		{
+			return GetTypeHash(GetOpAt<FRigVMRunInstructionsOp>(InInstruction));
+		}
 		case ERigVMOpCode::Invalid:
 		{
 			ensure(false);
@@ -842,6 +876,71 @@ uint64 FRigVMByteCode::GetOpNumBytesAt(uint64 InByteCodeIndex, bool bIncludeOper
 	ERigVMOpCode OpCode = GetOpCodeAt(InByteCodeIndex);
 	switch (OpCode)
 	{
+		case ERigVMOpCode::Execute_0_Operands:
+		case ERigVMOpCode::Execute_1_Operands:
+		case ERigVMOpCode::Execute_2_Operands:
+		case ERigVMOpCode::Execute_3_Operands:
+		case ERigVMOpCode::Execute_4_Operands:
+		case ERigVMOpCode::Execute_5_Operands:
+		case ERigVMOpCode::Execute_6_Operands:
+		case ERigVMOpCode::Execute_7_Operands:
+		case ERigVMOpCode::Execute_8_Operands:
+		case ERigVMOpCode::Execute_9_Operands:
+		case ERigVMOpCode::Execute_10_Operands:
+		case ERigVMOpCode::Execute_11_Operands:
+		case ERigVMOpCode::Execute_12_Operands:
+		case ERigVMOpCode::Execute_13_Operands:
+		case ERigVMOpCode::Execute_14_Operands:
+		case ERigVMOpCode::Execute_15_Operands:
+		case ERigVMOpCode::Execute_16_Operands:
+		case ERigVMOpCode::Execute_17_Operands:
+		case ERigVMOpCode::Execute_18_Operands:
+		case ERigVMOpCode::Execute_19_Operands:
+		case ERigVMOpCode::Execute_20_Operands:
+		case ERigVMOpCode::Execute_21_Operands:
+		case ERigVMOpCode::Execute_22_Operands:
+		case ERigVMOpCode::Execute_23_Operands:
+		case ERigVMOpCode::Execute_24_Operands:
+		case ERigVMOpCode::Execute_25_Operands:
+		case ERigVMOpCode::Execute_26_Operands:
+		case ERigVMOpCode::Execute_27_Operands:
+		case ERigVMOpCode::Execute_28_Operands:
+		case ERigVMOpCode::Execute_29_Operands:
+		case ERigVMOpCode::Execute_30_Operands:
+		case ERigVMOpCode::Execute_31_Operands:
+		case ERigVMOpCode::Execute_32_Operands:
+		case ERigVMOpCode::Execute_33_Operands:
+		case ERigVMOpCode::Execute_34_Operands:
+		case ERigVMOpCode::Execute_35_Operands:
+		case ERigVMOpCode::Execute_36_Operands:
+		case ERigVMOpCode::Execute_37_Operands:
+		case ERigVMOpCode::Execute_38_Operands:
+		case ERigVMOpCode::Execute_39_Operands:
+		case ERigVMOpCode::Execute_40_Operands:
+		case ERigVMOpCode::Execute_41_Operands:
+		case ERigVMOpCode::Execute_42_Operands:
+		case ERigVMOpCode::Execute_43_Operands:
+		case ERigVMOpCode::Execute_44_Operands:
+		case ERigVMOpCode::Execute_45_Operands:
+		case ERigVMOpCode::Execute_46_Operands:
+		case ERigVMOpCode::Execute_47_Operands:
+		case ERigVMOpCode::Execute_48_Operands:
+		case ERigVMOpCode::Execute_49_Operands:
+		case ERigVMOpCode::Execute_50_Operands:
+		case ERigVMOpCode::Execute_51_Operands:
+		case ERigVMOpCode::Execute_52_Operands:
+		case ERigVMOpCode::Execute_53_Operands:
+		case ERigVMOpCode::Execute_54_Operands:
+		case ERigVMOpCode::Execute_55_Operands:
+		case ERigVMOpCode::Execute_56_Operands:
+		case ERigVMOpCode::Execute_57_Operands:
+		case ERigVMOpCode::Execute_58_Operands:
+		case ERigVMOpCode::Execute_59_Operands:
+		case ERigVMOpCode::Execute_60_Operands:
+		case ERigVMOpCode::Execute_61_Operands:
+		case ERigVMOpCode::Execute_62_Operands:
+		case ERigVMOpCode::Execute_63_Operands:
+		case ERigVMOpCode::Execute_64_Operands:
 		case ERigVMOpCode::Execute:
 		{
 			uint64 NumBytes = (uint64)sizeof(FRigVMExecuteOp);
@@ -947,6 +1046,10 @@ uint64 FRigVMByteCode::GetOpNumBytesAt(uint64 InByteCodeIndex, bool bIncludeOper
 		case ERigVMOpCode::JumpToBranch:
 		{
 			return (uint64)sizeof(FRigVMJumpToBranchOp);
+		}
+		case ERigVMOpCode::RunInstructions:
+		{
+			return (uint64)sizeof(FRigVMRunInstructionsOp);
 		}
 		case ERigVMOpCode::Invalid:
 		{
@@ -1064,14 +1167,22 @@ uint64 FRigVMByteCode::AddExecuteOp(uint16 InFunctionIndex, const FRigVMOperandA
 	Op.PredicateCount = PredicateCount;
 	uint64 OpByteIndex = AddOp(Op);
 
-	uint64 OperandsByteIndex = (uint64)ByteCode.AddZeroed(sizeof(FRigVMOperand) * InOperands.Num());
+	const uint64 OperandsByteIndex = (uint64)ByteCode.AddZeroed(sizeof(FRigVMOperand) * InOperands.Num());
 	FMemory::Memcpy(ByteCode.GetData() + OperandsByteIndex, InOperands.GetData(), sizeof(FRigVMOperand) * InOperands.Num());
+
+	for(int32 Index = 0; Index < InOperands.Num(); Index++)
+	{
+		FRigVMOperand* Operand = reinterpret_cast<FRigVMOperand*>(ByteCode.GetData() + OperandsByteIndex + sizeof(FRigVMOperand) * Index);
+		FRigVMOperand::ZeroPaddedMemoryIfNeeded(Operand);
+	}
+	
 	return OpByteIndex;
 }
 
 uint64 FRigVMByteCode::InlineFunction(const FRigVMByteCode* FunctionByteCode, const FRigVMOperandArray& InOperands)
 {
 	check(FunctionByteCode);
+	check(!FunctionByteCode->bByteCodeIsAligned);
 	uint64 OpByteIndex = ByteCode.Num();
 	ByteCode.Append(FunctionByteCode->ByteCode);
 	NumInstructions += FunctionByteCode->NumInstructions;
@@ -1219,6 +1330,17 @@ FString FRigVMByteCode::DumpToText() const
 				Line += FString::Join(BranchInfoTexts, TEXT(", "));
 				break;
 			}
+			case ERigVMOpCode::RunInstructions:
+			{
+				const FRigVMRunInstructionsOp& Op = GetOpAt<FRigVMRunInstructionsOp>(Instruction.ByteCodeIndex);
+				FString Arg;
+				FRigVMOperand::StaticStruct()->ExportText(Arg, &Op.Arg, &Op.Arg, nullptr, PPF_None, nullptr);
+				Line += TEXT(" Instructions ");
+				Line += FString::FromInt(Op.StartInstruction);
+				Line += TEXT("-");
+				Line += FString::FromInt(Op.EndInstruction);
+				break;
+			}
 			case ERigVMOpCode::Invalid:
 			{
 				ensure(false);
@@ -1260,6 +1382,11 @@ uint64 FRigVMByteCode::AddInvokeEntryOp(const FName& InEntryName)
 uint64 FRigVMByteCode::AddJumpToBranchOp(FRigVMOperand InBranchNameArg, int32 InFirstBranchInfoIndex)
 {
 	return AddOp(FRigVMJumpToBranchOp(InBranchNameArg, InFirstBranchInfoIndex));
+}
+
+uint64 FRigVMByteCode::AddRunInstructionsOp(FRigVMOperand InExecuteStateArg, int32 InStartInstruction, int32 InEndInstruction)
+{
+	return AddOp(FRigVMRunInstructionsOp(InExecuteStateArg, InStartInstruction, InEndInstruction));
 }
 
 int32 FRigVMByteCode::AddBranchInfo(const FRigVMBranchInfo& InBranchInfo)
@@ -1361,6 +1488,11 @@ FRigVMOperandArray FRigVMByteCode::GetOperandsForOp(const FRigVMInstruction& InI
 			const FRigVMJumpToBranchOp& Op = GetOpAt<FRigVMJumpToBranchOp>(InInstruction.ByteCodeIndex);
 			return FRigVMOperandArray(&Op.Arg, 1);
 		}
+		case ERigVMOpCode::RunInstructions:
+		{
+			const FRigVMRunInstructionsOp& Op = GetOpAt<FRigVMRunInstructionsOp>(InInstruction.ByteCodeIndex);
+			return FRigVMOperandArray(&Op.Arg, 1);
+		}
 		case ERigVMOpCode::JumpAbsolute:
 		case ERigVMOpCode::JumpForward:
 		case ERigVMOpCode::JumpBackward:
@@ -1452,6 +1584,11 @@ uint64 FRigVMByteCode::GetFirstOperandByteIndex(const FRigVMInstruction& InInstr
 		case ERigVMOpCode::JumpToBranch:
 		{
 			const FRigVMJumpToBranchOp& Op = GetOpAt<FRigVMJumpToBranchOp>(InInstruction.ByteCodeIndex);
+			return InInstruction.ByteCodeIndex + ((uint64)&Op.Arg - (uint64)&Op);
+		}
+		case ERigVMOpCode::RunInstructions:
+		{
+			const FRigVMRunInstructionsOp& Op = GetOpAt<FRigVMRunInstructionsOp>(InInstruction.ByteCodeIndex);
 			return InInstruction.ByteCodeIndex + ((uint64)&Op.Arg - (uint64)&Op);
 		}
 		case ERigVMOpCode::JumpAbsolute:
@@ -1587,6 +1724,11 @@ uint64 FRigVMByteCode::GetOpAlignment(ERigVMOpCode InOpCode) const
 			static const uint64 Alignment = FRigVMJumpToBranchOp::StaticStruct()->GetCppStructOps()->GetAlignment();
 			return Alignment;
 		}
+		case ERigVMOpCode::RunInstructions:
+		{
+			static const uint64 Alignment = FRigVMRunInstructionsOp::StaticStruct()->GetCppStructOps()->GetAlignment();
+			return Alignment;
+		}
 		case ERigVMOpCode::Invalid:
 		{
 			ensure(false);
@@ -1699,7 +1841,10 @@ UObject* FRigVMByteCode::GetSubjectForInstruction(int32 InInstructionIndex) cons
 {
 	if (SubjectPerInstruction.IsValidIndex(InInstructionIndex))
 	{
-		return SubjectPerInstruction[InInstructionIndex];
+		if (SubjectPerInstruction[InInstructionIndex].IsValid())
+		{
+			return SubjectPerInstruction[InInstructionIndex].Get();
+		}
 	}
 	return nullptr;
 }
@@ -1781,7 +1926,7 @@ TArray<int32> FRigVMByteCode::GetAllInstructionIndicesForCallPath(const FString&
 	return MatchedInstructions;
 }
 
-int32 FRigVMByteCode::GetFirstInstructionIndexForCallstack(const TArray<UObject*>& InCallstack) const
+int32 FRigVMByteCode::GetFirstInstructionIndexForCallstack(const TArray<TWeakObjectPtr<UObject>>& InCallstack) const
 {
 	const TArray<int32>& InstructionIndices = GetAllInstructionIndicesForCallstack(InCallstack);
 	if (InstructionIndices.Num() > 0)
@@ -1791,7 +1936,7 @@ int32 FRigVMByteCode::GetFirstInstructionIndexForCallstack(const TArray<UObject*
 	return INDEX_NONE;
 }
 
-const TArray<int32>& FRigVMByteCode::GetAllInstructionIndicesForCallstack(const TArray<UObject*>& InCallstack) const
+const TArray<int32>& FRigVMByteCode::GetAllInstructionIndicesForCallstack(const TArray<TWeakObjectPtr<UObject>>& InCallstack) const
 {
 	if(InCallstack.IsEmpty())
 	{
@@ -1807,9 +1952,9 @@ const TArray<int32>& FRigVMByteCode::GetAllInstructionIndicesForCallstack(const 
 	return EmptyInstructionIndices;
 }
 
-void FRigVMByteCode::SetSubject(int32 InInstructionIndex, const FString& InCallPath, const TArray<UObject*>& InCallstack)
+void FRigVMByteCode::SetSubject(int32 InInstructionIndex, const FString& InCallPath, const TArray<TWeakObjectPtr<UObject>>& InCallstack)
 {
-	UObject* Subject = InCallstack.Last();
+	TWeakObjectPtr<UObject> Subject = InCallstack.Last();
 	if (SubjectPerInstruction.Num() <= InInstructionIndex)
 	{
 		SubjectPerInstruction.AddZeroed(1 + InInstructionIndex - SubjectPerInstruction.Num());
@@ -1838,14 +1983,21 @@ void FRigVMByteCode::SetSubject(int32 InInstructionIndex, const FString& InCallP
 
 	for(int32 CallstackLength = InCallstack.Num(); CallstackLength > 0; CallstackLength--)
 	{
-		UObject* const* DataPtr = &InCallstack[InCallstack.Num() - CallstackLength];
-		TArrayView<UObject* const> View(DataPtr, CallstackLength);
+		TWeakObjectPtr<UObject> const* DataPtr = &InCallstack[InCallstack.Num() - CallstackLength];
+		TArrayView<TWeakObjectPtr<UObject> const> View(DataPtr, CallstackLength);
 		uint32 Hash = GetCallstackHash(View);
 		CallstackHashToInstructions.FindOrAdd(Hash).AddUnique(InInstructionIndex);
 	}
 }
 
-const TArray<UObject*>* FRigVMByteCode::GetCallstackForInstruction(int32 InInstructionIndex) const
+void FRigVMByteCode::AddInstructionForSubject(UObject* InSubject, int32 InInstructionIndex)
+{
+	check(InSubject);
+	TWeakObjectPtr<UObject> WeakSubject(InSubject);
+	SubjectToInstructions.FindOrAdd(WeakSubject).AddUnique(InInstructionIndex);
+}
+
+const TArray<TWeakObjectPtr<UObject>>* FRigVMByteCode::GetCallstackForInstruction(int32 InInstructionIndex) const
 {
 	if (CallstackPerInstruction.IsValidIndex(InInstructionIndex))
 	{
@@ -1863,21 +2015,21 @@ uint32 FRigVMByteCode::GetCallstackHashForInstruction(int32 InInstructionIndex) 
 	return 0;
 }
 
-uint32 FRigVMByteCode::GetCallstackHash(const TArray<UObject*>& InCallstack)
+uint32 FRigVMByteCode::GetCallstackHash(const TArray<TWeakObjectPtr<UObject>>& InCallstack)
 {
-	UObject*const * DataPtr = nullptr;
+	TWeakObjectPtr<UObject> const * DataPtr = nullptr;
 	if(InCallstack.Num() > 0)
 	{
 		DataPtr = &InCallstack[0];
 	}
-	TArrayView<UObject* const> View(DataPtr, InCallstack.Num());
+	TArrayView<TWeakObjectPtr<UObject> const> View(DataPtr, InCallstack.Num());
 	return GetCallstackHash(View);
 }
 
-uint32 FRigVMByteCode::GetCallstackHash(const TArrayView<UObject* const>& InCallstack)
+uint32 FRigVMByteCode::GetCallstackHash(const TArrayView<TWeakObjectPtr<UObject> const>& InCallstack)
 {
 	uint32 Hash = GetTypeHash(InCallstack.Num());
-	for(const UObject* Object : InCallstack)
+	for(const TWeakObjectPtr<UObject> Object : InCallstack)
 	{
 		Hash = HashCombine(Hash, GetTypeHash(Object));
 	}

@@ -2,13 +2,13 @@
 
 import 'dart:ui';
 
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/settings/delta_widget_settings.dart';
-import '../../utilities/transient_preference.dart';
-import '../../utilities/unreal_colors.dart';
 import 'delta_widget_base.dart';
 import 'unreal_widget_base.dart';
 

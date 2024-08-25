@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -10,9 +12,8 @@ import '../../../models/unreal_actor_manager.dart';
 import '../../../models/unreal_types.dart';
 import '../../../utilities/constants.dart';
 import '../../../utilities/debug_utilities.dart';
-import '../../../utilities/unreal_colors.dart';
 import '../../elements/floating_map_preview.dart';
-import '../../elements/layout/lazy_tab_view.dart';
+import '../../elements/floating_trackpad.dart';
 import '../connect/views/n_display_selector_dialog.dart';
 import 'tabs/main_screen_tabs.dart';
 import 'toolbar/main_screen_toolbar.dart';
@@ -103,12 +104,16 @@ class _StageAppMainScreenState extends State<StageAppMainScreen>
           children: [
             Container(
               color: UnrealColors.gray14,
-              padding: EdgeInsets.only(left: cardMargin, right: cardMargin, bottom: cardMargin),
+              padding: EdgeInsets.only(
+                left: UnrealTheme.cardMargin,
+                right: UnrealTheme.cardMargin,
+                bottom: UnrealTheme.cardMargin,
+              ),
               key: Key('Tab View'),
               child: Container(
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.background,
-                  borderRadius: BorderRadius.circular(outerCornerRadius),
+                  borderRadius: BorderRadius.circular(UnrealTheme.outerCornerRadius),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: LazyTabView(
@@ -119,6 +124,7 @@ class _StageAppMainScreenState extends State<StageAppMainScreen>
               ),
             ),
             if (_bShowMapPreview) const FloatingMapPreview(key: Key('Map Preview')),
+            FloatingTrackpad()
           ],
         ),
       ),

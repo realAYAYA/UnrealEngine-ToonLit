@@ -117,9 +117,18 @@ uint GetNumLocalLights(uint EyeIndex)
 #endif
 }
 
+uint GetMaxLightsPerCell(uint EyeIndex)
+{
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	return (EyeIndex == 0) ? ForwardLightData.MaxCulledLightsPerCell  : ForwardLightDataISR.MaxCulledLightsPerCell ;
+#else
+	return ForwardLightData.MaxCulledLightsPerCell ;
+#endif
+}
+
 struct FCulledLightsGridData
 {
-	uint NumLocalLights;
+	uint NumLights;
 	uint DataStartIndex;
 };
 
@@ -133,14 +142,14 @@ FCulledLightsGridData GetCulledLightsGrid(uint GridIndex, uint EyeIndex)
 	{
 #endif
 
-		Result.NumLocalLights = min(ForwardLightData.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 0], ForwardLightData.NumLocalLights);
+		Result.NumLights = min(ForwardLightData.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 0], ForwardLightData.NumLocalLights);
 		Result.DataStartIndex = ForwardLightData.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 1];
 
 #if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
 	}
 	else
 	{
-		Result.NumLocalLights = min(ForwardLightDataISR.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 0], ForwardLightDataISR.NumLocalLights);
+		Result.NumLights = min(ForwardLightDataISR.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 0], ForwardLightDataISR.NumLocalLights);
 		Result.DataStartIndex = ForwardLightDataISR.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 1];
 	}
 #endif
@@ -192,6 +201,9 @@ FDirectionalLightData GetDirectionalLightData(uint EyeIndex)
 		Result.DirectionalLightColor				= ForwardLightData.DirectionalLightColor;
 		Result.DirectionalLightDirection			= ForwardLightData.DirectionalLightDirection;
 		Result.DirectionalLightSourceRadius			= ForwardLightData.DirectionalLightSourceRadius;
+		Result.DirectionalLightSoftSourceRadius		= ForwardLightData.DirectionalLightSoftSourceRadius;
+		Result.DirectionalLightSpecularScale		= ForwardLightData.DirectionalLightSpecularScale;
+		Result.LightFunctionAtlasLightIndex			= ForwardLightData.LightFunctionAtlasLightIndex;
 
 #if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
 	}
@@ -203,6 +215,9 @@ FDirectionalLightData GetDirectionalLightData(uint EyeIndex)
 		Result.DirectionalLightColor				= ForwardLightDataISR.DirectionalLightColor;
 		Result.DirectionalLightDirection			= ForwardLightDataISR.DirectionalLightDirection;
 		Result.DirectionalLightSourceRadius			= ForwardLightDataISR.DirectionalLightSourceRadius;
+		Result.DirectionalLightSoftSourceRadius		= ForwardLightDataISR.DirectionalLightSoftSourceRadius;
+		Result.DirectionalLightSpecularScale		= ForwardLightDataISR.DirectionalLightSpecularScale;
+		Result.LightFunctionAtlasLightIndex			= ForwardLightDataISR.LightFunctionAtlasLightIndex;
 	}
 #endif
 
@@ -212,22 +227,28 @@ FDirectionalLightData GetDirectionalLightData(uint EyeIndex)
 FLocalLightData GetLocalLightData_Internal(
 	uint LocalLightIndex,
 	uint ClusteredDeferredSupportedEndIndex,
-	uint LumenSupportedStartIndex,
+	uint ManyLightsSupportedStartIndex,
 	uint SimpleLightsEndIndex,
 	float4 InData0, float4 InData1, float4 InData2, float4 InData3, float4 InData4, float4 InData5)
 {
 	FLocalLightData Out = (FLocalLightData)0;
 
 	Out.bClusteredDeferredSupported				= LocalLightIndex <  ClusteredDeferredSupportedEndIndex;
-	Out.bLumenLightSupported					= LocalLightIndex >= LumenSupportedStartIndex;
+	Out.bManyLightsSupported					= LocalLightIndex >= ManyLightsSupportedStartIndex;
 	Out.bIsSimpleLight							= LocalLightIndex <  SimpleLightsEndIndex;
 	Out.LightPositionAndInvRadius				= InData0;
 	Out.LightColorAndIdAndFalloffExponent		= InData1;
 	Out.LightDirectionAndShadowMask				= InData2;
 	Out.SpotAnglesAndSourceRadiusPacked			= InData3;
 	Out.LightTangentAndIESDataAndSpecularScale	= InData4;
-	Out.RectDataAndVirtualShadowMapId			= InData5;
-	Out.VirtualShadowMapId						= int(Out.RectDataAndVirtualShadowMapId.z);
+	Out.RectData								= InData5.xyz;
+#if MANY_LIGHTS
+	Out.VirtualShadowMapId						= -1;
+	Out.PrevLocalLightIndex						= int(InData5.w);
+#else
+	Out.VirtualShadowMapId						= int(InData5.w);
+	Out.PrevLocalLightIndex						= -1;
+#endif
 	Out.LightSceneId							= int(Out.LightColorAndIdAndFalloffExponent.z);
 
 	return Out;
@@ -241,7 +262,7 @@ FLocalLightData GetLocalLightDataNonStereo(uint LocalLightIndex)
 	Out = GetLocalLightData_Internal(
 		LocalLightIndex,
 		ForwardLightData.ClusteredDeferredSupportedEndIndex,
-		ForwardLightData.LumenSupportedStartIndex,
+		ForwardLightData.ManyLightsSupportedStartIndex,
 		ForwardLightData.SimpleLightsEndIndex,
 		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 0],
 		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 1],
@@ -267,7 +288,7 @@ FLocalLightData GetLocalLightData(uint GridIndex, uint EyeIndex)
 		Out = GetLocalLightData_Internal(
 			LocalLightIndex, 
 			ForwardLightData.ClusteredDeferredSupportedEndIndex,
-			ForwardLightData.LumenSupportedStartIndex,
+			ForwardLightData.ManyLightsSupportedStartIndex,
 			ForwardLightData.SimpleLightsEndIndex,
 			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 0],
 			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 1],
@@ -285,7 +306,7 @@ FLocalLightData GetLocalLightData(uint GridIndex, uint EyeIndex)
 		Out = GetLocalLightData_Internal(
 			LocalLightIndex,
 			ForwardLightDataISR.ClusteredDeferredSupportedEndIndex,
-			ForwardLightDataISR.LumenSupportedStartIndex,
+			ForwardLightDataISR.ManyLightsSupportedStartIndex,
 			ForwardLightDataISR.SimpleLightsEndIndex,
 			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 0],
 			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 1],
@@ -304,7 +325,7 @@ FLocalLightData GetLocalLightData(uint GridIndex, uint EyeIndex)
  */
 uint4 InitializePackedShadowMask()
 {
-	return uint(0xffffffff).xxxx;
+	return uint(0U).xxxx;
 }
 
 uint GetPackedShadowMaskMaxLightCount()
@@ -314,22 +335,20 @@ uint GetPackedShadowMaskMaxLightCount()
 
 void PackShadowMask(inout uint4 InOutShadowMask, float InShadowFactor, uint InLightIndex)
 {
-	uint Value = ~uint(round(InShadowFactor * 15.0f)) & 15U;
+	uint Value = uint(round((InShadowFactor) * 15.0f)) & 15U;
 	uint Dword = InLightIndex / 8;
 
-	InOutShadowMask.x ^= (Dword == 0U) ? (Value << (InLightIndex      ) * 4U) : 0U;
-	InOutShadowMask.y ^= (Dword == 1U) ? (Value << (InLightIndex -  8U) * 4U) : 0U;
-	InOutShadowMask.z ^= (Dword == 2U) ? (Value << (InLightIndex - 16U) * 4U) : 0U;
-	InOutShadowMask.w ^= (Dword == 3U) ? (Value << (InLightIndex - 24U) * 4U) : 0U;
-
-	//OutShadowMask ^= (~uint(round(InShadowFactor * 7.0)) & 7u) << (InLightIndex * 3u);
+	InOutShadowMask.x ^= (Dword == 0U) ? (Value << ((InLightIndex      ) * 4U)) : 0U;
+	InOutShadowMask.y ^= (Dword == 1U) ? (Value << ((InLightIndex -  8U) * 4U)) : 0U;
+	InOutShadowMask.z ^= (Dword == 2U) ? (Value << ((InLightIndex - 16U) * 4U)) : 0U;
+	InOutShadowMask.w ^= (Dword == 3U) ? (Value << ((InLightIndex - 24U) * 4U)) : 0U;
 }
 
 float UnpackShadowMask(uint4 InShadowMask, uint InLightIndex)
-{	
+{
 	uint Dword = InLightIndex / 8;
-	return ((InShadowMask[Dword] >> (InLightIndex - Dword*8U) * 4U) & 15U) / 15.0f;	
-	//return ((InShadowMask >> (InLightIndex * 3u)) & 7u) / 7.0;
+	uint MaskBits = (InShadowMask[Dword] >> (InLightIndex - Dword*8U) * 4U) & 15U;
+	return (float(MaskBits) / 15.0f);
 }
 
 // Unpack with dither to hide some of the quantization

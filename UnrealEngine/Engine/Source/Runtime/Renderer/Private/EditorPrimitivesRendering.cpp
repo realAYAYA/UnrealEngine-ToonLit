@@ -49,7 +49,7 @@ bool FEditorPrimitivesBasePassMeshProcessor::TryAddMeshBatch(const FMeshBatch& R
 		&& (!PrimitiveSceneProxy || PrimitiveSceneProxy->ShouldRenderInMainPass())
 		&& ShouldIncludeDomainInMeshPass(Material.GetMaterialDomain()))
 	{
-		if (Scene->GetShadingPath(FeatureLevel) == EShadingPath::Mobile)
+		if (GetFeatureLevelShadingPath(FeatureLevel) == EShadingPath::Mobile)
 		{
 			bResult = ProcessMobileShadingPath(MeshBatch, BatchElementMask, Material, MaterialRenderProxy, PrimitiveSceneProxy, StaticMeshId);
 		}

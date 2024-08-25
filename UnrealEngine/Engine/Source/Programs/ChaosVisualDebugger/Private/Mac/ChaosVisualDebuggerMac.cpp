@@ -58,8 +58,10 @@ static FString GSavedCommandLine;
 		}
 	
 	FEngineLoop::AppExit();
-
-	[NSApp terminate: self];
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSApp terminate: nil];
+    });
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)Sender;

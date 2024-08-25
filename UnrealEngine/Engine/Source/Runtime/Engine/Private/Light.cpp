@@ -171,6 +171,16 @@ void ALight::SetAffectTranslucentLighting(bool bNewValue)
 	LightComponent->SetAffectTranslucentLighting(bNewValue);
 }
 
+void ALight::PostLoad()
+{
+	Super::PostLoad();
+
+	if (LightComponent && LightComponent->Mobility == EComponentMobility::Static)
+	{
+		LightComponent->ClearLightFunctionMaterial();
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 APointLight::APointLight(const FObjectInitializer& ObjectInitializer)
@@ -180,16 +190,6 @@ APointLight::APointLight(const FObjectInitializer& ObjectInitializer)
 	PointLightComponent->Mobility = EComponentMobility::Stationary;
 
 	RootComponent = PointLightComponent;
-}
-
-void APointLight::PostLoad()
-{
-	Super::PostLoad();
-
-	if (GetLightComponent()->Mobility == EComponentMobility::Static)
-	{
-		GetLightComponent()->ClearLightFunctionMaterial();
-	}
 }
 
 #if WITH_EDITOR
@@ -272,10 +272,6 @@ void ADirectionalLight::PostLoad()
 {
 	Super::PostLoad();
 
-	if (GetLightComponent()->Mobility == EComponentMobility::Static)
-	{
-		GetLightComponent()->ClearLightFunctionMaterial();
-	}
 #if WITH_EDITORONLY_DATA
 	if(ArrowComponent != nullptr)
 	{

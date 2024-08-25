@@ -57,7 +57,7 @@ namespace EpicGames.Horde.Storage
 	sealed class BucketIdJsonConverter : JsonConverter<BucketId>
 	{
 		/// <inheritdoc/>
-		public override BucketId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => new BucketId(reader.GetString() ?? String.Empty);
+		public override BucketId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => new BucketId(reader.GetString() ?? string.Empty);
 
 		/// <inheritdoc/>
 		public override void Write(Utf8JsonWriter writer, BucketId value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
@@ -75,7 +75,7 @@ namespace EpicGames.Horde.Storage
 		public override object ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object? value) => new BucketId((string)value!);
 	}
 
-	sealed class BucketIdCbConverter : CbConverterBase<BucketId>
+	sealed class BucketIdCbConverter : CbConverter<BucketId>
 	{
 		public override BucketId Read(CbField field) => new BucketId(field.AsString());
 
@@ -83,6 +83,6 @@ namespace EpicGames.Horde.Storage
 		public override void Write(CbWriter writer, BucketId value) => writer.WriteStringValue(value.ToString());
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, BucketId value) => writer.WriteString(name, value.ToString());
+		public override void WriteNamed(CbWriter writer, CbFieldName name, BucketId value) => writer.WriteString(name, value.ToString());
 	}
 }

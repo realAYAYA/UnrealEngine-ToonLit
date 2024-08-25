@@ -148,7 +148,10 @@ private:
 	
 	virtual void SetupViewProjectionMatrix(FSceneViewProjectionData& InOutProjectionData) override
 	{
-		FDefaultXRCamera::SetupViewProjectionMatrix(InOutProjectionData);
+		if (ARKitSystem.GameThreadFrame.IsValid()) 
+		{
+			ARKitSystem.GameThreadFrame->Camera.GetViewProjectionMatrix(ARKitSystem.DeviceOrientation, InOutProjectionData);
+		}
 	}
 	
 	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override
@@ -1650,10 +1653,10 @@ bool FAppleARKitSystem::Run(UARSessionConfig* SessionConfig)
 		// Create MetalTextureCache
 		if (IsMetalPlatform(GMaxRHIShaderPlatform))
 		{
-			id<MTLDevice> Device = (id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
+            id<MTLDevice> Device = (__bridge id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
 			check(Device);
 
-			CVReturn Return = CVMetalTextureCacheCreate(nullptr, nullptr, Device, nullptr, &MetalTextureCache);
+			CVReturn Return = CVMetalTextureCacheCreate(nullptr, nullptr, (__bridge id<MTLDevice>)Device, nullptr, &MetalTextureCache);
 			check(Return == kCVReturnSuccess);
 			check(MetalTextureCache);
 

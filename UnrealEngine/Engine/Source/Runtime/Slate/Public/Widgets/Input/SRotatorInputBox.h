@@ -32,8 +32,10 @@ public:
 		: _bColorAxisLabels(false)
 		, _Font(FAppStyle::Get().GetFontStyle("NormalFont"))
 		, _AllowSpin(true)
-		, _MinSliderValue(0.0f)
-		, _MaxSliderValue(359.999f)
+		, _SpinDelta(1.f)
+		, _LinearDeltaSensitivity(1)
+		, _MinSliderValue(TOptional<NumericType>())
+		, _MaxSliderValue(TOptional<NumericType>())
 		, _DisplayToggle( false )
 		, _TogglePitchChecked( ECheckBoxState::Checked )
 		, _ToggleYawChecked( ECheckBoxState::Checked )
@@ -64,6 +66,12 @@ public:
 
 		/** Whether or not values can be spun or if they should be typed in */
 		SLATE_ARGUMENT( bool, AllowSpin )
+
+		/** The delta amount to apply, per pixel, when the spinner is dragged. */
+		SLATE_ATTRIBUTE(NumericType, SpinDelta)
+
+		/** If we're an unbounded spinbox, what value do we divide mouse movement by before multiplying by Delta. Requires Delta to be set. */
+		SLATE_ATTRIBUTE(int32, LinearDeltaSensitivity)
 
 		/** The minimum value that can be specified by using the slider */
 		SLATE_ATTRIBUTE( TOptional<NumericType>, MinSliderValue )
@@ -156,6 +164,10 @@ public:
 			[
 				SNew(SNumericEntryBox<NumericType>)
 				.AllowSpin(InArgs._AllowSpin)
+				.Delta(InArgs._SpinDelta)
+				.LinearDeltaSensitivity(InArgs._LinearDeltaSensitivity)
+				.MinValue(InArgs._MinSliderValue)
+				.MaxValue(InArgs._MaxSliderValue)
 				.MinSliderValue(InArgs._MinSliderValue)
 				.MaxSliderValue(InArgs._MaxSliderValue)
 				.LabelPadding(FMargin(3.0f))
@@ -188,6 +200,10 @@ public:
 			[
 				SNew(SNumericEntryBox<NumericType>)
 				.AllowSpin(InArgs._AllowSpin)
+				.Delta(InArgs._SpinDelta)
+				.LinearDeltaSensitivity(InArgs._LinearDeltaSensitivity)
+				.MinValue(InArgs._MinSliderValue)
+				.MaxValue(InArgs._MaxSliderValue)
 				.MinSliderValue(InArgs._MinSliderValue)
 				.MaxSliderValue(InArgs._MaxSliderValue)
 				.LabelPadding(FMargin(3.0f))
@@ -220,6 +236,10 @@ public:
 			[
 				SNew(SNumericEntryBox<NumericType>)
 				.AllowSpin(InArgs._AllowSpin)
+				.Delta(InArgs._SpinDelta)
+				.LinearDeltaSensitivity(InArgs._LinearDeltaSensitivity)
+				.MinValue(InArgs._MinSliderValue)
+				.MaxValue(InArgs._MaxSliderValue)
 				.MinSliderValue(InArgs._MinSliderValue)
 				.MaxSliderValue(InArgs._MaxSliderValue)
 				.LabelPadding(FMargin(3.0f))

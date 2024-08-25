@@ -1,20 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Perforce;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.IO;
-using System.Linq;	
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Perforce;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
+using Microsoft.Win32;
 
 namespace UnrealGameSync
 {
@@ -30,14 +34,17 @@ namespace UnrealGameSync
 
 	public class PerforceChangeDetails
 	{
+		public int Number { get; }
 		public string Description { get; }
 		public bool ContainsCode { get; }
 		public bool ContainsContent { get; }
+		public bool ContainsUgsConfig { get; }
 
 		public PerforceChangeDetails(DescribeRecord describeRecord, Func<string, bool>? isCodeFile = null)
 		{
 			isCodeFile ??= IsCodeFile;
 
+			Number = describeRecord.Number;
 			Description = describeRecord.Description;
 
 			// Check whether the files are code or content
@@ -52,9 +59,9 @@ namespace UnrealGameSync
 					ContainsContent = true;
 				}
 
-				if (ContainsCode && ContainsContent)
+				if (file.DepotFile.EndsWith("/UnrealGameSync.ini", StringComparison.OrdinalIgnoreCase))
 				{
-					break;
+					ContainsUgsConfig = true;
 				}
 			}
 		}
@@ -67,6 +74,271 @@ namespace UnrealGameSync
 
 	public static class Utility
 	{
+		static readonly MemoryCache s_changeCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 4096 });
+
+		class CachedChangeRecord
+		{
+			public ChangesRecord ChangesRecord { get; }
+			public int? PrevNumber { get; set; }
+
+			public CachedChangeRecord(ChangesRecord changesRecord) => ChangesRecord = changesRecord;
+		}
+
+		static string GetChangeCacheKey(int number, Sha1Hash config) => $"change: {number} ({config})";
+
+		static string GetChangeDetailsCacheKey(int number, Sha1Hash config) => $"details: {number} ({config})";
+
+		static Sha1Hash GetConfigHash(IPerforceConnection perforce, IEnumerable<string> syncPaths, IEnumerable<string> codeRules)
+		{
+			StringBuilder digest = new StringBuilder();
+			digest.AppendLine($"Server: {perforce.Settings.ServerAndPort}");
+			digest.AppendLine($"User: {perforce.Settings.UserName}");
+			digest.AppendLine($"Client: {perforce.Settings.ClientName}");
+			foreach (string syncPath in syncPaths)
+			{
+				digest.AppendLine($"Sync: {syncPath}");
+			}
+			foreach (string codeRule in codeRules)
+			{
+				digest.AppendLine($"Rule: {codeRule}");
+			}
+			return Sha1Hash.Compute(Encoding.UTF8.GetBytes(digest.ToString()));
+		}
+
+		/// <summary>
+		/// Gets the code filter from the project config file
+		/// </summary>
+		public static string[] GetCodeFilter(ConfigFile projectConfigFile)
+		{
+			ConfigSection? projectConfigSection = projectConfigFile.FindSection("Perforce");
+			return projectConfigSection?.GetValues("CodeFilter", (string[]?)null) ?? Array.Empty<string>();
+		}
+
+		/// <summary>
+		/// Creates or returns cached <see cref="PerforceChangeDetails"/> objects describing the requested chagnes
+		/// </summary>
+		public static async IAsyncEnumerable<ChangesRecord> EnumerateChanges(IPerforceConnection perforce, IEnumerable<string> syncPaths, int? minChangeNumber, int? maxChangeNumber, int? maxChanges, [EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			CachedChangeRecord? prevCachedChangeRecord = null;
+
+			Sha1Hash configHash = GetConfigHash(perforce, syncPaths, Array.Empty<string>());
+			while (maxChanges == null || maxChanges.Value > 0)
+			{
+				// If we have a maximum changelist number, see if the previous change is in the cache
+				if (maxChangeNumber != null)
+				{
+					if (minChangeNumber != null && maxChangeNumber.Value < minChangeNumber.Value)
+					{
+						yield break;
+					}
+
+					string cacheKey = GetChangeCacheKey(maxChangeNumber.Value, configHash);
+					if (s_changeCache.TryGetValue(cacheKey, out CachedChangeRecord change))
+					{
+						yield return change.ChangesRecord;
+
+						if (maxChanges != null)
+						{
+							maxChanges = maxChanges.Value - 1;
+						}
+
+						if (change.PrevNumber != null)
+						{
+							maxChangeNumber = change.PrevNumber.Value;
+						}
+						else
+						{
+							maxChangeNumber = change.ChangesRecord.Number - 1;
+						}
+
+						prevCachedChangeRecord = change;
+						continue;
+					}
+				}
+
+				// Get the search range
+				string range;
+				if (minChangeNumber == null)
+				{
+					if (maxChangeNumber == null)
+					{
+						range = "";
+					}
+					else
+					{
+						range = $"@<={maxChangeNumber.Value}";
+					}
+				}
+				else
+				{
+					if (maxChangeNumber == null)
+					{
+						range = $"@{minChangeNumber.Value},#head";
+					}
+					else
+					{
+						range = $"@{minChangeNumber.Value},{maxChangeNumber.Value}";
+					}
+				}
+
+				// Get the next batch of change numbers
+				int maxChangesForBatch = maxChanges ?? 20;
+				List<string> syncPathsWithChange = syncPaths.Select(x => $"{x}{range}").ToList();
+
+				List<ChangesRecord> changes;
+				if (minChangeNumber == null)
+				{
+					changes = await perforce.GetChangesAsync(ChangesOptions.IncludeTimes | ChangesOptions.LongOutput, maxChangesForBatch, ChangeStatus.Submitted, syncPathsWithChange, cancellationToken);
+				}
+				else
+				{
+					changes = await perforce.GetChangesAsync(ChangesOptions.IncludeTimes | ChangesOptions.LongOutput, clientName: null, minChangeNumber: minChangeNumber.Value, maxChangesForBatch, ChangeStatus.Submitted, userName: null, fileSpecs: syncPathsWithChange, cancellationToken: cancellationToken);
+				}
+
+				// Sort the changes in case we get interleaved output from multiple sync paths
+				changes = changes.OrderByDescending(x => x.Number).Take(maxChangesForBatch).ToList();
+
+				// Add all the previous change numbers to the cache
+				foreach (ChangesRecord change in changes)
+				{
+					if (prevCachedChangeRecord != null)
+					{
+						prevCachedChangeRecord.PrevNumber = change.Number;
+					}
+
+					prevCachedChangeRecord = new CachedChangeRecord(change);
+
+					string cacheKey = GetChangeCacheKey(change.Number, configHash);
+					using (ICacheEntry entry = s_changeCache.CreateEntry(cacheKey))
+					{
+						entry.SetSize(1);
+						entry.Value = prevCachedChangeRecord;
+					}
+
+					maxChangeNumber = change.Number - 1;
+				}
+
+				// Return the results
+				foreach (ChangesRecord change in changes)
+				{
+					yield return change;
+				}
+
+				// If we have run out of changes, quit now
+				if (changes.Count < maxChangesForBatch)
+				{
+					break;
+				}
+				if (maxChanges != null)
+				{
+					maxChanges = maxChanges.Value - changes.Count;
+				}
+			}
+		}
+
+		/// <summary>
+		/// Creates or returns cached <see cref="PerforceChangeDetails"/> objects describing the requested chagnes
+		/// </summary>
+		public static IAsyncEnumerable<PerforceChangeDetails> EnumerateChangeDetails(IPerforceConnection perforce, int? minChangeNumber, int? maxChangeNumber, IEnumerable<string> syncPaths, IEnumerable<string> codeRules, CancellationToken cancellationToken)
+		{
+			IAsyncEnumerable<int> changeNumbers = EnumerateChanges(perforce, syncPaths, minChangeNumber, maxChangeNumber, null, cancellationToken).Select(x => x.Number);
+			return EnumerateChangeDetails(perforce, changeNumbers, codeRules, cancellationToken);
+		}
+
+		/// <summary>
+		/// Creates or returns cached <see cref="PerforceChangeDetails"/> objects describing the requested chagnes
+		/// </summary>
+		public static async IAsyncEnumerable<PerforceChangeDetails> EnumerateChangeDetails(IPerforceConnection perforce, IAsyncEnumerable<int> changeNumbers, IEnumerable<string> codeRules, [EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			// Get a delegate that determines if a file is a code change or not
+			Func<string, bool>? isCodeFile = null;
+			if (codeRules.Any())
+			{
+				FileFilter filter = new FileFilter(PerforceUtils.CodeExtensions.Select(x => $"*{x}"));
+				foreach (string codeRule in codeRules)
+				{
+					filter.AddRule(codeRule);
+				}
+				isCodeFile = filter.Matches;
+			}
+
+			// Get the hash of the configuration
+			Sha1Hash hash = GetConfigHash(perforce, Enumerable.Empty<string>(), codeRules);
+
+			// Update them in batches
+			await using IAsyncEnumerator<int> changeNumberEnumerator = changeNumbers.GetAsyncEnumerator(cancellationToken);
+			for (; ; )
+			{
+				// Get the next batch of changes to query, up to the next change that we already have a cached value for
+				const int BatchSize = 10;
+				PerforceChangeDetails? cachedDetails = null;
+
+				List<int> changeBatch = new List<int>(BatchSize);
+				while (changeBatch.Count < BatchSize && await changeNumberEnumerator.MoveNextAsync(cancellationToken))
+				{
+					string cacheKey = GetChangeDetailsCacheKey(changeNumberEnumerator.Current, hash);
+					if (s_changeCache.TryGetValue(cacheKey, out cachedDetails))
+					{
+						break;
+					}
+					changeBatch.Add(changeNumberEnumerator.Current);
+				}
+
+				// Describe the requested changes
+				if (changeBatch.Count > 0)
+				{
+					const int InitialMaxFiles = 100;
+
+					List<DescribeRecord> describeRecords = await perforce.DescribeAsync(DescribeOptions.None, InitialMaxFiles, changeBatch.ToArray(), cancellationToken);
+					foreach (DescribeRecord describeRecordLoop in describeRecords.OrderByDescending(x => x.Number))
+					{
+						DescribeRecord describeRecord = describeRecordLoop;
+						int queryChangeNumber = describeRecord.Number;
+
+						PerforceChangeDetails details = new PerforceChangeDetails(describeRecord, isCodeFile);
+
+						// Content only changes must be flagged accurately, because code changes invalidate precompiled binaries. Increase the number of files fetched until we can classify it correctly.
+						int currentMaxFiles = InitialMaxFiles;
+						while (describeRecord.Files.Count >= currentMaxFiles && !details.ContainsCode)
+						{
+							cancellationToken.ThrowIfCancellationRequested();
+							currentMaxFiles *= 10;
+
+							List<DescribeRecord> newDescribeRecords = await perforce.DescribeAsync(DescribeOptions.None, currentMaxFiles, new int[] { queryChangeNumber }, cancellationToken);
+							if (newDescribeRecords.Count == 0)
+							{
+								break;
+							}
+
+							describeRecord = newDescribeRecords[0];
+							details = new PerforceChangeDetails(describeRecord, isCodeFile);
+						}
+
+						// Add it to the cache
+						string cacheKey = GetChangeDetailsCacheKey(describeRecord.Number, hash);
+						using (ICacheEntry entry = s_changeCache.CreateEntry(cacheKey))
+						{
+							entry.SetSize(10);
+							entry.Value = details;
+						}
+
+						// Return the value
+						yield return details;
+					}
+				}
+
+				// Return the cached value, if there was one
+				if (cachedDetails != null)
+				{
+					yield return cachedDetails;
+				}
+				else if (changeBatch.Count == 0)
+				{
+					yield break;
+				}
+			}
+		}
+
 		public static event Action<Exception>? TraceException;
 
 		static JsonSerializerOptions GetDefaultJsonSerializerOptions()
@@ -94,7 +366,7 @@ namespace UnrealGameSync
 				obj = LoadJson<T>(file);
 				return true;
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
 				TraceException?.Invoke(ex);
 				obj = null;
@@ -148,9 +420,9 @@ namespace UnrealGameSync
 		public static string GetPathWithCorrectCase(FileInfo info)
 		{
 			DirectoryInfo parentInfo = info.Directory!;
-			if(info.Exists)
+			if (info.Exists)
 			{
-				return Path.Combine(GetPathWithCorrectCase(parentInfo), parentInfo.GetFiles(info.Name)[0].Name); 
+				return Path.Combine(GetPathWithCorrectCase(parentInfo), parentInfo.GetFiles(info.Name)[0].Name);
 			}
 			else
 			{
@@ -161,11 +433,11 @@ namespace UnrealGameSync
 		public static string GetPathWithCorrectCase(DirectoryInfo info)
 		{
 			DirectoryInfo? parentInfo = info.Parent;
-			if(parentInfo == null)
+			if (parentInfo == null)
 			{
 				return info.FullName.ToUpperInvariant();
 			}
-			else if(info.Exists)
+			else if (info.Exists)
 			{
 				return Path.Combine(GetPathWithCorrectCase(parentInfo), parentInfo.GetDirectories(info.Name)[0].Name);
 			}
@@ -177,7 +449,7 @@ namespace UnrealGameSync
 
 		public static void ForceDeleteFile(string fileName)
 		{
-			if(File.Exists(fileName))
+			if (File.Exists(fileName))
 			{
 				File.SetAttributes(fileName, File.GetAttributes(fileName) & ~FileAttributes.ReadOnly);
 				File.Delete(fileName);
@@ -186,7 +458,7 @@ namespace UnrealGameSync
 
 		public static bool SpawnProcess(string fileName, string commandLine)
 		{
-			using(Process childProcess = new Process())
+			using (Process childProcess = new Process())
 			{
 				childProcess.StartInfo.FileName = fileName;
 				childProcess.StartInfo.Arguments = String.IsNullOrEmpty(commandLine) ? "" : commandLine;
@@ -197,7 +469,7 @@ namespace UnrealGameSync
 
 		public static bool SpawnHiddenProcess(string fileName, string commandLine)
 		{
-			using(Process childProcess = new Process())
+			using (Process childProcess = new Process())
 			{
 				childProcess.StartInfo.FileName = fileName;
 				childProcess.StartInfo.Arguments = String.IsNullOrEmpty(commandLine) ? "" : commandLine;
@@ -218,14 +490,15 @@ namespace UnrealGameSync
 
 		public static async Task<int> ExecuteProcessAsync(string fileName, string? workingDir, string commandLine, Action<string> outputLine, CancellationToken cancellationToken)
 		{
-			using (ManagedProcess newProcess = new ManagedProcess(null, fileName, commandLine, workingDir, null, null, ProcessPriorityClass.Normal))
+			using (ManagedProcessGroup newProcessGroup = new ManagedProcessGroup())
+			using (ManagedProcess newProcess = new ManagedProcess(newProcessGroup, fileName, commandLine, workingDir, null, null, ProcessPriorityClass.Normal))
 			{
 				for (; ; )
 				{
 					string? line = await newProcess.ReadLineAsync(cancellationToken);
 					if (line == null)
 					{
-						newProcess.WaitForExit();
+						await newProcess.WaitForExitAsync(cancellationToken);
 						return newProcess.ExitCode;
 					}
 					outputLine(line);
@@ -241,7 +514,7 @@ namespace UnrealGameSync
 				string fullFileName = Path.GetFullPath(fileName);
 				return fullFileName.StartsWith(fullDirectoryName, StringComparison.InvariantCultureIgnoreCase);
 			}
-			catch(Exception)
+			catch (Exception)
 			{
 				return false;
 			}
@@ -272,8 +545,8 @@ namespace UnrealGameSync
 				// Strip the format from the name
 				string? format = null;
 				int formatIdx = name.IndexOf(':', StringComparison.Ordinal);
-				if(formatIdx != -1)
-				{ 
+				if (formatIdx != -1)
+				{
 					format = name.Substring(formatIdx + 1);
 					name = name.Substring(0, formatIdx);
 				}
@@ -291,9 +564,9 @@ namespace UnrealGameSync
 				}
 
 				// Encode the variable if necessary
-				if(format != null)
+				if (format != null)
 				{
-					if(String.Equals(format, "URI", StringComparison.OrdinalIgnoreCase))
+					if (String.Equals(format, "URI", StringComparison.OrdinalIgnoreCase))
 					{
 						value = Uri.EscapeDataString(value);
 					}
@@ -313,8 +586,6 @@ namespace UnrealGameSync
 		/// <summary>
 		/// Determines if a project is an enterprise project
 		/// </summary>
-		/// <param name="FileName">Path to the project file</param>
-		/// <returns>True if the given filename is an enterprise project</returns>
 		public static bool IsEnterpriseProjectFromText(string text)
 		{
 			try
@@ -337,10 +608,10 @@ namespace UnrealGameSync
 
 		private static void AddLocalConfigPaths_WithSubFolders(DirectoryInfo baseDir, string fileName, List<FileInfo> files)
 		{
-			if(baseDir.Exists)
+			if (baseDir.Exists)
 			{
 				FileInfo baseFileInfo = new FileInfo(Path.Combine(baseDir.FullName, fileName));
-				if(baseFileInfo.Exists)
+				if (baseFileInfo.Exists)
 				{
 					files.Add(baseFileInfo);
 				}
@@ -433,7 +704,7 @@ namespace UnrealGameSync
 
 		public static async Task<string[]?> TryPrintFileUsingCacheAsync(IPerforceConnection perforce, string depotPath, DirectoryReference cacheFolder, string? digest, ILogger logger, CancellationToken cancellationToken)
 		{
-			if(digest == null)
+			if (digest == null)
 			{
 				PerforceResponse<PrintRecord<string[]>> printLinesResponse = await perforce.TryPrintLinesAsync(depotPath, cancellationToken);
 				if (printLinesResponse.Succeeded)
@@ -447,7 +718,7 @@ namespace UnrealGameSync
 			}
 
 			FileReference cacheFile = FileReference.Combine(cacheFolder, digest);
-			if(FileReference.Exists(cacheFile))
+			if (FileReference.Exists(cacheFile))
 			{
 				logger.LogDebug("Reading cached copy of {DepotFile} from {LocalFile}", depotPath, cacheFile);
 				try
@@ -468,7 +739,6 @@ namespace UnrealGameSync
 					logger.LogWarning(ex, "Error while reading cache file {LocalFile}: {Message}", cacheFile, ex.Message);
 				}
 			}
-
 
 			DirectoryReference.CreateDirectory(cacheFolder);
 
@@ -504,12 +774,12 @@ namespace UnrealGameSync
 		public static void ClearPrintCache(DirectoryReference cacheFolder)
 		{
 			DirectoryInfo cacheDir = cacheFolder.ToDirectoryInfo();
-			if(cacheDir.Exists)
+			if (cacheDir.Exists)
 			{
 				DateTime deleteTime = DateTime.UtcNow - TimeSpan.FromDays(5.0);
-				foreach(FileInfo cacheFile in cacheDir.EnumerateFiles())
+				foreach (FileInfo cacheFile in cacheDir.EnumerateFiles())
 				{
-					if(cacheFile.LastWriteTimeUtc < deleteTime || cacheFile.Name.EndsWith(".temp", StringComparison.OrdinalIgnoreCase))
+					if (cacheFile.LastWriteTimeUtc < deleteTime || cacheFile.Name.EndsWith(".temp", StringComparison.OrdinalIgnoreCase))
 					{
 						try
 						{
@@ -532,7 +802,7 @@ namespace UnrealGameSync
 		public static PerforceSettings OverridePerforceSettings(IPerforceSettings defaultConnection, string? serverAndPort, string? userName)
 		{
 			PerforceSettings newSettings = new PerforceSettings(defaultConnection);
-			if(!String.IsNullOrWhiteSpace(serverAndPort))
+			if (!String.IsNullOrWhiteSpace(serverAndPort))
 			{
 				newSettings.ServerAndPort = serverAndPort;
 			}
@@ -550,19 +820,19 @@ namespace UnrealGameSync
 			DateTime midnight = new DateTime(now.Year, now.Month, now.Day);
 			DateTime midnightTonight = midnight + TimeSpan.FromDays(1.0);
 
-			if(date > midnightTonight)
+			if (date > midnightTonight)
 			{
 				return String.Format("{0} at {1}", date.ToLongDateString(), date.ToShortTimeString());
 			}
-			else if(date >= midnight)
+			else if (date >= midnight)
 			{
 				return String.Format("today at {0}", date.ToShortTimeString());
 			}
-			else if(date >= midnight - TimeSpan.FromDays(1.0))
+			else if (date >= midnight - TimeSpan.FromDays(1.0))
 			{
 				return String.Format("yesterday at {0}", date.ToShortTimeString());
 			}
-			else if(date >= midnight - TimeSpan.FromDays(5.0))
+			else if (date >= midnight - TimeSpan.FromDays(5.0))
 			{
 				return String.Format("{0:dddd} at {1}", date, date.ToShortTimeString());
 			}
@@ -579,11 +849,11 @@ namespace UnrealGameSync
 
 		public static string FormatDurationMinutes(int totalMinutes)
 		{
-			if(totalMinutes > 24 * 60)
+			if (totalMinutes > 24 * 60)
 			{
 				return String.Format("{0}d {1}h", totalMinutes / (24 * 60), (totalMinutes / 60) % 24);
 			}
-			else if(totalMinutes > 60)
+			else if (totalMinutes > 60)
 			{
 				return String.Format("{0}h {1}m", totalMinutes / 60, totalMinutes % 60);
 			}
@@ -596,13 +866,13 @@ namespace UnrealGameSync
 		public static string FormatUserName(string userName)
 		{
 			StringBuilder normalUserName = new StringBuilder();
-			for(int idx = 0; idx < userName.Length; idx++)
+			for (int idx = 0; idx < userName.Length; idx++)
 			{
-				if(idx == 0 || userName[idx - 1] == '.')
+				if (idx == 0 || userName[idx - 1] == '.')
 				{
 					normalUserName.Append(Char.ToUpper(userName[idx]));
 				}
-				else if(userName[idx] == '.')
+				else if (userName[idx] == '.')
 				{
 					normalUserName.Append(' ');
 				}
@@ -620,6 +890,34 @@ namespace UnrealGameSync
 			startInfo.FileName = url;
 			startInfo.UseShellExecute = true;
 			using Process? _ = Process.Start(startInfo);
+		}
+
+		[SupportedOSPlatform("windows")]
+		public static void DeleteRegistryKey(RegistryKey rootKey, string keyName, string valueName)
+		{
+			using (RegistryKey? key = rootKey.OpenSubKey(keyName, true))
+			{
+				if (key != null)
+				{
+					DeleteRegistryKey(key, valueName);
+				}
+			}
+		}
+
+		[SupportedOSPlatform("windows")]
+		public static void DeleteRegistryKey(RegistryKey key, string name)
+		{
+			string[] valueNames = key.GetValueNames();
+			if (valueNames.Any(x => String.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+			{
+				try
+				{
+					key.DeleteValue(name);
+				}
+				catch
+				{
+				}
+			}
 		}
 	}
 }

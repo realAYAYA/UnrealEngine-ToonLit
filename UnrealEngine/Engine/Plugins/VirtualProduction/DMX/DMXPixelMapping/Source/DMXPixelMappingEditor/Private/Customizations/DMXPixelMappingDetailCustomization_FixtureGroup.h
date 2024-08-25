@@ -3,18 +3,14 @@
 #pragma once
 
 #include "IDetailCustomization.h"
-#include "Library/DMXEntityReference.h"
-
-struct FPropertyChangedEvent;
 
 class FDMXPixelMappingToolkit;
+struct FPropertyChangedEvent;
+class IDetailLayoutBuilder;
+class IPropertyUtilities;
 class UDMXPixelMapping;
 class UDMXPixelMappingBaseComponent;
-class UDMXPixelMappingFixtureGroupComponent;
 
-class IDetailLayoutBuilder;
-class IPropertyHandle;
-class IPropertyUtilities;
 
 
 class FDMXPixelMappingDetailCustomization_FixtureGroup
@@ -38,26 +34,8 @@ private:
 	/** Called when a component was added or removed */
 	void OnComponentAddedOrRemoved(UDMXPixelMapping* PixelMapping, UDMXPixelMappingBaseComponent* Component);
 
-	/** Called before the SizeX property changed */
-	void OnSizePropertyPreChange();
-
-	/** Called when the SizeX property changed */
-	void OnSizePropertyChanged(const FPropertyChangedEvent& PropertyChangedEvent);
-
-	/** Handles the size property changed, useful to call on tick */
-	void HandleSizePropertyChanged();
-
 	/** Weak reference to the DMX editor */
 	TWeakPtr<FDMXPixelMappingToolkit> ToolkitWeakPtr;
-
-	/** SizeX before it got changed */
-	TMap<TWeakObjectPtr<UDMXPixelMappingFixtureGroupComponent>, FVector2D> PreEditChangeComponentToSizeMap;
-
-	/** Property handle for the SizeX property */
-	TSharedPtr<IPropertyHandle> SizeXHandle;
-
-	/** Property handle for the SizeY property */
-	TSharedPtr<IPropertyHandle> SizeYHandle;
 
 	TSharedPtr<IPropertyUtilities> PropertyUtilities;
 };

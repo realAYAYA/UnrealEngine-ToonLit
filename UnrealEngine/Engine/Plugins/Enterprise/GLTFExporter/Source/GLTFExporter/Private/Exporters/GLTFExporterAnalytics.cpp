@@ -6,20 +6,21 @@
 #include "EngineAnalytics.h"
 #include "Engine/World.h"
 
-FGLTFExporterAnalytics::FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& Builder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime)
-	: FGLTFExporterAnalytics(Object, Builder, bInitiatedByTask, bExportAutomated, bExportSuccessful, StartTime, FPlatformTime::Cycles64())
+FGLTFExporterAnalytics::FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& InBuilder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime)
+	: FGLTFExporterAnalytics(Object, InBuilder, bInitiatedByTask, bExportAutomated, bExportSuccessful, StartTime, FPlatformTime::Cycles64())
 {
 }
 
-FGLTFExporterAnalytics::FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& Builder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime, uint64 EndTime)
+FGLTFExporterAnalytics::FGLTFExporterAnalytics(const UObject* Object, const FGLTFConvertBuilder& InBuilder, bool bInitiatedByTask, bool bExportAutomated, bool bExportSuccessful, uint64 StartTime, uint64 EndTime)
 	: AssetType(Object != nullptr ? Object->GetClass() : nullptr)
-	, ExportOptions(Builder.ExportOptions)
-	, bExportAsGLB(Builder.bIsGLB)
-	, bSelectedOnly(!Builder.SelectedActors.IsEmpty())
+	, ExportOptions(InBuilder.ExportOptions)
+	, bExportAsGLB(InBuilder.bIsGLB)
+	, bSelectedOnly(!InBuilder.SelectedActors.IsEmpty())
 	, bInitiatedByTask(bInitiatedByTask)
 	, bExportAutomated(bExportAutomated)
 	, bExportSuccessful(bExportSuccessful)
 	, ExportDuration(FPlatformTime::ToSeconds64(EndTime - StartTime))
+	, Builder(InBuilder)
 {
 }
 
@@ -42,6 +43,8 @@ void FGLTFExporterAnalytics::Send() const
 
 	EventAttributes.Emplace(TEXT("Platform"), FPlatformProperties::IniPlatformName());
 	EventAttributes.Emplace(TEXT("EngineMode"), FPlatformMisc::GetEngineMode());
+
+	EventAttributes.Append(Builder.GenerateAnalytics());
 
 	const FString EventName = bExportSuccessful ? TEXT("GLTFExporter.Export") : TEXT("GLTFExporter.ExportFailure");
 	FEngineAnalytics::GetProvider().RecordEvent(EventName, EventAttributes);
@@ -107,21 +110,14 @@ void FGLTFExporterAnalytics::GetAttributesFromProperty(const FProperty* Property
 	else if (const FMapProperty* MapProperty = CastField<FMapProperty>(Property))
 	{
 		FScriptMapHelper Helper(MapProperty, ValuePtr);
-		int32 RemainingPairs = Helper.Num();
+		OutAttributes.Emplace(AttributeName, Helper.Num() > 0);
 
-		OutAttributes.Emplace(AttributeName, RemainingPairs > 0);
-
-		for (int32 Index = 0; RemainingPairs > 0; ++Index)
+		for (FScriptMapHelper::FIterator It(Helper); It; ++It)
 		{
-			if (Helper.IsValidIndex(Index))
-			{
-				FString KeyString;
-				MapProperty->KeyProp->ExportTextItem_Direct(KeyString, Helper.GetKeyPtr(Index), nullptr, nullptr, PPF_None);
+			FString KeyString;
+			MapProperty->KeyProp->ExportTextItem_Direct(KeyString, Helper.GetKeyPtr(It), nullptr, nullptr, PPF_None);
 
-				GetAttributesFromProperty(MapProperty->ValueProp, Helper.GetValuePtr(Index), AttributeName + TEXT(".") + KeyString, OutAttributes);
-
-				--RemainingPairs;
-			}
+			GetAttributesFromProperty(MapProperty->ValueProp, Helper.GetValuePtr(It), AttributeName + TEXT(".") + KeyString, OutAttributes);
 		}
 	}
 	else if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))

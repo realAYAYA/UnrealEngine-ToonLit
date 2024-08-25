@@ -189,8 +189,8 @@ void FSlateOpenGLTexture::UpdateTextureThreadSafeWithKeyedTextureHandle(void* Te
 }
 #endif
 
-FSlateFontTextureOpenGL::FSlateFontTextureOpenGL(uint32 Width, uint32 Height, const bool InIsGrayscale)
-	: FSlateFontAtlas(Width, Height, InIsGrayscale) 
+FSlateFontTextureOpenGL::FSlateFontTextureOpenGL(uint32 Width, uint32 Height, ESlateFontAtlasContentType InContentType)
+	: FSlateFontAtlas(Width, Height, InContentType, NoPadding)
 	, FontTexture(nullptr)
 {
 }
@@ -254,41 +254,63 @@ void FSlateFontTextureOpenGL::ConditionalUpdateTexture()
 
 GLint FSlateFontTextureOpenGL::GetGLTextureInternalFormat() const
 {
-	if (IsGrayscale())
+	switch (GetContentType())
 	{
+		case ESlateFontAtlasContentType::Alpha:
 #if USE_DEPRECATED_OPENGL_FUNCTIONALITY
-		return GL_ALPHA;
+			return GL_ALPHA;
 #else
-		return GL_RED;
+			return GL_RED;
 #endif // USE_DEPRECATED_OPENGL_FUNCTIONALITY
-	}
+		default:
+			checkNoEntry();
+			// Default to Color
+			// falls through
+		case ESlateFontAtlasContentType::Color:
 #if !PLATFORM_USES_GLES
-	return GL_SRGB8_ALPHA8;
+			return GL_SRGB8_ALPHA8;
 #else
-	return GL_SRGB8_ALPHA8_EXT;
+			return GL_SRGB8_ALPHA8_EXT;
 #endif
+		case ESlateFontAtlasContentType::Msdf:
+			return GL_RGBA;
+	}
 }
 
 GLint FSlateFontTextureOpenGL::GetGLTextureFormat() const
 {
-	if (IsGrayscale())
+	switch (GetContentType())
 	{
+		case ESlateFontAtlasContentType::Alpha:
 #if USE_DEPRECATED_OPENGL_FUNCTIONALITY
-		return GL_ALPHA;
+			return GL_ALPHA;
 #else
-		return GL_RED;
+			return GL_RED;
 #endif // USE_DEPRECATED_OPENGL_FUNCTIONALITY
+		case ESlateFontAtlasContentType::Color:
+		case ESlateFontAtlasContentType::Msdf:
+			return GL_RGBA;
+		default:
+			checkNoEntry();
+			// Default to Color
+			return GL_RGBA;
 	}
-	return GL_RGBA;
 }
 
 GLint FSlateFontTextureOpenGL::GetGLTextureType() const
 {
-	if (IsGrayscale())
+	switch (GetContentType())
 	{
-		return GL_UNSIGNED_BYTE;
+		case ESlateFontAtlasContentType::Alpha:
+			return GL_UNSIGNED_BYTE;
+		case ESlateFontAtlasContentType::Color:
+		case ESlateFontAtlasContentType::Msdf:
+			return GL_UNSIGNED_INT_8_8_8_8_REV;
+		default:
+			checkNoEntry();
+			// Default to Color
+			return GL_UNSIGNED_INT_8_8_8_8_REV;
 	}
-	return GL_UNSIGNED_INT_8_8_8_8_REV;
 }
 
 FSlateTextureAtlasOpenGL::FSlateTextureAtlasOpenGL(uint32 Width, uint32 Height, uint32 StrideBytes, ESlateTextureAtlasPaddingStyle PaddingStyle)

@@ -222,11 +222,14 @@ class UMovieScene3DTransformSection
 
 public:
 
+	virtual void PostLoad() override;
+
 #if WITH_EDITOR
 	/* From UObject*/
 	virtual bool Modify(bool bAlwaysMarkDirty = true) override;
 	virtual void PostDuplicate(bool bDuplicateForPIE) override;
 #endif
+
 	/* From UMovieSection*/
 	
 	MOVIESCENETRACKS_API virtual bool ShowCurveForChannel(const void *Channel) const override;
@@ -329,12 +332,12 @@ public:
 	/*
 	* If it has that constraint with that Name
 	*/
-	virtual  bool HasConstraintChannel(const FName& InConstraintName) const override;
+	virtual  bool HasConstraintChannel(const FGuid& InGuid) const override;
 
 	/*
 	* Get constraint with that name
 	*/
-	virtual FConstraintAndActiveChannel* GetConstraintChannel(const FName& InConstraintName) override;
+	virtual FConstraintAndActiveChannel* GetConstraintChannel(const FGuid& InConstraintGuid) override;
 
 	/*
 	*  Add Constraint channel

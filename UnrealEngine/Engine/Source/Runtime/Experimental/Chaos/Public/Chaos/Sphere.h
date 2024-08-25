@@ -64,17 +64,12 @@ namespace Chaos
 
 		virtual ~TSphere() {}
 
-		virtual FImplicitObject* Duplicate() const override
-		{
-			return new TSphere(*this);
-		}
-
 		static constexpr EImplicitObjectType StaticType()
 		{ 
 			return ImplicitObjectType::Sphere; 
 		}
 
-		FReal GetRadius() const
+		virtual FReal GetRadius() const override
 		{
 			return Margin;
 		}
@@ -362,14 +357,14 @@ namespace Chaos
 			return HashCombine(CenterHash, RadiusHash);
 		}
 
-		virtual TUniquePtr<FImplicitObject> Copy() const override
+		virtual Chaos::FImplicitObjectPtr CopyGeometry() const override
 		{
-			return TUniquePtr<FImplicitObject>(new TSphere<T,d>(Center, GetRadius()));
+			return Chaos::FImplicitObjectPtr(new TSphere<T,d>(Center, GetRadius()));
 		}
 
-		virtual TUniquePtr<FImplicitObject> CopyWithScale(const FVec3& Scale) const override
+		virtual Chaos::FImplicitObjectPtr CopyGeometryWithScale(const FVec3& Scale) const override
 		{
-			return  TUniquePtr<FImplicitObject>(new TSphere<T, d>(Center * Scale, GetRadius() * Scale.Min()));
+			return  Chaos::FImplicitObjectPtr(new TSphere<T, d>(Center * Scale, GetRadius() * Scale.Min()));
 		}
 
 #if INTEL_ISPC

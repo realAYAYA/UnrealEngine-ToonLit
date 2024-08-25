@@ -16,14 +16,10 @@ class UAnimBoneCompressionCodec_ACLSafe : public UAnimBoneCompressionCodec_ACLBa
 
 #if WITH_EDITORONLY_DATA
 	// UAnimBoneCompressionCodec implementation
-// @third party code - Epic Games Begin
 	virtual void PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar) override;
-// @third party code - Epic Games End
 
 	// UAnimBoneCompressionCodec_ACLBase implementation
-// @third party code - Epic Games Begin
-	virtual void GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const override;
-// @third party code - Epic Games End
+	virtual void GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const override;
 #endif
 
 	// UAnimBoneCompressionCodec implementation

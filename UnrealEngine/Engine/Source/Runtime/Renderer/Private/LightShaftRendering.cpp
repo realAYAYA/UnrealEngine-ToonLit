@@ -90,6 +90,7 @@ FMobileLightShaftInfo GetMobileLightShaftInfo(const FViewInfo& View, const FLigh
 	LightShaft.ColorApply = LightSceneInfo.BloomTint;
 	LightShaft.ColorMask *= BloomScale;
 	LightShaft.ColorApply *= BloomScale;
+	LightShaft.BloomMaxBrightness = LightSceneInfo.BloomMaxBrightness;
 	return LightShaft;
 }
 

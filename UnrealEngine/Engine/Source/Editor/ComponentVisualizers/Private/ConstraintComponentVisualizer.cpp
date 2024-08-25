@@ -72,7 +72,7 @@ void FConstraintComponentVisualizer::DrawVisualization( const UActorComponent* C
 		FBox Body2Box = ConstraintComp->GetBodyBox(EConstraintFrame::Frame2);
 
 		// Draw constraint information
-		Instance.DrawConstraint(PDI, 1.f, 1.f, true, true, Con1Frame, Con2Frame, false);
+		Instance.DrawConstraint(PDI, 1.f, 1.f, true, true, Con1Frame, Con2Frame, false, false);
 
 		// Draw boxes to indicate bodies connected by joint.
 		if(Body1Box.IsValid)

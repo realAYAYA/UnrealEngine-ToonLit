@@ -30,6 +30,56 @@ size_t stbds_rehash_items;
 // int *prev_allocs[65536];
 // int num_prev;
 
+void* stbds_arrinlinef(size_t* buf, size_t elemsize, size_t elemcount)
+{
+	stbds_array_header* h = (stbds_array_header*)buf;
+
+	h->length = 0;
+	h->capacity = elemcount;
+	h->hash_table = 0;
+	h->temp = 0;
+	h->elemsize = elemsize;
+	h->inlinealloc = 1;
+
+	return h + 1;
+}
+
+void* stbds_arrinline_suballocf(void* a, size_t min_capacity)
+{
+	if (!a || !stbds_header(a)->inlinealloc)
+	{
+		return 0;
+	}
+
+	stbds_array_header* h = stbds_header(a);
+
+	// Get the end of the existing array and buffer from the capacity -- used_end is rounded upward to word size
+	char* used_end = (char*)a + ((h->elemsize * h->length + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1));
+	char* capacity_end = (char*)a + h->elemsize * h->capacity;
+
+	// Set existing allocation capacity equal to length, so no more can be allocated from the inline buffer.
+	// Growing will still work, it will just convert the inline allocation to a dynamic allocation.
+	h->capacity = h->length;
+
+	// Determine whether we have the minimum required capacity for the suballocation, if not return null.
+	if (capacity_end - used_end < sizeof(stbds_array_header) + min_capacity * h->elemsize)
+	{
+		return 0;
+	}
+
+	// Set up a new buffer
+	stbds_array_header* h_suballoc = (stbds_array_header*)used_end;
+
+	h_suballoc->length = 0;
+	h_suballoc->capacity = ((capacity_end - used_end) - sizeof(stbds_array_header)) / h->elemsize;
+	h_suballoc->hash_table = 0;
+	h_suballoc->temp = 0;
+	h_suballoc->elemsize = h->elemsize;
+	h_suballoc->inlinealloc = 1;
+
+	return h_suballoc + 1;
+}
+
 void* stbds_arrgrowf(void* a, size_t elemsize, size_t addlen, size_t min_cap)
 {
 	stbds_array_header temp = {0};	// force debugging
@@ -53,7 +103,17 @@ void* stbds_arrgrowf(void* a, size_t elemsize, size_t addlen, size_t min_cap)
 	// if (num_prev < 65536) if (a) prev_allocs[num_prev++] = (int *) ((char *) a+1);
 	// if (num_prev == 2201)
 	//   num_prev = num_prev;
-	b = STB_COMMON_REALLOC((a) ? stbds_header(a) : 0, elemsize * min_cap + sizeof(stbds_array_header));
+	if (a && stbds_header(a)->inlinealloc)
+	{
+		b = STB_COMMON_MALLOC(elemsize * min_cap + sizeof(stbds_array_header));
+		STB_ASSUME(b != NULL);
+		memcpy(b, stbds_header(a), elemsize * stbds_header(a)->length + sizeof(stbds_array_header));
+		((stbds_array_header*)b)->inlinealloc = 0;
+	}
+	else
+	{
+		b = STB_COMMON_REALLOC((a) ? stbds_header(a) : 0, elemsize * min_cap + sizeof(stbds_array_header));
+	}
 	STB_ASSUME(b != NULL);
 
 	// if (num_prev < 65536) prev_allocs[num_prev++] = (int *) (char *) b;
@@ -63,6 +123,8 @@ void* stbds_arrgrowf(void* a, size_t elemsize, size_t addlen, size_t min_cap)
 		stbds_header(b)->length = 0;
 		stbds_header(b)->hash_table = 0;
 		stbds_header(b)->temp = 0;
+		stbds_header(b)->elemsize = elemsize;
+		stbds_header(b)->inlinealloc = 0;
 	}
 	else
 	{

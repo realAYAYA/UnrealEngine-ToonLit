@@ -64,21 +64,21 @@ namespace ChaosTest
 
 		// Set up Particles
 		// @todo(ccaulfield) this needs to be easier
-		Particles[0]->X() = FVec3(-50, 0, 0);
+		Particles[0]->SetX(FVec3(-50, 0, 0));
 		Particles[0]->M() = 1.0f;
 		Particles[0]->I() = TVec3<FRealSingle>(100.0f, 100.0f, 100.0f);
 		Particles[0]->InvM() = 1.0f;
 		Particles[0]->InvI() = TVec3<FRealSingle>(1.0f / 100.0f, 1.0f / 100.0f, 1.0f / 100.0f);
-		Particles[0]->AuxilaryValue(ParticlePrevXs) = Particles[0]->X();
-		Particles[0]->AuxilaryValue(ParticlePrevRs) = Particles[0]->R();
+		Particles[0]->AuxilaryValue(ParticlePrevXs) = Particles[0]->GetX();
+		Particles[0]->AuxilaryValue(ParticlePrevRs) = Particles[0]->GetR();
 
-		Particles[1]->X() = FVec3(50, 0, 0);
+		Particles[1]->SetX(FVec3(50, 0, 0));
 		Particles[1]->M() = 1.0f;
 		Particles[1]->I() = TVec3<FRealSingle>(100.0f, 100.0f, 100.0f);
 		Particles[1]->InvM() = 1.0f;
 		Particles[1]->InvI() = TVec3<FRealSingle>(1.0f / 100.0f, 1.0f / 100.0f, 1.0f / 100.0f);
-		Particles[1]->AuxilaryValue(ParticlePrevXs) = Particles[1]->X();
-		Particles[1]->AuxilaryValue(ParticlePrevRs) = Particles[1]->R();
+		Particles[1]->AuxilaryValue(ParticlePrevXs) = Particles[1]->GetX();
+		Particles[1]->AuxilaryValue(ParticlePrevRs) = Particles[1]->GetR();
 
 		// Spring connectors at particle centres
 		TArray<FVec3> Locations =
@@ -97,8 +97,8 @@ namespace ChaosTest
 		}
 
 		// Particles should be separated by the spring's rest length
-		FVec3 P0 = Particles[0]->X();
-		FVec3 P1 = Particles[1]->X();
+		FVec3 P0 = Particles[0]->GetX();
+		FVec3 P1 = Particles[1]->GetX();
 		FReal Distance01 = (P0 - P1).Size();
 		EXPECT_NEAR(Distance01, Spring->GetRestLength(), 0.1f);
 	}

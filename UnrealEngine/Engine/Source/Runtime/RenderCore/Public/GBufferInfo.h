@@ -321,7 +321,13 @@ struct FGBufferParams
 
 int32 RENDERCORE_API FindGBufferTargetByName(const FGBufferInfo& GBufferInfo, const FString& Name);
 
-FGBufferBinding RENDERCORE_API FindGBufferBindingByName(const FGBufferInfo& GBufferInfo, const FString& Name);
+FGBufferBinding RENDERCORE_API FindGBufferBindingByName(const FGBufferInfo& GBufferInfo, const FString& Name, EShaderPlatform ShaderPlatform);
+
+UE_DEPRECATED(5.4, "Please use the overload which takes a shader platform parameter")
+inline FGBufferBinding FindGBufferBindingByName(const FGBufferInfo& GBufferInfo, const FString& Name)
+{
+	return FindGBufferBindingByName(GBufferInfo, Name, GMaxRHIShaderPlatform);
+}
 
 FGBufferInfo RENDERCORE_API FetchFullGBufferInfo(const FGBufferParams& Params);
 

@@ -6,7 +6,9 @@
 #include "Cluster/IPDisplayClusterClusterManager.h"
 
 #include "Render/Viewport/Containers/DisplayClusterViewport_CameraMotionBlur.h"
-#include "Render/Viewport/Containers/ImplDisplayClusterViewport_CustomFrustum.h"
+#include "Render/Viewport/Containers/DisplayClusterViewport_CustomFrustumRuntimeSettings.h"
+#include "Render/Viewport/Configuration/DisplayClusterViewportConfigurationHelpers_ICVFX.h"
+
 #include "Components/DisplayClusterCameraComponent.h"
 #include "DisplayClusterRootActor.h"
 
@@ -17,6 +19,10 @@
 #include "DisplayClusterEnums.h"
 #include "Version/DisplayClusterICVFXCameraCustomVersion.h"
 
+UDisplayClusterICVFXCameraComponent::UDisplayClusterICVFXCameraComponent(const FObjectInitializer& ObjectInitializer)
+{
+	PrimaryComponentTick.bCanEverTick = true;
+}
 
 void UDisplayClusterICVFXCameraComponent::Serialize(FArchive& Ar)
 {
@@ -53,68 +59,50 @@ void UDisplayClusterICVFXCameraComponent::PostLoad()
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
-void UDisplayClusterICVFXCameraComponent::GetDesiredView(FMinimalViewInfo& DesiredView)
+void UDisplayClusterICVFXCameraComponent::PostApplyToComponent()
 {
-	if (ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner()))
-	{
-		UCineCameraComponent* const CineCameraComponent = CameraSettings.ExternalCameraActor.IsValid() ? CameraSettings.ExternalCameraActor->GetCineCameraComponent() : this;
+	Super::PostApplyToComponent();
 
-		const float DeltaTime = RootActor->GetWorldDeltaSeconds();
-		CineCameraComponent->GetCameraView(DeltaTime, DesiredView);
-	}
+	CameraSettings.CameraDepthOfField.UpdateDynamicCompensationLUT();
 }
 
-UCameraComponent* UDisplayClusterICVFXCameraComponent::GetCameraComponent()
+void UDisplayClusterICVFXCameraComponent::GetCameraView(float DeltaTime, FMinimalViewInfo& InOutViewInfo)
 {
-	return CameraSettings.ExternalCameraActor.IsValid() ? CameraSettings.ExternalCameraActor->GetCineCameraComponent() : this;
+	const ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner());
+	if (RootActor == nullptr)
+	{
+		return;
+	}
+
+	const FDisplayClusterConfigurationICVFX_StageSettings& StageSettings = RootActor->GetStageSettings();
+
+	if (CameraSettings.ExternalCameraActor.IsValid())
+	{
+		// Get ViewInfo from external CineCamera
+		CameraSettings.ExternalCameraActor->GetCineCameraComponent()->GetCameraView(DeltaTime, InOutViewInfo);
+	}
+	else
+	{
+		// Get ViewInfo from this component
+		UCineCameraComponent::GetCameraView(DeltaTime, InOutViewInfo);
+	}
+
+	CameraSettings.SetupViewInfo(StageSettings, InOutViewInfo);
+}
+
+UCineCameraComponent* UDisplayClusterICVFXCameraComponent::GetActualCineCameraComponent()
+{
+	if (UCineCameraComponent* ExternalCineCameraComponent = CameraSettings.ExternalCameraActor.IsValid() ? CameraSettings.ExternalCameraActor->GetCineCameraComponent() : nullptr)
+	{
+		return ExternalCineCameraComponent;
+	}
+
+	return this;
 }
 
 FString UDisplayClusterICVFXCameraComponent::GetCameraUniqueId() const
 {
 	return GetFName().ToString();
-}
-
-bool UDisplayClusterICVFXCameraComponent::IsICVFXEnabled() const
-{
-	// When rendering offscreen, we have an extended logic for camera rendering activation
-	static const bool bIsRunningClusterModeOffscreen =
-		(GDisplayCluster->GetOperationMode() == EDisplayClusterOperationMode::Cluster) &&
-		FParse::Param(FCommandLine::Get(), TEXT("RenderOffscreen"));
-
-	// If cluster mode + rendering offscreen, discover media output settings
-	if (bIsRunningClusterModeOffscreen)
-	{
-		// This cluster node ID
-		static const FString NodeId = GDisplayCluster->GetPrivateClusterMgr()->GetNodeId();
-
-		// First condition to render offscreen: it has media output assigned
-		const bool bUsesMediaOutput = (CameraSettings.RenderSettings.Media.bEnable && CameraSettings.RenderSettings.Media.IsMediaOutputAssigned(NodeId));
-
-		// Get backbuffer media settings
-		const FDisplayClusterConfigurationMedia* BackbufferMediaSettings = nullptr;
-		if (const ADisplayClusterRootActor* const RootActor = Cast<ADisplayClusterRootActor>(GetOwner()))
-		{
-			if (const UDisplayClusterConfigurationData* const ConfigData = RootActor->GetConfigData())
-			{
-				if (const UDisplayClusterConfigurationClusterNode* const NodeCfg = ConfigData->Cluster->GetNode(NodeId))
-				{
-					BackbufferMediaSettings = &NodeCfg->Media;
-				}
-			}
-		}
-
-		// Second condition to render offscreen: the backbuffer has media output assigned.
-		// This means the whole frame including ICVFX cameras need to be rendered.
-		const bool bIsBackbufferBeingCaptured = BackbufferMediaSettings ?
-			BackbufferMediaSettings->bEnable && BackbufferMediaSettings->IsMediaOutputAssigned() :
-			false;
-
-		// Finally make a decision if the camera should be rendered
-		return CameraSettings.bEnable && (bUsesMediaOutput || bIsBackbufferBeingCaptured);
-	}
-
-	// Otherwise the on/off condition only
-	return CameraSettings.bEnable;
 }
 
 #if WITH_EDITOR
@@ -138,6 +126,36 @@ void UDisplayClusterICVFXCameraComponent::TickComponent(float DeltaTime, ELevelT
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	UpdateOverscanEstimatedFrameSize();
+
+	if (CameraSettings.CameraDepthOfField.bAutomaticallySetDistanceToWall)
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE_STR("UDisplayClusterICVFXCameraComponent Query Distance To Wall");
+
+		if (ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetOwner()))
+		{
+			FVector CameraLocation = FVector::ZeroVector;
+			FVector CameraDirection = FVector::XAxisVector;
+			if (CameraSettings.ExternalCameraActor.IsValid())
+			{
+				CameraLocation = CameraSettings.ExternalCameraActor->GetActorLocation();
+				CameraDirection = CameraSettings.ExternalCameraActor->GetActorRotation().RotateVector(FVector::XAxisVector);
+			}
+			else
+			{
+				CameraLocation = GetComponentLocation();
+				CameraDirection = GetComponentRotation().RotateVector(FVector::XAxisVector);
+			}
+			
+			float DistanceToWall = 0.0;
+
+			// For now, do a single trace from the center of the camera to the stage geometry.
+			// Alternative methods of obtaining wall distance, such as averaging multiple points, can be performed here
+			if (RootActor->GetDistanceToStageGeometry(CameraLocation, CameraDirection, DistanceToWall))
+			{
+				CameraSettings.CameraDepthOfField.DistanceToWall = DistanceToWall;
+			}
+		}
+	}
 }
 
 void UDisplayClusterICVFXCameraComponent::UpdateOverscanEstimatedFrameSize()
@@ -150,61 +168,61 @@ void UDisplayClusterICVFXCameraComponent::UpdateOverscanEstimatedFrameSize()
 
 	const FDisplayClusterConfigurationICVFX_StageSettings& StageSettings = RootActor->GetStageSettings();
 
+	UCineCameraComponent* ActualCineCameraComponent = GetActualCineCameraComponent();
+	check(ActualCineCameraComponent);
+
+	// additional multipliers from FDisplayClusterConfigurationRenderFrame are not used in following calculations
 	const float CameraBufferRatio = CameraSettings.GetCameraBufferRatio(StageSettings);
-	const FIntPoint InnerFrustumSize = CameraSettings.GetCameraFrameSize(StageSettings);
-
-	float InnerFrustumResolutionWidth = InnerFrustumSize.X * CameraBufferRatio;
-	float InnerFrustumResolutionHeight = InnerFrustumSize.Y * CameraBufferRatio;
-
-	float EstimatedOverscanResolutionWidth = InnerFrustumResolutionWidth;
-	float EstimatedOverscanResolutionHeight = InnerFrustumResolutionHeight;
-
-	//calculate estimate
+	const FIntPoint CameraFrameSize = CameraSettings.GetCameraFrameSize(StageSettings, *ActualCineCameraComponent);
+	const FIntPoint InnerFrustumResolution( CameraFrameSize.X * CameraBufferRatio, CameraFrameSize.Y * CameraBufferRatio);
+	
 	{
-		EstimatedOverscanResolutionWidth = InnerFrustumResolutionWidth * CameraSettings.CustomFrustum.FieldOfViewMultiplier;
-		EstimatedOverscanResolutionHeight = InnerFrustumResolutionHeight * CameraSettings.CustomFrustum.FieldOfViewMultiplier;
+		// calculate estimations
+		FDisplayClusterConfigurationICVFX_CameraCustomFrustum EstimatedCustomFrustum = CameraSettings.CustomFrustum;
+		EstimatedCustomFrustum.bEnable = true;
+		EstimatedCustomFrustum.bAdaptResolution = true;
 
-		FDisplayClusterViewport_CustomFrustumSettings CustomFrustumSettings;
+		const float EstimatedCameraAdaptResolutionRatio = EstimatedCustomFrustum.GetCameraAdaptResolutionRatio(StageSettings);
+		const FIntPoint EstimatedInnerFrustumResolution(
+			InnerFrustumResolution.X * EstimatedCameraAdaptResolutionRatio,
+			InnerFrustumResolution.Y * EstimatedCameraAdaptResolutionRatio
+	);
 
-		if (CameraSettings.CustomFrustum.Mode == EDisplayClusterConfigurationViewportCustomFrustumMode::Percent)
-		{
-			const float ConvertToPercent = 0.01;
-			CustomFrustumSettings.CustomFrustumPercent.Left = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Left * ConvertToPercent);
-			CustomFrustumSettings.CustomFrustumPercent.Right = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Right * ConvertToPercent);
-			CustomFrustumSettings.CustomFrustumPercent.Top = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Top * ConvertToPercent);
-			CustomFrustumSettings.CustomFrustumPercent.Bottom = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Bottom * ConvertToPercent);
-		}
-		else if (CameraSettings.CustomFrustum.Mode == EDisplayClusterConfigurationViewportCustomFrustumMode::Pixels)
-		{
-			CustomFrustumSettings.CustomFrustumPercent.Left = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Left / EstimatedOverscanResolutionWidth);
-			CustomFrustumSettings.CustomFrustumPercent.Right = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Right / EstimatedOverscanResolutionWidth);
-			CustomFrustumSettings.CustomFrustumPercent.Top = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Top / EstimatedOverscanResolutionHeight);
-			CustomFrustumSettings.CustomFrustumPercent.Bottom = FDisplayClusterViewport_OverscanSettings::ClampPercent(CameraSettings.CustomFrustum.Bottom / EstimatedOverscanResolutionHeight);
-		}
+		FIntRect EstimatedViewportRect(FIntPoint(0, 0), EstimatedInnerFrustumResolution);
+		FDisplayClusterViewport_CustomFrustumSettings EstimatedFrustumSettings;
+		FDisplayClusterViewport_CustomFrustumRuntimeSettings EstimatedFrustumRuntimeSettings;
 
-		// Calc pixels from percent
-		CustomFrustumSettings.CustomFrustumPixels.Left = FMath::RoundToInt(EstimatedOverscanResolutionWidth * CustomFrustumSettings.CustomFrustumPercent.Left);
-		CustomFrustumSettings.CustomFrustumPixels.Right = FMath::RoundToInt(EstimatedOverscanResolutionWidth * CustomFrustumSettings.CustomFrustumPercent.Right);
-		CustomFrustumSettings.CustomFrustumPixels.Top = FMath::RoundToInt(EstimatedOverscanResolutionHeight * CustomFrustumSettings.CustomFrustumPercent.Top);
-		CustomFrustumSettings.CustomFrustumPixels.Bottom = FMath::RoundToInt(EstimatedOverscanResolutionHeight * CustomFrustumSettings.CustomFrustumPercent.Bottom);
+		FDisplayClusterViewportConfigurationHelpers_ICVFX::UpdateCameraCustomFrustum(EstimatedCustomFrustum, EstimatedFrustumSettings);
+		FDisplayClusterViewport_CustomFrustumRuntimeSettings::UpdateCustomFrustumSettings(GetName(), EstimatedFrustumSettings, EstimatedFrustumRuntimeSettings, EstimatedViewportRect);
 
-		const FIntPoint AdjustmentSize = CustomFrustumSettings.CustomFrustumPixels.Size();
-		EstimatedOverscanResolutionWidth += AdjustmentSize.X;
-		EstimatedOverscanResolutionHeight += AdjustmentSize.Y;
+		// Assign estimated calculated values
+		CameraSettings.CustomFrustum.EstimatedOverscanResolution = EstimatedViewportRect.Size();
 	}
 
-	if (CameraSettings.CustomFrustum.bEnable && CameraSettings.CustomFrustum.bAdaptResolution)
 	{
-		InnerFrustumResolutionWidth = EstimatedOverscanResolutionWidth;
-		InnerFrustumResolutionHeight = EstimatedOverscanResolutionHeight;
+		// calculate real
+		const float RealCameraAdaptResolutionRatio = CameraSettings.CustomFrustum.GetCameraAdaptResolutionRatio(StageSettings);
+		const FIntPoint RealInnerFrustumResolution(
+			InnerFrustumResolution.X * RealCameraAdaptResolutionRatio,
+			InnerFrustumResolution.Y * RealCameraAdaptResolutionRatio
+		);
+
+		FIntRect RealViewportRect(FIntPoint(0, 0), RealInnerFrustumResolution);
+		FDisplayClusterViewport_CustomFrustumSettings RealFrustumSettings;
+		FDisplayClusterViewport_CustomFrustumRuntimeSettings RealFrustumRuntimeSettings;
+
+		FDisplayClusterViewportConfigurationHelpers_ICVFX::UpdateCameraCustomFrustum(CameraSettings.CustomFrustum, RealFrustumSettings);
+		FDisplayClusterViewport_CustomFrustumRuntimeSettings::UpdateCustomFrustumSettings(GetName(), RealFrustumSettings, RealFrustumRuntimeSettings, RealViewportRect);
+
+		// Assign real calculated values
+		CameraSettings.CustomFrustum.InnerFrustumResolution = RealViewportRect.Size();
 	}
+	
+	const int32 EstimatedPixel = CameraSettings.CustomFrustum.EstimatedOverscanResolution.X * CameraSettings.CustomFrustum.EstimatedOverscanResolution.Y;
+	const int32 BasePixels = CameraSettings.CustomFrustum.InnerFrustumResolution.X * CameraSettings.CustomFrustum.InnerFrustumResolution.Y;
 
-	CameraSettings.CustomFrustum.InnerFrustumResolution = FIntPoint(InnerFrustumResolutionWidth, InnerFrustumResolutionHeight);
-	CameraSettings.CustomFrustum.EstimatedOverscanResolution = FIntPoint(EstimatedOverscanResolutionWidth, EstimatedOverscanResolutionHeight);
-
-	CameraSettings.CustomFrustum.OverscanPixelsIncrease = ((float)(EstimatedOverscanResolutionWidth * EstimatedOverscanResolutionHeight) / (float)(InnerFrustumResolutionWidth * InnerFrustumResolutionHeight));
+	CameraSettings.CustomFrustum.OverscanPixelsIncrease = ((float)(EstimatedPixel) / (float)(BasePixels));
 }
-
 
 FDisplayClusterViewport_CameraMotionBlur UDisplayClusterICVFXCameraComponent::GetMotionBlurParameters()
 {
@@ -240,9 +258,30 @@ FDisplayClusterViewport_CameraMotionBlur UDisplayClusterICVFXCameraComponent::Ge
 	return OutParameters;
 }
 
+FDisplayClusterViewport_CameraDepthOfField UDisplayClusterICVFXCameraComponent::GetDepthOfFieldParameters()
+{
+	FDisplayClusterViewport_CameraDepthOfField OutParameters;
+
+	OutParameters.bEnableDepthOfFieldCompensation = CameraSettings.CameraDepthOfField.bEnableDepthOfFieldCompensation;
+	OutParameters.DistanceToWall = CameraSettings.CameraDepthOfField.DistanceToWall;
+	OutParameters.DistanceToWallOffset = CameraSettings.CameraDepthOfField.DistanceToWallOffset;
+	OutParameters.CompensationLUT = CameraSettings.CameraDepthOfField.DynamicCompensationLUT ? CameraSettings.CameraDepthOfField.DynamicCompensationLUT : CameraSettings.CameraDepthOfField.CompensationLUT.Get();
+
+	return OutParameters;
+}
+
 void UDisplayClusterICVFXCameraComponent::OnRegister()
 {
 	Super::OnRegister();
+
+	// If the blueprint is being reconstructed, we can't update the dynamic LUT here without causing issues
+	// when the reconstruction attempts to check if the component's properties are modified, as this call will
+	// load the compensation LUT soft pointer, resulting in a memory difference from the archetype.
+	// The PostApplyToComponent call handles rebuilding the dynamic LUT in such a case
+	if (!GIsReconstructingBlueprintInstances)
+	{
+		CameraSettings.CameraDepthOfField.UpdateDynamicCompensationLUT();
+	}
 
 #if WITH_EDITORONLY_DATA
 	// disable frustum for icvfx camera component
@@ -254,6 +293,36 @@ void UDisplayClusterICVFXCameraComponent::OnRegister()
 	// Update ExternalCineactor behaviour
 	UpdateICVFXPreviewState();
 #endif
+}
+
+void UDisplayClusterICVFXCameraComponent::SetDepthOfFieldParameters(const FDisplayClusterConfigurationICVFX_CameraDepthOfField& NewDepthOfFieldParams)
+{
+	CameraSettings.CameraDepthOfField.bEnableDepthOfFieldCompensation = NewDepthOfFieldParams.bEnableDepthOfFieldCompensation;
+	CameraSettings.CameraDepthOfField.bAutomaticallySetDistanceToWall = NewDepthOfFieldParams.bAutomaticallySetDistanceToWall;
+	CameraSettings.CameraDepthOfField.DistanceToWallOffset = NewDepthOfFieldParams.DistanceToWallOffset;
+
+	if (!NewDepthOfFieldParams.bAutomaticallySetDistanceToWall)
+	{
+		CameraSettings.CameraDepthOfField.DistanceToWall = NewDepthOfFieldParams.DistanceToWall;
+	}
+
+	bool bGenerateNewLUT = false;
+	if (CameraSettings.CameraDepthOfField.DepthOfFieldGain != NewDepthOfFieldParams.DepthOfFieldGain)
+	{
+		CameraSettings.CameraDepthOfField.DepthOfFieldGain = NewDepthOfFieldParams.DepthOfFieldGain;
+		bGenerateNewLUT = true;
+	}
+
+	if (CameraSettings.CameraDepthOfField.CompensationLUT != NewDepthOfFieldParams.CompensationLUT)
+	{
+		CameraSettings.CameraDepthOfField.CompensationLUT = NewDepthOfFieldParams.CompensationLUT;
+		bGenerateNewLUT = true;
+	}
+
+	if (bGenerateNewLUT)
+	{
+		CameraSettings.CameraDepthOfField.UpdateDynamicCompensationLUT();
+	}
 }
 
 #if WITH_EDITORONLY_DATA
@@ -268,6 +337,13 @@ void UDisplayClusterICVFXCameraComponent::PreEditChange(FProperty* PropertyThatW
 void UDisplayClusterICVFXCameraComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	FName PropertyName = PropertyChangedEvent.GetPropertyName();
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(FDisplayClusterConfigurationICVFX_CameraDepthOfField, CompensationLUT) ||
+		(PropertyName == GET_MEMBER_NAME_CHECKED(FDisplayClusterConfigurationICVFX_CameraDepthOfField, DepthOfFieldGain) && PropertyChangedEvent.ChangeType != EPropertyChangeType::Interactive))
+	{
+		CameraSettings.CameraDepthOfField.UpdateDynamicCompensationLUT();
+	}
 
 	UpdateICVFXPreviewState();
 }

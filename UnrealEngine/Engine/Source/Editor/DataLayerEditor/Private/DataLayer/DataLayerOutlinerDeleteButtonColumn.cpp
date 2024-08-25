@@ -61,14 +61,14 @@ const TSharedRef<SWidget> FDataLayerOutlinerDeleteButtonColumn::ConstructRowWidg
 			.Visibility_Lambda([this, TreeItem, DataLayerActorItem]()
 			{
 				AActor* Actor = DataLayerActorItem->GetActor();
-				const UDataLayerInstance* DataLayer = DataLayerActorItem->GetDataLayer();
-				return (Actor && DataLayer && !DataLayer->IsLocked() && TreeItem->CanInteract()) ? EVisibility::Visible : EVisibility::Collapsed;
+				const UDataLayerInstance* DataLayerInstance = DataLayerActorItem->GetDataLayer();
+				return (Actor && DataLayerInstance && DataLayerInstance->CanRemoveActor(Actor) && DataLayerInstance->CanUserRemoveActors() && TreeItem->CanInteract()) ? EVisibility::Visible : EVisibility::Collapsed;
 			})
 			.OnClicked_Lambda([this, TreeItem, DataLayerActorItem]()
 			{
 				AActor* Actor = DataLayerActorItem->GetActor();
-				const UDataLayerInstance* DataLayer = DataLayerActorItem->GetDataLayer();
-				if (Actor && DataLayer)
+				const UDataLayerInstance* DataLayerInstance = DataLayerActorItem->GetDataLayer();
+				if (Actor && DataLayerInstance)
 				{
 					UDataLayerEditorSubsystem* DataLayerEditorSubsystem = UDataLayerEditorSubsystem::Get();
 					if (auto SceneOutliner = WeakSceneOutliner.IsValid() ? WeakSceneOutliner.Pin() : nullptr)

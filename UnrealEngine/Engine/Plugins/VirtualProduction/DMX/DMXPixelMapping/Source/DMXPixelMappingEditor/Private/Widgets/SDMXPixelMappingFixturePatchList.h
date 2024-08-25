@@ -29,11 +29,11 @@ public:
 	void Construct(const FArguments& InArgs, const TSharedPtr<FDMXPixelMappingToolkit>& InToolkit, TWeakObjectPtr<UDMXPixelMappingDMXLibraryViewModel> InDMXLibraryModel);
 
 	/** Selects the first patch after the specified fixture patches */
-	void SelectAfter(const TArray<TSharedPtr<FDMXEntityFixturePatchRef>>& FixturePatches);
+	void SelectAfter(const TArray<UDMXEntityFixturePatch*>& FixturePatches);
 
 private:
 	//~ Begin SDMXReadOnlyFixturePatchList interface
-	virtual void RefreshList() override;
+	virtual void ForceRefresh() override;
 	//~ End SDMXReadOnlyFixturePatchList interface
 
 	/** Called when a row in the list was dragged */

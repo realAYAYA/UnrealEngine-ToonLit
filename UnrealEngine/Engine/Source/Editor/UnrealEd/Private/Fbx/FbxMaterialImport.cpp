@@ -451,7 +451,7 @@ FString UnFbx::FFbxImporter::GetMaterialFullName(const FbxSurfaceMaterial& FbxMa
 			if (SkinXXNumber.IsNumeric())
 			{
 				// remove the '_skinXX' suffix from the material name					
-				MaterialFullName.LeftChopInline(MaterialFullName.Len() - Offset, false);
+				MaterialFullName.LeftChopInline(MaterialFullName.Len() - Offset, EAllowShrinking::No);
 			}
 		}
 	}

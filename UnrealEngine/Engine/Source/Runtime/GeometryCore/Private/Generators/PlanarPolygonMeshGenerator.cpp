@@ -35,6 +35,8 @@ FMeshShapeGenerator& FPlanarPolygonMeshGenerator::Generate()
 		return *this;
 	}
 
+	TRACE_CPUPROFILER_EVENT_SCOPE(PlanarPolygonMeshGenerator_Generate);
+
 	TArray<FIndex3i> TriangleList;
 	PolygonTriangulation::TriangulateSimplePolygon(Polygon.GetVertices(), TriangleList, false);
 

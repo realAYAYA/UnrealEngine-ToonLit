@@ -10,13 +10,6 @@
 
 #if WITH_ENGINE
 #include "AudioPluginUtilities.h"
-#include "OpusAudioInfo.h"
-#include "VorbisAudioInfo.h"
-#include "ADPCMAudioInfo.h"
-#if WITH_BINK_AUDIO
-#include "BinkAudioInfo.h"
-#endif // WITH_BINK_AUDIO
-
 #endif // WITH_ENGINE
 
 DECLARE_LOG_CATEGORY_EXTERN(LogAudioMixerSDL, Log, All);
@@ -372,59 +365,6 @@ namespace Audio
 		check(InOutputBufferByteLength == OutputBufferByteLength);
 
 		ReadNextBuffer();
-	}
-
-	FName FMixerPlatformSDL::GetRuntimeFormat(const USoundWave* InSoundWave) const
-	{
-		FName RuntimeFormat = Audio::ToName(InSoundWave->GetSoundAssetCompressionType());
-
-		if (RuntimeFormat == Audio::NAME_PLATFORM_SPECIFIC)
-		{
-			if (InSoundWave->IsStreaming(nullptr))
-			{
-				return Audio::NAME_OPUS;
-			}
-			else
-			{
-				return Audio::NAME_OGG;
-			}
-		}
-
-#if !WITH_BINK_AUDIO
-		// Some SDL platforms don't yet support bink, so fall back to ADPCM
-		if (RuntimeFormat == Audio::NAME_BINKA)
-		{
-			return Audio::NAME_ADPCM;
-		}
-#endif
-
-		return RuntimeFormat;
-	}
-
-	ICompressedAudioInfo* FMixerPlatformSDL::CreateCompressedAudioInfo(const FName& InRuntimeFormat) const
-	{
-		ICompressedAudioInfo* Decoder = nullptr;
-
-		if (InRuntimeFormat == Audio::NAME_OGG)
-		{
-			Decoder = new FVorbisAudioInfo();
-		}
-		else if (InRuntimeFormat == Audio::NAME_OPUS)
-		{
-			Decoder = new FOpusAudioInfo();
-		}
-#if WITH_BINK_AUDIO
-		else if (InRuntimeFormat == Audio::NAME_BINKA)
-		{
-			Decoder = new FBinkAudioInfo();
-		}
-#endif // WITH_BINK_AUDIO	
-		else
-		{
-			Decoder = Audio::CreateSoundAssetDecoder(InRuntimeFormat);
-		}
-		ensureMsgf(Decoder != nullptr, TEXT("Failed to create a sound asset decoder for compression type: %s"), *InRuntimeFormat.ToString());
-		return Decoder;
 	}
 
 	FString FMixerPlatformSDL::GetDefaultDeviceName()

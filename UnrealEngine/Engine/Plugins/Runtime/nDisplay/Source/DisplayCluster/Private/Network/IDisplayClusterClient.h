@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+#include "Cluster/IDisplayClusterGenericBarriersClient.h"
 
 /**
  * DisplayCluster TCP client interface
@@ -23,3 +24,6 @@ public:
 	// Returns client name
 	virtual FString GetName() const = 0;
 };
+
+// Custom deleter for IDisplayClusterClient. See FDisplayClusterGenericClientDeleter for more info.
+using FDisplayClusterClientDeleter = FDisplayClusterGenericClientDeleter<IDisplayClusterClient>;

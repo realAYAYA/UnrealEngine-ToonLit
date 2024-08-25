@@ -95,7 +95,7 @@ public:
 		return operator[](0) > Other[0];
 	}
 
-	TArray<UObject*> GetStack() const { return Stack; }
+	TArray<TWeakObjectPtr<UObject>> GetStack() const { return Stack; }
 
 	FRigVMCallstack GetCallStackUpTo(int32 InIndex) const;
 
@@ -114,7 +114,7 @@ private:
 		return HashCombine(GetEntryTypeHash(Index - 1), GetTypeHash(Stack[Index]));
 	}
 
-	TArray<UObject*> Stack;
+	TArray<TWeakObjectPtr<UObject>> Stack;
 
 	friend class FRigVMParserAST;
 	friend class FRigVMCallstackGuard;
@@ -162,7 +162,7 @@ public:
 	static FRigVMASTProxy MakeFromUObject(UObject* InSubject);
 	static FRigVMASTProxy MakeFromCallPath(const FString& InCallPath, UObject* InRootObject);
 	static FRigVMASTProxy MakeFromCallstack(const FRigVMCallstack& InCallstack);
-	static FRigVMASTProxy MakeFromCallstack(const TArray<UObject*>* InCallstack);
+	static FRigVMASTProxy MakeFromCallstack(const TArray<TWeakObjectPtr<UObject>>* InCallstack);
 
 	FRigVMASTProxy GetSibling(UObject* InSubject) const
 	{
@@ -204,7 +204,7 @@ public:
 
 	const FRigVMCallstack& GetCallstack() const { return Callstack; }
 
-	UObject* GetSubject() const { return Callstack.Stack.Last(); }
+	UObject* GetSubject() const { return Callstack.Stack.Last().IsValid() ? Callstack.Stack.Last().Get() : nullptr; }
 
 	template<class T>
 	T* GetSubject() const { return Cast<T>(GetSubject()); }

@@ -475,6 +475,8 @@ void UNiagaraNodeStaticSwitch::AllocateDefaultPins()
 	}
 	
 	TArray<int32> OptionValues = GetOptionValues();
+	NumOptionsPerVariable = OptionValues.Num();
+	
 	for (int32 i = 0; i < OptionValues.Num(); i++)
 	{
 		for (const FNiagaraVariable& Variable : OutputVars)
@@ -694,7 +696,7 @@ UNiagaraScriptVariable* UNiagaraNodeStaticSwitch::GetStaticSwitchScriptVariable(
 	return GetNiagaraGraph()->GetScriptVariable(Variable);
 }
 
-void UNiagaraNodeStaticSwitch::CheckForOutdatedEnum(FTranslator* Translator)
+void UNiagaraNodeStaticSwitch::CheckForOutdatedEnum(FTranslator* Translator) const
 {
 	// we check during compilation if the node is using outdated enum information and log it
 	if(SwitchTypeData.SwitchType == ENiagaraStaticSwitchType::Enum)

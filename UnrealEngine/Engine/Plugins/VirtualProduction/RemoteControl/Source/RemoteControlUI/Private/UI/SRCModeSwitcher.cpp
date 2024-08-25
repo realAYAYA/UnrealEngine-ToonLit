@@ -31,16 +31,30 @@ void SRCModeSwitcher::Construct(const FArguments& InArgs)
 		.BorderImage(&RCPanelStyle->ContentAreaBrushDark)
 	);
 
+	FRCMode* ActiveModeElem = nullptr;
+	
 	// Copy all the mode info from the declaration
 	for (FRCMode* const Mode : InArgs.Slots)
 	{
 		RCModes.Add(*Mode);
 
 		Mode->bIsVisible = true;
+
+		if (Mode->ModeId == ActiveMode)
+		{
+			ActiveModeElem = Mode;
+		}
 	}
 
 	// Generate widgets for all modes
 	RegenerateWidgets();
+
+	// Force-enable the default mode
+	if (ActiveModeElem)
+	{
+		constexpr bool bForceModeEnable = true;
+		SetModeEnabled_Internal(ECheckBoxState::Checked, ActiveModeElem, bForceModeEnable);
+	}
 }
 
 ECheckBoxState SRCModeSwitcher::IsModeEnabled(FRCMode* InMode) const
@@ -113,7 +127,7 @@ void SRCModeSwitcher::RegenerateWidgets()
 					.ToolTip(SomeMode.ToolTip)
 					.ToolTipText(SomeMode.ToolTip.IsSet() ? TAttribute<FText>() :
 						SomeMode.DefaultTooltip.IsSet() ? SomeMode.DefaultTooltip : ModeLabel)
-					.Padding(4.f)
+					.Padding(FMargin(4.f, 0.f))
 					[
 						ContentWidget
 					];
@@ -171,9 +185,14 @@ void SRCModeSwitcher::RegenerateWidgets()
 
 void SRCModeSwitcher::SetModeEnabled(ECheckBoxState NewState, FRCMode* NewMode)
 {
+	SetModeEnabled_Internal(NewState, NewMode);
+}
+
+void SRCModeSwitcher::SetModeEnabled_Internal(ECheckBoxState NewState, FRCMode* NewMode, bool bInForceModeEnabled /* false */)
+{
 	check(NewMode);
 
-	if (ActiveMode != NewMode->ModeId)
+	if (ActiveMode != NewMode->ModeId || bInForceModeEnabled)
 	{
 		if (NewState == ECheckBoxState::Checked)
 		{

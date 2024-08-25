@@ -3,7 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Issues;
 
 namespace Horde.Server.Issues
 {
@@ -18,19 +18,29 @@ namespace Horde.Server.Issues
 		public string Type { get; }
 
 		/// <summary>
+		/// Template string for the issue summary
+		/// </summary>
+		public string SummaryTemplate { get; }
+
+		/// <summary>
 		/// List of keys which identify this issue.
 		/// </summary>
-		public CaseInsensitiveStringSet Keys { get; }
+		public IReadOnlySet<IssueKey> Keys { get; }
 
 		/// <summary>
 		/// Set of keys which should trigger a negative match
 		/// </summary>
-		public CaseInsensitiveStringSet? RejectKeys { get; }
+		public IReadOnlySet<IssueKey>? RejectKeys { get; }
 
 		/// <summary>
 		/// Collection of additional metadata added by the handler
 		/// </summary>
-		public CaseInsensitiveStringSet? Metadata { get; }
+		public IReadOnlySet<IssueMetadata>? Metadata { get; }
+
+		/// <summary>
+		/// Filter for changes that should be included in this issue
+		/// </summary>
+		public IReadOnlyList<string> ChangeFilter { get; }
 	}
 
 	/// <summary>
@@ -47,6 +57,10 @@ namespace Horde.Server.Issues
 		public static bool IsMatch(this IIssueFingerprint fingerprint, IIssueFingerprint other)
 		{
 			if (!fingerprint.Type.Equals(other.Type, StringComparison.Ordinal))
+			{
+				return false;
+			}
+			if (!fingerprint.SummaryTemplate.Equals(other.SummaryTemplate, StringComparison.Ordinal))
 			{
 				return false;
 			}
@@ -88,37 +102,6 @@ namespace Horde.Server.Issues
 				return false;
 			}
 			return true;
-		}
-
-		/// <summary>
-		/// Gets all the metadata values with a given key
-		/// </summary>
-		/// <param name="fingerprint">Fingerprint to find values for</param>
-		/// <param name="value">Key name to search for</param>
-		/// <returns>All values with the given key</returns>
-		public static bool HasMetadataValue(this IIssueFingerprint fingerprint, string value)
-		{
-			return fingerprint.Metadata != null && fingerprint.Metadata.Contains(value);
-		}
-
-		/// <summary>
-		/// Gets all the metadata values with a given key
-		/// </summary>
-		/// <param name="fingerprint">Fingerprint to find values for</param>
-		/// <param name="key">Key name to search for</param>
-		/// <returns>All values with the given key</returns>
-		public static IEnumerable<string> GetMetadataValues(this IIssueFingerprint fingerprint, string key)
-		{
-			if (fingerprint.Metadata != null)
-			{
-				foreach (string element in fingerprint.Metadata)
-				{
-					if (element.StartsWith(key, StringComparison.OrdinalIgnoreCase) && element.Length > key.Length && element[key.Length] == '=')
-					{
-						yield return element.Substring(key.Length + 1);
-					}
-				}
-			}
 		}
 	}
 }

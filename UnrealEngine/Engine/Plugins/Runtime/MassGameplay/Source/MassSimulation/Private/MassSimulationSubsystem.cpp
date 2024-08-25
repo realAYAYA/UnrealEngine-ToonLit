@@ -7,16 +7,26 @@
 #include "MassSimulationSettings.h"
 #include "VisualLogger/VisualLogger.h"
 #include "MassEntitySettings.h"
+#include "Engine/Engine.h"
 #if WITH_EDITOR
 #include "Editor.h"
 #endif // WITH_EDITOR
 
 DEFINE_LOG_CATEGORY(LogMassSim);
 
-namespace UE::MassSimulation
+namespace UE::Mass::Simulation
 {
-	int32 bDoEntityCompaction = 1;
-	FAutoConsoleVariableRef CVarEntityCompaction(TEXT("ai.mass.EntityCompaction"), bDoEntityCompaction, TEXT("Maximize the nubmer of entities per chunk"), ECVF_Cheat);
+	bool bDoEntityCompaction = true;
+	bool bSimulationTickingEnabled = true;
+
+	namespace Private
+	{
+	FAutoConsoleVariableRef CVars[] = {
+		{TEXT("mass.EntityCompaction"), bDoEntityCompaction, TEXT("Maximize the number of entities per chunk"), ECVF_Cheat}
+		, {TEXT("mass.SimulationTickingEnabled"), bSimulationTickingEnabled, TEXT("Controls whether Mass simulation ticking is allowed in game worlds. Upon changing the value it also stops/starts Mass simulation ticking, if needed"), 
+			FConsoleVariableDelegate::CreateStatic(UMassSimulationSubsystem::HandleSimulationTickingEnabledCVarChange)}
+		};
+	}
 }
 
 //----------------------------------------------------------------------//
@@ -80,6 +90,8 @@ void UMassSimulationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	EntityManager = EntitySubsystem->GetMutableEntityManager().AsShared();
 	
 	GetOnProcessingPhaseStarted(EMassProcessingPhase::PrePhysics).AddUObject(this, &UMassSimulationSubsystem::OnProcessingPhaseStarted, EMassProcessingPhase::PrePhysics);
+
+	HandleLateCreation();
 }
 
 void UMassSimulationSubsystem::Deinitialize()
@@ -119,6 +131,8 @@ void UMassSimulationSubsystem::PostInitialize()
 
 void UMassSimulationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
+	Super::OnWorldBeginPlay(InWorld);
+
 	// To evaluate the effective processors execution mode, we need to wait on OnWorldBeginPlay before calling
 	// RebuildTickPipeline as we are sure by this time the network is setup correctly.
 	RebuildTickPipeline();
@@ -137,6 +151,45 @@ void UMassSimulationSubsystem::UnregisterDynamicProcessor(UMassProcessor& Proces
 {
 	checkf(!IsDuringMassProcessing(), TEXT("Unable to remove dynamic processors to Mass during processing."));
 	PhaseManager.UnregisterDynamicProcessor(Processor);
+}
+
+void UMassSimulationSubsystem::HandleSimulationTickingEnabledCVarChange(IConsoleVariable*)
+{
+	if (GEngine == nullptr)
+	{
+		return;
+	}
+
+	for (const FWorldContext& Context : GEngine->GetWorldContexts())
+	{
+		if (Context.WorldType != EWorldType::Inactive)
+		{
+			UWorld* World = Context.World();
+			
+			// we only want to affect game worlds
+			if (World == nullptr || World->IsGameWorld() == false)
+			{
+				continue;
+			}
+
+			if (UMassSimulationSubsystem* MassSimulationSubsystem = UWorld::GetSubsystem<UMassSimulationSubsystem>(World))
+			{
+				if (UE::Mass::Simulation::bSimulationTickingEnabled)
+				{
+					// if enabling call StartSimulation ony if the world has already begun play. Otherwise the 
+					// simulation ticking will be started at the right time automatically
+					if (World->HasBegunPlay())
+					{
+						MassSimulationSubsystem->StartSimulation(*World);
+					}
+				}
+				else
+				{
+					MassSimulationSubsystem->StopSimulation();
+				}
+			}
+		}
+	}
 }
 
 void UMassSimulationSubsystem::RebuildTickPipeline()
@@ -158,15 +211,28 @@ void UMassSimulationSubsystem::RebuildTickPipeline()
 
 void UMassSimulationSubsystem::StartSimulation(UWorld& InWorld)
 {
-	PhaseManager.Start(InWorld);
+	if (bSimulationStarted)
+	{
+		return;
+	}
 
-	bSimulationStarted = true;
+	if (UE::Mass::Simulation::bSimulationTickingEnabled)
+	{
+		PhaseManager.Start(InWorld);
 
-	OnSimulationStarted.Broadcast(&InWorld);
+		bSimulationStarted = true;
+
+		OnSimulationStarted.Broadcast(&InWorld);
+	}
 }
 
 void UMassSimulationSubsystem::StopSimulation()
 {
+	if (bSimulationStarted == false)
+	{
+		return;
+	}
+
 	PhaseManager.Stop();
 
 	bSimulationStarted = false;
@@ -178,10 +244,10 @@ void UMassSimulationSubsystem::OnProcessingPhaseStarted(const float DeltaSeconds
 	{
 		case EMassProcessingPhase::PrePhysics:
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(DoEntityCompation);
-				check(EntityManager);
-				if (UE::MassSimulation::bDoEntityCompaction)
+				if (UE::Mass::Simulation::bDoEntityCompaction && GET_MASSSIMULATION_CONFIG_VALUE(bEntityCompactionEnabled))
 				{
+					TRACE_CPUPROFILER_EVENT_SCOPE(DoEntityCompaction);
+					check(EntityManager);
 					EntityManager->DoEntityCompaction(GET_MASSSIMULATION_CONFIG_VALUE(DesiredEntityCompactionTimeSlicePerTick));
 				}
 			}

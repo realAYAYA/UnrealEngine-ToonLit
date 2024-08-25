@@ -22,6 +22,7 @@ public:
 	// Helper that creates a new UActorFolder
 	static ENGINE_API UActorFolder* Create(ULevel* InOuter, const FString& InFolderLabel, UActorFolder* InParent);
 
+	UE_DEPRECATED(5.4, "This function is deprecated.")
 	static EPackageFlags GetExternalPackageFlags() { return (PKG_EditorOnly | PKG_ContainsMapData | PKG_NewlyCreated); }
 	
 	// Returns actor folder info stored in its package
@@ -29,7 +30,10 @@ public:
 	
 	//~ Begin UObject
 	ENGINE_API virtual bool IsAsset() const override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
+	ENGINE_API virtual void PostLoad() override;
 	//~ End UObject
 
 	ENGINE_API void SetParent(UActorFolder* InParent);

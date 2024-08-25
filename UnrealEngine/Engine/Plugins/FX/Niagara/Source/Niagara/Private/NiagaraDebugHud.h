@@ -96,6 +96,7 @@ class FNiagaraDebugHud
 	#if WITH_EDITORONLY_DATA
 		bool		bCompileForEdit = false;
 	#endif
+		bool		bSystemStateFastPath = false;
 
 		#if WITH_PARTICLE_PERF_STATS
 		TSharedPtr<FNiagaraDebugHUDPerfStats> PerfStats = nullptr;
@@ -267,7 +268,7 @@ private:
 
 	TMap<FName, FSystemDebugInfo>	PerSystemDebugInfo;
 
-	TArray<TWeakObjectPtr<class UNiagaraComponent>>	InWorldComponents;
+	TArray<TWeakObjectPtr<class UFXSystemComponent>>	InWorldComponents;
 
 	TMap<TWeakObjectPtr<class UNiagaraComponent>, FValidationErrorInfo> ValidationErrors;
 
@@ -354,6 +355,10 @@ private:
 		float Lifetime;
 	};
 	TArray<FDebugBox2D> Boxes2D;
+
+	double AutoGraphTimeRange = 100.0;
+	double AutoGraphTimeRangeChangeMax = 100.0;
+	double AutoGraphTimeRangeChangedTime = 0.0;
 
 public:
 	/** Add a 2D line to the debug renering. Positions are in normalized screen space. (0,0) in top left, (1,1) bottom right.*/

@@ -84,7 +84,7 @@ void UMovieSceneEntityInstantiatorSystem::UnlinkStaleObjectBindings(UE::MovieSce
 		const FSequenceInstance* TargetInstance = &InstanceRegistry->GetInstance(InstanceHandle);
 
 		FMovieSceneSequenceID ThisSequenceID     = TargetInstance->GetSequenceID();
-		FMovieSceneSequenceID RemappedSequenceID = InObjectBindingID.ResolveSequenceID(ThisSequenceID, *TargetInstance->GetPlayer());
+		FMovieSceneSequenceID RemappedSequenceID = InObjectBindingID.ResolveSequenceID(ThisSequenceID, TargetInstance->GetSharedPlaybackState());
 
 		if (RemappedSequenceID == ThisSequenceID)
 		{

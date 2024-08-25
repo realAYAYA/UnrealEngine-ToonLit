@@ -23,6 +23,11 @@ struct TScaleGridIndexer2
 	/** Real-valued size of an integer grid cell */
 	RealType CellSize;
 
+	TScaleGridIndexer2() : CellSize((RealType)1) 
+	{
+		ensure(CellSize >= TMathUtil<RealType>::ZeroTolerance);
+	}
+
 	TScaleGridIndexer2(RealType CellSize) : CellSize(CellSize)
 	{
 		ensure(CellSize >= TMathUtil<RealType>::ZeroTolerance);

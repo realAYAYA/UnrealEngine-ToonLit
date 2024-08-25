@@ -591,20 +591,68 @@ inline varying FVector3d VectorGather(const uniform FVector3d *varying SrcPtr)
 
 inline varying FVector3f VectorGather(const uniform FVector3f *varying SrcPtr)
 {
-	#pragma ignore warning(perf)
-	return *SrcPtr;
+	varying FVector3f Result;
+
+	if (((1 << TARGET_WIDTH) - 1 ^ lanemask()) == 0)
+	{
+#if TARGET_WIDTH == 4
+		AosToSoa3Explicit((uniform float* varying)SrcPtr, (uniform float* uniform)&Result);
+#else
+		UniformLoad(SrcPtr, (uniform FVector3f* uniform)&Result);
+		aos_to_soa3_ispc((uniform float* uniform)&Result, &Result.V[0], &Result.V[1], &Result.V[2]);
+#endif
+	}
+	else
+	{
+		#pragma ignore warning(perf)
+		Result = *SrcPtr;
+	}
+
+	return Result;
 }
 
 inline void VectorScatter(uniform FVector3d *varying DstPtr, const varying FVector3d &V)
 {
-	#pragma ignore warning(perf)
-	*DstPtr = V;
+	if (((1 << TARGET_WIDTH) - 1 ^ lanemask()) == 0)
+	{
+		unmasked
+		{
+#if TARGET_WIDTH == 4
+			SoaToAos3Explicit((uniform double* uniform)&V, (uniform double* varying)DstPtr);
+#else
+			uniform FVector3d Result[programCount];
+			soa_to_aos3_ispc(V.V[0], V.V[1], V.V[2], (uniform double* uniform)&Result);
+			UniformStore(Result, DstPtr);
+#endif
+		}
+	}
+	else
+	{
+		#pragma ignore warning(perf)
+		*DstPtr = V;
+	}
 }
 
 inline void VectorScatter(uniform FVector3f *varying DstPtr, const varying FVector3f &V)
 {
-	#pragma ignore warning(perf)
-	*DstPtr = V;
+	if (((1 << TARGET_WIDTH) - 1 ^ lanemask()) == 0)
+	{
+		unmasked
+		{
+#if TARGET_WIDTH == 4
+			SoaToAos3Explicit((uniform float* uniform)&V, (uniform float* varying)DstPtr);
+#else
+			uniform FVector3f Result[programCount];
+			soa_to_aos3_ispc(V.V[0], V.V[1], V.V[2], (uniform float* uniform)&Result);
+			UniformStore(Result, DstPtr);
+#endif
+		}
+	}
+	else 
+	{
+		#pragma ignore warning(perf)
+		*DstPtr = V;
+	}
 }
 
 inline varying FVector4d VectorGather(const uniform FVector4d *varying SrcPtr)
@@ -613,39 +661,12 @@ inline varying FVector4d VectorGather(const uniform FVector4d *varying SrcPtr)
 
 	if(((1<<TARGET_WIDTH)-1 ^ lanemask()) == 0)
 	{
-		unmasked
-		{
-			uniform FVector4d *uniform Src[programCount];
-			uniform FVector4d *uniform DstPtr = (uniform FVector4d *uniform)&Result;
-
-			foreach(i = 0 ... programCount)
-			{
-				Src[i] = (uniform FVector4d *varying)&SrcPtr[0];
-			}
-
-			DstPtr[0] = *Src[0];
-			DstPtr[1] = *Src[1];
-			DstPtr[2] = *Src[2];
-			DstPtr[3] = *Src[3];
-#if TARGET_WIDTH == 8 || TARGET_WIDTH == 16
-			DstPtr[4] = *Src[4];
-			DstPtr[5] = *Src[5];
-			DstPtr[6] = *Src[6];
-			DstPtr[7] = *Src[7];
+#if TARGET_WIDTH == 4
+		AosToSoa4Explicit((const uniform double* varying)SrcPtr, (uniform double* uniform)&Result);
+#else
+		UniformLoad(SrcPtr, (uniform FVector4d* uniform)&Result);
+		aos_to_soa4_ispc((uniform double* uniform)&Result, &Result.V[0], &Result.V[1], &Result.V[2], &Result.V[3]);
 #endif
-#if TARGET_WIDTH == 16
-			DstPtr[8] = *Src[8];
-			DstPtr[9] = *Src[9];
-			DstPtr[10] = *Src[10];
-			DstPtr[11] = *Src[11];
-			DstPtr[12] = *Src[12];
-			DstPtr[13] = *Src[13];
-			DstPtr[14] = *Src[14];
-			DstPtr[15] = *Src[15];
-#endif
-
-			aos_to_soa4_ispc((uniform double * uniform)&Result, &Result.V[0], &Result.V[1], &Result.V[2], &Result.V[3]);
-		}
 	}
 	else
 	{
@@ -662,39 +683,12 @@ inline varying FVector4f VectorGather(const uniform FVector4f *varying SrcPtr)
 
 	if(((1<<TARGET_WIDTH)-1 ^ lanemask()) == 0)
 	{
-		unmasked
-		{
-			uniform FVector4f *uniform Src[programCount];
-			uniform FVector4f *uniform DstPtr = (uniform FVector4f *uniform)&Result;
-
-			foreach(i = 0 ... programCount)
-			{
-				Src[i] = (uniform FVector4f *varying)&SrcPtr[0];
-			}
-
-			DstPtr[0] = *Src[0];
-			DstPtr[1] = *Src[1];
-			DstPtr[2] = *Src[2];
-			DstPtr[3] = *Src[3];
-#if TARGET_WIDTH == 8 || TARGET_WIDTH == 16
-			DstPtr[4] = *Src[4];
-			DstPtr[5] = *Src[5];
-			DstPtr[6] = *Src[6];
-			DstPtr[7] = *Src[7];
+#if TARGET_WIDTH == 4
+		AosToSoa4Explicit((const uniform float* varying)SrcPtr, (uniform float* uniform) & Result);
+#else
+		UniformLoad(SrcPtr, (uniform FVector4f* uniform)&Result);
+		aos_to_soa4_ispc((uniform float* uniform)&Result, &Result.V[0], &Result.V[1], &Result.V[2], &Result.V[3]);
 #endif
-#if TARGET_WIDTH == 16
-			DstPtr[8] = *Src[8];
-			DstPtr[9] = *Src[9];
-			DstPtr[10] = *Src[10];
-			DstPtr[11] = *Src[11];
-			DstPtr[12] = *Src[12];
-			DstPtr[13] = *Src[13];
-			DstPtr[14] = *Src[14];
-			DstPtr[15] = *Src[15];
-#endif
-
-			aos_to_soa4_ispc((uniform float * uniform)&Result, &Result.V[0], &Result.V[1], &Result.V[2], &Result.V[3]);
-		}
 	}
 	else
 	{
@@ -711,35 +705,12 @@ inline void VectorScatter(uniform FVector4d *varying DstPtr, const varying FVect
 	{
 		unmasked
 		{
+#if TARGET_WIDTH == 4
+			SoaToAos4Explicit((uniform double* uniform)&V, (uniform double* varying)DstPtr);
+#else
 			uniform FVector4d Result[programCount];
-			soa_to_aos4_ispc(V.V[0], V.V[1], V.V[2], V.V[3], (uniform double *uniform)&Result);
-
-			uniform FVector4d *uniform Dst[programCount];
-
-			foreach(i = 0 ... programCount)
-			{
-				Dst[i] = (uniform FVector4d *varying)&DstPtr[0];
-			}
-
-			*Dst[0] = Result[0];
-			*Dst[1] = Result[1];
-			*Dst[2] = Result[2];
-			*Dst[3] = Result[3];
-#if TARGET_WIDTH == 8 || TARGET_WIDTH == 16
-			*Dst[4] = Result[4];
-			*Dst[5] = Result[5];
-			*Dst[6] = Result[6];
-			*Dst[7] = Result[7];
-#endif
-#if TARGET_WIDTH == 16
-			*Dst[8] = Result[8];
-			*Dst[9] = Result[9];
-			*Dst[10] = Result[10];
-			*Dst[11] = Result[11];
-			*Dst[12] = Result[12];
-			*Dst[13] = Result[13];
-			*Dst[14] = Result[14];
-			*Dst[15] = Result[15];
+			soa_to_aos4_ispc(V.V[0], V.V[1], V.V[2], V.V[3], (uniform double* uniform)&Result);
+			UniformStore(Result, DstPtr);
 #endif
 		}
 	}
@@ -756,35 +727,12 @@ inline void VectorScatter(uniform FVector4f *varying DstPtr, const varying FVect
 	{
 		unmasked
 		{
+#if TARGET_WIDTH == 4
+			SoaToAos4Explicit((uniform float* uniform)&V, (uniform float* varying)DstPtr);
+#else
 			uniform FVector4f Result[programCount];
-			soa_to_aos4_ispc(V.V[0], V.V[1], V.V[2], V.V[3], (uniform float *uniform)&Result);
-
-			uniform FVector4f *uniform Dst[programCount];
-
-			foreach(i = 0 ... programCount)
-			{
-				Dst[i] = (uniform FVector4f *varying)&DstPtr[0];
-			}
-
-			*Dst[0] = Result[0];
-			*Dst[1] = Result[1];
-			*Dst[2] = Result[2];
-			*Dst[3] = Result[3];
-#if TARGET_WIDTH == 8 || TARGET_WIDTH == 16
-			*Dst[4] = Result[4];
-			*Dst[5] = Result[5];
-			*Dst[6] = Result[6];
-			*Dst[7] = Result[7];
-#endif
-#if TARGET_WIDTH == 16
-			*Dst[8] = Result[8];
-			*Dst[9] = Result[9];
-			*Dst[10] = Result[10];
-			*Dst[11] = Result[11];
-			*Dst[12] = Result[12];
-			*Dst[13] = Result[13];
-			*Dst[14] = Result[14];
-			*Dst[15] = Result[15];
+			soa_to_aos4_ispc(V.V[0], V.V[1], V.V[2], V.V[3], (uniform float* uniform)&Result);
+			UniformStore(Result, DstPtr);
 #endif
 		}
 	}
@@ -793,6 +741,28 @@ inline void VectorScatter(uniform FVector4f *varying DstPtr, const varying FVect
 		#pragma ignore warning(perf)
 		*DstPtr = V;
 	}
+}
+
+inline varying FIntVector VectorGather(const uniform FIntVector *varying SrcPtr)
+{
+	varying FIntVector Result;
+
+	if (((1 << TARGET_WIDTH) - 1 ^ lanemask()) == 0)
+	{
+#if TARGET_WIDTH == 4
+		AosToSoa3Explicit((uniform int32* varying)SrcPtr, (uniform int32* uniform)&Result);
+#else
+		UniformLoad(SrcPtr, (uniform FIntVector* uniform)&Result);
+		aos_to_soa3_ispc((uniform int32* uniform)&Result, &Result.V[0], &Result.V[1], &Result.V[2]);
+#endif
+	}
+	else
+	{
+		#pragma ignore warning(perf)
+		Result = *SrcPtr;
+	}
+
+	return Result;
 }
 
 inline FVector4d operator+(const FVector4d &A, const FVector4d &B)
@@ -808,6 +778,18 @@ inline FVector4d operator+(const FVector4d &A, const FVector4d &B)
 }
 
 inline FVector4f operator+(const FVector4f &A, const FVector4f &B)
+{
+	FVector4f Result;
+
+	for(uniform int i = 0; i < 4; i++)
+	{
+		Result.V[i] = A.V[i] + B.V[i];
+	}
+
+	return Result;
+}
+
+inline FVector4f operator+(const FVector4f &A, const uniform FVector4f &B)
 {
 	FVector4f Result;
 
@@ -931,6 +913,18 @@ inline FVector4f operator*(const FVector4f &A, const FVector4f &B)
 	return Result;
 }
 
+inline FVector4f operator*(const uniform FVector4f &A, const FVector4f &B)
+{
+	FVector4f Result;
+
+	for(uniform int i = 0; i < 4; i++)
+	{
+		Result.V[i] = A.V[i] * B.V[i];
+	}
+
+	return Result;
+}
+
 inline FVector4 operator*(const uniform FVector4 &A, const FVector4 &B)
 {
 	FVector4 Result;
@@ -1025,9 +1019,21 @@ inline FVector4 operator*(const FVector4 &A, const uniform FReal F)
 	return Result;
 }
 
-inline FVector4 operator*(const uniform FReal F, const FVector4 &A)
+inline FVector4d operator*(const uniform double F, const FVector4d &A)
 {
-	FVector4 Result;
+	FVector4d Result;
+
+	for(uniform int i = 0; i < 4; i++)
+	{
+		Result.V[i] = F * A.V[i];
+	}
+
+	return Result;
+}
+
+inline FVector4f operator*(const uniform float F, const FVector4f &A)
+{
+	FVector4f Result;
 
 	for(uniform int i = 0; i < 4; i++)
 	{
@@ -1249,9 +1255,21 @@ inline FVector4 operator-(const FVector4 &A, const uniform FReal F)
 	return Result;
 }
 
-inline FVector4 operator-(const uniform FReal F, const FVector4 &A)
+inline FVector4d operator-(const uniform double F, const FVector4d &A)
 {
-	FVector4 Result;
+	FVector4d Result;
+
+	for(uniform int i = 0; i < 4; i++)
+	{
+		Result.V[i] = F - A.V[i];
+	}
+
+	return Result;
+}
+
+inline FVector4f operator-(const uniform float F, const FVector4f &A)
+{
+	FVector4f Result;
 
 	for(uniform int i = 0; i < 4; i++)
 	{
@@ -2388,19 +2406,10 @@ inline uniform bool VectorIsAllNearlyZero(const uniform FVector3f &V, const unif
 	return all(abs(S0) <= Tolerance);
 }
 
-inline FVector3d VectorLerp(const FVector3d& A, const FVector3d& B, const double Alpha)
+template<typename T, typename V>
+inline T VectorLerp(const T& A, const T& B, const V Alpha)
 {
-	return (A + (B-A) * Alpha);
-}
-
-inline FVector3f VectorLerp(const FVector3f& A, const FVector3f& B, const float Alpha)
-{
-	return (A + (B-A) * Alpha);
-}
-
-inline uniform FVector VectorLerp(const uniform FVector& A, const uniform FVector& B, const uniform FReal Alpha)
-{
-	return (A + (B-A) * Alpha);
+	return (A + (B - A) * Alpha);
 }
 
 inline FVector VectorFloor(const FVector &A)
@@ -2408,71 +2417,22 @@ inline FVector VectorFloor(const FVector &A)
 	return SetVector(floor(A.V[0]), floor(A.V[1]), floor(A.V[2]));
 }
 
-inline FVector VectorClamp(const FVector &A, const FVector &B, const FVector &C)
+template<typename T, typename V>
+inline T VectorClamp(const T &A, const V &B, const V &C)
 {
 	return SetVector(clamp(A.V[0], B.V[0], C.V[0]),
 		clamp(A.V[1], B.V[1], C.V[1]),
 		clamp(A.V[2], B.V[2], C.V[2]));
 }
 
-inline FVector VectorClamp(const FVector &A, const uniform FVector &B, const uniform FVector &C)
-{
-	return SetVector(clamp(A.V[0], B.V[0], C.V[0]),
-		clamp(A.V[1], B.V[1], C.V[1]),
-		clamp(A.V[2], B.V[2], C.V[2]));
-}
-
-inline FVector4d VectorAdd(const FVector4d &A, const FVector4d &B)
+template <typename T>
+inline T VectorAdd(const T& A, const T& B)
 {
 	return A + B;
 }
 
-inline FVector4f VectorAdd(const FVector4f &A, const FVector4f &B)
-{
-	return A + B;
-}
-
-inline FVector4 VectorAdd(const FVector4 &A, const uniform FVector4 &B)
-{
-	return A + B;
-}
-
-inline uniform FVector4d VectorAdd(const uniform FVector4d &A, const uniform FVector4d &B)
-{
-	return A + B;
-}
-
-inline uniform FVector4f VectorAdd(const uniform FVector4f &A, const uniform FVector4f &B)
-{
-	return A + B;
-}
-
-inline uniform FVector8 VectorAdd(const uniform FVector8 &A, const uniform FVector8 &B)
-{
-	return A + B;
-}
-
-inline FVector4d VectorSubtract(const FVector4d &A, const FVector4d &B)
-{
-	return A - B;
-}
-
-inline FVector4f VectorSubtract(const FVector4f &A, const FVector4f &B)
-{
-	return A - B;
-}
-
-inline FVector4 VectorSubtract(const uniform FVector4 &A, const FVector4 &B)
-{
-	return A - B;
-}
-
-inline uniform FVector4d VectorSubtract(const uniform FVector4d &A, const uniform FVector4d &B)
-{
-	return A - B;
-}
-
-inline uniform FVector4f VectorSubtract(const uniform FVector4f &A, const uniform FVector4f &B)
+template <typename T>
+inline T VectorSubtract(const T& A, const T& B)
 {
 	return A - B;
 }
@@ -2497,6 +2457,11 @@ inline FVector4 VectorMultiply(const uniform FVector4 &A, const FVector4 &B)
 	return A * B;
 }
 
+inline FVector4f VectorMultiply(const uniform FVector4f &A, const FVector4f &B)
+{
+	return A * B;
+}
+
 inline uniform FVector4d VectorMultiply(const uniform FVector4d &A, const uniform FVector4d &B)
 {
 	return A * B;
@@ -2517,22 +2482,8 @@ inline uniform FVector8 VectorMultiply(const uniform FVector8 &A, const uniform 
 	return A * B;
 }
 
-inline FVector4d VectorDivide(const FVector4d &A, const FVector4d &B)
-{
-	return A / B;
-}
-
-inline FVector4f VectorDivide(const FVector4f &A, const FVector4f &B)
-{
-	return A / B;
-}
-
-inline uniform FVector4d VectorDivide(const uniform FVector4d &A, const uniform FVector4d &B)
-{
-	return A / B;
-}
-
-inline uniform FVector4f VectorDivide(const uniform FVector4f &A, const uniform FVector4f &B)
+template <typename T>
+inline T VectorDivide(const T& A, const T& B)
 {
 	return A / B;
 }
@@ -2585,9 +2536,33 @@ inline FVector4 VectorMultiplyAdd(const uniform FVector4& A, const FVector4 &B, 
 	return Result;
 }
 
+inline FVector4f VectorMultiplyAdd(const uniform FVector4f& A, const FVector4f &B, const FVector4f &C)
+{
+	FVector4f Result;
+
+	Result.V[0] = A.V[0] * B.V[0] + C.V[0];
+	Result.V[1] = A.V[1] * B.V[1] + C.V[1];
+	Result.V[2] = A.V[2] * B.V[2] + C.V[2];
+	Result.V[3] = A.V[3] * B.V[3] + C.V[3];
+
+	return Result;
+}
+
 inline FVector4 VectorMultiplyAdd(const FReal F, const FVector4 &B, const FVector4 &C)
 {
 	FVector4 Result;
+
+	Result.V[0] = F * B.V[0] + C.V[0];
+	Result.V[1] = F * B.V[1] + C.V[1];
+	Result.V[2] = F * B.V[2] + C.V[2];
+	Result.V[3] = F * B.V[3] + C.V[3];
+
+	return Result;
+}
+
+inline FVector4f VectorMultiplyAdd(const float F, const FVector4f& B, const FVector4f& C)
+{
+	FVector4f Result;
 
 	Result.V[0] = F * B.V[0] + C.V[0];
 	Result.V[1] = F * B.V[1] + C.V[1];
@@ -2975,7 +2950,12 @@ inline uniform FReal VectorSum(const uniform FVector &V)
 	return V.V[0] + V.V[1] + V.V[2];
 }
 
-inline FReal VectorSum(const FVector &A)
+inline double VectorSum(const FVector3d &A)
+{
+	return A.V[0] + A.V[1] + A.V[2];
+}
+
+inline float VectorSum(const FVector3f &A)
 {
 	return A.V[0] + A.V[1] + A.V[2];
 }
@@ -3002,7 +2982,8 @@ inline uniform FVector4 VectorReciprocal(const uniform FVector4& V)
 	return *((uniform FVector4 *uniform)&Result);
 }
 
-inline FVector4 VectorReciprocalAccurate(const FVector4& V)
+template <typename T>
+inline T VectorReciprocalAccurate(const T& V)
 {
 	// Perform two passes of Newton-Raphson iteration on the hardware estimate
 	//   x1 = x0 - f(x0) / f'(x0)
@@ -3017,47 +2998,17 @@ inline FVector4 VectorReciprocalAccurate(const FVector4& V)
 	// => x1 = x0 - (x0 * Vec - 1) * x0 = 2 * x0 - Vec * x0^2
 
 	// Initial estimate
-	const FVector4 x0 = VectorReciprocal(V);
+	const T x0 = VectorReciprocal(V);
 
 	// First iteration
-	const FVector4 x0Squared = VectorMultiply(x0, x0);
-	const FVector4 x0Times2 = VectorAdd(x0, x0);
-	const FVector4 x1 = VectorSubtract(x0Times2, VectorMultiply(V, x0Squared));
+	const T x0Squared = VectorMultiply(x0, x0);
+	const T x0Times2 = VectorAdd(x0, x0);
+	const T x1 = VectorSubtract(x0Times2, VectorMultiply(V, x0Squared));
 
 	// Second iteration
-	const FVector4 x1Squared = VectorMultiply(x1, x1);
-	const FVector4 x1Times2 = VectorAdd(x1, x1);
-	const FVector4 x2 = VectorSubtract(x1Times2, VectorMultiply(V, x1Squared));
-
-	return x2;
-}
-
-inline uniform FVector4 VectorReciprocalAccurate(const uniform FVector4& V)
-{
-	// Perform two passes of Newton-Raphson iteration on the hardware estimate
-	//   x1 = x0 - f(x0) / f'(x0)
-	//
-	//    1 / Vec = x
-	// => x * Vec = 1
-	// => F(x) = x * Vec - 1
-	//    F'(x) = Vec
-	// => x1 = x0 - (x0 * Vec - 1) / Vec
-	//
-	// Since 1/Vec is what we're trying to solve, use an estimate for it, x0
-	// => x1 = x0 - (x0 * Vec - 1) * x0 = 2 * x0 - Vec * x0^2
-
-	// Initial estimate
-	const uniform FVector4 x0 = VectorReciprocal(V);
-
-	// First iteration
-	const uniform FVector4 x0Squared = VectorMultiply(x0, x0);
-	const uniform FVector4 x0Times2 = VectorAdd(x0, x0);
-	const uniform FVector4 x1 = VectorSubtract(x0Times2, VectorMultiply(V, x0Squared));
-
-	// Second iteration
-	const uniform FVector4 x1Squared = VectorMultiply(x1, x1);
-	const uniform FVector4 x1Times2 = VectorAdd(x1, x1);
-	const uniform FVector4 x2 = VectorSubtract(x1Times2, VectorMultiply(V, x1Squared));
+	const T x1Squared = VectorMultiply(x1, x1);
+	const T x1Times2 = VectorAdd(x1, x1);
+	const T x2 = VectorSubtract(x1Times2, VectorMultiply(V, x1Squared));
 
 	return x2;
 }
@@ -3209,27 +3160,14 @@ inline uniform FVector VectorReciprocalSqrtAccurate(const uniform FVector& V)
  * @param ElementIndex	Index (0-3) of the element to replicate
  * @return				VectorRegister( Vec[ElementIndex], Vec[ElementIndex], Vec[ElementIndex], Vec[ElementIndex] )
  */
-inline FVector4d VectorReplicate(const FVector4d &Vec, const uniform int ElementIndex)
+template<typename T>
+inline T VectorReplicate(const T& Vec, const uniform int ElementIndex)
 {
 	return SetVector4(Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex]);
 }
 
-inline FVector4f VectorReplicate(const FVector4f &Vec, const uniform int ElementIndex)
-{
-	return SetVector4(Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex]);
-}
-
-inline uniform FVector4d VectorReplicate(const uniform FVector4d &Vec, const uniform int ElementIndex)
-{
-	return SetVector4(Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex]);
-}
-
-inline uniform FVector4f VectorReplicate(const uniform FVector4f &Vec, const uniform int ElementIndex)
-{
-	return SetVector4(Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex], Vec.V[ElementIndex]);
-}
-
-inline uniform FVector8 VectorReplicate(const uniform FVector8 &Vec, const uniform int R)
+template<>
+inline uniform FVector8 VectorReplicate<uniform FVector8>(const uniform FVector8 &Vec, const uniform int R)
 {
 	return SetVector8(Vec.V[R], Vec.V[R], Vec.V[R], Vec.V[R], Vec.V[R+4], Vec.V[R+4], Vec.V[R+4], Vec.V[R+4]);
 }
@@ -3300,17 +3238,8 @@ inline uniform FVector8 VectorSwizzle(const uniform FVector8 &Vec, const uniform
  * @param W			Index for which component of Vector2 to use for W (literal 0-3)
  * @return			The swizzled vector
  */
-inline FVector4 VectorShuffle(const FVector4 &Vec1, const FVector4 &Vec2, const uniform int X, const uniform int Y, const uniform int Z, const uniform int W)
-{
-	return SetVector4(Vec1.V[X], Vec1.V[Y], Vec2.V[Z], Vec2.V[W]);
-}
-
-inline uniform FVector4d VectorShuffle(const uniform FVector4d &Vec1, const uniform FVector4d &Vec2, const uniform int X, const uniform int Y, const uniform int Z, const uniform int W)
-{
-	return SetVector4(Vec1.V[X], Vec1.V[Y], Vec2.V[Z], Vec2.V[W]);
-}
-
-inline uniform FVector4f VectorShuffle(const uniform FVector4f &Vec1, const uniform FVector4f &Vec2, const uniform int X, const uniform int Y, const uniform int Z, const uniform int W)
+template <typename T>
+inline T VectorShuffle(const T& Vec1, const T& Vec2, const uniform int X, const uniform int Y, const uniform int Z, const uniform int W)
 {
 	return SetVector4(Vec1.V[X], Vec1.V[Y], Vec2.V[Z], Vec2.V[W]);
 }
@@ -3333,6 +3262,16 @@ inline FVector4d VectorCross(const FVector4d& Vec1, const FVector4d& Vec2)
 }
 
 inline FVector4f VectorCross(const FVector4f& Vec1, const FVector4f& Vec2)
+{
+	FVector4f Tmp0 = VectorSwizzle(Vec2, 1,2,0,3);
+	FVector4f Tmp1 = VectorSwizzle(Vec1, 1,2,0,3);
+	Tmp0 = Tmp0 * Vec1;
+	Tmp1 = Tmp1 * Vec2;
+	FVector4f Tmp2 = Tmp0 - Tmp1;
+	return VectorSwizzle(Tmp2, 1,2,0,3);
+}
+
+inline FVector4f VectorCross(const uniform FVector4f& Vec1, const FVector4f& Vec2)
 {
 	FVector4f Tmp0 = VectorSwizzle(Vec2, 1,2,0,3);
 	FVector4f Tmp1 = VectorSwizzle(Vec1, 1,2,0,3);
@@ -3949,13 +3888,22 @@ inline void VectorSinCos(uniform FVector4 &VSinAngles, uniform FVector4 &VCosAng
 	VCosAngles = VectorMultiply(C, sign);
 }
 
-inline FVector4 VectorLerp(const FVector4 &A, const FVector4 &B, const FReal Alpha)
+template<>
+inline FVector4d VectorLerp<FVector4d, double>(const FVector4d& A, const FVector4d& B, const double Alpha)
 {
-	const FVector4 Delta = VectorSubtract(B, A);
+	const FVector4d Delta = VectorSubtract(B, A);
 	return VectorMultiplyAdd(Alpha, Delta, A);
 }
 
-inline uniform FVector4 VectorLerp(const uniform FVector4 &A, const uniform FVector4 &B, const uniform FReal Alpha)
+template<>
+inline FVector4f VectorLerp<FVector4f, float>(const FVector4f& A, const FVector4f& B, const float Alpha)
+{
+	const FVector4f Delta = VectorSubtract(B, A);
+	return VectorMultiplyAdd(Alpha, Delta, A);
+}
+
+template<>
+inline uniform FVector4 VectorLerp<uniform FVector4, uniform FReal>(const uniform FVector4& A, const uniform FVector4& B, const uniform FReal Alpha)
 {
 	const uniform FVector4 Delta = VectorSubtract(B, A);
 	return VectorMultiplyAdd(Alpha, Delta, A);
@@ -4050,7 +3998,8 @@ inline FVector4 VectorFloor(const FVector4 &A)
 	return SetVector4(floor(A.V[0]), floor(A.V[1]), floor(A.V[2]), floor(A.V[3]));
 }
 
-inline FVector4 VectorClamp(const FVector4 &A, const FVector4 &B, const FVector4 &C)
+template<>
+inline FVector4 VectorClamp<FVector4, FVector4>(const FVector4 &A, const FVector4 &B, const FVector4 &C)
 {
 	return SetVector4(clamp(A.V[0], B.V[0], C.V[0]),
 		clamp(A.V[1], B.V[1], C.V[1]),
@@ -4058,7 +4007,8 @@ inline FVector4 VectorClamp(const FVector4 &A, const FVector4 &B, const FVector4
 		clamp(A.V[3], B.V[3], C.V[3]));
 }
 
-inline FVector4 VectorClamp(const FVector4 &A, const uniform FVector4 &B, const uniform FVector4 &C)
+template<>
+inline FVector4 VectorClamp<FVector4, uniform FVector4>(const FVector4 &A, const uniform FVector4 &B, const uniform FVector4 &C)
 {
 	return SetVector4(clamp(A.V[0], B.V[0], C.V[0]),
 		clamp(A.V[1], B.V[1], C.V[1]),
@@ -4066,55 +4016,54 @@ inline FVector4 VectorClamp(const FVector4 &A, const uniform FVector4 &B, const 
 		clamp(A.V[3], B.V[3], C.V[3]));
 }
 
-inline uniform FVector3d VectorReduceAdd(const FVector3d& A)
+template<typename T>
+inline uniform T VectorReduceAdd(const T& A)
 {
 	return SetVector(reduce_add(A.V[0]), reduce_add(A.V[1]), reduce_add(A.V[2]));
 }
 
-inline uniform FVector3f VectorReduceAdd(const FVector3f& A)
-{
-	return SetVector(reduce_add(A.V[0]), reduce_add(A.V[1]), reduce_add(A.V[2]));
-}
-
-inline uniform FVector4 VectorReduceAdd(const FVector4& A)
+template<>
+inline uniform FVector4 VectorReduceAdd<FVector4>(const FVector4& A)
 {
 	return SetVector4(reduce_add(A.V[0]), reduce_add(A.V[1]), reduce_add(A.V[2]), reduce_add(A.V[3]));
 }
 
-inline uniform FVector3d VectorReduceMin(const FVector3d& A)
+template <typename T>
+inline uniform T VectorReduceMin(const T& A)
 {
 	return SetVector(reduce_min(A.V[0]), reduce_min(A.V[1]), reduce_min(A.V[2]));
 }
 
-inline uniform FVector3f VectorReduceMin(const FVector3f& A)
-{
-	return SetVector(reduce_min(A.V[0]), reduce_min(A.V[1]), reduce_min(A.V[2]));
-}
-
-inline uniform FVector3d VectorReduceMax(const FVector3d& A)
+template <typename T>
+inline uniform T VectorReduceMax(const T& A)
 {
 	return SetVector(reduce_max(A.V[0]), reduce_max(A.V[1]), reduce_max(A.V[2]));
 }
 
-inline uniform FVector3f VectorReduceMax(const FVector3f& A)
-{
-	return SetVector(reduce_max(A.V[0]), reduce_max(A.V[1]), reduce_max(A.V[2]));
-}
-
-inline FVector3d VectorGetSafeNormal(const FVector3d &V)
+inline FVector3d VectorGetSafeNormal(const FVector3d &V, const uniform FVector3d &ResultIfZero)
 {
 	//We want N / ||N|| and to avoid inf
 	//So we want N / ||N|| < 1 / eps => N eps < ||N||, but this is clearly true for all eps < 1 and N > 0
 	double SizeSqr = VectorSizeSquared(V);
-	return VectorSelect(SizeSqr <= DBL_MIN, DoubleForwardVector, V / sqrt(SizeSqr));
+	return VectorSelect(SizeSqr <= DBL_MIN, ResultIfZero, V / sqrt(SizeSqr));
 }
 
-inline FVector3f VectorGetSafeNormal(const FVector3f &V)
+inline FVector3f VectorGetSafeNormal(const FVector3f &V, const uniform FVector3f &ResultIfZero)
 {
 	//We want N / ||N|| and to avoid inf
 	//So we want N / ||N|| < 1 / eps => N eps < ||N||, but this is clearly true for all eps < 1 and N > 0
 	float SizeSqr = VectorSizeSquared(V);
-	return VectorSelect(SizeSqr <= FLT_MIN, FloatForwardVector, V / sqrt(SizeSqr));
+	return VectorSelect(SizeSqr <= FLT_MIN, ResultIfZero, V / sqrt(SizeSqr));
+}
+
+inline FVector3d VectorGetSafeNormal(const FVector3d &V)
+{
+	return VectorGetSafeNormal(V, DoubleForwardVector);
+}
+
+inline FVector3f VectorGetSafeNormal(const FVector3f &V)
+{
+	return VectorGetSafeNormal(V, FloatForwardVector);
 }
 
 #endif

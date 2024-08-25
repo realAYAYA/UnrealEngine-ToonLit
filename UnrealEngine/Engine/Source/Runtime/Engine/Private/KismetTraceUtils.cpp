@@ -272,27 +272,33 @@ void DrawDebugSphereTraceMulti(const UWorld* World, const FVector& Start, const 
 
 void DrawDebugCapsuleTraceSingle(const UWorld* World, const FVector& Start, const FVector& End, float Radius, float HalfHeight, EDrawDebugTrace::Type DrawDebugType, bool bHit, const FHitResult& OutHit, FLinearColor TraceColor, FLinearColor TraceHitColor, float DrawTime)
 {
+	DrawDebugCapsuleTraceSingle(World, Start, End, Radius, HalfHeight, FRotator::ZeroRotator, DrawDebugType, bHit, OutHit, TraceColor, TraceHitColor, DrawTime);
+}
+
+void DrawDebugCapsuleTraceSingle(const UWorld* World, const FVector& Start, const FVector& End, float Radius, float HalfHeight, const FRotator& Orientation, EDrawDebugTrace::Type DrawDebugType, bool bHit, const FHitResult& OutHit, FLinearColor TraceColor, FLinearColor TraceHitColor, float DrawTime)
+{
 	if (DrawDebugType != EDrawDebugTrace::None)
 	{
-		bool bPersistent = DrawDebugType == EDrawDebugTrace::Persistent;
-		float LifeTime = (DrawDebugType == EDrawDebugTrace::ForDuration) ? DrawTime : 0.f;
+		const bool bPersistent = DrawDebugType == EDrawDebugTrace::Persistent;
+		const float LifeTime = (DrawDebugType == EDrawDebugTrace::ForDuration) ? DrawTime : 0.f;
+		const FQuat OrientationQuat = Orientation.Quaternion();
 
 		if (bHit && OutHit.bBlockingHit)
 		{
 			// Red up to the blocking hit, green thereafter
-			::DrawDebugCapsule(World, Start, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
-			::DrawDebugCapsule(World, OutHit.Location, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, Start, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, OutHit.Location, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
 			::DrawDebugLine(World, Start, OutHit.Location, TraceColor.ToFColor(true), bPersistent, LifeTime);
 			::DrawDebugPoint(World, OutHit.ImpactPoint, KISMET_TRACE_DEBUG_IMPACTPOINT_SIZE, TraceColor.ToFColor(true), bPersistent, LifeTime);
 
-			::DrawDebugCapsule(World, End, HalfHeight, Radius, FQuat::Identity, TraceHitColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, End, HalfHeight, Radius, OrientationQuat, TraceHitColor.ToFColor(true), bPersistent, LifeTime);
 			::DrawDebugLine(World, OutHit.Location, End, TraceHitColor.ToFColor(true), bPersistent, LifeTime);
 		}
 		else
 		{
 			// no hit means all red
-			::DrawDebugCapsule(World, Start, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
-			::DrawDebugCapsule(World, End, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, Start, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, End, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
 			::DrawDebugLine(World, Start, End, TraceColor.ToFColor(true), bPersistent, LifeTime);
 		}
 	}
@@ -300,27 +306,33 @@ void DrawDebugCapsuleTraceSingle(const UWorld* World, const FVector& Start, cons
 
 void DrawDebugCapsuleTraceMulti(const UWorld* World, const FVector& Start, const FVector& End, float Radius, float HalfHeight, EDrawDebugTrace::Type DrawDebugType, bool bHit, const TArray<FHitResult>& OutHits, FLinearColor TraceColor, FLinearColor TraceHitColor, float DrawTime)
 {
+	DrawDebugCapsuleTraceMulti(World, Start, End, Radius, HalfHeight, FRotator::ZeroRotator, DrawDebugType, bHit, OutHits, TraceColor, TraceHitColor, DrawTime);
+}
+
+void DrawDebugCapsuleTraceMulti(const UWorld* World, const FVector& Start, const FVector& End, float Radius, float HalfHeight, const FRotator& Orientation, EDrawDebugTrace::Type DrawDebugType, bool bHit, const TArray<FHitResult>& OutHits, FLinearColor TraceColor, FLinearColor TraceHitColor, float DrawTime)
+{
 	if (DrawDebugType != EDrawDebugTrace::None)
 	{
-		bool bPersistent = DrawDebugType == EDrawDebugTrace::Persistent;
-		float LifeTime = (DrawDebugType == EDrawDebugTrace::ForDuration) ? DrawTime : 0.f;
+		const bool bPersistent = DrawDebugType == EDrawDebugTrace::Persistent;
+		const float LifeTime = (DrawDebugType == EDrawDebugTrace::ForDuration) ? DrawTime : 0.f;
+		const FQuat OrientationQuat = Orientation.Quaternion();
 
 		if (bHit && OutHits.Last().bBlockingHit)
 		{
 			// Red up to the blocking hit, green thereafter
 			FVector const BlockingHitPoint = OutHits.Last().Location;
-			::DrawDebugCapsule(World, Start, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
-			::DrawDebugCapsule(World, BlockingHitPoint, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, Start, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, BlockingHitPoint, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
 			::DrawDebugLine(World, Start, BlockingHitPoint, TraceColor.ToFColor(true), bPersistent, LifeTime);
 
-			::DrawDebugCapsule(World, End, HalfHeight, Radius, FQuat::Identity, TraceHitColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, End, HalfHeight, Radius, OrientationQuat, TraceHitColor.ToFColor(true), bPersistent, LifeTime);
 			::DrawDebugLine(World, BlockingHitPoint, End, TraceHitColor.ToFColor(true), bPersistent, LifeTime);
 		}
 		else
 		{
 			// no hit means all red
-			::DrawDebugCapsule(World, Start, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
-			::DrawDebugCapsule(World, End, HalfHeight, Radius, FQuat::Identity, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, Start, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugCapsule(World, End, HalfHeight, Radius, OrientationQuat, TraceColor.ToFColor(true), bPersistent, LifeTime);
 			::DrawDebugLine(World, Start, End, TraceColor.ToFColor(true), bPersistent, LifeTime);
 		}
 

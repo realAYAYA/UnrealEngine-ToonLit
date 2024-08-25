@@ -25,6 +25,7 @@ public:
 #if WITH_EDITORONLY_DATA
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnSettingsChange, const FPropertyChangedEvent& /*PropertyChangedEvent*/);
 #endif // WITH_EDITORONLY_DATA
+	DECLARE_MULTICAST_DELEGATE(FOnInitialized);
 
 	UMassEntitySettings(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
@@ -34,14 +35,18 @@ public:
 	TConstArrayView<FMassProcessingPhaseConfig> GetProcessingPhasesConfig();
 	const FMassProcessingPhaseConfig& GetProcessingPhaseConfig(const EMassProcessingPhase ProcessingPhase) const { check(ProcessingPhase != EMassProcessingPhase::MAX); return ProcessingPhasesConfig[int(ProcessingPhase)]; }
 
+	static FOnInitialized& GetOnInitializedEvent() { return GET_MASS_CONFIG_VALUE(OnInitializedEvent); }
 #if WITH_EDITOR
-	FOnSettingsChange& GetOnSettingsChange() { return OnSettingsChange; }	
+	FOnSettingsChange& GetOnSettingsChange() { return OnSettingsChange; }
+
+	static bool IsInitialized() { return GET_MASS_CONFIG_VALUE(bInitialized); }
 
 protected:
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual void PostEditChangeChainProperty(struct FPropertyChangedChainEvent& PropertyChangedEvent) override;
 #endif // WITH_EDITOR
 
+	virtual void PostInitProperties() override;
 	virtual void BeginDestroy() override;
 
 	void OnPostEngineInit();
@@ -49,7 +54,10 @@ protected:
 	void BuildProcessorList();
 
 public:
-	/** 
+	UPROPERTY(EditDefaultsOnly, Category = Mass, config, AdvancedDisplay)
+	int32 ChunkMemorySize = 128 * 1024;
+
+	/**
 	 * The name of the file to dump the processor dependency graph. T
 	 * The dot file will be put in the project log folder.
 	 * To generate a svg out of that file, simply run dot executable with following parameters: -Tsvg -O filename.dot 
@@ -71,4 +79,6 @@ protected:
 #endif // WITH_EDITORONLY_DATA
 	bool bInitialized = false;
 	bool bEngineInitialized = false;
+
+	FOnInitialized OnInitializedEvent;
 };

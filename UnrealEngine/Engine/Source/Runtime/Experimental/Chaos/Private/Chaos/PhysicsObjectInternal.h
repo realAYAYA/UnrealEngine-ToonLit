@@ -70,7 +70,7 @@ namespace Chaos
 				FGeometryCollectionPhysicsProxy* GeometryCollectionProxy = static_cast<FGeometryCollectionPhysicsProxy*>(Proxy);
 				FGeometryDynamicCollection& Collection = GetGeometryCollectionDynamicCollection<Id>(*GeometryCollectionProxy);
 
-				if (int32 Index = Collection.Parent[BodyIndex]; Index != INDEX_NONE)
+				if (int32 Index = Collection.GetParent(BodyIndex); Index != INDEX_NONE)
 				{
 					return GeometryCollectionProxy->GetPhysicsObjectByIndex(Index);
 				}
@@ -173,7 +173,7 @@ namespace Chaos
 			case EPhysicsProxyType::GeometryCollectionType:
 			{
 				FGeometryDynamicCollection& Collection = GetGeometryCollectionDynamicCollection<Id>(*static_cast<FGeometryCollectionPhysicsProxy*>(Proxy));
-				return !Collection.Children[BodyIndex].IsEmpty();
+				return Collection.HasChildren(BodyIndex);
 			}
 			case EPhysicsProxyType::ClusterUnionProxy:
 			{

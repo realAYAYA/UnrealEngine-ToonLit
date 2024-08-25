@@ -10,9 +10,18 @@ class FSlatePostProcessResource;
 class IRendererModule;
 struct IPooledRenderTarget;
 
+enum class EPostProcessDestination : uint8
+{
+	// Output postprocess to the default UI render target
+	UITarget,
+	// Output postprocess to the provided destination texture
+	DestTexture
+};
+
 struct FPostProcessRectParams
 {
 	FTextureRHIRef SourceTexture;
+	FTextureRHIRef DestTexture; // Only used when 'PostProcessDest' is 'DestTexture'
 	FSlateRect SourceRect;
 	FSlateRect DestRect;
 	FVector4f CornerRadius;
@@ -21,6 +30,7 @@ struct FPostProcessRectParams
 	TRefCountPtr<IPooledRenderTarget> UITarget; // not using FTextureRHIRef because we want to be able to use FRenderTargetWriteMask::Decode
 	uint32 StencilRef{};
 	EDisplayColorGamut HDRDisplayColorGamut;
+	EPostProcessDestination PostProcessDest = EPostProcessDestination::UITarget;
 };
 
 struct FBlurRectParams
@@ -41,6 +51,7 @@ public:
 	void ColorDeficiency(FRHICommandListImmediate& RHICmdList, IRendererModule& RendererModule, const FPostProcessRectParams& RectParams);
 	
 	void ReleaseRenderTargets();
+	void TickPostProcessResources();
 
 private:
 	void DownsampleRect(FRHICommandListImmediate& RHICmdList, IRendererModule& RendererModule, const FPostProcessRectParams& Params, const FIntPoint& DownsampleSize, FSlatePostProcessResource* IntermediateTargets);

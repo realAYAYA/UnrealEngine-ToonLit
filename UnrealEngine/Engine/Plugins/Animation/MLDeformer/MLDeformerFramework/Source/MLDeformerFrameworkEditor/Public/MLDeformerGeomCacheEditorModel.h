@@ -27,13 +27,14 @@ namespace UE::MLDeformer
 		// ~END FGCObject overrides.
 
 		// FMLDeformerEditorModel overrides.
+		virtual void Init(const InitSettings& Settings) override;
 		virtual FMLDeformerEditorActor* CreateEditorActor(const FMLDeformerEditorActor::FConstructSettings& Settings) const override;
-		virtual FMLDeformerSampler* CreateSampler() const override;
+		virtual TSharedPtr<FMLDeformerSampler> CreateSamplerObject() const override;
 		virtual void CreateTrainingGroundTruthActor(UWorld* World) override;
 		virtual void CreateTestGroundTruthActor(UWorld* World) override;
-		virtual int32 GetNumTrainingFrames() const override;
-		virtual double GetTestTimeAtFrame(int32 FrameNumber) const override;
-		virtual int32 GetTestFrameAtTime(double TimeInSeconds) const override;
+		virtual int32 GetNumTrainingInputAnims() const override;
+		virtual FMLDeformerTrainingInputAnim* GetTrainingInputAnim(int32 Index) const override;
+		virtual void UpdateNumTrainingFrames() override;
 		virtual void UpdateIsReadyForTrainingState() override;
 		virtual void OnPropertyChanged(FPropertyChangedEvent& PropertyChangedEvent) override;
 		virtual void OnInputAssetsChanged() override;
@@ -42,10 +43,14 @@ namespace UE::MLDeformer
 		// ~END FMLDeformerEditorModel overrides.
 		
 		// Helpers.
-		FMLDeformerGeomCacheSampler* GetGeomCacheSampler() const;
+		UE_DEPRECATED(5.4, "Please use GetSamplerForTrainingAnim() or GetSamplerForActiveAnim() instead and cast those manually.")
+		FMLDeformerGeomCacheSampler* GetGeomCacheSampler() const { return nullptr; }
+
 		UMLDeformerGeomCacheModel* GetGeomCacheModel() const;
 		UMLDeformerGeomCacheVizSettings* GetGeomCacheVizSettings() const;
 		FMLDeformerGeomCacheActor* FindGeomCacheEditorActor(int32 ID) const;
+		UGeometryCache* GetActiveGeometryCache() const;
+
 
 	protected:
 		/**

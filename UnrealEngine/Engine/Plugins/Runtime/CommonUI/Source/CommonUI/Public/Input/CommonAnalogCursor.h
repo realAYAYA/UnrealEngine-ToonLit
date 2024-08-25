@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Engine/EngineBaseTypes.h"
 #include "Framework/Application/AnalogCursor.h"
 #include "InputCoreTypes.h"
 #include "Rendering/SlateRenderTransform.h"
@@ -51,6 +52,8 @@ public:
 	virtual void ShouldHandleRightAnalog(bool bInShouldHandleRightAnalog);
 
 	virtual bool IsAnalogMovementEnabled() const { return bIsAnalogMovementEnabled; }
+
+	virtual bool ShouldVirtualAcceptSimulateMouseButton(const FKeyEvent& InKeyEvent, EInputEvent InputEvent) const { return true; }
 
 protected:
 	FCommonAnalogCursor(const UCommonUIActionRouterBase& InActionRouter);

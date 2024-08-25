@@ -443,7 +443,7 @@ void FUVEditorToolkit::PostInitAssetEditor()
 
 	// TODO: get these when possible (from level editor selection, for instance), and set them to something reasonable otherwise.
 	TArray<FTransform> ObjectTransforms;
-	ObjectTransforms.SetNum(ObjectsToEdit.Num());
+	Cast<UUVEditor>(OwningAssetEditor)->GetWorldspaceRelativeTransforms(ObjectTransforms);
 
 	// This static method call initializes the variety of contexts that UVEditorMode needs to be available in
 	// the context store on Enter() to function properly.

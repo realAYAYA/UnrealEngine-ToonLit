@@ -192,6 +192,11 @@ namespace FixedTagPrivate
 		return FTextStringHelper::CreateFromBuffer(*String);
 	}
 
+	int64 FMarshalledText::GetResourceSize() const
+	{
+		return String.GetAllocatedSize();
+	}
+
 	int32 FMarshalledText::CompareToCaseIgnored(const FMarshalledText& Other) const
 	{
 		return String.Compare(Other.String);
@@ -432,6 +437,27 @@ namespace FixedTagPrivate
 		check(false);
 		return FString();
 	}
+
+	int64 FValueHandle::GetResourceSize() const
+	{
+		FStore& Store = GStores[StoreIndex];
+		uint32 Index = Id.Index;
+
+		switch (Id.Type)
+		{
+		case EValueType::AnsiString:			return TCString<ANSICHAR>::Strlen(Store.GetAnsiString(Index))*sizeof(ANSICHAR);
+		case EValueType::WideString:			return TCString<WIDECHAR>::Strlen(Store.GetWideString(Index))*sizeof(WIDECHAR);
+		case EValueType::NumberlessName:		return sizeof(FDisplayNameEntryId);
+		case EValueType::Name:					return sizeof(FName);
+		case EValueType::NumberlessExportPath:	return sizeof(FNumberlessExportPath);
+		case EValueType::ExportPath:			return sizeof(FAssetRegistryExportPath);
+		case EValueType::LocalizedText:			return sizeof(Store.Texts[Index]) + Store.Texts[Index].GetResourceSize();
+		}
+
+		check(false);
+		return 0;
+	}
+
 
 	FString	FValueHandle::AsDisplayString() const
 	{
@@ -1377,6 +1403,11 @@ FString FAssetTagValueRef::ToLoose() const
 	return IsFixed() ? AsFixed().AsStorageString() : AsLoose();
 }
 
+int64 FAssetTagValueRef::GetResourceSize() const
+{
+	return IsFixed() ? AsFixed().GetResourceSize() : AsLoose().GetAllocatedSize();
+}
+
 bool FAssetTagValueRef::TryGetAsMarshalledText(FixedTagPrivate::FMarshalledText& Out) const
 {
 	if (IsFixed())
@@ -1416,7 +1447,7 @@ FAssetDataTagMapSharedView::FAssetDataTagMapSharedView(const FAssetDataTagMapSha
 	}
 	else if (IsLoose())
 	{
-		Loose->RefCount.Increment();
+		Loose->RefCount.Increment(); //-V614
 	}
 }
 
@@ -1607,7 +1638,7 @@ SIZE_T FAssetDataTagMapSharedView::FMemoryCounter::GetFixedSize() const
 #include "Misc/AutomationTest.h"
 #include "Serialization/MemoryReader.h"
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRegistryExportPathTest, "Engine.AssetRegistry.ExportPath", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRegistryExportPathTest, "System.AssetRegistry.ExportPath", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
 
 bool FAssetRegistryExportPathTest::RunTest(const FString& Parameters)
 {
@@ -1625,7 +1656,7 @@ bool FAssetRegistryExportPathTest::RunTest(const FString& Parameters)
 namespace FixedTagPrivate
 {
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompactExportPathTest, "Engine.AssetRegistry.FixedTag.NumberlessExportPath", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompactExportPathTest, "System.AssetRegistry.FixedTag.NumberlessExportPath", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
 
 bool FCompactExportPathTest::RunTest(const FString& Parameters)
 {
@@ -1637,7 +1668,7 @@ bool FCompactExportPathTest::RunTest(const FString& Parameters)
 }
 
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStoreTest, "Engine.AssetRegistry.FixedTag.Store", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStoreTest, "System.AssetRegistry.FixedTag.Store", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
 
 static TRefCountPtr<const FStore> MakeTestStore(FStoreData& Data)
 {

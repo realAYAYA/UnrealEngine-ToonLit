@@ -20,7 +20,7 @@ class UTypedElementSlateWidgetReferenceColumnUpdateFactory : public UTypedElemen
 public:
 	~UTypedElementSlateWidgetReferenceColumnUpdateFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
+	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) override;
 
 private:
 	void RegisterDeleteRowOnWidgetDeleteQuery(ITypedElementDataStorageInterface& DataStorage) const;

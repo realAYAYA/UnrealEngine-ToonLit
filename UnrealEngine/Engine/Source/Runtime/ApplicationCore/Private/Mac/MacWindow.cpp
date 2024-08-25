@@ -176,11 +176,8 @@ void FMacWindow::Initialize( FMacApplication* const Application, const TSharedRe
 				{
 					[WindowHandle setCollectionBehavior: NSWindowCollectionBehaviorFullScreenAuxiliary|NSWindowCollectionBehaviorDefault|NSWindowCollectionBehaviorManaged|NSWindowCollectionBehaviorParticipatesInCycle];
 
-					if (!FPlatformMisc::IsRunningOnMavericks())
-					{
-						WindowHandle.titlebarAppearsTransparent = YES;
-						WindowHandle.titleVisibility = NSWindowTitleHidden;
-					}
+					WindowHandle.titlebarAppearsTransparent = YES;
+					WindowHandle.titleVisibility = NSWindowTitleHidden;
 				}
 
 				SetText(*Definition->Title);

@@ -115,7 +115,7 @@ void FDelinquencyAnalytics::Add(FDelinquencyNameTimePair&& ToTrack)
 						// We found our entry, so we're done.
 						else if (TopOffenders[MaybeOurEntry].Name == AlreadyTracked->Name)
 						{
-							TopOffenders.RemoveAt(MaybeOurEntry, 1, false);
+							TopOffenders.RemoveAt(MaybeOurEntry, 1, EAllowShrinking::No);
 							break;
 						}
 
@@ -136,7 +136,7 @@ void FDelinquencyAnalytics::Add(FDelinquencyNameTimePair&& ToTrack)
 			// If we're going to displace a previous top offender, remove the least offensive.
 			if (LocalNumberOfTopOffendersToTrack == TopOffenders.Num())
 			{
-				TopOffenders.RemoveAt(TopOffenders.Num() - 1, 1, false);
+				TopOffenders.RemoveAt(TopOffenders.Num() - 1, 1, EAllowShrinking::No);
 			}
 
 			TopOffenders.InsertUninitialized(InsertAt, 1);

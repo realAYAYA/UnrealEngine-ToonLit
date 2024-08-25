@@ -953,16 +953,16 @@ namespace ChaosTest {
 	
 	void ImplicitScaled()
 	{
-		TUniquePtr<TBox<FReal, 3>> UnitCube = MakeUnique<TBox<FReal, 3>>(FVec3(-1), FVec3(1));
-		TImplicitObjectScaled<TBox<FReal,3>> UnitUnscaled(MakeSerializable(UnitCube), nullptr, FVec3(1));
+		FBoxPtr UnitCube( new TBox<FReal, 3>(FVec3(-1), FVec3(1)));
+		TImplicitObjectScaled<TBox<FReal,3>> UnitUnscaled(UnitCube, FVec3(1));
 		UnitImplicitObjectNormalsInternal(UnitUnscaled, FString("ImplicitTransformed()"));
 		UnitImplicitObjectNormalsExternal(UnitUnscaled, FString("ImplicitTransformed()"));
 		UnitImplicitObjectIntersections(UnitUnscaled, FString("ImplicitTransformed()"));
 
-		TUniquePtr<TSphere<FReal, 3>> Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(3, 0, 0), 5);
-		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(MakeSerializable(Sphere), nullptr, FVec3(1));
-		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScale(MakeSerializable(Sphere), nullptr, FVec3(2));
-		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScale(MakeSerializable(Sphere), nullptr, FVec3(2, 1, 1));
+		FSpherePtr Sphere( new TSphere<FReal, 3>(FVec3(3, 0, 0), 5));
+		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(Sphere, FVec3(1));
+		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScale(Sphere, FVec3(2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScale(Sphere, FVec3(2, 1, 1));
 
 		{//phi
 			const FVec3 NearEdge(7.5, 0, 0);
@@ -1192,14 +1192,14 @@ namespace ChaosTest {
 	{
 		FRigidTransform3 Identity(FVec3(0), FQuat::Identity);
 		
-		TUniquePtr<TBox<FReal, 3>> UnitCube = MakeUnique<TBox<FReal, 3>>(FVec3(-1), FVec3(1));
-		TImplicitObjectTransformed<FReal, 3> UnitUnrotated(MakeSerializable(UnitCube), FRigidTransform3(FVec3(0), FQuat::Identity));
+		FImplicitObjectPtr UnitCube = MakeImplicitObjectPtr<TBox<FReal, 3>>(FVec3(-1), FVec3(1));
+		TImplicitObjectTransformed<FReal, 3> UnitUnrotated(UnitCube, FRigidTransform3(FVec3(0), FQuat::Identity));
 		UnitImplicitObjectNormalsInternal(UnitUnrotated, FString("ImplicitTransformed()"));
 		UnitImplicitObjectNormalsExternal(UnitUnrotated, FString("ImplicitTransformed()"));
 		UnitImplicitObjectIntersections(UnitUnrotated, FString("ImplicitTransformed()"));
 		
 		// Rotate 45 degrees around z axis @ origin.
-		TImplicitObjectTransformed<FReal, 3> UnitRotated(MakeSerializable(UnitCube), FRigidTransform3(FVec3(0), FQuat(0, 0, sin(.3927), cos(.3927))));
+		TImplicitObjectTransformed<FReal, 3> UnitRotated(UnitCube, FRigidTransform3(FVec3(0), FQuat(0, 0, sin(.3927), cos(.3927))));
 		
 		{// unit rotated normals
 			FVec3 Normal;
@@ -1213,14 +1213,14 @@ namespace ChaosTest {
 			EXPECT_VECTOR_NEAR_DEFAULT(Normal, FVec3(-sqrt(2) / 2., -sqrt(2) / 2., 0));
 		}
 
-		TUniquePtr<TBox<FReal, 3>> Cube = MakeUnique<TBox<FReal, 3>>(FVec3(-2, -5, -5), FVec3(8, 5, 5));
-		TImplicitObjectTransformed<FReal, 3> Untransformed(MakeSerializable(Cube), FRigidTransform3(FVec3(0), FQuat::Identity));
-		TImplicitObjectTransformed<FReal, 3> Translated(MakeSerializable(Cube), FRigidTransform3(FVec3(4, 0, 0), FQuat::Identity));
+		FImplicitObjectPtr Cube = MakeImplicitObjectPtr<TBox<FReal, 3>>(FVec3(-2, -5, -5), FVec3(8, 5, 5));
+		TImplicitObjectTransformed<FReal, 3> Untransformed(Cube, FRigidTransform3(FVec3(0), FQuat::Identity));
+		TImplicitObjectTransformed<FReal, 3> Translated(Cube, FRigidTransform3(FVec3(4, 0, 0), FQuat::Identity));
 		
 		// Rotate 90 degrees around z axis @ origin. 
 		FReal rad_45 = FMath::DegreesToRadians(45);
-		TImplicitObjectTransformed<FReal, 3> Rotated(MakeSerializable(Cube), FRigidTransform3(FVec3(0), FQuat(0, 0, sin(rad_45), cos(rad_45))));
-		TImplicitObjectTransformed<FReal, 3> Transformed(MakeSerializable(Cube), FRigidTransform3(FVec3(4, 0, 0), FQuat(0, 0, sin(rad_45), cos(rad_45))));
+		TImplicitObjectTransformed<FReal, 3> Rotated(Cube, FRigidTransform3(FVec3(0), FQuat(0, 0, sin(rad_45), cos(rad_45))));
+		TImplicitObjectTransformed<FReal, 3> Transformed(Cube, FRigidTransform3(FVec3(4, 0, 0), FQuat(0, 0, sin(rad_45), cos(rad_45))));
 
 		{// phi
 			const FVec3 NearEdge(7.5, 0, 0);
@@ -1313,9 +1313,9 @@ namespace ChaosTest {
 		FString Caller("ImplicitIntersection()");
 
 		// Two cylinders intersected to make a unit cylinder.
-		TArray<TUniquePtr<FImplicitObject>> Objects;
-		Objects.Add(MakeUnique<FCylinder>(FVec3(0, 0, 2), FVec3(0, 0, -1), 1));
-		Objects.Add(MakeUnique<FCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -2), 1));
+		TArray<Chaos::FImplicitObjectPtr> Objects;
+		Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 2), FVec3(0, 0, -1), 1));
+		Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -2), 1));
 
 		TImplicitObjectIntersection<FReal, 3> MIntersectedObjects(std::move(Objects));
 
@@ -1345,9 +1345,9 @@ namespace ChaosTest {
 			EXPECT_FALSE(Result.Second);
 		}
 
-		TArray<TUniquePtr<FImplicitObject>> Objects2;
-		Objects2.Add(MakeUnique<FCylinder>(FVec3(4, 4, 6), FVec3(4, 4, 3), 1));
-		Objects2.Add(MakeUnique<FCylinder>(FVec3(4, 4, 5), FVec3(4, 4, 2), 1));
+		TArray<Chaos::FImplicitObjectPtr> Objects2;
+		Objects2.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(4, 4, 6), FVec3(4, 4, 3), 1));
+		Objects2.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(4, 4, 5), FVec3(4, 4, 2), 1));
 
 		TImplicitObjectIntersection<FReal, 3> MIntersectedObjects2(std::move(Objects2));
 		
@@ -1377,13 +1377,13 @@ namespace ChaosTest {
 	void ImplicitUnion()
 	{
 		FString Caller("ImplicitUnion()");
-		TUniquePtr<FImplicitObjectUnion> MUnionedObjects;
+		FImplicitObjectUnionPtr MUnionedObjects;
 
 		{// unit cylinder - sanity check
-			TArray<TUniquePtr<FImplicitObject>> Objects;
-			Objects.Add(MakeUnique<FCylinder>(FVec3(0, 0, 1), FVec3(0), 1));
-			Objects.Add(MakeUnique<FCylinder>(FVec3(0, 0, -1), FVec3(0), 1));
-			MUnionedObjects.Reset(new Chaos::FImplicitObjectUnion(std::move(Objects)));
+			TArray<Chaos::FImplicitObjectPtr> Objects;
+			Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 1), FVec3(0), 1));
+			Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, -1), FVec3(0), 1));
+			MUnionedObjects = FImplicitObjectUnionPtr(new Chaos::FImplicitObjectUnion(std::move(Objects)));
 
 			// Can't use the default internal unit tests because they expect different behavior internally where the two cylinders are joined together. 
 			EXPECT_VECTOR_NEAR(MUnionedObjects->Normal(FVec3(0, 0, 2 / 3.)), (FVec3(0, 0, 1)), KINDA_SMALL_NUMBER);
@@ -1405,10 +1405,10 @@ namespace ChaosTest {
 			TestFindClosestIntersection(*MUnionedObjects, FVec3(0, 0, -5 / 4.), FVec3(0, 0, -1), Caller);
 		}
 
-		TArray<TUniquePtr<FImplicitObject>> Objects;
-		Objects.Add(MakeUnique<FCylinder>(FVec3(0, 0, -2), FVec3(0, 0, 2), 1));
-		Objects.Add(MakeUnique<FCylinder>(FVec3(0, -2, 0), FVec3(0, 2, 0), 1));
-		MUnionedObjects.Reset(new Chaos::FImplicitObjectUnion(std::move(Objects)));
+		TArray<Chaos::FImplicitObjectPtr> Objects;
+		Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, -2), FVec3(0, 0, 2), 1));
+		Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, -2, 0), FVec3(0, 2, 0), 1));
+		MUnionedObjects = FImplicitObjectUnionPtr(new Chaos::FImplicitObjectUnion(std::move(Objects)));
 
 		{// closest point near origin (+)
 			EXPECT_NEAR(MUnionedObjects->SignedDistance(FVec3(0, 0, 9 / 4.)), 1 / 4., KINDA_SMALL_NUMBER);
@@ -1430,10 +1430,10 @@ namespace ChaosTest {
 			TestFindClosestIntersection(*MUnionedObjects, FVec3(-1 / 2., 0, 0), FVec3(-1, 0, 0), Caller);
 		}
 		
-		TArray<TUniquePtr<FImplicitObject>> Objects2;
-		Objects2.Add(MakeUnique<FCylinder>(FVec3(4, 4, 2), FVec3(4, 4, 6), 1));
-		Objects2.Add(MakeUnique<FCylinder>(FVec3(4, 2, 4), FVec3(4, 6, 4), 1));
-		MUnionedObjects.Reset(new Chaos::FImplicitObjectUnion(std::move(Objects2)));
+		TArray<Chaos::FImplicitObjectPtr> Objects2;
+		Objects2.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(4, 4, 2), FVec3(4, 4, 6), 1));
+		Objects2.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(4, 2, 4), FVec3(4, 6, 4), 1));
+		MUnionedObjects = FImplicitObjectUnionPtr(new Chaos::FImplicitObjectUnion(std::move(Objects2)));
 
 		{// closest point off origin (+)
 			EXPECT_NEAR(MUnionedObjects->SignedDistance(FVec3(4, 4, 4 + 9 / 4.)), 1 / 4., KINDA_SMALL_NUMBER);
@@ -1458,10 +1458,10 @@ namespace ChaosTest {
 		/* Nested Unions */
 		
 		{// Union of unions (capsule)
-			TArray<TUniquePtr<FImplicitObject>> Unions;
-			Unions.Add(MakeUnique<FCapsule>(FVec3(0, 0, 0), FVec3(0, 0, -2), 1));
-			Unions.Add(MakeUnique<FCapsule>(FVec3(0, 0, 0), FVec3(0, 0, 2), 1));
-			MUnionedObjects.Reset(new Chaos::FImplicitObjectUnion(std::move(Unions)));
+			TArray<Chaos::FImplicitObjectPtr> Unions;
+			Unions.Add(MakeImplicitObjectPtr<FCapsule>(FVec3(0, 0, 0), FVec3(0, 0, -2), 1));
+			Unions.Add(MakeImplicitObjectPtr<FCapsule>(FVec3(0, 0, 0), FVec3(0, 0, 2), 1));
+			MUnionedObjects = FImplicitObjectUnionPtr(new Chaos::FImplicitObjectUnion(std::move(Unions)));
 
 			EXPECT_VECTOR_NEAR(MUnionedObjects->Normal(FVec3(0, 0, 7 / 3.)), (FVec3(0, 0, 1)), KINDA_SMALL_NUMBER);
 			EXPECT_VECTOR_NEAR(MUnionedObjects->Normal(FVec3(0, 0, -7 / 3.)), (FVec3(0, 0, -1)), KINDA_SMALL_NUMBER);
@@ -1476,16 +1476,15 @@ namespace ChaosTest {
 		}
 
 		{// Union of a union containing all the unit geometries overlapping - should still pass all the normal unit tests. 
-			TArray<TUniquePtr<FImplicitObject>> Objects1;
-			Objects1.Add(MakeUnique<FCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1));
-			Objects1.Add(MakeUnique<TSphere<FReal, 3>>(FVec3(0, 0, 0), 1));
-			Objects1.Add(MakeUnique<TBox<FReal, 3>>(FVec3(-1, -1, -1), FVec3(1, 1, 1)));
-			Objects1.Add(MakeUnique<FTaperedCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1, 1));
+			TArray<Chaos::FImplicitObjectPtr> Objects1;
+			Objects1.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1));
+			Objects1.Add(MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0, 0, 0), 1));
+			Objects1.Add(MakeImplicitObjectPtr<TBox<FReal, 3>>(FVec3(-1, -1, -1), FVec3(1, 1, 1)));
+			Objects1.Add(MakeImplicitObjectPtr<FTaperedCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1, 1));
 
-			TArray<TUniquePtr<FImplicitObject>> Unions;
+			TArray<Chaos::FImplicitObjectPtr> Unions;
 			Unions.Emplace(new FImplicitObjectUnion(MoveTemp(Objects1)));
-			TUniquePtr<FImplicitObjectUnion> UnionedUnions;
-			UnionedUnions.Reset(new Chaos::FImplicitObjectUnion(std::move(Unions)));
+			FImplicitObjectUnionPtr UnionedUnions(new Chaos::FImplicitObjectUnion(std::move(Unions)));
 
 			UnitImplicitObjectNormalsExternal(*UnionedUnions, FString("ImplicitUnion() - nested union unit cylinder 1"));
 			UnitImplicitObjectNormalsInternal(*UnionedUnions, FString("ImplicitUnion() - nested union unit cylinder 1"));
@@ -1493,18 +1492,17 @@ namespace ChaosTest {
 		}
 
 		{// Union of two unions, each with two unit objects
-			TArray<TUniquePtr<FImplicitObject>> ObjectsA;
-			TArray<TUniquePtr<FImplicitObject>> ObjectsB;
-			ObjectsA.Add(MakeUnique<FCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1));
-			ObjectsA.Add(MakeUnique<TSphere<FReal, 3>>(FVec3(0, 0, 0), 1));
-			ObjectsB.Add(MakeUnique<TBox<FReal, 3>>(FVec3(-1, -1, -1), FVec3(1, 1, 1)));
-			ObjectsB.Add(MakeUnique<FTaperedCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1, 1));
+			TArray<Chaos::FImplicitObjectPtr> ObjectsA;
+			TArray<Chaos::FImplicitObjectPtr> ObjectsB;
+			ObjectsA.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1));
+			ObjectsA.Add(MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0, 0, 0), 1));
+			ObjectsB.Add(MakeImplicitObjectPtr<TBox<FReal, 3>>(FVec3(-1, -1, -1), FVec3(1, 1, 1)));
+			ObjectsB.Add(MakeImplicitObjectPtr<FTaperedCylinder>(FVec3(0, 0, 1), FVec3(0, 0, -1), 1, 1));
 
-			TArray<TUniquePtr<FImplicitObject>> Unions;
+			TArray<Chaos::FImplicitObjectPtr> Unions;
 			Unions.Emplace(new FImplicitObjectUnion(MoveTemp(ObjectsA)));
 			Unions.Emplace(new FImplicitObjectUnion(MoveTemp(ObjectsB)));
-			TUniquePtr<FImplicitObjectUnion> UnionedUnions;
-			UnionedUnions.Reset(new Chaos::FImplicitObjectUnion(std::move(Unions)));
+			FImplicitObjectUnionPtr UnionedUnions(new Chaos::FImplicitObjectUnion(std::move(Unions)));
 
 			UnitImplicitObjectNormalsExternal(*UnionedUnions, FString("ImplicitUnion() - nested union unit sphere 1"));
 			UnitImplicitObjectNormalsInternal(*UnionedUnions, FString("ImplicitUnion() - nested union unit sphere 1"));
@@ -1512,15 +1510,14 @@ namespace ChaosTest {
 		}
 
 		{// Mimic a unit cylinder, but made up of multiple unions. 
-			TArray<TUniquePtr<FImplicitObject>> ObjectsA;
-			TArray<TUniquePtr<FImplicitObject>> ObjectsB;
-			ObjectsA.Add(MakeUnique<FCylinder>(FVec3(0, 0, 0), FVec3(0, 0, -1), 1));
-			ObjectsB.Add(MakeUnique<FCylinder>(FVec3(0, 0, 0), FVec3(0, 0, 1), 1));
-			TArray<TUniquePtr<FImplicitObject>> Unions;
+			TArray<Chaos::FImplicitObjectPtr> ObjectsA;
+			TArray<Chaos::FImplicitObjectPtr> ObjectsB;
+			ObjectsA.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 0), FVec3(0, 0, -1), 1));
+			ObjectsB.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 0), FVec3(0, 0, 1), 1));
+			TArray<Chaos::FImplicitObjectPtr> Unions;
 			Unions.Emplace(new FImplicitObjectUnion(MoveTemp(ObjectsA)));
 			Unions.Emplace(new FImplicitObjectUnion(MoveTemp(ObjectsB)));
-			TUniquePtr<FImplicitObjectUnion> UnionedUnions;
-			UnionedUnions.Reset(new Chaos::FImplicitObjectUnion(std::move(Unions)));
+			FImplicitObjectUnionPtr UnionedUnions(new Chaos::FImplicitObjectUnion(std::move(Unions)));
 
 			UnitImplicitObjectNormalsExternal(*UnionedUnions, FString("ImplicitUnion() - nested union unit cylinder 2"));
 
@@ -1612,10 +1609,10 @@ namespace ChaosTest {
 
 		void RasterizationImplicit()
 	{
-		TUniquePtr<TBox<FReal, 3>> Box(new TBox<FReal,3>(FVec3(-0.5, -0.5, -0.5), FVec3(0.5, 0.5, 0.5)));
-		TArray<TUniquePtr<FImplicitObject>> Objects;
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(Box), FRigidTransform3(FVec3(0.5, 0, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(Box), FRigidTransform3(FVec3(-0.5, 0, 0), FRotation3::FromVector(FVec3(0))))));
+		FImplicitObjectPtr Box(new TBox<FReal,3>(FVec3(-0.5, -0.5, -0.5), FVec3(0.5, 0.5, 0.5)));
+		TArray<Chaos::FImplicitObjectPtr> Objects;
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(0.5, 0, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(-0.5, 0, 0), FRotation3::FromVector(FVec3(0)))));
 		FImplicitObjectUnion Union(MoveTemp(Objects));
 		FErrorReporter ErrorReporter;
 		// This one should be exactly right as we don't actually do an fast marching interior to the region
@@ -1675,17 +1672,16 @@ namespace ChaosTest {
 
 	void RasterizationImplicitWithHole()
 	{
-		TUniquePtr<TBox<FReal, 3>> Box(new TBox<FReal, 3>(FVec3(-0.5, -0.5, -0.5), FVec3(0.5, 0.5, 0.5)));
-		TSerializablePtr<TBox<FReal, 3>> SerializableBox(Box);
-		TArray<TUniquePtr<FImplicitObject>> Objects;
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(1, 1, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(0, 1, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(-1, 1, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(1, 0, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(-1, 0, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(1, -1, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(0, -1, 0), FRotation3::FromVector(FVec3(0))))));
-		Objects.Add(TUniquePtr<FImplicitObject>(new TImplicitObjectTransformed<FReal, 3>(SerializableBox, FRigidTransform3(FVec3(-1, -1, 0), FRotation3::FromVector(FVec3(0))))));
+		FImplicitObjectPtr Box(new TBox<FReal, 3>(FVec3(-0.5, -0.5, -0.5), FVec3(0.5, 0.5, 0.5)));
+		TArray<Chaos::FImplicitObjectPtr> Objects;
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(1, 1, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(0, 1, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(-1, 1, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(1, 0, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(-1, 0, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(1, -1, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(0, -1, 0), FRotation3::FromVector(FVec3(0)))));
+		Objects.Add(MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(Box, FRigidTransform3(FVec3(-1, -1, 0), FRotation3::FromVector(FVec3(0)))));
 		FImplicitObjectUnion Union(MoveTemp(Objects));
 		{
 			TUniformGrid<FReal, 3> Grid(FVec3(-1.6, -1.6, -0.6), FVec3(1.6, 1.6, 0.6), TVec3<int32>(32, 32, 12));
@@ -1709,15 +1705,15 @@ namespace ChaosTest {
 		{
 			FParticles Particles;
 			Particles.AddParticles(9);
-			Particles.X(0) = FVec3(-1, -1, -1);
-			Particles.X(1) = FVec3(-1, -1, 1);
-			Particles.X(2) = FVec3(-1, 1, -1);
-			Particles.X(3) = FVec3(-1, 1, 1);
-			Particles.X(4) = FVec3(1, -1, -1);
-			Particles.X(5) = FVec3(1, -1, 1);
-			Particles.X(6) = FVec3(1, 1, -1);
-			Particles.X(7) = FVec3(1, 1, 1);
-			Particles.X(8) = FVec3(0, 0, 0);
+			Particles.SetX(0, FVec3(-1, -1, -1));
+			Particles.SetX(1, FVec3(-1, -1, 1));
+			Particles.SetX(2, FVec3(-1, 1, -1));
+			Particles.SetX(3, FVec3(-1, 1, 1));
+			Particles.SetX(4, FVec3(1, -1, -1));
+			Particles.SetX(5, FVec3(1, -1, 1));
+			Particles.SetX(6, FVec3(1, 1, -1));
+			Particles.SetX(7, FVec3(1, 1, 1));
+			Particles.SetX(8, FVec3(0, 0, 0));
 			const FTriangleMesh TriMesh = FTriangleMesh::GetConvexHullFromParticles(Particles);
 			EXPECT_EQ(TriMesh.GetSurfaceElements().Num(), 12);
 			for (const auto& Tri : TriMesh.GetSurfaceElements())
@@ -1731,7 +1727,7 @@ namespace ChaosTest {
 			Vertices.SetNum((int32)Particles.Size());
 			for (int32 VertexIndex = 0; VertexIndex < (int32)Particles.Size(); ++VertexIndex)
 			{
-				Vertices[VertexIndex] = Particles.X(VertexIndex);
+				Vertices[VertexIndex] = Particles.GetX(VertexIndex);
 			}
 			FConvex Convex(Vertices, 0.0f);
 			const TArray<FConvex::FVec3Type>& CulledParticles = Convex.GetVertices();
@@ -1739,11 +1735,11 @@ namespace ChaosTest {
 
 			for (int32 Idx = 0; Idx < CulledParticles.Num(); ++Idx)
 			{
-				EXPECT_NE(Particles.X(8), (Chaos::TVector<FRealDouble, 3>)CulledParticles[Idx]);	//interior particle gone
+				EXPECT_NE(Particles.GetX(8), (Chaos::TVector<FRealDouble, 3>)CulledParticles[Idx]);	//interior particle gone
 				bool bFound = false;
 				for (uint32 InnerIdx = 0; InnerIdx < Particles.Size(); ++InnerIdx)	//remaining particles are from the original set
 				{
-					if (Particles.X(InnerIdx) == (Chaos::TVector<FRealDouble,3>)CulledParticles[Idx])
+					if (Particles.GetX(InnerIdx) == (Chaos::TVector<FRealDouble,3>)CulledParticles[Idx])
 					{
 						bFound = true;
 						break;
@@ -1757,12 +1753,12 @@ namespace ChaosTest {
 		{
 			FParticles Particles;
 			Particles.AddParticles(6);
-			Particles.X(0) = FVec3(-1, -1, -1);
-			Particles.X(1) = FVec3(1, -1, -1);
-			Particles.X(2) = FVec3(1, 1, -1);
-			Particles.X(3) = FVec3(0, 0, 0.5);
-			Particles.X(4) = (Particles.X(3) - Particles.X(1)) * 0.5 + Particles.X(1) + FVec3(0, 0, 0.1);
-			Particles.X(5) = Particles.X(4) + FVec3(-0.1, 0, 0);
+			Particles.SetX(0, FVec3(-1, -1, -1));
+			Particles.SetX(1, FVec3(1, -1, -1));
+			Particles.SetX(2, FVec3(1, 1, -1));
+			Particles.SetX(3, FVec3(0, 0, 0.5));
+			Particles.SetX(4, (Particles.GetX(3) - Particles.GetX(1)) * 0.5 + Particles.GetX(1) + FVec3(0, 0, 0.1));
+			Particles.SetX(5, Particles.GetX(4) + FVec3(-0.1, 0, 0));
 			const FTriangleMesh TriMesh = FTriangleMesh::GetConvexHullFromParticles(Particles);
 			//EXPECT_EQ(TriMesh.GetSurfaceElements().Num(), 6);
 		}
@@ -1979,13 +1975,13 @@ namespace ChaosTest {
 		// radius, the margin cannot be increased and any margin "added" by a wrapper shape like
 		// ImplicitObjectScaled is ignored.
 		FReal Thickness = 0.1;
-		TUniquePtr<TSphere<FReal, 3>> Sphere = MakeUnique<TSphere<FReal,3>>(FVec3(3, 0, 0), 5);
-		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(MakeSerializable(Sphere), nullptr, FVec3(1));
-		TImplicitObjectScaled<TSphere<FReal, 3>> UnscaledThickened(MakeSerializable(Sphere), nullptr, FVec3(1), Thickness);
-		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScale(MakeSerializable(Sphere), nullptr, FVec3(2));
-		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaleThickened(MakeSerializable(Sphere), nullptr, FVec3(2), Thickness);
-		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScale(MakeSerializable(Sphere), nullptr, FVec3(2, 1, 1));
-		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaleThickened(MakeSerializable(Sphere), nullptr, FVec3(2, 1, 1), Thickness);
+		FSpherePtr Sphere( new TSphere<FReal,3>(FVec3(3, 0, 0), 5));
+		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(Sphere, FVec3(1));
+		TImplicitObjectScaled<TSphere<FReal, 3>> UnscaledThickened(Sphere, FVec3(1), Thickness);
+		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScale(Sphere, FVec3(2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaleThickened(Sphere, FVec3(2), Thickness);
+		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScale(Sphere, FVec3(2, 1, 1));
+		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaleThickened(Sphere, FVec3(2, 1, 1), Thickness);
 
 		//phi
 		{
@@ -2110,17 +2106,16 @@ namespace ChaosTest {
 
 	void UpdateImplicitUnion()
 	{
-		TUniquePtr<FImplicitObjectUnion> MUnionedObjects;
+		TArray<Chaos::FImplicitObjectPtr> Objects;
+		Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, 1), FVec3(0), 1));
+		Objects.Add(MakeImplicitObjectPtr<FCylinder>(FVec3(0, 0, -1), FVec3(0), 1));
+		
+		FImplicitObjectUnionPtr MUnionedObjects(new Chaos::FImplicitObjectUnion(std::move(Objects)));
 
-		TArray<TUniquePtr<FImplicitObject>> Objects;
-		Objects.Add(MakeUnique<FCylinder>(FVec3(0, 0, 1), FVec3(0), 1));
-		Objects.Add(MakeUnique<FCylinder>(FVec3(0, 0, -1), FVec3(0), 1));
-		MUnionedObjects.Reset(new Chaos::FImplicitObjectUnion(std::move(Objects)));
-
-		TArray<TUniquePtr<FImplicitObject>> Objects2;
-		Objects2.Add(MakeUnique<TSphere<FReal, 3>>(FVec3(4, 0, 0), 1));
-		Objects2.Add(MakeUnique<TSphere<FReal, 3>>(FVec3(5, 0, 0), 2));
-		Objects2.Add(MakeUnique<TSphere<FReal, 3>>(FVec3(10, 0, 0), 3));
+		TArray<Chaos::FImplicitObjectPtr> Objects2;
+		Objects2.Add(MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(4, 0, 0), 1));
+		Objects2.Add(MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(5, 0, 0), 2));
+		Objects2.Add(MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(10, 0, 0), 3));
 
 		const FAABB3 OriginalBounds = MUnionedObjects->BoundingBox();
 
@@ -2153,14 +2148,14 @@ namespace ChaosTest {
 		TUniquePtr<FImplicitObject> Sphere = MakeUnique<FImplicitSphere3>(FVec3(0), 100.0);
 		const FImplicitObject* ConstSphere = Sphere.Get();
 
-		TArray<TUniquePtr<FImplicitObject>> UnionObjects;
-		UnionObjects.Emplace(MakeUnique<FImplicitSphere3>(FVec3(0), 100.0));
+		TArray<FImplicitObjectPtr> UnionObjects;
+		UnionObjects.Emplace(MakeImplicitObjectPtr<FImplicitSphere3>(FVec3(0), 100.0));
 
-		TArray<TUniquePtr<FImplicitObject>> UnionClusteredObjects;
-		UnionClusteredObjects.Emplace(MakeUnique<FImplicitSphere3>(FVec3(0), 100.0));
+		TArray<FImplicitObjectPtr> UnionClusteredObjects;
+		UnionClusteredObjects.Emplace(MakeImplicitObjectPtr<FImplicitSphere3>(FVec3(0), 100.0));
 
-		TUniquePtr<FImplicitObject> Union = MakeUnique<FImplicitObjectUnion>(MoveTemp(UnionObjects));
-		TUniquePtr<FImplicitObject> UnionClustered = MakeUnique<FImplicitObjectUnionClustered>(MoveTemp(UnionClusteredObjects));
+		FImplicitObjectPtr Union = MakeImplicitObjectPtr<FImplicitObjectUnion>(MoveTemp(UnionObjects));
+		FImplicitObjectPtr UnionClustered = MakeImplicitObjectPtr<FImplicitObjectUnionClustered>(MoveTemp(UnionClusteredObjects));
 
 		// We can cast an implicit object to its exact type (const and non-const)
 		FImplicitSphere3* SphereCast = Sphere->AsA<FImplicitSphere3>();

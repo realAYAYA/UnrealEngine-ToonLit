@@ -392,6 +392,7 @@ bool FSQLitePreparedStatement::Execute()
 
 int64 FSQLitePreparedStatement::Execute(TFunctionRef<ESQLitePreparedStatementExecuteRowResult(const FSQLitePreparedStatement&)> InCallback)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE_STR("FSQLitePreparedStatement::Execute");
 	checkf(IsValid() && !IsActive(), TEXT("SQLite statement must be valid and not-active!"));
 
 	// Step it to completion (or error)

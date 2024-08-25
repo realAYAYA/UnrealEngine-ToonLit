@@ -155,32 +155,30 @@ namespace Metasound
 			FFloatReadRef MaxOutput;
 		};
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
-			//const FRandomLowFrequencyNoiseNode& Node = static_cast<const FRandomLowFrequencyNoiseNode&>(InParams.Node);
-			const FDataReferenceCollection& InputCol = InParams.InputDataReferences;
 			const FOperatorSettings& Settings = InParams.OperatorSettings;
-			const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			using namespace LowFrequencyNoiseVertexNames;
 
 			FPinReadRefs Pins
 			{
-				  InputCol.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(RatePin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(RateJitterPin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(StepLimitPin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(SeedPin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<FEnumLowFrequencyNoiseInterpType>(InputInterface, METASOUND_GET_PARAM_NAME(InterpTypePin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, METASOUND_GET_PARAM_NAME(ResetSeedPin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, METASOUND_GET_PARAM_NAME(SyncPin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(MinOutputValuePin), Settings)
-				, InputCol.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(MaxOutputValuePin), Settings)
+				  InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(RatePin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(RateJitterPin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(StepLimitPin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(SeedPin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<FEnumLowFrequencyNoiseInterpType>(METASOUND_GET_PARAM_NAME(InterpTypePin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(ResetSeedPin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(SyncPin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(MinOutputValuePin), Settings)
+				, InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(MaxOutputValuePin), Settings)
 			};
 
 			return MakeUnique<FLowFrequencyNoiseOperator>(InParams, MoveTemp(Pins));
 		}
 
-		FLowFrequencyNoiseOperator(const FCreateOperatorParams& InParams, FPinReadRefs&& InPins)
+		FLowFrequencyNoiseOperator(const FBuildOperatorParams& InParams, FPinReadRefs&& InPins)
 			: BlockRate{ InParams.OperatorSettings.GetActualBlockRate() }
 			, Pins{ MoveTemp(InPins) }
 			, ScaledOutput{ FFloatWriteRef::CreateNew(0.f) }

@@ -51,13 +51,13 @@ public:
 	{
 	}
 
-	virtual ir_visitor_status visit_enter(ir_expression* expr)
+	virtual ir_visitor_status visit_enter(ir_expression* expr) override
 	{
 		++expr_depth;
 		check(expr_depth == 1);//Should never exceed one expression.
 		return visit_continue;
 	}
-	virtual ir_visitor_status visit_leave(ir_expression* expr)
+	virtual ir_visitor_status visit_leave(ir_expression* expr) override
 	{
 		if (expr->operation == ir_binop_mul)
 		{
@@ -163,7 +163,7 @@ public:
 		return visit_continue;
 	}
 
-	virtual ir_visitor_status visit_enter(ir_assignment* assign)
+	virtual ir_visitor_status visit_enter(ir_assignment* assign) override
 	{
 		assign_array_to_add = nullptr;
 		expr_depth = 0;

@@ -47,6 +47,8 @@ class BEHAVIORTREEEDITOR_API UBehaviorTreeGraph : public UAIGraph
 	virtual void UpdateAsset(int32 UpdateFlags = 0) override;
 	virtual void OnSubNodeDropped() override;
 
+	virtual bool DoesSupportServices() const { return true; }
+
 	void UpdateBlackboardChange();
 	void UpdateAbortHighlight(struct FAbortDrawHelper& Mode0, struct FAbortDrawHelper& Mode1);
 	void CreateBTFromGraph(class UBehaviorTreeGraphNode* RootEdNode);

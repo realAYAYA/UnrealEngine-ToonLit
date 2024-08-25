@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AssetPropertyTagCache.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/UnrealType.h"
 #include "UObject/LinkerLoad.h"
 
@@ -37,19 +38,20 @@ const FAssetPropertyTagCache::FClassPropertyTagCache& FAssetPropertyTagCache::Ge
 		if (UClass* AssetClass = GetAssetClass())
 		{
 			// Get the tags data from the CDO and use it to build the cache
-			TArray<UObject::FAssetRegistryTag> AssetTags;
-			AssetClass->GetDefaultObject()->GetAssetRegistryTags(AssetTags);
+			UObject* AssetClassDefaultObject = AssetClass->GetDefaultObject();
+			FAssetRegistryTagsContextData TagsContext(AssetClassDefaultObject, EAssetRegistryTagsCaller::Uncategorized);
+			AssetClassDefaultObject->GetAssetRegistryTags(TagsContext);
 			TMap<FName, UObject::FAssetRegistryTagMetadata> AssetTagMetaData;
-			AssetClass->GetDefaultObject()->GetAssetRegistryTagMetadata(AssetTagMetaData);
+			AssetClassDefaultObject->GetAssetRegistryTagMetadata(AssetTagMetaData);
 
-			ClassCache->TagNameToCachedDataMap.Reserve(AssetTags.Num());
-			for (const UObject::FAssetRegistryTag& AssetTag : AssetTags)
+			ClassCache->TagNameToCachedDataMap.Reserve(TagsContext.Tags.Num());
+			for (const TPair<FName, UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
 			{
-				FPropertyTagCache& TagCache = ClassCache->TagNameToCachedDataMap.Add(AssetTag.Name);
-				TagCache.TagType = AssetTag.Type;
-				TagCache.DisplayFlags = AssetTag.DisplayFlags;
+				FPropertyTagCache& TagCache = ClassCache->TagNameToCachedDataMap.Add(TagPair.Key);
+				TagCache.TagType = TagPair.Value.Type;
+				TagCache.DisplayFlags = TagPair.Value.DisplayFlags;
 
-				if (const UObject::FAssetRegistryTagMetadata* TagMetaData = AssetTagMetaData.Find(AssetTag.Name))
+				if (const UObject::FAssetRegistryTagMetadata* TagMetaData = AssetTagMetaData.Find(TagPair.Key))
 				{
 					TagCache.DisplayName = TagMetaData->DisplayName;
 					TagCache.TooltipText = TagMetaData->TooltipText;
@@ -59,14 +61,14 @@ const FAssetPropertyTagCache::FClassPropertyTagCache& FAssetPropertyTagCache::Ge
 				else
 				{
 					// If the tag name corresponds to a property name, use the property tooltip
-					const FProperty* Property = FindFProperty<FProperty>(AssetClass, AssetTag.Name);
-					TagCache.TooltipText = Property ? Property->GetToolTipText() : FText::FromString(FName::NameToDisplayString(AssetTag.Name.ToString(), false));
+					const FProperty* Property = FindFProperty<FProperty>(AssetClass, TagPair.Key);
+					TagCache.TooltipText = Property ? Property->GetToolTipText() : FText::FromString(FName::NameToDisplayString(TagPair.Key.ToString(), false));
 				}
 
 				// Ensure a display name for this tag
 				if (TagCache.DisplayName.IsEmpty())
 				{
-					if (const FProperty* TagField = FindFProperty<FProperty>(AssetClass, AssetTag.Name))
+					if (const FProperty* TagField = FindFProperty<FProperty>(AssetClass, TagPair.Key))
 					{
 						// Take the display name from the corresponding property if possible
 						TagCache.DisplayName = TagField->GetDisplayNameText();
@@ -74,7 +76,7 @@ const FAssetPropertyTagCache::FClassPropertyTagCache& FAssetPropertyTagCache::Ge
 					else
 					{
 						// We have no type information by this point, so no idea if it's a bool :(
-						TagCache.DisplayName = FText::AsCultureInvariant(FName::NameToDisplayString(AssetTag.Name.ToString(), /*bIsBool*/false));
+						TagCache.DisplayName = FText::AsCultureInvariant(FName::NameToDisplayString(TagPair.Key.ToString(), /*bIsBool*/false));
 					}
 				}
 
@@ -82,9 +84,9 @@ const FAssetPropertyTagCache::FClassPropertyTagCache& FAssetPropertyTagCache::Ge
 				// This is useful as people only see the display name in the UI, so are more likely to use it
 				{
 					const FName SanitizedDisplayName = MakeObjectNameFromDisplayLabel(TagCache.DisplayName.ToString(), NAME_None);
-					if (AssetTag.Name != SanitizedDisplayName)
+					if (TagPair.Key != SanitizedDisplayName)
 					{
-						ClassCache->DisplayNameToTagNameMap.Add(SanitizedDisplayName, AssetTag.Name);
+						ClassCache->DisplayNameToTagNameMap.Add(SanitizedDisplayName, TagPair.Key);
 					}
 				}
 			}

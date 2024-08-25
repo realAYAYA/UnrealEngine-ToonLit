@@ -71,8 +71,8 @@ FMQTTConnection::~FMQTTConnection()
 	if (Thread != nullptr)
 	{
 		Thread->Kill(true);
-		Thread = nullptr;
 		delete Thread;
+		Thread = nullptr;
 	}
 
 	if (Socket)
@@ -492,12 +492,12 @@ void FMQTTConnection::AbandonOperations()
 
 	{
 		FScopeLock Lock(&IncomingQueueLock);
-		TArray<TUniquePtr<IMQTTOperation>> Messages;
+		//TArray<TUniquePtr<IMQTTOperation>> Messages;
 		//PendingIncomingOperations.GenerateValueArray(Messages);
-		for(const TUniquePtr<IMQTTOperation>& Message : Messages)
-		{
-			Message->Abandon();
-		}
+		//for(const TUniquePtr<IMQTTOperation>& Message : Messages)
+		//{
+		//	Message->Abandon();
+		//}
 		PendingIncomingOperations.Empty();
 	}
 

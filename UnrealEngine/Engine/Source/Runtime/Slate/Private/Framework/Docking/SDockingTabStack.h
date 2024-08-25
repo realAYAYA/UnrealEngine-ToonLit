@@ -204,6 +204,9 @@ protected:
 	/** Overridden from SDockingNode */
 	SLATE_API virtual void SetParentNode( TSharedRef<class SDockingSplitter> InParent ) override;
 
+	/** @return false if the content is disabled (non-interactable) */
+	bool IsContentEnabled() const;
+
 private:
 	
 	/** Data that persists across sessions and when the widget associated with this node is removed. */	
@@ -316,6 +319,12 @@ private:
 
 	/** Attempts to find the active tab that can be closed by the CloseMinorTab command */
 	SLATE_API bool CanExecuteCloseMinorTabCommand();
+
+	/** Attempts to close the focused tab when the CloseFocusedTab command is executed */
+	SLATE_API void ExecuteCloseFocusedTabCommand();
+
+	/** Attempts to find the active tab that can be closed by the CloseFocusedTab command */
+	SLATE_API bool CanExecuteCloseFocusedTabCommand();
 
 	/** Called when this stack is resized. */
 	SLATE_API virtual void OnResized() override;

@@ -6,6 +6,7 @@
 #include "PBDRigidsSolver.h"
 #include "ChaosSolversModule.h"
 #include "HeadlessChaosTestUtility.h"
+#include "Chaos/ChaosScene.h"
 
 namespace GeometryCollectionTest
 {
@@ -19,11 +20,17 @@ namespace GeometryCollectionTest
 	struct EventTestData
 	{
 		EventTestData(int InData1, FVector InData2) : Data1(InData1), Data2(InData2) {}
-		EventTestData() {}
+		EventTestData() : Data1(0xBADF000D), Data2(FVector(0xBADF000D, 0xBADF000D, 0xBADF000D)) {}
 
 		bool operator==(const EventTestData& Other) const
 		{
 			return (Data1 == Other.Data1) && (Data2 == Other.Data2);
+		}
+
+		void Reset()
+		{
+			Data1 = 0xBADF000D;
+			Data2 = FVector(0xBADF000D, 0xBADF000D, 0xBADF000D);
 		}
 
 		int Data1;
@@ -129,7 +136,6 @@ namespace GeometryCollectionTest
 		TestData.Data2 = FVector(1, 2, 3);
 
 		EventManager.FillProducerData(Solver);
-		EventManager.FlipBuffersIfRequired();
 		EventManager.DispatchEvents();
 		EXPECT_EQ(HandlerTest.ResultFromHandler, TestData);
 
@@ -137,7 +143,6 @@ namespace GeometryCollectionTest
 		TestData.Data2 = FVector(7, 8, 9);
 
 		EventManager.FillProducerData(Solver);
-		EventManager.FlipBuffersIfRequired();
 		EventManager.DispatchEvents();
 		EXPECT_EQ(HandlerTest.ResultFromHandler, TestData);
 
@@ -149,7 +154,6 @@ namespace GeometryCollectionTest
 		TestData.Data2 = FVector(9, 9, 9);
 
 		EventManager.FillProducerData(Solver);
-		EventManager.FlipBuffersIfRequired();
 		EventManager.DispatchEvents();
 		EXPECT_EQ(HandlerTest.ResultFromHandler, OriginalTestData);
 
@@ -159,7 +163,6 @@ namespace GeometryCollectionTest
 		TestArrayData.Push(EventTestData(789, FVector(7, 8, 9)));
 
 		EventManager.FillProducerData(Solver);
-		EventManager.FlipBuffersIfRequired();
 		EventManager.DispatchEvents();
 		// dispatched to multiple handlers
 		EXPECT_EQ(HandlerTest.ResultFromHandler2, TestArrayData);
@@ -173,7 +176,6 @@ namespace GeometryCollectionTest
 		TestArrayData.Push(EventTestData(999, FVector(9, 9, 9)));
 
 		EventManager.FillProducerData(Solver);
-		EventManager.FlipBuffersIfRequired();
 		EventManager.DispatchEvents();
 		EXPECT_EQ(HandlerTest.ResultFromHandler2, OriginalTestArrayData); // Unregistered - data should no longer update
 		EXPECT_EQ(AnotherHandlerTest.ResultFromHandler2, TestArrayData); // Still registered so should get updates
@@ -181,11 +183,98 @@ namespace GeometryCollectionTest
 		HandlerTest.RegisterHandler2();
 
 		EventManager.FillProducerData(Solver);
-		EventManager.FlipBuffersIfRequired();
 		EventManager.DispatchEvents();
 
 		EXPECT_EQ(HandlerTest.ResultFromHandler2, TestArrayData);
 		EXPECT_EQ(AnotherHandlerTest.ResultFromHandler2, TestArrayData);
+	}
+
+
+	struct SimpleEventHandler
+	{	
+		void HandleEvent(const EventTestData& EventData)
+		{
+			ResultFromHandler = EventData;
+		}
+		EventTestData ResultFromHandler;
+	};
+
+	GTEST_TEST(AllTraits, EventTestBuffer)
+	{
+		for (EMultiBufferMode BufferMode : {EMultiBufferMode::Single, EMultiBufferMode::Double, EMultiBufferMode::Triple/*, EMultiBufferMode::TripleGuarded*/})
+		{
+			const FReal FixedDT = 1;
+			FChaosScene Scene(nullptr, FixedDT);
+			Scene.GetSolver()->SetThreadingMode_External(EThreadingModeTemp::SingleThread);
+
+			Chaos::FEventManager* EventManager = Scene.GetSolver()->GetEventManager();
+			EventManager->SetBufferMode(BufferMode);
+
+			Chaos::FPBDRigidsSolver* Solver = Scene.GetSolver();
+
+			EventTestData TestData;
+			TestData.Data1 = 123;
+			TestData.Data2 = FVector(1, 2, 3);
+			EventTestData* TestDataPtr = &TestData;
+			EventManager->template RegisterEvent<EventTestData>(CustomEvent1, [TestDataPtr]
+			(const auto* Solver, EventTestData& MyData, bool ResetData)
+				{
+					MyData = *TestDataPtr;
+				});
+
+			SimpleEventHandler EventHandler;
+			EventManager->template RegisterHandler<EventTestData>(CustomEvent1, &EventHandler, &SimpleEventHandler::HandleEvent);
+
+			FVec3 Grav(0, 0, -1);
+			Scene.SetUpForFrame(&Grav, 1, 0, 99999, 99999, 10, false);
+			Scene.StartFrame();
+			Scene.EndFrame();
+
+			EXPECT_EQ(EventHandler.ResultFromHandler, TestData);
+		}
+	}
+
+	GTEST_TEST(AllTraits, EventTestBuffer_SeveralTicks)
+	{
+		for (EMultiBufferMode BufferMode : {EMultiBufferMode::Single, EMultiBufferMode::Double, EMultiBufferMode::Triple})
+		{
+			const FReal FixedDT = 1;
+			FChaosScene Scene(nullptr, FixedDT);
+			Scene.GetSolver()->SetThreadingMode_External(EThreadingModeTemp::SingleThread);
+
+			Chaos::FEventManager* EventManager = Scene.GetSolver()->GetEventManager();
+			EventManager->SetBufferMode(BufferMode);
+
+			Chaos::FPBDRigidsSolver* Solver = Scene.GetSolver();
+
+			EventTestData TestData;
+			TestData.Data1 = 0;
+			TestData.Data2 = FVector(0, 0, 0);
+			EventTestData* TestDataPtr = &TestData;
+			EventManager->template RegisterEvent<EventTestData>(CustomEvent1, [TestDataPtr]
+			(const auto* Solver, EventTestData& MyData, bool ResetData)
+				{
+					MyData = *TestDataPtr;
+				});
+
+
+			SimpleEventHandler EventHandler;
+			EventHandler.ResultFromHandler = TestData;
+			EventManager->template RegisterHandler<EventTestData>(CustomEvent1, &EventHandler, &SimpleEventHandler::HandleEvent);
+
+			FVec3 Grav(0, 0, -1);
+			Scene.SetUpForFrame(&Grav, 1, 0, 99999, 99999, 10, false);
+
+
+			for (int32 Index = 0; Index < 3; Index++)
+			{
+				TestData.Data1 += 1;
+				TestData.Data2 += FVec3(1);
+				Scene.StartFrame();
+				Scene.EndFrame();
+				EXPECT_EQ(EventHandler.ResultFromHandler, TestData);
+			}
+		}
 	}
 }
 

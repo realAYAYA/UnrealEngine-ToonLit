@@ -33,10 +33,12 @@ static FAutoConsoleVariableRef CVarExperimentalAllowPerInstanceChildActorPropert
 UChildActorComponent::UChildActorComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ActorOuter(nullptr)
+	, CachedInstanceData(nullptr)
 	, bNeedsRecreate(false)
 	, bChildActorNameIsExact(false)
 {
 	bAllowReregistration = false;
+	bChildActorIsTransient = false;
 
 #if WITH_EDITORONLY_DATA
 	EditorTreeViewVisualizationMode = EChildActorComponentTreeViewVisualizationMode::UseDefault;
@@ -291,6 +293,20 @@ void UChildActorComponent::PostEditUndo()
 	
 }
 #endif
+
+AActor* UChildActorComponent::GetSpawnableChildActorTemplate() const
+{
+	// Only use the instance if it's the same type as the class it was supposedly built from
+	if (ChildActorTemplate && ChildActorTemplate->GetClass() == ChildActorClass)
+	{
+		return ChildActorTemplate;
+	}
+	// Use the CDO of the class as the template if the instance is wrong.
+	else
+	{
+		return ChildActorClass ? ChildActorClass->GetDefaultObject<AActor>() : nullptr;
+	}
+}
 
 void UChildActorComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
@@ -779,11 +795,18 @@ void UChildActorComponent::CreateChildActor(TFunction<void(AActor*)> CustomizerF
 				}
 
 				Params.OverrideParentComponent = this;
+				
+				if (bChildActorIsTransient || HasAllFlags(RF_Transient) || (MyOwner && MyOwner->HasAllFlags(RF_Transient)))
+				{
+					// If this component or its owner are transient, set our created actor to transient. 
+					Params.ObjectFlags |= RF_Transient;
+				}
 
 #if WITH_EDITOR
 				Params.bCreateActorPackage = false;
-				Params.OverridePackage = (MyOwner ? MyOwner->GetExternalPackage() : nullptr);
+				Params.OverridePackage = (MyOwner && !(Params.ObjectFlags & RF_Transient)) ? MyOwner->GetExternalPackage() : nullptr;
 				Params.OverrideActorGuid = CachedInstanceData ? CachedInstanceData->ChildActorGUID : FGuid();
+				Params.bHideFromSceneOutliner = EditorTreeViewVisualizationMode == EChildActorComponentTreeViewVisualizationMode::Hidden;
 #endif
 				if (ChildActorTemplate && ChildActorTemplate->GetClass() == ChildActorClass)
 				{
@@ -794,11 +817,7 @@ void UChildActorComponent::CreateChildActor(TFunction<void(AActor*)> CustomizerF
 				{
 					Params.ObjectFlags &= ~RF_Transactional;
 				}
-				if (bChildActorIsTransient || HasAllFlags(RF_Transient) || (MyOwner && MyOwner->HasAllFlags(RF_Transient)))
-				{
-					// If this component or its owner are transient, set our created actor to transient. 
-					Params.ObjectFlags |= RF_Transient;
-				}
+
 
 				// Spawn actor of desired class
 				ConditionalUpdateComponentToWorld();
@@ -862,6 +881,11 @@ void UChildActorComponent::CreateChildActor(TFunction<void(AActor*)> CustomizerF
 	{
 		delete CachedInstanceData;
 		CachedInstanceData = nullptr;
+	}
+
+	if (ChildActor)
+	{
+		OnChildActorCreatedDelegate.Broadcast(ChildActor);
 	}
 }
 
@@ -930,6 +954,10 @@ void UChildActorComponent::DestroyChildActor()
 			}
 		}
 
+		ChildActor = nullptr;
+	}
+	else if (!IsValid(ChildActor))
+	{
 		ChildActor = nullptr;
 	}
 }

@@ -212,7 +212,7 @@ public:
 	UMeshComponent* GetMeshComponent() const;
 
 	/** Get the mip level to upscale (-1 if disabled). */
-	int32 GetMipLevelToUpscale() const;
+	virtual int32 GetMipLevelToUpscale() const;
 
 protected:
 

@@ -1224,41 +1224,32 @@ namespace Math
 	TQuat<T> TQuat<T>::Slerp_NotNormalized(const TQuat<T>& Quat1, const TQuat<T>& Quat2, T Slerp)
 	{
 		// Get cosine of angle between quats.
-		const T RawCosom =
+		T RawCosom =
 			Quat1.X * Quat2.X +
 			Quat1.Y * Quat2.Y +
 			Quat1.Z * Quat2.Z +
 			Quat1.W * Quat2.W;
+
 		// Unaligned quats - compensate, results in taking shorter route.
-		const T Cosom = FMath::FloatSelect(RawCosom, RawCosom, -RawCosom);
-
-		T Scale0, Scale1;
-
-		if (Cosom < T(0.9999f))
+		const T Sign = FMath::FloatSelect(RawCosom, static_cast<T>(1.0), static_cast<T>(-1.0));
+		RawCosom *= Sign;
+		
+		T Scale0 = static_cast<T>(1.0) - Slerp;
+		T Scale1 = Slerp * Sign;
+		
+		if (RawCosom < static_cast<T>(0.9999))
 		{
-			const T Omega = FMath::Acos(Cosom);
-			const T InvSin = T(1.f) / FMath::Sin(Omega);
-			Scale0 = FMath::Sin((T(1.f) - Slerp) * Omega) * InvSin;
-			Scale1 = FMath::Sin(Slerp * Omega) * InvSin;
+			const T Omega = FMath::Acos(RawCosom);
+			const T InvSin = static_cast<T>(1.0) / FMath::Sin(Omega);
+			Scale0 = FMath::Sin(Scale0 * Omega) * InvSin;
+			Scale1 = FMath::Sin(Scale1 * Omega) * InvSin;
 		}
-		else
-		{
-			// Use linear interpolation.
-			Scale0 = T(1.0f) - Slerp;
-			Scale1 = Slerp;
-		}
-
-		// In keeping with our flipped Cosom:
-		Scale1 = FMath::FloatSelect(RawCosom, Scale1, -Scale1);
-
-		TQuat<T> Result;
-
-		Result.X = Scale0 * Quat1.X + Scale1 * Quat2.X;
-		Result.Y = Scale0 * Quat1.Y + Scale1 * Quat2.Y;
-		Result.Z = Scale0 * Quat1.Z + Scale1 * Quat2.Z;
-		Result.W = Scale0 * Quat1.W + Scale1 * Quat2.W;
-
-		return Result;
+		
+		return TQuat<T>(
+			Scale0 * Quat1.X + Scale1 * Quat2.X,
+			Scale0 * Quat1.Y + Scale1 * Quat2.Y,
+			Scale0 * Quat1.Z + Scale1 * Quat2.Z,
+			Scale0 * Quat1.W + Scale1 * Quat2.W);
 	}
 
 	template<typename T>
@@ -1534,29 +1525,48 @@ static void FindBounds( T& OutMin, T& OutMax,  T Start, T StartLeaveTan, float S
 		const T b = -6.f*Start - 4.f*StartLeaveTan - 2.f*EndArriveTan + 6.f*End;
 		const T c = StartLeaveTan;
 
-		const T Discriminant = (b*b) - (4.f*a*c);
-		if(Discriminant > 0.f && !FMath::IsNearlyZero(a)) // Solving doesn't work if a is zero, which usually indicates co-incident start and end, and zero tangents anyway
+		if (FMath::IsNearlyZero(a))
 		{
-			const T SqrtDisc = FMath::Sqrt( Discriminant );
-
-			const T x0 = (-b + SqrtDisc)/(2.f*a); // x0 is the 'Alpha' ie between 0 and 1
-			const T t0 = StartT + x0*(EndT - StartT); // Then t0 is the actual 'time' on the curve
-			if(t0 > StartT && t0 < EndT)
+			// The derivative is linear, find the linear root.
+			if (!FMath::IsNearlyZero(b))
 			{
-				const T Val = FMath::CubicInterp( Start, StartLeaveTan, End, EndArriveTan, x0 );
-
-				OutMin = FMath::Min( OutMin, Val );
-				OutMax = FMath::Max( OutMax, Val );
+				const T x = -c / b;
+				const T t = StartT + x * (EndT - StartT);
+				if (t > StartT && t < EndT)
+				{
+					const T Val = FMath::CubicInterp(Start, StartLeaveTan, End, EndArriveTan, x);
+					OutMin = FMath::Min(OutMin, Val);
+					OutMax = FMath::Max(OutMax, Val);
+				}
 			}
-
-			const T x1 = (-b - SqrtDisc)/(2.f*a);
-			const T t1 = StartT + x1*(EndT - StartT);
-			if(t1 > StartT && t1 < EndT)
+		}
+		else
+		{
+			// The derivative is quadratic, find the quadratic roots.
+			const T Discriminant = (b * b) - (4.f * a * c);
+			if (Discriminant >= 0.f)
 			{
-				const T Val = FMath::CubicInterp( Start, StartLeaveTan, End, EndArriveTan, x1 );
+				const T SqrtDisc = FMath::Sqrt(Discriminant);
 
-				OutMin = FMath::Min( OutMin, Val );
-				OutMax = FMath::Max( OutMax, Val );
+				const T x0 = (-b + SqrtDisc) / (2.f * a); // x0 is the 'Alpha' ie between 0 and 1
+				const T t0 = StartT + x0 * (EndT - StartT); // Then t0 is the actual 'time' on the curve
+				if (t0 > StartT && t0 < EndT)
+				{
+					const T Val = FMath::CubicInterp(Start, StartLeaveTan, End, EndArriveTan, x0);
+
+					OutMin = FMath::Min(OutMin, Val);
+					OutMax = FMath::Max(OutMax, Val);
+				}
+
+				const T x1 = (-b - SqrtDisc) / (2.f * a);
+				const T t1 = StartT + x1 * (EndT - StartT);
+				if (t1 > StartT && t1 < EndT)
+				{
+					const T Val = FMath::CubicInterp(Start, StartLeaveTan, End, EndArriveTan, x1);
+
+					OutMin = FMath::Min(OutMin, Val);
+					OutMax = FMath::Max(OutMax, Val);
+				}
 			}
 		}
 	}
@@ -1920,7 +1930,10 @@ bool FMath::SegmentTriangleIntersection(const FVector& StartPoint, const FVector
 	FVector Edge2(C - A);
 	Edge2.Normalize();
 	FVector TriNormal = Edge2 ^ Edge1;
-	TriNormal.Normalize();
+	if (!TriNormal.Normalize())
+	{
+		return false;
+	}
 
 	bool bCollide = FMath::SegmentPlaneIntersection(StartPoint, EndPoint, FPlane(A, TriNormal), OutIntersectPoint);
 	if (!bCollide)
@@ -1928,10 +1941,9 @@ bool FMath::SegmentTriangleIntersection(const FVector& StartPoint, const FVector
 		return false;
 	}
 
-	FVector BaryCentric = FMath::ComputeBaryCentric2D(OutIntersectPoint, A, B, C);
-
-	// ComputeBaryCenteric2D returns ZeroVector when the triangle is too small.
-	if (BaryCentric == FVector::ZeroVector)
+	// ComputeBarycentricTri returns false when the triangle is too small.
+	FVector BaryCentric;
+	if (!FMath::ComputeBarycentricTri(OutIntersectPoint, A, B, C, BaryCentric))
 	{
 		return false;
 	}
@@ -2221,33 +2233,48 @@ FVector FMath::GetBaryCentric2D(const FVector2D& Point, const FVector2D& A, cons
 	return FVector(a, b, 1.0f - a - b);
 }
 
-FVector FMath::ComputeBaryCentric2D(const FVector& Point, const FVector& A, const FVector& B, const FVector& C)
+bool FMath::ComputeBarycentricTri(const FVector& Point, const FVector& A, const FVector& B, const FVector& C, FVector& OutBarycentric, double Tolerance)
 {
-	// Compute the normal of the triangle
+	// Tolerance cannot be negative
+	checkSlow(Tolerance >= 0);
+
+	// Compute the normal direction of the triangle (scaled by 2x area)
 	const FVector TriNorm = (B-A) ^ (C-A);
 
-	// Check the size of the triangle is reasonable (TriNorm.Size() will be twice the triangle area)
-	if(TriNorm.SizeSquared() <= UE_SMALL_NUMBER)
+	// Check if the triangle is too small, according to the tolerance
+	const FVector::FReal TriNormSizeSquared = TriNorm.SizeSquared();
+	if(TriNormSizeSquared <= Tolerance)
 	{
-		UE_LOG(LogUnrealMath, Warning, TEXT("Small triangle detected in FMath::ComputeBaryCentric2D(), can't compute valid barycentric coordinate."));
-		return FVector(0.0f, 0.0f, 0.0f);
+		return false;
 	}
 
-	const FVector N = TriNorm.GetSafeNormal();
+	// Compute 1 / twice area of triangle ABC
+	const FVector::FReal AreaABCInv = FMath::InvSqrt(TriNormSizeSquared);
 
-	// Compute twice area of triangle ABC
-	const FVector::FReal AreaABCInv = 1.0f / (N | TriNorm);
+	// Compute unit-length Tri normal
+	const FVector N = TriNorm * AreaABCInv;
 
-	// Compute a contribution
+	// Compute a contribution (in X)
 	const FVector::FReal AreaPBC = N | ((B-Point) ^ (C-Point));
-	const FVector::FReal a = AreaPBC * AreaABCInv;
+	OutBarycentric.X = AreaPBC * AreaABCInv;
 
-	// Compute b contribution
+	// Compute b contribution (in Y)
 	const FVector::FReal AreaPCA = N | ((C-Point) ^ (A-Point));
-	const FVector::FReal b = AreaPCA * AreaABCInv;
+	OutBarycentric.Y = AreaPCA * AreaABCInv;
 
-	// Compute c contribution
-	return FVector(a, b, 1.0f - a - b);
+	// Compute c contribution (in Z)
+	OutBarycentric.Z = 1.0 - OutBarycentric.X - OutBarycentric.Y;
+	return true;
+}
+
+FVector FMath::ComputeBaryCentric2D(const FVector& Point, const FVector& A, const FVector& B, const FVector& C)
+{
+	FVector ToRet(0, 0, 0);
+	if (!ComputeBarycentricTri(Point, A, B, C, ToRet, UE_DOUBLE_SMALL_NUMBER))
+	{
+		UE_LOG(LogUnrealMath, Warning, TEXT("Small triangle detected in FMath::ComputeBaryCentric2D(); can't compute valid barycentric coordinate."));
+	}
+	return ToRet;
 }
 
 FVector4 FMath::ComputeBaryCentric3D(const FVector& Point, const FVector& A, const FVector& B, const FVector& C, const FVector& D)
@@ -3057,7 +3084,7 @@ FString FMath::FormatIntToHumanReadable(int32 Val)
 	while (Src.Len() > 3 && Src[Src.Len() - 4] != TEXT('-'))
 	{
 		Dst = FString::Printf(TEXT(",%s%s"), *Src.Right(3), *Dst);
-		Src.LeftInline(Src.Len() - 3, false);
+		Src.LeftInline(Src.Len() - 3, EAllowShrinking::No);
 	}
 
 	Dst = Src + Dst;

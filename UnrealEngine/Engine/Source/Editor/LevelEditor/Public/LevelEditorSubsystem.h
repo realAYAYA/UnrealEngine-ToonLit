@@ -86,10 +86,11 @@ public:
 	 * Close the current Persistent Level (without saving it). Create a new blank Level and save it. Load the new created level.
 	 * @param	AssetPath		Asset Path of where the level will be saved.
 	 *		ie. /Game/MyFolder/MyAsset
+	 * @param   bIsPartitionedWorld	If true, new map is partitioned.
 	 * @return	True if the operation succeeds.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Level Utility")
-	bool NewLevel(const FString& AssetPath);
+	bool NewLevel(const FString& AssetPath, bool bIsPartitionedWorld = false);
 
 	/**
 	 * Close the current Persistent Level (without saving it). Create a new Level base on another level and save it. Load the new created level.

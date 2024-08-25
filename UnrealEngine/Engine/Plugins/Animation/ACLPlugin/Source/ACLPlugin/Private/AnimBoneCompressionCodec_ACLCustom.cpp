@@ -18,40 +18,37 @@ THIRD_PARTY_INCLUDES_END
 
 UAnimBoneCompressionCodec_ACLCustom::UAnimBoneCompressionCodec_ACLCustom(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
-{
 #if WITH_EDITORONLY_DATA
-	RotationFormat = ACLRotationFormat::ACLRF_QuatDropW_Variable;
-	TranslationFormat = ACLVectorFormat::ACLVF_Vector3_Variable;
-	ScaleFormat = ACLVectorFormat::ACLVF_Vector3_Variable;
-
-	ConstantRotationThresholdAngle = 0.00284714461f;	// The smallest angle a float32 can represent in a quaternion is 0.000690533954 so we use a value just slightly larger
-	ConstantTranslationThreshold = 0.001f;				// 0.001cm, very conservative to be safe
-	ConstantScaleThreshold = 0.00001f;					// Very small value to be safe since scale is sensitive
-#endif	// WITH_EDITORONLY_DATA
+	, RotationFormat(ACLRotationFormat::ACLRF_QuatDropW_Variable)
+	, TranslationFormat(ACLVectorFormat::ACLVF_Vector3_Variable)
+	, ScaleFormat(ACLVectorFormat::ACLVF_Vector3_Variable)
+	, KeyframeStrippingProportion(0.0f)		// Strip nothing by default since it is destructive
+	, KeyframeStrippingThreshold(0.0f)		// Strip nothing by default since it is destructive
+#endif
+{
 }
 
 #if WITH_EDITORONLY_DATA
-// @third party code - Epic Games Begin
-void UAnimBoneCompressionCodec_ACLCustom::GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const
-// @third party code - Epic Games End
+void UAnimBoneCompressionCodec_ACLCustom::GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const
 {
-	using namespace acl;
-
 	OutSettings = acl::compression_settings();
+
 	OutSettings.rotation_format = GetRotationFormat(RotationFormat);
 	OutSettings.translation_format = GetVectorFormat(TranslationFormat);
 	OutSettings.scale_format = GetVectorFormat(ScaleFormat);
+
 	OutSettings.level = GetCompressionLevel(CompressionLevel);
+
+	OutSettings.keyframe_stripping.proportion = ACL::Private::GetPerPlatformFloat(KeyframeStrippingProportion, TargetPlatform);
+	OutSettings.keyframe_stripping.threshold = ACL::Private::GetPerPlatformFloat(KeyframeStrippingThreshold, TargetPlatform);
 }
 
-// @third party code - Epic Games Begin
 void UAnimBoneCompressionCodec_ACLCustom::PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar)
 {
 	Super::PopulateDDCKey(KeyArgs, Ar);
 
 	acl::compression_settings Settings;
-	GetCompressionSettings(Settings, KeyArgs.TargetPlatform);
-// @third party code - Epic Games End
+	GetCompressionSettings(KeyArgs.TargetPlatform, Settings);
 
 	uint32 ForceRebuildVersion = 1;
 	uint32 SettingsHash = Settings.get_hash();
@@ -92,4 +89,3 @@ void UAnimBoneCompressionCodec_ACLCustom::DecompressBone(FAnimSequenceDecompress
 
 	::DecompressBone(DecompContext, ACLContext, TrackIndex, OutAtom);
 }
-

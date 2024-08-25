@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SEditorViewport.h"
+
+#include "EditorInteractiveGizmoManager.h"
 #include "Misc/Paths.h"
 #include "Framework/Commands/UICommandList.h"
 #include "Misc/App.h"
@@ -436,7 +438,7 @@ void SEditorViewport::BindCommands()
 	MAP_VIEWMODE_ACTION( Commands.VirtualTexturePendingMipsMode, VMI_VirtualTexturePendingMips );
 	MAP_VIEWMODE_ACTION( Commands.StationaryLightOverlapMode, VMI_StationaryLightOverlap );
 
-	if (IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"))->GetValueOnAnyThread() != 0)
+	if (IsStaticLightingAllowed())
 	{
 		MAP_VIEWMODE_ACTION(Commands.LightmapDensityMode, VMI_LightmapDensity);
 	}
@@ -764,9 +766,12 @@ void SEditorViewport::OnCycleCoordinateSystem()
 	int32 CoordSystemAsInt = Client->GetWidgetCoordSystemSpace();
 
 	++CoordSystemAsInt;
-	if( CoordSystemAsInt == COORD_Max )
+
+	// parent mode is only supported with new trs gizmos for now
+	const int CoordMax = UEditorInteractiveGizmoManager::UsesNewTRSGizmos() ? COORD_Max : COORD_Parent;
+	if( CoordSystemAsInt >= CoordMax )
 	{
-		CoordSystemAsInt -= COORD_Max;
+		CoordSystemAsInt = COORD_World;
 	}
 
 	Client->SetWidgetCoordSystemSpace( (ECoordSystem)CoordSystemAsInt );
@@ -874,7 +879,7 @@ EVisibility SEditorViewport::GetCurrentFeatureLevelPreviewTextVisibility() const
 {
 	if (Client->GetWorld())
 	{
-		return (Client->GetWorld()->GetFeatureLevel() != GMaxRHIFeatureLevel) ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed;
+		return (GEditor && GEditor->IsFeatureLevelPreviewActive()) ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed;
 	}
 	else
 	{

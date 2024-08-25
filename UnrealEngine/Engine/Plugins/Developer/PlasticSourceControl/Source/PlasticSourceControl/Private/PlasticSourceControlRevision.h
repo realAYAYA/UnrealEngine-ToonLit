@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "ISourceControlRevision.h"
+#include "ISourceControlState.h"
 
 class FPlasticSourceControlState;
 
@@ -12,8 +13,8 @@ class FPlasticSourceControlRevision : public ISourceControlRevision
 {
 public:
 	FPlasticSourceControlRevision()
-		: ChangesetNumber(0)
-		, RevisionId(0)
+		: ChangesetNumber(ISourceControlState::INVALID_REVISION)
+		, RevisionId(ISourceControlState::INVALID_REVISION)
 		, Date(0)
 		, FileSize(0)
 	{

@@ -36,23 +36,6 @@
 
 namespace PixelInspector
 {
-	/** 
-	* A helper function that extracts the right scene color texture, untouched, to be used further in post processing. 
-	*/
-	FScreenPassTexture ReturnUntouchedSceneColorForPostProcessing(const FPostProcessMaterialInputs& InOutInputs)
-	{
-		if (InOutInputs.OverrideOutput.IsValid())
-		{
-			return InOutInputs.OverrideOutput;
-		}
-		else
-		{
-			/** We don't want to modify scene texture in any way. We just want it to be passed back onto the next stage. */
-			FScreenPassTexture SceneTexture = const_cast<FScreenPassTexture&>(InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor]);
-			return SceneTexture;
-		}
-	}
-
 	SPixelInspector::SPixelInspector()
 	{
 		DisplayResult = nullptr;
@@ -503,12 +486,7 @@ namespace PixelInspector
 		//5: high precision
 		const int32 GBufferFormat = CVarGBufferFormat != nullptr ? CVarGBufferFormat->GetValueOnGameThread() : 1;
 
-		// We need to know the static lighting mode to decode properly the buffers
-		const auto CVarAllowStaticLighting = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		//0: false
-		//1: true
-		//default: true
-		const bool AllowStaticLighting = CVarAllowStaticLighting != nullptr ? CVarAllowStaticLighting->GetValueOnGameThread() == 1 : true;
+		const bool AllowStaticLighting = IsStaticLightingAllowed();
 		
 		//Try to create the request buffer
 		int32 BufferIndex = CreateRequestBuffer(SceneInterface, GBufferFormat, bInGameViewMode);
@@ -894,16 +872,16 @@ namespace PixelInspector
 
 	FScreenPassTexture FPixelInspectorSceneViewExtension::PostProcessPassAfterFxaa_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& InOutInputs)
 	{
-		FinalColorPixelFormat = InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor].Texture->Desc.Format;
+		FinalColorPixelFormat = InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor].TextureSRV->Desc.Texture->Desc.Format;
 		// Don't need to modify anything, just return the untouched scene color texture back to post processing.
-		return ReturnUntouchedSceneColorForPostProcessing(InOutInputs);
+		return InOutInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 	}
 	
 	FScreenPassTexture FPixelInspectorSceneViewExtension::PostProcessPassAfterMotionBlur_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& InOutInputs)
 	{
-		HDRPixelFormat = InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor].Texture->Desc.Format;
+		HDRPixelFormat = InOutInputs.Textures[(uint32)EPostProcessMaterialInput::SceneColor].TextureSRV->Desc.Texture->Desc.Format;
 		// Don't need to modify anything, just return the untouched scene color texture back to post processing.
-		return ReturnUntouchedSceneColorForPostProcessing(InOutInputs);
+		return InOutInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 	}
 
 };

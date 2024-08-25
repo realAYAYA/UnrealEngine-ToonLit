@@ -6,6 +6,7 @@
 #include "GenericPlatform/GenericPlatformMemory.h"
 #include "HAL/MemoryBase.h"
 #include "HAL/PlatformMemory.h"
+#include "ProfilingDebugging/MemoryTrace.h"
 #include "Templates/IsPointer.h"
 
 #ifndef UE_USE_VERYLARGEPAGEALLOCATOR
@@ -191,15 +192,16 @@ struct FMemory
 	//
 	// C style memory allocation stubs that fall back to C runtime
 	//
-	static FORCEINLINE void* SystemMalloc(SIZE_T Size)
+	UE_ALLOCATION_FUNCTION(1) static FORCEINLINE void* SystemMalloc(SIZE_T Size)
 	{
-		/* TODO: Trace! */
-		return ::malloc(Size);
+		void* Ptr = ::malloc(Size);
+		MemoryTrace_Alloc(uint64(Ptr), Size, 0, EMemoryTraceRootHeap::SystemMemory);
+		return Ptr;
 	}
 
 	static FORCEINLINE void SystemFree(void* Ptr)
 	{
-		/* TODO: Trace! */
+		MemoryTrace_Free(uint64(Ptr), EMemoryTraceRootHeap::SystemMemory);
 		::free(Ptr);
 	}
 
@@ -207,12 +209,12 @@ struct FMemory
 	// C style memory allocation stubs.
 	//
 
-	static CORE_API void* Malloc(SIZE_T Count, uint32 Alignment = DEFAULT_ALIGNMENT);
-	static CORE_API void* Realloc(void* Original, SIZE_T Count, uint32 Alignment = DEFAULT_ALIGNMENT);
+	UE_ALLOCATION_FUNCTION(1, 2) static CORE_API void* Malloc(SIZE_T Count, uint32 Alignment = DEFAULT_ALIGNMENT);
+	UE_ALLOCATION_FUNCTION(2, 3) static CORE_API void* Realloc(void* Original, SIZE_T Count, uint32 Alignment = DEFAULT_ALIGNMENT);
 	static CORE_API void Free(void* Original);
 	static CORE_API SIZE_T GetAllocSize(void* Original);
 
-	static FORCEINLINE_DEBUGGABLE void* MallocZeroed(SIZE_T Count, uint32 Alignment = DEFAULT_ALIGNMENT)
+	UE_ALLOCATION_FUNCTION(1, 2) static FORCEINLINE_DEBUGGABLE void* MallocZeroed(SIZE_T Count, uint32 Alignment = DEFAULT_ALIGNMENT)
 	{
 		void* Memory = Malloc(Count, Alignment);
 		Memzero(Memory, Count);

@@ -129,7 +129,7 @@ FRDGBuffer* FSkeletalMeshDeformerHelpers::AllocateVertexFactoryPositionBuffer(FR
 			VertexBuffers[SectionIndex] = DeformerGeometry.Position->GetRHI();
 		}
 
-		MeshObjectGPU->UpdateRayTracingGeometry(LODModel, InLodIndex, VertexBuffers);
+		MeshObjectGPU->UpdateRayTracingGeometry(GraphBuilder.RHICmdList, LODModel, InLodIndex, VertexBuffers);
 #endif // RHI_RAYTRACING
 	}
 
@@ -209,6 +209,11 @@ FRDGBuffer* FSkeletalMeshDeformerHelpers::AllocateVertexFactoryColorBuffer(FRDGB
 
 void FSkeletalMeshDeformerHelpers::UpdateVertexFactoryBufferOverrides(FSkeletalMeshObject* InMeshObject, int32 InLodIndex)
 {
+	UpdateVertexFactoryBufferOverrides(FRHICommandListImmediate::Get(), InMeshObject, InLodIndex);
+}
+
+void FSkeletalMeshDeformerHelpers::UpdateVertexFactoryBufferOverrides(FRHICommandListBase& RHICmdList, FSkeletalMeshObject* InMeshObject, int32 InLodIndex)
+{
 	if (InMeshObject->IsCPUSkinned())
 	{
 		return;
@@ -248,18 +253,18 @@ void FSkeletalMeshDeformerHelpers::UpdateVertexFactoryBufferOverrides(FSkeletalM
 	{
 		FGPUBaseSkinVertexFactory const* BaseVertexFactory = MeshObjectGPU->GetBaseSkinVertexFactory(InLodIndex, SectionIndex);
 		FGPUSkinPassthroughVertexFactory* TargetVertexFactory = LOD.GPUSkinVertexFactories.PassthroughVertexFactories[SectionIndex].Get();
-		TargetVertexFactory->SetVertexAttributes(BaseVertexFactory, Desc);
+		TargetVertexFactory->SetVertexAttributes(RHICmdList, BaseVertexFactory, Desc);
 	}
 }
 
 void FSkeletalMeshDeformerHelpers::ResetVertexFactoryBufferOverrides(FSkeletalMeshObject* InMeshObject, int32 LODIndex)
 {
-	check(IsInRenderingThread());
-
 	if (InMeshObject->IsCPUSkinned())
 	{
 		return;
 	}
+
+	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
 
 	FSkeletalMeshObjectGPUSkin* MeshObjectGPU = static_cast<FSkeletalMeshObjectGPUSkin*>(InMeshObject);
 	FMeshDeformerGeometry& DeformerGeometry = MeshObjectGPU->GetDeformerGeometry(LODIndex);
@@ -284,7 +289,7 @@ void FSkeletalMeshDeformerHelpers::ResetVertexFactoryBufferOverrides(FSkeletalMe
 		TargetVertexFactory->ResetVertexAttributes();
 		FGPUSkinPassthroughVertexFactory::FDataType Data;
 		BaseVertexFactory->CopyDataTypeForLocalVertexFactory(Data);
-		TargetVertexFactory->SetData(Data);
+		TargetVertexFactory->SetData(RHICmdList, Data);
 	}
 
 #if RHI_RAYTRACING
@@ -295,6 +300,6 @@ void FSkeletalMeshDeformerHelpers::ResetVertexFactoryBufferOverrides(FSkeletalMe
 
 	TArray<FBufferRHIRef> VertexBuffers;
 	VertexBuffers.Init(VertexBuffer, NumSections);
-	MeshObjectGPU->UpdateRayTracingGeometry(LODModel, LODIndex, VertexBuffers);
+	MeshObjectGPU->UpdateRayTracingGeometry(RHICmdList, LODModel, LODIndex, VertexBuffers);
 #endif // RHI_RAYTRACING
 }

@@ -151,19 +151,19 @@ namespace EpicGames.BuildGraph.Expressions
 		internal BgNode Modify(BgList<BgFileSet>? inputs = null, BgList<BgNode>? fences = null, BgBool? runEarly = null, BgList<BgLabel>? labels = null)
 		{
 			BgNode node = Clone();
-			if (inputs is object)
+			if (inputs is not null)
 			{
 				node.Inputs = inputs;
 			}
-			if (fences is object)
+			if (fences is not null)
 			{
 				node.Fences = fences;
 			}
-			if (runEarly is object)
+			if (runEarly is not null)
 			{
 				node.RunEarly = runEarly;
 			}
-			if (labels is object)
+			if (labels is not null)
 			{
 				node.Labels = labels;
 			}

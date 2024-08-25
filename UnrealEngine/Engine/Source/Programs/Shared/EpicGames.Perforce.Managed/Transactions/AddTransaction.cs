@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using EpicGames.Core;
 
 namespace EpicGames.Perforce.Managed
@@ -57,7 +58,7 @@ namespace EpicGames.Perforce.Managed
 		readonly Dictionary<FileContentId, CachedFileInfo> _contentIdToTrackedFile;
 		readonly Dictionary<FileContentId, WorkspaceFileInfo> _contentIdToWorkspaceFile = new Dictionary<FileContentId, WorkspaceFileInfo>();
 
-		public AddTransaction(WorkspaceDirectoryInfo workspaceRootDir, StreamSnapshot streamSnapshot, Dictionary<FileContentId, CachedFileInfo> contentIdToTrackedFile)
+		private AddTransaction(WorkspaceDirectoryInfo workspaceRootDir, StreamSnapshot streamSnapshot, Dictionary<FileContentId, CachedFileInfo> contentIdToTrackedFile)
 		{
 			_streamSnapshot = streamSnapshot;
 			_newWorkspaceRootDir = new WorkspaceDirectoryInfo(workspaceRootDir.GetLocation());
@@ -69,14 +70,18 @@ namespace EpicGames.Perforce.Managed
 			{
 				_contentIdToWorkspaceFile[workspaceFile.ContentId] = workspaceFile;
 			}
-
-			using (ThreadPoolWorkQueue queue = new ThreadPoolWorkQueue())
-			{
-				queue.Enqueue(() => MergeDirectory(workspaceRootDir, _newWorkspaceRootDir, streamSnapshot.Root, queue));
-			}
 		}
 
-		void MergeDirectory(WorkspaceDirectoryInfo workspaceDir, WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamTreeRef, ThreadPoolWorkQueue queue)
+		public static async Task<AddTransaction> CreateAsync(WorkspaceDirectoryInfo workspaceRootDir, StreamSnapshot streamSnapshot, Dictionary<FileContentId, CachedFileInfo> contentIdToTrackedFile, int numWorkers)
+		{
+			AddTransaction transaction = new(workspaceRootDir, streamSnapshot, contentIdToTrackedFile);
+			using AsyncThreadPoolWorkQueue queue = new(numWorkers);
+			await queue.EnqueueAsync(_ => transaction.MergeDirectoryAsync(workspaceRootDir, transaction._newWorkspaceRootDir, streamSnapshot.Root, queue));
+			await queue.ExecuteAsync();
+			return transaction;
+		}
+
+		async Task MergeDirectoryAsync(WorkspaceDirectoryInfo workspaceDir, WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamTreeRef, AsyncThreadPoolWorkQueue queue)
 		{
 			// Make sure the directory exists
 			Directory.CreateDirectory(workspaceDir.GetFullName());
@@ -88,11 +93,11 @@ namespace EpicGames.Perforce.Managed
 				WorkspaceDirectoryInfo? workspaceSubDir;
 				if (workspaceDir.NameToSubDirectory.TryGetValue(subDirName, out workspaceSubDir))
 				{
-					MergeSubDirectory(subDirName, workspaceSubDir, subDirRef, newWorkspaceDir, queue);
+					await MergeSubDirectoryAsync(subDirName, workspaceSubDir, subDirRef, newWorkspaceDir, queue);
 				}
 				else
 				{
-					AddSubDirectory(subDirName, newWorkspaceDir, subDirRef, queue);
+					await AddSubDirectoryAsync(subDirName, newWorkspaceDir, subDirRef, queue);
 				}
 			}
 
@@ -111,7 +116,7 @@ namespace EpicGames.Perforce.Managed
 			}
 		}
 
-		void AddDirectory(WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamTreeRef, ThreadPoolWorkQueue queue)
+		async Task AddDirectoryAsync(WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamTreeRef, AsyncThreadPoolWorkQueue queue)
 		{
 			StreamTree streamDir = _streamSnapshot.Lookup(streamTreeRef);
 
@@ -121,7 +126,7 @@ namespace EpicGames.Perforce.Managed
 			// Add all the sub directories and files
 			foreach ((Utf8String subDirName, StreamTreeRef subDirRef) in streamDir.NameToTree)
 			{
-				AddSubDirectory(subDirName, newWorkspaceDir, subDirRef, queue);
+				await AddSubDirectoryAsync(subDirName, newWorkspaceDir, subDirRef, queue);
 			}
 			foreach ((Utf8String name, StreamFile streamFile) in streamDir.NameToFile)
 			{
@@ -129,18 +134,18 @@ namespace EpicGames.Perforce.Managed
 			}
 		}
 
-		void MergeSubDirectory(Utf8String name, WorkspaceDirectoryInfo workspaceSubDir, StreamTreeRef streamSubTreeRef, WorkspaceDirectoryInfo newWorkspaceDir, ThreadPoolWorkQueue queue)
+		async Task MergeSubDirectoryAsync(Utf8String name, WorkspaceDirectoryInfo workspaceSubDir, StreamTreeRef streamSubTreeRef, WorkspaceDirectoryInfo newWorkspaceDir, AsyncThreadPoolWorkQueue queue)
 		{
 			WorkspaceDirectoryInfo newWorkspaceSubDir = new WorkspaceDirectoryInfo(newWorkspaceDir, name, streamSubTreeRef);
 			newWorkspaceDir.NameToSubDirectory.Add(name, newWorkspaceSubDir);
-			queue.Enqueue(() => MergeDirectory(workspaceSubDir, newWorkspaceSubDir, streamSubTreeRef, queue));
+			await queue.EnqueueAsync(_ => MergeDirectoryAsync(workspaceSubDir, newWorkspaceSubDir, streamSubTreeRef, queue));
 		}
 
-		void AddSubDirectory(Utf8String name, WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamSubTreeRef, ThreadPoolWorkQueue queue)
+		async Task AddSubDirectoryAsync(Utf8String name, WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamSubTreeRef, AsyncThreadPoolWorkQueue queue)
 		{
 			WorkspaceDirectoryInfo newWorkspaceSubDir = new WorkspaceDirectoryInfo(newWorkspaceDir, name, streamSubTreeRef);
 			newWorkspaceDir.NameToSubDirectory.Add(name, newWorkspaceSubDir);
-			queue.Enqueue(() => AddDirectory(newWorkspaceSubDir, streamSubTreeRef, queue));
+			await queue.EnqueueAsync(_ => AddDirectoryAsync(newWorkspaceSubDir, streamSubTreeRef, queue));
 		}
 
 		void AddFile(WorkspaceDirectoryInfo newWorkspaceDir, Utf8String name, StreamFile streamFile)

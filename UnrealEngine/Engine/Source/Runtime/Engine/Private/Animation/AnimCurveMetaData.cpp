@@ -1,9 +1,10 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Animation/AnimCurveMetadata.h"
 #include "Animation/Skeleton.h"
 #if WITH_EDITOR
 #include "ScopedTransaction.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "AnimCurveMetaData" 
@@ -39,19 +40,27 @@ FCurveMetaData::FCurveMetaData()
 
 void UAnimCurveMetaData::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UAnimCurveMetaData::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 	// Add curve metadata IDs to a tag list, or a delimiter if we have no curve metadata.
 	// The delimiter is necessary so we can distinguish between data with no curves and old data, as the asset registry
 	// strips tags that have empty values 
 	TStringBuilder<256> CurvesBuilder;
-	CurvesBuilder.Append(USkeleton::CurveTagDelimiter);	
+	CurvesBuilder << USkeleton::CurveTagDelimiter;
 
 	ForEachCurveMetaData([&CurvesBuilder](FName InCurveName, const FCurveMetaData&)
 	{
-		CurvesBuilder.Append(InCurveName.ToString());
-		CurvesBuilder.Append(USkeleton::CurveTagDelimiter);
+		CurvesBuilder << InCurveName;
+		CurvesBuilder << USkeleton::CurveTagDelimiter;
 	});
 
-	OutTags.Add(FAssetRegistryTag(USkeleton::CurveNameTag, CurvesBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(USkeleton::CurveNameTag, CurvesBuilder.ToString(), FAssetRegistryTag::TT_Hidden));
 }
 
 #endif //WITH_EDITOR

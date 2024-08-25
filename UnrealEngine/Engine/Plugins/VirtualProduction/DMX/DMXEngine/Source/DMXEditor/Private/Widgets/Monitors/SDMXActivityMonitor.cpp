@@ -16,6 +16,7 @@
 #include "SlateOptMacros.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Layout/SScrollBar.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SWrapBox.h"
@@ -30,6 +31,7 @@
 SDMXActivityMonitor::SDMXActivityMonitor()
 	: MinUniverseID(1)
 	, MaxUniverseID(100)
+	, AnalyticsProvider("ActivityMonitor")
 {}
 
 SDMXActivityMonitor::~SDMXActivityMonitor()
@@ -46,6 +48,12 @@ BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION
 void SDMXActivityMonitor::Construct(const FArguments& InArgs)
 {
 	SetCanTick(true);
+
+	const TSharedRef<SScrollBar> HorizontalScrollBar = SNew(SScrollBar)
+		.Orientation(Orient_Horizontal);
+
+	const TSharedRef<SScrollBar> VerticalScrollBar = SNew(SScrollBar)
+		.Orientation(Orient_Vertical);
 
 	ChildSlot
 		[
@@ -179,17 +187,43 @@ void SDMXActivityMonitor::Construct(const FArguments& InArgs)
 			.VAlign(VAlign_Fill)
 			.HAlign(HAlign_Fill)
 			[
-				SNew(SScrollBox)
-				.Orientation(EOrientation::Orient_Horizontal)
+				SNew(SHorizontalBox)
 
-				+ SScrollBox::Slot()				
+				+ SHorizontalBox::Slot()
 				[
-					SAssignNew(UniverseList, SListView<TSharedPtr<SDMXActivityInUniverse>>)
-					.ItemHeight(20.0f)
-					.ListItemsSource(&UniverseListSource)
-					.Visibility(EVisibility::Visible)
-					.OnGenerateRow(this, &SDMXActivityMonitor::OnGenerateUniverseRow)
+					SNew(SScrollBox)
+					.Orientation(EOrientation::Orient_Horizontal)
+					.ExternalScrollbar(HorizontalScrollBar)
+
+					+ SScrollBox::Slot()
+					.FillSize(1.f)
+					[
+						SNew(SScrollBox)
+						.Orientation(EOrientation::Orient_Vertical)
+						.ExternalScrollbar(VerticalScrollBar)
+
+						+ SScrollBox::Slot()				
+						[
+							SAssignNew(UniverseList, SListView<TSharedPtr<SDMXActivityInUniverse>>)
+							.ItemHeight(20.0f)
+							.ListItemsSource(&UniverseListSource)
+							.Visibility(EVisibility::Visible)
+							.OnGenerateRow(this, &SDMXActivityMonitor::OnGenerateUniverseRow)
+						]
+					]
 				]
+
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				[
+					VerticalScrollBar
+				]
+			]
+
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			[
+				HorizontalScrollBar
 			]
 		];
 

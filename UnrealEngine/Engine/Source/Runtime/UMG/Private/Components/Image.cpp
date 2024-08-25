@@ -11,6 +11,10 @@
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
 
+#if WITH_EDITOR
+#include "TextureCompiler.h"
+#endif
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(Image)
 
 #define LOCTEXT_NAMESPACE "UMG"
@@ -187,6 +191,9 @@ void UImage::SetBrushFromTexture(UTexture2D* Texture, bool bMatchSize)
 		{
 			if (Texture)
 			{
+#if WITH_EDITOR
+				FTextureCompilingManager::Get().FinishCompilation({ Texture });
+#endif
 				Brush.ImageSize.X = Texture->GetSizeX();
 				Brush.ImageSize.Y = Texture->GetSizeY();
 			}

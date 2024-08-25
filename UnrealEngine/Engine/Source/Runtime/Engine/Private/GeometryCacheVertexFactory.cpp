@@ -99,13 +99,18 @@ void FGeometryCacheVertexVertexFactory::ModifyCompilationEnvironment(const FVert
 
 void FGeometryCacheVertexVertexFactory::SetData(const FDataType& InData)
 {
+	SetData(FRHICommandListImmediate::Get(), InData);
+}
+
+void FGeometryCacheVertexVertexFactory::SetData(FRHICommandListBase& RHICmdList, const FDataType& InData)
+{
 	// The shader code makes assumptions that the color component is a FColor, performing swizzles on ES3 and Metal platforms as necessary
 	// If the color is sent down as anything other than VET_Color then you'll get an undesired swizzle on those platforms
 	check((InData.ColorComponent.Type == VET_None) || (InData.ColorComponent.Type == VET_Color));
 
 	Data = InData;
 	// This will call InitRHI below where the real action happens
-	UpdateRHI(FRHICommandListImmediate::Get());
+	UpdateRHI(RHICmdList);
 }
 
 class FDefaultGeometryCacheVertexBuffer : public FVertexBuffer
@@ -173,7 +178,7 @@ void FGeometryCacheVertexVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 		{
 			FVertexDeclarationElementList PositionOnlyStreamElements;
 			PositionOnlyStreamElements.Add(AccessStreamComponent(Data.PositionComponent, 0, EVertexInputStreamType::PositionOnly));
-			AddPrimitiveIdStreamElement(EVertexInputStreamType::PositionOnly, PositionOnlyStreamElements, 1, 0xff); // TODO: support instancing on mobile
+			AddPrimitiveIdStreamElement(EVertexInputStreamType::PositionOnly, PositionOnlyStreamElements, 1, 1);
 			InitDeclaration(PositionOnlyStreamElements, EVertexInputStreamType::PositionOnly);
 		}
 
@@ -181,7 +186,7 @@ void FGeometryCacheVertexVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 			FVertexDeclarationElementList PositionAndNormalOnlyStreamElements;
 			PositionAndNormalOnlyStreamElements.Add(AccessStreamComponent(Data.PositionComponent, 0, EVertexInputStreamType::PositionAndNormalOnly));
 			PositionAndNormalOnlyStreamElements.Add(AccessStreamComponent(Data.TangentBasisComponents[1], 1, EVertexInputStreamType::PositionAndNormalOnly));
-			AddPrimitiveIdStreamElement(EVertexInputStreamType::PositionAndNormalOnly, PositionAndNormalOnlyStreamElements, 2, 0xff); // TODO: support instancing on mobile
+			AddPrimitiveIdStreamElement(EVertexInputStreamType::PositionAndNormalOnly, PositionAndNormalOnlyStreamElements, 2, 2);
 			InitDeclaration(PositionAndNormalOnlyStreamElements, EVertexInputStreamType::PositionAndNormalOnly);
 		}
 	}
@@ -245,7 +250,7 @@ void FGeometryCacheVertexVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 		}
 	}
 
-	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, 0xff); // TODO: support instancing on mobile
+	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, 13);
 
 	check(Streams.Num() > 0);
 	check(PositionStreamIndex >= 0);

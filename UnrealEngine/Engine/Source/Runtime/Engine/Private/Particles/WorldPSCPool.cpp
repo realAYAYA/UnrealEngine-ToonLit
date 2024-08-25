@@ -62,7 +62,7 @@ UParticleSystemComponent* FPSCPool::Acquire(UWorld* World, UParticleSystem* Temp
 	FPSCPoolElem RetElem;
 	if (FreeElements.Num())
 	{
-		RetElem = FreeElements.Pop(false);
+		RetElem = FreeElements.Pop(EAllowShrinking::No);
 		check(RetElem.PSC->Template == Template);
 		check(IsValid(RetElem.PSC));
 
@@ -185,7 +185,7 @@ void FPSCPool::KillUnusedComponents(float KillTime, UParticleSystem* Template)
 				PSC->DestroyComponent();
 			}
 
-			FreeElements.RemoveAtSwap(i, 1, false);
+			FreeElements.RemoveAtSwap(i, 1, EAllowShrinking::No);
 		}
 		else
 		{

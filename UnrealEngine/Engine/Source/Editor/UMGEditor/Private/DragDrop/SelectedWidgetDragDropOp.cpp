@@ -16,6 +16,12 @@ FSelectedWidgetDragDropOp::~FSelectedWidgetDragDropOp()
 	}
 }
 
+void FSelectedWidgetDragDropOp::OnDrop(bool bDropWasHandled, const FPointerEvent& MouseEvent)
+{
+	FDecoratedDragDropOp::OnDrop(bDropWasHandled, MouseEvent);
+	OnDragDropEnded.Broadcast();
+}
+
 TSharedRef<FSelectedWidgetDragDropOp> FSelectedWidgetDragDropOp::New(TSharedPtr<FWidgetBlueprintEditor> Editor, IUMGDesigner* InDesigner, const TArray<FDraggingWidgetReference>& InWidgets)
 {
 	TSharedRef<FSelectedWidgetDragDropOp> Operation = MakeShareable(new FSelectedWidgetDragDropOp());

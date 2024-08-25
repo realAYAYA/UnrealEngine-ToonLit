@@ -2,78 +2,345 @@
 
 #pragma once
 
-
 #include "Bindings/MVVMCompiledBindingLibrary.h"
 #include "Extensions/WidgetBlueprintGeneratedClassExtension.h"
 #include "Types/MVVMExecutionMode.h"
 #include "Types/MVVMViewModelContext.h"
+#include "View/MVVMViewTypes.h"
 
 #include "UObject/Package.h"
 #include "MVVMViewClass.generated.h"
 
 
-class UMVVMUserWidgetBinding;
 class UMVVMView;
 class UMVVMViewClass;
-class UMVVMViewModelBlueprintExtension;
+class UMVVMViewClassExtension;
 class UMVVMViewModelContextResolver;
 class UUserWidget;
 
-namespace UE::MVVM::Private
-{
-	struct FMVVMViewBlueprintCompiler;
-}
+namespace UE::MVVM::Private { struct FMVVMViewBlueprintCompiler; }
+
 
 /**
- * Shared data to find or create a ViewModel at runtime.
+ * A structure to identify the Binding and the associated FieldId
  */
 USTRUCT()
-struct FMVVMViewClass_SourceCreator
+struct FMVVMViewClass_SourceBinding
 {
 	GENERATED_BODY()
 
 	friend UE::MVVM::Private::FMVVMViewBlueprintCompiler;
 
 public:
-	UObject* CreateInstance(const UMVVMViewClass* ViewClass, UMVVMView* View, UUserWidget* UserWidget) const;
-
-	void DestroyInstance(const UObject* ViewModel, const UMVVMView* View) const;
-
-	UClass* GetSourceClass() const
+	/**
+	 * The id for the FieldId on the source.
+	 * Valid when it is OneWay or when we need to register to the FieldNotify system.
+	 */
+	FFieldNotificationId GetFieldId() const
 	{
-		return ExpectedSourceType.Get();
+		return FieldId;
 	}
 
-	bool IsSourceAUserWidgetProperty() const
+	/** The key to identify a binding in the view class. */
+	FMVVMViewClass_BindingKey GetBindingKey() const
 	{
-		return (Flags & (uint8)ESourceFlags::IsUserWidgetProperty) != 0;
+		return BindingKey;
+	}
+
+	/** @return true if this Binding should be executed at initialization. */
+	bool ExecuteAtInitialization() const
+	{
+		return (Flags & (uint8)EFlags::ExecuteAtInitialization) != 0;
+	}
+
+private:
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	FFieldNotificationId FieldId;
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	FMVVMViewClass_BindingKey BindingKey;
+
+	enum class EFlags : uint8
+	{
+		None = 0,
+		ExecuteAtInitialization = 1 << 0,
+	};
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	uint8 Flags = (uint8)EFlags::None;
+};
+
+
+/**
+ * A compiled and shared binding for ViewModel<->View
+ */
+USTRUCT()
+struct FMVVMViewClass_Binding
+{
+	GENERATED_BODY()
+
+	friend UE::MVVM::Private::FMVVMViewBlueprintCompiler;
+
+public:
+	/** @return the binding. From source to destination (if forward) or from destination to source (if backward). */
+	const FMVVMVCompiledBinding& GetBinding() const
+	{
+		return Binding;
+	}
+
+	/** @return true if multiple field or source can trigger this binding. */
+	bool IsShared() const
+	{
+		return (Flags & (uint8)EFlags::Shared) != 0;
+	}
+
+	/** @return true if this Binding should be executed once (at initialization) and when FieldId is broadcasted. */
+	bool IsOneWay() const
+	{
+		return (Flags & (uint8)EFlags::OneWay) != 0;
+	}
+
+	/**
+	 * A view binding may require more than one view sources to run the binding.
+	 * A binding will not execute if any view source is invalid.
+	 * It will not warn if the view source is make as optional.
+	 */
+	uint64 GetSources() const
+	{
+		return SourceBitField;
+	}
+
+	/** How/when the binding should be executed. */
+	MODELVIEWVIEWMODEL_API EMVVMExecutionMode GetExecuteMode() const;
+
+#if WITH_EDITORONLY_DATA
+	/** Get the id of the BlueprintViewBinding. */
+	FGuid GetEditorId() const
+	{
+		return EditorId;
+	}
+#endif
+
+#if UE_WITH_MVVM_DEBUGGING
+	struct FToStringArgs
+	{
+		bool bUseDisplayName = true;
+		bool bAddFlags = true;
+		bool bAddBindingId = true;
+		bool bAddBindingFields = true;
+		bool bAddSources = true;
+
+		MODELVIEWVIEWMODEL_API static FToStringArgs Short();
+		MODELVIEWVIEWMODEL_API static FToStringArgs All();
+	};
+
+	/** @return a human readable version of the source that can be use for debugging purposes. */
+	MODELVIEWVIEWMODEL_API FString ToString(const UMVVMViewClass* ViewClass, FToStringArgs Args) const;
+#endif
+
+private:
+	enum class EFlags : uint8
+	{
+		None = 0,
+		OneWay = 1 << 0,
+		Shared = 1 << 1,
+		OverrideExecuteMode = 1 << 2,
+		EnabledByDefault = 1 << 3,
+	};
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	FMVVMVCompiledBinding Binding;
+
+	//~ FMVVMVCompiledBinding ends with a uint8, adding the byte variable here to help with packing.
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	uint8 Flags = (uint8)EFlags::None;
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	EMVVMExecutionMode ExecutionMode = EMVVMExecutionMode::Immediate;
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	uint64 SourceBitField = 0;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(meta = (IgnoreForMemberInitializationTest))
+	FGuid EditorId;
+#endif
+};
+
+
+/**
+ * A binding to evaluate the source when something change in its path.
+ */
+USTRUCT()
+struct FMVVMViewClass_EvaluateSource
+{
+	GENERATED_BODY()
+
+	friend UE::MVVM::Private::FMVVMViewBlueprintCompiler;
+
+public:
+	/** The id for the FieldId on the source on the parent that will trigger the evaluation. */
+	FFieldNotificationId GetFieldId() const
+	{
+		return ParentFieldId;
 	}
 	
-	bool CanBeSet() const
+	/** The source that owns the source. */
+	FMVVMViewClass_SourceKey GetParentSource() const
 	{
-		return (Flags & (uint8)ESourceFlags::CanBeSet) != 0;
+		return ParentSource;
 	}
 
-	bool CanBeEvaluated() const
+	/** The source that needs to be evaluated. */
+	FMVVMViewClass_SourceKey GetSource() const
 	{
-		return (Flags & (uint8)ESourceFlags::CanBeEvaluated) != 0;
-	}
-
-	FName GetSourceName() const
-	{
-		return PropertyName;
-	}
-	
-	FName GetParentSourceName() const
-	{
-		return ParentSourceName;
+		return ToEvaluate;
 	}
 
 #if UE_WITH_MVVM_DEBUGGING
 	struct FToStringArgs
 	{
 		bool bUseDisplayName = true;
+
+		MODELVIEWVIEWMODEL_API static FToStringArgs Short();
+		MODELVIEWVIEWMODEL_API static FToStringArgs All();
+	};
+
+	/** @return a human readable version of the source that can be use for debugging purposes. */
+	MODELVIEWVIEWMODEL_API FString ToString(const UMVVMViewClass* ViewClass, FToStringArgs Args) const;
+#endif
+
+private:
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	FFieldNotificationId ParentFieldId;
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	FMVVMViewClass_SourceKey ParentSource;
+
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	FMVVMViewClass_SourceKey ToEvaluate;
+};
+
+
+/**
+ * Shared data to find or create a ViewModel at runtime.
+ */
+USTRUCT()
+struct FMVVMViewClass_Source
+{
+	GENERATED_BODY()
+
+	friend UE::MVVM::Private::FMVVMViewBlueprintCompiler;
+
+public:
+	/** Get or create the instance used to register the bindings. */
+	MODELVIEWVIEWMODEL_API UObject* GetOrCreateInstance(const UMVVMViewClass* ViewClass, UMVVMView* View, UUserWidget* UserWidget) const;
+
+	/** The source is not needed anymore. */
+	MODELVIEWVIEWMODEL_API void ReleaseInstance(const UObject* ViewModel, const UMVVMView* View) const;
+
+	/** The expected class of the source. */
+	UClass* GetSourceClass() const
+	{
+		return ExpectedSourceType.Get();
+	}
+
+	/** The source is the UserWidget. */
+	bool IsUserWidget() const
+	{
+		return (Flags & (uint16)EFlags::SelfReference) != 0;
+	}
+
+	/** The source is a viewmodel added in the editor. */
+	bool IsViewModel() const
+	{
+		return (Flags & (uint16)EFlags::IsViewModel) != 0;
+	}
+
+	/**
+	 * The source is UserWidget's property.
+	 * @return false if the source is from a long path or the source is the UserWidget.
+	 */
+	bool IsUserWidgetProperty() const
+	{
+		return (Flags & (uint16)EFlags::IsUserWidgetProperty) != 0;
+	}
+	
+	/** The UserWidget's property need to be set/reset when the Source is created/release. */
+	bool RequireSettingUserWidgetProperty() const
+	{
+		return (Flags & (uint16)EFlags::SetUserWidgetProperty) != 0;
+	}
+
+	/** Can be set at runtime from SetViewModel. */
+	bool CanBeSet() const
+	{
+		return (Flags & (uint16)EFlags::CanBeSet) != 0;
+	}
+
+	/** The source "GetOrCreateInstance" can be reevaluated. */
+	bool CanBeEvaluated() const
+	{
+		return (Flags & (uint16)EFlags::CanBeEvaluated) != 0;
+	}
+	
+	/** The source has at least one evaluate binding. */
+	bool HasEvaluateBindings() const
+	{
+		return (Flags & (uint16)EFlags::HasEvaluatedBindings) != 0;
+	}
+	
+	/**
+	 * The source GetOrCreateInstance can fail.
+	 * The view will not warn if a binding can't execute because the source is invalid.
+	 */
+	bool IsOptional() const
+	{
+		return (Flags & (uint16)EFlags::IsOptional) != 0;
+	}
+	
+	/** The source has at least one binding that need to be tick every frame. */
+	bool HasTickBindings() const
+	{
+		return (Flags & (uint16)EFlags::HasTickBindings) != 0;
+	}
+
+	/** The name of the source. */
+	FName GetName() const
+	{
+		return PropertyName;
+	}
+
+	/** The name of the UserWidget's property. */
+	FName GetUserWidgetPropertyName() const
+	{
+		return IsUserWidgetProperty() ? PropertyName : FName();
+	}
+
+	/**
+	 * FieldId owns by the source that we need to register to.
+	 * Only contains id for OneWay bindings or Evaluate bindings.
+	 */
+	const TArrayView<const FMVVMViewClass_FieldId> GetFieldIds() const
+	{
+		return FieldToRegisterTo;
+	}
+
+	/** The list of bindings owns by the source. A binding can be owns by more than one source. */
+	const TArrayView<const FMVVMViewClass_SourceBinding> GetBindings() const
+	{
+		return Bindings;
+	}
+
+#if UE_WITH_MVVM_DEBUGGING
+	struct FToStringArgs
+	{
+		FMVVMViewClass_Binding::FToStringArgs Bindings;
+		bool bUseDisplayName = true;
 		bool bAddCreationMode = true;
+		bool bAddFields = true;
+		bool bAddBindings = true;
 		bool bAddFlags = true;
 
 		MODELVIEWVIEWMODEL_API static FToStringArgs Short();
@@ -81,24 +348,20 @@ public:
 	};
 
 	/** @return a human readable version of the source that can be use for debugging purposes. */
-	MODELVIEWVIEWMODEL_API FString ToString(const FMVVMCompiledBindingLibrary& CompiledBindingLibrary, FToStringArgs Args) const;
-#endif
-
-#if WITH_EDITOR
-	MODELVIEWVIEWMODEL_API void PostSerialize(const FArchive& Ar);
+	MODELVIEWVIEWMODEL_API FString ToString(const UMVVMViewClass* ViewClass, FToStringArgs Args) const;
 #endif
 
 private:
 	/** Class type to create a source at runtime. */
-	UPROPERTY()
+	UPROPERTY(VisibleAnywhere, Category = "View")
 	TSubclassOf<UObject> ExpectedSourceType;
 
 	/** The resolver to fetch the source at runtime. */
-	UPROPERTY(Instanced)
+	UPROPERTY(VisibleAnywhere, Category = "View", Instanced)
 	TObjectPtr<UMVVMViewModelContextResolver> Resolver = nullptr;
 
 	/** Info to find the ViewModel instance at runtime. */
-	UPROPERTY()
+	UPROPERTY(VisibleAnywhere, Category = "View")
 	FMVVMViewModelContext GlobalViewModelInstance;
 
 	/**
@@ -106,208 +369,101 @@ private:
 	 * It can be a path "Property = Object.Function.Object".
 	 * It can be a UFunction's name of a FProperty's name.
 	 */
-	UPROPERTY()
+	UPROPERTY(VisibleAnywhere, Category = "View")
 	FMVVMVCompiledFieldPath FieldPath;
 
-	/** The source name and the property's name of the view (if the flag IsUserWidgetProperty is set). */
-	UPROPERTY()
+	UPROPERTY(VisibleAnywhere, Category = "View")
 	FName PropertyName;
 
-	/** The name of the parent source if it's the dynamic source. */
-	UPROPERTY()
-	FName ParentSourceName;
+	/** All the fields that the view need to register to for this source. */
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	TArray<FMVVMViewClass_FieldId> FieldToRegisterTo;
 
-	enum class ESourceFlags : uint8
+	/**
+	 * All the bindings this source need to execute at initialization (OneTime)
+	 * And the bindings that needs to execute when the FieldId matches (OneWay).
+	 */
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	TArray<FMVVMViewClass_SourceBinding> Bindings;
+
+	enum class EFlags : uint16
 	{
 		None = 0,
 		TypeCreateInstance = 1 << 0,
 		IsUserWidgetProperty = 1 << 1,
-		IsOptional = 1 << 2,
-		CanBeSet = 1 << 3,
-		CanBeEvaluated = 1 << 4,
+		SetUserWidgetProperty = 1 << 2,
+		IsOptional = 1 << 3,
+		CanBeSet = 1 << 4,
+		CanBeEvaluated = 1 << 5,
+		HasEvaluatedBindings = 1 << 6,
+		SelfReference = 1 << 7,
+		HasTickBindings = 1 << 8,
+		IsViewModel = 1 << 9,
+		IsViewModelInstanceExposed = 1 << 10,
+		GlobalViewModelCollectionRetry = 1 << 11,
 	};
 
-	UPROPERTY()
-	uint8 Flags = (uint8)ESourceFlags::None;
-	
-#if WITH_EDITORONLY_DATA
-	UPROPERTY()
-	bool bCreateInstance_DEPRECATED = false;
-
-	UPROPERTY()
-	bool bIsUserWidgetProperty_DEPRECATED = true;
-
-	UPROPERTY()
-	bool bOptional_DEPRECATED = false;
-#endif
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	uint16 Flags = (uint16)EFlags::None;
 };
-
-#if WITH_EDITOR
-template<>
-struct TStructOpsTypeTraits<FMVVMViewClass_SourceCreator> : public TStructOpsTypeTraitsBase2<FMVVMViewClass_SourceCreator>
-{
-	enum
-	{
-		WithPostSerialize = true,
-	};
-};
-#endif
 
 
 /**
- * A compiled and shared binding for ViewModel<->View
+ * A compiled and shared delegate bindings
  */
 USTRUCT()
-struct MODELVIEWVIEWMODEL_API FMVVMViewClass_CompiledBinding
+struct MODELVIEWVIEWMODEL_API FMVVMViewClass_Event
 {
 	GENERATED_BODY()
 
 	friend UE::MVVM::Private::FMVVMViewBlueprintCompiler;
 
 public:
-	/** @return The id for the FieldId on the source (if forward) or the destination (if backward). */
-	FMVVMVCompiledFieldId GetSourceFieldId() const
+	/**
+	 * The path to get access to the multicast from the UserWidget.
+	 * Include the name of the Widget/ViewModel
+	 */
+	const FMVVMVCompiledFieldPath& GetMulticastDelegatePath() const
 	{
-		return FieldId;
+		return FieldPath;
+	}
+
+	/** The name of the UFunction on the UserWidget. */
+	const FName GetUserWidgetFunctionName() const
+	{
+		return UserWidgetFunctionName;
 	}
 
 	/**
-	 * @return The unique name of the source object that contains the SourceFieldId.
-	 * It implements INotifyFieldValueChanged if it's not a One Time.
-	 * It can also be the name of a FProperty on the source object.
+	 * The source, if the multicast parent is a valid source.
+	 * This is used when the source value changes at runtime and we want to bound the event again.
 	 */
-	FName GetSourceName() const
+	FMVVMViewClass_SourceKey GetSourceKey() const
 	{
-		return SourcePropertyName;
+		return SourceToReevaluate;
 	}
-
-	/** @return The SourceCreator index when the binding is of the EvaluateSourceCreator type. */
-	int32 GetEvaluateSourceCreatorBindingIndex() const
-	{
-		return EvaluateSourceCreatorIndex;
-	}
-
-	/** @return true if SourceFieldId is not from a property but the object is the UserWidget. */
-	bool IsSourceUserWidget() const
-	{
-		return (Flags & EBindingFlags::SourceObjectIsSelf) != 0;
-	}
-
-	/** @return the binding. From source to destination (if forward) or from destination to source (if backward). */
-	const FMVVMVCompiledBinding& GetBinding() const
-	{
-		return Binding;
-	}
-
-	/** @return true if this Binding should be executed at initialization. */
-	bool NeedsExecutionAtInitialization() const
-	{
-		return (Flags & EBindingFlags::ExecuteAtInitialization) != 0;
-	}
-
-	/** @return true if this Binding should be executed once (at initialization) but should not be executed when the SourceFieldId value changes. */
-	bool IsOneTime() const
-	{
-		return (Flags & EBindingFlags::OneTime) != 0;
-	}
-
-	/** @return true if the binding is enabled by default. */
-	bool IsEnabledByDefault() const
-	{
-		return (Flags & EBindingFlags::EnabledByDefault) != 0;
-	}
-
-	/** @return true if it's normal that the binding could not find it's source when registering it. */
-	bool IsRegistrationOptional() const
-	{
-		return (Flags & EBindingFlags::ViewModelOptional) != 0;
-	}
-	
-	/** @return true if the binding is not valid and we should only evaluate the source creator. */
-	bool IsEvaluateSourceCreatorBinding() const
-	{
-		return EvaluateSourceCreatorIndex != INDEX_NONE;
-	}
-
-	/**
-	 * @return true if the binding use a conversion function and that the conversion function is complex.
-	 * The conversion function is complex, there is no input. The inputs are calculated in the BP function.
-	 */
-	bool IsConversionFunctionComplex() const
-	{
-		return Binding.IsComplexFunction();
-	}
-	
-	/** How the binding should be executed. */
-	EMVVMExecutionMode GetExecuteMode() const;
 
 #if UE_WITH_MVVM_DEBUGGING
 	struct FToStringArgs
 	{
 		bool bUseDisplayName = true;
-		bool bAddFieldPath = true;
-		bool bAddFieldId = true;
-		bool bAddFlags = true;
-		bool bAddBindingId = true;
-
+		
 		MODELVIEWVIEWMODEL_API static FToStringArgs Short();
 		MODELVIEWVIEWMODEL_API static FToStringArgs All();
 	};
-
-
-	UE_DEPRECATED(5.3, "ToString with no argument is deprecated.")
-	FString ToString() const;
-
 	/** @return a human readable version of the binding that can be use for debugging purposes. */
-	FString ToString(const FMVVMCompiledBindingLibrary& CompiledBindingLibrary, FToStringArgs Args) const;
-#endif
-
-#if WITH_EDITOR
-	FGuid GetEditorId() const
-	{
-		return EditorId;
-	}
+	FString ToString(const UMVVMViewClass* ViewClass, FToStringArgs Args) const;
 #endif
 
 private:
 	UPROPERTY()
-	FMVVMVCompiledFieldId FieldId;
-
-	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
-	FName SourcePropertyName;
+	FMVVMVCompiledFieldPath FieldPath;
 
 	UPROPERTY()
-	FMVVMVCompiledBinding Binding;
+	FName UserWidgetFunctionName;
 
-	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
-	EMVVMExecutionMode ExecutionMode = EMVVMExecutionMode::Immediate;
-
-	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
-	int8 EvaluateSourceCreatorIndex = INDEX_NONE;
-
-	enum EBindingFlags
-	{
-		None = 0,
-		ExecuteAtInitialization = 1 << 0,
-		Unused01 = 1 << 1,
-		OneTime = 1 << 2,
-		EnabledByDefault = 1 << 3,
-		/** The source (viewmodel) can be nullptr and the binding could failed and should not log a warning. */
-		ViewModelOptional = 1 << 4,
-		Unused02 = 1 << 5,
-		/** In development, (when the Blueprint maybe not be compiled with the latest data), the ExecutionMode may not reflect the default project setting value. */
-		OverrideExecuteMode = 1 << 6,
-		/** When the source object is the object itself. */
-		SourceObjectIsSelf = 1 << 7,
-	};
-
-	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
-	uint8 Flags = EBindingFlags::None;
-
-#if WITH_EDITORONLY_DATA
-	UPROPERTY(meta = (IgnoreForMemberInitializationTest))
-	FGuid EditorId;
-#endif
+	UPROPERTY()
+	FMVVMViewClass_SourceKey SourceToReevaluate;
 };
 
 
@@ -332,78 +488,145 @@ public:
 	//~ End UWidgetBlueprintGeneratedClassExtension
 
 public:
-	/** Should it automatically execute the bindings when the view is constructed or they will be executed manually. */
-	bool InitializeSourcesOnConstruct() const
+	/** Should it automatically create the binding sources when the view is constructed. */
+	[[nodiscard]] bool DoesInitializeSourcesOnConstruct() const
 	{
 		return bInitializeSourcesOnConstruct;
 	}
-	/** Should it automatically execute the bindings when the view is constructed or they will be executed manually. */
-	bool InitializeBindingsOnConstruct() const
+
+	/** Should it automatically register and execute the bindings when the view is constructed. */
+	[[nodiscard]] bool DoesInitializeBindingsOnConstruct() const
 	{
 		return bInitializeBindingsOnConstruct;
 	}
 	
-	/** Get the list of the needed ViewModel. */
-	const TArrayView<const FMVVMViewClass_SourceCreator> GetViewModelCreators() const
+	/** Should it automatically register the events when the view is constructed. */
+	[[nodiscard]] bool DoesInitializeEventsOnConstruct() const
 	{
-		return MakeArrayView(SourceCreators);
+		return bInitializeEventsOnConstruct;
 	}
 
 	/** Get the container of all the bindings. */
-	const FMVVMCompiledBindingLibrary& GetBindingLibrary() const
+	[[nodiscard]] const FMVVMCompiledBindingLibrary& GetBindingLibrary() const
 	{
 		return BindingLibrary;
 	}
 
-	/**  */
-	const TArrayView<const FMVVMViewClass_CompiledBinding> GetCompiledBindings() const
+	/** The field of all the sources that are optional. */
+	uint64 GetOptionalSources() const
 	{
-		return MakeArrayView(CompiledBindings);
+		return OptionalSources;
+	}
+	
+	/** Get the list of all the needed viewmodel or widgets. */
+	[[nodiscard]] const TArrayView<const FMVVMViewClass_Source> GetSources() const
+	{
+		return MakeArrayView(Sources);
+	}
+	
+	/** The shared source used by the view. */
+	[[nodiscard]] const FMVVMViewClass_Source& GetSource(FMVVMViewClass_SourceKey Key) const
+	{
+		check(Sources.IsValidIndex(Key.GetIndex()));
+		return Sources[Key.GetIndex()];
 	}
 
-	/** */
-	const FMVVMViewClass_CompiledBinding& GetCompiledBinding(int32 Index) const
+	/** The list of bindings. A binding can be used by more than one source. */
+	[[nodiscard]] const TArrayView<const FMVVMViewClass_Binding> GetBindings() const
 	{
-		return CompiledBindings[Index];
+		return Bindings;
+	}
+
+	/** The binding (can be shared by more than one source). */
+	[[nodiscard]] const FMVVMViewClass_Binding& GetBinding(FMVVMViewClass_BindingKey Key) const
+	{
+		check(Bindings.IsValidIndex(Key.GetIndex()));
+		return Bindings[Key.GetIndex()];
+	}
+
+	/** The list of evaluate bindings. */
+	[[nodiscard]] const TArrayView<const FMVVMViewClass_EvaluateSource> GetEvaluateSources() const
+	{
+		return EvaluateSources;
+	}
+
+	/** The evaluate binding. */
+	[[nodiscard]] const FMVVMViewClass_EvaluateSource& GetEvaluateSource(FMVVMViewClass_EvaluateBindingKey Key) const
+	{
+		check(EvaluateSources.IsValidIndex(Key.GetIndex()));
+		return EvaluateSources[Key.GetIndex()];
+	}
+	
+	/** The list of events. */
+	[[nodiscard]] const TArrayView<const FMVVMViewClass_Event> GetEvents() const
+	{
+		return Events;
+	}
+
+	/** The event. */
+	[[nodiscard]] const FMVVMViewClass_Event& GetEvent(FMVVMViewClass_EventKey Key) const
+	{
+		check(Events.IsValidIndex(Key.GetIndex()));
+		return Events[Key.GetIndex()];
+	}
+
+	/** The list of extensions for widgets. */
+	[[nodiscard]] const TArrayView<const TObjectPtr<UMVVMViewClassExtension>> GetViewClassExtensions() const
+	{
+		return ViewClassExtensions;
 	}
 
 #if UE_WITH_MVVM_DEBUGGING
-	void Log(FMVVMViewClass_SourceCreator::FToStringArgs SourceArgs, FMVVMViewClass_CompiledBinding::FToStringArgs BindingArgs) const;
+	struct FToStringArgs
+	{
+		FMVVMViewClass_Source::FToStringArgs Source;
+		FMVVMViewClass_Binding::FToStringArgs Binding;
+		FMVVMViewClass_EvaluateSource::FToStringArgs Evaluate;
+		FMVVMViewClass_Event::FToStringArgs Event;
+
+		MODELVIEWVIEWMODEL_API static FToStringArgs Short();
+		MODELVIEWVIEWMODEL_API static FToStringArgs All();
+	};
+	[[nodiscard]] FString ToString(FToStringArgs SourceArgs) const;
 #endif
 
 private:
-	/**  */
-	TArrayView<FMVVMViewClass_CompiledBinding> GetCompiledBindings()
-	{
-		return MakeArrayView(CompiledBindings);
-	}
-
 #if WITH_EDITOR
 	void HandleBlueprintCompiled();
 #endif
 
 private:
-	/** Data to retrieve/create the sources (could be viewmodel, widget, ...). */
-	UPROPERTY()
-	TArray<FMVVMViewClass_SourceCreator> SourceCreators;
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	TArray<FMVVMViewClass_Source> Sources;
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	TArray<FMVVMViewClass_Binding> Bindings;
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	TArray<FMVVMViewClass_EvaluateSource> EvaluateSources;
+	UPROPERTY(VisibleAnywhere, Category = "View")
+	TArray<FMVVMViewClass_Event> Events;
 
-	/** */
-	UPROPERTY()
-	TArray<FMVVMViewClass_CompiledBinding> CompiledBindings;
+	/** All MVVM extensions on widgets of the owning userwidget. */
+	UPROPERTY(Instanced)
+	TArray<TObjectPtr<UMVVMViewClassExtension>> ViewClassExtensions;
 
 	/** All the bindings shared between all the View instance. */
 	UPROPERTY()
 	FMVVMCompiledBindingLibrary BindingLibrary;
 
-	/** */
+	/** Which view source are optional. */
+	UPROPERTY()
+	uint64 OptionalSources;
+
 	int32 ViewCounter = 0;
 
-	/** */
 	UPROPERTY()
 	bool bInitializeSourcesOnConstruct = true;
-	/** */
+
 	UPROPERTY()
 	bool bInitializeBindingsOnConstruct = true;
+
+	UPROPERTY()
+	bool bInitializeEventsOnConstruct = true;
 
 #if WITH_EDITORONLY_DATA
 	FDelegateHandle BluerpintCompiledHandle;

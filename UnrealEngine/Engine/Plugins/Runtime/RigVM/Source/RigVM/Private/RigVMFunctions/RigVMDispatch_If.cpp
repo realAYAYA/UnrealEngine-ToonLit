@@ -23,19 +23,22 @@ FName FRigVMDispatch_If::GetArgumentNameForOperandIndex(int32 InOperandIndex, in
 	return ArgumentNames[InOperandIndex];
 }
 
-const TArray<FRigVMTemplateArgument>& FRigVMDispatch_If::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigVMDispatch_If::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
-		FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
-	};
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		FRigVMTemplateArgument(ConditionName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Bool),
-		FRigVMTemplateArgument(TrueName, ERigVMPinDirection::Input, ValueCategories),
-		FRigVMTemplateArgument(FalseName, ERigVMPinDirection::Input, ValueCategories),
-		FRigVMTemplateArgument(ResultName, ERigVMPinDirection::Output, ValueCategories)
-	};
-	return Arguments;
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if(Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> ValueCategories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
+			FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
+		};
+		
+		Infos.Emplace(ConditionName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Bool);
+		Infos.Emplace(TrueName, ERigVMPinDirection::Input, ValueCategories);
+		Infos.Emplace(FalseName, ERigVMPinDirection::Input, ValueCategories);
+		Infos.Emplace(ResultName, ERigVMPinDirection::Output, ValueCategories);
+	}
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigVMDispatch_If::OnNewArgumentType(const FName& InArgumentName,
@@ -83,7 +86,7 @@ void FRigVMDispatch_If::Execute(FRigVMExtendedExecuteContext& InContext, FRigVMM
 	FRigVMMemoryHandle& InputHandle = Condition ? Handles[1] : Handles[2];
 	if(InputHandle.IsLazy())
 	{
-		InputHandle.ComputeLazyValueIfNecessary(InContext, InContext.GetSlice().GetIndex());
+		InputHandle.ComputeLazyValueIfNecessary(InContext, InContext.GetSliceHash());
 	}
 
 	const uint8* Input = InputHandle.GetData();

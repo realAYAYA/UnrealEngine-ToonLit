@@ -6,6 +6,7 @@
 #include "Misc/AssertionMacros.h"
 #include "MuR/Layout.h"
 #include "MuR/Mesh.h"
+#include "MuR/MeshPrivate.h"
 #include "MuR/MeshBufferSet.h"
 #include "MuR/MutableMath.h"
 #include "MuR/Operations.h"
@@ -29,6 +30,7 @@
 #include "MuT/ASTOpMeshTransform.h"
 #include "MuT/ASTOpMeshDifference.h"
 #include "MuT/ASTOpMeshMorph.h"
+#include "MuT/ASTOpMeshAddTags.h"
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/CodeGenerator.h"
 #include "MuT/CodeGenerator_FirstPass.h"
@@ -77,13 +79,10 @@
 
 #include "Spatial/PointHashGrid3.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
-class Node;
+	class Node;
 
 	
 	//---------------------------------------------------------------------------------------------
@@ -160,7 +159,7 @@ class Node;
 	void GetUVIsland(TArray<FTriangle>& InTriangles,
 		const uint32 InFirstTriangle,
 		TArray<uint32>& OutTriangleIndices,
-		const TArray<vec2<float>>& InUVs,
+		const TArray<FVector2f>& InUVs,
 		const TMultiMap<int32, uint32>& InVertexToTriangleMap)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(LayoutUV_GetUVIsland);
@@ -206,7 +205,7 @@ class Node;
 					{
 						// Check if the vertex is in the same UV Island 
 						if (!SkipTrinalges[OtherTriangleIndex]
-							&& InUVs[Triangle.Indices[1]].AlmostEqual(InUVs[OtherTriangle.Indices[OtherIndex]], 0.00001))
+							&& InUVs[Triangle.Indices[1]].Equals(InUVs[OtherTriangle.Indices[OtherIndex]], 0.00001f))
 						{
 							OutTriangleIndices.Add(OtherTriangleIndex);
 							PendingTriangles.Add(OtherTriangleIndex);
@@ -221,7 +220,7 @@ class Node;
 					{
 						// Check if the vertex is in the same UV Island 
 						if (!SkipTrinalges[OtherTriangleIndex]
-							&& InUVs[Triangle.Indices[2]].AlmostEqual(InUVs[OtherTriangle.Indices[OtherIndex]], 0.00001))
+							&& InUVs[Triangle.Indices[2]].Equals(InUVs[OtherTriangle.Indices[OtherIndex]], 0.00001f))
 						{
 							OutTriangleIndices.Add(OtherTriangleIndex);
 							PendingTriangles.Add(OtherTriangleIndex);
@@ -250,7 +249,7 @@ class Node;
 					{
 						// Check if the vertex belong to the same UV island
 						if (!SkipTrinalges[OtherTriangleIndex]
-							&& InUVs[Triangle.Indices[2]].AlmostEqual(InUVs[OtherTriangle.Indices[OtherIndex]], 0.00001))
+							&& InUVs[Triangle.Indices[2]].Equals(InUVs[OtherTriangle.Indices[OtherIndex]], 0.00001f))
 						{
 							OutTriangleIndices.Add(OtherTriangleIndex);
 							PendingTriangles.Add(OtherTriangleIndex);
@@ -267,8 +266,8 @@ class Node;
 
     //---------------------------------------------------------------------------------------------
 	void CodeGenerator::PrepareForLayout(Ptr<const Layout> GeneratedLayout,
-		MeshPtr currentLayoutMesh,
-		size_t currentLayoutChannel,
+		Ptr<Mesh> currentLayoutMesh,
+		int32 currentLayoutChannel,
 		const void* errorContext,
 		const FMeshGenerationOptions& MeshOptions
 		)
@@ -330,7 +329,7 @@ class Node;
 
 		// 
 		TArray<uint16> BlockIds;
-		TArray<box<vec2<float>>> BlockRects;
+		TArray<box<FVector2f>> BlockRects;
 
 		BlockIds.SetNumUninitialized(NumBlocks);
 		BlockRects.SetNumUninitialized(NumBlocks);
@@ -346,7 +345,7 @@ class Node;
 			uint16 MinX, MinY, SizeX, SizeY;
 			Layout->GetBlock(BlockIndex, &MinX, &MinY, &SizeX, &SizeY);
 
-			box<vec2<float>>& BlockRect = BlockRects[BlockIndex];
+			box<FVector2f>& BlockRect = BlockRects[BlockIndex];
 			BlockRect.min[0] = ((float)MinX) / (float)Grid.X;
 			BlockRect.min[1] = ((float)MinY) / (float)Grid.Y;
 			BlockRect.size[0] = ((float)SizeX) / (float)Grid.X;
@@ -400,36 +399,38 @@ class Node;
 		(buffer, channel, &semantic, &semanticIndex, &format, &components, &offset);
 		check(semantic == MBS_TEXCOORDS);
 
-		const uint8_t* pData = currentLayoutMesh->GetVertexBuffers().GetBufferData(buffer);
+		uint8* pData = currentLayoutMesh->GetVertexBuffers().GetBufferData(buffer);
 		int elemSize = currentLayoutMesh->GetVertexBuffers().GetElementSize(buffer);
 		int channelOffset = currentLayoutMesh->GetVertexBuffers().GetChannelOffset(buffer, channel);
 		pData += channelOffset;
 
 
 		// Temp copy of the UVs
-		TArray<vec2<float>> TempUVs;
+		TArray<FVector2f> TempUVs;
 		TempUVs.SetNumUninitialized(NumVertices);
 
-		// Get a copy of the UVs as vec2<float> to work with them. 
+		// Get a copy of the UVs as FVector2f to work with them. 
 		{
 			bool bNonNormalizedUVs = false;
+			const bool bIsOverlayLayout = GeneratedLayout->GetLayoutPackingStrategy() == mu::EPackStrategy::OVERLAY_LAYOUT;
 
 			const uint8* pVertices = pData;
 			for (int32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
 			{
-				vec2<float>& UV = TempUVs[VertexIndex];
+				FVector2f& UV = TempUVs[VertexIndex];
 				if (format == MBF_FLOAT32)
 				{
-					UV = *((vec2<float>*)pVertices);
+					UV = *((FVector2f*)pVertices);
 				}
 				else if (format == MBF_FLOAT16)
 				{
-					float16* pUV = (float16*)pVertices;
-					UV = vec2<float>(halfToFloat(pUV[0]), halfToFloat(pUV[1]));
+					const FFloat16* pUV = reinterpret_cast<const FFloat16*>(pVertices);
+					UV = FVector2f(float(pUV[0]), float(pUV[1]));
 				}
 
 				// Check that UVs are normalized. If not, clamp the values and throw a warning.
-				if (MeshOptions.bNormalizeUVs && (UV[0] < 0.f || UV[0] > 1.f || UV[1] < 0.f || UV[1] > 1.f))
+				if (MeshOptions.bNormalizeUVs && !bIsOverlayLayout
+					&& (UV[0] < 0.f || UV[0] > 1.f || UV[1] < 0.f || UV[1] > 1.f))
 				{
 					UV[0] = FMath::Clamp(UV[0], 0.f, 1.f);
 					UV[1] = FMath::Clamp(UV[1], 0.f, 1.f);
@@ -440,7 +441,7 @@ class Node;
 			}
 
 			// Mutable does not support non-normalized UVs
-			if (bNonNormalizedUVs)
+			if (bNonNormalizedUVs && !bIsOverlayLayout)
 			{
 				FString Msg = FString::Printf(TEXT("Source mesh has non-normalized UVs in LOD %d"), m_currentParents.Last().m_lod );
 				m_pErrorLog->GetPrivate()->Add(Msg, ELMT_WARNING, errorContext);
@@ -588,7 +589,7 @@ class Node;
 			const float MaxY = (((float)LayoutBlock.m_size.Y + LayoutBlock.m_min.Y) / (float)Grid.Y) - 2 * SmallNumber;
 
 			// Iterate triangles and clamp the UVs
-			vec2<float>* TempUVsData = TempUVs.GetData();
+			FVector2f* TempUVsData = TempUVs.GetData();
 			for (int32 TriangleIndex : TriangleIndices)
 			{
 				FTriangle& OtherTriangle = Triangles[TriangleIndex];
@@ -604,7 +605,7 @@ class Node;
 
 					// Clamp UVs
 					const int32 UVIndex = OtherTriangle.Indices[VertexIndex];
-					vec2<float>& UV = TempUVs[UVIndex];
+					FVector2f& UV = TempUVs[UVIndex];
 					UV[0] = FMath::Clamp(UV[0], MinX, MaxX);
 					UV[1] = FMath::Clamp(UV[1], MinY, MaxY);
 					*(LayoutData + UVIndex) = BlockIndex;
@@ -620,7 +621,7 @@ class Node;
 			TArray<float> UnassignedUVs;
 			UnassignedUVs.Reserve(NumVertices / 100);
 
-			const vec2<float>* UVs = TempUVs.GetData();
+			const FVector2f* UVs = TempUVs.GetData();
 			for (int32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
 			{
 				if (LayoutData[VertexIndex] == MAX_uint16)
@@ -644,12 +645,12 @@ class Node;
 
 		// Format and copy UVs
 		{
-			uint8* pVertices = const_cast<uint8*>(pData);
-			vec2<float>* UVs = TempUVs.GetData();
+			uint8* pVertices = pData;
+			FVector2f* UVs = TempUVs.GetData();
 
 			for (int32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
 			{
-				vec2<float>* UV = &TempUVs[VertexIndex];
+				FVector2f* UV = &TempUVs[VertexIndex];
 
 				uint16& LayoutBlockIndex = LayoutData[VertexIndex];
 				if (BlockIds.IsValidIndex(LayoutBlockIndex))
@@ -669,14 +670,14 @@ class Node;
 				// Copy UVs
 				if (format == MBF_FLOAT32)
 				{
-					vec2<float>* pUV = (vec2<float>*)pVertices;
+					FVector2f* pUV = reinterpret_cast<FVector2f*>(pVertices);
 					*pUV = *UV;
 				}
 				else if (format == MBF_FLOAT16)
 				{
-					float16* pUV = (float16*)pVertices;
-					pUV[0] = floatToHalf((*UV)[0]);
-					pUV[1] = floatToHalf((*UV)[1]);
+					FFloat16* pUV = reinterpret_cast<FFloat16*>(pVertices);
+					pUV[0] = FFloat16((*UV)[0]);
+					pUV[1] = FFloat16((*UV)[1]);
 				}
 
 				pVertices += elemSize;
@@ -693,9 +694,6 @@ class Node;
             OutResult = FMeshGenerationResult();
             return;
         }
-
-		// Clear bottom-up state
-		m_currentBottomUpState.m_address = nullptr;
 
         // See if it was already generated
 		FGeneratedMeshCacheKey Key;
@@ -751,7 +749,7 @@ class Node;
         // Factor
         if ( node.Factor )
         {
-            OpMorph->Factor = Generate( node.Factor.get() );
+            OpMorph->Factor = Generate( node.Factor.get(), InOptions );
         }
         else
         {
@@ -804,6 +802,7 @@ class Node;
 			// Setting bReshapeVertices to false the bind op will remove all mesh members except 
 			// PhysicsBodies and the Skeleton.
             OpBind->bReshapeVertices = false;
+            OpBind->bApplyLaplacian = false;
 		    OpBind->bReshapeSkeleton = node.bReshapeSkeleton;
 		    OpBind->BonesToDeform = node.BonesToDeform;
     	    OpBind->bReshapePhysicsVolumes = node.bReshapePhysicsVolumes; 
@@ -919,19 +918,19 @@ class Node;
                 Ptr<ASTOpMeshExtractLayoutBlocks> op = new ASTOpMeshExtractLayoutBlocks();
                 OutResult.meshOp = op;
 
-                op->source = BaseResult.meshOp;
+                op->Source = BaseResult.meshOp;
 
                 if (BaseResult.GeneratedLayouts.Num()>node.m_layoutOrGroup )
                 {
                     const Layout* pLayout = BaseResult.GeneratedLayouts[node.m_layoutOrGroup].get();
-                    op->layout = (uint16)node.m_layoutOrGroup;
+                    op->Layout = (uint16)node.m_layoutOrGroup;
 
                     for ( int32 i=0; i<node.m_blocks.Num(); ++i )
                     {
                         if (node.m_blocks[i]>=0 && node.m_blocks[i]<pLayout->m_blocks.Num() )
                         {
                             int bid = pLayout->m_blocks[ node.m_blocks[i] ].m_id;
-                            op->blocks.Add(bid);
+                            op->Blocks.Add(bid);
                         }
                         else
                         {
@@ -948,16 +947,9 @@ class Node;
                 }
             }
 
-            else if ( node.m_fragmentType==NodeMeshFragment::FT_FACE_GROUP )
+            else
             {
-				// \TODO: Deprecated?
-                Ptr<ASTOpFixed> op = new ASTOpFixed();
-                OutResult.meshOp = op;
-
-                op->op.type = OP_TYPE::ME_EXTRACTFACEGROUP;
-
-                op->SetChild( op->op.args.MeshExtractFaceGroup.source, BaseResult.meshOp );
-                op->op.args.MeshExtractFaceGroup.group = node.m_layoutOrGroup;
+				check(false);
             }
 
         }
@@ -987,7 +979,7 @@ class Node;
         // Factor
         if ( Node* pFactor = node.m_pFactor.get() )
         {
-            op->SetChild( op->op.args.MeshInterpolate.factor, Generate( pFactor ) );
+            op->SetChild( op->op.args.MeshInterpolate.factor, Generate( pFactor, InOptions ) );
         }
         else
         {
@@ -1079,7 +1071,7 @@ class Node;
         // Factor
         if ( node.m_pParameter )
         {
-            op->variable = Generate( node.m_pParameter.get() );
+            op->variable = Generate( node.m_pParameter.get(), InOptions);
         }
         else
         {
@@ -1088,25 +1080,29 @@ class Node;
         }
 
         // Options
+		bool bFirstValidConnectionFound = false;
         for ( int32 t=0; t< node.m_options.Num(); ++t )
         {
 			FMeshGenerationOptions TargetOptions = InOptions;
 
-            if (t!=0)
-            {
-				TargetOptions.OverrideLayouts = OutResult.GeneratedLayouts;
-            }
-
             if ( node.m_options[t] )
             {
-                FMeshGenerationResult BranchResults;
+				// Take the layouts from the first non-null connection.
+				// \TODO: Take them from the first connection that actually returns layouts?
+				if (bFirstValidConnectionFound)
+				{
+					TargetOptions.OverrideLayouts = OutResult.GeneratedLayouts;
+				}
+				
+				FMeshGenerationResult BranchResults;
                 GenerateMesh(TargetOptions, BranchResults, node.m_options[t] );
 
-                auto branch = BranchResults.meshOp;
+                Ptr<ASTOp> branch = BranchResults.meshOp;
                 op->cases.Emplace((int16)t,op,branch);
 
-                if (t==0)
-                {
+				if (!bFirstValidConnectionFound)
+				{
+					bFirstValidConnectionFound = true;
                     OutResult = BranchResults;
                 }
             }
@@ -1122,11 +1118,12 @@ class Node;
 		//
 		FMeshGenerationResult NewResult = OutResult;
 		int t = 0;
+		bool bFirstRowGenerated = false;
 
-		Ptr<ASTOp> Op = GenerateTableSwitch<NodeMeshTable::Private, TCT_MESH, OP_TYPE::ME_SWITCH>(*TableNode->GetPrivate(), 
-			[this, &NewResult, &t, &InOptions] (const NodeMeshTable::Private& node, int colIndex, int row, ErrorLog* pErrorLog)
+		Ptr<ASTOp> Op = GenerateTableSwitch<NodeMeshTable::Private, ETableColumnType::Mesh, OP_TYPE::ME_SWITCH>(*TableNode->GetPrivate(),
+			[this, &NewResult, &bFirstRowGenerated, &InOptions] (const NodeMeshTable::Private& node, int colIndex, int row, ErrorLog* pErrorLog)
 			{
-				MeshPtr pMesh = node.m_pTable->GetPrivate()->m_rows[row].m_values[colIndex].m_pMesh;
+				mu::Ptr<mu::Mesh> pMesh = node.Table->GetPrivate()->Rows[row].Values[colIndex].Mesh;
 				FMeshGenerationResult BranchResults;
 
 				if (pMesh)
@@ -1135,28 +1132,29 @@ class Node;
 					pCell->SetValue(pMesh);
 
 					// TODO Take into account layout strategy
-					int numLayouts = node.m_layouts.Num();
+					int numLayouts = node.Layouts.Num();
 					pCell->SetLayoutCount(numLayouts);
 					for (int i = 0; i < numLayouts; ++i)
 					{
-						pCell->SetLayout(i, node.m_layouts[i]);
+						pCell->SetLayout(i, node.Layouts[i]);
 					}
 
 					FMeshGenerationOptions TargetOptions = InOptions;
 
-					if (t != 0)
+					if (bFirstRowGenerated)
 					{
 						TargetOptions.OverrideLayouts = NewResult.GeneratedLayouts;
 					}
 
+					TargetOptions.OverrideContext = node.Table->GetPrivate()->Rows[row].Values[colIndex].ErrorContext;
+
 					GenerateMesh(TargetOptions, BranchResults, pCell);
 
-					if (t == 0)
+					if (!bFirstRowGenerated)
 					{
 						NewResult = BranchResults;
+						bFirstRowGenerated = true;
 					}
-
-					++t;
 				}
 
 				return BranchResults.meshOp;
@@ -1195,7 +1193,7 @@ class Node;
         for ( int32 t = node.m_variations.Num()-1; t >= 0; --t )
         {
             int tagIndex = -1;
-            const string& tag = node.m_variations[t].m_tag;
+            const FString& tag = node.m_variations[t].m_tag;
             for ( int i = 0; i < m_firstPass.m_tags.Num(); ++i )
             {
                 if ( m_firstPass.m_tags[i].tag==tag)
@@ -1206,10 +1204,8 @@ class Node;
 
             if ( tagIndex < 0 )
             {
-				const char* Aux = nullptr;
-				Aux = tag.c_str();
                 m_pErrorLog->GetPrivate()->Add( 
-					FString::Printf(TEXT("Unknown tag found in mesh variation [%s]."), StringCast<TCHAR>(Aux).Get()),
+					FString::Printf(TEXT("Unknown tag found in mesh variation [%s]."), *tag),
 					ELMT_WARNING,
 					node.m_errorContext,
 					ELMSB_UNKNOWN_TAG
@@ -1259,7 +1255,7 @@ class Node;
         NodeMeshConstant::Private& node = *constant->GetPrivate();
 
         Ptr<ASTOpConstantResource> op = new ASTOpConstantResource();
-        op->type = OP_TYPE::ME_CONSTANT;
+        op->Type = OP_TYPE::ME_CONSTANT;
 		OutResult.baseMeshOp = op;
 		OutResult.meshOp = op;
 		OutResult.GeneratedLayouts.Empty();
@@ -1271,13 +1267,22 @@ class Node;
 		{
 			// This data is required
 			MeshPtr pTempMesh = new Mesh();
-			op->SetValue(pTempMesh, m_compilerOptions->OptimisationOptions.bUseDiskCache);
+			op->SetValue(pTempMesh, m_compilerOptions->OptimisationOptions.DiskCacheContext);
 			m_constantMeshes.Add(pTempMesh);
 
 			// Log an error message
 			m_pErrorLog->GetPrivate()->Add("Constant mesh not set.", ELMT_WARNING, node.m_errorContext);
 
 			return;
+		}
+
+		// Separate the tags from the mesh
+		TArray<FString> Tags = pMesh->m_tags;
+		if (Tags.Num())
+		{
+			Ptr<Mesh> TaglessMesh = CloneOrTakeOver(pMesh.get());
+			TaglessMesh->m_tags.SetNum(0, EAllowShrinking::No);
+			pMesh = TaglessMesh;
 		}
 
 		// Find out if we can (or have to) reuse a mesh that we have already generated.
@@ -1333,6 +1338,7 @@ class Node;
 			}
 		}
 
+		Ptr<const Mesh> FinalMesh;
 		if (DuplicateOf)
 		{
 			// Make sure the source layouts of the mesh are mapped to the layouts of the duplicated mesh.
@@ -1356,7 +1362,7 @@ class Node;
 				}
 			}
 
-			op->SetValue(DuplicateOf, m_compilerOptions->OptimisationOptions.bUseDiskCache);
+			FinalMesh = DuplicateOf;
 		}
 		else
 		{
@@ -1371,17 +1377,22 @@ class Node;
 					// Apply whatever transform is necessary for every layout
 					for (int32 LayoutIndex = 0; LayoutIndex < node.m_layouts.Num(); ++LayoutIndex)
 					{
-						NodeLayoutPtr pLayoutNode = node.m_layouts[LayoutIndex];
-						// TODO: In a cleanup of the design of the layouts, we should remove this cast.
-						const NodeLayoutBlocks* TypedNode = dynamic_cast<NodeLayoutBlocks*>(pLayoutNode.get());
-						if (TypedNode)
+						Ptr<NodeLayout> pLayoutNode = node.m_layouts[LayoutIndex];
+						if (!pLayoutNode)
 						{
-							Ptr<const Layout> SourceLayout = TypedNode->GetPrivate()->m_pLayout;
-							Ptr<const Layout> GeneratedLayout = AddLayout( SourceLayout );
-							PrepareForLayout(GeneratedLayout, pCloned, LayoutIndex, TypedNode->GetPrivate()->m_errorContext, InOptions);
-
-							OutResult.GeneratedLayouts.Add(GeneratedLayout);
+							continue;
 						}
+
+						// TODO: In a cleanup of the design of the layouts, we should remove this cast.
+						check(pLayoutNode->GetType()==NodeLayoutBlocks::GetStaticType() );
+						const NodeLayoutBlocks* TypedNode = static_cast<const NodeLayoutBlocks*>(pLayoutNode.get());
+
+						Ptr<const Layout> SourceLayout = TypedNode->GetPrivate()->m_pLayout;
+						Ptr<const Layout> GeneratedLayout = AddLayout( SourceLayout );
+						const void* Context = InOptions.OverrideContext.Get(node.m_errorContext);
+						PrepareForLayout(GeneratedLayout, pCloned, LayoutIndex, Context, InOptions);
+
+						OutResult.GeneratedLayouts.Add(GeneratedLayout);
 					}
 				}
 				else
@@ -1390,7 +1401,8 @@ class Node;
 					for (int32 LayoutIndex = 0; LayoutIndex < InOptions.OverrideLayouts.Num(); ++LayoutIndex)
 					{
 						Ptr<const Layout> GeneratedLayout = InOptions.OverrideLayouts[LayoutIndex];
-						PrepareForLayout(GeneratedLayout, pCloned, LayoutIndex, node.m_errorContext, InOptions);
+						const void* Context = InOptions.OverrideContext.Get(node.m_errorContext);
+						PrepareForLayout(GeneratedLayout, pCloned, LayoutIndex, Context, InOptions);
 
 						OutResult.GeneratedLayouts.Add(GeneratedLayout);
 					}
@@ -1425,28 +1437,35 @@ class Node;
 					uint32* pIdData = (uint32*)pCloned->GetVertexBuffers().GetBufferData(newBuffer);
 					for (int i = 0; i < pMesh->GetVertexCount(); ++i)
 					{
-						check(m_freeVertexIndex < std::numeric_limits<uint32>::max());
+						check(m_freeVertexIndex < TNumericLimits<uint32>::Max());
 
 						(*pIdData++) = m_freeVertexIndex++;
-						check(m_freeVertexIndex < std::numeric_limits<uint32>::max());
+						check(m_freeVertexIndex < TNumericLimits<uint32>::Max());
 					}
 				}
 			}
 
 			// Add the constant data
 			m_constantMeshes.Add(pCloned);
-			op->SetValue(pCloned.get(), m_compilerOptions->OptimisationOptions.bUseDiskCache);
+			FinalMesh = pCloned;
 		}
 
- 
+		op->SetValue(FinalMesh, m_compilerOptions->OptimisationOptions.DiskCacheContext);
+
+		Ptr<ASTOp> LastMeshOp = op;
+
+		// Add the tags operation
+		if (Tags.Num())
+		{
+			Ptr<ASTOpMeshAddTags> AddTagsOp = new ASTOpMeshAddTags;
+			AddTagsOp->Source = LastMeshOp;
+			AddTagsOp->Tags = Tags;
+			LastMeshOp = AddTagsOp;
+		}
+
 		// Apply the modifier for the pre-normal operations stage.
-		BOTTOM_UP_STATE temp = m_currentBottomUpState;
-
 		bool bModifiersForBeforeOperations = true;
-		OutResult.meshOp = ApplyMeshModifiers(op, InOptions.ActiveTags, bModifiersForBeforeOperations, node.m_errorContext);
-
-		m_currentBottomUpState = temp;
-
+		OutResult.meshOp = ApplyMeshModifiers(InOptions, LastMeshOp, bModifiersForBeforeOperations, node.m_errorContext);
     }
 
 
@@ -1487,8 +1506,8 @@ class Node;
             }
 
             Ptr<ASTOpConstantResource> cop = new ASTOpConstantResource();
-            cop->type = OP_TYPE::ME_CONSTANT;
-            cop->SetValue( pFormatMesh, m_compilerOptions->OptimisationOptions.bUseDiskCache );
+            cop->Type = OP_TYPE::ME_CONSTANT;
+            cop->SetValue( pFormatMesh, m_compilerOptions->OptimisationOptions.DiskCacheContext );
             op->Format = cop;
 
             m_constantMeshes.Add(pFormatMesh);
@@ -1514,9 +1533,9 @@ class Node;
         Ptr<ASTOpMeshTransform> op = new ASTOpMeshTransform();
 
         // Base
-        if (node.m_pSource)
+        if (node.Source)
         {
-            GenerateMesh(InOptions, OutResult, node.m_pSource);
+            GenerateMesh(InOptions, OutResult, node.Source);
             op->source = OutResult.meshOp;
         }
         else
@@ -1526,7 +1545,7 @@ class Node;
                 ELMT_ERROR, node.m_errorContext);
         }
 
-        op->matrix = node.m_transform;
+        op->matrix = node.Transform;
 
         OutResult.meshOp = op;
     }
@@ -1560,20 +1579,20 @@ class Node;
             op->morphShape.type = (uint8_t)FShape::Type::Ellipse;
             op->morphShape.position = node.m_origin;
             op->morphShape.up = node.m_normal;
-            op->morphShape.size = vec3f(node.m_radius1, node.m_radius2, node.m_rotation); // TODO: Move rotation to ellipse rotation reference base instead of passing it directly
+            op->morphShape.size = FVector3f(node.m_radius1, node.m_radius2, node.m_rotation); // TODO: Move rotation to ellipse rotation reference base instead of passing it directly
 
                                                                                       // Generate a "side" vector.
                                                                                       // \todo: make generic and move to the vector class
             {
                 // Generate vector perpendicular to normal for ellipse rotation reference base
-                vec3f aux_base(0.f, 1.f, 0.f);
+				FVector3f aux_base(0.f, 1.f, 0.f);
 
-                if (fabs(dot(node.m_normal, aux_base)) > 0.95f)
+                if (fabs(FVector3f::DotProduct(node.m_normal, aux_base)) > 0.95f)
                 {
-                    aux_base = vec3f(0.f, 0.f, 1.f);
+                    aux_base = FVector3f(0.f, 0.f, 1.f);
                 }
 
-                op->morphShape.side = cross(node.m_normal, aux_base);
+                op->morphShape.side = FVector3f::CrossProduct(node.m_normal, aux_base);
             }
         }
 
@@ -1776,50 +1795,52 @@ class Node;
 			op->meshB = bResult.meshOp;
 		}
 
-		op->scalarA = Generate(node.m_pScalarA);
-		op->scalarB = Generate(node.m_pScalarB);
+		op->scalarA = Generate(node.m_pScalarA, InOptions);
+		op->scalarB = Generate(node.m_pScalarB, InOptions);
 
 		OutResult.meshOp = op;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void CodeGenerator::GenerateMesh_Reshape(const FMeshGenerationOptions& InOptions, FMeshGenerationResult& OutResult, const NodeMeshReshape* reshape)
+	void CodeGenerator::GenerateMesh_Reshape(const FMeshGenerationOptions& InOptions, FMeshGenerationResult& OutResult, const NodeMeshReshape* Reshape)
 	{
-		const NodeMeshReshape::Private& node = *reshape->GetPrivate();
+		const NodeMeshReshape::Private& Node = *Reshape->GetPrivate();
 
 		Ptr<ASTOpMeshBindShape> OpBind = new ASTOpMeshBindShape();
 		Ptr<ASTOpMeshApplyShape> OpApply = new ASTOpMeshApplyShape();
 
-		OpBind->bReshapeSkeleton = node.m_reshapeSkeleton;	
-		OpBind->BonesToDeform = node.BonesToDeform;
-    	OpBind->bReshapePhysicsVolumes = node.m_reshapePhysicsVolumes;
-		OpBind->PhysicsToDeform = node.PhysicsToDeform;
-		OpBind->bReshapeVertices = node.m_reshapeVertices;
+		OpBind->bReshapeSkeleton = Node.bReshapeSkeleton;	
+		OpBind->BonesToDeform = Node.BonesToDeform;
+    	OpBind->bReshapePhysicsVolumes = Node.bReshapePhysicsVolumes;
+		OpBind->PhysicsToDeform = Node.PhysicsToDeform;
+		OpBind->bReshapeVertices = Node.bReshapeVertices;
+		OpBind->bApplyLaplacian = Node.bApplyLaplacian;
 		OpBind->BindingMethod = static_cast<uint32>(EShapeBindingMethod::ReshapeClosestProject);
 
-		OpBind->RChannelUsage = node.ColorRChannelUsage;
-		OpBind->GChannelUsage = node.ColorGChannelUsage;
-		OpBind->BChannelUsage = node.ColorBChannelUsage;
-		OpBind->AChannelUsage = node.ColorAChannelUsage;
+		OpBind->RChannelUsage = Node.ColorRChannelUsage;
+		OpBind->GChannelUsage = Node.ColorGChannelUsage;
+		OpBind->BChannelUsage = Node.ColorBChannelUsage;
+		OpBind->AChannelUsage = Node.ColorAChannelUsage;
 
 		OpApply->bReshapeVertices = OpBind->bReshapeVertices;
 		OpApply->bReshapeSkeleton = OpBind->bReshapeSkeleton;
+		OpApply->bApplyLaplacian = OpBind->bApplyLaplacian;
 		OpApply->bReshapePhysicsVolumes = OpBind->bReshapePhysicsVolumes;
 
 		// Base Mesh
-		if (node.m_pBaseMesh)
+		if (Node.BaseMesh)
 		{
 			FMeshGenerationOptions BaseOptions = InOptions;
 			BaseOptions.bUniqueVertexIDs = true;
 
-			GenerateMesh(BaseOptions, OutResult, node.m_pBaseMesh);
+			GenerateMesh(BaseOptions, OutResult, Node.BaseMesh);
 			OpBind->Mesh = OutResult.meshOp;
 		}
 		else
 		{
 			// This argument is required
-			m_pErrorLog->GetPrivate()->Add("Mesh reshape base node is not set.", ELMT_ERROR, node.m_errorContext);
+			m_pErrorLog->GetPrivate()->Add("Mesh reshape base node is not set.", ELMT_ERROR, Node.m_errorContext);
 		}
 
 		// Base and target shapes shouldn't have layouts or modifiers.
@@ -1830,20 +1851,20 @@ class Node;
 		ShapeOptions.ActiveTags.Empty();
 
 		// Base Shape
-		if (node.m_pBaseShape)
+		if (Node.BaseShape)
 		{
 			FMeshGenerationResult baseResult;
-			GenerateMesh(ShapeOptions, baseResult, node.m_pBaseShape);
+			GenerateMesh(ShapeOptions, baseResult, Node.BaseShape);
 			OpBind->Shape = baseResult.meshOp;
 		}
 
 		OpApply->Mesh = OpBind;
 
 		// Target Shape
-		if (node.m_pTargetShape)
+		if (Node.TargetShape)
 		{
 			FMeshGenerationResult targetResult;
-			GenerateMesh(ShapeOptions, targetResult, node.m_pTargetShape);
+			GenerateMesh(ShapeOptions, targetResult, Node.TargetShape);
 			OpApply->Shape = targetResult.meshOp;
 		}
 

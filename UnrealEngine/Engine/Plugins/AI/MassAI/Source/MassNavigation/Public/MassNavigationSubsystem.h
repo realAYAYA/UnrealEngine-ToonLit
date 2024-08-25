@@ -4,7 +4,7 @@
 
 #include "MassEntityTypes.h"
 #include "HierarchicalHashGrid2D.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassNavigationSubsystem.generated.h"
 
 UENUM()
@@ -29,19 +29,20 @@ struct FMassNavigationObstacleItem
 typedef THierarchicalHashGrid2D<2, 4, FMassNavigationObstacleItem> FNavigationObstacleHashGrid2D;	// 2 levels of hierarchy, 4 ratio between levels
 
 UCLASS()
-class MASSNAVIGATION_API UMassNavigationSubsystem : public UWorldSubsystem
+class MASSNAVIGATION_API UMassNavigationSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 
 public:
 	UMassNavigationSubsystem();
 
-	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-
 	const FNavigationObstacleHashGrid2D& GetObstacleGrid() const { return AvoidanceObstacleGrid; }
 	FNavigationObstacleHashGrid2D& GetObstacleGridMutable() { return AvoidanceObstacleGrid; }
 
 protected:
+	// USubsystem BEGIN
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	// USubsystem END
 
 	FNavigationObstacleHashGrid2D AvoidanceObstacleGrid;
 };

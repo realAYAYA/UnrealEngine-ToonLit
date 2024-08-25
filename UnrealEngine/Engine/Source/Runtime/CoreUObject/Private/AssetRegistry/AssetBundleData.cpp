@@ -33,9 +33,12 @@ namespace UE::AssetBundleEntry::Private
 
 bool FAssetBundleEntry::ExportTextItem(FString& ValueStr, const FAssetBundleEntry& DefaultValue, UObject* Parent, int32 PortFlags, UObject* ExportRootScope) const
 {	
-	if (DefaultValue.IsValid())
+	// If the DefaultValue points to this, that is the import/export system's way of specifying that there are no
+	// available defaults and the entire struct should be exported. If the DefautlValue is an empty version of the
+	// struct, then we also will export the entire struct. Otherwise there are actual defaults and we're supposed to
+	// export a delta. This path does not handle that delta, fall back to normal export path
+	if (&DefaultValue != this && DefaultValue.IsValid())
 	{
-		// This path does not handle default values, fall back to normal export path
 		return false;
 	}
 
@@ -64,7 +67,7 @@ bool FAssetBundleEntry::ExportTextItem(FString& ValueStr, const FAssetBundleEntr
 		}
 
 		// Remove last comma
-		ValueStr.LeftChopInline(1, /* shrink */ false);
+		ValueStr.LeftChopInline(1, EAllowShrinking::No);
 
 		ValueStr += AssetPathsSuffix;
 	}
@@ -485,9 +488,12 @@ bool FAssetBundleData::ExportTextItem(FString& ValueStr, FAssetBundleData const&
 		// Empty, don't write anything to avoid it cluttering the asset registry tags
 		return true;
 	}
-	else if (DefaultValue.Bundles.Num() != 0)
+	// If the DefaultValue points to this, that is the import/export system's way of specifying that there are no
+	// available defaults and the entire struct should be exported. If the DefautlValue is an empty version of the
+	// struct, then we also will export the entire struct. Otherwise there are actual defaults and we're supposed to
+	// export a delta. This path does not handle that delta, fall back to normal export path
+	else if (&DefaultValue != this && DefaultValue.Bundles.Num() != 0)
 	{
-		// This path does not handle default values, fall back to normal export path
 		return false;
 	}
 	
@@ -509,7 +515,7 @@ bool FAssetBundleData::ExportTextItem(FString& ValueStr, FAssetBundleData const&
 	}
 
 	// Remove last comma
-	ValueStr.LeftChopInline(1, /* shrink */ false);
+	ValueStr.LeftChopInline(1, EAllowShrinking::No);
 
 	ValueStr += BundlesSuffix;
 
@@ -583,7 +589,7 @@ FString FAssetBundleData::ToDebugString() const
 
 // Combine import/export tests
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBundleEntryImportExportTextTest, "Engine.AssetRegistry.AssetBundleEntry.ImportExportText", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBundleEntryImportExportTextTest, "System.AssetRegistry.AssetBundleEntry.ImportExportText", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
 bool FAssetBundleEntryImportExportTextTest::RunTest(const FString& Parameters)
 {
 	FAssetBundleEntry DefaultEntry;
@@ -670,7 +676,7 @@ bool FAssetBundleEntryImportExportTextTest::RunTest(const FString& Parameters)
 }
 
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLegacyAssetBundleEntryTest, "Engine.AssetRegistry.AssetBundleEntry.LegacyAssetBundleEntry", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLegacyAssetBundleEntryTest, "System.AssetRegistry.AssetBundleEntry.LegacyAssetBundleEntry", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
 // Test ImportText for old asset bundles with BundleAssets field
 bool FLegacyAssetBundleEntryTest::RunTest(const FString& Parameters)
 {
@@ -738,7 +744,7 @@ bool FLegacyAssetBundleEntryTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBundlDataImportExportTextTest, "Engine.AssetRegistry.AssetBundleData.ImportExportText", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetBundlDataImportExportTextTest, "System.AssetRegistry.AssetBundleData.ImportExportText", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
 bool FAssetBundlDataImportExportTextTest::RunTest(const FString& Parameters)
 {
 	UScriptStruct* Struct = TBaseStructure<FAssetBundleData>::Get();

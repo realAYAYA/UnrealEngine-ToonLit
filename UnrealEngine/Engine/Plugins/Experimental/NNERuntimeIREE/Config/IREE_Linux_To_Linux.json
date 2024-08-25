@@ -1,0 +1,12 @@
+{
+	"CompilerCommand": [ "${PLUGIN_DIR}/Source/ThirdParty/IREE/Bin/Linux/iree-compile" ],
+	"LinkerCommand": [ "${PLUGIN_DIR}/Source/ThirdParty/IREE/Bin/Linux/ld.lld" ],
+	"SharedLibExt": ".so",
+	"Targets": [
+		{
+			"Architecture": "",
+			"CompilerArguments": "--iree-llvmcpu-target-triple=x86_64-unknown-linux-gnu --iree-input-type=auto --iree-hal-target-backends=llvm-cpu --iree-llvmcpu-link-embedded=false --iree-llvmcpu-link-static --output-format=vm-bytecode --iree-llvmcpu-static-library-output-path=${OBJECT_PATH} -o ${VMFB_PATH} ${INPUT_PATH}",
+			"LinkerArguments": "-shared --export-dynamic -o ${SHARED_LIB_PATH} ${OBJECT_PATH}"
+		}
+	]
+}

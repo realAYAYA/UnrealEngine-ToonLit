@@ -330,6 +330,22 @@ struct FWeightedLatticeBvEntry
 		return Bounds;
 	}
 
+	THierarchicalSpatialHash<int32, FReal>::FVectorAABB VectorAABB() const
+	{
+		THierarchicalSpatialHash<int32, FReal>::FVectorAABB Bounds(Lattice->GetDeformedPoints()(CellIndex));
+		for (int32 I = 0; I < 2; ++I)
+		{
+			for (int32 J = 0; J < 2; ++J)
+			{
+				for (int32 K = 0; K < 2; ++K)
+				{
+					Bounds.GrowToInclude(Lattice->GetDeformedPoints()(CellIndex + TVec3<int32>(I, J, K)));
+				}
+			}
+		}
+		return Bounds;
+	}
+
 	template<typename TPayloadType>
 	TPayloadType GetPayload(int32 Idx) const
 	{
@@ -598,13 +614,12 @@ TWeightedLatticeImplicitObject<TConcrete>::TWeightedLatticeImplicitObject(TWeigh
 }
 
 template<typename TConcrete>
-FImplicitObject* TWeightedLatticeImplicitObject<TConcrete>::Duplicate() const
+FImplicitObjectPtr TWeightedLatticeImplicitObject<TConcrete>::CopyGeometry() const
 {
 	if (Object)
 	{
-		ObjectType DuplicatedObject((TConcrete*)Object->Duplicate());
-		TWeightedLatticeImplicitObject* NewObj = new TWeightedLatticeImplicitObject(MoveTemp(DuplicatedObject), *this);
-		return NewObj;
+		FImplicitObjectPtr CopiedShape = Object->CopyGeometry();
+		return new TWeightedLatticeImplicitObject<TConcrete>(reinterpret_cast<ObjectType&&>(CopiedShape), *this);
 	}
 	else
 	{
@@ -614,26 +629,12 @@ FImplicitObject* TWeightedLatticeImplicitObject<TConcrete>::Duplicate() const
 }
 
 template<typename TConcrete>
-TUniquePtr<FImplicitObject> TWeightedLatticeImplicitObject<TConcrete>::Copy() const
+FImplicitObjectPtr TWeightedLatticeImplicitObject<TConcrete>::DeepCopyGeometry() const
 {
 	if (Object)
 	{
-		return TUniquePtr<FImplicitObject>(CopyHelper(this));
-	}
-	else
-	{
-		check(false);
-		return nullptr;
-	}
-}
-
-template<typename TConcrete>
-TUniquePtr<FImplicitObject> TWeightedLatticeImplicitObject<TConcrete>::DeepCopy() const
-{
-	if (Object)
-	{
-		TUniquePtr<FImplicitObject> CopiedObject = Object->DeepCopy();
-		TUniquePtr<TWeightedLatticeImplicitObject> NewObj(new TWeightedLatticeImplicitObject(reinterpret_cast<ObjectType&&>(CopiedObject), *this));
+		FImplicitObjectPtr CopiedObject = Object->DeepCopyGeometry();
+		FImplicitObjectPtr NewObj(new TWeightedLatticeImplicitObject(reinterpret_cast<ObjectType&&>(CopiedObject), *this));
 		return NewObj;
 	}
 	else

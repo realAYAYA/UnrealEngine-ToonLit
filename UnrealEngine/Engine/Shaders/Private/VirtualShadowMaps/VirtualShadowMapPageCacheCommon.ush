@@ -5,18 +5,8 @@ VirtualShadowMapPageCacheCommon.ush:
 =============================================================================*/
 #pragma once
 
-// Flags buffer (one bit per PersistentPrimitiveIndex) to track statically cached primitives that are invalidating
-// Currently we use GPU messaging to send these primitives back for the CPU to handle as desired
-// in future frames, but this flags buffer ensures we only send one message per prim.
-RWStructuredBuffer<uint> OutStaticInvalidatingPrimitives;
-
-void RecordStaticPrimitiveInvalidation(uint PersistentPrimitiveIndex)
-{
-	uint PrimitiveIdWordOffset = PersistentPrimitiveIndex / 32U;
-	uint PrimitiveIdWordMask = 1U << (PersistentPrimitiveIndex % 32U);
-
-	InterlockedOr(OutStaticInvalidatingPrimitives[PrimitiveIdWordOffset], PrimitiveIdWordMask);
-}
+#include "../Nanite/NaniteDataDecode.ush"
+#include "VirtualShadowMapProjectionStructs.ush"
 
 bool ShouldMaterialInvalidateShadowCache(FPrimitiveSceneData PrimitiveData, bool bEnableWPO)
 {
@@ -30,3 +20,44 @@ bool ShouldMaterialInvalidateShadowCache(FPrimitiveSceneData PrimitiveData, bool
 	return bInvalidate;
 }
 
+// NOTE: This logic must be constant, or else we could miss invalidations if it swaps suddenly.
+// Any changes to the underlying data (i.e. evaluate WPO flag) need to generate a GPUScene update and
+// associated VSM instance invalidation.
+bool VirtualShadowMapIsWPOAllowed(FPrimitiveSceneData PrimitiveData, int VirtualShadowMapId)
+{
+	// If always evaluate WPO is enabled, that takes priority
+	if ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_ALWAYS_EVALUATE_WPO_MATERIALS) != 0u)
+	{
+		return true;
+	}
+
+	bool bEvaluateWPO = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_EVALUATE_WORLD_POSITION_OFFSET) != 0u;
+	bool bWPODisableDistance = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_WPO_DISABLE_DISTANCE) != 0u;
+	if (bEvaluateWPO && bWPODisableDistance && VirtualShadowMapId >= 0)
+	{
+		FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
+		// NOTE: ProjectionData set to a safe value for this test even if this is not a clipmap
+		return ProjectionData.ClipmapLevelWPODistanceDisabledThresholdSquared <= PrimitiveData.InstanceWPODisableDistanceSquared;		
+	}
+
+	return bEvaluateWPO;
+}
+
+bool GetCachePrimitiveAsDynamic(uint PersistentPrimitiveIndex)
+{
+	uint PrimitiveIdWordOffset = PersistentPrimitiveIndex / 32U;
+	uint PrimitiveIdWordMask = 1U << (PersistentPrimitiveIndex % 32U);
+	return (VirtualShadowMap.CachePrimitiveAsDynamic[PrimitiveIdWordOffset] & PrimitiveIdWordMask) != 0;
+}
+
+bool ShouldCacheInstanceAsStatic(uint InstanceId, bool bViewUncached, bool bAllowWPO)
+{
+	if (bViewUncached || bAllowWPO)
+	{
+		return false;
+	}
+
+	FInstanceSceneData InstanceData = GetInstanceSceneData(InstanceId, false);
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+	return !GetCachePrimitiveAsDynamic(PrimitiveData.PersistentPrimitiveIndex);
+}

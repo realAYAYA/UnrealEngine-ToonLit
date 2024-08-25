@@ -709,8 +709,7 @@ void LogPathPartHelper(AActor* LogOwner, FNavMeshPath* NavMeshPath, int32 StartI
 	const FVector CorridorOffset = NavigationDebugDrawing::PathOffset * 1.25f;
 	int32 NumAreaMark = 1;
 
-	FVisualLogEntry* Snapshot = VisualLogger.GetEntryToWrite(LogOwner, LogOwner->GetWorld()->GetTimeSeconds());
-	if (Snapshot)
+	if (FVisualLogEntry* Snapshot = FVisualLogger::GetEntryToWrite(LogOwner, LogCrowdFollowing))
 	{
 		NavMesh->BeginBatchQuery();
 

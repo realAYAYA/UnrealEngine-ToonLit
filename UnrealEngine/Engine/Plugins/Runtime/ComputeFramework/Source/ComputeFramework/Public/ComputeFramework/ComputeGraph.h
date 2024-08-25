@@ -131,6 +131,12 @@ public:
 	 */
 	void UpdateResources();
 
+	/**
+	 * Shader compilations triggered by UpdateResources() are async,
+	 * This checks if all kernel resources are ready.
+	 */	
+	bool HasKernelResourcesPendingShaderCompilation() const;
+
 protected:
 	//~ Begin UObject Interface.
 	void Serialize(FArchive& Ar) override;
@@ -215,6 +221,10 @@ private:
 
 	/** Kernel resources stored with the same indexing as the KernelInvocations array. */
 	TArray<FComputeKernelResourceSet>  KernelResources;
+	
+	/** Indices of kernels pending shader compilation */
+	TSet<int32> KernelResourceIndicesPendingShaderCompilation;
+	
 	/** Render proxy that owns all render thread resources. */
 	FComputeGraphRenderProxy* RenderProxy = nullptr;
 };

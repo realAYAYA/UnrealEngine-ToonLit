@@ -3,9 +3,9 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using EpicGames.Core;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Streams;
 using Horde.Server.Jobs;
-using Horde.Server.Streams;
-using Horde.Server.Utilities;
 using HordeCommon;
 
 namespace Horde.Server.Notifications

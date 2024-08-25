@@ -4,6 +4,7 @@
 
 #include "Engine/BlueprintGeneratedClass.h"
 #include "LevelSequence.h"
+#include "MovieScene.h"
 #include "MovieSceneSequenceEditor.h"
 #include "LevelSequenceDirector.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -23,6 +24,13 @@ struct FMovieSceneSequenceEditor_LevelSequence : FMovieSceneSequenceEditor
 
 	virtual UBlueprint* CreateBlueprintForSequence(UMovieSceneSequence* InSequence) const override
 	{
+#if WITH_EDITOR
+		if (!UMovieScene::IsTrackClassAllowed(ULevelSequenceDirector::StaticClass()))
+		{
+			return nullptr;
+		}
+#endif
+
 		UBlueprint* Blueprint = GetBlueprintForSequence(InSequence);
 		if (!ensureMsgf(!Blueprint, TEXT("Should not call CreateBlueprintForSequence when one already exists")))
 		{

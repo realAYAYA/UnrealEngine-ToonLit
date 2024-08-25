@@ -17,7 +17,7 @@ void VirtualShadowMapCompositeTileVS(
 	out float4 Position : SV_POSITION)
 {
 	const uint TileData = TileListData[InstanceId.x];
-	const uint2 TileOrigin = WORK_TILE_SIZE * uint2((TileData & 0xFFFF), (TileData >> 16u));
+	const uint2 TileOrigin = WORK_TILE_SIZE * UnpackTileCoord12bits(TileData);
 
 	uint2 TileVertex = TileOrigin;
 	TileVertex.x += VertexId == 1 || VertexId == 2 || VertexId == 4 ? WORK_TILE_SIZE : 0;
@@ -47,14 +47,14 @@ void VirtualShadowMapCompositeFromMaskBitsPS(
 {
 	const uint2 PixelPos = uint2(SvPosition.xy);
 
-	const float DeviceZ = SceneTexturesStruct.SceneDepthTexture.Load(int3(PixelPos, 0)).r;
+	const float DeviceZ = InputDepthTexture.Load(int3(PixelPos, 0)).r;
 	const float SceneDepth = ConvertFromDeviceZ(DeviceZ);
 
-	uint EyeIndex = 0; // TODO: Instanced stereo
+	// Possibly needed to do fallback single sample VSM lookup
+	const float3 TranslatedWorldPosition = SvPositionToTranslatedWorld(SvPosition);
+
 	float ShadowMask = GetVirtualShadowMapMaskForLight(
-		ShadowMaskBits, PixelPos, SceneDepth, EyeIndex, CompositeVirtualShadowMapId);;
-	
-	// TODO: Subsurface...?
-		
+		ShadowMaskBits[PixelPos], PixelPos, SceneDepth, CompositeVirtualShadowMapId, TranslatedWorldPosition);
+			
 	OutShadowMask = EncodeLightAttenuation(ShadowMask.xxxx);
 }

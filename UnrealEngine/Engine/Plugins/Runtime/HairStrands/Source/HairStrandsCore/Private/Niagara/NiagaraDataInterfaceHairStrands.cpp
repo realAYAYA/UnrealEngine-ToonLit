@@ -22,6 +22,7 @@
 
 #include "GroomComponent.h"
 #include "GroomAsset.h"
+#include "SystemTextures.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraDataInterfaceHairStrands)
 
@@ -31,8 +32,8 @@
 namespace NDIHairStrandsLocal
 {
 BEGIN_SHADER_PARAMETER_STRUCT(FShaderParameters,)
-	SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint4>,	DeformedPositionBuffer)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint4>,		RestPositionBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer,DeformedPositionBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer,	RestPositionBuffer)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>,		CurvesOffsetsBuffer)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>,		RestTrianglePositionBuffer)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>,		DeformedTrianglePositionBuffer)
@@ -50,15 +51,15 @@ BEGIN_SHADER_PARAMETER_STRUCT(FShaderParameters,)
 	SHADER_PARAMETER(FVector3f,							RestRootOffset)
 	SHADER_PARAMETER(FVector3f,							DeformedRootOffset)
 	SHADER_PARAMETER(FVector3f,							RestPositionOffset)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>,		DeformedPositionOffset)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, DeformedPositionOffset)
 	SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>,		BoundingBoxBuffer)
 	SHADER_PARAMETER(uint32,							ResetSimulation)
 	SHADER_PARAMETER(uint32,							RestUpdate)
 	SHADER_PARAMETER(uint32,							LocalSimulation)
 	SHADER_PARAMETER(int,								SampleCount)
 	SHADER_PARAMETER(FIntVector4,						BoundingBoxOffsets)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>,		RestSamplePositionsBuffer)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>,		MeshSampleWeightsBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, RestSamplePositionsBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, MeshSampleWeightsBuffer)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>,		ParamsScaleBuffer)
 	SHADER_PARAMETER(FVector3f,							BoneLinearVelocity)
 	SHADER_PARAMETER(FVector3f,							BoneAngularVelocity)
@@ -323,7 +324,7 @@ void FNDIHairStrandsBuffer::InitRHI(FRHICommandListBase&)
 		{
 			const uint32 PositionsCount = SourceDatas->GetNumPoints();
 
-			FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateBufferDesc(FHairStrandsPositionFormat::SizeInByte, PositionsCount);
+			FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateByteAddressDesc(FHairStrandsPositionFormat::SizeInByte * PositionsCount);
 			FRDGBufferRef RDGBuffer = GraphBuilder.CreateBuffer(BufferDesc, TEXT("DeformedPositionBuffer"));
 			DeformedPositionBuffer = GraphBuilder.ConvertToExternalBuffer(RDGBuffer);
 		}
@@ -381,7 +382,7 @@ void FNDIHairStrandsData::Update(UNiagaraDataInterfaceHairStrands* Interface, FN
 
 		const bool bHasValidBindingAsset = (Interface->IsComponentValid() && Interface->SourceComponent->BindingAsset && Interface->SourceComponent->GroomAsset);
 
-		GlobalInterpolation = bHasValidBindingAsset ? Interface->SourceComponent->GroomAsset->GetEnableGlobalInterpolation() : false;
+		GlobalInterpolation = bHasValidBindingAsset ? Interface->SourceComponent->GroomAsset->IsGlobalInterpolationEnable(GroupIndex, LODIndex) : false;
 		bSkinningTransfer = bHasValidBindingAsset ?
 			(Interface->SourceComponent->BindingAsset->GetSourceSkeletalMesh() && Interface->SourceComponent->BindingAsset->GetTargetSkeletalMesh() &&
 			 Interface->SourceComponent->BindingAsset->GetSourceSkeletalMesh() != Interface->SourceComponent->BindingAsset->GetTargetSkeletalMesh()) : false;
@@ -732,7 +733,7 @@ void UNiagaraDataInterfaceHairStrands::ExtractDatasAndResources(
 		OutLocalToWorld = SystemInstance ? SystemInstance->GetWorldTransform() : FTransform::Identity;
 		if (OutGroupIndex < DefaultSource->GetNumHairGroups())
 		{
-			OutStrandsRestResource = DefaultSource->GetHairGroupsPlatformData()[OutGroupIndex].Guides.RestResource;
+			OutStrandsRestResource = DefaultSource->GetHairGroupsResources()[OutGroupIndex].Guides.RestResource;
 			OutGroomAsset = DefaultSource;
 		}
 	}
@@ -823,11 +824,11 @@ class FInterpolateGroomGuidesCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>,	RootBarycentricCoordinatesBuffer)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>,	RootToUniqueTriangleIndexBuffer)
 
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>,		PointToCurveIndexBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint4>,	DeformedPositionBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint4>,		RestPositionBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer,	PointToCurveIndexBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer,DeformedPositionBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer,	RestPositionBuffer)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>,		CurvesOffsetsBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>,	DeformedPositionOffset)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, DeformedPositionOffset)
 		SHADER_PARAMETER(FVector3f,				RestPositionOffset)
 		SHADER_PARAMETER(FMatrix44f,			WorldToLocal)
 
@@ -886,7 +887,7 @@ FMatrix44f ComputeWorldTransform(const FNDIHairStrandsData* InstanceData)
 
 static void InterpolateGroomGuides(FRDGBuilder& GraphBuilder, FNiagaraDataBuffer* ParticlesBuffer,
 	const uint32 NodePositionComponent,  const uint32 RestPositionComponent, FNDIHairStrandsBuffer* HairStrandsBuffer,
-	const uint32 StrandsSize, const bool bHasSkinningBinding, const bool bHasValidGeometry, const FMatrix44f& WorldToLocal)
+	const uint32 StrandsSize, const bool bHasSkinningBinding, const bool bHasValidGeometry, const FMatrix44f& WorldToLocal, int32 MeshLODIndex)
 {
 	const bool bIsHairValid = HairStrandsBuffer && HairStrandsBuffer->IsInitialized();
 	const bool bIsRestValid = bIsHairValid && HairStrandsBuffer->SourceRestResources && HairStrandsBuffer->SourceRestResources->IsInitialized();
@@ -894,13 +895,10 @@ static void InterpolateGroomGuides(FRDGBuilder& GraphBuilder, FNiagaraDataBuffer
 
 	if(bIsRestValid && bIsDeformedValid && bHasValidGeometry)
 	{
-		bool bIsRootValid = HairStrandsBuffer->SourceDeformedRootResources && HairStrandsBuffer->SourceDeformedRootResources->IsInitialized() &&
-								HairStrandsBuffer->SourceRestRootResources && HairStrandsBuffer->SourceRestRootResources->IsInitialized() && bHasSkinningBinding;
+		bool bIsRootValid = HairStrandsBuffer->SourceDeformedRootResources && HairStrandsBuffer->SourceDeformedRootResources->IsValid(MeshLODIndex) &&
+							HairStrandsBuffer->SourceRestRootResources && HairStrandsBuffer->SourceRestRootResources->IsValid(MeshLODIndex) && bHasSkinningBinding;
 
 		const uint32 NumPoints = HairStrandsBuffer->SourceRestResources->GetPointCount();
-		const int32 MeshLODIndex = bIsRootValid ? HairStrandsBuffer->SourceDeformedRootResources->MeshLODIndex : -1;
-		bIsRootValid = bIsRootValid && HairStrandsBuffer->SourceDeformedRootResources->IsValid(MeshLODIndex);
-		
 
 		FInterpolateGroomGuidesCS::FPermutationDomain InterpolationDomain;
 		InterpolationDomain.Set<FInterpolateGroomGuidesCS::FInterpolationType>(!bIsRootValid);
@@ -928,11 +926,11 @@ static void InterpolateGroomGuides(FRDGBuilder& GraphBuilder, FNiagaraDataBuffer
 		PassParameters->CurvesOffsetsBuffer = RegisterAsSRV(GraphBuilder, HairStrandsBuffer->SourceRestResources->CurveBuffer);
 		if(bIsRootValid)
 		{
-			const FHairStrandsRestRootResource::FLOD* RestMeshProjection = &(HairStrandsBuffer->SourceRestRootResources->LODs[MeshLODIndex]) ;
-			const FHairStrandsDeformedRootResource::FLOD* DeformedMeshProjection =  &(HairStrandsBuffer->SourceDeformedRootResources->LODs[MeshLODIndex]);
+			const FHairStrandsLODRestRootResource* RestMeshProjection = HairStrandsBuffer->SourceRestRootResources->GetLOD(MeshLODIndex) ;
+			const FHairStrandsLODDeformedRootResource* DeformedMeshProjection = HairStrandsBuffer->SourceDeformedRootResources->GetLOD(MeshLODIndex);
 
 			PassParameters->RestTrianglePositionBuffer = RegisterAsSRV(GraphBuilder, RestMeshProjection->RestUniqueTrianglePositionBuffer);
-			PassParameters->DeformedTrianglePositionBuffer = RegisterAsSRV(GraphBuilder, DeformedMeshProjection->GetDeformedUniqueTrianglePositionBuffer(FHairStrandsDeformedRootResource::FLOD::Current));
+			PassParameters->DeformedTrianglePositionBuffer = RegisterAsSRV(GraphBuilder, DeformedMeshProjection->GetDeformedUniqueTrianglePositionBuffer(FHairStrandsLODDeformedRootResource::Current));
 			PassParameters->RootBarycentricCoordinatesBuffer = RegisterAsSRV(GraphBuilder, RestMeshProjection->RootBarycentricBuffer);
 			PassParameters->RootToUniqueTriangleIndexBuffer = RegisterAsSRV(GraphBuilder, RestMeshProjection->RootToUniqueTriangleIndexBuffer);
 		}
@@ -955,7 +953,7 @@ void UNiagaraDataInterfaceHairStrands::SimCachePostReadFrame(void* OptionalPerIn
 {
 	for (TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe> EmitterInst : SystemInstance->GetEmitters())
 	{
-		FNiagaraDataSet& EmitterDatas  = EmitterInst->GetData();
+		FNiagaraDataSet& EmitterDatas  = EmitterInst->GetParticleData();
 
 		const FNiagaraVariable NodePositionVariable(FNiagaraTypeDefinition::GetVec3Def(), FName("NodePosition"));
 		const int32 NodePositionIndex = EmitterDatas.GetCompiledData().Variables.IndexOfByKey(NodePositionVariable);
@@ -984,12 +982,14 @@ void UNiagaraDataInterfaceHairStrands::SimCachePostReadFrame(void* OptionalPerIn
 					const bool bHasSkinningBinding = InstanceData->HairGroupInstance->BindingType == EHairBindingType::Skinning;
 					const bool bHasValidGeometry = InstanceData->HairGroupInstance->GeometryType != EHairGeometryType::NoneGeometry;
 				
+					FHairGroupInstance* LocalHairInstance = InstanceData->HairGroupInstance;
+
 					ENQUEUE_RENDER_COMMAND(NiagaraInterpolateGroomSimCache)(
-						[ParticlesBuffer, HairstrandsBuffer, NodePositionComponent, RestPositionComponent, StrandsSize, bHasSkinningBinding, bHasValidGeometry, WorldToLocal](FRHICommandListImmediate& RHICmdList)
+						[ParticlesBuffer, HairstrandsBuffer, NodePositionComponent, RestPositionComponent, StrandsSize, bHasSkinningBinding, bHasValidGeometry, WorldToLocal, LocalHairInstance](FRHICommandListImmediate& RHICmdList)
 						{
 							FMemMark MemMark(FMemStack::Get());
 							FRDGBuilder GraphBuilder(RHICmdList);
-							InterpolateGroomGuides(GraphBuilder, ParticlesBuffer, NodePositionComponent, RestPositionComponent, HairstrandsBuffer, StrandsSize, bHasSkinningBinding, bHasValidGeometry, WorldToLocal);
+							InterpolateGroomGuides(GraphBuilder, ParticlesBuffer, NodePositionComponent, RestPositionComponent, HairstrandsBuffer, StrandsSize, bHasSkinningBinding, bHasValidGeometry, WorldToLocal, LocalHairInstance->Debug.MeshLODIndex);
 							GraphBuilder.Execute();
 						}
 					);
@@ -1049,11 +1049,13 @@ void UNiagaraDataInterfaceHairStrands::PostInitProperties()
 	}
 }
 
+#if WITH_EDITORONLY_DATA
+
 // Codegen optimization degenerates for very long functions like GetFunctions when combined with the invokation of lots of FORCEINLINE methods.
 // We don't need this code to be particularly fast anyway. The other way to improve this code compilation time would be to split it in multiple functions.
 BEGIN_FUNCTION_BUILD_OPTIMIZATION 
 
-void UNiagaraDataInterfaceHairStrands::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+void UNiagaraDataInterfaceHairStrands::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIHairStrandsLocal;
 	{
@@ -2092,6 +2094,8 @@ void UNiagaraDataInterfaceHairStrands::GetFunctions(TArray<FNiagaraFunctionSigna
 	}
 }
 END_FUNCTION_BUILD_OPTIMIZATION
+
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceHairStrands, GetNumStrands);
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceHairStrands, GetStrandSize);
@@ -3348,21 +3352,25 @@ void UNiagaraDataInterfaceHairStrands::SetShaderParameters(const FNiagaraDataInt
 	FNDIHairStrandsProxy& DIProxy = Context.GetProxy<FNDIHairStrandsProxy>();
 	FNDIHairStrandsData* ProxyData = DIProxy.SystemInstancesToProxyData.Find(Context.GetSystemInstanceID());
 
+	// TODO: refactor all of that with if condition
+	const int32 MeshLODIndex = ProxyData && ProxyData->HairGroupInstance && ProxyData->HairGroupInstance->HairGroupPublicData ? ProxyData->HairGroupInstance->HairGroupPublicData->GetMeshLODIndex() : -1;
 	const bool bIsHairValid = ProxyData != nullptr && ProxyData->HairStrandsBuffer && ProxyData->HairStrandsBuffer->IsInitialized();
 	const bool bIsHairGroupInstValid = ProxyData != nullptr && ProxyData->HairGroupInstSource != nullptr && ProxyData->HairGroupInstSource->ContainsGroupInstance(ProxyData->HairGroupInstance);
-	const bool bHasSkinningBinding = bIsHairValid && bIsHairGroupInstValid && ProxyData->HairGroupInstance->BindingType == EHairBindingType::Skinning;
-	const bool bIsRootValid = bIsHairValid && ProxyData->HairStrandsBuffer->SourceDeformedRootResources&& ProxyData->HairStrandsBuffer->SourceDeformedRootResources->IsInitialized() && bHasSkinningBinding;
+	const bool bHasSkinningBinding = bIsHairValid && bIsHairGroupInstValid && ProxyData->HairGroupInstance && ProxyData->HairGroupInstance->BindingType == EHairBindingType::Skinning;
+	const bool bIsRootValid = bIsHairValid && ProxyData->HairStrandsBuffer->SourceDeformedRootResources&& ProxyData->HairStrandsBuffer->SourceDeformedRootResources->IsValid(MeshLODIndex) && bHasSkinningBinding;
 	const bool bIsRestValid = bIsHairValid && ProxyData->HairStrandsBuffer->SourceRestResources && ProxyData->HairStrandsBuffer->SourceRestResources->IsInitialized()&&
 		// TEMP: These check are only temporary for avoiding crashes while we find the bottom of the issue.
 		ProxyData->HairStrandsBuffer->ParamsScaleBuffer.IsValid() && ProxyData->HairStrandsBuffer->BoundingBoxBuffer.IsValid();
 
-	const bool bIsGeometryValid = bIsHairValid && (!bIsHairGroupInstValid || (bIsHairGroupInstValid && (ProxyData->HairGroupInstance->GeometryType != EHairGeometryType::NoneGeometry)));
+	const bool bIsGeometryValid = bIsHairValid && (!bIsHairGroupInstValid || (bIsHairGroupInstValid && (ProxyData->HairGroupInstance && ProxyData->HairGroupInstance->GeometryType != EHairGeometryType::NoneGeometry)));
 	const bool bIsDeformedValid = bIsHairValid && ProxyData->HairStrandsBuffer->SourceDeformedResources && ProxyData->HairStrandsBuffer->SourceDeformedResources->IsInitialized();
 
 	NDIHairStrandsLocal::FShaderParameters* ShaderParameters = Context.GetParameterNestedStruct<NDIHairStrandsLocal::FShaderParameters>();
 	if (bIsHairValid && bIsRestValid && bIsGeometryValid && bIsHairGroupInstValid)
 	{
 		check(ProxyData);
+
+		FRDGBufferSRVRef DummyStructuredBufferSRV = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultStructuredBuffer(GraphBuilder, 16u, FUintVector4(0,0,0,0)));
 
 		FNDIHairStrandsBuffer* HairStrandsBuffer = ProxyData->HairStrandsBuffer;
 
@@ -3371,7 +3379,7 @@ void UNiagaraDataInterfaceHairStrands::SetShaderParameters(const FNiagaraDataInt
 		if (bIsDeformedValid)
 		{
 			FRDGPooledBuffer* DeformedPositionBuffer = HairStrandsBuffer->SourceDeformedResources->DeformedPositionBuffer[HairStrandsBuffer->SourceDeformedResources->CurrentIndex].Buffer;
-			DeformedPositionBufferUAV = GraphBuilder.CreateUAV(GraphBuilder.RegisterExternalBuffer(DeformedPositionBuffer), FHairStrandsPositionFormat::Format);	//-OPT: If constant across all dispatches can create in PreStage once
+			DeformedPositionBufferUAV = GraphBuilder.CreateUAV(GraphBuilder.RegisterExternalBuffer(DeformedPositionBuffer));	//-OPT: If constant across all dispatches can create in PreStage once
 			DeformedPositionOffsetSRV = RegisterAsSRV(GraphBuilder, HairStrandsBuffer->SourceDeformedResources->DeformedOffsetBuffer[HairStrandsBuffer->SourceDeformedResources->CurrentIndex]);
 
 			// Keep the readback commented out for future debug
@@ -3387,39 +3395,39 @@ void UNiagaraDataInterfaceHairStrands::SetShaderParameters(const FNiagaraDataInt
 		}
 		else
 		{
-			DeformedPositionBufferUAV = GraphBuilder.CreateUAV(GraphBuilder.RegisterExternalBuffer(HairStrandsBuffer->DeformedPositionBuffer), FHairStrandsPositionFormat::Format);
-			DeformedPositionOffsetSRV = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsPositionOffsetFormat::Format);
+			DeformedPositionBufferUAV = GraphBuilder.CreateUAV(GraphBuilder.RegisterExternalBuffer(HairStrandsBuffer->DeformedPositionBuffer));
+			DeformedPositionOffsetSRV = DummyStructuredBufferSRV;
 		}
-		const int32 MeshLODIndex = bIsRootValid ? HairStrandsBuffer->SourceDeformedRootResources->MeshLODIndex : -1;
 
 		// Projection Buffers
 		const bool bHasSkinnedInterpolation = (bIsRootValid && HairStrandsBuffer->SourceDeformedRootResources->IsValid(MeshLODIndex));
 		const EHairSimulationInterpolationMode InterpolationModeValue = bHasSkinnedInterpolation ? (ProxyData->GlobalInterpolation ?
 			EHairSimulationInterpolationMode::RBF : EHairSimulationInterpolationMode::Skinned) : EHairSimulationInterpolationMode::Rigid;
 
-		const FHairStrandsRestRootResource::FLOD* RestMeshProjection = bHasSkinnedInterpolation ? &(HairStrandsBuffer->SourceRestRootResources->LODs[MeshLODIndex]) : nullptr;
-		const FHairStrandsDeformedRootResource::FLOD* DeformedMeshProjection = bHasSkinnedInterpolation ? &(HairStrandsBuffer->SourceDeformedRootResources->LODs[MeshLODIndex]) : nullptr;
+		const FHairStrandsLODRestRootResource* RestMeshProjection = bHasSkinnedInterpolation ? HairStrandsBuffer->SourceRestRootResources->GetLOD(MeshLODIndex) : nullptr;
+		const FHairStrandsLODDeformedRootResource* DeformedMeshProjection = bHasSkinnedInterpolation ? HairStrandsBuffer->SourceDeformedRootResources->GetLOD(MeshLODIndex) : nullptr;
 
 		FRDGBufferSRVRef RestTrianglePositionSRV = (bHasSkinnedInterpolation && RestMeshProjection) ? RegisterAsSRV(GraphBuilder, RestMeshProjection->RestUniqueTrianglePositionBuffer) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
-		FRDGBufferSRVRef DeformedTrianglePositionSRV = (bHasSkinnedInterpolation && DeformedMeshProjection) ?  RegisterAsSRV(GraphBuilder, DeformedMeshProjection->GetDeformedUniqueTrianglePositionBuffer(FHairStrandsDeformedRootResource::FLOD::Current)) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
+		FRDGBufferSRVRef DeformedTrianglePositionSRV = (bHasSkinnedInterpolation && DeformedMeshProjection) ?  RegisterAsSRV(GraphBuilder, DeformedMeshProjection->GetDeformedUniqueTrianglePositionBuffer(FHairStrandsLODDeformedRootResource::Current)) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
 		
-		FRDGBufferSRVRef RootBarycentricCoordinatesSRV = (bHasSkinnedInterpolation && RestMeshProjection) ? RegisterAsSRV(GraphBuilder, RestMeshProjection->RootBarycentricBuffer) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsRootBarycentricFormat::Format);
+ 		FRDGBufferSRVRef RootBarycentricCoordinatesSRV = (bHasSkinnedInterpolation && RestMeshProjection) ? RegisterAsSRV(GraphBuilder, RestMeshProjection->RootBarycentricBuffer) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsRootBarycentricFormat::Format);
 		FRDGBufferSRVRef RootToUniqueTriangleIndexSRV = (bHasSkinnedInterpolation && RestMeshProjection) ? RegisterAsSRV(GraphBuilder, RestMeshProjection->RootToUniqueTriangleIndexBuffer) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsRootToUniqueTriangleIndexFormat::Format);
 
 		// RBF buffers
 		const bool bHasSamples = (RestMeshProjection && RestMeshProjection->SampleCount > 0);
 		const int32 SampleCountValue = bHasSamples ? RestMeshProjection->SampleCount : 0;
 
-		FRDGBufferSRVRef RestSamplePositionsBufferSRV = (bHasSamples && RestMeshProjection) ? RegisterAsSRV(GraphBuilder,RestMeshProjection->RestSamplePositionsBuffer) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
-		FRDGBufferSRVRef MeshSampleWeightsBufferSRV = (bHasSamples && DeformedMeshProjection) ? RegisterAsSRV(GraphBuilder,DeformedMeshProjection->GetMeshSampleWeightsBuffer((FHairStrandsDeformedRootResource::FLOD::Current))) : Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
-		
+		FRDGBufferSRVRef RestSamplePositionsBufferSRV = (bHasSamples && RestMeshProjection) ? RegisterAsSRV(GraphBuilder,RestMeshProjection->RestSamplePositionsBuffer) : DummyStructuredBufferSRV;
+		FRDGBufferSRVRef MeshSampleWeightsBufferSRV = (bHasSamples && DeformedMeshProjection) ? RegisterAsSRV(GraphBuilder,DeformedMeshProjection->GetMeshSampleWeightsBuffer((FHairStrandsLODDeformedRootResource::Current))) : DummyStructuredBufferSRV;
+
 		// Simulation setup (we update the rest configuration based on the deformed positions 
-		// if in restupdate mode or if we are resetting the sim and using RBF transfer since the rest positions are not matrching the physics asset)
-		const int32 NeedResetValue = (ProxyData->TickCount <= GHairSimulationMaxDelay) || !HairStrandsBuffer->bValidGeometryType;
+		// if in restupdate mode or if we are resetting the sim and using RBF transfer since the rest positions are not matching the physics asset)
+		const int32 NeedResetValue = (ProxyData->TickCount <= GHairSimulationMaxDelay) || !HairStrandsBuffer->bValidGeometryType || (HairStrandsBuffer->CurrentMeshLOD != MeshLODIndex);
 		const int32 RestUpdateValue = GHairSimulationRestUpdate || (NeedResetValue && ProxyData->bSkinningTransfer) ? 1 : 0;
 		const int32 LocalSimulationValue = ProxyData->LocalSimulation;
-
+		
 		HairStrandsBuffer->bValidGeometryType = true;
+		HairStrandsBuffer->CurrentMeshLOD = MeshLODIndex;
 
 		// Offsets / Transforms
 		FVector3f RestPositionOffsetValue = (FVector3f)ProxyData->HairStrandsBuffer->SourceRestResources->GetPositionOffset();
@@ -3512,17 +3520,20 @@ void UNiagaraDataInterfaceHairStrands::SetShaderParameters(const FNiagaraDataInt
 		ShaderParameters->SampleCount = 0;
 
 		// Set Shader UAV
-		ShaderParameters->DeformedPositionBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferUAV(GraphBuilder, FHairStrandsPositionFormat::Format);
+		ShaderParameters->DeformedPositionBuffer = GraphBuilder.CreateUAV(GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateByteAddressDesc(16u), TEXT("Niagara.Hair.DummyUAV")), ERDGUnorderedAccessViewFlags::SkipBarrier);
 		ShaderParameters->BoundingBoxBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferUAV(GraphBuilder, PF_R32_UINT);
 
 		// Set Shader SRV
-		ShaderParameters->CurvesOffsetsBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsCurveFormat::Format);
-		ShaderParameters->RestPositionBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsPositionFormat::Format);
-		ShaderParameters->DeformedPositionOffset = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsPositionOffsetFormat::Format);
+		FRDGBufferSRVRef DummyStructuredBuffer = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultStructuredBuffer(GraphBuilder, 16u, FUintVector4(0,0,0,0)));
+		FRDGBufferSRVRef DummyByteAddressBuffer = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultByteAddressBuffer(GraphBuilder, 16u));
+
+		ShaderParameters->CurvesOffsetsBuffer = DummyByteAddressBuffer;
+		ShaderParameters->RestPositionBuffer = DummyByteAddressBuffer;
+		ShaderParameters->DeformedPositionOffset = DummyStructuredBuffer;
 		ShaderParameters->RestTrianglePositionBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
 		ShaderParameters->DeformedTrianglePositionBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
-		ShaderParameters->RestSamplePositionsBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
-		ShaderParameters->MeshSampleWeightsBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsMeshTrianglePositionFormat::Format);
+		ShaderParameters->RestSamplePositionsBuffer = DummyStructuredBuffer;
+		ShaderParameters->MeshSampleWeightsBuffer = DummyStructuredBuffer;
 		ShaderParameters->RootBarycentricCoordinatesBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsRootBarycentricFormat::Format);
 		ShaderParameters->RootToUniqueTriangleIndexBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, FHairStrandsRootToUniqueTriangleIndexFormat::Format);
 		ShaderParameters->ParamsScaleBuffer = Context.GetComputeDispatchInterface().GetEmptyBufferSRV(GraphBuilder, PF_R32_FLOAT);
@@ -3565,23 +3576,31 @@ void FNDIHairStrandsProxy::PreStage(const FNDIGpuComputePreStageContext& Context
 
 void FNDIHairStrandsProxy::PostSimulate(const FNDIGpuComputePostSimulateContext& Context)
 {
+	// Check we have valid hair data
 	FNDIHairStrandsData* ProxyData = SystemInstancesToProxyData.Find(Context.GetSystemInstanceID());
-
-	const bool bIsHairValid = ProxyData != nullptr && ProxyData->HairStrandsBuffer && ProxyData->HairStrandsBuffer->IsInitialized();
-	const bool bIsDeformedValid = bIsHairValid && ProxyData->HairStrandsBuffer->SourceDeformedResources && ProxyData->HairStrandsBuffer->SourceDeformedResources->IsInitialized();
-
-	// MGPU DeformedPositionBuffer copy after simulation
-	if (bIsDeformedValid)
+	FNDIHairStrandsBuffer* HairStrandsBuffer = ProxyData ? ProxyData->HairStrandsBuffer : nullptr;
+	if (!HairStrandsBuffer || !HairStrandsBuffer->IsInitialized())
 	{
-		const FNDIHairStrandsBuffer* HairStrandsBuffer = ProxyData->HairStrandsBuffer;
-		FRHIBuffer* DeformedPositionBuffer = HairStrandsBuffer->SourceDeformedResources->DeformedPositionBuffer[HairStrandsBuffer->SourceDeformedResources->CurrentIndex].Buffer->GetRHI();
-		Context.GetComputeDispatchInterface().MultiGPUResourceModified(Context.GetGraphBuilder(), DeformedPositionBuffer, false, true);
+		return;
 	}
 
-	if (bIsHairValid && Context.IsFinalPostSimulate())
+	// MGPU DeformedPositionBuffer copy after simulation
+	if (HairStrandsBuffer->SourceDeformedResources && HairStrandsBuffer->SourceDeformedResources->IsInitialized())
 	{
-		ProxyData->HairStrandsBuffer->BoundingBoxBuffer.EndGraphUsage();
-		ProxyData->HairStrandsBuffer->ParamsScaleBuffer.EndGraphUsage();
+		const FRDGExternalBuffer& DeformedBuffer = HairStrandsBuffer->SourceDeformedResources->DeformedPositionBuffer[HairStrandsBuffer->SourceDeformedResources->CurrentIndex];
+		if (DeformedBuffer.Buffer.IsValid())
+		{
+			if (FRHIBuffer* DeformedPositionBuffer = DeformedBuffer.Buffer->GetRHI())
+			{
+				Context.GetComputeDispatchInterface().MultiGPUResourceModified(Context.GetGraphBuilder(), DeformedPositionBuffer, false, true);
+			}
+		}
+	}
+
+	if (Context.IsFinalPostSimulate())
+	{
+		HairStrandsBuffer->BoundingBoxBuffer.EndGraphUsage();
+		HairStrandsBuffer->ParamsScaleBuffer.EndGraphUsage();
 	}
 }
 

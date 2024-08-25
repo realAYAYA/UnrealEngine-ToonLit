@@ -52,11 +52,11 @@ public:
 	/**
 	* Process and update the vertex Influences using the predefined wedges
 	* 
-	* @param WedgeCount - The number of wedges in the corresponding mesh.
+	* @param VertexCount - The number of wedges in the corresponding mesh.
 	* @param Influences - BoneWeights and Ids for the corresponding vertices. 
 	* @param MeshName	- Name of mesh, used for warning messages
 	*/
-	static void ProcessImportMeshInfluences(const int32 WedgeCount, TArray<SkeletalMeshImportData::FRawBoneInfluence>& Influences, const FString& MeshName);
+	static void ProcessImportMeshInfluences(const int32 VertexCount, TArray<SkeletalMeshImportData::FRawBoneInfluence>& Influences, const FString& MeshName);
 
 	/** Regenerate LODs of the mesh
 	*
@@ -132,6 +132,21 @@ public:
 	 */
 	static void BuildMorphTargets(USkeletalMesh* SkeletalMesh, class FSkeletalMeshImportData &ImportData, int32 LODIndex, bool ShouldImportNormals, bool ShouldImportTangents, bool bUseMikkTSpace, const FOverlappingThresholds& Thresholds);
 
+	/*
+	 * Same as above but use normals from the source mesh description to build up the morph targets. 
+	 */
+	static void BuildMorphTargets(
+		USkeletalMesh* SkeletalMesh,
+		const FMeshDescription& SkeletalMeshModel,
+		FSkeletalMeshImportData& ImportData,
+		int32 LODIndex,
+		bool ShouldImportNormals,
+		bool ShouldImportTangents,
+		bool bUseMikkTSpace,
+		const FOverlappingThresholds& Thresholds
+		);
+	
+	
 	/**
 	 *	This function apply the skinning weights from asource skeletal mesh to the destination skeletal mesh.
 	 *  The Destination will receive the weights has the alternate weights.
@@ -267,6 +282,11 @@ public:
 	 * Reorder the material slot array to follow the base LOD section order. It will readjust all LOD section material index and LODMaterialMap.
 	 */
 	static void ReorderMaterialSlotToBaseLod(USkeletalMesh* SkeletalMesh);
+
+	/**
+	 * Remove any material slot that is not used by any LODs
+	 */
+	static void RemoveUnusedMaterialSlot(USkeletalMesh* SkeletalMesh);
 
 	/**
 	 * This function will strip all triangle in the specified LOD that don't have any UV area pointing on a black pixel in the TextureMask.

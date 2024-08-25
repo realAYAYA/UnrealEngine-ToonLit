@@ -9,6 +9,7 @@
 #include "WaterCurveSettings.h"
 #include "WaterBodyStaticMeshSettings.h"
 #include "WaterSplineMetadata.h"
+#include "WaterZoneActor.h"
 #include "WaterBodyTypes.h"
 
 class AWaterBody;
@@ -41,6 +42,7 @@ class AWaterZone;
 class ALandscapeProxy;
 class UMaterialInstanceDynamic;
 class FTokenizedMessage;
+class UNavAreaBase;
 namespace UE::Geometry { class FDynamicMesh3; }
 struct FMeshDescription;
 
@@ -149,6 +151,7 @@ public:
 
 	void UpdateWaterBodyRenderData();
 
+	UFUNCTION(BlueprintCallable, Category = Water)
 	void SetWaterBodyStaticMeshEnabled(bool bEnabled);
 #endif //WITH_EDITOR
 
@@ -216,13 +219,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = Rendering)
 	UMaterialInterface* GetWaterMaterial() const { return WaterMaterial; }
 
+	/** Returns river to lake transition water material */
+	UFUNCTION(BlueprintCallable, Category = Rendering)
+	virtual UMaterialInterface* GetRiverToLakeTransitionMaterial() const { return nullptr; }
+
+	/** Returns river to ocean transition water material */
+	UFUNCTION(BlueprintCallable, Category = Rendering)
+	virtual UMaterialInterface* GetRiverToOceanTransitionMaterial() const { return nullptr; }
+
 	/** Returns material used to render the water as a static mesh */
 	UMaterialInterface* GetWaterStaticMeshMaterial() const { return WaterStaticMeshMaterial; }
 
 	/** Sets water material */
+	UFUNCTION(BlueprintCallable, Category = Rendering)
 	void SetWaterMaterial(UMaterialInterface* InMaterial);
 
 	/** Sets water static mesh material */
+	UFUNCTION(BlueprintCallable, Category = Rendering)
 	void SetWaterStaticMeshMaterial(UMaterialInterface* InMaterial);
 
 	/** Returns water MID */
@@ -247,6 +260,7 @@ public:
 	UMaterialInstanceDynamic* GetWaterInfoMaterialInstance();
 
 	/** Sets under water post process material */
+	UFUNCTION(BlueprintCallable, Category = Rendering)
 	void SetUnderwaterPostProcessMaterial(UMaterialInterface* InMaterial);
 
 	UFUNCTION(BlueprintCallable, Category = Rendering)
@@ -414,7 +428,7 @@ public:
 
 	UE_DEPRECATED(5.2, "Use version which takes FOnWaterBodyChangedParams")
 	UFUNCTION(BlueprintCallable, Category=Water, meta=(Deprecated = "5.2"))
-	void OnWaterBodyChanged(bool bShapeOrPositionChanged, bool bWeightmapSettingsChanged = false);
+	void OnWaterBodyChanged(bool bShapeOrPositionChanged, bool bWeightmapSettingsChanged = false, bool bUserTriggeredChanged = false);
 
 	UE_DEPRECATED(5.3, "Renamed to GetWaterStaticMeshMaterial")
 	UMaterialInterface* GetWaterLODMaterial() const { return GetWaterStaticMeshMaterial(); }
@@ -451,6 +465,12 @@ protected:
 	virtual void UpdateWaterBody(bool bWithExclusionVolumes);
 
 	virtual void OnUpdateBody(bool bWithExclusionVolumes) {}
+
+	/** 
+	 * Marks the owning water zone for rebuild. 
+	 * If bOnlyWithinWaterBodyBounds is set, updates to the water zone that aren't relevant within the bounds of the water body are suppressed.
+	 */
+	void MarkOwningWaterZoneForRebuild(EWaterZoneRebuildFlags InRebuildFlags, bool bInOnlyWithinWaterBodyBounds = true) const;
 
 	/** Called when the WaterBodyActor has had all its components registered. */
 	virtual void OnPostRegisterAllComponents();
@@ -494,6 +514,9 @@ protected:
 	virtual FVector GetWaterSpriteLocation() const { return GetComponentLocation(); }
 
 	virtual void OnWaterBodyRenderDataUpdated();
+
+	/** Fixup any invalid transformations made to the water body in the editor that may have been made through the transform gizmo or property changes. */
+	void FixupEditorTransform();
 #endif // WITH_EDITOR
 
 	EWaterBodyQueryFlags CheckAndAjustQueryFlags(EWaterBodyQueryFlags InQueryFlags) const;
@@ -514,7 +537,6 @@ protected:
 	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
 	virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
-	virtual bool MoveComponentImpl(const FVector& Delta, const FQuat& NewRotation, bool bSweep, FHitResult* Hit = NULL, EMoveComponentFlags MoveFlags = MOVECOMP_NoFlags, ETeleportType Teleport = ETeleportType::None) override;
 	virtual void OnComponentCollisionSettingsChanged(bool bUpdateOverlaps) override;
 	virtual void OnGenerateOverlapEventsChanged() override;
 	virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
@@ -551,17 +573,11 @@ public:
 
 	/** Public static constants : */
 	static const FName WaterBodyIndexParamName;
+	static const FName WaterZoneIndexParamName;
 	static const FName WaterBodyZOffsetParamName;
 	static const FName WaterVelocityAndHeightName;
 	static const FName GlobalOceanHeightName;
-	static const FName FixedZHeightName;
-	static const FName FixedVelocityName;
-	static const FName FixedWaterDepthName;
-	static const FName WaterAreaParamName;
 	static const FName MaxFlowVelocityParamName;
-	static const FName WaterZMinParamName;
-	static const FName WaterZMaxParamName;
-	static const FName GroundZMinParamName;
 
 	UPROPERTY(EditDefaultsOnly, Category = Collision, meta = (EditCondition = "bGenerateCollisions"))
 	TObjectPtr<UPhysicalMaterial> PhysicalMaterial;

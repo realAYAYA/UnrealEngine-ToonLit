@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "XRCreativeITFComponent.h"
+#include "XRCreativeAvatar.h"
 #include "XRCreativeITFRenderComponent.h"
 #include "XRCreativeLog.h"
 #include "XRCreativePointerComponent.h"
@@ -91,6 +92,11 @@ public:
 	virtual EToolContextCoordinateSystem GetCurrentCoordinateSystem() const override
 	{
 		return ToolsComp->GetCurrentCoordinateSystem();
+	}
+
+	virtual EToolContextTransformGizmoMode GetCurrentTransformGizmoMode() const override
+	{
+		return ToolsComp->GetCurrentTransformGizmoMode();
 	}
 
 	virtual FToolContextSnappingConfiguration GetCurrentSnappingSettings() const override
@@ -284,7 +290,7 @@ public:
 		}
 	}
 
-	virtual bool RequestSelectionChange(const FSelectedOjectsChangeList& SelectionChange) override
+	virtual bool RequestSelectionChange(const FSelectedObjectsChangeList& SelectionChange) override
 	{
 		if (UTypedElementSelectionSet* SelectionSet = WeakSelectionSet.Get())
 		{
@@ -356,6 +362,8 @@ UXRCreativeITFComponent::UXRCreativeITFComponent()
 
 	bAutoActivate = true;
 	bWantsInitializeComponent = true;
+
+	UnselectableActorClasses.Add(AXRCreativeAvatar::StaticClass());
 }
 
 
@@ -368,6 +376,17 @@ void UXRCreativeITFComponent::SetPointerComponent(UXRCreativePointerComponent* I
 void UXRCreativeITFComponent::InitializeComponent()
 {
 	Super::InitializeComponent();
+
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		if (UTransBuffer* TransBuffer = Cast<UTransBuffer>(GEditor->Trans))
+		{
+			TransBuffer->OnUndo().AddUObject(this, &UXRCreativeITFComponent::HandleTransactorUndo);
+			TransBuffer->OnRedo().AddUObject(this, &UXRCreativeITFComponent::HandleTransactorRedo);
+		}
+	}
+#endif
 
 	ensure(IsValid(PointerComponent));
 
@@ -395,11 +414,51 @@ void UXRCreativeITFComponent::InitializeComponent()
 #endif
 
 	// register selection interaction
-	SelectionInteraction = NewObject<UXRCreativeSelectionInteraction>(this);
-	SelectionInteraction->Initialize(GetSelectionSet(),
-		[this]() { return HaveActiveTool() == false; }
-	);
-	ToolsContext->InputRouter->RegisterSource(SelectionInteraction);
+	{
+		auto InteractionActorCallback = [this](AActor* SelectionCandidate)
+			{
+				if (HaveActiveTool() || !PointerComponent->IsEnabled())
+				{
+					return false;
+				}
+
+				if (CanSelectPredicate.IsBound())
+				{
+					return CanSelectPredicate.Execute(SelectionCandidate);
+				}
+
+				if (SelectionCandidate)
+				{
+					for (const TSubclassOf<AActor>& DisallowedClass : UnselectableActorClasses)
+					{
+						if (DisallowedClass.Get() && SelectionCandidate->IsA(DisallowedClass))
+						{
+							return false;
+						}
+					}
+				}
+
+				return true;
+			};
+
+		auto InteractionTraceCallback = [this](const FInputDeviceRay& InRay) -> FHitResult
+			{
+				FHitResult Result;
+				if (ensure(PointerComponent))
+				{
+					GetWorld()->LineTraceSingleByChannel(Result, InRay.WorldRay.Origin,
+						InRay.WorldRay.PointAt(UXRCreativeSelectionInteraction::RayLength),
+						ECC_Visibility, PointerComponent->GetQueryParams());
+				}
+				return Result;
+			};
+
+		SelectionInteraction = NewObject<UXRCreativeSelectionInteraction>(this);
+		SelectionInteraction->Initialize(GetSelectionSet(),
+			MoveTemp(InteractionActorCallback),
+			MoveTemp(InteractionTraceCallback));
+		ToolsContext->InputRouter->RegisterSource(SelectionInteraction);
+	}
 
 	// create transform interaction
 	TransformInteraction = NewObject<UXRCreativeTransformInteraction>(this);
@@ -421,6 +480,17 @@ void UXRCreativeITFComponent::InitializeComponent()
 void UXRCreativeITFComponent::UninitializeComponent()
 {
 	bIsShuttingDown = true;
+
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		if (UTransBuffer* TransBuffer = Cast<UTransBuffer>(GEditor->Trans))
+		{
+			TransBuffer->OnUndo().RemoveAll(this);
+			TransBuffer->OnRedo().RemoveAll(this);
+		}
+	}
+#endif
 
 	if (ToolsContext)
 	{
@@ -528,6 +598,7 @@ void UXRCreativeITFComponent::TickComponent(float InDeltaTime, enum ELevelTick I
 #if WITH_EDITOR
 		if (IsInEditor())
 		{
+			FEditorScriptExecutionGuard ScriptGuard;
 			EditorToolsTick(InDeltaTime);
 		}
 #endif
@@ -584,8 +655,9 @@ void UXRCreativeITFComponent::ToolsTick(float InDeltaTime)
 	ULocalPlayer* LocalPlayer = Cast<ULocalPlayer>(PC->Player);
 	FVector ViewLocation;
 	FRotator ViewRotation;
+	const int32 StereoViewIndex = GEngine->IsStereoscopic3D(Viewport) ? eSSE_LEFT_EYE : eSSE_MONOSCOPIC;
 	FSceneView* SceneView = LocalPlayer->CalcSceneView(&ViewFamily, ViewLocation, ViewRotation,
-		LocalPlayer->ViewportClient->Viewport, nullptr, EStereoscopicEye::eSSE_LEFT_EYE);
+		LocalPlayer->ViewportClient->Viewport, nullptr, StereoViewIndex);
 	if (!SceneView)
 	{
 		return;
@@ -638,8 +710,8 @@ void UXRCreativeITFComponent::ToolsTick(float InDeltaTime)
 	//InputState.Mouse.WorldRay = FRay(Origin, Direction);
 #endif // #ifdef XRCREATIVE_CALC_ITF_MOUSE_2D
 
-	InputState.Mouse.WorldRay = FRay(PointerComponent->GetComponentLocation(),
-	                                 PointerComponent->GetFilteredTraceEnd(false));
+	const FVector PointerDirection = (PointerComponent->GetFilteredTraceEnd(false) - PointerComponent->GetComponentLocation()).GetSafeNormal();
+	InputState.Mouse.WorldRay = FRay(PointerComponent->GetComponentLocation(), PointerDirection, true);
 
 	if (bPendingMouseStateChange || ToolsContext->InputRouter->HasActiveMouseCapture())
 	{
@@ -749,8 +821,8 @@ void UXRCreativeITFComponent::EditorToolsTick(float InDeltaTime)
 	//InputState.Mouse.WorldRay = FRay(RayOrigin, RayDirection);
 #endif // #ifdef XRCREATIVE_CALC_ITF_MOUSE_2D
 
-	InputState.Mouse.WorldRay = FRay(PointerComponent->GetComponentLocation(),
-	                                 PointerComponent->GetFilteredTraceEnd(false));
+	const FVector PointerDirection = (PointerComponent->GetFilteredTraceEnd(false) - PointerComponent->GetComponentLocation()).GetSafeNormal();
+	InputState.Mouse.WorldRay = FRay(PointerComponent->GetComponentLocation(), PointerDirection, true);
 
 	if (bPendingMouseStateChange || ToolsContext->InputRouter->HasActiveMouseCapture())
 	{
@@ -787,11 +859,34 @@ void UXRCreativeITFComponent::EditorToolsTick(float InDeltaTime)
 	// force rendering flush so that PDI lines get drawn
 	FlushRenderingCommands();
 }
-#endif
+
+
+void UXRCreativeITFComponent::HandleTransactorUndo(const FTransactionContext& TransactionContext, bool bSucceeded)
+{
+	if (bSucceeded)
+	{
+		OnUndo.Broadcast();
+	}
+}
+
+
+void UXRCreativeITFComponent::HandleTransactorRedo(const FTransactionContext& TransactionContext, bool bSucceeded)
+{
+	if (bSucceeded)
+	{
+		OnRedo.Broadcast();
+	}
+}
+#endif // #if WITH_EDITOR
 
 
 void UXRCreativeITFComponent::LeftMousePressed()
 {
+	if (!IsActive())
+	{
+		return;
+	}
+
 	CurrentMouseState.Mouse.Left.SetStates(true, false, false);
 	bPendingMouseStateChange = true;
 }
@@ -799,6 +894,11 @@ void UXRCreativeITFComponent::LeftMousePressed()
 
 void UXRCreativeITFComponent::LeftMouseReleased()
 {
+	if (!IsActive())
+	{
+		return;
+	}
+
 	CurrentMouseState.Mouse.Left.SetStates(false, false, true);
 	bPendingMouseStateChange = true;
 }
@@ -836,7 +936,18 @@ bool UXRCreativeITFComponent::HaveActiveTool()
 
 
 void UXRCreativeITFComponent::SetCurrentCoordinateSystem(EToolContextCoordinateSystem CoordSystem)
-{ 
-	CurrentCoordinateSystem = CoordSystem; 
-	//TransformInteraction->ForceUpdateGizmoState();
+{
+	if(IsValid(GetSelectionSet()))
+	{
+		CurrentCoordinateSystem = CoordSystem; 
+		TransformInteraction->ForceUpdateGizmoState();	
+	}
+
+}
+
+
+void UXRCreativeITFComponent::SetCurrentTransformGizmoMode(EToolContextTransformGizmoMode GizmoMode)
+{
+	CurrentTransformGizmoMode = GizmoMode;
+	TransformInteraction->ForceUpdateGizmoState();
 }

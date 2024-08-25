@@ -100,8 +100,12 @@ struct MASSENTITY_API FMassPhaseProcessorConfigurationHelper
 	{
 	}
 
-	void Configure(TArrayView<UMassProcessor* const> DynamicProcessors, const TSharedPtr<FMassEntityManager>& EntityManager = TSharedPtr<FMassEntityManager>(), 
-		FMassProcessorDependencySolver::FResult* OutOptionalResult = nullptr);
+	/** 
+	 * @param InWorldExecutionFlags - provide EProcessorExecutionFlags::None to let underlying code decide
+	 */
+	void Configure(TArrayView<UMassProcessor* const> DynamicProcessors, EProcessorExecutionFlags InWorldExecutionFlags
+		, const TSharedPtr<FMassEntityManager>& EntityManager = TSharedPtr<FMassEntityManager>()
+		, FMassProcessorDependencySolver::FResult* OutOptionalResult = nullptr);
 
 	UMassCompositeProcessor& PhaseProcessor;
 	const FMassProcessingPhaseConfig& PhaseConfig;
@@ -113,7 +117,14 @@ struct MASSENTITY_API FMassPhaseProcessorConfigurationHelper
 	UE_DEPRECATED(5.2, "This flavor of Configure has been deprecated. Use the one requiring the first parameter to be an array view of additional processors")
 	void Configure(const TSharedPtr<FMassEntityManager>& EntityManager = TSharedPtr<FMassEntityManager>(), FMassProcessorDependencySolver::FResult* OutOptionalResult = nullptr)
 	{
-		Configure({}, EntityManager, OutOptionalResult);
+		Configure({}, EProcessorExecutionFlags::None, EntityManager, OutOptionalResult);
+	}
+
+	UE_DEPRECATED(5.3, "This flavor of Configure has been deprecated. Use the one requiring the first parameter to be an array view of additional processors and EProcessorExecutionFlags to be provided")
+	void Configure(TArrayView<UMassProcessor* const> DynamicProcessors, const TSharedPtr<FMassEntityManager>& EntityManager = TSharedPtr<FMassEntityManager>(),
+		FMassProcessorDependencySolver::FResult* OutOptionalResult = nullptr)
+	{
+		Configure(DynamicProcessors, EProcessorExecutionFlags::None, EntityManager, OutOptionalResult);
 	}
 };
 
@@ -128,7 +139,9 @@ struct MASSENTITY_API FMassPhaseProcessorConfigurationHelper
 struct MASSENTITY_API FMassProcessingPhaseManager : public FGCObject
 {
 public:
-	FMassProcessingPhaseManager() = default;
+	explicit FMassProcessingPhaseManager(EProcessorExecutionFlags InProcessorExecutionFlags = EProcessorExecutionFlags::None) 
+		: ProcessorExecutionFlags(InProcessorExecutionFlags)
+	{}
 	FMassProcessingPhaseManager(const FMassProcessingPhaseManager& Other) = delete;
 	FMassProcessingPhaseManager& operator=(const FMassProcessingPhaseManager& Other) = delete;
 
@@ -136,7 +149,7 @@ public:
 	FMassEntityManager& GetEntityManagerRef() { check(EntityManager); return *EntityManager.Get(); }
 
 	/** Retrieves OnPhaseStart multicast delegate's reference for a given Phase */
-	FMassProcessingPhase::FOnPhaseEvent& GetOnPhaseStart(const EMassProcessingPhase Phase) { return ProcessingPhases[uint8(Phase)].OnPhaseStart; }
+	FMassProcessingPhase::FOnPhaseEvent& GetOnPhaseStart(const EMassProcessingPhase Phase) { return ProcessingPhases[uint8(Phase)].OnPhaseStart; } //-V557
 	/** Retrieves OnPhaseEnd multicast delegate's reference for a given Phase */
 	FMassProcessingPhase::FOnPhaseEvent& GetOnPhaseEnd(const EMassProcessingPhase Phase) { return ProcessingPhases[uint8(Phase)].OnPhaseEnd; }
 
@@ -222,5 +235,6 @@ protected:
 
 	FDelegateHandle OnNewArchetypeHandle;
 
+	EProcessorExecutionFlags ProcessorExecutionFlags = EProcessorExecutionFlags::None;
 	bool bIsAllowedToTick = false;
 };

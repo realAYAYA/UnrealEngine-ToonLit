@@ -24,18 +24,23 @@ namespace UE::Net
 class FNetRefHandle
 {
 public:
-	enum { Invalid = 0 };
+	
+	inline static FNetRefHandle GetInvalid() { return FNetRefHandle(); }
+
+private:
+	enum { InvalidValue = 0 };
 	enum { IdBits = 60 };
 	enum { ReplicationSystemIdBits = 4 };
 
 public:
-	FNetRefHandle() : Value(Invalid) {}
+
+	FNetRefHandle() : Value(InvalidValue) {}
 
 	uint64 GetId() const { return Id; }
 	uint32 GetReplicationSystemId() const { check(ReplicationSystemId != 0); return (uint32)(ReplicationSystemId - 1); }
-	bool IsValid() const { return Value != Invalid; }
+	bool IsValid() const { return Value != InvalidValue; }
 
-	bool IsCompleteHandle() const { return Value != Invalid && ReplicationSystemId != 0U; }
+	bool IsCompleteHandle() const { return Value != InvalidValue && ReplicationSystemId != 0U; }
 
 	bool IsStatic() const { return Id & StaticIdMask; }
 	bool IsDynamic() const { return IsValid() && !IsStatic(); }

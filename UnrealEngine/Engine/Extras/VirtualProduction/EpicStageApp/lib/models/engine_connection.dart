@@ -3,23 +3,27 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/cupertino.dart';
+import 'package:crypto/crypto.dart';
+import 'package:epic_common/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:logging/logging.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/io.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
-import './navigator_keys.dart';
 import '../utilities/net_utilities.dart';
 import '../utilities/unreal_utilities.dart';
-import '../widgets/elements/modal.dart';
 import '../widgets/screens/connect/connect.dart';
+import '../widgets/screens/connect/views/passphrase_modal.dart';
 import '../widgets/screens/main/stage_app_main_screen.dart';
 import '../widgets/screens/reconnect_screen.dart';
+import './navigator_keys.dart';
 import 'api_version.dart';
+import 'engine_passphrase_manager.dart';
+import 'settings/connection_settings.dart';
 
 final _log = Logger('EngineConnection');
 
@@ -29,9 +33,32 @@ enum EngineConnectionState {
   disconnected,
 }
 
+/// Possible results of attempting to connect to the engine.
+enum EngineConnectionResult {
+  /// The connection was successful.
+  success,
+
+  /// The connection was cancelled.
+  cancelled,
+
+  /// The connection couldn't be opened because another one was already open.
+  alreadyOpen,
+
+  /// The connection failed because the passphrase was incorrect.
+  passphraseRejected,
+
+  /// The connection failed because we were unable to configure compression.
+  compressionFailed,
+
+  /// The connection failed for unknown reasons.
+  genericFailure,
+}
+
 /// HTTP response codes
 class HttpResponseCode {
   static const int ok = 200;
+  static const int unauthorized = 401;
+  static const int clientClosedRequest = 499;
 }
 
 /// Callback type for a WebSocket message. Passes dynamic JSON data parsed from the message.
@@ -69,7 +96,8 @@ class UnrealHttpRequestWithCallback {
 
 /// Holds the state of the app's connection to the engine and notifies when the connection changes.
 class EngineConnectionManager with WidgetsBindingObserver {
-  EngineConnectionManager(this.context) {
+  EngineConnectionManager(this.context)
+      : _connectionSettings = Provider.of<ConnectionSettings>(context, listen: false) {
     _loadLastConnectionIfNone();
 
     WidgetsBinding.instance.addObserver(this);
@@ -90,6 +118,9 @@ class EngineConnectionManager with WidgetsBindingObserver {
   /// The websocket channel we currently have open to the engine.
   IOWebSocketChannel? _webSocketChannel;
 
+  /// The app's connection-related settings.
+  final ConnectionSettings _connectionSettings;
+
   /// Map from message type to callback functions for when the message type is received.
   final Map<String, List<WebSocketMessageCallback>> _messageCallbacks = {};
 
@@ -100,7 +131,11 @@ class EngineConnectionManager with WidgetsBindingObserver {
   final Map<int, Completer<UnrealHttpResponse>> _httpResponseCompleters = {};
 
   /// List of HTTP request IDs that must be processed before connection is complete.
-  final Set<int> handshakeMessageIds = {};
+  final Set<int> _handshakeHttpMessageIds = {};
+
+  /// Map from message type to callback functions for when the message type is received during the initial connection
+  /// handshake. These messages will not be sent outside theis class.
+  final Map<String, WebSocketMessageCallback> _handshakeMessageCallbacks = {};
 
   /// List of messages that have been received, but are waiting to dispatch after connection setup is finished.
   final List<dynamic> _initialPendingMessages = [];
@@ -119,7 +154,7 @@ class EngineConnectionManager with WidgetsBindingObserver {
   StreamSubscription? _connectionSubscription;
 
   /// Future that will return when the current connection attempt completes.
-  FutureOr<WebSocketChannel?>? _pendingConnectionAttempt;
+  FutureOr<EngineConnectionResult>? _pendingConnectionAttempt;
 
   /// HTTP client of the current WebSocket connection or connection attempt.
   HttpClient? _webSocketHttpClient;
@@ -129,6 +164,16 @@ class EngineConnectionManager with WidgetsBindingObserver {
 
   /// Whether this should attempt to reconnect when the app becomes active again.
   bool _bShouldReconnectOnWake = false;
+
+  /// Whether the current connection is in demo mode, meaning no actual Unreal Engine instance is connected.
+  bool _bIsInDemoMode = false;
+
+  /// MD5 hash of the passphrase to be passed along with all messages for the current connection, or null if no
+  /// passphrase was given.
+  String? _passphraseHash;
+
+  /// The compression mode used to compress and decompress WebSocket messages.
+  WebSocketCompressionMode _compressionMode = WebSocketCompressionMode.none;
 
   /// Get the current state of the connection to the engine.
   EngineConnectionState get connectionState => _internalConnectionState;
@@ -145,6 +190,9 @@ class EngineConnectionManager with WidgetsBindingObserver {
   /// Get the version of the engine we're currently connected to, or null if we're not connected.
   EpicStageAppAPIVersion? get apiVersion => _apiVersion;
 
+  /// Whether the current connection is in demo mode, meaning no actual Unreal Engine instance is connected.
+  bool get bIsInDemoMode => _bIsInDemoMode;
+
   /// Dispose of any stored data.
   void dispose() {
     disconnect();
@@ -157,6 +205,7 @@ class EngineConnectionManager with WidgetsBindingObserver {
       case AppLifecycleState.detached:
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
         _onAppPaused();
         break;
 
@@ -175,12 +224,12 @@ class EngineConnectionManager with WidgetsBindingObserver {
     return _loadLastConnectionIfNone();
   }
 
-  /// Try to connect with the given connection data.
-  Future<WebSocketChannel?> connect(ConnectionData connectionData) async {
+  /// Try to connect with the given connection data. Returns a future which will provide the result of the attempt.
+  Future<EngineConnectionResult> connect(ConnectionData connectionData) async {
     if (_pendingConnectionAttempt != null) {
       if (!_bIsPendingConnectionCancelled) {
         _log.warning('Tried to connect while an uncancelled connection attempt was in progress. New attempt ignored');
-        return null;
+        return EngineConnectionResult.alreadyOpen;
       }
 
       // Wait for cancelled attempt to finish so we don't try to open the same socket twice
@@ -188,13 +237,14 @@ class EngineConnectionManager with WidgetsBindingObserver {
     }
 
     _bIsPendingConnectionCancelled = false;
-    Future<WebSocketChannel?> result;
+    Future<EngineConnectionResult> result;
 
     try {
       _pendingConnectionAttempt = _internalConnect(connectionData);
       result = Future.value(await _pendingConnectionAttempt);
-    } catch (e) {
-      result = Future.error(e);
+    } catch (error, stack) {
+      _log.warning('Connection failed: $error\n$stack');
+      result = Future.value(EngineConnectionResult.genericFailure);
     }
 
     _pendingConnectionAttempt = null;
@@ -203,7 +253,7 @@ class EngineConnectionManager with WidgetsBindingObserver {
   }
 
   /// Try to reconnect to the last connection.
-  FutureOr<WebSocketChannel?> reconnect() async {
+  Future<EngineConnectionResult> reconnect() async {
     if (_lastConnectionData != null) {
       return connect(_lastConnectionData!);
     } else {
@@ -217,23 +267,28 @@ class EngineConnectionManager with WidgetsBindingObserver {
       _bIsPendingConnectionCancelled = true;
     }
 
+    _cancelHttpRequestsWithError(HttpResponseCode.clientClosedRequest);
+
     if (_webSocketChannel != null) {
       _log.info('Disconnecting from engine');
 
       _webSocketChannel!.sink.close();
       _connectionSubscription?.cancel();
-      _onWebSocketStreamClosed(bWasExpected: true, bShouldReturnToConnectScreen: true);
     }
 
-    // Force the HTTP client itself shut since we were in the middle of connecting and want to immediately stop.
-    // The WebSocket itself isn't returned until the connection completes, so we have to kill the connection from here.
-    _webSocketHttpClient?.close(force: true);
-    _webSocketHttpClient = null;
+    _onWebSocketStreamClosed(
+      bWasExpected: true,
+      // If this was in the middle of attempting to connect, we were already on the connect screen and it can handle
+      // the navigator by itself
+      bShouldReturnToConnectScreen: _pendingConnectionAttempt == null,
+    );
+
+    _bIsInDemoMode = false;
   }
 
   /// Send a message via the current WebSocket connection in standard Unreal WebSocket format.
   void sendMessage(String messageName, Object parameters) {
-    if (connectionState != EngineConnectionState.connected) {
+    if (connectionState != EngineConnectionState.connected && _pendingConnectionAttempt == null) {
       return;
     }
 
@@ -242,7 +297,7 @@ class EngineConnectionManager with WidgetsBindingObserver {
 
   /// Send a batch of messages as a single message via the current WebSocket connection.
   void sendBatchedMessage(List<dynamic> messages) {
-    if (connectionState != EngineConnectionState.connected) {
+    if (connectionState != EngineConnectionState.connected && _pendingConnectionAttempt == null) {
       return;
     }
 
@@ -257,12 +312,45 @@ class EngineConnectionManager with WidgetsBindingObserver {
 
   /// Send a raw message via the current WebSocket connection, encoded as JSON.
   /// You may want to create the message using [createUnrealWebSocketMessage].
-  void sendRawMessage(Object message) {
-    if (connectionState != EngineConnectionState.connected) {
+  void sendRawMessage(dynamic message) {
+    if (_bIsInDemoMode) {
       return;
     }
 
-    _webSocketChannel?.sink.add(jsonEncode(message));
+    if (connectionState != EngineConnectionState.connected && _pendingConnectionAttempt == null) {
+      return;
+    }
+
+    if (_passphraseHash != null) {
+      message['Passphrase'] = _passphraseHash;
+    }
+
+    dynamic outData = jsonEncode(message);
+
+    switch (_compressionMode) {
+      case WebSocketCompressionMode.zlib:
+        final List<int> uncompressedData = utf8.encode(outData);
+        final List<int> compressedData = zlib.encode(uncompressedData);
+
+        // Unreal requires the total WebSocket message length when sending in binary mode, and also the total
+        // uncompressed size when sending compressed data.
+        const int headerSize = 8;
+        final int messageSize = compressedData.length + headerSize;
+        final outBytes = ByteData(messageSize);
+        outBytes.setUint32(0, messageSize - 4, Endian.little); // Don't include the size of this size
+        outBytes.setInt32(4, uncompressedData.length, Endian.little);
+
+        final Uint8List outBuffer = outBytes.buffer.asUint8List();
+        outBuffer.setRange(headerSize, messageSize, compressedData);
+
+        outData = outBuffer;
+        break;
+
+      default:
+        break;
+    }
+
+    _webSocketChannel?.sink.add(outData);
   }
 
   /// Send an HTTP request via the current WebSocket connection.
@@ -383,7 +471,26 @@ class EngineConnectionManager with WidgetsBindingObserver {
 
   /// Internal function to connect to the engine.
   /// You should almost always call [connect] instead of this so we know we have a pending connection attempt.
-  FutureOr<WebSocketChannel?> _internalConnect(ConnectionData connectionData) async {
+  Future<EngineConnectionResult> _internalConnect(ConnectionData connectionData) async {
+    _bIsInDemoMode = connectionData.bIsDemo;
+
+    if (_bIsInDemoMode) {
+      // Run the app in demo mode, where the connection will be spoofed
+      _connectionState = EngineConnectionState.connected;
+      _apiVersion = EpicStageAppAPIVersion(0, 0, 0);
+      return Future.value(EngineConnectionResult.success);
+    }
+
+    // Get the passphrase ready
+    final passphraseManager = Provider.of<EnginePassphraseManager>(context, listen: false);
+    final String? passphrase = await passphraseManager.getPassphrase(connectionData);
+
+    if (passphrase == null) {
+      _passphraseHash = null;
+    } else {
+      _passphraseHash = md5.convert(utf8.encode(passphrase)).toString();
+    }
+
     // Close the existing connection
     if (connectionState == EngineConnectionState.connected) {
       _onWebSocketStreamClosed(bWasExpected: true, bShouldReturnToConnectScreen: false);
@@ -394,7 +501,7 @@ class EngineConnectionManager with WidgetsBindingObserver {
     _lastConnectionData = connectionData;
     _webSocketChannel = null;
     _initialPendingMessages.clear();
-    handshakeMessageIds.clear();
+    _handshakeHttpMessageIds.clear();
 
     final String address = 'ws://${connectionData.websocketAddress.address}:${connectionData.websocketPort.toString()}';
     WebSocket? webSocket;
@@ -414,6 +521,9 @@ class EngineConnectionManager with WidgetsBindingObserver {
 
         bHasConnected = true;
       } catch (error) {
+        _webSocketHttpClient?.close(force: true);
+        _webSocketHttpClient = null;
+
         lastError = error.toString();
         _log.info('Failed: $lastError');
       }
@@ -427,7 +537,7 @@ class EngineConnectionManager with WidgetsBindingObserver {
       if (bHasConnected) {
         disconnect();
       }
-      return null;
+      return EngineConnectionResult.cancelled;
     }
 
     if (!bHasConnected) {
@@ -444,17 +554,50 @@ class EngineConnectionManager with WidgetsBindingObserver {
       onDone: _onWebSocketStreamClosed,
     );
 
-    _connectionState = EngineConnectionState.connected;
-
     _saveLastConnection(connectionData);
 
+    // Check passphrase
+    final bool bIsPassphraseValid = await _checkPassphrase().timeout(
+      Duration(seconds: 3),
+      onTimeout: () => false,
+    );
+    if (!bIsPassphraseValid) {
+      // The HTTP handler will have already disconnected us, so we can just return the result
+      return EngineConnectionResult.passphraseRejected;
+    }
+
+    // Retrieve API version
     _log.info('Retrieving API version');
-    _apiVersion = await _retrieveAPIVersion();
+    try {
+      _apiVersion = await _retrieveAPIVersion().timeout(Duration(seconds: 3));
+    } catch (e) {
+      _log.warning('Timed out waiting for API version');
+      disconnect();
+      return EngineConnectionResult.genericFailure;
+    }
     _log.info('API version: $_apiVersion');
 
+    // Bailed out early
     if (_bIsPendingConnectionCancelled) {
+      _log.info('User cancelled connection');
       disconnect();
-      return null;
+      return EngineConnectionResult.cancelled;
+    }
+
+    // Set up compression if available and desired
+    if (_apiVersion!.bIsWebSocketCompressionAvailable &&
+        _connectionSettings.webSocketCompressionMode.getValue() != WebSocketCompressionMode.none) {
+      final bool isCompressionReady = await _enableWebSocketCompression().timeout(
+        Duration(seconds: 3),
+        onTimeout: () => false,
+      );
+      if (!isCompressionReady) {
+        _log.warning('Timed out on compression response');
+        disconnect();
+        return EngineConnectionResult.compressionFailed;
+      }
+    } else {
+      _log.info('No compression requested');
     }
 
     // Now that we're fully connected, handle any messages that were waiting
@@ -462,7 +605,38 @@ class EngineConnectionManager with WidgetsBindingObserver {
       _handleWebSocketMessage(message);
     }
 
-    return _webSocketChannel;
+    // This will notify external classes, so don't set it until everything is ready to go
+    _connectionState = EngineConnectionState.connected;
+
+    return EngineConnectionResult.success;
+  }
+
+  /// Enable WebSocket compression during the connection's handshake phase.
+  Future<bool> _enableWebSocketCompression() async {
+    const compressionMessage = 'CompressionChanged';
+
+    final WebSocketCompressionMode targetCompressionMode = _connectionSettings.webSocketCompressionMode.getValue();
+    final String targetCompressionModeString = targetCompressionMode.name.toUpperCase();
+
+    _log.info('Requesting compression mode $targetCompressionModeString');
+
+    final compressionReadyCompleter = Completer<bool>();
+    final handleCompressionChanged =
+        (message) => compressionReadyCompleter.complete(message['Mode'] == targetCompressionModeString);
+
+    // Send message
+    _handshakeMessageCallbacks[compressionMessage] = handleCompressionChanged;
+    sendMessage('compression.change', {'Mode': targetCompressionModeString});
+
+    // Wait for response
+    final bool bIsCorrectMode = await compressionReadyCompleter.future;
+    _handshakeMessageCallbacks.remove(compressionMessage);
+
+    if (bIsCorrectMode) {
+      _compressionMode = targetCompressionMode;
+    }
+
+    return bIsCorrectMode;
   }
 
   /// Called when a WebSocket error occurs.
@@ -475,26 +649,85 @@ class EngineConnectionManager with WidgetsBindingObserver {
     _webSocketChannel = null;
     _connectionSubscription = null;
     _connectionState = EngineConnectionState.disconnected;
+    _compressionMode = WebSocketCompressionMode.none;
     _apiVersion = null;
+    _respondingCheck = null;
+    _passphraseHash = null;
+
+    // Force the HTTP client itself shut in case we were in the middle of connecting and want to immediately stop.
+    // The WebSocket itself isn't returned until the connection completes, so we have to kill the connection from here.
+    _webSocketHttpClient?.close(force: true);
+    _webSocketHttpClient = null;
 
     if (bShouldReturnToConnectScreen) {
       _goToNamedRoute(ConnectScreen.route);
     }
 
     if (!bWasExpected) {
-      InfoModalDialog.showInContext((context) => AppLocalizations.of(context)!.engineConnectionLostMessage);
+      final BuildContext context = rootNavigatorKey.currentContext!;
+      InfoModalDialog.show(context, AppLocalizations.of(context)!.engineConnectionLostMessage);
     }
   }
 
   /// Called when a WebSocket message is received.
   void _onWebSocketMessageReceived(dynamic data) {
+    switch (_compressionMode) {
+      case WebSocketCompressionMode.zlib:
+        try {
+          data = zlib.decode(Uint8List.fromList(data));
+        } catch (_) {
+          // Data may not have been compressed if it was cheaper to send raw, so fall through to directly decoding JSON
+        }
+        break;
+
+      default:
+        break;
+    }
+
     final String stringData = String.fromCharCodes(data);
-    final jsonMessage = jsonDecode(stringData);
+
+    final dynamic jsonMessage;
+    try {
+      jsonMessage = jsonDecode(stringData);
+    } catch (error) {
+      _log.warning('Failed to parse WebSocket message:\n$error\nMessage text:$stringData');
+      return;
+    }
+
+    // Passphrase failures are reported with no request ID and with a Verb of 401. In this case, all future messages
+    // will fail, so we can close out all completers with the same response and disconnect.
+    if (jsonMessage['Verb'] == '${HttpResponseCode.unauthorized}') {
+      _log.info('Passphrase rejected; disconnecting');
+
+      _cancelHttpRequestsWithError(HttpResponseCode.unauthorized);
+
+      // If we were mid connection attempt, the connection screen UI will handle showing the prompt if needed
+      final bool bShowPassphraseDialog = _pendingConnectionAttempt == null;
+
+      disconnect();
+
+      if (bShowPassphraseDialog) {
+        GenericModalDialogRoute.showDialog(
+          context: rootNavigatorKey.currentContext!,
+          builder: (context) => PassphraseModalDialog(
+            initialErrorMessage: AppLocalizations.of(context)!.connectScreenPassphraseDisconnectErrorMessage,
+          ),
+        );
+      }
+
+      return;
+    }
 
     // If we're in the middle of connecting, we don't want to dispatch messages to outside systems.
     // Unless the message is required for us to complete the connection handshake, queue it for later.
-    if (_pendingConnectionAttempt != null && !handshakeMessageIds.contains(jsonMessage[_httpRequestIdFieldName])) {
+    if (_pendingConnectionAttempt != null && !_handshakeHttpMessageIds.contains(jsonMessage[_httpRequestIdFieldName])) {
       _initialPendingMessages.add(jsonMessage);
+
+      // If this is a WebSocket message that needs to be handled during the handshake, call the internal callback even
+      // if we won't call external ones
+      final WebSocketMessageCallback? handshakeCallback = _handshakeMessageCallbacks[jsonMessage['Type']];
+      handshakeCallback?.call(jsonMessage);
+
       return;
     }
 
@@ -522,6 +755,20 @@ class EngineConnectionManager with WidgetsBindingObserver {
       _httpResponseCompleters[decodedResponse.requestId]!.complete(decodedResponse);
       _httpResponseCompleters.remove(decodedResponse.requestId);
     }
+  }
+
+  /// Returns true if the current passphrase (if any) is accepted by the engine, and false otherwise.
+  /// Note that if the passphrase is rejected, we will automatically disconnect before this returns false.
+  Future<bool> _checkPassphrase() async {
+    final UnrealHttpResponse response = await _internalSendHttpRequest(
+      UnrealHttpRequest(
+        url: '/remote/passphrase',
+        verb: 'GET',
+      ),
+      bIsHandshakeMessage: true,
+    );
+
+    return response.code != HttpResponseCode.unauthorized;
   }
 
   /// Retrieve the API version from the engine, if possible.
@@ -571,13 +818,13 @@ class EngineConnectionManager with WidgetsBindingObserver {
 
   /// Send an HTTP request via the current WebSocket connection.
   /// The response's body will contain decoded JSON data.
-  /// If [bIsHandshakeMessage] is true, the request ID will be added to [handshakeMessageIds].
+  /// If [bIsHandshakeMessage] is true, the request ID will be added to [_handshakeHttpMessageIds].
   Future<UnrealHttpResponse> _internalSendHttpRequest(UnrealHttpRequest request, {bool bIsHandshakeMessage = false}) {
     final parameters = _generateHttpRequestParameters(request);
     final completer = _makeHttpResponseCompleterFromParameters(parameters);
 
     if (bIsHandshakeMessage) {
-      handshakeMessageIds.add(_lastRequestId);
+      _handshakeHttpMessageIds.add(_lastRequestId);
     }
 
     sendMessage('http', parameters);
@@ -651,7 +898,6 @@ class EngineConnectionManager with WidgetsBindingObserver {
       ConnectionData? loadedConnectionData;
       try {
         loadedConnectionData = ConnectionData(
-          uuid: UuidValue(const Uuid().v1()),
           name: name,
           websocketAddress: InternetAddress(address),
           websocketPort: port,
@@ -675,6 +921,19 @@ class EngineConnectionManager with WidgetsBindingObserver {
     sharedPrefs.setString('lastConnection.name', lastConnection.name);
     sharedPrefs.setString('lastConnection.websocketAddress', lastConnection.websocketAddress.address);
     sharedPrefs.setInt('lastConnection.websocketPort', lastConnection.websocketPort);
+  }
+
+  /// Complete all pending HTTP-over-WebSocket requests with the same error response.
+  void _cancelHttpRequestsWithError(int errorCode) {
+    for (final MapEntry<int, Completer<UnrealHttpResponse>> httpCompleterEntry in _httpResponseCompleters.entries) {
+      final response = UnrealHttpResponse(
+        requestId: httpCompleterEntry.key,
+        code: errorCode,
+        body: {},
+      );
+      httpCompleterEntry.value.complete(response);
+    }
+    _httpResponseCompleters.clear();
   }
 
   /// Called when the app is paused.

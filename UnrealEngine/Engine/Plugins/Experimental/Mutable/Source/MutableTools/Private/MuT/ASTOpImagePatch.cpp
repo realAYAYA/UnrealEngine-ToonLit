@@ -30,8 +30,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpImagePatch::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpImagePatch*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpImagePatch* other = static_cast<const ASTOpImagePatch*>(&otherUntyped);
 			return base == other->base &&
 				patch == other->patch &&
 				location == other->location;

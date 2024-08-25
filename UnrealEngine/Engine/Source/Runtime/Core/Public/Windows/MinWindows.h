@@ -2,6 +2,10 @@
 
 #pragma once
 
+#if !defined(WINDOWS_H_WRAPPER_GUARD)
+#pragma message("WARNING: do not include Windows/MinWindows.h file directly. Use Windows/WindowsHWrapper.h instead")
+#endif
+
 // #TODO: redirect to platform-agnostic version for the time being. Eventually this will become an error
 #include "HAL/Platform.h"
 #if !PLATFORM_WINDOWS

@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -8,6 +7,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
+using EpicGames.Core;
 
 namespace EpicGames.Serialization.Converters
 {
@@ -24,7 +24,7 @@ namespace EpicGames.Serialization.Converters
 			}
 		}
 
-		static readonly Utf8String s_discriminatorKey = "_t";
+		static readonly Utf8String s_discriminatorKey = new Utf8String("_t");
 
 		public Type ClassType { get; }
 		public bool IsPolymorphic { get; }
@@ -61,7 +61,7 @@ namespace EpicGames.Serialization.Converters
 			WriteConcreteContentsMethod = new DynamicMethod($"WriteConcreteContents_{classType.Name}", null, new Type[] { typeof(CbWriter), classType });
 
 			WriteMethod = new DynamicMethod($"Write_{classType.Name}", null, new Type[] { typeof(CbWriter), classType });
-			WriteNamedMethod = new DynamicMethod($"WriteNamed_{classType.Name}", null, new Type[] { typeof(CbWriter), typeof(Utf8String), classType });
+			WriteNamedMethod = new DynamicMethod($"WriteNamed_{classType.Name}", null, new Type[] { typeof(CbWriter), typeof(CbFieldName), classType });
 
 			if (IsPolymorphic)
 			{
@@ -125,12 +125,8 @@ namespace EpicGames.Serialization.Converters
 					{
 						if (baseType == classType)
 						{
-							CbDiscriminatorAttribute? discriminator = knownType.GetCustomAttribute<CbDiscriminatorAttribute>();
-							if (discriminator == null)
-							{
-								throw new NotSupportedException();
-							}
-							discriminatorToKnownType[discriminator.Name] = knownType;
+							CbDiscriminatorAttribute discriminator = knownType.GetCustomAttribute<CbDiscriminatorAttribute>() ?? throw new NotSupportedException();
+							discriminatorToKnownType[new Utf8String(discriminator.Name)] = knownType;
 						}
 					}
 				}
@@ -197,7 +193,7 @@ namespace EpicGames.Serialization.Converters
 
 			generator.Emit(OpCodes.Ldarg_0);
 			generator.Emit(OpCodes.Ldarg_1);
-			generator.EmitCall(OpCodes.Call, GetMethodInfo<CbWriter>(x => x.BeginObject(null!)), null);
+			generator.EmitCall(OpCodes.Call, GetMethodInfo<CbWriter>(x => x.BeginObject(default)), null);
 
 			generator.Emit(OpCodes.Ldarg_0);
 			generator.Emit(OpCodes.Ldarg_2);
@@ -266,7 +262,7 @@ namespace EpicGames.Serialization.Converters
 
 				generator.Emit(OpCodes.Ldsfld, namesField);
 				generator.Emit(OpCodes.Ldc_I4, idx);
-				generator.Emit(OpCodes.Ldelem, typeof(Utf8String));
+				generator.Emit(OpCodes.Ldelem, typeof(CbFieldName));
 
 				generator.Emit(OpCodes.Ldloc, local);
 				generator.EmitCall(OpCodes.Call, writeMethod, null);
@@ -304,11 +300,8 @@ namespace EpicGames.Serialization.Converters
 		static void CreateConcreteObjectReader(Type type, ILGenerator generator)
 		{
 			// Construct the object
-			ConstructorInfo? constructor = type.GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
-			if (constructor == null)
-			{
-				throw new CbException($"Unable to find default constructor for {type}");
-			}
+			ConstructorInfo? constructor =
+				type.GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null) ?? throw new CbException($"Unable to find default constructor for {type}");
 
 			// Find the reflected properties from this type
 			(Utf8String Name, PropertyInfo Property)[] properties = GetProperties(type);
@@ -459,7 +452,7 @@ namespace EpicGames.Serialization.Converters
 
 		static void CopyCollection<TCollection, TElement>(TCollection source, TCollection target) where TCollection : ICollection<TElement>
 		{
-			foreach(TElement element in source)
+			foreach (TElement element in source)
 			{
 				target.Add(element);
 			}
@@ -470,11 +463,15 @@ namespace EpicGames.Serialization.Converters
 			List<(Utf8String, PropertyInfo)> propertyList = new List<(Utf8String, PropertyInfo)>();
 			foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
 			{
-				CbFieldAttribute? attribute = property.GetCustomAttribute<CbFieldAttribute>();
-				if (attribute != null)
+				CbIgnoreAttribute? ignoreAttribute = property.GetCustomAttribute<CbIgnoreAttribute>();
+				if (ignoreAttribute == null)
 				{
-					Utf8String name = attribute.Name ?? property.Name;
-					propertyList.Add((name, property));
+					CbFieldAttribute? attribute = property.GetCustomAttribute<CbFieldAttribute>();
+					if (attribute != null || (property.GetGetMethod()?.IsPublic ?? false))
+					{
+						Utf8String name = new Utf8String(attribute?.Name ?? property.Name);
+						propertyList.Add((name, property));
+					}
 				}
 			}
 			if (propertyList.Count == 0 && type.GetCustomAttribute<CbObjectAttribute>() == null)
@@ -500,13 +497,13 @@ namespace EpicGames.Serialization.Converters
 		}
 	}
 
-	class CbClassConverter<T> : CbConverterBase<T>, ICbConverterMethods where T : class
+	class CbClassConverter<T> : CbConverter<T>, ICbConverterMethods where T : class
 	{
 		readonly CbClassConverterMethods _methods;
 
 		readonly Func<CbField, T> _readFunc;
 		readonly Action<CbWriter, T> _writeFunc;
-		readonly Action<CbWriter, Utf8String, T> _writeNamedFunc;
+		readonly Action<CbWriter, CbFieldName, T> _writeNamedFunc;
 
 		public CbClassConverter()
 		{
@@ -514,7 +511,7 @@ namespace EpicGames.Serialization.Converters
 
 			_readFunc = CreateDelegate<Func<CbField, T>>(_methods.ReadMethod);
 			_writeFunc = CreateDelegate<Action<CbWriter, T>>(_methods.WriteMethod);
-			_writeNamedFunc = CreateDelegate<Action<CbWriter, Utf8String, T>>(_methods.WriteNamedMethod);
+			_writeNamedFunc = CreateDelegate<Action<CbWriter, CbFieldName, T>>(_methods.WriteNamedMethod);
 		}
 
 		public MethodInfo ReadMethod => _methods.ReadMethod;
@@ -529,22 +526,22 @@ namespace EpicGames.Serialization.Converters
 
 		public override void Write(CbWriter writer, T value) => _writeFunc(writer, value);
 
-		public override void WriteNamed(CbWriter writer, Utf8String name, T value) => _writeNamedFunc(writer, name, value);
+		public override void WriteNamed(CbWriter writer, CbFieldName name, T value) => _writeNamedFunc(writer, name, value);
 	}
 
 	class CbClassConverterFactory : CbConverterFactory
 	{
-		public override ICbConverter? CreateConverter(Type type)
+		public override CbConverter? CreateConverter(Type type)
 		{
-			ICbConverter? converter = null;
+			CbConverter? converter = null;
 			if (type.IsClass)
 			{
 				Type converterType = typeof(CbClassConverter<>).MakeGenericType(type);
 				try
 				{
-					converter = (ICbConverter?)Activator.CreateInstance(converterType);
+					converter = (CbConverter?)Activator.CreateInstance(converterType);
 				}
-				catch (TargetInvocationException ex) when (ex.InnerException is object)
+				catch (TargetInvocationException ex) when (ex.InnerException is not null)
 				{
 					throw ex.InnerException;
 				}

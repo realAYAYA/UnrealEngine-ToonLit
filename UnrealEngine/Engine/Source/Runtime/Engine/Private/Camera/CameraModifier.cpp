@@ -93,6 +93,11 @@ bool UCameraModifier::IsDisabled() const
 	return bDisabled;
 }
 
+bool UCameraModifier::IsPendingDisable() const
+{
+	return bPendingDisable;
+}
+
 AActor* UCameraModifier::GetViewTarget() const
 {
 	return CameraOwner ? CameraOwner->GetViewTarget() : nullptr;

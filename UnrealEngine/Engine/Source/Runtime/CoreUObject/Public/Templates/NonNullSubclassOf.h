@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "UObject/Class.h"
 #include "UObject/Field.h"
-#include "Templates/ChooseClass.h"
 #include "SubclassOf.h"
 
 // So we can construct uninitialized TNonNullSubclassOf

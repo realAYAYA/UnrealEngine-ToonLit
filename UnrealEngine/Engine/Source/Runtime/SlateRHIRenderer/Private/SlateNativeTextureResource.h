@@ -11,8 +11,6 @@ class FSlateTexture2DRHIRef;
 class FSlateDynamicTextureResource
 {
 public:
-	static TSharedPtr<FSlateDynamicTextureResource> NullResource;
-
 	FSlateDynamicTextureResource(FSlateTexture2DRHIRef* ExistingTexture);
 	~FSlateDynamicTextureResource();
 

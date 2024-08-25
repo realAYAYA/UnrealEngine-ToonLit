@@ -7,6 +7,7 @@
 #include "Settings/LevelEditorViewportSettings.h"
 #include "Editor/UnrealEdEngine.h"
 #include "EngineGlobals.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/WorldSettings.h"
@@ -3232,7 +3233,8 @@ void UViewportWorldInteraction::SetGizmoHandleType( const EGizmoHandleTypes InGi
 			GetModeTools().SetWidgetMode( UE::Widget::WM_Scale );
 			break;
 
-		check(0);
+		default:
+			check(0);
 	}
 }
 

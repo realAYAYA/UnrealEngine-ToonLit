@@ -40,8 +40,52 @@ struct FPackedHairVertex
 	typedef uint64 BulkType;
 
 	FFloat16 X, Y, Z;
-	uint8 PackedRadiusAndType;
 	uint8 UCoord;
+	uint8 Radius : 6;
+	uint8 Type : 2;
+};
+
+struct FTranscodedHairPositions
+{
+	typedef FUintVector4 BulkType;
+
+	struct FPosition
+	{
+		uint32 X    : 10;
+		uint32 Y    : 10;
+		uint32 Z    : 10;
+		uint32 Type : 2;
+	};
+
+	struct FAttributePacking0
+	{
+		uint32 Radius0 : 6;
+		uint32 Radius1 : 6;
+		uint32 Radius2 : 6;
+
+		uint32 UCoord0 : 6;
+		uint32 UCoord2 : 6;
+		uint32 Interp  : 2;
+	};
+
+	struct FAttributePacking1
+	{
+		uint32 Radius0 : 6;
+		uint32 Radius1 : 6;
+		uint32 Radius2 : 6;
+
+		uint32 UCoord0 : 7;
+		uint32 UCoord1 : 7;
+	};
+
+	FPosition CP0;
+	FPosition CP1;
+	FPosition CP2;
+	union
+	{
+		FAttributePacking0 Attribute0;
+		FAttributePacking1 Attribute1;
+	};
 };
 
 struct FPackedHairAttribute0Vertex
@@ -69,6 +113,16 @@ struct FVector4_16
 }; 
 FArchive& operator<<(FArchive& Ar, FVector4_16& Vertex);
 
+struct FHairStrandsTranscodedPositionFormat
+{
+	typedef FTranscodedHairPositions Type;
+	typedef FTranscodedHairPositions::BulkType BulkType;
+	static const uint32 ComponentCount = 1;
+	static const uint32 SizeInByte = sizeof(Type);
+	static const EVertexElementType VertexElementType = VET_UShort4;
+	static const EPixelFormat Format = PF_Unknown;
+};
+
 struct FHairStrandsPositionFormat
 {
 	typedef FPackedHairVertex Type;
@@ -76,7 +130,7 @@ struct FHairStrandsPositionFormat
 	static const uint32 ComponentCount = 1;
 	static const uint32 SizeInByte = sizeof(Type);
 	static const EVertexElementType VertexElementType = VET_UShort4;
-	static const EPixelFormat Format = PF_R16G16B16A16_UINT;
+	static const EPixelFormat Format = PF_Unknown;
 };
 
 struct FHairStrandsPositionOffsetFormat
@@ -98,17 +152,7 @@ struct FHairStrandsAttributeFormat
 	static const EPixelFormat Format = PF_R32_UINT;
 };
 
-struct FHairStrandsPointToCurveFormat16
-{
-	typedef uint16 Type;
-	typedef uint16 BulkType;
-	static const uint32 ComponentCount = 1;
-	static const uint32 SizeInByte = sizeof(Type);
-	static const EVertexElementType VertexElementType = VET_MAX;
-	static const EPixelFormat Format = PF_R16_UINT;
-};
-
-struct FHairStrandsPointToCurveFormat32
+struct FHairStrandsPointToCurveFormat
 {
 	typedef uint32 Type;
 	typedef uint32 BulkType;
@@ -174,6 +218,17 @@ struct FHairStrandsRaytracingFormat
 
 /** Hair strands index format */
 struct HAIRSTRANDSCORE_API FHairStrandsIndexFormat
+{
+	using Type = uint32;
+	using BulkType = uint32;
+	static const uint32 ComponentCount = 1;
+	static const uint32 SizeInByte = sizeof(Type);
+	static const EVertexElementType VertexElementType = VET_UInt;
+	static const EPixelFormat Format = PF_R32_UINT;
+};
+
+/** Hair strands RBF sample index format */
+struct HAIRSTRANDSCORE_API FHairStrandsRBFSampleIndexFormat
 {
 	using Type = uint32;
 	using BulkType = uint32;
@@ -341,7 +396,7 @@ struct FHairStreamingRequest
 		void Release();
 	};
 
-	void Request(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, int32 InLODIndex, FHairStrandsBulkCommon& In,
+	void Request(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, FHairStrandsBulkCommon& In,
 		bool bWait=false, bool bFillBulkData=false, bool bWarmCache=false, const FName& InOwnerName = NAME_None,
 		bool* bWaitResult = nullptr);
 	bool IsNone() const;
@@ -349,7 +404,7 @@ struct FHairStreamingRequest
 	bool IsUnloading() const;
 
 #if WITH_EDITORONLY_DATA
-	bool WarmCache(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, int32 InLODIndex, FHairStrandsBulkCommon& In);
+	bool WarmCache(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, FHairStrandsBulkCommon& In);
 #endif
 
 #if !WITH_EDITORONLY_DATA
@@ -394,11 +449,11 @@ struct HAIRSTRANDSCORE_API FHairStrandsBulkCommon
 	virtual ~FHairStrandsBulkCommon() { }
 	void Serialize(FArchive& Ar, UObject* Owner);
 	virtual void SerializeHeader(FArchive& Ar, UObject* Owner) = 0;
-	void SerializeData(FArchive& Ar, UObject* Owner, int32 LODIndex=-1);
+	void SerializeData(FArchive& Ar, UObject* Owner);
 
-	void Write_DDC(UObject* Owner, TArray<UE::DerivedData::FCachePutValueRequest>& Out, int32 LODIndex=-1);
+	void Write_DDC(UObject* Owner, TArray<UE::DerivedData::FCachePutValueRequest>& Out);
 	void Read_DDC(FHairStreamingRequest* In, TArray<UE::DerivedData::FCacheGetChunkRequest>& Out);
-	void Write_IO(UObject* Owner, FArchive& Out, int32 LODIndex=-1);
+	void Write_IO(UObject* Owner, FArchive& Out);
 	void Read_IO(FHairStreamingRequest* In, FBulkDataBatchRequest& Out);
 	void Unload(FHairStreamingRequest* In);
 
@@ -407,7 +462,6 @@ struct HAIRSTRANDSCORE_API FHairStrandsBulkCommon
 		void Add(FHairBulkContainer& In, const TCHAR* InSuffix, uint32& InOffset, uint32 InSize=0);
 		uint32 GetCurveCount() const { check(StreamingRequest); return StreamingRequest->CurveCount; }
 		uint32 GetPointCount() const { check(StreamingRequest); return StreamingRequest->PointCount; }
-		int32  GetLODIndex() const	 { return StreamingRequest ? StreamingRequest->LODIndex : LODIndex; }
 		enum EQueryType { None, ReadDDC, WriteDDC, ReadIO, ReadWriteIO /* i.e. regular Serialize() */, UnloadData};
 		EQueryType Type = None;
 		FHairStreamingRequest* StreamingRequest = nullptr;
@@ -419,7 +473,6 @@ struct HAIRSTRANDSCORE_API FHairStrandsBulkCommon
 		FString* DerivedDataKey = nullptr;
 	#endif
 		UObject* Owner = nullptr; 
-		int32 LODIndex = -1;
 	};
 
 	virtual uint32 GetResourceCount() const = 0;
@@ -510,7 +563,7 @@ struct HAIRSTRANDSCORE_API FHairStrandsCurves
 	TArray<FIntVector> CurvesClosestGuideIDs;
 
 	/** Custom guid weights (indexed with StrandID) (optional) */
-	TArray<FVector> CurvesClosestGuideWeights;
+	TArray<FVector3f> CurvesClosestGuideWeights;
 
 	/** Flags for attributes */
 	uint32 AttributeFlags = 0;
@@ -547,16 +600,18 @@ struct HAIRSTRANDSCORE_API FHairStrandsDatas
 	float HairDensity = 1;
 
 	/* Strands bounding box */
-	FBox BoundingBox = FBox(EForceInit::ForceInit);
+	FBox3f BoundingBox = FBox3f(EForceInit::ForceInit);
 };
 
 struct HAIRSTRANDSCORE_API FHairStrandsBulkData : FHairStrandsBulkCommon
 {
 	enum EDataFlags
 	{
-		DataFlags_HasData = 1,				// Contains valid data. Otherwise: Position, Attributes, ... are all empty
-		DataFlags_Has16bitsCurveIndex = 2,	// Use 16bits index for vertex to curve mapping
-		DataFlags_HasPointAttribute = 4,	// Contains point attribute data.
+		DataFlags_HasData = 0x1u,				// Contains valid data. Otherwise: Position, Attributes, ... are all empty
+		DataFlags_HasPointAttribute = 0x2,		// Contains point attribute data.
+		DataFlags_HasTranscodedPosition = 0x4u,	// Contains transcoded position
+		DataFlags_HasTrimmedCurve = 0x8u,		// Source data had more curves per group than the limit and some curves were trimmed
+		DataFlags_HasTrimmedPoint = 0x10u,		// Source data had more points per curve than the limit and some points were trimmed
 	};
 
 	virtual void SerializeHeader(FArchive& Ar, UObject* Owner) override;
@@ -567,6 +622,7 @@ struct HAIRSTRANDSCORE_API FHairStrandsBulkData : FHairStrandsBulkCommon
 	bool IsValid() const { return Header.CurveCount > 0 && Header.PointCount > 0; }
 	void Reset();
 	virtual void ResetLoadedSize() override;
+	float GetCoverageScale(float InCurvePercentage /*[0..1]*/) const;
 
 	uint32 GetNumCurves() const { return Header.CurveCount;  };
 	uint32 GetNumPoints() const { return Header.PointCount; };
@@ -574,9 +630,12 @@ struct HAIRSTRANDSCORE_API FHairStrandsBulkData : FHairStrandsBulkCommon
 	float  GetMaxRadius() const { return Header.MaxRadius; }
 	FVector GetPositionOffset() const { return Header.BoundingBox.GetCenter(); }
 	const FBox& GetBounds() const { return Header.BoundingBox; }
+	uint32 GetSize() const;
 
-	uint32 GetCurveAttributeSizeInBytes(uint32 InCurveCount=HAIR_MAX_NUM_CURVE_PER_GROUP) const	{ return InCurveCount > 0 ? FMath::DivideAndRoundUp(FMath::Min(Header.CurveCount, InCurveCount), Header.Strides.CurveAttributeChunkElementCount) * Header.Strides.CurveAttributeChunkStride : 0; }
-	uint32 GetPointAttributeSizeInBytes(uint32 InPointCount=HAIR_MAX_NUM_POINT_PER_GROUP) const	{ return InPointCount > 0 ? FMath::DivideAndRoundUp(FMath::Min(Header.PointCount, InPointCount), Header.Strides.PointAttributeChunkElementCount) * Header.Strides.PointAttributeChunkStride : 0; }
+	uint32 GetCurveAttributeSizeInBytes(uint32 InCurveCount=HAIR_MAX_NUM_CURVE_PER_GROUP) const			{ return InCurveCount > 0 ? FMath::DivideAndRoundUp(FMath::Min(Header.CurveCount, InCurveCount), Header.Strides.CurveAttributeChunkElementCount) * Header.Strides.CurveAttributeChunkStride : 0; }
+	uint32 GetPointAttributeSizeInBytes(uint32 InPointCount=HAIR_MAX_NUM_POINT_PER_GROUP) const			{ return InPointCount > 0 ? FMath::DivideAndRoundUp(FMath::Min(Header.PointCount, InPointCount), Header.Strides.PointAttributeChunkElementCount) * Header.Strides.PointAttributeChunkStride : 0; }
+	uint32 GetPointToCurveSizeInBytes(uint32 InPointCount=HAIR_MAX_NUM_POINT_PER_GROUP) const			{ return InPointCount > 0 ? FMath::DivideAndRoundUp(FMath::Min(Header.PointCount, InPointCount), Header.Strides.PointToCurveChunkElementCount)   * Header.Strides.PointToCurveChunkStride   : 0; }
+	uint32 GetTranscodedPositionSizeInBytes(uint32 InPointCount = HAIR_MAX_NUM_POINT_PER_GROUP) const 	{ return InPointCount > 0 ? FMath::DivideAndRoundUp(FMath::Min(Header.PointCount, InPointCount), Header.Strides.TranscodedPositionChunkElementCount) * Header.Strides.TranscodedPositionChunkStride : 0; }
 
 	struct FHeader
 	{
@@ -599,28 +658,42 @@ struct HAIRSTRANDSCORE_API FHairStrandsBulkData : FHairStrandsBulkCommon
 		// Map 'curve' count to 'point' count (used for CLOD)
 		TArray<uint32> CurveToPointCount;
 
+		// Coverage scale
+		TArray<float> CoverageScales;
+
+		// Data transcoding parameters
+		struct FTranscoding
+		{
+			FVector3f PositionOffset = FVector3f::OneVector;
+			FVector3f PositionScale = FVector3f::OneVector;
+		} Transcoding;
+
 		// Data strides
 		struct FStrides
 		{
 			uint32 PositionStride = 0;
 			uint32 CurveStride = 0;
-			uint32 PointToCurveStride = 0;
+			uint32 PointToCurveChunkStride = 0;
 			uint32 CurveAttributeChunkStride = 0;
 			uint32 PointAttributeChunkStride = 0;
+			uint32 TranscodedPositionChunkStride = 0;
 
 			// Number of element per chunk block
+			uint32 PointToCurveChunkElementCount = 0;
 			uint32 CurveAttributeChunkElementCount = 0;
 			uint32 PointAttributeChunkElementCount = 0;
+			uint32 TranscodedPositionChunkElementCount = 0;
 		} Strides;
 	} Header;
 
 	struct FData
 	{
-		FHairBulkContainer Positions;		// Size = PointCount
-		FHairBulkContainer CurveAttributes;	// Size = y*CurveCount (depends on the per-curve stored attributes)
-		FHairBulkContainer PointAttributes;	// Size = x*PointCount (depends on the per-point stored attributes)
-		FHairBulkContainer PointToCurve; 	// Size = PointCount
-		FHairBulkContainer Curves;			// Size = CurveCount
+		FHairBulkContainer Positions;			// Size = PointCount
+		FHairBulkContainer TranscodedPositions;	// Size = PointCount / TranscodedPositionChunkElementCount (=3)
+		FHairBulkContainer CurveAttributes;		// Size = y*CurveCount (depends on the per-curve stored attributes)
+		FHairBulkContainer PointAttributes;		// Size = x*PointCount (depends on the per-point stored attributes)
+		FHairBulkContainer PointToCurve; 		// Size = PointCount
+		FHairBulkContainer Curves;				// Size = CurveCount
 	} Data;
 };
 
@@ -631,27 +704,31 @@ struct HAIRSTRANDSCORE_API FHairStrandsBulkData : FHairStrandsBulkCommon
 struct HAIRSTRANDSCORE_API FHairStrandsInterpolationDatas
 {
 	/** Set the number of interpolated points */
-	void SetNum(const uint32 NumPoints);
+	void SetNum(const uint32 InCurveCount, const uint32 InPointCount);
 
 	/** Reset the interpolated points to 0 */
 	void Reset();
 
 	/** Get the number of interpolated points */
-	uint32 Num() const { return PointsSimCurvesVertexIndex.Num(); }
+	uint32 GetPointCount() const { return PointSimIndices.Num(); }
+	uint32 GetCurveCount() const { return CurveSimIndices.Num(); }
 
-	bool IsValid() const { return PointsSimCurvesIndex.Num() > 0; }
+	bool IsValid() const { return CurveSimIndices.Num() > 0; }
 
-	/** Simulation curve indices, ordered by closest influence */
-	TArray<FIntVector> PointsSimCurvesIndex;
+	/** Simulation curve indices, ordered by closest influence (per-curve data)*/
+	TArray<FIntVector2> CurveSimIndices;
 
-	/** Closest vertex indices on simulation curve, ordered by closest influence */
-	TArray<FIntVector> PointsSimCurvesVertexIndex;
+	/** Weight of simulation curve, ordered by closest influence (per-curve data)*/
+	TArray<FVector2f> CurveSimWeights;
 
-	/** Lerp value between the closest vertex indices and the next one, ordered by closest influence */
-	TArray<FVector3f> PointsSimCurvesVertexLerp;
+	/** (Global) Index of the root point of the curve*/
+	TArray<FIntVector2> CurveSimRootPointIndex;
 
-	/** Weight of vertex indices on simulation curve, ordered by closest influence */
-	TArray<FVector3f>	PointsSimCurvesVertexWeights;
+	/** Closest vertex (local, 0..255) indices on simulation curve, ordered by closest influence (per-point data)*/
+	TArray<FIntVector2> PointSimIndices;
+
+	/** Lerp value between the closest vertex indices and the next one, ordered by closest influence (per-point data)*/
+	TArray<FVector2f> PointSimLerps;
 
 	/** True, if interpolation data are built using a single guide */
 	bool bUseUniqueGuide = false;
@@ -672,24 +749,25 @@ struct HAIRSTRANDSCORE_API FHairStrandsInterpolationBulkData : FHairStrandsBulkC
 	virtual uint32 GetResourceCount() const override;
 	virtual void GetResources(FQuery& Out) override;
 	uint32 GetPointCount() const { return Header.PointCount; };
+	uint32 GetSize() const;
 
 	struct FHeader
 	{
 		uint32 Flags = 0;
 		uint32 PointCount = 0;
-		uint32 SimPointCount = 0;
+		uint32 CurveCount = 0;
 
 		struct FStrides
 		{
-			uint32 InterpolationStride = 0;
-			uint32 SimRootPointIndexStride = 0;
+			uint32 CurveInterpolationStride = 0;
+			uint32 PointInterpolationStride = 0;
 		} Strides;
 	} Header;
 
 	struct FData
 	{
-		FHairBulkContainer Interpolation;		// FHairStrandsInterpolationFormat  - Per-rendering-vertex interpolation data (closest guides, weight factors, ...). Data for a 1 or 3 guide(s))
-		FHairBulkContainer SimRootPointIndex;	// FHairStrandsRootIndexFormat      - Per-rendering-vertex index of the sim-root vertex
+		FHairBulkContainer CurveInterpolation;	// FHairStrandsInterpolationFormat  - Per-rendering-curve interpolation data (closest guides, weight factors, ...). Data for a 1 or 2 guide(s))
+		FHairBulkContainer PointInterpolation;	// FHairStrandsInterpolationFormat  - Per-rendering-point interpolation data (local point index, lerp factors,...). Data for a 1 or 2 guide(s))
 	} Data;
 };
 
@@ -722,6 +800,7 @@ struct HAIRSTRANDSCORE_API FHairStrandsClusterBulkData : FHairStrandsBulkCommon
 	virtual uint32 GetResourceCount() const override;
 	virtual void GetResources(FQuery& Out) override;
 	uint32 GetCurveCount(float InLODIndex) const;
+	uint32 GetSize() const;
 
 	bool IsValid() const { return Header.ClusterCount > 0 && Header.PointCount > 0; }
 
@@ -763,44 +842,45 @@ struct FHairStrandsRootData
 	bool HasProjectionData() const;
 	bool IsValid() const { return RootCount > 0; }
 
-	struct FMeshProjectionLOD
-	{
-		int32 LODIndex = -1;
+	/* Triangle on which a root is attached */
+	/* When the projection is done with source to target mesh transfer, the projection indices does not match.
+		In this case we need to separate index computation. The barycentric coords remain the same however. */
+	TArray<FHairStrandsRootToUniqueTriangleIndexFormat::Type> RootToUniqueTriangleIndexBuffer;
+	TArray<FHairStrandsRootBarycentricFormat::Type> RootBarycentricBuffer;
 
-		/* Triangle on which a root is attached */
-		/* When the projection is done with source to target mesh transfer, the projection indices does not match.
-			In this case we need to separate index computation. The barycentric coords remain the same however. */
-		TArray<FHairStrandsRootToUniqueTriangleIndexFormat::Type> RootToUniqueTriangleIndexBuffer;
-		TArray<FHairStrandsRootBarycentricFormat::Type> RootBarycentricBuffer;
+	/* Strand hair roots translation and rotation in rest position relative to the bound triangle. Positions are relative to the rest root center */
+	TArray<FHairStrandsUniqueTriangleIndexFormat::Type> UniqueTriangleIndexBuffer;
+	TArray<FHairStrandsMeshTrianglePositionFormat::Type> RestUniqueTrianglePositionBuffer;
 
-		/* Strand hair roots translation and rotation in rest position relative to the bound triangle. Positions are relative to the rest root center */
-		TArray<FHairStrandsUniqueTriangleIndexFormat::Type> UniqueTriangleIndexBuffer;
-		TArray<FHairStrandsMeshTrianglePositionFormat::Type> RestUniqueTrianglePositionBuffer;
+	/* Number of samples used for the mesh interpolation */
+	uint32 SampleCount = 0;
 
-		/* Number of samples used for the mesh interpolation */
-		uint32 SampleCount = 0;
+	/* Store the hair interpolation weights | Size = SamplesCount * SamplesCount */
+	TArray<FHairStrandsWeightFormat::Type> MeshInterpolationWeightsBuffer;
 
-		/* Store the hair interpolation weights | Size = SamplesCount * SamplesCount */
-		TArray<FHairStrandsWeightFormat::Type> MeshInterpolationWeightsBuffer;
+	/* Store the samples vertex indices */
+	TArray<uint32> MeshSampleIndicesBuffer;
 
-		/* Store the samples vertex indices */
-		TArray<FHairStrandsIndexFormat::Type> MeshSampleIndicesBuffer;
+	/* Store the samples rest positions */
+	TArray<FHairStrandsMeshTrianglePositionFormat::Type> RestSamplePositionsBuffer;
 
-		/* Store the samples rest positions */
-		TArray<FHairStrandsMeshTrianglePositionFormat::Type> RestSamplePositionsBuffer;
+	/* Store the samples rest section */
+	TArray<uint32> MeshSampleSectionsBuffer;
 
-		/* Store the mesh section indices which are relevant for this root LOD data */
-		TArray<uint32> UniqueSectionIds;
-	};
+	/* Store the mesh section indices which are relevant for this root LOD data */
+	TArray<uint32> UniqueSectionIds;
+
+	/* Mesh LOD index for which the root data are computed */
+	int32 LODIndex = -1;
+
+	/* Number of render section of the target mesh */
+	uint32 MeshSectionCount = 0;
 
 	/* Number of roots */
 	uint32 RootCount = 0;
 
 	/* Number of control points */
 	uint32 PointCount = 0;
-
-	/* Store the hair projection information for each mesh LOD */
-	TArray<FMeshProjectionLOD> MeshProjectionLODs;
 };
 
 /* Bulk data for root resources (GPU resources are stored into FHairStrandsRootResources) */
@@ -809,39 +889,24 @@ struct FHairStrandsRootBulkData : FHairStrandsBulkCommon
 	virtual void SerializeHeader(FArchive& Ar, UObject* Owner) override;
 	virtual uint32 GetResourceCount() const override;
 	virtual void GetResources(FQuery& Out) override;
+	uint32 GetSize() const;
 
 	void Reset();
 	virtual void ResetLoadedSize() override;
 	bool IsValid() const { return Header.RootCount > 0; }
-	const TArray<uint32>& GetValidSectionIndices(int32 LODIndex) const;
-	uint32 GetLODCount() const { return Header.LODs.Num(); }
+	const TArray<uint32>& GetValidSectionIndices() const;
 	uint32 GetRootCount()const { return Header.RootCount; }
-
-	uint32 GetDataSize() const
-	{
-		uint32 Total = 0;
-		for (const FData::FLOD& LOD : Data.LODs)
-		{
-			Total += LOD.UniqueTriangleIndexBuffer.IsBulkDataLoaded() ?			LOD.UniqueTriangleIndexBuffer.GetBulkDataSize() : 0u;
-			Total += LOD.RootToUniqueTriangleIndexBuffer.IsBulkDataLoaded() ?	LOD.RootToUniqueTriangleIndexBuffer.GetBulkDataSize() : 0u;
-			Total += LOD.RootBarycentricBuffer.IsBulkDataLoaded() ?				LOD.RootBarycentricBuffer.GetBulkDataSize() : 0u;
-			Total += LOD.RestUniqueTrianglePositionBuffer.IsBulkDataLoaded() ?	LOD.RestUniqueTrianglePositionBuffer.GetBulkDataSize() : 0u;
-			Total += LOD.MeshInterpolationWeightsBuffer.IsBulkDataLoaded() ?	LOD.MeshInterpolationWeightsBuffer.GetBulkDataSize() : 0u;
-			Total += LOD.MeshSampleIndicesBuffer.IsBulkDataLoaded() ?			LOD.MeshSampleIndicesBuffer.GetBulkDataSize() : 0u;
-			Total += LOD.RestSamplePositionsBuffer.IsBulkDataLoaded() ?			LOD.RestSamplePositionsBuffer.GetBulkDataSize() : 0u;
-		}
-		return Total;
-	}
+	uint32 GetDataSize() const;
 
 	struct FHeader
 	{		
-		struct FLOD
-		{
-			int32  LODIndex = -1;
-			uint32 UniqueTriangleCount = 0;			
-			uint32 SampleCount = 0; 				// Number of samples used for the mesh interpolation
-			TArray<uint32> UniqueSectionIndices; 	// Store the mesh section indices which are relevant for this root LOD data
-		};
+		int32  LODIndex = -1;
+		uint32 RootCount = 0;					// Number of roots
+		uint32 PointCount = 0;					// Number of control points
+		uint32 SampleCount = 0; 				// Number of samples used for the mesh interpolation
+		uint32 MeshSectionCount = 0;			// Number of section of the target mesh
+		uint32 UniqueTriangleCount = 0;			
+		TArray<uint32> UniqueSectionIndices; 	// Store the mesh section indices which are relevant for this root LOD data
 
 		struct FStrides
 		{
@@ -851,32 +916,23 @@ struct FHairStrandsRootBulkData : FHairStrandsBulkCommon
 			uint32 RestUniqueTrianglePositionBufferStride = 0;
 
 			uint32 MeshInterpolationWeightsBufferStride = 0;
-			uint32 MeshSampleIndicesBufferStride = 0;
+			uint32 MeshSampleIndicesAndSectionsBufferStride = 0;
 			uint32 RestSamplePositionsBufferStride = 0;
-		};
-
-		uint32 RootCount = 0;						// Number of roots
-		uint32 PointCount = 0;						// Number of control points
-		FStrides Strides;
-		TArray<FLOD> LODs;
+		} Strides;
 	} Header;
 
 	struct FData
 	{
-		struct FLOD
-		{
-			// Binding
-			FHairBulkContainer RootToUniqueTriangleIndexBuffer; // Map each root onto the unique triangle Id (per-root)
-			FHairBulkContainer RootBarycentricBuffer; 			// Root's barycentric (per-root)
-			FHairBulkContainer UniqueTriangleIndexBuffer; 		// Unique triangles list from skeleton mesh section IDs and triangle IDs (per-unique-triangle)
-			FHairBulkContainer RestUniqueTrianglePositionBuffer;// Rest triangle positions (per-unique-triangle)
+		// Binding
+		FHairBulkContainer RootToUniqueTriangleIndexBuffer; 	// Map each root onto the unique triangle Id (per-root)
+		FHairBulkContainer RootBarycentricBuffer; 				// Root's barycentric (per-root)
+		FHairBulkContainer UniqueTriangleIndexBuffer; 			// Unique triangles list from skeleton mesh section IDs and triangle IDs (per-unique-triangle)
+		FHairBulkContainer RestUniqueTrianglePositionBuffer;	// Rest triangle positions (per-unique-triangle)
 
-			// RBF
-			FHairBulkContainer MeshInterpolationWeightsBuffer; 	// Store the hair interpolation weights | Size = SamplesCount * SamplesCount (per-sample
-			FHairBulkContainer MeshSampleIndicesBuffer; 		// Store the samples vertex indices (per-sample)
-			FHairBulkContainer RestSamplePositionsBuffer; 		// Store the samples rest positions (per-sample)
-		};
-		TArray<FLOD> LODs;
+		// RBF
+		FHairBulkContainer MeshInterpolationWeightsBuffer; 		// Store the hair interpolation weights | Size = SamplesCount * SamplesCount (per-sample
+		FHairBulkContainer MeshSampleIndicesAndSectionsBuffer;	// Store the samples vertex indices (per-sample)
+		FHairBulkContainer RestSamplePositionsBuffer; 			// Store the samples rest positions (per-sample)
 	} Data;
 };
 
@@ -913,12 +969,11 @@ struct HAIRSTRANDSCORE_API FHairStrandsDebugDatas
 	FDesc VoxelDescription;
 	TArray<FOffsetAndCount> VoxelOffsetAndCount;
 	TArray<FVoxel> VoxelData;
+};
 
-	struct FResources
-	{
-		FDesc VoxelDescription;
-
-		TRefCountPtr<FRDGPooledBuffer> VoxelOffsetAndCount;
-		TRefCountPtr<FRDGPooledBuffer> VoxelData;
-	};
+struct HAIRSTRANDSCORE_API FHairStrandsDebugResources
+{
+	FHairStrandsDebugDatas::FDesc VoxelDescription;
+	TRefCountPtr<FRDGPooledBuffer> VoxelOffsetAndCount;
+	TRefCountPtr<FRDGPooledBuffer> VoxelData;
 };

@@ -1554,7 +1554,7 @@ bool UUnitTestManager::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar
 		{
 #if STATS
 			FString TargetEvent = FParse::Token(Cmd, false);
-			uint8 FramePercentThreshold = FCString::Atoi(*FParse::Token(Cmd, false));
+			int32 FramePercentThreshold = FCString::Atoi(*FParse::Token(Cmd, false));
 
 			if (!TargetEvent.IsEmpty() && FramePercentThreshold > 0)
 			{

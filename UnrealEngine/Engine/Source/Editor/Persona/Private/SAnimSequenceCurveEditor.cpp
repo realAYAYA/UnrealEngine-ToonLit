@@ -261,8 +261,6 @@ void FRichCurveEditorModelNamed::UpdateCachedCurve()
 				return &FloatCurve.FloatCurve;
 			}
 		}
-
-		return nullptr;
 	}();
 	
 	if (ensure(CurveToCopyFrom))

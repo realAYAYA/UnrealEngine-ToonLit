@@ -16,6 +16,7 @@
 #include "Kismet2/CompilerResultsLog.h"
 #include "Binding/PropertyBinding.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/PropertyTag.h"
 #include "WidgetBlueprintCompiler.h"
 #include "UObject/EditorObjectVersion.h"
@@ -41,7 +42,10 @@
 
 #define LOCTEXT_NAMESPACE "UMG"
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 FWidgetBlueprintDelegates::FGetAssetTags FWidgetBlueprintDelegates::GetAssetTags;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+FWidgetBlueprintDelegates::FGetAssetTagsWithContext FWidgetBlueprintDelegates::GetAssetTagsWithContext;
 
 FEditorPropertyPathSegment::FEditorPropertyPathSegment()
 	: Struct(nullptr)
@@ -568,6 +572,7 @@ bool FWidgetAnimation_DEPRECATED::SerializeFromMismatchedTag(struct FPropertyTag
 
 UWidgetBlueprint::UWidgetBlueprint(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+	, bCanCallInitializedWithoutPlayerContext(false)
 	, TickFrequency(EWidgetTickFrequency::Auto)
 {
 }
@@ -719,9 +724,43 @@ void UWidgetBlueprint::PreSave(FObjectPreSaveContext ObjectSaveContext)
 
 void UWidgetBlueprint::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
 
-	FWidgetBlueprintDelegates::GetAssetTags.Broadcast(this, OutTags);
+void UWidgetBlueprint::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	TArray<UObject::FAssetRegistryTag> DeprecatedFunctionTags;
+	FWidgetBlueprintDelegates::GetAssetTags.Broadcast(this, DeprecatedFunctionTags);
+	for (UObject::FAssetRegistryTag& Tag : DeprecatedFunctionTags)
+	{
+		Context.AddTag(MoveTemp(Tag));
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+
+	// Add AvailableNamedSlots,  also available on generated class, to the WidgetBlueprint
+	if (const UWidgetBlueprintGeneratedClass* WidgetBPGeneratedClass = Cast<const UWidgetBlueprintGeneratedClass>(GeneratedClass))
+	{
+		TStringBuilder<512> Builder;
+		for (FName NamedSlot : WidgetBPGeneratedClass->AvailableNamedSlots)
+		{
+			if (!NamedSlot.IsNone())
+			{
+				if (Builder.Len() > 0)
+				{
+					Builder << TEXT(',');
+				}
+				Builder << NamedSlot;
+			}
+		}
+		Context.AddTag(FAssetRegistryTag(FName("AvailableNamedSlots"), Builder.ToString(), FAssetRegistryTag::TT_Hidden));
+	}
+
+	FWidgetBlueprintDelegates::GetAssetTagsWithContext.Broadcast(this, Context);
 }
 
 void UWidgetBlueprint::NotifyGraphRenamed(class UEdGraph* Graph, FName OldName, FName NewName)
@@ -753,6 +792,13 @@ bool UWidgetBlueprint::DetectSlateWidgetLeaks(FDataValidationContext& Context) c
 	// We can't safely run this in anything but a running editor, since widgets
 	// rely on a functioning slate application.
 	if (IsRunningCommandlet())
+	{
+		return false;
+	}
+
+	// The detection relies on instantiation of the class: don't try to create an abstract class. 
+	// The validation will have to be run on the WBP inheriting from abstract ones.
+	if (GeneratedClass->HasAnyClassFlags(CLASS_Abstract))
 	{
 		return false;
 	}

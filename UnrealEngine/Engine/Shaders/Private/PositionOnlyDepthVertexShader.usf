@@ -10,7 +10,7 @@
 
 void Main(
 	FPositionOnlyVertexFactoryInput Input,
-	out float4 OutPosition : SV_POSITION
+	out INVARIANT_OUTPUT float4 OutPosition : SV_POSITION
 #if USE_GLOBAL_CLIP_PLANE
 	, out float OutGlobalClipPlaneDistance : SV_ClipDistance
 #endif

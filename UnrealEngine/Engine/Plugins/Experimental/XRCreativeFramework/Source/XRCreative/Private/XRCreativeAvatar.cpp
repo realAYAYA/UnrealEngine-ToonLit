@@ -36,6 +36,7 @@
 #	include "IMultiUserClientModule.h"
 #	include "IVREditorModule.h"
 #	include "VREditorModeBase.h"
+#	include "XRCreativeSettings.h"
 #endif
 
 
@@ -93,7 +94,7 @@ AXRCreativeAvatar::AXRCreativeAvatar(const FObjectInitializer& ObjectInitializer
 	WidgetInteraction->bTickInEditor = true;
 	WidgetInteraction->bShowDebug = false;
 	WidgetInteraction->InteractionDistance = 50.0;
-
+	
 	ToolsComponent = CreateDefaultSubobject<UXRCreativeITFComponent>("ToolsComponent");
 	ToolsComponent->bTickInEditor = true;
 	ToolsComponent->SetPointerComponent(RightControllerPointer);
@@ -129,8 +130,14 @@ void AXRCreativeAvatar::OnConstruction(const FTransform& InTransform)
 		// We're in editor, and the base class won't initialize our components, so do it manually.
 		ToolsComponent->InitializeComponent();
 	}
+	UXRCreativeEditorSettings* Settings = UXRCreativeEditorSettings::GetXRCreativeEditorSettings();
+	UE_LOG(LogXRCreative, Log, TEXT("Handedness: %s"), *UEnum::GetValueAsString(Settings->Handedness) );
+	
+	if (Settings->Handedness == EXRCreativeHandedness::Left)
+	{
+		ToolsComponent->SetPointerComponent(LeftControllerPointer);
+	}
 #endif
-
 	if (!IsTemplate())
 	{
 #if WITH_EDITOR
@@ -138,7 +145,6 @@ void AXRCreativeAvatar::OnConstruction(const FTransform& InTransform)
 #endif
 	}
 }
-
 
 void AXRCreativeAvatar::BeginDestroy()
 {
@@ -191,13 +197,6 @@ void AXRCreativeAvatar::ConfigureToolset(UXRCreativeToolset* InToolset)
 			UXRCreativeTool* NewTool = NewObject<UXRCreativeTool>(this, ToolEntry.ToolClass);
 			Tools.Add(NewTool);
 		}
-	}
-
-	if (ensure(Toolset->Palette))
-	{
-		UXRCreativePalette* Palette = CreateWidget<UXRCreativePalette>(GetWorld(), Toolset->Palette);
-		Palette->SetOwner(this);
-		MenuWidget->SetWidget(Palette);
 	}
 }
 
@@ -279,29 +278,36 @@ void AXRCreativeAvatar::UnregisterObjectForInput(UObject* InObject)
 }
 
 
-void AXRCreativeAvatar::AddInputMappingContext(UInputMappingContext* InContext, int32 InPriority)
+void AXRCreativeAvatar::AddInputMappingContext(UInputMappingContext* InContext, int32 InPriority,const FModifyContextOptions Options)
 {
 	if (IEnhancedInputSubsystemInterface* EnhancedInputSubsystemInterface = GetEnhancedInputSubsystemInterface())
 	{
 		if (IsValid(InContext))
 		{
-			EnhancedInputSubsystemInterface->AddMappingContext(InContext, InPriority);
+			EnhancedInputSubsystemInterface->AddMappingContext(InContext, InPriority, Options);
 		}
 	}
 }
 
 
-void AXRCreativeAvatar::RemoveInputMappingContext(UInputMappingContext* InContext)
+void AXRCreativeAvatar::RemoveInputMappingContext(UInputMappingContext* InContext, const FModifyContextOptions Options)
 {
 	if (IEnhancedInputSubsystemInterface* EnhancedInputSubsystemInterface = GetEnhancedInputSubsystemInterface())
 	{
 		if (IsValid(InContext))
 		{
-			EnhancedInputSubsystemInterface->RemoveMappingContext(InContext);
+			EnhancedInputSubsystemInterface->RemoveMappingContext(InContext, Options);
 		}
 	}
 }
 
+void AXRCreativeAvatar::ClearAllInputMappings()
+{
+	if (IEnhancedInputSubsystemInterface* EnhancedInputSubsystemInterface = GetEnhancedInputSubsystemInterface())
+	{
+		EnhancedInputSubsystemInterface->ClearAllMappings();
+	}
+}
 
 //** Cues up a Haptic effect to be processed on tick in ProcessHaptics() //
 void AXRCreativeAvatar::PlayHapticEffect(UHapticFeedbackEffect_Base* HapticEffect, const int ControllerID, const EControllerHand Hand, float Scale, bool bLoop)

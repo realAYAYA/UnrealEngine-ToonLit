@@ -1,16 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Buffers;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Threading.Tasks;
 using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 namespace Horde.Agent.Utility
 {
@@ -35,7 +32,7 @@ namespace Horde.Agent.Utility
 		static readonly string s_linePropertyName = LogEventPropertyName.Line.ToString();
 		static readonly string s_lineCountPropertyName = LogEventPropertyName.LineCount.ToString();
 
-		static readonly Utf8String s_escapedNewline = "\\n";
+		static readonly Utf8String s_escapedNewline = new Utf8String("\\n");
 
 		readonly List<JsonLogEvent> _logEvents = new List<JsonLogEvent>();
 		readonly ArrayBufferWriter<byte> _lineWriter;
@@ -62,7 +59,7 @@ namespace Horde.Agent.Utility
 		/// </summary>
 		/// <param name="maxLineLength">Maximum length for an individual line</param>
 		/// <param name="maxPacketLength">Maximum length for a packet</param>
-		public JsonRpcLogWriter(int maxLineLength = 4 * 1024, int maxPacketLength = 256 * 1024)
+		public JsonRpcLogWriter(int maxLineLength = 64 * 1024, int maxPacketLength = 256 * 1024)
 		{
 			MaxLineLength = maxLineLength;
 			_lineWriter = new ArrayBufferWriter<byte>(maxLineLength);
@@ -101,6 +98,38 @@ namespace Horde.Agent.Utility
 		/// </summary>
 		/// <param name="jsonLogEvent">Event to write</param>
 		public int SanitizeAndWriteEvent(JsonLogEvent jsonLogEvent)
+		{
+			try
+			{
+				return SanitizeAndWriteEventInternal(jsonLogEvent);
+			}
+			catch (Exception ex)
+			{
+				StringBuilder escapedLineBuilder = new StringBuilder();
+
+				ReadOnlySpan<byte> span = jsonLogEvent.Data.Span;
+				for (int idx = 0; idx < span.Length; idx++)
+				{
+					if (span[idx] >= 32 && span[idx] <= 127)
+					{
+						escapedLineBuilder.Append((char)span[idx]);
+					}
+					else
+					{
+						escapedLineBuilder.Append($"\\x{span[idx]:x2}");
+					}
+				}
+
+				string escapedLine = escapedLineBuilder.ToString();
+				KeyValuePair<string, object>[] properties = new[] { new KeyValuePair<string, object>("Text", escapedLine) };
+				LogEvent newLogEvent = new LogEvent(DateTime.UtcNow, LogLevel.Error, default, $"Invalid json log event: {escapedLineBuilder}", "Invalid json log event: {Text}", properties, LogException.FromException(ex));
+				JsonLogEvent newJsonLogEvent = new JsonLogEvent(newLogEvent);
+
+				return SanitizeAndWriteEventInternal(newJsonLogEvent);
+			}
+		}
+
+		public int SanitizeAndWriteEventInternal(JsonLogEvent jsonLogEvent)
 		{
 			ReadOnlySpan<byte> span = jsonLogEvent.Data.Span;
 			if (jsonLogEvent.LineCount == 1 && span.IndexOf(s_escapedNewline) != -1)
@@ -242,8 +271,7 @@ namespace Horde.Agent.Utility
 					string name = format.Substring(nameStart, idx - nameStart);
 					if (properties.TryGetValue(name, out string? text))
 					{
-						int textLineEnd = text.IndexOf('\n', StringComparison.Ordinal);
-						if (textLineEnd != -1)
+						if (text.Contains('\n', StringComparison.Ordinal))
 						{
 							prefix = format.Substring(0, nameStart - 1);
 							suffix = format.Substring(idx + 1);

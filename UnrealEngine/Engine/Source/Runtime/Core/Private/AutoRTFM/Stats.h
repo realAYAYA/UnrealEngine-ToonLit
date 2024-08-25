@@ -2,12 +2,11 @@
 
 #pragma once
 
+#include "Toggles.h"
 #include "Utils.h"
 
 namespace AutoRTFM
 {
-
-static constexpr bool bCollectStats = false;
 
 enum class EStatsKind : uint8_t
 {
@@ -27,6 +26,10 @@ enum class EStatsKind : uint8_t
 	MaximumCommitTasks,
 	AverageAbortTasks,
 	MaximumAbortTasks,
+	NewMemoryTrackerHit,
+	NewMemoryTrackerMiss,
+	AverageHitSetSize,
+	AverageHitSetCapacity,
 	Total
 };
 
@@ -42,6 +45,8 @@ template<EStatsKind Kind> constexpr bool IsStatsKindNoArgs()
 	case EStatsKind::HitSetHit:
 	case EStatsKind::HitSetMiss:
 	case EStatsKind::HitSetSkippedBecauseOfStackLocalMemory:
+	case EStatsKind::NewMemoryTrackerHit:
+	case EStatsKind::NewMemoryTrackerMiss:
 		return true;
 	}
 }
@@ -62,6 +67,8 @@ template<EStatsKind Kind> constexpr bool IsStatsKindOneArg()
 	case EStatsKind::MaximumCommitTasks:
 	case EStatsKind::AverageAbortTasks:
 	case EStatsKind::MaximumAbortTasks:
+	case EStatsKind::AverageHitSetSize:
+	case EStatsKind::AverageHitSetCapacity:
 		return true;
 	}
 }
@@ -77,6 +84,8 @@ template<EStatsKind Kind> constexpr bool IsStatsKindAverage()
 	case EStatsKind::AverageWriteLogBytes:
 	case EStatsKind::AverageCommitTasks:
 	case EStatsKind::AverageAbortTasks:
+	case EStatsKind::AverageHitSetSize:
+	case EStatsKind::AverageHitSetCapacity:
 		return true;
 	}
 }

@@ -54,16 +54,15 @@ private:
 #if WITH_EDITORONLY_DATA
 		FTextKey LocResID;
 #endif
-#if ENABLE_LOC_TESTING
-		FTextConstDisplayStringPtr NativeStringBackup;
-#endif
+		int32 LocalizationTargetPathId = INDEX_NONE;
 		uint32 SourceStringHash;
 
-		FDisplayStringEntry(const FTextKey& InLocResID, const uint32 InSourceStringHash, const FTextConstDisplayStringRef& InDisplayString)
+		FDisplayStringEntry(const FTextKey& InLocResID, const int32 InLocalizationTargetPathId, const uint32 InSourceStringHash, const FTextConstDisplayStringRef& InDisplayString)
 			: DisplayString(InDisplayString)
 #if WITH_EDITORONLY_DATA
 			, LocResID(InLocResID)
 #endif
+			, LocalizationTargetPathId(InLocalizationTargetPathId)
 			, SourceStringHash(InSourceStringHash)
 		{
 		}
@@ -80,6 +79,39 @@ private:
 	/** Manages the currently loaded or registered text localizations. */
 	typedef TMap<FTextId, FDisplayStringEntry> FDisplayStringLookupTable;
 
+	struct FDisplayStringsForLocalizationTarget
+	{
+		/**
+		 * The path of this localization target.
+		 */
+		FString LocalizationTargetPath;
+
+		/**
+		 * Text IDs currently associated with this localization target.
+		 * @note This information is also known via FDisplayStringEntry::LocalizationTargetPathId, but this serves as 
+		 *       an accelerator for HandleLocalizationTargetsUnmounted to avoid spinning the entire live table.
+		 */
+		TSet<FTextId> TextIds;
+
+		/**
+		 * True if this localization target has been mounted via HandleLocalizationTargetsMounted.
+		 * @note Only mounted localization targets track TextIds, as they're the only things that can be unloaded via HandleLocalizationTargetsUnmounted.
+		 */
+		bool bIsMounted = false;
+	};
+
+	struct FDisplayStringsByLocalizationTargetId
+	{
+	public:
+		FDisplayStringsForLocalizationTarget& FindOrAdd(FStringView InLocalizationTargetPath, int32* OutLocalizationTargetPathId = nullptr);
+		FDisplayStringsForLocalizationTarget* Find(const int32 InLocalizationTargetPathId);
+		void TrackTextId(const int32 InCurrentLocalizationPathId, const int32 InNewLocalizationPathId, const FTextId& InTextId);
+
+	private:
+		TArray<FDisplayStringsForLocalizationTarget> LocalizationTargets;
+		TMap<FStringView, int32> LocalizationTargetPathsToIds;
+	};
+
 private:
 	std::atomic<ETextLocalizationManagerInitializedFlags> InitializedFlags{ ETextLocalizationManagerInitializedFlags::None };
 	
@@ -88,8 +120,12 @@ private:
 		return InitializedFlags != ETextLocalizationManagerInitializedFlags::None;
 	}
 
-	mutable FCriticalSection DisplayStringLookupTableCS;
+	mutable FCriticalSection DisplayStringTableCS;
 	FDisplayStringLookupTable DisplayStringLookupTable;
+#if ENABLE_LOC_TESTING
+	TMap<FTextId, FTextConstDisplayStringPtr> DisplayStringBackupTable;
+#endif
+	FDisplayStringsByLocalizationTargetId DisplayStringsByLocalizationTargetId;
 
 	mutable FRWLock TextRevisionRW;
 	TMap<FTextId, uint16> LocalTextRevisions;
@@ -113,6 +149,8 @@ public:
 	static CORE_API FTextLocalizationManager& Get();
 	static CORE_API void TearDown();
 
+	static CORE_API bool IsDisplayStringSupportEnabled();
+
 	CORE_API void DumpMemoryInfo() const;
 	CORE_API void CompactDataStructures();
 
@@ -121,7 +159,11 @@ public:
 	 * Dumps the current live table state to the log, optionally filtering it based on the given wildcard arguments.
 	 * @note Calling this function with no filters specified will dump the entire live table.
 	 */
+private:
+	CORE_API void DumpLiveTableImpl(const FString* NamespaceFilter, const FString* KeyFilter, const FString* DisplayStringFilter, TFunctionRef<void(const FTextId& Id, const FTextConstDisplayStringRef& DisplayString)> Callback) const;
+public:
 	CORE_API void DumpLiveTable(const FString* NamespaceFilter = nullptr, const FString* KeyFilter = nullptr, const FString* DisplayStringFilter = nullptr, const FLogCategoryBase* CategoryOverride = nullptr) const;
+	CORE_API void DumpLiveTable(const FString& OutputFilename, const FString* NamespaceFilter = nullptr, const FString* KeyFilter = nullptr, const FString* DisplayStringFilter = nullptr) const;
 #endif
 
 	/**
@@ -146,6 +188,12 @@ public:
 	CORE_API TArray<FString> GetLocalizedCultureNames(const ELocalizationLoadFlags InLoadFlags) const;
 
 	/**
+	 * Given a localization target path, get the ID associated with it.
+	 * @note This ID is unstable and should only be used for quick in-process comparison.
+	 */
+	CORE_API int32 GetLocalizationTargetPathId(FStringView InLocalizationTargetPath);
+
+	/**
 	 * Register a localized text source with the text localization manager.
 	 */
 	CORE_API void RegisterTextSource(const TSharedRef<ILocalizedTextSource>& InLocalizedTextSource, const bool InRefreshResources = true);
@@ -157,33 +205,21 @@ public:
 	CORE_API void RegisterPolyglotTextData(TArrayView<const FPolyglotTextData> InPolyglotTextDataArray, const bool InAddDisplayStrings = true);
 
 	/**	Finds and returns the display string with the given namespace and key, if it exists.
-	 *	Additionally, if a source string is specified and the found localized display string was not localized from that source string, null will be returned. */
-	CORE_API FTextConstDisplayStringPtr FindDisplayString(const FTextKey& Namespace, const FTextKey& Key, const FString* const SourceString = nullptr) const;
+	 *	Additionally, if a non-null and non-empty source string is specified and the found localized display string was not localized from that source string, null will be returned. */
+	CORE_API FTextConstDisplayStringPtr FindDisplayString(const FTextKey& Namespace, const FTextKey& Key, const FString* const SourceStringPtr = nullptr) const;
 
 	/**	Returns a display string with the given namespace and key.
 	 *	If no display string exists, it will be created using the source string or an empty string if no source string is provided.
 	 *	If a display string exists ...
 	 *		... but it was not localized from the specified source string, the display string will be set to the specified source and returned.
-	 *		... and it was localized from the specified source string (or none was provided), the display string will be returned.
+	 *		... and it was localized from the specified source string (or the source string was null or empty), the display string will be returned.
 	*/
-	CORE_API FTextConstDisplayStringRef GetDisplayString(const FTextKey& Namespace, const FTextKey& Key, const FString* const SourceString);
+	CORE_API FTextConstDisplayStringPtr GetDisplayString(const FTextKey& Namespace, const FTextKey& Key, const FString* const SourceStringPtr);
 
 #if WITH_EDITORONLY_DATA
 	/** If an entry exists for the specified namespace and key, returns true and provides the localization resource identifier from which it was loaded. Otherwise, returns false. */
 	CORE_API bool GetLocResID(const FTextKey& Namespace, const FTextKey& Key, FString& OutLocResId) const;
 #endif
-
-	UE_DEPRECATED(5.0, "FindNamespaceAndKeyFromDisplayString no longer functions! Use FTextInspector::GetTextId instead.")
-	bool FindNamespaceAndKeyFromDisplayString(const FTextConstDisplayStringPtr& InDisplayString, FString& OutNamespace, FString& OutKey) const { return false; }
-
-	UE_DEPRECATED(5.0, "FindNamespaceAndKeyFromDisplayString no longer functions! Use FTextInspector::GetTextId instead.")
-	bool FindNamespaceAndKeyFromDisplayString(const FTextConstDisplayStringPtr& InDisplayString, FTextKey& OutNamespace, FTextKey& OutKey) const { return false; }
-	
-	/**	Attempts to register the specified display string, associating it with the specified namespace and key.
-	 *	Returns true if the display string has been or was already associated with the namespace and key.
-	 *	Returns false if the display string was already associated with another namespace and key or the namespace and key are already in use by another display string.
-	 */
-	CORE_API bool AddDisplayString(const FTextDisplayStringRef& DisplayString, const FTextKey& Namespace, const FTextKey& Key);
 
 	/** Updates display string entries and adds new display string entries based on localizations found in a specified localization resource. */
 	CORE_API void UpdateFromLocalizationResource(const FString& LocalizationResourceFilePath);
@@ -215,8 +251,8 @@ public:
 	CORE_API void HandleLocalizationTargetsMounted(TArrayView<const FString> LocalizationTargetPaths);
 
 	 /**
-	  * Called when paths containing additional localization target data (LocRes) are unmounted, to allow the display strings to dynamically update without waiting for a refresh.
-	  * @note The loading is async, see WaitUntilLoadingCompletes.
+	  * Called when paths containing additional localization target data (LocRes) are unmounted, to allow the display strings to be unloaded.
+	  * @note The unloading is async, see WaitUntilLoadingCompletes.
 	  * @see FCoreDelegates::GatherAdditionalLocResPathsCallback.
 	  */
 	CORE_API void HandleLocalizationTargetsUnmounted(TArrayView<const FString> LocalizationTargetPaths);

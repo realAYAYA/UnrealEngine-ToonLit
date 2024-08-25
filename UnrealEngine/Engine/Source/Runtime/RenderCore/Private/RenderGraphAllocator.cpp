@@ -1,24 +1,79 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RenderGraphAllocator.h"
-#include "Async/TaskGraphInterfaces.h"
 #include "RenderCore.h"
 #include "RenderGraphPrivate.h"
 
-FRDGAllocator& FRDGAllocator::Get()
+#if RDG_ALLOCATOR_DEBUG
+thread_local int32 FRDGAllocator::NumAccessesTLS = 0;
+#endif
+
+uint32 FRDGAllocator::AllocatorTLSSlot = FPlatformTLS::AllocTlsSlot();
+
+FRDGAllocator::FRDGAllocator()
+#if !RDG_USE_MALLOC
+	: MemStack(FMemStackBase::EPageSize::Large)
+#endif
+{}
+
+FRDGAllocator::FRDGAllocator(FRDGAllocator&& Other)
 {
-	static FRDGAllocator Instance;
-	return Instance;
+	*this = MoveTemp(Other);
+}
+
+FRDGAllocator& FRDGAllocator::operator= (FRDGAllocator&& Other)
+{
+#if RDG_USE_MALLOC
+	Mallocs = MoveTemp(Other.Mallocs);
+	NumMallocBytes = Other.NumMallocBytes;
+	Other.NumMallocBytes = 0;
+	check(Other.Mallocs.IsEmpty());
+#else
+	MemStack = MoveTemp(Other.MemStack);
+	check(Other.MemStack.IsEmpty());
+#endif
+	Objects = MoveTemp(Other.Objects);
+	check(Other.Objects.IsEmpty());
+
+#if RDG_ALLOCATOR_DEBUG
+	NumAccesses = Other.NumAccesses.load(std::memory_order_relaxed);
+	Other.NumAccesses.store(0, std::memory_order_relaxed);
+#endif
+
+	return *this;
 }
 
 FRDGAllocator::~FRDGAllocator()
 {
-	Context.ReleaseAll();
-	ContextForTasks.ReleaseAll();
+	ReleaseAll();
 }
 
-void FRDGAllocator::FContext::ReleaseAll()
+FRDGAllocator& FRDGAllocator::GetTLS()
 {
+	void* Allocator = FPlatformTLS::GetTlsValue(AllocatorTLSSlot);
+	checkf(Allocator, TEXT("Attempted to access RDG allocator outside of FRDGAllocatorScope"));
+	return *(FRDGAllocator*)Allocator;
+}
+
+#if RDG_ALLOCATOR_DEBUG
+
+void FRDGAllocator::AcquireAccess()
+{
+	check(NumAccesses.fetch_add(1, std::memory_order_acquire) == NumAccessesTLS++);
+}
+
+void FRDGAllocator::ReleaseAccess()
+{
+	check(NumAccesses.fetch_sub(1, std::memory_order_release) == NumAccessesTLS--);
+}
+
+#endif
+
+void FRDGAllocator::ReleaseAll()
+{
+	CSV_SCOPED_TIMING_STAT_EXCLUSIVE_CONDITIONAL(RDGAllocator_Clear, GRDGVerboseCSVStats != 0 && IsInRenderingThread());
+	TRACE_CPUPROFILER_EVENT_SCOPE(FRDGAllocator::ReleaseAll);
+
 	for (int32 Index = Objects.Num() - 1; Index >= 0; --Index)
 	{
 #if RDG_USE_MALLOC
@@ -30,41 +85,26 @@ void FRDGAllocator::FContext::ReleaseAll()
 	Objects.Reset();
 
 #if RDG_USE_MALLOC
-	for (void* RawAlloc : RawAllocs)
+	for (void* Malloc : Mallocs)
 	{
-		FMemory::Free(RawAlloc);
+		FMemory::Free(Malloc);
 	}
-	RawAllocs.Reset();
+	Mallocs.Reset();
+	NumMallocBytes = 0;
 #else
 	MemStack.Flush();
 #endif
 }
 
-void FRDGAllocator::ReleaseAll()
+FRDGAllocatorScope::FRDGAllocatorScope(FRDGAllocator& Allocator)
+	: AllocatorToRestore(FPlatformTLS::GetTlsValue(FRDGAllocator::AllocatorTLSSlot))
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(FRDGAllocator::ReleaseAll);
-	CSV_SCOPED_TIMING_STAT_EXCLUSIVE_CONDITIONAL(RDGAllocator_Clear, GRDGVerboseCSVStats != 0);
-	Context.ReleaseAll();
-	ContextForTasks.ReleaseAll();
+	FPlatformTLS::SetTlsValue(FRDGAllocator::AllocatorTLSSlot, &Allocator);
 }
 
 FRDGAllocatorScope::~FRDGAllocatorScope()
 {
-	if (AsyncDeleteFunction)
-	{
-		FFunctionGraphTask::CreateAndDispatchWhenReady(
-			[Allocator = MoveTemp(Allocator), AsyncDeleteFunction = MoveTemp(AsyncDeleteFunction)] () mutable
-		{
-			SCOPED_NAMED_EVENT(FRDGAllocatorScope_AsyncDelete, FColor::Emerald);
-			AsyncDeleteFunction();
-			AsyncDeleteFunction = {};
-
-		}, TStatId(), nullptr, ENamedThreads::AnyThread);
-	}
-	else
-	{
-		Allocator.ReleaseAll();
-	}
+	FPlatformTLS::SetTlsValue(FRDGAllocator::AllocatorTLSSlot, AllocatorToRestore);
 }
 
 FORCENOINLINE void UE::RenderCore::Private::OnInvalidRDGAllocatorNum(int32 NewNum, SIZE_T NumBytesPerElement)

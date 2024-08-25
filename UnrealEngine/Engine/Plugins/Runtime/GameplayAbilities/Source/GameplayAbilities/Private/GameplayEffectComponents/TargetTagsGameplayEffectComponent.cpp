@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GameplayEffectComponents/TargetTagsGameplayEffectComponent.h"
+#include "Misc/DataValidation.h"
+
+#define LOCTEXT_NAMESPACE "TargetTagsGameplayEffectComponent"
 
 void UTargetTagsGameplayEffectComponent::PostInitProperties()
 {
@@ -16,10 +19,10 @@ void UTargetTagsGameplayEffectComponent::PostInitProperties()
 #endif // WITH_EDITORONLY_DATA
 }
 
-void UTargetTagsGameplayEffectComponent::OnGameplayEffectChanged() const
+void UTargetTagsGameplayEffectComponent::OnGameplayEffectChanged()
 {
 	Super::OnGameplayEffectChanged();
-	ApplyTargetTagChanges();
+	SetAndApplyTargetTagChanges(InheritableGrantedTagsContainer);
 }
 
 #if WITH_EDITOR
@@ -30,13 +33,26 @@ void UTargetTagsGameplayEffectComponent::PostEditChangeProperty(FPropertyChanged
 
 	if (PropertyChangedEvent.GetMemberPropertyName() == GetInheritableGrantedTagsContainerName())
 	{
-		SetAndApplyTargetTagChanges(InheritableGrantedTagsContainer);
-
 		// Tell the GE it needs to reconfigure itself based on these updated properties (this will reaggregate the tags)
 		UGameplayEffect* Owner = GetOwner();
 		Owner->OnGameplayEffectChanged();
 	}
 }
+
+EDataValidationResult UTargetTagsGameplayEffectComponent::IsDataValid(FDataValidationContext& Context) const
+{
+	EDataValidationResult Result = Super::IsDataValid(Context);
+
+	const bool bInstantEffect = (GetOwner()->DurationPolicy == EGameplayEffectDurationType::Instant);
+	if (bInstantEffect && !InheritableGrantedTagsContainer.CombinedTags.IsEmpty())
+	{
+		Context.AddError(FText::FormatOrdered(LOCTEXT("GEInstantAndTargetTags", "GE {0} is set to Instant so TargetTagsGameplayEffectComponent will not be able to apply its tags."), FText::FromString(GetNameSafe(GetOwner()))));
+		Result = EDataValidationResult::Invalid;
+	}
+
+	return Result;
+}
+
 #endif // WITH_EDITOR
 
 void UTargetTagsGameplayEffectComponent::SetAndApplyTargetTagChanges(const FInheritedTagContainer& TagContainerMods)
@@ -56,3 +72,5 @@ void UTargetTagsGameplayEffectComponent::ApplyTargetTagChanges() const
 	UGameplayEffect* Owner = GetOwner();
 	InheritableGrantedTagsContainer.ApplyTo(Owner->CachedGrantedTags);
 }
+
+#undef LOCTEXT_NAMESPACE

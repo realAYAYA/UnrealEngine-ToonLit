@@ -224,7 +224,7 @@ TArray<FWaveFunctionCollapseOption> UWaveFunctionCollapseSubsystem::GetInnerBord
 	{
 		for (FWaveFunctionCollapseOption& RemoveThisOption : InnerBorderOptionsToRemove)
 		{
-			InnerBorderOptions.RemoveSingleSwap(RemoveThisOption, false);
+			InnerBorderOptions.RemoveSingleSwap(RemoveThisOption, EAllowShrinking::No);
 		}
 		InnerBorderOptions.Shrink();
 	}

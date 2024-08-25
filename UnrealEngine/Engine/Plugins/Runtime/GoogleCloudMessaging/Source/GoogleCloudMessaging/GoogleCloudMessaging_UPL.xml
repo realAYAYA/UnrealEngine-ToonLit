@@ -123,7 +123,7 @@ dependencies {
           public void AndroidThunkJava_RegisterForRemoteNotifications()
           {
           // start IntentService to register this application with Google Cloud Messaging
-          Intent intent = new Intent(_activity.getApplicationContext(), RemoteNotificationsRegistrationIntentService.class);
+          Intent intent = new Intent(activityContext.getApplicationContext(), RemoteNotificationsRegistrationIntentService.class);
           startService(intent);
           }
           public void AndroidThunkJava_UnregisterForRemoteNotifications()

@@ -1,9 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "WorldPartition/LoaderAdapter/LoaderAdapterList.h"
-#include "WorldPartition/ActorDescContainerCollection.h"
+#include "WorldPartition/ActorDescContainerInstanceCollection.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "Engine/Level.h"
 
 #if WITH_EDITOR
@@ -25,22 +26,15 @@ void FLoaderAdapterList::ForEachActor(TFunctionRef<void(const FWorldPartitionHan
 
 void FLoaderAdapterList::HandleActorContainer(const FWorldPartitionHandle& InActor, TFunctionRef<void(const FWorldPartitionHandle&)> InOperation) const
 {
-	if (InActor->IsContainerInstance())
+	if (InActor->IsChildContainerInstance())
 	{
-		FWorldPartitionActorDesc::FContainerInstance ContainerInstance;
-		if (InActor->GetContainerInstance(ContainerInstance))
+		if (UWorldPartition* ContainerWorldPartition = GetLoadedChildWorldPartition(InActor); ContainerWorldPartition && ContainerWorldPartition->IsStreamingEnabledInEditor())
 		{
-			if (ContainerInstance.bSupportsPartialEditorLoading)
+			for (FActorDescContainerInstanceCollection::TIterator<> Iterator(ContainerWorldPartition); Iterator; ++Iterator)
 			{
-				if (UWorldPartition* ContainerWorldPartition = ContainerInstance.LoadedLevel ? ContainerInstance.LoadedLevel->GetWorldPartition() : nullptr)
-				{
-					for (FActorDescContainerCollection::TIterator<> ActorDescIterator(ContainerWorldPartition); ActorDescIterator; ++ActorDescIterator)
-					{
-						FWorldPartitionHandle ActorHandle(ContainerWorldPartition, ActorDescIterator->GetGuid());
-						InOperation(ActorHandle);
-						HandleActorContainer(ActorHandle, InOperation);
-					}
-				}
+				FWorldPartitionHandle ActorHandle(ContainerWorldPartition, Iterator->GetGuid());
+				InOperation(ActorHandle);
+				HandleActorContainer(ActorHandle, InOperation);
 			}
 		}
 	}

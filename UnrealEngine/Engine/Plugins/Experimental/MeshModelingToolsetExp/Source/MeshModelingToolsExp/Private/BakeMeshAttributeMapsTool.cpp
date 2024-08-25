@@ -101,7 +101,7 @@ public:
 	TSharedPtr<UE::Geometry::FDynamicMesh3, ESPMode::ThreadSafe> DetailMesh;
 	TSharedPtr<UE::Geometry::FDynamicMeshAABBTree3, ESPMode::ThreadSafe> DetailSpatial;
 	TSharedPtr<UE::Geometry::TMeshTangents<double>, ESPMode::ThreadSafe> DetailMeshTangents;
-	UE::Geometry::FDynamicMesh3* BaseMesh = nullptr;
+	TSharedPtr<UE::Geometry::FDynamicMesh3, ESPMode::ThreadSafe> BaseMesh;
 	TUniquePtr<UE::Geometry::FMeshMapBaker> Baker;
 	UBakeMeshAttributeMapsTool::FBakeSettings BakeSettings;
 	TSharedPtr<UE::Geometry::TMeshTangents<double>, ESPMode::ThreadSafe> BaseMeshTangents;
@@ -134,7 +134,7 @@ public:
 		Baker->CancelF = [Progress]() {
 			return Progress && Progress->Cancelled();
 		};
-		Baker->SetTargetMesh(BaseMesh);
+		Baker->SetTargetMesh(BaseMesh.Get());
 		Baker->SetTargetMeshUVLayer(BakeSettings.TargetUVLayer);
 		Baker->SetDimensions(BakeSettings.Dimensions);
 		Baker->SetProjectionDistance(BakeSettings.ProjectionDistance);
@@ -292,9 +292,10 @@ void UBakeMeshAttributeMapsTool::Setup()
 
 	PreviewMesh->ProcessMesh([this](const FDynamicMesh3& Mesh)
 	{
-		TargetMesh.Copy(Mesh);
-		TargetSpatial.SetMesh(&TargetMesh, true);
-		TargetMeshTangents = MakeShared<FMeshTangentsd, ESPMode::ThreadSafe>(&TargetMesh);
+		TargetMesh = MakeShared<FDynamicMesh3, ESPMode::ThreadSafe>();
+		TargetMesh->Copy(Mesh);
+
+		TargetMeshTangents = MakeShared<FMeshTangentsd, ESPMode::ThreadSafe>(TargetMesh.Get());
 		TargetMeshTangents->CopyTriVertexTangents(Mesh);
 	});
 
@@ -328,7 +329,7 @@ void UBakeMeshAttributeMapsTool::Setup()
 	InputMeshSettings->SourceSkeletalMesh = !bIsBakeToSelf ? UE::ToolTarget::GetSkeletalMeshFromTargetIfAvailable(DetailTarget) : nullptr;
 	InputMeshSettings->SourceDynamicMesh = !bIsBakeToSelf ? GetTargetActorViaIPersistentDynamicMeshSource(DetailTarget) : nullptr;
 	InputMeshSettings->SourceNormalMap = nullptr;
-	UpdateUVLayerNames(InputMeshSettings->TargetUVLayer, InputMeshSettings->TargetUVLayerNamesList, TargetMesh);
+	UpdateUVLayerNames(InputMeshSettings->TargetUVLayer, InputMeshSettings->TargetUVLayerNamesList, *TargetMesh);
 	InputMeshSettings->WatchProperty(InputMeshSettings->bHideSourceMesh, [this](bool bState) { SetSourceObjectVisible(!bState); });
 	InputMeshSettings->WatchProperty(InputMeshSettings->TargetUVLayer, [this](FString) { OpState |= EBakeOpState::Evaluate; });
 	InputMeshSettings->WatchProperty(InputMeshSettings->ProjectionDistance, [this](float) { OpState |= EBakeOpState::Evaluate; });
@@ -435,7 +436,7 @@ TUniquePtr<UE::Geometry::TGenericDataOperator<FMeshMapBaker>> UBakeMeshAttribute
 	TUniquePtr<FMeshMapBakerOp> Op = MakeUnique<FMeshMapBakerOp>();
 	Op->DetailMesh = DetailMesh;
 	Op->DetailSpatial = DetailSpatial;
-	Op->BaseMesh = &TargetMesh;
+	Op->BaseMesh = TargetMesh;
 	Op->BakeSettings = CachedBakeSettings;
 	Op->BaseMeshUVCharts = TargetMeshUVCharts;
 	Op->bIsBakeToSelf = bIsBakeToSelf;
@@ -821,7 +822,7 @@ void UBakeMeshAttributeMapsTool::GatherAnalytics(FBakeAnalytics::FMeshSettings& 
 {
 	if (FEngineAnalytics::IsAvailable())
 	{
-		Data.NumTargetMeshTris = TargetMesh.TriangleCount();
+		Data.NumTargetMeshTris = TargetMesh->TriangleCount();
 		Data.NumDetailMesh = 1;
 		Data.NumDetailMeshTris = DetailMesh->TriangleCount();
 	}
